@@ -1,0 +1,481 @@
+' Gambas class file
+
+Private NombreProyecto As String
+Private RutaProyecto As String
+Public $Bash As Process
+
+Public Sub Form_Open()
+
+  m_InicioCierre.DirectorioOcultoApp()
+  m_OnOff_y_Red.OnRed' abrimos la conexión a la red
+  $Bash = TerminalViewProyecto.Shell("/usr/bin/bash")
+
+  TextAreaProyecto.Visible = True
+  PictureBoxProyecto.Visible = False
+  PictureBoxProyecto.Picture = Null
+
+End
+
+Public Sub DirViewProyecto_Click()' Evento click en DirView actualiza los archivos que se muestran en FileViewProyecto
+
+  Dim bloquear As Boolean = False
+
+  If Not bloquear Then
+    FileViewProyecto.Dir = DirViewProyecto.Current
+  Endif
+
+End
+
+Public Sub Watcher_Change()' Evento que se ejecuta cuando se detecta un cambio en el directorio
+
+  DirViewProyecto.Root = File.Dir(txtProyecto.Text)' reforzamos la indicación de la ruta
+  DirViewProyecto.Refresh
+  FileViewProyecto.Refresh
+
+End
+
+Public Sub btnVerProyectos_Click()
+  ' Cambiar visibilidad del TabPanel2 según el estado del botón
+
+  If btnVerProyectos.Value Then
+    ' Verificar si hay un proyecto seleccionado (filtro)
+    If Trim(txtProyecto.Text) = "" Then
+      ' No hay proyecto seleccionado, mostrar advertencia
+      Message.Warning("No tiene ningún proyecto seleccionado.\nSe abrirá el gestor para seleccionar uno.", "Aceptar")
+
+      ' Desactivar el botón ya que no se puede mostrar el panel
+      btnVerProyectos.Value = False
+
+      ' Llamar al procedimiento para abrir un proyecto
+      ButtonAbrirProyecto_Click()
+      Return
+    End If
+
+    ' Si hay proyecto seleccionado, mostrar el panel
+    PanelProyectos.Visible = True
+  Else
+    ' Ocultar el panel
+    PanelProyectos.Visible = False
+  End If
+
+End Sub
+
+Public Sub ButtonAbrirProyecto_Click()
+
+  Dialog.Title = "Seleccionar archivo"
+  Dialog.Filter = ["*.adoc", "Archivos de Asciidoc,"]
+  Dialog.AutoExt = True
+  Dialog.Path = User.Home
+
+  If Dialog.OpenFile() Then
+    Return
+  Else
+    ' ahora refrescamos el nombre del archivo nuevo
+    txtProyecto.Text = Dialog.Path
+    NombreProyecto = File.BaseName(Dialog.Path)
+    RutaProyecto = File.Dir(txtProyecto.Text)
+    Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+    ControlarCarpetas()' nos aseguramos revisar las carpetas del proyecto
+    MenuButtonSalidas.Visible = True
+    TabPanelMetadatosRevista.Visible = True
+    TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
+    TerminalViewProyecto.Input("clear" & "\n")
+    PictureBoxProyecto.Image = Null
+    DirViewProyecto.Root = File.Dir(txtProyecto.Text)
+    DirViewProyecto.Reload' hacemos un refresco luego de aseguramos de que las carpetas fueron revisadas
+    FileViewProyecto.Refresh
+  Endif
+
+End
+
+Public Sub ControlarCarpetas()' Lista de directorios que se deben confirmar al abrir
+
+  Dim directorios As String[] = ["articulos", "files", "media", "correcciones", "originales", "salidas", "salidas/tapa", ".github", ".github/workflows"]
+
+  ' Crear los directorios si no existen
+  For Each directorio As String In directorios
+    If Not Exist(File.Dir(txtProyecto.Text) & "/" & directorio) Then
+      Mkdir File.Dir(txtProyecto.Text) & "/" & directorio
+    End If
+  Next
+
+End
+
+Public Sub Form_Close()
+
+  m_InicioCierre.CerrarTodo()
+
+End
+
+Public Sub btnCrearCarpeta_Click()
+
+  If DirViewProyecto.Current = "" Then
+    Message.Warning("Seleccioná un directorio en el árbol primero.")
+    Return
+  Endif
+
+  ' Guardamos la ruta actual como destino
+  f_AgregarCarpeta.RutaDestino = DirViewProyecto.Current
+  f_AgregarCarpeta.ShowModal
+
+  ' Si se creó la carpeta, actualizamos el FileView
+  If f_AgregarCarpeta.CarpetaCreada Then
+    FileViewProyecto.Dir = DirViewProyecto.Current
+  Endif
+
+  DirViewProyecto.Reload
+
+End
+
+Public Sub btnBorrarCarpeta_Click()
+
+  Dim ruta As String = DirViewProyecto.Current
+
+  ' Verificar que la ruta existe y es una carpeta
+  If Not Exist(ruta) Or Not IsDir(ruta) Then
+    Message.Warning("La ruta seleccionada no es una carpeta válida.")
+    Return
+  End If
+
+  ' Confirmar acción
+  If Message.Question("¿Seguro que deseas borrar la carpeta y TODO su contenido, incluyendo subcarpetas y archivos?", "Sí", "Cancelar") <> 1 Then
+    Return
+  End If
+
+  ' Intentar borrar la carpeta
+  If BorrarCarpeta(ruta) Then
+    DirViewProyecto.Reload
+    Message.Info("Carpeta borrada exitosamente.")
+  Else
+    Message.Error("No se pudo borrar la carpeta completamente.")
+  End If
+
+End
+
+Private Function BorrarCarpeta(RutaCarpeta As String) As Boolean
+
+  Dim archivos As String[]
+  Dim archivo As String
+  Dim rutaCompleta As String
+
+  ' Obtener lista de archivos y carpetas
+  Try archivos = Dir(RutaCarpeta, "*", gb.File + gb.Directory)
+  If Error Then
+    Print "Error al leer carpeta: " & RutaCarpeta & " - " & Error.Text
+    Return False
+  End If
+
+  ' Procesar cada elemento
+  For Each archivo In archivos
+    ' Saltar las entradas "." y ".."
+    If archivo = "." Or archivo = ".." Then Continue
+
+    rutaCompleta = RutaCarpeta &/ archivo
+
+    If IsDir(rutaCompleta) Then
+      ' Es una subcarpeta, llamada recursiva
+      If Not BorrarCarpeta(rutaCompleta) Then
+        Return False
+      End If
+    Else
+      ' Es un archivo, borrarlo
+      Try Kill rutaCompleta
+      If Error Then
+        Print "Error al borrar archivo: " & rutaCompleta & " - " & Error.Text
+        Return False
+      End If
+    End If
+  Next
+
+  ' Finalmente, borrar la carpeta vacía
+  Try Rmdir RutaCarpeta
+  If Error Then
+    Print "Error al borrar carpeta: " & RutaCarpeta & " - " & Error.Text
+    Return False
+  End If
+
+  Return True
+
+End Function
+
+' Evento para agregar archivo
+Public Sub btnAgregarArchivo_Click()
+  ' Mostrar formulario de creación
+
+  f_AgregarArchivo.RutaDestino = DirViewProyecto.Current
+  f_AgregarArchivo.ShowModal
+  ' Si se creó, actualizamos la vista
+  If f_AgregarArchivo.ArchivoCreado Then
+    FileViewProyecto.Dir = DirViewProyecto.Current
+  Endif
+
+  FileViewProyecto.Reload
+
+End
+
+Public Sub btnBorrarArchivo_Click()
+
+  Dim archivoSeleccionado As String
+  Dim rutaCompleta As String
+  Dim respuesta As Integer
+
+  ' Verificar que hay un archivo seleccionado
+  If FileViewProyecto.Current = "" Then
+    Message.Warning("No hay ningún archivo seleccionado")
+    Return
+  Endif
+
+  ' Obtener el archivo seleccionado y su ruta completa
+  archivoSeleccionado = FileViewProyecto.Current
+  rutaCompleta = FileViewProyecto.Dir &/ archivoSeleccionado
+
+  ' Mostrar alerta de confirmación
+  respuesta = Message.Question("¿Está seguro que desea eliminar el archivo '" & archivoSeleccionado & "'?", "Eliminar", "Cancelar")
+
+  ' Si confirma (OK), eliminar el archivo
+  If respuesta = 1 Then
+    Kill rutaCompleta
+    If Error Then
+      Message.Error("Error al eliminar el archivo: " & Error.Text)
+    Else
+      Message.Info("Archivo eliminado correctamente")
+      ' Refrescar la vista
+      FileViewProyecto.Reload
+    Endif
+  Endif
+
+End
+
+Public Sub btnVerIMAGEN_Click()
+
+  Dim sArchivoSeleccionado As String
+  Dim sRutaCompleta As String
+  Dim sExtension As String
+  Dim aExtensionesImagen As String[]
+
+  ' Definir las extensiones de imagen permitidas
+  aExtensionesImagen = ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"]
+
+  ' Verificar que hay un archivo seleccionado en el FileView
+  If FileViewProyecto.Current = "" Then
+    Message.Warning("Por favor seleccione un archivo de la lista")
+    Return
+  Endif
+
+  ' Obtener el archivo seleccionado
+  sArchivoSeleccionado = FileViewProyecto.Current
+
+  ' Construir la ruta completa del archivo
+  sRutaCompleta = FileViewProyecto.Dir &/ sArchivoSeleccionado
+
+  ' Verificar que el archivo existe
+  If Not Exist(sRutaCompleta) Then
+    Message.Error("El archivo seleccionado no existe")
+    Return
+  Endif
+
+  ' Obtener la extensión del archivo
+  sExtension = LCase(File.Ext(sArchivoSeleccionado))
+
+  ' Verificar que es un archivo de imagen válido
+  If aExtensionesImagen.Find(sExtension) = -1 Then
+    Message.Warning("El archivo seleccionado no es una imagen válida.\nExtensiones permitidas: ." & aExtensionesImagen.Join(", ."))
+    Return
+  Endif
+
+  ' Cargar y mostrar la imagen
+  Try PictureBoxProyecto.Picture = Picture.Load(sRutaCompleta)
+
+  If Error Then
+    ' Si hay error al cargar la imagen
+    PictureBoxProyecto.Picture = Null
+    PictureBoxProyecto.Visible = False
+    TextAreaProyecto.Visible = True
+  Else
+    ' Si la imagen se cargó correctamente
+    PictureBoxProyecto.Visible = True
+    TextAreaProyecto.Visible = False
+  Endif
+
+  If Error Then
+    Message.Error("Error al cargar la imagen:\n" & Error.Text)
+    ' Limpiar el ImageView en caso de error
+    PictureBoxProyecto.Picture = Null
+  Endif
+
+End
+
+Public Sub btnVerTexto_Click()
+
+  Dim sArchivoSeleccionado As String
+  Dim sRutaCompleta As String
+  Dim sExtension As String
+  Dim aExtensionesPermitidas As String[]
+
+  ' Definir las extensiones de archivos de texto permitidas
+  aExtensionesPermitidas = ["adoc", "txt", "sh", "css", "js", "json", "xml", "md", "log", "conf", "cfg", "ini", "csl", "sass"]
+
+  ' Verificar que hay un archivo seleccionado en el FileView
+  If FileViewProyecto.Current = "" Then
+    Message.Warning("Por favor seleccione un archivo de la lista")
+    Return
+  Endif
+
+  ' Obtener el archivo seleccionado
+  sArchivoSeleccionado = FileViewProyecto.Current
+  ' Construir la ruta completa del archivo
+  sRutaCompleta = FileViewProyecto.Dir &/ sArchivoSeleccionado
+
+  ' Verificar que el archivo existe
+  If Not Exist(sRutaCompleta) Then
+    Message.Error("El archivo seleccionado no existe")
+    Return
+  Endif
+
+  ' Obtener la extensión del archivo
+  sExtension = LCase(File.Ext(sArchivoSeleccionado))
+
+  ' Verificar que es un archivo de texto válido
+  If aExtensionesPermitidas.Find(sExtension) = -1 Then
+    Message.Warning("El archivo seleccionado no es un archivo de texto válido.\nExtensiones permitidas: " & aExtensionesPermitidas.Join(", "))
+    Return
+  Endif
+
+  ' Cargar el contenido del archivo de texto
+  Try TextAreaProyecto.Text = File.Load(sRutaCompleta)
+
+  If Error Then
+    ' Si hay error al cargar el archivo
+    TextAreaProyecto.Text = ""
+    PictureBoxProyecto.Visible = True
+    TextAreaProyecto.Visible = False
+    Message.Error("Error al cargar el archivo de texto:\n" & Error.Text)
+  Else
+    ' Si el texto se cargó correctamente
+    PictureBoxProyecto.Visible = False
+    TextAreaProyecto.Visible = True
+  Endif
+
+End
+
+Public Sub btnVerTextoExterno_Click()
+
+  Dim sArchivoSeleccionado As String
+  Dim sRutaCompleta As String
+  Dim sExtension As String
+  Dim aExtensionesPermitidas As String[]
+
+  ' Definir las extensiones de archivos de texto permitidas
+  aExtensionesPermitidas = ["adoc", "xml", "doc", "docx", "rtf"]
+
+  ' Verificar que hay un archivo seleccionado en el FileView
+  If FileViewProyecto.Current = "" Then
+    Message.Warning("Por favor seleccione un archivo de la lista")
+    Return
+  Endif
+
+  ' Obtener el archivo seleccionado
+  sArchivoSeleccionado = FileViewProyecto.Current
+
+  ' Construir la ruta completa del archivo
+  sRutaCompleta = FileViewProyecto.Dir &/ sArchivoSeleccionado
+
+  ' Verificar que el archivo existe
+  If Not Exist(sRutaCompleta) Then
+    Message.Error("El archivo seleccionado no existe")
+    Return
+  Endif
+
+  ' Obtener la extensión del archivo
+  sExtension = LCase(File.Ext(sArchivoSeleccionado))
+
+  ' Verificar que es un archivo de texto válido
+  If aExtensionesPermitidas.Find(sExtension) = -1 Then
+    Message.Warning("El archivo seleccionado no es un archivo de texto válido.\nExtensiones permitidas: " & aExtensionesPermitidas.Join(", "))
+    Return
+  Endif
+
+  ' Abrir el archivo de texto
+  Try Desktop.Open(sRutaCompleta)
+
+  ' Verificar si ocurrió un error
+  If Error Then
+    Message.Error("Error al abrir el archivo de texto:\n" & Error.Text)
+  Endif
+
+End
+
+Public Sub menuEPUB_Click()
+
+  If Not Exist(File.Dir(txtProyecto.Text) & "/salidas/epub") Then
+    Mkdir File.Dir(txtProyecto.Text) & "/salidas/epub"
+    DirViewProyecto.Reload
+  End If
+
+  ' hacemos una consulta a la BBDD y obtenemos los metadatos
+
+  ' hacemos otra consulta a la bbdd y obteneos el archivo .bib
+
+  'generamos el epub3
+  ' Dim sCommand As String
+  ' sCommand = "asciidoctor-epub3 salidas/epub mi-documento.adoc"
+  ' Shell sCommand Wait
+
+End
+
+Public Sub menuPDFcompleto_Click()
+
+  If Not Exist(File.Dir(txtProyecto.Text) & "/salidas/pdf") Then
+    Mkdir File.Dir(txtProyecto.Text) & "/salidas/pdf"
+    DirViewProyecto.Reload
+  End If
+
+End
+
+Public Sub menuHTMLcompleto_Click()
+
+  If Not Exist(File.Dir(txtProyecto.Text) & "/salidas/html") Then
+    Mkdir File.Dir(txtProyecto.Text) & "/salidas/html"
+    DirViewProyecto.Reload
+  End If
+
+End
+
+Public Sub menuDocBook_Click()
+
+  If Not Exist(File.Dir(txtProyecto.Text) & "/salidas/docbook") Then
+    Mkdir File.Dir(txtProyecto.Text) & "/salidas/docbook"
+    DirViewProyecto.Reload
+  End If
+
+End
+
+Public Sub menuXMLpmd_Click()
+
+  If Not Exist(File.Dir(txtProyecto.Text) & "/salidas/xml") Then
+    Mkdir File.Dir(txtProyecto.Text) & "/salidas/xml"
+    DirViewProyecto.Reload
+  End If
+
+End
+
+Public Sub menuSCIELO_Click()
+
+  If Not Exist(File.Dir(txtProyecto.Text) & "/salidas/xml") Then
+    Mkdir File.Dir(txtProyecto.Text) & "/salidas/xml"
+    DirViewProyecto.Reload
+  End If
+
+End
+
+Public Sub btnBlockNotas_Click()
+
+  f_BlockNotas.ShowModal()
+
+End
+
+Public Sub ButtonCerrarAplicacion_Click()
+
+  m_InicioCierre.CerrarTodo()
+
+End
