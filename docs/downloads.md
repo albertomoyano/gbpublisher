@@ -23,7 +23,7 @@ sudo apt install ./gbtexpublisher0_0.1.662-0ubuntu1_all.deb
 ## Descargas por versión
 
 ### Versión Actual (v0.1.662)
-- **Fecha**: 19 de Abril 2025  
+- **Fecha**: 19 de Abril 2025
 - **Novedades**:
   - Mejoras en estabilidad
   - Corrección de errores menores
@@ -34,7 +34,7 @@ sudo apt install ./gbtexpublisher0_0.1.662-0ubuntu1_all.deb
 
 
 3. Para reportar bugs:
-[Crear un issue en GitHub](https://github.com/albertomoyano/gbtexpublisher/issues)
+[Crear un issue en GitHub](https://github.com/albertomoyano/gbadocmagazine/issues)
 
 ## Historial de Cambios
 
@@ -46,4 +46,4 @@ sudo apt install ./gbtexpublisher0_0.1.662-0ubuntu1_all.deb
 
 [Inicio](index.md) | [Desarrollador](cv.md) | [Descargas](downloads.md)
 
-2025 gbTeXpublisher | [Licencia GPLv3](https://www-gnu-org.translate.goog/licenses/gpl-3.0.html?_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc) | Desarrollado con ❤️ en Gambas
+2025 gbadocmagazine | [Licencia GPLv3](https://www-gnu-org.translate.goog/licenses/gpl-3.0.html?_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc) | Desarrollado con ❤️ en Gambas
