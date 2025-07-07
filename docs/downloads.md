@@ -23,12 +23,11 @@ sudo apt install ./gbtexpublisher0_0.1.662-0ubuntu1_all.deb
 ## Descargas por versión
 
 ### Versión Actual (v0.1.662)
-- **Fecha**: 19 de Abril 2025
+- **Fecha**: 07 de julio 2025
 - **Novedades**:
-  - Mejoras en estabilidad
-  - Corrección de errores menores
+  - Prueba de lanzamiento
 - **Descarga directa**:
-  - [Paquete .deb (64-bit)](https://github.com/albertomoyano/gbtexpublisher/releases/download/deb-2025.04.19/gbtexpublisher0_0.1.662-0ubuntu1_all.deb)
+  - [Paquete .deb (64-bit)](hhttps://github.com/albertomoyano/gbadocmagazine/releases/download/deb-2025.07.07/gbadocmagazine_0.0.19-0ubuntu1_all.deb)
 
 [Ver todas las versiones →](https://github.com/albertomoyano/gbadocmagazine/releases)
 
@@ -40,7 +39,7 @@ sudo apt install ./gbtexpublisher0_0.1.662-0ubuntu1_all.deb
 
 | Versión   | Fecha       | Cambios Importantes               |
 |-----------|------------|-----------------------------------|
-| v0.1.662  | 2025-04-19 | Mejoras de estabilidad general    |
+| v0.0.18  | 2025-07-07 | Prueba de lanzamiento    |
 
 ---
 
