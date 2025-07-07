@@ -1,33 +1,25 @@
 # Descargas
 
-## Instalación en Ubuntu/Debian/Linux Mint
+## Instalación manual en Ubuntu/Debian/Linux Mint
 
-### Método recomendado (instalador automático)
-Ejecuta este comando en tu terminal para instalar automáticamente todas las dependencias y la última versión:
-
-```bash
-wget -qO- https://raw.githubusercontent.com/albertomoyano/gbtexpublisher/main/instalar-gbtexpublisher.sh | sudo bash
-```
-
-### Instalación manual
 1. Descarga el paquete más reciente:
 ```bash
-wget https://github.com/albertomoyano/gbtexpublisher/releases/download/deb-2025.04.19/gbtexpublisher0_0.1.662-0ubuntu1_all.deb
+wget https://github.com/albertomoyano/gbadocmagazine/releases/download/deb-2025.07.07/gbadocmagazine_0.0.19-0ubuntu1_all.deb
 ```
 
 2. Instala con gestión de dependencias:
 ```bash
-sudo apt install ./gbtexpublisher0_0.1.662-0ubuntu1_all.deb
+sudo apt install ./gbadocmagazine_0.0.19-0ubuntu1_all.deb
 ```
 
 ## Descargas por versión
 
-### Versión Actual (v0.1.662)
+### Versión Actual (v0.0.18)
 - **Fecha**: 07 de julio 2025
 - **Novedades**:
   - Prueba de lanzamiento
 - **Descarga directa**:
-  - [Paquete .deb (64-bit)](hhttps://github.com/albertomoyano/gbadocmagazine/releases/download/deb-2025.07.07/gbadocmagazine_0.0.19-0ubuntu1_all.deb)
+  - [Paquete .deb (64-bit)](https://github.com/albertomoyano/gbadocmagazine/releases/download/deb-2025.07.07/gbadocmagazine_0.0.19-0ubuntu1_all.deb)
 
 [Ver todas las versiones →](https://github.com/albertomoyano/gbadocmagazine/releases)
 
