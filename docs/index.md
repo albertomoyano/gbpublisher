@@ -1,10 +1,10 @@
 # Acerca de este proyecto
 
-## Gestor de flujo de producción editorial para LaTeX
+## Gestor de flujo de producción editorial para revistas científicas
 
 Este proyecto nació de la necesidad de optimizar el proceso de edición científica de revistas utilizando Asciidoc como lenguaje base, donde la complejidad de gestionar múltiples formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
 
-Tras evaluar las herramientas existentes, identifiqué que ninguna ofrecía:
+Tras evaluar las herramientas existentes, identifiqué que ninguna ofrecía (todo al mismo tiempo):
 
 - Control preciso sobre flujos de trabajo ramificados (ej.: ediciones paralelas para impresión, digital y adaptaciones).
 - Automatización integral desde el código fuente hasta las salidas finales (PDF, EPUB y HTML).
@@ -15,8 +15,8 @@ Tras evaluar las herramientas existentes, identifiqué que ninguna ofrecía:
 
 Opté por Gambas como lenguaje de desarrollo por su equilibrio único entre:
 
-- Rendimiento nativo en entornos Linux (mi ecosistema principal).
-- Productividad acelerada gracias a su IDE intuitivo y vinculación sencilla con herramientas CLI de LaTeX.
+- Rendimiento nativo en entornos Linux (mi ecosistema principal desde hace 30 años).
+- Productividad acelerada gracias a su IDE intuitivo.
 - Capacidad modular para integrar scripts personalizados y bibliotecas externas.
 
 ## Qué ofrece mi solución
@@ -24,11 +24,11 @@ Opté por Gambas como lenguaje de desarrollo por su equilibrio único entre:
 - Edición ramificada: Gestión de versiones orientada a derivados (ej.: una base Asciidoc genera salidas para imprenta, web y dispositivos).
 - Validaciones automáticas: Detección de inconsistencias en sintaxis, referencias cruzadas y metadatos.
 - Pipeline configurable: Flujos adaptables a estándares editoriales específicos (APA, IEEE, etc.).
-- Libertad de stack: Interoperabilidad con git, Makefiles y herramientas tradicionales de LaTeX.
+- Libertad de stack: Interoperabilidad con git, Makefiles y herramientas tradicionales de GNU/Linux.
 
 ## Impacto
 
-Actualmente, el software reduce un 70% el tiempo dedicado a tareas repetitivas en mis proyectos, garantizando salidas idénticas en todos los formatos. Está diseñado para editores científicos que valoran la precisión y la escalabilidad.
+Actualmente, el software reduce en más de un 80% el tiempo dedicado a tareas repetitivas en mis proyectos, garantizando salidas sólidas en todos los formatos. Está diseñado para editores científicos que valoran la precisión y la escalabilidad.
 
 ---
 
