@@ -2,14 +2,14 @@
 
 ## Gestor de flujo de producción editorial para LaTeX
 
-Este proyecto nació de la necesidad de optimizar el proceso de edición técnica de libros científicos en LaTeX, donde la complejidad de gestionar múltiples versiones, formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
+Este proyecto nació de la necesidad de optimizar el proceso de edición científica de revistas utilizando Asciidoc como lenguaje base, donde la complejidad de gestionar múltiples formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
 
 Tras evaluar las herramientas existentes, identifiqué que ninguna ofrecía:
 
 - Control preciso sobre flujos de trabajo ramificados (ej.: ediciones paralelas para impresión, digital y adaptaciones).
-- Automatización integral desde el código fuente hasta las salidas finales (PDF, EPUB, HTML, XML).
+- Automatización integral desde el código fuente hasta las salidas finales (PDF, EPUB y HTML).
 - Garantías de consistencia en proyectos con alta demanda técnica y colaborativa.
-
+- Automatización y solidez en la salida XML-JATS.
 
 ## Por qué Gambas como lenguaje para el desarrollo
 
@@ -21,7 +21,7 @@ Opté por Gambas como lenguaje de desarrollo por su equilibrio único entre:
 
 ## Qué ofrece mi solución
 
-- Edición ramificada: Gestión de versiones orientada a derivados (ej.: una base LaTeX genera salidas para imprenta, web y dispositivos).
+- Edición ramificada: Gestión de versiones orientada a derivados (ej.: una base Asciidoc genera salidas para imprenta, web y dispositivos).
 - Validaciones automáticas: Detección de inconsistencias en sintaxis, referencias cruzadas y metadatos.
 - Pipeline configurable: Flujos adaptables a estándares editoriales específicos (APA, IEEE, etc.).
 - Libertad de stack: Interoperabilidad con git, Makefiles y herramientas tradicionales de LaTeX.

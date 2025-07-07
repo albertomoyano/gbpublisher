@@ -30,7 +30,7 @@ sudo apt install ./gbtexpublisher0_0.1.662-0ubuntu1_all.deb
 - **Descarga directa**:
   - [Paquete .deb (64-bit)](https://github.com/albertomoyano/gbtexpublisher/releases/download/deb-2025.04.19/gbtexpublisher0_0.1.662-0ubuntu1_all.deb)
 
-[Ver todas las versiones →](https://github.com/albertomoyano/gbtexpublisher/releases)
+[Ver todas las versiones →](https://github.com/albertomoyano/gbadocmagazine/releases)
 
 
 3. Para reportar bugs:
