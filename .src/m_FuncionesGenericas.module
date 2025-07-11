@@ -1,0 +1,229 @@
+' Gambas module file
+
+Public Sub VerificarURLDesdeCampo(campo As TextBox)
+
+  Dim sURL As String
+  Dim sResult As String
+  Dim iExitCode As Integer
+
+  ' Mostrar indicador de carga
+  FMain.Mouse = Mouse.Wait
+
+  sURL = Trim(campo.Text)
+  If sURL = "" Then
+    Message.Error("Por favor, ingrese una URL válida.")
+    campo.SetFocus
+    FMain.Mouse = Mouse.Default
+    Return
+  Endif
+
+  ' Ejecutar curl para obtener el código HTTP
+  Shell "curl -s -o /dev/null -w '%{http_code}' -L --connect-timeout 5 --max-time 10 -A 'Mozilla/5.0' " & Quote(sURL) To sResult
+  iExitCode = Process.LastValue
+
+  ' Restaurar el cursor
+  FMain.Mouse = Mouse.Default
+
+  ' Evaluar el código HTTP
+  Select Case sResult
+    Case "200"
+      Message.Info("La <b>URL existe</b> y respondió con código 200.")
+    Case "301", "302"
+      Message.Info("La <b>URL fue redireccionada</b> y respondió con código " & sResult & ".")
+    Case "404"
+      Message.Error("La <b>URL no existe</b> (404 Not Found).")
+    Case "500", "503"
+      Message.Error("<b>Error del servidor</b> (" & sResult & "). Intente nuevamente más tarde.")
+    Case "000"
+      Message.Error("Tiempo de espera agotado o no se pudo conectar al servidor.")
+    Case Else
+      Message.Error("Código de respuesta desconocido: <b>" & sResult & "</b>.")
+  End Select
+
+End
+
+' Función para validar un número ISBN
+Public Sub EsISBNValido(ISBN As String) As Boolean
+  ' Elimina los guiones o espacios en blanco del número ISBN
+
+  ISBN = Replace(ISBN, "-", "")
+  ISBN = Replace(ISBN, " ", "")
+
+  ' Comprueba si el ISBN tiene 10 o 13 dígitos
+  If Len(ISBN) <> 10 And Len(ISBN) <> 13 Then
+    Return False
+  End If
+
+  ' Comprueba si el último dígito de verificación es válido
+  Dim Suma As Integer
+  Dim UltimoDigito As Integer
+  Dim Factor As Integer
+
+  If Len(ISBN) = 10 Then
+    Factor = 10
+    For i As Integer = 1 To 9
+      Suma += Val(Mid(ISBN, i, 1)) * Factor
+      Factor -= 1
+    Next
+    Dim UltimoChar As String = Mid(ISBN, 10, 1)
+    If UltimoChar = "X" Then
+      UltimoDigito = 10
+    Else
+      UltimoDigito = Val(UltimoChar)
+    End If
+
+  Else If Len(ISBN) = 13 Then
+    Factor = 1
+    For i As Integer = 1 To 12
+      Suma += Val(Mid(ISBN, i, 1)) * Factor
+      Factor = IIf(Factor = 1, 3, 1)
+    Next
+    UltimoDigito = Val(Mid(ISBN, 13, 1))
+  End If
+
+  Dim DigitoVerificacion As Integer
+  DigitoVerificacion = 10 - (Suma Mod 10)
+
+  Return UltimoDigito = DigitoVerificacion
+
+End
+
+' Función para validar formato ISSN y dígito de control
+Public Sub IsValidISSN(sISSN As String) As Boolean
+  ' Eliminar guiones si existen
+
+  sISSN = Replace(sISSN, "-", "")
+
+  ' Verificar que tenga 8 caracteres
+  If Len(sISSN) <> 8 Then Return False
+
+  ' Verificar que los primeros 7 caracteres sean dígitos
+  Dim i As Integer
+  For i = 1 To 7
+    If Not IsDigit(Mid(sISSN, i, 1)) Then Return False
+  Next
+
+  ' Verificar que el último carácter sea un dígito o "X"
+  Dim sLastChar As String = Mid(sISSN, 8, 1)
+  If Not (IsDigit(sLastChar) Or sLastChar = "X") Then Return False
+
+  ' Calcular el dígito de control
+  Dim suma As Integer = 0
+  Dim peso As Integer = 8
+  For i = 1 To 7
+    suma += Val(Mid(sISSN, i, 1)) * peso
+    peso -= 1
+  Next
+
+  ' Calcular el dígito de control esperado
+  Dim digitoControl As Integer = 11 - (suma Mod 11)
+  Dim digitoEsperado As String
+
+  If digitoControl = 11 Then
+    digitoEsperado = "0"
+  Else If digitoControl = 10 Then
+    digitoEsperado = "X"
+  Else
+    digitoEsperado = Str(digitoControl)
+  Endif
+
+  ' Comparar el dígito de control calculado con el último carácter del ISSN
+  Return digitoEsperado = sLastChar
+
+End
+
+Public Sub VerificarDOI(campo As TextBox)
+
+  Dim sURL As String
+  Dim sResult As String
+  Dim iExitCode As Integer
+
+  ' Mostrar indicador de carga
+  FMain.Mouse = Mouse.Wait
+
+  sURL = Trim(FMain.txtDoi.Text)
+  If sURL = "" Then
+    Message.Error("Por favor, ingresar un DOI válido.")
+    FMain.Mouse = Mouse.Default
+    Return
+  Endif
+
+  ' Validar si el formato es de un DOI
+  If Not (Left(sURL, 4) = "http") Then
+    ' Agregar el prefijo para DOI
+    sURL = "https://doi.org/" & sURL
+  Endif
+
+  ' Comando curl con límite de tiempo y otras mejoras
+  ' --connect-timeout: límite de tiempo para la conexión (5 segundos)
+  ' --max-time: límite de tiempo total para la operación (10 segundos)
+  Shell "curl -s -o /dev/null -w '%{http_code}' -L --connect-timeout 5 --max-time 10 -A 'Mozilla/5.0'" & " " & Quote(sURL) To sResult
+  iExitCode = Process.LastValue
+
+  ' Restaurar el cursor
+  FMain.Mouse = Mouse.Default
+
+  ' Evaluar código de estado HTTP
+  Select Case sResult
+    Case "200"
+      Message.Info("El <b>DOI es válido</b> y respondió con código 200.")
+    Case "301", "302"
+      Message.Info("El <b>DOI fue redireccionado</b> y respondió con código " & sResult & ".")
+    Case "404"
+      Message.Error("El <b>DOI no existe</b> y respondió con código 404 Not Found.")
+    Case "500", "503"
+      Message.Error("<b>Error del servidor</b> (" & sResult & "). Intenta nuevamente más tarde.")
+    Case "000"
+      Message.Error("Tiempo de espera agotado o no se pudo conectar al servidor.")
+    Case ""
+      Message.Error("Error en la ejecución del comando. Verifica la conexión a Internet.")
+    Case Else
+      Message.Error("Código de respuesta: <b>" & sResult & "</b>.")
+  End Select
+
+End
+
+Public Sub BuscarPorCampo(campo As TextBox, grid As GridView, Optional sTabla As String = "bibtex")
+
+  Dim sCampoBD As String = campo.Name
+  Dim sValor As String = Trim(campo.Text)
+  Dim sConsulta As String
+
+  If sValor = "" Then
+    Message.Warning("Debe introducir contenido a buscar.")
+    campo.SetFocus
+    Return
+  Endif
+
+  sConsulta = "SELECT * FROM " & sTabla & " WHERE " & sCampoBD & " LIKE '%" & sValor & "%' ORDER BY id DESC;"
+  CargarDatos(sConsulta, grid)
+
+End
+
+Public Sub CargarDatos(Consulta As String, Grid As GridView)
+
+  Dim i As Integer
+  Dim Contenido As Result
+
+  ' Ejecutar la consulta
+  Contenido = m_OnOff_y_Red.meConn.Exec(Consulta)
+
+  ' Si no hay resultados
+  If Contenido.Count = 0 Then
+    Message.Info("No se ha encontrado ningún resultado.")
+    Return
+  Endif
+
+  ' Limpiar el Grid antes de mostrar los resultados
+  FMain.gvReferenciasEnCurso.Clear()
+  FMain.gvReferenciasEnCurso.Rows.Count = Contenido.Count
+
+  ' Llenar el Grid con los resultados
+  For i = 0 To Contenido.Count - 1
+    For j As Integer = 0 To FMain.gvReferenciasEnCurso.Columns.Count - 1
+      FMain.gvReferenciasEnCurso[i, j].Text = Contenido[j]
+    Next
+    Contenido.MoveNext
+  Next
+
+End
