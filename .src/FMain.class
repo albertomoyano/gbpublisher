@@ -3,7 +3,8 @@
 Private NombreProyecto As String
 Private RutaProyecto As String
 Public $Bash As Process
-Private sResult As Result
+Public ContenidoBib As Result
+Public ContenidoArt As Result
 
 Public Sub Form_Open()
 
@@ -80,6 +81,7 @@ Public Sub ButtonAbrirProyecto_Click()
     txtProyecto.Text = Dialog.Path
     NombreProyecto = File.BaseName(Dialog.Path)
     RutaProyecto = File.Dir(txtProyecto.Text)
+    '
     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
     ControlarCarpetas()' nos aseguramos revisar las carpetas del proyecto
     m_Metadatos.CargarMetadatosDesdeArchivo(NombreProyecto)
@@ -92,6 +94,7 @@ Public Sub ButtonAbrirProyecto_Click()
     m_Bibtex.RefrescarTableViewBibtexEnCurso()
     m_Bibtex.RellenarComboBoxBibTeX()
     '
+    LevantarTitulosCSL()
     MenuButtonSalidas.Visible = True
     TabPanelMetadatosRevista.Visible = True
     TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
@@ -549,12 +552,10 @@ End
 
 Public Sub gbMetadatosArticulos_Data(Row As Integer, Column As Integer)
 
-  sResult = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas = &1", FMain.idMetadatoRevista.Text)
-
-  If (sResult <> Null) Then
-    If Row >= 0 And Row < sResult.Count Then
-      sResult.MoveTo(Row)
-      Try gbMetadatosArticulos.Data.Text = Str(sResult[Column])
+  If (ContenidoArt <> Null) Then
+    If Row >= 0 And Row < ContenidoArt.Count Then
+      ContenidoArt.MoveTo(Row)
+      Try gbMetadatosArticulos.Data.Text = Str(ContenidoArt[Column])
     Endif
   Endif
 
@@ -594,12 +595,15 @@ End
 Public Sub BtnNuevoBib_Click()
 
   m_Bibtex.ObtenerIdNuevoBibtex()
+  m_Bibtex.LimpiarCamposBIB()
+  m_Bibtex.RefrescarTableViewBibtexEnCurso()
 
 End
 
 Public Sub btnGuardarBib_Click()
 
   m_Bibtex.GuardarBibtexPrimeraVez()
+  m_Bibtex.LimpiarCamposBIB()
 
   FMain.BtnNuevoBib.Visible = True
   FMain.btnGuardarBib.Visible = False
@@ -610,12 +614,12 @@ End
 
 Public Sub gvReferenciasEnCurso_Data(Row As Integer, Column As Integer)
 
-  sResult = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revistas = &1", FMain.idMetadatoRevista.Text)
+  ' sResult = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revistas = &1", FMain.idMetadatoRevista.Text)
 
-  If (sResult <> Null) Then
-    If Row >= 0 And Row < sResult.Count Then
-      sResult.MoveTo(Row)
-      Try gvReferenciasEnCurso.Data.Text = Str(sResult[Column])
+  If (ContenidoBib <> Null) Then
+    If Row >= 0 And Row < ContenidoBib.Count Then
+      ContenidoBib.MoveTo(Row)
+      Try gvReferenciasEnCurso.Data.Text = Str(ContenidoBib[Column])
     Endif
   Endif
 
@@ -625,6 +629,18 @@ Public Sub gvReferenciasEnCurso_Data(Row As Integer, Column As Integer)
   Else
     gvReferenciasEnCurso.Data.Background = Color.White
   Endif
+
+End
+
+Public Sub Form_Activate()
+
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revistas = &1", FMain.idMetadatoRevista.Text)
+  gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+  gvReferenciasEnCurso.Refresh
+
+  ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas = &1", FMain.idMetadatoRevista.Text)
+  gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
+  gbMetadatosArticulos.Refresh
 
 End
 
@@ -651,5 +667,62 @@ Public Sub btnGuardarCambiosBib_Click()
   FMain.btnGuardarBib.Visible = False
   FMain.btnGuardarCambiosBib.Visible = False
   FMain.BtnEliminarBib.Visible = False
+
+End
+
+Public Sub cmbTipoDeEntrada_Click()
+
+  If cmbTipoDeEntrada.Text = "thesis" Then
+    hbTesis.Visible = True
+  Else
+    hbTesis.Visible = False
+    ' Limpiar el ComboBox cuando se oculta
+    cmbTipoDeTesis.Text = ""
+    cmbTipoDeTesis.Index = -1
+  Endif
+
+End
+
+Public Sub LevantarTitulosCSL()
+
+  Dim sDirectorio As String = User.Home & "/.gbadoc/csl"
+  Dim aArchivos As String[]
+  Dim sArchivo, sRutaCompleta, sPrimeraLinea, sNombreVisible As String
+  Dim hArchivo As File
+
+  FMain.cmbTipoCSL.Clear()
+
+  If Not Exist(sDirectorio) Then
+    Message.Warning("El directorio " & sDirectorio & " no existe")
+    Return
+  Endif
+
+  aArchivos = Dir(sDirectorio, "*.csl", gb.File)
+
+  For Each sArchivo In aArchivos
+    sRutaCompleta = sDirectorio &/ sArchivo
+    sNombreVisible = sArchivo  ' Valor por defecto
+
+    If Exist(sRutaCompleta) Then
+      hArchivo = Open sRutaCompleta For Input
+      If hArchivo Then
+        Line Input #hArchivo, sPrimeraLinea
+        Close #hArchivo
+
+        ' Extraer texto entre <!-- Título: ... -->
+        If InStr(sPrimeraLinea, "<!-- Título:") Then
+          sNombreVisible = Trim(Mid(sPrimeraLinea, InStr(sPrimeraLinea, ":") + 1))
+          sNombreVisible = Replace(sNombreVisible, "-->", "") ' Por si está todo en la misma línea
+          sNombreVisible = Trim(sNombreVisible)
+        Endif
+      Endif
+    Endif
+
+    ' Mostrar título y archivo como referencia (opcional)
+    FMain.cmbTipoCSL.Add(sNombreVisible & " [" & sArchivo & "]")
+  Next
+
+Catch
+  Message.Error("Error al leer los títulos CSL: " & Error.Text)
 
 End
