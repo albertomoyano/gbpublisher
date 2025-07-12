@@ -85,22 +85,19 @@ Public Sub ButtonAbrirProyecto_Click()
     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
     ControlarCarpetas()' nos aseguramos revisar las carpetas del proyecto
     m_Metadatos.CargarMetadatosDesdeArchivo(NombreProyecto)
-    '
-    ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas = &1", FMain.idMetadatoRevista.Text)
+    ' bibtex
+    ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revistas=" & idMetadatoRevista.Text)
+    gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+    LevantarTitulosCSL()
+    m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+    m_Bibtex.RellenarComboBoxBibTeX()
+    ' revista y articulos
+    ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
     gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
-    gbMetadatosArticulos.Refresh
     m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
-    m_Articulos.RefrescarTableViewArticulos()
+    ' autores
     m_Autores.LlenarComboBoxArticulos()
     '
-    ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revistas = &1", FMain.idMetadatoRevista.Text)
-    gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-    gvReferenciasEnCurso.Refresh
-    m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-    m_Bibtex.RefrescarTableViewBibtexEnCurso()
-    m_Bibtex.RellenarComboBoxBibTeX()
-    '
-    LevantarTitulosCSL()
     MenuButtonSalidas.Visible = True
     TabPanelMetadatosRevista.Visible = True
     TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
@@ -630,26 +627,94 @@ End
 
 Public Sub BtnNuevoBib_Click()
 
-  m_Bibtex.ObtenerIdNuevoBibtex()
+  ' Verificar si hay un proyecto activo
+  If Trim(txtProyecto.Text) = "" Then
+    Message.Info("No hay un proyecto en curso. Por favor, abra o cree un proyecto antes de continuar.")
+    Return
+  Endif
+
+  ' Solo si hay proyecto se ejecuta lo siguiente:
+  Dim Idn As Integer
+  Dim MaxId As Variant
+
+  MaxId = m_OnOff_y_Red.meConn.Exec("SELECT MAX(id) FROM bibtex LIMIT 1")
+
+  If MaxId["MAX(id)"] = Null Then
+    Idn = 0
+  Else
+    Idn = CInt(MaxId["MAX(id)"]) + 1
+  Endif
+
+  idBibtex.Text = Idn
   m_Bibtex.LimpiarCamposBIB()
+  TabPanel5.Index = 0
   m_Bibtex.RellenarComboBoxBibTeX()
-  m_Bibtex.RefrescarTableViewBibtexEnCurso()
+
+  txtTMPbiblio.Enabled = True
+  txtTMPbiblio.Font = Font["Monospace"]
+  txtTMPbiblio.Background = Color.White
+  txtTMPbiblio.SetFocus
+
+  BtnNuevoBib.Visible = False
+  btnGuardarBib.Visible = True
+  btnGuardarCambiosBib.Visible = False
+  BtnEliminarBib.Visible = False
 
 End
 
 Public Sub btnGuardarBib_Click()
 
-  m_Bibtex.GuardarBibtexPrimeraVez()
+  ' Verificar que hay una texto en la clavebib
+  If Trim(txtClaveBibtex.Text) = "" Then
+    Message.Info("Debe generar una clave. No es posible guardar la entrada.")
+    Return
+  Endif
+
+  If m_Bibtex.VerificarCaracteresInvalidos() Then Return
+
+  If m_Bibtex.VerificacionBase() Then Return
+
+  ContenidoBib = m_OnOff_y_Red.meConn.Create("bibtex")
+
+  GuardarCamposBib()
+  ContenidoBib.Update
+  m_OnOff_y_Red.meConn.Commit()
+  m_Bibtex.LimpiarCamposBIB()
+  RefrescarTableViewBibtexEnCurso()
   m_Bibtex.RellenarComboBoxBibTeX()
-  m_Bibtex.RefrescarTableViewBibtexEnCurso()
+
+  Message.Info("Los registros se han guardado correctamente.")
+
+  txtTMPbiblio.Enabled = False
+  txtTMPbiblio.Background = Color.Background
+
+  BtnNuevoBib.Visible = True
+  btnGuardarBib.Visible = False
+  btnGuardarCambiosBib.Visible = False
+  BtnEliminarBib.Visible = False
+
+Catch
+  Message.Error("Se obtuvo el siguiente error al intentar guardar: <b>" & Error.Text & "</b>.")
 
 End
 
 Public Sub btnGuardarCambiosBib_Click()
 
-  m_Bibtex.GuardarCambiosEnBibtex()
+  ContenidoBib = m_OnOff_y_Red.meConn.Edit("bibtex", "id=" & idBibtex.Text)
+
+  GuardarCamposBib()
+  ContenidoBib.Update
+  m_OnOff_y_Red.meConn.Commit()
+  m_Bibtex.LimpiarCamposBIB()
+  RefrescarTableViewBibtexEnCurso()
   m_Bibtex.RellenarComboBoxBibTeX()
-  gvReferenciasEnCurso.Refresh()
+
+  Message.Info("Los cambios se guardaron con éxito.")
+
+  BtnNuevoBib.Visible = True
+  btnGuardarBib.Visible = False
+  btnGuardarCambiosBib.Visible = False
+  BtnEliminarBib.Visible = False
 
 End
 
@@ -673,7 +738,7 @@ Public Sub LevantarTitulosCSL()
   Dim sArchivo, sRutaCompleta, sPrimeraLinea, sNombreVisible As String
   Dim hArchivo As File
 
-  FMain.cmbTipoCSL.Clear()
+  cmbTipoCSL.Clear()
 
   If Not Exist(sDirectorio) Then
     Message.Warning("El directorio " & sDirectorio & " no existe")
@@ -702,7 +767,7 @@ Public Sub LevantarTitulosCSL()
     Endif
 
     ' Mostrar título y archivo como referencia (opcional)
-    FMain.cmbTipoCSL.Add(sNombreVisible & " [" & sArchivo & "]")
+    cmbTipoCSL.Add(sNombreVisible & " [" & sArchivo & "]")
   Next
 
 Catch
@@ -1064,5 +1129,170 @@ Public Sub btnEmpujarGitHubRemoto_Click()
   TerminalViewProyecto.Input("git commit -m '" & fecha & "'" & "\n")
   TerminalViewProyecto.Input("git push --set-upstream origin main" & "\n")
   TerminalViewProyecto.SetFocus()
+
+End
+
+Public Sub btnRefrescarGrid_Click()
+
+  DirViewProyecto.Root = File.Dir(txtProyecto.Text)
+  DirViewProyecto.Reload
+  FileViewProyecto.Reload
+
+End
+
+Public Sub btnRespandoBBDD_Click()
+
+  Dim sOrigen As String = User.Home & "/.gbadoc/gbadoc.sqlite"
+  Dim sDestino As String
+  Dim sDirectorioDestino As String
+  Dim sNombreArchivo As String = "gbadoc_backup_" & Format(Now, "yyyymmdd_hhmmss") & ".sqlite"
+
+  ' Verificar si el archivo existe
+  If Not Exist(sOrigen) Then
+    Message.Error("No se encontró el archivo de base de datos en: " & sOrigen)
+    Return
+  Endif
+
+  ' Mostrar diálogo para seleccionar directorio
+  Dialog.Title = "Seleccione la carpeta donde guardar la copia"
+  If Dialog.SelectDirectory() <> 0 Then
+    Return  ' Usuario canceló
+  Endif
+
+  sDirectorioDestino = Dialog.Path
+  sDestino = sDirectorioDestino & "/" & sNombreArchivo
+
+  ' Copiar el archivo
+  Try Copy sOrigen To sDestino
+  If Error Then
+    Message.Error("Error al realizar la copia de seguridad: " & Error.Text)
+    Return
+  Endif
+
+  Message.Info("Copia de seguridad creada en:" & gb.NewLine & sDestino)
+
+End
+
+Public Sub RefrescarTableViewBibtexEnCurso()
+
+  gvReferenciasEnCurso.Clear
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revistas=" & idMetadatoRevista.Text)
+  gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+  gvReferenciasEnCurso.Refresh
+
+End
+
+Public Sub GuardarCamposBib()
+
+  ContenidoBib!id = idBibtex.Text
+  ContenidoBib!id_revistas = idMetadatoRevista.Text
+  ContenidoBib!txtAuthor = txtAuthor.Text
+  ContenidoBib!txtTitle = txtTitle.Text
+  ContenidoBib!cmbTipoCSL = cmbTipoCSL.Text
+  ContenidoBib!txtClaveBibtex = txtClaveBibtex.Text
+  ContenidoBib!cmbTipoDeEntrada = cmbTipoDeEntrada.Text
+  ContenidoBib!txtNameAddOn = txtNameAddOn.Text
+  ContenidoBib!txtBookAuthor = txtBookAuthor.Text
+  ContenidoBib!txtEditor = txtEditor.Text
+  ContenidoBib!txtEditorA = txtEditorA.Text
+  ContenidoBib!txtEditorB = txtEditorB.Text
+  ContenidoBib!txtEditorC = txtEditorC.Text
+  ContenidoBib!txtAfterword = txtAfterword.Text
+  ContenidoBib!txtForeword = txtForeword.Text
+  ContenidoBib!txtCommentator = txtCommentator.Text
+  ContenidoBib!txtIntroduction = txtIntroduction.Text
+  ContenidoBib!txtTranslator = txtTranslator.Text
+  ContenidoBib!txtAnnotator = txtAnnotator.Text
+  ContenidoBib!txtHolder = txtHolder.Text
+  ContenidoBib!txtGender = txtGender.Text
+  ContenidoBib!txtShortAuthor = txtShortAuthor.Text
+  ContenidoBib!cmbEditorType = cmbEditorType.Text
+  ContenidoBib!cmbEditorTypeA = cmbEditorTypeA.Text
+  ContenidoBib!cmbEditorTypeB = cmbEditorTypeB.Text
+  ContenidoBib!cmbEditorTypeC = cmbEditorTypeC.Text
+  ContenidoBib!txtTitleAddOn = txtTitleAddOn.Text
+  ContenidoBib!txtSubTitle = txtSubTitle.Text
+  ContenidoBib!txtSeries = txtSeries.Text
+  ContenidoBib!txtBookTitle = txtBookTitle.Text
+  ContenidoBib!txtBookTitleAddOn = txtBookTitleAddOn.Text
+  ContenidoBib!txtMainTitle = txtMainTitle.Text
+  ContenidoBib!txtMainTitleAddOn = txtMainTitleAddOn.Text
+  ContenidoBib!txtJournalTitle = txtJournalTitle.Text
+  ContenidoBib!txtJournalTitleAddOn = txtJournalTitleAddOn.Text
+  ContenidoBib!txtIssueTitle = txtIssueTitle.Text
+  ContenidoBib!txtIssueTitleAddOn = txtIssueTitleAddOn.Text
+  ContenidoBib!txtEventTitle = txtEventTitle.Text
+  ContenidoBib!txtEventTitleAddOn = txtEventTitleAddOn.Text
+  ContenidoBib!txtIndexTitle = txtIndexTitle.Text
+  ContenidoBib!txtShortTitle = txtShortTitle.Text
+  ContenidoBib!txtReprintTitle = txtReprintTitle.Text
+  ContenidoBib!txtVolume = txtVolume.Text
+  ContenidoBib!txtVolumes = txtVolumes.Text
+  ContenidoBib!txtNumber = txtNumber.Text
+  ContenidoBib!txtChapter = txtChapter.Text
+  ContenidoBib!txtEid = txtEid.Text
+  ContenidoBib!txtPart = txtPart.Text
+  ContenidoBib!txtEdition = txtEdition.Text
+  ContenidoBib!txtIssue = txtIssue.Text
+  ContenidoBib!txtYear = txtYear.Text
+  ContenidoBib!txtEventDate = txtEventDate.Text
+  ContenidoBib!txtDate = txtDate.Text
+  ContenidoBib!txtOrigDate = txtOrigDate.Text
+  ContenidoBib!txtUrlDate = txtUrlDate.Text
+  ContenidoBib!txtVersion = txtVersion.Text
+  ContenidoBib!cmbHyphenation = cmbHyphenation.Text
+  ContenidoBib!cmbLanguage = cmbLanguage.Text
+  ContenidoBib!cmbOrigLanguage = cmbOrigLanguage.Text
+  ContenidoBib!cmbLangId = cmbLangId.Text
+  ContenidoBib!txtLandIdOpts = txtLandIdOpts.Text
+  ContenidoBib!cmbPubState = cmbPubState.Text
+  ContenidoBib!txtPages = txtPages.Text
+  ContenidoBib!txtPageTotal = txtPageTotal.Text
+  ContenidoBib!cmbPagination = cmbPagination.Text
+  ContenidoBib!cmbBookPagination = cmbBookPagination.Text
+  ContenidoBib!txtLocation = txtLocation.Text
+  ContenidoBib!txtOrigLocation = txtOrigLocation.Text
+  ContenidoBib!txtInstitution = txtInstitution.Text
+  ContenidoBib!txtOrganization = txtOrganization.Text
+  ContenidoBib!txtPublisher = txtPublisher.Text
+  ContenidoBib!txtOrigPublisher = txtOrigPublisher.Text
+  ContenidoBib!txtVenue = txtVenue.Text
+  ContenidoBib!txtEprint = txtEprint.Text
+  ContenidoBib!cmbEprintType = cmbEprintType.Text
+  ContenidoBib!txtUrl = txtUrl.Text
+  ContenidoBib!txtIsbn = txtIsbn.Text
+  ContenidoBib!txtIssn = txtIssn.Text
+  ContenidoBib!txtIsmn = txtIsmn.Text
+  ContenidoBib!txtIsrn = txtIsrn.Text
+  ContenidoBib!txtIsan = txtIsan.Text
+  ContenidoBib!txtIswc = txtIswc.Text
+  ContenidoBib!txtDoi = txtDoi.Text
+  ContenidoBib!cmbRelatedType = cmbRelatedType.Text
+  ContenidoBib!txtRelated = txtRelated.Text
+  ContenidoBib!txtRelatedString = txtRelatedString.Text
+  ContenidoBib!txtAddendum = txtAddendum.Text
+  ContenidoBib!txtEntrySubType = txtEntrySubType.Text
+  ContenidoBib!txtOptions = txtOptions.Text
+  ContenidoBib!txtLabel = txtLabel.Text
+  ContenidoBib!txtHowPublished = txtHowPublished.Text
+  ContenidoBib!txtShortHand = txtShortHand.Text
+  ContenidoBib!txtShortHandIntro = txtShortHandIntro.Text
+  ContenidoBib!txtIds = txtIds.Text
+  ContenidoBib!txtEntrySet = txtEntrySet.Text
+  ContenidoBib!txtCrossRef = txtCrossRef.Text
+  ContenidoBib!txtXref = txtXref.Text
+  ContenidoBib!txtXdata = txtXdata.Text
+  ContenidoBib!txtPreSort = txtPreSort.Text
+  ContenidoBib!txtSortKey = txtSortKey.Text
+  ContenidoBib!txtSortName = txtSortName.Text
+  ContenidoBib!txtSortHand = txtSortHand.Text
+  ContenidoBib!txtSortYear = txtSortYear.Text
+  ContenidoBib!txtSortTitle = txtSortTitle.Text
+  ContenidoBib!txtIndexSortTitle = txtIndexSortTitle.Text
+  ContenidoBib!txtAbstract = txtAbstract.Text
+  ContenidoBib!txtNote = txtNote.Text
+  ContenidoBib!txtLibrary = txtLibrary.Text
+  ContenidoBib!txtAnnotation = txtAnnotation.Text
+  ContenidoBib!txtFile = txtFile.Text
 
 End
