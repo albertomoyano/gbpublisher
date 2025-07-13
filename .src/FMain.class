@@ -91,7 +91,7 @@ Public Sub ButtonAbrirProyecto_Click()
     ControlarCarpetas()' nos aseguramos revisar las carpetas del proyecto
     m_Metadatos.CargarMetadatosDesdeArchivo(NombreProyecto)
     ' bibtex
-    ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revistas=" & idMetadatoRevista.Text)
+    ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_articulos=" & idMetadatoRevista.Text)
     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
     LevantarTitulosCSL()
     m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
@@ -105,6 +105,12 @@ Public Sub ButtonAbrirProyecto_Click()
     '
     MenuButtonSalidas.Visible = True
     TabPanelMetadatosRevista.Visible = True
+    TabPanelBibliografia.Visible = True
+    Panel1Bibliografia.Visible = True
+    HBoxB1.Visible = True
+    HBoxB2.Visible = True
+    HBoxB3.Visible = True
+    HBoxB4.Visible = True
     TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
     TerminalViewProyecto.Input("clear" & "\n")
     PictureBoxProyecto.Image = Null
@@ -652,7 +658,7 @@ Public Sub BtnNuevoBib_Click()
 
   idBibtex.Text = Idn
   m_Bibtex.LimpiarCamposBIB()
-  TabPanel5.Index = 0
+  TabPanel5.Index = 1
   m_Bibtex.RellenarComboBoxBibTeX()
 
   txtTMPbiblio.Enabled = True
@@ -668,6 +674,12 @@ Public Sub BtnNuevoBib_Click()
 End
 
 Public Sub btnGuardarBib_Click()
+
+  ' Verificar que hay un artículo asociado
+  If Trim(ComboBoxArticuloAsociadoEnbibtex.Text) = "" Then
+    Message.Info("Debe tener un artículo asociado a esta referencia. No es posible guardar la entrada.")
+    Return
+  Endif
 
   ' Verificar que hay una texto en la clavebib
   If Trim(txtClaveBibtex.Text) = "" Then
@@ -692,6 +704,8 @@ Public Sub btnGuardarBib_Click()
 
   txtTMPbiblio.Enabled = False
   txtTMPbiblio.Background = Color.Background
+  txtTMPbiblio.Clear
+  TabPanel5.Index = 0
 
   BtnNuevoBib.Visible = True
   btnGuardarBib.Visible = False
@@ -740,7 +754,7 @@ Public Sub LevantarTitulosCSL()
 
   Dim sDirectorio As String = User.Home & "/.gbadoc/csl"
   Dim aArchivos As String[]
-  Dim sArchivo, sRutaCompleta, sPrimeraLinea, sNombreVisible As String
+  Dim sArchivo, sRutaCompleta, sLinea1, sLinea2, sNombreVisible As String
   Dim hArchivo As File
 
   cmbTipoCSL.Clear()
@@ -751,6 +765,7 @@ Public Sub LevantarTitulosCSL()
   Endif
 
   aArchivos = Dir(sDirectorio, "*.csl", gb.File)
+  aArchivos.Sort()
 
   For Each sArchivo In aArchivos
     sRutaCompleta = sDirectorio &/ sArchivo
@@ -759,12 +774,14 @@ Public Sub LevantarTitulosCSL()
     If Exist(sRutaCompleta) Then
       hArchivo = Open sRutaCompleta For Input
       If hArchivo Then
-        Line Input #hArchivo, sPrimeraLinea
+        ' Leer primera y segunda línea
+        Line Input #hArchivo, sLinea1
+        Line Input #hArchivo, sLinea2
         Close #hArchivo
 
-        ' Extraer texto entre <!-- Título: ... -->
-        If InStr(sPrimeraLinea, "<!-- Título:") Then
-          sNombreVisible = Trim(Mid(sPrimeraLinea, InStr(sPrimeraLinea, ":") + 1))
+        ' Buscar el título en la segunda línea
+        If InStr(sLinea2, "<!-- Título:") Then
+          sNombreVisible = Trim(Mid(sLinea2, InStr(sLinea2, ":") + 1))
           sNombreVisible = Replace(sNombreVisible, "-->", "") ' Por si está todo en la misma línea
           sNombreVisible = Trim(sNombreVisible)
         Endif
@@ -779,6 +796,50 @@ Catch
   Message.Error("Error al leer los títulos CSL: " & Error.Text)
 
 End
+
+' Public Sub LevantarTitulosCSL()
+'
+'   Dim sDirectorio As String = User.Home & "/.gbadoc/csl"
+'   Dim aArchivos As String[]
+'   Dim sArchivo, sRutaCompleta, sPrimeraLinea, sNombreVisible As String
+'   Dim hArchivo As File
+'
+'   cmbTipoCSL.Clear()
+'
+'   If Not Exist(sDirectorio) Then
+'     Message.Warning("El directorio " & sDirectorio & " no existe")
+'     Return
+'   Endif
+'
+'   aArchivos = Dir(sDirectorio, "*.csl", gb.File)
+'
+'   For Each sArchivo In aArchivos
+'     sRutaCompleta = sDirectorio &/ sArchivo
+'     sNombreVisible = sArchivo  ' Valor por defecto
+'
+'     If Exist(sRutaCompleta) Then
+'       hArchivo = Open sRutaCompleta For Input
+'       If hArchivo Then
+'         Line Input #hArchivo, sPrimeraLinea
+'         Close #hArchivo
+'
+'         ' Extraer texto entre <!-- Título: ... -->
+'         If InStr(sPrimeraLinea, "<!-- Título:") Then
+'           sNombreVisible = Trim(Mid(sPrimeraLinea, InStr(sPrimeraLinea, ":") + 1))
+'           sNombreVisible = Replace(sNombreVisible, "-->", "") ' Por si está todo en la misma línea
+'           sNombreVisible = Trim(sNombreVisible)
+'         Endif
+'       Endif
+'     Endif
+'
+'     ' Mostrar título y archivo como referencia (opcional)
+'     cmbTipoCSL.Add(sNombreVisible & " [" & sArchivo & "]")
+'   Next
+'
+' Catch
+'   Message.Error("Error al leer los títulos CSL: " & Error.Text)
+'
+' End
 
 Public Sub btnGenerarClaveBib_Click()
 
@@ -1330,5 +1391,64 @@ Public Sub btnBuscarTituloEnGoogle_Click()
 
   ' Abrir la búsqueda en el navegador predeterminado
   Desktop.Open("https://www.google.com/search?q=" & sTITULO)
+
+End
+
+Public Sub btnChequearISSNRevista_Click()
+
+  Dim sISSN As String
+  Dim sURL As String
+
+  ' Obtener el texto del TextBox
+  sISSN = txtRevistaISSN.Text
+
+  ' Verificar que no esté vacío
+  If Trim(sISSN) = "" Then
+    Message.Error("Por favor, introduce un ISSN para buscar")
+    Return
+  Endif
+
+  ' Validar formato ISSN y dígito de control
+  If Not m_FuncionesGenericas.IsValidISSN(sISSN) Then
+    Message.Error("El ISSN no es válido. Debe tener el formato XXXX-XXXX o XXXXXXXX y pasar la validación del dígito de control.")
+    Return
+  Endif
+
+  ' Construir la URL de búsqueda para el portal ISSN
+  ' $URL = "https://scholar.google.com/scholar?q=" & URL.Encode(sISSN)
+  sURL = "https://portal.issn.org/resource/ISSN/" & Replace(sISSN, "-", "")
+
+  ' Abrir la URL en el navegador predeterminado
+  Desktop.Open(sURL)
+
+End
+
+Public Sub btnVerificarURLetica_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(txtRevistaPoliticaEticaURL)
+
+End
+
+Public Sub btnVerificarURLrevisores_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(txtPoliticaRevisoresURL)
+
+End
+
+Public Sub btnVerificarURLopen_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(txtPoliticaOpenAccessURL)
+
+End
+
+Public Sub btnVerificarDOIarticulo_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(txtArticuloDoi)
+
+End
+
+Public Sub btnVerificarURLrevista_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(txtRevistaURL)
 
 End
