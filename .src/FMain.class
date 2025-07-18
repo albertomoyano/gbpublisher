@@ -6,6 +6,7 @@ Public $Bash As Process' es público para compartirlo en las operaciones
 Private ContenidoArt As Result
 Private ContenidoBib As Result
 Private ContenidoAut As Result
+Public sRutaArchivoAbierto As String
 
 Public Sub Form_Open()
 
@@ -20,17 +21,11 @@ Public Sub Form_Open()
   ' abrimos la conexión a la red
   m_OnOff_y_Red.OnRed
 
-  ' Usar la ruta existente para el editor ACE
-  Dim ruta As String
-  Dim rutaAce As String = User.Home & "/.gbadoc/www/editor.html"
-
-  ruta = "file://" & rutaAce
-  WebViewEditor.url = ruta
-
   ' habilitamos bash en la terminal
   $Bash = TerminalViewProyecto.Shell("/usr/bin/bash")
 
   TextAreaProyecto.Visible = True
+  HBoxGuardarTextArea.Visible = True
   PictureBoxProyecto.Visible = False
   PictureBoxProyecto.Picture = Null
 
@@ -92,6 +87,7 @@ Public Sub ButtonAbrirProyecto_Click()
     m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
     ' ahora refrescamos el nombre del archivo nuevo
     txtProyecto.Text = Dialog.Path
+
     NombreProyecto = File.BaseName(Dialog.Path)
     RutaProyecto = File.Dir(txtProyecto.Text)
     '
@@ -135,7 +131,7 @@ End
 
 Public Sub ControlarCarpetas()' Lista de directorios que se deben confirmar al abrir
 
-  Dim directorios As String[] = ["articulos", "files", "media", "correcciones", "originales", "salidas", "salidas/tapa", ".github", ".github/workflows"]
+  Dim directorios As String[] = ["articulos", "files", "media", "correcciones", "originales", "salidas", "salidas/docbook", "salidas/tapa", "salidas/pdf", "salidas/epub", "salidas/xml-ind", "salidas/xml-scielo", "salidas/xml-pmd", "salidas/xml-doaj", ".github", ".github/workflows"]
 
   ' Crear los directorios si no existen
   For Each directorio As String In directorios
@@ -335,10 +331,12 @@ Public Sub btnVerIMAGEN_Click()
     PictureBoxProyecto.Picture = Null
     PictureBoxProyecto.Visible = False
     TextAreaProyecto.Visible = True
+    HBoxGuardarTextArea.Visible = True
   Else
     ' Si la imagen se cargó correctamente
     PictureBoxProyecto.Visible = True
     TextAreaProyecto.Visible = False
+    HBoxGuardarTextArea.Visible = False
   Endif
 
   If Error Then
@@ -387,17 +385,20 @@ Public Sub btnVerTexto_Click()
 
   ' Cargar el contenido del archivo de texto
   Try TextAreaProyecto.Text = File.Load(sRutaCompleta)
+  sRutaArchivoAbierto = sRutaCompleta
 
   If Error Then
     ' Si hay error al cargar el archivo
     TextAreaProyecto.Text = ""
     PictureBoxProyecto.Visible = True
     TextAreaProyecto.Visible = False
+    HBoxGuardarTextArea.Visible = False
     Message.Error("Error al cargar el archivo de texto:\n" & Error.Text)
   Else
     ' Si el texto se cargó correctamente
     PictureBoxProyecto.Visible = False
     TextAreaProyecto.Visible = True
+    HBoxGuardarTextArea.Visible = True
   Endif
 
 End
@@ -449,7 +450,7 @@ Public Sub btnVerTextoExterno_Click()
 
 End
 
-Public Sub menuEPUB_Click()
+Public Sub menuEPUB_Click()' exportar a epub
 
   If Not Exist(File.Dir(txtProyecto.Text) & "/salidas/epub") Then
     Mkdir File.Dir(txtProyecto.Text) & "/salidas/epub"
@@ -460,10 +461,17 @@ Public Sub menuEPUB_Click()
 
   ' hacemos otra consulta a la bbdd y obteneos el archivo .bib
 
-  'generamos el epub3
-  ' Dim sCommand As String
-  ' sCommand = "asciidoctor-epub3 salidas/epub mi-documento.adoc"
-  ' Shell sCommand Wait
+  Dim sInsertCmd As String
+  sInsertCmd = "grep -q '^include::files/cabecera.adoc\\[\\]' " & NombreProyecto & ".adoc || sed -i '1iinclude::files/cabecera.adoc[]' " & NombreProyecto & ".adoc"
+  TerminalViewProyecto.Input(sInsertCmd & "\n") ' Ejecuta el comando sed
+
+  Dim sDocBook As String
+  sDocBook = "asciidoctor -b docbook5 -o " & "salidas/docbook/docbook-" & NombreProyecto & ".xml " & NombreProyecto & ".adoc"
+  TerminalViewProyecto.Input(sDocBook & "\n")
+  '
+  Dim xDocBook As String
+  xDocBook = "xmllint --noout --schema /usr/share/xml/docbook/schema/xsd/5.0/docbook.xsd " & "salidas/docbook/docbook-" & NombreProyecto & ".xml"
+  TerminalViewProyecto.Input(xDocBook & "\n")
 
 End
 
@@ -1401,5 +1409,25 @@ Public Sub gbMetadatosAutores_Click()
 
   ' Sincronizar el ComboBox con el ID del artículo
   m_FuncionesGenericas.ActualizarComboBoxArticuloAsociadoDesdeId()
+
+End
+
+Public Sub btnGuardarCambiosEditor_Click()
+
+  If sRutaArchivoAbierto = "" Or Not Exist(sRutaArchivoAbierto) Then
+    Message.Warning("No hay un archivo válido cargado para guardar.")
+    Return
+  Endif
+
+  ' Intentar guardar
+  Try File.Save(sRutaArchivoAbierto, TextAreaProyecto.Text)
+
+  If Error Then
+    Message.Error("Error al guardar el archivo: " & Error.Text)
+    Error.Clear
+    Return
+  Endif
+
+  Message.Info("Archivo guardado correctamente.")
 
 End
