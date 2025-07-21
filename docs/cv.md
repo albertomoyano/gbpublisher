@@ -2,8 +2,8 @@
 
 ![Flora](img/flora.png)
 
-Email: alberto.alejandro.moyano@gmail.com  
-GitHub: [https://github.com/albertomoyano](https://github.com/albertomoyano)  
+Email: alberto.alejandro.moyano@gmail.com
+GitHub: [https://github.com/albertomoyano](https://github.com/albertomoyano)
 LinkedIn: [https://www.linkedin.com/in/edicion-cientifica](https://www.linkedin.com/in/edicion-cientifica/)
 
 ## Resumen profesional
@@ -16,19 +16,20 @@ Soy editor especializado en textos académicos y científicos, con más de 700 t
 - lenguaje LaTeX
 - entorno BibTeX y bibLaTeX
 - lenguaje Markdown
-- lenguaje Asciidoc
 
 ### Nivel avanzado
 - aplicación InDesign
 - aplicación JabRef
 - lenguaje Gambas
+- lenguaje XML
+- lenguaje SQL
 
 ### Nivel general
 - lenguaje Python
 - lenguaje HTML
 - lenguaje CSS
-- lenguaje SQL
-- lenguaje XML
+
+
 
 ## Experiencia profesional
 
