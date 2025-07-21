@@ -2,7 +2,7 @@
 
 ## Gestor de flujo de producción editorial para revistas científicas
 
-Este proyecto nació de la necesidad de optimizar el proceso de edición científica de revistas utilizando Asciidoc como lenguaje base, donde la complejidad de gestionar múltiples formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
+Este proyecto nació de la necesidad de optimizar el proceso de edición científica de revistas utilizando MarkDown como lenguaje base, donde la complejidad de gestionar múltiples formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
 
 Tras evaluar las herramientas existentes, identifiqué que ninguna ofrecía (todo al mismo tiempo):
 
@@ -21,7 +21,7 @@ Opté por Gambas como lenguaje de desarrollo por su equilibrio único entre:
 
 ## Qué ofrece mi solución
 
-- Edición ramificada: Gestión de versiones orientada a derivados (ej.: una base Asciidoc genera salidas para imprenta, web y dispositivos).
+- Edición ramificada: Gestión de versiones orientada a derivados (ej.: desde una base Markdown se generan múltiples salidas).
 - Validaciones automáticas: Detección de inconsistencias en sintaxis, referencias cruzadas y metadatos.
 - Pipeline configurable: Flujos adaptables a estándares editoriales específicos (APA, IEEE, etc.).
 - Libertad de stack: Interoperabilidad con git, Makefiles y herramientas tradicionales de GNU/Linux.
