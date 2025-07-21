@@ -58,4 +58,4 @@ Soy editor especializado en textos académicos y científicos, con más de 700 t
 
 [Inicio](index.md) | [Desarrollador](cv.md) | [Descargas](downloads.md)
 
-2025 gbTeXpublisher | [Licencia GPLv3](https://www-gnu-org.translate.goog/licenses/gpl-3.0.html?_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc) | Desarrollado con ❤️ en Gambas
+2025 gbmagazine | [Licencia GPLv3](https://www-gnu-org.translate.goog/licenses/gpl-3.0.html?_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc) | Desarrollado con ❤️ en Gambas
