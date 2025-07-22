@@ -2,7 +2,7 @@
 
 ## Gestor de flujo de producción editorial para revistas científicas
 
-Este proyecto nació de la necesidad de optimizar el proceso de edición científica de revistas utilizando MarkDown como lenguaje base, donde la complejidad de gestionar múltiples formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
+Este proyecto nació de la necesidad de optimizar el proceso de edición de libros y revistas científicas utilizando MarkDown como lenguaje base, donde la complejidad de gestionar múltiples formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
 
 Tras evaluar las herramientas existentes, identifiqué que ninguna ofrecía (todo al mismo tiempo):
 
@@ -34,4 +34,4 @@ Actualmente, el software reduce en más de un 80% el tiempo dedicado a tareas re
 
 [Inicio](index.md) | [Desarrollador](cv.md) | [Descargas](downloads.md)
 
-2025 gbmagazine | [Licencia GPLv3](https://www-gnu-org.translate.goog/licenses/gpl-3.0.html?_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc) | Desarrollado con ❤️ en Gambas
+2025 gbpublisher | [Licencia GPLv3](https://www-gnu-org.translate.goog/licenses/gpl-3.0.html?_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc) | Desarrollado con ❤️ en Gambas
