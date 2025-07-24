@@ -11,12 +11,13 @@ Este software fue desarrollado para asistir en la edición técnica y académica
 
 ## Decisión arquitectónica
 
-La aplicación está desarrollada como **software de escritorio en Linux**, específicamente diseñada para funcionar bajo entornos **Debian + KDE**, utilizando:
+La aplicación está desarrollada como **software de escritorio en Linux**, específicamente diseñada para funcionar bajo entornos **Debian + GTK**, utilizando:
 
 - **Gambas** como entorno de desarrollo.
-- **MySQL** como base de datos.
+- **SQLite** como base de datos.
+- **Markdown** como formato de texto base.
 - **LaTeX** como formato de texto base.
-- Herramientas del sistema (Bash, Pandoc, LuaLaTeX, etc.) para procesamiento.
+- **Herramientas del sistema Linux** para procesamiento.
 
 ## Razones para no hacer una versión web
 
