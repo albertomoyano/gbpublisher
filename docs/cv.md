@@ -3,7 +3,9 @@
 ![Flora](img/flora.png)
 
 Email: alberto.alejandro.moyano@gmail.com
+
 GitHub: [https://github.com/albertomoyano](https://github.com/albertomoyano)
+
 LinkedIn: [https://www.linkedin.com/in/edicion-cientifica](https://www.linkedin.com/in/edicion-cientifica/)
 
 ## Resumen profesional
