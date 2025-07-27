@@ -300,7 +300,7 @@ Public Sub btnVerTexto_Click()
   Dim aExtensionesPermitidas As String[]
 
   ' Definir las extensiones de archivos de texto permitidas
-  aExtensionesPermitidas = ["md", "txt", "sh", "bib"]
+  aExtensionesPermitidas = ["md", "yaml", "lua", "txt", "sh", "bib"]
 
   ' Verificar que hay un archivo seleccionado en el FileView
   If FileViewProyecto.Current = "" Then
@@ -553,8 +553,8 @@ Public Sub gvReferenciasEnCurso_Data(Row As Integer, Column As Integer)
 End
 
 Public Sub gvReferenciasEnCurso_Click()
-
   ' configurar como se muestran los botones
+
   BtnNuevoBib.Visible = True
   btnGuardarBib.Visible = False
   btnGuardarCambiosBib.Visible = True
@@ -563,8 +563,10 @@ Public Sub gvReferenciasEnCurso_Click()
   ' Mostrar los datos en los TextBox
   m_Bibtex.MostrarRefereciasEnTableViewBibtexEnCurso(gvReferenciasEnCurso.Row)
 
-  ' Sincronizar el ComboBox con el ID del artículo
-  m_FuncionesGenericas.ActualizarComboBoxArticuloEnbibtexDesdeId()
+  ' Sincronizar el ComboBox con el ID del artículo (solo para revistas)
+  If TipoProyectoActual = m_Constantes.TIPO_REVISTA_MD Then
+    m_FuncionesGenericas.ActualizarComboBoxArticuloEnbibtexDesdeId()
+  Endif
 
 End
 
@@ -590,6 +592,11 @@ Public Sub BtnNuevoBib_Click()
 
   idBibtex.Text = Idn
   idRevistaBibtex.Text = idMetadatoRevista.Text
+  '
+  If TipoProyectoActual = m_Constantes.TIPO_LIBRO_MD Or TipoProyectoActual = m_Constantes.TIPO_LIBRO_LATEX Then
+    idArticuloBibtex.Text = idMetadatoRevista.Text 'esto es para libros
+  Endif
+  '
   TabPanel5.Index = 1
   m_Bibtex.RellenarComboBoxBibTeX()
 
@@ -607,8 +614,9 @@ End
 
 Public Sub btnGuardarBib_Click()
 
-  ' Verificar que hay un artículo asociado
+  ' Verificar que hay un artículo asociado (solo para revistas)
   If Trim(idArticuloBibtex.Text) = "" Then
+    ' Si es revista, mostrar mensaje de error
     Message.Info("Debe tener un artículo asociado a esta referencia. No es posible guardar la entrada.")
     Return
   Endif
@@ -1359,60 +1367,6 @@ Public Sub menuReslpaldarBBDD_Click()
 
 End
 
-' Public Sub menuAbrir_Click()
-'
-' ' '   Dialog.Title = "Seleccionar archivo"
-' ' '   Dialog.Filter = ["*.md", "Todos los archivos,"]
-' ' '   Dialog.AutoExt = True
-' ' '   Dialog.Path = User.Home
-' ' '
-' ' '   If Dialog.OpenFile() Then
-' ' '     Return
-'   Else
-'     m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
-'     ' ahora refrescamos el nombre del archivo nuevo
-'     txtProyecto.Text = Dialog.Path
-'
-'     NombreProyecto = File.BaseName(Dialog.Path)
-'     RutaProyecto = File.Dir(txtProyecto.Text)
-'     '
-'     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-'     ControlarCarpetas()' nos aseguramos revisar las carpetas del proyecto
-'     m_Metadatos.CargarMetadatosDesdeArchivo(NombreProyecto)
-'     ' bibtex
-'     ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
-'     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-'     m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-'     m_Bibtex.RellenarComboBoxBibTeX()
-'     ' revista y articulos
-'     ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
-'     gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
-'     m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
-'     m_FuncionesGenericas.LlenarComboBoxArticulos()' mostramos articulos en autores y referencias
-'     ' autores
-'     ContenidoAut = m_OnOff_y_Red.meConn.Exec("SELECT * FROM autores WHERE id_revista = &1", FMain.idMetadatoRevista.Text)
-'     gbMetadatosAutores.Rows.Count = ContenidoAut.Count
-'     m_Autores.ConfigurarTableViewAutores(gbMetadatosAutores)
-'
-'     MenuButtonSalidas.Visible = True
-'     TabPanelMetadatosRevista.Visible = True
-'     TabPanelBibliografia.Visible = True
-'     Panel1Bibliografia.Visible = True
-'     HBoxB1.Visible = True
-'     HBoxB2.Visible = True
-'     HBoxB3.Visible = True
-'     HBoxB4.Visible = True
-'     HBoxBuscarEnProyecto.Visible = True
-'     TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
-'     TerminalViewProyecto.Input("clear" & "\n")
-'     PictureBoxProyecto.Image = Null
-'     DirViewProyecto.Root = File.Dir(txtProyecto.Text)
-'     DirViewProyecto.Reload' hacemos un refresco luego de aseguramos de que las carpetas fueron revisadas
-'     FileViewProyecto.Refresh
-'   Endif
-'
-' End
-
 Public Sub menuVerProyecto_Click()
 
   Dim sURL As String
@@ -1499,6 +1453,51 @@ Public Sub menuAbrirLibroLTX_Click()
 
 End
 
+Public Sub Menu10_Click()' compilar epub libro
+
+  ' Verificar que txtProyecto.Text no esté vacío
+  If Trim(txtProyecto.Text) = "" Then
+    Message.Warning("No se ha especificado un archivo de proyecto")
+    Return
+  Else
+    Dim sExtension As String
+    ' obtener la extensión del archivo
+    sExtension = LCase(File.Ext(txtProyecto.Text))
+    ' generamos la exportacion del bib
+    m_FuncionesExportar.ExportarBibTeX()
+    ' Ejecutar la función correspondiente según la extensión
+    Select Case sExtension
+      Case "tex"
+        m_FuncionesExportar.GenerarEPUBlibroTEX()
+      Case "md"
+        ' generamos la exportacion del yaml para epub
+        '
+        m_FuncionesExportar.GenerarEPUBlibroMD()
+        m_FuncionesExportar.GenerarKindlelibroMD()
+      Default
+        Message.Error("Extensión no soportada: " & sExtension & Chr(10) & "Solo se admiten archivos .tex y .md")
+    End Select
+
+  Endif
+
+End
+
+Public Sub btbBuscarTapita_Click()
+
+  Dialog.Title = "Seleccionar archivo"
+  Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
+  Dialog.AutoExt = True
+  Dialog.Path = RutaProyecto & "/media/"
+  If Dialog.OpenFile() Then
+    Return
+  Else
+    txtImagenTapita.Text = File.Name(Dialog.Path)
+  Endif
+Catch
+  Message.Error("No se pudo abrir el archivo")
+
+End
+
 Public Sub AbrirProyecto(nTipoProyecto As Integer)
 
   Select Case nTipoProyecto
@@ -1557,7 +1556,6 @@ Public Sub AbrirRevistaMD()
     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
     ControlarCarpetas()' primero nos aseguramos de que existan las carpetas
     m_FuncionesGenericas.CopiarArchivosBase()
-
     '
     ' bibtex
     ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
@@ -1619,6 +1617,7 @@ Public Sub AbrirLibroMD()
     RutaProyecto = File.Dir(txtProyecto.Text)
     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
     ControlarCarpetas()
+    m_Bibtex.RefrescarTableViewBibtexEnCurso()
     '
     ' Configurar interfaz para libro MD
     ConfigurarInterfazLibroMD()
@@ -1648,7 +1647,7 @@ Public Sub AbrirLibroTEX()
     RutaProyecto = File.Dir(txtProyecto.Text)
     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
     ControlarCarpetas()
-    '
+    m_Bibtex.RefrescarTableViewBibtexEnCurso()
     ' Configurar interfaz para libro LaTeX
     ConfigurarInterfazLibroTEX()
   End If
@@ -1716,6 +1715,11 @@ Private Sub ConfigurarInterfazLibroMD()
   menuXMLlibroIndesign.Visible = True
   menuHTML5libro.Visible = True
   m_FuncionesGenericas.MostrarMetadatosLibro()
+  ' bibtex
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
+  gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+  m_Bibtex.RellenarComboBoxBibTeX()
 
   ' Configurar terminal y vistas
   TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
@@ -1753,6 +1757,11 @@ Private Sub ConfigurarInterfazLibroTEX()
   menuXMLlibroIndesign.Visible = False
   menuHTML5libro.Visible = False
   m_FuncionesGenericas.MostrarMetadatosLibro()
+  ' bibtex
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
+  gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+  m_Bibtex.RellenarComboBoxBibTeX()
 
   ' Configurar terminal y vistas
   TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
@@ -1764,47 +1773,56 @@ Private Sub ConfigurarInterfazLibroTEX()
 
 End
 
-Public Sub Menu10_Click()' compilar epub libro
-
-  ' Verificar que txtProyecto.Text no esté vacío
-  If Trim(txtProyecto.Text) = "" Then
-    Message.Warning("No se ha especificado un archivo de proyecto")
-    Return
-  Else
-    Dim sExtension As String
-    ' obtener la extensión del archivo
-    sExtension = LCase(File.Ext(txtProyecto.Text))
-    ' generamos la exportacion del bib
-    m_FuncionesExportar.ExportarBibTeX()
-    ' Ejecutar la función correspondiente según la extensión
-    Select Case sExtension
-      Case "tex"
-        m_FuncionesExportar.GenerarEPUBlibroTEX()
-      Case "md"
-        ' generamos la exportacion del yaml para epub
-        '
-        m_FuncionesExportar.GenerarEPUBlibroMD()
-        m_FuncionesExportar.GenerarKindlelibroMD()
-      Default
-        Message.Error("Extensión no soportada: " & sExtension & Chr(10) & "Solo se admiten archivos .tex y .md")
-    End Select
-
-  Endif
-
-End
-
-Public Sub btbBuscarTapita_Click()
-
-  Dialog.Title = "Seleccionar archivo"
-  Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
-  Dialog.AutoExt = True
-  Dialog.Path = RutaProyecto & "/media/"
-  If Dialog.OpenFile() Then
-    Return
-  Else
-    txtImagenTapita.Text = File.Name(Dialog.Path)
-  Endif
-Catch
-  Message.Error("No se pudo abrir el archivo")
-
-End
+' Public Sub menuAbrir_Click()
+'
+' ' '   Dialog.Title = "Seleccionar archivo"
+' ' '   Dialog.Filter = ["*.md", "Todos los archivos,"]
+' ' '   Dialog.AutoExt = True
+' ' '   Dialog.Path = User.Home
+' ' '
+' ' '   If Dialog.OpenFile() Then
+' ' '     Return
+'   Else
+'     m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
+'     ' ahora refrescamos el nombre del archivo nuevo
+'     txtProyecto.Text = Dialog.Path
+'
+'     NombreProyecto = File.BaseName(Dialog.Path)
+'     RutaProyecto = File.Dir(txtProyecto.Text)
+'     '
+'     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+'     ControlarCarpetas()' nos aseguramos revisar las carpetas del proyecto
+'     m_Metadatos.CargarMetadatosDesdeArchivo(NombreProyecto)
+'     ' bibtex
+'     ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
+'     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+'     m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+'     m_Bibtex.RellenarComboBoxBibTeX()
+'     ' revista y articulos
+'     ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
+'     gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
+'     m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
+'     m_FuncionesGenericas.LlenarComboBoxArticulos()' mostramos articulos en autores y referencias
+'     ' autores
+'     ContenidoAut = m_OnOff_y_Red.meConn.Exec("SELECT * FROM autores WHERE id_revista = &1", FMain.idMetadatoRevista.Text)
+'     gbMetadatosAutores.Rows.Count = ContenidoAut.Count
+'     m_Autores.ConfigurarTableViewAutores(gbMetadatosAutores)
+'
+'     MenuButtonSalidas.Visible = True
+'     TabPanelMetadatosRevista.Visible = True
+'     TabPanelBibliografia.Visible = True
+'     Panel1Bibliografia.Visible = True
+'     HBoxB1.Visible = True
+'     HBoxB2.Visible = True
+'     HBoxB3.Visible = True
+'     HBoxB4.Visible = True
+'     HBoxBuscarEnProyecto.Visible = True
+'     TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
+'     TerminalViewProyecto.Input("clear" & "\n")
+'     PictureBoxProyecto.Image = Null
+'     DirViewProyecto.Root = File.Dir(txtProyecto.Text)
+'     DirViewProyecto.Reload' hacemos un refresco luego de aseguramos de que las carpetas fueron revisadas
+'     FileViewProyecto.Refresh
+'   Endif
+'
+' End
