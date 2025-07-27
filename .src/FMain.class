@@ -577,8 +577,10 @@ Public Sub BtnNuevoBib_Click()
     Message.Info("No hay un proyecto en curso. Por favor, abra o cree un proyecto antes de continuar.")
     Return
   Else
-    ' limpiamos los textbox
+    ' limpiamos los textbox al iniciar una nueva carga
     m_Bibtex.LimpiarTextboxBibtex()
+    m_Bibtex.RellenarComboBoxBibTeX()
+
     ' Solo si hay proyecto se ejecuta lo siguiente:
     Dim Idn As Integer
     Dim MaxId As Variant
@@ -599,7 +601,6 @@ Public Sub BtnNuevoBib_Click()
     Endif
     '
     TabPanel5.Index = 1
-    m_Bibtex.RellenarComboBoxBibTeX()
     txtTMPbiblio.Enabled = True
     txtTMPbiblio.Font = Font["Monospace"]
     txtTMPbiblio.Background = Color.White
@@ -1598,62 +1599,129 @@ End
 
 Public Sub AbrirLibroMD()
 
-  ' IMPORTANTE: Verificar si se pueden cargar los metadatos
-  Dim bExito As Boolean
+  txtProyecto.Text = Dialog.Path
+  NombreProyecto = File.BaseName(Dialog.Path)
+  RutaProyecto = File.Dir(txtProyecto.Text)
 
-  bExito = m_Metadatos.CargarMetadatosDelProyecto(Dialog.Path)
-  If Error Then
-    Message.Error("Error al cargar el archivo: " & Error.Text)
-    Return
-  End If
+  m_Metadatos.LimpiarCamposMetadatos()
 
-  ' Si CargarMetadatosDelProyecto devuelve False, también salir
-  If Not bExito Then
-    ' El mensaje de error ya se mostró en la función CargarMetadatosDelProyecto
-    Return
+  Dim sSQL As String
+  Dim Contenido As Result
+  Dim nuevoID As Integer
+
+  ' Verificar si ya existe el proyecto
+  sSQL = "SELECT id FROM revistas WHERE nombre_archivo = &1"
+  Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
+
+  If Contenido.Available Then
+    Message.Info("El archivo '" & NombreProyecto & "' ya está registrado.")
+    nuevoID = Contenido["id"]
   Else
-    m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
-    txtProyecto.Text = Dialog.Path
-    NombreProyecto = File.BaseName(Dialog.Path)
-    RutaProyecto = File.Dir(txtProyecto.Text)
-    Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-    ControlarCarpetas()
-    m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
-    m_Bibtex.RefrescarTableViewBibtexEnCurso()
-    '
-    ' Configurar interfaz para libro MD
-    ConfigurarInterfazLibroMD()
-  End If
+    Dim ResultadoInsert As Result
+
+    sSQL = "INSERT INTO revistas (nombre_archivo, intTipoProducto) VALUES (&1, &2)"
+    ResultadoInsert = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto, m_Constantes.TIPO_LIBRO_MD)
+
+    ' Obtener el ID insertado
+    nuevoID = m_OnOff_y_Red.meConn.Exec("SELECT last_insert_rowid()")[0]
+
+    Message.Info("Proyecto registrado con metadatos iniciales.")
+  Endif
+
+  m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
+
+  ' Mostrar los ID
+  idMetadatoRevista.Text = nuevoID
+  intTipoProducto.Text = m_Constantes.TIPO_LIBRO_MD
+
+  ' Limpiar caché o entorno previo
+  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+
+  ' bibtex
+  m_Bibtex.LimpiarTextboxBibtex()
+  m_Bibtex.RellenarComboBoxBibTeX()
+
+  sSQL = "SELECT * FROM bibtex WHERE id_revista = &1"
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec(sSQL, nuevoID)
+
+  If ContenidoBib.Available Then
+    gvReferenciasEnCurso.Clear
+    gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+    m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+    gvReferenciasEnCurso.Refresh
+  Else
+    gvReferenciasEnCurso.Rows.Count = 0
+  Endif
+
+  ' Configurar interfaz para libro MD
+  ConfigurarInterfazLibroMD()
+
+  ' Finalmente, controlar estructura de carpetas
+  ControlarCarpetas()
 
 End
 
 Public Sub AbrirLibroTEX()
 
-  ' IMPORTANTE: Verificar si se pueden cargar los metadatos
-  Dim bExito As Boolean
+  txtProyecto.Text = Dialog.Path
+  NombreProyecto = File.BaseName(Dialog.Path)
+  RutaProyecto = File.Dir(txtProyecto.Text)
 
-  bExito = m_Metadatos.CargarMetadatosDelProyecto(Dialog.Path)
-  If Error Then
-    Message.Error("Error al cargar el archivo: " & Error.Text)
-    Return
-  End If
+  m_Metadatos.LimpiarCamposMetadatos()
 
-  ' Si CargarMetadatosDelProyecto devuelve False, también salir
-  If Not bExito Then
-    ' El mensaje de error ya se mostró en la función CargarMetadatosDelProyecto
-    Return
+  Dim sSQL As String
+  Dim Contenido As Result
+  Dim nuevoID As Integer
+
+  ' Verificar si ya existe el proyecto
+  sSQL = "SELECT id FROM revistas WHERE nombre_archivo = &1"
+  Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
+
+  If Contenido.Available Then
+    Message.Info("El archivo '" & NombreProyecto & "' ya está registrado.")
+    nuevoID = Contenido["id"]
   Else
-    m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
-    txtProyecto.Text = Dialog.Path
-    NombreProyecto = File.BaseName(Dialog.Path)
-    RutaProyecto = File.Dir(txtProyecto.Text)
-    Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-    ControlarCarpetas()
-    m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
-    m_Bibtex.RefrescarTableViewBibtexEnCurso()
-    ' Configurar interfaz para libro LaTeX
-    ConfigurarInterfazLibroTEX()
-  End If
+    Dim ResultadoInsert As Result
+
+    sSQL = "INSERT INTO revistas (nombre_archivo, intTipoProducto) VALUES (&1, &2)"
+    ResultadoInsert = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto, m_Constantes.TIPO_LIBRO_LATEX)
+
+    ' Obtener el ID insertado
+    nuevoID = m_OnOff_y_Red.meConn.Exec("SELECT last_insert_rowid()")[0]
+
+    Message.Info("Proyecto registrado con metadatos iniciales.")
+  Endif
+
+  m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
+
+  ' Mostrar los ID
+  idMetadatoRevista.Text = nuevoID
+  intTipoProducto.Text = m_Constantes.TIPO_LIBRO_LATEX
+
+  ' Limpiar caché o entorno previo
+  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+
+  ' bibtex
+  m_Bibtex.LimpiarTextboxBibtex()
+  m_Bibtex.RellenarComboBoxBibTeX()
+
+  sSQL = "SELECT * FROM bibtex WHERE id_revista = &1"
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec(sSQL, nuevoID)
+
+  If ContenidoBib.Available Then
+    gvReferenciasEnCurso.Clear
+    gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+    m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+    gvReferenciasEnCurso.Refresh
+  Else
+    gvReferenciasEnCurso.Rows.Count = 0
+  Endif
+
+  ' Configurar interfaz para libro MD
+  ConfigurarInterfazLibroMD()
+
+  ' Finalmente, controlar estructura de carpetas
+  ControlarCarpetas()
 
 End
 
@@ -1680,14 +1748,8 @@ Private Sub ConfigurarInterfazRevista()
   HBoxSigla1.Visible = False
   HBoxSigla2.Visible = False
   HBoxSigla3.Visible = False
-  m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
+  ' m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
   m_FuncionesGenericas.MostrarMetadatosRevista()
-  ' bibtex
-  ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
-  gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-  m_Bibtex.RellenarComboBoxBibTeX()
-
   ' Configurar terminal y vistas
   TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
   TerminalViewProyecto.Input("clear" & "\n")
@@ -1723,12 +1785,7 @@ Private Sub ConfigurarInterfazLibroMD()
   HBoxSigla3.Visible = False
   menuXMLlibroIndesign.Visible = True
   menuHTML5libro.Visible = True
-  m_FuncionesGenericas.MostrarMetadatosLibro()
-  ' bibtex
-  ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idRevistaBibtex.Text)
-  gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-  m_Bibtex.RellenarComboBoxBibTeX()
+  m_FuncionesGenericas.MostrarMetadatosLibro()' se refiere a los hbox
 
   ' Configurar terminal y vistas
   TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
@@ -1766,11 +1823,6 @@ Private Sub ConfigurarInterfazLibroTEX()
   menuXMLlibroIndesign.Visible = False
   menuHTML5libro.Visible = False
   m_FuncionesGenericas.MostrarMetadatosLibro()
-  ' bibtex
-  ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idRevistaBibtex.Text)
-  gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-  m_Bibtex.RellenarComboBoxBibTeX()
 
   ' Configurar terminal y vistas
   TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
@@ -1781,60 +1833,6 @@ Private Sub ConfigurarInterfazLibroTEX()
   FileViewProyecto.Refresh
 
 End
-
-' Public Sub menuAbrir_Click()
-'
-' ' '   Dialog.Title = "Seleccionar archivo"
-' ' '   Dialog.Filter = ["*.md", "Todos los archivos,"]
-' ' '   Dialog.AutoExt = True
-' ' '   Dialog.Path = User.Home
-' ' '
-' ' '   If Dialog.OpenFile() Then
-' ' '     Return
-'   Else
-'     m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
-'     ' ahora refrescamos el nombre del archivo nuevo
-'     txtProyecto.Text = Dialog.Path
-'
-'     NombreProyecto = File.BaseName(Dialog.Path)
-'     RutaProyecto = File.Dir(txtProyecto.Text)
-'     '
-'     Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-'     ControlarCarpetas()' nos aseguramos revisar las carpetas del proyecto
-'     m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
-'     ' bibtex
-'     ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
-'     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-'     m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-'     m_Bibtex.RellenarComboBoxBibTeX()
-'     ' revista y articulos
-'     ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
-'     gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
-'     m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
-'     m_FuncionesGenericas.LlenarComboBoxArticulos()' mostramos articulos en autores y referencias
-'     ' autores
-'     ContenidoAut = m_OnOff_y_Red.meConn.Exec("SELECT * FROM autores WHERE id_revista = &1", FMain.idMetadatoRevista.Text)
-'     gbMetadatosAutores.Rows.Count = ContenidoAut.Count
-'     m_Autores.ConfigurarTableViewAutores(gbMetadatosAutores)
-'
-'     MenuButtonSalidas.Visible = True
-'     TabPanelMetadatosRevista.Visible = True
-'     TabPanelBibliografia.Visible = True
-'     Panel1Bibliografia.Visible = True
-'     HBoxB1.Visible = True
-'     HBoxB2.Visible = True
-'     HBoxB3.Visible = True
-'     HBoxB4.Visible = True
-'     HBoxBuscarEnProyecto.Visible = True
-'     TerminalViewProyecto.Input("cd " & RutaProyecto & "\n")
-'     TerminalViewProyecto.Input("clear" & "\n")
-'     PictureBoxProyecto.Image = Null
-'     DirViewProyecto.Root = File.Dir(txtProyecto.Text)
-'     DirViewProyecto.Reload' hacemos un refresco luego de aseguramos de que las carpetas fueron revisadas
-'     FileViewProyecto.Refresh
-'   Endif
-'
-' End
 
 Public Sub btnVerEPUB_Click()
 
