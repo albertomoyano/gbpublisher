@@ -1653,6 +1653,8 @@ Public Sub AbrirLibroMD()
     gvReferenciasEnCurso.Rows.Count = 0
   Endif
 
+  CargarScripts()
+
   ' Configurar interfaz para libro MD
   ConfigurarInterfazLibroMD()
 
@@ -1737,6 +1739,7 @@ Private Sub ConfigurarInterfazRevista()
   HBoxB3.Visible = True
   HBoxB4.Visible = True
   HBoxBuscarEnProyecto.Visible = True
+  HBoxComboBoxScriptPy.Visible = True
   TabPanelMetadatosRevista[0].Text = "Metadatos de la revista"
   TabPanelMetadatosRevista[1].Text = "Metadatos de los artículos"
   TabPanelMetadatosRevista[2].Text = "Metadatos de los autores"
@@ -1772,6 +1775,7 @@ Private Sub ConfigurarInterfazLibroMD()
   HBoxB3.Visible = True
   HBoxB4.Visible = True
   HBoxBuscarEnProyecto.Visible = True
+  HBoxComboBoxScriptPy.Visible = True
   TabPanelMetadatosRevista[0].Text = "Metadatos del libro"
   TabPanelMetadatosRevista[1].Text = "Metadatos de los capítulos"
   TabPanelMetadatosRevista[2].Text = "Metadatos de los autores"
@@ -1809,6 +1813,7 @@ Private Sub ConfigurarInterfazLibroTEX()
   HBoxB3.Visible = True
   HBoxB4.Visible = True
   HBoxBuscarEnProyecto.Visible = True
+  HBoxComboBoxScriptPy.Visible = True
   TabPanelMetadatosRevista[0].Text = "Metadatos del libro"
   TabPanelMetadatosRevista[1].Text = "Metadatos de los capítulos"
   TabPanelMetadatosRevista[2].Text = "Metadatos de los autores"
@@ -1891,5 +1896,135 @@ Public Sub btnVerHTML_Click()
   Else
     Desktop.Open(sRutaCompleta)
   Endif
+
+End
+
+Public Sub CargarScripts()
+
+  Dim rutaScripts As String = User.Home &/ ".gbadoc/scripts"
+  Dim archivos As String[]
+  Dim archivo As String
+  Dim linea As String
+  Dim descripcion As String
+  Dim archivoBase As String
+  Dim hFile As File
+
+  ' Verificar que el directorio existe
+  If Not Exist(rutaScripts) Then
+    Message.Error("El directorio de scripts no existe: " & rutaScripts)
+    Return
+  Endif
+
+  ComboBoxScriptPy.Clear
+
+  ' Obtener lista de archivos .py
+  archivos = Dir(rutaScripts, "*.py")
+  If Error Then
+    Message.Error("Error al leer el directorio: " & Error.Text)
+    Return
+  Endif
+
+  ' Procesar cada archivo
+  For Each archivo In archivos
+    descripcion = "Sin descripción"
+
+    ' Construir ruta completa del archivo
+    Dim rutaCompleta As String = rutaScripts &/ archivo
+
+    ' Intentar leer la primera línea del archivo para obtener descripción
+    hFile = Open rutaCompleta For Read
+    If Not Error Then
+      Line Input #hFile, linea
+      If Not Error And linea <> "" Then
+        linea = Trim(linea)
+        If Left(linea, 1) = "#" Then
+          ' Extraer descripción, eliminando "# " del inicio
+          If Len(linea) > 2 Then
+            descripcion = Trim(Mid(linea, 3))
+          Endif
+        Endif
+      Endif
+      Close #hFile
+    Else
+      descripcion = "Error al leer archivo"
+    Endif
+
+    ' Agregar al ComboBox
+    archivoBase = File.BaseName(archivo) & ".py"
+    ComboBoxScriptPy.Add(descripcion & " [" & archivoBase & "]")
+  Next
+
+  ' Mostrar mensaje si no se encontraron archivos
+  If ComboBoxScriptPy.Count = 0 Then
+    Message.Info("No se encontraron archivos .py en el directorio")
+  Endif
+
+End
+
+Public Sub EjecutarScript()
+
+  Dim rutaScript As String
+  Dim comando As String
+
+  ' Verificar que hay un script seleccionado
+  If ComboBoxScriptPy.Index = -1 Then
+    Message.Warning("Selecciona un script primero")
+    Return
+  Endif
+
+  ' Verificar que el bash está disponible
+  If Not $Bash Or If $Bash.State <> Process.Running Then
+    Message.Error("La terminal no está disponible")
+    Return
+  Endif
+
+  ' Obtener la ruta del script seleccionado
+  ' Extraer el nombre del archivo del texto entre corchetes
+  Dim textoSeleccionado As String = ComboBoxScriptPy.Text
+  Dim nombreArchivo As String
+  Dim inicio As Integer
+  Dim fin As Integer
+
+  inicio = InStr(textoSeleccionado, "[")
+  fin = InStr(textoSeleccionado, "]")
+
+  If inicio > 0 And fin > inicio Then
+    nombreArchivo = Mid(textoSeleccionado, inicio + 1, fin - inicio - 1)
+    rutaScript = User.Home &/ ".gbadoc/scripts" &/ nombreArchivo
+  Else
+    Message.Error("No se pudo determinar el archivo del script")
+    Return
+  Endif
+
+  ' Verificar que el script existe
+  If Not Exist(rutaScript) Then
+    Message.Error("El script no existe: " & rutaScript)
+    Return
+  Endif
+
+  ' Construir y ejecutar el comando Python
+  comando = "python3 \"" & rutaScript & "\" \"`pwd`\""
+
+  ' Enviar información y comando a la terminal
+  Print #$Bash, "# Ejecutando: " & nombreArchivo
+  Print #$Bash, comando
+
+End
+
+Public Sub ComboBoxScriptPy_Click()
+
+  EjecutarScript()
+
+End
+
+Public Sub BtnBuscarEnArchivos_Click()
+
+  Dim palabraAbuscar As String
+
+  palabraAbuscar = TextBoxBuscarEnConsola.Text
+
+  TerminalViewProyecto.Clear
+  TerminalViewProyecto.Input("python3 " & rutaApp & "/buscador.py " & palabraAbuscar & "\n")
+  TerminalViewProyecto.SetFocus
 
 End
