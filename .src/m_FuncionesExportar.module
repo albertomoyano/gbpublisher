@@ -169,61 +169,29 @@ Public Sub ExportarBibTeX()
 
 End
 
-' Public Sub GenerarEPUBlibroMD()
-'
-'   Dim sSQL As String
-'   Dim sNombreArchivo As String = NombreProyecto
-'   Dim rConsulta As Result
-'
-'   sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
-'   rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
-'
-'   ' Obtener de la base de datos
-'   Dim iVariosAutores As Integer
-'   iVariosAutores = rConsulta!cmbAutoriaLibro
-'
-'   Dim sComando As String
-'   ' Construir el comando pandoc
-'   sComando = FMain.NombreProyecto & ".md articulos/*.md"
-'   sComando &= " --filter pandoc-crossref"
-'   sComando &= " --lua-filter=files/figure-bold-filter.lua"
-'   ' Condicional para section-refs.lua
-'   If iVariosAutores = 1 Then
-'     sComando &= " --lua-filter=files/section-refs.lua"
-'   Endif
-'   sComando &= " --lua-filter=files/section-refs.lua"
-'   sComando &= " --citeproc"
-'   sComando &= " --metadata-file=files/" & FMain.NombreProyecto & ".yaml"
-'   sComando &= " --bibliography=files/" & FMain.NombreProyecto & ".bib"
-'   sComando &= " --csl=files/apa.csl" ' levantar valor de bbdd
-'   sComando &= " --output=salidas/epub/" & FMain.NombreProyecto & ".epub"
-'   sComando &= " --from markdown"
-'   sComando &= " --to epub3"
-'   sComando &= " --epub-cover-image=media/cover.png" ' levantar valor de bbdd
-'   sComando &= " --css=files/stylesheet1.css"
-'   sComando &= " --resource-path=.:articulos:media:files"
-'   sComando &= " --epub-embed-font=files/fonts/georgia.ttf"
-'   sComando &= " --epub-embed-font=files/fonts/georgiab.ttf"
-'   sComando &= " --epub-embed-font=files/fonts/georgiai.ttf"
-'   sComando &= " --epub-embed-font=files/fonts/georgiaz.ttf"
-'   sComando &= " --embed-resources"
-'   sComando &= " --standalone"
-'   sComando &= " --toc"
-'   sComando &= " --toc-depth=2"
-'   sComando &= " --split-level=1"
-'
-'   FMain.TerminalViewProyecto.Input("pandoc " & sComando & "\n")
-'   Wait 0.5
-'
-'   FMain.TerminalViewProyecto.Input("epubcheck ./salidas/" & FMain.NombreProyecto & ".epub" & "\n")
-'
-' End Sub
+Public Sub GenerarKindlelibroMD()
+
+  Dim sComando As String
+
+  ' Comando para convertir EPUB a AZW3 (formato Kindle moderno)
+  sComando = "ebook-convert ./salidas/epub/" & FMain.NombreProyecto & ".epub ./salidas/kindle/" & FMain.NombreProyecto & ".azw3"
+
+  FMain.TerminalViewProyecto.Input(sComando & "\n")
+  Wait 0.5
+
+End Sub
 
 Public Sub GenerarEPUBlibroMD()
 
   Dim sSQL As String
   Dim sNombreArchivo As String = NombreProyecto
   Dim rConsulta As Result
+  ' Obtener valores de la base de datos
+  Dim iVariosAutores As Integer
+  Dim sImagenTapa As String
+  Dim sCSL As String
+
+  iVariosAutores = rConsulta!cmbAutoriaLibro
 
   sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
   rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
@@ -234,12 +202,60 @@ Public Sub GenerarEPUBlibroMD()
     Return
   Endif
 
-  ' Obtener valores de la base de datos
-  Dim iVariosAutores As Integer
-  Dim sImagenTapa As String
-  Dim sCSL As String
+  ' Generamos YAML para el epub
+  Dim sYAML As String
+  sYAML = ""
 
-  iVariosAutores = rConsulta!cmbAutoriaLibro
+  ' Título del libro
+  If IsNull(rConsulta!txtRevistaTitulo) Or Trim(rConsulta!txtRevistaTitulo) = "" Then
+    Message.Error("El título del libro es obligatorio.")
+    Return
+  Else
+    sYAML &= "title: " & Trim(rConsulta!txtRevistaTitulo) & "\n"
+  Endif
+
+  ' Autores del libro
+  If Not IsNull(rConsulta!txtLibroAutoria) And Trim(rConsulta!txtLibroAutoria) <> "" Then
+    Dim autores As String[] = Split(Trim(rConsulta!txtLibroAutoria), ",")
+    sYAML &= "author:\n"
+    For Each autor In autores
+      sYAML &= "  - " & Trim(autor) & "\n"
+    Next
+  Endif
+
+  ' Ordenes directas
+  ' Configuración de pandoc-crossref en español
+  sYAML &= "link-citations: true\n"
+  sYAML &= "figureTitle: \"Figura\"\n"
+  sYAML &= "tableTitle: \"Cuadro\"\n"
+  sYAML &= "listingTitle: \"Listado\"\n"
+  sYAML &= "figPrefix:\n"
+  sYAML &= "  - \"figura\"\n"
+  sYAML &= "  - \"figuras\"\n"
+  sYAML &= "eqnPrefix:\n"
+  sYAML &= "  - \"ecuación\"\n"
+  sYAML &= "  - \"ecuaciones\"\n"
+  sYAML &= "tblPrefix:\n"
+  sYAML &= "  - \"cuadro\"\n"
+  sYAML &= "  - \"cuadros\"\n"
+  sYAML &= "lstPrefix:\n"
+  sYAML &= "  - \"listado\"\n"
+  sYAML &= "  - \"listados\"\n"
+  sYAML &= "secPrefix:\n"
+  sYAML &= "  - \"sección\"\n"
+  sYAML &= "  - \"secciones\"\n"
+  sYAML &= "linkReferences: true\n"
+  sYAML &= "nameInLink: true\n"
+  sYAML &= "figLabels: arabic\n"
+
+  ' Guardar el archivo YAML
+  Dim sRutaYAML As String = "files/" & FMain.NombreProyecto & ".yaml"
+  Try File.Save(sRutaYAML, sYAML)
+  If Error Then
+    Message.Error("Error al crear el archivo YAML: " & Error.Text)
+    Return
+  Endif
+  '
 
   ' Obtener el nombre del archivo de tapa
   If IsNull(rConsulta!txtImagenTapita) Or Trim(rConsulta!txtImagenTapita) = "" Then
@@ -261,18 +277,18 @@ Public Sub GenerarEPUBlibroMD()
   sComando &= " --filter pandoc-crossref"
   ' filtros personalizados
   sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/figure-bold-filter.lua"
-  '
+
   ' Condicional para section-refs.lua
   If iVariosAutores = 1 Then
     sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/files/section-refs.lua"
   Else If iVariosAutores = 0 Then
     sComando &= ""
   Endif
-  '
+
   sComando &= " --citeproc"
   sComando &= " --metadata-file=files/" & FMain.NombreProyecto & ".yaml"
   sComando &= " --bibliography=files/" & FMain.NombreProyecto & ".bib"
-  sComando &= " --csl=files/" & sCSL
+  sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
   sComando &= " --output=salidas/epub/" & FMain.NombreProyecto & ".epub"
   sComando &= " --from markdown"
   sComando &= " --to epub3"
@@ -289,20 +305,83 @@ Public Sub GenerarEPUBlibroMD()
   sComando &= " --toc-depth=2"
   sComando &= " --split-level=1"
 
+  ' Ejecutar pandoc
   FMain.TerminalViewProyecto.Input("pandoc " & sComando & "\n")
   Wait 0.5
-  FMain.TerminalViewProyecto.Input("epubcheck ./salidas/epub/" & FMain.NombreProyecto & ".epub" & "\n")
 
-End Sub
+  ' Verificar si el archivo EPUB se generó correctamente
+  Dim sRutaEpub As String = "./salidas/epub/" & FMain.NombreProyecto & ".epub"
+  If Exist(sRutaEpub) Then
+    ' Agregamos metadatos adicionales con ebook-meta
+    Dim sComandoMeta As String = "ebook-meta " & sRutaEpub
 
-Public Sub GenerarKindlelibroMD()
+    ' Agregar serie si existe en la BD
+    If Not IsNull(rConsulta!txtLibroSerie) And Trim(rConsulta!txtLibroSerie) <> "" Then
+      sComandoMeta &= " --series \"" & Trim(rConsulta!txtLibroSerie) & "\""
 
-  Dim sComando As String
+      ' Agregar índice de serie si existe
+      If Not IsNull(rConsulta!txtLibroSerieNumero) Then
+        sComandoMeta &= " --series-index " & rConsulta!txtLibroSerieNumero
+      Endif
+    Endif
 
-  ' Comando para convertir EPUB a AZW3 (formato Kindle moderno)
-  sComando = "ebook-convert ./salidas/epub/" & FMain.NombreProyecto & ".epub ./salidas/kindle/" & FMain.NombreProyecto & ".azw3"
+    ' Agregar volumen si existe
+    If Not IsNull(rConsulta!txtRevistaVolumen) And Trim(rConsulta!txtRevistaVolumen) <> "" Then
+      sComandoMeta &= " --comments \"Volumen: " & Trim(rConsulta!txtRevistaVolumen) & "\""
+    Endif
 
-  FMain.TerminalViewProyecto.Input(sComando & "\n")
-  Wait 0.5
+    ' Agregar URL si existe
+    If Not IsNull(rConsulta!txtRevistaURL) And Trim(rConsulta!txtRevistaURL) <> "" Then
+      sComandoMeta &= " --identifier url:\"" & Trim(rConsulta!txtRevistaURL) & "\""
+    Endif
+
+    If Not IsNull(rConsulta!txtRevistaDOIPrefix) And Trim(rConsulta!txtRevistaDOIPrefix) <> "" Then
+      sComandoMeta &= " --identifier doi:\"" & Trim(rConsulta!txtRevistaDOIPrefix) & "\""
+    Endif
+
+    sComandoMeta &= " --book-producer=gbpublisher"
+
+    ' Construir tags combinando todos los campos disponibles
+    Dim sTags As String = ""
+
+    ' Agregar palabras clave del segundo idioma
+    If Not IsNull(rConsulta!txtLibroPalabrasClaveEn) And Trim(rConsulta!txtLibroPalabrasClaveEn) <> "" Then
+      sTags = Trim(rConsulta!txtLibroPalabrasClaveEn)
+    Endif
+
+    ' Agregar género
+    If Not IsNull(rConsulta!txtLibroGenero) And Trim(rConsulta!txtLibroGenero) <> "" Then
+      If sTags <> "" Then sTags &= ","
+      sTags &= Trim(rConsulta!txtLibroGenero)
+    Endif
+
+    ' Agregar audiencia
+    If Not IsNull(rConsulta!txtLibroAudiencia) And Trim(rConsulta!txtLibroAudiencia) <> "" Then
+      If sTags <> "" Then sTags &= ","
+      sTags &= Trim(rConsulta!txtLibroAudiencia)
+    Endif
+
+    ' Agregar clasificación
+    If Not IsNull(rConsulta!txtLibroClasificacion) And Trim(rConsulta!txtLibroClasificacion) <> "" Then
+      If sTags <> "" Then sTags &= ","
+      sTags &= Trim(rConsulta!txtLibroClasificacion)
+    Endif
+
+    ' Aplicar todos los tags si hay alguno
+    If sTags <> "" Then
+      sComandoMeta &= " --tags \"" & sTags & "\""
+    Endif
+
+    ' Ejecutar ebook-meta solo si hay metadatos que agregar
+    If sComandoMeta <> "ebook-meta " & sRutaEpub Then
+      FMain.TerminalViewProyecto.Input(sComandoMeta & "\n")
+      Wait 0.5
+    Endif
+
+    ' Ejecutar epubcheck
+    FMain.TerminalViewProyecto.Input("epubcheck " & sRutaEpub & "\n")
+  Else
+    Message.Error("Error: No se pudo generar el archivo EPUB")
+  Endif
 
 End Sub
