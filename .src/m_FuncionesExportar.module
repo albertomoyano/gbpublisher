@@ -161,25 +161,13 @@ Public Sub ExportarBibTeX()
 
   fecha = Format(Now, "dd/mm/yyyy [hh:nn:ss]")
 
-  s &= "\n\n@Comment{generado con gbadocmagazine; databaseType:biblatex; fecha de creación: " & fecha & "}"
+  s &= "\n\n@Comment{generado con gbpublisher; databaseType:biblatex; fecha de creación: " & fecha & "}"
 
   Dim outputFile As String
   outputFile = RutaProyecto & "/files/" & NombreProyecto & ".bib"
   File.Save(outputFile, s)
 
 End
-
-Public Sub GenerarKindlelibroMD()
-
-  Dim sComando As String
-
-  ' Comando para convertir EPUB a AZW3 (formato Kindle moderno)
-  sComando = "ebook-convert ./salidas/epub/" & FMain.NombreProyecto & ".epub ./salidas/kindle/" & FMain.NombreProyecto & ".azw3"
-
-  FMain.TerminalViewProyecto.Input(sComando & "\n")
-  Wait 0.5
-
-End Sub
 
 Public Sub GenerarEPUBlibroMD()
 
@@ -191,7 +179,8 @@ Public Sub GenerarEPUBlibroMD()
   Dim sImagenTapa As String
   Dim sCSL As String
 
-  iVariosAutores = rConsulta!cmbAutoriaLibro
+  ' generamos la exportacion del bib
+  ExportarBibTeX()
 
   sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
   rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
@@ -214,17 +203,76 @@ Public Sub GenerarEPUBlibroMD()
     sYAML &= "title: " & Trim(rConsulta!txtRevistaTitulo) & "\n"
   Endif
 
+  If Not IsNull(rConsulta!txtLibroSubtitulo) And Trim(rConsulta!txtLibroSubtitulo) <> "" Then
+    sYAML &= "subtitle: " & Trim(rConsulta!txtLibroSubtitulo) & "\n"
+  Endif
   ' Autores del libro
   If Not IsNull(rConsulta!txtLibroAutoria) And Trim(rConsulta!txtLibroAutoria) <> "" Then
     Dim autores As String[] = Split(Trim(rConsulta!txtLibroAutoria), ",")
     sYAML &= "author:\n"
-    For Each autor In autores
+    For Each autor As String In autores
       sYAML &= "  - " & Trim(autor) & "\n"
     Next
   Endif
+  ' Subject combinado (palabras clave + género + audiencia)
+  Dim aSubjects As New String[]
 
-  ' Ordenes directas
-  ' Configuración de pandoc-crossref en español
+  ' Agregar palabras clave si existen
+  If Not IsNull(rConsulta!txtLibroPalabrasClaveEs) And Trim(rConsulta!txtLibroPalabrasClaveEs) <> "" Then
+    Dim palabras As String[] = Split(Trim(rConsulta!txtLibroPalabrasClaveEs), ",")
+    For Each palabra As String In palabras
+      aSubjects.Add(Trim(palabra))
+    Next
+  Endif
+
+  ' Agregar género si existe
+  If Not IsNull(rConsulta!txtLibroGenero) And Trim(rConsulta!txtLibroGenero) <> "" Then
+    aSubjects.Add(Trim(rConsulta!txtLibroGenero))
+  Endif
+
+  ' Agregar audiencia si existe
+  If Not IsNull(rConsulta!txtLibroAudiencia) And Trim(rConsulta!txtLibroAudiencia) <> "" Then
+    aSubjects.Add(Trim(rConsulta!txtLibroAudiencia))
+  Endif
+  ' Escribir subject solo si hay elementos
+  If aSubjects.Count > 0 Then
+    sYAML &= "subject:\n"
+    For Each item As String In aSubjects
+      sYAML &= "  - \"" & item & "\"\n"
+    Next
+  Endif
+  If Not IsNull(rConsulta!txtFechaPublicacion) Or Trim(rConsulta!txtFechaPublicacion) <> "" Then
+    sYAML &= "date: " & Trim(rConsulta!txtFechaPublicacion) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtRevistaISSN) Or Trim(rConsulta!txtRevistaISSN) <> "" Then
+    sYAML &= "isbn: " & Trim(rConsulta!txtRevistaISSN) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtRevistaEditorial) Or Trim(rConsulta!txtRevistaEditorial) <> "" Then
+    sYAML &= "publisher: " & Trim(rConsulta!txtRevistaEditorial) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtRevistaIdioma) Or Trim(rConsulta!txtRevistaIdioma) <> "" Then
+    sYAML &= "language: " & Trim(rConsulta!txtRevistaIdioma) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLicencia) Or Trim(rConsulta!txtLicencia) <> "" Then
+    sYAML &= "rights: " & Trim(rConsulta!txtLicencia) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLibroSerie) Or Trim(rConsulta!txtLibroSerie) <> "" Then
+    sYAML &= "series: " & Trim(rConsulta!txtLibroSerie) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLibroSerieNumero) Or Trim(rConsulta!txtLibroSerieNumero) <> "" Then
+    sYAML &= "index: " & Trim(rConsulta!txtLibroSerieNumero) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLibroResumenEs) Or Trim(rConsulta!txtLibroResumenEs) <> "" Then
+    sYAML &= "description: " & Trim(rConsulta!txtLibroResumenEs) & "\n"
+  Endif
+
+  sYAML &= "identifier:\n"
+  sYAML &= "  - scheme: \"ISBN\"\n"
+  sYAML &= "    text: " & Trim(rConsulta!txtRevistaISSN) & "\n"
+  sYAML &= "  - scheme: \"URI\"\n"
+  sYAML &= "    text: " & Trim(rConsulta!txtRevistaURL) & "\n"
+  sYAML &= "type: \"Text\"\n"
+  sYAML &= "format: \"application/epub+zip\"\n"
   sYAML &= "link-citations: true\n"
   sYAML &= "figureTitle: \"Figura\"\n"
   sYAML &= "tableTitle: \"Cuadro\"\n"
@@ -247,15 +295,20 @@ Public Sub GenerarEPUBlibroMD()
   sYAML &= "linkReferences: true\n"
   sYAML &= "nameInLink: true\n"
   sYAML &= "figLabels: arabic\n"
+  sYAML &= "tblLabels: arabic\n"
+  sYAML &= "eqnLabels: arabic\n"
+  sYAML &= "ibooks:\n"
+  sYAML &= "  version: \"1.0.0\"\n"
+  sYAML &= "  specified-fonts: true\n"
+  sYAML &= "  iphone-orientation-lock: \"portrait-only\"\n"
+  sYAML &= "book-producer: gbpublisher\n"
 
   ' Guardar el archivo YAML
-  Dim sRutaYAML As String = "files/" & FMain.NombreProyecto & ".yaml"
-  Try File.Save(sRutaYAML, sYAML)
-  If Error Then
-    Message.Error("Error al crear el archivo YAML: " & Error.Text)
-    Return
-  Endif
-  '
+  Dim outputFile As String
+  outputFile = RutaProyecto & "/files/" & NombreProyecto & ".yaml"
+  File.Save(outputFile, sYAML)
+
+  iVariosAutores = rConsulta!cmbAutoriaLibro
 
   ' Obtener el nombre del archivo de tapa
   If IsNull(rConsulta!txtImagenTapita) Or Trim(rConsulta!txtImagenTapita) = "" Then
@@ -286,10 +339,10 @@ Public Sub GenerarEPUBlibroMD()
   Endif
 
   sComando &= " --citeproc"
-  sComando &= " --metadata-file=files/" & FMain.NombreProyecto & ".yaml"
-  sComando &= " --bibliography=files/" & FMain.NombreProyecto & ".bib"
+  sComando &= " --metadata-file=files/" & NombreProyecto & ".yaml"
+  sComando &= " --bibliography=files/" & NombreProyecto & ".bib"
   sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
-  sComando &= " --output=salidas/epub/" & FMain.NombreProyecto & ".epub"
+  sComando &= " --output=salidas/epub/" & NombreProyecto & ".epub"
   sComando &= " --from markdown"
   sComando &= " --to epub3"
   sComando &= " --epub-cover-image=media/" & sImagenTapa
@@ -309,79 +362,10 @@ Public Sub GenerarEPUBlibroMD()
   FMain.TerminalViewProyecto.Input("pandoc " & sComando & "\n")
   Wait 0.5
 
-  ' Verificar si el archivo EPUB se generó correctamente
-  Dim sRutaEpub As String = "./salidas/epub/" & FMain.NombreProyecto & ".epub"
-  If Exist(sRutaEpub) Then
-    ' Agregamos metadatos adicionales con ebook-meta
-    Dim sComandoMeta As String = "ebook-meta " & sRutaEpub
+  Dim ArchivoFinal As String
+  ArchivoFinal = RutaProyecto & "/salidas/epub/" & NombreProyecto & ".epub"
 
-    ' Agregar serie si existe en la BD
-    If Not IsNull(rConsulta!txtLibroSerie) And Trim(rConsulta!txtLibroSerie) <> "" Then
-      sComandoMeta &= " --series \"" & Trim(rConsulta!txtLibroSerie) & "\""
+  ' Ejecutar epubcheck
+  FMain.TerminalViewProyecto.Input("epubcheck " & ArchivoFinal & "\n")
 
-      ' Agregar índice de serie si existe
-      If Not IsNull(rConsulta!txtLibroSerieNumero) Then
-        sComandoMeta &= " --series-index " & rConsulta!txtLibroSerieNumero
-      Endif
-    Endif
-
-    ' Agregar volumen si existe
-    If Not IsNull(rConsulta!txtRevistaVolumen) And Trim(rConsulta!txtRevistaVolumen) <> "" Then
-      sComandoMeta &= " --comments \"Volumen: " & Trim(rConsulta!txtRevistaVolumen) & "\""
-    Endif
-
-    ' Agregar URL si existe
-    If Not IsNull(rConsulta!txtRevistaURL) And Trim(rConsulta!txtRevistaURL) <> "" Then
-      sComandoMeta &= " --identifier url:\"" & Trim(rConsulta!txtRevistaURL) & "\""
-    Endif
-
-    If Not IsNull(rConsulta!txtRevistaDOIPrefix) And Trim(rConsulta!txtRevistaDOIPrefix) <> "" Then
-      sComandoMeta &= " --identifier doi:\"" & Trim(rConsulta!txtRevistaDOIPrefix) & "\""
-    Endif
-
-    sComandoMeta &= " --book-producer=gbpublisher"
-
-    ' Construir tags combinando todos los campos disponibles
-    Dim sTags As String = ""
-
-    ' Agregar palabras clave del segundo idioma
-    If Not IsNull(rConsulta!txtLibroPalabrasClaveEn) And Trim(rConsulta!txtLibroPalabrasClaveEn) <> "" Then
-      sTags = Trim(rConsulta!txtLibroPalabrasClaveEn)
-    Endif
-
-    ' Agregar género
-    If Not IsNull(rConsulta!txtLibroGenero) And Trim(rConsulta!txtLibroGenero) <> "" Then
-      If sTags <> "" Then sTags &= ","
-      sTags &= Trim(rConsulta!txtLibroGenero)
-    Endif
-
-    ' Agregar audiencia
-    If Not IsNull(rConsulta!txtLibroAudiencia) And Trim(rConsulta!txtLibroAudiencia) <> "" Then
-      If sTags <> "" Then sTags &= ","
-      sTags &= Trim(rConsulta!txtLibroAudiencia)
-    Endif
-
-    ' Agregar clasificación
-    If Not IsNull(rConsulta!txtLibroClasificacion) And Trim(rConsulta!txtLibroClasificacion) <> "" Then
-      If sTags <> "" Then sTags &= ","
-      sTags &= Trim(rConsulta!txtLibroClasificacion)
-    Endif
-
-    ' Aplicar todos los tags si hay alguno
-    If sTags <> "" Then
-      sComandoMeta &= " --tags \"" & sTags & "\""
-    Endif
-
-    ' Ejecutar ebook-meta solo si hay metadatos que agregar
-    If sComandoMeta <> "ebook-meta " & sRutaEpub Then
-      FMain.TerminalViewProyecto.Input(sComandoMeta & "\n")
-      Wait 0.5
-    Endif
-
-    ' Ejecutar epubcheck
-    FMain.TerminalViewProyecto.Input("epubcheck " & sRutaEpub & "\n")
-  Else
-    Message.Error("Error: No se pudo generar el archivo EPUB")
-  Endif
-
-End Sub
+End
