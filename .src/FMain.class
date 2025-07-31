@@ -1555,64 +1555,128 @@ End
 
 Public Sub AbrirRevistaMD()
 
-  ' IMPORTANTE: Verificar si se pueden cargar los metadatos
-  Dim bExito As Boolean
+  txtProyecto.Text = Dialog.Path
+  NombreProyecto = File.BaseName(Dialog.Path)
+  RutaProyecto = File.Dir(txtProyecto.Text)
 
-  bExito = m_Metadatos.CargarMetadatosDelProyecto(Dialog.Path)
-  If Error Then
-    Message.Error("Error al cargar el archivo: " & Error.Text)
-    Return
-  End If
+  m_Metadatos.LimpiarCamposMetadatos()
 
-  ' Si CargarMetadatosDelProyecto devuelve False, también salir
-  If Not bExito Then
-    ' El mensaje de error ya se mostró en la función CargarMetadatosDelProyecto
-    Return
+  Dim sSQL As String
+  Dim Contenido As Result
+  Dim nuevoID As Integer
+
+  ' Verificar si ya existe el proyecto
+  sSQL = "SELECT id FROM revistas WHERE nombre_archivo = &1"
+  Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
+
+  If Contenido.Available Then
+    Message.Info("El archivo '" & NombreProyecto & "' ya está registrado.")
+    nuevoID = Contenido["id"]
   Else
-    ' Solo continuar si todo está bien
-    m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
-    txtProyecto.Text = Dialog.Path
-    NombreProyecto = File.BaseName(Dialog.Path)
-    RutaProyecto = File.Dir(txtProyecto.Text)
-    Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-    ControlarCarpetas()' primero nos aseguramos de que existan las carpetas
-    m_FuncionesGenericas.CopiarArchivosBase()
-    ' '
-    ' ' bibtex
-    ' ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
-    ' If Error Then
-    '   Message.Error("Error al cargar referencias: " & Error.Text)
-    '   Return
-    ' End If
-    ' '
-    ' gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-    ' m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-    ' m_Bibtex.RellenarComboBoxBibTeX()
-    '
-    ' Libros, revista y artículos
-    ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
-    If Error Then
-      Message.Error("Error al cargar artículos: " & Error.Text)
-      Return
-    Else
-      gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
-      m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
-      m_FuncionesGenericas.LlenarComboBoxArticulos()
-      '
-      ' Autores
-      ContenidoAut = m_OnOff_y_Red.meConn.Exec("SELECT * FROM autores WHERE id_revista = &1", FMain.idMetadatoRevista.Text)
-      If Error Then
-        Message.Error("Error al cargar autores: " & Error.Text)
-        Return
-      End If
-      '
-      FMain.gbMetadatosAutores.Rows.Count = ContenidoAut.Count
-      m_Autores.ConfigurarTableViewAutores(gbMetadatosAutores)
-      '
-      ' Configurar interfaz para revista
-      ConfigurarInterfazRevista()
-    End If
-  End If
+    Dim ResultadoInsert As Result
+
+    sSQL = "INSERT INTO revistas (nombre_archivo, intTipoProducto) VALUES (&1, &2)"
+    ResultadoInsert = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto, m_Constantes.TIPO_REVISTA_MD)
+
+    ' Obtener el ID insertado
+    nuevoID = m_OnOff_y_Red.meConn.Exec("SELECT last_insert_rowid()")[0]
+
+    Message.Info("Proyecto registrado con metadatos iniciales.")
+  Endif
+
+  ' precargamos el combox de los estilos para bib
+  CargarCSLBibTeX()
+  m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
+
+  ' Mostrar los ID
+  idMetadatoRevista.Text = nuevoID
+  intTipoProducto.Text = m_Constantes.TIPO_LIBRO_MD
+
+  ' Limpiar caché o entorno previo
+  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+
+  ' bibtex
+  m_Bibtex.LimpiarTextboxBibtex()
+  m_Bibtex.RellenarComboBoxBibTeX()
+
+  sSQL = "SELECT * FROM bibtex WHERE id_revista = &1"
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec(sSQL, nuevoID)
+
+  If ContenidoBib.Available Then
+    gvReferenciasEnCurso.Clear
+    gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+    m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+    gvReferenciasEnCurso.Refresh
+  Else
+    gvReferenciasEnCurso.Rows.Count = 0
+  Endif
+
+  CargarScripts()
+
+  ' Configurar interfaz para revista MD
+  ConfigurarInterfazRevista()
+
+  ' Finalmente, controlar estructura de carpetas
+  ControlarCarpetas()
+
+  ' ' IMPORTANTE: Verificar si se pueden cargar los metadatos
+  ' Dim bExito As Boolean
+  '
+  ' bExito = m_Metadatos.CargarMetadatosDelProyecto(Dialog.Path)
+  ' If Error Then
+  '   Message.Error("Error al cargar el archivo: " & Error.Text)
+  '   Return
+  ' End If
+  '
+  ' ' Si CargarMetadatosDelProyecto devuelve False, también salir
+  ' If Not bExito Then
+  '   ' El mensaje de error ya se mostró en la función CargarMetadatosDelProyecto
+  '   Return
+  ' Else
+  '   ' Solo continuar si todo está bien
+  '   m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
+  '   txtProyecto.Text = Dialog.Path
+  '   NombreProyecto = File.BaseName(Dialog.Path)
+  '   RutaProyecto = File.Dir(txtProyecto.Text)
+  '   Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+  '   ControlarCarpetas()' primero nos aseguramos de que existan las carpetas
+  '   m_FuncionesGenericas.CopiarArchivosBase()
+  ' '
+  ' ' bibtex
+  ' ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
+  ' If Error Then
+  '   Message.Error("Error al cargar referencias: " & Error.Text)
+  '   Return
+  ' End If
+  ' '
+  ' gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+  ' m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+  ' m_Bibtex.RellenarComboBoxBibTeX()
+  '
+  '   ' Libros, revista y artículos
+  '   ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
+  '   If Error Then
+  '     Message.Error("Error al cargar artículos: " & Error.Text)
+  '     Return
+  '   Else
+  '     gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
+  '     m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
+  '     m_FuncionesGenericas.LlenarComboBoxArticulos()
+  '     '
+  '     ' Autores
+  '     ContenidoAut = m_OnOff_y_Red.meConn.Exec("SELECT * FROM autores WHERE id_revista = &1", FMain.idMetadatoRevista.Text)
+  '     If Error Then
+  '       Message.Error("Error al cargar autores: " & Error.Text)
+  '       Return
+  '     End If
+  '     '
+  '     FMain.gbMetadatosAutores.Rows.Count = ContenidoAut.Count
+  '     m_Autores.ConfigurarTableViewAutores(gbMetadatosAutores)
+  '     '
+  '     ' Configurar interfaz para revista
+  '     ConfigurarInterfazRevista()
+  '   End If
+  ' End If
 
 End
 
@@ -2205,65 +2269,6 @@ Public Sub txtCoordinadorEditorialEmail_LostFocus()
 
 End
 
-Public Sub txtFechaPublicacion_KeyPress()
-
-  Dim texto As String = txtFechaPublicacion.Text
-  Dim posicion As Integer = txtFechaPublicacion.Pos
-  Dim tecla As String = Key.Text
-
-  ' Permitir teclas de control
-  If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or Key.Code = Key.Left Or Key.Code = Key.Right Then Return
-  If Key.Code >= Key.F1 Then Return  ' Teclas de función
-
-  ' Limitar longitud máxima (YYYY-MM-DD = 10 caracteres)
-  If Len(texto) >= 10 And Key.Code <> Key.BackSpace Then
-    Stop Event
-    Return
-  Endif
-
-  ' Validar según posición
-  Select Case posicion
-    Case 0, 1, 2, 3  ' Año (posiciones 0-3): solo números
-      If tecla < "0" Or tecla > "9" Then Stop Event
-
-    Case 4  ' Primera posición del guión (posición 4): solo "-"
-      If tecla <> "-" Then Stop Event
-
-    Case 5, 6  ' Mes (posiciones 5-6): solo números
-      If tecla < "0" Or tecla > "9" Then Stop Event
-
-    Case 7  ' Segunda posición del guión (posición 7): solo "-"
-      If tecla <> "-" Then Stop Event
-
-    Case 8, 9  ' Día (posiciones 8-9): solo números
-      If tecla < "0" Or tecla > "9" Then Stop Event
-
-    Default
-      Stop Event  ' No permitir más caracteres
-  End Select
-
-End
-
-Public Sub txtFechaPublicacion_LostFocus()
-
-  Dim fecha As String = Trim(Me.Text)
-
-  If fecha <> "" And Len(fecha) = 10 Then
-    Dim partes As String[] = Split(fecha, "-")
-    If partes.Count = 3 Then
-      ' Dim anio As Integer = Val(partes[0])
-      Dim mes As Integer = Val(partes[1])
-      Dim dia As Integer = Val(partes[2])
-
-      If mes < 1 Or mes > 12 Or dia < 1 Or dia > 31 Then
-        Message.Warning("Fecha no válida")
-        Me.SetFocus()
-      Endif
-    Endif
-  Endif
-
-End
-
 Public Sub CargarCSLBibTeX()
 
   Dim rutaArchivos As String = User.Home & "/.gbadoc/csl"
@@ -2347,6 +2352,151 @@ Public Sub CargarCSLBibTeX()
 
   If cmbTipoCSL.Count = 0 Then
     Message.Info("No se encontraron archivos válidos en el directorio")
+  Endif
+
+End
+
+Public Sub txtRevistaIdioma_KeyPress()
+
+  Dim texto As String = txtRevistaIdioma.Text
+  Dim posicion As Integer = txtRevistaIdioma.Pos
+  Dim tecla As String = Key.Text
+
+  ' Permitir teclas de control
+  If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or Key.Code = Key.Left Or Key.Code = Key.Right Then Return
+  If Key.Code >= Key.F1 Then Return  ' Teclas de función
+
+  ' Limitar longitud máxima (aa-AA = 5 caracteres)
+  If Len(texto) >= 5 And Key.Code <> Key.BackSpace Then
+    Stop Event
+    Return
+  Endif
+
+  ' Validar según posición
+  Select Case posicion
+    Case 0, 1  ' Primeras dos posiciones: solo letras minúsculas
+      If tecla < "a" Or tecla > "z" Then Stop Event
+    Case 2  ' Tercera posición: solo guión
+      If tecla <> "-" Then Stop Event
+    Case 3, 4  ' Cuarta y quinta posición: solo letras mayúsculas
+      If tecla < "A" Or tecla > "Z" Then Stop Event
+    Default
+      Stop Event  ' No permitir más caracteres
+  End Select
+
+End
+
+Public Sub txtRevistaIdioma_LostFocus()
+
+  Dim idioma As String = Trim(txtRevistaIdioma.Text)
+
+  ' Si está vacío, es válido - restaurar color y salir
+  If idioma = "" Then
+    txtRevistaIdioma.Background = Color.White
+    Return
+  Endif
+
+  ' Si no está vacío, debe tener exactamente 5 caracteres
+  If Len(idioma) <> 5 Then
+    txtRevistaIdioma.Background = Color.Pink
+    Message.Warning("El formato del idioma debe ser: aa-AA (por ejemplo: es-ES)")
+    txtRevistaIdioma.SetFocus()
+    Return
+  Endif
+
+  ' Validar formato completo
+  Dim char1 As String = Mid(idioma, 1, 1)
+  Dim char2 As String = Mid(idioma, 2, 1)
+  Dim char3 As String = Mid(idioma, 3, 1)
+  Dim char4 As String = Mid(idioma, 4, 1)
+  Dim char5 As String = Mid(idioma, 5, 1)
+
+  If (char1 < "a" Or char1 > "z") Or
+      (char2 < "a" Or char2 > "z") Or
+      (char3 <> "-") Or
+      (char4 < "A" Or char4 > "Z") Or
+      (char5 < "A" Or char5 > "Z") Then
+    txtRevistaIdioma.Background = Color.Pink
+    Message.Warning("El formato del idioma debe ser: aa-AA (por ejemplo: es-ES)")
+    txtRevistaIdioma.SetFocus()
+  Else
+    txtRevistaIdioma.Background = Color.White
+  Endif
+
+End
+
+Public Sub txtFechaPublicacion_KeyPress()
+
+  Dim texto As String = txtFechaPublicacion.Text
+  Dim posicion As Integer = txtFechaPublicacion.Pos
+  Dim tecla As String = Key.Text
+
+  ' Permitir teclas de control
+  If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or Key.Code = Key.Left Or Key.Code = Key.Right Then Return
+  If Key.Code >= Key.F1 Then Return  ' Teclas de función
+
+  ' Limitar longitud máxima (YYYY-MM-DD = 10 caracteres)
+  If Len(texto) >= 10 And Key.Code <> Key.BackSpace Then
+    Stop Event
+    Return
+  Endif
+
+  ' Validar según posición
+  Select Case posicion
+    Case 0, 1, 2, 3  ' Año (posiciones 0-3): solo números
+      If tecla < "0" Or tecla > "9" Then Stop Event
+    Case 4  ' Primera posición del guión (posición 4): solo "-"
+      If tecla <> "-" Then Stop Event
+    Case 5, 6  ' Mes (posiciones 5-6): solo números
+      If tecla < "0" Or tecla > "9" Then Stop Event
+    Case 7  ' Segunda posición del guión (posición 7): solo "-"
+      If tecla <> "-" Then Stop Event
+    Case 8, 9  ' Día (posiciones 8-9): solo números
+      If tecla < "0" Or tecla > "9" Then Stop Event
+    Default
+      Stop Event  ' No permitir más caracteres
+  End Select
+
+End
+
+Public Sub txtFechaPublicacion_LostFocus()
+
+  Dim fecha As String = Trim(txtFechaPublicacion.Text)  ' Cambio aquí: usar txtFechaPublicacion.Text
+
+  ' Si está vacío, restaurar color blanco y salir
+  If fecha = "" Then
+    txtFechaPublicacion.Background = Color.White
+    Return
+  Endif
+
+  ' Si no tiene 10 caracteres, es inválido
+  If Len(fecha) <> 10 Then
+    txtFechaPublicacion.Background = Color.Pink
+    Message.Warning("La fecha debe tener el formato año-mes-día (YYYY-MM-DD)")
+    txtFechaPublicacion.SetFocus()
+    Return
+  Endif
+
+  ' Validar estructura y valores
+  Dim partes As String[] = Split(fecha, "-")
+  If partes.Count <> 3 Then
+    txtFechaPublicacion.Background = Color.Pink
+    Message.Warning("La fecha debe tener el formato año-mes-día (YYYY-MM-DD)")
+    txtFechaPublicacion.SetFocus()
+    Return
+  Endif
+
+  Dim anio As Integer = Val(partes[0])
+  Dim mes As Integer = Val(partes[1])
+  Dim dia As Integer = Val(partes[2])
+
+  ' Validar rangos
+  If anio < 1900 Or anio > 2100 Or mes < 1 Or mes > 12 Or dia < 1 Or dia > 31 Then
+    txtFechaPublicacion.Background = Color.Pink
+    Message.Warning("Fecha fuera de rango, no es válida")
+    txtFechaPublicacion.SetFocus()
+  Else
+    txtFechaPublicacion.Background = Color.White
   Endif
 
 End
