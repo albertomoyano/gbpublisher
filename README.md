@@ -11,12 +11,12 @@ Este software fue desarrollado para asistir en la edición técnica y académica
 
 ## Decisión arquitectónica
 
-La aplicación está desarrollada como **software de escritorio en Linux**, específicamente diseñada para funcionar bajo entornos **Debian + GTK**, utilizando:
+La aplicación está desarrollada como **software de escritorio en GNU/Linux**, específicamente diseñada para funcionar bajo entornos **Debian + GTK**, utilizando:
 
 - **Gambas** como entorno de desarrollo.
 - **SQLite** como base de datos.
 - **Markdown** y **LaTeX** como formatos base.
-- **Herramientas del sistema Linux** para procesamiento.
+- **Herramientas del sistema GNU/Linux** para procesamiento.
 - **Scripts en Python, Lua y Bash** cuando resultan más eficaces o rápidos que una implementación nativa.
 
 ## La aplicación como orquestador de flujos
@@ -31,7 +31,7 @@ Gambas resulta ideal para este tipo de arquitectura: su integración con el ento
 
 ## Valor estratégico de Gambas
 
-Algunos componentes del entorno Gambas, como `gb.term`, son difíciles de replicar con el mismo nivel de integración en otras plataformas. La posibilidad de embebido de consola, manipulación directa de archivos, ventanas modales simples y control total del sistema convierten a Gambas en una opción subestimada pero poderosa para el desarrollo de herramientas técnicas en Linux.
+Algunos componentes del entorno Gambas, como `gb.term`, son difíciles de replicar con el mismo nivel de integración en otras plataformas. La posibilidad de embebido de consola, manipulación directa de archivos, ventanas modales simples y control total del sistema convierten a Gambas en una opción subestimada pero poderosa para el desarrollo de herramientas técnicas en GNU/Linux.
 
 ## Razones para no hacer una versión web
 
