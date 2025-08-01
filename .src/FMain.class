@@ -799,41 +799,6 @@ Public Sub Form_Click()
 
 End
 
-Public Sub ButtonMostrarAbstract_Click()
-
-  f_TXTextendido.OriginalTextBox = txtAbstract
-  f_TXTextendido.ShowModal
-
-End
-
-Public Sub ButtonMostrarNote_Click()
-
-  f_TXTextendido.OriginalTextBox = txtNote
-  f_TXTextendido.ShowModal
-
-End
-
-Public Sub ButtonMostrarLibrary_Click()
-
-  f_TXTextendido.OriginalTextBox = txtLibrary
-  f_TXTextendido.ShowModal
-
-End
-
-Public Sub ButtonMostrarAnnotation_Click()
-
-  f_TXTextendido.OriginalTextBox = txtAnnotation
-  f_TXTextendido.ShowModal
-
-End
-
-Public Sub ButtonMostrarFile_Click()
-
-  f_TXTextendido.OriginalTextBox = txtFile
-  f_TXTextendido.ShowModal
-
-End
-
 Public Sub BtnBuscarClaveBib_Click()
 
   m_FuncionesGenericas.BuscarPorCampo(txtClaveBibtex, gvReferenciasEnCurso)
@@ -1533,7 +1498,7 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
       Dialog.Filter = ["*.tex", "Libro en LaTeX"]
   End Select
 
-  Dialog.AutoExt = True
+  Dialog.AutoExt = False  ' IMPORTANTE: No cambiar extensiones automáticamente
   Dialog.Path = User.Home
 
   If Dialog.OpenFile() Then Return
@@ -1553,12 +1518,49 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
 
 End
 
+Private Function ObtenerDescripcionTipo(iTipo As Integer) As String
+
+  Select Case iTipo
+    Case m_Constantes.TIPO_REVISTA_MD
+      Return "Revista MD"
+    Case m_Constantes.TIPO_LIBRO_MD
+      Return "Libro MD"
+    Case m_Constantes.TIPO_LIBRO_LATEX
+      Return "Libro LaTeX"
+    Default
+      Return "Tipo desconocido (" & iTipo & ")"
+  End Select
+
+End
+
 Public Sub AbrirRevistaMD()
 
-  txtProyecto.Text = Dialog.Path
-  NombreProyecto = File.BaseName(Dialog.Path)
-  RutaProyecto = File.Dir(txtProyecto.Text)
+  Dim sRutaSeleccionada As String = Dialog.Path
 
+  ' VALIDAR EXTENSIÓN ANTES DE CONTINUAR
+  Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
+
+  If sExtension <> "md" Then
+    Message.Error("El archivo seleccionado no es un archivo markdown (.md)." & gb.NewLine &
+      "Archivo: " & sRutaSeleccionada & gb.NewLine &
+      "Extensión encontrada: ." & sExtension & gb.NewLine &
+      "Use la función correspondiente para abrir archivos de ese tipo." & gb.NewLine & "\n" &
+      "No se ejecutará ninguna acción.")
+    Return
+  Endif
+
+  ' VALIDACIÓN ADICIONAL: Verificar que el archivo comience con 'r' (revista)
+  Dim sNombreArchivo As String = LCase(File.Name(sRutaSeleccionada))
+  If Left(sNombreArchivo, 1) <> "r" Then
+    Message.Error("El archivo seleccionado no es una revista." & gb.NewLine &
+      "Los archivos de revista deben comenzar con <b>r</b> (en minúscula)." & gb.NewLine &
+      "Se intento abrir: <b>" & File.Name(sRutaSeleccionada) & "</b>")
+    Return
+  Endif
+
+  txtProyecto.Text = sRutaSeleccionada
+  NombreProyecto = File.Name(sRutaSeleccionada)
+  RutaProyecto = File.Dir(sRutaSeleccionada)
   m_Metadatos.LimpiarCamposMetadatos()
 
   Dim sSQL As String
@@ -1566,31 +1568,45 @@ Public Sub AbrirRevistaMD()
   Dim nuevoID As Integer
 
   ' Verificar si ya existe el proyecto
-  sSQL = "SELECT id FROM revistas WHERE nombre_archivo = &1"
+  sSQL = "SELECT id, intTipoProducto FROM revistas WHERE nombre_archivo = &1"
   Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
 
   If Contenido.Available Then
+    ' El proyecto existe - verificar tipo ANTES de continuar
+    Dim iTipoBD As Integer = Contenido["intTipoProducto"]
+
+    ' CORRECCIÓN: Comparar con TIPO_REVISTA_MD, no TIPO_LIBRO_MD
+    If iTipoBD <> m_Constantes.TIPO_REVISTA_MD Then
+      Message.Error("El archivo seleccionado no corresponde con el tipo de producto elegido." & gb.NewLine &
+        "Se esperaba: Revista MD" & gb.NewLine &  ' CORRECCIÓN: Decir "Revista MD"
+        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
+      Return  ' CORRECCIÓN: Solo Return, no Me.Close()
+    Endif
+
     Message.Info("El archivo '" & NombreProyecto & "' ya está registrado.")
     nuevoID = Contenido["id"]
   Else
+    ' Proyecto nuevo - crear registro
     Dim ResultadoInsert As Result
-
     sSQL = "INSERT INTO revistas (nombre_archivo, intTipoProducto) VALUES (&1, &2)"
     ResultadoInsert = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto, m_Constantes.TIPO_REVISTA_MD)
-
     ' Obtener el ID insertado
     nuevoID = m_OnOff_y_Red.meConn.Exec("SELECT last_insert_rowid()")[0]
-
     Message.Info("Proyecto registrado con metadatos iniciales.")
   Endif
 
   ' precargamos el combox de los estilos para bib
   CargarCSLBibTeX()
-  m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
+
+  ' Cargar metadatos - verificar si la carga fue exitosa
+  If Not m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto) Then
+    ' CORRECCIÓN: Solo Return, no Me.Close()
+    Return
+  Endif
 
   ' Mostrar los ID
   idMetadatoRevista.Text = nuevoID
-  intTipoProducto.Text = m_Constantes.TIPO_LIBRO_MD
+  intTipoProducto.Text = m_Constantes.TIPO_REVISTA_MD
 
   ' Limpiar caché o entorno previo
   Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
@@ -1598,10 +1614,8 @@ Public Sub AbrirRevistaMD()
   ' bibtex
   m_Bibtex.LimpiarTextboxBibtex()
   m_Bibtex.RellenarComboBoxBibTeX()
-
   sSQL = "SELECT * FROM bibtex WHERE id_revista = &1"
   ContenidoBib = m_OnOff_y_Red.meConn.Exec(sSQL, nuevoID)
-
   If ContenidoBib.Available Then
     gvReferenciasEnCurso.Clear
     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
@@ -1619,72 +1633,56 @@ Public Sub AbrirRevistaMD()
   ' Finalmente, controlar estructura de carpetas
   ControlarCarpetas()
 
-  ' ' IMPORTANTE: Verificar si se pueden cargar los metadatos
-  ' Dim bExito As Boolean
-  '
-  ' bExito = m_Metadatos.CargarMetadatosDelProyecto(Dialog.Path)
-  ' If Error Then
-  '   Message.Error("Error al cargar el archivo: " & Error.Text)
-  '   Return
-  ' End If
-  '
-  ' ' Si CargarMetadatosDelProyecto devuelve False, también salir
-  ' If Not bExito Then
-  '   ' El mensaje de error ya se mostró en la función CargarMetadatosDelProyecto
-  '   Return
-  ' Else
-  '   ' Solo continuar si todo está bien
-  '   m_InicioCierre.VerificarYAgregarProyecto(File.BaseName(Dialog.Path))
-  '   txtProyecto.Text = Dialog.Path
-  '   NombreProyecto = File.BaseName(Dialog.Path)
-  '   RutaProyecto = File.Dir(txtProyecto.Text)
-  '   Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-  '   ControlarCarpetas()' primero nos aseguramos de que existan las carpetas
-  '   m_FuncionesGenericas.CopiarArchivosBase()
-  ' '
-  ' ' bibtex
-  ' ContenidoBib = m_OnOff_y_Red.meConn.Exec("SELECT * FROM bibtex WHERE id_revista=" & idMetadatoRevista.Text)
-  ' If Error Then
-  '   Message.Error("Error al cargar referencias: " & Error.Text)
-  '   Return
-  ' End If
-  ' '
-  ' gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
-  ' m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-  ' m_Bibtex.RellenarComboBoxBibTeX()
-  '
-  '   ' Libros, revista y artículos
-  '   ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
-  '   If Error Then
-  '     Message.Error("Error al cargar artículos: " & Error.Text)
-  '     Return
-  '   Else
-  '     gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
-  '     m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
-  '     m_FuncionesGenericas.LlenarComboBoxArticulos()
-  '     '
-  '     ' Autores
-  '     ContenidoAut = m_OnOff_y_Red.meConn.Exec("SELECT * FROM autores WHERE id_revista = &1", FMain.idMetadatoRevista.Text)
-  '     If Error Then
-  '       Message.Error("Error al cargar autores: " & Error.Text)
-  '       Return
-  '     End If
-  '     '
-  '     FMain.gbMetadatosAutores.Rows.Count = ContenidoAut.Count
-  '     m_Autores.ConfigurarTableViewAutores(gbMetadatosAutores)
-  '     '
-  '     ' Configurar interfaz para revista
-  '     ConfigurarInterfazRevista()
-  '   End If
-  ' End If
-
 End
+
+'   ' Libros, revista y artículos
+'   ContenidoArt = m_OnOff_y_Red.meConn.Exec("SELECT * FROM articulos WHERE id_revistas=" & idMetadatoRevista.Text)
+'   If Error Then
+'     Message.Error("Error al cargar artículos: " & Error.Text)
+'     Return
+'   Else
+'     gbMetadatosArticulos.Rows.Count = ContenidoArt.Count
+'     m_Articulos.ConfigurarTableViewArticulos(gbMetadatosArticulos)
+'     m_FuncionesGenericas.LlenarComboBoxArticulos()
+'     '
+'     ' Autores
+'     ContenidoAut = m_OnOff_y_Red.meConn.Exec("SELECT * FROM autores WHERE id_revista = &1", FMain.idMetadatoRevista.Text)
+'     If Error Then
+'       Message.Error("Error al cargar autores: " & Error.Text)
+'       Return
+'     End If
+'     '
+'     FMain.gbMetadatosAutores.Rows.Count = ContenidoAut.Count
+'     m_Autores.ConfigurarTableViewAutores(gbMetadatosAutores)
+'     '
 
 Public Sub AbrirLibroMD()
 
-  txtProyecto.Text = Dialog.Path
-  NombreProyecto = File.BaseName(Dialog.Path)
-  RutaProyecto = File.Dir(txtProyecto.Text)
+  Dim sRutaSeleccionada As String = Dialog.Path
+
+  ' VALIDAR EXTENSIÓN ANTES DE CONTINUAR
+  Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
+
+  If sExtension <> "md" Then
+    Message.Error("El archivo seleccionado no es un archivo markdown (.md)." & gb.NewLine &
+      "Archivo: " & sRutaSeleccionada & gb.NewLine &
+      "Extensión encontrada: ." & sExtension & gb.NewLine &
+      "Use la función correspondiente para abrir archivos de ese tipo.")
+    Return  ' Solo salir de la función, no cerrar la aplicación
+  Endif
+
+  ' VALIDACIÓN ADICIONAL: Verificar que el archivo comience con 'l' (libro)
+  Dim sNombreArchivo As String = LCase(File.Name(sRutaSeleccionada))
+  If Left(sNombreArchivo, 1) <> "l" Then
+    Message.Error("El archivo seleccionado no es un libro en markdown." & gb.NewLine &
+      "Los archivos de libro deben comenzar con <b>l</b> (en minúscula)." & gb.NewLine &
+      "Se intento abrir: <b>" & File.Name(sRutaSeleccionada) & "</b>")
+    Return
+  Endif
+
+  txtProyecto.Text = sRutaSeleccionada
+  NombreProyecto = File.Name(sRutaSeleccionada)
+  RutaProyecto = File.Dir(sRutaSeleccionada)
 
   m_Metadatos.LimpiarCamposMetadatos()
 
@@ -1693,27 +1691,42 @@ Public Sub AbrirLibroMD()
   Dim nuevoID As Integer
 
   ' Verificar si ya existe el proyecto
-  sSQL = "SELECT id FROM revistas WHERE nombre_archivo = &1"
+  sSQL = "SELECT id, intTipoProducto FROM revistas WHERE nombre_archivo = &1"
   Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
 
   If Contenido.Available Then
+    ' El proyecto existe - verificar tipo ANTES de continuar
+    Dim iTipoBD As Integer = Contenido["intTipoProducto"]
+
+    If iTipoBD <> m_Constantes.TIPO_LIBRO_MD Then
+      Message.Error("El archivo seleccionado no corresponde con el tipo de producto elegido." & gb.NewLine &
+        "Se esperaba: Libro MD" & gb.NewLine &
+        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
+
+      ' Solo salir de la función, no cerrar la aplicación
+      Return
+    Endif
+
     Message.Info("El archivo '" & NombreProyecto & "' ya está registrado.")
     nuevoID = Contenido["id"]
   Else
+    ' Proyecto nuevo - crear registro
     Dim ResultadoInsert As Result
-
     sSQL = "INSERT INTO revistas (nombre_archivo, intTipoProducto) VALUES (&1, &2)"
     ResultadoInsert = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto, m_Constantes.TIPO_LIBRO_MD)
-
     ' Obtener el ID insertado
     nuevoID = m_OnOff_y_Red.meConn.Exec("SELECT last_insert_rowid()")[0]
-
     Message.Info("Proyecto registrado con metadatos iniciales.")
   Endif
 
   ' precargamos el combox de los estilos para bib
   CargarCSLBibTeX()
-  m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
+
+  ' Cargar metadatos - verificar si la carga fue exitosa
+  If Not m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto) Then
+    ' Si CargarMetadatosDelProyecto retorna False, solo salir
+    Return
+  Endif
 
   ' Mostrar los ID
   idMetadatoRevista.Text = nuevoID
@@ -1725,10 +1738,8 @@ Public Sub AbrirLibroMD()
   ' bibtex
   m_Bibtex.LimpiarTextboxBibtex()
   m_Bibtex.RellenarComboBoxBibTeX()
-
   sSQL = "SELECT * FROM bibtex WHERE id_revista = &1"
   ContenidoBib = m_OnOff_y_Red.meConn.Exec(sSQL, nuevoID)
-
   If ContenidoBib.Available Then
     gvReferenciasEnCurso.Clear
     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
@@ -1750,9 +1761,22 @@ End
 
 Public Sub AbrirLibroTEX()
 
-  txtProyecto.Text = Dialog.Path
-  NombreProyecto = File.BaseName(Dialog.Path)
-  RutaProyecto = File.Dir(txtProyecto.Text)
+  Dim sRutaSeleccionada As String = Dialog.Path
+
+  ' VALIDAR EXTENSIÓN ANTES DE CONTINUAR
+  Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
+
+  If sExtension <> "tex" Then
+    Message.Error("El archivo seleccionado no es un archivo latex (.tex)." & gb.NewLine &
+      "Archivo: " & sRutaSeleccionada & gb.NewLine &
+      "Extensión encontrada: ." & sExtension & gb.NewLine &
+      "Use la función correspondiente para abrir archivos de ese tipo.")
+    Return  ' Solo salir de la función, no cerrar la aplicación
+  Endif
+
+  txtProyecto.Text = sRutaSeleccionada
+  NombreProyecto = File.Name(sRutaSeleccionada)
+  RutaProyecto = File.Dir(sRutaSeleccionada)
 
   m_Metadatos.LimpiarCamposMetadatos()
 
@@ -1761,25 +1785,42 @@ Public Sub AbrirLibroTEX()
   Dim nuevoID As Integer
 
   ' Verificar si ya existe el proyecto
-  sSQL = "SELECT id FROM revistas WHERE nombre_archivo = &1"
+  sSQL = "SELECT id, intTipoProducto FROM revistas WHERE nombre_archivo = &1"
   Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
 
   If Contenido.Available Then
+
+    ' El proyecto existe - verificar tipo ANTES de continuar
+    Dim iTipoBD As Integer = Contenido["intTipoProducto"]
+
+    If iTipoBD <> m_Constantes.TIPO_LIBRO_MD Then
+      Message.Error("El archivo seleccionado no corresponde con el tipo de producto elegido." & gb.NewLine &
+        "Se esperaba: Libro TEX" & gb.NewLine &
+        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
+      Return
+    Endif
+
     Message.Info("El archivo '" & NombreProyecto & "' ya está registrado.")
     nuevoID = Contenido["id"]
   Else
+    ' Proyecto nuevo - crear registro
     Dim ResultadoInsert As Result
-
     sSQL = "INSERT INTO revistas (nombre_archivo, intTipoProducto) VALUES (&1, &2)"
     ResultadoInsert = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto, m_Constantes.TIPO_LIBRO_LATEX)
-
     ' Obtener el ID insertado
     nuevoID = m_OnOff_y_Red.meConn.Exec("SELECT last_insert_rowid()")[0]
-
     Message.Info("Proyecto registrado con metadatos iniciales.")
   Endif
 
-  m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto)
+  ' no es necesario cargar el combox de los estilos para bib
+  ' CargarCSLBibTeX()
+
+  ' Cargar metadatos - verificar si la carga fue exitosa
+  If Not m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto) Then
+    ' Si CargarMetadatosDelProyecto retorna False, salir
+    Me.Close()  ' O Application.Quit()
+    Return
+  Endif
 
   ' Mostrar los ID
   idMetadatoRevista.Text = nuevoID
@@ -1791,10 +1832,8 @@ Public Sub AbrirLibroTEX()
   ' bibtex
   m_Bibtex.LimpiarTextboxBibtex()
   m_Bibtex.RellenarComboBoxBibTeX()
-
   sSQL = "SELECT * FROM bibtex WHERE id_revista = &1"
   ContenidoBib = m_OnOff_y_Red.meConn.Exec(sSQL, nuevoID)
-
   If ContenidoBib.Available Then
     gvReferenciasEnCurso.Clear
     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
@@ -1804,7 +1843,9 @@ Public Sub AbrirLibroTEX()
     gvReferenciasEnCurso.Rows.Count = 0
   Endif
 
-  ' Configurar interfaz para libro LaTeX
+  CargarScripts()
+
+  ' Configurar interfaz para libro MD
   ConfigurarInterfazLibroTEX()
 
   ' Finalmente, controlar estructura de carpetas
@@ -2498,5 +2539,105 @@ Public Sub txtFechaPublicacion_LostFocus()
   Else
     txtFechaPublicacion.Background = Color.White
   Endif
+
+End
+
+Public Sub ButtonSeleccionarLogoLicencia_Click()
+
+  Dialog.Title = "Seleccionar archivo"
+  Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
+  Dialog.AutoExt = True
+  Dialog.Path = RutaProyecto & "/media/"
+  If Dialog.OpenFile() Then
+    Return
+  Else
+    txtImagenTapita.Text = File.Name(Dialog.Path)
+  Endif
+Catch
+  Message.Error("No se pudo abrir el archivo")
+
+End
+
+Public Sub ButtonVerResumenEs_Click()
+
+  f_TXTextendido.OriginalTextBox = txtLibroResumenEs
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonVerResumenEn_Click()
+
+  f_TXTextendido.OriginalTextBox = txtLibroResumenEn
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarResumenEs_Click()
+
+  f_TXTextendido.OriginalTextBox = txtResumenEs
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarResumenEn_Click()
+
+  f_TXTextendido.OriginalTextBox = txtResumenEn
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarAutorBiografia_Click()
+
+  f_TXTextendido.OriginalTextBox = txtAutorBiografia
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarAbstract_Click()
+
+  f_TXTextendido.OriginalTextBox = txtAbstract
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarNote_Click()
+
+  f_TXTextendido.OriginalTextBox = txtNote
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarLibrary_Click()
+
+  f_TXTextendido.OriginalTextBox = txtLibrary
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarAnnotation_Click()
+
+  f_TXTextendido.OriginalTextBox = txtAnnotation
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub ButtonMostrarFile_Click()
+
+  f_TXTextendido.OriginalTextBox = txtFile
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub btnMostrarGlosarioDescripcionExtendido_Click()
+
+  f_TXTextendido.OriginalTextBox = txtDescripcionGlosario
+  f_TXTextendido.ShowModal
+
+End
+
+Public Sub btnTextoTeiExtendido_Click()
+
+  f_TXTextendido.OriginalTextBox = txtComentariosTei
+  f_TXTextendido.ShowModal
 
 End

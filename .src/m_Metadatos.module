@@ -18,20 +18,18 @@ Public Function ObtenerDescripcionTipo(valor As Integer) As String
 
 End
 
-Public Function CargarMetadatosDelProyecto(sRutaArchivo As String) As Boolean
+Public Function CargarMetadatosDelProyecto(sNombreArchivoCompleto As String) As Boolean
 
   Dim sSQL As String
-  Dim sNombreArchivo As String
   Dim iTipoBD As Integer
 
   If Not m_OnOff_y_Red.meConn Or If m_OnOff_y_Red.meConn.Opened = False Then
     m_OnOff_y_Red.OnRed()
   Endif
 
-  sNombreArchivo = File.BaseName(sRutaArchivo)
-
+  ' Usar el nombre completo del archivo (con extensión)
   sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
-  Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
+  Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivoCompleto)
 
   If Contenido.Available Then
     iTipoBD = Contenido["intTipoProducto"]' Leemos tipo guardado como número
@@ -42,6 +40,24 @@ Public Function CargarMetadatosDelProyecto(sRutaArchivo As String) As Boolean
         "Tipo de archivo que se espera: " & ObtenerDescripcionTipo(FMain.TipoProyectoActual) & gb.NewLine &
         "Tipo de archivo que se obtiene: " & ObtenerDescripcionTipo(iTipoBD))
       Return False  ' Retornamos False en lugar de usar Error.Raise
+    Endif
+
+    ' VALIDACIÓN ADICIONAL: verificar que la extensión coincida con el tipo
+    Dim sExtension As String = File.Ext(sNombreArchivoCompleto)
+    Dim bExtensionValida As Boolean = False
+
+    Select Case iTipoBD
+      Case m_Constantes.TIPO_REVISTA_MD, m_Constantes.TIPO_LIBRO_MD
+        bExtensionValida = (sExtension = "md")
+      Case m_Constantes.TIPO_LIBRO_LATEX
+        bExtensionValida = (sExtension = "tex")
+    End Select
+
+    If Not bExtensionValida Then
+      Message.Error("La extensión del archivo no coincide con el tipo de proyecto." & gb.NewLine &
+        "Tipo de proyecto: " & ObtenerDescripcionTipo(iTipoBD) & gb.NewLine &
+        "Extensión encontrada: ." & sExtension)
+      Return False
     Endif
 
     ' Cargar datos del proyecto existente
@@ -109,14 +125,14 @@ Public Function CargarMetadatosDelProyecto(sRutaArchivo As String) As Boolean
     Dim nuevoReg As Result
     nuevoReg = m_OnOff_y_Red.meConn.Edit("revistas")
 
-    nuevoReg!nombre_archivo = sNombreArchivo
+    nuevoReg!nombre_archivo = sNombreArchivoCompleto
     nuevoReg!intTipoProducto = FMain.TipoProyectoActual ' Guardamos el tipo como entero
     nuevoReg.Update
     m_OnOff_y_Red.meConn.Commit()
 
     ' Recuperar el ID del nuevo registro
     sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
-    Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
+    Contenido = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivoCompleto)
     If Contenido.Available Then
       iIDProyecto = Contenido["id"]
       FMain.idMetadatoRevista.Text = Contenido["id"]
