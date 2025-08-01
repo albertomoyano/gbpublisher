@@ -49,7 +49,7 @@ El proceso editorial se realiza offline o en red local, sin exposición en la we
 
 ### 4. Alto rendimiento sin sobrecarga
 
-Al ser una aplicación nativa, no depende de navegadores ni intérpretes web. Esto garantiza velocidad, bajo uso de memoria y estabilidad en hardware modesto.
+Al ser una aplicación nativa no depende de navegadores ni intérpretes web. Esto garantiza velocidad, bajo uso de memoria y estabilidad en hardware modesto.
 
 ### 5. Estándares abiertos y editables
 
@@ -59,9 +59,8 @@ El uso de texto plano (LaTeX, Markdown) garantiza trazabilidad, edición con cua
 
 No todas las soluciones deben ser web. Las apps de escritorio siguen siendo el estándar en:
 
-- Edición profesional (DTP, InDesign, Affinity).
+- Edición profesional (InDesign, QuarkXpress, etc.).
 - Programación (IDEs).
-- Producción científica.
 - Sistemas cerrados o de misión crítica.
 
 Este proyecto no busca seguir modas tecnológicas, sino resolver problemas reales con eficiencia, robustez y apertura.
