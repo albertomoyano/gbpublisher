@@ -20,17 +20,16 @@ Soy editor especializado en textos académicos y científicos, con más de 700 t
 - lenguaje Markdown
 
 ### Nivel avanzado
+- lenguaje Gambas
 - aplicación InDesign
 - aplicación JabRef
-- lenguaje Gambas
-- lenguaje XML
-- lenguaje SQL
 
 ### Nivel general
-- lenguaje Python
+- lenguaje Bash
 - lenguaje HTML
 - lenguaje CSS
-
+- lenguaje XML
+- lenguaje SQL
 
 
 ## Experiencia profesional
