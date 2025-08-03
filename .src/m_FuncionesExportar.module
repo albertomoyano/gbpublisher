@@ -241,6 +241,85 @@ Public Sub GenerarPDFlibroMD()' usamos yaml no plantillas de latex
 
 End
 
+Public Sub GenerarTEXlibroMD()
+
+  Dim sSQL As String
+  Dim sNombreArchivo As String = NombreProyecto ' nombre del proyecto con extension
+  Dim rConsulta As Result
+  Dim sComandoCompleto As String
+  Dim ArchivoFinal As String
+
+  ' generamos la exportacion del bib
+  ExportarBibTeX()
+
+  sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
+  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
+
+  ' Verificar que la consulta devolvió resultados
+  If rConsulta.Available = 0 Then
+    Message.Error("No se encontró información para el proyecto: " & sNombreArchivo)
+    Return
+  Endif
+
+  ' Obtener CSL
+  Dim sCSL As String
+  If IsNull(rConsulta!cmbTipoCSL) Or Trim(rConsulta!cmbTipoCSL) = "" Then
+    sCSL = "apa.csl"
+  Else
+    Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
+    ' Buscar texto entre corchetes
+    If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
+      sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
+    Else
+      sCSL = "apa.csl"
+    Endif
+  Endif
+
+  ' Verificar si es varios autores para el filtro
+  Dim iVariosAutores As Integer = rConsulta!cmbAutoriaLibro
+
+  Dim sComando As String
+  sComando = BaseNombreProyecto & ".md articulos/*.md"
+  sComando &= " --filter pandoc-crossref"
+
+  ' Condicional para section-refs.lua
+  If iVariosAutores = 1 Then
+    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/files/section-refs.lua"
+  Endif
+
+  sComando &= " --citeproc"
+  sComando &= " --metadata lang=es-ES"
+  sComando &= " --metadata-file=" & User.Home & "/.gbadoc/yaml/pdf-libro.yaml"
+  sComando &= " --bibliography=files/" & BaseNombreProyecto & ".bib"
+  sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
+  sComando &= " --from markdown+smart"
+  sComando &= " --template=" & User.Home & "/.gbadoc/basetex/pdf-libro-md.tex"
+  sComando &= " --to latex"
+  sComando &= " --output=salidas/tex/" & BaseNombreProyecto & ".tex"
+  sComando &= " --resource-path=.:articulos:media:files"
+  sComando &= " --standalone"
+  sComando &= " --number-sections"
+
+  ' Comando completo con pandoc
+  sComandoCompleto = "pandoc " & sComando
+
+  ' Ejecutar pandoc y capturar posibles errores
+  FMain.TerminalViewProyecto.Input(sComandoCompleto & "\n")
+
+  ' Esperar un poco más para que se complete el proceso
+  Wait 2.0
+
+  ' Verificar si se creó el archivo de salida
+  ArchivoFinal = RutaProyecto & "/salidas/tex/" & BaseNombreProyecto & ".tex"
+
+  If Exist(ArchivoFinal) Then
+    Message.Info("Archivo LaTeX generado exitosamente: " & ArchivoFinal)
+  Else
+    Message.Error("El archivo LaTeX no se generó correctamente. Verifica el terminal para más detalles.")
+  Endif
+
+End
+
 Public Sub GenerarEPUBlibroMD()
 
   Dim sSQL As String
