@@ -3,8 +3,8 @@
 Private NombreProyecto As String = File.Name(FMain.txtProyecto.Text)
 Private BaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text)
 Private RutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+Public sComando As String
 
-'exportamos el archivo bibtex
 Public Sub ExportarBibTeX()
 
   Dim s As String
@@ -170,7 +170,7 @@ Public Sub ExportarBibTeX()
 
 End
 
-Public Sub GenerarPDFlibroMD()' usamos yaml no plantillas de latex
+Public Sub GenerarPDFlibroMD()
 
   Dim sSQL As String
   Dim sNombreArchivo As String = NombreProyecto ' nombre del proyecto con extension
@@ -178,7 +178,6 @@ Public Sub GenerarPDFlibroMD()' usamos yaml no plantillas de latex
 
   ' generamos la exportacion del bib
   ExportarBibTeX()
-
   sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
   rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
 
@@ -194,7 +193,6 @@ Public Sub GenerarPDFlibroMD()' usamos yaml no plantillas de latex
     sCSL = "apa.csl"
   Else
     Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
-
     ' Buscar texto entre corchetes
     If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
       sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
@@ -205,35 +203,70 @@ Public Sub GenerarPDFlibroMD()' usamos yaml no plantillas de latex
 
   ' Verificar si es varios autores para el filtro
   Dim iVariosAutores As Integer = rConsulta!cmbAutoriaLibro
-  '
-  ' Construir comando pandoc para PDF
-  Dim sComando As String
-  sComando = BaseNombreProyecto & ".md articulos/*.md"
-  sComando &= " --filter pandoc-crossref"
 
-  ' Condicional para section-refs.lua
+  ' Construir comando pandoc para PDF
+  Dim archivos As String[]
+  Dim archivo As String
+  Dim listaOrdenada As String = ""
+
+  ' Definir orden específico de secciones editoriales
+  Dim seccionesEspeciales As String[] = [
+    "00-primeras.md",     ' Páginas de cortesía
+    "01-portada.md",      ' Portada
+    "02-portadilla.md",   ' Portadilla
+    "03-legales.md",      ' Página legal
+    "04-dedicatoria.md",  ' Dedicatoria (opcional)
+    "05-sumario.md"       ' Sumario/índice
+  ]
+
+  ' Leer archivos con ruta completa
+  archivos = Dir(RutaProyecto &/ "articulos", "*.md")
+  Print "Archivos encontrados: " & archivos.Count
+  archivos.Sort()
+
+  ' 1. Primero agregar secciones especiales en orden
+  For Each archivo In seccionesEspeciales
+    If archivos.Exist(archivo) Then
+      listaOrdenada &= RutaProyecto &/ "articulos" &/ archivo & " "
+    Endif
+  Next
+
+  ' 2. Luego agregar el resto del contenido (caps, prólogos, etc.)
+  For Each archivo In archivos
+    ' Excluir secciones especiales ya procesadas y colofón
+    If Not seccionesEspeciales.Exist(archivo) And InStr(archivo, "99-colofon") <> 1 Then
+      listaOrdenada &= RutaProyecto &/ "articulos" &/ archivo & " "
+    Endif
+  Next
+
+  ' Construir comando pandoc completo
+  sComando = RutaProyecto &/ BaseNombreProyecto & ".md " & listaOrdenada
+  sComando &= " --filter pandoc-crossref"
+  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/sumario-pdf-control.lua"
+
   If iVariosAutores = 1 Then
-    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/files/section-refs.lua"
+    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/section-refs.lua"
   Endif
 
+  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/colofon.lua"
   sComando &= " --citeproc"
   sComando &= " --metadata lang=es-ES"
   sComando &= " --metadata-file=" & User.Home & "/.gbadoc/yaml/pdf-libro.yaml"
-  sComando &= " --bibliography=files/" & BaseNombreProyecto & ".bib"
+  sComando &= " --bibliography=" & RutaProyecto &/ "files" &/ BaseNombreProyecto & ".bib"
   sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
   sComando &= " --from markdown+smart"
   sComando &= " --pdf-engine=latexmk"
   sComando &= " --pdf-engine-opt=-lualatex"
   sComando &= " --to pdf"
-  sComando &= " --output=salidas/pdf/" & BaseNombreProyecto & ".pdf"
-  sComando &= " --resource-path=.:articulos:media:files"
+  sComando &= " --output=" & RutaProyecto &/ "salidas" &/ "pdf" &/ BaseNombreProyecto & ".pdf"
+  sComando &= " --resource-path=" & RutaProyecto & ":" & RutaProyecto &/ "articulos" & ":" & RutaProyecto &/ "media" & ":" & RutaProyecto &/ "files"
   sComando &= " --standalone"
   sComando &= " --number-sections"
   sComando &= " --template=" & User.Home & "/.gbadoc/basetex/pdf-libro-md.tex "
 
-  ' Ejecutar pandoc
-  FMain.TerminalViewProyecto.Input("pandoc " & sComando & "\n")
-  Wait 0.5
+  ' Ejecutar pandoc desde el directorio correcto
+  FMain.TerminalViewProyecto.Input("cd " & RutaProyecto & " && pandoc " & sComando & "\n")
+  Wait 2
 
   ' Mostrar mensaje de finalización
   Dim ArchivoFinal As String
@@ -284,7 +317,7 @@ Public Sub GenerarTEXlibroMD()
 
   ' Condicional para section-refs.lua
   If iVariosAutores = 1 Then
-    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/files/section-refs.lua"
+    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/section-refs.lua"
   Endif
 
   sComando &= " --citeproc"
@@ -296,7 +329,7 @@ Public Sub GenerarTEXlibroMD()
   sComando &= " --template=" & User.Home & "/.gbadoc/basetex/pdf-libro-md.tex"
   sComando &= " --to latex"
   sComando &= " --output=salidas/tex/" & BaseNombreProyecto & ".tex"
-  sComando &= " --resource-path=.:articulos:media:files"
+  sComando &= " --resource-path=" & RutaProyecto & ":" & RutaProyecto &/ "articulos" & ":" & RutaProyecto &/ "media" & ":" & RutaProyecto &/ "files"
   sComando &= " --standalone"
   sComando &= " --number-sections"
 
@@ -500,7 +533,7 @@ Public Sub GenerarEPUBlibroMD()
 
   ' Condicional para section-refs.lua
   If iVariosAutores = 1 Then
-    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/files/section-refs.lua"
+    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/section-refs.lua"
   Else If iVariosAutores = 0 Then
     sComando &= ""
   Endif
@@ -514,7 +547,7 @@ Public Sub GenerarEPUBlibroMD()
   sComando &= " --to epub3"
   sComando &= " --epub-cover-image=media/" & sImagenTapa
   sComando &= " --css=files/stylesheet1.css"
-  sComando &= " --resource-path=.:articulos:media:files"
+  sComando &= " --resource-path=" & RutaProyecto & ":" & RutaProyecto &/ "articulos" & ":" & RutaProyecto &/ "media" & ":" & RutaProyecto &/ "files"
   sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgia.ttf"
   sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiab.ttf"
   sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiai.ttf"
@@ -522,7 +555,7 @@ Public Sub GenerarEPUBlibroMD()
   sComando &= " --embed-resources"
   sComando &= " --standalone"
   sComando &= " --toc"
-  sComando &= " --toc-depth=2"
+  sComando &= " --toc-depth=0"
   sComando &= " --split-level=1"
 
   ' Ejecutar pandoc
