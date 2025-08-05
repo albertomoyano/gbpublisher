@@ -170,6 +170,225 @@ Public Sub ExportarBibTeX()
 
 End
 
+Public Sub GenerarEPUBlibroMD()
+
+  Dim sSQL As String
+  Dim sNombreArchivo As String = NombreProyecto
+  Dim rConsulta As Result
+  Dim iVariosAutores As Integer
+  Dim sImagenTapa As String
+  Dim sCSL As String
+  Dim sComando As String ' Añadir esta declaración que faltaba
+
+  ' Exportar BibTeX
+  ExportarBibTeX()
+
+  ' Obtener datos del proyecto
+  sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
+  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
+
+  If rConsulta.Available = 0 Then
+    Message.Error("No se encontró información para el proyecto: " & sNombreArchivo)
+    Return
+  Endif
+
+  ' Construir YAML (mantener el código existente del YAML)
+  Dim sYAML As String = ""
+  sYAML &= "title: " & Trim(rConsulta!txtRevistaTitulo) & "\n"
+
+  If Not IsNull(rConsulta!txtLibroSubtitulo) Then
+    sYAML &= "subtitle: " & Trim(rConsulta!txtLibroSubtitulo) & "\n"
+  Endif
+
+  If Not IsNull(rConsulta!txtLibroAutoria) Then
+    Dim autores As String[] = Split(Trim(rConsulta!txtLibroAutoria), ",")
+    sYAML &= "author:\n"
+    For Each autor As String In autores
+      sYAML &= "  - " & Trim(autor) & "\n"
+    Next
+  Endif
+
+  ' Palabras clave, género y audiencia
+  Dim aSubjects As New String[]
+  If Not IsNull(rConsulta!txtLibroPalabrasClaveEs) Then
+    Dim palabras As String[] = Split(Trim(rConsulta!txtLibroPalabrasClaveEs), ",")
+    For Each palabra As String In palabras
+      aSubjects.Add(Trim(palabra))
+    Next
+  Endif
+
+  If Not IsNull(rConsulta!txtLibroGenero) Then
+    aSubjects.Add(Trim(rConsulta!txtLibroGenero))
+  Endif
+  If Not IsNull(rConsulta!txtLibroAudiencia) Then
+    aSubjects.Add(Trim(rConsulta!txtLibroAudiencia))
+  Endif
+  If aSubjects.Count > 0 Then
+    sYAML &= "subject:\n"
+    For Each item As String In aSubjects
+      sYAML &= "  - \"" & item & "\"\n"
+    Next
+  Endif
+
+  If Not IsNull(rConsulta!txtFechaPublicacion) Then
+    sYAML &= "date: " & Trim(rConsulta!txtFechaPublicacion) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtRevistaISSN) And Trim(rConsulta!txtRevistaISSN) <> "" Then
+    sYAML &= "isbn: " & Trim(rConsulta!txtRevistaISSN) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtRevistaEditorial) Then
+    sYAML &= "publisher: " & Trim(rConsulta!txtRevistaEditorial) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtRevistaIdioma) Then
+    sYAML &= "language: " & Trim(rConsulta!txtRevistaIdioma) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLicencia) Then
+    sYAML &= "rights: " & Trim(rConsulta!txtLicencia) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLibroSerie) Then
+    sYAML &= "series: " & Trim(rConsulta!txtLibroSerie) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLibroSerieNumero) Then
+    sYAML &= "index: " & Trim(rConsulta!txtLibroSerieNumero) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtLibroResumenEs) Then
+    sYAML &= "description: " & Trim(rConsulta!txtLibroResumenEs) & "\n"
+  Endif
+
+  ' Identificadores
+  If Not IsNull(rConsulta!txtRevistaISSN) And Trim(rConsulta!txtRevistaISSN) <> "" Then
+    sYAML &= "identifier:\n"
+    sYAML &= "  - scheme: \"ISBN\"\n"
+    sYAML &= "    text: " & Trim(rConsulta!txtRevistaISSN) & "\n"
+  Endif
+  If Not IsNull(rConsulta!txtRevistaURL) And Trim(rConsulta!txtRevistaURL) <> "" Then
+    If Not InStr(sYAML, "identifier:") Then sYAML &= "identifier:\n"
+    sYAML &= "  - scheme: \"URI\"\n"
+    sYAML &= "    text: " & Trim(rConsulta!txtRevistaURL) & "\n"
+  Endif
+
+  ' Extras para EPUB - Configuración mejorada
+  sYAML &= "type: \"Text\"\n"
+  sYAML &= "format: \"application/epub+zip\"\n"
+  sYAML &= "link-citations: true\n"
+  sYAML &= "reference-section-title: \"Referencias\"\n"
+  sYAML &= "citations-hover: false\n"
+  sYAML &= "figureTitle: \"Figura\"\n"
+  sYAML &= "tableTitle: \"Cuadro\"\n"
+  sYAML &= "listingTitle: \"Listado\"\n"
+  sYAML &= "figPrefix:\n  - \"figura\"\n  - \"figuras\"\n"
+  sYAML &= "eqnPrefix:\n  - \"ecuación\"\n  - \"ecuaciones\"\n"
+  sYAML &= "tblPrefix:\n  - \"cuadro\"\n  - \"cuadros\"\n"
+  sYAML &= "lstPrefix:\n  - \"listado\"\n  - \"listados\"\n"
+  sYAML &= "secPrefix:\n  - \"sección\"\n  - \"secciones\"\n"
+  sYAML &= "linkReferences: true\n"
+  sYAML &= "nameInLink: true\n"
+  sYAML &= "figLabels: arabic\n"
+  sYAML &= "tblLabels: arabic\n"
+  sYAML &= "eqnLabels: arabic\n"
+  ' Configuración específica para EPUB3
+  sYAML &= "epub-chapter-level: 1\n"
+  sYAML &= "epub-subdirectory: \"text\"\n"
+  sYAML &= "ibooks:\n"
+  sYAML &= "  version: \"1.0.0\"\n"
+  sYAML &= "  specified-fonts: true\n"
+  sYAML &= "  iphone-orientation-lock: \"portrait-only\"\n"
+  sYAML &= "book-producer: gbpublisher\n"
+
+  ' Guardar YAML
+  File.Save(RutaProyecto & "/files/" & BaseNombreProyecto & ".yaml", sYAML)
+
+  ' Imagen de tapa
+  If IsNull(rConsulta!txtImagenTapita) Or Trim(rConsulta!txtImagenTapita) = "" Then
+    sImagenTapa = "cover.png"
+  Else
+    sImagenTapa = Trim(rConsulta!txtImagenTapita)
+  Endif
+
+  ' Obtener CSL
+  If IsNull(rConsulta!cmbTipoCSL) Or Trim(rConsulta!cmbTipoCSL) = "" Then
+    sCSL = "apa.csl"
+  Else
+    Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
+    If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
+      sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
+    Else
+      sCSL = "apa.csl"
+    Endif
+  Endif
+
+  iVariosAutores = rConsulta!cmbAutoriaLibro
+
+  ' Preparar lista ordenada de archivos (incluyendo colofón al final)
+  Dim archivos As String[] = Dir(RutaProyecto &/ "articulos", "*.md")
+  archivos.Sort()
+  Dim listaOrdenada As String = ""
+
+  ' Primero las secciones especiales iniciales
+  Dim seccionesEspeciales As String[] = [
+    "00-primeras.md", "01-portada.md", "02-portadilla.md",
+    "03-legales.md", "04-dedicatoria.md", "05-sumario.md"
+  ]
+  Dim archivo As String
+  For Each archivo In seccionesEspeciales
+    If archivos.Exist(archivo) Then
+      listaOrdenada &= RutaProyecto &/ "articulos" &/ archivo & " "
+    Endif
+  Next
+
+  ' Luego el contenido principal (excluyendo colofón)
+  For Each archivo In archivos
+    If Not seccionesEspeciales.Exist(archivo) And InStr(archivo, "99-colofon") <> 1 Then
+      listaOrdenada &= RutaProyecto &/ "articulos" &/ archivo & " "
+    Endif
+  Next
+
+  ' IMPORTANTE: Para EPUB, NO incluir directamente el colofón aquí
+  ' El filtro lua lo agregará después de las referencias
+
+  ' Construir comando pandoc - ORDEN SIMPLIFICADO PARA EPUB
+  sComando = BaseNombreProyecto & ".md " & listaOrdenada
+  sComando &= " --from markdown"
+  sComando &= " --to epub3"
+  sComando &= " --output=salidas/epub/" & BaseNombreProyecto & ".epub"
+  sComando &= " --metadata-file=files/" & BaseNombreProyecto & ".yaml"
+  sComando &= " --bibliography=files/" & BaseNombreProyecto & ".bib"
+  sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
+  sComando &= " --filter pandoc-crossref"
+  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/figure-bold-filter.lua"
+  If iVariosAutores = 1 Then
+    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/section-refs.lua"
+  Endif
+  sComando &= " --citeproc"
+  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/colofon-epub.lua"
+  sComando &= " --output=salidas/epub/" & BaseNombreProyecto & ".epub"
+  sComando &= " --from markdown"
+  sComando &= " --to epub3"
+  sComando &= " --epub-cover-image=media/" & sImagenTapa
+  sComando &= " --css=files/stylesheet1.css"
+  sComando &= " --resource-path=" & RutaProyecto & ":" & RutaProyecto &/ "articulos" & ":" & RutaProyecto &/ "media" & ":" & RutaProyecto &/ "files"
+  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgia.ttf"
+  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiab.ttf"
+  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiai.ttf"
+  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiaz.ttf"
+  sComando &= " --embed-resources"
+  sComando &= " --standalone"
+  sComando &= " --toc"
+  sComando &= " --toc-depth=2" ' Cambiar a 2 para EPUB
+  sComando &= " --split-level=1"
+  ' Opciones adicionales para mejor EPUB
+  sComando &= " --epub-chapter-level=1"
+
+  ' Ejecutar Pandoc
+  FMain.TerminalViewProyecto.Input("cd " & RutaProyecto & " && pandoc " & sComando & " --verbose --fail-if-warnings\n")
+  Wait 0.5
+
+  ' Validar con epubcheck
+  Dim ArchivoFinal As String = RutaProyecto & "/salidas/epub/" & BaseNombreProyecto & ".epub"
+  FMain.TerminalViewProyecto.Input("epubcheck " & ArchivoFinal & "\n")
+
+End
+
 Public Sub GenerarPDFlibroMD()
 
   Dim sSQL As String
@@ -186,6 +405,26 @@ Public Sub GenerarPDFlibroMD()
     Message.Error("No se encontró información para el proyecto: " & sNombreArchivo)
     Return
   Endif
+  '
+  ' ' construir anexo de metadatos
+  ' Dim sYAML As String
+  ' Dim rutaYAML As String = RutaProyecto & "/files/anexo-metadatos.yaml"
+  '
+  ' sYAML &= "title: " & rConsulta!txtRevistaTitulo & gb.NewLine
+  ' sYAML &= "author: Alberto Moyano" & gb.NewLine
+  ' sYAML &= FormatearListaAutores(rConsulta!autores) & gb.NewLine
+  ' sYAML &= "publisher: " & rConsulta!txtRevistaEditorial & gb.NewLine
+  ' sYAML &= "country: Argentina" & gb.NewLine' "" & rConsulta!pais & "" "" & gb.NewLine
+  ' sYAML &= "genre: GenRe" & gb.NewLine' "" & rConsulta!genero & "" "" & gb.NewLine
+  ' sYAML &= "subject: subjet" & gb.NewLine' "" & rConsulta!tema & "" "" & gb.NewLine
+  ' sYAML &= "keywords: [clave1, clave2]" & gb.NewLine' & ReemplazarComasPorLista(r!palabras_clave) & "]" & gb.NewLine
+  ' sYAML &= "date: " & rConsulta!txtFechaPublicacion & gb.NewLine
+  ' sYAML &= "lang: " & rConsulta!txtRevistaIdioma & gb.NewLine
+  ' sYAML &= "isbn: " & rConsulta!txtRevistaISSN & gb.NewLine
+  '
+  ' File.Save(rutaYAML, sYAML)
+  '
+  '
 
   ' Obtener CSL
   Dim sCSL As String
@@ -251,9 +490,10 @@ Public Sub GenerarPDFlibroMD()
   sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/colofon.lua"
   sComando &= " --citeproc"
   sComando &= " --metadata lang=es-ES"
-  sComando &= " --metadata-file=" & User.Home & "/.gbadoc/yaml/pdf-libro.yaml"
+  sComando &= " --metadata-file=" & User.Home & "/.gbadoc/yaml/pdf-libro-md.yaml"
+  '
   ' este archivo lo tengo que generar dinamicamente con los datos de la bbdd
-  ' sComando &= " --metadata-file=" & RutaProyecto &/ "metadatos-del-proyecto.yaml"
+  ' sComando &= " --metadata-file=" & RutaProyecto & "/files/anexo-metadatos.yaml"
   '
   sComando &= " --bibliography=" & RutaProyecto &/ "files" &/ BaseNombreProyecto & ".bib"
   sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
@@ -352,221 +592,5 @@ Public Sub GenerarTEXlibroMD()
   Else
     Message.Error("El archivo LaTeX no se generó correctamente. Verifica el terminal para más detalles.")
   Endif
-
-End
-
-Public Sub GenerarEPUBlibroMD()
-
-  Dim sSQL As String
-  Dim sNombreArchivo As String = NombreProyecto
-  Dim rConsulta As Result
-  ' Obtener valores de la base de datos
-  Dim iVariosAutores As Integer
-  Dim sImagenTapa As String
-  Dim sCSL As String
-
-  ' generamos la exportacion del bib
-  ExportarBibTeX()
-
-  sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
-  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
-
-  ' Verificar que la consulta devolvió resultados
-  If rConsulta.Available = 0 Then
-    Message.Error("No se encontró información para el proyecto: " & sNombreArchivo)
-    Return
-  Endif
-
-  ' Generamos YAML para el epub
-  Dim sYAML As String
-  sYAML = ""
-
-  ' Título del libro
-  If IsNull(rConsulta!txtRevistaTitulo) Or Trim(rConsulta!txtRevistaTitulo) = "" Then
-    Message.Error("El título del libro es obligatorio.")
-    Return
-  Else
-    sYAML &= "title: " & Trim(rConsulta!txtRevistaTitulo) & "\n"
-  Endif
-
-  If Not IsNull(rConsulta!txtLibroSubtitulo) And Trim(rConsulta!txtLibroSubtitulo) <> "" Then
-    sYAML &= "subtitle: " & Trim(rConsulta!txtLibroSubtitulo) & "\n"
-  Endif
-  ' Autores del libro
-  If Not IsNull(rConsulta!txtLibroAutoria) And Trim(rConsulta!txtLibroAutoria) <> "" Then
-    Dim autores As String[] = Split(Trim(rConsulta!txtLibroAutoria), ",")
-    sYAML &= "author:\n"
-    For Each autor As String In autores
-      sYAML &= "  - " & Trim(autor) & "\n"
-    Next
-  Endif
-  ' Subject combinado (palabras clave + género + audiencia)
-  Dim aSubjects As New String[]
-
-  ' Agregar palabras clave si existen
-  If Not IsNull(rConsulta!txtLibroPalabrasClaveEs) And Trim(rConsulta!txtLibroPalabrasClaveEs) <> "" Then
-    Dim palabras As String[] = Split(Trim(rConsulta!txtLibroPalabrasClaveEs), ",")
-    For Each palabra As String In palabras
-      aSubjects.Add(Trim(palabra))
-    Next
-  Endif
-
-  ' Agregar género si existe
-  If Not IsNull(rConsulta!txtLibroGenero) And Trim(rConsulta!txtLibroGenero) <> "" Then
-    aSubjects.Add(Trim(rConsulta!txtLibroGenero))
-  Endif
-
-  ' Agregar audiencia si existe
-  If Not IsNull(rConsulta!txtLibroAudiencia) And Trim(rConsulta!txtLibroAudiencia) <> "" Then
-    aSubjects.Add(Trim(rConsulta!txtLibroAudiencia))
-  Endif
-  ' Escribir subject solo si hay elementos
-  If aSubjects.Count > 0 Then
-    sYAML &= "subject:\n"
-    For Each item As String In aSubjects
-      sYAML &= "  - \"" & item & "\"\n"
-    Next
-  Endif
-  If Not IsNull(rConsulta!txtFechaPublicacion) Or Trim(rConsulta!txtFechaPublicacion) <> "" Then
-    sYAML &= "date: " & Trim(rConsulta!txtFechaPublicacion) & "\n"
-  Endif
-  If Not IsNull(rConsulta!txtRevistaISSN) Or Trim(rConsulta!txtRevistaISSN) <> "" Then
-    sYAML &= "isbn: " & Trim(rConsulta!txtRevistaISSN) & "\n"
-  Endif
-  If Not IsNull(rConsulta!txtRevistaEditorial) Or Trim(rConsulta!txtRevistaEditorial) <> "" Then
-    sYAML &= "publisher: " & Trim(rConsulta!txtRevistaEditorial) & "\n"
-  Endif
-  If Not IsNull(rConsulta!txtRevistaIdioma) Or Trim(rConsulta!txtRevistaIdioma) <> "" Then
-    sYAML &= "language: " & Trim(rConsulta!txtRevistaIdioma) & "\n"
-  Endif
-  If Not IsNull(rConsulta!txtLicencia) Or Trim(rConsulta!txtLicencia) <> "" Then
-    sYAML &= "rights: " & Trim(rConsulta!txtLicencia) & "\n"
-  Endif
-  If Not IsNull(rConsulta!txtLibroSerie) Or Trim(rConsulta!txtLibroSerie) <> "" Then
-    sYAML &= "series: " & Trim(rConsulta!txtLibroSerie) & "\n"
-  Endif
-  If Not IsNull(rConsulta!txtLibroSerieNumero) Or Trim(rConsulta!txtLibroSerieNumero) <> "" Then
-    sYAML &= "index: " & Trim(rConsulta!txtLibroSerieNumero) & "\n"
-  Endif
-  If Not IsNull(rConsulta!txtLibroResumenEs) Or Trim(rConsulta!txtLibroResumenEs) <> "" Then
-    sYAML &= "description: " & Trim(rConsulta!txtLibroResumenEs) & "\n"
-  Endif
-
-  sYAML &= "identifier:\n"
-  sYAML &= "  - scheme: \"ISBN\"\n"
-  sYAML &= "    text: " & Trim(rConsulta!txtRevistaISSN) & "\n"
-  sYAML &= "  - scheme: \"URI\"\n"
-  sYAML &= "    text: " & Trim(rConsulta!txtRevistaURL) & "\n"
-  sYAML &= "type: \"Text\"\n"
-  sYAML &= "format: \"application/epub+zip\"\n"
-  sYAML &= "link-citations: true\n"
-  sYAML &= "figureTitle: \"Figura\"\n"
-  sYAML &= "tableTitle: \"Cuadro\"\n"
-  sYAML &= "listingTitle: \"Listado\"\n"
-  sYAML &= "figPrefix:\n"
-  sYAML &= "  - \"figura\"\n"
-  sYAML &= "  - \"figuras\"\n"
-  sYAML &= "eqnPrefix:\n"
-  sYAML &= "  - \"ecuación\"\n"
-  sYAML &= "  - \"ecuaciones\"\n"
-  sYAML &= "tblPrefix:\n"
-  sYAML &= "  - \"cuadro\"\n"
-  sYAML &= "  - \"cuadros\"\n"
-  sYAML &= "lstPrefix:\n"
-  sYAML &= "  - \"listado\"\n"
-  sYAML &= "  - \"listados\"\n"
-  sYAML &= "secPrefix:\n"
-  sYAML &= "  - \"sección\"\n"
-  sYAML &= "  - \"secciones\"\n"
-  sYAML &= "linkReferences: true\n"
-  sYAML &= "nameInLink: true\n"
-  sYAML &= "figLabels: arabic\n"
-  sYAML &= "tblLabels: arabic\n"
-  sYAML &= "eqnLabels: arabic\n"
-  sYAML &= "ibooks:\n"
-  sYAML &= "  version: \"1.0.0\"\n"
-  sYAML &= "  specified-fonts: true\n"
-  sYAML &= "  iphone-orientation-lock: \"portrait-only\"\n"
-  sYAML &= "book-producer: gbpublisher\n"
-
-  ' Guardar el archivo YAML
-  Dim outputFile As String
-  outputFile = RutaProyecto & "/files/" & BaseNombreProyecto & ".yaml"
-  File.Save(outputFile, sYAML)
-
-  iVariosAutores = rConsulta!cmbAutoriaLibro
-
-  ' Obtener el nombre del archivo de tapa
-  If IsNull(rConsulta!txtImagenTapita) Or Trim(rConsulta!txtImagenTapita) = "" Then
-    sImagenTapa = "cover.png"  ' Valor por defecto
-  Else
-    sImagenTapa = Trim(rConsulta!txtImagenTapita)
-  Endif
-
-  sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
-  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
-
-  ' Verificar que la consulta devolvió resultados
-  If rConsulta.Available = 0 Then
-    Message.Error("No se encontró información para el proyecto: " & sNombreArchivo)
-    Return
-  Endif
-
-  ' Obtener CSL
-  If IsNull(rConsulta!cmbTipoCSL) Or Trim(rConsulta!cmbTipoCSL) = "" Then
-    sCSL = "apa.csl"
-  Else
-    Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
-
-    ' Buscar texto entre corchetes
-    If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
-      sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
-    Else
-      sCSL = "apa.csl"
-    Endif
-  Endif
-
-  ' Construir el comando pandoc
-  sComando = BaseNombreProyecto & ".md articulos/*.md"
-  sComando &= " --filter pandoc-crossref"
-  ' filtros personalizados
-  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/figure-bold-filter.lua"
-
-  ' Condicional para section-refs.lua
-  If iVariosAutores = 1 Then
-    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/section-refs.lua"
-  Else If iVariosAutores = 0 Then
-    sComando &= ""
-  Endif
-
-  sComando &= " --citeproc"
-  sComando &= " --metadata-file=files/" & BaseNombreProyecto & ".yaml"
-  sComando &= " --bibliography=files/" & BaseNombreProyecto & ".bib"
-  sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
-  sComando &= " --output=salidas/epub/" & BaseNombreProyecto & ".epub"
-  sComando &= " --from markdown"
-  sComando &= " --to epub3"
-  sComando &= " --epub-cover-image=media/" & sImagenTapa
-  sComando &= " --css=files/stylesheet1.css"
-  sComando &= " --resource-path=" & RutaProyecto & ":" & RutaProyecto &/ "articulos" & ":" & RutaProyecto &/ "media" & ":" & RutaProyecto &/ "files"
-  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgia.ttf"
-  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiab.ttf"
-  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiai.ttf"
-  sComando &= " --epub-embed-font=" & User.Home & "/.gbadoc/fonts/georgiaz.ttf"
-  sComando &= " --embed-resources"
-  sComando &= " --standalone"
-  sComando &= " --toc"
-  sComando &= " --toc-depth=0"
-  sComando &= " --split-level=1"
-
-  ' Ejecutar pandoc
-  FMain.TerminalViewProyecto.Input("pandoc " & sComando & " --verbose --fail-if-warnings" & "\n")
-  Wait 0.5
-
-  Dim ArchivoFinal As String
-  ArchivoFinal = RutaProyecto & "/salidas/epub/" & BaseNombreProyecto & ".epub"
-
-  ' Ejecutar epubcheck
-  FMain.TerminalViewProyecto.Input("epubcheck " & ArchivoFinal & "\n")
 
 End
