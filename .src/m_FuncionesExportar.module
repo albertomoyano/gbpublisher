@@ -4,6 +4,8 @@ Private NombreProyecto As String = File.Name(FMain.txtProyecto.Text)
 Private BaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text)
 Private RutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
 Public sComando As String
+Private sSQL As String
+Private rConsulta As Result
 
 Public Sub ExportarBibTeX()
 
@@ -172,9 +174,7 @@ End
 
 Public Sub GenerarEPUBlibroMD()
 
-  Dim sSQL As String
   Dim sNombreArchivo As String = NombreProyecto
-  Dim rConsulta As Result
   Dim iVariosAutores As Integer
   Dim sImagenTapa As String
   Dim sCSL As String
@@ -390,9 +390,7 @@ End
 
 Public Sub GenerarPDFlibroMD()
 
-  Dim sSQL As String
   Dim sNombreArchivo As String = NombreProyecto ' nombre del proyecto con extension
-  Dim rConsulta As Result
 
   ' generamos la exportacion del bib
   ExportarBibTeX()
@@ -518,9 +516,7 @@ End
 
 Public Sub GenerarTEXlibroMD()
 
-  Dim sSQL As String
   Dim sNombreArchivo As String = NombreProyecto ' nombre del proyecto con extension
-  Dim rConsulta As Result
   Dim sComandoCompleto As String
   Dim ArchivoFinal As String
 
@@ -591,5 +587,112 @@ Public Sub GenerarTEXlibroMD()
   Else
     Message.Error("El archivo LaTeX no se generó correctamente. Verifica el terminal para más detalles.")
   Endif
+
+End
+
+Public Sub ObtenerXMLlibroIndesign()
+
+  Dim sRutaProyecto As String = RutaProyecto
+  Dim sArchivoMD As String = sRutaProyecto &/ NombreProyecto
+  Dim sArchivoJATS As String = sRutaProyecto &/ "salidas/xml/libro-jats.xml"
+  Dim sArchivoICML As String = sRutaProyecto &/ "salidas/xml/xml-indesign/libro.icml"
+  Dim sFiltroLua As String = User.Home & "/.gbadoc/lua/jats-custom.lua"
+  Dim sXSL As String = User.Home & "/.gbadoc/xsl/jats-to-icml.xsl"
+  Dim sCSL As String
+  Dim sNombreArchivo As String = NombreProyecto ' nombre del proyecto con extension
+
+  ' Exportar BibTeX
+  ExportarBibTeX()
+
+  ' Obtener datos del proyecto
+  sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
+  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
+
+  ' Crear archivo temporal con todo el contenido
+  Dim sArchivoCompleto As String = sRutaProyecto &/ "temp-libro-completo.md"
+  Dim sContenidoCompleto As String
+
+  ' 1️⃣ Cargar archivo principal
+  sContenidoCompleto = File.Load(sArchivoMD)
+  sContenidoCompleto &= gb.NewLine & gb.NewLine
+
+  ' 2️⃣ Agregar todos los archivos de la carpeta articulos/
+  Dim sCarpetaArticulos As String = sRutaProyecto &/ "articulos"
+  Dim aArchivos As String[]
+
+  If Exist(sCarpetaArticulos) Then
+    aArchivos = Dir(sCarpetaArticulos, "*.md").Sort()
+    Print "Archivos encontrados en articulos/:"
+    For Each sArchivo As String In aArchivos
+      Print "  - " & sArchivo
+      Dim sRutaArticulo As String = sCarpetaArticulos &/ sArchivo
+      sContenidoCompleto &= File.Load(sRutaArticulo) & gb.NewLine & gb.NewLine
+    Next
+  Else
+    Message.Error("No existe la carpeta: " & sCarpetaArticulos)
+    Return
+  End If
+
+  ' Obtener CSL
+  If IsNull(rConsulta!cmbTipoCSL) Or Trim(rConsulta!cmbTipoCSL) = "" Then
+    sCSL = "apa.csl"
+  Else
+    Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
+    If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
+      sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
+    Else
+      sCSL = "apa.csl"
+    Endif
+  Endif
+
+  ' Guardar archivo temporal completo
+  File.Save(sArchivoCompleto, sContenidoCompleto)
+  Print "Archivo temporal creado: " & sArchivoCompleto
+  Print "Tamaño total: " & CStr(Stat(sArchivoCompleto).Size) & " bytes"
+
+  ' 3️⃣ Convertir archivo completo a JATS-XML
+  sComando = "pandoc " & Quote(sArchivoCompleto) &
+    " --to=jats" &
+    " --lua-filter=" & Quote(sFiltroLua) &
+    " --bibliography=files/" & BaseNombreProyecto & ".bib" &
+    " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL &
+    " --filter pandoc-crossref" &
+    " --citeproc" &
+    " --standalone" &
+    " --wrap=preserve" &
+    " -o " & Quote(sArchivoJATS)
+
+  FMain.TerminalViewProyecto.Input(sComando & gb.NewLine)
+
+  ' Esperar a que termine el primer comando
+  Wait 3
+
+  ' Verificar que el archivo JATS se creó
+  If Not Exist(sArchivoJATS) Then
+    Message.Error("Error: No se pudo generar el archivo JATS")
+    Return
+  End If
+
+  ' 2️⃣ Convertir JATS-XML a ICML usando XSLTProc
+  ' 2️⃣ Convertir JATS-XML a ICML usando XSLTProc (sin validación)
+  sComando = "xsltproc --novalid " & Quote(sXSL) & " " & Quote(sArchivoJATS) & " > " & Quote(sArchivoICML)
+
+  FMain.TerminalViewProyecto.Input(sComando & gb.NewLine)
+
+  ' Esperar a que termine
+  Wait 2
+
+  ' Verificar resultado
+  If Exist(sArchivoICML) Then
+    Dim sSize As String = CStr(Stat(sArchivoICML).Size)
+    Message.Info("Conversión completada." & gb.NewLine &
+      "Archivo generado: " & sArchivoICML & gb.NewLine &
+      "Tamaño: " & sSize & " bytes")
+  Else
+    Message.Error("Error: No se pudo generar el archivo ICML")
+  End If
+
+  FMain.TerminalViewProyecto.Input("rm -rf temp-libro-completo.md" & gb.NewLine)
+  FMain.FileViewProyecto.Refresh
 
 End
