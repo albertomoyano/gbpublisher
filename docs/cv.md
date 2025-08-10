@@ -1,7 +1,7 @@
 # Alberto Moyano
 
 <p align="left">
-  <img src="img/flora.png" alt="Flora" width="30%">
+  <img src="img/flora.png" alt="Flora" width="35%">
 </p>
 
 Email: alberto.alejandro.moyano@gmail.com
@@ -12,7 +12,7 @@ LinkedIn: [https://www.linkedin.com/in/edicion-cientifica](https://www.linkedin.
 
 ## Resumen profesional
 
-Soy editor especializado en textos académicos y científicos, con más de 700 títulos editados en una carrera que combina experiencia gráfica editorial con herramientas digitales avanzadas. Actualmente, me encuentro dirigiendo la producción de Ediciones Imago Mundi, trabajo y coedito con editoriales colegas y he dirigido talleres de impresión especializados en libros y revistas, adquiriendo una sólida base en el sector.
+Soy editor especializado en textos académicos y científicos, con más de 900 títulos editados en una carrera que combina experiencia gráfica editorial con herramientas digitales avanzadas. Actualmente, me encuentro dirigiendo la producción de Ediciones Imago Mundi, trabajo y coedito con editoriales colegas y he dirigido talleres de impresión especializados en libros y revistas, adquiriendo una sólida base en el sector.
 
 ## Conocimientos
 
@@ -49,8 +49,8 @@ Soy editor especializado en textos académicos y científicos, con más de 700 t
 ## Experiencia docente y de laboratorio
 - 1992-1992 Dictado de curso de Aldus PageMaker en la Subsecretaría de Publicaciones de la Facultad de Filosofía y Letras (UBA) a cargo de Mauro Dobruskin.
 - 1995 Beta tester de Adobe Latinoamérica para su producto Adobe PageMaker.
-- 2009-2010 Dictado del Seminario Edición de textos académicos y científicos utilizando LaTeX en el Programa de Extensión Universitaria de la Facultad de Filosofía y Letras de la UBA.
-
+- 2009-2010 Dictado del seminario Edición de textos académicos y científicos utilizando LaTeX en el Programa de Extensión Universitaria de la Facultad de Filosofía y Letras de la UBA.
+- 2025 Dictado del seminario Introducción a la producción de libros científicos utilizando LaTeX, como parte de la materia Registro y Organización de Materiales Editoriales (ROME) de la carrera de Edición en la Facultad de Filosofía y Letras de la UBA.
 
 ## Membresías
 - [CervanTeX](http://www.cervantex.es/)
