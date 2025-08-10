@@ -1,6 +1,8 @@
 # Alberto Moyano
 
-![Flora](img/flora.png){width=50%}
+<p align="left">
+  <img src="img/flora.png" alt="Flora" width="70%">
+</p>
 
 Email: alberto.alejandro.moyano@gmail.com
 
