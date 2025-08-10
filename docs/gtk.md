@@ -1,14 +1,11 @@
 # Soporte oficial
 
-## Alcance del soporte. Linux Mint (Cinnamon)
-
+## Alcance del soporte (Linux Mint - Cinnamon)
 
 Esta aplicación está diseñada y probada **exclusivamente** en entornos **Linux Mint** con el escritorio **Cinnamon**.
 El soporte oficial se limita a esta plataforma, garantizando funcionamiento correcto y consistencia visual en ellas.
 
 No se ofrece soporte oficial para otros escritorios o distribuciones, aunque la aplicación podría ejecutarse en entornos similares.
-
----
 
 ## Justificación técnica
 
@@ -33,15 +30,11 @@ Linux Mint es reconocido por su:
 
 Esto permite que el desarrollo se centre en **estabilidad** y **funcionalidad**, sin tener que rehacer partes de la aplicación ante cambios bruscos en las librerías gráficas.
 
----
-
 ## Nota sobre otros entornos
 La aplicación puede ejecutarse en otros escritorios basados en GTK (ej. MATE, GNOME, Xfce) o en otras distribuciones, pero fuera del entorno oficial de Linux Mint:
 - No se garantiza compatibilidad visual total.
 - El funcionamiento no está probado.
 - Los reportes de errores en entornos no soportados se considerarán de **baja prioridad**.
-
----
 
 ## Conclusión
 El uso exclusivo de componentes GTK en Gambas, junto con el soporte oficial limitado a Linux Mint con Cinnamon, es una decisión técnica orientada a:

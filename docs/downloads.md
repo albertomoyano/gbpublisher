@@ -32,9 +32,3 @@ sudo apt install ./gbadocmagazine_0.0.19-0ubuntu1_all.deb
 | Versión   | Fecha       | Cambios Importantes               |
 |-----------|------------|-----------------------------------|
 | v0.0.18  | 2025-07-07 | Prueba de lanzamiento    |
-
----
-
-[Inicio](index.md) | [Desarrollador](cv.md) | [Descargas](downloads.md)
-
-2025 gbpublisher | [Licencia GPLv3](https://www-gnu-org.translate.goog/licenses/gpl-3.0.html?_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc) | Desarrollado con ❤️ en Gambas
