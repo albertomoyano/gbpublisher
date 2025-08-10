@@ -1,7 +1,7 @@
 # Alberto Moyano
 
 <p align="left">
-  <img src="img/flora.png" alt="Flora" width="70%">
+  <img src="img/flora.png" alt="Flora" width="30%">
 </p>
 
 Email: alberto.alejandro.moyano@gmail.com
