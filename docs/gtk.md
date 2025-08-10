@@ -1,6 +1,7 @@
-# Soporte oficial: Linux Mint (Cinnamon / MATE) – Componentes GTK en Gambas
+# Soporte oficial
 
-## Alcance del soporte
+## Alcance del soporte. Linux Mint (Cinnamon)
+
 
 Esta aplicación está diseñada y probada **exclusivamente** en entornos **Linux Mint** con el escritorio **Cinnamon**.
 El soporte oficial se limita a esta plataforma, garantizando funcionamiento correcto y consistencia visual en ellas.
