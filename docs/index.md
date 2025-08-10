@@ -1,6 +1,6 @@
 # Acerca de este proyecto
 
-## Gestor de flujo de producción editorial para revistas científicas
+## Gestor de flujo de producción editorial para libros y revistas científicas
 
 Este proyecto nació de la necesidad de optimizar el proceso de edición de libros y revistas científicas utilizando MarkDown como lenguaje base, donde la complejidad de gestionar múltiples formatos de salida y revisiones colaborativas demandaba una solución robusta y automatizada.
 
@@ -21,11 +21,11 @@ Opté por Gambas como lenguaje de desarrollo por su equilibrio único entre:
 
 ## Qué ofrece mi solución
 
-- Edición ramificada: Gestión de versiones orientada a derivados (ej.: desde una base Markdown se generan múltiples salidas).
-- Validaciones automáticas: Detección de inconsistencias en sintaxis, referencias cruzadas y metadatos.
-- Pipeline configurable: Flujos adaptables a estándares editoriales específicos (APA, IEEE, etc.).
-- Libertad de stack: Interoperabilidad con git, Makefiles y herramientas tradicionales de GNU/Linux.
+- **Edición ramificada:** Gestión de versiones orientada a derivados (ej.: desde una base Markdown se generan múltiples salidas).
+- **Validaciones automáticas:** Detección de inconsistencias en sintaxis, referencias cruzadas y metadatos.
+- **Pipeline configurable:** Flujos adaptables a estándares editoriales específicos (APA, IEEE, etc.).
+- **Libertad de stack:** Interoperabilidad con git, Makefiles y herramientas tradicionales de GNU/Linux.
 
 ## Impacto
 
-Actualmente, el software reduce en más de un 80% el tiempo dedicado a tareas repetitivas en mis proyectos, garantizando salidas sólidas en todos los formatos. Está diseñado para editores científicos que valoran la precisión y la escalabilidad.
+Actualmente, el software reduce en más de un 80% el tiempo dedicado a tareas repetitivas en mis proyectos, garantizando salidas sólidas en todos los formatos. Está diseñado para editores científicos que privilegian fuertemente la precisión y la escalabilidad.
