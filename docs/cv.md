@@ -1,6 +1,6 @@
 # Alberto Moyano
 
-![Flora](img/flora.png)
+![Flora](img/flora.png){width=50%}
 
 Email: alberto.alejandro.moyano@gmail.com
 
