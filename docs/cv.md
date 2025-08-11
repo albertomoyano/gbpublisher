@@ -18,8 +18,10 @@ Soy editor especializado en textos académicos y científicos, con más de 900 t
 
 ### Nivel profesional
 - lenguaje LaTeX
-- entorno BibTeX y bibLaTeX
 - lenguaje Markdown
+- lenguaje Asciidoc
+- entorno BibTeX y bibLaTeX
+
 
 ### Nivel avanzado
 - lenguaje Gambas
@@ -28,6 +30,8 @@ Soy editor especializado en textos académicos y científicos, con más de 900 t
 
 ### Nivel general
 - lenguaje Bash
+- lenguaje Python
+- lenguaje Lua
 - lenguaje HTML
 - lenguaje CSS
 - lenguaje XML
