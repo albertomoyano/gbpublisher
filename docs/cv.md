@@ -12,7 +12,7 @@ LinkedIn: [https://www.linkedin.com/in/edicion-cientifica](https://www.linkedin.
 
 ## Resumen profesional
 
-Soy editor especializado en textos académicos y científicos, con más de 900 títulos editados en una carrera que combina experiencia gráfica editorial con herramientas digitales avanzadas. Actualmente, me encuentro dirigiendo la producción de Ediciones Imago Mundi, trabajo y coedito con editoriales colegas y he dirigido talleres de impresión especializados en libros y revistas, adquiriendo una sólida base en el sector.
+Soy editor especializado en textos académicos y científicos, con más de 900 títulos editados en una carrera que combina experiencia gráfica editorial (imprenta propia) con herramientas informáticas (conocimientos de programación). Desde el 2005 me encuentro al frente de la producción editorial de Ediciones Imago Mundi.
 
 ## Conocimientos
 
