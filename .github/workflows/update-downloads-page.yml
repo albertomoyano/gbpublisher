@@ -1,4 +1,4 @@
-name: Update downloads.md with latest release info
+name: Update Downloads Page
 
 on:
   release:
@@ -7,46 +7,54 @@ on:
 jobs:
   update-downloads:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Get latest release info
-        id: release
-        uses: actions-ecosystem/action-get-latest-release@v1
-
-      - name: Extract commit message
-        id: commit
+      - name: Get release info
+        id: release_info
         run: |
-          COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "message<<EOF" >> $GITHUB_OUTPUT
-          echo "$COMMIT_MSG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "Obteniendo info del release..."
+          TAG=$(jq -r .release.tag_name $GITHUB_EVENT_PATH)
+          DATE=$(jq -r .release.published_at $GITHUB_EVENT_PATH | cut -d'T' -f1)
+          BODY=$(jq -r .release.body $GITHUB_EVENT_PATH | tr '\n' ' ' | cut -c1-200)
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "body=$BODY" >> $GITHUB_OUTPUT
 
       - name: Update downloads.md
         run: |
           FILE="docs/downloads.md"
-          echo "=== Editando $FILE con la última info de release ==="
 
-          VERSION="${{ steps.release.outputs.tag_name }}"
-          DATE=$(date +'%Y-%m-%d')
-          MESSAGE="${{ steps.commit.outputs.message }}"
-          DEB_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/gbadocmagazine_${VERSION}-0ubuntu1_all.deb"
+          echo "Actualizando $FILE con tag ${{ steps.release_info.outputs.tag }}"
 
-          # Actualizar link de descarga
+          # Construir URL de descarga .deb
+          DEB_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.release_info.outputs.tag }}/gbadocmagazine_${{ steps.release_info.outputs.tag }}-0ubuntu1_all.deb"
+
+          # Reemplazar línea wget con nueva URL
           sed -i "s|wget .*|wget ${DEB_URL}|" "$FILE"
 
-          # Agregar entrada en historial
-          {
-            echo ""
-            echo "## $VERSION - $DATE"
-            echo "$MESSAGE"
-          } >> "$FILE"
+          # Verificar si la versión ya está en historial
+          if ! grep -q "${{ steps.release_info.outputs.tag }}" "$FILE"; then
+            echo "" >> "$FILE"
+            echo "| ${{ steps.release_info.outputs.tag }} | ${{ steps.release_info.outputs.date }} | ${{ steps.release_info.outputs.body }} |" >> "$FILE"
+            echo "Se agregó versión al historial."
+          else
+            echo "La versión ya está en el historial, no se agrega."
+          fi
 
-      - name: Commit and push changes
+      - name: Commit and push if changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add docs/downloads.md
-          git commit -m "Actualizar downloads.md para versión ${{ steps.release.outputs.tag_name }}"
-          git push
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios para commitear."
+          else
+            git commit -m "🤖 Actualizar downloads.md para la versión ${{ steps.release_info.outputs.tag }}"
+            git push
+            echo "Cambios enviados correctamente."
+          fi
