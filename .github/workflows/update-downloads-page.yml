@@ -23,10 +23,10 @@ jobs:
     - name: Get latest release info
       id: release
       run: |
-        # Obtener información del último release
+        set -euo pipefail
+
         LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases/latest")
 
-        # Verificar si la respuesta contiene un mensaje de error
         if echo "$LATEST_RELEASE" | jq -e '.message' > /dev/null 2>&1; then
           HAS_RELEASE=false
         else
@@ -34,18 +34,13 @@ jobs:
         fi
 
         if [ "$HAS_RELEASE" = "true" ]; then
-          # Si hay releases disponibles
           TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name // "v0.0.0"')
-          RELEASE_DATE=$(echo "$LATEST_RELEASE" | jq -r '.published_at' | cut -d'T' -f1)
-
-          # Limpiar el body del release de caracteres problemáticos
-          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body // "Sin descripción"' | tr -d '\n\r' | sed 's/[*#]//' | cut -c1-100)
-
-          # Buscar archivos .deb en los assets
+          RELEASE_DATE=$(echo "$LATEST_RELEASE" | jq -r '.published_at' | cut -d"T" -f1)
+          # limpiar saltos y limitar longitud tempranamente (seguridad)
+          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body // "Sin descripción"' | tr -d '\r' | tr '\n' ' ' | sed 's/[*#]//g' | cut -c1-200)
           DEB_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name | endswith(".deb")) | .browser_download_url' | head -1)
           DEB_NAME=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name | endswith(".deb")) | .name' | head -1)
 
-          # Si no encuentra .deb, usar valores por defecto
           if [ -z "$DEB_URL" ] || [ "$DEB_URL" = "null" ]; then
             DEB_URL="https://github.com/${{ github.repository }}/releases/download/$TAG_NAME/package.deb"
             DEB_NAME="package.deb"
@@ -60,9 +55,8 @@ jobs:
             echo "has_release=true"
           } >> $GITHUB_OUTPUT
         else
-          # Si no hay releases, usar información del commit más reciente
           COMMIT_DATE=$(git log -1 --format="%Y-%m-%d")
-          COMMIT_MESSAGE=$(git log -1 --format="%s" | tr -d '\n\r' | cut -c1-50)
+          COMMIT_MESSAGE=$(git log -1 --format="%s" | tr -d '\n\r' | cut -c1-100)
           COMMIT_SHA=$(git log -1 --format="%h")
 
           {
@@ -75,114 +69,95 @@ jobs:
           } >> $GITHUB_OUTPUT
         fi
 
-    - name: Update downloads page sections
+    - name: Update downloads page (safe, backtick-proof)
+      env:
+        RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+        RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+        RELEASE_BODY: ${{ steps.release.outputs.release_body }}
+        DEB_URL: ${{ steps.release.outputs.deb_url }}
+        DEB_NAME: ${{ steps.release.outputs.deb_name }}
       run: |
-        echo "=== Debug: Valores obtenidos ==="
-        echo "Tag: ${{ steps.release.outputs.tag_name }}"
-        echo "Date: ${{ steps.release.outputs.release_date }}"
-        echo "DEB URL: ${{ steps.release.outputs.deb_url }}"
-        echo "DEB Name: ${{ steps.release.outputs.deb_name }}"
-        echo "Has Release: ${{ steps.release.outputs.has_release }}"
+        set -euo pipefail
 
-        # Verificar que el archivo existe
-        if [ ! -f "docs/downloads.md" ]; then
-          echo "❌ El archivo docs/downloads.md no existe"
+        FILE="docs/downloads.md"
+
+        if [ ! -f "$FILE" ]; then
+          echo "❌ No se encontró $FILE"
           exit 1
         fi
 
-        echo "=== Archivo encontrado, aplicando cambios ==="
+        echo "=== Guardando valores en archivos temporales (evita expansión peligrosa) ==="
+        # Guardamos tal cual el contenido en archivos (no se reinyectan en el script)
+        printf '%s\n' "$DEB_URL" > /tmp/deb_url.txt
+        printf '%s\n' "$DEB_NAME" > /tmp/deb_name.txt
+        # Nota: RELEASE_* se pasan por env y python los leerá desde os.environ
 
-        # Guardar las variables en archivos para evitar problemas de bash
-        echo '${{ steps.release.outputs.deb_url }}' > /tmp/deb_url.txt
-        echo '${{ steps.release.outputs.deb_name }}' > /tmp/deb_name.txt
-        echo '${{ steps.release.outputs.tag_name }}' > /tmp/tag_name.txt
-        echo '${{ steps.release.outputs.release_date }}' > /tmp/release_date.txt
-        echo '${{ steps.release.outputs.release_body }}' > /tmp/release_body.txt
+        echo "=== Ejecutando sustituciones en Python (heredoc protegido) ==="
 
-        # Leer las variables de los archivos
-        DEB_URL=$(cat /tmp/deb_url.txt)
-        DEB_NAME=$(cat /tmp/deb_name.txt)
-        TAG_NAME=$(cat /tmp/tag_name.txt)
-        RELEASE_DATE=$(cat /tmp/release_date.txt)
-        RELEASE_BODY=$(cat /tmp/release_body.txt)
+        python3 - <<'PY'
+import os, re
 
-        # 1. Actualizar la URL del wget usando python para evitar problemas de bash
-        python3 -c "
-import re
-with open('docs/downloads.md', 'r') as f:
+# Leer valores (DEB_* desde archivos para evitar cualquier re-evaluación del shell)
+DEB_URL = open('/tmp/deb_url.txt', 'r', encoding='utf-8').read().strip()
+DEB_NAME = open('/tmp/deb_name.txt', 'r', encoding='utf-8').read().strip()
+
+RELEASE_TAG = os.environ.get('RELEASE_TAG', '').strip()
+RELEASE_DATE = os.environ.get('RELEASE_DATE', '').strip()
+RELEASE_BODY_RAW = os.environ.get('RELEASE_BODY', '').strip()
+
+# Sanitizar release body para que no rompa la tabla markdown (quitar pipes, newlines y acortar)
+RELEASE_BODY = re.sub(r'\s+', ' ', RELEASE_BODY_RAW)
+if len(RELEASE_BODY) > 180:
+    RELEASE_BODY = RELEASE_BODY[:177] + '...'
+RELEASE_BODY = RELEASE_BODY.replace('|', '&#124;')  # sustituir pipe por entidad para tabla
+
+path = 'docs/downloads.md'
+with open(path, 'r', encoding='utf-8') as f:
     content = f.read()
 
-# Reemplazar URL_WGET
-new_url = '<!--URL_WGET-->wget ${DEB_URL}<!--END_URL_WGET-->'
-content = re.sub(r'<!--URL_WGET-->.*?<!--END_URL_WGET-->', new_url, content)
+# Reemplazo no-greedy entre marcadores (DOTALL para incluir saltos si los hubiera)
+content = re.sub(r'<!--URL_WGET-->.*?<!--END_URL_WGET-->', f'<!--URL_WGET-->wget {DEB_URL}<!--END_URL_WGET-->', content, flags=re.DOTALL)
+content = re.sub(r'<!--NOMBRE_DEB-->.*?<!--END_NOMBRE_DEB-->', f'<!--NOMBRE_DEB-->./{DEB_NAME}<!--END_NOMBRE_DEB-->', content, flags=re.DOTALL)
 
-# Reemplazar NOMBRE_DEB
-new_name = '<!--NOMBRE_DEB-->./${DEB_NAME}<!--END_NOMBRE_DEB-->'
-content = re.sub(r'<!--NOMBRE_DEB-->.*?<!--END_NOMBRE_DEB-->', new_name, content)
+# Agregar la nueva fila en la tabla de historial solo si la versión no existe
+if RELEASE_TAG:
+    if f'| {RELEASE_TAG} |' not in content:
+        m = re.search(r'(\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|)', content, flags=re.MULTILINE)
+        new_line = f'| {RELEASE_TAG} | {RELEASE_DATE} | {RELEASE_BODY} |'
+        if m:
+            insert_at = m.end()
+            content = content[:insert_at] + '\n' + new_line + content[insert_at:]
+        else:
+            # fallback: si no encuentra la tabla, añadir al final
+            content = content + '\n' + new_line + '\n'
 
-with open('docs/downloads.md', 'w') as f:
+with open(path, 'w', encoding='utf-8') as f:
     f.write(content)
-"
 
-        echo "✅ URLs actualizadas"
+print("OK: archivo actualizado (Python)")
+PY
 
-        # 2. Verificar si la versión ya existe en el historial para evitar duplicados
-        if ! grep -q "${TAG_NAME}" docs/downloads.md; then
-          echo "=== Agregando nueva versión al historial ==="
+        echo "=== Resultado (primeras 200 líneas) ==="
+        sed -n '1,200p' "$FILE" || true
 
-          # Usar python para agregar la línea al historial
-          python3 -c "
-import re
-
-with open('docs/downloads.md', 'r') as f:
-    content = f.read()
-
-# Buscar la línea del separador de tabla
-if re.search(r'\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|', content):
-    new_line = '| ${TAG_NAME} | ${RELEASE_DATE} | ${RELEASE_BODY} |'
-    # Insertar después de la línea de separadores
-    content = re.sub(
-        r'(\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|)\n',
-        r'\1\n' + new_line + '\n',
-        content,
-        count=1
-    )
-
-    with open('docs/downloads.md', 'w') as f:
-        f.write(content)
-    print('Nueva versión agregada al historial')
-else:
-    print('No se encontró la tabla de historial')
-"
-        else
-          echo "=== Versión ${TAG_NAME} ya existe en el historial, no se agrega duplicada ==="
-        fi
-
-        echo "=== Cambios aplicados correctamente ==="
-
-    - name: Commit and push changes
+    - name: Commit and push changes (safe)
+      env:
+        RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+        RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+        DEB_NAME: ${{ steps.release.outputs.deb_name }}
       run: |
+        set -euo pipefail
+
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
 
-        echo "=== Estado del repositorio ==="
-        git status
-
-        # Verificar si hay cambios en el archivo
+        # Solo commitear si hay cambios
         if git diff --quiet docs/downloads.md; then
-          echo "❌ No hay cambios en docs/downloads.md para commitear"
+          echo "❌ No hay cambios para commitear"
         else
-          echo "✅ Cambios detectados en docs/downloads.md, commiteando..."
-
+          printf '🤖 Actualizar página de descargas automáticamente\n\n- Versión: %s\n- Fecha: %s\n- Archivo: %s\n' "$RELEASE_TAG" "$RELEASE_DATE" "$DEB_NAME" > /tmp/commitmsg.txt
           git add docs/downloads.md
-          git commit -m "🤖 Actualizar página de descargas
-
-          - Versión: ${{ steps.release.outputs.tag_name }}
-          - Fecha: ${{ steps.release.outputs.release_date }}
-          - URL actualizada: ${{ steps.release.outputs.deb_url }}
-          - Archivo: ${{ steps.release.outputs.deb_name }}"
-
-          echo "=== Pushing cambios ==="
+          git commit -F /tmp/commitmsg.txt
           git push
           echo "✅ Cambios enviados correctamente"
         fi
