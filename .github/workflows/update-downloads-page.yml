@@ -87,86 +87,56 @@ jobs:
         # Asegurar que el directorio docs existe
         mkdir -p docs
 
-        # Variables para evitar problemas de escape
-        DEB_URL="${{ steps.release.outputs.deb_url }}"
-        DEB_NAME="${{ steps.release.outputs.deb_name }}"
-        REPO="${{ github.repository }}"
+        # Crear el archivo usando tee para evitar problemas con backticks
+        tee docs/descargas.md > /dev/null << 'CONTENT_EOF'
+        # Descargas
+        ## Instalación manual en Linux Mint
+        1. Descarga el paquete más reciente:
+        ```bash
+        <!--URL_WGET-->PLACEHOLDER_URL<!--END_URL_WGET-->
+        ```
+        2. Instala con gestión de dependencias:
+        ```bash
+        sudo apt install <!--NOMBRE_DEB-->PLACEHOLDER_NAME<!--END_NOMBRE_DEB-->
+        ```
+        3. Para reportar un error:
+        [Crear un issue en GitHub](https://github.com/PLACEHOLDER_REPO/issues)
 
-        # Crear el contenido usando un script Python inline para evitar problemas de bash
-        python3 << 'PYTHON_EOF'
-import os
-import sys
+        ## Historial de Cambios
+        | Versión   | Fecha       | Cambios Importantes               |
+        |-----------|------------|-----------------------------------|
+        CONTENT_EOF
 
-deb_url = os.environ.get('DEB_URL', '')
-deb_name = os.environ.get('DEB_NAME', '')
-repo = os.environ.get('REPO', '')
-
-content = f"""# Descargas
-## Instalación manual en Linux Mint
-1. Descarga el paquete más reciente:
-```bash
-<!--URL_WGET-->wget {deb_url}<!--END_URL_WGET-->
-```
-2. Instala con gestión de dependencias:
-```bash
-sudo apt install <!--NOMBRE_DEB-->./{deb_name}<!--END_NOMBRE_DEB-->
-```
-3. Para reportar un error:
-[Crear un issue en GitHub](https://github.com/{repo}/issues)
-
-## Historial de Cambios
-| Versión   | Fecha       | Cambios Importantes               |
-|-----------|------------|-----------------------------------|
-"""
-
-with open('docs/descargas.md', 'w') as f:
-    f.write(content)
-
-print("✅ Archivo base creado correctamente")
-PYTHON_EOF
-
-        # Exportar variables para Python
-        export DEB_URL="$DEB_URL"
-        export DEB_NAME="$DEB_NAME"
-        export REPO="$REPO"
+        # Reemplazar los placeholders
+        sed -i "s|PLACEHOLDER_URL|${{ steps.release.outputs.deb_url }}|g" docs/descargas.md
+        sed -i "s|PLACEHOLDER_NAME|./${{ steps.release.outputs.deb_name }}|g" docs/descargas.md
+        sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" docs/descargas.md
 
         # Obtener historial de releases
         if [ "${{ steps.release.outputs.has_release }}" = "true" ]; then
           echo "=== Obteniendo historial de releases ==="
 
-          # Usar Python para procesar el JSON de forma más segura
-          python3 << 'PYTHON_EOF2'
-import requests
-import json
-import os
-import sys
-
-repo = os.environ.get('REPO', '')
-try:
-    response = requests.get(f'https://api.github.com/repos/{repo}/releases')
-    releases = response.json()
-
-    if isinstance(releases, list):
-        with open('docs/descargas.md', 'a') as f:
-            for release in releases[:10]:
-                tag = release.get('tag_name', 'N/A')
-                date = release.get('published_at', '')[:10]
-                body = release.get('body', 'Sin descripción')
-
-                # Limpiar el body
-                body = body.replace('\n', ' ').replace('\r', '')
-                body = body.replace('*', '').replace('#', '')
-                if len(body) > 50:
-                    body = body[:50] + '...'
-
-                f.write(f"| {tag} | {date} | {body} |\n")
-
-    print("✅ Historial de releases agregado")
-except Exception as e:
-    print(f"❌ Error obteniendo releases: {e}")
-    with open('docs/descargas.md', 'a') as f:
-        f.write("| Error | - | No se pudo obtener el historial |\n")
-PYTHON_EOF2
+          # Descargar releases y procesar con sed/awk en lugar de jq
+          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" | \
+          sed 's/},{/}\n{/g' | \
+          grep -E '"tag_name"|"published_at"|"body"' | \
+          sed 's/.*"tag_name": *"\([^"]*\)".*/TAG:\1/' | \
+          sed 's/.*"published_at": *"\([^T]*\)T.*/DATE:\1/' | \
+          sed 's/.*"body": *"\([^"]*\)".*/BODY:\1/' | \
+          awk '
+            /^TAG:/ { tag = substr($0, 5) }
+            /^DATE:/ { date = substr($0, 6) }
+            /^BODY:/ {
+              body = substr($0, 6)
+              gsub(/\\n/, " ", body)
+              gsub(/\*/, "", body)
+              gsub(/#/, "", body)
+              if (length(body) > 50) body = substr(body, 1, 50) "..."
+              print "| " tag " | " date " | " body " |"
+              count++
+              if (count >= 10) exit
+            }
+          ' >> docs/descargas.md
         else
           echo "=== Usando información de commits ==="
           echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |" >> docs/descargas.md
