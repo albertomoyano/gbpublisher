@@ -23,10 +23,10 @@ jobs:
     - name: Get latest release info
       id: release
       run: |
-        set -euo pipefail
-
+        # Obtener información del último release
         LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases/latest")
 
+        # Verificar si la respuesta contiene un mensaje de error
         if echo "$LATEST_RELEASE" | jq -e '.message' > /dev/null 2>&1; then
           HAS_RELEASE=false
         else
@@ -34,12 +34,18 @@ jobs:
         fi
 
         if [ "$HAS_RELEASE" = "true" ]; then
+          # Si hay releases disponibles
           TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name // "v0.0.0"')
           RELEASE_DATE=$(echo "$LATEST_RELEASE" | jq -r '.published_at' | cut -d'T' -f1)
+
+          # Limpiar el body del release de caracteres problemáticos
           RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body // "Sin descripción"' | tr -d '\n\r' | sed 's/[*#]//' | cut -c1-100)
+
+          # Buscar archivos .deb en los assets
           DEB_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name | endswith(".deb")) | .browser_download_url' | head -1)
           DEB_NAME=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name | endswith(".deb")) | .name' | head -1)
 
+          # Si no encuentra .deb, usar valores por defecto
           if [ -z "$DEB_URL" ] || [ "$DEB_URL" = "null" ]; then
             DEB_URL="https://github.com/${{ github.repository }}/releases/download/$TAG_NAME/package.deb"
             DEB_NAME="package.deb"
@@ -54,6 +60,7 @@ jobs:
             echo "has_release=true"
           } >> $GITHUB_OUTPUT
         else
+          # Si no hay releases, usar información del commit más reciente
           COMMIT_DATE=$(git log -1 --format="%Y-%m-%d")
           COMMIT_MESSAGE=$(git log -1 --format="%s" | tr -d '\n\r' | cut -c1-50)
           COMMIT_SHA=$(git log -1 --format="%h")
@@ -68,75 +75,80 @@ jobs:
           } >> $GITHUB_OUTPUT
         fi
 
-    - name: Update downloads page
-      env:
-        RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
-        RELEASE_DATE: ${{ steps.release.outputs.release_date }}
-        RELEASE_BODY: ${{ steps.release.outputs.release_body }}
-        DEB_URL: ${{ steps.release.outputs.deb_url }}
-        DEB_NAME: ${{ steps.release.outputs.deb_name }}
+    - name: Update downloads page sections
       run: |
-        set -euo pipefail
+        echo "=== Debug: Valores obtenidos ==="
+        echo "Tag: ${{ steps.release.outputs.tag_name }}"
+        echo "Date: ${{ steps.release.outputs.release_date }}"
+        echo "DEB URL: ${{ steps.release.outputs.deb_url }}"
+        echo "DEB Name: ${{ steps.release.outputs.deb_name }}"
+        echo "Has Release: ${{ steps.release.outputs.has_release }}"
 
-        FILE="docs/downloads.md"
-
-        if [ ! -f "$FILE" ]; then
-          echo "❌ No se encontró $FILE"
+        # Verificar que el archivo existe
+        if [ ! -f "docs/downloads.md" ]; then
+          echo "❌ El archivo docs/downloads.md no existe"
           exit 1
         fi
 
-        echo "=== Editando $FILE con la última info de release ==="
+        echo "=== Contenido original ==="
+        cat docs/downloads.md
 
-        # Escapar &, / y \ en las variables antes de pasarlas como reemplazo a sed
-        safe_url=$(printf '%s\n' "$DEB_URL" | sed 's/[&/\\]/\\&/g')
-        safe_name=$(printf '%s\n' "$DEB_NAME" | sed 's/[&/\\]/\\&/g')
+        # 1. Actualizar la URL del wget
+        sed -i "s|<!--URL_WGET-->.*<!--END_URL_WGET-->|<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->|g" docs/downloads.md
 
-        # Reemplazar URL y nombre dentro de los marcadores (usa | como delimitador)
-        sed -i "s|<!--URL_WGET-->.*<!--END_URL_WGET-->|<!--URL_WGET-->wget $safe_url<!--END_URL_WGET-->|" "$FILE"
-        sed -i "s|<!--NOMBRE_DEB-->.*<!--END_NOMBRE_DEB-->|<!--NOMBRE_DEB-->$safe_name<!--END_NOMBRE_DEB-->|" "$FILE"
+        # 2. Actualizar el nombre del archivo DEB
+        sed -i "s|<!--NOMBRE_DEB-->.*<!--END_NOMBRE_DEB-->|<!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->|g" docs/downloads.md
 
-        # Agregar entrada al historial sólo si la versión no existe aún
-        if grep -Fq "| $RELEASE_TAG |" "$FILE"; then
-          echo "La versión $RELEASE_TAG ya existe en el historial, no se añade."
-        else
-          # Buscar la línea separadora de la tabla (la que contiene ---)
-          sep_line=$(grep -n '---' "$FILE" | head -n1 | cut -d: -f1 || true)
+        # 3. Verificar si la versión ya existe en el historial para evitar duplicados
+        if ! grep -q "${{ steps.release.outputs.tag_name }}" docs/downloads.md; then
+          echo "=== Agregando nueva versión al historial ==="
 
-          if [ -n "$sep_line" ]; then
-            # Insertar la nueva fila justo después de la línea separadora
-            awk -v ln="$sep_line" -v version="$RELEASE_TAG" -v date="$RELEASE_DATE" -v changes="$RELEASE_BODY" \
-              'NR==ln { print; print "| " version " | " date " | " changes " |"; next } { print }' \
-              "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+          # Encontrar la línea después del encabezado de la tabla
+          HEADER_LINE=$(grep -n "^|.*Versión.*Fecha.*Cambios" docs/downloads.md | cut -d: -f1)
+          SEPARATOR_LINE=$(grep -n "^|.*---|.*---|.*---" docs/downloads.md | cut -d: -f1)
+
+          if [ -n "$HEADER_LINE" ] && [ -n "$SEPARATOR_LINE" ]; then
+            # Insertar la nueva línea después del separador
+            INSERT_LINE=$((SEPARATOR_LINE + 1))
+
+            # Crear línea temporal
+            NEW_LINE="| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |"
+
+            # Insertar la nueva línea
+            sed -i "${INSERT_LINE}i\\${NEW_LINE}" docs/downloads.md
           else
-            # Si no encuentra la tabla, agregar al final como fallback
-            echo "| $RELEASE_TAG | $RELEASE_DATE | $RELEASE_BODY |" >> "$FILE"
+            echo "❌ No se encontró la tabla de historial de cambios"
           fi
+        else
+          echo "=== Versión ${{ steps.release.outputs.tag_name }} ya existe en el historial, no se agrega duplicada ==="
         fi
 
-        echo "=== Contenido final ==="
-        cat "$FILE"
+        echo "=== Contenido actualizado ==="
+        cat docs/downloads.md
 
     - name: Commit and push changes
-      env:
-        RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
-        RELEASE_DATE: ${{ steps.release.outputs.release_date }}
-        DEB_NAME: ${{ steps.release.outputs.deb_name }}
       run: |
-        set -euo pipefail
-
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
 
-        git add docs/downloads.md
+        echo "=== Estado del repositorio ==="
+        git status
 
-        if git diff --cached --quiet; then
-          echo "❌ No hay cambios para commitear"
+        # Verificar si hay cambios en el archivo
+        if git diff --quiet docs/downloads.md; then
+          echo "❌ No hay cambios en docs/downloads.md para commitear"
         else
-          git commit -m "🤖 Actualizar página de descargas automáticamente
+          echo "✅ Cambios detectados en docs/downloads.md, commiteando..."
 
-- Versión: $RELEASE_TAG
-- Fecha: $RELEASE_DATE
-- Archivo: $DEB_NAME"
+          git add docs/downloads.md
+          git commit -m "🤖 Actualizar página de descargas
+
+          - Versión: ${{ steps.release.outputs.tag_name }}
+          - Fecha: ${{ steps.release.outputs.release_date }}
+          - URL actualizada: ${{ steps.release.outputs.deb_url }}
+          - Archivo: ${{ steps.release.outputs.deb_name }}"
+
+          echo "=== Pushing cambios ==="
           git push
           echo "✅ Cambios enviados correctamente"
         fi
