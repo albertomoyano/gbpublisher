@@ -1,0 +1,113 @@
+name: Update Downloads Page
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+
+jobs:
+  update-downloads:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Get latest release info
+      id: release
+      run: |
+        # Obtener información del último release
+        LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+
+        if [ "$LATEST_RELEASE" != "null" ] && [ "$(echo "$LATEST_RELEASE" | jq -r '.message // empty')" != "Not Found" ]; then
+          # Si hay releases disponibles
+          TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          RELEASE_DATE=$(echo "$LATEST_RELEASE" | jq -r '.published_at' | cut -d'T' -f1)
+          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body // "Sin descripción"')
+
+          # Buscar archivos .deb en los assets
+          DEB_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | endswith(".deb")) | .browser_download_url' | head -1)
+          DEB_NAME=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | endswith(".deb")) | .name' | head -1)
+
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_date=$RELEASE_DATE" >> $GITHUB_OUTPUT
+          echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
+          echo "deb_url=$DEB_URL" >> $GITHUB_OUTPUT
+          echo "deb_name=$DEB_NAME" >> $GITHUB_OUTPUT
+          echo "has_release=true" >> $GITHUB_OUTPUT
+        else
+          # Si no hay releases, usar información del commit más reciente
+          COMMIT_DATE=$(git log -1 --format="%Y-%m-%d")
+          COMMIT_MESSAGE=$(git log -1 --format="%s")
+          COMMIT_SHA=$(git log -1 --format="%h")
+
+          echo "tag_name=v0.0.0-dev" >> $GITHUB_OUTPUT
+          echo "release_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
+          echo "release_body=$COMMIT_MESSAGE (commit $COMMIT_SHA)" >> $GITHUB_OUTPUT
+          echo "deb_url=https://github.com/${{ github.repository }}/releases/download/latest/package.deb" >> $GITHUB_OUTPUT
+          echo "deb_name=package.deb" >> $GITHUB_OUTPUT
+          echo "has_release=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Update downloads page
+      run: |
+        # Crear el archivo de descargas actualizado
+        cat > docs/descargas.md << 'EOF'
+        # Descargas
+        ## Instalación manual en Linux Mint
+        1. Descarga el paquete más reciente:
+        ```bash
+        <!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->
+        ```
+        2. Instala con gestión de dependencias:
+        ```bash
+        sudo apt install <!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->
+        ```
+        3. Para reportar un error:
+        [Crear un issue en GitHub](https://github.com/${{ github.repository }}/issues)
+
+        ## Historial de Cambios
+        | Versión   | Fecha       | Cambios Importantes               |
+        |-----------|------------|-----------------------------------|
+        EOF
+
+        # Obtener historial de releases para la tabla
+        if [ "${{ steps.release.outputs.has_release }}" = "true" ]; then
+          # Si hay releases, obtener todos los releases
+          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" | \
+          jq -r '.[] | "| \(.tag_name) | \(.published_at | split("T")[0]) | \(.body // "Sin descripción" | gsub("\n"; " ") | .[0:50])... |"' | \
+          head -10 >> docs/descargas.md
+        else
+          # Si no hay releases, mostrar commits recientes
+          echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |" >> docs/descargas.md
+
+          # Agregar algunos commits anteriores
+          git log --oneline --date=short --pretty=format:"| commit-%h | %ad | %s |" -n 5 >> docs/descargas.md
+        fi
+
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+        # Verificar si hay cambios
+        if git diff --quiet docs/descargas.md; then
+          echo "No changes to commit"
+          exit 0
+        fi
+
+        git add docs/descargas.md
+        git commit -m "🤖 Actualizar página de descargas automáticamente
+
+        - Versión: ${{ steps.release.outputs.tag_name }}
+        - Fecha: ${{ steps.release.outputs.release_date }}
+        - Archivo: ${{ steps.release.outputs.deb_name }}"
+
+        git push
