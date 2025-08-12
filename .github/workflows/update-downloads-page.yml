@@ -92,45 +92,73 @@ jobs:
 
         echo "=== Archivo encontrado, aplicando cambios ==="
 
-        # 1. Actualizar la URL del wget usando un método más seguro
-        # Crear un archivo temporal con el nuevo contenido
-        NEW_WGET_LINE="<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->"
+        # Guardar las variables en archivos para evitar problemas de bash
+        echo '${{ steps.release.outputs.deb_url }}' > /tmp/deb_url.txt
+        echo '${{ steps.release.outputs.deb_name }}' > /tmp/deb_name.txt
+        echo '${{ steps.release.outputs.tag_name }}' > /tmp/tag_name.txt
+        echo '${{ steps.release.outputs.release_date }}' > /tmp/release_date.txt
+        echo '${{ steps.release.outputs.release_body }}' > /tmp/release_body.txt
 
-        # Usar perl en lugar de sed para manejar mejor los caracteres especiales
-        perl -pi -e 's|<!--URL_WGET-->.*?<!--END_URL_WGET-->|'"$NEW_WGET_LINE"'|g' docs/downloads.md
+        # Leer las variables de los archivos
+        DEB_URL=$(cat /tmp/deb_url.txt)
+        DEB_NAME=$(cat /tmp/deb_name.txt)
+        TAG_NAME=$(cat /tmp/tag_name.txt)
+        RELEASE_DATE=$(cat /tmp/release_date.txt)
+        RELEASE_BODY=$(cat /tmp/release_body.txt)
 
-        # 2. Actualizar el nombre del archivo DEB
-        NEW_DEB_LINE="<!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->"
-        perl -pi -e 's|<!--NOMBRE_DEB-->.*?<!--END_NOMBRE_DEB-->|'"$NEW_DEB_LINE"'|g' docs/downloads.md
+        # 1. Actualizar la URL del wget usando python para evitar problemas de bash
+        python3 -c "
+import re
+with open('docs/downloads.md', 'r') as f:
+    content = f.read()
 
-        # 3. Verificar si la versión ya existe en el historial para evitar duplicados
-        if ! grep -q "${{ steps.release.outputs.tag_name }}" docs/downloads.md; then
+# Reemplazar URL_WGET
+new_url = '<!--URL_WGET-->wget ${DEB_URL}<!--END_URL_WGET-->'
+content = re.sub(r'<!--URL_WGET-->.*?<!--END_URL_WGET-->', new_url, content)
+
+# Reemplazar NOMBRE_DEB
+new_name = '<!--NOMBRE_DEB-->./${DEB_NAME}<!--END_NOMBRE_DEB-->'
+content = re.sub(r'<!--NOMBRE_DEB-->.*?<!--END_NOMBRE_DEB-->', new_name, content)
+
+with open('docs/downloads.md', 'w') as f:
+    f.write(content)
+"
+
+        echo "✅ URLs actualizadas"
+
+        # 2. Verificar si la versión ya existe en el historial para evitar duplicados
+        if ! grep -q "${TAG_NAME}" docs/downloads.md; then
           echo "=== Agregando nueva versión al historial ==="
 
-          # Buscar la línea del separador de tabla
-          if grep -q "^|.*---|.*---|.*---" docs/downloads.md; then
-            # Crear la nueva línea de historial
-            NEW_HISTORY_LINE="| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |"
+          # Usar python para agregar la línea al historial
+          python3 -c "
+import re
 
-            # Usar awk para insertar después del separador
-            awk -v new_line="$NEW_HISTORY_LINE" '
-              /^[|].*---[|].*---[|].*---/ {
-                print $0
-                print new_line
-                next
-              }
-              {print}
-            ' docs/downloads.md > docs/downloads.md.tmp && mv docs/downloads.md.tmp docs/downloads.md
+with open('docs/downloads.md', 'r') as f:
+    content = f.read()
 
-            echo "✅ Nueva versión agregada al historial"
-          else
-            echo "❌ No se encontró la tabla de historial de cambios"
-          fi
+# Buscar la línea del separador de tabla
+if re.search(r'\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|', content):
+    new_line = '| ${TAG_NAME} | ${RELEASE_DATE} | ${RELEASE_BODY} |'
+    # Insertar después de la línea de separadores
+    content = re.sub(
+        r'(\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|)\n',
+        r'\1\n' + new_line + '\n',
+        content,
+        count=1
+    )
+
+    with open('docs/downloads.md', 'w') as f:
+        f.write(content)
+    print('Nueva versión agregada al historial')
+else:
+    print('No se encontró la tabla de historial')
+"
         else
-          echo "=== Versión ${{ steps.release.outputs.tag_name }} ya existe en el historial, no se agrega duplicada ==="
+          echo "=== Versión ${TAG_NAME} ya existe en el historial, no se agrega duplicada ==="
         fi
 
-        echo "=== Cambios aplicados ==="
+        echo "=== Cambios aplicados correctamente ==="
 
     - name: Commit and push changes
       run: |
