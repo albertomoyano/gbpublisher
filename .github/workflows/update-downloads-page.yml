@@ -87,38 +87,89 @@ jobs:
         # Asegurar que el directorio docs existe
         mkdir -p docs
 
-        # Crear el archivo usando printf para evitar problemas con backticks
-        printf "# Descargas\n" > docs/descargas.md
-        printf "## Instalación manual en Linux Mint\n" >> docs/descargas.md
-        printf "1. Descarga el paquete más reciente:\n" >> docs/descargas.md
-        printf "\`\`\`bash\n" >> docs/descargas.md
-        printf "<!--URL_WGET-->wget %s<!--END_URL_WGET-->\n" "${{ steps.release.outputs.deb_url }}" >> docs/descargas.md
-        printf "\`\`\`\n" >> docs/descargas.md
-        printf "2. Instala con gestión de dependencias:\n" >> docs/descargas.md
-        printf "\`\`\`bash\n" >> docs/descargas.md
-        printf "sudo apt install <!--NOMBRE_DEB-->./%s<!--END_NOMBRE_DEB-->\n" "${{ steps.release.outputs.deb_name }}" >> docs/descargas.md
-        printf "\`\`\`\n" >> docs/descargas.md
-        printf "3. Para reportar un error:\n" >> docs/descargas.md
-        printf "[Crear un issue en GitHub](https://github.com/%s/issues)\n\n" "${{ github.repository }}" >> docs/descargas.md
-        printf "## Historial de Cambios\n" >> docs/descargas.md
-        printf "| Versión   | Fecha       | Cambios Importantes               |\n" >> docs/descargas.md
-        printf "|-----------|------------|-----------------------------------|\n" >> docs/descargas.md
+        # Variables para evitar problemas de escape
+        DEB_URL="${{ steps.release.outputs.deb_url }}"
+        DEB_NAME="${{ steps.release.outputs.deb_name }}"
+        REPO="${{ github.repository }}"
 
-        # Obtener historial de releases para la tabla de forma más simple
+        # Crear el contenido usando un script Python inline para evitar problemas de bash
+        python3 << 'PYTHON_EOF'
+import os
+import sys
+
+deb_url = os.environ.get('DEB_URL', '')
+deb_name = os.environ.get('DEB_NAME', '')
+repo = os.environ.get('REPO', '')
+
+content = f"""# Descargas
+## Instalación manual en Linux Mint
+1. Descarga el paquete más reciente:
+```bash
+<!--URL_WGET-->wget {deb_url}<!--END_URL_WGET-->
+```
+2. Instala con gestión de dependencias:
+```bash
+sudo apt install <!--NOMBRE_DEB-->./{deb_name}<!--END_NOMBRE_DEB-->
+```
+3. Para reportar un error:
+[Crear un issue en GitHub](https://github.com/{repo}/issues)
+
+## Historial de Cambios
+| Versión   | Fecha       | Cambios Importantes               |
+|-----------|------------|-----------------------------------|
+"""
+
+with open('docs/descargas.md', 'w') as f:
+    f.write(content)
+
+print("✅ Archivo base creado correctamente")
+PYTHON_EOF
+
+        # Exportar variables para Python
+        export DEB_URL="$DEB_URL"
+        export DEB_NAME="$DEB_NAME"
+        export REPO="$REPO"
+
+        # Obtener historial de releases
         if [ "${{ steps.release.outputs.has_release }}" = "true" ]; then
           echo "=== Obteniendo historial de releases ==="
 
-          # Crear un archivo temporal para procesar el JSON de forma más segura
-          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" > /tmp/releases.json
+          # Usar Python para procesar el JSON de forma más segura
+          python3 << 'PYTHON_EOF2'
+import requests
+import json
+import os
+import sys
 
-          # Procesar los releases de uno en uno
-          cat /tmp/releases.json | jq -r '.[0:10][] | [.tag_name, (.published_at | split("T")[0]), (.body // "Sin descripción" | gsub("[\n\r*#]"; " ") | .[0:50])] | "| " + .[0] + " | " + .[1] + " | " + .[2] + "... |"' >> docs/descargas.md
+repo = os.environ.get('REPO', '')
+try:
+    response = requests.get(f'https://api.github.com/repos/{repo}/releases')
+    releases = response.json()
+
+    if isinstance(releases, list):
+        with open('docs/descargas.md', 'a') as f:
+            for release in releases[:10]:
+                tag = release.get('tag_name', 'N/A')
+                date = release.get('published_at', '')[:10]
+                body = release.get('body', 'Sin descripción')
+
+                # Limpiar el body
+                body = body.replace('\n', ' ').replace('\r', '')
+                body = body.replace('*', '').replace('#', '')
+                if len(body) > 50:
+                    body = body[:50] + '...'
+
+                f.write(f"| {tag} | {date} | {body} |\n")
+
+    print("✅ Historial de releases agregado")
+except Exception as e:
+    print(f"❌ Error obteniendo releases: {e}")
+    with open('docs/descargas.md', 'a') as f:
+        f.write("| Error | - | No se pudo obtener el historial |\n")
+PYTHON_EOF2
         else
           echo "=== Usando información de commits ==="
-          printf "| %s | %s | %s |\n" "${{ steps.release.outputs.tag_name }}" "${{ steps.release.outputs.release_date }}" "${{ steps.release.outputs.release_body }}" >> docs/descargas.md
-
-          # Agregar algunos commits anteriores
-          git log --oneline --date=short --pretty=format:"| commit-%h | %ad | %s |" -n 5 >> docs/descargas.md
+          echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |" >> docs/descargas.md
         fi
 
         echo "=== Contenido del archivo generado ==="
