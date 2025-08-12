@@ -116,6 +116,24 @@ jobs:
           echo "✅ El release $TAG_NAME no existe, se puede crear"
         fi
 
+    - name: Debug Ubuntu Files
+      if: steps.ubuntu-info.outputs.found == 'true' && steps.check-ubuntu-release.outputs.exists == 'false'
+      run: |
+        echo "🔍 Debugging archivos Ubuntu antes de crear release:"
+        echo "Files to upload: ${{ steps.ubuntu-info.outputs.files }}"
+        echo "Main file: ${{ steps.ubuntu-info.outputs.main_file }}"
+        echo "Tag: ${{ steps.ubuntu-info.outputs.tag }}"
+        echo "Version: ${{ steps.ubuntu-info.outputs.version }}"
+        echo ""
+        echo "Verificando que los archivos existen:"
+        for file in ${{ steps.ubuntu-info.outputs.files }}; do
+          if [ -f "$file" ]; then
+            echo "✅ $file existe ($(ls -lh "$file" | awk '{print $5}'))"
+          else
+            echo "❌ $file NO EXISTE"
+          fi
+        done
+
     - name: Create Ubuntu Release
       if: steps.ubuntu-info.outputs.found == 'true' && steps.check-ubuntu-release.outputs.exists == 'false'
       uses: softprops/action-gh-release@v2
@@ -143,6 +161,17 @@ jobs:
           Deployed automatically from commit: ${{ github.sha }}
         draft: false
         prerelease: false
+        fail_on_unmatched_files: true  # Fallar si no encuentra archivos
+
+    - name: Ubuntu Release Status
+      if: always() && (steps.ubuntu-info.outputs.found == 'true' && steps.check-ubuntu-release.outputs.exists == 'false')
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "✅ Release de Ubuntu creado exitosamente"
+        else
+          echo "❌ Error al crear release de Ubuntu"
+          echo "Revisa los logs anteriores para más detalles"
+        fi
 
   release-arch:
     needs: detect-changes
@@ -263,14 +292,26 @@ jobs:
           RPM_NAME=$(basename "$RPM_FILE")
 
           # Extraer versión del nombre del archivo .rpm
-          VERSION=$(echo "$RPM_NAME" | sed -n 's/.*-\([0-9][^-]*-[0-9]*\)\.\(x86_64\|noarch\)\.rpm$/\1/p')
+          VERSION=$(echo "$RPM_NAME" | sed -n 's/.*-\([0-9][^-]*-[0-9]*\)\.\(x86_64\|noarch\|i686\)\.rpm$/\1/p')
 
+          # Si no encuentra versión con el patrón anterior, probar otro
+          if [ -z "$VERSION" ]; then
+            VERSION=$(echo "$RPM_NAME" | sed -n 's/.*-\([0-9][^-]*\)-.*\.rpm$/\1/p')
+          fi
+
+          # Si aún no encuentra versión, usar fecha
           if [ -z "$VERSION" ]; then
             VERSION=$(date +"%Y.%m.%d.%H%M")
           fi
 
-          # Crear lista de todos los archivos .rpm
-          RPM_FILES=$(ls distribuciones/fedora/*.rpm | tr '\n' ' ')
+          # Crear lista de todos los archivos .rpm (separados por espacios)
+          RPM_FILES=""
+          for rpm in distribuciones/fedora/*.rpm; do
+            if [ -f "$rpm" ]; then
+              RPM_FILES="$RPM_FILES$rpm "
+            fi
+          done
+          RPM_FILES=$(echo "$RPM_FILES" | sed 's/ $//')  # Remover espacio final
 
           echo "files=$RPM_FILES" >> $GITHUB_OUTPUT
           echo "main_file=$RPM_FILE" >> $GITHUB_OUTPUT
@@ -281,6 +322,7 @@ jobs:
           echo "📦 Paquete principal: $RPM_NAME"
           echo "🏷️ Versión: $VERSION"
           echo "🔖 Tag: fedora-v$VERSION"
+          echo "📁 Archivos a subir: $RPM_FILES"
 
         else
           echo "found=false" >> $GITHUB_OUTPUT
@@ -300,6 +342,30 @@ jobs:
           echo "exists=false" >> $GITHUB_OUTPUT
           echo "✅ El release $TAG_NAME no existe, se puede crear"
         fi
+
+    - name: Wait before release creation
+      if: steps.fedora-info.outputs.found == 'true' && steps.check-fedora-release.outputs.exists == 'false'
+      run: |
+        echo "⏳ Esperando 5 segundos antes de crear el release..."
+        sleep 5
+
+    - name: Debug Fedora Files
+      if: steps.fedora-info.outputs.found == 'true' && steps.check-fedora-release.outputs.exists == 'false'
+      run: |
+        echo "🔍 Debugging archivos Fedora antes de crear release:"
+        echo "Files to upload: ${{ steps.fedora-info.outputs.files }}"
+        echo "Main file: ${{ steps.fedora-info.outputs.main_file }}"
+        echo "Tag: ${{ steps.fedora-info.outputs.tag }}"
+        echo "Version: ${{ steps.fedora-info.outputs.version }}"
+        echo ""
+        echo "Verificando que los archivos existen:"
+        for file in ${{ steps.fedora-info.outputs.files }}; do
+          if [ -f "$file" ]; then
+            echo "✅ $file existe ($(ls -lh "$file" | awk '{print $5}'))"
+          else
+            echo "❌ $file NO EXISTE"
+          fi
+        done
 
     - name: Create Fedora Release
       if: steps.fedora-info.outputs.found == 'true' && steps.check-fedora-release.outputs.exists == 'false'
@@ -329,6 +395,17 @@ jobs:
           Deployed automatically from commit: ${{ github.sha }}
         draft: false
         prerelease: false
+        fail_on_unmatched_files: true  # Fallar si no encuentra archivos
+
+    - name: Fedora Release Status
+      if: always() && (steps.fedora-info.outputs.found == 'true' && steps.check-fedora-release.outputs.exists == 'false')
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "✅ Release de Fedora creado exitosamente"
+        else
+          echo "❌ Error al crear release de Fedora"
+          echo "Revisa los logs anteriores para más detalles"
+        fi
 
   create-deployment-records:
     needs: [detect-changes, release-ubuntu, release-arch, release-fedora]
