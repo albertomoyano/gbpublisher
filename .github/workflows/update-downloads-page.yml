@@ -23,10 +23,8 @@ jobs:
     - name: Get latest release info
       id: release
       run: |
-        # Obtener información del último release
         LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases/latest")
 
-        # Verificar si la respuesta contiene un mensaje de error
         if echo "$LATEST_RELEASE" | jq -e '.message' > /dev/null 2>&1; then
           HAS_RELEASE=false
         else
@@ -34,18 +32,12 @@ jobs:
         fi
 
         if [ "$HAS_RELEASE" = "true" ]; then
-          # Si hay releases disponibles
           TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name // "v0.0.0"')
           RELEASE_DATE=$(echo "$LATEST_RELEASE" | jq -r '.published_at' | cut -d'T' -f1)
-
-          # Limpiar el body del release de caracteres problemáticos
           RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body // "Sin descripción"' | tr -d '\n\r' | sed 's/[*#]//' | cut -c1-100)
-
-          # Buscar archivos .deb en los assets
           DEB_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name | endswith(".deb")) | .browser_download_url' | head -1)
           DEB_NAME=$(echo "$LATEST_RELEASE" | jq -r '.assets[]? | select(.name | endswith(".deb")) | .name' | head -1)
 
-          # Si no encuentra .deb, usar valores por defecto
           if [ -z "$DEB_URL" ] || [ "$DEB_URL" = "null" ]; then
             DEB_URL="https://github.com/${{ github.repository }}/releases/download/$TAG_NAME/package.deb"
             DEB_NAME="package.deb"
@@ -60,7 +52,6 @@ jobs:
             echo "has_release=true"
           } >> $GITHUB_OUTPUT
         else
-          # Si no hay releases, usar información del commit más reciente
           COMMIT_DATE=$(git log -1 --format="%Y-%m-%d")
           COMMIT_MESSAGE=$(git log -1 --format="%s" | tr -d '\n\r' | cut -c1-50)
           COMMIT_SHA=$(git log -1 --format="%h")
@@ -77,103 +68,54 @@ jobs:
 
     - name: Update downloads page
       run: |
-        echo "=== Debug: Valores obtenidos ==="
-        echo "Tag: ${{ steps.release.outputs.tag_name }}"
-        echo "Date: ${{ steps.release.outputs.release_date }}"
-        echo "DEB URL: ${{ steps.release.outputs.deb_url }}"
-        echo "DEB Name: ${{ steps.release.outputs.deb_name }}"
-        echo "Has Release: ${{ steps.release.outputs.has_release }}"
+        FILE="docs/downloads.md"
 
-        # Asegurar que el directorio docs existe
-        mkdir -p docs
-
-        # Crear el archivo línea por línea sin heredocs
-        echo "# Descargas" > docs/descargas.md
-        echo "## Instalación manual en Linux Mint" >> docs/descargas.md
-        echo "1. Descarga el paquete más reciente:" >> docs/descargas.md
-
-        # Crear el bloque de código bash usando variables
-        TRIPLE_TICK='```'
-        echo "${TRIPLE_TICK}bash" >> docs/descargas.md
-        echo "<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->" >> docs/descargas.md
-        echo "${TRIPLE_TICK}" >> docs/descargas.md
-
-        echo "2. Instala con gestión de dependencias:" >> docs/descargas.md
-        echo "${TRIPLE_TICK}bash" >> docs/descargas.md
-        echo "sudo apt install <!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->" >> docs/descargas.md
-        echo "${TRIPLE_TICK}" >> docs/descargas.md
-
-        echo "3. Para reportar un error:" >> docs/descargas.md
-        echo "[Crear un issue en GitHub](https://github.com/${{ github.repository }}/issues)" >> docs/descargas.md
-        echo "" >> docs/descargas.md
-        echo "## Historial de Cambios" >> docs/descargas.md
-        echo "| Versión   | Fecha       | Cambios Importantes               |" >> docs/descargas.md
-        echo "|-----------|------------|-----------------------------------|" >> docs/descargas.md
-
-        # Obtener historial de releases de forma más simple
-        if [ "${{ steps.release.outputs.has_release }}" = "true" ]; then
-          echo "=== Obteniendo historial de releases ==="
-
-          # Agregar solo el release actual primero
-          echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | Última versión disponible |" >> docs/descargas.md
-
-          # Intentar obtener más releases pero de forma más simple
-          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" > /tmp/releases.json
-
-          if [ -f /tmp/releases.json ] && [ -s /tmp/releases.json ]; then
-            # Extraer información básica usando grep y sed
-            grep -o '"tag_name":"[^"]*"' /tmp/releases.json | head -5 | sed 's/"tag_name":"\([^"]*\)"/\1/' > /tmp/tags.txt
-            grep -o '"published_at":"[^"]*"' /tmp/releases.json | head -5 | sed 's/"published_at":"\([^T]*\)T.*/\1/' > /tmp/dates.txt
-
-            # Combinar la información en la tabla (saltar el primer release que ya agregamos)
-            tail -n +2 /tmp/tags.txt > /tmp/tags_remaining.txt
-            tail -n +2 /tmp/dates.txt > /tmp/dates_remaining.txt
-
-            paste /tmp/tags_remaining.txt /tmp/dates_remaining.txt | while read tag date; do
-              echo "| $tag | $date | Release anterior |" >> docs/descargas.md
-            done
-          fi
-        else
-          echo "=== Usando información de commits ==="
-          echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |" >> docs/descargas.md
+        if [ ! -f "$FILE" ]; then
+          echo "❌ No se encontró $FILE"
+          exit 1
         fi
 
-        echo "=== Contenido del archivo generado ==="
-        cat docs/descargas.md
+        echo "=== Editando $FILE con la última info de release ==="
+
+        # Reemplazar URL en la sección wget
+        sed -i "s|<!--URL_WGET-->.*<!--END_URL_WGET-->|<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->|" "$FILE"
+
+        # Reemplazar nombre del .deb
+        sed -i "s|<!--NOMBRE_DEB-->.*<!--END_NOMBRE_DEB-->|<!--NOMBRE_DEB-->${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->|" "$FILE"
+
+        # Insertar nueva fila en Historial de Cambios
+        TEMP_FILE=$(mktemp)
+        awk -v version="${{ steps.release.outputs.tag_name }}" \
+            -v date="${{ steps.release.outputs.release_date }}" \
+            -v changes="${{ steps.release.outputs.release_body }}" \
+            'BEGIN{added=0}
+             /^| Versión/ {print; next}
+             /^|-----------/ {print; next}
+             added==0 && /^|/ {
+                 print "| " version " | " date " | " changes " |"
+                 added=1
+             }
+             {print}
+            ' "$FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$FILE"
+
+        echo "=== Contenido final ==="
+        cat "$FILE"
 
     - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
 
-        echo "=== Estado del repositorio ==="
-        git status
+        git add docs/downloads.md
 
-        echo "=== Diferencias encontradas ==="
-        git diff docs/descargas.md || echo "Archivo no existía previamente"
-
-        # Agregar el archivo sin verificar diferencias primero
-        git add docs/descargas.md
-
-        echo "=== Archivos en staging ==="
-        git status --porcelain
-
-        # Verificar si hay cambios en staging
         if git diff --cached --quiet; then
           echo "❌ No hay cambios para commitear"
-          git status
-          echo "=== Contenido actual del archivo ==="
-          ls -la docs/
-          cat docs/descargas.md
         else
-          echo "✅ Cambios detectados, commiteando..."
           git commit -m "🤖 Actualizar página de descargas automáticamente
 
           - Versión: ${{ steps.release.outputs.tag_name }}
           - Fecha: ${{ steps.release.outputs.release_date }}
           - Archivo: ${{ steps.release.outputs.deb_name }}"
-
-          echo "=== Pushing cambios ==="
           git push
           echo "✅ Cambios enviados correctamente"
         fi
