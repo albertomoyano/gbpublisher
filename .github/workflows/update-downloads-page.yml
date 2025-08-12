@@ -87,37 +87,35 @@ jobs:
         # Asegurar que el directorio docs existe
         mkdir -p docs
 
-        # Crear el archivo de descargas actualizado usando echo
-        {
-          echo "# Descargas"
-          echo "## Instalación manual en Linux Mint"
-          echo "1. Descarga el paquete más reciente:"
-          echo '```bash'
-          echo "<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->"
-          echo '```'
-          echo "2. Instala con gestión de dependencias:"
-          echo '```bash'
-          echo "sudo apt install <!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->"
-          echo '```'
-          echo "3. Para reportar un error:"
-          echo "[Crear un issue en GitHub](https://github.com/${{ github.repository }}/issues)"
-          echo ""
-          echo "## Historial de Cambios"
-          echo "| Versión   | Fecha       | Cambios Importantes               |"
-          echo "|-----------|------------|-----------------------------------|"
-        } > docs/descargas.md
+        # Crear el archivo usando printf para evitar problemas con backticks
+        printf "# Descargas\n" > docs/descargas.md
+        printf "## Instalación manual en Linux Mint\n" >> docs/descargas.md
+        printf "1. Descarga el paquete más reciente:\n" >> docs/descargas.md
+        printf "\`\`\`bash\n" >> docs/descargas.md
+        printf "<!--URL_WGET-->wget %s<!--END_URL_WGET-->\n" "${{ steps.release.outputs.deb_url }}" >> docs/descargas.md
+        printf "\`\`\`\n" >> docs/descargas.md
+        printf "2. Instala con gestión de dependencias:\n" >> docs/descargas.md
+        printf "\`\`\`bash\n" >> docs/descargas.md
+        printf "sudo apt install <!--NOMBRE_DEB-->./%s<!--END_NOMBRE_DEB-->\n" "${{ steps.release.outputs.deb_name }}" >> docs/descargas.md
+        printf "\`\`\`\n" >> docs/descargas.md
+        printf "3. Para reportar un error:\n" >> docs/descargas.md
+        printf "[Crear un issue en GitHub](https://github.com/%s/issues)\n\n" "${{ github.repository }}" >> docs/descargas.md
+        printf "## Historial de Cambios\n" >> docs/descargas.md
+        printf "| Versión   | Fecha       | Cambios Importantes               |\n" >> docs/descargas.md
+        printf "|-----------|------------|-----------------------------------|\n" >> docs/descargas.md
 
-        # Obtener historial de releases para la tabla
+        # Obtener historial de releases para la tabla de forma más simple
         if [ "${{ steps.release.outputs.has_release }}" = "true" ]; then
           echo "=== Obteniendo historial de releases ==="
-          # Si hay releases, obtener todos los releases
-          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" | \
-          jq -r '.[] | "| " + .tag_name + " | " + (.published_at | split("T")[0]) + " | " + ((.body // "Sin descripción") | gsub("\\n"; " ") | gsub("\\*"; "") | gsub("#"; "") | .[0:50]) + "... |"' | \
-          head -10 >> docs/descargas.md
+
+          # Crear un archivo temporal para procesar el JSON de forma más segura
+          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" > /tmp/releases.json
+
+          # Procesar los releases de uno en uno
+          cat /tmp/releases.json | jq -r '.[0:10][] | [.tag_name, (.published_at | split("T")[0]), (.body // "Sin descripción" | gsub("[\n\r*#]"; " ") | .[0:50])] | "| " + .[0] + " | " + .[1] + " | " + .[2] + "... |"' >> docs/descargas.md
         else
           echo "=== Usando información de commits ==="
-          # Si no hay releases, mostrar commits recientes
-          echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |" >> docs/descargas.md
+          printf "| %s | %s | %s |\n" "${{ steps.release.outputs.tag_name }}" "${{ steps.release.outputs.release_date }}" "${{ steps.release.outputs.release_body }}" >> docs/descargas.md
 
           # Agregar algunos commits anteriores
           git log --oneline --date=short --pretty=format:"| commit-%h | %ad | %s |" -n 5 >> docs/descargas.md
