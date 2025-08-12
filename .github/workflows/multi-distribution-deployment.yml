@@ -1,0 +1,426 @@
+name: Multi-Distribution Package Deployment
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'distribuciones/ubuntu/*.deb'
+      - 'distribuciones/arch/*.pkg.tar.xz'
+      - 'distribuciones/arch/*.pkg.tar.zst'
+      - 'distribuciones/fedora/*.rpm'
+  workflow_dispatch:  # Permite ejecutar manualmente
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ubuntu_changed: ${{ steps.changes.outputs.ubuntu }}
+      arch_changed: ${{ steps.changes.outputs.arch }}
+      fedora_changed: ${{ steps.changes.outputs.fedora }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # Necesario para comparar cambios
+
+    - name: Detect package changes
+      id: changes
+      run: |
+        # Detectar cambios en Ubuntu (.deb)
+        if git diff --name-only HEAD~1 HEAD | grep -q "distribuciones/ubuntu/.*\.deb$" || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "ubuntu=true" >> $GITHUB_OUTPUT
+          echo "🐧 Cambios detectados en paquetes Ubuntu"
+        else
+          echo "ubuntu=false" >> $GITHUB_OUTPUT
+        fi
+
+        # Detectar cambios en Arch (.pkg.tar.xz o .pkg.tar.zst)
+        if git diff --name-only HEAD~1 HEAD | grep -q "distribuciones/arch/.*\.pkg\.tar\.\(xz\|zst\)$" || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "arch=true" >> $GITHUB_OUTPUT
+          echo "🏴‍☠️ Cambios detectados en paquetes Arch"
+        else
+          echo "arch=false" >> $GITHUB_OUTPUT
+        fi
+
+        # Detectar cambios en Fedora (.rpm)
+        if git diff --name-only HEAD~1 HEAD | grep -q "distribuciones/fedora/.*\.rpm$" || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "fedora=true" >> $GITHUB_OUTPUT
+          echo "🎩 Cambios detectados en paquetes Fedora"
+        else
+          echo "fedora=false" >> $GITHUB_OUTPUT
+        fi
+
+  release-ubuntu:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ubuntu_changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Process Ubuntu packages
+      id: ubuntu-info
+      run: |
+        echo "🐧 Procesando paquetes Ubuntu (.deb)"
+
+        # Verificar si existen archivos .deb
+        if ls distribuciones/ubuntu/*.deb 1> /dev/null 2>&1; then
+          echo "found=true" >> $GITHUB_OUTPUT
+          echo "✅ Archivos .deb encontrados:"
+          ls -la distribuciones/ubuntu/*.deb
+
+          # Obtener información del primer paquete .deb
+          DEB_FILE=$(ls distribuciones/ubuntu/*.deb | head -n 1)
+          DEB_NAME=$(basename "$DEB_FILE")
+
+          # Extraer versión del nombre del archivo .deb
+          VERSION=$(echo "$DEB_NAME" | sed -n 's/.*_\([0-9][^_]*\)_.*\.deb$/\1/p')
+
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +"%Y.%m.%d.%H%M")
+          fi
+
+          # Crear lista de todos los archivos .deb
+          DEB_FILES=$(ls distribuciones/ubuntu/*.deb | tr '\n' ' ')
+
+          echo "files=$DEB_FILES" >> $GITHUB_OUTPUT
+          echo "main_file=$DEB_FILE" >> $GITHUB_OUTPUT
+          echo "name=$DEB_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=ubuntu-v$VERSION" >> $GITHUB_OUTPUT
+
+          echo "📦 Paquete principal: $DEB_NAME"
+          echo "🏷️ Versión: $VERSION"
+          echo "🔖 Tag: ubuntu-v$VERSION"
+
+        else
+          echo "found=false" >> $GITHUB_OUTPUT
+          echo "❌ No se encontraron archivos .deb"
+        fi
+
+    - name: Check if Ubuntu release exists
+      if: steps.ubuntu-info.outputs.found == 'true'
+      id: check-ubuntu-release
+      run: |
+        TAG_NAME="${{ steps.ubuntu-info.outputs.tag }}"
+
+        if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME"; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "⚠️ El release $TAG_NAME ya existe"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "✅ El release $TAG_NAME no existe, se puede crear"
+        fi
+
+    - name: Create Ubuntu Release
+      if: steps.ubuntu-info.outputs.found == 'true' && steps.check-ubuntu-release.outputs.exists == 'false'
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ steps.ubuntu-info.outputs.files }}
+        tag_name: ${{ steps.ubuntu-info.outputs.tag }}
+        name: "Ubuntu Package v${{ steps.ubuntu-info.outputs.version }}"
+        body: |
+          ## 🐧 Ubuntu Package Release
+
+          **Distribución:** Ubuntu/Debian
+          **Paquete principal:** `${{ steps.ubuntu-info.outputs.name }}`
+          **Versión:** `${{ steps.ubuntu-info.outputs.version }}`
+          **Fecha:** `${{ github.event.head_commit.timestamp }}`
+
+          ### Instalación
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.ubuntu-info.outputs.tag }}/${{ steps.ubuntu-info.outputs.name }}
+          sudo dpkg -i ${{ steps.ubuntu-info.outputs.name }}
+          sudo apt-get install -f  # Si hay dependencias faltantes
+          ```
+
+          Deployed automatically from commit: ${{ github.sha }}
+        draft: false
+        prerelease: false
+
+  release-arch:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.arch_changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Process Arch packages
+      id: arch-info
+      run: |
+        echo "🏴‍☠️ Procesando paquetes Arch Linux"
+
+        # Verificar archivos de paquetes Arch
+        if ls distribuciones/arch/*.pkg.tar.{xz,zst} 1> /dev/null 2>&1; then
+          echo "found=true" >> $GITHUB_OUTPUT
+          echo "✅ Archivos de paquetes Arch encontrados:"
+          ls -la distribuciones/arch/*.pkg.tar.* 2>/dev/null || true
+
+          # Obtener información del primer paquete
+          PKG_FILE=$(ls distribuciones/arch/*.pkg.tar.* | head -n 1)
+          PKG_NAME=$(basename "$PKG_FILE")
+
+          # Extraer versión del nombre del archivo Arch
+          VERSION=$(echo "$PKG_NAME" | sed -n 's/.*-\([0-9][^-]*-[0-9]*\)-.*/\1/p')
+
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +"%Y.%m.%d.%H%M")
+          fi
+
+          # Crear lista de todos los archivos
+          PKG_FILES=$(ls distribuciones/arch/*.pkg.tar.* | tr '\n' ' ')
+
+          echo "files=$PKG_FILES" >> $GITHUB_OUTPUT
+          echo "main_file=$PKG_FILE" >> $GITHUB_OUTPUT
+          echo "name=$PKG_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=arch-v$VERSION" >> $GITHUB_OUTPUT
+
+          echo "📦 Paquete principal: $PKG_NAME"
+          echo "🏷️ Versión: $VERSION"
+          echo "🔖 Tag: arch-v$VERSION"
+
+        else
+          echo "found=false" >> $GITHUB_OUTPUT
+          echo "❌ No se encontraron archivos de paquetes Arch"
+        fi
+
+    - name: Check if Arch release exists
+      if: steps.arch-info.outputs.found == 'true'
+      id: check-arch-release
+      run: |
+        TAG_NAME="${{ steps.arch-info.outputs.tag }}"
+
+        if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME"; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "⚠️ El release $TAG_NAME ya existe"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "✅ El release $TAG_NAME no existe, se puede crear"
+        fi
+
+    - name: Create Arch Release
+      if: steps.arch-info.outputs.found == 'true' && steps.check-arch-release.outputs.exists == 'false'
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ steps.arch-info.outputs.files }}
+        tag_name: ${{ steps.arch-info.outputs.tag }}
+        name: "Arch Linux Package v${{ steps.arch-info.outputs.version }}"
+        body: |
+          ## 🏴‍☠️ Arch Linux Package Release
+
+          **Distribución:** Arch Linux
+          **Paquete principal:** `${{ steps.arch-info.outputs.name }}`
+          **Versión:** `${{ steps.arch-info.outputs.version }}`
+          **Fecha:** `${{ github.event.head_commit.timestamp }}`
+
+          ### Instalación
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.arch-info.outputs.tag }}/${{ steps.arch-info.outputs.name }}
+          sudo pacman -U ${{ steps.arch-info.outputs.name }}
+          ```
+
+          Deployed automatically from commit: ${{ github.sha }}
+        draft: false
+        prerelease: false
+
+  release-fedora:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.fedora_changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Process Fedora packages
+      id: fedora-info
+      run: |
+        echo "🎩 Procesando paquetes Fedora (.rpm)"
+
+        # Verificar archivos .rpm
+        if ls distribuciones/fedora/*.rpm 1> /dev/null 2>&1; then
+          echo "found=true" >> $GITHUB_OUTPUT
+          echo "✅ Archivos .rpm encontrados:"
+          ls -la distribuciones/fedora/*.rpm
+
+          # Obtener información del primer paquete .rpm
+          RPM_FILE=$(ls distribuciones/fedora/*.rpm | head -n 1)
+          RPM_NAME=$(basename "$RPM_FILE")
+
+          # Extraer versión del nombre del archivo .rpm
+          VERSION=$(echo "$RPM_NAME" | sed -n 's/.*-\([0-9][^-]*-[0-9]*\)\.\(x86_64\|noarch\)\.rpm$/\1/p')
+
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +"%Y.%m.%d.%H%M")
+          fi
+
+          # Crear lista de todos los archivos .rpm
+          RPM_FILES=$(ls distribuciones/fedora/*.rpm | tr '\n' ' ')
+
+          echo "files=$RPM_FILES" >> $GITHUB_OUTPUT
+          echo "main_file=$RPM_FILE" >> $GITHUB_OUTPUT
+          echo "name=$RPM_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=fedora-v$VERSION" >> $GITHUB_OUTPUT
+
+          echo "📦 Paquete principal: $RPM_NAME"
+          echo "🏷️ Versión: $VERSION"
+          echo "🔖 Tag: fedora-v$VERSION"
+
+        else
+          echo "found=false" >> $GITHUB_OUTPUT
+          echo "❌ No se encontraron archivos .rpm"
+        fi
+
+    - name: Check if Fedora release exists
+      if: steps.fedora-info.outputs.found == 'true'
+      id: check-fedora-release
+      run: |
+        TAG_NAME="${{ steps.fedora-info.outputs.tag }}"
+
+        if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME"; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "⚠️ El release $TAG_NAME ya existe"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "✅ El release $TAG_NAME no existe, se puede crear"
+        fi
+
+    - name: Create Fedora Release
+      if: steps.fedora-info.outputs.found == 'true' && steps.check-fedora-release.outputs.exists == 'false'
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ steps.fedora-info.outputs.files }}
+        tag_name: ${{ steps.fedora-info.outputs.tag }}
+        name: "Fedora Package v${{ steps.fedora-info.outputs.version }}"
+        body: |
+          ## 🎩 Fedora Package Release
+
+          **Distribución:** Fedora/RHEL/CentOS
+          **Paquete principal:** `${{ steps.fedora-info.outputs.name }}`
+          **Versión:** `${{ steps.fedora-info.outputs.version }}`
+          **Fecha:** `${{ github.event.head_commit.timestamp }}`
+
+          ### Instalación
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.fedora-info.outputs.tag }}/${{ steps.fedora-info.outputs.name }}
+          sudo dnf install ${{ steps.fedora-info.outputs.name }}
+          # o para versiones más antiguas:
+          # sudo yum install ${{ steps.fedora-info.outputs.name }}
+          ```
+
+          Deployed automatically from commit: ${{ github.sha }}
+        draft: false
+        prerelease: false
+
+  create-deployment-records:
+    needs: [detect-changes, release-ubuntu, release-arch, release-fedora]
+    if: always() && (needs.release-ubuntu.result == 'success' || needs.release-arch.result == 'success' || needs.release-fedora.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: write
+    steps:
+    - name: Create deployment records
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const deployments = [];
+
+          // Ubuntu deployment
+          if ('${{ needs.release-ubuntu.result }}' === 'success') {
+            deployments.push({
+              environment: 'ubuntu-packages',
+              description: 'Ubuntu DEB Package Release'
+            });
+          }
+
+          // Arch deployment
+          if ('${{ needs.release-arch.result }}' === 'success') {
+            deployments.push({
+              environment: 'arch-packages',
+              description: 'Arch Linux Package Release'
+            });
+          }
+
+          // Fedora deployment
+          if ('${{ needs.release-fedora.result }}' === 'success') {
+            deployments.push({
+              environment: 'fedora-packages',
+              description: 'Fedora RPM Package Release'
+            });
+          }
+
+          for (const deployment of deployments) {
+            try {
+              const result = await github.rest.repos.createDeployment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: context.ref,
+                description: deployment.description,
+                environment: deployment.environment,
+                auto_merge: false,
+                required_contexts: []
+              });
+
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: result.data.id,
+                state: 'success',
+                description: `${deployment.description} completed successfully`
+              });
+
+              console.log(`✅ Deployment record created for ${deployment.environment}`);
+            } catch (error) {
+              console.log(`⚠️ Error creating deployment for ${deployment.environment}:`, error.message);
+            }
+          }
+
+  summary:
+    needs: [detect-changes, release-ubuntu, release-arch, release-fedora]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Workflow Summary
+      run: |
+        echo "## 📋 Multi-Distribution Package Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        echo "### 🔍 Change Detection Results:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Ubuntu:** ${{ needs.detect-changes.outputs.ubuntu_changed }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Arch:** ${{ needs.detect-changes.outputs.arch_changed }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Fedora:** ${{ needs.detect-changes.outputs.fedora_changed }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        echo "### 🚀 Release Results:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Ubuntu Release:** ${{ needs.release-ubuntu.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Arch Release:** ${{ needs.release-arch.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Fedora Release:** ${{ needs.release-fedora.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        echo "### 📦 Package Structure Expected:" >> $GITHUB_STEP_SUMMARY
+        echo "```" >> $GITHUB_STEP_SUMMARY
+        echo "distribuciones/" >> $GITHUB_STEP_SUMMARY
+        echo "├── ubuntu/     (.deb files)" >> $GITHUB_STEP_SUMMARY
+        echo "├── arch/       (.pkg.tar.xz/.pkg.tar.zst files)" >> $GITHUB_STEP_SUMMARY
+        echo "└── fedora/     (.rpm files)" >> $GITHUB_STEP_SUMMARY
+        echo "```" >> $GITHUB_STEP_SUMMARY
