@@ -87,56 +87,52 @@ jobs:
         # Asegurar que el directorio docs existe
         mkdir -p docs
 
-        # Crear el archivo usando tee para evitar problemas con backticks
-        tee docs/descargas.md > /dev/null << 'CONTENT_EOF'
-        # Descargas
-        ## Instalación manual en Linux Mint
-        1. Descarga el paquete más reciente:
-        ```bash
-        <!--URL_WGET-->PLACEHOLDER_URL<!--END_URL_WGET-->
-        ```
-        2. Instala con gestión de dependencias:
-        ```bash
-        sudo apt install <!--NOMBRE_DEB-->PLACEHOLDER_NAME<!--END_NOMBRE_DEB-->
-        ```
-        3. Para reportar un error:
-        [Crear un issue en GitHub](https://github.com/PLACEHOLDER_REPO/issues)
+        # Crear el archivo línea por línea sin heredocs
+        echo "# Descargas" > docs/descargas.md
+        echo "## Instalación manual en Linux Mint" >> docs/descargas.md
+        echo "1. Descarga el paquete más reciente:" >> docs/descargas.md
 
-        ## Historial de Cambios
-        | Versión   | Fecha       | Cambios Importantes               |
-        |-----------|------------|-----------------------------------|
-        CONTENT_EOF
+        # Crear el bloque de código bash usando variables
+        TRIPLE_TICK='```'
+        echo "${TRIPLE_TICK}bash" >> docs/descargas.md
+        echo "<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->" >> docs/descargas.md
+        echo "${TRIPLE_TICK}" >> docs/descargas.md
 
-        # Reemplazar los placeholders
-        sed -i "s|PLACEHOLDER_URL|${{ steps.release.outputs.deb_url }}|g" docs/descargas.md
-        sed -i "s|PLACEHOLDER_NAME|./${{ steps.release.outputs.deb_name }}|g" docs/descargas.md
-        sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" docs/descargas.md
+        echo "2. Instala con gestión de dependencias:" >> docs/descargas.md
+        echo "${TRIPLE_TICK}bash" >> docs/descargas.md
+        echo "sudo apt install <!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->" >> docs/descargas.md
+        echo "${TRIPLE_TICK}" >> docs/descargas.md
 
-        # Obtener historial de releases
+        echo "3. Para reportar un error:" >> docs/descargas.md
+        echo "[Crear un issue en GitHub](https://github.com/${{ github.repository }}/issues)" >> docs/descargas.md
+        echo "" >> docs/descargas.md
+        echo "## Historial de Cambios" >> docs/descargas.md
+        echo "| Versión   | Fecha       | Cambios Importantes               |" >> docs/descargas.md
+        echo "|-----------|------------|-----------------------------------|" >> docs/descargas.md
+
+        # Obtener historial de releases de forma más simple
         if [ "${{ steps.release.outputs.has_release }}" = "true" ]; then
           echo "=== Obteniendo historial de releases ==="
 
-          # Descargar releases y procesar con sed/awk en lugar de jq
-          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" | \
-          sed 's/},{/}\n{/g' | \
-          grep -E '"tag_name"|"published_at"|"body"' | \
-          sed 's/.*"tag_name": *"\([^"]*\)".*/TAG:\1/' | \
-          sed 's/.*"published_at": *"\([^T]*\)T.*/DATE:\1/' | \
-          sed 's/.*"body": *"\([^"]*\)".*/BODY:\1/' | \
-          awk '
-            /^TAG:/ { tag = substr($0, 5) }
-            /^DATE:/ { date = substr($0, 6) }
-            /^BODY:/ {
-              body = substr($0, 6)
-              gsub(/\\n/, " ", body)
-              gsub(/\*/, "", body)
-              gsub(/#/, "", body)
-              if (length(body) > 50) body = substr(body, 1, 50) "..."
-              print "| " tag " | " date " | " body " |"
-              count++
-              if (count >= 10) exit
-            }
-          ' >> docs/descargas.md
+          # Agregar solo el release actual primero
+          echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | Última versión disponible |" >> docs/descargas.md
+
+          # Intentar obtener más releases pero de forma más simple
+          curl -s "https://api.github.com/repos/${{ github.repository }}/releases" > /tmp/releases.json
+
+          if [ -f /tmp/releases.json ] && [ -s /tmp/releases.json ]; then
+            # Extraer información básica usando grep y sed
+            grep -o '"tag_name":"[^"]*"' /tmp/releases.json | head -5 | sed 's/"tag_name":"\([^"]*\)"/\1/' > /tmp/tags.txt
+            grep -o '"published_at":"[^"]*"' /tmp/releases.json | head -5 | sed 's/"published_at":"\([^T]*\)T.*/\1/' > /tmp/dates.txt
+
+            # Combinar la información en la tabla (saltar el primer release que ya agregamos)
+            tail -n +2 /tmp/tags.txt > /tmp/tags_remaining.txt
+            tail -n +2 /tmp/dates.txt > /tmp/dates_remaining.txt
+
+            paste /tmp/tags_remaining.txt /tmp/dates_remaining.txt | while read tag date; do
+              echo "| $tag | $date | Release anterior |" >> docs/descargas.md
+            done
+          fi
         else
           echo "=== Usando información de commits ==="
           echo "| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |" >> docs/descargas.md
