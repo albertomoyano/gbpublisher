@@ -90,32 +90,39 @@ jobs:
           exit 1
         fi
 
-        echo "=== Contenido original ==="
-        cat docs/downloads.md
+        echo "=== Archivo encontrado, aplicando cambios ==="
 
-        # 1. Actualizar la URL del wget
-        sed -i "s|<!--URL_WGET-->.*<!--END_URL_WGET-->|<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->|g" docs/downloads.md
+        # 1. Actualizar la URL del wget usando un método más seguro
+        # Crear un archivo temporal con el nuevo contenido
+        NEW_WGET_LINE="<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->"
+
+        # Usar perl en lugar de sed para manejar mejor los caracteres especiales
+        perl -pi -e 's|<!--URL_WGET-->.*?<!--END_URL_WGET-->|'"$NEW_WGET_LINE"'|g' docs/downloads.md
 
         # 2. Actualizar el nombre del archivo DEB
-        sed -i "s|<!--NOMBRE_DEB-->.*<!--END_NOMBRE_DEB-->|<!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->|g" docs/downloads.md
+        NEW_DEB_LINE="<!--NOMBRE_DEB-->./${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->"
+        perl -pi -e 's|<!--NOMBRE_DEB-->.*?<!--END_NOMBRE_DEB-->|'"$NEW_DEB_LINE"'|g' docs/downloads.md
 
         # 3. Verificar si la versión ya existe en el historial para evitar duplicados
         if ! grep -q "${{ steps.release.outputs.tag_name }}" docs/downloads.md; then
           echo "=== Agregando nueva versión al historial ==="
 
-          # Encontrar la línea después del encabezado de la tabla
-          HEADER_LINE=$(grep -n "^|.*Versión.*Fecha.*Cambios" docs/downloads.md | cut -d: -f1)
-          SEPARATOR_LINE=$(grep -n "^|.*---|.*---|.*---" docs/downloads.md | cut -d: -f1)
+          # Buscar la línea del separador de tabla
+          if grep -q "^|.*---|.*---|.*---" docs/downloads.md; then
+            # Crear la nueva línea de historial
+            NEW_HISTORY_LINE="| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |"
 
-          if [ -n "$HEADER_LINE" ] && [ -n "$SEPARATOR_LINE" ]; then
-            # Insertar la nueva línea después del separador
-            INSERT_LINE=$((SEPARATOR_LINE + 1))
+            # Usar awk para insertar después del separador
+            awk -v new_line="$NEW_HISTORY_LINE" '
+              /^[|].*---[|].*---[|].*---/ {
+                print $0
+                print new_line
+                next
+              }
+              {print}
+            ' docs/downloads.md > docs/downloads.md.tmp && mv docs/downloads.md.tmp docs/downloads.md
 
-            # Crear línea temporal
-            NEW_LINE="| ${{ steps.release.outputs.tag_name }} | ${{ steps.release.outputs.release_date }} | ${{ steps.release.outputs.release_body }} |"
-
-            # Insertar la nueva línea
-            sed -i "${INSERT_LINE}i\\${NEW_LINE}" docs/downloads.md
+            echo "✅ Nueva versión agregada al historial"
           else
             echo "❌ No se encontró la tabla de historial de cambios"
           fi
@@ -123,8 +130,7 @@ jobs:
           echo "=== Versión ${{ steps.release.outputs.tag_name }} ya existe en el historial, no se agrega duplicada ==="
         fi
 
-        echo "=== Contenido actualizado ==="
-        cat docs/downloads.md
+        echo "=== Cambios aplicados ==="
 
     - name: Commit and push changes
       run: |
