@@ -152,3 +152,36 @@ if archivos_backup:
         print(f"  {archivo_backup.relative_to(directorio_raiz)}")
     print()
     print("IMPORTANTE: Revisa los cambios y elimina manualmente los archivos orig-*.md cuando estés conforme")
+
+# Mover archivos de backup a carpeta respaldo
+if archivos_backup:
+    carpeta_respaldo = carpeta_articulos / "respaldo"
+
+    # Crear carpeta respaldo si no existe
+    if not carpeta_respaldo.exists():
+        carpeta_respaldo.mkdir(parents=True, exist_ok=True)
+        print(f"Carpeta creada: {carpeta_respaldo.relative_to(directorio_raiz)}")
+
+    # Mover archivos backup
+    archivos_movidos = []
+    for archivo_backup in archivos_backup:
+        destino = carpeta_respaldo / archivo_backup.name
+
+        # Si ya existe un archivo con el mismo nombre, crear uno único
+        contador = 1
+        destino_original = destino
+        while destino.exists():
+            nombre_sin_ext = destino_original.stem
+            extension = destino_original.suffix
+            destino = carpeta_respaldo / f"{nombre_sin_ext}_{contador}{extension}"
+            contador += 1
+
+        shutil.move(str(archivo_backup), str(destino))
+        archivos_movidos.append(destino)
+
+    print(f"\nArchivos de backup movidos a respaldo/:")
+    for archivo_movido in archivos_movidos:
+        print(f"  {archivo_movido.relative_to(directorio_raiz)}")
+
+    print(f"\nIMPORTANTE: Los archivos de respaldo están en {carpeta_respaldo.relative_to(directorio_raiz)}/")
+    print("Revisa los cambios y elimina manualmente los archivos de respaldo cuando estés conforme")
