@@ -77,21 +77,26 @@ jobs:
 
         echo "=== Editando $FILE con la última info de release ==="
 
+        # Escapar caracteres especiales para sed
+        safe_url=$(printf '%s\n' "${{ steps.release.outputs.deb_url }}" | sed 's/[&/\]/\\&/g')
+        safe_name=$(printf '%s\n' "${{ steps.release.outputs.deb_name }}" | sed 's/[&/\]/\\&/g')
+
         # Reemplazar URL en la sección wget
-        sed -i "s|<!--URL_WGET-->.*<!--END_URL_WGET-->|<!--URL_WGET-->wget ${{ steps.release.outputs.deb_url }}<!--END_URL_WGET-->|" "$FILE"
+        sed -i "s|<!--URL_WGET-->.*<!--END_URL_WGET-->|<!--URL_WGET-->wget $safe_url<!--END_URL_WGET-->|" "$FILE"
 
         # Reemplazar nombre del .deb
-        sed -i "s|<!--NOMBRE_DEB-->.*<!--END_NOMBRE_DEB-->|<!--NOMBRE_DEB-->${{ steps.release.outputs.deb_name }}<!--END_NOMBRE_DEB-->|" "$FILE"
+        sed -i "s|<!--NOMBRE_DEB-->.*<!--END_NOMBRE_DEB-->|<!--NOMBRE_DEB-->$safe_name<!--END_NOMBRE_DEB-->|" "$FILE"
 
-        # Insertar nueva fila en Historial de Cambios
+        # Insertar nueva fila en Historial de Cambios (evita duplicados)
         TEMP_FILE=$(mktemp)
         awk -v version="${{ steps.release.outputs.tag_name }}" \
             -v date="${{ steps.release.outputs.release_date }}" \
             -v changes="${{ steps.release.outputs.release_body }}" \
-            'BEGIN{added=0}
+            'BEGIN{added=0; found=0}
              /^| Versión/ {print; next}
              /^|-----------/ {print; next}
-             added==0 && /^|/ {
+             $0 ~ "\\| " version " \\|" {found=1}
+             added==0 && found!=1 && /^|/ {
                  print "| " version " | " date " | " changes " |"
                  added=1
              }
