@@ -10,11 +10,21 @@ Public segundosTotal As Integer
 Private iIDProyecto As Integer
 
 ' Inicia el reloj en 00:00:00 y comienza el temporizador
-Public Sub IniciarContadorReloj()
+Public Sub IniciarContadorReloj(proyectoID As Integer)
+  ' Resetear contador parcial
 
   horas = 0
   minutos = 0
   segundos = 0
+
+  ' Guardar el ID del proyecto - ASEGURAR que es Integer
+  iIDProyecto = CInt(proyectoID)
+
+  ' Cargar tiempo total acumulado para este proyecto
+  CargarTiempoTotal()
+
+  ' Verificar si existe registro en la tabla timer, si no crearlo
+  VerificarOCrearRegistroTimer()
 
   ' Establece intervalo y activa el Timer
   FMain.TimerHOY.Delay = 1000
@@ -22,11 +32,10 @@ Public Sub IniciarContadorReloj()
 
 End
 
-' Esta función se llama cada segundo desde el evento Timer
+' Esta función se llama cada segundo desde el evento Timer del formulario
 Public Sub ActualizarContador()
 
   segundos += 1
-
   If segundos = 60 Then
     segundos = 0
     minutos += 1
@@ -37,7 +46,7 @@ Public Sub ActualizarContador()
     horas += 1
   Endif
 
-  ' Actualiza el TextBox
+  ' Actualiza el TextBox parcial
   FMain.TextHoraParcial.Text = Format(horas, "00") & ":" & Format(minutos, "00") & ":" & Format(segundos, "00")
 
   ' También actualiza el total acumulado visible
@@ -45,25 +54,37 @@ Public Sub ActualizarContador()
 
 End
 
-' Añadir este método para cargar el tiempo total
-Public Sub cargarTiempoTotal(NombreProyecto As String)
+' Cargar el tiempo total acumulado desde la base de datos
+Public Sub CargarTiempoTotal()
 
   Dim rResultado As Result
   Dim tiempoTotalSegundos As Integer = 0
 
-  ' Consultar el tiempo total para este proyecto
-  Try rResultado = m_OnOff_y_Red.meConn.Exec("SELECT tiempo_total FROM timer WHERE iIDProyecto = &1", iIDProyecto)
-
-  If Error Or Not rResultado.Available Then
-    horasTotal = 0
-    minutosTotal = 0
-    segundosTotal = 0
+  ' Verificar que la conexión existe y está disponible
+  If IsNull(m_OnOff_y_Red.meConn) Then
     Return
   Endif
 
-  Try tiempoTotalSegundos = rResultado!tiempo_total
-  If Error Or IsNull(tiempoTotalSegundos) Then tiempoTotalSegundos = 0
+  If Not m_OnOff_y_Red.meConn.Opened Then
+    Return
+  Endif
 
+  ' Consultar el tiempo total para este proyecto
+  Dim queryTiempo As String = "SELECT tiempo_total FROM timer WHERE iIDProyecto = " & CStr(CInt(iIDProyecto))
+  rResultado = m_OnOff_y_Red.meConn.Exec(queryTiempo)
+  If Error Then
+    Return
+  Endif
+
+  If rResultado.Available Then
+    tiempoTotalSegundos = rResultado!tiempo_total
+    If Error Then tiempoTotalSegundos = 0
+    If IsNull(tiempoTotalSegundos) Then tiempoTotalSegundos = 0
+  Else
+    tiempoTotalSegundos = 0
+  Endif
+
+  ' Convertir segundos a horas:minutos:segundos
   horasTotal = Int(tiempoTotalSegundos / 3600)
   minutosTotal = Int((tiempoTotalSegundos Mod 3600) / 60)
   segundosTotal = tiempoTotalSegundos Mod 60
@@ -72,29 +93,137 @@ Public Sub cargarTiempoTotal(NombreProyecto As String)
 
 End
 
-' Añadir este método para guardar el tiempo total
-Public Sub guardarTiempoTotal()
+' Verificar si existe registro en timer, si no existe lo crea
+Public Sub VerificarOCrearRegistroTimer()
 
-  Dim tiempoTotalSegundos As Integer
-  Dim tiempoParcialSegundos As Integer
-  Dim iIDProyecto As Integer
+  Dim rResultado As Result
+  Dim rInsert As Result
 
-  If FMain.txtProyecto.Text Then
-    iIDProyecto = CInt(FMain.idMetadatoRevista.Text)' en este textbox tengo el id del proyecto
+  ' Verificar que la conexión existe y está disponible
+  If IsNull(m_OnOff_y_Red.meConn) Then
+    Return
+  Endif
 
-    tiempoParcialSegundos = (horas * 3600) + (minutos * 60) + segundos
-    tiempoTotalSegundos = (horasTotal * 3600) + (minutosTotal * 60) + segundosTotal + tiempoParcialSegundos
+  If Not m_OnOff_y_Red.meConn.Opened Then
+    Return
+  Endif
 
-    Try m_OnOff_y_Red.meConn.Exec("UPDATE timer SET tiempo_total = &1, WHERE iIDProyecto = &2", tiempoTotalSegundos, iIDProyecto)
+  ' Verificar si ya existe el registro - USAR concatenación directa
+  Dim sqlQuery As String
 
-    If Error Then Message.Error("Error al guardar el tiempo total en la base de datos.")
+  sqlQuery = "SELECT id, tiempo_total FROM timer WHERE iIDProyecto = " & CStr(CInt(iIDProyecto))
+  rResultado = m_OnOff_y_Red.meConn.Exec(sqlQuery)
+  If Error Then
+    Return
+  Endif
+
+  ' Si no existe, crear el registro
+  If Not rResultado.Available Then
+
+    ' FORZAR conversión a Integer y usar concatenación directa
+    sqlQuery = "SELECT id FROM revistas WHERE id = " & CStr(CInt(iIDProyecto))
+    Dim rProyecto As Result = m_OnOff_y_Red.meConn.Exec(sqlQuery)
+    If Error Then
+      Return
+    Endif
+
+    If rProyecto.Available Then
+
+    Endif
+
+    If Not rProyecto.Available Then
+
+      ' Mostrar todos los IDs que existen para debug
+      Dim rTodos As Result = m_OnOff_y_Red.meConn.Exec("SELECT id, nombre_archivo FROM revistas ORDER BY id")
+
+      For Each rTodos
+
+      Next
+      Return
+    Endif
+
+    ' Intentar el INSERT - USAR concatenación directa
+    Dim insertQuery As String = "INSERT INTO timer (iIDProyecto, tiempo_total) VALUES (" & CStr(CInt(iIDProyecto)) & ", 0)"
+
+    rInsert = m_OnOff_y_Red.meConn.Exec(insertQuery)
+    If Error Then
+
+      Return
+    Endif
+
+    ' Verificar que se insertó
+    Dim nuevoID As Integer = m_OnOff_y_Red.meConn.Exec("SELECT last_insert_rowid()")[0]
+
+    ' Verificar la inserción
+    Dim verificarQuery As String = "SELECT id, tiempo_total FROM timer WHERE iIDProyecto = " & CStr(CInt(iIDProyecto))
+    rResultado = m_OnOff_y_Red.meConn.Exec(verificarQuery)
+    If rResultado.Available Then
+
+    Else
+
+    Endif
+
+  Else
+
   Endif
 
 End
 
-Public Sub ActualizarDisplayTotal()' Formatear el tiempo parcial (hh:mm:ss)
+' Guardar el tiempo total acumulado en la base de datos
+Public Sub GuardarTiempoTotal()
 
+  Dim tiempoTotalSegundos As Integer
+  Dim tiempoParcialSegundos As Integer
+
+  If iIDProyecto <= 0 Then
+
+    ' Intentar obtenerlo del textbox
+    If FMain.idMetadatoRevista.Text <> "" Then
+      iIDProyecto = Val(FMain.idMetadatoRevista.Text)
+
+    Else
+
+      Return
+    Endif
+  Endif
+
+  If IsNull(m_OnOff_y_Red) Then
+
+    Return
+  Endif
+
+  If IsNull(m_OnOff_y_Red.meConn) Then
+
+    Return
+  Endif
+
+  If Not m_OnOff_y_Red.meConn.Opened Then
+
+    Return
+  Endif
+
+  ' Calcular tiempo parcial en segundos
+  tiempoParcialSegundos = (horas * 3600) + (minutos * 60) + segundos
+
+  ' Calcular tiempo total (acumulado + parcial actual)
+  tiempoTotalSegundos = (horasTotal * 3600) + (minutosTotal * 60) + segundosTotal + tiempoParcialSegundos
+
+  ' Ejecutar UPDATE con concatenación directa
+  Dim updateQuery As String = "UPDATE timer SET tiempo_total = " & CStr(tiempoTotalSegundos) & " WHERE iIDProyecto = " & CStr(CInt(iIDProyecto))
+
+  m_OnOff_y_Red.meConn.Exec(updateQuery)
+  If Error Then
+
+  Else
+
+  Endif
+
+End
+
+' Actualizar la visualización del tiempo total
+Public Sub ActualizarDisplayTotal()
   ' Calcular y mostrar el tiempo total (suma del tiempo parcial actual + tiempo total anterior)
+
   Dim totalHoras As Integer = horasTotal
   Dim totalMinutos As Integer = minutosTotal
   Dim totalSegundos As Integer = segundosTotal + segundos
@@ -115,7 +244,15 @@ Public Sub ActualizarDisplayTotal()' Formatear el tiempo parcial (hh:mm:ss)
   ' Ajustar las horas
   totalHoras += horas
 
-  ' ' Mostrar tiempo total (tiempo acumulado + tiempo actual)
+  ' Mostrar tiempo total (tiempo acumulado + tiempo actual)
   FMain.TextHoraTotal.Text = Format(totalHoras, "00") & ":" & Format(totalMinutos, "00") & ":" & Format(totalSegundos, "00")
+
+End
+
+' Detener el contador y guardar el tiempo
+Public Sub DetenerContador()
+
+  FMain.TimerHOY.Stop
+  GuardarTiempoTotal()
 
 End
