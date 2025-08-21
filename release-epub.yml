@@ -1,0 +1,86 @@
+name: EPUB Release
+on:
+  push:
+    paths:
+      - 'salidas/epub/*.epub'
+  workflow_dispatch:
+jobs:
+  release-epub:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Debug - List EPUB directory
+      run: |
+        echo "Contenido del directorio salidas/epub:"
+        ls -la salidas/epub/ || echo "Directorio salidas/epub no existe"
+    - name: Find EPUB file and calculate hash
+      id: epub-finder
+      run: |
+        # Establecer zona horaria (UTC por defecto)
+        export TZ="UTC"  # Puedes cambiar a tu zona horaria preferida
+        REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2)
+        echo "Nombre del repositorio: $REPO_NAME"
+        # Approach más flexible: primero verificar si existe el EPUB esperado
+        EXPECTED_EPUB="salidas/epub/$REPO_NAME.epub"
+        echo "Buscando EPUB esperado en: $EXPECTED_EPUB"
+        # Verificar existencia del archivo esperado o buscar cualquier EPUB
+        if [ -f "$EXPECTED_EPUB" ]; then
+          FOUND_EPUB="$EXPECTED_EPUB"
+          echo "EPUB encontrado (formato estándar): $FOUND_EPUB"
+        else
+          # Si no existe el archivo esperado, buscar cualquier EPUB en el directorio
+          FOUND_EPUB=$(find salidas/epub/ -name "*.epub" -type f | head -1)
+          if [ -n "$FOUND_EPUB" ]; then
+            echo "EPUB encontrado (formato alternativo): $FOUND_EPUB"
+          else
+            echo "::warning::No se encontró ningún EPUB en la carpeta salidas/epub/"
+            echo "name=" >> $GITHUB_OUTPUT  # Variable vacía para skipear el release
+            exit 0
+          fi
+        fi
+        # Procesar el EPUB encontrado
+        if [ -f "$FOUND_EPUB" ]; then
+          # Obtener el nombre base del EPUB (sin extensión y sin ruta)
+          EPUB_BASENAME=$(basename "$FOUND_EPUB" .epub)
+          echo "Nombre base del EPUB: $EPUB_BASENAME"
+          EPUB_SIZE=$(du -h "$FOUND_EPUB" | cut -f1)
+          echo "Tamaño del EPUB: $EPUB_SIZE"
+          # Calcular un hash para el contenido del EPUB
+          EPUB_HASH=$(sha256sum "$FOUND_EPUB" | cut -d' ' -f1 | head -c 8)
+          echo "Hash del EPUB: $EPUB_HASH"
+          # Crear fecha y hora de versión con hash
+          RELEASE_DATE=$(date +"%Y.%m.%d")
+          RELEASE_DATETIME=$(date +"%Y.%m.%d-%H.%M")
+          DISPLAY_DATETIME=$(date +"%d/%m/%Y a las %H:%M UTC")
+          # Añadir hash corto al tag para garantizar unicidad
+          UNIQUE_TAG="${EPUB_BASENAME}-${RELEASE_DATETIME}-${EPUB_HASH}"
+          echo "name=$FOUND_EPUB" >> $GITHUB_OUTPUT
+          echo "basename=$EPUB_BASENAME" >> $GITHUB_OUTPUT
+          echo "version=$RELEASE_DATE" >> $GITHUB_OUTPUT
+          echo "unique_tag=$UNIQUE_TAG" >> $GITHUB_OUTPUT
+          echo "display_datetime=$DISPLAY_DATETIME" >> $GITHUB_OUTPUT
+          echo "hash=$EPUB_HASH" >> $GITHUB_OUTPUT
+          echo "size=$EPUB_SIZE" >> $GITHUB_OUTPUT
+        else
+          echo "::warning::No se pudo procesar el EPUB"
+          echo "name=" >> $GITHUB_OUTPUT  # Variable vacía para skipear el release
+        fi
+    - name: Create Release
+      if: steps.epub-finder.outputs.name != ''
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ steps.epub-finder.outputs.name }}
+        tag_name: "${{ steps.epub-finder.outputs.basename }}-${{ steps.epub-finder.outputs.version }}"
+        name: "${{ steps.epub-finder.outputs.basename }} - ${{ steps.epub-finder.outputs.version }}"
+        body: |
+          📚 EPUB compilado automáticamente
+          📊 Tamaño: ${{ steps.epub-finder.outputs.size }}
+          🗓️ Fecha: ${{ steps.epub-finder.outputs.display_datetime }}
+          🔄 Hash: ${{ steps.epub-finder.outputs.hash }}
