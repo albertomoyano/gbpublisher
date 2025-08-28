@@ -1,11 +1,11 @@
 ' Gambas module file
 
-Private sProyecto As String = File.Name(FMain.txtProyecto.Text)
-Private sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
-Private sArchivoProyecto As String = File.BaseName(FMain.txtProyecto.Text)
-Private sBaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text)
-Private sSQL As String
-Private rConsulta As Result
+Private sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)            ' ruta del proyecto
+Private sArchivoProyecto As String = File.Name(FMain.txtProyecto.Text)        ' nombre del proyecto con extension
+Private sBaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text) ' nombre del proyecto sin extension
+Private sSQL As String                                                        ' consultas varias a la bbdd
+Private rConsulta As Result                                                   ' resultados de las consultas
+Private sComando As String
 
 Public Sub GenerarPDFdesdeLATEX()
 
@@ -26,10 +26,10 @@ Public Sub GenerarPDFdesdeLATEX()
   sMetadatos = File.Load(sRutaProyecto &/ "files/metadatos.tex")
 
   ' Leer el contenido del archivo del proyecto
-  If Exist(sRutaProyecto &/ sProyecto) Then
-    sContenido = File.Load(sRutaProyecto &/ sProyecto)
+  If Exist(sRutaProyecto &/ sArchivoProyecto) Then
+    sContenido = File.Load(sRutaProyecto &/ sArchivoProyecto)
   Else
-    Message.Warning("No se encontró el archivo del proyecto: " & sRutaProyecto &/ sProyecto)
+    Message.Warning("No se encontró el archivo del proyecto: " & sRutaProyecto &/ sArchivoProyecto)
     Return
   Endif
 
@@ -69,11 +69,11 @@ Public Sub GenerarPDFlibroMD()
   m_FuncionesExportar.ExportarGlosarioJSON
 
   sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
-  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sProyecto)
+  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sArchivoProyecto)
 
   ' Verificar que la consulta devolvió resultados
   If rConsulta.Available = 0 Then
-    Message.Error("No se encontró información para el proyecto: " & sProyecto)
+    Message.Error("No se encontró información para el proyecto: " & sArchivoProyecto)
     Return
   Endif
   '
@@ -129,7 +129,6 @@ Public Sub GenerarPDFlibroMD()
     Endif
   Next
 
-  Dim sComando As String
   ' Construir comando pandoc completo
   sComando = sRutaProyecto &/ sBaseNombreProyecto & ".md " & listaOrdenada
   sComando &= " --filter pandoc-crossref"
@@ -167,5 +166,111 @@ Public Sub GenerarPDFlibroMD()
   ' Mostrar mensaje de finalización
   Dim ArchivoFinal As String
   ArchivoFinal = sRutaProyecto & "/salidas/pdf/" & sBaseNombreProyecto & ".pdf"
+
+End
+
+Public Sub GenerarXMLlibroIndesign()
+
+  Dim sArchivoMD As String = sArchivoProyecto
+  Dim sArchivoJATS As String = sRutaProyecto &/ "salidas/xml/libro-jats.xml"
+  Dim sArchivoICML As String = sRutaProyecto &/ "salidas/xml/xml-indesign/libro.icml"
+  Dim sFiltroLua As String = User.Home & "/.gbadoc/lua/jats-custom.lua"
+  Dim sXSL As String = User.Home & "/.gbadoc/xsl/jats-to-icml.xsl"
+  Dim sCSL As String
+
+  ' Exportar BibTeX
+  m_FuncionesExportar.ExportarBibTeX()
+
+  ' Obtener datos del proyecto
+  sSQL = "SELECT * FROM revistas WHERE id = &1"
+  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, FMain.idMetadatoRevista)
+
+  ' Crear archivo temporal con todo el contenido
+  Dim sArchivoCompleto As String = sRutaProyecto &/ "temp-libro-completo.md"
+  Dim sContenidoCompleto As String
+
+  ' 1️⃣ Cargar archivo principal
+  sContenidoCompleto = File.Load(sArchivoMD)
+  sContenidoCompleto &= gb.NewLine & gb.NewLine
+
+  ' 2️⃣ Agregar todos los archivos de la carpeta articulos/
+  Dim sCarpetaArticulos As String = sRutaProyecto &/ "articulos"
+  Dim aArchivos As String[]
+
+  If Exist(sCarpetaArticulos) Then
+    aArchivos = Dir(sCarpetaArticulos, "*.md").Sort()
+    Print "Archivos encontrados en articulos/:"
+    For Each sArchivo As String In aArchivos
+      Print "  - " & sArchivo
+      Dim sRutaArticulo As String = sCarpetaArticulos &/ sArchivo
+      sContenidoCompleto &= File.Load(sRutaArticulo) & gb.NewLine & gb.NewLine
+    Next
+  Else
+    Message.Error("No existe la carpeta: " & sCarpetaArticulos)
+    Return
+  End If
+
+  ' Obtener CSL
+  If IsNull(rConsulta!cmbTipoCSL) Or Trim(rConsulta!cmbTipoCSL) = "" Then
+    sCSL = "apa.csl"
+  Else
+    Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
+    If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
+      sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
+    Else
+      sCSL = "apa.csl"
+    Endif
+  Endif
+
+  ' Guardar archivo temporal completo
+  File.Save(sArchivoCompleto, sContenidoCompleto)
+  Print "Archivo temporal creado: " & sArchivoCompleto
+  Print "Tamaño total: " & CStr(Stat(sArchivoCompleto).Size) & " bytes"
+
+  ' 3️⃣ Convertir archivo completo a JATS-XML
+  Dim sComando As String
+  sComando = "pandoc " & Quote(sArchivoCompleto) &
+    " --to=jats" &
+    " --lua-filter=" & Quote(sFiltroLua) &
+    " --bibliography=files/" & sBaseNombreProyecto & ".bib" &
+    " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL &
+    " --filter pandoc-crossref" &
+    " --citeproc" &
+    " --standalone" &
+    " --wrap=preserve" &
+    " -o " & Quote(sArchivoJATS)
+
+  FMain.TerminalViewProyecto.Input(sComando & gb.NewLine)
+
+  ' Esperar a que termine el primer comando
+  Wait 3
+
+  ' Verificar que el archivo JATS se creó
+  If Not Exist(sArchivoJATS) Then
+    Message.Error("Error: No se pudo generar el archivo JATS")
+    Return
+  End If
+
+  ' 2️⃣ Convertir JATS-XML a ICML usando XSLTProc
+  ' 2️⃣ Convertir JATS-XML a ICML usando XSLTProc (sin validación)
+  sComando = "xsltproc --novalid " & Quote(sXSL) & " " & Quote(sArchivoJATS) & " > " & Quote(sArchivoICML)
+
+  FMain.TerminalViewProyecto.Input(sComando & gb.NewLine)
+
+  ' Esperar a que termine
+  Wait 2
+
+  ' Verificar resultado
+  If Exist(sArchivoICML) Then
+    Dim sSize As String = CStr(Stat(sArchivoICML).Size)
+    Message.Info("Conversión completada." & gb.NewLine &
+      "Archivo generado: " & sArchivoICML & gb.NewLine &
+      "Tamaño: " & sSize & " bytes")
+  Else
+    Message.Error("Error: No se pudo generar el archivo ICML")
+  End If
+
+  FMain.TerminalViewProyecto.Input("rm -rf temp-libro-completo.md" & gb.NewLine)
+  FMain.FileViewProyecto.Refresh
 
 End
