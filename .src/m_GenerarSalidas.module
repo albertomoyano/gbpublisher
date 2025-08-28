@@ -3,6 +3,9 @@
 Private sProyecto As String = File.Name(FMain.txtProyecto.Text)
 Private sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
 Private sArchivoProyecto As String = File.BaseName(FMain.txtProyecto.Text)
+Private sBaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text)
+Private sSQL As String
+Private rConsulta As Result
 
 Public Sub GenerarPDFdesdeLATEX()
 
@@ -33,6 +36,9 @@ Public Sub GenerarPDFdesdeLATEX()
   ' Exportamos las referencias bibliográficas
   m_FuncionesExportar.ExportarBibTeX()
 
+  ' Exportamos las siglas y glosarios
+  m_FuncionesExportar.ExportarGlosarioTeX()
+
   ' Concatenar ambos contenidos
   sMain = sPreambulo & gb.NewLine & sMetadatos & gb.NewLine & sContenido
 
@@ -51,5 +57,115 @@ Public Sub GenerarPDFdesdeLATEX()
   FMain.TerminalViewProyecto.Input("mv " & sRutaProyecto &/ "salidas/pdf/temporal.pdf" & " " & sRutaProyecto &/ "salidas/pdf/" & sArchivoProyecto & ".pdf" & "\n")
 
   m_FuncionesGenericas.BorrarArchivosAuxiliares
+
+End
+
+Public Sub GenerarPDFlibroMD()
+
+  ' Exportamos las referencias
+  m_FuncionesExportar.ExportarBibTeX()
+
+  ' Esportamos los glosarios
+  m_FuncionesExportar.ExportarGlosarioJSON
+
+  sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
+  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sProyecto)
+
+  ' Verificar que la consulta devolvió resultados
+  If rConsulta.Available = 0 Then
+    Message.Error("No se encontró información para el proyecto: " & sProyecto)
+    Return
+  Endif
+  '
+  ' Obtener CSL
+  Dim sCSL As String
+  If IsNull(rConsulta!cmbTipoCSL) Or Trim(rConsulta!cmbTipoCSL) = "" Then
+    sCSL = "apa.csl"
+  Else
+    Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
+    ' Buscar texto entre corchetes
+    If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
+      sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
+    Else
+      sCSL = "apa.csl"
+    Endif
+  Endif
+
+  ' Verificar si es varios autores para el filtro
+  Dim iVariosAutores As Integer = rConsulta!cmbAutoriaLibro
+
+  ' Construir comando pandoc para PDF
+  Dim archivos As String[]
+  Dim archivo As String
+  Dim listaOrdenada As String = ""
+
+  ' Definir orden específico de secciones editoriales
+  Dim seccionesEspeciales As String[] = [
+    "00-primeras.md",     ' Páginas de cortesía
+    "01-portada.md",      ' Portada
+    "02-portadilla.md",   ' Portadilla
+    "03-legales.md",      ' Página legal
+    "04-dedicatoria.md",  ' Dedicatoria (opcional)
+    "05-sumario.md"       ' Sumario/índice
+  ]
+
+  ' Leer archivos con ruta completa
+  archivos = Dir(sRutaProyecto &/ "articulos", "*.md")
+  Print "Archivos encontrados: " & archivos.Count
+  archivos.Sort()
+
+  ' 1. Primero agregar secciones especiales en orden
+  For Each archivo In seccionesEspeciales
+    If archivos.Exist(archivo) Then
+      listaOrdenada &= sRutaProyecto &/ "articulos" &/ archivo & " "
+    Endif
+  Next
+
+  ' 2. Luego agregar el resto del contenido (caps, prólogos, etc.)
+  For Each archivo In archivos
+    ' Excluir secciones especiales ya procesadas y colofón
+    If Not seccionesEspeciales.Exist(archivo) And InStr(archivo, "99-colofon") <> 1 Then
+      listaOrdenada &= sRutaProyecto &/ "articulos" &/ archivo & " "
+    Endif
+  Next
+
+  Dim sComando As String
+  ' Construir comando pandoc completo
+  sComando = sRutaProyecto &/ sBaseNombreProyecto & ".md " & listaOrdenada
+  sComando &= " --filter pandoc-crossref"
+  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/glosario.lua"
+  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/sumario-pdf-control.lua"
+
+  If iVariosAutores = 1 Then
+    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/section-refs.lua"
+  Endif
+
+  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/colofon.lua"
+  sComando &= " --citeproc"
+  sComando &= " --metadata lang=es-ES"
+  sComando &= " --metadata-file=" & User.Home & "/.gbadoc/yaml/pdf-libro-md.yaml"
+  '
+  ' este archivo lo tengo que generar dinamicamente con los datos de la bbdd
+  ' sComando &= " --metadata-file=" & RutaProyecto & "/files/metadatos.yaml"
+  '
+  sComando &= " --bibliography=" & sRutaProyecto &/ "files" &/ sBaseNombreProyecto & ".bib"
+  sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
+  sComando &= " --from markdown+smart"
+  sComando &= " --pdf-engine=latexmk"
+  sComando &= " --pdf-engine-opt=-lualatex"
+  sComando &= " --to pdf"
+  sComando &= " --output=" & sRutaProyecto &/ "salidas" &/ "pdf" &/ sBaseNombreProyecto & ".pdf"
+  sComando &= " --resource-path=" & sRutaProyecto & ":" & sRutaProyecto &/ "articulos" & ":" & sRutaProyecto &/ "media" & ":" & sRutaProyecto &/ "files"
+  sComando &= " --standalone"
+  sComando &= " --number-sections"
+  sComando &= " --template=" & User.Home & "/.gbadoc/basetex/pdf-libro-md.tex "
+
+  ' Ejecutar pandoc desde el directorio correcto
+  FMain.TerminalViewProyecto.Input("cd " & sRutaProyecto & " && pandoc " & sComando & "\n")
+  Wait 2
+
+  ' Mostrar mensaje de finalización
+  Dim ArchivoFinal As String
+  ArchivoFinal = sRutaProyecto & "/salidas/pdf/" & sBaseNombreProyecto & ".pdf"
 
 End

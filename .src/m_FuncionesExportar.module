@@ -183,6 +183,9 @@ Public Sub GenerarEPUBlibroMD()
   ' Exportar BibTeX
   ExportarBibTeX()
 
+  ' Exportamos los glosarios
+  ExportarGlosarioJSON()
+
   ' Obtener datos del proyecto
   sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
   rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
@@ -389,131 +392,7 @@ Public Sub GenerarEPUBlibroMD()
 
 End
 
-Public Sub GenerarPDFlibroMD()
 
-  Dim sNombreArchivo As String = NombreProyecto ' nombre del proyecto con extension
-
-  ' generamos la exportacion del bib
-  ExportarBibTeX()
-  sSQL = "SELECT * FROM revistas WHERE nombre_archivo = &1"
-  rConsulta = m_OnOff_y_Red.meConn.Exec(sSQL, sNombreArchivo)
-
-  ' Verificar que la consulta devolvió resultados
-  If rConsulta.Available = 0 Then
-    Message.Error("No se encontró información para el proyecto: " & sNombreArchivo)
-    Return
-  Endif
-  '
-  ' ' construir anexo de metadatos
-  ' Dim sYAML As String
-  ' Dim rutaYAML As String = RutaProyecto & "/files/anexo-metadatos.yaml"
-  '
-  ' sYAML &= "title: " & rConsulta!txtRevistaTitulo & gb.NewLine
-  ' sYAML &= "author: Alberto Moyano" & gb.NewLine
-  ' sYAML &= FormatearListaAutores(rConsulta!autores) & gb.NewLine
-  ' sYAML &= "publisher: " & rConsulta!txtRevistaEditorial & gb.NewLine
-  ' sYAML &= "country: Argentina" & gb.NewLine' "" & rConsulta!pais & "" "" & gb.NewLine
-  ' sYAML &= "genre: GenRe" & gb.NewLine' "" & rConsulta!genero & "" "" & gb.NewLine
-  ' sYAML &= "subject: subjet" & gb.NewLine' "" & rConsulta!tema & "" "" & gb.NewLine
-  ' sYAML &= "keywords: [clave1, clave2]" & gb.NewLine' & ReemplazarComasPorLista(r!palabras_clave) & "]" & gb.NewLine
-  ' sYAML &= "date: " & rConsulta!txtFechaPublicacion & gb.NewLine
-  ' sYAML &= "lang: " & rConsulta!txtRevistaIdioma & gb.NewLine
-  ' sYAML &= "isbn: " & rConsulta!txtRevistaISSN & gb.NewLine
-  '
-  ' File.Save(rutaYAML, sYAML)
-  '
-  '
-
-  ' Obtener CSL
-  Dim sCSL As String
-  If IsNull(rConsulta!cmbTipoCSL) Or Trim(rConsulta!cmbTipoCSL) = "" Then
-    sCSL = "apa.csl"
-  Else
-    Dim sTextoCompleto As String = Trim(rConsulta!cmbTipoCSL)
-    ' Buscar texto entre corchetes
-    If InStr(sTextoCompleto, "[") > 0 And InStr(sTextoCompleto, "]") > 0 Then
-      sCSL = Replace(Replace(Split(sTextoCompleto, "[")[1], "]", ""), " ", "")
-    Else
-      sCSL = "apa.csl"
-    Endif
-  Endif
-
-  ' Verificar si es varios autores para el filtro
-  Dim iVariosAutores As Integer = rConsulta!cmbAutoriaLibro
-
-  ' Construir comando pandoc para PDF
-  Dim archivos As String[]
-  Dim archivo As String
-  Dim listaOrdenada As String = ""
-
-  ' Definir orden específico de secciones editoriales
-  Dim seccionesEspeciales As String[] = [
-    "00-primeras.md",     ' Páginas de cortesía
-    "01-portada.md",      ' Portada
-    "02-portadilla.md",   ' Portadilla
-    "03-legales.md",      ' Página legal
-    "04-dedicatoria.md",  ' Dedicatoria (opcional)
-    "05-sumario.md"       ' Sumario/índice
-  ]
-
-  ' Leer archivos con ruta completa
-  archivos = Dir(RutaProyecto &/ "articulos", "*.md")
-  Print "Archivos encontrados: " & archivos.Count
-  archivos.Sort()
-
-  ' 1. Primero agregar secciones especiales en orden
-  For Each archivo In seccionesEspeciales
-    If archivos.Exist(archivo) Then
-      listaOrdenada &= RutaProyecto &/ "articulos" &/ archivo & " "
-    Endif
-  Next
-
-  ' 2. Luego agregar el resto del contenido (caps, prólogos, etc.)
-  For Each archivo In archivos
-    ' Excluir secciones especiales ya procesadas y colofón
-    If Not seccionesEspeciales.Exist(archivo) And InStr(archivo, "99-colofon") <> 1 Then
-      listaOrdenada &= RutaProyecto &/ "articulos" &/ archivo & " "
-    Endif
-  Next
-
-  ' Construir comando pandoc completo
-  sComando = RutaProyecto &/ BaseNombreProyecto & ".md " & listaOrdenada
-  sComando &= " --filter pandoc-crossref"
-  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/sumario-pdf-control.lua"
-
-  If iVariosAutores = 1 Then
-    sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/section-refs.lua"
-  Endif
-
-  sComando &= " --lua-filter=" & User.Home & "/.gbadoc/lua/colofon.lua"
-  sComando &= " --citeproc"
-  sComando &= " --metadata lang=es-ES"
-  sComando &= " --metadata-file=" & User.Home & "/.gbadoc/yaml/pdf-libro-md.yaml"
-  '
-  ' este archivo lo tengo que generar dinamicamente con los datos de la bbdd
-  ' sComando &= " --metadata-file=" & RutaProyecto & "/files/anexo-metadatos.yaml"
-  '
-  sComando &= " --bibliography=" & RutaProyecto &/ "files" &/ BaseNombreProyecto & ".bib"
-  sComando &= " --csl=" & User.Home & "/.gbadoc/csl/" & sCSL
-  sComando &= " --from markdown+smart"
-  sComando &= " --pdf-engine=latexmk"
-  sComando &= " --pdf-engine-opt=-lualatex"
-  sComando &= " --to pdf"
-  sComando &= " --output=" & RutaProyecto &/ "salidas" &/ "pdf" &/ BaseNombreProyecto & ".pdf"
-  sComando &= " --resource-path=" & RutaProyecto & ":" & RutaProyecto &/ "articulos" & ":" & RutaProyecto &/ "media" & ":" & RutaProyecto &/ "files"
-  sComando &= " --standalone"
-  sComando &= " --number-sections"
-  sComando &= " --template=" & User.Home & "/.gbadoc/basetex/pdf-libro-md.tex "
-
-  ' Ejecutar pandoc desde el directorio correcto
-  FMain.TerminalViewProyecto.Input("cd " & RutaProyecto & " && pandoc " & sComando & "\n")
-  Wait 2
-
-  ' Mostrar mensaje de finalización
-  Dim ArchivoFinal As String
-  ArchivoFinal = RutaProyecto & "/salidas/pdf/" & BaseNombreProyecto & ".pdf"
-
-End
 
 Public Sub GenerarTEXlibroMD()
 
@@ -698,6 +577,127 @@ Public Sub ObtenerXMLlibroIndesign()
 
 End
 
+' ' exportamos el archivo metadatos para PDF libro
+' Public Sub ExportarMetadatosPDFlibro()
+'
+'   Dim s As String
+'   Dim outputFile As String
+'   Dim rContenido As Result
+'
+'   ' Exportamos los registros seleccionados
+'   sSQL = "SELECT * FROM revistas WHERE id = " & FMain.idMetadatoRevista.Text
+'   rContenido = m_OnOff_y_Red.meConn.Exec(sSQL)
+'
+'   s = "" ' Inicializa la cadena vacía
+'
+'   ' Si hay resultados, los procesamos, sino igual generamos el bloque fijo
+'   If rContenido.Available Then
+'     s &= "\\hypersetup" & "{" & "\n"
+'     s &= "pdfauthor={" & rContenido["txtLibroAutoria"] & "},\n"
+'     s &= "pdftitle={" & rContenido["txtRevistaTitulo"] & "},\n"
+'     s &= "pdfsubtitle={" & rContenido["txtLibroSubtitulo"] & "},\n"
+'     s &= "pdfisbn={" & rContenido["txtRevistaISSN"] & "},\n"
+'     s &= "pdfkeywords={" & rContenido["txtLibroPalabrasClaveEs"] & "},\n"
+'     s &= "pdfsubject={" & rContenido["txtLibroResumenEs"] & "},\n"
+'     s &= "pdfurl={" & rContenido["txtRevistaURL"] & "},\n"
+'     s &= "pdfdate={" & rContenido["txtFechaPublicacion"] & "},\n"
+'     s &= "pdfcreationdate={" & rContenido["txtFechaPublicacion"] & "},\n"
+'     s &= "pdfmetadate={" & rContenido["txtFechaPublicacion"] & "},\n"
+'     s &= "pdflang={" & rContenido["txtRevistaIdioma"] & "},\n"
+'     s &= "pdfcopyrightstatus={" & rContenido["txtLicencia"] & "},\n"
+'     s &= "pdfcopyrightstatustype={Text},\n"
+'     s &= "pdfpubtype={book},\n"
+'     s &= "pdfrendition={default},\n"
+'     s &= "pdfcreator={gbpublisher v. " & versionLocal & "},\n"
+'     s &= "pdfproducer={Ecosistema de LaTeX},\n"
+'     s &= "unicode=true,\n"
+'     s &= "bookmarks=true,\n"
+'     s &= "pdfdisplaydoctitle=true,\n"
+'     s &= "pdfnewwindow=true\n"
+'     s &= "}" & "\n"
+'   Else
+'     ' Si no hay filas, igual generamos algo por defecto
+'     s &= "\\hypersetup" & "{" & "\n"
+'     s &= "pdfauthor={Documento sin autor},\n"
+'     s &= "pdfpubtype={book},\n"
+'     s &= "pdfrendition={default},\n"
+'     s &= "unicode=true,\n"
+'     s &= "bookmarks=true,\n"
+'     s &= "pdfdisplaydoctitle=false,\n"
+'     s &= "pdfnewwindow=true\n"
+'     s &= "pdfcreator={gbpublisher v. " & versionLocal & "},\n"
+'     s &= "pdfproducer={Ecosistema de LaTeX}\n"
+'     s &= "}" & "\n"
+'   Endif
+'
+'   ' Establece la ruta y el nombre del archivo de salida
+'   outputFile = RutaProyecto &/ "files/metadatos.tex"
+'
+'   ' Guarda el contenido acumulado en un solo archivo
+'   File.Save(outputFile, s)
+'
+' End
+
+' Exportamos el archivo glosario
+Public Sub ExportarGlosarioTeX()
+
+  Dim s As String
+  Dim outputFile As String
+  Dim rContenido As Result
+
+  ' Exportamos los registros de la revista actual
+  sSQL = "SELECT * FROM siglas WHERE id_revista = " & FMain.idMetadatoRevista.Text
+  rContenido = m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  s = "" ' Inicializa la cadena vacía
+
+  While rContenido.Available
+
+    If rContenido["cmbTipoDeEntradaGlosario"] = "sigla" Then
+      s &= "\n\\newglossaryentry{" & rContenido["txtClaveGlosario"] & "}{" & "\n"
+      s &= "  type=\\acronymtype,\n"
+    Else If rContenido["cmbTipoDeEntradaGlosario"] = "glosario" Then
+      s &= "\n\\newglossaryentry{" & rContenido["txtClaveGlosario"] & "}{" & "\n"
+    End If
+
+    ' Campos opcionales
+    If Not IsNull(rContenido["txtNameGlosario"]) Then
+      s &= "  name={" & rContenido["txtNameGlosario"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtDescripcionGlosario"]) Then
+      s &= "  description={" & rContenido["txtDescripcionGlosario"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtFirstGlosario"]) Then
+      s &= "  first={" & rContenido["txtFirstGlosario"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtTextGlosario"]) Then
+      s &= "  text={" & rContenido["txtTextGlosario"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtFirstPluraIGlosario"]) Then
+      s &= "  firstplural={" & rContenido["txtFirstPluraIGlosario"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtPluralGlosario"]) Then
+      s &= "  plural={" & rContenido["txtPluralGlosario"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtSortGlosario"]) Then
+      s &= "  sort={" & rContenido["txtSortGlosario"] & "},\n"
+    End If
+
+    ' Cierra la entrada
+    s &= "}\n"
+
+    rContenido.MoveNext
+  Wend
+
+  ' Limpieza: eliminar ",}" sobrantes
+  s = Replace(s, ",}", "}")
+
+  ' Guarda el contenido acumulado en un solo archivo
+  outputFile = RutaProyecto & "/files/siglas.tex"
+  File.Save(outputFile, s)
+
+End
+
 ' exportamos el archivo metadatos para PDF libro
 Public Sub ExportarMetadatosPDFlibro()
 
@@ -713,48 +713,141 @@ Public Sub ExportarMetadatosPDFlibro()
 
   ' Si hay resultados, los procesamos, sino igual generamos el bloque fijo
   If rContenido.Available Then
-    s &= "\\hypersetup" & "{" & "\n"
-    s &= "pdfauthor={" & rContenido["txtLibroAutoria"] & "},\n"
-    s &= "pdftitle={" & rContenido["txtRevistaTitulo"] & "},\n"
-    s &= "pdfsubtitle={" & rContenido["txtLibroSubtitulo"] & "},\n"
-    s &= "pdfisbn={" & rContenido["txtRevistaISSN"] & "},\n"
-    s &= "pdfkeywords={" & rContenido["txtLibroPalabrasClaveEs"] & "},\n"
-    s &= "pdfsubject={" & rContenido["txtLibroResumenEs"] & "},\n"
-    s &= "pdfurl={" & rContenido["txtRevistaURL"] & "},\n"
-    s &= "pdfdate={" & rContenido["txtFechaPublicacion"] & "},\n"
-    s &= "pdfcreationdate={" & rContenido["txtFechaPublicacion"] & "},\n"
-    s &= "pdfmetadate={" & rContenido["txtFechaPublicacion"] & "},\n"
-    s &= "pdflang={" & rContenido["txtRevistaIdioma"] & "},\n"
-    s &= "pdfcopyrightstatus={" & rContenido["txtLicencia"] & "},\n"
-    s &= "pdfcopyrightstatustype={Text},\n"
-    s &= "pdfpubtype={book},\n"
-    s &= "pdfrendition={default},\n"
-    s &= "pdfcreator={gbpublisher v. " & versionLocal & "},\n"
-    s &= "pdfproducer={Ecosistema de LaTeX},\n"
-    s &= "unicode=true,\n"
-    s &= "bookmarks=true,\n"
-    s &= "pdfdisplaydoctitle=true,\n"
-    s &= "pdfnewwindow=true\n"
-    s &= "}" & "\n"
+    s &= "\\hypersetup{\n"
+
+    If Not IsNull(rContenido["txtLibroAutoria"]) And Len(Trim(rContenido["txtLibroAutoria"])) > 0 Then
+      s &= "  pdfauthor={" & rContenido["txtLibroAutoria"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtRevistaTitulo"]) And Len(Trim(rContenido["txtRevistaTitulo"])) > 0 Then
+      s &= "  pdftitle={" & rContenido["txtRevistaTitulo"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtLibroSubtitulo"]) And Len(Trim(rContenido["txtLibroSubtitulo"])) > 0 Then
+      s &= "  pdfsubtitle={" & rContenido["txtLibroSubtitulo"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtRevistaISSN"]) And Len(Trim(rContenido["txtRevistaISSN"])) > 0 Then
+      s &= "  pdfisbn={" & rContenido["txtRevistaISSN"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtLibroPalabrasClaveEs"]) And Len(Trim(rContenido["txtLibroPalabrasClaveEs"])) > 0 Then
+      s &= "  pdfkeywords={" & rContenido["txtLibroPalabrasClaveEs"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtLibroResumenEs"]) And Len(Trim(rContenido["txtLibroResumenEs"])) > 0 Then
+      s &= "  pdfsubject={" & rContenido["txtLibroResumenEs"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtRevistaURL"]) And Len(Trim(rContenido["txtRevistaURL"])) > 0 Then
+      s &= "  pdfurl={" & rContenido["txtRevistaURL"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtFechaPublicacion"]) And Len(Trim(rContenido["txtFechaPublicacion"])) > 0 Then
+      Dim fecha As String = Trim(rContenido["txtFechaPublicacion"])
+      Dim partes As String[] = Split(fecha, "-")
+      Dim fechaPDF As String
+      If partes.Count = 3 Then
+        ' yyyy-mm-dd → yyyymmdd000000
+        fechaPDF = partes[0] & partes[1] & partes[2] & "000000"
+      Else
+        ' Si no viene bien, metemos la original sin guiones
+        fechaPDF = Replace(fecha, "-", "") & "000000"
+      End If
+      s &= "  pdfdate={" & fechaPDF & "},\n"
+      s &= "  pdfcreationdate={" & fechaPDF & "},\n"
+      s &= "  pdfmetadate={" & fechaPDF & "},\n"
+    End If
+    If Not IsNull(rContenido["txtRevistaIdioma"]) And Len(Trim(rContenido["txtRevistaIdioma"])) > 0 Then
+      s &= "  pdflang={" & rContenido["txtRevistaIdioma"] & "},\n"
+    End If
+    If Not IsNull(rContenido["txtLicencia"]) And Len(Trim(rContenido["txtLicencia"])) > 0 Then
+      s &= "  pdfcopyrightstatus={" & rContenido["txtLicencia"] & "},\n"
+      s &= "  pdfcopyrightstatustype={Text},\n"
+    End If
+
+    ' Campos fijos que siempre se exportan
+    s &= "  pdfpubtype={book},\n"
+    s &= "  pdfrendition={default},\n"
+    s &= "  pdfcreator={gbpublisher v. " & versionLocal & "},\n"
+    s &= "  pdfproducer={Ecosistema de LaTeX},\n"
+    s &= "  unicode=true,\n"
+    s &= "  bookmarks=true,\n"
+    s &= "  pdfdisplaydoctitle=true,\n"
+    s &= "  pdfnewwindow=true\n"
+    s &= "}\n"
+
   Else
     ' Si no hay filas, igual generamos algo por defecto
-    s &= "\\hypersetup" & "{" & "\n"
-    s &= "pdfauthor={Documento sin autor},\n"
-    s &= "pdfpubtype={book},\n"
-    s &= "pdfrendition={default},\n"
-    s &= "unicode=true,\n"
-    s &= "bookmarks=true,\n"
-    s &= "pdfdisplaydoctitle=false,\n"
-    s &= "pdfnewwindow=true\n"
-    s &= "pdfcreator={gbpublisher v. " & versionLocal & "},\n"
-    s &= "pdfproducer={Ecosistema de LaTeX}\n"
-    s &= "}" & "\n"
-  Endif
+    s &= "\\hypersetup{\n"
+    s &= "  pdfauthor={Documento sin autor},\n"
+    s &= "  pdfpubtype={book},\n"
+    s &= "  pdfrendition={default},\n"
+    s &= "  unicode=true,\n"
+    s &= "  bookmarks=true,\n"
+    s &= "  pdfdisplaydoctitle=false,\n"
+    s &= "  pdfnewwindow=true,\n"
+    s &= "  pdfcreator={gbpublisher v. " & versionLocal & "},\n"
+    s &= "  pdfproducer={Ecosistema de LaTeX}\n"
+    s &= "}\n"
+  End If
 
   ' Establece la ruta y el nombre del archivo de salida
   outputFile = RutaProyecto &/ "files/metadatos.tex"
 
   ' Guarda el contenido acumulado en un solo archivo
+  File.Save(outputFile, s)
+
+End
+
+' exportamos el archivo glosario en JSON
+Public Sub ExportarGlosarioJSON()
+
+  Dim s As String
+  Dim outputFile As String
+  Dim rContenido As Result
+  Dim coma As String
+
+  sSQL = "SELECT * FROM siglas WHERE id_revista = " & FMain.idMetadatoRevista.Text
+  rContenido = m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  s = "{\n  \"entries\": [\n"
+  coma = ""
+
+  While rContenido.Available
+    s &= coma & "    {\n"
+
+    s &= "      \"key\": \"" & rContenido["txtClaveGlosario"] & "\",\n"
+    s &= "      \"type\": \"" & rContenido["cmbTipoDeEntradaGlosario"] & "\",\n"
+
+    If Not IsNull(rContenido["txtNameGlosario"]) Then
+      s &= "      \"name\": \"" & rContenido["txtNameGlosario"] & "\",\n"
+    End If
+    If Not IsNull(rContenido["txtDescripcionGlosario"]) Then
+      s &= "      \"description\": \"" & rContenido["txtDescripcionGlosario"] & "\",\n"
+    End If
+    If Not IsNull(rContenido["txtFirstGlosario"]) Then
+      s &= "      \"first\": \"" & rContenido["txtFirstGlosario"] & "\",\n"
+    End If
+    If Not IsNull(rContenido["txtTextGlosario"]) Then
+      s &= "      \"text\": \"" & rContenido["txtTextGlosario"] & "\",\n"
+    End If
+    If Not IsNull(rContenido["txtFirstPluraIGlosario"]) Then
+      s &= "      \"firstplural\": \"" & rContenido["txtFirstPluraIGlosario"] & "\",\n"
+    End If
+    If Not IsNull(rContenido["txtPluralGlosario"]) Then
+      s &= "      \"plural\": \"" & rContenido["txtPluralGlosario"] & "\",\n"
+    End If
+    If Not IsNull(rContenido["txtSortGlosario"]) Then
+      s &= "      \"sort\": \"" & rContenido["txtSortGlosario"] & "\",\n"
+    End If
+
+    ' Cerrar objeto eliminando coma final si la hay
+    If Right(s, 2) = ",\n" Then
+      s = Left(s, Len(s) - 2) & "\n"
+    End If
+
+    s &= "    }"
+    rContenido.MoveNext
+    If rContenido.Available Then coma = ",\n" Else coma = "\n"
+  Wend
+
+  s &= "  ]\n}\n"
+
+  outputFile = RutaProyecto &/ "files/siglas.json"
   File.Save(outputFile, s)
 
 End
