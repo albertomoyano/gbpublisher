@@ -1,6 +1,7 @@
 ' Gambas class file
 
 Public rutaApp As String = User.Home & "/.gbadoc"
+Public respaldoBBDD As String = User.Home & "/.gbadoc/respaldobbdd"
 Public $Bash As Process                              ' es público para compartirlo en las operaciones
 Public TipoProyectoActual As Integer
 Private ContenidoArt As Result
@@ -75,7 +76,63 @@ Public Sub Form_Open()
   End If
 
   sDbFile = sArchivo
-  ' Message.Info("Base de datos configurada en: " & sDbFile)
+
+  ' Hacemos una copia de la bbdd antes de abrirla
+  Dim fecha As String
+  Dim sArchivoDestino As String
+  Dim sFiles As String[]
+  Dim sFile As String
+  Dim sFechaArchivo As String
+  Dim dFechaArchivo As Date
+  Dim iDiasAntiguo As Integer
+
+  fecha = Format(Now(), "dd-mm-yyyy") ' Obtener la fecha actual
+  sArchivoDestino = respaldoBBDD &/ fecha & "-gbadoc.sqlite"
+
+  ' Verificar que el directorio de respaldo existe
+  If Not Exist(respaldoBBDD) Then
+    Try Mkdir respaldoBBDD
+    If Error Then
+      Message.Warning("No se pudo crear el directorio de respaldo: " & respaldoBBDD)
+      Return ' Salir de la función si no se puede crear
+    End If
+  End If
+
+  ' Verificar que el archivo origen existe
+  If Not Exist(sDbFile) Then
+    Message.Warning("El archivo de base de datos no existe: " & sDbFile)
+    Return
+  End If
+
+  ' Crear el respaldo del día actual (solo si no existe ya)
+  If Not Exist(sArchivoDestino) Then
+    Try Copy sDbFile To sArchivoDestino
+    If Error Then
+      Message.Warning("Error al crear respaldo: " & Error.Text)
+    End If
+  End If
+
+  ' Limpiar respaldos antiguos (mantener solo 10 días)
+  Try sFiles = Dir(respaldoBBDD, "*-gbadoc.sqlite")
+  If Not Error Then
+    For Each sFile In sFiles
+      ' Extraer la fecha del nombre del archivo
+      If sFile Like "??-??-????-gbadoc.sqlite" Then
+        sFechaArchivo = Left(sFile, 10) ' Extraer "dd-mm-yyyy"
+        Try dFechaArchivo = Date(Val(Right(sFechaArchivo, 4)), Val(Mid(sFechaArchivo, 4, 2)), Val(Left(sFechaArchivo, 2)))
+        If Not Error Then
+          ' Calcular días de diferencia
+          iDiasAntiguo = DateDiff(dFechaArchivo, Date(Now()), gb.Day)
+          ' Si tiene más de 10 días, eliminarlo
+          If iDiasAntiguo > 10 Then
+            Try Kill respaldoBBDD &/ sFile
+            ' Si quieres ver qué archivos se eliminan, descomenta la siguiente línea:
+            ' Print "Eliminado respaldo antiguo: " & sFile
+          End If
+        End If
+      End If
+    Next
+  End If
 
   ' abrimos la conexión a la red
   m_OnOff_y_Red.OnRed
@@ -1725,7 +1782,6 @@ Public Sub AbrirLibroTEX()
   m_Metadatos.LimpiarCamposMetadatos()
 
   Dim sSQL As String
-  Dim sgSQL As String
   Dim Contenido As Result
   Dim nuevoID As Integer
 
@@ -1791,10 +1847,11 @@ Public Sub AbrirLibroTEX()
   Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
 
   ' bibtex
+  Dim bibSQL As String
   m_Bibtex.LimpiarTextboxBibtex()
   m_Bibtex.RellenarComboBoxBibTeX()
-  sSQL = "SELECT * FROM bibtex WHERE id_revista = &1 ORDER BY id DESC"
-  ContenidoBib = m_OnOff_y_Red.meConn.Exec(sSQL, nuevoID)
+  bibSQL = "SELECT * FROM bibtex WHERE id_revista = &1 ORDER BY id DESC"
+  ContenidoBib = m_OnOff_y_Red.meConn.Exec(bibSQL, nuevoID)
   If ContenidoBib.Available Then
     gvReferenciasEnCurso.Clear
     gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
@@ -1804,9 +1861,10 @@ Public Sub AbrirLibroTEX()
   Endif
 
   ' siglas
+  Dim gloSQL As String
   m_Glosarios.LimpiarTextboxSigla()
-  sgSQL = "SELECT * FROM siglas WHERE id_revista = &1 ORDER BY id DESC"
-  ContenidoGlo = m_OnOff_y_Red.meConn.Exec(sgSQL, nuevoID)
+  gloSQL = "SELECT * FROM siglas WHERE id_revista = &1 ORDER BY id DESC"
+  ContenidoGlo = m_OnOff_y_Red.meConn.Exec(gloSQL, nuevoID)
   If ContenidoGlo.Available Then
     gvSiglasEnCurso.Clear
     gvSiglasEnCurso.Rows.Count = ContenidoGlo.Count
