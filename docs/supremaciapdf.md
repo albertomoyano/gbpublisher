@@ -88,7 +88,7 @@ Sin embargo, JATS no anula la necesidad del PDF; más bien, se complementan:
 *   **Separación de contenido y presentación:** JATS encapsula el "qué" del artículo (su contenido y estructura lógica), mientras que el PDF encapsula el "cómo" (su presentación exacta y diseño tipográfico). Para la academia, ambos son esenciales: el "qué" para la interoperabilidad y el "cómo" para la autoridad y la precisión en la comunicación.
 *   **Fidelidad visual irreemplazable:** Incluso con el marcado semántico de JATS, la conversión a un formato fluido como HTML no puede garantizar la preservación de la apariencia exacta que es crucial para la verificación y citación en la academia. El PDF sigue siendo la única garantía de esta fidelidad visual.
 
-## 5. Consideraciones culturales y cognitivas**
+## 5. Consideraciones culturales y cognitivas
 
 Más allá de los aspectos técnicos, hay factores culturales y cognitivos que contribuyen a la preferencia por el PDF:
 
