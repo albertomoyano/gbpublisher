@@ -1,0 +1,144 @@
+' Gambas class file
+
+' Función corregida para seleccionar archivo
+Public Sub btnSeleccionarArchivo_Click()
+
+  Dialog.Title = "Seleccionar archivo referencias.json"
+  Dialog.Filter = ["referencias.json", "Archivos JSON"]
+  Dialog.Path = User.Home
+
+  If Dialog.OpenFile() Then
+    ' Si el usuario cancela, salimos sin hacer nada
+    Return
+  End If
+
+  ' Verificar que sea el archivo correcto
+  If File.Name(Dialog.Path) <> "referencias.json" Then
+    Message.Warning("Debe seleccionar un archivo llamado 'referencias.json'")
+    Return
+  Endif
+
+  ' Mostramos la ruta seleccionada en el textbox
+  txtArchivoReferencias.Text = Dialog.Path
+
+End
+
+' Función para importar las referencias
+Public Sub btnImportar_Click()
+
+  Dim archivoReferencias As String
+  Dim contenidoJSON As String
+  Dim datos As Variant
+  Dim registro As Collection
+  Dim campos As New String[]
+  Dim valores As New String[]
+  Dim sql As String
+  Dim registrosImportados As Integer = 0
+  Dim clave As String
+  Dim valor As Variant
+  Dim idRevistaActual As Integer
+
+  ' 1) Verificar que se haya seleccionado un archivo
+  archivoReferencias = Trim(txtArchivoReferencias.Text)
+  If archivoReferencias = "" Then
+    Message.Warning("Debe seleccionar un archivo primero")
+    Return
+  Endif
+
+  If Not Exist(archivoReferencias) Then
+    Message.Error("El archivo seleccionado no existe")
+    Return
+  Endif
+
+  ' 2) Obtener ID de revista actual
+  idRevistaActual = CInt(FMain.idMetadatoRevista.Text)  ' Ajusta según tu estructura
+
+  ' 3) Leer y procesar el archivo JSON
+  contenidoJSON = File.Load(archivoReferencias)
+
+  ' Verificar que el contenido no esté vacío
+  If Len(contenidoJSON) = 0 Then
+    Message.Error("El archivo está vacío")
+    Return
+  Endif
+
+  ' Decodificar JSON
+  datos = JSON.Decode(contenidoJSON)
+
+  ' Verificar que datos sea un array
+  If TypeOf(datos) <> gb.Object Then
+    Message.Error("El archivo JSON no tiene el formato esperado (debe ser un array)")
+    Return
+  Endif
+
+  ' 4) Iniciar transacción
+  m_OnOff_y_Red.meConn.Begin()  ' Ajusta según tu conexión
+
+  ' 5) Procesar cada registro
+  For Each registro In datos
+    campos.Clear
+    valores.Clear
+
+    ' Verificar que registro sea una colección
+    If TypeOf(registro) <> gb.Object Then
+      Continue  ' Saltar este registro si no es válido
+    Endif
+
+    ' Construir arrays de campos y valores
+    For Each clave In registro
+      valor = registro[clave]
+
+      If clave = "id_revista" Then
+        ' Reemplazar por el ID de revista actual
+        campos.Add("id_revista")
+        valores.Add(CStr(idRevistaActual))
+      Else If clave <> "id" And clave <> "id_articulo" Then
+        ' Omitir el ID original y el id_articulo para evitar conflictos
+        campos.Add(clave)
+        If IsNull(valor) Then
+          valores.Add("")
+        Else
+          valores.Add(EscapeSQL(CStr(valor)))
+        Endif
+      Endif
+    Next
+
+    ' Ejecutar INSERT si hay campos
+    If campos.Count > 0 Then
+      sql = "INSERT INTO bibtex (" & campos.Join(",") & ") VALUES ('" & valores.Join("','") & "')"
+      m_OnOff_y_Red.meConn.Exec(sql)  ' Ajusta según tu conexión
+      registrosImportados += 1
+    Endif
+  Next
+
+  ' 6) Confirmar transacción
+  m_OnOff_y_Red.meConn.Commit()  ' Ajusta según tu conexión
+
+  ' 7) Mostrar resultado y cerrar formulario
+  Message.Info("Importación completada correctamente." & gb.NewLine &
+    registrosImportados & " registros importados con id_revista = " & idRevistaActual)
+
+  Me.Close()
+
+Catch
+  ' En caso de error, hacer rollback
+  m_OnOff_y_Red.meConn.Rollback()  ' Ajusta según tu conexión
+  Message.Error("Error durante la importación: " & Error.Text)
+
+End
+
+' Función para escapar caracteres SQL
+Private Function EscapeSQL(value As String) As String
+
+  If IsNull(value) Or value = "" Then Return ""
+  ' Escapar comillas simples duplicándolas
+  Return Replace(value, "'", "''")
+
+End
+
+' Función para cerrar el formulario
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
