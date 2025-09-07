@@ -4513,3 +4513,80 @@ Public Sub txtJournalTitle_LostFocus()
   Endif
 
 End
+
+Public Sub btnExportarJSON_Click()
+
+  Dim idRevista As Integer = CInt(idMetadatoRevista.Text)
+  Dim r As Result
+  Dim sJSON As String
+  Dim firstRow As Boolean = True
+  Dim i As Integer
+  Dim valorCampo As String
+  Dim outputFile As String
+
+  ' 1) Obtener registros
+  r = DB.Exec("SELECT * FROM bibtex WHERE id_revista = " & idRevista & " ORDER BY id")
+  If r.Count = 0 Then
+    Message.Info("No se encontraron referencias para exportar.")
+    Return
+  Endif
+
+  ' 2) Construir JSON en memoria con formato legible
+  sJSON = "[" & gb.NewLine
+
+  For Each r
+    If Not firstRow Then sJSON &= "," & gb.NewLine
+    sJSON &= "  {" & gb.NewLine  ' Indentación para el objeto
+
+    For i = 0 To r.Fields.Count - 1
+      If r[i] = Null Then
+        valorCampo = ""
+      Else
+        valorCampo = CStr(r[i])  ' Conversión explícita a String
+      Endif
+
+      If i > 0 Then sJSON &= "," & gb.NewLine
+      sJSON &= "    \"" & r.Fields[i].Name & "\": \"" & EscapeJSON(valorCampo) & "\""  ' Doble indentación para campos
+    Next
+
+    sJSON &= gb.NewLine & "  }"  ' Cerrar objeto con indentación
+    firstRow = False
+  Next
+
+  sJSON &= gb.NewLine & "]"  ' Cerrar array
+
+  ' 3) Guardar archivo
+  outputFile = RutaProyecto & "/files/referencias.json"
+
+  ' Crear directorio si no existe
+  If Not Exist(File.Dir(outputFile)) Then
+    Mkdir File.Dir(outputFile)
+  Endif
+
+  File.Save(outputFile, sJSON)
+  Message.Info("Exportación completada correctamente." & gb.NewLine & outputFile)
+
+Catch
+  Message.Error("Error durante la exportación: " & Error.Text)
+
+End
+
+' --- Escapa cadenas para JSON ---
+Private Function EscapeJSON(value As String) As String
+
+  If IsNull(value) Or value = "" Then Return ""
+
+  Dim result As String = value
+
+  ' Escapar caracteres especiales en el orden correcto
+  result = Replace(result, "\\", "\\\\")     ' \ -> \\
+  result = Replace(result, "\"", "\\\"")     ' " -> \"
+  result = Replace(result, Chr(8), "\\b")    ' Backspace -> \b
+  result = Replace(result, Chr(12), "\\f")   ' Form feed -> \f
+  result = Replace(result, Chr(10), "\\n")   ' Line feed -> \n
+  result = Replace(result, Chr(13), "\\r")   ' Carriage return -> \r
+  result = Replace(result, Chr(9), "\\t")    ' Tab -> \t
+
+  Return result
+
+End
