@@ -1,5 +1,11 @@
 ' Gambas class file
 
+Public Sub btnCerrar_Click()
+
+  Me.Close
+
+End
+
 ' Función corregida para seleccionar archivo
 Public Sub btnSeleccionarArchivo_Click()
 
@@ -23,22 +29,54 @@ Public Sub btnSeleccionarArchivo_Click()
 
 End
 
-' Función para importar las referencias
+' --- btnImportar_Click: Importa referencias desde referencias.json ---
 Public Sub btnImportar_Click()
 
   Dim archivoReferencias As String
   Dim contenidoJSON As String
   Dim datos As Variant
+  Dim registrosArray As Collection
   Dim registro As Collection
   Dim campos As New String[]
-  Dim valores As New String[]
+  Dim valores As New Variant[]
+  Dim marcadores As New String[]
   Dim sql As String
   Dim registrosImportados As Integer = 0
-  Dim clave As String
-  Dim valor As Variant
   Dim idRevistaActual As Integer
+  Dim nombreCampo As String
+  Dim valorCampo As Variant
 
-  ' 1) Verificar que se haya seleccionado un archivo
+  ' Campos válidos que se pueden importar
+  Dim camposValidos As String[] = [
+    "cmbTipoDeEntrada", "txtClaveBibtex", "cmbTipoDeTesis",
+    "txtAuthor", "txtEditor", "txtTitle", "txtNameAddOn", "txtBookAuthor",
+    "txtEditorA", "txtEditorB", "txtEditorC", "txtAfterword", "txtForeword",
+    "txtCommentator", "txtIntroduction", "txtTranslator", "txtAnnotator",
+    "txtHolder", "txtGender", "txtShortAuthor", "cmbEditorType", "cmbEditorTypeA",
+    "cmbEditorTypeB", "cmbEditorTypeC", "txtTitleAddOn", "txtSubTitle",
+    "txtSeries", "txtBookTitle", "txtBookTitleAddOn", "txtMainTitle",
+    "txtMainTitleAddOn", "txtJournalTitle", "txtJournalTitleAddOn",
+    "txtIssueTitle", "txtIssueTitleAddOn", "txtEventTitle", "txtEventTitleAddOn",
+    "txtIndexTitle", "txtShortTitle", "txtReprintTitle", "txtVolume",
+    "txtVolumes", "txtNumber", "txtChapter", "txtEid", "txtPart",
+    "txtEdition", "txtIssue", "txtYear", "txtEventDate", "txtDate",
+    "txtOrigDate", "txtUrlDate", "txtVersion", "cmbHyphenation", "cmbLanguage",
+    "cmbOrigLanguage", "cmbLangId", "txtLandIdOpts", "cmbPubState",
+    "txtPages", "txtPageTotal", "cmbPagination", "cmbBookPagination",
+    "txtLocation", "txtOrigLocation", "txtInstitution", "txtOrganization",
+    "txtPublisher", "txtOrigPublisher", "txtVenue", "txtEprint",
+    "cmbEprintType", "txtUrl", "txtIsbn", "txtIssn", "txtIsmn",
+    "txtIsrn", "txtIsan", "txtIswc", "txtDoi", "cmbRelatedType",
+    "txtRelated", "txtRelatedString", "txtAddendum", "txtEntrySubType",
+    "txtOptions", "txtLabel", "txtHowPublished", "txtShortHand",
+    "txtShortHandIntro", "txtIds", "txtEntrySet", "txtCrossRef",
+    "txtXref", "txtXdata", "txtPreSort", "txtSortKey", "txtSortName",
+    "txtSortHand", "txtSortYear", "txtSortTitle", "txtIndexSortTitle",
+    "txtAbstract", "txtNote", "txtLibrary", "txtAnnotation", "txtFile"
+
+  ]
+
+  ' 1) Verificar archivo
   archivoReferencias = Trim(txtArchivoReferencias.Text)
   If archivoReferencias = "" Then
     Message.Warning("Debe seleccionar un archivo primero")
@@ -51,94 +89,121 @@ Public Sub btnImportar_Click()
   Endif
 
   ' 2) Obtener ID de revista actual
-  idRevistaActual = CInt(FMain.idMetadatoRevista.Text)  ' Ajusta según tu estructura
+  If Not IsNumber(FMain.idMetadatoRevista.Text) Then
+    Message.Error("El ID de la revista no es un número válido.")
+    Return
+  Endif
+  idRevistaActual = CInt(FMain.idMetadatoRevista.Text)
 
-  ' 3) Leer y procesar el archivo JSON
+  ' 3) Leer contenido del archivo
   contenidoJSON = File.Load(archivoReferencias)
-
-  ' Verificar que el contenido no esté vacío
-  If Len(contenidoJSON) = 0 Then
-    Message.Error("El archivo está vacío")
+  If contenidoJSON = "" Then
+    Message.Error("El archivo JSON está vacío o no se pudo leer.")
     Return
   Endif
 
-  ' Decodificar JSON
+  ' 4) Decodificar JSON
+  ' Try
   datos = JSON.Decode(contenidoJSON)
-
-  ' Verificar que datos sea un array
-  If TypeOf(datos) <> gb.Object Then
-    Message.Error("El archivo JSON no tiene el formato esperado (debe ser un array)")
+  If Error Then
+    Message.Error("Error al decodificar JSON: " & Error.Text)
     Return
   Endif
 
-  ' 4) Iniciar transacción
-  m_OnOff_y_Red.meConn.Begin()  ' Ajusta según tu conexión
+  ' 5) Validar que sea un array de objetos
+  If TypeOf(datos) <> Collection Then
+    Message.Error("El JSON debe ser un array de objetos")
+    Return
+  Endif
+  registrosArray = datos
 
-  ' 5) Procesar cada registro
-  For Each registro In datos
-    campos.Clear
-    valores.Clear
+  ' 6) Iniciar transacción
+  If Not m_OnOff_y_Red.meConn.Opened Then
+    Message.Error("La conexión a la base de datos no está abierta")
+    Return
+  Endif
+  m_OnOff_y_Red.meConn.Begin()
 
-    ' Verificar que registro sea una colección
-    If TypeOf(registro) <> gb.Object Then
-      Continue  ' Saltar este registro si no es válido
-    Endif
+  ' 7) Procesar cada registro
+  For Each registro In registrosArray
+    campos = New String[]
+    valores = New Variant[]
+    marcadores = New String[]
 
-    ' Construir arrays de campos y valores
-    For Each clave In registro
-      valor = registro[clave]
+    ' Añadir id_revista siempre
+    campos.Add("`id_revista`")
+    marcadores.Add("?")
+    valores.Add(idRevistaActual)
 
-      If clave = "id_revista" Then
-        ' Reemplazar por el ID de revista actual
-        campos.Add("id_revista")
-        valores.Add(CStr(idRevistaActual))
-      Else If clave <> "id" And clave <> "id_articulo" Then
-        ' Omitir el ID original y el id_articulo para evitar conflictos
-        campos.Add(clave)
-        If IsNull(valor) Then
-          valores.Add("")
-        Else
-          valores.Add(EscapeSQL(CStr(valor)))
+    ' Iterar sobre campos válidos
+    For Each nombreCampo In camposValidos
+      If registro.Exist(nombreCampo) Then
+        valorCampo = registro[nombreCampo]
+        If Not IsNull(valorCampo) And CStr(valorCampo) <> "" Then
+          campos.Add("`" & nombreCampo & "`")
+          marcadores.Add("?")
+          valores.Add(CStr(valorCampo))
         Endif
       Endif
     Next
 
-    ' Ejecutar INSERT si hay campos
-    If campos.Count > 0 Then
-      sql = "INSERT INTO bibtex (" & campos.Join(",") & ") VALUES ('" & valores.Join("','") & "')"
-      m_OnOff_y_Red.meConn.Exec(sql)  ' Ajusta según tu conexión
+    ' Insertar registro si tiene más campos aparte de id_revista
+    If campos.Count > 1 Then
+      sql = "INSERT INTO `bibtex` (" & campos.Join(",") & ") VALUES (" & marcadores.Join(",") & ")"
+      Dim stmt As Result = m_OnOff_y_Red.meConn.Create(sql)
+      Dim i As Integer
+      For i = 0 To valores.Max
+        stmt[i] = valores[i]
+      Next
+      stmt.Update()
       registrosImportados += 1
     Endif
   Next
 
-  ' 6) Confirmar transacción
-  m_OnOff_y_Red.meConn.Commit()  ' Ajusta según tu conexión
+  ' 8) Commit
+  m_OnOff_y_Red.meConn.Commit()
 
-  ' 7) Mostrar resultado y cerrar formulario
+  ' 9) Resultado
   Message.Info("Importación completada correctamente." & gb.NewLine &
     registrosImportados & " registros importados con id_revista = " & idRevistaActual)
 
   Me.Close()
 
 Catch
-  ' En caso de error, hacer rollback
-  m_OnOff_y_Red.meConn.Rollback()  ' Ajusta según tu conexión
+  ' Rollback en caso de error
+  If m_OnOff_y_Red.meConn.Opened Then m_OnOff_y_Red.meConn.Rollback()
   Message.Error("Error durante la importación: " & Error.Text)
 
 End
 
-' Función para escapar caracteres SQL
-Private Function EscapeSQL(value As String) As String
+' --- Comprueba si una cadena representa un número ---
+Public Function IsNumber(value As String) As Boolean
 
-  If IsNull(value) Or value = "" Then Return ""
-  ' Escapar comillas simples duplicándolas
-  Return Replace(value, "'", "''")
+  If value = "" Then Return False
+
+  ' Try
+  Dim test As Float = CFloat(value)
+  Return True
+  If Error Then
+    Return False
+  Endif
 
 End
 
-' Función para cerrar el formulario
-Public Sub btnCerrar_Click()
+' --- Escapa caracteres especiales para SQL ---
+Public Function EscapeSQL(value As String) As String
 
-  Me.Close()
+  If IsNull(value) Then Return ""
+
+  Dim result As String = value
+
+  ' Escapar comillas simples
+  result = Replace(result, "'", "''")
+
+  ' Escapar caracteres problemáticos adicionales
+  result = Replace(result, Chr(0), "")    ' Null byte
+  result = Replace(result, Chr(26), "")   ' Substitute character
+
+  Return result
 
 End
