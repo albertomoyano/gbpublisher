@@ -1729,6 +1729,19 @@ Public Sub AbrirLibroMD()
     gvReferenciasEnCurso.Rows.Count = 0
   Endif
 
+  ' siglas
+  Dim gloSQL As String
+  m_Glosarios.LimpiarTextboxSigla()
+  gloSQL = "SELECT * FROM siglas WHERE id_revista = &1 ORDER BY id DESC"
+  ContenidoGlo = m_OnOff_y_Red.meConn.Exec(gloSQL, nuevoID)
+  If ContenidoGlo.Available Then
+    gvSiglasEnCurso.Clear
+    gvSiglasEnCurso.Rows.Count = ContenidoGlo.Count
+    gvSiglasEnCurso.Refresh
+  Else
+    gvSiglasEnCurso.Rows.Count = 0
+  Endif
+
   CargarScripts()
 
   ' Controlomanos archivos base
@@ -4648,5 +4661,127 @@ Public Sub btnExportarJSONsiglas_Click()
 
 Catch
   Message.Error("Error durante la exportación: " & Error.Text)
+
+End
+
+Public Sub btnImportarJSONsiglas_Click()
+
+  Dim sJSON As String
+  Dim aJSON As Collection[]
+  Dim item As Collection
+  Dim inputFile As String
+  Dim sql As String
+  Dim registrosImportados As Integer = 0
+
+  With Dialog
+    .Title = "Seleccionar archivo de siglas JSON"
+    .Filter = ["*.json", "Archivos JSON", "*", "Todos los archivos"]
+    .Path = User.Home
+  End With
+  If Dialog.OpenFile() Then Return
+  inputFile = Dialog.Path
+
+  sJSON = File.Load(inputFile)
+  If Trim(sJSON) = "" Then
+    Message.Error("El archivo JSON está vacío.")
+    Return
+  Endif
+
+  aJSON = JSON.Decode(sJSON)
+  If aJSON.Count = 0 Then
+    Message.Info("No se encontraron registros para importar.")
+    Return
+  Endif
+
+  If Message.Question("¿Está seguro de importar " & aJSON.Count & " siglas?" & gb.NewLine &
+      "Se asignarán al proyecto actual (ID: " & idMetadatoRevista.Text & ")") <> 1 Then
+    Return
+  Endif
+
+  m_OnOff_y_Red.meConn.Begin()
+
+  For Each item In aJSON
+    Dim vIdRevista As String = idMetadatoRevista.Text
+    Dim v1, v2, v3, v4, v5, v6, v7, v8, v9 As String
+
+    ' Print "Objeto JSON leído: "; JSON.Encode(item)
+
+    v1 = ""
+    v2 = ""
+    v3 = ""
+    v4 = ""
+    v5 = ""
+    v6 = ""
+    v7 = ""
+    v8 = ""
+    v9 = ""
+
+    If item.Exist("txtClaveGlosario") Then v1 = CStr(item["txtClaveGlosario"])
+    If item.Exist("cmbTipoDeEntradaGlosario") Then v2 = CStr(item["cmbTipoDeEntradaGlosario"])
+    If item.Exist("txtNameGlosario") Then v3 = CStr(item["txtNameGlosario"])
+    If item.Exist("txtDescripcionGlosario") Then v4 = CStr(item["txtDescripcionGlosario"])
+    If item.Exist("txtFirstGlosario") Then v5 = CStr(item["txtFirstGlosario"])
+    If item.Exist("txtTextGlosario") Then v6 = CStr(item["txtTextGlosario"])
+    If item.Exist("txtFirstPluraIGlosario") Then v7 = CStr(item["txtFirstPluraIGlosario"])
+    If item.Exist("txtPluralGlosario") Then v8 = CStr(item["txtPluralGlosario"])
+    If item.Exist("txtSortGlosario") Then v9 = CStr(item["txtSortGlosario"])
+
+    v1 = Replace(v1, "'", "''")
+    v2 = Replace(v2, "'", "''")
+    v3 = Replace(v3, "'", "''")
+    v4 = Replace(v4, "'", "''")
+    v5 = Replace(v5, "'", "''")
+    v6 = Replace(v6, "'", "''")
+    v7 = Replace(v7, "'", "''")
+    v8 = Replace(v8, "'", "''")
+    v9 = Replace(v9, "'", "''")
+
+    sql = "INSERT INTO siglas (id_revista, txtClaveGlosario, cmbTipoDeEntradaGlosario, txtNameGlosario, txtDescripcionGlosario, txtFirstGlosario, txtTextGlosario, txtFirstPluraIGlosario, txtPluralGlosario, txtSortGlosario) VALUES ("
+    sql = sql & vIdRevista & ", "
+    sql = sql & "'" & v1 & "', "
+    sql = sql & "'" & v2 & "', "
+    sql = sql & "'" & v3 & "', "
+    sql = sql & "'" & v4 & "', "
+    sql = sql & "'" & v5 & "', "
+    sql = sql & "'" & v6 & "', "
+    sql = sql & "'" & v7 & "', "
+    sql = sql & "'" & v8 & "', "
+    sql = sql & "'" & v9 & "')"
+
+    ' Print "SQL completa:"
+    ' Print sql
+    ' Print "---"
+
+    Try m_OnOff_y_Red.meConn.Exec(sql)
+    If Error Then
+      ' Print "✗ Error en INSERT: " & Error.Text
+      Error.Raise("Error en INSERT: " & Error.Text)
+    Else
+      ' Print "✔ INSERT ejecutado correctamente"
+      registrosImportados += 1
+
+      Dim verificacion As Result
+      Try verificacion = m_OnOff_y_Red.meConn.Exec("SELECT * FROM siglas WHERE id_revista = " & idMetadatoRevista.Text & " ORDER BY id DESC LIMIT 1")
+      If Not Error And verificacion.Available Then
+        ' Print "  -> Verificación del registro insertado:"
+        ' Print "     ID: " & verificacion["id"]
+        ' Print "     txtClaveGlosario: '" & CStr(verificacion["txtClaveGlosario"]) & "'"
+        ' Print "     txtNameGlosario: '" & CStr(verificacion["txtNameGlosario"]) & "'"
+      Endif
+    Endif
+  Next
+
+  m_OnOff_y_Red.meConn.Commit()
+  ' Print "✔ Commit hecho"
+
+  Message.Info("Importación completada correctamente." & gb.NewLine &
+    registrosImportados & " siglas importadas desde: " & File.Name(inputFile) & gb.NewLine &
+    "Proyecto ID: " & idMetadatoRevista.Text)
+
+  m_Glosarios.RefrescarTableViewGlosarioEnCurso()
+
+Catch
+  m_OnOff_y_Red.meConn.Rollback()
+  Message.Error("Error durante la importación: " & Error.Text)
 
 End
