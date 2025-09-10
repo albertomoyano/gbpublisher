@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Mi CV
-nav_order: 2
+nav_order: 5
 ---
 
 # Alberto Moyano
