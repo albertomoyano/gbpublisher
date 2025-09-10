@@ -1,6 +1,6 @@
 ---
 layout: default
-title: La supremacía del PDF
+title: Soporte oficial
 parent: Manual
 ---
 
