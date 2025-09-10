@@ -1,10 +1,10 @@
 ---
 layout: default
-title: EPUB: historia, tecnología y evolución
+title: ePub: historia, tecnología y evolución
 parent: Apuntes
 ---
 
-# EPUB: historia, tecnología y evolución
+# ePub: historia, tecnología y evolución
 
 ## Introducción
 EPUB (Electronic Publication) es un formato estándar para la publicación de libros electrónicos. Su diseño busca ser flexible, accesible y compatible con una variedad de dispositivos y plataformas.
