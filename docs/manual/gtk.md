@@ -1,3 +1,9 @@
+---
+layout: default
+title: La supremacía del PDF
+parent: Manual
+---
+
 # Soporte oficial
 
 ## Alcance del soporte (Linux Mint - Cinnamon)

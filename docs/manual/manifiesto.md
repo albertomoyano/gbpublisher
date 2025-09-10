@@ -1,3 +1,9 @@
+---
+layout: default
+title: La supremacía del PDF
+parent: Manual
+---
+
 # Manifiesto técnico
 
 ## Por qué una aplicación de escritorio. Contexto del proyecto
