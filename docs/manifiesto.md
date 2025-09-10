@@ -6,7 +6,7 @@ Este software fue desarrollado para asistir en la edición técnica y académica
 
 - Precisión en el marcado estructural de los textos.
 - Flujo editorial controlado.
-- Exportación en formatos académicos como ePub, PDF, XML (TEI, JATS, DocBook) y otros.
+- Exportación en formatos académicos como ePub, PDF, HTML y XML.
 - Integración con una base de datos para trazabilidad, metadatos y automatización.
 
 ## Decisión arquitectónica
