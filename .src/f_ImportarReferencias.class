@@ -1,191 +1,193 @@
 ' Gambas class file
 
-Public Sub btnCerrar_Click()
-
-  Me.Close
-
-End
-
-' Función corregida para seleccionar archivo
-Public Sub btnSeleccionarArchivo_Click()
-
-  Dialog.Title = "Seleccionar archivo referencias.json"
-  Dialog.Filter = ["referencias.json", "Archivos JSON"]
-  Dialog.Path = User.Home
-
-  If Dialog.OpenFile() Then
-    ' Si el usuario cancela, salimos sin hacer nada
-    Return
-  End If
-
-  ' Verificar que sea el archivo correcto
-  If File.Name(Dialog.Path) <> "referencias.json" Then
-    Message.Warning("Debe seleccionar un archivo llamado 'referencias.json'")
-    Return
-  Endif
-
-  ' Mostramos la ruta seleccionada en el textbox
-  txtArchivoReferencias.Text = Dialog.Path
-
-End
-
-' --- btnImportar_Click: Importa referencias desde referencias.json ---
-Public Sub btnImportar_Click()
-
-  Dim archivoReferencias As String
-  Dim contenidoJSON As String
-  Dim datos As Variant
-  Dim registrosArray As Collection
-  Dim registro As Collection
-  Dim campos As New String[]
-  Dim valores As New Variant[]
-  Dim marcadores As New String[]
-  Dim sql As String
-  Dim registrosImportados As Integer = 0
-  Dim idRevistaActual As Integer
-  Dim nombreCampo As String
-  Dim valorCampo As Variant
-
-  ' Campos válidos que se pueden importar
-  Dim camposValidos As String[] = [
-    "cmbTipoDeEntrada", "txtClaveBibtex", "cmbTipoDeTesis",
-    "txtAuthor", "txtEditor", "txtTitle", "txtNameAddOn", "txtBookAuthor",
-    "txtEditorA", "txtEditorB", "txtEditorC", "txtAfterword", "txtForeword",
-    "txtCommentator", "txtIntroduction", "txtTranslator", "txtAnnotator",
-    "txtHolder", "txtGender", "txtShortAuthor", "cmbEditorType", "cmbEditorTypeA",
-    "cmbEditorTypeB", "cmbEditorTypeC", "txtTitleAddOn", "txtSubTitle",
-    "txtSeries", "txtBookTitle", "txtBookTitleAddOn", "txtMainTitle",
-    "txtMainTitleAddOn", "txtJournalTitle", "txtJournalTitleAddOn",
-    "txtIssueTitle", "txtIssueTitleAddOn", "txtEventTitle", "txtEventTitleAddOn",
-    "txtIndexTitle", "txtShortTitle", "txtReprintTitle", "txtVolume",
-    "txtVolumes", "txtNumber", "txtChapter", "txtEid", "txtPart",
-    "txtEdition", "txtIssue", "txtYear", "txtEventDate", "txtDate",
-    "txtOrigDate", "txtUrlDate", "txtVersion", "cmbHyphenation", "cmbLanguage",
-    "cmbOrigLanguage", "cmbLangId", "txtLandIdOpts", "cmbPubState",
-    "txtPages", "txtPageTotal", "cmbPagination", "cmbBookPagination",
-    "txtLocation", "txtOrigLocation", "txtInstitution", "txtOrganization",
-    "txtPublisher", "txtOrigPublisher", "txtVenue", "txtEprint",
-    "cmbEprintType", "txtUrl", "txtIsbn", "txtIssn", "txtIsmn",
-    "txtIsrn", "txtIsan", "txtIswc", "txtDoi", "cmbRelatedType",
-    "txtRelated", "txtRelatedString", "txtAddendum", "txtEntrySubType",
-    "txtOptions", "txtLabel", "txtHowPublished", "txtShortHand",
-    "txtShortHandIntro", "txtIds", "txtEntrySet", "txtCrossRef",
-    "txtXref", "txtXdata", "txtPreSort", "txtSortKey", "txtSortName",
-    "txtSortHand", "txtSortYear", "txtSortTitle", "txtIndexSortTitle",
-    "txtAbstract", "txtNote", "txtLibrary", "txtAnnotation", "txtFile"
-
-  ]
-
-  ' 1) Verificar archivo
-  archivoReferencias = Trim(txtArchivoReferencias.Text)
-  If archivoReferencias = "" Then
-    Message.Warning("Debe seleccionar un archivo primero")
-    Return
-  Endif
-
-  If Not Exist(archivoReferencias) Then
-    Message.Error("El archivo seleccionado no existe")
-    Return
-  Endif
-
-  ' 2) Obtener ID de revista actual
-  idRevistaActual = CInt(FMain.idMetadatoRevista.Text)
-
-  ' 3) Leer contenido del archivo
-  contenidoJSON = File.Load(archivoReferencias)
-  If contenidoJSON = "" Then
-    Message.Error("El archivo JSON está vacío o no se pudo leer.")
-    Return
-  Endif
-
-  ' 4) Decodificar JSON
-  ' Try
-  datos = JSON.Decode(contenidoJSON)
-  If Error Then
-    Message.Error("Error al decodificar JSON: " & Error.Text)
-    Return
-  Endif
-
-  ' 5) Validar que sea un array de objetos
-  If TypeOf(datos) <> Collection Then
-    Message.Error("El JSON debe ser un array de objetos")
-    Return
-  Endif
-  registrosArray = datos
-
-  ' 6) Iniciar transacción
-  If Not m_OnOff_y_Red.meConn.Opened Then
-    Message.Error("La conexión a la base de datos no está abierta")
-    Return
-  Endif
-  m_OnOff_y_Red.meConn.Begin()
-
-  ' 7) Procesar cada registro
-  For Each registro In registrosArray
-    campos = New String[]
-    valores = New Variant[]
-    marcadores = New String[]
-
-    ' Añadir id_revista siempre
-    campos.Add("`id_revista`")
-    marcadores.Add("?")
-    valores.Add(idRevistaActual)
-
-    ' Iterar sobre campos válidos
-    For Each nombreCampo In camposValidos
-      If registro.Exist(nombreCampo) Then
-        valorCampo = registro[nombreCampo]
-        If Not IsNull(valorCampo) And CStr(valorCampo) <> "" Then
-          campos.Add("`" & nombreCampo & "`")
-          marcadores.Add("?")
-          valores.Add(CStr(valorCampo))
-        Endif
-      Endif
-    Next
-
-    ' Insertar registro si tiene más campos aparte de id_revista
-    If campos.Count > 1 Then
-      sql = "INSERT INTO `bibtex` (" & campos.Join(",") & ") VALUES (" & marcadores.Join(",") & ")"
-      Dim stmt As Result = m_OnOff_y_Red.meConn.Create(sql)
-      Dim i As Integer
-      For i = 0 To valores.Max
-        stmt[i] = valores[i]
-      Next
-      stmt.Update()
-      registrosImportados += 1
-    Endif
-  Next
-
-  ' 8) Commit
-  m_OnOff_y_Red.meConn.Commit()
-
-  ' 9) Resultado
-  Message.Info("Importación completada correctamente." & gb.NewLine &
-    registrosImportados & " registros importados con id_revista = " & idRevistaActual)
-
-  Me.Close()
-
-Catch
-  ' Rollback en caso de error
-  If m_OnOff_y_Red.meConn.Opened Then m_OnOff_y_Red.meConn.Rollback()
-  Message.Error("Error durante la importación: " & Error.Text)
-
-End
-
-' --- Escapa caracteres especiales para SQL ---
-Public Function EscapeSQL(value As String) As String
-
-  If IsNull(value) Then Return ""
-
-  Dim result As String = value
-
-  ' Escapar comillas simples
-  result = Replace(result, "'", "''")
-
-  ' Escapar caracteres problemáticos adicionales
-  result = Replace(result, Chr(0), "")    ' Null byte
-  result = Replace(result, Chr(26), "")   ' Substitute character
-
-  Return result
-
-End
+' ' Gambas class file
+'
+' Public Sub btnCerrar_Click()
+'
+'   Me.Close
+'
+' End
+'
+' ' Función corregida para seleccionar archivo
+' Public Sub btnSeleccionarArchivo_Click()
+'
+'   Dialog.Title = "Seleccionar archivo referencias.json"
+'   Dialog.Filter = ["referencias.json", "Archivos JSON"]
+'   Dialog.Path = User.Home
+'
+'   If Dialog.OpenFile() Then
+'     ' Si el usuario cancela, salimos sin hacer nada
+'     Return
+'   End If
+'
+'   ' Verificar que sea el archivo correcto
+'   If File.Name(Dialog.Path) <> "referencias.json" Then
+'     Message.Warning("Debe seleccionar un archivo llamado 'referencias.json'")
+'     Return
+'   Endif
+'
+'   ' Mostramos la ruta seleccionada en el textbox
+'   txtArchivoReferencias.Text = Dialog.Path
+'
+' End
+'
+' ' --- btnImportar_Click: Importa referencias desde referencias.json ---
+' Public Sub btnImportar_Click()
+'
+'   Dim archivoReferencias As String
+'   Dim contenidoJSON As String
+'   Dim datos As Variant
+'   Dim registrosArray As Collection
+'   Dim registro As Collection
+'   Dim campos As New String[]
+'   Dim valores As New Variant[]
+'   Dim marcadores As New String[]
+'   Dim sql As String
+'   Dim registrosImportados As Integer = 0
+'   Dim idRevistaActual As Integer
+'   Dim nombreCampo As String
+'   Dim valorCampo As Variant
+'
+'   ' Campos válidos que se pueden importar
+'   Dim camposValidos As String[] = [
+'     "cmbTipoDeEntrada", "txtClaveBibtex", "cmbTipoDeTesis",
+'     "txtAuthor", "txtEditor", "txtTitle", "txtNameAddOn", "txtBookAuthor",
+'     "txtEditorA", "txtEditorB", "txtEditorC", "txtAfterword", "txtForeword",
+'     "txtCommentator", "txtIntroduction", "txtTranslator", "txtAnnotator",
+'     "txtHolder", "txtGender", "txtShortAuthor", "cmbEditorType", "cmbEditorTypeA",
+'     "cmbEditorTypeB", "cmbEditorTypeC", "txtTitleAddOn", "txtSubTitle",
+'     "txtSeries", "txtBookTitle", "txtBookTitleAddOn", "txtMainTitle",
+'     "txtMainTitleAddOn", "txtJournalTitle", "txtJournalTitleAddOn",
+'     "txtIssueTitle", "txtIssueTitleAddOn", "txtEventTitle", "txtEventTitleAddOn",
+'     "txtIndexTitle", "txtShortTitle", "txtReprintTitle", "txtVolume",
+'     "txtVolumes", "txtNumber", "txtChapter", "txtEid", "txtPart",
+'     "txtEdition", "txtIssue", "txtYear", "txtEventDate", "txtDate",
+'     "txtOrigDate", "txtUrlDate", "txtVersion", "cmbHyphenation", "cmbLanguage",
+'     "cmbOrigLanguage", "cmbLangId", "txtLandIdOpts", "cmbPubState",
+'     "txtPages", "txtPageTotal", "cmbPagination", "cmbBookPagination",
+'     "txtLocation", "txtOrigLocation", "txtInstitution", "txtOrganization",
+'     "txtPublisher", "txtOrigPublisher", "txtVenue", "txtEprint",
+'     "cmbEprintType", "txtUrl", "txtIsbn", "txtIssn", "txtIsmn",
+'     "txtIsrn", "txtIsan", "txtIswc", "txtDoi", "cmbRelatedType",
+'     "txtRelated", "txtRelatedString", "txtAddendum", "txtEntrySubType",
+'     "txtOptions", "txtLabel", "txtHowPublished", "txtShortHand",
+'     "txtShortHandIntro", "txtIds", "txtEntrySet", "txtCrossRef",
+'     "txtXref", "txtXdata", "txtPreSort", "txtSortKey", "txtSortName",
+'     "txtSortHand", "txtSortYear", "txtSortTitle", "txtIndexSortTitle",
+'     "txtAbstract", "txtNote", "txtLibrary", "txtAnnotation", "txtFile"
+'
+'   ]
+'
+'   ' 1) Verificar archivo
+'   archivoReferencias = Trim(txtArchivoReferencias.Text)
+'   If archivoReferencias = "" Then
+'     Message.Warning("Debe seleccionar un archivo primero")
+'     Return
+'   Endif
+'
+'   If Not Exist(archivoReferencias) Then
+'     Message.Error("El archivo seleccionado no existe")
+'     Return
+'   Endif
+'
+'   ' 2) Obtener ID de revista actual
+'   idRevistaActual = CInt(FMain.idMetadatoRevista.Text)
+'
+'   ' 3) Leer contenido del archivo
+'   contenidoJSON = File.Load(archivoReferencias)
+'   If contenidoJSON = "" Then
+'     Message.Error("El archivo JSON está vacío o no se pudo leer.")
+'     Return
+'   Endif
+'
+'   ' 4) Decodificar JSON
+'   ' Try
+'   datos = JSON.Decode(contenidoJSON)
+'   If Error Then
+'     Message.Error("Error al decodificar JSON: " & Error.Text)
+'     Return
+'   Endif
+'
+'   ' 5) Validar que sea un array de objetos
+'   If TypeOf(datos) <> Collection Then
+'     Message.Error("El JSON debe ser un array de objetos")
+'     Return
+'   Endif
+'   registrosArray = datos
+'
+'   ' 6) Iniciar transacción
+'   If Not m_OnOff_y_Red.meConn.Opened Then
+'     Message.Error("La conexión a la base de datos no está abierta")
+'     Return
+'   Endif
+'   m_OnOff_y_Red.meConn.Begin()
+'
+'   ' 7) Procesar cada registro
+'   For Each registro In registrosArray
+'     campos = New String[]
+'     valores = New Variant[]
+'     marcadores = New String[]
+'
+'     ' Añadir id_revista siempre
+'     campos.Add("`id_revista`")
+'     marcadores.Add("?")
+'     valores.Add(idRevistaActual)
+'
+'     ' Iterar sobre campos válidos
+'     For Each nombreCampo In camposValidos
+'       If registro.Exist(nombreCampo) Then
+'         valorCampo = registro[nombreCampo]
+'         If Not IsNull(valorCampo) And CStr(valorCampo) <> "" Then
+'           campos.Add("`" & nombreCampo & "`")
+'           marcadores.Add("?")
+'           valores.Add(CStr(valorCampo))
+'         Endif
+'       Endif
+'     Next
+'
+'     ' Insertar registro si tiene más campos aparte de id_revista
+'     If campos.Count > 1 Then
+'       sql = "INSERT INTO `bibtex` (" & campos.Join(",") & ") VALUES (" & marcadores.Join(",") & ")"
+'       Dim stmt As Result = m_OnOff_y_Red.meConn.Create(sql)
+'       Dim i As Integer
+'       For i = 0 To valores.Max
+'         stmt[i] = valores[i]
+'       Next
+'       stmt.Update()
+'       registrosImportados += 1
+'     Endif
+'   Next
+'
+'   ' 8) Commit
+'   m_OnOff_y_Red.meConn.Commit()
+'
+'   ' 9) Resultado
+'   Message.Info("Importación completada correctamente." & gb.NewLine &
+'     registrosImportados & " registros importados con id_revista = " & idRevistaActual)
+'
+'   Me.Close()
+'
+' Catch
+'   ' Rollback en caso de error
+'   If m_OnOff_y_Red.meConn.Opened Then m_OnOff_y_Red.meConn.Rollback()
+'   Message.Error("Error durante la importación: " & Error.Text)
+'
+' End
+'
+' ' --- Escapa caracteres especiales para SQL ---
+' Public Function EscapeSQL(value As String) As String
+'
+'   If IsNull(value) Then Return ""
+'
+'   Dim result As String = value
+'
+'   ' Escapar comillas simples
+'   result = Replace(result, "'", "''")
+'
+'   ' Escapar caracteres problemáticos adicionales
+'   result = Replace(result, Chr(0), "")    ' Null byte
+'   result = Replace(result, Chr(26), "")   ' Substitute character
+'
+'   Return result
+'
+' End
