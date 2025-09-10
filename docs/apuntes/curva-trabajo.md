@@ -35,7 +35,7 @@ El análisis cruzado y comparativo entre la curva de inversión y el plan de tra
 3. **Cumplimiento de plazos:** Analizar si los tiempos de inversión coinciden con los plazos definidos en el calendario editorial.
 4. **Rentabilidad y ajustes:** Identificar desviaciones en la inversión y realizar ajustes en la estrategia de comercialización para maximizar la rentabilidad de cada publicación.
 
-# Impacto del flujo de trabajo basado en Git en la gestión editorial
+## Impacto del flujo de trabajo basado en Git en la gestión editorial
 El uso de un flujo de trabajo basado en Git, junto con plataformas como GitHub, GitLab o Bitbucket, puede incidir significativamente en la gestión de proyectos editoriales. Algunas de las principales influencias incluyen:
 
 1. **Gestión de Issues y Projects:**
@@ -57,6 +57,5 @@ El uso de un flujo de trabajo basado en Git, junto con plataformas como GitHub, 
    - Asegura la entrega continua de contenido digital, alineando la inversión con los entregables editoriales.
    - Reduce el riesgo de retrasos en la publicación al optimizar los procesos de despliegue en la distribución digital.
 
-# Conclusión
+## Conclusión
 El análisis comparativo entre **la curva de inversión** y **el plan de trabajo** es fundamental en la gerencia editorial. La adopción de un flujo de trabajo basado en Git y herramientas colaborativas como GitHub mejoran la planificación, ejecución y control de los proyectos de publicación, asegurando una gestión más eficiente de los recursos y maximizando el éxito comercial de los productos editoriales.
-
