@@ -12,7 +12,7 @@ La estructura de un libro es un elemento fundamental tanto para su creación com
 
 ---
 
-## 1. División lógica (planteada por el autor)
+## División lógica (planteada por el autor)
 
 La división lógica de un libro se refiere a la organización interna que el autor le da a su obra. Esta estructura depende del género, el contenido y el propósito del libro. Algunas de las partes más comunes son:
 
@@ -36,7 +36,7 @@ La división lógica de un libro se refiere a la organización interna que el au
 
 ---
 
-## 2. División estructural (planteada en la edición)
+## División estructural (planteada en la edición)
 
 La división estructural se refiere a la organización física del libro tal como aparece en su edición impresa o digital. Esta división es responsabilidad del editor y su equipo, y suele seguir convenciones estandarizadas. Las partes más comunes son:
 
@@ -63,7 +63,7 @@ La división estructural se refiere a la organización física del libro tal com
 
 ---
 
-## 3. Casos excepcionales
+## Casos excepcionales
 
 En algunos casos, la estructura de un libro puede variar significativamente debido a su naturaleza especial. A continuación, se presentan algunos ejemplos:
 
@@ -105,7 +105,7 @@ En algunos casos, la estructura de un libro puede variar significativamente debi
 
 ---
 
-## 4. Comparación entre división lógica y estructural
+## Comparación entre división lógica y estructural
 
 | **División Lógica**                     | **División Estructural**                |
 |-----------------------------------------|-----------------------------------------|
@@ -116,6 +116,6 @@ En algunos casos, la estructura de un libro puede variar significativamente debi
 
 ---
 
-## 5. Conclusión
+## Conclusión
 
 La división lógica y la división estructural son dos aspectos complementarios que contribuyen a la organización y comprensión de un libro. Mientras que la primera refleja la intención del autor y la estructura narrativa o temática, la segunda facilita la navegación y el acceso al contenido. En casos excepcionales, como obras completas o ediciones críticas, estas divisiones pueden adaptarse para incluir material adicional y análisis complementarios. Ambas son esenciales para garantizar una experiencia de lectura coherente y satisfactoria.

@@ -10,13 +10,13 @@ parent: Apuntes
 
 A pesar del vertiginoso avance de tecnologías como HTML, EPUB y formatos basados en XML como JATS, el Portable Document Format (PDF) ha mantenido una posición dominante y, previsiblemente, seguirá siendo el estándar *de facto* para la publicación y el consumo de producción académica. Esta monografía explora los fundamentos técnicos, históricos y culturales que subyacen a esta persistencia, examinando sus características intrínsecas que lo hacen excepcionalmente adecuado para los rigurosos requisitos de la ciencia y la academia. Se argumenta que la fidelidad visual, la inmutabilidad garantizada, la independencia de plataforma y su arraigo en los flujos de trabajo editoriales y de archivo justifican su longevidad, incluso frente a alternativas que ofrecen mayor flexibilidad. Finalmente, se analiza cómo la evolución de XML-JATS, si bien crucial para la estructuración y el intercambio de metadatos, no anula la necesidad del PDF como representación final y autoritativa del contenido publicado.
 
-## 1. Introducción: un paradigma resistente al cambio
+## Introducción: un paradigma resistente al cambio
 
 Desde su introducción por Adobe en 1993, el PDF ha transformado radicalmente la forma en que los documentos se crean, comparten y visualizan. Lo que comenzó como una solución para la portabilidad de documentos entre diferentes sistemas operativos y aplicaciones, se ha consolidado en el ámbito académico como el formato preeminente para artículos de investigación, tesis, libros y otros materiales científicos. Esta hegemonía es notable, considerando que formatos más dinámicos y adaptativos como HTML (desde la World Wide Web) y EPUB (popularizado en la lectura de libros electrónicos) han ganado tracción en otros dominios.
 
 La producción académica se distingue por su énfasis en la precisión, la reproducibilidad, la citable e inmutabilidad. Los documentos científicos no son meros textos; son artefactos complejos que integran texto, fórmulas matemáticas, gráficos de alta resolución, imágenes y tablas, presentados con un diseño específico que es inherente a su interpretación y autoridad. Es en este contexto donde el PDF ha demostrado ser excepcionalmente resiliente, proveyendo una solución robusta que alinea perfectamente con las necesidades intrínsecas de la comunicación científica.
 
-## 2. Fundamentos técnicos de la fortaleza del PDF
+## Fundamentos técnicos de la fortaleza del PDF
 
 La persistencia del PDF no es accidental; se basa en un conjunto de características técnicas que lo hacen idóneo para el ecosistema académico.
 
@@ -57,7 +57,7 @@ En la tradición académica, un índice no es meramente una lista; es una herram
 
 La esencia de estos índices radica en su **granularidad y su vinculación directa a una ubicación estática** (número de página o sección) dentro del flujo inmutable del documento. Los PDF modernos pueden hipervincular estas entradas de índice directamente a la ubicación en el documento, replicando y mejorando la experiencia del "ir a la página X" de un libro impreso. Esta funcionalidad permite una lectura no lineal y una consulta eficiente que es indispensable para la revisión, el estudio y la verificación de referencias en el ámbito académico.
 
-## 3. Desafíos y limitaciones de formatos alternativos
+## Desafíos y limitaciones de formatos alternativos
 
 ### 3.1. HTML: flexibilidad vs fidelidad
 
@@ -76,7 +76,7 @@ EPUB (Electronic Publication) es un formato estándar para libros electrónicos,
 *   **Ventajas de EPUB:** Ofrece una excelente experiencia de lectura en *e-readers*, permitiendo al usuario ajustar el tamaño de la fuente, el estilo y el espaciado. Es ideal para la lectura lineal de libros.
 *   **Limitaciones en el ámbito académico:** Al igual que HTML, su naturaleza reflowable compromete la fidelidad visual y la paginación fija, lo que lo hace inadecuado para la "versión de registro" de un artículo científico. Si bien EPUB 3 ha mejorado el soporte para elementos fijos y MathML, sigue estando más orientado a la narrativa que a la documentación de investigación que exige una precisión milimétrica en el diseño. **La implementación de índices complejos con referencias estáticas y precisas, análogas a las del PDF, es intrínsecamente desafiante en un formato cuyo propósito es la adaptabilidad dinámica del contenido.** Las anotaciones y el manejo de gráficos complejos suelen ser menos robustos que en PDF.
 
-## 4. La evolución de XML-JATS y su relación con el PDF
+## La evolución de XML-JATS y su relación con el PDF
 
 El Joint Article Tag Suite (JATS) es un estándar XML para la publicación de artículos de revistas científicas. Su propósito principal es definir un modelo de contenido para el marcado de textos, metadatos, tablas y figuras de artículos de revistas académicas. JATS ha sido adoptado por un gran número de editoriales y repositorios, facilitando la interoperabilidad, el archivo a largo plazo y la creación de diferentes formatos de salida a partir de una única fuente.
 
@@ -94,7 +94,7 @@ Sin embargo, JATS no anula la necesidad del PDF; más bien, se complementan:
 *   **Separación de contenido y presentación:** JATS encapsula el "qué" del artículo (su contenido y estructura lógica), mientras que el PDF encapsula el "cómo" (su presentación exacta y diseño tipográfico). Para la academia, ambos son esenciales: el "qué" para la interoperabilidad y el "cómo" para la autoridad y la precisión en la comunicación.
 *   **Fidelidad visual irreemplazable:** Incluso con el marcado semántico de JATS, la conversión a un formato fluido como HTML no puede garantizar la preservación de la apariencia exacta que es crucial para la verificación y citación en la academia. El PDF sigue siendo la única garantía de esta fidelidad visual.
 
-## 5. Consideraciones culturales y cognitivas
+## Consideraciones culturales y cognitivas
 
 Más allá de los aspectos técnicos, hay factores culturales y cognitivos que contribuyen a la preferencia por el PDF:
 
@@ -103,7 +103,7 @@ Más allá de los aspectos técnicos, hay factores culturales y cognitivos que c
 *   **Legitimidad percibida:** Existe una percepción generalizada de que un documento en PDF (especialmente uno con la maquetación de una revista prestigiosa) posee mayor legitimidad y autoridad que una página HTML, que puede parecer más efímera o menos "oficial".
 *   **Facilidad de distribución y archivo:** El PDF es un formato "cerrado" en el sentido de que encapsula todo el contenido. Esto facilita su distribución como un único archivo autocontenido y su archivo a largo plazo, ya que no depende de recursos externos (hojas de estilo, imágenes) que puedan desaparecer o cambiar.
 
-## 6. El Futuro: convivencia y adaptación, no sustitución
+## El Futuro: convivencia y adaptación, no sustitución
 
 Es probable que la comunicación académica continúe evolucionando hacia un modelo híbrido donde diferentes formatos sirvan a diferentes propósitos:
 
@@ -113,7 +113,7 @@ Es probable que la comunicación académica continúe evolucionando hacia un mod
 *   **EPUB para la lectura extensa:** Podría ganar terreno para la lectura de libros de texto o monografías académicas que no requieren la misma precisión de diseño que un artículo de investigación.
 *   **Formatos interactivos y datos abiertos:** A medida que la ciencia se vuelve más computacional, habrá una creciente demanda de formatos que permitan la interactividad con datos, códigos y simulaciones, pero estos complementarán el PDF, en lugar de reemplazarlo como el documento principal.
 
-## 7. Conclusión
+## Conclusión
 
 La persistencia del PDF en la producción académica no es un signo de resistencia al progreso, sino una validación de sus fortalezas intrínsecas que se alinean con las necesidades fundamentales de la comunicación científica. Su capacidad para garantizar la fidelidad visual, la inmutabilidad, la independencia de plataforma **y la replicación efectiva de complejas herramientas de referencia internas como los índices especializados** lo convierte en el formato ideal para la "versión de registro" de la investigación, donde la precisión, la autoridad y la citabilidad son primordiales.
 
