@@ -77,13 +77,15 @@ Históricamente, LaTeX se apoyó en distintos formatos de fuentes:
 | Soporte vertical CJK   | No         | Sí         | No       |
 
 ## Configuración recomendada en LaTeX
+
 ```latex
 \usepackage{unicode-math}
 \setmainfont{Libertinus Serif}
 \setmathfont{Libertinus Math}
 \setsansfont{Noto Sans CJK SC} % Para títulos o pasajes en chino.
+```
 
-Conclusión general
+## Conclusión general
 
 La elección tipográfica en el ámbito científico debe equilibrar tres dimensiones: calidad tipográfica, compatibilidad técnica y coherencia editorial.
 - Para textos matemáticos extensos, Libertinus es una opción óptima.
