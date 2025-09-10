@@ -1,3 +1,9 @@
+---
+layout: default
+title: Manifiesto técnico
+nav_order: 4
+---
+
 # Manifiesto técnico
 
 ## Por qué una aplicación de escritorio. Contexto del proyecto

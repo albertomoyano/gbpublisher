@@ -1,3 +1,9 @@
+---
+layout: default
+title: Descargas
+nav_order: 3
+---
+
 # Descargas
 
 ## Instalación manual en Linux Mint
