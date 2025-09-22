@@ -1,6 +1,6 @@
 ---
 layout: default
-title: Tipografía en LaTeX y libros científicos
+title: Tipografía en LaTeX
 parent: Apuntes
 ---
 

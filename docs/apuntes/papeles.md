@@ -1,6 +1,6 @@
 ---
 layout: default
-title: Diferencias entre los formatos de papel para impresión de libros. Sistema Inglés vs. Norma ISO vs. Formatos Especiales Editoriales
+title: Formatos de papel para impresión de libros
 parent: Apuntes
 ---
 

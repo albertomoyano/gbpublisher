@@ -6,11 +6,11 @@ parent: Apuntes
 
 # La supremacía del PDF
 
-## Un análisis fundamentado
+## Introducción
 
 A pesar del vertiginoso avance de tecnologías como HTML, EPUB y formatos basados en XML como JATS, el Portable Document Format (PDF) ha mantenido una posición dominante y, previsiblemente, seguirá siendo el estándar *de facto* para la publicación y el consumo de producción académica. Esta monografía explora los fundamentos técnicos, históricos y culturales que subyacen a esta persistencia, examinando sus características intrínsecas que lo hacen excepcionalmente adecuado para los rigurosos requisitos de la ciencia y la academia. Se argumenta que la fidelidad visual, la inmutabilidad garantizada, la independencia de plataforma y su arraigo en los flujos de trabajo editoriales y de archivo justifican su longevidad, incluso frente a alternativas que ofrecen mayor flexibilidad. Finalmente, se analiza cómo la evolución de XML-JATS, si bien crucial para la estructuración y el intercambio de metadatos, no anula la necesidad del PDF como representación final y autoritativa del contenido publicado.
 
-## Introducción: un paradigma resistente al cambio
+## Un paradigma resistente al cambio
 
 Desde su introducción por Adobe en 1993, el PDF ha transformado radicalmente la forma en que los documentos se crean, comparten y visualizan. Lo que comenzó como una solución para la portabilidad de documentos entre diferentes sistemas operativos y aplicaciones, se ha consolidado en el ámbito académico como el formato preeminente para artículos de investigación, tesis, libros y otros materiales científicos. Esta hegemonía es notable, considerando que formatos más dinámicos y adaptativos como HTML (desde la World Wide Web) y EPUB (popularizado en la lectura de libros electrónicos) han ganado tracción en otros dominios.
 

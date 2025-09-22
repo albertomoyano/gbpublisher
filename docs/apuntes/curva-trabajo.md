@@ -1,6 +1,6 @@
 ---
 layout: default
-title: Análisis comparativo entre la Curva de Inversión y el Plan de Trabajo en la gerencia editorial
+title: Curva de Inversión y el Plan de Trabajo
 parent: Apuntes
 ---
 

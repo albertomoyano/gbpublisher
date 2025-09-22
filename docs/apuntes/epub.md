@@ -1,6 +1,6 @@
 ---
 layout: default
-title: ePub. Historia, tecnología y evolución
+title: ePub. Tecnología y evolución
 parent: Apuntes
 ---
 
