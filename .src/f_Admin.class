@@ -1,33 +1,29 @@
 ' Gambas class file
 
 Private Contenido As Result
+Private ContenidoBusqueda As Result
+Private esBusqueda As Boolean = False
 
 Public Sub Form_Open()
-
   ' Limpiar campos al inicio
-  LimpiarCampos()
 
+  LimpiarCampos()
   With TableViewAdministracion
     .Header = True
     .Grid = True
-    .Columns.Count = 62
+    .Columns.Count = 2  ' Solo 2 columnas visibles
 
-    ' Configuración de columnas
-    For i As Integer = 0 To 61
-      Select Case i
-        Case 3
-          .Columns[i].Title = "Título"
-          .Columns[i].Width = 650
-        Case 48
-          .Columns[i].Title = "Autoría"
-          .Columns[i].Width = 300
-        Case Else
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-      End Select
-    Next
+    ' Configuración de las 2 columnas visibles
+    .Columns[0].Title = "Título"
+    .Columns[0].Width = 570
+
+    .Columns[1].Title = "Autoría"
+    .Columns[1].Width = 300
+
+    ' Configurar el modo de texto para que se corte
+    .Mode = Select.Single
+    .ScrollBar = Scroll.Vertical
   End With
-
   CargarGridAdmin()
 
 End
@@ -55,16 +51,42 @@ Public Sub CargarGridAdmin()
   Contenido = m_OnOff_y_Red.meConn.Exec("SELECT * FROM revistas ORDER BY txtRevistaTitulo")
   TableViewAdministracion.Rows.Count = Contenido.Count
   TableViewAdministracion.Refresh()
+  esBusqueda = False
+
+End
+
+' Función para cargar resultados de búsqueda
+Public Sub CargarResultadoBusqueda(resultado As Result)
+
+  ContenidoBusqueda = resultado
+  TableViewAdministracion.Clear
+  TableViewAdministracion.Rows.Count = ContenidoBusqueda.Count
+  TableViewAdministracion.Refresh()
+  esBusqueda = True
 
 End
 
 ' Evento que se ejecuta para cada celda del TableView
 Public Sub TableViewAdministracion_Data(Row As Integer, Column As Integer)
 
-  If (Contenido <> Null) Then
+  Dim contenidoActual As Result
+
+  ' Determinar qué contenido usar (búsqueda o datos completos)
+  If esBusqueda Then
+    contenidoActual = ContenidoBusqueda
+  Else
+    contenidoActual = Contenido
+  Endif
+
+  If (contenidoActual <> Null) Then
     If Row >= 0 Then
-      Contenido.moveTo(Row)
-      Try TableViewAdministracion.Data.Text = Str(Contenido[Column])
+      contenidoActual.moveTo(Row)
+      Select Case Column
+        Case 0  ' Primera columna visible = campo 3 de la BD
+          TableViewAdministracion.Data.Text = Str(contenidoActual[3])
+        Case 1  ' Segunda columna visible = campo 48 de la BD
+          TableViewAdministracion.Data.Text = Str(contenidoActual[48])
+      End Select
     Endif
   Endif
 
@@ -73,12 +95,26 @@ End
 ' Evento Click en el TableView - Cargar detalles del registro seleccionado
 Public Sub TableViewAdministracion_Click()
 
-  ' Rellenar los campos de texto con los valores de la fila seleccionada
-  txtIdAdmin.Text = TableViewAdministracion[TableViewAdministracion.row, 0].Text
-  txtRevistaTitulo.Text = TableViewAdministracion[TableViewAdministracion.row, 3].Text
-  txtLibroAutoria.Text = TableViewAdministracion[TableViewAdministracion.row, 48].Text
-  txtLibroSerie.Text = TableViewAdministracion[TableViewAdministracion.row, 49].Text
-  txtRepositorio.Text = TableViewAdministracion[TableViewAdministracion.row, 61].Text
+  Dim contenidoActual As Result
+
+  If TableViewAdministracion.Row >= 0 Then
+    ' Determinar qué contenido usar
+    If esBusqueda Then
+      contenidoActual = ContenidoBusqueda
+    Else
+      contenidoActual = Contenido
+    Endif
+
+    ' Mover el cursor del resultado a la fila seleccionada
+    contenidoActual.MoveTo(TableViewAdministracion.Row)
+
+    ' Rellenar los campos de texto con los valores originales de la BD
+    txtIdAdmin.Text = Str(contenidoActual[0])
+    txtRevistaTitulo.Text = Str(contenidoActual[3])
+    txtLibroAutoria.Text = Str(contenidoActual[48])
+    txtLibroSerie.Text = Str(contenidoActual[49])
+    txtRepositorio.Text = Str(contenidoActual[61])
+  Endif
 
 End
 
@@ -91,18 +127,75 @@ End
 
 Public Sub btnBuscarTitulo_Click()
 
-  m_Metadatos.BuscarMetadatoPorCampo(txtRevistaTitulo, TableViewAdministracion)
+  Dim resultado As Result
+  Dim sCampoBD As String = "txtRevistaTitulo"
+  Dim sValor As String = Trim(txtRevistaTitulo.Text)
+  Dim sConsulta As String
+
+  If sValor = "" Then
+    Message.Warning("Debe introducir contenido a buscar.")
+    txtRevistaTitulo.SetFocus
+    Return
+  Endif
+
+  sConsulta = "SELECT * FROM revistas WHERE " & sCampoBD & " LIKE '%" & sValor & "%' ORDER BY id DESC;"
+  resultado = m_OnOff_y_Red.meConn.Exec(sConsulta)
+
+  If resultado.Count = 0 Then
+    Message.Info("No se ha encontrado ningún resultado.")
+    Return
+  Endif
+
+  CargarResultadoBusqueda(resultado)
 
 End
 
 Public Sub btnBuscarAutoria_Click()
 
-  m_Metadatos.BuscarMetadatoPorCampo(txtLibroAutoria, TableViewAdministracion)
+  Dim resultado As Result
+  Dim sCampoBD As String = "txtLibroAutoria"
+  Dim sValor As String = Trim(txtLibroAutoria.Text)
+  Dim sConsulta As String
+
+  If sValor = "" Then
+    Message.Warning("Debe introducir contenido a buscar.")
+    txtLibroAutoria.SetFocus
+    Return
+  Endif
+
+  sConsulta = "SELECT * FROM revistas WHERE " & sCampoBD & " LIKE '%" & sValor & "%' ORDER BY id DESC;"
+  resultado = m_OnOff_y_Red.meConn.Exec(sConsulta)
+
+  If resultado.Count = 0 Then
+    Message.Info("No se ha encontrado ningún resultado.")
+    Return
+  Endif
+
+  CargarResultadoBusqueda(resultado)
 
 End
 
 Public Sub btnBuscarColeccion_Click()
 
-  m_Metadatos.BuscarMetadatoPorCampo(txtLibroSerie, TableViewAdministracion)
+  Dim resultado As Result
+  Dim sCampoBD As String = "txtLibroSerie"
+  Dim sValor As String = Trim(txtLibroSerie.Text)
+  Dim sConsulta As String
+
+  If sValor = "" Then
+    Message.Warning("Debe introducir contenido a buscar.")
+    txtLibroSerie.SetFocus
+    Return
+  Endif
+
+  sConsulta = "SELECT * FROM revistas WHERE " & sCampoBD & " LIKE '%" & sValor & "%' ORDER BY id DESC;"
+  resultado = m_OnOff_y_Red.meConn.Exec(sConsulta)
+
+  If resultado.Count = 0 Then
+    Message.Info("No se ha encontrado ningún resultado.")
+    Return
+  Endif
+
+  CargarResultadoBusqueda(resultado)
 
 End
