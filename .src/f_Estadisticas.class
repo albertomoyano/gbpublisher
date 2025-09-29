@@ -1,34 +1,17 @@
 ' Gambas class file
 
-Private Contenido As Result
 Private rutaScripts As String = User.Home &/ ".gbadoc/estadisticaspython"
+Private $correcta As Boolean
+Private $r As Result
 
 Public Sub Form_Open()
 
   Splitter1.Layout = [2, 5]
 
+  LlenaTablas()
+  Llenalista()' lista de consultas guardadas
+  $correcta = True
   CargarScripts()
-
-  With TableViewEstadisticas
-    .Header = True
-    .Grid = True
-    .Columns.Count = 62
-
-    ' Configuración de columnas
-    For i As Integer = 0 To 61
-      Select Case i
-        Case 0
-          .Columns[i].Title = "id"
-          .Columns[i].Width = 80
-        Case 1
-          .Columns[i].Title = "Proyecto"
-          .Columns[i].Width = 800
-        Case Else
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-      End Select
-    Next
-  End With
 
 End
 
@@ -123,5 +106,350 @@ End
 Public Sub ButtonCerrar_Click()
 
   Me.Close
+
+End
+
+Public Sub ButtonMostrarComentarios_Click()
+
+  f_TXTextendido.OriginalTextBox = TextBoxComentarios
+  f_TXTextendido.ShowModal
+
+End
+
+Private Sub Llenalista()
+
+  Dim r As Result
+  Dim n As Integer
+
+  r = m_OnOff_y_Red.meConn.Exec("Select * from consultas order by TextBoxNombre")
+  If Not r.Available Then Return
+  ListBoxConsultas.Tag = New Integer[]
+  ListBoxConsultas.Clear
+  ListBoxConsultas.Tag.Clear
+  For n = 0 To r.count - 1
+    ListBoxConsultas.Add(r!TextBoxNombre)
+    ListBoxConsultas.Tag.Add(r!id)
+    r.MoveNext
+  Next
+
+Catch
+
+  Message(Error.Text & "-" & Error.Where)
+
+End
+
+Public Sub TextEditorConsultasSQL_GotFocus()
+
+  TextEditorConsultasSQL.ShowCursor = True
+
+End
+
+Public Sub ListBoxTablas_Activate()
+
+  Dim nPos As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim i As Integer
+  Dim texto As String
+
+  ' Obtener la línea y la columna del cursor
+  linea = TextEditorConsultasSQL.Line
+  columna = TextEditorConsultasSQL.Column
+  ' Recorrer cada línea hasta la línea del cursor
+  For i = 0 To linea - 1
+    texto &= TextEditorConsultasSQL[i] & "\n"
+  Next
+  ' Añadir el texto de la línea actual hasta la columna del cursor
+  texto &= Left(TextEditorConsultasSQL[linea].Text, columna)
+  nPos = InStr(texto, " from ", 0, gb.IgnoreCase)
+  If nPos > 0 Then
+    TextEditorConsultasSQL.Insert("`" & ListBoxTablas.Text & "`")
+  Else
+    TextEditorConsultasSQL.Insert("`" & ListBoxTablas.Text & "` as '" & ListBoxTablas.text & "'")
+  Endif
+  TextEditorConsultasSQL.SetFocus()
+
+End
+
+Private Sub LlenaTablas()
+
+  Dim r As Result
+
+  ComboBoxTablas.Clear()
+  r = m_OnOff_y_Red.meConn.Exec("select tbl_name as 'name' from sqlite_master where type='table' or type='view' order by tbl_name")
+
+  If Not r.Available Then Return
+
+  While r.Available
+    If Left(r!name, 6) <> "sqlite" And Left(r!name, 9) <> "consultas" And Left(r!name, 5) <> "timer" Then
+      ComboBoxTablas.Add(r!name)
+    Endif
+    r.movenext
+  Wend
+
+  If ComboBoxTablas.Count > 0 Then
+    ComboBoxTablas.Index = 0
+    ' Llenar el ListBox con las columnas de la primera tabla
+    LlenaColumnas()
+  Endif
+
+End
+
+' Nueva función para llenar las columnas
+Private Sub LlenaColumnas()
+
+  Dim r As Result
+
+  ListBoxTablas.Clear
+
+  If Not ComboBoxTablas.Text Or ComboBoxTablas.Index = -1 Then Return
+
+  Try r = m_OnOff_y_Red.meConn.Exec("PRAGMA table_info(\"" & ComboBoxTablas.Text & "\")")
+
+  If Error Then
+    Message.Error("Error al obtener columnas: " & Error.Text)
+    Return
+  Endif
+
+  If Not r.Available Then Return
+
+  While r.Available
+    ListBoxTablas.Add(r!name)
+    r.MoveNext
+  Wend
+
+End
+
+' Usar Click en lugar de Change
+Public Sub ComboBoxTablas_Click()
+
+  LlenaColumnas()
+
+End
+
+' Mantener Change por si se escribe manualmente
+Public Sub ComboBoxTablas_Change()
+
+  ' Solo si hay texto válido
+  If ComboBoxTablas.Text <> "" Then
+    LlenaColumnas()
+  Endif
+
+End
+
+Public Sub ComboBoxTablas_Activate()
+
+  If TextEditorConsultasSQL.Text = "" Then
+    TextEditorConsultasSQL.Text = "Select * from `" & ComboBoxTablas.Text & "`"
+  Else
+    TextEditorConsultasSQL.Insert("`" & ComboBoxTablas.Text & "`")
+  Endif
+
+End
+
+Public Sub ComboBoxTablas_DblClick()
+
+  ComboBoxTablas_Activate()
+
+End
+
+Public Sub ButtonEjecutarSQL_Click()
+
+  If Not TextEditorConsultasSQL.Text Then Return
+
+  Inc Application.Busy
+  Try $r = m_OnOff_y_Red.meConn.Exec(TextEditorConsultasSQL.Text)
+  Dec Application.Busy
+
+  If Error Then
+    TextLabelResultados.Text = "Error: " & Error.Text
+    Wait 0.1
+    $correcta = False
+    Return
+  Endif
+
+  $correcta = True
+
+  If $r.Available Then
+    TextLabelResultados.Text = ("Total de registros encontrados: ") & $r.Count
+    LlenaGrid()
+  Else
+    TextLabelResultados.Text = ("La consulta parece correcta pero no devolvió ningún resultado.")
+    VaciaGrid()
+  Endif
+
+Catch
+
+  Message(Error.Text & "-" & Error.Where)
+
+End
+
+Private Sub LlenaGrid()
+
+  Dim n As Integer
+
+  VaciaGrid()
+  TableViewEstadisticas.Columns.Count = $r.Fields.Count
+
+  For n = 0 To $r.Fields.Count - 1
+    TableViewEstadisticas.Columns[n].Title = $r.Fields[n].Name
+    TableViewEstadisticas.Columns[n].Expand = True
+  Next
+
+  TableViewEstadisticas.Rows.Count = $r.Count
+
+  ' IMPORTANTE: Refrescar el TableView para que llame al evento Data
+  TableViewEstadisticas.Refresh()
+
+End
+
+' El nombre de la función debe ser TableViewEstadisticas_Data
+Public Sub TableViewEstadisticas_Data(Row As Integer, Column As Integer)
+
+  If $r Is Null Then Return
+  If Row >= $r.Count Then Return
+
+  $r.MoveTo(Row)
+
+  Try TableViewEstadisticas[Row, Column].Text = $r[$r.Fields[Column].Name]
+
+  If Error Then
+    TableViewEstadisticas[Row, Column].Text = ""
+  Endif
+
+End
+
+Private Sub VaciaGrid()
+
+  TableViewEstadisticas.Rows.Count = 0
+  TableViewEstadisticas.Columns.Count = 0
+  TableViewEstadisticas.Clear
+
+End
+
+Public Sub ButtonGrabarConsulta_Click()
+
+  Dim r As Result
+  Dim n As Integer
+
+  If TextBoxNombre.Text = "" Then
+    Message("El nombre es obligatorio")
+    Return
+  Endif
+  If TextEditorConsultasSQL.Text = "" Then
+    Message.Error("No hay consulta")
+    Return
+  Endif
+  If Not $correcta Then
+    n = Message.Warning(("La consulta parece errónea ¿Está seguro que la quiere guardar así?"), ("Sí"), ("No"))
+    If n <> 1 Then Return
+  Endif
+  If Not $correcta Then
+    n = Message.Warning(("Si ya existe una consulta con este nombre será sobreescrita. ¿Guardar esta Consulta?"), ("Sí"), ("No"))
+    If n <> 1 Then Return
+  Endif
+  r = m_OnOff_y_Red.meConn.Exec("select TextBoxNombre as 'TextBoxNombre' from consultas where TextBoxNombre=&1", TextBoxNombre.Text)
+  If r.available Then
+    r = m_OnOff_y_Red.meConn.Edit("consultas", "id=&1", TextBoxIDsql.Value)
+  Else
+    r = m_OnOff_y_Red.meConn.Create("consultas", True)
+  Endif
+  r!TextBoxNombre = TextBoxNombre.Text
+  r!TextBoxDescripcion = TextBoxDescripcion.Text
+  r!TextEditorConsultasSQL = TextEditorConsultasSQL.Text
+  r!TextBoxComentarios = TextBoxComentarios.Text
+  r.Update()
+  Llenalista()
+
+End
+
+Public Sub ListBoxConsultas_Activate()
+
+  Dim r As Result
+
+  r = m_OnOff_y_Red.meConn.Exec("Select * from consultas where id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+  If Not r.Available Then Return
+  TextBoxIDsql.Value = r!id
+  TextBoxNombre.Text = r!TextBoxNombre
+  TextBoxDescripcion.Text = r!TextBoxDescripcion
+  TextEditorConsultasSQL.Text = r!TextEditorConsultasSQL
+  TextBoxComentarios.Text = r!TextBoxComentarios
+  TextBoxNombre.SetFocus
+
+End
+
+Public Sub ButtonNuevaConsulta_Click()
+
+  Limpiacampos()
+  TextBoxNombre.SetFocus()
+
+End
+
+Private Sub Limpiacampos()
+
+  TextBoxIDsql.Value = Null
+  TextBoxNombre.text = ""
+  TextEditorConsultasSQL.Text = ""
+  TextBoxDescripcion.Text = ""
+  TextBoxComentarios.Text = ""
+  TextLabelResultados.text = ""
+  TableViewEstadisticas.Rows.Count = 0
+  TableViewEstadisticas.Columns.Count = 0
+  TableViewEstadisticas.Clear()
+
+End
+
+Public Sub ButtonBorrarConsulta_Click()
+
+  Dim n As Integer
+
+  n = Message.Question(("¿Desea eliminar esta consulta? ") & ListBoxConsultas.Text, ("Sí"), ("No"))
+  If n <> 1 Then Return
+  m_OnOff_y_Red.meConn.Delete("consultas", "id=&1", ListBoxConsultas.Tag[ListBoxConsultas.index])
+
+  ListBoxConsultas.Clear
+
+  Llenalista()
+  Limpiacampos()
+
+End
+
+Public Sub ButtonLimpiarCampos_Click()
+
+  Limpiacampos()
+
+End
+
+Public Sub ButtonExportarCSV_Click()
+
+  Dim csv As String
+  Dim c, f As Integer
+
+  ' Validar que hay datos para exportar
+  If TableViewEstadisticas.Rows.Count = 0 Or TableViewEstadisticas.Columns.Count = 0 Then
+    Message.Warning("No hay datos para exportar")
+    Return
+  Endif
+
+  For c = 0 To TableViewEstadisticas.Columns.Max
+    csv &= "\"" & TableViewEstadisticas.Columns[c].Title & "\" ;"
+  Next
+  csv = Left(csv, -1) & gb.NewLine
+  For f = 0 To TableViewEstadisticas.Rows.Max
+    For c = 0 To TableViewEstadisticas.Columns.Max
+      csv &= TableViewEstadisticas[f, c].text & ";"
+    Next
+    csv = Left(csv, -1) & gb.NewLine
+  Next
+  csv = Left(csv, -1)
+  Dialog.Filter = ["*.csv", "CSV Files"]
+  Dialog.AutoExt = True
+  If Dialog.SaveFile() Then Return
+  File.Save(Dialog.Path, csv)
+  Message.Info("Fichero CSV guardado como " & Dialog.Path)
+
+Catch
+
+  Message.Info(Error.Text)
 
 End
