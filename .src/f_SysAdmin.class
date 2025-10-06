@@ -1,28 +1,211 @@
 ' Gambas class file
 
+Public hConn As Connection
+Private sRuta As String = User.Home &/ ".gbpublisher/.superuser.sqlite"
+
+Public Function CreateDataBase() As Boolean
+
+  Dim sDir As String
+  Dim sBase As String
+  Dim sTablas As String
+
+  sDir = User.Home &/ ".gbpublisher"
+  sBase = ".superuser.sqlite"
+  sRuta = sDir &/ sBase
+
+  ' Crear directorio si no existe
+  If Not Exist(sDir) Then Mkdir sDir
+
+  ' Si la base ya existe, salir devolviendo False
+  If Exist(sRuta) Then Return False
+
+  ' Crear conexión y base
+  hConn = New Connection
+  hConn.Type = "sqlite3"
+  hConn.Host = sDir
+  hConn.Open()
+
+  sTablas = "CREATE TABLE superuser (" &
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, " &
+    "usuario TEXT, " &
+    "clave TEXT, " &
+    "email TEXT);"
+
+  hConn.Databases.Add(sBase)
+  Wait 0.2
+  hConn.Close()
+
+  hConn.Name = sRuta
+  hConn.Open()
+  hConn.Exec(sTablas)
+  hConn.Close()
+
+  Message.Info("Base de datos creada con éxito.")
+  Return True
+
+Catch
+  Message.Error("Error creando la base de datos:\n" & Error.Text & "\n" & Error.Where)
+  Return False
+
+End
+
+Public Sub Form_Open()
+
+  ' Ponemos en True
+  txtClaveAdministrador.Password = True
+  CargarComboBoxIP()
+
+  ' Si no existe, la crea y devuelve True si fue creada
+  Dim creada As Boolean = CreateDataBase()
+
+  If creada Then
+    ' Primera ejecución: base recién creada
+    HBoxCrearAdmin.Visible = True
+    HBoxValidar.Visible = False
+    btnActualizarAdmin.Visible = False
+    Message.Info("Debe crear el administrador inicial.")
+  Else
+    ' Ya existía
+    HBoxCrearAdmin.Visible = False
+    HBoxValidar.Visible = True
+    btnActualizarAdmin.Visible = True
+  Endif
+
+  ' Ocultar elementos adicionales siempre
+  HBox1a.Visible = False
+  HBox2a.Visible = False
+  HBox3a.Visible = False
+  HBox4a.Visible = False
+  HBox5a.Visible = False
+  TableViewUsuarios.Visible = False
+
+End
+
 Public Sub btnCerrar_Click()
 
   Me.Close()
 
 End
 
-Public Sub Form_Open()
+Public Sub btnCrearAdmin_Click()
 
-  HBox1a.Visible = False
-  HBox2a.Visible = False
-  HBox3a.Visible = False
-  HBox4a.Visible = False
-  TableViewUsuarios.Visible = False
+  Dim sUsuario As String = Trim(txtAdministrador.Text)
+  Dim sClave As String = Trim(txtClaveAdministrador.Text)
+  Dim sEmail As String = Trim(txtEmailAdministrador.Text)
+  Dim dbLocal As Connection
+  Dim sClaveHash As String
+
+  ' Validaciones
+  If Not sUsuario Or Not sClave Then
+    Message.Warning("Usuario y contraseña son obligatorios.")
+    Return
+  Endif
+
+  If Len(sClave) < 4 Then
+    Message.Warning("La contraseña debe tener al menos 4 caracteres.")
+    Return
+  Endif
+
+  If sEmail And Not IsValidEmail(sEmail) Then
+    Message.Warning("El formato del email no es válido.")
+    Return
+  Endif
+
+  ' Conectar a la base
+  dbLocal = New Connection
+  dbLocal.Type = "sqlite3"
+  dbLocal.Name = sRuta
+
+  Try dbLocal.Open()
+  If Error Then
+    Message.Error("Error al abrir la base:\n" & Error.Text)
+    Return
+  Endif
+
+  ' Insertar el primer admin
+  sClaveHash = Hash.SHA256(sClave)
+
+  Try dbLocal.Exec("INSERT INTO superuser (usuario, clave, email) VALUES (?, ?, ?);",
+    [sUsuario, sClaveHash, sEmail])
+  If Error Then
+    Message.Error("Error al crear el administrador:\n" & Error.Text)
+    dbLocal.Close()
+    Return
+  Endif
+
+  dbLocal.Close()
+
+  Message.Info("Administrador creado correctamente.\n\nAhora puede validar su acceso.")
+
+  ' Cambiar visibilidad de botones
+  HBoxCrearAdmin.Visible = False
+  HBoxValidar.Visible = True
+  btnActualizarAdmin.Visible = True
+
+  ' Limpiar campos
+  txtClaveAdministrador.Text = ""
 
 End
 
-Public Sub btnReferescarAdmin_Click()
+Private Function IsValidEmail(sEmail As String) As Boolean
 
-  HBox1a.Visible = True
-  HBox2a.Visible = True
-  HBox3a.Visible = True
-  HBox4a.Visible = True
-  TableViewUsuarios.Visible = True
-  btnReferescarAdmin.Enabled = False
+  If Not sEmail Then Return False
+  If InStr(sEmail, "@") = 0 Then Return False
+  If InStr(sEmail, ".") = 0 Then Return False
+  Return True
+
+End
+
+Public Sub ToggleButtonMostrar_Click()
+
+  ' Invertimos la lógica: mostrar caracteres si el botón está activado
+  If ToggleButtonMostrar.Value Then
+    txtClaveAdministrador.Password = False  ' Mostrar texto
+  Else
+    txtClaveAdministrador.Password = True   ' Ocultar texto
+  Endif
+
+  ' Forzar redibujado y mantener el foco correctamente
+  txtClaveAdministrador.Refresh()
+  txtClaveAdministrador.SetFocus()
+
+End
+
+Public Sub btnNuevaIP_Click()
+
+  f_EditarIPs.ShowModal()
+
+  ' Refrescar el ComboBox inmediatamente después de cerrar el modal
+  CargarComboBoxIP()
+
+End
+
+Public Sub CargarComboBoxIP()
+
+  Dim rutaIPs As String = User.Home &/ ".gbpublisher/ips.txt"
+  Dim contenidoArchivo As String
+  Dim linea As String
+  Dim contenido As String[]
+
+  ComboBoxIP.Clear()
+
+  If Not Exist(rutaIPs) Then Return
+
+  Try contenidoArchivo = File.Load(rutaIPs)
+  If Error Then
+    Message.Error("No se pudo leer el archivo de IPs: " & Error.Text)
+    Return
+  End If
+
+  ' Normaliza saltos de línea (Windows/Linux)
+  contenidoArchivo = Replace(contenidoArchivo, "\r\n", "\n")
+  contenido = Split(contenidoArchivo, "\n")
+
+  For Each linea In contenido
+    linea = Trim(linea)
+    If linea <> "" Then
+      ComboBoxIP.Add(linea)
+    End If
+  Next
 
 End

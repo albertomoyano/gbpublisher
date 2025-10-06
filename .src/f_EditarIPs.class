@@ -1,38 +1,79 @@
 ' Gambas class file
 
-Private rutaIPs As String
+Private rutaIPs As String = User.Home & "/.gbpublisher/ips.txt"
 Private ipsModificadas As Boolean = False
+Private Const MODO_NINGUNO As Integer = 0
+Private Const MODO_NUEVO As Integer = 1
+Private Const MODO_EDITAR As Integer = 2
+Private modoActual As Integer = MODO_NINGUNO
 
 Public Sub Form_Open()
 
-  rutaIPs = User.Home & "/.gbadoc/ips.txt"
   CargarIPs()
   TextBox1.Text = ""
-  ButtonEditar.Enabled = False
-  ButtonEliminar.Enabled = False
+  modoActual = MODO_NINGUNO
+  ActualizarControles()
+
+End
+
+Private Sub ActualizarControles()
+  ' Bloqueamos o desbloqueamos TextBox según el modo
+
+  Select Case modoActual
+    Case MODO_NINGUNO
+      TextBox1.Enabled = False
+      ButtonAgregar.Visible = True
+      ButtonGuardar.Visible = False
+      ButtonEditar.Visible = False
+      ButtonEliminar.Visible = False
+
+    Case MODO_NUEVO
+      TextBox1.Enabled = True
+      ButtonAgregar.Visible = False
+      ButtonGuardar.Visible = True
+      ButtonEditar.Visible = False
+      ButtonEliminar.Visible = False
+
+    Case MODO_EDITAR
+      TextBox1.Enabled = True
+      ButtonAgregar.Visible = False
+      ButtonGuardar.Visible = False
+      ButtonEditar.Visible = True
+      ButtonEliminar.Visible = True
+  End Select
 
 End
 
 Private Sub CargarIPs()
 
+  Dim contenidoArchivo As String
+  Dim contenido As String[]
+  Dim linea As String
+
   ListBox1.Clear()
 
-  If Exist(rutaIPs) Then
-    Dim contenidoArchivo As String
-    Try contenidoArchivo = File.Load(rutaIPs)
+  If Not Exist(rutaIPs) Then
+    Return
+  Endif
 
-    If Not Error And contenidoArchivo And Len(contenidoArchivo) > 0 Then
-      Dim linea As String
-      Dim contenido As String[] = Split(contenidoArchivo, Chr(10), "", True)
+  Try contenidoArchivo = File.Load(rutaIPs)
+  If Error Then
+    Message.Error("No se pudo leer el archivo de IPs: " & Error.Text)
+    Return
+  Endif
 
-      For Each linea In contenido
-        linea = Trim(linea)
-        If linea <> "" Then
-          ListBox1.Add(linea)
-        End If
-      Next
+  ' Normalizar saltos de línea (Windows/Linux/Mac)
+  contenidoArchivo = Replace(contenidoArchivo, "\r\n", "\n")
+  contenidoArchivo = Replace(contenidoArchivo, "\r", "\n")
+
+  contenido = Split(contenidoArchivo, "\n")
+
+  For Each linea In contenido
+    linea = Trim(linea)
+    If linea <> "" Then
+      ListBox1.Add(linea)
     End If
-  End If
+  Next
 
 End
 
@@ -40,40 +81,23 @@ Public Sub ListBox1_Click()
 
   If ListBox1.Index >= 0 Then
     TextBox1.Text = ListBox1[ListBox1.Index].Text
-    ButtonEditar.Enabled = True
-    ButtonEliminar.Enabled = True
+    modoActual = MODO_EDITAR
   Else
-    ButtonEditar.Enabled = False
-    ButtonEliminar.Enabled = False
+    TextBox1.Text = ""
+    modoActual = MODO_NINGUNO
   End If
+
+  ' Actualizamos la UI según el modo
+  ActualizarControles()
 
 End
 
 Public Sub ButtonAgregar_Click()
 
-  Dim nuevaIP As String = Trim(TextBox1.Text)
-
-  If nuevaIP = "" Then
-    Message.Warning("Ingrese una dirección IP válida")
-    TextBox1.SetFocus()
-    Return
-  End If
-
-  ' Verificar si ya existe
-  Dim i As Integer
-  For i = 0 To ListBox1.Count - 1
-    If ListBox1[i].Text = nuevaIP Then
-      Message.Warning("La IP ya existe en la lista")
-      TextBox1.SetFocus()
-      Return
-    End If
-  Next
-
-  ' Agregar la nueva IP
-  ListBox1.Add(nuevaIP)
+  modoActual = MODO_NUEVO
+  ActualizarControles()
   TextBox1.Text = ""
-  ipsModificadas = True
-  Message.Info("IP agregada. Recuerde guardar los cambios.")
+  TextBox1.SetFocus()
 
 End
 
@@ -106,16 +130,20 @@ Public Sub ButtonEditar_Click()
   ListBox1[ListBox1.Index].Text = nuevaIP
   TextBox1.Text = ""
   ListBox1.Index = -1
-  ButtonEditar.Enabled = False
-  ButtonEliminar.Enabled = False
+  ButtonEditar.Visible = False
+  ButtonEliminar.Visible = False
   ipsModificadas = True
-  Message.Info("IP modificada. Recuerde guardar los cambios.")
+
+  ' Guardamos inmediatamente
+  ButtonGuardar_Click()
 
 End
 
 Public Sub ButtonEliminar_Click()
 
-  If ListBox1.Index < 0 Then
+  Dim idx As Integer = ListBox1.Index
+
+  If idx < 0 Then
     Message.Warning("Seleccione una IP para eliminar")
     Return
   End If
@@ -123,66 +151,52 @@ Public Sub ButtonEliminar_Click()
   Dim respuesta As Integer = Message.Question("¿Está seguro de eliminar la IP seleccionada?", "Sí", "No")
 
   If respuesta = 1 Then ' Sí
-    ListBox1.Remove(ListBox1.Index)
+    ' Eliminamos el item
+    ListBox1.Remove(idx)
     TextBox1.Text = ""
-    ButtonEditar.Enabled = False
-    ButtonEliminar.Enabled = False
     ipsModificadas = True
-    Message.Info("IP eliminada. Recuerde guardar los cambios.")
+    modoActual = MODO_NINGUNO
+    ActualizarControles()
+
+    ' Guardamos inmediatamente
+    ButtonGuardar_Click()
   End If
 
 End
 
 Public Sub ButtonGuardar_Click()
 
-  ' Construir el contenido del archivo
-  Dim contenido As String = ""
   Dim i As Integer
+  Dim contenido As String = ""
 
+  ' Si estamos en modo NUEVO y hay texto en TextBox1, lo agregamos al ListBox
+  If modoActual = MODO_NUEVO And Trim(TextBox1.Text) <> "" Then
+    ListBox1.Add(Trim(TextBox1.Text))
+    TextBox1.Text = ""
+  End If
+
+  ' Construimos el contenido línea por línea
   For i = 0 To ListBox1.Count - 1
     If i > 0 Then contenido &= Chr(10)
     contenido &= ListBox1[i].Text
   Next
 
-  ' Guardar el archivo
+  ' Guardamos el archivo
   Try File.Save(rutaIPs, contenido)
-
   If Error Then
     Message.Error("Error al guardar el archivo: " & Error.Text)
   Else
     Message.Info("Archivo guardado correctamente")
     ipsModificadas = False
+    modoActual = MODO_NINGUNO
+    ActualizarControles()
   End If
 
 End
 
 Public Sub ButtonCancelar_Click()
 
-  If ipsModificadas Then
-    Dim respuesta As Integer = Message.Question("Hay cambios sin guardar. ¿Desea salir sin guardar?", "Sí", "No")
-    If respuesta = 2 Then ' No
-      Return
-    End If
-  End If
-
   Me.Close()
-
-End
-
-Public Sub Form_Close()
-
-  If ipsModificadas Then
-    Dim respuesta As Integer = Message.Question("Hay cambios sin guardar. ¿Desea guardar antes de salir?", "Guardar", "Salir sin guardar", "Cancelar")
-
-    Select Case respuesta
-      Case 1 ' Guardar
-        ButtonGuardar_Click()
-      Case 2 ' Salir sin guardar
-        ' No hacer nada, se cierra
-      Case 3 ' Cancelar
-        Stop Event
-    End Select
-  End If
 
 End
 
@@ -191,8 +205,5 @@ Public Sub ButtonEditarIPs_Click()
   Dim formEditar As F_EditarIPs = New F_EditarIPs
 
   formEditar.ShowModal()
-
-  ' ' Recargar el ComboBox después de editar
-  Form_Open() ' O llamar solo la parte que carga el ComboBox
 
 End
