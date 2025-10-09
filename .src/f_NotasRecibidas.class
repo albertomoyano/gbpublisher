@@ -1,0 +1,173 @@
+' Gambas class file
+
+Private notaActualId As Integer = 0
+Private usuarioDe As String
+Private usuarioPara As String
+
+Public Sub CargarNota(hRs As Result)
+
+  ' Limpiar controles al cargar
+  tlfecha.Text = ""
+  texto.Text = ""
+  btnEditar.Visible = False
+  texto.ReadOnly = True
+  notaActualId = 0
+  texto.Background = Color.White ' o el color que uses por defecto
+
+  ' Cargar la primera nota disponible (supone solo una fila)
+  If hRs.Available Then
+    notaActualId = hRs["id"]
+
+    usuarioDe = hRs["de"]
+    usuarioPara = hRs["para"]
+    Dim sTexto As String = hRs["texto"]
+    Dim dtFecha As Date = hRs["fecha"]
+    Dim iColor As Integer = hRs["color"]  ' <-- Tomar el color guardado
+
+    tlfecha.Text = "Nota de <strong>" & usuarioDe & "</strong> (enviada el " & Format(dtFecha, "dd/mm/yyyy hh:nn") & ")"
+    texto.Text = sTexto
+    texto.Background = iColor  ' <-- Aplicar el color al fondo del texto
+
+    If usuarioDe = usuarioPara Then
+      texto.ReadOnly = False
+      btnEditar.Visible = True
+      btnResponder.Visible = False
+      FMain.TimerNotitas.Enabled = False
+      FMain.TimerNotitas.Stop
+    Else
+      texto.ReadOnly = True
+      btnEditar.Visible = False
+      btnResponder.Visible = True
+    Endif
+
+  Else
+    Message.Info("No hay notas para mostrar.")
+    Me.Hide()
+  Endif
+
+End
+
+Public Sub btnEditar_Click()
+
+  If notaActualId = 0 Then
+    Message.Error("No se pudo identificar la nota.")
+    Return
+  Endif
+
+  Dim sTextoNuevo As String = Trim(texto.Text)
+
+  If sTextoNuevo = "" Then
+    Message.Warning("El contenido de la nota no puede quedar vacío.")
+    Return
+  Endif
+
+  Dim sSQL As String
+  sSQL = "UPDATE postits SET texto = '" & Replace(sTextoNuevo, "'", "''") & "' WHERE id = " & notaActualId
+
+  Try m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al guardar los cambios: " & Error.Text)
+  Else
+    Message.Info("Cambios guardados correctamente.")
+    If usuarioDe = usuarioPara Then
+      texto.ReadOnly = False
+      btnEditar.Visible = True
+      FMain.TimerNotitas.Stop' Detener el timer mientras edita
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnLeido_Click()
+
+  If notaActualId = 0 Then
+    Message.Error("No se pudo identificar la nota.")
+    Return
+  Endif
+
+  Dim sSQL As String
+  sSQL = "UPDATE postits SET leido = 1 WHERE id = " & notaActualId
+
+  Try m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al marcar la nota como leída: " & Error.Text)
+  Else
+    Message.Info("Nota marcada como leída.")
+    Me.Hide()
+  Endif
+
+End
+
+Public Sub btnDelete_Click()
+
+  If notaActualId = 0 Then
+    Message.Error("No se pudo identificar la nota para borrar.")
+    Return
+  Endif
+
+  If Not Message.Question("¿Estás seguro de que querés borrar esta nota? Esta acción no se puede deshacer.", "Sí", "No") Then
+    Return
+  Endif
+
+  Dim sSQL As String
+  sSQL = "DELETE FROM postits WHERE id = " & notaActualId
+
+  Try m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al borrar la nota: " & Error.Text)
+  Else
+    Message.Info("Nota borrada correctamente.")
+    Me.Close
+  Endif
+
+End
+
+Public Sub btnResponder_Click()
+
+  ' Seguridad por si se llama incorrectamente
+  If usuarioDe = usuarioPara Then
+    Message.Warning("No se puede responder a una auto-nota.")
+    Return
+  Endif
+
+  ' Abrir el formulario de nueva nota
+  f_NotaNueva.cmbUsuarios.Text = usuarioDe
+
+  ' Elegir un color aleatorio (copiado de tu lógica original)
+  Dim colores As String[] = ["Amarillo", "Verde", "Azul", "Rojo", "Violeta", "Cian", "Magenta", "Naranja", "Rosa", "Blanco"]
+  Dim indice As Integer = Rnd(0, colores.Max)
+  f_NotaNueva.cmbColores.Text = colores[indice]
+
+  ' Mostrar formulario
+  f_NotaNueva.EsRespuesta = True
+  f_NotaNueva.cmbUsuarios.Text = usuarioDe
+  f_NotaNueva.cmbUsuarios.Enabled = False
+  f_NotaNueva.TextAreaNota.Text = ""
+  f_NotaNueva.dateSince.Value = Now()
+  f_NotaNueva.ShowModal()
+
+End
+
+Public Sub btnOcultar_Click()
+
+  If notaActualId = 0 Then
+    Message.Error("No se pudo identificar la nota para ocultar.")
+    Return
+  Endif
+
+  Dim sSQL As String = "UPDATE postits SET oculto = 1 WHERE id = " & notaActualId
+
+  Try m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al ocultar la nota: " & Error.Text)
+  Else
+    Message.Info("Nota ocultada correctamente.")
+    Me.Close
+  Endif
+
+End

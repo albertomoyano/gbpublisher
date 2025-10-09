@@ -1,0 +1,181 @@
+' Gambas class file
+
+Private ColoresDisponibles As New Collection
+Public EsRespuesta As Boolean
+
+Public Sub Form_Open()
+
+  ' Restaurar por defecto solo si NO es respuesta
+  If Not EsRespuesta Then
+    cmbUsuarios.Enabled = True
+    cmbUsuarios.Text = ""
+  Endif
+
+  EsRespuesta = False  ' Resetear para próximas aperturas
+
+  Me.Title = "Nota de " & m_OnOff_y_Red.UsuarioActual
+  dateSince.Value = Now()
+  TextAreaNota.Text = ""
+  TextAreaNota.SetFocus()
+
+  ' Limpiar ComboBox y colección
+  cmbColores.Clear()
+  ColoresDisponibles.Clear()
+
+  ' Agregar colores y nombres
+  AgregarColor("Amarillo", Color.Lighter(Color.Lighter(Color.Yellow)))
+  AgregarColor("Verde", Color.Lighter(Color.Lighter(Color.Green)))
+  AgregarColor("Azul", Color.Lighter(Color.Lighter(Color.Blue)))
+  AgregarColor("Rojo", Color.Lighter(Color.Lighter(Color.Red)))
+  AgregarColor("Violeta", Color.Lighter(Color.Lighter(Color.Violet)))
+  AgregarColor("Cian", Color.Lighter(Color.Lighter(Color.DarkCyan)))
+  AgregarColor("Magenta", Color.Lighter(Color.Lighter(Color.Magenta)))
+  AgregarColor("Naranja", Color.Lighter(Color.Lighter(Color.Orange)))
+  AgregarColor("Rosa", Color.Lighter(Color.Lighter(Color.Pink)))
+  AgregarColor("Blanco", Color.White)
+
+  ' Selección aleatoria
+  Dim aleatorio As Integer = Rnd(0, cmbColores.Count - 1)
+  cmbColores.Index = aleatorio  ' Establece la selección
+  CambiarColorNota(cmbColores.Text)
+
+  CargarUsuarios()
+
+End
+
+Public Sub CargarUsuarios()
+
+  Dim hRs As Result
+  Dim sSQL As String
+  Dim sNombre As String
+
+  ' Verificar conexión
+  If Not m_OnOff_y_Red.meConn Then Return
+  If Not m_OnOff_y_Red.meConn.Opened Then Return
+
+  cmbUsuarios.Clear
+
+  sSQL = "SELECT usuario FROM usuarios ORDER BY usuario"
+  hRs = m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  While hRs.Available
+    sNombre = hRs["usuario"]
+    cmbUsuarios.Add(sNombre)
+    hRs.MoveNext
+  Wend
+
+End
+
+' Método auxiliar para agregar al ComboBox y a la colección
+Private Sub AgregarColor(nombre As String, valor As Integer)
+
+  cmbColores.Add(nombre)
+  ColoresDisponibles.Add(valor, nombre)
+
+End
+
+Private Sub CambiarColorNota(nombreColor As String)
+
+  If ColoresDisponibles.Exist(nombreColor) Then
+    TextAreaNota.Background = ColoresDisponibles[nombreColor]
+    TextAreaNota.Foreground = Color.Black
+  Endif
+
+End
+
+Public Sub cmbColores_Click()
+
+  If ColoresDisponibles.Exist(cmbColores.Text) Then
+    TextAreaNota.Background = ColoresDisponibles[cmbColores.Text]
+    TextAreaNota.Foreground = Color.Black
+  Endif
+
+End
+
+Public Sub btnSend_Click()
+
+  Dim sTexto As String = Trim(TextAreaNota.Text)
+  Dim sPara As String = cmbUsuarios.Text
+  Dim sDe As String = m_OnOff_y_Red.UsuarioActual
+  Dim iColor As Integer = TextAreaNota.Background
+  Dim dDesde As Date = dateSince.Value
+
+  If sTexto = "" Then
+    Message.Warning("El contenido de la nota está vacío.")
+    Return
+  Endif
+
+  If sPara = "" Then
+    Message.Warning("Debe seleccionar un destinatario.")
+    Return
+  Endif
+
+  Dim sDesde As String = Format(dDesde, "yyyy-mm-dd hh:nn:ss")
+
+  Dim sSQL As String
+  sSQL = "INSERT INTO postits (de, para, fecha, texto, desde, oculto, x, y, color, leido) VALUES (" &
+    "'" & sDe & "', " &
+    "'" & sPara & "', " &
+    "NOW(), " &
+    "'" & Replace(sTexto, "'", "''") & "', " &
+    "'" & sDesde & "', " &
+    "0, 0, 0, " & iColor & ", 0)"
+
+  Try m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al guardar la nota: " & Error.Text)
+  Else
+    Message.Info("Nota enviada con éxito.")
+    Me.Hide()
+  Endif
+
+End
+
+Public Sub btnCancelar_Click()
+
+  Me.Close()
+
+End
+
+Public Sub btnMostrarOcultos_Click()
+
+  Dim hRs As Result
+  Dim sSQL As String
+  Dim offsetX As Integer = 30
+  Dim offsetY As Integer = 30
+  Dim contador As Integer = 0
+
+  sSQL = "SELECT * FROM postits WHERE para = '" & m_OnOff_y_Red.UsuarioActual & "' AND oculto = 1 AND leido = 0 ORDER BY fecha DESC"
+
+  Try hRs = m_OnOff_y_Red.meConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al consultar notas ocultas: " & Error.Text)
+    Return
+  Endif
+
+  If Not hRs.Available Then
+    Message.Info("No hay notas ocultas para mostrar.")
+    Return
+  Endif
+
+  While hRs.Available
+    ' Crear una instancia nueva del formulario
+    Dim notaForm As New F_NotasRecibidas
+
+    ' Cargar los datos de la nota en esa instancia
+    notaForm.CargarNota(hRs)
+
+    ' Posicionar el formulario con un corrimiento para no superponer
+    notaForm.Move(100 + contador * offsetX, 100 + contador * offsetY)
+
+    ' Mostrarlo
+    notaForm.Show
+
+    ' Avanzar al siguiente
+    contador += 1
+    hRs.MoveNext
+  Wend
+
+End
