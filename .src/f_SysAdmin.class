@@ -1,16 +1,24 @@
 ' Gambas class file
 
-Public hConn As Connection  ' Conexión SQLite local (ya la tienes)
-Public hConnServidor As Connection  ' ✅ Nueva: Conexión al servidor MySQL
+' ============================================
+' FORMULARIO DE GESTIÓN DE USUARIOS
+' SQLite Local para SuperAdmin + MySQL para Usuarios
+' ============================================
+
+Public hConn As Connection  ' Conexión SQLite local
+Public hConnServidor As Connection  ' Conexión al servidor MySQL
 Public sUsuarioActual As String
 Public sRolActual As String
 Public sServidorActual As String
 
+' ============================================
+' INICIALIZACIÓN DEL FORMULARIO
+' ============================================
 Public Sub Form_Open()
 
   Dim sRuta As String = User.Home &/ ".gbpublisher/.superuser.sqlite"
 
-  ' Crear/conectar SQLite local (solo para caché de IPs)
+  ' Crear/conectar SQLite local (solo para admin local)
   If Not Exist(sRuta) Then
     CreateDataBase()
   Endif
@@ -24,19 +32,20 @@ Public Sub Form_Open()
   ' Cargar IPs disponibles
   m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
 
-  ' ✅ Mostrar solo el panel de validación (sin creación local)
-  ' Mostrar paneles/botones de ABM
-  HBox1a.Visible = True           ' Boton de validar
+  ' Mostrar solo panel de validación inicial
+  HBox1a.Visible = True           ' Botón de validar
   TableViewUsuarios.Visible = True
   HBox2a.Visible = True
   HBox3a.Visible = True
-  HBox4a.Visible = True
   HBox4a.Visible = True
 
   txtAdministrador.SetFocus()
 
 End
 
+' ============================================
+' CREAR BASE DE DATOS SQLITE LOCAL
+' ============================================
 Public Sub CreateDataBase()
 
   Dim sHost As String = User.Home &/ ".gbpublisher"
@@ -52,56 +61,53 @@ Public Sub CreateDataBase()
   hConn = New Connection
   hConn.Type = "sqlite3"
   hConn.Host = sHost
-  hConn.Open()  ' Abrir conexión SIN base de datos aún
+  hConn.Open()
 
-  hConn.Databases.Add(sDbName)  ' ✅ CREAR la base de datos
-  Wait 0.5  ' Dar tiempo al sistema
+  hConn.Databases.Add(sDbName)
+  Wait 0.5
 
-  hConn.Close()  ' Cerrar
+  hConn.Close()
 
-  ' Ahora reconectar CON la base de datos
+  ' Reconectar con la base de datos
   hConn.Name = sDbName
   hConn.Open()
 
-  ' Crear primera tabla
+  ' Crear tabla de superusuario local
   sTablas = "CREATE TABLE superuser (" &
     "id INTEGER PRIMARY KEY AUTOINCREMENT, " &
-    "usuario TEXT NOT NULL, " &
+    "usuario TEXT NOT NULL UNIQUE, " &
     "clave TEXT NOT NULL, " &
     "email TEXT);"
   hConn.Exec(sTablas)
 
-  ' Crear segunda tabla
-  sTablas = "CREATE TABLE usuario_roles (" &
-    "id INTEGER PRIMARY KEY AUTOINCREMENT, " &
-    "usuario_id INTEGER NOT NULL, " &
-    "servidor_ip TEXT NOT NULL, " &
-    "rol TEXT NOT NULL DEFAULT 'admin', " &
-    "UNIQUE(usuario_id, servidor_ip));"
-  hConn.Exec(sTablas)
+  ' ✅ Insertar admin por defecto
+  hConn.Exec("INSERT INTO superuser (usuario, clave, email) VALUES " &
+    "('admin', '" & Hash.SHA256("admin123") & "', NULL);")
 
   hConn.Close()
 
-  Message.Info("Base de datos creada con éxito.")
+  Message.Info("Base de datos local creada.\n\nUsuario inicial:\nUsuario: admin\nContraseña: admin123\n\n¡Cámbiela inmediatamente!")
 
 Catch
   Message.Error("Error creando la base: " & Error.Text & " (" & Error.Where & ")")
 
 End
 
+' ============================================
+' CONECTAR A SQLITE LOCAL
+' ============================================
 Public Function Conectar(sRuta As String) As Boolean
 
   hConn = New Connection
   hConn.Type = "sqlite3"
-  hConn.Host = File.Dir(sRuta)   ' ✅ Directorio
-  hConn.Name = File.Name(sRuta)  ' ✅ Nombre del archivo
+  hConn.Host = File.Dir(sRuta)
+  hConn.Name = File.Name(sRuta)
 
   Try hConn.Open()
   If Not hConn.Opened Then
     Return False
   Endif
 
-  ' Asegurar claves foráneas activas
   hConn.Exec("PRAGMA foreign_keys = ON;")
   Return True
 
@@ -111,91 +117,9 @@ Catch
 
 End
 
-Public Sub btnCerrar_Click()
-
-  Me.Close
-
-End
-
-Public Sub btnCrearAdmin_Click()
-
-  Dim sUsuario As String = Trim(txtAdministrador.Text)
-  Dim sClave As String = Trim(txtClaveAdministrador.Text)
-  Dim sEmail As String = Trim(txtEmailAdministrador.Text)
-  Dim sIP As String = Trim(ComboBoxIP.Text)
-  Dim sClaveHash As String
-  Dim sSQL As String
-  Dim usuario_id As Integer
-  Dim rCheck As Result
-
-  ' Validaciones
-  If Not sUsuario Or Not sClave Then
-    Message.Warning("Usuario y contraseña son obligatorios")
-    Return
-  Endif
-
-  If Not sIP Then
-    Message.Warning("Debe seleccionar una IP de servidor")
-    Return
-  Endif
-
-  If Len(sClave) < 8 Then
-    Message.Warning("La contraseña debe tener 8 caracteres")
-    Return
-  Endif
-
-  ' Verificar si el usuario ya existe
-  rCheck = hConn.Exec("SELECT id FROM superuser WHERE usuario = '" & sUsuario & "';")
-  If rCheck.Available Then
-    usuario_id = rCheck["id"]
-
-    ' Verificar si ya tiene rol en esta IP
-    rCheck = hConn.Exec("SELECT id FROM usuario_roles WHERE usuario_id = " & usuario_id & " AND servidor_ip = '" & sIP & "';")
-    If rCheck.Available Then
-      Message.Warning("El usuario '" & sUsuario & "' ya tiene rol asignado en el servidor " & sIP)
-      Return
-    Else
-      ' Solo agregar el rol
-      sSQL = "INSERT INTO usuario_roles (usuario_id, servidor_ip, rol) VALUES (" &
-        usuario_id & ", '" & sIP & "', 'admin');"
-      hConn.Exec(sSQL)
-      Message.Info("Rol admin asignado a '" & sUsuario & "' para el servidor " & sIP)
-    Endif
-
-  Else
-    ' Usuario nuevo
-    sClaveHash = Hash.SHA256(sClave)
-
-    ' Insertar usuario
-    If Not sEmail Or sEmail = "@." Then
-      sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
-        sUsuario & "', '" & sClaveHash & "', NULL);"
-    Else
-      sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
-        sUsuario & "', '" & sClaveHash & "', '" & sEmail & "');"
-    Endif
-
-    hConn.Exec(sSQL)
-    usuario_id = hConn.LastInsertId
-
-    ' Insertar rol
-    sSQL = "INSERT INTO usuario_roles (usuario_id, servidor_ip, rol) VALUES (" &
-      usuario_id & ", '" & sIP & "', 'admin');"
-    hConn.Exec(sSQL)
-
-    Message.Info("Administrador '" & sUsuario & "' creado exitosamente para el servidor " & sIP)
-  Endif
-
-  ' Limpiar campos
-  txtAdministrador.Text = ""
-  txtClaveAdministrador.Text = ""
-  txtEmailAdministrador.Text = ""
-
-Catch
-  Message.Error("Error al crear administrador: " & Error.Text & " (" & Error.Where & ")")
-
-End
-
+' ============================================
+' VALIDAR SUPERUSUARIO
+' ============================================
 Public Sub btnValidarSuperuser_Click()
 
   Dim sUsuario As String = Trim(txtAdministrador.Text)
@@ -213,96 +137,135 @@ Public Sub btnValidarSuperuser_Click()
     Return
   Endif
 
-  ' ✅ Conectar y validar contra el servidor MySQL
-  If Not ConectarYValidarServidor(sIP, sUsuario, sClave) Then
+  ' ✅ PASO 1: Validar contra SQLite LOCAL
+  If Not ValidarAdminLocal(sUsuario, sClave) Then
     txtAdministrador.Text = ""
     txtClaveAdministrador.Text = ""
     Return
   Endif
 
-  ' ✅ Verificar rol y habilitar funciones
-  If sRolActual = "admin" Then
-    Message.Info("Acceso concedido como ADMINISTRADOR del servidor " & sServidorActual)
-    HabilitarABMUsuarios()
-    PanelUsuarios.Visible = True
-    PanelAdmin.Visible = False
-    FMain.MenuInicio.Visible = True ' habilitamos el menu del formulario
-    ' FMain.btnCerrarApp.Visible = False
-    ' Else
-    '   Message.Info("Acceso concedido como USUARIO del servidor " & sServidorActual)
-    '   HabilitarVistaUsuario()
+  ' ✅ PASO 2: Conectar a MySQL con credenciales de app
+  If Not ConectarMySQL(sIP) Then
+    Message.Error("Admin válido, pero no se pudo conectar al servidor MySQL")
+    Return
   Endif
+
+  ' ✅ PASO 3: Habilitar gestión
+  sUsuarioActual = sUsuario
+  sServidorActual = sIP
+  sRolActual = "superadmin"
+
+  Message.Info("Acceso concedido como SUPERADMINISTRADOR")
+
+  HabilitarABMUsuarios()
 
   ' Limpiar campos
   txtAdministrador.Text = ""
   txtClaveAdministrador.Text = ""
+  txtEmailAdministrador.Text = ""
 
 Catch
   Message.Error("Error: " & Error.Text & " (" & Error.Where & ")")
 
 End
 
+' ============================================
+' VALIDAR ADMIN LOCAL (SQLITE)
+' ============================================
+Private Function ValidarAdminLocal(sUsuario As String, sClave As String) As Boolean
+
+  Dim r As Result
+  Dim sHash As String
+
+  sHash = Hash.SHA256(sClave)
+
+  r = hConn.Exec("SELECT id FROM superuser " &
+    "WHERE usuario = '" & sUsuario & "' " &
+    "AND clave = '" & sHash & "';")
+
+  If Not r.Available Then
+    Message.Warning("Usuario o contraseña de administrador incorrectos")
+    Return False
+  Endif
+
+  Return True
+
+Catch
+  Message.Error("Error validando administrador local: " & Error.Text)
+  Return False
+
+End
+
+' ============================================
+' CONECTAR A MYSQL (CREDENCIALES FIJAS)
+' ============================================
+Private Function ConectarMySQL(sIP As String) As Boolean
+
+  hConnServidor = New Connection
+  hConnServidor.Type = "mysql"
+  hConnServidor.Host = sIP
+  hConnServidor.Port = 3306
+  hConnServidor.Name = "gbpublisher"
+  hConnServidor.User = "app_user"
+  hConnServidor.Password = "AppUser2024!"
+
+  Try hConnServidor.Open()
+
+  If Not hConnServidor.Opened Then
+    Return False
+  Endif
+
+  Return True
+
+Catch
+  Message.Error("Error conectando a MySQL: " & Error.Text)
+  Return False
+
+End
+
+' ============================================
+' HABILITAR PANEL DE GESTIÓN
+' ============================================
 Private Sub HabilitarABMUsuarios()
 
-  ' Mostrar paneles/botones de ABM
-  HBoxValidar.Visible = True
-  HBox1a.Visible = True
-  TableViewUsuarios.Visible = True
-  HBox2a.Visible = True
-  HBox3a.Visible = True
-  HBox4a.Visible = True
-  HBox4a.Visible = True
+  PanelAdminUsuarios.Visible = True
+  btnCrearUsuario.Visible = True
+  btnGuardarUsuario.Visible = False
+  btnGuardarCambiosUsuario.Visible = False
 
-  ' Mostrar info de sesión
   LabelSesion.Text = "Conectado como administrador: " & sUsuarioActual & " @ " & sServidorActual
 
-  ' Cargar usuarios del servidor
   CargarUsuariosDelServidor()
 
 End
 
-Private Sub HabilitarVistaUsuario()
-
-  ' Vista limitada para usuarios comunes
-  HBoxValidar.Visible = False
-  HBox1a.Visible = True
-
-  ' Deshabilitar funciones de admin
-  btnCrearUsuario.Enabled = False
-  btnEditarUsuario.Enabled = False
-  btnEliminarUsuario.Enabled = False
-
-  LabelSesion.Text = "Conectado como: " & sUsuarioActual & " (usuario) @ " & sServidorActual
-
-  Message.Info("Acceso limitado. Solo puede consultar datos.")
-
-End
-
+' ============================================
+' CARGAR USUARIOS DESDE MYSQL
+' ============================================
 Private Sub CargarUsuariosDelServidor()
 
   Dim rUsuarios As Result
   Dim iRow As Integer
 
-  ' Limpiar tabla
   TableViewUsuarios.Clear()
   TableViewUsuarios.Rows.Count = 0
-  TableViewUsuarios.Columns.Count = 5
+  TableViewUsuarios.Columns.Count = 6
 
-  ' Configurar columnas
   TableViewUsuarios.Columns[0].Title = "ID"
   TableViewUsuarios.Columns[0].Width = 50
   TableViewUsuarios.Columns[1].Title = "Usuario"
-  TableViewUsuarios.Columns[1].Width = 120
+  TableViewUsuarios.Columns[1].Width = 150
   TableViewUsuarios.Columns[2].Title = "Email"
-  TableViewUsuarios.Columns[2].Width = 450
-  TableViewUsuarios.Columns[3].Title = "Rol"
-  TableViewUsuarios.Columns[3].Width = 80
-  TableViewUsuarios.Columns[4].Title = "Activo"
-  TableViewUsuarios.Columns[4].Width = 50
+  TableViewUsuarios.Columns[2].Width = 400
+  TableViewUsuarios.Columns[3].Title = "Activo"
+  TableViewUsuarios.Columns[3].Width = 70
+  TableViewUsuarios.Columns[4].Title = "Fecha Creación"
+  TableViewUsuarios.Columns[4].Width = 200
+  TableViewUsuarios.Columns[5].Title = "En Línea"
+  TableViewUsuarios.Columns[5].Width = 70
 
-  ' ✅ Cargar usuarios desde el servidor MySQL
-  rUsuarios = hConnServidor.Exec("SELECT id, usuario, email, rol, activo " &
-    "FROM usuarios_sistema ORDER BY usuario;")
+  rUsuarios = hConnServidor.Exec("SELECT id, usuario, email, activo, fecha_creacion, en_linea " &
+    "FROM usuarios ORDER BY usuario;")
 
   While rUsuarios.Available
     TableViewUsuarios.Rows.Count += 1
@@ -310,9 +273,10 @@ Private Sub CargarUsuariosDelServidor()
 
     TableViewUsuarios[iRow, 0].Text = rUsuarios["id"]
     TableViewUsuarios[iRow, 1].Text = rUsuarios["usuario"]
-    TableViewUsuarios[iRow, 2].Text = rUsuarios["email"]
-    TableViewUsuarios[iRow, 3].Text = rUsuarios["rol"]
-    TableViewUsuarios[iRow, 4].Text = If(rUsuarios["activo"], "Sí", "No")
+    TableViewUsuarios[iRow, 2].Text = If(rUsuarios["email"], rUsuarios["email"], "")
+    TableViewUsuarios[iRow, 3].Text = If(rUsuarios["activo"], "Sí", "No")
+    TableViewUsuarios[iRow, 4].Text = Format(rUsuarios["fecha_creacion"], "dd/mm/yyyy hh:nn")
+    TableViewUsuarios[iRow, 5].Text = If(rUsuarios["en_linea"], "Sí", "No")
 
     rUsuarios.MoveNext()
   Wend
@@ -324,177 +288,372 @@ Catch
 
 End
 
-Public Function ConectarYValidarServidor(sIP As String, sUsuario As String, sClave As String) As Boolean
+' ============================================
+' CREAR/MODIFICAR ADMIN LOCAL
+' ============================================
+Public Sub btnCrearAdmin_Click()
 
+  Dim sUsuario As String = Trim(txtAdministrador.Text)
+  Dim sClave As String = Trim(txtClaveAdministrador.Text)
+  Dim sEmail As String = Trim(txtEmailAdministrador.Text)
   Dim sClaveHash As String
-  Dim rUser As Result
+  Dim sSQL As String
+  Dim rCheck As Result
+
+  If Not sUsuario Or Not sClave Then
+    Message.Warning("Usuario y contraseña son obligatorios")
+    Return
+  Endif
+
+  If Len(sClave) < 8 Then
+    Message.Warning("La contraseña debe tener al menos 8 caracteres")
+    Return
+  Endif
 
   sClaveHash = Hash.SHA256(sClave)
 
-  hConnServidor = New Connection
-  hConnServidor.Type = "mysql"
-  hConnServidor.Host = sIP
-  hConnServidor.Port = 3306
-  hConnServidor.Name = "gbpublisher"
-  hConnServidor.User = "app_user"
-  hConnServidor.Password = "AppUser2024!"
-
-  Try hConnServidor.Open()
-  If Not hConnServidor.Opened Then
-    Message.Error("No se pudo conectar al servidor MySQL")
-    Return False
-  Endif
-
-  rUser = hConnServidor.Exec("SELECT id, rol, activo, primer_acceso FROM usuarios_sistema " &
-    "WHERE usuario = '" & sUsuario & "' " &
-    "AND clave_hash = '" & sClaveHash & "';")
-
-  If Not rUser.Available Then
-    Message.Warning("Usuario o contraseña incorrectos")
-    hConnServidor.Close()
-    Return False
-  Endif
-
-  If Not rUser["activo"] Then
-    Message.Warning("Usuario deshabilitado")
-    hConnServidor.Close()
-    Return False
-  Endif
-
-  sUsuarioActual = sUsuario
-  sRolActual = rUser["rol"]
-  sServidorActual = sIP
-
-  ' ✅ Verificar si es el primer acceso
-  If rUser["primer_acceso"] Then
-    Message.Info("Debe cambiar la contraseña predeterminada")
-    If Not CambiarPasswordObligatorio(rUser["id"]) Then
-      hConnServidor.Close()
-      Return False
-    Endif
-  Endif
-
-  Return True
-
-Catch
-  Message.Error("Error: " & Error.Text)
-  Return False
-
-End
-
-Private Function CambiarPasswordObligatorio(iUsuarioID As Integer) As Boolean
-
-  Dim sNuevoUsuario As String
-  Dim sNuevaClave As String
-  Dim sConfirmarClave As String
-  Dim sClaveHash As String
-
-  Message.Info("Por seguridad, debe personalizar el usuario administrador")
-
-  ' ✅ Permitir cambiar el nombre de usuario
-  sNuevoUsuario = InputBox("Ingrese el nuevo nombre de usuario:", "Cambio obligatorio", "admin")
-
-  If Not sNuevoUsuario Or Len(sNuevoUsuario) < 4 Then
-    Message.Warning("El usuario debe tener al menos 4 caracteres")
-    Return False
-  Endif
-
-  ' Verificar que no exista otro usuario con ese nombre
-  Dim rCheck As Result = hConnServidor.Exec("SELECT id FROM usuarios_sistema WHERE usuario = '" & sNuevoUsuario & "' AND id != " & iUsuarioID & ";")
+  rCheck = hConn.Exec("SELECT id FROM superuser WHERE usuario = '" & sUsuario & "';")
 
   If rCheck.Available Then
-    Message.Warning("El usuario '" & sNuevoUsuario & "' ya existe")
-    Return False
+    ' Actualizar admin existente
+    sSQL = "UPDATE superuser SET clave = '" & sClaveHash & "'"
+
+    If sEmail And sEmail <> "@." Then
+      sSQL &= ", email = '" & sEmail & "'"
+    Endif
+
+    sSQL &= " WHERE usuario = '" & sUsuario & "';"
+
+    hConn.Exec(sSQL)
+    Message.Info("Contraseña del administrador '" & sUsuario & "' actualizada")
+
+  Else
+    ' Crear nuevo admin
+    If Not sEmail Or sEmail = "@." Then
+      sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
+        sUsuario & "', '" & sClaveHash & "', NULL);"
+    Else
+      sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
+        sUsuario & "', '" & sClaveHash & "', '" & sEmail & "');"
+    Endif
+
+    hConn.Exec(sSQL)
+    Message.Info("Administrador local '" & sUsuario & "' creado exitosamente")
   Endif
 
-  ' Solicitar nueva contraseña
-  sNuevaClave = InputBox("Ingrese la nueva contraseña (8 caracteres):", "Nueva contraseña")
-
-  If Not sNuevaClave Or Len(sNuevaClave) = 8 Then
-    Message.Warning("La contraseña debe tener 8 caracteres")
-    Return False
-  Endif
-
-  ' Validar fortaleza de contraseña
-  If Not ValidarFortalezaPassword(sNuevaClave) Then
-    Message.Warning("La contraseña debe incluir:\n- Al menos una mayúscula\n- Al menos un número")
-    Return False
-  Endif
-
-  ' Confirmar contraseña
-  sConfirmarClave = InputBox("Confirme la nueva contraseña:", "Confirmación")
-
-  If sNuevaClave <> sConfirmarClave Then
-    Message.Warning("Las contraseñas no coinciden")
-    Return False
-  Endif
-
-  ' ✅ Actualizar usuario Y contraseña en el servidor
-  sClaveHash = Hash.SHA256(sNuevaClave)
-
-  hConnServidor.Exec("UPDATE usuarios_sistema SET " &
-    "usuario = '" & sNuevoUsuario & "', " &
-    "clave_hash = '" & sClaveHash & "', " &
-    "primer_acceso = FALSE, " &
-    "fecha_cambio_password = NOW() " &
-    "WHERE id = " & iUsuarioID & ";")
-
-  ' Actualizar variable de sesión
-  sUsuarioActual = sNuevoUsuario
-
-  Message.Info("Credenciales actualizadas correctamente.\n\n" &
-    "IMPORTANTE: Anote estas credenciales:\n" &
-    "Usuario: " & sNuevoUsuario & "\n" &
-    "Contraseña: " & sNuevaClave & "\n\n" &
-    "Deberá usarlas en el próximo acceso.")
-
-  Return True
+  txtAdministrador.Text = ""
+  txtClaveAdministrador.Text = ""
+  txtEmailAdministrador.Text = ""
 
 Catch
-  Message.Error("Error al cambiar credenciales: " & Error.Text)
-  Return False
+  Message.Error("Error: " & Error.Text & " (" & Error.Where & ")")
 
 End
 
-Private Function ValidarFortalezaPassword(sPassword As String) As Boolean
+' ============================================
+' GUARDAR NUEVO USUARIO (btnGuardarUsuario)
+' ============================================
+Public Sub btnGuardarUsuario_Click()
 
-  Dim bTieneMayuscula As Boolean = False
-  Dim bTieneNumero As Boolean = False
-  Dim i As Integer
+  Dim sUsuario As String
+  Dim sClave As String
+  Dim sEmail As String
+  Dim bActivo As Boolean
+  Dim sHash As String
 
-  For i = 1 To Len(sPassword)
-    If Mid(sPassword, i, 1) >= "A" And Mid(sPassword, i, 1) <= "Z" Then
-      bTieneMayuscula = True
-    Endif
-    If IsDigit(Mid(sPassword, i, 1)) Then
-      bTieneNumero = True
-    Endif
-  Next
-
-  Return bTieneMayuscula And bTieneNumero
-
-End
-
-Public Sub ToggleButtonMostrar_Click()
-
-  ' Invertimos la lógica: mostrar caracteres si el botón está activado
-  If ToggleButtonMostrar.Value Then
-    txtClaveAdministrador.Password = False  ' Mostrar texto
-  Else
-    txtClaveAdministrador.Password = True   ' Ocultar texto
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    Message.Warning("Debe validarse primero como administrador")
+    Return
   Endif
 
-  ' Forzar redibujado y mantener el foco correctamente
+  ' Obtener valores de los controles
+  sUsuario = Trim(txtUsuario.Text)
+  sClave = Trim(txtClaveUsuario.Text)
+  sEmail = Trim(txtEmailUsuario.Text)
+  bActivo = RadioButtonSi.Value
+
+  ' Validaciones
+  If Not sUsuario Then
+    Message.Warning("Debe ingresar un nombre de usuario")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  If Len(sUsuario) > 12 Then
+    Message.Warning("El usuario no puede tener más de 12 caracteres")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  If Not sClave Or Len(sClave) < 8 Then
+    Message.Warning("La contraseña debe tener al menos 8 caracteres")
+    txtClaveUsuario.SetFocus()
+    Return
+  Endif
+
+  If Not sEmail Then
+    Message.Warning("El email es obligatorio")
+    txtEmailUsuario.SetFocus()
+    Return
+  Endif
+
+  ' Hashear contraseña
+  sHash = Hash.SHA256(sClave)
+
+  ' Insertar en MySQL
+  hConnServidor.Exec("INSERT INTO usuarios (usuario, clave, email, activo, metodo, fecha_creacion) " &
+    "VALUES ('" & sUsuario & "', '" & sHash & "', '" & sEmail & "', " &
+    If(bActivo, "TRUE", "FALSE") & ", 'local', NOW());")
+
+    Message.Info("Usuario '" & sUsuario & "' creado exitosamente")
+
+    ' Limpiar controles
+    LimpiarControlesUsuario()
+
+    ' Acualizamos los botones
+    btnCrearUsuario.Visible = True
+    btnGuardarUsuario.Visible = False
+    btnGuardarCambiosUsuario.Visible = False
+
+    ' Recargar tabla
+    CargarUsuariosDelServidor()
+
+  Catch
+    Message.Error("Error creando usuario: " & Error.Text)
+
+End
+
+' ============================================
+' GUARDAR CAMBIOS DE USUARIO (btnGuardarCambiosUsuario)
+' ============================================
+Public Sub btnGuardarCambiosUsuario_Click()
+
+  Dim iID As Integer
+  Dim sNuevoUsuario As String
+  Dim sNuevaClave As String
+  Dim sNuevoEmail As String
+  Dim bActivo As Boolean
+  Dim sHash As String
+
+  ' Verificar que hay un usuario seleccionado
+  If TableViewUsuarios.Row < 0 Then
+    Message.Warning("Debe seleccionar un usuario de la tabla para modificar")
+    Return
+  Endif
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    Message.Warning("No hay conexión al servidor")
+    Return
+  Endif
+
+  ' Obtener ID del usuario seleccionado
+  iID = Val(TableViewUsuarios[TableViewUsuarios.Row, 0].Text)
+
+  ' Obtener valores de los controles
+  sNuevoUsuario = Trim(txtUsuario.Text)
+  sNuevaClave = Trim(txtClaveUsuario.Text)
+  sNuevoEmail = Trim(txtEmailUsuario.Text)
+  bActivo = RadioButtonSi.Value
+
+  ' Validaciones
+  If Not sNuevoUsuario Then
+    Message.Warning("El nombre de usuario no puede estar vacío")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  If Len(sNuevoUsuario) > 12 Then
+    Message.Warning("El usuario no puede tener más de 12 caracteres")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  If Not sNuevoEmail Then
+    Message.Warning("El email es obligatorio")
+    txtEmailUsuario.SetFocus()
+    Return
+  Endif
+
+  ' Si hay nueva contraseña, validar y actualizar
+  If sNuevaClave And Len(sNuevaClave) > 0 Then
+    If Len(sNuevaClave) < 8 Then
+      Message.Warning("La contraseña debe tener al menos 8 caracteres")
+      txtClaveUsuario.SetFocus()
+      Return
+    Endif
+    sHash = Hash.SHA256(sNuevaClave)
+    hConnServidor.Exec("UPDATE usuarios SET usuario = '" & sNuevoUsuario &
+      "', clave = '" & sHash & "', email = '" & sNuevoEmail &
+      "', activo = " & If(bActivo, "TRUE", "FALSE") &
+      " WHERE id = " & iID & ";")
+  Else
+    ' Actualizar sin cambiar contraseña
+    hConnServidor.Exec("UPDATE usuarios SET usuario = '" & sNuevoUsuario &
+      "', email = '" & sNuevoEmail &
+      "', activo = " & If(bActivo, "TRUE", "FALSE") &
+      " WHERE id = " & iID & ";")
+  Endif
+
+  Message.Info("Cambios guardados correctamente")
+
+  ' Acualizamos los botones
+  btnCrearUsuario.Visible = True
+  btnGuardarUsuario.Visible = False
+  btnGuardarCambiosUsuario.Visible = False
+
+  ' Limpiar controles
+  LimpiarControlesUsuario()
+
+  ' Recargar tabla
+  CargarUsuariosDelServidor()
+
+Catch
+  Message.Error("Error guardando cambios: " & Error.Text)
+
+End
+
+' ============================================
+' EVENTO CLICK EN TABLEVIEW - CARGAR DATOS EN CONTROLES
+' ============================================
+Public Sub TableViewUsuarios_Click()
+
+  Dim iRow As Integer = TableViewUsuarios.Row
+  Dim sFechaCreacion As String
+  Dim sFechaAcceso As String
+
+  btnCrearUsuario.Visible = False
+  btnGuardarUsuario.Visible = False
+  btnGuardarCambiosUsuario.Visible = True
+
+  If iRow < 0 Then Return
+
+  ' Cargar datos en los controles
+  txtUsuario.Text = TableViewUsuarios[iRow, 1].Text
+  txtEmailUsuario.Text = TableViewUsuarios[iRow, 2].Text
+
+  ' Limpiar contraseña (por seguridad no se muestra)
+  txtClaveUsuario.Text = ""
+
+  ' Estado activo
+  If TableViewUsuarios[iRow, 3].Text = "Sí" Then
+    RadioButtonSi.Value = True
+  Else
+    RadioButtonNo.Value = True
+  Endif
+
+  ' Fecha de creación
+  sFechaCreacion = TableViewUsuarios[iRow, 4].Text
+  If sFechaCreacion Then
+    Try DateBoxCreacion.Value = CDate(sFechaCreacion)
+  Endif
+
+  ' Fecha último acceso (cargar desde BD)
+  CargarUltimoAcceso(Val(TableViewUsuarios[iRow, 0].Text))
+
+Catch
+  Print "Error al cargar datos: " & Error.Text
+
+End
+
+' ============================================
+' CARGAR FECHA DE ÚLTIMO ACCESO DESDE BD
+' ============================================
+Private Sub CargarUltimoAcceso(iUsuarioID As Integer)
+
+  Dim r As Result
+
+  r = hConnServidor.Exec("SELECT ultimo_acceso FROM usuarios WHERE id = " & iUsuarioID & ";")
+
+  If r.Available And r["ultimo_acceso"] Then
+    Try DateBoxUltimoAcceso.Value = r["ultimo_acceso"]
+  Else
+    DateBoxUltimoAcceso.Value = Null
+  Endif
+
+Catch
+  Print "Error cargando último acceso: " & Error.Text
+
+End
+
+' ============================================
+' LIMPIAR CONTROLES DEL FORMULARIO
+' ============================================
+Private Sub LimpiarControlesUsuario()
+
+  txtUsuario.Text = ""
+  txtClaveUsuario.Text = ""
+  txtEmailUsuario.Text = ""
+  RadioButtonSi.Value = True  ' Por defecto activo
+  DateBoxCreacion.Value = Now()
+  DateBoxUltimoAcceso.Value = Null
+
+  ' Quitar selección de la tabla
+  TableViewUsuarios.Row = -1
+
+End
+
+' ============================================
+' BOTÓN NUEVO - PREPARAR PARA CREAR USUARIO
+' ============================================
+Public Sub btnNuevoUsuario_Click()
+
+  LimpiarControlesUsuario()
+  txtUsuario.SetFocus()
+
+End
+
+' ============================================
+' TOGGLE MOSTRAR/OCULTAR CONTRASEÑA
+' ============================================
+Public Sub ToggleButtonMostrar_Click()
+
+  If ToggleButtonMostrar.Value Then
+    txtClaveAdministrador.Password = False
+  Else
+    txtClaveAdministrador.Password = True
+  Endif
+
   txtClaveAdministrador.Refresh()
   txtClaveAdministrador.SetFocus()
 
 End
 
+' ============================================
+' GESTIONAR IPS
+' ============================================
 Public Sub btnNuevaIP_Click()
 
   f_EditarIPs.ShowModal()
-
-  ' Refrescar el ComboBox inmediatamente después de cerrar el modal
   m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
+
+End
+
+' ============================================
+' CERRAR FORMULARIO
+' ============================================
+Public Sub btnCerrar_Click()
+
+  If hConnServidor And hConnServidor.Opened Then
+    hConnServidor.Close()
+  Endif
+
+  If hConn And hConn.Opened Then
+    hConn.Close()
+  Endif
+
+  Me.Close()
+
+End
+
+Public Sub btnCrearUsuario_Click()
+
+  btnCrearUsuario.Visible = False
+  btnGuardarUsuario.Visible = True
+  btnGuardarCambiosUsuario.Visible = False
+
+  txtUsuario.Text = ""
+  txtClaveUsuario.Text = ""
+  ' Asignar fecha actual al DateBox
+  DateBoxCreacion.Value = Now
 
 End
