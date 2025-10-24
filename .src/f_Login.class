@@ -2,17 +2,9 @@
 
 Public Sub Form_Open()
 
-  ' Refrescar el ComboBox inmediatamente después de cerrar el modal
-  m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
-
-End
-
-Public Sub btnEditarIPs_Click()
-
-  f_EditarIPs.ShowModal()
-
-  ' Refrescar el ComboBox inmediatamente después de cerrar el modal
-  m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
+  TextBoxIP.Text = ""
+  TextBoxUsuario.Text = ""
+  TextBoxClave.Text = ""
 
 End
 
@@ -23,14 +15,13 @@ Public Sub btnCancelar_Click()
 End
 
 Public Sub ToggleButtonMostrar_Click()
-
   ' Invertimos la lógica: mostrar caracteres si el botón está activado
+
   If ToggleButtonMostrar.Value Then
     TextBoxClave.Password = False  ' Mostrar texto
   Else
     TextBoxClave.Password = True   ' Ocultar texto
   Endif
-
   ' Forzar redibujado y mantener el foco correctamente
   TextBoxClave.Refresh()
   TextBoxClave.SetFocus()
@@ -39,17 +30,129 @@ End
 
 Public Sub btnConectarServer_Click()
 
-  ' Si el login es correcto habilitamos los botones
-  FMain.MenuInicio.Visible = True ' habilitamos el menu del formulario
-  FMain.ButtonCerrarApp.Visible = False
-  FMain.ButtonEmail.Enabled = True
-  FMain.ButtonNotitas.Enabled = True
-  FMain.ButtonBitacora.Enabled = True
-  FMain.ButtonBolckNotas.Enabled = True
-  FMain.ButtonAdminRepositorios.Enabled = True
-  FMain.ButtonConsultasSQL.Enabled = True
-  FMain.ButtonCorregirBib.Enabled = True
-  '
-  Me.Close
+  Dim ip As String = TextBoxIP.Text
+  Dim usuario As String = TextBoxUsuario.Text
+  Dim clave As String = TextBoxClave.Text
+  Dim iResultado As Integer
+
+  ' Validar que se haya seleccionado una IP
+  If Trim(ip) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ingrese una IP correcta")
+    TextBoxIP.SetFocus()
+    Return
+  End If
+
+  ' Validar usuario
+  If Trim(usuario) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ingrese el nombre de usuario")
+    TextBoxUsuario.SetFocus()
+    Return
+  End If
+
+  ' Validar clave ANTES de encriptar
+  If Trim(clave) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ingrese la contraseña")
+    TextBoxClave.SetFocus()
+    Return
+  End If
+
+  ' Encriptar la clave con SHA256
+  Dim sClaveEncriptada As String
+  sClaveEncriptada = Hash.SHA256(clave)
+
+  ' Validar conectividad del servidor
+  If Not ValidarConectividad(ip) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se puede conectar al servidor " & ip & Chr(10) &
+      "Verifique que el servidor esté encendido y la red funcione correctamente.")
+    Return
+  End If
+
+  ' AQUÍ: pasar la clave ENCRIPTADA
+  iResultado = m_ConexionBD.ConexionAbierta(ip, usuario, sClaveEncriptada)
+
+  Select Case iResultado
+    Case 1  ' Login exitoso
+      ' Habilitar la interfaz de FMain
+      FMain.MenuInicio.Visible = True
+      FMain.ButtonCerrarApp.Visible = False
+      FMain.ButtonEmail.Enabled = True
+      FMain.ButtonNotitas.Enabled = True
+      FMain.ButtonBitacora.Enabled = True
+      FMain.ButtonBolckNotas.Enabled = True
+      FMain.ButtonAdminRepositorios.Enabled = True
+      FMain.ButtonConsultasSQL.Enabled = True
+      FMain.ButtonCorregirBib.Enabled = True
+      ' Reflejar en los textbox de fmain los valores del loguin exitoso
+      FMain.TextBoxUsuario.Text = usuario
+      FMain.TextBoxServidor.Text = ip
+      Me.Close()  ' Cerrar formulario de login
+    Case 2  ' Usuario ya conectado o inactivo
+      ' El mensaje ya se mostró en ConexionAbierta
+    Case 3  ' Credenciales incorrectas
+      m_Sonido.sonar("Error")
+      Message.Error("Usuario y/o clave incorrectos.")
+    Case Else  ' Error de conexión o consulta
+      ' El mensaje ya se mostró en ConexionAbierta
+  End Select
+
+End
+
+Private Function ValidarConectividad(ip As String) As Boolean
+
+  Dim archivo As String = "/tmp/ping_result_" & CStr(Timer)
+  Dim comando As String
+  Dim contenido As String
+
+  ' Crear comando que guarde el resultado en un archivo temporal
+  comando = "ping -c 1 -W 3 " & ip & " > " & archivo & " 2>&1; echo $? >> " & archivo
+
+  ' Ejecutar el comando
+  Try Shell comando Wait
+
+  If Error Then
+    Return False
+  End If
+
+  ' Leer el archivo de resultado
+  If Exist(archivo) Then
+    Try contenido = File.Load(archivo)
+
+    If Not Error Then
+      ' El último carácter debería ser el código de salida
+      Dim lineas As String[] = Split(contenido, "\n")
+      Dim codigoSalida As String = ""
+
+      If lineas.Count > 0 Then
+        codigoSalida = Trim(lineas[lineas.Count - 1])
+        If codigoSalida = "" And lineas.Count > 1 Then
+          codigoSalida = Trim(lineas[lineas.Count - 2])
+        End If
+      End If
+
+      ' Limpiar archivo temporal
+      Try Kill archivo
+
+      ' Código 0 significa éxito
+      Return codigoSalida = "0"
+    End If
+
+    ' Limpiar archivo temporal en caso de error
+    Try Kill archivo
+  End If
+
+  Return False
+
+End
+
+' EVENTO AL PRESIONAR ENTER EN EL CAMPO CLAVE
+Public Sub TextBoxClave_KeyPress()
+
+  If Key.Code = Key.Return Then
+    btnConectarServer_Click()
+  Endif
 
 End
