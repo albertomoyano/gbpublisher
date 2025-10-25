@@ -1,17 +1,16 @@
 ' Gambas module file
 
-Public Sub CerrarTodo()
+Public UsuarioEnCurso As String
+Public IdUsuario As Integer
 
-  ' --- Debug / estado ---
-  If Not IsNull(m_OnOff_y_Red.meConn) Then
-  Endif
+Public Sub CerrarTodoMySQL()
 
-  ' Guardar el tiempo ANTES de cerrar la conexión
-  m_Timer.DetenerContador()
+  ' --- Marcar al usuario como desconectado antes de cerrar ---
+  m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = '" & UsuarioEnCurso & "'")
 
-  ' Borramos carpetas del caché
-  FMain.TerminalViewProyecto.Input("rm -rf " & User.Home & "/.local/share/org.gambas.*" & "\n")
-  FMain.TerminalViewProyecto.Input("clear" & "\n")
+  ' --- Limpiar terminal y procesos ---
+  Try FMain.TerminalViewProyecto.Input("rm -rf " & User.Home & "/.local/share/org.gambas.*" & "\n")
+  Try FMain.TerminalViewProyecto.Input("clear" & "\n")
   Wait 0.2
 
   ' Detiene el proceso Bash (intentos cortos, no bloqueantes)
@@ -33,28 +32,18 @@ Public Sub CerrarTodo()
     Endif
   Endif
 
+  ' --- Limpiar interfaz ---
+  FMain.txtProyecto.Clear
+  FMain.DirViewProyecto.Root = User.Home
+  FMain.TextBoxUsuario.Clear
+  FMain.TextBoxServidor.Clear
+
   ' Cierra la conexión a la BBDD si existe y está abierta
-  If Not IsNull(m_OnOff_y_Red.meConn) Then
-    If m_OnOff_y_Red.meConn.Opened Then
-      m_OnOff_y_Red.meConn.Close()
+  If Not IsNull(m_ConexionBD.mConn) Then
+    If m_ConexionBD.mConn.Opened Then
+      m_ConexionBD.mConn.Close()
     Endif
-    m_OnOff_y_Red.meConn = Null
-  Endif
-
-  ' Cerrar UI y salir
-  FMain.Close
-  Quit
-
-Catch
-  ' Aquí cae cualquier error ocurrido arriba; lo logueamos y hacemos una limpieza mínima.
-  Print "Error en CerrarTodo: " & Error.Text & "  (" & Error.Where & ")"
-
-  ' Intento de limpieza mínimo (no garantizado si hay errores graves)
-  If Not IsNull(m_OnOff_y_Red.meConn) Then
-    If m_OnOff_y_Red.meConn.Opened Then
-      Try m_OnOff_y_Red.meConn.Close()
-    Endif
-    m_OnOff_y_Red.meConn = Null
+    m_ConexionBD.mConn = Null
   Endif
 
   ' Forzamos salida para no quedar en estado inconsistente
@@ -162,5 +151,73 @@ Public Sub DirectorioOcultoApp()
   If Not File.RealPath(User.Home & "/.gbpublisher/python/footnotes.py") Then
     Copy "./footnotes.py" To User.Home & "/.gbpublisher/python/footnotes.py"
   End If
+
+End
+
+Public Sub CargarUsuarios()
+
+  Dim rUsuarios As Result
+  Dim iRow As Integer
+  Dim iCol As Integer
+
+  rUsuarios = m_ConexionBD.mConn.Exec("SELECT usuario, en_linea FROM usuarios WHERE activo = 1 ORDER BY en_linea DESC, usuario ASC")
+
+  ' Limpiar el GridView
+  FMain.TableViewUsuarios.Clear
+
+  ' Si no hay datos, establecer el grid vacío y salir
+  If rUsuarios = Null Or rUsuarios.Count = 0 Then
+    FMain.TableViewUsuarios.Rows.Count = 0
+    FMain.TableViewUsuarios.Columns.Count = 0
+    Return
+  Endif
+
+  ' Configurar columnas y filas
+  FMain.TableViewUsuarios.Columns.Count = rUsuarios.Fields.Count
+  FMain.TableViewUsuarios.Rows.Count = rUsuarios.Count
+  FMain.TableViewUsuarios.MoveTo(0, 0)
+
+  ' Poblar los datos del resultado en el GridView
+  iRow = 0
+  For Each rUsuarios
+    For iCol = 0 To rUsuarios.Fields.Count - 1
+      If IsNull(rUsuarios[iCol]) Then
+        FMain.TableViewUsuarios[iRow, iCol].Text = ""
+      Else
+        ' Si es la columna "en_linea" (índice 1), mostrar texto
+        If iCol = 1 Then
+          FMain.TableViewUsuarios[iRow, iCol].Text = IIf(CBool(rUsuarios[iCol]), "Conectado", "")
+        Else
+          FMain.TableViewUsuarios[iRow, iCol].Text = rUsuarios[iCol]
+        End If
+      Endif
+    Next
+    iRow += 1
+  Next
+
+End
+
+Public Sub DisenarTableViewUsuarios(grid As GridView)
+
+  With grid
+    .Header = True
+    .Grid = True
+    .Columns.Count = 3
+
+    ' Configuración de columnas
+    For i As Integer = 0 To 2
+      Select Case i
+        Case 0
+          .Columns[i].Title = "Usuario"
+          .Columns[i].Width = 150
+        Case 1
+          .Columns[i].Title = "Estado"
+          .Columns[i].Width = 150
+        Case 2
+          .Columns[i].Title = "Proyecto"
+          .Columns[i].Width = 300
+      End Select
+    Next
+  End With
 
 End

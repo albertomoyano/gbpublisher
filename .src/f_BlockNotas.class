@@ -12,6 +12,8 @@ Public Sub Form_Open()
 
   CargarNotas()
 
+  f_BlockNotas.Title = "Block de notas (usuario en curso: " & m_InicioCierre.UsuarioEnCurso & ")"
+
   With gridNotas
     .Header = True
     .Grid = True
@@ -19,109 +21,60 @@ Public Sub Form_Open()
     .Columns[0].Title = "id"
     .Columns[0].Width = 0
     .Columns[1].Title = "Asunto"
-    ' .Columns[1].Width = 800
   End With
 
   txtAsunto.Enabled = False
   txtContenido.Enabled = False
 
-  tbNuevo.Visible = True
-  tbBorrar.Visible = False
+  btnNuevo.Visible = True
+  btnBorrar.Visible = False
   btnGuardar.Visible = False
   btnGuardarMod.Visible = False
 
 End
 
-' Función para cargar y actualizar la grilla
+' -----------------------------
+' Función para cargar notas
+' -----------------------------
 Public Sub CargarNotas()
 
-  Contenido = m_OnOff_y_Red.meConn.Exec("SELECT * FROM block_notas ORDER BY id DESC")
+  Contenido = m_ConexionBD.mConn.Exec(
+    "SELECT b.*, u.usuario FROM block_notas b " &
+    "JOIN usuarios u ON b.id_usuario = u.id " &
+    "ORDER BY b.id DESC")
+
   gridNotas.Rows.Count = Contenido.Count
   gridNotas.Refresh()
 
 End
 
+' -----------------------------
+' Cerrar formulario
+' -----------------------------
 Public Sub btnCerrar_Click()
 
   Me.Close
 
 End
 
-Public Sub btnGuardarMod_Click()
-
-  Dim miEdit As Result
-
-  Try miEdit = m_OnOff_y_Red.meConn.Edit("block_notas", "id=" & ID_block.Text)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al editar: " & Error.Text)
-    Return
-  Endif
-
-  With miEdit
-    !asunto = txtAsunto.Text
-    !contenido = txtContenido.Text
-    Try .Update()
-    If Error Then
-      m_Sonido.sonar("Error")
-      Message.Error("Error al actualizar: " & Error.Text)
-      Return
-    Endif
-  End With
-
-  CargarNotas()
-  LimpiarCamposNotas()
-  m_Sonido.sonar("Info")
-  Message.Info("Los cambios se guardaron con éxito.")
-
-  txtAsunto.Enabled = False
-  txtContenido.Enabled = False
-
-  tbNuevo.Visible = True
-  tbBorrar.Visible = False
-  btnGuardar.Visible = False
-  btnGuardarMod.Visible = False
-
-End
-
-Public Sub tbNuevo_Click()
-
-  ' Limpiamos los campos
-  LimpiarCamposNotas()
-
-  ' Habilitamos los campos de entrada
-  txtAsunto.Enabled = True
-  txtContenido.Enabled = True
-  txtBuscar.Enabled = False
-
-  ' Ocultamos/mostramos botones según sea necesario
-  tbNuevo.Visible = False
-  tbBorrar.Visible = False
-  btnGuardar.Visible = True
-  btnGuardarMod.Visible = False
-
-  ' Obtenemos el último ID y sumamos +1 para el nuevo registro
-  Dim resultado As Result
-  resultado = m_OnOff_y_Red.meConn.Exec("SELECT MAX(id) FROM block_notas LIMIT 1")
-
-  Dim Idn As Integer
-  ' Si no hay ninguna entrada entonces arrancamos desde 0
-  If resultado["MAX(id)"] = Null Then
-    Idn = 0
-  Else
-    Idn = CInt(resultado["MAX(id)"]) + 1
-  Endif
-
-  ID_block.Text = Idn
-  txtAsunto.SetFocus
-
-End
-
+' -----------------------------
+' Guardar nueva nota
+' -----------------------------
 Public Sub btnGuardar_Click()
 
   Dim miCreate As Result
+  Dim UsuarioID As Integer
+  Dim resultado As Result
 
-  Try miCreate = m_OnOff_y_Red.meConn.Create("block_notas")
+  ' Obtener el ID del usuario actual
+  resultado = m_ConexionBD.mConn.Exec("SELECT id FROM usuarios WHERE usuario = '" & m_InicioCierre.UsuarioEnCurso & "' LIMIT 1")
+  If resultado.Count = 0 Then
+    Message.Error("No se encontró el usuario actual en la base de datos.")
+    Return
+  End If
+  UsuarioID = CInt(resultado["id"])
+
+  Try miCreate = m_ConexionBD.mConn.Create("block_notas")
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("Error al crear: " & Error.Text)
@@ -129,15 +82,17 @@ Public Sub btnGuardar_Click()
   Endif
 
   With miCreate
-    !id = ID_block.Text
+    !id = ID_block.Value
     !asunto = txtAsunto.Text
     !contenido = txtContenido.Text
+    !id_usuario = UsuarioID
+    !fecha = Now
     Try .Update()
     If Error Then
       m_Sonido.sonar("Error")
       Message.Error("Error al guardar: " & Error.Text)
       Return
-    Endif
+    End If
   End With
 
   CargarNotas()
@@ -149,14 +104,167 @@ Public Sub btnGuardar_Click()
   txtContenido.Enabled = False
   txtBuscar.Enabled = True
 
-  tbNuevo.Visible = True
-  tbBorrar.Visible = False
+  btnNuevo.Visible = True
+  btnBorrar.Visible = False
   btnGuardar.Visible = False
   btnGuardarMod.Visible = False
 
 End
 
-Public Sub tbBorrar_Click()
+' -----------------------------
+' Modificar nota existente
+' -----------------------------
+Public Sub btnGuardarMod_Click()
+
+  Dim miEdit As Result
+  Dim UsuarioID As Integer
+  Dim resultado As Result
+
+  ' Obtener el ID del usuario actual
+  resultado = m_ConexionBD.mConn.Exec("SELECT id FROM usuarios WHERE usuario = '" & m_InicioCierre.UsuarioEnCurso & "' LIMIT 1")
+  If resultado.Count = 0 Then
+    Message.Error("No se encontró el usuario actual en la base de datos.")
+    Return
+  End If
+  UsuarioID = CInt(resultado["id"])
+
+  ' Verificar que la nota seleccionada pertenece al usuario actual
+  Contenido.MoveTo(gridNotas.Row)
+  If Contenido["id_usuario"] <> UsuarioID Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No puede modificar notas de otros usuarios.")
+    Return
+  End If
+
+  Try miEdit = m_ConexionBD.mConn.Edit("block_notas", "id=" & ID_block.Value)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al editar: " & Error.Text)
+    Return
+  End If
+
+  With miEdit
+    !asunto = txtAsunto.Text
+    !contenido = txtContenido.Text
+    Try .Update()
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al actualizar: " & Error.Text)
+      Return
+    End If
+  End With
+
+  CargarNotas()
+  LimpiarCamposNotas()
+  m_Sonido.sonar("Info")
+  Message.Info("Los cambios se guardaron con éxito.")
+
+  txtAsunto.Enabled = False
+  txtContenido.Enabled = False
+  txtBuscar.Enabled = True
+
+  btnNuevo.Visible = True
+  btnBorrar.Visible = False
+  btnGuardar.Visible = False
+  btnGuardarMod.Visible = False
+
+End
+
+' -----------------------------
+' Botón nueva nota
+' -----------------------------
+Public Sub btnNuevo_Click()
+
+  LimpiarCamposNotas()
+
+  txtAsunto.Enabled = True
+  txtContenido.Enabled = True
+  txtBuscar.Enabled = False
+  DateBoxBlockNotas.Value = Now  ' Fecha actual
+
+  btnNuevo.Visible = False
+  btnBorrar.Visible = False
+  btnGuardar.Visible = True
+  btnGuardarMod.Visible = False
+
+  ' Obtener último ID
+  Dim resultado As Result
+  resultado = m_ConexionBD.mConn.Exec("SELECT MAX(id) FROM block_notas LIMIT 1")
+
+  Dim Idn As Integer
+  If resultado["MAX(id)"] = Null Then
+    Idn = 0
+  Else
+    Idn = CInt(resultado["MAX(id)"]) + 1
+  Endif
+
+  ID_block.Value = Idn
+  txtAsunto.SetFocus
+
+End
+
+' -----------------------------
+' Seleccionar nota en grilla
+' -----------------------------
+Public Sub gridNotas_Click()
+
+  Contenido.MoveTo(gridNotas.Row)
+
+  ' Cargar datos en campos
+  ID_block.Value = Contenido["id"]
+  txtAsunto.Text = Contenido["asunto"]
+  txtContenido.Text = Contenido["contenido"]
+  txtUsuario.Text = Contenido["usuario"]
+  DateBoxBlockNotas.Value = Contenido["fecha"]
+
+  txtAsunto.Enabled = True
+  txtContenido.Enabled = True
+  txtContenido.ReadOnly = False
+
+  btnNuevo.Visible = True
+  btnBorrar.Visible = True
+  btnGuardar.Visible = False
+
+  ' Validar modificación solo para autor
+  Dim UsuarioID As Integer
+  Dim resultado As Result
+  resultado = m_ConexionBD.mConn.Exec("SELECT id FROM usuarios WHERE usuario = '" & m_InicioCierre.UsuarioEnCurso & "' LIMIT 1")
+  If resultado.Count = 0 Then Return
+  UsuarioID = CInt(resultado["id"])
+
+  If Contenido["id_usuario"] = UsuarioID Then
+    btnGuardarMod.Visible = True
+    btnBorrar.Visible = True
+  Else
+    btnGuardarMod.Visible = False
+    btnBorrar.Visible = False
+    m_Sonido.sonar("Warning")
+    Message.Warning("Solo puede modificar sus propias notas.")
+  End If
+
+End
+
+Public Sub LimpiarCamposNotas()
+
+  txtBuscar.Text = ""
+  ID_block.Value = ""
+  txtAsunto.Text = ""
+  txtContenido.Text = ""
+
+End
+
+Public Sub gridNotas_Data(Row As Integer, Column As Integer)
+
+  If (Contenido <> Null) Then
+    If Row >= 0 Then
+      Contenido.moveTo(Row)
+      Try gridNotas.Data.Text = Str(Contenido[Column])
+    Endif
+  Endif
+
+End
+
+Public Sub btnBorrar_Click()
 
   'Chequeamos primero que se haya elegido una entrada
   If ID_block.Text = "" Then
@@ -165,10 +273,16 @@ Public Sub tbBorrar_Click()
     Return
   Endif
 
-  m_Sonido.sonar("Question")
+  ' Verificar si el usuario logueado es el creador de la nota
+  If m_InicioCierre.UsuarioEnCurso <> txtUsuario.Text Then
+    m_Sonido.sonar("Error")
+    Message.Error("No tienes permiso para eliminar esta nota. Solo el autor puede hacerlo.")
+    Return
+  Endif
+
   If Message.Question("¿Desea borrar la entrada?", "Si", "No") = 1 Then
-    ' Corregido: la tabla se llama "block_notas"
-    Try m_OnOff_y_Red.meConn.Exec("DELETE FROM block_notas WHERE id=" & ID_block.Text)
+    ' Corregido: la tabla es "block_notas", no "notas"
+    Try m_ConexionBD.mConn.Exec("DELETE FROM block_notas WHERE id=" & ID_block.Text)
     If Error Then
       m_Sonido.sonar("Error")
       Message.Error("Error al eliminar: " & Error.Text)
@@ -186,17 +300,17 @@ Public Sub tbBorrar_Click()
   txtContenido.Enabled = False
   txtBuscar.Enabled = True
 
-  tbNuevo.Visible = True
-  tbBorrar.Visible = False
+  btnNuevo.Visible = True
+  btnBorrar.Visible = False
   btnGuardar.Visible = False
   btnGuardarMod.Visible = False
 
 End
 
-Public Sub BtnBuscar_Click()
+Public Sub btnBuscar_Click()
 
-  tbNuevo.Visible = True
-  tbBorrar.Visible = False
+  btnNuevo.Visible = True
+  btnBorrar.Visible = False
   btnGuardar.Visible = False
   btnGuardarMod.Visible = False
 
@@ -209,10 +323,13 @@ Public Sub BtnBuscar_Click()
 
   Dim Consulta As String
   ' Crear la consulta SQL basada en el texto introducido
-  Consulta = "SELECT * FROM block_notas WHERE asunto LIKE '%" & txtBuscar.Text & "%' OR contenido LIKE '%" & txtBuscar.Text & "%'"
+  Consulta = "SELECT b.*, u.usuario FROM block_notas b " &
+    "JOIN usuarios u ON b.id_usuario = u.id " &
+    "WHERE b.asunto LIKE '%" & txtBuscar.Text & "%' OR b.contenido LIKE '%" & txtBuscar.Text & "%' " &
+    "ORDER BY b.id DESC"
 
   ' Ejecutar la consulta y verificar si hay resultados
-  Contenido = m_OnOff_y_Red.meConn.Exec(Consulta)
+  Contenido = m_ConexionBD.mConn.Exec(Consulta)
 
   If Contenido.Count = 0 Then
     ' No hay resultados
@@ -220,82 +337,44 @@ Public Sub BtnBuscar_Click()
     Message.Info("No se ha encontrado ningún resultado.")
     Return
   Else
+    txtAsunto.Text = ""
+    txtContenido.Text = ""
+    txtUsuario.Text = ""
     ' Hay resultados: cargar los datos en el grid
     CargarDatos(Consulta, gridNotas)
   Endif
 
 End
 
-Public Sub Form_Close()
-
-  Me.Close
-
-End
-
-Public Sub gridNotas_Data(Row As Integer, Column As Integer)
-
-  If (Contenido <> Null) Then
-    If Row >= 0 Then
-      Contenido.moveTo(Row)
-      ' Column 0 del grid = columna 0 del Result (id)
-      ' Column 1 del grid = columna 1 del Result (asunto)
-      Try gridNotas.Data.Text = Str(Contenido[Column])
-    Endif
-  Endif
-
-End
-
-Public Sub gridNotas_Click()
-
-  txtAsunto.Enabled = True
-  txtContenido.Enabled = True
-  tbNuevo.Visible = True
-  tbBorrar.Visible = True
-  btnGuardar.Visible = False
-  btnGuardarMod.Visible = True
-  txtContenido.ReadOnly = False
-
-  ' Acceder directamente al Result usando la fila seleccionada
-  Contenido.MoveTo(gridNotas.Row)
-  ID_block.Text = Contenido["id"]
-  txtAsunto.Text = Contenido["asunto"]
-  txtContenido.Text = Contenido["contenido"]
-
-End
-
 Public Sub CargarDatos(Consulta As String, Grid As GridView)
 
-  Dim i As Integer
-
-  ' Ejecutar la consulta
-  Contenido = m_OnOff_y_Red.meConn.Exec(Consulta)
-
-  ' Si no hay resultados
+  Contenido = m_ConexionBD.mConn.Exec(Consulta)
   If Contenido.Count = 0 Then
     m_Sonido.sonar("Info")
     Message.Info("No se ha encontrado ningún resultado.")
     Return
-  Endif
+  End If
 
-  ' Limpiar el Grid antes de mostrar los resultados
   Grid.Clear()
   Grid.Rows.Count = Contenido.Count
 
-  ' Llenar el Grid con los resultados
-  For i = 0 To Contenido.Count - 1
-    For j As Integer = 0 To Grid.Columns.Count - 1
-      Grid[i, j].Text = Contenido[j]
-    Next
+  For i As Integer = 0 To Contenido.Count - 1
+    Grid[i, 0].Text = Contenido["id"]
+    Grid[i, 1].Text = Contenido["asunto"]
     Contenido.MoveNext
   Next
 
 End
 
-Public Sub LimpiarCamposNotas()
+Public Sub btnRefrescarGridNotas_Click()
 
-  txtBuscar.Text = ""
-  ID_block.Text = ""
   txtAsunto.Text = ""
   txtContenido.Text = ""
+  txtUsuario.Text = ""
+  btnGuardar.Visible = False
+  btnGuardarMod.Visible = False
+  btnBorrar.Visible = False
+  gridNotas.Clear
+  CargarNotas()
 
 End
