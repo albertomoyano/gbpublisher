@@ -2,9 +2,43 @@
 
 Public Sub Form_Open()
 
+  ' Limpiar campos al iniciar
   TextBoxIP.Text = ""
   TextBoxUsuario.Text = ""
   TextBoxClave.Text = ""
+
+  ' Comprobar si ya existe una conexión activa
+  If Object.IsValid(m_ConexionBD) And Object.IsValid(m_ConexionBD.mConn) Then
+    If m_ConexionBD.mConn.Opened Then
+      ' Hay una conexión activa
+      m_Sonido.sonar("Error")
+      Message.Error("Ya existe una conexión activa al servidor " & FMain.TextBoxServidor.Text & Chr(10) &
+        "Debe desconectarse antes de conectarse a un nuevo servidor.")
+
+      ' Mostrar botón de desconexión
+      btnConectarServer.Visible = False
+      btnDesconectarServer.Visible = True
+
+      ' Deshabilitar campos para evitar nueva conexión
+      TextBoxIP.Enabled = False
+      TextBoxUsuario.Enabled = False
+      TextBoxClave.Enabled = False
+    Else
+      ' No hay conexión activa
+      btnConectarServer.Visible = True
+      btnDesconectarServer.Visible = False
+      TextBoxIP.Enabled = True
+      TextBoxUsuario.Enabled = True
+      TextBoxClave.Enabled = True
+    Endif
+  Else
+    ' No existe aún el módulo o la conexión
+    btnConectarServer.Visible = True
+    btnDesconectarServer.Visible = False
+    TextBoxIP.Enabled = True
+    TextBoxUsuario.Enabled = True
+    TextBoxClave.Enabled = True
+  Endif
 
 End
 
@@ -15,14 +49,12 @@ Public Sub btnCancelar_Click()
 End
 
 Public Sub ToggleButtonMostrar_Click()
-  ' Invertimos la lógica: mostrar caracteres si el botón está activado
 
   If ToggleButtonMostrar.Value Then
-    TextBoxClave.Password = False  ' Mostrar texto
+    TextBoxClave.Password = False
   Else
-    TextBoxClave.Password = True   ' Ocultar texto
+    TextBoxClave.Password = True
   Endif
-  ' Forzar redibujado y mantener el foco correctamente
   TextBoxClave.Refresh()
   TextBoxClave.SetFocus()
 
@@ -35,7 +67,7 @@ Public Sub btnConectarServer_Click()
   Dim clave As String = TextBoxClave.Text
   Dim iResultado As Integer
 
-  ' Validar que se haya seleccionado una IP
+  ' Validaciones básicas
   If Trim(ip) = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("Ingrese una IP correcta")
@@ -43,7 +75,6 @@ Public Sub btnConectarServer_Click()
     Return
   End If
 
-  ' Validar usuario
   If Trim(usuario) = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("Ingrese el nombre de usuario")
@@ -51,7 +82,6 @@ Public Sub btnConectarServer_Click()
     Return
   End If
 
-  ' Validar clave ANTES de encriptar
   If Trim(clave) = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("Ingrese la contraseña")
@@ -59,11 +89,10 @@ Public Sub btnConectarServer_Click()
     Return
   End If
 
-  ' Encriptar la clave con SHA256
-  Dim sClaveEncriptada As String
-  sClaveEncriptada = Hash.SHA256(clave)
+  ' Encriptar clave
+  Dim sClaveEncriptada As String = Hash.SHA256(clave)
 
-  ' Validar conectividad del servidor
+  ' Verificar conectividad
   If Not ValidarConectividad(ip) Then
     m_Sonido.sonar("Error")
     Message.Error("No se puede conectar al servidor " & ip & Chr(10) &
@@ -71,12 +100,15 @@ Public Sub btnConectarServer_Click()
     Return
   End If
 
-  ' AQUÍ: pasar la clave ENCRIPTADA
+  ' Intentar conexión
   iResultado = m_ConexionBD.ConexionAbierta(ip, usuario, sClaveEncriptada)
 
   Select Case iResultado
-    Case 1  ' Login exitoso
-      m_InicioCierre.UsuarioEnCurso = usuario ' Guardar usuario para uso global
+    Case 1
+      m_Sonido.sonar("Info")
+      Message.Info("Conexión exitosa al servidor " & ip)
+
+      m_InicioCierre.UsuarioEnCurso = usuario
       FMain.MenuInicio.Visible = True
       FMain.ButtonCerrarApp.Visible = False
       FMain.ButtonNotitas.Enabled = True
@@ -84,20 +116,74 @@ Public Sub btnConectarServer_Click()
       FMain.ButtonAdminRepositorios.Enabled = True
       FMain.ButtonConsultasSQL.Enabled = True
       FMain.ButtonCorregirBib.Enabled = True
+      FMain.ButtonBitacora.Enabled = True
       FMain.TextBoxUsuario.Text = usuario
       FMain.TextBoxServidor.Text = ip
-      ' Cargar usuarios en el TableView ahora que hay conexión
       FMain.TableViewUsuarios.Visible = True
       m_InicioCierre.CargarUsuarios()
+
       Me.Close()
-    Case 2  ' Usuario ya conectado o inactivo
-      ' El mensaje ya se mostró en ConexionAbierta
-    Case 3  ' Credenciales incorrectas
+
+    Case 2
+      m_Sonido.sonar("Error")
+      Message.Error("El usuario ya está conectado o está inactivo.")
+
+    Case 3
       m_Sonido.sonar("Error")
       Message.Error("Usuario y/o clave incorrectos.")
-    Case Else  ' Error de conexión o consulta
-      ' El mensaje ya se mostró en ConexionAbierta
+
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("Error al intentar conectar al servidor.")
   End Select
+
+End
+
+Public Sub btnDesconectarServer_Click()
+
+  ' Confirmar desconexión
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Desea desconectarse del servidor actual?", "Sí", "No") = 1 Then
+
+    Try m_ConexionBD.mConn.Close
+
+    If Not Error Then
+      m_Sonido.sonar("Info")
+      Message.Info("Se ha desconectado correctamente del servidor.")
+
+      ' Actualizar botones
+      btnConectarServer.Visible = True
+      btnDesconectarServer.Visible = False
+
+      ' Limpiar datos y habilitar campos
+      TextBoxIP.Enabled = True
+      TextBoxUsuario.Enabled = True
+      TextBoxClave.Enabled = True
+      TextBoxIP.Text = ""
+      TextBoxUsuario.Text = ""
+      TextBoxClave.Text = ""
+
+      ' Limpiar en FMain
+      FMain.TextBoxServidor.Text = ""
+      FMain.TextBoxUsuario.Text = ""
+      FMain.MenuInicio.Visible = False
+      FMain.ButtonCerrarApp.Visible = True
+      FMain.TableViewUsuarios.Visible = False
+
+      ' Deshabilitar botones del menú
+      FMain.ButtonNotitas.Enabled = False
+      FMain.ButtonBolckNotas.Enabled = False
+      FMain.ButtonAdminRepositorios.Enabled = False
+      FMain.ButtonConsultasSQL.Enabled = False
+      FMain.ButtonCorregirBib.Enabled = False
+      FMain.ButtonBitacora.Enabled = False
+
+    Else
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo cerrar la conexión correctamente: " & Error.Text)
+    End If
+
+  End If
 
 End
 
@@ -107,40 +193,25 @@ Private Function ValidarConectividad(ip As String) As Boolean
   Dim comando As String
   Dim contenido As String
 
-  ' Crear comando que guarde el resultado en un archivo temporal
   comando = "ping -c 1 -W 3 " & ip & " > " & archivo & " 2>&1; echo $? >> " & archivo
 
-  ' Ejecutar el comando
   Try Shell comando Wait
+  If Error Then Return False
 
-  If Error Then
-    Return False
-  End If
-
-  ' Leer el archivo de resultado
   If Exist(archivo) Then
     Try contenido = File.Load(archivo)
-
     If Not Error Then
-      ' El último carácter debería ser el código de salida
       Dim lineas As String[] = Split(contenido, "\n")
       Dim codigoSalida As String = ""
-
       If lineas.Count > 0 Then
         codigoSalida = Trim(lineas[lineas.Count - 1])
         If codigoSalida = "" And lineas.Count > 1 Then
           codigoSalida = Trim(lineas[lineas.Count - 2])
         End If
       End If
-
-      ' Limpiar archivo temporal
       Try Kill archivo
-
-      ' Código 0 significa éxito
       Return codigoSalida = "0"
     End If
-
-    ' Limpiar archivo temporal en caso de error
     Try Kill archivo
   End If
 
@@ -148,11 +219,10 @@ Private Function ValidarConectividad(ip As String) As Boolean
 
 End
 
-' EVENTO AL PRESIONAR ENTER EN EL CAMPO CLAVE
 Public Sub TextBoxClave_KeyPress()
 
   If Key.Code = Key.Return Then
-    Stop Event  ' evita que Enter dispare otro evento
+    Stop Event
     btnConectarServer_Click()
   Endif
 
