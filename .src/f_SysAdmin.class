@@ -45,7 +45,7 @@ Public Sub Form_Open()
 End
 
 ' ============================================
-' CREAR BASE DE DATOS SQLITE LOCAL
+' CREAR BASE DE DATOS SQLITE LOCAL PARA ADMIN
 ' ============================================
 Public Sub CreateDataBase()
 
@@ -249,6 +249,7 @@ Private Sub HabilitarABMUsuarios()
   LabelSesion.Text = "Conectado como administrador: " & sUsuarioActual & " @ " & sServidorActual
 
   CargarUsuariosDelServidor()
+  CargarProyectosDelServidor()
 
 End
 
@@ -688,5 +689,270 @@ Public Sub btnCrearUsuario_Click()
   txtClaveUsuario.Text = ""
   ' Asignar fecha actual al DateBox
   DateBoxCreacion.Value = Now
+
+End
+
+' ============================================
+' BOTÓN: TODOS LOS PROYECTOS (Refrescar)
+' ============================================
+Public Sub btnProyectosTodos_Click()
+
+  CargarProyectosDelServidor()
+
+End
+
+' ============================================
+' BOTÓN: PROYECTOS EN CURSO (Activos)
+' ============================================
+Public Sub btnProyectosEnCurso_Click()
+
+  Dim rs As Result
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor")
+    Return
+  Endif
+
+  ' Configurar el TableView (mismo formato)
+  ConfigurarTableViewProyectos()
+
+  ' ✅ Filtrar solo por activo = 1 (ocupado es indistinto)
+  rs = hConnServidor.Exec("SELECT * FROM proyectos " &
+    "WHERE activo = 1 " &
+    "ORDER BY fecha_creacion DESC;")
+
+  LlenarTableViewProyectos(rs)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error cargando proyectos en curso: " & Error.Text)
+
+End
+
+' ============================================
+' BOTÓN: PROYECTOS ARCHIVADOS (Inactivos)
+' ============================================
+Public Sub btnProyectosArchivados_Click()
+
+  Dim rs As Result
+  Dim i As Integer
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor")
+    Return
+  Endif
+
+  ' Configurar el TableView (mismo formato)
+  ConfigurarTableViewProyectos()
+
+  ' ✅ Filtrar por activo = 0
+  rs = hConnServidor.Exec("SELECT * FROM proyectos " &
+    "WHERE activo = 0 " &
+    "ORDER BY fecha_creacion DESC;")
+
+  LlenarTableViewProyectos(rs)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error cargando proyectos archivados: " & Error.Text)
+
+End
+
+' ============================================
+' CONFIGURAR ESTRUCTURA DEL TABLEVIEW
+' ============================================
+Private Sub ConfigurarTableViewProyectos()
+
+  With TableViewProyectos
+    .Clear
+    .Rows.Count = 0
+    .Columns.Count = 7
+
+    .Columns[0].Title = "ID"
+    .Columns[0].Width = 0
+    .Columns[1].Title = "Proyecto"
+    .Columns[1].Width = 250
+    .Columns[2].Title = "Activo"
+    .Columns[2].Width = 0
+    .Columns[3].Title = "Ocupado"
+    .Columns[3].Width = 80
+    .Columns[4].Title = "Tipo"
+    .Columns[4].Width = 200
+    .Columns[5].Title = "Fecha Creación"
+    .Columns[5].Width = 150
+    .Columns[6].Title = "Última Modificación"
+    .Columns[6].Width = 150
+
+    .Mode = Select.Single
+    .Header = True
+  End With
+
+End
+
+' ============================================
+' LLENAR TABLEVIEW CON DATOS
+' ============================================
+Private Sub LlenarTableViewProyectos(rs As Result)
+
+  Dim i As Integer
+
+  If rs.Available Then
+    TableViewProyectos.Rows.Count = rs.Count
+    i = 0
+
+    While rs.Available
+      TableViewProyectos[i, 0].Text = rs["id"]
+      TableViewProyectos[i, 1].Text = rs["nombre"]
+      TableViewProyectos[i, 2].Text = rs["activo"]
+
+      ' Columna "Tipo"
+      Select Case rs["tipo_producto"]
+        Case 1
+          TableViewProyectos[i, 4].Text = "Revista en markdown"
+        Case 2
+          TableViewProyectos[i, 4].Text = "Libro en markdown"
+        Case 3
+          TableViewProyectos[i, 4].Text = "Libro en LaTeX"
+        Default
+          TableViewProyectos[i, 4].Text = "Desconocido"
+      End Select
+
+      ' Columna "Ocupado" con color
+      If rs["ocupado"] = True Or rs["ocupado"] = 1 Then
+        TableViewProyectos[i, 3].Text = "SÍ"
+        TableViewProyectos[i, 3].Background = Color.RGB(255, 200, 200)
+      Else
+        TableViewProyectos[i, 3].Text = "NO"
+        TableViewProyectos[i, 3].Background = Color.RGB(200, 255, 200)
+      Endif
+
+      ' Fecha de Creación
+      If rs["fecha_creacion"] Then
+        Try TableViewProyectos[i, 5].Text = Format(rs["fecha_creacion"], "dd/mm/yyyy hh:nn")
+      Endif
+
+      ' Fecha de Modificación
+      If rs["fecha_modificacion"] Then
+        Try TableViewProyectos[i, 6].Text = Format(rs["fecha_modificacion"], "dd/mm/yyyy hh:nn")
+      Endif
+
+      i += 1
+      rs.MoveNext()
+    Wend
+  Else
+    ' No hay proyectos
+    TableViewProyectos.Rows.Count = 0
+  Endif
+
+End
+
+' ============================================
+' CARGAR PROYECTOS DEL SERVIDOR (Refactorizado)
+' ============================================
+Private Sub CargarProyectosDelServidor()
+
+  Dim rs As Result
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor")
+    Return
+  Endif
+
+  ' Configurar el TableView
+  ConfigurarTableViewProyectos()
+
+  ' Todos los proyectos
+  rs = hConnServidor.Exec("SELECT * FROM proyectos ORDER BY fecha_creacion DESC;")
+
+  LlenarTableViewProyectos(rs)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error cargando proyectos: " & Error.Text)
+
+End
+
+' ============================================
+' EVENTO CLICK EN TABLEVIEW PROYECTOS
+' ============================================
+Public Sub TableViewProyectos_Click()
+
+  Dim iRow As Integer = TableViewProyectos.Row
+  Dim iProyectoID As Integer
+  Dim rs As Result
+  Dim bActivo As Boolean
+
+  If iRow < 0 Then Return
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    Return
+  Endif
+
+  ' Obtener ID del proyecto
+  iProyectoID = Val(TableViewProyectos[iRow, 0].Text)
+
+  ' Consultar estado
+  rs = hConnServidor.Exec("SELECT activo FROM proyectos WHERE id = " & iProyectoID & ";")
+
+  If rs.Available Then
+    bActivo = rs["activo"]
+
+    ' Reflejar el estado en los RadioButtons
+    RadioButtonEnCurso.Value = bActivo
+    RadioButtonArchivar.Value = Not bActivo
+  Endif
+
+Catch
+  Print "Error al cargar estado del proyecto: " & Error.Text
+
+End
+
+' ============================================
+' GUARDAR CAMBIOS DE PROYECTO
+' ============================================
+Public Sub btnGuardarCambiosProyecto_Click()
+
+  Dim iRow As Integer = TableViewProyectos.Row
+  Dim iProyectoID As Integer
+  Dim bNuevoEstado As Boolean
+  Dim sNombreProyecto As String
+
+  ' Verificar que hay un proyecto seleccionado
+  If iRow < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un proyecto de la tabla para modificar")
+    Return
+  Endif
+
+  ' Verificar conexión
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor")
+    Return
+  Endif
+
+  ' Obtener datos del proyecto seleccionado
+  iProyectoID = Val(TableViewProyectos[iRow, 0].Text)
+  sNombreProyecto = TableViewProyectos[iRow, 1].Text
+
+  ' Obtener nuevo estado desde los RadioButtons
+  bNuevoEstado = RadioButtonEnCurso.Value
+
+  hConnServidor.Exec("UPDATE proyectos SET activo = " &
+    If(bNuevoEstado, "TRUE", "FALSE") &
+      ", fecha_modificacion = NOW() " &
+      "WHERE id = " & iProyectoID & ";")
+
+    m_Sonido.sonar("Info")
+    Message.Info("Estado del proyecto '" & sNombreProyecto & "' actualizado correctamente")
+
+    CargarProyectosDelServidor()
+
+  Catch
+    m_Sonido.sonar("Error")
+    Message.Error("Error guardando cambios: " & Error.Text)
 
 End

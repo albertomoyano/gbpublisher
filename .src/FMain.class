@@ -1385,13 +1385,13 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
   Select Case nTipoProyecto
     Case m_Constantes.TIPO_REVISTA_MD
       Dialog.Title = "Abrir revista (Markdown)"
-      Dialog.Filter = ["*.md", "Revista en Markdown"]
+      Dialog.Filter = ["r-*.md", "Revista en Markdown"]
     Case m_Constantes.TIPO_LIBRO_MD
       Dialog.Title = "Abrir libro (Markdown)"
-      Dialog.Filter = ["*.md", "Libro en Markdown"]
+      Dialog.Filter = ["l-*.md", "Libro en Markdown"]
     Case m_Constantes.TIPO_LIBRO_LATEX
       Dialog.Title = "Abrir libro (LaTeX)"
-      Dialog.Filter = ["*.tex", "Libro en LaTeX"]
+      Dialog.Filter = ["l-*.tex", "Libro en LaTeX"]
   End Select
 
   m_Sonido.sonar("OpenApp")
@@ -1433,86 +1433,125 @@ End
 
 Public Sub AbrirRevistaMD()
 
-  ' Asignamos la ruta seleccionada
-  sRutaSeleccionada = Dialog.Path
+  Dim sRutaSeleccionada As String = Dialog.Path
 
-  txtProyecto.Text = sRutaSeleccionada
-  NombreProyecto = File.Name(sRutaSeleccionada)
-  RutaProyecto = File.Dir(sRutaSeleccionada)
+  If sRutaSeleccionada = "" Then
+    Return
+  Endif
 
-  ' VALIDAR EXTENSIÓN ANTES DE CONTINUAR
   Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
-
-  If sExtension <> "md" Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo seleccionado no es un archivo markdown (.md)." & gb.NewLine &
-      "Archivo: " & sRutaSeleccionada & gb.NewLine &
-      "Extensión encontrada: ." & sExtension & gb.NewLine &
-      "Use la función correspondiente para abrir archivos de ese tipo." & gb.NewLine & "\n" &
-      "No se ejecutará ninguna acción.")
-    txtProyecto.Text = ""
-    Return
-  Endif
-
-  ' VALIDACIÓN ADICIONAL: Verificar que el archivo comience con 'r' (revista)
   Dim sNombreArchivo As String = LCase(File.Name(sRutaSeleccionada))
-  If Left(sNombreArchivo, 1) <> "r" Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo seleccionado no es una revista." & gb.NewLine &
-      "Los archivos de revista deben comenzar con <b>r</b> (en minúscula)." & gb.NewLine &
-      "Se intento abrir: <b>" & File.Name(sRutaSeleccionada) & "</b>")
-    Return
-  Endif
+  Dim NombreProyectoLocal As String = File.Name(sRutaSeleccionada)
+  Dim RutaProyectoLocal As String = File.Dir(sRutaSeleccionada)
 
-  ' *** AQUÍ: Detener y guardar el proyecto anterior (si existe) ***
-  ' Solo detener si hay un proyecto activo (verificar que txtProyecto no esté vacío)
+  ' --- DETERMINAR TIPO SEGÚN NORMAS: r- (revista .md), l- (libro .md/.tex) ---
+  Dim iTipoSeleccionado As Integer = -1
+
+  Select Case True
+    Case Left(sNombreArchivo, 2) = "r-" And sExtension = "md"
+      iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
+
+    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "md"
+      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD
+
+    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
+      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_TEX
+
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine &
+        "Formatos válidos:" & gb.NewLine &
+        "• Revista Markdown: r-nombre.md" & gb.NewLine &
+        "• Libro Markdown: l-nombre.md" & gb.NewLine &
+        "• Libro LaTeX: l-nombre.tex" & gb.NewLine &
+        "Archivo recibido: " & sNombreArchivo)
+      Return
+  End Select
+
+  ' --- Liberar proyecto que esta abierto
   If txtProyecto.Text <> "" Then
+    Dim sProyectoEnCurso As String = File.Name(txtProyecto.Text)
+    m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoEnCurso)
+    m_ConexionBD.mConn.Commit
     m_Timer.DetenerContador()
   Endif
 
+  ' --- BUSCAR EN LA BBDD SI EXISTE EL PROYECTO ---
+  Dim sSQL As String = "SELECT * FROM proyectos WHERE nombre = &1"
+  Dim Contenido As Result = m_ConexionBD.mConn.Exec(sSQL, NombreProyectoLocal)
+  Dim nuevoID As Integer
+
+  If Contenido.Available Then
+    ' --- VALIDACIONES SOBRE EL REGISTRO EXISTENTE ---
+    Dim iTipoBD As Integer = Contenido["tipo_producto"]
+
+    ' 1) Coincidencia de tipo
+    If iTipoBD <> iTipoSeleccionado Then
+      m_Sonido.sonar("Error")
+      Message.Error("El tipo de archivo no coincide con el tipo registrado en la base de datos." & gb.NewLine &
+        "Se esperaba: " & ObtenerDescripcionTipo(iTipoSeleccionado) & gb.NewLine &
+        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
+      Return
+    Endif
+
+    ' 2) Activo? (0 es False y 1 es True)
+    If Not Contenido["activo"] Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El proyecto '" & NombreProyectoLocal & "' está archivado." & gb.NewLine &
+        "Debe solicitar al editor que lo reactive para poder abrirlo.")
+      Return
+    Endif
+
+    ' 3) No ocupado?
+    If Contenido["ocupado"] Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El proyecto '" & NombreProyectoLocal & "' está ocupado en otra máquina." & gb.NewLine &
+        "Lo puede abrir en modo parcial o espere a que se libere.")
+      Return
+    Endif
+
+    nuevoID = Contenido["id"]
+    m_Sonido.sonar("Info")
+    Message.Info("Proyecto encontrado en la base de datos y listo para abrir.")
+  Else
+    ' --- NO EXISTE: CREAR REGISTRO NUEVO (MySQL) ---
+    m_ConexionBD.mConn.Exec("INSERT INTO proyectos (nombre, tipo_producto, activo, ocupado) VALUES (&1, &2, 1, 0)",
+      NombreProyectoLocal, iTipoSeleccionado)
+
+    ' OBTENER LAST_INSERT_ID() EN MYSQL
+    Dim rLast As Result = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
+    If rLast.Available Then
+      nuevoID = rLast[0]
+    Else
+      ' Fallback: si no podemos recuperar el ID, avisar y abortar
+      m_ConexionBD.mConn.Rollback
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo obtener el ID del proyecto insertado. Abortando apertura.")
+      Return
+    Endif
+
+    m_ConexionBD.mConn.Commit
+    m_Sonido.sonar("Info")
+    Message.Info("Proyecto nuevo registrado en la base de datos.")
+  Endif
+
+  ' --- MARCAR NUEVO PROYECTO COMO OCUPADO (1) ---
+  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 1 WHERE id = &1", nuevoID)
+  m_ConexionBD.mConn.Commit
+
+  ' --- ACTUALIZAR ESTADO DE LA APLICACIÓN ---
+  txtProyecto.Text = sRutaSeleccionada
+  NombreProyecto = NombreProyectoLocal
+  RutaProyecto = RutaProyectoLocal
+
+  ' --- LIMPIAR/INICIALIZAR INTERFACES ---
   m_Metadatos.LimpiarCamposMetadatos()
   m_Articulos.LimpiarTextboxArticulos()
   m_Autores.LimpiarTextboxAutores()
-
-  Dim sSQL As String
-  Dim Contenido As Result
-  Dim nuevoID As Integer
-
-  ' Verificar si ya existe el proyecto
-  sSQL = "SELECT id, tipo_producto FROM proyectos WHERE nombre = &1"
-  Contenido = m_ConexionBD.mConn.Exec(sSQL, NombreProyecto)
-
-  If Contenido.Available Then
-    ' El proyecto existe - verificar tipo ANTES de continuar
-    Dim iTipoBD As Integer = Contenido["tipo_producto"]
-
-    If iTipoBD <> m_Constantes.TIPO_REVISTA_MD Then
-      m_Sonido.sonar("Error")
-      Message.Error("El archivo seleccionado no corresponde con el tipo de producto elegido." & gb.NewLine &
-        "Se esperaba: Revista MD" & gb.NewLine &  ' CORRECCIÓN: Decir "Revista MD"
-        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
-      Return  ' CORRECCIÓN: Solo Return, no Me.Close()
-    Endif
-
-    m_Sonido.sonar("Info")
-    Message.Info("El archivo '" & NombreProyecto & "' ya está registrado.")
-    nuevoID = Contenido["id"]
-  Else
-    ' Proyecto nuevo - crear registro
-    Dim ResultadoInsert As Result
-
-    m_ConexionBD.mConn.Exec("INSERT INTO proyectos (nombre, tipo_producto) VALUES (&1, &2)", NombreProyecto, m_Constantes.TIPO_REVISTA_MD)
-    nuevoID = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")[0]
-    m_ConexionBD.mConn.Commit
-
-    ' sSQL = "INSERT INTO proyectos (nombre, tipo_producto) VALUES (&1, &2)"
-    ' ResultadoInsert = m_ConexionBD.mConn.Exec(sSQL, NombreProyecto, m_Constantes.TIPO_REVISTA_MD)
-    ' ' Obtener el ID insertado
-    ' nuevoID = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")[0]
-    m_Sonido.sonar("Info")
-    Message.Info("Proyecto registrado.")
-  Endif
-
+  '
+  '
+  '
+  '
   ' precargamos el combox de los estilos para bib
   CargarCSLBibTeX()
 
@@ -4838,7 +4877,7 @@ End
 
 Public Sub MenuProyectoParcial_Click()
 
-  f_ProyectosParcial.ShowModal()
+  AbrirFormularioModoMedia()
 
 End
 
@@ -4889,5 +4928,27 @@ Public Sub TimerNotitas_Timer()
     m_Sonido.sonar("Info")
     f_NotasRecibidas.Show
   Endif
+
+End
+
+Public Sub AbrirFormularioModoMedia()
+
+  Dim rs As Result
+  Dim sSQL As String
+
+  ' Verificar si hay proyectos activos ANTES de abrir el formulario
+  sSQL = "SELECT COUNT(*) as total FROM proyectos WHERE activo = 1"
+  rs = m_ConexionBD.mConn.Exec(sSQL)
+
+  If rs["total"] = 0 Then
+    Message.Info("No hay proyectos activos")
+    Return
+  End If
+
+  ' Si hay proyectos, abrir el formulario
+  f_ProyectosParcial.ShowModal()
+
+Catch
+  Message.Error("Error al verificar proyectos: " & Error.Text)
 
 End
