@@ -442,11 +442,6 @@ Public Sub menuEPUB_Click() ' construir epub para revista
 
   ' exportar archivo cabecera
 
-  ' Dim sAsciiDoc As String
-  '
-  ' sAsciiDoc = "asciidoctor-epub3 -r asciidoctor-bibtex -o salidas/epub/" & NombreProyecto & ".epub " & NombreProyecto & ".adoc"
-  ' TerminalViewProyecto.Input(sAsciiDoc & "\n")
-
   ' === Validación con epubcheck ===
   Dim sEpubCheck As String
 
@@ -1107,8 +1102,6 @@ Public Sub btnEditorxml_Click()
 
   ' Ejecutar XML Copy Editor con el archivo
   Try Exec ["xmlcopyeditor", sRutaCompleta] Wait
-  ' ' Abrir el archivo de texto
-  ' Try Desktop.Open(sRutaCompleta)
 
   ' Verificar si ocurrió un error
   If Error Then
@@ -1468,7 +1461,7 @@ Public Sub AbrirRevistaMD()
       Return
   End Select
 
-  ' --- Liberar proyecto que esta abierto
+  ' Liberar proyecto que esta abierto
   If txtProyecto.Text <> "" Then
     Dim sProyectoEnCurso As String = File.Name(txtProyecto.Text)
     m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoEnCurso)
@@ -1476,13 +1469,13 @@ Public Sub AbrirRevistaMD()
     m_Timer.DetenerContador()
   Endif
 
-  ' --- BUSCAR EN LA BBDD SI EXISTE EL PROYECTO ---
+  ' Buscar en la BBDD si el proyecto que vamos a abrir existe
   Dim sSQL As String = "SELECT * FROM proyectos WHERE nombre = &1"
   Dim Contenido As Result = m_ConexionBD.mConn.Exec(sSQL, NombreProyectoLocal)
   Dim nuevoID As Integer
 
   If Contenido.Available Then
-    ' --- VALIDACIONES SOBRE EL REGISTRO EXISTENTE ---
+    ' VALIDACIONES SOBRE EL REGISTRO EXISTENTE ---
     Dim iTipoBD As Integer = Contenido["tipo_producto"]
 
     ' 1) Coincidencia de tipo
@@ -1544,27 +1537,47 @@ Public Sub AbrirRevistaMD()
   NombreProyecto = NombreProyectoLocal
   RutaProyecto = RutaProyectoLocal
 
-  ' --- LIMPIAR/INICIALIZAR INTERFACES ---
+  ' Limpiamos los formularios
   m_Metadatos.LimpiarCamposMetadatos()
   m_Articulos.LimpiarTextboxArticulos()
   m_Autores.LimpiarTextboxAutores()
+  m_Bibtex.LimpiarTextboxBibtex()
+  m_Glosarios.LimpiarTextboxSigla()
   '
+  ' Limpiar caché o entorno previo
+  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
   '
+  ' Controlomanos existan los archivos base para un proyecto
+  m_FuncionesGenericas.CopiarArchivosBase()
   '
+  ' Configurar interfaz para revista MD
+  ConfigurarInterfazRevista()
   '
-  ' precargamos el combox de los estilos para bib
-  CargarCSLBibTeX()
-
-  ' ' Cargar metadatos - verificar si la carga fue exitosa
-  ' If Not m_Metadatos.CargarMetadatosDelProyecto(NombreProyecto) Then
-  '   Return
-  ' Endif
-
-  ' Mostrar los ID
+  ' Mostrar el id del proyecto
   id_proyecto.Text = nuevoID
-  ' tipo_producto.Text = m_Constantes.TIPO_REVISTA_MD
-
-  ' ' Cargamos los metadatos de los artículos y autores
+  '
+  ' == Comenzamos la carga de datos ==
+  ' Cargamos los metadatos del proyecto
+  '
+  ' Cargamos los comboxbox con los estilos CSL para bibtex
+  CargarCSLBibTeX()
+  '
+  ' Cargamos los scripts para trabajar con los *.md
+  m_InicioCierre.CargarScripts()
+  '
+  ' Cargamos los metadatos del proyecto
+  '
+  ' Cargamos los metadatos de los artículos
+  '
+  ' Cargamos los metadatos de los autores
+  '
+  ' Cargamos las referencias bibtex
+  '
+  ' Cargamos las siglas
+  '
+  ' Arrancamos el contador
+  m_Timer.IniciarContadorReloj(id_proyecto.Value)
+  '
   ' ContenidoArt = m_ConexionBD.mConn.Exec("SELECT * FROM articulos WHERE id_proyecto=" & id_proyecto.Text)
   ' If Error Then
   '   m_Sonido.sonar("Error")
@@ -1585,9 +1598,6 @@ Public Sub AbrirRevistaMD()
   ' End If
   '
 
-  ' Limpiar caché o entorno previo
-  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-
   ' ' bibtex
   ' m_Bibtex.LimpiarTextboxBibtex()
   ' m_Bibtex.RellenarComboBoxBibTeX()
@@ -1602,16 +1612,6 @@ Public Sub AbrirRevistaMD()
   ' Else
   '   gvReferenciasEnCurso.Rows.Count = 0
   ' Endif
-
-  CargarScripts()
-
-  ' Controlomanos archivos base
-  m_FuncionesGenericas.CopiarArchivosBase()
-
-  ' Configurar interfaz para revista MD
-  ConfigurarInterfazRevista()
-
-  m_Timer.IniciarContadorReloj(id_proyecto.Value)
 
 End
 
@@ -2403,128 +2403,9 @@ Public Sub btnVerHTML_Click()
 
 End
 
-Public Sub CargarScripts()
+Public Sub ComboBoxScripts_Click()
 
-  Dim rutaScripts As String = User.Home &/ ".gbadoc/python"
-  Dim archivos As String[]
-  Dim archivo As String
-  Dim linea As String
-  Dim descripcion As String
-  Dim archivoBase As String
-  Dim hFile As File
-
-  ' Verificar que el directorio existe
-  If Not Exist(rutaScripts) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El directorio de python no existe: " & rutaScripts)
-    Return
-  Endif
-
-  ComboBoxScriptPy.Clear
-
-  ' Obtener lista de archivos .py
-  archivos = Dir(rutaScripts, "*.py")
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al leer el directorio: " & Error.Text)
-    Return
-  Endif
-
-  ' Procesar cada archivo
-  For Each archivo In archivos
-    descripcion = "Sin descripción"
-
-    ' Construir ruta completa del archivo
-    Dim rutaCompleta As String = rutaScripts &/ archivo
-
-    ' Intentar leer la primera línea del archivo para obtener descripción
-    hFile = Open rutaCompleta For Read
-    If Not Error Then
-      Line Input #hFile, linea
-      If Not Error And linea <> "" Then
-        linea = Trim(linea)
-        If Left(linea, 1) = "#" Then
-          ' Extraer descripción, eliminando "# " del inicio
-          If Len(linea) > 2 Then
-            descripcion = Trim(Mid(linea, 3))
-          Endif
-        Endif
-      Endif
-      Close #hFile
-    Else
-      descripcion = "Error al leer archivo"
-    Endif
-
-    ' Agregar al ComboBox
-    archivoBase = File.BaseName(archivo) & ".py"
-    ComboBoxScriptPy.Add(descripcion & " [" & archivoBase & "]")
-  Next
-
-  ' Mostrar mensaje si no se encontraron archivos
-  If ComboBoxScriptPy.Count = 0 Then
-    m_Sonido.sonar("Info")
-    Message.Info("No se encontraron archivos .py en el directorio")
-  Endif
-
-End
-
-Public Sub EjecutarScript()
-
-  Dim rutaScript As String
-  Dim comando As String
-
-  ' Verificar que hay un script seleccionado
-  If ComboBoxScriptPy.Index = -1 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Selecciona un script primero")
-    Return
-  Endif
-
-  ' Verificar que el bash está disponible
-  If Not $Bash Or If $Bash.State <> Process.Running Then
-    m_Sonido.sonar("Error")
-    Message.Error("La terminal no está disponible")
-    Return
-  Endif
-
-  ' Obtener la ruta del script seleccionado
-  ' Extraer el nombre del archivo del texto entre corchetes
-  Dim textoSeleccionado As String = ComboBoxScriptPy.Text
-  Dim nombreArchivo As String
-  Dim inicio As Integer
-  Dim fin As Integer
-
-  inicio = InStr(textoSeleccionado, "[")
-  fin = InStr(textoSeleccionado, "]")
-
-  If inicio > 0 And fin > inicio Then
-    nombreArchivo = Mid(textoSeleccionado, inicio + 1, fin - inicio - 1)
-    rutaScript = User.Home &/ ".gbadoc/python" &/ nombreArchivo
-  Else
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo determinar el archivo de python")
-    Return
-  Endif
-
-  ' Verificar que el script existe
-  If Not Exist(rutaScript) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El script de python no existe: " & rutaScript)
-    Return
-  Endif
-
-  ' Construir y ejecutar el comando Python
-  comando = "python3 \"" & rutaScript & "\" \"`pwd`\""
-
-  ' Enviar información y comando a la terminal
-  Print #$Bash, "# Ejecutando: " & nombreArchivo
-  Print #$Bash, comando
-
-End
-
-Public Sub ComboBoxScriptPy_Click()
-
-  EjecutarScript()
+  m_FuncionesGenericas.EjecutarScript($Bash, ComboBoxScripts)
 
 End
 
