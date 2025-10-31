@@ -1,304 +1,306 @@
 ' Gambas class file
 
-Private NombreProyecto As String = File.Name(FMain.txtProyecto.Text)
-Private BaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text)
-Private RutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
-Private ProyectoTeX As String = File.Dir(FMain.txtProyecto.Text) &/ "salidas/tex/ot_" & BaseNombreProyecto & ".tex"
-Private rContenido As Result
-
-Public Sub Form_Open()
-
-  Splitter1.Layout = [2, 6]
-
-  ' Intentar cargar la orden de taller existente
-  If Not CargarOrdenTallerDelProyecto() Then
-    ' Si no existe, crear una nueva con los datos del proyecto
-    CrearNuevaOrdenTaller()
-    ' Cargar la orden de taller recién creada
-    CargarOrdenTallerDelProyecto()
-  Endif
-
-End
-
-Private Sub CrearNuevaOrdenTaller()
-
-  Dim sSQL As String
-  Dim rProyecto As Result
-
-  ' Obtener los IDs del proyecto desde la tabla metadatos
-  sSQL = "SELECT nombre_archivo, txtRevistaTitulo, txtLibroAutoria FROM proyectos WHERE nombre = &1"
-  rProyecto = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
-
-  If rProyecto.Available Then
-    sSQL = "INSERT INTO ordentaller (txtOrigenOT, txtAutorOT, txtTituloOT) VALUES (&1, &2, &3)"
-    m_OnOff_y_Red.meConn.Exec(sSQL, rProyecto["nombre_archivo"], rProyecto["txtLibroAutoria"], rProyecto["txtRevistaTitulo"])
-  Else
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontró el proyecto en la base de datos para crear la orden de taller")
-  Endif
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al crear nueva orden de taller: " & Error.Text)
-
-End
-
-Public Sub Splitter1_Resize()
-
-  Splitter1.Layout = [2, 6]
-
-End
-
-Public Sub btnGenerarSalidaPDF_Click()
-
-  Dim sLaTeX As String
-  Dim outputFileLaTeX As String
-  Dim outputFilePDF As String
-
-  ' Crear el contenido LaTeX (adaptado a tu nueva estructura)
-  sLaTeX = GenerarContenidoLaTeX()
-
-  ' Establecer rutas temporales
-  outputFileLaTeX = ProyectoTeX
-  outputFilePDF = "ot_" & BaseNombreProyecto & ".pdf"
-
-  ' Guardar archivo LaTeX temporal
-  File.Save(outputFileLaTeX, sLaTeX)
-
-  ' Compilar LaTeX a PDF
-  ComplilarLaTeX()
-
-  ' Borrar archivo LaTeX temporal
-  If Not Exist(outputFileLaTeX) Then
-    File.Remove(outputFileLaTeX)
-  Endif
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al generar PDF: " & Error.Text)
-
-  ' Asegurar limpieza en caso de error
-  If Not Exist(outputFileLaTeX) Then
-    File.Remove(outputFileLaTeX)
-  Endif
-
-End
-
-Private Function GenerarContenidoLaTeX() As String
-
-  Dim s As String
-
-  s &= "\\documentclass[11pt]{article}" & "\n"
-  s &= "\\usepackage[paperwidth=210mm,paperheight=297mm,top=26mm,bottom=20mm,left=20mm,right=20mm,marginparsep=6mm,marginparwidth=44mm,headsep=0pt,headheight=0pt,footskip=0pt,footnotesep=13.5pt plus 0.1pt minus 0.1pt]{geometry}" & "\n"
-  s &= "\\usepackage[absolute]{textpos}" & "\n"
-  s &= "\\TPMargin{0mm}" & "\n"
-  s &= "\\usepackage[spanish,es-ucroman,es-noshorthands]{babel}" & "\n"
-  s &= "\\usepackage[autostyle=true]{csquotes}" & "\n"
-  s &= "\\usepackage{graphicx}" & "\n"
-  s &= "\\usepackage{fontspec}" & "\n"
-  s &= "\\usepackage{microtype}" & "\n"
-  s &= "\\newfontfeature{Microtypography}{protrusion=default;expansion=default}" & "\n"
-  s &= "\\directlua{fonts.protrusions.setups.default.factor=.5}" & "\n"
-  s &= "\\renewcommand{\\normalsize}{\\fontsize{11pt}{14.5pt}\\selectfont}" & "\n"
-  s &= "\\topskip=14.5pt" & "\n"
-  s &= "\\linespread{1.2}" & "\n"
-  s &= "\\setmainfont{Libertinus Serif}[Numbers={OldStyle,Proportional},Ligatures=TeX,Scale=1.0]" & "\n"
-  s &= "\\setsansfont{IBMPlexSansCondensed}[Scale=0.92,Ligatures=TeX,Extension=.otf,UprightFont=*-Regular,ItalicFont=*-Italic,BoldFont=*-SemiBold,BoldItalicFont=*-SemiBoldItalic]" & "\n"
-  s &= "\\setmonofont{IBMPlexMono.otf}[Scale=0.92,Extension=.otf,UprightFont=*-Regular,ItalicFont = IBMPlexMono-Italic.otf,BoldFont = IBMPlexMono-Bold.otf,BoldItalicFont = IBMPlexMono-BoldItalic.otf]" & "\n"
-  s &= "\\newcommand\\titulo[1]{\\sf\\Large{\\textbf{#1}}}" & "\n"
-  s &= "\\newcommand\\subtitulo[1]{\\sf\\large{#1}}" & "\n"
-  s &= "\\newcommand\\texto[1]{\\rm\\normalsize{#1}}" & "\n"
-  s &= "\\newcommand\\foot[1]{\\sf\\footnotesize{#1}}" & "\n"
-  s &= "\\usepackage{url}" & "\n"
-  s &= "\\def\\UrlFont{\\tt\\footnotesize}" & "\n"
-
-  s &= "\\begin{document}" & "\n"
-  s &= "\\thispagestyle{empty}" & "\n"
-  s &= "\\noindent\\rule{\\textwidth}{0.4pt}\\\\" & gb.NewLine
-  s &= "\\noindent \\titulo{Orden de Taller: " & txtOrigenOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Proveedor: " & txtProveedorOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Copias impresas: " & txtCopiasOT.Text & "}\\\\" & gb.NewLine & gb.NewLine
-  s &= "\\noindent \\subtitulo{Título: \\emph{" & txtTituloOT.Text & "}}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Autor(es): " & txtAutorOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Cantidad de páginas: " & txtPaginasOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Formato de corte: " & txtFormatoOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Tintas de interior: " & txtTintasInteriorOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Papel de interior: " & txtPapelInteriorOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Encuadernación: " & txtEncuadernacionOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Tintas de tapa: " & txtTintasTapaOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Revestimiento: " & txtRevestimientoOT.Text & "}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Archivo de tapa: \\textbf{" & txtArchAdjunto1.Text & "}}\\\\" & gb.NewLine
-  s &= "\\noindent \\subtitulo{Archivo de interiores: \\textbf{" & txtArchAdjunto2.Text & "}}\\\\" & gb.NewLine & gb.NewLine & gb.NewLine
-  s &= "\\linespread{1.0}" & "\n"
-  s &= "\\noindent \\subtitulo{\\textbf{Observaciones}}\\\\" & gb.NewLine
-  s &= "\\texto{" & txtNotasOT.Text & "}\\\\" & gb.NewLine
-  '
-  ' cabecera
-  s &= "\\begin{textblock*}{170mm}(14mm,10mm)" & "\n"
-  If txtCabeceraOT.Text <> "" Then
-    s &= "\\includegraphics[width=170mm]{" & RutaProyecto & "/media/" & txtCabeceraOT.Text & "}" & "\n"
-  Else
-    s &= "\\includegraphics[width=170mm]{" & User.Home & "/.gbadoc/falta-cabecera.png}" & "\n"
-  Endif
-  s &= "\\end{textblock*}" & "\n"
-  '
-  ' tapita
-  s &= "\\begin{textblock*}{44mm}(140mm,36mm)" & "\n"
-  If txtImagenTapaOT.Text <> "" Then
-    s &= "\\includegraphics[width=44mm]{" & RutaProyecto &/ "media" &/ txtImagenTapaOT.Text & "}" & "\n"
-  Else
-    s &= "\\includegraphics[width=44mm]{" & User.Home & "/.gbadoc/falta-tapa.png}" & "\n"
-  Endif
-  s &= "\\end{textblock*}" & "\n"
-
-  'pie de página
-  s &= "\\vfill" & gb.NewLine
-  s &= "\\noindent\\foot{\\textbf{Disclaimer:} Esta página no forma parte del contenido oficial del libro. La misma se generó para proporcionar al taller de imprenta instrucciones y comentarios. Asegúrese de revisar las observaciones aquí indicadas antes de realizar la impresión y no dude en ponerse en contacto con la editorial si encuentra un problema en el trabajo.}" & gb.NewLine & gb.NewLine
-  s &= "\\noindent\\foot{\\textbf{Fecha de emisión de esta OT:} \\today}" & gb.NewLine & gb.NewLine
-  s &= "\\end{document}" & gb.NewLine
-
-  Return s
-
-End
-
-Public Sub btnSalirOrdenTaller_Click()
-
-  Me.Close()
-
-End
-
-Public Function CargarOrdenTallerDelProyecto() As Boolean
-
-  Dim sSQL As String
-
-  ' Verificar conexión
-  If Not m_OnOff_y_Red.meConn Or If m_OnOff_y_Red.meConn.Opened = False Then
-    m_OnOff_y_Red.OnRed()
-  Endif
-
-  ' Consulta SQL con JOIN para obtener los valores descriptivos
-  sSQL = "SELECT ot.*, r.txtLibroAutoria, r.txtRevistaTitulo, r.nombre_archivo, r.txtImagenTapita " &
-    "FROM ordentaller ot " &
-    "LEFT JOIN proyectos r ON ot.txtOrigenOT = r.nombre_archivo " &
-    "WHERE ot.txtOrigenOT = &1"
-  rContenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
-
-  ' Verificar si se encontraron datos
-  If rContenido.Available = False Then
-    Return False
-  Endif
-
-  ' Cargar datos - ahora con valores descriptivos
-  ID_ordentaller.Text = CStr(rContenido["id"])
-  txtOrigenOT.Text = rContenido["nombre_archivo"]         ' Texto descriptivo del proyecto
-  txtAutorOT.Text = rContenido["txtLibroAutoria"]         ' Texto descriptivo del autor
-  txtTituloOT.Text = rContenido["txtRevistaTitulo"]       ' Texto descriptivo del título
-  txtImagenTapaOT.Text = rContenido["txtImagenTapita"]       ' Texto descriptivo de la tapita
-  '
-  If Not IsNull(rContenido["txtImagenTapita"]) And rContenido["txtImagenTapita"] <> "" Then
-    txtImagenTapaOT.Text = rContenido["txtImagenTapita"]
-
-    ' Construir ruta completa a la imagen
-    Dim rutaImagen As String = RutaProyecto &/ "media" &/ rContenido["txtImagenTapita"]
-
-    If Exist(rutaImagen) Then
-      picTapaOT.Picture = Picture[rutaImagen]
-    Else
-      m_Sonido.sonar("Info")
-      Message.Info("No se encontró la imagen en: " & rutaImagen)
-      picTapaOT.Picture = Null
-    Endif
-  Else
-    txtImagenTapaOT.Text = ""
-    picTapaOT.Picture = Null
-  Endif
-
-  ' Campos opcionales (sin cambios)
-  txtProveedorOT.Text = IIf(IsNull(rContenido["txtProveedorOT"]), "", CStr(rContenido["txtProveedorOT"]))
-  txtCopiasOT.Text = IIf(IsNull(rContenido["txtCopiasOT"]), "", CStr(rContenido["txtCopiasOT"]))
-  txtPaginasOT.Text = IIf(IsNull(rContenido["txtPaginasOT"]), "", CStr(rContenido["txtPaginasOT"]))
-  txtFormatoOT.Text = IIf(IsNull(rContenido["txtFormatoOT"]), "", CStr(rContenido["txtFormatoOT"]))
-  txtTintasInteriorOT.Text = IIf(IsNull(rContenido["txtTintasInteriorOT"]), "", CStr(rContenido["txtTintasInteriorOT"]))
-  txtEncuadernacionOT.Text = IIf(IsNull(rContenido["txtEncuadernacionOT"]), "", CStr(rContenido["txtEncuadernacionOT"]))
-  txtTintasTapaOT.Text = IIf(IsNull(rContenido["txtTintasTapaOT"]), "", CStr(rContenido["txtTintasTapaOT"]))
-  txtPapelInteriorOT.Text = IIf(IsNull(rContenido["txtPapelInteriorOT"]), "", CStr(rContenido["txtPapelInteriorOT"]))
-  txtPapelTapaOT.Text = IIf(IsNull(rContenido["txtPapelTapaOT"]), "", CStr(rContenido["txtPapelTapaOT"]))
-  txtRevestimientoOT.Text = IIf(IsNull(rContenido["txtRevestimientoOT"]), "", CStr(rContenido["txtRevestimientoOT"]))
-  txtArchAdjunto1.Text = IIf(IsNull(rContenido["txtArchAdjunto1"]), "", CStr(rContenido["txtArchAdjunto1"]))
-  txtArchAdjunto2.Text = IIf(IsNull(rContenido["txtArchAdjunto2"]), "", CStr(rContenido["txtArchAdjunto2"]))
-  txtNotasOT.Text = IIf(IsNull(rContenido["txtNotasOT"]), "", CStr(rContenido["txtNotasOT"]))
-  txtCabeceraOT.Text = IIf(IsNull(rContenido["txtCabeceraOT"]), "", CStr(rContenido["txtCabeceraOT"]))
-
-  Return True
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al cargar orden de taller: " & Error.Text)
-  Return False
-
-End
-
-Public Sub btnGuardarCambiosOT_Click()
-
-  rContenido = m_OnOff_y_Red.meConn.Edit("ordentaller", "id=" & CInt(ID_ordentaller.Text))
-
-  rContenido!txtProveedorOT = txtProveedorOT.Text
-  rContenido!txtCopiasOT = txtCopiasOT.Text
-  rContenido!txtPaginasOT = txtPaginasOT.Text
-  rContenido!txtFormatoOT = txtFormatoOT.Text
-  rContenido!txtTintasInteriorOT = txtTintasInteriorOT.Text
-  rContenido!txtPapelInteriorOT = txtPapelInteriorOT.Text
-  rContenido!txtEncuadernacionOT = txtEncuadernacionOT.Text
-  rContenido!txtTintasTapaOT = txtTintasTapaOT.Text
-  rContenido!txtPapelTapaOT = txtPapelTapaOT.Text
-  rContenido!txtRevestimientoOT = txtRevestimientoOT.Text
-  rContenido!txtArchAdjunto1 = txtArchAdjunto1.Text
-  rContenido!txtArchAdjunto2 = txtArchAdjunto2.Text
-  rContenido!txtNotasOT = txtNotasOT.Text
-  rContenido!txtCabeceraOT = txtCabeceraOT.Text
-
-  rContenido.Update
-  m_OnOff_y_Red.meConn.Commit()
-
-  m_Sonido.sonar("Info")
-  Message.Info("Cambios guardados correctamente.")
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al guardar cambios: " & Error.Text)
-
-End
-
-Private Sub ComplilarLaTeX()
-
-  Dim compilar As String = "latexmk -l -f -outdir=./salidas/pdf  --interaction=nonstopmode -pdflatex=lualatex -pdflua " & ProyectoTeX
-
-  FMain.TerminalViewProyecto.Input(compilar & "\n")
-  Wait 2
-
-  m_FuncionesGenericas.BorrarArchivosAuxiliares()
-
-End
-
-Public Sub btnBuscarCabecera_Click()
-
-  Dialog.Title = "Seleccionar archivo"
-  Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
-  Dialog.AutoExt = True
-  Dialog.Path = RutaProyecto & "/media/"
-  If Dialog.OpenFile() Then
-    Return
-  Else
-    txtCabeceraOT.Text = File.Name(Dialog.Path)
-  Endif
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("No se pudo abrir el archivo")
-
-End
-
-Public Sub btnLimpiarCabecera_Click()
-
-  txtCabeceraOT.Clear
-
-End
+' ' Gambas class file
+'
+' Private NombreProyecto As String = File.Name(FMain.txtProyecto.Text)
+' Private BaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text)
+' Private RutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+' Private ProyectoTeX As String = File.Dir(FMain.txtProyecto.Text) &/ "salidas/tex/ot_" & BaseNombreProyecto & ".tex"
+' Private rContenido As Result
+'
+' Public Sub Form_Open()
+'
+'   Splitter1.Layout = [2, 6]
+'
+'   ' Intentar cargar la orden de taller existente
+'   If Not CargarOrdenTallerDelProyecto() Then
+'     ' Si no existe, crear una nueva con los datos del proyecto
+'     CrearNuevaOrdenTaller()
+'     ' Cargar la orden de taller recién creada
+'     CargarOrdenTallerDelProyecto()
+'   Endif
+'
+' End
+'
+' Private Sub CrearNuevaOrdenTaller()
+'
+'   Dim sSQL As String
+'   Dim rProyecto As Result
+'
+'   ' Obtener los IDs del proyecto desde la tabla metadatos
+'   sSQL = "SELECT nombre_archivo, txtRevistaTitulo, txtLibroAutoria FROM proyectos WHERE nombre = &1"
+'   rProyecto = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
+'
+'   If rProyecto.Available Then
+'     sSQL = "INSERT INTO ordentaller (txtOrigenOT, txtAutorOT, txtTituloOT) VALUES (&1, &2, &3)"
+'     m_OnOff_y_Red.meConn.Exec(sSQL, rProyecto["nombre_archivo"], rProyecto["txtLibroAutoria"], rProyecto["txtRevistaTitulo"])
+'   Else
+'     m_Sonido.sonar("Error")
+'     Message.Error("No se encontró el proyecto en la base de datos para crear la orden de taller")
+'   Endif
+'
+' Catch
+'   m_Sonido.sonar("Error")
+'   Message.Error("Error al crear nueva orden de taller: " & Error.Text)
+'
+' End
+'
+' Public Sub Splitter1_Resize()
+'
+'   Splitter1.Layout = [2, 6]
+'
+' End
+'
+' Public Sub btnGenerarSalidaPDF_Click()
+'
+'   Dim sLaTeX As String
+'   Dim outputFileLaTeX As String
+'   Dim outputFilePDF As String
+'
+'   ' Crear el contenido LaTeX (adaptado a tu nueva estructura)
+'   sLaTeX = GenerarContenidoLaTeX()
+'
+'   ' Establecer rutas temporales
+'   outputFileLaTeX = ProyectoTeX
+'   outputFilePDF = "ot_" & BaseNombreProyecto & ".pdf"
+'
+'   ' Guardar archivo LaTeX temporal
+'   File.Save(outputFileLaTeX, sLaTeX)
+'
+'   ' Compilar LaTeX a PDF
+'   ComplilarLaTeX()
+'
+'   ' Borrar archivo LaTeX temporal
+'   If Not Exist(outputFileLaTeX) Then
+'     File.Remove(outputFileLaTeX)
+'   Endif
+'
+' Catch
+'   m_Sonido.sonar("Error")
+'   Message.Error("Error al generar PDF: " & Error.Text)
+'
+'   ' Asegurar limpieza en caso de error
+'   If Not Exist(outputFileLaTeX) Then
+'     File.Remove(outputFileLaTeX)
+'   Endif
+'
+' End
+'
+' Private Function GenerarContenidoLaTeX() As String
+'
+'   Dim s As String
+'
+'   s &= "\\documentclass[11pt]{article}" & "\n"
+'   s &= "\\usepackage[paperwidth=210mm,paperheight=297mm,top=26mm,bottom=20mm,left=20mm,right=20mm,marginparsep=6mm,marginparwidth=44mm,headsep=0pt,headheight=0pt,footskip=0pt,footnotesep=13.5pt plus 0.1pt minus 0.1pt]{geometry}" & "\n"
+'   s &= "\\usepackage[absolute]{textpos}" & "\n"
+'   s &= "\\TPMargin{0mm}" & "\n"
+'   s &= "\\usepackage[spanish,es-ucroman,es-noshorthands]{babel}" & "\n"
+'   s &= "\\usepackage[autostyle=true]{csquotes}" & "\n"
+'   s &= "\\usepackage{graphicx}" & "\n"
+'   s &= "\\usepackage{fontspec}" & "\n"
+'   s &= "\\usepackage{microtype}" & "\n"
+'   s &= "\\newfontfeature{Microtypography}{protrusion=default;expansion=default}" & "\n"
+'   s &= "\\directlua{fonts.protrusions.setups.default.factor=.5}" & "\n"
+'   s &= "\\renewcommand{\\normalsize}{\\fontsize{11pt}{14.5pt}\\selectfont}" & "\n"
+'   s &= "\\topskip=14.5pt" & "\n"
+'   s &= "\\linespread{1.2}" & "\n"
+'   s &= "\\setmainfont{Libertinus Serif}[Numbers={OldStyle,Proportional},Ligatures=TeX,Scale=1.0]" & "\n"
+'   s &= "\\setsansfont{IBMPlexSansCondensed}[Scale=0.92,Ligatures=TeX,Extension=.otf,UprightFont=*-Regular,ItalicFont=*-Italic,BoldFont=*-SemiBold,BoldItalicFont=*-SemiBoldItalic]" & "\n"
+'   s &= "\\setmonofont{IBMPlexMono.otf}[Scale=0.92,Extension=.otf,UprightFont=*-Regular,ItalicFont = IBMPlexMono-Italic.otf,BoldFont = IBMPlexMono-Bold.otf,BoldItalicFont = IBMPlexMono-BoldItalic.otf]" & "\n"
+'   s &= "\\newcommand\\titulo[1]{\\sf\\Large{\\textbf{#1}}}" & "\n"
+'   s &= "\\newcommand\\subtitulo[1]{\\sf\\large{#1}}" & "\n"
+'   s &= "\\newcommand\\texto[1]{\\rm\\normalsize{#1}}" & "\n"
+'   s &= "\\newcommand\\foot[1]{\\sf\\footnotesize{#1}}" & "\n"
+'   s &= "\\usepackage{url}" & "\n"
+'   s &= "\\def\\UrlFont{\\tt\\footnotesize}" & "\n"
+'
+'   s &= "\\begin{document}" & "\n"
+'   s &= "\\thispagestyle{empty}" & "\n"
+'   s &= "\\noindent\\rule{\\textwidth}{0.4pt}\\\\" & gb.NewLine
+'   s &= "\\noindent \\titulo{Orden de Taller: " & txtOrigenOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Proveedor: " & txtProveedorOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Copias impresas: " & txtCopiasOT.Text & "}\\\\" & gb.NewLine & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Título: \\emph{" & txtTituloOT.Text & "}}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Autor(es): " & txtAutorOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Cantidad de páginas: " & txtPaginasOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Formato de corte: " & txtFormatoOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Tintas de interior: " & txtTintasInteriorOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Papel de interior: " & txtPapelInteriorOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Encuadernación: " & txtEncuadernacionOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Tintas de tapa: " & txtTintasTapaOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Revestimiento: " & txtRevestimientoOT.Text & "}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Archivo de tapa: \\textbf{" & txtArchAdjunto1.Text & "}}\\\\" & gb.NewLine
+'   s &= "\\noindent \\subtitulo{Archivo de interiores: \\textbf{" & txtArchAdjunto2.Text & "}}\\\\" & gb.NewLine & gb.NewLine & gb.NewLine
+'   s &= "\\linespread{1.0}" & "\n"
+'   s &= "\\noindent \\subtitulo{\\textbf{Observaciones}}\\\\" & gb.NewLine
+'   s &= "\\texto{" & txtNotasOT.Text & "}\\\\" & gb.NewLine
+'   '
+'   ' cabecera
+'   s &= "\\begin{textblock*}{170mm}(14mm,10mm)" & "\n"
+'   If txtCabeceraOT.Text <> "" Then
+'     s &= "\\includegraphics[width=170mm]{" & RutaProyecto & "/media/" & txtCabeceraOT.Text & "}" & "\n"
+'   Else
+'     s &= "\\includegraphics[width=170mm]{" & User.Home & "/.gbadoc/falta-cabecera.png}" & "\n"
+'   Endif
+'   s &= "\\end{textblock*}" & "\n"
+'   '
+'   ' tapita
+'   s &= "\\begin{textblock*}{44mm}(140mm,36mm)" & "\n"
+'   If txtImagenTapaOT.Text <> "" Then
+'     s &= "\\includegraphics[width=44mm]{" & RutaProyecto &/ "media" &/ txtImagenTapaOT.Text & "}" & "\n"
+'   Else
+'     s &= "\\includegraphics[width=44mm]{" & User.Home & "/.gbadoc/falta-tapa.png}" & "\n"
+'   Endif
+'   s &= "\\end{textblock*}" & "\n"
+'
+'   'pie de página
+'   s &= "\\vfill" & gb.NewLine
+'   s &= "\\noindent\\foot{\\textbf{Disclaimer:} Esta página no forma parte del contenido oficial del libro. La misma se generó para proporcionar al taller de imprenta instrucciones y comentarios. Asegúrese de revisar las observaciones aquí indicadas antes de realizar la impresión y no dude en ponerse en contacto con la editorial si encuentra un problema en el trabajo.}" & gb.NewLine & gb.NewLine
+'   s &= "\\noindent\\foot{\\textbf{Fecha de emisión de esta OT:} \\today}" & gb.NewLine & gb.NewLine
+'   s &= "\\end{document}" & gb.NewLine
+'
+'   Return s
+'
+' End
+'
+' Public Sub btnSalirOrdenTaller_Click()
+'
+'   Me.Close()
+'
+' End
+'
+' Public Function CargarOrdenTallerDelProyecto() As Boolean
+'
+'   Dim sSQL As String
+'
+'   ' Verificar conexión
+'   If Not m_OnOff_y_Red.meConn Or If m_OnOff_y_Red.meConn.Opened = False Then
+'     m_OnOff_y_Red.OnRed()
+'   Endif
+'
+'   ' Consulta SQL con JOIN para obtener los valores descriptivos
+'   sSQL = "SELECT ot.*, r.txtLibroAutoria, r.txtRevistaTitulo, r.nombre_archivo, r.txtImagenTapita " &
+'     "FROM ordentaller ot " &
+'     "LEFT JOIN proyectos r ON ot.txtOrigenOT = r.nombre_archivo " &
+'     "WHERE ot.txtOrigenOT = &1"
+'   rContenido = m_OnOff_y_Red.meConn.Exec(sSQL, NombreProyecto)
+'
+'   ' Verificar si se encontraron datos
+'   If rContenido.Available = False Then
+'     Return False
+'   Endif
+'
+'   ' Cargar datos - ahora con valores descriptivos
+'   ID_ordentaller.Text = CStr(rContenido["id"])
+'   txtOrigenOT.Text = rContenido["nombre_archivo"]         ' Texto descriptivo del proyecto
+'   txtAutorOT.Text = rContenido["txtLibroAutoria"]         ' Texto descriptivo del autor
+'   txtTituloOT.Text = rContenido["txtRevistaTitulo"]       ' Texto descriptivo del título
+'   txtImagenTapaOT.Text = rContenido["txtImagenTapita"]       ' Texto descriptivo de la tapita
+'   '
+'   If Not IsNull(rContenido["txtImagenTapita"]) And rContenido["txtImagenTapita"] <> "" Then
+'     txtImagenTapaOT.Text = rContenido["txtImagenTapita"]
+'
+'     ' Construir ruta completa a la imagen
+'     Dim rutaImagen As String = RutaProyecto &/ "media" &/ rContenido["txtImagenTapita"]
+'
+'     If Exist(rutaImagen) Then
+'       picTapaOT.Picture = Picture[rutaImagen]
+'     Else
+'       m_Sonido.sonar("Info")
+'       Message.Info("No se encontró la imagen en: " & rutaImagen)
+'       picTapaOT.Picture = Null
+'     Endif
+'   Else
+'     txtImagenTapaOT.Text = ""
+'     picTapaOT.Picture = Null
+'   Endif
+'
+'   ' Campos opcionales (sin cambios)
+'   txtProveedorOT.Text = IIf(IsNull(rContenido["txtProveedorOT"]), "", CStr(rContenido["txtProveedorOT"]))
+'   txtCopiasOT.Text = IIf(IsNull(rContenido["txtCopiasOT"]), "", CStr(rContenido["txtCopiasOT"]))
+'   txtPaginasOT.Text = IIf(IsNull(rContenido["txtPaginasOT"]), "", CStr(rContenido["txtPaginasOT"]))
+'   txtFormatoOT.Text = IIf(IsNull(rContenido["txtFormatoOT"]), "", CStr(rContenido["txtFormatoOT"]))
+'   txtTintasInteriorOT.Text = IIf(IsNull(rContenido["txtTintasInteriorOT"]), "", CStr(rContenido["txtTintasInteriorOT"]))
+'   txtEncuadernacionOT.Text = IIf(IsNull(rContenido["txtEncuadernacionOT"]), "", CStr(rContenido["txtEncuadernacionOT"]))
+'   txtTintasTapaOT.Text = IIf(IsNull(rContenido["txtTintasTapaOT"]), "", CStr(rContenido["txtTintasTapaOT"]))
+'   txtPapelInteriorOT.Text = IIf(IsNull(rContenido["txtPapelInteriorOT"]), "", CStr(rContenido["txtPapelInteriorOT"]))
+'   txtPapelTapaOT.Text = IIf(IsNull(rContenido["txtPapelTapaOT"]), "", CStr(rContenido["txtPapelTapaOT"]))
+'   txtRevestimientoOT.Text = IIf(IsNull(rContenido["txtRevestimientoOT"]), "", CStr(rContenido["txtRevestimientoOT"]))
+'   txtArchAdjunto1.Text = IIf(IsNull(rContenido["txtArchAdjunto1"]), "", CStr(rContenido["txtArchAdjunto1"]))
+'   txtArchAdjunto2.Text = IIf(IsNull(rContenido["txtArchAdjunto2"]), "", CStr(rContenido["txtArchAdjunto2"]))
+'   txtNotasOT.Text = IIf(IsNull(rContenido["txtNotasOT"]), "", CStr(rContenido["txtNotasOT"]))
+'   txtCabeceraOT.Text = IIf(IsNull(rContenido["txtCabeceraOT"]), "", CStr(rContenido["txtCabeceraOT"]))
+'
+'   Return True
+'
+' Catch
+'   m_Sonido.sonar("Error")
+'   Message.Error("Error al cargar orden de taller: " & Error.Text)
+'   Return False
+'
+' End
+'
+' Public Sub btnGuardarCambiosOT_Click()
+'
+'   rContenido = m_OnOff_y_Red.meConn.Edit("ordentaller", "id=" & CInt(ID_ordentaller.Text))
+'
+'   rContenido!txtProveedorOT = txtProveedorOT.Text
+'   rContenido!txtCopiasOT = txtCopiasOT.Text
+'   rContenido!txtPaginasOT = txtPaginasOT.Text
+'   rContenido!txtFormatoOT = txtFormatoOT.Text
+'   rContenido!txtTintasInteriorOT = txtTintasInteriorOT.Text
+'   rContenido!txtPapelInteriorOT = txtPapelInteriorOT.Text
+'   rContenido!txtEncuadernacionOT = txtEncuadernacionOT.Text
+'   rContenido!txtTintasTapaOT = txtTintasTapaOT.Text
+'   rContenido!txtPapelTapaOT = txtPapelTapaOT.Text
+'   rContenido!txtRevestimientoOT = txtRevestimientoOT.Text
+'   rContenido!txtArchAdjunto1 = txtArchAdjunto1.Text
+'   rContenido!txtArchAdjunto2 = txtArchAdjunto2.Text
+'   rContenido!txtNotasOT = txtNotasOT.Text
+'   rContenido!txtCabeceraOT = txtCabeceraOT.Text
+'
+'   rContenido.Update
+'   m_OnOff_y_Red.meConn.Commit()
+'
+'   m_Sonido.sonar("Info")
+'   Message.Info("Cambios guardados correctamente.")
+'
+' Catch
+'   m_Sonido.sonar("Error")
+'   Message.Error("Error al guardar cambios: " & Error.Text)
+'
+' End
+'
+' Private Sub ComplilarLaTeX()
+'
+'   Dim compilar As String = "latexmk -l -f -outdir=./salidas/pdf  --interaction=nonstopmode -pdflatex=lualatex -pdflua " & ProyectoTeX
+'
+'   FMain.TerminalViewProyecto.Input(compilar & "\n")
+'   Wait 2
+'
+'   m_FuncionesGenericas.BorrarArchivosAuxiliares()
+'
+' End
+'
+' Public Sub btnBuscarCabecera_Click()
+'
+'   Dialog.Title = "Seleccionar archivo"
+'   Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
+'   Dialog.AutoExt = True
+'   Dialog.Path = RutaProyecto & "/media/"
+'   If Dialog.OpenFile() Then
+'     Return
+'   Else
+'     txtCabeceraOT.Text = File.Name(Dialog.Path)
+'   Endif
+' Catch
+'   m_Sonido.sonar("Error")
+'   Message.Error("No se pudo abrir el archivo")
+'
+' End
+'
+' Public Sub btnLimpiarCabecera_Click()
+'
+'   txtCabeceraOT.Clear
+'
+' End
