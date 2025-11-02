@@ -5,25 +5,23 @@ Private ContenidoBusqueda As Result
 Private esBusqueda As Boolean = False
 
 Public Sub Form_Open()
-  ' Limpiar campos al inicio
 
   LimpiarCampos()
+
   With TableViewAdministracion
     .Header = True
     .Grid = True
     .Columns.Count = 2  ' Solo 2 columnas visibles
 
-    ' Configuración de las 2 columnas visibles
-    .Columns[0].Title = "Título"
-    .Columns[0].Width = 570
+    .Columns[0].Title = "Proyecto"
+    .Columns[0].Width = 250
+    .Columns[1].Title = "Título"
+    .Columns[1].Width = 400
 
-    .Columns[1].Title = "Autoría"
-    .Columns[1].Width = 300
-
-    ' Configurar el modo de texto para que se corte
     .Mode = Select.Single
     .ScrollBar = Scroll.Vertical
   End With
+
   CargarGridAdmin()
 
 End
@@ -34,28 +32,23 @@ Public Sub ButtonCerrarAdmin_Click()
 
 End
 
-' Función para limpiar los campos de texto
 Public Sub LimpiarCampos()
 
   txtRevistaTitulo.Text = ""
-  txtLibroAutoria.Text = ""
-  txtLibroSerie.Text = ""
   txtRepositorio.Text = ""
 
 End
 
-' Función para cargar y actualizar la grilla
 Public Sub CargarGridAdmin()
 
   TableViewAdministracion.Clear
-  Contenido = m_ConexionBD.mConn.Exec("SELECT * FROM metadatos ORDER BY txtRevistaTitulo")
+  Contenido = m_ConexionBD.mConn.Exec("SELECT m.*, p.nombre AS nombre_proyecto FROM metadatos m LEFT JOIN proyectos p ON m.id_proyecto = p.id ORDER BY m.id DESC")
   TableViewAdministracion.Rows.Count = Contenido.Count
   TableViewAdministracion.Refresh()
   esBusqueda = False
 
 End
 
-' Función para cargar resultados de búsqueda
 Public Sub CargarResultadoBusqueda(resultado As Result)
 
   ContenidoBusqueda = resultado
@@ -66,54 +59,53 @@ Public Sub CargarResultadoBusqueda(resultado As Result)
 
 End
 
-' Evento que se ejecuta para cada celda del TableView
 Public Sub TableViewAdministracion_Data(Row As Integer, Column As Integer)
 
   Dim contenidoActual As Result
 
-  ' Determinar qué contenido usar (búsqueda o datos completos)
   If esBusqueda Then
     contenidoActual = ContenidoBusqueda
   Else
     contenidoActual = Contenido
   Endif
 
-  If (contenidoActual <> Null) Then
-    If Row >= 0 Then
-      contenidoActual.moveTo(Row)
-      Select Case Column
-        Case 0  ' Primera columna visible = campo 3 de la BD
-          TableViewAdministracion.Data.Text = Str(contenidoActual[3])
-        Case 1  ' Segunda columna visible = campo 48 de la BD
-          TableViewAdministracion.Data.Text = Str(contenidoActual[48])
-      End Select
-    Endif
-  Endif
+  If IsNull(contenidoActual) Then Return
+  If Row < 0 Then Return
+
+  contenidoActual.MoveTo(Row)
+
+  Select Case Column
+    Case 0
+      TableViewAdministracion.Data.Text = contenidoActual["nombre_proyecto"]
+    Case 1
+      TableViewAdministracion.Data.Text = contenidoActual["revista_titulo"]
+  End Select
 
 End
 
-' Evento Click en el TableView - Cargar detalles del registro seleccionado
 Public Sub TableViewAdministracion_Click()
 
   Dim contenidoActual As Result
+  Dim idSel As Integer
+  Dim detalle As Result
 
-  If TableViewAdministracion.Row >= 0 Then
-    ' Determinar qué contenido usar
-    If esBusqueda Then
-      contenidoActual = ContenidoBusqueda
-    Else
-      contenidoActual = Contenido
-    Endif
+  If TableViewAdministracion.Row < 0 Then Return
 
-    ' Mover el cursor del resultado a la fila seleccionada
-    contenidoActual.MoveTo(TableViewAdministracion.Row)
+  If esBusqueda Then
+    contenidoActual = ContenidoBusqueda
+  Else
+    contenidoActual = Contenido
+  Endif
 
-    ' Rellenar los campos de texto con los valores originales de la BD
-    txtIdAdmin.Text = Str(contenidoActual[0])
-    txtRevistaTitulo.Text = Str(contenidoActual[3])
-    txtLibroAutoria.Text = Str(contenidoActual[48])
-    txtLibroSerie.Text = Str(contenidoActual[49])
-    txtRepositorio.Text = Str(contenidoActual[61])
+  contenidoActual.MoveTo(TableViewAdministracion.Row)
+  idSel = contenidoActual["id"]
+
+  ' Cargar los campos reales desde la base
+  detalle = m_ConexionBD.mConn.Exec("SELECT revista_titulo, repositorio_github FROM metadatos WHERE id = " & idSel)
+
+  If detalle.Available Then
+    txtRevistaTitulo.Text = detalle["revista_titulo"]
+    txtRepositorio.Text = detalle["repositorio_github"]
   Endif
 
 End
@@ -128,17 +120,25 @@ End
 Public Sub btnBuscarTitulo_Click()
 
   Dim resultado As Result
-  Dim sCampoBD As String = "txtRevistaTitulo"
+  Dim sCampoBD As String = "revista_titulo"
   Dim sValor As String = Trim(txtRevistaTitulo.Text)
   Dim sConsulta As String
+  Dim sFiltro As String
 
   If sValor = "" Then
+    m_Sonido.sonar("Warning")
     Message.Warning("Debe introducir contenido a buscar.")
     txtRevistaTitulo.SetFocus
     Return
   Endif
 
-  sConsulta = "SELECT * FROM metadatos WHERE " & sCampoBD & " LIKE '%" & sValor & "%' ORDER BY id DESC;"
+  sFiltro = Quote("%" & LCase(sValor) & "%")
+
+  sConsulta = "SELECT m.id, m.revista_titulo, m.repositorio_github, p.nombre AS nombre_proyecto " &
+    "FROM metadatos m " &
+    "LEFT JOIN proyectos p ON m.id_proyecto = p.id " &
+    "WHERE LOWER(m." & sCampoBD & ") LIKE " & sFiltro & " ORDER BY m.id DESC;"
+
   resultado = m_ConexionBD.mConn.Exec(sConsulta)
 
   If resultado.Count = 0 Then
@@ -151,72 +151,16 @@ Public Sub btnBuscarTitulo_Click()
 
 End
 
-Public Sub btnBuscarAutoria_Click()
-
-  Dim resultado As Result
-  Dim sCampoBD As String = "txtLibroAutoria"
-  Dim sValor As String = Trim(txtLibroAutoria.Text)
-  Dim sConsulta As String
-
-  If sValor = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe introducir contenido a buscar.")
-    txtLibroAutoria.SetFocus
-    Return
-  Endif
-
-  sConsulta = "SELECT * FROM metadatos WHERE " & sCampoBD & " LIKE '%" & sValor & "%' ORDER BY id DESC;"
-  resultado = m_ConexionBD.mConn.Exec(sConsulta)
-
-  If resultado.Count = 0 Then
-    m_Sonido.sonar("Info")
-    Message.Info("No se ha encontrado ningún resultado.")
-    Return
-  Endif
-
-  CargarResultadoBusqueda(resultado)
-
-End
-
-Public Sub btnBuscarColeccion_Click()
-
-  Dim resultado As Result
-  Dim sCampoBD As String = "txtLibroSerie"
-  Dim sValor As String = Trim(txtLibroSerie.Text)
-  Dim sConsulta As String
-
-  If sValor = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe introducir contenido a buscar.")
-    txtLibroSerie.SetFocus
-    Return
-  Endif
-
-  sConsulta = "SELECT * FROM metadatos WHERE " & sCampoBD & " LIKE '%" & sValor & "%' ORDER BY id DESC;"
-  resultado = m_ConexionBD.mConn.Exec(sConsulta)
-
-  If resultado.Count = 0 Then
-    m_Sonido.sonar("Info")
-    Message.Info("No se ha encontrado ningún resultado.")
-    Return
-  Endif
-
-  CargarResultadoBusqueda(resultado)
-
-End
-
 Public Sub btnBuscarRepositorio_Click()
 
   Dim sTITULO As String = Trim(txtRepositorio.Text)
 
-  ' Verificar que no esté vacío
   If sTITULO = "" Then
     m_Sonido.sonar("Error")
     Message.Error("La dirección del repositorio es nula.")
     Return
   Endif
 
-  ' Abrir la búsqueda en el navegador predeterminado
   Desktop.Open(sTITULO)
 
 End
