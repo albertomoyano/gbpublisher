@@ -1,6 +1,6 @@
 ' Gambas class file
 
-Private rutaScripts As String = User.Home &/ ".gbadoc/estadisticaspython"
+Private rutaScripts As String = User.Home &/ ".gbpublisher/estadisticaspython"
 Private $correcta As Boolean
 Private $r As Result
 
@@ -126,7 +126,7 @@ Private Sub Llenalista()
   Dim r As Result
   Dim n As Integer
 
-  r = m_ConexionBD.mConn.Exec("Select * from consultas order by TextBoxNombre")
+  r = m_ConexionBD.mConn.Exec("SELECT * FROM consultas ORDER BY nombre")
   If Not r.Available Then Return
   ListBoxConsultas.Tag = New Integer[]
   ListBoxConsultas.Clear
@@ -181,20 +181,14 @@ Private Sub LlenaTablas()
   Dim r As Result
 
   ComboBoxTablas.Clear()
-  r = m_ConexionBD.mConn.Exec("select tbl_name as 'name' from sqlite_master where type='table' or type='view' order by tbl_name")
-
+  r = m_ConexionBD.mConn.Exec("SELECT TABLE_NAME as name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND (TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW') AND TABLE_NAME NOT IN ('contador_tiempo', 'postits', 'usuarios', 'usuarios_sistema', 'consultas') ORDER BY TABLE_NAME")
   If Not r.Available Then Return
-
   While r.Available
-    If Left(r!name, 6) <> "sqlite" And Left(r!name, 9) <> "consultas" And Left(r!name, 5) <> "timer" Then
-      ComboBoxTablas.Add(r!name)
-    Endif
+    ComboBoxTablas.Add(r!name)
     r.movenext
   Wend
-
   If ComboBoxTablas.Count > 0 Then
     ComboBoxTablas.Index = 0
-    ' Llenar el ListBox con las columnas de la primera tabla
     LlenaColumnas()
   Endif
 
@@ -209,7 +203,7 @@ Private Sub LlenaColumnas()
 
   If Not ComboBoxTablas.Text Or ComboBoxTablas.Index = -1 Then Return
 
-  Try r = m_ConexionBD.mConn.Exec("PRAGMA table_info(\"" & ComboBoxTablas.Text & "\")")
+  Try r = m_ConexionBD.mConn.Exec("DESCRIBE `" & ComboBoxTablas.Text & "`")
 
   If Error Then
     m_Sonido.sonar("Error")
@@ -220,7 +214,7 @@ Private Sub LlenaColumnas()
   If Not r.Available Then Return
 
   While r.Available
-    ListBoxTablas.Add(r!name)
+    ListBoxTablas.Add(r!Field)
     r.MoveNext
   Wend
 
@@ -261,7 +255,36 @@ End
 
 Public Sub ButtonEjecutarSQL_Click()
 
+  Dim consulta As String
+  Dim n As Integer
+
   If Not TextEditorConsultasSQL.Text Then Return
+
+  ' Convertir la consulta a mayúsculas para validación
+  consulta = UCase(Trim(TextEditorConsultasSQL.Text))
+
+  ' Lista de comandos peligrosos prohibidos
+  If InStr(consulta, "DROP ") > 0 Or
+      InStr(consulta, "DELETE ") > 0 Or
+      InStr(consulta, "TRUNCATE ") > 0 Or
+      InStr(consulta, "ALTER ") > 0 Or
+      InStr(consulta, "CREATE ") > 0 Or
+      InStr(consulta, "INSERT ") > 0 Or
+      InStr(consulta, "UPDATE ") > 0 Then
+
+    m_Sonido.sonar("Warning")
+    n = Message.Warning("Esta consulta contiene comandos que pueden modificar o eliminar datos.\n\n" &
+      "Solo se permiten consultas SELECT para proteger la integridad de la base de datos.\n\n" &
+      "Comandos prohibidos: DROP, DELETE, TRUNCATE, ALTER, CREATE, INSERT, UPDATE", "Entendido")
+    Return
+  Endif
+
+  ' Verificar que sea una consulta SELECT
+  If Left(consulta, 6) <> "SELECT" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Solo se permiten consultas SELECT.\n\nPara modificar datos, use las funciones específicas de la aplicación.")
+    Return
+  Endif
 
   Inc Application.Busy
   Try $r = m_ConexionBD.mConn.Exec(TextEditorConsultasSQL.Text)
@@ -383,9 +406,9 @@ Public Sub ButtonGrabarConsulta_Click()
     n = Message.Warning(("Si ya existe una consulta con este nombre será sobreescrita. ¿Guardar esta Consulta?"), ("Sí"), ("No"))
     If n <> 1 Then Return
   Endif
-  r = m_ConexionBD.mConn.Exec("select TextBoxNombre as 'TextBoxNombre' from consultas where TextBoxNombre=&1", TextBoxNombre.Text)
+  r = m_ConexionBD.mConn.Exec("SELECT TextBoxNombre FROM consultas WHERE TextBoxNombre = ?", TextBoxNombre.Text)
   If r.available Then
-    r = m_ConexionBD.mConn.Edit("consultas", "id=&1", TextBoxIDsql.Value)
+    r = m_ConexionBD.mConn.Edit("consultas", "id = ?", TextBoxIDsql.Value)
   Else
     r = m_ConexionBD.mConn.Create("consultas", True)
   Endif
@@ -402,7 +425,7 @@ Public Sub ListBoxConsultas_Activate()
 
   Dim r As Result
 
-  r = m_ConexionBD.mConn.Exec("Select * from consultas where id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+  r = m_ConexionBD.mConn.Exec("SELECT * FROM consultas WHERE id = ?", ListBoxConsultas.Tag[ListBoxConsultas.Index])
   If Not r.Available Then Return
   TextBoxIDsql.Value = r!id
   TextBoxNombre.Text = r!TextBoxNombre
@@ -441,7 +464,7 @@ Public Sub ButtonBorrarConsulta_Click()
   m_Sonido.sonar("Question")
   n = Message.Question(("¿Desea eliminar esta consulta? ") & ListBoxConsultas.Text, ("Sí"), ("No"))
   If n <> 1 Then Return
-  m_ConexionBD.mConn.Delete("consultas", "id=&1", ListBoxConsultas.Tag[ListBoxConsultas.index])
+  m_ConexionBD.mConn.Delete("consultas", "id = ?", ListBoxConsultas.Tag[ListBoxConsultas.index])
 
   ListBoxConsultas.Clear
 
