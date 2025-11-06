@@ -7,8 +7,9 @@ parent: Manual
 # Reflexión sobre la fragmentación en Linux y el desarrollo de aplicaciones de nicho
 
 Mi aplicación está desarrollada en **Gambas** y tiene una política técnica muy estricta:
-- Solo tiene soprote para en **Linux Mint Cinnamon**.
-- Solo utiliza **Gambas** como entorno de desarrollo.
+
+- Solo tiene soporte para la distribución **Linux Mint Cinnamon**.
+- Utiliza **Gambas** como entorno de desarrollo.
 
 Esta decisión no es arbitraria. Surge de la necesidad de garantizar **estabilidad, seguridad y coherencia técnica**.
 

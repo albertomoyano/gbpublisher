@@ -20,17 +20,17 @@ Este software fue desarrollado para asistir en la edición técnica y académica
 La aplicación está desarrollada como **software de escritorio en GNU/Linux**, específicamente diseñada para funcionar bajo entornos **Debian + GTK**, utilizando:
 
 - **Gambas** como entorno de desarrollo.
-- **SQLite** como base de datos.
-- **Markdown** y **LaTeX** como formatos base.
+- **MySQL** como motor de base de datos.
+- **Markdown** y **LaTeX** como lenguajes de marcas.
 - **Herramientas del sistema GNU/Linux** para procesamiento.
-- **Scripts en Python, Lua y Bash** cuando resultan más eficaces o rápidos que una implementación nativa.
+- **Scripts en Python, Lua, Bash y Perl** cuando resultan más eficaces o rápidos que una implementación nativa.
 
 ## La aplicación como orquestador de flujos
 
 Más que una herramienta monolítica, esta aplicación cumple el rol de un **coordinador de flujos de trabajo**. Orquesta la ejecución de scripts, gestiona documentos, integra bases de datos, captura y muestra resultados de consola en tiempo real. Este enfoque modular permite:
 
 - Reutilizar herramientas existentes (Pandoc, LaTeX, etc.).
-- Integrar scripts en distintos lenguajes (Python, Lua, Bash).
+- Integrar scripts en distintos lenguajes (Python, Lua, Bash y Perl).
 - Extender capacidades sin reescribir componentes ya probados.
 
 Gambas resulta ideal para este tipo de arquitectura: su integración con el entorno gráfico y los recursos del sistema permiten desarrollar de forma productiva y eficaz.
@@ -59,7 +59,7 @@ Al ser una aplicación nativa no depende de navegadores ni intérpretes web. Est
 
 ### 5. Estándares abiertos y editables
 
-El uso de texto plano (LaTeX, Markdown) garantiza trazabilidad, edición con cualquier editor y control con herramientas estándar (grep, diff, git, etc.).
+El uso de texto plano garantiza trazabilidad, edición con cualquier editor y control con herramientas estándar (grep, diff, git, etc.).
 
 ## Contra la percepción de obsolescencia
 
