@@ -1,9 +1,6 @@
 ' Gambas class file
 
-' ============================================
-' FORMULARIO DE GESTIÓN DE USUARIOS
-' SQLite Local para SuperAdmin + MySQL para Usuarios
-' ============================================
+Private $idSeleccionado As Integer
 
 Public hConn As Connection  ' Conexión SQLite local
 Public hConnServidor As Connection  ' Conexión al servidor MySQL
@@ -18,7 +15,7 @@ Public Sub Form_Open()
 
   Dim sRuta As String = User.Home &/ ".gbpublisher/.superuser.sqlite"
 
-  ' Crear/conectar SQLite local (solo para admin local)
+  ' CREAR/CONECTAR SQLITE LOCAL (SOLO PARA ADMIN LOCAL)
   If Not Exist(sRuta) Then
     CreateDataBase()
   Endif
@@ -30,17 +27,26 @@ Public Sub Form_Open()
     Return
   Endif
 
-  ' Cargar IPs disponibles
+  ' CARGAR IPS DISPONIBLES
   m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
 
-  ' Mostrar solo panel de validación inicial
-  HBox1a.Visible = True           ' Botón de validar
+  ' MOSTRAR SOLO PANEL DE VALIDACIÓN INICIAL
+  HBox1a.Visible = True
   TableViewUsuarios.Visible = True
   HBox2a.Visible = True
   HBox3a.Visible = True
   HBox4a.Visible = True
 
   txtAdministrador.SetFocus()
+
+  With TableViewAyudas
+    .Header = True
+    .Grid = True
+    .Columns.Count = 2
+    .Columns[0].Title = "id"
+    .Columns[0].Width = 0
+    .Columns[1].Title = "Componenete"
+  End With
 
 End
 
@@ -236,9 +242,7 @@ Catch
 
 End
 
-' ============================================
 ' HABILITAR PANEL DE GESTIÓN
-' ============================================
 Private Sub HabilitarABMUsuarios()
 
   PanelAdminUsuarios.Visible = True
@@ -250,6 +254,7 @@ Private Sub HabilitarABMUsuarios()
 
   CargarUsuariosDelServidor()
   CargarProyectosDelServidor()
+  CargarAyudas()
 
 End
 
@@ -920,21 +925,21 @@ Public Sub btnGuardarCambiosProyecto_Click()
   Dim bNuevoEstado As Boolean
   Dim sNombreProyecto As String
 
-  ' Verificar que hay un proyecto seleccionado
+  ' VERIFICAR QUE HAY UN PROYECTO SELECCIONADO
   If iRow < 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("Debe seleccionar un proyecto de la tabla para modificar")
     Return
   Endif
 
-  ' Verificar conexión
+  ' VERIFICAR CONEXIÓN
   If Not hConnServidor Or Not hConnServidor.Opened Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay conexión al servidor")
     Return
   Endif
 
-  ' Obtener datos del proyecto seleccionado
+  ' OBTENER DATOS DEL PROYECTO SELECCIONADO
   iProyectoID = Val(TableViewProyectos[iRow, 0].Text)
   sNombreProyecto = TableViewProyectos[iRow, 1].Text
 
@@ -954,5 +959,99 @@ Public Sub btnGuardarCambiosProyecto_Click()
   Catch
     m_Sonido.sonar("Error")
     Message.Error("Error guardando cambios: " & Error.Text)
+
+End
+
+' CARGAR EN EL TABLEVIEW LOS COMPONENTES EXISTENTES
+Private Sub CargarAyudas()
+
+  Dim rComponentes As Result
+  Dim i As Integer
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    Return
+  Endif
+
+  rComponentes = hConnServidor.Exec("SELECT id, componente FROM manual_ayudas ORDER BY componente;")
+
+  TableViewAyudas.Rows.Count = 0
+
+  If rComponentes.Available Then
+    TableViewAyudas.Rows.Count = rComponentes.Count
+    i = 0
+
+    While rComponentes.Available
+      TableViewAyudas[i, 0].Text = rComponentes["id"]
+      TableViewAyudas[i, 1].Text = rComponentes["componente"]
+      i += 1
+      rComponentes.MoveNext()
+    Wend
+  Endif
+
+  TableViewAyudas.Refresh()
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error cargando ayudas: " & Error.Text)
+
+End
+
+' AL HACER CLIC EN UNA FILA, MOSTRAR LA AYUDA ASOCIADA
+Public Sub TableViewAyudas_Click()
+
+  Dim rComponentes As Result
+  Dim fila As Integer
+
+  fila = TableViewAyudas.Row
+  If fila < 0 Then Return
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    Return
+  Endif
+
+  ' GUARDAMOS EL ID DEL COMPONENTE SELECCIONADO
+  $idSeleccionado = Val(TableViewAyudas[fila, 0].Text)
+
+  ' BUSCAR EL TEXTO DE AYUDA CORRESPONDIENTE
+  rComponentes = hConnServidor.Exec("SELECT ayuda FROM manual_ayudas WHERE id = &1 LIMIT 1;", $idSeleccionado)
+
+  If rComponentes.Available Then
+    TextAreaAyudasSysAdmin.Text = If(rComponentes["ayuda"], rComponentes["ayuda"], "")
+  Else
+    Message.Info("No se dispone de ayuda para esta clave")
+    TextAreaAyudasSysAdmin.Text = ""
+  Endif
+
+Catch
+  Print "Error cargando ayuda: " & Error.Text
+
+End
+
+' GUARDAR LOS CAMBIOS EN LA BASE DE DATOS
+Public Sub btnGuardarCambiosAyuda_Click()
+
+  Dim nuevoTexto As String
+
+  If $idSeleccionado = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Seleccione un componente de la lista primero.")
+    Return
+  Endif
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor")
+    Return
+  Endif
+
+  nuevoTexto = TextAreaAyudasSysAdmin.Text
+
+  hConnServidor.Exec("UPDATE manual_ayudas SET ayuda = &1 WHERE id = &2;", nuevoTexto, $idSeleccionado)
+  m_Sonido.sonar("Info")
+  Message.Info("La ayuda se ha actualizado correctamente.")
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al guardar los cambios: " & Error.Text)
 
 End
