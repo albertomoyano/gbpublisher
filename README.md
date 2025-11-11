@@ -2,11 +2,11 @@
 
 ## Contexto del proyecto
 
-Este software fue desarrollado para asistir en la edición técnica y académica de libros y revistas científicas. El dominio de trabajo requiere:
+Este software fue desarrollado para asistir en la edición de libros y revistas científicas. El dominio de trabajo requiere:
 
 - Precisión en el marcado estructural de los textos.
 - Flujo editorial controlado.
-- Exportación en formatos académicos como ePub, PDF, XML (TEI, JATS, DocBook) y otros.
+- Exportación en formatos académicos como ePub, PDF, HTML y XML.
 - Integración con una base de datos para trazabilidad, metadatos y automatización.
 
 ## Decisión arquitectónica
@@ -14,17 +14,17 @@ Este software fue desarrollado para asistir en la edición técnica y académica
 La aplicación está desarrollada como **software de escritorio en GNU/Linux**, específicamente diseñada para funcionar bajo entornos **Debian + GTK**, utilizando:
 
 - **Gambas** como entorno de desarrollo.
-- **SQLite** como base de datos.
+- **MySQL** y **SQLite** como bases de datos.
 - **Markdown** y **LaTeX** como formatos base.
 - **Herramientas del sistema GNU/Linux** para procesamiento.
-- **Scripts en Python, Lua y Bash** cuando resultan más eficaces o rápidos que una implementación nativa.
+- **Scripts en Python, Lua, Bash y Perl** cuando resultan más eficaces o rápidos que una implementación nativa.
 
 ## La aplicación como orquestador de flujos
 
 Más que una herramienta monolítica, esta aplicación cumple el rol de un **coordinador de flujos de trabajo**. Orquesta la ejecución de scripts, gestiona documentos, integra bases de datos, captura y muestra resultados de consola en tiempo real. Este enfoque modular permite:
 
 - Reutilizar herramientas existentes (Pandoc, LaTeX, etc.).
-- Integrar scripts en distintos lenguajes (Python, Lua, Bash).
+- Integrar scripts en distintos lenguajes.
 - Extender capacidades sin reescribir componentes ya probados.
 
 Gambas resulta ideal para este tipo de arquitectura: su integración con el entorno gráfico y los recursos del sistema permiten desarrollar de forma productiva y eficaz.
@@ -59,8 +59,8 @@ El uso de texto plano (LaTeX, Markdown) garantiza trazabilidad, edición con cua
 
 No todas las soluciones deben ser web. Las apps de escritorio siguen siendo el estándar en:
 
-- Edición profesional (InDesign, QuarkXpress, etc.).
-- Programación (IDEs).
+- Edición profesional.
+- Programación.
 - Sistemas cerrados o de misión crítica.
 
 Este proyecto no busca seguir modas tecnológicas, sino resolver problemas reales con eficiencia, robustez y apertura.
