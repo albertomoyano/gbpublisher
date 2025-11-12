@@ -7,6 +7,8 @@ Public hConnServidor As Connection  ' Conexión al servidor MySQL
 Public sUsuarioActual As String
 Public sRolActual As String
 Public sServidorActual As String
+Private $aColumnas As String[]
+Private $aRegistros As String[][]
 
 ' INICIALIZACIÓN DEL FORMULARIO
 Public Sub Form_Open()
@@ -47,6 +49,9 @@ Public Sub Form_Open()
     .Columns[1].Width = "300"
     .Columns[2].Title = "Componente"
   End With
+
+  ' CARGAR LISTA DE RESPALDOS
+  CargarListaRespaldos()
 
 End
 
@@ -1007,5 +1012,375 @@ Public Sub btnGuardarCambiosAyuda_Click()
 Catch
   m_Sonido.sonar("Error")
   Message.Error("Error al guardar los cambios: " & Error.Text)
+
+End
+
+Private Sub CargarListaRespaldos()
+
+  Dim sRutaRespaldo As String
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
+
+  ' OBTENER ARCHIVOS .SQL DEL DIRECTORIO
+  aArchivos = RDir(sRutaRespaldo, "*.sql")
+
+  If aArchivos.Count = 0 Then Return
+
+  ' ORDENAR ARCHIVOS (MÁS RECIENTES PRIMERO)
+  aArchivos.Sort(gb.Descent)
+
+  ListarBases.Clear()
+
+  ' AGREGAR CADA ARCHIVO AL LISTVIEW
+  For Each sArchivo In aArchivos
+    ListarBases.Add(sArchivo, sArchivo)
+  Next
+
+End
+
+Public Sub ListarBases_Select()
+
+  Dim sRutaRespaldo As String
+  Dim sArchivoSQL As String
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sNombreTabla As String
+  Dim iPos As Integer
+
+  ' VERIFICAR QUE HAY ALGO SELECCIONADO
+  If Not ListarBases.Current Then Return
+
+  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
+  sArchivoSQL = sRutaRespaldo &/ ListarBases.Current.Key
+
+  ' LEER EL ARCHIVO SQL
+  sContenido = File.Load(sArchivoSQL)
+
+  ' DIVIDIR EN LÍNEAS
+  aLineas = Split(sContenido, "\n")
+
+  ListarTablas.Clear()
+
+  ' BUSCAR LÍNEAS QUE CONTENGAN CREATE TABLE
+  For Each sLinea In aLineas
+    sLinea = Trim(sLinea)
+
+    ' BUSCAR ESPECÍFICAMENTE EL PATRÓN DE MYSQL: CREATE TABLE `NOMBRE_TABLA`
+    If InStr(UCase(sLinea), "CREATE TABLE") > 0 Then
+      ' REMOVER LOS BACKTICKS
+      sLinea = Replace(sLinea, "`", "")
+
+      ' BUSCAR LA POSICIÓN DE CREATE TABLE
+      iPos = InStr(UCase(sLinea), "CREATE TABLE ")
+
+      If iPos > 0 Then
+        ' EXTRAER DESDE DESPUÉS DE "CREATE TABLE "
+        sNombreTabla = Mid(sLinea, iPos + 13) ' 13 = Len("CREATE TABLE ")
+        sNombreTabla = Trim(sNombreTabla)
+
+        ' QUITAR TODO LO QUE VIENE DESPUÉS DEL NOMBRE DE LA TABLA (ESPACIOS, PARÉNTESIS, ETC.)
+        iPos = InStr(sNombreTabla, " ")
+        If iPos > 0 Then sNombreTabla = Left(sNombreTabla, iPos - 1)
+
+        iPos = InStr(sNombreTabla, "(")
+        If iPos > 0 Then sNombreTabla = Left(sNombreTabla, iPos - 1)
+
+        ' AGREGAR AL LISTBOX SI NO ESTÁ VACÍO
+        If Trim(sNombreTabla) <> "" Then
+          ListarTablas.Add(Trim(sNombreTabla))
+        Endif
+      Endif
+    Endif
+  Next
+
+  ' LIMPIAR COMPLETAMENTE EL TABLEVIEW
+  ListarContenido.Rows.Count = 0
+  ListarContenido.Columns.Count = 0
+
+End
+
+Public Sub ListarTablas_Select()
+
+  LlenaGrid()
+
+End
+
+Private Sub LlenaGrid()
+
+  Dim sRutaRespaldo As String
+  Dim sArchivoSQL As String
+  Dim sContenido As String
+  Dim sTablaSeleccionada As String
+  Dim i As Integer
+  Dim j As Integer
+
+  ' Verificar que hay una tabla seleccionada
+  If ListarTablas.Index < 0 Then Return
+  If Not ListarBases.Current Then Return
+
+  sTablaSeleccionada = ListarTablas[ListarTablas.Index].Text
+
+  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
+  sArchivoSQL = sRutaRespaldo &/ ListarBases.Current.Key
+
+  ' Leer el archivo SQL
+  sContenido = File.Load(sArchivoSQL)
+
+  ' Extraer columnas y datos
+  ExtraerEstructuraYDatos(sContenido, sTablaSeleccionada)
+
+  ' Limpiar el TableView
+  ListarContenido.Clear()
+
+  ' Verificar si hay columnas
+  If $aColumnas.Count = 0 Then
+    Return
+  Endif
+
+  ' Configurar columnas
+  ListarContenido.Columns.Count = $aColumnas.Count
+  For i = 0 To $aColumnas.Max
+    ListarContenido.Columns[i].Title = $aColumnas[i]
+    ListarContenido.Columns[i].Width = -1
+  Next
+
+  ' Configurar filas y llenar datos
+  If $aRegistros.Count > 0 Then
+    ListarContenido.Rows.Count = $aRegistros.Count
+
+    For i = 0 To $aRegistros.Max
+      For j = 0 To Min($aRegistros[i].Max, $aColumnas.Max)
+        ListarContenido[i, j].Text = $aRegistros[i][j]
+      Next
+    Next
+  Endif
+
+End
+
+Private Sub ExtraerEstructuraYDatos(sContenido As String, sTabla As String)
+
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim bDentroCreate As Boolean
+  Dim iPosInicio As Integer
+  Dim iPosFin As Integer
+  Dim sCampo As String
+  Dim iContadorInsert As Integer
+
+  $aColumnas = New String[]
+  $aRegistros = New String[][]
+
+  aLineas = Split(sContenido, "\n")
+  bDentroCreate = False
+  iContadorInsert = 0
+
+  For Each sLinea In aLineas
+    sLinea = Trim(sLinea)
+
+    ' Buscar CREATE TABLE
+    If InStr(UCase(sLinea), "CREATE TABLE") > 0 And InStr(sLinea, "`" & sTabla & "`") > 0 Then
+      bDentroCreate = True
+      Continue
+    Endif
+
+    ' Extraer columnas
+    If bDentroCreate Then
+      ' Buscar líneas con definición de campos (empiezan con backtick)
+      If Left(Trim(sLinea), 1) = "`" Then
+        ' Verificar que no sea una clave o constraint
+        If Not InStr(UCase(sLinea), "PRIMARY KEY") And
+            Not InStr(UCase(sLinea), "UNIQUE KEY") And
+            Not InStr(UCase(sLinea), "CONSTRAINT") And
+            Not InStr(UCase(sLinea), "FOREIGN KEY") And
+            Not InStr(UCase(sLinea), "KEY `") Then
+
+          ' Extraer nombre del campo (primer texto entre backticks)
+          iPosInicio = InStr(sLinea, "`")
+          If iPosInicio > 0 Then
+            iPosFin = InStr(sLinea, "`", iPosInicio + 1)
+            If iPosFin > iPosInicio Then
+              sCampo = Mid(sLinea, iPosInicio + 1, iPosFin - iPosInicio - 1)
+              $aColumnas.Add(sCampo)
+            Endif
+          Endif
+        Endif
+      Endif
+
+      ' Detectar fin de CREATE TABLE
+      If InStr(sLinea, ") ENGINE=") > 0 Then
+        bDentroCreate = False
+
+      Endif
+    Endif
+
+    ' Buscar INSERT INTO - DEBUGGING
+    If InStr(UCase(sLinea), "INSERT INTO") > 0 Then
+      Inc iContadorInsert
+      If InStr(sLinea, "`" & sTabla & "`") > 0 Then
+
+        ' Extraer los datos
+        If InStr(UCase(sLinea), "VALUES") > 0 Then
+
+          ExtraerDatosInsert(sLinea)
+        Else
+
+        Endif
+      Endif
+    Endif
+  Next
+
+End
+
+Private Sub ExtraerDatosInsert(sLinea As String)
+
+  Dim sValores As String
+  Dim aGrupos As String[]
+  Dim sGrupo As String
+  Dim aValoresFila As String[]
+  Dim iPosValues As Integer
+
+  ' Extraer la parte VALUES
+  iPosValues = InStr(UCase(sLinea), "VALUES")
+  If iPosValues = 0 Then
+
+    Return
+  Endif
+
+  sValores = Trim(Mid(sLinea, iPosValues + 6))
+
+  ' Dividir por ),( para obtener cada registro
+  aGrupos = DividirRegistros(sValores)
+
+  For Each sGrupo In aGrupos
+
+    aValoresFila = ParsearValores(sGrupo)
+
+    $aRegistros.Add(aValoresFila)
+  Next
+
+End
+
+Private Function DividirRegistros(sValores As String) As String[]
+
+  Dim aResultado As New String[]
+  Dim sRegistro As String
+  Dim bDentroComilla As Boolean
+  Dim i As Integer
+  Dim c As String
+  Dim cAnterior As String
+  Dim iParentesis As Integer
+
+  sRegistro = ""
+  bDentroComilla = False
+  iParentesis = 0
+  cAnterior = ""
+
+  ' Limpiar el punto y coma final si existe
+  sValores = Trim(sValores)
+  If Right(sValores, 1) = ";" Then
+    sValores = Left(sValores, Len(sValores) - 1)
+  Endif
+
+  For i = 1 To Len(sValores)
+    c = Mid(sValores, i, 1)
+
+    ' Detectar comilla simple (ignorar si está escapada)
+    If c = "'" And cAnterior <> "\\" Then
+      bDentroComilla = Not bDentroComilla
+      sRegistro &= c
+    Else If c = "(" And Not bDentroComilla Then
+      Inc iParentesis
+      If iParentesis > 1 Then sRegistro &= c
+    Else If c = ")" And Not bDentroComilla Then
+      Dec iParentesis
+      If iParentesis > 0 Then
+        sRegistro &= c
+      Else
+        ' Fin de un registro
+        If Trim(sRegistro) <> "" Then
+          aResultado.Add(sRegistro)
+          sRegistro = ""
+        Endif
+      Endif
+    Else If c = "," And Not bDentroComilla And iParentesis = 0 Then
+      ' Coma entre registros, ignorar
+      Continue
+    Else
+      sRegistro &= c
+    Endif
+
+    cAnterior = c
+  Next
+
+  ' Agregar el último si quedó algo
+  If Trim(sRegistro) <> "" Then
+    aResultado.Add(sRegistro)
+  Endif
+
+  Return aResultado
+
+End
+
+Private Function ParsearValores(sRegistro As String) As String[]
+
+  Dim aResultado As New String[]
+  Dim sValor As String
+  Dim bDentroComilla As Boolean
+  Dim i As Integer
+  Dim c As String
+  Dim cAnterior As String
+
+  sValor = ""
+  bDentroComilla = False
+  cAnterior = ""
+
+  For i = 1 To Len(sRegistro)
+    c = Mid(sRegistro, i, 1)
+
+    ' Detectar comilla simple (ignorar si está escapada)
+    If c = "'" And cAnterior <> "\\" Then
+      bDentroComilla = Not bDentroComilla
+    Else If c = "," And Not bDentroComilla Then
+      ' Fin de un valor
+      aResultado.Add(LimpiarValor(sValor))
+      sValor = ""
+    Else
+      sValor &= c
+    Endif
+
+    cAnterior = c
+  Next
+
+  ' Agregar el último valor
+  aResultado.Add(LimpiarValor(sValor))
+
+  Return aResultado
+
+End
+
+Private Function LimpiarValor(sValor As String) As String
+
+  sValor = Trim(sValor)
+
+  ' NULL
+  If UCase(sValor) = "NULL" Then
+    Return ""
+  Endif
+
+  ' Remover comillas
+  If Left(sValor, 1) = "'" And Right(sValor, 1) = "'" Then
+    sValor = Mid(sValor, 2, Len(sValor) - 2)
+  Endif
+
+  ' Decodificar caracteres escapados
+  sValor = Replace(sValor, "\\'", "'")
+  sValor = Replace(sValor, "\\n", "\n")
+  sValor = Replace(sValor, "\\t", "\t")
+  sValor = Replace(sValor, "\\\\", "\\")
+
+  Return sValor
 
 End
