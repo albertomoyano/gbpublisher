@@ -1,70 +1,146 @@
-# Manifiesto técnico: Por qué una aplicación de escritorio
+---
+layout: default
+title: Acerca de este proyecto
+nav_order: 1
+---
 
-## Contexto del proyecto
+# Acerca de este proyecto
 
-Este software fue desarrollado para asistir en la edición de libros y revistas científicas. El dominio de trabajo requiere:
+## Introducción
 
-- Precisión en el marcado estructural de los textos.
-- Flujo editorial controlado.
-- Exportación en formatos académicos como ePub, PDF, HTML y XML.
-- Integración con una base de datos para trazabilidad, metadatos y automatización.
+gbpublisher es una plataforma integral de **producción editorial académica**, diseñada específicamente para revistas científicas, series académicas y proyectos editoriales institucionales. Desarrollada íntegramente en **software libre**, gbpublisher ofrece un flujo de trabajo moderno, reproducible y estandarizado, basado en **Markdown, motor de base de datos SQL, JATS XML, XSLT, LaTeX** y otras tecnologías abiertas ampliamente adoptadas en el ecosistema científico internacional.
 
-## Decisión arquitectónica
+## Un modelo de producción XML-first con soberanía tecnológica
 
-La aplicación está desarrollada como **software de escritorio en GNU/Linux**, específicamente diseñada para funcionar bajo entornos **Debian + GTK**, utilizando:
+A diferencia de las soluciones comerciales cerradas, gbpublisher se sustenta en un flujo XML-first, donde cada artículo se transforma en un **JATS maestro validado**, que luego sirve como fuente única y autoritativa para todas las salidas editoriales posteriores. Este enfoque garantiza:
 
-- **Gambas** como entorno de desarrollo.
-- **MySQL** y **SQLite** como bases de datos.
-- **Markdown** y **LaTeX** como formatos base.
-- **Herramientas del sistema GNU/Linux** para procesamiento.
-- **Scripts en Python, Lua, Bash y Perl** cuando resultan más eficaces o rápidos que una implementación nativa.
+- Estándares internacionales (JATS, PubMed, SciELO, Crossref)
+- Total portabilidad
+- Independencia de proveedores externos
+- Transparencia en cada fase del proceso
+- Reproducibilidad y auditoría en ambiente académico
 
-## La aplicación como orquestador de flujos
+## 100% Software Libre y multiplataforma Linux
 
-Más que una herramienta monolítica, esta aplicación cumple el rol de un **coordinador de flujos de trabajo**. Orquesta la ejecución de scripts, gestiona documentos, integra bases de datos, captura y muestra resultados de consola en tiempo real. Este enfoque modular permite:
+gbpublisher se distribuye con licencia Creative Commons, permitiendo:
 
-- Reutilizar herramientas existentes (Pandoc, LaTeX, etc.).
-- Integrar scripts en distintos lenguajes.
-- Extender capacidades sin reescribir componentes ya probados.
+- Revisar el código
+- Auditar procesos
+- Adaptar flujos editoriales
+- Extender funcionalidades
+- Integrarse con infraestructura institucional existente
 
-Gambas resulta ideal para este tipo de arquitectura: su integración con el entorno gráfico y los recursos del sistema permiten desarrollar de forma productiva y eficaz.
+Es una solución pensada para universidades y bibliotecas que buscan soberanía tecnológica, control interno y sustentabilidad a largo plazo.
 
-## Valor estratégico de Gambas
+## Flujo editorial completo
 
-Algunos componentes del entorno Gambas, como `gb.term`, son difíciles de replicar con el mismo nivel de integración en otras plataformas. La posibilidad de embebido de consola, manipulación directa de archivos, ventanas modales simples y control total del sistema convierten a Gambas en una opción subestimada pero poderosa para el desarrollo de herramientas técnicas en GNU/Linux.
+gbpublisher unifica en una sola herramienta de escritorio (Gambas/Linux) la gestión de todo el proceso editorial:
 
-## Razones para no hacer una versión web
+### Gestión de metadatos (ABM en MySQL)
 
-### 1. El trabajo editorial es de escritorio
+- Autores/as
+- Afiliaciones
+- Referencias
+- Siglas
+- Ordenes de taller
+- Palabras clave
+- Información institucional
+- Datos para indexadores
 
-La edición científica implica documentos largos, estructurados, con marcado semántico y control tipográfico. Este trabajo no se puede realizar eficazmente desde navegadores, móviles o tablets.
+### Edición basada en Markdown
 
-### 2. Precisión técnica y control del entorno
+El contenido se procesa a partir de archivos **Markdown estructurados**, simplificando la escritura, revisiones y control de cambios.
 
-El sistema requiere integración con herramientas de consola, ejecución de comandos locales, rutas de archivos, versiones específicas de paquetes y scripts. Un entorno controlado (Debian + GTK) evita inconsistencias.
+### Generación automática del JATS maestro
 
-### 3. Seguridad y confidencialidad
+- Validación con xmllint
+- Generación reproducible
+- Registro de versiones
 
-El proceso editorial se realiza offline o en red local, sin exposición en la web. Esto evita fugas de información o accesos no autorizados.
+### Transformación a múltiples salidas mediante XSLT
 
-### 4. Alto rendimiento sin sobrecarga
+- SciELO (formatos por colección)
+- PubMed/PMC
+- Crossref Journal Metadata Deposit XML
+- XML para InDesign
+- HTML académico
+- EPUB accesible
 
-Al ser una aplicación nativa no depende de navegadores ni intérpretes web. Esto garantiza velocidad, bajo uso de memoria y estabilidad en hardware modesto.
+### Generación de PDF de alta calidad
 
-### 5. Estándares abiertos y editables
+- Compuesto con LaTeX
+- Control tipográfico profesional
+- Compatible con PDF/A
 
-El uso de texto plano (LaTeX, Markdown) garantiza trazabilidad, edición con cualquier editor y control con herramientas estándar (grep, diff, git, etc.).
+### Validación rigurosa y calidad editorial garantizada
 
-## Contra la percepción de obsolescencia
+Cada salida generada por **gbpublisher** pasa por un proceso de validación formal:
 
-No todas las soluciones deben ser web. Las apps de escritorio siguen siendo el estándar en:
+- **JATS maestro**: validación estándar W3C con xmllint
+- **Flavors**: validación de conformidad según el estándar específico (SciELO, PubMed, Crossref)
+- **PDF**: reproducibilidad garantizada
+- **EPUB/HTML**: estructura semántica consistente
 
-- Edición profesional.
-- Programación.
-- Sistemas cerrados o de misión crítica.
+Este modelo reduce errores, mejora la calidad editorial y acelera el proceso de indexación.
 
-Este proyecto no busca seguir modas tecnológicas, sino resolver problemas reales con eficiencia, robustez y apertura.
+### Beneficios para instituciones académicas
+
+- **Costos reducidos**
+
+El software libre elimina licencias costosas y evita depender de servicios externos.
+
+- **Control interno del proceso editorial**
+
+La editorial o revista mantiene la propiedad total de los datos y del flujo de producción.
+
+- **Cumplimiento con indexadores y estándares internacionales**
+
+Listo para SciELO, Latindex, DOAJ, RedALyC, PubMed, Crossref y repositorios institucionales.
+
+- **Sustentabilidad a largo plazo**
+
+Al usar estándares abiertos, los documentos generados seguirán siendo utilizables y migrables dentro de 10, 20 o 30 años.
+
+- **Flexibilidad total en personalización**
+
+Las transformaciones XSLT pueden adaptarse a cualquier necesidad:
+nuevas indexaciones, estructura local, políticas de publicación, diseño, etc.
+
+### ¿Por qué gbpublisher es único en Iberoamérica?
+
+- No depende de Word ni de InDesign
+
+(bases hegemónicas del mercado)
+
+- No es SaaS ni envía datos a terceros
+
+(se aloja y ejecuta en la institución)
+
+- No encierra información en formatos propietarios
+
+(todo es abierto XML/Markdown/SQL)
+
+- Ofrece multi-output profesional desde una única fuente
+- Pensado especialmente para editoriales universitarias
+- 100% Linux, estable, reproducible y transparente
+
+En la región no existe otra herramienta con este modelo técnico, con este nivel de integración, y completamente libre.
+
+### gbpublisher en el ecosistema de ciencia abierta
+
+**gbpublisher** se alinea con los principios de:
+
+- Acceso abierto
+- Reproducibilidad
+- Interoperabilidad
+- Transparencia
+- Soberanía tecnológica
+- Infraestructura abierta
+
+Esto lo convierte en una opción ideal para instituciones públicas e iniciativas editoriales con enfoque social.
 
 ## Conclusión
 
-En un mundo donde muchas herramientas privilegian la estética y la ubicuidad sobre la eficiencia y el control, esta aplicación apuesta por un entorno productivo, reproducible y auditable. Se privilegia la integración profunda con el sistema operativo GNU/Linux y las herramientas existentes, con una arquitectura que no impone su lógica, sino que **coordina inteligentemente los recursos del sistema y del usuario**.
+**gbpublisher** es más que una herramienta: es un ecosistema editorial completo, abierto, validado, reproducible y adaptado al contexto académico.
+
+Permite a universidades y revistas científicas producir contenidos de calidad profesional sin depender de servicios costosos ni plataformas propietarias, garantizando independencia y estandarización total.
