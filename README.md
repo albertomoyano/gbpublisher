@@ -1,9 +1,3 @@
----
-layout: default
-title: Acerca de este proyecto
-nav_order: 1
----
-
 # Acerca de este proyecto
 
 ## Introducción
