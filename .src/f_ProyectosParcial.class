@@ -9,12 +9,12 @@ Public Sub Form_Open()
   Dim rs As Result
   Dim sSQL As String
   Dim i As Integer
-  ' Configurar el TableView
+  ' CONFIGURAR EL TABLEVIEW
   With TableViewModoParcial
     .Clear
     .Rows.Count = 0
-    .Columns.Count = 5  ' Ajusta según tus necesidades
-    ' Definir encabezados de columnas
+    .Columns.Count = 5
+    ' DEFINIR ENCABEZADOS DE COLUMNAS
     .Columns[0].Title = "ID"
     .Columns[0].Width = 0
     .Columns[1].Title = "Proyecto"
@@ -25,7 +25,7 @@ Public Sub Form_Open()
     .Columns[3].Width = 80
     .Columns[4].Title = "Tipo"
     .Columns[4].Width = 300
-    ' Opcional: más propiedades del TableView
+    ' OPCIONAL: MÁS PROPIEDADES DEL TABLEVIEW
     .Mode = Select.Single  ' Selección simple
     .Header = True         ' Mostrar encabezados
   End With
@@ -35,14 +35,14 @@ Public Sub Form_Open()
 
   If rs.Available Then
     TableViewModoParcial.Rows.Count = rs.Count
-    ' Llenar el TableView con los datos
+    ' LLENAR EL TABLEVIEW CON LOS DATOS
     i = 0
     For Each rs
       TableViewModoParcial[i, 0].Text = rs["id"]
       TableViewModoParcial[i, 1].Text = rs["nombre"]
       TableViewModoParcial[i, 2].Text = rs["activo"]
 
-      ' Columna "Tipo" con texto según el valor
+      ' COLUMNA "TIPO" CON TEXTO SEGÚN EL VALOR
       Select Case rs["tipo_producto"]
         Case 1
           TableViewModoParcial[i, 4].Text = "Revista en markdown"
@@ -54,7 +54,7 @@ Public Sub Form_Open()
           TableViewModoParcial[i, 4].Text = "Desconocido"
       End Select
 
-      ' Columna "Ocupado" con color
+      ' COLUMNA "OCUPADO" CON COLOR
       If rs["ocupado"] = True Or rs["ocupado"] = 1 Then
         TableViewModoParcial[i, 3].Text = "SÍ"
         TableViewModoParcial[i, 3].Background = Color.RGB(255, 200, 200)  ' Rojo suave
@@ -73,5 +73,112 @@ End
 Public Sub ButtonCancelar_Click()
 
   Me.Close
+
+End
+
+' BOTON QUE ABRE EL ARCHIVO SELECCIONADO EN EL GRID
+Public Sub ButtonAbrirParcial_Click()
+
+  ' VERIFICAR SI EL USUARIO TIENE UN PROYECTO COMPLETO OCUPADO
+  Dim rsCheck As Result
+
+  rsCheck = m_ConexionBD.mConn.Exec("SELECT id FROM proyectos WHERE usuario_propietario = &1 AND ocupado = 1", m_InicioCierre.UsuarioEnCurso)
+  If rsCheck.Available Then
+    m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE id = &1", FMain.id_proyecto.Value)
+    m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE id = &1", FMain.id_proyecto.Value)
+    m_ConexionBD.mConn.Commit
+  Else
+    Return
+  Endif
+
+  Dim fila As Integer
+  Dim idProyecto As Integer
+  Dim nombreProyecto As String
+  Dim tipoProyecto As Integer
+  Dim sSQL As String
+  Dim rs As Result
+  Dim sRutaEnBD As String
+
+  ' VALIDAR SELECCIÓN EN EL TABLEVIEW
+  fila = TableViewModoParcial.Row
+  If fila < 0 Then
+    Message.Warning("Debe seleccionar un proyecto de la lista.")
+    Return
+  Endif
+
+  idProyecto = Val(TableViewModoParcial[fila, 0].Text)
+  nombreProyecto = TableViewModoParcial[fila, 1].Text
+
+  ' LEER REGISTRO COMPLETO DESDE LA BD
+  sSQL = "SELECT * FROM proyectos WHERE id = &1"
+  rs = m_ConexionBD.mConn.Exec(sSQL, idProyecto)
+
+  If Not rs.Available Then
+    Message.Error("No se pudo recuperar el proyecto desde la base de datos.")
+    Return
+  Endif
+
+  tipoProyecto = rs["tipo_producto"]
+  nombreProyecto = rs["nombre"]
+  idProyecto = rs["id"]
+
+  ' VALIDAR QUE ESTÉ ACTIVO
+  If Not rs["activo"] Then
+    Message.Warning("El proyecto está archivado. Debe activarlo antes de trabajar.")
+    Return
+  Endif
+
+  ' MOSTRAR NOMBRE e ID EN EL FORMULARIO PRINCIPAL
+  FMain.txtProyecto.Text = nombreProyecto
+  FMain.id_proyecto.Value = idProyecto
+
+  ' LIMPIAMOS LOS FORMULARIOS
+  m_Metadatos.LimpiarCamposMetadatos()
+  m_Articulos.LimpiarTextboxArticulos()
+  m_Autores.LimpiarTextboxAutores()
+  m_Bibtex.LimpiarTextboxBibtex()
+  m_Siglas.LimpiarTextboxSigla()
+
+  ' LIMPIAR CACHÉ O ENTORNO PREVIO
+  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+
+  ' CONFIGURAR INTERFAZ SEGUN TIPO DE PRODUCTO
+  CargarFuncionPorTipo(rs["tipo_producto"])
+
+  ' CARGAMOS LOS METADATOS DEL PROYECTO
+  m_Metadatos.CargarMetadatosDelProyecto
+
+  ' CARGAMOS LAS REFERENCIAS BIBTEX
+  m_Bibtex.IniciarBibtex
+
+  ' ARRANCAMOS EL CONTADOR
+  m_Timer.IniciarContadorReloj(rs["id"])
+
+  ' MARCAR QUE SE ABRIÓ EN MODO PARCIAL
+  FMain.ValueBoxParcial.Value = 1
+
+  m_Sonido.sonar("Info")
+  Message.Info("Proyecto '" & nombreProyecto & "' abierto en modo parcial.\n Puede trabajar sobre la base de datos.")
+
+  Dim proyecto As String = File.Name(FMain.txtProyecto.Text)
+
+  Me.Close
+
+End
+
+Public Sub CargarFuncionPorTipo(iTipo As Integer)
+
+  Select Case iTipo
+    Case 1
+      m_FuncionesGenericas.ConfigurarFormulariosRevistaMDparcial()
+    Case 2
+      ' FuncionX2()
+    Case 3
+      m_FuncionesGenericas.ConfigurarFormulariosLibroLaTeXparcial()
+      ' CARGAMOS LAS SIGLAS
+      m_Siglas.IniciarSiglas()
+    Case Else
+      Message.Warning("Tipo desconocido: " & iTipo)
+  End Select
 
 End
