@@ -1,13 +1,71 @@
 ' Gambas module file
 
-Public mConn As Connection
+' ==============================================================================
+' Módulo: m_ConexionBD
+' ------------------------------------------------------------------------------
+' Descripción general:
+'   Administra la conexión MySQL utilizada por toda la aplicación gbpublisher.
+'   Contiene:
+'     - Apertura de la conexión con validación de usuario (ConexionAbierta)
+'     - Cierre seguro de la conexión (ConexionCerrada)
+'     - Cierre global de la aplicación, procesos y entorno (CerrarTodo)
+'
+' Objetivo:
+'   Centralizar la lógica de conexión y asegurar que exista un único punto de
+'   acceso a la base de datos durante toda la sesión. También controla que un
+'   usuario no inicie sesión simultáneamente en más de una máquina.
+'
+' Nota:
+'   Este módulo está diseñado para ser cargado al iniciar la aplicación, dejando
+'   la conexión disponible de manera global a través de `mConn`.
+' ==============================================================================
+
+Public mConn As Connection    ' Objeto de conexión reutilizado globalmente
+
+' ==============================================================================
+' Función: ConexionAbierta(ip, usuario, claveEncriptada) As Integer
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Abre la conexión MySQL con el servidor indicado y valida el inicio de sesión
+'   del usuario. También controla si el usuario está activo o si ya se encuentra
+'   conectado desde otra máquina. Si la autenticación es exitosa, marca al
+'   usuario como conectado y registra el timestamp del último acceso.
+'
+' Parámetros:
+'   ip              String   Dirección IP del servidor MySQL
+'   usuario         String   Nombre de usuario ingresado en la interfaz
+'   claveEncriptada String   Contraseña del usuario ya procesada/encriptada
+'
+' Retornos:
+'   0  → Error al abrir conexión o ejecutar consulta
+'   1  → Conexión exitosa, usuario autenticado
+'   2  → Usuario inactivo o conectado desde otra máquina
+'   3  → Usuario no encontrado
+'
+' Flujo de validación:
+'   1. Abrir conexión MySQL
+'   2. Verificar credenciales en la tabla "usuarios"
+'   3. Validar:
+'        - Activación del usuario
+'        - Estado "en línea"
+'   4. Marcar usuario como conectado
+'
+' Errores:
+'   En caso de error en cualquiera de las etapas se informa al usuario mediante
+'   Message.Error() o Message.Warning() y se devuelve un código de estado.
+'
+' Seguridad:
+'   Esta función construye SQL mediante concatenación. En futuras versiones
+'   podría migrarse a consultas parametrizadas para mayor robustez.
+'
+' ==============================================================================
 
 Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada As String) As Integer
 
   Dim sSQL As String
   Dim hResultado As Result
 
-  ' Crear y configurar conexión
+  ' Crear y configurar conexión MySQL
   mConn = New Connection
   mConn.Type = "mysql"
   mConn.Host = ip
@@ -16,7 +74,7 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
   mConn.User = "app_user"
   mConn.Password = "AppUser2024!"
 
-  ' ABRIR LA CONEXIÓN
+  ' Intentar abrir la conexión
   Try mConn.Open
 
   If Error Then
@@ -27,11 +85,11 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
 
   If Not mConn.Opened Then
     m_Sonido.sonar("Error")
-    Message.Error("La conexión no se pudo abrir correctamente")
+    Message.Error("La conexión no se pudo abrir correctamente.")
     Return 0
   Endif
 
-  ' Construir SQL directamente
+  ' Construcción del SQL de validación
   Error.Clear
   sSQL = "SELECT * FROM usuarios WHERE usuario = '" & usuario & "' AND clave = '" & claveEncriptada & "'"
 
@@ -40,40 +98,48 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
 
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("Error en consulta: " & Error.Text)
+    Message.Error("Error en consulta SQL: " & Error.Text)
     Return 0
   Endif
 
-  ' Verificar resultado
-  If Not hResultado Then
-    Return 0
-  Endif
+  ' Verificar resultado de consulta
+  If Not hResultado Then Return 0
 
-  ' Verificar si encontró el usuario
-  If Not hResultado.Available Then
-    Return 3
-  Endif
+  ' Usuario no encontrado
+  If Not hResultado.Available Then Return 3
 
-  ' Verificar si está activo
+  ' Usuario inactivo
   If CInt(hResultado["activo"]) = 0 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("El usuario " & usuario & " se encuentra inactivo y no tiene acceso a la base de datos.")
+    Message.Warning("El usuario " & usuario & " se encuentra inactivo y no tiene acceso al sistema.")
     Return 2
   End If
 
-  ' Verificar si está en linea en otra máquina
+  ' Usuario ya conectado en otra máquina
   If (hResultado["en_linea"] = True) Or (CInt(hResultado["en_linea"]) = 1) Then
     m_Sonido.sonar("Warning")
     Message.Warning("El usuario " & usuario & " ya está conectado en otra máquina.")
     Return 2
   End If
 
-  ' Marcar como conectado
+  ' Marcar usuario como conectado
   mConn.Exec("UPDATE usuarios SET en_linea = 1, ultimo_acceso = CURRENT_TIMESTAMP WHERE usuario = '" & usuario & "'")
 
   Return 1
 
 End
+
+' ==============================================================================
+' Subrutina: ConexionCerrada()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Cierra la conexión global `mConn` si está abierta y elimina su referencia.
+'
+' Notas:
+'   - No muestra mensajes al usuario.
+'   - Debe ser usada por módulos superiores que controlen el cierre global.
+'
+' ==============================================================================
 
 Public Sub ConexionCerrada() As Connection
 
@@ -82,48 +148,79 @@ Public Sub ConexionCerrada() As Connection
 
 End
 
+' ==============================================================================
+' Subrutina: CerrarTodo()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Finaliza completamente la aplicación. Se encarga de:
+'     - Limpiar la terminal embebida
+'     - Matar procesos Bash asociados si siguen activos
+'     - Limpiar componentes visuales del proyecto en FMain
+'     - Cerrar la conexión MySQL si sigue abierta
+'     - Ejecutar Quit para finalizar la sesión
+'
+' Uso:
+'   Llamada normalmente desde FMain al cerrar la ventana principal.
+'
+' Flujo interno:
+'   1. Limpiar terminal del proyecto
+'   2. Controlar y matar procesos Bash
+'   3. Resetear componentes del formulario principal
+'   4. Cerrar conexión MySQL
+'   5. Salir de la aplicación
+'
+' Notas:
+'   - El método utiliza Try para evitar interrupciones por errores.
+'   - Muestra advertencias si un proceso no puede detenerse.
+'
+' ==============================================================================
+
 Public Sub CerrarTodo()
 
+  ' Limpiar terminal, si está visible
   If FMain.TerminalViewProyecto Then
     Try FMain.TerminalViewProyecto.Input("rm -rf " & User.Home & "/.local/share/org.gambas.*" & "\n")
     Try FMain.TerminalViewProyecto.Input("clear" & "\n")
     Wait 0.2
   Endif
 
-  ' Detener el proceso Bash si está corriendo
+  ' Intentar detener proceso Bash
   If FMain.$Bash Then
     If Object.IsValid(FMain.$Bash) Then
       If FMain.$Bash.State = Process.Running Then
+
+        ' Intento primario: Kill
         Try FMain.$Bash.Kill
         Wait 0.2
+
+        ' Intento secundario: Terminate
         If FMain.$Bash.State = Process.Running Then
           Try FMain.$Bash.Terminate
           Wait 0.2
+
+          ' Reportar último recurso
           If FMain.$Bash.State = Process.Running Then
             m_Sonido.sonar("Warning")
-            Message.Warning("El proceso no pudo ser detenido.")
+            Message.Warning("El proceso Bash no pudo ser detenido.")
           Endif
         Endif
+
       Endif
     Endif
   Endif
 
-  ' Limpiar la interfaz del proyecto si existe
-  If FMain.txtProyecto Then
-    Try FMain.txtProyecto.Text = ""
-  Endif
+  ' Limpiar editor de proyecto
+  If FMain.txtProyecto Then Try FMain.txtProyecto.Text = ""
 
-  If FMain.DirViewProyecto Then
-    Try FMain.DirViewProyecto.Root = User.Home
-  Endif
+  ' Restaurar ruta raíz del árbol de archivos
+  If FMain.DirViewProyecto Then Try FMain.DirViewProyecto.Root = User.Home
 
+  ' Cerrar conexión si sigue abierta
   If mConn Then
-    If mConn.Opened Then
-      Try mConn.Close
-    Endif
+    If mConn.Opened Then Try mConn.Close
   Endif
 
-  ' --- SALIR ---
+  ' Salir de la aplicación
   Quit
 
 End

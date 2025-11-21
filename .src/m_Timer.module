@@ -1,6 +1,42 @@
 ' Gambas module file
 
-' Variables globales
+' ==============================================================================
+' Módulo: m_Timer
+' ------------------------------------------------------------------------------
+' Descripción general:
+'   Gestiona el temporizador de trabajo asociado a cada proyecto. Este módulo
+'   controla:
+'     • El contador parcial por sesión (horas, minutos, segundos)
+'     • El total acumulado guardado en la base de datos
+'     • El incremento automático cada segundo
+'     • El almacenamiento del tiempo total al detener el contador
+'
+' Dependencias:
+'   - Requiere una conexión MySQL activa (m_ConexionBD.mConn)
+'   - Interactúa con el formulario principal FMain (controles visuales y Timer)
+'
+' Objetivo:
+'   Permitir registrar el tiempo que un usuario dedica a cada proyecto, con
+'   actualización automática y persistencia en la tabla "contador_tiempo".
+'
+' ==============================================================================
+
+' ==============================================================================
+' VARIABLES GLOBALES
+' ------------------------------------------------------------------------------
+' horas, minutos, segundos:
+'   Contador parcial (solo el tiempo de la sesión actual).
+'
+' horasTotal, minutosTotal, segundosTotal:
+'   Tiempo acumulado del proyecto almacenado en la base de datos.
+'
+' id_proyecto:
+'   ID del proyecto actualmente activo. Se establece al iniciar el contador.
+'
+' nuevoID:
+'   Último ID insertado en contador_tiempo cuando se crea el registro.
+' ==============================================================================
+
 Public horas As Integer
 Public minutos As Integer
 Public segundos As Integer
@@ -10,30 +46,54 @@ Public segundosTotal As Integer
 Private id_proyecto As Integer
 Private nuevoID As Integer
 
-' Inicia el reloj en 00:00:00 y comienza el temporizador
+' ==============================================================================
+' Subrutina: IniciarContadorReloj(proyectoID)
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Inicializa el contador parcial en 00:00:00, carga el tiempo acumulado de la
+'   base de datos y activa el Timer del formulario principal.
+'
+' Parámetros:
+'   proyectoID   Integer   ID del proyecto para el cual se medirá el tiempo.
+'
+' Flujo:
+'   1) Reinicia el contador parcial
+'   2) Guarda el ID del proyecto
+'   3) Carga el tiempo acumulado en variables globales
+'   4) Verifica que exista registro en contador_tiempo o lo crea
+'   5) Activa el Timer (1 segundo)
+'
+' ==============================================================================
+
 Public Sub IniciarContadorReloj(proyectoID As Integer)
-  ' Resetear contador parcial
 
   horas = 0
   minutos = 0
   segundos = 0
 
-  ' Guardar el ID del proyecto - ASEGURAR que es Integer
   id_proyecto = CInt(proyectoID)
 
-  ' Cargar tiempo total acumulado para este proyecto
   CargarTiempoTotal()
-
-  ' Verificar si existe registro en la tabla contador_tiempo, si no crearlo
   VerificarOCrearRegistroTimer()
 
-  ' Establece intervalo y activa el Timer
   FMain.TimerHOY.Delay = 1000
   FMain.TimerHOY.Restart
 
 End
 
-' Esta función se llama cada segundo desde el evento Timer del formulario
+' ==============================================================================
+' Subrutina: ActualizarContador()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Ejecutada cada segundo por el Timer. Incrementa el contador parcial y
+'   actualiza la visualización tanto parcial como total.
+'
+' Efectos:
+'   - Modifica horas/minutos/segundos parciales.
+'   - Actualiza FMain.TextHoraParcial y el display total acumulado.
+'
+' ==============================================================================
+
 Public Sub ActualizarContador()
 
   segundos += 1
@@ -47,81 +107,83 @@ Public Sub ActualizarContador()
     horas += 1
   Endif
 
-  ' Actualiza el TextBox parcial
   FMain.TextHoraParcial.Text = Format(horas, "00") & ":" & Format(minutos, "00") & ":" & Format(segundos, "00")
 
-  ' También actualiza el total acumulado visible
   ActualizarDisplayTotal()
 
 End
 
-' Guardar el tiempo total acumulado en la base de datos
+' ==============================================================================
+' Subrutina: GuardarTiempoTotal()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Calcula el tiempo total acumulado (parcial + total anterior) y lo guarda
+'   en la base de datos.
+'
+' Comportamiento:
+'   - No ejecuta UPDATE si no hay conexión o el ID de proyecto no está definido.
+'
+' Notas:
+'   Esta función es llamada al detener el contador.
+'
+' ==============================================================================
+
 Public Sub GuardarTiempoTotal()
 
   Dim tiempoTotalSegundos As Integer
   Dim tiempoParcialSegundos As Integer
 
-  ' Verificar que tenemos un ID válido (ya fue establecido en IniciarContadorReloj)
-  If id_proyecto <= 0 Then
-    Return
-  Endif
+  If id_proyecto <= 0 Then Return
+  If IsNull(m_ConexionBD.mConn) Then Return
+  If Not m_ConexionBD.mConn.Opened Then Return
 
-  ' Verificar conexión
-  If IsNull(m_ConexionBD.mConn) Then
-    Return
-  Endif
-
-  If Not m_ConexionBD.mConn.Opened Then
-    Return
-  Endif
-
-  ' Calcular tiempo parcial en segundos
   tiempoParcialSegundos = (horas * 3600) + (minutos * 60) + segundos
 
-  ' Calcular tiempo total (acumulado + parcial actual)
-  tiempoTotalSegundos = (horasTotal * 3600) + (minutosTotal * 60) + segundosTotal + tiempoParcialSegundos
+  tiempoTotalSegundos = (horasTotal * 3600) +
+    (minutosTotal * 60) +
+    segundosTotal +
+    tiempoParcialSegundos
 
-  ' Ejecutar UPDATE
-  Dim updateQuery As String
-  updateQuery = "UPDATE contador_tiempo SET tiempo_total = &1 WHERE id_proyecto = &2"
+  Dim updateQuery As String = "UPDATE contador_tiempo SET tiempo_total = &1 WHERE id_proyecto = &2"
   m_ConexionBD.mConn.Exec(updateQuery, tiempoTotalSegundos, CInt(id_proyecto))
 
   If Error Then
+    ' Error se ignora de forma silenciosa, por diseño.
   Endif
 
 End
 
-' Cargar el tiempo total acumulado desde la base de datos
+' ==============================================================================
+' Subrutina: CargarTiempoTotal()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Lee desde la base de datos el tiempo total acumulado del proyecto actual y
+'   lo carga en las variables globales horasTotal, minutosTotal, segundosTotal.
+'
+' Flujo:
+'   - Si no existe un registro, se considera 0
+'   - Convierte tiempo_total (segundos) a formato h:m:s
+'   - Actualiza el display total
+'
+' ==============================================================================
+
 Public Sub CargarTiempoTotal()
 
   Dim rResultado As Result
   Dim tiempoTotalSegundos As Integer = 0
 
-  ' Verificar que la conexión existe y está disponible
-  If IsNull(m_ConexionBD.mConn) Then
-    Return
-  Endif
+  If IsNull(m_ConexionBD.mConn) Then Return
+  If Not m_ConexionBD.mConn.Opened Then Return
 
-  If Not m_ConexionBD.mConn.Opened Then
-    Return
-  Endif
-
-  ' Consultar el tiempo total para este proyecto
-  Dim queryTiempo As String = "SELECT tiempo_total FROM contador_tiempo WHERE id_proyecto = " & CStr(CInt(id_proyecto))
+  Dim queryTiempo As String = "SELECT tiempo_total FROM contador_tiempo WHERE id_proyecto = " & CStr(id_proyecto)
   rResultado = m_ConexionBD.mConn.Exec(queryTiempo)
-  If Error Then
-    Return
-  Endif
+  If Error Then Return
 
   If rResultado.Available Then
     tiempoTotalSegundos = rResultado!tiempo_total
-    If Error Then tiempoTotalSegundos = 0
-    If IsNull(tiempoTotalSegundos) Then tiempoTotalSegundos = 0
-  Else
-    tiempoTotalSegundos = 0
+    If Error Or IsNull(tiempoTotalSegundos) Then tiempoTotalSegundos = 0
   Endif
 
-  ' Convertir segundos a horas:minutos:segundos
   horasTotal = Int(tiempoTotalSegundos / 3600)
   minutosTotal = Int((tiempoTotalSegundos Mod 3600) / 60)
   segundosTotal = tiempoTotalSegundos Mod 60
@@ -130,69 +192,90 @@ Public Sub CargarTiempoTotal()
 
 End
 
-' Verificar si existe registro en contador_tiempo, si no existe lo crea
+' ==============================================================================
+' Subrutina: VerificarOCrearRegistroTimer()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Verifica si el proyecto tiene un registro en la tabla contador_tiempo.
+'   Si no existe, lo crea con tiempo_total = 0.
+'
+' Efectos:
+'   - Crea el registro si no existe.
+'   - Guarda en nuevoID el ID recién insertado.
+'
+' ==============================================================================
+
 Public Sub VerificarOCrearRegistroTimer()
 
   Dim rResultado As Result
-  ' Dim rInsert As Result
   Dim sqlQuery As String
 
   If IsNull(m_ConexionBD.mConn) Or Not m_ConexionBD.mConn.Opened Then Return
 
-  ' Verificar si ya existe registro en contador_tiempo
-  sqlQuery = "SELECT id FROM contador_tiempo WHERE id_proyecto = " & CStr(CInt(id_proyecto))
+  sqlQuery = "SELECT id FROM contador_tiempo WHERE id_proyecto = " & CStr(id_proyecto)
   rResultado = m_ConexionBD.mConn.Exec(sqlQuery)
-  If Error Then
-    Return
-  Endif
+  If Error Then Return
 
-  ' Si no existe, crear el registro
   If Not rResultado.Available Then
-    Dim insertQuery As String = "INSERT INTO contador_tiempo (id_proyecto, tiempo_total) VALUES (" & CStr(CInt(id_proyecto)) & ", 0)"
+    Dim insertQuery As String = "INSERT INTO contador_tiempo (id_proyecto, tiempo_total) VALUES (" & CStr(id_proyecto) & ", 0)"
     m_ConexionBD.mConn.Exec(insertQuery)
-    If Error Then
-      Return
-    Endif
+    If Error Then Return
 
-    ' Obtener ID insertado (MySQL)
     Dim rID As Result = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
-    If rID.Available Then
-      nuevoID = rID[0]
-    Endif
+    If rID.Available Then nuevoID = rID[0]
   Endif
 
 End
 
-' Actualizar la visualización del tiempo total
+' ==============================================================================
+' Subrutina: ActualizarDisplayTotal()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Calcula el tiempo total acumulado (parcial + histórico) y lo muestra en
+'   el control FMain.TextHoraTotal.
+'
+' Notas:
+'   Esta función no guarda datos en la base; solo actualiza la vista.
+'
+' ==============================================================================
+
 Public Sub ActualizarDisplayTotal()
-  ' Calcular y mostrar el tiempo total (suma del tiempo parcial actual + tiempo total anterior)
 
   Dim totalHoras As Integer = horasTotal
   Dim totalMinutos As Integer = minutosTotal
   Dim totalSegundos As Integer = segundosTotal + segundos
 
-  ' Ajustar los segundos
   If totalSegundos >= 60 Then
     totalMinutos += Int(totalSegundos / 60)
     totalSegundos = totalSegundos Mod 60
   Endif
 
-  ' Ajustar los minutos
   totalMinutos += minutos
   If totalMinutos >= 60 Then
     totalHoras += Int(totalMinutos / 60)
     totalMinutos = totalMinutos Mod 60
   Endif
 
-  ' Ajustar las horas
   totalHoras += horas
 
-  ' Mostrar tiempo total (tiempo acumulado + tiempo actual)
-  FMain.TextHoraTotal.Text = Format(totalHoras, "00") & ":" & Format(totalMinutos, "00") & ":" & Format(totalSegundos, "00")
+  FMain.TextHoraTotal.Text = Format(totalHoras, "00") & ":" &
+    Format(totalMinutos, "00") & ":" &
+    Format(totalSegundos, "00")
 
 End
 
-' Detener el contador y guardar el tiempo
+' ==============================================================================
+' Subrutina: DetenerContador()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Detiene el Timer y guarda el tiempo total acumulado en la base de datos.
+'
+' Efectos:
+'   - Llama a GuardarTiempoTotal()
+'   - Detiene la actualización automática del reloj
+'
+' ==============================================================================
+
 Public Sub DetenerContador()
 
   FMain.TimerHOY.Stop

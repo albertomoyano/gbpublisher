@@ -1,31 +1,51 @@
 ' Gambas class file
 
-Private Contenido As Result
+' --------------------------------------------------------------------------------
+' Título: Formulario f_BlockNotas
+' Propósito: Gestiona la interfaz y lógica para un sistema de "Block de Notas"
+'            con funcionalidades CRUD (Crear, Leer, Actualizar, Borrar) y búsqueda.
+' Dependencias: m_ConexionBD, m_InicioCierre, m_Sonido, FMain.
+' --------------------------------------------------------------------------------
 
+Private Contenido As Result ' Objeto Result que almacena los registros de notas cargadas desde la BD.
+
+' --------------------------------------------------------------------------------
+' Evento: Form_Activate()
+' Propósito: Se dispara inmediatamente después de que el formulario se activa.
+' Uso: Asegura que el contenido esté actualizado si el formulario se reutiliza.
+' --------------------------------------------------------------------------------
 Public Sub Form_Activate()
 
   CargarNotas()
 
 End
 
+' --------------------------------------------------------------------------------
+' Evento: Form_Open()
+' Propósito: Inicializa los controles y la apariencia del formulario al abrirse.
+' --------------------------------------------------------------------------------
 Public Sub Form_Open()
 
   CargarNotas()
 
+  ' Establece el título del formulario, incluyendo el nombre del usuario logueado.
   f_BlockNotas.Title = "Block de notas (usuario en curso: " & m_InicioCierre.UsuarioEnCurso & ")"
 
+  ' Configuración inicial de la grilla (gridNotas)
   With gridNotas
-    .Header = True
-    .Grid = True
-    .Columns.Count = 2
-    .Columns[0].Title = "id"
-    .Columns[0].Width = 0
-    .Columns[1].Title = "Asunto"
+    .Header = True          ' Muestra la cabecera
+    .Grid = True            ' Muestra las líneas de la grilla
+    .Columns.Count = 2      ' Define dos columnas
+    .Columns[0].Title = "id"    ' Título de la columna 0
+    .Columns[0].Width = 0       ' Oculta la columna del ID
+    .Columns[1].Title = "Asunto" ' Título visible
   End With
 
+  ' Deshabilita los campos de entrada al inicio
   txtAsunto.Enabled = False
   txtContenido.Enabled = False
 
+  ' Configuración inicial del estado de los botones (Modo 'Ver' o 'Listo para Nuevo')
   btnNuevo.Visible = True
   btnBorrar.Visible = False
   btnGuardar.Visible = False
@@ -33,38 +53,43 @@ Public Sub Form_Open()
 
 End
 
-' -----------------------------
-' Función para cargar notas
-' -----------------------------
+' --------------------------------------------------------------------------------
+' Función: CargarNotas()
+' Propósito: Carga todas las notas de la base de datos en el objeto 'Contenido'.
+' Uso: Realiza un JOIN para obtener también el nombre de usuario.
+' --------------------------------------------------------------------------------
 Public Sub CargarNotas()
 
   Contenido = m_ConexionBD.mConn.Exec(
     "SELECT b.*, u.usuario FROM block_notas b " &
     "JOIN usuarios u ON b.id_usuario = u.id " &
-    "ORDER BY b.id DESC")
+    "ORDER BY b.id DESC") ' Ordena por ID descendente (más reciente primero)
 
+  ' Asigna el número de filas de la grilla al número de resultados
   gridNotas.Rows.Count = Contenido.Count
-  gridNotas.Refresh()
+  gridNotas.Refresh() ' Refresca la grilla para que se muestren los datos
 
 End
 
-' -----------------------------
-' Cerrar formulario
-' -----------------------------
+' --------------------------------------------------------------------------------
+' Evento: btnCerrar_Click()
+' Propósito: Cierra el formulario actual.
+' --------------------------------------------------------------------------------
 Public Sub btnCerrar_Click()
 
   Me.Close
 
 End
 
-' -----------------------------
-' Guardar nueva nota
-' -----------------------------
+' --------------------------------------------------------------------------------
+' Evento: btnGuardar_Click()
+' Propósito: Guarda una nueva nota en la tabla 'block_notas'.
+' --------------------------------------------------------------------------------
 Public Sub btnGuardar_Click()
 
-  Dim miCreate As Result
-  Dim UsuarioID As Integer
-  Dim resultado As Result
+  Dim miCreate As Result  ' Objeto para la operación INSERT
+  Dim UsuarioID As Integer ' ID numérico del usuario actual
+  Dim resultado As Result ' Almacena el resultado de la consulta de ID
 
   ' Obtener el ID del usuario actual
   resultado = m_ConexionBD.mConn.Exec("SELECT id FROM usuarios WHERE usuario = '" & m_InicioCierre.UsuarioEnCurso & "' LIMIT 1")
@@ -74,6 +99,7 @@ Public Sub btnGuardar_Click()
   End If
   UsuarioID = CInt(resultado["id"])
 
+  ' Intenta crear un nuevo registro (objeto CREATE)
   Try miCreate = m_ConexionBD.mConn.Create("block_notas")
   If Error Then
     m_Sonido.sonar("Error")
@@ -82,11 +108,14 @@ Public Sub btnGuardar_Click()
   Endif
 
   With miCreate
+    ' Asignación de valores a los campos
     !id = ID_block.Value
     !asunto = txtAsunto.Text
     !contenido = txtContenido.Text
     !id_usuario = UsuarioID
-    !fecha = Now
+    !fecha = Now ' Utiliza la fecha y hora actual del sistema
+
+    ' Ejecuta la inserción
     Try .Update()
     If Error Then
       m_Sonido.sonar("Error")
@@ -95,11 +124,13 @@ Public Sub btnGuardar_Click()
     End If
   End With
 
+  ' Lógica de post-guardado
   CargarNotas()
   m_Sonido.sonar("Info")
   Message.Info("Nueva entrada guardada.")
   LimpiarCamposNotas()
 
+  ' Restablecer estado de la interfaz
   txtAsunto.Enabled = False
   txtContenido.Enabled = False
   txtBuscar.Enabled = True
@@ -111,16 +142,17 @@ Public Sub btnGuardar_Click()
 
 End
 
-' -----------------------------
-' Modificar nota existente
-' -----------------------------
+' --------------------------------------------------------------------------------
+' Evento: btnGuardarMod_Click()
+' Propósito: Modifica (UPDATE) una nota existente si el usuario logueado es el autor.
+' --------------------------------------------------------------------------------
 Public Sub btnGuardarMod_Click()
 
-  Dim miEdit As Result
-  Dim UsuarioID As Integer
-  Dim resultado As Result
+  Dim miEdit As Result    ' Objeto para la operación UPDATE
+  Dim UsuarioID As Integer ' ID numérico del usuario actual
+  Dim resultado As Result ' Almacena el resultado de la consulta de ID
 
-  ' Obtener el ID del usuario actual
+  ' Obtener el ID del usuario actual (necesario para la validación de autoría)
   resultado = m_ConexionBD.mConn.Exec("SELECT id FROM usuarios WHERE usuario = '" & m_InicioCierre.UsuarioEnCurso & "' LIMIT 1")
   If resultado.Count = 0 Then
     Message.Error("No se encontró el usuario actual en la base de datos.")
@@ -136,6 +168,7 @@ Public Sub btnGuardarMod_Click()
     Return
   End If
 
+  ' Intenta obtener el registro para edición
   Try miEdit = m_ConexionBD.mConn.Edit("block_notas", "id=" & ID_block.Value)
   If Error Then
     m_Sonido.sonar("Error")
@@ -146,6 +179,8 @@ Public Sub btnGuardarMod_Click()
   With miEdit
     !asunto = txtAsunto.Text
     !contenido = txtContenido.Text
+
+    ' Ejecuta la actualización en la BD
     Try .Update()
     If Error Then
       m_Sonido.sonar("Error")
@@ -154,11 +189,13 @@ Public Sub btnGuardarMod_Click()
     End If
   End With
 
+  ' Lógica de post-modificación
   CargarNotas()
   LimpiarCamposNotas()
   m_Sonido.sonar("Info")
   Message.Info("Los cambios se guardaron con éxito.")
 
+  ' Restablecer estado de la interfaz
   txtAsunto.Enabled = False
   txtContenido.Enabled = False
   txtBuscar.Enabled = True
@@ -170,72 +207,81 @@ Public Sub btnGuardarMod_Click()
 
 End
 
-' -----------------------------
-' Botón nueva nota
-' -----------------------------
+' --------------------------------------------------------------------------------
+' Evento: btnNuevo_Click()
+' Propósito: Prepara la interfaz para la creación de una nueva nota.
+' --------------------------------------------------------------------------------
 Public Sub btnNuevo_Click()
 
   LimpiarCamposNotas()
 
+  ' Habilitar campos de entrada
   txtAsunto.Enabled = True
   txtContenido.Enabled = True
   txtBuscar.Enabled = False
-  DateBoxBlockNotas.Value = Now  ' Fecha actual
+  DateBoxBlockNotas.Value = Now ' Establece la fecha actual
 
+  ' Configuración del estado de los botones (Modo 'Guardar Nuevo')
   btnNuevo.Visible = False
   btnBorrar.Visible = False
   btnGuardar.Visible = True
   btnGuardarMod.Visible = False
 
-  ' Obtener último ID
+  ' Obtener el siguiente ID para sugerir
   Dim resultado As Result
   resultado = m_ConexionBD.mConn.Exec("SELECT MAX(id) FROM block_notas LIMIT 1")
 
   Dim Idn As Integer
   If resultado["MAX(id)"] = Null Then
-    Idn = 0
+    Idn = 1 ' Si la tabla está vacía, el primer ID es 1
   Else
-    Idn = CInt(resultado["MAX(id)"]) + 1
+    Idn = CInt(resultado["MAX(id)"]) + 1 ' ID máximo + 1
   Endif
 
   ID_block.Value = Idn
-  txtAsunto.SetFocus
+  txtAsunto.SetFocus ' Pone el foco en el campo Asunto
 
 End
 
-' -----------------------------
-' Seleccionar nota en grilla
-' -----------------------------
+' --------------------------------------------------------------------------------
+' Evento: gridNotas_Click()
+' Propósito: Carga los datos de la nota seleccionada en la grilla a los campos del formulario.
+' --------------------------------------------------------------------------------
 Public Sub gridNotas_Click()
 
-  Contenido.MoveTo(gridNotas.Row)
+  Contenido.MoveTo(gridNotas.Row) ' Mueve el puntero del Result al registro seleccionado
 
-  ' Cargar datos en campos
+  ' Cargar datos en campos de detalle
   ID_block.Value = Contenido["id"]
   txtAsunto.Text = Contenido["asunto"]
   txtContenido.Text = Contenido["contenido"]
   txtUsuario.Text = Contenido["usuario"]
   DateBoxBlockNotas.Value = Contenido["fecha"]
 
+  ' Habilitar campos de edición
   txtAsunto.Enabled = True
   txtContenido.Enabled = True
   txtContenido.ReadOnly = False
 
+  ' Configuración básica de botones
   btnNuevo.Visible = True
   btnBorrar.Visible = True
   btnGuardar.Visible = False
 
-  ' Validar modificación solo para autor
+  ' VALIDACIÓN DE AUTORÍA para botones Modificar y Borrar
   Dim UsuarioID As Integer
   Dim resultado As Result
   resultado = m_ConexionBD.mConn.Exec("SELECT id FROM usuarios WHERE usuario = '" & m_InicioCierre.UsuarioEnCurso & "' LIMIT 1")
-  If resultado.Count = 0 Then Return
+  If resultado.Count = 0 Then Return ' Falla si no encuentra el ID del usuario logueado
+
   UsuarioID = CInt(resultado["id"])
 
+  ' Si el ID de la nota coincide con el ID del usuario logueado, habilita Modificación y Borrado
   If Contenido["id_usuario"] = UsuarioID Then
     btnGuardarMod.Visible = True
     btnBorrar.Visible = True
   Else
+    ' Si no es el autor, deshabilita y emite advertencia
     btnGuardarMod.Visible = False
     btnBorrar.Visible = False
     m_Sonido.sonar("Warning")
@@ -244,44 +290,60 @@ Public Sub gridNotas_Click()
 
 End
 
+' --------------------------------------------------------------------------------
+' Función: LimpiarCamposNotas()
+' Propósito: Limpia el contenido de los campos de detalle y búsqueda.
+' --------------------------------------------------------------------------------
 Public Sub LimpiarCamposNotas()
 
   txtBuscar.Text = ""
   ID_block.Value = ""
   txtAsunto.Text = ""
   txtContenido.Text = ""
+  txtUsuario.Text = "" ' También se limpia el campo de usuario
 
 End
 
+' --------------------------------------------------------------------------------
+' Evento: gridNotas_Data(Row, Column)
+' Propósito: Rellena las celdas de la grilla con datos cuando el control lo requiere.
+' Uso: Se utiliza el objeto 'Contenido' cargado previamente por CargarNotas().
+' --------------------------------------------------------------------------------
 Public Sub gridNotas_Data(Row As Integer, Column As Integer)
 
   If (Contenido <> Null) Then
     If Row >= 0 Then
-      Contenido.moveTo(Row)
+      Contenido.moveTo(Row) ' Mueve el puntero al registro de la fila
+      ' Usa Try por seguridad, ya que Contenido[Column] puede no ser cadena.
       Try gridNotas.Data.Text = Str(Contenido[Column])
     Endif
   Endif
 
 End
 
+' --------------------------------------------------------------------------------
+' Evento: btnBorrar_Click()
+' Propósito: Elimina la nota seleccionada si el usuario logueado es el autor.
+' --------------------------------------------------------------------------------
 Public Sub btnBorrar_Click()
 
-  'Chequeamos primero que se haya elegido una entrada
+  ' Chequeamos primero que se haya elegido una entrada
   If ID_block.Text = "" Then
     m_Sonido.sonar("Info")
     Message.Info("Debe primero seleccionarse la entrada a borrar.")
     Return
   Endif
 
-  ' Verificar si el usuario logueado es el creador de la nota
+  ' Verificar si el usuario logueado es el creador de la nota (comparando el campo txtUsuario)
   If m_InicioCierre.UsuarioEnCurso <> txtUsuario.Text Then
     m_Sonido.sonar("Error")
     Message.Error("No tienes permiso para eliminar esta nota. Solo el autor puede hacerlo.")
     Return
   Endif
 
+  ' Pide confirmación antes de eliminar
   If Message.Question("¿Desea borrar la entrada?", "Si", "No") = 1 Then
-    ' Corregido: la tabla es "block_notas", no "notas"
+    ' Ejecuta la instrucción DELETE
     Try m_ConexionBD.mConn.Exec("DELETE FROM block_notas WHERE id=" & ID_block.Text)
     If Error Then
       m_Sonido.sonar("Error")
@@ -289,11 +351,13 @@ Public Sub btnBorrar_Click()
       Return
     Endif
 
+    ' Lógica de post-borrado
     CargarNotas()
     m_Sonido.sonar("Info")
     Message.Info("Entrada eliminada correctamente.")
   Endif
 
+  ' Restablecer estado de la interfaz
   LimpiarCamposNotas()
 
   txtAsunto.Enabled = False
@@ -307,8 +371,13 @@ Public Sub btnBorrar_Click()
 
 End
 
+' --------------------------------------------------------------------------------
+' Evento: btnBuscar_Click()
+' Propósito: Busca notas cuyo 'asunto' o 'contenido' coincida con el texto en txtBuscar.
+' --------------------------------------------------------------------------------
 Public Sub btnBuscar_Click()
 
+  ' Restablecer botones a estado de visualización/inicio
   btnNuevo.Visible = True
   btnBorrar.Visible = False
   btnGuardar.Visible = False
@@ -322,7 +391,7 @@ Public Sub btnBuscar_Click()
   Endif
 
   Dim Consulta As String
-  ' Crear la consulta SQL basada en el texto introducido
+  ' Crea la consulta SQL con la condición LIKE para buscar en asunto y contenido
   Consulta = "SELECT b.*, u.usuario FROM block_notas b " &
     "JOIN usuarios u ON b.id_usuario = u.id " &
     "WHERE b.asunto LIKE '%" & txtBuscar.Text & "%' OR b.contenido LIKE '%" & txtBuscar.Text & "%' " &
@@ -337,15 +406,22 @@ Public Sub btnBuscar_Click()
     Message.Info("No se ha encontrado ningún resultado.")
     Return
   Else
+    ' Limpia campos de detalle antes de cargar la nueva búsqueda
     txtAsunto.Text = ""
     txtContenido.Text = ""
     txtUsuario.Text = ""
-    ' Hay resultados: cargar los datos en el grid
+
+    ' Cargar los datos encontrados en la grilla
     CargarDatos(Consulta, gridNotas)
   Endif
 
 End
 
+' --------------------------------------------------------------------------------
+' Función: CargarDatos(Consulta, Grid)
+' Propósito: Función auxiliar para ejecutar una consulta y cargar los datos de
+'            ID y Asunto en una grilla específica.
+' --------------------------------------------------------------------------------
 Public Sub CargarDatos(Consulta As String, Grid As GridView)
 
   Contenido = m_ConexionBD.mConn.Exec(Consulta)
@@ -358,23 +434,31 @@ Public Sub CargarDatos(Consulta As String, Grid As GridView)
   Grid.Clear()
   Grid.Rows.Count = Contenido.Count
 
+  ' Itera sobre los resultados y los carga en las columnas del Grid
   For i As Integer = 0 To Contenido.Count - 1
     Grid[i, 0].Text = Contenido["id"]
     Grid[i, 1].Text = Contenido["asunto"]
-    Contenido.MoveNext
+    Contenido.MoveNext ' Mueve el puntero al siguiente registro
   Next
 
 End
 
+' --------------------------------------------------------------------------------
+' Evento: btnRefrescarGridNotas_Click()
+' Propósito: Restablece el estado de los campos, botones y recarga todas las notas.
+' --------------------------------------------------------------------------------
 Public Sub btnRefrescarGridNotas_Click()
 
   txtAsunto.Text = ""
   txtContenido.Text = ""
   txtUsuario.Text = ""
+
+  ' Oculta los botones de acción (Guardar, Modificar, Borrar)
   btnGuardar.Visible = False
   btnGuardarMod.Visible = False
   btnBorrar.Visible = False
-  gridNotas.Clear
-  CargarNotas()
+
+  gridNotas.Clear ' Limpia el contenido visual de la grilla
+  CargarNotas() ' Recarga todos los registros desde la BD
 
 End
