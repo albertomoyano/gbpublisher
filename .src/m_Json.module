@@ -548,3 +548,447 @@ Public Sub ExportarMetadatosJSON2PDF() As Boolean
   Endif
 
 End
+'
+'
+'
+'
+
+Public Sub ExportarCSLJSON() As Boolean
+
+  Dim f As ResultField
+  Dim aFields As New String[]
+  Dim i As Integer
+  Dim sResultado As Result
+  Dim filtrarBib As String
+  Dim aEntradas As New Collection[]
+  Dim dEntrada As Collection
+  Dim sCampo As String
+  Dim sJSON As String
+  Dim outputFile As String
+
+  ' OBTENER DATOS DEL PROYECTO
+  filtrarBib = "select * from bibtex where id_proyecto = " & FMain.id_proyecto.Text
+  sResultado = m_ConexionBD.mConn.Exec(filtrarBib)
+
+  ' OBTENER NOMBRES DE CAMPOS
+  aFields.Clear
+  For Each f In sResultado.Fields
+    aFields.Add(f.Name)
+  Next
+
+  ' PROCESAR CADA REGISTRO
+  While sResultado.Available
+    dEntrada = New Collection
+
+    ' MAPEAR CAMPOS BIBTEX A CSL-JSON
+    ' ID (usar el campo clave, aFields[4] según tu código)
+    If Not IsNull(sResultado[aFields[4]]) Then
+      dEntrada["id"] = sResultado[aFields[4]]
+    Endif
+
+    ' TYPE - Convertir tipo de entrada BibTeX a CSL
+    If Not IsNull(sResultado["tipo_de_entrada"]) Then
+      dEntrada["type"] = ConvertirTipoCSL(sResultado["tipo_de_entrada"])
+    Endif
+
+    ' PROCESAR CAMPOS SEGÚN MAPEO CSL
+    For i = 0 To aFields.Max
+      sCampo = aFields[i]
+
+      ' SALTAR CAMPOS ESPECIALES YA PROCESADOS
+      If sCampo = "id_proyecto" Or sCampo = "id" Or sCampo = "id_articulo" Or sCampo = "tipo_de_entrada" Or i = 4 Then
+        Continue
+      Endif
+
+      If Not IsNull(sResultado[sCampo]) And Len(Trim(sResultado[sCampo])) > 0 Then
+        MapearCampoCSL(dEntrada, sCampo, sResultado[sCampo])
+      Endif
+    Next
+
+    aEntradas.Add(dEntrada)
+    sResultado.MoveNext
+  Wend
+
+  ' CONVERTIR A JSON Y FORMATEAR
+  sJSON = JSON.Encode(aEntradas)
+  sJSON = FormatearJSON(sJSON)
+
+  ' GUARDAR ARCHIVO
+  outputFile = File.Dir(FMain.txtProyecto.Text) & "/files/" & File.BaseName(FMain.txtProyecto.Text) & "_csl.json"
+  File.Save(outputFile, sJSON)
+
+  ' VERIFICAR QUE EL ARCHIVO SE HAYA CREADO
+  If Exist(outputFile) Then
+    Return True
+  Else
+    Return False
+  Endif
+
+End
+
+' FUNCIÓN AUXILIAR: CONVERTIR TIPO DE ENTRADA BIBTEX A CSL
+Private Function ConvertirTipoCSL(sTipoBibTeX As String) As String
+
+  Dim mapeo As New Collection
+
+  ' MAPEO DE TIPOS BIBTEX/BIBLATEX A CSL
+  mapeo["article"] = "article-journal"
+  mapeo["book"] = "book"
+  mapeo["booklet"] = "pamphlet"
+  mapeo["inbook"] = "chapter"
+  mapeo["incollection"] = "chapter"
+  mapeo["inproceedings"] = "paper-conference"
+  mapeo["conference"] = "paper-conference"
+  mapeo["manual"] = "book"
+  mapeo["mastersthesis"] = "thesis"
+  mapeo["phdthesis"] = "thesis"
+  mapeo["proceedings"] = "book"
+  mapeo["techreport"] = "report"
+  mapeo["unpublished"] = "manuscript"
+  mapeo["misc"] = "article"
+  mapeo["online"] = "webpage"
+  mapeo["patent"] = "patent"
+  mapeo["report"] = "report"
+  mapeo["thesis"] = "thesis"
+  mapeo["collection"] = "book"
+  mapeo["dataset"] = "dataset"
+  mapeo["software"] = "software"
+  mapeo["artwork"] = "graphic"
+  mapeo["audio"] = "song"
+  mapeo["video"] = "motion_picture"
+  mapeo["movie"] = "motion_picture"
+  mapeo["legislation"] = "legislation"
+  mapeo["jurisdiction"] = "legal_case"
+
+  If mapeo.Exist(Lower(sTipoBibTeX)) Then
+    Return mapeo[Lower(sTipoBibTeX)]
+  Else
+    Return "article"
+  Endif
+
+End
+
+' FUNCIÓN AUXILIAR: MAPEAR CAMPO BIBTEX A CSL
+Private Sub MapearCampoCSL(dEntrada As Collection, sCampo As String, valor As Variant)
+
+  Dim sCampoLower As String = Lower(sCampo)
+
+  Select Case sCampoLower
+      ' CAMPOS DE TEXTO DIRECTO - TÍTULO Y VARIANTES
+    Case "title"
+      dEntrada["title"] = valor
+    Case "subtitle", "sub_title"
+      ' Combinar con title si ya existe
+      If dEntrada.Exist("title") Then
+        dEntrada["title"] = dEntrada["title"] & ": " & valor
+      Else
+        dEntrada["title"] = valor
+      Endif
+    Case "shorttitle", "short_title"
+      dEntrada["title-short"] = valor
+    Case "title_addon"
+      ' Añadir al título principal
+      If dEntrada.Exist("title") Then
+        dEntrada["title"] = dEntrada["title"] & " " & valor
+      Endif
+    Case "main_title"
+      dEntrada["container-title"] = valor
+    Case "main_title_addon"
+      If dEntrada.Exist("container-title") Then
+        dEntrada["container-title"] = dEntrada["container-title"] & " " & valor
+      Endif
+    Case "index_title"
+      dEntrada["title-short"] = valor
+    Case "reprint_title"
+      dEntrada["original-title"] = valor
+
+      ' IDENTIFICADORES
+    Case "doi"
+      dEntrada["DOI"] = valor
+    Case "isbn"
+      dEntrada["ISBN"] = valor
+    Case "issn"
+      dEntrada["ISSN"] = valor
+    Case "ismn"
+      dEntrada["ISMN"] = valor
+    Case "isrn"
+      dEntrada["call-number"] = valor
+    Case "url"
+      dEntrada["URL"] = valor
+    Case "eid"
+      dEntrada["number"] = valor
+
+      ' NOTAS Y TEXTOS
+    Case "note"
+      dEntrada["note"] = valor
+    Case "abstract"
+      dEntrada["abstract"] = valor
+    Case "annotation"
+      dEntrada["annote"] = valor
+    Case "addendum"
+      If dEntrada.Exist("note") Then
+        dEntrada["note"] = dEntrada["note"] & " " & valor
+      Else
+        dEntrada["note"] = valor
+      Endif
+
+      ' IDIOMA
+    Case "language", "lang_id", "hyphenation"
+      dEntrada["language"] = valor
+    Case "orig_language"
+      dEntrada["original-language"] = valor
+
+      ' CAMPOS NUMÉRICOS
+    Case "volume"
+      dEntrada["volume"] = valor
+    Case "volumes"
+      dEntrada["number-of-volumes"] = valor
+    Case "number", "issue"
+      dEntrada["issue"] = valor
+    Case "pages"
+      dEntrada["page"] = valor
+    Case "page_total"
+      dEntrada["number-of-pages"] = valor
+    Case "edition"
+      dEntrada["edition"] = valor
+    Case "chapter"
+      dEntrada["chapter-number"] = valor
+    Case "part"
+      dEntrada["part"] = valor
+
+      ' CAMPOS DE CONTENEDOR
+    Case "journal", "journaltitle", "journal_title"
+      dEntrada["container-title"] = valor
+    Case "journal_title_addon"
+      If dEntrada.Exist("container-title") Then
+        dEntrada["container-title"] = dEntrada["container-title"] & " " & valor
+      Endif
+    Case "booktitle", "book_title"
+      dEntrada["container-title"] = valor
+    Case "book_title_addon"
+      If dEntrada.Exist("container-title") Then
+        dEntrada["container-title"] = dEntrada["container-title"] & " " & valor
+      Endif
+    Case "issue_title"
+      dEntrada["container-title"] = valor
+    Case "issue_title_addon"
+      If dEntrada.Exist("container-title") Then
+        dEntrada["container-title"] = dEntrada["container-title"] & " " & valor
+      Endif
+    Case "series"
+      dEntrada["collection-title"] = valor
+
+      ' CAMPOS DE PUBLICACIÓN
+    Case "publisher"
+      dEntrada["publisher"] = valor
+    Case "orig_publisher"
+      dEntrada["original-publisher"] = valor
+    Case "location"
+      dEntrada["publisher-place"] = valor
+    Case "orig_location"
+      dEntrada["original-publisher-place"] = valor
+    Case "organization", "institution"
+      ' Para tesis e informes técnicos, usar publisher
+      dEntrada["publisher"] = valor
+    Case "venue"
+      dEntrada["event-place"] = valor
+    Case "how_published"
+      dEntrada["medium"] = valor
+
+      ' AUTOR Y COLABORADORES PRINCIPALES
+    Case "author"
+      dEntrada["author"] = ParsearNombres(valor)
+    Case "editor"
+      dEntrada["editor"] = ParsearNombres(valor)
+    Case "editor_a"
+      dEntrada["editor"] = ParsearNombres(valor)
+    Case "editor_b", "editor_c"
+      ' Editores adicionales - en CSL no hay campos separados, agregar a note
+      If Not dEntrada.Exist("note") Then
+        dEntrada["note"] = "Additional editor: " & valor
+      Else
+        dEntrada["note"] = dEntrada["note"] & "; Additional editor: " & valor
+      Endif
+    Case "book_author"
+      dEntrada["container-author"] = ParsearNombres(valor)
+    Case "translator"
+      dEntrada["translator"] = ParsearNombres(valor)
+    Case "short_author"
+      ' Usar como autor si no existe author
+      If Not dEntrada.Exist("author") Then
+        dEntrada["author"] = ParsearNombres(valor)
+      Endif
+
+      ' COLABORADORES SECUNDARIOS
+    Case "afterword", "foreword", "introduction", "commentator", "annotator"
+      ' CSL no tiene campos específicos, agregar a contributors o note
+      If Not dEntrada.Exist("note") Then
+        dEntrada["note"] = sCampo & ": " & valor
+      Else
+        dEntrada["note"] = dEntrada["note"] & "; " & sCampo & ": " & valor
+      Endif
+    Case "holder"
+      dEntrada["authority"] = valor
+
+      ' FECHAS
+    Case "year"
+      If Not dEntrada.Exist("issued") Then
+        dEntrada["issued"] = CrearFechaCSL(valor, Null, Null)
+      Endif
+    Case "date"
+      dEntrada["issued"] = ParsearFechaCompleta(valor)
+    Case "url_date"
+      dEntrada["accessed"] = ParsearFechaCompleta(valor)
+    Case "event_date"
+      dEntrada["event-date"] = ParsearFechaCompleta(valor)
+    Case "orig_date"
+      dEntrada["original-date"] = ParsearFechaCompleta(valor)
+
+      ' EVENTOS
+    Case "event_title"
+      dEntrada["event"] = valor
+    Case "event_title_addon"
+      If dEntrada.Exist("event") Then
+        dEntrada["event"] = dEntrada["event"] & " " & valor
+      Else
+        dEntrada["event"] = valor
+      Endif
+
+      ' CAMPOS DE ARCHIVO Y REPOSITORIO
+    Case "eprint"
+      dEntrada["PMID"] = valor
+    Case "eprint_type"
+      dEntrada["archive"] = valor
+    Case "library"
+      dEntrada["archive"] = valor
+    Case "file"
+      dEntrada["source"] = valor
+
+      ' ESTADO Y VERSIÓN
+    Case "version"
+      dEntrada["version"] = valor
+    Case "pub_state"
+      dEntrada["status"] = valor
+
+      ' REFERENCIAS CRUZADAS (agregar como note)
+    Case "cross_ref", "xref"
+      If Not dEntrada.Exist("note") Then
+        dEntrada["note"] = "Cross-reference: " & valor
+      Else
+        dEntrada["note"] = dEntrada["note"] & "; Cross-reference: " & valor
+      Endif
+
+      ' TIPO DE TESIS (agregar como genre en CSL)
+    Case "tipo_de_tesis"
+      dEntrada["genre"] = valor
+
+      ' LABEL/SHORTHAND
+    Case "short_hand", "label"
+      dEntrada["citation-label"] = valor
+
+  End Select
+
+End
+
+' FUNCIÓN AUXILIAR: CREAR OBJETO FECHA CSL
+Private Function CrearFechaCSL(anio As Variant, mes As Variant, dia As Variant) As Collection
+
+  Dim dFecha As New Collection
+  Dim aPartes As New Integer[]
+
+  If Not IsNull(anio) Then
+    aPartes.Add(CInt(anio))
+    If Not IsNull(mes) Then
+      aPartes.Add(CInt(mes))
+      If Not IsNull(dia) Then
+        aPartes.Add(CInt(dia))
+      Endif
+    Endif
+  Endif
+
+  dFecha["date-parts"] = [aPartes]
+  Return dFecha
+
+End
+
+' FUNCIÓN AUXILIAR: PARSEAR FECHA COMPLETA (FORMATO ISO O BIBTEX)
+Private Function ParsearFechaCompleta(sFecha As String) As Collection
+
+  Dim partes As String[]
+  Dim anio, mes, dia As Integer
+
+  ' FORMATO ISO: YYYY-MM-DD
+  If InStr(sFecha, "-") > 0 Then
+    partes = Split(sFecha, "-")
+    anio = CInt(partes[0])
+    If partes.Count > 1 Then mes = CInt(partes[1])
+    If partes.Count > 2 Then dia = CInt(partes[2])
+    Return CrearFechaCSL(anio, mes, dia)
+  Else
+    ' SOLO ANIO
+    Return CrearFechaCSL(CInt(sFecha), Null, Null)
+  Endif
+
+End
+
+' FUNCIÓN AUXILIAR: PARSEAR NOMBRES DE AUTOR/EDITOR A FORMATO CSL
+' FUNCIÓN AUXILIAR: PARSEAR NOMBRES DE AUTOR/EDITOR A FORMATO CSL
+Private Function ParsearNombres(sNombres As String) As Collection[]
+
+  Dim aAutores As New Collection[]
+  Dim aNombresDiv As String[]
+  Dim nombreCompleto As String
+  Dim dAutor As Collection
+  Dim posComa As Integer
+  Dim partes As String[]
+  Dim i As Integer
+  Dim given As String
+
+  ' Normalizar espacios en blanco
+  sNombres = Replace(sNombres, Chr(9), " ")   ' Tab
+  sNombres = Replace(sNombres, Chr(160), " ") ' Non-breaking space
+  While InStr(sNombres, "  ")
+    sNombres = Replace(sNombres, "  ", " ")
+  Wend
+  sNombres = Trim(sNombres)
+
+  ' Dividir por " and " usando Replace + Split
+  ' Reemplazar " and " por un carácter especial que no esté en uso
+  sNombres = Replace(sNombres, " and ", "|||")
+  aNombresDiv = Split(sNombres, "|||")
+
+  For i = 0 To aNombresDiv.Max
+    nombreCompleto = Trim(aNombresDiv[i])
+
+    If Len(nombreCompleto) = 0 Then Continue
+
+    dAutor = New Collection
+    posComa = InStr(nombreCompleto, ",")
+
+    If posComa > 0 Then
+      ' FORMATO: Apellido, Nombre
+      dAutor["family"] = Trim(Left(nombreCompleto, posComa - 1))
+      dAutor["given"] = Trim(Mid(nombreCompleto, posComa + 1))
+    Else
+      ' FORMATO: Nombre Apellido
+      partes = Split(nombreCompleto, " ")
+
+      dAutor["family"] = Trim(partes[partes.Max])
+
+      If partes.Max > 0 Then
+        given = ""
+        Dim j As Integer
+        For j = 0 To partes.Max - 1
+          If given <> "" Then given &= " "
+          given &= Trim(partes[j])
+        Next
+        dAutor["given"] = given
+      Endif
+    Endif
+
+    aAutores.Add(dAutor)
+  Next
+
+  Return aAutores
+
+End
