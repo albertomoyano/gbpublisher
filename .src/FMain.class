@@ -9,8 +9,9 @@ Private LastTextBox As TextBox
 Private sTB_Text As String
 Public NombreProyecto As String
 Public RutaProyecto As String
-Public sRutaArchivoAbierto As String
 Public ProyectoActualCompleto As String
+Private sRutaArchivoAbierto As String
+Private sContenidoOriginal As String  ' PARA COMPARAR SI HUBO CAMBIOS
 
 ' Private sRutaSeleccionada As String
 
@@ -383,63 +384,6 @@ Public Sub btnVerIMAGEN_Click()
     Message.Error("Error al cargar la imagen:\n" & Error.Text)
     ' LIMPIAR EL IMAGEVIEW EN CASO DE ERROR
     PictureBoxProyecto.Picture = Null
-  Endif
-
-End
-
-Public Sub btnVerTexto_Click()
-
-  Dim sArchivoSeleccionado As String
-  Dim sRutaCompleta As String
-  Dim sExtension As String
-  Dim aExtensionesPermitidas As String[]
-
-  ' DEFINIR LAS EXTENSIONES DE ARCHIVOS DE TEXTO PERMITIDAS
-  aExtensionesPermitidas = ["tex", "md", "yaml", "json", "lua", "txt", "sh", "bib"]
-
-  ' VERIFICAR QUE HAY UN ARCHIVO SELECCIONADO EN EL FILEVIEW
-  If FileViewProyecto.Current = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Por favor seleccione un archivo de la lista")
-    Return
-  Endif
-
-  ' Obtener el archivo seleccionado
-  sArchivoSeleccionado = FileViewProyecto.Current
-  ' CONSTRUIR LA RUTA COMPLETA DEL ARCHIVO
-  sRutaCompleta = FileViewProyecto.Dir &/ sArchivoSeleccionado
-
-  ' VERIFICAR QUE EL ARCHIVO EXISTE
-  If Not Exist(sRutaCompleta) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo seleccionado no existe")
-    Return
-  Endif
-
-  ' OBTENER LA EXTENSIÓN DEL ARCHIVO
-  sExtension = LCase(File.Ext(sArchivoSeleccionado))
-
-  ' VERIFICAR QUE ES UN ARCHIVO DE TEXTO VÁLIDO
-  If aExtensionesPermitidas.Find(sExtension) = -1 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("El archivo seleccionado no es un archivo de texto válido.\nExtensiones permitidas: " & aExtensionesPermitidas.Join(", "))
-    Return
-  Endif
-
-  ' CARGAR EL CONTENIDO DEL ARCHIVO DE TEXTO
-  Try TextAreaProyecto.Text = File.Load(sRutaCompleta)
-  sRutaArchivoAbierto = sRutaCompleta
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al cargar el archivo de texto:\n" & Error.Text)
-  Else
-    ' MOSTRAR MENUBUTTON SOLO SI ES UN ARCHIVO MARKDOWN
-    If sExtension = "md" Then
-      mEdicion.Visible = True
-    Else
-      mEdicion.Visible = False
-    Endif
-    TabPanelVisor.Index = 0
   Endif
 
 End
@@ -1089,6 +1033,9 @@ Public Sub btnGuardarCambiosEditor_Click()
     Return
   Endif
 
+  ' ACTUALIZAR EL CONTENIDO ORIGINAL DESPUÉS DE GUARDAR
+  sContenidoOriginal = TextAreaProyecto.Text
+
   m_Sonido.sonar("Info")
   Message.Info("Archivo guardado correctamente.")
 
@@ -1441,14 +1388,8 @@ Public Sub AbrirRevistaMD()
   ' LIMPIAR CACHÉ O ENTORNO PREVIO
   Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
 
-  ' ASEGURAMOS GUARDAR CAMBIOS EN EL EDITOR
-  btnLimpiarEditor_Click()
-
-  ' LIMPIAMOS EL EDITOR
-  LimpiarEditor()
-
   ' CONTROLOMANOS EXISTAN LOS ARCHIVOS BASE PARA UN PROYECTO
-  m_FuncionesGenericas.CopiarArchivosBase()
+  m_FuncionesGenericas.CopiarArchivosBase_MD()
 
   ' CONFIGURAR INTERFAZ PARA REVISTA MD
   m_FuncionesGenericas.ConfigurarFormulariosRevistaMD()
@@ -1476,6 +1417,116 @@ Public Sub AbrirRevistaMD()
 
   ' MARCAR QUE SE ABRIÓ EN MODO completo
   FMain.ValueBoxParcial.Value = 0
+
+  ' CARGAR LISTA DE ARTÍCULOS EN EL COMBOBOX
+  CargarListaArticulos()
+
+  ' CARGAMOS EL ARCHIVO DEL PROYECTO EN EL EDITOR
+  TextAreaProyecto.Text = File.Load(sRutaSeleccionada)
+
+  ' GUARDAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
+  sRutaArchivoAbierto = sRutaSeleccionada
+  sContenidoOriginal = TextAreaProyecto.Text
+
+End
+
+Public Sub CargarListaArticulos()
+
+  Dim sRutaArticulos As String
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  ' Limpiar el ComboBox
+  cmbArticulosRevista.Clear()
+
+  ' Agregar primero el archivo principal del proyecto
+  cmbArticulosRevista.Add(NombreProyecto)
+
+  ' Construir ruta a la carpeta artículos
+  sRutaArticulos = RutaProyecto &/ "articulos"
+
+  ' Listar archivos .md en la carpeta artículos
+  aArchivos = Dir(sRutaArticulos, "*.md")
+
+  ' Ordenar alfabéticamente
+  aArchivos.Sort()
+
+  ' Agregar cada archivo al ComboBox
+  For Each sArchivo In aArchivos
+    cmbArticulosRevista.Add(sArchivo)
+  Next
+
+  ' Seleccionar el archivo principal por defecto
+  cmbArticulosRevista.Index = 0
+
+End
+
+Public Sub cmbArticulosRevista_Click()
+
+  Dim sArchivoSeleccionado As String
+  Dim sRutaCompleta As String
+  Dim sContenido As String
+  Dim iRespuesta As Integer
+
+  ' Verificar que hay algo seleccionado
+  If cmbArticulosRevista.Index = -1 Then Return
+
+  ' Obtener el archivo seleccionado
+  sArchivoSeleccionado = cmbArticulosRevista.Text
+
+  If sArchivoSeleccionado = "" Then Return
+
+  ' VERIFICAR SI HAY CAMBIOS SIN GUARDAR
+  If sRutaArchivoAbierto <> "" Then
+    If TextAreaProyecto.Text <> sContenidoOriginal Then
+      m_Sonido.sonar("Warning")
+      iRespuesta = Message.Question("Hay cambios sin guardar en el archivo actual." & gb.NewLine &
+        "¿Desea guardar los cambios antes de continuar?",
+        "Sí", "No", "Cancelar")
+
+      Select Case iRespuesta
+        Case 1  ' Sí - Guardar
+          btnGuardarCambiosEditor_Click()
+
+        Case 2  ' No - Continuar sin guardar
+          ' No hacer nada, continuar
+
+        Case 3, 0  ' Cancelar o cerrar diálogo
+          ' Restaurar la selección anterior en el ComboBox
+          ' (esto es opcional, depende de tu preferencia)
+          Return
+      End Select
+    Endif
+  Endif
+
+  ' Determinar la ruta completa según la selección
+  If cmbArticulosRevista.Index = 0 Then
+    ' Es el archivo principal del proyecto
+    sRutaCompleta = txtProyecto.Text
+  Else
+    ' Es un artículo de la carpeta articulos
+    sRutaCompleta = RutaProyecto &/ "articulos" &/ sArchivoSeleccionado
+  Endif
+
+  ' Verificar que el archivo existe
+  If Not Exist(sRutaCompleta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo no existe:" & gb.NewLine & sRutaCompleta)
+    Return
+  Endif
+
+  ' Cargar el contenido en el editor
+  sContenido = File.Load(sRutaCompleta)
+
+  If sContenido Then
+    TextAreaProyecto.Text = sContenido
+    ' ACTUALIZAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
+    sRutaArchivoAbierto = sRutaCompleta
+    sContenidoOriginal = sContenido
+  Else
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el contenido del archivo")
+  Endif
 
 End
 
@@ -1613,12 +1664,6 @@ Public Sub AbrirLibroTEX()
   ' LIMPIAR CACHÉ O ENTORNO PREVIO
   Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
 
-  ' ASEGURAMOS GUARDAR CAMBIOS EN EL EDITOR
-  btnLimpiarEditor_Click()
-
-  ' LIMPIAMOS EL EDITOR
-  LimpiarEditor()
-
   ' CONTROLOMANOS EXISTAN LOS ARCHIVOS BASE PARA UN PROYECTO
   m_FuncionesGenericas.CopiarArchivosBase()
 
@@ -1739,73 +1784,6 @@ Public Sub BtnBuscarEnArchivos_Click()
   TerminalViewProyecto.Clear
   TerminalViewProyecto.Input("python3 " & rutaApp & "/buscador.py " & palabraAbuscar & "\n")
   TerminalViewProyecto.SetFocus
-
-End
-
-Public Sub btnLimpiarEditor_Click()
-
-  Dim bTieneCambios As Boolean
-  Dim sContenidoOriginal As String
-  Dim iRespuesta As Integer
-
-  ' VERIFICAR SI HAY UN ARCHIVO CARGADO
-  If sRutaArchivoAbierto = "" Then
-    ' NO HAY ARCHIVO CARGADO, SIMPLEMENTE LIMPIAR
-    LimpiarEditor()
-    Return
-  Endif
-
-  ' VERIFICAR SI EL ARCHIVO AÚN EXISTE
-  If Not Exist(sRutaArchivoAbierto) Then
-    ' EL ARCHIVO YA NO EXISTE, LIMPIAR SIN VERIFICAR CAMBIOS
-    LimpiarEditor()
-    Return
-  Endif
-
-  ' CARGAR EL CONTENIDO ORIGINAL DEL ARCHIVO PARA COMPARAR
-  Try sContenidoOriginal = File.Load(sRutaArchivoAbierto)
-  If Error Then
-    ' ERROR AL LEER EL ARCHIVO ORIGINAL, PREGUNTAR AL USUARIO QUÉ HACER
-    m_Sonido.sonar("Question")
-    iRespuesta = Message.Question("No se pudo verificar si hay cambios sin guardar.\n¿Desea limpiar el editor de todas formas?", "Sí", "No")
-    If iRespuesta = 1 Then ' Sí
-      LimpiarEditor()
-    Endif
-    Return
-  Endif
-
-  ' COMPARAR EL CONTENIDO ACTUAL CON EL ORIGINAL
-  bTieneCambios = (TextAreaProyecto.Text <> sContenidoOriginal)
-
-  If bTieneCambios Then
-    ' HAY CAMBIOS SIN GUARDAR, PREGUNTAR AL USUARIO
-    m_Sonido.sonar("Question")
-    iRespuesta = Message.Question("El archivo tiene cambios sin guardar.\n¿Qué desea hacer?", "Guardar y limpiar", "Limpiar sin guardar", "Cancelar")
-
-    Select Case iRespuesta
-      Case 1 ' GUARDAR Y LIMPIAR
-        ' LLAMAR A LA FUNCIÓN DE GUARDAR
-        btnGuardarCambiosEditor_Click()
-        ' SOLO LIMPIAR SI NO HUBO ERROR AL GUARDAR
-        If Error.Text = "" Then
-          LimpiarEditor()
-        Endif
-      Case 2 ' LIMPIAR SIN GUARDAR
-        LimpiarEditor()
-      Case 3 ' CANCELAR
-        Return
-    End Select
-  Else
-    ' NO HAY CAMBIOS, LIMPIAR DIRECTAMENTE
-    LimpiarEditor()
-  Endif
-
-End
-
-Private Function LimpiarEditor()
-
-  TextAreaProyecto.Text = ""
-  sRutaArchivoAbierto = ""
 
 End
 
