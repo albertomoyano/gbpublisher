@@ -1,0 +1,265 @@
+' Gambas class file
+
+' FORMULARIO PARA CREAR TABLAS EN FORMATO MARKDOWN
+' PERMITE DEFINIR FILAS, COLUMNAS Y CONTENIDO DE CELDAS
+
+Property Read MarkDownTable As String
+Private $sMarkdownTableDefinition As String
+Private $aMaxWidths As Variant  ' Array bidimensional para anchos máximos de columnas
+
+'' Evento: Cancelar y cerrar el formulario
+'' Cierra la ventana sin guardar cambios (retorna 0)
+Public Sub btnCancel_Click()
+
+  Me.Close()
+
+End
+
+' EVENTO: APERTURA DEL FORMULARIO
+' INICIALIZA TODOS LOS CONTROLES Y PROPIEDADES DE LA INTERFAZ
+Public Sub Form_Open()
+
+  FTabla.Caption = ("Definir una tabla Markdown")
+
+  tblCuadros.AutoResize = True
+  tblCuadros.Mode = Select.Single
+  tblCuadros.Header = tblCuadros.Both
+  tblCuadros.Rows.Count = spinboxRows.Value
+  tblCuadros.Columns.Count = spinboxColumns.Value
+  tblCuadros.NoKeyboard = False
+
+  InicializarArray()
+  ConfigurarColumnas()
+
+End
+
+' EVENTO: LLENAR DATOS INICIALES DE CADA CELDA
+' @PARAM ROW: NÚMERO DE FILA
+' @PARAM COLUMN: NÚMERO DE COLUMNA
+' GENERA TEXTO POR DEFECTO PARA VISUALIZAR LA ESTRUCTURA DE LA TABLA
+Public Sub tblCuadros_Data(Row As Integer, Column As Integer)
+
+  tblCuadros.Data.Text = ("Fila") & "_" & (Row + 1) & "_" & ("Columna") & "_" & (Column + 1)
+
+End
+
+' EVENTO: CAMBIO EN EL NÚMERO DE FILAS
+' AJUSTA EL NÚMERO DE FILAS EN LA TABLA Y REINICIALIZA EL ARRAY DE ANCHOS
+Public Sub spinboxRows_Change()
+
+  tblCuadros.Rows.Count = spinboxRows.Value
+  InicializarArray()
+
+End
+
+' EVENTO: CAMBIO EN EL NÚMERO DE COLUMNAS
+' AJUSTA EL NÚMERO DE COLUMNAS EN LA TABLA Y ACTUALIZA TÍTULOS
+Public Sub spinboxColumns_Change()
+
+  tblCuadros.Columns.Count = spinboxColumns.Value
+  InicializarArray()
+  ConfigurarColumnas()
+
+End
+
+' EVENTO: CREAR TABLA MARKDOWN
+' VALIDA LA POSICIÓN DEL CURSOR Y GENERA LA TABLA SI ES VÁLIDA
+' CIERRA EL FORMULARIO CON CÓDIGO 1 SI TODO ES CORRECTO
+Public Sub btnCreateMDTable_Click()
+
+  ' VALIDAR QUE EL CURSOR ESTÉ AL INICIO DE UNA LÍNEA VACÍA
+  If Not ValidarPosicionCursor() Then
+    Message.Title = ("Error de posición")
+    Message.Error(("No se puede insertar una tabla dentro de una línea.\nEl cursor debe estar al inicio de una línea vacía."))
+    Return
+  Endif
+
+  CrearTablaMarkdown()
+  Me.Close(1)  ' RETORNA 1 PARA INDICAR ÉXITO
+
+End
+
+' EVENTO: CLICK EN UNA CELDA DE LA TABLA
+' ACTIVA EL MODO DE EDICIÓN PARA LA CELDA SELECCIONADA
+Public Sub tblCuadros_Click()
+
+  Dim txbEditor As TextBox
+
+  txbEditor = New TextBox(tblCuadros)
+  tblCuadros[tblCuadros.Row, tblCuadros.Column].Text = ""
+  tblCuadros.EditWith(txbEditor)
+
+End
+
+' AJUSTA AUTOMÁTICAMENTE EL ANCHO DE COLUMNA SEGÚN EL CONTENIDO
+Public Sub tblCuadros_Save(Row As Integer, Column As Integer, ValueEdit As String)
+
+  Dim iTextWidth As Integer
+
+  tblCuadros[Row, Column].Text = ValueEdit
+
+  ' CALCULAR ANCHO DEL TEXTO
+  iTextWidth = tblCuadros.Font.TextWidth(ValueEdit)
+
+  ' ACTUALIZAR ANCHO MÁXIMO DE ESTA COLUMNA SI ES NECESARIO
+  If $aMaxWidths[Row][Column] < iTextWidth Then
+    $aMaxWidths[Row][Column] = iTextWidth
+    tblCuadros.Columns[Column].Width = iTextWidth + 8  ' +8 para padding
+  Else
+    tblCuadros.Columns[Column].Width = $aMaxWidths[Row][Column] + 8
+  Endif
+
+End
+
+' VERIFICA QUE EL CURSOR ESTÉ EN FMAIN.TXTEDITORPROYECTO EN POSICIÓN VÁLIDA
+Private Function ValidarPosicionCursor() As Boolean
+
+  Dim iLinea As Integer
+  Dim iColumna As Integer
+  Dim sLineaActual As String
+  Dim oEditor As TextEditor
+
+  ' OBTENER REFERENCIA AL EDITOR
+  oEditor = FMain.txtEditorProyecto
+
+  ' OBTENER LA POSICIÓN ACTUAL DEL CURSOR
+  iLinea = oEditor.Line
+  iColumna = oEditor.Column
+
+  ' SI EL EDITOR ESTÁ VACÍO, ES VÁLIDO
+  If oEditor.Count = 0 Then Return True
+
+  ' VERIFICAR QUE LA COLUMNA SEA 0 (INICIO DE LÍNEA)
+  If iColumna <> 0 Then Return False
+
+  ' OBTENER EL CONTENIDO DE LA LÍNEA ACTUAL
+  sLineaActual = oEditor[iLinea].Text
+
+  ' VERIFICAR QUE LA LÍNEA ESTÉ VACÍA (SIN CONTENIDO O SOLO ESPACIOS)
+  If Trim(sLineaActual) <> "" Then Return False
+
+  Return True
+
+Catch
+  ' SI HAY ERROR AL ACCEDER AL EDITOR, RETORNAR FALSE
+  Message.Warning(("Error al validar posición del cursor: ") & Error.Text)
+  Return False
+
+End
+
+' PROCEDIMIENTO: CREAR TABLA EN FORMATO MARKDOWN
+' GENERA LA SINTAXIS DE TABLA MARKDOWN SEGÚN EL CONTENIDO DE TBLCUADROS
+' ALMACENA EL RESULTADO EN $SMARKDOWNTABLEDEFINITION
+Private Sub CrearTablaMarkdown()
+
+  Dim r, c As Integer
+  Dim sMDQT As String
+  Dim sLinea As String
+  Dim sSeparador As String
+
+  ' CONSTRUIR LA TABLA EN FORMATO MARKDOWN ESTÁNDAR (ESTILO GITHUB/EXCEL)
+
+  ' PRIMERA FILA (ENCABEZADO O PRIMERA LÍNEA DE DATOS)
+  sLinea = "|"
+  For c = 0 To tblCuadros.Columns.Count - 1
+    sLinea &= " " & tblCuadros[0, c].Text & " |"
+  Next
+  sMDQT = "\n" & sLinea & "\n"
+
+  ' LÍNEA SEPARADORA
+  If cboxHeader.Value = True Then
+    ' SI TIENE ENCABEZADO, AGREGAR SEPARADOR CON ALINEACIÓN
+    sSeparador = "|"
+    For c = 0 To tblCuadros.Columns.Count - 1
+      sSeparador &= " --- |"
+    Next
+    sMDQT &= sSeparador & "\n"
+
+    ' RESTO DE LAS FILAS (DATOS)
+    For r = 1 To tblCuadros.Rows.Count - 1
+      sLinea = "|"
+      For c = 0 To tblCuadros.Columns.Count - 1
+        sLinea &= " " & tblCuadros[r, c].Text & " |"
+      Next
+      sMDQT &= sLinea & "\n"
+    Next
+  Else
+    ' SIN ENCABEZADO, AGREGAR SEPARADOR SIMPLE
+    sSeparador = "|"
+    For c = 0 To tblCuadros.Columns.Count - 1
+      sSeparador &= " --- |"
+    Next
+    sMDQT &= sSeparador & "\n"
+
+    ' RESTO DE LAS FILAS
+    For r = 1 To tblCuadros.Rows.Count - 1
+      sLinea = "|"
+      For c = 0 To tblCuadros.Columns.Count - 1
+        sLinea &= " " & tblCuadros[r, c].Text & " |"
+      Next
+      sMDQT &= sLinea & "\n"
+    Next
+  Endif
+
+  sMDQT &= "\n"
+
+  '-- DESCRIPCIÓN DE LA TABLA (OPCIONAL)
+  sMDQT &= "**Tabla 1:** Descripción de la tabla\n"
+
+  $sMarkdownTableDefinition = sMDQT
+
+Catch
+  Message.Title = ("¡Ha ocurrido un error!")
+  Message.Error(("No se pudo crear la tabla Markdown.") & "\n" &
+    "Clase: " & Error.Class & ", Código: " & Error.Code & "\n" &
+    "Ubicación: " & Error.Where & "\n" &
+    "Descripción: " & Error.Text)
+
+End
+
+' PROCEDIMIENTO: INICIALIZAR ARRAY DE ANCHOS MÁXIMOS
+' CREA UNA MATRIZ BIDIMENSIONAL PARA ALMACENAR LOS ANCHOS DE CADA CELDA
+Private Sub InicializarArray()
+
+  Dim r, c As Integer
+  Dim iAnchoDefault As Integer = 224
+
+  ' CREAR ARRAY BIDIMENSIONAL (PRIMERO FILAS, LUEGO COLUMNAS)
+  $aMaxWidths = New Variant[]
+  $aMaxWidths.Resize(tblCuadros.Rows.Count)
+
+  ' PARA CADA FILA, CREAR ARRAY DE COLUMNAS
+  For r = 0 To $aMaxWidths.Max
+    $aMaxWidths[r] = New Integer[tblCuadros.Columns.Count]
+    For c = 0 To tblCuadros.Columns.Count - 1
+      $aMaxWidths[r][c] = iAnchoDefault
+    Next
+  Next
+
+End
+
+' PROCEDIMIENTO: CONFIGURAR TÍTULOS Y ANCHOS DE COLUMNAS
+' ESTABLECE LOS TÍTULOS Y ANCHOS PREDETERMINADOS DE LAS COLUMNAS
+Private Sub ConfigurarColumnas()
+
+  Dim iCount As Integer
+
+  For iCount = 0 To tblCuadros.Columns.Count - 1
+    tblCuadros.Columns[iCount].Title = Str(iCount + 1) & ". Columna"
+    tblCuadros.Columns[iCount].Width = 224
+  Next
+
+End
+
+' FUNCIÓN: LEER TABLA MARKDOWN GENERADA (PROPERTY READ)
+Private Function MarkDownTable_Read() As String
+
+  ' SHOWMODAL RETORNA 0 SI SE CERRÓ CON [X] O BTNCANCEL
+  ' RETORNA 1 SI SE CERRÓ CON BTNCREATEMDTABLE (ÉXITO)
+  If Me.ShowModal() = 0 Then
+    Return ""  ' USUARIO CANCELÓ
+  Else
+    Return $sMarkdownTableDefinition  ' USUARIO CREÓ LA TABLA
+  Endif
+
+End
