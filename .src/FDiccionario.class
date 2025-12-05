@@ -1,0 +1,170 @@
+' Gambas class file
+
+Private $aCodigosIdioma As String[]
+Private $hClient As HttpClient
+
+Public Sub Form_Open()
+
+  ' Configurar idiomas disponibles
+  cmbIdiomas.Clear()
+  cmbIdiomas.Add("Español")
+  cmbIdiomas.Add("Inglés")
+  cmbIdiomas.Add("Francés")
+  cmbIdiomas.Add("Alemán")
+  cmbIdiomas.Add("Italiano")
+  cmbIdiomas.Add("Portugués")
+
+  ' Array paralelo con códigos ISO
+  $aCodigosIdioma = ["es", "en", "fr", "de", "it", "pt-BR"]
+
+  ' Seleccionar español por defecto
+  cmbIdiomas.Index = 0
+
+  ' Mensaje inicial si el textbox está vacío
+  If Trim(txtPalabra.Text) = "" Then
+    HtmlViewDiccionario.Html = "<p>Ingrese una palabra y presione Consultar.</p>"
+  Else
+    ' Si ya hay palabra, consultar automáticamente
+    ConsultarDiccionario()
+  Endif
+
+End
+
+Public Sub btnConsultar_Click()
+
+  ConsultarDiccionario()
+
+End
+
+Private Sub ConsultarDiccionario()
+
+  Dim sPalabra As String
+  Dim sIdioma As String
+  Dim sUrl As String
+
+  sPalabra = Trim(txtPalabra.Text)
+
+  If sPalabra = "" Then
+    Message.Info("Ingrese una palabra para consultar.")
+    Return
+  Endif
+
+  ' Obtener código de idioma
+  sIdioma = $aCodigosIdioma[cmbIdiomas.Index]
+
+  ' Construir URL de la API
+  sUrl = "https://api.dictionaryapi.dev/api/v2/entries/" & sIdioma & "/" & sPalabra
+
+  ' Mostrar mensaje de carga
+  HtmlViewDiccionario.Html = "<p><i>Consultando...</i></p>"
+
+  ' Crear cliente HTTP
+  $hClient = New HttpClient As "ClienteDiccionario"
+  $hClient.URL = sUrl
+  $hClient.Async = True
+  $hClient.TimeOut = 10
+  $hClient.Get()
+
+End
+
+Public Sub ClienteDiccionario_Finished()
+
+  Dim sRespuesta As String
+  Dim vJson As Variant
+  Dim sHtml As String
+
+  ' Leer la respuesta
+  sRespuesta = ""
+
+  While Not Eof(Last)
+    sRespuesta &= Read #Last, 1024
+  Wend
+
+  ' Debug
+  Print "HTTP Code: "; Last.Code
+  Print "Respuesta (primeros 500 chars): "; Left(sRespuesta, 500)
+
+  ' Verificar código HTTP
+  If Last.Code >= 400 Then
+    HtmlViewDiccionario.Html = "<p style='color:red;'>No se encontró definición para esta palabra.</p>"
+    Return
+  Endif
+
+  ' Parsear JSON
+  Try vJson = JSON.Decode(sRespuesta)
+
+  If Error Then
+    HtmlViewDiccionario.Html = "<p style='color:red;'>Error al procesar respuesta: " & Error.Text & "</p>"
+    Return
+  Endif
+
+  ' Generar HTML
+  Try sHtml = GenerarHtmlDefiniciones(vJson)
+
+  If Error Then
+    HtmlViewDiccionario.Html = "<p style='color:red;'>Error al generar HTML: " & Error.Text & "</p>"
+    Return
+  Endif
+
+  HtmlViewDiccionario.Html = sHtml
+
+Catch
+  HtmlViewDiccionario.Html = "<p style='color:red;'>Error: " & Error.Text & "</p>"
+
+End
+
+Public Sub ClienteDiccionario_Error()
+
+  HtmlViewDiccionario.Html = "<p style='color:red;'>Error de conexión: No se pudo conectar al servidor.</p>"
+
+End
+
+Private Function GenerarHtmlDefiniciones(vJson As Variant) As String
+
+  Dim sHtml As String
+  Dim i, j As Integer
+  Dim vMeaning As Variant
+  Dim vDefinition As Variant
+
+  sHtml = "<html><body style='font-family: Arial; padding: 10px;'>"
+  sHtml &= "<h2>" & vJson[0]["word"] & "</h2>"
+
+  ' Fonética si existe
+  If vJson[0].Exist("phonetic") And vJson[0]["phonetic"] Then
+    sHtml &= "<p><i>" & vJson[0]["phonetic"] & "</i></p>"
+  Endif
+
+  ' Recorrer significados
+  For i = 0 To vJson[0]["meanings"].Count - 1
+    vMeaning = vJson[0]["meanings"][i]
+
+    sHtml &= "<h3>" & vMeaning["partOfSpeech"] & "</h3>"
+    sHtml &= "<ol>"
+
+    ' Recorrer definiciones
+    For j = 0 To vMeaning["definitions"].Count - 1
+      vDefinition = vMeaning["definitions"][j]
+      sHtml &= "<li>" & vDefinition["definition"]
+
+      ' Ejemplo si existe
+      If vDefinition.Exist("example") And vDefinition["example"] Then
+        sHtml &= "<br><i>Ejemplo: " & vDefinition["example"] & "</i>"
+      Endif
+
+      sHtml &= "</li>"
+    Next
+
+    sHtml &= "</ol>"
+  Next
+
+  sHtml &= "</body></html>"
+
+  Return sHtml
+
+End
+
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
