@@ -1,0 +1,208 @@
+' Gambas module file
+
+' ============================================================================
+' MÓDULO: m_GestorComentarios
+' DESCRIPCIÓN: Gestiona la extracción, visualización y navegación de marcas
+'              de comentarios (INFO, FIXME, ERROR) en el editor de texto.
+' AUTOR: Alberto Moyano
+' FECHA: 09/12/2025
+' ============================================================================
+
+' ----------------------------------------------------------------------------
+' ESTRUCTURA: ComentarioMarca
+' DESCRIPCIÓN: Almacena los datos de una marca de comentario encontrada
+' ----------------------------------------------------------------------------
+Public Struct ComentarioMarca
+  Linea As Integer        ' Número de línea donde se encuentra (base 0)
+  Tipo As String          ' Tipo: INFO, FIXME, ERROR
+  FechaHora As String     ' Fecha y hora del comentario
+  Usuario As String       ' Usuario que creó la marca
+  TextoCompleto As String ' Línea completa para referencia
+End Struct
+
+' ----------------------------------------------------------------------------
+' FUNCIÓN: ExtraerMarcasComentarios
+' DESCRIPCIÓN: Analiza el texto del editor y extrae todas las marcas de
+'              comentarios que coincidan con el patrón establecido.
+' PARÁMETROS:
+'   - texto: String con el contenido completo del editor
+' RETORNA: Array de ComentarioMarca con todas las marcas encontradas
+' PATRÓN BUSCADO: [dd-mm-yyyy hh:nn USUARIO]: # (TIPO: ...)
+' ----------------------------------------------------------------------------
+Public Function ExtraerMarcasComentarios(texto As String) As ComentarioMarca[]
+
+  Dim marcas As New ComentarioMarca[]
+  Dim lineas As String[]
+  Dim linea As String
+  Dim i As Integer
+  Dim marca As ComentarioMarca
+  Dim posInicio As Integer
+  Dim posFin As Integer
+  Dim contenido As String
+  Dim restoCadena As String
+
+  ' Dividir el texto en líneas
+  lineas = Split(texto, "\n")
+
+  ' Recorrer cada línea buscando el patrón de comentario
+  For i = 0 To lineas.Max
+    linea = Trim(lineas[i])
+
+    ' Verificar si la línea contiene el patrón de marca
+    ' Patrón: [dd-mm-yyyy hh:nn USUARIO]: # (TIPO: ...)
+    If linea Like "\\[*\\]: # (*:*)" Then
+
+      marca = New ComentarioMarca
+      marca.Linea = i
+      marca.TextoCompleto = linea
+
+      ' Extraer contenido entre corchetes [...]
+      posInicio = InStr(linea, "[")
+      posFin = InStr(linea, "]")
+
+      If posInicio > 0 And posFin > posInicio Then
+        contenido = Mid(linea, posInicio + 1, posFin - posInicio - 1)
+        ' contenido = "dd-mm-yyyy hh:nn USUARIO"
+
+        ' Extraer fecha/hora (primeros 16 caracteres: "dd-mm-yyyy hh:nn")
+        If Len(contenido) >= 16 Then
+          marca.FechaHora = Left(contenido, 16)
+          ' El resto es el usuario
+          marca.Usuario = Trim(Mid(contenido, 18))
+        Endif
+      Endif
+
+      ' Extraer tipo de comentario entre paréntesis (TIPO: ...)
+      posInicio = InStr(linea, "(")
+
+      If posInicio > 0 Then
+        ' Obtener el resto de la cadena desde "("
+        restoCadena = Mid(linea, posInicio + 1)
+        ' Buscar ":" en esa subcadena
+        posFin = InStr(restoCadena, ":")
+        If posFin > 0 Then
+          marca.Tipo = Trim(Left(restoCadena, posFin - 1))
+        Endif
+      Endif
+
+      ' Agregar la marca al array
+      marcas.Add(marca)
+
+    Endif
+  Next
+
+  Return marcas
+
+End
+
+' ----------------------------------------------------------------------------
+' PROCEDIMIENTO: ActualizarGridComentarios
+' DESCRIPCIÓN: Llena el GridView con las marcas de comentarios encontradas
+'              en el editor. Debe llamarse después de guardar el documento.
+' PARÁMETROS:
+'   - grid: Referencia al GridView donde mostrar las marcas
+'   - texto: Contenido del editor a analizar
+' NOTAS:
+'   - Limpia el grid antes de llenarlo
+'   - Configura colores según el tipo de comentario
+'   - Almacena el número de línea en grid.Data para navegación
+' ----------------------------------------------------------------------------
+Public Sub ActualizarGridComentarios(grid As GridView, texto As String)
+
+  Dim marcas As ComentarioMarca[]
+  Dim marca As ComentarioMarca
+  Dim i As Integer
+
+  ' Extraer todas las marcas del texto
+  marcas = ExtraerMarcasComentarios(texto)
+
+  ' Configurar el grid
+  With grid
+    ' Limpiar contenido previo
+    .Rows.Count = 0
+
+    ' Configurar columnas si no están configuradas
+    If .Columns.Count = 0 Then
+      .Columns.Count = 4
+      .Columns[0].Title = "Línea"
+      .Columns[0].Width = 60
+      .Columns[1].Title = "Tipo"
+      .Columns[1].Width = 100
+      .Columns[2].Title = "Fecha/Hora"
+      .Columns[2].Width = 150
+      .Columns[3].Title = "Usuario"
+      .Columns[3].Width = 150
+    Endif
+
+    ' Agregar filas con las marcas encontradas
+    .Rows.Count = marcas.Count
+
+    For i = 0 To marcas.Max
+      marca = marcas[i]
+
+      ' Llenar celdas
+      ' Línea +1 para mostrar numeración base 1 (más natural para el usuario)
+      .[i, 0].Text = Str(marca.Linea + 1)
+      .[i, 1].Text = marca.Tipo
+      .[i, 2].Text = marca.FechaHora
+      .[i, 3].Text = marca.Usuario
+
+      ' Almacenar número de línea real (base 0) en Tag para navegación
+      .[i, 0].Tag = marca.Linea
+
+      ' Colorear según tipo de comentario
+      Select Case Upper(marca.Tipo)
+        Case "ERROR"
+          .[i, 1].Foreground = Color.Red
+        Case "FIXME"
+          .[i, 1].Foreground = Color.Orange
+        Case "INFO"
+          .[i, 1].Foreground = Color.Blue
+      End Select
+
+    Next
+
+  End With
+
+End
+
+' ----------------------------------------------------------------------------
+' PROCEDIMIENTO: ConfigurarGridComentarios
+' DESCRIPCIÓN: Configura las propiedades iniciales del GridView para
+'              mostrar las marcas de comentarios correctamente.
+' PARÁMETROS:
+'   - grid: Referencia al GridView a configurar
+' NOTAS:
+'   - Llamar una vez al iniciar el formulario (Form_Open)
+'   - Configura columnas, anchos y propiedades visuales
+' ----------------------------------------------------------------------------
+Public Sub ConfigurarGridComentarios(grid As GridView)
+
+  With grid
+    ' Configurar columnas
+    .Columns.Count = 4
+
+    .Columns[0].Title = "Línea"
+    .Columns[0].Width = 60
+    ' .Columns[0].Alignment = Align.Center
+
+    .Columns[1].Title = "Tipo"
+    .Columns[1].Width = 100
+    ' .Columns[1].Alignment = Align.Center
+
+    .Columns[2].Title = "Fecha/Hora"
+    .Columns[2].Width = 150
+    ' .Columns[2].Alignment = Align.Center
+
+    .Columns[3].Title = "Usuario"
+    .Columns[3].Width = 150
+    ' .Columns[3].Alignment = Align.Left
+
+    ' Propiedades generales
+    .Mode = Select.Single  ' Selección de una sola fila
+    .Grid = True           ' Mostrar líneas de cuadrícula
+    .Header = GridView.Horizontal  ' Mostrar encabezados
+
+  End With
+
+End
