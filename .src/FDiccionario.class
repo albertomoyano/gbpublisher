@@ -5,26 +5,22 @@ Private $hClient As HttpClient
 
 Public Sub Form_Open()
 
-  ' Configurar idiomas disponibles
+  ' CONFIGURAR IDIOMAS DISPONIBLES
   cmbIdiomas.Clear()
   cmbIdiomas.Add("Español")
   cmbIdiomas.Add("Inglés")
-  ' cmbIdiomas.Add("Francés")
-  ' cmbIdiomas.Add("Alemán")
-  ' cmbIdiomas.Add("Italiano")
-  ' cmbIdiomas.Add("Portugués")
 
-  ' Array paralelo con códigos ISO
+  ' ARRAY PARALELO CON CÓDIGOS ISO
   $aCodigosIdioma = ["es", "en", "fr", "de", "it", "pt-BR"]
 
-  ' Seleccionar español por defecto
+  ' SELECCIONAR ESPAÑOL POR DEFECTO
   cmbIdiomas.Index = 0
 
-  ' Mensaje inicial si el textbox está vacío
+  ' MENSAJE INICIAL SI EL TEXTBOX ESTÁ VACÍO
   If Trim(txtPalabra.Text) = "" Then
-    HtmlViewDiccionario.Html = ("<p>Ingrese una palabra y presione Consultar.</p>")
+    HtmlViewDiccionario.Html = "<p>Ingrese una palabra y presione Consultar.</p>"
   Else
-    ' Si ya hay palabra, consultar automáticamente
+    ' SI YA HAY PALABRA, CONSULTAR AUTOMÁTICAMENTE
     ConsultarDiccionario()
   Endif
 
@@ -48,20 +44,20 @@ Private Sub ConsultarDiccionario()
     Return
   Endif
 
-  '--- elegimos motor según idioma seleccionado -----------------
+  ' ELEGIMOS MOTOR SEGÚN IDIOMA SELECCIONADO
   sIdioma = $aCodigosIdioma[cmbIdiomas.Index]
 
   Select Case sIdioma
-    Case "es"                                                  'ESPAÑOL
+    Case "es"
       sUrl = "https://rae-api.com/api/words/" & sPalabra
-    Case "en"                                                  'INGLÉS
+    Case "en"
       sUrl = "https://api.dictionaryapi.dev/api/v2/entries/en/" & sPalabra
-    Case Else                                                  'OTROS (por ahora igual)
+    Case Else
       sUrl = "https://api.dictionaryapi.dev/api/v2/entries/" & sIdioma & "/" & sPalabra
   End Select
 
-  '--- petición HTTP -------------------------------------------
-  HtmlViewDiccionario.Html = ("<p><i>Consultando...</i></p>")
+  ' PETICIÓN HTTP
+  HtmlViewDiccionario.Html = "<p><i>Consultando...</i></p>"
 
   $hClient = New HttpClient As "ClienteDiccionario"
   $hClient.URL = sUrl
@@ -77,90 +73,210 @@ Public Sub ClienteDiccionario_Finished()
   Dim vJson As Variant
   Dim sHtml As String
 
-  ' Leer toda la respuesta de golpe
-  sRespuesta = Read #Last, Lof(Last)   'lee exactamente los bytes disponibles
+  ' LEER TODA LA RESPUESTA
+  sRespuesta = Read #Last, Lof(Last)
 
-  ' Debug
-  Print "HTTP Code: "; Last.Code
-  Print "Respuesta (primeros 5000 chars): "; Left(sRespuesta, 5000)
-
-  ' Verificar código HTTP
+  ' VERIFICAR CÓDIGO HTTP
   If Last.Code <> 200 Then
-    HtmlViewDiccionario.Html = ("<p style='color:red;'>No se encontró definición para esta palabra.</p>")
+    HtmlViewDiccionario.Html = "<p style='color:red;'>No se encontró definición para esta palabra.</p>"
     Return
   Endif
 
-  ' Parsear JSON
+  ' PARSEAR JSON
   Try vJson = JSON.Decode(sRespuesta)
   If Error Then
-    HtmlViewDiccionario.Html = ("<p style='color:red;'>Error al procesar respuesta: " & Error.Text & "</p>")
+    HtmlViewDiccionario.Html = "<p style='color:red;'>Error al procesar respuesta: " & Error.Text & "</p>"
     Return
   Endif
 
-  Print "JSON recibido: "; JSON.Encode(vJson, 0)
-
-  ' Generar HTML
-  Try sHtml = GenerarHtmlDefiniciones(vJson, $aCodigosIdioma[cmbIdiomas.Index])
-  If Error Then
-    HtmlViewDiccionario.Html = ("<p style='color:red;'>Error al generar HTML: " & Error.Text & "</p>")
-    Return
-  Endif
-
+  ' GENERAR HTML
+  sHtml = GenerarHtmlDefiniciones(vJson, $aCodigosIdioma[cmbIdiomas.Index])
   HtmlViewDiccionario.Html = sHtml
-
-Catch
-  HtmlViewDiccionario.Html = ("<p style='color:red;'>Error: " & Error.Text & "</p>")
 
 End
 
 Public Sub ClienteDiccionario_Error()
 
-  HtmlViewDiccionario.Html = ("<p style='color:red;'>Error de conexión: No se pudo conectar al servidor.</p>")
+  HtmlViewDiccionario.Html = "<p style='color:red;'>Error de conexión: No se pudo conectar al servidor.</p>"
 
 End
 
 Private Function GenerarHtmlDefiniciones(vJson As Variant, sIdioma As String) As String
 
-  Dim vData As Variant
+  Dim cData As Collection
+  Dim cRoot As Collection
+  Dim cMeanings As Collection[]
+  Dim cMeaning As Collection
+  Dim cSenses As Collection[]
+  Dim cSense As Collection
+  Dim cDefinitions As Collection[]
+  Dim cDef As Collection
+  Dim sSynonyms As String[]
   Dim sHtml As String
-  Dim vMean As Variant
-  Dim vDef As Variant
-  Dim i, j As Integer
   Dim sPalabra As String
+  Dim i As Integer
+  Dim j As Integer
 
-  '--- normalizamos entrada (array u objeto) --------------
-  Try vData = vJson[0]          '¿es array?
-  If Error Then
-    vData = vJson               'no, es objeto simple
+  ' INICIALIZAR HTML CON ESTILOS
+  sHtml = "<html><head>" &
+    "<meta charset='utf-8'>" &
+    "<style>" &
+    "html, body { font-family: Arial, sans-serif; font-size: 18px; line-height: 1.5; margin: 0; padding: 4px; overflow-x: hidden; box-sizing: border-box; max-width: 99%; }" &
+    "h2 { color: #2c3e50; margin-bottom: 10px; }" &
+    "h3 { color: #004080; margin-top: 15px; margin-bottom: 5px; }" &
+    "ol { margin: 5px 0; padding-left: 25px; }" &
+    "li { margin-bottom: 8px; }" &
+    "small { color: #666; }" &
+    "</style></head><body>"
+
+  ' NORMALIZAR ENTRADA (PUEDE SER ARRAY U OBJETO)
+  If TypeOf(vJson) = gb.Object Then
+    If Object.Type(vJson) = "Collection[]" Or Object.Type(vJson) = "Variant[]" Then
+      If vJson.Count > 0 Then
+        cRoot = vJson[0]
+      Else
+        sHtml &= "<p>Sin resultados</p></body></html>"
+        Return sHtml
+      Endif
+    Else
+      cRoot = vJson
+    Endif
+  Else
+    sHtml &= "<p>Formato no reconocido</p></body></html>"
+    Return sHtml
   Endif
 
-  '--- palabra ---------------------------------------------------------
-  sPalabra = vData["word"]
-  sHtml = "<html><body style='font-family:Arial; padding:10px;'>"
-  sHtml &= "<h2>" & sPalabra & "</h2>"
+  ' RAE (ESPAÑOL) - ESTRUCTURA: data.word, data.meanings[].senses[].description
+  If sIdioma = "es" Then
+    ' VERIFICAR QUE EXISTA "data"
+    If Not cRoot.Exist("data") Then
+      sHtml &= "<p>No se encontraron datos.</p></body></html>"
+      Return sHtml
+    Endif
 
-  '---------------- RAE (es) -------------------------------------------
-  If sIdioma = "es" And vData.Exist("meanings") Then
+    cData = cRoot["data"]
+
+    ' OBTENER PALABRA
+    sPalabra = txtPalabra.Text
+    If cData.Exist("word") Then sPalabra = cData["word"]
+    sHtml &= "<h2>" & sPalabra & "</h2>"
+
+    ' VERIFICAR QUE EXISTA MEANINGS
+    If Not cData.Exist("meanings") Then
+      sHtml &= "<p>No se encontraron definiciones.</p></body></html>"
+      Return sHtml
+    Endif
+
+    cMeanings = cData["meanings"]
+
     sHtml &= "<ol>"
-    For Each vDef In vData["meanings"]
-      sHtml &= "<li>" & vDef["definition"] & "</li>"
+    For i = 0 To cMeanings.Max
+      cMeaning = cMeanings[i]
+
+      ' LAS DEFINICIONES ESTÁN EN "senses"
+      If cMeaning.Exist("senses") Then
+        cSenses = cMeaning["senses"]
+
+        For j = 0 To cSenses.Max
+          cSense = cSenses[j]
+
+          If cSense.Exist("description") Then
+            sHtml &= "<li>"
+
+            ' CATEGORÍA GRAMATICAL
+            If cSense.Exist("category") Then
+              Select Case cSense["category"]
+                Case "noun"
+                  sHtml &= "<b>sust.</b> "
+                Case "adjective"
+                  sHtml &= "<b>adj.</b> "
+                Case "verb"
+                  sHtml &= "<b>verb.</b> "
+                Case "adverb"
+                  sHtml &= "<b>adv.</b> "
+              End Select
+            Endif
+
+            ' USO (COLOQUIAL, OBSOLETO, ETC)
+            If cSense.Exist("usage") Then
+              Select Case cSense["usage"]
+                Case "colloquial"
+                  sHtml &= "<i>coloq.</i> "
+                Case "obsolete"
+                  sHtml &= "<i>desus.</i> "
+              End Select
+            Endif
+
+            ' DEFINICIÓN
+            sHtml &= cSense["description"]
+
+            ' SINÓNIMOS SI EXISTEN
+            If cSense.Exist("synonyms") Then
+              If cSense["synonyms"] <> Null Then
+                sSynonyms = cSense["synonyms"]
+                If sSynonyms.Count > 0 Then
+                  sHtml &= "<br><small><b>Sin.:</b> " & sSynonyms.Join(", ") & "</small>"
+                Endif
+              Endif
+            Endif
+
+            sHtml &= "</li>"
+          Endif
+        Next
+      Endif
     Next
+
     sHtml &= "</ol></body></html>"
     Return sHtml
   Endif
 
-  '---------------- dictionaryapi.dev (resto) ---------------------------
-  For i = 0 To vData["meanings"].Count - 1
-    vMean = vData["meanings"][i]
-    sHtml &= "<h3>" & vMean["partOfSpeech"] & "</h3><ol>"
-    For j = 0 To vMean["definitions"].Count - 1
-      vDef = vMean["definitions"][j]
-      sHtml &= "<li>" & vDef["definition"]
-      If vDef.Exist("example") And vDef["example"] Then
-        sHtml &= "<br><i>Ejemplo: " & vDef["example"] & "</i>"
-      Endif
-      sHtml &= "</li>"
-    Next
+  ' DICTIONARYAPI.DEV (INGLÉS Y OTROS)
+  cData = cRoot
+
+  ' OBTENER PALABRA
+  sPalabra = txtPalabra.Text
+  If cData.Exist("word") Then sPalabra = cData["word"]
+  sHtml &= "<h2>" & sPalabra & "</h2>"
+
+  If Not cData.Exist("meanings") Then
+    sHtml &= "<p>No se encontraron definiciones.</p></body></html>"
+    Return sHtml
+  Endif
+
+  cMeanings = cData["meanings"]
+
+  For i = 0 To cMeanings.Max
+    cMeaning = cMeanings[i]
+
+    ' PARTE DEL DISCURSO
+    If cMeaning.Exist("partOfSpeech") Then
+      sHtml &= "<h3>" & cMeaning["partOfSpeech"] & "</h3>"
+    Endif
+
+    sHtml &= "<ol>"
+
+    ' DEFINICIONES
+    If cMeaning.Exist("definitions") Then
+      cDefinitions = cMeaning["definitions"]
+
+      For j = 0 To cDefinitions.Max
+        cDef = cDefinitions[j]
+
+        If cDef.Exist("definition") Then
+          sHtml &= "<li>" & cDef["definition"]
+
+          ' EJEMPLO SI EXISTE
+          If cDef.Exist("example") Then
+            If cDef["example"] <> Null Then
+              sHtml &= "<br><i>Ejemplo: " & cDef["example"] & "</i>"
+            Endif
+          Endif
+
+          sHtml &= "</li>"
+        Endif
+      Next
+    Endif
+
     sHtml &= "</ol>"
   Next
 
