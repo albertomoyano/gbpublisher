@@ -1,14 +1,360 @@
 ' Gambas class file
 
+' =============================================================================
+' CONFIGURACIÓN DE API KEYS - EDITAR AQUÍ
+' =============================================================================
+' AZURE TRANSLATOR: OBTENER EN https://portal.azure.com
+' CREAR RECURSO "TRANSLATOR" CON PLAN F0 (GRATUITO)
+Private Const AZURE_API_KEY As String = "tu-api-key-de-azure"
+Private Const AZURE_REGION As String = "eastus"
+' =============================================================================
+
+' TEXTO SELECCIONADO QUE SE RECIBE DEL EDITOR
+Public TextoSeleccionado As String
+
+' CLIENTE HTTP PARA LAS PETICIONES
+Private hHttp As HttpClient
+
+' BUFFER PARA ALMACENAR LA RESPUESTA
+Private sRespuesta As String
+
+' INDICA SI HAY UNA PETICIÓN EN CURSO
+Private bPeticionActiva As Boolean
+
+' ARRAYS DE CÓDIGOS Y NOMBRES DE IDIOMAS
+Private aCodigosOrigen As String[]
+Private aNombresOrigen As String[]
+Private aCodigosDestino As String[]
+Private aNombresDestino As String[]
+
+' =============================================================================
+' INICIALIZACIÓN DEL FORMULARIO
+' =============================================================================
+
 Public Sub Form_Open()
 
   SplitterTraducir.Layout = [1, 1]
 
-End Sub
+  InicializarIdiomas()
+  CargarIdiomasOrigen()
+  CargarIdiomasDestino()
+  CargarMotores()
+
+  If TextoSeleccionado Then
+    txtOrigen.Text = TextoSeleccionado
+  Endif
+
+  cmbIdiomaOrigen.Index = 0
+  cmbIdiomaDestino.Index = 1
+  cmbMotor.Index = 0
+  bPeticionActiva = False
+
+End
+
+' =============================================================================
+' INICIALIZACIÓN DE IDIOMAS DISPONIBLES
+' =============================================================================
+
+Private Sub InicializarIdiomas()
+
+  aCodigosOrigen = ["auto", "es", "en", "pt", "fr", "de", "it"]
+  aNombresOrigen = ["Auto-detectar", "Español", "English", "Português", "Français", "Deutsch", "Italiano"]
+  aCodigosDestino = ["es", "en", "pt", "fr", "de", "it"]
+  aNombresDestino = ["Español", "English", "Português", "Français", "Deutsch", "Italiano"]
+
+End
+
+' =============================================================================
+' CARGAR COMBOBOX DE IDIOMA ORIGEN
+' =============================================================================
+
+Private Sub CargarIdiomasOrigen()
+
+  Dim i As Integer
+
+  cmbIdiomaOrigen.Clear()
+  For i = 0 To aNombresOrigen.Max
+    cmbIdiomaOrigen.Add(aNombresOrigen[i])
+  Next
+
+End
+
+' =============================================================================
+' CARGAR COMBOBOX DE IDIOMA DESTINO
+' =============================================================================
+
+Private Sub CargarIdiomasDestino()
+
+  Dim i As Integer
+
+  cmbIdiomaDestino.Clear()
+  For i = 0 To aNombresDestino.Max
+    cmbIdiomaDestino.Add(aNombresDestino[i])
+  Next
+
+End
+
+' =============================================================================
+' CARGAR COMBOBOX DE MOTORES DE TRADUCCIÓN
+' =============================================================================
+
+Private Sub CargarMotores()
+
+  cmbMotor.Clear()
+  cmbMotor.Add("Azure Translator")
+
+End
+
+' =============================================================================
+' OBTENER CÓDIGO DE IDIOMA ORIGEN SELECCIONADO
+' =============================================================================
+
+Private Function ObtenerCodigoOrigen() As String
+
+  Dim i As Integer = cmbIdiomaOrigen.Index
+
+  If i >= 0 And If i <= aCodigosOrigen.Max Then
+    Return aCodigosOrigen[i]
+  Endif
+  Return "auto"
+
+End
+
+' =============================================================================
+' OBTENER CÓDIGO DE IDIOMA DESTINO SELECCIONADO
+' =============================================================================
+
+Private Function ObtenerCodigoDestino() As String
+
+  Dim i As Integer = cmbIdiomaDestino.Index
+
+  If i >= 0 And If i <= aCodigosDestino.Max Then
+    Return aCodigosDestino[i]
+  Endif
+  Return "en"
+
+End
+
+' =============================================================================
+' EVENTO CLICK DEL BOTÓN APLICAR - EJECUTA LA TRADUCCIÓN
+' =============================================================================
+
+Public Sub btnAplicar_Click()
+
+  Dim sTexto As String
+  Dim sOrigen As String
+  Dim sDestino As String
+
+  sTexto = Trim(txtOrigen.Text)
+  If Not sTexto Then
+    Message.Warning("No hay texto para traducir.")
+    Return
+  Endif
+
+  If bPeticionActiva Then
+    Message.Info("Hay una traducción en curso. Por favor espere.")
+    Return
+  Endif
+
+  sOrigen = ObtenerCodigoOrigen()
+  sDestino = ObtenerCodigoDestino()
+
+  If sOrigen <> "auto" And If sOrigen = sDestino Then
+    Message.Warning("El idioma de origen y destino no pueden ser iguales.")
+    Return
+  Endif
+
+  txtDestino.Text = ""
+  sRespuesta = ""
+
+  Select Case cmbMotor.Text
+    Case "Azure Translator"
+      TraducirConAzure(sTexto, sOrigen, sDestino)
+  End Select
+
+End
+
+' =============================================================================
+' TRADUCCIÓN CON AZURE TRANSLATOR
+' =============================================================================
+' ENDPOINT: POST https://api.cognitive.microsofttranslator.com/translate
+' QUERY: ?api-version=3.0&to=en
+' HEADER: Ocp-Apim-Subscription-Key: [API_KEY]
+' BODY: [{"Text": "texto"}]
+' RESPUESTA: [{"translations": [{"text": "traducido", "to": "en"}]}]
+' =============================================================================
+
+Private Sub TraducirConAzure(sTexto As String, sOrigen As String, sDestino As String)
+
+  Dim sUrl As String
+  Dim sBody As String
+  Dim aBody As New Variant[]
+  Dim cTexto As New Collection
+  Dim aHeaders As New String[]
+
+  If AZURE_API_KEY = "tu-api-key-de-azure" Then
+    Message.Error("Configure la API Key de Azure en el código fuente.")
+    Return
+  Endif
+
+  sUrl = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0"
+  If sOrigen <> "auto" Then
+    sUrl &= "&from=" & sOrigen
+  Endif
+  sUrl &= "&to=" & sDestino
+
+  cTexto["Text"] = sTexto
+  aBody.Add(cTexto)
+  sBody = JSON.Encode(aBody)
+
+  aHeaders.Add("Content-Type: application/json")
+  aHeaders.Add("Ocp-Apim-Subscription-Key: " & AZURE_API_KEY)
+  If AZURE_REGION Then
+    aHeaders.Add("Ocp-Apim-Subscription-Region: " & AZURE_REGION)
+  Endif
+
+  EjecutarPeticion(sUrl, sBody, aHeaders, "Azure")
+
+End
+
+' =============================================================================
+' EJECUTAR PETICIÓN HTTP POST
+' =============================================================================
+
+Private Sub EjecutarPeticion(sUrl As String, sBody As String, aHeaders As String[], sMotor As String)
+
+  hHttp = New HttpClient As "hHttp"
+  hHttp.URL = sUrl
+  hHttp.Async = True
+  hHttp.Timeout = 30
+  hHttp.Tag = sMotor
+
+  bPeticionActiva = True
+  txtDestino.Text = "Traduciendo..."
+
+  hHttp.Post("application/json", sBody, aHeaders)
+
+End
+
+' =============================================================================
+' EVENTO READ - RECIBE DATOS
+' =============================================================================
+
+Public Sub hHttp_Read()
+
+  Dim sBuffer As String
+
+  If Lof(hHttp) Then
+    sBuffer = Read #hHttp, Lof(hHttp)
+    sRespuesta &= sBuffer
+  Endif
+
+End
+
+' =============================================================================
+' EVENTO ERROR
+' =============================================================================
+
+Public Sub hHttp_Error()
+
+  bPeticionActiva = False
+  txtDestino.Text = ""
+  Message.Error("Error de conexión: " & hHttp.ErrorText)
+
+End
+
+' =============================================================================
+' EVENTO FINISHED - PETICIÓN COMPLETADA
+' =============================================================================
+
+Public Sub hHttp_Finished()
+
+  bPeticionActiva = False
+
+  If hHttp.Code < 200 Or If hHttp.Code >= 300 Then
+    txtDestino.Text = ""
+    Message.Error("Error HTTP " & hHttp.Code & ": " & hHttp.Reason & "\n\n" & sRespuesta)
+    Return
+  Endif
+
+  Select Case hHttp.Tag
+    Case "Azure"
+      ProcesarAzure()
+  End Select
+
+End
+
+' =============================================================================
+' PROCESAR RESPUESTA AZURE
+' =============================================================================
+
+Private Sub ProcesarAzure()
+
+  Dim vJson As Variant
+  Dim aResp As Variant[]
+  Dim cFirst As Collection
+  Dim aTrans As Variant[]
+  Dim cTrans As Collection
+
+  Try vJson = JSON.Decode(sRespuesta)
+  If Error Then
+    txtDestino.Text = ""
+    Message.Error("Error al procesar respuesta:\n" & sRespuesta)
+    Return
+  Endif
+
+  Try aResp = vJson
+  If Not Error And If aResp.Count > 0 Then
+    Try cFirst = aResp[0]
+    If Not Error And If cFirst.Exist("translations") Then
+      aTrans = cFirst["translations"]
+      If aTrans.Count > 0 Then
+        Try cTrans = aTrans[0]
+        If Not Error And If cTrans.Exist("text") Then
+          txtDestino.Text = cTrans["text"]
+          Return
+        Endif
+      Endif
+    Endif
+  Endif
+
+  Try cFirst = vJson
+  If Not Error And If cFirst.Exist("error") Then
+    Dim cErr As Collection = cFirst["error"]
+    If cErr.Exist("message") Then
+      Message.Error("Error Azure: " & cErr["message"])
+      txtDestino.Text = ""
+      Return
+    Endif
+  Endif
+
+  Message.Error("Respuesta inesperada:\n" & sRespuesta)
+  txtDestino.Text = ""
+
+End
+
+' =============================================================================
+' EVENTO CLICK DEL BOTÓN CERRAR
+' =============================================================================
 
 Public Sub btnCerrar_Click()
 
-  Me.Close
+  If bPeticionActiva And If hHttp Then
+    Try hHttp.Stop()
+  Endif
+  Me.Close()
+
+End
+
+' =============================================================================
+' EVENTO CLOSE DEL FORMULARIO
+' =============================================================================
+
+Public Sub Form_Close()
+
+  If bPeticionActiva And If hHttp Then
+    Try hHttp.Stop()
+  Endif
 
 End
 
