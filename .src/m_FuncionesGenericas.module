@@ -1602,3 +1602,441 @@ Private Function ContarCaracter(texto As String, caracter As String) As Integer
   Return cuenta
 
 End
+'
+'
+'
+'
+' ============================================================================
+' FUNCIÓN: VerificarFootnotes
+' MÓDULO: m_InicioCierre
+' DESCRIPCIÓN: ANALIZA ARCHIVOS MARKDOWN PARA VERIFICAR LA INTEGRIDAD DE LAS
+'              NOTAS AL PIE. DETECTA REFERENCIAS HUÉRFANAS, DEFINICIONES SIN
+'              USAR Y MUEVE LAS DEFINICIONES AL FINAL DEL ARCHIVO.
+' SINTAXIS MARKDOWN FOOTNOTES:
+'   - REFERENCIA: [^identificador]
+'   - DEFINICIÓN: [^identificador]: texto de la nota
+' ============================================================================
+
+' ------------------------------------------------------------------------------
+' SUBRUTINA PRINCIPAL: VERIFICA FOOTNOTES EN TODOS LOS ARCHIVOS .MD DEL PROYECTO
+' SE LLAMA DESDE: menuVerificarFootnote_Click
+' ------------------------------------------------------------------------------
+Public Sub VerificarFootnotes()
+
+  Dim sInfo As String
+  Dim archivos As String[]
+  Dim archivo As String
+  Dim rutaProyecto As String
+  Dim rutaArticulos As String
+  Dim rutaCompleta As String
+  Dim totalArchivos As Integer
+  Dim archivosOK As Integer
+  Dim archivosError As Integer
+  Dim archivosReorg As Integer
+  Dim infoArchivo As String[]
+
+  ' OBTENER RUTA DEL PROYECTO DESDE EL FORMULARIO PRINCIPAL
+  rutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  rutaArticulos = rutaProyecto &/ "articulos"
+
+  ' CONSTRUIR ENCABEZADO HTML
+  sInfo = "<html><head><style>"
+  sInfo &= "* { box-sizing: border-box; }"
+  sInfo &= "body { font-family: monospace; font-size: 16px; padding: 15px; margin: 0; overflow-x: hidden; word-wrap: break-word; }"
+  sInfo &= "h3 { color: #333; margin-bottom: 10px; }"
+  sInfo &= "table { border-collapse: collapse; width: 100%; }"
+  sInfo &= "th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }"
+  sInfo &= "th { background-color: #f0f0f0; font-weight: bold; }"
+  sInfo &= ".ok { color: green; }"
+  sInfo &= ".error { color: red; }"
+  sInfo &= ".reorg { color: blue; }"
+  sInfo &= ".seccion { background-color: #e8e8e8; font-weight: bold; }"
+  sInfo &= "</style></head><body>"
+  sInfo &= "<h3>Verificación de notas al pie (footnotes)</h3>"
+
+  ' INICIO DE LA TABLA
+  sInfo &= "<table>"
+  sInfo &= "<tr><th>Archivo</th><th>Estado</th><th>Ref sin Def</th><th>Def sin Ref</th></tr>"
+
+  ' PROCESAR ARCHIVOS EN LA RAÍZ DEL PROYECTO
+  If Exist(rutaProyecto) Then
+    archivos = Dir(rutaProyecto, "*.md")
+    If archivos.Count > 0 Then
+      sInfo &= "<tr class=\"seccion\"><td colspan=\"4\">Raíz del proyecto</td></tr>"
+      For Each archivo In archivos
+        rutaCompleta = rutaProyecto &/ archivo
+        infoArchivo = ProcesarArchivoFootnote(rutaCompleta)
+        sInfo &= FormatearFilaTabla(archivo, infoArchivo)
+        Inc totalArchivos
+        If infoArchivo[0] = "OK" Then
+          Inc archivosOK
+        Else If infoArchivo[0] = "OK (reorg)" Then
+          Inc archivosOK
+          Inc archivosReorg
+        Else
+          Inc archivosError
+        Endif
+      Next
+    Endif
+  Endif
+
+  ' PROCESAR ARCHIVOS EN /ARTICULOS
+  If Exist(rutaArticulos) Then
+    archivos = Dir(rutaArticulos, "*.md")
+    If archivos.Count > 0 Then
+      sInfo &= "<tr class=\"seccion\"><td colspan=\"4\">Carpeta /articulos</td></tr>"
+      For Each archivo In archivos
+        rutaCompleta = rutaArticulos &/ archivo
+        infoArchivo = ProcesarArchivoFootnote(rutaCompleta)
+        sInfo &= FormatearFilaTabla(archivo, infoArchivo)
+        Inc totalArchivos
+        If infoArchivo[0] = "OK" Then
+          Inc archivosOK
+        Else If infoArchivo[0] = "OK (reorg)" Then
+          Inc archivosOK
+          Inc archivosReorg
+        Else
+          Inc archivosError
+        Endif
+      Next
+    Endif
+  Endif
+
+  ' CERRAR TABLA
+  sInfo &= "</table>"
+
+  ' RESUMEN FINAL
+  sInfo &= "<hr>"
+  sInfo &= "<p><b>Resumen:</b> " & totalArchivos & " archivos procesados<br>"
+  sInfo &= "<span class=\"ok\">" & archivosOK & " OK</span>"
+  If archivosReorg > 0 Then
+    sInfo &= " <span class=\"reorg\">(" & archivosReorg & " reorganizados)</span>"
+  Endif
+  sInfo &= " | <span class=\"error\">" & archivosError & " con errores</span></p>"
+
+  ' CERRAR HTML
+  sInfo &= "</body></html>"
+
+  ' MOSTRAR EN EL FORMULARIO FEstructuraMD
+  FEstructuraMD.HtmlViewEstructuraMD.Html = sInfo
+  FEstructuraMD.ShowModal()
+
+End
+
+' ------------------------------------------------------------------------------
+' FUNCIÓN: PROCESA UN ARCHIVO MARKDOWN INDIVIDUAL
+' PARÁMETROS: sRutaArchivo - RUTA COMPLETA AL ARCHIVO .MD
+' RETORNA: STRING[] CON 3 ELEMENTOS:
+'   [0] = ESTADO GENERAL (OK, OK (reorg), ERROR, Error lectura, Error escritura)
+'   [1] = REFERENCIAS SIN DEFINICIÓN (LISTA SEPARADA POR COMAS)
+'   [2] = DEFINICIONES SIN REFERENCIA (LISTA SEPARADA POR COMAS)
+' ACCIONES:
+'   1. EXTRAE TODAS LAS REFERENCIAS [^id]
+'   2. EXTRAE TODAS LAS DEFINICIONES [^id]:
+'   3. MUEVE LAS DEFINICIONES AL FINAL DEL ARCHIVO Y GUARDA
+'   4. SI EL ARCHIVO ESTÁ EN EL EDITOR, LO REFRESCA
+'   5. COMPARA REFERENCIAS VS DEFINICIONES
+' ------------------------------------------------------------------------------
+Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
+
+  Dim contenidoOriginal As String
+  Dim lineas As String[]
+  Dim linea As String
+  Dim i As Integer
+  Dim referencias As New String[]
+  Dim definiciones As New String[]
+  Dim definicionesLineas As New String[]
+  Dim textoSinDefiniciones As New String[]
+  Dim refSinDef As New String[]
+  Dim defSinRef As New String[]
+  Dim resultado As New String[3]
+  Dim id As String
+  Dim nuevoContenido As String
+  Dim enDefinicionMultilinea As Boolean
+  Dim esLineaDefinicion As Boolean
+  Dim bHuboCambios As Boolean
+
+  ' INICIALIZAR RESULTADO
+  resultado[0] = "OK"
+  resultado[1] = ""
+  resultado[2] = ""
+
+  ' LEER CONTENIDO DEL ARCHIVO
+  Try contenidoOriginal = File.Load(sRutaArchivo)
+  If Error Then
+    resultado[0] = "Error lectura"
+    Return resultado
+  Endif
+
+  ' DIVIDIR EN LÍNEAS PARA PROCESAMIENTO
+  lineas = Split(contenidoOriginal, "\n")
+
+  ' PROCESAR CADA LÍNEA
+  enDefinicionMultilinea = False
+
+  For i = 0 To lineas.Max
+    linea = lineas[i]
+    esLineaDefinicion = False
+
+    ' DETECTAR INICIO DE DEFINICIÓN DE FOOTNOTE: [^identificador]:
+    id = ExtraerDefinicionId(linea)
+
+    If id <> "" Then
+      ' ES UNA LÍNEA DE DEFINICIÓN
+      esLineaDefinicion = True
+      ' AGREGAR A LA LISTA SI NO EXISTE YA
+      If definiciones.Find(id) < 0 Then
+        definiciones.Add(id)
+      Endif
+      definicionesLineas.Add(linea)
+      enDefinicionMultilinea = True
+
+      ' DETECTAR CONTINUACIÓN DE DEFINICIÓN MULTILÍNEA
+    Else If enDefinicionMultilinea
+      ' VERIFICAR SI ES CONTINUACIÓN (INDENTADA CON 4 ESPACIOS O TAB)
+      If Len(linea) >= 4 And Left$(linea, 4) = "    " Then
+        esLineaDefinicion = True
+        definicionesLineas.Add(linea)
+      Else If Len(linea) >= 1 And Left$(linea, 1) = Chr$(9) Then
+        esLineaDefinicion = True
+        definicionesLineas.Add(linea)
+      Else If Trim$(linea) = "" Then
+        ' LÍNEA VACÍA PUEDE SER PARTE DE LA DEFINICIÓN O SEPARADOR
+        If i < lineas.Max Then
+          If Len(lineas[i + 1]) >= 4 And Left$(lineas[i + 1], 4) = "    " Then
+            esLineaDefinicion = True
+            definicionesLineas.Add(linea)
+          Else
+            enDefinicionMultilinea = False
+          Endif
+        Else
+          enDefinicionMultilinea = False
+        Endif
+      Else
+        ' NO ES CONTINUACIÓN, FIN DE LA DEFINICIÓN
+        enDefinicionMultilinea = False
+      Endif
+    Endif
+
+    ' SI NO ES LÍNEA DE DEFINICIÓN, BUSCAR REFERENCIAS Y AGREGAR AL TEXTO
+    If Not esLineaDefinicion Then
+      textoSinDefiniciones.Add(linea)
+      ' BUSCAR REFERENCIAS [^id] EN ESTA LÍNEA
+      ExtraerReferenciasDeLinea(linea, referencias)
+    Endif
+
+  Next
+
+  ' VERIFICAR CORRESPONDENCIA ENTRE REFERENCIAS Y DEFINICIONES
+  ' REFERENCIAS SIN DEFINICIÓN
+  For Each id In referencias
+    If definiciones.Find(id) < 0 Then
+      refSinDef.Add(id)
+    Endif
+  Next
+
+  ' DEFINICIONES SIN REFERENCIA
+  For Each id In definiciones
+    If referencias.Find(id) < 0 Then
+      defSinRef.Add(id)
+    Endif
+  Next
+
+  ' REORGANIZAR EL ARCHIVO SI HAY DEFINICIONES
+  bHuboCambios = False
+
+  If definicionesLineas.Count > 0 Then
+    ' ELIMINAR LÍNEAS VACÍAS AL FINAL DEL TEXTO
+    While textoSinDefiniciones.Count > 0 And Trim$(textoSinDefiniciones[textoSinDefiniciones.Max]) = ""
+      textoSinDefiniciones.Remove(textoSinDefiniciones.Max)
+    Wend
+
+    ' ELIMINAR LÍNEAS VACÍAS AL INICIO DE DEFINICIONES
+    While definicionesLineas.Count > 0 And Trim$(definicionesLineas[0]) = ""
+      definicionesLineas.Remove(0)
+    Wend
+
+    ' RECONSTRUIR CONTENIDO: TEXTO + DOS LÍNEAS VACÍAS + DEFINICIONES
+    nuevoContenido = textoSinDefiniciones.Join("\n")
+    nuevoContenido &= "\n\n"
+    nuevoContenido &= definicionesLineas.Join("\n")
+    ' ASEGURAR QUE TERMINE CON SALTO DE LÍNEA
+    If Right$(nuevoContenido, 1) <> "\n" Then
+      nuevoContenido &= "\n"
+    Endif
+
+    ' COMPARAR SI HUBO CAMBIOS REALES
+    If nuevoContenido <> contenidoOriginal Then
+      bHuboCambios = True
+      ' GUARDAR ARCHIVO REORGANIZADO (SILENCIOSO)
+      Try File.Save(sRutaArchivo, nuevoContenido)
+      If Error Then
+        resultado[0] = "Error escritura"
+        Return resultado
+      Endif
+
+      ' SI EL ARCHIVO MODIFICADO ES EL QUE ESTÁ EN EL EDITOR, REFRESCARLO
+      If sRutaArchivo = FMain.sRutaArchivoAbierto Then
+        FMain.txtEditorProyecto.Text = nuevoContenido
+        FMain.sContenidoOriginal = nuevoContenido
+      Endif
+    Endif
+  Endif
+
+  ' PREPARAR RESULTADO DE ERRORES
+  If refSinDef.Count > 0 Then
+    resultado[1] = refSinDef.Join(", ")
+    resultado[0] = "ERROR"
+  Endif
+
+  If defSinRef.Count > 0 Then
+    resultado[2] = defSinRef.Join(", ")
+    If resultado[0] <> "ERROR" Then
+      resultado[0] = "ERROR"
+    Endif
+  Endif
+
+  ' SI NO HAY ERRORES, DETERMINAR SI SE REORGANIZÓ
+  If refSinDef.Count = 0 And defSinRef.Count = 0 Then
+    If bHuboCambios Then
+      resultado[0] = "OK (reorg)"
+    Else
+      resultado[0] = "OK"
+    Endif
+  Endif
+
+  Return resultado
+
+End
+
+' ------------------------------------------------------------------------------
+' FUNCIÓN: EXTRAE EL IDENTIFICADOR DE UNA LÍNEA DE DEFINICIÓN DE FOOTNOTE
+' PARÁMETROS: sLinea - LÍNEA DE TEXTO A ANALIZAR
+' RETORNA: EL IDENTIFICADOR SI ES UNA DEFINICIÓN, "" SI NO LO ES
+' FORMATO ESPERADO: [^identificador]: texto...
+' ------------------------------------------------------------------------------
+Private Function ExtraerDefinicionId(sLinea As String) As String
+
+  Dim posCierra As Integer
+  Dim id As String
+  Dim lineaTrim As String
+
+  ' LA DEFINICIÓN DEBE ESTAR AL INICIO DE LA LÍNEA (O CON ESPACIOS MÍNIMOS)
+  lineaTrim = LTrim$(sLinea)
+
+  ' VERIFICAR QUE EMPIECE CON [^
+  If Left$(lineaTrim, 2) <> "[^" Then
+    Return ""
+  Endif
+
+  ' BUSCAR EL CIERRE ]:
+  posCierra = InStr(lineaTrim, "]:")
+  If posCierra = 0 Then
+    Return ""
+  Endif
+
+  ' EXTRAER EL ID (ENTRE [^ Y ]:)
+  id = Mid$(lineaTrim, 3, posCierra - 3)
+
+  ' VALIDAR QUE EL ID NO ESTÉ VACÍO
+  If Len(Trim$(id)) = 0 Then
+    Return ""
+  Endif
+
+  Return Trim$(id)
+
+End
+
+' ------------------------------------------------------------------------------
+' SUBRUTINA: EXTRAE REFERENCIAS [^id] DE UNA LÍNEA DE TEXTO
+' PARÁMETROS:
+'   sLinea - LÍNEA DE TEXTO A ANALIZAR
+'   aReferencias - STRING[] DONDE SE AGREGAN LAS REFERENCIAS ENCONTRADAS
+' NOTA: IGNORA LAS DEFINICIONES [^id]: YA QUE ESTAS SE PROCESAN APARTE
+' ------------------------------------------------------------------------------
+Private Sub ExtraerReferenciasDeLinea(sLinea As String, aReferencias As String[])
+
+  Dim posicion As Integer
+  Dim posInicio As Integer
+  Dim posCierre As Integer
+  Dim id As String
+  Dim resto As String
+
+  posicion = 1
+
+  ' BUSCAR TODAS LAS OCURRENCIAS DE [^ EN LA LÍNEA
+  Do
+    posInicio = InStr(sLinea, "[^", posicion)
+    If posInicio = 0 Then Break
+
+    ' BUSCAR EL CIERRE ]
+    posCierre = InStr(sLinea, "]", posInicio + 2)
+    If posCierre = 0 Then Break
+
+    ' EXTRAER EL ID
+    id = Mid$(sLinea, posInicio + 2, posCierre - posInicio - 2)
+
+    ' VERIFICAR QUE NO SEA UNA DEFINICIÓN
+    ' UNA DEFINICIÓN TIENE ]: MIENTRAS QUE UNA REFERENCIA SOLO TIENE ]
+    resto = Mid$(sLinea, posCierre, 2)
+
+    If resto <> "]:" Then
+      ' ES UNA REFERENCIA, NO UNA DEFINICIÓN
+      id = Trim$(id)
+      If Len(id) > 0 Then
+        ' AGREGAR SI NO EXISTE YA EN LA LISTA
+        If aReferencias.Find(id) < 0 Then
+          aReferencias.Add(id)
+        Endif
+      Endif
+    Endif
+
+    ' CONTINUAR BUSCANDO DESPUÉS DE ESTA OCURRENCIA
+    posicion = posCierre + 1
+
+  Loop
+
+End
+
+' ------------------------------------------------------------------------------
+' FUNCIÓN: FORMATEA UNA FILA DE LA TABLA HTML
+' PARÁMETROS:
+'   sArchivo - NOMBRE DEL ARCHIVO
+'   aInfo - ARRAY CON [ESTADO, REF_SIN_DEF, DEF_SIN_REF]
+' RETORNA: FILA HTML FORMATEADA
+' ------------------------------------------------------------------------------
+Private Function FormatearFilaTabla(sArchivo As String, aInfo As String[]) As String
+
+  Dim resultado As String
+  Dim estado As String
+  Dim refSinDef As String
+  Dim defSinRef As String
+  Dim claseEstado As String
+
+  estado = aInfo[0]
+  refSinDef = aInfo[1]
+  defSinRef = aInfo[2]
+
+  ' DETERMINAR CLASE CSS PARA EL ESTADO
+  If estado = "OK" Then
+    claseEstado = "ok"
+  Else If estado = "OK (reorg)" Then
+    claseEstado = "reorg"
+  Else
+    claseEstado = "error"
+  Endif
+
+  ' SI NO HAY ERRORES, MOSTRAR GUIÓN
+  If refSinDef = "" Then refSinDef = "-"
+  If defSinRef = "" Then defSinRef = "-"
+
+  resultado = "<tr>"
+  resultado &= "<td>" & Html$(sArchivo) & "</td>"
+  resultado &= "<td class=\"" & claseEstado & "\">" & Html$(estado) & "</td>"
+  resultado &= "<td>" & Html$(refSinDef) & "</td>"
+  resultado &= "<td>" & Html$(defSinRef) & "</td>"
+  resultado &= "</tr>"
+
+  Return resultado
+
+End
