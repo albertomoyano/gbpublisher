@@ -1,0 +1,1285 @@
+' Gambas module file
+
+Const DISTANCIA_MAXIMA As Integer = 76
+Const LONGITUD_MINIMA_PALABRA As Integer = 5
+
+' ==============================================================================
+' FUNCIÓN: EscanearCodificacionUTF8
+' DESCRIPCIÓN: Escanea el contenido del editor en busca de caracteres
+'              problemáticos que suelen aparecer al copiar/pegar desde
+'              Word, LibreOffice u otros editores de texto.
+' DETECTA:
+'   - Caracteres no imprimibles y de control (U+0000-U+001F, U+007F-U+009F)
+'   - Espacios especiales (no-break, em space, en space, etc.)
+'   - Tildes y diacríticos combinantes mal posicionados
+'   - Caracteres de ancho cero y marcas de dirección
+'   - Caracteres de sustitución y símbolos problemáticos
+'   - Guiones y comillas tipográficas variadas (informativo)
+'   - Ligaduras tipográficas
+' SALIDA: Reporte HTML mostrado en FEstructuraMD.HtmlViewEstructuraMD
+' ==============================================================================
+Public Sub EscanearCodificacionUTF8()
+
+  Dim sInfo As String
+  Dim contenido As String
+  Dim totalErrores As Integer
+  Dim totalAdvertencias As Integer
+
+  ' OBTENER CONTENIDO DEL EDITOR ACTUAL
+  contenido = FMain.txtEditorProyecto.Text
+
+  If Len(contenido) = 0 Then
+    Message.Warning("El editor está vacío")
+    Return
+  Endif
+
+  ' CONSTRUIR ENCABEZADO HTML
+  sInfo = BuildHTMLHeader("Escáner de codificación UTF-8")
+  sInfo &= "<p>Analizando " & Len(contenido) & " caracteres...</p>"
+  sInfo &= "<hr>"
+
+  ' EJECUTAR TODAS LAS VERIFICACIONES
+  sInfo &= ScanControlCharacters(contenido, ByRef totalErrores)
+  sInfo &= ScanSpecialSpaces(contenido, ByRef totalErrores)
+  sInfo &= ScanCombiningDiacritics(contenido, ByRef totalErrores)
+  sInfo &= ScanZeroWidthChars(contenido, ByRef totalErrores)
+  sInfo &= ScanReplacementChars(contenido, ByRef totalErrores)
+  sInfo &= ScanLigatures(contenido, ByRef totalAdvertencias)
+  sInfo &= ScanTypographicChars(contenido, ByRef totalAdvertencias)
+  sInfo &= ScanHighUnicode(contenido, ByRef totalAdvertencias)
+
+  ' RESUMEN FINAL
+  sInfo &= "<hr>"
+  sInfo &= "<h4>Resumen</h4>"
+  If totalErrores = 0 And totalAdvertencias = 0 Then
+    sInfo &= "<p class=\"ok\"><b>✓ No se encontraron problemas de codificación</b></p>"
+  Else
+    If totalErrores > 0 Then
+      sInfo &= "<p class=\"error\"><b>✗ Errores encontrados: " & totalErrores & "</b></p>"
+    Endif
+    If totalAdvertencias > 0 Then
+      sInfo &= "<p class=\"advertencia\"><b>⚠ Advertencias: " & totalAdvertencias & "</b></p>"
+    Endif
+  Endif
+
+  sInfo &= "</body></html>"
+
+  ' MOSTRAR RESULTADO
+  FEstructuraMD.HtmlViewEstructuraMD.Html = sInfo
+  FEstructuraMD.ShowModal()
+
+End
+
+' ==============================================================================
+' FUNCIÓN: BuildHTMLHeader
+' DESCRIPCIÓN: Genera el encabezado HTML con estilos CSS para los reportes
+' PARÁMETROS:
+'   titulo - Título que aparecerá en el reporte
+' RETORNA: String con el HTML del encabezado
+' ==============================================================================
+Private Function BuildHTMLHeader(titulo As String) As String
+
+  Dim html As String
+
+  html = "<html><head>" &
+    "<meta charset='utf-8'>" &
+    "<style>" &
+    "html, body { font-family: monospace; font-size: 16px; line-height: 1.5; " &
+    "margin: 0; padding: 10px; overflow-x: hidden; box-sizing: border-box; max-width: 99%; }" &
+    "h3 { color: #2c3e50; margin-bottom: 10px; }" &
+    "h4 { color: #34495e; margin: 15px 0 10px 0; }" &
+    "p { margin: 5px 0 15px 0; }" &
+    "hr { border: none; border-top: 1px solid #ccc; margin: 15px 0; }" &
+    ".ok { color: green; }" &
+    ".error { color: red; }" &
+    ".advertencia { color: orange; }" &
+    ".indent { margin-left: 20px; }" &
+    ".indent2 { margin-left: 40px; }" &
+    ".codigo { background-color: #f4f4f4; padding: 2px 6px; border-radius: 3px; }" &
+    ".seccion { background-color: #ecf0f1; padding: 10px; margin: 10px 0; border-radius: 5px; }" &
+    "</style></head><body>"
+
+  html &= "<h3>" & Html(titulo) & "</h3>"
+
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanControlCharacters
+' DESCRIPCIÓN: Detecta caracteres de control no imprimibles
+'              Rango: U+0000-U+001F (excepto tab, CR, LF) y U+007F-U+009F
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalErrores - Contador de errores (ByRef para actualizar)
+' RETORNA: String HTML con los resultados del escaneo
+' ==============================================================================
+Private Function ScanControlCharacters(contenido As String, ByRef totalErrores As Integer) As String
+
+  Dim html As String
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim errores As New Collection
+  Dim contexto As String
+  Dim posLinea As Integer
+  Dim char As String
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>1. Caracteres de control</h4>"
+
+  linea = 1
+  columna = 1
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+
+    ' DETECTAR CARACTERES DE CONTROL (EXCEPTO TAB=9, LF=10, CR=13)
+    If (codigo >= 0 And codigo <= 31 And codigo <> 9 And codigo <> 10 And codigo <> 13) Or (codigo >= 127 And codigo <= 159) Then
+      contexto = GetContexto(contenido, i, 20)
+      errores.Add([linea, columna, codigo, GetControlCharName(codigo), contexto])
+      totalErrores += 1
+    Endif
+
+    ' ACTUALIZAR POSICIÓN
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+  Next
+
+  If errores.Count = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron caracteres de control</p>"
+  Else
+    html &= "<p class=\"error\">✗ Encontrados: " & errores.Count & "</p>"
+    For Each err As Variant[] In errores
+      html &= "<span class=\"indent\">Línea " & err[0] & ", Col " & err[1] & ": "
+      html &= "<span class=\"codigo\">U+" & Hex(err[2], 4) & "</span> "
+      html &= "(" & err[3] & ")</span><br>"
+      html &= "<span class=\"indent2\">Contexto: \"" & Html(err[4]) & "\"</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanSpecialSpaces
+' DESCRIPCIÓN: Detecta espacios especiales que no son el espacio normal (U+0020)
+'              Incluye: no-break space, en/em space, thin space, etc.
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalErrores - Contador de errores (ByRef)
+' RETORNA: String HTML con los resultados
+' ==============================================================================
+Private Function ScanSpecialSpaces(contenido As String, ByRef totalErrores As Integer) As String
+
+  Dim html As String
+  Dim espacios As New Collection
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim char As String
+  Dim nombre As String
+
+  ' DEFINIR ESPACIOS ESPECIALES A DETECTAR
+  ' U+00A0 = No-Break Space
+  ' U+2000 = En Quad
+  ' U+2001 = Em Quad
+  ' U+2002 = En Space
+  ' U+2003 = Em Space
+  ' U+2004 = Three-Per-Em Space
+  ' U+2005 = Four-Per-Em Space
+  ' U+2006 = Six-Per-Em Space
+  ' U+2007 = Figure Space
+  ' U+2008 = Punctuation Space
+  ' U+2009 = Thin Space
+  ' U+200A = Hair Space
+  ' U+202F = Narrow No-Break Space
+  ' U+205F = Medium Mathematical Space
+  ' U+3000 = Ideographic Space
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>2. Espacios especiales</h4>"
+
+  linea = 1
+  columna = 1
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+    nombre = ""
+
+    Select Case codigo
+      Case 160
+        nombre = "No-Break Space"
+      Case 8192
+        nombre = "En Quad"
+      Case 8193
+        nombre = "Em Quad"
+      Case 8194
+        nombre = "En Space"
+      Case 8195
+        nombre = "Em Space"
+      Case 8196
+        nombre = "Three-Per-Em Space"
+      Case 8197
+        nombre = "Four-Per-Em Space"
+      Case 8198
+        nombre = "Six-Per-Em Space"
+      Case 8199
+        nombre = "Figure Space"
+      Case 8200
+        nombre = "Punctuation Space"
+      Case 8201
+        nombre = "Thin Space"
+      Case 8202
+        nombre = "Hair Space"
+      Case 8239
+        nombre = "Narrow No-Break Space"
+      Case 8287
+        nombre = "Medium Mathematical Space"
+      Case 12288
+        nombre = "Ideographic Space"
+    End Select
+
+    If nombre <> "" Then
+      espacios.Add([linea, columna, codigo, nombre, GetContexto(contenido, i, 20)])
+      totalErrores += 1
+    Endif
+
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+  Next
+
+  If espacios.Count = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron espacios especiales</p>"
+  Else
+    html &= "<p class=\"error\">✗ Encontrados: " & espacios.Count & "</p>"
+    For Each esp As Variant[] In espacios
+      html &= "<span class=\"indent\">Línea " & esp[0] & ", Col " & esp[1] & ": "
+      html &= "<span class=\"codigo\">U+" & Hex(esp[2], 4) & "</span> "
+      html &= "(" & esp[3] & ")</span><br>"
+      html &= "<span class=\"indent2\">Contexto: \"" & Html(esp[4]) & "\"</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanCombiningDiacritics
+' DESCRIPCIÓN: Detecta diacríticos combinantes (tildes, acentos) que están
+'              aplicados incorrectamente, especialmente cuando siguen a una
+'              consonante en lugar de una vocal.
+'              Rango: U+0300-U+036F (Combining Diacritical Marks)
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalErrores - Contador de errores (ByRef)
+' RETORNA: String HTML con los resultados
+' ==============================================================================
+Private Function ScanCombiningDiacritics(contenido As String, ByRef totalErrores As Integer) As String
+
+  Dim html As String
+  Dim errores As New Collection
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim codigoAnterior As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim char As String
+  Dim charAnterior As String
+  Dim vocales As String
+  Dim consonantes As String
+
+  vocales = "aeiouAEIOUáéíóúÁÉÍÓÚàèìòùÀÈÌÒÙäëïöüÄËÏÖÜâêîôûÂÊÎÔÛ"
+  consonantes = "bcdfghjklmnñpqrstvwxyzBCDFGHJKLMNÑPQRSTVWXYZ"
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>3. Diacríticos combinantes</h4>"
+
+  linea = 1
+  columna = 1
+  charAnterior = ""
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+
+    ' DETECTAR DIACRÍTICOS COMBINANTES (U+0300 - U+036F)
+    If codigo >= 768 And codigo <= 879 Then
+      ' VERIFICAR SI EL CARÁCTER ANTERIOR ES UNA CONSONANTE (ERROR PROBABLE)
+      If InStr(consonantes, charAnterior) > 0 Then
+        errores.Add([linea, columna, codigo, GetCombiningName(codigo), charAnterior, GetContexto(contenido, i, 20)])
+        totalErrores += 1
+        ' TAMBIÉN REPORTAR SI ESTÁ DESPUÉS DE UN ESPACIO O AL INICIO
+      Else If charAnterior = "" Or charAnterior = " " Or Asc(charAnterior) = 10 Then
+        errores.Add([linea, columna, codigo, GetCombiningName(codigo), "(inicio/espacio)", GetContexto(contenido, i, 20)])
+        totalErrores += 1
+      Endif
+    Endif
+
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+
+    charAnterior = char
+  Next
+
+  If errores.Count = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron diacríticos mal posicionados</p>"
+  Else
+    html &= "<p class=\"error\">✗ Encontrados: " & errores.Count & "</p>"
+    For Each err As Variant[] In errores
+      html &= "<span class=\"indent\">Línea " & err[0] & ", Col " & err[1] & ": "
+      html &= "<span class=\"codigo\">U+" & Hex(err[2], 4) & "</span> "
+      html &= "(" & err[3] & ") después de '" & Html(err[4]) & "'</span><br>"
+      html &= "<span class=\"indent2\">Contexto: \"" & Html(err[5]) & "\"</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanZeroWidthChars
+' DESCRIPCIÓN: Detecta caracteres de ancho cero y marcas de dirección de texto
+'              que son invisibles pero pueden causar problemas de renderizado
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalErrores - Contador de errores (ByRef)
+' RETORNA: String HTML con los resultados
+' ==============================================================================
+Private Function ScanZeroWidthChars(contenido As String, ByRef totalErrores As Integer) As String
+
+  Dim html As String
+  Dim errores As New Collection
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim char As String
+  Dim nombre As String
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>4. Caracteres de ancho cero y marcas de dirección</h4>"
+
+  linea = 1
+  columna = 1
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+    nombre = ""
+
+    Select Case codigo
+      Case 8203  ' U+200B
+        nombre = "Zero Width Space"
+      Case 8204  ' U+200C
+        nombre = "Zero Width Non-Joiner"
+      Case 8205  ' U+200D
+        nombre = "Zero Width Joiner"
+      Case 8206  ' U+200E
+        nombre = "Left-to-Right Mark"
+      Case 8207  ' U+200F
+        nombre = "Right-to-Left Mark"
+      Case 8232  ' U+2028
+        nombre = "Line Separator"
+      Case 8233  ' U+2029
+        nombre = "Paragraph Separator"
+      Case 8234  ' U+202A
+        nombre = "Left-to-Right Embedding"
+      Case 8235  ' U+202B
+        nombre = "Right-to-Left Embedding"
+      Case 8236  ' U+202C
+        nombre = "Pop Directional Formatting"
+      Case 8237  ' U+202D
+        nombre = "Left-to-Right Override"
+      Case 8238  ' U+202E
+        nombre = "Right-to-Left Override"
+      Case 65279  ' U+FEFF
+        nombre = "Byte Order Mark (BOM)"
+      Case 65532  ' U+FFFC
+        nombre = "Object Replacement Character"
+    End Select
+
+    If nombre <> "" Then
+      errores.Add([linea, columna, codigo, nombre])
+      totalErrores += 1
+    Endif
+
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+  Next
+
+  If errores.Count = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron caracteres de ancho cero</p>"
+  Else
+    html &= "<p class=\"error\">✗ Encontrados: " & errores.Count & "</p>"
+    For Each err As Variant[] In errores
+      html &= "<span class=\"indent\">Línea " & err[0] & ", Col " & err[1] & ": "
+      html &= "<span class=\"codigo\">U+" & Hex(err[2], 4) & "</span> "
+      html &= "(" & err[3] & ")</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanReplacementChars
+' DESCRIPCIÓN: Detecta caracteres de sustitución (U+FFFD) que indican que
+'              hubo un error de decodificación UTF-8
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalErrores - Contador de errores (ByRef)
+' RETORNA: String HTML con los resultados
+' ==============================================================================
+Private Function ScanReplacementChars(contenido As String, ByRef totalErrores As Integer) As String
+
+  Dim html As String
+  Dim errores As New Collection
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim char As String
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>5. Caracteres de sustitución (errores de decodificación)</h4>"
+
+  linea = 1
+  columna = 1
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+
+    ' U+FFFD = REPLACEMENT CHARACTER
+    If codigo = 65533 Then
+      errores.Add([linea, columna, GetContexto(contenido, i, 20)])
+      totalErrores += 1
+    Endif
+
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+  Next
+
+  If errores.Count = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron caracteres de sustitución</p>"
+  Else
+    html &= "<p class=\"error\">✗ Encontrados: " & errores.Count & " (indica problemas de codificación)</p>"
+    For Each err As Variant[] In errores
+      html &= "<span class=\"indent\">Línea " & err[0] & ", Col " & err[1] & ": "
+      html &= "<span class=\"codigo\">U+FFFD</span> (Replacement Character)</span><br>"
+      html &= "<span class=\"indent2\">Contexto: \"" & Html(err[2]) & "\"</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanLigatures
+' DESCRIPCIÓN: Detecta ligaduras tipográficas que pueden causar problemas
+'              de búsqueda y procesamiento de texto
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalAdvertencias - Contador de advertencias (ByRef)
+' RETORNA: String HTML con los resultados
+' ==============================================================================
+Private Function ScanLigatures(contenido As String, ByRef totalAdvertencias As Integer) As String
+
+  Dim html As String
+  Dim ligaduras As New Collection
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim char As String
+  Dim nombre As String
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>6. Ligaduras tipográficas</h4>"
+
+  linea = 1
+  columna = 1
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+    nombre = ""
+
+    Select Case codigo
+      Case 64256  ' U+FB00
+        nombre = "Ligadura ff"
+      Case 64257  ' U+FB01
+        nombre = "Ligadura fi"
+      Case 64258  ' U+FB02
+        nombre = "Ligadura fl"
+      Case 64259  ' U+FB03
+        nombre = "Ligadura ffi"
+      Case 64260  ' U+FB04
+        nombre = "Ligadura ffl"
+      Case 64261  ' U+FB05
+        nombre = "Ligadura st"
+      Case 64262  ' U+FB06
+        nombre = "Ligadura st"
+    End Select
+
+    If nombre <> "" Then
+      ligaduras.Add([linea, columna, codigo, nombre, char, GetContexto(contenido, i, 20)])
+      totalAdvertencias += 1
+    Endif
+
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+  Next
+
+  If ligaduras.Count = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron ligaduras</p>"
+  Else
+    html &= "<p class=\"advertencia\">⚠ Encontradas: " & ligaduras.Count & " (pueden afectar búsquedas)</p>"
+    For Each lig As Variant[] In ligaduras
+      html &= "<span class=\"indent\">Línea " & lig[0] & ", Col " & lig[1] & ": "
+      html &= "'" & Html(lig[4]) & "' <span class=\"codigo\">U+" & Hex(lig[2], 4) & "</span> "
+      html &= "(" & lig[3] & ")</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanTypographicChars
+' DESCRIPCIÓN: Detecta caracteres tipográficos especiales (guiones, comillas)
+'              que son válidos pero es útil saber que existen
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalAdvertencias - Contador de advertencias (ByRef)
+' RETORNA: String HTML con los resultados
+' ==============================================================================
+Private Function ScanTypographicChars(contenido As String, ByRef totalAdvertencias As Integer) As String
+
+  Dim html As String
+  Dim chars As New Collection
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim char As String
+  Dim nombre As String
+  Dim conteo As New Collection  ' PARA CONTAR OCURRENCIAS POR TIPO
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>7. Caracteres tipográficos especiales (informativo)</h4>"
+
+  linea = 1
+  columna = 1
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+    nombre = ""
+
+    Select Case codigo
+        ' GUIONES
+      Case 8208  ' U+2010
+        nombre = "Guion"
+      Case 8209  ' U+2011
+        nombre = "Non-Breaking Hyphen"
+      Case 8210  ' U+2012
+        nombre = "Figure Dash"
+      Case 8211  ' U+2013
+        nombre = "En Dash (–)"
+      Case 8212  ' U+2014
+        nombre = "Em Dash (—)"
+      Case 8722  ' U+2212
+        nombre = "Minus Sign"
+        ' COMILLAS
+      Case 8216  ' U+2018
+        nombre = "Left Single Quote (')"
+      Case 8217  ' U+2019
+        nombre = "Right Single Quote (')"
+        ' COMILLAS DOBLES TIPOGRÁFICAS
+      Case 8220  ' U+201C
+        nombre = "Left Double Quote (" & Chr(8220) & ")"
+      Case 8221  ' U+201D
+        nombre = "Right Double Quote (" & Chr(8221) & ")"
+      Case 171   ' U+00AB
+        nombre = "Left Guillemet («)"
+      Case 187   ' U+00BB
+        nombre = "Right Guillemet (»)"
+        ' PUNTOS SUSPENSIVOS
+      Case 8230  ' U+2026
+        nombre = "Horizontal Ellipsis (…)"
+    End Select
+
+    If nombre <> "" Then
+      ' CONTAR OCURRENCIAS
+      If conteo.Exist(nombre) Then
+        conteo[nombre] = conteo[nombre] + 1
+      Else
+        conteo.Add(1, nombre)
+      Endif
+    Endif
+
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+  Next
+
+  If conteo.Count = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron caracteres tipográficos especiales</p>"
+  Else
+    html &= "<p>Encontrados (estos son válidos pero útil conocerlos):</p>"
+    For Each clave As String In conteo.Keys
+      html &= "<span class=\"indent\">" & clave & ": " & conteo[clave] & "</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ScanHighUnicode
+' DESCRIPCIÓN: Detecta caracteres fuera del rango Latin básico (> U+00FF)
+'              excluyendo los ya detectados en otras funciones
+' PARÁMETROS:
+'   contenido - Texto a analizar
+'   totalAdvertencias - Contador de advertencias (ByRef)
+' RETORNA: String HTML con los resultados
+' ==============================================================================
+Private Function ScanHighUnicode(contenido As String, ByRef totalAdvertencias As Integer) As String
+
+  Dim html As String
+  Dim chars As New Collection
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim char As String
+  Dim limite As Integer
+
+  limite = 10  ' MOSTRAR MÁXIMO 10 EJEMPLOS
+
+  html = "<div class=\"seccion\">"
+  html &= "<h4>8. Otros caracteres Unicode extendido (> U+00FF)</h4>"
+
+  linea = 1
+  columna = 1
+
+  For i = 1 To String.Len(contenido)
+    char = String.Mid(contenido, i, 1)
+    codigo = Asc(char)
+
+    ' CARACTERES FUERA DE LATIN-1 PERO NO YA DETECTADOS
+    If codigo > 255 Then
+      ' EXCLUIR LOS YA PROCESADOS EN OTRAS FUNCIONES
+      If Not IsAlreadyScanned(codigo) Then
+        If chars.Count < limite Then
+          chars.Add([linea, columna, codigo, char, GetContexto(contenido, i, 20)])
+        Endif
+        totalAdvertencias += 1
+      Endif
+    Endif
+
+    If codigo = 10 Then
+      linea += 1
+      columna = 1
+    Else
+      columna += 1
+    Endif
+  Next
+
+  If totalAdvertencias = 0 Then
+    html &= "<p class=\"ok\">✓ No se encontraron caracteres Unicode extendido adicionales</p>"
+  Else
+    html &= "<p class=\"advertencia\">⚠ Encontrados: " & totalAdvertencias
+    If totalAdvertencias > limite Then
+      html &= " (mostrando primeros " & limite & ")"
+    Endif
+    html &= "</p>"
+    For Each c As Variant[] In chars
+      html &= "<span class=\"indent\">Línea " & c[0] & ", Col " & c[1] & ": "
+      html &= "'" & Html(c[3]) & "' <span class=\"codigo\">U+" & Hex(c[2], 4) & "</span></span><br>"
+      html &= "<span class=\"indent2\">Contexto: \"" & Html(c[4]) & "\"</span><br>"
+    Next
+  Endif
+
+  html &= "</div>"
+  Return html
+
+End
+
+' ==============================================================================
+' FUNCIÓN: IsAlreadyScanned
+' DESCRIPCIÓN: Verifica si un código Unicode ya fue procesado por otras
+'              funciones de escaneo para evitar duplicados
+' PARÁMETROS:
+'   codigo - Código Unicode a verificar
+' RETORNA: True si ya fue escaneado, False en caso contrario
+' ==============================================================================
+Private Function IsAlreadyScanned(codigo As Integer) As Boolean
+
+  ' ESPACIOS ESPECIALES
+  If codigo = 160 Or (codigo >= 8192 And codigo <= 8202) Or codigo = 8239 Or codigo = 8287 Or codigo = 12288 Then Return True
+  ' DIACRÍTICOS COMBINANTES
+  If codigo >= 768 And codigo <= 879 Then Return True
+  ' CARACTERES DE ANCHO CERO Y DIRECCIÓN
+  If codigo >= 8203 And codigo <= 8238 Then Return True
+  If codigo = 65279 Or codigo = 65532 Or codigo = 65533 Then Return True
+  ' LIGADURAS
+  If codigo >= 64256 And codigo <= 64262 Then Return True
+  ' TIPOGRÁFICOS (GUIONES, COMILLAS)
+  If codigo >= 8208 And codigo <= 8212 Then Return True
+  If codigo = 8722 Then Return True
+  If codigo >= 8216 And codigo <= 8221 Then Return True
+  If codigo = 171 Or codigo = 187 Or codigo = 8230 Then Return True
+
+  Return False
+
+End
+
+' ==============================================================================
+' FUNCIÓN: GetContexto
+' DESCRIPCIÓN: Extrae el contexto alrededor de una posición en el texto
+'              para ayudar a identificar dónde está el problema
+' PARÁMETROS:
+'   contenido - Texto completo
+'   posicion - Posición del carácter problemático (1-based)
+'   radio - Cantidad de caracteres a cada lado
+' RETORNA: String con el contexto, marcando el carácter problemático
+' ==============================================================================
+Private Function GetContexto(contenido As String, posicion As Integer, radio As Integer) As String
+
+  Dim inicio As Integer
+  Dim fin As Integer
+  Dim ctx As String
+
+  inicio = Max(1, posicion - radio)
+  fin = Min(String.Len(contenido), posicion + radio)
+
+  ctx = String.Mid(contenido, inicio, fin - inicio + 1)
+
+  ' REEMPLAZAR SALTOS DE LÍNEA PARA VISUALIZACIÓN
+  ctx = Replace(ctx, "\n", "↵")
+  ctx = Replace(ctx, "\r", "")
+  ctx = Replace(ctx, "\t", "→")
+
+  Return ctx
+
+End
+
+' ==============================================================================
+' FUNCIÓN: GetControlCharName
+' DESCRIPCIÓN: Devuelve el nombre legible de un carácter de control
+' PARÁMETROS:
+'   codigo - Código del carácter de control
+' RETORNA: String con el nombre del carácter
+' ==============================================================================
+Private Function GetControlCharName(codigo As Integer) As String
+
+  Select Case codigo
+    Case 0
+      Return "NUL (Null)"
+    Case 1
+      Return "SOH (Start of Heading)"
+    Case 2
+      Return "STX (Start of Text)"
+    Case 3
+      Return "ETX (End of Text)"
+    Case 4
+      Return "EOT (End of Transmission)"
+    Case 5
+      Return "ENQ (Enquiry)"
+    Case 6
+      Return "ACK (Acknowledge)"
+    Case 7
+      Return "BEL (Bell)"
+    Case 8
+      Return "BS (Backspace)"
+    Case 11
+      Return "VT (Vertical Tab)"
+    Case 12
+      Return "FF (Form Feed)"
+    Case 14
+      Return "SO (Shift Out)"
+    Case 15
+      Return "SI (Shift In)"
+    Case 16
+      Return "DLE (Data Link Escape)"
+    Case 17
+      Return "DC1 (Device Control 1)"
+    Case 18
+      Return "DC2 (Device Control 2)"
+    Case 19
+      Return "DC3 (Device Control 3)"
+    Case 20
+      Return "DC4 (Device Control 4)"
+    Case 21
+      Return "NAK (Negative Acknowledge)"
+    Case 22
+      Return "SYN (Synchronous Idle)"
+    Case 23
+      Return "ETB (End of Trans. Block)"
+    Case 24
+      Return "CAN (Cancel)"
+    Case 25
+      Return "EM (End of Medium)"
+    Case 26
+      Return "SUB (Substitute)"
+    Case 27
+      Return "ESC (Escape)"
+    Case 28
+      Return "FS (File Separator)"
+    Case 29
+      Return "GS (Group Separator)"
+    Case 30
+      Return "RS (Record Separator)"
+    Case 31
+      Return "US (Unit Separator)"
+    Case 127
+      Return "DEL (Delete)"
+    Case 128 To 159
+      Return "C1 Control Character"
+    Case Else
+      Return "Unknown Control"
+  End Select
+
+End
+
+' ==============================================================================
+' FUNCIÓN: GetCombiningName
+' DESCRIPCIÓN: Devuelve el nombre de un diacrítico combinante
+' PARÁMETROS:
+'   codigo - Código Unicode del diacrítico
+' RETORNA: String con el nombre descriptivo
+' ==============================================================================
+Private Function GetCombiningName(codigo As Integer) As String
+
+  Select Case codigo
+    Case 768  ' U+0300
+      Return "Combining Grave Accent"
+    Case 769  ' U+0301
+      Return "Combining Acute Accent"
+    Case 770  ' U+0302
+      Return "Combining Circumflex"
+    Case 771  ' U+0303
+      Return "Combining Tilde"
+    Case 772  ' U+0304
+      Return "Combining Macron"
+    Case 774  ' U+0306
+      Return "Combining Breve"
+    Case 775  ' U+0307
+      Return "Combining Dot Above"
+    Case 776  ' U+0308
+      Return "Combining Diaeresis"
+    Case 778  ' U+030A
+      Return "Combining Ring Above"
+    Case 780  ' U+030C
+      Return "Combining Caron"
+    Case 807  ' U+0327
+      Return "Combining Cedilla"
+    Case Else
+      Return "Combining Mark U+" & Hex(codigo, 4)
+  End Select
+
+End
+'
+'
+'
+'
+'
+'
+' Gambas module file
+
+' MÓDULO: m_EscanerTipografico (agregar esta función al módulo existente)
+' FUNCIÓN: ControlCercaniaTipografica
+' DESCRIPCIÓN: DETECTA PALABRAS REPETIDAS DENTRO DE UN RANGO DE 76 CARACTERES
+'              EN EL MISMO PÁRRAFO. ESTO IDENTIFICA REPETICIONES QUE APARECERÍAN
+'              EN LA MISMA LÍNEA O EN LA SIGUIENTE EN UN LIBRO IMPRESO
+'              (CONSIDERANDO UNA MEDIA DE 80 CARACTERES POR LÍNEA).
+' PARÁMETROS: NINGUNO (LEE DIRECTAMENTE DEL EDITOR txtEditorProyecto EN FMain)
+' RETORNA: STRING - CÓDIGO HTML CON EL INFORME DE REPETICIONES ENCONTRADAS
+' AUTOR: GENERADO PARA GBPUBLISHER
+' FECHA: 2025
+' NOTAS:
+'   - SOLO ANALIZA PALABRAS DE 5 O MÁS CARACTERES
+'   - EL CONTROL SE REINICIA EN CADA PÁRRAFO (LÍNEA EN BLANCO = NUEVO PÁRRAFO)
+'   - LA DISTANCIA MÁXIMA ENTRE REPETICIONES ES DE 76 CARACTERES
+'   - EL RESULTADO SE MUESTRA EN FEstructuraMD.htmlView
+
+Public Function ControlCercaniaTipografica() As String
+
+  Dim sTextoCompleto As String
+  Dim aParrafos As String[]
+  Dim sParrafo As String
+  Dim aPalabras As String[]
+  Dim i As Integer
+  Dim j As Integer
+  Dim k As Integer
+  Dim sPalabra As String
+  Dim sPalabraComparar As String
+  Dim iPosActual As Integer
+  Dim iPosAnterior As Integer
+  Dim iDistancia As Integer
+  Dim iNumParrafo As Integer
+  Dim iLineaInicio As Integer
+  Dim iLineaActual As Integer
+  Dim sResultadoHTML As String
+  Dim iContadorRepeticiones As Integer
+  Dim colPalabrasEncontradas As New Collection
+  Dim sClaveRepeticion As String
+  Dim bEsNuevoParrafo As Boolean
+  Dim sLineaActual As String
+  Dim iNumLinea As Integer
+  Dim aLineas As String[]
+  Dim sTextoParrafo As String
+  Dim iLineaInicioParrafo As Integer
+
+  ' OBTENER TODO EL TEXTO DEL EDITOR
+  sTextoCompleto = FMain.txtEditorProyecto.Text
+
+  ' SI EL TEXTO ESTÁ VACÍO, RETORNAR MENSAJE
+  If Trim(sTextoCompleto) = "" Then
+    Return "<html><body><h3>Control de cercanía tipográfica</h3><p>El editor está vacío.</p></body></html>"
+  Endif
+
+  ' DIVIDIR EL TEXTO EN LÍNEAS
+  aLineas = Split(sTextoCompleto, "\n")
+
+  ' INICIALIZAR EL HTML DE RESULTADO (CSS corregido)
+  sResultadoHTML = "<html><head><style>"
+  sResultadoHTML &= "* { box-sizing: border-box; }"
+  sResultadoHTML &= "body { font-family: sans-serif; font-size: 14px; padding: 15px; margin: 0; overflow-x: hidden; max-width: 99%;}"
+  sResultadoHTML &= "h3 { color: #333; border-bottom: 2px solid #666; padding-bottom: 5px; }"
+  sResultadoHTML &= "table { border-collapse: collapse; width: 100%; margin-top: 10px; table-layout: fixed; }"
+  sResultadoHTML &= "th, td { border: 1px solid #ddd; padding: 8px; word-wrap: break-word; overflow-wrap: break-word; }"
+  sResultadoHTML &= "tr:nth-child(even) { background-color: #f9f9f9; }"
+  sResultadoHTML &= "tr:hover { background-color: #f1f1f1; }"
+  sResultadoHTML &= ".palabra { font-weight: bold; color: #c00; }"
+  sResultadoHTML &= ".info { color: #666; font-style: italic; margin-bottom: 15px; }"
+  sResultadoHTML &= ".resumen { background-color: #e8f4e8; padding: 10px; border-radius: 5px; margin-top: 15px; }"
+  sResultadoHTML &= "</style></head><body>"
+
+  sResultadoHTML &= "<h3>Control de cercanía tipográfica</h3>"
+  sResultadoHTML &= "<p class='info'>Palabras de " & LONGITUD_MINIMA_PALABRA & "+ caracteres repetidas dentro de " & DISTANCIA_MAXIMA & " caracteres en el mismo párrafo.</p>"
+
+  iContadorRepeticiones = 0
+  iNumParrafo = 0
+  iLineaInicioParrafo = 0
+  sTextoParrafo = ""
+
+  ' RECORRER LÍNEA POR LÍNEA PARA ARMAR PÁRRAFOS
+  For iNumLinea = 0 To aLineas.Max
+
+    sLineaActual = aLineas[iNumLinea]
+
+    If Trim(sLineaActual) = "" Then
+      If Trim(sTextoParrafo) <> "" Then
+        iNumParrafo += 1
+        iContadorRepeticiones += AnalizarParrafo(sTextoParrafo, iLineaInicioParrafo, aLineas, DISTANCIA_MAXIMA, LONGITUD_MINIMA_PALABRA, ByRef sResultadoHTML)
+      Endif
+      sTextoParrafo = ""
+      iLineaInicioParrafo = iNumLinea + 1
+    Else
+      If sTextoParrafo = "" Then
+        sTextoParrafo = sLineaActual
+        iLineaInicioParrafo = iNumLinea
+      Else
+        sTextoParrafo &= " " & sLineaActual
+      Endif
+    Endif
+
+  Next
+
+  ' PROCESAR ÚLTIMO PÁRRAFO
+  If Trim(sTextoParrafo) <> "" Then
+    iNumParrafo += 1
+    iContadorRepeticiones += AnalizarParrafo(sTextoParrafo, iLineaInicioParrafo, aLineas, DISTANCIA_MAXIMA, LONGITUD_MINIMA_PALABRA, ByRef sResultadoHTML)
+  Endif
+
+  ' MOSTRAR RESUMEN
+  If iContadorRepeticiones = 0 Then
+    sResultadoHTML &= "<p class='resumen'>✓ No se encontraron repeticiones de cercanía.</p>"
+  Else
+    sResultadoHTML &= "</table>"
+    sResultadoHTML &= "<p class='resumen'>Total de repeticiones encontradas: <strong>" & iContadorRepeticiones & "</strong></p>"
+  Endif
+
+  sResultadoHTML &= "</body></html>"
+
+  Return sResultadoHTML
+
+End
+
+' FUNCIÓN AUXILIAR: AnalizarParrafo
+' DESCRIPCIÓN: ANALIZA UN PÁRRAFO INDIVIDUAL BUSCANDO REPETICIONES DE PALABRAS
+'              DENTRO DEL RANGO DE DISTANCIA ESPECIFICADO.
+' PARÁMETROS:
+'   sParrafo - TEXTO DEL PÁRRAFO A ANALIZAR
+'   iLineaInicio - NÚMERO DE LÍNEA DONDE COMIENZA EL PÁRRAFO (BASE 0)
+'   aLineasOriginal - ARRAY CON TODAS LAS LÍNEAS DEL DOCUMENTO
+'   iDistanciaMax - DISTANCIA MÁXIMA EN CARACTERES PARA CONSIDERAR CERCANÍA
+'   iLongitudMin - LONGITUD MÍNIMA DE PALABRA PARA ANALIZAR
+'   sHTML - REFERENCIA AL STRING HTML DONDE SE AGREGAN LOS RESULTADOS
+' RETORNA: INTEGER - NÚMERO DE REPETICIONES ENCONTRADAS EN ESTE PÁRRAFO
+
+Private Function AnalizarParrafo(sParrafo As String, iLineaInicio As Integer, aLineasOriginal As String[], iDistanciaMax As Integer, iLongitudMin As Integer, ByRef sHTML As String) As Integer
+
+  Dim aPalabras As String[]
+  Dim colPosiciones As New Collection
+  Dim colPalabrasYaProcesadas As New Collection
+  Dim i As Integer
+  Dim j As Integer
+  Dim sPalabra As String
+  Dim sPalabraLower As String
+  Dim iPosicion As Integer
+  Dim aPosPalabra As Integer[]
+  Dim iContador As Integer
+  Dim bPrimeraRepeticion As Boolean
+  Dim sCaracter As String
+  Dim sPalabraLimpia As String
+  Dim iPosAnterior As Integer
+  Dim iLineaEncontrada As Integer
+  Dim iPosEnLinea As Integer
+  Dim iAcumulado As Integer
+
+  iContador = 0
+  bPrimeraRepeticion = True
+
+  ' LIMPIAR Y NORMALIZAR EL PÁRRAFO
+  ' REEMPLAZAR SIGNOS DE PUNTUACIÓN POR ESPACIOS PARA SEPARAR PALABRAS
+  sParrafo = Replace(sParrafo, ",", " ")
+  sParrafo = Replace(sParrafo, ".", " ")
+  sParrafo = Replace(sParrafo, ";", " ")
+  sParrafo = Replace(sParrafo, ":", " ")
+  sParrafo = Replace(sParrafo, "!", " ")
+  sParrafo = Replace(sParrafo, "?", " ")
+  sParrafo = Replace(sParrafo, "¡", " ")
+  sParrafo = Replace(sParrafo, "¿", " ")
+  sParrafo = Replace(sParrafo, "(", " ")
+  sParrafo = Replace(sParrafo, ")", " ")
+  sParrafo = Replace(sParrafo, "[", " ")
+  sParrafo = Replace(sParrafo, "]", " ")
+  sParrafo = Replace(sParrafo, "«", " ")
+  sParrafo = Replace(sParrafo, "»", " ")
+  sParrafo = Replace(sParrafo, "\"", " ")
+  sParrafo = Replace(sParrafo, "'", " ")
+  sParrafo = Replace(sParrafo, "—", " ")
+  sParrafo = Replace(sParrafo, "–", " ")
+  sParrafo = Replace(sParrafo, "-", " ")
+
+  ' CONSTRUIR UN MAPA DE POSICIONES PARA CADA PALABRA
+  ' PRIMERO IDENTIFICAMOS CADA PALABRA Y SU POSICIÓN EN EL PÁRRAFO ORIGINAL
+  iPosicion = 0
+  aPalabras = Split(sParrafo, " ", "", True) ' TRUE PARA IGNORAR VACÍOS
+
+  ' RECALCULAR POSICIONES REALES EN EL TEXTO
+  Dim aInfoPalabras As New Variant[]
+  Dim sParrafoTemp As String = sParrafo
+  Dim iPosActual As Integer = 0
+
+  For i = 0 To aPalabras.Max
+    sPalabra = Trim(aPalabras[i])
+    If sPalabra = "" Then Continue
+
+    ' ENCONTRAR LA POSICIÓN REAL DE ESTA PALABRA
+    iPosicion = InStr(sParrafoTemp, sPalabra, iPosActual + 1)
+    If iPosicion > 0 Then
+      ' GUARDAR: [PALABRA, POSICIÓN, ÍNDICE_ORIGINAL]
+      aInfoPalabras.Add([sPalabra, iPosicion, i])
+      iPosActual = iPosicion + Len(sPalabra) - 1
+    Endif
+  Next
+
+  ' AHORA BUSCAR REPETICIONES
+  For i = 0 To aInfoPalabras.Max
+    sPalabra = aInfoPalabras[i][0]
+    sPalabraLower = Lower(sPalabra)
+
+    ' VERIFICAR LONGITUD MÍNIMA
+    If Len(sPalabra) < iLongitudMin Then Continue
+
+    ' SI YA PROCESAMOS ESTA PALABRA, CONTINUAR
+    If colPalabrasYaProcesadas.Exist(sPalabraLower) Then Continue
+
+    ' BUSCAR REPETICIONES DE ESTA PALABRA HACIA ADELANTE
+    For j = i + 1 To aInfoPalabras.Max
+      sPalabraLimpia = Lower(aInfoPalabras[j][0])
+
+      If sPalabraLimpia = sPalabraLower Then
+        ' CALCULAR DISTANCIA ENTRE LAS DOS OCURRENCIAS
+        iPosAnterior = aInfoPalabras[i][1]
+        iPosicion = aInfoPalabras[j][1]
+
+        ' LA DISTANCIA ES DESDE EL FINAL DE LA PRIMERA HASTA EL INICIO DE LA SEGUNDA
+        Dim iDistancia As Integer = iPosicion - (iPosAnterior + Len(sPalabra))
+
+        If iDistancia <= iDistanciaMax And iDistancia >= 0 Then
+          ' ENCONTRADA UNA REPETICIÓN DE CERCANÍA
+          If bPrimeraRepeticion Then
+            sHTML &= "<table><tr><th>Línea</th><th>Palabra</th><th>Distancia</th><th>Contexto</th></tr>"
+            bPrimeraRepeticion = False
+          Endif
+
+          ' DETERMINAR EN QUÉ LÍNEA ESTÁ (APROXIMADO)
+          iLineaEncontrada = CalcularLineaDePosicion(aLineasOriginal, iLineaInicio, iPosAnterior)
+
+          ' EXTRAER CONTEXTO
+          Dim sContexto As String = ExtraerContexto(sParrafo, iPosAnterior, iPosicion + Len(sPalabra), sPalabra)
+
+          sHTML &= "<tr>"
+          sHTML &= "<td>" & (iLineaEncontrada + 1) & "</td>"  ' +1 PARA BASE 1
+          sHTML &= "<td class='palabra'>" & Html(sPalabra) & "</td>"
+          sHTML &= "<td>" & iDistancia & " car.</td>"
+          sHTML &= "<td>" & sContexto & "</td>"
+          sHTML &= "</tr>"
+
+          iContador += 1
+        Endif
+      Endif
+    Next
+
+    ' MARCAR ESTA PALABRA COMO PROCESADA
+    colPalabrasYaProcesadas[sPalabraLower] = True
+  Next
+
+  Return iContador
+
+End
+
+' FUNCIÓN AUXILIAR: CalcularLineaDePosicion
+' DESCRIPCIÓN: CALCULA EL NÚMERO DE LÍNEA APROXIMADO BASÁNDOSE EN LA POSICIÓN
+'              DENTRO DEL PÁRRAFO Y LAS LÍNEAS ORIGINALES.
+' PARÁMETROS:
+'   aLineas - ARRAY DE LÍNEAS DEL DOCUMENTO
+'   iLineaInicio - LÍNEA DONDE COMIENZA EL PÁRRAFO
+'   iPosicion - POSICIÓN DEL CARÁCTER EN EL PÁRRAFO
+' RETORNA: INTEGER - NÚMERO DE LÍNEA (BASE 0)
+
+Private Function CalcularLineaDePosicion(aLineas As String[], iLineaInicio As Integer, iPosicion As Integer) As Integer
+
+  Dim iAcumulado As Integer = 0
+  Dim i As Integer
+  Dim sLinea As String
+
+  For i = iLineaInicio To aLineas.Max
+    sLinea = aLineas[i]
+
+    ' SI ES LÍNEA VACÍA, ES FIN DE PÁRRAFO
+    If Trim(sLinea) = "" Then
+      Return iLineaInicio
+    Endif
+
+    iAcumulado += Len(sLinea) + 1 ' +1 POR EL ESPACIO QUE AGREGAMOS AL UNIR
+
+    If iAcumulado >= iPosicion Then
+      Return i
+    Endif
+  Next
+
+  Return iLineaInicio
+
+End
+
+' FUNCIÓN AUXILIAR: ExtraerContexto
+' DESCRIPCIÓN: EXTRAE UN FRAGMENTO DE TEXTO ALREDEDOR DE LAS PALABRAS REPETIDAS
+'              PARA MOSTRAR EL CONTEXTO AL USUARIO.
+' PARÁMETROS:
+'   sTexto - TEXTO COMPLETO DEL PÁRRAFO
+'   iPosInicio - POSICIÓN DE LA PRIMERA OCURRENCIA
+'   iPosFin - POSICIÓN DEL FINAL DE LA SEGUNDA OCURRENCIA
+'   sPalabra - LA PALABRA REPETIDA
+' RETORNA: STRING - FRAGMENTO DE CONTEXTO CON LAS PALABRAS RESALTADAS
+
+Private Function ExtraerContexto(sTexto As String, iPosInicio As Integer, iPosFin As Integer, sPalabra As String) As String
+
+  Dim iMargen As Integer = 15
+  Dim iInicio As Integer
+  Dim iFin As Integer
+  Dim sContexto As String
+
+  ' CALCULAR INICIO Y FIN DEL CONTEXTO
+  iInicio = Max(1, iPosInicio - iMargen)
+  iFin = Min(Len(sTexto), iPosFin + iMargen)
+
+  ' EXTRAER EL CONTEXTO
+  sContexto = Mid(sTexto, iInicio, iFin - iInicio + 1)
+
+  ' AGREGAR ELIPSIS SI CORTAMOS
+  If iInicio > 1 Then sContexto = "..." & sContexto
+  If iFin < Len(sTexto) Then sContexto = sContexto & "..."
+
+  ' ESCAPAR HTML Y RESALTAR LAS PALABRAS REPETIDAS
+  sContexto = Html(sContexto)
+
+  ' RESALTAR LA PALABRA (INSENSIBLE A MAYÚSCULAS)
+  Dim sPalabraHtml As String = "<span style='background-color:#ffcccc;font-weight:bold;'>" & Html(sPalabra) & "</span>"
+  sContexto = Replace(sContexto, Html(sPalabra), sPalabraHtml, gb.IgnoreCase)
+
+  Return sContexto
+
+End
+
+' SUBRUTINA: MostrarControlCercania
+' DESCRIPCIÓN: FUNCIÓN PRINCIPAL QUE SE INVOCA DESDE EL MENÚ.
+'              EJECUTA EL ANÁLISIS Y MUESTRA LOS RESULTADOS EN FEstructuraMD.
+' USO: LLAMAR DESDE menuCercania_Click() EN FMain
+
+Public Sub MostrarControlCercania()
+
+  Dim sResultado As String
+
+  ' EJECUTAR EL ANÁLISIS
+  sResultado = ControlCercaniaTipografica()
+
+  ' MOSTRAR EL FORMULARIO DE RESULTADOS
+  FEstructuraMD.Show()
+
+  ' CARGAR EL HTML EN EL HTMLVIEW
+  FEstructuraMD.HtmlViewEstructuraMD.HTML = sResultado
+
+End
