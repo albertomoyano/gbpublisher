@@ -1606,12 +1606,13 @@ End
 '
 '
 '
+'
 ' ============================================================================
 ' FUNCIÓN: VerificarFootnotes
 ' MÓDULO: m_InicioCierre
 ' DESCRIPCIÓN: ANALIZA ARCHIVOS MARKDOWN PARA VERIFICAR LA INTEGRIDAD DE LAS
 '              NOTAS AL PIE. DETECTA REFERENCIAS HUÉRFANAS, DEFINICIONES SIN
-'              USAR Y MUEVE LAS DEFINICIONES AL FINAL DEL ARCHIVO.
+'              USAR, DUPLICADOS Y MUEVE LAS DEFINICIONES AL FINAL DEL ARCHIVO.
 ' SINTAXIS MARKDOWN FOOTNOTES:
 '   - REFERENCIA: [^identificador]
 '   - DEFINICIÓN: [^identificador]: texto de la nota
@@ -1645,24 +1646,25 @@ Public Sub VerificarFootnotes()
   sInfo &= "body { font-family: monospace; font-size: 16px; padding: 15px; margin: 0; overflow-x: hidden; word-wrap: break-word; }"
   sInfo &= "h3 { color: #333; margin-bottom: 10px; }"
   sInfo &= "table { border-collapse: collapse; width: 100%; }"
-  sInfo &= "th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }"
+  sInfo &= "th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 14px; }"
   sInfo &= "th { background-color: #f0f0f0; font-weight: bold; }"
   sInfo &= ".ok { color: green; }"
   sInfo &= ".error { color: red; }"
   sInfo &= ".reorg { color: blue; }"
+  sInfo &= ".warn { color: orange; }"
   sInfo &= ".seccion { background-color: #e8e8e8; font-weight: bold; }"
   sInfo &= "</style></head><body>"
   sInfo &= "<h3>Verificación de notas al pie (footnotes)</h3>"
 
   ' INICIO DE LA TABLA
   sInfo &= "<table>"
-  sInfo &= "<tr><th>Archivo</th><th>Estado</th><th>Ref sin Def</th><th>Def sin Ref</th></tr>"
+  sInfo &= "<tr><th>Archivo</th><th>Estado</th><th>Ref sin Def</th><th>Def sin Ref</th><th>Ref duplicadas</th><th>Def duplicadas</th></tr>"
 
   ' PROCESAR ARCHIVOS EN LA RAÍZ DEL PROYECTO
   If Exist(rutaProyecto) Then
     archivos = Dir(rutaProyecto, "*.md")
     If archivos.Count > 0 Then
-      sInfo &= "<tr class=\"seccion\"><td colspan=\"4\">Raíz del proyecto</td></tr>"
+      sInfo &= "<tr class=\"seccion\"><td colspan=\"6\">Raíz del proyecto</td></tr>"
       For Each archivo In archivos
         rutaCompleta = rutaProyecto &/ archivo
         infoArchivo = ProcesarArchivoFootnote(rutaCompleta)
@@ -1684,7 +1686,7 @@ Public Sub VerificarFootnotes()
   If Exist(rutaArticulos) Then
     archivos = Dir(rutaArticulos, "*.md")
     If archivos.Count > 0 Then
-      sInfo &= "<tr class=\"seccion\"><td colspan=\"4\">Carpeta /articulos</td></tr>"
+      sInfo &= "<tr class=\"seccion\"><td colspan=\"6\">Carpeta /articulos</td></tr>"
       For Each archivo In archivos
         rutaCompleta = rutaArticulos &/ archivo
         infoArchivo = ProcesarArchivoFootnote(rutaCompleta)
@@ -1726,16 +1728,12 @@ End
 ' ------------------------------------------------------------------------------
 ' FUNCIÓN: PROCESA UN ARCHIVO MARKDOWN INDIVIDUAL
 ' PARÁMETROS: sRutaArchivo - RUTA COMPLETA AL ARCHIVO .MD
-' RETORNA: STRING[] CON 3 ELEMENTOS:
+' RETORNA: STRING[] CON 5 ELEMENTOS:
 '   [0] = ESTADO GENERAL (OK, OK (reorg), ERROR, Error lectura, Error escritura)
-'   [1] = REFERENCIAS SIN DEFINICIÓN (LISTA SEPARADA POR COMAS)
-'   [2] = DEFINICIONES SIN REFERENCIA (LISTA SEPARADA POR COMAS)
-' ACCIONES:
-'   1. EXTRAE TODAS LAS REFERENCIAS [^id]
-'   2. EXTRAE TODAS LAS DEFINICIONES [^id]:
-'   3. MUEVE LAS DEFINICIONES AL FINAL DEL ARCHIVO Y GUARDA
-'   4. SI EL ARCHIVO ESTÁ EN EL EDITOR, LO REFRESCA
-'   5. COMPARA REFERENCIAS VS DEFINICIONES
+'   [1] = REFERENCIAS SIN DEFINICIÓN (ID Y NÚMERO DE LÍNEA)
+'   [2] = DEFINICIONES SIN REFERENCIA (ID Y NÚMERO DE LÍNEA)
+'   [3] = REFERENCIAS DUPLICADAS (ID Y NÚMEROS DE LÍNEA)
+'   [4] = DEFINICIONES DUPLICADAS (ID Y NÚMEROS DE LÍNEA)
 ' ------------------------------------------------------------------------------
 Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
 
@@ -1743,23 +1741,38 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
   Dim lineas As String[]
   Dim linea As String
   Dim i As Integer
-  Dim referencias As New String[]
-  Dim definiciones As New String[]
+  Dim j As Integer
+
+  ' LISTAS DE IDS (PARA PODER ITERAR)
+  Dim refIds As New String[]
+  Dim defIds As New String[]
+
+  ' COLLECTIONS PARA MAPEAR ID -> LÍNEAS
+  Dim refLineas As New Collection    ' ID -> STRING CON LÍNEAS SEPARADAS POR COMA
+  Dim defLineas As New Collection    ' ID -> STRING CON LÍNEAS SEPARADAS POR COMA
+
   Dim definicionesLineas As New String[]
   Dim textoSinDefiniciones As New String[]
-  Dim refSinDef As New String[]
-  Dim defSinRef As New String[]
-  Dim resultado As New String[3]
+  Dim resultado As New String[5]
   Dim id As String
   Dim nuevoContenido As String
   Dim enDefinicionMultilinea As Boolean
   Dim esLineaDefinicion As Boolean
   Dim bHuboCambios As Boolean
+  Dim bHayErrores As Boolean
+  Dim sRefSinDef As String
+  Dim sDefSinRef As String
+  Dim sRefDuplicadas As String
+  Dim sDefDuplicadas As String
+  Dim sLineasTemp As String
+  Dim aLineasTemp As String[]
 
   ' INICIALIZAR RESULTADO
   resultado[0] = "OK"
   resultado[1] = ""
   resultado[2] = ""
+  resultado[3] = ""
+  resultado[4] = ""
 
   ' LEER CONTENIDO DEL ARCHIVO
   Try contenidoOriginal = File.Load(sRutaArchivo)
@@ -1784,16 +1797,22 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
     If id <> "" Then
       ' ES UNA LÍNEA DE DEFINICIÓN
       esLineaDefinicion = True
-      ' AGREGAR A LA LISTA SI NO EXISTE YA
-      If definiciones.Find(id) < 0 Then
-        definiciones.Add(id)
+
+      ' REGISTRAR LA DEFINICIÓN CON SU LÍNEA
+      If defLineas.Exist(id) Then
+        ' YA EXISTE, AGREGAR LÍNEA
+        defLineas[id] = defLineas[id] & "," & CStr(i + 1)
+      Else
+        ' PRIMERA OCURRENCIA
+        defIds.Add(id)
+        defLineas[id] = CStr(i + 1)
       Endif
+
       definicionesLineas.Add(linea)
       enDefinicionMultilinea = True
 
       ' DETECTAR CONTINUACIÓN DE DEFINICIÓN MULTILÍNEA
     Else If enDefinicionMultilinea
-      ' VERIFICAR SI ES CONTINUACIÓN (INDENTADA CON 4 ESPACIOS O TAB)
       If Len(linea) >= 4 And Left$(linea, 4) = "    " Then
         esLineaDefinicion = True
         definicionesLineas.Add(linea)
@@ -1801,7 +1820,6 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
         esLineaDefinicion = True
         definicionesLineas.Add(linea)
       Else If Trim$(linea) = "" Then
-        ' LÍNEA VACÍA PUEDE SER PARTE DE LA DEFINICIÓN O SEPARADOR
         If i < lineas.Max Then
           If Len(lineas[i + 1]) >= 4 And Left$(lineas[i + 1], 4) = "    " Then
             esLineaDefinicion = True
@@ -1813,7 +1831,6 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
           enDefinicionMultilinea = False
         Endif
       Else
-        ' NO ES CONTINUACIÓN, FIN DE LA DEFINICIÓN
         enDefinicionMultilinea = False
       Endif
     Endif
@@ -1822,23 +1839,52 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
     If Not esLineaDefinicion Then
       textoSinDefiniciones.Add(linea)
       ' BUSCAR REFERENCIAS [^id] EN ESTA LÍNEA
-      ExtraerReferenciasDeLinea(linea, referencias)
+      ExtraerReferenciasDeLinea(linea, i + 1, refIds, refLineas)
     Endif
 
   Next
 
-  ' VERIFICAR CORRESPONDENCIA ENTRE REFERENCIAS Y DEFINICIONES
+  ' CONSTRUIR STRINGS DE ERRORES CON NÚMEROS DE LÍNEA
+
   ' REFERENCIAS SIN DEFINICIÓN
-  For Each id In referencias
-    If definiciones.Find(id) < 0 Then
-      refSinDef.Add(id)
+  For Each id In refIds
+    If Not defLineas.Exist(id) Then
+      If sRefSinDef <> "" Then sRefSinDef &= ", "
+      ' OBTENER PRIMERA LÍNEA
+      sLineasTemp = refLineas[id]
+      aLineasTemp = Split(sLineasTemp, ",")
+      sRefSinDef &= id & " (ln " & aLineasTemp[0] & ")"
     Endif
   Next
 
   ' DEFINICIONES SIN REFERENCIA
-  For Each id In definiciones
-    If referencias.Find(id) < 0 Then
-      defSinRef.Add(id)
+  For Each id In defIds
+    If Not refLineas.Exist(id) Then
+      If sDefSinRef <> "" Then sDefSinRef &= ", "
+      ' OBTENER PRIMERA LÍNEA
+      sLineasTemp = defLineas[id]
+      aLineasTemp = Split(sLineasTemp, ",")
+      sDefSinRef &= id & " (ln " & aLineasTemp[0] & ")"
+    Endif
+  Next
+
+  ' REFERENCIAS DUPLICADAS
+  For Each id In refIds
+    sLineasTemp = refLineas[id]
+    aLineasTemp = Split(sLineasTemp, ",")
+    If aLineasTemp.Count > 1 Then
+      If sRefDuplicadas <> "" Then sRefDuplicadas &= ", "
+      sRefDuplicadas &= id & " (ln " & sLineasTemp & ")"
+    Endif
+  Next
+
+  ' DEFINICIONES DUPLICADAS
+  For Each id In defIds
+    sLineasTemp = defLineas[id]
+    aLineasTemp = Split(sLineasTemp, ",")
+    If aLineasTemp.Count > 1 Then
+      If sDefDuplicadas <> "" Then sDefDuplicadas &= ", "
+      sDefDuplicadas &= id & " (ln " & sLineasTemp & ")"
     Endif
   Next
 
@@ -1860,7 +1906,6 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
     nuevoContenido = textoSinDefiniciones.Join("\n")
     nuevoContenido &= "\n\n"
     nuevoContenido &= definicionesLineas.Join("\n")
-    ' ASEGURAR QUE TERMINE CON SALTO DE LÍNEA
     If Right$(nuevoContenido, 1) <> "\n" Then
       nuevoContenido &= "\n"
     Endif
@@ -1868,7 +1913,6 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
     ' COMPARAR SI HUBO CAMBIOS REALES
     If nuevoContenido <> contenidoOriginal Then
       bHuboCambios = True
-      ' GUARDAR ARCHIVO REORGANIZADO (SILENCIOSO)
       Try File.Save(sRutaArchivo, nuevoContenido)
       If Error Then
         resultado[0] = "Error escritura"
@@ -1883,26 +1927,22 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
     Endif
   Endif
 
-  ' PREPARAR RESULTADO DE ERRORES
-  If refSinDef.Count > 0 Then
-    resultado[1] = refSinDef.Join(", ")
+  ' PREPARAR RESULTADO
+  resultado[1] = sRefSinDef
+  resultado[2] = sDefSinRef
+  resultado[3] = sRefDuplicadas
+  resultado[4] = sDefDuplicadas
+
+  ' DETERMINAR SI HAY ERRORES
+  bHayErrores = (sRefSinDef <> "" Or sDefSinRef <> "" Or sDefDuplicadas <> "")
+
+  ' DETERMINAR ESTADO FINAL
+  If bHayErrores Then
     resultado[0] = "ERROR"
-  Endif
-
-  If defSinRef.Count > 0 Then
-    resultado[2] = defSinRef.Join(", ")
-    If resultado[0] <> "ERROR" Then
-      resultado[0] = "ERROR"
-    Endif
-  Endif
-
-  ' SI NO HAY ERRORES, DETERMINAR SI SE REORGANIZÓ
-  If refSinDef.Count = 0 And defSinRef.Count = 0 Then
-    If bHuboCambios Then
-      resultado[0] = "OK (reorg)"
-    Else
-      resultado[0] = "OK"
-    Endif
+  Else If bHuboCambios Then
+    resultado[0] = "OK (reorg)"
+  Else
+    resultado[0] = "OK"
   Endif
 
   Return resultado
@@ -1921,24 +1961,19 @@ Private Function ExtraerDefinicionId(sLinea As String) As String
   Dim id As String
   Dim lineaTrim As String
 
-  ' LA DEFINICIÓN DEBE ESTAR AL INICIO DE LA LÍNEA (O CON ESPACIOS MÍNIMOS)
   lineaTrim = LTrim$(sLinea)
 
-  ' VERIFICAR QUE EMPIECE CON [^
   If Left$(lineaTrim, 2) <> "[^" Then
     Return ""
   Endif
 
-  ' BUSCAR EL CIERRE ]:
   posCierra = InStr(lineaTrim, "]:")
   If posCierra = 0 Then
     Return ""
   Endif
 
-  ' EXTRAER EL ID (ENTRE [^ Y ]:)
   id = Mid$(lineaTrim, 3, posCierra - 3)
 
-  ' VALIDAR QUE EL ID NO ESTÉ VACÍO
   If Len(Trim$(id)) = 0 Then
     Return ""
   Endif
@@ -1951,10 +1986,11 @@ End
 ' SUBRUTINA: EXTRAE REFERENCIAS [^id] DE UNA LÍNEA DE TEXTO
 ' PARÁMETROS:
 '   sLinea - LÍNEA DE TEXTO A ANALIZAR
-'   aReferencias - STRING[] DONDE SE AGREGAN LAS REFERENCIAS ENCONTRADAS
-' NOTA: IGNORA LAS DEFINICIONES [^id]: YA QUE ESTAS SE PROCESAN APARTE
+'   iNumLinea - NÚMERO DE LÍNEA ACTUAL
+'   aRefIds - ARRAY DE IDS DE REFERENCIAS (PARA ITERAR)
+'   colRefLineas - COLLECTION ID -> STRING DE LÍNEAS SEPARADAS POR COMA
 ' ------------------------------------------------------------------------------
-Private Sub ExtraerReferenciasDeLinea(sLinea As String, aReferencias As String[])
+Private Sub ExtraerReferenciasDeLinea(sLinea As String, iNumLinea As Integer, aRefIds As String[], colRefLineas As Collection)
 
   Dim posicion As Integer
   Dim posInicio As Integer
@@ -1964,34 +2000,30 @@ Private Sub ExtraerReferenciasDeLinea(sLinea As String, aReferencias As String[]
 
   posicion = 1
 
-  ' BUSCAR TODAS LAS OCURRENCIAS DE [^ EN LA LÍNEA
   Do
     posInicio = InStr(sLinea, "[^", posicion)
     If posInicio = 0 Then Break
 
-    ' BUSCAR EL CIERRE ]
     posCierre = InStr(sLinea, "]", posInicio + 2)
     If posCierre = 0 Then Break
 
-    ' EXTRAER EL ID
     id = Mid$(sLinea, posInicio + 2, posCierre - posInicio - 2)
-
-    ' VERIFICAR QUE NO SEA UNA DEFINICIÓN
-    ' UNA DEFINICIÓN TIENE ]: MIENTRAS QUE UNA REFERENCIA SOLO TIENE ]
     resto = Mid$(sLinea, posCierre, 2)
 
     If resto <> "]:" Then
-      ' ES UNA REFERENCIA, NO UNA DEFINICIÓN
       id = Trim$(id)
       If Len(id) > 0 Then
-        ' AGREGAR SI NO EXISTE YA EN LA LISTA
-        If aReferencias.Find(id) < 0 Then
-          aReferencias.Add(id)
+        If colRefLineas.Exist(id) Then
+          ' YA EXISTE, AGREGAR LÍNEA
+          colRefLineas[id] = colRefLineas[id] & "," & CStr(iNumLinea)
+        Else
+          ' PRIMERA OCURRENCIA
+          aRefIds.Add(id)
+          colRefLineas[id] = CStr(iNumLinea)
         Endif
       Endif
     Endif
 
-    ' CONTINUAR BUSCANDO DESPUÉS DE ESTA OCURRENCIA
     posicion = posCierre + 1
 
   Loop
@@ -2002,20 +2034,24 @@ End
 ' FUNCIÓN: FORMATEA UNA FILA DE LA TABLA HTML
 ' PARÁMETROS:
 '   sArchivo - NOMBRE DEL ARCHIVO
-'   aInfo - ARRAY CON [ESTADO, REF_SIN_DEF, DEF_SIN_REF]
+'   aInfo - ARRAY CON [ESTADO, REF_SIN_DEF, DEF_SIN_REF, REF_DUP, DEF_DUP]
 ' RETORNA: FILA HTML FORMATEADA
 ' ------------------------------------------------------------------------------
 Private Function FormatearFilaTabla(sArchivo As String, aInfo As String[]) As String
 
   Dim resultado As String
   Dim estado As String
+  Dim claseEstado As String
   Dim refSinDef As String
   Dim defSinRef As String
-  Dim claseEstado As String
+  Dim refDup As String
+  Dim defDup As String
 
   estado = aInfo[0]
   refSinDef = aInfo[1]
   defSinRef = aInfo[2]
+  refDup = aInfo[3]
+  defDup = aInfo[4]
 
   ' DETERMINAR CLASE CSS PARA EL ESTADO
   If estado = "OK" Then
@@ -2029,12 +2065,16 @@ Private Function FormatearFilaTabla(sArchivo As String, aInfo As String[]) As St
   ' SI NO HAY ERRORES, MOSTRAR GUIÓN
   If refSinDef = "" Then refSinDef = "-"
   If defSinRef = "" Then defSinRef = "-"
+  If refDup = "" Then refDup = "-"
+  If defDup = "" Then defDup = "-"
 
   resultado = "<tr>"
   resultado &= "<td>" & Html$(sArchivo) & "</td>"
   resultado &= "<td class=\"" & claseEstado & "\">" & Html$(estado) & "</td>"
   resultado &= "<td>" & Html$(refSinDef) & "</td>"
   resultado &= "<td>" & Html$(defSinRef) & "</td>"
+  resultado &= "<td>" & Html$(refDup) & "</td>"
+  resultado &= "<td>" & Html$(defDup) & "</td>"
   resultado &= "</tr>"
 
   Return resultado

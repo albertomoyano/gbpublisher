@@ -178,8 +178,9 @@ Public Sub Form_Open()
     txtEditorProyecto.Refresh()
   End If
 
-  ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO
+  ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO Y BUSCAR LINEA
   TabPanelIzquierdaInferior.Visible = False
+  hbGoTo.Visible = False
 
   ' CONFIGURAR EL GRID DE COMENTARIOS
   m_GestorComentarios.ConfigurarGridComentarios(gvComentarios)
@@ -1131,6 +1132,9 @@ Public Sub btnGuardarCambiosEditor_Click()
   m_Sonido.sonar("Info")
   Message.Info("Archivo guardado correctamente.")
 
+  ' ACTUALIZAMOS EL CONTEO DE LINEAS
+  ActualizarContadorLineas()
+
 End
 
 Public Sub menuSalir_Click()
@@ -1523,15 +1527,15 @@ Public Sub AbrirRevistaMD()
   sContenidoOriginal = txtEditorProyecto.Text
   vbPanelIzquierdo.Visible = True
 
-  ' ' CONFIGURAR EL GRID DE COMENTARIOS
-  ' m_GestorComentarios.ConfigurarGridComentarios(gvComentarios)
-
   ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
 
   ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO
   TabPanelIzquierdaInferior.Visible = False
   HBoxBuscar.Visible = False
+
+  ' ACTUALIZAMOS EL CONTEO DE LINEAS
+  ActualizarContadorLineas()
 
 End
 
@@ -1635,6 +1639,9 @@ Public Sub cmbArticulosRevista_Click()
 
   ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
+
+  ' ACTUALIZAMOS EL CONTEO DE LINEAS
+  ActualizarContadorLineas()
 
 End
 
@@ -4041,12 +4048,6 @@ Public Sub exportarCSLJSON_Click()
 
 End
 
-Public Sub btnOcultarBuscar_Click()
-
-  HBoxBuscar.Visible = False
-
-End
-
 Public Sub btnFontSelector_Click()
 
   ' CONFIGURAR LA FUENTE ACTUAL
@@ -4169,36 +4170,6 @@ Public Sub btnItalic_Click()
 
 End
 
-Public Sub btnAgregarImagen_Click()
-
-  Dim iLineaActual As Integer
-  Dim sLineaActual As String
-  Dim sSintaxisImagen As String
-
-  sSintaxisImagen = "![descripción de la imagen](./media/imagen.png)"
-
-  ' LÍNEA Y COLUMNA ACTUAL
-  iLineaActual = txtEditorProyecto.Line
-  sLineaActual = txtEditorProyecto[iLineaActual].Text
-
-  ' CASO 1: LÍNEA VACÍA
-  If Trim(sLineaActual) = "" Then
-
-    ' VERIFICAR QUE EL CURSOR ESTÁ AL INICIO DE LA LÍNEA
-    If txtEditorProyecto.Column <> 0 Then
-      Message.Info("Para insertar una imagen, el cursor debe estar al inicio de una línea vacía.")
-      Return
-    End If
-    ' INSERTAR CORRECTAMENTE
-    txtEditorProyecto.Insert("\n" & sSintaxisImagen & "\n")
-    Return
-  End If
-
-  ' CASO 2: LÍNEA NO VACÍA → ERROR DEL USUARIO
-  Message.Info("No se puede insertar una imagen dentro de una línea o párrafo.")
-
-End
-
 Public Sub btnFootnote_Click()
 
   Dim iNumeroFootnote As Integer
@@ -4304,7 +4275,11 @@ End
 
 Public Sub btnMostrarBuscar_Click()
 
-  HBoxBuscar.Visible = True
+  If btnMostrarBuscar.Value Then
+    HBoxBuscar.Visible = True
+  Else
+    HBoxBuscar.Visible = False
+  Endif
 
 End
 
@@ -4464,5 +4439,243 @@ Public Sub menuCercania_Click()
 
   ' LLAMAR A LA FUNCIÓN DEL MÓDULO m_EscanerTipografico
   m_EscanerTipografico.MostrarControlCercania()
+
+End
+
+' ============================================================================
+' EVENTO CLICK DEL BOTÓN AGREGAR IMAGEN
+' ============================================================================
+' INSERTA CÓDIGO MARKDOWN PARA UNA IMAGEN EN EL EDITOR DE TEXTO.
+' LA IMAGEN SE SELECCIONA MEDIANTE UN DIÁLOGO Y SE COPIA A LA CARPETA
+' /MEDIA DEL PROYECTO SI NO ESTÁ UBICADA AHÍ.
+' EL CÓDIGO SE INSERTA ASEGURANDO QUE QUEDE EN UNA LÍNEA NUEVA Y VACÍA,
+' CON UNA LÍNEA VACÍA ANTES Y DESPUÉS.
+' ============================================================================
+
+Public Sub btnAgregarImagen_Click()
+
+  Dim sRutaImagen As String
+  Dim sNombreArchivo As String
+  Dim sRutaMedia As String
+  Dim sRutaDestino As String
+  Dim sCodigoMarkdown As String
+
+  ' VALIDAR QUE EL CURSOR ESTÉ AL INICIO DE UNA LÍNEA VACÍA
+  If Not ValidarPosicionCursorImagen() Then
+    m_Sonido.sonar("Error")
+    Message.Title = "Error de posición."
+    Message.Error("No se puede insertar una imagen dentro de una línea o párrafo.\nEl cursor debe estar al inicio de una línea vacía.")
+    Return
+  Endif
+
+  ' VERIFICAR QUE HAY UN PROYECTO ABIERTO Y OBTENER RUTA DE MEDIA
+  ' NOTA: AJUSTAR SEGÚN CÓMO SE ALMACENA LA RUTA DEL PROYECTO EN TU APLICACIÓN
+  If Not RutaProyecto Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  sRutaMedia = RutaProyecto &/ "media/"
+
+  ' CREAR CARPETA MEDIA SI NO EXISTE
+  If Not Exist(sRutaMedia) Then
+    Try Mkdir sRutaMedia
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta media: " & Error.Text)
+      Return
+    Endif
+  Endif
+
+  ' CONFIGURAR Y MOSTRAR DIÁLOGO DE SELECCIÓN DE IMAGEN
+  Dialog.Title = "Seleccionar imagen"
+  Dialog.Filter = ["*.png;*.jpg;*.jpeg", "Archivos de imagen (PNG, JPG)", "*", "Todos los archivos"]
+  Dialog.Path = sRutaMedia
+
+  ' SI EL USUARIO CANCELA, SALIR
+  If Dialog.OpenFile() Then Return
+
+  sRutaImagen = Dialog.Path
+  sNombreArchivo = File.Name(sRutaImagen)
+  sRutaDestino = sRutaMedia &/ sNombreArchivo
+
+  ' COPIAR IMAGEN A CARPETA MEDIA SOLO SI FUE SELECCIONADA DESDE OTRA UBICACIÓN
+  ' SI LA IMAGEN YA ESTÁ EN LA CARPETA MEDIA, NO HACER NADA
+  If File.Dir(sRutaImagen) & "/" <> sRutaMedia Then
+    ' LA IMAGEN VIENE DE OTRA UBICACIÓN, VERIFICAR SI YA EXISTE EN MEDIA
+    If Exist(sRutaDestino) Then
+      ' PREGUNTAR SI DESEA SOBRESCRIBIR
+      m_Sonido.sonar("Question")
+      If Message.Question("Ya existe una imagen con el nombre '" & sNombreArchivo & "' en la carpeta media.\n¿Desea sobrescribirla?", "Sí", "No") = 2 Then
+        Return
+      Endif
+    Endif
+
+    ' COPIAR EL ARCHIVO
+    Try Copy sRutaImagen To sRutaDestino
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo copiar la imagen: " & Error.Text)
+      Return
+    Endif
+  Endif
+
+  ' CONSTRUIR EL CÓDIGO MARKDOWN Y SHORTCODE
+  ' RUTA RELATIVA DESDE EL DOCUMENTO: media/nombre_archivo
+  sCodigoMarkdown = "![descripción de la imagen](media/" & sNombreArchivo & ")" & gb.NewLine
+  sCodigoMarkdown &= "[Aquí va el shortcode]"
+
+  ' INSERTAR EL CÓDIGO EN EL EDITOR CON POSICIONAMIENTO CORRECTO
+  InsertarCodigoImagen(sCodigoMarkdown)
+
+  ' DEVOLVER FOCO AL EDITOR
+  txtEditorProyecto.SetFocus
+
+End
+
+' ============================================================================
+' FUNCIÓN AUXILIAR PARA VALIDAR POSICIÓN DEL CURSOR
+' ============================================================================
+' VERIFICA QUE EL CURSOR ESTÉ EN FMAIN.TXTEDITORPROYECTO EN POSICIÓN VÁLIDA
+' RETORNA TRUE SI EL CURSOR ESTÁ AL INICIO DE UNA LÍNEA VACÍA
+' ============================================================================
+
+Private Function ValidarPosicionCursorImagen() As Boolean
+
+  Dim iLinea As Integer
+  Dim iColumna As Integer
+  Dim sLineaActual As String
+  Dim oEditor As TextEditor
+
+  ' OBTENER REFERENCIA AL EDITOR
+  oEditor = FMain.txtEditorProyecto
+
+  ' OBTENER LA POSICIÓN ACTUAL DEL CURSOR
+  iLinea = oEditor.Line
+  iColumna = oEditor.Column
+
+  ' SI EL EDITOR ESTÁ VACÍO, ES VÁLIDO
+  If oEditor.Count = 0 Then Return True
+
+  ' VERIFICAR QUE LA COLUMNA SEA 0 (INICIO DE LÍNEA)
+  If iColumna <> 0 Then Return False
+
+  ' OBTENER EL CONTENIDO DE LA LÍNEA ACTUAL
+  sLineaActual = oEditor[iLinea].Text
+
+  ' VERIFICAR QUE LA LÍNEA ESTÉ VACÍA (SIN CONTENIDO O SOLO ESPACIOS)
+  If Trim(sLineaActual) <> "" Then Return False
+
+  Return True
+
+Catch
+  ' SI HAY ERROR AL ACCEDER AL EDITOR, RETORNAR FALSE
+  m_Sonido.sonar("Error")
+  Message.Error("Error al validar posición del cursor: " & Error.Text)
+  Return False
+
+End
+
+' ============================================================================
+' FUNCIÓN AUXILIAR PARA INSERTAR EL CÓDIGO DE IMAGEN
+' ============================================================================
+' INSERTA EL CÓDIGO MARKDOWN EN LA POSICIÓN ACTUAL DEL CURSOR
+' ASEGURANDO LÍNEAS VACÍAS ANTES Y DESPUÉS SI ES NECESARIO
+' ============================================================================
+
+Private Sub InsertarCodigoImagen(sCodigo As String)
+
+  Dim iLinea As Integer
+  Dim sTextoLineaAnterior As String
+  Dim sTextoLineaSiguiente As String
+  Dim sInsercion As String
+  Dim oEditor As TextEditor
+
+  oEditor = FMain.txtEditorProyecto
+  iLinea = oEditor.Line
+
+  sInsercion = ""
+
+  ' VERIFICAR LÍNEA ANTERIOR (SI EXISTE Y NO ESTÁ VACÍA)
+  If iLinea > 0 Then
+    sTextoLineaAnterior = Trim(oEditor[iLinea - 1].Text)
+    If sTextoLineaAnterior <> "" Then
+      ' AGREGAR LÍNEA VACÍA ANTES
+      sInsercion = gb.NewLine
+    Endif
+  Endif
+
+  ' AGREGAR EL CÓDIGO
+  sInsercion &= sCodigo
+
+  ' VERIFICAR LÍNEA SIGUIENTE (SI EXISTE Y NO ESTÁ VACÍA)
+  If iLinea < oEditor.Count - 1 Then
+    sTextoLineaSiguiente = Trim(oEditor[iLinea + 1].Text)
+    If sTextoLineaSiguiente <> "" Then
+      ' AGREGAR LÍNEA VACÍA DESPUÉS
+      sInsercion &= gb.NewLine & gb.NewLine
+    Else
+      sInsercion &= gb.NewLine
+    Endif
+  Else
+    ' ESTAMOS EN LA ÚLTIMA LÍNEA
+    sInsercion &= gb.NewLine
+  Endif
+
+  oEditor.Insert(sInsercion)
+
+End
+
+' ==============================================================================
+' FUNCIÓN: vLinea_KeyPress
+' DESCRIPCIÓN: POSICIONA EL EDITOR EN LA LÍNEA ESPECIFICADA POR EL USUARIO.
+'              SE EJECUTA AL PRESIONAR ENTER EN EL VALUEBOX.
+'              LA LÍNEA SOLICITADA QUEDA CENTRADA EN EL ÁREA VISIBLE.
+' PARÁMETROS: NINGUNO (USA EL VALOR DE vLinea.Value)
+' NOTAS:
+'   - EL USUARIO INGRESA LÍNEAS EN BASE 1 (NATURAL PARA EDICIÓN)
+'   - INTERNAMENTE TEXTEDITOR USA BASE 0
+'   - GotoCenter(X, Y): PRIMER PARÁMETRO ES COLUMNA, SEGUNDO ES LÍNEA
+' ==============================================================================
+Public Sub vLinea_KeyPress()
+
+  Dim iLinea As Integer
+
+  ' SOLO PROCESAR SI SE PRESIONA ENTER O RETURN
+  If Key.Code <> Key.Enter And Key.Code <> Key.Return Then Return
+
+  ' OBTENER LA LÍNEA SOLICITADA (EL USUARIO INGRESA EN BASE 1)
+  iLinea = CInt(vLinea.Value)
+
+  ' VERIFICAR QUE LA LÍNEA EXISTA EN EL DOCUMENTO
+  If iLinea < 1 Or iLinea > txtEditorProyecto.Count Then
+    Message.Info("Línea no disponible")
+    Return
+  Endif
+
+  ' MOVER EL CURSOR Y CENTRAR LA VISTA EN LA LÍNEA
+  ' GotoCenter(Columna, Línea) - COLUMNA 0, LÍNEA EN BASE 0
+  txtEditorProyecto.GotoCenter(0, iLinea - 1)
+
+End
+
+' ==============================================================================
+' FUNCIÓN: ActualizarContadorLineas
+' DESCRIPCIÓN: MUESTRA EL NÚMERO TOTAL DE LÍNEAS DEL DOCUMENTO EN txtLineas.
+' ==============================================================================
+Public Sub ActualizarContadorLineas()
+
+  txtLineas.Text = txtEditorProyecto.Count & " líneas"
+
+End
+
+Public Sub tbGoTo_Click()
+
+  If tbGoTo.Value Then
+    hbGoTo.Visible = True
+  Else
+    hbGoTo.Visible = False
+  Endif
 
 End
