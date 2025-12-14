@@ -665,27 +665,6 @@ Public Sub GitVersion(raw As String) As String 'Función para chequear si hay ve
 
 End
 
-Public Sub BotonesInicio()
-
-  ' Botonera bibtex
-  FMain.BtnNuevoBib.Visible = True
-  FMain.btnGuardarBib.Visible = False
-  FMain.btnGuardarCambiosBib.Visible = False
-  FMain.BtnEliminarBib.Visible = False
-  FMain.btnGuardarIGUAL.Visible = False
-  FMain.TabPanel5.Index = 0
-
-  ' botonera siglas
-  FMain.btnNuevoGlosario.Visible = True
-  FMain.btnGuardarGlosario.Visible = False
-  FMain.btnGuardarCambiosGlosario.Visible = False
-  FMain.btnBorrarGlosario.Visible = False
-  FMain.tbPanelGlosarios.Index = 0
-
-  ' Botonera Tei
-
-End
-
 Public Sub CargarComboBoxIP(combo As ComboBox)
 
   Dim contenidoArchivo As String
@@ -2078,5 +2057,260 @@ Private Function FormatearFilaTabla(sArchivo As String, aInfo As String[]) As St
   resultado &= "</tr>"
 
   Return resultado
+
+End
+
+' FUNCIÓN PARA REEMPLAZAR MARCADORES \\rdm{contenido} POR –contenido–
+' DONDE – ES EL CARÁCTER ENDASH (U+2013)
+'
+' DESCRIPCIÓN:
+'   BUSCA TODAS LAS OCURRENCIAS DEL PATRÓN \\rdm{...} EN EL TEXTO DEL EDITOR
+'   Y LAS REEMPLAZA POR EL CONTENIDO ENVUELTO EN CARACTERES ENDASH.
+'   EL CONTENIDO PUEDE INCLUIR CARACTERES ESPECIALES Y OTROS MARCADORES
+'   COMO \\enquote{...}
+'
+' USO:
+'   LLAMAR DESDE UN MENÚ: ReemplazarRdm()
+'
+' EJEMPLO:
+'   ENTRADA: "Texto con \\rdm{palabra especial} en medio"
+'   SALIDA:  "Texto con –palabra especial– en medio"
+
+Public Sub ReemplazarRdm()
+
+  Dim sTexto As String
+  Dim sResultado As String
+  Dim iPos As Integer
+  Dim iInicio As Integer
+  Dim iFin As Integer
+  Dim sContenido As String
+  Dim iNivel As Integer
+  Dim i As Integer
+  Dim ENDASH As String = "–"
+
+  ' OBTENGO EL TEXTO COMPLETO DEL EDITOR
+  sTexto = FMain.txtEditorProyecto.Text
+  sResultado = ""
+  iPos = 1
+
+  ' RECORRO EL TEXTO BUSCANDO OCURRENCIAS DE \\rdm{
+  Do While iPos <= Len(sTexto)
+
+    ' BUSCO LA SIGUIENTE OCURRENCIA DE \\rdm{
+    ' SINTAXIS GAMBAS: InStr(String, Substring, Start)
+    iInicio = InStr(sTexto, "\\rdm{", iPos)
+
+    If iInicio = 0 Then
+      ' NO HAY MÁS OCURRENCIAS, AGREGO EL RESTO DEL TEXTO
+      sResultado &= Mid$(sTexto, iPos)
+      Break
+    Endif
+
+    ' AGREGO EL TEXTO ANTERIOR AL MARCADOR
+    sResultado &= Mid$(sTexto, iPos, iInicio - iPos)
+
+    ' BUSCO LA LLAVE DE CIERRE CORRESPONDIENTE
+    ' DEBO CONTAR NIVELES DE LLAVES PARA MANEJAR CONTENIDO ANIDADO
+    iNivel = 0
+    iFin = 0
+
+    For i = iInicio + 5 To Len(sTexto)  ' +5 PARA SALTAR "\\rdm{"
+      If Mid$(sTexto, i, 1) = "{" Then
+        iNivel += 1
+      Else If Mid$(sTexto, i, 1) = "}" Then
+        If iNivel = 0 Then
+          ' ENCONTRÉ LA LLAVE DE CIERRE CORRESPONDIENTE
+          iFin = i
+          Break
+        Else
+          iNivel -= 1
+        Endif
+      Endif
+    Next
+
+    If iFin > 0 Then
+      ' EXTRAIGO EL CONTENIDO ENTRE LAS LLAVES
+      sContenido = Mid$(sTexto, iInicio + 5, iFin - iInicio - 5)
+
+      ' REEMPLAZO POR ENDASH + CONTENIDO + ENDASH
+      sResultado &= ENDASH & sContenido & ENDASH
+
+      ' AVANZO LA POSICIÓN DESPUÉS DE LA LLAVE DE CIERRE
+      iPos = iFin + 1
+    Else
+      ' NO SE ENCONTRÓ LLAVE DE CIERRE, COPIO EL MARCADOR TAL CUAL
+      ' ESTO EVITA PÉRDIDA DE DATOS SI HAY UN ERROR DE SINTAXIS
+      sResultado &= Mid$(sTexto, iInicio, 5)
+      iPos = iInicio + 5
+    Endif
+
+  Loop
+
+  ' ACTUALIZO EL CONTENIDO DEL EDITOR
+  FMain.txtEditorProyecto.Text = sResultado
+
+End
+
+' FUNCIÓN PARA ELIMINAR FOOTNOTE REFERENCE Y SU DEFINITION
+'
+' DESCRIPCIÓN:
+'   ELIMINA UN FOOTNOTE REFERENCE SELECCIONADO (EJ: [^5]) Y SU CORRESPONDIENTE
+'   DEFINITION ([^5]: TEXTO...). VALIDA MÚLTIPLES CASOS:
+'   - FOOTNOTE HUÉRFANO (SIN DEFINITION)
+'   - MÚLTIPLES REFERENCIAS AL MISMO FOOTNOTE
+'   - DEFINITION CON PÁRRAFOS ADICIONALES (SANGRÍA 4 ESPACIOS)
+'
+' USO:
+'   SELECCIONAR EL FOOTNOTE REFERENCE EN EL EDITOR (EJ: [^5])
+'   LLAMAR DESDE MENÚ POPUP: EliminarFootnote()
+'
+' FORMATO ESPERADO:
+'   REFERENCE: [^N] DONDE N ES UN NÚMERO
+'   DEFINITION: [^N]: TEXTO (COMIENZA EN COLUMNA 0)
+'               PUEDE TENER LÍNEAS ADICIONALES CON 4 ESPACIOS DE SANGRÍA
+
+Public Sub EliminarFootnote()
+
+  Dim sSeleccion As String
+  Dim sTexto As String
+  Dim sNumero As String
+  Dim sPatronRef As String
+  Dim sPatronDef As String
+  Dim iContador As Integer
+  Dim iPos As Integer
+  Dim iInicioDef As Integer
+  Dim iFinDef As Integer
+  Dim iRespuesta As Integer
+  Dim sLinea As String
+  Dim aLineas As String[]
+  Dim i As Integer
+  Dim bEnDefinicion As Boolean
+  Dim sResultado As String
+
+  ' OBTENGO LA SELECCIÓN DEL EDITOR
+  sSeleccion = FMain.txtEditorProyecto.SelectedText
+
+  ' VERIFICO QUE LA SELECCIÓN TENGA FORMATO DE FOOTNOTE REFERENCE
+  If Not (Left(sSeleccion, 2) = "[^" And Right(sSeleccion, 1) = "]") Then
+    Message.Error("La selección no es un footnote válido.\nDebe seleccionar un footnote con formato [^N]")
+    Return
+  Endif
+
+  ' EXTRAIGO EL NÚMERO DEL FOOTNOTE
+  sNumero = Mid$(sSeleccion, 3, Len(sSeleccion) - 3)
+
+  ' VERIFICO QUE SEA UN NÚMERO
+  If Not IsNumber(sNumero) Then
+    Message.Error("El footnote no contiene un número válido.")
+    Return
+  Endif
+
+  ' OBTENGO EL TEXTO COMPLETO DEL EDITOR
+  sTexto = FMain.txtEditorProyecto.Text
+
+  ' CUENTO CUÁNTAS VECES APARECE EL FOOTNOTE REFERENCE (SOLO REFERENCIAS, NO DEFINICIONES)
+  sPatronRef = "[^" & sNumero & "]"
+  sPatronDef = "[^" & sNumero & "]:"
+  iContador = 0
+  iPos = 1
+
+  Do
+    iPos = InStr(sTexto, sPatronRef, iPos)
+    If iPos > 0 Then
+      ' Verifico que no sea una definición (que tenga ":" después del "]")
+      If Mid$(sTexto, iPos + Len(sPatronRef), 1) <> ":" Then
+        iContador += 1
+      Endif
+      iPos += 1
+    Endif
+  Loop Until iPos = 0
+
+  ' SI HAY MÁS DE UNA REFERENCIA, AVISAR AL USUARIO
+  If iContador > 1 Then
+    Message.Warning("El footnote " & sPatronRef & " aparece " & iContador & " veces en el documento.\nDebe resolver manualmente las múltiples referencias antes de eliminar.")
+    Return
+  Endif
+
+  ' BUSCO LA DEFINITION DEL FOOTNOTE
+  sPatronDef = "[^" & sNumero & "]:"
+  aLineas = Split(sTexto, "\n")
+  iInicioDef = -1
+  iFinDef = -1
+  bEnDefinicion = False
+
+  For i = 0 To aLineas.Max
+    sLinea = aLineas[i]
+
+    If bEnDefinicion Then
+      ' ESTOY DENTRO DE UNA DEFINITION, VERIFICO SI CONTINÚA
+      If Len(sLinea) = 0 Then
+        ' LÍNEA EN BLANCO, PUEDE SER SEPARADOR DE PÁRRAFOS
+        ' VERIFICO SI LA SIGUIENTE LÍNEA TIENE SANGRÍA
+        If i < aLineas.Max Then
+          If Left(aLineas[i + 1], 4) = "    " Then
+            ' CONTINÚA LA DEFINITION
+            Continue
+          Endif
+        Endif
+        ' FIN DE LA DEFINITION
+        iFinDef = i - 1
+        Break
+      Else If Left(sLinea, 2) = "[^" And InStr(sLinea, "]:") > 0 Then
+        ' OTRA DEFINITION, FIN DE LA ACTUAL
+        iFinDef = i - 1
+        Break
+      Else If Left(sLinea, 4) <> "    " And Len(Trim(sLinea)) > 0 Then
+        ' LÍNEA SIN SANGRÍA Y CON CONTENIDO, FIN DE DEFINITION
+        iFinDef = i - 1
+        Break
+      Endif
+    Else
+      ' BUSCO EL INICIO DE LA DEFINITION
+      If Left(sLinea, Len(sPatronDef)) = sPatronDef Then
+        iInicioDef = i
+        bEnDefinicion = True
+      Endif
+    Endif
+  Next
+
+  ' SI TERMINÉ EL BUCLE DENTRO DE UNA DEFINITION, EL FIN ES LA ÚLTIMA LÍNEA
+  If bEnDefinicion And iFinDef = -1 Then
+    iFinDef = aLineas.Max
+  Endif
+
+  ' VERIFICO SI ENCONTRÉ LA DEFINITION
+  If iInicioDef = -1 Then
+    ' FOOTNOTE HUÉRFANO
+    iRespuesta = Message.Question("El footnote " & sPatronRef & " no tiene definition.\n¿Eliminar la referencia de todas formas?", "Sí", "No")
+    If iRespuesta = 1 Then
+      ' ELIMINO SOLO LA REFERENCIA
+      sTexto = Replace(sTexto, sSeleccion, "")
+      FMain.txtEditorProyecto.Text = sTexto
+    Endif
+    Return
+  Endif
+
+  ' CONFIRMO LA ELIMINACIÓN
+  iRespuesta = Message.Question("¿Eliminar el footnote " & sPatronRef & " y su definition?", "Sí", "No")
+  If iRespuesta <> 1 Then
+    Return
+  Endif
+
+  ' ELIMINO LA DEFINITION (DESDE iInicioDef HASTA iFinDef)
+  sResultado = ""
+  For i = 0 To aLineas.Max
+    If i < iInicioDef Or i > iFinDef Then
+      If Len(sResultado) > 0 Then
+        sResultado &= "\n"
+      Endif
+      sResultado &= aLineas[i]
+    Endif
+  Next
+
+  ' ELIMINO LA REFERENCIA
+  sResultado = Replace(sResultado, sSeleccion, "")
+
+  ' ACTUALIZO EL EDITOR
+  FMain.txtEditorProyecto.Text = sResultado
 
 End
