@@ -1,0 +1,630 @@
+' Gambas module file
+
+' ============================================================================
+' MÓDULO: m_ApiCredenciales
+' DESCRIPCIÓN: GESTIÓN DE CREDENCIALES DE API CON CIFRADO AES-256
+' AUTOR: gbpublisher
+' DEPENDENCIAS: gb.openssl, gb.db
+' ============================================================================
+'
+' ESTE MÓDULO CENTRALIZA TODAS LAS OPERACIONES DE LECTURA, ESCRITURA Y
+' CIFRADO/DESCIFRADO DE API KEYS ALMACENADAS EN LA BASE DE DATOS.
+'
+' LA CLAVE MAESTRA SE OBTIENE DE LA VARIABLE DE ENTORNO GBPUBLISHER_MASTER_KEY
+' SI NO EXISTE, SE USA UNA CLAVE DERIVADA DEL HOSTNAME + SALT FIJO
+' (MENOS SEGURO PERO FUNCIONAL PARA DESARROLLO)
+'
+' CONEXIÓN: EL MÓDULO PUEDE USAR DOS CONEXIONES:
+'   - hConexionAdmin: CONEXIÓN DEL ADMINISTRADOR (f_SysAdmin.hConnServidor)
+'   - m_ConexionBD.mConn: CONEXIÓN DEL USUARIO NORMAL
+'
+' USO TÍPICO DESDE f_SysAdmin:
+'   1. Después de validar admin: m_ApiCredenciales.EstablecerConexion(hConnServidor)
+'   2. Operar normalmente: m_ApiCredenciales.ListarCredenciales()
+'   3. Al cerrar: m_ApiCredenciales.LiberarConexion()
+'
+' USO TÍPICO DESDE USUARIO NORMAL:
+'   - Solo llamar: m_ApiCredenciales.ObtenerApiKey("Azure")
+'   - Usa automáticamente m_ConexionBD.mConn
+' ============================================================================
+
+' CONSTANTES PARA CONFIGURACIÓN DE CIFRADO
+Private Const CIPHER_ALGORITHM As String = "aes-256-cfb"
+Private Const CIPHER_SALT As String = "gbPub!3d"  ' SALT FIJO DE 8 BYTES
+Private Const ENV_VAR_NAME As String = "GBPUBLISHER_MASTER_KEY"
+
+' CONEXIÓN ALTERNATIVA PARA USO DESDE f_SysAdmin
+Private hConexionAdmin As Connection
+
+' ============================================================================
+' PROCEDIMIENTO: EstablecerConexion
+' DESCRIPCIÓN: ESTABLECE LA CONEXIÓN A USAR PARA OPERACIONES DE BD
+'              USAR DESDE f_SysAdmin DESPUÉS DE VALIDAR EL ADMIN
+' PARÁMETROS:
+'   hConn - CONEXIÓN MYSQL ABIERTA
+' ============================================================================
+Public Sub EstablecerConexion(hConn As Connection)
+
+  hConexionAdmin = hConn
+
+End
+
+' ============================================================================
+' PROCEDIMIENTO: LiberarConexion
+' DESCRIPCIÓN: LIBERA LA REFERENCIA A LA CONEXIÓN ADMIN
+'              LLAMAR AL CERRAR f_SysAdmin
+' ============================================================================
+Public Sub LiberarConexion()
+
+  hConexionAdmin = Null
+
+End
+
+' ============================================================================
+' FUNCIÓN: ObtenerConexion
+' DESCRIPCIÓN: OBTIENE LA CONEXIÓN ACTIVA (ADMIN O USUARIO)
+' RETORNA: CONNECTION - LA CONEXIÓN ABIERTA O NULL
+' ============================================================================
+Private Function ObtenerConexion() As Connection
+
+  ' PRIORIDAD 1: CONEXIÓN ADMIN (f_SysAdmin)
+  If hConexionAdmin <> Null Then
+    If hConexionAdmin.Opened Then
+      Return hConexionAdmin
+    Endif
+  Endif
+
+  ' PRIORIDAD 2: CONEXIÓN USUARIO NORMAL
+  If m_ConexionBD.mConn <> Null Then
+    If m_ConexionBD.mConn.Opened Then
+      Return m_ConexionBD.mConn
+    Endif
+  Endif
+
+  Return Null
+
+End
+
+' ============================================================================
+' FUNCIÓN: ObtenerClaveMaestra
+' DESCRIPCIÓN: OBTIENE LA CLAVE MAESTRA PARA CIFRADO/DESCIFRADO
+'              PRIORIDAD: 1) VARIABLE DE ENTORNO, 2) DERIVADA DEL SERVIDOR MYSQL
+' RETORNA: STRING CON LA CLAVE MAESTRA
+' ============================================================================
+Private Function ObtenerClaveMaestra() As String
+
+  Dim sClave As String
+  Dim hConn As Connection
+
+  ' INTENTAR OBTENER DE VARIABLE DE ENTORNO (MÉTODO PREFERIDO)
+  sClave = Env[ENV_VAR_NAME]
+
+  If sClave Then
+    Return sClave
+  Endif
+
+  ' FALLBACK: DERIVAR DE LOS DATOS DEL SERVIDOR MYSQL
+  ' ESTO GARANTIZA QUE TODOS LOS CLIENTES QUE SE CONECTEN AL MISMO
+  ' SERVIDOR GENEREN LA MISMA CLAVE MAESTRA
+  hConn = ObtenerConexion()
+
+  If hConn <> Null And hConn.Opened Then
+    sClave = hConn.Host & "-" & hConn.Name & "-gbpublisher-key"
+  Else
+    ' ÚLTIMO RECURSO SI NO HAY CONEXIÓN (NO DEBERÍA PASAR)
+    sClave = "gbpublisher-emergency-fallback-key"
+  Endif
+
+  Return sClave
+
+End
+
+' ============================================================================
+' FUNCIÓN: CifrarApiKey
+' DESCRIPCIÓN: CIFRA UNA API KEY USANDO AES-256-CFB CON SALT
+' PARÁMETROS:
+'   sApiKey - LA API KEY EN TEXTO PLANO
+' RETORNA: STRING CON LA API KEY CIFRADA EN BASE64
+' ============================================================================
+Public Function CifrarApiKey(sApiKey As String) As String
+
+  Dim sCifrado As String
+  Dim sClave As String
+
+  If Not sApiKey Then
+    Return ""
+  Endif
+
+  sClave = ObtenerClaveMaestra()
+
+  Try sCifrado = Cipher[CIPHER_ALGORITHM].EncryptSalted(sApiKey, sClave, CIPHER_SALT)
+  If Error Then
+    Debug "Error al cifrar API key: " & Error.Text
+    Error.Clear()
+    Return ""
+  Endif
+
+  ' RETORNAR EN BASE64 PARA ALMACENAMIENTO SEGURO EN BD
+  Return Base64$(sCifrado)
+
+End
+
+' ============================================================================
+' FUNCIÓN: DescifrarApiKey
+' DESCRIPCIÓN: DESCIFRA UNA API KEY ALMACENADA EN LA BASE DE DATOS
+' PARÁMETROS:
+'   sApiKeyCifrada - LA API KEY CIFRADA EN BASE64
+' RETORNA: STRING CON LA API KEY EN TEXTO PLANO
+' ============================================================================
+Public Function DescifrarApiKey(sApiKeyCifrada As String) As String
+
+  Dim sDescifrado As String
+  Dim sClave As String
+  Dim sDatosBinarios As String
+
+  If Not sApiKeyCifrada Then
+    Return ""
+  Endif
+
+  sClave = ObtenerClaveMaestra()
+
+  ' DECODIFICAR DE BASE64 A BINARIO
+  Try sDatosBinarios = UnBase64$(sApiKeyCifrada)
+  If Error Then
+    Debug "Error al decodificar Base64: " & Error.Text
+    Error.Clear()
+    Return ""
+  Endif
+
+  ' DESCIFRAR
+  Try sDescifrado = Cipher[CIPHER_ALGORITHM].DecryptSalted(sDatosBinarios, sClave)
+  If Error Then
+    Debug "Error al descifrar API key: " & Error.Text
+    Error.Clear()
+    Return ""
+  Endif
+
+  Return sDescifrado
+
+End
+
+' ============================================================================
+' FUNCIÓN: GuardarNuevaAPI
+' DESCRIPCIÓN: INSERTA UNA NUEVA CREDENCIAL DE API EN LA BASE DE DATOS
+' PARÁMETROS:
+'   sProveedor - NOMBRE DEL PROVEEDOR (AZURE, DEEPL, OPENAI, ETC.)
+'   sApiKey - LA API KEY EN TEXTO PLANO (SE CIFRARÁ ANTES DE GUARDAR)
+'   sIdentificador - DATO ADICIONAL OPCIONAL (SUBSCRIPTION KEY, ENDPOINT, ETC.)
+'   sRegion - REGIÓN DEL SERVICIO (OPCIONAL)
+'   sComentarios - NOTAS ADICIONALES (OPCIONAL)
+' RETORNA: INTEGER CON EL ID DEL REGISTRO INSERTADO, 0 SI HAY ERROR
+' ============================================================================
+Public Function GuardarNuevaAPI(sProveedor As String, sApiKey As String, Optional sIdentificador As String, Optional sRegion As String, Optional sComentarios As String) As Integer
+
+  Dim sApiKeyCifrada As String
+  Dim hResult As Result
+  Dim iId As Integer
+  Dim hConn As Connection
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Debug "GuardarNuevaAPI: No hay conexión disponible"
+    Return 0
+  Endif
+
+  ' VALIDACIONES BÁSICAS
+  If Not sProveedor Then
+    Debug "GuardarNuevaAPI: El proveedor es obligatorio"
+    Return 0
+  Endif
+
+  If Not sApiKey Then
+    Debug "GuardarNuevaAPI: La API key es obligatoria"
+    Return 0
+  Endif
+
+  ' CIFRAR LA API KEY
+  sApiKeyCifrada = CifrarApiKey(sApiKey)
+  If Not sApiKeyCifrada Then
+    Return 0
+  Endif
+
+  ' VERIFICAR QUE NO EXISTA YA UN PROVEEDOR CON ESE NOMBRE
+  Try hResult = hConn.Exec("SELECT id FROM api_credenciales WHERE proveedor = &1", sProveedor)
+  If Error Then
+    Debug "Error al verificar proveedor existente: " & Error.Text
+    Error.Clear()
+    Return 0
+  Endif
+
+  If hResult.Available Then
+    Debug "Ya existe una credencial para el proveedor: " & sProveedor
+    Return 0
+  Endif
+
+  ' INSERTAR EN LA BASE DE DATOS
+  Try hConn.Exec("INSERT INTO api_credenciales (proveedor, api_key_enc, identificador, region, comentarios, date_create, date_modif, activo) VALUES (&1, &2, &3, &4, &5, NOW(), NOW(), 1)", sProveedor, sApiKeyCifrada, sIdentificador, sRegion, sComentarios)
+  If Error Then
+    Debug "Error al insertar credencial: " & Error.Text
+    Error.Clear()
+    Return 0
+  Endif
+
+  ' OBTENER EL ID INSERTADO
+  Try hResult = hConn.Exec("SELECT LAST_INSERT_ID() AS id")
+  If Error Then
+    Debug "Error al obtener ID insertado: " & Error.Text
+    Error.Clear()
+    Return 0
+  Endif
+
+  If hResult.Available Then
+    iId = hResult!id
+  Endif
+
+  Return iId
+
+End
+
+' ============================================================================
+' FUNCIÓN: ActualizarAPI
+' DESCRIPCIÓN: ACTUALIZA UNA CREDENCIAL DE API EXISTENTE
+' PARÁMETROS:
+'   iId - ID DEL REGISTRO A ACTUALIZAR
+'   sProveedor - NOMBRE DEL PROVEEDOR
+'   sApiKey - LA API KEY EN TEXTO PLANO (SI ESTÁ VACÍA, NO SE MODIFICA)
+'   sIdentificador - DATO ADICIONAL OPCIONAL
+'   sRegion - REGIÓN DEL SERVICIO
+'   sComentarios - NOTAS ADICIONALES
+'   bActivo - ESTADO ACTIVO/INACTIVO
+' RETORNA: BOOLEAN - TRUE SI SE ACTUALIZÓ CORRECTAMENTE
+' ============================================================================
+Public Function ActualizarAPI(iId As Integer, sProveedor As String, sApiKey As String, sIdentificador As String, sRegion As String, sComentarios As String, bActivo As Boolean) As Boolean
+
+  Dim sApiKeyCifrada As String
+  Dim hConn As Connection
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Debug "ActualizarAPI: No hay conexión disponible"
+    Return False
+  Endif
+
+  ' VALIDACIONES BÁSICAS
+  If iId <= 0 Then
+    Debug "ActualizarAPI: ID inválido"
+    Return False
+  Endif
+
+  If Not sProveedor Then
+    Debug "ActualizarAPI: El proveedor es obligatorio"
+    Return False
+  Endif
+
+  ' CONSTRUIR LA CONSULTA SEGÚN SI SE ACTUALIZA O NO LA API KEY
+  If sApiKey Then
+    ' SE PROPORCIONÓ NUEVA API KEY, CIFRARLA
+    sApiKeyCifrada = CifrarApiKey(sApiKey)
+    If Not sApiKeyCifrada Then
+      Return False
+    Endif
+
+    Try hConn.Exec("UPDATE api_credenciales SET proveedor = &1, api_key_enc = &2, identificador = &3, region = &4, comentarios = &5, activo = &6, date_modif = NOW() WHERE id = &7", sProveedor, sApiKeyCifrada, sIdentificador, sRegion, sComentarios, If(bActivo, 1, 0), iId)
+  Else
+    ' NO SE MODIFICA LA API KEY
+    Try hConn.Exec("UPDATE api_credenciales SET proveedor = &1, identificador = &2, region = &3, comentarios = &4, activo = &5, date_modif = NOW() WHERE id = &6", sProveedor, sIdentificador, sRegion, sComentarios, If(bActivo, 1, 0), iId)
+  Endif
+
+  If Error Then
+    Debug "Error al actualizar credencial: " & Error.Text
+    Error.Clear()
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================================================
+' FUNCIÓN: ObtenerApiKey
+' DESCRIPCIÓN: OBTIENE LA API KEY DESCIFRADA DE UN PROVEEDOR ESPECÍFICO
+' PARÁMETROS:
+'   sProveedor - NOMBRE DEL PROVEEDOR (AZURE, DEEPL, OPENAI, ETC.)
+' RETORNA: STRING CON LA API KEY EN TEXTO PLANO, VACÍO SI NO EXISTE O ERROR
+' ============================================================================
+Public Function ObtenerApiKey(sProveedor As String) As String
+
+  Dim hResult As Result
+  Dim sApiKeyCifrada As String
+  Dim hConn As Connection
+
+  If Not sProveedor Then
+    Return ""
+  Endif
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Debug "ObtenerApiKey: No hay conexión disponible"
+    Return ""
+  Endif
+
+  ' BUSCAR LA CREDENCIAL ACTIVA DEL PROVEEDOR
+  Try hResult = hConn.Exec("SELECT api_key_enc FROM api_credenciales WHERE proveedor = &1 AND activo = 1", sProveedor)
+  If Error Then
+    Debug "Error al buscar credencial: " & Error.Text
+    Error.Clear()
+    Return ""
+  Endif
+
+  If Not hResult.Available Then
+    Return ""
+  Endif
+
+  sApiKeyCifrada = hResult!api_key_enc
+
+  Return DescifrarApiKey(sApiKeyCifrada)
+
+End
+
+' ============================================================================
+' FUNCIÓN: ObtenerIdentificador
+' DESCRIPCIÓN: OBTIENE EL IDENTIFICADOR ADICIONAL DE UN PROVEEDOR
+' PARÁMETROS:
+'   sProveedor - NOMBRE DEL PROVEEDOR
+' RETORNA: STRING CON EL IDENTIFICADOR, VACÍO SI NO EXISTE
+' ============================================================================
+Public Function ObtenerIdentificador(sProveedor As String) As String
+
+  Dim hResult As Result
+  Dim hConn As Connection
+
+  If Not sProveedor Then
+    Return ""
+  Endif
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Return ""
+  Endif
+
+  Try hResult = hConn.Exec("SELECT identificador FROM api_credenciales WHERE proveedor = &1 AND activo = 1", sProveedor)
+  If Error Then
+    Error.Clear()
+    Return ""
+  Endif
+
+  If Not hResult.Available Then
+    Return ""
+  Endif
+
+  Return If(hResult!identificador, hResult!identificador, "")
+
+End
+
+' ============================================================================
+' FUNCIÓN: ObtenerRegion
+' DESCRIPCIÓN: OBTIENE LA REGIÓN DE UN PROVEEDOR
+' PARÁMETROS:
+'   sProveedor - NOMBRE DEL PROVEEDOR
+' RETORNA: STRING CON LA REGIÓN, VACÍO SI NO EXISTE
+' ============================================================================
+Public Function ObtenerRegion(sProveedor As String) As String
+
+  Dim hResult As Result
+  Dim hConn As Connection
+
+  If Not sProveedor Then
+    Return ""
+  Endif
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Return ""
+  Endif
+
+  Try hResult = hConn.Exec("SELECT region FROM api_credenciales WHERE proveedor = &1 AND activo = 1", sProveedor)
+  If Error Then
+    Error.Clear()
+    Return ""
+  Endif
+
+  If Not hResult.Available Then
+    Return ""
+  Endif
+
+  Return If(hResult!region, hResult!region, "")
+
+End
+
+' ============================================================================
+' FUNCIÓN: ObtenerCredencialCompleta
+' DESCRIPCIÓN: OBTIENE TODOS LOS DATOS DE UNA CREDENCIAL (API KEY DESCIFRADA)
+' PARÁMETROS:
+'   sProveedor - NOMBRE DEL PROVEEDOR
+' RETORNA: COLLECTION CON TODOS LOS CAMPOS, NULL SI NO EXISTE
+' ============================================================================
+Public Function ObtenerCredencialCompleta(sProveedor As String) As Collection
+
+  Dim hResult As Result
+  Dim colDatos As New Collection
+  Dim hConn As Connection
+
+  If Not sProveedor Then
+    Return Null
+  Endif
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Return Null
+  Endif
+
+  Try hResult = hConn.Exec("SELECT * FROM api_credenciales WHERE proveedor = &1 AND activo = 1", sProveedor)
+  If Error Then
+    Error.Clear()
+    Return Null
+  Endif
+
+  If Not hResult.Available Then
+    Return Null
+  Endif
+
+  colDatos["id"] = hResult!id
+  colDatos["proveedor"] = hResult!proveedor
+  colDatos["api_key"] = DescifrarApiKey(hResult!api_key_enc)
+  colDatos["identificador"] = If(hResult!identificador, hResult!identificador, "")
+  colDatos["region"] = If(hResult!region, hResult!region, "")
+  colDatos["comentarios"] = If(hResult!comentarios, hResult!comentarios, "")
+  colDatos["activo"] = hResult!activo
+
+  Return colDatos
+
+End
+
+' ============================================================================
+' FUNCIÓN: ListarCredenciales
+' DESCRIPCIÓN: OBTIENE LISTADO DE TODAS LAS CREDENCIALES (SIN DESCIFRAR KEYS)
+' PARÁMETROS:
+'   bSoloActivas - SI ES TRUE, SOLO RETORNA LAS ACTIVAS
+' RETORNA: RESULT CON TODAS LAS CREDENCIALES (PUEDE ESTAR VACÍO)
+' ============================================================================
+Public Function ListarCredenciales(Optional bSoloActivas As Boolean = False) As Result
+
+  Dim hResult As Result
+  Dim sSql As String
+  Dim hConn As Connection
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Debug "ListarCredenciales: No hay conexión disponible"
+    Return Null
+  Endif
+
+  sSql = "SELECT id, proveedor, identificador, region, comentarios, date_create, date_modif, activo FROM api_credenciales"
+
+  If bSoloActivas Then
+    sSql &= " WHERE activo = 1"
+  Endif
+
+  sSql &= " ORDER BY proveedor"
+
+  Try hResult = hConn.Exec(sSql)
+  If Error Then
+    Debug "Error al listar credenciales: " & Error.Text
+    Error.Clear()
+    Return Null
+  Endif
+
+  ' SI NO HAY ERROR, RETORNAR EL RESULTADO (PUEDE TENER 0 FILAS)
+  Return hResult
+
+End
+
+' ============================================================================
+' FUNCIÓN: ObtenerCredencialPorId
+' DESCRIPCIÓN: OBTIENE UNA CREDENCIAL POR SU ID (SIN DESCIFRAR API KEY)
+' PARÁMETROS:
+'   iId - ID DEL REGISTRO
+' RETORNA: RESULT CON LA CREDENCIAL
+' ============================================================================
+Public Function ObtenerCredencialPorId(iId As Integer) As Result
+
+  Dim hResult As Result
+  Dim hConn As Connection
+
+  If iId <= 0 Then
+    Return Null
+  Endif
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Return Null
+  Endif
+
+  Try hResult = hConn.Exec("SELECT * FROM api_credenciales WHERE id = &1", iId)
+  If Error Then
+    Error.Clear()
+    Return Null
+  Endif
+
+  Return hResult
+
+End
+
+' ============================================================================
+' FUNCIÓN: ExisteProveedor
+' DESCRIPCIÓN: VERIFICA SI YA EXISTE UNA CREDENCIAL PARA UN PROVEEDOR
+' PARÁMETROS:
+'   sProveedor - NOMBRE DEL PROVEEDOR
+'   iExcluirId - ID A EXCLUIR DE LA BÚSQUEDA (PARA EDICIONES)
+' RETORNA: BOOLEAN - TRUE SI EXISTE
+' ============================================================================
+Public Function ExisteProveedor(sProveedor As String, Optional iExcluirId As Integer = 0) As Boolean
+
+  Dim hResult As Result
+  Dim sSql As String
+  Dim hConn As Connection
+
+  If Not sProveedor Then
+    Return False
+  Endif
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Return False
+  Endif
+
+  sSql = "SELECT id FROM api_credenciales WHERE proveedor = &1"
+  If iExcluirId > 0 Then
+    sSql &= " AND id <> " & Str$(iExcluirId)
+  Endif
+
+  Try hResult = hConn.Exec(sSql, sProveedor)
+  If Error Then
+    Error.Clear()
+    Return False
+  Endif
+
+  Return hResult.Available
+
+End
+
+' ============================================================================
+' FUNCIÓN: DesactivarCredencial
+' DESCRIPCIÓN: DESACTIVA UNA CREDENCIAL (SOFT DELETE)
+' PARÁMETROS:
+'   iId - ID DEL REGISTRO A DESACTIVAR
+' RETORNA: BOOLEAN - TRUE SI SE DESACTIVÓ CORRECTAMENTE
+' ============================================================================
+Public Function DesactivarCredencial(iId As Integer) As Boolean
+
+  Dim hConn As Connection
+
+  If iId <= 0 Then
+    Return False
+  Endif
+
+  ' OBTENER CONEXIÓN ACTIVA
+  hConn = ObtenerConexion()
+  If hConn = Null Then
+    Return False
+  Endif
+
+  Try hConn.Exec("UPDATE api_credenciales SET activo = 0, date_modif = NOW() WHERE id = &1", iId)
+  If Error Then
+    Debug "Error al desactivar credencial: " & Error.Text
+    Error.Clear()
+    Return False
+  Endif
+
+  Return True
+
+End

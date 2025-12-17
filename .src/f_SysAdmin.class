@@ -9,6 +9,8 @@ Public sRolActual As String
 Public sServidorActual As String
 Private $aColumnas As String[]
 Private $aRegistros As String[][]
+' VARIABLE PARA CONTROLAR SI ESTAMOS EN MODO EDICIÓN O NUEVO
+Private $bModoEdicion As Boolean
 
 ' INICIALIZACIÓN DEL FORMULARIO
 Public Sub Form_Open()
@@ -52,6 +54,31 @@ Public Sub Form_Open()
 
   ' CARGAR LISTA DE RESPALDOS
   CargarListaRespaldos()
+
+  ' ' VERIFICAR QUE LA CLAVE MAESTRA ESTÉ CONFIGURADA
+  ' If Not m_ApiCredenciales.ValidarClaveMaestra() Then
+  '   Message.Warning("ADVERTENCIA: La variable de entorno " & m_ApiCredenciales.ObtenerNombreVariableEntorno() & " no está definida.\n\nSe usará una clave derivada del sistema (menos seguro).\n\nPara producción, defina la variable con:\nexport " & m_ApiCredenciales.ObtenerNombreVariableEntorno() & "='su_clave_secreta_aquí'")
+  ' Endif
+  '
+  ' ' CONFIGURAR EL GRIDVIEW
+  ' ConfigurarGridView()
+  '
+  ' ' CONFIGURAR EL TEXTBOX DE API KEY EN MODO PASSWORD
+  ' txtApiKey.Password = True
+  '
+  ' ' CARGAR DATOS EN EL GRIDVIEW
+  ' CargarCredenciales()
+  '
+  ' ' PREPARAR FORMULARIO PARA NUEVA ENTRADA
+  ' LimpiarFormulario()
+
+  ' QUITAR ESTO DEL Form_Open:
+  ' VERIFICAR QUE LA CLAVE MAESTRA ESTÉ CONFIGURADA
+  ' If Not m_ApiCredenciales.ValidarClaveMaestra() Then ...
+  ' ConfigurarGridView()
+  ' txtApiKey.Password = True
+  ' CargarCredenciales()
+  ' LimpiarFormulario()
 
 End
 
@@ -250,6 +277,20 @@ Private Sub HabilitarABMUsuarios()
   CargarUsuariosDelServidor()
   CargarProyectosDelServidor()
   CargarAyudas()
+
+  CargarUsuariosDelServidor()
+  CargarProyectosDelServidor()
+  CargarAyudas()
+
+  ' AGREGAR ESTO AL FINAL:
+  ' ESTABLECER CONEXIÓN PARA EL MÓDULO DE APIS
+  m_ApiCredenciales.EstablecerConexion(hConnServidor)
+
+  ' CONFIGURAR Y CARGAR APIS
+  ConfigurarGridView()
+  txtApiKey.Password = True
+  CargarCredenciales()
+  LimpiarFormulario()
 
 End
 
@@ -640,6 +681,9 @@ End
 
 ' CERRAR FORMULARIO
 Public Sub btnCerrar_Click()
+
+  ' AGREGAR ESTO:
+  m_ApiCredenciales.LiberarConexion()
 
   If hConnServidor And hConnServidor.Opened Then
     hConnServidor.Close()
@@ -1425,5 +1469,337 @@ Public Sub btnEliminarBase_Click()
 
   m_Sonido.sonar("Info")
   Message.Info("Archivo de respaldo eliminado correctamente")
+
+End
+'
+'
+'
+' Gambas class file
+
+' ============================================================================
+' FORMULARIO: FApiCredenciales
+' DESCRIPCIÓN: ABM (ALTA, BAJA LÓGICA, MODIFICACIÓN) DE CREDENCIALES DE API
+' AUTOR: gbpublisher
+' DEPENDENCIAS: m_ApiCredenciales, MConexion
+' ============================================================================
+'
+' COMPONENTES DEL FORMULARIO:
+'   - btnNuevaAPI: BOTÓN PARA LIMPIAR FORMULARIO Y PREPARAR NUEVA ENTRADA
+'   - btnGuardarAPI: BOTÓN PARA GUARDAR NUEVA CREDENCIAL
+'   - btnGuardarCambiosAPI: BOTÓN PARA ACTUALIZAR CREDENCIAL EXISTENTE
+'   - ID_apis: VALUEBOX PARA MOSTRAR ID (SOLO LECTURA)
+'   - txtProveedor: TEXTBOX PARA NOMBRE DEL PROVEEDOR
+'   - ckbActivo: CHECKBOX PARA ESTADO ACTIVO/INACTIVO
+'   - txtIdentificador: TEXTBOX PARA DATO ADICIONAL (SUBSCRIPTION KEY, ETC.)
+'   - txtRegion: TEXTBOX PARA REGIÓN DEL SERVICIO
+'   - txtApiKey: TEXTBOX PARA LA API KEY (PASSWORD MODE)
+'   - txtComentarios: TEXTAREA PARA NOTAS
+'   - gvAPIkeys: GRIDVIEW PARA LISTAR TODAS LAS CREDENCIALES
+' ============================================================================
+
+' ============================================================================
+' PROCEDIMIENTO: ConfigurarGridView
+' DESCRIPCIÓN: ESTABLECE LA ESTRUCTURA DEL GRIDVIEW
+' ============================================================================
+Private Sub ConfigurarGridView()
+
+  With gvAPIkeys
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Mode = Select.Single
+    .Columns.Count = 6
+
+    ' CONFIGURAR COLUMNAS
+    .Columns[0].Title = "ID"
+    .Columns[0].Width = 40
+    .Columns[0].Alignment = Align.Center
+
+    .Columns[1].Title = "Proveedor"
+    .Columns[1].Width = 150
+
+    .Columns[2].Title = "Identificador"
+    .Columns[2].Width = 150
+
+    .Columns[3].Title = "Región"
+    .Columns[3].Width = 150
+
+    .Columns[4].Title = "Activo"
+    .Columns[4].Width = 50
+    .Columns[4].Alignment = Align.Center
+
+    .Columns[5].Title = "Última modificación"
+    .Columns[5].Width = 150
+
+    .Rows.Count = 0
+  End With
+
+End
+
+' ============================================================================
+' PROCEDIMIENTO: CargarCredenciales
+' DESCRIPCIÓN: CARGA TODAS LAS CREDENCIALES EN EL GRIDVIEW
+' ============================================================================
+Private Sub CargarCredenciales()
+
+  Dim hResult As Result
+  Dim iRow As Integer
+
+  ' OBTENER TODAS LAS CREDENCIALES (ACTIVAS E INACTIVAS)
+  hResult = m_ApiCredenciales.ListarCredenciales(False)
+
+  If hResult = Null Then
+    gvAPIkeys.Rows.Count = 0
+    Return
+  Endif
+
+  ' ESTABLECER NÚMERO DE FILAS
+  gvAPIkeys.Rows.Count = hResult.Count
+
+  If hResult.Count = 0 Then
+    Return
+  Endif
+
+  ' LLENAR EL GRIDVIEW
+  iRow = 0
+  For Each hResult
+    gvAPIkeys[iRow, 0].Text = Str$(hResult!id)
+    gvAPIkeys[iRow, 1].Text = hResult!proveedor
+    gvAPIkeys[iRow, 2].Text = If(hResult!identificador, hResult!identificador, "")
+    gvAPIkeys[iRow, 3].Text = If(hResult!region, hResult!region, "")
+    gvAPIkeys[iRow, 4].Text = If(hResult!activo, "Sí", "No")
+    gvAPIkeys[iRow, 5].Text = Format$(hResult!date_modif, "dd/mm/yyyy hh:nn")
+
+    ' COLOREAR FILAS INACTIVAS
+    If Not hResult!activo Then
+      gvAPIkeys[iRow, 0].Background = Color.LightGray
+      gvAPIkeys[iRow, 1].Background = Color.LightGray
+      gvAPIkeys[iRow, 2].Background = Color.LightGray
+      gvAPIkeys[iRow, 3].Background = Color.LightGray
+      gvAPIkeys[iRow, 4].Background = Color.LightGray
+      gvAPIkeys[iRow, 5].Background = Color.LightGray
+    Endif
+
+    Inc iRow
+  Next
+
+End
+
+' ============================================================================
+' PROCEDIMIENTO: LimpiarFormulario
+' DESCRIPCIÓN: LIMPIA TODOS LOS CAMPOS Y PREPARA PARA NUEVA ENTRADA
+' ============================================================================
+Private Sub LimpiarFormulario()
+
+  $bModoEdicion = False
+
+  ID_apis.Value = 0
+  txtProveedor.Text = ""
+  txtApiKey.Text = ""
+  txtIdentificador.Text = ""
+  txtRegion.Text = ""
+  txtComentarios.Text = ""
+  ckbActivo.Value = True
+
+  ' AJUSTAR ESTADO DE BOTONES
+  btnGuardarAPI.Enabled = True
+  btnGuardarCambiosAPI.Enabled = False
+
+  ' ENFOCAR EN PROVEEDOR
+  txtProveedor.SetFocus()
+
+End
+
+' ============================================================================
+' PROCEDIMIENTO: CargarCredencialEnFormulario
+' DESCRIPCIÓN: CARGA LOS DATOS DE UNA CREDENCIAL EN EL FORMULARIO PARA EDICIÓN
+' PARÁMETROS:
+'   iId - ID DE LA CREDENCIAL A CARGAR
+' ============================================================================
+Private Sub CargarCredencialEnFormulario(iId As Integer)
+
+  Dim hResult As Result
+
+  hResult = m_ApiCredenciales.ObtenerCredencialPorId(iId)
+
+  If hResult = Null Or Not hResult.Available Then
+    Message.Error("No se pudo cargar la credencial seleccionada")
+    Return
+  Endif
+
+  $bModoEdicion = True
+
+  ID_apis.Value = hResult!id
+  txtProveedor.Text = hResult!proveedor
+  txtApiKey.Text = ""  ' NO SE MUESTRA LA API KEY POR SEGURIDAD
+  txtIdentificador.Text = If(hResult!identificador, hResult!identificador, "")
+  txtRegion.Text = If(hResult!region, hResult!region, "")
+  txtComentarios.Text = If(hResult!comentarios, hResult!comentarios, "")
+  ckbActivo.Value = hResult!activo
+
+  ' AJUSTAR ESTADO DE BOTONES
+  btnGuardarAPI.Enabled = False
+  btnGuardarCambiosAPI.Enabled = True
+
+End
+
+' ============================================================================
+' FUNCIÓN: ValidarFormulario
+' DESCRIPCIÓN: VALIDA QUE LOS CAMPOS OBLIGATORIOS ESTÉN COMPLETOS
+' RETORNA: BOOLEAN - TRUE SI LA VALIDACIÓN ES CORRECTA
+' ============================================================================
+Private Function ValidarFormulario() As Boolean
+
+  ' VALIDAR PROVEEDOR
+  If Not Trim$(txtProveedor.Text) Then
+    Message.Warning("El nombre del proveedor es obligatorio")
+    txtProveedor.SetFocus()
+    Return False
+  Endif
+
+  ' VALIDAR API KEY (SOLO PARA NUEVAS ENTRADAS)
+  If Not $bModoEdicion And Not Trim$(txtApiKey.Text) Then
+    Message.Warning("La API Key es obligatoria para nuevas credenciales")
+    txtApiKey.SetFocus()
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================================================
+' EVENTO: btnNuevaAPI_Click
+' DESCRIPCIÓN: PREPARA EL FORMULARIO PARA UNA NUEVA CREDENCIAL
+' ============================================================================
+Public Sub btnNuevaAPI_Click()
+
+  LimpiarFormulario()
+
+End
+
+' ============================================================================
+' EVENTO: btnGuardarAPI_Click
+' DESCRIPCIÓN: GUARDA UNA NUEVA CREDENCIAL EN LA BASE DE DATOS
+' ============================================================================
+Public Sub btnGuardarAPI_Click()
+
+  Dim iId As Integer
+
+  ' VALIDAR FORMULARIO
+  If Not ValidarFormulario() Then
+    Return
+  Endif
+
+  ' VERIFICAR QUE NO EXISTA EL PROVEEDOR
+  If m_ApiCredenciales.ExisteProveedor(Trim$(txtProveedor.Text)) Then
+    Message.Warning("Ya existe una credencial para el proveedor: " & txtProveedor.Text)
+    txtProveedor.SetFocus()
+    Return
+  Endif
+
+  ' GUARDAR EN LA BASE DE DATOS
+  iId = m_ApiCredenciales.GuardarNuevaAPI(Trim$(txtProveedor.Text), Trim$(txtApiKey.Text), Trim$(txtIdentificador.Text), Trim$(txtRegion.Text), Trim$(txtComentarios.Text))
+
+  If iId > 0 Then
+    Message.Info("Credencial guardada correctamente con ID: " & Str$(iId))
+    CargarCredenciales()
+    LimpiarFormulario()
+  Else
+    Message.Error("Error al guardar la credencial")
+  Endif
+
+End
+
+' ============================================================================
+' EVENTO: btnGuardarCambiosAPI_Click
+' DESCRIPCIÓN: ACTUALIZA UNA CREDENCIAL EXISTENTE
+' ============================================================================
+Public Sub btnGuardarCambiosAPI_Click()
+
+  Dim iId As Integer
+
+  ' VALIDAR FORMULARIO
+  If Not ValidarFormulario() Then
+    Return
+  Endif
+
+  iId = ID_apis.Value
+
+  If iId <= 0 Then
+    Message.Error("No hay una credencial seleccionada para actualizar")
+    Return
+  Endif
+
+  ' VERIFICAR QUE NO EXISTA OTRO PROVEEDOR CON EL MISMO NOMBRE
+  If m_ApiCredenciales.ExisteProveedor(Trim$(txtProveedor.Text), iId) Then
+    Message.Warning("Ya existe otra credencial con el proveedor: " & txtProveedor.Text)
+    txtProveedor.SetFocus()
+    Return
+  Endif
+
+  ' CONFIRMAR SI SE ESTÁ DESACTIVANDO
+  If Not ckbActivo.Value Then
+    If Message.Question("¿Está seguro de desactivar esta credencial?\n\nLos servicios que la utilicen dejarán de funcionar.", "Sí", "No") = 2 Then
+      Return
+    Endif
+  Endif
+
+  ' ACTUALIZAR EN LA BASE DE DATOS
+  ' NOTA: SI txtApiKey ESTÁ VACÍO, NO SE MODIFICA LA API KEY EXISTENTE
+  If m_ApiCredenciales.ActualizarAPI(iId, Trim$(txtProveedor.Text), Trim$(txtApiKey.Text), Trim$(txtIdentificador.Text), Trim$(txtRegion.Text), Trim$(txtComentarios.Text), ckbActivo.Value) Then
+    Message.Info("Credencial actualizada correctamente")
+    CargarCredenciales()
+    LimpiarFormulario()
+  Else
+    Message.Error("Error al actualizar la credencial")
+  Endif
+
+End
+
+' ============================================================================
+' EVENTO: gvAPIkeys_Click
+' DESCRIPCIÓN: CARGA LA CREDENCIAL SELECCIONADA EN EL FORMULARIO
+' ============================================================================
+Public Sub gvAPIkeys_Click()
+
+  Dim iRow As Integer
+  Dim iId As Integer
+
+  iRow = gvAPIkeys.Row
+
+  If iRow < 0 Or iRow >= gvAPIkeys.Rows.Count Then
+    Return
+  Endif
+
+  ' OBTENER EL ID DE LA FILA SELECCIONADA
+  iId = Val(gvAPIkeys[iRow, 0].Text)
+
+  If iId > 0 Then
+    CargarCredencialEnFormulario(iId)
+  Endif
+
+End
+
+' ============================================================================
+' EVENTO: gvAPIkeys_DblClick
+' DESCRIPCIÓN: DOBLE CLIC CARGA LA CREDENCIAL (MISMO COMPORTAMIENTO QUE CLIC)
+' ============================================================================
+Public Sub gvAPIkeys_DblClick()
+
+  gvAPIkeys_Click()
+
+End
+
+' ============================================================================
+' EVENTO: txtApiKey_Enter
+' DESCRIPCIÓN: MUESTRA TOOLTIP AL ENTRAR EN EL CAMPO DE API KEY
+' ============================================================================
+Public Sub txtApiKey_Enter()
+
+  If $bModoEdicion Then
+    txtApiKey.ToolTip = "Dejar vacío para mantener la API Key actual"
+  Else
+    txtApiKey.ToolTip = "Ingrese la API Key del proveedor"
+  Endif
 
 End
