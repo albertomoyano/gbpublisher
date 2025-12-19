@@ -1,15 +1,388 @@
 ' Gambas class file
 
+' ==============================================================================
+' Formulario: FShortcodes
+' ------------------------------------------------------------------------------
+' Descripción general:
+'   Formulario no modal para selección e inserción de shortcodes en el editor.
+'   Permite seleccionar un perfil de medio (medicina, historia, etc.) y luego
+'   elegir un shortcode específico para aplicarlo al texto seleccionado en
+'   txtEditorProyecto.
+'
+' Componentes:
+'   - ListBoxEstilo: Lista de perfiles disponibles
+'   - ListBoxDefiniciones: Shortcodes del perfil seleccionado
+'   - TextEditorPreview: Muestra descripción del shortcode (solo lectura)
+'   - btnABMshortcodes: Abre formulario de ABM
+'   - btnCerrar: Cierra el formulario
+'
+' Funcionamiento:
+'   1. Al abrir, carga los perfiles en ListBoxEstilo
+'   2. Al seleccionar perfil, carga shortcodes asociados en ListBoxDefiniciones
+'   3. Al seleccionar shortcode, muestra descripción en TextEditorPreview
+'   4. Doble click en shortcode lo aplica al texto seleccionado en el editor
+'   5. Los shortcodes de usuario (es_sistema=0) se muestran con prefijo »»»
+'
+' Notas:
+'   - El usuario debe seleccionar texto antes de aplicar un shortcode
+'   - Los shortcodes de sistema no se pueden editar, solo usar como referencia
+' ==============================================================================
+
+' ------------------------------------------------------------------------------
+' VARIABLES PRIVADAS DEL MÓDULO
+' ------------------------------------------------------------------------------
+Private $aShortcodes As Collection[]    ' COLECCIÓN DE SHORTCODES CARGADOS
+Private $aIdPerfiles As Integer[]       ' ARRAY DE IDS DE PERFILES (PARALELO A LISTBOX)
+Private $iPerfilActual As Integer       ' ID DEL PERFIL SELECCIONADO
+
+' ==============================================================================
+' Evento: Form_Open()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Inicializa el formulario al abrirse. Carga los perfiles disponibles
+'   en ListBoxEstilo y configura TextEditorPreview como solo lectura.
+' ==============================================================================
+
 Public Sub Form_Open()
 
+  ' DISEÑAMOS EL SPLIT
   SplitterSC.Layout = [2, 3]
-  Me.TopOnly = True
+  SplitterSC2.Layout = [6, 3]
 
-End Sub
+  ' LIMPIAR COMPONENTES
+  ListBoxEstilo.Clear
+  ListBoxDefiniciones.Clear
+  TextEditorPreview.Text = ""
+
+  ' CONFIGURAR PREVIEW COMO SOLO LECTURA
+  TextEditorPreview.ReadOnly = True
+
+  ' INICIALIZAR COLECCIONES Y ARRAYS
+  $aShortcodes = New Collection[]
+  $aIdPerfiles = New Integer[]
+
+  ' CARGAR PERFILES
+  CargarPerfiles()
+
+End
+
+' ==============================================================================
+' Subrutina: CargarPerfiles()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Consulta la tabla perfiles_shortcode y puebla ListBoxEstilo con los
+'   perfiles activos ordenados por nombre.
+' ==============================================================================
+
+Private Sub CargarPerfiles()
+
+  Dim hResultado As Result
+  Dim sSQL As String
+
+  sSQL = "SELECT id, nombre FROM perfiles_shortcode WHERE activo = 1 ORDER BY nombre"
+
+  Try hResultado = m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al cargar perfiles: " & Error.Text)
+    Return
+  Endif
+
+  If Not hResultado Then Return
+  If Not hResultado.Available Then Return
+
+  ' LIMPIAR ARRAY DE IDS
+  $aIdPerfiles.Clear
+
+  ' POBLAR LISTBOX Y ARRAY DE IDS
+  For Each hResultado
+    ListBoxEstilo.Add(hResultado["nombre"])
+    $aIdPerfiles.Add(hResultado["id"])
+  Next
+
+End
+
+' ==============================================================================
+' Evento: ListBoxEstilo_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Al seleccionar un perfil, carga los shortcodes asociados a ese perfil
+'   en ListBoxDefiniciones. Los shortcodes de usuario se muestran con
+'   prefijo »»» para diferenciarlos claramente.
+' ==============================================================================
+
+Public Sub ListBoxEstilo_Click()
+
+  Dim hResultado As Result
+  Dim sSQL As String
+  Dim sEtiqueta As String
+
+  ' VALIDAR SELECCIÓN
+  If ListBoxEstilo.Index < 0 Then Return
+  If ListBoxEstilo.Index >= $aIdPerfiles.Count Then Return
+
+  ' OBTENER ID DEL PERFIL DESDE ARRAY PARALELO
+  $iPerfilActual = $aIdPerfiles[ListBoxEstilo.Index]
+
+  ' LIMPIAR COMPONENTES
+  ListBoxDefiniciones.Clear
+  TextEditorPreview.Text = ""
+  $aShortcodes.Clear
+
+  ' CONSULTA CON JOIN PARA OBTENER SHORTCODES DEL PERFIL (ORDENADO POR ETIQUETA)
+  sSQL = "SELECT s.id, s.nombre, s.etiqueta, s.descripcion, s.sintaxis_apertura, "
+  sSQL &= "s.sintaxis_cierre, s.tiene_contenido, s.atributos_requeridos, "
+  sSQL &= "s.jats_elemento, s.jats_plantilla, s.ejemplo, s.es_sistema "
+  sSQL &= "FROM shortcodes s "
+  sSQL &= "INNER JOIN perfil_shortcode_rel r ON s.id = r.id_shortcode "
+  sSQL &= "WHERE r.id_perfil = " & $iPerfilActual & " "
+  sSQL &= "AND s.activo = 1 "
+  sSQL &= "ORDER BY s.etiqueta"
+
+  Try hResultado = m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al cargar shortcodes: " & Error.Text)
+    Return
+  Endif
+
+  If Not hResultado Then Return
+  If Not hResultado.Available Then Return
+
+  ' POBLAR LISTBOX Y COLECCIÓN
+  For Each hResultado
+
+    ' CREAR COLECCIÓN CON DATOS DEL SHORTCODE
+    Dim cShortcode As New Collection
+    cShortcode["id"] = hResultado["id"]
+    cShortcode["nombre"] = hResultado["nombre"]
+    cShortcode["etiqueta"] = hResultado["etiqueta"]
+    cShortcode["descripcion"] = hResultado["descripcion"]
+    cShortcode["sintaxis_apertura"] = hResultado["sintaxis_apertura"]
+    cShortcode["sintaxis_cierre"] = hResultado["sintaxis_cierre"]
+    cShortcode["tiene_contenido"] = hResultado["tiene_contenido"]
+    cShortcode["atributos_requeridos"] = hResultado["atributos_requeridos"]
+    cShortcode["jats_elemento"] = hResultado["jats_elemento"]
+    cShortcode["jats_plantilla"] = hResultado["jats_plantilla"]
+    cShortcode["ejemplo"] = hResultado["ejemplo"]
+    cShortcode["es_sistema"] = hResultado["es_sistema"]
+
+    ' AGREGAR A COLECCIÓN
+    $aShortcodes.Add(cShortcode)
+
+    ' PREPARAR ETIQUETA CON PREFIJO SI ES DE USUARIO (»»» PARA MAYOR VISIBILIDAD)
+    If Not hResultado["es_sistema"] Then
+      sEtiqueta = "»»» " & hResultado["etiqueta"]
+    Else
+      sEtiqueta = hResultado["etiqueta"]
+    Endif
+
+    ' AGREGAR A LISTBOX
+    ListBoxDefiniciones.Add(sEtiqueta)
+
+  Next
+
+End
+
+' ==============================================================================
+' Evento: ListBoxDefiniciones_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Al seleccionar un shortcode, muestra su descripción y ejemplo
+'   en TextEditorPreview.
+' ==============================================================================
+
+Public Sub ListBoxDefiniciones_Click()
+
+  Dim cShortcode As Collection
+  Dim sPreview As String
+
+  ' VALIDAR SELECCIÓN
+  If ListBoxDefiniciones.Index < 0 Then Return
+  If ListBoxDefiniciones.Index >= $aShortcodes.Count Then Return
+
+  ' OBTENER SHORTCODE SELECCIONADO
+  cShortcode = $aShortcodes[ListBoxDefiniciones.Index]
+
+  ' CONSTRUIR TEXTO DE PREVIEW
+  sPreview = "ELEMENTO JATS: " & cShortcode["jats_elemento"] & gb.NewLine
+  sPreview &= String$(50, "-") & gb.NewLine & gb.NewLine
+  sPreview &= cShortcode["descripcion"] & gb.NewLine & gb.NewLine
+  sPreview &= String$(50, "-") & gb.NewLine
+  sPreview &= "EJEMPLO:" & gb.NewLine & gb.NewLine
+  sPreview &= cShortcode["ejemplo"]
+
+  ' MOSTRAR EN PREVIEW
+  TextEditorPreview.Text = sPreview
+
+End
+
+' ==============================================================================
+' Evento: ListBoxDefiniciones_DblClick()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Al hacer doble click en un shortcode, lo aplica al texto seleccionado
+'   en txtEditorProyecto, envolviéndolo con las marcas de apertura y cierre.
+'
+' Validaciones:
+'   1. Debe haber un shortcode seleccionado
+'   2. Si tiene_contenido = True: debe haber texto seleccionado
+'   3. Si tiene_contenido = False y hay texto seleccionado: advertir al usuario
+'
+' Flujo:
+'   1. Obtener texto seleccionado
+'   2. Construir texto con shortcode (apertura + selección + cierre)
+'   3. Reemplazar selección con el texto envuelto
+' ==============================================================================
+
+Public Sub ListBoxDefiniciones_DblClick()
+
+  Dim cShortcode As Collection
+  Dim sApertura As String
+  Dim sCierre As String
+  Dim sSeleccion As String
+  Dim sInsertar As String
+  Dim iRespuesta As Integer
+
+  ' VALIDAR SELECCIÓN EN LISTBOX
+  If ListBoxDefiniciones.Index < 0 Then Return
+  If ListBoxDefiniciones.Index >= $aShortcodes.Count Then Return
+
+  ' OBTENER SHORTCODE
+  cShortcode = $aShortcodes[ListBoxDefiniciones.Index]
+
+  ' OBTENER TEXTO SELECCIONADO EN EL EDITOR
+  sSeleccion = FMain.txtEditorProyecto.SelectedText
+
+  ' OBTENER SINTAXIS
+  sApertura = cShortcode["sintaxis_apertura"]
+  sCierre = cShortcode["sintaxis_cierre"]
+
+  ' VERIFICAR SI EL SHORTCODE TIENE CONTENIDO
+  If cShortcode["tiene_contenido"] Then
+    ' SHORTCODE CON CONTENIDO: DEBE HABER TEXTO SELECCIONADO
+    If sSeleccion = "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Debe seleccionar el texto al que desea aplicar el shortcode.")
+      Return
+    Endif
+
+    ' CONSTRUIR TEXTO ENVUELTO
+    sInsertar = sApertura & gb.NewLine & sSeleccion & gb.NewLine & sCierre
+
+  Else
+    ' SHORTCODE SIN CONTENIDO
+    If sSeleccion <> "" Then
+      ' HAY TEXTO SELECCIONADO: ADVERTIR QUE SERÁ REEMPLAZADO
+      m_Sonido.sonar("Warning")
+      iRespuesta = Message.Question("Este shortcode no tiene contenido.\n\n" &
+        "El texto seleccionado será reemplazado por el shortcode.\n\n" &
+        "¿Desea continuar?", "Sí", "No")
+
+      If iRespuesta <> 1 Then
+        Return
+      Endif
+    Endif
+
+    ' CONSTRUIR SHORTCODE SIN CONTENIDO (SOLO APERTURA Y CIERRE)
+    sInsertar = sApertura & gb.NewLine & sCierre
+
+  Endif
+
+  ' REEMPLAZAR SELECCIÓN CON EL TEXTO
+  FMain.txtEditorProyecto.Insert(sInsertar)
+
+  ' DAR FOCO AL EDITOR
+  FMain.txtEditorProyecto.SetFocus
+
+End
+
+' ==============================================================================
+' Evento: btnABMshortcodes_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Abre el formulario de ABM de shortcodes.
+'   1. Sin selección en ningún ListBox: abre formulario vacío
+'   2. Selección de shortcode de sistema: avisa que son datos de referencia
+'      y pregunta si crear nuevo basándose en ellos
+'   3. Selección de shortcode de usuario: abre para editar
+' ==============================================================================
+
+Public Sub btnABMshortcodes_Click()
+
+  Dim cShortcode As Collection
+  Dim iRespuesta As Integer
+
+  ' VALIDAR QUE HAY UN PERFIL SELECCIONADO
+  If ListBoxEstilo.Index < 0 Or $iPerfilActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un perfil antes de gestionar shortcodes.")
+    Return
+  Endif
+
+  ' SI NO HAY SELECCIÓN EN LISTBOX DE DEFINICIONES, ABRIR PARA CREAR NUEVO
+  If ListBoxDefiniciones.Index < 0 Then
+    f_ABMshortcode.ModoNuevo($iPerfilActual)
+    f_ABMshortcode.ShowModal
+    ' REFRESCAR LISTA AL CERRAR
+    ListBoxEstilo_Click()
+    Return
+  Endif
+
+  ' OBTENER SHORTCODE SELECCIONADO
+  cShortcode = $aShortcodes[ListBoxDefiniciones.Index]
+
+  ' VERIFICAR SI ES DE SISTEMA (USAR EVALUACIÓN BOOLEANA)
+  If cShortcode["es_sistema"] Then
+    ' ES DE SISTEMA: INFORMAR Y PREGUNTAR SI QUIERE USARLO COMO BASE
+    iRespuesta = Message.Question("El shortcode seleccionado es de sistema y no puede ser modificado.\n\n" &
+      "Se abrirá el formulario con los datos como referencia.\n" &
+      "Puede usarlos como base para crear un nuevo shortcode.\n\n" &
+      "¿Desea continuar?", "Sí", "No")
+
+    If iRespuesta = 1 Then
+      f_ABMshortcode.ModoReferencia(cShortcode, $iPerfilActual)
+      f_ABMshortcode.ShowModal
+      ' REFRESCAR LISTA AL CERRAR
+      ListBoxEstilo_Click()
+    Endif
+  Else
+    ' NO ES DE SISTEMA: ABRIR PARA EDITAR
+    f_ABMshortcode.ModoEditar(cShortcode, $iPerfilActual)
+    f_ABMshortcode.ShowModal
+    ' REFRESCAR LISTA AL CERRAR
+    ListBoxEstilo_Click()
+  Endif
+
+End
+
+' ==============================================================================
+' Evento: btnCerrar_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Cierra el formulario.
+' ==============================================================================
 
 Public Sub btnCerrar_Click()
 
   Me.Close
+
+End
+
+' ==============================================================================
+' Subrutina pública: RefrescarShortcodes()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Recarga los shortcodes del perfil actual. Se llama desde f_ABMshortcode
+'   después de guardar cambios.
+' ==============================================================================
+
+Public Sub RefrescarShortcodes()
+
+  ' SIMULAR CLICK EN EL PERFIL ACTUAL PARA RECARGAR
+  If ListBoxEstilo.Index >= 0 Then
+    ListBoxEstilo_Click()
+  Endif
 
 End
 
@@ -19,8 +392,103 @@ Public Sub SplitterSC_Resize()
 
 End
 
-Public Sub btnABMshortcodes_Click()
+Public Sub SplitterSC2_Resize()
 
-  f_ABMshortcode.ShowModal()
+  SplitterSC2.Layout = [6, 3]
 
 End
+
+' ==============================================================================
+' DOCUMENTACIÓN DE REFERENCIAS PARA EL SISTEMA DE SHORTCODES
+' ==============================================================================
+'
+' FUNDAMENTO TÉCNICO
+' ------------------
+' Los shortcodes de gbpublisher mapean estructuras semánticas del contenido
+' académico a elementos válidos del estándar JATS (Journal Article Tag Suite)
+' versión 1.3, mantenido por NISO (National Information Standards Organization).
+'
+' Especificación JATS 1.3:
+'   https://jats.nlm.nih.gov/publishing/tag-library/1.3/
+'
+' ELEMENTOS JATS UTILIZADOS
+' -------------------------
+' - <disp-formula>: Fórmulas matemáticas y químicas (JATS §2.1)
+' - <disp-quote>: Citas en bloque, fuentes primarias (JATS §2.2)
+' - <statement>: Teoremas, definiciones, demostraciones (JATS §2.3)
+' - <boxed-text>: Contenido destacado, ejemplos, notas (JATS §2.4)
+' - <fig>: Figuras, esquemas, diagramas (JATS §2.5)
+' - <table-wrap>: Tablas con título y notas (JATS §2.6)
+' - <fn>: Notas al pie (JATS §2.7)
+' - <verse-group>: Poesía y verso (JATS §2.8)
+' - <code>: Código fuente (JATS §2.9)
+' - <supplementary-material>: Material suplementario (JATS §2.10)
+' - <glossary>, <gloss>, <def-list>: Glosarios y definiciones (JATS §2.11)
+' - <speech>: Diálogos y entrevistas (JATS §2.12)
+' - <app>: Aparato crítico, variantes textuales (JATS §2.13)
+'
+' CONVENCIONES DISCIPLINARES
+' --------------------------
+'
+' MEDICINA Y CIENCIAS DE LA SALUD
+'   - Estructura IMRyD (Introducción, Métodos, Resultados, Discusión)
+'   - ICMJE Recommendations: https://www.icmje.org/recommendations/
+'   - CONSORT para ensayos clínicos: https://www.consort-statement.org/
+'   - Registro de ensayos clínicos (ClinicalTrials.gov)
+'
+' QUÍMICA
+'   - ACS Style Guide (American Chemical Society)
+'   - Convenciones para datos espectroscópicos (RMN, IR, MS, UV-Vis)
+'   - IUPAC nomenclatura: https://iupac.org/what-we-do/nomenclature/
+'   - Representación de estructuras moleculares y esquemas de reacción
+'
+' MATEMÁTICAS Y FÍSICA
+'   - Estructura clásica: Definición → Teorema → Demostración
+'   - Convenciones AMS (American Mathematical Society)
+'   - LaTeX/MathML para notación matemática
+'   - Numeración de ecuaciones para referencia cruzada
+'
+' HUMANIDADES
+'   - Chicago Manual of Style para citas y referencias
+'   - Convenciones de citación de fuentes primarias
+'   - Formato de entrevistas y trabajo de campo
+'
+' CIENCIAS SOCIALES
+'   - APA Style (American Psychological Association)
+'   - Formato para estudios de caso y notas de campo
+'   - Transcripción de entrevistas
+'
+' FILOLOGÍA Y LINGÜÍSTICA
+'   - TEI Guidelines (Text Encoding Initiative): https://tei-c.org/guidelines/
+'   - Leipzig Glossing Rules para glosas interlineales:
+'     https://www.eva.mpg.de/lingua/resources/glossing-rules.php
+'   - Convenciones de edición crítica (aparato crítico, stemma codicum)
+'   - Transcripción paleográfica (diplomática, interpretativa)
+'   - Representación de variantes textuales entre testimonios
+'
+' SINTAXIS DE SHORTCODES
+' ----------------------
+' La sintaxis utiliza Pandoc fenced divs (divisiones cercadas):
+'
+'   ::: nombre-shortcode {atributo="valor"}
+'   Contenido del shortcode
+'   :::
+'
+' Esta sintaxis es compatible con Pandoc y permite:
+'   - Atributos opcionales entre llaves
+'   - Contenido Markdown dentro del shortcode
+'   - Anidamiento de shortcodes
+'   - Procesamiento mediante filtros Lua
+'
+' Referencia Pandoc divs:
+'   https://pandoc.org/MANUAL.html#divs-and-spans
+'
+' FLUJO DE TRANSFORMACIÓN
+' -----------------------
+'   1. Markdown + Shortcodes (edición)
+'   2. Pandoc + filtro Lua (expansión de shortcodes)
+'   3. JATS XML maestro (formato canónico)
+'   4. XSLT (transformaciones a variantes: SciELO, PubMed, DOAJ)
+'   5. Salidas finales (XML, HTML, PDF)
+'
+' ==============================================================================

@@ -1,5 +1,711 @@
 ' Gambas class file
 
+' ==============================================================================
+' Formulario: f_ABMshortcode
+' ------------------------------------------------------------------------------
+' Descripción general:
+'   Formulario para Alta, Baja y Modificación de shortcodes personalizados.
+'   Solo permite editar shortcodes creados por el usuario (es_sistema = 0).
+'   Incluye un GridView para navegar entre shortcodes de usuario.
+'
+' Componentes:
+'   - gvShortcodes: GridView con lista de shortcodes de usuario
+'   - txtnombre: Identificador interno del shortcode
+'   - txtetiqueta: Nombre visible en ListBox
+'   - txtdescripcion: Explicación del shortcode
+'   - txtsintaxisapertura: Marca de apertura (ej: ::: epigraph)
+'   - txtsintaxiscierre: Marca de cierre (ej: :::)
+'   - chkTieneContenido: Si espera texto entre apertura y cierre
+'   - txtatributosrequeridos: Lista de atributos obligatorios
+'   - txtjatselemento: Elemento JATS destino
+'   - txtjatsplantilla: Plantilla de transformación
+'   - txtejemplo: Ejemplo de uso
+'   - btnNuevoShortCode: Limpia campos para nuevo registro
+'   - btnGuardarShortCode: Guarda nuevo shortcode
+'   - btnGuardarCambiosShortCode: Guarda modificaciones
+'
+' Modos de operación:
+'   - ModoNuevo(): Formulario vacío para crear shortcode
+'   - ModoEditar(): Carga shortcode de usuario para modificar
+'   - ModoReferencia(): Carga shortcode de sistema como base (solo lectura)
+'
+' Notas:
+'   - Los shortcodes de sistema (es_sistema = 1) no se pueden editar
+'   - El GridView muestra solo shortcodes de usuario
+'   - El orden se calcula automáticamente (alfabético por etiqueta)
+' ==============================================================================
+
+' ------------------------------------------------------------------------------
+' VARIABLES PRIVADAS DEL MÓDULO
+' ------------------------------------------------------------------------------
+Private $iIdShortcode As Integer        ' ID DEL SHORTCODE EN EDICIÓN (0 SI ES NUEVO)
+Private $iIdPerfil As Integer           ' ID DEL PERFIL ASOCIADO
+Private $bModoEdicion As Boolean        ' TRUE SI ESTÁ EDITANDO, FALSE SI ES NUEVO
+Private $aIdShortcodes As Integer[]     ' ARRAY DE IDS PARA MAPEAR FILAS DEL GRID
+
+' ==============================================================================
+' Evento: Form_Open()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Inicializa el formulario y configura el GridView.
+' ==============================================================================
+
+Public Sub Form_Open()
+
+  ' INICIALIZAR ARRAY DE IDS
+  If $aIdShortcodes = Null Then
+    $aIdShortcodes = New Integer[]
+  Endif
+
+  ' CONFIGURAR GRIDVIEW
+  ConfigurarGridView()
+
+  ' VALOR POR DEFECTO PARA CIERRE
+  If txtsintaxiscierre.Text = "" Then
+    txtsintaxiscierre.Text = ":::"
+  Endif
+
+  ' ESTADO INICIAL DE BOTONES
+  ActualizarEstadoBotones()
+
+End
+
+' ==============================================================================
+' Evento: Form_Show()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Se ejecuta cuando el formulario se muestra. Carga el GridView aquí
+'   para asegurar que el componente ya está visible.
+' ==============================================================================
+
+Public Sub Form_Show()
+
+  CargarGridView()
+
+End
+
+' ==============================================================================
+' Subrutina privada: ConfigurarGridView()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Configura las propiedades iniciales del GridView.
+' ==============================================================================
+
+Private Sub ConfigurarGridView()
+
+  ' CONFIGURAR COLUMNAS
+  gvShortcodes.Columns.Count = 3
+  gvShortcodes.Rows.Count = 0
+
+  ' CONFIGURAR ENCABEZADOS
+  gvShortcodes.Header = GridView.Horizontal
+  gvShortcodes.Columns[0].Title = "Etiqueta"
+  gvShortcodes.Columns[0].Width = 250
+  gvShortcodes.Columns[1].Title = "Elemento JATS"
+  gvShortcodes.Columns[1].Width = 350
+  gvShortcodes.Columns[2].Title = "Tipo"
+  gvShortcodes.Columns[2].Width = 0
+
+  ' CONFIGURAR SELECCIÓN
+  gvShortcodes.Mode = Select.Single
+  gvShortcodes.Grid = True
+
+End
+
+' ==============================================================================
+' Subrutina pública: ModoNuevo(iIdPerfil)
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Prepara el formulario para crear un nuevo shortcode.
+'
+' Parámetros:
+'   iIdPerfil   Integer   ID del perfil al que se asociará el shortcode
+' ==============================================================================
+
+Public Sub ModoNuevo(iIdPerfil As Integer)
+
+  ' GUARDAR ID DE PERFIL
+  $iIdPerfil = iIdPerfil
+  $iIdShortcode = 0
+  $bModoEdicion = False
+
+  ' ASEGURAR QUE EL GRIDVIEW ESTÉ CONFIGURADO
+  If gvShortcodes.Columns.Count = 0 Then
+    ConfigurarGridView()
+  Endif
+
+  ' LIMPIAR CAMPOS
+  LimpiarCampos()
+
+  ' VALORES POR DEFECTO
+  txtsintaxiscierre.Text = ":::"
+  chkTieneContenido.Value = True
+
+  ' TÍTULO DEL FORMULARIO
+  Me.Title = "Nuevo Shortcode"
+
+  ' ACTUALIZAR BOTONES
+  ActualizarEstadoBotones()
+
+End
+
+' ==============================================================================
+' Subrutina pública: ModoEditar(cShortcode, iIdPerfil)
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Carga un shortcode de usuario existente para edición.
+'
+' Parámetros:
+'   cShortcode  Collection   Datos del shortcode a editar
+'   iIdPerfil   Integer      ID del perfil asociado
+' ==============================================================================
+
+Public Sub ModoEditar(cShortcode As Collection, iIdPerfil As Integer)
+
+  ' GUARDAR IDS
+  $iIdShortcode = cShortcode["id"]
+  $iIdPerfil = iIdPerfil
+  $bModoEdicion = True
+
+  ' ASEGURAR QUE EL GRIDVIEW ESTÉ CONFIGURADO
+  If gvShortcodes.Columns.Count = 0 Then
+    ConfigurarGridView()
+  Endif
+
+  ' CARGAR CAMPOS DESDE LA COLECCIÓN
+  CargarCamposDesdeColeccion(cShortcode)
+
+  ' TÍTULO DEL FORMULARIO
+  Me.Title = "Editar Shortcode: " & cShortcode["etiqueta"]
+
+  ' ACTUALIZAR BOTONES
+  ActualizarEstadoBotones()
+
+End
+
+' ==============================================================================
+' Subrutina pública: ModoReferencia(cShortcode, iIdPerfil)
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Carga un shortcode de sistema como referencia para crear uno nuevo.
+'   Los datos se muestran pero el ID se resetea para forzar creación.
+'
+' Parámetros:
+'   cShortcode  Collection   Datos del shortcode de referencia
+'   iIdPerfil   Integer      ID del perfil asociado
+' ==============================================================================
+
+Public Sub ModoReferencia(cShortcode As Collection, iIdPerfil As Integer)
+
+  ' GUARDAR ID DE PERFIL, PERO NO EL ID DEL SHORTCODE (ES REFERENCIA)
+  $iIdShortcode = 0
+  $iIdPerfil = iIdPerfil
+  $bModoEdicion = False
+
+  ' ASEGURAR QUE EL GRIDVIEW ESTÉ CONFIGURADO
+  If gvShortcodes.Columns.Count = 0 Then
+    ConfigurarGridView()
+  Endif
+
+  ' CARGAR CAMPOS DESDE LA COLECCIÓN
+  CargarCamposDesdeColeccion(cShortcode)
+
+  ' LIMPIAR EL NOMBRE PARA FORZAR UNO NUEVO
+  txtnombre.Text = ""
+
+  ' TÍTULO DEL FORMULARIO
+  Me.Title = "Nuevo Shortcode (basado en: " & cShortcode["etiqueta"] & ")"
+
+  ' ACTUALIZAR BOTONES
+  ActualizarEstadoBotones()
+
+End
+
+' ==============================================================================
+' Subrutina privada: CargarCamposDesdeColeccion(cShortcode)
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Carga los campos del formulario desde una colección de datos.
+'
+' Parámetros:
+'   cShortcode  Collection   Datos del shortcode
+' ==============================================================================
+
+Private Sub CargarCamposDesdeColeccion(cShortcode As Collection)
+
+  txtnombre.Text = Nz(cShortcode["nombre"], "")
+  txtetiqueta.Text = Nz(cShortcode["etiqueta"], "")
+  txtdescripcion.Text = Nz(cShortcode["descripcion"], "")
+  txtsintaxisapertura.Text = Nz(cShortcode["sintaxis_apertura"], "")
+  txtsintaxiscierre.Text = Nz(cShortcode["sintaxis_cierre"], ":::")
+
+  ' CHECKBOX: USAR EVALUACIÓN BOOLEANA (MYSQL PUEDE DEVOLVER TRUE/FALSE O 1/0)
+  chkTieneContenido.Value = cShortcode["tiene_contenido"]
+
+  txtatributosrequeridos.Text = Nz(cShortcode["atributos_requeridos"], "")
+  txtjatselemento.Text = Nz(cShortcode["jats_elemento"], "")
+  txtjatsplantilla.Text = Nz(cShortcode["jats_plantilla"], "")
+  txtejemplo.Text = Nz(cShortcode["ejemplo"], "")
+
+End
+
+' ==============================================================================
+' Subrutina privada: CargarGridView()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Carga el GridView con los shortcodes de USUARIO (es_sistema = 0).
+'   Muestra: Etiqueta, Elemento JATS, Tipo
+' ==============================================================================
+
+Private Sub CargarGridView()
+
+  Dim hResultado As Result
+  Dim sSQL As String
+  Dim iRow As Integer
+
+  ' INICIALIZAR ARRAY SI NO EXISTE
+  If $aIdShortcodes = Null Then
+    $aIdShortcodes = New Integer[]
+  Endif
+
+  ' LIMPIAR GRIDVIEW Y ARRAY DE IDS
+  gvShortcodes.Rows.Count = 0
+  $aIdShortcodes.Clear
+
+  ' CONSULTA PARA OBTENER SHORTCODES DE USUARIO (NO DE SISTEMA)
+  sSQL = "SELECT s.id, s.etiqueta, s.jats_elemento "
+  sSQL &= "FROM shortcodes s "
+  sSQL &= "WHERE s.es_sistema = 0 "
+  sSQL &= "AND s.activo = 1 "
+  sSQL &= "ORDER BY s.etiqueta"
+
+  Try hResultado = m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Then
+    Message.Error("Error al cargar shortcodes de usuario: " & Error.Text)
+    Return
+  Endif
+
+  If Not hResultado Then Return
+  If Not hResultado.Available Then Return
+
+  ' POBLAR GRIDVIEW DIRECTAMENTE
+  iRow = 0
+  For Each hResultado
+    ' AGREGAR FILA AL GRID
+    gvShortcodes.Rows.Count = iRow + 1
+
+    ' GUARDAR ID EN ARRAY
+    $aIdShortcodes.Add(hResultado["id"])
+
+    ' LLENAR CELDAS
+    gvShortcodes[iRow, 0].Text = hResultado["etiqueta"]
+    gvShortcodes[iRow, 1].Text = hResultado["jats_elemento"]
+    gvShortcodes[iRow, 2].Text = "Usuario"
+
+    Inc iRow
+  Next
+
+End
+
+' ==============================================================================
+' Evento: gvShortcodes_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Al hacer click en una fila del GridView, carga el shortcode seleccionado
+'   en los campos del formulario para edición.
+' ==============================================================================
+
+Public Sub gvShortcodes_Click()
+
+  Dim iRow As Integer
+  Dim iIdSeleccionado As Integer
+  Dim hResultado As Result
+  Dim sSQL As String
+
+  ' OBTENER FILA SELECCIONADA
+  iRow = gvShortcodes.Row
+
+  ' VALIDAR SELECCIÓN
+  If iRow < 0 Or If iRow >= $aIdShortcodes.Count Then Return
+
+  ' OBTENER ID DEL SHORTCODE
+  iIdSeleccionado = $aIdShortcodes[iRow]
+
+  ' CONSULTAR DATOS COMPLETOS
+  sSQL = "SELECT * FROM shortcodes WHERE id = " & iIdSeleccionado
+
+  Try hResultado = m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Or Not hResultado Or Not hResultado.Available Then
+    Message.Error("Error al cargar shortcode seleccionado.")
+    Return
+  Endif
+
+  ' CARGAR DATOS EN CAMPOS
+  $iIdShortcode = iIdSeleccionado
+  txtnombre.Text = Nz(hResultado["nombre"], "")
+  txtetiqueta.Text = Nz(hResultado["etiqueta"], "")
+  txtdescripcion.Text = Nz(hResultado["descripcion"], "")
+  txtsintaxisapertura.Text = Nz(hResultado["sintaxis_apertura"], "")
+  txtsintaxiscierre.Text = Nz(hResultado["sintaxis_cierre"], ":::")
+
+  ' CHECKBOX: USAR EVALUACIÓN BOOLEANA
+  chkTieneContenido.Value = hResultado["tiene_contenido"]
+
+  txtatributosrequeridos.Text = Nz(hResultado["atributos_requeridos"], "")
+  txtjatselemento.Text = Nz(hResultado["jats_elemento"], "")
+  txtjatsplantilla.Text = Nz(hResultado["jats_plantilla"], "")
+  txtejemplo.Text = Nz(hResultado["ejemplo"], "")
+
+  ' ES DE USUARIO: MODO EDICIÓN
+  $bModoEdicion = True
+  Me.Title = "Editar Shortcode: " & hResultado["etiqueta"]
+
+  ' ACTUALIZAR BOTONES
+  ActualizarEstadoBotones()
+
+End
+
+' ==============================================================================
+' Subrutina privada: LimpiarCampos()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Limpia todos los campos del formulario.
+' ==============================================================================
+
+Private Sub LimpiarCampos()
+
+  txtnombre.Text = ""
+  txtetiqueta.Text = ""
+  txtdescripcion.Text = ""
+  txtsintaxisapertura.Text = ""
+  txtsintaxiscierre.Text = ""
+  chkTieneContenido.Value = True
+  txtatributosrequeridos.Text = ""
+  txtjatselemento.Text = ""
+  txtjatsplantilla.Text = ""
+  txtejemplo.Text = ""
+
+  ' RESETEAR ID
+  $iIdShortcode = 0
+
+End
+
+' ==============================================================================
+' Subrutina privada: ActualizarEstadoBotones()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Habilita/deshabilita botones según el modo de operación.
+' ==============================================================================
+
+Private Sub ActualizarEstadoBotones()
+
+  ' BOTÓN NUEVO: SIEMPRE HABILITADO
+  btnNuevoShortCode.Enabled = True
+
+  ' BOTÓN GUARDAR NUEVO: SIEMPRE HABILITADO
+  btnGuardarShortCode.Enabled = True
+
+  ' BOTÓN GUARDAR CAMBIOS: SOLO SI ESTAMOS EDITANDO UN SHORTCODE DE USUARIO
+  btnGuardarCambiosShortCode.Visible = $bModoEdicion
+
+End
+
+' ==============================================================================
+' Evento: btnNuevoShortCode_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Limpia los campos para iniciar la creación de un nuevo shortcode.
+' ==============================================================================
+
+Public Sub btnNuevoShortCode_Click()
+
+  ' LIMPIAR CAMPOS
+  LimpiarCampos()
+
+  ' VALORES POR DEFECTO
+  txtsintaxiscierre.Text = ":::"
+  chkTieneContenido.Value = True
+
+  ' RESETEAR MODO
+  $bModoEdicion = False
+  $iIdShortcode = 0
+
+  ' TÍTULO
+  Me.Title = "Nuevo Shortcode"
+
+  ' ACTUALIZAR BOTONES
+  ActualizarEstadoBotones()
+
+  ' FOCO EN NOMBRE
+  txtnombre.SetFocus
+
+End
+
+' ==============================================================================
+' Evento: btnGuardarShortCode_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Guarda un nuevo shortcode en la base de datos.
+'   El orden se asigna automáticamente (0, ya que ordenamos por etiqueta).
+' ==============================================================================
+
+Public Sub btnGuardarShortCode_Click()
+
+  Dim sSQL As String
+  Dim hResultado As Result
+  Dim iNuevoId As Integer
+
+  ' VALIDAR CAMPOS OBLIGATORIOS
+  If Not ValidarCampos() Then Return
+
+  ' VERIFICAR UNICIDAD DEL NOMBRE
+  sSQL = "SELECT id FROM shortcodes WHERE nombre = '" & EscaparSQL(txtnombre.Text) & "'"
+
+  Try hResultado = m_ConexionBD.mConn.Exec(sSQL)
+
+  If hResultado And If hResultado.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ya existe un shortcode con el nombre '" & txtnombre.Text & "'.\nElija otro nombre.")
+    txtnombre.SetFocus
+    Return
+  Endif
+
+  ' CONSTRUIR SQL DE INSERCIÓN (ORDEN = 0 PORQUE ORDENAMOS POR ETIQUETA)
+  sSQL = "INSERT INTO shortcodes ("
+  sSQL &= "nombre, etiqueta, descripcion, sintaxis_apertura, sintaxis_cierre, "
+  sSQL &= "tiene_contenido, atributos_requeridos, jats_elemento, jats_plantilla, "
+  sSQL &= "ejemplo, activo, orden, es_sistema"
+  sSQL &= ") VALUES ("
+  sSQL &= "'" & EscaparSQL(txtnombre.Text) & "', "
+  sSQL &= "'" & EscaparSQL(txtetiqueta.Text) & "', "
+  sSQL &= "'" & EscaparSQL(txtdescripcion.Text) & "', "
+  sSQL &= "'" & EscaparSQL(txtsintaxisapertura.Text) & "', "
+  sSQL &= "'" & EscaparSQL(txtsintaxiscierre.Text) & "', "
+  sSQL &= IIf(chkTieneContenido.Value, "1", "0") & ", "
+  sSQL &= "'" & EscaparSQL(txtatributosrequeridos.Text) & "', "
+  sSQL &= "'" & EscaparSQL(txtjatselemento.Text) & "', "
+  sSQL &= "'" & EscaparSQL(txtjatsplantilla.Text) & "', "
+  sSQL &= "'" & EscaparSQL(txtejemplo.Text) & "', "
+  sSQL &= "1, "  ' ACTIVO POR DEFECTO
+  sSQL &= "0, "  ' ORDEN = 0 (ORDENAMOS ALFABÉTICAMENTE POR ETIQUETA)
+  sSQL &= "0"    ' NO ES DE SISTEMA
+  sSQL &= ")"
+
+  ' EJECUTAR INSERCIÓN
+  Try m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar shortcode: " & Error.Text)
+    Return
+  Endif
+
+  ' OBTENER ID DEL NUEVO REGISTRO
+  Try hResultado = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID() AS id")
+
+  If Error Or Not hResultado Or Not hResultado.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al obtener ID del nuevo shortcode.")
+    Return
+  Endif
+
+  iNuevoId = hResultado["id"]
+
+  ' CREAR RELACIÓN CON EL PERFIL
+  If $iIdPerfil > 0 Then
+    sSQL = "INSERT INTO perfil_shortcode_rel (id_perfil, id_shortcode, orden_en_perfil) "
+    sSQL &= "VALUES (" & $iIdPerfil & ", " & iNuevoId & ", 0)"
+
+    Try m_ConexionBD.mConn.Exec(sSQL)
+
+    If Error Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Shortcode creado pero no se pudo asociar al perfil: " & Error.Text)
+    Endif
+  Endif
+
+  ' NOTIFICAR ÉXITO
+  m_Sonido.sonar("OK")
+  Message.Info("Shortcode creado correctamente.")
+
+  ' RECARGAR GRIDVIEW
+  CargarGridView()
+
+  ' LIMPIAR PARA NUEVO INGRESO
+  LimpiarCampos()
+  txtsintaxiscierre.Text = ":::"
+  chkTieneContenido.Value = True
+  $bModoEdicion = False
+  Me.Title = "Nuevo Shortcode"
+  ActualizarEstadoBotones()
+
+End
+
+' ==============================================================================
+' Evento: btnGuardarCambiosShortCode_Click()
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Guarda las modificaciones de un shortcode existente.
+' ==============================================================================
+
+Public Sub btnGuardarCambiosShortCode_Click()
+
+  Dim sSQL As String
+  Dim hResultado As Result
+
+  ' VALIDAR QUE ESTAMOS EN MODO EDICIÓN
+  If Not $bModoEdicion Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay shortcode de usuario en edición.\nLos shortcodes de sistema no se pueden modificar.")
+    Return
+  Endif
+
+  ' VALIDAR QUE HAY UN ID VÁLIDO
+  If $iIdShortcode <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay shortcode seleccionado para modificar.")
+    Return
+  Endif
+
+  ' VALIDAR CAMPOS OBLIGATORIOS
+  If Not ValidarCampos() Then Return
+
+  ' VERIFICAR UNICIDAD DEL NOMBRE (EXCLUYENDO EL REGISTRO ACTUAL)
+  sSQL = "SELECT id FROM shortcodes WHERE nombre = '" & EscaparSQL(txtnombre.Text) & "' AND id <> " & $iIdShortcode
+
+  Try hResultado = m_ConexionBD.mConn.Exec(sSQL)
+
+  If hResultado And If hResultado.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ya existe otro shortcode con el nombre '" & txtnombre.Text & "'.\nElija otro nombre.")
+    txtnombre.SetFocus
+    Return
+  Endif
+
+  ' CONSTRUIR SQL DE ACTUALIZACIÓN
+  sSQL = "UPDATE shortcodes SET "
+  sSQL &= "nombre = '" & EscaparSQL(txtnombre.Text) & "', "
+  sSQL &= "etiqueta = '" & EscaparSQL(txtetiqueta.Text) & "', "
+  sSQL &= "descripcion = '" & EscaparSQL(txtdescripcion.Text) & "', "
+  sSQL &= "sintaxis_apertura = '" & EscaparSQL(txtsintaxisapertura.Text) & "', "
+  sSQL &= "sintaxis_cierre = '" & EscaparSQL(txtsintaxiscierre.Text) & "', "
+  sSQL &= "tiene_contenido = " & IIf(chkTieneContenido.Value, "1", "0") & ", "
+  sSQL &= "atributos_requeridos = '" & EscaparSQL(txtatributosrequeridos.Text) & "', "
+  sSQL &= "jats_elemento = '" & EscaparSQL(txtjatselemento.Text) & "', "
+  sSQL &= "jats_plantilla = '" & EscaparSQL(txtjatsplantilla.Text) & "', "
+  sSQL &= "ejemplo = '" & EscaparSQL(txtejemplo.Text) & "' "
+  sSQL &= "WHERE id = " & $iIdShortcode & " AND es_sistema = 0"
+
+  ' EJECUTAR ACTUALIZACIÓN
+  Try m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al actualizar shortcode: " & Error.Text)
+    Return
+  Endif
+
+  ' NOTIFICAR ÉXITO
+  m_Sonido.sonar("OK")
+  Message.Info("Shortcode actualizado correctamente.")
+
+  ' RECARGAR GRIDVIEW
+  CargarGridView()
+
+End
+
+' ==============================================================================
+' Función privada: ValidarCampos() As Boolean
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Valida que los campos obligatorios estén completos.
+'
+' Retorno:
+'   True si todos los campos obligatorios están completos
+'   False si falta algún campo
+' ==============================================================================
+
+Private Function ValidarCampos() As Boolean
+
+  ' VALIDAR NOMBRE
+  If Trim(txtnombre.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El campo 'Nombre' es obligatorio.")
+    txtnombre.SetFocus
+    Return False
+  Endif
+
+  ' VALIDAR ETIQUETA
+  If Trim(txtetiqueta.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El campo 'Etiqueta' es obligatorio.")
+    txtetiqueta.SetFocus
+    Return False
+  Endif
+
+  ' VALIDAR SINTAXIS APERTURA
+  If Trim(txtsintaxisapertura.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El campo 'Sintaxis apertura' es obligatorio.")
+    txtsintaxisapertura.SetFocus
+    Return False
+  Endif
+
+  ' VALIDAR ELEMENTO JATS
+  If Trim(txtjatselemento.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El campo 'Elemento JATS' es obligatorio.")
+    txtjatselemento.SetFocus
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ==============================================================================
+' Función privada: EscaparSQL(sTexto) As String
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Escapa caracteres especiales en cadenas para uso seguro en SQL.
+'
+' Parámetros:
+'   sTexto   String   Texto a escapar
+'
+' Retorno:
+'   Cadena con comillas simples escapadas
+' ==============================================================================
+
+Private Function EscaparSQL(sTexto As String) As String
+
+  If sTexto = Null Then Return ""
+  Return Replace(sTexto, "'", "''")
+
+End
+
+' ==============================================================================
+' Función privada: Nz(vValor, vDefecto) As Variant
+' ------------------------------------------------------------------------------
+' Descripción:
+'   Retorna el valor por defecto si el valor es Null.
+'
+' Parámetros:
+'   vValor    Variant   Valor a evaluar
+'   vDefecto  Variant   Valor por defecto si es Null
+'
+' Retorno:
+'   vValor si no es Null, vDefecto en caso contrario
+' ==============================================================================
+
+Private Function Nz(vValor As Variant, vDefecto As Variant) As Variant
+
+  If IsNull(vValor) Then Return vDefecto
+  Return vValor
+
+End
+
 Public Sub btnCerrar_Click()
 
   Me.Close()
