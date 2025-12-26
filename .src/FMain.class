@@ -12,12 +12,23 @@ Public RutaProyecto As String
 Public ProyectoActualCompleto As String
 Public sRutaArchivoAbierto As String
 Public sContenidoOriginal As String  ' PARA COMPARAR SI HUBO CAMBIOS
-
-' Private sRutaSeleccionada As String
+Private hTimerRefrescoXML As Timer ' REFESCAMOS EL COMBOBOX DE XML
+Private hTimerRefrescarProyecto As Timer ' REFRESCAMOS EL COMBOBOX DE ARTICULOS MD
 
 Public Sub SplitterPrincipal_Resize()
 
   SplitterPrincipal.Layout = [1, 1]
+
+End
+
+Public Sub IniciarTimerArchivosXML()
+  ' INICIA EL TIMER PARA REFRESCAR LA LISTA DE ARCHIVOS XML
+
+  If hTimerRefrescoXML = Null Then
+    hTimerRefrescoXML = New Timer As "TimerXML"
+  Endif
+  hTimerRefrescoXML.Delay = 5000
+  hTimerRefrescoXML.Start()
 
 End
 
@@ -50,7 +61,7 @@ Public Sub Form_Open()
   Dim versionRemota As String
   Dim name As String
 
-  ' Configurar relojes
+  ' CONFIGURAR RELOJES
   TimerTemp.Delay = 2000
   TimerTemp.Enabled = True
   TimerNotitas.Delay = 5000
@@ -1468,9 +1479,11 @@ Public Sub AbrirRevistaMD()
 
   ' CARGAR LISTA DE ARTÍCULOS EN EL COMBOBOX
   CargarListaArticulosMD()
+  IniciarTimerArchivosProyecto()
 
   ' CARGAR LISTA DE ARCHIVOS XML EN EL COMBOBOX
   CargarListaArchivosXML()
+  IniciarTimerArchivosXML()
 
   ' CARGAMOS EL ARCHIVO DEL PROYECTO EN EL EDITOR
   txtEditorProyecto.Text = File.Load(sRutaSeleccionada)
@@ -5023,6 +5036,157 @@ Public Sub cmbArchivosXML_Click()
   Else
     m_Sonido.sonar("Error")
     Message.Error("No se pudo cargar el contenido del archivo XML")
+  Endif
+
+End
+
+Public Sub DetenerTimerArchivosXML()
+  ' DETIENE EL TIMER DE REFRESCO DE ARCHIVOS XML
+
+  If hTimerRefrescoXML <> Null Then
+    hTimerRefrescoXML.Stop()
+  Endif
+
+End
+
+Public Sub IniciarTimerArchivosProyecto()
+
+  ' INICIA EL TIMER PARA REFRESCAR LA LISTA DE ARCHIVOS MD EN LA CARPETA ARTICULOS
+  ' INTERVALO DE 5 SEGUNDOS
+
+  If hTimerRefrescarProyecto = Null Then
+    hTimerRefrescarProyecto = New Timer As "TimerArchivosProyecto"
+  Endif
+  hTimerRefrescarProyecto.Delay = 5000
+  hTimerRefrescarProyecto.Start()
+
+End
+
+Public Sub DetenerTimerArchivosProyecto()
+  ' DETIENE EL TIMER DE REFRESCO DE ARCHIVOS MD
+
+  If hTimerRefrescarProyecto <> Null Then
+    hTimerRefrescarProyecto.Stop()
+  Endif
+
+End
+
+Public Sub TimerArchivosProyecto_Timer()
+
+  ' REFRESCA LA LISTA DE ARCHIVOS MD SOLO SI HAY CAMBIOS EN EL DIRECTORIO
+
+  Dim sRutaArticulos As String
+  Dim aArchivosActuales As String[]
+  Dim aArchivosCombo As String[]
+  Dim sSeleccionActual As String
+  Dim i As Integer
+
+  ' CONSTRUIR RUTA A LA CARPETA ARTÍCULOS
+  sRutaArticulos = RutaProyecto &/ "articulos"
+
+  ' VERIFICAR QUE EL DIRECTORIO EXISTE
+  If Not IsDir(sRutaArticulos) Then
+    Return
+  Endif
+
+  ' OBTENER LISTA ACTUAL DE ARCHIVOS EN DISCO
+  aArchivosActuales = Dir(sRutaArticulos, "*.md")
+  aArchivosActuales.Sort()
+
+  ' OBTENER LISTA ACTUAL DEL COMBOBOX (SIN EL PROYECTO PRINCIPAL)
+  aArchivosCombo = New String[]
+  For i = 1 To cmbArticulosRevista.Count - 1
+    aArchivosCombo.Add(cmbArticulosRevista[i].Text)
+  Next
+
+  ' COMPARAR SI HAY DIFERENCIAS
+  If aArchivosActuales.Count = aArchivosCombo.Count Then
+    Dim bIguales As Boolean = True
+    For i = 0 To aArchivosActuales.Count - 1
+      If aArchivosActuales[i] <> aArchivosCombo[i] Then
+        bIguales = False
+        Break
+      Endif
+    Next
+    If bIguales Then Return  ' NO HAY CAMBIOS, SALIR SIN REFRESCAR
+  Endif
+
+  ' GUARDAR LA SELECCIÓN ACTUAL
+  If cmbArticulosRevista.Index >= 0 Then
+    sSeleccionActual = cmbArticulosRevista.Text
+  Endif
+
+  ' RECARGAR LA LISTA
+  CargarListaArticulosMD()
+
+  ' RESTAURAR LA SELECCIÓN SI EL ARCHIVO AÚN EXISTE
+  If sSeleccionActual <> "" Then
+    For i = 0 To cmbArticulosRevista.Count - 1
+      If cmbArticulosRevista[i].Text = sSeleccionActual Then
+        cmbArticulosRevista.Index = i
+        Return
+      Endif
+    Next
+  Endif
+
+End
+
+Public Sub TimerXML_Timer()
+
+  ' REFRESCA LA LISTA DE ARCHIVOS XML SOLO SI HAY CAMBIOS EN EL DIRECTORIO
+
+  Dim sRutaXML As String
+  Dim aArchivosActuales As String[]
+  Dim aArchivosCombo As String[]
+  Dim sSeleccionActual As String
+  Dim i As Integer
+
+  ' CONSTRUIR RUTA A LA CARPETA XML
+  sRutaXML = RutaProyecto &/ "salidas" &/ "xml"
+
+  ' VERIFICAR QUE EL DIRECTORIO EXISTE
+  If Not IsDir(sRutaXML) Then
+    Return
+  Endif
+
+  ' OBTENER LISTA ACTUAL DE ARCHIVOS EN DISCO
+  aArchivosActuales = Dir(sRutaXML, "*.xml")
+  aArchivosActuales.Sort()
+
+  ' OBTENER LISTA ACTUAL DEL COMBOBOX
+  aArchivosCombo = New String[]
+  For i = 0 To cmbArchivosXML.Count - 1
+    aArchivosCombo.Add(cmbArchivosXML[i].Text)
+  Next
+
+  ' COMPARAR SI HAY DIFERENCIAS
+  If aArchivosActuales.Count = aArchivosCombo.Count Then
+    Dim bIguales As Boolean = True
+    For i = 0 To aArchivosActuales.Count - 1
+      If aArchivosActuales[i] <> aArchivosCombo[i] Then
+        bIguales = False
+        Break
+      Endif
+    Next
+    If bIguales Then Return  ' NO HAY CAMBIOS, SALIR SIN REFRESCAR
+  Endif
+
+  ' GUARDAR LA SELECCIÓN ACTUAL
+  If cmbArchivosXML.Index >= 0 Then
+    sSeleccionActual = cmbArchivosXML.Text
+  Endif
+
+  ' RECARGAR LA LISTA
+  CargarListaArchivosXML()
+
+  ' RESTAURAR LA SELECCIÓN SI EL ARCHIVO AÚN EXISTE
+  If sSeleccionActual <> "" Then
+    For i = 0 To cmbArchivosXML.Count - 1
+      If cmbArchivosXML[i].Text = sSeleccionActual Then
+        cmbArchivosXML.Index = i
+        Return
+      Endif
+    Next
   Endif
 
 End
