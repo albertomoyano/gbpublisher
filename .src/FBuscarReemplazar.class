@@ -1,7 +1,528 @@
 ' Gambas class file
 
+' ============================================================================
+' FBUSCARREEMPLAZAR - FORMULARIO DE BÚSQUEDA Y REEMPLAZO
+' ============================================================================
+' DESCRIPCIÓN:
+'   FORMULARIO PARA BUSCAR Y REEMPLAZAR TEXTO EN EL ARCHIVO PRINCIPAL
+'   DEL PROYECTO Y EN TODOS LOS ARCHIVOS .MD Y .TEX DENTRO DE /ARTICULOS
+'
+' COMPONENTES DEL FORMULARIO:
+'   - btnMayusculaMinuscula: TOGGLEBUTTON (DEFAULT=FALSE) - DISTINGUE MAYÚSCULAS
+'   - btnExacta: TOGGLEBUTTON (DEFAULT=FALSE) - BÚSQUEDA DE PALABRA COMPLETA
+'   - txtBuscarPalabra: TEXTBOX - TÉRMINO A BUSCAR
+'   - btnMostrarBuscar: BUTTON - EJECUTA LA BÚSQUEDA
+'   - txtReemplazar: TEXTBOX - TEXTO DE REEMPLAZO
+'   - gvBuscarReemplazar: GRIDVIEW - MUESTRA RESULTADOS
+'   - btnAplicar: BUTTON - APLICA REEMPLAZO EN FILA SELECCIONADA
+'   - btnAplicarTodo: BUTTON - APLICA TODOS LOS REEMPLAZOS
+'   - btnCerrar: BUTTON - CIERRA EL FORMULARIO
+'
+' AUTOR: GENERADO PARA GBPUBLISHER
+' ============================================================================
+
+' ARRAYS PARALELOS PARA ALMACENAR DATOS DE CADA COINCIDENCIA
+' CADA ÍNDICE CORRESPONDE A UNA FILA DEL GRIDVIEW
+Private $aRutaArchivo As New String[]      ' RUTA COMPLETA AL ARCHIVO
+Private $aNumeroLinea As New Integer[]     ' NÚMERO DE LÍNEA (BASE 1)
+Private $aPosicionEnLinea As New Integer[] ' POSICIÓN DENTRO DE LA LÍNEA
+
+' ============================================================================
+' FORM_OPEN - INICIALIZACIÓN DEL FORMULARIO
+' ============================================================================
+' CONFIGURA EL GRIDVIEW CON 3 COLUMNAS Y ESTABLECE PROPIEDADES INICIALES
+' ============================================================================
+Public Sub Form_Open()
+
+  ' CONFIGURAR EL GRIDVIEW
+  With gvBuscarReemplazar
+    .Columns.Count = 3
+    .Rows.Count = 0
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Mode = Select.Single
+
+    ' CONFIGURAR ANCHOS Y TÍTULOS DE COLUMNAS
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 200
+    .Columns[1].Title = "Línea"
+    .Columns[1].Width = 100
+    .Columns[2].Title = "Coincidencia"
+    .Columns[2].Width = 400
+  End With
+
+  ' LIMPIAR CAMPOS DE TEXTO
+  txtBuscarPalabra.Text = ""
+  txtReemplazar.Text = ""
+
+  ' INICIALIZAR ARRAYS
+  LimpiarArrays()
+
+End
+
+' ============================================================================
+' LIMPIARARRAYS - LIMPIA TODOS LOS ARRAYS DE COINCIDENCIAS
+' ============================================================================
+Private Sub LimpiarArrays()
+
+  $aRutaArchivo.Clear()
+  $aNumeroLinea.Clear()
+  $aPosicionEnLinea.Clear()
+
+End
+
+' ============================================================================
+' BTNMOSTRARBUSCAR_CLICK - EJECUTA LA BÚSQUEDA
+' ============================================================================
+' BUSCA EL TÉRMINO EN EL ARCHIVO PRINCIPAL Y EN /ARTICULOS
+' RESPETA LOS TOGGLEBUTTONS PARA MAYÚSCULAS Y PALABRA EXACTA
+' ============================================================================
+Public Sub btnMostrarBuscar_Click()
+
+  Dim sTermino As String
+  Dim sRutaProyecto As String
+  Dim sArchivoPrincipal As String
+  Dim sCarpetaArticulos As String
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  ' VALIDAR QUE HAY TÉRMINO DE BÚSQUEDA
+  sTermino = Trim(txtBuscarPalabra.Text)
+  If sTermino = "" Then
+    Message.Warning("Debe ingresar un término de búsqueda.")
+    txtBuscarPalabra.SetFocus()
+    Return
+  Endif
+
+  ' LIMPIAR RESULTADOS ANTERIORES
+  gvBuscarReemplazar.Rows.Count = 0
+  LimpiarArrays()
+
+  ' OBTENER RUTAS DESDE FMAIN
+  sRutaProyecto = FMain.RutaProyecto
+  sArchivoPrincipal = FMain.txtProyecto.Text
+
+  ' VALIDAR QUE EXISTE EL PROYECTO
+  If sRutaProyecto = "" Or Not Exist(sArchivoPrincipal) Then
+    Message.Warning("No hay un proyecto cargado.")
+    Return
+  Endif
+
+  ' BUSCAR EN EL ARCHIVO PRINCIPAL
+  BuscarEnArchivo(sArchivoPrincipal, sTermino)
+
+  ' BUSCAR EN LA CARPETA /ARTICULOS
+  sCarpetaArticulos = sRutaProyecto &/ "articulos"
+
+  If Exist(sCarpetaArticulos) And Stat(sCarpetaArticulos).Type = gb.Directory Then
+    ' OBTENER LISTA DE ARCHIVOS .MD Y .TEX
+    aArchivos = ObtenerArchivos(sCarpetaArticulos)
+
+    For Each sArchivo In aArchivos
+      BuscarEnArchivo(sArchivo, sTermino)
+    Next
+  Endif
+
+  ' MOSTRAR MENSAJE SI NO HAY RESULTADOS
+  If $aRutaArchivo.Count = 0 Then
+    Message.Info("No se encontraron coincidencias.")
+  Endif
+
+End
+
+' ============================================================================
+' OBTENERARCHIVOS - OBTIENE LISTA DE ARCHIVOS .MD Y .TEX EN UNA CARPETA
+' ============================================================================
+' PARÁMETROS:
+'   sCarpeta: RUTA DE LA CARPETA A EXPLORAR
+' RETORNA:
+'   ARRAY CON RUTAS COMPLETAS DE ARCHIVOS .MD Y .TEX
+' ============================================================================
+Private Function ObtenerArchivos(sCarpeta As String) As String[]
+
+  Dim aResultado As New String[]
+  Dim sNombre As String
+  Dim sExtension As String
+
+  ' RECORRER ARCHIVOS EN LA CARPETA (SIN RECURSIÓN)
+  For Each sNombre In Dir(sCarpeta)
+    sExtension = LCase(File.Ext(sNombre))
+
+    ' FILTRAR SOLO ARCHIVOS .MD Y .TEX
+    If sExtension = "md" Or sExtension = "tex" Then
+      aResultado.Add(sCarpeta &/ sNombre)
+    Endif
+  Next
+
+  Return aResultado
+
+End
+
+' ============================================================================
+' BUSCARENARCHIVO - BUSCA COINCIDENCIAS EN UN ARCHIVO ESPECÍFICO
+' ============================================================================
+' PARÁMETROS:
+'   sRutaArchivo: RUTA COMPLETA DEL ARCHIVO
+'   sTermino: TÉRMINO A BUSCAR
+' AÑADE LAS COINCIDENCIAS ENCONTRADAS AL GRIDVIEW Y A LOS ARRAYS
+' ============================================================================
+Private Sub BuscarEnArchivo(sRutaArchivo As String, sTermino As String)
+
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sLineaBusqueda As String
+  Dim sTerminoBusqueda As String
+  Dim iLinea As Integer
+  Dim iPosicion As Integer
+  Dim iFilaGrid As Integer
+  Dim sNombreArchivo As String
+  Dim sCoincidenciaTexto As String
+  Dim bDistingueMayusculas As Boolean
+  Dim bPalabraExacta As Boolean
+
+  ' VERIFICAR QUE EL ARCHIVO EXISTE
+  If Not Exist(sRutaArchivo) Then Return
+
+  ' LEER CONTENIDO DEL ARCHIVO
+  sContenido = File.Load(sRutaArchivo)
+  aLineas = Split(sContenido, "\n")
+
+  ' OBTENER CONFIGURACIÓN DE BÚSQUEDA
+  bDistingueMayusculas = btnMayusculaMinuscula.Value
+  bPalabraExacta = btnExacta.Value
+
+  ' PREPARAR TÉRMINO DE BÚSQUEDA
+  If bDistingueMayusculas Then
+    sTerminoBusqueda = sTermino
+  Else
+    sTerminoBusqueda = LCase(sTermino)
+  Endif
+
+  ' OBTENER NOMBRE DEL ARCHIVO PARA MOSTRAR
+  sNombreArchivo = File.Name(sRutaArchivo)
+
+  ' RECORRER CADA LÍNEA
+  For iLinea = 0 To aLineas.Max
+    sLinea = aLineas[iLinea]
+
+    ' PREPARAR LÍNEA PARA BÚSQUEDA
+    If bDistingueMayusculas Then
+      sLineaBusqueda = sLinea
+    Else
+      sLineaBusqueda = LCase(sLinea)
+    Endif
+
+    ' BUSCAR TODAS LAS OCURRENCIAS EN LA LÍNEA
+    iPosicion = 0
+    Do
+      ' BUSCAR SIGUIENTE OCURRENCIA
+      ' SINTAXIS GAMBAS: InStr(String, Substring [, Start, Comparison])
+      iPosicion = InStr(sLineaBusqueda, sTerminoBusqueda, iPosicion)
+
+      If iPosicion > 0 Then
+        ' VERIFICAR PALABRA EXACTA SI ES NECESARIO
+        If bPalabraExacta Then
+          If Not EsPalabraCompleta(sLineaBusqueda, iPosicion, Len(sTerminoBusqueda)) Then
+            iPosicion = iPosicion + 1
+            Continue
+          Endif
+        Endif
+
+        ' AÑADIR A LOS ARRAYS PARALELOS
+        $aRutaArchivo.Add(sRutaArchivo)
+        $aNumeroLinea.Add(iLinea + 1)  ' BASE 1 PARA MOSTRAR
+        $aPosicionEnLinea.Add(iPosicion)
+
+        ' PREPARAR TEXTO DE COINCIDENCIA (DESDE LA POSICIÓN HASTA FIN DE LÍNEA)
+        sCoincidenciaTexto = Mid$(sLinea, iPosicion)
+
+        ' AÑADIR FILA AL GRIDVIEW
+        iFilaGrid = gvBuscarReemplazar.Rows.Count
+        gvBuscarReemplazar.Rows.Count = iFilaGrid + 1
+        gvBuscarReemplazar[iFilaGrid, 0].Text = sNombreArchivo
+        gvBuscarReemplazar[iFilaGrid, 1].Text = Str(iLinea + 1)
+        gvBuscarReemplazar[iFilaGrid, 2].Text = sCoincidenciaTexto
+
+        ' AVANZAR POSICIÓN PARA BUSCAR SIGUIENTE OCURRENCIA
+        ' EN GAMBAS, START=0 SIGNIFICA INICIO, START>0 ES LA POSICIÓN
+        iPosicion = iPosicion + Len(sTerminoBusqueda)
+      Endif
+    Loop While iPosicion > 0
+  Next
+
+End
+
+' ============================================================================
+' ESPALABRACOMPLETA - VERIFICA SI LA COINCIDENCIA ES UNA PALABRA COMPLETA
+' ============================================================================
+' PARÁMETROS:
+'   sLinea: LÍNEA DE TEXTO
+'   iPosicion: POSICIÓN INICIAL DE LA COINCIDENCIA
+'   iLongitud: LONGITUD DEL TÉRMINO
+' RETORNA:
+'   TRUE SI ES PALABRA COMPLETA, FALSE SI ES PARTE DE OTRA PALABRA
+' ============================================================================
+Private Function EsPalabraCompleta(sLinea As String, iPosicion As Integer, iLongitud As Integer) As Boolean
+
+  Dim sCarAntes As String
+  Dim sCarDespues As String
+
+  ' VERIFICAR CARÁCTER ANTES
+  If iPosicion > 1 Then
+    sCarAntes = Mid$(sLinea, iPosicion - 1, 1)
+    If EsCaracterPalabra(sCarAntes) Then
+      Return False
+    Endif
+  Endif
+
+  ' VERIFICAR CARÁCTER DESPUÉS
+  If iPosicion + iLongitud <= Len(sLinea) Then
+    sCarDespues = Mid$(sLinea, iPosicion + iLongitud, 1)
+    If EsCaracterPalabra(sCarDespues) Then
+      Return False
+    Endif
+  Endif
+
+  Return True
+
+End
+
+' ============================================================================
+' ESCARACTERPALABRA - VERIFICA SI UN CARÁCTER ES PARTE DE UNA PALABRA
+' ============================================================================
+' PARÁMETROS:
+'   sCar: CARÁCTER A VERIFICAR
+' RETORNA:
+'   TRUE SI ES LETRA, NÚMERO O GUIÓN BAJO
+' ============================================================================
+Private Function EsCaracterPalabra(sCar As String) As Boolean
+
+  Dim iCodigo As Integer
+
+  If Len(sCar) = 0 Then Return False
+
+  iCodigo = Asc(sCar)
+
+  ' LETRAS A-Z, a-z, NÚMEROS 0-9, GUIÓN BAJO
+  ' TAMBIÉN INCLUIR LETRAS CON ACENTOS (RANGO EXTENDIDO)
+  If (iCodigo >= 65 And iCodigo <= 90) Then Return True       ' A-Z
+  If (iCodigo >= 97 And iCodigo <= 122) Then Return True      ' a-z
+  If (iCodigo >= 48 And iCodigo <= 57) Then Return True       ' 0-9
+  If iCodigo = 95 Then Return True                             ' _
+  If (iCodigo >= 192 And iCodigo <= 255) Then Return True     ' LETRAS ACENTUADAS
+
+  Return False
+
+End
+
+' ============================================================================
+' BTNAPLICAR_CLICK - APLICA REEMPLAZO EN LA FILA SELECCIONADA
+' ============================================================================
+' VALIDA QUE HAY TEXTO DE REEMPLAZO Y UNA FILA SELECCIONADA
+' REALIZA EL REEMPLAZO SOLO EN ESA OCURRENCIA ESPECÍFICA
+' ============================================================================
+Public Sub btnAplicar_Click()
+
+  Dim sReemplazo As String
+  Dim iFilaSeleccionada As Integer
+
+  ' VALIDAR QUE HAY TEXTO DE REEMPLAZO
+  sReemplazo = txtReemplazar.Text
+  If sReemplazo = "" Then
+    Message.Warning("Debe ingresar el texto de reemplazo.")
+    txtReemplazar.SetFocus()
+    Return
+  Endif
+
+  ' VALIDAR QUE HAY UNA FILA SELECCIONADA
+  iFilaSeleccionada = gvBuscarReemplazar.Row
+  If iFilaSeleccionada < 0 Or iFilaSeleccionada > $aRutaArchivo.Max Then
+    Message.Warning("Debe seleccionar una fila del listado.")
+    Return
+  Endif
+
+  ' APLICAR EL REEMPLAZO
+  AplicarReemplazoEnArchivo(iFilaSeleccionada, txtBuscarPalabra.Text, sReemplazo)
+
+  ' ELIMINAR LA FILA DEL GRIDVIEW Y DE LOS ARRAYS
+  gvBuscarReemplazar.Rows.Remove(iFilaSeleccionada)
+  $aRutaArchivo.Remove(iFilaSeleccionada)
+  $aNumeroLinea.Remove(iFilaSeleccionada)
+  $aPosicionEnLinea.Remove(iFilaSeleccionada)
+
+End
+
+' ============================================================================
+' BTNAPLICARTODO_CLICK - APLICA REEMPLAZO EN TODAS LAS COINCIDENCIAS
+' ============================================================================
+' VALIDA QUE HAY TEXTO DE REEMPLAZO
+' RECORRE TODAS LAS COINCIDENCIAS Y APLICA LOS REEMPLAZOS
+' ============================================================================
+Public Sub btnAplicarTodo_Click()
+
+  Dim sReemplazo As String
+  Dim i As Integer
+
+  ' VALIDAR QUE HAY TEXTO DE REEMPLAZO
+  sReemplazo = txtReemplazar.Text
+  If sReemplazo = "" Then
+    Message.Warning("Debe ingresar el texto de reemplazo.")
+    txtReemplazar.SetFocus()
+    Return
+  Endif
+
+  ' VALIDAR QUE HAY COINCIDENCIAS
+  If $aRutaArchivo.Count = 0 Then
+    Message.Warning("No hay coincidencias para reemplazar.")
+    Return
+  Endif
+
+  ' APLICAR REEMPLAZOS EN ORDEN INVERSO PARA MANTENER POSICIONES VÁLIDAS
+  ' (PROCESAMOS DE ABAJO HACIA ARRIBA)
+  For i = $aRutaArchivo.Max To 0 Step -1
+    AplicarReemplazoEnArchivo(i, txtBuscarPalabra.Text, sReemplazo)
+  Next
+
+  ' LIMPIAR GRIDVIEW Y ARRAYS
+  gvBuscarReemplazar.Rows.Count = 0
+  LimpiarArrays()
+
+End
+
+' ============================================================================
+' APLICARREEMPLAZOARCHIVO - APLICA UN REEMPLAZO EN UN ARCHIVO
+' ============================================================================
+' PARÁMETROS:
+'   iIndice: ÍNDICE EN LOS ARRAYS PARALELOS
+'   sTermino: TÉRMINO ORIGINAL A BUSCAR
+'   sReemplazo: TEXTO DE REEMPLAZO
+' SI EL ARCHIVO ES EL QUE ESTÁ EN EL EDITOR DE FMAIN, MODIFICA EL EDITOR
+' SI NO, MODIFICA DIRECTAMENTE EL ARCHIVO EN DISCO
+' ============================================================================
+Private Sub AplicarReemplazoEnArchivo(iIndice As Integer, sTermino As String, sReemplazo As String)
+
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sNuevaLinea As String
+  Dim iIndiceLinea As Integer
+  Dim sRutaArchivo As String
+  Dim iPosicion As Integer
+
+  ' OBTENER DATOS DE LOS ARRAYS
+  sRutaArchivo = $aRutaArchivo[iIndice]
+  iIndiceLinea = $aNumeroLinea[iIndice] - 1  ' CONVERTIR A BASE 0
+  iPosicion = $aPosicionEnLinea[iIndice]
+
+  ' VERIFICAR SI ES EL ARCHIVO QUE ESTÁ EN EL EDITOR
+  ' USAMOS sRutaArchivoAbierto QUE GUARDA LA RUTA DEL ARCHIVO ACTUALMENTE ABIERTO
+  If sRutaArchivo = FMain.sRutaArchivoAbierto Then
+    ' MODIFICAR DIRECTAMENTE EN EL EDITOR DE FMAIN
+    ModificarEnEditor(iIndiceLinea, iPosicion, sTermino, sReemplazo)
+  Else
+    ' MODIFICAR EL ARCHIVO EN DISCO
+    sContenido = File.Load(sRutaArchivo)
+    aLineas = Split(sContenido, "\n")
+
+    ' VERIFICAR QUE LA LÍNEA EXISTE
+    If iIndiceLinea >= 0 And iIndiceLinea <= aLineas.Max Then
+      sLinea = aLineas[iIndiceLinea]
+
+      ' REEMPLAZAR SOLO EN LA POSICIÓN ESPECÍFICA
+      sNuevaLinea = ReemplazarEnPosicion(sLinea, sTermino, sReemplazo, iPosicion)
+      aLineas[iIndiceLinea] = sNuevaLinea
+
+      ' GUARDAR EL ARCHIVO
+      sContenido = aLineas.Join("\n")
+      File.Save(sRutaArchivo, sContenido)
+    Endif
+  Endif
+
+End
+
+' ============================================================================
+' MODIFICARENEDITOR - MODIFICA EL CONTENIDO DEL EDITOR EN FMAIN
+' ============================================================================
+' PARÁMETROS:
+'   iIndiceLinea: ÍNDICE DE LA LÍNEA (BASE 0)
+'   iPosicion: POSICIÓN DENTRO DE LA LÍNEA
+'   sTermino: TÉRMINO A BUSCAR
+'   sReemplazo: TEXTO DE REEMPLAZO
+' MODIFICA DIRECTAMENTE LA PROPIEDAD TEXT DEL TEXTEDITOR EN FMAIN
+' ============================================================================
+Private Sub ModificarEnEditor(iIndiceLinea As Integer, iPosicion As Integer, sTermino As String, sReemplazo As String)
+
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sNuevaLinea As String
+
+  ' OBTENER CONTENIDO DEL EDITOR
+  sContenido = FMain.txtEditorProyecto.Text
+  aLineas = Split(sContenido, "\n")
+
+  ' VERIFICAR QUE LA LÍNEA EXISTE
+  If iIndiceLinea >= 0 And iIndiceLinea <= aLineas.Max Then
+    sLinea = aLineas[iIndiceLinea]
+
+    ' REEMPLAZAR EN LA POSICIÓN ESPECÍFICA
+    sNuevaLinea = ReemplazarEnPosicion(sLinea, sTermino, sReemplazo, iPosicion)
+    aLineas[iIndiceLinea] = sNuevaLinea
+
+    ' ACTUALIZAR EL EDITOR
+    FMain.txtEditorProyecto.Text = aLineas.Join("\n")
+  Endif
+
+End
+
+' ============================================================================
+' REEMPLAZARPOSICION - REEMPLAZA TEXTO EN UNA POSICIÓN ESPECÍFICA
+' ============================================================================
+' PARÁMETROS:
+'   sLinea: LÍNEA ORIGINAL
+'   sTermino: TÉRMINO A REEMPLAZAR
+'   sReemplazo: TEXTO DE REEMPLAZO
+'   iPosicion: POSICIÓN DONDE HACER EL REEMPLAZO
+' RETORNA:
+'   LÍNEA CON EL REEMPLAZO APLICADO
+' ============================================================================
+Private Function ReemplazarEnPosicion(sLinea As String, sTermino As String, sReemplazo As String, iPosicion As Integer) As String
+
+  Dim sAntes As String
+  Dim sDespues As String
+  Dim iLongitud As Integer
+
+  iLongitud = Len(sTermino)
+
+  ' VERIFICAR QUE LA POSICIÓN ES VÁLIDA
+  If iPosicion < 1 Or iPosicion > Len(sLinea) Then
+    Return sLinea
+  Endif
+
+  ' DIVIDIR LA LÍNEA
+  sAntes = Left$(sLinea, iPosicion - 1)
+  sDespues = Mid$(sLinea, iPosicion + iLongitud)
+
+  ' RECONSTRUIR CON EL REEMPLAZO
+  Return sAntes & sReemplazo & sDespues
+
+End
+
+' ============================================================================
+' BTNCERRAR_CLICK - CIERRA EL FORMULARIO
+' ============================================================================
 Public Sub btnCerrar_Click()
 
-  Me.Close
+  Me.Close()
+
+End
+
+' ============================================================================
+' FORM_CLOSE - LIMPIEZA AL CERRAR EL FORMULARIO
+' ============================================================================
+Public Sub Form_Close()
+
+  LimpiarArrays()
 
 End
