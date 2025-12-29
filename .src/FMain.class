@@ -4247,14 +4247,14 @@ Public Sub btnCrearCuadro_Click()
 
 End
 
-Public Sub btnMostrarTodas_Click()
+Public Sub btnResultados_Click()
 
   ' Primero verificar si hay resultados suficientes
   If vConteo.Value > 1 Then
     ' Si hay resultados, el estado del botón controla la visibilidad
-    TabPanelIzquierdaInferior[6].Visible = btnMostrarTodas.Value
+    TabPanelIzquierdaInferior[6].Visible = btnResultados.Value
 
-    If btnMostrarTodas.Value Then
+    If btnResultados.Value Then
       ' Si se activa el botón, mostrar la solapa
       TabPanelIzquierdaInferior.Index = 6
     Endif
@@ -4262,23 +4262,35 @@ Public Sub btnMostrarTodas_Click()
   Else
     ' Si no hay suficientes resultados
     ' Solo mostrar mensaje si el botón estaba activado (intentando activarse)
-    If btnMostrarTodas.Value = True Then
+    If btnResultados.Value = True Then
       m_Sonido.sonar("Info")
       Message.Info("El resultado de la búsqueda debe ser mayor a 2.")
     Endif
 
-    btnMostrarTodas.Value = False  ' Desactivar el botón
+    btnResultados.Value = False  ' Desactivar el botón
     TabPanelIzquierdaInferior[6].Visible = False
   Endif
 
 End
 
+' ==============================================================================
+' BTNMOSTRARBUSCAR_CLICK - MUESTRA/OCULTA EL PANEL DE BÚSQUEDA
+' ==============================================================================
+' AL OCULTAR EL PANEL, LIMPIA EL TEXTBOX Y LOS RESULTADOS DE BÚSQUEDA
+' ==============================================================================
 Public Sub btnMostrarBuscar_Click()
 
   If btnMostrarBuscar.Value Then
     HBoxBuscar.Visible = True
   Else
+    btnExacta.Value = False
+    btnMayMin.Value = False
+    btnResultados.Value = False
     HBoxBuscar.Visible = False
+    TabPanelIzquierdaInferior[6].Visible = False
+    txtBuscarPalabra.Text = ""
+    LimpiarBusqueda()
+
   Endif
 
 End
@@ -5254,5 +5266,337 @@ Public Sub btnCercania_Click()
 
   ' LLAMAR A LA FUNCIÓN DEL MÓDULO m_EscanerTipografico
   m_EscanerTipografico.MostrarControlCercania()
+
+End
+'
+'
+'
+'
+' ============================================================================
+' CÓDIGO PARA AGREGAR A FMAIN - FUNCIONALIDAD DE BÚSQUEDA EN EDITOR
+' ============================================================================
+' COMPONENTES REQUERIDOS EN FMAIN:
+'   - btnMayMin: TOGGLEBUTTON - DISTINGUE MAYÚSCULAS/MINÚSCULAS
+'   - btnExacta: TOGGLEBUTTON - BÚSQUEDA DE PALABRA COMPLETA
+'   - btnBuscar: BUTTON - EJECUTA LA BÚSQUEDA
+'   - txtBuscarPalabra: TEXTBOX - TÉRMINO A BUSCAR
+'   - btnIrAsiguiente: BUTTON - IR A SIGUIENTE COINCIDENCIA
+'   - vConteo: VALUEBOX (READONLY) - CANTIDAD DE COINCIDENCIAS
+'   - btnResultados: TOGGLEBUTTON - MUESTRA/OCULTA GRIDVIEW DE RESULTADOS
+'   - gvResultados: GRIDVIEW - LISTA DE RESULTADOS (2 COLUMNAS)
+'   - TabPanelIzquierdaInferior: TABSTRIP - SOLAPA [6] PARA RESULTADOS
+' ============================================================================
+
+' ARRAYS PARALELOS PARA ALMACENAR LAS COINCIDENCIAS DE BÚSQUEDA
+Private $aBusqNumeroLinea As New Integer[]    ' NÚMERO DE LÍNEA (BASE 1)
+Private $aBusqPosicionEnLinea As New Integer[] ' POSICIÓN DENTRO DE LA LÍNEA
+
+' ÍNDICE DE LA COINCIDENCIA ACTUAL (PARA btnIrAsiguiente)
+Private $iBusqIndiceActual As Integer
+
+' ============================================================================
+' BTNBUSCAR_CLICK - EJECUTA LA BÚSQUEDA EN EL EDITOR
+' ============================================================================
+' BUSCA EL TÉRMINO EN txtEditorProyecto.Text
+' RESPETA btnMayMin Y btnExacta
+' ACTUALIZA vConteo, LLENA gvResultados Y POSICIONA EN LA PRIMERA COINCIDENCIA
+' ============================================================================
+Public Sub btnBuscar_Click()
+
+  Dim sTermino As String
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sLineaBusqueda As String
+  Dim sTerminoBusqueda As String
+  Dim iLinea As Integer
+  Dim iPosicion As Integer
+  Dim iFilaGrid As Integer
+  Dim sCoincidenciaTexto As String
+  Dim bDistingueMayusculas As Boolean
+  Dim bPalabraExacta As Boolean
+
+  ' VALIDAR QUE HAY TÉRMINO DE BÚSQUEDA
+  sTermino = Trim(txtBuscarPalabra.Text)
+  If sTermino = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar un término de búsqueda.")
+    txtBuscarPalabra.SetFocus()
+    Return
+  Endif
+
+  ' LIMPIAR RESULTADOS ANTERIORES
+  LimpiarBusqueda()
+
+  ' OBTENER CONTENIDO DEL EDITOR
+  sContenido = txtEditorProyecto.Text
+  If sContenido = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("El editor está vacío.")
+    Return
+  Endif
+
+  aLineas = Split(sContenido, "\n")
+
+  ' OBTENER CONFIGURACIÓN DE BÚSQUEDA
+  bDistingueMayusculas = btnMayMin.Value
+  bPalabraExacta = btnExacta.Value
+
+  ' PREPARAR TÉRMINO DE BÚSQUEDA
+  If bDistingueMayusculas Then
+    sTerminoBusqueda = sTermino
+  Else
+    sTerminoBusqueda = LCase(sTermino)
+  Endif
+
+  ' CONFIGURAR GRIDVIEW (2 COLUMNAS: LÍNEA, COINCIDENCIA)
+  With gvResultados
+    .Columns.Count = 2
+    .Rows.Count = 0
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Mode = Select.Single
+    .Columns[0].Title = "Línea"
+    .Columns[0].Width = 100
+    .Columns[1].Title = "Coincidencia"
+    .Columns[1].Width = 500
+  End With
+
+  ' RECORRER CADA LÍNEA
+  For iLinea = 0 To aLineas.Max
+    sLinea = aLineas[iLinea]
+
+    ' PREPARAR LÍNEA PARA BÚSQUEDA
+    If bDistingueMayusculas Then
+      sLineaBusqueda = sLinea
+    Else
+      sLineaBusqueda = LCase(sLinea)
+    Endif
+
+    ' BUSCAR TODAS LAS OCURRENCIAS EN LA LÍNEA
+    iPosicion = 0
+    Do
+      ' BUSCAR SIGUIENTE OCURRENCIA
+      ' SINTAXIS GAMBAS: InStr(String, Substring [, Start, Comparison])
+      iPosicion = InStr(sLineaBusqueda, sTerminoBusqueda, iPosicion)
+
+      If iPosicion > 0 Then
+        ' VERIFICAR PALABRA EXACTA SI ES NECESARIO
+        If bPalabraExacta Then
+          If Not EsPalabraCompletaBusq(sLineaBusqueda, iPosicion, Len(sTerminoBusqueda)) Then
+            iPosicion = iPosicion + 1
+            Continue
+          Endif
+        Endif
+
+        ' AÑADIR A LOS ARRAYS PARALELOS
+        $aBusqNumeroLinea.Add(iLinea + 1)  ' BASE 1 PARA MOSTRAR
+        $aBusqPosicionEnLinea.Add(iPosicion)
+
+        ' PREPARAR TEXTO DE COINCIDENCIA (DESDE LA POSICIÓN HASTA FIN DE LÍNEA)
+        sCoincidenciaTexto = Mid$(sLinea, iPosicion)
+
+        ' AÑADIR FILA AL GRIDVIEW
+        iFilaGrid = gvResultados.Rows.Count
+        gvResultados.Rows.Count = iFilaGrid + 1
+        gvResultados[iFilaGrid, 0].Text = Str(iLinea + 1)
+        gvResultados[iFilaGrid, 1].Text = sCoincidenciaTexto
+
+        ' AVANZAR POSICIÓN PARA BUSCAR SIGUIENTE OCURRENCIA
+        iPosicion = iPosicion + Len(sTerminoBusqueda)
+      Endif
+    Loop While iPosicion > 0
+  Next
+
+  ' ACTUALIZAR CONTEO
+  vConteo.Value = $aBusqNumeroLinea.Count
+
+  ' PROCESAR RESULTADOS SEGÚN CANTIDAD
+  Select Case $aBusqNumeroLinea.Count
+    Case 0
+      ' NO HAY COINCIDENCIAS
+      m_Sonido.sonar("Info")
+      Message.Info("No se encontraron coincidencias.")
+      btnResultados.Value = False
+      TabPanelIzquierdaInferior[6].Visible = False
+
+    Case 1
+      ' UNA SOLA COINCIDENCIA - IR A ESA LÍNEA
+      $iBusqIndiceActual = 0
+      IrALineaBusqueda($aBusqNumeroLinea[0])
+      btnResultados.Value = False
+      TabPanelIzquierdaInferior[6].Visible = False
+
+    Case Else
+      ' DOS O MÁS COINCIDENCIAS - IR A LA PRIMERA
+      $iBusqIndiceActual = 0
+      IrALineaBusqueda($aBusqNumeroLinea[0])
+
+  End Select
+
+End
+
+' ============================================================================
+' LIMPIARBUSQUEDA - LIMPIA LOS ARRAYS Y RESETEA EL ÍNDICE
+' ============================================================================
+Private Sub LimpiarBusqueda()
+
+  $aBusqNumeroLinea.Clear()
+  $aBusqPosicionEnLinea.Clear()
+  $iBusqIndiceActual = 0
+  gvResultados.Rows.Count = 0
+  vConteo.Value = 0
+
+End
+
+' ============================================================================
+' ESPALABRACOMPLETA - VERIFICA SI LA COINCIDENCIA ES UNA PALABRA COMPLETA
+' ============================================================================
+' PARÁMETROS:
+'   sLinea: LÍNEA DE TEXTO
+'   iPosicion: POSICIÓN INICIAL DE LA COINCIDENCIA
+'   iLongitud: LONGITUD DEL TÉRMINO
+' RETORNA:
+'   TRUE SI ES PALABRA COMPLETA, FALSE SI ES PARTE DE OTRA PALABRA
+' ============================================================================
+Private Function EsPalabraCompletaBusq(sLinea As String, iPosicion As Integer, iLongitud As Integer) As Boolean
+
+  Dim sCarAntes As String
+  Dim sCarDespues As String
+
+  ' VERIFICAR CARÁCTER ANTES
+  If iPosicion > 1 Then
+    sCarAntes = Mid$(sLinea, iPosicion - 1, 1)
+    If EsCaracterPalabraBusq(sCarAntes) Then
+      Return False
+    Endif
+  Endif
+
+  ' VERIFICAR CARÁCTER DESPUÉS
+  If iPosicion + iLongitud <= Len(sLinea) Then
+    sCarDespues = Mid$(sLinea, iPosicion + iLongitud, 1)
+    If EsCaracterPalabraBusq(sCarDespues) Then
+      Return False
+    Endif
+  Endif
+
+  Return True
+
+End
+
+' ============================================================================
+' ESCARACTERPALABRABUSC - VERIFICA SI UN CARÁCTER ES PARTE DE UNA PALABRA
+' ============================================================================
+Private Function EsCaracterPalabraBusq(sCar As String) As Boolean
+
+  Dim iCodigo As Integer
+
+  If Len(sCar) = 0 Then Return False
+
+  iCodigo = Asc(sCar)
+
+  ' LETRAS A-Z, a-z, NÚMEROS 0-9, GUIÓN BAJO
+  ' TAMBIÉN INCLUIR LETRAS CON ACENTOS (RANGO EXTENDIDO)
+  If (iCodigo >= 65 And iCodigo <= 90) Then Return True       ' A-Z
+  If (iCodigo >= 97 And iCodigo <= 122) Then Return True      ' a-z
+  If (iCodigo >= 48 And iCodigo <= 57) Then Return True       ' 0-9
+  If iCodigo = 95 Then Return True                             ' _
+  If (iCodigo >= 192 And iCodigo <= 255) Then Return True     ' LETRAS ACENTUADAS
+
+  Return False
+
+End
+
+' ============================================================================
+' IRALINEABUSQUEDA - POSICIONA UNA LÍNEA AL TOPE DE LA VENTANA DEL EDITOR
+' ============================================================================
+' PARÁMETROS:
+'   iLinea: NÚMERO DE LÍNEA (BASE 1)
+' MUEVE EL CURSOR Y AJUSTA EL SCROLL PARA QUE LA LÍNEA QUEDE AL TOPE
+' ============================================================================
+Private Sub IrALineaBusqueda(iLinea As Integer)
+
+  Dim iCursorY As Integer
+
+  ' VERIFICAR QUE LA LÍNEA EXISTA
+  If iLinea < 1 Or iLinea > txtEditorProyecto.Count Then Return
+
+  ' MOVER EL CURSOR A LA LÍNEA (COLUMNA 0, LÍNEA EN BASE 0)
+  txtEditorProyecto.Goto(0, iLinea - 1)
+
+  ' OBTENER LA POSICIÓN Y DEL CURSOR DESPUÉS DEL GOTO
+  ' CursorAt CONVIERTE LA POSICIÓN DEL CURSOR EN COORDENADAS DE PIXEL
+  iCursorY = txtEditorProyecto.CursorAt(txtEditorProyecto.Line, txtEditorProyecto.Column).Y
+
+  ' AJUSTAR EL SCROLL SUMANDO LA POSICIÓN ACTUAL DEL SCROLL
+  txtEditorProyecto.ScrollY = txtEditorProyecto.ScrollY + iCursorY
+
+End
+
+' ============================================================================
+' BTNIRASIGUIENTE_CLICK - IR A LA SIGUIENTE COINCIDENCIA
+' ============================================================================
+' AVANZA AL SIGUIENTE RESULTADO DE BÚSQUEDA
+' AL LLEGAR AL FINAL, PREGUNTA SI VOLVER AL INICIO
+' ============================================================================
+Public Sub btnIrAsiguiente_Click()
+
+  Dim iRespuesta As Integer
+
+  ' VERIFICAR QUE HAY COINCIDENCIAS
+  If $aBusqNumeroLinea.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("No hay resultados de búsqueda.")
+    Return
+  Endif
+
+  ' AVANZAR AL SIGUIENTE ÍNDICE
+  $iBusqIndiceActual = $iBusqIndiceActual + 1
+
+  ' VERIFICAR SI LLEGAMOS AL FINAL
+  If $iBusqIndiceActual > $aBusqNumeroLinea.Max Then
+    m_Sonido.sonar("Question")
+    iRespuesta = Message.Question("Se llegó al final del archivo." & gb.NewLine &
+      "¿Desea volver al inicio?", "Sí", "No")
+
+    If iRespuesta = 1 Then
+      ' VOLVER AL INICIO
+      $iBusqIndiceActual = 0
+      IrALineaBusqueda($aBusqNumeroLinea[0])
+    Else
+      ' MANTENER EN LA ÚLTIMA POSICIÓN
+      $iBusqIndiceActual = $aBusqNumeroLinea.Max
+    Endif
+    Return
+  Endif
+
+  ' IR A LA SIGUIENTE COINCIDENCIA
+  IrALineaBusqueda($aBusqNumeroLinea[$iBusqIndiceActual])
+
+End
+
+' ============================================================================
+' GVRESULTADOS_CLICK - AL HACER CLIC EN UNA FILA DEL GRIDVIEW
+' ============================================================================
+' POSICIONA LA LÍNEA SELECCIONADA AL TOPE DEL EDITOR
+' PERMITE SALTAR A CUALQUIER COINCIDENCIA DIRECTAMENTE
+' ============================================================================
+Public Sub gvResultados_Click()
+
+  Dim iFilaSeleccionada As Integer
+
+  ' OBTENER FILA SELECCIONADA
+  iFilaSeleccionada = gvResultados.Row
+
+  ' VERIFICAR QUE HAY UNA FILA VÁLIDA SELECCIONADA
+  If iFilaSeleccionada < 0 Or iFilaSeleccionada > $aBusqNumeroLinea.Max Then
+    Return
+  Endif
+
+  ' ACTUALIZAR EL ÍNDICE ACTUAL
+  $iBusqIndiceActual = iFilaSeleccionada
+
+  ' IR A LA LÍNEA SELECCIONADA
+  IrALineaBusqueda($aBusqNumeroLinea[iFilaSeleccionada])
 
 End
