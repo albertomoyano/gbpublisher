@@ -1,0 +1,330 @@
+' Gambas class file
+
+' FORMULARIO PARA MOSTRAR INFORMACIÓN DEL REPOSITORIO GIT
+'
+' MUESTRA:
+'   - RAMA ACTUAL
+'   - ÚLTIMO COMMIT (FECHA Y MENSAJE)
+'   - ARCHIVOS MODIFICADOS SIN COMMITEAR
+'   - COMMITS PENDIENTES DE PUSH
+'   - TOTAL DE COMMITS
+'   - HISTORIAL DE LOS ÚLTIMOS 10 COMMITS
+'   - LISTA DE ARCHIVOS MODIFICADOS
+
+' RUTA COMPLETA DEL PROYECTO ACTUAL
+Private sRutaCompleta As String
+
+Public Sub Form_Open()
+  ' CONFIGURAR EL FORMULARIO
+
+  Me.Center()
+
+  ' OBTENER EL DIRECTORIO DEL PROYECTO DESDE LA RUTA DEL ARCHIVO
+  sRutaCompleta = File.Dir(FMain.txtProyecto.Text)
+
+  ' CONFIGURAR EL GRIDVIEW DE HISTORIAL
+  ConfigurarGridHistorial()
+
+  ' CONFIGURAR EL GRIDVIEW DE ARCHIVOS MODIFICADOS
+  ConfigurarGridArchivos()
+
+  ' CARGAR LA INFORMACIÓN DE GIT
+  CargarInformacionGit()
+
+End
+
+Private Sub ConfigurarGridHistorial()
+  ' CONFIGURA EL GRIDVIEW PARA MOSTRAR EL HISTORIAL DE COMMITS
+  '
+  ' COLUMNAS:
+  '   0 - HASH (7 CARACTERES)
+  '   1 - AUTOR
+  '   2 - FECHA RELATIVA
+  '   3 - MENSAJE
+
+  With gvHistorial
+    .Columns.Count = 4
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Columns[0].Title = "Hash"
+    .Columns[0].Width = 150
+    .Columns[1].Title = "Autor"
+    .Columns[1].Width = 150
+    .Columns[2].Title = "Fecha"
+    .Columns[2].Width = 150
+    .Columns[3].Title = "Mensaje"
+    .Columns[3].Width = 400
+  End With
+
+End
+
+Private Sub ConfigurarGridArchivos()
+  ' CONFIGURA EL GRIDVIEW PARA MOSTRAR ARCHIVOS MODIFICADOS
+  '
+  ' COLUMNAS:
+  '   0 - ESTADO (M=MODIFICADO, A=AGREGADO, D=ELIMINADO, ?=SIN SEGUIMIENTO)
+  '   1 - NOMBRE DEL ARCHIVO
+
+  With gvArchivos
+    .Columns.Count = 2
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Columns[0].Title = "Estado"
+    .Columns[0].Width = 200
+    .Columns[1].Title = "Archivo"
+    .Columns[1].Width = 350
+  End With
+
+End
+
+Private Sub CargarInformacionGit()
+  ' CARGA TODA LA INFORMACIÓN DEL REPOSITORIO GIT
+  ' LLAMA A LOS MÉTODOS INDIVIDUALES PARA CADA SECCIÓN
+
+  ' VERIFICAR QUE ESTAMOS EN UN REPOSITORIO GIT
+  If Not EsRepositorioGit() Then
+    Message.Warning("El directorio actual no es un repositorio Git", "Ok")
+    Return
+  Endif
+
+  ObtenerRamaActual()
+  ObtenerUltimoCommit()
+  ObtenerArchivosModificados()
+  ObtenerCommitsPendientes()
+  ObtenerTotalCommits()
+  ObtenerHistorialCommits()
+
+End
+
+Private Function EsRepositorioGit() As Boolean
+  ' VERIFICA SI EL DIRECTORIO DEL PROYECTO ES UN REPOSITORIO GIT
+  '
+  ' RETORNA:
+  '   TRUE SI ES UN REPOSITORIO GIT
+  '   FALSE EN CASO CONTRARIO
+
+  Dim resultado As String
+
+  resultado = EjecutarComandoGit("rev-parse --is-inside-work-tree 2>/dev/null")
+  Return Trim(resultado) = "true"
+
+End
+
+Private Sub ObtenerRamaActual()
+  ' OBTIENE Y MUESTRA LA RAMA ACTUAL DEL REPOSITORIO
+
+  Dim rama As String
+
+  rama = Trim(EjecutarComandoGit("branch --show-current"))
+  If rama = "" Then
+    rama = "(sin rama)"
+  Endif
+
+  lblRamaActual.Text = rama
+
+End
+
+Private Sub ObtenerUltimoCommit()
+  ' OBTIENE Y MUESTRA LA INFORMACIÓN DEL ÚLTIMO COMMIT
+  ' FORMATO: FECHA - MENSAJE
+
+  Dim resultado As String
+
+  resultado = Trim(EjecutarComandoGit("log -1 --pretty=format:'%ar - %s' 2>/dev/null"))
+  If resultado = "" Then
+    resultado = "(sin commits)"
+  Endif
+
+  lblUltimoCommit.Text = resultado
+
+End
+
+Private Function TraducirEstadoGit(estado As String) As String
+  ' TRADUCE LOS CÓDIGOS DE ESTADO DE GIT A TEXTO LEGIBLE
+  '
+  ' PARÁMETROS:
+  '   estado: CÓDIGO DE ESTADO DE GIT (M, A, D, ??, ETC.)
+  '
+  ' RETORNA:
+  '   TEXTO DESCRIPTIVO DEL ESTADO
+
+  Select Case estado
+    Case "M"
+      Return "Modificado"
+    Case "A"
+      Return "Nuevo"
+    Case "D"
+      Return "Eliminado"
+    Case "??"
+      Return "Sin seguimiento"
+    Case "R"
+      Return "Renombrado"
+    Case "C"
+      Return "Copiado"
+    Case "U"
+      Return "Conflicto"
+    Case Else
+      Return estado
+  End Select
+
+End
+
+Private Sub ObtenerCommitsPendientes()
+  ' OBTIENE LA CANTIDAD DE COMMITS PENDIENTES DE PUSH
+  ' COMPARA LA RAMA LOCAL CON origin/main
+
+  Dim resultado As String
+  Dim pendientes As Integer
+
+  resultado = EjecutarComandoGit("log origin/main..HEAD --oneline 2>/dev/null")
+
+  If Trim(resultado) = "" Then
+    pendientes = 0
+  Else
+    pendientes = Split(resultado, "\n").Count
+  Endif
+
+  lblCommitsPendientes.Text = Str(pendientes)
+
+End
+
+Private Sub ObtenerTotalCommits()
+  ' OBTIENE EL NÚMERO TOTAL DE COMMITS EN EL REPOSITORIO
+
+  Dim resultado As String
+
+  resultado = Trim(EjecutarComandoGit("rev-list --count HEAD 2>/dev/null"))
+
+  If resultado = "" Then
+    resultado = "0"
+  Endif
+
+  lblTotalCommits.Text = resultado
+
+End
+
+Private Sub ObtenerHistorialCommits()
+  ' OBTIENE LOS ÚLTIMOS 10 COMMITS Y LOS MUESTRA EN EL GRIDVIEW
+  ' FORMATO: HASH;AUTOR;FECHA_RELATIVA;MENSAJE
+
+  Dim resultado As String
+  Dim lineas As String[]
+  Dim linea As String
+  Dim campos As String[]
+  Dim fila As Integer
+
+  resultado = EjecutarComandoGit("log --pretty=format:'%h;%an;%ar;%s' -n 10 2>/dev/null")
+
+  ' LIMPIAR EL GRIDVIEW
+  gvHistorial.Rows.Count = 0
+
+  If Trim(resultado) = "" Then
+    Return
+  Endif
+
+  lineas = Split(resultado, "\n")
+  gvHistorial.Rows.Count = lineas.Count
+
+  For Each linea In lineas
+    campos = Split(linea, ";")
+
+    If campos.Count >= 4 Then
+      gvHistorial[fila, 0].Text = campos[0]  ' HASH
+      gvHistorial[fila, 1].Text = campos[1]  ' AUTOR
+      gvHistorial[fila, 2].Text = campos[2]  ' FECHA
+      gvHistorial[fila, 3].Text = campos[3]  ' MENSAJE
+    Endif
+
+    Inc fila
+  Next
+
+End
+
+Private Function EjecutarComandoGit(comando As String) As String
+  ' EJECUTA UN COMANDO GIT EN EL DIRECTORIO DEL PROYECTO
+  '
+  ' PARÁMETROS:
+  '   comando: COMANDO GIT SIN EL PREFIJO "git"
+  '
+  ' RETORNA:
+  '   SALIDA DEL COMANDO COMO STRING
+
+  Dim resultado As String
+  Dim comandoCompleto As String
+
+  ' CONSTRUIR EL COMANDO COMPLETO
+  ' SHELL$() ESCAPA LA RUTA PARA QUE SEA SEGURA EN EL SHELL
+  comandoCompleto = "git -C " & Shell$(sRutaCompleta) & " " & comando
+
+  ' EJECUTAR EL COMANDO Y CAPTURAR LA SALIDA
+  Shell comandoCompleto To resultado
+
+  Return resultado
+
+End
+
+Public Sub btnActualizar_Click()
+  ' RECARGA TODA LA INFORMACIÓN DE GIT
+
+  CargarInformacionGit()
+
+End
+
+Public Sub btnCerrar_Click()
+  ' CIERRA EL FORMULARIO
+
+  Me.Close()
+
+End
+
+Private Sub ObtenerArchivosModificados()
+  ' OBTIENE LA LISTA DE ARCHIVOS MODIFICADOS Y LOS MUESTRA EN EL GRIDVIEW
+  ' USA git status --porcelain PARA OBTENER UN FORMATO PARSEABLE
+
+  Dim resultado As String
+  Dim lineas As String[]
+  Dim linea As String
+  Dim estado As String
+  Dim archivo As String
+  Dim fila As Integer
+  Dim cantidadFilas As Integer
+
+  resultado = EjecutarComandoGit("status --porcelain")
+
+  ' LIMPIAR EL GRIDVIEW
+  gvArchivos.Rows.Count = 0
+
+  If Trim(resultado) = "" Then
+    lblArchivosModificados.Text = "0"
+    Return
+  Endif
+
+  lineas = Split(resultado, "\n")
+
+  ' CONTAR SOLO LAS LÍNEAS CON CONTENIDO
+  cantidadFilas = 0
+  For Each linea In lineas
+    If Len(Trim(linea)) > 0 Then
+      Inc cantidadFilas
+    Endif
+  Next
+
+  gvArchivos.Rows.Count = cantidadFilas
+
+  ' LLENAR EL GRID SOLO CON LÍNEAS QUE TIENEN CONTENIDO
+  For Each linea In lineas
+    If Len(linea) >= 3 Then
+      ' LOS PRIMEROS 2 CARACTERES SON EL ESTADO
+      estado = Left(linea, 2)
+      archivo = Mid(linea, 4)
+
+      gvArchivos[fila, 0].Text = TraducirEstadoGit(Trim(estado))
+      gvArchivos[fila, 1].Text = archivo
+
+      Inc fila
+    Endif
+  Next
+
+  lblArchivosModificados.Text = Str(fila)
+
+End

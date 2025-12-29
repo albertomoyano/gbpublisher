@@ -614,44 +614,43 @@ Public Sub ComboBoxArticuloAsociado_Click()
 End
 
 Public Sub BtnNuevoBib_Click()
-
   ' VERIFICAR SI HAY UN PROYECTO ACTIVO
+
   If Trim(txtProyecto.Text) = "" Then
     m_Sonido.sonar("Info")
     Message.Info("No hay un proyecto en curso. Por favor, abra o cree un proyecto antes de continuar.")
     Return
-  Else
-    ' LIMPIAMOS LOS TEXTBOX AL INICIAR UNA NUEVA CARGA
-    m_Bibtex.LimpiarTextboxBibtex()
-
-    ' SOLO SI HAY PROYECTO SE EJECUTA LO SIGUIENTE
-    Dim Idn As Integer
-    Dim MaxId As Variant
-
-    MaxId = m_ConexionBD.mConn.Exec("SELECT MAX(id) FROM bibtex LIMIT 1")
-
-    If MaxId["MAX(id)"] = Null Then
-      Idn = 0
-    Else
-      Idn = CInt(MaxId["MAX(id)"]) + 1
-    Endif
-
-    id_bibtex.Value = Idn
-    '
-    TabPanel5.Index = 1
-    txtTMPbiblio.Enabled = True
-    txtTMPbiblio.Font = Font["Monospace"]
-    txtTMPbiblio.Background = Color.White
-    txtTMPbiblio.Clear
-    txtTMPbiblio.SetFocus
-
-    BtnNuevoBib.Visible = False
-    btnGuardarBib.Visible = True
-    btnGuardarCambiosBib.Visible = False
-    BtnEliminarBib.Visible = False
-    TabPanelBibliografia.Index = 0
-
   Endif
+
+  ' OCULTAR/MOSTRAR BOTONES Y FORZAR REFRESCO INMEDIATO
+  BtnNuevoBib.Visible = False
+  btnGuardarBib.Visible = True
+  btnGuardarCambiosBib.Visible = False
+  BtnEliminarBib.Visible = False
+  Wait   ' PROCESA EVENTOS PENDIENTES PARA ACTUALIZAR LA INTERFAZ
+
+  ' LIMPIAMOS LOS TEXTBOX
+  m_Bibtex.LimpiarTextboxBibtex()
+
+  ' OBTENER SIGUIENTE ID
+  Dim Idn As Integer
+  Dim MaxId As Result
+  MaxId = m_ConexionBD.mConn.Exec("SELECT MAX(id) FROM bibtex")
+  If IsNull(MaxId["MAX(id)"]) Then
+    Idn = 0
+  Else
+    Idn = CInt(MaxId["MAX(id)"]) + 1
+  Endif
+  id_bibtex.Value = Idn
+
+  ' CONFIGURAR INTERFAZ
+  TabPanel5.Index = 1
+  txtTMPbiblio.Enabled = True
+  txtTMPbiblio.Font = Font["Monospace"]
+  txtTMPbiblio.Background = Color.White
+  txtTMPbiblio.Clear
+  txtTMPbiblio.SetFocus
+  TabPanelBibliografia.Index = 0
 
 End
 
@@ -799,25 +798,38 @@ Public Sub BtnBuscarClaveBib_Click()
 End
 
 Public Sub btnEmpujarGitLocal_Click()
+  ' EMPUJA LOS CAMBIOS AL REPOSITORIO GIT LOCAL
+  ' MUESTRA UN FORMULARIO PARA INGRESAR EL MENSAJE DEL COMMIT
 
-  Dim fecha As String
   Dim rutaGit As String
+  Dim rutaProyecto As String
 
-  ' OBTENER LA FECHA ACTUAL
-  fecha = Format(Date(), "dd-mm-yyyy")
-  rutaGit = File.Dir(txtProyecto.Text) & "/.git"
+  ' OBTENER LA RUTA DEL PROYECTO
+  rutaProyecto = File.Dir(txtProyecto.Text)
+  rutaGit = rutaProyecto & "/.git"
 
-  ' VERIFICAR SI EL DIRECTORIO EXISTE
-  If Not Exist(rutaGit) Then
-    TerminalViewProyecto.Input("git init --initial-branch=main" & "\n")
-    TerminalViewProyecto.Input("git add ." & "\n")
-    TerminalViewProyecto.Input("git commit -m " & fecha & "\n")
-    TerminalViewProyecto.SetFocus()
-  Else
-    TerminalViewProyecto.Input("git add ." & "\n")
-    TerminalViewProyecto.Input("git commit -m " & fecha & "\n")
-    TerminalViewProyecto.SetFocus()
+  ' MOSTRAR EL FORMULARIO MODAL PARA INGRESAR EL MENSAJE DE COMMIT
+  If Not FCommits.ShowModal() Then
+    ' EL USUARIO CANCELÓ LA OPERACIÓN
+    Return
   Endif
+
+  ' MOSTRAMOS LA CONSOLA
+  TabPanelIzquierdaInferior.Index = 0
+
+  ' CAMBIAR AL DIRECTORIO DEL PROYECTO
+  TerminalViewProyecto.Input("cd " & Shell$(rutaProyecto) & "\n")
+
+  ' VERIFICAR SI EL DIRECTORIO .GIT EXISTE
+  If Not Exist(rutaGit) Then
+    ' INICIALIZAR EL REPOSITORIO SI NO EXISTE
+    TerminalViewProyecto.Input("git init --initial-branch=main" & "\n")
+  Endif
+
+  ' EJECUTAR LOS COMANDOS DE GIT
+  TerminalViewProyecto.Input("git add ." & "\n")
+  TerminalViewProyecto.Input("git commit -m '" & Replace$(FCommits.MensajeCommit, "'", "'\\''") & "'" & "\n")
+  TerminalViewProyecto.SetFocus()
 
 End
 
@@ -5221,5 +5233,12 @@ Public Sub TimerXML_Timer()
       Endif
     Next
   Endif
+
+End
+
+Public Sub btnVerInfoGit_Click()
+  ' MUESTRA EL FORMULARIO CON INFORMACIÓN DEL REPOSITORIO GIT
+
+  FGitInfo.ShowModal()
 
 End
