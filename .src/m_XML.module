@@ -1,0 +1,479 @@
+' Gambas module file
+
+' =====================================================
+' FUNCIÓN: ExportarJATS
+' DESCRIPCIÓN: EXPORTA REFERENCIAS BIBLIOGRÁFICAS A FORMATO XML-JATS
+' RETORNA: Boolean - TRUE SI SE EXPORTÓ EXITOSAMENTE
+' =====================================================
+
+Public Sub ExportarJATS() As Boolean
+
+  Dim sResultado As Result
+  Dim filtrarBib As String
+  Dim sXML As String
+  Dim outputFile As String
+  Dim sTipo As String
+
+  ' OBTENER DATOS DEL PROYECTO
+  filtrarBib = "select * from bibtex where id_proyecto = " & FMain.id_proyecto.Text
+  sResultado = m_ConexionBD.mConn.Exec(filtrarBib)
+
+  ' INICIALIZAR XML CON CABECERA
+  sXML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+  sXML &= "<ref-list>\n"
+
+  ' PROCESAR CADA REGISTRO
+  While sResultado.Available
+
+    ' CONVERTIR TIPO BIBTEX A TIPO JATS
+    sTipo = ConvertirTipoJATS(sResultado["tipo_de_entrada"])
+
+    ' INICIAR REFERENCIA
+    sXML &= "  <ref id=\"ref" & sResultado["id"] & "\">\n"
+    sXML &= "    <element-citation publication-type=\"" & sTipo & "\">\n"
+
+    ' AUTORES
+    If Not IsNull(sResultado["author"]) Then
+      sXML &= GenerarPersonGroup(sResultado["author"], "author")
+    Endif
+
+    ' EDITORES (SI NO HAY AUTORES)
+    If IsNull(sResultado["author"]) And Not IsNull(sResultado["editor"]) Then
+      sXML &= GenerarPersonGroup(sResultado["editor"], "editor")
+    Endif
+
+    ' TÍTULO DEL ARTÍCULO/CAPÍTULO
+    If Not IsNull(sResultado["title"]) Then
+      sXML &= "      <article-title>"
+      sXML &= LimpiarMarcasLatex(sResultado["title"])
+
+      ' AGREGAR SUBTÍTULO SI EXISTE
+      If Not IsNull(sResultado["sub_title"]) Then
+        sXML &= ": " & LimpiarMarcasLatex(sResultado["sub_title"])
+      Endif
+
+      sXML &= "</article-title>\n"
+    Endif
+
+    ' FUENTE (REVISTA O LIBRO)
+    If Not IsNull(sResultado["journal_title"]) Then
+      sXML &= "      <source>" & LimpiarMarcasLatex(sResultado["journal_title"]) & "</source>\n"
+    Else If Not IsNull(sResultado["book_title"]) Then
+      sXML &= "      <source>" & LimpiarMarcasLatex(sResultado["book_title"]) & "</source>\n"
+    Else If Not IsNull(sResultado["main_title"]) Then
+      sXML &= "      <source>" & LimpiarMarcasLatex(sResultado["main_title"]) & "</source>\n"
+    Endif
+
+    ' EDITORIAL Y UBICACIÓN
+    If Not IsNull(sResultado["publisher"]) Then
+      sXML &= "      <publisher-name>" & LimpiarMarcasLatex(sResultado["publisher"]) & "</publisher-name>\n"
+    Endif
+
+    If Not IsNull(sResultado["location"]) Then
+      sXML &= "      <publisher-loc>" & LimpiarMarcasLatex(sResultado["location"]) & "</publisher-loc>\n"
+    Endif
+
+    ' AÑO
+    If Not IsNull(sResultado["year"]) Then
+      sXML &= "      <year>" & sResultado["year"] & "</year>\n"
+    Else If Not IsNull(sResultado["date"]) Then
+      ' EXTRAER AÑO DE LA FECHA
+      sXML &= "      <year>" & ExtraerAnio(sResultado["date"]) & "</year>\n"
+    Endif
+
+    ' VOLUMEN
+    If Not IsNull(sResultado["volume"]) Then
+      sXML &= "      <volume>" & sResultado["volume"] & "</volume>\n"
+    Endif
+
+    ' NÚMERO/ISSUE
+    If Not IsNull(sResultado["issue"]) Then
+      sXML &= "      <issue>" & sResultado["issue"] & "</issue>\n"
+    Else If Not IsNull(sResultado["number"]) Then
+      sXML &= "      <issue>" & sResultado["number"] & "</issue>\n"
+    Endif
+
+    ' PÁGINAS
+    If Not IsNull(sResultado["pages"]) Then
+      sXML &= GenerarPaginas(sResultado["pages"])
+    Endif
+
+    ' EDICIÓN
+    If Not IsNull(sResultado["edition"]) Then
+      sXML &= "      <edition>" & sResultado["edition"] & "</edition>\n"
+    Endif
+
+    ' CAPÍTULO
+    If Not IsNull(sResultado["chapter"]) Then
+      sXML &= "      <chapter-title>" & LimpiarMarcasLatex(sResultado["chapter"]) & "</chapter-title>\n"
+    Endif
+
+    ' ISBN/ISSN
+    If Not IsNull(sResultado["isbn"]) Then
+      sXML &= "      <isbn>" & sResultado["isbn"] & "</isbn>\n"
+    Endif
+
+    If Not IsNull(sResultado["issn"]) Then
+      sXML &= "      <issn>" & sResultado["issn"] & "</issn>\n"
+    Endif
+
+    ' DOI
+    If Not IsNull(sResultado["doi"]) Then
+      sXML &= "      <pub-id pub-id-type=\"doi\">" & sResultado["doi"] & "</pub-id>\n"
+    Endif
+
+    ' URL
+    If Not IsNull(sResultado["url"]) Then
+      sXML &= "      <ext-link ext-link-type=\"uri\" xlink:href=\"" & sResultado["url"] & "\">"
+      sXML &= sResultado["url"] & "</ext-link>\n"
+    Endif
+
+    ' CERRAR ELEMENT-CITATION Y REF
+    sXML &= "    </element-citation>\n"
+    sXML &= "  </ref>\n"
+
+    sResultado.MoveNext
+  Wend
+
+  ' CERRAR XML
+  sXML &= "</ref-list>\n"
+
+  ' GUARDAR ARCHIVO
+  outputFile = File.Dir(FMain.txtProyecto.Text) & "/jats/ref-" & File.BaseName(FMain.txtProyecto.Text) & ".xml"
+  File.Save(outputFile, sXML)
+
+  ' VERIFICAR QUE EL ARCHIVO SE HAYA CREADO
+  If Exist(outputFile) Then
+    Return True
+  Else
+    Return False
+  Endif
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: ConvertirTipoJATS
+' DESCRIPCIÓN: CONVIERTE TIPO DE ENTRADA BIBTEX A TIPO JATS
+' PARÁMETROS: sTipoBibTeX - TIPO DE ENTRADA BIBTEX
+' RETORNA: String - TIPO DE PUBLICACIÓN JATS
+' =====================================================
+
+Private Function ConvertirTipoJATS(sTipoBibTeX As String) As String
+
+  Dim mapeo As New Collection
+
+  ' MAPEO DE TIPOS BIBTEX/BIBLATEX A JATS
+  mapeo["article"] = "journal"
+  mapeo["book"] = "book"
+  mapeo["inbook"] = "book"
+  mapeo["incollection"] = "book"
+  mapeo["inproceedings"] = "confproc"
+  mapeo["conference"] = "confproc"
+  mapeo["proceedings"] = "confproc"
+  mapeo["thesis"] = "thesis"
+  mapeo["phdthesis"] = "thesis"
+  mapeo["mastersthesis"] = "thesis"
+  mapeo["techreport"] = "report"
+  mapeo["manual"] = "report"
+  mapeo["booklet"] = "book"
+  mapeo["unpublished"] = "other"
+  mapeo["misc"] = "other"
+  mapeo["online"] = "web"
+  mapeo["patent"] = "patent"
+  mapeo["report"] = "report"
+  mapeo["software"] = "software"
+  mapeo["dataset"] = "dataset"
+
+  If mapeo.Exist(Lower(sTipoBibTeX)) Then
+    Return mapeo[Lower(sTipoBibTeX)]
+  Else
+    Return "other"
+  Endif
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: GenerarPersonGroup
+' DESCRIPCIÓN: GENERA ELEMENTO <person-group> CON NOMBRES DE AUTORES/EDITORES
+' PARÁMETROS: sNombres - STRING CON NOMBRES SEPARADOS POR " and "
+'             sTipo - "author" o "editor"
+' RETORNA: String - XML DEL PERSON-GROUP
+' =====================================================
+
+Private Function GenerarPersonGroup(sNombres As String, sTipo As String) As String
+
+  Dim sXML As String
+  Dim aNombres As String[]
+  Dim nombreCompleto As String
+  Dim apellido As String
+  Dim nombre As String
+  Dim posComa As Integer
+  Dim partes As String[]
+  Dim i As Integer
+
+  sXML = "      <person-group person-group-type=\"" & sTipo & "\">\n"
+
+  ' NORMALIZAR ESPACIOS
+  sNombres = Replace(sNombres, Chr(9), " ")
+  sNombres = Replace(sNombres, Chr(160), " ")
+  While InStr(sNombres, "  ")
+    sNombres = Replace(sNombres, "  ", " ")
+  Wend
+  sNombres = Trim(sNombres)
+
+  ' DIVIDIR POR " and "
+  sNombres = Replace(sNombres, " and ", "|||")
+  aNombres = Split(sNombres, "|||")
+
+  For i = 0 To aNombres.Max
+    nombreCompleto = Trim(aNombres[i])
+
+    If Len(nombreCompleto) = 0 Then Continue
+
+    sXML &= "        <name>\n"
+
+    posComa = InStr(nombreCompleto, ",")
+
+    If posComa > 0 Then
+      ' FORMATO: Apellido, Nombre
+      apellido = Trim(Left(nombreCompleto, posComa - 1))
+      nombre = Trim(Mid(nombreCompleto, posComa + 1))
+    Else
+      ' FORMATO: Nombre Apellido
+      partes = Split(nombreCompleto, " ")
+      apellido = Trim(partes[partes.Max])
+
+      If partes.Max > 0 Then
+        nombre = ""
+        Dim j As Integer
+        For j = 0 To partes.Max - 1
+          If nombre <> "" Then nombre &= " "
+          nombre &= Trim(partes[j])
+        Next
+      Else
+        nombre = ""
+      Endif
+    Endif
+
+    sXML &= "          <surname>" & EscaparXML(apellido) & "</surname>\n"
+
+    If Len(nombre) > 0 Then
+      sXML &= "          <given-names>" & EscaparXML(nombre) & "</given-names>\n"
+    Endif
+
+    sXML &= "        </name>\n"
+  Next
+
+  sXML &= "      </person-group>\n"
+
+  Return sXML
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: GenerarPaginas
+' DESCRIPCIÓN: GENERA ELEMENTOS <fpage> Y <lpage> DESDE CAMPO pages
+' PARÁMETROS: sPages - STRING CON PÁGINAS (ej: "45-67" o "45--67")
+' RETORNA: String - XML CON FPAGE Y LPAGE
+' =====================================================
+
+Private Function GenerarPaginas(sPages As String) As String
+
+  Dim sXML As String
+  Dim sPaginaInicio As String
+  Dim sPaginaFin As String
+
+  sXML = ""
+
+  ' NORMALIZAR SEPARADORES DE PÁGINA
+  sPages = Replace(sPages, "--", "-")
+
+  If InStr(sPages, "-") > 0 Then
+    ' HAY RANGO DE PÁGINAS
+    sPaginaInicio = Trim(Split(sPages, "-")[0])
+    sPaginaFin = Trim(Split(sPages, "-")[1])
+
+    sXML &= "      <fpage>" & sPaginaInicio & "</fpage>\n"
+    sXML &= "      <lpage>" & sPaginaFin & "</lpage>\n"
+  Else
+    ' SOLO UNA PÁGINA
+    sXML &= "      <fpage>" & Trim(sPages) & "</fpage>\n"
+  Endif
+
+  Return sXML
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: EscaparXML
+' DESCRIPCIÓN: ESCAPA CARACTERES ESPECIALES PARA XML
+' PARÁMETROS: sTexto - TEXTO A ESCAPAR
+' RETORNA: String - TEXTO ESCAPADO
+' =====================================================
+
+Private Function EscaparXML(sTexto As String) As String
+
+  Dim sResultado As String
+
+  sResultado = sTexto
+
+  ' REEMPLAZAR CARACTERES ESPECIALES XML
+  sResultado = Replace(sResultado, "&", "&amp;")
+  sResultado = Replace(sResultado, "<", "&lt;")
+  sResultado = Replace(sResultado, ">", "&gt;")
+  sResultado = Replace(sResultado, "\"", "&quot;")
+  sResultado = Replace(sResultado, "'", "&apos;")
+
+  Return sResultado
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: ExtraerAnio
+' DESCRIPCIÓN: EXTRAE EL AÑO DE UNA FECHA EN FORMATO ISO (YYYY-MM-DD)
+' PARÁMETROS: sFecha - STRING CON FECHA
+' RETORNA: String - AÑO EXTRAÍDO
+' =====================================================
+
+Private Function ExtraerAnio(sFecha As String) As String
+
+  If InStr(sFecha, "-") > 0 Then
+    ' FORMATO ISO: YYYY-MM-DD
+    Return Split(sFecha, "-")[0]
+  Else
+    ' ASUMIR QUE ES SOLO EL AÑO
+    Return sFecha
+  Endif
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: LimpiarMarcasLatex
+' DESCRIPCIÓN: CONVIERTE MARCAS LATEX A MARCAS JATS
+' VERSIÓN MEJORADA - ESCAPA CARACTERES XML EXCEPTO LAS MARCAS GENERADAS
+' PARÁMETROS: sTexto - TEXTO CON MARCAS LATEX
+' RETORNA: String - TEXTO CON MARCAS XML-JATS
+' =====================================================
+
+Private Function LimpiarMarcasLatex(sTexto As String) As String
+
+  Dim sResultado As String
+  Dim comillaAbre As String
+  Dim comillaCierra As String
+
+  sResultado = sTexto
+
+  ' DEFINIR COMILLAS
+  comillaAbre = Chr(34)
+  comillaCierra = Chr(34)
+
+  ' 1. PRIMERO ESCAPAR CARACTERES XML DEL TEXTO ORIGINAL
+  sResultado = Replace(sResultado, "&", "&amp;")
+  sResultado = Replace(sResultado, "<", "&lt;")
+  sResultado = Replace(sResultado, ">", "&gt;")
+
+  ' 2. CARACTERES ESCAPADOS DE LATEX
+  sResultado = Replace(sResultado, "\\&", "&")
+  sResultado = Replace(sResultado, "\\%", "%")
+  sResultado = Replace(sResultado, "\\$", "$")
+  sResultado = Replace(sResultado, "\\_", "_")
+  sResultado = Replace(sResultado, "\\#", "#")
+
+  ' 3. ÉNFASIS E ITÁLICA → <italic> (AMBOS)
+  ' ESTAS MARCAS SE INSERTAN **DESPUÉS** DE ESCAPAR, POR ESO QUEDAN COMO TAGS XML
+  sResultado = ConvertirMarcaLatex(sResultado, "\\emph", "<italic>", "</italic>")
+  sResultado = ConvertirMarcaLatex(sResultado, "\\textit", "<italic>", "</italic>")
+
+  ' 4. NEGRITA → <bold>
+  sResultado = ConvertirMarcaLatex(sResultado, "\\textbf", "<bold>", "</bold>")
+
+  ' 5. COMILLAS
+  sResultado = ConvertirMarcaLatex(sResultado, "\\enquote", comillaAbre, comillaCierra)
+
+  ' 6. GUIONES TIPOGRÁFICOS
+  sResultado = Replace(sResultado, "---", "—")
+  sResultado = Replace(sResultado, "--", "–")
+
+  ' 7. ESPACIOS
+  sResultado = Replace(sResultado, "~", " ")
+  sResultado = Replace(sResultado, "\\ ", " ")
+
+  Return sResultado
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: ConvertirMarcaLatex
+' DESCRIPCIÓN: CONVIERTE UNA MARCA LATEX {CONTENIDO} A MARCAS XML
+' PARÁMETROS: sTexto - TEXTO COMPLETO
+'             sMarcaLatex - MARCA LATEX (ej: "\\emph")
+'             sMarcaApertura - MARCA XML APERTURA (ej: "<italic>")
+'             sMarcaCierre - MARCA XML CIERRE (ej: "</italic>")
+' RETORNA: String - TEXTO CON MARCAS CONVERTIDAS
+' =====================================================
+
+Private Function ConvertirMarcaLatex(sTexto As String, sMarcaLatex As String, sMarcaApertura As String, sMarcaCierre As String) As String
+
+  Dim sResultado As String
+  Dim posInicio As Integer
+  Dim posFin As Integer
+  Dim contenido As String
+
+  sResultado = sTexto
+
+  While InStr(sResultado, sMarcaLatex & "{") > 0
+    posInicio = InStr(sResultado, sMarcaLatex & "{")
+
+    ' PASAR LA POSICIÓN DESPUÉS DEL {
+    posFin = EncontrarLlaveCorrespondiente(sResultado, posInicio + Len(sMarcaLatex) + 1)
+
+    If posFin > 0 Then
+      ' EXTRAER CONTENIDO ENTRE LLAVES
+      contenido = Mid(sResultado, posInicio + Len(sMarcaLatex) + 1, posFin - posInicio - Len(sMarcaLatex) - 1)
+
+      ' REEMPLAZAR CON MARCAS XML
+      sResultado = Left(sResultado, posInicio - 1) & sMarcaApertura & contenido & sMarcaCierre & Mid(sResultado, posFin + 1)
+    Else
+      ' SI NO ENCUENTRA LLAVE DE CIERRE, SOLO QUITAR LA MARCA
+      sResultado = Replace(sResultado, sMarcaLatex & "{", "", 1)
+    Endif
+  Wend
+
+  Return sResultado
+
+End
+
+' =====================================================
+' FUNCIÓN AUXILIAR: EncontrarLlaveCorrespondiente
+' DESCRIPCIÓN: ENCUENTRA LA LLAVE DE CIERRE } CORRESPONDIENTE A UNA LLAVE DE APERTURA {
+' PARÁMETROS: sTexto - TEXTO COMPLETO
+'             iPosInicio - POSICIÓN DE LA LLAVE DE APERTURA {
+' RETORNA: Integer - POSICIÓN DE LA LLAVE DE CIERRE, O -1 SI NO SE ENCUENTRA
+' =====================================================
+
+Private Function EncontrarLlaveCorrespondiente(sTexto As String, iPosInicio As Integer) As Integer
+
+  Dim nivel As Integer = 1
+  Dim i As Integer
+  Dim caracter As String
+
+  ' RECORRER DESDE LA POSICIÓN SIGUIENTE A LA LLAVE DE APERTURA
+  For i = iPosInicio To Len(sTexto)
+    caracter = Mid(sTexto, i, 1)
+
+    If caracter = "{" Then
+      nivel += 1
+    Else If caracter = "}" Then
+      nivel -= 1
+
+      If nivel = 0 Then
+        ' ENCONTRAMOS LA LLAVE CORRESPONDIENTE
+        Return i
+      Endif
+    Endif
+  Next
+
+  ' NO SE ENCONTRÓ LLAVE DE CIERRE
+  Return -1
+
+End
