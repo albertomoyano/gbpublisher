@@ -1,6 +1,7 @@
 ' Gambas class file
 
 Private ColoresDisponibles As New Collection
+Private NotasIds As New Collection  ' COLECCIÓN PARA GUARDAR IDs DE NOTAS
 Public EsRespuesta As Boolean
 
 Public Sub SplitterNotitas_Resize()
@@ -13,24 +14,23 @@ Public Sub Form_Open()
 
   SplitterNotitas.Layout = [5, 9]
 
-  ' Restaurar por defecto solo si NO es respuesta
+  ' RESTAURAR POR DEFECTO SOLO SI NO ES RESPUESTA
   If Not EsRespuesta Then
     cmbUsuarios.Enabled = True
     cmbUsuarios.Text = ""
   Endif
 
-  EsRespuesta = False  ' Resetear para próximas aperturas
+  EsRespuesta = False  ' RESETEAR PARA PRÓXIMAS APERTURAS
 
-  ' Me.Title = "Nota de " & m_OnOff_y_Red.UsuarioActual
   dateSince.Value = Now()
   TextAreaNota.Text = ""
   TextAreaNota.SetFocus()
 
-  ' Limpiar ComboBox y colección
+  ' LIMPIAR COMBOBOX Y COLECCIÓN
   cmbColores.Clear()
   ColoresDisponibles.Clear()
 
-  ' Agregar colores y nombres
+  ' AGREGAR COLORES Y NOMBRES
   AgregarColor("Amarillo", Color.Lighter(Color.Lighter(Color.Yellow)))
   AgregarColor("Verde", Color.Lighter(Color.Lighter(Color.Green)))
   AgregarColor("Azul", Color.Lighter(Color.Lighter(Color.Blue)))
@@ -42,12 +42,13 @@ Public Sub Form_Open()
   AgregarColor("Rosa", Color.Lighter(Color.Lighter(Color.Pink)))
   AgregarColor("Blanco", Color.White)
 
-  ' Selección aleatoria
+  ' SELECCIÓN ALEATORIA
   Dim aleatorio As Integer = Rnd(0, cmbColores.Count - 1)
-  cmbColores.Index = aleatorio  ' Establece la selección
+  cmbColores.Index = aleatorio
   CambiarColorNota(cmbColores.Text)
 
   CargarUsuarios()
+  CargarGridNotitas()
 
 End
 
@@ -57,7 +58,7 @@ Public Sub CargarUsuarios()
   Dim sSQL As String
   Dim sNombre As String
 
-  ' Verificar que la conexión esté abierta
+  ' VERIFICAR QUE LA CONEXIÓN ESTÉ ABIERTA
   If Not m_ConexionBD.mConn Then Return
   If Not m_ConexionBD.mConn.Opened Then Return
 
@@ -74,7 +75,132 @@ Public Sub CargarUsuarios()
 
 End
 
-' Método auxiliar para agregar al ComboBox y a la colección
+Public Sub CargarGridNotitas()
+
+  Dim hRs As Result
+  Dim sSQL As String
+  Dim sUsuario As String
+  Dim iFila As Integer
+  Dim sIndicadores As String
+  Dim sFecha As String
+  Dim sTexto As String
+  Dim sEmisor As String
+
+  ' VERIFICAR QUE LA CONEXIÓN ESTÉ ABIERTA
+  If Not m_ConexionBD.mConn Then Return
+  If Not m_ConexionBD.mConn.Opened Then Return
+
+  ' OBTENER USUARIO ACTUAL
+  sUsuario = m_InicioCierre.UsuarioEnCurso
+
+  ' LIMPIAR COLECCIÓN DE IDs
+  NotasIds.Clear()
+
+  ' CONFIGURAR GRIDVIEW - AHORA CON 4 COLUMNAS
+  gvNotitas.Clear
+  gvNotitas.Columns.Count = 4
+  gvNotitas.Header = GridView.Both
+
+  ' DEFINIR TÍTULOS DE COLUMNAS
+  gvNotitas.Columns[0].Title = "Emisor"
+  gvNotitas.Columns[0].Width = 120
+  gvNotitas.Columns[1].Title = "Fecha"
+  gvNotitas.Columns[1].Width = 150
+  gvNotitas.Columns[2].Title = "Estado"
+  gvNotitas.Columns[2].Width = 80
+  gvNotitas.Columns[3].Title = "Contenido"
+  gvNotitas.Columns[3].Width = 400
+
+  ' CONSULTA SQL: TODAS LAS NOTAS ENVIADAS Y RECIBIDAS DEL USUARIO
+  sSQL = "SELECT * FROM postits " &
+    "WHERE de = '" & sUsuario & "' OR para = '" & sUsuario & "' " &
+    "ORDER BY fecha DESC"
+
+  Try hRs = m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar las notas: " & Error.Text)
+    Return
+  Endif
+
+  ' CONTAR FILAS DISPONIBLES
+  gvNotitas.Rows.Count = 0
+  iFila = 0
+
+  While hRs.Available
+    ' AUMENTAR CONTADOR DE FILAS
+    gvNotitas.Rows.Count = iFila + 1
+
+    ' COLUMNA 0: EMISOR
+    sEmisor = hRs["de"]
+    gvNotitas[iFila, 0].Text = sEmisor
+
+    ' COLUMNA 1: FECHA
+    If Not IsNull(hRs["fecha"]) Then
+      sFecha = Format(hRs["fecha"], "dd/mm/yyyy hh:nn")
+    Else
+      sFecha = ""
+    Endif
+    gvNotitas[iFila, 1].Text = sFecha
+
+    ' COLUMNA 2: INDICADORES
+    sIndicadores = ObtenerIndicadores(hRs, sUsuario)
+    gvNotitas[iFila, 2].Text = sIndicadores
+
+    ' COLUMNA 3: CONTENIDO
+    sTexto = hRs["texto"]
+    If Len(sTexto) > 100 Then
+      sTexto = Left(sTexto, 100) & "..."
+    Endif
+    gvNotitas[iFila, 3].Text = sTexto
+
+    ' GUARDAR ID EN LA COLECCIÓN USANDO EL ÍNDICE DE FILA COMO CLAVE
+    NotasIds[CStr(iFila)] = hRs["id"]
+
+    iFila += 1
+    hRs.MoveNext
+  Wend
+
+  ' SI NO HAY NOTAS, MOSTRAR MENSAJE EN EL GRID
+  If gvNotitas.Rows.Count = 0 Then
+    gvNotitas.Rows.Count = 1
+    gvNotitas[0, 0].Text = ""
+    gvNotitas[0, 1].Text = ""
+    gvNotitas[0, 2].Text = ""
+    gvNotitas[0, 3].Text = "No hay notas para mostrar"
+  Endif
+
+End
+
+' FUNCIÓN AUXILIAR PARA OBTENER LOS INDICADORES DE ESTADO DE UNA NOTA
+Private Function ObtenerIndicadores(hRs As Result, sUsuario As String) As String
+
+  Dim aIndicadores As New String[]
+
+  ' O = OCULTA
+  If hRs["oculto"] = 1 Then
+    aIndicadores.Add("O")
+  Endif
+
+  ' NP = NOTA PROPIA (AUTO-RECORDATORIO)
+  If hRs["de"] = sUsuario And hRs["para"] = sUsuario Then
+    aIndicadores.Add("NP")
+  Endif
+
+  ' NL = NO LEÍDA / SL = SÍ LEÍDA
+  If hRs["leido"] = 0 Then
+    aIndicadores.Add("NL")
+  Else
+    aIndicadores.Add("SL")
+  Endif
+
+  ' RETORNAR INDICADORES SEPARADOS POR COMA
+  Return aIndicadores.Join(", ")
+
+End
+
+' MÉTODO AUXILIAR PARA AGREGAR AL COMBOBOX Y A LA COLECCIÓN
 Private Sub AgregarColor(nombre As String, valor As Integer)
 
   cmbColores.Add(nombre)
@@ -139,7 +265,12 @@ Public Sub btnSend_Click()
   Else
     m_Sonido.sonar("Info")
     Message.Info("Nota enviada con éxito.")
-    Me.Close
+    ' RECARGAR GRID DESPUÉS DE ENVIAR
+    CargarGridNotitas()
+    ' LIMPIAR FORMULARIO
+    TextAreaNota.Text = ""
+    cmbUsuarios.Text = ""
+    dateSince.Value = Now()
   Endif
 
 End
@@ -175,21 +306,258 @@ Public Sub btnMostrarOcultos_Click()
   Endif
 
   While hRs.Available
-    ' Crear una instancia nueva del formulario
+    ' CREAR UNA INSTANCIA NUEVA DEL FORMULARIO
     Dim notaForm As New F_NotasRecibidas
 
-    ' Cargar los datos de la nota en esa instancia
+    ' CARGAR LOS DATOS DE LA NOTA EN ESA INSTANCIA
     notaForm.CargarNota(hRs)
 
-    ' Posicionar el formulario con un corrimiento para no superponer
+    ' POSICIONAR EL FORMULARIO CON UN CORRIMIENTO PARA NO SUPERPONER
     notaForm.Move(100 + contador * offsetX, 100 + contador * offsetY)
 
-    ' Mostrarlo y dar foco
+    ' MOSTRARLO Y DAR FOCO
     notaForm.Show
 
-    ' Avanzar al siguiente
+    ' AVANZAR AL SIGUIENTE
     contador += 1
     hRs.MoveNext
   Wend
 
 End
+
+' EVENTO CLICK EN EL GRIDVIEW - ABRE LA NOTA SELECCIONADA
+Public Sub gvNotitas_Click()
+
+  Dim iFilaSeleccionada As Integer
+  Dim iNotaId As Integer
+  Dim hRs As Result
+  Dim sSQL As String
+
+  ' OBTENER FILA SELECCIONADA
+  iFilaSeleccionada = gvNotitas.Row
+
+  ' VERIFICAR QUE HAY UNA FILA VÁLIDA SELECCIONADA
+  If iFilaSeleccionada < 0 Then Return
+  If gvNotitas.Rows.Count = 0 Then Return
+
+  ' VERIFICAR QUE EXISTE EL ID EN LA COLECCIÓN
+  If Not NotasIds.Exist(CStr(iFilaSeleccionada)) Then Return
+
+  ' OBTENER ID DE LA NOTA DESDE LA COLECCIÓN
+  iNotaId = NotasIds[CStr(iFilaSeleccionada)]
+
+  ' CONSULTAR LA NOTA ESPECÍFICA
+  sSQL = "SELECT * FROM postits WHERE id = " & iNotaId
+
+  Try hRs = m_ConexionBD.mConn.Exec(sSQL)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar la nota: " & Error.Text)
+    Return
+  Endif
+
+  ' SI EXISTE LA NOTA, ABRIR FORMULARIO DE RECIBIDAS
+  If hRs.Available Then
+    Dim notaForm As New F_NotasRecibidas
+    notaForm.CargarNota(hRs)
+    notaForm.Show
+  Endif
+
+End
+
+' ' Gambas class file
+'
+' Private ColoresDisponibles As New Collection
+' Public EsRespuesta As Boolean
+'
+' Public Sub SplitterNotitas_Resize()
+'
+'   SplitterNotitas.Layout = [5, 9]
+'
+' End
+'
+' Public Sub Form_Open()
+'
+'   SplitterNotitas.Layout = [5, 9]
+'
+'   ' Restaurar por defecto solo si NO es respuesta
+'   If Not EsRespuesta Then
+'     cmbUsuarios.Enabled = True
+'     cmbUsuarios.Text = ""
+'   Endif
+'
+'   EsRespuesta = False  ' Resetear para próximas aperturas
+'
+'   ' Me.Title = "Nota de " & m_OnOff_y_Red.UsuarioActual
+'   dateSince.Value = Now()
+'   TextAreaNota.Text = ""
+'   TextAreaNota.SetFocus()
+'
+'   ' Limpiar ComboBox y colección
+'   cmbColores.Clear()
+'   ColoresDisponibles.Clear()
+'
+'   ' Agregar colores y nombres
+'   AgregarColor("Amarillo", Color.Lighter(Color.Lighter(Color.Yellow)))
+'   AgregarColor("Verde", Color.Lighter(Color.Lighter(Color.Green)))
+'   AgregarColor("Azul", Color.Lighter(Color.Lighter(Color.Blue)))
+'   AgregarColor("Rojo", Color.Lighter(Color.Lighter(Color.Red)))
+'   AgregarColor("Violeta", Color.Lighter(Color.Lighter(Color.Violet)))
+'   AgregarColor("Cian", Color.Lighter(Color.Lighter(Color.DarkCyan)))
+'   AgregarColor("Magenta", Color.Lighter(Color.Lighter(Color.Magenta)))
+'   AgregarColor("Naranja", Color.Lighter(Color.Lighter(Color.Orange)))
+'   AgregarColor("Rosa", Color.Lighter(Color.Lighter(Color.Pink)))
+'   AgregarColor("Blanco", Color.White)
+'
+'   ' Selección aleatoria
+'   Dim aleatorio As Integer = Rnd(0, cmbColores.Count - 1)
+'   cmbColores.Index = aleatorio  ' Establece la selección
+'   CambiarColorNota(cmbColores.Text)
+'
+'   CargarUsuarios()
+'
+' End
+'
+' Public Sub CargarUsuarios()
+'
+'   Dim hRs As Result
+'   Dim sSQL As String
+'   Dim sNombre As String
+'
+'   ' Verificar que la conexión esté abierta
+'   If Not m_ConexionBD.mConn Then Return
+'   If Not m_ConexionBD.mConn.Opened Then Return
+'
+'   cmbUsuarios.Clear
+'
+'   sSQL = "SELECT usuario FROM usuarios ORDER BY usuario"
+'   hRs = m_ConexionBD.mConn.Exec(sSQL)
+'
+'   While hRs.Available
+'     sNombre = hRs["usuario"]
+'     cmbUsuarios.Add(sNombre)
+'     hRs.MoveNext
+'   Wend
+'
+' End
+'
+' ' Método auxiliar para agregar al ComboBox y a la colección
+' Private Sub AgregarColor(nombre As String, valor As Integer)
+'
+'   cmbColores.Add(nombre)
+'   ColoresDisponibles.Add(valor, nombre)
+'
+' End
+'
+' Private Sub CambiarColorNota(nombreColor As String)
+'
+'   If ColoresDisponibles.Exist(nombreColor) Then
+'     TextAreaNota.Background = ColoresDisponibles[nombreColor]
+'     TextAreaNota.Foreground = Color.Black
+'   Endif
+'
+' End
+'
+' Public Sub cmbColores_Click()
+'
+'   If ColoresDisponibles.Exist(cmbColores.Text) Then
+'     TextAreaNota.Background = ColoresDisponibles[cmbColores.Text]
+'     TextAreaNota.Foreground = Color.Black
+'   Endif
+'
+' End
+'
+' Public Sub btnSend_Click()
+'
+'   Dim sTexto As String = Trim(TextAreaNota.Text)
+'   Dim sPara As String = cmbUsuarios.Text
+'   Dim sDe As String = m_InicioCierre.UsuarioEnCurso
+'   Dim iColor As Integer = TextAreaNota.Background
+'   Dim dDesde As Date = dateSince.Value
+'
+'   If sTexto = "" Then
+'     m_Sonido.sonar("Warning")
+'     Message.Warning("El contenido de la nota está vacío.")
+'     Return
+'   Endif
+'
+'   If sPara = "" Then
+'     m_Sonido.sonar("Warning")
+'     Message.Warning("Debe seleccionar un destinatario.")
+'     Return
+'   Endif
+'
+'   Dim sDesde As String = Format(dDesde, "yyyy-mm-dd hh:nn:ss")
+'
+'   Dim sSQL As String
+'   sSQL = "INSERT INTO postits (de, para, fecha, texto, desde, oculto, x, y, color, leido) VALUES (" &
+'     "'" & sDe & "', " &
+'     "'" & sPara & "', " &
+'     "NOW(), " &
+'     "'" & Replace(sTexto, "'", "''") & "', " &
+'     "'" & sDesde & "', " &
+'     "0, 0, 0, " & iColor & ", 0)"
+'
+'   Try m_ConexionBD.mConn.Exec(sSQL)
+'
+'   If Error Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("Error al guardar la nota: " & Error.Text)
+'   Else
+'     m_Sonido.sonar("Info")
+'     Message.Info("Nota enviada con éxito.")
+'     Me.Close
+'   Endif
+'
+' End
+'
+' Public Sub btnCancelar_Click()
+'
+'   Me.Close()
+'
+' End
+'
+' Public Sub btnMostrarOcultos_Click()
+'
+'   Dim hRs As Result
+'   Dim sSQL As String
+'   Dim offsetX As Integer = 30
+'   Dim offsetY As Integer = 30
+'   Dim contador As Integer = 0
+'
+'   sSQL = "SELECT * FROM postits WHERE para = '" & m_InicioCierre.UsuarioEnCurso & "' AND oculto = 1 AND leido = 0 ORDER BY fecha DESC"
+'
+'   Try hRs = m_ConexionBD.mConn.Exec(sSQL)
+'
+'   If Error Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("Error al consultar notas ocultas: " & Error.Text)
+'     Return
+'   Endif
+'
+'   If Not hRs.Available Then
+'     m_Sonido.sonar("Info")
+'     Message.Info("No hay notas ocultas para mostrar.")
+'     Return
+'   Endif
+'
+'   While hRs.Available
+'     ' Crear una instancia nueva del formulario
+'     Dim notaForm As New F_NotasRecibidas
+'
+'     ' Cargar los datos de la nota en esa instancia
+'     notaForm.CargarNota(hRs)
+'
+'     ' Posicionar el formulario con un corrimiento para no superponer
+'     notaForm.Move(100 + contador * offsetX, 100 + contador * offsetY)
+'
+'     ' Mostrarlo y dar foco
+'     notaForm.Show
+'
+'     ' Avanzar al siguiente
+'     contador += 1
+'     hRs.MoveNext
+'   Wend
+'
+' End
