@@ -1,19 +1,323 @@
 ' Gambas class file
 
+' VARIABLES GLOBALES DEL FORMULARIO
+Private $idiomaActual As String = "es"
+Private $banderasPath As String = Application.Path &/ "iconos"
+Private $idsResultados As New Integer[] ' ARRAY PARA ALMACENAR LOS IDs
+
+' ============================================
+' INICIALIZACIÓN DEL FORMULARIO
+' ============================================
 Public Sub Form_Open()
 
+  ' CONFIGURAR LAYOUT DEL SPLITTER
   SplitterAyudas.Layout = [2, 5]
+
+  ' CONFIGURAR IDIOMA INICIAL
+  If System.Language Then
+    $idiomaActual = Left(System.Language, 2)
+  Else
+    $idiomaActual = "es"
+  Endif
+
+  ' VALIDAR QUE EL IDIOMA SEA UNO DE LOS SOPORTADOS
+  Select Case $idiomaActual
+    Case "es", "pt", "en", "it", "fr", "de"
+      ' IDIOMA VÁLIDO
+    Case Else
+      $idiomaActual = "es"
+  End Select
+
+  ' ASIGNAR EL MENÚ AL MENUBUTTON
+  MenuButtonIdiomas.Menu = "mnuIdiomas"
+
+  ' ACTUALIZAR BANDERA INICIAL
+  ActualizarBandera()
+
+  ' CONFIGURAR LISTBOX
+  lbAyudas.Clear()
+
+  ' CONFIGURAR HTMLVIEW
+  htmlAyudas.Html = ""
 
 End
 
+' ============================================
+' EVENTOS DE MENÚ DE IDIOMAS
+' ============================================
+Public Sub mnuEspanol_Click()
+
+  CambiarIdioma("es")
+
+End
+
+Public Sub mnuPortugues_Click()
+
+  CambiarIdioma("pt")
+
+End
+
+Public Sub mnuIngles_Click()
+
+  CambiarIdioma("en")
+
+End
+
+Public Sub mnuItaliano_Click()
+
+  CambiarIdioma("it")
+
+End
+
+Public Sub mnuFrances_Click()
+
+  CambiarIdioma("fr")
+
+End
+
+Public Sub mnuAleman_Click()
+
+  CambiarIdioma("de")
+
+End
+
+' ============================================
+' CAMBIA EL IDIOMA Y ACTUALIZA LA INTERFAZ
+' ============================================
+Private Sub CambiarIdioma(nuevoIdioma As String)
+
+  $idiomaActual = nuevoIdioma
+  ActualizarBandera()
+
+  ' LIMPIAR RESULTADOS ANTERIORES
+  lbAyudas.Clear()
+  $idsResultados.Clear()
+  htmlAyudas.Html = ""
+
+  ' SI HAY TEXTO EN LA BÚSQUEDA, VOLVER A BUSCAR CON EL NUEVO IDIOMA
+  If txtAyuda.Text And Trim(txtAyuda.Text) <> "" Then
+    BuscarAyuda()
+  Endif
+
+End
+
+' ============================================
+' ACTUALIZA LA BANDERA SEGÚN EL IDIOMA ACTUAL
+' ============================================
+Private Sub ActualizarBandera()
+
+  Dim rutaBandera As String
+  Dim nombreArchivo As String
+
+  Select Case $idiomaActual
+    Case "es"
+      nombreArchivo = "es.png"
+    Case "pt"
+      nombreArchivo = "br.png"
+    Case "en"
+      nombreArchivo = "en.png"
+    Case "it"
+      nombreArchivo = "it.png"
+    Case "fr"
+      nombreArchivo = "fr.png"
+    Case "de"
+      nombreArchivo = "de.png"
+    Case Else
+      nombreArchivo = "es.png"
+  End Select
+
+  rutaBandera = $banderasPath &/ nombreArchivo
+
+  Try pbBandera.Picture = Picture.Load(rutaBandera)
+  If Error Then
+    pbBandera.Picture = Null
+  Endif
+
+End
+
+' ============================================
+' BOTÓN BUSCAR
+' ============================================
+Public Sub btnBuscarAyuda_Click()
+
+  BuscarAyuda()
+
+End
+
+' ============================================
+' ENTER EN TEXTBOX
+' ============================================
+Public Sub txtAyuda_KeyPress()
+
+  If Key.Code = Key.Return Then
+    BuscarAyuda()
+  Endif
+
+End
+
+' ============================================
+' BÚSQUEDA EN BASE DE DATOS
+' ============================================
+Private Sub BuscarAyuda()
+
+  Dim r As Result
+  Dim textoBusqueda As String
+  Dim sql As String
+
+  ' LIMPIAR RESULTADOS ANTERIORES
+  lbAyudas.Clear()
+  $idsResultados.Clear()
+  htmlAyudas.Html = ""
+
+  ' VALIDAR QUE HAY TEXTO PARA BUSCAR
+  textoBusqueda = Trim(txtAyuda.Text)
+
+  If Not textoBusqueda Or textoBusqueda = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Debe ingresar un texto para buscar.")
+    txtAyuda.SetFocus()
+    Return
+  Endif
+
+  ' CONSTRUIR CONSULTA SQL
+  sql = "SELECT id, clave, componente, ayuda " &
+    "FROM manual_ayudas " &
+    "WHERE idioma = &1 " &
+    "AND (clave LIKE &2 OR ayuda LIKE &2) " &
+    "ORDER BY clave;"
+
+  Try r = m_ConexionBD.mConn.Exec(sql, $idiomaActual, "%" & textoBusqueda & "%")
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al buscar en la base de datos:\n" & Error.Text)
+    Return
+  Endif
+
+  ' VERIFICAR SI HAY RESULTADOS
+  If Not r.Available Then
+    m_Sonido.sonar("Info")
+    Message.Info("No se encontraron resultados para '" & textoBusqueda & "' en " & NombreIdiomaActual())
+    Return
+  Endif
+
+  ' CARGAR RESULTADOS EN EL LISTBOX Y ARRAY PARALELO
+  For Each r
+    ' AGREGAR SOLO LA CLAVE AL LISTBOX
+    lbAyudas.Add(r!clave)
+    ' AGREGAR ID AL ARRAY PARALELO
+    $idsResultados.Add(r!id)
+  Next
+
+  ' SELECCIONAR EL PRIMER RESULTADO AUTOMÁTICAMENTE
+  If lbAyudas.Count > 0 Then
+    lbAyudas.Index = 0
+    MostrarAyudaSeleccionada()
+  Endif
+
+  m_Sonido.sonar("Success")
+
+End
+
+' ============================================
+' MUESTRA AYUDA SELECCIONADA
+' ============================================
+Public Sub lbAyudas_Click()
+
+  MostrarAyudaSeleccionada()
+
+End
+
+Private Sub MostrarAyudaSeleccionada()
+
+  Dim r As Result
+  Dim idSeleccionado As Integer
+  Dim estiloHTML As String
+
+  ' VERIFICAR QUE HAY UNA SELECCIÓN
+  If lbAyudas.Index < 0 Then Return
+
+  ' OBTENER EL ID DEL ARRAY PARALELO USANDO EL ÍNDICE DEL LISTBOX
+  idSeleccionado = $idsResultados[lbAyudas.Index]
+
+  ' CONSULTAR LA AYUDA COMPLETA
+  Try r = m_ConexionBD.mConn.Exec("SELECT ayuda FROM manual_ayudas WHERE id = &1;", idSeleccionado)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar la ayuda:\n" & Error.Text)
+    Return
+  Endif
+
+  If Not r.Available Then
+    htmlAyudas.Html = "<p>No se pudo cargar el contenido de la ayuda.</p>"
+    Return
+  Endif
+
+  ' APLICAR ESTILOS Y MOSTRAR
+  estiloHTML = "<style>" &
+    "html, body {margin:0; padding:0; overflow-x:hidden; box-sizing:border-box; max-width:99%;}" &
+    "img, table {max-width:99%; height:auto;}" &
+    "pre {color:#004080; font-weight:bold; display:inline;}" &
+    "code {color:#008040; font-weight:bold; display:inline;}" &
+    "</style>"
+
+  htmlAyudas.Html = estiloHTML & r!ayuda
+
+End
+
+' ============================================
+' RETORNA EL NOMBRE DEL IDIOMA ACTUAL
+' ============================================
+Private Function NombreIdiomaActual() As String
+
+  Select Case $idiomaActual
+    Case "es"
+      Return "Español"
+    Case "pt"
+      Return "Português (Brasil)"
+    Case "en"
+      Return "English"
+    Case "it"
+      Return "Italiano"
+    Case "fr"
+      Return "Français"
+    Case "de"
+      Return "Deutsch"
+    Case Else
+      Return "Desconocido"
+  End Select
+
+End
+
+' ============================================
+' BOTÓN CERRAR
+' ============================================
 Public Sub btnCerrar_Click()
 
   Me.Close()
 
 End
 
-Public Sub SplitterAyudas_Resize()
+' ============================================
+' CIERRE CON ESC
+' ============================================
+Public Sub Form_KeyPress()
 
-  SplitterAyudas.Layout = [2, 5]
+  If Key.Code = Key.Esc Then
+    Me.Close()
+  Endif
+
+End
+
+' ============================================
+' BOTÓN PARA ABRIR ABM DE AYUDAS
+' ============================================
+Public Sub btnABMAyudas_Click()
+
+  Dim fABM As New FAyudaABM
+
+  ' ABRIR FORMULARIO ABM DE FORMA MODAL
+  fABM.ShowModal()
 
 End

@@ -1,0 +1,538 @@
+' Gambas class file
+
+' VARIABLES GLOBALES
+Private $modoEdicion As Boolean = False ' TRUE = editando existente, FALSE = nuevo
+Private $componenteOriginal As String   ' Para detectar cambios en el componente
+Private $datosOriginales As Collection  ' Para función Cancelar
+Private $usuarioActual As String        ' Usuario que está operando el formulario
+
+' ============================================
+' INICIALIZACIÓN DEL FORMULARIO
+' ============================================
+Public Sub Form_Open()
+
+  ' OBTENER USUARIO ACTUAL DEL SISTEMA
+  $usuarioActual = m_InicioCierre.UsuarioEnCurso
+
+  ' VALIDAR QUE HAY UN USUARIO LOGUEADO
+  If Not $usuarioActual Or Trim($usuarioActual) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error: No hay usuario logueado en el sistema.")
+    Me.Close()
+    Return
+  Endif
+
+  ' CARGAR TODAS LAS TABLAS DE LA BD
+  CargarTablas()
+
+  ' CONFIGURAR ESTADO INICIAL
+  LimpiarFormulario()
+  HabilitarControles(False)
+
+  ' CONFIGURAR TEXTAREAS
+  ConfigurarTextAreas()
+
+  ' LIMPIAR LABELS DE AUDITORÍA
+  LimpiarAuditoria()
+
+End
+
+' ============================================
+' CARGA TODAS LAS TABLAS DE LA BASE DE DATOS
+' ============================================
+Private Sub CargarTablas()
+
+  Dim r As Result
+  Dim sql As String
+
+  cmbTablas.Clear()
+
+  sql = "SELECT TABLE_NAME " &
+    "FROM INFORMATION_SCHEMA.TABLES " &
+    "WHERE TABLE_SCHEMA = DATABASE() " &
+    "  AND TABLE_TYPE = 'BASE TABLE' " &
+    "ORDER BY TABLE_NAME;"
+
+  Try r = m_ConexionBD.mConn.Exec(sql)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar las tablas:\n" & Error.Text)
+    Return
+  Endif
+
+  For Each r
+    cmbTablas.Add(r!TABLE_NAME)
+  Next
+
+End
+
+' ============================================
+' EVENTO: CAMBIO EN COMBOBOX DE TABLAS
+' ============================================
+Public Sub cmbTablas_Click()
+
+  If cmbTablas.Index < 0 Then Return
+
+  ' LIMPIAR COLUMNAS Y DATOS
+  cmbColumnas.Clear()
+  LimpiarDatos()
+
+  ' CARGAR COLUMNAS DE LA TABLA SELECCIONADA
+  CargarColumnas(cmbTablas.Text)
+
+End
+
+' ============================================
+' CARGA LAS COLUMNAS DE UNA TABLA
+' ============================================
+Private Sub CargarColumnas(nombreTabla As String)
+
+  Dim r As Result
+  Dim sql As String
+
+  If Not nombreTabla Or Trim(nombreTabla) = "" Then Return
+
+  cmbColumnas.Clear()
+
+  sql = "SELECT COLUMN_NAME " &
+    "FROM INFORMATION_SCHEMA.COLUMNS " &
+    "WHERE TABLE_SCHEMA = DATABASE() " &
+    "  AND TABLE_NAME = &1 " &
+    "ORDER BY ORDINAL_POSITION;"
+
+  Try r = m_ConexionBD.mConn.Exec(sql, nombreTabla)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar las columnas:\n" & Error.Text)
+    Return
+  Endif
+
+  For Each r
+    cmbColumnas.Add(r!COLUMN_NAME)
+  Next
+
+  ' HABILITAR COMBOBOX DE COLUMNAS
+  cmbColumnas.Enabled = True
+
+End
+
+' ============================================
+' EVENTO: CAMBIO EN COMBOBOX DE COLUMNAS
+' ============================================
+Public Sub cmbColumnas_Click()
+
+  If cmbColumnas.Index < 0 Then Return
+
+  ' AUTOCOMPLETAR CAMPO COMPONENTE
+  txtComponente.Text = cmbColumnas.Text
+
+  ' INTENTAR CARGAR DATOS EXISTENTES
+  CargarAyudaExistente(cmbColumnas.Text)
+
+  ' HABILITAR CONTROLES DE EDICIÓN
+  HabilitarControles(True)
+
+End
+
+' ============================================
+' CARGA AYUDA EXISTENTE SI EXISTE
+' ============================================
+Private Sub CargarAyudaExistente(nombreComponente As String)
+
+  Dim r As Result
+  Dim sql As String
+  Dim hayDatos As Boolean = False
+
+  If Not nombreComponente Or Trim(nombreComponente) = "" Then Return
+
+  ' BUSCAR SI EXISTEN AYUDAS PARA ESTE COMPONENTE
+  sql = "SELECT idioma, clave, ayuda, usuario_creacion, fecha_creacion, " &
+    "       usuario_modificacion, fecha_modificacion " &
+    "FROM manual_ayudas " &
+    "WHERE componente = &1;"
+
+  Try r = m_ConexionBD.mConn.Exec(sql, nombreComponente)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al buscar ayuda existente:\n" & Error.Text)
+    Return
+  Endif
+
+  ' LIMPIAR DATOS PRIMERO
+  LimpiarDatos()
+
+  ' CARGAR DATOS POR IDIOMA
+  For Each r
+    hayDatos = True
+
+    ' CARGAR CLAVE (SOLO UNA VEZ, ES LA MISMA PARA TODOS LOS IDIOMAS)
+    If Not txtClave.Text Then
+      txtClave.Text = r!clave
+    Endif
+
+    ' CARGAR INFORMACIÓN DE AUDITORÍA (SOLO UNA VEZ)
+    If r!usuario_creacion And Not lblUsuarioCreacion.Text Then
+      lblUsuarioCreacion.Text = r!usuario_creacion
+      lblFechaCreacion.Text = Format(r!fecha_creacion, "dd/mm/yyyy hh:nn")
+      lblUsuarioModificacion.Text = r!usuario_modificacion
+      lblFechaModificacion.Text = Format(r!fecha_modificacion, "dd/mm/yyyy hh:nn")
+    Endif
+
+    ' CARGAR AYUDA SEGÚN IDIOMA
+    Select Case r!idioma
+      Case "es"
+        txtAyudaES.Text = r!ayuda
+      Case "pt"
+        txtAyudaPT.Text = r!ayuda
+      Case "en"
+        txtAyudaEN.Text = r!ayuda
+      Case "it"
+        txtAyudaIT.Text = r!ayuda
+      Case "fr"
+        txtAyudaFR.Text = r!ayuda
+      Case "de"
+        txtAyudaDE.Text = r!ayuda
+    End Select
+  Next
+
+  ' CONFIGURAR MODO
+  If hayDatos Then
+    $modoEdicion = True
+    $componenteOriginal = nombreComponente
+    GuardarDatosOriginales()
+  Else
+    $modoEdicion = False
+    $componenteOriginal = ""
+    LimpiarAuditoria()
+  Endif
+
+End
+
+' ============================================
+' GUARDA LOS DATOS ORIGINALES PARA CANCELAR
+' ============================================
+Private Sub GuardarDatosOriginales()
+
+  $datosOriginales = New Collection
+  $datosOriginales["clave"] = txtClave.Text
+  $datosOriginales["es"] = txtAyudaES.Text
+  $datosOriginales["pt"] = txtAyudaPT.Text
+  $datosOriginales["en"] = txtAyudaEN.Text
+  $datosOriginales["it"] = txtAyudaIT.Text
+  $datosOriginales["fr"] = txtAyudaFR.Text
+  $datosOriginales["de"] = txtAyudaDE.Text
+
+End
+
+' ============================================
+' BOTÓN NUEVO
+' ============================================
+Public Sub btnNuevo_Click()
+
+  ' LIMPIAR TODO EL FORMULARIO
+  LimpiarFormulario()
+
+  ' HABILITAR COMBOBOXES PARA SELECCIÓN
+  cmbTablas.Enabled = True
+  cmbColumnas.Enabled = False
+
+  ' DESHABILITAR CONTROLES DE EDICIÓN HASTA SELECCIONAR COLUMNA
+  HabilitarControles(False)
+
+  ' MODO NUEVO
+  $modoEdicion = False
+  $componenteOriginal = ""
+
+  ' LIMPIAR AUDITORÍA
+  LimpiarAuditoria()
+
+  ' FOCO EN COMBOBOX DE TABLAS
+  cmbTablas.SetFocus()
+
+End
+
+' ============================================
+' BOTÓN GUARDAR
+' ============================================
+Public Sub btnGuardar_Click()
+
+  Dim sql As String
+  Dim nombreComponente As String
+  Dim clave As String
+  ' Dim ayudas As String[6]
+  Dim ayudas As String[]
+  Dim idiomas As String[] = ["es", "pt", "en", "it", "fr", "de"]
+  Dim i As Integer
+  Dim usuarioCreador As String
+
+  ' VALIDAR DATOS
+  If Not ValidarDatos() Then Return
+
+  nombreComponente = txtComponente.Text
+  clave = txtClave.Text
+
+  ' RECOPILAR AYUDAS
+  ayudas[0] = txtAyudaES.Text
+  ayudas[1] = txtAyudaPT.Text
+  ayudas[2] = txtAyudaEN.Text
+  ayudas[3] = txtAyudaIT.Text
+  ayudas[4] = txtAyudaFR.Text
+  ayudas[5] = txtAyudaDE.Text
+
+  ' DETERMINAR USUARIO CREADOR
+  If $modoEdicion Then
+    ' MANTENER EL USUARIO CREADOR ORIGINAL
+    usuarioCreador = lblUsuarioCreacion.Text
+  Else
+    ' NUEVO REGISTRO, EL CREADOR ES EL USUARIO ACTUAL
+    usuarioCreador = $usuarioActual
+  Endif
+
+  ' INICIAR TRANSACCIÓN
+  Try m_ConexionBD.mConn.Begin()
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al iniciar transacción:\n" & Error.Text)
+    Return
+  Endif
+
+  ' Try
+  ' SI ES MODO EDICIÓN, ELIMINAR REGISTROS EXISTENTES
+  If $modoEdicion Then
+    sql = "DELETE FROM manual_ayudas WHERE componente = &1;"
+    m_ConexionBD.mConn.Exec(sql, nombreComponente)
+  Endif
+
+  ' INSERTAR LOS 6 IDIOMAS CON AUDITORÍA
+  For i = 0 To 5
+    sql = "INSERT INTO manual_ayudas " &
+      "(clave, componente, idioma, ayuda, usuario_creacion, usuario_modificacion) " &
+      "VALUES (&1, &2, &3, &4, &5, &6);"
+    m_ConexionBD.mConn.Exec(sql, clave, nombreComponente, idiomas[i], ayudas[i], usuarioCreador, $usuarioActual)
+  Next
+
+  ' COMMIT
+  m_ConexionBD.mConn.Commit()
+
+  m_Sonido.sonar("Success")
+  Message.Info("Ayuda guardada correctamente.")
+
+  ' ACTUALIZAR ESTADO
+  $modoEdicion = True
+  $componenteOriginal = nombreComponente
+
+  ' RECARGAR PARA MOSTRAR AUDITORÍA ACTUALIZADA
+  CargarAyudaExistente(nombreComponente)
+
+Catch
+  ' ROLLBACK EN CASO DE ERROR
+  m_ConexionBD.mConn.Rollback()
+  m_Sonido.sonar("Error")
+  Message.Error("Error al guardar:\n" & Error.Text)
+  ' End Try
+
+End
+
+' ============================================
+' VALIDAR DATOS ANTES DE GUARDAR
+' ============================================
+Private Function ValidarDatos() As Boolean
+
+  ' VALIDAR COMPONENTE
+  If Not txtComponente.Text Or Trim(txtComponente.Text) = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Debe seleccionar un componente.")
+    cmbColumnas.SetFocus()
+    Return False
+  Endif
+
+  ' VALIDAR CLAVE
+  If Not txtClave.Text Or Trim(txtClave.Text) = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Debe ingresar una clave (texto del label).")
+    txtClave.SetFocus()
+    Return False
+  Endif
+
+  ' VALIDAR QUE AL MENOS UN IDIOMA TENGA CONTENIDO
+  If Not txtAyudaES.Text And Not txtAyudaPT.Text And Not txtAyudaEN.Text And
+      Not txtAyudaIT.Text And Not txtAyudaFR.Text And Not txtAyudaDE.Text Then
+    m_Sonido.sonar("Info")
+    Message.Info("Debe ingresar ayuda en al menos un idioma.")
+    tabIdiomas.Index = 0
+    txtAyudaES.SetFocus()
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' BOTÓN ELIMINAR
+' ============================================
+Public Sub btnEliminar_Click()
+
+  Dim sql As String
+  Dim nombreComponente As String
+  Dim respuesta As Integer
+
+  ' VALIDAR QUE HAY UN COMPONENTE SELECCIONADO
+  If Not txtComponente.Text Or Trim(txtComponente.Text) = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("No hay componente seleccionado para eliminar.")
+    Return
+  Endif
+
+  ' VALIDAR QUE EXISTE EN LA BD
+  If Not $modoEdicion Then
+    m_Sonido.sonar("Info")
+    Message.Info("Este componente no tiene ayudas guardadas.")
+    Return
+  Endif
+
+  nombreComponente = txtComponente.Text
+
+  ' CONFIRMAR ELIMINACIÓN
+  respuesta = Message.Question("¿Está seguro de eliminar las ayudas del componente '" & nombreComponente & "' en todos los idiomas?", "Sí", "No")
+
+  If respuesta <> 1 Then Return
+
+  ' ELIMINAR
+  sql = "DELETE FROM manual_ayudas WHERE componente = &1;"
+
+  Try m_ConexionBD.mConn.Exec(sql, nombreComponente)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al eliminar:\n" & Error.Text)
+    Return
+  Endif
+
+  m_Sonido.sonar("Success")
+  Message.Info("Ayuda eliminada correctamente.")
+
+  ' LIMPIAR FORMULARIO
+  LimpiarFormulario()
+
+End
+
+' ============================================
+' BOTÓN CANCELAR
+' ============================================
+Public Sub btnCancelar_Click()
+
+  ' SI HAY DATOS ORIGINALES, RESTAURARLOS
+  If $datosOriginales Then
+    txtClave.Text = $datosOriginales["clave"]
+    txtAyudaES.Text = $datosOriginales["es"]
+    txtAyudaPT.Text = $datosOriginales["pt"]
+    txtAyudaEN.Text = $datosOriginales["en"]
+    txtAyudaIT.Text = $datosOriginales["it"]
+    txtAyudaFR.Text = $datosOriginales["fr"]
+    txtAyudaDE.Text = $datosOriginales["de"]
+
+    m_Sonido.sonar("Info")
+    Message.Info("Cambios descartados.")
+  Else
+    ' SI NO HAY DATOS ORIGINALES, LIMPIAR
+    LimpiarFormulario()
+  Endif
+
+End
+
+' ============================================
+' BOTÓN CERRAR
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
+
+' ============================================
+' CIERRE CON ESC
+' ============================================
+Public Sub Form_KeyPress()
+
+  If Key.Code = Key.Esc Then
+    Me.Close()
+  Endif
+
+End
+
+' ============================================
+' LIMPIA TODO EL FORMULARIO
+' ============================================
+Private Sub LimpiarFormulario()
+
+  cmbTablas.Clear()
+  cmbColumnas.Clear()
+  CargarTablas()
+  LimpiarDatos()
+  LimpiarAuditoria()
+  HabilitarControles(False)
+
+End
+
+' ============================================
+' LIMPIA SOLO LOS DATOS (NO LOS COMBOBOX)
+' ============================================
+Private Sub LimpiarDatos()
+
+  txtComponente.Text = ""
+  txtClave.Text = ""
+  txtAyudaES.Text = ""
+  txtAyudaPT.Text = ""
+  txtAyudaEN.Text = ""
+  txtAyudaIT.Text = ""
+  txtAyudaFR.Text = ""
+  txtAyudaDE.Text = ""
+
+  $datosOriginales = Null
+
+End
+
+' ============================================
+' LIMPIA LOS LABELS DE AUDITORÍA
+' ============================================
+Private Sub LimpiarAuditoria()
+
+  lblUsuarioCreacion.Text = ""
+  lblFechaCreacion.Text = ""
+  lblUsuarioModificacion.Text = ""
+  lblFechaModificacion.Text = ""
+
+End
+
+' ============================================
+' HABILITA/DESHABILITA CONTROLES DE EDICIÓN
+' ============================================
+Private Sub HabilitarControles(habilitar As Boolean)
+
+  txtClave.Enabled = habilitar
+  tabIdiomas.Enabled = habilitar
+  btnGuardar.Enabled = habilitar
+  btnEliminar.Enabled = habilitar And $modoEdicion
+  btnCancelar.Enabled = habilitar
+
+End
+
+' ============================================
+' CONFIGURA LAS TEXTAREAS PARA MEJOR EDICIÓN
+' ============================================
+Private Sub ConfigurarTextAreas()
+
+  ' CONFIGURAR WRAP PARA TODAS LAS TEXTAREAS
+  txtAyudaES.Wrap = True
+  txtAyudaPT.Wrap = True
+  txtAyudaEN.Wrap = True
+  txtAyudaIT.Wrap = True
+  txtAyudaFR.Wrap = True
+  txtAyudaDE.Wrap = True
+
+End
