@@ -1,19 +1,109 @@
 ' Gambas class file
 
-Public Sub MostrarTexto(nombreCampo As String, texto As String, Optional clave As String)
+' ============================================
+' VARIABLE PRIVADA PARA IDIOMA DETECTADO
+' ============================================
+Private $idiomaActual As String
 
-  Dim estiloHTML As String
+' ============================================
+' EVENTO: Form_Open
+' DESCRIPCIÓN: Inicializa el formulario y detecta el idioma del sistema
+' ============================================
+Public Sub Form_Open()
 
-  estiloHTML = "<style>" &
-    "html, body {margin:0; padding:0; overflow-x:hidden; box-sizing:border-box; max-width:99%;}" &
-    "img, table {max-width:99%; height:auto;}" &
-    "pre {color:#004080; font-weight:bold; display:inline;}" &
-    "code {color:#008040; font-weight:bold; display:inline;}" &
-    "</style>"
+  ' DETECTAR IDIOMA DEL SISTEMA SI NO ESTÁ DETECTADO
+  If Not $idiomaActual Or Trim($idiomaActual) = "" Then
+    DetectarIdioma()
+  Endif
 
-  ' Si se proporciona la clave, usarla; sino usar nombreCampo
+End
+
+' ============================================
+' FUNCIÓN PRIVADA: DetectarIdioma
+' DESCRIPCIÓN: Detecta el idioma del sistema operativo y lo convierte al formato de 2 letras
+' ============================================
+Private Sub DetectarIdioma()
+
+  Dim idiomaCompleto As String
+  Dim idioma As String
+
+  ' OBTENER IDIOMA DEL SISTEMA (EJEMPLO: "es_AR.UTF-8")
+  idiomaCompleto = System.Language
+
+  ' EXTRAER SOLO LAS PRIMERAS 2 LETRAS (CÓDIGO DE IDIOMA ISO 639-1)
+  If Len(idiomaCompleto) >= 2 Then
+    idioma = Lower(Left(idiomaCompleto, 2))
+  Else
+    idioma = "en" ' FALLBACK A INGLÉS
+  Endif
+
+  ' VALIDAR QUE EL IDIOMA ESTÉ SOPORTADO
+  ' IDIOMAS SOPORTADOS: es, pt, en, it, fr, de
+  Select Case idioma
+    Case "es", "pt", "en", "it", "fr", "de"
+      $idiomaActual = idioma
+    Case Else
+      ' SI EL IDIOMA NO ESTÁ SOPORTADO, USAR INGLÉS COMO FALLBACK
+      $idiomaActual = "en"
+  End Select
+
+End
+
+' ============================================
+' FUNCIÓN PÚBLICA: MostrarTexto
+' DESCRIPCIÓN: Muestra ayuda contextual en el idioma detectado del sistema
+' PARÁMETROS:
+'   nombreCampo (String): Nombre del campo del formulario
+'   texto (String): Contenido HTML de la ayuda (solo si se llama manualmente)
+'   clave (String, opcional): Texto descriptivo del campo
+' ============================================
+Public Sub MostrarTexto(nombreCampo As String, Optional texto As String, Optional clave As String)
+
+  Dim r As Result
+  Dim sql As String
+  Dim contenidoHTML As String
+
+  ' DETECTAR IDIOMA SI NO ESTÁ DETECTADO (PUEDE SER LLAMADO ANTES DE Form_Open)
+  If Not $idiomaActual Or Trim($idiomaActual) = "" Then
+    DetectarIdioma()
+  Endif
+
+  ' CONFIGURAR TÍTULO DEL FORMULARIO
   Me.Text = "Ayuda para: " & If(clave, clave, nombreCampo)
 
-  HTMLAyudasSysAdmin.Html = estiloHTML & texto
+  ' SI SE PROPORCIONA TEXTO DIRECTAMENTE, MOSTRARLO (MODO LEGACY)
+  If texto And Trim(texto) <> "" Then
+    HTMLAyudasSysAdmin.Html = m_EstilosHTML.ObtenerEstilosCSS() & texto
+    Return
+  Endif
+
+  ' SI NO HAY TEXTO, BUSCAR EN LA BASE DE DATOS SEGÚN EL IDIOMA DEL SISTEMA
+  sql = "SELECT ayuda FROM manual_ayudas " &
+    "WHERE componente = &1 AND idioma = &2;"
+
+  Try r = m_ConexionBD.mConn.Exec(sql, nombreCampo, $idiomaActual)
+
+  If Error Then
+    ' SI HAY ERROR, MOSTRAR MENSAJE
+    contenidoHTML = "<p>Error al cargar la ayuda: " & Error.Text & "</p>"
+    HTMLAyudasSysAdmin.Html = m_EstilosHTML.ObtenerEstilosCSS() & contenidoHTML
+    Return
+  Endif
+
+  If Not r.Available Then
+    ' SI NO HAY AYUDA EN EL IDIOMA ACTUAL, INTENTAR CON INGLÉS COMO FALLBACK
+    Try r = m_ConexionBD.mConn.Exec(sql, nombreCampo, "en")
+
+    If Error Or Not r.Available Then
+      ' SI TAMPOCO HAY EN INGLÉS, MOSTRAR MENSAJE
+      contenidoHTML = "<p>No hay ayuda disponible para este campo.</p>"
+      HTMLAyudasSysAdmin.Html = m_EstilosHTML.ObtenerEstilosCSS() & contenidoHTML
+      Return
+    Endif
+  Endif
+
+  ' OBTENER CONTENIDO Y APLICAR ESTILOS
+  contenidoHTML = r!ayuda
+  HTMLAyudasSysAdmin.Html = m_EstilosHTML.ObtenerEstilosCSS() & contenidoHTML
 
 End
