@@ -1,6 +1,9 @@
 ' Gambas class file
 
-Private saxonJar As String ' RUTA AL JAR DE SAXON
+' ====================================================================
+' MÓDULO: FSabores
+' PROPÓSITO: APLICAR TRANSFORMACIONES XSLT USANDO SAXON A ARCHIVOS XML
+' ====================================================================
 
 Public Sub Form_Open()
 
@@ -10,18 +13,10 @@ Public Sub Form_Open()
   Dim archivosXML As String[]
   Dim archivo As String
   Dim linea As String
+  Dim lineaComentario As String
   Dim descripcion As String
   Dim archivoBase As String
   Dim hFile As File
-
-  ' VERIFICAR INSTALACIÓN DE SAXON
-  If Not VerificarSaxon() Then
-    Message.Error("Saxon-HE no está instalado o no se encuentra.\n\n" &
-      "Por favor ejecute:\n" &
-      "~/.gbpublisher/scripts/instalador-saxon.sh")
-    Me.Close
-    Return
-  Endif
 
   ' LIMPIAR LOS LISTBOX ANTES DE CARGAR
   lbSabores.Clear
@@ -39,20 +34,32 @@ Public Sub Form_Open()
       ' CONSTRUIR RUTA COMPLETA DEL ARCHIVO
       Dim rutaCompleta As String = rutaXSLT &/ archivo
 
-      ' INTENTAR LEER LA PRIMERA LÍNEA DEL ARCHIVO PARA OBTENER DESCRIPCIÓN
+      ' INTENTAR LEER LA SEGUNDA LÍNEA DEL ARCHIVO PARA OBTENER DESCRIPCIÓN
       Try hFile = Open rutaCompleta For Read
       If hFile Then
+        ' LEER PRIMERA LÍNEA (DECLARACIÓN XML)
         Try Line Input #hFile, linea
-        If linea And linea <> "" Then
-          linea = Trim(linea)
+
+        ' LEER SEGUNDA LÍNEA (COMENTARIO)
+        Try Line Input #hFile, lineaComentario
+
+        If lineaComentario And lineaComentario <> "" Then
+          lineaComentario = Trim(lineaComentario)
 
           ' VERIFICAR SI LA LÍNEA CONTIENE UN COMENTARIO XML
-          If InStr(linea, "<!--") > 0 And InStr(linea, "-->") > 0 Then
+          If InStr(lineaComentario, "<!--") > 0 And InStr(lineaComentario, "-->") > 0 Then
             ' EXTRAER CONTENIDO ENTRE <!-- Y -->
-            Dim inicio As Integer = InStr(linea, "<!--") + 4
-            Dim fin As Integer = InStr(linea, "-->")
+            Dim inicio As Integer = InStr(lineaComentario, "<!--") + 4
+            Dim fin As Integer = InStr(lineaComentario, "-->")
             If fin > inicio Then
-              descripcion = Trim(Mid(linea, inicio, fin - inicio))
+              Dim comentarioCompleto As String = Trim(Mid(lineaComentario, inicio, fin - inicio))
+
+              ' EXTRAER SOLO LA DESCRIPCIÓN (ANTES DEL PRIMER |)
+              If InStr(comentarioCompleto, "|") > 0 Then
+                descripcion = Trim(Split(comentarioCompleto, "|")[0])
+              Else
+                descripcion = comentarioCompleto
+              Endif
             Endif
           Endif
         Endif
@@ -89,47 +96,26 @@ Public Sub Form_Open()
 End
 
 ' ====================================================================
-' FUNCIÓN: VERIFICAR QUE SAXON ESTÉ INSTALADO Y LOCALIZAR EL JAR
+' FUNCIÓN: LOCALIZAR SAXON JAR
+' BUSCA EL JAR DE SAXON EN UBICACIONES ESTÁNDAR
+' RETORNA: Ruta completa al JAR o cadena vacía si no se encuentra
 ' ====================================================================
-Private Function VerificarSaxon() As Boolean
+Private Function LocalizarSaxon() As String
 
-  Dim archivoConfig As String = User.Home &/ ".gbpublisher/saxon.conf"
   Dim resultado As String
-  Dim hFile As File
-  Dim linea As String
   Dim ubicacion As String
-
-  ' INTENTAR LEER CONFIGURACIÓN GUARDADA
-  If Exist(archivoConfig) Then
-    Try hFile = Open archivoConfig For Read
-    If hFile Then
-      While Not Eof(hFile)
-        Try Line Input #hFile, linea
-        If Left(linea, 10) = "SAXON_JAR=" Then
-          saxonJar = Trim(Mid(linea, 11))
-          Break
-        Endif
-      Wend
-      Try Close #hFile
-
-      ' VERIFICAR QUE EL JAR EXISTE
-      If saxonJar And Exist(saxonJar) Then
-        Return True
-      Endif
-    Endif
-  Endif
 
   ' BUSCAR EN UBICACIONES ESTÁNDAR
   Dim ubicaciones As String[] = [
     "/usr/share/java/Saxon-HE.jar",
     "/usr/share/java/saxon9he.jar",
     "/usr/share/java/saxon.jar"
+
   ]
 
   For Each ubicacion In ubicaciones
     If Exist(ubicacion) Then
-      saxonJar = ubicacion
-      Return True
+      Return ubicacion
     Endif
   Next
 
@@ -138,8 +124,7 @@ Private Function VerificarSaxon() As Boolean
   resultado = Trim(resultado)
 
   If resultado And Exist(resultado) Then
-    saxonJar = resultado
-    Return True
+    Return resultado
   Endif
 
   ' BUSCAR CON find
@@ -147,21 +132,23 @@ Private Function VerificarSaxon() As Boolean
   resultado = Trim(resultado)
 
   If resultado And Exist(resultado) Then
-    saxonJar = resultado
-    Return True
+    Return resultado
   Endif
 
-  Return False
+  Return ""
 
 End
 
 ' ====================================================================
 ' FUNCIÓN: EXTRAER CONFIGURACIÓN DE OUTPUT DEL COMENTARIO XSLT
+' NOTA: EL COMENTARIO DEBE ESTAR EN LA SEGUNDA LÍNEA DEL ARCHIVO
+' FORMATO: <!-- Descripción | output:nombre_base | format:extensión -->
 ' ====================================================================
 Private Function ExtraerConfiguracionOutput(rutaXSLT As String, ByRef outputName As String, ByRef formato As String) As Boolean
 
   Dim hFile As File
   Dim linea As String
+  Dim lineaComentario As String
   Dim partes As String[]
   Dim parte As String
   Dim inicioComentario As Integer
@@ -175,23 +162,27 @@ Private Function ExtraerConfiguracionOutput(rutaXSLT As String, ByRef outputName
   Try hFile = Open rutaXSLT For Read
   If Error Then Return False
 
+  ' LEER PRIMERA LÍNEA (DECLARACIÓN XML)
   Try Line Input #hFile, linea
+
+  ' LEER SEGUNDA LÍNEA (COMENTARIO CON CONFIGURACIÓN)
+  Try Line Input #hFile, lineaComentario
   Try Close #hFile
 
-  If Not linea Or linea = "" Then Return False
+  If Not lineaComentario Or lineaComentario = "" Then Return False
 
   ' VERIFICAR QUE SEA UN COMENTARIO XML
-  If InStr(linea, "<!--") = 0 Or InStr(linea, "-->") = 0 Then
+  If InStr(lineaComentario, "<!--") = 0 Or InStr(lineaComentario, "-->") = 0 Then
     Return False
   Endif
 
   ' EXTRAER EL CONTENIDO DEL COMENTARIO
-  inicioComentario = InStr(linea, "<!--") + 4
-  finComentario = InStr(linea, "-->")
+  inicioComentario = InStr(lineaComentario, "<!--") + 4
+  finComentario = InStr(lineaComentario, "-->")
 
   If finComentario <= inicioComentario Then Return False
 
-  contenidoComentario = Trim(Mid(linea, inicioComentario, finComentario - inicioComentario))
+  contenidoComentario = Trim(Mid(lineaComentario, inicioComentario, finComentario - inicioComentario))
 
   ' DIVIDIR POR PIPE |
   partes = Split(contenidoComentario, "|")
@@ -253,6 +244,7 @@ Public Sub btnAplicar_Click()
   Dim rutaSalida As String
   Dim archivoSalida As String
   Dim rutaLog As String
+  Dim saxonJar As String
   Dim comando As String
   Dim outputConfig As String
   Dim formatoSalida As String
@@ -279,6 +271,17 @@ Public Sub btnAplicar_Click()
 
   If Left(lbXML.Current.Text, 1) = "(" Then
     Message.Warning("No hay archivos XML disponibles")
+    Return
+  Endif
+
+  ' ====================================================================
+  ' LOCALIZAR SAXON
+  ' ====================================================================
+  saxonJar = LocalizarSaxon()
+
+  If Not saxonJar Or saxonJar = "" Then
+    Message.Error("No se pudo localizar Saxon-HE\n\n" &
+      "Ejecute la verificación de dependencias desde el menú principal")
     Return
   Endif
 
@@ -342,6 +345,7 @@ Public Sub btnAplicar_Click()
   EscribirLog(rutaLog, "Archivo XML entrada: " & xmlSeleccionado)
   EscribirLog(rutaLog, "Archivo XSLT: " & xsltSeleccionado)
   EscribirLog(rutaLog, "Archivo salida: " & archivoSalida)
+  EscribirLog(rutaLog, "Saxon JAR: " & saxonJar)
 
   ' ====================================================================
   ' CONSTRUIR COMANDO SAXON
