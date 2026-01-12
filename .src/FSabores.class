@@ -1,5 +1,7 @@
 ' Gambas class file
 
+Private saxonJar As String ' RUTA AL JAR DE SAXON
+
 Public Sub Form_Open()
 
   Dim rutaXSLT As String = User.Home &/ ".gbpublisher/xslt"
@@ -11,6 +13,15 @@ Public Sub Form_Open()
   Dim descripcion As String
   Dim archivoBase As String
   Dim hFile As File
+
+  ' VERIFICAR INSTALACIÓN DE SAXON
+  If Not VerificarSaxon() Then
+    Message.Error("Saxon-HE no está instalado o no se encuentra.\n\n" &
+      "Por favor ejecute:\n" &
+      "~/.gbpublisher/scripts/instalador-saxon.sh")
+    Me.Close
+    Return
+  Endif
 
   ' LIMPIAR LOS LISTBOX ANTES DE CARGAR
   lbSabores.Clear
@@ -34,6 +45,7 @@ Public Sub Form_Open()
         Try Line Input #hFile, linea
         If linea And linea <> "" Then
           linea = Trim(linea)
+
           ' VERIFICAR SI LA LÍNEA CONTIENE UN COMENTARIO XML
           If InStr(linea, "<!--") > 0 And InStr(linea, "-->") > 0 Then
             ' EXTRAER CONTENIDO ENTRE <!-- Y -->
@@ -56,11 +68,8 @@ Public Sub Form_Open()
   ' ====================================================================
   ' CARGAR ARCHIVOS XML EN lbXML
   ' ====================================================================
-
-  ' VERIFICAR QUE EL DIRECTORIO XML EXISTE
   If Exist(rutaXML) Then
     archivosXML = Dir(rutaXML, "*.xml")
-
     If archivosXML And archivosXML.Count > 0 Then
       For Each archivo In archivosXML
         lbXML.Add(archivo)
@@ -79,6 +88,316 @@ Public Sub Form_Open()
 
 End
 
+' ====================================================================
+' FUNCIÓN: VERIFICAR QUE SAXON ESTÉ INSTALADO Y LOCALIZAR EL JAR
+' ====================================================================
+Private Function VerificarSaxon() As Boolean
+
+  Dim archivoConfig As String = User.Home &/ ".gbpublisher/saxon.conf"
+  Dim resultado As String
+  Dim hFile As File
+  Dim linea As String
+  Dim ubicacion As String
+
+  ' INTENTAR LEER CONFIGURACIÓN GUARDADA
+  If Exist(archivoConfig) Then
+    Try hFile = Open archivoConfig For Read
+    If hFile Then
+      While Not Eof(hFile)
+        Try Line Input #hFile, linea
+        If Left(linea, 10) = "SAXON_JAR=" Then
+          saxonJar = Trim(Mid(linea, 11))
+          Break
+        Endif
+      Wend
+      Try Close #hFile
+
+      ' VERIFICAR QUE EL JAR EXISTE
+      If saxonJar And Exist(saxonJar) Then
+        Return True
+      Endif
+    Endif
+  Endif
+
+  ' BUSCAR EN UBICACIONES ESTÁNDAR
+  Dim ubicaciones As String[] = [
+    "/usr/share/java/Saxon-HE.jar",
+    "/usr/share/java/saxon9he.jar",
+    "/usr/share/java/saxon.jar"
+  ]
+
+  For Each ubicacion In ubicaciones
+    If Exist(ubicacion) Then
+      saxonJar = ubicacion
+      Return True
+    Endif
+  Next
+
+  ' INTENTAR ENCONTRAR CON dpkg
+  Shell "dpkg -L libsaxonhe-java 2>/dev/null | grep -i saxon.*\\.jar | head -n 1" To resultado
+  resultado = Trim(resultado)
+
+  If resultado And Exist(resultado) Then
+    saxonJar = resultado
+    Return True
+  Endif
+
+  ' BUSCAR CON find
+  Shell "find /usr/share/java -name 'saxon*.jar' -o -name 'Saxon*.jar' 2>/dev/null | head -n 1" To resultado
+  resultado = Trim(resultado)
+
+  If resultado And Exist(resultado) Then
+    saxonJar = resultado
+    Return True
+  Endif
+
+  Return False
+
+End
+
+' ====================================================================
+' FUNCIÓN: EXTRAER CONFIGURACIÓN DE OUTPUT DEL COMENTARIO XSLT
+' ====================================================================
+Private Function ExtraerConfiguracionOutput(rutaXSLT As String, ByRef outputName As String, ByRef formato As String) As Boolean
+
+  Dim hFile As File
+  Dim linea As String
+  Dim partes As String[]
+  Dim parte As String
+  Dim inicioComentario As Integer
+  Dim finComentario As Integer
+  Dim contenidoComentario As String
+
+  ' VALORES POR DEFECTO
+  outputName = ""
+  formato = "html"
+
+  Try hFile = Open rutaXSLT For Read
+  If Error Then Return False
+
+  Try Line Input #hFile, linea
+  Try Close #hFile
+
+  If Not linea Or linea = "" Then Return False
+
+  ' VERIFICAR QUE SEA UN COMENTARIO XML
+  If InStr(linea, "<!--") = 0 Or InStr(linea, "-->") = 0 Then
+    Return False
+  Endif
+
+  ' EXTRAER EL CONTENIDO DEL COMENTARIO
+  inicioComentario = InStr(linea, "<!--") + 4
+  finComentario = InStr(linea, "-->")
+
+  If finComentario <= inicioComentario Then Return False
+
+  contenidoComentario = Trim(Mid(linea, inicioComentario, finComentario - inicioComentario))
+
+  ' DIVIDIR POR PIPE |
+  partes = Split(contenidoComentario, "|")
+
+  For Each parte In partes
+    parte = Trim(parte)
+
+    If InStr(LCase(parte), "output:") > 0 Then
+      Dim posOutput As Integer = InStr(LCase(parte), "output:")
+      outputName = Trim(Mid(parte, posOutput + 7))
+
+      If InStr(outputName, " ") > 0 Then
+        outputName = Trim(Split(outputName, " ")[0])
+      Endif
+    Endif
+
+    If InStr(LCase(parte), "format:") > 0 Then
+      Dim posFormat As Integer = InStr(LCase(parte), "format:")
+      formato = Trim(Mid(parte, posFormat + 7))
+
+      If InStr(formato, " ") > 0 Then
+        formato = Trim(Split(formato, " ")[0])
+      Endif
+    Endif
+  Next
+
+  If Not formato Or formato = "" Then
+    formato = "html"
+  Endif
+
+  Return True
+
+End
+
+' ====================================================================
+' FUNCIÓN: ESCRIBIR LOG
+' ====================================================================
+Private Sub EscribirLog(rutaLog As String, mensaje As String)
+
+  Dim hLog As File
+
+  Try hLog = Open rutaLog For Append
+  If Not Error Then
+    Print #hLog, "[" & Format(Now, "yyyy-mm-dd hh:nn:ss") & "] " & mensaje
+    Try Close #hLog
+  Endif
+
+End
+
+' ====================================================================
+' EVENTO: BOTÓN APLICAR TRANSFORMACIÓN
+' ====================================================================
+Public Sub btnAplicar_Click()
+
+  Dim xsltSeleccionado As String
+  Dim xmlSeleccionado As String
+  Dim rutaXSLT As String
+  Dim rutaXML As String
+  Dim rutaSalida As String
+  Dim archivoSalida As String
+  Dim rutaLog As String
+  Dim comando As String
+  Dim outputConfig As String
+  Dim formatoSalida As String
+  Dim resultado As String
+  Dim codigoSalida As Integer
+
+  ' ====================================================================
+  ' VALIDAR QUE HAYA SELECCIONES EN AMBOS LISTBOX
+  ' ====================================================================
+  If lbSabores.Index < 0 Then
+    Message.Warning("Debe seleccionar un archivo XSLT (sabor)")
+    Return
+  Endif
+
+  If lbXML.Index < 0 Then
+    Message.Warning("Debe seleccionar un archivo XML")
+    Return
+  Endif
+
+  If Left(lbSabores.Current.Text, 1) = "(" Then
+    Message.Warning("No hay archivos XSLT disponibles")
+    Return
+  Endif
+
+  If Left(lbXML.Current.Text, 1) = "(" Then
+    Message.Warning("No hay archivos XML disponibles")
+    Return
+  Endif
+
+  ' ====================================================================
+  ' EXTRAER NOMBRES DE ARCHIVOS DE LAS SELECCIONES
+  ' ====================================================================
+  Dim textoXSLT As String = lbSabores.Current.Text
+  Dim inicio As Integer = InStr(textoXSLT, "[")
+  Dim fin As Integer = InStr(textoXSLT, "]")
+
+  If inicio > 0 And fin > inicio Then
+    xsltSeleccionado = Mid(textoXSLT, inicio + 1, fin - inicio - 1)
+  Else
+    Message.Error("No se pudo extraer el nombre del archivo XSLT")
+    Return
+  Endif
+
+  xmlSeleccionado = lbXML.Current.Text
+
+  ' ====================================================================
+  ' CONSTRUIR RUTAS COMPLETAS
+  ' ====================================================================
+  rutaXSLT = User.Home &/ ".gbpublisher/xslt" &/ xsltSeleccionado
+  rutaXML = FMain.RutaProyecto &/ "jats" &/ xmlSeleccionado
+
+  If Not Exist(rutaXSLT) Then
+    Message.Error("No se encuentra el archivo XSLT:\n" & rutaXSLT)
+    Return
+  Endif
+
+  If Not Exist(rutaXML) Then
+    Message.Error("No se encuentra el archivo XML:\n" & rutaXML)
+    Return
+  Endif
+
+  ' ====================================================================
+  ' EXTRAER CONFIGURACIÓN DE SALIDA DEL XSLT
+  ' ====================================================================
+  ExtraerConfiguracionOutput(rutaXSLT, outputConfig, formatoSalida)
+
+  If Not outputConfig Or outputConfig = "" Then
+    outputConfig = File.BaseName(xmlSeleccionado)
+  Endif
+
+  If Not formatoSalida Or formatoSalida = "" Then
+    formatoSalida = "html"
+  Endif
+
+  archivoSalida = outputConfig & "_" & Format(Now, "yyyymmdd_hhnnss") & "." & formatoSalida
+  rutaSalida = FMain.RutaProyecto &/ "jats" &/ archivoSalida
+
+  ' RUTA DEL ARCHIVO LOG
+  rutaLog = FMain.RutaProyecto &/ "jats" &/ "transformaciones_xslt.log"
+
+  ' ====================================================================
+  ' ESCRIBIR LOG - INICIO
+  ' ====================================================================
+  EscribirLog(rutaLog, "==========================================")
+  EscribirLog(rutaLog, "INICIO DE TRANSFORMACIÓN XSLT")
+  EscribirLog(rutaLog, "==========================================")
+  EscribirLog(rutaLog, "Archivo XML entrada: " & xmlSeleccionado)
+  EscribirLog(rutaLog, "Archivo XSLT: " & xsltSeleccionado)
+  EscribirLog(rutaLog, "Archivo salida: " & archivoSalida)
+
+  ' ====================================================================
+  ' CONSTRUIR COMANDO SAXON
+  ' ====================================================================
+  comando = "java -jar " & Shell(saxonJar) &
+    " -s:" & Shell(rutaXML) &
+    " -xsl:" & Shell(rutaXSLT) &
+    " -o:" & Shell(rutaSalida) &
+    " -dtd:off -expand:off 2>&1"
+
+  EscribirLog(rutaLog, "Comando ejecutado:")
+  EscribirLog(rutaLog, comando)
+  EscribirLog(rutaLog, "------------------------------------------")
+
+  ' ====================================================================
+  ' EJECUTAR COMANDO
+  ' ====================================================================
+  Shell comando To resultado
+  codigoSalida = Process.LastValue
+
+  ' ====================================================================
+  ' ESCRIBIR LOG - RESULTADO
+  ' ====================================================================
+  EscribirLog(rutaLog, "Código de salida: " & codigoSalida)
+
+  If resultado And Trim(resultado) <> "" Then
+    EscribirLog(rutaLog, "Salida de Saxon:")
+    EscribirLog(rutaLog, resultado)
+  Endif
+
+  ' ====================================================================
+  ' MOSTRAR RESULTADO AL USUARIO
+  ' ====================================================================
+  If codigoSalida = 0 And Exist(rutaSalida) Then
+    EscribirLog(rutaLog, "ESTADO: Transformación completada exitosamente")
+    EscribirLog(rutaLog, "==========================================")
+    EscribirLog(rutaLog, "")
+
+    Message.Info("✓ Transformación completada exitosamente\n\n" &
+      "Archivo generado:\n" & archivoSalida & "\n\n" &
+      "Log disponible en:\n" & File.Name(rutaLog))
+  Else
+    EscribirLog(rutaLog, "ESTADO: ERROR en la transformación")
+    EscribirLog(rutaLog, "==========================================")
+    EscribirLog(rutaLog, "")
+
+    Message.Error("Error en la transformación XSLT\n\n" &
+      "Código de salida: " & codigoSalida & "\n\n" &
+      "Revise el archivo de log para más detalles:\n" & File.Name(rutaLog))
+  Endif
+
+End
+
+' ====================================================================
+' EVENTO: BOTÓN CERRAR
+' ====================================================================
 Public Sub btnCerrar_Click()
 
   Me.Close
