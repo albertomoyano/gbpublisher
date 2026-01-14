@@ -1,6 +1,6 @@
 ' Gambas class file
 
-Private hObserver As Observer  ' OBSERVER PARA LOS TEXTBOX
+Public EsFormularioInicial As Boolean = True  ' Es pública para que se pueda modificar desde FMain
 
 ' --------------------------------------------------------------------------------
 ' Título: Formulario FAutores
@@ -28,6 +28,12 @@ End
 ' --------------------------------------------------------------------------------
 Public Sub Form_Open()
 
+  If EsFormularioInicial Then
+    btnSeleccionar.Visible = True
+  Else
+    btnSeleccionar.Visible = False
+  Endif
+
   CargarAutores()
 
   ' CONFIGURACIÓN INICIAL DE LA GRILLA (gbAutores) - SOLO 3 COLUMNAS VISIBLES
@@ -52,20 +58,6 @@ Public Sub Form_Open()
   btnGuardar.Visible = False
   btnGuardarMod.Visible = False
   btnBorrar.Visible = False
-
-End
-
-' --------------------------------------------------------------------------------
-' Función: CargarAutores()
-' Propósito: Carga todos los autores de la base de datos en el objeto 'ContenidoAutor'.
-' --------------------------------------------------------------------------------
-Public Sub CargarAutores()
-
-  ContenidoAutor = m_ConexionBD.mConn.Exec("SELECT id_autor, apellidos, nombre, email_principal FROM autores ORDER BY apellidos, nombre")
-
-  ' ASIGNA EL NÚMERO DE FILAS DE LA GRILLA AL NÚMERO DE RESULTADOS
-  gbAutores.Rows.Count = ContenidoAutor.Count
-  gbAutores.Refresh()
 
 End
 
@@ -287,6 +279,7 @@ Public Sub btnGuardar_Click()
   End With
 
   ' LÓGICA DE POST-GUARDADO
+  gbAutores.Clear()
   CargarAutores()
   m_Sonido.sonar("Info")
   Message.Info("Nueva entrada guardada.")
@@ -554,6 +547,7 @@ Public Sub btnGuardarMod_Click()
   End With
 
   ' LÓGICA DE POST-MODIFICACIÓN
+  gbAutores.Clear ' VACIAMOS EL GRID PARA ELIMINAR CARGA RESIDUAL
   CargarAutores()
   LimpiarCamposAutores()
   m_Sonido.sonar("Info")
@@ -593,6 +587,8 @@ Public Sub btnNuevo_Click()
   Endif
 
   id_autor.Value = Idn
+
+  apellidos.SetFocus()
 
   ' VALORES POR DEFECTO
   estado_autor.Text = "activo"
@@ -853,13 +849,9 @@ Public Sub btnRefrescarGridNotas_Click()
 
 End
 
-' ───────────────────────────────────────────────────────────────────────────
-' EVENTOS: apellidos_Change y nombre_Change
-' DESCRIPCIÓN: ACTUALIZA AUTOMÁTICAMENTE nombre_completo Y apellidos_nombre
-' ───────────────────────────────────────────────────────────────────────────
-Public Sub apellidos_Change()
+Private Sub ActualizarNombres()
 
-  If nombre.Text <> "" And apellidos.Text <> "" Then
+  If Trim(nombre.Text) <> "" And Trim(apellidos.Text) <> "" Then
     nombre_completo.Text = Trim(nombre.Text) & " " & Trim(apellidos.Text)
     apellidos_nombre.Text = Trim(apellidos.Text) & ", " & Trim(nombre.Text)
   Endif
@@ -868,10 +860,13 @@ End
 
 Public Sub nombre_Change()
 
-  If nombre.Text <> "" And apellidos.Text <> "" Then
-    nombre_completo.Text = Trim(nombre.Text) & " " & Trim(apellidos.Text)
-    apellidos_nombre.Text = Trim(apellidos.Text) & ", " & Trim(nombre.Text)
-  Endif
+  ActualizarNombres()
+
+End
+
+Public Sub apellidos_Change()
+
+  ActualizarNombres()
 
 End
 
@@ -1174,6 +1169,7 @@ Public Sub gbAutores_Click()
   btnBorrar.Visible = True
 
 End
+
 ' ═══════════════════════════════════════════════════════════════════════════
 ' EVENTO: AllTextBoxes_LostFocus
 ' DESCRIPCIÓN: VALIDACIÓN EN TIEMPO REAL AL PERDER EL FOCO
@@ -1421,5 +1417,93 @@ Private Function VerificarORCIDDuplicado(orcid As String) As Boolean
   Endif
 
   Return False
+
+End
+
+' --------------------------------------------------------------------------------
+' Función: CargarAutores()
+' Propósito: Carga todos los autores de la base de datos en el objeto 'ContenidoAutor'.
+' --------------------------------------------------------------------------------
+Public Sub CargarAutores()
+
+  ContenidoAutor = m_ConexionBD.mConn.Exec("SELECT * FROM autores ORDER BY id_autor DESC")
+
+  ' Asigna el número de filas de la grilla al número de resultados
+  gbAutores.Rows.Count = ContenidoAutor.Count
+  gbAutores.Refresh() ' Refresca la grilla para que se muestren los datos
+
+End
+
+' --------------------------------------------------------------------------------
+' Función: CargarDatos(Consulta, Grid)
+' Propósito: Función auxiliar para ejecutar una consulta y cargar los datos de
+'            en una grilla específica.
+' --------------------------------------------------------------------------------
+Public Sub CargarDatos(Consulta As String, Grid As GridView)
+
+  ContenidoAutor = m_ConexionBD.mConn.Exec(Consulta)
+  If ContenidoAutor.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("No se ha encontrado ningún resultado.")
+    Return
+  End If
+
+  Grid.Clear()
+  Grid.Rows.Count = ContenidoAutor.Count
+
+  ' Itera sobre los resultados y los carga en las columnas del Grid
+  For i As Integer = 0 To ContenidoAutor.Count - 1
+    Grid[i, 0].Text = ContenidoAutor["id_autor"]
+    Grid[i, 1].Text = ContenidoAutor["apellidos"]
+    Grid[i, 2].Text = ContenidoAutor["nombre"]
+    Grid[i, 3].Text = ContenidoAutor["email_principal"]
+    ContenidoAutor.MoveNext ' Mueve el puntero al siguiente registro
+  Next
+
+End
+
+' --------------------------------------------------------------------------------
+' Evento: btnBuscar_Click()
+' Propósito: Busca autores cuyo 'apellidos' o 'nombre' coincida con el texto en txtBuscar.
+' --------------------------------------------------------------------------------
+Public Sub btnBuscar_Click()
+
+  ' Restablecer botones a estado de visualización/inicio
+  btnNuevo.Visible = True
+  btnBorrar.Visible = False
+  btnGuardar.Visible = False
+  btnGuardarMod.Visible = False
+
+  ' Verificar si el campo de búsqueda está vacío
+  If txtBuscar.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe introducir contenido a buscar.")
+    Return
+  Endif
+
+  Dim texto As String
+  Dim Consulta As String
+
+  texto = Trim(txtBuscar.Text)
+
+  Consulta = "SELECT * FROM autores WHERE apellidos LIKE '%" & texto & "%' OR nombre LIKE '%" & texto & "%'"
+
+  ' Ejecutar la consulta y verificar si hay resultados
+  ContenidoAutor = m_ConexionBD.mConn.Exec(Consulta)
+
+  If ContenidoAutor.Count = 0 Then
+    ' No hay resultados
+    m_Sonido.sonar("Info")
+    Message.Info("No se ha encontrado ningún resultado.")
+    Return
+  Else
+    ' Limpia campos de detalle antes de cargar la nueva búsqueda
+    txtBuscar.Text = ""
+
+    ' Cargar los datos encontrados en la grilla
+    CargarDatos(Consulta, gbAutores)
+  Endif
+
+  LimpiarCamposAutores()
 
 End
