@@ -1,140 +1,129 @@
-# Acerca de este proyecto
+# gbpublisher
 
 ## Introducción
 
-gbpublisher es una plataforma integral de **producción editorial académica**, diseñada específicamente para revistas científicas, series académicas y proyectos editoriales institucionales. Desarrollada íntegramente en **software libre**, gbpublisher ofrece un flujo de trabajo moderno, reproducible y estandarizado, basado en **Markdown, motor de base de datos SQL, JATS XML, XSLT, LaTeX** y otras tecnologías abiertas ampliamente adoptadas en el ecosistema científico internacional.
+**gbpublisher** es una plataforma integral de producción editorial académica orientada a revistas científicas, series académicas y proyectos editoriales institucionales.
 
-## Un modelo de producción XML-first con soberanía tecnológica
+Está diseñada para ofrecer un **flujo de trabajo editorial moderno, reproducible y estandarizado**, alineado con las prácticas internacionales de la edición científica, sin depender de plataformas comerciales ni formatos propietarios.
 
-A diferencia de las soluciones comerciales cerradas, gbpublisher se sustenta en un flujo XML-first, donde cada artículo se transforma en un **JATS maestro validado**, que luego sirve como fuente única y autoritativa para todas las salidas editoriales posteriores. Este enfoque garantiza:
+La herramienta integra tecnologías abiertas ampliamente adoptadas en el ecosistema académico, permitiendo a las instituciones mantener **control total sobre sus datos, procesos y resultados editoriales**.
 
-- Estándares internacionales (JATS, PubMed, SciELO, Crossref)
-- Total portabilidad
-- Independencia de proveedores externos
-- Transparencia en cada fase del proceso
-- Reproducibilidad y auditoría en ambiente académico
+---
 
-## 100% Software Libre y multiplataforma Linux
+## ¿Qué problema resuelve gbpublisher?
 
-gbpublisher se distribuye con licencia Creative Commons, permitiendo:
+La producción editorial académica suele depender de herramientas cerradas, flujos manuales y procesos difíciles de auditar o reproducir. gbpublisher aborda estos problemas ofreciendo:
 
-- Revisar el código
-- Auditar procesos
-- Adaptar flujos editoriales
-- Extender funcionalidades
-- Integrarse con infraestructura institucional existente
+* Un único flujo editorial coherente y documentado
+* Separación estricta entre contenido, estructura y presentación
+* Generación automática y validada de múltiples salidas editoriales
+* Independencia tecnológica frente a proveedores externos
 
-Es una solución pensada para universidades y bibliotecas que buscan soberanía tecnológica, control interno y sustentabilidad a largo plazo.
+---
 
-## Flujo editorial completo
+## Flujo editorial unificado
 
-gbpublisher unifica en una sola herramienta de escritorio (Gambas/Linux) la gestión de todo el proceso editorial:
+gbpublisher centraliza en una sola aplicación de escritorio todo el proceso editorial académico:
 
-### Gestión de metadatos (ABM en MySQL)
+### Gestión estructurada de metadatos (SQL)
 
-- Autores/as
-- Afiliaciones
-- Referencias
-- Siglas
-- Ordenes de taller
-- Palabras clave
-- Información institucional
-- Datos para indexadores
+* Autores y autoras
+* Afiliaciones institucionales
+* Referencias bibliográficas
+* Siglas y nomenclaturas
+* Órdenes de taller
+* Palabras clave
+* Información institucional
+* Metadatos para indexadores
 
 ### Edición basada en Markdown
 
-El contenido se procesa a partir de archivos **Markdown estructurados**, simplificando la escritura, revisiones y control de cambios.
+El contenido textual se escribe y mantiene en **Markdown estructurado**, lo que facilita:
 
-### Generación automática del JATS maestro
+* Escritura clara y sin distracciones
+* Control de cambios
+* Revisión colaborativa
+* Independencia del formato de salida
 
-- Validación con xmllint
-- Generación reproducible
-- Registro de versiones
+---
 
-### Transformación a múltiples salidas mediante XSLT
+## Producción editorial automatizada
 
-- SciELO (formatos por colección)
-- PubMed/PMC
-- Crossref Journal Metadata Deposit XML
-- XML para InDesign
-- HTML académico
-- EPUB accesible
+A partir de los contenidos y metadatos, gbpublisher permite:
 
-### Generación de PDF de alta calidad
+* Generación automática del **JATS maestro**
+* Transformación a múltiples salidas editoriales
+* Producción de PDF de alta calidad tipográfica
 
-- Compuesto con LaTeX
-- Control tipográfico profesional
-- Compatible con PDF/A
+Todo el proceso es **reproducible y verificable**.
 
-### Validación rigurosa y calidad editorial garantizada
+---
 
-Cada salida generada por **gbpublisher** pasa por un proceso de validación formal:
+## Salidas soportadas
 
-- **JATS maestro**: validación estándar W3C con xmllint
-- **Flavors**: validación de conformidad según el estándar específico (SciELO, PubMed, Crossref)
-- **PDF**: reproducibilidad garantizada
-- **EPUB/HTML**: estructura semántica consistente
+Desde una única fuente editorial, gbpublisher puede generar:
 
-Este modelo reduce errores, mejora la calidad editorial y acelera el proceso de indexación.
+* XML JATS para SciELO (según colección)
+* PubMed / PMC
+* Crossref (Journal Metadata Deposit)
+* XML para flujos con InDesign
+* HTML académico
+* EPUB accesible
+* PDF compuesto con LaTeX (compatible con PDF/A)
 
-### Beneficios para instituciones académicas
+---
 
-- **Costos reducidos**
+## Validación y control de calidad
 
-El software libre elimina licencias costosas y evita depender de servicios externos.
+Cada salida generada pasa por validaciones formales que garantizan:
 
-- **Control interno del proceso editorial**
+* Conformidad con estándares internacionales
+* Reducción de errores editoriales
+* Mayor velocidad en procesos de indexación
 
-La editorial o revista mantiene la propiedad total de los datos y del flujo de producción.
+Este enfoque mejora la calidad editorial y la confiabilidad institucional.
 
-- **Cumplimiento con indexadores y estándares internacionales**
+---
 
-Listo para SciELO, Latindex, DOAJ, RedALyC, PubMed, Crossref y repositorios institucionales.
+## Beneficios para instituciones académicas
 
-- **Sustentabilidad a largo plazo**
+### Costos reducidos
 
-Al usar estándares abiertos, los documentos generados seguirán siendo utilizables y migrables dentro de 10, 20 o 30 años.
+El uso de software libre elimina licencias costosas y evita dependencias externas.
 
-- **Flexibilidad total en personalización**
+### Control interno del proceso editorial
 
-Las transformaciones XSLT pueden adaptarse a cualquier necesidad:
-nuevas indexaciones, estructura local, políticas de publicación, diseño, etc.
+La institución conserva la propiedad completa de los datos y del flujo de trabajo.
 
-### ¿Por qué gbpublisher es único en Iberoamérica?
+### Cumplimiento con estándares e indexadores
 
-- No depende de Word ni de InDesign
+Preparado para SciELO, Latindex, DOAJ, RedALyC, PubMed, Crossref y repositorios institucionales.
 
-(bases hegemónicas del mercado)
+### Sustentabilidad a largo plazo
 
-- No es SaaS ni envía datos a terceros
+Los documentos producidos seguirán siendo utilizables y migrables dentro de 10, 20 o 30 años.
 
-(se aloja y ejecuta en la institución)
+### Flexibilidad total
 
-- No encierra información en formatos propietarios
+Las transformaciones y salidas pueden adaptarse a políticas editoriales, requisitos locales y nuevas indexaciones.
 
-(todo es abierto XML/Markdown/SQL)
+---
 
-- Ofrece multi-output profesional desde una única fuente
-- Pensado especialmente para editoriales universitarias
-- 100% Linux, estable, reproducible y transparente
+## gbpublisher en el ecosistema de ciencia abierta
 
-En la región no existe otra herramienta con este modelo técnico, con este nivel de integración, y completamente libre.
+gbpublisher se alinea con los principios de:
 
-### gbpublisher en el ecosistema de ciencia abierta
+* Acceso abierto
+* Reproducibilidad
+* Interoperabilidad
+* Transparencia
+* Soberanía tecnológica
+* Infraestructura abierta
 
-**gbpublisher** se alinea con los principios de:
-
-- Acceso abierto
-- Reproducibilidad
-- Interoperabilidad
-- Transparencia
-- Soberanía tecnológica
-- Infraestructura abierta
-
-Esto lo convierte en una opción ideal para instituciones públicas e iniciativas editoriales con enfoque social.
+---
 
 ## Conclusión
 
-**gbpublisher** es más que una herramienta: es un ecosistema editorial completo, abierto, validado, reproducible y adaptado al contexto académico.
+gbpublisher es más que una herramienta: es un ecosistema editorial completo, abierto, validado, reproducible y adaptado al contexto académico.
 
 Permite a universidades y revistas científicas producir contenidos de calidad profesional sin depender de servicios costosos ni plataformas propietarias, garantizando independencia y estandarización total.
