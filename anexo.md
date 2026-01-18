@@ -14,33 +14,62 @@ El documento regula específicamente:
 * Las condiciones de acceso de red.
 * El uso obligatorio de una dirección IP única de origen.
 * El alcance del uso de recursos del servidor.
-* El carácter open source del software.
+* La naturaleza del licenciamiento del software.
 * La delimitación de responsabilidades y del alcance del soporte.
 
 ---
 
 ### 2. Naturaleza del software y documentación
 
-gbpublisher es un software **open source**, distribuido bajo una licencia **Creative Commons 4.0**, conforme a la especificación exacta indicada en su repositorio oficial.
-
 El repositorio del proyecto incluye el código fuente y la documentación técnica asociada, entre otros archivos:
 
 * El presente Anexo Técnico
-* `leeme.md`
+* `README.md`
 * `arquitectura.md`
+* `leeme.md`
 * `verificar.sh`
 
-El archivo `leeme.md` contiene instrucciones sobre como proceder para una correcta instalación de gbpublisher en su máquina local.
+El archivo `README.md` describe el modelo general del proyecto, su filosofía y condiciones de licenciamiento.
 
 El archivo `arquitectura.md` constituye la **fuente principal de documentación funcional y técnica** de la aplicación, describiendo su diseño general, flujo de trabajo y criterios de integración con infraestructura institucional.
 
-El acceso al software y a la documentación es libre y gratuito, conforme a los términos de la licencia aplicable.
+El archivo `leeme.md` contiene instrucciones sobre cómo proceder para una correcta instalación de gbpublisher en máquinas locales.
+
+El acceso al código fuente y a la documentación está disponible en el repositorio público, conforme a los términos de la Business Source License 1.1.
 
 ---
 
-### 3. Base de datos
+### 3. Licenciamiento
 
-#### 3.1. Estructura incluida en el repositorio
+gbpublisher está licenciado bajo **Business Source License 1.1 (BSL)**.
+
+#### 3.1. Uso académico sin costo de licencia
+
+El uso de gbpublisher por parte de la universidad **no requiere pago de licencia** siempre que:
+
+* El uso se realice en el marco de funciones académicas, científicas o institucionales.
+* No se presten servicios editoriales comerciales a terceros mediante el software.
+* No se redistribuya el software como parte de productos o servicios comerciales.
+
+#### 3.2. Uso comercial
+
+Si la universidad o alguna de sus unidades:
+
+* Presta servicios editoriales comerciales externos utilizando gbpublisher.
+* Integra gbpublisher en plataformas comerciales.
+* Redistribuye o comercializa productos derivados del software.
+
+Deberá contactar al autor para obtener una licencia comercial.
+
+#### 3.3. Transición futura
+
+Conforme a BSL 1.1, el código de gbpublisher pasará automáticamente a licencia GPL-3.0 transcurridos 4 años desde la publicación de cada versión.
+
+---
+
+### 4. Base de datos
+
+#### 4.1. Estructura incluida en el repositorio
 
 El repositorio oficial de gbpublisher incluye un archivo *dump* SQL que contiene **exclusivamente la estructura de las tablas necesarias** para el funcionamiento de la aplicación.
 
@@ -50,7 +79,7 @@ El archivo *dump*:
 * No contiene información sensible.
 * Define únicamente tablas, índices y relaciones básicas.
 
-#### 3.2. Responsabilidades del área de IT
+#### 4.2. Responsabilidades del área de IT
 
 El área de IT de la universidad será responsable de:
 
@@ -61,7 +90,7 @@ El área de IT de la universidad será responsable de:
 
 La importación deberá realizarse mediante herramientas estándar del motor de base de datos.
 
-#### 3.3. Permisos requeridos
+#### 4.3. Permisos requeridos
 
 El usuario de base de datos asignado a gbpublisher contará únicamente con los siguientes permisos:
 
@@ -74,7 +103,7 @@ No se requieren ni se solicitarán permisos administrativos, de creación de bas
 
 ---
 
-### 4. Uso de recursos del servidor
+### 5. Uso de recursos del servidor
 
 gbpublisher realiza un uso **liviano y predecible** del motor de base de datos, limitado a:
 
@@ -84,15 +113,15 @@ gbpublisher realiza un uso **liviano y predecible** del motor de base de datos, 
 
 La aplicación:
 
-* No ejecuta procesos de cálculo intensivo.
+* No ejecuta procesos de cálculo intensivo en el servidor.
 * No realiza consultas complejas ni agregaciones pesadas.
-* No utiliza el servidor como motor de procesamiento.
+* No utiliza el servidor de base de datos como motor de procesamiento.
 
 ---
 
-### 5. Acceso de red y principio de IP única
+### 6. Acceso de red y principio de IP única
 
-#### 5.1. Principio de diseño obligatorio
+#### 6.1. Principio de diseño obligatorio
 
 gbpublisher ha sido diseñada para operar **exclusivamente** bajo un esquema de **dirección IP única de origen**, el cual forma parte integral del mecanismo de acceso y control de la aplicación.
 
@@ -105,7 +134,7 @@ Bajo este esquema:
 
 ---
 
-### 6. Responsabilidades del área de IT en materia de red
+### 7. Responsabilidades del área de IT en materia de red
 
 El área de IT de la universidad deberá:
 
@@ -117,7 +146,7 @@ La provisión, estabilidad y validez de la dirección IP son responsabilidad exc
 
 ---
 
-### 7. Verificación del entorno de ejecución
+### 8. Verificación del entorno de ejecución
 
 El repositorio de gbpublisher incluye el script `verificar.sh`, desarrollado en lenguaje Bash.
 
@@ -129,6 +158,9 @@ El objetivo del script es verificar el entorno local de ejecución, incluyendo:
 
   * `pandoc`
   * `xmllint`
+  * `xsltproc`
+  * Saxon-HE
+  * LaTeX
   * y otras herramientas de línea de comandos utilizadas por la aplicación.
 
 El script `verificar.sh`:
@@ -140,7 +172,7 @@ El script `verificar.sh`:
 
 ---
 
-### 8. Verificación desde la aplicación
+### 9. Verificación desde la aplicación
 
 gbpublisher realiza verificaciones internas sobre su propio funcionamiento.
 
@@ -154,7 +186,7 @@ La aplicación únicamente verifica que dichas herramientas estén disponibles e
 
 ---
 
-### 9. Uso de VPN
+### 10. Uso de VPN
 
 En caso de que el acceso al servidor se realice mediante VPN:
 
@@ -164,28 +196,35 @@ En caso de que el acceso al servidor se realice mediante VPN:
 
 ---
 
-### 10. Alcance de la gratuidad y exclusión de soporte
+### 11. Código fuente disponible y servicios profesionales
 
-La provisión de gbpublisher como software open source, junto con su documentación técnica:
+El acceso al código fuente y documentación de gbpublisher es gratuito para instituciones académicas conforme a la licencia BSL 1.1.
 
-* No implica la prestación automática de servicios de implementación.
-* No incluye soporte técnico, auditoría ni acompañamiento en la puesta en producción.
-* No transfiere responsabilidad operativa al proveedor del software.
+Sin embargo, el acceso al código **no incluye**:
 
-El área de IT y los usuarios finales son responsables de la correcta instalación del entorno local conforme a la documentación disponible.
+* Servicios de implementación personalizada.
+* Soporte técnico directo.
+* Auditorías de infraestructura.
+* Capacitación presencial o remota.
+* Acompañamiento en puesta en producción.
+* Consultoría sobre flujos editoriales específicos.
+
+El área de IT y los usuarios finales son responsables de la correcta instalación del entorno local conforme a la documentación disponible en el repositorio.
 
 ---
 
-### 11. Asesoramiento profesional
+### 12. Servicios profesionales opcionales
 
-Cualquier servicio de asistencia técnica, asesoramiento o validación:
+Cualquier servicio de asistencia técnica, asesoramiento, auditoría o capacitación:
 
-* No se encuentra incluido en la licencia open source.
+* No se encuentra incluido en la licencia de uso académico.
 * Podrá ser prestado únicamente mediante acuerdo específico y arancelado entre las partes.
 
+Para solicitar servicios profesionales, contactar a: [tu email]
+
 ---
 
-### 12. Límites de alcance
+### 13. Límites de alcance
 
 Quedan expresamente fuera del alcance del presente Anexo Técnico:
 
@@ -193,9 +232,18 @@ Quedan expresamente fuera del alcance del presente Anexo Técnico:
 * Instalación de dependencias externas en equipos de usuarios.
 * Cambios en la infraestructura general de la universidad.
 * Ajustes avanzados de rendimiento del servidor o del motor de base de datos.
+* Modificaciones personalizadas del código fuente.
+* Integración con sistemas externos no contemplados en la arquitectura original.
 
 ---
 
-### 13. Aceptación
+### 14. Aceptación
 
 La utilización de gbpublisher sobre infraestructura institucional implica la aceptación expresa de las condiciones establecidas en el presente Anexo Técnico.
+
+---
+
+**Copyright © 2024-2026 Alberto Moyano**
+
+Licenciado bajo Business Source License 1.1
+Repositorio: https://github.com/albertomoyano/gbpublisher

@@ -83,27 +83,47 @@ Este modelo reduce errores, mejora la calidad editorial y acelera los procesos d
 
 ## Licencia y modelo de uso
 
-El código fuente de gbpublisher está disponible bajo la **Business Source License 1.1 (BSL)**.
+**gbpublisher** está disponible bajo la **Business Source License 1.1 (BSL)**.
 
-### Uso permitido sin costo
+Esta licencia permite el acceso al código fuente mientras protege el modelo de desarrollo sostenible del proyecto.
 
-* instituciones académicas y científicas
-* universidades y bibliotecas
-* revistas académicas sin fines comerciales
-* proyectos editoriales institucionales
+### Uso permitido sin costo de licencia
 
-### Uso comercial
+El uso de gbpublisher **no requiere pago de licencia** para:
 
-El uso comercial **no está permitido sin acuerdo explícito** con el autor.
+* instituciones académicas y científicas sin fines de lucro
+* universidades y bibliotecas en su función académica
+* revistas académicas de acceso abierto o con modelo institucional
+* proyectos editoriales institucionales sin intermediación comercial
+* uso interno para investigación y docencia
 
-Esto incluye:
+### Uso que requiere licencia comercial
 
-* prestación de servicios editoriales a terceros
-* integración en plataformas comerciales
-* SaaS o servicios alojados
-* redistribución con fines de lucro
+El uso de gbpublisher **requiere acuerdo comercial explícito** para:
 
-Para licencias comerciales, contactar al autor.
+* empresas editoriales con fines de lucro
+* plataformas SaaS de servicios editoriales
+* proveedores de servicios editoriales externos a instituciones
+* redistribución del software con fines comerciales
+* uso del software como parte de servicios facturados a terceros
+* integración en productos comerciales
+
+### Casos especiales
+
+Los siguientes casos requieren consulta previa con el autor:
+
+* editoriales universitarias con modelo híbrido (comercial/académico)
+* revistas con APCs (Article Processing Charges) administradas institucionalmente
+* consorcios interinstitucionales con participación mixta
+* proyectos de cooperación público-privada
+
+Para estos casos, contactar a: [tu email]
+
+### Transición futura a licencia permisiva
+
+Conforme al modelo BSL 1.1, el código de gbpublisher pasará automáticamente a **licencia GPL-3.0** transcurridos **4 años** desde la fecha de publicación de cada versión.
+
+Esto garantiza que, a largo plazo, el software será completamente libre, protegiendo el interés académico mientras se preserva un modelo de desarrollo sostenible durante el período inicial.
 
 ---
 
@@ -136,8 +156,33 @@ Es una herramienta pensada para instituciones públicas, universidades y proyect
 
 ---
 
+## Software de código abierto, no software libre sin restricciones
+
+gbpublisher hace su código fuente **disponible públicamente** bajo Business Source License 1.1.
+
+Esto significa:
+
+* El código puede ser inspeccionado, estudiado y auditado
+* Las instituciones académicas pueden usarlo sin costo
+* El desarrollo es transparente y trazable
+* Las contribuciones son bienvenidas bajo las condiciones establecidas
+
+Sin embargo, **no es software libre** en el sentido de licencias como GPL, MIT o Apache durante el período inicial de 4 años.
+
+La restricción de uso comercial garantiza que el esfuerzo de desarrollo no sea apropiado por actores comerciales sin retribución al proyecto.
+
+---
+
 ## Conclusión
 
 gbpublisher no es solo una herramienta, sino un **ecosistema editorial académico**, diseñado para producir contenidos de calidad profesional de forma abierta, controlada y sostenible.
 
 Permite a universidades y revistas científicas trabajar con estándares internacionales sin depender de plataformas propietarias ni servicios externos, manteniendo el control total sobre sus datos y procesos.
+
+---
+
+**Copyright © 2024-2026 Alberto Moyano**
+
+Licenciado bajo Business Source License 1.1
+Repositorio: https://github.com/albertomoyano/gbpublisher
+Consultas sobre licenciamiento: alberto.alejandro.moyano@gmail.com
