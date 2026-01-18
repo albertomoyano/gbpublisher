@@ -2,128 +2,142 @@
 
 ## Introducción
 
-**gbpublisher** es una plataforma integral de producción editorial académica orientada a revistas científicas, series académicas y proyectos editoriales institucionales.
+**gbpublisher** es una plataforma integral de producción editorial académica, diseñada para revistas científicas, series académicas y proyectos editoriales institucionales.
 
-Está diseñada para ofrecer un **flujo de trabajo editorial moderno, reproducible y estandarizado**, alineado con las prácticas internacionales de la edición científica, sin depender de plataformas comerciales ni formatos propietarios.
+Está pensada para entornos universitarios y científicos que requieren **estandarización, reproducibilidad y soberanía tecnológica**, sin depender de plataformas propietarias ni servicios externos.
 
-La herramienta integra tecnologías abiertas ampliamente adoptadas en el ecosistema académico, permitiendo a las instituciones mantener **control total sobre sus datos, procesos y resultados editoriales**.
-
----
-
-## ¿Qué problema resuelve gbpublisher?
-
-La producción editorial académica suele depender de herramientas cerradas, flujos manuales y procesos difíciles de auditar o reproducir. gbpublisher aborda estos problemas ofreciendo:
-
-* Un único flujo editorial coherente y documentado
-* Separación estricta entre contenido, estructura y presentación
-* Generación automática y validada de múltiples salidas editoriales
-* Independencia tecnológica frente a proveedores externos
+gbpublisher implementa un flujo de trabajo **XML-first**, basado en estándares abiertos ampliamente adoptados en el ecosistema académico internacional: Markdown, bases de datos SQL, JATS XML, XSLT y LaTeX.
 
 ---
 
-## Flujo editorial unificado
+## Modelo de producción XML-first
 
-gbpublisher centraliza en una sola aplicación de escritorio todo el proceso editorial académico:
+En gbpublisher, cada artículo se transforma en un **JATS maestro validado**, que actúa como fuente única y autoritativa para todas las salidas editoriales posteriores.
 
-### Gestión estructurada de metadatos (SQL)
+Este enfoque garantiza:
 
-* Autores y autoras
-* Afiliaciones institucionales
-* Referencias bibliográficas
-* Siglas y nomenclaturas
-* Órdenes de taller
-* Palabras clave
-* Información institucional
-* Metadatos para indexadores
+* cumplimiento de estándares internacionales (JATS, PubMed, SciELO, Crossref)
+* portabilidad total de los contenidos
+* independencia de proveedores externos
+* trazabilidad y auditoría del proceso editorial
+* reproducibilidad en entornos académicos
+
+---
+
+## Flujo editorial completo
+
+gbpublisher unifica en una única aplicación de escritorio (Gambas sobre Linux) todo el proceso editorial:
+
+### Gestión de metadatos (base de datos SQL)
+
+* autores y afiliaciones
+* referencias bibliográficas
+* palabras clave
+* información institucional
+* datos para indexadores
+* órdenes de taller y control editorial
 
 ### Edición basada en Markdown
 
-El contenido textual se escribe y mantiene en **Markdown estructurado**, lo que facilita:
+El contenido se redacta y mantiene en archivos Markdown estructurados, facilitando:
 
-* Escritura clara y sin distracciones
-* Control de cambios
-* Revisión colaborativa
-* Independencia del formato de salida
+* escritura y corrección
+* control de versiones
+* independencia del formato final
 
----
+### Generación y validación del JATS maestro
 
-## Producción editorial automatizada
+* generación reproducible
+* validación con `xmllint`
+* control de versiones y consistencia estructural
 
-A partir de los contenidos y metadatos, gbpublisher permite:
+### Transformación a múltiples salidas mediante XSLT
 
-* Generación automática del **JATS maestro**
-* Transformación a múltiples salidas editoriales
-* Producción de PDF de alta calidad tipográfica
-
-Todo el proceso es **reproducible y verificable**.
-
----
-
-## Salidas soportadas
-
-Desde una única fuente editorial, gbpublisher puede generar:
-
-* XML JATS para SciELO (según colección)
+* SciELO (por colección)
 * PubMed / PMC
-* Crossref (Journal Metadata Deposit)
+* Crossref Journal Metadata Deposit XML
 * XML para flujos con InDesign
 * HTML académico
 * EPUB accesible
-* PDF compuesto con LaTeX (compatible con PDF/A)
+
+### Generación de PDF de alta calidad
+
+* composición con LaTeX
+* control tipográfico profesional
+* compatibilidad con PDF/A
 
 ---
 
-## Validación y control de calidad
+## Calidad editorial y validación
 
-Cada salida generada pasa por validaciones formales que garantizan:
+Cada salida generada por gbpublisher pasa por procesos de validación formal:
 
-* Conformidad con estándares internacionales
-* Reducción de errores editoriales
-* Mayor velocidad en procesos de indexación
+* JATS maestro: validación estándar
+* salidas específicas: validación por flavor
+* PDF: reproducibilidad garantizada
+* HTML y EPUB: estructura semántica consistente
 
-Este enfoque mejora la calidad editorial y la confiabilidad institucional.
-
----
-
-## Beneficios para instituciones académicas
-
-### Costos reducidos
-
-El uso de software libre elimina licencias costosas y evita dependencias externas.
-
-### Control interno del proceso editorial
-
-La institución conserva la propiedad completa de los datos y del flujo de trabajo.
-
-### Cumplimiento con estándares e indexadores
-
-Preparado para SciELO, Latindex, DOAJ, RedALyC, PubMed, Crossref y repositorios institucionales.
-
-### Sustentabilidad a largo plazo
-
-Los documentos producidos seguirán siendo utilizables y migrables dentro de 10, 20 o 30 años.
-
-### Flexibilidad total
-
-Las transformaciones y salidas pueden adaptarse a políticas editoriales, requisitos locales y nuevas indexaciones.
+Este modelo reduce errores, mejora la calidad editorial y acelera los procesos de indexación.
 
 ---
 
-## gbpublisher en el ecosistema de ciencia abierta
+## Licencia y modelo de uso
+
+El código fuente de gbpublisher está disponible bajo la **Business Source License 1.1 (BSL)**.
+
+### Uso permitido sin costo
+
+* instituciones académicas y científicas
+* universidades y bibliotecas
+* revistas académicas sin fines comerciales
+* proyectos editoriales institucionales
+
+### Uso comercial
+
+El uso comercial **no está permitido sin acuerdo explícito** con el autor.
+
+Esto incluye:
+
+* prestación de servicios editoriales a terceros
+* integración en plataformas comerciales
+* SaaS o servicios alojados
+* redistribución con fines de lucro
+
+Para licencias comerciales, contactar al autor.
+
+---
+
+## Filosofía del proyecto
+
+gbpublisher prioriza:
+
+* estándares abiertos
+* procesos explícitos y auditables
+* separación entre contenido y procesamiento
+* estabilidad a largo plazo
+* claridad editorial por sobre automatismos opacos
+
+La aplicación no toma decisiones editoriales por el usuario.
+No adivina. No oculta procesos. No impone formatos.
+
+---
+
+## gbpublisher y la ciencia abierta
 
 gbpublisher se alinea con los principios de:
 
-* Acceso abierto
-* Reproducibilidad
-* Interoperabilidad
-* Transparencia
-* Soberanía tecnológica
-* Infraestructura abierta
+* acceso abierto
+* interoperabilidad
+* reproducibilidad
+* transparencia
+* soberanía tecnológica
+
+Es una herramienta pensada para instituciones públicas, universidades y proyectos editoriales comprometidos con el conocimiento como bien común.
 
 ---
 
 ## Conclusión
 
-gbpublisher es más que una herramienta: es un ecosistema editorial completo, abierto, validado, reproducible y adaptado al contexto académico.
+gbpublisher no es solo una herramienta, sino un **ecosistema editorial académico**, diseñado para producir contenidos de calidad profesional de forma abierta, controlada y sostenible.
 
-Permite a universidades y revistas científicas producir contenidos de calidad profesional sin depender de servicios costosos ni plataformas propietarias, garantizando independencia y estandarización total.
+Permite a universidades y revistas científicas trabajar con estándares internacionales sin depender de plataformas propietarias ni servicios externos, manteniendo el control total sobre sus datos y procesos.
