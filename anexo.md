@@ -220,7 +220,7 @@ Cualquier servicio de asistencia técnica, asesoramiento, auditoría o capacitac
 * No se encuentra incluido en la licencia de uso académico.
 * Podrá ser prestado únicamente mediante acuerdo específico y arancelado entre las partes.
 
-Para solicitar servicios profesionales, contactar a: [tu email]
+Para solicitar servicios profesionales, contactar a:  estudio2a@outlook.com.ar
 
 ---
 
