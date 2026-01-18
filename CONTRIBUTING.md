@@ -93,10 +93,24 @@ End
 Try
   ' CÓDIGO QUE PUEDE FALLAR
 Catch
-  ' MANEJO DE ERROR EXPLICITO
+  ' MANEJO DE ERROR EXPLÍCITO
   Print "ERROR: " & Error.Text
   Return False
-End Try
+End
+```
+
+O con limpieza de recursos:
+```gambas
+Try
+  ' CÓDIGO QUE PUEDE FALLAR
+Catch
+  ' MANEJO DE ERROR EXPLÍCITO
+  Print "ERROR: " & Error.Text
+  Return False
+Finally
+  ' LIMPIEZA DE RECURSOS
+  If miArchivo Then miArchivo.Close()
+End
 ```
 
 ---
@@ -144,7 +158,7 @@ Los contribuidores serán reconocidos en el archivo `CONTRIBUTORS.md` (próximam
 
 ## Preguntas
 
-Para preguntas sobre contribuciones, abre un **issue** en GitHub o contacta a: [tu email]
+Para preguntas sobre contribuciones, abre un **issue** en GitHub o contacta a:  estudio2a@outlook.com.ar
 
 ---
 
