@@ -25,10 +25,12 @@ gbpublisher es un software **open source**, distribuido bajo una licencia **Crea
 
 El repositorio del proyecto incluye el código fuente y la documentación técnica asociada, entre otros archivos:
 
+* El presente Anexo Técnico
+* `leeme.md`
 * `arquitectura.md`
 * `verificar.sh`
-* `leeme.txt`
-* El presente Anexo Técnico
+
+El archivo `leeme.md` contiene instrucciones sobre como proceder para una correcta instalación de gbpublisher en su máquina local.
 
 El archivo `arquitectura.md` constituye la **fuente principal de documentación funcional y técnica** de la aplicación, describiendo su diseño general, flujo de trabajo y criterios de integración con infraestructura institucional.
 
