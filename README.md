@@ -121,7 +121,7 @@ Para estos casos, contactar a: estudio2a@outlook.com.ar
 
 ### Transición futura a licencia permisiva
 
-Conforme al modelo BSL 1.1, el código de gbpublisher pasará automáticamente a **licencia GPL-3.0** transcurridos **10 años** desde la fecha de publicación de cada versión.
+Conforme al modelo BSL 1.1, el código de gbpublisher pasará automáticamente a **licencia GPL-3.0** transcurridos **5 años** desde la fecha de publicación de cada versión.
 
 Esto garantiza que, a largo plazo, el software será completamente libre, protegiendo el interés académico mientras se preserva un modelo de desarrollo sostenible durante el período inicial.
 
