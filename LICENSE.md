@@ -1,85 +1,179 @@
 # Business Source License 1.1
 
-**Licensor:** Alberto Alejandro Moyano
-**Project:** gbpublisher
-**Copyright:** © 2026 Alberto Alejandro Moyano
+## Parámetros de Licencia
+
+**Licensor:** Alberto Moyano
+
+**Software Licenciado:** gbpublisher
+
+**Fecha de Cambio (Change Date):** Cuatro (4) años desde la fecha de publicación de cada versión específica del Software Licenciado.
+
+**Licencia de Cambio (Change License):** GNU General Public License v3.0 o posterior (GPL-3.0-or-later)
+
+**Concesión de Uso Adicional (Additional Use Grant):**
+
+El uso del Software Licenciado está permitido sin costo para:
+
+1. Instituciones académicas y científicas sin fines de lucro
+2. Universidades y bibliotecas en su función académica
+3. Revistas académicas de acceso abierto o con modelo institucional
+4. Proyectos editoriales institucionales sin intermediación comercial
+5. Uso interno para investigación y docencia
+
+Están expresamente excluidos del uso permitido sin costo:
+
+1. Empresas editoriales con fines de lucro
+2. Plataformas SaaS de servicios editoriales
+3. Proveedores de servicios editoriales externos a instituciones
+4. Redistribución del software con fines comerciales
+5. Uso del software como parte de servicios facturados a terceros
+6. Integración en productos comerciales
+
+**Contacto para Licencias Comerciales:** [tu email]
 
 ---
 
-## License
+## Aviso
 
-This License governs use of the software identified above (the “Software”).
-
-The Licensor hereby grants you the right to copy, modify, create derivative works, and redistribute the Software, subject to the limitations described below.
+El Software Licenciado es (c) 2024-2026 Alberto Moyano
 
 ---
 
-## Additional Use Grant
+## Licencia
 
-The Software may be used **free of charge** under the following conditions:
+El Licenciante por la presente otorga el derecho a copiar, modificar, crear trabajos derivados, redistribuir y hacer uso no comercial del Software Licenciado. El Licenciante puede hacer una Concesión de Uso Adicional, arriba mencionada, que permite un uso limitado comercial.
 
-* Academic, scientific, and educational use
-* Use by universities, research institutions, libraries, and public or private non-profit organizations
-* Internal editorial production for journals, books, series, or institutional publications
-* Non-commercial research, experimentation, and teaching
+El uso efectivo del Software Licenciado que exceda las limitaciones del uso permitido requerirá el pago de una tarifa y la firma de un acuerdo de licencia comercial con el Licenciante. El uso efectivo que quede dentro de las limitaciones del uso permitido no requiere pago ni acuerdo.
 
----
+El uso comercial del Software Licenciado que no esté cubierto por la Concesión de Uso Adicional requiere el pago de una tarifa al Licenciante y la firma de un acuerdo de licencia comercial.
 
-## Commercial Use Restriction
-
-Commercial use of the Software is **not permitted** without an explicit agreement with the Licensor.
-
-Commercial use includes, but is not limited to:
-
-* Providing editorial, publishing, or production services to third parties for payment
-* Offering gbpublisher as part of a commercial product, platform, or service
-* SaaS deployments or hosted services
-* Integration into proprietary or revenue-generating workflows
-
-For commercial licensing, please contact the Licensor.
+Efectivo en la Fecha de Cambio, o en la cuarta (4ta) versión del Software Licenciado (lo que ocurra primero), la Licencia del Licenciante por la presente cambiará a la Licencia de Cambio especificada en los Parámetros de Licencia.
 
 ---
 
-## Change Date
+## Texto de la Business Source License 1.1
 
-This Software does **not** automatically convert to an Open Source license.
-No Change Date is defined.
+### Términos
 
----
+El Licenciante por la presente otorga el derecho a copiar, modificar, crear trabajos derivados, redistribuir y hacer uso no comercial del Software Licenciado. El Licenciante puede hacer una Concesión de Uso Adicional, arriba, que permite un uso comercial limitado.
 
-## Attribution
+El uso efectivo del Software Licenciado que exceda las limitaciones del uso permitido requerirá el pago de una tarifa y la firma de un acuerdo de licencia comercial con el Licenciante. El uso efectivo que quede dentro de las limitaciones del uso permitido no requiere pago ni acuerdo.
 
-Any redistribution or derivative work must retain:
+El uso comercial del Software Licenciado que no esté cubierto por la Concesión de Uso Adicional requiere el pago de una tarifa al Licenciante y la firma de un acuerdo de licencia comercial.
 
-* The original copyright notice
-* Attribution to the original author
-* This license file
+Efectivo en la Fecha de Cambio, o en la cuarta (4ta) versión del Software Licenciado (lo que ocurra primero), la Licencia del Licenciante por la presente cambiará a la Licencia de Cambio especificada en los Parámetros de Licencia.
 
----
+Si el Licenciante no especifica una Licencia de Cambio, entonces se aplicará la Licencia GPL v2.0.
 
-## No Trademark License
+Si el Software Licenciado incluye un archivo de "Aviso" (Notice), entonces el Aviso se aplica a todos los Trabajos Licenciados. De lo contrario, este Aviso se aplica a todos los Trabajos Licenciados:
 
-This License does not grant any rights to use the Licensor’s name, logo, or project name for endorsement or promotion without prior written permission.
+El Software Licenciado es (c) 2024-2026 Alberto Moyano
 
----
+El Licenciante por la presente otorga el derecho a copiar y modificar el Software Licenciado, pero solo para el uso permitido. Toda otra copia o modificación del Software Licenciado que no sea para uso permitido queda prohibida. Si está prohibido, usted no puede usar, copiar, modificar, redistribuir, vender o explotar de otra manera el Software Licenciado.
 
-## Disclaimer of Warranty
+Sujeto a las limitaciones anteriores, el Licenciante por la presente otorga el derecho a hacer un uso comercial limitado del Software Licenciado de acuerdo con la Concesión de Uso Adicional especificada en los Parámetros de Licencia arriba.
 
-The Software is provided “as is”, without warranty of any kind, express or implied, including but not limited to fitness for a particular purpose.
+### Conversión automática a GPL-3.0
 
----
+En la Fecha de Cambio (4 años desde la publicación), el Software Licenciado se convierte automáticamente en software bajo licencia **GNU General Public License v3.0** (GPL-3.0-or-later).
 
-## Limitation of Liability
+Esto significa que:
 
-In no event shall the Licensor be liable for any claim, damages, or other liability arising from the use of the Software.
-
----
-
-## Governing Law
-
-This License shall be governed by and construed in accordance with the laws applicable to the Licensor’s jurisdiction.
+* El código será completamente libre
+* Podrá ser usado con cualquier propósito, incluido comercial
+* Las modificaciones deberán compartirse bajo la misma licencia
+* Se garantiza libertad completa conforme a la Free Software Foundation
 
 ---
 
-**Business Source License 1.1**
-© MariaDB Corporation Ab, used under the terms of the BSL 1.1
+## Definiciones
+
+**Licencia:** Este documento.
+
+**Software Licenciado:** El software al que se hace referencia en el Aviso.
+
+**Trabajo Licenciado:** El Software Licenciado y cualquier adición o modificación al mismo.
+
+**Fecha de Cambio:** La fecha especificada en los Parámetros de Licencia arriba, o la cuarta versión del Software Licenciado, lo que ocurra primero.
+
+**Licencia de Cambio:** La licencia especificada en los Parámetros de Licencia arriba.
+
+**Concesión de Uso Adicional:** La concesión especificada en los Parámetros de Licencia arriba.
+
+**Uso Permitido:** El uso no comercial del Software Licenciado, junto con cualquier uso comercial permitido bajo la Concesión de Uso Adicional.
+
+**Licenciante:** El titular de los derechos de autor que distribuye esta Licencia.
+
+**Trabajo Derivado:** Cualquier trabajo basado en el Software Licenciado.
+
+---
+
+## Aviso de Copyright
+
+Copyright © 2024-2026 Alberto Moyano
+
+---
+
+## Texto Completo de GPL-3.0 (Licencia de Cambio)
+
+A partir de la Fecha de Cambio (4 años desde la publicación de cada versión), el Software Licenciado se convierte en software libre bajo los términos de la GNU General Public License v3.0.
+
+El texto completo de GPL-3.0 puede consultarse en:
+
+https://www.gnu.org/licenses/gpl-3.0.html
+
+---
+
+## Preguntas Frecuentes sobre Licenciamiento
+
+### ¿Puedo usar gbpublisher en mi universidad?
+
+Sí, sin costo de licencia, siempre que el uso sea para funciones académicas, científicas o institucionales sin intermediación comercial.
+
+### ¿Puedo modificar el código?
+
+Sí, puedes modificar el código para uso interno académico. Si deseas redistribuir versiones modificadas con fines comerciales, necesitas una licencia comercial.
+
+### ¿Puedo contribuir al proyecto?
+
+Sí, las contribuciones son bienvenidas. Consulta el archivo `CONTRIBUTING.md` para detalles sobre el proceso.
+
+### ¿Qué pasa si mi universidad cobra APCs (Article Processing Charges)?
+
+Si los APCs son administrados institucionalmente como parte del modelo editorial académico, el uso está permitido. Si los APCs son parte de un modelo de negocio comercial externo, requiere consulta previa.
+
+### ¿Puedo usar gbpublisher en una editorial universitaria que vende libros?
+
+Depende. Si la editorial es parte de la función institucional de la universidad sin intermediación comercial externa, el uso está permitido. Para modelos híbridos o comerciales, contacta al autor.
+
+### ¿Qué sucede después de 4 años?
+
+El código se convierte automáticamente en GPL-3.0, lo que significa que será completamente libre para cualquier uso, incluido comercial.
+
+### ¿Puedo auditar el código?
+
+Sí, el código fuente está completamente disponible para auditoría, inspección y estudio.
+
+### ¿Dónde consulto sobre licencias comerciales?
+
+Contacta a:  estudio2a@outlook.com.ar
+
+---
+
+## Información Adicional
+
+**Repositorio del Proyecto:** https://github.com/albertomoyano/gbpublisher
+
+**Documentación:**
+* `README.md` — Información general del proyecto
+* `arquitectura.md` — Decisiones arquitectónicas y técnicas
+* `anexo.md` — Condiciones de implementación institucional
+* `leeme.md` — Guía de instalación
+
+**Licencia Original BSL 1.1:** https://mariadb.com/bsl11/
+
+**Licencia de Cambio GPL-3.0:** https://www.gnu.org/licenses/gpl-3.0.html
+
+---
+
+**Última actualización:** 17 de enero de 2026
