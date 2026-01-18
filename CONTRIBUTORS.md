@@ -79,7 +79,7 @@ Todas las contribuciones a gbpublisher se realizan bajo los términos de la **Bu
 
 Al contribuir, aceptas que tu trabajo:
 * Será licenciado bajo BSL 1.1 durante el período de protección comercial
-* Se convertirá automáticamente a GPL-3.0 transcurridos 4 años desde la publicación de cada versión
+* Se convertirá automáticamente a GPL-3.0 transcurridos 5 años desde la publicación de cada versión
 
 Para más detalles, consulta:
 * `LICENSE.md` — Términos completos de licenciamiento

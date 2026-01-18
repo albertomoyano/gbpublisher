@@ -1,1 +1,1 @@
-# como proceder para una correcta instalación de gbpublisher en su máquina local
+# Como proceder para una correcta instalación de gbpublisher en su máquina local

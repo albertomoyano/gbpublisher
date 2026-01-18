@@ -167,7 +167,7 @@ Esto significa:
 * El desarrollo es transparente y trazable
 * Las contribuciones son bienvenidas bajo las condiciones establecidas
 
-Sin embargo, **no es software libre** en el sentido de licencias como GPL, MIT o Apache durante el período inicial de 4 años.
+Sin embargo, **no es software libre** en el sentido de licencias como GPL, MIT o Apache durante el período inicial de 5 años.
 
 La restricción de uso comercial garantiza que el esfuerzo de desarrollo no sea apropiado por actores comerciales sin retribución al proyecto.
 

@@ -13,7 +13,7 @@ Al contribuir código a gbpublisher, aceptas que:
 
 1. Tu contribución será licenciada bajo **Business Source License 1.1**, los mismos términos que el proyecto principal.
 
-2. Tu contribución se convertirá automáticamente a **GPL-3.0** en la Fecha de Cambio (4 años desde la publicación de cada versión).
+2. Tu contribución se convertirá automáticamente a **GPL-3.0** en la Fecha de Cambio (5 años desde la publicación de cada versión).
 
 3. Retienes el copyright de tu contribución, pero otorgas al proyecto una licencia perpetua, mundial, no exclusiva, gratuita, libre de regalías e irrevocable para usar, reproducir, modificar, mostrar, distribuir y sublicenciar tu contribución como parte de gbpublisher.
 

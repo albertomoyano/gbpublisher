@@ -6,7 +6,7 @@
 
 **Software Licenciado:** gbpublisher
 
-**Fecha de Cambio (Change Date):** Cuatro (4) años desde la fecha de publicación de cada versión específica del Software Licenciado.
+**Fecha de Cambio (Change Date):** Cinco (5) años desde la fecha de publicación de cada versión específica del Software Licenciado.
 
 **Licencia de Cambio (Change License):** GNU General Public License v3.0 o posterior (GPL-3.0-or-later)
 
@@ -29,7 +29,7 @@ Están expresamente excluidos del uso permitido sin costo:
 5. Uso del software como parte de servicios facturados a terceros
 6. Integración en productos comerciales
 
-**Contacto para Licencias Comerciales:** [tu email]
+**Contacto para Licencias Comerciales:**  estudio2a@outlook.com.ar
 
 ---
 
@@ -75,7 +75,7 @@ Sujeto a las limitaciones anteriores, el Licenciante por la presente otorga el d
 
 ### Conversión automática a GPL-3.0
 
-En la Fecha de Cambio (4 años desde la publicación), el Software Licenciado se convierte automáticamente en software bajo licencia **GNU General Public License v3.0** (GPL-3.0-or-later).
+En la Fecha de Cambio (5 años desde la publicación), el Software Licenciado se convierte automáticamente en software bajo licencia **GNU General Public License v3.0** (GPL-3.0-or-later).
 
 Esto significa que:
 
@@ -116,7 +116,7 @@ Copyright © 2024-2026 Alberto Moyano
 
 ## Texto Completo de GPL-3.0 (Licencia de Cambio)
 
-A partir de la Fecha de Cambio (4 años desde la publicación de cada versión), el Software Licenciado se convierte en software libre bajo los términos de la GNU General Public License v3.0.
+A partir de la Fecha de Cambio (5 años desde la publicación de cada versión), el Software Licenciado se convierte en software libre bajo los términos de la GNU General Public License v3.0.
 
 El texto completo de GPL-3.0 puede consultarse en:
 
@@ -146,7 +146,7 @@ Si los APCs son administrados institucionalmente como parte del modelo editorial
 
 Depende. Si la editorial es parte de la función institucional de la universidad sin intermediación comercial externa, el uso está permitido. Para modelos híbridos o comerciales, contacta al autor.
 
-### ¿Qué sucede después de 4 años?
+### ¿Qué sucede después de 5 años?
 
 El código se convierte automáticamente en GPL-3.0, lo que significa que será completamente libre para cualquier uso, incluido comercial.
 
@@ -176,4 +176,4 @@ Contacta a:  estudio2a@outlook.com.ar
 
 ---
 
-**Última actualización:** 17 de enero de 2026
+**Última actualización:** 00 de xxx de 2026

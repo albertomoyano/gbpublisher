@@ -63,7 +63,7 @@ Deberá contactar al autor para obtener una licencia comercial.
 
 #### 3.3. Transición futura
 
-Conforme a BSL 1.1, el código de gbpublisher pasará automáticamente a licencia GPL-3.0 transcurridos 4 años desde la publicación de cada versión.
+Conforme a BSL 1.1, el código de gbpublisher pasará automáticamente a licencia GPL-3.0 transcurridos 5 años desde la publicación de cada versión.
 
 ---
 

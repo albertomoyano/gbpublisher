@@ -257,7 +257,7 @@ Esta decisión arquitectónica responde a:
 La licencia BSL 1.1:
 
 * permite uso académico sin costo
-* restringe uso comercial durante 4 años
+* restringe uso comercial durante 5 años
 * convierte automáticamente el código a GPL-3.0 tras ese período
 
 Este modelo alinea los intereses de la comunidad académica con la viabilidad del proyecto a largo plazo.
