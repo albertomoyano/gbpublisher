@@ -1,36 +1,77 @@
 ' Gambas class file
 
-Private $correcta As Boolean
-Private $r As Result
+' ============================================================================
+' FORMULARIO: GESTOR DE CONSULTAS SQL
+' ============================================================================
+' PROPOSITO: PERMITE A LOS USUARIOS CREAR, GUARDAR Y EJECUTAR CONSULTAS SQL
+'            PERSONALIZADAS SOBRE LA BASE DE DATOS DE GBPUBLISHER
+'
+' SEGURIDAD: SOLO PERMITE CONSULTAS SELECT (LECTURA)
+'            PROHIBE: DROP, DELETE, TRUNCATE, ALTER, CREATE, INSERT, UPDATE
+'
+' COMPONENTES PRINCIPALES:
+'   - TextBoxNombre: Nombre corto para identificar la consulta guardada
+'   - TextBoxDescripcion: Descripción larga de la consulta
+'   - TextEditorConsultasSQL: Editor donde se escribe el código SQL
+'   - TextBoxComentarios: Comentarios sobre uso y contexto
+'   - ListBoxConsultas: Lista de consultas guardadas
+'   - TableViewEstadisticas: Grid para mostrar resultados
+'   - ComboBoxTablas: Selector de tablas disponibles
+'   - ListBoxTablas: Columnas de la tabla seleccionada
+' ============================================================================
 
+Private $correcta As Boolean      ' INDICA SI LA ULTIMA CONSULTA EJECUTADA FUE EXITOSA
+Private $r As Result              ' ALMACENA EL RESULTADO DE LA ULTIMA CONSULTA
+
+' ============================================================================
+' EVENTO: APERTURA DEL FORMULARIO
+' ============================================================================
+' INICIALIZA EL FORMULARIO CONFIGURANDO EL LAYOUT DEL SPLITTER Y CARGANDO
+' LAS LISTAS DE TABLAS Y CONSULTAS GUARDADAS
+' ============================================================================
 Public Sub Form_Open()
 
   Splitter1.Layout = [2, 5]
-
   LlenaTablas()
-  Llenalista()' lista de consultas guardadas
+  Llenalista()
   $correcta = True
 
 End
 
+' ============================================================================
+' EVENTO: CIERRE DEL FORMULARIO
+' ============================================================================
 Public Sub Form_Close()
 
   Me.Close
 
 End
 
+' ============================================================================
+' EVENTO: REDIMENSIONAMIENTO DEL SPLITTER
+' ============================================================================
+' MANTIENE LA PROPORCION 2:5 DEL SPLITTER AL REDIMENSIONAR LA VENTANA
+' ============================================================================
 Public Sub Splitter1_Resize()
 
   Splitter1.Layout = [2, 5]
 
 End
 
+' ============================================================================
+' EVENTO: CLIC EN BOTON CERRAR
+' ============================================================================
 Public Sub ButtonCerrar_Click()
 
   Me.Close
 
 End
 
+' ============================================================================
+' EVENTO: CLIC EN BOTON MOSTRAR COMENTARIOS
+' ============================================================================
+' ABRE UN FORMULARIO MODAL PARA VER/EDITAR LOS COMENTARIOS EN MODO EXTENDIDO
+' ============================================================================
 Public Sub ButtonMostrarComentarios_Click()
 
   f_TXTextendido.OriginalTextBox = TextBoxComentarios
@@ -38,34 +79,67 @@ Public Sub ButtonMostrarComentarios_Click()
 
 End
 
+' ============================================================================
+' FUNCION: LLENALISTA
+' ============================================================================
+' PROPOSITO: CARGAR LA LISTA DE CONSULTAS GUARDADAS DESDE LA BASE DE DATOS
+'
+' COMPORTAMIENTO:
+'   - Carga todas las consultas ordenadas alfabéticamente por nombre
+'   - Limpia el ListBox antes de llenarlo
+'   - Guarda los IDs en la propiedad Tag para referencia posterior
+'
+' MANEJO DE ERRORES: Captura excepciones y muestra mensaje descriptivo
+' ============================================================================
 Private Sub Llenalista()
 
   Dim r As Result
   Dim n As Integer
 
-  r = m_ConexionBD.mConn.Exec("SELECT * FROM consultas ORDER BY nombre")
+  ' ✅ CORREGIDO: Usar nombres de campos reales
+  r = m_ConexionBD.mConn.Exec("SELECT id, nombre FROM consultas ORDER BY nombre")
   If Not r.Available Then Return
+
   ListBoxConsultas.Tag = New Integer[]
   ListBoxConsultas.Clear
   ListBoxConsultas.Tag.Clear
-  For n = 0 To r.count - 1
-    ListBoxConsultas.Add(r!TextBoxNombre)
+
+  For n = 0 To r.Count - 1
+    ListBoxConsultas.Add(r!nombre)         ' ✅ CORREGIDO: Campo real de la tabla
     ListBoxConsultas.Tag.Add(r!id)
     r.MoveNext
   Next
 
 Catch
-
-  Message(Error.Text & "-" & Error.Where)
+  m_Sonido.sonar("Error")
+  Message.Error(Error.Text & " - " & Error.Where)
 
 End
 
+' ============================================================================
+' EVENTO: EDITOR DE CONSULTAS RECIBE FOCO
+' ============================================================================
+' MUESTRA EL CURSOR CUANDO EL USUARIO ENTRA AL EDITOR SQL
+' ============================================================================
 Public Sub TextEditorConsultasSQL_GotFocus()
 
   TextEditorConsultasSQL.ShowCursor = True
 
 End
 
+' ============================================================================
+' EVENTO: ACTIVACION DE ITEM EN LISTBOX DE TABLAS (COLUMNAS)
+' ============================================================================
+' PROPOSITO: INSERTAR EL NOMBRE DE UNA COLUMNA EN EL EDITOR SQL
+'
+' COMPORTAMIENTO INTELIGENTE:
+'   - Si hay "FROM" antes del cursor: Inserta solo el nombre con backticks
+'   - Si NO hay "FROM": Inserta nombre con alias (para SELECT)
+'
+' EJEMPLO:
+'   SELECT `nombre` as 'nombre', ...
+'   FROM `articulos`
+' ============================================================================
 Public Sub ListBoxTablas_Activate()
 
   Dim nPos As Integer
@@ -74,36 +148,63 @@ Public Sub ListBoxTablas_Activate()
   Dim i As Integer
   Dim texto As String
 
-  ' Obtener la línea y la columna del cursor
+  ' OBTENER LA POSICION DEL CURSOR EN EL EDITOR
   linea = TextEditorConsultasSQL.Line
   columna = TextEditorConsultasSQL.Column
-  ' Recorrer cada línea hasta la línea del cursor
+
+  ' CONSTRUIR EL TEXTO HASTA LA POSICION DEL CURSOR
   For i = 0 To linea - 1
     texto &= TextEditorConsultasSQL[i] & "\n"
   Next
-  ' Añadir el texto de la línea actual hasta la columna del cursor
   texto &= Left(TextEditorConsultasSQL[linea].Text, columna)
+
+  ' DETECTAR SI YA SE ESCRIBIO LA CLAUSULA FROM
   nPos = InStr(texto, " from ", 0, gb.IgnoreCase)
+
   If nPos > 0 Then
+    ' DESPUES DE FROM: SOLO NOMBRE DE TABLA
     TextEditorConsultasSQL.Insert("`" & ListBoxTablas.Text & "`")
   Else
-    TextEditorConsultasSQL.Insert("`" & ListBoxTablas.Text & "` as '" & ListBoxTablas.text & "'")
+    ' EN SELECT: NOMBRE CON ALIAS
+    TextEditorConsultasSQL.Insert("`" & ListBoxTablas.Text & "` as '" & ListBoxTablas.Text & "'")
   Endif
+
   TextEditorConsultasSQL.SetFocus()
 
 End
 
+' ============================================================================
+' FUNCION: LLENATABLES
+' ============================================================================
+' PROPOSITO: CARGAR LISTA DE TABLAS Y VISTAS DISPONIBLES EN LA BASE DE DATOS
+'
+' COMPORTAMIENTO:
+'   - Lee INFORMATION_SCHEMA para obtener tablas y vistas
+'   - EXCLUYE tablas del sistema: contador_tiempo, postits, usuarios,
+'     usuarios_sistema, consultas
+'   - Ordena alfabéticamente
+'   - Carga automáticamente las columnas de la primera tabla
+' ============================================================================
 Private Sub LlenaTablas()
 
   Dim r As Result
 
   ComboBoxTablas.Clear()
-  r = m_ConexionBD.mConn.Exec("SELECT TABLE_NAME as name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND (TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW') AND TABLE_NAME NOT IN ('contador_tiempo', 'postits', 'usuarios', 'usuarios_sistema', 'consultas') ORDER BY TABLE_NAME")
+
+  r = m_ConexionBD.mConn.Exec("SELECT TABLE_NAME as name " &
+    "FROM information_schema.TABLES " &
+    "WHERE TABLE_SCHEMA = DATABASE() " &
+    "AND (TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW') " &
+    "AND TABLE_NAME NOT IN ('contador_tiempo', 'postits', 'usuarios', 'usuarios_sistema', 'consultas') " &
+    "ORDER BY TABLE_NAME")
+
   If Not r.Available Then Return
+
   While r.Available
     ComboBoxTablas.Add(r!name)
-    r.movenext
+    r.MoveNext
   Wend
+
   If ComboBoxTablas.Count > 0 Then
     ComboBoxTablas.Index = 0
     LlenaColumnas()
@@ -111,7 +212,16 @@ Private Sub LlenaTablas()
 
 End
 
-' Nueva función para llenar las columnas
+' ============================================================================
+' FUNCION: LLENACOLUMNAS
+' ============================================================================
+' PROPOSITO: CARGAR LAS COLUMNAS DE LA TABLA SELECCIONADA EN EL COMBOBOX
+'
+' COMPORTAMIENTO:
+'   - Ejecuta DESCRIBE sobre la tabla seleccionada
+'   - Muestra todas las columnas en el ListBoxTablas
+'   - Maneja errores de tablas inexistentes o problemas de permisos
+' ============================================================================
 Private Sub LlenaColumnas()
 
   Dim r As Result
@@ -137,39 +247,74 @@ Private Sub LlenaColumnas()
 
 End
 
-' Usar Click en lugar de Change
+' ============================================================================
+' EVENTO: CLIC EN COMBOBOX DE TABLAS
+' ============================================================================
 Public Sub ComboBoxTablas_Click()
 
   LlenaColumnas()
 
 End
 
-' Mantener Change por si se escribe manualmente
+' ============================================================================
+' EVENTO: CAMBIO EN COMBOBOX DE TABLAS
+' ============================================================================
+' SE ACTIVA CUANDO EL USUARIO ESCRIBE MANUALMENTE
+' ============================================================================
 Public Sub ComboBoxTablas_Change()
 
-  ' Solo si hay texto válido
   If ComboBoxTablas.Text <> "" Then
     LlenaColumnas()
   Endif
 
 End
 
+' ============================================================================
+' EVENTO: ACTIVACION DEL COMBOBOX DE TABLAS (ENTER O DOBLE CLIC)
+' ============================================================================
+' PROPOSITO: INSERTAR AUTOMATICAMENTE UNA CONSULTA SELECT BASICA
+'
+' COMPORTAMIENTO:
+'   - Si el editor está vacío: Crea "SELECT * FROM `tabla`"
+'   - Si hay texto: Inserta solo el nombre de la tabla con backticks
+' ============================================================================
 Public Sub ComboBoxTablas_Activate()
 
   If TextEditorConsultasSQL.Text = "" Then
-    TextEditorConsultasSQL.Text = "Select * from `" & ComboBoxTablas.Text & "`"
+    TextEditorConsultasSQL.Text = "SELECT * FROM `" & ComboBoxTablas.Text & "`"
   Else
     TextEditorConsultasSQL.Insert("`" & ComboBoxTablas.Text & "`")
   Endif
 
 End
 
+' ============================================================================
+' EVENTO: DOBLE CLIC EN COMBOBOX DE TABLAS
+' ============================================================================
 Public Sub ComboBoxTablas_DblClick()
 
   ComboBoxTablas_Activate()
 
 End
 
+' ============================================================================
+' FUNCION: BUTTONEJECUTARSQL_CLICK
+' ============================================================================
+' PROPOSITO: EJECUTAR LA CONSULTA SQL ESCRITA EN EL EDITOR
+'
+' VALIDACIONES DE SEGURIDAD:
+'   1. Verifica que no esté vacío el editor
+'   2. Rechaza comandos peligrosos: DROP, DELETE, TRUNCATE, ALTER, CREATE,
+'      INSERT, UPDATE
+'   3. Solo permite consultas SELECT
+'
+' COMPORTAMIENTO:
+'   - Si la consulta es válida y devuelve datos: Llena el grid con resultados
+'   - Si es válida pero sin resultados: Muestra mensaje informativo
+'   - Si hay error SQL: Muestra el mensaje de error
+'
+' MANEJO DE ERRORES: Try/Catch con feedback visual y sonoro
+' ============================================================================
 Public Sub ButtonEjecutarSQL_Click()
 
   Dim consulta As String
@@ -177,10 +322,10 @@ Public Sub ButtonEjecutarSQL_Click()
 
   If Not TextEditorConsultasSQL.Text Then Return
 
-  ' Convertir la consulta a mayúsculas para validación
+  ' CONVERTIR A MAYUSCULAS PARA VALIDACION
   consulta = UCase(Trim(TextEditorConsultasSQL.Text))
 
-  ' Lista de comandos peligrosos prohibidos
+  ' VERIFICAR COMANDOS PELIGROSOS
   If InStr(consulta, "DROP ") > 0 Or
       InStr(consulta, "DELETE ") > 0 Or
       InStr(consulta, "TRUNCATE ") > 0 Or
@@ -196,13 +341,14 @@ Public Sub ButtonEjecutarSQL_Click()
     Return
   Endif
 
-  ' Verificar que sea una consulta SELECT
+  ' VERIFICAR QUE SEA SELECT
   If Left(consulta, 6) <> "SELECT" Then
     m_Sonido.sonar("Error")
     Message.Error("Solo se permiten consultas SELECT.\n\nPara modificar datos, use las funciones específicas de la aplicación.")
     Return
   Endif
 
+  ' EJECUTAR CONSULTA
   Inc Application.Busy
   Try $r = m_ConexionBD.mConn.Exec(TextEditorConsultasSQL.Text)
   Dec Application.Busy
@@ -216,20 +362,35 @@ Public Sub ButtonEjecutarSQL_Click()
 
   $correcta = True
 
+  ' PROCESAR RESULTADOS
   If $r.Available Then
-    TextLabelResultados.Text = ("Total de registros encontrados: ") & $r.Count
+    TextLabelResultados.Text = "Total de registros encontrados: " & $r.Count
     LlenaGrid()
   Else
-    TextLabelResultados.Text = ("La consulta parece correcta pero no devolvió ningún resultado.")
+    TextLabelResultados.Text = "La consulta parece correcta pero no devolvió ningún resultado."
     VaciaGrid()
   Endif
 
 Catch
-
-  Message(Error.Text & "-" & Error.Where)
+  m_Sonido.sonar("Error")
+  Message.Error(Error.Text & " - " & Error.Where)
 
 End
 
+' ============================================================================
+' FUNCION: LLENAGRID
+' ============================================================================
+' PROPOSITO: POBLAR EL TABLEVIEW CON LOS RESULTADOS DE LA CONSULTA
+'
+' COMPORTAMIENTO:
+'   1. Limpia el grid
+'   2. Configura las columnas según los campos del Result
+'   3. Maneja nombres de campos problemáticos (vacíos, nulos)
+'   4. Asigna títulos a las columnas
+'   5. Configura el número de filas según el count del Result
+'
+' NOTA: Los datos se cargan ON-DEMAND via evento TableViewEstadisticas_Data
+' ============================================================================
 Private Sub LlenaGrid()
 
   Dim n As Integer
@@ -239,20 +400,19 @@ Private Sub LlenaGrid()
 
   If Not $r Or Not $r.Available Then Return
 
-  ' Mover al primer registro
   $r.MoveFirst()
 
-  ' Configurar columnas
+  ' CONFIGURAR COLUMNAS
   TableViewEstadisticas.Columns.Count = $r.Fields.Count
 
   For n = 0 To $r.Fields.Count - 1
-    ' Obtener el nombre del campo de forma segura
+    ' OBTENER NOMBRE DEL CAMPO DE FORMA SEGURA
     Try sFieldName = $r.Fields[n].Name
     If Error Then
       sFieldName = "Campo_" & n
     Endif
 
-    ' Si el nombre está vacío o es nulo, usar un nombre por defecto
+    ' VALIDAR QUE NO ESTE VACIO
     If Not sFieldName Or Len(Trim(sFieldName)) = 0 Then
       sFieldName = "Columna_" & (n + 1)
     Endif
@@ -261,28 +421,43 @@ Private Sub LlenaGrid()
     TableViewEstadisticas.Columns[n].Expand = True
   Next
 
+  ' CONFIGURAR FILAS
   TableViewEstadisticas.Rows.Count = $r.Count
   TableViewEstadisticas.Refresh()
 
 End
 
+' ============================================================================
+' EVENTO: TABLEVIEWESTADISTICAS_DATA
+' ============================================================================
+' PROPOSITO: PROPORCIONAR DATOS ON-DEMAND PARA CADA CELDA DEL GRID
+'
+' ESTE EVENTO SE DISPARA CADA VEZ QUE EL TABLEVIEW NECESITA MOSTRAR UNA CELDA
+' ES EL PATRON RECOMENDADO EN GAMBAS PARA GRANDES VOLUMENES DE DATOS
+'
+' PARAMETROS:
+'   - Row: Índice de fila (0-based)
+'   - Column: Índice de columna (0-based)
+'
+' MANEJO DE ERRORES: Valores NULL se muestran como cadena vacía
+' ============================================================================
 Public Sub TableViewEstadisticas_Data(Row As Integer, Column As Integer)
 
   Dim valor As Variant
 
   If Not $r Then Return
 
-  ' Mover al registro correspondiente
+  ' MOVER AL REGISTRO CORRESPONDIENTE
   $r.MoveTo(Row)
 
-  ' Obtener el valor de forma segura
+  ' OBTENER VALOR DE FORMA SEGURA
   Try valor = $r[Column]
   If Error Then
     TableViewEstadisticas.Data.Text = ""
     Return
   Endif
 
-  ' Mostrar el valor (convertir a texto si es necesario)
+  ' MOSTRAR VALOR (CONVERTIR NULL A CADENA VACIA)
   If IsNull(valor) Then
     TableViewEstadisticas.Data.Text = ""
   Else
@@ -291,6 +466,11 @@ Public Sub TableViewEstadisticas_Data(Row As Integer, Column As Integer)
 
 End
 
+' ============================================================================
+' FUNCION: VACIAGRID
+' ============================================================================
+' PROPOSITO: LIMPIAR COMPLETAMENTE EL TABLEVIEW DE RESULTADOS
+' ============================================================================
 Private Sub VaciaGrid()
 
   TableViewEstadisticas.Rows.Count = 0
@@ -299,60 +479,134 @@ Private Sub VaciaGrid()
 
 End
 
+' ============================================================================
+' FUNCION: BUTTONGRABARCONSULTA_CLICK
+' ============================================================================
+' PROPOSITO: GUARDAR O ACTUALIZAR UNA CONSULTA EN LA BASE DE DATOS
+'
+' VALIDACIONES:
+'   1. Nombre obligatorio
+'   2. Consulta SQL no vacía
+'   3. Advertencia si la consulta tiene errores
+'   4. Confirmación si va a sobrescribir consulta existente
+'
+' COMPORTAMIENTO:
+'   - Si existe (por nombre): UPDATE
+'   - Si es nueva: INSERT
+'   - Actualiza fecha_creacion automáticamente (DEFAULT CURRENT_TIMESTAMP)
+'
+' CAMPOS GUARDADOS:
+'   - nombre: Identificador corto
+'   - descripcion: Descripción larga
+'   - editor_consultas: Código SQL
+'   - comentarios: Notas de uso
+'
+' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
+' ============================================================================
 Public Sub ButtonGrabarConsulta_Click()
 
   Dim r As Result
   Dim n As Integer
 
+  ' VALIDAR NOMBRE OBLIGATORIO
   If TextBoxNombre.Text = "" Then
-    Message("El nombre es obligatorio")
+    m_Sonido.sonar("Error")
+    Message.Error("El nombre es obligatorio")
     Return
   Endif
+
+  ' VALIDAR QUE HAYA CONSULTA
   If TextEditorConsultasSQL.Text = "" Then
     m_Sonido.sonar("Error")
-    Message.Error("No hay consulta")
+    Message.Error("No hay consulta para guardar")
     Return
   Endif
+
+  ' ADVERTIR SI LA CONSULTA TIENE ERRORES
   If Not $correcta Then
     m_Sonido.sonar("Warning")
-    n = Message.Warning(("La consulta parece errónea ¿Está seguro que la quiere guardar así?"), ("Sí"), ("No"))
+    n = Message.Warning("La consulta parece errónea. ¿Está seguro que la quiere guardar así?", "Sí", "No")
     If n <> 1 Then Return
   Endif
-  If Not $correcta Then
+
+  ' ✅ VERIFICAR SI YA EXISTE UNA CONSULTA CON ESE NOMBRE
+  ' GAMBAS USA &1, &2, &3 COMO PLACEHOLDERS, NO EL SIMBOLO ?
+  r = m_ConexionBD.mConn.Exec("SELECT id FROM consultas WHERE nombre = &1", TextBoxNombre.Text)
+
+  If r.Available Then
+    ' ACTUALIZAR CONSULTA EXISTENTE
     m_Sonido.sonar("Warning")
-    n = Message.Warning(("Si ya existe una consulta con este nombre será sobreescrita. ¿Guardar esta Consulta?"), ("Sí"), ("No"))
+    n = Message.Warning("Ya existe una consulta con este nombre. ¿Desea sobrescribirla?", "Sí", "No")
     If n <> 1 Then Return
-  Endif
-  r = m_ConexionBD.mConn.Exec("SELECT TextBoxNombre FROM consultas WHERE TextBoxNombre = ?", TextBoxNombre.Text)
-  If r.available Then
-    r = m_ConexionBD.mConn.Edit("consultas", "id = ?", TextBoxIDsql.Value)
+
+    ' ✅ USAR Edit() PARA ACTUALIZAR - GAMBAS USA &1 COMO PLACEHOLDER
+    r = m_ConexionBD.mConn.Edit("consultas", "id = &1", r!id)
   Else
-    r = m_ConexionBD.mConn.Create("consultas", True)
+    ' ✅ CREAR NUEVA CONSULTA CON Create()
+    r = m_ConexionBD.mConn.Create("consultas")
   Endif
-  r!TextBoxNombre = TextBoxNombre.Text
-  r!TextBoxDescripcion = TextBoxDescripcion.Text
-  r!TextEditorConsultasSQL = TextEditorConsultasSQL.Text
-  r!TextBoxComentarios = TextBoxComentarios.Text
+
+  ' ✅ ASIGNAR VALORES A LOS CAMPOS REALES DE LA TABLA
+  r!nombre = TextBoxNombre.Text
+  r!descripcion = TextBoxDescripcion.Text
+  r!editor_consultas = TextEditorConsultasSQL.Text
+  r!comentarios = TextBoxComentarios.Text
+  ' NOTA: fecha_creacion se asigna automáticamente por DEFAULT CURRENT_TIMESTAMP
+
   r.Update()
+
+  m_Sonido.sonar("Info")
+  Message.Info("Consulta guardada correctamente")
+
   Llenalista()
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al guardar la consulta: " & Error.Text)
 
 End
 
+' ============================================================================
+' EVENTO: ACTIVACION DE ITEM EN LISTBOX DE CONSULTAS
+' ============================================================================
+' PROPOSITO: CARGAR UNA CONSULTA GUARDADA EN EL FORMULARIO
+'
+' COMPORTAMIENTO:
+'   1. Busca la consulta por ID (guardado en Tag)
+'   2. Carga todos los campos en los controles correspondientes
+'   3. Coloca el foco en el campo Nombre
+'
+' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
+' ============================================================================
 Public Sub ListBoxConsultas_Activate()
 
   Dim r As Result
 
-  r = m_ConexionBD.mConn.Exec("SELECT * FROM consultas WHERE id = ?", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+  ' ✅ GAMBAS USA &1 COMO PLACEHOLDER, NO EL SIMBOLO ?
+  r = m_ConexionBD.mConn.Exec("SELECT * FROM consultas WHERE id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+
   If Not r.Available Then Return
+
+  ' ✅ CORREGIDO: Usar nombres de campos reales de la tabla
   TextBoxIDsql.Value = r!id
-  TextBoxNombre.Text = r!TextBoxNombre
-  TextBoxDescripcion.Text = r!TextBoxDescripcion
-  TextEditorConsultasSQL.Text = r!TextEditorConsultasSQL
-  TextBoxComentarios.Text = r!TextBoxComentarios
+  TextBoxNombre.Text = r!nombre
+  TextBoxDescripcion.Text = r!descripcion
+  TextEditorConsultasSQL.Text = r!editor_consultas
+  TextBoxComentarios.Text = r!comentarios
+
   TextBoxNombre.SetFocus
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al cargar la consulta: " & Error.Text & " - " & Error.Where)
 
 End
 
+' ============================================================================
+' EVENTO: CLIC EN BOTON NUEVA CONSULTA
+' ============================================================================
+' LIMPIA TODOS LOS CAMPOS PARA COMENZAR UNA CONSULTA DESDE CERO
+' ============================================================================
 Public Sub ButtonNuevaConsulta_Click()
 
   Limpiacampos()
@@ -360,74 +614,127 @@ Public Sub ButtonNuevaConsulta_Click()
 
 End
 
+' ============================================================================
+' FUNCION: LIMPIACAMPOS
+' ============================================================================
+' PROPOSITO: LIMPIAR TODOS LOS CONTROLES DEL FORMULARIO
+' ============================================================================
 Private Sub Limpiacampos()
 
   TextBoxIDsql.Value = Null
-  TextBoxNombre.text = ""
+  TextBoxNombre.Text = ""
   TextEditorConsultasSQL.Text = ""
   TextBoxDescripcion.Text = ""
   TextBoxComentarios.Text = ""
-  TextLabelResultados.text = ""
+  TextLabelResultados.Text = ""
   TableViewEstadisticas.Rows.Count = 0
   TableViewEstadisticas.Columns.Count = 0
   TableViewEstadisticas.Clear()
 
 End
 
+' ============================================================================
+' EVENTO: CLIC EN BOTON BORRAR CONSULTA
+' ============================================================================
+' PROPOSITO: ELIMINAR UNA CONSULTA GUARDADA DE LA BASE DE DATOS
+'
+' SEGURIDAD: Pide confirmación antes de eliminar
+'
+' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
+' ============================================================================
 Public Sub ButtonBorrarConsulta_Click()
 
   Dim n As Integer
 
+  If ListBoxConsultas.Index < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar una consulta para borrar")
+    Return
+  Endif
+
   m_Sonido.sonar("Question")
-  n = Message.Question(("¿Desea eliminar esta consulta? ") & ListBoxConsultas.Text, ("Sí"), ("No"))
+  n = Message.Question("¿Desea eliminar esta consulta?\n\n" & ListBoxConsultas.Text, "Sí", "No")
+
   If n <> 1 Then Return
-  m_ConexionBD.mConn.Delete("consultas", "id = ?", ListBoxConsultas.Tag[ListBoxConsultas.index])
+
+  ' ✅ GAMBAS USA &1 COMO PLACEHOLDER, NO EL SIMBOLO ?
+  m_ConexionBD.mConn.Delete("consultas", "id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+
+  m_Sonido.sonar("Info")
+  Message.Info("Consulta eliminada")
 
   ListBoxConsultas.Clear
 
   Llenalista()
   Limpiacampos()
 
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al eliminar la consulta: " & Error.Text)
+
 End
 
+' ============================================================================
+' EVENTO: CLIC EN BOTON LIMPIAR CAMPOS
+' ============================================================================
 Public Sub ButtonLimpiarCampos_Click()
 
   Limpiacampos()
 
 End
 
+' ============================================================================
+' FUNCION: BUTTONEXPORTARCSV_CLICK
+' ============================================================================
+' PROPOSITO: EXPORTAR LOS RESULTADOS DE LA CONSULTA A UN ARCHIVO CSV
+'
+' FORMATO CSV:
+'   - Primera fila: Encabezados entre comillas
+'   - Separador: Punto y coma (;)
+'   - Encoding: UTF-8 (por defecto en Gambas)
+'
+' VALIDACION: Verifica que haya datos antes de exportar
+' ============================================================================
 Public Sub ButtonExportarCSV_Click()
 
   Dim csv As String
   Dim c, f As Integer
 
-  ' Validar que hay datos para exportar
+  ' VALIDAR QUE HAY DATOS
   If TableViewEstadisticas.Rows.Count = 0 Or TableViewEstadisticas.Columns.Count = 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay datos para exportar")
     Return
   Endif
 
+  ' CONSTRUIR ENCABEZADOS
   For c = 0 To TableViewEstadisticas.Columns.Max
-    csv &= "\"" & TableViewEstadisticas.Columns[c].Title & "\" ;"
+    csv &= "\"" & TableViewEstadisticas.Columns[c].Title & "\";"
   Next
   csv = Left(csv, -1) & gb.NewLine
+
+  ' CONSTRUIR FILAS DE DATOS
   For f = 0 To TableViewEstadisticas.Rows.Max
     For c = 0 To TableViewEstadisticas.Columns.Max
-      csv &= TableViewEstadisticas[f, c].text & ";"
+      csv &= TableViewEstadisticas[f, c].Text & ";"
     Next
     csv = Left(csv, -1) & gb.NewLine
   Next
   csv = Left(csv, -1)
-  Dialog.Filter = ["*.csv", "CSV Files"]
+
+  ' DIALOGO GUARDAR ARCHIVO
+  Dialog.Filter = ["*.csv", "Archivos CSV"]
   Dialog.AutoExt = True
   If Dialog.SaveFile() Then Return
+
+  ' GUARDAR ARCHIVO
   File.Save(Dialog.Path, csv)
+
   m_Sonido.sonar("Info")
-  Message.Info("Fichero CSV guardado como " & Dialog.Path)
+  Message.Info("Archivo CSV guardado como:\n" & Dialog.Path)
 
 Catch
   m_Sonido.sonar("Error")
-  Message.Error(Error.Text)
+  Message.Error("Error al exportar CSV: " & Error.Text)
 
 End
