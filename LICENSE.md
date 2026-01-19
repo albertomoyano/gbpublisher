@@ -13,7 +13,7 @@
 
 ## Additional Use Grant
 
-### Uso Permitido Sin Restricciones
+### Uso permitido sin restricciones
 
 Puedes usar gbpublisher para producción editorial en:
 
@@ -40,14 +40,14 @@ Puedes usar gbpublisher para producción editorial en:
 - Operan sin fines de lucro
 - Reinvierten excedentes en la actividad académica
 
-### Criterio de Elegibilidad
+### Criterio de elegibilidad
 
 El criterio NO es **público vs privado**, sino **finalidad de la actividad editorial**:
 
 - ✅ **Permitido**: Producción editorial como servicio académico
 - ❌ **No permitido**: Producción editorial como negocio comercial
 
-### Ejemplos de Uso Permitido
+### Ejemplos de uso permitido
 
 - Revista científica de universidad privada sin fines de lucro
 - Editorial de instituto de investigación privado
@@ -55,7 +55,7 @@ El criterio NO es **público vs privado**, sino **finalidad de la actividad edit
 - Sociedad científica que publica journal
 - Universidad privada confesional publicando libros académicos
 
-### Ejemplos de Uso NO Permitido
+### Ejemplos de uso NO permitido
 
 - Empresa editorial comercial (por ejemplo: Springer, Elsevier, etc.)
 - Agencia de servicios editoriales con fines de lucro
@@ -63,7 +63,7 @@ El criterio NO es **público vs privado**, sino **finalidad de la actividad edit
 - Consultor independiente que ofrece servicios de edición
 - Plataforma SaaS basada en gbpublisher
 
-### Casos Especiales
+### Casos especiales
 
 **Editoriales universitarias que venden publicaciones**:
 - ✅ Permitido si:
@@ -91,7 +91,7 @@ Criterios generales:
 
 Si respondes SÍ a las 3 → probablemente aplicas.
 
-### Licencias Comerciales
+### Licencias comerciales
 
 Para uso comercial, contactar para licencia separada:
 - Empresas editoriales
