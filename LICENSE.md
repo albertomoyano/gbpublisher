@@ -1,5 +1,114 @@
 # Business Source License 1.1
 
+## Parámetros
+
+- **Licensor**: Alberto Moyano
+- **Software**: gbpublisher v1.0.0
+- **Fecha release**: [24 de mayo de 2026 1.0.0]
+- **Additional Use Grant**: Véase abajo
+- **Change Date**: 5 años desde fecha de release
+- **Change License**: GNU GPL v3.0
+
+---
+
+## Additional Use Grant
+
+### Uso Permitido Sin Restricciones
+
+Puedes usar gbpublisher para producción editorial en:
+
+**Instituciones Académicas** (públicas o privadas):
+- Universidades estatales
+- Universidades privadas sin fines de lucro
+- Colegios universitarios
+- Institutos de educación superior
+
+**Centros de Investigación** (públicos o privados):
+- Institutos de investigación
+- Laboratorios académicos
+- Observatorios científicos
+- Think tanks sin fines de lucro
+
+**Organizaciones Académicas**:
+- Sociedades científicas
+- Colegios profesionales
+- Fundaciones de investigación
+- Redes académicas
+
+**Editoriales Universitarias** que:
+- Publican contenido académico/científico
+- Operan sin fines de lucro
+- Reinvierten excedentes en la actividad académica
+
+### Criterio de Elegibilidad
+
+El criterio NO es **público vs privado**, sino **finalidad de la actividad editorial**:
+
+- ✅ **Permitido**: Producción editorial como servicio académico
+- ❌ **No permitido**: Producción editorial como negocio comercial
+
+### Ejemplos de Uso Permitido
+
+- Revista científica de universidad privada sin fines de lucro
+- Editorial de instituto de investigación privado
+- Publicaciones de fundación educativa
+- Sociedad científica que publica journal
+- Universidad privada confesional publicando libros académicos
+
+### Ejemplos de Uso NO Permitido
+
+- Empresa editorial comercial (por ejemplo: Springer, Elsevier, etc.)
+- Agencia de servicios editoriales con fines de lucro
+- Universidad con fines de lucro que vende servicios editoriales
+- Consultor independiente que ofrece servicios de edición
+- Plataforma SaaS basada en gbpublisher
+
+### Casos Especiales
+
+**Editoriales universitarias que venden publicaciones**:
+- ✅ Permitido si:
+- Ventas cubren costos operativos
+- Precios cercanos al costo de producción
+- Excedentes se reinvierten en actividad académica
+- El objetivo NO es maximizar ganancias
+
+**Servicios externos contratados por universidad**:
+- ❌ Si una universidad contrata a una empresa comercial para hacer la producción editorial, esa empresa NO puede usar gbpublisher bajo esta licencia gratuita.
+- ✅ La universidad puede usar gbpublisher internamente.
+
+**Consultores/freelancers**:
+- ❌ No pueden usar gbpublisher para ofrecer servicios comerciales a terceros.
+- ✅ Pueden usarlo si están contratados directamente como empleados de una institución elegible y el servidor se encuentra dentro de la institución.
+
+### ¿Mi caso aplica?
+
+Si tienes dudas, contáctame: alberto@estudio2a.com
+
+Criterios generales:
+1. ¿Tu institución es primariamente académica/científica?
+2. ¿La publicación es parte de la misión académica?
+3. ¿Los excedentes se reinvierten en actividad académica?
+
+Si respondes SÍ a las 3 → probablemente aplicas.
+
+### Licencias Comerciales
+
+Para uso comercial, contactar para licencia separada:
+- Empresas editoriales
+- Servicios editoriales comerciales
+- Plataformas SaaS
+- Consultores independientes
+
+---
+
+## Conversión a GPL v3
+
+Esta versión (1.0) se convertirá automáticamente a GPL v3 el 24 de mayo de 2031. Después de esa fecha, TODOS los usos estarán permitidos bajo términos GPL v3.
+
+---
+
+# Business Source License 1.1
+
 ## Parámetros de Licencia
 
 **Licensor:** Alberto Moyano
@@ -35,7 +144,7 @@ Están expresamente excluidos del uso permitido sin costo:
 
 ## Aviso
 
-El Software Licenciado es (c) 2024-2026 Alberto Moyano
+El Software Licenciado es (c) 2026 Alberto Moyano
 
 ---
 
@@ -67,7 +176,7 @@ Si el Licenciante no especifica una Licencia de Cambio, entonces se aplicará la
 
 Si el Software Licenciado incluye un archivo de "Aviso" (Notice), entonces el Aviso se aplica a todos los Trabajos Licenciados. De lo contrario, este Aviso se aplica a todos los Trabajos Licenciados:
 
-El Software Licenciado es (c) 2024-2026 Alberto Moyano
+El Software Licenciado es (c) 2026 Alberto Moyano
 
 El Licenciante por la presente otorga el derecho a copiar y modificar el Software Licenciado, pero solo para el uso permitido. Toda otra copia o modificación del Software Licenciado que no sea para uso permitido queda prohibida. Si está prohibido, usted no puede usar, copiar, modificar, redistribuir, vender o explotar de otra manera el Software Licenciado.
 
@@ -110,7 +219,7 @@ Esto significa que:
 
 ## Aviso de Copyright
 
-Copyright © 2024-2026 Alberto Moyano
+Copyright © 2026 Alberto Moyano
 
 ---
 
