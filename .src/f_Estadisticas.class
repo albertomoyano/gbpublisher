@@ -7,7 +7,6 @@
 '            PERSONALIZADAS SOBRE LA BASE DE DATOS DE GBPUBLISHER
 '
 ' SEGURIDAD: SOLO PERMITE CONSULTAS SELECT (LECTURA)
-'            PROHIBE: DROP, DELETE, TRUNCATE, ALTER, CREATE, INSERT, UPDATE
 '
 ' COMPONENTES PRINCIPALES:
 '   - TextBoxNombre: Nombre corto para identificar la consulta guardada
@@ -30,6 +29,8 @@ Private $r As Result              ' ALMACENA EL RESULTADO DE LA ULTIMA CONSULTA
 ' LAS LISTAS DE TABLAS Y CONSULTAS GUARDADAS
 ' ============================================================================
 Public Sub Form_Open()
+
+  Me.Title = "Estadísticas (usuario en curso: " & m_ConexionBD.usuarioActual & ")"
 
   Splitter1.Layout = [2, 5]
   LlenaTablas()
@@ -105,7 +106,7 @@ Private Sub Llenalista()
   ListBoxConsultas.Tag.Clear
 
   For n = 0 To r.Count - 1
-    ListBoxConsultas.Add(r!nombre)         ' ✅ CORREGIDO: Campo real de la tabla
+    ListBoxConsultas.Add(r!nombre)
     ListBoxConsultas.Tag.Add(r!id)
     r.MoveNext
   Next
@@ -137,7 +138,7 @@ End
 '   - Si NO hay "FROM": Inserta nombre con alias (para SELECT)
 '
 ' EJEMPLO:
-'   SELECT `nombre` as 'nombre', ...
+'   SELECT `nombre` as 'nombre',
 '   FROM `articulos`
 ' ============================================================================
 Public Sub ListBoxTablas_Activate()
@@ -344,7 +345,7 @@ Public Sub ButtonEjecutarSQL_Click()
   ' VERIFICAR QUE SEA SELECT
   If Left(consulta, 6) <> "SELECT" Then
     m_Sonido.sonar("Error")
-    Message.Error("Solo se permiten consultas SELECT.\n\nPara modificar datos, use las funciones específicas de la aplicación.")
+    Message.Error("Solo se permiten consultas SELECT.")
     Return
   Endif
 
@@ -480,93 +481,6 @@ Private Sub VaciaGrid()
 End
 
 ' ============================================================================
-' FUNCION: BUTTONGRABARCONSULTA_CLICK
-' ============================================================================
-' PROPOSITO: GUARDAR O ACTUALIZAR UNA CONSULTA EN LA BASE DE DATOS
-'
-' VALIDACIONES:
-'   1. Nombre obligatorio
-'   2. Consulta SQL no vacía
-'   3. Advertencia si la consulta tiene errores
-'   4. Confirmación si va a sobrescribir consulta existente
-'
-' COMPORTAMIENTO:
-'   - Si existe (por nombre): UPDATE
-'   - Si es nueva: INSERT
-'   - Actualiza fecha_creacion automáticamente (DEFAULT CURRENT_TIMESTAMP)
-'
-' CAMPOS GUARDADOS:
-'   - nombre: Identificador corto
-'   - descripcion: Descripción larga
-'   - editor_consultas: Código SQL
-'   - comentarios: Notas de uso
-'
-' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
-' ============================================================================
-Public Sub ButtonGrabarConsulta_Click()
-
-  Dim r As Result
-  Dim n As Integer
-
-  ' VALIDAR NOMBRE OBLIGATORIO
-  If TextBoxNombre.Text = "" Then
-    m_Sonido.sonar("Error")
-    Message.Error("El nombre es obligatorio")
-    Return
-  Endif
-
-  ' VALIDAR QUE HAYA CONSULTA
-  If TextEditorConsultasSQL.Text = "" Then
-    m_Sonido.sonar("Error")
-    Message.Error("No hay consulta para guardar")
-    Return
-  Endif
-
-  ' ADVERTIR SI LA CONSULTA TIENE ERRORES
-  If Not $correcta Then
-    m_Sonido.sonar("Warning")
-    n = Message.Warning("La consulta parece errónea. ¿Está seguro que la quiere guardar así?", "Sí", "No")
-    If n <> 1 Then Return
-  Endif
-
-  ' ✅ VERIFICAR SI YA EXISTE UNA CONSULTA CON ESE NOMBRE
-  ' GAMBAS USA &1, &2, &3 COMO PLACEHOLDERS, NO EL SIMBOLO ?
-  r = m_ConexionBD.mConn.Exec("SELECT id FROM consultas WHERE nombre = &1", TextBoxNombre.Text)
-
-  If r.Available Then
-    ' ACTUALIZAR CONSULTA EXISTENTE
-    m_Sonido.sonar("Warning")
-    n = Message.Warning("Ya existe una consulta con este nombre. ¿Desea sobrescribirla?", "Sí", "No")
-    If n <> 1 Then Return
-
-    ' ✅ USAR Edit() PARA ACTUALIZAR - GAMBAS USA &1 COMO PLACEHOLDER
-    r = m_ConexionBD.mConn.Edit("consultas", "id = &1", r!id)
-  Else
-    ' ✅ CREAR NUEVA CONSULTA CON Create()
-    r = m_ConexionBD.mConn.Create("consultas")
-  Endif
-
-  ' ✅ ASIGNAR VALORES A LOS CAMPOS REALES DE LA TABLA
-  r!nombre = TextBoxNombre.Text
-  r!descripcion = TextBoxDescripcion.Text
-  r!editor_consultas = TextEditorConsultasSQL.Text
-  r!comentarios = TextBoxComentarios.Text
-  ' NOTA: fecha_creacion se asigna automáticamente por DEFAULT CURRENT_TIMESTAMP
-
-  r.Update()
-
-  m_Sonido.sonar("Info")
-  Message.Info("Consulta guardada correctamente")
-
-  Llenalista()
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al guardar la consulta: " & Error.Text)
-
-End
-
-' ============================================================================
 ' EVENTO: ACTIVACION DE ITEM EN LISTBOX DE CONSULTAS
 ' ============================================================================
 ' PROPOSITO: CARGAR UNA CONSULTA GUARDADA EN EL FORMULARIO
@@ -634,47 +548,6 @@ Private Sub Limpiacampos()
 End
 
 ' ============================================================================
-' EVENTO: CLIC EN BOTON BORRAR CONSULTA
-' ============================================================================
-' PROPOSITO: ELIMINAR UNA CONSULTA GUARDADA DE LA BASE DE DATOS
-'
-' SEGURIDAD: Pide confirmación antes de eliminar
-'
-' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
-' ============================================================================
-Public Sub ButtonBorrarConsulta_Click()
-
-  Dim n As Integer
-
-  If ListBoxConsultas.Index < 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar una consulta para borrar")
-    Return
-  Endif
-
-  m_Sonido.sonar("Question")
-  n = Message.Question("¿Desea eliminar esta consulta?\n\n" & ListBoxConsultas.Text, "Sí", "No")
-
-  If n <> 1 Then Return
-
-  ' ✅ GAMBAS USA &1 COMO PLACEHOLDER, NO EL SIMBOLO ?
-  m_ConexionBD.mConn.Delete("consultas", "id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
-
-  m_Sonido.sonar("Info")
-  Message.Info("Consulta eliminada")
-
-  ListBoxConsultas.Clear
-
-  Llenalista()
-  Limpiacampos()
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al eliminar la consulta: " & Error.Text)
-
-End
-
-' ============================================================================
 ' EVENTO: CLIC EN BOTON LIMPIAR CAMPOS
 ' ============================================================================
 Public Sub ButtonLimpiarCampos_Click()
@@ -736,5 +609,252 @@ Public Sub ButtonExportarCSV_Click()
 Catch
   m_Sonido.sonar("Error")
   Message.Error("Error al exportar CSV: " & Error.Text)
+
+End
+
+' ============================================================================
+' EVENTO: TEXTEDITORCONSU LTASSQL_CHANGE
+' ============================================================================
+' PROPOSITO: PREVENIR LA ESCRITURA DE COMANDOS SQL PELIGROSOS EN TIEMPO REAL
+'
+' COMPORTAMIENTO:
+'   - Detecta cuando el usuario escribe comandos prohibidos
+'   - Borra automáticamente la palabra cuando se completa
+'   - Lista de comandos prohibidos: DROP, DELETE, UPDATE, INSERT, TRUNCATE,
+'     ALTER, CREATE, GRANT, REVOKE
+'
+' FUNCIONAMIENTO:
+'   - Analiza las primeras palabras de cada línea
+'   - Si detecta una palabra prohibida completa, la borra
+'   - Usa Split() para dividir por espacios, más robusto que Mid()
+'
+' NOTA: Se ejecuta después de cada cambio en el texto del editor
+' ============================================================================
+Public Sub TextEditorConsultasSQL_Change()
+
+  Dim lineaActual As String
+  Dim linea As Integer
+  Dim columna As Integer
+  Dim palabras As String[]
+  Dim primeraPalabra As String
+  Dim i As Integer
+  Dim palabrasProhibidas As String[]
+
+  ' LISTA DE PALABRAS PROHIBIDAS (en mayúsculas para comparación)
+  palabrasProhibidas = ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE",
+    "ALTER", "CREATE", "GRANT", "REVOKE"]
+
+  ' OBTENER POSICION ACTUAL DEL CURSOR
+  linea = TextEditorConsultasSQL.Line
+  columna = TextEditorConsultasSQL.Column
+
+  ' VERIFICAR QUE HAY TEXTO EN LA LINEA ACTUAL
+  If linea >= TextEditorConsultasSQL.Count Then Return
+
+  lineaActual = TextEditorConsultasSQL[linea].Text
+  If Not lineaActual Or Len(Trim(lineaActual)) = 0 Then Return
+
+  ' DIVIDIR LA LINEA EN PALABRAS (MAS ROBUSTO QUE Mid())
+  palabras = Split(Trim(lineaActual), " ", "", True)
+
+  ' SI NO HAY PALABRAS COMPLETAS, SALIR
+  If palabras.Count = 0 Then Return
+
+  ' OBTENER LA PRIMERA PALABRA
+  primeraPalabra = Trim(palabras[0])
+  If Not primeraPalabra Or Len(primeraPalabra) = 0 Then Return
+
+  ' VERIFICAR SI LA PRIMERA PALABRA ESTA EN LA LISTA DE PROHIBIDAS
+  For i = 0 To palabrasProhibidas.Max
+    If UCase(primeraPalabra) = palabrasProhibidas[i] Then
+
+      ' BORRAR TODA LA LINEA (LA PALABRA PROHIBIDA ESTA AL INICIO)
+      TextEditorConsultasSQL[linea].Text = ""
+
+      ' RESTAURAR CURSOR AL INICIO DE LA LINEA
+      TextEditorConsultasSQL.Goto(linea, 0)
+
+      ' FEEDBACK VISUAL
+      Try m_Sonido.sonar("Warning")
+
+      Return
+    Endif
+  Next
+
+End
+
+' ============================================================================
+' EVENTO: CLIC EN BOTON BORRAR CONSULTA
+' ============================================================================
+' PROPOSITO: ELIMINAR UNA CONSULTA GUARDADA DE LA BASE DE DATOS
+'
+' SEGURIDAD:
+'   - Verifica que el usuario actual sea el creador
+'   - Pide confirmación antes de eliminar
+'   - NI SIQUIERA EL ADMINISTRADOR PUEDE BORRAR CONSULTAS DE OTROS
+'
+' COMPORTAMIENTO: Elimina de BD, refresca lista y limpia campos del formulario
+'
+' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
+' ============================================================================
+Public Sub ButtonBorrarConsulta_Click()
+
+  Dim n As Integer
+  Dim r As Result
+
+  ' VALIDAR QUE HAY UNA CONSULTA SELECCIONADA
+  If ListBoxConsultas.Index < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar una consulta para borrar")
+    Return
+  Endif
+
+  ' ✅ OBTENER EL USUARIO CREADOR DE LA CONSULTA
+  r = m_ConexionBD.mConn.Exec("SELECT usuario_creador FROM consultas WHERE id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+
+  If Not r.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error: No se pudo obtener la información de la consulta")
+    Return
+  Endif
+
+  ' ✅ VERIFICAR SI EL USUARIO ACTUAL ES EL CREADOR
+  If m_ConexionBD.usuarioActual <> r!usuario_creador Then
+    m_Sonido.sonar("Error")
+    Message.Error("No tienes permiso para eliminar esta consulta.\n\nSolo el usuario creador (" & r!usuario_creador & ") puede eliminarla.")
+    Return
+  Endif
+
+  ' PEDIR CONFIRMACION AL USUARIO
+  m_Sonido.sonar("Question")
+  n = Message.Question("¿Desea eliminar esta consulta?\n\n" & ListBoxConsultas.Text, "Sí", "No")
+
+  If n <> 1 Then Return
+
+  ' ELIMINAR DE LA BASE DE DATOS
+  m_ConexionBD.mConn.Delete("consultas", "id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+
+  ' FEEDBACK AL USUARIO
+  m_Sonido.sonar("Info")
+  Message.Info("Consulta eliminada correctamente")
+
+  ' ACTUALIZAR INTERFAZ
+  ListBoxConsultas.Clear
+  Llenalista()      ' Refresca el ListBox
+  Limpiacampos()    ' Limpia los campos del formulario
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al eliminar la consulta: " & Error.Text)
+
+End
+
+' ============================================================================
+' FUNCION: BUTTONGRABARCONSULTA_CLICK
+' ============================================================================
+' PROPOSITO: GUARDAR O ACTUALIZAR UNA CONSULTA EN LA BASE DE DATOS
+'
+' VALIDACIONES:
+'   1. Nombre obligatorio
+'   2. Consulta SQL no vacía
+'   3. ✅ NUEVA: La consulta DEBE comenzar con SELECT
+'   4. Advertencia si la consulta tiene errores de ejecución
+'   5. Confirmación si va a sobrescribir consulta existente
+'   6. Verificación de permisos (solo el creador puede modificar)
+'
+' COMPORTAMIENTO:
+'   - Si existe (por nombre): UPDATE
+'   - Si es nueva: INSERT con usuario_creador
+'   - Actualiza fecha_creacion automáticamente (DEFAULT CURRENT_TIMESTAMP)
+'
+' CAMPOS GUARDADOS:
+'   - nombre: Identificador corto
+'   - descripcion: Descripción larga
+'   - editor_consultas: Código SQL
+'   - comentarios: Notas de uso
+'   - usuario_creador: Usuario que creó la consulta
+'   - fecha_creacion: Timestamp automático
+'
+' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
+' ============================================================================
+Public Sub ButtonGrabarConsulta_Click()
+
+  Dim r As Result
+  Dim n As Integer
+  Dim consultaLimpia As String
+
+  ' VALIDAR NOMBRE OBLIGATORIO
+  If TextBoxNombre.Text = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El nombre es obligatorio")
+    Return
+  Endif
+
+  ' VALIDAR QUE HAYA CONSULTA
+  If TextEditorConsultasSQL.Text = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("No hay consulta para guardar")
+    Return
+  Endif
+
+  ' ✅ VALIDAR QUE LA CONSULTA COMIENCE CON SELECT
+  consultaLimpia = Trim(TextEditorConsultasSQL.Text)
+  If Left(UCase(consultaLimpia), 6) <> "SELECT" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Solo se permiten consultas SELECT.\n\nLas consultas deben comenzar con SELECT para proteger la integridad de la base de datos.\n\nPara modificar datos, use las funciones específicas de la aplicación.")
+    Return
+  Endif
+
+  ' ADVERTIR SI LA CONSULTA TIENE ERRORES DE EJECUCION
+  If Not $correcta Then
+    m_Sonido.sonar("Warning")
+    n = Message.Warning("La consulta parece errónea. ¿Está seguro que la quiere guardar así?", "Sí", "No")
+    If n <> 1 Then Return
+  Endif
+
+  ' VERIFICAR SI YA EXISTE UNA CONSULTA CON ESE NOMBRE
+  r = m_ConexionBD.mConn.Exec("SELECT id, usuario_creador FROM consultas WHERE nombre = &1", TextBoxNombre.Text)
+
+  If r.Available Then
+    ' LA CONSULTA YA EXISTE
+
+    ' VERIFICAR SI EL USUARIO ACTUAL ES EL CREADOR
+    If m_ConexionBD.usuarioActual <> r!usuario_creador Then
+      m_Sonido.sonar("Error")
+      Message.Error("No tienes permiso para modificar esta consulta.\n\nSolo el usuario creador (" & r!usuario_creador & ") puede modificarla.")
+      Return
+    Endif
+
+    ' SI ES EL CREADOR, PEDIR CONFIRMACION PARA SOBRESCRIBIR
+    m_Sonido.sonar("Warning")
+    n = Message.Warning("Ya existe una consulta con este nombre. ¿Desea sobrescribirla?", "Sí", "No")
+    If n <> 1 Then Return
+
+    ' ACTUALIZAR CONSULTA EXISTENTE
+    r = m_ConexionBD.mConn.Edit("consultas", "id = &1", r!id)
+  Else
+    ' CREAR NUEVA CONSULTA
+    r = m_ConexionBD.mConn.Create("consultas")
+  Endif
+
+  ' ASIGNAR VALORES A LOS CAMPOS
+  r!nombre = TextBoxNombre.Text
+  r!descripcion = TextBoxDescripcion.Text
+  r!editor_consultas = TextEditorConsultasSQL.Text
+  r!comentarios = TextBoxComentarios.Text
+  r!usuario_creador = m_ConexionBD.usuarioActual
+  ' NOTA: fecha_creacion se asigna automáticamente por DEFAULT CURRENT_TIMESTAMP
+
+  r.Update()
+
+  m_Sonido.sonar("Info")
+  Message.Info("Consulta guardada correctamente")
+
+  ListBoxConsultas.Clear
+  Llenalista()
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al guardar la consulta: " & Error.Text)
 
 End
