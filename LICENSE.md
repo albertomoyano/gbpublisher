@@ -82,7 +82,7 @@ El criterio NO es **público vs privado**, sino **finalidad de la actividad edit
 
 ### ¿Mi caso aplica?
 
-Si tienes dudas, contáctame: alberto@estudio2a.com
+Si tienes dudas, puedes escribirme a: estudio2a@outlook.com.ar
 
 Criterios generales:
 1. ¿Tu institución es primariamente académica/científica?
@@ -96,6 +96,7 @@ Si respondes SÍ a las 3 → probablemente aplicas.
 Para uso comercial, contactar para licencia separada:
 - Empresas editoriales
 - Servicios editoriales comerciales
+- Agencias de producción editorial
 - Plataformas SaaS
 - Consultores independientes
 
