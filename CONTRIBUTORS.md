@@ -4,7 +4,7 @@ Este documento reconoce a todas las personas que han contribuido al desarrollo d
 
 ---
 
-## Autor Principal
+## Autor principal
 
 **Alberto Moyano** ([@albertomoyano](https://github.com/albertomoyano))
 * Arquitectura del sistema
@@ -15,16 +15,15 @@ Este documento reconoce a todas las personas que han contribuido al desarrollo d
 
 ---
 
-## Contribuciones de Documentación
+## Contribuciones de documentación
 
 **Alejandro Moyano**
 * Revisión y corrección de documentación
 * Mejoras en claridad expositiva
-* Validación de contenidos técnicos
 
 ---
 
-## Cómo Aparecer en Esta Lista
+## Cómo aparecer en esta lista
 
 Si has contribuido a gbpublisher mediante:
 
@@ -41,7 +40,7 @@ Consulta el archivo `CONTRIBUTING.md` para conocer el proceso de contribución.
 
 ---
 
-## Tipos de Contribución
+## Tipos de contribución
 
 Esta lista utiliza los siguientes símbolos para identificar tipos de contribución:
 
@@ -53,27 +52,12 @@ Esta lista utiliza los siguientes símbolos para identificar tipos de contribuci
 | 🎨 | Diseño |
 | 🔧 | Infraestructura |
 | ✅ | Testing |
-| 🌍 | Traducción |
 | 💡 | Ideas y planificación |
 | 🔍 | Revisión de código |
 
 ---
 
-## Agradecimientos Institucionales
-
-gbpublisher se ha beneficiado del feedback y uso en entornos académicos reales.
-
-Agradecemos especialmente a:
-
-* **Instituciones que adoptaron gbpublisher en fase de desarrollo**
-  * (Pendiente: agregar instituciones que hayan testeado la aplicación)
-
-* **Comunidades académicas que aportaron retroalimentación**
-  * (Pendiente: agregar comunidades y proyectos colaboradores)
-
----
-
-## Nota sobre Contribuciones
+## Nota sobre contribuciones
 
 Todas las contribuciones a gbpublisher se realizan bajo los términos de la **Business Source License 1.1**.
 
@@ -81,7 +65,7 @@ Al contribuir, aceptas que tu trabajo:
 * Será licenciado bajo BSL 1.1 durante el período de protección comercial
 * Se convertirá automáticamente a GPL-3.0 transcurridos 5 años desde la publicación de cada versión
 
-Para más detalles, consulta:
+Para más detalles, véase
 * `LICENSE.md` — Términos completos de licenciamiento
 * `CONTRIBUTING.md` — Guía de contribución y proceso
 
@@ -91,12 +75,12 @@ Para más detalles, consulta:
 
 Para consultas sobre contribuciones o reconocimientos:
 
-* Email: [tu email]
+* Email: estudio2a@outlook.com.ar
 * Issues: https://github.com/albertomoyano/gbpublisher/issues
 
 ---
 
-**Última actualización:** 17 de enero de 2026
+**Última actualización:** 20 de enero de 2026
 
 ---
 

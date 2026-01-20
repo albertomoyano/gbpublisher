@@ -241,7 +241,7 @@ Este enfoque evita:
 * correcciones automáticas opacas
 * decisiones difíciles de auditar
 
-La ausencia de *inteligencia implícita* no es una carencia, sino una garantía: lo que ocurre en el sistema es siempre visible, comprensible y reproducible.
+La ausencia de **inteligencia implícita** no es una carencia, sino una garantía: lo que ocurre en el sistema es siempre visible, comprensible y reproducible.
 
 ---
 
