@@ -114,9 +114,7 @@ Este modelo:
 
 ### 5.2 Verificación de dependencias
 
-El script `verificar.sh` comprueba la disponibilidad de las herramientas externas esperadas.
-
-La aplicación también incluye verificaciones internas, pero:
+El script `verificar.sh` comprueba la disponibilidad de las herramientas externas esperadas, pero:
 
 * **no instala software**
 * **no modifica el sistema**
@@ -168,9 +166,9 @@ Desde el punto de vista editorial, equivale a separar claramente **escritura y c
 
 ---
 
-## 8. Uso de consola y trazabilidad
+## 8. Trazabilidad
 
-La aplicación utiliza la consola como espacio visible de ejecución de procesos externos.
+El formulario principal de la aplicación contiene una grilla como espacio visible de ejecución de procesos externos.
 
 Esta decisión no responde a una limitación técnica, sino a un criterio de diseño orientado a la **transparencia**.
 
@@ -181,7 +179,7 @@ Cada acción relevante muestra:
 * en qué orden
 * y qué salida produce
 
-La consola cumple un rol similar al de un informe de preimpresión: no es el espacio principal de trabajo, pero sí el lugar donde se verifica que el proceso es correcto, auditable y comprensible.
+Esta grilla cumple un rol similar al de un informe de preimpresión: no es el espacio principal de trabajo, pero sí el lugar donde se verifica que el proceso es correcto, auditable y comprensible.
 
 ---
 
