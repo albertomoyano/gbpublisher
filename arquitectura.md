@@ -85,15 +85,15 @@ Este modelo evita acoplamientos innecesarios y permite sustituir herramientas si
 
 gbpublisher **no incluye ni distribuye** las herramientas de procesamiento que utiliza.
 
-En su lugar, **verifica la disponibilidad** de estas herramientas en el sistema del usuario y las **invoca mediante llamadas a consola**.
+En su lugar, **verifica la disponibilidad** de estas herramientas en el sistema del usuario y las **invoca mediante llamadas**.
 
 Las herramientas externas típicamente utilizadas incluyen:
 
 * `pandoc` — conversión de formatos de documento
 * `xmllint` — validación de XML
 * `xsltproc` — transformaciones XSLT
-* Saxon-HE — procesamiento XSLT avanzado
-* LaTeX — composición tipográfica
+* `Saxon-HE` — procesamiento XSLT avanzado
+* `LaTeX` — composición tipográfica
 * Intérpretes de scripts: Python, Bash, Perl, Lua
 
 ### 5.1 Modelo de invocación
@@ -103,8 +103,8 @@ gbpublisher no utiliza librerías de Python, Bash, Perl ni Lua.
 En su lugar, proporciona funciones que permiten a los usuarios:
 
 * escribir sus propios scripts de procesamiento
-* invocarlos mediante `gb.Term` desde la interfaz
-* visualizar la salida en consola integrada
+* invocarlos mediante `Shell`, `Exec` o `gb.Term` desde la interfaz
+* visualizar la salida en consola
 
 Este modelo:
 
@@ -120,7 +120,8 @@ La aplicación también incluye verificaciones internas, pero:
 
 * **no instala software**
 * **no modifica el sistema**
-* solo **informa** sobre herramientas faltantes
+* solo genera un **informe** sobre el estado de las herramientas instaladas y/o faltantes
+* este informe también se puede obtener desde aplicación
 
 ---
 
@@ -140,7 +141,7 @@ El costo computacional dominante se encuentra en:
 * operaciones de E/S
 * validación y transformación de documentos
 
-En este contexto, el rendimiento del lenguaje o del runtime **no constituye un cuello de botella relevante**. La claridad, mantenibilidad y previsibilidad tienen prioridad sobre la optimización prematura.
+En este contexto, el rendimiento del lenguaje o del runtime **no constituye un cuello de botella**. La claridad, mantenibilidad y previsibilidad tienen prioridad sobre la optimización prematura.
 
 ---
 
@@ -204,13 +205,15 @@ Desde el punto de vista del usuario, esto se refleja en una interfaz que no sorp
 
 La interfaz es consecuencia directa del modelo de funciones simples.
 
-Cada componente:
+En cada formulario, cada componente:
 
 * tiene un rol único
 * espera un tipo de información explícito
 * produce un efecto previsible
 
-La aplicación incorpora **ayuda contextual** inspirada en las páginas `man`: información breve, localizada y orientada a la tarea concreta, accesible sin abandonar el flujo de trabajo.
+La aplicación incorpora **ayuda contextual** inspirada en las `man pages` de UNIX: información breve, localizada y orientada a la tarea concreta, accesible sin abandonar el flujo de trabajo, respetando el principio de que
+
+> El sistema debe documentarse a sí mismo.
 
 ---
 
@@ -226,12 +229,13 @@ La aplicación no reemplaza el criterio editorial: lo acompaña, haciendo visibl
 
 ---
 
-## 12. Qué no hace la aplicación
+## 12. Qué NO hace la aplicación
 
-La aplicación no adivina.
-No tiene una bola mágica.
-
-No interpreta intenciones, no completa información implícita ni toma decisiones editoriales por el usuario.
+* La aplicación no adivina
+* No tiene una bola mágica
+* No interpreta intenciones
+* No completa información implícita
+* No toma decisiones editoriales por el usuario
 
 Este enfoque evita:
 
@@ -239,8 +243,7 @@ Este enfoque evita:
 * correcciones automáticas opacas
 * decisiones difíciles de auditar
 
-La ausencia de "inteligencia implícita" no es una carencia, sino una garantía:
-lo que ocurre en el sistema es siempre visible, comprensible y reproducible.
+La ausencia de *inteligencia implícita* no es una carencia, sino una garantía: lo que ocurre en el sistema es siempre visible, comprensible y reproducible.
 
 ---
 
@@ -256,8 +259,8 @@ Esta decisión arquitectónica responde a:
 
 La licencia BSL 1.1:
 
-* permite uso académico sin costo
-* restringe uso comercial durante 5 años
+* permite el uso académico sin costo
+* restringe el uso comercial durante 5 años
 * convierte automáticamente el código a GPL-3.0 tras ese período
 
 Este modelo alinea los intereses de la comunidad académica con la viabilidad del proyecto a largo plazo.
