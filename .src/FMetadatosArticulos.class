@@ -1,5 +1,278 @@
 ' Gambas class file
 
+' ══════════════════════════════════════════════════════════════════════
+' VARIABLES DE CLASE
+' ══════════════════════════════════════════════════════════════════════
+Private iArticuloActual As Integer = 0  ' ID DEL ARTÍCULO ACTUALMENTE CARGADO (0 = NUEVO)
+Public iAutorSeleccionado As Integer = 0  ' ID DEL AUTOR SELECCIONADO EN FAutores (COMUNICACIÓN ENTRE FORMULARIOS)
+Private aIdsAutores As New Integer[]
+
+Public Sub Form_Open()
+
+  ' VERIFICAR QUE HAY UN PROYECTO ABIERTO
+  If FMain.id_proyecto.Value <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe abrir un proyecto antes de editar metadatos.")
+    Me.Close
+    Return
+  Endif
+
+  ' SINCRONIZAR EL id_proyecto
+  id_proyecto.Value = FMain.id_proyecto.Value
+
+  ' OBTENER Y VERIFICAR QUE ES UN PROYECTO DE REVISTA
+  If Not ObtenerIdRevista() Then
+    Return  ' SI NO ES REVISTA, CERRAR EL FORMULARIO
+  Endif
+
+  ' CARGAR TODOS LOS COMBOBOX CON VALORES DE ENUM
+  CargarComboBoxes()
+
+  ' CONFIGURAR GRIDVIEW DE ARTÍCULOS
+  ConfigurarGridView()
+
+  ' CARGAR ARTÍCULOS EXISTENTES (SI LOS HAY)
+  CargarArticulos()
+
+  ' INICIALIZAR ESTADO: MODO INICIAL (SOLO BOTÓN "NUEVO" VISIBLE)
+  ModoInicial()
+
+End
+
+Private Function ObtenerIdRevista() As Boolean
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  ' OBTENER EL id_revista DEL PROYECTO ACTUAL
+  sQuery = "SELECT id_revista FROM revistas_md WHERE id_proyecto = " & id_proyecto.Value
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al verificar el proyecto:\n" & Error.Text)
+    Me.Close
+    Return False
+  Endif
+
+  If $result.Available Then
+    id_revista.Value = $result!id_revista
+    Return True
+  Else
+    m_Sonido.sonar("Warning")
+    Message.Warning("Este proyecto no es una revista.\nLos artículos solo se pueden crear en proyectos de tipo revista.")
+    Me.Close
+    Return False
+  Endif
+
+End
+
+Private Sub CargarComboBoxes()
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CARGA DE COMBOBOX DESDE ENUMS DE LA BASE DE DATOS
+  ' ═══════════════════════════════════════════════════════════════
+
+  ' TIPO DE SUJETOS DE INVESTIGACIÓN
+  tipo_sujetos_investigacion.Clear()
+  tipo_sujetos_investigacion.List = ["humanos", "animales", "humanos_y_animales", "in_vitro", "in_silico", "no_aplica"]
+  tipo_sujetos_investigacion.ReadOnly = True
+
+  ' GÉNERO PARTICIPANTES
+  genero_participantes.Clear()
+  genero_participantes.List = ["masculino", "femenino", "ambos", "no_binario", "mixto"]
+  genero_participantes.ReadOnly = True
+
+  ' SEXO ANIMALES
+  sexo_animales.Clear()
+  sexo_animales.List = ["macho", "hembra", "ambos"]
+  sexo_animales.ReadOnly = True
+
+  ' METODOLOGÍA DE INVESTIGACIÓN
+  metodologia_investigacion.Clear()
+  metodologia_investigacion.List = ["cualitativa", "cuantitativa", "mixta"]
+  metodologia_investigacion.ReadOnly = True
+
+  ' TIPO DE EXPERIMENTO
+  tipo_experimento.Clear()
+  tipo_experimento.List = ["experimental", "simulacion", "teorico", "computacional", "mixto"]
+  tipo_experimento.ReadOnly = True
+
+  ' TIPO DE ACCESO
+  tipo_acceso.Clear()
+  tipo_acceso.List = ["abierto", "suscripcion", "embargo"]
+  tipo_acceso.ReadOnly = True
+  tipo_acceso.Text = "abierto"  ' VALOR POR DEFECTO
+
+  ' ESTADO DEL ARTÍCULO
+  estado_articulo.Clear()
+  estado_articulo.List = ["borrador", "en_revision", "aceptado", "publicado", "rechazado", "retractado"]
+  estado_articulo.ReadOnly = True
+  estado_articulo.Text = "borrador"  ' VALOR POR DEFECTO
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' COMBOBOX DE LICENCIAS (VALORES ESTÁNDAR CREATIVE COMMONS + OTRAS)
+  ' ═══════════════════════════════════════════════════════════════
+
+  licencia.Clear()
+  licencia.List = [
+    "CC BY 4.0",
+    "CC BY-SA 4.0",
+    "CC BY-NC 4.0",
+    "CC BY-NC-SA 4.0",
+    "CC BY-ND 4.0",
+    "CC BY-NC-ND 4.0",
+    "CC0 1.0",
+    "MIT",
+    "GPL v3",
+    "Apache 2.0",
+    "BSD 3-Clause",
+    "Todos los derechos reservados",
+    "Otra"
+  ]
+  licencia.ReadOnly = False  ' PERMITE ENTRADA PERSONALIZADA
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' COMBOBOX DE PLATAFORMAS DE REPOSITORIO DE CÓDIGO
+  ' ═══════════════════════════════════════════════════════════════
+
+  repositorio_codigo_plataforma.Clear()
+  repositorio_codigo_plataforma.List = [
+    "GitHub",
+    "GitLab",
+    "Bitbucket",
+    "SourceForge",
+    "Zenodo",
+    "figshare",
+    "OSF",
+    "CodeOcean",
+    "Otra"
+  ]
+  repositorio_codigo_plataforma.ReadOnly = False
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' COMBOBOX DE LICENCIAS DE CÓDIGO
+  ' ═══════════════════════════════════════════════════════════════
+
+  repositorio_codigo_licencia.Clear()
+  repositorio_codigo_licencia.List = [
+    "MIT",
+    "GPL v3",
+    "GPL v2",
+    "Apache 2.0",
+    "BSD 2-Clause",
+    "BSD 3-Clause",
+    "LGPL v3",
+    "MPL 2.0",
+    "AGPL v3",
+    "Unlicense",
+    "Propietaria",
+    "Otra"
+  ]
+  repositorio_codigo_licencia.ReadOnly = False
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' COMBOBOX DE MESES (PARA mes_publicacion)
+  ' ═══════════════════════════════════════════════════════════════
+
+  mes_publicacion.Clear()
+  mes_publicacion.List = [
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre"
+  ]
+  mes_publicacion.ReadOnly = True
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CARGAR TIPOS DE ARTÍCULO DESDE LA BASE DE DATOS
+  ' ═══════════════════════════════════════════════════════════════
+
+  CargarTiposArticulo()
+
+End
+
+Private Sub CargarTiposArticulo()
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  ' CONSULTA PARA OBTENER LOS VALORES ENUM DE tipo_articulo
+  sQuery = "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS " &
+    "WHERE TABLE_SCHEMA = DATABASE() " &
+    "AND TABLE_NAME = 'articulos' " &
+    "AND COLUMN_NAME = 'tipo_articulo'"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery)
+
+  tipo_articulo.Clear()
+
+  If Not Error And If $result.Available Then
+    Dim sEnumValues As String
+    Dim aValores As String[]
+
+    ' ACCESO CORRECTO CON MAYÚSCULAS
+    sEnumValues = $result!COLUMN_TYPE
+
+    ' VERIFICAR SI ES VARCHAR (NO ENUM)
+    If InStr(sEnumValues, "varchar") > 0 Then
+      ' ES VARCHAR, CARGAR VALORES PREDEFINIDOS COMUNES JATS
+      tipo_articulo.List = [
+        "research-article",
+        "review-article",
+        "case-report",
+        "editorial",
+        "letter",
+        "correction",
+        "retraction",
+        "book-review",
+        "brief-report",
+        "data-paper",
+        "method-article",
+        "opinion",
+        "perspective",
+        "commentary",
+        "abstract",
+        "announcement",
+        "obituary",
+        "other"
+      ]
+      tipo_articulo.ReadOnly = False  ' PERMITE VALORES PERSONALIZADOS
+    Else
+      ' SI FUERA ENUM (PARA FUTURAS MODIFICACIONES)
+      ' EXTRAER VALORES ENTRE COMILLAS
+      sEnumValues = Replace$(sEnumValues, "enum(", "")
+      sEnumValues = Replace$(sEnumValues, ")", "")
+      sEnumValues = Replace$(sEnumValues, "'", "")
+      aValores = Split(sEnumValues, ",")
+
+      tipo_articulo.List = aValores
+      tipo_articulo.ReadOnly = True
+    Endif
+
+  Else
+    ' VALORES POR DEFECTO SI FALLA LA CONSULTA
+    tipo_articulo.List = [
+      "research-article",
+      "review-article",
+      "case-report",
+      "editorial",
+      "letter",
+      "other"
+    ]
+    tipo_articulo.ReadOnly = False
+  Endif
+
+End
+
 ' DETECTA CTRL + F1
 Public Sub Form_KeyRelease()
 
@@ -15,29 +288,33 @@ Public Sub btnCerrar_Click()
 
 End
 
-Public Sub btnAgregarAutor_Click()
+Public Sub btnVincularAutor_Click()
 
+  ' VERIFICAR QUE HAY UN ARTÍCULO ACTUAL
+  If iArticuloActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe guardar el artículo antes de vincular autores.")
+    Return
+  Endif
+
+  ' RESETEAR VARIABLE DE COMUNICACIÓN
+  iAutorSeleccionado = 0
+
+  ' ABRIR FORMULARIO DE AUTORES MODAL
   m_Sonido.sonar("OpenApp")
   FAutores.ShowModal()
+
+  ' AL CERRAR FAutores, VERIFICAR SI SE SELECCIONÓ UN AUTOR
+  If iAutorSeleccionado > 0 Then
+    VincularAutorAlArticulo(iAutorSeleccionado)
+  Endif
 
 End
 
 Public Sub btnNotasAutor_Click()
 
-  f_TXTextendido.OriginalTextBox = notas_autor
+  f_TXTextendido.OriginalTextBox = author_notes
   f_TXTextendido.ShowModal
-
-End
-
-Public Sub btnVerificarResumenGrafico_Click()
-
-  m_FuncionesGenericas.VerificarURLDesdeCampo(url_resumen_grafico)
-
-End
-
-Public Sub btnVerificarVideo_Click()
-
-  m_FuncionesGenericas.VerificarURLDesdeCampo(url_video_resumen)
 
 End
 
@@ -75,12 +352,6 @@ Public Sub btnVerificarRepositoriosURL_Click()
 
 End
 
-Public Sub btnVerificarRepositoriosURL2_Click()
-
-  m_FuncionesGenericas.VerificarURLDesdeCampo(url_repositorio_datos)
-
-End
-
 Public Sub btnVerificarRevision_Click()
 
   m_FuncionesGenericas.VerificarURLDesdeCampo(url_revision)
@@ -95,7 +366,7 @@ End
 
 Public Sub btnVerificarPrePrint_Click()
 
-  m_FuncionesGenericas.VerificarURLDesdeCampo(url_preprint)
+  m_FuncionesGenericas.VerificarURLDesdeCampo(preprint_url)
 
 End
 
@@ -103,30 +374,6 @@ Public Sub btnInternas_Click()
 
   f_TXTextendido.OriginalTextBox = notas_internas
   f_TXTextendido.ShowModal
-
-End
-
-Public Sub Form_Open()
-
-  ' VERIFICAR QUE HAY UN PROYECTO ABIERTO
-  If FMain.id_proyecto.Value <= 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe abrir un proyecto antes de editar metadatos.")
-    Me.Close
-    Return
-  Endif
-
-  ' SINCRONIZAR EL id_proyecto
-  id_proyecto.Value = FMain.id_proyecto.Value
-
-End
-
-Public Sub periodo_embargo_KeyPress()
-  ' PERMITIR SOLO DÍGITOS Y TECLAS DE CONTROL
-
-  If Not IsDigit(Key.Text) And Key.Code <> Key.BackSpace And Key.Code <> Key.Delete Then
-    Stop Event
-  Endif
 
 End
 
@@ -146,7 +393,1759 @@ End
 
 Public Sub btnTitulo_Click()
 
-  f_TXTextendido.OriginalTextBox = titulo
+  f_TXTextendido.OriginalTextBox = titulo_articulo
   f_TXTextendido.ShowModal
+
+End
+
+Private Sub ConfigurarGridView()
+
+  ' CONFIGURACIÓN DEL GRIDVIEW DE ARTÍCULOS
+  With gbArticulos
+    .Columns.Count = 5
+    .Header = GridView.Both
+    .Mode = Select.Single
+    .Scrollbar = Scroll.Vertical
+
+    ' ENCABEZADOS
+    .Columns[0].Title = "ID"
+    .Columns[0].Width = 0
+    .Columns[1].Title = "Título"
+    .Columns[1].Width = 300
+    .Columns[2].Title = "Tipo"
+    .Columns[2].Width = 150
+    .Columns[3].Title = "Estado"
+    .Columns[3].Width = 150
+    .Columns[4].Title = "Fecha"
+    .Columns[4].Width = 150
+  End With
+
+End
+
+Private Sub CargarArticulos()
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iRow As Integer
+
+  ' CONSULTA PARA OBTENER ARTÍCULOS DE LA REVISTA ACTUAL
+  sQuery = "SELECT id_articulo, titulo_articulo, tipo_articulo, estado_articulo, " &
+    "fecha_creacion_registro " &
+    "FROM articulos " &
+    "WHERE id_revista = &1 " &
+    "ORDER BY fecha_creacion_registro DESC"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, id_revista.Value)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar artículos:\n" & Error.Text)
+    Return
+  Endif
+
+  ' LIMPIAR GRIDVIEW
+  gbArticulos.Rows.Count = 0
+
+  ' VERIFICAR SI HAY RESULTADOS
+  If Not $result.Available Then
+    ' NO HAY ARTÍCULOS AÚN
+    Return
+  Endif
+
+  ' CARGAR DATOS EN EL GRIDVIEW
+  iRow = 0
+  For Each $result
+    gbArticulos.Rows.Count = iRow + 1
+
+    ' COLUMNA 0: ID
+    gbArticulos[iRow, 0].Text = $result!id_articulo
+    gbArticulos[iRow, 0].Alignment = Align.Center
+
+    ' COLUMNA 1: TÍTULO (TRUNCAR SI ES MUY LARGO)
+    Dim sTitulo As String = $result!titulo_articulo
+    If Len(sTitulo) > 60 Then
+      sTitulo = Left(sTitulo, 57) & "..."
+    Endif
+    gbArticulos[iRow, 1].Text = sTitulo
+
+    ' COLUMNA 2: TIPO
+    gbArticulos[iRow, 2].Text = $result!tipo_articulo
+
+    ' COLUMNA 3: ESTADO
+    gbArticulos[iRow, 3].Text = $result!estado_articulo
+    gbArticulos[iRow, 3].Alignment = Align.Center
+
+    ' COLUMNA 4: FECHA (SOLO DÍA/MES/AÑO)
+    If $result!fecha_creacion_registro Then
+      gbArticulos[iRow, 4].Text = Format($result!fecha_creacion_registro, "dd/mm/yyyy")
+    Else
+      gbArticulos[iRow, 4].Text = ""
+    Endif
+    gbArticulos[iRow, 4].Alignment = Align.Center
+
+    Inc iRow
+  Next
+
+  ' COLOREAR FILAS SEGÚN ESTADO
+  ColorearFilasPorEstado()
+
+End
+
+Private Sub ColorearFilasPorEstado()
+
+  Dim iRow As Integer
+  Dim sEstado As String
+
+  For iRow = 0 To gbArticulos.Rows.Max
+    sEstado = gbArticulos[iRow, 3].Text
+
+    Select Case sEstado
+      Case "borrador"
+        gbArticulos[iRow, 3].Background = Color.LightGray
+      Case "en_revision"
+        gbArticulos[iRow, 3].Background = Color.RGB(255, 255, 200)  ' AMARILLO CLARO
+      Case "aceptado"
+        gbArticulos[iRow, 3].Background = Color.RGB(200, 255, 200)  ' VERDE CLARO
+      Case "publicado"
+        gbArticulos[iRow, 3].Background = Color.RGB(200, 230, 255)  ' AZUL CLARO
+      Case "rechazado"
+        gbArticulos[iRow, 3].Background = Color.RGB(255, 200, 200)  ' ROJO CLARO
+      Case "retractado"
+        gbArticulos[iRow, 3].Background = Color.RGB(255, 150, 150)  ' ROJO
+    End Select
+  Next
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' GESTIÓN DE MODOS: INICIAL / NUEVO / EDITAR
+' ══════════════════════════════════════════════════════════════════════
+
+Private Sub ModoInicial()
+
+  ' MODO INICIAL: FORMULARIO VACÍO, SOLO BOTÓN "NUEVO" VISIBLE
+
+  ' LIMPIAR TODOS LOS CAMPOS
+  LimpiarFormulario()
+
+  ' RESETEAR VARIABLE DE CONTROL
+  iArticuloActual = 0
+
+  ' CONFIGURAR BOTONES: SOLO "NUEVO" VISIBLE
+  btnArticuloNuevo.Visible = True
+  btnArticuloGuardarPrimeraVez.Visible = False
+  btnArticuloGuardarCambios.Visible = False
+  btnArticuloBorrar.Visible = False
+
+End
+
+Private Sub ModoNuevo()
+
+  ' MODO NUEVO: CREAR ARTÍCULO DESDE CERO
+
+  ' LIMPIAR TODOS LOS CAMPOS
+  LimpiarFormulario()
+
+  ' RESETEAR VARIABLE DE CONTROL
+  iArticuloActual = 0
+
+  ' CONFIGURAR BOTONES: SOLO "GUARDAR PRIMERA VEZ" VISIBLE
+  btnArticuloNuevo.Visible = False
+  btnArticuloGuardarPrimeraVez.Visible = True
+  btnArticuloGuardarCambios.Visible = False
+  btnArticuloBorrar.Visible = False
+
+End
+
+Private Sub ModoEditar()
+
+  ' MODO EDITAR: MODIFICAR ARTÍCULO EXISTENTE
+
+  ' CONFIGURAR BOTONES: "NUEVO", "GUARDAR CAMBIOS" Y "BORRAR" VISIBLES
+  btnArticuloNuevo.Visible = True
+  btnArticuloGuardarPrimeraVez.Visible = False
+  btnArticuloGuardarCambios.Visible = True
+  btnArticuloBorrar.Visible = True
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' EVENTOS DE BOTONES
+' ══════════════════════════════════════════════════════════════════════
+
+Public Sub btnArticuloNuevo_Click()
+
+  ' CAMBIAR A MODO NUEVO
+  ModoNuevo()
+
+End
+
+Public Sub gbArticulos_Click()
+
+  Dim iRow As Integer
+  Dim iIdArticulo As Integer
+
+  ' OBTENER FILA SELECCIONADA
+  iRow = gbArticulos.Row
+  If iRow < 0 Then Return
+
+  ' OBTENER ID DEL ARTÍCULO
+  iIdArticulo = Val(gbArticulos[iRow, 0].Text)
+  If iIdArticulo <= 0 Then Return
+
+  ' CARGAR DATOS DEL ARTÍCULO EN EL FORMULARIO
+  CargarDatosArticulo(iIdArticulo)
+
+  ' CARGAR AUTORES ASOCIADOS AL ARTÍCULO
+  CargarAutoresArticulo(iIdArticulo)
+
+  ' GUARDAR ID ACTUAL
+  iArticuloActual = iIdArticulo
+
+  ' CAMBIAR A MODO EDITAR
+  ModoEditar()
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' FUNCIÓN: LIMPIAR FORMULARIO
+' ══════════════════════════════════════════════════════════════════════
+
+Private Sub LimpiarFormulario()
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' TEXTBOX - CAMPOS DE TEXTO
+  ' ═══════════════════════════════════════════════════════════════
+
+  titulo_articulo.Clear()
+  subtitulo.Clear()
+  titulo_corto.Clear()
+  titulo_traducido.Clear()
+  pagina_inicio.Clear()
+  pagina_fin.Clear()
+  articulo_numero.Clear()
+  elocation_id.Clear()
+  historial_fechas.Clear()
+  doi.Clear()
+  doi_version.Clear()
+  handle_system.Clear()
+  pii.Clear()
+  pmid.Clear()
+  pmcid.Clear()
+  arxiv_id.Clear()
+  url_articulo.Clear()
+  url_pdf.Clear()
+  url_xml.Clear()
+  url_html.Clear()
+  autor_seleccionado.Clear()
+  autor_corporativo.Clear()
+  grupo_autores.Clear()
+  author_notes.Clear()
+
+  ' RESÚMENES Y PALABRAS CLAVE
+  resumen.Clear()
+  abstract_ingles.Clear()
+  abstract_estructurado.Clear()
+  resumenes_adicionales.Clear()
+  resumen_grafico.Clear()
+  video_resumen.Clear()
+  palabras_clave.Clear()
+  keywords_ingles.Clear()
+  palabras_clave_adicionales.Clear()
+  mesh_terms.Clear()
+  descriptores_decs.Clear()
+  clasificacion_tematica.Clear()
+  categorias.Clear()
+
+  ' ESTRUCTURA Y CONTENIDO
+  estructura_personalizada.Clear()
+  material_suplementario.Clear()
+  dataset_asociado.Clear()
+
+  ' CÓDIGO Y REPOSITORIOS
+  code_availability_statement.Clear()
+  repositorio_codigo_url.Clear()
+  repositorio_codigo_version.Clear()
+  repositorio_codigo_doi.Clear()
+  repositorios_adicionales.Clear()
+
+  ' REFERENCIAS
+  referencias_xml.Clear()
+  referencias_citadas.Clear()
+
+  ' FINANCIAMIENTO
+  financiamiento.Clear()
+  numero_proyecto.Clear()
+  conflictos_interes.Clear()
+  sponsors.Clear()
+  funding_statement.Clear()
+
+  ' ÉTICA
+  declaracion_etica.Clear()
+  numero_aprobacion_etica.Clear()
+  registro_ensayo_clinico.Clear()
+  disponibilidad_datos.Clear()
+  repositorio_datos.Clear()
+  data_availability_statement.Clear()
+
+  ' REVISIÓN
+  tipo_revision.Clear()
+  url_revision.Clear()
+  revisores.Clear()
+
+  ' LICENCIA Y COPYRIGHT
+  url_licencia.Clear()
+  copyright_holder.Clear()
+  declaracion_copyright.Clear()
+
+  ' VERSIONES
+  version.Clear()
+  preprint_url.Clear()
+  nota_version.Clear()
+
+  ' IDIOMAS
+  idioma_principal.Clear()
+  idiomas_adicionales.Clear()
+  traduccion_disponible.Clear()
+
+  ' MÉTRICAS (CAMPOS DE TEXTO)
+  plumx_metrics.Clear()
+  menciones_redes.Clear()
+
+  ' SERIES Y RELACIONES
+  serie_id.Clear()
+  comentarios_ids.Clear()
+  erratas_ids.Clear()
+
+  ' VALIDACIÓN
+  errores_validacion.Clear()
+
+  ' NOTAS INTERNAS
+  notas_internas.Clear()
+  checklist_publicacion.Clear()
+
+  ' CAMPOS DE METODOLOGÍA (HUMANOS)
+  estudios_humanos_tipo.Clear()
+  rango_edad_participantes.Clear()
+  poblacion_especifica.Clear()
+  criterios_inclusion.Clear()
+  criterios_exclusion.Clear()
+
+  ' CAMPOS DE METODOLOGÍA (ANIMALES)
+  estudios_animales_especies.Clear()
+  edad_peso_animales.Clear()
+  cepa_linea_animales.Clear()
+  condiciones_alojamiento.Clear()
+  protocolo_bienestar_animal.Clear()
+  numero_aprobacion_animal.Clear()
+
+  ' CAMPOS DE METODOLOGÍA (IN VITRO)
+  tipo_cultivo.Clear()
+  condiciones_cultivo.Clear()
+  tipo_modelado.Clear()
+  software_utilizado.Clear()
+  tipo_muestras_biologicas.Clear()
+  origen_muestras.Clear()
+  otras_guias_cumplimiento.Clear()
+
+  ' CAMPOS DE METODOLOGÍA (CUALITATIVA/CUANTITATIVA)
+  enfoque_cualitativo.Clear()
+  tecnica_recoleccion_datos.Clear()
+  tipo_muestreo.Clear()
+  area_geografica_estudio.Clear()
+  periodo_estudio.Clear()
+  tecnica_analisis_datos.Clear()
+  software_analisis_cualitativo.Clear()
+
+  ' CAMPOS DE METODOLOGÍA (LINGÜÍSTICA)
+  corpus_utilizado.Clear()
+  tamano_corpus.Clear()
+  lenguas_estudiadas.Clear()
+  periodo_historico.Clear()
+  variedad_linguistica.Clear()
+  tipo_analisis_linguistico.Clear()
+  marco_teorico_linguistico.Clear()
+  software_analisis_linguistico.Clear()
+
+  ' CAMPOS DE METODOLOGÍA (EXPERIMENTAL/INGENIERÍA)
+  equipamiento_utilizado.Clear()
+  software_ingenieria.Clear()
+  parametros_experimentales.Clear()
+  variables_controladas.Clear()
+  variables_dependientes.Clear()
+  margen_error.Clear()
+  nivel_confianza.Clear()
+  especificaciones_tecnicas.Clear()
+  normativas_aplicadas.Clear()
+  condiciones_ambientales.Clear()
+
+  ' CAMPOS ESTADÍSTICOS
+  metodos_estadisticos.Clear()
+  software_estadistico.Clear()
+  valor_p_significancia.Clear()
+  test_normalidad.Clear()
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' SPINBOX - CAMPOS NUMÉRICOS
+  ' ═══════════════════════════════════════════════════════════════
+
+  ano_publicacion.Value = Year(Now)
+  dia_publicacion.Value = 1
+  numero_paginas.Value = 0
+  numero_participantes_humanos.Value = 0
+  numero_animales.Value = 0
+  numero_muestras.Value = 0
+  tamano_muestra.Value = 0
+  numero_ensayos_repeticiones.Value = 0
+  numero_secciones.Value = 0
+  numero_figuras.Value = 0
+  numero_tablas.Value = 0
+  numero_ecuaciones.Value = 0
+  numero_esquemas.Value = 0
+  numero_videos.Value = 0
+  numero_audios.Value = 0
+  numero_referencias.Value = 0
+  numero_rondas_revision.Value = 0
+  copyright_year.Value = Year(Now)
+  periodo_embargo.Value = 0
+  visualizaciones.Value = 0
+  descargas.Value = 0
+  citas_scopus.Value = 0
+  citas_wos.Value = 0
+  citas_google_scholar.Value = 0
+  calidad_metadatos.Value = 0
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' COMBOBOX - RESETEAR A VACÍO O VALOR POR DEFECTO
+  ' ═══════════════════════════════════════════════════════════════
+
+  tipo_articulo.Text = ""
+  tipo_sujetos_investigacion.Text = ""
+  genero_participantes.Text = ""
+  sexo_animales.Text = ""
+  metodologia_investigacion.Text = ""
+  tipo_experimento.Text = ""
+  repositorio_codigo_plataforma.Text = ""
+  repositorio_codigo_licencia.Text = ""
+  licencia.Text = ""
+  tipo_acceso.Text = "abierto"
+  estado_articulo.Text = "borrador"
+  mes_publicacion.Text = ""
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' DATEBOX - FECHA NULA
+  ' ═══════════════════════════════════════════════════════════════
+
+  fecha_publicacion_completa.Value = Null
+  fecha_publicacion_online.Value = Null
+  fecha_publicacion_impresa.Value = Null
+  fecha_recepcion.Value = Null
+  fecha_aceptacion.Value = Null
+  fecha_revision.Value = Null
+  fecha_actualizacion.Value = Null
+  fecha_fin_embargo.Value = Null
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CHECKBOX - DESMARCAR TODOS (0 = FALSE EN GAMBAS)
+  ' ═══════════════════════════════════════════════════════════════
+
+  aprobacion_comite_animal.Value = 0
+  cumple_arrive.Value = 0
+  cumple_consort.Value = 0
+  cumple_strobe.Value = 0
+  cumple_prisma.Value = 0
+  cumple_care.Value = 0
+  cumple_stard.Value = 0
+  cumple_squire.Value = 0
+  analisis_potencia.Value = 0
+  tiene_introduccion.Value = 0
+  tiene_metodologia.Value = 0
+  tiene_resultados.Value = 0
+  tiene_discusion.Value = 0
+  tiene_conclusiones.Value = 0
+  tiene_conflictos.Value = 0
+  consentimiento_informado.Value = 0
+  aprobacion_comite_etica.Value = 0
+  revision_abierta.Value = 0
+  version_record.Value = -1  ' MARCADO POR DEFECTO (-1 = TRUE EN GAMBAS)
+  tiene_correccion.Value = 0
+  tiene_retractacion.Value = 0
+  tiene_expresion_preocupacion.Value = 0
+  parte_de_serie.Value = 0
+  revisado_xml.Value = 0
+  validado_jats.Value = 0
+  autores_anonimos.Value = 0
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' LISTBOX - LIMPIAR AUTORES
+  ' ═══════════════════════════════════════════════════════════════
+
+  listadoAutores.Clear()
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' FUNCIÓN: CARGAR DATOS DE UN ARTÍCULO EN EL FORMULARIO
+' ══════════════════════════════════════════════════════════════════════
+
+Private Sub CargarDatosArticulo(iIdArticulo As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  sQuery = "SELECT * FROM articulos WHERE id_articulo = &1"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar datos del artículo:\n" & Error.Text)
+    Return
+  Endif
+
+  If Not $result.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontró el artículo seleccionado.")
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CARGAR DATOS EN LOS COMPONENTES DEL FORMULARIO
+  ' ═══════════════════════════════════════════════════════════════
+
+  ' TEXTBOX - CAMPOS DE TEXTO (VERIFICAR NULL)
+  id_articulo.Value = $result!id_articulo
+  id_proyecto.Value = $result!id_proyecto
+  id_revista.Value = $result!id_revista
+  usuario_creacion.Text = If($result!usuario_creacion, $result!usuario_creacion, "")
+  fecha_creacion_registro.Value = $result!fecha_creacion_registro
+  titulo_articulo.Text = If($result!titulo_articulo, $result!titulo_articulo, "")
+  subtitulo.Text = If($result!subtitulo, $result!subtitulo, "")
+  titulo_corto.Text = If($result!titulo_corto, $result!titulo_corto, "")
+  titulo_traducido.Text = If($result!titulo_traducido, $result!titulo_traducido, "")
+  pagina_inicio.Text = If($result!pagina_inicio, $result!pagina_inicio, "")
+  pagina_fin.Text = If($result!pagina_fin, $result!pagina_fin, "")
+  articulo_numero.Text = If($result!articulo_numero, $result!articulo_numero, "")
+  elocation_id.Text = If($result!elocation_id, $result!elocation_id, "")
+  historial_fechas.Text = If($result!historial_fechas, $result!historial_fechas, "")
+
+  ' IDENTIFICADORES
+  doi.Text = If($result!doi, $result!doi, "")
+  doi_version.Text = If($result!doi_version, $result!doi_version, "")
+  handle_system.Text = If($result!handle_system, $result!handle_system, "")
+  pii.Text = If($result!pii, $result!pii, "")
+  pmid.Text = If($result!pmid, $result!pmid, "")
+  pmcid.Text = If($result!pmcid, $result!pmcid, "")
+  arxiv_id.Text = If($result!arxiv_id, $result!arxiv_id, "")
+
+  ' URLs
+  url_articulo.Text = If($result!url_articulo, $result!url_articulo, "")
+  url_pdf.Text = If($result!url_pdf, $result!url_pdf, "")
+  url_xml.Text = If($result!url_xml, $result!url_xml, "")
+  url_html.Text = If($result!url_html, $result!url_html, "")
+
+  ' AUTORES (CAMPOS ESPECÍFICOS DEL ARTÍCULO)
+  autor_corporativo.Text = If($result!autor_corporativo, $result!autor_corporativo, "")
+  grupo_autores.Text = If($result!grupo_autores, $result!grupo_autores, "")
+  author_notes.Text = If($result!author_notes, $result!author_notes, "")
+
+  ' RESÚMENES Y PALABRAS CLAVE
+  resumen.Text = If($result!resumen, $result!resumen, "")
+  abstract_ingles.Text = If($result!abstract_ingles, $result!abstract_ingles, "")
+  abstract_estructurado.Text = If($result!abstract_estructurado, $result!abstract_estructurado, "")
+  resumenes_adicionales.Text = If($result!resumenes_adicionales, $result!resumenes_adicionales, "")
+  resumen_grafico.Text = If($result!resumen_grafico, $result!resumen_grafico, "")
+  video_resumen.Text = If($result!video_resumen, $result!video_resumen, "")
+  palabras_clave.Text = If($result!palabras_clave, $result!palabras_clave, "")
+  keywords_ingles.Text = If($result!keywords_ingles, $result!keywords_ingles, "")
+  palabras_clave_adicionales.Text = If($result!palabras_clave_adicionales, $result!palabras_clave_adicionales, "")
+  mesh_terms.Text = If($result!mesh_terms, $result!mesh_terms, "")
+  descriptores_decs.Text = If($result!descriptores_decs, $result!descriptores_decs, "")
+  clasificacion_tematica.Text = If($result!clasificacion_tematica, $result!clasificacion_tematica, "")
+  categorias.Text = If($result!categorias, $result!categorias, "")
+
+  ' ESTRUCTURA Y CONTENIDO
+  estructura_personalizada.Text = If($result!estructura_personalizada, $result!estructura_personalizada, "")
+  material_suplementario.Text = If($result!material_suplementario, $result!material_suplementario, "")
+  dataset_asociado.Text = If($result!dataset_asociado, $result!dataset_asociado, "")
+
+  ' CÓDIGO Y REPOSITORIOS
+  code_availability_statement.Text = If($result!code_availability_statement, $result!code_availability_statement, "")
+  repositorio_codigo_url.Text = If($result!repositorio_codigo_url, $result!repositorio_codigo_url, "")
+  repositorio_codigo_version.Text = If($result!repositorio_codigo_version, $result!repositorio_codigo_version, "")
+  repositorio_codigo_doi.Text = If($result!repositorio_codigo_doi, $result!repositorio_codigo_doi, "")
+  repositorios_adicionales.Text = If($result!repositorios_adicionales, $result!repositorios_adicionales, "")
+
+  ' REFERENCIAS
+  referencias_xml.Text = If($result!referencias_xml, $result!referencias_xml, "")
+  referencias_citadas.Text = If($result!referencias_citadas, $result!referencias_citadas, "")
+
+  ' FINANCIAMIENTO
+  financiamiento.Text = If($result!financiamiento, $result!financiamiento, "")
+  numero_proyecto.Text = If($result!numero_proyecto, $result!numero_proyecto, "")
+  conflictos_interes.Text = If($result!conflictos_interes, $result!conflictos_interes, "")
+  sponsors.Text = If($result!sponsors, $result!sponsors, "")
+  funding_statement.Text = If($result!funding_statement, $result!funding_statement, "")
+
+  ' ÉTICA
+  declaracion_etica.Text = If($result!declaracion_etica, $result!declaracion_etica, "")
+  numero_aprobacion_etica.Text = If($result!numero_aprobacion_etica, $result!numero_aprobacion_etica, "")
+  registro_ensayo_clinico.Text = If($result!registro_ensayo_clinico, $result!registro_ensayo_clinico, "")
+  disponibilidad_datos.Text = If($result!disponibilidad_datos, $result!disponibilidad_datos, "")
+  repositorio_datos.Text = If($result!repositorio_datos, $result!repositorio_datos, "")
+  data_availability_statement.Text = If($result!data_availability_statement, $result!data_availability_statement, "")
+
+  ' REVISIÓN
+  tipo_revision.Text = If($result!tipo_revision, $result!tipo_revision, "")
+  url_revision.Text = If($result!url_revision, $result!url_revision, "")
+  revisores.Text = If($result!revisores, $result!revisores, "")
+
+  ' LICENCIA Y COPYRIGHT
+  url_licencia.Text = If($result!url_licencia, $result!url_licencia, "")
+  copyright_holder.Text = If($result!copyright_holder, $result!copyright_holder, "")
+  declaracion_copyright.Text = If($result!declaracion_copyright, $result!declaracion_copyright, "")
+
+  ' VERSIONES
+  version.Text = If($result!version, $result!version, "")
+  preprint_url.Text = If($result!preprint_url, $result!preprint_url, "")
+  If IsNull($result!articulo_correccion_id) Then
+    articulo_correccion_id.Value = 0
+  Else
+    articulo_correccion_id.Value = CInt($result!articulo_correccion_id)
+  Endif
+  If IsNull($result!articulo_retractacion_id) Then
+    articulo_retractacion_id.Value = 0
+  Else
+    articulo_retractacion_id.Value = CInt($result!articulo_retractacion_id)
+  Endif
+  nota_version.Text = If($result!nota_version, $result!nota_version, "")
+
+  ' IDIOMAS
+  idioma_principal.Text = If($result!idioma_principal, $result!idioma_principal, "")
+  idiomas_adicionales.Text = If($result!idiomas_adicionales, $result!idiomas_adicionales, "")
+  traduccion_disponible.Text = If($result!traduccion_disponible, $result!traduccion_disponible, "")
+
+  ' MÉTRICAS
+  If IsNull($result!altmetric_score) Then
+    altmetric_score.Value = 0
+  Else
+    altmetric_score.Value = $result!altmetric_score
+  Endif
+  plumx_metrics.Text = If($result!plumx_metrics, $result!plumx_metrics, "")
+  menciones_redes.Text = If($result!menciones_redes, $result!menciones_redes, "")
+
+  ' SERIES Y RELACIONES
+  serie_id.Text = If($result!serie_id, $result!serie_id, "")
+  If IsNull($result!articulo_comentado_id) Then
+    articulo_comentado_id.Value = 0
+  Else
+    articulo_comentado_id.Value = CInt($result!articulo_comentado_id)
+  Endif
+  comentarios_ids.Text = If($result!comentarios_ids, $result!comentarios_ids, "")
+  erratas_ids.Text = If($result!erratas_ids, $result!erratas_ids, "")
+
+  ' VALIDACIÓN
+  errores_validacion.Text = If($result!errores_validacion, $result!errores_validacion, "")
+  If IsNull($result!completitud_metadatos) Then
+    completitud_metadatos.Value = 0
+  Else
+    completitud_metadatos.Value = $result!completitud_metadatos
+  Endif
+
+  ' NOTAS INTERNAS
+  notas_internas.Text = If($result!notas_internas, $result!notas_internas, "")
+  checklist_publicacion.Text = If($result!checklist_publicacion, $result!checklist_publicacion, "")
+
+  ' CAMPOS DE METODOLOGÍA - HUMANOS
+  estudios_humanos_tipo.Text = If($result!estudios_humanos_tipo, $result!estudios_humanos_tipo, "")
+  rango_edad_participantes.Text = If($result!rango_edad_participantes, $result!rango_edad_participantes, "")
+  poblacion_especifica.Text = If($result!poblacion_especifica, $result!poblacion_especifica, "")
+  criterios_inclusion.Text = If($result!criterios_inclusion, $result!criterios_inclusion, "")
+  criterios_exclusion.Text = If($result!criterios_exclusion, $result!criterios_exclusion, "")
+
+  ' CAMPOS DE METODOLOGÍA - ANIMALES
+  estudios_animales_especies.Text = If($result!estudios_animales_especies, $result!estudios_animales_especies, "")
+  edad_peso_animales.Text = If($result!edad_peso_animales, $result!edad_peso_animales, "")
+  cepa_linea_animales.Text = If($result!cepa_linea_animales, $result!cepa_linea_animales, "")
+  condiciones_alojamiento.Text = If($result!condiciones_alojamiento, $result!condiciones_alojamiento, "")
+  protocolo_bienestar_animal.Text = If($result!protocolo_bienestar_animal, $result!protocolo_bienestar_animal, "")
+  numero_aprobacion_animal.Text = If($result!numero_aprobacion_animal, $result!numero_aprobacion_animal, "")
+
+  ' CAMPOS DE METODOLOGÍA - IN VITRO/IN SILICO
+  tipo_cultivo.Text = If($result!tipo_cultivo, $result!tipo_cultivo, "")
+  condiciones_cultivo.Text = If($result!condiciones_cultivo, $result!condiciones_cultivo, "")
+  tipo_modelado.Text = If($result!tipo_modelado, $result!tipo_modelado, "")
+  software_utilizado.Text = If($result!software_utilizado, $result!software_utilizado, "")
+  tipo_muestras_biologicas.Text = If($result!tipo_muestras_biologicas, $result!tipo_muestras_biologicas, "")
+  origen_muestras.Text = If($result!origen_muestras, $result!origen_muestras, "")
+  otras_guias_cumplimiento.Text = If($result!otras_guias_cumplimiento, $result!otras_guias_cumplimiento, "")
+
+  ' CAMPOS DE METODOLOGÍA - CUALITATIVA/CUANTITATIVA
+  enfoque_cualitativo.Text = If($result!enfoque_cualitativo, $result!enfoque_cualitativo, "")
+  tecnica_recoleccion_datos.Text = If($result!tecnica_recoleccion_datos, $result!tecnica_recoleccion_datos, "")
+  tipo_muestreo.Text = If($result!tipo_muestreo, $result!tipo_muestreo, "")
+  area_geografica_estudio.Text = If($result!area_geografica_estudio, $result!area_geografica_estudio, "")
+  periodo_estudio.Text = If($result!periodo_estudio, $result!periodo_estudio, "")
+  tecnica_analisis_datos.Text = If($result!tecnica_analisis_datos, $result!tecnica_analisis_datos, "")
+  software_analisis_cualitativo.Text = If($result!software_analisis_cualitativo, $result!software_analisis_cualitativo, "")
+
+  ' CAMPOS DE METODOLOGÍA - LINGÜÍSTICA
+  corpus_utilizado.Text = If($result!corpus_utilizado, $result!corpus_utilizado, "")
+  tamano_corpus.Text = If($result!tamano_corpus, $result!tamano_corpus, "")
+  lenguas_estudiadas.Text = If($result!lenguas_estudiadas, $result!lenguas_estudiadas, "")
+  periodo_historico.Text = If($result!periodo_historico, $result!periodo_historico, "")
+  variedad_linguistica.Text = If($result!variedad_linguistica, $result!variedad_linguistica, "")
+  tipo_analisis_linguistico.Text = If($result!tipo_analisis_linguistico, $result!tipo_analisis_linguistico, "")
+  marco_teorico_linguistico.Text = If($result!marco_teorico_linguistico, $result!marco_teorico_linguistico, "")
+  software_analisis_linguistico.Text = If($result!software_analisis_linguistico, $result!software_analisis_linguistico, "")
+
+  ' CAMPOS DE METODOLOGÍA - EXPERIMENTAL/INGENIERÍA
+  equipamiento_utilizado.Text = If($result!equipamiento_utilizado, $result!equipamiento_utilizado, "")
+  software_ingenieria.Text = If($result!software_ingenieria, $result!software_ingenieria, "")
+  parametros_experimentales.Text = If($result!parametros_experimentales, $result!parametros_experimentales, "")
+  variables_controladas.Text = If($result!variables_controladas, $result!variables_controladas, "")
+  variables_dependientes.Text = If($result!variables_dependientes, $result!variables_dependientes, "")
+  margen_error.Text = If($result!margen_error, $result!margen_error, "")
+  nivel_confianza.Text = If($result!nivel_confianza, $result!nivel_confianza, "")
+  especificaciones_tecnicas.Text = If($result!especificaciones_tecnicas, $result!especificaciones_tecnicas, "")
+  normativas_aplicadas.Text = If($result!normativas_aplicadas, $result!normativas_aplicadas, "")
+  condiciones_ambientales.Text = If($result!condiciones_ambientales, $result!condiciones_ambientales, "")
+
+  ' CAMPOS ESTADÍSTICOS
+  metodos_estadisticos.Text = If($result!metodos_estadisticos, $result!metodos_estadisticos, "")
+  software_estadistico.Text = If($result!software_estadistico, $result!software_estadistico, "")
+  valor_p_significancia.Text = If($result!valor_p_significancia, $result!valor_p_significancia, "")
+  test_normalidad.Text = If($result!test_normalidad, $result!test_normalidad, "")
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' SPINBOX - CAMPOS NUMÉRICOS (VERIFICAR NULL CORRECTAMENTE)
+  ' ═══════════════════════════════════════════════════════════════
+
+  If IsNull($result!ano_publicacion) Then
+    ano_publicacion.Value = Year(Now)
+  Else
+    ano_publicacion.Value = CInt($result!ano_publicacion)
+  Endif
+
+  If IsNull($result!dia_publicacion) Then
+    dia_publicacion.Value = 1
+  Else
+    dia_publicacion.Value = CInt($result!dia_publicacion)
+  Endif
+
+  If IsNull($result!numero_paginas) Then
+    numero_paginas.Value = 0
+  Else
+    numero_paginas.Value = CInt($result!numero_paginas)
+  Endif
+
+  If IsNull($result!numero_participantes_humanos) Then
+    numero_participantes_humanos.Value = 0
+  Else
+    numero_participantes_humanos.Value = CInt($result!numero_participantes_humanos)
+  Endif
+
+  If IsNull($result!numero_animales) Then
+    numero_animales.Value = 0
+  Else
+    numero_animales.Value = CInt($result!numero_animales)
+  Endif
+
+  If IsNull($result!numero_muestras) Then
+    numero_muestras.Value = 0
+  Else
+    numero_muestras.Value = CInt($result!numero_muestras)
+  Endif
+
+  If IsNull($result!tamano_muestra) Then
+    tamano_muestra.Value = 0
+  Else
+    tamano_muestra.Value = CInt($result!tamano_muestra)
+  Endif
+
+  If IsNull($result!numero_ensayos_repeticiones) Then
+    numero_ensayos_repeticiones.Value = 0
+  Else
+    numero_ensayos_repeticiones.Value = CInt($result!numero_ensayos_repeticiones)
+  Endif
+
+  If IsNull($result!numero_secciones) Then
+    numero_secciones.Value = 0
+  Else
+    numero_secciones.Value = CInt($result!numero_secciones)
+  Endif
+
+  If IsNull($result!numero_figuras) Then
+    numero_figuras.Value = 0
+  Else
+    numero_figuras.Value = CInt($result!numero_figuras)
+  Endif
+
+  If IsNull($result!numero_tablas) Then
+    numero_tablas.Value = 0
+  Else
+    numero_tablas.Value = CInt($result!numero_tablas)
+  Endif
+
+  If IsNull($result!numero_ecuaciones) Then
+    numero_ecuaciones.Value = 0
+  Else
+    numero_ecuaciones.Value = CInt($result!numero_ecuaciones)
+  Endif
+
+  If IsNull($result!numero_esquemas) Then
+    numero_esquemas.Value = 0
+  Else
+    numero_esquemas.Value = CInt($result!numero_esquemas)
+  Endif
+
+  If IsNull($result!numero_videos) Then
+    numero_videos.Value = 0
+  Else
+    numero_videos.Value = CInt($result!numero_videos)
+  Endif
+
+  If IsNull($result!numero_audios) Then
+    numero_audios.Value = 0
+  Else
+    numero_audios.Value = CInt($result!numero_audios)
+  Endif
+
+  If IsNull($result!numero_referencias) Then
+    numero_referencias.Value = 0
+  Else
+    numero_referencias.Value = CInt($result!numero_referencias)
+  Endif
+
+  If IsNull($result!numero_rondas_revision) Then
+    numero_rondas_revision.Value = 0
+  Else
+    numero_rondas_revision.Value = CInt($result!numero_rondas_revision)
+  Endif
+
+  If IsNull($result!copyright_year) Then
+    copyright_year.Value = Year(Now)
+  Else
+    copyright_year.Value = CInt($result!copyright_year)
+  Endif
+
+  If IsNull($result!periodo_embargo) Then
+    periodo_embargo.Value = 0
+  Else
+    periodo_embargo.Value = CInt($result!periodo_embargo)
+  Endif
+
+  If IsNull($result!visualizaciones) Then
+    visualizaciones.Value = 0
+  Else
+    visualizaciones.Value = CInt($result!visualizaciones)
+  Endif
+
+  If IsNull($result!descargas) Then
+    descargas.Value = 0
+  Else
+    descargas.Value = CInt($result!descargas)
+  Endif
+
+  If IsNull($result!citas_scopus) Then
+    citas_scopus.Value = 0
+  Else
+    citas_scopus.Value = CInt($result!citas_scopus)
+  Endif
+
+  If IsNull($result!citas_wos) Then
+    citas_wos.Value = 0
+  Else
+    citas_wos.Value = CInt($result!citas_wos)
+  Endif
+
+  If IsNull($result!citas_google_scholar) Then
+    citas_google_scholar.Value = 0
+  Else
+    citas_google_scholar.Value = CInt($result!citas_google_scholar)
+  Endif
+
+  If IsNull($result!calidad_metadatos) Then
+    calidad_metadatos.Value = 0
+  Else
+    calidad_metadatos.Value = CInt($result!calidad_metadatos)
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' COMBOBOX - CARGAR VALORES (VERIFICAR NULL)
+  ' ═══════════════════════════════════════════════════════════════
+
+  tipo_articulo.Text = If($result!tipo_articulo, $result!tipo_articulo, "")
+  tipo_sujetos_investigacion.Text = If($result!tipo_sujetos_investigacion, $result!tipo_sujetos_investigacion, "")
+  genero_participantes.Text = If($result!genero_participantes, $result!genero_participantes, "")
+  sexo_animales.Text = If($result!sexo_animales, $result!sexo_animales, "")
+  metodologia_investigacion.Text = If($result!metodologia_investigacion, $result!metodologia_investigacion, "")
+  tipo_experimento.Text = If($result!tipo_experimento, $result!tipo_experimento, "")
+  repositorio_codigo_plataforma.Text = If($result!repositorio_codigo_plataforma, $result!repositorio_codigo_plataforma, "")
+  repositorio_codigo_licencia.Text = If($result!repositorio_codigo_licencia, $result!repositorio_codigo_licencia, "")
+  licencia.Text = If($result!licencia, $result!licencia, "")
+  tipo_acceso.Text = If($result!tipo_acceso, $result!tipo_acceso, "abierto")
+  estado_articulo.Text = If($result!estado_articulo, $result!estado_articulo, "borrador")
+  mes_publicacion.Text = If($result!mes_publicacion, $result!mes_publicacion, "")
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' DATEBOX - CARGAR FECHAS (NULL SI NO EXISTE)
+  ' ═══════════════════════════════════════════════════════════════
+
+  fecha_publicacion_completa.Value = $result!fecha_publicacion_completa
+  fecha_publicacion_online.Value = $result!fecha_publicacion_online
+  fecha_publicacion_impresa.Value = $result!fecha_publicacion_impresa
+  fecha_recepcion.Value = $result!fecha_recepcion
+  fecha_aceptacion.Value = $result!fecha_aceptacion
+  fecha_revision.Value = $result!fecha_revision
+  fecha_actualizacion.Value = $result!fecha_actualizacion
+  fecha_fin_embargo.Value = $result!fecha_fin_embargo
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CHECKBOX - MAPEAR TINYINT(1) A GAMBAS (-1 = TRUE, 0 = FALSE)
+  ' ═══════════════════════════════════════════════════════════════
+
+  aprobacion_comite_animal.Value = If($result!aprobacion_comite_animal = True, -1, 0)
+  cumple_arrive.Value = If($result!cumple_arrive = True, -1, 0)
+  cumple_consort.Value = If($result!cumple_consort = True, -1, 0)
+  cumple_strobe.Value = If($result!cumple_strobe = True, -1, 0)
+  cumple_prisma.Value = If($result!cumple_prisma = True, -1, 0)
+  cumple_care.Value = If($result!cumple_care = True, -1, 0)
+  cumple_stard.Value = If($result!cumple_stard = True, -1, 0)
+  cumple_squire.Value = If($result!cumple_squire = True, -1, 0)
+  analisis_potencia.Value = If($result!analisis_potencia = True, -1, 0)
+  tiene_introduccion.Value = If($result!tiene_introduccion = True, -1, 0)
+  tiene_metodologia.Value = If($result!tiene_metodologia = True, -1, 0)
+  tiene_resultados.Value = If($result!tiene_resultados = True, -1, 0)
+  tiene_discusion.Value = If($result!tiene_discusion = True, -1, 0)
+  tiene_conclusiones.Value = If($result!tiene_conclusiones = True, -1, 0)
+  tiene_conflictos.Value = If($result!tiene_conflictos = True, -1, 0)
+  consentimiento_informado.Value = If($result!consentimiento_informado = True, -1, 0)
+  aprobacion_comite_etica.Value = If($result!aprobacion_comite_etica = True, -1, 0)
+  revision_abierta.Value = If($result!revision_abierta = True, -1, 0)
+  version_record.Value = If($result!version_record = True, -1, 0)
+  tiene_correccion.Value = If($result!tiene_correccion = True, -1, 0)
+  tiene_retractacion.Value = If($result!tiene_retractacion = True, -1, 0)
+  tiene_expresion_preocupacion.Value = If($result!tiene_expresion_preocupacion = True, -1, 0)
+  parte_de_serie.Value = If($result!parte_de_serie = True, -1, 0)
+  revisado_xml.Value = If($result!revisado_xml = True, -1, 0)
+  validado_jats.Value = If($result!validado_jats = True, -1, 0)
+  autores_anonimos.Value = If($result!autores_anonimos = True, -1, 0)
+
+  responsable_edicion.Text = If($result!responsable_edicion, $result!responsable_edicion, "")
+  fecha_actualizacion_registro.Value = $result!fecha_actualizacion_registro
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' FUNCIÓN: VINCULAR UN AUTOR AL ARTÍCULO ACTUAL
+' ══════════════════════════════════════════════════════════════════════
+
+Private Sub VincularAutorAlArticulo(iIdAutor As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iOrden As Integer
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' VERIFICAR QUE EL AUTOR NO ESTÉ YA VINCULADO
+  ' ═══════════════════════════════════════════════════════════════
+
+  sQuery = "SELECT COUNT(*) AS total FROM articulo_autor " &
+    "WHERE id_articulo = &1 AND id_autor = &2"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iArticuloActual, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al verificar autor:\n" & Error.Text)
+    Return
+  Endif
+
+  If $result!total > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Este autor ya está vinculado al artículo.")
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CALCULAR EL ORDEN DE AUTORÍA (SIGUIENTE NÚMERO)
+  ' ═══════════════════════════════════════════════════════════════
+
+  sQuery = "SELECT IFNULL(MAX(orden_autoria), 0) + 1 AS siguiente " &
+    "FROM articulo_autor WHERE id_articulo = &1"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iArticuloActual)
+  If Error Then
+    iOrden = 1  ' SI FALLA, ASUMIR QUE ES EL PRIMERO
+  Else
+    iOrden = $result!siguiente
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' INSERTAR RELACIÓN EN articulo_autor
+  ' ═══════════════════════════════════════════════════════════════
+
+  sQuery = "INSERT INTO articulo_autor (" &
+    "id_articulo, id_autor, orden_autoria, rol_autor, " &
+    "fecha_asignacion, usuario_asignacion" &
+    ") VALUES (" &
+    "&1, &2, &3, 'autor', NOW(), &4" &
+    ")"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery,
+    iArticuloActual,
+    iIdAutor,
+    iOrden,
+    m_ConexionBD.usuarioActual)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al vincular autor:\n" & Error.Text)
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' RECARGAR LISTBOX DE AUTORES
+  ' ═══════════════════════════════════════════════════════════════
+
+  m_Sonido.sonar("Success")
+  CargarAutoresArticulo(iArticuloActual)
+
+End
+
+Public Sub btnDesvincularArticulo_Click()
+
+  Dim iIndice As Integer
+  Dim iIdAutor As Integer
+  Dim sTextoCompleto As String
+  Dim aParts As String[]
+  Dim sQuery As String
+  Dim $result As Result
+
+  ' VERIFICAR QUE HAY UN AUTOR SELECCIONADO EN EL LISTBOX
+  iIndice = listadoAutores.Index
+  If iIndice < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un autor del listado.")
+    Return
+  Endif
+
+  ' OBTENER EL TEXTO COMPLETO Y EXTRAER EL ID
+  sTextoCompleto = listadoAutores[iIndice].Text
+  aParts = Split(sTextoCompleto, " | ")
+  iIdAutor = Val(aParts[0])
+
+  ' CONFIRMAR ELIMINACIÓN
+  If Message.Question("¿Está seguro de desvincular este autor del artículo?", "Sí", "No") = 2 Then
+    Return
+  Endif
+
+  ' ELIMINAR RELACIÓN DE articulo_autor
+  sQuery = "DELETE FROM articulo_autor WHERE id_articulo = &1 AND id_autor = &2"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iArticuloActual, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al desvincular autor:\n" & Error.Text)
+    Return
+  Endif
+
+  ' RECARGAR LISTBOX
+  m_Sonido.sonar("Success")
+  CargarAutoresArticulo(iArticuloActual)
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' BOTÓN: GUARDAR ARTÍCULO POR PRIMERA VEZ (INSERT MÍNIMO)
+' ══════════════════════════════════════════════════════════════════════
+
+Public Sub btnArticuloGuardarPrimeraVez_Click()
+
+  Dim sQuery As String
+  Dim $result As Result
+  Dim iNuevoId As Integer
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' VALIDACIONES MÍNIMAS
+  ' ═══════════════════════════════════════════════════════════════
+
+  ' VALIDAR QUE HAY UN TÍTULO
+  If Trim(titulo_articulo.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar un título para el artículo.")
+    titulo_articulo.SetFocus
+    Return
+  Endif
+
+  ' VALIDAR QUE HAY UN TIPO DE ARTÍCULO
+  If Trim(tipo_articulo.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un tipo de artículo.")
+    tipo_articulo.SetFocus
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' INSERT MÍNIMO: SOLO DATOS ESENCIALES
+  ' ═══════════════════════════════════════════════════════════════
+
+  sQuery = "INSERT INTO articulos (" &
+    "id_proyecto, id_revista, tipo_articulo, titulo_articulo, " &
+    "estado_articulo, usuario_creacion, responsable_edicion, fecha_creacion_registro" &
+    ") VALUES (" &
+    "&1, &2, &3, &4, &5, &6, &7, CURRENT_TIMESTAMP )"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery,
+    id_proyecto.Value,
+    id_revista.Value,
+    tipo_articulo.Text,
+    titulo_articulo.Text,
+    estado_articulo.Text,
+    m_ConexionBD.usuarioActual,
+    m_ConexionBD.usuarioActual)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar el artículo:\n" & Error.Text)
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' OBTENER EL ID DEL ARTÍCULO RECIÉN CREADO
+  ' ═══════════════════════════════════════════════════════════════
+
+  Try $result = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID() AS id")
+  If Error Or Not $result.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Artículo guardado pero no se pudo obtener el ID.")
+    CargarArticulos()
+    ModoInicial()
+    Return
+  Endif
+
+  iNuevoId = $result!id
+  iArticuloActual = iNuevoId
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CARGAR EL ARTÍCULO RECIÉN CREADO Y CAMBIAR A MODO EDITAR
+  ' ═══════════════════════════════════════════════════════════════
+
+  m_Sonido.sonar("Info")
+  Message.Info("Artículo creado exitosamente.\n\n" &
+    "ID del artículo: " & iNuevoId & "\n\n" &
+    "Ahora puede continuar completando los metadatos y usar 'Guardar cambios' para actualizar los metadatos.")
+
+  ' RECARGAR GRIDVIEW
+  CargarArticulos()
+
+  ' CARGAR DATOS DEL ARTÍCULO RECIÉN CREADO
+  CargarDatosArticulo(iNuevoId)
+
+  ' CAMBIAR A MODO EDITAR
+  ModoEditar()
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' BOTÓN: GUARDAR CAMBIOS EN ARTÍCULO EXISTENTE (UPDATE CON Edit())
+' ══════════════════════════════════════════════════════════════════════
+
+Public Sub btnArticuloGuardarCambios_Click()
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' VALIDACIONES BÁSICAS
+  ' ═══════════════════════════════════════════════════════════════
+
+  If iArticuloActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un artículo seleccionado para guardar.")
+    Return
+  Endif
+
+  If Trim(titulo_articulo.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar un título para el artículo.")
+    titulo_articulo.SetFocus
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' PREPARAR EDICIÓN DEL REGISTRO
+  ' ═══════════════════════════════════════════════════════════════
+
+  Try $result = m_ConexionBD.mConn.Edit("articulos", "id_articulo=" & Str(Me.id_articulo.Value))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al preparar edición:\n" & Error.Text)
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ACTUALIZAR CAMPOS DESDE LOS COMPONENTES DEL FORMULARIO
+  ' ═══════════════════════════════════════════════════════════════
+
+  ' CAMPOS BÁSICOS
+  $result!tipo_articulo = tipo_articulo.Text
+  $result!titulo_articulo = titulo_articulo.Text
+  $result!subtitulo = If(subtitulo.Text <> "", subtitulo.Text, Null)
+  $result!titulo_corto = If(titulo_corto.Text <> "", titulo_corto.Text, Null)
+  $result!titulo_traducido = If(titulo_traducido.Text <> "", titulo_traducido.Text, Null)
+
+  ' FECHAS DE PUBLICACIÓN
+  $result!ano_publicacion = If(ano_publicacion.Value > 0, ano_publicacion.Value, Null)
+  $result!mes_publicacion = If(mes_publicacion.Text <> "", mes_publicacion.Text, Null)
+  $result!dia_publicacion = If(dia_publicacion.Value > 0, dia_publicacion.Value, Null)
+  $result!fecha_publicacion_completa = fecha_publicacion_completa.Value
+  $result!fecha_publicacion_online = fecha_publicacion_online.Value
+  $result!fecha_publicacion_impresa = fecha_publicacion_impresa.Value
+  $result!fecha_recepcion = fecha_recepcion.Value
+  $result!fecha_aceptacion = fecha_aceptacion.Value
+  $result!fecha_revision = fecha_revision.Value
+  $result!fecha_actualizacion = fecha_actualizacion.Value
+  $result!historial_fechas = If(historial_fechas.Text <> "", historial_fechas.Text, Null)
+
+  ' PAGINACIÓN
+  $result!pagina_inicio = If(pagina_inicio.Text <> "", pagina_inicio.Text, Null)
+  $result!pagina_fin = If(pagina_fin.Text <> "", pagina_fin.Text, Null)
+  $result!numero_paginas = If(numero_paginas.Value > 0, numero_paginas.Value, Null)
+  $result!articulo_numero = If(articulo_numero.Text <> "", articulo_numero.Text, Null)
+  $result!elocation_id = If(elocation_id.Text <> "", elocation_id.Text, Null)
+
+  ' IDENTIFICADORES
+  $result!doi = If(doi.Text <> "", doi.Text, Null)
+  $result!doi_version = If(doi_version.Text <> "", doi_version.Text, Null)
+  $result!handle_system = If(handle_system.Text <> "", handle_system.Text, Null)
+  $result!pii = If(pii.Text <> "", pii.Text, Null)
+  $result!pmid = If(pmid.Text <> "", pmid.Text, Null)
+  $result!pmcid = If(pmcid.Text <> "", pmcid.Text, Null)
+  $result!arxiv_id = If(arxiv_id.Text <> "", arxiv_id.Text, Null)
+
+  ' URLs
+  $result!url_articulo = If(url_articulo.Text <> "", url_articulo.Text, Null)
+  $result!url_pdf = If(url_pdf.Text <> "", url_pdf.Text, Null)
+  $result!url_xml = If(url_xml.Text <> "", url_xml.Text, Null)
+  $result!url_html = If(url_html.Text <> "", url_html.Text, Null)
+
+  ' AUTORES (INFORMACIÓN GENERAL)
+  $result!autor_corporativo = If(autor_corporativo.Text <> "", autor_corporativo.Text, Null)
+  $result!grupo_autores = If(grupo_autores.Text <> "", grupo_autores.Text, Null)
+  $result!autores_anonimos = If(autores_anonimos.Value = -1, 1, 0)
+  $result!author_notes = If(author_notes.Text <> "", author_notes.Text, Null)
+
+  ' RESÚMENES
+  $result!resumen = If(resumen.Text <> "", resumen.Text, Null)
+  $result!abstract_ingles = If(abstract_ingles.Text <> "", abstract_ingles.Text, Null)
+  $result!abstract_estructurado = If(abstract_estructurado.Text <> "", abstract_estructurado.Text, Null)
+  $result!resumenes_adicionales = If(resumenes_adicionales.Text <> "", resumenes_adicionales.Text, Null)
+  $result!resumen_grafico = If(resumen_grafico.Text <> "", resumen_grafico.Text, Null)
+  $result!video_resumen = If(video_resumen.Text <> "", video_resumen.Text, Null)
+
+  ' PALABRAS CLAVE
+  $result!palabras_clave = If(palabras_clave.Text <> "", palabras_clave.Text, Null)
+  $result!keywords_ingles = If(keywords_ingles.Text <> "", keywords_ingles.Text, Null)
+  $result!palabras_clave_adicionales = If(palabras_clave_adicionales.Text <> "", palabras_clave_adicionales.Text, Null)
+  $result!mesh_terms = If(mesh_terms.Text <> "", mesh_terms.Text, Null)
+  $result!descriptores_decs = If(descriptores_decs.Text <> "", descriptores_decs.Text, Null)
+  $result!clasificacion_tematica = If(clasificacion_tematica.Text <> "", clasificacion_tematica.Text, Null)
+  $result!categorias = If(categorias.Text <> "", categorias.Text, Null)
+
+  ' ESTRUCTURA
+  $result!numero_secciones = If(numero_secciones.Value > 0, numero_secciones.Value, Null)
+  $result!tiene_introduccion = If(tiene_introduccion.Value = -1, 1, 0)
+  $result!tiene_metodologia = If(tiene_metodologia.Value = -1, 1, 0)
+  $result!tiene_resultados = If(tiene_resultados.Value = -1, 1, 0)
+  $result!tiene_discusion = If(tiene_discusion.Value = -1, 1, 0)
+  $result!tiene_conclusiones = If(tiene_conclusiones.Value = -1, 1, 0)
+  $result!estructura_personalizada = If(estructura_personalizada.Text <> "", estructura_personalizada.Text, Null)
+
+  ' CONTENIDO MULTIMEDIA
+  $result!numero_figuras = If(numero_figuras.Value > 0, numero_figuras.Value, Null)
+  $result!numero_tablas = If(numero_tablas.Value > 0, numero_tablas.Value, Null)
+  $result!numero_ecuaciones = If(numero_ecuaciones.Value > 0, numero_ecuaciones.Value, Null)
+  $result!numero_esquemas = If(numero_esquemas.Value > 0, numero_esquemas.Value, Null)
+  $result!numero_videos = If(numero_videos.Value > 0, numero_videos.Value, Null)
+  $result!numero_audios = If(numero_audios.Value > 0, numero_audios.Value, Null)
+  $result!material_suplementario = If(material_suplementario.Text <> "", material_suplementario.Text, Null)
+  $result!dataset_asociado = If(dataset_asociado.Text <> "", dataset_asociado.Text, Null)
+
+  ' CÓDIGO Y REPOSITORIOS
+  $result!code_availability_statement = If(code_availability_statement.Text <> "", code_availability_statement.Text, Null)
+  $result!repositorio_codigo_url = If(repositorio_codigo_url.Text <> "", repositorio_codigo_url.Text, Null)
+  $result!repositorio_codigo_plataforma = If(repositorio_codigo_plataforma.Text <> "", repositorio_codigo_plataforma.Text, Null)
+  $result!repositorio_codigo_version = If(repositorio_codigo_version.Text <> "", repositorio_codigo_version.Text, Null)
+  $result!repositorio_codigo_doi = If(repositorio_codigo_doi.Text <> "", repositorio_codigo_doi.Text, Null)
+  $result!repositorio_codigo_licencia = If(repositorio_codigo_licencia.Text <> "", repositorio_codigo_licencia.Text, Null)
+  $result!repositorios_adicionales = If(repositorios_adicionales.Text <> "", repositorios_adicionales.Text, Null)
+
+  ' REFERENCIAS
+  $result!numero_referencias = If(numero_referencias.Value > 0, numero_referencias.Value, Null)
+  $result!referencias_xml = If(referencias_xml.Text <> "", referencias_xml.Text, Null)
+  $result!referencias_citadas = If(referencias_citadas.Text <> "", referencias_citadas.Text, Null)
+
+  ' FINANCIAMIENTO
+  $result!financiamiento = If(financiamiento.Text <> "", financiamiento.Text, Null)
+  $result!numero_proyecto = If(numero_proyecto.Text <> "", numero_proyecto.Text, Null)
+  $result!conflictos_interes = If(conflictos_interes.Text <> "", conflictos_interes.Text, Null)
+  $result!tiene_conflictos = If(tiene_conflictos.Value = -1, 1, 0)
+  $result!sponsors = If(sponsors.Text <> "", sponsors.Text, Null)
+  $result!funding_statement = If(funding_statement.Text <> "", funding_statement.Text, Null)
+
+  ' ÉTICA
+  $result!declaracion_etica = If(declaracion_etica.Text <> "", declaracion_etica.Text, Null)
+  $result!consentimiento_informado = If(consentimiento_informado.Value = -1, 1, 0)
+  $result!aprobacion_comite_etica = If(aprobacion_comite_etica.Value = -1, 1, 0)
+  $result!numero_aprobacion_etica = If(numero_aprobacion_etica.Text <> "", numero_aprobacion_etica.Text, Null)
+  $result!registro_ensayo_clinico = If(registro_ensayo_clinico.Text <> "", registro_ensayo_clinico.Text, Null)
+  $result!disponibilidad_datos = If(disponibilidad_datos.Text <> "", disponibilidad_datos.Text, Null)
+  $result!repositorio_datos = If(repositorio_datos.Text <> "", repositorio_datos.Text, Null)
+  $result!data_availability_statement = If(data_availability_statement.Text <> "", data_availability_statement.Text, Null)
+
+  ' REVISIÓN
+  $result!tipo_revision = If(tipo_revision.Text <> "", tipo_revision.Text, Null)
+  $result!revision_abierta = If(revision_abierta.Value = -1, 1, 0)
+  $result!url_revision = If(url_revision.Text <> "", url_revision.Text, Null)
+  $result!revisores = If(revisores.Text <> "", revisores.Text, Null)
+  $result!numero_rondas_revision = If(numero_rondas_revision.Value > 0, numero_rondas_revision.Value, Null)
+
+  ' LICENCIA Y COPYRIGHT
+  $result!licencia = If(licencia.Text <> "", licencia.Text, Null)
+  $result!url_licencia = If(url_licencia.Text <> "", url_licencia.Text, Null)
+  $result!copyright_holder = If(copyright_holder.Text <> "", copyright_holder.Text, Null)
+  $result!copyright_year = If(copyright_year.Value > 0, copyright_year.Value, Null)
+  $result!declaracion_copyright = If(declaracion_copyright.Text <> "", declaracion_copyright.Text, Null)
+
+  ' ACCESO
+  $result!tipo_acceso = tipo_acceso.Text
+  $result!periodo_embargo = If(periodo_embargo.Value > 0, periodo_embargo.Value, Null)
+  $result!fecha_fin_embargo = fecha_fin_embargo.Value
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' VALIDAR IDS DE ARTÍCULOS RELACIONADOS (FOREIGN KEYS)
+  ' ═══════════════════════════════════════════════════════════════
+
+  Dim sQueryValidacion As String
+  Dim $resultValidacion As Result
+
+  ' VALIDAR articulo_correccion_id
+  If articulo_correccion_id.Value > 0 Then
+    sQueryValidacion = "SELECT id_articulo FROM articulos WHERE id_articulo = &1"
+    Try $resultValidacion = m_ConexionBD.mConn.Exec(sQueryValidacion, articulo_correccion_id.Value)
+    If Error Or Not $resultValidacion.Available Then
+      articulo_correccion_id.Value = 0
+    Endif
+  Endif
+
+  ' VALIDAR articulo_retractacion_id
+  If articulo_retractacion_id.Value > 0 Then
+    sQueryValidacion = "SELECT id_articulo FROM articulos WHERE id_articulo = &1"
+    Try $resultValidacion = m_ConexionBD.mConn.Exec(sQueryValidacion, articulo_retractacion_id.Value)
+    If Error Or Not $resultValidacion.Available Then
+      articulo_retractacion_id.Value = 0
+    Endif
+  Endif
+
+  ' VALIDAR articulo_comentado_id
+  If articulo_comentado_id.Value > 0 Then
+    sQueryValidacion = "SELECT id_articulo FROM articulos WHERE id_articulo = &1"
+    Try $resultValidacion = m_ConexionBD.mConn.Exec(sQueryValidacion, articulo_comentado_id.Value)
+    If Error Or Not $resultValidacion.Available Then
+      articulo_comentado_id.Value = 0
+    Endif
+  Endif
+
+  ' VERSIONES
+  $result!version = If(version.Text <> "", version.Text, Null)
+  $result!version_record = If(version_record.Value = -1, 1, 0)
+  $result!preprint_url = If(preprint_url.Text <> "", preprint_url.Text, Null)
+  $result!tiene_correccion = If(tiene_correccion.Value = -1, 1, 0)
+  $result!articulo_correccion_id = If(articulo_correccion_id.Value > 0, articulo_correccion_id.Value, Null)
+  $result!articulo_retractacion_id = If(articulo_retractacion_id.Value > 0, articulo_retractacion_id.Value, Null)
+  $result!tiene_expresion_preocupacion = If(tiene_expresion_preocupacion.Value = -1, 1, 0)
+  $result!nota_version = If(nota_version.Text <> "", nota_version.Text, Null)
+
+  ' IDIOMAS
+  $result!idioma_principal = If(idioma_principal.Text <> "", idioma_principal.Text, Null)
+  $result!idiomas_adicionales = If(idiomas_adicionales.Text <> "", idiomas_adicionales.Text, Null)
+  $result!traduccion_disponible = If(traduccion_disponible.Text <> "", traduccion_disponible.Text, Null)
+
+  ' MÉTRICAS
+  $result!visualizaciones = If(visualizaciones.Value > 0, visualizaciones.Value, Null)
+  $result!descargas = If(descargas.Value > 0, descargas.Value, Null)
+  $result!citas_scopus = If(citas_scopus.Value > 0, citas_scopus.Value, Null)
+  $result!citas_wos = If(citas_wos.Value > 0, citas_wos.Value, Null)
+  $result!citas_google_scholar = If(citas_google_scholar.Value > 0, citas_google_scholar.Value, Null)
+  $result!altmetric_score = If(altmetric_score.Value > 0, altmetric_score.Value, Null)
+  $result!plumx_metrics = If(plumx_metrics.Text <> "", plumx_metrics.Text, Null)
+  $result!menciones_redes = If(menciones_redes.Text <> "", menciones_redes.Text, Null)
+
+  ' SERIES Y RELACIONES
+  $result!parte_de_serie = If(parte_de_serie.Value = -1, 1, 0)
+  $result!serie_id = If(serie_id.Text <> "", serie_id.Text, Null)
+  $result!articulo_comentado_id = If(articulo_comentado_id.Value > 0, articulo_comentado_id.Value, Null)
+  $result!comentarios_ids = If(comentarios_ids.Text <> "", comentarios_ids.Text, Null)
+  $result!erratas_ids = If(erratas_ids.Text <> "", erratas_ids.Text, Null)
+
+  ' VALIDACIÓN
+  $result!revisado_xml = If(revisado_xml.Value = -1, 1, 0)
+  $result!validado_jats = If(validado_jats.Value = -1, 1, 0)
+  $result!errores_validacion = If(errores_validacion.Text <> "", errores_validacion.Text, Null)
+  $result!calidad_metadatos = If(calidad_metadatos.Value > 0, calidad_metadatos.Value, Null)
+  $result!completitud_metadatos = If(completitud_metadatos.Value > 0, completitud_metadatos.Value, Null)
+
+  ' ESTADO Y GESTIÓN
+  $result!estado_articulo = estado_articulo.Text
+  $result!responsable_edicion = m_ConexionBD.usuarioActual
+  $result!notas_internas = If(notas_internas.Text <> "", notas_internas.Text, Null)
+  $result!checklist_publicacion = If(checklist_publicacion.Text <> "", checklist_publicacion.Text, Null)
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CAMPOS DE METODOLOGÍA - SUJETOS DE INVESTIGACIÓN
+  ' ═══════════════════════════════════════════════════════════════
+
+  $result!tipo_sujetos_investigacion = If(tipo_sujetos_investigacion.Text <> "", tipo_sujetos_investigacion.Text, Null)
+
+  ' METODOLOGÍA - HUMANOS
+  $result!estudios_humanos_tipo = If(estudios_humanos_tipo.Text <> "", estudios_humanos_tipo.Text, Null)
+  $result!numero_participantes_humanos = If(numero_participantes_humanos.Value > 0, numero_participantes_humanos.Value, Null)
+  $result!rango_edad_participantes = If(rango_edad_participantes.Text <> "", rango_edad_participantes.Text, Null)
+  $result!genero_participantes = If(genero_participantes.Text <> "", genero_participantes.Text, Null)
+  $result!poblacion_especifica = If(poblacion_especifica.Text <> "", poblacion_especifica.Text, Null)
+  $result!criterios_inclusion = If(criterios_inclusion.Text <> "", criterios_inclusion.Text, Null)
+  $result!criterios_exclusion = If(criterios_exclusion.Text <> "", criterios_exclusion.Text, Null)
+
+  ' METODOLOGÍA - ANIMALES
+  $result!estudios_animales_especies = If(estudios_animales_especies.Text <> "", estudios_animales_especies.Text, Null)
+  $result!numero_animales = If(numero_animales.Value > 0, numero_animales.Value, Null)
+  $result!sexo_animales = If(sexo_animales.Text <> "", sexo_animales.Text, Null)
+  $result!edad_peso_animales = If(edad_peso_animales.Text <> "", edad_peso_animales.Text, Null)
+  $result!cepa_linea_animales = If(cepa_linea_animales.Text <> "", cepa_linea_animales.Text, Null)
+  $result!condiciones_alojamiento = If(condiciones_alojamiento.Text <> "", condiciones_alojamiento.Text, Null)
+  $result!protocolo_bienestar_animal = If(protocolo_bienestar_animal.Text <> "", protocolo_bienestar_animal.Text, Null)
+  $result!aprobacion_comite_animal = If(aprobacion_comite_animal.Value = -1, 1, 0)
+  $result!numero_aprobacion_animal = If(numero_aprobacion_animal.Text <> "", numero_aprobacion_animal.Text, Null)
+
+  ' METODOLOGÍA - IN VITRO / IN SILICO
+  $result!tipo_cultivo = If(tipo_cultivo.Text <> "", tipo_cultivo.Text, Null)
+  $result!condiciones_cultivo = If(condiciones_cultivo.Text <> "", condiciones_cultivo.Text, Null)
+  $result!tipo_modelado = If(tipo_modelado.Text <> "", tipo_modelado.Text, Null)
+  $result!software_utilizado = If(software_utilizado.Text <> "", software_utilizado.Text, Null)
+  $result!tipo_muestras_biologicas = If(tipo_muestras_biologicas.Text <> "", tipo_muestras_biologicas.Text, Null)
+  $result!numero_muestras = If(numero_muestras.Value > 0, numero_muestras.Value, Null)
+  $result!origen_muestras = If(origen_muestras.Text <> "", origen_muestras.Text, Null)
+
+  ' GUÍAS DE REPORTE
+  $result!cumple_arrive = If(cumple_arrive.Value = -1, 1, 0)
+  $result!cumple_consort = If(cumple_consort.Value = -1, 1, 0)
+  $result!cumple_strobe = If(cumple_strobe.Value = -1, 1, 0)
+  $result!cumple_prisma = If(cumple_prisma.Value = -1, 1, 0)
+  $result!cumple_care = If(cumple_care.Value = -1, 1, 0)
+  $result!cumple_stard = If(cumple_stard.Value = -1, 1, 0)
+  $result!cumple_squire = If(cumple_squire.Value = -1, 1, 0)
+  $result!otras_guias_cumplimiento = If(otras_guias_cumplimiento.Text <> "", otras_guias_cumplimiento.Text, Null)
+
+  ' METODOLOGÍA - INVESTIGACIÓN CUALITATIVA/CUANTITATIVA
+  $result!metodologia_investigacion = If(metodologia_investigacion.Text <> "", metodologia_investigacion.Text, Null)
+  $result!enfoque_cualitativo = If(enfoque_cualitativo.Text <> "", enfoque_cualitativo.Text, Null)
+  $result!tecnica_recoleccion_datos = If(tecnica_recoleccion_datos.Text <> "", tecnica_recoleccion_datos.Text, Null)
+  $result!tamano_muestra = If(tamano_muestra.Value > 0, tamano_muestra.Value, Null)
+  $result!tipo_muestreo = If(tipo_muestreo.Text <> "", tipo_muestreo.Text, Null)
+  $result!area_geografica_estudio = If(area_geografica_estudio.Text <> "", area_geografica_estudio.Text, Null)
+  $result!periodo_estudio = If(periodo_estudio.Text <> "", periodo_estudio.Text, Null)
+  $result!tecnica_analisis_datos = If(tecnica_analisis_datos.Text <> "", tecnica_analisis_datos.Text, Null)
+  $result!software_analisis_cualitativo = If(software_analisis_cualitativo.Text <> "", software_analisis_cualitativo.Text, Null)
+
+  ' METODOLOGÍA - LINGÜÍSTICA
+  $result!corpus_utilizado = If(corpus_utilizado.Text <> "", corpus_utilizado.Text, Null)
+  $result!tamano_corpus = If(tamano_corpus.Text <> "", tamano_corpus.Text, Null)
+  $result!lenguas_estudiadas = If(lenguas_estudiadas.Text <> "", lenguas_estudiadas.Text, Null)
+  $result!periodo_historico = If(periodo_historico.Text <> "", periodo_historico.Text, Null)
+  $result!variedad_linguistica = If(variedad_linguistica.Text <> "", variedad_linguistica.Text, Null)
+  $result!tipo_analisis_linguistico = If(tipo_analisis_linguistico.Text <> "", tipo_analisis_linguistico.Text, Null)
+  $result!marco_teorico_linguistico = If(marco_teorico_linguistico.Text <> "", marco_teorico_linguistico.Text, Null)
+  $result!software_analisis_linguistico = If(software_analisis_linguistico.Text <> "", software_analisis_linguistico.Text, Null)
+
+  ' METODOLOGÍA - EXPERIMENTAL/INGENIERÍA
+  $result!tipo_experimento = If(tipo_experimento.Text <> "", tipo_experimento.Text, Null)
+  $result!numero_ensayos_repeticiones = If(numero_ensayos_repeticiones.Value > 0, numero_ensayos_repeticiones.Value, Null)
+  $result!equipamiento_utilizado = If(equipamiento_utilizado.Text <> "", equipamiento_utilizado.Text, Null)
+  $result!software_ingenieria = If(software_ingenieria.Text <> "", software_ingenieria.Text, Null)
+  $result!parametros_experimentales = If(parametros_experimentales.Text <> "", parametros_experimentales.Text, Null)
+  $result!variables_controladas = If(variables_controladas.Text <> "", variables_controladas.Text, Null)
+  $result!variables_dependientes = If(variables_dependientes.Text <> "", variables_dependientes.Text, Null)
+  $result!margen_error = If(margen_error.Text <> "", margen_error.Text, Null)
+  $result!nivel_confianza = If(nivel_confianza.Text <> "", nivel_confianza.Text, Null)
+  $result!especificaciones_tecnicas = If(especificaciones_tecnicas.Text <> "", especificaciones_tecnicas.Text, Null)
+  $result!normativas_aplicadas = If(normativas_aplicadas.Text <> "", normativas_aplicadas.Text, Null)
+  $result!condiciones_ambientales = If(condiciones_ambientales.Text <> "", condiciones_ambientales.Text, Null)
+
+  ' METODOLOGÍA - ANÁLISIS ESTADÍSTICO
+  $result!metodos_estadisticos = If(metodos_estadisticos.Text <> "", metodos_estadisticos.Text, Null)
+  $result!software_estadistico = If(software_estadistico.Text <> "", software_estadistico.Text, Null)
+  $result!valor_p_significancia = If(valor_p_significancia.Text <> "", valor_p_significancia.Text, Null)
+  $result!test_normalidad = If(test_normalidad.Text <> "", test_normalidad.Text, Null)
+  $result!analisis_potencia = If(analisis_potencia.Value = -1, 1, 0)
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ACTUALIZAR AUTOR DE CORRESPONDENCIA (SOLO SI HAY SELECCIÓN)
+  ' ═══════════════════════════════════════════════════════════════
+
+  ' SOLO ACTUALIZAR SI HAY UN AUTOR SELECCIONADO EN EL LISTBOX
+  If listadoAutores.Index >= 0 Then
+
+    ' PRIMERO: QUITAR MARCA DE CORRESPONDENCIA DE TODOS LOS AUTORES
+    sQuery = "UPDATE articulo_autor SET es_autor_correspondencia = 0 " &
+      "WHERE id_articulo = &1"
+
+    Try m_ConexionBD.mConn.Exec(sQuery, iArticuloActual)
+    If Error Then
+    Endif
+
+    ' SEGUNDO: SI EL CHECKBOX ESTÁ MARCADO, MARCAR COMO CORRESPONDENCIA
+    If autor_correspondencia.Value = -1 Then
+      Dim iIdAutorSeleccionado As Integer
+      iIdAutorSeleccionado = aIdsAutores[listadoAutores.Index]
+
+      sQuery = "UPDATE articulo_autor SET es_autor_correspondencia = 1 " &
+        "WHERE id_articulo = &1 AND id_autor = &2"
+
+      Try m_ConexionBD.mConn.Exec(sQuery, iArticuloActual, iIdAutorSeleccionado)
+      If Error Then
+      Endif
+    Endif
+
+  Endif
+  ' SI NO HAY SELECCIÓN, NO TOCAR LOS AUTORES DE CORRESPONDENCIA
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ACTUALIZAR EL REGISTRO EN LA BASE DE DATOS
+  ' ═══════════════════════════════════════════════════════════════
+
+  Try $result.Update()
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar los cambios:\n" & Error.Text)
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ACTUALIZACIÓN EXITOSA
+  ' ═══════════════════════════════════════════════════════════════
+
+  Dim iIndiceSeleccionado As Integer
+
+  m_Sonido.sonar("Info")
+  Message.Info("Cambios guardados exitosamente.")
+
+  ' GUARDAR ÍNDICE DEL AUTOR SELECCIONADO
+  iIndiceSeleccionado = listadoAutores.Index
+
+  ' RECARGAR GRIDVIEW PARA REFLEJAR CAMBIOS
+  CargarArticulos()
+
+  ' RECARGAR AUTORES PARA ACTUALIZAR EL SÍMBOLO
+  CargarAutoresArticulo(iArticuloActual)
+
+  ' RESTAURAR SELECCIÓN SI HABÍA UN AUTOR SELECCIONADO
+  If iIndiceSeleccionado >= 0 And iIndiceSeleccionado < listadoAutores.Count Then
+    listadoAutores.Index = iIndiceSeleccionado
+    ' DISPARAR EVENTO CLICK MANUALMENTE PARA ACTUALIZAR LOS CAMPOS
+    listadoAutores_Click()
+  Endif
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' EVENTO: CLICK EN LISTBOX DE AUTORES
+' ══════════════════════════════════════════════════════════════════════
+
+Public Sub listadoAutores_Click()
+
+  Dim iIndice As Integer
+  Dim iIdAutor As Integer
+  Dim $result As Result
+  Dim sQuery As String
+
+  ' OBTENER ÍNDICE DEL AUTOR SELECCIONADO
+  iIndice = listadoAutores.Index
+  If iIndice < 0 Then
+    autor_seleccionado.Text = ""
+    autor_correspondencia.Value = 0
+    Return
+  Endif
+
+  ' VERIFICAR QUE EL ARRAY TENGA DATOS
+  If aIdsAutores.Count = 0 Or iIndice >= aIdsAutores.Count Then
+    autor_seleccionado.Text = ""
+    autor_correspondencia.Value = 0
+    Return
+  Endif
+
+  ' OBTENER ID DEL AUTOR DESDE EL ARRAY PARALELO
+  iIdAutor = aIdsAutores[iIndice]
+
+  ' CONSULTAR DATOS DEL AUTOR Y SU ESTADO DE CORRESPONDENCIA
+  sQuery = "SELECT a.apellidos, a.nombre, aa.es_autor_correspondencia " &
+    "FROM autores a " &
+    "INNER JOIN articulo_autor aa ON a.id_autor = aa.id_autor " &
+    "WHERE aa.id_articulo = &1 AND aa.id_autor = &2"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iArticuloActual, iIdAutor)
+  If Error Or Not $result.Available Then
+    autor_seleccionado.Text = ""
+    autor_correspondencia.Value = 0
+    Return
+  Endif
+
+  ' MOSTRAR APELLIDO, NOMBRE EN EL TEXTBOX
+  autor_seleccionado.Text = $result!apellidos & ", " & $result!nombre
+
+  ' MOSTRAR ESTADO DE CORRESPONDENCIA EN EL CHECKBOX
+  autor_correspondencia.Value = If($result!es_autor_correspondencia = True, -1, 0)
+
+End
+' ══════════════════════════════════════════════════════════════════════
+' FUNCIÓN: CARGAR AUTORES ASOCIADOS AL ARTÍCULO
+' ══════════════════════════════════════════════════════════════════════
+
+Private Sub CargarAutoresArticulo(iIdArticulo As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim sNombreCompleto As String
+
+  ' CONSULTA PARA OBTENER AUTORES DEL ARTÍCULO CON SUS DATOS
+  sQuery = "SELECT a.id_autor, a.nombre, a.apellidos, aa.orden_autoria, " &
+    "aa.rol_autor, aa.es_autor_correspondencia " &
+    "FROM articulo_autor aa " &
+    "INNER JOIN autores a ON aa.id_autor = a.id_autor " &
+    "WHERE aa.id_articulo = &1 " &
+    "ORDER BY aa.orden_autoria"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar autores del artículo:\n" & Error.Text)
+    Return
+  Endif
+
+  ' LIMPIAR LISTBOX Y ARRAY DE IDS
+  listadoAutores.Clear()
+  aIdsAutores.Clear()
+
+  ' VERIFICAR SI HAY RESULTADOS
+  If Not $result.Available Then
+    ' NO HAY AUTORES ASOCIADOS
+    Return
+  Endif
+
+  ' CARGAR AUTORES EN EL LISTBOX Y ARRAY PARALELO
+  For Each $result
+    sNombreCompleto = $result!apellidos & ", " & $result!nombre
+
+    ' AGREGAR INDICADOR SI ES AUTOR DE CORRESPONDENCIA
+    ' CAMBIAR: comparar con Boolean TRUE en lugar de 1
+    If $result!es_autor_correspondencia = True Then
+      sNombreCompleto &= " [CORRESPONDENCIA]"
+    Endif
+
+    ' AGREGAR ROL SI NO ES "AUTOR" ESTÁNDAR
+    If $result!rol_autor <> "autor" Then
+      sNombreCompleto &= " (" & $result!rol_autor & ")"
+    Endif
+
+    ' AGREGAR AL LISTBOX
+    listadoAutores.Add(sNombreCompleto)
+
+    ' GUARDAR ID EN ARRAY PARALELO (MISMO ÍNDICE QUE EL LISTBOX)
+    aIdsAutores.Add($result!id_autor)
+  Next
+
+End
+
+' ══════════════════════════════════════════════════════════════════════
+' BOTÓN: BORRAR ARTÍCULO
+' ══════════════════════════════════════════════════════════════════════
+
+Public Sub btnArticuloBorrar_Click()
+
+  Dim sQuery As String
+  Dim $result As Result
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' VALIDACIONES BÁSICAS
+  ' ═══════════════════════════════════════════════════════════════
+
+  If iArticuloActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un artículo seleccionado para borrar.")
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' CONFIRMACIÓN DE BORRADO
+  ' ═══════════════════════════════════════════════════════════════
+
+  Dim sMensaje As String
+  sMensaje = "¿Está seguro de eliminar el artículo:\n\n" &
+    "\"" & titulo_articulo.Text & "\"?\n\n" &
+    "Se eliminarán también todas sus relaciones (autores, revisores, etc.)."
+
+  m_Sonido.sonar("Question")
+
+  If Message.Question(sMensaje, "Sí, eliminar", "No, cancelar") = 2 Then
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ELIMINAR RELACIONES DE articulo_autor
+  ' ═══════════════════════════════════════════════════════════════
+
+  sQuery = "DELETE FROM articulo_autor WHERE id_articulo = &1"
+  Try m_ConexionBD.mConn.Exec(sQuery, iArticuloActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al eliminar relaciones de autores:\n" & Error.Text)
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ELIMINAR RELACIONES DE articulo_revisor
+  ' ═══════════════════════════════════════════════════════════════
+
+  sQuery = "DELETE FROM articulo_revisor WHERE id_articulo = &1"
+  Try m_ConexionBD.mConn.Exec(sQuery, iArticuloActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al eliminar relaciones de revisores:\n" & Error.Text)
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ELIMINAR EL ARTÍCULO
+  ' ═══════════════════════════════════════════════════════════════
+
+  sQuery = "DELETE FROM articulos WHERE id_articulo = &1"
+  Try m_ConexionBD.mConn.Exec(sQuery, iArticuloActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al eliminar el artículo:\n" & Error.Text)
+    Return
+  Endif
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ELIMINACIÓN EXITOSA
+  ' ═══════════════════════════════════════════════════════════════
+
+  m_Sonido.sonar("Success")
+  Message.Info("Artículo eliminado exitosamente.")
+
+  ' RECARGAR GRIDVIEW
+  CargarArticulos()
+
+  ' LIMPIAR FORMULARIO Y VOLVER A MODO INICIAL
+  ModoInicial()
 
 End
