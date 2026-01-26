@@ -303,61 +303,80 @@ End
 ' ============================================================================
 ' PROPOSITO: EJECUTAR LA CONSULTA SQL ESCRITA EN EL EDITOR
 '
-' VALIDACIONES DE SEGURIDAD:
-'   1. Verifica que no esté vacío el editor
-'   2. Rechaza comandos peligrosos: DROP, DELETE, TRUNCATE, ALTER, CREATE,
-'      INSERT, UPDATE
-'   3. Solo permite consultas SELECT
+' VALIDACIONES DE SEGURIDAD (defensa en profundidad):
+'   1. WHITELIST: Verifica que empiece con SELECT
+'   2. BLACKLIST: Verifica que no contenga comandos peligrosos
+'   3. Verifica que no esté vacío
 '
-' COMPORTAMIENTO:
-'   - Si la consulta es válida y devuelve datos: Llena el grid con resultados
-'   - Si es válida pero sin resultados: Muestra mensaje informativo
-'   - Si hay error SQL: Muestra el mensaje de error
+' ESTRATEGIA: Doble validación independiente del evento Change
+'             por si el usuario desactiva temporalmente el editor
 '
 ' MANEJO DE ERRORES: Try/Catch con feedback visual y sonoro
 ' ============================================================================
 Public Sub ButtonEjecutarSQL_Click()
 
   Dim consulta As String
+  Dim consultaUpper As String
   Dim n As Integer
 
-  If Not TextEditorConsultasSQL.Text Then Return
-
-  ' CONVERTIR A MAYUSCULAS PARA VALIDACION
-  consulta = UCase(Trim(TextEditorConsultasSQL.Text))
-
-  ' VERIFICAR COMANDOS PELIGROSOS
-  If InStr(consulta, "DROP ") > 0 Or
-      InStr(consulta, "DELETE ") > 0 Or
-      InStr(consulta, "TRUNCATE ") > 0 Or
-      InStr(consulta, "ALTER ") > 0 Or
-      InStr(consulta, "CREATE ") > 0 Or
-      InStr(consulta, "INSERT ") > 0 Or
-      InStr(consulta, "UPDATE ") > 0 Then
-
+  ' VERIFICAR QUE HAY CONTENIDO
+  If Not TextEditorConsultasSQL.Text Then
     m_Sonido.sonar("Warning")
-    n = Message.Warning("Esta consulta contiene comandos que pueden modificar o eliminar datos.\n\n" &
-      "Solo se permiten consultas SELECT para proteger la integridad de la base de datos.\n\n" &
-      "Comandos prohibidos: DROP, DELETE, TRUNCATE, ALTER, CREATE, INSERT, UPDATE", "Entendido")
+    Message.Warning("El editor está vacío.")
     Return
   Endif
 
-  ' VERIFICAR QUE SEA SELECT
-  If Left(consulta, 6) <> "SELECT" Then
+  consulta = Trim(TextEditorConsultasSQL.Text)
+  consultaUpper = UCase(consulta)
+
+  ' ========================================================================
+  ' VERIFICACION 1: WHITELIST - DEBE EMPEZAR CON SELECT
+  ' ========================================================================
+  If Left(consultaUpper, 6) <> "SELECT" Then
     m_Sonido.sonar("Error")
-    Message.Error("Solo se permiten consultas SELECT.")
+    Message.Error("Solo se permiten consultas SELECT.\n\nSu consulta debe comenzar con SELECT.")
     Return
   Endif
 
+  ' ========================================================================
+  ' VERIFICACION 2: BLACKLIST - NO DEBE CONTENER COMANDOS PELIGROSOS
+  ' ========================================================================
+  ' Verificar comandos peligrosos en CUALQUIER parte de la consulta
+  If InStr(consultaUpper, "DROP ") > 0 Or
+      InStr(consultaUpper, "DELETE ") > 0 Or
+      InStr(consultaUpper, "UPDATE ") > 0 Or
+      InStr(consultaUpper, "INSERT ") > 0 Or
+      InStr(consultaUpper, "TRUNCATE ") > 0 Or
+      InStr(consultaUpper, "ALTER ") > 0 Or
+      InStr(consultaUpper, "CREATE ") > 0 Or
+      InStr(consultaUpper, "GRANT ") > 0 Or
+      InStr(consultaUpper, "REVOKE ") > 0 Or
+      InStr(consultaUpper, "RESET ") > 0 Or
+      InStr(consultaUpper, "SOURCE ") > 0 Or
+      InStr(consultaUpper, "LOAD ") > 0 Or
+      InStr(consultaUpper, "DESCRIBE ") > 0 Or
+      InStr(consultaUpper, "REPLACE ") > 0 Or
+      InStr(consultaUpper, "SET ") > 0 Or
+      InStr(consultaUpper, "FLUSH ") > 0 Or
+      InStr(consultaUpper, "PURGE ") > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La consulta contiene comandos no permitidos.\n\n" &
+      "Solo se permiten consultas SELECT para proteger\n" &
+      "la integridad de la base de datos.", "Entendido")
+    Return
+  Endif
+
+  ' ========================================================================
   ' EJECUTAR CONSULTA
+  ' ========================================================================
   Inc Application.Busy
-  Try $r = m_ConexionBD.mConn.Exec(TextEditorConsultasSQL.Text)
+  Try $r = m_ConexionBD.mConn.Exec(consulta)
   Dec Application.Busy
 
   If Error Then
-    TextLabelResultados.Text = "Error: " & Error.Text
-    Wait 0.1
+    TextLabelResultados.Text = "Error SQL: " & Error.Text
     $correcta = False
+    m_Sonido.sonar("Error")
     Return
   Endif
 
@@ -365,16 +384,16 @@ Public Sub ButtonEjecutarSQL_Click()
 
   ' PROCESAR RESULTADOS
   If $r.Available Then
-    TextLabelResultados.Text = "Total de registros encontrados: " & $r.Count
+    TextLabelResultados.Text = "Registros encontrados: " & $r.Count
     LlenaGrid()
   Else
-    TextLabelResultados.Text = "La consulta parece correcta pero no devolvió ningún resultado."
+    TextLabelResultados.Text = "Consulta válida sin resultados."
     VaciaGrid()
   Endif
 
 Catch
   m_Sonido.sonar("Error")
-  Message.Error(Error.Text & " - " & Error.Where)
+  Message.Error("Error inesperado:\n" & Error.Text & "\n\nEn: " & Error.Where)
 
 End
 
@@ -613,71 +632,87 @@ Catch
 End
 
 ' ============================================================================
-' EVENTO: TEXTEDITORCONSU LTASSQL_CHANGE
+' EVENTO: TEXTEDITORCONSULTASSQL_CHANGE
 ' ============================================================================
-' PROPOSITO: PREVENIR LA ESCRITURA DE COMANDOS SQL PELIGROSOS EN TIEMPO REAL
+' PROPOSITO: PREVENIR LA ESCRITURA DE COMANDOS SQL NO PERMITIDOS EN TIEMPO REAL
+'
+' ESTRATEGIA DE SEGURIDAD:
+'   1. WHITELIST: Solo permite SELECT como primera palabra COMPLETA
+'   2. BLACKLIST: Bloquea comandos peligrosos COMPLETOS en cualquier parte
 '
 ' COMPORTAMIENTO:
-'   - Detecta cuando el usuario escribe comandos prohibidos
-'   - Borra automáticamente la palabra cuando se completa
-'   - Lista de comandos prohibidos: DROP, DELETE, UPDATE, INSERT, TRUNCATE,
-'     ALTER, CREATE, GRANT, REVOKE
+'   - Detecta comandos no permitidos SOLO cuando se completan (con espacio)
+'   - Evita borrar mientras el usuario está escribiendo
+'   - Borra automáticamente cuando detecta palabra prohibida completa
 '
-' FUNCIONAMIENTO:
-'   - Analiza las primeras palabras de cada línea
-'   - Si detecta una palabra prohibida completa, la borra
-'   - Usa Split() para dividir por espacios, más robusto que Mid()
-'
-' NOTA: Se ejecuta después de cada cambio en el texto del editor
+' NOTA: Una palabra se considera completa cuando le sigue un espacio
 ' ============================================================================
 Public Sub TextEditorConsultasSQL_Change()
 
   Dim lineaActual As String
   Dim linea As Integer
-  Dim columna As Integer
   Dim palabras As String[]
   Dim primeraPalabra As String
   Dim i As Integer
   Dim palabrasProhibidas As String[]
 
-  ' LISTA DE PALABRAS PROHIBIDAS (en mayúsculas para comparación)
+  ' LISTA DE PALABRAS PROHIBIDAS (defensa adicional)
   palabrasProhibidas = ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE",
-    "ALTER", "CREATE", "GRANT", "REVOKE"]
+    "ALTER", "CREATE", "GRANT", "REVOKE", "RESET",
+    "SOURCE", "LOAD", "DESCRIBE", "REPLACE", "SET",
+    "FLUSH", "PURGE"]
 
-  ' OBTENER POSICION ACTUAL DEL CURSOR
+  ' OBTENER LINEA ACTUAL
   linea = TextEditorConsultasSQL.Line
-  columna = TextEditorConsultasSQL.Column
-
-  ' VERIFICAR QUE HAY TEXTO EN LA LINEA ACTUAL
   If linea >= TextEditorConsultasSQL.Count Then Return
 
   lineaActual = TextEditorConsultasSQL[linea].Text
   If Not lineaActual Or Len(Trim(lineaActual)) = 0 Then Return
 
-  ' DIVIDIR LA LINEA EN PALABRAS (MAS ROBUSTO QUE Mid())
+  ' DIVIDIR LA LINEA EN PALABRAS
   palabras = Split(Trim(lineaActual), " ", "", True)
-
-  ' SI NO HAY PALABRAS COMPLETAS, SALIR
   If palabras.Count = 0 Then Return
 
-  ' OBTENER LA PRIMERA PALABRA
-  primeraPalabra = Trim(palabras[0])
-  If Not primeraPalabra Or Len(primeraPalabra) = 0 Then Return
+  ' ========================================================================
+  ' VERIFICACION 1: WHITELIST - PRIMERA PALABRA DEBE SER SELECT
+  ' ========================================================================
+  ' Solo verificar si hay al menos 2 palabras (primera completa + siguiente)
+  ' O si la línea termina con espacio (palabra completa)
+  If palabras.Count >= 2 Or Right(lineaActual, 1) = " " Then
+    primeraPalabra = Trim(palabras[0])
 
-  ' VERIFICAR SI LA PRIMERA PALABRA ESTA EN LA LISTA DE PROHIBIDAS
-  For i = 0 To palabrasProhibidas.Max
-    If UCase(primeraPalabra) = palabrasProhibidas[i] Then
+    If primeraPalabra And Len(primeraPalabra) > 0 Then
+      If UCase(primeraPalabra) <> "SELECT" Then
+        ' BORRAR LA LINEA COMPLETA
+        TextEditorConsultasSQL[linea].Text = ""
+        TextEditorConsultasSQL.Goto(linea, 0)
+        Try m_Sonido.sonar("Warning")
+        Return
+      Endif
+    Endif
+  Endif
 
-      ' BORRAR TODA LA LINEA (LA PALABRA PROHIBIDA ESTA AL INICIO)
-      TextEditorConsultasSQL[linea].Text = ""
+  ' ========================================================================
+  ' VERIFICACION 2: BLACKLIST - PALABRAS PROHIBIDAS EN CUALQUIER POSICION
+  ' ========================================================================
+  ' Solo verificar palabras completas (cuando hay más palabras después o termina en espacio)
+  For i = 0 To palabras.Max
+    Dim palabraActual As String = Trim(palabras[i])
+    Dim j As Integer
 
-      ' RESTAURAR CURSOR AL INICIO DE LA LINEA
-      TextEditorConsultasSQL.Goto(linea, 0)
-
-      ' FEEDBACK VISUAL
-      Try m_Sonido.sonar("Warning")
-
-      Return
+    ' Verificar solo si:
+    ' - No es la última palabra, O
+    ' - Es la última palabra pero la línea termina con espacio
+    If i < palabras.Max Or Right(lineaActual, 1) = " " Then
+      For j = 0 To palabrasProhibidas.Max
+        If UCase(palabraActual) = palabrasProhibidas[j] Then
+          ' BORRAR TODA LA LINEA
+          TextEditorConsultasSQL[linea].Text = ""
+          TextEditorConsultasSQL.Goto(linea, 0)
+          Try m_Sonido.sonar("Warning")
+          Return
+        Endif
+      Next
     Endif
   Next
 
