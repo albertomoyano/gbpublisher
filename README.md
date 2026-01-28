@@ -186,3 +186,7 @@ Permite a universidades y revistas científicas trabajar con estándares interna
 Licenciado bajo Business Source License 1.1
 Repositorio: https://github.com/albertomoyano/gbpublisher
 Consultas sobre licenciamiento:  estudio2a@outlook.com.ar
+
+## Cómo apoyar el proyecto
+
+Si desea apoyar este proyecto puede leer las condiciones en [../SUPORT_MODEL.md](SUPORT_MODEL.md)
