@@ -189,4 +189,4 @@ Consultas sobre licenciamiento:  estudio2a@outlook.com.ar
 
 ## Cómo apoyar el proyecto
 
-Si desea apoyar este proyecto puede leer las condiciones en [SUPORT_MODEL.md](SUPORT_MODEL.md)
+Si desea apoyar este proyecto puede leer las condiciones en [SUPORT_MODEL.md](../SUPORT_MODEL/)
