@@ -125,10 +125,19 @@ El modelo de apoyo:
 | III   | Institucional Colaborador | Financiamiento específico     | Módulos, integraciones, mejoras estructurales |
 | IV    | Institucional Estratégico | Apoyo sostenido y planificado | Roadmap, estabilidad a largo plazo            |
 
-**Notas:**
-- Ningún nivel otorga exclusividad.
-- Ningún nivel modifica la licencia del software.
-- Los aportes no constituyen compra de servicios comerciales.
+**Aclaraciones importantes**
+
+- Ningún nivel:
+  - otorga exclusividad
+  - modifica la licencia del software
+  - implica acceso preferencial al código
+  - constituye la compra de servicios comerciales
+- Los aportes no generan obligaciones contractuales de desarrollo a medida.
+
+Las mejoras, funcionalidades o desarrollos incorporados como resultado de ideas, propuestas o necesidades institucionales:
+- se integran al **código común del proyecto**
+- **no son exclusividad** de la institución que realizó el aporte
+- quedan disponibles para toda la comunidad de usuarios bajo la licencia vigente
 
 ---
 
