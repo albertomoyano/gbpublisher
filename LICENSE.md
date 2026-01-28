@@ -99,7 +99,7 @@ Uso permitido únicamente si:
 
 #### Servicios externos contratados por universidad
 
-- ❌ Si una universidad contrata a una empresa comercial (o persona) para hacer la producción editorial, esa empresa NO puede usar gbpublisher bajo esta licencia gratuita.
+- ❌ Si una universidad contrata a una empresa comercial (o persona) para hacer la producción editorial, esa empresa (o persona) NO puede usar gbpublisher bajo esta licencia gratuita.
 - ✅ La universidad puede usar gbpublisher internamente.
 
 #### Consultores / freelancers
@@ -222,7 +222,7 @@ En la Fecha de Cambio de cada versión, el Software Licenciado se convierte auto
 
 **Fecha de Cambio:** Cinco (5) años desde la publicación de cada versión.
 
-**Uso Permitido:** Uso no comercial más usos habilitados por la Concesión.
+**Uso Permitido:** Uso NO comercial más usos habilitados por la Concesión.
 
 ---
 
