@@ -149,6 +149,7 @@ Las versiones posteriores del Software Licenciado publicadas con posterioridad e
 ## Parámetros de Licencia
 
 **Licensor:** Alberto Moyano
+
 **Software Licenciado:** gbpublisher
 
 **Fecha de Cambio (Change Date):**
@@ -214,9 +215,13 @@ En la Fecha de Cambio de cada versión, el Software Licenciado se convierte auto
 ## Definiciones
 
 **Licencia:** Este documento.
+
 **Software Licenciado:** El software identificado arriba.
+
 **Trabajo Licenciado:** El Software Licenciado y sus modificaciones.
+
 **Fecha de Cambio:** Cinco (5) años desde la publicación de cada versión.
+
 **Uso Permitido:** Uso no comercial más usos habilitados por la Concesión.
 
 ---
@@ -233,7 +238,7 @@ En la Fecha de Cambio de cada versión, el Software Licenciado se convierte auto
 Sí, siempre que el uso sea institucional, académico o científico.
 
 ### ¿Puedo modificar el código?
-Sí, para uso interno permitido.
+Sí, para estudio y uso interno permitido.
 
 ### ¿Qué sucede después de 5 años?
 Esa versión específica se convierte en GPL-3.0-or-later.
