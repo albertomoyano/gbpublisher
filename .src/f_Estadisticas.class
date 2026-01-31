@@ -32,7 +32,7 @@ Public Sub Form_Open()
 
   Me.Title = "Estadísticas (usuario en curso: " & m_ConexionBD.usuarioActual & ")"
 
-  Splitter1.Layout = [2, 5]
+  Splitter1.Layout = [3, 7]
   LlenaTablas()
   Llenalista()
   $correcta = True
@@ -55,7 +55,7 @@ End
 ' ============================================================================
 Public Sub Splitter1_Resize()
 
-  Splitter1.Layout = [2, 5]
+  Splitter1.Layout = [3, 7]
 
 End
 
@@ -527,7 +527,8 @@ Public Sub ListBoxConsultas_Activate()
   TextEditorConsultasSQL.Text = r!editor_consultas
   TextBoxComentarios.Text = r!comentarios
 
-  TextBoxNombre.SetFocus
+  TextBoxNombre.Enabled = False
+  TextBoxNombre.Foreground = Color.Blue
 
 Catch
   m_Sonido.sonar("Error")
@@ -543,6 +544,8 @@ End
 Public Sub ButtonNuevaConsulta_Click()
 
   Limpiacampos()
+  TextBoxNombre.Enabled = True
+  TextBoxNombre.Foreground = Color.Black
   TextBoxNombre.SetFocus()
 
 End
@@ -792,7 +795,7 @@ End
 ' VALIDACIONES:
 '   1. Nombre obligatorio
 '   2. Consulta SQL no vacía
-'   3. ✅ NUEVA: La consulta DEBE comenzar con SELECT
+'   3. ✅ La consulta DEBE comenzar con SELECT
 '   4. Advertencia si la consulta tiene errores de ejecución
 '   5. Confirmación si va a sobrescribir consulta existente
 '   6. Verificación de permisos (solo el creador puede modificar)
@@ -801,11 +804,12 @@ End
 '   - Si existe (por nombre): UPDATE
 '   - Si es nueva: INSERT con usuario_creador
 '   - Actualiza fecha_creacion automáticamente (DEFAULT CURRENT_TIMESTAMP)
+'   - ✅ NUEVO: Normaliza finales de línea antes de guardar
 '
 ' CAMPOS GUARDADOS:
 '   - nombre: Identificador corto
 '   - descripcion: Descripción larga
-'   - editor_consultas: Código SQL
+'   - editor_consultas: Código SQL normalizado
 '   - comentarios: Notas de uso
 '   - usuario_creador: Usuario que creó la consulta
 '   - fecha_creacion: Timestamp automático
@@ -817,6 +821,7 @@ Public Sub ButtonGrabarConsulta_Click()
   Dim r As Result
   Dim n As Integer
   Dim consultaLimpia As String
+  Dim consultaNormalizada As String
 
   ' VALIDAR NOMBRE OBLIGATORIO
   If TextBoxNombre.Text = "" Then
@@ -832,8 +837,18 @@ Public Sub ButtonGrabarConsulta_Click()
     Return
   Endif
 
+  ' NORMALIZAR CONSULTA (FINALES DE LINEA)
+  consultaNormalizada = Trim(TextEditorConsultasSQL.Text)
+  consultaNormalizada = Replace(consultaNormalizada, "\r\n", "\n")
+  consultaNormalizada = Replace(consultaNormalizada, "\r", "\n")
+
+  ' ASEGURAR NEWLINE FINAL
+  If Right(consultaNormalizada, 1) <> gb.NewLine Then
+    consultaNormalizada &= gb.NewLine
+  Endif
+
   ' ✅ VALIDAR QUE LA CONSULTA COMIENCE CON SELECT
-  consultaLimpia = Trim(TextEditorConsultasSQL.Text)
+  consultaLimpia = Trim(consultaNormalizada)
   If Left(UCase(consultaLimpia), 6) <> "SELECT" Then
     m_Sonido.sonar("Error")
     Message.Error("Solo se permiten consultas SELECT.\n\nLas consultas deben comenzar con SELECT para proteger la integridad de la base de datos.\n\nPara modificar datos, use las funciones específicas de la aplicación.")
@@ -872,10 +887,10 @@ Public Sub ButtonGrabarConsulta_Click()
     r = m_ConexionBD.mConn.Create("consultas")
   Endif
 
-  ' ASIGNAR VALORES A LOS CAMPOS
+  ' ASIGNAR VALORES A LOS CAMPOS (CON CONSULTA NORMALIZADA)
   r!nombre = TextBoxNombre.Text
   r!descripcion = TextBoxDescripcion.Text
-  r!editor_consultas = TextEditorConsultasSQL.Text
+  r!editor_consultas = consultaNormalizada
   r!comentarios = TextBoxComentarios.Text
   r!usuario_creador = m_ConexionBD.usuarioActual
   ' NOTA: fecha_creacion se asigna automáticamente por DEFAULT CURRENT_TIMESTAMP
@@ -885,11 +900,39 @@ Public Sub ButtonGrabarConsulta_Click()
   m_Sonido.sonar("Info")
   Message.Info("Consulta guardada correctamente")
 
+  TextBoxNombre.Enabled = False
   ListBoxConsultas.Clear
   Llenalista()
+  Limpiacampos()
 
 Catch
   m_Sonido.sonar("Error")
   Message.Error("Error al guardar la consulta: " & Error.Text)
+
+End
+
+Public Sub TextEditorConsultasSQL_KeyPress()
+
+  Dim sTexto As String
+
+  ' DETECTAR CTRL+V
+  If Key.Code = Key["V"] And Key.Control Then
+
+    ' OBTENER TEXTO DEL PORTAPAPELES
+    sTexto = Clipboard.Paste()
+
+    ' NORMALIZAR FINALES DE LÍNEA
+    sTexto = Replace(sTexto, "\r\n", "\n")
+    sTexto = Replace(sTexto, "\r", "\n")
+
+    ' ASEGURAR NEWLINE FINAL
+    If Right(sTexto, 1) <> gb.NewLine Then sTexto &= gb.NewLine
+
+    ' INSERTAR EN POSICIÓN ACTUAL
+    TextEditorConsultasSQL.Insert(sTexto)
+
+    ' CANCELAR EL PASTE ORIGINAL
+    Stop Event
+  Endif
 
 End
