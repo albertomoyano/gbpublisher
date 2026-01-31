@@ -95,25 +95,27 @@ End
 Private Sub Llenalista()
 
   Dim r As Result
-  Dim n As Integer
+  Dim sIcono As String
 
-  ' ✅ CORREGIDO: Usar nombres de campos reales
-  r = m_ConexionBD.mConn.Exec("SELECT id, nombre FROM consultas ORDER BY nombre")
-  If Not r.Available Then Return
+  ListBoxConsultas.Clear()
 
-  ListBoxConsultas.Tag = New Integer[]
-  ListBoxConsultas.Clear
-  ListBoxConsultas.Tag.Clear
+  r = m_ConexionBD.mConn.Exec("SELECT nombre, consulta_sistema FROM consultas ORDER BY nombre")
 
-  For n = 0 To r.Count - 1
-    ListBoxConsultas.Add(r!nombre)
-    ListBoxConsultas.Tag.Add(r!id)
-    r.MoveNext
-  Next
+  While r.Available
+    ' AGREGAR INDICADOR VISUAL PARA CONSULTAS DEL SISTEMA
+    If r!consulta_sistema = 1 Then
+      sIcono = "🔒 "  ' Candado para consultas bloqueadas
+    Else
+      sIcono = ""
+    Endif
+
+    ListBoxConsultas.Add(sIcono & r!nombre)
+    r.MoveNext()
+  Wend
 
 Catch
   m_Sonido.sonar("Error")
-  Message.Error(Error.Text & " - " & Error.Where)
+  Message.Error("Error al cargar lista de consultas: " & Error.Text)
 
 End
 
@@ -342,23 +344,23 @@ Public Sub ButtonEjecutarSQL_Click()
   ' VERIFICACION 2: BLACKLIST - NO DEBE CONTENER COMANDOS PELIGROSOS
   ' ========================================================================
   ' Verificar comandos peligrosos en CUALQUIER parte de la consulta
-  If InStr(consultaUpper, "DROP ") > 0 Or
-      InStr(consultaUpper, "DELETE ") > 0 Or
-      InStr(consultaUpper, "UPDATE ") > 0 Or
-      InStr(consultaUpper, "INSERT ") > 0 Or
-      InStr(consultaUpper, "TRUNCATE ") > 0 Or
-      InStr(consultaUpper, "ALTER ") > 0 Or
-      InStr(consultaUpper, "CREATE ") > 0 Or
-      InStr(consultaUpper, "GRANT ") > 0 Or
-      InStr(consultaUpper, "REVOKE ") > 0 Or
-      InStr(consultaUpper, "RESET ") > 0 Or
-      InStr(consultaUpper, "SOURCE ") > 0 Or
-      InStr(consultaUpper, "LOAD ") > 0 Or
-      InStr(consultaUpper, "DESCRIBE ") > 0 Or
-      InStr(consultaUpper, "REPLACE ") > 0 Or
-      InStr(consultaUpper, "SET ") > 0 Or
-      InStr(consultaUpper, "FLUSH ") > 0 Or
-      InStr(consultaUpper, "PURGE ") > 0 Then
+  If InStr(consultaUpper, " DROP ") > 0 Or InStr(consultaUpper, " DROP;") > 0 Or Right(consultaUpper, 4) = "DROP" Or
+      InStr(consultaUpper, " DELETE ") > 0 Or InStr(consultaUpper, " DELETE;") > 0 Or Right(consultaUpper, 6) = "DELETE" Or
+      InStr(consultaUpper, " UPDATE ") > 0 Or InStr(consultaUpper, " UPDATE;") > 0 Or Right(consultaUpper, 6) = "UPDATE" Or
+      InStr(consultaUpper, " INSERT ") > 0 Or InStr(consultaUpper, " INSERT;") > 0 Or Right(consultaUpper, 6) = "INSERT" Or
+      InStr(consultaUpper, " TRUNCATE ") > 0 Or InStr(consultaUpper, " TRUNCATE;") > 0 Or Right(consultaUpper, 8) = "TRUNCATE" Or
+      InStr(consultaUpper, " ALTER ") > 0 Or InStr(consultaUpper, " ALTER;") > 0 Or Right(consultaUpper, 5) = "ALTER" Or
+      InStr(consultaUpper, " CREATE ") > 0 Or InStr(consultaUpper, " CREATE;") > 0 Or Right(consultaUpper, 6) = "CREATE" Or
+      InStr(consultaUpper, " GRANT ") > 0 Or InStr(consultaUpper, " GRANT;") > 0 Or Right(consultaUpper, 5) = "GRANT" Or
+      InStr(consultaUpper, " REVOKE ") > 0 Or InStr(consultaUpper, " REVOKE;") > 0 Or Right(consultaUpper, 6) = "REVOKE" Or
+      InStr(consultaUpper, " RESET ") > 0 Or InStr(consultaUpper, " RESET;") > 0 Or Right(consultaUpper, 5) = "RESET" Or
+      InStr(consultaUpper, " SOURCE ") > 0 Or InStr(consultaUpper, " SOURCE;") > 0 Or Right(consultaUpper, 6) = "SOURCE" Or
+      InStr(consultaUpper, " LOAD ") > 0 Or InStr(consultaUpper, " LOAD;") > 0 Or Right(consultaUpper, 4) = "LOAD" Or
+      InStr(consultaUpper, " DESCRIBE ") > 0 Or InStr(consultaUpper, " DESCRIBE;") > 0 Or Right(consultaUpper, 8) = "DESCRIBE" Or
+      InStr(consultaUpper, " REPLACE ") > 0 Or InStr(consultaUpper, " REPLACE;") > 0 Or Right(consultaUpper, 7) = "REPLACE" Or
+      InStr(consultaUpper, " SET ") > 0 Or InStr(consultaUpper, " SET;") > 0 Or Right(consultaUpper, 3) = "SET" Or
+      InStr(consultaUpper, " FLUSH ") > 0 Or InStr(consultaUpper, " FLUSH;") > 0 Or Right(consultaUpper, 5) = "FLUSH" Or
+      InStr(consultaUpper, " PURGE ") > 0 Or InStr(consultaUpper, " PURGE;") > 0 Or Right(consultaUpper, 5) = "PURGE" Then
     m_Sonido.sonar("Warning")
     Message.Warning("La consulta contiene comandos no permitidos.\n\n" &
       "Solo se permiten consultas SELECT para proteger\n" &
@@ -505,30 +507,69 @@ End
 ' PROPOSITO: CARGAR UNA CONSULTA GUARDADA EN EL FORMULARIO
 '
 ' COMPORTAMIENTO:
-'   1. Busca la consulta por ID (guardado en Tag)
+'   1. Busca la consulta por nombre (quitando el icono 🔒 si existe)
 '   2. Carga todos los campos en los controles correspondientes
-'   3. Coloca el foco en el campo Nombre
-'
-' NOTA IMPORTANTE: Gambas usa &1, &2, &3 como placeholders, NO el símbolo ?
+'   3. Configura permisos según si es consulta del sistema o de usuario
+'   4. Coloca el foco en el campo Nombre
 ' ============================================================================
 Public Sub ListBoxConsultas_Activate()
 
   Dim r As Result
+  Dim nombreConsulta As String
 
-  ' ✅ GAMBAS USA &1 COMO PLACEHOLDER, NO EL SIMBOLO ?
-  r = m_ConexionBD.mConn.Exec("SELECT * FROM consultas WHERE id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+  ' QUITAR ICONO SI EXISTE
+  nombreConsulta = Replace(ListBoxConsultas.Text, "🔒 ", "")
+
+  ' OBTENER DATOS DE LA CONSULTA
+  r = m_ConexionBD.mConn.Exec("SELECT id, nombre, descripcion, editor_consultas, comentarios, consulta_sistema, usuario_creador " &
+    "FROM consultas WHERE nombre = &1",
+    nombreConsulta)
 
   If Not r.Available Then Return
 
-  ' ✅ CORREGIDO: Usar nombres de campos reales de la tabla
+  ' CARGAR DATOS EN FORMULARIO
   TextBoxIDsql.Value = r!id
   TextBoxNombre.Text = r!nombre
   TextBoxDescripcion.Text = r!descripcion
   TextEditorConsultasSQL.Text = r!editor_consultas
   TextBoxComentarios.Text = r!comentarios
 
-  TextBoxNombre.Enabled = False
-  TextBoxNombre.Foreground = Color.Blue
+  ' CONFIGURAR PERMISOS SEGÚN TIPO DE CONSULTA
+  If r!consulta_sistema = 1 Then
+    ' ========================================================================
+    ' CONSULTA DEL SISTEMA: COMPLETAMENTE BLOQUEADA (SOLO LECTURA)
+    ' ========================================================================
+    TextEditorConsultasSQL.ReadOnly = True
+    TextBoxNombre.Enabled = False
+    TextBoxDescripcion.Enabled = False
+    TextBoxComentarios.Enabled = False
+    TextBoxNombre.Foreground = Color.Red
+    ButtonGrabarConsulta.Enabled = False
+    ButtonBorrarConsulta.Enabled = False
+    ButtonBorrarConsulta.Tooltip = "Esta consulta es parte del sistema y no puede eliminarse ni modificarse"
+
+  Else
+    ' ========================================================================
+    ' CONSULTA DE USUARIO: VERIFICAR AUTORÍA
+    ' ========================================================================
+    TextEditorConsultasSQL.ReadOnly = False
+    TextBoxNombre.Enabled = False  ' El nombre no se modifica después de crear
+    TextBoxDescripcion.Enabled = True
+    TextBoxComentarios.Enabled = True
+    TextBoxNombre.Foreground = Color.Blue
+    ButtonGrabarConsulta.Enabled = True
+
+    ' SOLO EL AUTOR PUEDE BORRAR
+    If m_ConexionBD.usuarioActual = r!usuario_creador Then
+      ButtonBorrarConsulta.Enabled = True
+      ButtonGrabarConsulta.Enabled = True
+      ButtonBorrarConsulta.Tooltip = "Eliminar consulta seleccionada"
+    Else
+      ButtonBorrarConsulta.Enabled = False
+      ButtonGrabarConsulta.Enabled = False
+      ButtonBorrarConsulta.Tooltip = "Solo el autor puede eliminar esta consulta"
+    Endif
+  Endif
 
 Catch
   m_Sonido.sonar("Error")
@@ -544,8 +585,16 @@ End
 Public Sub ButtonNuevaConsulta_Click()
 
   Limpiacampos()
+
+  ' HABILITAR EDICIÓN PARA NUEVA CONSULTA
+  TextEditorConsultasSQL.ReadOnly = False
   TextBoxNombre.Enabled = True
+  TextBoxDescripcion.Enabled = True
+  TextBoxComentarios.Enabled = True
   TextBoxNombre.Foreground = Color.Black
+  ButtonGrabarConsulta.Enabled = True
+  ButtonBorrarConsulta.Enabled = False  ' No hay nada que borrar aún
+
   TextBoxNombre.SetFocus()
 
 End
@@ -634,92 +683,92 @@ Catch
 
 End
 
-' ============================================================================
-' EVENTO: TEXTEDITORCONSULTASSQL_CHANGE
-' ============================================================================
-' PROPOSITO: PREVENIR LA ESCRITURA DE COMANDOS SQL NO PERMITIDOS EN TIEMPO REAL
+' ' ============================================================================
+' ' EVENTO: TEXTEDITORCONSULTASSQL_CHANGE
+' ' ============================================================================
+' ' PROPOSITO: PREVENIR LA ESCRITURA DE COMANDOS SQL NO PERMITIDOS EN TIEMPO REAL
+' '
+' ' ESTRATEGIA DE SEGURIDAD:
+' '   1. WHITELIST: Solo permite SELECT como primera palabra COMPLETA
+' '   2. BLACKLIST: Bloquea comandos peligrosos COMPLETOS en cualquier parte
+' '
+' ' COMPORTAMIENTO:
+' '   - Detecta comandos no permitidos SOLO cuando se completan (con espacio)
+' '   - Evita borrar mientras el usuario está escribiendo
+' '   - Borra automáticamente cuando detecta palabra prohibida completa
+' '
+' ' NOTA: Una palabra se considera completa cuando le sigue un espacio
+' ' ============================================================================
+' Public Sub TextEditorConsultasSQL_Change()
 '
-' ESTRATEGIA DE SEGURIDAD:
-'   1. WHITELIST: Solo permite SELECT como primera palabra COMPLETA
-'   2. BLACKLIST: Bloquea comandos peligrosos COMPLETOS en cualquier parte
+'   Dim lineaActual As String
+'   Dim linea As Integer
+'   Dim palabras As String[]
+'   Dim primeraPalabra As String
+'   Dim i As Integer
+'   Dim palabrasProhibidas As String[]
 '
-' COMPORTAMIENTO:
-'   - Detecta comandos no permitidos SOLO cuando se completan (con espacio)
-'   - Evita borrar mientras el usuario está escribiendo
-'   - Borra automáticamente cuando detecta palabra prohibida completa
+'   ' LISTA DE PALABRAS PROHIBIDAS (defensa adicional)
+'   palabrasProhibidas = ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE",
+'     "ALTER", "CREATE", "GRANT", "REVOKE", "RESET",
+'     "SOURCE", "LOAD", "DESCRIBE", "REPLACE", "SET",
+'     "FLUSH", "PURGE"]
 '
-' NOTA: Una palabra se considera completa cuando le sigue un espacio
-' ============================================================================
-Public Sub TextEditorConsultasSQL_Change()
-
-  Dim lineaActual As String
-  Dim linea As Integer
-  Dim palabras As String[]
-  Dim primeraPalabra As String
-  Dim i As Integer
-  Dim palabrasProhibidas As String[]
-
-  ' LISTA DE PALABRAS PROHIBIDAS (defensa adicional)
-  palabrasProhibidas = ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE",
-    "ALTER", "CREATE", "GRANT", "REVOKE", "RESET",
-    "SOURCE", "LOAD", "DESCRIBE", "REPLACE", "SET",
-    "FLUSH", "PURGE"]
-
-  ' OBTENER LINEA ACTUAL
-  linea = TextEditorConsultasSQL.Line
-  If linea >= TextEditorConsultasSQL.Count Then Return
-
-  lineaActual = TextEditorConsultasSQL[linea].Text
-  If Not lineaActual Or Len(Trim(lineaActual)) = 0 Then Return
-
-  ' DIVIDIR LA LINEA EN PALABRAS
-  palabras = Split(Trim(lineaActual), " ", "", True)
-  If palabras.Count = 0 Then Return
-
-  ' ========================================================================
-  ' VERIFICACION 1: WHITELIST - PRIMERA PALABRA DEBE SER SELECT
-  ' ========================================================================
-  ' Solo verificar si hay al menos 2 palabras (primera completa + siguiente)
-  ' O si la línea termina con espacio (palabra completa)
-  If palabras.Count >= 2 Or Right(lineaActual, 1) = " " Then
-    primeraPalabra = Trim(palabras[0])
-
-    If primeraPalabra And Len(primeraPalabra) > 0 Then
-      If UCase(primeraPalabra) <> "SELECT" Then
-        ' BORRAR LA LINEA COMPLETA
-        TextEditorConsultasSQL[linea].Text = ""
-        TextEditorConsultasSQL.Goto(linea, 0)
-        Try m_Sonido.sonar("Warning")
-        Return
-      Endif
-    Endif
-  Endif
-
-  ' ========================================================================
-  ' VERIFICACION 2: BLACKLIST - PALABRAS PROHIBIDAS EN CUALQUIER POSICION
-  ' ========================================================================
-  ' Solo verificar palabras completas (cuando hay más palabras después o termina en espacio)
-  For i = 0 To palabras.Max
-    Dim palabraActual As String = Trim(palabras[i])
-    Dim j As Integer
-
-    ' Verificar solo si:
-    ' - No es la última palabra, O
-    ' - Es la última palabra pero la línea termina con espacio
-    If i < palabras.Max Or Right(lineaActual, 1) = " " Then
-      For j = 0 To palabrasProhibidas.Max
-        If UCase(palabraActual) = palabrasProhibidas[j] Then
-          ' BORRAR TODA LA LINEA
-          TextEditorConsultasSQL[linea].Text = ""
-          TextEditorConsultasSQL.Goto(linea, 0)
-          Try m_Sonido.sonar("Warning")
-          Return
-        Endif
-      Next
-    Endif
-  Next
-
-End
+'   ' OBTENER LINEA ACTUAL
+'   linea = TextEditorConsultasSQL.Line
+'   If linea >= TextEditorConsultasSQL.Count Then Return
+'
+'   lineaActual = TextEditorConsultasSQL[linea].Text
+'   If Not lineaActual Or Len(Trim(lineaActual)) = 0 Then Return
+'
+'   ' DIVIDIR LA LINEA EN PALABRAS
+'   palabras = Split(Trim(lineaActual), " ", "", True)
+'   If palabras.Count = 0 Then Return
+'
+'   ' ========================================================================
+'   ' VERIFICACION 1: WHITELIST - PRIMERA PALABRA DEBE SER SELECT
+'   ' ========================================================================
+'   ' Solo verificar si hay al menos 2 palabras (primera completa + siguiente)
+'   ' O si la línea termina con espacio (palabra completa)
+'   If palabras.Count >= 2 Or Right(lineaActual, 1) = " " Then
+'     primeraPalabra = Trim(palabras[0])
+'
+'     If primeraPalabra And Len(primeraPalabra) > 0 Then
+'       If UCase(primeraPalabra) <> "SELECT" Then
+'         ' BORRAR LA LINEA COMPLETA
+'         TextEditorConsultasSQL[linea].Text = ""
+'         TextEditorConsultasSQL.Goto(linea, 0)
+'         Try m_Sonido.sonar("Warning")
+'         Return
+'       Endif
+'     Endif
+'   Endif
+'
+'   ' ========================================================================
+'   ' VERIFICACION 2: BLACKLIST - PALABRAS PROHIBIDAS EN CUALQUIER POSICION
+'   ' ========================================================================
+'   ' Solo verificar palabras completas (cuando hay más palabras después o termina en espacio)
+'   For i = 0 To palabras.Max
+'     Dim palabraActual As String = Trim(palabras[i])
+'     Dim j As Integer
+'
+'     ' Verificar solo si:
+'     ' - No es la última palabra, O
+'     ' - Es la última palabra pero la línea termina con espacio
+'     If i < palabras.Max Or Right(lineaActual, 1) = " " Then
+'       For j = 0 To palabrasProhibidas.Max
+'         If UCase(palabraActual) = palabrasProhibidas[j] Then
+'           ' BORRAR TODA LA LINEA
+'           TextEditorConsultasSQL[linea].Text = ""
+'           TextEditorConsultasSQL.Goto(linea, 0)
+'           Try m_Sonido.sonar("Warning")
+'           Return
+'         Endif
+'       Next
+'     Endif
+'   Next
+'
+' End
 
 ' ============================================================================
 ' EVENTO: CLIC EN BOTON BORRAR CONSULTA
@@ -737,49 +786,67 @@ End
 ' ============================================================================
 Public Sub ButtonBorrarConsulta_Click()
 
-  Dim n As Integer
   Dim r As Result
+  Dim idConsulta As Integer
 
-  ' VALIDAR QUE HAY UNA CONSULTA SELECCIONADA
+  ' OBTENER ID DE CONSULTA SELECCIONADA
   If ListBoxConsultas.Index < 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar una consulta para borrar")
+    m_Sonido.sonar("Error")
+    Message.Error("Debe seleccionar una consulta para borrar")
     Return
   Endif
 
-  ' ✅ OBTENER EL USUARIO CREADOR DE LA CONSULTA
-  r = m_ConexionBD.mConn.Exec("SELECT usuario_creador FROM consultas WHERE id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+  ' OBTENER DATOS DE LA CONSULTA
+  r = m_ConexionBD.mConn.Exec("SELECT id, nombre, usuario_creador, consulta_sistema FROM consultas WHERE nombre = &1", Replace(ListBoxConsultas.Text, "🔒 ", ""))
 
   If Not r.Available Then
     m_Sonido.sonar("Error")
-    Message.Error("Error: No se pudo obtener la información de la consulta")
+    Message.Error("No se encontró la consulta seleccionada")
     Return
   Endif
 
-  ' ✅ VERIFICAR SI EL USUARIO ACTUAL ES EL CREADOR
+  ' VERIFICAR SI ES CONSULTA DEL SISTEMA (BLOQUEADA)
+  If r!consulta_sistema = 1 Then
+    m_Sonido.sonar("Error")
+    Message.Error("Esta consulta forma parte del sistema gbpublisher y no puede eliminarse.\n\nSi necesita una versión modificada, puede copiarla y crear una consulta nueva.")
+    Return
+  Endif
+
+  ' VERIFICAR SI EL USUARIO ACTUAL ES EL CREADOR
   If m_ConexionBD.usuarioActual <> r!usuario_creador Then
     m_Sonido.sonar("Error")
-    Message.Error("No tienes permiso para eliminar esta consulta.\n\nSolo el usuario creador (" & r!usuario_creador & ") puede eliminarla.")
+    Message.Error("Solo el autor de la consulta (" & r!usuario_creador & ") puede eliminarla.")
     Return
   Endif
 
-  ' PEDIR CONFIRMACION AL USUARIO
-  m_Sonido.sonar("Question")
-  n = Message.Question("¿Desea eliminar esta consulta?\n\n" & ListBoxConsultas.Text, "Sí", "No")
+  ' CONFIRMAR BORRADO
+  m_Sonido.sonar("Warning")
+  If Message.Warning("¿Está seguro de eliminar la consulta '" & r!nombre & "'?\n\nEsta acción quedará registrada en el sistema.", "Sí, eliminar", "Cancelar") <> 1 Then
+    Return
+  Endif
 
-  If n <> 1 Then Return
+  ' INTENTAR REGISTRAR EN AUDITORÍA (IGNORAR SI FALLA)
+  m_ConexionBD.mConn.Exec("INSERT INTO consultas_eliminadas (id_original, nombre, descripcion, editor_consultas, comentarios, usuario_creador, fecha_creacion, usuario_elimino, fecha_eliminacion) " &
+    "SELECT id, nombre, descripcion, editor_consultas, comentarios, usuario_creador, fecha_creacion, &1, NOW() " &
+    "FROM consultas WHERE id = &2",
+    m_ConexionBD.usuarioActual,
+    r!id)
 
-  ' ELIMINAR DE LA BASE DE DATOS
-  m_ConexionBD.mConn.Delete("consultas", "id = &1", ListBoxConsultas.Tag[ListBoxConsultas.Index])
+  ' ELIMINAR CONSULTA
+  m_ConexionBD.mConn.Exec("DELETE FROM consultas WHERE id = &1", r!id)
 
-  ' FEEDBACK AL USUARIO
+  ' LIMPIAR FORMULARIO Y RECARGAR LISTA
+  Limpiacampos()
+  ListBoxConsultas.Clear()
+  Llenalista()
+
+  ' RESETEAR ESTADO DE BOTONES
+  ButtonBorrarConsulta.Enabled = False
+  ButtonGrabarConsulta.Enabled = False
+  TextEditorConsultasSQL.ReadOnly = False
+
   m_Sonido.sonar("Info")
   Message.Info("Consulta eliminada correctamente")
-
-  ' ACTUALIZAR INTERFAZ
-  ListBoxConsultas.Clear
-  Llenalista()      ' Refresca el ListBox
-  Limpiacampos()    ' Limpia los campos del formulario
 
 Catch
   m_Sonido.sonar("Error")
@@ -822,6 +889,7 @@ Public Sub ButtonGrabarConsulta_Click()
   Dim n As Integer
   Dim consultaLimpia As String
   Dim consultaNormalizada As String
+  Dim consultaUpper As String
 
   ' VALIDAR NOMBRE OBLIGATORIO
   If TextBoxNombre.Text = "" Then
@@ -837,6 +905,20 @@ Public Sub ButtonGrabarConsulta_Click()
     Return
   Endif
 
+  ' ============================================================================
+  ' ✅ VERIFICAR QUE NO SEA CONSULTA DEL SISTEMA
+  ' ============================================================================
+  r = m_ConexionBD.mConn.Exec("SELECT consulta_sistema FROM consultas WHERE nombre = &1", TextBoxNombre.Text)
+
+  If r.Available Then
+    If r!consulta_sistema = 1 Then
+      m_Sonido.sonar("Error")
+      Message.Error("Esta consulta forma parte del sistema gbpublisher y no puede modificarse.\n\nSi necesita una versión modificada, use el botón 'Nueva Consulta' y cree una copia con otro nombre.")
+      Return
+    Endif
+  Endif
+  ' ============================================================================
+
   ' NORMALIZAR CONSULTA (FINALES DE LINEA)
   consultaNormalizada = Trim(TextEditorConsultasSQL.Text)
   consultaNormalizada = Replace(consultaNormalizada, "\r\n", "\n")
@@ -847,11 +929,44 @@ Public Sub ButtonGrabarConsulta_Click()
     consultaNormalizada &= gb.NewLine
   Endif
 
-  ' ✅ VALIDAR QUE LA CONSULTA COMIENCE CON SELECT
+  ' PREPARAR VERSION EN MAYUSCULAS PARA VALIDACIONES
   consultaLimpia = Trim(consultaNormalizada)
-  If Left(UCase(consultaLimpia), 6) <> "SELECT" Then
+  consultaUpper = UCase(consultaLimpia)
+
+  ' ========================================================================
+  ' VERIFICACION 1: WHITELIST - DEBE EMPEZAR CON SELECT
+  ' ========================================================================
+  If Left(consultaUpper, 6) <> "SELECT" Then
     m_Sonido.sonar("Error")
     Message.Error("Solo se permiten consultas SELECT.\n\nLas consultas deben comenzar con SELECT para proteger la integridad de la base de datos.\n\nPara modificar datos, use las funciones específicas de la aplicación.")
+    Return
+  Endif
+
+  ' ========================================================================
+  ' VERIFICACION 2: BLACKLIST - NO DEBE CONTENER COMANDOS PELIGROSOS
+  ' ========================================================================
+  ' Verificar comandos peligrosos con espacio Y al final de línea/consulta
+  If InStr(consultaUpper, " DROP ") > 0 Or InStr(consultaUpper, " DROP;") > 0 Or Right(consultaUpper, 4) = "DROP" Or
+      InStr(consultaUpper, " DELETE ") > 0 Or InStr(consultaUpper, " DELETE;") > 0 Or Right(consultaUpper, 6) = "DELETE" Or
+      InStr(consultaUpper, " UPDATE ") > 0 Or InStr(consultaUpper, " UPDATE;") > 0 Or Right(consultaUpper, 6) = "UPDATE" Or
+      InStr(consultaUpper, " INSERT ") > 0 Or InStr(consultaUpper, " INSERT;") > 0 Or Right(consultaUpper, 6) = "INSERT" Or
+      InStr(consultaUpper, " TRUNCATE ") > 0 Or InStr(consultaUpper, " TRUNCATE;") > 0 Or Right(consultaUpper, 8) = "TRUNCATE" Or
+      InStr(consultaUpper, " ALTER ") > 0 Or InStr(consultaUpper, " ALTER;") > 0 Or Right(consultaUpper, 5) = "ALTER" Or
+      InStr(consultaUpper, " CREATE ") > 0 Or InStr(consultaUpper, " CREATE;") > 0 Or Right(consultaUpper, 6) = "CREATE" Or
+      InStr(consultaUpper, " GRANT ") > 0 Or InStr(consultaUpper, " GRANT;") > 0 Or Right(consultaUpper, 5) = "GRANT" Or
+      InStr(consultaUpper, " REVOKE ") > 0 Or InStr(consultaUpper, " REVOKE;") > 0 Or Right(consultaUpper, 6) = "REVOKE" Or
+      InStr(consultaUpper, " RESET ") > 0 Or InStr(consultaUpper, " RESET;") > 0 Or Right(consultaUpper, 5) = "RESET" Or
+      InStr(consultaUpper, " SOURCE ") > 0 Or InStr(consultaUpper, " SOURCE;") > 0 Or Right(consultaUpper, 6) = "SOURCE" Or
+      InStr(consultaUpper, " LOAD ") > 0 Or InStr(consultaUpper, " LOAD;") > 0 Or Right(consultaUpper, 4) = "LOAD" Or
+      InStr(consultaUpper, " DESCRIBE ") > 0 Or InStr(consultaUpper, " DESCRIBE;") > 0 Or Right(consultaUpper, 8) = "DESCRIBE" Or
+      InStr(consultaUpper, " REPLACE ") > 0 Or InStr(consultaUpper, " REPLACE;") > 0 Or Right(consultaUpper, 7) = "REPLACE" Or
+      InStr(consultaUpper, " SET ") > 0 Or InStr(consultaUpper, " SET;") > 0 Or Right(consultaUpper, 3) = "SET" Or
+      InStr(consultaUpper, " FLUSH ") > 0 Or InStr(consultaUpper, " FLUSH;") > 0 Or Right(consultaUpper, 5) = "FLUSH" Or
+      InStr(consultaUpper, " PURGE ") > 0 Or InStr(consultaUpper, " PURGE;") > 0 Or Right(consultaUpper, 5) = "PURGE" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La consulta contiene comandos no permitidos.\n\n" &
+      "Solo se permiten consultas SELECT para proteger\n" &
+      "la integridad de la base de datos.", "Entendido")
     Return
   Endif
 
@@ -893,6 +1008,7 @@ Public Sub ButtonGrabarConsulta_Click()
   r!editor_consultas = consultaNormalizada
   r!comentarios = TextBoxComentarios.Text
   r!usuario_creador = m_ConexionBD.usuarioActual
+  r!consulta_sistema = 0
   ' NOTA: fecha_creacion se asigna automáticamente por DEFAULT CURRENT_TIMESTAMP
 
   r.Update()
@@ -900,7 +1016,6 @@ Public Sub ButtonGrabarConsulta_Click()
   m_Sonido.sonar("Info")
   Message.Info("Consulta guardada correctamente")
 
-  TextBoxNombre.Enabled = False
   ListBoxConsultas.Clear
   Llenalista()
   Limpiacampos()

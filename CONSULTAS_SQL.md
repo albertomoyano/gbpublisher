@@ -790,7 +790,7 @@ Los principios de gobernanza materializados en el formulario SQL de gbpublisher 
 
 Estos principios no son declaraciones aspiracionales: son **restricciones técnicas implementadas en código**.
 
-## NOTAS FINALES
+## Notas finales
 
 Convenciones utilizadas:
 
