@@ -411,6 +411,8 @@ End Function
 
 ' =====================================================
 ' FUNCIÓN: ExportarJATSdesdeBIB
+' DESCRIPCIÓN: EXPORTA REFERENCIAS BIBLIOGRÁFICAS A FORMATO XML-JATS
+' RETORNA: Boolean - TRUE SI SE EXPORTÓ EXITOSAMENTE
 ' =====================================================
 
 Public Function ExportarJATSdesdeBIB() As Boolean
@@ -425,6 +427,8 @@ Public Function ExportarJATSdesdeBIB() As Boolean
   Dim sType As String
   Dim iPosLlave As Integer
   Dim iPosComa As Integer
+  Dim dictEntries As New Collection  ' DICCIONARIO PARA RESOLVER CROSSREF
+  Dim dictTypes As New Collection    ' DICCIONARIO PARA TIPOS
 
   ' RUTA AL ARCHIVO BIB
   sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" & File.BaseName(FMain.txtProyecto.Text) & ".bib"
@@ -438,16 +442,13 @@ Public Function ExportarJATSdesdeBIB() As Boolean
   ' LEER CONTENIDO COMPLETO DEL BIB
   sBibContent = File.Load(sBibFile)
 
-  ' INICIAR XML
-  sXML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-  sXML &= "<ref-list>\n"
+  ' ====================================================
+  ' PRIMERA PASADA: ALMACENAR TODAS LAS ENTRADAS
+  ' ====================================================
 
-  ' DIVIDIR EN ENTRADAS (cada entrada empieza con @)
   aEntries = Split(sBibContent, "@", "", True)
 
-  ' PROCESAR CADA ENTRADA
   For Each sEntry In aEntries
-
     ' SALTAR ENTRADAS VACÍAS
     If TrimUTF8(sEntry) = "" Then Continue
 
@@ -461,17 +462,49 @@ Public Function ExportarJATSdesdeBIB() As Boolean
     ' EXTRAER TIPO (sin la llave)
     sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
 
-    ' SALTAR @comment
-    If Lower(sType) = "comment" Then Continue
+    ' SALTAR @comment Y @string
+    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
+
+    ' EXTRAER CITEKEY
+    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
+
+    ' GUARDAR EN DICCIONARIOS
+    dictEntries[sCitekey] = sEntry
+    dictTypes[sCitekey] = sType
+  Next
+
+  ' ====================================================
+  ' SEGUNDA PASADA: GENERAR XML RESOLVIENDO CROSSREF
+  ' ====================================================
+
+  ' INICIAR XML
+  sXML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+  sXML &= "<ref-list>\n"
+
+  For Each sEntry In aEntries
+    ' SALTAR ENTRADAS VACÍAS
+    If TrimUTF8(sEntry) = "" Then Continue
+
+    ' BUSCAR POSICIÓN DE { Y ,
+    iPosLlave = InStr(sEntry, "{")
+    iPosComa = InStr(sEntry, ",")
+
+    ' VERIFICAR QUE EXISTEN
+    If iPosLlave = 0 Or iPosComa = 0 Then Continue
+
+    ' EXTRAER TIPO (sin la llave)
+    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
+
+    ' SALTAR @comment Y @string
+    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
 
     ' EXTRAER CITEKEY
     sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
 
     ' GENERAR ELEMENTO <ref>
     sXML &= "  <ref id=\"" & EscaparXML(sCitekey) & "\">\n"
-    sXML &= GenerarElementCitationDesdeBib(sEntry, sType)
+    sXML &= GenerarElementCitationDesdeBib(sEntry, sType, dictEntries, dictTypes)
     sXML &= "  </ref>\n"
-
   Next
 
   ' CERRAR XML
@@ -481,9 +514,7 @@ Public Function ExportarJATSdesdeBIB() As Boolean
   outputFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" & File.BaseName(FMain.txtProyecto.Text) & ".xml"
   File.Save(outputFile, sXML)
 
-  ' ============================================
   ' APLICAR REGLAS DE POSTPROCESO
-  ' ============================================
   If Not AplicarReglasPostproceso(outputFile) Then
     Message.Error("Error en el postproceso del archivo XML")
     Return False
@@ -500,19 +531,25 @@ End
 ' PARÁMETROS:
 '   - sEntry: TEXTO COMPLETO DE LA ENTRADA BIBTEX
 '   - sType: TIPO DE ENTRADA (@article, @book, etc.)
+'   - dictEntries: DICCIONARIO CON TODAS LAS ENTRADAS (para resolver crossref)
+'   - dictTypes: DICCIONARIO CON TIPOS DE ENTRADAS
 ' RETORNA: STRING CON XML DE <element-citation>
 ' =====================================================
 
-Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As String) As String
+Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As String, dictEntries As Collection, dictTypes As Collection) As String
 
   Dim sXML As String = ""
   Dim sPubType As String
   Dim sAuthor As String
   Dim sEditor As String
+  Dim sTranslator As String
   Dim sTitle As String
+  Dim sSubtitle As String
   Dim sJournal As String
   Dim sBookTitle As String
+  Dim sBookSubtitle As String
   Dim sYear As String
+  Dim sDate As String
   Dim sVolume As String
   Dim sNumber As String
   Dim sPages As String
@@ -524,9 +561,43 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Dim sUrl As String
   Dim sEdition As String
   Dim sSchool As String
+  Dim sInstitution As String
   Dim sNote As String
   Dim sEid As String
+  Dim sEprint As String
+  Dim sEprintType As String
+  Dim sSeries As String
+  Dim sVersion As String
+  Dim sHolder As String
+  Dim sMaintitle As String
+  Dim sMainsubtitle As String
+  Dim sBookauthor As String
   Dim aPages As String[]
+  Dim sFinalYear As String
+  Dim sTituloCompleto As String
+  Dim sBookTitleCompleto As String
+  Dim sCrossref As String
+  Dim sEntryBase As String
+
+  ' ====================================================
+  ' 0. VERIFICAR SI HAY CROSSREF Y FUSIONAR ENTRADAS
+  ' ====================================================
+
+  sCrossref = ParsearCampoBib(sEntry, "crossref")
+
+  If sCrossref <> "" And dictEntries.Exist(sCrossref) Then
+    ' OBTENER ENTRADA BASE (la referenciada)
+    sEntryBase = dictEntries[sCrossref]
+
+    ' SI LA ENTRADA ACTUAL ES incollection, RENOMBRAR title→booktitle EN LA BASE
+    If Lower(TrimUTF8(sType)) = "incollection" Then
+      ' REEMPLAZAR "title =" por "booktitle =" en la entrada base
+      sEntryBase = Replace(sEntryBase, "  title ", "  booktitle ", gb.IgnoreCase)
+    Endif
+
+    ' FUSIONAR: campos de sEntry tienen prioridad sobre sEntryBase
+    sEntry = FusionarEntradas(sEntryBase, sEntry)
+  Endif
 
   ' ====================================================
   ' 1. MAPEAR TIPO BIBTEX → JATS publication-type
@@ -537,7 +608,7 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
       sPubType = "journal"
     Case "book"
       sPubType = "book"
-    Case "incollection", "inbook", "bookinbook"
+    Case "incollection", "inbook", "bookinbook", "collection"
       sPubType = "book"
     Case "phdthesis", "mastersthesis", "thesis"
       sPubType = "thesis"
@@ -545,6 +616,14 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
       sPubType = "web"
     Case "conference", "inproceedings"
       sPubType = "confproc"
+    Case "report", "techreport"
+      sPubType = "report"
+    Case "patent"
+      sPubType = "patent"
+    Case "manual"
+      sPubType = "book"
+    Case "periodical"
+      sPubType = "journal"
     Case Else
       sPubType = "other"
   End Select
@@ -555,26 +634,74 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
 
   sAuthor = ParsearCampoBib(sEntry, "author")
   sEditor = ParsearCampoBib(sEntry, "editor")
+  sTranslator = ParsearCampoBib(sEntry, "translator")
   sTitle = ParsearCampoBib(sEntry, "title")
+  sSubtitle = ParsearCampoBib(sEntry, "subtitle")
+
+  ' JOURNAL: PRIORIZAR journaltitle SOBRE journal
   sJournal = ParsearCampoBib(sEntry, "journaltitle")
   If sJournal = "" Then
     sJournal = ParsearCampoBib(sEntry, "journal")
   Endif
+
   sBookTitle = ParsearCampoBib(sEntry, "booktitle")
+  sBookSubtitle = ParsearCampoBib(sEntry, "booksubtitle")
+
+  ' ====================================================
+  ' AÑO: PRIORIZAR date SOBRE year
+  ' ====================================================
+  sDate = ParsearCampoBib(sEntry, "date")
   sYear = ParsearCampoBib(sEntry, "year")
+
+  If sDate <> "" Then
+    sFinalYear = ExtraerAnio(sDate)
+  Else If sYear <> "" Then
+    sFinalYear = sYear
+  Else
+    sFinalYear = ""
+  Endif
+
   sVolume = ParsearCampoBib(sEntry, "volume")
   sNumber = ParsearCampoBib(sEntry, "number")
   sPages = ParsearCampoBib(sEntry, "pages")
   sPublisher = ParsearCampoBib(sEntry, "publisher")
-  sAddress = ParsearCampoBib(sEntry, "address")
+
+  ' LOCATION (BibLaTeX) o ADDRESS (BibTeX)
+  sAddress = ParsearCampoBib(sEntry, "location")
+  If sAddress = "" Then
+    sAddress = ParsearCampoBib(sEntry, "address")
+  Endif
+
   sDoi = ParsearCampoBib(sEntry, "doi")
   sIsbn = ParsearCampoBib(sEntry, "isbn")
   sIssn = ParsearCampoBib(sEntry, "issn")
   sUrl = ParsearCampoBib(sEntry, "url")
   sEdition = ParsearCampoBib(sEntry, "edition")
+
+  ' ====================================================
+  ' INSTITUCIÓN: BUSCAR school E institution
+  ' ====================================================
   sSchool = ParsearCampoBib(sEntry, "school")
+  sInstitution = ParsearCampoBib(sEntry, "institution")
+
   sNote = ParsearCampoBib(sEntry, "note")
   sEid = ParsearCampoBib(sEntry, "eid")
+
+  ' ====================================================
+  ' EPRINT (arXiv, etc.)
+  ' ====================================================
+  sEprint = ParsearCampoBib(sEntry, "eprint")
+  sEprintType = ParsearCampoBib(sEntry, "eprinttype")
+
+  ' ====================================================
+  ' OTROS CAMPOS
+  ' ====================================================
+  sSeries = ParsearCampoBib(sEntry, "series")
+  sVersion = ParsearCampoBib(sEntry, "version")
+  sHolder = ParsearCampoBib(sEntry, "holder")
+  sMaintitle = ParsearCampoBib(sEntry, "maintitle")
+  sMainsubtitle = ParsearCampoBib(sEntry, "mainsubtitle")
+  sBookauthor = ParsearCampoBib(sEntry, "bookauthor")
 
   ' ====================================================
   ' 3. INICIAR <element-citation>
@@ -599,30 +726,52 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 6. TÍTULOS
+  ' 6. PERSON-GROUP: TRADUCTORES
   ' ====================================================
 
-  ' DIFERENCIAR ENTRE LIBRO COMPLETO Y CAPÍTULO
-  If sBookTitle <> "" Then
-    ' ES UN CAPÍTULO DE LIBRO
-    If sTitle <> "" Then
-      sXML &= "      <chapter-title>" & sTitle & "</chapter-title>\n"
-    Endif
-    sXML &= "      <source>" & sBookTitle & "</source>\n"
+  If sTranslator <> "" Then
+    sXML &= GenerarPersonGroup(sTranslator, "translator")
+  Endif
+
+  ' ====================================================
+  ' 7. TÍTULOS
+  ' ====================================================
+
+  ' CONSTRUIR TÍTULO COMPLETO (title + subtitle si existe)
+  If sSubtitle <> "" Then
+    sTituloCompleto = sTitle & ": " & sSubtitle
   Else
-    ' ES ARTÍCULO, LIBRO COMPLETO, O TESIS
-    If sTitle <> "" Then
+    sTituloCompleto = sTitle
+  Endif
+
+  ' CONSTRUIR BOOKTITLE COMPLETO
+  If sBookSubtitle <> "" Then
+    sBookTitleCompleto = sBookTitle & ": " & sBookSubtitle
+  Else
+    sBookTitleCompleto = sBookTitle
+  Endif
+
+  ' DIFERENCIAR ENTRE LIBRO COMPLETO, CAPÍTULO Y ARTÍCULO
+  If sBookTitleCompleto <> "" Then
+    ' ES UN CAPÍTULO DE LIBRO O INCOLLECTION
+    If sTituloCompleto <> "" Then
+      sXML &= "      <chapter-title>" & sTituloCompleto & "</chapter-title>\n"
+    Endif
+    sXML &= "      <source>" & sBookTitleCompleto & "</source>\n"
+  Else
+    ' ES ARTÍCULO, LIBRO COMPLETO, TESIS O REPORTE
+    If sTituloCompleto <> "" Then
       Select Case sPubType
         Case "journal"
-          sXML &= "      <article-title>" & sTitle & "</article-title>\n"
+          sXML &= "      <article-title>" & sTituloCompleto & "</article-title>\n"
         Case Else
-          sXML &= "      <source>" & sTitle & "</source>\n"
+          sXML &= "      <source>" & sTituloCompleto & "</source>\n"
       End Select
     Endif
   Endif
 
   ' ====================================================
-  ' 7. FUENTE (REVISTA/JOURNAL)
+  ' 8. FUENTE (REVISTA/JOURNAL)
   ' ====================================================
 
   If sJournal <> "" And sPubType = "journal" Then
@@ -630,7 +779,15 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 8. PUBLICADOR Y UBICACIÓN
+  ' 9. SERIES (para books, incollection)
+  ' ====================================================
+
+  If sSeries <> "" And (sPubType = "book" Or InStr(Lower(sType), "collection") > 0) Then
+    sXML &= "      <series>" & sSeries & "</series>\n"
+  Endif
+
+  ' ====================================================
+  ' 10. PUBLICADOR Y UBICACIÓN
   ' ====================================================
 
   If sPublisher <> "" Then
@@ -642,15 +799,15 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 9. AÑO
+  ' 11. AÑO
   ' ====================================================
 
-  If sYear <> "" Then
-    sXML &= "      <year>" & sYear & "</year>\n"
+  If sFinalYear <> "" Then
+    sXML &= "      <year>" & sFinalYear & "</year>\n"
   Endif
 
   ' ====================================================
-  ' 10. VOLUMEN
+  ' 12. VOLUMEN
   ' ====================================================
 
   If sVolume <> "" Then
@@ -658,15 +815,27 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 11. NÚMERO/ISSUE
+  ' 13. NÚMERO (PATENT, REPORT, O ISSUE SEGÚN TIPO)
   ' ====================================================
 
   If sNumber <> "" Then
-    sXML &= "      <issue>" & sNumber & "</issue>\n"
+    Select Case sPubType
+      Case "patent"
+        ' PARA PATENTES: USAR <patent>
+        sXML &= "      <patent>" & sNumber & "</patent>\n"
+
+      Case "report"
+        ' PARA REPORTES: USAR <pub-id pub-id-type="report-number">
+        sXML &= "      <pub-id pub-id-type=\"report-number\">" & sNumber & "</pub-id>\n"
+
+      Case Else
+        ' PARA ARTÍCULOS Y OTROS: USAR <issue>
+        sXML &= "      <issue>" & sNumber & "</issue>\n"
+    End Select
   Endif
 
   ' ====================================================
-  ' 12. PAGINACIÓN O EID
+  ' 14. PAGINACIÓN O EID
   ' ====================================================
 
   If sEid <> "" Then
@@ -699,7 +868,7 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 13. EDICIÓN
+  ' 15. EDICIÓN
   ' ====================================================
 
   If sEdition <> "" Then
@@ -707,23 +876,55 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 14. INSTITUCIÓN (TESIS)
+  ' 16. INSTITUCIÓN (TESIS Y REPORTES)
   ' ====================================================
 
-  If sSchool <> "" And sPubType = "thesis" Then
-    sXML &= "      <institution>" & sSchool & "</institution>\n"
+  If sPubType = "thesis" Or sPubType = "report" Then
+    ' PRIORIZAR institution (BibLaTeX) sobre school (BibTeX)
+    If sInstitution <> "" Then
+      sXML &= "      <institution>" & sInstitution & "</institution>\n"
+    Else If sSchool <> "" Then
+      sXML &= "      <institution>" & sSchool & "</institution>\n"
+    Endif
   Endif
 
   ' ====================================================
-  ' 15. NOTA/COMENTARIO (MISC)
+  ' 17. NOTA/COMENTARIO
   ' ====================================================
 
-  If sNote <> "" And sPubType = "web" Then
+  If sNote <> "" Then
     sXML &= "      <comment>" & sNote & "</comment>\n"
   Endif
 
   ' ====================================================
-  ' 16. IDENTIFICADORES: ISBN, ISSN, DOI
+  ' 18. VERSION (para online)
+  ' ====================================================
+
+  If sVersion <> "" And sPubType = "web" Then
+    sXML &= "      <comment>Version " & sVersion & "</comment>\n"
+  Endif
+
+  ' ====================================================
+  ' 19. HOLDER (para patents)
+  ' LIMPIAR LLAVES DOBLES Y CONVERTIR
+  ' ====================================================
+
+  If sHolder <> "" And sPubType = "patent" Then
+    ' LIMPIAR LLAVES DOBLES DE AUTORES CORPORATIVOS
+    Dim sHolderLimpio As String
+    sHolderLimpio = Replace(sHolder, "{{", "")
+    sHolderLimpio = Replace(sHolderLimpio, "}}", "")
+    sHolderLimpio = Replace(sHolderLimpio, "{", "")
+    sHolderLimpio = Replace(sHolderLimpio, "}", "")
+
+    ' CONVERTIR "and" EN COMAS PARA MEJOR LEGIBILIDAD
+    sHolderLimpio = Replace(sHolderLimpio, " and ", ", ")
+
+    sXML &= "      <comment>Patent holder: " & sHolderLimpio & "</comment>\n"
+  Endif
+
+  ' ====================================================
+  ' 20. IDENTIFICADORES: ISBN, ISSN, DOI
   ' ====================================================
 
   If sIsbn <> "" Then
@@ -739,7 +940,20 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 17. URL
+  ' 21. EPRINT (arXiv, etc.)
+  ' ====================================================
+
+  If sEprint <> "" Then
+
+    If sEprintType <> "" Then
+      sEprintType = Lower(sEprintType)
+    Endif
+
+    sXML &= "      <pub-id pub-id-type=\"" & sEprintType & "\">" & sEprint & "</pub-id>\n"
+  Endif
+
+  ' ====================================================
+  ' 22. URL
   ' ====================================================
 
   If sUrl <> "" Then
@@ -747,7 +961,7 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   Endif
 
   ' ====================================================
-  ' 18. CERRAR </element-citation>
+  ' 23. CERRAR </element-citation>
   ' ====================================================
 
   sXML &= "    </element-citation>\n"
@@ -822,6 +1036,123 @@ Private Function ParsearCampoBib(sEntry As String, sCampo As String) As String
   sValor = Mid(sEntry, iStart, iEnd - iStart)
 
   Return TrimUTF8(sValor)
+
+End
+
+' =====================================================
+' FUNCIÓN: FusionarEntradas
+' DESCRIPCIÓN: FUSIONA DOS ENTRADAS BIB (para resolver crossref)
+' PARÁMETROS:
+'   - sEntryBase: ENTRADA BASE (referenciada por crossref)
+'   - sEntryActual: ENTRADA ACTUAL (tiene prioridad)
+' RETORNA: String - ENTRADA FUSIONADA
+' =====================================================
+
+Private Function FusionarEntradas(sEntryBase As String, sEntryActual As String) As String
+
+  Dim aLineasBase As String[]
+  Dim aLineasActual As String[]
+  Dim dictCampos As New Collection
+  Dim sLinea As String
+  Dim sCampo As String
+  Dim iPosIgual As Integer
+  Dim sResultado As String
+  Dim sPrimeraLinea As String
+  Dim i As Integer
+
+  ' ====================================================
+  ' PARSEAR ENTRADA BASE Y ALMACENAR CAMPOS
+  ' ====================================================
+
+  aLineasBase = Split(sEntryBase, "\n")
+
+  For i = 0 To aLineasBase.Max
+    sLinea = aLineasBase[i]
+
+    ' SALTAR LÍNEAS VACÍAS
+    If Len(Trim(sLinea)) = 0 Then Continue
+
+    ' SALTAR LÍNEA QUE CIERRA LA ENTRADA (})
+    If Trim(sLinea) = "}" Then Continue
+
+    ' BUSCAR = EN LA LÍNEA
+    iPosIgual = InStr(sLinea, "=")
+
+    ' SI NO HAY =, NO ES UN CAMPO VÁLIDO
+    If iPosIgual = 0 Then Continue
+
+    ' EXTRAER NOMBRE DEL CAMPO (todo antes del =, sin espacios)
+    sCampo = Trim(Left(sLinea, iPosIgual - 1))
+
+    ' IGNORAR SI ES LA PRIMERA LÍNEA
+    If InStr(sCampo, "{") > 0 Then Continue
+
+    ' CONVERTIR A MINÚSCULAS
+    sCampo = Lower(sCampo)
+
+    ' GUARDAR LÍNEA COMPLETA
+    dictCampos[sCampo] = sLinea
+  Next
+
+  ' ====================================================
+  ' PARSEAR ENTRADA ACTUAL Y SOBRESCRIBIR
+  ' ====================================================
+
+  aLineasActual = Split(sEntryActual, "\n")
+
+  ' GUARDAR LA PRIMERA LÍNEA
+  sPrimeraLinea = aLineasActual[0]
+
+  For i = 0 To aLineasActual.Max
+    sLinea = aLineasActual[i]
+
+    ' SALTAR LÍNEAS VACÍAS
+    If Len(Trim(sLinea)) = 0 Then Continue
+
+    ' SALTAR LÍNEA QUE CIERRA LA ENTRADA
+    If Trim(sLinea) = "}" Then Continue
+
+    ' BUSCAR = EN LA LÍNEA
+    iPosIgual = InStr(sLinea, "=")
+
+    ' SI NO HAY =, NO ES UN CAMPO VÁLIDO
+    If iPosIgual = 0 Then Continue
+
+    ' EXTRAER NOMBRE DEL CAMPO
+    sCampo = Trim(Left(sLinea, iPosIgual - 1))
+
+    ' IGNORAR SI ES LA PRIMERA LÍNEA
+    If InStr(sCampo, "{") > 0 Then Continue
+
+    ' CONVERTIR A MINÚSCULAS
+    sCampo = Lower(sCampo)
+
+    ' NO COPIAR crossref
+    If sCampo = "crossref" Then
+      Continue
+    Endif
+
+    ' SOBRESCRIBIR
+    dictCampos[sCampo] = sLinea
+  Next
+
+  ' ====================================================
+  ' RECONSTRUIR ENTRADA
+  ' ====================================================
+
+  sResultado = sPrimeraLinea & "\n"
+
+  ' ITERAR SOBRE LAS KEYS, NO SOBRE LA COLECCIÓN DIRECTAMENTE
+  Dim aKeys As String[] = dictCampos.Keys
+
+  For i = 0 To aKeys.Max
+    sCampo = aKeys[i]
+    sResultado &= dictCampos[sCampo] & "\n"
+  Next
+
+  sResultado &= "}\n"
+
+  Return sResultado
 
 End
 
