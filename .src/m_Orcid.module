@@ -1,0 +1,532 @@
+' Gambas module file
+
+' ───────────────────────────────────────────────────────────────────────────
+' MÓDULO: m_Orcid
+' DESCRIPCIÓN: GESTIÓN Y VALIDACIÓN DE ORCID DE AUTORES
+' ───────────────────────────────────────────────────────────────────────────
+
+' ───────────────────────────────────────────────────────────────────────────
+' VARIABLE PÚBLICA PARA COMUNICACIÓN ENTRE FORMULARIOS
+' ───────────────────────────────────────────────────────────────────────────
+Public sORCIDSeleccionado As String
+
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: BuscarORCIDEnAPI
+' DESCRIPCIÓN: BUSCA UN ORCID EN LA API PÚBLICA DE ORCID.ORG Y MUESTRA
+'              LOS RESULTADOS EN EL FORMULARIO FOrcid
+'              USA EXPANDED-SEARCH PARA OBTENER MÁS INFORMACIÓN
+' PARÁMETROS:
+'   - sNombre: String - NOMBRE DEL AUTOR A BUSCAR
+'   - sApellido: String - APELLIDO DEL AUTOR A BUSCAR
+' RETORNA: String - EL ORCID SELECCIONADO O "" SI SE CANCELA
+' ───────────────────────────────────────────────────────────────────────────
+Public Function BuscarORCIDEnAPI(sNombre As String, sApellido As String) As String
+
+  Dim sURL As String
+  Dim sRespuesta As String
+  Dim jResultados As Collection
+  Dim aResultados As Collection[]
+  Dim aDataOrcid As Collection[]
+
+  ' LIMPIAR VARIABLE PÚBLICA
+  sORCIDSeleccionado = ""
+
+  ' VERIFICAR QUE HAY DATOS PARA BUSCAR
+  If Trim(sNombre) = "" And Trim(sApellido) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar al menos un nombre o apellido para buscar.")
+    Return ""
+  Endif
+
+  ' INTENTAR BÚSQUEDA FLEXIBLE (PRIMERO CON NOMBRE COMPLETO, LUEGO SOLO APELLIDO)
+  aDataOrcid = BuscarORCIDFlexible(sNombre, sApellido)
+
+  ' VERIFICAR SI HAY RESULTADOS
+  If aDataOrcid.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("No se encontraron resultados para:\n\n" &
+      "Nombre: " & sNombre & "\n" &
+      "Apellido: " & sApellido)
+    Return ""
+  Endif
+
+  ' ABRIR FORMULARIO FOrcid Y PASAR LOS DATOS
+  Dim fOrcid As New FOrcid(aDataOrcid)
+  fOrcid.ShowModal()
+
+  ' RETORNAR EL ORCID SELECCIONADO
+  Return sORCIDSeleccionado
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: BuscarORCIDFlexible
+' DESCRIPCIÓN: REALIZA BÚSQUEDA AMPLIA EN LA API DE ORCID PARA ENCONTRAR
+'              TODOS LOS POSIBLES CANDIDATOS, INCLUYENDO DUPLICADOS
+' PARÁMETROS:
+'   - sNombre: String - NOMBRE DEL AUTOR
+'   - sApellido: String - APELLIDO DEL AUTOR
+' RETORNA: Collection[] - ARRAY CON LOS DATOS DE LOS ORCIDs ENCONTRADOS
+' ───────────────────────────────────────────────────────────────────────────
+Private Function BuscarORCIDFlexible(sNombre As String, sApellido As String) As Collection[]
+
+  Dim aResultados As Collection[]
+  Dim sNombreLimpio As String
+  Dim sApellidoLimpio As String
+
+  sNombreLimpio = Trim(sNombre)
+  sApellidoLimpio = Trim(sApellido)
+
+  ' ESTRATEGIA: BUSCAR SOLO POR APELLIDO PARA OBTENER TODOS LOS CANDIDATOS
+  ' ESTO PERMITE ENCONTRAR DUPLICADOS Y VARIACIONES DEL NOMBRE
+
+  If sApellidoLimpio <> "" Then
+    ' BÚSQUEDA PRINCIPAL: SOLO APELLIDO (MÁS AMPLIA)
+    Print "Búsqueda por apellido: "; sApellidoLimpio
+    aResultados = EjecutarBusquedaORCID("", sApellidoLimpio)
+
+    If aResultados.Count > 0 Then
+      Print "Se encontraron "; aResultados.Count; " candidatos con el apellido "; sApellidoLimpio
+      Return aResultados
+    Endif
+  Endif
+
+  ' SI NO HAY APELLIDO, INTENTAR SOLO CON NOMBRE
+  If sNombreLimpio <> "" Then
+    Print "Búsqueda por nombre: "; sNombreLimpio
+    aResultados = EjecutarBusquedaORCID(sNombreLimpio, "")
+
+    If aResultados.Count > 0 Then
+      Print "Se encontraron "; aResultados.Count; " candidatos con el nombre "; sNombreLimpio
+      Return aResultados
+    Endif
+  Endif
+
+  ' NO SE ENCONTRARON RESULTADOS
+  Return New Collection[]
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: EjecutarBusquedaORCID
+' DESCRIPCIÓN: EJECUTA UNA BÚSQUEDA EN LA API DE ORCID Y PARSEA LOS RESULTADOS
+'              USA EL ENDPOINT EXPANDED-SEARCH PARA OBTENER MÁS INFORMACIÓN
+' PARÁMETROS:
+'   - sNombre: String - NOMBRE A BUSCAR (PUEDE ESTAR VACÍO)
+'   - sApellido: String - APELLIDO A BUSCAR (PUEDE ESTAR VACÍO)
+' RETORNA: Collection[] - ARRAY CON LOS DATOS PARSEADOS Y ORDENADOS
+' ───────────────────────────────────────────────────────────────────────────
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: EjecutarBusquedaORCID (VERSIÓN MEJORADA)
+' DESCRIPCIÓN: PRUEBA DIFERENTES ESTRATEGIAS DE BÚSQUEDA PARA OBTENER
+'              TODOS LOS RESULTADOS POSIBLES, INCLUYENDO DEPRECATED
+' ───────────────────────────────────────────────────────────────────────────
+Private Function EjecutarBusquedaORCID(sNombre As String, sApellido As String) As Collection[]
+
+  Dim sURL As String
+  Dim sRespuesta As String
+  Dim jResultados As Collection
+  Dim aResultados As Collection[]
+  Dim aDataOrcid As New Collection[]
+  Dim i As Integer
+  Dim jItem As Collection
+  Dim cDato As Collection
+
+  ' ESTRATEGIA 1: USAR BÚSQUEDA MÁS AMPLIA CON given-and-family-names
+  ' Este campo busca en AMBOS campos a la vez y es más flexible
+  sURL = "https://pub.orcid.org/v3.0/expanded-search/?q="
+
+  If Trim(sNombre) <> "" And Trim(sApellido) <> "" Then
+    ' PROBAR CON given-and-family-names QUE ES MÁS FLEXIBLE
+    sURL &= "family-name:" & Url(Trim(sApellido))
+  Else If Trim(sNombre) <> "" Then
+    sURL &= "given-names:" & Url(Trim(sNombre))
+  Else If Trim(sApellido) <> "" Then
+    sURL &= "family-name:" & Url(Trim(sApellido))
+  Endif
+
+  ' AMPLIAR LÍMITE DE RESULTADOS A 50 POR SI ACASO
+  sURL &= "&rows=50"
+
+  Print "URL: "; sURL
+
+  ' MOSTRAR INDICADOR DE CARGA
+  FAutores.Mouse = Mouse.Wait
+
+  ' EJECUTAR CURL
+  Shell "curl -s -L -H 'Accept: application/json' --connect-timeout 10 --max-time 20 " & Quote(sURL) To sRespuesta
+
+  ' RESTAURAR EL CURSOR
+  FAutores.Mouse = Mouse.Default
+
+  ' VERIFICAR ERRORES
+  If Error Then
+    Print "ERROR en Shell: "; Error.Text
+    Return aDataOrcid
+  Endif
+
+  If Trim(sRespuesta) = "" Then
+    Print "Respuesta vacía"
+    Return aDataOrcid
+  Endif
+
+  ' PARSEAR JSON
+  jResultados = JSON.Decode(sRespuesta)
+
+  If Error Then
+    Print "ERROR en JSON.Decode: "; Error.Text
+    Return aDataOrcid
+  Endif
+
+  ' DEBUG: MOSTRAR TOTAL ENCONTRADO
+  If jResultados.Exist("num-found") Then
+    Print "Total de registros en ORCID (num-found): "; jResultados["num-found"]
+    Print "Registros devueltos en esta página: ";
+  Endif
+
+  ' VERIFICAR SI HAY EXPANDED-RESULT
+  If Not jResultados.Exist("expanded-result") Then
+    Print "No existe 'expanded-result' en la respuesta"
+    Return aDataOrcid
+  Endif
+
+  aResultados = jResultados["expanded-result"]
+  Print aResultados.Count
+
+  ' PROCESAR CADA RESULTADO
+  For i = 0 To aResultados.Max
+    jItem = aResultados[i]
+    cDato = New Collection
+
+    ' EXTRAER ORCID-ID
+    If jItem.Exist("orcid-id") Then
+      cDato["orcid"] = jItem["orcid-id"]
+    Else
+      cDato["orcid"] = "(no disponible)"
+    Endif
+
+    ' EXTRAER GIVEN-NAMES (NOMBRE)
+    If jItem.Exist("given-names") Then
+      cDato["nombre"] = jItem["given-names"]
+    Else
+      cDato["nombre"] = ""
+    Endif
+
+    ' EXTRAER FAMILY-NAMES (APELLIDO)
+    If jItem.Exist("family-names") Then
+      cDato["apellido"] = jItem["family-names"]
+    Else
+      cDato["apellido"] = ""
+    Endif
+
+    ' CONSTRUIR NOMBRE COMPLETO
+    cDato["nombre_completo"] = Trim(cDato["nombre"] & " " & cDato["apellido"])
+    If cDato["nombre_completo"] = "" Then
+      ' SI NO HAY NOMBRE/APELLIDO, INTENTAR CON CREDIT-NAME
+      If jItem.Exist("credit-name") And jItem["credit-name"] <> Null Then
+        cDato["nombre_completo"] = jItem["credit-name"]
+      Else
+        cDato["nombre_completo"] = "(sin nombre)"
+      Endif
+    Endif
+
+    ' EXTRAER INSTITUTION-NAME (AFILIACIÓN)
+    cDato["afiliacion"] = ""
+    If jItem.Exist("institution-name") Then
+      Dim vInstituciones As Variant
+      Dim aTextoInst As New String[]
+      Dim j As Integer
+      Dim iCount As Integer
+
+      vInstituciones = jItem["institution-name"]
+
+      ' OBTENER CANTIDAD DE ELEMENTOS
+      Try iCount = vInstituciones.Count
+
+      If Not Error And iCount > 0 Then
+        ' RECORRER EL ARRAY DE INSTITUCIONES
+        For j = 0 To iCount - 1
+          If vInstituciones[j] <> Null Then
+            Dim sInst As String
+            sInst = Trim(CStr(vInstituciones[j]))
+            If sInst <> "" Then
+              aTextoInst.Add(sInst)
+            Endif
+          Endif
+        Next
+
+        If aTextoInst.Count > 0 Then
+          ' UNIR CON COMAS, MÁXIMO 3 INSTITUCIONES PARA NO SATURAR
+          If aTextoInst.Count > 3 Then
+            cDato["afiliacion"] = aTextoInst[0] & ", " & aTextoInst[1] & ", " & aTextoInst[2] & " (+" & (aTextoInst.Count - 3) & " más)"
+          Else
+            cDato["afiliacion"] = aTextoInst.Join(", ")
+          Endif
+        Endif
+      Endif
+    Endif
+
+    ' DEBUG: MOSTRAR CADA ORCID ENCONTRADO
+    Print "  ["; i; "] ORCID: "; cDato["orcid"]; " - Nombre: "; cDato["nombre_completo"]
+
+    aDataOrcid.Add(cDato)
+  Next
+
+  ' ORDENAR ALFABÉTICAMENTE POR NOMBRE COMPLETO
+  aDataOrcid = OrdenarResultadosORCID(aDataOrcid)
+
+  Return aDataOrcid
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: OrdenarResultadosORCID
+' DESCRIPCIÓN: ORDENA UN ARRAY DE RESULTADOS ORCID ALFABÉTICAMENTE
+'              POR NOMBRE COMPLETO (APELLIDO + NOMBRE)
+' PARÁMETROS:
+'   - aResultados: Collection[] - ARRAY DE RESULTADOS A ORDENAR
+' RETORNA: Collection[] - ARRAY ORDENADO
+' ───────────────────────────────────────────────────────────────────────────
+Private Function OrdenarResultadosORCID(aResultados As Collection[]) As Collection[]
+
+  Dim i As Integer
+  Dim j As Integer
+  Dim cTemp As Collection
+  Dim sNombre1 As String
+  Dim sNombre2 As String
+
+  ' ORDENAMIENTO BURBUJA (BUBBLE SORT)
+  ' SUFICIENTE PARA 30 ELEMENTOS
+  For i = 0 To aResultados.Max - 1
+    For j = 0 To aResultados.Max - i - 1
+
+      ' OBTENER NOMBRES COMPLETOS PARA COMPARAR
+      sNombre1 = UCase(aResultados[j]["nombre_completo"])
+      sNombre2 = UCase(aResultados[j + 1]["nombre_completo"])
+
+      ' SI EL PRIMERO ES MAYOR QUE EL SEGUNDO, INTERCAMBIAR
+      If sNombre1 > sNombre2 Then
+        cTemp = aResultados[j]
+        aResultados[j] = aResultados[j + 1]
+        aResultados[j + 1] = cTemp
+      Endif
+
+    Next
+  Next
+
+  Return aResultados
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: VerificarORCID
+' DESCRIPCIÓN: VERIFICA QUE EL ORCID SEA VÁLIDO, NO ESTÉ DUPLICADO EN LA
+'              BASE DE DATOS Y EXISTA EN EL REGISTRO DE ORCID.ORG
+' PARÁMETROS:
+'   - sOrcid: String - ORCID A VERIFICAR
+'   - iAutorActualId: Integer OPCIONAL - ID DEL AUTOR ACTUAL (PARA PERMITIR
+'                     EDICIÓN SIN CONFLICTO CON SU PROPIO ORCID)
+' RETORNA: Boolean - TRUE SI ES VÁLIDO Y NO HAY CONFLICTOS, FALSE EN CASO CONTRARIO
+' ───────────────────────────────────────────────────────────────────────────
+Public Function VerificarORCID(sOrcid As String, Optional iAutorActualId As Integer = 0) As Boolean
+
+  Dim sOrcidLimpio As String
+  Dim sURL As String
+  Dim sResult As String
+  Dim iExitCode As Integer
+
+  ' LIMPIAR Y NORMALIZAR EL ORCID
+  sOrcidLimpio = Trim(sOrcid)
+
+  ' VERIFICAR QUE HAY UN ORCID
+  If sOrcidLimpio = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Debe ingresar un ORCID para verificarlo.")
+    Return False
+  Endif
+
+  ' VERIFICAR QUE EL FORMATO ES VÁLIDO
+  If Not ValidarFormatoORCID(sOrcidLimpio) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El formato del ORCID es inválido.\n\nNo se puede verificar.\n\nFormato correcto: 0000-0002-1825-0097")
+    Return False
+  Endif
+
+  ' VERIFICAR SI EL ORCID YA EXISTE EN LA BASE DE DATOS
+  If ExisteORCIDEnBaseDatos(sOrcidLimpio, iAutorActualId) Then
+    Return False
+  Endif
+
+  ' CONSTRUIR LA URL COMPLETA
+  sURL = "https://orcid.org/" & sOrcidLimpio
+
+  ' MOSTRAR INDICADOR DE CARGA
+  FAutores.Mouse = Mouse.Wait
+
+  ' EJECUTAR CURL PARA OBTENER EL CÓDIGO HTTP
+  Shell "curl -s -o /dev/null -w '%{http_code}' -L --connect-timeout 5 --max-time 10 -A 'Mozilla/5.0' " & Quote(sURL) To sResult
+  iExitCode = Process.LastValue
+
+  ' RESTAURAR EL CURSOR
+  FAutores.Mouse = Mouse.Default
+
+  ' EVALUAR EL CÓDIGO HTTP
+  Select Case sResult
+    Case "200"
+      m_Sonido.sonar("Ok")
+      Message.Info("El ORCID existe y está activo.\n\nURL: " & sURL)
+      Return True
+
+    Case "301", "302"
+      m_Sonido.sonar("Info")
+      Message.Info("El ORCID fue redireccionado (código " & sResult & ").\n\nURL: " & sURL)
+      Return True
+
+    Case "404"
+      m_Sonido.sonar("Error")
+      Message.Error("El ORCID no existe en el registro de ORCID.org (404 Not Found).\n\nVerifique que el número sea correcto.")
+      Return False
+
+    Case "500", "503"
+      m_Sonido.sonar("Error")
+      Message.Error("Error del servidor de ORCID.org (" & sResult & ").\n\nIntente nuevamente más tarde.")
+      Return False
+
+    Case "000"
+      m_Sonido.sonar("Error")
+      Message.Error("Tiempo de espera agotado o no se pudo conectar a ORCID.org.\n\nVerifique su conexión a Internet.")
+      Return False
+
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("Código de respuesta desconocido: " & sResult & "\n\nURL: " & sURL)
+      Return False
+
+  End Select
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: ExisteORCIDEnBaseDatos
+' DESCRIPCIÓN: VERIFICA SI UN ORCID YA ESTÁ ASIGNADO A OTRO AUTOR EN LA BD
+' PARÁMETROS:
+'   - sOrcid: String - ORCID A BUSCAR
+'   - iAutorActualId: Integer - ID DEL AUTOR ACTUAL (PARA EXCLUIR DE LA BÚSQUEDA)
+'                                SI ES 0, BUSCA EN TODOS LOS AUTORES
+' RETORNA: Boolean - TRUE SI EL ORCID YA EXISTE ASIGNADO A OTRO AUTOR
+' ───────────────────────────────────────────────────────────────────────────
+Private Function ExisteORCIDEnBaseDatos(sOrcid As String, iAutorActualId As Integer) As Boolean
+
+  Dim rResult As Result
+  Dim sQuery As String
+  Dim sNombreAutor As String
+
+  ' CONSTRUIR LA CONSULTA SQL
+  ' SI iAutorActualId ES 0, BUSCAR EN TODOS LOS AUTORES (NUEVO AUTOR)
+  ' SI NO, EXCLUIR EL AUTOR ACTUAL DE LA BÚSQUEDA (EDICIÓN)
+  If iAutorActualId = 0 Then
+    sQuery = "SELECT id_autor, nombre, apellidos, nombre_completo FROM autores WHERE orcid = &1"
+    rResult = m_ConexionBD.mConn.Exec(sQuery, sOrcid)
+  Else
+    sQuery = "SELECT id_autor, nombre, apellidos, nombre_completo FROM autores WHERE orcid = &1 AND id_autor <> &2"
+    rResult = m_ConexionBD.mConn.Exec(sQuery, sOrcid, iAutorActualId)
+  Endif
+
+  ' VERIFICAR SI HAY ERROR EN LA CONSULTA
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al verificar el ORCID en la base de datos:\n\n" & Error.Text)
+    Return True ' RETORNAR TRUE PARA PREVENIR CONTINUAR CON LA VALIDACIÓN
+  Endif
+
+  ' VERIFICAR SI SE ENCONTRÓ ALGÚN REGISTRO
+  If rResult.Available Then
+    ' USAR EL NOMBRE COMPLETO SI ESTÁ DISPONIBLE, SI NO, CONSTRUIRLO
+    If rResult["nombre_completo"] And Trim(rResult["nombre_completo"]) <> "" Then
+      sNombreAutor = Trim(rResult["nombre_completo"])
+    Else
+      sNombreAutor = Trim(rResult["nombre"] & " " & rResult["apellidos"])
+    Endif
+
+    m_Sonido.sonar("Error")
+    Message.Error("El ORCID " & sOrcid & " ya está asignado al autor:\n\n" &
+      sNombreAutor & "\n(ID: " & rResult["id_autor"] & ")\n\n" &
+      "Cada ORCID debe ser único en el sistema.")
+
+    Return True
+  Endif
+
+  ' EL ORCID NO EXISTE EN LA BASE DE DATOS (O ES EL MISMO AUTOR)
+  Return False
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' FUNCIÓN: ValidarFormatoORCID
+' DESCRIPCIÓN: VERIFICA QUE EL FORMATO DEL ORCID SEA VÁLIDO
+'              FORMATO: XXXX-XXXX-XXXX-XXXX (DONDE X SON DÍGITOS)
+'              EL ÚLTIMO CARÁCTER PUEDE SER UN DÍGITO O UNA X (CHECKSUM)
+' PARÁMETROS:
+'   - sOrcid: String - ORCID A VALIDAR
+' RETORNA: Boolean - TRUE SI EL FORMATO ES VÁLIDO
+' NOTA: LA TABLA AUTORES TIENE orcid VARCHAR(19) QUE ES EL TAMAÑO EXACTO
+' ───────────────────────────────────────────────────────────────────────────
+Public Function ValidarFormatoORCID(sOrcid As String) As Boolean
+
+  Dim aPartes As String[]
+  Dim i As Integer
+  Dim sParte As String
+  Dim j As Integer
+  Dim sCaracter As String
+
+  ' VERIFICAR LONGITUD BÁSICA (19 CARACTERES: 16 DÍGITOS + 3 GUIONES)
+  If Len(sOrcid) <> 19 Then
+    Return False
+  Endif
+
+  ' DIVIDIR POR GUIONES
+  aPartes = Split(sOrcid, "-")
+
+  ' DEBE TENER EXACTAMENTE 4 PARTES
+  If aPartes.Count <> 4 Then
+    Return False
+  Endif
+
+  ' VERIFICAR CADA PARTE
+  For i = 0 To aPartes.Max
+    sParte = aPartes[i]
+
+    ' CADA PARTE DEBE TENER EXACTAMENTE 4 CARACTERES
+    If Len(sParte) <> 4 Then
+      Return False
+    Endif
+
+    ' VERIFICAR CARACTERES DE LA PARTE
+    If i = 3 Then
+      ' LA ÚLTIMA PARTE: LOS PRIMEROS 3 DEBEN SER DÍGITOS
+      For j = 1 To 3
+        sCaracter = Mid(sParte, j, 1)
+        If Not IsDigit(sCaracter) Then
+          Return False
+        Endif
+      Next
+
+      ' EL ÚLTIMO CARÁCTER PUEDE SER DÍGITO O X (CHECKSUM)
+      sCaracter = Mid(sParte, 4, 1)
+      If Not (IsDigit(sCaracter) Or sCaracter = "X") Then
+        Return False
+      Endif
+    Else
+      ' LAS PRIMERAS TRES PARTES DEBEN SER SOLO DÍGITOS
+      For j = 1 To 4
+        sCaracter = Mid(sParte, j, 1)
+        If Not IsDigit(sCaracter) Then
+          Return False
+        Endif
+      Next
+    Endif
+  Next
+
+  Return True
+
+End

@@ -1,1 +1,181 @@
 ' Gambas class file
+
+' ───────────────────────────────────────────────────────────────────────────
+' VARIABLE PRIVADA PARA ALMACENAR LOS RESULTADOS
+' ───────────────────────────────────────────────────────────────────────────
+Private $aResultados As Collection[]
+
+' ───────────────────────────────────────────────────────────────────────────
+' CONSTRUCTOR
+' DESCRIPCIÓN: INICIALIZA EL FORMULARIO CON LOS RESULTADOS DE LA BÚSQUEDA
+' ───────────────────────────────────────────────────────────────────────────
+Public Sub _new(aResultados As Collection[])
+
+  $aResultados = aResultados
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' EVENTO: Form_Open
+' DESCRIPCIÓN: CONFIGURA EL GRIDVIEW Y CARGA LOS DATOS
+'              MARCA EN AMARILLO LOS DUPLICADOS (DESDE EL SEGUNDO)
+' ───────────────────────────────────────────────────────────────────────────
+Public Sub Form_Open()
+
+  Dim i As Integer
+  Dim cItem As Collection
+  Dim aNombresVistos As New Collection  ' PARA DETECTAR DUPLICADOS
+  Dim sNombreNormalizado As String
+
+  ' CONFIGURAR MENSAJE
+  If $aResultados.Count = 1 Then
+    labelMensaje.Text = "Se encontró 1 ORCID:"
+  Else
+    labelMensaje.Text = "Se encontraron " & $aResultados.Count & " ORCIDs:"
+  Endif
+
+  ' CONFIGURAR GRIDVIEW
+  gvResultadosOrcid.Columns.Count = 3
+  gvResultadosOrcid.Header = GridView.Both
+
+  ' CONFIGURAR ENCABEZADOS
+  gvResultadosOrcid.Columns[0].Title = "ORCID"
+  gvResultadosOrcid.Columns[0].Width = 200
+
+  gvResultadosOrcid.Columns[1].Title = "Nombre Completo"
+  gvResultadosOrcid.Columns[1].Width = 350
+
+  gvResultadosOrcid.Columns[2].Title = "Afiliación"
+  gvResultadosOrcid.Columns[2].Width = 600
+
+  ' CARGAR DATOS
+  gvResultadosOrcid.Rows.Count = $aResultados.Count
+
+  For i = 0 To $aResultados.Max
+    cItem = $aResultados[i]
+
+    gvResultadosOrcid[i, 0].Text = cItem["orcid"]
+    gvResultadosOrcid[i, 1].Text = cItem["nombre_completo"]
+    gvResultadosOrcid[i, 2].Text = cItem["afiliacion"]
+
+    ' DETECTAR Y MARCAR DUPLICADOS (MISMO NOMBRE)
+    sNombreNormalizado = UCase(Trim(cItem["nombre_completo"]))
+
+    If aNombresVistos.Exist(sNombreNormalizado) Then
+      ' ES UN DUPLICADO (SEGUNDO O POSTERIOR) - MARCAR CON COLOR AMARILLO SUAVE
+      gvResultadosOrcid[i, 0].Background = Color.SoftYellow
+      gvResultadosOrcid[i, 1].Background = Color.SoftYellow
+      gvResultadosOrcid[i, 2].Background = Color.SoftYellow
+    Else
+      ' PRIMERA VEZ QUE VEMOS ESTE NOMBRE - DEJAR NORMAL
+      aNombresVistos[sNombreNormalizado] = i
+    Endif
+  Next
+
+  ' SELECCIONAR LA PRIMERA FILA
+  If gvResultadosOrcid.Rows.Count > 0 Then
+    gvResultadosOrcid.Row = 0
+  Endif
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' EVENTO: btnAplicarOrcid_Click
+' DESCRIPCIÓN: APLICA EL ORCID SELECCIONADO Y CIERRA EL FORMULARIO
+' ───────────────────────────────────────────────────────────────────────────
+Public Sub btnAplicarOrcid_Click()
+
+  Dim iRow As Integer
+  Dim sORCID As String
+
+  ' VERIFICAR QUE HAYA UNA FILA SELECCIONADA
+  If gvResultadosOrcid.Row < 0 Then
+    m_Sonido.sonar("Error")
+    Message.Warning("Debes seleccionar una fila primero.")
+    Return
+  Endif
+
+  iRow = gvResultadosOrcid.Row
+
+  ' OBTENER EL ORCID DE LA COLUMNA 0
+  sORCID = gvResultadosOrcid[iRow, 0].Text
+
+  ' VERIFICAR QUE NO SEA "(no disponible)"
+  If sORCID = "(no disponible)" Or sORCID = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El ORCID seleccionado no está disponible.")
+    Return
+  Endif
+
+  ' GUARDAR EN VARIABLE PÚBLICA DEL MÓDULO
+  m_Orcid.sORCIDSeleccionado = sORCID
+
+  ' CERRAR FORMULARIO
+  Me.Close
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' EVENTO: btnCerrar_Click
+' DESCRIPCIÓN: CIERRA EL FORMULARIO SIN APLICAR NADA
+' ───────────────────────────────────────────────────────────────────────────
+Public Sub btnCerrar_Click()
+
+  ' LIMPIAR SELECCIÓN
+  m_Orcid.sORCIDSeleccionado = ""
+
+  ' CERRAR FORMULARIO
+  Me.Close
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' EVENTO: gvResultadosOrcid_DblClick
+' DESCRIPCIÓN: DOBLE CLIC = APLICAR ORCID
+' ───────────────────────────────────────────────────────────────────────────
+Public Sub gvResultadosOrcid_DblClick()
+
+  btnAplicarOrcid_Click()
+
+End
+
+' ───────────────────────────────────────────────────────────────────────────
+' EVENTO: btnVisitar_Click
+' DESCRIPCIÓN: ABRE EL ORCID SELECCIONADO EN EL NAVEGADOR
+' ───────────────────────────────────────────────────────────────────────────
+Public Sub btnVisitar_Click()
+
+  Dim iRow As Integer
+  Dim sORCID As String
+  Dim sURL As String
+
+  ' VERIFICAR QUE HAYA UNA FILA SELECCIONADA
+  If gvResultadosOrcid.Row < 0 Then
+    m_Sonido.sonar("Error")
+    Message.Warning("Debes seleccionar una fila primero.")
+    Return
+  Endif
+
+  iRow = gvResultadosOrcid.Row
+
+  ' OBTENER EL ORCID DE LA COLUMNA 0
+  sORCID = gvResultadosOrcid[iRow, 0].Text
+
+  ' VERIFICAR QUE NO SEA "(no disponible)"
+  If sORCID = "(no disponible)" Or sORCID = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El ORCID seleccionado no está disponible.")
+    Return
+  Endif
+
+  ' CONSTRUIR URL
+  sURL = "https://orcid.org/" & sORCID
+
+  ' ABRIR EN NAVEGADOR POR DEFECTO
+  Desktop.Open(sURL)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("No se pudo abrir el navegador.<br><br>URL: " & sURL & "<br><br>Error: " & Error.Text)
+
+End
