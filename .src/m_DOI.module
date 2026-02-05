@@ -1,0 +1,509 @@
+' Gambas module file
+
+' MÓDULO PARA BÚSQUEDA DE DOI EN BASE DE DATOS LOCAL Y APIS EXTERNAS
+
+' ------------------------------------------------------------------------------
+' VARIABLES PÚBLICAS
+' ------------------------------------------------------------------------------
+Public sDOISeleccionado As String = ""
+
+' ------------------------------------------------------------------------------
+' FUNCIÓN PRINCIPAL: BÚSQUEDA INTELIGENTE DE DOI
+' ------------------------------------------------------------------------------
+Public Sub BuscarDOIInteligente(sTitulo As String, Optional sIssn As String, Optional sAutor As String, Optional sAnio As String, Optional iProyectoId As Integer)
+
+  Dim sDOI As String
+
+  ' LIMPIAR DOI SELECCIONADO ANTERIOR
+  sDOISeleccionado = ""
+
+  ' PASO 1: BUSCAR EN LA BASE DE DATOS LOCAL DEL PROYECTO
+  sDOI = BuscarDOIEnBD(sTitulo, iProyectoId)
+
+  ' SI SE ENCONTRÓ Y SELECCIONÓ UN DOI EN BD, TERMINAR
+  If sDOI <> "" Then
+    sDOISeleccionado = sDOI
+    Return
+  Endif
+
+  ' PASO 2: SI NO SE ENCONTRÓ EN BD, BUSCAR EN CROSSREF
+  BuscarDOICrossRef(sTitulo, sIssn, sAutor, sAnio)
+
+Catch
+  FMain.Mouse = Mouse.Default
+  m_Sonido.sonar("Error")
+  Message.Error("Error al buscar DOI:<br><br>" & Error.Text)
+
+End
+
+' ------------------------------------------------------------------------------
+' BÚSQUEDA EN BASE DE DATOS LOCAL
+' ------------------------------------------------------------------------------
+Private Function BuscarDOIEnBD(sTitulo As String, iProyectoId As Integer) As String
+
+  Dim rResult As Result
+  Dim sTituloLike As String
+  Dim iCount As Integer
+
+  ' VALIDAR QUE TENGAMOS PROYECTO
+  If iProyectoId <= 0 Then
+    Return ""
+  Endif
+
+  ' NORMALIZAR TÍTULO PARA BÚSQUEDA
+  sTituloLike = "%" & NormalizarTituloBusqueda(sTitulo) & "%"
+
+  ' BUSCAR COINCIDENCIAS EN LA BD
+  rResult = m_ConexionBD.mConn.Exec("SELECT doi, title, author, year, journal_title, volume, pages " &
+    "FROM bibtex " &
+    "WHERE id_proyecto = &1 " &
+    "AND doi IS NOT NULL " &
+    "AND doi != '' " &
+    "AND LOWER(title) LIKE &2 " &
+    "LIMIT 10",
+    iProyectoId,
+    Lower(sTituloLike))
+
+  ' SI NO HAY RESULTADOS, RETORNAR VACÍO
+  If rResult.Available = 0 Then
+    Return ""
+  Endif
+
+  iCount = rResult.Count
+
+  ' MOSTRAR RESULTADOS EN GRIDVIEW (UNA O MÚLTIPLES COINCIDENCIAS)
+  CargarResultadosEnGrid(rResult, iCount)
+
+  FMain.Mouse = Mouse.Default
+  FDoi.ShowModal()
+
+  ' RETORNAR EL DOI SELECCIONADO (SI LO HAY)
+  Return sDOISeleccionado
+
+Catch
+  FMain.Mouse = Mouse.Default
+  Message.Error("Error al buscar en la base de datos:<br><br>" & Error.Text)
+  Return ""
+
+End
+
+' ------------------------------------------------------------------------------
+' BÚSQUEDA EN CROSSREF API
+' ------------------------------------------------------------------------------
+Private Sub BuscarDOICrossRef(sTitulo As String, Optional sIssn As String, Optional sAutor As String, Optional sAnio As String)
+
+  Dim sURL As String
+  Dim sQuery As String
+  Dim sResult As String
+  Dim jResult As Collection
+  Dim aItems As Collection[]
+  Dim iExitCode As Integer
+  Dim sEmail As String
+
+  ' MOSTRAR INDICADOR DE CARGA
+  FMain.Mouse = Mouse.Wait
+
+  ' OBTENER EMAIL DEL PROYECTO
+  sEmail = ObtenerEmailProyecto()
+
+  If sEmail = "" Then
+    sEmail = "contacto@ejemplo.com"
+  Endif
+
+  ' CONSTRUIR QUERY URL-ENCODED
+  sQuery = "query.bibliographic=" & URL.Encode(sTitulo)
+
+  If sIssn <> "" Then
+    sIssn = Replace(sIssn, "-", "")
+    sQuery &= "&query.issn=" & URL.Encode(sIssn)
+  Endif
+
+  If sAutor <> "" Then
+    sAutor = Split(sAutor, ",")[0]
+    sQuery &= "&query.author=" & URL.Encode(sAutor)
+  Endif
+
+  If sAnio <> "" Then
+    sQuery &= "&filter=from-pub-date:" & sAnio & ",until-pub-date:" & sAnio
+  Endif
+
+  sQuery &= "&rows=10&sort=score&order=desc"
+
+  ' CONSTRUIR URL COMPLETA
+  sURL = "https://api.crossref.org/works?" & sQuery & "&mailto=" & URL.Encode(sEmail)
+
+  ' EJECUTAR CURL
+  Shell "curl -s -L --connect-timeout 10 --max-time 15 -A 'gbpublisher/1.0 (mailto:" & sEmail & ")' " & Quote(sURL) To sResult
+  iExitCode = Process.LastValue
+
+  ' VERIFICAR CONEXIÓN
+  If iExitCode <> 0 Or sResult = "" Then
+    FMain.Mouse = Mouse.Default
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo conectar con CrossRef.<br><br>Verifica tu conexión a Internet.")
+    Return
+  Endif
+
+  ' PARSEAR JSON
+  jResult = JSON.Decode(sResult)
+
+  ' VERIFICAR RESULTADOS
+  If Not jResult.Exist("message") Then
+    FMain.Mouse = Mouse.Default
+    m_Sonido.sonar("Info")
+    Message.Info("No se encontraron resultados en CrossRef para:<br><br><b>" & sTitulo & "</b>")
+    Return
+  Endif
+
+  aItems = jResult["message"]["items"]
+
+  If aItems.Count = 0 Then
+    FMain.Mouse = Mouse.Default
+    m_Sonido.sonar("Info")
+    Message.Info("No se encontraron resultados en CrossRef.")
+    Return
+  Endif
+
+  ' MOSTRAR RESULTADOS EN GRIDVIEW
+  CargarResultadosCrossRefEnGrid(aItems)
+
+  FMain.Mouse = Mouse.Default
+  FDoi.ShowModal()
+
+Catch
+  FMain.Mouse = Mouse.Default
+  m_Sonido.sonar("Error")
+  Message.Error("Error al procesar CrossRef:<br><br>" & Error.Text)
+
+End
+
+' ------------------------------------------------------------------------------
+' CARGAR RESULTADOS DE BD EN GRIDVIEW
+' ------------------------------------------------------------------------------
+Private Sub CargarResultadosEnGrid(rResult As Result, iCount As Integer)
+
+  Dim iRow As Integer = 0
+  Dim sMensaje As String
+
+  ' LIMPIAR GRID
+  FDoi.gvResultadosDoi.Clear
+  FDoi.gvResultadosDoi.Rows.Count = 0
+
+  ' CONFIGURAR COLUMNAS
+  FDoi.gvResultadosDoi.Columns.Count = 6
+  FDoi.gvResultadosDoi.Columns[0].Title = "DOI"
+  FDoi.gvResultadosDoi.Columns[0].Width = 300
+  FDoi.gvResultadosDoi.Columns[1].Title = "Título"
+  FDoi.gvResultadosDoi.Columns[1].Width = 450
+  FDoi.gvResultadosDoi.Columns[2].Title = "Autor(es)"
+  FDoi.gvResultadosDoi.Columns[2].Width = 250
+  FDoi.gvResultadosDoi.Columns[3].Title = "Año"
+  FDoi.gvResultadosDoi.Columns[3].Width = 100
+  FDoi.gvResultadosDoi.Columns[4].Title = "Revista"
+  FDoi.gvResultadosDoi.Columns[4].Width = 300
+  FDoi.gvResultadosDoi.Columns[5].Title = "Vol/Págs"
+  FDoi.gvResultadosDoi.Columns[5].Width = 150
+
+  ' CARGAR DATOS
+  For Each rResult
+    FDoi.gvResultadosDoi.Rows.Count = iRow + 1
+
+    FDoi.gvResultadosDoi[iRow, 0].Text = rResult["doi"]
+    FDoi.gvResultadosDoi[iRow, 1].Text = rResult["title"]
+    FDoi.gvResultadosDoi[iRow, 2].Text = If(IsNull(rResult["author"]), "", rResult["author"])
+    FDoi.gvResultadosDoi[iRow, 3].Text = rResult["year"]
+    FDoi.gvResultadosDoi[iRow, 4].Text = If(IsNull(rResult["journal_title"]), "", rResult["journal_title"])
+
+    ' CONSTRUIR VOL/PÁGS
+    Dim sVolPags As String = ""
+    If Not IsNull(rResult["volume"]) And rResult["volume"] <> "" Then
+      sVolPags = "Vol " & rResult["volume"]
+    Endif
+    If Not IsNull(rResult["pages"]) And rResult["pages"] <> "" Then
+      If sVolPags <> "" Then sVolPags &= ", "
+      sVolPags &= rResult["pages"]
+    Endif
+    FDoi.gvResultadosDoi[iRow, 5].Text = sVolPags
+
+    Inc iRow
+  Next
+
+  ' ACTUALIZAR TÍTULO DEL FORMULARIO
+  FDoi.Title = "Resultados de búsqueda DOI"
+
+  ' ACTUALIZAR LABEL CON MENSAJE
+  If iCount = 1 Then
+    sMensaje = "Se ha encontrado 1 coincidencia en la base de datos local"
+  Else
+    sMensaje = "Se han encontrado " & iCount & " coincidencias en la base de datos local"
+  Endif
+
+  FDoi.labelMensaje.Text = sMensaje
+
+End
+
+' ------------------------------------------------------------------------------
+' CARGAR RESULTADOS DE CROSSREF EN GRIDVIEW
+' ------------------------------------------------------------------------------
+Private Sub CargarResultadosCrossRefEnGrid(aItems As Collection[])
+
+  Dim i As Integer
+  Dim item As Collection
+  Dim sTitulo As String
+  Dim sAutores As String
+  Dim sAnio As String
+  Dim sJournal As String
+  Dim sVolume As String
+  Dim sPages As String
+  Dim sDOI As String
+  Dim iScore As Float
+  Dim sVolPags As String
+  Dim sMensaje As String
+  Dim iTotal As Integer
+
+  iTotal = Min(10, aItems.Count)
+
+  ' LIMPIAR GRID
+  FDoi.gvResultadosDoi.Clear
+  FDoi.gvResultadosDoi.Rows.Count = 0
+
+  ' CONFIGURAR COLUMNAS
+  FDoi.gvResultadosDoi.Columns.Count = 7
+  FDoi.gvResultadosDoi.Columns[0].Title = "Confianza"
+  FDoi.gvResultadosDoi.Columns[0].Width = 80
+  FDoi.gvResultadosDoi.Columns[1].Title = "DOI"
+  FDoi.gvResultadosDoi.Columns[1].Width = 200
+  FDoi.gvResultadosDoi.Columns[2].Title = "Título"
+  FDoi.gvResultadosDoi.Columns[2].Width = 350
+  FDoi.gvResultadosDoi.Columns[3].Title = "Autor(es)"
+  FDoi.gvResultadosDoi.Columns[3].Width = 200
+  FDoi.gvResultadosDoi.Columns[4].Title = "Año"
+  FDoi.gvResultadosDoi.Columns[4].Width = 60
+  FDoi.gvResultadosDoi.Columns[5].Title = "Revista"
+  FDoi.gvResultadosDoi.Columns[5].Width = 200
+  FDoi.gvResultadosDoi.Columns[6].Title = "Vol/Págs"
+  FDoi.gvResultadosDoi.Columns[6].Width = 120
+
+  ' CARGAR DATOS (MÁXIMO 10)
+  For i = 0 To iTotal - 1
+
+    item = aItems[i]
+    FDoi.gvResultadosDoi.Rows.Count = i + 1
+
+    ' EXTRAER SCORE
+    iScore = 0
+    If item.Exist("score") Then iScore = item["score"]
+    FDoi.gvResultadosDoi[i, 0].Text = Format(iScore, "0.0") & "%"
+
+    ' EXTRAER DOI
+    sDOI = "(no disponible)"
+    If item.Exist("DOI") Then sDOI = item["DOI"]
+    FDoi.gvResultadosDoi[i, 1].Text = sDOI
+
+    ' EXTRAER TÍTULO
+    sTitulo = "(sin título)"
+    If item.Exist("title") And item["title"].Count > 0 Then
+      sTitulo = item["title"][0]
+    Endif
+    FDoi.gvResultadosDoi[i, 2].Text = sTitulo
+
+    ' EXTRAER AUTORES
+    sAutores = ""
+    If item.Exist("author") And item["author"].Count > 0 Then
+      Dim j As Integer
+      For j = 0 To Min(2, item["author"].Count - 1)
+        If item["author"][j].Exist("family") Then
+          If sAutores <> "" Then sAutores &= ", "
+          sAutores &= item["author"][j]["family"]
+          If item["author"][j].Exist("given") Then
+            sAutores &= " " & Left(item["author"][j]["given"], 1) & "."
+          Endif
+        Endif
+      Next
+      If item["author"].Count > 3 Then sAutores &= " et al."
+    Else
+      sAutores = "(sin autor)"
+    Endif
+    FDoi.gvResultadosDoi[i, 3].Text = sAutores
+
+    ' EXTRAER AÑO
+    sAnio = ""
+    If item.Exist("published-print") Then
+      If item["published-print"].Exist("date-parts") Then
+        sAnio = item["published-print"]["date-parts"][0][0]
+      Endif
+    Endif
+    If sAnio = "" And item.Exist("published-online") Then
+      If item["published-online"].Exist("date-parts") Then
+        sAnio = item["published-online"]["date-parts"][0][0]
+      Endif
+    Endif
+    FDoi.gvResultadosDoi[i, 4].Text = sAnio
+
+    ' EXTRAER JOURNAL/CONTAINER
+    sJournal = ""
+    If item.Exist("container-title") And item["container-title"].Count > 0 Then
+      sJournal = item["container-title"][0]
+    Endif
+    FDoi.gvResultadosDoi[i, 5].Text = sJournal
+
+    ' EXTRAER VOLUMEN Y PÁGINAS
+    sVolume = ""
+    If item.Exist("volume") Then sVolume = item["volume"]
+
+    sPages = ""
+    If item.Exist("page") Then sPages = item["page"]
+
+    sVolPags = ""
+    If sVolume <> "" Then sVolPags = "Vol " & sVolume
+    If sPages <> "" Then
+      If sVolPags <> "" Then sVolPags &= ", "
+      sVolPags &= sPages
+    Endif
+    FDoi.gvResultadosDoi[i, 6].Text = sVolPags
+
+  Next
+
+  ' ACTUALIZAR TÍTULO DEL FORMULARIO
+  FDoi.Title = "Resultados de búsqueda DOI"
+
+  ' ACTUALIZAR LABEL CON MENSAJE
+  If iTotal = 1 Then
+    sMensaje = "Se ha encontrado 1 coincidencia en CrossRef"
+  Else
+    sMensaje = "Se han encontrado " & iTotal & " coincidencias en CrossRef"
+  Endif
+
+  FDoi.labelMensaje.Text = sMensaje
+
+End
+
+' ------------------------------------------------------------------------------
+' FUNCIÓN AUXILIAR: OBTENER EMAIL DEL PROYECTO
+' ------------------------------------------------------------------------------
+Private Function ObtenerEmailProyecto() As String
+
+  Dim rResult As Result
+
+  rResult = m_ConexionBD.mConn.Exec("SELECT email FROM proyectos WHERE id = &1",
+    FMain.id_proyecto.Value)
+
+  If rResult.Available Then
+    Return rResult["email"]
+  Endif
+
+  Return ""
+
+Catch
+  Return ""
+
+End
+
+' ------------------------------------------------------------------------------
+' FUNCIÓN AUXILIAR: NORMALIZAR TÍTULO PARA BÚSQUEDA
+' ------------------------------------------------------------------------------
+Private Function NormalizarTituloBusqueda(sTitulo As String) As String
+
+  Dim sNormalizado As String
+  Dim aArticulos As String[] = ["el", "la", "los", "las", "un", "una", "unos", "unas", "the", "a", "an"]
+  Dim aPalabras As String[]
+
+  ' CONVERTIR A MINÚSCULAS
+  sNormalizado = Lower(Trim(sTitulo))
+
+  ' ELIMINAR SIGNOS DE PUNTUACIÓN
+  sNormalizado = Replace(sNormalizado, ":", "")
+  sNormalizado = Replace(sNormalizado, ",", "")
+  sNormalizado = Replace(sNormalizado, ".", "")
+  sNormalizado = Replace(sNormalizado, ";", "")
+  sNormalizado = Replace(sNormalizado, "¿", "")
+  sNormalizado = Replace(sNormalizado, "?", "")
+  sNormalizado = Replace(sNormalizado, "¡", "")
+  sNormalizado = Replace(sNormalizado, "!", "")
+
+  ' SEPARAR EN PALABRAS
+  aPalabras = Split(sNormalizado, " ")
+
+  ' ELIMINAR ARTÍCULOS DE LA PRIMERA PALABRA
+  If aPalabras.Count > 0 Then
+    If aArticulos.Exist(aPalabras[0]) Then
+      aPalabras.Remove(0)
+    Endif
+  Endif
+
+  ' RECONSTRUIR
+  sNormalizado = aPalabras.Join(" ")
+
+  Return sNormalizado
+
+End
+
+' ------------------------------------------------------------------------------
+' FUNCIÓN PRINCIPAL: VERIFICAR DOI
+' ------------------------------------------------------------------------------
+Public Sub VerificarDOI(campo As TextBox)
+
+  Dim sURL As String
+  Dim sDOI As String
+  Dim sResult As String
+  Dim iExitCode As Integer
+
+  ' MOSTRAR INDICADOR DE CARGA
+  FMain.Mouse = Mouse.Wait
+
+  sURL = Trim(campo.Text)
+
+  If sURL = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Por favor, ingresar un DOI válido.")
+    FMain.Mouse = Mouse.Default
+    Return
+  Endif
+
+  ' EXTRAER EL DOI PURO (SIN EL PREFIJO HTTPS://DOI.ORG/)
+  If Left(sURL, 16) = "https://doi.org/" Then
+    sDOI = Mid(sURL, 17)
+  Else If Left(sURL, 15) = "http://doi.org/" Then
+    sDOI = Mid(sURL, 16)
+  Else
+    sDOI = sURL
+  Endif
+
+  ' CONSTRUIR URL COMPLETA PARA VALIDACIÓN
+  sURL = "https://doi.org/" & sDOI
+
+  ' COMANDO CURL CON LÍMITE DE TIEMPO
+  Shell "curl -s -o /dev/null -w '%{http_code}' -L --connect-timeout 5 --max-time 10 -A 'Mozilla/5.0' " & Quote(sURL) To sResult
+  iExitCode = Process.LastValue
+
+  ' RESTAURAR EL CURSOR
+  FMain.Mouse = Mouse.Default
+
+  ' EVALUAR CÓDIGO DE ESTADO HTTP
+  Select Case sResult
+    Case "200"
+      campo.Text = sDOI
+      m_Sonido.sonar("Info")
+      Message.Info("El <b>DOI es válido</b> y respondió con código 200.")
+    Case "301", "302"
+      campo.Text = sDOI
+      m_Sonido.sonar("Info")
+      Message.Info("El <b>DOI fue redireccionado</b> y respondió con código " & sResult & ".")
+    Case "404"
+      m_Sonido.sonar("Error")
+      Message.Error("El <b>DOI no existe</b> y respondió con código 404 Not Found.")
+    Case "500", "503"
+      m_Sonido.sonar("Error")
+      Message.Error("<b>Error del servidor</b> (" & sResult & "). Intenta nuevamente más tarde.")
+    Case "000"
+      m_Sonido.sonar("Error")
+      Message.Error("Tiempo de espera agotado o no se pudo conectar al servidor.")
+    Case ""
+      m_Sonido.sonar("Error")
+      Message.Error("Error en la ejecución del comando. Verifica la conexión a Internet.")
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("Código de respuesta: <b>" & sResult & "</b>.")
+  End Select
+
+End
