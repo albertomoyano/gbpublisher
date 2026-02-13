@@ -12,8 +12,6 @@ Public RutaProyecto As String
 Public ProyectoActualCompleto As String
 Public sRutaArchivoAbierto As String
 Public sContenidoOriginal As String  ' PARA COMPARAR SI HUBO CAMBIOS
-Private hTimerRefrescoXML As Timer ' REFESCAMOS EL COMBOBOX DE XML
-Private hTimerRefrescarProyecto As Timer ' REFRESCAMOS EL COMBOBOX DE ARTICULOS MD
 
 Public Sub SplitterPrincipal_Resize()
 
@@ -22,13 +20,10 @@ Public Sub SplitterPrincipal_Resize()
 End
 
 Public Sub IniciarTimerArchivosXML()
-  ' INICIA EL TIMER PARA REFRESCAR LA LISTA DE ARCHIVOS XML
 
-  If hTimerRefrescoXML = Null Then
-    hTimerRefrescoXML = New Timer As "TimerXML"
-  Endif
-  hTimerRefrescoXML.Delay = 5000
-  hTimerRefrescoXML.Start()
+  ' EL TIMER YA EXISTE EN EL DISEÑADOR, SOLO CONFIGURARLO
+  hTimerXML.Delay = 5000  ' 5 SEGUNDOS
+  hTimerXML.Start()
 
 End
 
@@ -1253,6 +1248,9 @@ Public Sub AbrirRevistaMD()
 
   ' LIBERAR PROYECTO QUE ESTA ABIERTO
   If NombreProyecto <> "" Then
+    ' *** DETENER EL TIMER DE ARCHIVOS ANTES DE LIBERAR ***
+    DetenerTimerArchivosProyecto()
+
     Dim sProyectoEnCurso As String = File.Name(txtProyecto.Text)
     m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoEnCurso)
     m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE nombre = &1", sProyectoEnCurso)
@@ -1382,6 +1380,18 @@ Public Sub AbrirRevistaMD()
   m_ComboBox.CargarTodosLosComboBox()
   IniciarTimerArchivosXML()
 
+  ' CARGAR EL PRIMER ARCHIVO XML O LIMPIAR EDITOR SI NO HAY ARCHIVOS
+  If cmbArchivosXML.Count > 0 Then
+    cmbArchivosXML.Index = 0
+    cmbArchivosXML_Click()  ' EJECUTAR LA FUNCIÓN QUE CARGA EL CONTENIDO
+    txtEditorXML.ReadOnly = True
+    txtEditorXML.Enabled = True
+  Else
+    txtEditorXML.Clear()
+    txtEditorXML.ReadOnly = True
+    txtEditorXML.Enabled = False
+  Endif
+
   ' CARGAMOS EL ARCHIVO DEL PROYECTO EN EL EDITOR
   txtEditorProyecto.Text = File.Load(sRutaSeleccionada)
   txtEditorProyecto.ReadOnly = False
@@ -1402,11 +1412,17 @@ Public Sub AbrirRevistaMD()
   ' ACTUALIZAMOS EL CONTEO DE LINEAS
   ActualizarContadorLineas()
 
+  ' HABILITAMOS EL PANEL INFERIOR
+  tbMostrarPanelInferior.Enabled = True
+
 End
 
 ' CARGA LA LISTA DE ARCHIVOS MARKDOWN DEL PROYECTO EN EL COMBOBOX
 ' INCLUYE: ARCHIVO PRINCIPAL + ARCHIVOS DE FRONT-MATTER + ARTÍCULOS + BACK-MATTER
-Public Sub CargarListaArticulosMD()
+' CARGA LA LISTA DE ARCHIVOS MARKDOWN DEL PROYECTO EN EL COMBOBOX
+' INCLUYE: ARCHIVO PRINCIPAL + ARCHIVOS DE FRONT-MATTER + ARTÍCULOS + BACK-MATTER
+' PARÁMETRO OPCIONAL: bPreservarSeleccion - SI ES TRUE, INTENTA MANTENER EL ARCHIVO SELECCIONADO
+Public Sub CargarListaArticulosMD(Optional bPreservarSeleccion As Boolean = False)
 
   Dim sRutaFrontMatter As String
   Dim sRutaArticulos As String
@@ -1415,6 +1431,16 @@ Public Sub CargarListaArticulosMD()
   Dim aArchivosArticulos As String[]
   Dim aArchivosBack As String[]
   Dim sArchivo As String
+  Dim sSeleccionAnterior As String
+  Dim iIndiceAnterior As Integer
+
+  ' GUARDAR LA SELECCIÓN ACTUAL SI SE REQUIERE PRESERVARLA
+  If bPreservarSeleccion And cmbArticulosRevista.Count > 0 Then
+    iIndiceAnterior = cmbArticulosRevista.Index
+    If iIndiceAnterior >= 0 Then
+      sSeleccionAnterior = cmbArticulosRevista.Text
+    Endif
+  Endif
 
   ' LIMPIAR EL COMBOBOX
   cmbArticulosRevista.Clear()
@@ -1460,10 +1486,83 @@ Public Sub CargarListaArticulosMD()
     Endif
   Endif
 
-  ' SELECCIONAR EL ARCHIVO PRINCIPAL POR DEFECTO
-  cmbArticulosRevista.Index = 0
+  ' RESTAURAR LA SELECCIÓN ANTERIOR O SELECCIONAR EL ARCHIVO PRINCIPAL
+  If bPreservarSeleccion And sSeleccionAnterior Then
+    ' BUSCAR EL ARCHIVO QUE ESTABA SELECCIONADO
+    Dim i As Integer
+    For i = 0 To cmbArticulosRevista.Count - 1
+      If cmbArticulosRevista[i].Text = sSeleccionAnterior Then
+        cmbArticulosRevista.Index = i
+        Return
+      Endif
+    Next
+    ' SI NO SE ENCONTRÓ, SELECCIONAR EL ARCHIVO PRINCIPAL
+    cmbArticulosRevista.Index = 0
+  Else
+    ' SELECCIONAR EL ARCHIVO PRINCIPAL POR DEFECTO
+    cmbArticulosRevista.Index = 0
+  Endif
 
 End
+
+' Public Sub CargarListaArticulosMD()
+'
+'   Dim sRutaFrontMatter As String
+'   Dim sRutaArticulos As String
+'   Dim sRutaBackMatter As String
+'   Dim aArchivosFront As String[]
+'   Dim aArchivosArticulos As String[]
+'   Dim aArchivosBack As String[]
+'   Dim sArchivo As String
+'
+'   ' LIMPIAR EL COMBOBOX
+'   cmbArticulosRevista.Clear()
+'
+'   ' AGREGAR PRIMERO EL ARCHIVO PRINCIPAL DEL PROYECTO
+'   cmbArticulosRevista.Add(NombreProyecto)
+'
+'   ' CONSTRUIR RUTAS A LAS TRES CARPETAS
+'   sRutaFrontMatter = RutaProyecto &/ "front-matter"
+'   sRutaArticulos = RutaProyecto &/ "articulos"
+'   sRutaBackMatter = RutaProyecto &/ "back-matter"
+'
+'   ' CARGAR ARCHIVOS DE FRONT-MATTER
+'   If Exist(sRutaFrontMatter) Then
+'     aArchivosFront = Dir(sRutaFrontMatter, "*.md")
+'     If aArchivosFront Then
+'       aArchivosFront.Sort()
+'       For Each sArchivo In aArchivosFront
+'         cmbArticulosRevista.Add("front-matter/" & sArchivo)
+'       Next
+'     Endif
+'   Endif
+'
+'   ' CARGAR ARCHIVOS DE ARTÍCULOS
+'   If Exist(sRutaArticulos) Then
+'     aArchivosArticulos = Dir(sRutaArticulos, "*.md")
+'     If aArchivosArticulos Then
+'       aArchivosArticulos.Sort()
+'       For Each sArchivo In aArchivosArticulos
+'         cmbArticulosRevista.Add("articulos/" & sArchivo)
+'       Next
+'     Endif
+'   Endif
+'
+'   ' CARGAR ARCHIVOS DE BACK-MATTER
+'   If Exist(sRutaBackMatter) Then
+'     aArchivosBack = Dir(sRutaBackMatter, "*.md")
+'     If aArchivosBack Then
+'       aArchivosBack.Sort()
+'       For Each sArchivo In aArchivosBack
+'         cmbArticulosRevista.Add("back-matter/" & sArchivo)
+'       Next
+'     Endif
+'   Endif
+'
+'   ' SELECCIONAR EL ARCHIVO PRINCIPAL POR DEFECTO
+'   cmbArticulosRevista.Index = 0
+'
+' End
 
 ' MANEJA LA SELECCIÓN DE ARCHIVOS MARKDOWN DEL COMBOBOX
 ' VERIFICA CAMBIOS SIN GUARDAR ANTES DE CAMBIAR DE ARCHIVO
@@ -1729,6 +1828,9 @@ Public Sub AbrirLibroTEX()
   ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO
   TabPanelIzquierdaInferior.Visible = False
   HBoxBuscar.Visible = False
+
+  ' HABILITAMOS EL PANEL INFERIOR
+  tbMostrarPanelInferior.Enabled = True
 
 End
 
@@ -4695,31 +4797,28 @@ Public Sub cmbArchivosXML_Click()
 End
 
 Public Sub DetenerTimerArchivosXML()
-  ' DETIENE EL TIMER DE REFRESCO DE ARCHIVOS XML
 
-  If hTimerRefrescoXML <> Null Then
-    hTimerRefrescoXML.Stop()
+  ' DETIENE EL TIMER DE REFRESCO DE ARCHIVOS XML
+  If hTimerXML Then
+    hTimerXML.Stop()
   Endif
 
 End
 
+' INICIA EL TIMER DE MONITOREO DE ARCHIVOS DEL PROYECTO
+' VERIFICA CADA 3 SEGUNDOS SI HAY CAMBIOS EN LOS ARCHIVOS .MD
 Public Sub IniciarTimerArchivosProyecto()
 
-  ' INICIA EL TIMER PARA REFRESCAR LA LISTA DE ARCHIVOS MD EN LA CARPETA ARTICULOS
-  ' INTERVALO DE 5 SEGUNDOS
-
-  If hTimerRefrescarProyecto = Null Then
-    hTimerRefrescarProyecto = New Timer As "TimerArchivosProyecto"
-  Endif
-  hTimerRefrescarProyecto.Delay = 5000
+  ' EL TIMER YA EXISTE EN EL DISEÑADOR, SOLO CONFIGURARLO
+  hTimerRefrescarProyecto.Delay = 3000  ' 3 SEGUNDOS
   hTimerRefrescarProyecto.Start()
 
 End
 
+' DETIENE EL TIMER DE MONITOREO DE ARCHIVOS DEL PROYECTO
 Public Sub DetenerTimerArchivosProyecto()
-  ' DETIENE EL TIMER DE REFRESCO DE ARCHIVOS MD
 
-  If hTimerRefrescarProyecto <> Null Then
+  If hTimerRefrescarProyecto Then
     hTimerRefrescarProyecto.Stop()
   Endif
 
@@ -4727,7 +4826,7 @@ End
 
 ' VERIFICA SI HAY NUEVOS ARCHIVOS .MD EN LAS CARPETAS DEL PROYECTO
 ' RECARGA EL COMBOBOX SOLO SI DETECTA CAMBIOS
-Public Sub TimerArchivosProyecto_Timer()
+Public Sub hTimerRefrescarProyecto_Timer()
 
   Dim sRutaFrontMatter As String
   Dim sRutaArticulos As String
@@ -4774,8 +4873,7 @@ Public Sub TimerArchivosProyecto_Timer()
 
 End
 
-Public Sub TimerXML_Timer()
-
+Public Sub hTimerXML_Timer()
   ' REFRESCA LA LISTA DE ARCHIVOS XML SOLO SI HAY CAMBIOS EN EL DIRECTORIO
 
   Dim sRutaXML As String
