@@ -1661,32 +1661,60 @@ Public Sub btnAsignar_Click()
 End
 
 ' ───────────────────────────────────────────────────────────────────────────
-' EVENTO: btnVerificarORCID_Click
-' DESCRIPCIÓN: BUSCA EL AUTOR EN LA API DE ORCID Y PERMITE SELECCIONAR
-'              EL ORCID CORRECTO SI HAY MÚLTIPLES RESULTADOS
-' ───────────────────────────────────────────────────────────────────────────
-' ───────────────────────────────────────────────────────────────────────────
-' EVENTO: btnVerificarORCID_Click
-' DESCRIPCIÓN: BUSCA EL AUTOR EN LA API DE ORCID Y PERMITE SELECCIONAR
-'              EL ORCID CORRECTO SI HAY MÚLTIPLES RESULTADOS
+' EVENTO: btnVerificarORCID_Click (VERSIÓN CORREGIDA CON FLUJO MEJORADO)
 ' ───────────────────────────────────────────────────────────────────────────
 Public Sub btnVerificarORCID_Click()
 
   Dim sNombre As String
   Dim sApellido As String
+  Dim sOrcidExistente As String
   Dim sOrcidSeleccionado As String
+  Dim aDataOrcid As Collection[]
 
   ' DEBUG
   Print "Iniciando búsqueda ORCID..."
 
-  ' OBTENER NOMBRE Y APELLIDO DEL FORMULARIO
+  ' OBTENER DATOS DEL FORMULARIO
   sNombre = Trim(nombre.Text)
   sApellido = Trim(apellidos.Text)
+  sOrcidExistente = Trim(orcid.Text)
 
   ' DEBUG
   Print "Nombre: "; sNombre
   Print "Apellido: "; sApellido
+  Print "ORCID existente en campo: "; sOrcidExistente
 
+  ' ESTRATEGIA 1: SI YA HAY UN ORCID EN EL CAMPO, VERIFICARLO PRIMERO
+  If sOrcidExistente <> "" Then
+    Print "Verificando ORCID existente: "; sOrcidExistente
+
+    ' VERIFICAR SI EL FORMATO ES VÁLIDO
+    If m_Orcid.ValidarFormatoORCID(sOrcidExistente) Then
+      ' VERIFICAR SI EXISTE EN ORCID.ORG
+      If m_Orcid.VerificarORCID(sOrcidExistente, id_autor.Value) Then
+        ' EL ORCID ES VÁLIDO Y EXISTE
+        Print "ORCID válido y verificado: "; sOrcidExistente
+        m_Sonido.sonar("Ok")
+        Return
+      Else
+        ' EL ORCID NO ES VÁLIDO O HAY ALGÚN PROBLEMA
+        Print "ORCID inválido o con problemas, procediendo a búsqueda..."
+      Endif
+    Else
+      ' EL FORMATO NO ES VÁLIDO, AVISAR AL USUARIO
+      m_Sonido.sonar("Warning")
+      If Message.Question("El ORCID ingresado tiene un formato inválido.\n\n" &
+          "¿Desea buscar un ORCID usando el nombre y apellido del autor?",
+          "Sí", "No") = 2 Then
+        orcid.SetFocus()
+        Return
+      Endif
+      ' LIMPIAR EL CAMPO PARA CONTINUAR CON LA BÚSQUEDA
+      orcid.Text = ""
+    Endif
+  Endif
+
+  ' ESTRATEGIA 2: BUSCAR POR NOMBRE Y APELLIDO
   ' VERIFICAR QUE HAY AL MENOS UN DATO
   If sNombre = "" And sApellido = "" Then
     m_Sonido.sonar("Warning")
@@ -1696,17 +1724,27 @@ Public Sub btnVerificarORCID_Click()
   Endif
 
   ' DEBUG
-  Print "Llamando a BuscarORCIDEnAPI..."
+  Print "Llamando a BuscarORCIDFlexible..."
 
-  ' BUSCAR EN LA API DE ORCID
-  sOrcidSeleccionado = m_Orcid.BuscarORCIDEnAPI(sNombre, sApellido)
+  ' BUSCAR EN LA API DE ORCID CON ESTRATEGIAS FLEXIBLES
+  aDataOrcid = m_Orcid.BuscarORCIDFlexible(sNombre, sApellido)
 
-  ' DEBUG
-  Print "ORCID seleccionado: "; sOrcidSeleccionado
+  ' VERIFICAR SI HAY RESULTADOS
+  If aDataOrcid.Count = 0 Then
+    ' NO HAY RESULTADOS - EL USUARIO YA FUE INFORMADO EN BuscarORCIDFlexible
+    ' ENFOCAR EL CAMPO ORCID PARA QUE PUEDA INGRESAR MANUALMENTE
+    orcid.SetFocus()
+    Return
+  Endif
+
+  ' HAY RESULTADOS - ABRIR FORMULARIO PARA SELECCIONAR
+  Print "Abriendo formulario con "; aDataOrcid.Count; " resultados"
+  Dim fOrcid As New FOrcid(aDataOrcid)
+  fOrcid.ShowModal()
 
   ' SI SE SELECCIONÓ UN ORCID, APLICARLO AL TEXTBOX
-  If sOrcidSeleccionado <> "" Then
-    orcid.Text = sOrcidSeleccionado
+  If m_Orcid.sORCIDSeleccionado <> "" Then
+    orcid.Text = m_Orcid.sORCIDSeleccionado
     m_Sonido.sonar("Ok")
     ' VERIFICAR EL ORCID AUTOMÁTICAMENTE
     btnVisitarORDIC_Click()
