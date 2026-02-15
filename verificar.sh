@@ -175,14 +175,42 @@ echo -e "${AZUL}=== VERIFICANDO DEPENDENCIAS ===${NC}"
 
 # DEPENDENCIAS ACTUALES
 
-# RUNTIME Y BASES DE DATOS
-verificar_paquete "gambas3-runtime" "Gambas3 Runtime"
+# BASES DE DATOS
 verificar_paquete "mysql-server" "MySQL Server"
 
 # COMPONENTES DE GAMBAS
-verificar_paquete "gambas3-gb-db-mysql" "Gambas3 MySQL Component"
-verificar_paquete "gambas3-gb-xml" "Gambas3 XML Component"
-verificar_paquete "gambas3-gb-form" "Gambas3 Form Component"
+verificar_paquete "gambas3-runtime" "Gambas3 Runtime"
+verificar_paquete "gambas3-gb-complex" "gambas3-complex Component"
+verificar_paquete "gambas3-gb-crypt" "gambas3-gb-crypt Component"
+verificar_paquete "gambas3-gb-db2" "gambas3-gb-db2 Component"
+verificar_paquete "gambas3-gb-db2-mysql" "gambas3-gb-db2-mysql Component"
+verificar_paquete "gambas3-gb-db2-sqlite3" "gambas3-gb-db2-sqlite3 Component"
+verificar_paquete "gambas3-gb-dbus" "gambas3-gb-dbus Component"
+verificar_paquete "gambas3-gb-desktop" "gambas3-gb-desktop Component"
+verificar_paquete "gambas3-gb-eval" "gambas3-gb-eval Component"
+verificar_paquete "gambas3-gb-form" "gambas3-gb-form Component"
+verificar_paquete "gambas3-gb-form-dialog" "gambas3-gb-form-dialog Component"
+verificar_paquete "gambas3-gb-form-editor" "gambas3-gb-form-editor Component"
+verificar_paquete "gambas3-gb-form-htmlview" "gambas3-gb-form-htmlview Component"
+verificar_paquete "gambas3-gb-form-terminal" "gambas3-gb-form-terminal Component"
+verificar_paquete "gambas3-gb-highlight" "gambas3-gb-highlight Component"
+verificar_paquete "gambas3-gb-image" "gambas3-gb-image Component"
+verificar_paquete "gambas3-gb-markdown" "gambas3-gb-markdown Component"
+verificar_paquete "gambas3-gb-net" "gambas3-gb-net Component"
+verificar_paquete "gambas3-gb-net-curl" "gambas3-gb-net-curl Component"
+verificar_paquete "gambas3-gb-openssl" "gambas3-gb-openssl Component"
+verificar_paquete "gambas3-gb-pcre" "gambas3-gb-pcre Component"
+verificar_paquete "gambas3-gb-qt5" "gambas3-gb-qt5 Component"
+verificar_paquete "gambas3-gb-qt5-ext" "gambas3-gb-qt5-ext Component"
+verificar_paquete "gambas3-gb-sdl2-audio" "gambas3-gb-sdl2-audio Component"
+verificar_paquete "gambas3-gb-settings" "gambas3-gb-settings Component"
+verificar_paquete "gambas3-gb-term" "gambas3-gb-term Component"
+verificar_paquete "gambas3-gb-util" "gambas3-gb-util Component"
+verificar_paquete "gambas3-gb-util-web" "gambas3-gb-util-web Component"
+verificar_paquete "gambas3-gb-xml" "gambas3-gb-xml Component"
+verificar_paquete "gambas3-gb-xml-html" "gambas3-gb-xml-html Component"
+verificar_paquete "gambas3-gb-xml-rpc" "gambas3-gb-xml-rpc Component"
+verificar_paquete "gambas3-gb-xml-xslt" "gambas3-gb-xml-rpc Component"
 
 # JAVA (REQUERIDO PARA SAXON-HE)
 verificar_comando "java" "Java Runtime Environment"
@@ -196,7 +224,7 @@ verificar_paquete "texlive-full" "TeX Live (completo)"
 verificar_jar "/opt/Saxon-HE" "saxon-he-*.jar" "Saxon-HE XSLT Processor"
 
 # VALIDADORES XML
-verificar_comando "xmllint" "xmllint (validador XML)"
+verificar_comando "xmllint" "libxml2-utils (validador XML)"
 
 # ============================================================================
 # AQUÍ PUEDES AGREGAR MÁS DEPENDENCIAS SIGUIENDO LOS EJEMPLOS ANTERIORES
