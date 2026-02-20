@@ -1,5 +1,9 @@
 ' Gambas module file
 
+' ' IDs LEÍDOS DIRECTAMENTE DESDE LOS VALUEBOX DE FMain
+' Public idRevista As Integer = CInt(FMain.id_revista.Value)
+' Public idArticulo As Integer = CInt(FMain.id_articulo.Value)
+
 ' =====================================================
 ' FUNCIÓN: ExportarJATS
 ' DESCRIPCIÓN: EXPORTA REFERENCIAS BIBLIOGRÁFICAS A FORMATO XML-JATS
@@ -87,8 +91,7 @@ End
 ' PARÁMETROS: sTexto - TEXTO A ESCAPAR
 ' RETORNA: String - TEXTO ESCAPADO
 ' =====================================================
-
-Private Function EscaparXML(sTexto As String) As String
+Public Function EscaparXML(sTexto As String) As String
 
   Dim sResultado As String
 
@@ -1373,3 +1376,1312 @@ Private Function MapearTipoEditor(sTipoBibLaTeX As String) As String
   Return sTipo
 
 End
+
+' =====================================================
+' FUNCIÓN AUXILIAR PRIVADA: ConvertirMesANumero
+' DESCRIPCIÓN: CONVIERTE NOMBRE DE MES (ESPAÑOL O NÚMERO) A
+'              CADENA NUMÉRICA DE DOS DÍGITOS PARA USO EN XML-JATS
+' PARÁMETROS:
+'   sMes: Nombre del mes en español, abreviatura, o número
+' RETORNA:
+'   String con número de mes de dos dígitos ("01".."12")
+'   Cadena vacía si no se reconoce el valor
+' =====================================================
+Private Function ConvertirMesANumero(sMes As String) As String
+
+  Dim sLower As String
+
+  ' NORMALIZAR ENTRADA
+  sLower = Lower(TrimUTF8(sMes))
+
+  ' NOMBRES COMPLETOS EN ESPAÑOL
+  Select Case sLower
+    Case "enero", "january", "jan"
+      Return "01"
+    Case "febrero", "february", "feb"
+      Return "02"
+    Case "marzo", "march", "mar"
+      Return "03"
+    Case "abril", "april", "apr"
+      Return "04"
+    Case "mayo", "may"
+      Return "05"
+    Case "junio", "june", "jun"
+      Return "06"
+    Case "julio", "july", "jul"
+      Return "07"
+    Case "agosto", "august", "aug"
+      Return "08"
+    Case "septiembre", "setiembre", "september", "sep", "sept"
+      Return "09"
+    Case "octubre", "october", "oct"
+      Return "10"
+    Case "noviembre", "november", "nov"
+      Return "11"
+    Case "diciembre", "december", "dec"
+      Return "12"
+    Case Else
+      ' PUEDE SER YA UN NÚMERO ("1".."12" o "01".."12")
+      If Val(sMes) >= 1 And Val(sMes) <= 12 Then
+        ' FORZAR DOS DÍGITOS
+        Return Right("0" & CStr(Int(Val(sMes))), 2)
+      Endif
+      Return ""
+  End Select
+
+End Function
+
+' =====================================================
+' FUNCIÓN AUXILIAR PRIVADA: GenerarElementoFecha
+' DESCRIPCIÓN: GENERA UN ELEMENTO <date date-type="..."> PARA
+'              EL BLOQUE <history> DE JATS A PARTIR DE UNA
+'              FECHA EN FORMATO ISO YYYY-MM-DD
+' PARÁMETROS:
+'   sTipo:  Valor del atributo date-type (received, accepted, etc.)
+'   sFecha: Fecha en formato ISO "YYYY-MM-DD" o "YYYY-MM" o "YYYY"
+' RETORNA:
+'   String con el elemento XML completo (6 espacios de sangría)
+' =====================================================
+Private Function GenerarElementoFecha(sTipo As String, sFecha As String) As String
+
+  Dim sXML As String
+  Dim aPartes As String[]
+
+  sFecha = TrimUTF8(sFecha)
+  If sFecha = "" Then Return ""
+
+  aPartes = Split(sFecha, "-")
+
+  sXML = "      <date date-type=\"" & sTipo & "\">\n"
+
+  If aPartes.Count >= 1 Then
+    If TrimUTF8(aPartes[0]) <> "" Then
+      sXML &= "        <year>" & TrimUTF8(aPartes[0]) & "</year>\n"
+    Endif
+  Endif
+  If aPartes.Count >= 2 Then
+    If TrimUTF8(aPartes[1]) <> "" Then
+      sXML &= "        <month>" & TrimUTF8(aPartes[1]) & "</month>\n"
+    Endif
+  Endif
+  If aPartes.Count >= 3 Then
+    If TrimUTF8(aPartes[2]) <> "" Then
+      sXML &= "        <day>" & TrimUTF8(aPartes[2]) & "</day>\n"
+    Endif
+  Endif
+
+  sXML &= "      </date>\n"
+
+  Return sXML
+
+End Function
+
+' =====================================================
+' FUNCIÓN AUXILIAR PRIVADA: GenerarKwdGroup
+' DESCRIPCIÓN: GENERA UN BLOQUE <kwd-group> JATS A PARTIR DE
+'              UNA CADENA DE PALABRAS CLAVE SEPARADAS POR
+'              COMAS O PUNTO Y COMA
+' PARÁMETROS:
+'   sKwds:   Cadena con palabras clave separadas (ej: "paz, guerra; política")
+'   sIdioma: Código ISO de idioma (ej: "es", "en", "pt")
+' RETORNA:
+'   String con el bloque <kwd-group> completo (4 espacios de sangría base)
+' =====================================================
+Private Function GenerarKwdGroup(sKwds As String, sIdioma As String) As String
+
+  Dim sXML As String
+  Dim aKwds As String[]
+  Dim sKwd As String
+
+  ' PROTECCIÓN CONTRA VALOR VACÍO
+  sKwds = TrimUTF8(sKwds)
+  If sKwds = "" Then Return ""
+
+  ' NORMALIZAR SEPARADOR: convertir punto y coma a coma
+  sKwds = Replace(sKwds, ";", ",")
+
+  ' DIVIDIR POR COMA
+  aKwds = Split(sKwds, ",")
+
+  ' VERIFICAR QUE HAY AL MENOS UN ELEMENTO VÁLIDO
+  If aKwds.Count = 0 Then Return ""
+
+  ' ABRIR GRUPO
+  sXML = "    <kwd-group xml:lang=\"" & sIdioma & "\" kwd-group-type=\"author-generated\">\n"
+
+  ' GENERAR CADA PALABRA CLAVE
+  For Each sKwd In aKwds
+    sKwd = TrimUTF8(sKwd)
+    If sKwd <> "" Then
+      sXML &= "      <kwd>" & EscaparXML(sKwd) & "</kwd>\n"
+    Endif
+  Next
+
+  sXML &= "    </kwd-group>\n"
+
+  Return sXML
+
+End Function
+
+' =====================================================
+' FUNCIÓN: ObtenerIdRevista
+' DESCRIPCIÓN: OBTIENE EL id_revista CORRESPONDIENTE
+'              A UN PROYECTO (RELACIÓN 1 A 1)
+' PARÁMETROS:
+'   iIdProyecto: ID DEL PROYECTO A CONSULTAR
+' RETORNA:
+'   Integer > 0  si se encontró la revista
+'   0            si el proyecto no tiene revista asignada
+' =====================================================
+Public Function ObtenerIdRevista(iIdProyecto As Integer) As Integer
+
+  Dim hResult As Result
+
+  Try hResult = m_ConexionBD.mConn.Exec(
+    "SELECT id_revista FROM revistas_md WHERE id_proyecto = &1 LIMIT 1",
+    iIdProyecto)
+
+  If Error Then
+    Message.Error("Error al obtener la revista del proyecto:" & Chr(10) & Error.Text)
+    Return 0
+  Endif
+
+  If hResult.Available Then
+    Return hResult["id_revista"]
+  Endif
+
+  Return 0
+
+Catch
+  Message.Error("Error inesperado en ObtenerIdRevista:" & Chr(10) & Error.Text)
+  Return 0
+
+End Function
+
+' =====================================================
+' FUNCIÓN PRINCIPAL: GenerarFrontXML
+' =====================================================
+' DESCRIPCIÓN:
+'   Genera el fragmento <front> de JATS 1.4 para un artículo,
+'   consultando los datos de las tablas revistas_md, articulos,
+'   articulo_autor y autores.
+'   El archivo resultante se escribe en:
+'     /tmp/gbpublisher/{idArticulo}/front.xml
+'   y es consumido por la función de ensamblado del canónico.
+'
+' RETORNA:
+'   True  si el archivo front.xml se generó y existe en disco
+'   False si ocurrió cualquier error (muestra mensaje al usuario)
+'
+' DEPENDENCIAS:
+'   - EscaparXML()          en este mismo módulo (m_XML)
+'   - TrimUTF8()            en este mismo módulo (m_XML)
+'   - ConvertirMesANumero() en este mismo módulo (m_XML)
+'   - GenerarElementoFecha()en este mismo módulo (m_XML)
+'   - GenerarKwdGroup()     en este mismo módulo (m_XML)
+'   - m_ConexionBD.mConn    conexión activa a la base de datos
+' =====================================================
+Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) As Boolean
+
+  ' ====================================================
+  ' DECLARACIÓN DE TODAS LAS VARIABLES
+  ' ====================================================
+
+  Dim hRevista As Result
+  Dim hArticulo As Result
+  Dim hAutores As Result
+  Dim sXML As String
+  Dim sDirTmp As String
+  Dim sFilePath As String
+  Dim sNombreBase As String
+
+  ' VARIABLES PARA DATOS DE REVISTA
+  Dim sEditorial As String
+  Dim sLocPublisher As String
+
+  ' VARIABLES PARA DATOS DE ARTÍCULO
+  Dim sIdiomaPrincipal As String
+  Dim sIdiomaTrad As String
+  Dim sFechaPub As String
+  Dim aFechaPub As String[]
+  Dim sMesPub As String
+  Dim bTieneHistory As Boolean
+  Dim sCopyrightYear As String
+  Dim sCopyrightHolder As String
+  Dim sLicencia As String
+  Dim sUrlLicencia As String
+
+  ' VARIABLES PARA EL LOOP DE AUTORES
+  Dim sContribType As String
+  Dim sAfil As String
+  Dim sDept As String
+  Dim sCiudadAfil As String
+  Dim sPaisAfil As String
+  Dim sEmail As String
+
+  ' ' IDs LEÍDOS DIRECTAMENTE DESDE LOS VALUEBOX DE FMain
+  iIdRevista = CInt(FMain.id_revista.Value)
+  iIdArticulo = CInt(FMain.id_articulo.Value)
+
+  ' ====================================================
+  ' PASO 0: PREPARAR DIRECTORIO TEMPORAL
+  ' (ControlarCarpetas() garantiza que /tmp ya existe)
+  ' ====================================================
+  sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
+
+  ' ====================================================
+  ' PASO 1: CONSULTAR DATOS DE LA REVISTA
+  ' ====================================================
+  Try hRevista = m_ConexionBD.mConn.Exec("SELECT * FROM revistas_md WHERE id_revista = &1 LIMIT 1", iIdRevista)
+
+  If Error Then
+    Message.Error("Error al consultar la revista:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hRevista.Available Then
+    Message.Error("No se encontraron datos para la revista id=" & CStr(iIdRevista))
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 2: CONSULTAR DATOS DEL ARTÍCULO
+  ' LAS FECHAS SE PIDEN EN FORMATO ISO YYYY-MM-DD
+  ' MEDIANTE DATE_FORMAT() PARA EVITAR PROBLEMAS DE
+  ' LOCALIZACIÓN EN LA CONVERSIÓN DE GAMBAS
+  ' ====================================================
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT *, " &
+    "DATE_FORMAT(fecha_publicacion_completa, '%Y-%m-%d') AS fecha_pub_iso, " &
+    "DATE_FORMAT(fecha_recepcion,            '%Y-%m-%d') AS fecha_rec_iso, " &
+    "DATE_FORMAT(fecha_revision,             '%Y-%m-%d') AS fecha_rev_iso, " &
+    "DATE_FORMAT(fecha_aceptacion,           '%Y-%m-%d') AS fecha_ace_iso, " &
+    "DATE_FORMAT(fecha_publicacion_online,   '%Y-%m-%d') AS fecha_online_iso " &
+    "FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    iIdArticulo)
+
+  If Error Then
+    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hArticulo.Available Then
+    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
+    Return False
+  Endif
+
+  ' ====================================================
+  ' NOMBRE DEL ARCHIVO DE SALIDA
+  ' "a-01-revista-v19-n37" → "front-01-revista-v19-n37"
+  ' ====================================================
+  sNombreBase = TrimUTF8(hArticulo["nombre_archivo"])
+  sNombreBase = "front-" & Mid(sNombreBase, 3)
+  sFilePath = sDirTmp & "/" & sNombreBase & ".xml"
+
+  ' ====================================================
+  ' PASO 3: CONSULTAR AUTORES (JOIN articulo_autor + autores)
+  ' ====================================================
+  Try hAutores = m_ConexionBD.mConn.Exec(
+    "SELECT a.id_autor, a.apellidos, a.nombre, a.sufijo, a.orcid, " &
+    "a.afiliacion_actual, a.departamento, a.ciudad_afiliacion, a.pais_afiliacion, " &
+    "a.email_principal, " &
+    "aa.orden_autoria, aa.rol_autor, aa.es_autor_correspondencia, " &
+    "aa.afiliacion_momento, aa.departamento_momento, aa.ciudad_momento, " &
+    "aa.pais_momento, aa.email_momento " &
+    "FROM autores a " &
+    "INNER JOIN articulo_autor aa ON a.id_autor = aa.id_autor " &
+    "WHERE aa.id_articulo = &1 " &
+    "ORDER BY aa.orden_autoria ASC",
+    iIdArticulo)
+
+  If Error Then
+    Message.Error("Error al consultar autores del artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 4: DETERMINAR IDIOMA PRINCIPAL DEL ARTÍCULO
+  ' NORMALIZAR VALORES LIBRES A CÓDIGOS ISO 639-1
+  ' ====================================================
+  sIdiomaPrincipal = "es"
+  If Not IsNull(hArticulo["idioma_principal"]) Then
+    Select Case Lower(TrimUTF8(hArticulo["idioma_principal"]))
+      Case "es", "spa", "español", "spanish", "castellano"
+        sIdiomaPrincipal = "es"
+      Case "en", "eng", "inglés", "ingles", "english"
+        sIdiomaPrincipal = "en"
+      Case "pt", "por", "portugués", "portugues", "portuguese"
+        sIdiomaPrincipal = "pt"
+      Case "fr", "fra", "francés", "frances", "french"
+        sIdiomaPrincipal = "fr"
+      Case Else
+        If Len(TrimUTF8(hArticulo["idioma_principal"])) > 0 Then
+          sIdiomaPrincipal = TrimUTF8(hArticulo["idioma_principal"])
+        Endif
+    End Select
+  Endif
+
+  ' ====================================================
+  ' PASO 5: CONSTRUIR XML
+  ' ====================================================
+  sXML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+
+  ' DECLARAR NAMESPACE xlink NECESARIO PARA <license xlink:href>
+  sXML &= "<front xmlns:xlink=\"http://www.w3.org/1999/xlink\">\n"
+
+  ' --------------------------------------------------
+  ' JOURNAL-META
+  ' --------------------------------------------------
+  sXML &= "  <journal-meta>\n"
+
+  ' JOURNAL-ID: USAR ISSN ELECTRÓNICO COMO IDENTIFICADOR PRINCIPAL
+  If Not IsNull(hRevista["e_issn"]) Then
+    If Len(TrimUTF8(hRevista["e_issn"])) > 0 Then
+      sXML &= "    <journal-id journal-id-type=\"publisher-id\">" & EscaparXML(TrimUTF8(hRevista["e_issn"])) & "</journal-id>\n"
+    Endif
+  Endif
+
+  ' JOURNAL-TITLE-GROUP
+  sXML &= "    <journal-title-group>\n"
+  sXML &= "      <journal-title>" & EscaparXML(TrimUTF8(hRevista["titulo_revista"])) & "</journal-title>\n"
+  If Not IsNull(hRevista["titulo_abreviado"]) Then
+    If Len(TrimUTF8(hRevista["titulo_abreviado"])) > 0 Then
+      sXML &= "      <abbrev-journal-title abbrev-type=\"publisher\">" & EscaparXML(TrimUTF8(hRevista["titulo_abreviado"])) & "</abbrev-journal-title>\n"
+    Endif
+  Endif
+  sXML &= "    </journal-title-group>\n"
+
+  ' ISSN
+  If Not IsNull(hRevista["issn_impreso"]) Then
+    If Len(TrimUTF8(hRevista["issn_impreso"])) > 0 Then
+      sXML &= "    <issn pub-type=\"ppub\">" & EscaparXML(TrimUTF8(hRevista["issn_impreso"])) & "</issn>\n"
+    Endif
+  Endif
+  If Not IsNull(hRevista["e_issn"]) Then
+    If Len(TrimUTF8(hRevista["e_issn"])) > 0 Then
+      sXML &= "    <issn pub-type=\"epub\">" & EscaparXML(TrimUTF8(hRevista["e_issn"])) & "</issn>\n"
+    Endif
+  Endif
+
+  ' PUBLISHER
+  sXML &= "    <publisher>\n"
+
+  ' NOMBRE: PRIORIZAR editorial SOBRE institucion_editora
+  sEditorial = ""
+  If Not IsNull(hRevista["editorial"]) Then
+    If Len(TrimUTF8(hRevista["editorial"])) > 0 Then
+      sEditorial = TrimUTF8(hRevista["editorial"])
+    Endif
+  Endif
+  If sEditorial = "" Then
+    If Not IsNull(hRevista["institucion_editora"]) Then
+      If Len(TrimUTF8(hRevista["institucion_editora"])) > 0 Then
+        sEditorial = TrimUTF8(hRevista["institucion_editora"])
+      Endif
+    Endif
+  Endif
+  If sEditorial <> "" Then
+    sXML &= "      <publisher-name>" & EscaparXML(sEditorial) & "</publisher-name>\n"
+  Endif
+
+  ' UBICACIÓN: ciudad + país
+  sLocPublisher = ""
+  If Not IsNull(hRevista["ciudad_publicacion"]) Then
+    If Len(TrimUTF8(hRevista["ciudad_publicacion"])) > 0 Then
+      sLocPublisher = TrimUTF8(hRevista["ciudad_publicacion"])
+    Endif
+  Endif
+  If Not IsNull(hRevista["pais_publicacion"]) Then
+    If Len(TrimUTF8(hRevista["pais_publicacion"])) > 0 Then
+      If sLocPublisher <> "" Then
+        sLocPublisher &= ", " & TrimUTF8(hRevista["pais_publicacion"])
+      Else
+        sLocPublisher = TrimUTF8(hRevista["pais_publicacion"])
+      Endif
+    Endif
+  Endif
+  If sLocPublisher <> "" Then
+    sXML &= "      <publisher-loc>" & EscaparXML(sLocPublisher) & "</publisher-loc>\n"
+  Endif
+
+  sXML &= "    </publisher>\n"
+  sXML &= "  </journal-meta>\n"
+
+  ' --------------------------------------------------
+  ' ARTICLE-META
+  ' --------------------------------------------------
+  sXML &= "  <article-meta>\n"
+
+  ' IDENTIFICADORES DEL ARTÍCULO
+  If Not IsNull(hArticulo["doi"]) Then
+    If Len(TrimUTF8(hArticulo["doi"])) > 0 Then
+      sXML &= "    <article-id pub-id-type=\"doi\">" & EscaparXML(TrimUTF8(hArticulo["doi"])) & "</article-id>\n"
+    Endif
+  Endif
+  If Not IsNull(hArticulo["pmid"]) Then
+    If Len(TrimUTF8(hArticulo["pmid"])) > 0 Then
+      sXML &= "    <article-id pub-id-type=\"pmid\">" & EscaparXML(TrimUTF8(hArticulo["pmid"])) & "</article-id>\n"
+    Endif
+  Endif
+
+  ' CATEGORÍAS / TIPO DE ARTÍCULO
+  If Not IsNull(hArticulo["tipo_articulo"]) Then
+    If Len(TrimUTF8(hArticulo["tipo_articulo"])) > 0 Then
+      sXML &= "    <article-categories>\n"
+      sXML &= "      <subj-group subj-group-type=\"heading\">\n"
+      sXML &= "        <subject>" & EscaparXML(TrimUTF8(hArticulo["tipo_articulo"])) & "</subject>\n"
+      sXML &= "      </subj-group>\n"
+      sXML &= "    </article-categories>\n"
+    Endif
+  Endif
+
+  ' TITLE-GROUP
+  sXML &= "    <title-group>\n"
+  sXML &= "      <article-title>" & EscaparXML(TrimUTF8(hArticulo["titulo_articulo"])) & "</article-title>\n"
+
+  If Not IsNull(hArticulo["subtitulo"]) Then
+    If Len(TrimUTF8(hArticulo["subtitulo"])) > 0 Then
+      sXML &= "      <subtitle>" & EscaparXML(TrimUTF8(hArticulo["subtitulo"])) & "</subtitle>\n"
+    Endif
+  Endif
+
+  ' TÍTULO TRADUCIDO: IDIOMA DESTINO ES EL OPUESTO AL PRINCIPAL
+  If Not IsNull(hArticulo["titulo_traducido"]) Then
+    If Len(TrimUTF8(hArticulo["titulo_traducido"])) > 0 Then
+      Dim sIdiomaTraducido As String = ""
+      If Not IsNull(hArticulo["idioma_titulo_traducido"]) Then
+        sIdiomaTraducido = TrimUTF8(hArticulo["idioma_titulo_traducido"])
+      Endif
+      If sIdiomaTraducido <> "" Then
+        sXML &= "      <trans-title-group xml:lang=\"" & sIdiomaTraducido & "\">\n"
+        sXML &= "        <trans-title>" & EscaparXML(TrimUTF8(hArticulo["titulo_traducido"])) & "</trans-title>\n"
+        sXML &= "      </trans-title-group>\n"
+      Endif
+    Endif
+  Endif
+
+  sXML &= "    </title-group>\n"
+
+  ' --------------------------------------------------
+  ' CONTRIB-GROUP (autores)
+  ' --------------------------------------------------
+  If hAutores.Available Then
+    sXML &= "    <contrib-group>\n"
+
+    While hAutores.Available
+
+      ' DETERMINAR TIPO DE CONTRIBUCIÓN
+      sContribType = "author"
+      If Not IsNull(hAutores["rol_autor"]) Then
+        Select Case TrimUTF8(hAutores["rol_autor"])
+          Case "editor"
+            sContribType = "editor"
+          Case "traductor"
+            sContribType = "translator"
+          Case Else
+            sContribType = "author"
+        End Select
+      Endif
+
+      ' ABRIR <contrib> CON ATRIBUTO corresp SI CORRESPONDE
+      If CInt(hAutores["es_autor_correspondencia"]) = 1 Then
+        sXML &= "      <contrib contrib-type=\"" & sContribType & "\" corresp=\"yes\">\n"
+      Else
+        sXML &= "      <contrib contrib-type=\"" & sContribType & "\">\n"
+      Endif
+
+      ' NOMBRE DEL AUTOR
+      sXML &= "        <name>\n"
+      sXML &= "          <surname>" & EscaparXML(TrimUTF8(hAutores["apellidos"])) & "</surname>\n"
+      sXML &= "          <given-names>" & EscaparXML(TrimUTF8(hAutores["nombre"])) & "</given-names>\n"
+      If Not IsNull(hAutores["sufijo"]) Then
+        If Len(TrimUTF8(hAutores["sufijo"])) > 0 Then
+          sXML &= "          <suffix>" & EscaparXML(TrimUTF8(hAutores["sufijo"])) & "</suffix>\n"
+        Endif
+      Endif
+      sXML &= "        </name>\n"
+
+      ' ORCID
+      If Not IsNull(hAutores["orcid"]) Then
+        If Len(TrimUTF8(hAutores["orcid"])) > 0 Then
+          sXML &= "        <contrib-id contrib-id-type=\"orcid\" authenticated=\"true\">" &
+            "https://orcid.org/" & EscaparXML(TrimUTF8(hAutores["orcid"])) &
+            "</contrib-id>\n"
+        Endif
+      Endif
+
+      ' AFILIACIÓN: PRIORIZAR afiliacion_momento (DATO DEL MOMENTO DE PUBLICACIÓN)
+      ' FALLBACK A LOS DATOS ACTUALES DEL AUTOR
+      sAfil = ""
+      sDept = ""
+      sCiudadAfil = ""
+      sPaisAfil = ""
+
+      If Not IsNull(hAutores["afiliacion_momento"]) Then
+        If Len(TrimUTF8(hAutores["afiliacion_momento"])) > 0 Then
+          sAfil = TrimUTF8(hAutores["afiliacion_momento"])
+        Endif
+      Endif
+      If sAfil = "" Then
+        If Not IsNull(hAutores["afiliacion_actual"]) Then
+          If Len(TrimUTF8(hAutores["afiliacion_actual"])) > 0 Then
+            sAfil = TrimUTF8(hAutores["afiliacion_actual"])
+          Endif
+        Endif
+      Endif
+
+      If Not IsNull(hAutores["departamento_momento"]) Then
+        If Len(TrimUTF8(hAutores["departamento_momento"])) > 0 Then
+          sDept = TrimUTF8(hAutores["departamento_momento"])
+        Endif
+      Endif
+      If sDept = "" Then
+        If Not IsNull(hAutores["departamento"]) Then
+          If Len(TrimUTF8(hAutores["departamento"])) > 0 Then
+            sDept = TrimUTF8(hAutores["departamento"])
+          Endif
+        Endif
+      Endif
+
+      If Not IsNull(hAutores["ciudad_momento"]) Then
+        If Len(TrimUTF8(hAutores["ciudad_momento"])) > 0 Then
+          sCiudadAfil = TrimUTF8(hAutores["ciudad_momento"])
+        Endif
+      Endif
+      If sCiudadAfil = "" Then
+        If Not IsNull(hAutores["ciudad_afiliacion"]) Then
+          If Len(TrimUTF8(hAutores["ciudad_afiliacion"])) > 0 Then
+            sCiudadAfil = TrimUTF8(hAutores["ciudad_afiliacion"])
+          Endif
+        Endif
+      Endif
+
+      If Not IsNull(hAutores["pais_momento"]) Then
+        If Len(TrimUTF8(hAutores["pais_momento"])) > 0 Then
+          sPaisAfil = TrimUTF8(hAutores["pais_momento"])
+        Endif
+      Endif
+      If sPaisAfil = "" Then
+        If Not IsNull(hAutores["pais_afiliacion"]) Then
+          If Len(TrimUTF8(hAutores["pais_afiliacion"])) > 0 Then
+            sPaisAfil = TrimUTF8(hAutores["pais_afiliacion"])
+          Endif
+        Endif
+      Endif
+
+      ' GENERAR <aff> SOLO SI HAY AL MENOS UN DATO DE AFILIACIÓN
+      If sAfil <> "" Or sDept <> "" Or sCiudadAfil <> "" Or sPaisAfil <> "" Then
+        sXML &= "        <aff>\n"
+        If sDept <> "" Then
+          sXML &= "          <institution content-type=\"dept\">" & EscaparXML(sDept) & "</institution>,\n"
+        Endif
+        If sAfil <> "" Then
+          sXML &= "          <institution>" & EscaparXML(sAfil) & "</institution>"
+          If sCiudadAfil <> "" Or sPaisAfil <> "" Then
+            sXML &= ",\n"
+          Else
+            sXML &= "\n"
+          Endif
+        Endif
+        If sCiudadAfil <> "" Then
+          sXML &= "          <city>" & EscaparXML(sCiudadAfil) & "</city>"
+          If sPaisAfil <> "" Then
+            sXML &= ",\n"
+          Else
+            sXML &= "\n"
+          Endif
+        Endif
+        If sPaisAfil <> "" Then
+          sXML &= "          <country>" & EscaparXML(sPaisAfil) & "</country>\n"
+        Endif
+        sXML &= "        </aff>\n"
+      Endif
+
+      ' EMAIL: SOLO PARA EL AUTOR DE CORRESPONDENCIA
+      If CInt(hAutores["es_autor_correspondencia"]) = 1 Then
+        sEmail = ""
+        If Not IsNull(hAutores["email_momento"]) Then
+          If Len(TrimUTF8(hAutores["email_momento"])) > 0 Then
+            sEmail = TrimUTF8(hAutores["email_momento"])
+          Endif
+        Endif
+        If sEmail = "" Then
+          If Not IsNull(hAutores["email_principal"]) Then
+            If Len(TrimUTF8(hAutores["email_principal"])) > 0 Then
+              sEmail = TrimUTF8(hAutores["email_principal"])
+            Endif
+          Endif
+        Endif
+        If sEmail <> "" Then
+          sXML &= "        <email>" & EscaparXML(sEmail) & "</email>\n"
+        Endif
+      Endif
+
+      sXML &= "      </contrib>\n"
+      hAutores.MoveNext
+    Wend
+
+    sXML &= "    </contrib-group>\n"
+  Endif
+
+  ' AUTHOR-NOTES
+  If Not IsNull(hArticulo["author_notes"]) Then
+    If Len(TrimUTF8(hArticulo["author_notes"])) > 0 Then
+      sXML &= "    <author-notes>\n"
+      sXML &= "      <notes>" & EscaparXML(TrimUTF8(hArticulo["author_notes"])) & "</notes>\n"
+      sXML &= "    </author-notes>\n"
+    Endif
+  Endif
+
+  ' --------------------------------------------------
+  ' PUB-DATE
+  ' PRIORIDAD: fecha_pub_iso > ano_publicacion + mes_publicacion
+  ' --------------------------------------------------
+  sFechaPub = ""
+  If Not IsNull(hArticulo["fecha_pub_iso"]) Then
+    If Len(CStr(hArticulo["fecha_pub_iso"])) > 0 Then
+      sFechaPub = CStr(hArticulo["fecha_pub_iso"])
+    Endif
+  Endif
+
+  If sFechaPub <> "" Then
+    ' FORMATO ISO GARANTIZADO POR DATE_FORMAT(): YYYY-MM-DD
+    aFechaPub = Split(sFechaPub, "-")
+    sXML &= "    <pub-date pub-type=\"epub-ppub\">\n"
+    If aFechaPub.Count >= 1 Then
+      If TrimUTF8(aFechaPub[0]) <> "" Then
+        sXML &= "      <year>" & TrimUTF8(aFechaPub[0]) & "</year>\n"
+      Endif
+    Endif
+    If aFechaPub.Count >= 2 Then
+      If TrimUTF8(aFechaPub[1]) <> "" And TrimUTF8(aFechaPub[1]) <> "00" Then
+        sXML &= "      <month>" & TrimUTF8(aFechaPub[1]) & "</month>\n"
+      Endif
+    Endif
+    If aFechaPub.Count >= 3 Then
+      If TrimUTF8(aFechaPub[2]) <> "" And TrimUTF8(aFechaPub[2]) <> "00" Then
+        sXML &= "      <day>" & TrimUTF8(aFechaPub[2]) & "</day>\n"
+      Endif
+    Endif
+    sXML &= "    </pub-date>\n"
+
+  Else If Not IsNull(hArticulo["ano_publicacion"]) Then
+    If Len(CStr(hArticulo["ano_publicacion"])) > 0 Then
+      sXML &= "    <pub-date pub-type=\"epub-ppub\">\n"
+
+      ' MES: PRIORIZAR MES DEL ARTÍCULO, FALLBACK AL MES DE LA REVISTA
+      sMesPub = ""
+      If Not IsNull(hArticulo["mes_publicacion"]) Then
+        sMesPub = ConvertirMesANumero(TrimUTF8(hArticulo["mes_publicacion"]))
+      Endif
+      If sMesPub = "" Then
+        If Not IsNull(hRevista["mes_publicacion"]) Then
+          sMesPub = ConvertirMesANumero(TrimUTF8(hRevista["mes_publicacion"]))
+        Endif
+      Endif
+
+      If sMesPub <> "" Then
+        sXML &= "      <month>" & sMesPub & "</month>\n"
+      Endif
+      sXML &= "      <year>" & CStr(hArticulo["ano_publicacion"]) & "</year>\n"
+      sXML &= "    </pub-date>\n"
+    Endif
+  Endif
+
+  ' --------------------------------------------------
+  ' VOLUMEN, NÚMERO, SUPLEMENTO (DESDE revistas_md)
+  ' --------------------------------------------------
+  If Not IsNull(hRevista["volumen"]) Then
+    If Len(TrimUTF8(hRevista["volumen"])) > 0 Then
+      sXML &= "    <volume>" & EscaparXML(TrimUTF8(hRevista["volumen"])) & "</volume>\n"
+    Endif
+  Endif
+  If Not IsNull(hRevista["numero"]) Then
+    If Len(TrimUTF8(hRevista["numero"])) > 0 Then
+      sXML &= "    <issue>" & EscaparXML(TrimUTF8(hRevista["numero"])) & "</issue>\n"
+    Endif
+  Endif
+  If Not IsNull(hRevista["suplemento"]) Then
+    If Len(TrimUTF8(hRevista["suplemento"])) > 0 Then
+      sXML &= "    <supplement>" & EscaparXML(TrimUTF8(hRevista["suplemento"])) & "</supplement>\n"
+    Endif
+  Endif
+
+  ' --------------------------------------------------
+  ' PAGINACIÓN: elocation-id TIENE PRIORIDAD SOBRE fpage/lpage
+  ' --------------------------------------------------
+  If Not IsNull(hArticulo["elocation_id"]) Then
+    If Len(TrimUTF8(hArticulo["elocation_id"])) > 0 Then
+      sXML &= "    <elocation-id>" & EscaparXML(TrimUTF8(hArticulo["elocation_id"])) & "</elocation-id>\n"
+    Else
+      If Not IsNull(hArticulo["pagina_inicio"]) Then
+        If Len(TrimUTF8(hArticulo["pagina_inicio"])) > 0 Then
+          sXML &= "    <fpage>" & EscaparXML(TrimUTF8(hArticulo["pagina_inicio"])) & "</fpage>\n"
+        Endif
+      Endif
+      If Not IsNull(hArticulo["pagina_fin"]) Then
+        If Len(TrimUTF8(hArticulo["pagina_fin"])) > 0 Then
+          sXML &= "    <lpage>" & EscaparXML(TrimUTF8(hArticulo["pagina_fin"])) & "</lpage>\n"
+        Endif
+      Endif
+    Endif
+  Else
+    If Not IsNull(hArticulo["pagina_inicio"]) Then
+      If Len(TrimUTF8(hArticulo["pagina_inicio"])) > 0 Then
+        sXML &= "    <fpage>" & EscaparXML(TrimUTF8(hArticulo["pagina_inicio"])) & "</fpage>\n"
+      Endif
+    Endif
+    If Not IsNull(hArticulo["pagina_fin"]) Then
+      If Len(TrimUTF8(hArticulo["pagina_fin"])) > 0 Then
+        sXML &= "    <lpage>" & EscaparXML(TrimUTF8(hArticulo["pagina_fin"])) & "</lpage>\n"
+      Endif
+    Endif
+  Endif
+
+  ' --------------------------------------------------
+  ' HISTORY (FECHAS DEL PROCESO EDITORIAL)
+  ' USAR CAMPOS _iso GENERADOS POR DATE_FORMAT() EN LA CONSULTA
+  ' --------------------------------------------------
+  bTieneHistory = False
+  If Not IsNull(hArticulo["fecha_rec_iso"]) Then
+    If Len(CStr(hArticulo["fecha_rec_iso"])) > 0 Then bTieneHistory = True
+  Endif
+  If Not IsNull(hArticulo["fecha_rev_iso"]) Then
+    If Len(CStr(hArticulo["fecha_rev_iso"])) > 0 Then bTieneHistory = True
+  Endif
+  If Not IsNull(hArticulo["fecha_ace_iso"]) Then
+    If Len(CStr(hArticulo["fecha_ace_iso"])) > 0 Then bTieneHistory = True
+  Endif
+  If Not IsNull(hArticulo["fecha_online_iso"]) Then
+    If Len(CStr(hArticulo["fecha_online_iso"])) > 0 Then bTieneHistory = True
+  Endif
+
+  If bTieneHistory Then
+    sXML &= "    <history>\n"
+    If Not IsNull(hArticulo["fecha_rec_iso"]) Then
+      If Len(CStr(hArticulo["fecha_rec_iso"])) > 0 Then
+        sXML &= GenerarElementoFecha("received", CStr(hArticulo["fecha_rec_iso"]))
+      Endif
+    Endif
+    If Not IsNull(hArticulo["fecha_rev_iso"]) Then
+      If Len(CStr(hArticulo["fecha_rev_iso"])) > 0 Then
+        sXML &= GenerarElementoFecha("rev-recd", CStr(hArticulo["fecha_rev_iso"]))
+      Endif
+    Endif
+    If Not IsNull(hArticulo["fecha_ace_iso"]) Then
+      If Len(CStr(hArticulo["fecha_ace_iso"])) > 0 Then
+        sXML &= GenerarElementoFecha("accepted", CStr(hArticulo["fecha_ace_iso"]))
+      Endif
+    Endif
+    If Not IsNull(hArticulo["fecha_online_iso"]) Then
+      If Len(CStr(hArticulo["fecha_online_iso"])) > 0 Then
+        sXML &= GenerarElementoFecha("pub", CStr(hArticulo["fecha_online_iso"]))
+      Endif
+    Endif
+    sXML &= "    </history>\n"
+  Endif
+
+  ' --------------------------------------------------
+  ' PERMISSIONS (COPYRIGHT Y LICENCIA)
+  ' --------------------------------------------------
+  sXML &= "    <permissions>\n"
+
+  ' AÑO DE COPYRIGHT: PRIORIZAR CAMPO ESPECÍFICO, FALLBACK AL AÑO DE PUBLICACIÓN
+  sCopyrightYear = ""
+  If Not IsNull(hArticulo["copyright_year"]) Then
+    If Len(CStr(hArticulo["copyright_year"])) > 0 Then
+      sCopyrightYear = CStr(hArticulo["copyright_year"])
+    Endif
+  Endif
+  If sCopyrightYear = "" Then
+    If Not IsNull(hArticulo["ano_publicacion"]) Then
+      If Len(CStr(hArticulo["ano_publicacion"])) > 0 Then
+        sCopyrightYear = CStr(hArticulo["ano_publicacion"])
+      Endif
+    Endif
+  Endif
+  If sCopyrightYear <> "" Then
+    sXML &= "      <copyright-year>" & sCopyrightYear & "</copyright-year>\n"
+  Endif
+
+  ' TITULAR DEL COPYRIGHT
+  sCopyrightHolder = ""
+  If Not IsNull(hArticulo["copyright_holder"]) Then
+    If Len(TrimUTF8(hArticulo["copyright_holder"])) > 0 Then
+      sCopyrightHolder = TrimUTF8(hArticulo["copyright_holder"])
+    Endif
+  Endif
+  If sCopyrightHolder <> "" Then
+    sXML &= "      <copyright-holder>" & EscaparXML(sCopyrightHolder) & "</copyright-holder>\n"
+  Endif
+
+  ' LICENCIA: PRIORIZAR LA DEL ARTÍCULO SOBRE EL DEFECTO DE LA REVISTA
+  sLicencia = ""
+  sUrlLicencia = ""
+
+  If Not IsNull(hArticulo["licencia"]) Then
+    If Len(TrimUTF8(hArticulo["licencia"])) > 0 Then
+      sLicencia = TrimUTF8(hArticulo["licencia"])
+      If Not IsNull(hArticulo["url_licencia"]) Then
+        sUrlLicencia = TrimUTF8(hArticulo["url_licencia"])
+      Endif
+    Endif
+  Endif
+
+  If sLicencia = "" Then
+    If Not IsNull(hRevista["licencia_defecto"]) Then
+      If Len(TrimUTF8(hRevista["licencia_defecto"])) > 0 Then
+        sLicencia = TrimUTF8(hRevista["licencia_defecto"])
+        If Not IsNull(hRevista["url_licencia"]) Then
+          sUrlLicencia = TrimUTF8(hRevista["url_licencia"])
+        Endif
+      Endif
+    Endif
+  Endif
+
+  If sLicencia <> "" Then
+    If sUrlLicencia <> "" Then
+      sXML &= "      <license license-type=\"open-access\" xlink:href=\"" & EscaparXML(sUrlLicencia) & "\">\n"
+    Else
+      sXML &= "      <license license-type=\"open-access\">\n"
+    Endif
+    sXML &= "        <license-p>" & EscaparXML(sLicencia) & "</license-p>\n"
+    sXML &= "      </license>\n"
+  Endif
+
+  sXML &= "    </permissions>\n"
+
+  ' ABSTRACT - ITERAR SOBRE LOS TRES PARES
+  Dim i As Integer
+  Dim sResumen As String
+  Dim sIdiomaRes As String
+  Dim sTag As String
+
+  For i = 1 To 3
+    Select Case i
+      Case 1
+        sResumen = If(IsNull(hArticulo["resumen_1"]), "", TrimUTF8(hArticulo["resumen_1"]))
+        sIdiomaRes = If(IsNull(hArticulo["idioma_resumen_1"]), "", TrimUTF8(hArticulo["idioma_resumen_1"]))
+      Case 2
+        sResumen = If(IsNull(hArticulo["resumen_2"]), "", TrimUTF8(hArticulo["resumen_2"]))
+        sIdiomaRes = If(IsNull(hArticulo["idioma_resumen_2"]), "", TrimUTF8(hArticulo["idioma_resumen_2"]))
+      Case 3
+        sResumen = If(IsNull(hArticulo["resumen_3"]), "", TrimUTF8(hArticulo["resumen_3"]))
+        sIdiomaRes = If(IsNull(hArticulo["idioma_resumen_3"]), "", TrimUTF8(hArticulo["idioma_resumen_3"]))
+    End Select
+
+    If sResumen = "" Or sIdiomaRes = "" Then Continue
+
+    ' EL PRIMERO ES <abstract>, LOS SIGUIENTES <trans-abstract>
+    If i = 1 Then
+      sTag = "abstract"
+    Else
+      sTag = "trans-abstract"
+    Endif
+
+    sXML &= "    <" & sTag & " xml:lang=\"" & sIdiomaRes & "\">\n"
+    sXML &= "      <p>" & EscaparXML(sResumen) & "</p>\n"
+    sXML &= "    </" & sTag & ">\n"
+  Next
+
+  ' KWD-GROUP - ITERAR SOBRE LOS TRES PARES
+  Dim sKwd As String
+  Dim sIdiomaKwd As String
+
+  For i = 1 To 3
+    Select Case i
+      Case 1
+        sKwd = If(IsNull(hArticulo["palabras_clave_1"]), "", TrimUTF8(hArticulo["palabras_clave_1"]))
+        sIdiomaKwd = If(IsNull(hArticulo["idioma_kwd_1"]), "", TrimUTF8(hArticulo["idioma_kwd_1"]))
+      Case 2
+        sKwd = If(IsNull(hArticulo["palabras_clave_2"]), "", TrimUTF8(hArticulo["palabras_clave_2"]))
+        sIdiomaKwd = If(IsNull(hArticulo["idioma_kwd_2"]), "", TrimUTF8(hArticulo["idioma_kwd_2"]))
+      Case 3
+        sKwd = If(IsNull(hArticulo["palabras_clave_3"]), "", TrimUTF8(hArticulo["palabras_clave_3"]))
+        sIdiomaKwd = If(IsNull(hArticulo["idioma_kwd_3"]), "", TrimUTF8(hArticulo["idioma_kwd_3"]))
+    End Select
+
+    If sKwd = "" Or sIdiomaKwd = "" Then Continue
+
+    sXML &= GenerarKwdGroup(sKwd, sIdiomaKwd)
+  Next
+
+  ' --------------------------------------------------
+  ' FUNDING-GROUP
+  ' PRIORIDAD: funding_statement (TEXTO FORMAL) SOBRE financiamiento (LIBRE)
+  ' --------------------------------------------------
+  If Not IsNull(hArticulo["funding_statement"]) Then
+    If Len(TrimUTF8(hArticulo["funding_statement"])) > 0 Then
+      sXML &= "    <funding-group>\n"
+      sXML &= "      <funding-statement>" & EscaparXML(TrimUTF8(hArticulo["funding_statement"])) & "</funding-statement>\n"
+      sXML &= "    </funding-group>\n"
+    Else If Not IsNull(hArticulo["financiamiento"]) Then
+      If Len(TrimUTF8(hArticulo["financiamiento"])) > 0 Then
+        sXML &= "    <funding-group>\n"
+        sXML &= "      <funding-statement>" & EscaparXML(TrimUTF8(hArticulo["financiamiento"])) & "</funding-statement>\n"
+        sXML &= "    </funding-group>\n"
+      Endif
+    Endif
+  Endif
+
+  ' ====================================================
+  ' CERRAR ARTICLE-META Y FRONT
+  ' ====================================================
+  sXML &= "  </article-meta>\n"
+  sXML &= "</front>\n"
+
+  ' ====================================================
+  ' GUARDAR ARCHIVO
+  ' ====================================================
+  Try File.Save(sFilePath, sXML)
+  If Error Then
+    Message.Error("Error al guardar front.xml en " & sFilePath & ":" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return Exist(sFilePath)
+
+Catch
+  Message.Error("Error inesperado en GenerarFrontXML:" & Chr(10) &
+    Error.Text & Chr(10) &
+    "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
+  ' ====================================================
+  ' DECLARACIÓN DE TODAS LAS VARIABLES
+  ' ====================================================
+
+  Dim hArticulo As Result
+  Dim sNombreArchivo As String
+  Dim sNombreBase As String
+  Dim sRutaProyecto As String
+  Dim sRutaMD As String
+  Dim sDirTmp As String
+  Dim sFileBody As String
+  Dim iEspera As Integer
+
+  ' ' ID LEÍDO DIRECTAMENTE DESDE EL VALUEBOX DE FMain
+  iIdArticulo = CInt(FMain.id_articulo.Value)
+
+  ' ====================================================
+  ' PASO 1: OBTENER nombre_archivo DEL ARTÍCULO
+  ' ====================================================
+  Try hArticulo = m_ConexionBD.mConn.Exec("SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1", iIdArticulo)
+
+  If Error Then
+    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hArticulo.Available Then
+    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
+    Return False
+  Endif
+
+  sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
+
+  If sNombreArchivo = "" Then
+    Message.Error("El artículo id=" & CStr(iIdArticulo) & " no tiene nombre de archivo registrado.")
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 2: CONSTRUIR RUTAS
+  ' "a-01-revista-v19-n37" → "body-01-revista-v19-n37"
+  ' ====================================================
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sNombreBase = "body-" & Mid(sNombreArchivo, 3)
+  sDirTmp = sRutaProyecto & "/tmp"
+  sRutaMD = sRutaProyecto & "/articulos/" & sNombreArchivo & ".md"
+  sFileBody = sDirTmp & "/" & sNombreBase & ".xml"
+
+  ' ====================================================
+  ' PASO 3: VERIFICAR QUE EL ARCHIVO .md EXISTE
+  ' ====================================================
+  If Not Exist(sRutaMD) Then
+    Message.Error("No se encontró el archivo del artículo:" & Chr(10) & sRutaMD)
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 4: ELIMINAR FRAGMENTO ANTERIOR SI EXISTE
+  ' NECESARIO PARA QUE EL LOOP DE ESPERA NO SE CONFUNDA
+  ' CON UN ARCHIVO DE UNA EJECUCIÓN ANTERIOR
+  ' ====================================================
+  If Exist(sFileBody) Then
+    Shell "rm '" & sFileBody & "'" Wait
+  Endif
+
+  ' ====================================================
+  ' PASO 5: PANDOC → FRAGMENTO <body>
+  ' --output - ESCRIBE A STDOUT
+  ' { echo "<body>"; pandoc ...; echo "</body>"; } > archivo
+  ' ENVUELVE LA SALIDA DE PANDOC EN <body>...</body>
+  ' SIN ARCHIVO TEMPORAL INTERMEDIO
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "{ echo '<body xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">'; pandoc '" & sRutaMD & "' " &
+    "--from markdown --to jats --no-highlight --wrap=none " &
+    "--lua-filter ~/.gbpublisher/filters/cite-to-xref.lua --output -; " &
+    "echo '</body>'; } > '" & sFileBody & "'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 6: ESPERAR HASTA QUE EL ARCHIVO EXISTA
+  ' MÁXIMO 30 SEGUNDOS (300 x 0.1s)
+  ' Wait 0.1 NO BLOQUEA LA INTERFAZ: GAMBAS PROCESA
+  ' EVENTOS ENTRE CADA CICLO
+  ' ====================================================
+  iEspera = 0
+  While Not Exist(sFileBody) And iEspera < 300
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileBody) Then
+    Message.Error("Pandoc no generó el fragmento body en el tiempo esperado." & Chr(10) &
+      "Verifique que pandoc está instalado y el archivo .md es válido." & Chr(10) &
+      "Ruta MD: " & sRutaMD)
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 7: VERIFICAR QUE EL FRAGMENTO TIENE CONTENIDO
+  ' PEQUEÑA ESPERA ADICIONAL PARA QUE EL BUFFER DE
+  ' LA TERMINAL TERMINE DE ESCRIBIR EL ARCHIVO
+  ' ====================================================
+  Wait 0.3
+
+  If File.Load(sFileBody) = "" Then
+    Message.Error("El fragmento body generado está vacío." & Chr(10) &
+      "Verifique que el archivo .md tiene contenido válido.")
+    Return False
+  Endif
+
+  Return True
+
+Catch
+  Message.Error("Error inesperado en GenerarBodyXML:" & Chr(10) &
+    Error.Text & Chr(10) &
+    "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' =====================================================
+' FUNCIÓN: GenerarRefListXML
+' =====================================================
+' DESCRIPCIÓN:
+'   Genera el fragmento <ref-list> de JATS 1.4 para un
+'   artículo específico, filtrando solo las entradas del
+'   archivo .bib cuyo citekey aparece en el campo
+'   referencias_citadas de la tabla articulos.
+'
+'   A diferencia de ExportarJATSdesdeBIB(), esta función:
+'   - NO genera encabezado <?xml?> ni elemento raíz <root>
+'   - FILTRA las entradas por los citekeys del artículo
+'   - Guarda el resultado en:
+'     {raíz_proyecto}/tmp/reflist-{nombre_sin_prefijo}.xml
+'
+' RETORNA:
+'   True  si el archivo reflist-*.xml se generó y existe
+'   False si ocurrió cualquier error
+'
+' DEPENDENCIAS:
+'   - ParsearCampoBib()              en este módulo
+'   - GenerarElementCitationDesdeBib() en este módulo
+'   - EscaparXML()                   en este módulo
+'   - TrimUTF8()                     en este módulo
+'   - m_ConexionBD.mConn             conexión activa a BD
+'   - FMain.txtProyecto.Text         ruta al archivo .md del proyecto
+' =====================================================
+Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
+  ' ====================================================
+  ' DECLARACIÓN DE TODAS LAS VARIABLES
+  ' ====================================================
+
+  Dim hArticulo As Result
+  Dim sNombreArchivo As String
+  Dim sReferenciasCSV As String
+  Dim aCitekeys As String[]
+  Dim colCitekeys As New Collection
+
+  Dim sBibFile As String
+  Dim sBibContent As String
+  Dim sEntry As String
+  Dim aEntries As String[]
+  Dim sType As String
+  Dim sCitekey As String
+  Dim iPosLlave As Integer
+  Dim iPosComa As Integer
+
+  Dim dictEntries As New Collection
+  Dim dictTypes As New Collection
+
+  Dim sXML As String
+  Dim sDirTmp As String
+  Dim sNombreBase As String
+  Dim sFilePath As String
+
+  ' ' ID LEÍDO DIRECTAMENTE DESDE EL VALUEBOX DE FMain
+  ' Dim idArticulo As Integer = CInt(FMain.id_articulo.Value)
+  iIdArticulo = CInt(FMain.id_articulo.Value)
+
+  ' ====================================================
+  ' PASO 1: OBTENER nombre_archivo Y referencias_citadas
+  '         DEL ARTÍCULO
+  ' ====================================================
+  Try hArticulo = m_ConexionBD.mConn.Exec("SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1", iIdArticulo)
+
+  If Error Then
+    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hArticulo.Available Then
+    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
+    Return False
+  Endif
+
+  sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
+
+  ' VERIFICAR QUE EL CAMPO referencias_citadas TIENE CONTENIDO
+  If IsNull(hArticulo["referencias_citadas"]) Then
+    Message.Warning("El artículo '" & sNombreArchivo & "' no tiene referencias citadas registradas." & Chr(10) &
+      "Guarde el archivo .md para que se extraigan automáticamente.")
+    Return False
+  Endif
+
+  sReferenciasCSV = TrimUTF8(hArticulo["referencias_citadas"])
+
+  If sReferenciasCSV = "" Then
+    Message.Warning("El artículo '" & sNombreArchivo & "' no tiene referencias citadas registradas." & Chr(10) &
+      "Guarde el archivo .md para que se extraigan automáticamente.")
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 2: CONSTRUIR COLECCIÓN DE CITEKEYS ESPERADOS
+  '         referencias_citadas = "key1,key2,key3,..."
+  ' ====================================================
+  aCitekeys = Split(sReferenciasCSV, ",")
+
+  Dim sCk As String
+  For Each sCk In aCitekeys
+    sCk = TrimUTF8(sCk)
+    If sCk <> "" Then
+      colCitekeys[sCk] = True
+    Endif
+  Next
+
+  If colCitekeys.Count = 0 Then
+    Message.Warning("No se encontraron citekeys válidos en referencias_citadas.")
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 3: VERIFICAR QUE EXISTE EL ARCHIVO .bib
+  ' ====================================================
+  sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
+    File.BaseName(FMain.txtProyecto.Text) & ".bib"
+
+  If Not Exist(sBibFile) Then
+    Message.Error("No se encontró el archivo de referencias:" & Chr(10) & sBibFile & Chr(10) &
+      "Exporte primero las referencias desde la base de datos.")
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 4: LEER EL ARCHIVO .bib
+  ' ====================================================
+  Try sBibContent = File.Load(sBibFile)
+  If Error Then
+    Message.Error("Error al leer el archivo .bib:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' ====================================================
+  ' PASO 5: PRIMERA PASADA
+  '         ALMACENAR TODAS LAS ENTRADAS DEL BIB EN
+  '         DICCIONARIOS PARA RESOLVER CROSSREF
+  ' ====================================================
+  aEntries = Split(sBibContent, "@", "", True)
+
+  For Each sEntry In aEntries
+    If TrimUTF8(sEntry) = "" Then Continue
+
+    iPosLlave = InStr(sEntry, "{")
+    iPosComa = InStr(sEntry, ",")
+
+    If iPosLlave = 0 Or iPosComa = 0 Then Continue
+
+    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
+
+    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
+
+    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
+
+    If sCitekey = "" Then Continue
+
+    dictEntries[sCitekey] = sEntry
+    dictTypes[sCitekey] = sType
+  Next
+
+  ' ====================================================
+  ' PASO 6: SEGUNDA PASADA
+  '         GENERAR XML SOLO PARA LOS CITEKEYS DEL ARTÍCULO
+  '         RESPETANDO EL ORDEN DE referencias_citadas
+  ' ====================================================
+  sXML = "<ref-list>\n"
+
+  ' ITERAR SOBRE LOS CITEKEYS EN EL ORDEN EN QUE APARECEN
+  ' EN EL ARTÍCULO (orden de aCitekeys, no del .bib)
+  For Each sCk In aCitekeys
+    sCk = TrimUTF8(sCk)
+    If sCk = "" Then Continue
+
+    ' VERIFICAR QUE EL CITEKEY EXISTE EN EL BIB
+    If Not dictEntries.Exist(sCk) Then
+      ' REGISTRAR FALTANTE PERO CONTINUAR
+      sXML &= "  <!-- ADVERTENCIA: citekey '" & sCk & "' no encontrado en el .bib -->\n"
+      Continue
+    Endif
+
+    sEntry = dictEntries[sCk]
+    sType = dictTypes[sCk]
+
+    sXML &= "  <ref id=" & Chr(34) & "bib-" & EscaparXML(sCk) & Chr(34) & ">" & Chr(10)
+    sXML &= GenerarElementCitationDesdeBib(sEntry, sType, dictEntries, dictTypes)
+    sXML &= "  </ref>\n"
+  Next
+
+  sXML &= "</ref-list>\n"
+
+  ' ====================================================
+  ' PASO 7: DETERMINAR RUTA DE SALIDA
+  '         "a-01-revista-v19-n37" → "reflist-01-revista-v19-n37"
+  ' ====================================================
+  sNombreBase = "reflist-" & Mid(sNombreArchivo, 3)
+  sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
+  sFilePath = sDirTmp & "/" & sNombreBase & ".xml"
+
+  ' ====================================================
+  ' PASO 8: GUARDAR ARCHIVO
+  ' ====================================================
+  Try File.Save(sFilePath, sXML)
+  If Error Then
+    Message.Error("Error al guardar reflist xml en " & sFilePath & ":" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return Exist(sFilePath)
+
+Catch
+  Message.Error("Error inesperado en GenerarRefListXML:" & Chr(10) &
+    Error.Text & Chr(10) &
+    "Donde: " & Error.Where)
+  Return False
+
+End Function

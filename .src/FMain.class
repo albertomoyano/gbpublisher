@@ -1070,7 +1070,6 @@ Public Sub btnGuardarCambiosEditor_Click()
 
   ' INTENTAR GUARDAR
   Try File.Save(sRutaArchivoAbierto, txtEditorProyecto.Text)
-
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("Error al guardar el archivo: " & Error.Text)
@@ -1081,9 +1080,11 @@ Public Sub btnGuardarCambiosEditor_Click()
   ' ACTUALIZAR EL CONTENIDO ORIGINAL DESPUÉS DE GUARDAR
   sContenidoOriginal = txtEditorProyecto.Text
 
+  ' EXTRAER Y GUARDAR REFERENCIAS CITADAS EN LA BD (SOLO PARA ARTÍCULOS)
+  m_Bibtex.ExtraerYGuardarReferenciasDelArticulo(txtEditorProyecto.Text, sRutaArchivoAbierto)
+
   ' ACTUALIZAR EL LISTADO DE MARCAS
   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
-
   m_Sonido.sonar("Info")
   Message.Info("Archivo guardado correctamente.")
 
@@ -1091,6 +1092,38 @@ Public Sub btnGuardarCambiosEditor_Click()
   ActualizarContadorLineas()
 
 End
+
+' Public Sub btnGuardarCambiosEditor_Click()
+'
+'   If sRutaArchivoAbierto = "" Or Not Exist(sRutaArchivoAbierto) Then
+'     m_Sonido.sonar("Warning")
+'     Message.Warning("No hay un archivo válido cargado para guardar.")
+'     Return
+'   Endif
+'
+'   ' INTENTAR GUARDAR
+'   Try File.Save(sRutaArchivoAbierto, txtEditorProyecto.Text)
+'
+'   If Error Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("Error al guardar el archivo: " & Error.Text)
+'     Error.Clear
+'     Return
+'   Endif
+'
+'   ' ACTUALIZAR EL CONTENIDO ORIGINAL DESPUÉS DE GUARDAR
+'   sContenidoOriginal = txtEditorProyecto.Text
+'
+'   ' ACTUALIZAR EL LISTADO DE MARCAS
+'   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
+'
+'   m_Sonido.sonar("Info")
+'   Message.Info("Archivo guardado correctamente.")
+'
+'   ' ACTUALIZAMOS EL CONTEO DE LINEAS
+'   ActualizarContadorLineas()
+'
+' End
 
 Public Sub menuSalir_Click()
 
@@ -1346,7 +1379,7 @@ Public Sub AbrirRevistaMD()
 
   ' MOSTRAR EL ID DEL PROYECTO
   id_proyecto.Value = nuevoID
-
+  id_revista.Value = m_XML.ObtenerIdRevista(id_proyecto.Value)
   ' CARGAMOS LOS SCRIPTS PARA MANIPULAR CON LOS *.md
   m_InicioCierre.CargarScripts()
 
@@ -1411,6 +1444,9 @@ Public Sub AbrirRevistaMD()
 
   ' HABILITAMOS EL PANEL INFERIOR
   tbMostrarPanelInferior.Enabled = True
+
+  ' MOSTRAR EL ID DE REVISTA
+  id_revista.Value = m_XML.ObtenerIdRevista(id_proyecto.Value)
 
   ' ASEGURAMOS LA RUTA EN LA TERMINAL
   FMain.TerminalViewProyecto.Input("cd " & File.Dir(sRutaSeleccionada) & "\n" & "clear" & "\n")
@@ -1580,6 +1616,28 @@ Public Sub cmbArticulosRevista_Click()
 
   ' ACTUALIZAMOS EL CONTEO DE LINEAS
   ActualizarContadorLineas()
+
+  ' ====================================================
+  ' ACTUALIZAR id_articulo SEGÚN EL ARCHIVO SELECCIONADO
+  ' SOLO PARA ARCHIVOS DE LA CARPETA articulos/ (prefijo a-)
+  ' ====================================================
+  id_articulo.Value = 0
+
+  If Left(sArchivoSeleccionado, 10) = "articulos/" Then
+    Dim sNombreArchivo As String = File.BaseName(Mid(sArchivoSeleccionado, 11))
+    If Left(sNombreArchivo, 2) = "a-" Then
+      Dim hResult As Result
+      Try hResult = m_ConexionBD.mConn.Exec(
+        "SELECT id_articulo FROM articulos WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
+        sNombreArchivo,
+        id_proyecto.Value)
+      If Not Error Then
+        If hResult.Available Then
+          id_articulo.Value = hResult["id_articulo"]
+        Endif
+      Endif
+    Endif
+  Endif
 
 End
 
@@ -5334,3 +5392,201 @@ Public Sub btnAdminRevistas_Click()
   m_Sonido.sonar("Info")
 
 End
+
+Public Sub ExportarReferenciasXMLJATS()
+
+  ' NOS ASEGURAMOS DE QUE EXISTA EL ARCHIVO .BIB
+  m_Bibtex.ExportarBibTeX()
+
+  Dim resultado As Boolean
+  resultado = m_XML.ExportarJATSdesdeBIB()
+
+End
+
+' =====================================================
+' EVENTO: btnGenerarXMLcanonico_Click
+' DESCRIPCIÓN: ORQUESTADOR DEL FLUJO DE GENERACIÓN
+'              DEL XML CANÓNICO JATS 1.4
+'
+'   PASO 1.1 — GenerarFrontXML()   → tmp/front-*.xml
+'   PASO 1.2 — GenerarBodyXML()    → tmp/body-*.xml
+'   PASO 1.3 — GenerarRefListXML() → tmp/reflist-*.xml
+'   PASO 1.4 — Saxon-HE            → jats/c-*.xml
+' =====================================================
+Public Sub btnGenerarXMLcanonico_Click()
+
+  Dim sNombreArchivo As String
+  Dim sRutaProyecto As String
+  Dim sFileFront As String
+  Dim sFileBody As String
+  Dim sFileReflist As String
+  Dim sFileCanonico As String
+  Dim sXsl As String
+  Dim sSaxon As String
+  Dim hResult As Result
+  Dim iEspera As Integer
+  ' IDs LEÍDOS DIRECTAMENTE DESDE LOS VALUEBOX DE FMain
+  Dim idRevista As Integer = CInt(FMain.id_revista.Value)
+  Dim idArticulo As Integer = CInt(FMain.id_articulo.Value)
+
+  ' EXPORTAMOS .BIB Y GENERAMOS XML-JATS DE REFERENCIAS
+  ExportarReferenciasXMLJATS()
+
+  If idArticulo = 0 Then
+    Message.Warning("No hay ningún artículo seleccionado." & Chr(10) &
+      "Seleccione un archivo de la carpeta articulos/")
+    Return
+  Endif
+
+  ' VERIFICAR QUE SAXON-HE ESTÁ INSTALADO
+  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
+      "Instale Saxon-HE y cree el symlink:" & Chr(10) &
+      "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
+    Return
+  Endif
+
+  ' VERIFICAR QUE EL XSLT ESTÁ INSTALADO
+  sXsl = User.Home & "/.gbpublisher/xslt/ensamblar-canonico.xsl"
+  If Not Exist(sXsl) Then
+    Message.Error("XSLT de ensamblado no encontrado en:" & Chr(10) & sXsl)
+    Return
+  Endif
+
+  ' OBTENER nombre_archivo PARA CONSTRUIR TODOS LOS PATHS
+  Try hResult = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    idArticulo)
+
+  If Not hResult.Available Then
+    Message.Error("No se encontró el artículo id=" & CStr(idArticulo))
+    Return
+  Endif
+
+  sNombreArchivo = m_XML.TrimUTF8(hResult["nombre_archivo"])
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+
+  sFileFront = sRutaProyecto & "/tmp/front-" & Mid(sNombreArchivo, 3) & ".xml"
+  sFileBody = sRutaProyecto & "/tmp/body-" & Mid(sNombreArchivo, 3) & ".xml"
+  sFileReflist = sRutaProyecto & "/tmp/reflist-" & Mid(sNombreArchivo, 3) & ".xml"
+  sFileCanonico = sRutaProyecto & "/jats/c-" & Mid(sNombreArchivo, 3) & ".xml"
+
+  ' ====================================================
+  ' PASO 1.1: GENERAR front.xml
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.1: GENERANDO front ---'" & Chr(10))
+
+  If Not m_XML.GenerarFrontXML(idArticulo, idRevista) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló front.xml'" & Chr(10))
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: front generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "xmllint --noout '" & sFileFront & "' && echo 'front: bien formado' || echo 'front: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.2: GENERAR body.xml
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.2: GENERANDO body ---'" & Chr(10))
+
+  If Not m_XML.GenerarBodyXML(idArticulo) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló body.xml'" & Chr(10))
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: body generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "xmllint --noout '" & sFileBody & "' && echo 'body: bien formado' || echo 'body: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.3: GENERAR reflist.xml
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.3: GENERANDO reflist ---'" & Chr(10))
+
+  If Not m_XML.GenerarRefListXML(idArticulo) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló reflist.xml'" & Chr(10))
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: reflist generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "xmllint --noout '" & sFileReflist & "' && echo 'reflist: bien formado' || echo 'reflist: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.4: ENSAMBLAR CANÓNICO CON SAXON-HE
+  ' ELIMINAR CANÓNICO ANTERIOR SI EXISTE PARA QUE
+  ' EL LOOP DE ESPERA NO SE CONFUNDA
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.4: ENSAMBLANDO CANÓNICO ---'" & Chr(10))
+
+  If Exist(sFileCanonico) Then
+    Shell "rm '" & sFileCanonico & "'" Wait
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "java -jar " & sSaxon & " " &
+    "-s:'" & sFileFront & "' " &
+    "-xsl:'" & sXsl & "' " &
+    "-o:'" & sFileCanonico & "' " &
+    "body='" & sFileBody & "' " &
+    "reflist='" & sFileReflist & "'" & Chr(10))
+
+  ' ESPERAR HASTA QUE SAXON GENERE EL CANÓNICO (MÁXIMO 60 SEGUNDOS)
+  iEspera = 0
+  While Not Exist(sFileCanonico) And iEspera < 600
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileCanonico) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el canónico'" & Chr(10))
+    Message.Error("Saxon-HE no generó el archivo canónico en el tiempo esperado." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: canónico generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sFileCanonico & "'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "xmllint --noout '" & sFileCanonico & "' && echo 'canónico: bien formado' || echo 'canónico: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.5: VALIDACIÓN DTD JATS 1.4
+  ' --nonet EVITA QUE XMLLINT INTENTE CARGAR EL DTD
+  ' REMOTO DEL DOCTYPE (YA TENEMOS COPIA LOCAL)
+  ' EL WARNING DE "failed to load external entity"
+  ' ES ESPERADO E INOFENSIVO CON --nonet
+  ' ====================================================
+  Dim sDtd As String = User.Home & "/.gbpublisher/dtd/JATS-archivearticle1-4.dtd"
+
+  If Not Exist(sDtd) Then
+    FMain.TerminalViewProyecto.Input("echo 'AVISO: DTD local no encontrado, omitiendo validación'" & Chr(10))
+  Else
+    FMain.TerminalViewProyecto.Input("echo '--- PASO 1.5: VALIDANDO CONTRA DTD JATS 1.4 ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "xmllint --noout --nonet --dtdvalid '" & sDtd & "' " &
+      "'" & sFileCanonico & "' " &
+      "&& echo 'DTD válido: JATS 1.4 OK' " &
+      "|| echo 'DTD INVÁLIDO: revisar errores arriba'" & Chr(10))
+  Endif
+
+  ' ====================================================
+  ' VERIFICACIÓN FINAL: CONFIRMAR QUE EL CANÓNICO EXISTE
+  ' PEQUEÑA ESPERA PARA QUE LA TERMINAL TERMINE
+  ' ====================================================
+  Wait 2.0
+
+  If Exist(sFileCanonico) Then
+    m_Sonido.sonar("Info")
+    Message.Info("Proceso completado." & Chr(10) & Chr(10) &
+      "Archivo canónico JATS 1.4 generado:" & Chr(10) &
+      sFileCanonico)
+  Else
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proceso terminó pero no se encontró el archivo canónico." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+  Endif
+
+End Sub

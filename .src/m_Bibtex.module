@@ -1409,3 +1409,130 @@ Public Sub CargarDatosResultados(Grid As GridView, resultado As Result)
   Next
 
 End
+
+' =====================================================
+' FUNCIÓN: ExtraerYGuardarReferenciasDelArticulo
+' DESCRIPCIÓN: PARSEA EL CONTENIDO DEL ARCHIVO MD BUSCANDO
+'              CITEKEYS EN FORMATO [@citekey] Y LAS GUARDA
+'              EN EL CAMPO referencias_citadas DE LA TABLA articulos
+' PARÁMETROS:
+'   sContenidoMD   - CONTENIDO COMPLETO DEL ARCHIVO .md
+'   sRutaArchivo   - RUTA COMPLETA AL ARCHIVO .md ABIERTO
+'   m_ConexionBD   - OBJETO DE CONEXIÓN A LA BASE DE DATOS
+' RETORNA: Boolean - TRUE SI SE GUARDÓ EXITOSAMENTE
+' =====================================================
+Public Function ExtraerYGuardarReferenciasDelArticulo(sContenidoMD As String, sRutaArchivo As String) As Boolean
+
+  Dim sNombreArchivo As String
+  Dim iIdArticulo As Integer
+  Dim sLinea As String
+  Dim aLineas As String[]
+  Dim sCitekeys As String
+  Dim aEncontradas As New String[]
+  Dim colUnicas As New Collection
+  Dim iPos As Integer
+  Dim iPosFin As Integer
+  Dim sCitekey As String
+  Dim hResult As Result
+
+  ' EXTRAER NOMBRE DE ARCHIVO SIN EXTENSIÓN NI RUTA
+  sNombreArchivo = File.BaseName(sRutaArchivo)
+
+  ' VERIFICAR QUE ES UN ARTÍCULO (comienza con a-)
+  If Not (Left(sNombreArchivo, 2) = "a-") Then
+    ' NO ES UN ARTÍCULO, NO HAY NADA QUE HACER
+    Return True
+  Endif
+
+  ' BUSCAR id_articulo EN LA BD POR nombre_archivo
+  Try hResult = m_ConexionBD.mConn.Exec("SELECT id_articulo FROM articulos WHERE nombre_archivo = &1", sNombreArchivo)
+  If Error Then
+    Message.Error("Error al buscar el artículo en la base de datos:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If hResult.Count = 0 Then
+    Message.Warning("El archivo " & sNombreArchivo & " no tiene registro en la base de datos." & Chr(10) & "Las referencias citadas no se pudieron guardar.")
+    Return False
+  Endif
+
+  iIdArticulo = hResult!id_articulo
+
+  ' PARSEAR EL CONTENIDO MD BUSCANDO CITEKEYS EN FORMATO [@citekey]
+  ' UNA CITA PUEDE CONTENER MÚLTIPLES CITEKEYS: [@key1; @key2; @key3]
+  aLineas = Split(sContenidoMD, Chr(10))
+
+  For Each sLinea In aLineas
+
+    ' BUSCAR TODAS LAS OCURRENCIAS DE [@ EN LA LÍNEA
+    iPos = 1
+
+    While InStr(sLinea, "[@", iPos) > 0
+
+      iPos = InStr(sLinea, "[@", iPos)
+
+      ' BUSCAR EL CIERRE ]
+      iPosFin = InStr(sLinea, "]", iPos)
+      If iPosFin = 0 Then Break
+
+      ' EXTRAER EL CONTENIDO ENTRE [@ Y ]
+      Dim sBloque As String = Mid(sLinea, iPos + 1, iPosFin - iPos - 1)
+
+      ' EL BLOQUE PUEDE TENER MÚLTIPLES CITAS: @key1; @key2
+      Dim aPartes As String[] = Split(sBloque, ";")
+      Dim sParte As String
+
+      For Each sParte In aPartes
+        sParte = Trim(sParte)
+
+        ' VERIFICAR QUE EMPIEZA CON @
+        If Left(sParte, 1) = "@" Then
+          sCitekey = Trim(Mid(sParte, 2))
+
+          ' PUEDE TENER PREFIJO O SUFIJO DE PÁGINA: @key, p. 45
+          ' TOMAR SOLO HASTA EL PRIMER ESPACIO O COMA
+          Dim iPosEspacio As Integer = InStr(sCitekey, " ")
+          Dim iPosComa As Integer = InStr(sCitekey, ",")
+
+          If iPosEspacio > 0 And (iPosComa = 0 Or iPosEspacio < iPosComa) Then
+            sCitekey = Left(sCitekey, iPosEspacio - 1)
+          Else If iPosComa > 0 Then
+            sCitekey = Left(sCitekey, iPosComa - 1)
+          Endif
+
+          sCitekey = Trim(sCitekey)
+
+          ' GUARDAR SOLO SI NO ESTÁ DUPLICADA
+          If sCitekey <> "" And Not colUnicas.Exist(sCitekey) Then
+            colUnicas[sCitekey] = True
+            aEncontradas.Add(sCitekey)
+          Endif
+        Endif
+      Next
+
+      ' AVANZAR LA POSICIÓN PARA SEGUIR BUSCANDO EN LA MISMA LÍNEA
+      iPos = iPosFin + 1
+
+    Wend
+
+  Next
+
+  ' CONSTRUIR EL STRING SEPARADO POR COMAS
+  sCitekeys = aEncontradas.Join(",")
+
+  ' GUARDAR EN LA BD
+  Try m_ConexionBD.mConn.Exec("UPDATE articulos SET referencias_citadas = &1 WHERE id_articulo = &2",
+    sCitekeys,
+    iIdArticulo)
+  If Error Then
+    Message.Error("Error al guardar las referencias citadas:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+Catch
+  Message.Error("Error inesperado al procesar referencias:" & Chr(10) & Error.Text)
+  Return False
+
+End Function
