@@ -1,0 +1,285 @@
+' Gambas module file
+
+' ============================================================================
+' MÓDULO: m_ValidacionSchematron
+' DESCRIPCIÓN: VALIDACIÓN SCHEMATRON JATS4R PARA ARTÍCULOS ACADÉMICOS
+' PIPELINE: .sch → Saxon-HE (SchXslt) → SVRL → ANÁLISIS DE RESULTADOS
+' ESTÁNDAR: JATS4R (https://jats4r.org)
+' VERSIÓN SCHXSLT: 1.10.1
+' AUTOR: gbpublisher
+' ============================================================================
+
+' RUTAS BASE DE LA INFRAESTRUCTURA DE VALIDACIÓN
+Private Const SAXON_JAR As String = "/opt/Saxon-HE/saxon-he.jar"
+Private Const SCHXSLT_XSL As String = "~/.gbpublisher/schematron/schxslt-xslt/xslt/2.0/pipeline-for-svrl.xsl"
+Private Const SCH_DIR As String = "~/.gbpublisher/schematron/jats-schematrons/schematrons/1.0"
+Private Const SCH_PATRON As String = "*-errors.sch"
+
+' ============================================================================
+' FUNCIÓN PRINCIPAL: ValidarSchematronJATS
+' DESCRIPCIÓN: EJECUTA TODOS LOS SCHEMATRONS JATS4R CONTRA UN ARCHIVO XML
+'              Y DEVUELVE TRUE SI EL DOCUMENTO PASA TODAS LAS VALIDACIONES
+' PARÁMETROS:
+'   sArchivoXML  - RUTA ABSOLUTA AL ARCHIVO JATS XML A VALIDAR
+'   sDirectorioSalida - DIRECTORIO DONDE SE GUARDARÁN LOS REPORTES SVRL
+'   aErrores     - ARRAY (POR REFERENCIA) QUE RECIBIRÁ LOS MENSAJES DE ERROR
+' RETORNA: TRUE SI NO HAY ERRORES, FALSE SI HAY AL MENOS UN ERROR
+' ============================================================================
+Public Function ValidarSchematronJATS(sArchivoXML As String, sDirectorioSalida As String, aErrores As String[]) As Boolean
+
+  Dim bValido As Boolean
+  Dim aArchivosSchematron As String[]
+  Dim sArchivo As String
+  Dim sNombre As String
+  Dim sReporte As String
+  Dim sComando As String
+  Dim sSalida As String
+  Dim iErrores As Integer
+  Dim sMensaje As String
+
+  ' INICIALIZAR RESULTADO COMO VÁLIDO
+  bValido = True
+
+  ' VALIDAR QUE EL ARCHIVO XML EXISTE
+  If Not Exist(sArchivoXML) Then
+    aErrores.Add("ERROR FATAL: No se encuentra el archivo XML: " & sArchivoXML)
+    Return False
+  Endif
+
+  ' VALIDAR QUE LAS DEPENDENCIAS ESTÁN INSTALADAS
+  If Not EstaInstalado() Then
+    aErrores.Add("ERROR FATAL: Dependencias de validación no encontradas. " &
+      "Verificar Saxon-HE y SchXslt en " & SAXON_JAR)
+    Return False
+  Endif
+
+  ' CREAR DIRECTORIO DE REPORTES SI NO EXISTE
+  If Not Exist(sDirectorioSalida) Then
+    Try Mkdir sDirectorioSalida
+    If Error Then
+      aErrores.Add("ERROR: No se pudo crear directorio de reportes: " & sDirectorioSalida)
+      Return False
+    Endif
+  Endif
+
+  ' OBTENER LISTA DE SCHEMATRONS DISPONIBLES
+  aArchivosSchematron = ObtenerSchematrons()
+  If aArchivosSchematron.Count = 0 Then
+    aErrores.Add("ERROR: No se encontraron archivos .sch en: " & SCH_DIR)
+    Return False
+  Endif
+
+  ' EJECUTAR CADA SCHEMATRON
+  For Each sArchivo In aArchivosSchematron
+
+    ' EXTRAER NOMBRE SIN EXTENSIÓN PARA EL REPORTE
+    sNombre = File.BaseName(sArchivo)
+    sReporte = sDirectorioSalida &/ sNombre & "-svrl.xml"
+
+    ' CONSTRUIR COMANDO SAXON CON PARÁMETRO document= REQUERIDO POR PIPELINE-FOR-SVRL
+    sComando = "java -jar " & SAXON_JAR &
+      " -s:" & SCH_DIR &/ sArchivo &
+      " -xsl:" & SCHXSLT_XSL &
+      " document=" & sArchivoXML &
+      " -o:" & sReporte &
+      " 2>&1"
+
+    ' EJECUTAR VALIDACIÓN Y CAPTURAR SALIDA
+    Try Shell sComando Wait
+    If Error Then
+      aErrores.Add("ERROR en schematron [" & sNombre & "]: " & Error.Text)
+      bValido = False
+      Continue
+    Endif
+
+    ' ANALIZAR EL REPORTE SVRL GENERADO
+    iErrores = ContarErroresSVRL(sReporte, aErrores, sNombre)
+    If iErrores > 0 Then
+      bValido = False
+    Endif
+
+  Next
+
+  Return bValido
+
+End Function
+
+' ============================================================================
+' FUNCIÓN: ContarErroresSVRL
+' DESCRIPCIÓN: ANALIZA EL ARCHIVO SVRL Y EXTRAE LOS MENSAJES DE ERROR
+' ============================================================================
+Private Function ContarErroresSVRL(sArchivoSVRL As String, aErrores As String[], sContexto As String) As Integer
+
+  Dim hArchivo As File
+  Dim sLinea As String
+  Dim iContador As Integer
+  Dim sUbicacion As String
+  Dim sTest As String
+  Dim sMensaje As String
+
+  iContador = 0
+
+  If Not Exist(sArchivoSVRL) Then
+    aErrores.Add("[" & sContexto & "] No se generó reporte SVRL")
+    Return 1
+  Endif
+
+  hArchivo = Open sArchivoSVRL For Read
+  While Not Eof(hArchivo)
+    Line Input #hArchivo, sLinea
+    sLinea = Trim(sLinea)
+
+    If InStr(sLinea, "failed-assert") > 0 And InStr(sLinea, "</") = 0 Then
+      Inc iContador
+      sUbicacion = ExtraerAtributo(sLinea, "location")
+      sTest = ExtraerAtributo(sLinea, "test")
+    Endif
+
+    If InStr(sLinea, "<svrl:text>") > 0 Then
+      sMensaje = Replace(sLinea, "<svrl:text>", "")
+      sMensaje = Replace(sMensaje, "</svrl:text>", "")
+      sMensaje = Trim(sMensaje)
+      aErrores.Add("[" & sContexto & "] " &
+        "Ubicación: " & sUbicacion & " | " &
+        "Regla: " & sTest & " | " &
+        "Mensaje: " & sMensaje)
+    Endif
+  Wend
+
+  Return iContador
+
+Finally
+  ' CERRAR EL ARCHIVO SIEMPRE, HAYA O NO ERROR
+  If hArchivo Then Close #hArchivo
+
+Catch
+  aErrores.Add("[" & sContexto & "] Error leyendo reporte: " & Error.Text)
+  Return 1
+
+End Function
+
+' ============================================================================
+' FUNCIÓN: ObtenerSchematrons
+' DESCRIPCIÓN: DEVUELVE LA LISTA DE ARCHIVOS .sch DISPONIBLES
+' ============================================================================
+Private Function ObtenerSchematrons() As String[]
+
+  Dim aResultado As New String[]
+
+  Try aResultado = Dir(SCH_DIR, SCH_PATRON)
+  If Error Then Return aResultado
+
+  aResultado.Sort()
+  Return aResultado
+
+End Function
+
+' ============================================================================
+' FUNCIÓN: EstaInstalado
+' DESCRIPCIÓN: VERIFICA QUE LAS DEPENDENCIAS MÍNIMAS ESTÁN DISPONIBLES:
+'              - Saxon-HE JAR
+'              - SchXslt pipeline-for-svrl.xsl
+'              - Directorio de schematrons JATS4R
+' RETORNA: TRUE SI TODO ESTÁ EN ORDEN
+' ============================================================================
+Private Function EstaInstalado() As Boolean
+
+  If Not Exist(SAXON_JAR) Then Return False
+  If Not Exist(SCHXSLT_XSL) Then Return False
+  If Not Exist(SCH_DIR) Then Return False
+
+  Return True
+
+End Function
+
+' ============================================================================
+' FUNCIÓN: ExtraerAtributo
+' DESCRIPCIÓN: EXTRAE EL VALOR DE UN ATRIBUTO XML DE UNA CADENA DE TEXTO
+'              EJEMPLO: ExtraerAtributo('<foo bar="hola">', "bar") → "hola"
+' PARÁMETROS:
+'   sLinea    - LÍNEA DE TEXTO QUE CONTIENE EL ATRIBUTO
+'   sAtributo - NOMBRE DEL ATRIBUTO A EXTRAER
+' RETORNA: VALOR DEL ATRIBUTO O CADENA VACÍA SI NO SE ENCUENTRA
+' ============================================================================
+Private Function ExtraerAtributo(sLinea As String, sAtributo As String) As String
+
+  Dim iPosInicio As Integer
+  Dim iPosFin As Integer
+  Dim sBuscar As String
+
+  sBuscar = sAtributo & "=\""
+  iPosInicio = InStr(sLinea, sBuscar)
+  If iPosInicio = 0 Then Return ""
+
+  iPosInicio = iPosInicio + Len(sBuscar)
+  iPosFin = InStr(Mid(sLinea, iPosInicio), "\"")
+  If iPosFin = 0 Then Return ""
+
+  Return Mid(sLinea, iPosInicio, iPosFin - 1)
+
+End Function
+
+' ============================================================================
+' FUNCIÓN: GenerarResumenValidacion
+' DESCRIPCIÓN: CREA UN RESUMEN LEGIBLE PARA MOSTRAR EN LA INTERFAZ
+'              A PARTIR DE LOS ERRORES ACUMULADOS EN aErrores
+' PARÁMETROS:
+'   aErrores - ARRAY CON LOS MENSAJES DE ERROR RECOPILADOS
+'   bValido  - RESULTADO GENERAL DE LA VALIDACIÓN
+' RETORNA: STRING CON EL RESUMEN FORMATEADO PARA MOSTRAR AL USUARIO
+' ============================================================================
+Public Function GenerarResumenValidacion(aErrores As String[], bValido As Boolean) As String
+
+  Dim sResumen As String
+  Dim sError As String
+
+  If bValido Then
+    sResumen = "✓ Validación Schematron JATS4R completada sin errores." & Chr(10)
+    sResumen &= "  Todos los controles de calidad pasaron correctamente."
+  Else
+    sResumen = "✗ Se encontraron " & CStr(aErrores.Count) &
+      " problema(s) en la validación Schematron JATS4R:" & Chr(10) & Chr(10)
+    For Each sError In aErrores
+      sResumen &= "  • " & sError & Chr(10)
+    Next
+    sResumen &= Chr(10) & "Consulte los reportes SVRL para detalle completo."
+  Endif
+
+  Return sResumen
+
+End Function
+
+' ============================================================================
+' FUNCIÓN: EjecutarValidacionCompleta
+' DESCRIPCIÓN: FUNCIÓN DE ALTO NIVEL PARA USO DESDE LA INTERFAZ GRÁFICA
+'              INTEGRA VALIDACIÓN DTD (PASO 1.5) + SCHEMATRON (PASO 1.6)
+'              Y MUESTRA LOS RESULTADOS EN UN MESSAGEBOX
+' PARÁMETROS:
+'   sArchivoXML - RUTA AL ARCHIVO JATS XML CANÓNICO (PREFIJO c-)
+' RETORNA: TRUE SI EL DOCUMENTO PASA TODAS LAS VALIDACIONES
+' ============================================================================
+Public Function EjecutarValidacionCompleta(sArchivoXML As String) As Boolean
+
+  Dim aErrores As New String[]
+  Dim bValido As Boolean
+  Dim sDirectorioSVRL As String
+  Dim sResumen As String
+
+  ' DIRECTORIO DE REPORTES JUNTO AL ARCHIVO VALIDADO
+  sDirectorioSVRL = File.Dir(sArchivoXML) &/ "svrl-reports"
+
+  ' EJECUTAR VALIDACIÓN SCHEMATRON
+  bValido = ValidarSchematronJATS(sArchivoXML, sDirectorioSVRL, aErrores)
+
+  ' GENERAR Y MOSTRAR RESUMEN
+  sResumen = GenerarResumenValidacion(aErrores, bValido)
+
+  If bValido Then
+    Message.Info(sResumen)
+  Else
+    Message.Error(sResumen)
+  Endif
+
+  Return bValido
+
+End Function
