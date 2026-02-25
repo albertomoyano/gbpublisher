@@ -2497,11 +2497,42 @@ End Function
 '   - m_ConexionBD.mConn             conexión activa a BD
 '   - FMain.txtProyecto.Text         ruta al archivo .md del proyecto
 ' =====================================================
+' FUNCIÓN: GenerarRefListXML
+' =====================================================
+' DESCRIPCIÓN:
+'   Genera el fragmento <ref-list> de JATS 1.4 para un
+'   artículo específico, filtrando solo las entradas del
+'   archivo .bib cuyo citekey aparece en el campo
+'   referencias_citadas de la tabla articulos.
+'
+'   A diferencia de ExportarJATSdesdeBIB(), esta función:
+'   - NO genera encabezado <?xml?> ni elemento raíz <root>
+'   - FILTRA las entradas por los citekeys del artículo
+'   - Guarda el resultado en:
+'     {raíz_proyecto}/tmp/reflist-{nombre_sin_prefijo}.xml
+'
+'   ARTÍCULOS SIN REFERENCIAS (editorial, necrológica,
+'   carta, reseña, etc.): SE GENERA UN <ref-list/> VACÍO
+'   Y SE RETORNA True. EL XSLT DE ENSAMBLADO OMITIRÁ
+'   EL BLOQUE <back> AL NO ENCONTRAR ELEMENTOS <ref>.
+'
+' RETORNA:
+'   True  si el archivo reflist-*.xml se generó y existe
+'   False si ocurrió cualquier error
+'
+' DEPENDENCIAS:
+'   - ParsearCampoBib()                en este módulo
+'   - GenerarElementCitationDesdeBib() en este módulo
+'   - EscaparXML()                     en este módulo
+'   - TrimUTF8()                       en este módulo
+'   - m_ConexionBD.mConn               conexión activa a BD
+'   - FMain.txtProyecto.Text           ruta al archivo .md del proyecto
+' =====================================================
 Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
+
   ' ====================================================
   ' DECLARACIÓN DE TODAS LAS VARIABLES
   ' ====================================================
-
   Dim hArticulo As Result
   Dim sNombreArchivo As String
   Dim sReferenciasCSV As String
@@ -2524,16 +2555,18 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Dim sDirTmp As String
   Dim sNombreBase As String
   Dim sFilePath As String
+  Dim sCk As String
 
-  ' ' ID LEÍDO DIRECTAMENTE DESDE EL VALUEBOX DE FMain
-  ' Dim idArticulo As Integer = CInt(FMain.id_articulo.Value)
+  ' ID LEÍDO DIRECTAMENTE DESDE EL VALUEBOX DE FMain
   iIdArticulo = CInt(FMain.id_articulo.Value)
 
   ' ====================================================
   ' PASO 1: OBTENER nombre_archivo Y referencias_citadas
   '         DEL ARTÍCULO
   ' ====================================================
-  Try hArticulo = m_ConexionBD.mConn.Exec("SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1", iIdArticulo)
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    iIdArticulo)
 
   If Error Then
     Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
@@ -2546,29 +2579,37 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Endif
 
   sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
+  sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
+  sNombreBase = "reflist-" & Mid(sNombreArchivo, 3)
+  sFilePath = sDirTmp & "/" & sNombreBase & ".xml"
 
-  ' VERIFICAR QUE EL CAMPO referencias_citadas TIENE CONTENIDO
-  If IsNull(hArticulo["referencias_citadas"]) Then
-    Message.Warning("El artículo '" & sNombreArchivo & "' no tiene referencias citadas registradas." & Chr(10) &
-      "Guarde el archivo .md para que se extraigan automáticamente.")
-    Return False
+  ' ====================================================
+  ' PASO 2: VERIFICAR SI EL ARTÍCULO TIENE REFERENCIAS
+  '         ARTÍCULOS SIN REFERENCIAS (editorial, carta,
+  '         reseña, necrológica, etc.) → ref-list VACÍO
+  ' ====================================================
+  If IsNull(hArticulo["referencias_citadas"]) Or
+      TrimUTF8(hArticulo["referencias_citadas"]) = "" Then
+
+    ' GENERAR ref-list VACÍO Y RETORNAR SIN ERROR
+    ' EL XSLT OMITIRÁ <back> AL NO ENCONTRAR ELEMENTOS <ref>
+    Try File.Save(sFilePath, "<ref-list/>" & Chr(10))
+    If Error Then
+      Message.Error("Error al guardar reflist vacío en " & sFilePath & ":" & Chr(10) & Error.Text)
+      Return False
+    Endif
+    Return True
+
   Endif
 
   sReferenciasCSV = TrimUTF8(hArticulo["referencias_citadas"])
 
-  If sReferenciasCSV = "" Then
-    Message.Warning("El artículo '" & sNombreArchivo & "' no tiene referencias citadas registradas." & Chr(10) &
-      "Guarde el archivo .md para que se extraigan automáticamente.")
-    Return False
-  Endif
-
   ' ====================================================
-  ' PASO 2: CONSTRUIR COLECCIÓN DE CITEKEYS ESPERADOS
+  ' PASO 3: CONSTRUIR COLECCIÓN DE CITEKEYS ESPERADOS
   '         referencias_citadas = "key1,key2,key3,..."
   ' ====================================================
   aCitekeys = Split(sReferenciasCSV, ",")
 
-  Dim sCk As String
   For Each sCk In aCitekeys
     sCk = TrimUTF8(sCk)
     If sCk <> "" Then
@@ -2582,7 +2623,7 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Endif
 
   ' ====================================================
-  ' PASO 3: VERIFICAR QUE EXISTE EL ARCHIVO .bib
+  ' PASO 4: VERIFICAR QUE EXISTE EL ARCHIVO .bib
   ' ====================================================
   sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
     File.BaseName(FMain.txtProyecto.Text) & ".bib"
@@ -2594,7 +2635,7 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Endif
 
   ' ====================================================
-  ' PASO 4: LEER EL ARCHIVO .bib
+  ' PASO 5: LEER EL ARCHIVO .bib
   ' ====================================================
   Try sBibContent = File.Load(sBibFile)
   If Error Then
@@ -2603,7 +2644,7 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Endif
 
   ' ====================================================
-  ' PASO 5: PRIMERA PASADA
+  ' PASO 6: PRIMERA PASADA
   '         ALMACENAR TODAS LAS ENTRADAS DEL BIB EN
   '         DICCIONARIOS PARA RESOLVER CROSSREF
   ' ====================================================
@@ -2630,11 +2671,11 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Next
 
   ' ====================================================
-  ' PASO 6: SEGUNDA PASADA
+  ' PASO 7: SEGUNDA PASADA
   '         GENERAR XML SOLO PARA LOS CITEKEYS DEL ARTÍCULO
   '         RESPETANDO EL ORDEN DE referencias_citadas
   ' ====================================================
-  sXML = "<ref-list>\n"
+  sXML = "<ref-list>" & Chr(10)
 
   ' ITERAR SOBRE LOS CITEKEYS EN EL ORDEN EN QUE APARECEN
   ' EN EL ARTÍCULO (orden de aCitekeys, no del .bib)
@@ -2645,7 +2686,7 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
     ' VERIFICAR QUE EL CITEKEY EXISTE EN EL BIB
     If Not dictEntries.Exist(sCk) Then
       ' REGISTRAR FALTANTE PERO CONTINUAR
-      sXML &= "  <!-- ADVERTENCIA: citekey '" & sCk & "' no encontrado en el .bib -->\n"
+      sXML &= "  <!-- ADVERTENCIA: citekey '" & sCk & "' no encontrado en el .bib -->" & Chr(10)
       Continue
     Endif
 
@@ -2654,18 +2695,10 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
 
     sXML &= "  <ref id=" & Chr(34) & "bib-" & EscaparXML(sCk) & Chr(34) & ">" & Chr(10)
     sXML &= GenerarElementCitationDesdeBib(sEntry, sType, dictEntries, dictTypes)
-    sXML &= "  </ref>\n"
+    sXML &= "  </ref>" & Chr(10)
   Next
 
-  sXML &= "</ref-list>\n"
-
-  ' ====================================================
-  ' PASO 7: DETERMINAR RUTA DE SALIDA
-  '         "a-01-revista-v19-n37" → "reflist-01-revista-v19-n37"
-  ' ====================================================
-  sNombreBase = "reflist-" & Mid(sNombreArchivo, 3)
-  sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
-  sFilePath = sDirTmp & "/" & sNombreBase & ".xml"
+  sXML &= "</ref-list>" & Chr(10)
 
   ' ====================================================
   ' PASO 8: GUARDAR ARCHIVO

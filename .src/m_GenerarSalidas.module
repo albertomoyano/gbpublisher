@@ -1,15 +1,48 @@
 ' Gambas module file
 
-Private sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)            ' ruta del proyecto
-Private sArchivoProyecto As String = File.Name(FMain.txtProyecto.Text)        ' nombre del proyecto con extension
-Private sBaseNombreProyecto As String = File.BaseName(FMain.txtProyecto.Text) ' nombre del proyecto sin extension
-Private sSQL As String                                                        ' consultas varias a la bbdd
-Private rConsulta As Result                                                   ' resultados de las consultas
+' ====================================================
+' VARIABLES PRIVADAS DEL MÓDULO
+' ====================================================
+Private sRutaProyecto As String
+Private sArchivoProyecto As String
+Private sBaseNombreProyecto As String
+Private sNombreArchivo As String
+Private sFileCanonico As String
+Private sSQL As String
+Private rConsulta As Result
 Private sComando As String
+Private sSaxon As String
 
+' ====================================================
+' INICIALIZAR VARIABLES DESDE EL PROYECTO ACTIVO
+' SE LLAMA AL INICIO DE CADA FUNCIÓN PÚBLICA
+' ====================================================
+Private Sub InicializarVariables()
+
+  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sArchivoProyecto = File.Name(FMain.txtProyecto.Text)
+  sBaseNombreProyecto = File.BaseName(FMain.txtProyecto.Text)
+
+  ' OBTENER NOMBRE DEL ARCHIVO DEL ARTÍCULO ACTIVO EN EL EDITOR
+  ' id_articulo SE ACTUALIZA CADA VEZ QUE SE SELECCIONA UN ARTÍCULO EN EL COMBOBOX
+  sSQL = "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1"
+  rConsulta = m_ConexionBD.mConn.Exec(sSQL, FMain.id_articulo.Value)
+  sNombreArchivo = m_XML.TrimUTF8(rConsulta["nombre_archivo"])
+
+  ' CONSTRUIR RUTA DEL CANÓNICO DESDE EL NOMBRE DEL ARTÍCULO
+  ' nombre_archivo = "a-02-revistaAlgo-v01-n01"
+  ' sFileCanonico  = /ruta/proyecto/jats/c-02-revistaAlgo-v01-n01.xml
+  sFileCanonico = sRutaProyecto &/ "jats" &/ "c-" & Mid(sNombreArchivo, 3) & ".xml"
+
+End
+
+' ====================================================
+' GENERAR PDF DESDE LATEX
+' ====================================================
 Public Sub GenerarPDFdesdeLATEX()
 
-  ' Verificar que hay un proyecto abierto
+  ' VERIFICAR QUE HAY UN PROYECTO ABIERTO
   If FMain.txtProyecto.Text = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay ningún proyecto abierto")
@@ -19,7 +52,6 @@ Public Sub GenerarPDFdesdeLATEX()
   ' HACEMOS LAS EXPORTACIONES
   m_Json.ExportarMetadatosJSON2PDF()
   m_Bibtex.ExportarBibTeX()
-  ' m_FuncionesExportar.ExportarGlosarioTeX()
 
   ' ASIGNAMOS LAS VARIABLES
   Dim sPreambulo As String = File.Load(File.Dir(FMain.txtProyecto.Text) &/ "files/pdf-preambulo.tex")
@@ -44,9 +76,159 @@ Public Sub GenerarPDFdesdeLATEX()
   FMain.TerminalViewProyecto.Input(compilar & "\n")
   Wait 1
 
-  FMain.TerminalViewProyecto.Input("mv temporal.pdf" & " " & File.Dir(FMain.txtProyecto.Text) &/ "salidas/pdf/" & sBaseNombreProyecto & ".pdf" & "\n")
+  FMain.TerminalViewProyecto.Input("mv temporal.pdf" & " " &
+    File.Dir(FMain.txtProyecto.Text) &/ "salidas/pdf/" &
+    sBaseNombreProyecto & ".pdf" & "\n")
 
-  ' LIMPIAMOS LOS ARCHIOVS AUXILIARS
+  ' LIMPIAMOS LOS ARCHIVOS AUXILIARES
   m_FuncionesGenericas.BorrarArchivosAuxiliares
+
+End
+
+' ====================================================
+' GENERAR HTML PARA CONTROL (GITHUB PAGES → /docs)
+' ====================================================
+Public Sub GenerarHtmlControl()
+
+  ' VERIFICAR QUE HAY UN PROYECTO ABIERTO
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto")
+    Return
+  Endif
+
+  ' VERIFICAR QUE HAY UN ARTÍCULO SELECCIONADO EN EL EDITOR
+  If FMain.id_articulo.Value = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo seleccionado en el editor.")
+    Return
+  Endif
+
+  InicializarVariables()
+
+  ' VERIFICAR QUE EL CANÓNICO EXISTE
+  If Not Exist(sFileCanonico) Then
+    Message.Error("No se encontró el canónico:" & Chr(10) & sFileCanonico & Chr(10) &
+      "Generá primero el canónico (Paso 1.4).")
+    Return
+  Endif
+
+  ' CONSTRUIR NOMBRE HTML: c-02-....xml → h-02-....html
+  Dim sNombreHtml As String = "h" & Mid(File.Name(sFileCanonico), 2)
+  sNombreHtml = File.BaseName(sNombreHtml) & ".html"
+
+  ' RUTAS DE SALIDA Y XSLT
+  Dim sFileHtml As String = sRutaProyecto &/ "docs" &/ sNombreHtml
+  Dim sXslHtml As String = "/home/alberto/.gbpublisher/xslt/jats-to-html.xsl"
+  Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
+
+  FMain.TerminalViewProyecto.Input("echo '--- GENERANDO HTML PARA CONTROL ---'" & Chr(10))
+
+  ' ELIMINAR HTML ANTERIOR SI EXISTE
+  If Exist(sFileHtml) Then
+    Shell "rm '" & sFileHtml & "'" Wait
+  Endif
+
+  ' EJECUTAR SAXON CON ruta_media=../media PARA GITHUB PAGES
+  FMain.TerminalViewProyecto.Input(
+    "java -jar " & sSaxon & " " &
+    "-s:'" & sFileCanonico & "' " &
+    "-xsl:'" & sXslHtml & "' " &
+    "-o:'" & sFileHtml & "' " &
+    "imagen_tapa='" & sTapa & "' " &
+    "ruta_media='../media'" & Chr(10))
+
+  ' ESPERAR HASTA QUE SAXON GENERE EL HTML (MÁXIMO 60 SEGUNDOS)
+  Dim iEspera As Integer = 0
+  While Not Exist(sFileHtml) And iEspera < 600
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileHtml) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el HTML'" & Chr(10))
+    Message.Error("Saxon-HE no generó el HTML de control." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: HTML control generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sFileHtml & "'" & Chr(10))
+
+End
+
+' ====================================================
+' GENERAR HTML PARA OJS (→ /salidas/html)
+' ====================================================
+Public Sub GenerarHtmlOjs()
+
+  ' VERIFICAR QUE HAY UN PROYECTO ABIERTO
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto")
+    Return
+  Endif
+
+  ' VERIFICAR QUE HAY UN ARTÍCULO SELECCIONADO EN EL EDITOR
+  If FMain.id_articulo.Value = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo seleccionado en el editor.")
+    Return
+  Endif
+
+  InicializarVariables()
+
+  ' VERIFICAR QUE EL CANÓNICO EXISTE
+  If Not Exist(sFileCanonico) Then
+    Message.Error("No se encontró el canónico:" & Chr(10) & sFileCanonico & Chr(10) &
+      "Generá primero el canónico (Paso 1.4).")
+    Return
+  Endif
+
+  ' CONSTRUIR NOMBRE HTML: c-02-....xml → h-02-....html
+  Dim sNombreHtml As String = "h" & Mid(File.Name(sFileCanonico), 2)
+  sNombreHtml = File.BaseName(sNombreHtml) & ".html"
+
+  ' RUTAS DE SALIDA Y XSLT
+  Dim sFileHtml As String = sRutaProyecto &/ "salidas" &/ "html" &/ sNombreHtml
+  Dim sXslHtml As String = "/home/alberto/.gbpublisher/xslt/jats-to-html.xsl"
+  Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
+
+  FMain.TerminalViewProyecto.Input("echo '--- GENERANDO HTML PARA OJS ---'" & Chr(10))
+
+  ' CREAR CARPETA DE SALIDA SI NO EXISTE
+  If Not Exist(File.Dir(sFileHtml)) Then
+    Shell "mkdir -p '" & File.Dir(sFileHtml) & "'" Wait
+  Endif
+
+  ' ELIMINAR HTML ANTERIOR SI EXISTE
+  If Exist(sFileHtml) Then
+    Shell "rm '" & sFileHtml & "'" Wait
+  Endif
+
+  ' EJECUTAR SAXON CON ruta_media VACÍO PARA OJS
+  FMain.TerminalViewProyecto.Input(
+    "java -jar " & sSaxon & " " &
+    "-s:'" & sFileCanonico & "' " &
+    "-xsl:'" & sXslHtml & "' " &
+    "-o:'" & sFileHtml & "' " &
+    "imagen_tapa='" & sTapa & "'" & Chr(10))
+
+  ' ESPERAR HASTA QUE SAXON GENERE EL HTML (MÁXIMO 60 SEGUNDOS)
+  Dim iEspera As Integer = 0
+  While Not Exist(sFileHtml) And iEspera < 600
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileHtml) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el HTML'" & Chr(10))
+    Message.Error("Saxon-HE no generó el HTML para OJS." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: HTML OJS generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sFileHtml & "'" & Chr(10))
 
 End
