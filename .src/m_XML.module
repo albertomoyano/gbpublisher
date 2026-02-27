@@ -1619,13 +1619,13 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Dim sPaisAfil As String
   Dim sEmail As String
 
-  ' ' IDs LEÍDOS DIRECTAMENTE DESDE LOS VALUEBOX DE FMain
+  ' IDs LEÍDOS DIRECTAMENTE DESDE LOS VALUEBOX DE FMain
   iIdRevista = CInt(FMain.id_revista.Value)
   iIdArticulo = CInt(FMain.id_articulo.Value)
 
   ' ====================================================
   ' PASO 0: PREPARAR DIRECTORIO TEMPORAL
-  ' (ControlarCarpetas() garantiza que /tmp ya existe)
+  ' (ControlarCarpetas() GARANTIZA QUE /tmp YA EXISTE)
   ' ====================================================
   sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
 
@@ -1680,11 +1680,13 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
 
   ' ====================================================
   ' PASO 3: CONSULTAR AUTORES (JOIN articulo_autor + autores)
+  ' SE AGREGA email_correspondencia PARA USAR COMO EMAIL
+  ' DE CONTACTO PÚBLICO EN EL AUTOR DE CORRESPONDENCIA
   ' ====================================================
   Try hAutores = m_ConexionBD.mConn.Exec(
     "SELECT a.id_autor, a.apellidos, a.nombre, a.sufijo, a.orcid, " &
     "a.afiliacion_actual, a.departamento, a.ciudad_afiliacion, a.pais_afiliacion, " &
-    "a.email_principal, " &
+    "a.email_principal, a.email_correspondencia, " &
     "aa.orden_autoria, aa.rol_autor, aa.es_autor_correspondencia, " &
     "aa.afiliacion_momento, aa.departamento_momento, aa.ciudad_momento, " &
     "aa.pais_momento, aa.email_momento " &
@@ -1730,7 +1732,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   sXML &= "<front xmlns:xlink=\"http://www.w3.org/1999/xlink\">\n"
 
   ' --------------------------------------------------
-  ' JOURNAL-META
+  ' PASO 5.1: JOURNAL-META
   ' --------------------------------------------------
   sXML &= "  <journal-meta>\n"
 
@@ -1808,7 +1810,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   sXML &= "  </journal-meta>\n"
 
   ' --------------------------------------------------
-  ' ARTICLE-META
+  ' PASO 5.2: ARTICLE-META
   ' --------------------------------------------------
   sXML &= "  <article-meta>\n"
 
@@ -1863,7 +1865,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   sXML &= "    </title-group>\n"
 
   ' --------------------------------------------------
-  ' CONTRIB-GROUP (autores)
+  ' PASO 5.3: CONTRIB-GROUP (autores)
   ' --------------------------------------------------
   If hAutores.Available Then
     sXML &= "    <contrib-group>\n"
@@ -1883,8 +1885,8 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
         End Select
       Endif
 
-      ' ABRIR <contrib> CON ATRIBUTO corresp SI CORRESPONDE
-      If CInt(hAutores["es_autor_correspondencia"]) = 1 Then
+      ' ABRIR <contrib> — AGREGAR corresp="yes" SI ES AUTOR DE CORRESPONDENCIA
+      If hAutores["es_autor_correspondencia"] = True Then
         sXML &= "      <contrib contrib-type=\"" & sContribType & "\" corresp=\"yes\">\n"
       Else
         sXML &= "      <contrib contrib-type=\"" & sContribType & "\">\n"
@@ -1910,8 +1912,11 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
         Endif
       Endif
 
-      ' AFILIACIÓN: PRIORIZAR afiliacion_momento (DATO DEL MOMENTO DE PUBLICACIÓN)
-      ' FALLBACK A LOS DATOS ACTUALES DEL AUTOR
+      ' --------------------------------------------------
+      ' AFILIACIÓN
+      ' PRIORIDAD: _momento (DATO DEL MOMENTO DE PUBLICACIÓN)
+      '            → DATO ACTUAL DEL AUTOR (FALLBACK)
+      ' --------------------------------------------------
       sAfil = ""
       sDept = ""
       sCiudadAfil = ""
@@ -1997,23 +2002,38 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
         sXML &= "        </aff>\n"
       Endif
 
-      ' EMAIL: PARA TODOS LOS AUTORES
-      ' PRIORIDAD: email_momento (DEL MOMENTO DE PUBLICACIÓN) → email_principal
+      ' --------------------------------------------------
+      ' EMAIL
+      ' SOLO SE GENERA PARA EL AUTOR DE CORRESPONDENCIA
+      ' PRIORIDAD:
+      '   1. email_correspondencia (CAMPO ESPECÍFICO PARA CONTACTO PÚBLICO)
+      '   2. email_momento         (EMAIL VIGENTE AL MOMENTO DE PUBLICACIÓN)
+      '   3. email_principal       (EMAIL GENERAL DEL AUTOR, FALLBACK FINAL)
+      ' --------------------------------------------------
       sEmail = ""
-      If Not IsNull(hAutores["email_momento"]) Then
-        If Len(TrimUTF8(hAutores["email_momento"])) > 0 Then
-          sEmail = TrimUTF8(hAutores["email_momento"])
-        Endif
-      Endif
-      If sEmail = "" Then
-        If Not IsNull(hAutores["email_principal"]) Then
-          If Len(TrimUTF8(hAutores["email_principal"])) > 0 Then
-            sEmail = TrimUTF8(hAutores["email_principal"])
+      If hAutores["es_autor_correspondencia"] = True Then
+        If Not IsNull(hAutores["email_correspondencia"]) Then
+          If Len(TrimUTF8(hAutores["email_correspondencia"])) > 0 Then
+            sEmail = TrimUTF8(hAutores["email_correspondencia"])
           Endif
         Endif
-      Endif
-      If sEmail <> "" Then
-        sXML &= "        <email>" & EscaparXML(sEmail) & "</email>\n"
+        If sEmail = "" Then
+          If Not IsNull(hAutores["email_momento"]) Then
+            If Len(TrimUTF8(hAutores["email_momento"])) > 0 Then
+              sEmail = TrimUTF8(hAutores["email_momento"])
+            Endif
+          Endif
+        Endif
+        If sEmail = "" Then
+          If Not IsNull(hAutores["email_principal"]) Then
+            If Len(TrimUTF8(hAutores["email_principal"])) > 0 Then
+              sEmail = TrimUTF8(hAutores["email_principal"])
+            Endif
+          Endif
+        Endif
+        If sEmail <> "" Then
+          sXML &= "        <email>" & EscaparXML(sEmail) & "</email>\n"
+        Endif
       Endif
 
       sXML &= "      </contrib>\n"
@@ -2033,7 +2053,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Endif
 
   ' --------------------------------------------------
-  ' PUB-DATE
+  ' PASO 5.4: PUB-DATE
   ' PRIORIDAD: fecha_pub_iso > ano_publicacion + mes_publicacion
   ' --------------------------------------------------
   sFechaPub = ""
@@ -2088,7 +2108,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Endif
 
   ' --------------------------------------------------
-  ' VOLUMEN, NÚMERO, SUPLEMENTO (DESDE revistas_md)
+  ' PASO 5.5: VOLUMEN, NÚMERO, SUPLEMENTO (DESDE revistas_md)
   ' --------------------------------------------------
   If Not IsNull(hRevista["volumen"]) Then
     If Len(TrimUTF8(hRevista["volumen"])) > 0 Then
@@ -2107,7 +2127,8 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Endif
 
   ' --------------------------------------------------
-  ' PAGINACIÓN: elocation-id TIENE PRIORIDAD SOBRE fpage/lpage
+  ' PASO 5.6: PAGINACIÓN
+  ' elocation-id TIENE PRIORIDAD SOBRE fpage/lpage
   ' --------------------------------------------------
   If Not IsNull(hArticulo["elocation_id"]) Then
     If Len(TrimUTF8(hArticulo["elocation_id"])) > 0 Then
@@ -2138,7 +2159,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Endif
 
   ' --------------------------------------------------
-  ' HISTORY (FECHAS DEL PROCESO EDITORIAL)
+  ' PASO 5.7: HISTORY (FECHAS DEL PROCESO EDITORIAL)
   ' USAR CAMPOS _iso GENERADOS POR DATE_FORMAT() EN LA CONSULTA
   ' --------------------------------------------------
   bTieneHistory = False
@@ -2181,7 +2202,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Endif
 
   ' --------------------------------------------------
-  ' PERMISSIONS (COPYRIGHT Y LICENCIA)
+  ' PASO 5.8: PERMISSIONS (COPYRIGHT Y LICENCIA)
   ' --------------------------------------------------
   sXML &= "    <permissions>\n"
 
@@ -2250,7 +2271,9 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
 
   sXML &= "    </permissions>\n"
 
-  ' ABSTRACT - ITERAR SOBRE LOS TRES PARES
+  ' --------------------------------------------------
+  ' PASO 5.9: ABSTRACT — ITERAR SOBRE LOS TRES PARES
+  ' --------------------------------------------------
   Dim i As Integer
   Dim sResumen As String
   Dim sIdiomaRes As String
@@ -2283,7 +2306,9 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
     sXML &= "    </" & sTag & ">\n"
   Next
 
-  ' KWD-GROUP - ITERAR SOBRE LOS TRES PARES
+  ' --------------------------------------------------
+  ' PASO 5.10: KWD-GROUP — ITERAR SOBRE LOS TRES PARES
+  ' --------------------------------------------------
   Dim sKwd As String
   Dim sIdiomaKwd As String
 
@@ -2306,7 +2331,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Next
 
   ' --------------------------------------------------
-  ' FUNDING-GROUP
+  ' PASO 5.11: FUNDING-GROUP
   ' PRIORIDAD: funding_statement (TEXTO FORMAL) SOBRE financiamiento (LIBRE)
   ' --------------------------------------------------
   If Not IsNull(hArticulo["funding_statement"]) Then
@@ -2323,14 +2348,26 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
     Endif
   Endif
 
+  ' --------------------------------------------------
+  ' PASO 5.12: CUSTOM-META — IDIOMA PRINCIPAL DEL ARTÍCULO
+  ' USADO POR ensamblar-canonico.xsl CUANDO NO HAY <abstract>
+  ' (editoriales, reseñas, obituarios, etc.)
+  ' --------------------------------------------------
+  sXML &= "    <custom-meta-group>\n"
+  sXML &= "      <custom-meta>\n"
+  sXML &= "        <meta-name>xml-lang</meta-name>\n"
+  sXML &= "        <meta-value>" & sIdiomaPrincipal & "</meta-value>\n"
+  sXML &= "      </custom-meta>\n"
+  sXML &= "    </custom-meta-group>\n"
+
   ' ====================================================
-  ' CERRAR ARTICLE-META Y FRONT
+  ' PASO 6: CERRAR ARTICLE-META Y FRONT
   ' ====================================================
   sXML &= "  </article-meta>\n"
   sXML &= "</front>\n"
 
   ' ====================================================
-  ' GUARDAR ARCHIVO
+  ' PASO 7: GUARDAR ARCHIVO EN /tmp
   ' ====================================================
   Try File.Save(sFilePath, sXML)
   If Error Then
