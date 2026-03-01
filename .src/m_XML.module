@@ -1826,6 +1826,17 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
     Endif
   Endif
 
+  ' --------------------------------------------------
+  ' PASO 5.2b: RELATED-ARTICLE (ARTÍCULO RELACIONADO)
+  ' SE INSERTA DESPUÉS DE LOS <article-id> Y ANTES DE
+  ' <article-categories>, CONFORME A JATS 1.4
+  ' --------------------------------------------------
+  sXML &= GenerarRelatedArticle(hArticulo)
+
+  ' CATEGORÍAS / TIPO DE ARTÍCULO
+  If Not IsNull(hArticulo["tipo_articulo"]) Then
+
+  Endif
   ' CATEGORÍAS / TIPO DE ARTÍCULO
   If Not IsNull(hArticulo["tipo_articulo"]) Then
     If Len(TrimUTF8(hArticulo["tipo_articulo"])) > 0 Then
@@ -2777,3 +2788,472 @@ Public Sub MostrarArchivosDOAJ()
   Endif
 
 End
+
+' =====================================================
+' FUNCIÓN PRIVADA: GenerarRelatedArticle
+' DESCRIPCIÓN: GENERA EL ELEMENTO <related-article> DE
+'              JATS 1.4 A PARTIR DE LOS CAMPOS related_article_*
+'              DE LA TABLA articulos.
+'              EL ELEMENTO VA DENTRO DE <article-meta>,
+'              DESPUÉS DE LOS <article-id> Y ANTES DE
+'              <article-categories>.
+' PARÁMETROS:
+'   hArticulo: RESULT CON LOS DATOS DEL ARTÍCULO (SELECT *)
+' RETORNA:
+'   String CON EL ELEMENTO XML (VACÍO SI NO HAY DATO)
+' =====================================================
+Private Function GenerarRelatedArticle(hArticulo As Result) As String
+
+  Dim sType As String
+  Dim sDoi As String
+  Dim sJournal As String
+  Dim sAnio As String
+  Dim sVolume As String
+  Dim sIssue As String
+  Dim sFpage As String
+  Dim sLpage As String
+  Dim sXML As String
+  Dim sAtributos As String
+
+  ' LEER CAMPOS (TODOS OPCIONALES SALVO EL TIPO)
+  sType = If(IsNull(hArticulo["related_article_type"]), "", TrimUTF8(hArticulo["related_article_type"]))
+  sDoi = If(IsNull(hArticulo["related_article_doi"]), "", TrimUTF8(hArticulo["related_article_doi"]))
+  sJournal = If(IsNull(hArticulo["related_article_journal"]), "", TrimUTF8(hArticulo["related_article_journal"]))
+  sAnio = If(IsNull(hArticulo["related_article_anio"]), "", TrimUTF8(hArticulo["related_article_anio"]))
+  sVolume = If(IsNull(hArticulo["related_article_volume"]), "", TrimUTF8(hArticulo["related_article_volume"]))
+  sIssue = If(IsNull(hArticulo["related_article_issue"]), "", TrimUTF8(hArticulo["related_article_issue"]))
+  sFpage = If(IsNull(hArticulo["related_article_fpage"]), "", TrimUTF8(hArticulo["related_article_fpage"]))
+  sLpage = If(IsNull(hArticulo["related_article_lpage"]), "", TrimUTF8(hArticulo["related_article_lpage"]))
+
+  ' SI NO HAY TIPO NO SE GENERA NADA
+  If sType = "" Then Return ""
+
+  ' CONSTRUIR ATRIBUTOS DEL ELEMENTO
+  sAtributos = "related-article-type=\"" & EscaparXML(sType) & "\""
+
+  ' DOI: GENERA xlink:href Y ext-link-type
+  If sDoi <> "" Then
+    sAtributos &= " xlink:href=\"https://doi.org/" & EscaparXML(sDoi) & "\""
+    sAtributos &= " ext-link-type=\"doi\""
+  Endif
+
+  ' REVISTA: CUANDO EL ARTÍCULO RELACIONADO ES DE OTRA REVISTA
+  If sJournal <> "" Then
+    sAtributos &= " journal-id=\"" & EscaparXML(sJournal) & "\""
+    sAtributos &= " journal-id-type=\"custom\""
+  Endif
+
+  ' DATOS BIBLIOGRÁFICOS DEL ARTÍCULO RELACIONADO
+  If sAnio <> "" Then
+    sAtributos &= " publication-year=\"" & EscaparXML(sAnio) & "\""
+  Endif
+  If sVolume <> "" Then
+    sAtributos &= " vol=\"" & EscaparXML(sVolume) & "\""
+  Endif
+  If sIssue <> "" Then
+    sAtributos &= " issue=\"" & EscaparXML(sIssue) & "\""
+  Endif
+  If sFpage <> "" Then
+    sAtributos &= " fpage=\"" & EscaparXML(sFpage) & "\""
+  Endif
+  If sLpage <> "" Then
+    sAtributos &= " lpage=\"" & EscaparXML(sLpage) & "\""
+  Endif
+
+  ' ELEMENTO VACÍO (JATS SPEC: <related-article> NO TIENE CONTENIDO)
+  sXML = "    <related-article " & sAtributos & "/>\n"
+
+  Return sXML
+
+End Function
+
+'' ============================================
+'' Función   : NombreArchivoDoajANombreBD
+'' Propósito : Convierte el nombre de archivo d-* visible en
+''             el listbox al nombre_archivo guardado en la BD
+''             Ejemplo: d-02-revistaAlgo-v01-n01.xml
+''                   → a-02-revistaAlgo-v01-n01
+'' Parámetros: sArchivoDoaj As String — nombre con prefijo d- y .xml
+'' Retorna   : String — nombre sin extensión y con prefijo a-
+'' ============================================
+Public Function NombreArchivoDoajANombreBD(sArchivoDoaj As String) As String
+
+  ' --- 1. Quitar extensión .xml ---
+  Dim sBase As String = Left(sArchivoDoaj, Len(sArchivoDoaj) - 4)
+
+  ' --- 2. Reemplazar prefijo d- por a- ---
+  If Left(sBase, 2) = "d-" Then
+    Return "a-" & Mid(sBase, 3)
+  Endif
+
+  ' --- 3. Fallback: devolver sin cambios si el prefijo no coincide ---
+  Return sBase
+
+End Function
+
+'' ============================================
+'' Función   : ObtenerIdArticuloPorNombre
+'' Propósito : Busca el id_articulo en la BD a partir del
+''             nombre_archivo (sin extensión, con prefijo a-)
+'' Parámetros: sNombreArchivo As String — campo nombre_archivo de la BD
+'' Retorna   : Integer — id_articulo, o 0 si no se encuentra
+'' ============================================
+Public Function ObtenerIdArticuloPorNombre(sNombreArchivo As String) As Integer
+
+  ' --- 1. Consulta por nombre_archivo ---
+  Dim hRS As Result
+
+  ' DESPUÉS:
+  Try hRS = m_ConexionBD.mConn.Exec(
+    "SELECT id_articulo FROM articulos WHERE nombre_archivo = &1 LIMIT 1",
+    sNombreArchivo)
+
+  If Error Then Return 0
+  If hRS.Count = 0 Then Return 0
+
+  Return hRS!id_articulo
+
+End Function
+
+' ============================================
+' Función   : ValidarArchivoDoaj
+' Propósito : Lee el archivo d-*.xml y consulta la BD para
+'             verificar los requisitos del schema DOAJ.
+'             Carga los resultados en FMain.gvDOAJ con
+'             colores por estado: OK / ERROR / ADVERTENCIA
+' Parámetros: sArchivo As String — nombre del archivo (con .xml)
+'             idArticulo As Integer — id_articulo en la BD (0 si no encontrado)
+' Retorna   : Boolean — True si no hay errores bloqueantes
+' ============================================
+Public Function ValidarArchivoDoaj(sArchivo As String, idArticulo As Integer) As Boolean
+
+  ' --- 1. Inicialización ---
+  Dim sRuta As String
+  Dim xDoc As New XmlDocument
+  Dim bValido As Boolean = True
+
+  ' --- 2. Preparar el GridView ---
+  FMain.gvDOAJ.Clear
+  FMain.gvDOAJ.Rows.Count = 0
+  FMain.gvDOAJ.Columns.Count = 4
+  FMain.gvDOAJ.Columns[0].Text = "Estado"
+  FMain.gvDOAJ.Columns[0].Width = 90
+  FMain.gvDOAJ.Columns[1].Text = "Campo DOAJ"
+  FMain.gvDOAJ.Columns[1].Width = 140
+  FMain.gvDOAJ.Columns[2].Text = "Valor encontrado"
+  FMain.gvDOAJ.Columns[2].Width = 280
+  FMain.gvDOAJ.Columns[3].Text = "Acción requerida"
+  FMain.gvDOAJ.Columns[3].Width = 250
+
+  ' --- 3. Cargar el XML generado ---
+  sRuta = FMain.RutaProyecto &/ "jats" &/ sArchivo
+
+  If Not Exist(sRuta) Then
+    AgregarFilaGv(FMain.gvDOAJ, "ERROR",
+      "archivo", "(no encontrado)", "Regenerar desde el canónico", True)
+    Return False
+  Endif
+
+  Try xDoc.Open(sRuta)
+  If Error Then
+    AgregarFilaGv(FMain.gvDOAJ, "ERROR",
+      "archivo", "XML malformado: " & Error.Text, "Verificar el XSLT", True)
+    Return False
+  Endif
+
+  ' --- 4. Validar campos obligatorios desde el XML ---
+  ' PUBLISHER
+  Dim sPublisher As String = ObtenerNodoXml(xDoc, "publisher")
+  If Not AgregarFilaGv(FMain.gvDOAJ, If(sPublisher <> "", "OK", "ERROR"),
+      "publisher", If(sPublisher <> "", sPublisher, "(vacío)"),
+      If(sPublisher = "", "Completar editorial en FMetadatosRevista", ""), True) Then
+      bValido = False
+    Endif
+
+    ' JOURNAL TITLE
+    Dim sJTitle As String = ObtenerNodoXml(xDoc, "journalTitle")
+    If Not AgregarFilaGv(FMain.gvDOAJ, If(sJTitle <> "", "OK", "ERROR"),
+        "journalTitle", If(sJTitle <> "", sJTitle, "(vacío)"),
+        If(sJTitle = "", "Completar título de revista en FMetadatosRevista", ""), True) Then
+        bValido = False
+      Endif
+
+      ' PUBLICATION DATE
+      Dim sPubDate As String = ObtenerNodoXml(xDoc, "publicationDate")
+      If Not AgregarFilaGv(FMain.gvDOAJ, If(sPubDate <> "", "OK", "ERROR"),
+          "publicationDate", If(sPubDate <> "", sPubDate, "(vacío)"),
+          If(sPubDate = "", "Completar fecha publicación en FMetadatosArticulos", ""), True) Then
+          bValido = False
+        Endif
+
+        ' TITLE
+        Dim sTitulo As String = ObtenerNodoXml(xDoc, "title")
+        If Not AgregarFilaGv(FMain.gvDOAJ, If(sTitulo <> "", "OK", "ERROR"),
+            "title", If(sTitulo <> "", sTitulo, "(vacío)"),
+            If(sTitulo = "", "Completar título en FMetadatosArticulos", ""), True) Then
+            bValido = False
+          Endif
+
+          ' AL MENOS UN ISSN (REGLA DE NEGOCIO: XSD PERMITE AUSENCIA PERO DOAJ LA RECHAZA)
+          Dim sEissn As String = ObtenerNodoXml(xDoc, "eissn")
+          Dim sIssn As String = ObtenerNodoXml(xDoc, "issn")
+          Dim sIssnMostrar As String = If(sEissn <> "", "eissn: " & sEissn,
+            If(sIssn <> "", "issn: " & sIssn, "(ninguno)"))
+            Dim bTieneIssn As Boolean = (sEissn <> "" Or sIssn <> "")
+            If Not AgregarFilaGv(FMain.gvDOAJ, If(bTieneIssn, "OK", "ERROR"),
+                "issn / eissn", sIssnMostrar,
+                If(Not bTieneIssn, "Completar ISSN en FMetadatosRevista", ""), True) Then
+                bValido = False
+              Endif
+
+              ' --- 5. fullTextUrl: viene de la BD, no del XML ---
+              ' (EL XML PUEDE TENER EL COMENTARIO DE ADVERTENCIA SI FUE GENERADO SIN URL)
+              Dim sUrlFull As String = ""
+              If idArticulo > 0 Then
+                sUrlFull = ObtenerUrlTextoCompleto(idArticulo)
+              Endif
+              If Not AgregarFilaGv(FMain.gvDOAJ, If(sUrlFull <> "", "OK", "ERROR"),
+                  "fullTextUrl", If(sUrlFull <> "", sUrlFull, "(vacío)"),
+                  If(sUrlFull = "", "Completar url_html / url_articulo en FMetadatosArticulos", ""), True) Then
+                  bValido = False
+                Endif
+
+                ' --- 6. Campos opcionales recomendados ---
+                Dim sDoi As String = ObtenerNodoXml(xDoc, "doi")
+                AgregarFilaGv(FMain.gvDOAJ, If(sDoi <> "", "OK", "ADVERTENCIA"),
+                  "doi", If(sDoi <> "", sDoi, "(ausente)"),
+                  If(sDoi = "", "Recomendado — completar DOI en FMetadatosArticulos", ""), False)
+
+                  Dim sAbstract As String = ObtenerNodoXml(xDoc, "abstract")
+                  AgregarFilaGv(FMain.gvDOAJ, If(sAbstract <> "", "OK", "ADVERTENCIA"),
+                    "abstract", If(sAbstract <> "", Left(sAbstract, 60) & "...", "(ausente)"),
+                    If(sAbstract = "", "Recomendado — completar resumen en FMetadatosArticulos", ""), False)
+
+                    Dim sAutor As String = ObtenerNodoXml(xDoc, "n")
+                    AgregarFilaGv(FMain.gvDOAJ, If(sAutor <> "", "OK", "ADVERTENCIA"),
+                      "authors", If(sAutor <> "", sAutor, "(ausente)"),
+                      If(sAutor = "", "Recomendado — vincular autores al artículo", ""), False)
+
+                      Dim sKwd As String = ObtenerNodoXml(xDoc, "keyword")
+                      AgregarFilaGv(FMain.gvDOAJ, If(sKwd <> "", "OK", "ADVERTENCIA"),
+                        "keywords", If(sKwd <> "", sKwd, "(ausente)"),
+                        If(sKwd = "", "Recomendado — completar palabras clave", ""), False)
+
+                        ' --- 7. Determinar resultado global leyendo columna 0 ---
+                        Dim i As Integer
+                        For i = 0 To FMain.gvDOAJ.Rows.Count - 1
+                          If FMain.gvDOAJ[i, 0].Text = "ERROR" Then
+                            bValido = False
+                            Break
+                          Endif
+                        Next
+
+                        ' --- 8. Fila de resumen final ---
+                        Dim iUlt As Integer = FMain.gvDOAJ.Rows.Count
+                        FMain.gvDOAJ.Rows.Count = iUlt + 1
+
+                        FMain.gvDOAJ[iUlt, 0].Text = If(bValido, "APTO", "NO APTO")
+                        FMain.gvDOAJ[iUlt, 2].Text = If(bValido,
+                          "El archivo puede subirse a DOAJ",
+                          "Corregir errores antes de subir")
+                        Dim colorResumen As Integer = If(bValido,
+                          Color.RGB(200, 230, 201),
+                          Color.RGB(255, 205, 210))
+                        Dim j As Integer
+                        For j = 0 To 3
+                          FMain.gvDOAJ[iUlt, j].Background = colorResumen
+                          FMain.gvDOAJ[iUlt, j].Font.Bold = True
+                        Next
+
+                        Return bValido
+
+End Function
+
+' ============================================
+' Función   : AgregarFilaGv
+' Propósito : Agrega una fila al gvDOAJ con color según estado.
+'             El Tag de la fila queda en "ERROR" si corresponde.
+' Parámetros: gv As GridView
+'             sEstado As String — "OK" | "ERROR" | "ADVERTENCIA"
+'             sCampo As String — nombre del campo DOAJ
+'             sValor As String — valor encontrado o mensaje
+'             sAccion As String — instrucción al editor
+'             bObligatorio As Boolean — solo usado para determinar
+'                                       si un vacío es ERROR
+' Retorna   : Boolean — True si el campo está OK (no tiene error)
+' ============================================
+Private Function AgregarFilaGv(gv As GridView, sEstado As String, sCampo As String, sValor As String, sAccion As String, bObligatorio As Boolean) As Boolean
+
+  ' --- 1. Asignar color según estado ---
+  Dim colorFondo As Integer
+
+  Select Case sEstado
+    Case "OK"
+      colorFondo = Color.RGB(232, 245, 233)  ' VERDE SUAVE
+    Case "ERROR"
+      colorFondo = Color.RGB(255, 235, 238)  ' ROJO SUAVE
+    Case "ADVERTENCIA"
+      colorFondo = Color.RGB(255, 253, 231)  ' AMARILLO SUAVE
+    Case Else
+      colorFondo = Color.White
+  End Select
+
+  ' --- 2. Agregar fila ---
+  Dim iRow As Integer = gv.Rows.Count
+  gv.Rows.Count = iRow + 1
+  gv[iRow, 0].Text = sEstado
+  gv[iRow, 1].Text = sCampo
+  gv[iRow, 2].Text = sValor
+  gv[iRow, 3].Text = sAccion
+
+  ' --- 3. Aplicar color a toda la fila ---
+  Dim j As Integer
+  For j = 0 To 3
+    gv[iRow, j].Background = colorFondo
+  Next
+
+  Return (sEstado = "OK" Or sEstado = "ADVERTENCIA")
+
+End Function
+
+' ============================================
+' Función   : ObtenerNodoXml
+' Propósito : Devuelve el texto del primer nodo que coincide
+'             con el nombre de tag buscado en el documento XML
+' Parámetros: xDoc As XmlDocument — documento ya cargado
+'             sTag As String — nombre del elemento a buscar
+' Retorna   : String — texto del nodo, o cadena vacía si no existe
+' ============================================
+Private Function ObtenerNodoXml(xDoc As XmlDocument, sTag As String) As String
+
+  ' --- 1. Buscar el primer nodo con ese nombre ---
+  Dim xNodo As XmlNode
+
+  Try xNodo = xDoc.GetElementsByTagName(sTag)[0]
+  If Error Or xNodo = Null Then Return ""
+
+  Return Trim(xNodo.TextContent)
+
+End Function
+
+' ============================================
+' Función   : ObtenerUrlTextoCompleto
+' Propósito : Consulta la BD para obtener la mejor URL
+'             disponible para fullTextUrl en DOAJ.
+'             Cascada: url_html → url_articulo → url_pdf
+' Parámetros: idArticulo As Integer
+' Retorna   : String — URL encontrada, o cadena vacía
+' ============================================
+Public Function ObtenerUrlTextoCompleto(idArticulo As Integer) As String
+
+  ' --- 1. Consulta a la BD ---
+  Dim hRS As Result
+
+  Try hRS = m_ConexionBD.mConn.Exec(
+    "SELECT url_html, url_articulo, url_pdf FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    idArticulo)
+
+  If Error Then Return ""
+  If hRS.Count = 0 Then Return ""
+
+  ' --- 2. Cascada de prioridad ---
+  If hRS!url_html <> Null Then
+    If Trim(CStr(hRS!url_html)) <> "" Then Return Trim(CStr(hRS!url_html))
+  Endif
+
+  If hRS!url_articulo <> Null Then
+    If Trim(CStr(hRS!url_articulo)) <> "" Then Return Trim(CStr(hRS!url_articulo))
+  Endif
+
+  If hRS!url_pdf <> Null Then
+    If Trim(CStr(hRS!url_pdf)) <> "" Then Return Trim(CStr(hRS!url_pdf))
+  Endif
+
+  Return ""
+
+End Function
+
+' ============================================
+' Función   : EnriquecerCanonico
+' Propósito : Inyecta fullTextUrl como custom-meta en el
+'             canónico JATS usando XmlDocument (gb.xml).
+'             Opera sobre el árbol DOM sin manipulación
+'             de strings, preservando UTF-8 y estructura.
+' Parámetros: sRutaCanonico As String — ruta completa al c-*.xml
+'             idArticulo As Integer
+' Retorna   : Boolean — True si el enriquecimiento fue exitoso
+' ============================================
+Public Function EnriquecerCanonico(sRutaCanonico As String, idArticulo As Integer) As Boolean
+
+  ' --- 1. Leer URL desde la BD ---
+  ' CASCADA: url_html → url_articulo → url_pdf
+  Dim hRS As Result
+
+  Try hRS = m_ConexionBD.mConn.Exec(
+    "SELECT url_html, url_articulo, url_pdf FROM articulos " &
+    "WHERE id_articulo = &1 LIMIT 1",
+    idArticulo)
+  If Error Or Not hRS.Available Then Return False
+
+  Dim sUrl As String = ""
+  If hRS!url_html <> Null Then
+    If Trim(CStr(hRS!url_html)) <> "" Then sUrl = Trim(CStr(hRS!url_html))
+  Endif
+  If sUrl = "" And hRS!url_articulo <> Null Then
+    If Trim(CStr(hRS!url_articulo)) <> "" Then sUrl = Trim(CStr(hRS!url_articulo))
+  Endif
+  If sUrl = "" And hRS!url_pdf <> Null Then
+    If Trim(CStr(hRS!url_pdf)) <> "" Then sUrl = Trim(CStr(hRS!url_pdf))
+  Endif
+  If sUrl = "" Then Return False
+
+  ' --- 2. Cargar el canónico en el DOM ---
+  Dim hDoc As XmlDocument = New XmlDocument
+  Try hDoc.Open(sRutaCanonico)
+  If Error Then Return False
+
+  ' --- 3. Verificar si ya fue inyectado para no duplicar ---
+  Dim aMetaNames As XmlElement[]
+  aMetaNames = hDoc.GetElementsByTagName("meta-name")
+  Dim hNode As XmlElement
+  For Each hNode In aMetaNames
+    If hNode.Value = "fullTextUrl" Then Return True
+  Next
+
+  ' --- 4. Crear el nodo custom-meta con sus dos hijos ---
+  ' ESTRUCTURA A INSERTAR:
+  '   <custom-meta>
+  '     <meta-name>fullTextUrl</meta-name>
+  '     <meta-value>https://...</meta-value>
+  '   </custom-meta>
+  Dim hMeta As XmlElement = hDoc.CreateElement("custom-meta")
+  hMeta.NewElement("meta-name", "fullTextUrl")
+  hMeta.NewElement("meta-value", sUrl)
+
+  ' --- 5. Insertar en custom-meta-group si existe,
+  '        o crear el grupo dentro de article-meta ---
+  Dim aGrupo As XmlElement[]
+  aGrupo = hDoc.GetElementsByTagName("custom-meta-group")
+
+  If aGrupo.Count > 0 Then
+    ' AGREGAR AL GRUPO EXISTENTE
+    aGrupo[0].AppendChild(hMeta)
+  Else
+    ' CREAR EL GRUPO Y AGREGARLO A article-meta
+    Dim aArticleMeta As XmlElement[]
+    aArticleMeta = hDoc.GetElementsByTagName("article-meta")
+    If aArticleMeta.Count = 0 Then Return False
+
+    Dim hGrupo As XmlElement = hDoc.CreateElement("custom-meta-group")
+    hGrupo.AppendChild(hMeta)
+    aArticleMeta[0].AppendChild(hGrupo)
+  Endif
+
+  ' --- 6. Guardar el canónico enriquecido ---
+  ' Save() de XmlDocument preserva UTF-8 y estructura XML
+  Try hDoc.Save(sRutaCanonico)
+  If Error Then Return False
+
+  Return True
+
+End Function

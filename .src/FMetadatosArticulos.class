@@ -56,6 +56,11 @@ Public Sub Form_Open()
   idioma_kwd_3.ReadOnly = False
   idioma_titulo_traducido.ReadOnly = False
 
+  ' IDIOMA PRINCIPAL DEL ARTÍCULO (MISMO MODELO QUE RESÚMENES)
+  idioma_principal.List = aIdiomas
+  idioma_principal.ReadOnly = False
+  idioma_principal.Text = "es"  ' VALOR POR DEFECTO
+
   ' VALORES POR DEFECTO
   idioma_resumen_1.Text = ""
   idioma_resumen_2.Text = ""
@@ -730,16 +735,15 @@ Private Sub LimpiarFormulario()
   nota_version.Clear()
 
   ' IDIOMAS
-  idioma_principal.Clear()
   idiomas_adicionales.Clear()
   traduccion_disponible.Clear()
+  idioma_principal.Text = "es"
 
   ' MÉTRICAS (CAMPOS DE TEXTO)
   plumx_metrics.Clear()
   menciones_redes.Clear()
 
   ' SERIES Y RELACIONES
-  serie_id.Clear()
   comentarios_ids.Clear()
   erratas_ids.Clear()
 
@@ -896,7 +900,6 @@ Private Sub LimpiarFormulario()
   tiene_correccion.Value = 0
   tiene_retractacion.Value = 0
   tiene_expresion_preocupacion.Value = 0
-  parte_de_serie.Value = 0
   revisado_xml.Value = 0
   validado_jats.Value = 0
   autores_anonimos.Value = 0
@@ -906,6 +909,10 @@ Private Sub LimpiarFormulario()
   ' ═══════════════════════════════════════════════════════════════
 
   listadoAutores.Clear()
+
+  ' ARTÍCULO RELACIONADO: ESTADO INICIAL
+  chk_related_article.Value = False
+  btn_related_article.Visible = False
 
 End
 
@@ -1050,7 +1057,7 @@ Private Sub CargarDatosArticulo(iIdArticulo As Integer)
   nota_version.Text = If($result!nota_version, $result!nota_version, "")
 
   ' IDIOMAS
-  idioma_principal.Text = If($result!idioma_principal, $result!idioma_principal, "")
+  idioma_principal.Text = If(IsNull($result["idioma_principal"]), "es", CStr($result["idioma_principal"]))
   idiomas_adicionales.Text = If($result!idiomas_adicionales, $result!idiomas_adicionales, "")
   traduccion_disponible.Text = If($result!traduccion_disponible, $result!traduccion_disponible, "")
 
@@ -1064,7 +1071,6 @@ Private Sub CargarDatosArticulo(iIdArticulo As Integer)
   menciones_redes.Text = If($result!menciones_redes, $result!menciones_redes, "")
 
   ' SERIES Y RELACIONES
-  serie_id.Text = If($result!serie_id, $result!serie_id, "")
   If IsNull($result!articulo_comentado_id) Then
     articulo_comentado_id.Value = 0
   Else
@@ -1350,13 +1356,24 @@ Private Sub CargarDatosArticulo(iIdArticulo As Integer)
   tiene_correccion.Value = If($result!tiene_correccion = True, -1, 0)
   tiene_retractacion.Value = If($result!tiene_retractacion = True, -1, 0)
   tiene_expresion_preocupacion.Value = If($result!tiene_expresion_preocupacion = True, -1, 0)
-  parte_de_serie.Value = If($result!parte_de_serie = True, -1, 0)
   revisado_xml.Value = If($result!revisado_xml = True, -1, 0)
   validado_jats.Value = If($result!validado_jats = True, -1, 0)
   autores_anonimos.Value = If($result!autores_anonimos = True, -1, 0)
 
   responsable_edicion.Text = If($result!responsable_edicion, $result!responsable_edicion, "")
   fecha_actualizacion_registro.Value = $result!fecha_actualizacion_registro
+
+  ' ═══════════════════════════════════════════════════════════════
+  ' ESTADO DEL CHECKBOX Y VISIBILIDAD DEL BOTÓN DE ARTÍCULO RELACIONADO
+  ' SI related_article_type TIENE VALOR → CHECKBOX ACTIVO Y BOTÓN VISIBLE
+  ' SI ES NULL O VACÍO       → CHECKBOX INACTIVO Y BOTÓN OCULTO
+  ' ═══════════════════════════════════════════════════════════════
+  Dim bTieneRelacion As Boolean = (
+    Not IsNull($result["related_article_type"]) And
+    Len(m_XML.TrimUTF8($result["related_article_type"])) > 0)
+
+  chk_related_article.Value = bTieneRelacion
+  btn_related_article.Visible = bTieneRelacion
 
 End
 
@@ -1881,8 +1898,6 @@ Public Sub btnArticuloGuardarCambios_Click()
   $result!menciones_redes = If(menciones_redes.Text <> "", menciones_redes.Text, Null)
 
   ' SERIES Y RELACIONES
-  $result!parte_de_serie = If(parte_de_serie.Value = -1, 1, 0)
-  $result!serie_id = If(serie_id.Text <> "", serie_id.Text, Null)
   $result!articulo_comentado_id = If(articulo_comentado_id.Value > 0, articulo_comentado_id.Value, Null)
   $result!comentarios_ids = If(comentarios_ids.Text <> "", comentarios_ids.Text, Null)
   $result!erratas_ids = If(erratas_ids.Text <> "", erratas_ids.Text, Null)
@@ -2352,5 +2367,48 @@ Public Sub autor_correspondencia_Click()
   ' RECARGAR LISTBOX PARA MOSTRAR/QUITAR [CORRESPONDENCIA]
   CargarAutoresArticulo(iArticuloActual)
   listadoAutores.Index = aIdsAutores.Find(iIdAutor)
+
+End
+
+' =====================================================
+' EVENTO: chk_related_article_Click
+' DESCRIPCIÓN: CONTROLA LA VISIBILIDAD DEL BOTÓN
+'              btn_related_article. SI SE DESMARCA,
+'              LIMPIA TODOS LOS CAMPOS related_*
+'              EN LA BASE DE DATOS
+' =====================================================
+Public Sub chk_related_article_Click()
+
+  If iArticuloActual <= 0 Then Return
+
+  ' SI SE DESMARCA: LIMPIAR TODOS LOS CAMPOS RELACIONADOS
+  If chk_related_article.Value = False Then
+    Try m_ConexionBD.mConn.Exec(
+      "UPDATE articulos SET " &
+      "related_article_type    = NULL, " &
+      "related_article_journal = NULL, " &
+      "related_article_doi     = NULL, " &
+      "related_article_anio    = NULL, " &
+      "related_article_volume  = NULL, " &
+      "related_article_issue   = NULL, " &
+      "related_article_fpage   = NULL, " &
+      "related_article_lpage   = NULL " &
+      "WHERE id_articulo = &1",
+      iArticuloActual)
+
+    If Error Then
+      Message.Error("Error al limpiar artículo relacionado:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  Endif
+
+  ' MOSTRAR U OCULTAR EL BOTÓN SEGÚN ESTADO DEL CHECKBOX
+  btn_related_article.Visible = (chk_related_article.Value = True)
+
+End Sub
+
+Public Sub btn_related_article_Click()
+
+  FArticuloRelacionado.ShowModal()
 
 End
