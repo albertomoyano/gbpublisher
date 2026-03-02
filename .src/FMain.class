@@ -1453,7 +1453,7 @@ Public Sub AbrirRevistaMD()
   ' MOSTRAMOS ARCHIVOS DOAJ
   lbDOAJ.Clear
   gvDOAJ.Clear
-  gvDOAJ.Count = 0
+  gvDOAJ.Refresh
   m_XML.MostrarArchivosDOAJ()
 
   ' ASEGURAMOS LA RUTA EN LA TERMINAL
@@ -5440,6 +5440,9 @@ Public Sub btnGenerarXMLcanonico_Click()
   Dim idRevista As Integer = CInt(FMain.id_revista.Value)
   Dim idArticulo As Integer = CInt(FMain.id_articulo.Value)
 
+  tbMostrarPanelInferior.Value = True
+  TabPanelIzquierdaInferior.Index = 0
+
   ' EXPORTAMOS .BIB Y GENERAMOS XML-JATS DE REFERENCIAS
   ExportarReferenciasXMLJATS()
 
@@ -5819,36 +5822,350 @@ Public Sub HTMLojs_Click()
 
 End
 
+' ' ============================================
+' ' Evento    : lbDOAJ_Click
+' ' Propósito : Al seleccionar un archivo d-* en el listbox,
+' '             busca el artículo correspondiente en la BD
+' '             y lanza la validación DOAJ en el GridView
+' ' ============================================
+' Public Sub lbDOAJ_Click()
+'
+'   ' --- 1. Obtener el archivo seleccionado ---
+'   Dim sArchivo As String = lbDOAJ.Text
+'
+'   If sArchivo = "" Then Return
+'
+'   ' --- 2. Derivar el nombre_archivo de la BD ---
+'   Dim sNombreArchivoBD As String = m_XML.NombreArchivoDoajANombreBD(sArchivo)
+'
+'   ' --- 3. Buscar el id_articulo ---
+'   Dim idArticulo As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreArchivoBD)
+'
+'   ' --- 4. Advertir si no se encontró en la BD (puede ser archivo huérfano) ---
+'   If idArticulo = 0 Then
+'     Message.Warning("El archivo '" & sArchivo & "' no tiene un artículo " &
+'       "correspondiente en la base de datos." & Chr(10) &
+'       "Se validará el XML sin datos complementarios de la BD.")
+'   Endif
+'
+'   ' --- 5. Lanzar validación ---
+'   Dim bApto As Boolean = m_XML.ValidarArchivoDoaj(sArchivo, idArticulo)
+'
+'   ' --- 6. Habilitar el botón de envío solo si pasa validación ---
+'   btnEnviarDoaj.Enabled = bApto
+'
+' End Sub
+
 ' ============================================
-' Evento    : lbDOAJ_Click
-' Propósito : Al seleccionar un archivo d-* en el listbox,
-'             busca el artículo correspondiente en la BD
-'             y lanza la validación DOAJ en el GridView
+' Función   : menuJsonDoaj_Click
+' Propósito : Genera el archivo JSON para DOAJ desde los datos
+'             de BD del artículo activo. Mismo flujo que
+'             menuXMLDoaj_Click pero produce d-*.json.
+' ============================================
+Public Sub menuJsonDoaj_Click()
+
+  ' --- 1. Verificar que hay un artículo activo ---
+  If id_articulo.Value = 0 Then
+    Message.Info("Seleccioná un artículo antes de generar el JSON DOAJ.")
+    Return
+  Endif
+
+  ' --- 2. Obtener nombre del archivo desde la BD ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = " & CStr(id_articulo.Value))
+  If Error Or hRes.Count = 0 Then
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  ' nombre_archivo GUARDADO COMO a-01-revista-v01-n01 (SIN EXTENSIÓN)
+  Dim sNombreArchivo As String = Trim(hRes!nombre_archivo)
+  Dim sNombreCanonico As String = Replace(sNombreArchivo, "a-", "c-") & ".xml"
+
+  ' --- 3. Construir ruta del canónico ---
+  Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
+  Dim sRutaCanonico As String = sRutaProyecto & "/jats/" & sNombreCanonico
+
+  If Not Exist(sRutaCanonico) Then
+    Message.Error("No existe el canónico:\n" & sRutaCanonico & "\nGenerá primero el XML JATS.")
+    Return
+  Endif
+
+  ' --- 4. Enriquecer el canónico con fullTextUrl ---
+  FMain.TerminalViewProyecto.Input("echo '--- DOAJ JSON PASO A: ENRIQUECIENDO CANÓNICO ---'" & Chr(10))
+  If Not m_XML.EnriquecerCanonico(sRutaCanonico, id_articulo.Value) Then
+    Message.Error("No se pudo enriquecer el canónico.")
+    Return
+  Endif
+  FMain.TerminalViewProyecto.Input("echo 'OK: canónico enriquecido'" & Chr(10))
+
+  ' --- 5. Generar el JSON ---
+  FMain.TerminalViewProyecto.Input("echo '--- DOAJ JSON PASO B: GENERANDO JSON ---'" & Chr(10))
+  If Not m_XML.GenerarJsonDoaj(sRutaCanonico, id_articulo.Value) Then Return
+
+  Dim sNombreJson As String = Replace(sNombreArchivo, "a-", "d-") & ".json"
+  Dim sRutaJson As String = sRutaProyecto & "/jats/" & sNombreJson
+  FMain.TerminalViewProyecto.Input("echo 'OK: JSON generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sRutaJson & "'" & Chr(10))
+
+  ' --- 6. Refrescar el listbox y auto-seleccionar ---
+  TabStripValidaciones.Index = 0  ' AJUSTAR AL ÍNDICE O CONSTANTE DEL PANEL
+  m_XML.MostrarArchivosDOAJ()
+
+  Dim i As Integer
+  For i = 0 To lbDOAJ.Count - 1
+    If lbDOAJ[i].Text = sNombreJson Then
+      lbDOAJ.Index = i
+      lbDOAJ_Click()
+      Break
+    Endif
+  Next
+
+End Sub
+
+' ============================================
+' Función   : btnEnviarDoaj_Click
+' Propósito : Valida y envía el JSON seleccionado a la API de DOAJ.
+'             Detecta automáticamente si es primer envío (POST)
+'             o actualización (PUT) según id_doaj en la BD.
+' ============================================
+Public Sub btnEnviarDoaj_Click()
+
+  ' --- 1. Validaciones previas ---
+  If lbDOAJ.Index < 0 Then
+    Message.Info("Seleccioná un archivo JSON del listado.")
+    Return
+  Endif
+
+  Dim sArchivo As String = lbDOAJ.Text
+  If Not (sArchivo Ends ".json") Then
+    Message.Info("Para enviar a la API de DOAJ seleccioná un archivo .json" & Chr(10) &
+      "El archivo .xml es para carga manual en el panel web de DOAJ.")
+    Return
+  Endif
+
+  Dim sApiKey As String = Trim(txtCredencial.Text)
+  If sApiKey = "" Then
+    Message.Info("Ingresá tu API key de DOAJ antes de enviar.")
+    txtCredencial.SetFocus()
+    Return
+  Endif
+
+  ' --- 2. Obtener ID del artículo ---
+  Dim sNombreBD As String = m_XML.NombreArchivoDoajANombreBD(sArchivo)
+  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
+  If idArt = 0 Then
+    Message.Error("No se pudo determinar el artículo correspondiente al archivo.")
+    Return
+  Endif
+
+  ' --- 3. Confirmar envío ---
+  If Message.Question("¿Enviar " & sArchivo & " a DOAJ?",
+      "Enviar", "Cancelar") = 2 Then Return
+
+    ' --- 4. Construir ruta y enviar ---
+    Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
+    Dim sRutaJson As String = sRutaProyecto & "/jats/" & sArchivo
+
+    FMain.TerminalViewProyecto.Input("echo '--- ENVIANDO A DOAJ API ---'" & Chr(10))
+
+    ' EL MÉTODO POST/PUT LO DECIDE EnviarJsonDoaj INTERNAMENTE
+    ' SEGÚN SI id_doaj EXISTE O NO EN LA BD
+    Dim sIdDoaj As String = m_XML.EnviarJsonDoaj(sRutaJson, sApiKey, idArt)
+
+    ' --- 5. Procesar resultado ---
+    If sIdDoaj = "" Then
+      FMain.TerminalViewProyecto.Input("echo 'ERROR: DOAJ rechazó el artículo'" & Chr(10))
+      Return
+    Endif
+
+    FMain.TerminalViewProyecto.Input("echo 'OK: artículo aceptado por DOAJ'" & Chr(10))
+    FMain.TerminalViewProyecto.Input("echo 'ID DOAJ: " & sIdDoaj & "'" & Chr(10))
+
+    ' --- 6. Confirmación final y bloqueo del botón ---
+    Message.Info("Artículo enviado correctamente a DOAJ." & Chr(10) & "ID asignado: " & sIdDoaj)
+    btnEnviarDoaj.Enabled = False
+
+End Sub
+
+' ============================================
+' Función   : MostrarArchivosDOAJ  (REEMPLAZA LA VERSIÓN ANTERIOR)
+' Propósito : Lista todos los archivos d-*.xml y d-*.json
+'             del directorio jats/ del proyecto activo.
+'             Primero XML, luego JSON, para que queden
+'             visualmente agrupados por base de nombre.
+' Parámetros: sRutaProyecto As String — ruta raíz del proyecto
+' ============================================
+Public Sub MostrarArchivosDOAJ(sRutaProyecto As String)
+
+  ' --- 1. Limpiar el listbox ---
+  lbDOAJ.Clear()
+
+  Dim sRutaJats As String = sRutaProyecto & "/jats"
+  If Not Exist(sRutaJats) Then Return
+
+  ' --- 2. Recolectar en dos listas para mantener el orden ---
+  Dim aXml As New String[]
+  Dim aJson As New String[]
+  Dim sArch As String
+
+  For Each sArch In Dir(sRutaJats, "d-*.xml")
+    aXml.Add(File.Name(sArch))
+  Next
+  For Each sArch In Dir(sRutaJats, "d-*.json")
+    aJson.Add(File.Name(sArch))
+  Next
+
+  aXml.Sort()
+  aJson.Sort()
+
+  ' --- 3. Cargar en el listbox: XML primero, JSON después ---
+  Dim s As String
+  For Each s In aXml
+    lbDOAJ.Add(s)
+  Next
+  For Each s In aJson
+    lbDOAJ.Add(s)
+  Next
+
+End Sub
+
+' ============================================
+' Función   : lbDOAJ_Click  (REEMPLAZA LA VERSIÓN ANTERIOR)
+' Propósito : Al seleccionar un archivo determina el flujo:
+'             .xml → validación GridView (sin envío API)
+'             .json → estado en GridView + habilitar envío API
 ' ============================================
 Public Sub lbDOAJ_Click()
 
-  ' --- 1. Obtener el archivo seleccionado ---
   Dim sArchivo As String = lbDOAJ.Text
+  Dim sNombreBD As String = m_XML.NombreArchivoDoajANombreBD(sArchivo)
+  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
 
-  If sArchivo = "" Then Return
+  If sArchivo Ends ".xml" Then
+    ' FLUJO EXISTENTE: VALIDAR CONTRA XSD Y MOSTRAR EN GRIDVIEW
+    btnEnviarDoaj.Enabled = False
+    Dim bApto As Boolean = m_XML.ValidarArchivoDoaj(sArchivo, idArt)
+    lblEstadoDoaj.Text = If(bApto, "APTO para carga manual (panel web DOAJ)", "NO APTO — revisar errores")
 
-  ' --- 2. Derivar el nombre_archivo de la BD ---
-  Dim sNombreArchivoBD As String = m_XML.NombreArchivoDoajANombreBD(sArchivo)
+  Else If sArchivo Ends ".json" Then
+    ' FLUJO NUEVO: MOSTRAR ESTADO Y HABILITAR ENVÍO API
+    Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
+    Dim sRutaJson As String = sRutaProyecto & "/jats/" & sArchivo
+    MostrarEstadoJson(sRutaJson, idArt)
 
-  ' --- 3. Buscar el id_articulo ---
-  Dim idArticulo As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreArchivoBD)
-
-  ' --- 4. Advertir si no se encontró en la BD (puede ser archivo huérfano) ---
-  If idArticulo = 0 Then
-    Message.Warning("El archivo '" & sArchivo & "' no tiene un artículo " &
-      "correspondiente en la base de datos." & Chr(10) &
-      "Se validará el XML sin datos complementarios de la BD.")
   Endif
 
-  ' --- 5. Lanzar validación ---
-  Dim bApto As Boolean = m_XML.ValidarArchivoDoaj(sArchivo, idArticulo)
+End Sub
 
-  ' --- 6. Habilitar el botón de envío solo si pasa validación ---
-  btnEnviarDoaj.Enabled = bApto
+' ============================================
+' Función   : MostrarEstadoJson
+' Propósito : Muestra en el GridView el estado de los campos
+'             del JSON DOAJ y habilita el botón de envío
+'             si los campos obligatorios están presentes.
+' Parámetros: sRutaJson As String  — ruta al d-*.json
+'             idArt     As Integer — ID del artículo en BD
+' ============================================
+Public Sub MostrarEstadoJson(sRutaJson As String, idArt As Integer)
+
+  ' --- 1. Preparar el GridView ---
+  gvDOAJ.Clear
+  gvDOAJ.Rows.Count = 0
+  gvDOAJ.Columns.Count = 4
+  gvDOAJ.Columns[0].Text = "Estado"
+  gvDOAJ.Columns[0].Width = 90
+  gvDOAJ.Columns[1].Text = "Campo DOAJ"
+  gvDOAJ.Columns[1].Width = 140
+  gvDOAJ.Columns[2].Text = "Valor encontrado"
+  gvDOAJ.Columns[2].Width = 280
+  gvDOAJ.Columns[3].Text = "Acción requerida"
+  gvDOAJ.Columns[3].Width = 250
+  btnEnviarDoaj.Enabled = False
+
+  If Not Exist(sRutaJson) Then
+    lblEstadoDoaj.Text = "Archivo JSON no encontrado"
+    Return
+  Endif
+
+  ' --- 2. Leer el JSON ---
+  Dim hFile As File
+  Dim sJson As String
+  Try hFile = Open sRutaJson For Input
+  If Error Then Return
+  Try sJson = Read #hFile, Lof(hFile)
+  Try Close #hFile
+
+  ' --- 3. Verificar campos clave ---
+  Dim bTieneTitle As Boolean = InStr(sJson, "" "title" ":") > 0
+  Dim bTieneIssn As Boolean = InStr(sJson, "" "eissn" "") > 0 Or InStr(sJson, "" "pissn" "") > 0
+  Dim bTieneLink As Boolean = InStr(sJson, "" "fulltext" "") > 0
+  Dim bTieneAutores As Boolean = InStr(sJson, "" "author" ":") > 0
+  Dim bTieneAbstract As Boolean = InStr(sJson, "" "abstract" ":") > 0
+  Dim bTieneYear As Boolean = InStr(sJson, "" "year" ":") > 0
+
+  ' --- 4. Verificar si ya fue enviado ---
+  Dim sIdDoajExistente As String = ""
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_doaj FROM articulos WHERE id_articulo = " & CStr(idArt))
+  If Not Error Then
+    If hRes.Count > 0 Then
+      If Not IsNull(hRes["id_doaj"]) Then
+        sIdDoajExistente = Trim(CStr(hRes["id_doaj"]))
+      Endif
+    Endif
+  Endif
+
+  ' --- 5. Agregar filas al GridView ---
+  m_XML.AgregarFilaGv(gvDOAJ, If(bTieneTitle, "OK", "ERROR"),
+    "title", If(bTieneTitle, "Presente", "(ausente)"),
+    If(Not bTieneTitle, "Obligatorio — regenerar JSON", ""), True)
+
+    m_XML.AgregarFilaGv(gvDOAJ, If(bTieneIssn, "OK", "ERROR"),
+      "issn/eissn", If(bTieneIssn, "Presente", "(ausente)"),
+      If(Not bTieneIssn, "Obligatorio — verificar BD de revista", ""), True)
+
+      m_XML.AgregarFilaGv(gvDOAJ, If(bTieneLink, "OK", "ERROR"),
+        "link/fulltext", If(bTieneLink, "Presente", "(ausente)"),
+        If(Not bTieneLink, "Obligatorio — completar URL en BD", ""), True)
+
+        m_XML.AgregarFilaGv(gvDOAJ, If(bTieneYear, "OK", "ADVERTENCIA"),
+          "year", If(bTieneYear, "Presente", "(ausente)"),
+          If(Not bTieneYear, "Recomendado — completar año en BD", ""), False)
+
+          m_XML.AgregarFilaGv(gvDOAJ, If(bTieneAutores, "OK", "ADVERTENCIA"),
+            "author", If(bTieneAutores, "Presente", "(ausente)"),
+            If(Not bTieneAutores, "Recomendado — vincular autores", ""), False)
+
+            m_XML.AgregarFilaGv(gvDOAJ, If(bTieneAbstract, "OK", "ADVERTENCIA"),
+              "abstract", If(bTieneAbstract, "Presente", "(ausente)"),
+              If(Not bTieneAbstract, "Recomendado para indexación", ""), False)
+
+              ' --- 6. Fila resumen ---
+              Dim bApto As Boolean = bTieneTitle And bTieneIssn And bTieneLink
+              Dim sEstadoEnvio As String
+              If sIdDoajExistente <> "" Then
+                sEstadoEnvio = "Ya enviado — próximo envío actualizará (PUT) ID: " & sIdDoajExistente
+              Else
+                sEstadoEnvio = If(bApto, "Listo para primer envío (POST)", "Corregir campos en error")
+              Endif
+
+              Dim iUlt As Integer = gvDOAJ.Rows.Count
+              gvDOAJ.Rows.Count = iUlt + 1
+              gvDOAJ[iUlt, 0].Text = If(bApto, If(sIdDoajExistente <> "", "ACTUALIZAR", "LISTO"), "INCOMPLETO")
+              gvDOAJ[iUlt, 1].Text = "Estado envío API"
+              gvDOAJ[iUlt, 2].Text = sEstadoEnvio
+              gvDOAJ[iUlt, 3].Text = ""
+              Dim cFondo As Integer = If(bApto, Color.RGB(232, 245, 233), Color.RGB(255, 235, 238))
+              Dim j As Integer
+              For j = 0 To 3
+                gvDOAJ[iUlt, j].Background = cFondo
+                gvDOAJ[iUlt, j].Font.Bold = True
+              Next
+
+              ' --- 7. Estado final ---
+              btnEnviarDoaj.Enabled = bApto
+              lblEstadoDoaj.Text = sEstadoEnvio
 
 End Sub

@@ -2768,26 +2768,38 @@ End Function
 
 Public Sub MostrarArchivosDOAJ()
 
-  Dim rutaXML As String = FMain.RutaProyecto &/ "jats"
-  Dim archivosXML As String[]
-  Dim archivo As String
+  Dim sRutaJats As String = File.Dir(FMain.txtProyecto.Text) &/ "jats"
 
-  ' LIMPIAR EL LISTBOX ANTES DE CARGAR
+  ' --- 1. Limpiar el listbox ---
   FMain.lbDOAJ.Clear
 
-  ' ====================================================================
-  ' CARGAR ARCHIVOS XML EN lbDOAJ
-  ' ====================================================================
-  If Exist(rutaXML) Then
-    archivosXML = Dir(rutaXML, "d-*.xml")
-    If archivosXML And archivosXML.Count > 0 Then
-      For Each archivo In archivosXML
-        FMain.lbDOAJ.Add(archivo)
-      Next
-    Endif
-  Endif
+  If Not Exist(sRutaJats) Then Return
 
-End
+  ' --- 2. Recolectar XML y JSON en listas separadas ---
+  Dim aXml As New String[]
+  Dim aJson As New String[]
+  Dim sArch As String
+
+  For Each sArch In Dir(sRutaJats, "d-*.xml")
+    aXml.Add(File.Name(sArch))
+  Next
+  For Each sArch In Dir(sRutaJats, "d-*.json")
+    aJson.Add(File.Name(sArch))
+  Next
+
+  aXml.Sort()
+  aJson.Sort()
+
+  ' --- 3. Primero XML, luego JSON ---
+  Dim s As String
+  For Each s In aXml
+    FMain.lbDOAJ.Add(s)
+  Next
+  For Each s In aJson
+    FMain.lbDOAJ.Add(s)
+  Next
+
+End Sub
 
 ' =====================================================
 ' FUNCIÓN PRIVADA: GenerarRelatedArticle
@@ -2867,15 +2879,15 @@ Private Function GenerarRelatedArticle(hArticulo As Result) As String
 
 End Function
 
-'' ============================================
-'' Función   : NombreArchivoDoajANombreBD
-'' Propósito : Convierte el nombre de archivo d-* visible en
-''             el listbox al nombre_archivo guardado en la BD
-''             Ejemplo: d-02-revistaAlgo-v01-n01.xml
-''                   → a-02-revistaAlgo-v01-n01
-'' Parámetros: sArchivoDoaj As String — nombre con prefijo d- y .xml
-'' Retorna   : String — nombre sin extensión y con prefijo a-
-'' ============================================
+' ============================================
+' Función   : NombreArchivoDoajANombreBD
+' Propósito : Convierte el nombre de archivo d-* visible en
+'             el listbox al nombre_archivo guardado en la BD
+'             Ejemplo: d-02-revistaAlgo-v01-n01.xml
+'                   → a-02-revistaAlgo-v01-n01
+' Parámetros: sArchivoDoaj As String — nombre con prefijo d- y .xml
+' Retorna   : String — nombre sin extensión y con prefijo a-
+' ============================================
 Public Function NombreArchivoDoajANombreBD(sArchivoDoaj As String) As String
 
   ' --- 1. Quitar extensión .xml ---
@@ -2891,13 +2903,13 @@ Public Function NombreArchivoDoajANombreBD(sArchivoDoaj As String) As String
 
 End Function
 
-'' ============================================
-'' Función   : ObtenerIdArticuloPorNombre
-'' Propósito : Busca el id_articulo en la BD a partir del
-''             nombre_archivo (sin extensión, con prefijo a-)
-'' Parámetros: sNombreArchivo As String — campo nombre_archivo de la BD
-'' Retorna   : Integer — id_articulo, o 0 si no se encuentra
-'' ============================================
+' ============================================
+' Función   : ObtenerIdArticuloPorNombre
+' Propósito : Busca el id_articulo en la BD a partir del
+'             nombre_archivo (sin extensión, con prefijo a-)
+' Parámetros: sNombreArchivo As String — campo nombre_archivo de la BD
+' Retorna   : Integer — id_articulo, o 0 si no se encuentra
+' ============================================
 Public Function ObtenerIdArticuloPorNombre(sNombreArchivo As String) As Integer
 
   ' --- 1. Consulta por nombre_archivo ---
@@ -3024,21 +3036,22 @@ Public Function ValidarArchivoDoaj(sArchivo As String, idArticulo As Integer) As
                   "doi", If(sDoi <> "", sDoi, "(ausente)"),
                   If(sDoi = "", "Recomendado — completar DOI en FMetadatosArticulos", ""), False)
 
-                  Dim sAbstract As String = ObtenerNodoXml(xDoc, "abstract")
-                  AgregarFilaGv(FMain.gvDOAJ, If(sAbstract <> "", "OK", "ADVERTENCIA"),
-                    "abstract", If(sAbstract <> "", Left(sAbstract, 60) & "...", "(ausente)"),
-                    If(sAbstract = "", "Recomendado — completar resumen en FMetadatosArticulos", ""), False)
+                  Dim aAbstracts As XmlElement[] = xDoc.GetElementsByTagName("abstract")
+                  Dim sAbstract As String = If(aAbstracts.Count > 0, ObtenerNodoXml(xDoc, "abstract"), "")
+                  AgregarFilaGv(FMain.gvDOAJ, If(aAbstracts.Count > 0, "OK", "ADVERTENCIA"),
+                    "abstract", If(aAbstracts.Count > 0, Left(sAbstract, 60) & "...", "(ausente)"),
+                    If(aAbstracts.Count = 0, "Recomendado — completar resumen en FMetadatosArticulos", ""), False)
 
-                    Dim sAutor As String = ObtenerNodoXml(xDoc, "n")
-                    AgregarFilaGv(FMain.gvDOAJ, If(sAutor <> "", "OK", "ADVERTENCIA"),
-                      "authors", If(sAutor <> "", sAutor, "(ausente)"),
-                      If(sAutor = "", "Recomendado — vincular autores al artículo", ""), False)
+                    Dim aAutores As XmlElement[] = xDoc.GetElementsByTagName("author")
+                    Dim sAutor As String = If(aAutores.Count > 0, ObtenerNodoXml(xDoc, "n"), "")
+                    AgregarFilaGv(FMain.gvDOAJ, If(aAutores.Count > 0, "OK", "ADVERTENCIA"),
+                      "authors", If(aAutores.Count > 0, sAutor & " (" & CStr(aAutores.Count) & ")", "(ausente)"),
+                      If(aAutores.Count = 0, "Recomendado — vincular autores al artículo", ""), False)
 
-                      Dim sKwd As String = ObtenerNodoXml(xDoc, "keyword")
-                      AgregarFilaGv(FMain.gvDOAJ, If(sKwd <> "", "OK", "ADVERTENCIA"),
-                        "keywords", If(sKwd <> "", sKwd, "(ausente)"),
-                        If(sKwd = "", "Recomendado — completar palabras clave", ""), False)
-
+                      Dim aKwds As XmlElement[] = xDoc.GetElementsByTagName("keyword")
+                      AgregarFilaGv(FMain.gvDOAJ, If(aKwds.Count > 0, "OK", "ADVERTENCIA"),
+                        "keywords", If(aKwds.Count > 0, ObtenerNodoXml(xDoc, "keyword") & " (" & CStr(aKwds.Count) & ")", "(ausente)"),
+                        If(aKwds.Count = 0, "Recomendado — completar palabras clave", ""), False)
                         ' --- 7. Determinar resultado global leyendo columna 0 ---
                         Dim i As Integer
                         For i = 0 To FMain.gvDOAJ.Rows.Count - 1
@@ -3082,7 +3095,7 @@ End Function
 '                                       si un vacío es ERROR
 ' Retorna   : Boolean — True si el campo está OK (no tiene error)
 ' ============================================
-Private Function AgregarFilaGv(gv As GridView, sEstado As String, sCampo As String, sValor As String, sAccion As String, bObligatorio As Boolean) As Boolean
+Public Function AgregarFilaGv(gv As GridView, sEstado As String, sCampo As String, sValor As String, sAccion As String, bObligatorio As Boolean) As Boolean
 
   ' --- 1. Asignar color según estado ---
   Dim colorFondo As Integer
@@ -3255,5 +3268,380 @@ Public Function EnriquecerCanonico(sRutaCanonico As String, idArticulo As Intege
   If Error Then Return False
 
   Return True
+
+End Function
+
+' ============================================
+' Función   : GenerarJsonDoaj
+' Propósito : Construye el JSON BibJSON para la API de DOAJ
+'             leyendo datos de la base de datos.
+'             Guarda el resultado como d-*.json en la carpeta jats/.
+' Parámetros: sRutaCanonico As String — ruta al canónico c-*.xml
+'             idArticulo    As Integer — ID del artículo en BD
+' Retorna   : Boolean — True si el JSON se generó correctamente
+' ============================================
+Public Function GenerarJsonDoaj(sRutaCanonico As String, idArticulo As Integer) As Boolean
+
+  ' --- 1. Inicialización de variables ---
+  Dim hRes As Result
+  Dim sJson As String
+  Dim sRutaJson As String
+  Dim hFile As File
+
+  ' --- 2. Verificar que el canónico existe ---
+  If Not Exist(sRutaCanonico) Then
+    Message.Error("No se encuentra el canónico:\n" & sRutaCanonico)
+    Return False
+  Endif
+
+  ' --- 3. Consultar datos del artículo en la BD ---
+  ' NOMBRES DE CAMPOS SEGÚN DESCRIBE articulos
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT a.titulo_articulo, a.resumen_1, a.idioma_resumen_1, " &
+    "a.palabras_clave_1, a.doi, " &
+    "a.pagina_inicio, a.pagina_fin, " &
+    "a.url_html, a.url_articulo, a.url_pdf, " &
+    "a.id_doaj, a.nombre_archivo, " &
+    "a.ano_publicacion, a.mes_publicacion, " &
+    "r.titulo_revista, r.editorial, " &
+    "r.issn_impreso, r.e_issn AS issn_electronico, " &
+    "r.volumen, r.numero " &
+    "FROM articulos a " &
+    "JOIN revistas_md r ON a.id_revista = r.id_revista " &
+    "WHERE a.id_articulo = " & idArticulo)
+  If Error Then
+    Message.Error("Error al consultar la BD:\n" & Error.Text)
+    Return False
+  Endif
+  If hRes.Count = 0 Then
+    Message.Error("No se encontró el artículo ID " & CStr(idArticulo))
+    Return False
+  Endif
+
+  ' --- 4. Construir ruta del JSON de salida ---
+  ' PATRÓN: c-01-revista-v01-n01.xml → d-01-revista-v01-n01.json
+  sRutaJson = File.Dir(sRutaCanonico) & "/" &
+    Replace(Replace(File.BaseName(sRutaCanonico), "c-", "d-"), ".xml", "") & ".json"
+
+  ' --- 5. Construir bloque de autores desde BD ---
+  Dim sAutores As String
+  Dim hAutores As Result
+  Dim bPrimero As Boolean = True
+
+  Try hAutores = m_ConexionBD.mConn.Exec(
+    "SELECT p.nombre, p.apellido, p.orcid, pa.institucion " &
+    "FROM personas p " &
+    "JOIN personas_articulos pa ON p.id_persona = pa.id_persona " &
+    "WHERE pa.id_articulo = " & idArticulo & " " &
+    "AND pa.rol = 'autor' " &
+    "ORDER BY pa.orden")
+  If Not Error Then
+    While hAutores.Available
+      Dim sNombreA As String = EscaparJson(Trim(hAutores!apellido) & ", " & Trim(hAutores!nombre))
+      Dim sOrcid As String = Trim(hAutores!orcid)
+      Dim sAff As String = EscaparJson(Trim(hAutores!institucion))
+
+      If Not bPrimero Then sAutores &= ","
+      sAutores &= Chr(10) & "      {"
+      sAutores &= Chr(10) & "        " "name" ": " "" & sNombreA & "" ""
+      If sAff <> "" Then
+        sAutores &= "," & Chr(10) & "        " "affiliation" ": " "" & sAff & "" ""
+      Endif
+      If sOrcid <> "" Then
+        ' ORCID DEBE IR CON URL COMPLETA SEGÚN DOAJ
+        If Not (sOrcid Begins "https://") Then sOrcid = "https://orcid.org/" & sOrcid
+        sAutores &= "," & Chr(10) & "        " "orcid_id" ": " "" & sOrcid & "" ""
+      Endif
+      sAutores &= Chr(10) & "      }"
+      bPrimero = False
+      hAutores.MoveNext()
+    Wend
+  Endif
+
+  ' --- 6. Construir bloque de identificadores ---
+  ' DOAJ REQUIERE AL MENOS UN ISSN (eissn O pissn)
+  Dim sIdentificadores As String
+  Dim bPrimeroId As Boolean = True
+
+  If Trim(hRes!issn_electronico) <> "" Then
+    sIdentificadores &= Chr(10) & "      {" "type" ": " "eissn" ", " "id" ": " "" & EscaparJson(Trim(hRes!issn_electronico)) & "" "}"
+    bPrimeroId = False
+  Endif
+  If Trim(hRes!issn_impreso) <> "" Then
+    If Not bPrimeroId Then sIdentificadores &= ","
+    sIdentificadores &= Chr(10) & "      {" "type" ": " "pissn" ", " "id" ": " "" & EscaparJson(Trim(hRes!issn_impreso)) & "" "}"
+    bPrimeroId = False
+  Endif
+  If Trim(hRes!doi) <> "" Then
+    If Not bPrimeroId Then sIdentificadores &= ","
+    sIdentificadores &= Chr(10) & "      {" "type" ": " "doi" ", " "id" ": " "" & EscaparJson(Trim(hRes!doi)) & "" "}"
+  Endif
+
+  ' --- 7. URL del texto completo (cascada: url_html → url_articulo → url_pdf) ---
+  Dim sUrl As String
+  If Trim(hRes!url_html) <> "" Then
+    sUrl = Trim(hRes!url_html)
+  Else If Trim(hRes!url_articulo) <> "" Then
+    sUrl = Trim(hRes!url_articulo)
+  Else
+    sUrl = Trim(hRes!url_pdf)
+  Endif
+
+  ' --- 8. Construir bloque de palabras clave desde BD ---
+  ' palabras_clave_1 ESTÁ GUARDADO COMO LISTA SEPARADA POR COMAS O PUNTO Y COMA
+  Dim sKeywords As String
+  Dim aKwRaw As String[]
+  Dim bPrimeroKw As Boolean = True
+
+  If Trim(hRes!palabras_clave_1) <> "" Then
+    ' INTENTAR SEPARAR POR COMA
+    Dim sSepKw As String = Trim(hRes!palabras_clave_1)
+    If InStr(sSepKw, ",") > 0 Then
+      aKwRaw = Split(sSepKw, ",")
+    Endif
+    Dim sKw As String
+    For Each sKw In aKwRaw
+      sKw = Trim(sKw)
+      If sKw = "" Then Continue
+      If Not bPrimeroKw Then sKeywords &= ","
+      sKeywords &= Chr(10) & "      " "" & EscaparJson(sKw) & "" ""
+      bPrimeroKw = False
+    Next
+  Endif
+
+  ' --- 9. Armar el JSON completo ---
+  sJson = "{"
+  sJson &= Chr(10) & "  " "bibjson" ": {"
+
+  ' TÍTULO (OBLIGATORIO)
+  sJson &= Chr(10) & "    " "title" ": " "" & EscaparJson(Trim(hRes!titulo_articulo)) & "" ","
+
+  ' RESUMEN (OPCIONAL)
+  If Trim(hRes!resumen_1) <> "" Then
+    sJson &= Chr(10) & "    " "abstract" ": " "" & EscaparJson(Trim(hRes!resumen_1)) & "" ","
+  Endif
+
+  ' AÑO Y MES
+  sJson &= Chr(10) & "    " "year" ": " "" & CStr(hRes!ano_publicacion) & "" ","
+  If Trim(hRes!mes_publicacion) <> "" Then
+    sJson &= Chr(10) & "    " "month" ": " "" & Trim(hRes!mes_publicacion) & "" ","
+  Endif
+
+  ' PALABRAS CLAVE (MÁX 6 SEGÚN DOAJ)
+  If sKeywords <> "" Then
+    sJson &= Chr(10) & "    " "keywords" ": [" & sKeywords & Chr(10) & "    ],"
+  Endif
+
+  ' AUTORES
+  If sAutores <> "" Then
+    sJson &= Chr(10) & "    " "author" ": [" & sAutores & Chr(10) & "    ],"
+  Endif
+
+  ' IDENTIFICADORES (OBLIGATORIO AL MENOS UNO)
+  sJson &= Chr(10) & "    " "identifier" ": [" & sIdentificadores & Chr(10) & "    ],"
+
+  ' DATOS DEL NÚMERO (journal)
+  sJson &= Chr(10) & "    " "journal" ": {"
+  sJson &= Chr(10) & "      " "title" ": " "" & EscaparJson(Trim(hRes!titulo_revista)) & "" ","
+  sJson &= Chr(10) & "      " "publisher" ": " "" & EscaparJson(Trim(hRes!editorial)) & "" ","
+  sJson &= Chr(10) & "      " "volume" ": " "" & Trim(hRes!volumen) & "" ","
+  sJson &= Chr(10) & "      " "number" ": " "" & Trim(hRes!numero) & "" ","
+  If Trim(hRes!pagina_inicio) <> "" Then
+    sJson &= Chr(10) & "      " "start_page" ": " "" & Trim(hRes!pagina_inicio) & "" ","
+  Endif
+  If Trim(hRes!pagina_fin) <> "" Then
+    sJson &= Chr(10) & "      " "end_page" ": " "" & Trim(hRes!pagina_fin) & "" ","
+  Endif
+  ' QUITAR LA COMA DEL ÚLTIMO CAMPO DE journal ANTES DE CERRAR
+  If sJson Ends "," Then sJson = Left(sJson, Len(sJson) - 1)
+  sJson &= Chr(10) & "    },"
+
+  ' LINK AL TEXTO COMPLETO
+  If sUrl <> "" Then
+    sJson &= Chr(10) & "    " "link" ": ["
+    sJson &= Chr(10) & "      {"
+    sJson &= Chr(10) & "        " "type" ": " "fulltext" ","
+    sJson &= Chr(10) & "        " "url" ": " "" & EscaparJson(sUrl) & "" ","
+    sJson &= Chr(10) & "        " "content_type" ": " "text/html" ""
+    sJson &= Chr(10) & "      }"
+    sJson &= Chr(10) & "    ]"
+  Else
+    ' SIN URL: QUITAR LA COMA FINAL DEL BLOQUE ANTERIOR
+    If sJson Ends "," Then sJson = Left(sJson, Len(sJson) - 1)
+  Endif
+
+  sJson &= Chr(10) & "  }"
+  sJson &= Chr(10) & "}"
+
+  ' --- 10. Guardar el archivo JSON ---
+  Try File.Save(sRutaJson, sJson)
+  If Error Then
+    Message.Error("No se pudo guardar el JSON:\n" & sRutaJson & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End Function
+
+' ============================================
+' Función   : EscaparJson
+' Propósito : Escapa caracteres especiales en cadenas JSON
+' Parámetros: s As String — cadena a escapar
+' Retorna   : String — cadena escapada para uso seguro en JSON
+' ============================================
+Public Function EscaparJson(s As String) As String
+
+  ' REEMPLAZOS OBLIGATORIOS SEGÚN RFC 8259
+  ' BARRA INVERSA PRIMERO PARA EVITAR DOBLE ESCAPE
+  s = Replace(s, "\\", "\\\\")
+  s = Replace(s, "" "", "\\" "")
+  s = Replace(s, Chr(10), "\\n")
+  s = Replace(s, Chr(13), "")
+  s = Replace(s, Chr(9), "\\t")
+  Return s
+
+End Function
+
+' ============================================
+' Función   : EnviarJsonDoaj
+' Propósito : Envía el JSON de un artículo a la API de DOAJ
+'             via HTTP POST (primer envío) o PUT (actualización
+'             si ya existe id_doaj en la BD).
+'             El ID DOAJ devuelto se graba en articulos.id_doaj.
+' Parámetros: sRutaJson  As String  — ruta al archivo d-*.json
+'             sApiKey    As String  — clave API del publicador en DOAJ
+'             idArticulo As Integer — ID del artículo en BD
+' Retorna   : String — ID DOAJ asignado si tuvo éxito, "" si falló
+' ============================================
+Public Function EnviarJsonDoaj(sRutaJson As String, sApiKey As String, idArticulo As Integer) As String
+
+  ' --- 1. Validaciones previas ---
+  If Not Exist(sRutaJson) Then
+    Message.Error("No se encuentra el archivo JSON:\n" & sRutaJson)
+    Return ""
+  Endif
+  If Trim(sApiKey) = "" Then
+    Message.Error("La API key no puede estar vacía.")
+    Return ""
+  Endif
+
+  ' --- 2. Determinar si es POST (nuevo) o PUT (actualización) ---
+  ' id_doaj EN LA BD INDICA QUE EL ARTÍCULO YA FUE ENVIADO ANTES
+  Dim hRes As Result
+  Dim sIdDoaj As String = ""
+  Dim sMetodo As String = "POST"
+  Dim sUrlApi As String
+
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_doaj FROM articulos WHERE id_articulo = " & CStr(idArticulo))
+  If Not Error Then
+    If hRes.Count > 0 Then
+      If Not IsNull(hRes["id_doaj"]) Then
+        sIdDoaj = Trim(CStr(hRes["id_doaj"]))
+      Endif
+    Endif
+  Endif
+
+  If sIdDoaj <> "" Then
+    ' ARTÍCULO YA ENVIADO ANTES → ACTUALIZAR CON PUT
+    sMetodo = "PUT"
+    sUrlApi = "https://doaj.org/api/articles/" & sIdDoaj & "?api_key=" & Trim(sApiKey)
+  Else
+    ' PRIMER ENVÍO → CREAR CON POST
+    sMetodo = "POST"
+    sUrlApi = "https://doaj.org/api/articles?api_key=" & Trim(sApiKey)
+  Endif
+
+  ' --- 3. Leer el contenido del JSON ---
+  Dim sJson As String
+  Dim hFile As File
+  Try hFile = Open sRutaJson For Input
+  If Error Then
+    Message.Error("Error al abrir el JSON:\n" & Error.Text)
+    Return ""
+  Endif
+  Try sJson = Read #hFile, Lof(hFile)
+  Try Close #hFile
+
+  ' --- 4. Escribir body en archivo temporal ---
+  ' EVITA PROBLEMAS CON CARACTERES ESPECIALES EN LA LÍNEA DE COMANDO
+  Dim sTmpBody As String = "/tmp/doaj_body_" & CStr(idArticulo) & ".json"
+  Dim sTmpResp As String = "/tmp/doaj_resp_" & CStr(idArticulo) & ".json"
+
+  Try hFile = Open sTmpBody For Output
+  Try Print #hFile, sJson
+  Try Close #hFile
+
+  ' --- 5. Ejecutar curl ---
+  Dim sCmd As String = "curl -s -o " & Shell(sTmpResp) &
+    " -w " "%{http_code}" "" &
+    " -X " & sMetodo &
+    " -H " "Content-Type: application/json" "" &
+    " --data-binary @" & Shell(sTmpBody) &
+    " " "" & sUrlApi & "" ""
+
+  Dim sHttpCode As String
+  Shell sCmd To sHttpCode
+  Wait
+  If Error Then
+    Message.Error("Error al ejecutar curl:\n" & Error.Text)
+    Return ""
+  Endif
+  sHttpCode = Trim(sHttpCode)
+
+  ' --- 6. Leer la respuesta ---
+  Dim sRespuesta As String
+  Try hFile = Open sTmpResp For Input
+  If Not Error Then
+    Try sRespuesta = Read #hFile, Lof(hFile)
+    Try Close #hFile
+  Endif
+
+  ' LIMPIAR ARCHIVOS TEMPORALES
+  Try Kill sTmpBody
+  Try Kill sTmpResp
+
+  ' --- 7. Evaluar el resultado ---
+  ' DOAJ DEVUELVE 201 CREATED (POST) O 200 OK (PUT)
+  If sHttpCode = "201" Or sHttpCode = "200" Then
+
+    ' EXTRAER EL ID DOAJ DE LA RESPUESTA
+    ' FORMATO POST: {"id": "abcdef1234", "location": "..."}
+    ' FORMATO PUT:  {"id": "abcdef1234", ...}
+    Dim iInicio As Integer = InStr(sRespuesta, "" "id" ": " "")
+    If iInicio > 0 Then
+      iInicio += Len("" "id" ": " "")
+      Dim iFin As Integer = InStr(iInicio, sRespuesta, "" "")
+      If iFin > 0 Then
+        sIdDoaj = Mid(sRespuesta, iInicio, iFin - iInicio)
+      Endif
+    Endif
+
+    ' SI NO PUDO EXTRAER EL ID PERO HTTP FUE OK
+    If sIdDoaj = "" Then sIdDoaj = "OK-" & sHttpCode
+
+    ' --- 8. GRABAR id_doaj EN LA BD ---
+    ' ESTE ES EL ÚNICO MOMENTO EN QUE SE ESCRIBE ESTE CAMPO:
+    ' CUANDO DOAJ CONFIRMA LA RECEPCIÓN CON HTTP 200/201
+    Try m_ConexionBD.mConn.Exec(
+      "UPDATE articulos SET id_doaj = " & m_ConexionBD.mConn.Quote(sIdDoaj) &
+      " WHERE id_articulo = " & CStr(idArticulo))
+    If Error Then
+      ' EL ENVÍO FUE EXITOSO PERO NO SE PUDO GUARDAR EL ID
+      ' SE INFORMA AL USUARIO PARA QUE LO ANOTE MANUALMENTE
+      Message.Warning("Artículo aceptado por DOAJ pero no se pudo guardar el ID en la BD." &
+        Chr(10) & "ID DOAJ: " & sIdDoaj &
+        Chr(10) & "Anotalo manualmente para futuras actualizaciones.")
+    Endif
+
+    Return sIdDoaj
+
+  Else
+    ' DOAJ RECHAZÓ EL ARTÍCULO
+    Message.Error("DOAJ rechazó el artículo (HTTP " & sHttpCode & "):" &
+      Chr(10) & sRespuesta)
+    Return ""
+  Endif
 
 End Function
