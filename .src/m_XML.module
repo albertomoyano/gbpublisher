@@ -3645,3 +3645,377 @@ Public Function EnviarJsonDoaj(sRutaJson As String, sApiKey As String, idArticul
   Endif
 
 End Function
+
+' ============================================
+' Función   : NombreArchivoRedalycANombreBD
+' Propósito : Convierte el nombre de archivo r-* visible en
+'             el listbox al nombre_archivo guardado en la BD.
+'             Ejemplo: r-02-revista-v01-n01.xml
+'                   → a-02-revista-v01-n01
+' Parámetros: sArchivoRedalyc As String — nombre con prefijo r- y .xml
+' Retorna   : String — nombre sin extensión y con prefijo a-
+' ============================================
+Public Function NombreArchivoRedalycANombreBD(sArchivoRedalyc As String) As String
+
+  ' --- 1. Quitar extensión .xml ---
+  Dim sBase As String = Left(sArchivoRedalyc, Len(sArchivoRedalyc) - 4)
+
+  ' --- 2. Reemplazar prefijo r- por a- ---
+  If Left(sBase, 2) = "r-" Then
+    Return "a-" & Mid(sBase, 3)
+  Endif
+
+  ' --- 3. Fallback: devolver sin cambios si el prefijo no coincide ---
+  Return sBase
+
+End Function
+
+' ============================================
+' Función   : ValidarArchivoRedalyc
+' Propósito : Lee el archivo r-*.xml y consulta la BD para
+'             verificar los requisitos de indexación en Redalyc.
+'             Las reglas se basan en JATS4R + requisitos de
+'             Marcalyc 4.0 (acceso abierto sin APC, CC obligatoria).
+'             Carga los resultados en FMain.gvRedalyc con
+'             colores por estado: OK / ERROR / ADVERTENCIA.
+' Parámetros: sArchivo    As String  — nombre del archivo (con .xml)
+'             idArticulo  As Integer — id_articulo en la BD (0 si no encontrado)
+' Retorna   : Boolean — True si no hay errores bloqueantes
+' ============================================
+Public Function ValidarArchivoRedalyc(sArchivo As String, idArticulo As Integer) As Boolean
+
+  ' --- 1. Inicialización ---
+  Dim sRuta As String
+  Dim xDoc As New XmlDocument
+  Dim bValido As Boolean = True
+  Dim sTipoArticulo As String
+  Dim bRequiereAbstract As Boolean
+
+  ' --- 2. Preparar el GridView ---
+  FMain.gvRedalyc.Clear
+  FMain.gvRedalyc.Rows.Count = 0
+  FMain.gvRedalyc.Columns.Count = 4
+  FMain.gvRedalyc.Columns[0].Text = "Estado"
+  FMain.gvRedalyc.Columns[0].Width = 90
+  FMain.gvRedalyc.Columns[1].Text = "Campo Redalyc"
+  FMain.gvRedalyc.Columns[1].Width = 160
+  FMain.gvRedalyc.Columns[2].Text = "Valor encontrado"
+  FMain.gvRedalyc.Columns[2].Width = 260
+  FMain.gvRedalyc.Columns[3].Text = "Acción requerida"
+  FMain.gvRedalyc.Columns[3].Width = 250
+
+  ' --- 3. Cargar el XML generado ---
+  sRuta = FMain.RutaProyecto &/ "jats" &/ sArchivo
+
+  If Not Exist(sRuta) Then
+    AgregarFilaGv(FMain.gvRedalyc, "ERROR",
+      "archivo", "(no encontrado)", "Regenerar desde el canónico", True)
+    Return False
+  Endif
+
+  Try xDoc.Open(sRuta)
+  If Error Then
+    AgregarFilaGv(FMain.gvRedalyc, "ERROR",
+      "archivo", "XML malformado: " & Error.Text, "Verificar el XSLT", True)
+    Return False
+  Endif
+
+  ' ====================================================
+  ' --- 4. BLOQUE A: ERRORES — campos obligatorios del artículo ---
+  ' ====================================================
+
+  ' --- 4.1. article-type (atributo del elemento raíz <article>) ---
+  Dim aArticle As XmlElement[] = xDoc.GetElementsByTagName("article")
+  Dim sArticleType As String = ""
+  If aArticle.Count > 0 Then
+    sArticleType = Trim(aArticle[0].Attributes["article-type"])
+  Endif
+  If Not AgregarFilaGv(FMain.gvRedalyc, If(sArticleType <> "", "OK", "ERROR"),
+      "article/@article-type",
+      If(sArticleType <> "", sArticleType, "(ausente)"),
+        If(sArticleType = "", "Completar tipo de artículo en FMetadatosArticulos", ""), True) Then
+        bValido = False
+      Endif
+
+      ' --- 4.2. xml:lang (atributo del elemento raíz <article>) ---
+      Dim sXmlLang As String = ""
+      If aArticle.Count > 0 Then
+        sXmlLang = Trim(aArticle[0].Attributes["xml:lang"])
+      Endif
+      If Not AgregarFilaGv(FMain.gvRedalyc, If(sXmlLang <> "", "OK", "ERROR"),
+          "article/@xml:lang",
+          If(sXmlLang <> "", sXmlLang, "(ausente)"),
+            If(sXmlLang = "", "Completar idioma principal en FMetadatosArticulos", ""), True) Then
+            bValido = False
+          Endif
+
+          ' --- 4.3. journal-title ---
+          Dim sJTitle As String = ObtenerNodoXml(xDoc, "journal-title")
+          If Not AgregarFilaGv(FMain.gvRedalyc, If(sJTitle <> "", "OK", "ERROR"),
+              "journal-title",
+              If(sJTitle <> "", sJTitle, "(ausente)"),
+                If(sJTitle = "", "Completar título de revista en FMetadatosRevista", ""), True) Then
+                bValido = False
+              Endif
+
+              ' --- 4.4. Al menos un ISSN ---
+              Dim aIssn As XmlElement[] = xDoc.GetElementsByTagName("issn")
+              Dim sIssnVal As String = If(aIssn.Count > 0, Trim(aIssn[0].Value), "")
+              Dim bTieneIssn As Boolean = (aIssn.Count > 0 And sIssnVal <> "")
+              If Not AgregarFilaGv(FMain.gvRedalyc, If(bTieneIssn, "OK", "ERROR"),
+                  "issn",
+                  If(bTieneIssn, sIssnVal & " (" & CStr(aIssn.Count) & " registrado/s)", "(ninguno)"),
+                    If(Not bTieneIssn, "Completar ISSN en FMetadatosRevista", ""), True) Then
+                    bValido = False
+                  Endif
+
+                  ' --- 4.5. publisher-name ---
+                  Dim sPublisher As String = ObtenerNodoXml(xDoc, "publisher-name")
+                  If Not AgregarFilaGv(FMain.gvRedalyc, If(sPublisher <> "", "OK", "ERROR"),
+                      "publisher-name",
+                      If(sPublisher <> "", sPublisher, "(ausente)"),
+                        If(sPublisher = "", "Completar editorial en FMetadatosRevista", ""), True) Then
+                        bValido = False
+                      Endif
+
+                      ' --- 4.6. article-title ---
+                      Dim sTitle As String = ObtenerNodoXml(xDoc, "article-title")
+                      If Not AgregarFilaGv(FMain.gvRedalyc, If(sTitle <> "", "OK", "ERROR"),
+                          "article-title",
+                          If(sTitle <> "", Left(sTitle, 70) & If(Len(sTitle) > 70, "…", ""), "(ausente)"),
+                            If(sTitle = "", "Completar título en FMetadatosArticulos", ""), True) Then
+                            bValido = False
+                          Endif
+
+                          ' --- 4.7. pub-date ---
+                          Dim aPubDate As XmlElement[] = xDoc.GetElementsByTagName("pub-date")
+                          Dim sPubYear As String = ""
+                          If aPubDate.Count > 0 Then
+                            Dim aYear As XmlElement[] = aPubDate[0].GetElementsByTagName("year")
+                            If aYear.Count > 0 Then sPubYear = Trim(aYear[0].Value)
+                          Endif
+                          If Not AgregarFilaGv(FMain.gvRedalyc, If(sPubYear <> "", "OK", "ERROR"),
+                              "pub-date/year",
+                              If(sPubYear <> "", sPubYear, "(ausente)"),
+                                If(sPubYear = "", "Completar fecha de publicación en FMetadatosArticulos", ""), True) Then
+                                bValido = False
+                              Endif
+
+                              ' --- 4.8. permissions / license (obligatorio en Redalyc) ---
+                              Dim aLicense As XmlElement[] = xDoc.GetElementsByTagName("license")
+                              Dim sLicenseHref As String = ""
+                              Dim bTieneCC As Boolean = False
+                              If aLicense.Count > 0 Then
+                                sLicenseHref = Trim(aLicense[0].Attributes["xlink:href"])
+                                bTieneCC = (InStr(sLicenseHref, "creativecommons.org") > 0)
+                              Endif
+                              ' PRESENCIA DE LICENCIA
+                              If Not AgregarFilaGv(FMain.gvRedalyc, If(aLicense.Count > 0, "OK", "ERROR"),
+                                  "permissions/license",
+                                  If(aLicense.Count > 0, sLicenseHref, "(ausente)"),
+                                    If(aLicense.Count = 0, "Completar licencia en FMetadatosRevista o FMetadatosArticulos", ""), True) Then
+                                    bValido = False
+                                  Endif
+                                  ' URL DE CREATIVE COMMONS (obligatorio para indexación Redalyc)
+                                  If aLicense.Count > 0 Then
+                                    If Not AgregarFilaGv(FMain.gvRedalyc, If(bTieneCC, "OK", "ERROR"),
+                                        "license/@xlink:href CC",
+                                        If(sLicenseHref <> "", sLicenseHref, "(sin URL)"),
+                                          If(Not bTieneCC, "Redalyc requiere licencia Creative Commons — URL debe contener creativecommons.org", ""), True) Then
+                                          bValido = False
+                                        Endif
+                                      Endif
+
+                                      ' --- 4.9. Al menos un autor con surname ---
+                                      Dim aSurname As XmlElement[] = xDoc.GetElementsByTagName("surname")
+                                      Dim bTieneAutores As Boolean = (aSurname.Count > 0)
+                                      If Not AgregarFilaGv(FMain.gvRedalyc, If(bTieneAutores, "OK", "ERROR"),
+                                          "contrib/name/surname",
+                                          If(bTieneAutores, Trim(aSurname[0].Value) & " (" & CStr(aSurname.Count) & " autor/es)", "(ninguno)"),
+                                            If(Not bTieneAutores, "Vincular autores al artículo en FMetadatosAutores", ""), True) Then
+                                            bValido = False
+                                          Endif
+
+                                          ' --- 4.10. element-citation en referencias (JATS4R — no mixed-citation) ---
+                                          Dim aMixed As XmlElement[] = xDoc.GetElementsByTagName("mixed-citation")
+                                          Dim aElement As XmlElement[] = xDoc.GetElementsByTagName("element-citation")
+                                          Dim aRefList As XmlElement[] = xDoc.GetElementsByTagName("ref-list")
+                                          ' SOLO VALIDAR SI HAY REF-LIST CON CONTENIDO
+                                          If aRefList.Count > 0 And (aMixed.Count > 0 Or aElement.Count > 0) Then
+                                            If Not AgregarFilaGv(FMain.gvRedalyc, If(aMixed.Count = 0, "OK", "ERROR"),
+                                                "element-citation (JATS4R)",
+                                                If(aMixed.Count = 0,
+                                                  CStr(aElement.Count) & " element-citation",
+                                                  CStr(aMixed.Count) & " mixed-citation encontradas"),
+                                                  If(aMixed.Count > 0, "JATS4R requiere element-citation, no mixed-citation", ""), True) Then
+                                                  bValido = False
+                                                Endif
+                                              Endif
+
+                                              ' ====================================================
+                                              ' --- 5. BLOQUE B: ADVERTENCIAS — campos recomendados ---
+                                              ' ====================================================
+
+                                              ' --- 5.1. abstract (solo obligatorio en research-article y review-article) ---
+                                              ' TIPOS QUE REQUIEREN ABSTRACT SEGÚN REDALYC / JATS4R
+                                              sTipoArticulo = Lower(sArticleType)
+                                              bRequiereAbstract = (sTipoArticulo = "research-article" Or
+                                                sTipoArticulo = "review-article" Or
+                                                sTipoArticulo = "systematic-review")
+
+                                              Dim aAbstract As XmlElement[] = xDoc.GetElementsByTagName("abstract")
+                                              Dim sEstadoAbstract As String
+                                              Dim sMensajeAbstract As String
+
+                                              If bRequiereAbstract Then
+                                                ' PARA ESTOS TIPOS ES ERROR, NO ADVERTENCIA
+                                                sEstadoAbstract = If(aAbstract.Count > 0, "OK", "ERROR")
+                                                sMensajeAbstract = If(aAbstract.Count = 0,
+                                                  "Obligatorio para " & sArticleType & " — completar resumen en FMetadatosArticulos", "")
+                                                If Not AgregarFilaGv(FMain.gvRedalyc, sEstadoAbstract,
+                                                    "abstract",
+                                                    If(aAbstract.Count > 0, CStr(aAbstract.Count) & " resumen/s", "(ausente)"),
+                                                      sMensajeAbstract, True) Then
+                                                    bValido = False
+                                                  Endif
+                                                Else
+                                                  ' PARA EDITORIALES, RESEÑAS, OBITUARIOS, ETC. → ADVERTENCIA
+                                                  AgregarFilaGv(FMain.gvRedalyc, If(aAbstract.Count > 0, "OK", "ADVERTENCIA"),
+                                                    "abstract",
+                                                    If(aAbstract.Count > 0, CStr(aAbstract.Count) & " resumen/s", "(ausente)"),
+                                                      If(aAbstract.Count = 0, "Recomendado para " & sArticleType, ""), False)
+                                                    Endif
+
+                                                    ' --- 5.2. abstract multilingüe (advertencia si solo hay uno en research-article) ---
+                                                    If bRequiereAbstract And aAbstract.Count = 1 Then
+                                                      Dim aTransAbstract As XmlElement[] = xDoc.GetElementsByTagName("trans-abstract")
+                                                      AgregarFilaGv(FMain.gvRedalyc, If(aTransAbstract.Count > 0, "OK", "ADVERTENCIA"),
+                                                        "trans-abstract",
+                                                        If(aTransAbstract.Count > 0,
+                                                          CStr(aTransAbstract.Count) & " traducción/es de resumen",
+                                                          "(solo un idioma)"),
+                                                          If(aTransAbstract.Count = 0,
+                                                            "Redalyc recomienda resumen en al menos dos idiomas", ""), False)
+                                                        Endif
+
+                                                        ' --- 5.3. kwd-group (palabras clave) ---
+                                                        Dim aKwdGroup As XmlElement[] = xDoc.GetElementsByTagName("kwd-group")
+                                                        Dim aKwds As XmlElement[] = xDoc.GetElementsByTagName("kwd")
+                                                        If bRequiereAbstract Then
+                                                          ' EN ARTÍCULOS DE INVESTIGACIÓN LAS PALABRAS CLAVE SON ERROR
+                                                          If Not AgregarFilaGv(FMain.gvRedalyc, If(aKwdGroup.Count > 0, "OK", "ERROR"),
+                                                              "kwd-group",
+                                                              If(aKwdGroup.Count > 0,
+                                                                CStr(aKwdGroup.Count) & " grupo/s, " & CStr(aKwds.Count) & " palabra/s clave",
+                                                                "(ausente)"),
+                                                                If(aKwdGroup.Count = 0,
+                                                                  "Obligatorio para " & sArticleType & " — completar en FMetadatosArticulos", ""), True) Then
+                                                                bValido = False
+                                                              Endif
+                                                            Else
+                                                              AgregarFilaGv(FMain.gvRedalyc, If(aKwdGroup.Count > 0, "OK", "ADVERTENCIA"),
+                                                                "kwd-group",
+                                                                If(aKwdGroup.Count > 0,
+                                                                  CStr(aKwdGroup.Count) & " grupo/s, " & CStr(aKwds.Count) & " palabra/s clave",
+                                                                  "(ausente)"),
+                                                                  If(aKwdGroup.Count = 0, "Recomendado — completar en FMetadatosArticulos", ""), False)
+                                                                Endif
+
+                                                                ' --- 5.4. DOI ---
+                                                                Dim sDoi As String = ObtenerNodoXml(xDoc, "article-id")
+                                                                ' article-id PUEDE SER DOI U OTRO TIPO — BUSCAR POR ATRIBUTO
+                                                                Dim aArticleId As XmlElement[] = xDoc.GetElementsByTagName("article-id")
+                                                                Dim sDoiVal As String = ""
+                                                                Dim xId As XmlElement
+                                                                For Each xId In aArticleId
+                                                                  If Trim(xId.Attributes["pub-id-type"]) = "doi" Then
+                                                                    sDoiVal = Trim(xId.Value)
+                                                                    Break
+                                                                  Endif
+                                                                Next
+                                                                AgregarFilaGv(FMain.gvRedalyc, If(sDoiVal <> "", "OK", "ADVERTENCIA"),
+                                                                  "article-id[@pub-id-type='doi']",
+                                                                  If(sDoiVal <> "", sDoiVal, "(ausente)"),
+                                                                    If(sDoiVal = "", "Recomendado — completar DOI en FMetadatosArticulos", ""), False)
+
+                                                                    ' --- 5.5. Afiliación de autores ---
+                                                                    Dim aAff As XmlElement[] = xDoc.GetElementsByTagName("aff")
+                                                                    Dim aContrib As XmlElement[] = xDoc.GetElementsByTagName("contrib")
+                                                                    Dim sAffMsg As String = If(aAff.Count > 0,
+                                                                      CStr(aAff.Count) & " afiliación/es para " & CStr(aContrib.Count) & " autor/es",
+                                                                      "(sin afiliaciones)")
+                                                                    AgregarFilaGv(FMain.gvRedalyc, If(aAff.Count > 0, "OK", "ADVERTENCIA"),
+                                                                      "contrib/aff",
+                                                                      sAffMsg,
+                                                                      If(aAff.Count = 0, "Redalyc requiere afiliación institucional — completar en FMetadatosAutores", ""), False)
+
+                                                                      ' --- 5.6. ORCID de autores ---
+                                                                      Dim aOrcid As XmlElement[] = xDoc.GetElementsByTagName("contrib-id")
+                                                                      Dim iOrcidCount As Integer = 0
+                                                                      Dim xCid As XmlElement
+                                                                      For Each xCid In aOrcid
+                                                                        If Trim(xCid.Attributes["contrib-id-type"]) = "orcid" Then
+                                                                          Inc iOrcidCount
+                                                                        Endif
+                                                                      Next
+                                                                      AgregarFilaGv(FMain.gvRedalyc, If(iOrcidCount > 0, "OK", "ADVERTENCIA"),
+                                                                        "contrib-id[@orcid]",
+                                                                        If(iOrcidCount > 0,
+                                                                          CStr(iOrcidCount) & " ORCID registrado/s de " & CStr(aContrib.Count) & " autor/es",
+                                                                          "(ninguno)"),
+                                                                          If(iOrcidCount = 0, "Recomendado — registrar ORCID en FMetadatosAutores", ""), False)
+
+                                                                          ' --- 5.7. volume e issue (advertencia si ambos ausentes — publicación continua) ---
+                                                                          Dim sVolume As String = ObtenerNodoXml(xDoc, "volume")
+                                                                          Dim sIssue As String = ObtenerNodoXml(xDoc, "issue")
+                                                                          AgregarFilaGv(FMain.gvRedalyc, If(sVolume <> "" Or sIssue <> "", "OK", "ADVERTENCIA"),
+                                                                            "volume / issue",
+                                                                            If(sVolume <> "" Or sIssue <> "",
+                                                                              "vol: " & If(sVolume <> "", sVolume, "—") & " / núm: " & If(sIssue <> "", sIssue, "—"),
+                                                                              "(ambos ausentes)"),
+                                                                              If(sVolume = "" And sIssue = "", "Completar volumen/número en FMetadatosRevista si aplica", ""), False)
+
+                                                                              ' --- 5.8. ref-list (advertencia si es research-article sin referencias) ---
+                                                                              If bRequiereAbstract Then
+                                                                                Dim aRef As XmlElement[] = xDoc.GetElementsByTagName("ref")
+                                                                                AgregarFilaGv(FMain.gvRedalyc, If(aRef.Count > 0, "OK", "ADVERTENCIA"),
+                                                                                  "ref-list/ref",
+                                                                                  If(aRef.Count > 0, CStr(aRef.Count) & " referencia/s", "(sin referencias)"),
+                                                                                    If(aRef.Count = 0, "Inusual para " & sArticleType & " — verificar si corresponde", ""), False)
+                                                                                  Endif
+
+                                                                                  ' ====================================================
+                                                                                  ' --- 6. Releer la columna 0 para estado global ---
+                                                                                  ' (igual que en ValidarArchivoDoaj)
+                                                                                  ' ====================================================
+                                                                                  Dim i As Integer
+                                                                                  For i = 0 To FMain.gvRedalyc.Rows.Count - 1
+                                                                                    If FMain.gvRedalyc[i, 0].Text = "ERROR" Then
+                                                                                      bValido = False
+                                                                                      Break
+                                                                                    Endif
+                                                                                  Next
+
+                                                                                  ' ====================================================
+                                                                                  ' --- 7. Fila de resumen final ---
+                                                                                  ' ====================================================
+                                                                                  Dim iUlt As Integer = FMain.gvRedalyc.Rows.Count
+                                                                                  FMain.gvRedalyc.Rows.Count = iUlt + 1
+
+                                                                                  FMain.gvRedalyc[iUlt, 0].Text = If(bValido, "APTO", "NO APTO")
+                                                                                  FMain.gvRedalyc[iUlt, 2].Text = If(bValido,
+                                                                                    "El archivo puede enviarse a Marcalyc / Redalyc",
+                                                                                    "Corregir errores antes de enviar")
+
+                                                                                  Dim colorResumen As Integer = If(bValido,
+                                                                                    Color.RGB(200, 230, 201),
+                                                                                    Color.RGB(255, 205, 210))
+                                                                                  Dim j As Integer
+                                                                                  For j = 0 To 3
+                                                                                    FMain.gvRedalyc[iUlt, j].Background = colorResumen
+                                                                                    FMain.gvRedalyc[iUlt, j].Font.Bold = True
+                                                                                  Next
+
+                                                                                  Return bValido
+
+End Function

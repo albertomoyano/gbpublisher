@@ -5833,12 +5833,12 @@ Public Sub HTMLojs_Click()
 
 End
 
-' ' ============================================
-' ' Evento    : lbDOAJ_Click
-' ' Propósito : Al seleccionar un archivo d-* en el listbox,
-' '             busca el artículo correspondiente en la BD
-' '             y lanza la validación DOAJ en el GridView
-' ' ============================================
+'  ============================================
+'  Evento    : lbDOAJ_Click
+'  Propósito : Al seleccionar un archivo d-* en el listbox,
+'              busca el artículo correspondiente en la BD
+'              y lanza la validación DOAJ en el GridView
+'  ============================================
 ' Public Sub lbDOAJ_Click()
 '
 '   ' --- 1. Obtener el archivo seleccionado ---
@@ -6005,7 +6005,7 @@ Public Sub btnEnviarDoaj_Click()
 End Sub
 
 ' ============================================
-' Función   : MostrarArchivosDOAJ  (REEMPLAZA LA VERSIÓN ANTERIOR)
+' Función   : MostrarArchivosDOAJ
 ' Propósito : Lista todos los archivos d-*.xml y d-*.json
 '             del directorio jats/ del proyecto activo.
 '             Primero XML, luego JSON, para que queden
@@ -6182,5 +6182,171 @@ Public Sub MostrarEstadoJson(sRutaJson As String, idArt As Integer)
               ' --- 7. Estado final ---
               btnEnviarDoaj.Enabled = bApto
               lblEstadoDoaj.Text = sEstadoEnvio
+
+End Sub
+
+' ============================================
+' Función   : MostrarArchivosRedalyc
+' Propósito : Lista todos los archivos r-*.xml del directorio
+'             jats/ del proyecto activo en el listbox lbRedalyc.
+'             Réplica exacta del patrón de MostrarArchivosDOAJ
+'             restringida a archivos XML (Redalyc no usa JSON).
+' ============================================
+Public Sub MostrarArchivosRedalyc()
+
+  ' --- 1. Construir ruta ---
+  Dim sRutaJats As String = File.Dir(txtProyecto.Text) &/ "jats"
+
+  ' --- 2. Limpiar el listbox ---
+  lbRedalyc.Clear()
+
+  If Not Exist(sRutaJats) Then Return
+
+  ' --- 3. Recolectar y ordenar ---
+  Dim aXml As New String[]
+  Dim sArch As String
+
+  For Each sArch In Dir(sRutaJats, "r-*.xml")
+    aXml.Add(File.Name(sArch))
+  Next
+
+  aXml.Sort()
+
+  ' --- 4. Cargar en el listbox ---
+  Dim s As String
+  For Each s In aXml
+    lbRedalyc.Add(s)
+  Next
+
+End Sub
+
+' ============================================
+' Función   : lbRedalyc_Click
+' Propósito : Al seleccionar un archivo r-*.xml en el listbox,
+'             busca el artículo correspondiente en la BD
+'             y lanza la validación Redalyc en gvRedalyc.
+' ============================================
+Public Sub lbRedalyc_Click()
+
+  ' --- 1. Obtener el archivo seleccionado ---
+  Dim sArchivo As String = lbRedalyc.Text
+
+  If sArchivo = "" Then Return
+
+  ' --- 2. Derivar el nombre_archivo de la BD ---
+  Dim sNombreArchivoBD As String = m_XML.NombreArchivoRedalycANombreBD(sArchivo)
+
+  ' --- 3. Buscar el id_articulo ---
+  Dim idArticulo As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreArchivoBD)
+
+  ' --- 4. Advertir si no se encontró en la BD ---
+  If idArticulo = 0 Then
+    Message.Warning("El archivo '" & sArchivo & "' no tiene un artículo " &
+      "correspondiente en la base de datos." & Chr(10) &
+      "Se validará el XML sin datos complementarios de la BD.")
+  Endif
+
+  ' --- 5. Lanzar validación y actualizar etiqueta de estado ---
+  Dim bApto As Boolean = m_XML.ValidarArchivoRedalyc(sArchivo, idArticulo)
+
+  lblEstadoRedalyc.Text = If(bApto,
+    "APTO para envío a Marcalyc / Redalyc",
+    "NO APTO — revisar errores antes de enviar")
+
+End Sub
+
+' ============================================
+' Función   : menuXMLRedalyc_Click
+' Propósito : Genera el archivo r-*.xml aplicando la hoja
+'             jats-to-redalyc.xsl sobre el canónico c-*.xml
+'             del artículo activo. Réplica del patrón de
+'             menuXMLDoaj_Click adaptada para Redalyc.
+' ============================================
+Public Sub menuXMLRedalyc_Click()
+
+  ' --- 1. Mostrar consola ---
+  tbMostrarPanelInferior.Value = True
+  TabPanelIzquierdaInferior.Index = 0
+
+  ' --- 2. Verificar que hay un artículo activo ---
+  If id_articulo.Value = 0 Then
+    Message.Info("Seleccioná un artículo antes de generar el XML Redalyc.")
+    Return
+  Endif
+
+  ' --- 3. Obtener nombre del archivo desde la BD ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = " & CStr(id_articulo.Value))
+  If Error Or hRes.Count = 0 Then
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  ' nombre_archivo GUARDADO COMO a-01-revista-v01-n01 (SIN EXTENSIÓN)
+  Dim sNombreArchivo As String = Trim(hRes!nombre_archivo)
+
+  ' --- 4. Construir rutas ---
+  ' PATRÓN: a-01-revista-v01-n01 → c-01-revista-v01-n01.xml → r-01-revista-v01-n01.xml
+  Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
+  Dim sNombreCanonico As String = "c-" & Mid(sNombreArchivo, 3) & ".xml"
+  Dim sNombreRedalyc As String = "r-" & Mid(sNombreArchivo, 3) & ".xml"
+  Dim sRutaCanonico As String = sRutaProyecto &/ "jats" &/ sNombreCanonico
+  Dim sRutaRedalyc As String = sRutaProyecto &/ "jats" &/ sNombreRedalyc
+  Dim sRutaXSL As String = User.Home &/ ".gbpublisher/xsl/jats-to-redalyc.xsl"
+
+  ' --- 5. Verificar que el canónico existe ---
+  If Not Exist(sRutaCanonico) Then
+    Message.Error("No existe el canónico:" & Chr(10) & sRutaCanonico & Chr(10) &
+      "Generá primero el XML JATS.")
+    Return
+  Endif
+
+  ' --- 6. Verificar que el XSL existe ---
+  If Not Exist(sRutaXSL) Then
+    Message.Error("No se encontró la hoja de transformación:" & Chr(10) & sRutaXSL & Chr(10) &
+      "Verificar la instalación de gbpublisher.")
+    Return
+  Endif
+
+  ' --- 7. Ejecutar Saxon-HE en el terminal integrado ---
+  ' PATRÓN IDÉNTICO AL USADO PARA DOAJ EN EL RESTO DEL PROYECTO
+  FMain.TerminalViewProyecto.Input("echo '--- REDALYC XML: TRANSFORMANDO CANÓNICO ---'" & Chr(10))
+
+  Dim sComandoSaxon As String =
+    "java -Djavax.xml.accessExternalDTD=all -jar ~/.gbpublisher/saxon/saxon-he.jar " &
+    "-s:'" & sRutaCanonico & "' " &
+    "-xsl:'" & sRutaXSL & "' " &
+    "-o:'" & sRutaRedalyc & "'" & Chr(10)
+
+  FMain.TerminalViewProyecto.Input(sComandoSaxon)
+
+  ' --- 8. Esperar hasta que el archivo exista (máximo 20 s) ---
+  Dim iEspera As Integer = 0
+  While Not Exist(sRutaRedalyc) And iEspera < 200
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sRutaRedalyc) Then
+    Message.Error("Saxon no generó el archivo Redalyc en el tiempo esperado." & Chr(10) &
+      "Verificar la consola para ver el error.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: " & sNombreRedalyc & " generado'" & Chr(10))
+
+  ' --- 9. Refrescar el listbox y auto-seleccionar el archivo generado ---
+  TabStripValidaciones.Index = 3
+  MostrarArchivosRedalyc()
+
+  Dim i As Integer
+  For i = 0 To lbRedalyc.Count - 1
+    If lbRedalyc[i].Text = sNombreRedalyc Then
+      lbRedalyc.Index = i
+      lbRedalyc_Click()
+      Break
+    Endif
+  Next
 
 End Sub
