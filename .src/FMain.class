@@ -13,6 +13,12 @@ Public ProyectoActualCompleto As String
 Public sRutaArchivoAbierto As String
 Public sContenidoOriginal As String  ' PARA COMPARAR SI HUBO CAMBIOS
 
+Public Sub SplitterLaTeX_Resize()
+
+  SplitterLaTeX.Layout = [2, 5]
+
+End
+
 Public Sub SplitterPrincipal_Resize()
 
   SplitterPrincipal.Layout = [1, 1]
@@ -99,6 +105,7 @@ Public Sub Form_Open()
   SplitterDOAJ.Layout = [2, 5]
   SplitterRedalyc.Layout = [2, 5]
   SplitterScieLO.Layout = [2, 5]
+  SplitterLaTeX.Layout = [2, 5]
 
   PictureBoxProyecto.Picture = Null
 
@@ -1113,38 +1120,6 @@ Public Sub btnGuardarCambiosEditor_Click()
 
 End
 
-' Public Sub btnGuardarCambiosEditor_Click()
-'
-'   If sRutaArchivoAbierto = "" Or Not Exist(sRutaArchivoAbierto) Then
-'     m_Sonido.sonar("Warning")
-'     Message.Warning("No hay un archivo válido cargado para guardar.")
-'     Return
-'   Endif
-'
-'   ' INTENTAR GUARDAR
-'   Try File.Save(sRutaArchivoAbierto, txtEditorProyecto.Text)
-'
-'   If Error Then
-'     m_Sonido.sonar("Error")
-'     Message.Error("Error al guardar el archivo: " & Error.Text)
-'     Error.Clear
-'     Return
-'   Endif
-'
-'   ' ACTUALIZAR EL CONTENIDO ORIGINAL DESPUÉS DE GUARDAR
-'   sContenidoOriginal = txtEditorProyecto.Text
-'
-'   ' ACTUALIZAR EL LISTADO DE MARCAS
-'   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
-'
-'   m_Sonido.sonar("Info")
-'   Message.Info("Archivo guardado correctamente.")
-'
-'   ' ACTUALIZAMOS EL CONTEO DE LINEAS
-'   ActualizarContadorLineas()
-'
-' End
-
 Public Sub menuSalir_Click()
 
   m_InicioCierre.CerrarTodoMySQL()
@@ -1464,7 +1439,7 @@ Public Sub AbrirRevistaMD()
   ' MOSTRAR EL ID DE REVISTA
   id_revista.Value = m_XML.ObtenerIdRevista(id_proyecto.Value)
 
-  ' MOSTRAMOS ARCHIVOS DE DIFERENTES SABORES
+  ' MOSTRAMOS ARCHIVOS DE DIFERENTES SABORES Y SALIDAS
   lbDOAJ.Clear
   gvDOAJ.Clear
   gvDOAJ.Refresh
@@ -1473,6 +1448,10 @@ Public Sub AbrirRevistaMD()
   gvRedalyc.Clear
   gvRedalyc.Refresh
   m_XML.MostrarArchivosRedalyc()
+  lbLatex.Clear
+  gvLatex.Clear
+  gvLatex.Refresh
+  m_XML.MostrarArchivosLatex()
 
   ' ASEGURAMOS LA RUTA EN LA TERMINAL
   FMain.TerminalViewProyecto.Input("cd " & File.Dir(sRutaSeleccionada) & "\n" & "clear" & "\n")
@@ -6065,7 +6044,7 @@ Public Sub MostrarArchivosDOAJ(sRutaProyecto As String)
 End Sub
 
 ' ============================================
-' Función   : lbDOAJ_Click  (REEMPLAZA LA VERSIÓN ANTERIOR)
+' Función   : lbDOAJ_Click
 ' Propósito : Al seleccionar un archivo determina el flujo:
 '             .xml → validación GridView (sin envío API)
 '             .json → estado en GridView + habilitar envío API
@@ -6342,5 +6321,117 @@ Public Sub menuXMLRedalyc_Click()
       Break
     Endif
   Next
+
+End Sub
+
+' ============================================
+' Función   : menuPDFunaColumna_Click
+' Propósito : Dispara el pipeline completo de generación
+'             de PDF (XSLT → ensamblado → LuaLaTeX) para
+'             el artículo activo. El PDF final queda en
+'             {proyecto}/salidas/pdf/l-{base}.pdf
+'             Réplica del patrón de menuXMLRedalyc_Click
+'             adaptada para el pipeline LaTeX.
+' ============================================
+Public Sub menuPDFunaColumna_Click()
+
+  ' --- 1. Mostrar consola ---
+  tbMostrarPanelInferior.Value = True
+  TabPanelIzquierdaInferior.Index = 0
+
+  ' --- 2. Verificar que hay un artículo activo ---
+  If id_articulo.Value = 0 Then
+    Message.Info("Seleccioná un artículo antes de generar el PDF.")
+    Return
+  Endif
+
+  ' --- 3. Verificar que Saxon-HE está instalado ---
+  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
+      "Instale Saxon-HE y cree el symlink:" & Chr(10) &
+      "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
+    Return
+  Endif
+
+  ' --- 4. Verificar que la hoja de estilo LaTeX existe ---
+  Dim sRutaXSL As String = User.Home &/ ".gbpublisher/xslt/jats-to-latex.xsl"
+  If Not Exist(sRutaXSL) Then
+    Message.Error("No se encontró la hoja de transformación LaTeX:" & Chr(10) &
+      sRutaXSL & Chr(10) &
+      "Verificar la instalación de gbpublisher.")
+    Return
+  Endif
+
+  ' --- 5. Verificar que lualatex está disponible ---
+  Dim sCheckLua As String
+  Shell "which lualatex" To sCheckLua
+  Wait
+  If Trim(sCheckLua) = "" Then
+    Message.Error("lualatex no encontrado en el sistema." & Chr(10) &
+      "Instalá TeX Live:" & Chr(10) &
+      "sudo apt install texlive-full")
+    Return
+  Endif
+
+  ' --- 6. Obtener nombre del archivo para construir el nombre del PDF ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = " &
+    CStr(id_articulo.Value))
+  If Error Or hRes.Count = 0 Then
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  ' nombre_archivo GUARDADO COMO a-01-revista-v01-n01 (SIN EXTENSIÓN)
+  Dim sNombreArchivo As String = Trim(hRes!nombre_archivo)
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+  Dim sNombrePDF As String = "l-" & sNombreBase & ".pdf"
+
+  ' --- 7. Verificar que el canónico existe antes de disparar el pipeline ---
+  Dim sRutaCanonico As String = File.Dir(txtProyecto.Text) &/ "jats" &/ "c-" & sNombreBase & ".xml"
+  If Not Exist(sRutaCanonico) Then
+    Message.Error("No existe el canónico:" & Chr(10) & sRutaCanonico & Chr(10) &
+      "Generá primero el XML JATS canónico.")
+    Return
+  Endif
+
+  ' --- 8. Ejecutar el pipeline completo desde m_XML ---
+  ' GenerarPDF() orquesta: Saxon → EnsamblarTeX → lualatex (→ biber →) lualatex
+  If Not m_XML.GenerarPDF(CInt(id_articulo.Value)) Then
+    ' EL MENSAJE DE ERROR YA FUE MOSTRADO POR GenerarPDF() O SUS SUBFUNCIONES
+    Return
+  Endif
+
+  ' --- 9. Confirmar al usuario y actualizar el listbox ---
+  Message.Info("PDF generado correctamente:" & Chr(10) & sNombrePDF)
+
+  ' ACTUALIZAR LISTBOX Y AUTO-SELECCIONAR EL ARCHIVO GENERADO
+  m_XML.MostrarArchivosLatex()
+  Dim i As Integer
+  For i = 0 To lbLatex.Count - 1
+    If lbLatex[i].Text = "l-" & sNombreBase & ".tex" Then
+      lbLatex.Index = i
+      Break
+    Endif
+  Next
+
+End Sub
+
+' ============================================
+' Función   : lbLatex_Click
+' Propósito : Responde al click en lbLatex. Convierte el
+'             nombre del archivo al nombre_archivo de la BD,
+'             obtiene el id_articulo y dispara la validación.
+'             Réplica del patrón de lbDOAJ_Click.
+' ============================================
+Public Sub lbLatex_Click()
+
+  Dim sArchivo As String = lbLatex.Text
+  Dim sNombreBD As String = m_XML.NombreArchivoLatexANombreBD(sArchivo)
+  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
+
+  m_XML.ValidarArchivoLatex(sArchivo, idArt)
 
 End Sub

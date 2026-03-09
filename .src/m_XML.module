@@ -4059,3 +4059,964 @@ Public Sub MostrarArchivosRedalyc()
   Next
 
 End Sub
+
+' ============================================
+' FUNCIONES PARA AGREGAR AL MÓDULO m_XML
+' PIPELINE DE GENERACIÓN DE PDF DESDE CANÓNICO JATS
+'
+' Orden de inclusión en el módulo:
+'   1. ObtenerPreambuloEmbebido()       — Private (auxiliar)
+'   2. GenerarTeXBodyDesdeCanonico()    — Public
+'   3. EnsamblarTeX()                   — Public
+'   4. CompilarPDF()                    — Public
+'   5. GenerarPDF()                     — Public (orquestador)
+'   6. MostrarArchivosLatex()           — Public Sub
+'
+' Convención de archivos generados:
+'   /latex/body-{base}.tex  → fragmento del cuerpo (salida Saxon)
+'   /latex/l-{base}.tex     → documento completo ensamblado
+'   /latex/l-{base}.pdf     → PDF intermedio (lualatex lo deja aquí)
+'   /salidas/pdf/l-{base}.pdf → PDF final entregado al editor
+'
+' Ejemplo con nombre de proyecto "r-01-revistaAlgo-v10-n10":
+'   Canónico leído:  /jats/c-01-revistaAlgo-v10-n10.xml
+'   Body generado:   /latex/body-01-revistaAlgo-v10-n10.tex
+'   TeX ensamblado:  /latex/l-01-revistaAlgo-v10-n10.tex
+'   PDF final:       /salidas/pdf/l-01-revistaAlgo-v10-n10.pdf
+' ============================================
+
+' ============================================
+' Función   : ObtenerPreambuloEmbebido
+' Propósito : Retorna el preámbulo LaTeX de fábrica para
+'             compilación de artículos académicos con LuaLaTeX.
+'             Contiene el marcador %%BIBRESOURCE%% que
+'             EnsamblarTeX() reemplaza en tiempo de ensamblado
+'             con la línea \addbibresource real, o con cadena
+'             vacía si el artículo no tiene referencias.
+'             El usuario puede sustituir este preámbulo creando
+'             ~/.gbpublisher/gb-pdf-template.tex con el mismo
+'             marcador %%BIBRESOURCE%%.
+' Parámetros: ninguno
+' Retorna   : String — preámbulo completo hasta \begin{document}
+' ============================================
+Private Function ObtenerPreambuloEmbebido() As String
+
+  ' --- 1. Inicialización ---
+  Dim s As String
+
+  ' --- 2. Clase y opciones de documento ---
+  s = "\\documentclass{article}" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 3. Fuentes y codificación (LuaLaTeX nativo) ---
+  s &= "% --- FUENTES Y CODIFICACIÓN ---" & Chr(10)
+  s &= "\\usepackage[final,babel=True]{microtype}" & Chr(10)
+  s &= "\\microtypecontext{spacing=nonfrench}" & Chr(10)
+  s &= "\\usepackage{fontspec}" & Chr(10)
+  s &= "\\usepackage{unicode-math}" & Chr(10)
+  s &= "\\setsansfont[Scale=MatchLowercase," & Chr(10)
+  s &= "  Ligatures=TeX," & Chr(10)
+  s &= "  Extension=.otf," & Chr(10)
+  s &= "  UprightFont=*-Regular," & Chr(10)
+  s &= "  ItalicFont=*-Italic," & Chr(10)
+  s &= "  BoldFont=*-SemiBold," & Chr(10)
+  s &= "  BoldItalicFont=*-SemiBoldItalic]{IBMPlexSansCondensed}" & Chr(10)
+  s &= "\\setmonofont[Scale=0.91," & Chr(10)
+  s &= "  Extension=.otf," & Chr(10)
+  s &= "  UprightFont=*-Regular," & Chr(10)
+  s &= "  ItalicFont=IBMPlexMono-Italic.otf," & Chr(10)
+  s &= "  BoldFont=IBMPlexMono-Bold.otf," & Chr(10)
+  s &= "  BoldItalicFont=IBMPlexMono-BoldItalic.otf]{IBMPlexMono.otf}" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 4. Idiomas (orden: principal al último = tiene prioridad) ---
+  s &= "% --- IDIOMAS ---" & Chr(10)
+  s &= "\\usepackage[english,portuguese,main=spanish]{babel}" & Chr(10)
+  s &= "\\usepackage[autostyle=true]{csquotes}" & Chr(10)
+  s &= "\\setmainfont[Numbers={OldStyle,Proportional},Ligatures={TeX,Common,Discretionary},Scale=1.18]{Libertinus Serif}" & Chr(10)
+  s &= "\\renewcommand{\\normalsize}{\\fontsize{10pt}{14pt}\\selectfont}" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 5. Bibliografía ---
+  ' EL MARCADOR %%BIBRESOURCE%% ES OBLIGATORIO EN ESTA POSICIÓN
+  ' EnsamblarTeX() LO REEMPLAZA CON LA RUTA REAL DEL .BIB
+  s &= "% --- BIBLIOGRAFÍA ---" & Chr(10)
+  s &= "\\usepackage[style=apa,backend=biber,sorting=nyt]{biblatex}" & Chr(10)
+  s &= "%%BIBRESOURCE%%" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 6. Página ---
+  s &= "% --- PÁGINA ---" & Chr(10)
+  s &= "\\usepackage[" &
+    "paperwidth=210mm,paperheight=297mm," &
+    "top=13mm,bottom=23mm," &
+    "left=13mm,right=87mm," &
+    "headsep=0mm,footskip=0mm," &
+    "headheight=29mm,headsep=10mm," &
+    "marginparsep=6mm,marginparwidth=68mm," &
+    "includehead,includefoot,showframe]{geometry}" & Chr(10)
+  s &= "\\setcounter{secnumdepth}{0}" & Chr(10)
+  s &= "% LONGITUD PARA POSICIÓN X DEL BLOQUE LATERAL" & Chr(10)
+  s &= "\\newlength{\\gbbloquex}" & Chr(10)
+  s &= "\\AtBeginDocument{\\setlength{\\gbbloquex}" &
+    "{\\dimexpr 1in+\\hoffset+\\oddsidemargin+\\textwidth+\\marginparsep\\relax}}" & Chr(10)
+  s &= Chr(10)
+
+  ' NOTA SOBRE right=87mm:
+  '   right = margen_real(13) + marginparsep(6) + marginparwidth(68) = 87mm
+  '   geometry deduce textwidth = 210 - 13 - 87 = 110mm automáticamente.
+  ' NOTA SOBRE headheight=29mm:
+  '   logo(20mm) + separación(3mm) + barra azul(6mm) = 29mm
+  s &= "\\setcounter{secnumdepth}{0}" & Chr(10) ' SIN NUMERACIÓN DE SECCIONES EN ARTÍCULOS
+  s &= "% --- POSICIONAMIENTO ABSOLUTO ---" & Chr(10)
+  s &= "\\usepackage[absolute,overlay]{textpos}" & Chr(10)
+  s &= "\\setlength{\\TPHorizModule}{1mm}" & Chr(10)
+  s &= "\\setlength{\\TPVertModule}{1mm}" & Chr(10)
+  ' ORIGEN EN LA ESQUINA FÍSICA DEL PAPEL: SIN ESTO textpos
+  ' MIDE DESDE EL PUNTO INTERNO DE TEX (1in ADENTRO) Y EL
+  ' BLOQUE QUEDA CORRIDO 25.4mm A LA DERECHA
+  s &= "\\textblockorigin{0mm}{0mm}" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 7. Tablas y figuras ---
+  s &= "% --- TABLAS Y FIGURAS ---" & Chr(10)
+  s &= "\\usepackage{booktabs}" & Chr(10)
+  s &= "\\usepackage{graphicx}" & Chr(10)
+  s &= "\\usepackage[labelfont=bf]{caption}" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 8. Varios ---
+  s &= "% --- VARIOS ---" & Chr(10)
+  s &= "\\usepackage[hidelinks]{hyperref}" & Chr(10)
+  s &= "\\usepackage[bottom]{footmisc}" & Chr(10)
+  s &= "\\usepackage{siunitx}" & Chr(10)
+  s &= "\\usepackage{enumitem}" & Chr(10)
+  s &= "\\usepackage{titlesec}" & Chr(10)
+  s &= "% --- COLOR ---" & Chr(10)
+  s &= "\\usepackage[svgnames]{xcolor}" & Chr(10)
+  s &= "\\definecolor{azulrevista}{HTML}{2d5a8e}" & Chr(10)
+  s &= Chr(10)
+
+  s &= "\\newcommand{\\articulotipo}{}" & Chr(10)
+  s &= "\\newcommand{\\articulologorevista}{}" & Chr(10)
+  s &= Chr(10)
+  s &= "% --- HEADER ---" & Chr(10)
+  s &= "\\usepackage{fancyhdr}" & Chr(10)
+  s &= Chr(10)
+  ' HEADWIDTH GLOBAL: textwidth(110) + marginparsep(6) + marginparwidth(68) = 184mm
+  ' SE DEFINE UNA SOLA VEZ Y APLICA A AMBOS ESTILOS DE PÁGINA
+  s &= "\\setlength{\\headwidth}{\\textwidth}" & Chr(10)
+  s &= "\\addtolength{\\headwidth}{\\marginparsep}" & Chr(10)
+  s &= "\\addtolength{\\headwidth}{\\marginparwidth}" & Chr(10)
+  s &= Chr(10)
+  ' ESTILO PRIMERA PÁGINA: LOGO + BARRA AZUL RELLENA
+  ' SE ACTIVA VÍA \thispagestyle{firstpage} AL INICIO DEL BODY (EMITIDO POR EL XSLT)
+  ' ESTO GARANTIZA QUE \articulotipo YA FUE RENOVADA ANTES DEL SHIPOUT
+  s &= "\\fancypagestyle{firstpage}{%" & Chr(10)
+  s &= "  \\fancyhf{}%" & Chr(10)
+  s &= "  \\fancyhead[L]{%" & Chr(10)
+  s &= "    \\begin{minipage}{\\headwidth}%" & Chr(10)
+  s &= "      \\ifdefempty{\\articulologorevista}{}{%" & Chr(10)
+  s &= "        \\includegraphics[width=184mm,height=20mm,keepaspectratio=false]{\\articulologorevista}%" & Chr(10)
+  s &= "      }%" & Chr(10)
+  s &= "      \\vspace{3mm}%" & Chr(10)
+  s &= "      {\\setlength{\\fboxsep}{0pt}%" & Chr(10)
+  s &= "      \\colorbox{azulrevista}{%" & Chr(10)
+  s &= "        \\parbox[c][6mm][c]{\\headwidth}{%" & Chr(10)
+  s &= "          \\hspace{12pt}\\sffamily\\bfseries\\color{white}\\articulotipo%" & Chr(10)
+  s &= "        }%" & Chr(10)
+  s &= "      }}%" & Chr(10)
+  s &= "    \\end{minipage}%" & Chr(10)
+  s &= "  }%" & Chr(10)
+  s &= "  \\renewcommand{\\headrulewidth}{0pt}%" & Chr(10)
+  s &= "}" & Chr(10)
+  s &= Chr(10)
+  ' ESTILO PÁGINAS 2+: FILETE AZUL 1pt + NÚMERO A IZQUIERDA + LEYENDA A DERECHA
+  ' L: número de página actual (\thepage) en sans bold
+  ' R: revista / e-ISSN / VOL / No / fecha en sans
+  s &= "\\pagestyle{fancy}" & Chr(10)
+  s &= "\\fancyhf{}" & Chr(10)
+  ' RAISEBOX ELEVA EL BLOQUE 22mm (= headheight - 7mm)
+  ' BASELINE DEL HEADER = 42mm DESDE EL CORTE → REGLA QUEDA A 20mm
+  ' [0pt][0pt] EVITA QUE EL RAISEBOX AFECTE EL LAYOUT CIRCUNDANTE
+  s &= "\\fancyhead[L]{%" & Chr(10)
+  s &= "  \\raisebox{\\dimexpr\\headheight-7mm\\relax}[0pt][0pt]{%" & Chr(10)
+  s &= "    \\begin{minipage}[b]{\\headwidth}%" & Chr(10)
+  s &= "      \\sffamily\\thepage\\hfill%" & Chr(10)
+  s &= "      \\small\\articulorevista{} / e-ISSN: \\texttt{\\articuloissne}" &
+    "{} / Vol.~\\articulovolumen{},~n.\\textsuperscript{o}~\\articulonumero{} / \\articulofecha\\\\[1pt]%" & Chr(10)
+  s &= "      \\textcolor{azulrevista}{\\rule{\\headwidth}{1pt}}%" & Chr(10)
+  s &= "    \\end{minipage}%" & Chr(10)
+  s &= "  }%" & Chr(10)
+  s &= "}%" & Chr(10)
+  s &= "\\renewcommand{\\headrulewidth}{0pt}" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 9. Macros del artículo ---
+  ' EL XSLT EMITE \renewcommand AL INICIO DEL BODY PARA SOBREESCRIBIRLAS
+  s &= "% --- MACROS DEL ARTÍCULO (SOBREESCRITAS POR EL XSLT) ---" & Chr(10)
+  s &= "\\newcommand{\\articulotitulo}{}" & Chr(10)
+  s &= "\\newcommand{\\articulosubtitulo}{}" & Chr(10)
+  s &= "\\newcommand{\\articulotitulotrans}{}" & Chr(10)
+  s &= "\\newcommand{\\articuloautores}{}" & Chr(10)
+  s &= "\\newcommand{\\articulodoi}{}" & Chr(10)
+  s &= "\\newcommand{\\articuloidiomaxml}{es}" & Chr(10)
+  s &= "\\newcommand{\\articulorevista}{}" & Chr(10)
+  s &= "\\newcommand{\\articuloissne}{}" & Chr(10)
+  s &= "\\newcommand{\\articulovolumen}{}" & Chr(10)
+  s &= "\\newcommand{\\articulonumero}{}" & Chr(10)
+  s &= "\\newcommand{\\articulofecha}{}" & Chr(10)
+  s &= "\\newcommand{\\articulopagina}{0}" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 10. Apertura del documento ---
+  s &= "\\begin{document}" & Chr(10)
+
+  Return s
+
+End Function
+
+' ============================================
+' Función   : GenerarTeXBodyDesdeCanonico
+' Propósito : Ejecuta Saxon-HE sobre el canónico c-*.xml
+'             usando jats-to-latex.xsl para generar el
+'             fragmento LaTeX del cuerpo del artículo.
+'             El resultado se escribe en:
+'               {raíz_proyecto}/latex/body-{base}.tex
+'             Este fragmento NO incluye preámbulo ni
+'             \begin{document} / \end{document}.
+'             EnsamblarTeX() lo consume en el paso siguiente.
+' Parámetros: iIdArticulo As Integer — id del artículo en BD
+' Retorna   : Boolean — True si body-*.tex fue generado
+' ============================================
+Public Function GenerarTeXBodyDesdeCanonico(iIdArticulo As Integer) As Boolean
+
+  ' --- 1. Declaración de variables ---
+  Dim hArticulo As Result
+  Dim sNombreArchivo As String
+  Dim sNombreBase As String
+  Dim sRutaProyecto As String
+  Dim sRutaCanonico As String
+  Dim sRutaSaxon As String
+  Dim sRutaXSL As String
+  Dim sRutaBody As String
+  Dim sComando As String
+  Dim iEspera As Integer
+
+  ' --- 2. Leer id desde el ValueBox de FMain ---
+  iIdArticulo = CInt(FMain.id_articulo.Value)
+
+  ' --- 3. Consultar nombre_archivo del artículo ---
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    iIdArticulo)
+
+  If Error Then
+    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hArticulo.Available Then
+    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
+    Return False
+  Endif
+
+  sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+
+  ' --- 4. Construir rutas ---
+  ' NOMBRE BASE: QUITA EL PREFIJO a- DEL nombre_archivo
+  ' "a-01-revistaAlgo-v10-n10" → "01-revistaAlgo-v10-n10"
+  sNombreBase = Mid(sNombreArchivo, 3)
+  sRutaCanonico = sRutaProyecto &/ "jats" &/ "c-" & sNombreBase & ".xml"
+  sRutaSaxon = "/opt/Saxon-HE/saxon-he.jar"
+  sRutaXSL = User.Home &/ ".gbpublisher" &/ "xslt" &/ "jats-to-latex.xsl"
+  sRutaBody = sRutaProyecto &/ "latex" &/ "body-" & sNombreBase & ".tex"
+
+  ' --- 5. Verificar existencia de archivos requeridos ---
+  If Not Exist(sRutaCanonico) Then
+    Message.Error("No se encontró el canónico JATS:" & Chr(10) & sRutaCanonico & Chr(10) &
+      "Genere primero el canónico antes de compilar el PDF.")
+    Return False
+  Endif
+
+  If Not Exist(sRutaSaxon) Then
+    Message.Error("No se encontró Saxon-HE en:" & Chr(10) & sRutaSaxon)
+    Return False
+  Endif
+
+  If Not Exist(sRutaXSL) Then
+    Message.Error("No se encontró la hoja de estilo LaTeX:" & Chr(10) & sRutaXSL)
+    Return False
+  Endif
+
+  ' --- 6. Eliminar body anterior para que el loop de espera ---
+  ' NO SE CONFUNDA CON UNA EJECUCIÓN ANTERIOR
+  If Exist(sRutaBody) Then
+    FMain.TerminalViewProyecto.Input("rm -f '" & sRutaBody & "'" & Chr(10))
+    Wait 0.2
+  Endif
+
+  ' --- 7. Ejecutar Saxon-HE en el terminal integrado ---
+  ' PATRÓN IDÉNTICO AL USADO PARA DOAJ Y REDALYC
+  FMain.TerminalViewProyecto.Input("echo '--- LATEX: TRANSFORMANDO CANÓNICO ---'" & Chr(10))
+  Dim sRutaCatalogo As String = User.Home &/ ".gbpublisher" &/ "dtd" &/ "catalog-jats-v1-4-no-base.xml"
+  sComando =
+    "java -jar '" & sRutaSaxon & "' " &
+    "-catalog:'" & sRutaCatalogo & "' " &
+    "-s:'" & sRutaCanonico & "' " &
+    "-xsl:'" & sRutaXSL & "' " &
+    "-o:'" & sRutaBody & "'" & Chr(10)
+  FMain.TerminalViewProyecto.Input(sComando)
+
+  ' --- 8. Esperar hasta que el archivo exista (máximo 30 seg) ---
+  ' Wait 0.1 NO BLOQUEA LA UI: GAMBAS PROCESA EVENTOS ENTRE CICLOS
+  iEspera = 0
+  While Not Exist(sRutaBody) And iEspera < 500
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sRutaBody) Then
+    Message.Error("Saxon no generó el body LaTeX en el tiempo esperado." & Chr(10) &
+      "Revise el terminal para ver el error de transformación.")
+    Return False
+  Endif
+
+  ' PEQUEÑA ESPERA ADICIONAL PARA QUE EL BUFFER TERMINE DE ESCRIBIR
+  Wait 0.3
+
+  If File.Load(sRutaBody) = "" Then
+    Message.Error("El body LaTeX generado está vacío." & Chr(10) &
+      "Verifique que el canónico tiene contenido válido.")
+    Return False
+  Endif
+
+  Return True
+
+Catch
+  Message.Error("Error inesperado en GenerarTeXBodyDesdeCanonico:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' ============================================
+' Función   : EnsamblarTeX
+' Propósito : Combina el preámbulo LaTeX (desde el archivo
+'             ~/.gbpublisher/gb-pdf-template.tex si existe,
+'             o el preámbulo embebido de fábrica como fallback)
+'             con el body generado por Saxon para producir
+'             el documento .tex completo listo para compilar.
+'             Inserta \addbibresource con la ruta real del .bib
+'             solo si el artículo tiene referencias_citadas y
+'             el archivo .bib existe.
+'             Guarda el resultado en:
+'               {raíz_proyecto}/latex/l-{base}.tex
+' Parámetros: iIdArticulo As Integer — id del artículo en BD
+' Retorna   : Boolean — True si l-*.tex fue guardado
+' ============================================
+Public Function EnsamblarTeX(iIdArticulo As Integer) As Boolean
+
+  ' --- 1. Declaración de variables ---
+  Dim hArticulo As Result
+  Dim sNombreArchivo As String
+  Dim sNombreBase As String
+  Dim sRutaProyecto As String
+  Dim sRutaBody As String
+  Dim sRutaTex As String
+  Dim sRutaBib As String
+  Dim sRutaTemplate As String
+  Dim sPreamble As String
+  Dim sBody As String
+  Dim sCierre As String
+  Dim sTexFinal As String
+  Dim sAddbibresource As String
+  Dim bTieneReferencias As Boolean
+
+  ' --- 2. Leer id desde el ValueBox de FMain ---
+  iIdArticulo = CInt(FMain.id_articulo.Value)
+
+  ' --- 3. Consultar datos del artículo ---
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    iIdArticulo)
+
+  If Error Then
+    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hArticulo.Available Then
+    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
+    Return False
+  Endif
+
+  sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sNombreBase = Mid(sNombreArchivo, 3)
+
+  ' --- 4. Determinar si el artículo tiene referencias ---
+  ' CONDICIÓN DOBLE: referencias_citadas NO VACÍO + archivo .bib existe
+  bTieneReferencias = False
+  sRutaBib = sRutaProyecto &/ "referencias" &/ "ref-" & File.BaseName(FMain.txtProyecto.Text) & ".bib"
+
+  If Not IsNull(hArticulo["referencias_citadas"]) Then
+    If TrimUTF8(hArticulo["referencias_citadas"]) <> "" Then
+      If Exist(sRutaBib) Then
+        bTieneReferencias = True
+      Endif
+    Endif
+  Endif
+
+  ' --- 5. Construir rutas de archivos ---
+  sRutaBody = sRutaProyecto &/ "latex" &/ "body-" & sNombreBase & ".tex"
+  sRutaTex = sRutaProyecto &/ "latex" &/ "l-" & sNombreBase & ".tex"
+  sRutaTemplate = User.Home &/ ".gbpublisher" &/ "gb-pdf-template.tex"
+
+  ' --- 6. Verificar que el body Saxon existe ---
+  If Not Exist(sRutaBody) Then
+    Message.Error("No se encontró el body LaTeX:" & Chr(10) & sRutaBody & Chr(10) &
+      "Ejecute primero la transformación XSLT.")
+    Return False
+  Endif
+
+  ' --- 7. Leer el body generado por Saxon ---
+  Try sBody = File.Load(sRutaBody)
+  If Error Then
+    Message.Error("Error al leer el body LaTeX:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 8. Obtener el preámbulo ---
+  ' MODO 2: ARCHIVO DEL USUARIO (TIENE PRIORIDAD SOBRE EL EMBEBIDO)
+  ' MODO 1: PREÁMBULO EMBEBIDO (DEFECTO DE FÁBRICA)
+  If Exist(sRutaTemplate) Then
+    Try sPreamble = File.Load(sRutaTemplate)
+    If Error Then
+      Message.Warning("No se pudo leer gb-pdf-template.tex." & Chr(10) &
+        "Usando preámbulo embebido de fábrica.")
+      sPreamble = ObtenerPreambuloEmbebido()
+    Endif
+  Else
+    sPreamble = ObtenerPreambuloEmbebido()
+  Endif
+
+  ' --- 9. Insertar \addbibresource en el marcador del preámbulo ---
+  ' SI NO HAY REFERENCIAS, EL MARCADOR SE REEMPLAZA CON CADENA VACÍA
+  ' EL USUARIO DEBE TENER %%BIBRESOURCE%% EN SU TEMPLATE PERSONALIZADO
+  sAddbibresource = ""
+  If bTieneReferencias Then
+    sAddbibresource = "\\addbibresource{" & sRutaBib & "}"
+  Endif
+  sPreamble = Replace(sPreamble, "%%BIBRESOURCE%%", sAddbibresource)
+
+  ' --- 10. Construir el cierre del documento ---
+  ' \printbibliography SOLO SI HAY REFERENCIAS
+  sCierre = ""
+  If bTieneReferencias Then
+    sCierre = "\\printbibliography" & Chr(10)
+  Endif
+  sCierre &= "\\end{document}" & Chr(10)
+
+  ' --- 11. Ensamblar el documento completo ---
+  ' PREÁMBULO (termina con \begin{document}) + BODY + CIERRE
+  sTexFinal = sPreamble & Chr(10) & sBody & Chr(10) & sCierre
+
+  ' --- 12. Guardar el .tex completo ---
+  Try File.Save(sRutaTex, sTexFinal)
+  If Error Then
+    Message.Error("Error al guardar el .tex ensamblado:" & Chr(10) &
+      sRutaTex & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return Exist(sRutaTex)
+
+Catch
+  Message.Error("Error inesperado en EnsamblarTeX:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' ============================================
+' Función   : CompilarPDF
+' Propósito : Compila el archivo l-*.tex ensamblado ejecutando
+'             el pipeline LuaLaTeX estándar para publicaciones
+'             académicas con bibliografía. Los pasos se encadenan
+'             con && en un solo comando de terminal para garantizar
+'             la secuencia correcta sin depender de tiempos fijos:
+'
+'             CON referencias:
+'               lualatex → biber → lualatex → lualatex
+'             SIN referencias:
+'               lualatex → lualatex
+'
+'             Usa un archivo centinela (.compile_done_*) para
+'             detectar el fin del pipeline desde Gambas.
+'             El PDF resultante se copia a /salidas/pdf/.
+' Parámetros: iIdArticulo As Integer — id del artículo en BD
+' Retorna   : Boolean — True si el PDF fue generado y copiado
+' ============================================
+Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
+
+  ' --- 1. Declaración de variables ---
+  Dim hArticulo As Result
+  Dim sNombreArchivo As String
+  Dim sNombreBase As String
+  Dim sRutaProyecto As String
+  Dim sRutaLatex As String
+  Dim sRutaTex As String
+  Dim sRutaBib As String
+  Dim sRutaPdfOrigen As String
+  Dim sRutaPdfDestino As String
+  Dim sRutaCentinela As String
+  Dim sComando As String
+  Dim iEspera As Integer
+  Dim bTieneReferencias As Boolean
+
+  ' --- 2. Leer id desde el ValueBox de FMain ---
+  iIdArticulo = CInt(FMain.id_articulo.Value)
+
+  ' --- 3. Consultar datos del artículo ---
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    iIdArticulo)
+
+  If Error Then
+    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hArticulo.Available Then
+    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
+    Return False
+  Endif
+
+  sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sNombreBase = Mid(sNombreArchivo, 3)
+
+  ' --- 4. Determinar si tiene referencias (para decidir si corre biber) ---
+  bTieneReferencias = False
+  sRutaBib = sRutaProyecto &/ "referencias" &/ "ref-" & File.BaseName(FMain.txtProyecto.Text) & ".bib"
+
+  If Not IsNull(hArticulo["referencias_citadas"]) Then
+    If TrimUTF8(hArticulo["referencias_citadas"]) <> "" Then
+      If Exist(sRutaBib) Then bTieneReferencias = True
+    Endif
+  Endif
+
+  ' --- 5. Construir rutas ---
+  sRutaLatex = sRutaProyecto &/ "latex"
+  sRutaTex = "l-" & sNombreBase & ".tex"           ' RELATIVO AL cd DEL COMANDO
+  sRutaPdfOrigen = sRutaLatex &/ "l-" & sNombreBase & ".pdf"
+  sRutaPdfDestino = sRutaProyecto &/ "salidas" &/ "pdf" &/ "l-" & sNombreBase & ".pdf"
+  sRutaCentinela = sRutaLatex &/ ".compile_done_" & sNombreBase
+
+  ' --- 6. Verificar que el .tex ensamblado existe ---
+  If Not Exist(sRutaLatex &/ "l-" & sNombreBase & ".tex") Then
+    Message.Error("No se encontró el .tex ensamblado:" & Chr(10) &
+      sRutaLatex &/ "l-" & sNombreBase & ".tex" & Chr(10) &
+      "Ejecute primero el ensamblado.")
+    Return False
+  Endif
+
+  ' --- 7. Limpiar archivos de compilaciones anteriores ---
+  FMain.TerminalViewProyecto.Input("rm -f '" & sRutaCentinela & "' '" & sRutaPdfOrigen & "'" & Chr(10))
+  Wait 1
+
+  ' --- 8. Construir el comando de compilación encadenado ---
+  ' && GARANTIZA QUE CADA PASO ESPERA AL ANTERIOR
+  ' cd PRIMERO: TODOS LOS AUXILIARES (.aux .bcf .bbl) QUEDAN EN /latex/
+  sComando = "cd '" & sRutaLatex & "' && "
+  sComando &= "lualatex -interaction=nonstopmode '" & sRutaTex & "'"
+
+  If bTieneReferencias Then
+    ' PIPELINE COMPLETO: lualatex → biber → lualatex → lualatex
+    ' biber RECIBE SOLO EL NOMBRE BASE (SIN EXTENSIÓN)
+    sComando &= " && biber 'l-" & sNombreBase & "'"
+    sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
+    FMain.TerminalViewProyecto.Input("echo '--- PDF: PIPELINE lualatex → biber → lualatex × 2 ---'" & Chr(10))
+  Else
+    ' PIPELINE SIN BIBLIOGRAFÍA: lualatex × 2
+    FMain.TerminalViewProyecto.Input("echo '--- PDF: PIPELINE lualatex × 2 (sin bibliografía) ---'" & Chr(10))
+  Endif
+
+  ' ÚLTIMA PASADA lualatex SIEMPRE (ESTABILIZA REFERENCIAS CRUZADAS)
+  sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
+
+  ' CENTINELA: SE CREA SOLO SI TODAS LAS PASADAS ANTERIORES TUVIERON ÉXITO
+  sComando &= " && touch '" & sRutaCentinela & "'"
+
+  FMain.TerminalViewProyecto.Input(sComando & Chr(10))
+
+  ' --- 9. Esperar hasta que el centinela exista (máximo 5 minutos) ---
+  ' 3000 × 0.1s = 300s = 5 min. Suficiente para documentos largos.
+  iEspera = 0
+  While Not Exist(sRutaCentinela) And iEspera < 3000
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sRutaCentinela) Then
+    Message.Error("El pipeline de compilación no finalizó correctamente." & Chr(10) &
+      "Revise el terminal para ver los errores de lualatex o biber.")
+    Return False
+  Endif
+
+  ' --- 10. Verificar que el PDF fue generado ---
+  If Not Exist(sRutaPdfOrigen) Then
+    Message.Error("lualatex no produjo el PDF:" & Chr(10) & sRutaPdfOrigen & Chr(10) &
+      "Revise el terminal para ver los errores de compilación.")
+    Return False
+  Endif
+
+  ' --- 11. Copiar el PDF al destino final en /salidas/pdf/ ---
+  Shell "cp -f '" & sRutaPdfOrigen & "' '" & sRutaPdfDestino & "'" Wait
+
+  If Not Exist(sRutaPdfDestino) Then
+    Message.Error("No se pudo copiar el PDF a /salidas/pdf/:" & Chr(10) & sRutaPdfDestino)
+    Return False
+  Endif
+
+  ' --- 12. Confirmar en el terminal ---
+  FMain.TerminalViewProyecto.Input("echo '--- PDF DISPONIBLE: " & sRutaPdfDestino & " ---'" & Chr(10))
+
+  Return True
+
+Catch
+  Message.Error("Error inesperado en CompilarPDF:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' ============================================
+' Función   : GenerarPDF
+' Propósito : Orquesta el pipeline completo de generación
+'             de PDF académico a partir del canónico JATS:
+'
+'               Paso 1 — GenerarTeXBodyDesdeCanonico()
+'                        Saxon transforma c-*.xml → body-*.tex
+'               Paso 2 — EnsamblarTeX()
+'                        Gambas combina preámbulo + body → l-*.tex
+'               Paso 3 — CompilarPDF()
+'                        lualatex (→ biber →) lualatex → PDF
+'
+'             Si cualquier paso falla, el pipeline se detiene
+'             y se muestra el mensaje de error correspondiente.
+' Parámetros: iIdArticulo As Integer — id del artículo en BD
+' Retorna   : Boolean — True si el PDF final está en /salidas/pdf/
+' ============================================
+Public Function GenerarPDF(iIdArticulo As Integer) As Boolean
+
+  ' --- 1. Anunciar inicio en el terminal ---
+  FMain.TerminalViewProyecto.Input("echo '=== INICIO PIPELINE PDF ==='" & Chr(10))
+
+  ' --- 2. Paso 1: Transformación XSLT (canónico JATS → body LaTeX) ---
+  If Not GenerarTeXBodyDesdeCanonico(iIdArticulo) Then
+    Message.Error("Falló la transformación XSLT." & Chr(10) & "Pipeline cancelado.")
+    Return False
+  Endif
+
+  ' --- 3. Paso 2: Ensamblado (preámbulo + body → .tex completo) ---
+  If Not EnsamblarTeX(iIdArticulo) Then
+    Message.Error("Falló el ensamblado del .tex." & Chr(10) & "Pipeline cancelado.")
+    Return False
+  Endif
+
+  ' --- 4. Paso 3: Compilación LuaLaTeX ---
+  If Not CompilarPDF(iIdArticulo) Then
+    Message.Error("Falló la compilación." & Chr(10) &
+      "Revise el terminal para más detalles.")
+    Return False
+  Endif
+
+  ' --- 5. Confirmar finalización ---
+  FMain.TerminalViewProyecto.Input("echo '=== PIPELINE PDF COMPLETADO ==='" & Chr(10))
+
+  Return True
+
+Catch
+  Message.Error("Error inesperado en GenerarPDF:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' ============================================
+' Función   : MostrarArchivosLatex
+' Propósito : Lista todos los archivos l-*.tex del directorio
+'             latex/ del proyecto activo en el listbox lbLatex.
+'             Sigue el patrón de MostrarArchivosDOAJ()
+'             y MostrarArchivosRedalyc().
+' ============================================
+Public Sub MostrarArchivosLatex()
+
+  ' --- 1. Construir ruta ---
+  Dim sRutaLatex As String = File.Dir(FMain.txtProyecto.Text) &/ "latex"
+
+  ' --- 2. Limpiar el listbox ---
+  FMain.lbLatex.Clear()
+
+  If Not Exist(sRutaLatex) Then Return
+
+  ' --- 3. Recolectar y ordenar ---
+  Dim aTex As New String[]
+  Dim sArch As String
+
+  For Each sArch In Dir(sRutaLatex, "l-*.tex")
+    aTex.Add(File.Name(sArch))
+  Next
+
+  aTex.Sort()
+
+  ' --- 4. Cargar en el listbox ---
+  Dim s As String
+  For Each s In aTex
+    FMain.lbLatex.Add(s)
+  Next
+
+End Sub
+
+' ============================================
+' Función   : ValidarArchivoLatex
+' Propósito : Lee el archivo l-*.tex ensamblado y consulta
+'             la BD para verificar el estado del pipeline
+'             LaTeX del artículo activo.
+'             Carga los resultados en FMain.gvLatex con
+'             colores por estado: OK / ERROR / ADVERTENCIA.
+'             Sigue el patrón de ValidarArchivoDoaj() y
+'             ValidarArchivoRedalyc().
+' Parámetros: sArchivo   As String  — nombre del archivo .tex (con extensión)
+'             idArticulo As Integer — id_articulo en la BD (0 si no encontrado)
+' Retorna   : Boolean — True si no hay errores bloqueantes
+' ============================================
+Public Function ValidarArchivoLatex(sArchivo As String, idArticulo As Integer) As Boolean
+
+  ' --- 1. Inicialización ---
+  Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+  Dim sRutaLatex As String = sRutaProyecto &/ "latex"
+  Dim sRutaTex As String = sRutaLatex &/ sArchivo
+  Dim bValido As Boolean = True
+
+  ' --- 2. Preparar el GridView ---
+  FMain.gvLatex.Clear
+  FMain.gvLatex.Rows.Count = 0
+  FMain.gvLatex.Columns.Count = 4
+  FMain.gvLatex.Columns[0].Text = "Estado"
+  FMain.gvLatex.Columns[0].Width = 120
+  FMain.gvLatex.Columns[1].Text = "Componente"
+  FMain.gvLatex.Columns[1].Width = 200
+  FMain.gvLatex.Columns[2].Text = "Valor encontrado"
+  FMain.gvLatex.Columns[2].Width = 300
+  FMain.gvLatex.Columns[3].Text = "Acción requerida"
+  FMain.gvLatex.Columns[3].Width = 800
+
+  ' --- 3. Verificar que el .tex ensamblado existe ---
+  If Not Exist(sRutaTex) Then
+    AgregarFilaGv(FMain.gvLatex, "ERROR",
+      "l-*.tex", "(no encontrado)", "Ejecutar el pipeline PDF desde el menú", True)
+    Return False
+  Endif
+
+  ' --- 4. Leer el contenido del .tex para inspeccionar ---
+  Dim sTex As String
+  Try sTex = File.Load(sRutaTex)
+  If Error Then
+    AgregarFilaGv(FMain.gvLatex, "ERROR",
+      "l-*.tex", "Error al leer: " & Error.Text, "Verificar permisos del archivo", True)
+    Return False
+  Endif
+
+  ' ====================================================
+  ' BLOQUE A: ERRORES — estructura mínima del .tex
+  ' ====================================================
+
+  ' --- 4.1. \documentclass ---
+  Dim bDocclass As Boolean = (InStr(sTex, "\\documentclass") > 0)
+  If Not AgregarFilaGv(FMain.gvLatex, If(bDocclass, "OK", "ERROR"),
+      "\\documentclass",
+      If(bDocclass, "presente", "(ausente)"),
+        If(Not bDocclass, "El preámbulo no contiene \\documentclass — verificar gb-pdf-template.tex", ""), True) Then
+        bValido = False
+      Endif
+
+      ' --- 4.2. \begin{document} ---
+      Dim bBeginDoc As Boolean = (InStr(sTex, "\\begin{document}") > 0)
+      If Not AgregarFilaGv(FMain.gvLatex, If(bBeginDoc, "OK", "ERROR"),
+          "\\begin{document}",
+          If(bBeginDoc, "presente", "(ausente)"),
+            If(Not bBeginDoc, "El .tex ensamblado no tiene \\begin{document} — regenerar el pipeline", ""), True) Then
+            bValido = False
+          Endif
+
+          ' --- 4.3. \end{document} ---
+          Dim bEndDoc As Boolean = (InStr(sTex, "\\end{document}") > 0)
+          If Not AgregarFilaGv(FMain.gvLatex, If(bEndDoc, "OK", "ERROR"),
+              "\\end{document}",
+              If(bEndDoc, "presente", "(ausente)"),
+                If(Not bEndDoc, "El .tex ensamblado no cierra el documento — regenerar el pipeline", ""), True) Then
+                bValido = False
+              Endif
+
+              ' --- 4.4. \renewcommand{\articulotitulo} (emitido por el XSLT) ---
+              ' SU AUSENCIA INDICA QUE LA TRANSFORMACIÓN SAXON FALLÓ O
+              ' EL CANÓNICO NO TIENE TÍTULO
+              Dim bTitulo As Boolean = (InStr(sTex, "\\renewcommand{\\articulotitulo}") > 0)
+              If Not AgregarFilaGv(FMain.gvLatex, If(bTitulo, "OK", "ERROR"),
+                  "\\renewcommand{\\articulotitulo}",
+                  If(bTitulo, "presente (Saxon OK)", "(ausente)"),
+                    If(Not bTitulo, "La transformación XSLT no generó el body — verificar el canónico JATS", ""), True) Then
+                    bValido = False
+                  Endif
+
+                  ' ====================================================
+                  ' BLOQUE B: ESTADO DE ARCHIVOS INTERMEDIOS Y FINALES
+                  ' ====================================================
+
+                  ' --- 5.1. body-*.tex (fragmento Saxon) ---
+                  Dim sNombreBase As String = Mid(Left(sArchivo, Len(sArchivo) - 4), 3)
+                  Dim sRutaBody As String = sRutaLatex &/ "body-" & sNombreBase & ".tex"
+                  Dim bBody As Boolean = Exist(sRutaBody)
+                  AgregarFilaGv(FMain.gvLatex, If(bBody, "OK", "ADVERTENCIA"),
+                    "body-*.tex",
+                    If(bBody, "presente en /latex/", "(no encontrado)"),
+                      If(Not bBody, "Archivo intermedio del XSLT ausente — se regenera en cada ejecución", ""), False)
+
+                      ' --- 5.2. \addbibresource (solo si el artículo tiene referencias) ---
+                      Dim bTieneRefsBD As Boolean = False
+                      If idArticulo > 0 Then
+                        Dim hRes As Result
+                        Try hRes = m_ConexionBD.mConn.Exec(
+                          "SELECT referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
+                          idArticulo)
+                        If Not Error Then
+                          If hRes.Available Then
+                            If Not IsNull(hRes["referencias_citadas"]) Then
+                              If TrimUTF8(hRes["referencias_citadas"]) <> "" Then
+                                bTieneRefsBD = True
+                              Endif
+                            Endif
+                          Endif
+                        Endif
+                      Endif
+
+                      Dim bBibresource As Boolean = (InStr(sTex, "\\addbibresource") > 0)
+
+                      If bTieneRefsBD Then
+                        ' EL ARTÍCULO TIENE REFERENCIAS: \addbibresource ES OBLIGATORIO
+                        If Not AgregarFilaGv(FMain.gvLatex, If(bBibresource, "OK", "ERROR"),
+                            "\\addbibresource",
+                            If(bBibresource, "presente", "(ausente — artículo con referencias)"),
+                              If(Not bBibresource, "El artículo tiene referencias_citadas pero falta \\addbibresource — verificar el .bib", ""), True) Then
+                              bValido = False
+                            Endif
+                          Else
+                            ' SIN REFERENCIAS: \addbibresource NO DEBE ESTAR (SERÍA UN ERROR DE ENSAMBLADO)
+                            AgregarFilaGv(FMain.gvLatex, If(Not bBibresource, "OK", "ADVERTENCIA"),
+                              "\\addbibresource",
+                              If(Not bBibresource, "ausente (correcto, sin referencias)", "presente (artículo sin referencias_citadas)"),
+                                If(bBibresource, "El artículo no tiene referencias_citadas — verificar el ensamblado", ""), False)
+                              Endif
+
+                              ' --- 5.3. PDF en /latex/ (archivo intermedio de lualatex) ---
+                              Dim sRutaPdfLatex As String = sRutaLatex &/ "l-" & sNombreBase & ".pdf"
+                              Dim bPdfLatex As Boolean = Exist(sRutaPdfLatex)
+                              AgregarFilaGv(FMain.gvLatex, If(bPdfLatex, "OK", "ADVERTENCIA"),
+                                "PDF en /latex/",
+                                If(bPdfLatex, "presente", "(no generado aún)"),
+                                  If(Not bPdfLatex, "Ejecutar el pipeline PDF completo desde el menú", ""), False)
+
+                                  ' --- 5.4. PDF final en /salidas/pdf/ (destino del editor) ---
+                                  Dim sRutaPdfFinal As String = sRutaProyecto &/ "salidas" &/ "pdf" &/ "l-" & sNombreBase & ".pdf"
+                                  Dim bPdfFinal As Boolean = Exist(sRutaPdfFinal)
+                                  If Not AgregarFilaGv(FMain.gvLatex, If(bPdfFinal, "OK", "ERROR"),
+                                      "PDF en /salidas/pdf/",
+                                      If(bPdfFinal, "l-" & sNombreBase & ".pdf", "(no encontrado)"),
+                                        If(Not bPdfFinal, "El pipeline no finalizó correctamente o no se ejecutó aún", ""), True) Then
+                                        bValido = False
+                                      Endif
+
+                                      ' ====================================================
+                                      ' BLOQUE C: ADVERTENCIAS — componentes opcionales
+                                      ' ====================================================
+
+                                      ' --- 6.1. \printbibliography (solo si tiene referencias) ---
+                                      If bTieneRefsBD Then
+                                        Dim bPrintbib As Boolean = (InStr(sTex, "\\printbibliography") > 0)
+                                        AgregarFilaGv(FMain.gvLatex, If(bPrintbib, "OK", "ADVERTENCIA"),
+                                          "\\printbibliography",
+                                          If(bPrintbib, "presente", "(ausente con referencias)"),
+                                            If(Not bPrintbib, "El artículo tiene referencias pero falta \\printbibliography — verificar EnsamblarTeX()", ""), False)
+                                          Endif
+
+                                          ' --- 6.2. Template personalizado activo ---
+                                          Dim sRutaTemplate As String = User.Home &/ ".gbpublisher" &/ "gb-pdf-template.tex"
+                                          Dim bTemplatePersonal As Boolean = Exist(sRutaTemplate)
+                                          AgregarFilaGv(FMain.gvLatex, "OK",
+                                            "template",
+                                            If(bTemplatePersonal, "gb-pdf-template.tex (personalizado)", "preámbulo embebido (fábrica)"),
+                                              "", False)
+
+                                            ' ====================================================
+                                            ' RELEER COLUMNA 0 PARA ESTADO GLOBAL
+                                            ' (mismo patrón que ValidarArchivoDoaj y ValidarArchivoRedalyc)
+                                            ' ====================================================
+                                            Dim i As Integer
+                                            For i = 0 To FMain.gvLatex.Rows.Count - 1
+                                              If FMain.gvLatex[i, 0].Text = "ERROR" Then
+                                                bValido = False
+                                                Break
+                                              Endif
+                                            Next
+
+                                            ' ====================================================
+                                            ' FILA DE RESUMEN FINAL
+                                            ' ====================================================
+                                            Dim iUlt As Integer = FMain.gvLatex.Rows.Count
+                                            FMain.gvLatex.Rows.Count = iUlt + 1
+
+                                            FMain.gvLatex[iUlt, 0].Text = If(bValido, "APTO", "NO APTO")
+                                            FMain.gvLatex[iUlt, 2].Text = If(bValido,
+                                              "El PDF está generado y disponible en /salidas/pdf/",
+                                              "Corregir errores o ejecutar el pipeline PDF")
+
+                                            Dim colorResumen As Integer = If(bValido,
+                                              Color.RGB(200, 230, 201),
+                                              Color.RGB(255, 205, 210))
+                                            Dim j As Integer
+                                            For j = 0 To 3
+                                              FMain.gvLatex[iUlt, j].Background = colorResumen
+                                              FMain.gvLatex[iUlt, j].Font.Bold = True
+                                            Next
+
+                                            Return bValido
+
+End Function
+
+' ============================================
+' Función   : NombreArchivoLatexANombreBD
+' Propósito : Convierte el nombre de archivo l-*.tex visible
+'             en el listbox al nombre_archivo guardado en la BD.
+'             Ejemplo: l-02-revista-v01-n01.tex
+'                   → a-02-revista-v01-n01
+' Parámetros: sArchivoLatex As String — nombre con prefijo l- y .tex
+' Retorna   : String — nombre sin extensión y con prefijo a-
+' ============================================
+Public Function NombreArchivoLatexANombreBD(sArchivoLatex As String) As String
+
+  ' --- 1. Quitar extensión .tex ---
+  Dim sBase As String = Left(sArchivoLatex, Len(sArchivoLatex) - 4)
+
+  ' --- 2. Reemplazar prefijo l- por a- ---
+  If Left(sBase, 2) = "l-" Then
+    Return "a-" & Mid(sBase, 3)
+  Endif
+
+  ' --- 3. Fallback: devolver sin cambios si el prefijo no coincide ---
+  Return sBase
+
+End Function
