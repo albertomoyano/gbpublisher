@@ -4087,17 +4087,13 @@ End Sub
 
 ' ============================================
 ' Función   : ObtenerPreambuloEmbebido
-' Propósito : Retorna el preámbulo LaTeX de fábrica para
-'             compilación de artículos académicos con LuaLaTeX.
-'             Contiene el marcador %%BIBRESOURCE%% que
-'             EnsamblarTeX() reemplaza en tiempo de ensamblado
-'             con la línea \addbibresource real, o con cadena
-'             vacía si el artículo no tiene referencias.
-'             El usuario puede sustituir este preámbulo creando
-'             ~/.gbpublisher/gb-pdf-template.tex con el mismo
-'             marcador %%BIBRESOURCE%%.
-' Parámetros: ninguno
-' Retorna   : String — preámbulo completo hasta \begin{document}
+' Propósito : Genera el preámbulo LaTeX completo para el ensamblado
+'             del documento final. Incluye paquetes, fuentes, layout
+'             de página, estilos de cabecera/pie y macros del artículo.
+'             El marcador %%BIBRESOURCE%% es reemplazado por EnsamblarTeX()
+'             con la ruta real del archivo .bib antes de compilar.
+' Parámetros: (ninguno)
+' Retorna   : String — preámbulo LaTeX listo para escribir en l-*.tex
 ' ============================================
 Private Function ObtenerPreambuloEmbebido() As String
 
@@ -4146,46 +4142,50 @@ Private Function ObtenerPreambuloEmbebido() As String
   s &= Chr(10)
 
   ' --- 6. Página ---
+  ' NOTA SOBRE right=87mm:
+  '   right = margen_real(13) + marginparsep(6) + marginparwidth(68) = 87mm
+  '   geometry deduce textwidth = 210 - 13 - 87 = 110mm automáticamente
+  ' NOTA SOBRE headheight=29mm:
+  '   logo(20mm) + separación(3mm) + barra azul(6mm) = 29mm
+  ' NOTA SOBRE footskip=12mm:
+  '   espacio entre línea base del último renglón y la línea base del pie
   s &= "% --- PÁGINA ---" & Chr(10)
   s &= "\\usepackage[" &
     "paperwidth=210mm,paperheight=297mm," &
     "top=13mm,bottom=23mm," &
     "left=13mm,right=87mm," &
-    "headsep=0mm,footskip=0mm," &
+    "headsep=0mm,footskip=12mm," &
     "headheight=29mm,headsep=10mm," &
     "marginparsep=6mm,marginparwidth=68mm," &
-    "includehead,includefoot,showframe]{geometry}" & Chr(10)
+    "includehead,includefoot]{geometry}" & Chr(10)
   s &= "\\setcounter{secnumdepth}{0}" & Chr(10)
-  s &= "% LONGITUD PARA POSICIÓN X DEL BLOQUE LATERAL" & Chr(10)
+  s &= Chr(10)
+
+  ' --- 7. Posicionamiento absoluto (bloque lateral) ---
+  ' LONGITUD PARA POSICIÓN X DEL BLOQUE LATERAL
+  ' gbbloquex = 1in + hoffset + oddsidemargin + textwidth + marginparsep
+  ' SE CALCULA EN \AtBeginDocument PARA TENER LOS VALORES REALES DE geometry
+  ' NOTA: \textblockorigin{0mm}{0mm} MIDE DESDE LA ESQUINA FÍSICA DEL PAPEL.
+  '   SIN ESTO textpos MIDE DESDE EL PUNTO INTERNO DE TEX (1in ADENTRO)
+  '   Y EL BLOQUE QUEDA CORRIDO 25.4mm A LA DERECHA
+  s &= "% --- POSICIONAMIENTO ABSOLUTO ---" & Chr(10)
+  s &= "\\usepackage[absolute,overlay]{textpos}" & Chr(10)
+  s &= "\\setlength{\\TPHorizModule}{1mm}" & Chr(10)
+  s &= "\\setlength{\\TPVertModule}{1mm}" & Chr(10)
+  s &= "\\textblockorigin{0mm}{0mm}" & Chr(10)
   s &= "\\newlength{\\gbbloquex}" & Chr(10)
   s &= "\\AtBeginDocument{\\setlength{\\gbbloquex}" &
     "{\\dimexpr 1in+\\hoffset+\\oddsidemargin+\\textwidth+\\marginparsep\\relax}}" & Chr(10)
   s &= Chr(10)
 
-  ' NOTA SOBRE right=87mm:
-  '   right = margen_real(13) + marginparsep(6) + marginparwidth(68) = 87mm
-  '   geometry deduce textwidth = 210 - 13 - 87 = 110mm automáticamente.
-  ' NOTA SOBRE headheight=29mm:
-  '   logo(20mm) + separación(3mm) + barra azul(6mm) = 29mm
-  s &= "\\setcounter{secnumdepth}{0}" & Chr(10) ' SIN NUMERACIÓN DE SECCIONES EN ARTÍCULOS
-  s &= "% --- POSICIONAMIENTO ABSOLUTO ---" & Chr(10)
-  s &= "\\usepackage[absolute,overlay]{textpos}" & Chr(10)
-  s &= "\\setlength{\\TPHorizModule}{1mm}" & Chr(10)
-  s &= "\\setlength{\\TPVertModule}{1mm}" & Chr(10)
-  ' ORIGEN EN LA ESQUINA FÍSICA DEL PAPEL: SIN ESTO textpos
-  ' MIDE DESDE EL PUNTO INTERNO DE TEX (1in ADENTRO) Y EL
-  ' BLOQUE QUEDA CORRIDO 25.4mm A LA DERECHA
-  s &= "\\textblockorigin{0mm}{0mm}" & Chr(10)
-  s &= Chr(10)
-
-  ' --- 7. Tablas y figuras ---
+  ' --- 8. Tablas y figuras ---
   s &= "% --- TABLAS Y FIGURAS ---" & Chr(10)
   s &= "\\usepackage{booktabs}" & Chr(10)
   s &= "\\usepackage{graphicx}" & Chr(10)
   s &= "\\usepackage[labelfont=bf]{caption}" & Chr(10)
   s &= Chr(10)
 
-  ' --- 8. Varios ---
+  ' --- 9. Varios ---
   s &= "% --- VARIOS ---" & Chr(10)
   s &= "\\usepackage[hidelinks]{hyperref}" & Chr(10)
   s &= "\\usepackage[bottom]{footmisc}" & Chr(10)
@@ -4197,29 +4197,37 @@ Private Function ObtenerPreambuloEmbebido() As String
   s &= "\\definecolor{azulrevista}{HTML}{2d5a8e}" & Chr(10)
   s &= Chr(10)
 
+  ' --- 10. Macros vacías (sobreescritas luego por el XSLT) ---
   s &= "\\newcommand{\\articulotipo}{}" & Chr(10)
   s &= "\\newcommand{\\articulologorevista}{}" & Chr(10)
   s &= Chr(10)
-  s &= "% --- HEADER ---" & Chr(10)
-  s &= "\\usepackage{fancyhdr}" & Chr(10)
-  s &= Chr(10)
-  ' HEADWIDTH GLOBAL: textwidth(110) + marginparsep(6) + marginparwidth(68) = 184mm
+
+  ' --- 11. Estilos de cabecera y pie ---
+  ' headwidth GLOBAL: textwidth(110) + marginparsep(6) + marginparwidth(68) = 184mm
   ' SE DEFINE UNA SOLA VEZ Y APLICA A AMBOS ESTILOS DE PÁGINA
+  s &= "% --- HEADER / FOOTER ---" & Chr(10)
+  s &= "\\usepackage{fancyhdr}" & Chr(10)
   s &= "\\setlength{\\headwidth}{\\textwidth}" & Chr(10)
   s &= "\\addtolength{\\headwidth}{\\marginparsep}" & Chr(10)
   s &= "\\addtolength{\\headwidth}{\\marginparwidth}" & Chr(10)
   s &= Chr(10)
-  ' ESTILO PRIMERA PÁGINA: LOGO + BARRA AZUL RELLENA
+
+  ' ESTILO PRIMERA PÁGINA: LOGO + BARRA AZUL RELLENA EN CABECERA
+  '                        FILETE AZUL + LEYENDA EN EL PIE
   ' SE ACTIVA VÍA \thispagestyle{firstpage} AL INICIO DEL BODY (EMITIDO POR EL XSLT)
   ' ESTO GARANTIZA QUE \articulotipo YA FUE RENOVADA ANTES DEL SHIPOUT
   s &= "\\fancypagestyle{firstpage}{%" & Chr(10)
   s &= "  \\fancyhf{}%" & Chr(10)
+  ' CABECERA: MINIPAGE CON LOGO ARRIBA + ESPACIO + BARRA AZUL RELLENA CON TIPO DE ARTÍCULO
   s &= "  \\fancyhead[L]{%" & Chr(10)
-  s &= "    \\begin{minipage}{\\headwidth}%" & Chr(10)
+  s &= "    \\begin{minipage}[t]{\\headwidth}%" & Chr(10)
+  ' SI articulologorevista ESTÁ VACÍA SE OMITE EL \includegraphics Y NO HAY ERROR
+  ' \ifdefempty DE etoolbox ES EL TEST CORRECTO PARA MACROS DEFINIDAS
+  ' CON \newcommand: \ifx FALLA PORQUE \newcommand AGREGA PREFIJO \long
+  ' etoolbox YA ESTÁ CARGADO (biblatex LO TRAE COMO DEPENDENCIA)
   s &= "      \\ifdefempty{\\articulologorevista}{}{%" & Chr(10)
-  s &= "        \\includegraphics[width=184mm,height=20mm,keepaspectratio=false]{\\articulologorevista}%" & Chr(10)
+  s &= "        \\includegraphics[height=20mm]{\\articulologorevista}\\\\[3mm]%" & Chr(10)
   s &= "      }%" & Chr(10)
-  s &= "      \\vspace{3mm}%" & Chr(10)
   s &= "      {\\setlength{\\fboxsep}{0pt}%" & Chr(10)
   s &= "      \\colorbox{azulrevista}{%" & Chr(10)
   s &= "        \\parbox[c][6mm][c]{\\headwidth}{%" & Chr(10)
@@ -4229,16 +4237,26 @@ Private Function ObtenerPreambuloEmbebido() As String
   s &= "    \\end{minipage}%" & Chr(10)
   s &= "  }%" & Chr(10)
   s &= "  \\renewcommand{\\headrulewidth}{0pt}%" & Chr(10)
-  s &= "}" & Chr(10)
+  ' PIE PRIMERA PÁGINA: FILETE AZUL ENCIMA + NÚMERO + LEYENDA DE REVISTA
+  ' [t] EN MINIPAGE ALINEA EL FILETE AL TOPE DEL BOX DEL PIE
+  s &= "  \\fancyfoot[L]{%" & Chr(10)
+  s &= "    \\begin{minipage}[t]{\\headwidth}%" & Chr(10)
+  s &= "      \\textcolor{azulrevista}{\\rule{\\headwidth}{1pt}}\\\\[1pt]%" & Chr(10)
+  s &= "      \\sffamily\\thepage\\hfill%" & Chr(10)
+  s &= "      \\small\\articulorevista{} / e-ISSN: \\texttt{\\articuloissne}" &
+    "{} / Vol.~\\articulovolumen{},~n.\\textsuperscript{o}~\\articulonumero{} / \\articulofecha%" & Chr(10)
+  s &= "    \\end{minipage}%" & Chr(10)
+  s &= "  }%" & Chr(10)
+  s &= "  \\renewcommand{\\footrulewidth}{0pt}%" & Chr(10)
+  s &= "}%" & Chr(10)
   s &= Chr(10)
+
   ' ESTILO PÁGINAS 2+: FILETE AZUL 1pt + NÚMERO A IZQUIERDA + LEYENDA A DERECHA
-  ' L: número de página actual (\thepage) en sans bold
-  ' R: revista / e-ISSN / VOL / No / fecha en sans
+  ' RAISEBOX ELEVA EL BLOQUE (headheight - 7mm) DESDE LA LÍNEA BASE DEL HEADER
+  ' [0pt][0pt] EVITA QUE EL RAISEBOX AFECTE EL LAYOUT CIRCUNDANTE
+  ' EL FILETE VA DEBAJO DEL TEXTO (ÚLTIMA LÍNEA DEL MINIPAGE)
   s &= "\\pagestyle{fancy}" & Chr(10)
   s &= "\\fancyhf{}" & Chr(10)
-  ' RAISEBOX ELEVA EL BLOQUE 22mm (= headheight - 7mm)
-  ' BASELINE DEL HEADER = 42mm DESDE EL CORTE → REGLA QUEDA A 20mm
-  ' [0pt][0pt] EVITA QUE EL RAISEBOX AFECTE EL LAYOUT CIRCUNDANTE
   s &= "\\fancyhead[L]{%" & Chr(10)
   s &= "  \\raisebox{\\dimexpr\\headheight-7mm\\relax}[0pt][0pt]{%" & Chr(10)
   s &= "    \\begin{minipage}[b]{\\headwidth}%" & Chr(10)
@@ -4252,7 +4270,7 @@ Private Function ObtenerPreambuloEmbebido() As String
   s &= "\\renewcommand{\\headrulewidth}{0pt}" & Chr(10)
   s &= Chr(10)
 
-  ' --- 9. Macros del artículo ---
+  ' --- 12. Macros del artículo ---
   ' EL XSLT EMITE \renewcommand AL INICIO DEL BODY PARA SOBREESCRIBIRLAS
   s &= "% --- MACROS DEL ARTÍCULO (SOBREESCRITAS POR EL XSLT) ---" & Chr(10)
   s &= "\\newcommand{\\articulotitulo}{}" & Chr(10)
@@ -4269,7 +4287,7 @@ Private Function ObtenerPreambuloEmbebido() As String
   s &= "\\newcommand{\\articulopagina}{0}" & Chr(10)
   s &= Chr(10)
 
-  ' --- 10. Apertura del documento ---
+  ' --- 13. Apertura del documento ---
   s &= "\\begin{document}" & Chr(10)
 
   Return s
@@ -4556,6 +4574,7 @@ End Function
 '             Usa un archivo centinela (.compile_done_*) para
 '             detectar el fin del pipeline desde Gambas.
 '             El PDF resultante se copia a /salidas/pdf/.
+'             Los auxiliares de LaTeX se eliminan tras la copia.
 ' Parámetros: iIdArticulo As Integer — id del artículo en BD
 ' Retorna   : Boolean — True si el PDF fue generado y copiado
 ' ============================================
@@ -4571,6 +4590,7 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
   Dim sRutaBib As String
   Dim sRutaPdfOrigen As String
   Dim sRutaPdfDestino As String
+  Dim sRutaSalidasPdf As String
   Dim sRutaCentinela As String
   Dim sComando As String
   Dim iEspera As Integer
@@ -4612,7 +4632,8 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
   sRutaLatex = sRutaProyecto &/ "latex"
   sRutaTex = "l-" & sNombreBase & ".tex"           ' RELATIVO AL cd DEL COMANDO
   sRutaPdfOrigen = sRutaLatex &/ "l-" & sNombreBase & ".pdf"
-  sRutaPdfDestino = sRutaProyecto &/ "salidas" &/ "pdf" &/ "l-" & sNombreBase & ".pdf"
+  sRutaSalidasPdf = sRutaProyecto &/ "salidas" &/ "pdf"
+  sRutaPdfDestino = sRutaSalidasPdf &/ "l-" & sNombreBase & ".pdf"
   sRutaCentinela = sRutaLatex &/ ".compile_done_" & sNombreBase
 
   ' --- 6. Verificar que el .tex ensamblado existe ---
@@ -4623,11 +4644,18 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
     Return False
   Endif
 
-  ' --- 7. Limpiar archivos de compilaciones anteriores ---
+  ' --- 7. Garantizar que el directorio de salida existe ---
+  ' mkdir -p NO FALLA SI YA EXISTE
+  If Not Exist(sRutaSalidasPdf) Then
+    Shell "mkdir -p '" & sRutaSalidasPdf & "'"
+    Wait
+  Endif
+
+  ' --- 8. Limpiar centinela y PDF anteriores ---
   FMain.TerminalViewProyecto.Input("rm -f '" & sRutaCentinela & "' '" & sRutaPdfOrigen & "'" & Chr(10))
   Wait 1
 
-  ' --- 8. Construir el comando de compilación encadenado ---
+  ' --- 9. Construir el comando de compilación encadenado ---
   ' && GARANTIZA QUE CADA PASO ESPERA AL ANTERIOR
   ' cd PRIMERO: TODOS LOS AUXILIARES (.aux .bcf .bbl) QUEDAN EN /latex/
   sComando = "cd '" & sRutaLatex & "' && "
@@ -4638,10 +4666,10 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
     ' biber RECIBE SOLO EL NOMBRE BASE (SIN EXTENSIÓN)
     sComando &= " && biber 'l-" & sNombreBase & "'"
     sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
-    FMain.TerminalViewProyecto.Input("echo '--- PDF: PIPELINE lualatex → biber → lualatex × 2 ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input("'--- PDF: PIPELINE lualatex → biber → lualatex × 2 ---'" & Chr(10))
   Else
     ' PIPELINE SIN BIBLIOGRAFÍA: lualatex × 2
-    FMain.TerminalViewProyecto.Input("echo '--- PDF: PIPELINE lualatex × 2 (sin bibliografía) ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input("'--- PDF: PIPELINE lualatex × 2 (sin bibliografía) ---'" & Chr(10))
   Endif
 
   ' ÚLTIMA PASADA lualatex SIEMPRE (ESTABILIZA REFERENCIAS CRUZADAS)
@@ -4652,7 +4680,7 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
 
   FMain.TerminalViewProyecto.Input(sComando & Chr(10))
 
-  ' --- 9. Esperar hasta que el centinela exista (máximo 5 minutos) ---
+  ' --- 10. Esperar hasta que el centinela exista (máximo 5 minutos) ---
   ' 3000 × 0.1s = 300s = 5 min. Suficiente para documentos largos.
   iEspera = 0
   While Not Exist(sRutaCentinela) And iEspera < 3000
@@ -4666,24 +4694,39 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
     Return False
   Endif
 
-  ' --- 10. Verificar que el PDF fue generado ---
+  ' --- 11. Verificar que el PDF fue generado ---
   If Not Exist(sRutaPdfOrigen) Then
     Message.Error("lualatex no produjo el PDF:" & Chr(10) & sRutaPdfOrigen & Chr(10) &
       "Revise el terminal para ver los errores de compilación.")
     Return False
   Endif
 
-  ' --- 11. Copiar el PDF al destino final en /salidas/pdf/ ---
-  Shell "cp -f '" & sRutaPdfOrigen & "' '" & sRutaPdfDestino & "'" Wait
+  ' --- 12. Copiar el PDF al destino final en /salidas/pdf/ ---
+  FMain.TerminalViewProyecto.Input("cp -f '" & sRutaPdfOrigen & "' '" & sRutaPdfDestino & "'" & Chr(10))
+  Wait 2
 
   If Not Exist(sRutaPdfDestino) Then
     Message.Error("No se pudo copiar el PDF a /salidas/pdf/:" & Chr(10) & sRutaPdfDestino)
     Return False
   Endif
 
-  ' --- 12. Confirmar en el terminal ---
-  FMain.TerminalViewProyecto.Input("echo '--- PDF DISPONIBLE: " & sRutaPdfDestino & " ---'" & Chr(10))
+  ' --- 13. Limpiar archivos auxiliares de LaTeX de /latex/ ---
+  ' SE HACE DESPUÉS DE CONFIRMAR QUE EL PDF YA ESTÁ EN /salidas/pdf/
+  ' SE CONSERVA: .tex (fuente ensamblada) y .pdf (copia local de respaldo)
+  ' SE ELIMINA: auxiliares que LaTeX regenera en cada compilación
+  ' LIMPIEZA DE AUXILIARES VISIBLE EN CONSOLA
+  ' cd PRIMERO PARA USAR GLOBS SIN RUTAS LARGAS
+  ' rm -f NO FALLA SI ALGÚN AUXILIAR NO EXISTE
+  FMain.TerminalViewProyecto.Input(
+    "cd '" & sRutaLatex & "' && " &
+    "rm -f *.aux *.bbl *.bcf *.blg *.log *.out *.run.xml *.toc" &
+    "'" & sRutaCentinela & "'" & Chr(10))
+  Wait 1
 
+  ' --- 14. Confirmar en el terminal ---
+  FMain.TerminalViewProyecto.Input("'--- PDF DISPONIBLE: " & sRutaPdfDestino & " ---'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(Chr(10))
+  FMain.TerminalViewProyecto.Input("cd " & sRutaProyecto & Chr(10))
   Return True
 
 Catch
@@ -4713,7 +4756,7 @@ End Function
 Public Function GenerarPDF(iIdArticulo As Integer) As Boolean
 
   ' --- 1. Anunciar inicio en el terminal ---
-  FMain.TerminalViewProyecto.Input("echo '=== INICIO PIPELINE PDF ==='" & Chr(10))
+  FMain.TerminalViewProyecto.Input("'=== INICIO PIPELINE PDF ==='" & Chr(10))
 
   ' --- 2. Paso 1: Transformación XSLT (canónico JATS → body LaTeX) ---
   If Not GenerarTeXBodyDesdeCanonico(iIdArticulo) Then
@@ -4735,7 +4778,7 @@ Public Function GenerarPDF(iIdArticulo As Integer) As Boolean
   Endif
 
   ' --- 5. Confirmar finalización ---
-  FMain.TerminalViewProyecto.Input("echo '=== PIPELINE PDF COMPLETADO ==='" & Chr(10))
+  FMain.TerminalViewProyecto.Input("'=== PIPELINE PDF COMPLETADO ==='" & Chr(10))
 
   Return True
 
