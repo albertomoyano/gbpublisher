@@ -1,0 +1,355 @@
+' Gambas module file
+
+' ============================================
+' Módulo   : m_EscanerUTF8
+' Propósito: Detecta caracteres problemáticos en todos los archivos .md
+'            del proyecto y muestra resultados en FEstructuraResultados
+' ============================================
+
+' ============================================
+' Función   : EscanearCodificacionUTF8
+' Propósito : Itera todos los archivos .md del proyecto, detecta caracteres
+'             problemáticos y puebla FEstructuraResultados
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub EscanearCodificacionUTF8()
+
+  ' --- 1. Inicialización de variables ---
+  Dim archivos As String[]
+  Dim archivo As String
+  Dim contenido As String
+  Dim rutaProyecto As String
+  Dim rutaArticulos As String
+  Dim rutaCompleta As String
+  Dim sEtiqueta As String
+  Dim iFila As Integer
+
+  ' ARRAYS ACUMULADORES — SOLO SE AGREGAN ARCHIVOS CON ERRORES
+  Dim aArchivos As New String[]
+  Dim aLineas As New String[]
+  Dim aErrores As New String[]
+  Dim aContextos As New String[]
+
+  ' --- 2. Resolución de rutas ---
+  rutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  rutaArticulos = rutaProyecto &/ "articulos"
+
+  ' --- 3. Procesamiento de archivos ---
+
+  ' ARCHIVOS EN LA RAÍZ DEL PROYECTO
+  If Exist(rutaProyecto) Then
+    archivos = Dir(rutaProyecto, "*.md")
+    archivos.Sort()
+    For Each archivo In archivos
+      rutaCompleta = rutaProyecto &/ archivo
+      Try contenido = File.Load(rutaCompleta)
+      If Error Then Continue
+      EscanearArchivo(contenido, archivo, aArchivos, aLineas, aErrores, aContextos)
+    Next
+  Endif
+
+  ' ARCHIVOS EN LA SUBCARPETA /ARTICULOS
+  If Exist(rutaArticulos) Then
+    archivos = Dir(rutaArticulos, "*.md")
+    archivos.Sort()
+    For Each archivo In archivos
+      rutaCompleta = rutaArticulos &/ archivo
+      Try contenido = File.Load(rutaCompleta)
+      If Error Then Continue
+      EscanearArchivo(contenido, "articulos/" & archivo, aArchivos, aLineas, aErrores, aContextos)
+    Next
+  Endif
+
+  ' --- 4. Configuración del formulario ---
+  FEstructuraResultados.blTitulo.Text = "Escáner de codificación UTF-8"
+
+  ' --- 5. Configuración de columnas del GridView ---
+  With FEstructuraResultados.gvResultados
+    .Rows.Count = 0
+    .Columns.Count = 5
+    .Header = GridView.Horizontal
+    .ScrollBar = GridView.Both
+
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 350
+    .Columns[0].Alignment = Align.Left
+
+    .Columns[1].Title = "L"
+    .Columns[1].Width = 50
+    .Columns[1].Alignment = Align.Center
+
+    .Columns[2].Title = "Error"
+    .Columns[2].Width = 250
+    .Columns[2].Alignment = Align.Left
+
+    .Columns[3].Title = "Contexto"
+    .Columns[3].Width = 700
+    .Columns[3].Alignment = Align.Left
+
+    ' COLUMNA FANTASMA QUE ABSORBE EL ESPACIO SOBRANTE
+    .Columns[4].Title = ""
+    .Columns[4].Width = 10
+  End With
+
+  ' --- 6. Carga de datos ---
+  If aArchivos.Count = 0 Then
+    FEstructuraResultados.gvResultados.Rows.Count = 1
+    FEstructuraResultados.gvResultados[0, 0].Text = "Sin problemas"
+    FEstructuraResultados.gvResultados[0, 3].Text = "No se encontraron caracteres problemáticos en ningún archivo"
+  Else
+    FEstructuraResultados.gvResultados.Rows.Count = aArchivos.Count
+    For iFila = 0 To aArchivos.Count - 1
+      FEstructuraResultados.gvResultados[iFila, 0].Text = aArchivos[iFila]
+      FEstructuraResultados.gvResultados[iFila, 1].Text = aLineas[iFila]
+      FEstructuraResultados.gvResultados[iFila, 2].Text = aErrores[iFila]
+      FEstructuraResultados.gvResultados[iFila, 3].Text = aContextos[iFila]
+      ' CELDA ERROR EN ROJO
+      FEstructuraResultados.gvResultados[iFila, 2].Background = Color.RGB(255, 180, 180)
+    Next
+  Endif
+
+  ' --- 7. Presentación del formulario ---
+  m_Sonido.sonar("Info")
+  FEstructuraResultados.ShowModal
+
+End
+
+' ============================================
+' Función   : EscanearArchivo
+' Propósito : Recorre carácter a carácter un archivo y detecta todos los
+'             problemas de codificación, acumulando en los arrays
+' Parámetros: sContenido  As String   — texto completo del archivo
+'             sEtiqueta   As String   — nombre del archivo para la columna
+'             aArchivos   As String[] — acumulador columna Archivo
+'             aLineas     As String[] — acumulador columna L
+'             aErrores    As String[] — acumulador columna Error
+'             aContextos  As String[] — acumulador columna Contexto
+' Retorna   : nada
+' ============================================
+Private Sub EscanearArchivo(sContenido As String, sEtiqueta As String, aArchivos As String[], aLineas As String[], aErrores As String[], aContextos As String[])
+
+  ' --- 1. Inicialización ---
+  Dim i As Integer
+  Dim codigo As Integer
+  Dim char As String
+  Dim charAnt As String
+  Dim iLinea As Integer
+  Dim iColumna As Integer
+  Dim sNombre As String
+  Dim sContexto As String
+  Dim bEsError As Boolean
+
+  ' CONSONANTES PARA DETECCIÓN DE DIACRÍTICOS MAL POSICIONADOS
+  Dim sConsonantes As String
+
+  sConsonantes = "bcdfghjklmnñpqrstvwxyzBCDFGHJKLMNÑPQRSTVWXYZ"
+
+  iLinea = 1
+  iColumna = 1
+  charAnt = ""
+
+  ' --- 2. Recorrido carácter a carácter ---
+  For i = 1 To String.Len(sContenido)
+    char = String.Mid(sContenido, i, 1)
+    codigo = Asc(char)
+    sNombre = ""
+    bEsError = True   ' POR DEFECTO ES ERROR; ADVERTENCIAS SE MARCAN IGUAL
+
+    ' --- 2a. Caracteres de control (excluye tab=9, LF=10, CR=13) ---
+    If (codigo >= 0 And codigo <= 31 And codigo <> 9 And codigo <> 10 And codigo <> 13) Or
+        (codigo >= 127 And codigo <= 159) Then
+      sNombre = "Control: " & NombreControlChar(codigo)
+
+      ' --- 2b. Soft hyphen ---
+    Else If codigo = 173 Then
+      sNombre = "Soft hyphen (U+00AD)"
+
+      ' --- 2c. Espacios especiales ---
+    Else If codigo = 160 Then
+      sNombre = "No-Break Space (U+00A0)"
+    Else If (codigo >= 8192 And codigo <= 8202) Or codigo = 8239 Or codigo = 8287 Then
+      sNombre = "Espacio especial (U+" & Hex(codigo, 4) & ")"
+    Else If codigo = 12288 Then
+      sNombre = "Ideographic Space (U+3000)"
+
+      ' --- 2d. Diacríticos combinantes mal posicionados ---
+    Else If codigo >= 768 And codigo <= 879 Then
+      If InStr(sConsonantes, charAnt) > 0 Or charAnt = "" Or charAnt = " " Then
+        sNombre = "Diacrítico combinante mal posicionado (U+" & Hex(codigo, 4) & ")"
+      Endif
+
+      ' --- 2e. Caracteres de ancho cero y marcas de dirección ---
+    Else If codigo = 8203 Then
+      sNombre = "Zero Width Space (U+200B)"
+    Else If codigo = 8204 Then
+      sNombre = "Zero Width Non-Joiner (U+200C)"
+    Else If codigo = 8205 Then
+      sNombre = "Zero Width Joiner (U+200D)"
+    Else If codigo = 8206 Then
+      sNombre = "Left-to-Right Mark (U+200E)"
+    Else If codigo = 8207 Then
+      sNombre = "Right-to-Left Mark (U+200F)"
+    Else If codigo >= 8234 And codigo <= 8238 Then
+      sNombre = "Marca de dirección (U+" & Hex(codigo, 4) & ")"
+    Else If codigo = 8232 Then
+      sNombre = "Line Separator (U+2028)"
+    Else If codigo = 8233 Then
+      sNombre = "Paragraph Separator (U+2029)"
+
+      ' --- 2f. Word joiner e invisible operators ---
+    Else If codigo = 8288 Then
+      sNombre = "Word Joiner (U+2060)"
+    Else If codigo >= 8289 And codigo <= 8292 Then
+      sNombre = "Invisible operator (U+" & Hex(codigo, 4) & ")"
+
+      ' --- 2g. Deprecated format characters U+206A–U+206F ---
+    Else If codigo >= 8298 And codigo <= 8303 Then
+      sNombre = "Formato obsoleto (U+" & Hex(codigo, 4) & ")"
+
+      ' --- 2h. Variation selectors U+FE00–U+FE0F ---
+    Else If codigo >= 65024 And codigo <= 65039 Then
+      sNombre = "Variation Selector (U+" & Hex(codigo, 4) & ")"
+
+      ' --- 2i. Carácter de sustitución (error de decodificación) ---
+    Else If codigo = 65533 Then
+      sNombre = "Replacement Character (U+FFFD) — error de decodificación"
+
+      ' --- 2j. Byte Order Mark ---
+    Else If codigo = 65279 Then
+      sNombre = "BOM (U+FEFF)"
+
+      ' --- 2k. Specials block U+FFF9–U+FFFB ---
+    Else If codigo >= 65529 And codigo <= 65531 Then
+      sNombre = "Interlinear annotation (U+" & Hex(codigo, 4) & ")"
+
+      ' --- 2l. Ligaduras tipográficas ---
+    Else If codigo >= 64256 And codigo <= 64262 Then
+      sNombre = "Ligadura tipográfica (U+" & Hex(codigo, 4) & ")"
+
+      ' --- 2m. Private Use Area U+E000–U+F8FF ---
+    Else If codigo >= 57344 And codigo <= 63743 Then
+      sNombre = "Private Use Area (U+" & Hex(codigo, 4) & ") — fuente propietaria"
+
+    Endif
+
+    ' --- 3. Acumulación si se encontró un problema ---
+    If sNombre <> "" Then
+      sContexto = ExtraerContexto(sContenido, i, 25)
+      aArchivos.Add(sEtiqueta)
+      aLineas.Add(Str(iLinea))
+      aErrores.Add(sNombre)
+      aContextos.Add(sContexto)
+    Endif
+
+    ' --- 4. Actualización de posición ---
+    If codigo = 10 Then
+      iLinea += 1
+      iColumna = 1
+    Else
+      iColumna += 1
+    Endif
+
+    charAnt = char
+  Next
+
+End
+
+' ============================================
+' Función   : ExtraerContexto
+' Propósito : Extrae texto alrededor de una posición para mostrar al usuario
+'             El contexto arranca en la posición del carácter problemático
+' Parámetros: sTexto   As String  — texto completo
+'             iPos     As Integer — posición del carácter problemático
+'             iMargen  As Integer — caracteres a incluir después del problema
+' Retorna   : String con el fragmento de contexto
+' ============================================
+Private Function ExtraerContexto(sTexto As String, iPos As Integer, iMargen As Integer) As String
+
+  Dim iFin As Integer
+  Dim sContexto As String
+
+  ' EL CONTEXTO ARRANCA EN EL CARÁCTER PROBLEMÁTICO (NO ANTES)
+  ' PARA QUE SEA FÁCILMENTE LOCALIZABLE EN EL EDITOR
+  iFin = Min(String.Len(sTexto), iPos + iMargen)
+  sContexto = String.Mid(sTexto, iPos, iFin - iPos + 1)
+
+  ' NORMALIZAR SALTOS DE LÍNEA Y TABULACIONES PARA VISUALIZACIÓN EN CELDA
+  sContexto = Replace(sContexto, "\n", "↵")
+  sContexto = Replace(sContexto, "\r", "")
+  sContexto = Replace(sContexto, "\t", "→")
+
+  If iFin < Len(sTexto) Then sContexto &= "…"
+
+  Return sContexto
+
+End
+
+' ============================================
+' Función   : NombreControlChar
+' Propósito : Devuelve el nombre legible de un carácter de control
+' Parámetros: codigo As Integer — código ASCII/Unicode
+' Retorna   : String con el nombre
+' ============================================
+Private Function NombreControlChar(codigo As Integer) As String
+
+  Select Case codigo
+    Case 0
+      Return "NUL"
+    Case 1
+      Return "SOH"
+    Case 2
+      Return "STX"
+    Case 3
+      Return "ETX"
+    Case 4
+      Return "EOT"
+    Case 5
+      Return "ENQ"
+    Case 6
+      Return "ACK"
+    Case 7
+      Return "BEL"
+    Case 8
+      Return "BS (Backspace)"
+    Case 11
+      Return "VT (Vertical Tab)"
+    Case 12
+      Return "FF (Form Feed)"
+    Case 14
+      Return "SO"
+    Case 15
+      Return "SI"
+    Case 16
+      Return "DLE"
+    Case 17
+      Return "DC1"
+    Case 18
+      Return "DC2"
+    Case 19
+      Return "DC3"
+    Case 20
+      Return "DC4"
+    Case 21
+      Return "NAK"
+    Case 22
+      Return "SYN"
+    Case 23
+      Return "ETB"
+    Case 24
+      Return "CAN"
+    Case 25
+      Return "EM"
+    Case 26
+      Return "SUB"
+    Case 27
+      Return "ESC"
+    Case 127
+      Return "DEL"
+    Case 128 To 159
+      Return "C1 Control (U+" & Hex(codigo, 4) & ")"
+    Case Else
+      Return "Control U+" & Hex(codigo, 4)
+  End Select
+
+End
