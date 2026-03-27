@@ -16,6 +16,12 @@
     ruta_media   - RUTA RELATIVA AL DIRECTORIO /media
                    VACÍO = solo nombre de archivo (para OJS)
                    ../media = revisión interna desde docs/
+    estilo_cita  - 'autor-anio' (humanidades) o 'vancouver' (ciencias de la salud)
+    ruta_meta    - RUTA AL XML AUXILIAR m-*.xml GENERADO POR
+                   GenerarMetaArticuloXML() EN m_XML.gambas
+                   CONTIENE: CRediT POR AUTOR, ROR DE AFILIACIÓN,
+                   URL TEXTO COMPLETO, ROR DEL EDITOR
+                   VACÍO = HTML SE GENERA SIN METADATOS ENRIQUECIDOS
 
   VERSIÓN XSLT: 2.0 (REQUIERE SAXON-HE)
   =====================================================
@@ -37,6 +43,14 @@
        'autor-anio' = (Apellido, 2024) — humanidades/sociales
        'vancouver'  = [1]  [1-3]       — ciencias de la salud  -->
   <xsl:param name="estilo_cita" as="xs:string" select="'autor-anio'"
+             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+
+  <!-- RUTA AL XML AUXILIAR DE METADATOS (m-*.xml)
+       GENERADO POR GenerarMetaArticuloXML() EN m_XML.gambas
+       CONTIENE: CRediT POR AUTOR, ROR DE AFILIACIÓN,
+       URL TEXTO COMPLETO, ROR DEL EDITOR
+       VACÍO = NO SE CARGAN METADATOS ENRIQUECIDOS (DEGRADACIÓN ELEGANTE) -->
+  <xsl:param name="ruta_meta" as="xs:string" select="''"
              xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
 
   <!-- ================================================
@@ -80,6 +94,22 @@
   <xsl:variable name="revista"
     select="normalize-space(//journal-meta/journal-title-group/journal-title)"/>
 
+  <!-- DOCUMENTO XML AUXILIAR DE METADATOS
+       SE CARGA SOLO SI ruta_meta NO ESTÁ VACÍO.
+       CRUCE CON EL CANÓNICO:
+         $meta/meta-articulo/autores/autor[@ref='a12']/credit
+         $meta/meta-articulo/autores/autor[@ref='a12']/ror-afiliacion
+         $meta/meta-articulo/identidad/url-texto-completo
+         $meta/meta-articulo/revista/ror-editorial
+       EL ATRIBUTO ref COINCIDE CON contrib/@id EN EL JATS -->
+  <xsl:variable name="meta"
+    select="if ($ruta_meta != '') then doc($ruta_meta) else ()"/>
+
+  <xsl:variable name="url-texto-completo"
+    select="if ($meta) then
+      normalize-space($meta/meta-articulo/identidad/url-texto-completo)
+    else ''"/>
+
   <!-- ================================================
        TEMPLATE RAÍZ
        ================================================ -->
@@ -95,15 +125,253 @@
           <xsl:value-of select="$revista"/>
         </title>
 
-        <!-- META PARA INDEXACIÓN ACADÉMICA -->
+        <!-- ================================================
+             HIGHWIRE PRESS — INDEXACIÓN ACADÉMICA
+             GOOGLE SCHOLAR, PUBMED, LENS, SEMANTIC SCHOLAR
+             ================================================ -->
+        <meta name="citation_title" content="{$titulo}"/>
         <xsl:if test="$doi != ''">
           <meta name="citation_doi" content="{$doi}"/>
         </xsl:if>
-        <meta name="citation_title" content="{$titulo}"/>
-        <xsl:for-each select="//contrib[@contrib-type='author']/name">
+        <meta name="citation_journal_title" content="{$revista}"/>
+        <xsl:if test="//journal-meta/issn[@pub-type='epub']">
+          <meta name="citation_issn"
+            content="{//journal-meta/issn[@pub-type='epub']}"/>
+        </xsl:if>
+        <xsl:if test="//journal-meta/issn[@pub-type='ppub']">
+          <meta name="citation_issn"
+            content="{//journal-meta/issn[@pub-type='ppub']}"/>
+        </xsl:if>
+        <xsl:if test="//article-meta/volume">
+          <meta name="citation_volume"
+            content="{//article-meta/volume}"/>
+        </xsl:if>
+        <xsl:if test="//article-meta/issue">
+          <meta name="citation_issue"
+            content="{//article-meta/issue}"/>
+        </xsl:if>
+        <xsl:if test="//article-meta/fpage">
+          <meta name="citation_firstpage"
+            content="{//article-meta/fpage}"/>
+        </xsl:if>
+        <xsl:if test="//article-meta/lpage">
+          <meta name="citation_lastpage"
+            content="{//article-meta/lpage}"/>
+        </xsl:if>
+        <xsl:if test="//article-meta/pub-date/year">
+          <meta name="citation_publication_date"
+            content="{//article-meta/pub-date/year}/{//article-meta/pub-date/month}"/>
+        </xsl:if>
+        <meta name="citation_language" content="{$lang}"/>
+        <xsl:if test="$url-texto-completo != ''">
+          <meta name="citation_abstract_html_url" content="{$url-texto-completo}"/>
+          <meta name="citation_fulltext_html_url"  content="{$url-texto-completo}"/>
+        </xsl:if>
+        <xsl:for-each select="//contrib[@contrib-type='author']">
           <meta name="citation_author"
+            content="{normalize-space(name/surname)}, {normalize-space(name/given-names)}"/>
+          <xsl:if test="contrib-id[@contrib-id-type='orcid']">
+            <meta name="citation_author_orcid"
+              content="{contrib-id[@contrib-id-type='orcid']}"/>
+          </xsl:if>
+          <xsl:if test="aff/institution[not(@content-type='dept')]">
+            <meta name="citation_author_institution"
+              content="{normalize-space(aff/institution[not(@content-type='dept')])}"/>
+          </xsl:if>
+        </xsl:for-each>
+        <xsl:if test="//abstract">
+          <meta name="citation_abstract"
+            content="{normalize-space(//abstract/p[1])}"/>
+        </xsl:if>
+        <xsl:if test="//publisher-name">
+          <meta name="citation_publisher"
+            content="{normalize-space(//publisher-name)}"/>
+        </xsl:if>
+
+        <!-- ================================================
+             DUBLIN CORE
+             ================================================ -->
+        <meta name="DC.title"    content="{$titulo}"/>
+        <meta name="DC.language" content="{$lang}"/>
+        <meta name="DC.type"     content="Text"/>
+        <meta name="DC.format"   content="text/html"/>
+        <xsl:if test="//publisher-name">
+          <meta name="DC.publisher"
+            content="{normalize-space(//publisher-name)}"/>
+        </xsl:if>
+        <xsl:if test="$doi != ''">
+          <meta name="DC.identifier"
+            content="https://doi.org/{$doi}"/>
+        </xsl:if>
+        <xsl:if test="//article-meta/pub-date/year">
+          <meta name="DC.date"
+            content="{//article-meta/pub-date/year}"/>
+        </xsl:if>
+        <xsl:if test="//abstract">
+          <meta name="DC.description"
+            content="{normalize-space(//abstract/p[1])}"/>
+        </xsl:if>
+        <xsl:if test="//permissions/license/@xlink:href">
+          <meta name="DC.rights"
+            content="{//permissions/license/@xlink:href}"/>
+        </xsl:if>
+        <xsl:for-each select="//contrib[@contrib-type='author']/name">
+          <meta name="DC.creator"
             content="{normalize-space(surname)}, {normalize-space(given-names)}"/>
         </xsl:for-each>
+        <xsl:for-each select="//kwd-group[@xml:lang=$lang]/kwd">
+          <meta name="DC.subject" content="{normalize-space(.)}"/>
+        </xsl:for-each>
+
+        <!-- ================================================
+             OPEN GRAPH + TWITTER CARDS
+             ================================================ -->
+        <meta property="og:type"      content="article"/>
+        <meta property="og:title"     content="{$titulo}"/>
+        <meta property="og:site_name" content="{$revista}"/>
+        <meta property="og:locale"    content="{$lang}"/>
+        <xsl:if test="$url-texto-completo != ''">
+          <meta property="og:url"     content="{$url-texto-completo}"/>
+        </xsl:if>
+        <xsl:if test="//abstract">
+          <meta property="og:description"
+            content="{normalize-space(//abstract/p[1])}"/>
+        </xsl:if>
+        <meta name="twitter:card"  content="summary"/>
+        <meta name="twitter:title" content="{$titulo}"/>
+        <xsl:if test="//abstract">
+          <meta name="twitter:description"
+            content="{normalize-space(//abstract/p[1])}"/>
+        </xsl:if>
+
+        <!-- ================================================
+             SCHEMA.ORG JSON-LD — ScholarlyArticle
+             GOOGLE KNOWLEDGE GRAPH, SEMANTIC WEB
+             ================================================ -->
+        <script type="application/ld+json">
+          <xsl:text>{</xsl:text>
+          <xsl:text>"@context":"https://schema.org",</xsl:text>
+          <xsl:text>"@type":"ScholarlyArticle",</xsl:text>
+          <xsl:text>"headline":"</xsl:text>
+          <xsl:value-of select="replace($titulo, '&quot;', '\\&quot;')"/>
+          <xsl:text>",</xsl:text>
+          <xsl:text>"inLanguage":"</xsl:text>
+          <xsl:value-of select="$lang"/>
+          <xsl:text>",</xsl:text>
+          <xsl:if test="$doi != ''">
+            <xsl:text>"identifier":{"@type":"PropertyValue","propertyID":"DOI","value":"</xsl:text>
+            <xsl:value-of select="$doi"/>
+            <xsl:text>"},</xsl:text>
+            <xsl:text>"url":"https://doi.org/</xsl:text>
+            <xsl:value-of select="$doi"/>
+            <xsl:text>",</xsl:text>
+          </xsl:if>
+          <xsl:if test="$url-texto-completo != '' and $doi = ''">
+            <xsl:text>"url":"</xsl:text>
+            <xsl:value-of select="$url-texto-completo"/>
+            <xsl:text>",</xsl:text>
+          </xsl:if>
+          <xsl:if test="//article-meta/pub-date/year">
+            <xsl:text>"datePublished":"</xsl:text>
+            <xsl:value-of select="//article-meta/pub-date/year"/>
+            <xsl:if test="//article-meta/pub-date/month">
+              <xsl:text>-</xsl:text>
+              <xsl:value-of
+                select="format-number(xs:integer(//article-meta/pub-date/month), '00')"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+            </xsl:if>
+            <xsl:text>",</xsl:text>
+          </xsl:if>
+          <xsl:if test="//abstract">
+            <xsl:text>"abstract":"</xsl:text>
+            <xsl:value-of
+              select="replace(normalize-space(//abstract/p[1]), '&quot;', '\\&quot;')"/>
+            <xsl:text>",</xsl:text>
+          </xsl:if>
+          <!-- AUTORES: NOMBRE + ORCID + AFILIACIÓN CON ROR DESDE META XML -->
+          <xsl:text>"author":[</xsl:text>
+          <xsl:for-each select="//contrib[@contrib-type='author']">
+            <xsl:if test="position() > 1">
+              <xsl:text>,</xsl:text>
+            </xsl:if>
+            <xsl:text>{"@type":"Person","name":"</xsl:text>
+            <xsl:value-of select="normalize-space(name/given-names)"/>
+            <xsl:text> </xsl:text>
+            <xsl:value-of select="normalize-space(name/surname)"/>
+            <xsl:text>"</xsl:text>
+            <xsl:if test="contrib-id[@contrib-id-type='orcid']">
+              <xsl:text>,"@id":"</xsl:text>
+              <xsl:value-of select="contrib-id[@contrib-id-type='orcid']"/>
+              <xsl:text>"</xsl:text>
+            </xsl:if>
+            <!-- ROR DE AFILIACIÓN CRUZADO DESDE EL META XML POR @id DEL contrib -->
+            <xsl:variable name="refAutor" select="@id"/>
+            <xsl:variable name="rorAfil"
+              select="if ($meta) then
+                normalize-space($meta/meta-articulo/autores/autor[@ref=$refAutor]/ror-afiliacion)
+              else ''"/>
+            <xsl:if test="aff/institution[not(@content-type='dept')] or $rorAfil != ''">
+              <xsl:text>,"affiliation":{"@type":"Organization"</xsl:text>
+              <xsl:if test="aff/institution[not(@content-type='dept')]">
+                <xsl:text>,"name":"</xsl:text>
+                <xsl:value-of
+                  select="normalize-space(aff/institution[not(@content-type='dept')])"/>
+                <xsl:text>"</xsl:text>
+              </xsl:if>
+              <xsl:if test="$rorAfil != ''">
+                <xsl:text>,"@id":"</xsl:text>
+                <xsl:value-of select="$rorAfil"/>
+                <xsl:text>"</xsl:text>
+              </xsl:if>
+              <xsl:text>}</xsl:text>
+            </xsl:if>
+            <xsl:text>}</xsl:text>
+          </xsl:for-each>
+          <xsl:text>],</xsl:text>
+          <!-- PUBLISHER CON ROR DESDE EL META XML -->
+          <xsl:variable name="rorEdit"
+            select="if ($meta) then
+              normalize-space($meta/meta-articulo/revista/ror-editorial)
+            else ''"/>
+          <xsl:text>"publisher":{"@type":"Organization","name":"</xsl:text>
+          <xsl:value-of select="normalize-space(//publisher-name)"/>
+          <xsl:text>"</xsl:text>
+          <xsl:if test="$rorEdit != ''">
+            <xsl:text>,"@id":"</xsl:text>
+            <xsl:value-of select="$rorEdit"/>
+            <xsl:text>"</xsl:text>
+          </xsl:if>
+          <xsl:text>},</xsl:text>
+          <xsl:text>"isPartOf":{"@type":"Periodical","name":"</xsl:text>
+          <xsl:value-of select="$revista"/>
+          <xsl:text>"</xsl:text>
+          <xsl:if test="//journal-meta/issn[@pub-type='epub']">
+            <xsl:text>,"issn":"</xsl:text>
+            <xsl:value-of select="//journal-meta/issn[@pub-type='epub']"/>
+            <xsl:text>"</xsl:text>
+          </xsl:if>
+          <xsl:text>},</xsl:text>
+          <xsl:if test="//permissions/license/@xlink:href">
+            <xsl:text>"license":"</xsl:text>
+            <xsl:value-of select="//permissions/license/@xlink:href"/>
+            <xsl:text>"</xsl:text>
+          </xsl:if>
+          <xsl:choose>
+            <xsl:when test="//kwd-group[@xml:lang=$lang]/kwd">
+              <xsl:text>,"keywords":"</xsl:text>
+              <xsl:for-each select="//kwd-group[@xml:lang=$lang]/kwd">
+                <xsl:if test="position() > 1">
+                  <xsl:text>, </xsl:text>
+                </xsl:if>
+                <xsl:value-of select="normalize-space(.)"/>
+              </xsl:for-each>
+              <xsl:text>"}</xsl:text>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:text>}</xsl:text>
+            </xsl:otherwise>
+          </xsl:choose>
+        </script>
 
         <!-- MATHJAX PARA ECUACIONES -->
         <script>
@@ -1319,28 +1587,24 @@
                       </div>
                     </xsl:if>
 
-                    <!-- LÍNEA 2: DATOS BIBLIOGRÁFICOS DE CORRIDO -->
-                    <div class="related-datos">
-                      <xsl:if test="$ra/@publication-year">
-                        <xsl:value-of select="$ra/@publication-year"/>
-                      </xsl:if>
-                      <xsl:if test="$ra/@vol">
-                        <xsl:text>, vol. </xsl:text>
-                        <xsl:value-of select="$ra/@vol"/>
-                      </xsl:if>
-                      <xsl:if test="$ra/@issue">
-                        <xsl:text>, n&#xFA;m. </xsl:text>
-                        <xsl:value-of select="$ra/@issue"/>
-                      </xsl:if>
-                      <xsl:if test="$ra/@fpage">
-                        <xsl:text>, pp. </xsl:text>
-                        <xsl:value-of select="$ra/@fpage"/>
-                        <xsl:if test="$ra/@lpage">
-                          <xsl:text>&#x2013;</xsl:text>
-                          <xsl:value-of select="$ra/@lpage"/>
+                    <!-- LÍNEA 2: DATOS BIBLIOGRÁFICOS
+                         NOTA: publication-year, fpage y lpage NO SON ATRIBUTOS
+                         VÁLIDOS EN DTD JATS 1.4 — SOLO vol e issue -->
+                    <xsl:if test="$ra/@vol or $ra/@issue">
+                      <div class="related-datos">
+                        <xsl:if test="$ra/@vol">
+                          <xsl:text>vol. </xsl:text>
+                          <xsl:value-of select="$ra/@vol"/>
                         </xsl:if>
-                      </xsl:if>
-                    </div>
+                        <xsl:if test="$ra/@issue">
+                          <xsl:if test="$ra/@vol">
+                            <xsl:text>, </xsl:text>
+                          </xsl:if>
+                          <xsl:text>n&#xFA;m. </xsl:text>
+                          <xsl:value-of select="$ra/@issue"/>
+                        </xsl:if>
+                      </div>
+                    </xsl:if>
 
                     <!-- LÍNEA 3: DOI COMO ENLACE CLICABLE -->
                     <xsl:if test="$ra/@xlink:href">
