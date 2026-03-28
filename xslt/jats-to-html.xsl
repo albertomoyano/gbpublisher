@@ -16,7 +16,9 @@
     ruta_media   - RUTA RELATIVA AL DIRECTORIO /media
                    VACÍO = solo nombre de archivo (para OJS)
                    ../media = revisión interna desde docs/
-    estilo_cita  - 'autor-anio' (humanidades) o 'vancouver' (ciencias de la salud)
+    estilo_cita  - 'autor-anio' (humanidades) | 'vancouver' (numérico) |
+                   'apa' (APA 7) | 'iso690' (ISO 690 autor-fecha)
+                   DETERMINADO AUTOMÁTICAMENTE POR LeerTipoCSL() EN m_GenerarSalidas
     ruta_meta    - RUTA AL XML AUXILIAR m-*.xml GENERADO POR
                    GenerarMetaArticuloXML() EN m_XML.gambas
                    CONTIENE: CRediT POR AUTOR, ROR DE AFILIACIÓN,
@@ -41,7 +43,9 @@
 
   <!-- ESTILO DE CITAS EN TEXTO
        'autor-anio' = (Apellido, 2024) — humanidades/sociales
-       'vancouver'  = [1]  [1-3]       — ciencias de la salud  -->
+       'vancouver'  = [1]  [1-3]       — ciencias de la salud
+       'apa'        = APA 7ª edición
+       'iso690'     = ISO 690 autor-fecha (aproximación) -->
   <xsl:param name="estilo_cita" as="xs:string" select="'autor-anio'"
              xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
 
@@ -95,13 +99,7 @@
     select="normalize-space(//journal-meta/journal-title-group/journal-title)"/>
 
   <!-- DOCUMENTO XML AUXILIAR DE METADATOS
-       SE CARGA SOLO SI ruta_meta NO ESTÁ VACÍO.
-       CRUCE CON EL CANÓNICO:
-         $meta/meta-articulo/autores/autor[@ref='a12']/credit
-         $meta/meta-articulo/autores/autor[@ref='a12']/ror-afiliacion
-         $meta/meta-articulo/identidad/url-texto-completo
-         $meta/meta-articulo/revista/ror-editorial
-       EL ATRIBUTO ref COINCIDE CON contrib/@id EN EL JATS -->
+       SE CARGA SOLO SI ruta_meta NO ESTÁ VACÍO -->
   <xsl:variable name="meta"
     select="if ($ruta_meta != '') then doc($ruta_meta) else ()"/>
 
@@ -127,7 +125,6 @@
 
         <!-- ================================================
              HIGHWIRE PRESS — INDEXACIÓN ACADÉMICA
-             GOOGLE SCHOLAR, PUBMED, LENS, SEMANTIC SCHOLAR
              ================================================ -->
         <meta name="citation_title" content="{$titulo}"/>
         <xsl:if test="$doi != ''">
@@ -143,20 +140,16 @@
             content="{//journal-meta/issn[@pub-type='ppub']}"/>
         </xsl:if>
         <xsl:if test="//article-meta/volume">
-          <meta name="citation_volume"
-            content="{//article-meta/volume}"/>
+          <meta name="citation_volume" content="{//article-meta/volume}"/>
         </xsl:if>
         <xsl:if test="//article-meta/issue">
-          <meta name="citation_issue"
-            content="{//article-meta/issue}"/>
+          <meta name="citation_issue" content="{//article-meta/issue}"/>
         </xsl:if>
         <xsl:if test="//article-meta/fpage">
-          <meta name="citation_firstpage"
-            content="{//article-meta/fpage}"/>
+          <meta name="citation_firstpage" content="{//article-meta/fpage}"/>
         </xsl:if>
         <xsl:if test="//article-meta/lpage">
-          <meta name="citation_lastpage"
-            content="{//article-meta/lpage}"/>
+          <meta name="citation_lastpage" content="{//article-meta/lpage}"/>
         </xsl:if>
         <xsl:if test="//article-meta/pub-date/year">
           <meta name="citation_publication_date"
@@ -183,9 +176,9 @@
           <meta name="citation_abstract"
             content="{normalize-space(//abstract/p[1])}"/>
         </xsl:if>
-        <xsl:if test="//publisher-name">
+        <xsl:if test="//journal-meta/publisher/publisher-name">
           <meta name="citation_publisher"
-            content="{normalize-space(//publisher-name)}"/>
+            content="{normalize-space(//journal-meta/publisher/publisher-name)}"/>
         </xsl:if>
 
         <!-- ================================================
@@ -195,25 +188,22 @@
         <meta name="DC.language" content="{$lang}"/>
         <meta name="DC.type"     content="Text"/>
         <meta name="DC.format"   content="text/html"/>
-        <xsl:if test="//publisher-name">
+        <xsl:if test="//journal-meta/publisher/publisher-name">
           <meta name="DC.publisher"
-            content="{normalize-space(//publisher-name)}"/>
+            content="{normalize-space(//journal-meta/publisher/publisher-name)}"/>
         </xsl:if>
         <xsl:if test="$doi != ''">
-          <meta name="DC.identifier"
-            content="https://doi.org/{$doi}"/>
+          <meta name="DC.identifier" content="https://doi.org/{$doi}"/>
         </xsl:if>
         <xsl:if test="//article-meta/pub-date/year">
-          <meta name="DC.date"
-            content="{//article-meta/pub-date/year}"/>
+          <meta name="DC.date" content="{//article-meta/pub-date/year}"/>
         </xsl:if>
         <xsl:if test="//abstract">
           <meta name="DC.description"
             content="{normalize-space(//abstract/p[1])}"/>
         </xsl:if>
         <xsl:if test="//permissions/license/@xlink:href">
-          <meta name="DC.rights"
-            content="{//permissions/license/@xlink:href}"/>
+          <meta name="DC.rights" content="{//permissions/license/@xlink:href}"/>
         </xsl:if>
         <xsl:for-each select="//contrib[@contrib-type='author']/name">
           <meta name="DC.creator"
@@ -231,7 +221,7 @@
         <meta property="og:site_name" content="{$revista}"/>
         <meta property="og:locale"    content="{$lang}"/>
         <xsl:if test="$url-texto-completo != ''">
-          <meta property="og:url"     content="{$url-texto-completo}"/>
+          <meta property="og:url" content="{$url-texto-completo}"/>
         </xsl:if>
         <xsl:if test="//abstract">
           <meta property="og:description"
@@ -246,7 +236,6 @@
 
         <!-- ================================================
              SCHEMA.ORG JSON-LD — ScholarlyArticle
-             GOOGLE KNOWLEDGE GRAPH, SEMANTIC WEB
              ================================================ -->
         <script type="application/ld+json">
           <xsl:text>{</xsl:text>
@@ -288,12 +277,9 @@
               select="replace(normalize-space(//abstract/p[1]), '&quot;', '\\&quot;')"/>
             <xsl:text>",</xsl:text>
           </xsl:if>
-          <!-- AUTORES: NOMBRE + ORCID + AFILIACIÓN CON ROR DESDE META XML -->
           <xsl:text>"author":[</xsl:text>
           <xsl:for-each select="//contrib[@contrib-type='author']">
-            <xsl:if test="position() > 1">
-              <xsl:text>,</xsl:text>
-            </xsl:if>
+            <xsl:if test="position() > 1"><xsl:text>,</xsl:text></xsl:if>
             <xsl:text>{"@type":"Person","name":"</xsl:text>
             <xsl:value-of select="normalize-space(name/given-names)"/>
             <xsl:text> </xsl:text>
@@ -304,7 +290,6 @@
               <xsl:value-of select="contrib-id[@contrib-id-type='orcid']"/>
               <xsl:text>"</xsl:text>
             </xsl:if>
-            <!-- ROR DE AFILIACIÓN CRUZADO DESDE EL META XML POR @id DEL contrib -->
             <xsl:variable name="refAutor" select="@id"/>
             <xsl:variable name="rorAfil"
               select="if ($meta) then
@@ -328,13 +313,12 @@
             <xsl:text>}</xsl:text>
           </xsl:for-each>
           <xsl:text>],</xsl:text>
-          <!-- PUBLISHER CON ROR DESDE EL META XML -->
           <xsl:variable name="rorEdit"
             select="if ($meta) then
               normalize-space($meta/meta-articulo/revista/ror-editorial)
             else ''"/>
           <xsl:text>"publisher":{"@type":"Organization","name":"</xsl:text>
-          <xsl:value-of select="normalize-space(//publisher-name)"/>
+          <xsl:value-of select="normalize-space(//journal-meta/publisher/publisher-name)"/>
           <xsl:text>"</xsl:text>
           <xsl:if test="$rorEdit != ''">
             <xsl:text>,"@id":"</xsl:text>
@@ -360,9 +344,7 @@
             <xsl:when test="//kwd-group[@xml:lang=$lang]/kwd">
               <xsl:text>,"keywords":"</xsl:text>
               <xsl:for-each select="//kwd-group[@xml:lang=$lang]/kwd">
-                <xsl:if test="position() > 1">
-                  <xsl:text>, </xsl:text>
-                </xsl:if>
+                <xsl:if test="position() > 1"><xsl:text>, </xsl:text></xsl:if>
                 <xsl:value-of select="normalize-space(.)"/>
               </xsl:for-each>
               <xsl:text>"}</xsl:text>
@@ -2736,8 +2718,11 @@
 
   <!-- ================================================
        ELEMENT-CITATION — BIFURCA SEGÚN ESTILO DE CITA
-       VANCOUVER: Apellido IN. Título. Revista. año;vol(n):pag.
-       AUTOR-AÑO: Apellido, N. (año). Título. Revista, vol, n, pp.
+       vancouver : Apellido IN. Título. Revista. año;vol(n):pag.
+       apa       : Apellido, I. I. (año). Título. Revista, vol(n), pp–pp.
+       iso690    : APELLIDO, Nombre. "Título". Revista, vol. X, n.º N, pp. XX–XX.
+       otherwise : autor-año genérico (fallback)
+       EN TODOS LOS CASOS: SI NO HAY AUTORES SE MUESTRAN EDITORES
        ================================================ -->
   <xsl:template match="element-citation">
     <xsl:choose>
@@ -2747,35 +2732,56 @@
            ============================================ -->
       <xsl:when test="$estilo_cita = 'vancouver'">
 
-        <!-- AUTORES: Apellido IN, Apellido2 IN, et al. -->
+        <!-- AUTORES O EDITORES COMO FALLBACK -->
         <div class="ref-authors">
-          <xsl:for-each select="person-group[@person-group-type='author']/name">
-            <xsl:value-of select="surname"/>
-            <xsl:if test="given-names">
-              <!-- INICIALES SIN PUNTOS NI ESPACIOS: "E. W." → "EW" -->
-              <xsl:text> </xsl:text>
-              <xsl:value-of select="translate(given-names, '. ', '')"/>
-            </xsl:if>
-            <xsl:if test="position() != last()">
-              <xsl:text>, </xsl:text>
-            </xsl:if>
-          </xsl:for-each>
-          <!-- ET AL. — PRESENTE EN EL JATS COMO ELEMENTO <etal/> -->
-          <xsl:if test="person-group[@person-group-type='author']/etal">
-            <xsl:text>, et al</xsl:text>
-          </xsl:if>
+          <xsl:choose>
+            <xsl:when test="person-group[@person-group-type='author']/name">
+              <xsl:for-each select="person-group[@person-group-type='author']/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text> </xsl:text>
+                  <xsl:value-of select="translate(given-names, '. ', '')"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>, </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:if test="person-group[@person-group-type='author']/etal">
+                <xsl:text>, et al</xsl:text>
+              </xsl:if>
+            </xsl:when>
+            <xsl:when test="person-group[@person-group-type='editor']/name">
+              <xsl:for-each select="person-group[@person-group-type='editor']/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text> </xsl:text>
+                  <xsl:value-of select="translate(given-names, '. ', '')"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>, </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:text> (ed.)</xsl:text>
+            </xsl:when>
+          </xsl:choose>
           <xsl:text>. </xsl:text>
         </div>
 
-        <!-- TÍTULO DEL ARTÍCULO -->
+        <!-- TÍTULO DEL ARTÍCULO O FUENTE (LIBROS) -->
         <xsl:if test="article-title">
           <span class="ref-title-roman">
             <xsl:value-of select="article-title"/>
             <xsl:text>. </xsl:text>
           </span>
         </xsl:if>
+        <xsl:if test="chapter-title">
+          <span class="ref-title-roman">
+            <xsl:value-of select="chapter-title"/>
+            <xsl:text>. </xsl:text>
+          </span>
+        </xsl:if>
 
-        <!-- FUENTE (REVISTA) EN CURSIVA -->
+        <!-- FUENTE EN CURSIVA -->
         <xsl:if test="source">
           <span class="ref-source-italic">
             <xsl:value-of select="source"/>
@@ -2785,9 +2791,7 @@
         <!-- AÑO;VOLUMEN(NÚMERO):PÁGINAS -->
         <xsl:if test="year">
           <xsl:text>. </xsl:text>
-          <span class="ref-year">
-            <xsl:value-of select="year"/>
-          </span>
+          <span class="ref-year"><xsl:value-of select="year"/></span>
         </xsl:if>
         <xsl:if test="volume">
           <xsl:text>;</xsl:text>
@@ -2806,6 +2810,16 @@
             <xsl:value-of select="lpage"/>
           </xsl:if>
         </xsl:if>
+
+        <!-- EDITORIAL (LIBROS) -->
+        <xsl:if test="publisher-loc">
+          <xsl:text>. </xsl:text>
+          <xsl:value-of select="publisher-loc"/>
+          <xsl:text>: </xsl:text>
+        </xsl:if>
+        <xsl:if test="publisher-name">
+          <xsl:value-of select="publisher-name"/>
+        </xsl:if>
         <xsl:text>.</xsl:text>
 
         <!-- DOI -->
@@ -2821,40 +2835,63 @@
       </xsl:when>
 
       <!-- ============================================
-           FORMATO AUTOR-AÑO (DEFAULT)
+           FORMATO APA 7ª EDICIÓN
+           Apellido, I. I., & Apellido2, I. I. (año).
+           Título. Revista, vol(n), pp–pp.
+           https://doi.org/xxx
            ============================================ -->
-      <xsl:otherwise>
+      <xsl:when test="$estilo_cita = 'apa'">
 
-        <!-- AUTORES: Apellido, Nombre; Apellido2, Nombre2 ... et al. -->
+        <!-- AUTORES O EDITORES COMO FALLBACK -->
         <div class="ref-authors">
-          <xsl:for-each select="person-group[@person-group-type='author']/name">
-            <xsl:value-of select="surname"/>
-            <xsl:if test="given-names">
-              <xsl:text>, </xsl:text>
-              <xsl:value-of select="given-names"/>
-            </xsl:if>
-            <xsl:if test="position() != last()">
-              <xsl:text>; </xsl:text>
-            </xsl:if>
-          </xsl:for-each>
-          <!-- ET AL. -->
-          <xsl:if test="person-group[@person-group-type='author']/etal">
-            <xsl:text>; et al.</xsl:text>
-          </xsl:if>
-          <!-- EDITORES -->
-          <xsl:for-each select="person-group[@person-group-type='editor']/name">
-            <xsl:value-of select="surname"/>
-            <xsl:if test="given-names">
-              <xsl:text>, </xsl:text>
-              <xsl:value-of select="given-names"/>
-            </xsl:if>
-            <xsl:if test="position() != last()">
-              <xsl:text>; </xsl:text>
-            </xsl:if>
-            <xsl:if test="position() = last()">
-              <xsl:text> (ed.)</xsl:text>
-            </xsl:if>
-          </xsl:for-each>
+          <xsl:choose>
+            <xsl:when test="person-group[@person-group-type='author']/name">
+              <xsl:for-each select="person-group[@person-group-type='author']/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:call-template name="iniciales-apa">
+                    <xsl:with-param name="nombres" select="given-names"/>
+                  </xsl:call-template>
+                </xsl:if>
+                <xsl:choose>
+                  <xsl:when test="position() = last() - 1">
+                    <xsl:text>, &amp; </xsl:text>
+                  </xsl:when>
+                  <xsl:when test="position() != last()">
+                    <xsl:text>, </xsl:text>
+                  </xsl:when>
+                </xsl:choose>
+              </xsl:for-each>
+              <xsl:if test="person-group[@person-group-type='author']/etal">
+                <xsl:text>, . . .</xsl:text>
+              </xsl:if>
+            </xsl:when>
+            <xsl:when test="person-group[@person-group-type='editor']/name">
+              <xsl:for-each select="person-group[@person-group-type='editor']/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:call-template name="iniciales-apa">
+                    <xsl:with-param name="nombres" select="given-names"/>
+                  </xsl:call-template>
+                </xsl:if>
+                <xsl:choose>
+                  <xsl:when test="position() = last() - 1">
+                    <xsl:text>, &amp; </xsl:text>
+                  </xsl:when>
+                  <xsl:when test="position() != last()">
+                    <xsl:text>, </xsl:text>
+                  </xsl:when>
+                </xsl:choose>
+              </xsl:for-each>
+              <xsl:text> (Ed</xsl:text>
+              <xsl:if test="count(person-group[@person-group-type='editor']/name) > 1">
+                <xsl:text>s</xsl:text>
+              </xsl:if>
+              <xsl:text>.)</xsl:text>
+            </xsl:when>
+          </xsl:choose>
         </div>
 
         <!-- AÑO -->
@@ -2866,16 +2903,33 @@
           </span>
         </xsl:if>
 
-        <!-- CAPÍTULO (LIBROS) -->
+        <!-- CAPÍTULO DE LIBRO -->
         <xsl:if test="chapter-title">
           <span class="ref-title-roman">
             <xsl:value-of select="chapter-title"/>
             <xsl:text>. </xsl:text>
           </span>
           <xsl:text>En </xsl:text>
+          <xsl:for-each select="person-group[@person-group-type='editor']/name">
+            <xsl:call-template name="iniciales-apa">
+              <xsl:with-param name="nombres" select="given-names"/>
+            </xsl:call-template>
+            <xsl:text> </xsl:text>
+            <xsl:value-of select="surname"/>
+            <xsl:if test="position() != last()">
+              <xsl:text>, </xsl:text>
+            </xsl:if>
+          </xsl:for-each>
+          <xsl:if test="person-group[@person-group-type='editor']">
+            <xsl:text> (Ed</xsl:text>
+            <xsl:if test="count(person-group[@person-group-type='editor']/name) > 1">
+              <xsl:text>s</xsl:text>
+            </xsl:if>
+            <xsl:text>.), </xsl:text>
+          </xsl:if>
         </xsl:if>
 
-        <!-- TÍTULO DEL ARTÍCULO -->
+        <!-- TÍTULO DEL ARTÍCULO: sin cursiva en APA -->
         <xsl:if test="article-title">
           <span class="ref-title-roman">
             <xsl:value-of select="article-title"/>
@@ -2890,10 +2944,10 @@
           </span>
         </xsl:if>
 
-        <!-- VOLUMEN Y NÚMERO -->
+        <!-- VOLUMEN EN CURSIVA, NÚMERO ENTRE PARÉNTESIS SIN CURSIVA -->
         <xsl:if test="volume">
           <xsl:text>, </xsl:text>
-          <xsl:value-of select="volume"/>
+          <em><xsl:value-of select="volume"/></em>
         </xsl:if>
         <xsl:if test="issue">
           <xsl:text>(</xsl:text>
@@ -2901,14 +2955,123 @@
           <xsl:text>)</xsl:text>
         </xsl:if>
 
-        <!-- EDITORIAL (LIBROS) -->
-        <xsl:if test="publisher-loc">
-          <xsl:text>. </xsl:text>
-          <xsl:value-of select="publisher-loc"/>
-          <xsl:text>: </xsl:text>
+        <!-- PÁGINAS -->
+        <xsl:if test="fpage">
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="fpage"/>
+          <xsl:if test="lpage">
+            <xsl:text>&#x2013;</xsl:text>
+            <xsl:value-of select="lpage"/>
+          </xsl:if>
         </xsl:if>
+        <xsl:if test="elocation-id">
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="elocation-id"/>
+        </xsl:if>
+
+        <!-- EDITORIAL (LIBROS) -->
         <xsl:if test="publisher-name">
+          <xsl:text>. </xsl:text>
           <xsl:value-of select="publisher-name"/>
+        </xsl:if>
+
+        <!-- DOI: como URL sin etiqueta "DOI:" en APA 7 -->
+        <xsl:if test="pub-id[@pub-id-type='doi']">
+          <div class="ref-doi">
+            <a href="https://doi.org/{pub-id[@pub-id-type='doi']}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:text>https://doi.org/</xsl:text>
+              <xsl:value-of select="pub-id[@pub-id-type='doi']"/>
+            </a>
+          </div>
+        </xsl:if>
+      </xsl:when>
+
+      <!-- ============================================
+           FORMATO ISO 690 AUTOR-FECHA
+           APROXIMACIÓN PARA CSL author-date QUE NO SEA APA
+           ============================================ -->
+      <xsl:when test="$estilo_cita = 'iso690'">
+
+        <!-- AUTORES O EDITORES COMO FALLBACK — EN VERSALITAS -->
+        <div class="ref-authors">
+          <xsl:choose>
+            <xsl:when test="person-group[@person-group-type='author']/name">
+              <xsl:for-each select="person-group[@person-group-type='author']/name">
+                <span style="font-variant:small-caps">
+                  <xsl:value-of select="upper-case(surname)"/>
+                </span>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:value-of select="given-names"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>; </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:if test="person-group[@person-group-type='author']/etal">
+                <xsl:text> et al.</xsl:text>
+              </xsl:if>
+            </xsl:when>
+            <xsl:when test="person-group[@person-group-type='editor']/name">
+              <xsl:for-each select="person-group[@person-group-type='editor']/name">
+                <span style="font-variant:small-caps">
+                  <xsl:value-of select="upper-case(surname)"/>
+                </span>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:value-of select="given-names"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>; </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:text> (ed.)</xsl:text>
+            </xsl:when>
+          </xsl:choose>
+        </div>
+
+        <!-- AÑO -->
+        <xsl:if test="year">
+          <span class="ref-year">
+            <xsl:text> (</xsl:text>
+            <xsl:value-of select="year"/>
+            <xsl:text>). </xsl:text>
+          </span>
+        </xsl:if>
+
+        <!-- TÍTULO: entre comillas en ISO 690 -->
+        <xsl:if test="article-title">
+          <span class="ref-title-roman">
+            <xsl:text>&#x201C;</xsl:text>
+            <xsl:value-of select="article-title"/>
+            <xsl:text>&#x201D;. </xsl:text>
+          </span>
+        </xsl:if>
+        <xsl:if test="chapter-title">
+          <span class="ref-title-roman">
+            <xsl:text>&#x201C;</xsl:text>
+            <xsl:value-of select="chapter-title"/>
+            <xsl:text>&#x201D;. </xsl:text>
+          </span>
+          <xsl:text>En: </xsl:text>
+        </xsl:if>
+
+        <!-- FUENTE EN CURSIVA -->
+        <xsl:if test="source">
+          <span class="ref-source-italic">
+            <xsl:value-of select="source"/>
+          </span>
+        </xsl:if>
+
+        <!-- VOLUMEN Y NÚMERO -->
+        <xsl:if test="volume">
+          <xsl:text>, vol. </xsl:text>
+          <xsl:value-of select="volume"/>
+        </xsl:if>
+        <xsl:if test="issue">
+          <xsl:text>, n.&#xBA; </xsl:text>
+          <xsl:value-of select="issue"/>
         </xsl:if>
 
         <!-- PÁGINAS -->
@@ -2920,9 +3083,120 @@
             <xsl:value-of select="lpage"/>
           </xsl:if>
         </xsl:if>
-        <xsl:text>. </xsl:text>
+
+        <!-- EDITORIAL (LIBROS) -->
+        <xsl:if test="publisher-loc">
+          <xsl:text>. </xsl:text>
+          <xsl:value-of select="publisher-loc"/>
+          <xsl:text>: </xsl:text>
+        </xsl:if>
+        <xsl:if test="publisher-name">
+          <xsl:value-of select="publisher-name"/>
+        </xsl:if>
+        <xsl:text>.</xsl:text>
 
         <!-- DOI -->
+        <xsl:if test="pub-id[@pub-id-type='doi']">
+          <div class="ref-doi">
+            <a href="https://doi.org/{pub-id[@pub-id-type='doi']}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:text>DOI: </xsl:text>
+              <xsl:value-of select="pub-id[@pub-id-type='doi']"/>
+            </a>
+          </div>
+        </xsl:if>
+      </xsl:when>
+
+      <!-- ============================================
+           FALLBACK: AUTOR-AÑO GENÉRICO
+           ============================================ -->
+      <xsl:otherwise>
+
+        <!-- AUTORES O EDITORES COMO FALLBACK -->
+        <div class="ref-authors">
+          <xsl:choose>
+            <xsl:when test="person-group[@person-group-type='author']/name">
+              <xsl:for-each select="person-group[@person-group-type='author']/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:value-of select="given-names"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>; </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:if test="person-group[@person-group-type='author']/etal">
+                <xsl:text>; et al.</xsl:text>
+              </xsl:if>
+            </xsl:when>
+            <xsl:when test="person-group[@person-group-type='editor']/name">
+              <xsl:for-each select="person-group[@person-group-type='editor']/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:value-of select="given-names"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>; </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:text> (ed.)</xsl:text>
+            </xsl:when>
+          </xsl:choose>
+        </div>
+
+        <xsl:if test="year">
+          <span class="ref-year">
+            <xsl:text> (</xsl:text>
+            <xsl:value-of select="year"/>
+            <xsl:text>). </xsl:text>
+          </span>
+        </xsl:if>
+        <xsl:if test="chapter-title">
+          <span class="ref-title-roman">
+            <xsl:value-of select="chapter-title"/>
+            <xsl:text>. </xsl:text>
+          </span>
+          <xsl:text>En </xsl:text>
+        </xsl:if>
+        <xsl:if test="article-title">
+          <span class="ref-title-roman">
+            <xsl:value-of select="article-title"/>
+            <xsl:text>. </xsl:text>
+          </span>
+        </xsl:if>
+        <xsl:if test="source">
+          <span class="ref-source-italic">
+            <xsl:value-of select="source"/>
+          </span>
+        </xsl:if>
+        <xsl:if test="volume">
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="volume"/>
+        </xsl:if>
+        <xsl:if test="issue">
+          <xsl:text>(</xsl:text>
+          <xsl:value-of select="issue"/>
+          <xsl:text>)</xsl:text>
+        </xsl:if>
+        <xsl:if test="publisher-loc">
+          <xsl:text>. </xsl:text>
+          <xsl:value-of select="publisher-loc"/>
+          <xsl:text>: </xsl:text>
+        </xsl:if>
+        <xsl:if test="publisher-name">
+          <xsl:value-of select="publisher-name"/>
+        </xsl:if>
+        <xsl:if test="fpage">
+          <xsl:text>, pp. </xsl:text>
+          <xsl:value-of select="fpage"/>
+          <xsl:if test="lpage">
+            <xsl:text>&#x2013;</xsl:text>
+            <xsl:value-of select="lpage"/>
+          </xsl:if>
+        </xsl:if>
+        <xsl:text>. </xsl:text>
         <xsl:if test="pub-id[@pub-id-type='doi']">
           <div class="ref-doi">
             <a href="https://doi.org/{pub-id[@pub-id-type='doi']}"
@@ -2972,5 +3246,20 @@
   <xsl:template match="sec[@sec-type='intro']/title"     priority="3"/>
   <xsl:template match="sec[@sec-type='editorial']/title" priority="3"/>
   <xsl:template match="sec/title[normalize-space(.) = normalize-space(//article-meta/title-group/article-title)]" priority="2"/>
+  <!-- ================================================
+       NAMED TEMPLATE: iniciales-apa
+       CONVIERTE "John Allen" → "J. A."
+       USADO POR EL BLOQUE element-citation APA
+       ================================================ -->
+  <xsl:template name="iniciales-apa">
+    <xsl:param name="nombres"/>
+    <xsl:for-each select="tokenize(normalize-space($nombres), '\s+')">
+      <xsl:value-of select="substring(., 1, 1)"/>
+      <xsl:text>.</xsl:text>
+      <xsl:if test="position() != last()">
+        <xsl:text> </xsl:text>
+      </xsl:if>
+    </xsl:for-each>
+  </xsl:template>
 
 </xsl:stylesheet>

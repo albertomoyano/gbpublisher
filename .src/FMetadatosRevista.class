@@ -7,9 +7,26 @@
 Public Sub Form_Open()
 
   ' LLENAR COMBOBOX DE ESTILO DE CITA
+  ' --- CARGAR CSL DISPONIBLES DESDE ~/.gbpublisher/csl/ ---
+  ' FORMATO DE PANTALLA: "Nombre legible  [archivo.csl]"
+  ' SE GUARDA EN BD SOLO EL NOMBRE DEL ARCHIVO
+  Dim sRutaCSL As String = User.Home &/ ".gbpublisher" &/ "csl"
+
   cmb_tipo_csl.Clear
-  cmb_tipo_csl.Add("Autor-Año")   ' índice 0
-  cmb_tipo_csl.Add("Numérico")    ' índice 1
+
+  If Exist(sRutaCSL) Then
+    Dim sArch As String
+    For Each sArch In Dir(sRutaCSL, "*.csl")
+      Dim sNombreArch As String = File.Name(sArch)
+      Dim sLeyenda As String = LeerLeyendaCSL(sRutaCSL &/ sNombreArch)
+
+      If sLeyenda <> "" Then
+        cmb_tipo_csl.Add(sLeyenda & "  [" & sNombreArch & "]")
+      Else
+        cmb_tipo_csl.Add(sNombreArch)
+      Endif
+    Next
+  Endif
 
   ' VERIFICAR QUE HAY UN PROYECTO ABIERTO
   If FMain.id_proyecto.Value <= 0 Then
@@ -26,6 +43,37 @@ Public Sub Form_Open()
   m_Metadatos.CargarMetadatosDeRevista()
 
 End
+
+' FUNCIÓN AUXILIAR PRIVADA
+' Extrae la leyenda del comentario en la segunda línea del .csl
+' Retorna cadena vacía si falla o no encuentra el comentario
+Private Function LeerLeyendaCSL(sRutaArchivo As String) As String
+
+  Dim hFile As File
+  Dim sLinea As String
+  Dim iLinea As Integer = 0
+
+  ' --- 1. Abrir y leer hasta la segunda línea ---
+  hFile = Open sRutaArchivo For Input
+  While Not Eof(hFile) And iLinea < 2
+    Line Input #hFile, sLinea
+    Inc iLinea
+  Wend
+  Close #hFile
+
+  ' --- 2. Extraer texto entre <!-- y --> ---
+  sLinea = m_XML.TrimUTF8(sLinea)
+  If sLinea Begins "<!--" And sLinea Ends "-->" Then
+    Return m_XML.TrimUTF8(Mid(sLinea, 5, Len(sLinea) - 7))
+  Endif
+
+  Return ""
+
+Catch
+  ' SI FALLA LA LECTURA RETORNAR VACÍO → SE USARÁ SOLO EL NOMBRE DEL ARCHIVO
+  Return ""
+
+End Function
 
 Public Sub btnCerrar_Click()
 
@@ -409,3 +457,31 @@ Public Sub btnBuscarTapa_Click()
   imagen_tapa.Text = sNombreArchivo
 
 End Sub
+
+' FUNCIÓN AUXILIAR PRIVADA — agregar al formulario
+' Extrae "apa.csl" de "American Psychological... [apa.csl]"
+
+Public Function ExtraerNombreCSL(sTexto As String) As String
+
+  ' --- 1. Buscar el último [ y el último ] ---
+  Dim iAbre As Integer = 0
+  Dim iCierra As Integer = 0
+  Dim i As Integer
+
+  For i = Len(sTexto) To 1 Step -1
+    If Mid(sTexto, i, 1) = "]" And iCierra = 0 Then iCierra = i
+    If Mid(sTexto, i, 1) = "[" And iCierra > 0 Then
+      iAbre = i
+      Break
+    Endif
+  Next
+
+  ' --- 2. Extraer el contenido entre los corchetes ---
+  If iAbre > 0 And iCierra > iAbre Then
+    Return m_XML.TrimUTF8(Mid(sTexto, iAbre + 1, iCierra - iAbre - 1))
+  Endif
+
+  ' --- 3. Fallback: ya es solo el nombre del archivo ---
+  Return m_XML.TrimUTF8(sTexto)
+
+End Function

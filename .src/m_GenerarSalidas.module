@@ -81,10 +81,36 @@ Private Sub InicializarVariables()
   Dim hRev As Result = m_ConexionBD.mConn.Exec(
     "SELECT estilo_cita FROM revistas_md WHERE id_proyecto = &1 LIMIT 1",
     CInt(FMain.id_proyecto.Value))
-  sEstiloCita = "autor-anio"
+  ' DETERMINAR EL TIPO DE CITA LEYENDO EL ATRIBUTO class DEL ARCHIVO CSL
+  ' class="in-text"  → autor-anio
+  ' class="numeric"  → vancouver
+  ' FUNCIONA CON CUALQUIER CSL DEL REPOSITORIO ZOTERO SIN IMPORTAR EL NOMBRE
+  Dim sCsl As String = "apa.csl"
   If hRev.Available Then
-    If m_XML.TrimUTF8(hRev["estilo_cita"]) = "Numérico" Then sEstiloCita = "vancouver"
+    Dim sCslBD As String = m_XML.TrimUTF8(hRev["estilo_cita"])
+    If sCslBD <> "" Then sCsl = sCslBD
   Endif
+
+  ' REEMPLAZAR el bloque de LeerTipoCSL en InicializarVariables temporalmente:
+
+  Dim sRutaArchivoCSL As String = User.Home &/ ".gbpublisher" &/ "csl" &/ sCsl
+  FMain.TerminalViewProyecto.Input("echo 'DEBUG sCsl: " & sCsl & "'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo 'DEBUG ruta: " & sRutaArchivoCSL & "'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo 'DEBUG existe: " & CStr(Exist(sRutaArchivoCSL)) & "'" & Chr(10))
+  If Exist(sRutaArchivoCSL) Then
+    sEstiloCita = LeerTipoCSL(sRutaArchivoCSL)
+    FMain.TerminalViewProyecto.Input("echo 'DEBUG resultado LeerTipoCSL: " & sEstiloCita & "'" & Chr(10))
+  Else
+    sEstiloCita = "autor-anio"
+    FMain.TerminalViewProyecto.Input("echo 'DEBUG archivo no encontrado → fallback autor-anio'" & Chr(10))
+  Endif
+
+  ' Dim sRutaArchivoCSL As String = User.Home &/ ".gbpublisher" &/ "csl" &/ sCsl
+  ' If Exist(sRutaArchivoCSL) Then
+  '   sEstiloCita = LeerTipoCSL(sRutaArchivoCSL)
+  ' Else
+  '   sEstiloCita = "autor-anio"
+  ' Endif
 
 End
 
@@ -186,6 +212,10 @@ Public Sub GenerarHtmlControl()
   If Exist(sFileHtml) Then
     Shell "rm '" & sFileHtml & "'" Wait
   Endif
+
+  ' AGREGAR ANTES DEL BLOQUE DE Saxon:
+  FMain.TerminalViewProyecto.Input(
+    "echo 'DEBUG estilo_cita: " & sEstiloCita & "'" & Chr(10))
 
   ' --- 4. Ejecutar Saxon ---
   ' ruta_meta PERMITE A jats-to-html.xsl LEER EL m-*.xml AUXILIAR
@@ -612,3 +642,40 @@ Catch
   FMain.TerminalViewProyecto.Input("echo 'ERROR al generar índice: " & Error.Text & "'" & Chr(10))
 
 End
+
+' FUNCIÓN AUXILIAR PRIVADA
+' Lee el atributo class del elemento <style> en el archivo .csl
+' Retorna "autor-anio" o "vancouver"
+Private Function LeerTipoCSL(sRutaCSL As String) As String
+
+  Dim hFile As File
+  Dim sLinea As String
+  Dim iLinea As Integer = 0
+
+  ' --- 1. DETECCIÓN POR NOMBRE DE ARCHIVO ---
+  ' APA ES EL ÚNICO QUE TIENE TEMPLATE PROPIO — LOS DEMÁS
+  ' ESTILOS AUTOR-FECHA CAEN EN ISO690 COMO APROXIMACIÓN
+  If Lower(File.Name(sRutaCSL)) = "apa.csl" Then Return "apa"
+
+  ' --- 2. DETECCIÓN POR citation-format EN EL ARCHIVO ---
+  ' citation-format="numeric"     → vancouver
+  ' citation-format="author-date" → iso690
+  ' SE LIMITA A 30 LÍNEAS — citation-format ESTÁ SIEMPRE EN EL BLOQUE <info>
+  hFile = Open sRutaCSL For Input
+  While Not Eof(hFile) And iLinea < 30
+    Line Input #hFile, sLinea
+    Inc iLinea
+    If InStr(Lower(sLinea), "citation-format=") > 0 Then Break
+  Wend
+  Close #hFile
+
+  If InStr(Lower(sLinea), "citation-format=" & Chr(34) & "numeric" & Chr(34)) > 0 Then
+    Return "vancouver"
+  Endif
+
+  Return "iso690"
+
+Catch
+  Return "iso690"
+
+End Function
