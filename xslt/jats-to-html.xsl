@@ -908,8 +908,8 @@
 
           .article-body p {
             margin-bottom: 1.25em;
-            text-align: justify;
-            hyphens: auto;
+            text-align: left;
+            hyphens: none;
           }
 
           .article-body .sec { margin-bottom: 2.5rem; }
@@ -1351,14 +1351,126 @@
           /* ============================================
              RESPONSIVE
              ============================================ */
-          @media (max-width: 600px) {
-            .layout {
-              grid-template-columns: 1fr;
-              grid-template-areas: "center";
+          /* ============================================
+             BACKDROP PARA DRAWERS (TABLET/MÓVIL)
+             ============================================ */
+          .drawer-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.45);
+            z-index: 200;
+          }
+          .drawer-backdrop.open { display: block; }
+
+          /* BOTONES FLOTANTES FAB */
+          .fab-meta, .fab-panel-tablet {
+            display: none;
+            position: fixed;
+            z-index: 150;
+            background: var(--color-accent);
+            color: #fff;
+            border: none;
+            border-radius: 24px;
+            padding: 0.45rem 1rem;
+            font-family: var(--font-sans);
+            font-size: var(--text-xs);
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+          }
+          .fab-meta         { top: 1rem; left: 1rem; }
+          .fab-panel-tablet { top: 1rem; right: 1rem; }
+
+          /* ============================================
+             TABLET — 768px a 1199px
+             Layout en bloque (sin grid). col-left y
+             col-right son drawers fijos ocultos por
+             defecto. Se abren con display:block + fixed.
+             ============================================ */
+          @media (max-width: 1199px) {
+
+            /* MATAR EL GRID — TODO EN BLOQUE */
+            .layout,
+            .layout.panel-hidden {
+              display: block;
+              grid-template-columns: none;
+              grid-template-areas: none;
             }
-            .col-left, .col-right { display: none; }
-            .col-center           { padding: 1.5rem; }
-            .panel-toggle         { display: none; }
+
+            .article-body p {
+            text-align: left;
+            hyphens: none;
+            }
+            /* COL-LEFT: OCULTO POR DEFECTO, DRAWER AL ABRIR */
+            .col-left {
+              display: none;
+              position: fixed;
+              top: 0; left: 0; bottom: 0;
+              width: min(320px, 85vw);
+              height: 100vh !important;
+              overflow-y: auto;
+              z-index: 201;
+              border-right: 1px solid var(--color-border);
+              box-shadow: var(--shadow);
+            }
+            .col-left.drawer-open { display: block; }
+
+            /* COL-RIGHT: OCULTO POR DEFECTO, DRAWER AL ABRIR */
+            .col-right {
+              display: none;
+              position: fixed;
+              top: 0; right: 0; bottom: 0;
+              width: min(340px, 85vw);
+              height: 100vh !important;
+              overflow-y: auto;
+              z-index: 201;
+              border-left: 1px solid var(--color-border);
+              box-shadow: var(--shadow);
+            }
+            .col-right.drawer-open { display: flex; }
+
+            /* COL-CENTER: OCUPA TODO EL ANCHO */
+            .col-center { padding: 3.5rem 1.5rem 4rem; }
+
+            .panel-toggle     { display: none; }
+            .fab-meta         { display: block; }
+            .fab-panel-tablet { display: block; }
+          }
+
+          /* ============================================
+             MÓVIL — hasta 767px
+             col-right vuelve a posición estática y cae
+             debajo del centro como sección inline.
+             ============================================ */
+          @media (max-width: 767px) {
+
+            /* COL-RIGHT: INLINE AL FINAL DEL CONTENIDO */
+            .col-right,
+            .col-right.drawer-open {
+              display: block;
+              position: static;
+              width: 100%;
+              height: auto !important;
+              max-height: none;
+              border-left: none;
+              border-top: 2px solid var(--color-border);
+              box-shadow: none;
+            }
+
+            .fab-panel-tablet { display: none; }
+            .col-center       { padding: 3.5rem 1rem 2rem; }
+            .article-title    { font-size: var(--text-2xl); }
+          }
+
+          /* ============================================
+             DESKTOP — desde 1200px: comportamiento
+             original sin cambios
+             ============================================ */
+          @media (min-width: 1200px) {
+            .fab-meta         { display: none !important; }
+            .fab-panel-tablet { display: none !important; }
+            .drawer-backdrop  { display: none !important; }
           }
         </style>
       </head>
@@ -1366,10 +1478,23 @@
       <body>
 
         <!-- BOTÓN PARA OCULTAR/MOSTRAR PANEL DERECHO
-             ESTADO INICIAL: PANEL OCULTO             -->
+             ESTADO INICIAL: PANEL OCULTO — SOLO DESKTOP  -->
         <button class="panel-toggle" id="panelToggle" onclick="togglePanel()">
           &#x2192; Mostrar panel
         </button>
+
+        <!-- FAB: ABRIR METADATOS (TABLET/MÓVIL) -->
+        <button class="fab-meta" onclick="openDrawerMeta()">
+          &#x2630; Metadatos
+        </button>
+
+        <!-- FAB: ABRIR PANEL REFS/NOTAS/FIGS (SOLO TABLET) -->
+        <button class="fab-panel-tablet" onclick="openDrawerPanel()">
+          Referencias &#x2630;
+        </button>
+
+        <!-- BACKDROP SEMITRANSPARENTE -->
+        <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawers()"></div>
 
         <!-- LAYOUT CON PANEL OCULTO POR DEFECTO -->
         <div class="layout panel-hidden" id="mainLayout">
@@ -2292,7 +2417,7 @@
           }
 
           // ============================================
-          // TOGGLE PANEL DERECHO
+          // TOGGLE PANEL DERECHO (SOLO DESKTOP)
           // ============================================
           function togglePanel() {
             var layout = document.getElementById('mainLayout');
@@ -2300,6 +2425,29 @@
             panelVisible = !panelVisible;
             layout.classList.toggle('panel-hidden', !panelVisible);
             btn.textContent = panelVisible ? '\u2190 Ocultar panel' : '\u2192 Mostrar panel';
+          }
+
+          // ============================================
+          // DRAWERS — TABLET / MÓVIL
+          // SIN CLONACIÓN DE CONTENIDO: col-left y
+          // col-right se convierten en drawers via CSS.
+          // Los IDs originales permanecen únicos.
+          // ============================================
+
+          function openDrawerMeta() {
+            document.querySelector('.col-left').classList.add('drawer-open');
+            document.getElementById('drawerBackdrop').classList.add('open');
+          }
+
+          function openDrawerPanel() {
+            document.getElementById('rightPanel').classList.add('drawer-open');
+            document.getElementById('drawerBackdrop').classList.add('open');
+          }
+
+          function closeDrawers() {
+            document.querySelector('.col-left').classList.remove('drawer-open');
+            document.getElementById('rightPanel').classList.remove('drawer-open');
+            document.getElementById('drawerBackdrop').classList.remove('open');
           }
 
         </script>

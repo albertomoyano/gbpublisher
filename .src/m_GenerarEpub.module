@@ -1,0 +1,1379 @@
+' Gambas module file
+
+' =====================================================
+' MÓDULO: m_GenerarEpub
+' =====================================================
+' PROPÓSITO:
+'   Genera un archivo .epub 3 completo a partir de los
+'   canónicos JATS y los archivos Markdown del número.
+'
+'   El .epub incluye todos los artículos del número en
+'   orden de nombre_archivo, con front-matter y
+'   back-matter, tipografía Noto Serif embebida y
+'   metadatos Dublin Core en el content.opf.
+'
+' PIPELINE:
+'   1. Generar m-*.xml auxiliares (CRediT, ROR, URLs)
+'   2. Saxon convierte cada canónico JATS → XHTML
+'   3. Pandoc convierte cada .md → XHTML
+'   4. Generar páginas automáticas (portada, TOC,
+'      índice de autores, colofón gbpublisher)
+'   5. Escribir content.opf (manifiesto + spine)
+'   6. Escribir nav.xhtml (TOC EPUB 3)
+'   7. Copiar fuentes, CSS e imágenes
+'   8. Empaquetar con zip respetando orden EPUB 3
+'
+' DEPENDENCIAS:
+'   m_XML          — GenerarMetaArticuloXML(), TrimUTF8()
+'   m_ConexionBD   — mConn
+'   m_Sonido       — sonar()
+'   FMain          — terminal, valuebox proyecto/revista
+'   FMetadatosRevista — metadatos del número activo
+'
+' FUENTES REQUERIDAS en ~/.gbpublisher/fonts/:
+'   NotoSerif-Regular.ttf
+'   NotoSerif-Bold.ttf
+'   NotoSerif-Italic.ttf
+'   NotoSerif-BoldItalic.ttf
+'
+' XSLT REQUERIDO en ~/.gbpublisher/xslt/:
+'   jats-to-epub.xsl
+' =====================================================
+
+' ====================================================
+' VARIABLES PRIVADAS DEL MÓDULO
+' ====================================================
+Private sRutaProyecto As String
+Private sRutaOEBPS As String
+Private sRutaEpubWork As String
+Private sSaxon As String
+Private sXslEpub As String
+Private sRutaFonts As String
+Private sSQL As String
+Private rConsulta As Result
+
+' ====================================================
+' FUNCIÓN PRINCIPAL PÚBLICA
+' ====================================================
+' == == == == == == == == == == == == == == == == == == == == == ==
+' Función   : GenerarEpub
+' Propósito : Orquesta la generación completa del
+'             .epub 3 del número activo. Punto de
+'             entrada único desde la interfaz.
+' Parámetros: ninguno — lee el proyecto activo de FMain
+' Retorna   : nada
+' ============================================
+Public Sub GenerarEpub()
+
+  ' --- 1. Verificaciones previas ---
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  If FMain.id_revista.Value <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay revista asociada al proyecto.")
+    Return
+  Endif
+
+  InicializarVariables()
+
+  ' --- 2. Verificar fuentes requeridas ---
+  If Not VerificarFuentes() Then Return
+
+  ' --- 3. Crear estructura de directorios de trabajo ---
+  CrearEstructuraDirectorios()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '=== INICIANDO GENERACIÓN EPUB 3 ==='" & Chr(10))
+
+  ' --- 4. Generar XHTML de artículos via Saxon ---
+  If Not GenerarXhtmlArticulos() Then Return
+
+  ' --- 5. Convertir front-matter y back-matter via Pandoc ---
+  GenerarXhtmlFrontMatter()
+  GenerarXhtmlBackMatter()
+
+  ' --- 6. Generar páginas automáticas ---
+  GenerarPortada()
+  GenerarTOC()
+  GenerarIndiceAutores()
+  GenerarColofonGbpublisher()
+
+  ' --- 7. Copiar recursos (fuentes, CSS, imágenes) ---
+  CopiarFuentes()
+  GenerarCSS()
+  CopiarImagenes()
+
+  ' --- 8. Escribir content.opf y nav.xhtml ---
+  GenerarContentOPF()
+  GenerarNavXhtml()
+
+  ' --- 9. Escribir mimetype y container.xml ---
+  GenerarMimetype()
+  GenerarContainer()
+
+  ' --- 10. Empaquetar el .epub ---
+  EmpaquetarEpub()
+
+End
+
+' ====================================================
+' INICIALIZACIÓN
+' ====================================================
+' ============================================
+' Función   : InicializarVariables
+' Propósito : Configura rutas de trabajo a partir
+'             del proyecto activo en FMain
+' ============================================
+Private Sub InicializarVariables()
+
+  ' --- 1. Rutas base ---
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sRutaEpubWork = sRutaProyecto &/ "tmp" &/ "epub-work"
+  sRutaOEBPS = sRutaEpubWork &/ "OEBPS"
+  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
+  sXslEpub = User.Home &/ ".gbpublisher" &/ "xslt" &/ "jats-to-epub.xsl"
+  sRutaFonts = User.Home &/ ".gbpublisher" &/ "fonts"
+
+End
+
+' ====================================================
+' VERIFICACIONES PREVIAS
+' ====================================================
+' == == == == == == == == == == == == == == == == == == == == == ==
+' Función   : VerificarFuentes
+' Propósito : Comprueba que los 4 archivos de fuente
+'             Noto Serif existen en ~/.gbpublisher/fonts/
+' Retorna   : Boolean — False si falta alguna fuente
+' ============================================
+Private Function VerificarFuentes() As Boolean
+
+  ' --- 1. Lista de fuentes requeridas ---
+  Dim aFuentes As String[] = [
+    "NotoSerif-Regular.ttf",
+    "NotoSerif-Bold.ttf",
+    "NotoSerif-Italic.ttf",
+    "NotoSerif-BoldItalic.ttf"
+
+  ]
+
+  ' --- 2. Verificar existencia de cada archivo ---
+  Dim sFuente As String
+  For Each sFuente In aFuentes
+    If Not Exist(sRutaFonts &/ sFuente) Then
+      m_Sonido.sonar("Error")
+      Message.Error("Falta la fuente requerida:" & Chr(10) &
+        sRutaFonts &/ sFuente & Chr(10) & Chr(10) &
+        "Copiá los archivos .ttf de Noto Serif a:" & Chr(10) &
+        sRutaFonts)
+      Return False
+    Endif
+  Next
+
+  Return True
+
+Catch
+  Return False
+
+End Function
+
+' ====================================================
+' ESTRUCTURA DE DIRECTORIOS
+' ====================================================
+' ============================================
+' Función   : CrearEstructuraDirectorios
+' Propósito : Crea el árbol de directorios de trabajo
+'             para el EPUB. Limpia si ya existe.
+' ============================================
+Private Sub CrearEstructuraDirectorios()
+
+  ' --- 1. Limpiar directorio de trabajo previo ---
+  If Exist(sRutaEpubWork) Then
+    Shell "rm -rf '" & sRutaEpubWork & "'" Wait
+  Endif
+
+  ' --- 2. Crear árbol EPUB 3 ---
+  Dim aDirs As String[] = [
+    sRutaEpubWork &/ "META-INF",
+    sRutaOEBPS &/ "css",
+    sRutaOEBPS &/ "fonts",
+    sRutaOEBPS &/ "images",
+    sRutaOEBPS &/ "front-matter",
+    sRutaOEBPS &/ "articles",
+    sRutaOEBPS &/ "back-matter"
+  ]
+
+  Dim sDir As String
+  For Each sDir In aDirs
+    Shell "mkdir -p '" & sDir & "'" Wait
+  Next
+
+  ' --- 3. Crear también el directorio de salida final ---
+  Dim sRutaSalida As String = sRutaProyecto &/ "salidas" &/ "epub"
+  If Not Exist(sRutaSalida) Then
+    Shell "mkdir -p '" & sRutaSalida & "'" Wait
+  Endif
+
+End
+
+' ====================================================
+' GENERACIÓN DE ARTÍCULOS
+' ====================================================
+' ============================================
+' Función   : GenerarXhtmlArticulos
+' Propósito : Itera sobre todos los artículos del
+'             proyecto, genera el m-*.xml auxiliar
+'             y ejecuta Saxon para obtener el .xhtml
+' Retorna   : Boolean — False si algún artículo falla
+' ============================================
+Private Function GenerarXhtmlArticulos() As Boolean
+
+  ' --- 1. Consultar artículos ordenados por nombre_archivo ---
+  sSQL = "SELECT id_articulo, id_revista, nombre_archivo, titulo_articulo " &
+    "FROM articulos " &
+    "WHERE id_proyecto = &1 " &
+    "ORDER BY nombre_archivo ASC"
+  rConsulta = m_ConexionBD.mConn.Exec(sSQL, CInt(FMain.id_proyecto.Value))
+
+  If Not rConsulta.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay artículos en este proyecto.")
+    Return False
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- CONVIRTIENDO ARTÍCULOS A XHTML ---'" & Chr(10))
+
+  ' --- 2. Procesar cada artículo ---
+  While rConsulta.Available
+
+    Dim sNombreArchivo As String = m_XML.TrimUTF8(rConsulta["nombre_archivo"])
+    Dim iIdArticulo As Integer = CInt(rConsulta["id_articulo"])
+    Dim iIdRevista As Integer = CInt(rConsulta["id_revista"])
+
+    ' CONSTRUIR RUTAS
+    ' nombre_archivo = "a-01-revistaAlgo-v01-n01"
+    ' canónico       = jats/c-01-revistaAlgo-v01-n01.xml
+    ' salida xhtml   = OEBPS/articles/h-01-revistaAlgo-v01-n01.xhtml
+    Dim sBaseNombre As String = Mid(sNombreArchivo, 3)
+    Dim sCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sBaseNombre & ".xml"
+    Dim sFileMeta As String = sRutaProyecto &/ "tmp" &/ "m-" & sBaseNombre & ".xml"
+    Dim sNombreXhtml As String = "h-" & sBaseNombre & ".xhtml"
+    Dim sFileXhtml As String = sRutaOEBPS &/ "articles" &/ sNombreXhtml
+
+    ' VERIFICAR QUE EXISTE EL CANÓNICO
+    If Not Exist(sCanonico) Then
+      FMain.TerminalViewProyecto.Input(
+        "echo 'AVISO: canónico no encontrado: " & sNombreArchivo & "'" & Chr(10))
+      rConsulta.MoveNext()
+      Continue
+    Endif
+
+    ' GENERAR META XML AUXILIAR (NO BLOQUEANTE)
+    If Not m_XML.GenerarMetaArticuloXML(iIdArticulo, iIdRevista) Then
+      FMain.TerminalViewProyecto.Input(
+        "echo 'AVISO: sin meta XML para " & sNombreArchivo & "'" & Chr(10))
+    Endif
+
+    ' EJECUTAR SAXON
+    FMain.TerminalViewProyecto.Input(
+      "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
+      "-s:'" & sCanonico & "' " &
+      "-xsl:'" & sXslEpub & "' " &
+      "-o:'" & sFileXhtml & "' " &
+      "ruta_meta='" & sFileMeta & "'" & Chr(10))
+
+    ' ESPERAR SALIDA (MÁXIMO 60s)
+    Dim iEspera As Integer = 0
+    While Not Exist(sFileXhtml) And iEspera < 600
+      Wait 0.1
+      Inc iEspera
+    Wend
+
+    If Not Exist(sFileXhtml) Then
+      FMain.TerminalViewProyecto.Input(
+        "echo 'ERROR: Saxon no generó " & sNombreXhtml & "'" & Chr(10))
+      m_Sonido.sonar("Error")
+      Message.Error("Saxon no generó el XHTML para:" & Chr(10) & sNombreArchivo)
+      Return False
+    Endif
+
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: " & sNombreXhtml & "'" & Chr(10))
+
+    rConsulta.MoveNext()
+  Wend
+
+  Return True
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al generar artículos: " & Error.Text)
+  Return False
+
+End Function
+
+' ====================================================
+' FRONT-MATTER Y BACK-MATTER DESDE MARKDOWN
+' ====================================================
+' ============================================
+' Función   : GenerarXhtmlFrontMatter
+' Propósito : Convierte los .md del directorio
+'             front-matter/ a XHTML via Pandoc.
+'             Omite fm-00 y fm-03 (generados por BD).
+' ============================================
+Private Sub GenerarXhtmlFrontMatter()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- CONVIRTIENDO FRONT-MATTER ---'" & Chr(10))
+
+  Dim sRutaFM As String = sRutaProyecto &/ "front-matter"
+  If Not Exist(sRutaFM) Then Return
+
+  Dim sArch As String
+  Dim aArchivos As New String[]
+
+  ' RECOLECTAR Y ORDENAR ARCHIVOS .md
+  For Each sArch In Dir(sRutaFM, "*.md")
+    aArchivos.Add(File.Name(sArch))
+  Next
+  aArchivos.Sort()
+
+  For Each sArch In aArchivos
+
+    ' OMITIR fm-00 (portada) y fm-03 (TOC) — se generan automáticamente
+    If sArch Begins "fm-00" Or sArch Begins "fm-03" Then Continue
+
+    Dim sNombreXhtml As String = File.BaseName(sArch) & ".xhtml"
+    Dim sEntrada As String = sRutaFM &/ sArch
+    Dim sSalida As String = sRutaOEBPS &/ "front-matter" &/ sNombreXhtml
+
+    ConvertirMdAXhtml(sEntrada, sSalida)
+
+  Next
+
+End Sub
+
+' ============================================
+' Función   : GenerarXhtmlBackMatter
+' Propósito : Convierte los .md del directorio
+'             back-matter/ a XHTML via Pandoc.
+'             Omite bm-00 y bm-04 (generados por BD).
+' ============================================
+Private Sub GenerarXhtmlBackMatter()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- CONVIRTIENDO BACK-MATTER ---'" & Chr(10))
+
+  Dim sRutaBM As String = sRutaProyecto &/ "back-matter"
+  If Not Exist(sRutaBM) Then Return
+
+  Dim sArch As String
+  Dim aArchivos As New String[]
+
+  For Each sArch In Dir(sRutaBM, "*.md")
+    aArchivos.Add(File.Name(sArch))
+  Next
+  aArchivos.Sort()
+
+  For Each sArch In aArchivos
+
+    ' OMITIR bm-00 (índice autores) y bm-04 (colofón) — se generan automáticamente
+    If sArch Begins "bm-00" Or sArch Begins "bm-04" Then Continue
+
+    Dim sNombreXhtml As String = File.BaseName(sArch) & ".xhtml"
+    Dim sEntrada As String = sRutaBM &/ sArch
+    Dim sSalida As String = sRutaOEBPS &/ "back-matter" &/ sNombreXhtml
+
+    ConvertirMdAXhtml(sEntrada, sSalida)
+
+  Next
+
+End Sub
+
+' ============================================
+' Función   : ConvertirMdAXhtml
+' Propósito : Ejecuta Pandoc para convertir un
+'             archivo .md a XHTML 1.1 para EPUB 3
+' Parámetros: sEntrada As String — ruta del .md
+'             sSalida  As String — ruta del .xhtml destino
+' ============================================
+Private Sub ConvertirMdAXhtml(sEntrada As String, sSalida As String)
+
+  ' --- 1. Construir comando Pandoc ---
+  ' --to=html5 con --self-contained genera XHTML5 válido para EPUB
+  Dim sCmd As String =
+    "pandoc '" & sEntrada & "' " &
+    "--from markdown " &
+    "--to html5 " &
+    "--wrap=none " &
+    "--no-highlight " &
+    "-o '" & sSalida & "'"
+
+  FMain.TerminalViewProyecto.Input(sCmd & Chr(10))
+  Shell sCmd Wait
+
+  ' --- 2. Post-procesar: agregar DOCTYPE XHTML y namespace ---
+  If Exist(sSalida) Then
+    AgregarCabeceraXhtml(sSalida, File.BaseName(sSalida))
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: " & File.Name(sSalida) & "'" & Chr(10))
+  Else
+    FMain.TerminalViewProyecto.Input(
+      "echo 'ERROR: Pandoc no generó " & File.Name(sSalida) & "'" & Chr(10))
+  Endif
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en ConvertirMdAXhtml: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ============================================
+' Función   : AgregarCabeceraXhtml
+' Propósito : Envuelve el cuerpo generado por Pandoc
+'             en un documento XHTML 1.1 válido con
+'             DOCTYPE, namespace y hoja de estilos
+' Parámetros: sRutaArchivo As String — archivo a procesar
+'             sTitulo      As String — título del capítulo
+' ============================================
+Private Sub AgregarCabeceraXhtml(sRutaArchivo As String, sTitulo As String)
+
+  ' --- 1. Leer el contenido generado por Pandoc ---
+  Dim sBody As String = File.Load(sRutaArchivo)
+
+  ' --- 2. Construir el documento XHTML completo ---
+  Dim sXhtml As String
+
+  sXhtml = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sXhtml &= "<!DOCTYPE html>" & Chr(10)
+  sXhtml &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
+    " xml:lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<head>" & Chr(10)
+  sXhtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "<title>" & sTitulo & "</title>" & Chr(10)
+  sXhtml &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
+    " type=" & Chr(34) & "text/css" & Chr(34) &
+    " href=" & Chr(34) & "../css/epub.css" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "</head>" & Chr(10)
+  sXhtml &= "<body>" & Chr(10)
+  sXhtml &= sBody & Chr(10)
+  sXhtml &= "</body>" & Chr(10)
+  sXhtml &= "</html>" & Chr(10)
+
+  ' --- 3. Guardar ---
+  File.Save(sRutaArchivo, sXhtml)
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en AgregarCabeceraXhtml: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ====================================================
+' PÁGINAS GENERADAS AUTOMÁTICAMENTE
+' ====================================================
+' ============================================
+' Función   : GenerarPortada
+' Propósito : Genera fm-00-portada.xhtml con los
+'             datos del número activo desde la BD
+'             y la imagen de tapa
+' ============================================
+Private Sub GenerarPortada()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- GENERANDO PORTADA ---'" & Chr(10))
+
+  ' --- 1. Leer metadatos de la revista ---
+  Dim sTituloRevista As String = FMetadatosRevista.titulo_revista.Text
+  Dim sVolumen As String = FMetadatosRevista.volumen.Text
+  Dim sNumero As String = FMetadatosRevista.numero.Text
+  Dim sAnio As String = FMetadatosRevista.ano_publicacion.Text
+  Dim sMes As String = FMetadatosRevista.mes_publicacion.Text
+  Dim sISSN As String = FMetadatosRevista.e_issn.Text
+  Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
+  Dim sNombreTapa As String = ""
+  If sTapa <> "" Then sNombreTapa = File.Name(sTapa)
+
+  ' --- 2. Construir XHTML de portada ---
+  Dim sXhtml As String
+
+  sXhtml = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sXhtml &= "<!DOCTYPE html>" & Chr(10)
+  sXhtml &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
+    " xml:lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<head>" & Chr(10)
+  sXhtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "<title>" & sTituloRevista & "</title>" & Chr(10)
+  sXhtml &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
+    " type=" & Chr(34) & "text/css" & Chr(34) &
+    " href=" & Chr(34) & "../css/epub.css" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "</head>" & Chr(10)
+  sXhtml &= "<body class=" & Chr(34) & "portada" & Chr(34) & ">" & Chr(10)
+
+  ' IMAGEN DE TAPA
+  If sNombreTapa <> "" Then
+    sXhtml &= "<div class=" & Chr(34) & "cover-image" & Chr(34) & ">" & Chr(10)
+    sXhtml &= "<img src=" & Chr(34) & "../images/" & sNombreTapa & Chr(34) &
+      " alt=" & Chr(34) & "Tapa de " & sTituloRevista & Chr(34) & "/>" & Chr(10)
+    sXhtml &= "</div>" & Chr(10)
+  Endif
+
+  ' DATOS DEL NÚMERO
+  sXhtml &= "<div class=" & Chr(34) & "cover-data" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<p class=" & Chr(34) & "cover-title" & Chr(34) & ">" &
+    sTituloRevista & "</p>" & Chr(10)
+  If sISSN <> "" Then
+    sXhtml &= "<p class=" & Chr(34) & "cover-issn" & Chr(34) & ">e-ISSN " &
+      sISSN & "</p>" & Chr(10)
+  Endif
+  sXhtml &= "<p class=" & Chr(34) & "cover-vol" & Chr(34) & ">Vol. " &
+    sVolumen & ", N&#xFA;m. " & sNumero & "</p>" & Chr(10)
+  If sMes <> "" Then
+    sXhtml &= "<p class=" & Chr(34) & "cover-fecha" & Chr(34) & ">" &
+      sMes & " " & sAnio & "</p>" & Chr(10)
+  Else
+    sXhtml &= "<p class=" & Chr(34) & "cover-fecha" & Chr(34) & ">" &
+      sAnio & "</p>" & Chr(10)
+  Endif
+  sXhtml &= "</div>" & Chr(10)
+  sXhtml &= "</body>" & Chr(10)
+  sXhtml &= "</html>" & Chr(10)
+
+  ' --- 3. Guardar ---
+  Dim sSalida As String = sRutaOEBPS &/ "front-matter" &/ "fm-00-portada.xhtml"
+  File.Save(sSalida, sXhtml)
+  FMain.TerminalViewProyecto.Input("echo 'OK: fm-00-portada.xhtml'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en GenerarPortada: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ============================================
+' Función   : GenerarTOC
+' Propósito : Genera fm-03-toc.xhtml con la tabla
+'             de contenidos del número desde la BD
+' ============================================
+Private Sub GenerarTOC()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- GENERANDO TABLA DE CONTENIDOS ---'" & Chr(10))
+
+  ' --- 1. Consultar artículos con autores ---
+  sSQL = "SELECT a.nombre_archivo, a.titulo_articulo, a.tipo_articulo, " &
+    "a.pagina_inicio, a.pagina_fin, " &
+    "GROUP_CONCAT(au.apellidos ORDER BY aa.orden_autoria SEPARATOR '; ') AS autores " &
+    "FROM articulos a " &
+    "LEFT JOIN articulo_autor aa ON aa.id_articulo = a.id_articulo " &
+    "LEFT JOIN autores au ON au.id_autor = aa.id_autor " &
+    "WHERE a.id_proyecto = &1 " &
+    "GROUP BY a.id_articulo " &
+    "ORDER BY a.nombre_archivo ASC"
+  rConsulta = m_ConexionBD.mConn.Exec(sSQL, CInt(FMain.id_proyecto.Value))
+
+  ' --- 2. Construir XHTML ---
+  Dim sTituloRevista As String = FMetadatosRevista.titulo_revista.Text
+
+  Dim sXhtml As String
+  sXhtml = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sXhtml &= "<!DOCTYPE html>" & Chr(10)
+  sXhtml &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
+    " xml:lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<head>" & Chr(10)
+  sXhtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "<title>Contenido</title>" & Chr(10)
+  sXhtml &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
+    " type=" & Chr(34) & "text/css" & Chr(34) &
+    " href=" & Chr(34) & "../css/epub.css" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "</head>" & Chr(10)
+  sXhtml &= "<body>" & Chr(10)
+  sXhtml &= "<h1 class=" & Chr(34) & "toc-title" & Chr(34) & ">Contenido</h1>" & Chr(10)
+  sXhtml &= "<nav epub:type=" & Chr(34) & "toc" & Chr(34) &
+    " xmlns:epub=" & Chr(34) & "http://www.idpf.org/2007/ops" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<ol>" & Chr(10)
+
+  ' --- 3. Agregar cada artículo ---
+  While rConsulta.Available
+
+    Dim sNombre As String = m_XML.TrimUTF8(rConsulta["nombre_archivo"])
+    Dim sTitulo As String = m_XML.TrimUTF8(rConsulta["titulo_articulo"])
+    Dim sAutores As String = m_Metadatos.NullToString(rConsulta["autores"])
+    Dim sPagIni As String = m_Metadatos.NullToString(rConsulta["pagina_inicio"])
+    Dim sPagFin As String = m_Metadatos.NullToString(rConsulta["pagina_fin"])
+    Dim sBaseNombre As String = Mid(sNombre, 3)
+    Dim sHref As String = "../articles/h-" & sBaseNombre & ".xhtml"
+
+    sXhtml &= "<li>" & Chr(10)
+    sXhtml &= "<a href=" & Chr(34) & sHref & Chr(34) & ">" & sTitulo & "</a>" & Chr(10)
+    If sAutores <> "" Then
+      sXhtml &= "<span class=" & Chr(34) & "toc-autores" & Chr(34) & ">" &
+        sAutores & "</span>" & Chr(10)
+    Endif
+    If sPagIni <> "" Then
+      sXhtml &= "<span class=" & Chr(34) & "toc-pp" & Chr(34) & ">pp. " & sPagIni
+      If sPagFin <> "" Then sXhtml &= "&#x2013;" & sPagFin
+      sXhtml &= "</span>" & Chr(10)
+    Endif
+    sXhtml &= "</li>" & Chr(10)
+
+    rConsulta.MoveNext()
+  Wend
+
+  sXhtml &= "</ol>" & Chr(10)
+  sXhtml &= "</nav>" & Chr(10)
+  sXhtml &= "</body>" & Chr(10)
+  sXhtml &= "</html>" & Chr(10)
+
+  ' --- 4. Guardar ---
+  Dim sSalida As String = sRutaOEBPS &/ "front-matter" &/ "fm-03-toc.xhtml"
+  File.Save(sSalida, sXhtml)
+  FMain.TerminalViewProyecto.Input("echo 'OK: fm-03-toc.xhtml'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en GenerarTOC: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ============================================
+' Función   : GenerarIndiceAutores
+' Propósito : Genera bm-00-indice-autores.xhtml con
+'             todos los autores del número, ordenados
+'             alfabéticamente, con sus artículos
+' ============================================
+Private Sub GenerarIndiceAutores()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- GENERANDO ÍNDICE DE AUTORES ---'" & Chr(10))
+
+  ' --- 1. Consultar autores con artículos ---
+  sSQL = "SELECT au.apellidos, au.nombre, au.orcid, " &
+    "a.titulo_articulo, a.nombre_archivo " &
+    "FROM autores au " &
+    "INNER JOIN articulo_autor aa ON aa.id_autor = au.id_autor " &
+    "INNER JOIN articulos a ON a.id_articulo = aa.id_articulo " &
+    "WHERE a.id_proyecto = &1 " &
+    "ORDER BY au.apellidos ASC, au.nombre ASC, a.nombre_archivo ASC"
+  rConsulta = m_ConexionBD.mConn.Exec(sSQL, CInt(FMain.id_proyecto.Value))
+
+  ' --- 2. Construir XHTML ---
+  Dim sXhtml As String
+  sXhtml = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sXhtml &= "<!DOCTYPE html>" & Chr(10)
+  sXhtml &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
+    " xml:lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<head>" & Chr(10)
+  sXhtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "<title>&#205;ndice de autores</title>" & Chr(10)
+  sXhtml &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
+    " type=" & Chr(34) & "text/css" & Chr(34) &
+    " href=" & Chr(34) & "../css/epub.css" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "</head>" & Chr(10)
+  sXhtml &= "<body>" & Chr(10)
+  sXhtml &= "<h1>&#205;ndice de autores</h1>" & Chr(10)
+
+  ' --- 3. Agrupar por autor (detectar cambio de apellido+nombre) ---
+  Dim sAutorActual As String = ""
+
+  While rConsulta.Available
+
+    Dim sApellidos As String = m_XML.TrimUTF8(rConsulta["apellidos"])
+    Dim sNombreAut As String = m_XML.TrimUTF8(rConsulta["nombre"])
+    Dim sOrcid As String = m_Metadatos.NullToString(rConsulta["orcid"])
+    Dim sTitulo As String = m_XML.TrimUTF8(rConsulta["titulo_articulo"])
+    Dim sNombreArch As String = m_XML.TrimUTF8(rConsulta["nombre_archivo"])
+    Dim sAutorKey As String = sApellidos & "|" & sNombreAut
+    Dim sBaseNombre As String = Mid(sNombreArch, 3)
+    Dim sHref As String = "../articles/h-" & sBaseNombre & ".xhtml"
+
+    ' NUEVO AUTOR — ABRIR BLOQUE
+    If sAutorKey <> sAutorActual Then
+      If sAutorActual <> "" Then
+        sXhtml &= "</ul>" & Chr(10) & "</div>" & Chr(10)
+      Endif
+      sAutorActual = sAutorKey
+      sXhtml &= "<div class=" & Chr(34) & "autor-entry" & Chr(34) & ">" & Chr(10)
+      sXhtml &= "<p class=" & Chr(34) & "autor-nombre" & Chr(34) & ">" &
+        "<strong>" & sApellidos & "</strong>, " & sNombreAut
+      If sOrcid <> "" Then
+        sXhtml &= " <span class=" & Chr(34) & "orcid" & Chr(34) & ">" &
+          sOrcid & "</span>"
+      Endif
+      sXhtml &= "</p>" & Chr(10)
+      sXhtml &= "<ul>" & Chr(10)
+    Endif
+
+    ' ARTÍCULO DEL AUTOR
+    sXhtml &= "<li><a href=" & Chr(34) & sHref & Chr(34) & ">" &
+      sTitulo & "</a></li>" & Chr(10)
+
+    rConsulta.MoveNext()
+  Wend
+
+  ' CERRAR ÚLTIMO BLOQUE
+  If sAutorActual <> "" Then
+    sXhtml &= "</ul>" & Chr(10) & "</div>" & Chr(10)
+  Endif
+
+  sXhtml &= "</body>" & Chr(10)
+  sXhtml &= "</html>" & Chr(10)
+
+  ' --- 4. Guardar ---
+  Dim sSalida As String = sRutaOEBPS &/ "back-matter" &/ "bm-00-indice-autores.xhtml"
+  File.Save(sSalida, sXhtml)
+  FMain.TerminalViewProyecto.Input("echo 'OK: bm-00-indice-autores.xhtml'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en GenerarIndiceAutores: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ============================================
+' Función   : GenerarColofonGbpublisher
+' Propósito : Genera bm-04-gbpublisher.xhtml con
+'             la fecha de generación y datos de la
+'             herramienta y tipografía usada
+' ============================================
+Private Sub GenerarColofonGbpublisher()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- GENERANDO COLOFÓN GBPUBLISHER ---'" & Chr(10))
+
+  ' --- 1. Formatear fecha de hoy en DD/MM/AAAA ---
+  Dim dHoy As Date = Now()
+  Dim sDia As String = Format(Day(dHoy), "00")
+  Dim sMesNum As String = Format(Month(dHoy), "00")
+  Dim sAnioNum As String = CStr(Year(dHoy))
+  Dim sFecha As String = sDia & "/" & sMesNum & "/" & sAnioNum
+
+  ' --- 2. Construir XHTML ---
+  Dim sXhtml As String
+  sXhtml = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sXhtml &= "<!DOCTYPE html>" & Chr(10)
+  sXhtml &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
+    " xml:lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<head>" & Chr(10)
+  sXhtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "<title>Colof&#xF3;n</title>" & Chr(10)
+  sXhtml &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
+    " type=" & Chr(34) & "text/css" & Chr(34) &
+    " href=" & Chr(34) & "../css/epub.css" & Chr(34) & "/>" & Chr(10)
+  sXhtml &= "</head>" & Chr(10)
+  sXhtml &= "<body>" & Chr(10)
+  sXhtml &= "<div class=" & Chr(34) & "colofon" & Chr(34) & ">" & Chr(10)
+  sXhtml &= "<p>La composici&#xF3;n tipogr&#xE1;fica de este epub (" &
+    sFecha & ") se realiz&#xF3; utilizando " &
+    "<a href=" & Chr(34) & "https://estudio2a.netlify.app/" & Chr(34) &
+    ">gbpublisher</a>. " &
+    "La familia tipogr&#xE1;fica utilizada dentro de la revista es Noto Serif.</p>" & Chr(10)
+  sXhtml &= "</div>" & Chr(10)
+  sXhtml &= "</body>" & Chr(10)
+  sXhtml &= "</html>" & Chr(10)
+
+  ' --- 3. Guardar ---
+  Dim sSalida As String = sRutaOEBPS &/ "back-matter" &/ "bm-04-gbpublisher.xhtml"
+  File.Save(sSalida, sXhtml)
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: bm-04-gbpublisher.xhtml (" & sFecha & ")'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en GenerarColofonGbpublisher: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ====================================================
+' RECURSOS: FUENTES, CSS, IMÁGENES
+' ====================================================
+' ============================================
+' Función   : CopiarFuentes
+' Propósito : Copia los 4 archivos .ttf de Noto Serif
+'             desde ~/.gbpublisher/fonts/ al EPUB
+' ============================================
+Private Sub CopiarFuentes()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- COPIANDO FUENTES ---'" & Chr(10))
+
+  Dim aFuentes As String[] = [
+    "NotoSerif-Regular.ttf",
+    "NotoSerif-Bold.ttf",
+    "NotoSerif-Italic.ttf",
+    "NotoSerif-BoldItalic.ttf"
+  ]
+
+  Dim sFuente As String
+  For Each sFuente In aFuentes
+    Shell "cp '" & sRutaFonts &/ sFuente & "' '" &
+      sRutaOEBPS &/ "fonts" &/ sFuente & "'" Wait
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: fonts/" & sFuente & "'" & Chr(10))
+  Next
+
+End Sub
+
+' ============================================
+' Función   : GenerarCSS
+' Propósito : Escribe epub.css con Noto Serif
+'             embebida via @font-face y estilos
+'             base para todos los capítulos
+' ============================================
+Private Sub GenerarCSS()
+
+  Dim sCSS As String
+
+  ' --- 1. @font-face para las 4 variantes ---
+  sCSS = "@font-face {" & Chr(10)
+  sCSS &= "  font-family: 'Noto Serif';" & Chr(10)
+  sCSS &= "  font-weight: normal;" & Chr(10)
+  sCSS &= "  font-style: normal;" & Chr(10)
+  sCSS &= "  src: url('../fonts/NotoSerif-Regular.ttf') format('truetype');" & Chr(10)
+  sCSS &= "}" & Chr(10) & Chr(10)
+
+  sCSS &= "@font-face {" & Chr(10)
+  sCSS &= "  font-family: 'Noto Serif';" & Chr(10)
+  sCSS &= "  font-weight: bold;" & Chr(10)
+  sCSS &= "  font-style: normal;" & Chr(10)
+  sCSS &= "  src: url('../fonts/NotoSerif-Bold.ttf') format('truetype');" & Chr(10)
+  sCSS &= "}" & Chr(10) & Chr(10)
+
+  sCSS &= "@font-face {" & Chr(10)
+  sCSS &= "  font-family: 'Noto Serif';" & Chr(10)
+  sCSS &= "  font-weight: normal;" & Chr(10)
+  sCSS &= "  font-style: italic;" & Chr(10)
+  sCSS &= "  src: url('../fonts/NotoSerif-Italic.ttf') format('truetype');" & Chr(10)
+  sCSS &= "}" & Chr(10) & Chr(10)
+
+  sCSS &= "@font-face {" & Chr(10)
+  sCSS &= "  font-family: 'Noto Serif';" & Chr(10)
+  sCSS &= "  font-weight: bold;" & Chr(10)
+  sCSS &= "  font-style: italic;" & Chr(10)
+  sCSS &= "  src: url('../fonts/NotoSerif-BoldItalic.ttf') format('truetype');" & Chr(10)
+  sCSS &= "}" & Chr(10) & Chr(10)
+
+  ' --- 2. Estilos base ---
+  sCSS &= "* { box-sizing: border-box; margin: 0; padding: 0; }" & Chr(10)
+  sCSS &= "body {" & Chr(10)
+  sCSS &= "  font-family: 'Noto Serif', Georgia, serif;" & Chr(10)
+  sCSS &= "  font-size: 1em;" & Chr(10)
+  sCSS &= "  line-height: 1.7;" & Chr(10)
+  sCSS &= "  text-align: left;" & Chr(10)
+  sCSS &= "  color: #1a1a18;" & Chr(10)
+  sCSS &= "}" & Chr(10) & Chr(10)
+
+  ' --- 3. Tipografía ---
+  sCSS &= "h1, h2, h3, h4 {" & Chr(10)
+  sCSS &= "  font-family: 'Noto Serif', Georgia, serif;" & Chr(10)
+  sCSS &= "  font-weight: bold;" & Chr(10)
+  sCSS &= "  line-height: 1.3;" & Chr(10)
+  sCSS &= "  margin-top: 1.5em;" & Chr(10)
+  sCSS &= "  margin-bottom: 0.5em;" & Chr(10)
+  sCSS &= "}" & Chr(10)
+  sCSS &= "h1 { font-size: 1.6em; margin-top: 0; }" & Chr(10)
+  sCSS &= "h2 { font-size: 1.3em; }" & Chr(10)
+  sCSS &= "h3 { font-size: 1.1em; }" & Chr(10)
+  sCSS &= "p  { margin-bottom: 0.8em; }" & Chr(10)
+  sCSS &= "em { font-style: italic; }" & Chr(10)
+  sCSS &= "strong { font-weight: bold; }" & Chr(10) & Chr(10)
+
+  ' --- 4. Artículos ---
+  sCSS &= ".article-type { font-size: 0.8em; text-transform: uppercase;" &
+    " letter-spacing: 0.08em; margin-bottom: 0.5em; }" & Chr(10)
+  sCSS &= ".article-title { font-size: 1.5em; margin-top: 0; margin-bottom: 0.3em; }" & Chr(10)
+  sCSS &= ".article-trans-title { font-size: 1.1em; font-style: italic;" &
+    " color: #444; margin-bottom: 1em; }" & Chr(10)
+  sCSS &= ".abstract { background: #f5f4f0; padding: 1em; margin: 1em 0;" &
+    " border-left: 3px solid #888; }" & Chr(10)
+  sCSS &= ".abstract-label { font-weight: bold; font-size: 0.85em;" &
+    " text-transform: uppercase; }" & Chr(10) & Chr(10)
+
+  ' --- 5. Referencias ---
+  sCSS &= ".ref-list { margin-top: 2em; border-top: 1px solid #ccc; padding-top: 1em; }" & Chr(10)
+  sCSS &= ".ref-list h2 { font-size: 1em; text-transform: uppercase;" &
+    " letter-spacing: 0.06em; }" & Chr(10)
+  sCSS &= ".ref-item { margin-bottom: 0.6em; font-size: 0.9em; }" & Chr(10)
+  sCSS &= ".ref-doi a { color: #2d5a8e; }" & Chr(10) & Chr(10)
+
+  ' --- 6. Portada ---
+  sCSS &= ".portada { text-align: center; }" & Chr(10)
+  sCSS &= ".cover-image img { max-width: 100%; max-height: 90vh; }" & Chr(10)
+  sCSS &= ".cover-data { margin-top: 1em; }" & Chr(10)
+  sCSS &= ".cover-title { font-size: 1.3em; font-weight: bold; }" & Chr(10)
+  sCSS &= ".cover-vol, .cover-fecha { font-size: 0.95em; color: #444; }" & Chr(10)
+  sCSS &= ".cover-issn { font-size: 0.85em; color: #666; }" & Chr(10) & Chr(10)
+
+  ' --- 7. TOC ---
+  sCSS &= ".toc-title { margin-bottom: 1em; }" & Chr(10)
+  sCSS &= "nav ol { list-style: none; padding: 0; }" & Chr(10)
+  sCSS &= "nav ol li { margin-bottom: 1em; border-bottom: 1px solid #e0e0e0;" &
+    " padding-bottom: 0.5em; }" & Chr(10)
+  sCSS &= "nav ol li a { font-weight: bold; color: #1a1a18;" &
+    " text-decoration: none; display: block; }" & Chr(10)
+  sCSS &= ".toc-autores { display: block; font-size: 0.85em; color: #555;" &
+    " font-style: italic; }" & Chr(10)
+  sCSS &= ".toc-pp { display: block; font-size: 0.8em; color: #888; }" & Chr(10) & Chr(10)
+
+  ' --- 8. Índice de autores ---
+  sCSS &= ".autor-entry { margin-bottom: 1.2em; }" & Chr(10)
+  sCSS &= ".autor-nombre { font-size: 0.95em; margin-bottom: 0.3em; }" & Chr(10)
+  sCSS &= ".orcid { font-size: 0.8em; color: #555; }" & Chr(10)
+  sCSS &= ".autor-entry ul { list-style: disc; padding-left: 1.5em; }" & Chr(10)
+  sCSS &= ".autor-entry ul li a { color: #2d5a8e; }" & Chr(10) & Chr(10)
+
+  ' --- 9. Colofón ---
+  sCSS &= ".colofon { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ccc;" &
+    " font-size: 0.85em; color: #555; font-style: italic; }" & Chr(10)
+  sCSS &= ".colofon a { color: #2d5a8e; }" & Chr(10)
+
+  ' --- 10. Guardar ---
+  File.Save(sRutaOEBPS &/ "css" &/ "epub.css", sCSS)
+  FMain.TerminalViewProyecto.Input("echo 'OK: css/epub.css'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en GenerarCSS: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ============================================
+' Función   : CopiarImagenes
+' Propósito : Copia la imagen de tapa y todas las
+'             imágenes del directorio /media al EPUB
+' ============================================
+Private Sub CopiarImagenes()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- COPIANDO IMÁGENES ---'" & Chr(10))
+
+  Dim sRutaMedia As String = sRutaProyecto &/ "media"
+  Dim sDestImages As String = sRutaOEBPS &/ "images"
+
+  If Exist(sRutaMedia) Then
+    Shell "rsync -a '" & sRutaMedia & "/' '" & sDestImages & "/'" Wait
+    FMain.TerminalViewProyecto.Input("echo 'OK: imágenes copiadas'" & Chr(10))
+  Endif
+
+End Sub
+
+' ====================================================
+' OPF Y NAV
+' ====================================================
+' ============================================
+' Función   : GenerarContentOPF
+' Propósito : Escribe el OEBPS/content.opf con el
+'             manifiesto completo y el spine en orden
+' ============================================
+Private Sub GenerarContentOPF()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- GENERANDO content.opf ---'" & Chr(10))
+
+  ' --- 1. Leer metadatos de la revista ---
+  Dim sTitulo As String = FMetadatosRevista.titulo_revista.Text
+  Dim sVolumen As String = FMetadatosRevista.volumen.Text
+  Dim sNumero As String = FMetadatosRevista.numero.Text
+  Dim sAnio As String = FMetadatosRevista.ano_publicacion.Text
+  Dim sISSN As String = FMetadatosRevista.e_issn.Text
+  Dim sEditorial As String = FMetadatosRevista.editorial.Text
+  Dim sIsoDate As String = Format(Now(), "yyyy-mm-dd")
+  Dim sUniqueId As String = "isbn-" & sISSN & "-v" & sVolumen & "-n" & sNumero
+
+  ' --- 2. Construir OPF ---
+  Dim sOPF As String
+  sOPF = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sOPF &= "<package xmlns=" & Chr(34) & "http://www.idpf.org/2007/opf" & Chr(34) &
+    " version=" & Chr(34) & "3.0" & Chr(34) &
+    " unique-identifier=" & Chr(34) & "uid" & Chr(34) & ">" & Chr(10)
+
+  ' METADATA
+  sOPF &= "<metadata xmlns:dc=" & Chr(34) & "http://purl.org/dc/elements/1.1/" & Chr(34) & ">" & Chr(10)
+  sOPF &= "<dc:identifier id=" & Chr(34) & "uid" & Chr(34) & ">" & sUniqueId & "</dc:identifier>" & Chr(10)
+  sOPF &= "<dc:title>" & sTitulo & " Vol. " & sVolumen & " N&#xFA;m. " &
+    sNumero & " (" & sAnio & ")</dc:title>" & Chr(10)
+  sOPF &= "<dc:language>es</dc:language>" & Chr(10)
+  sOPF &= "<dc:publisher>" & sEditorial & "</dc:publisher>" & Chr(10)
+  sOPF &= "<dc:date>" & sAnio & "</dc:date>" & Chr(10)
+  If sISSN <> "" Then
+    sOPF &= "<dc:identifier>urn:issn:" & sISSN & "</dc:identifier>" & Chr(10)
+  Endif
+  sOPF &= "<meta property=" & Chr(34) & "dcterms:modified" & Chr(34) & ">" &
+    sIsoDate & "T00:00:00Z</meta>" & Chr(10)
+  sOPF &= "</metadata>" & Chr(10)
+
+  ' MANIFEST
+  sOPF &= "<manifest>" & Chr(10)
+
+  ' CSS
+  sOPF &= "<item id=" & Chr(34) & "css" & Chr(34) &
+    " href=" & Chr(34) & "css/epub.css" & Chr(34) &
+    " media-type=" & Chr(34) & "text/css" & Chr(34) & "/>" & Chr(10)
+
+  ' NAV
+  sOPF &= "<item id=" & Chr(34) & "nav" & Chr(34) &
+    " href=" & Chr(34) & "nav.xhtml" & Chr(34) &
+    " media-type=" & Chr(34) & "application/xhtml+xml" & Chr(34) &
+    " properties=" & Chr(34) & "nav" & Chr(34) & "/>" & Chr(10)
+
+  ' FUENTES
+  Dim aFuentes As String[] = [
+    "NotoSerif-Regular.ttf",
+    "NotoSerif-Bold.ttf",
+    "NotoSerif-Italic.ttf",
+    "NotoSerif-BoldItalic.ttf"
+  ]
+  Dim sFuente As String
+  For Each sFuente In aFuentes
+    Dim sId As String = "font-" & File.BaseName(sFuente)
+    sOPF &= "<item id=" & Chr(34) & sId & Chr(34) &
+      " href=" & Chr(34) & "fonts/" & sFuente & Chr(34) &
+      " media-type=" & Chr(34) & "font/ttf" & Chr(34) & "/>" & Chr(10)
+  Next
+
+  ' IMÁGENES
+  Dim sRutaImgs As String = sRutaOEBPS &/ "images"
+  If Exist(sRutaImgs) Then
+    Dim sImg As String
+    For Each sImg In Dir(sRutaImgs, "*.*")
+      Dim sNombreImg As String = File.Name(sImg)
+      Dim sExt As String = LCase(File.Ext(sNombreImg))
+      Dim sMime As String
+      Select Case sExt
+        Case "jpg", "jpeg"
+          sMime = "image/jpeg"
+        Case "png"
+          sMime = "image/png"
+        Case "gif"
+          sMime = "image/gif"
+        Case "svg"
+          sMime = "image/svg+xml"
+        Case Else
+          sMime = "image/jpeg"
+      End Select
+      Dim sImgId As String = "img-" & File.BaseName(sNombreImg)
+      ' MARCAR LA TAPA
+      Dim sPropsTapa As String = ""
+      If sNombreImg = File.Name(FMetadatosRevista.imagen_tapa.Text) Then
+        sPropsTapa = " properties=" & Chr(34) & "cover-image" & Chr(34)
+      Endif
+      sOPF &= "<item id=" & Chr(34) & sImgId & Chr(34) &
+        " href=" & Chr(34) & "images/" & sNombreImg & Chr(34) &
+        " media-type=" & Chr(34) & sMime & Chr(34) & sPropsTapa & "/>" & Chr(10)
+    Next
+  Endif
+
+  ' XHTML — FRONT-MATTER, ARTÍCULOS, BACK-MATTER
+  sOPF &= ManifestXhtmlDir("front-matter", "../front-matter")
+  sOPF &= ManifestXhtmlDir("articles", "../articles")
+  sOPF &= ManifestXhtmlDir("back-matter", "../back-matter")
+
+  sOPF &= "</manifest>" & Chr(10)
+
+  ' SPINE — ORDEN DE LECTURA
+  sOPF &= "<spine>" & Chr(10)
+  sOPF &= SpineXhtmlDir(sRutaOEBPS &/ "front-matter", "front-matter")
+  sOPF &= SpineXhtmlDir(sRutaOEBPS &/ "articles", "articles")
+  sOPF &= SpineXhtmlDir(sRutaOEBPS &/ "back-matter", "back-matter")
+  sOPF &= "</spine>" & Chr(10)
+
+  sOPF &= "</package>" & Chr(10)
+
+  File.Save(sRutaOEBPS &/ "content.opf", sOPF)
+  FMain.TerminalViewProyecto.Input("echo 'OK: content.opf'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en GenerarContentOPF: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ============================================
+' Función   : ManifestXhtmlDir
+' Propósito : Genera las líneas <item> del manifiesto
+'             para todos los .xhtml de un directorio
+' Parámetros: sPrefix As String — prefijo para el id
+'             sHrefBase As String — ruta relativa al OPF
+' Retorna   : String — fragmento XML del manifiesto
+' ============================================
+Private Function ManifestXhtmlDir(sPrefix As String, sHrefBase As String) As String
+
+  Dim sRutaDir As String = sRutaOEBPS &/ sPrefix
+
+  If Not Exist(sRutaDir) Then Return ""
+
+  Dim sResult As String = ""
+  Dim aArchivos As New String[]
+
+  Dim sArch As String
+  For Each sArch In Dir(sRutaDir, "*.xhtml")
+    aArchivos.Add(File.Name(sArch))
+  Next
+  aArchivos.Sort()
+
+  For Each sArch In aArchivos
+    Dim sItemId As String = sPrefix & "-" & File.BaseName(sArch)
+    sResult &= "<item id=" & Chr(34) & sItemId & Chr(34) &
+      " href=" & Chr(34) & sPrefix & "/" & sArch & Chr(34) &
+      " media-type=" & Chr(34) & "application/xhtml+xml" & Chr(34) & "/>" & Chr(10)
+  Next
+
+  Return sResult
+
+Catch
+  Return ""
+
+End Function
+
+' ============================================
+' Función   : SpineXhtmlDir
+' Propósito : Genera las líneas <itemref> del spine
+'             para todos los .xhtml de un directorio
+' Parámetros: sRutaDir As String — ruta absoluta al directorio
+'             sPrefix  As String — prefijo del id en el manifiesto
+' Retorna   : String — fragmento XML del spine
+' ============================================
+Private Function SpineXhtmlDir(sRutaDir As String, sPrefix As String) As String
+
+  If Not Exist(sRutaDir) Then Return ""
+
+  Dim sResult As String = ""
+  Dim aArchivos As New String[]
+
+  Dim sArch As String
+  For Each sArch In Dir(sRutaDir, "*.xhtml")
+    aArchivos.Add(File.Name(sArch))
+  Next
+  aArchivos.Sort()
+
+  For Each sArch In aArchivos
+    Dim sItemId As String = sPrefix & "-" & File.BaseName(sArch)
+    sResult &= "<itemref idref=" & Chr(34) & sItemId & Chr(34) & "/>" & Chr(10)
+  Next
+
+  Return sResult
+
+Catch
+  Return ""
+
+End Function
+
+' ============================================
+' Función   : GenerarNavXhtml
+' Propósito : Escribe el nav.xhtml requerido por
+'             EPUB 3 con la tabla de navegación
+'             sincronizada con el spine
+' ============================================
+Private Sub GenerarNavXhtml()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- GENERANDO nav.xhtml ---'" & Chr(10))
+
+  Dim sTituloRevista As String = FMetadatosRevista.titulo_revista.Text
+  Dim sVolumen As String = FMetadatosRevista.volumen.Text
+  Dim sNumero As String = FMetadatosRevista.numero.Text
+
+  Dim sNav As String
+  sNav = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sNav &= "<!DOCTYPE html>" & Chr(10)
+  sNav &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
+    " xmlns:epub=" & Chr(34) & "http://www.idpf.org/2007/ops" & Chr(34) &
+    " xml:lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
+  sNav &= "<head>" & Chr(10)
+  sNav &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
+  sNav &= "<title>" & sTituloRevista & " — Vol. " & sVolumen &
+    " N&#xFA;m. " & sNumero & "</title>" & Chr(10)
+  sNav &= "</head>" & Chr(10)
+  sNav &= "<body>" & Chr(10)
+  sNav &= "<nav epub:type=" & Chr(34) & "toc" & Chr(34) &
+    " id=" & Chr(34) & "toc" & Chr(34) & ">" & Chr(10)
+  sNav &= "<h1>Contenido</h1>" & Chr(10)
+  sNav &= "<ol>" & Chr(10)
+
+  ' FRONT-MATTER
+  sNav &= AgregarItemsNavDir(sRutaOEBPS &/ "front-matter", "front-matter")
+  ' ARTÍCULOS
+  sNav &= AgregarItemsNavDir(sRutaOEBPS &/ "articles", "articles")
+  ' BACK-MATTER
+  sNav &= AgregarItemsNavDir(sRutaOEBPS &/ "back-matter", "back-matter")
+
+  sNav &= "</ol>" & Chr(10)
+  sNav &= "</nav>" & Chr(10)
+  sNav &= "</body>" & Chr(10)
+  sNav &= "</html>" & Chr(10)
+
+  File.Save(sRutaOEBPS &/ "nav.xhtml", sNav)
+  FMain.TerminalViewProyecto.Input("echo 'OK: nav.xhtml'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'ERROR en GenerarNavXhtml: " & Error.Text & "'" & Chr(10))
+
+End Sub
+
+' ============================================
+' Función   : AgregarItemsNavDir
+' Propósito : Genera los <li><a> del nav.xhtml
+'             leyendo el <title> de cada XHTML
+' Parámetros: sRutaDir  As String — directorio a recorrer
+'             sSubdir   As String — subdirectorio relativo al nav
+' Retorna   : String — fragmento HTML del nav
+' ============================================
+Private Function AgregarItemsNavDir(sRutaDir As String, sSubdir As String) As String
+
+  If Not Exist(sRutaDir) Then Return ""
+
+  Dim sResult As String = ""
+  Dim aArchivos As New String[]
+
+  Dim sArch As String
+  For Each sArch In Dir(sRutaDir, "*.xhtml")
+    aArchivos.Add(File.Name(sArch))
+  Next
+  aArchivos.Sort()
+
+  For Each sArch In aArchivos
+    ' EXTRAER EL <title> DEL XHTML
+    Dim sContenido As String = File.Load(sRutaDir &/ sArch)
+    Dim sTitulo As String = File.BaseName(sArch)
+    Dim iIni As Integer = InStr(sContenido, "<title>")
+    Dim iFin As Integer = InStr(sContenido, "</title>")
+    If iIni > 0 And iFin > iIni Then
+      sTitulo = Mid(sContenido, iIni + 7, iFin - iIni - 7)
+    Endif
+    sResult &= "<li><a href=" & Chr(34) & sSubdir & "/" & sArch & Chr(34) & ">" &
+      sTitulo & "</a></li>" & Chr(10)
+  Next
+
+  Return sResult
+
+Catch
+  Return ""
+
+End Function
+
+' ====================================================
+' ESTRUCTURA EPUB OBLIGATORIA
+' ====================================================
+' ============================================
+' Función   : GenerarMimetype
+' Propósito : Escribe el archivo mimetype en la raíz
+'             del EPUB. Debe ser el primer archivo
+'             del ZIP y sin comprimir.
+' ============================================
+Private Sub GenerarMimetype()
+
+  File.Save(sRutaEpubWork &/ "mimetype", "application/epub+zip")
+
+End Sub
+
+' ============================================
+' Función   : GenerarContainer
+' Propósito : Escribe META-INF/container.xml que
+'             indica al lector dónde está el OPF
+' ============================================
+Private Sub GenerarContainer()
+
+  Dim sXml As String
+
+  sXml = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
+    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sXml &= "<container version=" & Chr(34) & "1.0" & Chr(34) &
+    " xmlns=" & Chr(34) & "urn:oasis:names:tc:opendocument:xmlns:container" & Chr(34) & ">" & Chr(10)
+  sXml &= "<rootfiles>" & Chr(10)
+  sXml &= "<rootfile full-path=" & Chr(34) & "OEBPS/content.opf" & Chr(34) &
+    " media-type=" & Chr(34) & "application/oebps-package+xml" & Chr(34) & "/>" & Chr(10)
+  sXml &= "</rootfiles>" & Chr(10)
+  sXml &= "</container>" & Chr(10)
+
+  File.Save(sRutaEpubWork &/ "META-INF" &/ "container.xml", sXml)
+  FMain.TerminalViewProyecto.Input("echo 'OK: META-INF/container.xml'" & Chr(10))
+
+End Sub
+
+' ====================================================
+' EMPAQUETADO FINAL
+' ====================================================
+' ============================================
+' Función   : EmpaquetarEpub
+' Propósito : Genera el .epub final usando zip.
+'             El mimetype debe ser el primer archivo
+'             y debe ir SIN compresión (-0).
+'             El resto de archivos van comprimidos (-9).
+' ============================================
+Private Sub EmpaquetarEpub()
+
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- EMPAQUETANDO EPUB ---'" & Chr(10))
+
+  ' NOMBRE DEL ARCHIVO FINAL
+  Dim sRevista As String = FMetadatosRevista.titulo_abreviado.Text
+  If sRevista = "" Then sRevista = "revista"
+  ' LIMPIAR ESPACIOS Y CARACTERES ESPECIALES DEL NOMBRE
+  Dim sNombreEpub As String = LCase(sRevista) & "-v" &
+    FMetadatosRevista.volumen.Text & "-n" &
+    FMetadatosRevista.numero.Text & ".epub"
+  ' REEMPLAZAR ESPACIOS POR GUIONES
+  Dim i As Integer
+  For i = 1 To Len(sNombreEpub)
+    If Mid(sNombreEpub, i, 1) = " " Then
+      sNombreEpub = Left(sNombreEpub, i - 1) & "-" & Mid(sNombreEpub, i + 1)
+    Endif
+  Next
+
+  Dim sRutaSalida As String = sRutaProyecto &/ "salidas" &/ "epub" &/ sNombreEpub
+
+  ' ELIMINAR EPUB ANTERIOR SI EXISTE
+  If Exist(sRutaSalida) Then
+    Shell "rm '" & sRutaSalida & "'" Wait
+  Endif
+
+  ' PASO 1: AGREGAR MIMETYPE SIN COMPRESIÓN (OBLIGATORIO EPUB)
+  FMain.TerminalViewProyecto.Input(
+    "cd '" & sRutaEpubWork & "' && " &
+    "zip -0 -X '" & sRutaSalida & "' mimetype" & Chr(10))
+
+  Shell "cd '" & sRutaEpubWork & "' && zip -0 -X '" & sRutaSalida & "' mimetype" Wait
+
+  ' PASO 2: AGREGAR EL RESTO DE ARCHIVOS CON COMPRESIÓN
+  FMain.TerminalViewProyecto.Input(
+    "cd '" & sRutaEpubWork & "' && " &
+    "zip -9 -r '" & sRutaSalida & "' META-INF OEBPS" & Chr(10))
+
+  Shell "cd '" & sRutaEpubWork & "' && zip -9 -r '" &
+    sRutaSalida & "' META-INF OEBPS" Wait
+
+  ' VERIFICAR RESULTADO
+  If Exist(sRutaSalida) Then
+    FMain.TerminalViewProyecto.Input(
+      "echo ''" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "echo '=== EPUB GENERADO CORRECTAMENTE ==='" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "echo 'Ruta: " & sRutaSalida & "'" & Chr(10))
+    m_Sonido.sonar("OK")
+    Message.Info("EPUB generado correctamente:" & Chr(10) & sRutaSalida)
+  Else
+    FMain.TerminalViewProyecto.Input(
+      "echo 'ERROR: no se generó el EPUB'" & Chr(10))
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo generar el EPUB." & Chr(10) &
+      "Revisá los mensajes en la terminal.")
+  Endif
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al empaquetar EPUB: " & Error.Text)
+
+End Sub
