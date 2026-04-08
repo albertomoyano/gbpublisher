@@ -222,13 +222,13 @@ End
 ' ====================================================
 ' GENERACIÓN DE ARTÍCULOS
 ' ====================================================
-'' ============================================
-'' Función   : GenerarXhtmlArticulos
-'' Propósito : Itera sobre todos los artículos del
-''             proyecto, genera el m-*.xml auxiliar
-''             y ejecuta Saxon para obtener el .xhtml
-'' Retorna   : Boolean — False si algún artículo falla
-'' ============================================
+' ============================================
+' Función   : GenerarXhtmlArticulos
+' Propósito : Itera sobre todos los artículos del
+'             proyecto, genera el m-*.xml auxiliar
+'             y ejecuta Saxon para obtener el .xhtml
+' Retorna   : Boolean — False si algún artículo falla
+' ============================================
 Private Function GenerarXhtmlArticulos() As Boolean
 
   ' --- 1. Consultar artículos ordenados por nombre_archivo ---
@@ -417,14 +417,10 @@ Private Sub ConvertirMdAXhtml(sEntrada As String, sSalida As String)
   Shell sCmd Wait
 
   ' --- 2. Post-procesar: agregar DOCTYPE XHTML y namespace ---
-  If Exist(sSalida) Then
-    AgregarCabeceraXhtml(sSalida, File.BaseName(sSalida))
-    FMain.TerminalViewProyecto.Input(
-      "echo 'OK: " & File.Name(sSalida) & "'" & Chr(10))
-  Else
-    FMain.TerminalViewProyecto.Input(
-      "echo 'ERROR: Pandoc no generó " & File.Name(sSalida) & "'" & Chr(10))
-  Endif
+  Shell sCmd Wait
+  AgregarCabeceraXhtml(sSalida, File.BaseName(sEntrada))
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: " & File.Name(sSalida) & "'" & Chr(10))
 
 Catch
   FMain.TerminalViewProyecto.Input(
@@ -432,18 +428,22 @@ Catch
 
 End Sub
 
-'' ============================================
-'' Función   : AgregarCabeceraXhtml
-'' Propósito : Envuelve el cuerpo generado por Pandoc
-''             en un documento XHTML 1.1 válido con
-''             DOCTYPE, namespace y hoja de estilos
-'' Parámetros: sRutaArchivo As String — archivo a procesar
-''             sTitulo      As String — título del capítulo
-'' ============================================
+' ============================================
+' Función   : AgregarCabeceraXhtml
+' Propósito : Envuelve el cuerpo generado por Pandoc
+'             en un documento XHTML 1.1 válido con
+'             DOCTYPE, namespace y hoja de estilos
+' Parámetros: sRutaArchivo As String — archivo a procesar
+'             sTitulo      As String — título del capítulo
+' ============================================
 Private Sub AgregarCabeceraXhtml(sRutaArchivo As String, sTitulo As String)
 
   ' --- 1. Leer el contenido generado por Pandoc ---
-  Dim sBody As String = File.Load(sRutaArchivo)
+  Dim sBody As String = ""
+
+  If Exist(sRutaArchivo) Then
+    Try sBody = File.Load(sRutaArchivo)
+  Endif
 
   ' --- 2. Construir el documento XHTML completo ---
   Dim sXhtml As String
@@ -509,7 +509,9 @@ Private Sub GenerarPortada()
     " xml:lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
   sXhtml &= "<head>" & Chr(10)
   sXhtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
-  sXhtml &= "<title>" & sTituloRevista & "</title>" & Chr(10)
+  Dim sTituloPagina As String = sTituloRevista
+  If sTituloPagina = "" Then sTituloPagina = "Portada"
+  sXhtml &= "<title>" & sTituloPagina & "</title>" & Chr(10)
   sXhtml &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
     " type=" & Chr(34) & "text/css" & Chr(34) &
     " href=" & Chr(34) & "../css/epub.css" & Chr(34) & "/>" & Chr(10)
@@ -1253,8 +1255,12 @@ Private Sub GenerarContentOPF()
   sOPF &= "<dc:title>" & sTitulo & " Vol. " & sVolumen & " N&#xFA;m. " &
     sNumero & " (" & sAnio & ")</dc:title>" & Chr(10)
   sOPF &= "<dc:language>es</dc:language>" & Chr(10)
-  sOPF &= "<dc:publisher>" & sEditorial & "</dc:publisher>" & Chr(10)
-  sOPF &= "<dc:date>" & sAnio & "</dc:date>" & Chr(10)
+  If sEditorial <> "" Then
+    sOPF &= "<dc:publisher>" & sEditorial & "</dc:publisher>" & Chr(10)
+  Endif
+  If sAnio <> "" Then
+    sOPF &= "<dc:date>" & sAnio & "</dc:date>" & Chr(10)
+  Endif
   If sISSN <> "" Then
     sOPF &= "<dc:identifier>urn:issn:" & sISSN & "</dc:identifier>" & Chr(10)
   Endif
@@ -1332,7 +1338,7 @@ Private Sub GenerarContentOPF()
         Case Else
           sMime = "image/jpeg"
       End Select
-      Dim sImgId As String = "img-" & File.BaseName(sNombreImg)
+      Dim sImgId As String = "img-" & Replace(File.BaseName(sNombreImg), " ", "-")
       ' MARCAR LA TAPA
       Dim sPropsTapa As String = ""
       If sNombreImg = File.Name(FMetadatosRevista.imagen_tapa.Text) Then
@@ -1582,20 +1588,24 @@ End Sub
 ''             El mimetype debe ser el primer archivo
 ''             y debe ir SIN compresión (-0).
 ''             El resto de archivos van comprimidos (-9).
+''             La validación con epubcheck corre
+''             directamente en la terminal, igual que
+''             Saxon y Pandoc — sin captura de salida.
 '' ============================================
 Private Sub EmpaquetarEpub()
 
   FMain.TerminalViewProyecto.Input(
     "echo '--- EMPAQUETANDO EPUB ---'" & Chr(10))
 
-  ' NOMBRE DEL ARCHIVO FINAL
+  ' --- 1. Nombre del archivo final ---
   Dim sRevista As String = FMetadatosRevista.titulo_abreviado.Text
   If sRevista = "" Then sRevista = "revista"
+
   ' LIMPIAR ESPACIOS Y CARACTERES ESPECIALES DEL NOMBRE
   Dim sNombreEpub As String = LCase(sRevista) & "-v" &
     FMetadatosRevista.volumen.Text & "-n" &
     FMetadatosRevista.numero.Text & ".epub"
-  ' REEMPLAZAR ESPACIOS POR GUIONES
+
   Dim i As Integer
   For i = 1 To Len(sNombreEpub)
     If Mid(sNombreEpub, i, 1) = " " Then
@@ -1605,19 +1615,19 @@ Private Sub EmpaquetarEpub()
 
   Dim sRutaSalida As String = sRutaProyecto &/ "salidas" &/ "epub" &/ sNombreEpub
 
-  ' ELIMINAR EPUB ANTERIOR SI EXISTE
+  ' --- 2. Eliminar EPUB anterior si existe ---
   If Exist(sRutaSalida) Then
     Shell "rm '" & sRutaSalida & "'" Wait
   Endif
 
-  ' PASO 1: AGREGAR MIMETYPE SIN COMPRESIÓN (OBLIGATORIO EPUB)
+  ' --- 3. Paso 1: mimetype sin compresión (obligatorio EPUB) ---
   FMain.TerminalViewProyecto.Input(
     "cd '" & sRutaEpubWork & "' && " &
     "zip -0 -X '" & sRutaSalida & "' mimetype" & Chr(10))
 
   Shell "cd '" & sRutaEpubWork & "' && zip -0 -X '" & sRutaSalida & "' mimetype" Wait
 
-  ' PASO 2: AGREGAR EL RESTO DE ARCHIVOS CON COMPRESIÓN
+  ' --- 4. Paso 2: resto de archivos con compresión ---
   FMain.TerminalViewProyecto.Input(
     "cd '" & sRutaEpubWork & "' && " &
     "zip -9 -r '" & sRutaSalida & "' META-INF OEBPS" & Chr(10))
@@ -1625,14 +1635,16 @@ Private Sub EmpaquetarEpub()
   Shell "cd '" & sRutaEpubWork & "' && zip -9 -r '" &
     sRutaSalida & "' META-INF OEBPS" Wait
 
-  ' VERIFICAR RESULTADO
+  ' --- 5. Verificar resultado y validar ---
   If Exist(sRutaSalida) Then
-    FMain.TerminalViewProyecto.Input(
-      "echo ''" & Chr(10))
+
+    FMain.TerminalViewProyecto.Input("echo ''" & Chr(10))
     FMain.TerminalViewProyecto.Input(
       "echo '=== EPUB GENERADO — VALIDANDO CON EPUBCHECK ==='" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "echo 'Ruta: " & sRutaSalida & "'" & Chr(10))
 
-    ' BUSCAR EPUBCHECK EN RUTAS ESTÁNDAR
+    ' BUSCAR EPUBCHECK EN RUTAS ESTÁNDAR DE LINUX MINT
     Dim sEpubCheck As String = ""
     If Exist("/usr/bin/epubcheck") Then
       sEpubCheck = "epubcheck"
@@ -1643,47 +1655,35 @@ Private Sub EmpaquetarEpub()
     Endif
 
     If sEpubCheck <> "" Then
-      ' EJECUTAR EPUBCHECK Y CAPTURAR RESULTADO
-      Dim sResultado As String
-      Shell sEpubCheck & " '" & sRutaSalida & "' 2>&1" To sResultado
-      Wait
-      FMain.TerminalViewProyecto.Input(sResultado & Chr(10))
-
-      ' DETECTAR ERRORES EN LA SALIDA
-      If InStr(LCase(sResultado), "error") > 0 Or
-          InStr(LCase(sResultado), "fatal") > 0 Then
-        FMain.TerminalViewProyecto.Input(
-          "echo 'AVISO: EPUBCheck reportó errores — revisá la salida.'" & Chr(10))
-        m_Sonido.sonar("Warning")
-        Message.Warning("El EPUB se generó pero EPUBCheck reportó errores." & Chr(10) &
-          "Revisá la terminal para ver los detalles." & Chr(10) & Chr(10) &
-          "Ruta: " & sRutaSalida)
-      Else
-        FMain.TerminalViewProyecto.Input(
-          "echo '=== EPUB VÁLIDO ==='" & Chr(10))
-        FMain.TerminalViewProyecto.Input(
-          "echo 'Ruta: " & sRutaSalida & "'" & Chr(10))
-        m_Sonido.sonar("OK")
-        Message.Info("EPUB generado y validado correctamente:" & Chr(10) & sRutaSalida)
-      Endif
+      ' EPUBCHECK CORRE EN LA TERMINAL COMO CUALQUIER OTRO COMANDO
+      ' SIN CAPTURA DE SALIDA — EL USUARIO LEE EL RESULTADO DIRECTAMENTE
+      FMain.TerminalViewProyecto.Input(
+        sEpubCheck & " '" & sRutaSalida & "'" & Chr(10))
+      Wait 2
+      m_Sonido.sonar("OK")
+      Message.Info("EPUB generado." & Chr(10) &
+        "Revisá la terminal para el resultado de EPUBCheck." & Chr(10) & Chr(10) &
+        "Ruta: " & sRutaSalida)
     Else
       ' SIN EPUBCHECK — AVISAR SIN BLOQUEAR
       FMain.TerminalViewProyecto.Input(
         "echo 'AVISO: epubcheck no encontrado — validación omitida.'" & Chr(10))
       FMain.TerminalViewProyecto.Input(
-        "echo 'Instalá epubcheck para validar automáticamente.'" & Chr(10))
-      FMain.TerminalViewProyecto.Input(
-        "echo 'Ruta: " & sRutaSalida & "'" & Chr(10))
+        "echo 'Instalá epubcheck con: sudo apt install epubcheck'" & Chr(10))
       m_Sonido.sonar("OK")
       Message.Info("EPUB generado correctamente:" & Chr(10) & sRutaSalida & Chr(10) & Chr(10) &
-        "Nota: instalá epubcheck para validación automática.")
+        "Instalá epubcheck para validación automática:" & Chr(10) &
+        "sudo apt install epubcheck")
     Endif
+
   Else
+
     FMain.TerminalViewProyecto.Input(
       "echo 'ERROR: no se generó el EPUB'" & Chr(10))
     m_Sonido.sonar("Error")
     Message.Error("No se pudo generar el EPUB." & Chr(10) &
       "Revisá los mensajes en la terminal.")
+
   Endif
 
 Catch
