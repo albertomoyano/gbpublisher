@@ -6112,118 +6112,6 @@ Public Sub menuXMLRedalyc_Click()
 
 End Sub
 
-' ============================================
-' Función   : menuPDFunaColumna_Click
-' Propósito : Dispara el pipeline completo de generación
-'             de PDF (XSLT → ensamblado → LuaLaTeX) para
-'             el artículo activo. El PDF final queda en
-'             {proyecto}/salidas/pdf/l-{base}.pdf
-'             Réplica del patrón de menuXMLRedalyc_Click
-'             adaptada para el pipeline LaTeX.
-' ============================================
-Public Sub menuPDFunaColumna_Click()
-
-  ' --- 1. Mostrar consola ---
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  ' --- 2. Verificar que hay un artículo activo ---
-  If id_articulo.Value = 0 Then
-    Message.Info("Seleccioná un artículo antes de generar el PDF.")
-    Return
-  Endif
-
-  ' --- 3. Verificar que Saxon-HE está instalado ---
-  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
-  If Not Exist(sSaxon) Then
-    Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
-      "Instale Saxon-HE y cree el symlink:" & Chr(10) &
-      "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
-    Return
-  Endif
-
-  ' --- 4. Verificar que la hoja de estilo LaTeX existe ---
-  Dim sRutaXSL As String = User.Home &/ ".gbpublisher/xslt/jats-to-latex.xsl"
-  If Not Exist(sRutaXSL) Then
-    Message.Error("No se encontró la hoja de transformación LaTeX:" & Chr(10) &
-      sRutaXSL & Chr(10) &
-      "Verificar la instalación de gbpublisher.")
-    Return
-  Endif
-
-  ' --- 5. Verificar que lualatex está disponible ---
-  Dim sCheckLua As String
-  Shell "which lualatex" To sCheckLua
-  Wait
-  If Trim(sCheckLua) = "" Then
-    Message.Error("lualatex no encontrado en el sistema." & Chr(10) &
-      "Instalá TeX Live:" & Chr(10) &
-      "sudo apt install texlive-full")
-    Return
-  Endif
-
-  ' --- 6. Obtener nombre del archivo para construir el nombre del PDF ---
-  Dim hRes As Result
-  Try hRes = m_ConexionBD.mConn.Exec(
-    "SELECT nombre_archivo FROM articulos WHERE id_articulo = " &
-    CStr(id_articulo.Value))
-  If Error Or hRes.Count = 0 Then
-    Message.Error("No se encontró el artículo en la BD.")
-    Return
-  Endif
-
-  ' nombre_archivo GUARDADO COMO a-01-revista-v01-n01 (SIN EXTENSIÓN)
-  Dim sNombreArchivo As String = Trim(hRes!nombre_archivo)
-  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
-  Dim sNombrePDF As String = "l-" & sNombreBase & ".pdf"
-
-  ' --- 7. Verificar que el canónico existe antes de disparar el pipeline ---
-  Dim sRutaCanonico As String = File.Dir(txtProyecto.Text) &/ "jats" &/ "c-" & sNombreBase & ".xml"
-  If Not Exist(sRutaCanonico) Then
-    Message.Error("No existe el canónico:" & Chr(10) & sRutaCanonico & Chr(10) &
-      "Generá primero el XML JATS canónico.")
-    Return
-  Endif
-
-  ' --- 8. Ejecutar el pipeline completo desde m_XML ---
-  ' GenerarPDF() orquesta: Saxon → EnsamblarTeX → lualatex (→ biber →) lualatex
-  If Not m_XML.GenerarPDF(CInt(id_articulo.Value)) Then
-    ' EL MENSAJE DE ERROR YA FUE MOSTRADO POR GenerarPDF() O SUS SUBFUNCIONES
-    Return
-  Endif
-
-  ' --- 9. Confirmar al usuario y actualizar el listbox ---
-  Message.Info("PDF generado correctamente:" & Chr(10) & sNombrePDF)
-
-  ' ACTUALIZAR LISTBOX Y AUTO-SELECCIONAR EL ARCHIVO GENERADO
-  m_XML.MostrarArchivosLatex()
-  Dim i As Integer
-  For i = 0 To lbLatex.Count - 1
-    If lbLatex[i].Text = "l-" & sNombreBase & ".tex" Then
-      lbLatex.Index = i
-      Break
-    Endif
-  Next
-
-End Sub
-
-' ============================================
-' Función   : lbLatex_Click
-' Propósito : Responde al click en lbLatex. Convierte el
-'             nombre del archivo al nombre_archivo de la BD,
-'             obtiene el id_articulo y dispara la validación.
-'             Réplica del patrón de lbDOAJ_Click.
-' ============================================
-Public Sub lbLatex_Click()
-
-  Dim sArchivo As String = lbLatex.Text
-  Dim sNombreBD As String = m_XML.NombreArchivoLatexANombreBD(sArchivo)
-  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
-
-  m_XML.ValidarArchivoLatex(sArchivo, idArt)
-
-End Sub
-
 Public Sub btnAbrirLaTeX_Click()
 
   TipoProyectoActual = m_Constantes.TIPO_LIBRO_LATEX
@@ -6299,52 +6187,40 @@ Public Sub menuABMautores_Click()
 
 End
 
-' ============================================
-' Función   : menuGenerarEpub_Click
-' Propósito : Lanza la generación del EPUB completo
-'             del número activo. No requiere artículo
-'             seleccionado — opera sobre el proyecto
-'             completo a diferencia de las salidas
-'             por artículo (HTML, PDF).
-'             Muestra confirmación previa y bloquea
-'             el menú durante el proceso para evitar
-'             ejecuciones simultáneas.
-' ============================================
 Public Sub menuGenerarEpub_Click()
 
   ' MOSTRAMOS CONSOLA
   tbMostrarPanelInferior.Value = True
   TabPanelIzquierdaInferior.Index = 0
 
-  ' --- 1. Confirmación antes de lanzar ---
-  m_Sonido.sonar("Info")
-  If Message.Question("¿Generar el EPUB del número completo?" & Chr(10) & Chr(10) &
-      "El proceso puede tardar varios minutos dependiendo" & Chr(10) &
-      "de la cantidad de artículos. Podés seguir el avance" & Chr(10) &
-      "en la terminal.",
-      "Continuar", "Cancelar") = 2 Then
-    Return
-  Endif
+  m_GenerarEpub.GenerarSalidaEpub
 
-  ' --- 2. Deshabilitar menú para evitar doble ejecución ---
-  menuGenerarEpub.Enabled = False
+End
 
-  ' --- 3. Cursor de espera y mensaje inicial en terminal ---
-  TerminalViewProyecto.Input(
-    "echo ''" & Chr(10))
-  TerminalViewProyecto.Input(
-    "echo '==='" & Chr(10))
-  TerminalViewProyecto.Input(
-    "echo '  GENERANDO EPUB — PROCESO EN CURSO, AGUARDE'" & Chr(10))
-  TerminalViewProyecto.Input(
-    "echo '==='" & Chr(10))
-  TerminalViewProyecto.Input(
-    "echo ''" & Chr(10))
+Public Sub menuPDFunaColumna_Click()
 
-  ' --- 4. Lanzar generación ---
-  Try m_GenerarEpub.GenerarEpub()
+  ' MOSTRAMOS CONSOLA
+  tbMostrarPanelInferior.Value = True
+  TabPanelIzquierdaInferior.Index = 0
 
-  ' --- 5. Restaurar estado —- siempre, incluso si hubo error ---
-  menuGenerarEpub.Enabled = True
+  m_GenerarPDF.GenerarPDFunaColumna()
+
+End
+
+' ============================================
+' Función   : lbLatex_Click
+' Propósito : Responde al click en lbLatex. Convierte el
+'             nombre del archivo al nombre_archivo de la BD,
+'             obtiene el id_articulo y dispara la validación.
+'             Réplica del patrón de lbDOAJ_Click.
+' ============================================
+
+Public Sub lbLatex_Click()
+
+  Dim sArchivo As String = lbLatex.Text
+  Dim sNombreBD As String = m_XML.NombreArchivoLatexANombreBD(sArchivo)
+  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
+
+  m_XML.ValidarArchivoLatex(sArchivo, idArt)
 
 End Sub

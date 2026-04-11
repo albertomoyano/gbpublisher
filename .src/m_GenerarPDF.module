@@ -1,0 +1,106 @@
+' Gambas module file
+
+' ============================================
+' Función   : GenerarPDFunaColumna
+' Propósito : Dispara el pipeline completo de generación
+'             de PDF (XSLT → ensamblado → LuaLaTeX) para
+'             el artículo activo. El PDF final queda en
+'             {proyecto}/salidas/pdf/l-{base}.pdf
+'             Réplica del patrón de menuXMLRedalyc_Click
+'             adaptada para el pipeline LaTeX.
+' ============================================
+Public Sub GenerarPDFunaColumna()
+
+  ' --- 1. Verificar que hay un artículo activo ---
+  If FMain.id_articulo.Value = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Seleccioná un artículo antes de generar el PDF.")
+    Return
+  Endif
+
+  ' --- 2. Elegir modo de salida ---
+  m_Sonido.sonar("Question")
+  Dim iModo As Integer = Message.Question("Seleccioná el modo de salida:" & Chr(10) & Chr(10) &
+    "<b>BORRADOR:</b> activa showframe y marcas de inconsistencias de principio y fin de linea (homeoarchy)" & Chr(10) & Chr(10) &
+    "<b>FINAL:</b> sin marcas visuales, listo para publicar.", "Borrador", "Final", "Cancelar")
+
+  If iModo = 3 Then Return
+
+  Dim bBorrador As Boolean = (iModo = 1)
+
+  ' --- 3. Verificar que Saxon-HE está instalado ---
+  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
+      "Instale Saxon-HE y cree el symlink:" & Chr(10) &
+      "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
+    Return
+  Endif
+
+  ' --- 4. Verificar que la hoja de estilo LaTeX existe ---
+  Dim sRutaXSL As String = User.Home &/ ".gbpublisher/xslt/jats-to-latex.xsl"
+  If Not Exist(sRutaXSL) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró la hoja de transformación LaTeX:" & Chr(10) &
+      sRutaXSL & Chr(10) &
+      "Verificar la instalación de gbpublisher.")
+    Return
+  Endif
+
+  ' --- 5. Verificar que lualatex está disponible ---
+  Dim sCheckLua As String
+  Shell "which lualatex" To sCheckLua
+  Wait
+  If Trim(sCheckLua) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("lualatex no encontrado en el sistema." & Chr(10) &
+      "Instalá TeX Live:" & Chr(10) &
+      "sudo apt install texlive-full")
+    Return
+  Endif
+
+  ' --- 6. Obtener nombre del archivo para construir el nombre del PDF ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec("SELECT nombre_archivo FROM articulos WHERE id_articulo = " & CStr(FMain.id_articulo.Value))
+  If Error Or hRes.Count = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  ' nombre_archivo GUARDADO COMO a-01-revista-v01-n01 (SIN EXTENSIÓN)
+  Dim sNombreArchivo As String = Trim(hRes!nombre_archivo)
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+  Dim sNombrePDF As String = "l-" & sNombreBase & ".pdf"
+
+  ' --- 7. Verificar que el canónico existe antes de disparar el pipeline ---
+  Dim sRutaCanonico As String = File.Dir(FMain.txtProyecto.Text) &/ "jats" &/ "c-" & sNombreBase & ".xml"
+  If Not Exist(sRutaCanonico) Then
+    Message.Error("No existe el canónico:" & Chr(10) & sRutaCanonico & Chr(10) &
+      "Generá primero el XML JATS canónico.")
+    Return
+  Endif
+
+  ' --- 8. Ejecutar el pipeline completo desde m_XML ---
+  ' GenerarPDF() orquesta: Saxon → EnsamblarTeX → lualatex (→ biber →) lualatex
+  If Not m_XML.GenerarPDF(CInt(FMain.id_articulo.Value), bBorrador) Then
+    ' EL MENSAJE DE ERROR YA FUE MOSTRADO POR GenerarPDF() O SUS SUBFUNCIONES
+    Return
+  Endif
+
+  ' --- 9. Confirmar al usuario y actualizar el listbox ---
+  m_Sonido.sonar("Info")
+  Message.Info("PDF generado correctamente:" & Chr(10) & sNombrePDF)
+
+  ' ACTUALIZAR LISTBOX Y AUTO-SELECCIONAR EL ARCHIVO GENERADO
+  m_XML.MostrarArchivosLatex()
+  Dim i As Integer
+  For i = 0 To FMain.lbLatex.Count - 1
+    If FMain.lbLatex[i].Text = "l-" & sNombreBase & ".tex" Then
+      FMain.lbLatex.Index = i
+      Break
+    Endif
+  Next
+
+End Sub

@@ -1,6 +1,5 @@
 ' Gambas module file
 
-'
 ' =====================================================
 ' MÓDULO: m_XML
 ' =====================================================
@@ -3582,7 +3581,7 @@ End Sub
 '             ese archivo tiene prioridad sobre este embebido.
 ' Retorna   : String — preámbulo LaTeX listo para l-*.tex
 ' ============================================
-Private Function ObtenerPreambuloEmbebido() As String
+Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean) As String
 
   Dim s As String
   Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
@@ -3629,7 +3628,11 @@ Private Function ObtenerPreambuloEmbebido() As String
   s &= "  top=13mm,bottom=23mm,left=13mm,right=87mm," & Chr(10)
   s &= "  headsep=0mm,footskip=12mm,headheight=29mm,headsep=10mm," & Chr(10)
   s &= "  marginparsep=6mm,marginparwidth=68mm," & Chr(10)
-  s &= "  includehead,includefoot,showframe]{geometry}" & Chr(10)
+  If bBorrador Then
+    s &= "  includehead,includefoot,showframe]{geometry}" & Chr(10)
+  Else
+    s &= "  includehead,includefoot]{geometry}" & Chr(10)
+  Endif
   s &= "\\setcounter{secnumdepth}{0}" & Chr(10)
   s &= Chr(10)
 
@@ -3669,8 +3672,10 @@ Private Function ObtenerPreambuloEmbebido() As String
     "{\\normalsize\\list{}{\\sf\\leftmargin=14pt\\rightmargin=0pt}" &
     "\\item\\relax}{\\endlist}" & Chr(10)
   s &= Chr(10)
-  s &= "\\usepackage[hyphenation,homeoarchy,homeoarchywordcolor=orange," &
-    "homeoarchycharcolor=orange,draft]{impnattypo}" & Chr(10)
+  If bBorrador Then
+    s &= "\\usepackage[hyphenation,homeoarchy,homeoarchywordcolor=orange," &
+      "homeoarchycharcolor=orange,draft]{impnattypo}" & Chr(10)
+  Endif
   s &= Chr(10)
 
   ' --- 8. Macro articulotipo (sobreescrita por XSLT) ---
@@ -3860,7 +3865,7 @@ End Function
 ' Parámetros: iIdArticulo As Integer
 ' Retorna   : Boolean — True si l-*.tex fue guardado
 ' ============================================
-Public Function EnsamblarTeX(iIdArticulo As Integer) As Boolean
+Public Function EnsamblarTeX(iIdArticulo As Integer, bBorrador As Boolean) As Boolean
 
   Dim hArticulo As Result
   Dim sNombreArchivo As String
@@ -3868,16 +3873,14 @@ Public Function EnsamblarTeX(iIdArticulo As Integer) As Boolean
   Dim sRutaProyecto As String
   Dim sRutaBody As String
   Dim sRutaTex As String
-  Dim sRutaBib As String
   Dim sRutaTemplate As String
+  Dim sRutaBib As String
   Dim sPreamble As String
   Dim sBody As String
   Dim sCierre As String
   Dim sTexFinal As String
   Dim sAddbibresource As String
   Dim bTieneReferencias As Boolean
-
-  iIdArticulo = CInt(FMain.id_articulo.Value)
 
   Try hArticulo = m_ConexionBD.mConn.Exec(
     "SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
@@ -3920,15 +3923,7 @@ Public Function EnsamblarTeX(iIdArticulo As Integer) As Boolean
     Return False
   Endif
 
-  If Exist(sRutaTemplate) Then
-    Try sPreamble = File.Load(sRutaTemplate)
-    If Error Then
-      Message.Warning("No se pudo leer gb-pdf-template.tex. Usando preámbulo embebido.")
-      sPreamble = ObtenerPreambuloEmbebido()
-    Endif
-  Else
-    sPreamble = ObtenerPreambuloEmbebido()
-  Endif
+  sPreamble = ObtenerPreambuloEmbebido(bBorrador)
 
   sAddbibresource = ""
   If bTieneReferencias Then
@@ -3985,8 +3980,6 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
   Dim iEspera As Integer
   Dim bTieneReferencias As Boolean
 
-  iIdArticulo = CInt(FMain.id_articulo.Value)
-
   Try hArticulo = m_ConexionBD.mConn.Exec(
     "SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
     iIdArticulo)
@@ -4039,13 +4032,13 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
   If bTieneReferencias Then
     sComando &= " && biber 'l-" & sNombreBase & "'"
     sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
-    FMain.TerminalViewProyecto.Input("echo '--- PDF: lualatex → biber → lualatex × 2 ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input("echo '=== PDF: lualatex → biber → lualatex × 2 ==='" & Chr(10))
   Else
-    FMain.TerminalViewProyecto.Input("echo '--- PDF: lualatex × 2 (sin bibliografía) ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input("echo '=== PDF: lualatex × 2 (sin bibliografía) ==='" & Chr(10))
   Endif
 
   sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
-  sComando &= " && touch '" & sRutaCentinela & "'"
+  sComando &= " ; touch '" & sRutaCentinela & "'"
 
   FMain.TerminalViewProyecto.Input(sComando & Chr(10))
 
@@ -4066,8 +4059,14 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
     Return False
   Endif
 
-  FMain.TerminalViewProyecto.Input("cp -f '" & sRutaPdfOrigen & "' '" & sRutaPdfDestino & "'" & Chr(10))
-  Wait 2
+  FMain.TerminalViewProyecto.Input("cp -f '" & sRutaPdfOrigen & "' '" & sRutaPdfDestino & "' && " &
+    "echo 'OK: PDF copiado'" & Chr(10))
+  Wait 3
+
+  If Not Exist(sRutaPdfDestino) Then
+    Message.Error("No se pudo copiar el PDF a /salidas/pdf/:" & Chr(10) & sRutaPdfDestino)
+    Return False
+  Endif
 
   If Not Exist(sRutaPdfDestino) Then
     Message.Error("No se pudo copiar el PDF a /salidas/pdf/:" & Chr(10) & sRutaPdfDestino)
@@ -4075,14 +4074,16 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
   Endif
 
   ' LIMPIAR AUXILIARES (conservar .tex y .pdf local como respaldo)
-  FMain.TerminalViewProyecto.Input(
-    "cd '" & sRutaLatex & "' && " &
-    "rm -f *.aux *.bbl *.bcf *.blg *.log *.out *.run.xml *.toc " &
+  FMain.TerminalViewProyecto.Input("cd '" & sRutaLatex & "' && " &
+    "rm -f *.aux *.bbl *.bcf *.blg *.log *.out *.run.xml *.toc *.fls *.pdf " &
     "'" & sRutaCentinela & "'" & Chr(10))
-  Wait 1
+  Wait 2
 
-  FMain.TerminalViewProyecto.Input("echo '--- PDF DISPONIBLE: " & sRutaPdfDestino & " ---'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("cd " & sRutaProyecto & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "echo '=== PDF DISPONIBLE: " & sRutaPdfDestino & " ==='" & Chr(10))
+
+  ' RESTAURAR DIRECTORIO DE TRABAJO
+  FMain.TerminalViewProyecto.Input("cd '" & sRutaProyecto & "'" & Chr(10))
 
   Return True
 
@@ -4102,7 +4103,7 @@ End Function
 ' Parámetros: iIdArticulo As Integer
 ' Retorna   : Boolean — True si el PDF final está en /salidas/pdf/
 ' ============================================
-Public Function GenerarPDF(iIdArticulo As Integer) As Boolean
+Public Function GenerarPDF(iIdArticulo As Integer, bBorrador As Boolean) As Boolean
 
   FMain.TerminalViewProyecto.Input("echo '=== INICIO PIPELINE PDF ==='" & Chr(10))
 
@@ -4111,7 +4112,7 @@ Public Function GenerarPDF(iIdArticulo As Integer) As Boolean
     Return False
   Endif
 
-  If Not EnsamblarTeX(iIdArticulo) Then
+  If Not EnsamblarTeX(iIdArticulo, bBorrador) Then
     Message.Error("Falló el ensamblado del .tex." & Chr(10) & "Pipeline cancelado.")
     Return False
   Endif
