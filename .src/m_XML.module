@@ -3581,7 +3581,9 @@ End Sub
 '             ese archivo tiene prioridad sobre este embebido.
 ' Retorna   : String — preámbulo LaTeX listo para l-*.tex
 ' ============================================
-Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean) As String
+Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean, sEstilo As String) As String
+
+  FMain.TerminalViewProyecto.Input("echo 'DEBUG preambulo sEstilo: " & sEstilo & "'" & Chr(10))
 
   Dim s As String
   Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
@@ -3614,10 +3616,28 @@ Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean) As String
   s &= Chr(10)
 
   ' --- 4. Bibliografía ---
-  ' EL MARCADOR %%BIBRESOURCE%% ES REEMPLAZADO POR EnsamblarTeX()
   s &= "% --- BIBLIOGRAFÍA ---" & Chr(10)
-  s &= "\\usepackage[style=apa,backend=biber]{biblatex}" & Chr(10)
-  s &= "%%BIBRESOURCE%%" & Chr(10)
+  Select Case sEstilo
+    Case "apa"
+      s &= "\\usepackage[style=apa,backref=true,backend=biber]{biblatex}" & Chr(10)
+      s &= "%%BIBRESOURCE%%" & Chr(10)
+    Case "iso690"
+      s &= "\\usepackage[style=iso-authoryear,backref=true,backend=biber]{biblatex}" & Chr(10)
+      s &= "%%BIBRESOURCE%%" & Chr(10)
+    Case "ieee"
+      s &= "\\usepackage[style=ieee,citestyle=numeric,backref=true,backend=biber]{biblatex}" & Chr(10)
+      s &= "%%BIBRESOURCE%%" & Chr(10)
+    Case "vancouver"
+      ' EL PAQUETE cite PERMITE \cite{k1,k2,k3} → [1,2,3]
+      ' SIN CONFLICTOS CON hyperref NI OTROS PAQUETES
+      ' vancouver.bst MANEJA EL FORMATO DEL LISTADO BIBLIOGRÁFICO
+      s &= "\\usepackage{cite}" & Chr(10)
+      s &= "\\bibliographystyle{vancouver}" & Chr(10)
+    Case Else
+      ' FALLBACK: APA
+      s &= "\\usepackage[style=apa,backref=true,backend=biber]{biblatex}" & Chr(10)
+      s &= "%%BIBRESOURCE%%" & Chr(10)
+  End Select
   s &= Chr(10)
 
   ' --- 5. Página ---
@@ -3778,7 +3798,7 @@ End Function
 ' Parámetros: iIdArticulo As Integer
 ' Retorna   : Boolean — True si body-*.tex fue generado
 ' ============================================
-Public Function GenerarTeXBodyDesdeCanonico(iIdArticulo As Integer) As Boolean
+Public Function GenerarTeXBodyDesdeCanonico(iIdArticulo As Integer, sEstilo As String) As Boolean
 
   Dim hArticulo As Result
   Dim sNombreArchivo As String
@@ -3791,7 +3811,7 @@ Public Function GenerarTeXBodyDesdeCanonico(iIdArticulo As Integer) As Boolean
   Dim sComando As String
   Dim iEspera As Integer
 
-  iIdArticulo = CInt(FMain.id_articulo.Value)
+  ' iIdArticulo = CInt(FMain.id_articulo.Value)
 
   Try hArticulo = m_ConexionBD.mConn.Exec(
     "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1", iIdArticulo)
@@ -3831,14 +3851,15 @@ Public Function GenerarTeXBodyDesdeCanonico(iIdArticulo As Integer) As Boolean
     Wait 0.2
   Endif
 
-  FMain.TerminalViewProyecto.Input("echo '--- LATEX: TRANSFORMANDO CANÓNICO ---'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo '=== LATEX: TRANSFORMANDO CANÓNICO ==='" & Chr(10))
   Dim sRutaCatalogo As String = User.Home &/ ".gbpublisher" &/ "dtd" &/ "catalog-jats-v1-4-no-base.xml"
   sComando =
     "java -jar '" & sRutaSaxon & "' " &
     "-catalog:'" & sRutaCatalogo & "' " &
     "-s:'" & sRutaCanonico & "' " &
     "-xsl:'" & sRutaXSL & "' " &
-    "-o:'" & sRutaBody & "'" & Chr(10)
+    "-o:'" & sRutaBody & "' " &
+    "estilo_cita='" & sEstilo & "'" & Chr(10)
   FMain.TerminalViewProyecto.Input(sComando)
 
   iEspera = 0
@@ -3871,22 +3892,22 @@ End Function
 ' ============================================
 ' Función   : EnsamblarTeX
 ' Propósito : Combina preámbulo (gb-pdf-template.tex si existe,
-'             o ObtenerPreambuloEmbebido() como fallback) con el
+'             o () como fallback) con el
 '             body Saxon y genera l-*.tex listo para compilar.
 '             Inserta \addbibresource solo si el artículo tiene
 '             referencias_citadas y el .bib existe.
 ' Parámetros: iIdArticulo As Integer
 ' Retorna   : Boolean — True si l-*.tex fue guardado
 ' ============================================
-Public Function EnsamblarTeX(iIdArticulo As Integer, bBorrador As Boolean) As Boolean
+Public Function EnsamblarTeX(iIdArticulo As Integer, bBorrador As Boolean, sEstilo As String) As Boolean
 
   Dim hArticulo As Result
   Dim sNombreArchivo As String
   Dim sNombreBase As String
   Dim sRutaProyecto As String
+  Dim sRutaLatex As String
   Dim sRutaBody As String
   Dim sRutaTex As String
-  Dim sRutaTemplate As String
   Dim sRutaBib As String
   Dim sPreamble As String
   Dim sBody As String
@@ -3911,6 +3932,7 @@ Public Function EnsamblarTeX(iIdArticulo As Integer, bBorrador As Boolean) As Bo
   sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
   sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
   sNombreBase = Mid(sNombreArchivo, 3)
+  sRutaLatex = sRutaProyecto &/ "latex"
 
   bTieneReferencias = False
   sRutaBib = sRutaProyecto &/ "referencias" &/ "ref-" & File.BaseName(FMain.txtProyecto.Text) & ".bib"
@@ -3923,7 +3945,6 @@ Public Function EnsamblarTeX(iIdArticulo As Integer, bBorrador As Boolean) As Bo
 
   sRutaBody = sRutaProyecto &/ "latex" &/ "body-" & sNombreBase & ".tex"
   sRutaTex = sRutaProyecto &/ "latex" &/ "l-" & sNombreBase & ".tex"
-  sRutaTemplate = User.Home &/ ".gbpublisher" &/ "gb-pdf-template.tex"
 
   If Not Exist(sRutaBody) Then
     Message.Error("No se encontró el body LaTeX:" & Chr(10) & sRutaBody)
@@ -3936,16 +3957,29 @@ Public Function EnsamblarTeX(iIdArticulo As Integer, bBorrador As Boolean) As Bo
     Return False
   Endif
 
-  sPreamble = ObtenerPreambuloEmbebido(bBorrador)
+  sPreamble = ObtenerPreambuloEmbebido(bBorrador, sEstilo)
 
   sAddbibresource = ""
   If bTieneReferencias Then
-    sAddbibresource = "\\addbibresource{" & sRutaBib & "}"
+    If sEstilo <> "vancouver" Then
+      sAddbibresource = "\\addbibresource{" & sRutaBib & "}"
+    Endif
   Endif
   sPreamble = Replace(sPreamble, "%%BIBRESOURCE%%", sAddbibresource)
 
   sCierre = ""
-  If bTieneReferencias Then sCierre = "\\printbibliography" & Chr(10)
+  If bTieneReferencias Then
+    If sEstilo = "vancouver" Then
+      ' BIBTEX NO ACEPTA RUTAS ABSOLUTAS — COPIAR EL .BIB AL
+      ' DIRECTORIO /latex/ Y REFERENCIAR SOLO POR NOMBRE BASE SIN EXT
+      Shell "cp '" & sRutaBib & "' '" & sRutaLatex & "/'" Wait
+      Dim sNombreBibBase As String = File.BaseName(sRutaBib)
+      sCierre = "\\bibliography{" & sNombreBibBase & "}" & Chr(10)
+    Else
+      ' BIBLATEX: \printbibliography
+      sCierre = "\\printbibliography" & Chr(10)
+    Endif
+  Endif
   sCierre &= "\\end{document}" & Chr(10)
 
   sTexFinal = sPreamble & Chr(10) & sBody & Chr(10) & sCierre
@@ -3976,7 +4010,7 @@ End Function
 ' Parámetros: iIdArticulo As Integer
 ' Retorna   : Boolean — True si PDF fue generado y copiado
 ' ============================================
-Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
+Public Function CompilarPDF(iIdArticulo As Integer, sEstilo As String) As Boolean
 
   Dim hArticulo As Result
   Dim sNombreArchivo As String
@@ -4043,11 +4077,19 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
   sComando &= "lualatex -interaction=nonstopmode '" & sRutaTex & "'"
 
   If bTieneReferencias Then
-    sComando &= " && biber 'l-" & sNombreBase & "'"
+    If sEstilo = "vancouver" Then
+      sComando &= " && bibtex 'l-" & sNombreBase & "'"
+      FMain.TerminalViewProyecto.Input(
+        "echo '=== PDF: lualatex → bibtex → lualatex × 2 ==='" & Chr(10))
+    Else
+      sComando &= " && biber 'l-" & sNombreBase & "'"
+      FMain.TerminalViewProyecto.Input(
+        "echo '=== PDF: lualatex → biber → lualatex × 2 ==='" & Chr(10))
+    Endif
     sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
-    FMain.TerminalViewProyecto.Input("echo '=== PDF: lualatex → biber → lualatex × 2 ==='" & Chr(10))
   Else
-    FMain.TerminalViewProyecto.Input("echo '=== PDF: lualatex × 2 (sin bibliografía) ==='" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "echo '=== PDF: lualatex × 2 (sin bibliografía) ==='" & Chr(10))
   Endif
 
   sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
@@ -4088,9 +4130,9 @@ Public Function CompilarPDF(iIdArticulo As Integer) As Boolean
 
   ' LIMPIAR AUXILIARES (conservar .tex y .pdf local como respaldo)
   FMain.TerminalViewProyecto.Input("cd '" & sRutaLatex & "' && " &
-    "rm -f *.aux *.bbl *.bcf *.blg *.log *.out *.run.xml *.toc *.fls *.pdf " &
+    "rm -f  *.bbl *.bcf *.out *.run.xml *.toc *.fls *.pdf " &
     "'" & sRutaCentinela & "'" & Chr(10))
-  Wait 2
+  Wait 2 '*.blg *.aux *.log
 
   FMain.TerminalViewProyecto.Input(
     "echo '=== PDF DISPONIBLE: " & sRutaPdfDestino & " ==='" & Chr(10))
@@ -4116,21 +4158,21 @@ End Function
 ' Parámetros: iIdArticulo As Integer
 ' Retorna   : Boolean — True si el PDF final está en /salidas/pdf/
 ' ============================================
-Public Function GenerarPDF(iIdArticulo As Integer, bBorrador As Boolean) As Boolean
+Public Function GenerarPDF(iIdArticulo As Integer, bBorrador As Boolean, sEstilo As String) As Boolean
 
   FMain.TerminalViewProyecto.Input("echo '=== INICIO PIPELINE PDF ==='" & Chr(10))
 
-  If Not GenerarTeXBodyDesdeCanonico(iIdArticulo) Then
+  If Not GenerarTeXBodyDesdeCanonico(iIdArticulo, sEstilo) Then
     Message.Error("Falló la transformación XSLT." & Chr(10) & "Pipeline cancelado.")
     Return False
   Endif
 
-  If Not EnsamblarTeX(iIdArticulo, bBorrador) Then
+  If Not EnsamblarTeX(iIdArticulo, bBorrador, sEstilo) Then
     Message.Error("Falló el ensamblado del .tex." & Chr(10) & "Pipeline cancelado.")
     Return False
   Endif
 
-  If Not CompilarPDF(iIdArticulo) Then
+  If Not CompilarPDF(iIdArticulo, sEstilo) Then
     Message.Error("Falló la compilación." & Chr(10) & "Revise el terminal para más detalles.")
     Return False
   Endif

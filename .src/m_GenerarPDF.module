@@ -11,6 +11,12 @@
 ' ============================================
 Public Sub GenerarPDFunaColumna()
 
+  Dim iModo As Integer
+  Dim bBorrador As Boolean
+  Dim sEstilo As String = ""
+  Dim hEstilo As Result
+  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+
   ' --- 1. Verificar que hay un artículo activo ---
   If FMain.id_articulo.Value = 0 Then
     m_Sonido.sonar("Info")
@@ -18,18 +24,34 @@ Public Sub GenerarPDFunaColumna()
     Return
   Endif
 
-  ' --- 2. Elegir modo de salida ---
-  m_Sonido.sonar("Question")
-  Dim iModo As Integer = Message.Question("Seleccioná el modo de salida:" & Chr(10) & Chr(10) &
-    "<b>BORRADOR:</b> activa showframe y marcas de inconsistencias de principio y fin de linea (homeoarchy)" & Chr(10) & Chr(10) &
-    "<b>FINAL:</b> sin marcas visuales, listo para publicar.", "Borrador", "Final", "Cancelar")
+  ' --- 2. LEER ESTILO DE CITA DESDE LA BD ---
+  ' Dim hEstilo As Result
+  Try hEstilo = m_ConexionBD.mConn.Exec(
+    "SELECT estilo_cita FROM revistas_md WHERE id_revista = &1 LIMIT 1",
+    CInt(FMain.id_revista.Value))
+  ' Dim sEstilo As String = ""
+  If Not Error And hEstilo.Available Then
+    sEstilo = m_Metadatos.NullToString(hEstilo["estilo_cita"])
+  Endif
+  ' NORMALIZAR: extraer tipo desde nombre del archivo CSL
+  ' apa.csl → "apa", vancouver.csl → "vancouver", etc.
+  sEstilo = LCase(File.BaseName(sEstilo))
 
-  If iModo = 3 Then Return
+  ' NORMALIZAR AL IDENTIFICADOR CORTO
+  If sEstilo Begins "apa" Then
+    sEstilo = "apa"
+  Else If InStr(sEstilo, "iso690") > 0 Or sEstilo Begins "iso" Then
+    sEstilo = "iso690"
+  Else If sEstilo Begins "ieee" Then
+    sEstilo = "ieee"
+  Else If sEstilo Begins "vancouver" Or InStr(sEstilo, "numeric") > 0 Then
+    sEstilo = "vancouver"
+  Endif
 
-  Dim bBorrador As Boolean = (iModo = 1)
+  FMain.TerminalViewProyecto.Input("echo 'DEBUG sEstilo normalizado: " & sEstilo & "'" & Chr(10))
 
   ' --- 3. Verificar que Saxon-HE está instalado ---
-  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+  ' Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
   If Not Exist(sSaxon) Then
     m_Sonido.sonar("Error")
     Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
@@ -37,6 +59,17 @@ Public Sub GenerarPDFunaColumna()
       "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
     Return
   Endif
+
+  ' --- 3. ELEGIR MODO DE SALIDA ---
+  iModo = Message.Question("Seleccioná el modo de salida:" & Chr(10) & Chr(10) &
+    "BORRADOR: activa showframe y marcas de inconsistencias" & Chr(10) &
+    "(líneas largas en naranja, espacios irregulares)." & Chr(10) & Chr(10) &
+    "FINAL: sin marcas visuales, listo para publicar.",
+    "Borrador", "Final", "Cancelar")
+
+  If iModo = 3 Then Return
+
+  bBorrador = (iModo = 1)
 
   ' --- 4. Verificar que la hoja de estilo LaTeX existe ---
   Dim sRutaXSL As String = User.Home &/ ".gbpublisher/xslt/jats-to-latex.xsl"
@@ -82,10 +115,8 @@ Public Sub GenerarPDFunaColumna()
     Return
   Endif
 
-  ' --- 8. Ejecutar el pipeline completo desde m_XML ---
-  ' GenerarPDF() orquesta: Saxon → EnsamblarTeX → lualatex (→ biber →) lualatex
-  If Not m_XML.GenerarPDF(CInt(FMain.id_articulo.Value), bBorrador) Then
-    ' EL MENSAJE DE ERROR YA FUE MOSTRADO POR GenerarPDF() O SUS SUBFUNCIONES
+  ' --- 8. EJECUTAR EL PIPELINE ---
+  If Not m_XML.GenerarPDF(CInt(FMain.id_articulo.Value), bBorrador, sEstilo) Then
     Return
   Endif
 
