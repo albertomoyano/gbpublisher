@@ -3631,7 +3631,7 @@ Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean, sEstilo As Strin
       ' EL PAQUETE cite PERMITE \cite{k1,k2,k3} → [1,2,3]
       ' SIN CONFLICTOS CON hyperref NI OTROS PAQUETES
       ' vancouver.bst MANEJA EL FORMATO DEL LISTADO BIBLIOGRÁFICO
-      s &= "\\usepackage{cite}" & Chr(10)
+      s &= "\\usepackage[nocompress]{cite}" & Chr(10)
       s &= "\\bibliographystyle{vancouver}" & Chr(10)
     Case Else
       ' FALLBACK: APA
@@ -4079,10 +4079,12 @@ Public Function CompilarPDF(iIdArticulo As Integer, sEstilo As String) As Boolea
   If bTieneReferencias Then
     If sEstilo = "vancouver" Then
       sComando &= " && bibtex 'l-" & sNombreBase & "'"
+      sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
       FMain.TerminalViewProyecto.Input(
-        "echo '=== PDF: lualatex → bibtex → lualatex × 2 ==='" & Chr(10))
+        "echo '=== PDF: lualatex → bibtex → lualatex × 3 ==='" & Chr(10))
     Else
       sComando &= " && biber 'l-" & sNombreBase & "'"
+      sComando &= " && lualatex -interaction=nonstopmode '" & sRutaTex & "'"
       FMain.TerminalViewProyecto.Input(
         "echo '=== PDF: lualatex → biber → lualatex × 2 ==='" & Chr(10))
     Endif
@@ -4118,6 +4120,9 @@ Public Function CompilarPDF(iIdArticulo As Integer, sEstilo As String) As Boolea
     "echo 'OK: PDF copiado'" & Chr(10))
   Wait 3
 
+  ' INYECTAR METADATOS XMP EN EL PDF FINAL
+  InyectarMetadatosXMP(iIdArticulo, sEstilo, sRutaPdfDestino)
+
   If Not Exist(sRutaPdfDestino) Then
     Message.Error("No se pudo copiar el PDF a /salidas/pdf/:" & Chr(10) & sRutaPdfDestino)
     Return False
@@ -4130,9 +4135,9 @@ Public Function CompilarPDF(iIdArticulo As Integer, sEstilo As String) As Boolea
 
   ' LIMPIAR AUXILIARES (conservar .tex y .pdf local como respaldo)
   FMain.TerminalViewProyecto.Input("cd '" & sRutaLatex & "' && " &
-    "rm -f  *.bbl *.bcf *.out *.run.xml *.toc *.fls *.pdf " &
+    "rm -f *.bcf *.out *.run.xml *.toc *.fls *.pdf *.blg *.aux *.log *.bbl " &
     "'" & sRutaCentinela & "'" & Chr(10))
-  Wait 2 '*.blg *.aux *.log
+  Wait 2
 
   FMain.TerminalViewProyecto.Input(
     "echo '=== PDF DISPONIBLE: " & sRutaPdfDestino & " ==='" & Chr(10))
@@ -4399,5 +4404,285 @@ Public Function NombreArchivoLatexANombreBD(sArchivoLatex As String) As String
 
   If Left(sBase, 2) = "l-" Then Return "a-" & Mid(sBase, 3)
   Return sBase
+
+End Function
+
+' ============================================
+' Función   : InyectarMetadatosXMP
+' Propósito : Inyecta metadatos XMP completos en el PDF final
+'             usando exiftool. Cubre Dublin Core, XMP básico,
+'             PDF, PRISM 3.x e Iptc4xmpExt para ORCID/afiliación.
+'             Opera sobre el PDF ya copiado en /salidas/pdf/.
+' Parámetros: iIdArticulo As Integer
+'             sEstilo     As String
+'             sRutaPdf    As String — ruta completa al PDF final
+' Retorna   : Boolean — True si exiftool terminó sin error
+' ============================================
+Public Function InyectarMetadatosXMP(iIdArticulo As Integer, sEstilo As String, sRutaPdf As String) As Boolean
+
+  ' --- 1. Verificar que exiftool está disponible ---
+  Dim sCheck As String
+
+  Shell "which exiftool" To sCheck
+  Wait
+  If Trim(sCheck) = "" Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'AVISO: exiftool no encontrado — metadatos XMP omitidos'" & Chr(10))
+    Return True  ' NO ES ERROR FATAL — el PDF ya está generado
+  Endif
+
+  ' --- 2. Localizar el canónico JATS ---
+  Dim hArticulo As Result
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    iIdArticulo)
+  If Error Or Not hArticulo.Available Then Return True
+
+  Dim sNombreArchivo As String = TrimUTF8(hArticulo["nombre_archivo"])
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+  Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+  Dim sRutaCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreBase & ".xml"
+
+  If Not Exist(sRutaCanonico) Then Return True
+
+  ' --- 3. Parsear el canónico JATS ---
+  Dim xDoc As New XmlDocument
+  Try xDoc.Open(sRutaCanonico)
+  If Error Then Return True
+
+  ' --- 4. Extraer metadatos del canónico ---
+
+  ' METADATOS DEL ARTÍCULO
+  Dim sTitulo As String = ObtenerNodoXml(xDoc, "article-title")
+  Dim sAbstract As String = ObtenerNodoXml(xDoc, "abstract")
+  Dim sDoi As String = ObtenerNodoXml(xDoc, "article-id")
+
+  ' DOI ESPECÍFICO POR ATRIBUTO pub-id-type
+  Dim aIds As XmlElement[] = xDoc.GetElementsByTagName("article-id")
+  Dim i As Integer
+  For i = 0 To aIds.Count - 1
+    If Trim(aIds[i].Attributes["pub-id-type"]) = "doi" Then
+      sDoi = Trim(aIds[i].TextContent)
+      Break
+    Endif
+  Next
+
+  ' IDIOMA
+  Dim aArticle As XmlElement[] = xDoc.GetElementsByTagName("article")
+  Dim sLang As String = ""
+  If aArticle.Count > 0 Then
+    sLang = Trim(aArticle[0].Attributes["xml:lang"])
+  Endif
+
+  ' TIPO DE ARTÍCULO
+  Dim sArticleType As String = ""
+  If aArticle.Count > 0 Then
+    sArticleType = Trim(aArticle[0].Attributes["article-type"])
+  Endif
+
+  ' METADATOS DE REVISTA
+  Dim sJTitle As String = ObtenerNodoXml(xDoc, "journal-title")
+  Dim sPublisher As String = ObtenerNodoXml(xDoc, "publisher-name")
+
+  ' ISSN
+  Dim sIssnPrint As String = ""
+  Dim sIssnElec As String = ""
+  Dim aIssn As XmlElement[] = xDoc.GetElementsByTagName("issn")
+  For i = 0 To aIssn.Count - 1
+    Dim sPubType As String = Trim(aIssn[i].Attributes["pub-type"])
+    If sPubType = "ppub" Then sIssnPrint = Trim(aIssn[i].TextContent)
+    If sPubType = "epub" Then sIssnElec = Trim(aIssn[i].TextContent)
+  Next
+
+  ' VOLUMEN, NÚMERO, PÁGINAS
+  Dim sVolumen As String = ObtenerNodoXml(xDoc, "volume")
+  Dim sNumero As String = ObtenerNodoXml(xDoc, "issue")
+  Dim sFpage As String = ObtenerNodoXml(xDoc, "fpage")
+  Dim sLpage As String = ObtenerNodoXml(xDoc, "lpage")
+
+  ' FECHA DE PUBLICACIÓN
+  Dim sAnio As String = ObtenerNodoXml(xDoc, "year")
+  Dim sMes As String = ObtenerNodoXml(xDoc, "month")
+  Dim sDia As String = ObtenerNodoXml(xDoc, "day")
+  Dim sFechaISO As String = ""
+  If sAnio <> "" Then
+    sFechaISO = sAnio
+    If sMes <> "" Then
+      sFechaISO &= "-" & Format(CInt(sMes), "00")
+      If sDia <> "" Then
+        sFechaISO &= "-" & Format(CInt(sDia), "00")
+      Endif
+    Endif
+  Endif
+
+  ' PALABRAS CLAVE (primera kwd-group)
+  Dim aKwds As XmlElement[] = xDoc.GetElementsByTagName("kwd")
+  Dim sKeywords As String = ""
+  For i = 0 To aKwds.Count - 1
+    If i > 0 Then sKeywords &= ", "
+    sKeywords &= Trim(aKwds[i].TextContent)
+  Next
+
+  ' LICENCIA
+  Dim sLicencia As String = ""
+  Dim aLicense As XmlElement[] = xDoc.GetElementsByTagName("license")
+  If aLicense.Count > 0 Then
+    sLicencia = Trim(aLicense[0].Attributes["xlink:href"])
+  Endif
+
+  ' --- 5. Construir lista de autores para dc:creator e Iptc4xmpExt ---
+  Dim aContribs As XmlElement[] = xDoc.GetElementsByTagName("contrib")
+  Dim sAutores As String = ""
+  Dim sIptcAutores As String = ""
+
+  For i = 0 To aContribs.Count - 1
+    Dim hContrib As XmlElement = aContribs[i]
+    If Trim(hContrib.Attributes["contrib-type"]) <> "author" Then Continue
+
+    ' EXTRAER DATOS NAVEGANDO HIJOS DEL XmlElement
+    ' XmlElement NO TIENE GetElementsByTagName — HAY QUE USAR Children
+    Dim sGiven As String = ""
+    Dim sSurname As String = ""
+    Dim sOrcid As String = ""
+    Dim sAfiliacion As String = ""
+
+    ' BUSCAR RECURSIVAMENTE EN HIJOS
+    sGiven = ObtenerHijoTexto(hContrib, "given-names")
+    sSurname = ObtenerHijoTexto(hContrib, "surname")
+
+    ' CONTRIB-ID CON ATRIBUTO orcid
+    Dim j As Integer
+    For j = 0 To hContrib.Children.Count - 1
+      If Object.Type(hContrib.Children[j]) <> "XmlElement" Then Continue
+      Dim hEl As XmlElement = hContrib.Children[j]
+      If hEl.Name = "contrib-id" Then
+        If Trim(hEl.Attributes["contrib-id-type"]) = "orcid" Then
+          sOrcid = Trim(hEl.TextContent)
+        Endif
+      Endif
+      If hEl.Name = "aff" Then
+        sAfiliacion = ObtenerHijoTexto(hEl, "institution")
+      Endif
+    Next
+
+    Dim sNombreCompleto As String = Trim(sGiven & " " & sSurname)
+    If sNombreCompleto = "" Then Continue
+
+    If sAutores <> "" Then sAutores &= "; "
+    sAutores &= sNombreCompleto
+
+    sIptcAutores &= " \"-XMP-iptcExt:PersonInImage+={PersonName=" & sNombreCompleto
+    If sOrcid <> "" Then sIptcAutores &= ",PersonId=" & sOrcid
+    If sAfiliacion <> "" Then
+      sIptcAutores &= ",OrganisationInImageName=" & sAfiliacion
+    Endif
+    sIptcAutores &= "}\""
+
+  Next
+
+  ' --- 6. Construir el comando exiftool ---
+  Dim sCmd As String = "exiftool -overwrite_original"
+
+  ' DUBLIN CORE
+  If sTitulo <> "" Then sCmd &= " -XMP-dc:Title=" & ShellQuote(sTitulo)
+  If sAutores <> "" Then sCmd &= " -XMP-dc:Creator=" & ShellQuote(sAutores)
+  If sAbstract <> "" Then sCmd &= " -XMP-dc:Description=" & ShellQuote(sAbstract)
+  If sKeywords <> "" Then sCmd &= " -XMP-dc:Subject=" & ShellQuote(sKeywords)
+  If sLang <> "" Then sCmd &= " -XMP-dc:Language=" & ShellQuote(sLang)
+  If sDoi <> "" Then
+    sCmd &= " -XMP-dc:Identifier=" & ShellQuote("https://doi.org/" & sDoi)
+  Endif
+  If sLicencia <> "" Then sCmd &= " -XMP-dc:Rights=" & ShellQuote(sLicencia)
+  If sPublisher <> "" Then sCmd &= " -XMP-dc:Publisher=" & ShellQuote(sPublisher)
+
+  ' XMP BÁSICO
+  sCmd &= " -XMP-xmp:CreatorTool=gbpublisher"
+  If sFechaISO <> "" Then
+    sCmd &= " -XMP-xmp:CreateDate=" & ShellQuote(sFechaISO)
+    sCmd &= " -XMP-xmp:MetadataDate=" & ShellQuote(sFechaISO)
+  Endif
+
+  ' PDF BÁSICO
+  If sTitulo <> "" Then sCmd &= " -PDF:Title=" & ShellQuote(sTitulo)
+  If sAutores <> "" Then sCmd &= " -PDF:Author=" & ShellQuote(sAutores)
+  If sKeywords <> "" Then sCmd &= " -PDF:Keywords=" & ShellQuote(sKeywords)
+
+  ' PRISM 3.x
+  If sJTitle <> "" Then sCmd &= " -XMP-prism:PublicationName=" & ShellQuote(sJTitle)
+  If sIssnElec <> "" Then sCmd &= " -XMP-prism:Eissn=" & ShellQuote(sIssnElec)
+  If sIssnPrint <> "" Then sCmd &= " -XMP-prism:Issn=" & ShellQuote(sIssnPrint)
+  If sDoi <> "" Then sCmd &= " -XMP-prism:Doi=" & ShellQuote(sDoi)
+  If sVolumen <> "" Then sCmd &= " -XMP-prism:Volume=" & ShellQuote(sVolumen)
+  If sNumero <> "" Then sCmd &= " -XMP-prism:Number=" & ShellQuote(sNumero)
+  If sFpage <> "" Then sCmd &= " -XMP-prism:StartingPage=" & ShellQuote(sFpage)
+  If sLpage <> "" Then sCmd &= " -XMP-prism:EndingPage=" & ShellQuote(sLpage)
+  If sFechaISO <> "" Then sCmd &= " -XMP-prism:CoverDate=" & ShellQuote(sFechaISO)
+  If sArticleType <> "" Then sCmd &= " -XMP-prism:ContentType=" & ShellQuote(sArticleType)
+  If sLicencia <> "" Then sCmd &= " -XMP-cc:License=" & ShellQuote(sLicencia)
+
+  ' IPTC4XMPEXT — ORCID Y AFILIACIÓN POR AUTOR
+  If sIptcAutores <> "" Then sCmd &= sIptcAutores
+
+  ' PDF A PROCESAR
+  sCmd &= " '" & sRutaPdf & "'"
+
+  ' --- 7. Ejecutar en terminal ---
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- INYECTANDO METADATOS XMP ---'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(sCmd & Chr(10))
+  Wait 3
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: metadatos XMP inyectados'" & Chr(10))
+
+  Return True
+
+Catch
+  FMain.TerminalViewProyecto.Input(
+    "echo 'AVISO: error al inyectar metadatos XMP: " & Error.Text & "'" & Chr(10))
+  Return True  ' NO ES ERROR FATAL
+
+End Function
+
+' ============================================
+' Función   : ShellQuote
+' Propósito : Escapa una cadena para uso seguro
+'             como argumento de shell entre comillas simples
+' Parámetros: s As String
+' Retorna   : String entre comillas simples con escapes
+' ============================================
+Private Function ShellQuote(s As String) As String
+  ' EN BASH, DENTRO DE COMILLAS SIMPLES NO HAY ESCAPES POSIBLES
+  ' SE CIERRA LA COMILLA, SE PONE LA COMILLA ESCAPADA, SE REABRE
+
+  Return "'" & Replace(s, "'", "'\\''") & "'"
+
+End Function
+
+' ============================================
+' Función   : ObtenerHijoTexto
+' Propósito : Busca un elemento hijo por nombre dentro de un
+'             XmlElement y retorna su TextContent.
+'             XmlElement NO tiene GetElementsByTagName —
+'             se itera Children manualmente.
+' Parámetros: hEl  As XmlElement — elemento raíz de búsqueda
+'             sTag As String     — nombre del elemento a buscar
+' Retorna   : String — texto del primer hijo encontrado, o ""
+' ============================================
+Private Function ObtenerHijoTexto(hEl As XmlElement, sTag As String) As String
+
+  Dim i As Integer
+
+  For i = 0 To hEl.Children.Count - 1
+    ' Object.Type() DEVUELVE EL NOMBRE DE CLASE COMO STRING
+    If Object.Type(hEl.Children[i]) <> "XmlElement" Then Continue
+    Dim hHijo As XmlElement = hEl.Children[i]
+    If hHijo.Name = sTag Then Return Trim(hHijo.TextContent)
+    ' BUSCAR UN NIVEL MÁS PROFUNDO (name/given-names, name/surname)
+    Dim sDeep As String = ObtenerHijoTexto(hHijo, sTag)
+    If sDeep <> "" Then Return sDeep
+  Next
+
+  Return ""
 
 End Function
