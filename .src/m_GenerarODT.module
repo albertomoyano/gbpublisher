@@ -1,0 +1,145 @@
+' Gambas module file
+
+' ============================================
+' Función   : GenerarODTunaColumna
+' Propósito : Dispara el pipeline de generación de ODT
+'             usando Pandoc con citeproc. Sigue el mismo
+'             patrón que GenerarPDFunaColumna().
+' ============================================
+Public Sub GenerarODTunaColumna()
+
+  ' --- 1. Inicialización de variables ---
+  Dim sEstilo As String = ""
+  Dim hEstilo As Result
+  Dim hRes As Result
+  Dim sNombreBase As String
+  Dim sRutaProyecto As String
+  Dim sRutaMd As String
+  Dim sRutaBib As String
+  Dim sRutaCSL As String
+  Dim sRutaRef As String
+  Dim sRutaSalida As String
+  Dim sCmd As String
+  Dim sPandoc As String
+
+  ' --- 2. Verificar que hay un artículo activo ---
+  If FMain.id_articulo.Value = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Seleccioná un artículo antes de generar el ODT.")
+    Return
+  Endif
+
+  ' --- 3. Leer estilo de cita desde la BD ---
+  Try hEstilo = m_ConexionBD.mConn.Exec(
+    "SELECT estilo_cita FROM revistas_md WHERE id_revista = &1 LIMIT 1",
+    CInt(FMain.id_revista.Value))
+  If Not Error And hEstilo.Available Then
+    sEstilo = m_Metadatos.NullToString(hEstilo["estilo_cita"])
+  Endif
+
+  ' NORMALIZAR AL IDENTIFICADOR CORTO
+  sEstilo = LCase(File.BaseName(sEstilo))
+  If sEstilo Begins "apa" Then
+    sEstilo = "apa"
+  Else If InStr(sEstilo, "iso690") > 0 Or sEstilo Begins "iso" Then
+    sEstilo = "iso690"
+  Else If sEstilo Begins "ieee" Then
+    sEstilo = "ieee"
+  Else If sEstilo Begins "vancouver" Or InStr(sEstilo, "numeric") > 0 Then
+    sEstilo = "vancouver"
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'DEBUG sEstilo ODT: " & sEstilo & "'" & Chr(10))
+
+  ' --- 4. Verificar que Pandoc está disponible ---
+  Shell "which pandoc" To sPandoc
+  Wait
+  If Trim(sPandoc) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Pandoc no encontrado en el sistema." & Chr(10) &
+      "Instalá Pandoc:" & Chr(10) &
+      "sudo apt install pandoc")
+    Return
+  Endif
+
+  ' --- 5. Verificar que la plantilla ODT existe ---
+  sRutaRef = User.Home &/ ".gbpublisher/odt/reference.ott"
+  If Not Exist(sRutaRef) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró la plantilla OTT:" & Chr(10) & sRutaRef)
+    Return
+  Endif
+
+  ' --- 6. Obtener nombre del archivo desde la BD ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = " &
+    CStr(FMain.id_articulo.Value))
+  If Error Or hRes.Count = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  ' --- 7. Construcción de rutas ---
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sNombreBase = Mid(Trim(hRes!nombre_archivo), 3)
+
+  sRutaMd = "articulos/a-" & sNombreBase & ".md"
+  sRutaBib = "referencias/ref-" & File.BaseName(FMain.txtProyecto.Text) & ".bib"
+  sRutaCSL = User.Home &/ ".gbpublisher/csl/" & sEstilo & ".csl"
+  sRutaSalida = "salidas/odt/o-" & sNombreBase & ".odt"
+
+  ' --- 8. Verificar archivos requeridos ---
+  If Not Exist(sRutaProyecto &/ sRutaMd) Then
+    Message.Error("No se encuentra el archivo Markdown:" & Chr(10) & sRutaMd)
+    Return
+  Endif
+  If Not Exist(sRutaProyecto &/ sRutaBib) Then
+    Message.Error("No se encuentra el archivo de referencias:" & Chr(10) & sRutaBib)
+    Return
+  Endif
+  If Not Exist(sRutaCSL) Then
+    Message.Error("No se encuentra el archivo CSL:" & Chr(10) & sRutaCSL)
+    Return
+  Endif
+
+  ' --- 9. Ejecutar el pipeline ---
+  FMain.TerminalViewProyecto.Input("echo '=== INICIO PIPELINE ODT ==='" & Chr(10))
+
+  ' CAMBIAR AL DIRECTORIO DEL PROYECTO
+  ' NECESARIO PARA QUE PANDOC RESUELVA RUTAS RELATIVAS DE IMÁGENES
+  FMain.TerminalViewProyecto.Input("cd '" & sRutaProyecto & "'" & Chr(10))
+  Wait 1
+
+  FMain.TerminalViewProyecto.Input("echo '=== ODT: GENERANDO CON PANDOC ==='" & Chr(10))
+
+  sCmd = "pandoc '" & sRutaMd & "'"
+  sCmd &= " --from markdown"
+  sCmd &= " --to odt"
+  sCmd &= " --citeproc"
+  sCmd &= " --bibliography '" & sRutaBib & "'"
+  sCmd &= " --csl '" & sRutaCSL & "'"
+  sCmd &= " --reference-doc '" & sRutaRef & "'"
+  sCmd &= " --output '" & sRutaSalida & "'"
+  sCmd &= " && echo 'OK: ODT generado en " & sRutaSalida & "'"
+  sCmd &= " || echo 'ERROR: falló la generación del ODT'"
+
+  FMain.TerminalViewProyecto.Input(sCmd & Chr(10))
+  Wait 8
+
+  ' --- 10. Verificar resultado ---
+  If Not Exist(sRutaProyecto &/ sRutaSalida) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo ODT no fue generado." & Chr(10) &
+      "Revisá la consola para más detalles.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo '=== ODT DISPONIBLE: " & sRutaSalida & " ==='" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo '=== PIPELINE ODT COMPLETADO ==='" & Chr(10))
+
+  ' --- 11. Confirmar al usuario ---
+  m_Sonido.sonar("Info")
+  Message.Info("ODT generado correctamente:" & Chr(10) & "o-" & sNombreBase & ".odt")
+
+End Sub
