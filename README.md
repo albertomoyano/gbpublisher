@@ -8,6 +8,8 @@ Está pensada para entornos universitarios y científicos que requieren **estand
 
 gbpublisher implementa un flujo de trabajo **Single Source Publishing**, basado en estándares abiertos ampliamente adoptados en el ecosistema académico internacional: Markdown, bases de datos SQL, JATS XML, XSLT y LaTeX. El proceso comienza con la autoría en Markdown, que luego se transforma a JATS —enriquecido con metadatos desde la base de datos SQL— para constituir un documento canónico único a partir del cual se generan múltiples formatos de salida.
 
+![Single Source Publishing](diagrama.png)
+
 ---
 
 ## Modelo de producción: Single Source con JATS canónico
