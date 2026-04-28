@@ -6,13 +6,15 @@
 
 Está pensada para entornos universitarios y científicos que requieren **estandarización, reproducibilidad y soberanía tecnológica**, sin depender de plataformas propietarias ni servicios externos.
 
-gbpublisher implementa un flujo de trabajo **XML-first**, basado en estándares abiertos ampliamente adoptados en el ecosistema académico internacional: Markdown, bases de datos SQL, JATS XML, XSLT y LaTeX.
+gbpublisher implementa un flujo de trabajo **Single Source Publishing**, basado en estándares abiertos ampliamente adoptados en el ecosistema académico internacional: Markdown, bases de datos SQL, JATS XML, XSLT y LaTeX. El proceso comienza con la autoría en Markdown, que luego se transforma a JATS —enriquecido con metadatos desde la base de datos SQL— para constituir un documento canónico único a partir del cual se generan múltiples formatos de salida.
 
 ---
 
-## Modelo de producción XML-first
+## Modelo de producción: Single Source con JATS canónico
 
 En gbpublisher, cada artículo se transforma en un **JATS maestro validado**, que actúa como fuente única y autoritativa para todas las salidas editoriales posteriores.
+
+El flujo comienza con autoría en Markdown, que se convierte a JATS y se enriquece con metadatos desde la base de datos SQL. Una vez consolidado, este JATS canónico alimenta todas las salidas: XML especializados (SciELO, PubMed, Crossref), HTML, EPUB y LaTeX para composición PDF.
 
 Este enfoque garantiza:
 
@@ -47,22 +49,25 @@ El contenido se redacta y mantiene en archivos Markdown estructurados, facilitan
 
 ### Generación y validación del JATS maestro
 
-* generación reproducible
+* generación reproducible desde Markdown
+* enriquecimiento con metadatos desde la base de datos SQL
 * validación con `xmllint`
 * control de versiones y consistencia estructural
 
 ### Transformación a múltiples salidas mediante XSLT
 
+Desde el JATS canónico se generan:
+
 * SciELO (por colección)
 * PubMed / PMC
 * Crossref Journal Metadata Deposit XML
-* XML para flujos con InDesign
 * HTML académico
 * EPUB accesible
+* LaTeX para composición PDF de alta calidad
 
 ### Generación de PDF de alta calidad
 
-* composición con LaTeX
+* composición con LaTeX generado desde el JATS canónico
 * control tipográfico profesional
 * compatibilidad con PDF/A
 
