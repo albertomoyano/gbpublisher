@@ -32,6 +32,7 @@
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xlink="http://www.w3.org/1999/xlink"
   xmlns:epub="http://www.idpf.org/2007/ops"
+  xmlns="http://www.w3.org/1999/xhtml"
   version="2.0">
 
   <!-- ================================================
@@ -47,10 +48,10 @@
        SALIDA: XHTML5
        ================================================ -->
   <xsl:output
-    method="html"
-    version="5"
+    method="xml"
     encoding="UTF-8"
-    indent="yes"/>
+    indent="yes"
+    omit-xml-declaration="no"/>
 
   <!-- ================================================
        VARIABLES GLOBALES
@@ -92,7 +93,6 @@
        TEMPLATE RAÍZ
        ================================================ -->
   <xsl:template match="/">
-    <xsl:text disable-output-escaping="yes">&lt;!DOCTYPE html&gt;</xsl:text>
     <html xmlns="http://www.w3.org/1999/xhtml"
           xmlns:epub="http://www.idpf.org/2007/ops"
           lang="{$lang}" xml:lang="{$lang}">
@@ -345,6 +345,42 @@
         <xsl:apply-templates select="//body"/>
 
         <!-- ================================================
+             NOTAS AL FINAL DEL CAPÍTULO
+             PATRÓN ENDNOTES: EL ANCLA VA INLINE EN EL TEXTO
+             (template fn), EL TEXTO DE LA NOTA VA AQUÍ.
+             <aside> DENTRO DE <p> ES INVÁLIDO EN XHTML —
+             POR ESO SE SEPARAN EN DOS LUGARES.
+             ================================================ -->
+        <xsl:if test="//fn">
+          <section epub:type="endnotes" role="doc-endnotes" id="notas">
+            <h2>
+              <xsl:choose>
+                <xsl:when test="$lang = 'es'">Notas</xsl:when>
+                <xsl:when test="$lang = 'en'">Notes</xsl:when>
+                <xsl:when test="$lang = 'pt'">Notas</xsl:when>
+                <xsl:otherwise>Notas</xsl:otherwise>
+              </xsl:choose>
+            </h2>
+            <xsl:for-each select="//fn">
+              <xsl:variable name="fn-num">
+                <xsl:number count="fn" level="any"/>
+              </xsl:variable>
+              <div role="doc-endnote" id="fn-{$fn-num}" class="fn-item">
+                <p>
+                  <sup><xsl:value-of select="$fn-num"/></sup>
+                  <xsl:text> </xsl:text>
+                  <xsl:apply-templates mode="text-only"/>
+                  <xsl:text> </xsl:text>
+                  <a href="#fnref-{$fn-num}"
+                     role="doc-backlink"
+                     class="fn-backlink">&#x21A9;</a>
+                </p>
+              </div>
+            </xsl:for-each>
+          </section>
+        </xsl:if>
+
+        <!-- ================================================
              REFERENCIAS AL FINAL DEL CAPÍTULO
              EN EPUB NO HAY PANEL LATERAL — VAN INLINE
              ================================================ -->
@@ -518,6 +554,15 @@
        COMO ENLACE BIDIRECCIONAL (DEGRADACIÓN ELEGANTE).
        KINDLE PAPERWHITE SOPORTA POPUP EN MISMO XHTML.
        ================================================ -->
+  <!-- ================================================
+       NOTA AL PIE — fn
+       SOLO EMITE EL ANCLA INLINE (SUPERÍNDICE).
+       EL TEXTO DE LA NOTA VA EN LA SECCIÓN endnotes
+       AL FINAL DEL ARTÍCULO, GENERADA DESDE EL TEMPLATE
+       RAÍZ. ESTO EVITA QUE <aside> QUEDE DENTRO DE <p>,
+       LO QUE ES INVÁLIDO EN XHTML Y RECHAZADO POR
+       EPUBCHECK.
+       ================================================ -->
   <xsl:template match="fn">
     <xsl:variable name="fn-num">
       <xsl:number count="fn" level="any"/>
@@ -527,20 +572,6 @@
       href="#fn-{$fn-num}"
       epub:type="noteref"
       role="doc-noteref"><xsl:value-of select="$fn-num"/></a></sup>
-    <aside
-      id="fn-{$fn-num}"
-      epub:type="footnote"
-      role="doc-footnote">
-      <p>
-        <sup><xsl:value-of select="$fn-num"/></sup>
-        <xsl:text> </xsl:text>
-        <xsl:apply-templates mode="text-only"/>
-        <xsl:text> </xsl:text>
-        <a href="#fnref-{$fn-num}"
-           role="doc-backlink"
-           class="fn-backlink">&#x21A9;</a>
-      </p>
-    </aside>
   </xsl:template>
 
   <!-- MODO TEXT-ONLY -->
@@ -551,13 +582,13 @@
   <!-- ================================================
        FÓRMULA MATEMÁTICA
        ================================================ -->
-  <xsl:template match="disp-formula">
-    <div class="disp-formula" id="{@id}">
-      <xsl:text>\[</xsl:text>
+<xsl:template match="disp-formula">
+  <div class="disp-formula" id="{@id}">
+    <code class="tex-math">
       <xsl:value-of select="tex-math"/>
-      <xsl:text>\]</xsl:text>
-    </div>
-  </xsl:template>
+    </code>
+  </div>
+</xsl:template>
 
   <!-- ================================================
        SPEECH / DIÁLOGO

@@ -123,9 +123,12 @@
           <xsl:value-of select="$revista"/>
         </title>
 
-        <!-- ================================================
-             HIGHWIRE PRESS — INDEXACIÓN ACADÉMICA
-             ================================================ -->
+        <xsl:comment>
+          ================================================
+          METADATOS: Highwire Press — Google Scholar
+          Permiten la indexación académica del artículo
+          ================================================
+        </xsl:comment>
         <meta name="citation_title" content="{$titulo}"/>
         <xsl:if test="$doi != ''">
           <meta name="citation_doi" content="{$doi}"/>
@@ -181,9 +184,12 @@
             content="{normalize-space(//journal-meta/publisher/publisher-name)}"/>
         </xsl:if>
 
-        <!-- ================================================
-             DUBLIN CORE
-             ================================================ -->
+        <xsl:comment>
+          ================================================
+          METADATOS: Dublin Core (DC)
+          Estándar de metadatos para recursos digitales
+          ================================================
+        </xsl:comment>
         <meta name="DC.title"    content="{$titulo}"/>
         <meta name="DC.language" content="{$lang}"/>
         <meta name="DC.type"     content="Text"/>
@@ -213,9 +219,12 @@
           <meta name="DC.subject" content="{normalize-space(.)}"/>
         </xsl:for-each>
 
-        <!-- ================================================
-             OPEN GRAPH + TWITTER CARDS
-             ================================================ -->
+        <xsl:comment>
+          ================================================
+          METADATOS: Open Graph + Twitter Cards
+          Para previsualización en redes sociales
+          ================================================
+        </xsl:comment>
         <meta property="og:type"      content="article"/>
         <meta property="og:title"     content="{$titulo}"/>
         <meta property="og:site_name" content="{$revista}"/>
@@ -234,9 +243,12 @@
             content="{normalize-space(//abstract/p[1])}"/>
         </xsl:if>
 
-        <!-- ================================================
-             SCHEMA.ORG JSON-LD — ScholarlyArticle
-             ================================================ -->
+        <xsl:comment>
+          ================================================
+          METADATOS: Schema.org JSON-LD (ScholarlyArticle)
+          Datos estructurados para motores de búsqueda
+          ================================================
+        </xsl:comment>
         <script type="application/ld+json">
           <xsl:text>{</xsl:text>
           <xsl:text>"@context":"https://schema.org",</xsl:text>
@@ -959,6 +971,47 @@
             margin-bottom: 0;
           }
 
+          /* LISTAS */
+          .list-order,
+          .list-bullet {
+            margin: 0.75rem 0 0.75rem 1.5rem;
+            padding-left: 1.25rem;
+          }
+          .list-order { list-style-type: decimal; }
+          .list-bullet { list-style-type: disc; }
+          .list-simple {
+            list-style: none;
+            margin: 0.75rem 0;
+            padding-left: 1.5rem;
+          }
+          .list-order li,
+          .list-bullet li,
+          .list-simple li {
+            margin-bottom: 0.2rem;
+            line-height: var(--line-height-body);
+          }
+          /* P DENTRO DE ITEM — SIN MARGEN EXTRA */
+          .list-order li p,
+          .list-bullet li p,
+          .list-simple li p { margin: 0; padding: 0; }
+          /* LISTAS ANIDADAS */
+          .list-order .list-order { list-style-type: lower-alpha; }
+          .list-order .list-order .list-order { list-style-type: lower-roman; }
+          .list-bullet .list-bullet { list-style-type: circle; }
+          .list-bullet .list-bullet .list-bullet { list-style-type: square; }
+
+          /* DIÁLOGO / ENTREVISTA */
+          .speech-item {
+            margin: 0.3rem 0;
+            line-height: var(--line-height-body);
+          }
+          .speech-speaker {
+            font-family: var(--font-serif);
+            font-size: var(--text-base);
+            font-weight: 600;
+            color: var(--color-accent);
+          }
+
           /* FIGURAS */
           .fig-wrapper {
             margin: 2rem 0;
@@ -1079,22 +1132,6 @@
             overflow-x: auto;
             padding: 0.5rem;
           }
-
-          /* SPEECH / DIÁLOGO */
-          .speech-block {
-            margin: 1rem 0 1rem 1rem;
-            padding: 0.5rem 0;
-          }
-
-          .speech-speaker {
-            font-family: var(--font-sans);
-            font-size: var(--text-sm);
-            font-weight: 700;
-            color: var(--color-accent);
-            margin-bottom: 0.15rem;
-          }
-
-          .speech-text { font-size: var(--text-base); }
 
           /* TABLAS */
           .table-wrap {
@@ -2527,6 +2564,58 @@
   </xsl:template>
 
   <!-- ================================================
+       LISTAS ORDENADAS Y NO ORDENADAS
+       list-type="order"  → <ol> numerada
+       list-type="bullet" → <ul> con bullets
+       list-type="simple" → <ul> sin marcador
+       ANIDAMIENTO VÍA apply-templates RECURSIVO
+       ================================================ -->
+  <xsl:template match="list[@list-type='order']">
+    <ol class="list-order">
+      <xsl:apply-templates select="list-item"/>
+    </ol>
+  </xsl:template>
+
+  <xsl:template match="list[@list-type='bullet']">
+    <ul class="list-bullet">
+      <xsl:apply-templates select="list-item"/>
+    </ul>
+  </xsl:template>
+
+  <xsl:template match="list[@list-type='simple' or not(@list-type)]">
+    <ul class="list-simple">
+      <xsl:apply-templates select="list-item"/>
+    </ul>
+  </xsl:template>
+
+  <xsl:template match="list-item">
+    <li><xsl:apply-templates/></li>
+  </xsl:template>
+
+  <!-- ================================================
+       DIÁLOGO / ENTREVISTA
+       <speech><speaker>Nombre</speaker><p>texto</p></speech>
+       RESULTADO: Nombre — texto (todo en línea, speaker en azul bold)
+       ================================================ -->
+  <xsl:template match="speech">
+    <p class="speech-item">
+      <xsl:apply-templates/>
+    </p>
+  </xsl:template>
+
+  <xsl:template match="speech/speaker">
+    <span class="speech-speaker">
+      <xsl:apply-templates/>
+    </span>
+    <xsl:text> — </xsl:text>
+  </xsl:template>
+
+  <!-- P DENTRO DE SPEECH: SIN WRAPPER <p> PARA QUE TODO QUEDE EN LÍNEA -->
+  <xsl:template match="speech/p" priority="5">
+    <xsl:apply-templates/>
+  </xsl:template>
+
+  <!-- ================================================
        FIGURA
        ================================================ -->
   <xsl:template match="fig">
@@ -2638,20 +2727,6 @@
   </xsl:template>
 
   <!-- ================================================
-       SPEECH / DIÁLOGO
-       ================================================ -->
-  <xsl:template match="speech">
-    <div class="speech-block">
-      <div class="speech-speaker">
-        <xsl:value-of select="speaker"/>
-      </div>
-      <div class="speech-text">
-        <xsl:apply-templates select="p"/>
-      </div>
-    </div>
-  </xsl:template>
-
-  <!-- ================================================
        TABLA
        ================================================ -->
   <xsl:template match="table-wrap">
@@ -2682,7 +2757,7 @@
        ================================================ -->
   <xsl:template match="xref[@ref-type='bibr']">
     <xsl:choose>
-      <xsl:when test="$estilo_cita = 'vancouver'">
+      <xsl:when test="$estilo_cita = 'vancouver' or $estilo_cita = 'ieee'">
         <xsl:call-template name="xref-vancouver"/>
       </xsl:when>
       <xsl:otherwise>
@@ -2693,22 +2768,115 @@
 
   <!-- ================================================
        XREF AUTOR-AÑO — (Apellido, 2024) / (A, 2024; B, 2023)
+       LEE @specific-use PARA MODO, PREFIJO Y SUFIJO
+       FORMATO: "modo|prefijo|sufijo"
+         normal         → (Autor, 2025)
+         suppress       → (2025)           [-@key]
+         author-in-text → Autor (2025)     [@key inline]
        ================================================ -->
   <xsl:template name="xref-autor-anio">
     <xsl:variable name="rid" select="@rid"/>
     <xsl:variable name="cit" select="//ref[@id=$rid]/element-citation"/>
     <xsl:variable name="autor">
       <xsl:choose>
-        <xsl:when test="$cit/person-group[@person-group-type='author']/name[1]/surname">
-          <xsl:value-of select="$cit/person-group[@person-group-type='author']/name[1]/surname"/>
+        <!-- AUTORES -->
+        <xsl:when test="$cit/person-group[@person-group-type='author']/name">
+          <xsl:choose>
+            <xsl:when test="count($cit/person-group[@person-group-type='author']/name) = 1">
+              <xsl:value-of select="$cit/person-group[@person-group-type='author']/name[1]/surname"/>
+            </xsl:when>
+            <xsl:when test="count($cit/person-group[@person-group-type='author']/name) = 2">
+              <xsl:value-of select="$cit/person-group[@person-group-type='author']/name[1]/surname"/>
+              <xsl:text> &amp; </xsl:text>
+              <xsl:value-of select="$cit/person-group[@person-group-type='author']/name[2]/surname"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="$cit/person-group[@person-group-type='author']/name[1]/surname"/>
+              <xsl:text> et al.</xsl:text>
+            </xsl:otherwise>
+          </xsl:choose>
         </xsl:when>
-        <xsl:when test="$cit/person-group[@person-group-type='editor']/name[1]/surname">
-          <xsl:value-of select="$cit/person-group[@person-group-type='editor']/name[1]/surname"/>
+        <!-- EDITORES -->
+        <xsl:when test="$cit/person-group[@person-group-type='editor']/name">
+          <xsl:choose>
+            <xsl:when test="count($cit/person-group[@person-group-type='editor']/name) = 1">
+              <xsl:value-of select="$cit/person-group[@person-group-type='editor']/name[1]/surname"/>
+            </xsl:when>
+            <xsl:when test="count($cit/person-group[@person-group-type='editor']/name) = 2">
+              <xsl:value-of select="$cit/person-group[@person-group-type='editor']/name[1]/surname"/>
+              <xsl:text> &amp; </xsl:text>
+              <xsl:value-of select="$cit/person-group[@person-group-type='editor']/name[2]/surname"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="$cit/person-group[@person-group-type='editor']/name[1]/surname"/>
+              <xsl:text> et al.</xsl:text>
+            </xsl:otherwise>
+          </xsl:choose>
+        </xsl:when>
+        <!-- COMPILADORES -->
+        <xsl:when test="$cit/person-group[@person-group-type='compiler']/name">
+          <xsl:choose>
+            <xsl:when test="count($cit/person-group[@person-group-type='compiler']/name) = 1">
+              <xsl:value-of select="$cit/person-group[@person-group-type='compiler']/name[1]/surname"/>
+            </xsl:when>
+            <xsl:when test="count($cit/person-group[@person-group-type='compiler']/name) = 2">
+              <xsl:value-of select="$cit/person-group[@person-group-type='compiler']/name[1]/surname"/>
+              <xsl:text> &amp; </xsl:text>
+              <xsl:value-of select="$cit/person-group[@person-group-type='compiler']/name[2]/surname"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="$cit/person-group[@person-group-type='compiler']/name[1]/surname"/>
+              <xsl:text> et al.</xsl:text>
+            </xsl:otherwise>
+          </xsl:choose>
+        </xsl:when>
+        <!-- DIRECTORES, COORDINADORES, ORGANIZADORES, COLABORADORES -->
+        <xsl:when test="$cit/person-group[@person-group-type='director' or
+                                          @person-group-type='coordinator' or
+                                          @person-group-type='organizer' or
+                                          @person-group-type='collaborator']/name">
+          <xsl:variable name="pg" select="$cit/person-group[@person-group-type='director' or
+                                                             @person-group-type='coordinator' or
+                                                             @person-group-type='organizer' or
+                                                             @person-group-type='collaborator'][1]"/>
+          <xsl:choose>
+            <xsl:when test="count($pg/name) = 1">
+              <xsl:value-of select="$pg/name[1]/surname"/>
+            </xsl:when>
+            <xsl:when test="count($pg/name) = 2">
+              <xsl:value-of select="$pg/name[1]/surname"/>
+              <xsl:text> &amp; </xsl:text>
+              <xsl:value-of select="$pg/name[2]/surname"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="$pg/name[1]/surname"/>
+              <xsl:text> et al.</xsl:text>
+            </xsl:otherwise>
+          </xsl:choose>
+        </xsl:when>
+        <!-- FALLBACK FINAL -->
+        <xsl:when test="$cit/person-group/name[1]/surname">
+          <xsl:value-of select="$cit/person-group/name[1]/surname"/>
         </xsl:when>
         <xsl:otherwise><xsl:value-of select="$rid"/></xsl:otherwise>
       </xsl:choose>
     </xsl:variable>
     <xsl:variable name="anio" select="$cit/year"/>
+
+    <!-- PARSEAR specific-use: modo|prefijo|sufijo -->
+    <xsl:variable name="su" select="normalize-space(@specific-use)"/>
+    <xsl:variable name="modo">
+      <xsl:choose>
+        <xsl:when test="$su != ''"><xsl:value-of select="tokenize($su, '\|')[1]"/></xsl:when>
+        <xsl:otherwise>normal</xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:variable name="prefijo">
+      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[2])"/></xsl:if>
+    </xsl:variable>
+    <xsl:variable name="sufijo">
+      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[3])"/></xsl:if>
+    </xsl:variable>
 
     <xsl:variable name="esPrimera" select="not(
       preceding-sibling::node()[1][self::text() and matches(., '^\s*,\s*$')] and
@@ -2719,28 +2887,69 @@
       following-sibling::node()[2][self::xref[@ref-type='bibr']]
     )"/>
 
-    <xsl:if test="$esPrimera"><xsl:text>(</xsl:text></xsl:if>
-    <xsl:if test="not($esPrimera)"><xsl:text>; </xsl:text></xsl:if>
+    <xsl:choose>
 
-    <a class="xref-bibr"
-       data-ref-id="{$rid}"
-       onclick="highlightPanel('refs', '{$rid}')"
-       href="#panel-ref-{$rid}">
-      <xsl:value-of select="$autor"/>
-      <xsl:if test="$anio != ''">
-        <xsl:text>, </xsl:text>
-        <xsl:value-of select="$anio"/>
-      </xsl:if>
-    </a>
+      <!-- AUTHOR-IN-TEXT: Autor (2025) — SIN PARÉNTESIS EXTERIOR -->
+      <xsl:when test="$modo = 'author-in-text'">
+        <a class="xref-bibr"
+           data-ref-id="{$rid}"
+           onclick="highlightPanel('refs', '{$rid}')"
+           href="#panel-ref-{$rid}">
+          <xsl:value-of select="$autor"/>
+        </a>
+        <xsl:text> (</xsl:text>
+        <a class="xref-bibr"
+           data-ref-id="{$rid}"
+           onclick="highlightPanel('refs', '{$rid}')"
+           href="#panel-ref-{$rid}">
+          <xsl:value-of select="$anio"/>
+        </a>
+        <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
+        <xsl:text>)</xsl:text>
+      </xsl:when>
 
-    <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
+      <!-- SUPPRESS: solo año (2025) -->
+      <xsl:when test="$modo = 'suppress'">
+        <xsl:if test="$esPrimera">
+          <xsl:text>(</xsl:text>
+          <xsl:if test="$prefijo != ''"><xsl:value-of select="$prefijo"/><xsl:text> </xsl:text></xsl:if>
+        </xsl:if>
+        <xsl:if test="not($esPrimera)"><xsl:text>; </xsl:text></xsl:if>
+        <a class="xref-bibr"
+           data-ref-id="{$rid}"
+           onclick="highlightPanel('refs', '{$rid}')"
+           href="#panel-ref-{$rid}">
+          <xsl:value-of select="$anio"/>
+          <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
+        </a>
+        <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
+      </xsl:when>
+
+      <!-- NORMAL: (prefijo Autor, 2025, sufijo) -->
+      <xsl:otherwise>
+        <xsl:if test="$esPrimera">
+          <xsl:text>(</xsl:text>
+          <xsl:if test="$prefijo != ''"><xsl:value-of select="$prefijo"/><xsl:text> </xsl:text></xsl:if>
+        </xsl:if>
+        <xsl:if test="not($esPrimera)"><xsl:text>; </xsl:text></xsl:if>
+        <a class="xref-bibr"
+           data-ref-id="{$rid}"
+           onclick="highlightPanel('refs', '{$rid}')"
+           href="#panel-ref-{$rid}">
+          <xsl:value-of select="$autor"/>
+          <xsl:if test="$anio != ''">, <xsl:value-of select="$anio"/></xsl:if>
+          <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
+        </a>
+        <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
+      </xsl:otherwise>
+
+    </xsl:choose>
   </xsl:template>
 
   <!-- ================================================
        XREF VANCOUVER — [1] / [1-3] / [1,3,5]
        GENERA UN <a> INDEPENDIENTE POR CADA SEGMENTO
-       (NÚMERO SUELTO O RANGO) PARA QUE CADA UNO
-       LLEVE AL PANEL DE LA REFERENCIA CORRESPONDIENTE
+       SOPORTA PREFIJO ANTES DEL CORCHETE Y SUFIJO DENTRO
        ================================================ -->
   <xsl:template name="xref-vancouver">
 
@@ -2749,7 +2958,22 @@
       preceding-sibling::node()[2][self::xref[@ref-type='bibr']]
     )"/>
 
+    <!-- PARSEAR specific-use: modo|prefijo|sufijo -->
+    <xsl:variable name="su" select="normalize-space(@specific-use)"/>
+    <xsl:variable name="prefijo">
+      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[2])"/></xsl:if>
+    </xsl:variable>
+    <xsl:variable name="sufijo">
+      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[3])"/></xsl:if>
+    </xsl:variable>
+
     <xsl:if test="$esPrimera">
+
+      <!-- PREFIJO ANTES DEL CORCHETE -->
+      <xsl:if test="$prefijo != ''">
+        <xsl:value-of select="$prefijo"/>
+        <xsl:text> </xsl:text>
+      </xsl:if>
 
       <!-- RECOLECTAR TODOS LOS rid DEL GRUPO -->
       <xsl:variable name="rids" as="xs:string*"
@@ -2759,9 +2983,7 @@
         </xsl:call-template>
       </xsl:variable>
 
-      <!-- RAÍZ DEL DOCUMENTO CAPTURADA ANTES DEL for-each
-           NECESARIO PORQUE DENTRO EL CONTEXTO ES UN xs:string,
-           NO UN NODO, Y EL '/' INICIAL FALLARÍA (XPTY0020) -->
+      <!-- RAÍZ DEL DOCUMENTO CAPTURADA ANTES DEL for-each -->
       <xsl:variable name="docRoot" select="/"/>
 
       <!-- CONSTRUIR PARES rid/número COMO ELEMENTOS TEMPORALES -->
@@ -2781,11 +3003,12 @@
         </xsl:perform-sort>
       </xsl:variable>
 
-      <!-- EMITIR CORCHETE ABRE + UN <a> POR CADA REF + CORCHETE CIERRA -->
+      <!-- EMITIR CORCHETE ABRE + LINKS + SUFIJO + CORCHETE CIERRA -->
       <xsl:text>[</xsl:text>
       <xsl:call-template name="generarLinksVancouver">
         <xsl:with-param name="pares" select="$paresOrdenados"/>
       </xsl:call-template>
+      <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
       <xsl:text>]</xsl:text>
 
     </xsl:if>
@@ -2852,8 +3075,8 @@
          data-ref-id="{@id}"
          onclick="irAlTexto('{@id}')"
          style="cursor:pointer">
-      <!-- EN VANCOUVER: PREFIJO [N] SEGÚN POSICIÓN EN ref-list -->
-      <xsl:if test="$estilo_cita = 'vancouver'">
+      <!-- EN VANCOUVER E IEEE: PREFIJO [N] SEGÚN POSICIÓN EN ref-list -->
+      <xsl:if test="$estilo_cita = 'vancouver' or $estilo_cita = 'ieee'">
         <span class="ref-numero">
           <xsl:text>[</xsl:text>
           <xsl:number count="ref" level="any"/>
@@ -2881,7 +3104,7 @@
       <xsl:when test="$estilo_cita = 'vancouver'">
 
         <!-- AUTORES O EDITORES COMO FALLBACK -->
-        <div class="ref-authors">
+        <span class="ref-authors">
           <xsl:choose>
             <xsl:when test="person-group[@person-group-type='author']/name">
               <xsl:for-each select="person-group[@person-group-type='author']/name">
@@ -2909,11 +3132,36 @@
                   <xsl:text>, </xsl:text>
                 </xsl:if>
               </xsl:for-each>
-              <xsl:text> (ed.)</xsl:text>
+              <xsl:text> (</xsl:text>
+              <xsl:call-template name="abrev-tipo-persona">
+                <xsl:with-param name="tipo" select="'editor'"/>
+                <xsl:with-param name="cantidad" select="count(person-group[@person-group-type='editor']/name)"/>
+                <xsl:with-param name="minuscula" select="true()"/>
+              </xsl:call-template>
+              <xsl:text>)</xsl:text>
+            </xsl:when>
+            <xsl:when test="person-group[not(@person-group-type='author')]/name">
+              <xsl:for-each select="person-group[not(@person-group-type='author')][1]/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text> </xsl:text>
+                  <xsl:value-of select="translate(given-names, '. ', '')"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>, </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:text> (</xsl:text>
+              <xsl:call-template name="abrev-tipo-persona">
+                <xsl:with-param name="tipo" select="string(person-group[not(@person-group-type='author')][1]/@person-group-type)"/>
+                <xsl:with-param name="cantidad" select="count(person-group[not(@person-group-type='author')][1]/name)"/>
+                <xsl:with-param name="minuscula" select="true()"/>
+              </xsl:call-template>
+              <xsl:text>)</xsl:text>
             </xsl:when>
           </xsl:choose>
           <xsl:text>. </xsl:text>
-        </div>
+        </span>
 
         <!-- TÍTULO DEL ARTÍCULO O FUENTE (LIBROS) -->
         <xsl:if test="article-title">
@@ -2960,13 +3208,15 @@
         </xsl:if>
 
         <!-- EDITORIAL (LIBROS) -->
-        <xsl:if test="publisher-loc">
+        <xsl:if test="publisher-loc or publisher-name">
           <xsl:text>. </xsl:text>
-          <xsl:value-of select="publisher-loc"/>
-          <xsl:text>: </xsl:text>
-        </xsl:if>
-        <xsl:if test="publisher-name">
-          <xsl:value-of select="publisher-name"/>
+          <xsl:if test="publisher-loc">
+            <xsl:value-of select="publisher-loc"/>
+            <xsl:text>: </xsl:text>
+          </xsl:if>
+          <xsl:if test="publisher-name">
+            <xsl:value-of select="replace(publisher-name, '(\s)and(\s)', '$1y$2')"/>
+          </xsl:if>
         </xsl:if>
         <xsl:text>.</xsl:text>
 
@@ -2991,7 +3241,7 @@
       <xsl:when test="$estilo_cita = 'apa'">
 
         <!-- AUTORES O EDITORES COMO FALLBACK -->
-        <div class="ref-authors">
+        <span class="ref-authors">
           <xsl:choose>
             <xsl:when test="person-group[@person-group-type='author']/name">
               <xsl:for-each select="person-group[@person-group-type='author']/name">
@@ -3039,8 +3289,34 @@
               </xsl:if>
               <xsl:text>.)</xsl:text>
             </xsl:when>
+            <!-- FALLBACK: compiler, director, coordinator y cualquier otro tipo -->
+            <xsl:when test="person-group[not(@person-group-type='author')]/name">
+              <xsl:for-each select="person-group[not(@person-group-type='author')][1]/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:call-template name="iniciales-apa">
+                    <xsl:with-param name="nombres" select="given-names"/>
+                  </xsl:call-template>
+                </xsl:if>
+                <xsl:choose>
+                  <xsl:when test="position() = last() - 1">
+                    <xsl:text>, &amp; </xsl:text>
+                  </xsl:when>
+                  <xsl:when test="position() != last()">
+                    <xsl:text>, </xsl:text>
+                  </xsl:when>
+                </xsl:choose>
+              </xsl:for-each>
+              <xsl:text> (</xsl:text>
+              <xsl:call-template name="abrev-tipo-persona">
+                <xsl:with-param name="tipo" select="string(person-group[not(@person-group-type='author')][1]/@person-group-type)"/>
+                <xsl:with-param name="cantidad" select="count(person-group[not(@person-group-type='author')][1]/name)"/>
+              </xsl:call-template>
+              <xsl:text>)</xsl:text>
+            </xsl:when>
           </xsl:choose>
-        </div>
+        </span>
 
         <!-- AÑO -->
         <xsl:if test="year">
@@ -3120,7 +3396,7 @@
         <!-- EDITORIAL (LIBROS) -->
         <xsl:if test="publisher-name">
           <xsl:text>. </xsl:text>
-          <xsl:value-of select="publisher-name"/>
+          <xsl:value-of select="replace(publisher-name, '(\s)and(\s)', '$1y$2')"/>
         </xsl:if>
 
         <!-- DOI: como URL sin etiqueta "DOI:" en APA 7 -->
@@ -3142,7 +3418,7 @@
       <xsl:when test="$estilo_cita = 'iso690'">
 
         <!-- AUTORES O EDITORES COMO FALLBACK — EN VERSALITAS -->
-        <div class="ref-authors">
+        <span class="ref-authors">
           <xsl:choose>
             <xsl:when test="person-group[@person-group-type='author']/name">
               <xsl:for-each select="person-group[@person-group-type='author']/name">
@@ -3174,10 +3450,36 @@
                   <xsl:text>; </xsl:text>
                 </xsl:if>
               </xsl:for-each>
-              <xsl:text> (ed.)</xsl:text>
+              <xsl:text> (</xsl:text>
+              <xsl:call-template name="abrev-tipo-persona">
+                <xsl:with-param name="tipo" select="'editor'"/>
+                <xsl:with-param name="cantidad" select="count(person-group[@person-group-type='editor']/name)"/>
+              </xsl:call-template>
+              <xsl:text>)</xsl:text>
+            </xsl:when>
+            <!-- FALLBACK: compiler, director, coordinator y cualquier otro tipo -->
+            <xsl:when test="person-group[not(@person-group-type='author')]/name">
+              <xsl:for-each select="person-group[not(@person-group-type='author')][1]/name">
+                <span style="font-variant:small-caps">
+                  <xsl:value-of select="upper-case(surname)"/>
+                </span>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:value-of select="given-names"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>; </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:text> (</xsl:text>
+              <xsl:call-template name="abrev-tipo-persona">
+                <xsl:with-param name="tipo" select="string(person-group[not(@person-group-type='author')][1]/@person-group-type)"/>
+                <xsl:with-param name="cantidad" select="count(person-group[not(@person-group-type='author')][1]/name)"/>
+              </xsl:call-template>
+              <xsl:text>)</xsl:text>
             </xsl:when>
           </xsl:choose>
-        </div>
+        </span>
 
         <!-- AÑO -->
         <xsl:if test="year">
@@ -3233,16 +3535,144 @@
         </xsl:if>
 
         <!-- EDITORIAL (LIBROS) -->
-        <xsl:if test="publisher-loc">
+        <xsl:if test="publisher-loc or publisher-name">
           <xsl:text>. </xsl:text>
-          <xsl:value-of select="publisher-loc"/>
-          <xsl:text>: </xsl:text>
-        </xsl:if>
-        <xsl:if test="publisher-name">
-          <xsl:value-of select="publisher-name"/>
+          <xsl:if test="publisher-loc">
+            <xsl:value-of select="publisher-loc"/>
+            <xsl:text>: </xsl:text>
+          </xsl:if>
+          <xsl:if test="publisher-name">
+            <xsl:value-of select="replace(publisher-name, '(\s)and(\s)', '$1y$2')"/>
+          </xsl:if>
         </xsl:if>
         <xsl:text>.</xsl:text>
 
+        <!-- DOI -->
+        <xsl:if test="pub-id[@pub-id-type='doi']">
+          <div class="ref-doi">
+            <a href="https://doi.org/{pub-id[@pub-id-type='doi']}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:text>DOI: </xsl:text>
+              <xsl:value-of select="pub-id[@pub-id-type='doi']"/>
+            </a>
+          </div>
+        </xsl:if>
+      </xsl:when>
+
+      <!-- ============================================
+           FORMATO IEEE — TODO INLINE, SIN div DE BLOQUE
+           I. Apellido, "Título artículo," Revista, vol. X, n.º N, pp. XX-XX, año.
+           I. Apellido, Título libro. Ciudad: Editorial, año.
+           ============================================ -->
+      <xsl:when test="$estilo_cita = 'ieee'">
+
+        <!-- AUTORES O EDITORES — INICIALES PRIMERO, INLINE -->
+        <span class="ref-authors">
+          <xsl:choose>
+            <xsl:when test="person-group[@person-group-type='author']/name">
+              <xsl:for-each select="person-group[@person-group-type='author']/name">
+                <xsl:if test="given-names">
+                  <xsl:value-of select="translate(given-names, '. ', '')"/>
+                  <xsl:text>. </xsl:text>
+                </xsl:if>
+                <xsl:value-of select="surname"/>
+                <xsl:choose>
+                  <xsl:when test="position() = last() - 1 and last() &gt; 1">
+                    <xsl:text> and </xsl:text>
+                  </xsl:when>
+                  <xsl:when test="position() != last()">
+                    <xsl:text>, </xsl:text>
+                  </xsl:when>
+                </xsl:choose>
+              </xsl:for-each>
+            </xsl:when>
+            <xsl:when test="person-group[not(@person-group-type='author')]/name">
+              <xsl:for-each select="person-group[not(@person-group-type='author')][1]/name">
+                <xsl:if test="given-names">
+                  <xsl:value-of select="translate(given-names, '. ', '')"/>
+                  <xsl:text>. </xsl:text>
+                </xsl:if>
+                <xsl:value-of select="surname"/>
+                <xsl:choose>
+                  <xsl:when test="position() = last() - 1 and last() &gt; 1">
+                    <xsl:text> and </xsl:text>
+                  </xsl:when>
+                  <xsl:when test="position() != last()">
+                    <xsl:text>, </xsl:text>
+                  </xsl:when>
+                </xsl:choose>
+              </xsl:for-each>
+              <xsl:text> (</xsl:text>
+              <xsl:call-template name="abrev-tipo-persona">
+                <xsl:with-param name="tipo" select="string(person-group[not(@person-group-type='author')][1]/@person-group-type)"/>
+                <xsl:with-param name="cantidad" select="count(person-group[not(@person-group-type='author')][1]/name)"/>
+              </xsl:call-template>
+              <xsl:text>)</xsl:text>
+            </xsl:when>
+          </xsl:choose>
+        </span>
+
+        <!-- PUNTO DESPUÉS DE AUTORES -->
+        <xsl:text>. </xsl:text>
+
+        <!-- TÍTULO ARTÍCULO: entre comillas — separado con coma de lo que sigue -->
+        <xsl:if test="article-title">
+          <span class="ref-title-roman">
+            <xsl:text>&#x201C;</xsl:text>
+            <xsl:value-of select="article-title"/>
+            <xsl:text>,&#x201D;</xsl:text>
+          </span>
+        </xsl:if>
+        <!-- TÍTULO CAPÍTULO: entre comillas -->
+        <xsl:if test="chapter-title">
+          <span class="ref-title-roman">
+            <xsl:text>&#x201C;</xsl:text>
+            <xsl:value-of select="chapter-title"/>
+            <xsl:text>,&#x201D;</xsl:text>
+          </span>
+        </xsl:if>
+        <!-- FUENTE EN CURSIVA -->
+        <xsl:if test="source">
+          <span class="ref-source-italic">
+            <xsl:text> </xsl:text>
+            <xsl:value-of select="source"/>
+          </span>
+        </xsl:if>
+        <!-- VOLUMEN Y NÚMERO -->
+        <xsl:if test="volume">
+          <xsl:text>, vol. </xsl:text>
+          <xsl:value-of select="volume"/>
+        </xsl:if>
+        <xsl:if test="issue">
+          <xsl:text>, n.&#xBA; </xsl:text>
+          <xsl:value-of select="issue"/>
+        </xsl:if>
+        <!-- PÁGINAS -->
+        <xsl:if test="fpage">
+          <xsl:text>, pp. </xsl:text>
+          <xsl:value-of select="fpage"/>
+          <xsl:if test="lpage">
+            <xsl:text>&#x2013;</xsl:text>
+            <xsl:value-of select="lpage"/>
+          </xsl:if>
+        </xsl:if>
+        <!-- EDITORIAL (LIBROS) -->
+        <xsl:if test="publisher-loc or publisher-name">
+          <xsl:text>. </xsl:text>
+          <xsl:if test="publisher-loc">
+            <xsl:value-of select="publisher-loc"/>
+            <xsl:text>: </xsl:text>
+          </xsl:if>
+          <xsl:if test="publisher-name">
+            <xsl:value-of select="replace(publisher-name, '(\s)and(\s)', '$1y$2')"/>
+          </xsl:if>
+        </xsl:if>
+        <!-- AÑO AL FINAL EN IEEE -->
+        <xsl:if test="year">
+          <xsl:text>, </xsl:text>
+          <span class="ref-year"><xsl:value-of select="year"/></span>
+        </xsl:if>
+        <xsl:text>.</xsl:text>
         <!-- DOI -->
         <xsl:if test="pub-id[@pub-id-type='doi']">
           <div class="ref-doi">
@@ -3261,7 +3691,7 @@
       <xsl:otherwise>
 
         <!-- AUTORES O EDITORES COMO FALLBACK -->
-        <div class="ref-authors">
+        <span class="ref-authors">
           <xsl:choose>
             <xsl:when test="person-group[@person-group-type='author']/name">
               <xsl:for-each select="person-group[@person-group-type='author']/name">
@@ -3291,9 +3721,27 @@
               </xsl:for-each>
               <xsl:text> (ed.)</xsl:text>
             </xsl:when>
+            <!-- FALLBACK: compiler, director, coordinator y cualquier otro tipo -->
+            <xsl:when test="person-group[not(@person-group-type='author')]/name">
+              <xsl:for-each select="person-group[not(@person-group-type='author')][1]/name">
+                <xsl:value-of select="surname"/>
+                <xsl:if test="given-names">
+                  <xsl:text>, </xsl:text>
+                  <xsl:value-of select="given-names"/>
+                </xsl:if>
+                <xsl:if test="position() != last()">
+                  <xsl:text>; </xsl:text>
+                </xsl:if>
+              </xsl:for-each>
+              <xsl:text> (</xsl:text>
+              <xsl:call-template name="abrev-tipo-persona">
+                <xsl:with-param name="tipo" select="string(person-group[not(@person-group-type='author')][1]/@person-group-type)"/>
+                <xsl:with-param name="cantidad" select="count(person-group[not(@person-group-type='author')][1]/name)"/>
+              </xsl:call-template>
+              <xsl:text>)</xsl:text>
+            </xsl:when>
           </xsl:choose>
-        </div>
-
+        </span>
         <xsl:if test="year">
           <span class="ref-year">
             <xsl:text> (</xsl:text>
@@ -3334,7 +3782,7 @@
           <xsl:text>: </xsl:text>
         </xsl:if>
         <xsl:if test="publisher-name">
-          <xsl:value-of select="publisher-name"/>
+          <xsl:value-of select="replace(publisher-name, '(\s)and(\s)', '$1y$2')"/>
         </xsl:if>
         <xsl:if test="fpage">
           <xsl:text>, pp. </xsl:text>
@@ -3395,7 +3843,52 @@
   <xsl:template match="sec[@sec-type='editorial']/title" priority="3"/>
   <xsl:template match="sec/title[normalize-space(.) = normalize-space(//article-meta/title-group/article-title)]" priority="2"/>
   <!-- ================================================
-       NAMED TEMPLATE: iniciales-apa
+       NAMED TEMPLATE: abrev-tipo-persona
+       MAPEA @person-group-type A SU ABREVIATURA EN ESPAÑOL
+       CON SOPORTE DE SINGULAR Y PLURAL SEGÚN CANTIDAD
+       ================================================ -->
+  <xsl:template name="abrev-tipo-persona">
+    <xsl:param name="tipo" as="xs:string" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+    <xsl:param name="cantidad" as="xs:integer" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+    <xsl:param name="minuscula" as="xs:boolean" select="false()" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+    <xsl:variable name="texto">
+      <xsl:choose>
+        <xsl:when test="$tipo = 'compiler'">
+          <xsl:choose><xsl:when test="$cantidad > 1">Comps.</xsl:when><xsl:otherwise>Comp.</xsl:otherwise></xsl:choose>
+        </xsl:when>
+        <xsl:when test="$tipo = 'coordinator'">
+          <xsl:choose><xsl:when test="$cantidad > 1">Coords.</xsl:when><xsl:otherwise>Coord.</xsl:otherwise></xsl:choose>
+        </xsl:when>
+        <xsl:when test="$tipo = 'direction'">
+          <xsl:choose><xsl:when test="$cantidad > 1">Dirs.</xsl:when><xsl:otherwise>Dir.</xsl:otherwise></xsl:choose>
+        </xsl:when>
+        <xsl:when test="$tipo = 'organizer'">
+          <xsl:choose><xsl:when test="$cantidad > 1">Orgs.</xsl:when><xsl:otherwise>Org.</xsl:otherwise></xsl:choose>
+        </xsl:when>
+        <xsl:when test="$tipo = 'collaborator'">
+          <xsl:choose><xsl:when test="$cantidad > 1">Cols.</xsl:when><xsl:otherwise>Col.</xsl:otherwise></xsl:choose>
+        </xsl:when>
+        <xsl:when test="$tipo = 'editor'">
+          <xsl:choose><xsl:when test="$cantidad > 1">Eds.</xsl:when><xsl:otherwise>Ed.</xsl:otherwise></xsl:choose>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="$tipo"/>
+          <xsl:text>.</xsl:text>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <!-- SI minuscula=true() CONVERTIR PRIMERA LETRA A MINÚSCULA -->
+    <xsl:choose>
+      <xsl:when test="$minuscula">
+        <xsl:value-of select="lower-case($texto)"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="$texto"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- ================================================
        CONVIERTE "John Allen" → "J. A."
        USADO POR EL BLOQUE element-citation APA
        ================================================ -->

@@ -20,11 +20,10 @@
     1. \renewcommand de macros de metadatos
     2. Título a ancho completo (184mm) + título traducido
     3. Bloque lateral de metadatos (posición absoluta, marginpar)
-    4. Resúmenes (\begin{abstract}...) con otherlanguage
-    5. Palabras clave (\noindent\textbf{...})
-    6. Separador visual (\rule)
-    7. Cuerpo del artículo (\section, \p, figuras, tablas...)
-    8. Agradecimientos y apéndices (back sin ref-list)
+    4. Resúmenes con palabras clave (tcolorbox por idioma)
+    5. Separador visual (\rule)
+    6. Cuerpo del artículo (\section, \p, figuras, tablas...)
+    7. Agradecimientos y apéndices (back sin ref-list)
   ============================================================
   CONVENCIÓN DE PREFIJOS rid ↔ id EN EL CANÓNICO:
     CITAS: xref[@ref-type='bibr']/@rid = 'bib-{citekey}'
@@ -59,42 +58,16 @@
   <!-- ============================================================ -->
   <xsl:function name="f:latex" as="xs:string">
     <xsl:param name="t" as="xs:string"/>
-
-    <!-- 1. BARRA INVERSA (OBLIGATORIAMENTE PRIMERA)  -->
-    <!-- PATRON '\\' = XPath regex \\ = un literal \         -->
-    <!-- REEMPLAZO '\\textbackslash{}' = Java repl → \textbackslash{} -->
     <xsl:variable name="s1"  select="replace($t,   '\\',    '\\textbackslash{}')"/>
-
-    <!-- 2. LLAVES  -->
-    <!-- PATRON '\{' = regex \{ = literal {                  -->
-    <!-- REEMPLAZO '\\{' = Java repl \\{ → \{               -->
     <xsl:variable name="s2"  select="replace($s1,  '\{',    '\\{')"/>
     <xsl:variable name="s3"  select="replace($s2,  '\}',    '\\}')"/>
-
-    <!-- 3. DÓLAR  -->
-    <!-- REEMPLAZO '\\\$' = Java repl \\(bslash) + \$(dolar) → \$ -->
     <xsl:variable name="s4"  select="replace($s3,  '\$',    '\\\$')"/>
-
-    <!-- 4. PORCENTAJE  -->
     <xsl:variable name="s5"  select="replace($s4,  '%',     '\\%')"/>
-
-    <!-- 5. AMPERSAND  -->
-    <!-- &amp; EN ATRIBUTO XML = & EN XPATH = patrón literal & -->
     <xsl:variable name="s6"  select="replace($s5,  '&amp;', '\\&amp;')"/>
-
-    <!-- 6. ALMOHADILLA  -->
     <xsl:variable name="s7"  select="replace($s6,  '#',     '\\#')"/>
-
-    <!-- 7. GUIÓN BAJO  -->
     <xsl:variable name="s8"  select="replace($s7,  '_',     '\\_')"/>
-
-    <!-- 8. CARET  -->
-    <!-- PATRON '\^' = regex \^ = literal ^ (fuera de clase []) -->
     <xsl:variable name="s9"  select="replace($s8,  '\^',    '\\textasciicircum{}')"/>
-
-    <!-- 9. TILDE  -->
     <xsl:variable name="s10" select="replace($s9,  '~',     '\\textasciitilde{}')"/>
-
     <xsl:value-of select="$s10"/>
   </xsl:function>
 
@@ -121,7 +94,7 @@
 
   <!-- ============================================================ -->
   <!-- VARIABLE GLOBAL: $xmlLang                                    -->
-  <!-- IDIOMA PRINCIPAL DEL ARTÍCULO EN CASCADA (CONSIGNA 6):      -->
+  <!-- IDIOMA PRINCIPAL DEL ARTÍCULO EN CASCADA:                   -->
   <!--   1. @xml:lang EN EL ELEMENTO RAÍZ <article>                -->
   <!--   2. custom-meta[xml-lang] INYECTADO POR GenerarFrontXML()  -->
   <!--   3. FALLBACK: 'es'                                          -->
@@ -146,9 +119,20 @@
   </xsl:variable>
 
   <!-- ============================================================ -->
-  <!--                                                              -->
+  <!-- PARÁMETRO GLOBAL: $estilo_cita                               -->
+  <!-- RECIBIDO DESDE m_XML VÍA SAXON (-p estilo_cita=valor)       -->
+  <!-- CONTROLA EL COMANDO DE CITA EN EL CUERPO DEL ARTÍCULO:      -->
+  <!--   biblatex (apa, iso690, ieee) → \autocite{}                 -->
+  <!--   bibtex (vancouver) → \cite{} DIRECTO SIN PAQUETES EXTRA   -->
+  <!-- FALLBACK: 'apa' (biblatex)                                   -->
+  <!-- ============================================================ -->
+  <xsl:param name="estilo_cita" as="xs:string" select="'apa'"/>
+
+  <!-- PARÁMETRO RECIBIDO DESDE m_XML — URL DEL ARTÍCULO DESDE LA BD -->
+  <xsl:param name="url_articulo" as="xs:string" select="''"/>
+
+  <!-- ============================================================ -->
   <!--                   PLANTILLAS RAÍZ                           -->
-  <!--                                                              -->
   <!-- ============================================================ -->
 
   <xsl:template match="/">
@@ -161,20 +145,14 @@
   <!-- ============================================================ -->
   <xsl:template match="article">
 
-    <!-- SELECCIONAR IDIOMA PRINCIPAL AL INICIO DEL FRAGMENTO -->
     <xsl:text>\selectlanguage{</xsl:text>
     <xsl:value-of select="f:babel-lang($xmlLang)"/>
     <xsl:text>}&#10;&#10;</xsl:text>
 
-    <!-- 1. MACROS DE METADATOS (\renewcommand)  -->
+    <!-- 1. MACROS DE METADATOS (\renewcommand) -->
     <xsl:call-template name="emitir-macros-metadatos"/>
 
-    <!-- NUMERACIÓN DE PÁGINA DESDE fpage + ESTILO PRIMERA PÁGINA  -->
-    <!-- AMBAS INSTRUCCIONES VAN DESPUÉS DE LOS \renewcommand PARA -->
-    <!-- QUE \articulotipo YA ESTÉ DISPONIBLE EN EL SHIPOUT        -->
-     <!-- \setcounter REQUIERE NÚMERO LITERAL, NO MACRO              -->
-    <!-- SE USA fpage DIRECTAMENTE; SI NO EXISTE O NO ES NUMÉRICO   -->
-    <!-- SE USA 1 COMO VALOR POR DEFECTO                            -->
+    <!-- NUMERACIÓN DE PÁGINA DESDE fpage + ESTILO PRIMERA PÁGINA -->
     <xsl:variable name="fpageNum"
       select="normalize-space(front/article-meta/fpage)"/>
     <xsl:text>\setcounter{page}{</xsl:text>
@@ -187,33 +165,42 @@
     <xsl:text>}&#10;</xsl:text>
     <xsl:text>\thispagestyle{firstpage}&#10;&#10;</xsl:text>
 
-    <!-- 2. TÍTULO A ANCHO COMPLETO (184mm) + TÍTULO TRADUCIDO  -->
+    <!-- 2. TÍTULO A ANCHO COMPLETO (184mm) + TÍTULO TRADUCIDO -->
     <xsl:call-template name="emitir-titulo-ancho"/>
 
     <!-- 3. BLOQUE LATERAL DE METADATOS (POSICIÓN ABSOLUTA EN MARGINPAR) -->
     <xsl:call-template name="emitir-bloque-lateral"/>
 
-    <!-- 4. RESÚMENES (PRINCIPAL Y TRADUCCIONES) — SOLO SI EXISTEN  -->
-    <xsl:apply-templates select="front/article-meta/abstract |
-                                 front/article-meta/trans-abstract"/>
+    <!-- 4. RESÚMENES CON PALABRAS CLAVE — UN tcolorbox POR IDIOMA -->
+    <xsl:for-each select="front/article-meta/abstract |
+                          front/article-meta/trans-abstract">
+      <xsl:variable name="lang"
+        select="if (normalize-space(@xml:lang) != '')
+                then normalize-space(@xml:lang)
+                else $xmlLang"/>
+      <xsl:variable name="kwds"
+        select="../kwd-group[@xml:lang = $lang]"/>
+      <xsl:call-template name="tcolorbox-resumen">
+        <xsl:with-param name="lang"  select="$lang"/>
+        <xsl:with-param name="parrs" select="p | sec"/>
+        <xsl:with-param name="kwds"  select="$kwds"/>
+      </xsl:call-template>
+    </xsl:for-each>
 
-    <!-- 5. PALABRAS CLAVE POR IDIOMA — SOLO SI EXISTEN  -->
-    <xsl:apply-templates select="front/article-meta/kwd-group"/>
-
-    <!-- SEPARADOR ENTRE METADATOS Y CUERPO  -->
+    <!-- SEPARADOR ENTRE METADATOS Y CUERPO -->
     <xsl:if test="body/sec or body/p">
       <xsl:text>&#10;\bigskip&#10;</xsl:text>
       <xsl:text>\noindent\rule{\linewidth}{0.4pt}&#10;</xsl:text>
       <xsl:text>\bigskip&#10;&#10;</xsl:text>
     </xsl:if>
 
-    <!-- 6. CUERPO DEL ARTÍCULO  -->
+    <!-- 5. CUERPO DEL ARTÍCULO -->
     <xsl:apply-templates select="body"/>
 
-    <!-- 7. AGRADECIMIENTOS  -->
+    <!-- 6. AGRADECIMIENTOS -->
     <xsl:apply-templates select="back/ack"/>
 
-    <!-- 8. APÉNDICES  -->
+    <!-- 7. APÉNDICES -->
     <xsl:apply-templates select="back/app-group"/>
 
     <!-- NOTA: back/ref-list ES OMITIDO INTENCIONALMENTE.           -->
@@ -221,10 +208,126 @@
 
   </xsl:template>
 
+<!-- ============================================================ -->
+<!-- DIÁLOGO: speech CON speaker                                  -->
+<!-- USA \paragraph{speaker} PARA EVITAR VIUDAS Y HUÉRFANAS      -->
+<!-- EL TEXTO CONTINÚA INLINE DESPUÉS DEL TÍTULO                  -->
+<!-- ============================================================ -->
+  <xsl:template match="speech">
+    <xsl:text>&#10;\paragraph{</xsl:text>
+    <xsl:value-of select="f:latex(normalize-space(speaker))"/>
+    <xsl:text>} </xsl:text>
+    <xsl:apply-templates select="*[not(self::speaker)]"/>
+  </xsl:template>
+
+  <xsl:template match="speech/p">
+    <xsl:apply-templates/>
+    <xsl:text>&#10;</xsl:text>
+  </xsl:template>
+
+<!-- ============================================================ -->
+<!-- CASO DE ESTUDIO: boxed-text CON id                          -->
+<!-- DISEÑO: borde izquierdo azul, fondo neutro                  -->
+<!-- ============================================================ -->
+  <xsl:template match="boxed-text[@id]" priority="5">
+    <xsl:text>&#10;\begin{tcolorbox}[colback=white,colframe=azulrevista,</xsl:text>
+    <xsl:text>leftrule=3pt,rightrule=0pt,toprule=0pt,bottomrule=0pt,</xsl:text>
+    <xsl:text>arc=0pt,left=8pt,right=4pt,top=3pt,bottom=3pt,</xsl:text>
+    <xsl:text>before skip=4pt,after skip=4pt]&#10;</xsl:text>
+    <xsl:text>{\sffamily\small&#10;</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}&#10;</xsl:text>
+    <xsl:text>\end{tcolorbox}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+<!-- ============================================================ -->
+<!-- ENTREVISTA CUALITATIVA: disp-quote content-type="interview" -->
+<!-- EL CÓDIGO DE INFORMANTE VA COMO TÍTULO DE \paragraph        -->
+<!-- ============================================================ -->
+  <xsl:template match="disp-quote[@content-type='interview']">
+    <xsl:variable name="codigo"
+    select="normalize-space(@specific-use)"/>
+    <xsl:text>&#10;\paragraph{</xsl:text>
+    <xsl:choose>
+      <xsl:when test="$codigo != ''">
+        <xsl:value-of select="f:latex($codigo)"/>
+      </xsl:when>
+      <xsl:otherwise>INF</xsl:otherwise>
+    </xsl:choose>
+    <xsl:text>} </xsl:text>
+    <xsl:apply-templates select="*[not(self::attrib)]"/>
+  </xsl:template>
+
   <!-- ============================================================ -->
-  <!--                                                              -->
+  <!-- NAMED TEMPLATE: tcolorbox-resumen                           -->
+  <!-- UN BOX POR IDIOMA: ETIQUETA + TEXTO + PALABRAS CLAVE        -->
+  <!-- COLOR: té con leche — marrón muy claro (brown!8!white)      -->
+  <!-- TIPOGRAFÍA: sans small, etiqueta bold inline                 -->
+  <!-- ============================================================ -->
+  <xsl:template name="tcolorbox-resumen">
+    <xsl:param name="lang"/>
+    <xsl:param name="parrs"/>
+    <xsl:param name="kwds"/>
+
+    <!-- ETIQUETA SEGÚN IDIOMA -->
+    <xsl:variable name="etiqueta">
+      <xsl:choose>
+        <xsl:when test="$lang = 'es'">Resumen</xsl:when>
+        <xsl:when test="$lang = 'en'">Abstract</xsl:when>
+        <xsl:when test="$lang = 'pt'">Resumo</xsl:when>
+        <xsl:when test="$lang = 'fr'">Résumé</xsl:when>
+        <xsl:otherwise>Resumen</xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
+    <!-- ETIQUETA DE PALABRAS CLAVE SEGÚN IDIOMA -->
+    <xsl:variable name="etiqueta-kwd">
+      <xsl:choose>
+        <xsl:when test="$lang = 'es'">Palabras clave</xsl:when>
+        <xsl:when test="$lang = 'en'">Keywords</xsl:when>
+        <xsl:when test="$lang = 'pt'">Palavras-chave</xsl:when>
+        <xsl:when test="$lang = 'fr'">Mots-clés</xsl:when>
+        <xsl:otherwise>Palabras clave</xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
+    <xsl:text>&#10;\begin{tcolorbox}[</xsl:text>
+    <xsl:text>colback=brown!8!white,</xsl:text>
+    <xsl:text>colframe=brown!8!white,</xsl:text>
+    <xsl:text>boxrule=0pt,arc=2pt,</xsl:text>
+    <xsl:text>left=4pt,right=4pt,top=3pt,bottom=3pt,</xsl:text>
+    <xsl:text>before skip=4pt,after skip=4pt]</xsl:text>
+    <xsl:text>&#10;\begin{otherlanguage}{</xsl:text>
+    <xsl:value-of select="f:babel-lang($lang)"/>
+    <xsl:text>}&#10;\sffamily\small </xsl:text>
+    <xsl:text>\textbf{</xsl:text>
+    <xsl:value-of select="$etiqueta"/>
+    <xsl:text>:} </xsl:text>
+    <xsl:apply-templates select="$parrs"/>
+    <xsl:if test="$kwds/kwd">
+      <xsl:text>&#10;\par\smallskip\noindent\textbf{</xsl:text>
+      <xsl:value-of select="$etiqueta-kwd"/>
+      <xsl:text>:} </xsl:text>
+      <xsl:for-each select="$kwds/kwd">
+        <xsl:if test="position() > 1">, </xsl:if>
+        <xsl:value-of select="f:latex(normalize-space(.))"/>
+      </xsl:for-each>
+    </xsl:if>
+    <xsl:text>&#10;\end{otherlanguage}</xsl:text>
+    <xsl:text>&#10;\end{tcolorbox}&#10;</xsl:text>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- RESÚMENES Y PALABRAS CLAVE                                   -->
+  <!-- PROCESADOS POR tcolorbox-resumen DESDE EL FOR-EACH          -->
+  <!-- DEL TEMPLATE article — NO PROCESAR DIRECTAMENTE             -->
+  <!-- ============================================================ -->
+  <xsl:template match="abstract | trans-abstract"/>
+  <xsl:template match="abstract/title | trans-abstract/title"/>
+  <xsl:template match="kwd-group"/>
+
+  <!-- ============================================================ -->
   <!--                   FRONT: METADATOS                          -->
-  <!--                                                              -->
   <!-- ============================================================ -->
 
   <!-- FRONT: SUPRIMIDO COMO ELEMENTO DIRECTO — SE PROCESA          -->
@@ -234,8 +337,6 @@
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: emitir-macros-metadatos                      -->
   <!-- PROPÓSITO: \renewcommand PARA CADA MACRO DEL PREÁMBULO.     -->
-  <!--            PERMITE A TEMPLATES PERSONALIZADOS ACCEDER A      -->
-  <!--            LOS METADATOS DEL ARTÍCULO VÍA MACROS.           -->
   <!-- ============================================================ -->
   <xsl:template name="emitir-macros-metadatos">
     <xsl:variable name="meta" select="front/article-meta"/>
@@ -276,7 +377,7 @@
       <xsl:text>}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- DOI (SIN ESCAPE: LOS DOI NO CONTIENEN CARACTERES ESPECIALES LATEX) -->
+    <!-- DOI -->
     <xsl:if test="normalize-space($meta/article-id[@pub-id-type='doi']) != ''">
       <xsl:text>\renewcommand{\articulodoi}{</xsl:text>
       <xsl:value-of select="normalize-space(
@@ -284,8 +385,7 @@
       <xsl:text>}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- TIPO DE ARTÍCULO: upper-case() DE XPATH 3.0 EVITA PROBLEMAS   -->
-    <!-- DE \MakeUppercase CON ACENTOS EN EL PARBOX DEL HEADER         -->
+    <!-- TIPO DE ARTÍCULO -->
     <xsl:variable name="articleType"
       select="normalize-space(/article/@article-type)"/>
     <xsl:if test="$articleType != ''">
@@ -355,7 +455,6 @@
       <xsl:text>}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- MACROS PARA EL HEADER DE PÁGINAS 2+ -->
     <!-- NOMBRE DE REVISTA -->
     <xsl:variable name="revNombre"
       select="normalize-space(front/journal-meta/journal-title-group/journal-title)"/>
@@ -450,7 +549,7 @@
       <xsl:text>}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- PÁGINA DE INICIO PARA \setcounter{page}{...} EN EL BODY -->
+    <!-- PÁGINA DE INICIO -->
     <xsl:if test="normalize-space(front/article-meta/fpage) != ''">
       <xsl:text>\renewcommand{\articulopagina}{</xsl:text>
       <xsl:value-of select="normalize-space(front/article-meta/fpage)"/>
@@ -461,106 +560,7 @@
   </xsl:template>
 
   <!-- ============================================================ -->
-  <!-- NAMED TEMPLATE: emitir-bloque-titulo                         -->
-  <!-- PROPÓSITO: EMITE EL BLOQUE VISUAL DE TÍTULO, AUTORES Y DOI. -->
-  <!--            EL XSLT EMITE CONTENIDO DIRECTO (NO DELEGA EN    -->
-  <!--            LAS MACROS) PARA EVITAR \ifx\@empty EN LATEX.     -->
-  <!-- ============================================================ -->
-  <xsl:template name="emitir-bloque-titulo">
-    <xsl:variable name="meta"      select="front/article-meta"/>
-    <xsl:variable name="titulo"    select="normalize-space($meta/title-group/article-title)"/>
-    <xsl:variable name="subtitulo" select="normalize-space($meta/title-group/subtitle)"/>
-    <xsl:variable name="doi"       select="normalize-space($meta/article-id[@pub-id-type='doi'])"/>
-
-    <xsl:text>% --- BLOQUE DE TÍTULO ---&#10;</xsl:text>
-
-    <!-- TÍTULO PRINCIPAL (obligatorio) -->
-    <xsl:if test="$titulo != ''">
-      <xsl:text>{\LARGE\bfseries </xsl:text>
-      <xsl:value-of select="f:latex($titulo)"/>
-      <xsl:text>\par}&#10;\medskip&#10;</xsl:text>
-    </xsl:if>
-
-    <!-- SUBTÍTULO (solo si existe en el canónico) -->
-    <xsl:if test="$subtitulo != ''">
-      <xsl:text>{\large </xsl:text>
-      <xsl:value-of select="f:latex($subtitulo)"/>
-      <xsl:text>\par}&#10;\medskip&#10;</xsl:text>
-    </xsl:if>
-
-    <!-- AUTORES (solo si existen) -->
-    <xsl:if test="$meta/contrib-group/contrib[@contrib-type='author']">
-      <xsl:text>{\normalsize </xsl:text>
-      <xsl:for-each select="$meta/contrib-group/contrib[@contrib-type='author']">
-        <xsl:if test="position() > 1">, </xsl:if>
-        <xsl:value-of select="f:latex(normalize-space(
-          concat(name/given-names, ' ', name/surname)))"/>
-      </xsl:for-each>
-      <xsl:text>\par}&#10;</xsl:text>
-    </xsl:if>
-
-    <!-- DOI (solo si existe) -->
-    <xsl:if test="$doi != ''">
-      <xsl:text>\smallskip&#10;{\small\url{https://doi.org/</xsl:text>
-      <xsl:value-of select="$doi"/>
-      <xsl:text>}\par}&#10;</xsl:text>
-    </xsl:if>
-
-    <xsl:text>\bigskip&#10;&#10;</xsl:text>
-  </xsl:template>
-
-  <!-- ============================================================ -->
-  <!-- PLANTILLAS: RESÚMENES                                        -->
-  <!-- ============================================================ -->
-
-  <!-- RESUMEN PRINCIPAL Y RESÚMENES TRADUCIDOS                      -->
-  <!-- AMBOS USAN \begin{abstract}: babel gestiona la etiqueta       -->
-  <xsl:template match="abstract | trans-abstract">
-    <xsl:variable name="lang"
-      select="if (normalize-space(@xml:lang) != '')
-              then normalize-space(@xml:lang)
-              else $xmlLang"/>
-    <xsl:text>\begin{otherlanguage}{</xsl:text>
-    <xsl:value-of select="f:babel-lang($lang)"/>
-    <xsl:text>}&#10;\begin{abstract}&#10;</xsl:text>
-    <xsl:apply-templates select="p | sec"/>
-    <xsl:text>\end{abstract}&#10;\end{otherlanguage}&#10;&#10;</xsl:text>
-  </xsl:template>
-
-  <!-- TÍTULO DEL ABSTRACT: OMITIDO — LATEX LO GENERA CON babel     -->
-  <xsl:template match="abstract/title | trans-abstract/title"/>
-
-  <!-- ============================================================ -->
-  <!-- PLANTILLAS: PALABRAS CLAVE                                   -->
-  <!-- ============================================================ -->
-  <xsl:template match="kwd-group">
-    <xsl:variable name="lang"
-      select="if (normalize-space(@xml:lang) != '')
-              then normalize-space(@xml:lang)
-              else $xmlLang"/>
-    <xsl:text>\begin{otherlanguage}{</xsl:text>
-    <xsl:value-of select="f:babel-lang($lang)"/>
-    <xsl:text>}&#10;\noindent\textbf{</xsl:text>
-    <!-- ETIQUETA SEGÚN IDIOMA DEL GRUPO -->
-    <xsl:choose>
-      <xsl:when test="$lang = 'es'">Palabras clave</xsl:when>
-      <xsl:when test="$lang = 'en'">Keywords</xsl:when>
-      <xsl:when test="$lang = 'pt'">Palavras-chave</xsl:when>
-      <xsl:when test="$lang = 'fr'">Mots-clés</xsl:when>
-      <xsl:otherwise>Palabras clave</xsl:otherwise>
-    </xsl:choose>
-    <xsl:text>:} </xsl:text>
-    <xsl:for-each select="kwd">
-      <xsl:if test="position() > 1">, </xsl:if>
-      <xsl:value-of select="f:latex(normalize-space(.))"/>
-    </xsl:for-each>
-    <xsl:text>\par&#10;\end{otherlanguage}&#10;&#10;</xsl:text>
-  </xsl:template>
-
-  <!-- ============================================================ -->
-  <!--                                                              -->
   <!--                   BODY: CUERPO                              -->
-  <!--                                                              -->
   <!-- ============================================================ -->
 
   <xsl:template match="body">
@@ -576,24 +576,30 @@
     <xsl:text>&#10;</xsl:text>
   </xsl:template>
 
+  <!-- SUPRIMIR TÍTULO DE LA PRIMERA SECCIÓN DEL BODY              -->
+  <!-- EN JATS EL ARTÍCULO COMIENZA CON UNA <sec> CUYO <title>    -->
+  <!-- REPITE EL TÍTULO DEL ARTÍCULO YA PRESENTE EN EL PREÁMBULO  -->
+  <xsl:template match="body/sec[1]/title" priority="5"/>
+
+  <!-- SEC/TITLE: normalize-space() EVITA WHITESPACE DE indent=yes  -->
+  <!-- QUE ROMPE \section{} CON titlesec                           -->
   <xsl:template match="sec/title">
     <xsl:variable name="profundidad" select="count(ancestor::sec) - 1"/>
+    <xsl:variable name="tituloSec"   select="normalize-space(.)"/>
     <xsl:choose>
       <xsl:when test="$profundidad = 0">\section{</xsl:when>
       <xsl:when test="$profundidad = 1">\subsection{</xsl:when>
       <xsl:when test="$profundidad = 2">\subsubsection{</xsl:when>
       <xsl:otherwise>\paragraph{</xsl:otherwise>
     </xsl:choose>
-    <xsl:apply-templates/>
+    <xsl:value-of select="$tituloSec"/>
     <xsl:text>}&#10;</xsl:text>
   </xsl:template>
 
   <!-- ============================================================ -->
   <!-- PLANTILLAS: PÁRRAFOS                                         -->
-  <!-- LA REGLA GENERAL Y LAS EXCEPCIONES POR CONTEXTO             -->
   <!-- ============================================================ -->
 
-  <!-- PÁRRAFO GENÉRICO -->
   <xsl:template match="p">
     <xsl:apply-templates/>
     <xsl:text>&#10;&#10;</xsl:text>
@@ -615,7 +621,7 @@
     </xsl:if>
   </xsl:template>
 
-  <!-- EN FOOTNOTE: SIN SALTO AL FINAL                              -->
+  <!-- EN FOOTNOTE: SIN SALTO AL FINAL -->
   <xsl:template match="fn/p">
     <xsl:apply-templates/>
     <xsl:if test="following-sibling::p">
@@ -638,10 +644,6 @@
 
   <!-- ============================================================ -->
   <!-- PLANTILLA: NODOS DE TEXTO                                    -->
-  <!-- TODOS PASAN POR f:latex() EXCEPTO LAS EXCEPCIONES SIGUIENTES -->
-  <!-- tex-math//text()  → sin escape (LaTeX matemático nativo)     -->
-  <!-- preformat//text() → sin escape (verbatim)                    -->
-  <!-- ESTAS PLANTILLAS MÁS ESPECÍFICAS TIENEN MAYOR PRIORIDAD      -->
   <!-- ============================================================ -->
   <xsl:template match="text()">
     <xsl:value-of select="f:latex(.)"/>
@@ -683,8 +685,57 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
+<!-- ============================================================ -->
+<!-- VERSO: verse-group CON verse-line                           -->
+<!-- DISEÑO: bastardilla, sangría 14pt, líneas con \\            -->
+<!-- LA ÚLTIMA LÍNEA NO LLEVA \\ — se detecta con position()     -->
+<!-- ============================================================ -->
+  <xsl:template match="verse-group">
+    <xsl:text>&#10;\begin{verse}&#10;</xsl:text>
+    <xsl:apply-templates select="verse-line"/>
+    <xsl:text>\end{verse}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="verse-line">
+    <xsl:text>\textit{</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}</xsl:text>
+    <xsl:if test="position() != last()">
+      <xsl:text>\\&#10;</xsl:text>
+    </xsl:if>
+    <xsl:if test="position() = last()">
+      <xsl:text>&#10;</xsl:text>
+    </xsl:if>
+  </xsl:template>
+
+<!-- ============================================================ -->
+  <!-- BLOQUE DE CÓDIGO CON LENGUAJE — USA listings                -->
+  <!-- priority="5" TIENE PRECEDENCIA SOBRE EL TEMPLATE GENÉRICO   -->
+  <!-- code SIN @language SIGUE USANDO \texttt{} (INLINE)          -->
+  <!-- ============================================================ -->
+  <xsl:template match="code[@language]" priority="5">
+    <xsl:variable name="lang">
+      <xsl:choose>
+        <xsl:when test="lower-case(@language) = 'python'">Python</xsl:when>
+        <xsl:when test="lower-case(@language) = 'r'">R</xsl:when>
+        <xsl:when test="lower-case(@language) = 'javascript'">JavaScript</xsl:when>
+        <xsl:when test="lower-case(@language) = 'sql'">SQL</xsl:when>
+        <xsl:when test="lower-case(@language) = 'bash'">bash</xsl:when>
+        <xsl:when test="lower-case(@language) = 'java'">Java</xsl:when>
+        <xsl:when test="lower-case(@language) = 'c'">C</xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="@language"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:text>&#10;\begin{lstlisting}[language=</xsl:text>
+    <xsl:value-of select="$lang"/>
+    <xsl:text>]&#10;</xsl:text>
+    <xsl:value-of select="."/>
+    <xsl:text>&#10;\end{lstlisting}&#10;&#10;</xsl:text>
+  </xsl:template>
+
   <xsl:template match="sc">
-    <!-- VERSALITAS — REQUIERE fontspec EN EL PREÁMBULO (ya incluido) -->
     <xsl:text>\textsc{</xsl:text>
     <xsl:apply-templates/>
     <xsl:text>}</xsl:text>
@@ -702,12 +753,10 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <!-- CONTENEDORES TRANSPARENTES: PASAN SU CONTENIDO SIN MARCADO  -->
   <xsl:template match="named-content | styled-content">
     <xsl:apply-templates/>
   </xsl:template>
 
-  <!-- SALTO DE LÍNEA FORZADO                                        -->
   <xsl:template match="break">
     <xsl:text>\\&#10;</xsl:text>
   </xsl:template>
@@ -716,23 +765,181 @@
   <!-- PLANTILLAS: REFERENCIAS CRUZADAS Y CITAS                     -->
   <!-- ============================================================ -->
 
-  <!-- CITA BIBLIOGRÁFICA                                            -->
-  <!-- rid = 'bib-{citekey}' (prefijo insertado por GenerarRefListXML) -->
-  <!-- SE QUITA EL PREFIJO bib- PARA OBTENER LA CLAVE REAL DEL .BIB -->
+  <!-- ============================================================ -->
+  <!-- CITA BIBLIOGRÁFICA                                           -->
+  <!-- EL COMANDO VARÍA SEGÚN $estilo_cita:                        -->
+  <!--   biblatex (apa, iso690, ieee) → \autocite{k1,k2,...}       -->
+  <!--   bibtex (vancouver) → \cite{k1,k2,...}                     -->
+  <!-- EL AGRUPAMIENTO ES UNIVERSAL — EL PRIMERO DEL GRUPO         -->
+  <!-- RECOPILA TODAS LAS CLAVES, LOS SIGUIENTES SE SUPRIMEN       -->
+  <!-- PARA VANCOUVER EL PAQUETE cite RESUELVE \cite{k1,k2,k3}    -->
+  <!-- ============================================================ -->
+  <!-- ============================================================ -->
+  <!-- CITA BIBLIOGRÁFICA                                           -->
+  <!-- LEE @specific-use PARA MODO, PREFIJO Y SUFIJO               -->
+  <!-- FORMATO DE specific-use: "modo|prefijo|sufijo"              -->
+  <!--   normal         → \autocite[pre][suf]{key}                 -->
+  <!--   suppress       → \autocite*[pre][suf]{key}  (solo año)    -->
+  <!--   author-in-text → \textcite[pre][suf]{key}   (autor inline)-->
+  <!-- VANCOUVER USA \cite EN TODOS LOS CASOS SIN VARIANTES        -->
+  <!-- ============================================================ -->
   <xsl:template match="xref[@ref-type='bibr']">
-    <xsl:text>\cite{</xsl:text>
-    <xsl:value-of select="substring-after(@rid, 'bib-')"/>
-    <xsl:text>}</xsl:text>
+    <xsl:variable name="prev1" select="preceding-sibling::node()[1]"/>
+    <xsl:variable name="prev2" select="preceding-sibling::node()[2]"/>
+
+    <!-- SI ES PARTE DE UN GRUPO — EL PRIMERO YA INCLUYÓ ESTA CLAVE -->
+    <xsl:if test="not(
+      $prev1/self::text()[matches(normalize-space(.), '^[\p{Pd},;]\s*$')] and
+      $prev2/self::xref[@ref-type='bibr'])">
+
+      <!-- PARSEAR specific-use: modo|prefijo|sufijo -->
+      <xsl:variable name="su" select="normalize-space(@specific-use)"/>
+      <xsl:variable name="modo">
+        <xsl:choose>
+          <xsl:when test="$su != ''">
+            <xsl:value-of select="tokenize($su, '\|')[1]"/>
+          </xsl:when>
+          <xsl:otherwise>normal</xsl:otherwise>
+        </xsl:choose>
+      </xsl:variable>
+      <xsl:variable name="prefijo">
+        <xsl:if test="$su != ''">
+          <xsl:value-of select="normalize-space(tokenize($su, '\|')[2])"/>
+        </xsl:if>
+      </xsl:variable>
+      <xsl:variable name="sufijo">
+        <xsl:if test="$su != ''">
+          <xsl:value-of select="normalize-space(tokenize($su, '\|')[3])"/>
+        </xsl:if>
+      </xsl:variable>
+
+      <xsl:choose>
+
+<!-- VANCOUVER: prefijo como texto libre + \cite[sufijo]{key} -->
+<xsl:when test="$estilo_cita = 'vancouver'">
+  <xsl:if test="$prefijo != ''">
+    <xsl:value-of select="$prefijo"/>
+    <xsl:text> </xsl:text>
+  </xsl:if>
+  <xsl:text>\cite</xsl:text>
+  <xsl:if test="$sufijo != ''">
+    <xsl:text>[</xsl:text>
+    <xsl:value-of select="$sufijo"/>
+    <xsl:text>]</xsl:text>
+  </xsl:if>
+  <xsl:text>{</xsl:text>
+  <xsl:value-of select="substring-after(@rid, 'bib-')"/>
+  <xsl:call-template name="recopilar-grupo-citas">
+    <xsl:with-param name="nodos" select="following-sibling::node()"/>
+  </xsl:call-template>
+  <xsl:text>}</xsl:text>
+</xsl:when>
+
+        <!-- SUPPRESS AUTHOR: [-@key] → \autocite* — SOLO AÑO -->
+        <xsl:when test="$modo = 'suppress'">
+          <xsl:text>\autocite*</xsl:text>
+          <xsl:if test="$prefijo != ''">
+            <xsl:text>[</xsl:text>
+            <xsl:value-of select="$prefijo"/>
+            <xsl:text>]</xsl:text>
+          </xsl:if>
+          <xsl:if test="$sufijo != ''">
+            <xsl:text>[</xsl:text>
+            <xsl:value-of select="$sufijo"/>
+            <xsl:text>]</xsl:text>
+          </xsl:if>
+          <xsl:text>{</xsl:text>
+          <xsl:value-of select="substring-after(@rid, 'bib-')"/>
+          <xsl:call-template name="recopilar-grupo-citas">
+            <xsl:with-param name="nodos" select="following-sibling::node()"/>
+          </xsl:call-template>
+          <xsl:text>}</xsl:text>
+        </xsl:when>
+
+        <!-- AUTHOR IN TEXT: @key → \textcite — AUTOR INLINE -->
+        <xsl:when test="$modo = 'author-in-text'">
+          <xsl:text>\textcite</xsl:text>
+          <xsl:if test="$prefijo != ''">
+            <xsl:text>[</xsl:text>
+            <xsl:value-of select="$prefijo"/>
+            <xsl:text>]</xsl:text>
+          </xsl:if>
+          <xsl:if test="$sufijo != ''">
+            <xsl:text>[</xsl:text>
+            <xsl:value-of select="$sufijo"/>
+            <xsl:text>]</xsl:text>
+          </xsl:if>
+          <xsl:text>{</xsl:text>
+          <xsl:value-of select="substring-after(@rid, 'bib-')"/>
+          <xsl:call-template name="recopilar-grupo-citas">
+            <xsl:with-param name="nodos" select="following-sibling::node()"/>
+          </xsl:call-template>
+          <xsl:text>}</xsl:text>
+        </xsl:when>
+
+        <!-- NORMAL: [@key] → \autocite CON PREFIJO Y SUFIJO OPCIONALES -->
+        <xsl:otherwise>
+          <xsl:text>\autocite</xsl:text>
+          <xsl:if test="$prefijo != ''">
+            <xsl:text>[</xsl:text>
+            <xsl:value-of select="$prefijo"/>
+            <xsl:text>]</xsl:text>
+          </xsl:if>
+          <xsl:if test="$sufijo != ''">
+            <xsl:text>[</xsl:text>
+            <xsl:value-of select="$sufijo"/>
+            <xsl:text>]</xsl:text>
+          </xsl:if>
+          <xsl:text>{</xsl:text>
+          <xsl:value-of select="substring-after(@rid, 'bib-')"/>
+          <xsl:call-template name="recopilar-grupo-citas">
+            <xsl:with-param name="nodos" select="following-sibling::node()"/>
+          </xsl:call-template>
+          <xsl:text>}</xsl:text>
+        </xsl:otherwise>
+
+      </xsl:choose>
+    </xsl:if>
   </xsl:template>
 
-  <!-- REFERENCIA A ECUACIÓN → \eqref (INCLUYE PARÉNTESIS AUTOMÁTICAMENTE) -->
+  <!-- ============================================================ -->
+  <!-- SUPRIMIR SEPARADORES ENTRE CITAS AGRUPADAS                  -->
+  <!-- APLICA A TODOS LOS ESTILOS — LOS SEPARADORES , ; - ENTRE    -->
+  <!-- DOS XREF DE CITA QUEDAN ABSORBIDOS POR EL AGRUPAMIENTO      -->
+  <!-- ============================================================ -->
+  <xsl:template match="text()[
+      matches(normalize-space(.), '^[\p{Pd},;]\s*$') and
+      preceding-sibling::node()[1]/self::xref[@ref-type='bibr'] and
+      following-sibling::node()[1]/self::xref[@ref-type='bibr']
+    ]"/>
+
+  <!-- ============================================================ -->
+  <!-- NAMED TEMPLATE: recopilar-grupo-citas                       -->
+  <!-- AGREGA CLAVES DE XREFS CONSECUTIVOS EN cmd{k1,k2,...}       -->
+  <!-- RECURSIVO: AVANZA DE A DOS NODOS (separador + xref)         -->
+  <!-- ============================================================ -->
+  <xsl:template name="recopilar-grupo-citas">
+    <xsl:param name="nodos" as="node()*"/>
+    <xsl:if test="count($nodos) >= 2">
+      <xsl:variable name="sep"  select="$nodos[1]"/>
+      <xsl:variable name="next" select="$nodos[2]"/>
+      <xsl:if test="$sep/self::text()[matches(normalize-space(.), '^[\p{Pd},;]\s*$')] and
+                    $next/self::xref[@ref-type='bibr']">
+        <xsl:text>,</xsl:text>
+        <xsl:value-of select="substring-after($next/@rid, 'bib-')"/>
+        <xsl:call-template name="recopilar-grupo-citas">
+          <xsl:with-param name="nodos" select="$nodos[position() > 2]"/>
+        </xsl:call-template>
+      </xsl:if>
+    </xsl:if>
+  </xsl:template>
+
   <xsl:template match="xref[@ref-type='disp-formula']">
     <xsl:text>\eqref{</xsl:text>
     <xsl:value-of select="@rid"/>
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <!-- REFERENCIA A FIGURA, TABLA, SECCIÓN, NOTA AL PIE → \ref     -->
   <xsl:template match="xref[@ref-type='fig'   or
                              @ref-type='table' or
                              @ref-type='sec'   or
@@ -742,7 +949,6 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <!-- xref GENÉRICO: MOSTRAR SOLO EL TEXTO DEL ENLACE              -->
   <xsl:template match="xref">
     <xsl:apply-templates/>
   </xsl:template>
@@ -759,12 +965,10 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <!-- ENLACE SIN href: SOLO EL TEXTO -->
   <xsl:template match="ext-link">
     <xsl:apply-templates/>
   </xsl:template>
 
-  <!-- URI COMO ELEMENTO AUTÓNOMO (FRECUENTE EN REFERENCIAS) -->
   <xsl:template match="uri">
     <xsl:text>\url{</xsl:text>
     <xsl:value-of select="."/>
@@ -775,22 +979,18 @@
   <!-- PLANTILLAS: NOTAS AL PIE                                     -->
   <!-- ============================================================ -->
 
-  <!-- fn EN EL CUERPO → \footnote{} INLINE                        -->
-  <!-- LA NUMERACIÓN LA GESTIONA LATEX AUTOMÁTICAMENTE              -->
   <xsl:template match="fn[not(ancestor::ref-list)]">
     <xsl:text>\footnote{</xsl:text>
     <xsl:apply-templates select="*[not(self::label)]"/>
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <!-- LABEL DE fn: SUPRIMIR (NUMERACIÓN LA HACE LATEX) -->
   <xsl:template match="fn/label"/>
 
   <!-- ============================================================ -->
   <!-- PLANTILLAS: LISTAS                                           -->
   <!-- ============================================================ -->
 
-  <!-- LISTAS ORDENADAS -->
   <xsl:template match="list[@list-type='order'       or
                              @list-type='roman-lower' or
                              @list-type='roman-upper' or
@@ -801,7 +1001,6 @@
     <xsl:text>\end{enumerate}&#10;&#10;</xsl:text>
   </xsl:template>
 
-  <!-- TODOS LOS DEMÁS TIPOS (bullet, simple, sin atributo) → itemize -->
   <xsl:template match="list">
     <xsl:text>\begin{itemize}&#10;</xsl:text>
     <xsl:apply-templates/>
@@ -813,7 +1012,6 @@
     <xsl:apply-templates/>
   </xsl:template>
 
-  <!-- LISTA DE DEFINICIONES → description -->
   <xsl:template match="def-list">
     <xsl:text>\begin{description}&#10;</xsl:text>
     <xsl:apply-templates/>
@@ -835,22 +1033,46 @@
   <!-- PLANTILLAS: BLOQUES ESPECIALES                               -->
   <!-- ============================================================ -->
 
-  <!-- CITA LARGA EN BLOQUE -->
+<!-- EPÍGRAFE: USA \epigraph{texto}{atribución} DEFINIDO EN EL PREÁMBULO -->
+  <!-- EN JATS: disp-quote CONTIENE EL TEXTO Y attrib LA ATRIBUCIÓN        -->
   <xsl:template match="disp-quote">
-    <xsl:text>&#10;\begin{quote}&#10;</xsl:text>
-    <xsl:apply-templates/>
-    <xsl:text>\end{quote}&#10;&#10;</xsl:text>
+    <xsl:choose>
+      <!-- CON attrib → EPÍGRAFE -->
+      <xsl:when test="attrib">
+        <xsl:text>&#10;\epigraph{</xsl:text>
+        <xsl:apply-templates select="*[not(self::attrib)]"/>
+        <xsl:text>}{</xsl:text>
+        <xsl:apply-templates select="attrib"/>
+        <xsl:text>}&#10;&#10;</xsl:text>
+      </xsl:when>
+      <!-- SIN attrib → CITA TEXTUAL CON ENTORNO quote -->
+      <xsl:otherwise>
+        <xsl:text>&#10;\begin{quote}&#10;</xsl:text>
+        <xsl:apply-templates/>
+        <xsl:text>\end{quote}&#10;&#10;</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
-  <!-- ATRIBUCIÓN EN CITA LARGA -->
+<!-- ============================================================ -->
+<!-- BOXED-TEXT — RECUADROS CON TIPO (warning, note, tip, etc.)  -->
+<!-- USA EL MISMO tcolorbox DE LOS RESÚMENES: brown!8!white      -->
+<!-- ============================================================ -->
+  <xsl:template match="boxed-text">
+  <xsl:text>&#10;\begin{tcolorbox}[colback=brown!8!white,colframe=brown!8!white,</xsl:text>
+    <xsl:text>boxrule=0pt,arc=2pt,left=4pt,right=4pt,top=3pt,bottom=3pt,</xsl:text>
+    <xsl:text>before skip=4pt,after skip=4pt]&#10;</xsl:text>
+    <xsl:text>{\sffamily\small&#10;</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}&#10;</xsl:text>
+    <xsl:text>\end{tcolorbox}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+  <!-- ATTRIB: CONTENIDO PURO SIN PREFIJO — \epigraph LO POSICIONA -->
   <xsl:template match="attrib">
-    <xsl:text>\hfill --- </xsl:text>
     <xsl:apply-templates/>
-    <xsl:text>&#10;</xsl:text>
   </xsl:template>
 
-  <!-- TEXTO PREFORMATEADO / VERBATIM EN BLOQUE                     -->
-  <!-- text() DENTRO NO PASA POR f:latex (ver plantilla preformat//text()) -->
   <xsl:template match="preformat">
     <xsl:text>&#10;\begin{verbatim}&#10;</xsl:text>
     <xsl:value-of select="string(.)"/>
@@ -862,113 +1084,182 @@
   <!-- ============================================================ -->
 
   <xsl:template match="fig">
-    <xsl:text>&#10;\begin{figure}[htbp]&#10;</xsl:text>
-    <xsl:text>  \centering&#10;</xsl:text>
+  <xsl:choose>
+    <!-- FIGURA A ANCHO COMPLETO (texto + marginparsep + marginparwidth) -->
+    <xsl:when test="@specific-use='fullwidth'">
+      <xsl:text>&#10;\begin{adjustwidth}{0pt}{-\dimexpr\marginparsep+\marginparwidth\relax}%&#10;</xsl:text>
+      <xsl:text>\centering&#10;</xsl:text>
+      <xsl:call-template name="emitir-contenido-fig"/>
+      <xsl:text>\end{adjustwidth}&#10;&#10;</xsl:text>
+    </xsl:when>
+    <!-- FIGURA NORMAL — ANCHO DE LA CAJA DE TEXTO -->
+    <xsl:otherwise>
+      <xsl:text>&#10;\begin{figure}[!ht]&#10;</xsl:text>
+      <xsl:text>\centering&#10;</xsl:text>
+      <xsl:call-template name="emitir-contenido-fig"/>
+      <xsl:text>\end{figure}&#10;&#10;</xsl:text>
+    </xsl:otherwise>
+  </xsl:choose>
+</xsl:template>
 
-    <!-- IMAGEN: RUTA RELATIVA AL SUBDIRECTORIO figuras/             -->
-    <!-- EL EDITOR COLOCA LAS IMÁGENES EN {proyecto}/figuras/        -->
-    <!-- EL .TEX SE COMPILA DESDE {proyecto}/latex/ — RUTA RELATIVA  -->
-    <xsl:if test="graphic/@xlink:href">
-      <xsl:text>  \includegraphics[width=\linewidth]{../figuras/</xsl:text>
-      <xsl:value-of select="graphic/@xlink:href"/>
-      <xsl:text>}&#10;</xsl:text>
-    </xsl:if>
+<!-- NAMED TEMPLATE: contenido común de la figura -->
+<xsl:template name="emitir-contenido-fig">
+  <xsl:if test="graphic/@xlink:href != ''">
+    <xsl:text>\includegraphics[width=\linewidth]{../</xsl:text>
+    <xsl:value-of select="graphic/@xlink:href"/>
+    <xsl:text>}&#10;</xsl:text>
+  </xsl:if>
+  <xsl:if test="caption">
+    <xsl:text>\captionof{figure}{</xsl:text>
+    <xsl:apply-templates select="caption/p/node()"/>
+    <xsl:text>}&#10;</xsl:text>
+  </xsl:if>
+  <xsl:if test="@id">
+    <xsl:text>\label{</xsl:text>
+    <xsl:value-of select="@id"/>
+    <xsl:text>}&#10;</xsl:text>
+  </xsl:if>
+  <xsl:if test="@id">
+    <xsl:text>\label{</xsl:text>
+    <xsl:value-of select="@id"/>
+    <xsl:text>}&#10;</xsl:text>
+  </xsl:if>
+  <xsl:text>\vspace{\intextsep}&#10;</xsl:text>
+</xsl:template>
 
-    <!-- LEYENDA (caption title + primer párrafo de caption/p)      -->
-    <xsl:if test="caption">
-      <xsl:text>  \caption{</xsl:text>
-      <xsl:if test="caption/title">
-        <xsl:apply-templates select="caption/title/node()"/>
-        <xsl:if test="caption/p">. </xsl:if>
-      </xsl:if>
-      <xsl:for-each select="caption/p">
-        <xsl:if test="position() > 1"> </xsl:if>
-        <xsl:apply-templates/>
-      </xsl:for-each>
-      <xsl:text>}&#10;</xsl:text>
-    </xsl:if>
-
-    <!-- LABEL PARA \ref{} Y \autoref{} -->
-    <xsl:if test="@id">
-      <xsl:text>  \label{</xsl:text>
-      <xsl:value-of select="@id"/>
-      <xsl:text>}&#10;</xsl:text>
-    </xsl:if>
-
-    <xsl:text>\end{figure}&#10;&#10;</xsl:text>
-  </xsl:template>
-
-  <!-- SUPRIMIR HIJOS DE fig PROCESADOS EXPLÍCITAMENTE ARRIBA       -->
   <xsl:template match="fig/caption"/>
   <xsl:template match="fig/label"/>
   <xsl:template match="fig/graphic"/>
 
   <!-- ============================================================ -->
   <!-- PLANTILLAS: TABLAS (JATS CALS → LaTeX booktabs)             -->
-  <!-- COBERTURA: TABLAS SIMPLES SIN colspan NI rowspan             -->
-  <!-- TODO: TABLAS CON SPANS REQUIEREN makecell O multirow         -->
   <!-- ============================================================ -->
-
+  <!-- ============================================================ -->
+  <!-- TABLA — TRES VARIANTES SEGÚN @specific-use                  -->
+  <!--   landscape → sidewaystable (flotante, página propia)        -->
+  <!--   fullwidth → adjustwidth al margen derecho, centrada        -->
+  <!--   (ninguno) → table normal ancho de columna                  -->
+  <!-- ============================================================ -->
   <xsl:template match="table-wrap">
-    <xsl:text>&#10;\begin{table}[htbp]&#10;</xsl:text>
-    <xsl:text>  \centering&#10;</xsl:text>
+    <xsl:choose>
 
-    <!-- LEYENDA ANTES DE LA TABLA (CONVENCIÓN JATS4R / EDITORIAL)  -->
-    <xsl:if test="caption">
-      <xsl:text>  \caption{</xsl:text>
-      <xsl:if test="caption/title">
-        <xsl:apply-templates select="caption/title/node()"/>
-        <xsl:if test="caption/p">. </xsl:if>
-      </xsl:if>
-      <xsl:for-each select="caption/p">
-        <xsl:if test="position() > 1"> </xsl:if>
-        <xsl:apply-templates/>
-      </xsl:for-each>
-      <xsl:text>}&#10;</xsl:text>
-    </xsl:if>
+      <!-- TABLA APAISADA — sidewaystable, ancho total, página propia -->
+      <xsl:when test="@specific-use='landscape'">
+        <xsl:text>&#10;\begin{sidewaystable}&#10;</xsl:text>
+        <xsl:text>\centering&#10;</xsl:text>
+        <xsl:text>{\sf\footnotesize\setlength\tabcolsep{4pt}%&#10;</xsl:text>
+        <xsl:apply-templates select="table | alternatives/table"/>
+        <xsl:if test="table-wrap-foot">
+          <xsl:text>  \smallskip&#10;</xsl:text>
+          <xsl:text>  {\small\raggedright </xsl:text>
+          <xsl:apply-templates select="table-wrap-foot//p"/>
+          <xsl:text>}&#10;</xsl:text>
+        </xsl:if>
+        <xsl:text>}%&#10;</xsl:text>
+        <xsl:if test="caption">
+          <xsl:text>\caption{</xsl:text>
+          <xsl:if test="caption/title">
+            <xsl:apply-templates select="caption/title/node()"/>
+            <xsl:if test="caption/p">. </xsl:if>
+          </xsl:if>
+          <xsl:for-each select="caption/p">
+            <xsl:if test="position() > 1"> </xsl:if>
+            <xsl:apply-templates/>
+          </xsl:for-each>
+          <xsl:text>}</xsl:text>
+        </xsl:if>
+        <xsl:if test="@id">
+          <xsl:text>\label{</xsl:text>
+          <xsl:value-of select="@id"/>
+          <xsl:text>}&#10;</xsl:text>
+        </xsl:if>
+        <xsl:text>\end{sidewaystable}&#10;&#10;</xsl:text>
+      </xsl:when>
 
-    <xsl:if test="@id">
-      <xsl:text>  \label{</xsl:text>
-      <xsl:value-of select="@id"/>
-      <xsl:text>}&#10;</xsl:text>
-    </xsl:if>
+      <!-- TABLA ANCHO TOTAL — adjustwidth al margen derecho, centrada -->
+      <xsl:when test="@specific-use='fullwidth'">
+        <xsl:text>&#10;\begin{adjustwidth}{0pt}{-\dimexpr\marginparsep+\marginparwidth\relax}%&#10;</xsl:text>
+        <xsl:text>\centering&#10;</xsl:text>
+        <xsl:text>{\sf\footnotesize\setlength\tabcolsep{4pt}%&#10;</xsl:text>
+        <xsl:apply-templates select="table | alternatives/table"/>
+        <xsl:if test="table-wrap-foot">
+          <xsl:text>  \smallskip&#10;</xsl:text>
+          <xsl:text>  {\small\raggedright </xsl:text>
+          <xsl:apply-templates select="table-wrap-foot//p"/>
+          <xsl:text>}&#10;</xsl:text>
+        </xsl:if>
+        <xsl:text>}%&#10;</xsl:text>
+        <xsl:if test="caption">
+          <xsl:text>\captionof{table}{</xsl:text>
+          <xsl:if test="caption/title">
+            <xsl:apply-templates select="caption/title/node()"/>
+            <xsl:if test="caption/p">. </xsl:if>
+          </xsl:if>
+          <xsl:for-each select="caption/p">
+            <xsl:if test="position() > 1"> </xsl:if>
+            <xsl:apply-templates/>
+          </xsl:for-each>
+          <xsl:text>}</xsl:text>
+        </xsl:if>
+        <xsl:if test="@id">
+          <xsl:text>\label{</xsl:text>
+          <xsl:value-of select="@id"/>
+          <xsl:text>}&#10;</xsl:text>
+        </xsl:if>
+        <xsl:text>\vspace{\intextsep}&#10;</xsl:text>
+        <xsl:text>\end{adjustwidth}&#10;&#10;</xsl:text>
+      </xsl:when>
 
-    <!-- TABLE PUEDE ESTAR DIRECTAMENTE O DENTRO DE alternatives     -->
-    <xsl:apply-templates select="table | alternatives/table"/>
+      <!-- TABLA NORMAL — ancho de columna de texto -->
+      <xsl:otherwise>
+        <xsl:text>&#10;\begin{table}[!ht]&#10;</xsl:text>
+        <xsl:text>\centering&#10;</xsl:text>
+        <xsl:text>{\sf\footnotesize\setlength\tabcolsep{4pt}%&#10;</xsl:text>
+        <xsl:apply-templates select="table | alternatives/table"/>
+        <xsl:if test="table-wrap-foot">
+          <xsl:text>  \smallskip&#10;</xsl:text>
+          <xsl:text>  {\small\raggedright </xsl:text>
+          <xsl:apply-templates select="table-wrap-foot//p"/>
+          <xsl:text>}&#10;</xsl:text>
+        </xsl:if>
+        <xsl:text>}%&#10;</xsl:text>
+        <xsl:if test="caption">
+          <xsl:text>\caption{</xsl:text>
+          <xsl:if test="caption/title">
+            <xsl:apply-templates select="caption/title/node()"/>
+            <xsl:if test="caption/p">. </xsl:if>
+          </xsl:if>
+          <xsl:for-each select="caption/p">
+            <xsl:if test="position() > 1"> </xsl:if>
+            <xsl:apply-templates/>
+          </xsl:for-each>
+          <xsl:text>}</xsl:text>
+        </xsl:if>
+        <xsl:if test="@id">
+          <xsl:text>\label{</xsl:text>
+          <xsl:value-of select="@id"/>
+          <xsl:text>}&#10;</xsl:text>
+        </xsl:if>
+        <xsl:text>\end{table}&#10;&#10;</xsl:text>
+      </xsl:otherwise>
 
-    <!-- NOTA AL PIE DE TABLA -->
-    <xsl:if test="table-wrap-foot">
-      <xsl:text>  \smallskip&#10;</xsl:text>
-      <xsl:text>  {\small\raggedright </xsl:text>
-      <xsl:apply-templates select="table-wrap-foot//p"/>
-      <xsl:text>}&#10;</xsl:text>
-    </xsl:if>
-
-    <xsl:text>\end{table}&#10;&#10;</xsl:text>
+    </xsl:choose>
   </xsl:template>
 
-  <!-- SUPRIMIR HIJOS DE table-wrap PROCESADOS EXPLÍCITAMENTE      -->
   <xsl:template match="table-wrap/caption"/>
   <xsl:template match="table-wrap/label"/>
 
   <xsl:template match="table">
-    <!-- NÚMERO DE COLUMNAS DESDE LA PRIMERA FILA DISPONIBLE        -->
     <xsl:variable name="primeraFila"
       select="(thead/tr | tbody/tr | tfoot/tr)[1]"/>
     <xsl:variable name="nCols"
       select="count($primeraFila/(th | td))"/>
-
-    <!-- ESPECIFICACIÓN DE COLUMNAS: l PARA CADA COLUMNA            -->
-    <!-- TODO: INFERIR l/c/r DESDE @align EN CADA CELDA            -->
     <xsl:variable name="colSpec"
       select="string-join(for $i in 1 to $nCols return 'l', '')"/>
-
     <xsl:text>  \begin{tabular}{@{}</xsl:text>
     <xsl:value-of select="$colSpec"/>
     <xsl:text>@{}}&#10;</xsl:text>
     <xsl:text>    \toprule&#10;</xsl:text>
-
-    <!-- ENCABEZADO (thead) -->
     <xsl:for-each select="thead/tr">
       <xsl:call-template name="emitir-fila-tabla">
         <xsl:with-param name="esEncabezado" select="true()"/>
@@ -977,8 +1268,6 @@
     <xsl:if test="thead/tr">
       <xsl:text>    \midrule&#10;</xsl:text>
     </xsl:if>
-
-    <!-- SI NO HAY THEAD, LA PRIMERA FILA DE TBODY FUNCIONA COMO ENCABEZADO -->
     <xsl:if test="not(thead) and tbody/tr">
       <xsl:for-each select="tbody/tr[1]">
         <xsl:call-template name="emitir-fila-tabla">
@@ -987,28 +1276,22 @@
       </xsl:for-each>
       <xsl:text>    \midrule&#10;</xsl:text>
     </xsl:if>
-
-    <!-- CUERPO (tbody) — SI NO HAY THEAD, OMITIR LA PRIMERA FILA  -->
     <xsl:for-each select="if (not(thead)) then tbody/tr[position() > 1]
                           else tbody/tr">
       <xsl:call-template name="emitir-fila-tabla">
         <xsl:with-param name="esEncabezado" select="false()"/>
       </xsl:call-template>
     </xsl:for-each>
-
-    <!-- PIE DE TABLA DENTRO DEL TABULAR (tfoot) -->
     <xsl:for-each select="tfoot/tr">
       <xsl:call-template name="emitir-fila-tabla">
         <xsl:with-param name="esEncabezado" select="false()"/>
       </xsl:call-template>
     </xsl:for-each>
-
     <xsl:text>    \bottomrule&#10;</xsl:text>
     <xsl:text>  \end{tabular}&#10;</xsl:text>
   </xsl:template>
 
-  <!-- NAMED TEMPLATE: EMITIR UNA FILA DE TABLA                     -->
-  <xsl:template name="emitir-fila-tabla">
+<xsl:template name="emitir-fila-tabla">
     <xsl:param name="esEncabezado" as="xs:boolean" select="false()"/>
     <xsl:text>    </xsl:text>
     <xsl:for-each select="th | td">
@@ -1027,9 +1310,12 @@
       </xsl:choose>
     </xsl:for-each>
     <xsl:text> \\&#10;</xsl:text>
+    <!-- MIDRULE DESPUÉS DE CADA FILA EXCEPTO LA ÚLTIMA -->
+    <xsl:if test="position() != last()">
+      <xsl:text>    \midrule&#10;</xsl:text>
+    </xsl:if>
   </xsl:template>
 
-  <!-- CONTENEDOR TRANSPARENTE PARA VERSIONES ALTERNATIVAS          -->
   <xsl:template match="alternatives">
     <xsl:apply-templates/>
   </xsl:template>
@@ -1038,15 +1324,12 @@
   <!-- PLANTILLAS: MATEMÁTICAS                                       -->
   <!-- ============================================================ -->
 
-  <!-- FÓRMULA EN LÍNEA -->
   <xsl:template match="inline-formula">
     <xsl:text>$</xsl:text>
     <xsl:apply-templates/>
     <xsl:text>$</xsl:text>
   </xsl:template>
 
-  <!-- FÓRMULA EN BLOQUE (NUMERADA AUTOMÁTICAMENTE POR LATEX)       -->
-  <!-- ETIQUETA \label SOLO SI EL ELEMENTO TIENE @id                 -->
   <xsl:template match="disp-formula">
     <xsl:text>&#10;\begin{equation}</xsl:text>
     <xsl:if test="@id">
@@ -1059,28 +1342,20 @@
     <xsl:text>&#10;\end{equation}&#10;&#10;</xsl:text>
   </xsl:template>
 
-  <!-- LABEL DENTRO DE disp-formula: SUPRIMIR (YA EMITIDO COMO \label) -->
   <xsl:template match="disp-formula/label"/>
 
-  <!-- tex-math: CONTENIDO LATEX PURO, SE EMITE SIN MODIFICAR       -->
-  <!-- text() DENTRO TIENE SU PROPIA PLANTILLA (tex-math//text())   -->
   <xsl:template match="tex-math">
     <xsl:value-of select="."/>
   </xsl:template>
 
-  <!-- MathML: PLACEHOLDER HASTA INTEGRACIÓN DE CONVERSOR           -->
-  <!-- TODO: INTEGRAR CONVERSIÓN MathML → LaTeX CON MÓDULO EXTERNO  -->
   <xsl:template match="mml:math">
     <xsl:text>\(\text{[FÓRMULA MathML --- conversión pendiente]}\)</xsl:text>
   </xsl:template>
 
   <!-- ============================================================ -->
-  <!--                                                              -->
   <!--                   BACK: MATERIAL POSTERIOR                  -->
-  <!--                                                              -->
   <!-- ============================================================ -->
 
-  <!-- AGRADECIMIENTOS -->
   <xsl:template match="ack">
     <xsl:text>&#10;\section*{</xsl:text>
     <xsl:choose>
@@ -1091,20 +1366,16 @@
       <xsl:otherwise>Agradecimientos</xsl:otherwise>
     </xsl:choose>
     <xsl:text>}&#10;</xsl:text>
-    <!-- SUPRIMIR EL TÍTULO DEL ACK: YA EMITIDO ARRIBA              -->
     <xsl:apply-templates select="*[not(self::title)]"/>
   </xsl:template>
 
-  <!-- GRUPO DE APÉNDICES -->
   <xsl:template match="app-group">
     <xsl:apply-templates/>
   </xsl:template>
 
-  <!-- APÉNDICE INDIVIDUAL -->
-  <!-- \appendix CAMBIA EL MODO DE NUMERACIÓN EN LATEX              -->
   <xsl:template match="app">
     <xsl:text>&#10;\appendix&#10;\section{</xsl:text>
-    <xsl:apply-templates select="title/node()"/>
+    <xsl:value-of select="normalize-space(title)"/>
     <xsl:text>}&#10;</xsl:text>
     <xsl:apply-templates select="*[not(self::title)]"/>
   </xsl:template>
@@ -1118,24 +1389,19 @@
   <!-- ============================================================ -->
   <xsl:template match="back/ref-list"/>
 
-
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: emitir-titulo-ancho                          -->
-  <!-- PROPÓSITO: TÍTULO PRINCIPAL Y TÍTULO TRADUCIDO AL ANCHO      -->
-  <!--            COMPLETO (textwidth + marginparsep + marginpar-    -->
-  <!--            width = 184mm). EL TÍTULO TRADUCIDO SE OMITE SI   -->
-  <!--            NO EXISTE trans-title EN EL CANÓNICO.             -->
+  <!-- TÍTULO PRINCIPAL Y TÍTULO TRADUCIDO AL ANCHO COMPLETO        -->
+  <!-- (textwidth + marginparsep + marginparwidth = 184mm)          -->
   <!-- ============================================================ -->
   <xsl:template name="emitir-titulo-ancho">
 
-    <!-- 1. Título principal-->
     <xsl:text>% --- TÍTULO A ANCHO COMPLETO ---&#10;</xsl:text>
     <xsl:text>\noindent\begin{minipage}[t]{\dimexpr\textwidth+\marginparsep+\marginparwidth\relax}%&#10;</xsl:text>
     <xsl:text>{\sffamily\bfseries\Large\articulotitulo\par}%&#10;</xsl:text>
     <xsl:text>\end{minipage}\par&#10;</xsl:text>
     <xsl:text>\vspace{3mm}%&#10;</xsl:text>
 
-    <!-- 2. Título en segundo idioma (condicional)-->
     <xsl:if test="normalize-space(front/article-meta/title-group/trans-title-group/trans-title) != ''">
       <xsl:text>\renewcommand{\articulotitulotrans}{</xsl:text>
       <xsl:value-of select="f:latex(normalize-space(
@@ -1152,31 +1418,23 @@
 
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: emitir-bloque-lateral                        -->
-  <!-- PROPÓSITO: CAJA DE METADATOS EN COLUMNA DERECHA (68mm).     -->
+  <!-- CAJA DE METADATOS EN COLUMNA DERECHA (68mm).                 -->
   <!-- POSICIÓN ABSOLUTA VÍA PAQUETE textpos:                       -->
   <!--   HORIZONTAL: left(13) + textwidth(110) + sep(6) = 129mm    -->
   <!--   VERTICAL:   top(13) + headheight(29) + 50mm    =  92mm    -->
-  <!-- TODO EL TEXTO EN \sffamily\scriptsize.                       -->
-  <!-- URLs, DOIs, ORCID, EMAIL EN \texttt.                         -->
-  <!-- ETIQUETAS DE SECCIÓN EN \MakeUppercase.                      -->
   <!-- ============================================================ -->
   <xsl:template name="emitir-bloque-lateral">
 
     <xsl:text>% --- BLOQUE LATERAL DE METADATOS ---&#10;</xsl:text>
-    <!-- POSICIÓN X CALCULADA EN TIEMPO DE COMPILACIÓN LATEX VÍA \gbbloquex -->
     <xsl:text>\begin{textblock*}{68mm}(\gbbloquex,92mm)&#10;</xsl:text>
-    <!-- RESETEAR leftskip Y parindent: EL CONTEXTO EXTERIOR PUEDE HEREDAR  -->
-    <!-- leftskip != 0 LO QUE DESPLAZA EL CONTENIDO DENTRO DEL BLOQUE       -->
     <xsl:text>{\setlength{\leftskip}{0pt}\setlength{\parindent}{0pt}%&#10;</xsl:text>
     <xsl:text>\noindent\begin{minipage}[t]{68mm}&#10;</xsl:text>
     <xsl:text>\sffamily\small\setlength{\parskip}{1pt}&#10;</xsl:text>
 
-    <!-- 1. Autoría (sin etiqueta, sin revista ni e-ISSN que van en header p.2+) -->
+    <!-- 1. AUTORÍA -->
     <xsl:if test="front/article-meta/contrib-group/contrib[@contrib-type='author']">
-
       <xsl:for-each select="front/article-meta/contrib-group/contrib[@contrib-type='author']">
 
-        <!-- NOMBRE COMPLETO EN BOLD AZUL + \par PARA SEPARAR DEL ORCID -->
         <xsl:text>{\bfseries\color{azulrevista}</xsl:text>
         <xsl:value-of select="f:latex(normalize-space(name/given-names))"/>
         <xsl:text> </xsl:text>
@@ -1187,7 +1445,6 @@
         </xsl:if>
         <xsl:text>}\par&#10;</xsl:text>
 
-        <!-- ORCID EN \scriptsize -->
         <xsl:if test="normalize-space(contrib-id[@contrib-id-type='orcid']) != ''">
           <xsl:variable name="orcid-url"
             select="normalize-space(contrib-id[@contrib-id-type='orcid'])"/>
@@ -1198,7 +1455,6 @@
           <xsl:text>}}}\par&#10;</xsl:text>
         </xsl:if>
 
-        <!-- EMAIL (solo autor de correspondencia) EN \scriptsize -->
         <xsl:if test="@corresp='yes' and normalize-space(email) != ''">
           <xsl:text>{\scriptsize\texttt{\href{mailto:</xsl:text>
           <xsl:value-of select="normalize-space(email)"/>
@@ -1207,7 +1463,6 @@
           <xsl:text>}}}\par&#10;</xsl:text>
         </xsl:if>
 
-        <!-- AFILIACIÓN -->
         <xsl:if test="aff">
           <xsl:for-each select="aff/institution">
             <xsl:value-of select="f:latex(normalize-space(.))"/>
@@ -1232,7 +1487,96 @@
       <xsl:text>\vspace{6pt}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- 4. Datos de publicación: etiqueta bold azul + datos en línea -->
+    <!-- 1.5. DERECHOS DE AUTORÍA — DESPUÉS DE AUTORES, ANTES DE PUBLICACIÓN -->
+    <!-- ETIQUETA EN AZUL IGUAL A Publicación — © AUTOR EN LÍNEA NUEVA       -->
+    <!-- TEXTO DESCRIPTIVO MISMO TAMAÑO QUE EL RESTO, CONTINÚA EN EL PÁRRAFO -->
+    <xsl:variable name="anio-pub"
+      select="normalize-space(front/article-meta/pub-date/year)"/>
+    <xsl:variable name="lic-url-der"
+      select="normalize-space(front/article-meta/permissions/license/@xlink:href)"/>
+    <xsl:variable name="contribs-der"
+      select="front/article-meta/contrib-group/contrib[@contrib-type='author']"/>
+    <xsl:variable name="autores-copyright">
+      <xsl:choose>
+        <xsl:when test="count($contribs-der) = 1">
+          <xsl:value-of select="normalize-space($contribs-der[1]/name/surname)"/>
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="substring(
+            normalize-space($contribs-der[1]/name/given-names), 1, 1)"/>
+          <xsl:text>.</xsl:text>
+        </xsl:when>
+        <xsl:when test="count($contribs-der) = 2">
+          <xsl:value-of select="normalize-space($contribs-der[1]/name/surname)"/>
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="substring(
+            normalize-space($contribs-der[1]/name/given-names), 1, 1)"/>
+          <xsl:text>. y </xsl:text>
+          <xsl:value-of select="normalize-space($contribs-der[2]/name/surname)"/>
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="substring(
+            normalize-space($contribs-der[2]/name/given-names), 1, 1)"/>
+          <xsl:text>.</xsl:text>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="normalize-space($contribs-der[1]/name/surname)"/>
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="substring(
+            normalize-space($contribs-der[1]/name/given-names), 1, 1)"/>
+          <xsl:text>. et al.</xsl:text>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:variable name="lic-texto-der">
+      <xsl:choose>
+        <xsl:when test="contains($lic-url-der, 'by/4.0')">
+          <xsl:text>Se permite el uso, distribución y reproducción sin restricciones, incluso con fines comerciales, siempre que se cite la obra original.</xsl:text>
+        </xsl:when>
+        <xsl:when test="contains($lic-url-der, 'by-nc-sa/4.0')">
+          <xsl:text>Se permite el uso, distribución y reproducción sin fines comerciales, siempre que se cite la obra original y las obras derivadas se distribuyan bajo la misma licencia.</xsl:text>
+        </xsl:when>
+        <xsl:when test="contains($lic-url-der, 'by-nc-nd/4.0')">
+          <xsl:text>Se permite el uso y distribución sin fines comerciales, siempre que se cite la obra original y no se realicen obras derivadas.</xsl:text>
+        </xsl:when>
+        <xsl:when test="contains($lic-url-der, 'by-nc/4.0')">
+          <xsl:text>Se permite el uso, distribución y reproducción sin fines comerciales, siempre que se cite la obra original.</xsl:text>
+        </xsl:when>
+        <xsl:when test="contains($lic-url-der, 'by-sa/4.0')">
+          <xsl:text>Se permite el uso, distribución y reproducción, incluso con fines comerciales, siempre que se cite la obra original y las obras derivadas se distribuyan bajo la misma licencia.</xsl:text>
+        </xsl:when>
+        <xsl:when test="contains($lic-url-der, 'by-nd/4.0')">
+          <xsl:text>Se permite el uso y distribución, incluso con fines comerciales, siempre que se cite la obra original y no se realicen obras derivadas.</xsl:text>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="normalize-space(
+            front/article-meta/permissions/license/license-p)"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:if test="$lic-url-der != '' or $autores-copyright != ''">
+      <!-- ETIQUETA — MISMO ESTILO QUE Publicación, DOI, etc. -->
+      <xsl:text>{\bfseries\color{azulrevista!70}Derechos de autor\'ia:}\par&#10;</xsl:text>
+      <!-- © AUTOR — LÍNEA NUEVA, MISMO TAMAÑO QUE EL RESTO DE LA COLUMNA -->
+      <xsl:text>\textcopyright\ </xsl:text>
+      <xsl:value-of select="$anio-pub"/>
+      <xsl:text> </xsl:text>
+      <xsl:value-of select="f:latex($autores-copyright)"/>
+      <xsl:text> Publicado por </xsl:text>
+      <xsl:value-of select="f:latex(normalize-space(
+        front/journal-meta/journal-title-group/journal-title))"/>
+      <xsl:text>. </xsl:text>
+      <!-- TEXTO DESCRIPTIVO — CONTINÚA EN EL MISMO PÁRRAFO, MISMO TAMAÑO -->
+      <xsl:value-of select="f:latex($lic-texto-der)"/>
+      <xsl:if test="$lic-url-der != ''">
+        <xsl:text> (\href{</xsl:text>
+        <xsl:value-of select="$lic-url-der"/>
+        <xsl:text>}{</xsl:text>
+        <xsl:value-of select="$lic-url-der"/>
+        <xsl:text>})</xsl:text>
+      </xsl:if>
+      <xsl:text>\par\vspace{6pt}&#10;</xsl:text>
+    </xsl:if>
+
+    <!-- 2. DATOS DE PUBLICACIÓN -->
     <xsl:text>{\bfseries\color{azulrevista!70}</xsl:text>
     <xsl:choose>
       <xsl:when test="$xmlLang = 'es'">Publicación</xsl:when>
@@ -1263,7 +1607,23 @@
     </xsl:if>
     <xsl:text>\par\vspace{6pt}&#10;</xsl:text>
 
-    <!-- 5. DOI: etiqueta bold azul + URL en scriptsize -->
+    <!-- 3. URL -->
+    <xsl:if test="$url_articulo != ''">
+      <xsl:text>{\bfseries\color{azulrevista!70}</xsl:text>
+      <xsl:choose>
+        <xsl:when test="$xmlLang = 'es'">URL</xsl:when>
+        <xsl:when test="$xmlLang = 'en'">URL</xsl:when>
+        <xsl:when test="$xmlLang = 'pt'">URL</xsl:when>
+        <xsl:otherwise>URL</xsl:otherwise>
+      </xsl:choose>
+      <xsl:text>:} {\scriptsize\texttt{\href{</xsl:text>
+      <xsl:value-of select="$url_articulo"/>
+      <xsl:text>}{</xsl:text>
+      <xsl:value-of select="$url_articulo"/>
+      <xsl:text>}}}\par\vspace{6pt}&#10;</xsl:text>
+    </xsl:if>
+
+    <!-- 4. DOI -->
     <xsl:variable name="doi-lat"
       select="normalize-space(front/article-meta/article-id[@pub-id-type='doi'])"/>
     <xsl:if test="$doi-lat != ''">
@@ -1274,7 +1634,7 @@
       <xsl:text>}}}\par\vspace{6pt}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- 6. Licencia: etiqueta bold azul + texto + URL en scriptsize -->
+    <!-- 5. LICENCIA -->
     <xsl:if test="front/article-meta/permissions/license">
       <xsl:text>{\bfseries\color{azulrevista!70}</xsl:text>
       <xsl:choose>
@@ -1288,7 +1648,6 @@
       <xsl:value-of select="f:latex(normalize-space(
         front/article-meta/permissions/license/license-p))"/>
       <xsl:text>\par&#10;</xsl:text>
-      <!-- URL DE LA LICENCIA EN \scriptsize\texttt (ATRIBUTO xlink:href) -->
       <xsl:if test="normalize-space(front/article-meta/permissions/license/@xlink:href) != ''">
         <xsl:variable name="lic-url"
           select="normalize-space(front/article-meta/permissions/license/@xlink:href)"/>
@@ -1301,7 +1660,7 @@
       <xsl:text>\vspace{6pt}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- 7. Fechas-->
+    <!-- 6. FECHAS -->
     <xsl:if test="front/article-meta/history/date[@date-type='received'] or
                   front/article-meta/history/date[@date-type='accepted'] or
                   front/article-meta/history/date[@date-type='pub']">
@@ -1365,31 +1724,63 @@
       <xsl:text>\vspace{6pt}&#10;</xsl:text>
     </xsl:if>
 
-    <!-- 8. Palabras clave (todas las kwd-group) -->
-    <xsl:if test="front/article-meta/kwd-group">
+
+<!-- N. COMPARTIR EN REDES SOCIALES -->
+    <xsl:if test="$url_articulo != ''">
+      <xsl:variable name="url-enc" select="encode-for-uri($url_articulo)"/>
+      <xsl:variable name="tit-enc" select="encode-for-uri(
+        normalize-space(front/article-meta/title-group/article-title))"/>
+      <xsl:text>\vspace{6pt}&#10;</xsl:text>
       <xsl:text>{\bfseries\color{azulrevista!70}</xsl:text>
       <xsl:choose>
-        <xsl:when test="$xmlLang = 'es'">Palabras clave</xsl:when>
-        <xsl:when test="$xmlLang = 'en'">Keywords</xsl:when>
-        <xsl:when test="$xmlLang = 'pt'">Palavras-chave</xsl:when>
-        <xsl:when test="$xmlLang = 'fr'">Mots-cl\'es</xsl:when>
-        <xsl:otherwise>Palabras clave</xsl:otherwise>
+        <xsl:when test="$xmlLang = 'es'">Compartir</xsl:when>
+        <xsl:when test="$xmlLang = 'en'">Share</xsl:when>
+        <xsl:when test="$xmlLang = 'pt'">Compartilhar</xsl:when>
+        <xsl:otherwise>Compartir</xsl:otherwise>
       </xsl:choose>
-      <xsl:text>}\par\vspace{2pt}&#10;</xsl:text>
-      <xsl:for-each select="front/article-meta/kwd-group">
-        <xsl:if test="@xml:lang != ''">
-          <xsl:text>(</xsl:text>
-          <xsl:value-of select="@xml:lang"/>
-          <xsl:text>)~</xsl:text>
-        </xsl:if>
-        <xsl:for-each select="kwd">
-          <xsl:value-of select="f:latex(normalize-space(.))"/>
-          <xsl:if test="position() != last()">
-            <xsl:text> $\cdot$ </xsl:text>
-          </xsl:if>
-        </xsl:for-each>
-        <xsl:text>\par&#10;</xsl:text>
-      </xsl:for-each>
+      <xsl:text>:}\par\vspace{3pt}&#10;</xsl:text>
+      <xsl:text>{\large&#10;</xsl:text>
+      <!-- LINKEDIN -->
+      <xsl:text>\href{https://www.linkedin.com/sharing/share-offsite/?url=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faLinkedin}}~&#10;</xsl:text>
+      <!-- X / TWITTER -->
+      <xsl:text>\href{https://twitter.com/intent/tweet?url=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>&amp;text=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faTwitter}}~&#10;</xsl:text>
+      <!-- RESEARCHGATE -->
+      <xsl:text>\href{https://www.researchgate.net/search?q=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faResearchgate}}~&#10;</xsl:text>
+      <!-- REDDIT -->
+      <xsl:text>\href{https://www.reddit.com/submit?url=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>&amp;title=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faReddit}}~&#10;</xsl:text>
+      <!-- EMAIL -->
+      <xsl:text>\href{mailto:?subject=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>&amp;body=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faEnvelope}}~&#10;</xsl:text>
+      <!-- FACEBOOK -->
+      <xsl:text>\href{https://www.facebook.com/sharer/sharer.php?u=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faFacebook}}~&#10;</xsl:text>
+      <!-- WHATSAPP -->
+      <xsl:text>\href{https://wa.me/?text=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faWhatsapp}}~&#10;</xsl:text>
+      <!-- TELEGRAM -->
+      <xsl:text>\href{https://t.me/share/url?url=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>&amp;text=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>}{\textcolor{azulrevista}{\faTelegram}}&#10;</xsl:text>
+      <xsl:text>}\par&#10;</xsl:text>
     </xsl:if>
 
     <xsl:text>\end{minipage}%&#10;</xsl:text>
