@@ -1,0 +1,353 @@
+' Gambas module file
+
+' ============================================
+' Función   : GenerarHTMLunaColumna
+' Propósito : Genera el HTML del artículo en modo control o final.
+'             Control → sin canonical, para revisión en GitHub Pages
+'             Final   → con canonical apuntando a OJS, para Netlify
+'             Sigue el mismo patrón que GenerarPDFunaColumna()
+' ============================================
+Public Sub GenerarHTMLunaColumna()
+
+  ' --- 1. Verificaciones previas ---
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  If FMain.id_articulo.Value = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo seleccionado en el editor.")
+    Return
+  Endif
+
+  ' --- 2. Inicializar variables locales ---
+  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+  Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+
+  If Not Exist(sSaxon) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no encontrado en " & sSaxon)
+    Return
+  Endif
+
+  ' --- 3. Obtener nombre del archivo desde la BD ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    CInt(FMain.id_articulo.Value))
+  If Error Or Not hRes.Available Then
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  Dim sNombreArchivo As String = Trim(hRes!nombre_archivo)
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+  Dim sFileCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreBase & ".xml"
+
+  If Not Exist(sFileCanonico) Then
+    Message.Error("No se encontró el canónico:" & Chr(10) & sFileCanonico & Chr(10) &
+      "Generá primero el canónico (Paso 1.4).")
+    Return
+  Endif
+
+  ' --- 4. Leer estilo de cita ---
+  Dim sEstiloCita As String = ""
+  Dim hEstilo As Result
+  Try hEstilo = m_ConexionBD.mConn.Exec(
+    "SELECT estilo_cita FROM revistas_md WHERE id_revista = &1 LIMIT 1",
+    CInt(FMain.id_revista.Value))
+  If Not Error And hEstilo.Available Then
+    sEstiloCita = m_InicioCierre.LeerTipoCSL(m_Metadatos.NullToString(hEstilo["estilo_cita"]))
+  Endif
+
+  ' --- 5. Elegir modo de salida ---
+  Dim iModo As Integer
+  iModo = Message.Question(
+    "Seleccioná el modo de salida HTML:" & Chr(10) & Chr(10) &
+    "CONTROL: sin URL canónica, para revisión interna en GitHub Pages." & Chr(10) & Chr(10) &
+    "FINAL: con URL canónica de OJS, listo para desplegar en Netlify.",
+    "Control", "Final", "Cancelar")
+
+  If iModo = 3 Then Return
+
+  Dim sModoSalida As String = If(iModo = 1, "control", "final")
+
+  ' --- 6. Leer URLs del artículo ---
+  Dim sUrlArticulo As String = ""
+  Dim sUrlPdf As String = ""
+  Dim hUrl As Result
+  Try hUrl = m_ConexionBD.mConn.Exec(
+    "SELECT url_articulo, url_pdf FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    CInt(FMain.id_articulo.Value))
+  If Not Error And hUrl.Available Then
+    If Not IsNull(hUrl["url_articulo"]) Then
+      sUrlArticulo = Trim(CStr(hUrl["url_articulo"]))
+    Endif
+    If Not IsNull(hUrl["url_pdf"]) Then
+      sUrlPdf = Trim(CStr(hUrl["url_pdf"]))
+    Endif
+  Endif
+
+  ' ADVERTENCIA SI ES FINAL SIN URL CANÓNICA
+  If sModoSalida = "final" And sUrlArticulo = "" Then
+    If Message.Warning(
+        "El artículo no tiene URL de OJS definida." & Chr(10) &
+        "El HTML final se generará sin canonical." & Chr(10) & Chr(10) &
+        "¿Continuar de todas formas?",
+        "Continuar", "Cancelar") = 2 Then Return
+    Endif
+
+    ' --- 7. Generar XML auxiliar de metadatos ---
+    If Not m_XML.GenerarMetaArticuloXML(
+        CInt(FMain.id_articulo.Value),
+        CInt(FMain.id_revista.Value)) Then
+      Message.Warning("No se pudo generar el meta XML auxiliar." & Chr(10) &
+        "El HTML se generará sin metadatos enriquecidos.")
+    Endif
+
+    ' --- 8. Construir rutas ---
+    Dim sNombreHtml As String = "h-" & sNombreBase & ".html"
+    Dim sFileMeta As String = sRutaProyecto &/ "tmp" &/ "m-" & sNombreBase & ".xml"
+    Dim sFileHtml As String = sRutaProyecto &/ "docs" &/ sNombreHtml
+    Dim sXslHtml As String = User.Home &/ ".gbpublisher/xslt/jats-to-html.xsl"
+    Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
+
+    ' --- 9. Ejecutar Saxon ---
+    FMain.TerminalViewProyecto.Input(
+      "echo '--- GENERANDO HTML " & UCase(sModoSalida) & " ---'" & Chr(10))
+
+    If Exist(sFileHtml) Then
+      Shell "rm '" & sFileHtml & "'" Wait
+    Endif
+
+    FMain.TerminalViewProyecto.Input(
+      "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
+      "-s:'" & sFileCanonico & "' " &
+      "-xsl:'" & sXslHtml & "' " &
+      "-o:'" & sFileHtml & "' " &
+      "imagen_tapa='" & sTapa & "' " &
+      "ruta_media='media' " &
+      "estilo_cita='" & sEstiloCita & "' " &
+      "ruta_meta='" & sFileMeta & "' " &
+      "url_articulo='" & sUrlArticulo & "' " &
+      "url_pdf='" & sUrlPdf & "' " &
+      "modo_salida='" & sModoSalida & "'" & Chr(10))
+
+    ' --- 10. Esperar hasta que Saxon genere el HTML (máximo 60 s) ---
+    Dim iEspera As Integer = 0
+    While Not Exist(sFileHtml) And iEspera < 600
+      Wait 0.1
+      Inc iEspera
+    Wend
+
+    If Not Exist(sFileHtml) Then
+      FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el HTML'" & Chr(10))
+      Message.Error("Saxon-HE no generó el HTML." & Chr(10) &
+        "Revise los mensajes en la terminal.")
+      Return
+    Endif
+
+    FMain.TerminalViewProyecto.Input("echo 'OK: HTML generado → " & sFileHtml & "'" & Chr(10))
+
+    ' --- 11. Sincronizar imágenes a docs/media/ ---
+    Dim sRutaDocsMedia As String = sRutaProyecto &/ "docs" &/ "media"
+    If Not Exist(sRutaDocsMedia) Then
+      Shell "mkdir -p '" & sRutaDocsMedia & "'" Wait
+    Endif
+    FMain.TerminalViewProyecto.Input(
+      "rsync -a --update '" & sRutaProyecto &/ "media" & "/' '" &
+      sRutaDocsMedia & "/'" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: imágenes sincronizadas → docs/media/'" & Chr(10))
+
+    ' --- 12. Regenerar índice del número ---
+    GenerarIndiceHtml()
+
+    m_Sonido.sonar("Info")
+    Message.Info("HTML " & sModoSalida & " generado correctamente:" & Chr(10) & sNombreHtml)
+
+End Sub
+
+' ============================================
+' Función   : GenerarIndiceHtml
+' Propósito : Genera index.html para GitHub Pages (/docs) con
+'             la lista de artículos del número que ya tienen HTML
+'             generado. Se llama automáticamente desde
+'             GenerarHtmlControl() al finalizar.
+' ============================================
+Public Sub GenerarIndiceHtml()
+
+  Dim sRutaDocs As String = File.Dir(FMain.txtProyecto.Text) &/ "docs"
+  Dim sFileIndex As String = sRutaDocs &/ "index.html"
+
+  ' METADATOS DEL NÚMERO ACTIVO
+  Dim sRevista As String = FMetadatosRevista.titulo_revista.Text
+  Dim sVolumen As String = FMetadatosRevista.volumen.Text
+  Dim sNumero As String = FMetadatosRevista.numero.Text
+  Dim sAnio As String = FMetadatosRevista.ano_publicacion.Text
+  Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
+
+  If Not Exist(sRutaDocs) Then
+    Shell "mkdir -p '" & sRutaDocs & "'" Wait
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo '--- GENERANDO ÍNDICE GITHUB PAGES ---'" & Chr(10))
+
+  ' --- 1. Consultar artículos del proyecto ordenados por nombre_archivo ---
+  Dim sSQL As String
+  Dim rArticulos As Result
+
+  sSQL = "SELECT id_articulo, nombre_archivo, titulo_articulo " &
+    "FROM articulos " &
+    "WHERE id_proyecto = &1 " &
+    "ORDER BY nombre_archivo ASC"
+  rArticulos = m_ConexionBD.mConn.Exec(sSQL, FMain.id_proyecto.Value)
+
+  ' --- 2. Construir tag de tapa ---
+  Dim sTapaHtml As String
+  If sTapa <> "" Then
+    sTapaHtml = "<img src=" & Chr(34) & "media/" & File.Name(sTapa) & Chr(34) &
+      " alt=" & Chr(34) & "Tapa " & sRevista & Chr(34) &
+      " class=" & Chr(34) & "tapa" & Chr(34) & "/>"
+  Else
+    sTapaHtml = "<div class=" & Chr(34) & "tapa-placeholder" & Chr(34) & ">Sin tapa</div>"
+  Endif
+
+  ' --- 3. Cabecera HTML ---
+  Dim sHtml As String
+
+  sHtml = "<!DOCTYPE html>" & Chr(10)
+  sHtml &= "<html lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
+  sHtml &= "<head>" & Chr(10)
+  sHtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
+  sHtml &= "<meta name=" & Chr(34) & "viewport" & Chr(34) &
+    " content=" & Chr(34) & "width=device-width, initial-scale=1.0" & Chr(34) & "/>" & Chr(10)
+  sHtml &= "<title>" & sRevista & " — Vol. " & sVolumen & " Núm. " & sNumero & " (" & sAnio & ")</title>" & Chr(10)
+  sHtml &= "<link rel=" & Chr(34) & "preconnect" & Chr(34) &
+    " href=" & Chr(34) & "https://fonts.googleapis.com" & Chr(34) & "/>" & Chr(10)
+  sHtml &= "<link rel=" & Chr(34) & "preconnect" & Chr(34) &
+    " href=" & Chr(34) & "https://fonts.gstatic.com" & Chr(34) & " crossorigin/>" & Chr(10)
+  sHtml &= "<link href=" & Chr(34) &
+    "https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400" &
+    "&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,400&display=swap" &
+    Chr(34) & " rel=" & Chr(34) & "stylesheet" & Chr(34) & "/>" & Chr(10)
+
+  ' --- 4. Estilos CSS ---
+  sHtml &= "<style>" & Chr(10)
+  sHtml &= ":root{--color-bg:#fafaf8;--color-surface:#fff;--color-border:#e2e0db;" &
+    "--color-text:#1a1a18;--color-text-muted:#6b6860;--color-accent:#2d5a8e;" &
+    "--color-accent-soft:#eef3f9;--font-serif:'Noto Serif',Georgia,serif;" &
+    "--font-sans:'IBM Plex Sans',system-ui,sans-serif;}" & Chr(10)
+  sHtml &= "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}" & Chr(10)
+  sHtml &= "body{background:var(--color-bg);color:var(--color-text);" &
+    "font-family:var(--font-sans);font-size:1.125rem;line-height:1.7;" &
+    "-webkit-font-smoothing:antialiased;}" & Chr(10)
+  sHtml &= ".contenedor{max-width:860px;margin:0 auto;padding:3rem 1.5rem 5rem;}" & Chr(10)
+  sHtml &= ".cabecera{display:flex;gap:2rem;align-items:flex-start;" &
+    "margin-bottom:3rem;padding-bottom:2rem;border-bottom:2px solid var(--color-border);}" & Chr(10)
+  sHtml &= ".tapa{width:140px;min-width:140px;height:auto;border-radius:4px;" &
+    "box-shadow:0 2px 8px rgba(0,0,0,0.10);}" & Chr(10)
+  sHtml &= ".tapa-placeholder{width:140px;min-width:140px;height:190px;" &
+    "background:var(--color-accent-soft);border:2px dashed var(--color-border);" &
+    "border-radius:4px;display:flex;align-items:center;justify-content:center;" &
+    "color:var(--color-text-muted);font-size:0.75rem;}" & Chr(10)
+  sHtml &= ".info-revista{flex:1;}" & Chr(10)
+  sHtml &= ".nombre-revista{font-family:var(--font-sans);font-size:0.75rem;" &
+    "font-weight:600;text-transform:uppercase;letter-spacing:0.08em;" &
+    "color:var(--color-accent);margin-bottom:0.5rem;}" & Chr(10)
+  sHtml &= ".datos-numero{font-family:var(--font-serif);font-size:1.75rem;" &
+    "font-weight:400;color:var(--color-text);line-height:1.3;margin-bottom:0.5rem;}" & Chr(10)
+  sHtml &= ".anio-numero{font-size:0.875rem;color:var(--color-text-muted);}" & Chr(10)
+  sHtml &= ".lista-articulos{list-style:none;}" & Chr(10)
+  sHtml &= ".articulo-item{padding:1.25rem 0;border-bottom:1px solid var(--color-border);}" & Chr(10)
+  sHtml &= ".articulo-item:last-child{border-bottom:none;}" & Chr(10)
+  sHtml &= ".articulo-titulo a{font-family:var(--font-serif);font-size:1.125rem;" &
+    "font-weight:600;color:var(--color-text);text-decoration:none;line-height:1.4;}" & Chr(10)
+  sHtml &= ".articulo-titulo a:hover{color:var(--color-accent);}" & Chr(10)
+  sHtml &= ".articulo-autores{font-size:0.875rem;color:var(--color-text-muted);margin-top:0.35rem;}" & Chr(10)
+  sHtml &= "footer{text-align:center;padding:1.25rem;background:#2a2a28;" &
+    "color:#c8c6c0;font-family:var(--font-sans);font-size:0.875rem;" &
+    "font-weight:300;margin-top:3rem;}" & Chr(10)
+  sHtml &= "footer a{color:#8ab4d8;text-decoration:none;}" & Chr(10)
+  sHtml &= "</style>" & Chr(10)
+  sHtml &= "</head>" & Chr(10)
+  sHtml &= "<body>" & Chr(10)
+  sHtml &= "<div class=" & Chr(34) & "contenedor" & Chr(34) & ">" & Chr(10)
+
+  ' --- 5. Cabecera con tapa y datos del número ---
+  sHtml &= "<div class=" & Chr(34) & "cabecera" & Chr(34) & ">" & Chr(10)
+  sHtml &= sTapaHtml & Chr(10)
+  sHtml &= "<div class=" & Chr(34) & "info-revista" & Chr(34) & ">" & Chr(10)
+  sHtml &= "<div class=" & Chr(34) & "nombre-revista" & Chr(34) & ">" & sRevista & "</div>" & Chr(10)
+  sHtml &= "<div class=" & Chr(34) & "datos-numero" & Chr(34) & ">Vol. " & sVolumen & ", Núm. " & sNumero & "</div>" & Chr(10)
+  sHtml &= "<div class=" & Chr(34) & "anio-numero" & Chr(34) & ">" & sAnio & "</div>" & Chr(10)
+  sHtml &= "</div>" & Chr(10)
+  sHtml &= "</div>" & Chr(10)
+
+  ' --- 6. Lista de artículos (solo los que tienen HTML en /docs) ---
+  sHtml &= "<ul class=" & Chr(34) & "lista-articulos" & Chr(34) & ">" & Chr(10)
+
+  Dim rAutores As Result
+  Dim sAutores As String
+  Dim sNombreHtml As String
+  Dim sFileHtmlArticulo As String
+
+  While rArticulos.Available
+
+    sNombreHtml = "h" & Mid(rArticulos["nombre_archivo"], 2) & ".html"
+    sFileHtmlArticulo = sRutaDocs &/ sNombreHtml
+
+    If Exist(sFileHtmlArticulo) Then
+
+      ' OBTENER AUTORES ORDENADOS POR orden_autoria
+      sSQL = "SELECT au.apellidos, au.nombre " &
+        "FROM autores au " &
+        "INNER JOIN articulo_autor aa ON aa.id_autor = au.id_autor " &
+        "WHERE aa.id_articulo = &1 " &
+        "AND aa.rol_autor IN ('autor','coautor','autor_correspondencia') " &
+        "ORDER BY aa.orden_autoria ASC"
+      rAutores = m_ConexionBD.mConn.Exec(sSQL, rArticulos["id_articulo"])
+
+      sAutores = ""
+      While rAutores.Available
+        If sAutores <> "" Then sAutores &= ", "
+        sAutores &= rAutores["apellidos"] & ", " & rAutores["nombre"]
+        rAutores.MoveNext()
+      Wend
+
+      sHtml &= "<li class=" & Chr(34) & "articulo-item" & Chr(34) & ">" & Chr(10)
+      sHtml &= "<div class=" & Chr(34) & "articulo-titulo" & Chr(34) & ">"
+      sHtml &= "<a href=" & Chr(34) & sNombreHtml & Chr(34) & ">"
+      sHtml &= rArticulos["titulo_articulo"]
+      sHtml &= "</a></div>" & Chr(10)
+      If sAutores <> "" Then
+        sHtml &= "<div class=" & Chr(34) & "articulo-autores" & Chr(34) & ">" & sAutores & "</div>" & Chr(10)
+      Endif
+      sHtml &= "</li>" & Chr(10)
+
+    Endif
+
+    rArticulos.MoveNext()
+  Wend
+
+  sHtml &= "</ul>" & Chr(10)
+  sHtml &= "</div>" & Chr(10)
+
+  ' --- 7. Footer y cierre ---
+  sHtml &= "<footer>Generado con <a href=" & Chr(34) &
+    "https://estudio2a.netlify.app/" & Chr(34) &
+    " target=" & Chr(34) & "_blank" & Chr(34) &
+    ">gbpublisher</a></footer>" & Chr(10)
+  sHtml &= "</body>" & Chr(10)
+  sHtml &= "</html>" & Chr(10)
+
+  File.Save(sFileIndex, sHtml)
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: índice generado → docs/index.html'" & Chr(10))
+
+Catch
+  FMain.TerminalViewProyecto.Input("echo 'ERROR al generar índice: " & Error.Text & "'" & Chr(10))
+
+End

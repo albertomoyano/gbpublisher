@@ -18,7 +18,7 @@
                    ../media = revisión interna desde docs/
     estilo_cita  - 'autor-anio' (humanidades) | 'vancouver' (numérico) |
                    'apa' (APA 7) | 'iso690' (ISO 690 autor-fecha)
-                   DETERMINADO AUTOMÁTICAMENTE POR LeerTipoCSL() EN m_GenerarSalidas
+                   DETERMINADO AUTOMÁTICAMENTE POR LeerTipoCSL() EN m_InicioSalidas
     ruta_meta    - RUTA AL XML AUXILIAR m-*.xml GENERADO POR
                    GenerarMetaArticuloXML() EN m_XML.gambas
                    CONTIENE: CRediT POR AUTOR, ROR DE AFILIACIÓN,
@@ -3037,7 +3037,6 @@
     </xsl:for-each>
   </xsl:template>
 
-
   <!-- ================================================
        NAMED TEMPLATE: recolectarRidsGrupo
        RECORRE XREFS CONSECUTIVOS Y DEVUELVE SUS @rid
@@ -3064,7 +3063,6 @@
   <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
     [preceding-sibling::node()[1][self::xref[@ref-type='bibr']]]
     [following-sibling::node()[1][self::xref[@ref-type='bibr']]]"/>
-
 
   <!-- ================================================
        REFERENCIAS EN PANEL DERECHO

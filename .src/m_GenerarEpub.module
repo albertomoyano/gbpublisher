@@ -1038,6 +1038,11 @@ Private Sub GenerarCSS()
   sCSS &= "  margin-top: 0;" & n
   sCSS &= "  margin-bottom: 0.4em;" & n
   sCSS &= "}" & n & n
+  sCSS &= ".abstract-keywords {" & n
+  sCSS &= "  font-size: 0.9em;" & n
+  sCSS &= "  margin-top: 0.5em;" & n
+  sCSS &= "  margin-bottom: 0;" & n
+  sCSS &= "}" & n & n
 
   ' --- 11. Palabras clave ---
   sCSS &= ".kwd-group { font-size: 0.9em; margin-top: 0; margin-bottom: 0.5em; }" & n
@@ -1214,7 +1219,11 @@ Private Sub GenerarCSS()
 
   ' --- 23. Versos ---
   sCSS &= ".verse-group { margin-top: 0.5em; margin-bottom: 0.5em; }" & n
-  sCSS &= ".verse-line { margin-top: 0; margin-bottom: 0.1em; }" & n & n
+  sCSS &= ".verse-line { font-style: italic; margin-top: 0; margin-bottom: 0.1em; display: block; }" & n & n
+
+  ' --- 23b. Speech / Diálogo ---
+  sCSS &= ".speech-item { margin-top: 0; margin-bottom: 0.5em; }" & n
+  sCSS &= ".speech-speaker { font-weight: bold; color: #2d5a8e; }" & n & n
 
   ' --- 24. Código fuente ---
   sCSS &= ".code-block { margin-top: 0.5em; margin-bottom: 0.5em; }" & n
@@ -1266,9 +1275,30 @@ Private Sub CopiarImagenes()
 
 End Sub
 
-' ====================================================
-' OPF Y NAV
-' ====================================================
+' MAPEAR NOMBRE DE IDIOMA A CÓDIGO RFC 3066
+Private Function MapearIdioma(sNombre As String) As String
+
+  Select Case LCase(Trim(sNombre))
+    Case "español", "espanol", "castellano", "spanish"
+      Return "es"
+    Case "inglés", "ingles", "english"
+      Return "en"
+    Case "portugués", "portugues", "portuguese"
+      Return "pt"
+    Case "francés", "frances", "french"
+      Return "fr"
+    Case "alemán", "aleman", "german"
+      Return "de"
+    Case "italiano", "italian"
+      Return "it"
+    Case Else
+      ' SI YA ES UN CÓDIGO CORTO (es, en, pt...) LO DEVUELVE TAL CUAL
+      If Len(Trim(sNombre)) <= 3 Then Return LCase(Trim(sNombre))
+      Return "es"  ' FALLBACK
+  End Select
+
+End Function
+
 ' ============================================
 ' Función   : GenerarContentOPF
 ' Propósito : Escribe el OEBPS/content.opf con el
@@ -1279,7 +1309,12 @@ Private Sub GenerarContentOPF()
   FMain.TerminalViewProyecto.Input(
     "echo '=== GENERANDO content.opf ==='" & Chr(10))
 
-  ' --- 1. Leer metadatos de la revista ---
+  FMain.TerminalViewProyecto.Input(
+    "echo 'DEBUG id_revista: " & CStr(FMain.id_revista.Value) & "'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "echo 'DEBUG sRutaOEBPS: " & sRutaOEBPS & "'" & Chr(10))
+
+  ' --- 1. Leer metadatos de la revista desde BD y formulario ---
   Dim sTitulo As String = FMetadatosRevista.titulo_revista.Text
   Dim sVolumen As String = FMetadatosRevista.volumen.Text
   Dim sNumero As String = FMetadatosRevista.numero.Text
@@ -1288,6 +1323,36 @@ Private Sub GenerarContentOPF()
   Dim sEditorial As String = FMetadatosRevista.editorial.Text
   Dim sIsoDate As String = Format(Now(), "yyyy-mm-dd")
   Dim sUniqueId As String = "isbn-" & sISSN & "-v" & sVolumen & "-n" & sNumero
+
+  ' DATOS COMPLEMENTARIOS DESDE LA BD
+  Dim sIdioma As String = "es"
+  Dim sUrlLicencia As String = ""
+  Dim sDescripcion As String = ""
+  Dim sInstitucion As String = ""
+
+  Dim hMeta As Result
+  Try hMeta = m_ConexionBD.mConn.Exec(
+    "SELECT idiomas_publicacion, url_licencia, descripcion_revista, " &
+    "institucion_editora FROM revistas_md WHERE id_revista = &1 LIMIT 1",
+    CInt(FMain.id_revista.Value))
+  If Not Error And hMeta.Available Then
+    If Not IsNull(hMeta["idiomas_publicacion"]) And
+        Trim(CStr(hMeta["idiomas_publicacion"])) <> "" Then
+      Dim aIdiomas As String[] = Split(CStr(hMeta["idiomas_publicacion"]), ",")
+      If aIdiomas.Count > 0 Then
+        sIdioma = MapearIdioma(aIdiomas[0])
+      Endif
+    Endif
+    If Not IsNull(hMeta["url_licencia"]) Then
+      sUrlLicencia = Trim(CStr(hMeta["url_licencia"]))
+    Endif
+    If Not IsNull(hMeta["descripcion_revista"]) Then
+      sDescripcion = Trim(CStr(hMeta["descripcion_revista"]))
+    Endif
+    If Not IsNull(hMeta["institucion_editora"]) Then
+      sInstitucion = Trim(CStr(hMeta["institucion_editora"]))
+    Endif
+  Endif
 
   ' --- 2. Construir OPF ---
   Dim sOPF As String
@@ -1302,22 +1367,33 @@ Private Sub GenerarContentOPF()
   sOPF &= "<dc:identifier id=" & Chr(34) & "uid" & Chr(34) & ">" & sUniqueId & "</dc:identifier>" & Chr(10)
   sOPF &= "<dc:title>" & sTitulo & " Vol. " & sVolumen & " N&#xFA;m. " &
     sNumero & " (" & sAnio & ")</dc:title>" & Chr(10)
-  sOPF &= "<dc:language>es</dc:language>" & Chr(10)
-  If sEditorial <> "" Then
+  sOPF &= "<dc:language>" & sIdioma & "</dc:language>" & Chr(10)
+
+  ' PUBLISHER: editorial + institución si están ambas
+  If sEditorial <> "" And sInstitucion <> "" Then
+    sOPF &= "<dc:publisher>" & sInstitucion & " — " & sEditorial & "</dc:publisher>" & Chr(10)
+  Else If sInstitucion <> "" Then
+    sOPF &= "<dc:publisher>" & sInstitucion & "</dc:publisher>" & Chr(10)
+  Else If sEditorial <> "" Then
     sOPF &= "<dc:publisher>" & sEditorial & "</dc:publisher>" & Chr(10)
   Endif
+
   If sAnio <> "" Then
     sOPF &= "<dc:date>" & sAnio & "</dc:date>" & Chr(10)
   Endif
   If sISSN <> "" Then
     sOPF &= "<dc:identifier>urn:issn:" & sISSN & "</dc:identifier>" & Chr(10)
   Endif
+  If sUrlLicencia <> "" Then
+    sOPF &= "<dc:rights>" & sUrlLicencia & "</dc:rights>" & Chr(10)
+  Endif
+  If sDescripcion <> "" Then
+    sOPF &= "<dc:description>" & sDescripcion & "</dc:description>" & Chr(10)
+  Endif
   sOPF &= "<meta property=" & Chr(34) & "dcterms:modified" & Chr(34) & ">" &
     sIsoDate & "T00:00:00Z</meta>" & Chr(10)
 
   ' METADATOS DE ACCESIBILIDAD — EPUB ACCESSIBILITY 1.1
-  ' REQUERIDOS POR EAA (EUROPEAN ACCESSIBILITY ACT) DESDE 2025
-  ' Y RECOMENDADOS POR DAISY ACCESSIBLE PUBLISHING KNOWLEDGE BASE
   sOPF &= "<meta property=" & Chr(34) & "schema:accessMode" & Chr(34) & ">textual</meta>" & Chr(10)
   sOPF &= "<meta property=" & Chr(34) & "schema:accessMode" & Chr(34) & ">visual</meta>" & Chr(10)
   sOPF &= "<meta property=" & Chr(34) & "schema:accessModeSufficient" & Chr(34) & ">textual</meta>" & Chr(10)
@@ -1691,7 +1767,6 @@ Private Sub EmpaquetarEpub()
   ' --- 5. Verificar resultado y validar ---
   If Exist(sRutaSalida) Then
 
-    FMain.TerminalViewProyecto.Input("clear" & Chr(10))
     FMain.TerminalViewProyecto.Input(
       "echo '=== EPUB GENERADO — VALIDANDO CON EPUBCHECK ==='" & Chr(10))
     FMain.TerminalViewProyecto.Input(

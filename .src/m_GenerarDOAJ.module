@@ -1,0 +1,271 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_GenerarDOAJ
+' Propósito : Genera la salida DOAJ XML (d-*.xml) desde el
+'             canónico JATS activo. Enriquece el canónico
+'             con fullTextUrl desde la BD, ejecuta Saxon
+'             con jats-to-doaj.xsl y valida contra el XSD.
+' ============================================
+
+' ============================================
+' Función   : GenerarDoajUnaColumna
+' Propósito : Orquesta la generación completa del archivo
+'             DOAJ XML para el artículo activo en FMain.
+'             Pasos:
+'             A — Enriquecer canónico con fullTextUrl desde BD
+'             B — Ejecutar Saxon para generar d-*.xml
+'             C — Validar contra doajArticles.xsd
+'             D — Actualizar panel de validación en FMain
+' ============================================
+Public Sub GenerarDoajUnaColumna()
+
+  ' --- 1. Verificaciones previas ---
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  Dim idArticulo As Integer = CInt(FMain.id_articulo.Value)
+  If idArticulo = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo activo en el editor." & Chr(10) &
+      "Abra un artículo antes de generar la salida DOAJ.")
+    Return
+  Endif
+
+  ' --- 2. Verificar dependencias ---
+  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no encontrado en " & sSaxon)
+    Return
+  Endif
+
+  Dim sXsl As String = User.Home &/ ".gbpublisher/xslt/jats-to-doaj.xsl"
+  If Not Exist(sXsl) Then
+    m_Sonido.sonar("Error")
+    Message.Error("XSLT de DOAJ no encontrado en:" & Chr(10) & sXsl)
+    Return
+  Endif
+
+  ' --- 3. Obtener nombre_archivo desde la BD ---
+  Dim hResult As Result
+  Try hResult = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    idArticulo)
+  If Error Or Not hResult.Available Then
+    Message.Error("No se encontró el artículo id=" & CStr(idArticulo))
+    Return
+  Endif
+
+  Dim sNombreArchivo As String = m_XML.TrimUTF8(hResult["nombre_archivo"])
+  Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+
+  ' --- 4. Construir rutas ---
+  Dim sFileCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreBase & ".xml"
+  Dim sFileDoaj As String = sRutaProyecto &/ "jats" &/ "d-" & sNombreBase & ".xml"
+
+  If Not Exist(sFileCanonico) Then
+    Message.Warning("El canónico JATS no existe:" & Chr(10) & sFileCanonico & Chr(10) &
+      Chr(10) & "Genere primero el canónico con el botón correspondiente.")
+    Return
+  Endif
+
+  ' ====================================================
+  ' PASO A: ENRIQUECER EL CANÓNICO CON DATOS DE LA BD
+  ' fullTextUrl → custom-meta, antes de invocar Saxon
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- DOAJ PASO A: ENRIQUECIENDO CANÓNICO ---'" & Chr(10))
+
+  If m_XML.EnriquecerCanonico(sFileCanonico, idArticulo) Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: fullTextUrl inyectado en custom-meta'" & Chr(10))
+  Else
+    FMain.TerminalViewProyecto.Input(
+      "echo 'AVISO: fullTextUrl no disponible en BD — el campo quedará ausente en DOAJ'" & Chr(10))
+  Endif
+
+  ' ====================================================
+  ' PASO B: GENERAR d-*.xml CON SAXON
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- DOAJ PASO B: EJECUTANDO SAXON ---'" & Chr(10))
+
+  If Exist(sFileDoaj) Then
+    Shell "rm '" & sFileDoaj & "'" Wait
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
+    "-s:'" & sFileCanonico & "' " &
+    "-xsl:'" & sXsl & "' " &
+    "-o:'" & sFileDoaj & "'" & Chr(10))
+
+  ' --- 5. Esperar hasta que Saxon genere el archivo (máximo 60 s) ---
+  Dim iEspera As Integer = 0
+  While Not Exist(sFileDoaj) And iEspera < 600
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileDoaj) Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'ERROR: Saxon no generó el archivo DOAJ'" & Chr(10))
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no generó el archivo DOAJ en el tiempo esperado." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: " & File.Name(sFileDoaj) & " generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "echo 'Ruta: " & sFileDoaj & "'" & Chr(10))
+
+  ' ====================================================
+  ' PASO C: VALIDAR CONTRA EL SCHEMA DOAJ
+  ' ====================================================
+  Dim sSchemaDoaj As String = User.Home &/ ".gbpublisher/schemas/doajArticles.xsd"
+
+  If Not Exist(sSchemaDoaj) Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'AVISO: schema DOAJ no encontrado — omitiendo validación XSD'" & Chr(10))
+  Else
+    FMain.TerminalViewProyecto.Input(
+      "echo '--- DOAJ PASO C: VALIDANDO CONTRA XSD ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "xmllint --noout --schema '" & sSchemaDoaj & "' " &
+      "'" & sFileDoaj & "' " &
+      "&& echo 'XSD válido: DOAJ OK' " &
+      "|| echo 'XSD INVÁLIDO: revisar errores arriba'" & Chr(10))
+  Endif
+
+  ' ====================================================
+  ' PASO D: ACTUALIZAR PANEL DE VALIDACIÓN EN FMAIN
+  ' ====================================================
+  Wait 1.0
+
+  FMain.TabPanelIzquierdaInferior.Index = 6
+  FMain.TabStripValidaciones.Index = 0
+
+  m_XML.MostrarArchivosDOAJ()
+
+  ' PRESELECCIONAR EL ARCHIVO RECIÉN GENERADO EN EL LISTBOX
+  Dim sArchivoDoaj As String = "d-" & sNombreBase & ".xml"
+  Dim i As Integer
+  For i = 0 To FMain.lbDOAJ.Count - 1
+    If FMain.lbDOAJ[i].Text = sArchivoDoaj Then
+      FMain.lbDOAJ.Index = i
+      FMain.lbDOAJ_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("Info")
+
+End Sub
+
+'' ============================================
+'' Función   : GenerarDoajJsonUnaColumna
+'' Propósito : Genera la salida DOAJ JSON (d-*.json) desde el
+''             canónico JATS activo. Enriquece el canónico
+''             con fullTextUrl desde la BD, genera el JSON
+''             y actualiza el panel de validación en FMain.
+'' ============================================
+Public Sub GenerarDoajJsonUnaColumna()
+
+  ' --- 1. Verificaciones previas ---
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  Dim idArticulo As Integer = CInt(FMain.id_articulo.Value)
+  If idArticulo = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo activo en el editor." & Chr(10) &
+      "Abra un artículo antes de generar el JSON DOAJ.")
+    Return
+  Endif
+
+  ' --- 2. Obtener nombre_archivo desde la BD ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    idArticulo)
+  If Error Or Not hRes.Available Then
+    Message.Error("No se encontró el artículo id=" & CStr(idArticulo))
+    Return
+  Endif
+
+  Dim sNombreArchivo As String = m_XML.TrimUTF8(hRes["nombre_archivo"])
+  Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+
+  ' --- 3. Construir rutas ---
+  Dim sFileCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreBase & ".xml"
+  Dim sFileJson As String = sRutaProyecto &/ "jats" &/ "d-" & sNombreBase & ".json"
+
+  If Not Exist(sFileCanonico) Then
+    Message.Warning("El canónico JATS no existe:" & Chr(10) & sFileCanonico & Chr(10) &
+      Chr(10) & "Genere primero el canónico con el botón correspondiente.")
+    Return
+  Endif
+
+  ' ====================================================
+  ' PASO A: ENRIQUECER EL CANÓNICO CON DATOS DE LA BD
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- DOAJ JSON PASO A: ENRIQUECIENDO CANÓNICO ---'" & Chr(10))
+
+  If m_XML.EnriquecerCanonico(sFileCanonico, idArticulo) Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: fullTextUrl inyectado en custom-meta'" & Chr(10))
+  Else
+    FMain.TerminalViewProyecto.Input(
+      "echo 'AVISO: fullTextUrl no disponible en BD — continuando sin él'" & Chr(10))
+  Endif
+
+  ' ====================================================
+  ' PASO B: GENERAR JSON
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- DOAJ JSON PASO B: GENERANDO JSON ---'" & Chr(10))
+
+  If Not m_XML.GenerarJsonDoaj(sFileCanonico, idArticulo) Then
+    m_Sonido.sonar("Error")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: " & File.Name(sFileJson) & " generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "echo 'Ruta: " & sFileJson & "'" & Chr(10))
+
+  ' ====================================================
+  ' PASO C: ACTUALIZAR PANEL DE VALIDACIÓN EN FMAIN
+  ' ====================================================
+  FMain.TabPanelIzquierdaInferior.Index = 6
+  FMain.TabStripValidaciones.Index = 0
+
+  m_XML.MostrarArchivosDOAJ()
+
+  ' PRESELECCIONAR EL ARCHIVO RECIÉN GENERADO EN EL LISTBOX
+  Dim sArchivoJson As String = "d-" & sNombreBase & ".json"
+  Dim i As Integer
+  For i = 0 To FMain.lbDOAJ.Count - 1
+    If FMain.lbDOAJ[i].Text = sArchivoJson Then
+      FMain.lbDOAJ.Index = i
+      FMain.lbDOAJ_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("Info")
+
+End Sub

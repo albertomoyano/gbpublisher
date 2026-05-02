@@ -1,44 +1,5 @@
 ' Gambas module file
 
-' =====================================================
-' MÓDULO: m_GenerarSalidas
-' =====================================================
-' PROPÓSITO:
-'   Orquesta la generación de todas las salidas editoriales
-'   a partir del canónico JATS y los datos de la BD:
-'
-'   — GenerarHtmlControl()  → HTML para revisión interna
-'                             (GitHub Pages, /docs)
-'   — GenerarHtmlOjs()      → HTML + ZIP para subir a OJS
-'                             (/salidas/html)
-'   — GenerarIndiceHtml()   → index.html del número completo
-'                             (GitHub Pages, /docs/index.html)
-'   — GenerarPDFdesdeLATEX() → PDF desde pipeline LaTeX
-'
-' DEPENDENCIAS:
-'   m_XML              — GenerarMetaArticuloXML(), TrimUTF8()
-'   m_Json             — ExportarMetadatosJSON2PDF()
-'   m_Bibtex           — ExportarBibTeX()
-'   m_Sonido           — sonar()
-'   m_FuncionesGenericas — BorrarArchivosAuxiliares()
-'   m_ConexionBD       — mConn
-'   FMain              — terminal, valuebox de proyecto
-'   FMetadatosRevista  — metadatos del número activo
-'
-' NOTA SOBRE EL META XML AUXILIAR (m-*.xml):
-'   Antes de llamar a Saxon para generar cualquier HTML,
-'   se genera un XML auxiliar m-*.xml en tmp/ con datos
-'   de la BD que no están en el canónico JATS:
-'     — CRediT por artículo (taxonomia_credit)
-'     — ROR de afiliación de cada autor
-'     — URL del texto completo
-'     — ROR del editor
-'   Saxon lo recibe vía parámetro ruta_meta y lo consume
-'   en jats-to-html.xsl para emitir los bloques de
-'   metadatos enriquecidos (Highwire Press, Dublin Core,
-'   Open Graph, Schema.org JSON-LD).
-' =====================================================
-
 ' ====================================================
 ' VARIABLES PRIVADAS DEL MÓDULO
 ' ====================================================
@@ -54,68 +15,68 @@ Private sSaxon As String
 Private sEstiloCita As String
 Private sRutaMedia As String
 
+' ' ====================================================
+' ' INICIALIZAR VARIABLES DESDE EL PROYECTO ACTIVO
+' ' SE LLAMA AL INICIO DE CADA FUNCIÓN PÚBLICA
+' ' ====================================================
+' Private Sub InicializarVariables()
+'
+'   sSaxon = "/opt/Saxon-HE/saxon-he.jar"
+'   sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+'   sArchivoProyecto = File.Name(FMain.txtProyecto.Text)
+'   sBaseNombreProyecto = File.BaseName(FMain.txtProyecto.Text)
+'   sRutaMedia = "media"
+'
+'   ' OBTENER NOMBRE DEL ARCHIVO DEL ARTÍCULO ACTIVO
+'   ' id_articulo SE ACTUALIZA AL SELECCIONAR UN ARTÍCULO EN EL COMBOBOX
+'   sSQL = "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1"
+'   rConsulta = m_ConexionBD.mConn.Exec(sSQL, FMain.id_articulo.Value)
+'   sNombreArchivo = m_XML.TrimUTF8(rConsulta["nombre_archivo"])
+'
+'   ' CONSTRUIR RUTA DEL CANÓNICO
+'   ' nombre_archivo = "a-02-revistaAlgo-v01-n01"
+'   ' sFileCanonico  = /ruta/proyecto/jats/c-02-revistaAlgo-v01-n01.xml
+'   sFileCanonico = sRutaProyecto &/ "jats" &/ "c-" & Mid(sNombreArchivo, 3) & ".xml"
+'
+'   ' ESTILO DE CITA SEGÚN CONFIGURACIÓN DE LA REVISTA
+'   Dim hRev As Result = m_ConexionBD.mConn.Exec(
+'     "SELECT estilo_cita FROM revistas_md WHERE id_proyecto = &1 LIMIT 1",
+'     CInt(FMain.id_proyecto.Value))
+'   ' DETERMINAR EL TIPO DE CITA LEYENDO EL ATRIBUTO class DEL ARCHIVO CSL
+'   ' class="in-text"  → autor-anio
+'   ' class="numeric"  → vancouver
+'   ' FUNCIONA CON CUALQUIER CSL DEL REPOSITORIO ZOTERO SIN IMPORTAR EL NOMBRE
+'   Dim sCsl As String = "apa.csl"
+'   If hRev.Available Then
+'     Dim sCslBD As String = m_XML.TrimUTF8(hRev["estilo_cita"])
+'     If sCslBD <> "" Then sCsl = sCslBD
+'   Endif
+'
+'   ' REEMPLAZAR el bloque de LeerTipoCSL en InicializarVariables temporalmente:
+'
+'   Dim sRutaArchivoCSL As String = User.Home &/ ".gbpublisher" &/ "csl" &/ sCsl
+'   FMain.TerminalViewProyecto.Input("echo 'DEBUG sCsl: " & sCsl & "'" & Chr(10))
+'   FMain.TerminalViewProyecto.Input("echo 'DEBUG ruta: " & sRutaArchivoCSL & "'" & Chr(10))
+'   FMain.TerminalViewProyecto.Input("echo 'DEBUG existe: " & CStr(Exist(sRutaArchivoCSL)) & "'" & Chr(10))
+'   If Exist(sRutaArchivoCSL) Then
+'     sEstiloCita = LeerTipoCSL(sRutaArchivoCSL)
+'     FMain.TerminalViewProyecto.Input("echo 'DEBUG resultado LeerTipoCSL: " & sEstiloCita & "'" & Chr(10))
+'   Else
+'     sEstiloCita = "autor-anio"
+'     FMain.TerminalViewProyecto.Input("echo 'DEBUG archivo no encontrado → fallback autor-anio'" & Chr(10))
+'   Endif
+'
+'   ' Dim sRutaArchivoCSL As String = User.Home &/ ".gbpublisher" &/ "csl" &/ sCsl
+'   ' If Exist(sRutaArchivoCSL) Then
+'   '   sEstiloCita = LeerTipoCSL(sRutaArchivoCSL)
+'   ' Else
+'   '   sEstiloCita = "autor-anio"
+'   ' Endif
+'
+' End
+
 ' ====================================================
-' INICIALIZAR VARIABLES DESDE EL PROYECTO ACTIVO
-' SE LLAMA AL INICIO DE CADA FUNCIÓN PÚBLICA
-' ====================================================
-Private Sub InicializarVariables()
-
-  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
-  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
-  sArchivoProyecto = File.Name(FMain.txtProyecto.Text)
-  sBaseNombreProyecto = File.BaseName(FMain.txtProyecto.Text)
-  sRutaMedia = "media"
-
-  ' OBTENER NOMBRE DEL ARCHIVO DEL ARTÍCULO ACTIVO
-  ' id_articulo SE ACTUALIZA AL SELECCIONAR UN ARTÍCULO EN EL COMBOBOX
-  sSQL = "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1"
-  rConsulta = m_ConexionBD.mConn.Exec(sSQL, FMain.id_articulo.Value)
-  sNombreArchivo = m_XML.TrimUTF8(rConsulta["nombre_archivo"])
-
-  ' CONSTRUIR RUTA DEL CANÓNICO
-  ' nombre_archivo = "a-02-revistaAlgo-v01-n01"
-  ' sFileCanonico  = /ruta/proyecto/jats/c-02-revistaAlgo-v01-n01.xml
-  sFileCanonico = sRutaProyecto &/ "jats" &/ "c-" & Mid(sNombreArchivo, 3) & ".xml"
-
-  ' ESTILO DE CITA SEGÚN CONFIGURACIÓN DE LA REVISTA
-  Dim hRev As Result = m_ConexionBD.mConn.Exec(
-    "SELECT estilo_cita FROM revistas_md WHERE id_proyecto = &1 LIMIT 1",
-    CInt(FMain.id_proyecto.Value))
-  ' DETERMINAR EL TIPO DE CITA LEYENDO EL ATRIBUTO class DEL ARCHIVO CSL
-  ' class="in-text"  → autor-anio
-  ' class="numeric"  → vancouver
-  ' FUNCIONA CON CUALQUIER CSL DEL REPOSITORIO ZOTERO SIN IMPORTAR EL NOMBRE
-  Dim sCsl As String = "apa.csl"
-  If hRev.Available Then
-    Dim sCslBD As String = m_XML.TrimUTF8(hRev["estilo_cita"])
-    If sCslBD <> "" Then sCsl = sCslBD
-  Endif
-
-  ' REEMPLAZAR el bloque de LeerTipoCSL en InicializarVariables temporalmente:
-
-  Dim sRutaArchivoCSL As String = User.Home &/ ".gbpublisher" &/ "csl" &/ sCsl
-  FMain.TerminalViewProyecto.Input("echo 'DEBUG sCsl: " & sCsl & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("echo 'DEBUG ruta: " & sRutaArchivoCSL & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("echo 'DEBUG existe: " & CStr(Exist(sRutaArchivoCSL)) & "'" & Chr(10))
-  If Exist(sRutaArchivoCSL) Then
-    sEstiloCita = LeerTipoCSL(sRutaArchivoCSL)
-    FMain.TerminalViewProyecto.Input("echo 'DEBUG resultado LeerTipoCSL: " & sEstiloCita & "'" & Chr(10))
-  Else
-    sEstiloCita = "autor-anio"
-    FMain.TerminalViewProyecto.Input("echo 'DEBUG archivo no encontrado → fallback autor-anio'" & Chr(10))
-  Endif
-
-  ' Dim sRutaArchivoCSL As String = User.Home &/ ".gbpublisher" &/ "csl" &/ sCsl
-  ' If Exist(sRutaArchivoCSL) Then
-  '   sEstiloCita = LeerTipoCSL(sRutaArchivoCSL)
-  ' Else
-  '   sEstiloCita = "autor-anio"
-  ' Endif
-
-End
-
-' ====================================================
-' GENERAR PDF DESDE LATEX
+' GENERAR PDF DESDE LATEX es para archivo LaTeX puro
 ' ====================================================
 Public Sub GenerarPDFdesdeLATEX()
 
@@ -153,559 +114,26 @@ Public Sub GenerarPDFdesdeLATEX()
 
 End
 
-' ============================================
-' Función   : GenerarHtmlControl
-' Propósito : Genera el HTML de revisión interna para GitHub Pages
-'             (/docs). Antes de invocar Saxon genera el XML auxiliar
-'             m-*.xml con datos de BD que alimentan los metadatos
-'             enriquecidos del HTML (Highwire Press, Dublin Core,
-'             Open Graph, Schema.org JSON-LD).
-'             Al finalizar regenera el índice del número.
-' ============================================
-Public Sub GenerarHtmlControl()
-
-  ' --- 1. Verificaciones previas ---
-  If FMain.txtProyecto.Text = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay ningún proyecto abierto")
-    Return
-  Endif
-
-  If FMain.id_articulo.Value = 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay ningún artículo seleccionado en el editor.")
-    Return
-  Endif
-
-  InicializarVariables()
-
-  If Not Exist(sFileCanonico) Then
-    Message.Error("No se encontró el canónico:" & Chr(10) & sFileCanonico & Chr(10) &
-      "Generá primero el canónico (Paso 1.4).")
-    Return
-  Endif
-
-  ' --- 2. Generar XML auxiliar de metadatos antes de Saxon ---
-  ' m-*.xml APORTA DATOS DE BD QUE NO ESTÁN EN EL JATS:
-  ' CRediT POR ARTÍCULO, ROR DE AFILIACIÓN, URL TEXTO COMPLETO
-  ' SI FALLA SE CONTINÚA SIN METADATOS ENRIQUECIDOS (NO ES BLOQUEANTE)
-  If Not m_XML.GenerarMetaArticuloXML(CInt(FMain.id_articulo.Value), CInt(FMain.id_revista.Value)) Then
-    Message.Warning("No se pudo generar el meta XML auxiliar." & Chr(10) &
-      "El HTML se generará sin metadatos enriquecidos.")
-  Endif
-
-  ' RUTA DEL META XML PARA PASARLA A SAXON COMO PARÁMETRO ruta_meta
-  Dim sFileMeta As String = sRutaProyecto &/ "tmp" &/ "m-" & Mid(sNombreArchivo, 3) & ".xml"
-
-  ' --- 3. Construir rutas de salida ---
-  ' c-02-....xml → h-02-....html
-  Dim sNombreHtml As String = "h" & Mid(File.Name(sFileCanonico), 2)
-  sNombreHtml = File.BaseName(sNombreHtml) & ".html"
-
-  Dim sFileHtml As String = sRutaProyecto &/ "docs" &/ sNombreHtml
-  Dim sXslHtml As String = User.Home &/ ".gbpublisher/xslt/jats-to-html.xsl"
-  Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
-
-  ' --- 3b. Obtener URLs del artículo desde la BD ---
-  Dim sUrlArticulo As String = ""
-  Dim sUrlPdf As String = ""
-  Dim hUrl As Result
-  Try hUrl = m_ConexionBD.mConn.Exec(
-    "SELECT url_articulo, url_pdf FROM articulos WHERE id_articulo = &1 LIMIT 1",
-    CInt(FMain.id_articulo.Value))
-  If Not Error And hUrl.Available Then
-    If Not IsNull(hUrl["url_articulo"]) Then
-      sUrlArticulo = Trim(CStr(hUrl["url_articulo"]))
-    Endif
-    If Not IsNull(hUrl["url_pdf"]) Then
-      sUrlPdf = Trim(CStr(hUrl["url_pdf"]))
-    Endif
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo '--- GENERANDO HTML PARA CONTROL ---'" & Chr(10))
-
-  ' ELIMINAR HTML ANTERIOR SI EXISTE
-  If Exist(sFileHtml) Then
-    Shell "rm '" & sFileHtml & "'" Wait
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'DEBUG estilo_cita: " & sEstiloCita & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "echo 'DEBUG url_articulo: " & sUrlArticulo & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "echo 'DEBUG url_pdf: " & sUrlPdf & "'" & Chr(10))
-
-  ' --- 4. Ejecutar Saxon ---
-  ' ruta_meta PERMITE A jats-to-html.xsl LEER EL m-*.xml AUXILIAR
-  ' Y EMITIR LOS BLOQUES DE METADATOS ENRIQUECIDOS
-  FMain.TerminalViewProyecto.Input(
-    "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
-    "-s:'" & sFileCanonico & "' " &
-    "-xsl:'" & sXslHtml & "' " &
-    "-o:'" & sFileHtml & "' " &
-    "imagen_tapa='" & sTapa & "' " &
-    "ruta_media='" & sRutaMedia & "' " &
-    "estilo_cita='" & sEstiloCita & "' " &
-    "ruta_meta='" & sFileMeta & "' " &
-    "url_articulo='" & sUrlArticulo & "' " &
-    "url_pdf='" & sUrlPdf & "'" & Chr(10))
-
-  ' --- 5. Esperar hasta que Saxon genere el HTML (máximo 60 s) ---
-  Dim iEspera As Integer = 0
-  While Not Exist(sFileHtml) And iEspera < 600
-    Wait 0.1
-    Inc iEspera
-  Wend
-
-  If Not Exist(sFileHtml) Then
-    FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el HTML'" & Chr(10))
-    Message.Error("Saxon-HE no generó el HTML de control." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: HTML control generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sFileHtml & "'" & Chr(10))
-
-  ' --- 6. Sincronizar imágenes a docs/media/ ---
-  ' GITHUB PAGES SOLO SIRVE LO QUE ESTÁ DENTRO DE /docs
-  Dim sRutaDocsMedia As String = sRutaProyecto &/ "docs" &/ "media"
-
-  If Not Exist(sRutaDocsMedia) Then
-    Shell "mkdir -p '" & sRutaDocsMedia & "'" Wait
-  Endif
-
-  ' rsync SOLO COPIA LAS IMÁGENES QUE CAMBIARON (más eficiente que cp)
-  FMain.TerminalViewProyecto.Input(
-    "rsync -a --update '" & sRutaProyecto &/ "media" & "/' '" &
-    sRutaDocsMedia & "/'" & Chr(10))
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: imágenes sincronizadas → docs/media/'" & Chr(10))
-
-  ' --- 7. Regenerar índice del número ---
-  GenerarIndiceHtml()
-
-End
-
-' ============================================
-' Función   : GenerarHtmlOjs
-' Propósito : Genera el HTML para subir a OJS junto con las
-'             imágenes declaradas en el JATS, empaquetados en
-'             un ZIP (/salidas/html). Igual que GenerarHtmlControl,
-'             genera primero el m-*.xml auxiliar para que Saxon
-'             pueda emitir los metadatos enriquecidos.
-' ============================================
-Public Sub GenerarHtmlOjs()
-
-  ' --- 1. Verificaciones previas ---
-  If FMain.txtProyecto.Text = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay ningún proyecto abierto")
-    Return
-  Endif
-
-  If FMain.id_articulo.Value = 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay ningún artículo seleccionado en el editor.")
-    Return
-  Endif
-
-  InicializarVariables()
-
-  If Not Exist(sFileCanonico) Then
-    Message.Error("No se encontró el canónico:" & Chr(10) & sFileCanonico & Chr(10) &
-      "Generá primero el canónico (Paso 1.4).")
-    Return
-  Endif
-
-  ' --- 2. Generar XML auxiliar de metadatos antes de Saxon ---
-  ' MISMO PATRÓN QUE GenerarHtmlControl — NO ES BLOQUEANTE
-  If Not m_XML.GenerarMetaArticuloXML(CInt(FMain.id_articulo.Value), CInt(FMain.id_revista.Value)) Then
-    Message.Warning("No se pudo generar el meta XML auxiliar." & Chr(10) &
-      "El HTML se generará sin metadatos enriquecidos.")
-  Endif
-
-  ' RUTA DEL META XML PARA PASARLA A SAXON COMO PARÁMETRO ruta_meta
-  Dim sFileMeta As String = sRutaProyecto &/ "tmp" &/ "m-" & Mid(sNombreArchivo, 3) & ".xml"
-
-  ' --- 3. Construir rutas de trabajo ---
-  ' c-02-....xml → h-02-....
-  Dim sNombreBase As String = "h" & Mid(File.Name(sFileCanonico), 2)
-  sNombreBase = File.BaseName(sNombreBase)
-
-  Dim sRutaSalida As String = sRutaProyecto &/ "salidas" &/ "html"
-  Dim sFileHtml As String = sRutaSalida &/ sNombreBase & ".html"
-  Dim sFileZip As String = sRutaSalida &/ sNombreBase & ".zip"
-  Dim sRutaMedia As String = sRutaProyecto &/ "media"
-  Dim sXslHtml As String = "/home/alberto/.gbpublisher/xslt/jats-to-html.xsl"
-  Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
-
-  If Not Exist(sRutaSalida) Then
-    Shell "mkdir -p '" & sRutaSalida & "'" Wait
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo '--- GENERANDO HTML PARA OJS ---'" & Chr(10))
-
-  If Exist(sFileHtml) Then Shell "rm '" & sFileHtml & "'" Wait
-  If Exist(sFileZip) Then Shell "rm '" & sFileZip & "'" Wait
-
-  ' --- 4. Ejecutar Saxon ---
-  ' ruta_meta PERMITE A jats-to-html.xsl LEER EL m-*.xml AUXILIAR
-  ' ruta_media SE PASA VACÍO PARA OJS (RUTAS RELATIVAS EN EL ZIP)
-  ' OBTENER URL DEL ARTÍCULO CON CASCADA url_articulo y url_pdf
-  Dim sUrlArticulo As String = ""
-  Dim sUrlPdf As String = ""
-  Dim hUrl As Result
-  Try hUrl = m_ConexionBD.mConn.Exec(
-    "SELECT url_articulo, url_pdf FROM articulos WHERE id_articulo = &1 LIMIT 1",
-    CInt(FMain.id_articulo.Value))
-  If Not Error And hUrl.Available Then
-    If Not IsNull(hUrl["url_articulo"]) Then
-      sUrlArticulo = Trim(CStr(hUrl["url_articulo"]))
-    Endif
-    If Not IsNull(hUrl["url_pdf"]) Then
-      sUrlPdf = Trim(CStr(hUrl["url_pdf"]))
-    Endif
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'DEBUG url_articulo: " & sUrlArticulo & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("echo 'DEBUG url_pdf: " & sUrlPdf & "'" & Chr(10))
-
-  ' --- 4. Ejecutar Saxon ---
-  FMain.TerminalViewProyecto.Input(
-    "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
-    "-s:'" & sFileCanonico & "' " &
-    "-xsl:'" & sXslHtml & "' " &
-    "-o:'" & sFileHtml & "' " &
-    "imagen_tapa='" & sTapa & "' " &
-    "estilo_cita='" & sEstiloCita & "' " &
-    "ruta_meta='" & sFileMeta & "' " &
-    "url_articulo='" & sUrlArticulo & "' " &
-    "url_pdf='" & sUrlPdf & "'" & Chr(10))
-
-  ' --- 5. Esperar hasta que Saxon genere el HTML (máximo 60 s) ---
-  Dim iEspera As Integer = 0
-  While Not Exist(sFileHtml) And iEspera < 600
-    Wait 0.1
-    Inc iEspera
-  Wend
-
-  If Not Exist(sFileHtml) Then
-    FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el HTML'" & Chr(10))
-    Message.Error("Saxon-HE no generó el HTML para OJS." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-    Return
-  Endif
-
-  ' ESPERAR QUE SAXON TERMINE DE ESCRIBIR SU SALIDA EN LA TERMINAL
-  Wait 5
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: HTML OJS generado'" & Chr(10))
-
-  ' --- 6. Extraer nombres de imágenes declaradas en el JATS ---
-  ' SE USA UN SCRIPT PYTHON TEMPORAL PARA EVITAR PROBLEMAS DE ESCAPE
-  FMain.TerminalViewProyecto.Input("echo '--- EXTRAYENDO IMÁGENES DEL JATS ---'" & Chr(10))
-
-  Dim aImagenes As New String[]
-  Dim sFileImagenes As String = sRutaSalida &/ "_imagenes.tmp"
-  Dim sScriptPy As String = sRutaSalida &/ "_extract.py"
-
-  Dim sPy As String
-  sPy = "import xml.etree.ElementTree as ET" & Chr(10)
-  sPy &= "import os" & Chr(10)
-  sPy &= "tree = ET.parse('" & sFileCanonico & "')" & Chr(10)
-  sPy &= "root = tree.getroot()" & Chr(10)
-  sPy &= "seen = set()" & Chr(10)
-  sPy &= "for graphic in root.iter('graphic'):" & Chr(10)
-  sPy &= "    href = graphic.get('{http://www.w3.org/1999/xlink}href', '')" & Chr(10)
-  sPy &= "    if href and not href.startswith('http'):" & Chr(10)
-  sPy &= "        name = os.path.basename(href)" & Chr(10)
-  sPy &= "        if name not in seen:" & Chr(10)
-  sPy &= "            seen.add(name)" & Chr(10)
-  sPy &= "            print(name)" & Chr(10)
-  File.Save(sScriptPy, sPy)
-
-  FMain.TerminalViewProyecto.Input(
-    "python3 '" & sScriptPy & "' > '" & sFileImagenes & "'" & Chr(10))
-
-  Dim iEspera2 As Integer = 0
-  While Not Exist(sFileImagenes) And iEspera2 < 100
-    Wait 0.1
-    Inc iEspera2
-  Wend
-
-  If Exist(sFileImagenes) Then
-    Dim sLineas As String = File.Load(sFileImagenes)
-    Dim aLineas As String[] = Split(Trim(sLineas), Chr(10))
-    Dim sLinea As String
-    For Each sLinea In aLineas
-      sLinea = Trim(sLinea)
-      If sLinea <> "" Then
-        If aImagenes.Find(sLinea) = -1 Then aImagenes.Add(sLinea)
-      Endif
-    Next
-    Shell "rm '" & sFileImagenes & "' '" & sScriptPy & "'" Wait
-  Endif
-
-  ' AGREGAR TAPA SI NO ESTÁ YA EN LA LISTA
-  If sTapa <> "" Then
-    If aImagenes.Find(File.Name(sTapa)) = -1 Then
-      aImagenes.Add(File.Name(sTapa))
-    Endif
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'Imágenes encontradas: " & aImagenes.Count & "'" & Chr(10))
-
-  ' --- 7. Armar ZIP con HTML + imágenes ---
-  ' cd PRIMERO PARA QUE EL ZIP NO INCLUYA RUTAS ABSOLUTAS
-  FMain.TerminalViewProyecto.Input("echo '--- GENERANDO ZIP ---'" & Chr(10))
-
-  Dim sZipCmd As String = "cd '" & sRutaSalida & "' && zip '" & sFileZip & "' '" & sNombreBase & ".html'"
-  Dim sImagen As String
-  Dim sCopiaImg As String
-
-  For Each sImagen In aImagenes
-    Dim sOrigen As String = sRutaMedia &/ sImagen
-    If Exist(sOrigen) Then
-      Shell "cp '" & sOrigen & "' '" & sRutaSalida & "/'" Wait
-      sZipCmd &= " '" & sImagen & "'"
-      FMain.TerminalViewProyecto.Input("echo '  + " & sImagen & "'" & Chr(10))
-    Else
-      FMain.TerminalViewProyecto.Input(
-        "echo '  AVISO: imagen no encontrada: " & sImagen & "'" & Chr(10))
-    Endif
-  Next
-
-  FMain.TerminalViewProyecto.Input(sZipCmd & Chr(10))
-
-  iEspera = 0
-  While Not Exist(sFileZip) And iEspera < 300
-    Wait 0.1
-    Inc iEspera
-  Wend
-
-  ' LIMPIAR COPIAS TEMPORALES DE IMÁGENES EN /salidas/html
-  For Each sImagen In aImagenes
-    sCopiaImg = sRutaSalida &/ sImagen
-    If Exist(sCopiaImg) Then Shell "rm '" & sCopiaImg & "'" Wait
-  Next
-
-  If Not Exist(sFileZip) Then
-    FMain.TerminalViewProyecto.Input("echo 'ERROR: no se generó el ZIP'" & Chr(10))
-    Message.Error("No se pudo generar el ZIP para OJS." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: ZIP OJS generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sFileZip & "'" & Chr(10))
-
-End
-
-' ============================================
-' Función   : GenerarIndiceHtml
-' Propósito : Genera index.html para GitHub Pages (/docs) con
-'             la lista de artículos del número que ya tienen HTML
-'             generado. Se llama automáticamente desde
-'             GenerarHtmlControl() al finalizar.
-' ============================================
-Public Sub GenerarIndiceHtml()
-
-  Dim sRutaDocs As String = File.Dir(FMain.txtProyecto.Text) &/ "docs"
-  Dim sFileIndex As String = sRutaDocs &/ "index.html"
-
-  ' METADATOS DEL NÚMERO ACTIVO
-  Dim sRevista As String = FMetadatosRevista.titulo_revista.Text
-  Dim sVolumen As String = FMetadatosRevista.volumen.Text
-  Dim sNumero As String = FMetadatosRevista.numero.Text
-  Dim sAnio As String = FMetadatosRevista.ano_publicacion.Text
-  Dim sTapa As String = FMetadatosRevista.imagen_tapa.Text
-
-  If Not Exist(sRutaDocs) Then
-    Shell "mkdir -p '" & sRutaDocs & "'" Wait
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo '--- GENERANDO ÍNDICE GITHUB PAGES ---'" & Chr(10))
-
-  ' --- 1. Consultar artículos del proyecto ordenados por nombre_archivo ---
-  Dim sSQL As String
-  Dim rArticulos As Result
-
-  sSQL = "SELECT id_articulo, nombre_archivo, titulo_articulo " &
-    "FROM articulos " &
-    "WHERE id_proyecto = &1 " &
-    "ORDER BY nombre_archivo ASC"
-  rArticulos = m_ConexionBD.mConn.Exec(sSQL, FMain.id_proyecto.Value)
-
-  ' --- 2. Construir tag de tapa ---
-  Dim sTapaHtml As String
-  If sTapa <> "" Then
-    sTapaHtml = "<img src=" & Chr(34) & "media/" & File.Name(sTapa) & Chr(34) &
-      " alt=" & Chr(34) & "Tapa " & sRevista & Chr(34) &
-      " class=" & Chr(34) & "tapa" & Chr(34) & "/>"
-  Else
-    sTapaHtml = "<div class=" & Chr(34) & "tapa-placeholder" & Chr(34) & ">Sin tapa</div>"
-  Endif
-
-  ' --- 3. Cabecera HTML ---
-  Dim sHtml As String
-
-  sHtml = "<!DOCTYPE html>" & Chr(10)
-  sHtml &= "<html lang=" & Chr(34) & "es" & Chr(34) & ">" & Chr(10)
-  sHtml &= "<head>" & Chr(10)
-  sHtml &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
-  sHtml &= "<meta name=" & Chr(34) & "viewport" & Chr(34) &
-    " content=" & Chr(34) & "width=device-width, initial-scale=1.0" & Chr(34) & "/>" & Chr(10)
-  sHtml &= "<title>" & sRevista & " — Vol. " & sVolumen & " Núm. " & sNumero & " (" & sAnio & ")</title>" & Chr(10)
-  sHtml &= "<link rel=" & Chr(34) & "preconnect" & Chr(34) &
-    " href=" & Chr(34) & "https://fonts.googleapis.com" & Chr(34) & "/>" & Chr(10)
-  sHtml &= "<link rel=" & Chr(34) & "preconnect" & Chr(34) &
-    " href=" & Chr(34) & "https://fonts.gstatic.com" & Chr(34) & " crossorigin/>" & Chr(10)
-  sHtml &= "<link href=" & Chr(34) &
-    "https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400" &
-    "&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,400&display=swap" &
-    Chr(34) & " rel=" & Chr(34) & "stylesheet" & Chr(34) & "/>" & Chr(10)
-
-  ' --- 4. Estilos CSS ---
-  sHtml &= "<style>" & Chr(10)
-  sHtml &= ":root{--color-bg:#fafaf8;--color-surface:#fff;--color-border:#e2e0db;" &
-    "--color-text:#1a1a18;--color-text-muted:#6b6860;--color-accent:#2d5a8e;" &
-    "--color-accent-soft:#eef3f9;--font-serif:'Noto Serif',Georgia,serif;" &
-    "--font-sans:'IBM Plex Sans',system-ui,sans-serif;}" & Chr(10)
-  sHtml &= "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}" & Chr(10)
-  sHtml &= "body{background:var(--color-bg);color:var(--color-text);" &
-    "font-family:var(--font-sans);font-size:1.125rem;line-height:1.7;" &
-    "-webkit-font-smoothing:antialiased;}" & Chr(10)
-  sHtml &= ".contenedor{max-width:860px;margin:0 auto;padding:3rem 1.5rem 5rem;}" & Chr(10)
-  sHtml &= ".cabecera{display:flex;gap:2rem;align-items:flex-start;" &
-    "margin-bottom:3rem;padding-bottom:2rem;border-bottom:2px solid var(--color-border);}" & Chr(10)
-  sHtml &= ".tapa{width:140px;min-width:140px;height:auto;border-radius:4px;" &
-    "box-shadow:0 2px 8px rgba(0,0,0,0.10);}" & Chr(10)
-  sHtml &= ".tapa-placeholder{width:140px;min-width:140px;height:190px;" &
-    "background:var(--color-accent-soft);border:2px dashed var(--color-border);" &
-    "border-radius:4px;display:flex;align-items:center;justify-content:center;" &
-    "color:var(--color-text-muted);font-size:0.75rem;}" & Chr(10)
-  sHtml &= ".info-revista{flex:1;}" & Chr(10)
-  sHtml &= ".nombre-revista{font-family:var(--font-sans);font-size:0.75rem;" &
-    "font-weight:600;text-transform:uppercase;letter-spacing:0.08em;" &
-    "color:var(--color-accent);margin-bottom:0.5rem;}" & Chr(10)
-  sHtml &= ".datos-numero{font-family:var(--font-serif);font-size:1.75rem;" &
-    "font-weight:400;color:var(--color-text);line-height:1.3;margin-bottom:0.5rem;}" & Chr(10)
-  sHtml &= ".anio-numero{font-size:0.875rem;color:var(--color-text-muted);}" & Chr(10)
-  sHtml &= ".lista-articulos{list-style:none;}" & Chr(10)
-  sHtml &= ".articulo-item{padding:1.25rem 0;border-bottom:1px solid var(--color-border);}" & Chr(10)
-  sHtml &= ".articulo-item:last-child{border-bottom:none;}" & Chr(10)
-  sHtml &= ".articulo-titulo a{font-family:var(--font-serif);font-size:1.125rem;" &
-    "font-weight:600;color:var(--color-text);text-decoration:none;line-height:1.4;}" & Chr(10)
-  sHtml &= ".articulo-titulo a:hover{color:var(--color-accent);}" & Chr(10)
-  sHtml &= ".articulo-autores{font-size:0.875rem;color:var(--color-text-muted);margin-top:0.35rem;}" & Chr(10)
-  sHtml &= "footer{text-align:center;padding:1.25rem;background:#2a2a28;" &
-    "color:#c8c6c0;font-family:var(--font-sans);font-size:0.875rem;" &
-    "font-weight:300;margin-top:3rem;}" & Chr(10)
-  sHtml &= "footer a{color:#8ab4d8;text-decoration:none;}" & Chr(10)
-  sHtml &= "</style>" & Chr(10)
-  sHtml &= "</head>" & Chr(10)
-  sHtml &= "<body>" & Chr(10)
-  sHtml &= "<div class=" & Chr(34) & "contenedor" & Chr(34) & ">" & Chr(10)
-
-  ' --- 5. Cabecera con tapa y datos del número ---
-  sHtml &= "<div class=" & Chr(34) & "cabecera" & Chr(34) & ">" & Chr(10)
-  sHtml &= sTapaHtml & Chr(10)
-  sHtml &= "<div class=" & Chr(34) & "info-revista" & Chr(34) & ">" & Chr(10)
-  sHtml &= "<div class=" & Chr(34) & "nombre-revista" & Chr(34) & ">" & sRevista & "</div>" & Chr(10)
-  sHtml &= "<div class=" & Chr(34) & "datos-numero" & Chr(34) & ">Vol. " & sVolumen & ", Núm. " & sNumero & "</div>" & Chr(10)
-  sHtml &= "<div class=" & Chr(34) & "anio-numero" & Chr(34) & ">" & sAnio & "</div>" & Chr(10)
-  sHtml &= "</div>" & Chr(10)
-  sHtml &= "</div>" & Chr(10)
-
-  ' --- 6. Lista de artículos (solo los que tienen HTML en /docs) ---
-  sHtml &= "<ul class=" & Chr(34) & "lista-articulos" & Chr(34) & ">" & Chr(10)
-
-  Dim rAutores As Result
-  Dim sAutores As String
-  Dim sNombreHtml As String
-  Dim sFileHtmlArticulo As String
-
-  While rArticulos.Available
-
-    sNombreHtml = "h" & Mid(rArticulos["nombre_archivo"], 2) & ".html"
-    sFileHtmlArticulo = sRutaDocs &/ sNombreHtml
-
-    If Exist(sFileHtmlArticulo) Then
-
-      ' OBTENER AUTORES ORDENADOS POR orden_autoria
-      sSQL = "SELECT au.apellidos, au.nombre " &
-        "FROM autores au " &
-        "INNER JOIN articulo_autor aa ON aa.id_autor = au.id_autor " &
-        "WHERE aa.id_articulo = &1 " &
-        "AND aa.rol_autor IN ('autor','coautor','autor_correspondencia') " &
-        "ORDER BY aa.orden_autoria ASC"
-      rAutores = m_ConexionBD.mConn.Exec(sSQL, rArticulos["id_articulo"])
-
-      sAutores = ""
-      While rAutores.Available
-        If sAutores <> "" Then sAutores &= ", "
-        sAutores &= rAutores["apellidos"] & ", " & rAutores["nombre"]
-        rAutores.MoveNext()
-      Wend
-
-      sHtml &= "<li class=" & Chr(34) & "articulo-item" & Chr(34) & ">" & Chr(10)
-      sHtml &= "<div class=" & Chr(34) & "articulo-titulo" & Chr(34) & ">"
-      sHtml &= "<a href=" & Chr(34) & sNombreHtml & Chr(34) & ">"
-      sHtml &= rArticulos["titulo_articulo"]
-      sHtml &= "</a></div>" & Chr(10)
-      If sAutores <> "" Then
-        sHtml &= "<div class=" & Chr(34) & "articulo-autores" & Chr(34) & ">" & sAutores & "</div>" & Chr(10)
-      Endif
-      sHtml &= "</li>" & Chr(10)
-
-    Endif
-
-    rArticulos.MoveNext()
-  Wend
-
-  sHtml &= "</ul>" & Chr(10)
-  sHtml &= "</div>" & Chr(10)
-
-  ' --- 7. Footer y cierre ---
-  sHtml &= "<footer>Generado con <a href=" & Chr(34) &
-    "https://estudio2a.netlify.app/" & Chr(34) &
-    " target=" & Chr(34) & "_blank" & Chr(34) &
-    ">gbpublisher</a></footer>" & Chr(10)
-  sHtml &= "</body>" & Chr(10)
-  sHtml &= "</html>" & Chr(10)
-
-  File.Save(sFileIndex, sHtml)
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: índice generado → docs/index.html'" & Chr(10))
-
-Catch
-  FMain.TerminalViewProyecto.Input("echo 'ERROR al generar índice: " & Error.Text & "'" & Chr(10))
-
-End
-
-Private Function LeerTipoCSL(sRutaCSL As String) As String
-
-  ' MAPEO DIRECTO: nombre de archivo CSL → identificador de estilo
-  ' gbpublisher SOPORTA EXACTAMENTE 4 ESTILOS CON NOMBRES FIJOS
-  Select Case Lower(File.Name(sRutaCSL))
-    Case "apa.csl"
-      Return "apa"
-    Case "ieee.csl"
-      Return "ieee"
-    Case "vancouver.csl"
-      Return "vancouver"
-    Case "iso690-author-date-es.csl"
-      Return "iso690"
-    Case Else
-      Message.Error("Estilo de cita no reconocido: " & File.Name(sRutaCSL) & Chr(10) &
-        "Los estilos soportados son: apa.csl, ieee.csl, vancouver.csl, iso690-author-date-es.csl")
-      Return ""
-  End Select
-
-Catch
-  Return "apa"
-
-End Function
+' Public Function LeerTipoCSL(sRutaCSL As String) As String
+'
+'   ' MAPEO DIRECTO: nombre de archivo CSL → identificador de estilo
+'   ' gbpublisher SOPORTA EXACTAMENTE 4 ESTILOS CON NOMBRES FIJOS
+'   Select Case Lower(File.Name(sRutaCSL))
+'     Case "apa.csl"
+'       Return "apa"
+'     Case "ieee.csl"
+'       Return "ieee"
+'     Case "vancouver.csl"
+'       Return "vancouver"
+'     Case "iso690-author-date-es.csl"
+'       Return "iso690"
+'     Case Else
+'       Message.Error("Estilo de cita no reconocido: " & File.Name(sRutaCSL) & Chr(10) &
+'         "Los estilos soportados son: apa.csl, ieee.csl, vancouver.csl, iso690-author-date-es.csl")
+'       Return ""
+'   End Select
+'
+' Catch
+'   Return "apa"
+'
+' End Function

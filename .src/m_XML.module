@@ -2702,7 +2702,7 @@ Public Function ValidarArchivoDoaj(sArchivo As String, idArticulo As Integer) As
                   If(aAbstracts.Count = 0, "Recomendado — completar resumen en FMetadatosArticulos", ""), False)
 
                   Dim aAutores As XmlElement[] = xDoc.GetElementsByTagName("author")
-                  Dim sAutor As String = If(aAutores.Count > 0, ObtenerNodoXml(xDoc, "n"), "")
+                  Dim sAutor As String = If(aAutores.Count > 0, ObtenerNodoXml(xDoc, "name"), "")
                   AgregarFilaGv(FMain.gvDOAJ, If(aAutores.Count > 0, "OK", "ADVERTENCIA"),
                     "authors", If(aAutores.Count > 0, sAutor & " (" & CStr(aAutores.Count) & ")", "(ausente)"),
                     If(aAutores.Count = 0, "Recomendado — vincular autores al artículo", ""), False)
@@ -2906,21 +2906,25 @@ End Function
 ' Función   : GenerarJsonDoaj
 ' Propósito : Construye el JSON BibJSON para la API de DOAJ
 '             leyendo datos de la BD. Guarda como d-*.json en jats/.
-' Parámetros: sRutaCanonico As String, idArticulo As Integer
+' Parámetros: sRutaCanonico As String — ruta al canónico JATS
+'             idArticulo    As Integer — id del artículo en BD
 ' Retorna   : Boolean — True si el JSON se generó correctamente
 ' ============================================
 Public Function GenerarJsonDoaj(sRutaCanonico As String, idArticulo As Integer) As Boolean
 
+  ' --- 1. Inicialización de variables ---
   Dim hRes As Result
   Dim sJson As String
   Dim sRutaJson As String
-  Dim hFile As File
+  Dim q As String = Chr(34)  ' COMILLA DOBLE — USADA EN TODO EL JSON
+  Dim n As String = Chr(10)  ' SALTO DE LÍNEA
 
   If Not Exist(sRutaCanonico) Then
-    Message.Error("No se encuentra el canónico:\n" & sRutaCanonico)
+    Message.Error("No se encuentra el canónico:" & Chr(10) & sRutaCanonico)
     Return False
   Endif
 
+  ' --- 2. Consulta principal a la BD ---
   Try hRes = m_ConexionBD.mConn.Exec(
     "SELECT a.titulo_articulo, a.resumen_1, a.idioma_resumen_1, " &
     "a.palabras_clave_1, a.doi, " &
@@ -2933,154 +2937,165 @@ Public Function GenerarJsonDoaj(sRutaCanonico As String, idArticulo As Integer) 
     "r.volumen, r.numero " &
     "FROM articulos a " &
     "JOIN revistas_md r ON a.id_revista = r.id_revista " &
-    "WHERE a.id_articulo = " & idArticulo)
+    "WHERE a.id_articulo = &1 LIMIT 1",
+    idArticulo)
   If Error Then
-    Message.Error("Error al consultar la BD:\n" & Error.Text)
+    Message.Error("Error al consultar la BD:" & Chr(10) & Error.Text)
     Return False
   Endif
-  If hRes.Count = 0 Then
+  If Not hRes.Available Then
     Message.Error("No se encontró el artículo ID " & CStr(idArticulo))
     Return False
   Endif
 
-  sRutaJson = File.Dir(sRutaCanonico) & "/" &
-    Replace(Replace(File.BaseName(sRutaCanonico), "c-", "d-"), ".xml", "") & ".json"
+  ' --- 3. Construir ruta del JSON ---
+  sRutaJson = File.Dir(sRutaCanonico) &/ "d-" & Mid(File.BaseName(sRutaCanonico), 3) & ".json"
 
-  ' --- Bloque de autores ---
-  Dim sAutores As String
+  ' --- 4. Bloque de autores ---
+  Dim sAutores As String = ""
   Dim hAutores As Result
   Dim bPrimero As Boolean = True
 
   Try hAutores = m_ConexionBD.mConn.Exec(
-    "SELECT p.nombre, p.apellido, p.orcid, pa.institucion " &
-    "FROM personas p " &
-    "JOIN personas_articulos pa ON p.id_persona = pa.id_persona " &
-    "WHERE pa.id_articulo = " & idArticulo & " " &
-    "AND pa.rol = 'autor' " &
-    "ORDER BY pa.orden")
+    "SELECT a.nombre, a.apellidos, a.orcid, aa.afiliacion_momento " &
+    "FROM autores a " &
+    "JOIN articulo_autor aa ON a.id_autor = aa.id_autor " &
+    "WHERE aa.id_articulo = &1 " &
+    "AND aa.rol_autor IN ('autor', 'coautor', 'autor_correspondencia') " &
+    "ORDER BY aa.orden_autoria",
+    idArticulo)
   If Not Error Then
     While hAutores.Available
-      Dim sNombreA As String = EscaparJson(Trim(hAutores!apellido) & ", " & Trim(hAutores!nombre))
-      Dim sOrcid As String = Trim(hAutores!orcid)
-      Dim sAff As String = EscaparJson(Trim(hAutores!institucion))
+      Dim sNombreA As String = EscaparJson(
+        Trim(hAutores["apellidos"]) & ", " & Trim(hAutores["nombre"]))
+      Dim sOrcid As String = If(IsNull(hAutores["orcid"]), "",
+        Trim(CStr(hAutores["orcid"])))
+      Dim sAff As String = EscaparJson(If(IsNull(hAutores["afiliacion_momento"]), "",
+        Trim(CStr(hAutores["afiliacion_momento"]))))
 
       If Not bPrimero Then sAutores &= ","
-      sAutores &= Chr(10) & "      {"
-      sAutores &= Chr(10) & "        " "name" ": " "" & sNombreA & "" ""
+      sAutores &= n & "      {"
+      sAutores &= n & "        " & q & "name" & q & ": " & q & sNombreA & q
       If sAff <> "" Then
-        sAutores &= "," & Chr(10) & "        " "affiliation" ": " "" & sAff & "" ""
+        sAutores &= "," & n & "        " & q & "affiliation" & q & ": " & q & sAff & q
       Endif
       If sOrcid <> "" Then
         If Not (sOrcid Begins "https://") Then sOrcid = "https://orcid.org/" & sOrcid
-        sAutores &= "," & Chr(10) & "        " "orcid_id" ": " "" & sOrcid & "" ""
+        sAutores &= "," & n & "        " & q & "orcid_id" & q & ": " & q & sOrcid & q
       Endif
-      sAutores &= Chr(10) & "      }"
+      sAutores &= n & "      }"
       bPrimero = False
       hAutores.MoveNext()
     Wend
   Endif
 
-  ' --- Identificadores ---
-  Dim sIdentificadores As String
+  ' --- 5. Bloque de identificadores ---
+  Dim sIdentificadores As String = ""
   Dim bPrimeroId As Boolean = True
 
-  If Trim(hRes!issn_electronico) <> "" Then
-    sIdentificadores &= Chr(10) & "      {" "type" ": " "eissn" ", " "id" ": " "" & EscaparJson(Trim(hRes!issn_electronico)) & "" "}"
+  If Not IsNull(hRes["issn_electronico"]) And Trim(CStr(hRes["issn_electronico"])) <> "" Then
+    sIdentificadores &= n & "      {" & q & "type" & q & ": " & q & "eissn" & q &
+      ", " & q & "id" & q & ": " & q & EscaparJson(Trim(CStr(hRes["issn_electronico"]))) & q & "}"
     bPrimeroId = False
   Endif
-  If Trim(hRes!issn_impreso) <> "" Then
+  If Not IsNull(hRes["issn_impreso"]) And Trim(CStr(hRes["issn_impreso"])) <> "" Then
     If Not bPrimeroId Then sIdentificadores &= ","
-    sIdentificadores &= Chr(10) & "      {" "type" ": " "pissn" ", " "id" ": " "" & EscaparJson(Trim(hRes!issn_impreso)) & "" "}"
+    sIdentificadores &= n & "      {" & q & "type" & q & ": " & q & "pissn" & q &
+      ", " & q & "id" & q & ": " & q & EscaparJson(Trim(CStr(hRes["issn_impreso"]))) & q & "}"
     bPrimeroId = False
   Endif
-  If Trim(hRes!doi) <> "" Then
+  If Not IsNull(hRes["doi"]) And Trim(CStr(hRes["doi"])) <> "" Then
     If Not bPrimeroId Then sIdentificadores &= ","
-    sIdentificadores &= Chr(10) & "      {" "type" ": " "doi" ", " "id" ": " "" & EscaparJson(Trim(hRes!doi)) & "" "}"
+    sIdentificadores &= n & "      {" & q & "type" & q & ": " & q & "doi" & q &
+      ", " & q & "id" & q & ": " & q & EscaparJson(Trim(CStr(hRes["doi"]))) & q & "}"
   Endif
 
-  ' --- URL texto completo ---
-  Dim sUrl As String
-  If Trim(hRes!url_html) <> "" Then
-    sUrl = Trim(hRes!url_html)
-  Else If Trim(hRes!url_articulo) <> "" Then
-    sUrl = Trim(hRes!url_articulo)
-  Else
-    sUrl = Trim(hRes!url_pdf)
+  ' --- 6. URL texto completo (cascada url_articulo → url_html → url_pdf) ---
+  Dim sUrl As String = ""
+  If Not IsNull(hRes["url_articulo"]) And Trim(CStr(hRes["url_articulo"])) <> "" Then
+    sUrl = Trim(CStr(hRes["url_articulo"]))
+  Else If Not IsNull(hRes["url_html"]) And Trim(CStr(hRes["url_html"])) <> "" Then
+    sUrl = Trim(CStr(hRes["url_html"]))
+  Else If Not IsNull(hRes["url_pdf"]) And Trim(CStr(hRes["url_pdf"])) <> "" Then
+    sUrl = Trim(CStr(hRes["url_pdf"]))
   Endif
 
-  ' --- Palabras clave ---
-  Dim sKeywords As String
-  Dim aKwRaw As String[]
+  ' --- 7. Palabras clave ---
+  Dim sKeywords As String = ""
   Dim bPrimeroKw As Boolean = True
 
-  If Trim(hRes!palabras_clave_1) <> "" Then
-    Dim sSepKw As String = Trim(hRes!palabras_clave_1)
-    If InStr(sSepKw, ",") > 0 Then aKwRaw = Split(sSepKw, ",")
+  If Not IsNull(hRes["palabras_clave_1"]) And Trim(CStr(hRes["palabras_clave_1"])) <> "" Then
+    Dim aKwRaw As String[] = Split(Trim(CStr(hRes["palabras_clave_1"])), ",")
     Dim sKw As String
     For Each sKw In aKwRaw
       sKw = Trim(sKw)
       If sKw = "" Then Continue
       If Not bPrimeroKw Then sKeywords &= ","
-      sKeywords &= Chr(10) & "      " "" & EscaparJson(sKw) & "" ""
+      sKeywords &= n & "      " & q & EscaparJson(sKw) & q
       bPrimeroKw = False
     Next
   Endif
 
-  ' --- Armar JSON ---
+  ' --- 8. Construcción del JSON ---
   sJson = "{"
-  sJson &= Chr(10) & "  " "bibjson" ": {"
-  sJson &= Chr(10) & "    " "title" ": " "" & EscaparJson(Trim(hRes!titulo_articulo)) & "" ","
+  sJson &= n & "  " & q & "bibjson" & q & ": {"
+  sJson &= n & "    " & q & "title" & q & ": " & q & EscaparJson(Trim(CStr(hRes["titulo_articulo"]))) & q & ","
 
-  If Trim(hRes!resumen_1) <> "" Then
-    sJson &= Chr(10) & "    " "abstract" ": " "" & EscaparJson(Trim(hRes!resumen_1)) & "" ","
+  If Not IsNull(hRes["resumen_1"]) And Trim(CStr(hRes["resumen_1"])) <> "" Then
+    sJson &= n & "    " & q & "abstract" & q & ": " & q & EscaparJson(Trim(CStr(hRes["resumen_1"]))) & q & ","
   Endif
 
-  sJson &= Chr(10) & "    " "year" ": " "" & CStr(hRes!ano_publicacion) & "" ","
-  If Trim(hRes!mes_publicacion) <> "" Then
-    sJson &= Chr(10) & "    " "month" ": " "" & Trim(hRes!mes_publicacion) & "" ","
+  sJson &= n & "    " & q & "year" & q & ": " & q & CStr(hRes["ano_publicacion"]) & q & ","
+
+  If Not IsNull(hRes["mes_publicacion"]) And Trim(CStr(hRes["mes_publicacion"])) <> "" Then
+    sJson &= n & "    " & q & "month" & q & ": " & q & Trim(CStr(hRes["mes_publicacion"])) & q & ","
   Endif
 
   If sKeywords <> "" Then
-    sJson &= Chr(10) & "    " "keywords" ": [" & sKeywords & Chr(10) & "    ],"
+    sJson &= n & "    " & q & "keywords" & q & ": [" & sKeywords & n & "    ],"
   Endif
+
   If sAutores <> "" Then
-    sJson &= Chr(10) & "    " "author" ": [" & sAutores & Chr(10) & "    ],"
+    sJson &= n & "    " & q & "author" & q & ": [" & sAutores & n & "    ],"
   Endif
 
-  sJson &= Chr(10) & "    " "identifier" ": [" & sIdentificadores & Chr(10) & "    ],"
+  sJson &= n & "    " & q & "identifier" & q & ": [" & sIdentificadores & n & "    ],"
 
-  sJson &= Chr(10) & "    " "journal" ": {"
-  sJson &= Chr(10) & "      " "title" ": " "" & EscaparJson(Trim(hRes!titulo_revista)) & "" ","
-  sJson &= Chr(10) & "      " "publisher" ": " "" & EscaparJson(Trim(hRes!editorial)) & "" ","
-  sJson &= Chr(10) & "      " "volume" ": " "" & Trim(hRes!volumen) & "" ","
-  sJson &= Chr(10) & "      " "number" ": " "" & Trim(hRes!numero) & "" ","
-  If Trim(hRes!pagina_inicio) <> "" Then
-    sJson &= Chr(10) & "      " "start_page" ": " "" & Trim(hRes!pagina_inicio) & "" ","
+  ' JOURNAL
+  sJson &= n & "    " & q & "journal" & q & ": {"
+  sJson &= n & "      " & q & "title" & q & ": " & q & EscaparJson(Trim(CStr(hRes["titulo_revista"]))) & q & ","
+  sJson &= n & "      " & q & "publisher" & q & ": " & q & EscaparJson(Trim(CStr(hRes["editorial"]))) & q & ","
+  sJson &= n & "      " & q & "volume" & q & ": " & q & Trim(CStr(hRes["volumen"])) & q & ","
+  sJson &= n & "      " & q & "number" & q & ": " & q & Trim(CStr(hRes["numero"])) & q
+  If Not IsNull(hRes["pagina_inicio"]) And Trim(CStr(hRes["pagina_inicio"])) <> "" Then
+    sJson &= "," & n & "      " & q & "start_page" & q & ": " & q & Trim(CStr(hRes["pagina_inicio"])) & q
   Endif
-  If Trim(hRes!pagina_fin) <> "" Then
-    sJson &= Chr(10) & "      " "end_page" ": " "" & Trim(hRes!pagina_fin) & "" ","
+  If Not IsNull(hRes["pagina_fin"]) And Trim(CStr(hRes["pagina_fin"])) <> "" Then
+    sJson &= "," & n & "      " & q & "end_page" & q & ": " & q & Trim(CStr(hRes["pagina_fin"])) & q
   Endif
-  If sJson Ends "," Then sJson = Left(sJson, Len(sJson) - 1)
-  sJson &= Chr(10) & "    },"
+  sJson &= n & "    },"
 
+  ' LINK
   If sUrl <> "" Then
-    sJson &= Chr(10) & "    " "link" ": ["
-    sJson &= Chr(10) & "      {"
-    sJson &= Chr(10) & "        " "type" ": " "fulltext" ","
-    sJson &= Chr(10) & "        " "url" ": " "" & EscaparJson(sUrl) & "" ","
-    sJson &= Chr(10) & "        " "content_type" ": " "text/html" ""
-    sJson &= Chr(10) & "      }"
-    sJson &= Chr(10) & "    ]"
+    sJson &= n & "    " & q & "link" & q & ": ["
+    sJson &= n & "      {"
+    sJson &= n & "        " & q & "type" & q & ": " & q & "fulltext" & q & ","
+    sJson &= n & "        " & q & "url" & q & ": " & q & EscaparJson(sUrl) & q & ","
+    sJson &= n & "        " & q & "content_type" & q & ": " & q & "text/html" & q
+    sJson &= n & "      }"
+    sJson &= n & "    ]"
   Else
+    ' ELIMINAR COMA FINAL SI NO HAY LINK
     If sJson Ends "," Then sJson = Left(sJson, Len(sJson) - 1)
   Endif
 
-  sJson &= Chr(10) & "  }"
-  sJson &= Chr(10) & "}"
+  sJson &= n & "  }"
+  sJson &= n & "}"
 
+  ' --- 9. Guardar ---
   Try File.Save(sRutaJson, sJson)
   If Error Then
-    Message.Error("No se pudo guardar el JSON:\n" & sRutaJson & Chr(10) & Error.Text)
+    Message.Error("No se pudo guardar el JSON:" & Chr(10) & sRutaJson & Chr(10) & Error.Text)
     Return False
   Endif
 
