@@ -1,0 +1,656 @@
+' Gambas module file
+
+'' ============================================
+'' Módulo    : m_GenerarSCIELO
+'' Propósito : Genera la salida SciELO PS (s-*.xml) desde el
+''             canónico JATS activo, valida con packtools,
+''             empaqueta en ZIP para /salidas/scielo/ y genera
+''             el archivo leeme-*.txt con el resumen del proceso.
+''
+'' Funciones públicas:
+''   GenerarScieloUnaColumna()            — orquesta todo el proceso
+''   MostrarResultadoScieloDesdeArchivo() — re-valida un s-*.xml existente
+''   MostrarContenidoZipScielo()          — muestra contenido de un ZIP en el grid
+''
+'' Funciones privadas:
+''   MostrarResultadoScielo()             — puebla gvSciELO con el resultado
+'' ============================================
+
+'' ============================================
+'' Función   : GenerarScieloUnaColumna
+'' Propósito : Orquesta la generación completa del paquete
+''             SciELO para el artículo activo en FMain.
+''             Pasos:
+''             A — Verificar existencia del PDF final
+''             B — Ejecutar Saxon → s-*.xml
+''             C — Validar con packtools StyleChecker
+''             D — Construir PID, renombrar archivos, agregar
+''                 imágenes referenciadas y generar ZIP final
+''             E — Generar leeme-*.txt con resumen del proceso
+''             F — Actualizar listbox y preseleccionar archivo
+'' ============================================
+Public Sub GenerarScieloUnaColumna()
+
+  ' --- 1. Verificaciones previas ---
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  If FMain.id_articulo.Value = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo activo en el editor.")
+    Return
+  Endif
+
+  ' --- 2. Verificar dependencias ---
+  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no encontrado en " & sSaxon)
+    Return
+  Endif
+
+  Dim sXsl As String = User.Home &/ ".gbpublisher/xslt/jats-to-scielo.xsl"
+  If Not Exist(sXsl) Then
+    m_Sonido.sonar("Error")
+    Message.Error("XSLT de SciELO no encontrado en:" & Chr(10) & sXsl)
+    Return
+  Endif
+
+  ' --- 3. Obtener datos desde la BD ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    CInt(FMain.id_articulo.Value))
+  If Error Or Not hRes.Available Then
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  Dim sNombreArchivo As String = m_XML.TrimUTF8(hRes["nombre_archivo"])
+  Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+
+  ' --- 4. Construir rutas ---
+  Dim sFileCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreBase & ".xml"
+  Dim sFileScielo As String = sRutaProyecto &/ "jats" &/ "s-" & sNombreBase & ".xml"
+  Dim sFilePdf As String = sRutaProyecto &/ "salidas" &/ "pdf" &/ "l-" & sNombreBase & ".pdf"
+  Dim sRutaScielo As String = sRutaProyecto &/ "salidas" &/ "scielo"
+  Dim sFileZip As String = sRutaScielo &/ "s-" & sNombreBase & ".zip"
+  Dim sFileLeeme As String = sRutaScielo &/ "leeme-" & sNombreBase & ".txt"
+
+  If Not Exist(sFileCanonico) Then
+    Message.Warning("El canónico JATS no existe:" & Chr(10) & sFileCanonico & Chr(10) &
+      Chr(10) & "Generá primero el canónico (Paso 1.4).")
+    Return
+  Endif
+
+  ' ====================================================
+  ' PASO A: VERIFICAR QUE EXISTE EL PDF FINAL
+  ' EL PAQUETE SCIELO REQUIERE EL PDF — SIN ÉL SE ABORTA
+  ' ====================================================
+  If Not Exist(sFilePdf) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontró el PDF del artículo:" & Chr(10) & sFilePdf & Chr(10) &
+      Chr(10) & "El paquete SciELO requiere el PDF final." & Chr(10) &
+      "Generá primero el PDF antes de continuar.")
+    Return
+  Endif
+
+  ' --- 5. Leer parámetros SciELO desde la BD ---
+  Dim sAcronimo As String = ""
+  Dim sIssnScielo As String = ""
+  Dim sUrlArticulo As String = ""
+
+  Dim hMeta As Result
+  Try hMeta = m_ConexionBD.mConn.Exec(
+    "SELECT r.acronimo_scielo, r.issn_impreso, r.e_issn, a.url_articulo " &
+    "FROM revistas_md r JOIN articulos a ON a.id_revista = r.id_revista " &
+    "WHERE a.id_articulo = &1 LIMIT 1",
+    CInt(FMain.id_articulo.Value))
+  If Not Error And hMeta.Available Then
+    If Not IsNull(hMeta["acronimo_scielo"]) Then
+      sAcronimo = Trim(CStr(hMeta["acronimo_scielo"]))
+    Endif
+    ' SCIELO PREFIERE ISSN IMPRESO — FALLBACK A ELECTRÓNICO
+    If Not IsNull(hMeta["issn_impreso"]) And Trim(CStr(hMeta["issn_impreso"])) <> "" Then
+      sIssnScielo = Trim(CStr(hMeta["issn_impreso"]))
+    Else If Not IsNull(hMeta["e_issn"]) Then
+      sIssnScielo = Trim(CStr(hMeta["e_issn"]))
+    Endif
+    If Not IsNull(hMeta["url_articulo"]) Then
+      sUrlArticulo = Trim(CStr(hMeta["url_articulo"]))
+    Endif
+  Endif
+
+  ' ADVERTENCIA SI FALTA EL ACRÓNIMO — EL ENDIF CIERRA SOLO ESTE BLOQUE
+  ' EL FLUJO PRINCIPAL CONTINÚA INDEPENDIENTEMENTE
+  If sAcronimo = "" Then
+    If Message.Warning(
+        "La revista no tiene acrónimo SciELO definido." & Chr(10) &
+        "El PID SciELO se generará sin él." & Chr(10) & Chr(10) &
+        "¿Continuár de todas formas?",
+        "Continuar", "Cancelar") = 2 Then Return
+    Endif
+
+    ' ====================================================
+    ' PASO B: EJECUTAR SAXON
+    ' ====================================================
+    FMain.TerminalViewProyecto.Input(
+      "echo '--- SCIELO PASO B: EJECUTANDO SAXON ---'" & Chr(10))
+
+    If Exist(sFileScielo) Then
+      Shell "rm '" & sFileScielo & "'" Wait
+    Endif
+
+    FMain.TerminalViewProyecto.Input(
+      "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
+      "-s:'" & sFileCanonico & "' " &
+      "-xsl:'" & sXsl & "' " &
+      "-o:'" & sFileScielo & "' " &
+      "acronimo_scielo='" & sAcronimo & "' " &
+      "issn_scielo='" & sIssnScielo & "' " &
+      "url_articulo='" & sUrlArticulo & "'" & Chr(10))
+
+    Dim iEspera As Integer = 0
+    While Not Exist(sFileScielo) And iEspera < 600
+      Wait 0.1
+      Inc iEspera
+    Wend
+
+    If Not Exist(sFileScielo) Then
+      m_Sonido.sonar("Error")
+      Message.Error("Saxon no generó el archivo SciELO." & Chr(10) &
+        "Revise los mensajes en la terminal.")
+      Return
+    Endif
+
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: " & File.Name(sFileScielo) & " generado'" & Chr(10))
+
+    ' ====================================================
+    ' PASO C: VALIDAR CON PACKTOOLS Y CAPTURAR RESULTADO
+    ' SE USA ARCHIVO TEMPORAL PARA CAPTURA CONFIABLE
+    ' Shell "cmd" To var NO ES CONFIABLE PARA PROCESOS LARGOS
+    ' ====================================================
+    FMain.TerminalViewProyecto.Input(
+      "echo '--- SCIELO PASO C: VALIDANDO CON PACKTOOLS ---'" & Chr(10))
+
+    Dim sTmpResult As String = "/tmp/gbpublisher-packtools.txt"
+    Dim q As String = Chr(34)
+
+    Shell "python3 -m packtools.stylechecker '" & sFileScielo & "' --nocolors > '" & sTmpResult & "' 2>/dev/null" Wait
+
+    Dim sResultadoPacktools As String = ""
+    If Exist(sTmpResult) Then
+      sResultadoPacktools = File.Load(sTmpResult)
+    Endif
+
+    ' PARSEAR RESULTADO — FORMATO CON ESPACIOS (SIN --raw)
+    Dim bValido As Boolean = InStr(sResultadoPacktools, q & "is_valid" & q & ": true") > 0
+    Dim bTieneDtdErrors As Boolean = InStr(sResultadoPacktools, q & "dtd_errors" & q & ": []") = 0
+    Dim bTieneStyleErr As Boolean = InStr(sResultadoPacktools, q & "style_errors" & q & ": {}") = 0
+
+    ' MOSTRAR RESULTADO EN LA TERMINAL DEL PROYECTO
+    FMain.TerminalViewProyecto.Input(
+      "python3 -m packtools.stylechecker '" & sFileScielo & "'" & Chr(10))
+
+    ' ====================================================
+    ' PASO D: CONSTRUIR PID Y EMPAQUETAR CON NOMENCLATURA SCIELO
+    ' EL RENOMBRADO ES SOLO PARA LAS COPIAS DENTRO DEL ZIP
+    ' LOS ARCHIVOS ORIGINALES EN /jats/, /salidas/pdf/ Y /media/
+    ' NO SE MODIFICAN
+    ' ====================================================
+    FMain.TerminalViewProyecto.Input(
+      "echo '--- SCIELO PASO D: EMPAQUETANDO ---'" & Chr(10))
+
+    ' LEER PÁGINA, VOLUMEN Y NÚMERO DESDE LA BD
+    Dim sPaginaInicio As String = ""
+    Dim sVolumen As String = ""
+    Dim sNumero As String = ""
+
+    Dim hPag As Result
+    Try hPag = m_ConexionBD.mConn.Exec(
+      "SELECT a.pagina_inicio, r.volumen, r.numero " &
+      "FROM articulos a " &
+      "JOIN revistas_md r ON a.id_revista = r.id_revista " &
+      "WHERE a.id_articulo = &1 LIMIT 1",
+      CInt(FMain.id_articulo.Value))
+    If Not Error And hPag.Available Then
+      sPaginaInicio = Format(CInt(hPag["pagina_inicio"]), "00000")
+      sVolumen = Trim(CStr(hPag["volumen"]))
+      sNumero = Trim(CStr(hPag["numero"]))
+    Endif
+
+    ' CONSTRUIR EL PID SCIELO
+    ' FORMATO: ISSN-acrónimo-volumen-numero-paginainicio
+    Dim sPid As String = sIssnScielo & "-" & sAcronimo & "-" &
+      sVolumen & "-" & sNumero & "-" & sPaginaInicio
+
+    FMain.TerminalViewProyecto.Input(
+      "echo 'PID SciELO: " & sPid & "'" & Chr(10))
+
+    ' NOMBRES DE ARCHIVOS RENOMBRADOS DENTRO DEL ZIP
+    Dim sXmlRenombrado As String = sPid & ".xml"
+    Dim sPdfRenombrado As String = sPid & ".pdf"
+
+    ' DIRECTORIO TEMPORAL PARA ARMAR EL PAQUETE ANTES DE ZIPAR
+    Dim sTmpPaquete As String = "/tmp/gbpublisher-scielo-pkg"
+    Shell "rm -rf '" & sTmpPaquete & "' && mkdir -p '" & sTmpPaquete & "'" Wait
+
+    ' LEER CONTENIDO DEL XML SCIELO COMO STRING PARA ACTUALIZAR HREFS
+    Dim sXmlContent As String = File.Load(sFileScielo)
+
+    ' EXTRAER HREFS DE IMÁGENES DEL XML Y COPIARLAS RENOMBRADAS
+    ' SOLO SE INCLUYEN LAS IMÁGENES QUE EL ARTÍCULO REFERENCIA
+    Dim xDoc As New XmlDocument
+    Try xDoc.Open(sFileScielo)
+    If Error Then
+      Message.Error("No se pudo leer el XML SciELO para renombrado.")
+      Return
+    Endif
+
+    Dim aImgNodes As XmlElement[] = xDoc.GetElementsByTagName("graphic")
+    Dim iContadorImg As Integer = 0
+
+    For Each oImg As XmlElement In aImgNodes
+      Dim sHref As String = oImg.Attributes["xlink:href"]
+      If sHref = "" Or Not (sHref Begins "media/") Then Continue
+
+      Inc iContadorImg
+      Dim sNombreOriginal As String = File.Name(sHref)
+      Dim sExt As String = LCase(File.Ext(sNombreOriginal))
+      ' NOMBRE SCIELO: ISSN-acrónimo-vol-nro-pag-gf01.png
+      Dim sImgDestino As String = sPid & "-gf" & Format(iContadorImg, "00") & "." & sExt
+      Dim sImgOrigen As String = sRutaProyecto &/ "media" &/ sNombreOriginal
+
+      If Exist(sImgOrigen) Then
+        Shell "cp '" & sImgOrigen & "' '" & sTmpPaquete &/ sImgDestino & "'" Wait
+        FMain.TerminalViewProyecto.Input(
+          "echo 'IMG: " & sNombreOriginal & " → " & sImgDestino & "'" & Chr(10))
+      Else
+        FMain.TerminalViewProyecto.Input(
+          "echo 'AVISO: imagen no encontrada: " & sImgOrigen & "'" & Chr(10))
+      Endif
+
+      ' ACTUALIZAR REFERENCIA EN EL XML: media/nombre.png → ISSN-...-gf01.png
+      sXmlContent = Replace(sXmlContent, "media/" & sNombreOriginal, sImgDestino)
+    Next
+
+    ' GUARDAR XML CON HREFS ACTUALIZADOS EN EL DIRECTORIO TEMPORAL
+    File.Save(sTmpPaquete &/ sXmlRenombrado, sXmlContent)
+    FMain.TerminalViewProyecto.Input(
+      "echo 'XML: " & File.Name(sFileScielo) & " → " & sXmlRenombrado & "'" & Chr(10))
+
+    ' COPIAR PDF RENOMBRADO AL DIRECTORIO TEMPORAL
+    Shell "cp '" & sFilePdf & "' '" & sTmpPaquete &/ sPdfRenombrado & "'" Wait
+    FMain.TerminalViewProyecto.Input(
+      "echo 'PDF: " & File.Name(sFilePdf) & " → " & sPdfRenombrado & "'" & Chr(10))
+
+    ' GENERAR ZIP FINAL DESDE EL DIRECTORIO TEMPORAL
+    If Exist(sFileZip) Then
+      Shell "rm '" & sFileZip & "'" Wait
+    Endif
+
+    FMain.TerminalViewProyecto.Input(
+      "cd '" & sTmpPaquete & "' && zip -j '" & sFileZip & "' *" & Chr(10))
+    Wait 2
+
+    ' LIMPIAR DIRECTORIO TEMPORAL
+    Shell "rm -rf '" & sTmpPaquete & "'" Wait
+
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: paquete ZIP → " & File.Name(sFileZip) & "'" & Chr(10))
+
+    ' ====================================================
+    ' PASO E: GENERAR LEEME CON RESUMEN DEL PROCESO
+    ' ====================================================
+    Dim sTituloArt As String = ""
+    Dim sAutoresArt As String = ""
+    Dim sLeeme As String = ""
+    Dim n As String = Chr(10)
+    Dim sTimestamp As String = Format(Now(), "yyyy-mm-dd hh:nn:ss")
+
+    ' OBTENER TÍTULO Y AUTORES DESDE LA BD
+    Dim hDatos As Result
+    Try hDatos = m_ConexionBD.mConn.Exec(
+      "SELECT a.titulo_articulo, " &
+      "GROUP_CONCAT(CONCAT(au.apellidos, ', ', au.nombre) ORDER BY aa.orden_autoria SEPARATOR '; ') AS autores " &
+      "FROM articulos a " &
+      "LEFT JOIN articulo_autor aa ON aa.id_articulo = a.id_articulo " &
+      "LEFT JOIN autores au ON au.id_autor = aa.id_autor " &
+      "WHERE a.id_articulo = &1 " &
+      "GROUP BY a.id_articulo LIMIT 1",
+      CInt(FMain.id_articulo.Value))
+    If Not Error And hDatos.Available Then
+      If Not IsNull(hDatos["titulo_articulo"]) Then
+        sTituloArt = Trim(CStr(hDatos["titulo_articulo"]))
+      Endif
+      If Not IsNull(hDatos["autores"]) Then
+        sAutoresArt = Trim(CStr(hDatos["autores"]))
+      Endif
+    Endif
+
+    ' CONSTRUIR CONTENIDO DEL LEEME
+    sLeeme = "PAQUETE SCIELO — construido con gbpublisher" & n
+    sLeeme &= "============================================================" & n
+    sLeeme &= "Generado: " & sTimestamp & n
+    sLeeme &= n
+    sLeeme &= "DATOS DEL ARTÍCULO" & n
+    sLeeme &= "------------------------------------------------------------" & n
+    sLeeme &= "Título:    " & If(sTituloArt <> "", sTituloArt, "(no disponible)") & n
+    sLeeme &= "Autor(es): " & If(sAutoresArt <> "", sAutoresArt, "(no disponible)") & n
+    sLeeme &= "Archivo:   " & sNombreBase & n
+    sLeeme &= n
+    sLeeme &= "DATOS DE LA REVISTA" & n
+    sLeeme &= "------------------------------------------------------------" & n
+    sLeeme &= "Acrónimo SciELO: " & If(sAcronimo <> "", sAcronimo, "(no definido)") & n
+    sLeeme &= "ISSN:            " & If(sIssnScielo <> "", sIssnScielo, "(no definido)") & n
+    sLeeme &= "URL canónica:    " & If(sUrlArticulo <> "", sUrlArticulo, "(no definida)") & n
+    sLeeme &= n
+    sLeeme &= "NOMENCLATURA SCIELO" & n
+    sLeeme &= "------------------------------------------------------------" & n
+    sLeeme &= "PID: " & sPid & n
+    sLeeme &= n
+    sLeeme &= "CONTENIDO DEL ZIP" & n
+    sLeeme &= "------------------------------------------------------------" & n
+    sLeeme &= "  " & sXmlRenombrado & " — XML SciELO PS 1.9" & n
+    sLeeme &= "  " & sPdfRenombrado & " — PDF final" & n
+    Dim iImg As Integer
+    For iImg = 1 To iContadorImg
+      sLeeme &= "  " & sPid & "-gf" & Format(iImg, "00") & ".png — Imagen " & CStr(iImg) & n
+    Next
+    sLeeme &= n
+    sLeeme &= "VALIDACIÓN PACKTOOLS STYLECHECKER" & n
+    sLeeme &= "------------------------------------------------------------" & n
+    If bValido Then
+      sLeeme &= "  Estado:       VÁLIDO — is_valid: true" & n
+      sLeeme &= "  DTD errors:   0" & n
+      sLeeme &= "  Style errors: 0" & n
+    Else
+      sLeeme &= "  Estado:       NO VÁLIDO" & n
+      sLeeme &= "  DTD errors:   " & If(bTieneDtdErrors, "presentes", "0") & n
+      sLeeme &= "  Style errors: " & If(bTieneStyleErr, "presentes", "0") & n
+    Endif
+    sLeeme &= n
+    sLeeme &= "OBSERVACIONES" & n
+    sLeeme &= "------------------------------------------------------------" & n
+    If sAcronimo = "" Then
+      sLeeme &= "  ADVERTENCIA: La revista no tiene acrónimo SciELO definido." & n
+    Endif
+    If sUrlArticulo = "" Then
+      sLeeme &= "  ADVERTENCIA: No hay URL canónica definida para este artículo." & n
+    Endif
+    If iContadorImg = 0 Then
+      sLeeme &= "  ADVERTENCIA: El artículo no tiene imágenes referenciadas." & n
+    Endif
+    If bValido And sAcronimo <> "" And sUrlArticulo <> "" Then
+      sLeeme &= "  Sin observaciones — el paquete está listo para enviar a SciELO." & n
+    Endif
+    sLeeme &= n
+    sLeeme &= "PRÓXIMOS PASOS" & n
+    sLeeme &= "------------------------------------------------------------" & n
+    If bValido Then
+      sLeeme &= "  1. Enviar el ZIP a scielo@scielo.org" & n
+    Else
+      sLeeme &= "  1. Corregir los errores indicados arriba" & n
+      sLeeme &= "  2. Regenerar el paquete desde gbpublisher" & n
+      sLeeme &= "  3. Enviar el ZIP a scielo@scielo.org" & n
+    Endif
+
+    Try File.Save(sFileLeeme, sLeeme)
+    FMain.TerminalViewProyecto.Input(
+      "echo 'OK: leeme generado → " & File.Name(sFileLeeme) & "'" & Chr(10))
+
+    ' ====================================================
+    ' PASO F: ACTUALIZAR LISTBOX Y PRESELECCIONAR ARCHIVO
+    ' ====================================================
+    FMain.TabPanelIzquierdaInferior.Index = 6
+    FMain.TabStripValidaciones.Index = 2
+
+    m_XML.MostrarArchivosScielo()
+
+    ' PRESELECCIONAR EL XML RECIÉN GENERADO EN EL LISTBOX
+    Dim sArchivoScielo As String = "s-" & sNombreBase & ".xml"
+    Dim i As Integer
+    For i = 0 To FMain.lbSciELO.Count - 1
+      If FMain.lbSciELO[i].Text = sArchivoScielo Then
+        FMain.lbSciELO.Index = i
+        FMain.lbSciELO_Click()
+        Break
+      Endif
+    Next
+
+    m_Sonido.sonar("Info")
+
+End Sub
+
+'' ============================================
+'' Función   : MostrarResultadoScielo
+'' Propósito : Puebla FMain.gvSciELO con el resultado de la
+''             generación y validación SciELO. Muestra estado
+''             por colores: OK (verde), ERROR (rojo), ADVERTENCIA
+''             (amarillo). Llamada desde GenerarScieloUnaColumna
+''             y MostrarResultadoScieloDesdeArchivo.
+'' Parámetros: sFileScielo     As String  — ruta al s-*.xml
+''             sFileZip        As String  — ruta al s-*.zip
+''             sFileLeeme      As String  — ruta al leeme-*.txt
+''             bValido         As Boolean — resultado is_valid de packtools
+''             bTieneDtdErrors As Boolean — True si hay DTD errors
+''             bTieneStyleErr  As Boolean — True si hay style errors
+''             sAcronimo       As String  — acrónimo SciELO de la revista
+''             sIssnScielo     As String  — ISSN usado para el PID
+''             sUrlArticulo    As String  — URL canónica del artículo
+'' ============================================
+Private Sub MostrarResultadoScielo(sFileScielo As String, sFileZip As String, sFileLeeme As String, bValido As Boolean, bTieneDtdErrors As Boolean, bTieneStyleErr As Boolean, sAcronimo As String, sIssnScielo As String, sUrlArticulo As String)
+
+  ' --- 1. Configurar el GridView ---
+  Dim gv As GridView = FMain.gvSciELO
+
+  gv.Clear
+  gv.Rows.Count = 0
+  gv.Columns.Count = 4
+  gv.Columns[0].Text = "Estado"
+  gv.Columns[0].Width = 120
+  gv.Columns[1].Text = "Componente"
+  gv.Columns[1].Width = 200
+  gv.Columns[2].Text = "Valor / Resultado"
+  gv.Columns[2].Width = 350
+  gv.Columns[3].Text = "Observación"
+  gv.Columns[3].Width = 400
+
+  ' --- 2. Filas de estado ---
+  m_XML.AgregarFilaGv(gv, If(Exist(sFileScielo), "OK", "ERROR"),
+    "XML SciELO PS", File.Name(sFileScielo),
+    If(Not Exist(sFileScielo), "No se generó el XML", ""), True)
+
+    m_XML.AgregarFilaGv(gv, If(bValido, "OK", "ERROR"),
+      "Validación DTD", If(bValido, "Sin errores", "Con errores"),
+      If(bTieneDtdErrors, "Ver detalle en terminal", ""), True)
+
+      m_XML.AgregarFilaGv(gv, If(Not bTieneStyleErr, "OK", "ERROR"),
+        "Validación SPS 1.9", If(Not bTieneStyleErr, "Sin errores de estilo", "Con errores de estilo"),
+        If(bTieneStyleErr, "Ver detalle en terminal", ""), True)
+
+        m_XML.AgregarFilaGv(gv, If(sAcronimo <> "", "OK", "ADVERTENCIA"),
+          "Acrónimo SciELO", If(sAcronimo <> "", sAcronimo, "(no definido)"),
+          If(sAcronimo = "", "Completar en FMetadatosRevista", ""), False)
+
+          m_XML.AgregarFilaGv(gv, If(sIssnScielo <> "", "OK", "ADVERTENCIA"),
+            "ISSN", If(sIssnScielo <> "", sIssnScielo, "(no definido)"),
+            If(sIssnScielo = "", "Completar en FMetadatosRevista", ""), False)
+
+            m_XML.AgregarFilaGv(gv, If(sUrlArticulo <> "", "OK", "ADVERTENCIA"),
+              "URL canónica", If(sUrlArticulo <> "", sUrlArticulo, "(no definida)"),
+              If(sUrlArticulo = "", "Completar en FMetadatosArticulos", ""), False)
+
+              m_XML.AgregarFilaGv(gv, If(Exist(sFileZip), "OK", "ERROR"),
+                "Paquete ZIP", File.Name(sFileZip),
+                If(Not Exist(sFileZip), "Error al empaquetar", ""), True)
+
+                m_XML.AgregarFilaGv(gv, If(Exist(sFileLeeme), "OK", "ADVERTENCIA"),
+                  "Archivo leeme", File.Name(sFileLeeme), "", False)
+
+                ' --- 3. Fila resumen con color de fondo ---
+                Dim iUlt As Integer = gv.Rows.Count
+                Dim bApto As Boolean = bValido And Exist(sFileZip)
+                gv.Rows.Count = iUlt + 1
+                gv[iUlt, 0].Text = If(bApto, "LISTO", "INCOMPLETO")
+                gv[iUlt, 1].Text = "Estado del paquete"
+                gv[iUlt, 2].Text = If(bApto,
+                  "Paquete listo para enviar a SciELO",
+                  "Corregir errores antes de enviar a SciELO")
+                gv[iUlt, 3].Text = ""
+                Dim cFondo As Integer = If(bApto, Color.RGB(232, 245, 233), Color.RGB(255, 235, 238))
+                Dim j As Integer
+                For j = 0 To 3
+                  gv[iUlt, j].Background = cFondo
+                  gv[iUlt, j].Font.Bold = True
+                Next
+
+End Sub
+
+'' ============================================
+'' Función   : MostrarResultadoScieloDesdeArchivo
+'' Propósito : Re-valida un s-*.xml existente con packtools
+''             y puebla FMain.gvSciELO con el resultado.
+''             Se llama desde FMain.lbSciELO_Click al
+''             seleccionar un archivo .xml en el listbox.
+'' Parámetros: sFileScielo As String — ruta completa al s-*.xml
+'' ============================================
+Public Sub MostrarResultadoScieloDesdeArchivo(sFileScielo As String)
+
+  If Not Exist(sFileScielo) Then
+    Message.Warning("El archivo no existe:" & Chr(10) & sFileScielo)
+    Return
+  Endif
+
+  ' --- 1. Re-validar con packtools usando archivo temporal ---
+  Dim sTmpResult As String = "/tmp/gbpublisher-packtools.txt"
+  Dim q As String = Chr(34)
+
+  Shell "python3 -m packtools.stylechecker '" & sFileScielo & "' --nocolors > '" & sTmpResult & "' 2>/dev/null" Wait
+
+  Dim sResultado As String = ""
+  If Exist(sTmpResult) Then
+    sResultado = File.Load(sTmpResult)
+  Endif
+
+  ' NOMBRES CONSISTENTES CON LA LLAMADA A MostrarResultadoScielo
+  Dim bValido As Boolean = InStr(sResultado, q & "is_valid" & q & ": true") > 0
+  Dim bTieneDtdErr As Boolean = InStr(sResultado, q & "dtd_errors" & q & ": []") = 0
+  Dim bTieneStyleErr As Boolean = InStr(sResultado, q & "style_errors" & q & ": {}") = 0
+
+  ' MOSTRAR RESULTADO EN LA TERMINAL
+  FMain.TerminalViewProyecto.Input(
+    "python3 -m packtools.stylechecker '" & sFileScielo & "'" & Chr(10))
+
+  ' --- 2. Recuperar datos de BD para completar el grid ---
+  Dim sAcronimo As String = ""
+  Dim sIssnScielo As String = ""
+  Dim sUrlArticulo As String = ""
+
+  Dim hMeta As Result
+  Try hMeta = m_ConexionBD.mConn.Exec(
+    "SELECT r.acronimo_scielo, r.issn_impreso, r.e_issn, a.url_articulo " &
+    "FROM revistas_md r JOIN articulos a ON a.id_revista = r.id_revista " &
+    "WHERE a.id_articulo = &1 LIMIT 1",
+    CInt(FMain.id_articulo.Value))
+  If Not Error And hMeta.Available Then
+    If Not IsNull(hMeta["acronimo_scielo"]) Then
+      sAcronimo = Trim(CStr(hMeta["acronimo_scielo"]))
+    Endif
+    If Not IsNull(hMeta["issn_impreso"]) And Trim(CStr(hMeta["issn_impreso"])) <> "" Then
+      sIssnScielo = Trim(CStr(hMeta["issn_impreso"]))
+    Else If Not IsNull(hMeta["e_issn"]) Then
+      sIssnScielo = Trim(CStr(hMeta["e_issn"]))
+    Endif
+    If Not IsNull(hMeta["url_articulo"]) Then
+      sUrlArticulo = Trim(CStr(hMeta["url_articulo"]))
+    Endif
+  Endif
+
+  ' --- 3. Construir rutas del ZIP y leeme correspondientes ---
+  ' sFileScielo ESTÁ EN /jats/ — File.Dir DA /jats/, File.Dir DE ESO DA LA RAÍZ
+  Dim sNombreBase As String = Mid(File.BaseName(sFileScielo), 3)
+  Dim sRutaProyecto As String = File.Dir(File.Dir(sFileScielo))
+  Dim sFileZip As String = sRutaProyecto &/ "salidas" &/ "scielo" &/ "s-" & sNombreBase & ".zip"
+  Dim sFileLeeme As String = sRutaProyecto &/ "salidas" &/ "scielo" &/ "leeme-" & sNombreBase & ".txt"
+
+  ' --- 4. Mostrar resultado en el grid ---
+  MostrarResultadoScielo(sFileScielo, sFileZip, sFileLeeme,
+    bValido, bTieneDtdErr, bTieneStyleErr,
+    sAcronimo, sIssnScielo, sUrlArticulo)
+
+End Sub
+
+'' ============================================
+'' Función   : MostrarContenidoZipScielo
+'' Propósito : Muestra en FMain.gvSciELO el listado de archivos
+''             contenidos en un ZIP SciELO existente.
+''             Se llama desde FMain.lbSciELO_Click al
+''             seleccionar un archivo .zip en el listbox.
+''             (Actualmente no se llama — el click en ZIP
+''             no hace nada por decisión de diseño.)
+'' Parámetros: sFileZip As String — ruta completa al .zip
+'' ============================================
+Public Sub MostrarContenidoZipScielo(sFileZip As String)
+
+  ' --- 1. Configurar el GridView con 3 columnas ---
+  Dim gv As GridView = FMain.gvSciELO
+
+  gv.Clear
+  gv.Rows.Count = 0
+  gv.Columns.Count = 3
+  gv.Columns[0].Text = "Estado"
+  gv.Columns[0].Width = 100
+  gv.Columns[1].Text = "Archivo"
+  gv.Columns[1].Width = 300
+  gv.Columns[2].Text = "Descripción"
+  gv.Columns[2].Width = 500
+
+  If Not Exist(sFileZip) Then
+    m_XML.AgregarFilaGv(gv, "ERROR", File.Name(sFileZip), "(no encontrado)", "", True)
+    Return
+  Endif
+
+  ' --- 2. Listar contenido del ZIP con unzip ---
+  Dim sListado As String = ""
+  Shell "unzip -l '" & sFileZip & "' 2>/dev/null | tail -n +4 | head -n -2 | awk '{print $NF}'" To sListado
+  Wait 1
+
+  ' --- 3. Agregar una fila por archivo con descripción por extensión ---
+  Dim aArchivos As String[] = Split(Trim(sListado), Chr(10))
+  Dim s As String
+  For Each s In aArchivos
+    s = Trim(s)
+    If s = "" Then Continue
+    Dim sDesc As String
+    Select Case LCase(File.Ext(s))
+      Case "xml"
+        sDesc = "XML SciELO PS 1.9"
+      Case "pdf"
+        sDesc = "PDF final del artículo"
+      Case "jpg", "jpeg", "png", "tif", "tiff"
+        sDesc = "Imagen"
+      Case Else
+        sDesc = "Archivo del paquete"
+    End Select
+    m_XML.AgregarFilaGv(gv, "OK", s, sDesc, "", False)
+  Next
+
+  ' --- 4. Fila resumen con total de archivos ---
+  Dim iUlt As Integer = gv.Rows.Count
+  gv.Rows.Count = iUlt + 1
+  gv[iUlt, 0].Text = "INFO"
+  gv[iUlt, 1].Text = "Total archivos"
+  gv[iUlt, 2].Text = CStr(gv.Rows.Count - 1) & " archivo(s) en el paquete"
+  Dim j As Integer
+  For j = 0 To 2
+    gv[iUlt, j].Background = Color.RGB(227, 242, 253)
+    gv[iUlt, j].Font.Bold = True
+  Next
+
+End Sub
