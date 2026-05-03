@@ -131,6 +131,10 @@
   <!-- PARÁMETRO RECIBIDO DESDE m_XML — URL DEL ARTÍCULO DESDE LA BD -->
   <xsl:param name="url_articulo" as="xs:string" select="''"/>
 
+  <!-- PARÁMETRO RECIBIDO DESDE m_XML — RUTA ABSOLUTA AL DIRECTORIO DE FONTS -->
+  <!-- EJEMPLO: /home/alberto/.gbpublisher/fonts/                             -->
+  <xsl:param name="ruta_fonts" as="xs:string" select="''"/>
+
   <!-- ============================================================ -->
   <!--                   PLANTILLAS RAÍZ                           -->
   <!-- ============================================================ -->
@@ -1740,46 +1744,68 @@
       </xsl:choose>
       <xsl:text>:}\par\vspace{3pt}&#10;</xsl:text>
       <xsl:text>{\large&#10;</xsl:text>
-      <!-- LINKEDIN -->
-      <xsl:text>\href{https://www.linkedin.com/sharing/share-offsite/?url=</xsl:text>
+      <!-- BLUESKY -->
+      <xsl:text>\href{https://bsky.app/intent/compose?text=</xsl:text>
       <xsl:value-of select="$url-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faLinkedin}}~&#10;</xsl:text>
-      <!-- X / TWITTER -->
-      <xsl:text>\href{https://twitter.com/intent/tweet?url=</xsl:text>
-      <xsl:value-of select="$url-enc"/>
-      <xsl:text>&amp;text=</xsl:text>
-      <xsl:value-of select="$tit-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faTwitter}}~&#10;</xsl:text>
-      <!-- RESEARCHGATE -->
-      <xsl:text>\href{https://www.researchgate.net/search?q=</xsl:text>
-      <xsl:value-of select="$tit-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faResearchgate}}~&#10;</xsl:text>
-      <!-- REDDIT -->
-      <xsl:text>\href{https://www.reddit.com/submit?url=</xsl:text>
-      <xsl:value-of select="$url-enc"/>
-      <xsl:text>&amp;title=</xsl:text>
-      <xsl:value-of select="$tit-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faReddit}}~&#10;</xsl:text>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>bluesky}}~&#10;</xsl:text>
       <!-- EMAIL -->
       <xsl:text>\href{mailto:?subject=</xsl:text>
       <xsl:value-of select="$tit-enc"/>
       <xsl:text>&amp;body=</xsl:text>
       <xsl:value-of select="$url-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faEnvelope}}~&#10;</xsl:text>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>envelope}}~&#10;</xsl:text>
       <!-- FACEBOOK -->
       <xsl:text>\href{https://www.facebook.com/sharer/sharer.php?u=</xsl:text>
       <xsl:value-of select="$url-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faFacebook}}~&#10;</xsl:text>
-      <!-- WHATSAPP -->
-      <xsl:text>\href{https://wa.me/?text=</xsl:text>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>facebook}}~&#10;</xsl:text>
+      <!-- LINKEDIN -->
+      <xsl:text>\href{https://www.linkedin.com/sharing/share-offsite/?url=</xsl:text>
       <xsl:value-of select="$url-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faWhatsapp}}~&#10;</xsl:text>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>linkedin}}~&#10;</xsl:text>
+      <!-- REDDIT -->
+      <xsl:text>\href{https://www.reddit.com/submit?url=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>&amp;title=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>reddit}}~&#10;</xsl:text>
+      <!-- RESEARCHGATE -->
+      <xsl:text>\href{https://www.researchgate.net/search?q=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>researchgate}}~&#10;</xsl:text>
       <!-- TELEGRAM -->
       <xsl:text>\href{https://t.me/share/url?url=</xsl:text>
       <xsl:value-of select="$url-enc"/>
       <xsl:text>&amp;text=</xsl:text>
       <xsl:value-of select="$tit-enc"/>
-      <xsl:text>}{\textcolor{azulrevista}{\faTelegram}}&#10;</xsl:text>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>telegram}}~&#10;</xsl:text>
+      <!-- WHATSAPP -->
+      <xsl:text>\href{https://wa.me/?text=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>whatsapp}}~&#10;</xsl:text>
+      <!-- X / TWITTER -->
+      <xsl:text>\href{https://twitter.com/intent/tweet?url=</xsl:text>
+      <xsl:value-of select="$url-enc"/>
+      <xsl:text>&amp;text=</xsl:text>
+      <xsl:value-of select="$tit-enc"/>
+      <xsl:text>}{\includesvg[height=0.9em]{</xsl:text>
+      <xsl:value-of select="$ruta_fonts"/>
+      <xsl:text>x-twitter}}&#10;</xsl:text>
       <xsl:text>}\par&#10;</xsl:text>
     </xsl:if>
 
