@@ -1,1 +1,338 @@
 ' Gambas module file
+
+' ============================================
+' Función   : GenerarCrossrefUnaColumna
+' Propósito : Genera el XML de depósito Crossref (f-*.xml)
+'             desde el canónico JATS activo, valida contra
+'             el schema 5.3.1 y actualiza el panel.
+'             Pasos:
+'             A — Verificar que el artículo tiene DOI
+'             B — Ejecutar Saxon → f-*.xml
+'             C — Validar contra crossref5.3.1.xsd
+'             D — Actualizar listbox y grid
+' ============================================
+Public Sub GenerarCrossrefUnaColumna()
+
+  ' --- 1. Verificaciones previas ---
+  If FMain.txtProyecto.Text = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  If FMain.id_articulo.Value = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo activo en el editor.")
+    Return
+  Endif
+
+  ' --- 2. Verificar dependencias ---
+  Dim sSaxon As String = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no encontrado en " & sSaxon)
+    Return
+  Endif
+
+  Dim sXsl As String = User.Home &/ ".gbpublisher/xslt/jats-to-crossref.xsl"
+  If Not Exist(sXsl) Then
+    m_Sonido.sonar("Error")
+    Message.Error("XSLT de Crossref no encontrado en:" & Chr(10) & sXsl)
+    Return
+  Endif
+
+  Dim sSchema As String = User.Home &/ ".gbpublisher/schemas/crossref/crossref5.3.1.xsd"
+  If Not Exist(sSchema) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Schema Crossref 5.3.1 no encontrado en:" & Chr(10) & sSchema)
+    Return
+  Endif
+
+  ' --- 3. Obtener datos desde la BD ---
+  Dim hRes As Result
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT a.nombre_archivo, a.doi, a.url_articulo " &
+    "FROM articulos a " &
+    "WHERE a.id_articulo = &1 LIMIT 1",
+    CInt(FMain.id_articulo.Value))
+  If Error Or Not hRes.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el artículo en la BD.")
+    Return
+  Endif
+
+  ' --- PASO A: VERIFICAR QUE EL ARTÍCULO TIENE DOI ---
+  Dim sDoi As String = ""
+  If Not IsNull(hRes["doi"]) Then sDoi = Trim(CStr(hRes["doi"]))
+  If sDoi = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El artículo no tiene DOI asignado." & Chr(10) &
+      "Crossref requiere un DOI para registrar el artículo." & Chr(10) &
+      Chr(10) & "Completá el DOI en FMetadatosArticulos.")
+    Return
+  Endif
+
+  Dim sNombreArchivo As String = m_XML.TrimUTF8(hRes["nombre_archivo"])
+  Dim sUrlArticulo As String = If(IsNull(hRes["url_articulo"]), "", Trim(CStr(hRes["url_articulo"])))
+  Dim sRutaProyecto As String = File.Dir(FMain.txtProyecto.Text)
+  Dim sNombreBase As String = Mid(sNombreArchivo, 3)
+
+  ' --- 4. Construir rutas ---
+  Dim sFileCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreBase & ".xml"
+  Dim sFileCrossref As String = sRutaProyecto &/ "jats" &/ "f-" & sNombreBase & ".xml"
+
+  If Not Exist(sFileCanonico) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El canónico JATS no existe:" & Chr(10) & sFileCanonico)
+    Return
+  Endif
+
+  ' --- 5. Leer parámetros desde la BD de la revista ---
+  Dim sDepositorName As String = ""
+  Dim sEmailAddress As String = ""
+  Dim sRegistrant As String = ""
+  Dim sDoiPrefix As String = ""
+
+  Dim hMeta As Result
+  Try hMeta = m_ConexionBD.mConn.Exec(
+    "SELECT r.editorial, r.email_editorial, r.institucion_editora, r.doi_prefix " &
+    "FROM revistas_md r " &
+    "JOIN articulos a ON a.id_revista = r.id_revista " &
+    "WHERE a.id_articulo = &1 LIMIT 1",
+    CInt(FMain.id_articulo.Value))
+  If Not Error And hMeta.Available Then
+    If Not IsNull(hMeta["editorial"]) Then sDepositorName = Trim(CStr(hMeta["editorial"]))
+    If Not IsNull(hMeta["email_editorial"]) Then sEmailAddress = Trim(CStr(hMeta["email_editorial"]))
+    If Not IsNull(hMeta["institucion_editora"]) Then sRegistrant = Trim(CStr(hMeta["institucion_editora"]))
+    If Not IsNull(hMeta["doi_prefix"]) Then sDoiPrefix = Trim(CStr(hMeta["doi_prefix"]))
+  Endif
+
+  ' GENERAR TIMESTAMP Y BATCH_ID ÚNICOS
+  Dim sTimestamp As String = Format(Now(), "yyyymmddhhnnss")
+  Dim sBatchId As String = "gbpublisher-" & sNombreBase & "-" & sTimestamp
+
+  ' ====================================================
+  ' PASO B: EJECUTAR SAXON
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- CROSSREF PASO B: EJECUTANDO SAXON ---'" & Chr(10))
+
+  If Exist(sFileCrossref) Then
+    Shell "rm '" & sFileCrossref & "'" Wait
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
+    "-s:'" & sFileCanonico & "' " &
+    "-xsl:'" & sXsl & "' " &
+    "-o:'" & sFileCrossref & "' " &
+    "depositor_name='" & sDepositorName & "' " &
+    "email_address='" & sEmailAddress & "' " &
+    "registrant='" & sRegistrant & "' " &
+    "doi_prefix='" & sDoiPrefix & "' " &
+    "url_articulo='" & sUrlArticulo & "' " &
+    "timestamp='" & sTimestamp & "' " &
+    "batch_id='" & sBatchId & "'" & Chr(10))
+
+  Dim iEspera As Integer = 0
+  While Not Exist(sFileCrossref) And iEspera < 600
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileCrossref) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon no generó el archivo Crossref." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: " & File.Name(sFileCrossref) & " generado'" & Chr(10))
+
+  ' ====================================================
+  ' PASO C: VALIDAR CONTRA EL SCHEMA CROSSREF 5.3.1
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- CROSSREF PASO C: VALIDANDO CONTRA XSD ---'" & Chr(10))
+
+  Dim sRutaSchemas As String = User.Home &/ ".gbpublisher/schemas/crossref"
+
+  FMain.TerminalViewProyecto.Input(
+    "xmllint --noout " &
+    "--schema '" & sSchema & "' " &
+    "--path '" & sRutaSchemas & "' " &
+    "'" & sFileCrossref & "' " &
+    "&& echo 'XSD válido: Crossref OK' " &
+    "|| echo 'XSD INVÁLIDO: revisar errores arriba'" & Chr(10))
+
+  ' ====================================================
+  ' PASO D: ACTUALIZAR PANEL
+  ' ====================================================
+  Wait 2
+
+  FMain.TabPanelIzquierdaInferior.Index = 6
+  FMain.TabStripValidaciones.Index = 1
+
+  m_XML.MostrarArchivosCrossref()
+
+  ' PRESELECCIONAR EL ARCHIVO RECIÉN GENERADO
+  Dim sArchivoCr As String = "f-" & sNombreBase & ".xml"
+  Dim i As Integer
+  For i = 0 To FMain.lbCROSSREF.Count - 1
+    If FMain.lbCROSSREF[i].Text = sArchivoCr Then
+      FMain.lbCROSSREF.Index = i
+      FMain.lbCROSSREF_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("Info")
+
+End Sub
+
+' ============================================
+' Función   : MostrarResultadoCrossrefDesdeArchivo
+' Propósito : Valida un f-*.xml existente contra el schema
+'             Crossref 5.3.1 y puebla FMain.gvCROSSREF
+'             con el resultado. Se llama desde
+'             FMain.lbCROSSREF_Click al seleccionar un archivo.
+' Parámetros: sFileCrossref As String — ruta completa al f-*.xml
+' ============================================
+Public Sub MostrarResultadoCrossrefDesdeArchivo(sFileCrossref As String)
+
+  If Not Exist(sFileCrossref) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El archivo no existe:" & Chr(10) & sFileCrossref)
+    Return
+  Endif
+
+  ' --- 1. Configurar el GridView ---
+  Dim gv As GridView = FMain.gvCROSSREF
+  gv.Clear
+  gv.Rows.Count = 0
+  gv.Columns.Count = 4
+  gv.Columns[0].Text = "Estado"
+  gv.Columns[0].Width = 120
+  gv.Columns[1].Text = "Campo"
+  gv.Columns[1].Width = 200
+  gv.Columns[2].Text = "Valor encontrado"
+  gv.Columns[2].Width = 350
+  gv.Columns[3].Text = "Observación"
+  gv.Columns[3].Width = 400
+
+  ' --- 2. Validar contra el XSD ---
+  Dim sSchema As String = User.Home &/ ".gbpublisher/schemas/crossref/crossref5.3.1.xsd"
+  Dim sRutaSchema As String = User.Home &/ ".gbpublisher/schemas/crossref"
+  Dim sTmpResult As String = "/tmp/gbpublisher-crossref-xsd.txt"
+
+  Shell "xmllint --noout " &
+    "--schema '" & sSchema & "' " &
+    "--path '" & sRutaSchema & "' " &
+    "'" & sFileCrossref & "' " &
+    "> '" & sTmpResult & "' 2>&1" Wait
+
+  Dim sResultXsd As String = ""
+  If Exist(sTmpResult) Then
+    sResultXsd = File.Load(sTmpResult)
+  Endif
+
+  ' xmllint escribe el resultado en stderr — el archivo contiene
+  ' "validates" si es válido o los errores si no lo es
+  Dim bXsdValido As Boolean = InStr(sResultXsd, "validates") > 0
+
+  m_XML.AgregarFilaGv(gv, If(bXsdValido, "OK", "ERROR"),
+    "Validación XSD 5.3.1",
+    If(bXsdValido, "Documento válido", "Documento inválido"),
+      If(Not bXsdValido, "Ver detalle en terminal", ""), True)
+
+      ' --- 3. Leer campos clave del XML con XmlDocument ---
+      Dim xDoc As New XmlDocument
+      Try xDoc.Open(sFileCrossref)
+      If Error Then
+        m_XML.AgregarFilaGv(gv, "ERROR", "Estructura XML",
+          "No se pudo leer el archivo", Error.Text, True)
+        Return
+      Endif
+
+      ' DOI DEL ARTÍCULO
+      Dim sDoi As String = m_XML.ObtenerNodoXml(xDoc, "doi")
+      m_XML.AgregarFilaGv(gv, If(sDoi <> "", "OK", "ERROR"),
+        "DOI artículo",
+        If(sDoi <> "", sDoi, "(ausente)"),
+          If(sDoi = "", "Obligatorio — completar en FMetadatosArticulos", ""), True)
+
+          ' DEPOSITOR
+          Dim sDepositor As String = m_XML.ObtenerNodoXml(xDoc, "depositor_name")
+          m_XML.AgregarFilaGv(gv, If(sDepositor <> "", "OK", "ERROR"),
+            "Depositor",
+            If(sDepositor <> "", sDepositor, "(ausente)"),
+              If(sDepositor = "", "Completar editorial en FMetadatosRevista", ""), True)
+
+              ' EMAIL
+              Dim sEmail As String = m_XML.ObtenerNodoXml(xDoc, "email_address")
+              m_XML.AgregarFilaGv(gv, If(sEmail <> "", "OK", "ADVERTENCIA"),
+                "Email depositor",
+                If(sEmail <> "", sEmail, "(ausente)"),
+                  If(sEmail = "", "Completar email_editorial en FMetadatosRevista", ""), False)
+
+                  ' TÍTULO DE REVISTA
+                  Dim sTituloRev As String = m_XML.ObtenerNodoXml(xDoc, "full_title")
+                  m_XML.AgregarFilaGv(gv, If(sTituloRev <> "", "OK", "ERROR"),
+                    "Título revista",
+                    If(sTituloRev <> "", sTituloRev, "(ausente)"),
+                      If(sTituloRev = "", "Verificar canónico", ""), True)
+
+                      ' ISSN
+                      Dim sIssn As String = m_XML.ObtenerNodoXml(xDoc, "issn")
+                      m_XML.AgregarFilaGv(gv, If(sIssn <> "", "OK", "ADVERTENCIA"),
+                        "ISSN",
+                        If(sIssn <> "", sIssn, "(ausente)"),
+                          If(sIssn = "", "Completar ISSN en FMetadatosRevista", ""), False)
+
+                          ' TÍTULO DEL ARTÍCULO
+                          Dim sTituloArt As String = m_XML.ObtenerNodoXml(xDoc, "title")
+                          m_XML.AgregarFilaGv(gv, If(sTituloArt <> "", "OK", "ERROR"),
+                            "Título artículo",
+                            If(sTituloArt <> "", Left(sTituloArt, 60) & "...", "(ausente)"),
+                              If(sTituloArt = "", "Verificar canónico", ""), True)
+
+                              ' URL DEL ARTÍCULO (resource)
+                              Dim sResource As String = m_XML.ObtenerNodoXml(xDoc, "resource")
+                              Dim bUrlValida As Boolean = InStr(sResource, "http") > 0
+                              m_XML.AgregarFilaGv(gv, If(bUrlValida, "OK", "ADVERTENCIA"),
+                                "URL artículo",
+                                If(sResource <> "", sResource, "(ausente)"),
+                                  If(Not bUrlValida, "Completar url_articulo en FMetadatosArticulos", ""), False)
+
+                                  ' CITAS
+                                  Dim aCitas As XmlElement[] = xDoc.GetElementsByTagName("citation")
+                                  Dim nCitas As Integer = If(aCitas <> Null, aCitas.Count, 0)
+                                  m_XML.AgregarFilaGv(gv, If(nCitas > 0, "OK", "ADVERTENCIA"),
+                                    "Lista de citas",
+                                    If(nCitas > 0, CStr(nCitas) & " cita(s)", "(sin citas)"),
+                                      If(nCitas = 0, "Recomendado para métricas de citación", ""), False)
+
+                                      ' --- 4. Fila resumen ---
+                                      Dim iUlt As Integer = gv.Rows.Count
+                                      Dim bApto As Boolean = bXsdValido And sDoi <> ""
+                                      gv.Rows.Count = iUlt + 1
+                                      gv[iUlt, 0].Text = If(bApto, "LISTO", "INCOMPLETO")
+                                      gv[iUlt, 1].Text = "Estado del depósito"
+                                      gv[iUlt, 2].Text = If(bApto,
+                                        "XML listo para depositar en Crossref",
+                                        "Corregir errores antes de depositar")
+                                      gv[iUlt, 3].Text = ""
+                                      Dim cFondo As Integer = If(bApto, Color.RGB(232, 245, 233), Color.RGB(255, 235, 238))
+                                      Dim j As Integer
+                                      For j = 0 To 3
+                                        gv[iUlt, j].Background = cFondo
+                                        gv[iUlt, j].Font.Bold = True
+                                      Next
+
+                                      ' ACTUALIZAR LABEL DE ESTADO
+                                      FMain.lblEstadoCrossref.Text = If(bApto,
+                                        "LISTO para depositar — " & File.Name(sFileCrossref),
+                                        "INCOMPLETO — corregir errores")
+
+End Sub

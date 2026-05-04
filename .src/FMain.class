@@ -103,6 +103,7 @@ Public Sub Form_Open()
   SplitterPrincipal.Layout = [1, 1]
   Splitter1.Layout = [1, 1]
   SplitterDOAJ.Layout = [2, 5]
+  SplitterCROSSREF.Layout = [2, 5]
   SplitterRedalyc.Layout = [2, 5]
   SplitterScieLO.Layout = [2, 5]
   SplitterLaTeX.Layout = [2, 5]
@@ -1428,6 +1429,10 @@ Public Sub AbrirRevistaMD()
   gvDOAJ.Clear
   gvDOAJ.Refresh
   m_XML.MostrarArchivosDOAJ()
+  lbCROSSREF.Clear
+  gvCROSSREF.Clear
+  gvCROSSREF.Refresh
+  m_XML.MostrarArchivosCrossref()
   lbRedalyc.Clear
   gvRedalyc.Clear
   gvRedalyc.Refresh
@@ -5937,5 +5942,209 @@ Public Sub lbSciELO_Click()
     Dim sFileScielo As String = sRutaProyecto &/ "jats" &/ sArchivo
     m_GenerarSCIELO.MostrarResultadoScieloDesdeArchivo(sFileScielo)
   Endif
+
+End Sub
+
+Public Sub menuXMLCrossref_Click()
+
+  tbMostrarPanelInferior.Value = True
+  TabPanelIzquierdaInferior.Index = 0
+  m_GenerarCROSSREF.GenerarCrossrefUnaColumna()
+
+End Sub
+
+Public Sub SplitterCROSSREF_Resize()
+
+  SplitterCROSSREF.Layout = [2, 5]
+
+End
+
+Public Sub lbCROSSREF_Click()
+
+  Dim sArchivo As String = lbCROSSREF.Text
+  Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
+
+  If sArchivo Ends ".xml" Then
+    Dim sFileCrossref As String = sRutaProyecto &/ "jats" &/ sArchivo
+    m_GenerarCROSSREF.MostrarResultadoCrossrefDesdeArchivo(sFileCrossref)
+  Endif
+
+End Sub
+
+' ============================================
+' Evento    : btnEnviarCrossref_Click
+' Propósito : Envía el f-*.xml seleccionado a Crossref
+'             via HTTPS POST multipart/form-data.
+'             Pregunta antes si es sandbox o producción.
+' ============================================
+Public Sub btnEnviarCrossref_Click()
+
+  ' --- 1. Validaciones previas ---
+  If lbCROSSREF.Index < 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Seleccioná un archivo del listado.")
+    Return
+  Endif
+
+  Dim sArchivo As String = lbCROSSREF.Text
+  If Not (sArchivo Ends ".xml") Then
+    m_Sonido.sonar("Info")
+    Message.Info("Seleccioná un archivo .xml para depositar.")
+    Return
+  Endif
+
+  Dim sUsuario As String = Trim(txtUsuarioCrossref.Text)
+  Dim sClave As String = Trim(txtClaveCrossref.Text)
+
+  If sUsuario = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Ingresá el usuario de Crossref.")
+    txtUsuarioCrossref.SetFocus()
+    Return
+  Endif
+
+  If sClave = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Ingresá la contraseña de Crossref.")
+    txtClaveCrossref.SetFocus()
+    Return
+  Endif
+
+  ' --- 2. Elegir sandbox o producción ---
+  m_Sonido.sonar("Question")
+  Dim iModo As Integer = Message.Question(
+    "¿A qué entorno querés depositar?" & Chr(10) & Chr(10) &
+    "Sandbox: entorno de pruebas (test.crossref.org)" & Chr(10) &
+    "Producción: registro real (doi.crossref.org)",
+    "Sandbox", "Producción", "Cancelar")
+
+  If iModo = 3 Then Return
+
+  Dim sEndpoint As String
+  If iModo = 1 Then
+    sEndpoint = "https://test.crossref.org/servlet/deposit"
+  Else
+    ' CONFIRMACIÓN ADICIONAL PARA PRODUCCIÓN
+    m_Sonido.sonar("Question")
+    If Message.Question(
+        "¿Confirmar depósito en PRODUCCIÓN?" & Chr(10) &
+        "Este registro será definitivo y público.",
+        "Confirmar", "Cancelar") = 2 Then Return
+      sEndpoint = "https://doi.crossref.org/servlet/deposit"
+    Endif
+
+    ' --- 3. Construir ruta del archivo ---
+    Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
+    Dim sRutaXml As String = sRutaProyecto &/ "jats" &/ sArchivo
+
+    If Not Exist(sRutaXml) Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se encuentra el archivo:" & Chr(10) & sRutaXml)
+      Return
+    Endif
+
+    ' --- 4. Enviar ---
+    FMain.TerminalViewProyecto.Input(
+      "echo '--- ENVIANDO A CROSSREF (" &
+      If(iModo = 1, "SANDBOX", "PRODUCCIÓN") & ") ---'" & Chr(10))
+
+      Dim sTmpResp As String = "/tmp/gbpublisher-crossref-resp.txt"
+      Dim sTmpCode As String = "/tmp/gbpublisher-crossref-code.txt"
+
+      Dim sCmd As String = "curl -s " &
+        "-o '" & sTmpResp & "' " &
+        "-w '%{http_code}' " &
+        "-F 'operation=doMDUpload' " &
+        "-F 'login_id=" & sUsuario & "' " &
+        "-F 'login_passwd=" & sClave & "' " &
+        "-F 'fname=@" & sRutaXml & "' " &
+        "'" & sEndpoint & "' " &
+        "> '" & sTmpCode & "'"
+
+      Dim sHttpCode As String
+      Shell sCmd To sHttpCode
+      Wait
+
+      ' LEER CÓDIGO HTTP Y RESPUESTA
+      sHttpCode = Trim(sHttpCode)
+      If sHttpCode = "" And Exist(sTmpCode) Then
+        sHttpCode = Trim(File.Load(sTmpCode))
+      Endif
+
+      Dim sRespuesta As String = ""
+      If Exist(sTmpResp) Then
+        sRespuesta = File.Load(sTmpResp)
+      Endif
+
+      FMain.TerminalViewProyecto.Input(
+        "echo 'HTTP: " & sHttpCode & "'" & Chr(10))
+
+      ' --- 5. Procesar respuesta ---
+      ' CROSSREF DEVUELVE 200 CON UN XML DE CONFIRMACIÓN
+      If sHttpCode = "200" Then
+        ' DETECTAR SI ES ÉXITO O ERROR EN EL XML DE RESPUESTA
+        Dim bExito As Boolean = InStr(sRespuesta, "queued") > 0 Or
+          InStr(sRespuesta, "success") > 0
+
+        If bExito Then
+          FMain.TerminalViewProyecto.Input(
+            "echo 'OK: depósito aceptado por Crossref'" & Chr(10))
+          lblEstadoCrossref.Text = If(iModo = 1, "Enviado al sandbox", "Enviado a producción") &
+            " — " & Format(Now(), "yyyy-mm-dd hh:nn")
+          m_Sonido.sonar("Info")
+          Message.Info("Depósito aceptado por Crossref." & Chr(10) &
+            "El DOI quedará activo en unos minutos.")
+          btnEnviarCrossref.Enabled = False
+        Else
+          FMain.TerminalViewProyecto.Input(
+            "echo 'AVISO: Crossref respondió 200 pero revisar el contenido'" & Chr(10))
+          m_Sonido.sonar("Warning")
+          Message.Warning("Crossref respondió 200 pero la respuesta merece revisión." & Chr(10) &
+            "Ver detalle en la terminal.")
+        Endif
+      Else
+        FMain.TerminalViewProyecto.Input(
+          "echo 'ERROR: Crossref devolvió HTTP " & sHttpCode & "'" & Chr(10))
+        m_Sonido.sonar("Error")
+        Message.Error("Crossref rechazó el depósito (HTTP " & sHttpCode & ")." & Chr(10) &
+          "Verificá las credenciales y el archivo.")
+      Endif
+
+      ' --- 6. GUARDAR ESTADO DEL DEPÓSITO EN LA BD ---
+      ' OBTENER id_articulo DESDE EL NOMBRE DEL ARCHIVO
+      Dim sNombreBase As String = Mid(File.BaseName(sArchivo), 3)
+      Dim hBuscar As Result
+      Dim idArt As Integer = 0
+      Try hBuscar = m_ConexionBD.mConn.Exec(
+        "SELECT id_articulo FROM articulos " &
+        "WHERE nombre_archivo LIKE &1 LIMIT 1",
+        "%-" & sNombreBase)
+      If Not Error And hBuscar.Available Then
+        idArt = CInt(hBuscar["id_articulo"])
+      Endif
+
+      If idArt > 0 Then
+        Dim sEstado As String = If(iModo = 1, "sandbox", "produccion")
+        Try m_ConexionBD.mConn.Exec(
+          "UPDATE articulos SET " &
+          "crossref_estado = &1, " &
+          "crossref_fecha_deposito = NOW() " &
+          "WHERE id_articulo = &2",
+          sEstado, idArt)
+        If Error Then
+          m_Sonido.sonar("Warning")
+          Message.Warning("Depósito exitoso pero no se pudo guardar el estado en la BD." & Chr(10) &
+            Error.Text)
+        Endif
+      Endif
+
+      ' MOSTRAR RESPUESTA EN TERMINAL
+      FMain.TerminalViewProyecto.Input(
+        "echo '--- RESPUESTA CROSSREF ---'" & Chr(10))
+      FMain.TerminalViewProyecto.Input(
+        "cat '" & sTmpResp & "'" & Chr(10))
+
+      Try Kill sTmpResp
+      Try Kill sTmpCode
 
 End Sub
