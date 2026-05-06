@@ -2783,11 +2783,6 @@ Public Sub gvReferenciasEnCurso_Click()
   ' MOSTRAR LOS DATOS EN LOS TEXTBOX
   m_Bibtex.MostrarRefereciasEnTableViewBibtexEnCurso(gvReferenciasEnCurso.Row)
 
-  ' ' Sincronizar el ComboBox con el ID del artículo (solo para revistas)
-  ' If TipoProyectoActual = m_Constantes.TIPO_REVISTA_MD Then
-  '   m_FuncionesGenericas.ActualizarComboBoxArticuloEnbibtexDesdeId()
-  ' Endif
-
 End
 
 Public Sub btnGuardarCambiosBib_Click()
@@ -5869,13 +5864,6 @@ Public Sub lbLatex_Click()
 
 End Sub
 
-Public Sub menuCrossRef_Click()
-
-  m_Sonido.sonar("Info")
-  FCrossRef.ShowModal()
-
-End
-
 Public Sub menuNotitas_Click()
 
   ' VOLVER A HABILITAR EL TIMER SI ESTÁ DETENIDO
@@ -6146,5 +6134,508 @@ Public Sub btnEnviarCrossref_Click()
 
       Try Kill sTmpResp
       Try Kill sTmpCode
+
+End Sub
+
+' ============================================
+' Evento    : btnChequearCrossref_Click
+' Propósito : Consulta la API pública de Crossref para el DOI
+'             que está en txtDoi y compara los metadatos
+'             con los datos de la BD local.
+'             Muestra el resultado en FEstructuraResultados.
+' ============================================
+Public Sub btnChequearCrossref_Click()
+
+  ' --- 1. Validar que hay un DOI cargado ---
+  Dim sDoi As String = Trim(txtDoi.Text)
+
+  If sDoi = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("No hay ningún DOI cargado en el campo.")
+    Return
+  Endif
+
+  ' --- 2. Consultar la API de Crossref ---
+  Dim sDoiEncoded As String = Replace(sDoi, "/", "%2F")
+  sDoiEncoded = Replace(sDoiEncoded, "(", "%28")
+  sDoiEncoded = Replace(sDoiEncoded, ")", "%29")
+  Dim sUrl As String = "https://api.crossref.org/works/" & sDoiEncoded
+
+  Dim sTmpResp As String = "/tmp/gbpublisher-crossref-query.json"
+  Dim sTmpCode As String = "/tmp/gbpublisher-crossref-query-code.txt"
+
+  Shell "curl -s -o '" & sTmpResp & "' " &
+    "-w '%{http_code}' " &
+    "--max-time 10 " &
+    "'" & sUrl & "' " &
+    "> '" & sTmpCode & "'" Wait
+
+  Dim sHttpCode As String = ""
+  If Exist(sTmpCode) Then sHttpCode = Trim(File.Load(sTmpCode))
+
+  ' --- 3. DOI inválido o no encontrado ---
+  If sHttpCode = "404" Or sHttpCode = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El DOI no existe en Crossref:" & Chr(10) & sDoi & Chr(10) &
+      Chr(10) & "Verificá que el DOI esté correctamente escrito.")
+    Try Kill sTmpResp
+    Try Kill sTmpCode
+    Return
+  Endif
+
+  If sHttpCode <> "200" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar Crossref (HTTP " & sHttpCode & ")." & Chr(10) &
+      "Verificá tu conexión a internet.")
+    Try Kill sTmpResp
+    Try Kill sTmpCode
+    Return
+  Endif
+
+  ' --- 4. DECODIFICAR JSON CON PYTHON PARA MANEJAR UTF-8 CORRECTAMENTE ---
+  ' python3 convierte todos los \uXXXX a caracteres UTF-8 reales
+  Dim sTmpDecoded As String = "/tmp/gbpublisher-crossref-decoded.json"
+
+  Shell "python3 -c \"" &
+    "import json, sys; " &
+    "f=open('" & sTmpResp & "'); " &
+    "d=json.load(f); " &
+    "f.close(); " &
+    "out=open('" & sTmpDecoded & "','w',encoding='utf-8'); " &
+    "json.dump(d, out, ensure_ascii=False); " &
+    "out.close()\"" Wait
+
+  Dim sJson As String = ""
+  If Exist(sTmpDecoded) Then
+    sJson = File.Load(sTmpDecoded)
+  Else If Exist(sTmpResp) Then
+    sJson = File.Load(sTmpResp)
+  Endif
+
+  Try Kill sTmpResp
+  Try Kill sTmpDecoded
+  Try Kill sTmpCode
+
+  ' --- 5. Extraer campos del JSON ---
+  Dim q As String = Chr(34)
+
+  ' TÍTULO
+  Dim sTituloCr As String = ExtraerValorJson(sJson, "title")
+  sTituloCr = Replace(Replace(Replace(sTituloCr, "[", ""), "]", ""), q, "")
+  If InStr(sTituloCr, ",") > 0 Then
+    sTituloCr = Trim(Left(sTituloCr, InStr(sTituloCr, ",") - 1))
+  Endif
+  sTituloCr = Trim(sTituloCr)
+
+  ' DOI NORMALIZADO
+  Dim sDoiCr As String = Replace(ExtraerValorJson(sJson, "DOI"), q, "")
+
+  ' AÑO — USANDO SOLO Mid() E InStr() CON 2 ARGUMENTOS
+  Dim sAnioCr As String = ""
+  Dim iPosPublished As Integer = InStr(sJson, q & "published" & q)
+  If iPosPublished > 0 Then
+    ' TRABAJAR SOBRE SUBSTRING PARA EVITAR InStr CON POSICIÓN
+    Dim sDesdePublished As String = Mid(sJson, iPosPublished)
+    Dim iPosDp As Integer = InStr(sDesdePublished, "date-parts")
+    If iPosDp > 0 Then
+      Dim sDesdeDate As String = Mid(sDesdePublished, iPosDp)
+      Dim iStartBk As Integer = InStr(sDesdeDate, "[[")
+      If iStartBk > 0 Then
+        Dim sDesdeAnio As String = Mid(sDesdeDate, iStartBk + 2)
+        Dim iEndComa As Integer = InStr(sDesdeAnio, ",")
+        Dim iEndBk As Integer = InStr(sDesdeAnio, "]]")
+        Dim iEnd As Integer = 0
+        If iEndComa = 0 And iEndBk = 0 Then
+          iEnd = 0
+        Else If iEndComa = 0 Then
+          iEnd = iEndBk
+        Else If iEndBk = 0 Then
+          iEnd = iEndComa
+        Else
+          iEnd = If(iEndComa < iEndBk, iEndComa, iEndBk)
+        Endif
+        If iEnd > 0 Then sAnioCr = Trim(Left(sDesdeAnio, iEnd - 1))
+      Endif
+    Endif
+  Endif
+
+  ' ISSN
+  Dim sIssnCr As String = ExtraerValorJson(sJson, "ISSN")
+  sIssnCr = Trim(Replace(Replace(Replace(sIssnCr, "[", ""), "]", ""), q, ""))
+
+  ' PÁGINA
+  Dim sPaginaCr As String = Replace(ExtraerValorJson(sJson, "page"), q, "")
+
+  ' PRIMER AUTOR — USANDO SOLO Mid() E InStr() CON 2 ARGUMENTOS
+  Dim sAutorCr As String = ""
+  Dim iPosAuthor As Integer = InStr(sJson, q & "author" & q)
+  If iPosAuthor > 0 Then
+    Dim sDesdeAuthor As String = Mid(sJson, iPosAuthor)
+    Dim iPosFamily As Integer = InStr(sDesdeAuthor, q & "family" & q)
+    Dim iPosGiven As Integer = InStr(sDesdeAuthor, q & "given" & q)
+    If iPosFamily > 0 Then
+      Dim sFamilia As String = ExtraerDesde(sDesdeAuthor, iPosFamily + Len(q & "family" & q))
+      Dim sNombreCr As String = ""
+      If iPosGiven > 0 Then
+        sNombreCr = ExtraerDesde(sDesdeAuthor, iPosGiven + Len(q & "given" & q))
+      Endif
+      sAutorCr = sFamilia & ", " & sNombreCr
+    Endif
+  Endif
+
+  sTituloCr = DecodificarJson(sTituloCr)
+  sDoiCr = DecodificarJson(sDoiCr)
+  sAnioCr = DecodificarJson(sAnioCr)
+  sIssnCr = DecodificarJson(sIssnCr)
+  sPaginaCr = DecodificarJson(sPaginaCr)
+  sAutorCr = DecodificarJson(sAutorCr)
+
+  ' --- 6. Leer datos locales de la BD — BUSCAR POR id_bibtex ---
+  Dim sTituloLocal As String = ""
+  Dim sDoiLocal As String = sDoi
+  Dim sAnioLocal As String = ""
+  Dim sIssnLocal As String = ""
+  Dim sPaginaLocal As String = ""
+  Dim sAutorLocal As String = ""
+
+  If id_bibtex.Value > 0 Then
+    Dim hLocal As Result
+    Try hLocal = m_ConexionBD.mConn.Exec(
+      "SELECT title, author, editor, year, pages, issn, doi " &
+      "FROM bibtex WHERE id = &1 LIMIT 1",
+      CInt(id_bibtex.Value))
+    If Not Error And hLocal.Available Then
+      sTituloLocal = If(IsNull(hLocal["title"]), "", Trim(CStr(hLocal["title"])))
+      sAnioLocal = If(IsNull(hLocal["year"]), "", Trim(CStr(hLocal["year"])))
+      sPaginaLocal = If(IsNull(hLocal["pages"]), "", Trim(CStr(hLocal["pages"])))
+      sIssnLocal = If(IsNull(hLocal["issn"]), "", Trim(CStr(hLocal["issn"])))
+      ' AUTOR: PRIORIDAD author, FALLBACK editor
+      If Not IsNull(hLocal["author"]) And Trim(CStr(hLocal["author"])) <> "" Then
+        sAutorLocal = Trim(CStr(hLocal["author"]))
+      Else If Not IsNull(hLocal["editor"]) And Trim(CStr(hLocal["editor"])) <> "" Then
+        sAutorLocal = Trim(CStr(hLocal["editor"]))
+      Endif
+    Endif
+  Endif
+
+  ' --- 7. Configurar FEstructuraResultados ---
+  FEstructuraResultados.blTitulo.Text = "Verificación Crossref — DOI: " & sDoi
+
+  With FEstructuraResultados.gvResultados
+    .Rows.Count = 0
+    .Columns.Count = 5
+    .Header = GridView.Horizontal
+    .Columns[0].Title = "Campo"
+    .Columns[0].Width = 130
+    .Columns[1].Title = "BD local"
+    .Columns[1].Width = 365
+    .Columns[2].Title = "Crossref"
+    .Columns[2].Width = 365
+    .Columns[3].Title = "Estado"
+    .Columns[3].Width = 80
+    .Columns[4].Title = ""
+    .Columns[4].Width = 2
+  End With
+
+  ' --- 8. Agregar filas de comparación ---
+  AgregarFilaComparacion("DOI", sDoiLocal, sDoiCr)
+  AgregarFilaComparacion("Título", sTituloLocal, sTituloCr)
+  AgregarFilaComparacion("Año", sAnioLocal, sAnioCr)
+  AgregarFilaComparacion("Páginas", sPaginaLocal, sPaginaCr)
+  AgregarFilaComparacion("ISSN", sIssnLocal, sIssnCr)
+  AgregarFilaComparacion("Primer autor", sAutorLocal, sAutorCr)
+
+  m_Sonido.sonar("Info")
+  FEstructuraResultados.ShowModal
+
+End Sub
+
+' ============================================
+' Función   : AgregarFilaComparacion
+' Propósito : Agrega una fila al gvResultados comparando
+'             valor local con el de Crossref.
+'             Verde = coincide, Amarillo = difiere, Gris = vacío.
+' ============================================
+Private Sub AgregarFilaComparacion(sCampo As String, sLocal As String, sCrossref As String)
+
+  Dim gv As GridView = FEstructuraResultados.gvResultados
+  Dim iFila As Integer = gv.Rows.Count
+
+  gv.Rows.Count = iFila + 1
+
+  gv[iFila, 0].Text = sCampo
+  gv[iFila, 1].Text = sLocal
+  gv[iFila, 2].Text = sCrossref
+
+  Dim sLocalNorm As String = LCase(Trim(sLocal))
+  Dim sCrossNorm As String = LCase(Trim(sCrossref))
+
+  Dim cFondo As Integer
+  Dim sEstado As String
+
+  If sLocal = "" Or sCrossref = "" Then
+    cFondo = Color.RGB(240, 240, 240)
+    sEstado = "—"
+  Else If sLocalNorm = sCrossNorm Then
+    cFondo = Color.RGB(232, 245, 233)
+    sEstado = "OK"
+  Else
+    cFondo = Color.SoftYellow
+    sEstado = "DIFIERE"
+  Endif
+
+  gv[iFila, 3].Text = sEstado
+  Dim j As Integer
+  For j = 0 To 3
+    gv[iFila, j].Background = cFondo
+  Next
+
+End Sub
+
+' ============================================
+' Función   : ExtraerValorJson
+' Propósito : Extrae el valor de una clave JSON simple.
+'             Solo usa InStr con 2 argumentos — compatible con Gambas.
+' ============================================
+Private Function ExtraerValorJson(sJson As String, sClave As String) As String
+
+  Dim q As String = Chr(34)
+  Dim sPatron As String = q & sClave & q & ":"
+  Dim iPos As Integer = InStr(sJson, sPatron)
+
+  If iPos = 0 Then Return ""
+
+  iPos += Len(sPatron)
+
+  ' SALTAR ESPACIOS
+  While iPos <= Len(sJson) And Mid(sJson, iPos, 1) = " "
+    Inc iPos
+  Wend
+
+  ' TRABAJAR SOBRE SUBSTRING PARA EVITAR InStr CON POSICIÓN
+  Dim sResto As String = Mid(sJson, iPos)
+  Dim cInicio As String = Left(sResto, 1)
+
+  If cInicio = q Then
+    ' VALOR STRING
+    sResto = Mid(sResto, 2)
+    Dim iFin As Integer = InStr(sResto, q)
+    If iFin = 0 Then Return ""
+    Return Left(sResto, iFin - 1)
+
+  Else If cInicio = "[" Then
+    ' VALOR ARRAY
+    Dim iFin2 As Integer = InStr(sResto, "]")
+    If iFin2 = 0 Then Return ""
+    Return Left(sResto, iFin2)
+
+  Else
+    ' VALOR NUMÉRICO U OTRO
+    Dim iFinComa As Integer = InStr(sResto, ",")
+    Dim iFinObj As Integer = InStr(sResto, "}")
+    Dim iFin3 As Integer
+    If iFinComa = 0 And iFinObj = 0 Then Return ""
+    If iFinComa = 0 Then
+      iFin3 = iFinObj
+    Else If iFinObj = 0 Then
+      iFin3 = iFinComa
+    Else
+      iFin3 = If(iFinComa < iFinObj, iFinComa, iFinObj)
+    Endif
+    Return Trim(Left(sResto, iFin3 - 1))
+
+  Endif
+
+End Function
+
+' ============================================
+' Función   : ExtraerDesde
+' Propósito : Extrae el valor string JSON a partir de una posición.
+'             Solo usa InStr con 2 argumentos — compatible con Gambas.
+' ============================================
+Private Function ExtraerDesde(sJson As String, iPos As Integer) As String
+
+  Dim q As String = Chr(34)
+
+  If iPos <= 0 Then Return ""
+
+  Dim sResto As String = Mid(sJson, iPos)
+  Dim iInicioQ As Integer = InStr(sResto, q)
+  If iInicioQ = 0 Then Return ""
+
+  Dim sFin As String = Mid(sResto, iInicioQ + 1)
+  Dim iFinQ As Integer = InStr(sFin, q)
+  If iFinQ = 0 Then Return ""
+
+  Return Left(sFin, iFinQ - 1)
+
+End Function
+
+' ============================================
+' Función   : DecodificarJson
+' Propósito : Convierte los escapes JSON a caracteres reales.
+'             Resuelve \/ → / y \uXXXX → carácter Unicode.
+' ============================================
+Private Function DecodificarJson(sTexto As String) As String
+
+  ' DESESCAPAR BARRA FRACCIONARIA
+  Dim sResult As String = Replace(sTexto, "\\/", "/")
+
+  ' DESESCAPAR \uXXXX → carácter Unicode
+  Dim i As Integer = 1
+
+  While i <= Len(sResult) - 5
+    If Mid(sResult, i, 2) = "\\u" Then
+      Dim sHex As String = Mid(sResult, i + 2, 4)
+      Dim iCode As Integer = Val("&H" & sHex)
+      If iCode > 0 Then
+        sResult = Left(sResult, i - 1) & Chr(iCode) & Mid(sResult, i + 6)
+        ' NO INCREMENTAR i — EL CARÁCTER REEMPLAZADO PUEDE CONTENER OTRO ESCAPE
+      Else
+        Inc i
+      Endif
+    Else
+      Inc i
+    Endif
+  Wend
+
+  Return sResult
+
+End Function
+
+' ============================================
+' Evento    : btnCrossrefTitulo_Click
+' Propósito : Busca en Crossref por título y muestra hasta 5
+'             candidatos en FEstructuraResultados para que el
+'             editor identifique la referencia correcta.
+' ============================================
+Public Sub btnCrossrefTitulo_Click()
+
+  ' --- 1. Validar que hay un título cargado ---
+  Dim sTitulo As String = Trim(txtTitle.Text)
+
+  If sTitulo = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("No hay ningún título cargado en el campo.")
+    Return
+  Endif
+
+  ' --- 2. URL-encodear el título ---
+  ' PYTHON MANEJA EL ENCODING — PASAMOS EL TÍTULO SIN MODIFICAR
+  Dim sTmpResp As String = "/tmp/gbpublisher-cr-search.json"
+  Dim sTmpResult As String = "/tmp/gbpublisher-cr-search-results.txt"
+  Dim sTmpCode As String = "/tmp/gbpublisher-cr-search-code.txt"
+
+  ' CONSTRUIR URL CON urllib.parse PARA ENCODING CORRECTO
+  Shell "python3 -c \"" &
+    "import urllib.request, urllib.parse; " &
+    "url = 'https://api.crossref.org/works?rows=5&query.title=' + " &
+    "urllib.parse.quote(open('/dev/stdin').read()); " &
+    "\" <<< '" & Replace(sTitulo, "'", "") & "'" Wait
+
+  ' USAR curl CON --data-urlencode PARA EL ENCODING
+  Shell "curl -s -o '" & sTmpResp & "' " &
+    "-w '%{http_code}' " &
+    "--max-time 15 " &
+    "--get " &
+    "--data-urlencode 'query.title=" & Replace(sTitulo, "'", " ") & "' " &
+    "'https://api.crossref.org/works?rows=5' " &
+    "> '" & sTmpCode & "'" Wait
+
+  ' LEER CÓDIGO HTTP
+  Dim sHttpCode As String = ""
+  If Exist(sTmpCode) Then sHttpCode = Trim(File.Load(sTmpCode))
+
+  If sHttpCode <> "200" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar Crossref (HTTP " & sHttpCode & ")." & Chr(10) &
+      "Verificá tu conexión a internet.")
+    Try Kill sTmpResp
+    Try Kill sTmpCode
+    Return
+  Endif
+
+  ' --- 3. PARSEAR CON PYTHON Y EXTRAER CAMPOS ---
+  ' PYTHON ESCRIBE UN ARCHIVO TSV: doi TAB titulo TAB anio TAB autor
+  Dim sPyScript As String =
+    "import json; " &
+    "f=open('" & sTmpResp & "',encoding='utf-8'); d=json.load(f); f.close(); " &
+    "items=d.get('message',{}).get('items',[]); " &
+    "out=open('" & sTmpResult & "','w',encoding='utf-8'); " &
+    "[out.write(" &
+    "(i.get('DOI','')+'\\t'+" &
+    "(i.get('title',[''])[0] if i.get('title') else '')+'\\t'+" &
+    "(str(i.get('published',{}).get('date-parts',[['']])[0][0]) if i.get('published') else '')+'\\t'+" &
+    "((i.get('author',[{}])[0].get('family','')+', '+i.get('author',[{}])[0].get('given','')) if i.get('author') else '')+'\\t'+" &
+    "(i.get('container-title',[''])[0] if i.get('container-title') else '')+'\\n')) " &
+    "for i in items[:5]]; " &
+    "out.close()"
+
+  Shell "python3 -c " & Chr(34) & sPyScript & Chr(34) Wait
+
+  Try Kill sTmpResp
+  Try Kill sTmpCode
+
+  If Not Exist(sTmpResult) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron resultados para ese título.")
+    Return
+  Endif
+
+  ' --- 4. Leer resultados TSV ---
+  Dim sContenido As String = Trim(File.Load(sTmpResult))
+  Try Kill sTmpResult
+
+  If sContenido = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron resultados para ese título.")
+    Return
+  Endif
+
+  ' --- 5. Configurar FEstructuraResultados ---
+  FEstructuraResultados.blTitulo.Text = "Búsqueda Crossref por título: " &
+    Left(sTitulo, 60) & If(Len(sTitulo) > 60, "...", "")
+
+  With FEstructuraResultados.gvResultados
+    .Rows.Count = 0
+    .Columns.Count = 6
+    .Header = GridView.Horizontal
+    .Columns[0].Title = "DOI"
+    .Columns[0].Width = 250
+    .Columns[1].Title = "Título"
+    .Columns[1].Width = 310
+    .Columns[2].Title = "Año"
+    .Columns[2].Width = 60
+    .Columns[3].Title = "Primer autor"
+    .Columns[3].Width = 150
+    .Columns[4].Title = "Revista"
+    .Columns[4].Width = 170
+    .Columns[5].Title = ""
+    .Columns[5].Width = 2
+  End With
+
+  ' --- 6. Poblar grid con los resultados ---
+  Dim aLineas As String[] = Split(sContenido, Chr(10))
+  Dim sLinea As String
+  Dim iFila As Integer = 0
+
+  For Each sLinea In aLineas
+    sLinea = Trim(sLinea)
+    If sLinea = "" Then Continue
+
+    Dim aCampos As String[] = Split(sLinea, Chr(9))
+    If aCampos.Count < 4 Then Continue
+
+    FEstructuraResultados.gvResultados.Rows.Count = iFila + 1
+    FEstructuraResultados.gvResultados[iFila, 0].Text = If(aCampos.Count > 0, Trim(aCampos[0]), "")
+    FEstructuraResultados.gvResultados[iFila, 1].Text = If(aCampos.Count > 1, Trim(aCampos[1]), "")
+    FEstructuraResultados.gvResultados[iFila, 2].Text = If(aCampos.Count > 2, Trim(aCampos[2]), "")
+    FEstructuraResultados.gvResultados[iFila, 3].Text = If(aCampos.Count > 3, Trim(aCampos[3]), "")
+    FEstructuraResultados.gvResultados[iFila, 4].Text = If(aCampos.Count > 4, Trim(aCampos[4]), "")
+    Inc iFila
+  Next
+
+  m_Sonido.sonar("Info")
+  FEstructuraResultados.ShowModal
 
 End Sub
