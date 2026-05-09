@@ -77,19 +77,47 @@ Public Sub Form_Open()
   ' CREAMOS EL DIRECTORIO OCULTO DEL PROGRAMA Y COPIAMOS ARCHIVOS DE INICIO
   m_InicioCierre.DirectorioOcultoApp()
 
-  ' COMPROBAMOS DIFERENCIA DE VERSIÓN
-  versionRemota = m_FuncionesGenericas.GitVersion("https://raw.githubusercontent.com/albertomoyano/gbpublisher/refs/heads/main/.project")
-  If versionRemota <> "" And versionRemota <> Application.Version Then
-    m_Sonido.sonar("Info")
-    Message.Info("La versión instalada que estás ejecutando (" & Application.Version & ") difiere de la disponible en el repositorio (" & versionRemota & ")")
-  Endif
-
-  ' VERIFICACIÓN DE INSTANCIAS MÚLTIPLES DE LA APP
+  ' VERIFICACIÓN DE INSTANCIAS MÚLTIPLES DE gbpublisher
   Exec ["pgrep", "-fl", Application.Name] Wait To name
   If Split(Trim$(name), gb.NewLine, "", True).Count > 1 Then
     m_Sonido.sonar("Warning")
     Message.Warning(Application.Name & " ya se está ejecutando en este equipo.")
     Quit
+  Endif
+
+  ' VERIFICACIÓN DE ENTORNO SOPORTADO
+  ' PLATAFORMA CERTIFICADA: Linux Mint + Cinnamon + X11
+  Dim sSesion As String = LCase(Trim(Env["XDG_SESSION_TYPE"]))
+  Dim sDesktop As String = LCase(Trim(Env["XDG_CURRENT_DESKTOP"]))
+  Dim sDistro As String = ""
+
+  ' LEER NOMBRE DE LA DISTRIBUCIÓN DESDE /etc/os-release
+  If Exist("/etc/os-release") Then
+    Dim sOsRelease As String = File.Load("/etc/os-release")
+    Dim aLineas As String[] = Split(sOsRelease, Chr(10))
+    Dim sL As String
+    For Each sL In aLineas
+      If sL Begins "NAME=" Then
+        sDistro = LCase(Replace(Replace(Mid(sL, 6), Chr(34), ""), "'", ""))
+        Break
+      Endif
+    Next
+  Endif
+
+  Dim bMint As Boolean = InStr(sDistro, "linux mint") > 0
+  Dim bCinnamon As Boolean = InStr(sDesktop, "cinnamon") > 0
+  Dim bX11 As Boolean = (sSesion = "x11")
+
+  If Not (bMint And bCinnamon And bX11) Then
+    Dim sMensaje As String = "gbpublisher está certificado para Linux Mint + Cinnamon + X11." & Chr(10) & Chr(10)
+    sMensaje &= "Entorno detectado:" & Chr(10)
+    sMensaje &= "  Distribución:  " & If(sDistro <> "", sDistro, "(no detectada)") & Chr(10)
+    sMensaje &= "  Escritorio:    " & If(sDesktop <> "", sDesktop, "(no detectado)") & Chr(10)
+    sMensaje &= "  Sesión:        " & If(sSesion <> "", sSesion, "(no detectada)") & Chr(10) & Chr(10)
+    sMensaje &= "No hay soporte ni garantías de estabilidad en este entorno."
+    m_Sonido.sonar("Warning")
+    Message.Warning(sMensaje)
+    ' NO HACE Quit — PERMITE CONTINUAR BAJO RESPONSABILIDAD DEL USUARIO
   Endif
 
   TimerHOY.Delay = 1000
