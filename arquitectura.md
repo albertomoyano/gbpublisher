@@ -114,7 +114,7 @@ Este modelo:
 
 ### 5.2 Verificación de dependencias
 
-El script `verificar.sh` comprueba la disponibilidad de las herramientas externas esperadas, pero:
+El script [integridad](integridad.sh) comprueba la disponibilidad de las herramientas externas esperadas, pero:
 
 * **no instala software**
 * **no modifica el sistema**

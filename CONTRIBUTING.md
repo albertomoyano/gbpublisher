@@ -152,7 +152,7 @@ La revisión busca mantener la coherencia arquitectónica y la calidad del códi
 
 ## Reconocimiento
 
-Los contribuidores serán reconocidos en el archivo `CONTRIBUTORS.md` (próximamente).
+Los contribuidores serán reconocidos en el archivo [CONTRIBUTORS](CONTRIBUTORS.md).
 
 ---
 

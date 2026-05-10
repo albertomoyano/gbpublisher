@@ -27,13 +27,13 @@ El repositorio del proyecto incluye el código fuente y la documentación técni
 * `README.md`
 * `arquitectura.md`
 * `leeme.md`
-* `verificar.sh`
+* `integridad.sh`
 
-El archivo `README.md` describe el modelo general del proyecto, su filosofía y condiciones de licenciamiento.
+El archivo [README](README.md) describe el modelo general del proyecto, su filosofía y condiciones de licenciamiento.
 
-El archivo `arquitectura.md` constituye la **fuente principal de documentación funcional y técnica** de la aplicación, describiendo su diseño general, flujo de trabajo y criterios de integración con infraestructura institucional.
+El archivo [arquitectura](arquitectura.md) constituye la **fuente principal de documentación funcional y técnica** de la aplicación, describiendo su diseño general, flujo de trabajo y criterios de integración con infraestructura institucional.
 
-El archivo `leeme.md` contiene instrucciones sobre cómo proceder para una correcta instalación de gbpublisher en máquinas locales.
+El archivo [leeme](leeme.md) contiene instrucciones sobre cómo proceder para una correcta instalación de gbpublisher en máquinas locales.
 
 El acceso al código fuente y a la documentación está disponible en el repositorio público, conforme a los términos de la Business Source License 1.1.
 
@@ -148,7 +148,7 @@ La provisión, estabilidad y validez de la dirección IP son responsabilidad exc
 
 ### 8. Verificación del entorno de ejecución
 
-El repositorio de gbpublisher incluye el script `verificar.sh`, desarrollado en lenguaje Bash.
+El repositorio de gbpublisher incluye el script [integridad](integridad.sh), desarrollado en lenguaje Bash.
 
 Dicho script debe ser ejecutado **por cada usuario, en su propia máquina**, una vez instalada la aplicación.
 
@@ -159,16 +159,16 @@ El objetivo del script es verificar el entorno local de ejecución, incluyendo:
   * `pandoc`
   * `xmllint`
   * `xsltproc`
-  * Saxon-HE
-  * LaTeX
+  * `Saxon-HE`
+  * `LaTeX`
   * y otras herramientas de línea de comandos utilizadas por la aplicación.
 
-El script `verificar.sh`:
+El script [integridad](integridad.sh):
 
 * **No instala software**.
 * **No modifica configuraciones del sistema**.
 * **No altera el servidor ni la base de datos**.
-* Se limita a comprobar la disponibilidad de los componentes necesarios.
+* Se limita a comprobar la disponibilidad de los componentes necesarios y mostrar un informe.
 
 ---
 
@@ -243,7 +243,6 @@ La utilización de gbpublisher sobre infraestructura institucional implica la ac
 
 ---
 
-**Copyright © 2024-2026 Alberto Moyano**
+**Copyright © 2026 Alberto Moyano**
 
 Licenciado bajo Business Source License 1.1
-Repositorio: https://github.com/albertomoyano/gbpublisher

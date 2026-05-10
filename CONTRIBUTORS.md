@@ -17,7 +17,11 @@ Este documento reconoce a todas las personas que han contribuido al desarrollo d
 
 ## Contribuciones de documentación
 
-**Alejandro Moyano**
+**Federico Moyano**
+* Revisión y corrección de documentación
+* Mejoras en claridad expositiva
+
+**Segio Santamaría**
 * Revisión y corrección de documentación
 * Mejoras en claridad expositiva
 
@@ -36,7 +40,7 @@ Si has contribuido a gbpublisher mediante:
 
 Tu nombre puede aparecer aquí.
 
-Consulta el archivo `CONTRIBUTING.md` para conocer el proceso de contribución.
+Consulta el archivo [CONTRIBUTING](CONTRIBUTING.md) para conocer el proceso de contribución.
 
 ---
 
@@ -66,8 +70,8 @@ Al contribuir, aceptas que tu trabajo:
 * Se convertirá automáticamente a GPL-3.0 transcurridos 5 años desde la publicación de cada versión
 
 Para más detalles, véase
-* `LICENSE.md` — Términos completos de licenciamiento
-* `CONTRIBUTING.md` — Guía de contribución y proceso
+* [LICENSE](LICENSE.md) — Términos completos de licenciamiento
+* [CONTRIBUTING](CONTRIBUTING.md) — Guía de contribución y proceso
 
 ---
 
