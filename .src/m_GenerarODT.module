@@ -63,7 +63,7 @@ Public Sub GenerarODTunaColumna()
   Endif
 
   ' --- 5. Verificar que la plantilla ODT existe ---
-  sRutaRef = User.Home &/ ".gbpublisher/odt/reference.ott"
+  sRutaRef = User.Home &/ ".gbpublisher/ott/reference.ott"
   If Not Exist(sRutaRef) Then
     m_Sonido.sonar("Error")
     Message.Error("No se encontró la plantilla OTT:" & Chr(10) & sRutaRef)
@@ -79,6 +79,42 @@ Public Sub GenerarODTunaColumna()
     Message.Error("No se encontró el artículo en la BD.")
     Return
   Endif
+
+  ' --- 6b. Obtener autores del artículo ---
+  Dim hAutores As Result
+  Dim sAutores As String = ""
+  Dim sSeparador As String = ""
+
+  Try hAutores = m_ConexionBD.mConn.Exec(
+    "SELECT a.nombre_completo " &
+    "FROM autores a " &
+    "JOIN articulo_autor aa ON aa.id_autor = a.id_autor " &
+    "WHERE aa.id_articulo = &1 " &
+    "ORDER BY aa.orden_autoria",
+    CInt(FMain.id_articulo.Value))
+
+  If Not Error Then
+    While hAutores.Available
+      sAutores &= sSeparador & m_Metadatos.NullToString(hAutores["nombre_completo"])
+      sSeparador = "; "
+      hAutores.MoveNext()
+    Wend
+  Endif
+
+  If sAutores = "" Then sAutores = "(sin autor registrado)"
+
+  ' --- 6c. Escribir archivo temporal de cabecera ---
+  Dim sRutaTmp As String = "/tmp/gbp-cabecera-odt.md"
+  Dim hFile As File
+
+  hFile = Open sRutaTmp For Write Create
+  Print #hFile, "**Autoría:** " & sAutores
+  Print #hFile, ""
+  Print #hFile, "**Fecha de creación:** " & FechaEnEspanol()
+  Print #hFile, ""
+  Print #hFile, "---"
+  Print #hFile, ""
+  Close #hFile
 
   ' --- 7. Construcción de rutas ---
   sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
@@ -104,6 +140,9 @@ Public Sub GenerarODTunaColumna()
   Endif
 
   ' --- 9. Ejecutar el pipeline ---
+  ' ELIMINAR SALIDA ANTERIOR PARA EVITAR CONFLICTO SI LIBREOFFICE LO TIENE ABIERTO
+  If Exist(sRutaProyecto &/ sRutaSalida) Then Kill sRutaProyecto &/ sRutaSalida
+
   FMain.TerminalViewProyecto.Input("echo '=== INICIO PIPELINE ODT ==='" & Chr(10))
 
   ' CAMBIAR AL DIRECTORIO DEL PROYECTO
@@ -113,7 +152,7 @@ Public Sub GenerarODTunaColumna()
 
   FMain.TerminalViewProyecto.Input("echo '=== ODT: GENERANDO CON PANDOC ==='" & Chr(10))
 
-  sCmd = "pandoc '" & sRutaMd & "'"
+  sCmd = "pandoc '" & sRutaTmp & "' '" & sRutaMd & "'"
   sCmd &= " --from markdown"
   sCmd &= " --to odt"
   sCmd &= " --citeproc"
@@ -121,8 +160,6 @@ Public Sub GenerarODTunaColumna()
   sCmd &= " --csl '" & sRutaCSL & "'"
   sCmd &= " --reference-doc '" & sRutaRef & "'"
   sCmd &= " --output '" & sRutaSalida & "'"
-  sCmd &= " && echo 'OK: ODT generado en " & sRutaSalida & "'"
-  sCmd &= " || echo 'ERROR: falló la generación del ODT'"
 
   FMain.TerminalViewProyecto.Input(sCmd & Chr(10))
   Wait 8
@@ -138,8 +175,29 @@ Public Sub GenerarODTunaColumna()
   FMain.TerminalViewProyecto.Input("echo '=== ODT DISPONIBLE: " & sRutaSalida & " ==='" & Chr(10))
   FMain.TerminalViewProyecto.Input("echo '=== PIPELINE ODT COMPLETADO ==='" & Chr(10))
 
+  ' LIMPIAR ARCHIVO TEMPORAL DE CABECERA
+  If Exist(sRutaTmp) Then Kill sRutaTmp
+
   ' --- 11. Confirmar al usuario ---
   m_Sonido.sonar("Info")
   Message.Info("ODT generado correctamente:" & Chr(10) & "o-" & sNombreBase & ".odt")
 
 End Sub
+
+' ============================================
+' Función   : FechaEnEspanol
+' Propósito : Devuelve la fecha actual formateada en español
+'             con el formato "d de mes de aaaa"
+' Retorna   : String — fecha legible en español
+' ============================================
+Private Function FechaEnEspanol() As String
+
+  ' --- 1. Tabla de nombres de mes ---
+  Dim meses As String[] = ["enero", "febrero", "marzo", "abril",
+    "mayo", "junio", "julio", "agosto",
+    "septiembre", "octubre", "noviembre", "diciembre"]
+
+  ' --- 2. Construir y retornar la cadena ---
+  Return CStr(Day(Now)) & " de " & meses[Month(Now) - 1] & " de " & CStr(Year(Now))
+
+End Function

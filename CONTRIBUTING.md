@@ -162,6 +162,6 @@ Para preguntas sobre contribuciones, abre un **issue** en GitHub o contacta a:  
 
 ---
 
-**Copyright © 2024-2026 Alberto Moyano**
+**Copyright © 2026 Alberto Moyano**
 
 Este documento está bajo Creative Commons CC0 1.0 Universal (Dominio Público).
