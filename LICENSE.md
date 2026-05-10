@@ -41,16 +41,16 @@ Se requiere licencia comercial para:
 
 ### Criterio de elegibilidad
 
-El criterio NO es **público vs privado**, sino **finalidad de la actividad editorial**:
+El criterio NO es **público vs privado**, sino **característica de la revista**:
 
-- ✅ **Permitido**: Producción editorial como servicio académico
-- ❌ **No permitido**: Producción editorial como negocio comercial
+- ✅ **Permitido**: Producción editorial de revistas que no cobren APC (Article Processing Charges)
+- ❌ **No permitido**: Producción editorial de revistas como negocio comercial y/o que cobre APC
 
 ---
 
 ### Redistribución
 
-Salvo lo permitido por la Licencia de Cambio a partir de la Change Date, **NO está permitida la redistribución del Software Licenciado**, ni en forma de código fuente ni de binarios, ya sea gratuita u onerosa, salvo autorización expresa y por escrito del Licensor.
+Salvo lo permitido por la Licencia de Cambio a partir de la Change Date, **NO está permitida la redistribución del Software Licenciado**, ni en forma de código fuente ni de binarios, ya sea gratuita u onerosa.
 
 ---
 
@@ -59,43 +59,7 @@ Salvo lo permitido por la Licencia de Cambio a partir de la Change Date, **NO es
 Se entiende por **uso interno** aquel en el que:
 
 - El software se ejecuta en infraestructura controlada por la institución elegible
-- El acceso está limitado a personal, editores, investigadores o estudiantes
-- No se ofrece el software ni sus funcionalidades como servicio a terceros externos
-
----
-
-### Casos especiales
-
-#### Editoriales universitarias que venden publicaciones
-
-Uso permitido únicamente si:
-- Las ventas cubren costos operativos
-- Los precios son cercanos al costo de producción
-- Los excedentes se reinvierten en actividad académica
-- El objetivo NO es maximizar ganancias
-
-#### Servicios externos contratados por universidad
-
-- ❌ Si una universidad contrata a una empresa comercial (o persona) para hacer la producción editorial, esa empresa (o persona) NO puede usar gbpublisher bajo esta licencia gratuita.
-- ✅ La universidad puede usar gbpublisher internamente.
-
-#### Consultores / freelancers
-
-- ❌ No pueden usar gbpublisher para ofrecer servicios comerciales a terceros.
-- ✅ Pueden usarlo únicamente cuando actúan bajo relación contractual directa con una institución elegible, para uso interno de dicha institución y el servidor se encuentra administrado por la institución, sin derecho a reutilizarlo para otros clientes.
-
----
-
-### ¿Mi caso aplica?
-
-La interpretación final de esta licencia corresponde exclusivamente al Licensor. Consultas: **estudio2a@outlook.com.ar**
-
-Criterios generales:
-1. ¿Tu institución es primariamente académica/científica?
-2. ¿La publicación es parte de la misión académica?
-3. ¿Los excedentes se reinvierten en actividad académica?
-
-Si respondes **SÍ** a las tres → probablemente aplica.
+- El acceso está limitado a personal de la editorial
 
 ---
 
@@ -106,7 +70,6 @@ Para uso comercial, contactar para licencia separada:
 - Empresas editoriales
 - Servicios editoriales comerciales
 - Agencias de producción editorial
-- Plataformas SaaS
 - Consultores independientes
 
 ---
@@ -130,46 +93,16 @@ Las versiones posteriores del Software Licenciado publicadas con posterioridad e
 **Software Licenciado:** gbpublisher
 
 **Fecha de Cambio (Change Date):**
-Cinco (5) años desde la fecha de publicación de cada versión específica
-del Software Licenciado.
+Cinco (5) años desde la fecha de publicación de cada versión específica del Software Licenciado.
 
 **Licencia de Cambio (Change License):**
-GNU General Public License v3.0 o posterior (GPL-3.0-or-later)
-
----
-
-## Concesión de Uso Adicional
-
-El uso del Software Licenciado está permitido sin costo para:
-
-1. Instituciones académicas y científicas sin fines de lucro
-2. Universidades y bibliotecas en su función académica
-3. Revistas académicas de acceso abierto o con modelo institucional
-4. Proyectos editoriales institucionales sin intermediación comercial
-5. Uso interno para investigación y docencia
-
-Están expresamente excluidos del uso permitido sin costo:
-
-1. Empresas editoriales con fines de lucro
-2. Plataformas SaaS de servicios editoriales
-3. Proveedores de servicios editoriales externos a instituciones
-4. Redistribución del software (fuente o binarios) antes de la Change Date
-5. Uso del software como parte de servicios facturados a terceros
-6. Integración en productos comerciales
+GNU General Public License v3.0 o posterior (GPL-3.0+)
 
 ---
 
 ## Aviso
 
 El Software Licenciado es (c) 2026 Alberto Moyano
-
----
-
-## Licencia
-
-El Licenciante otorga el derecho a copiar, modificar y crear trabajos derivados del Software Licenciado **únicamente para el Uso Permitido**.
-
-Cualquier uso que exceda el Uso Permitido requiere el pago de una licencia comercial y la firma de un acuerdo con el Licenciante.
 
 ---
 
@@ -183,7 +116,7 @@ Efectivo en la Fecha de Cambio correspondiente a cada versión, la Licencia camb
 
 ---
 
-## Conversión automática a GPL-3.0
+## Conversión automática a GPL-3.0+
 
 En la Fecha de Cambio de cada versión, el Software Licenciado se convierte automáticamente en software libre bajo licencia GNU GPL v3.0 o posterior.
 
@@ -199,7 +132,7 @@ En la Fecha de Cambio de cada versión, el Software Licenciado se convierte auto
 
 **Fecha de Cambio:** Cinco (5) años desde la publicación de cada versión.
 
-**Uso Permitido:** Uso NO comercial más usos habilitados por la Concesión.
+**Uso gratuito permitido:** Revistas científicas/académicas que no cobren APC.
 
 ---
 
@@ -215,10 +148,10 @@ En la Fecha de Cambio de cada versión, el Software Licenciado se convierte auto
 Sí, siempre que el uso sea institucional, académico o científico.
 
 ### ¿Puedo modificar el código?
-Sí, para estudio y uso interno permitido.
+Sí, para estudiarlo y hace el uso interno institucional permitido.
 
 ### ¿Qué sucede después de 5 años?
-Esa versión específica se convierte en GPL-3.0-or-later.
+Esa versión específica se convierte en GPL-3.0+.
 
 ---
 
