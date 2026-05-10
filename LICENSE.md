@@ -13,32 +13,29 @@
 
 ## Additional Use Grant
 
-### Uso permitido sin restricciones
+### Uso gratuito permitido
 
-Puedes usar gbpublisher para producción editorial en:
+gbpublisher puede usarse sin costo para **Revistas científicas/académicas que no cobren APC** (Article Processing Charges) a los autores:
 
-### Instituciones Académicas (públicas o privadas)
-- Universidades estatales
-- Universidades privadas sin fines de lucro
-- Colegios universitarios
-- Institutos de educación superior
+- Revistas de acceso abierto diamante (sin APC, sin suscripción)
+- Revistas institucionales financiadas por la universidad/instituto
+- Revistas de sociedades científicas sin cobro a autores
+- Cualquier publicación académica donde el autor no pague por publicar
 
-### Centros de Investigación (públicos o privados)
-- Institutos de investigación
-- Laboratorios académicos
-- Observatorios científicos
-- Think tanks sin fines de lucro
+### Uso de pago requerido
 
-### Organizaciones Académicas
-- Sociedades científicas
-- Colegios profesionales
-- Fundaciones de investigación
-- Redes académicas
+Se requiere licencia comercial para:
 
-### Editoriales Universitarias que:
-- Publican contenido académico/científico
-- Operan sin fines de lucro
-- Reinvierten excedentes en la actividad académica
+- Revistas que cobren APC a los autores
+- Empresas o prestadores de servicios que usen gbpublisher para terceros
+- Plataformas SaaS de servicios editoriales
+- Redistribución del software como producto o servicio
+
+### Casos especiales
+
+**Editoriales universitarias**: *gratuito* si las publicaciones de la editorial no cobran APC; *de pago* si alguna de sus revistas cobra APC.
+
+**Consultores/freelancers**: si trabajan para una revista sin APC, pueden usarla bajo la licencia gratuita de esa revista. Si trabajan para múltiples clientes o revistas con APC, requieren licencia comercial.
 
 ---
 
@@ -48,26 +45,6 @@ El criterio NO es **público vs privado**, sino **finalidad de la actividad edit
 
 - ✅ **Permitido**: Producción editorial como servicio académico
 - ❌ **No permitido**: Producción editorial como negocio comercial
-
----
-
-### Ejemplos de uso permitido
-
-- Revista científica de universidad privada sin fines de lucro
-- Editorial de instituto de investigación privado
-- Publicaciones de fundación educativa
-- Sociedad científica que publica journal
-- Universidad privada confesional publicando libros académicos
-
----
-
-### Ejemplos de uso NO permitido
-
-- Empresa editorial comercial (por ejemplo: Springer, Elsevier, etc.)
-- Agencia de servicios editoriales con fines de lucro
-- Universidad con fines de lucro que vende servicios editoriales
-- Consultor independiente que ofrece servicios de edición
-- Plataforma SaaS basada en gbpublisher
 
 ---
 
