@@ -163,7 +163,8 @@ Es una herramienta pensada para instituciones públicas, universidades y proyect
 
 ---
 
-## Software de código abierto, no software libre sin restricciones
+## Software de código fuente disponible bajo BSL 1.1, se convierte en GPL-3.0+ a los 5 años de su lanzamiento
+
 
 gbpublisher hace su código fuente **disponible públicamente** bajo Business Source License 1.1.
 
