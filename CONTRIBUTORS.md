@@ -18,12 +18,12 @@ Este documento reconoce a todas las personas que han contribuido al desarrollo d
 ## Contribuciones de documentación
 
 **Federico Moyano**
-* Revisión y corrección de documentación
-* Mejoras en claridad expositiva
+* 📖 Revisión y corrección de documentación
+* 📖 Mejoras en claridad expositiva
 
 **Segio Santamaría**
-* Revisión y corrección de documentación
-* Mejoras en claridad expositiva
+* 📖 Revisión y corrección de documentación
+* 📖 Mejoras en claridad expositiva
 
 ---
 
