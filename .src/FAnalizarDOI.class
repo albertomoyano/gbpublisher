@@ -1,0 +1,443 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FAnalizarDOI
+' Propósito  : Consulta metadatos de un DOI contra CrossRef,
+'              OpenCitations y OpenAIRE, y muestra los
+'              resultados en un grid de dos columnas dato/valor.
+' Componentes: txtAnalizarDOI, btnBuscar, gvAnalizarDOI, btnCerrar
+' ============================================
+
+Private $aDatos As String[]
+Private $aValores As String[]
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Inicializa el grid y posiciona el foco
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. Configurar estructura del grid ---
+  With gvAnalizarDOI
+    .Columns.Count = 2
+    .Columns[0].Title = "Dato"
+    .Columns[0].Width = 220
+    .Columns[1].Title = "Valor"
+    .Columns[1].Width = 560
+    .Rows.Count = 0
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Mode = Select.None
+  End With
+
+  $aDatos = New String[]
+  $aValores = New String[]
+
+  txtAnalizarDOI.SetFocus
+
+End Sub
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close
+
+End Sub
+
+' ============================================
+' Función   : txtAnalizarDOI_KeyPress
+' Propósito : Permite disparar la búsqueda con Enter
+' ============================================
+Public Sub txtAnalizarDOI_KeyPress()
+
+  If Key.Code = Key.Return Then
+    Stop Event
+    btnBuscar_Click()
+  Endif
+
+End Sub
+
+' ============================================
+' Función   : btnBuscar_Click
+' Propósito : Valida el DOI, realiza las tres consultas API
+'             y delega el procesamiento a ProcesarRespuestas()
+' ============================================
+Public Sub btnBuscar_Click()
+
+  ' --- 1. Validar entrada ---
+  Dim sDOI As String = Trim(txtAnalizarDOI.Text)
+
+  If sDOI = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ingresá un DOI antes de buscar.")
+    txtAnalizarDOI.SetFocus
+    Return
+  Endif
+
+  ' --- 2. Normalizar DOI (quitar prefijos de URL si los tiene) ---
+  If sDOI Begins "https://doi.org/" Then
+    sDOI = Mid(sDOI, 17)
+  Else If sDOI Begins "http://doi.org/" Then
+    sDOI = Mid(sDOI, 16)
+  Else If LCase(sDOI) Begins "doi:" Then
+    sDOI = Mid(sDOI, 5)
+  Endif
+  sDOI = Trim(sDOI)
+
+  ' --- 3. Bloquear UI durante la consulta ---
+  btnBuscar.Enabled = False
+  btnBuscar.Caption = "Consultando..."
+
+  ' --- 4. Limpiar resultados anteriores ---
+  $aDatos = New String[]
+  $aValores = New String[]
+  gvAnalizarDOI.Rows.Count = 0
+
+  ' --- 5. Consultar CrossRef ---
+  Dim sCR As String
+  Shell "curl -s --max-time 10 'https://api.crossref.org/works/" &
+    sDOI & "?mailto=info@estudio2a.com'" To sCR
+  Wait
+
+  ' --- 6. Consultar OpenCitations ---
+  Dim sOC As String
+  Shell "curl -s --max-time 10 'https://opencitations.net/index/api/v1/citations/" &
+    sDOI & "'" To sOC
+  Wait
+
+  ' --- 7. Consultar OpenAIRE ---
+  Dim sOA As String
+  Shell "curl -s --max-time 10 'https://api.openaire.eu/search/publications?doi=" &
+    sDOI & "&format=json'" To sOA
+  Wait
+
+  ' --- 8. Procesar y mostrar resultados ---
+  If Trim(sCR) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se recibió respuesta de CrossRef." & Chr(10) &
+      "Verificá la conexión a internet.")
+  Else
+    ProcesarRespuestas(sDOI, sCR, sOC, sOA)
+  Endif
+
+  ' --- 9. Restaurar UI ---
+  btnBuscar.Enabled = True
+  btnBuscar.Caption = "Buscar"
+
+End Sub
+
+' ============================================
+' Función   : ProcesarRespuestas
+' Propósito : Parsea las tres respuestas API y construye
+'             los arrays paralelos dato/valor para el grid
+' Parámetros: sDOI As String — DOI consultado
+'             sCR  As String — JSON de CrossRef
+'             sOC  As String — JSON de OpenCitations
+'             sOA  As String — JSON de OpenAIRE
+' ============================================
+Private Sub ProcesarRespuestas(sDOI As String, sCR As String, sOC As String, sOA As String)
+
+  ' --- 1. Parsear JSON de CrossRef ---
+  Dim vCR As Variant
+
+  Try vCR = JSON.Decode(sCR)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al interpretar la respuesta de CrossRef.")
+    Return
+  Endif
+
+  Dim hRoot As Collection = vCR
+  If hRoot["status"] <> "ok" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El DOI no fue encontrado en CrossRef.")
+    Return
+  Endif
+
+  Dim hMsg As Collection = hRoot["message"]
+
+  ' --- 2. DOI ---
+  AgregarFila("DOI", CStr(hMsg["DOI"]))
+
+  ' --- 3. Tipo de documento ---
+  AgregarFila("Tipo", CStr(hMsg["type"]))
+
+  ' --- 4. Título ---
+  Dim aTitulos As Variant[]
+  Dim sTitulo As String = "(sin título)"
+  Try aTitulos = hMsg["title"]
+  If Not Error And aTitulos And aTitulos.Count > 0 Then
+    Try sTitulo = CStr(aTitulos[0])
+  Endif
+  AgregarFila("Título", sTitulo)
+
+  ' --- 5. Autores y ORCID ---
+  Dim sAutores As String = ""
+  Dim iConORCID As Integer = 0
+  Dim iTotalAutores As Integer = 0
+  Dim aAutores As Variant[]
+
+  Try aAutores = hMsg["author"]
+  If Not Error And aAutores Then
+    Dim hAut As Collection
+    For Each hAut In aAutores
+      Inc iTotalAutores
+      Dim sNombre As String = ""
+      Try sNombre = CStr(hAut["given"]) & " "
+      Try sNombre &= CStr(hAut["family"])
+      ' VERIFICAR ORCID SIN ASUMIR QUE LA CLAVE EXISTE
+      Dim bORCID As Boolean
+      Try bORCID = hAut["ORCID"] <> Null
+      If Not Error And bORCID Then
+        Inc iConORCID
+        sNombre &= " [ORCID ✓]"
+      Endif
+      If sAutores <> "" Then sAutores &= " / "
+      sAutores &= sNombre
+    Next
+  Endif
+
+  AgregarFila("Autores", sAutores)
+  AgregarFila("ORCID en CrossRef", CStr(iConORCID) & " de " & CStr(iTotalAutores) & " autores tienen ORCID declarado en CrossRef")
+
+  ' --- 6. Revista ---
+  Dim aRevista As Variant[]
+  Try aRevista = hMsg["container-title"]
+  If Not Error And aRevista And aRevista.Count > 0 Then
+    Dim sRevista As String = ""
+    Try sRevista = CStr(aRevista[0])
+    If Not Error Then AgregarFila("Revista", sRevista)
+  Endif
+
+  ' --- 7. ISSN ---
+  Dim aISSN As Variant[]
+  Try aISSN = hMsg["ISSN"]
+  If Not Error And aISSN And aISSN.Count > 0 Then
+    Dim sISSN As String = ""
+    Dim vIS As Variant
+    For Each vIS In aISSN
+      If sISSN <> "" Then sISSN &= " / "
+      Try sISSN &= CStr(vIS)
+    Next
+    AgregarFila("ISSN", sISSN)
+  Endif
+
+  ' --- 8. Fecha de publicación ---
+  Dim hIssued As Collection
+  Try hIssued = hMsg["issued"]
+  If Not Error And hIssued Then
+    AgregarFila("Fecha de publicación", FormatearFechaCR(hIssued))
+  Endif
+
+  ' --- 9. Fecha primer depósito en CrossRef (created) ---
+  Dim hCreated As Collection
+  Try hCreated = hMsg["created"]
+  If Not Error And hCreated Then
+    Dim sCreated As String
+    Try sCreated = CStr(hCreated["date-time"])
+    If Not Error Then
+      AgregarFila("Primer depósito CrossRef", FormatearFechaISO(sCreated))
+    Endif
+  Endif
+
+  ' --- 10. Fecha último depósito en CrossRef (deposited) ---
+  Dim hDeposited As Collection
+  Try hDeposited = hMsg["deposited"]
+  If Not Error And hDeposited Then
+    Dim sDeposited As String
+    Try sDeposited = CStr(hDeposited["date-time"])
+    If Not Error Then
+      AgregarFila("Último depósito CrossRef", FormatearFechaISO(sDeposited))
+    Endif
+  Endif
+
+  ' --- 11. URL ---
+  AgregarFila("URL", CStr(hMsg["URL"]))
+
+  ' --- 12. Licencia ---
+  Dim aLic As Variant[]
+  Dim sLicencia As String = "(no declarada en CrossRef)"
+
+  Try aLic = hMsg["license"]
+  If Not Error And aLic Then
+    If aLic.Count > 0 Then
+      Dim hLic As Collection
+      Try hLic = aLic[0]
+      If Not Error And hLic Then
+        Try sLicencia = CStr(hLic["URL"])
+      Endif
+    Endif
+  Endif
+  AgregarFila("Licencia", sLicencia)
+
+  ' --- 13. Citado por (CrossRef) ---
+  Dim iCitadoPor As Integer = 0
+  Try iCitadoPor = CInt(hMsg["is-referenced-by-count"])
+  AgregarFila("Citado por (CrossRef)", CStr(iCitadoPor))
+
+  ' --- 14. Referencias incluidas ---
+  Dim iRefs As Integer = 0
+  Try iRefs = CInt(hMsg["reference-count"])
+  AgregarFila("Referencias incluidas", CStr(iRefs))
+
+  ' --- 15. Resumen disponible en CrossRef ---
+  Dim bAbstract As Boolean
+  Try bAbstract = hMsg["abstract"] <> Null
+  AgregarFila("Resumen en CrossRef", If(Not Error And bAbstract, "Sí", "No"))
+
+  ' --- 16. OpenCitations ---
+  Dim iCitasOC As Integer = 0
+  Dim sOCTrim As String = Trim(sOC)
+  If sOCTrim <> "" And sOCTrim <> "[]" Then
+    Dim vOC As Variant
+    Dim aOC As Variant[]
+    Try vOC = JSON.Decode(sOCTrim)
+    If Not Error Then
+      Try aOC = vOC
+      If Not Error And aOC Then iCitasOC = aOC.Count
+    Endif
+  Endif
+  AgregarFila("Citas en OpenCitations", CStr(iCitasOC))
+
+  ' --- 17. OpenAIRE ---
+  ' SE BUSCA EL TOTAL EN EL JSON DE OPENAIRE SIN PARSEO COMPLETO
+  Dim sPresenteOA As String = "No encontrado"
+  Dim iPosTotal As Integer = InStr(sOA, "" "total" ":")
+  If iPosTotal > 0 Then
+    Dim sFrag As String = Trim(Mid(sOA, iPosTotal + 8, 10))
+    Dim iTotalOA As Integer = 0
+    Try iTotalOA = CInt(Split(Replace(sFrag, "}", ""), ",")[0])
+    If Not Error And iTotalOA > 0 Then
+      sPresenteOA = "Sí (" & CStr(iTotalOA) & " resultado/s)"
+    Endif
+  Endif
+  AgregarFila("OpenAIRE", sPresenteOA)
+
+  ' --- 18. Google Scholar (link directo, sin API) ---
+  AgregarFila("Google Scholar", "https://scholar.google.com/scholar?q=" & sDOI)
+
+  ' --- 19. Actualizar grid ---
+  gvAnalizarDOI.Rows.Count = $aDatos.Count
+  gvAnalizarDOI.Refresh
+
+End Sub
+
+' ============================================
+' Función   : AgregarFila
+' Propósito : Agrega un par dato/valor a los arrays paralelos
+' Parámetros: sDato  As String — nombre del campo
+'             sValor As String — valor recuperado
+' ============================================
+Private Sub AgregarFila(sDato As String, sValor As String)
+
+  $aDatos.Add(sDato)
+  $aValores.Add(If(sValor = "" Or sValor = "null", "(no disponible)", sValor))
+
+End Sub
+
+' ============================================
+' Función   : FormatearFechaCR
+' Propósito : Convierte el formato date-parts de CrossRef
+'             [[año, mes, día]] a una cadena legible
+' Parámetros: hFecha As Collection — nodo de fecha de CrossRef
+' Retorna   : String — fecha en formato dd/mm/aaaa o parcial
+' ============================================
+Private Function FormatearFechaCR(hFecha As Collection) As String
+
+  Dim aParts As Variant[]
+  Dim aParte As Variant[]
+
+  Try aParts = hFecha["date-parts"]
+  If Error Or Not aParts Or aParts.Count = 0 Then Return "(fecha no disponible)"
+
+  Try aParte = aParts[0]
+  If Error Or Not aParte Or aParte.Count = 0 Then Return "(fecha no disponible)"
+
+  ' CONSTRUIR FECHA DE FORMA DEFENSIVA, ELEMENTO POR ELEMENTO
+  Dim sAnio As String = ""
+  Dim sMes As String = ""
+  Dim sDia As String = ""
+
+  Try sAnio = CStr(CInt(aParte[0]))
+  If Error Then Return "(fecha no disponible)"
+
+  If aParte.Count > 1 Then
+    Try sMes = CStr(CInt(aParte[1]))
+  Endif
+
+  If aParte.Count > 2 Then
+    Try sDia = CStr(CInt(aParte[2]))
+  Endif
+
+  ' ARMAR CADENA SEGÚN LOS COMPONENTES DISPONIBLES
+  Dim sF As String = sAnio
+  If sMes <> "" Then sF = sMes & "/" & sF
+  If sDia <> "" Then sF = sDia & "/" & sF
+
+  Return sF
+
+End Function
+
+' ============================================
+' Función   : FormatearFechaISO
+' Propósito : Convierte una fecha ISO 8601 (2023-06-01T21:13:59Z)
+'             a formato legible dd/mm/aaaa hh:nn
+' Parámetros: sISO As String — fecha en formato ISO
+' Retorna   : String — fecha formateada
+' ============================================
+Private Function FormatearFechaISO(sISO As String) As String
+
+  If sISO = "" Or sISO = "null" Then Return "(no disponible)"
+  Try Return Format(CDate(Left(sISO, 19)), "dd/mm/yyyy hh:nn")
+  Return sISO
+
+End Function
+
+' ============================================
+' Función   : gvAnalizarDOI_Data
+' Propósito : Provee datos al grid mediante el patrón Data
+' Parámetros: Row    As Integer — fila solicitada
+'             Column As Integer — columna solicitada
+' ============================================
+Public Sub gvAnalizarDOI_Data(Row As Integer, Column As Integer)
+
+  If $aDatos = Null Then Return
+  If Row >= $aDatos.Count Then Return
+
+  Select Case Column
+    Case 0
+      ' COLUMNA DATO: FONDO GRIS PARA DISTINGUIRLA DEL VALOR
+      gvAnalizarDOI.Data.Text = $aDatos[Row]
+      gvAnalizarDOI.Data.Background = Color.RGB(235, 235, 235)
+    Case 1
+      gvAnalizarDOI.Data.Text = $aValores[Row]
+      ' INDICAR VISUALMENTE LAS FILAS CON URL CLICABLE
+      If $aValores[Row] Begins "http://" Or $aValores[Row] Begins "https://" Then
+        gvAnalizarDOI.Data.Foreground = Color.Blue
+      Endif
+  End Select
+
+End Sub
+
+' ============================================
+' Función   : gvAnalizarDOI_Click
+' Propósito : Abre en el navegador el valor de la celda
+'             si contiene una URL
+' ============================================
+Public Sub gvAnalizarDOI_Click()
+
+  Dim iRow As Integer = gvAnalizarDOI.Row
+
+  If iRow < 0 Or iRow >= $aValores.Count Then Return
+
+  Dim sValor As String = $aValores[iRow]
+
+  ' ABRIR SOLO SI ES UNA URL
+  If sValor Begins "http://" Or sValor Begins "https://" Then
+    Shell "xdg-open '" & sValor & "'"
+  Endif
+
+End Sub
