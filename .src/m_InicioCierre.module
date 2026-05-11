@@ -3,70 +3,6 @@
 Public UsuarioEnCurso As String
 Public IdUsuario As Integer
 
-Public Sub CerrarTodoMySQL()
-
-  ' CONFIRMACIÓN DE SALIDA
-  m_Sonido.sonar("Question")
-  If Message.Question("¿Está seguro que desea salir de la aplicación?") = 2 Then ' Usuario eligió 2 = Cancelar
-    Return
-  Endif
-
-  m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", UsuarioEnCurso)
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE id = &1", FMain.id_proyecto.Value)
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE id = &1", FMain.id_proyecto.Value)
-
-  m_ConexionBD.mConn.Commit
-  m_Timer.DetenerContador()
-
-  'DETENEMOS EL CONTADOR PARA ARCHIVOS XML
-  FMain.DetenerTimerArchivosXML()
-
-  ' DETENEMOS EL CONTADOR PARA ARCHIVOS MD
-  FMain.DetenerTimerArchivosProyecto()
-
-  ' LIMPIAR TERMINAL Y PROCESOS
-  Try FMain.TerminalViewProyecto.Input("rm -rf " & User.Home & "/.local/share/org.gambas.*" & "\n")
-  Try FMain.TerminalViewProyecto.Input("clear" & "\n")
-  Wait 0.2
-
-  ' DETIENE EL PROCESO BASH (INTENTOS CORTOS, NO BLOQUEANTES)
-  If FMain.$Bash And FMain.$Bash.State = Process.Running Then
-    Dim tries As Integer = 0
-    While FMain.$Bash.State = Process.Running And tries < 20
-      FMain.$Bash.Kill
-      Wait 0.05
-      tries = tries + 1
-    Wend
-
-    If FMain.$Bash.State = Process.Running Then
-      FMain.$Bash.Terminate
-      Wait 0.2
-      If FMain.$Bash.State = Process.Running Then
-        m_Sonido.sonar("Warning")
-        Message.Warning("El proceso no pudo ser detenido.")
-      Endif
-    Endif
-  Endif
-
-  ' LIMPIAR INTERFAZ
-  FMain.txtProyecto.Clear
-  FMain.DirViewProyecto.Root = User.Home
-  FMain.TextBoxUsuario.Clear
-  FMain.TextBoxServidor.Clear
-
-  ' CIERRA LA CONEXIÓN A LA BBDD SI EXISTE Y ESTÁ ABIERTA
-  If Not IsNull(m_ConexionBD.mConn) Then
-    If m_ConexionBD.mConn.Opened Then
-      m_ConexionBD.mConn.Close()
-    Endif
-    m_ConexionBD.mConn = Null
-  Endif
-
-  ' FORZAMOS SALIDA PARA NO QUEDAR EN ESTADO INCONSISTENTE
-  Quit
-
-End
-
 Public Sub DirectorioOcultoApp()
 
   ' --- COPIAR CONTENIDO DE CARPETAS DEL SISTEMA ---
@@ -76,7 +12,7 @@ Public Sub DirectorioOcultoApp()
 
   Dim carpeta As String
   For Each carpeta In carpetas
-    CopiarDirectorio(Application.Path & "/" & carpeta, User.Home & "/.gbpublisher/" & carpeta)
+    CopiarDirectorio(RutaRecursos() & "/" & carpeta, User.Home & "/.gbpublisher/" & carpeta)
     ' DESPUÉS DE FUENTES, COPIAR ICONOS SVG CON COLOR AJUSTADO
     If carpeta = "fonts" Then CopiarIconosSVG()
   Next
@@ -94,10 +30,39 @@ Public Sub DirectorioOcultoApp()
   End If
 
   If Not File.RealPath(User.Home & "/.gbpublisher/buscador.py") Then
-    Copy "./buscador.py" To User.Home & "/.gbpublisher/buscador.py"
+    Copy "buscador.py" To User.Home & "/.gbpublisher/buscador.py"
   End If
 
 End
+
+Public Sub CopiarIconosSVG()
+
+  Dim srcDir As String
+  Dim dstDir As String
+  Dim f As String
+  Dim sContenido As String
+
+  srcDir = RutaRecursos() &/ "fonts"
+  dstDir = User.Home &/ ".gbpublisher" &/ "fonts"
+
+  For Each f In Dir(srcDir, "*.svg")
+
+    ' LEER CONTENIDO DEL SVG ORIGINAL
+    Try sContenido = File.Load(srcDir &/ f)
+    If Error Then Continue
+
+    ' REEMPLAZAR COLOR DE RELLENO POR azulrevista
+    sContenido = Replace(sContenido, "currentColor", "#2D5A8E")
+
+    ' ESCRIBIR SVG COLOREADO EN DESTINO
+    Try File.Save(dstDir &/ f, sContenido)
+    If Error Then
+      Message.Error("Error guardando: " & f & Chr(10) & Error.Text)
+    Endif
+
+  Next
+
+End Sub
 
 ' ============================================
 ' Función   : CopiarDirectorio
@@ -113,17 +78,23 @@ Public Sub CopiarDirectorio(srcDir As String, dstDir As String)
   ' --- 1. Inicialización de variables ---
   Dim f As String
 
-  ' --- 2. Crear carpeta destino si no existe ---
+  ' --- 2. Verificar que el directorio origen existe ---
+  If Not Exist(srcDir) Then
+    ' DIAGNÓSTICO: REGISTRAR QUÉ DIRECTORIO ORIGEN FALTA
+    FMain.TerminalViewProyecto.Input("echo 'FALTA srcDir: " & srcDir & "'" & Chr(10))
+    Return
+  Endif
+  ' --- 3. Crear carpeta destino si no existe ---
   If Not Exist(dstDir) Then
     Mkdir dstDir
   Endif
 
-  ' --- 3. Primera pasada: subdirectorios ---
+  ' --- 4. Primera pasada: subdirectorios ---
   For Each f In Dir(srcDir, "*", gb.Directory)
     CopiarDirectorio(srcDir & "/" & f, dstDir & "/" & f)
   Next
 
-  ' --- 4. Segunda pasada: archivos ---
+  ' --- 5. Segunda pasada: archivos ---
   For Each f In Dir(srcDir, "*.*")
     If Not Exist(dstDir & "/" & f) Then
       Copy srcDir & "/" & f To dstDir & "/" & f
@@ -360,34 +331,17 @@ Private Function FormatearNumero(numero As Long) As String
 
 End
 
-Public Sub CopiarIconosSVG()
+Public Function RutaRecursos() As String
 
-  Dim srcDir As String
-  Dim dstDir As String
-  Dim f As String
-  Dim sContenido As String
+  ' EN EL IDE: LAS CARPETAS ESTÁN EN .hidden/ DENTRO DEL PROYECTO
+  If Exist(Application.Path &/ ".hidden" &/ "fonts") Then
+    Return Application.Path &/ ".hidden"
+  Endif
 
-  srcDir = Application.Path &/ "fonts"
-  dstDir = User.Home &/ ".gbpublisher" &/ "fonts"
+  ' INSTALADO: LOS ARCHIVOS ESTÁN EN /usr/share/gbpublisher/
+  Return "/usr/share/gbpublisher"
 
-  For Each f In Dir(srcDir, "*.svg")
-
-    ' LEER CONTENIDO DEL SVG ORIGINAL
-    Try sContenido = File.Load(srcDir &/ f)
-    If Error Then Continue
-
-    ' REEMPLAZAR COLOR DE RELLENO POR azulrevista
-    sContenido = Replace(sContenido, "currentColor", "#2D5A8E")
-
-    ' ESCRIBIR SVG COLOREADO EN DESTINO
-    Try File.Save(dstDir &/ f, sContenido)
-    If Error Then
-      Message.Error("Error guardando: " & f & Chr(10) & Error.Text)
-    Endif
-
-  Next
-
-End Sub
+End
 
 Public Function LeerTipoCSL(sRutaCSL As String) As String
 
@@ -475,5 +429,69 @@ Public Sub CerrarProyecto()
   FMain.DirViewProyecto.Root = User.Home
   FMain.SplitterPrincipal.Visible = False
   FMain.SpringTemporal.Visible = True
+
+End
+
+Public Sub CerrarTodoMySQL()
+
+  ' CONFIRMACIÓN DE SALIDA
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Está seguro que desea salir de la aplicación?") = 2 Then ' Usuario eligió 2 = Cancelar
+    Return
+  Endif
+
+  m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", UsuarioEnCurso)
+  m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE id = &1", FMain.id_proyecto.Value)
+  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE id = &1", FMain.id_proyecto.Value)
+
+  m_ConexionBD.mConn.Commit
+  m_Timer.DetenerContador()
+
+  'DETENEMOS EL CONTADOR PARA ARCHIVOS XML
+  FMain.DetenerTimerArchivosXML()
+
+  ' DETENEMOS EL CONTADOR PARA ARCHIVOS MD
+  FMain.DetenerTimerArchivosProyecto()
+
+  ' LIMPIAR TERMINAL Y PROCESOS
+  Try FMain.TerminalViewProyecto.Input("rm -rf " & User.Home & "/.local/share/org.gambas.*" & "\n")
+  Try FMain.TerminalViewProyecto.Input("clear" & "\n")
+  Wait 0.2
+
+  ' DETIENE EL PROCESO BASH (INTENTOS CORTOS, NO BLOQUEANTES)
+  If FMain.$Bash And FMain.$Bash.State = Process.Running Then
+    Dim tries As Integer = 0
+    While FMain.$Bash.State = Process.Running And tries < 20
+      FMain.$Bash.Kill
+      Wait 0.05
+      tries = tries + 1
+    Wend
+
+    If FMain.$Bash.State = Process.Running Then
+      FMain.$Bash.Terminate
+      Wait 0.2
+      If FMain.$Bash.State = Process.Running Then
+        m_Sonido.sonar("Warning")
+        Message.Warning("El proceso no pudo ser detenido.")
+      Endif
+    Endif
+  Endif
+
+  ' LIMPIAR INTERFAZ
+  FMain.txtProyecto.Clear
+  FMain.DirViewProyecto.Root = User.Home
+  FMain.TextBoxUsuario.Clear
+  FMain.TextBoxServidor.Clear
+
+  ' CIERRA LA CONEXIÓN A LA BBDD SI EXISTE Y ESTÁ ABIERTA
+  If Not IsNull(m_ConexionBD.mConn) Then
+    If m_ConexionBD.mConn.Opened Then
+      m_ConexionBD.mConn.Close()
+    Endif
+    m_ConexionBD.mConn = Null
+  Endif
+
+  ' FORZAMOS SALIDA PARA NO QUEDAR EN ESTADO INCONSISTENTE
+  Quit
 
 End
