@@ -166,14 +166,14 @@ Es una herramienta pensada para instituciones públicas, universidades y proyect
 ## Software de código fuente disponible bajo BSL 1.1, se convierte en GPL-3.0+ a los 5 años de su lanzamiento
 
 
-gbpublisher hace su código fuente **disponible públicamente** bajo Business Source License 1.1.
+gbpublisher hace su **código fuente disponible públicamente** bajo Business Source License 1.1.
 
 Esto significa:
 
-* El código puede ser inspeccionado, estudiado y auditado
-* Las instituciones académicas pueden usarlo sin costo
-* El desarrollo es transparente y trazable
-* Las contribuciones son bienvenidas bajo las condiciones establecidas
+- El código puede ser inspeccionado, estudiado y auditado
+- Las instituciones académicas pueden usarlo sin costo
+- El desarrollo es transparente y trazable
+- Las contribuciones son bienvenidas bajo las condiciones establecidas
 
 Sin embargo, **no es software libre** en el sentido de licencias como GPL, MIT o Apache durante el período inicial de 5 años.
 
@@ -189,12 +189,12 @@ Permite a universidades y revistas científicas trabajar con estándares interna
 
 ---
 
-**Copyright © 2024-2026 Alberto Moyano**
+**Copyright © 2026 Alberto Moyano**
 
-Licenciado bajo Business Source License 1.1
-Repositorio: https://github.com/albertomoyano/gbpublisher
-Consultas sobre licenciamiento:  estudio2a@outlook.com.ar
-
+- Licenciado bajo Business Source License 1.1
+- Repositorio: https://github.com/albertomoyano/gbpublisher
+- Consultas sobre licenciamiento:  estudio2a@outlook.com.ar
+- Solicitar una copia del .deb: [Formulario de solicitud](https://docs.google.com/forms/d/e/1FAIpQLSdz-Tp6750Hq9rKZsWDmaVSBiCQSm3FAkMq8y9SV3tfqXcI5Q/viewform?usp=publish-editor)
 ## Cómo apoyar el proyecto
 
 Si desea apoyar este proyecto puede leer las condiciones en [SUPPORT_MODEL.md](SUPPORT_MODEL.md)
