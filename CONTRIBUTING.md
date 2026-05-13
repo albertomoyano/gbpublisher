@@ -1,164 +1,158 @@
-
 # Guía de Contribución
 
-## Bienvenida
-
-Las contribuciones a gbpublisher son bienvenidas, especialmente de la comunidad académica y científica.
+Las contribuciones a gbpublisher son bienvenidas, especialmente de la comunidad académica y científica que trabaja con producción editorial, estándares abiertos y flujos de publicación académica.
 
 ---
 
-## Licenciamiento de Contribuciones
+## Entorno de desarrollo
 
-Al contribuir código a gbpublisher, aceptas que:
+Para contribuir código es necesario contar con:
+
+- Linux Mint con escritorio Cinnamon (única plataforma soportada)
+- Gambas 3.21 o superior (IDE y runtime)
+- MySQL/MariaDB
+- TeXLive full
+- Pandoc
+- Saxon-HE (JAR en `/opt/Saxon-HE/`)
+- Java (para Saxon-HE)
+
+El proyecto usa `gb.qt5` como toolkit gráfico. No usar `gb.gtk` ni otras variantes: afecta el comportamiento de los acelerados de teclado y los campos de texto con acentos.
+
+---
+
+## Licenciamiento de contribuciones
+
+Al contribuir código a gbpublisher, aceptás que:
 
 1. Tu contribución será licenciada bajo **Business Source License 1.1**, los mismos términos que el proyecto principal.
+2. Tu contribución se convertirá automáticamente a **GPL-3.0-or-later** en la Fecha de Cambio (5 años desde la publicación de cada versión).
+3. Retenés el copyright de tu contribución, pero otorgás al proyecto una licencia perpetua, mundial, no exclusiva, gratuita y libre de regalías para usar, reproducir, modificar, distribuir y sublicenciar tu contribución como parte de gbpublisher.
 
-2. Tu contribución se convertirá automáticamente a **GPL-3.0** en la Fecha de Cambio (5 años desde la publicación de cada versión).
-
-3. Retienes el copyright de tu contribución, pero otorgas al proyecto una licencia perpetua, mundial, no exclusiva, gratuita, libre de regalías e irrevocable para usar, reproducir, modificar, mostrar, distribuir y sublicenciar tu contribución como parte de gbpublisher.
-
----
-
-## Acuerdo de Licencia de Contribuidor (CLA)
-
-No requerimos un CLA formal, pero al enviar un pull request, confirmas que:
-
-* Eres el autor original del código contribuido, o tienes el derecho legal de contribuirlo.
-* Aceptas los términos de licenciamiento arriba mencionados.
-* Tu contribución no infringe derechos de terceros.
+No requerimos un CLA formal. Al enviar un pull request confirmás que sos el autor original del código contribuido o tenés el derecho legal de contribuirlo, que aceptás los términos de licenciamiento mencionados y que tu contribución no infringe derechos de terceros.
 
 ---
 
-## Tipos de Contribuciones Bienvenidas
+## Tipos de contribuciones bienvenidas
 
-### Código
+**Código:** corrección de errores, mejoras de rendimiento, nuevas funcionalidades alineadas con la arquitectura del proyecto, mejoras en la documentación del código.
 
-* Corrección de errores
-* Mejoras de rendimiento
-* Nuevas funcionalidades alineadas con la arquitectura del proyecto
-* Mejoras en la documentación del código
+**Documentación:** correcciones ortográficas y gramaticales, aclaraciones técnicas, ejemplos de uso.
 
-### Documentación
-
-* Correcciones ortográficas y gramaticales
-* Aclaraciones técnicas
-* Ejemplos de uso
-* Traducciones
-
-### Reportes de Errores
-
-* Descripción clara del problema
-* Pasos para reproducir
-* Comportamiento esperado vs. observado
-* Versión de gbpublisher
-* Sistema operativo y distribución Linux
+**Reportes de errores:** descripción clara del problema, pasos para reproducir, comportamiento esperado versus observado, versión de gbpublisher y sistema operativo.
 
 ---
 
-## Proceso de Contribución
+## Proceso de contribución
 
-1. **Fork** el repositorio
-2. Crea una **rama** con un nombre descriptivo (`fix/nombre-error` o `feature/nueva-funcionalidad`)
-3. Realiza tus cambios siguiendo las convenciones del proyecto
-4. **Documenta** tu código en MAYÚSCULAS (estilo gbpublisher)
-5. **Prueba** tus cambios exhaustivamente
-6. Envía un **pull request** con descripción clara
+1. Hacé un **fork** del repositorio.
+2. Creá una **rama** con nombre descriptivo: `fix/nombre-error` o `feature/nueva-funcionalidad`.
+3. Realizá tus cambios siguiendo las convenciones del proyecto.
+4. Documentá tu código en MAYÚSCULAS (estilo gbpublisher).
+5. Probá tus cambios exhaustivamente.
+6. Enviá un **pull request** con descripción clara de qué cambia y por qué.
 
 ---
 
-## Convenciones de Código
+## Convenciones de código
 
-### Comentarios
+### Encabezado de función obligatorio
+
 ```gambas
-' ESTA ES LA DESCRIPCIÓN DE LA FUNCIÓN
-' PARÁMETROS:
-'   - param1: DESCRIPCIÓN
-'   - param2: DESCRIPCIÓN
-' RETORNA:
-'   - TIPO Y DESCRIPCIÓN DEL VALOR DE RETORNO
-Public Sub MiFuncion(param1 As String, param2 As Integer) As Boolean
-
-End
+'' ============================================
+'' Función   : NombreFuncion
+'' Propósito : Descripción clara de qué hace
+'' Parámetros: NombreParam As Tipo — descripción
+'' Retorna   : Tipo — descripción del valor de retorno
+'' ============================================
+Public Function NombreFuncion(sParam As String) As Boolean
 ```
 
-### Estilo
+### Apartados dentro de la función
 
-* Nombres de funciones en **PascalCase**
-* Variables locales en **camelCase**
-* Constantes en **MAYÚSCULAS_CON_GUIONES**
-* Indentación: 2 espacios (no tabs)
-
-### Manejo de Errores
 ```gambas
-Try
-  ' CÓDIGO QUE PUEDE FALLAR
+Public Function NombreFuncion(sParam As String) As Boolean
+
+  ' --- 1. Inicialización de variables ---
+  Dim sResultado As String
+
+  ' --- 2. Validación de entrada ---
+  If sParam = "" Then Return False
+
+  ' --- 3. Procesamiento ---
+  Try sResultado = OtraFuncion(sParam)
+  If Error Then Return False
+
+  Return True
+
+End Function
+```
+
+### Manejo de errores
+
+En Gambas, `Try` precede una sola línea. No existen bloques `Try/Catch/End`. El `Catch` va al final de la función y captura cualquier error no manejado:
+
+```gambas
+Public Function LeerArchivo(sRuta As String) As String
+
+  ' --- 1. Inicialización ---
+  Dim sContenido As String
+
+  ' --- 2. Lectura defensiva ---
+  Try sContenido = File.Load(sRuta)
+  If Error Then Return ""
+
+  Return sContenido
+
 Catch
-  ' MANEJO DE ERROR EXPLÍCITO
-  Print "ERROR: " & Error.Text
-  Return False
-End
+  ' CAPTURA DE ERRORES NO PREVISTOS EN LA FUNCIÓN
+  Message.Error("Error inesperado en LeerArchivo: " & Error.Text)
+  Return ""
+
+End Function
 ```
 
-O con limpieza de recursos:
-```gambas
-Try
-  ' CÓDIGO QUE PUEDE FALLAR
-Catch
-  ' MANEJO DE ERROR EXPLÍCITO
-  Print "ERROR: " & Error.Text
-  Return False
-Finally
-  ' LIMPIEZA DE RECURSOS
-  If miArchivo Then miArchivo.Close()
-End
-```
+### Estilo general
+
+- Nombres de funciones y procedimientos: **PascalCase**
+- Variables locales: **camelCase** con prefijo de tipo (`s` para String, `i` para Integer, `b` para Boolean, `h` para objetos)
+- Constantes: **MAYÚSCULAS_CON_GUIONES**
+- Comentarios internos: siempre en MAYÚSCULAS
+- Indentación: 2 espacios, sin tabs
 
 ---
 
-## Qué NO Será Aceptado
+## Qué no será aceptado
 
-* Código que viole la arquitectura del proyecto
-* Dependencias innecesarias o propietarias
-* Funcionalidades que comprometan la separación contenido/procesamiento
-* Cambios que requieran plataformas distintas de Linux
-* "Mejoras" que oculten procesos al usuario
-* Automatismos que tomen decisiones editoriales implícitas
-
----
-
-## Revisión de Código
-
-Todas las contribuciones serán revisadas por el mantenedor del proyecto.
-
-El proceso puede incluir:
-
-* Solicitud de cambios
-* Discusión sobre decisiones de diseño
-* Pruebas adicionales
-* Ajustes de documentación
-
-La revisión busca mantener la coherencia arquitectónica y la calidad del código.
+- Código que rompa la arquitectura Single Source del proyecto
+- Dependencias innecesarias o propietarias
+- Funcionalidades que comprometan la separación entre contenido y procesamiento
+- Cambios que requieran plataformas distintas de Linux Mint
+- Automatismos que tomen decisiones editoriales implícitas
+- Código que oculte procesos al usuario
 
 ---
 
-## Código de Conducta
+## Revisión de código
 
-* Respeto mutuo en todas las interacciones
-* Críticas constructivas al código, no a las personas
-* Enfoque en mejorar el proyecto
-* Reconocimiento de que el tiempo de todos es valioso
+Todas las contribuciones son revisadas por el mantenedor del proyecto. El proceso puede incluir solicitud de cambios, discusión sobre decisiones de diseño, pruebas adicionales y ajustes de documentación. El objetivo de la revisión es mantener coherencia arquitectónica y calidad del código, no bloquear contribuciones.
+
+---
+
+## Código de conducta
+
+Críticas constructivas al código, no a las personas. Respeto por el tiempo de todos. Enfoque en mejorar el proyecto.
 
 ---
 
 ## Reconocimiento
 
-Los contribuidores serán reconocidos en el archivo [CONTRIBUTORS](CONTRIBUTORS.md).
+Los contribuidores son reconocidos en [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ---
 
-## Preguntas
+## Contacto
 
-Para preguntas sobre contribuciones, abre un **issue** en GitHub o contacta a:  estudio2a@outlook.com.ar
+Para preguntas sobre contribuciones, abrí un **issue** en GitHub o escribí a [estudio2a@outlook.com.ar](mailto:estudio2a@outlook.com.ar).
 
 ---
 

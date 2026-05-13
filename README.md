@@ -1,200 +1,88 @@
 # gbpublisher
 
-## Introducción
+Plataforma de producción editorial académica para revistas científicas, series académicas y proyectos editoriales institucionales sobre Linux Mint con escritorio Cinnamon.
 
-**gbpublisher** es una plataforma integral de producción editorial académica, diseñada para revistas científicas, series académicas y proyectos editoriales institucionales.
+---
 
-Está pensada para entornos universitarios y científicos que requieren **estandarización, reproducibilidad y soberanía tecnológica**, sin depender de plataformas propietarias ni servicios externos.
+## Modelo de producción
 
-gbpublisher implementa un flujo de trabajo **Single Source Publishing**, basado en estándares abiertos ampliamente adoptados en el ecosistema académico internacional: Markdown, bases de datos SQL, JATS XML, XSLT y LaTeX. El proceso comienza con la autoría en Markdown, que luego se transforma a JATS —enriquecido con metadatos desde la base de datos SQL— para constituir un documento canónico único a partir del cual se generan múltiples formatos de salida.
+gbpublisher implementa un flujo **Single Source Publishing**: el contenido se redacta en Markdown, se transforma a JATS XML y se enriquece con metadatos desde una base de datos SQL. El resultado es un **JATS canónico validado** que actúa como fuente única para todas las salidas editoriales.
 
 ![Single Source Publishing](diagrama.png)
 
----
+Desde ese JATS canónico se generan:
 
-## Modelo de producción: Single Source con JATS canónico
+- ODT, EPUB 3, HTML, PDF (vía LuaLaTeX)
+- XML para indexadores: DOAJ, Crossref, SciELO, PubMed, Redalyc
 
-En gbpublisher, cada artículo se transforma en un **JATS maestro validado**, que actúa como fuente única y autoritativa para todas las salidas editoriales posteriores.
-
-El flujo comienza con autoría en Markdown, que se convierte a JATS y se enriquece con metadatos desde la base de datos SQL. Una vez consolidado, este JATS canónico alimenta todas las salidas: XML especializados (SciELO, PubMed, Crossref), HTML, EPUB y LaTeX para composición PDF.
-
-Este enfoque garantiza:
-
-* cumplimiento de estándares internacionales (JATS, PubMed, SciELO, Crossref)
-* portabilidad total de los contenidos
-* independencia de proveedores externos
-* trazabilidad y auditoría del proceso editorial
-* reproducibilidad en entornos académicos
+Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de los contenidos, sin depender de plataformas propietarias ni servicios externos.
 
 ---
 
-## Flujo editorial completo
+## Funcionalidades principales
 
-gbpublisher unifica en una única aplicación de escritorio (Gambas sobre Linux) todo el proceso editorial:
+**Gestión de metadatos**
+- Autores, afiliaciones, ORCID, ROR
+- Referencias bibliográficas (BibTeX/BibLaTeX)
+- Palabras clave, datos institucionales, información para indexadores
+- Órdenes de taller y control del flujo editorial
 
-### Gestión de metadatos (base de datos SQL)
+**Edición y producción**
+- Editor integrado con resaltado de sintaxis para Markdown y XML
+- Generación y validación del JATS canónico con `xmllint`
+- Transformación a múltiples salidas mediante XSLT 2.0 (Saxon-HE)
+- Integración con Pandoc y LuaLaTeX
 
-* autores y afiliaciones
-* referencias bibliográficas
-* palabras clave
-* información institucional
-* datos para indexadores
-* órdenes de taller y control editorial
-
-### Edición basada en Markdown
-
-El contenido se redacta y mantiene en archivos Markdown estructurados, facilitando:
-
-* escritura y corrección
-* control de versiones
-* independencia del formato final
-
-### Generación y validación del JATS maestro
-
-* generación reproducible desde Markdown
-* enriquecimiento con metadatos desde la base de datos SQL
-* validación con `xmllint`
-* control de versiones y consistencia estructural
-
-### Transformación a múltiples salidas mediante XSLT
-
-Desde el JATS canónico se generan:
-
-* SciELO (por colección)
-* PubMed / PMC
-* Crossref Journal Metadata Deposit XML
-* HTML académico
-* EPUB accesible
-* LaTeX para composición PDF de alta calidad
-
-### Generación de PDF de alta calidad
-
-* composición con LaTeX generado desde el JATS canónico
-* control tipográfico profesional
-* compatibilidad con PDF/A
+**Validación y calidad**
+- Validación de JATS por flavor (CrossRef, SciELO, PubMed, JATS4R, Redalyc)
+- Verificación de DOI contra CrossRef
+- Integración con ORCID y DOAJ
 
 ---
 
-## Calidad editorial y validación
+## Requisitos del sistema
 
-Cada salida generada por gbpublisher pasa por procesos de validación formal:
+- Linux Mint con escritorio Cinnamon (única plataforma soportada)
+- Servidor de pantalla X11 (no compatible con Wayland)
+- MySQL/MariaDB
+- Gambas 3 runtime
+- TeXLive full
+- Pandoc
+- Saxon-HE
+- Java (para Saxon-HE)
 
-* JATS maestro: validación estándar
-* salidas específicas: validación por flavor
-* PDF: reproducibilidad garantizada
-* HTML y EPUB: estructura semántica consistente
-
-Este modelo reduce errores, mejora la calidad editorial y acelera los procesos de indexación.
-
----
-
-## Licencia y modelo de uso
-
-**gbpublisher** está disponible bajo la **Business Source License 1.1 (BSL)**.
-
-Esta licencia permite el acceso al código fuente mientras protege el modelo de desarrollo sostenible del proyecto.
-
-### Uso permitido sin costo de licencia
-
-El uso de gbpublisher **no requiere pago de licencia** para:
-
-* instituciones académicas y científicas sin fines de lucro
-* universidades y bibliotecas en su función académica
-* revistas académicas de acceso abierto o con modelo institucional
-* proyectos editoriales institucionales sin intermediación comercial
-* uso interno para investigación y docencia
-
-### Uso que requiere licencia comercial
-
-El uso de gbpublisher **requiere acuerdo comercial explícito** para:
-
-* empresas editoriales con fines de lucro
-* plataformas SaaS de servicios editoriales
-* proveedores de servicios editoriales externos a instituciones
-* redistribución del software con fines comerciales
-* uso del software como parte de servicios facturados a terceros
-* integración en productos comerciales
-
-### Casos especiales
-
-Los siguientes casos requieren consulta previa con el autor:
-
-* editoriales universitarias con modelo híbrido (comercial/académico)
-* revistas con APCs (Article Processing Charges) administradas institucionalmente
-* consorcios interinstitucionales con participación mixta
-* proyectos de cooperación público-privada
-
-Para estos casos, contactar a: estudio2a@outlook.com.ar
-
-### Transición futura a licencia permisiva
-
-Conforme al modelo BSL 1.1, el código de gbpublisher pasará automáticamente a **licencia GPL-3.0** transcurridos **5 años** desde la fecha de publicación de cada versión.
-
-Esto garantiza que, a largo plazo, el software será completamente libre, protegiendo el interés académico mientras se preserva un modelo de desarrollo sostenible durante el período inicial.
+La aplicación verifica las dependencias al iniciar e informa al usuario si falta alguna.
 
 ---
 
-## Filosofía del proyecto
+## Instalación
 
-gbpublisher prioriza:
+La distribución se realiza mediante paquete `.deb`. Para solicitar una copia:
 
-* estándares abiertos
-* procesos explícitos y auditables
-* separación entre contenido y procesamiento
-* estabilidad a largo plazo
-* claridad editorial por sobre automatismos opacos
+[Formulario de solicitud](https://docs.google.com/forms/d/e/1FAIpQLSdz-Tp6750Hq9rKZsWDmaVSBiCQSm3FAkMq8y9SV3tfqXcI5Q/viewform?usp=publish-editor)
 
-La aplicación no toma decisiones editoriales por el usuario.
-No adivina. No oculta procesos. No impone formatos.
+El repositorio contiene el código fuente bajo los términos descritos en `LICENSE.md`.
 
 ---
 
-## gbpublisher y la ciencia abierta
+## Licencia
 
-gbpublisher se alinea con los principios de:
+gbpublisher se distribuye bajo la **Business Source License 1.1 (BSL 1.1)**.
 
-* acceso abierto
-* interoperabilidad
-* reproducibilidad
-* transparencia
-* soberanía tecnológica
+**Uso permitido sin costo:** producción editorial de revistas científicas o académicas que no cobren APC (Article Processing Charges) a los autores, bajo cualquier denominación.
 
-Es una herramienta pensada para instituciones públicas, universidades y proyectos editoriales comprometidos con el conocimiento como bien común.
+**Uso que requiere licencia comercial:** revistas que cobren APC, servicios editoriales para terceros, plataformas SaaS y redistribución del software.
 
----
+Cada versión publicada convierte automáticamente su licencia a **GPL-3.0-or-later** transcurridos cinco años desde su fecha de lanzamiento.
 
-## Software de código fuente disponible bajo BSL 1.1, se convierte en GPL-3.0+ a los 5 años de su lanzamiento
-
-
-gbpublisher hace su **código fuente disponible públicamente** bajo Business Source License 1.1.
-
-Esto significa:
-
-- El código puede ser inspeccionado, estudiado y auditado
-- Las instituciones académicas pueden usarlo sin costo
-- El desarrollo es transparente y trazable
-- Las contribuciones son bienvenidas bajo las condiciones establecidas
-
-Sin embargo, **no es software libre** en el sentido de licencias como GPL, MIT o Apache durante el período inicial de 5 años.
-
-La restricción de uso comercial garantiza que el esfuerzo de desarrollo no sea apropiado por actores comerciales sin retribución al proyecto.
+Véase [LICENSE.md](LICENSE.md) para los términos completos.
 
 ---
 
-## Conclusión
+## Información del proyecto
 
-gbpublisher no es solo una herramienta, sino un **ecosistema editorial académico**, diseñado para producir contenidos de calidad profesional de forma abierta, controlada y sostenible.
-
-Permite a universidades y revistas científicas trabajar con estándares internacionales sin depender de plataformas propietarias ni servicios externos, manteniendo el control total sobre sus datos y procesos.
-
----
+- Repositorio: [https://github.com/albertomoyano/gbpublisher](https://github.com/albertomoyano/gbpublisher)
+- Consultas sobre licenciamiento: estudio2a@outlook.com.ar
+- Cómo apoyar el proyecto: [SUPPORT_MODEL.md](SUPPORT_MODEL.md)
 
 **Copyright © 2026 Alberto Moyano**
-
-- Licenciado bajo Business Source License 1.1
-- Repositorio: https://github.com/albertomoyano/gbpublisher
-- Consultas sobre licenciamiento:  estudio2a@outlook.com.ar
-- Solicitar una copia del .deb: [Formulario de solicitud](https://docs.google.com/forms/d/e/1FAIpQLSdz-Tp6750Hq9rKZsWDmaVSBiCQSm3FAkMq8y9SV3tfqXcI5Q/viewform?usp=publish-editor)
-## Cómo apoyar el proyecto
-
-Si desea apoyar este proyecto puede leer las condiciones en [SUPPORT_MODEL.md](SUPPORT_MODEL.md)
