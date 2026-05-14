@@ -1,38 +1,52 @@
 ' Gambas class file
 
+' ============================================
+' Formulario : FSysAdmin
+' Propósito  : Panel de administración del sistema para el
+'              editor de la editorial. Permite gestionar
+'              usuarios MySQL, proyectos, credenciales de API
+'              y respaldos de base de datos.
+'              Autenticación en dos capas:
+'              1) SQLite local (.superuser.sqlite)
+'              2) MySQL con credenciales de aplicación
+' ============================================
+
 Private $idSeleccionado As Integer
 Public $claveSeleccionada As String
-Public hConn As Connection  ' Conexión SQLite local
-Public hConnServidor As Connection  ' Conexión al servidor MySQL
+Public hConn As Connection           ' CONEXIÓN SQLITE LOCAL PARA ADMIN
+Public hConnServidor As Connection   ' CONEXIÓN AL SERVIDOR MYSQL
 Public sUsuarioActual As String
 Public sRolActual As String
 Public sServidorActual As String
 Private $aColumnas As String[]
 Private $aRegistros As String[][]
-' VARIABLE PARA CONTROLAR SI ESTAMOS EN MODO EDICIÓN O NUEVO
-Private $bModoEdicion As Boolean
+Private $bModoEdicion As Boolean     ' CONTROLA SI ESTAMOS EN MODO EDICIÓN O NUEVO
 
-' INICIALIZACIÓN DEL FORMULARIO
+' ============================================
+' Función   : Form_Open
+' Propósito : Inicializa el formulario, conecta a la base
+'             SQLite local y carga los datos iniciales
+' ============================================
 Public Sub Form_Open()
 
+  ' --- 1. Verificar y conectar base SQLite local ---
   Dim sRuta As String = User.Home &/ ".gbpublisher/.superuser.sqlite"
 
-  ' CREAR/CONECTAR SQLITE LOCAL (SOLO PARA ADMIN LOCAL)
   If Not Exist(sRuta) Then
     CreateDataBase()
   Endif
 
   If Not Conectar(sRuta) Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudo conectar a la base local")
+    Message.Error("No se pudo conectar a la base local.")
     Me.Close()
     Return
   Endif
 
-  ' CARGAR IPS DISPONIBLES
+  ' --- 2. Cargar IPs disponibles ---
   m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
 
-  ' MOSTRAR SOLO PANEL DE VALIDACIÓN INICIAL
+  ' --- 3. Mostrar paneles de validación inicial ---
   HBox1a.Visible = True
   TableViewUsuarios.Visible = True
   HBox2a.Visible = True
@@ -41,49 +55,31 @@ Public Sub Form_Open()
 
   txtAdministrador.SetFocus()
 
-  ' CARGAR LISTA DE RESPALDOS
+  ' --- 4. Cargar lista de respaldos disponibles ---
   CargarListaRespaldos()
-
-  ' ' VERIFICAR QUE LA CLAVE MAESTRA ESTÉ CONFIGURADA
-  ' If Not m_ApiCredenciales.ValidarClaveMaestra() Then
-  '   Message.Warning("ADVERTENCIA: La variable de entorno " & m_ApiCredenciales.ObtenerNombreVariableEntorno() & " no está definida.\n\nSe usará una clave derivada del sistema (menos seguro).\n\nPara producción, defina la variable con:\nexport " & m_ApiCredenciales.ObtenerNombreVariableEntorno() & "='su_clave_secreta_aquí'")
-  ' Endif
-  '
-  ' ' CONFIGURAR EL GRIDVIEW
-  ' ConfigurarGridView()
-  '
-  ' ' CONFIGURAR EL TEXTBOX DE API KEY EN MODO PASSWORD
-  ' txtApiKey.Password = True
-  '
-  ' ' CARGAR DATOS EN EL GRIDVIEW
-  ' CargarCredenciales()
-  '
-  ' ' PREPARAR FORMULARIO PARA NUEVA ENTRADA
-  ' LimpiarFormulario()
-
-  ' QUITAR ESTO DEL Form_Open:
-  ' VERIFICAR QUE LA CLAVE MAESTRA ESTÉ CONFIGURADA
-  ' If Not m_ApiCredenciales.ValidarClaveMaestra() Then ...
-  ' ConfigurarGridView()
-  ' txtApiKey.Password = True
-  ' CargarCredenciales()
-  ' LimpiarFormulario()
 
 End
 
-' CREAR BASE DE DATOS SQLITE LOCAL PARA ADMIN
+' ============================================
+' Función   : CreateDataBase
+' Propósito : Crea la base de datos SQLite local para el
+'             administrador si no existe, con usuario por
+'             defecto admin/admin123
+' ============================================
 Public Sub CreateDataBase()
 
+  ' --- 1. Inicialización de variables ---
   Dim sHost As String = User.Home &/ ".gbpublisher"
   Dim sDbName As String = ".superuser.sqlite"
   Dim sTablas As String
 
-  ' VERIFICAR QUE EL DIRECTORIO EXISTE
+  ' --- 2. Verificar que el directorio base existe ---
   If Not Exist(sHost) Then Mkdir sHost
 
-  ' SI LA BASE YA EXISTE, SALIR
+  ' --- 3. Evitar recrear si ya existe ---
   If Exist(sHost &/ sDbName) Then Return
 
+  ' --- 4. Crear y conectar la base ---
   hConn = New Connection
   hConn.Type = "sqlite3"
   hConn.Host = sHost
@@ -94,11 +90,11 @@ Public Sub CreateDataBase()
 
   hConn.Close()
 
-  ' RECONECTAR CON LA BASE DE DATOS
+  ' --- 5. Reconectar con la base creada ---
   hConn.Name = sDbName
   hConn.Open()
 
-  ' CREAR TABLA DE SUPERUSUARIO LOCAL
+  ' --- 6. Crear estructura y datos iniciales ---
   sTablas = "CREATE TABLE superuser (" &
     "id INTEGER PRIMARY KEY AUTOINCREMENT, " &
     "usuario TEXT NOT NULL UNIQUE, " &
@@ -106,14 +102,17 @@ Public Sub CreateDataBase()
     "email TEXT);"
   hConn.Exec(sTablas)
 
-  ' ✅ INSERTAR ADMIN POR DEFECTO
   hConn.Exec("INSERT INTO superuser (usuario, clave, email) VALUES " &
     "('admin', '" & Hash.SHA256("admin123") & "', NULL);")
 
   hConn.Close()
 
   m_Sonido.sonar("Info")
-  Message.Info("Base de datos local creada.\n\nUsuario inicial:\nUsuario: admin\nContraseña: admin123\n\n¡Cámbiela inmediatamente!")
+  Message.Info("Base de datos local creada." & Chr(10) & Chr(10) &
+    "Usuario inicial:" & Chr(10) &
+    "Usuario: admin" & Chr(10) &
+    "Contraseña: admin123" & Chr(10) & Chr(10) &
+    "¡Cámbiela inmediatamente!")
 
 Catch
   m_Sonido.sonar("Error")
@@ -121,19 +120,24 @@ Catch
 
 End
 
-' CONECTAR A SQLITE LOCAL
+' ============================================
+' Función   : Conectar
+' Propósito : Abre la conexión a la base SQLite local
+' Parámetros: sRuta As String — ruta absoluta al archivo .sqlite
+' Retorna   : Boolean — True si la conexión fue exitosa
+' ============================================
 Public Function Conectar(sRuta As String) As Boolean
 
+  ' --- 1. Configurar y abrir conexión ---
   hConn = New Connection
   hConn.Type = "sqlite3"
   hConn.Host = File.Dir(sRuta)
   hConn.Name = File.Name(sRuta)
 
   Try hConn.Open()
-  If Not hConn.Opened Then
-    Return False
-  Endif
+  If Not hConn.Opened Then Return False
 
+  ' --- 2. Activar integridad referencial ---
   hConn.Exec("PRAGMA foreign_keys = ON;")
   Return True
 
@@ -144,52 +148,57 @@ Catch
 
 End
 
-' VALIDAR SUPERUSUARIO
+' ============================================
+' Función   : btnValidarSuperuser_Click
+' Propósito : Valida al administrador en dos pasos:
+'             1) SQLite local, 2) MySQL con credenciales de app
+' ============================================
 Public Sub btnValidarSuperuser_Click()
 
+  ' --- 1. Obtener valores del formulario ---
   Dim sUsuario As String = Trim(txtAdministrador.Text)
   Dim sClave As String = Trim(txtClaveAdministrador.Text)
   Dim sIP As String = Trim(ComboBoxIP.Text)
 
-  ' Validaciones básicas
+  ' --- 2. Validaciones básicas ---
   If Not sUsuario Or Not sClave Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe ingresar usuario y contraseña")
+    Message.Warning("Debe ingresar usuario y contraseña.")
     Return
   Endif
 
   If Not sIP Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar una IP de servidor")
+    Message.Warning("Debe seleccionar una IP de servidor.")
     Return
   Endif
 
-  ' ✅ PASO 1: Validar contra SQLite LOCAL
+  ' --- 3. Validar contra SQLite local ---
   If Not ValidarAdminLocal(sUsuario, sClave) Then
     txtAdministrador.Text = ""
     txtClaveAdministrador.Text = ""
     Return
   Endif
 
-  ' ✅ PASO 2: Conectar a MySQL con credenciales de app
+  ' --- 4. Conectar a MySQL ---
   If Not ConectarMySQL(sIP) Then
     m_Sonido.sonar("Error")
-    Message.Error("Admin válido, pero no se pudo conectar al servidor MySQL")
+    Message.Error("Admin válido, pero no se pudo conectar al servidor MySQL.")
     Return
   Endif
 
-  ' ✅ PASO 3: Habilitar gestión
+  ' --- 5. Habilitar panel de gestión ---
   sUsuarioActual = sUsuario
   sServidorActual = sIP
   sRolActual = "superadmin"
 
   m_Sonido.sonar("Info")
-  Message.Info("Acceso concedido como SUPERADMINISTRADOR")
+  Message.Info("Acceso concedido como SUPERADMINISTRADOR.")
 
   HabilitarABMUsuarios()
   PanelAdmin.Visible = False
 
-  ' LIMPIAR CAMPOS
+  ' --- 6. Limpiar campos de acceso ---
   txtAdministrador.Text = ""
   txtClaveAdministrador.Text = ""
   txtEmailAdministrador.Text = ""
@@ -200,21 +209,28 @@ Catch
 
 End
 
-' VALIDAR ADMIN LOCAL (SQLITE)
+' ============================================
+' Función   : ValidarAdminLocal
+' Propósito : Verifica las credenciales del administrador
+'             contra la base SQLite local
+' Parámetros: sUsuario As String — nombre de usuario
+'             sClave   As String — contraseña en texto plano
+' Retorna   : Boolean — True si las credenciales son válidas
+' ============================================
 Private Function ValidarAdminLocal(sUsuario As String, sClave As String) As Boolean
 
+  ' --- 1. Generar hash de la clave ---
   Dim r As Result
-  Dim sHash As String
+  Dim sHash As String = Hash.SHA256(sClave)
 
-  sHash = Hash.SHA256(sClave)
-
+  ' --- 2. Consultar en SQLite ---
   r = hConn.Exec("SELECT id FROM superuser " &
     "WHERE usuario = '" & sUsuario & "' " &
     "AND clave = '" & sHash & "';")
 
   If Not r.Available Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Usuario o contraseña de administrador incorrectos")
+    Message.Warning("Usuario o contraseña de administrador incorrectos.")
     Return False
   Endif
 
@@ -227,9 +243,16 @@ Catch
 
 End
 
-' CONECTAR A MYSQL (CREDENCIALES FIJAS)
+' ============================================
+' Función   : ConectarMySQL
+' Propósito : Abre la conexión al servidor MySQL usando
+'             las credenciales fijas de la aplicación
+' Parámetros: sIP As String — dirección IP del servidor MySQL
+' Retorna   : Boolean — True si la conexión fue exitosa
+' ============================================
 Private Function ConectarMySQL(sIP As String) As Boolean
 
+  ' --- 1. Configurar y abrir conexión ---
   hConnServidor = New Connection
   hConnServidor.Type = "mysql"
   hConnServidor.Host = sIP
@@ -240,9 +263,7 @@ Private Function ConectarMySQL(sIP As String) As Boolean
 
   Try hConnServidor.Open()
 
-  If Not hConnServidor.Opened Then
-    Return False
-  Endif
+  If Not hConnServidor.Opened Then Return False
 
   Return True
 
@@ -253,9 +274,14 @@ Catch
 
 End
 
-' HABILITAR PANEL DE GESTIÓN
+' ============================================
+' Función   : HabilitarABMUsuarios
+' Propósito : Muestra el panel de gestión tras autenticación
+'             exitosa y carga los datos del servidor
+' ============================================
 Private Sub HabilitarABMUsuarios()
 
+  ' --- 1. Mostrar panel y configurar botones ---
   PanelAdminUsuarios.Visible = True
   btnCrearUsuario.Visible = True
   btnGuardarUsuario.Visible = False
@@ -263,13 +289,12 @@ Private Sub HabilitarABMUsuarios()
 
   LabelSesion.Text = "Conectado como administrador: " & sUsuarioActual & " @ " & sServidorActual
 
+  ' --- 2. Cargar datos del servidor ---
   CargarUsuariosDelServidor()
   CargarProyectosDelServidor()
 
-  ' ESTABLECER CONEXIÓN PARA EL MÓDULO DE APIS
+  ' --- 3. Inicializar módulo de APIs ---
   m_ApiCredenciales.EstablecerConexion(hConnServidor)
-
-  ' CONFIGURAR Y CARGAR APIS
   ConfigurarGridView()
   txtApiKey.Password = True
   CargarCredenciales()
@@ -277,9 +302,14 @@ Private Sub HabilitarABMUsuarios()
 
 End
 
-' CARGAR USUARIOS DESDE MYSQL
+' ============================================
+' Función   : CargarUsuariosDelServidor
+' Propósito : Consulta y muestra todos los usuarios MySQL
+'             en el TableView de usuarios
+' ============================================
 Private Sub CargarUsuariosDelServidor()
 
+  ' --- 1. Limpiar y configurar TableView ---
   Dim rUsuarios As Result
   Dim iRow As Integer
 
@@ -300,6 +330,7 @@ Private Sub CargarUsuariosDelServidor()
   TableViewUsuarios.Columns[5].Title = "En Línea"
   TableViewUsuarios.Columns[5].Width = 70
 
+  ' --- 2. Consultar y llenar datos ---
   rUsuarios = hConnServidor.Exec("SELECT id, usuario, email, activo, fecha_creacion, en_linea " &
     "FROM usuarios ORDER BY usuario;")
 
@@ -323,9 +354,14 @@ Catch
 
 End
 
-' CREAR/MODIFICAR ADMIN LOCAL
+' ============================================
+' Función   : btnCrearAdmin_Click
+' Propósito : Crea o modifica las credenciales del
+'             administrador local en SQLite
+' ============================================
 Public Sub btnCrearAdmin_Click()
 
+  ' --- 1. Obtener y validar datos del formulario ---
   Dim sUsuario As String = Trim(txtAdministrador.Text)
   Dim sClave As String = Trim(txtClaveAdministrador.Text)
   Dim sEmail As String = Trim(txtEmailAdministrador.Text)
@@ -335,36 +371,32 @@ Public Sub btnCrearAdmin_Click()
 
   If Not sUsuario Or Not sClave Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Usuario y contraseña son obligatorios")
+    Message.Warning("Usuario y contraseña son obligatorios.")
     Return
   Endif
 
   If Len(sClave) < 8 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("La contraseña debe tener al menos 8 caracteres")
+    Message.Warning("La contraseña debe tener al menos 8 caracteres.")
     Return
   Endif
 
+  ' --- 2. Verificar si el admin ya existe ---
   sClaveHash = Hash.SHA256(sClave)
-
   rCheck = hConn.Exec("SELECT id FROM superuser WHERE usuario = '" & sUsuario & "';")
 
   If rCheck.Available Then
-    ' Actualizar admin existente
+    ' ACTUALIZAR ADMIN EXISTENTE
     sSQL = "UPDATE superuser SET clave = '" & sClaveHash & "'"
-
     If sEmail And sEmail <> "@." Then
       sSQL &= ", email = '" & sEmail & "'"
     Endif
-
     sSQL &= " WHERE usuario = '" & sUsuario & "';"
-
     hConn.Exec(sSQL)
     m_Sonido.sonar("Info")
-    Message.Info("Contraseña del administrador '" & sUsuario & "' actualizada")
-
+    Message.Info("Contraseña del administrador '" & sUsuario & "' actualizada.")
   Else
-    ' Crear nuevo admin
+    ' CREAR NUEVO ADMIN
     If Not sEmail Or sEmail = "@." Then
       sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
         sUsuario & "', '" & sClaveHash & "', NULL);"
@@ -372,12 +404,12 @@ Public Sub btnCrearAdmin_Click()
       sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
         sUsuario & "', '" & sClaveHash & "', '" & sEmail & "');"
     Endif
-
     hConn.Exec(sSQL)
     m_Sonido.sonar("Info")
-    Message.Info("Administrador local '" & sUsuario & "' creado exitosamente")
+    Message.Info("Administrador local '" & sUsuario & "' creado exitosamente.")
   Endif
 
+  ' --- 3. Limpiar campos ---
   txtAdministrador.Text = ""
   txtClaveAdministrador.Text = ""
   txtEmailAdministrador.Text = ""
@@ -388,76 +420,69 @@ Catch
 
 End
 
-' GUARDAR NUEVO USUARIO (btnGuardarUsuario)
+' ============================================
+' Función   : btnGuardarUsuario_Click
+' Propósito : Inserta un nuevo usuario en la tabla MySQL
+'             con los datos ingresados en el formulario
+' ============================================
 Public Sub btnGuardarUsuario_Click()
 
-  Dim sUsuario As String
-  Dim sClave As String
-  Dim sEmail As String
-  Dim bActivo As Boolean
-  Dim sHash As String
-
+  ' --- 1. Verificar conexión activa ---
   If Not hConnServidor Or Not hConnServidor.Opened Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe validarse primero como administrador")
+    Message.Warning("Debe validarse primero como administrador.")
     Return
   Endif
 
-  ' Obtener valores de los controles
-  sUsuario = Trim(txtUsuario.Text)
-  sClave = Trim(txtClaveUsuario.Text)
-  sEmail = Trim(txtEmailUsuario.Text)
-  bActivo = RadioButtonSi.Value
+  ' --- 2. Obtener y validar datos ---
+  Dim sUsuario As String = Trim(txtUsuario.Text)
+  Dim sClave As String = Trim(txtClaveUsuario.Text)
+  Dim sEmail As String = Trim(txtEmailUsuario.Text)
+  Dim bActivo As Boolean = RadioButtonSi.Value
+  Dim sHash As String
 
-  ' Validaciones
   If Not sUsuario Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe ingresar un nombre de usuario")
+    Message.Warning("Debe ingresar un nombre de usuario.")
     txtUsuario.SetFocus()
     Return
   Endif
 
   If Len(sUsuario) > 12 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("El usuario no puede tener más de 12 caracteres")
+    Message.Warning("El usuario no puede tener más de 12 caracteres.")
     txtUsuario.SetFocus()
     Return
   Endif
 
   If Not sClave Or Len(sClave) < 8 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("La contraseña debe tener 8 caracteres, incluyendo una mayúscula y un número.")
+    Message.Warning("La contraseña debe tener al menos 8 caracteres, una mayúscula y un número.")
     txtClaveUsuario.SetFocus()
     Return
   Endif
 
   If Not sEmail Then
     m_Sonido.sonar("Warning")
-    Message.Warning("El email es obligatorio")
+    Message.Warning("El email es obligatorio.")
     txtEmailUsuario.SetFocus()
     Return
   Endif
 
-  ' HASHEAR CONTRASEÑA
+  ' --- 3. Insertar usuario ---
   sHash = Hash.SHA256(sClave)
-
-  ' INSERTAR EN MYSQL
   hConnServidor.Exec("INSERT INTO usuarios (usuario, clave, email, activo, metodo, fecha_creacion) " &
     "VALUES ('" & sUsuario & "', '" & sHash & "', '" & sEmail & "', " &
     If(bActivo, "TRUE", "FALSE") & ", 'local', NOW());")
 
     m_Sonido.sonar("Info")
-    Message.Info("Usuario <b>'" & sUsuario & "'</b> creado exitosamente")
+    Message.Info("Usuario <b>'" & sUsuario & "'</b> creado exitosamente.")
 
-    ' LIMPIAR CONTROLES
+    ' --- 4. Restaurar estado del formulario ---
     LimpiarControlesUsuario()
-
-    ' ACUALIZAMOS LOS BOTONES
     btnCrearUsuario.Visible = True
     btnGuardarUsuario.Visible = False
     btnGuardarCambiosUsuario.Visible = False
-
-    ' RECARGAR TABLA
     CargarUsuariosDelServidor()
 
   Catch
@@ -466,92 +491,90 @@ Public Sub btnGuardarUsuario_Click()
 
 End
 
-' GUARDAR CAMBIOS DE USUARIO (btnGuardarCambiosUsuario)
+' ============================================
+' Función   : btnGuardarCambiosUsuario_Click
+' Propósito : Actualiza los datos de un usuario MySQL
+'             existente, incluyendo el estado en_linea
+'             para resolver bloqueos por corte de energía
+'             o cuelgue de la aplicación
+' ============================================
 Public Sub btnGuardarCambiosUsuario_Click()
 
-  Dim iID As Integer
-  Dim sNuevoUsuario As String
-  Dim sNuevaClave As String
-  Dim sNuevoEmail As String
-  Dim bActivo As Boolean
-  Dim sHash As String
-
-  ' VERIFICAR QUE HAY UN USUARIO SELECCIONADO
+  ' --- 1. Verificar selección y conexión ---
   If TableViewUsuarios.Row < 0 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar un usuario de la tabla para modificar")
+    Message.Warning("Debe seleccionar un usuario de la tabla para modificar.")
     Return
   Endif
 
   If Not hConnServidor Or Not hConnServidor.Opened Then
     m_Sonido.sonar("Warning")
-    Message.Warning("No hay conexión al servidor")
+    Message.Warning("No hay conexión al servidor.")
     Return
   Endif
 
-  ' OBTENER ID DEL USUARIO SELECCIONADO
-  iID = Val(TableViewUsuarios[TableViewUsuarios.Row, 0].Text)
+  ' --- 2. Obtener datos del formulario ---
+  Dim iID As Integer = Val(TableViewUsuarios[TableViewUsuarios.Row, 0].Text)
+  Dim sNuevoUsuario As String = Trim(txtUsuario.Text)
+  Dim sNuevaClave As String = Trim(txtClaveUsuario.Text)
+  Dim sNuevoEmail As String = Trim(txtEmailUsuario.Text)
+  Dim bActivo As Boolean = RadioButtonSi.Value
+  Dim sHash As String
 
-  ' OBTENER VALORES DE LOS CONTROLES
-  sNuevoUsuario = Trim(txtUsuario.Text)
-  sNuevaClave = Trim(txtClaveUsuario.Text)
-  sNuevoEmail = Trim(txtEmailUsuario.Text)
-  bActivo = RadioButtonSi.Value
-
-  ' VALIDACIONES
+  ' --- 3. Validaciones ---
   If Not sNuevoUsuario Then
     m_Sonido.sonar("Warning")
-    Message.Warning("El nombre de usuario no puede estar vacío")
+    Message.Warning("El nombre de usuario no puede estar vacío.")
     txtUsuario.SetFocus()
     Return
   Endif
 
   If Len(sNuevoUsuario) > 12 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("El usuario no puede tener más de 12 caracteres")
+    Message.Warning("El usuario no puede tener más de 12 caracteres.")
     txtUsuario.SetFocus()
     Return
   Endif
 
   If Not sNuevoEmail Then
-    Message.Warning("El email es obligatorio")
+    m_Sonido.sonar("Warning")
+    Message.Warning("El email es obligatorio.")
     txtEmailUsuario.SetFocus()
     Return
   Endif
 
-  ' SI HAY NUEVA CONTRASEÑA, VALIDAR Y ACTUALIZAR
+  ' --- 4. Actualizar con o sin cambio de contraseña ---
+  ' EN_LINEA SE INCLUYE SIEMPRE PARA PERMITIR LIBERAR USUARIOS BLOQUEADOS
   If sNuevaClave And Len(sNuevaClave) > 0 Then
     If Len(sNuevaClave) < 8 Then
       m_Sonido.sonar("Warning")
-      Message.Warning("La contraseña debe tener 8 caracteres")
+      Message.Warning("La contraseña debe tener al menos 8 caracteres.")
       txtClaveUsuario.SetFocus()
       Return
     Endif
     sHash = Hash.SHA256(sNuevaClave)
     hConnServidor.Exec("UPDATE usuarios SET usuario = '" & sNuevoUsuario &
-      "', clave = '" & sHash & "', email = '" & sNuevoEmail &
+      "', clave = '" & sHash &
+      "', email = '" & sNuevoEmail &
       "', activo = " & If(bActivo, "TRUE", "FALSE") &
+      ", en_linea = " & If(chkEnLinea.Value, "1", "0") &
       " WHERE id = " & iID & ";")
   Else
-    ' ACTUALIZAR SIN CAMBIAR CONTRASEÑA
     hConnServidor.Exec("UPDATE usuarios SET usuario = '" & sNuevoUsuario &
       "', email = '" & sNuevoEmail &
       "', activo = " & If(bActivo, "TRUE", "FALSE") &
+      ", en_linea = " & If(chkEnLinea.Value, "1", "0") &
       " WHERE id = " & iID & ";")
   Endif
 
   m_Sonido.sonar("Info")
-  Message.Info("Cambios guardados correctamente")
+  Message.Info("Cambios guardados correctamente.")
 
-  ' Acualizamos los botones
+  ' --- 5. Restaurar estado del formulario ---
   btnCrearUsuario.Visible = True
   btnGuardarUsuario.Visible = False
   btnGuardarCambiosUsuario.Visible = False
-
-  ' LIMPIAR CONTROLES
   LimpiarControlesUsuario()
-
-  ' RECARGAR TABLA
   CargarUsuariosDelServidor()
 
 Catch
@@ -560,12 +583,17 @@ Catch
 
 End
 
-' EVENTO CLICK EN TABLEVIEW - CARGAR DATOS EN CONTROLES
+' ============================================
+' Función   : TableViewUsuarios_Click
+' Propósito : Carga en los controles del formulario los datos
+'             del usuario seleccionado, incluyendo el estado
+'             en_linea leído directamente desde la BD
+' ============================================
 Public Sub TableViewUsuarios_Click()
 
+  ' --- 1. Obtener fila seleccionada ---
   Dim iRow As Integer = TableViewUsuarios.Row
   Dim sFechaCreacion As String
-  ' Dim sFechaAcceso As String
 
   btnCrearUsuario.Visible = False
   btnGuardarUsuario.Visible = False
@@ -573,34 +601,45 @@ Public Sub TableViewUsuarios_Click()
 
   If iRow < 0 Then Return
 
-  ' Cargar datos en los controles
+  ' --- 2. Cargar datos básicos del usuario ---
   txtUsuario.Text = TableViewUsuarios[iRow, 1].Text
   txtEmailUsuario.Text = TableViewUsuarios[iRow, 2].Text
+  txtClaveUsuario.Text = ""  ' NO SE MUESTRA LA CONTRASEÑA POR SEGURIDAD
 
-  ' Limpiar contraseña (por seguridad no se muestra)
-  txtClaveUsuario.Text = ""
-
-  ' Estado activo
   If TableViewUsuarios[iRow, 3].Text = "Sí" Then
     RadioButtonSi.Value = True
   Else
     RadioButtonNo.Value = True
   Endif
 
-  ' Fecha de creación
   sFechaCreacion = TableViewUsuarios[iRow, 4].Text
   If sFechaCreacion Then
     Try DateBoxCreacion.Value = CDate(sFechaCreacion)
   Endif
 
-  ' Fecha último acceso (cargar desde BD)
+  ' --- 3. Cargar estado en_linea desde BD (estado real) ---
+  ' SE LEE DESDE BD Y NO DEL GRID PARA REFLEJAR EL ESTADO REAL
+  ' ESPECIALMENTE ÚTIL TRAS CORTES DE ENERGÍA O CUELGUES DE LA APP
+  Dim rEnLinea As Result
+  rEnLinea = hConnServidor.Exec("SELECT en_linea FROM usuarios WHERE id = &1",
+    Val(TableViewUsuarios[iRow, 0].Text))
+  If rEnLinea.Available Then
+    chkEnLinea.Value = rEnLinea["en_linea"] = True
+  Endif
+
+  ' --- 4. Cargar fecha de último acceso ---
   CargarUltimoAcceso(Val(TableViewUsuarios[iRow, 0].Text))
 
 Catch
 
 End
 
-' CARGAR FECHA DE ÚLTIMO ACCESO DESDE BD
+' ============================================
+' Función   : CargarUltimoAcceso
+' Propósito : Lee la fecha de último acceso desde la BD
+'             y la muestra en el DateBox correspondiente
+' Parámetros: iUsuarioID As Integer — ID del usuario a consultar
+' ============================================
 Private Sub CargarUltimoAcceso(iUsuarioID As Integer)
 
   Dim r As Result
@@ -617,22 +656,28 @@ Catch
 
 End
 
-' LIMPIAR CONTROLES DEL FORMULARIO
+' ============================================
+' Función   : LimpiarControlesUsuario
+' Propósito : Limpia todos los controles del formulario
+'             de usuario y los deja en estado inicial
+' ============================================
 Private Sub LimpiarControlesUsuario()
 
   txtUsuario.Text = ""
   txtClaveUsuario.Text = ""
   txtEmailUsuario.Text = ""
-  RadioButtonSi.Value = True  ' Por defecto activo
+  RadioButtonSi.Value = True
+  chkEnLinea.Value = False   ' ESTADO INICIAL: NO EN LÍNEA
   DateBoxCreacion.Value = Now()
   DateBoxUltimoAcceso.Value = Null
-
-  ' Quitar selección de la tabla
   TableViewUsuarios.Row = -1
 
 End
 
-' BOTÓN NUEVO - PREPARAR PARA CREAR USUARIO
+' ============================================
+' Función   : btnNuevoUsuario_Click
+' Propósito : Prepara el formulario para crear un usuario nuevo
+' ============================================
 Public Sub btnNuevoUsuario_Click()
 
   LimpiarControlesUsuario()
@@ -640,21 +685,24 @@ Public Sub btnNuevoUsuario_Click()
 
 End
 
-' TOGGLE MOSTRAR/OCULTAR CONTRASEÑA
+' ============================================
+' Función   : ToggleButtonMostrar_Click
+' Propósito : Alterna la visibilidad de la contraseña
+'             del administrador local
+' ============================================
 Public Sub ToggleButtonMostrar_Click()
 
-  If ToggleButtonMostrar.Value Then
-    txtClaveAdministrador.Password = False
-  Else
-    txtClaveAdministrador.Password = True
-  Endif
-
+  txtClaveAdministrador.Password = Not ToggleButtonMostrar.Value
   txtClaveAdministrador.Refresh()
   txtClaveAdministrador.SetFocus()
 
 End
 
-' GESTIONAR IPS
+' ============================================
+' Función   : btnNuevaIP_Click
+' Propósito : Abre el formulario de edición de IPs y
+'             recarga el combo al volver
+' ============================================
 Public Sub btnNuevaIP_Click()
 
   FEditarIPs.ShowModal()
@@ -662,24 +710,25 @@ Public Sub btnNuevaIP_Click()
 
 End
 
-' CERRAR FORMULARIO
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra las conexiones abiertas y el formulario
+' ============================================
 Public Sub btnCerrar_Click()
 
-  ' AGREGAR ESTO:
   m_ApiCredenciales.LiberarConexion()
 
-  If hConnServidor And hConnServidor.Opened Then
-    hConnServidor.Close()
-  Endif
-
-  If hConn And hConn.Opened Then
-    hConn.Close()
-  Endif
+  If hConnServidor And hConnServidor.Opened Then hConnServidor.Close()
+  If hConn And hConn.Opened Then hConn.Close()
 
   Me.Close()
 
 End
 
+' ============================================
+' Función   : btnCrearUsuario_Click
+' Propósito : Prepara el formulario para ingresar un usuario nuevo
+' ============================================
 Public Sub btnCrearUsuario_Click()
 
   btnCrearUsuario.Visible = False
@@ -688,36 +737,36 @@ Public Sub btnCrearUsuario_Click()
 
   txtUsuario.Text = ""
   txtClaveUsuario.Text = ""
-  ' Asignar fecha actual al DateBox
   DateBoxCreacion.Value = Now
 
 End
 
-' BOTÓN: TODOS LOS PROYECTOS (Refrescar)
+' ============================================
+' Función   : btnProyectosTodos_Click
+' Propósito : Recarga todos los proyectos en el TableView
+' ============================================
 Public Sub btnProyectosTodos_Click()
 
   CargarProyectosDelServidor()
 
 End
 
-' BOTÓN: PROYECTOS EN CURSO (Activos)
+' ============================================
+' Función   : btnProyectosEnCurso_Click
+' Propósito : Filtra y muestra solo los proyectos activos
+' ============================================
 Public Sub btnProyectosEnCurso_Click()
-
-  Dim rs As Result
 
   If Not hConnServidor Or Not hConnServidor.Opened Then
     m_Sonido.sonar("Warning")
-    Message.Warning("No hay conexión al servidor")
+    Message.Warning("No hay conexión al servidor.")
     Return
   Endif
 
-  ' Configurar el TableView (mismo formato)
   ConfigurarTableViewProyectos()
 
-  ' ✅ Filtrar solo por activo = 1 (ocupado es indistinto)
-  rs = hConnServidor.Exec("SELECT * FROM proyectos " &
-    "WHERE activo = 1 " &
-    "ORDER BY fecha_creacion DESC;")
+  Dim rs As Result = hConnServidor.Exec("SELECT * FROM proyectos " &
+    "WHERE activo = 1 ORDER BY fecha_creacion DESC;")
 
   LlenarTableViewProyectos(rs)
 
@@ -727,25 +776,22 @@ Catch
 
 End
 
-' BOTÓN: PROYECTOS ARCHIVADOS (Inactivos)
+' ============================================
+' Función   : btnProyectosArchivados_Click
+' Propósito : Filtra y muestra solo los proyectos archivados
+' ============================================
 Public Sub btnProyectosArchivados_Click()
-
-  Dim rs As Result
-  ' Dim i As Integer
 
   If Not hConnServidor Or Not hConnServidor.Opened Then
     m_Sonido.sonar("Warning")
-    Message.Warning("No hay conexión al servidor")
+    Message.Warning("No hay conexión al servidor.")
     Return
   Endif
 
-  ' Configurar el TableView (mismo formato)
   ConfigurarTableViewProyectos()
 
-  ' ✅ Filtrar por activo = 0
-  rs = hConnServidor.Exec("SELECT * FROM proyectos " &
-    "WHERE activo = 0 " &
-    "ORDER BY fecha_creacion DESC;")
+  Dim rs As Result = hConnServidor.Exec("SELECT * FROM proyectos " &
+    "WHERE activo = 0 ORDER BY fecha_creacion DESC;")
 
   LlenarTableViewProyectos(rs)
 
@@ -755,7 +801,11 @@ Catch
 
 End
 
-' CONFIGURAR ESTRUCTURA DEL TABLEVIEW
+' ============================================
+' Función   : ConfigurarTableViewProyectos
+' Propósito : Establece la estructura de columnas del
+'             TableView de proyectos
+' ============================================
 Private Sub ConfigurarTableViewProyectos()
 
   With TableViewProyectos
@@ -784,77 +834,80 @@ Private Sub ConfigurarTableViewProyectos()
 
 End
 
-' LLENAR TABLEVIEW CON DATOS
+' ============================================
+' Función   : LlenarTableViewProyectos
+' Propósito : Llena el TableView de proyectos con los
+'             datos del Result recibido
+' Parámetros: rs As Result — resultado de la consulta
+' ============================================
 Private Sub LlenarTableViewProyectos(rs As Result)
 
   Dim i As Integer
 
-  If rs.Available Then
-    TableViewProyectos.Rows.Count = rs.Count
-    i = 0
-
-    While rs.Available
-      TableViewProyectos[i, 0].Text = rs["id"]
-      TableViewProyectos[i, 1].Text = rs["nombre"]
-      TableViewProyectos[i, 2].Text = rs["activo"]
-
-      ' Columna "Tipo"
-      Select Case rs["tipo_producto"]
-        Case 1
-          TableViewProyectos[i, 4].Text = "Revista en markdown"
-        Case 2
-          TableViewProyectos[i, 4].Text = "Libro en markdown"
-        Case 3
-          TableViewProyectos[i, 4].Text = "Libro en LaTeX"
-        Default
-          TableViewProyectos[i, 4].Text = "Desconocido"
-      End Select
-
-      ' Columna "Ocupado" con color
-      If rs["ocupado"] = True Or rs["ocupado"] = 1 Then
-        TableViewProyectos[i, 3].Text = "SÍ"
-        TableViewProyectos[i, 3].Background = Color.RGB(255, 200, 200)
-      Else
-        TableViewProyectos[i, 3].Text = "NO"
-        TableViewProyectos[i, 3].Background = Color.RGB(200, 255, 200)
-      Endif
-
-      ' Fecha de Creación
-      If rs["fecha_creacion"] Then
-        Try TableViewProyectos[i, 5].Text = Format(rs["fecha_creacion"], "dd/mm/yyyy hh:nn")
-      Endif
-
-      ' Fecha de Modificación
-      If rs["fecha_modificacion"] Then
-        Try TableViewProyectos[i, 6].Text = Format(rs["fecha_modificacion"], "dd/mm/yyyy hh:nn")
-      Endif
-
-      i += 1
-      rs.MoveNext()
-    Wend
-  Else
-    ' No hay proyectos
+  If Not rs.Available Then
     TableViewProyectos.Rows.Count = 0
-  Endif
-
-End
-
-' CARGAR PROYECTOS DEL SERVIDOR (Refactorizado)
-Private Sub CargarProyectosDelServidor()
-
-  Dim rs As Result
-
-  If Not hConnServidor Or Not hConnServidor.Opened Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay conexión al servidor")
     Return
   Endif
 
-  ' Configurar el TableView
+  TableViewProyectos.Rows.Count = rs.Count
+  i = 0
+
+  While rs.Available
+    TableViewProyectos[i, 0].Text = rs["id"]
+    TableViewProyectos[i, 1].Text = rs["nombre"]
+    TableViewProyectos[i, 2].Text = rs["activo"]
+
+    Select Case rs["tipo_producto"]
+      Case 1
+        TableViewProyectos[i, 4].Text = "Revista en markdown"
+      Case 2
+        TableViewProyectos[i, 4].Text = "Libro en markdown"
+      Case 3
+        TableViewProyectos[i, 4].Text = "Libro en LaTeX"
+      Default
+        TableViewProyectos[i, 4].Text = "Desconocido"
+    End Select
+
+    ' COLUMNA OCUPADO CON INDICADOR VISUAL DE COLOR
+    If rs["ocupado"] = True Or rs["ocupado"] = 1 Then
+      TableViewProyectos[i, 3].Text = "SÍ"
+      TableViewProyectos[i, 3].Background = Color.RGB(255, 200, 200)
+    Else
+      TableViewProyectos[i, 3].Text = "NO"
+      TableViewProyectos[i, 3].Background = Color.RGB(200, 255, 200)
+    Endif
+
+    If rs["fecha_creacion"] Then
+      Try TableViewProyectos[i, 5].Text = Format(rs["fecha_creacion"], "dd/mm/yyyy hh:nn")
+    Endif
+
+    If rs["fecha_modificacion"] Then
+      Try TableViewProyectos[i, 6].Text = Format(rs["fecha_modificacion"], "dd/mm/yyyy hh:nn")
+    Endif
+
+    i += 1
+    rs.MoveNext()
+  Wend
+
+End
+
+' ============================================
+' Función   : CargarProyectosDelServidor
+' Propósito : Consulta todos los proyectos del servidor
+'             y los muestra en el TableView
+' ============================================
+Private Sub CargarProyectosDelServidor()
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
   ConfigurarTableViewProyectos()
 
-  ' Todos los proyectos
-  rs = hConnServidor.Exec("SELECT * FROM proyectos ORDER BY fecha_creacion DESC;")
+  Dim rs As Result = hConnServidor.Exec(
+    "SELECT * FROM proyectos ORDER BY fecha_creacion DESC;")
 
   LlenarTableViewProyectos(rs)
 
@@ -864,74 +917,79 @@ Catch
 
 End
 
-' EVENTO CLICK EN TABLEVIEW PROYECTOS
+' ============================================
+' Función   : TableViewProyectos_Click
+' Propósito : Carga el estado del proyecto seleccionado,
+'             incluyendo el estado ocupado leído desde la BD
+'             para reflejar el estado real tras accidentes
+' ============================================
 Public Sub TableViewProyectos_Click()
 
+  ' --- 1. Obtener fila seleccionada ---
   Dim iRow As Integer = TableViewProyectos.Row
-  Dim iProyectoID As Integer
-  Dim rs As Result
-  Dim bActivo As Boolean
 
   If iRow < 0 Then Return
+  If Not hConnServidor Or Not hConnServidor.Opened Then Return
 
-  If Not hConnServidor Or Not hConnServidor.Opened Then
-    Return
-  Endif
+  ' --- 2. Consultar estado real desde BD ---
+  ' SE LEEN ACTIVO Y OCUPADO EN UNA SOLA CONSULTA
+  ' OCUPADO SE LEE DESDE BD Y NO DEL GRID PARA REFLEJAR EL ESTADO REAL
+  ' ESPECIALMENTE ÚTIL TRAS CORTES DE ENERGÍA O CUELGUES DE LA APP
+  Dim iProyectoID As Integer = Val(TableViewProyectos[iRow, 0].Text)
+  Dim rs As Result
 
-  ' Obtener ID del proyecto
-  iProyectoID = Val(TableViewProyectos[iRow, 0].Text)
-
-  ' Consultar estado
-  rs = hConnServidor.Exec("SELECT activo FROM proyectos WHERE id = " & iProyectoID & ";")
+  rs = hConnServidor.Exec("SELECT activo, ocupado FROM proyectos WHERE id = " & iProyectoID & ";")
 
   If rs.Available Then
-    bActivo = rs["activo"]
-
-    ' Reflejar el estado en los RadioButtons
+    Dim bActivo As Boolean = rs["activo"]
     RadioButtonEnCurso.Value = bActivo
     RadioButtonArchivar.Value = Not bActivo
+    ' CARGAR ESTADO OCUPADO EN EL CHECKBOX
+    chkOcupado.Value = rs["ocupado"] = True
   Endif
 
 Catch
 
 End
 
-' GUARDAR CAMBIOS DE PROYECTO
+' ============================================
+' Función   : btnGuardarCambiosProyecto_Click
+' Propósito : Actualiza el estado de un proyecto, incluyendo
+'             el campo ocupado para liberar proyectos bloqueados
+'             por cortes de energía o cuelgues de la app
+' ============================================
 Public Sub btnGuardarCambiosProyecto_Click()
 
+  ' --- 1. Verificar selección y conexión ---
   Dim iRow As Integer = TableViewProyectos.Row
-  Dim iProyectoID As Integer
-  Dim bNuevoEstado As Boolean
-  Dim sNombreProyecto As String
 
-  ' VERIFICAR QUE HAY UN PROYECTO SELECCIONADO
   If iRow < 0 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar un proyecto de la tabla para modificar")
+    Message.Warning("Debe seleccionar un proyecto de la tabla para modificar.")
     Return
   Endif
 
-  ' VERIFICAR CONEXIÓN
   If Not hConnServidor Or Not hConnServidor.Opened Then
     m_Sonido.sonar("Warning")
-    Message.Warning("No hay conexión al servidor")
+    Message.Warning("No hay conexión al servidor.")
     Return
   Endif
 
-  ' OBTENER DATOS DEL PROYECTO SELECCIONADO
-  iProyectoID = Val(TableViewProyectos[iRow, 0].Text)
-  sNombreProyecto = TableViewProyectos[iRow, 1].Text
+  ' --- 2. Obtener datos del proyecto ---
+  Dim iProyectoID As Integer = Val(TableViewProyectos[iRow, 0].Text)
+  Dim sNombreProyecto As String = TableViewProyectos[iRow, 1].Text
+  Dim bNuevoEstado As Boolean = RadioButtonEnCurso.Value
 
-  ' Obtener nuevo estado desde los RadioButtons
-  bNuevoEstado = RadioButtonEnCurso.Value
-
+  ' --- 3. Actualizar activo y ocupado en la BD ---
+  ' OCUPADO SE INCLUYE SIEMPRE PARA PERMITIR LIBERAR PROYECTOS BLOQUEADOS
   hConnServidor.Exec("UPDATE proyectos SET activo = " &
     If(bNuevoEstado, "TRUE", "FALSE") &
+      ", ocupado = " & If(chkOcupado.Value, "1", "0") &
       ", fecha_modificacion = NOW() " &
       "WHERE id = " & iProyectoID & ";")
 
     m_Sonido.sonar("Info")
-    Message.Info("Estado del proyecto <b>'" & sNombreProyecto & "'</b> actualizado correctamente")
+    Message.Info("Estado del proyecto <b>'" & sNombreProyecto & "'</b> actualizado correctamente.")
 
     CargarProyectosDelServidor()
 
@@ -941,142 +999,118 @@ Public Sub btnGuardarCambiosProyecto_Click()
 
 End
 
+' ============================================
+' Función   : CargarListaRespaldos
+' Propósito : Lista los archivos .sql del directorio de
+'             respaldo en el ListBox correspondiente
+' ============================================
 Private Sub CargarListaRespaldos()
 
-  Dim sRutaRespaldo As String
-  Dim aArchivos As String[]
-  Dim sArchivo As String
-
-  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
-
-  ' OBTENER ARCHIVOS .SQL DEL DIRECTORIO
-  aArchivos = RDir(sRutaRespaldo, "*.sql")
+  ' --- 1. Obtener archivos SQL del directorio de respaldo ---
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim aArchivos As String[] = RDir(sRutaRespaldo, "*.sql")
 
   If aArchivos.Count = 0 Then Return
 
-  ' ORDENAR ARCHIVOS (MÁS RECIENTES PRIMERO)
+  ' --- 2. Ordenar y mostrar los más recientes primero ---
   aArchivos.Sort(gb.Descent)
 
   ListarBases.Clear()
-
-  ' AGREGAR CADA ARCHIVO AL LISTVIEW
+  Dim sArchivo As String
   For Each sArchivo In aArchivos
     ListarBases.Add(sArchivo, sArchivo)
   Next
 
 End
 
+' ============================================
+' Función   : ListarBases_Select
+' Propósito : Al seleccionar un archivo de respaldo, extrae
+'             y muestra las tablas que contiene
+' ============================================
 Public Sub ListarBases_Select()
 
-  Dim sRutaRespaldo As String
-  Dim sArchivoSQL As String
-  Dim sContenido As String
-  Dim aLineas As String[]
+  ' --- 1. Verificar selección ---
+  If Not ListarBases.Current Then Return
+
+  ' --- 2. Leer y parsear el archivo SQL ---
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim sArchivoSQL As String = sRutaRespaldo &/ ListarBases.Current.Key
+  Dim sContenido As String = File.Load(sArchivoSQL)
+  Dim aLineas As String[] = Split(sContenido, "\n")
+
+  ListarTablas.Clear()
+
+  ' --- 3. Buscar y extraer nombres de tablas ---
   Dim sLinea As String
   Dim sNombreTabla As String
   Dim iPos As Integer
 
-  ' VERIFICAR QUE HAY ALGO SELECCIONADO
-  If Not ListarBases.Current Then Return
-
-  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
-  sArchivoSQL = sRutaRespaldo &/ ListarBases.Current.Key
-
-  ' LEER EL ARCHIVO SQL
-  sContenido = File.Load(sArchivoSQL)
-
-  ' DIVIDIR EN LÍNEAS
-  aLineas = Split(sContenido, "\n")
-
-  ListarTablas.Clear()
-
-  ' BUSCAR LÍNEAS QUE CONTENGAN CREATE TABLE
   For Each sLinea In aLineas
     sLinea = Trim(sLinea)
-
-    ' BUSCAR ESPECÍFICAMENTE EL PATRÓN DE MYSQL: CREATE TABLE `NOMBRE_TABLA`
     If InStr(UCase(sLinea), "CREATE TABLE") > 0 Then
-      ' REMOVER LOS BACKTICKS
       sLinea = Replace(sLinea, "`", "")
-
-      ' BUSCAR LA POSICIÓN DE CREATE TABLE
       iPos = InStr(UCase(sLinea), "CREATE TABLE ")
-
       If iPos > 0 Then
-        ' EXTRAER DESDE DESPUÉS DE "CREATE TABLE "
-        sNombreTabla = Mid(sLinea, iPos + 13) ' 13 = Len("CREATE TABLE ")
-        sNombreTabla = Trim(sNombreTabla)
-
-        ' QUITAR TODO LO QUE VIENE DESPUÉS DEL NOMBRE DE LA TABLA (ESPACIOS, PARÉNTESIS, ETC.)
+        sNombreTabla = Trim(Mid(sLinea, iPos + 13))
         iPos = InStr(sNombreTabla, " ")
         If iPos > 0 Then sNombreTabla = Left(sNombreTabla, iPos - 1)
-
         iPos = InStr(sNombreTabla, "(")
         If iPos > 0 Then sNombreTabla = Left(sNombreTabla, iPos - 1)
-
-        ' AGREGAR AL LISTBOX SI NO ESTÁ VACÍO
-        If Trim(sNombreTabla) <> "" Then
-          ListarTablas.Add(Trim(sNombreTabla))
-        Endif
+        If Trim(sNombreTabla) <> "" Then ListarTablas.Add(Trim(sNombreTabla))
       Endif
     Endif
   Next
 
-  ' LIMPIAR COMPLETAMENTE EL TABLEVIEW
+  ' --- 4. Limpiar el TableView de contenido ---
   ListarContenido.Rows.Count = 0
   ListarContenido.Columns.Count = 0
 
 End
 
+' ============================================
+' Función   : ListarTablas_Select
+' Propósito : Al seleccionar una tabla, muestra su contenido
+' ============================================
 Public Sub ListarTablas_Select()
 
   LlenaGrid()
 
 End
 
+' ============================================
+' Función   : LlenaGrid
+' Propósito : Extrae la estructura y datos de la tabla
+'             seleccionada y los muestra en el TableView
+' ============================================
 Private Sub LlenaGrid()
 
-  Dim sRutaRespaldo As String
-  Dim sArchivoSQL As String
-  Dim sContenido As String
-  Dim sTablaSeleccionada As String
-  Dim i As Integer
-  Dim j As Integer
-
-  ' Verificar que hay una tabla seleccionada
   If ListarTablas.Index < 0 Then Return
   If Not ListarBases.Current Then Return
 
-  sTablaSeleccionada = ListarTablas[ListarTablas.Index].Text
+  Dim sTablaSeleccionada As String = ListarTablas[ListarTablas.Index].Text
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim sArchivoSQL As String = sRutaRespaldo &/ ListarBases.Current.Key
+  Dim sContenido As String = File.Load(sArchivoSQL)
 
-  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
-  sArchivoSQL = sRutaRespaldo &/ ListarBases.Current.Key
-
-  ' Leer el archivo SQL
-  sContenido = File.Load(sArchivoSQL)
-
-  ' Extraer columnas y datos
   ExtraerEstructuraYDatos(sContenido, sTablaSeleccionada)
 
-  ' Limpiar el TableView
   ListarContenido.Clear()
 
-  ' Verificar si hay columnas
-  If $aColumnas.Count = 0 Then
-    Return
-  Endif
+  If $aColumnas.Count = 0 Then Return
 
-  ' Configurar columnas
+  ' --- CONFIGURAR COLUMNAS ---
   ListarContenido.Columns.Count = $aColumnas.Count
+  Dim i As Integer
   For i = 0 To $aColumnas.Max
     ListarContenido.Columns[i].Title = $aColumnas[i]
     ListarContenido.Columns[i].Width = -1
   Next
 
-  ' Configurar filas y llenar datos
+  ' --- LLENAR FILAS ---
   If $aRegistros.Count > 0 Then
     ListarContenido.Rows.Count = $aRegistros.Count
-
+    Dim j As Integer
     For i = 0 To $aRegistros.Max
       For j = 0 To Min($aRegistros[i].Max, $aColumnas.Max)
         ListarContenido[i, j].Text = $aRegistros[i][j]
@@ -1086,44 +1120,42 @@ Private Sub LlenaGrid()
 
 End
 
+' ============================================
+' Función   : ExtraerEstructuraYDatos
+' Propósito : Parsea el SQL del respaldo extrayendo columnas
+'             e INSERTs de la tabla indicada
+' Parámetros: sContenido As String — contenido del archivo SQL
+'             sTabla     As String — nombre de la tabla a extraer
+' ============================================
 Private Sub ExtraerEstructuraYDatos(sContenido As String, sTabla As String)
 
-  Dim aLineas As String[]
+  Dim aLineas As String[] = Split(sContenido, "\n")
   Dim sLinea As String
-  Dim bDentroCreate As Boolean
+  Dim bDentroCreate As Boolean = False
   Dim iPosInicio As Integer
   Dim iPosFin As Integer
   Dim sCampo As String
-  Dim iContadorInsert As Integer
 
   $aColumnas = New String[]
   $aRegistros = New String[][]
 
-  aLineas = Split(sContenido, "\n")
-  bDentroCreate = False
-  iContadorInsert = 0
-
   For Each sLinea In aLineas
     sLinea = Trim(sLinea)
 
-    ' Buscar CREATE TABLE
+    ' DETECTAR INICIO DE CREATE TABLE
     If InStr(UCase(sLinea), "CREATE TABLE") > 0 And InStr(sLinea, "`" & sTabla & "`") > 0 Then
       bDentroCreate = True
       Continue
     Endif
 
-    ' Extraer columnas
     If bDentroCreate Then
-      ' Buscar líneas con definición de campos (empiezan con backtick)
+      ' EXTRAER DEFINICIONES DE COLUMNAS
       If Left(Trim(sLinea), 1) = "`" Then
-        ' Verificar que no sea una clave o constraint
         If Not InStr(UCase(sLinea), "PRIMARY KEY") And
             Not InStr(UCase(sLinea), "UNIQUE KEY") And
             Not InStr(UCase(sLinea), "CONSTRAINT") And
             Not InStr(UCase(sLinea), "FOREIGN KEY") And
             Not InStr(UCase(sLinea), "KEY `") Then
-
-          ' Extraer nombre del campo (primer texto entre backticks)
           iPosInicio = InStr(sLinea, "`")
           If iPosInicio > 0 Then
             iPosFin = InStr(sLinea, "`", iPosInicio + 1)
@@ -1134,25 +1166,15 @@ Private Sub ExtraerEstructuraYDatos(sContenido As String, sTabla As String)
           Endif
         Endif
       Endif
-
-      ' Detectar fin de CREATE TABLE
-      If InStr(sLinea, ") ENGINE=") > 0 Then
-        bDentroCreate = False
-
-      Endif
+      ' DETECTAR FIN DE CREATE TABLE
+      If InStr(sLinea, ") ENGINE=") > 0 Then bDentroCreate = False
     Endif
 
-    ' Buscar INSERT INTO - DEBUGGING
+    ' EXTRAER DATOS DE INSERT INTO
     If InStr(UCase(sLinea), "INSERT INTO") > 0 Then
-      Inc iContadorInsert
       If InStr(sLinea, "`" & sTabla & "`") > 0 Then
-
-        ' Extraer los datos
         If InStr(UCase(sLinea), "VALUES") > 0 Then
-
           ExtraerDatosInsert(sLinea)
-        Else
-
         Endif
       Endif
     Endif
@@ -1160,60 +1182,50 @@ Private Sub ExtraerEstructuraYDatos(sContenido As String, sTabla As String)
 
 End
 
+' ============================================
+' Función   : ExtraerDatosInsert
+' Propósito : Extrae los grupos de valores de un INSERT INTO
+' Parámetros: sLinea As String — línea completa del INSERT
+' ============================================
 Private Sub ExtraerDatosInsert(sLinea As String)
 
-  Dim sValores As String
-  Dim aGrupos As String[]
+  Dim iPosValues As Integer = InStr(UCase(sLinea), "VALUES")
+
+  If iPosValues = 0 Then Return
+
+  Dim sValores As String = Trim(Mid(sLinea, iPosValues + 6))
+  Dim aGrupos As String[] = DividirRegistros(sValores)
+
   Dim sGrupo As String
-  Dim aValoresFila As String[]
-  Dim iPosValues As Integer
-
-  ' Extraer la parte VALUES
-  iPosValues = InStr(UCase(sLinea), "VALUES")
-  If iPosValues = 0 Then
-
-    Return
-  Endif
-
-  sValores = Trim(Mid(sLinea, iPosValues + 6))
-
-  ' Dividir por ),( para obtener cada registro
-  aGrupos = DividirRegistros(sValores)
-
   For Each sGrupo In aGrupos
-
-    aValoresFila = ParsearValores(sGrupo)
-
-    $aRegistros.Add(aValoresFila)
+    $aRegistros.Add(ParsearValores(sGrupo))
   Next
 
 End
 
+' ============================================
+' Función   : DividirRegistros
+' Propósito : Separa los grupos de valores de un INSERT
+'             respetando comillas y paréntesis anidados
+' Parámetros: sValores As String — parte VALUES del INSERT
+' Retorna   : String[] — array con un elemento por registro
+' ============================================
 Private Function DividirRegistros(sValores As String) As String[]
 
   Dim aResultado As New String[]
-  Dim sRegistro As String
-  Dim bDentroComilla As Boolean
+  Dim sRegistro As String = ""
+  Dim bDentroComilla As Boolean = False
+  Dim iParentesis As Integer = 0
+  Dim cAnterior As String = ""
   Dim i As Integer
   Dim c As String
-  Dim cAnterior As String
-  Dim iParentesis As Integer
 
-  sRegistro = ""
-  bDentroComilla = False
-  iParentesis = 0
-  cAnterior = ""
-
-  ' Limpiar el punto y coma final si existe
   sValores = Trim(sValores)
-  If Right(sValores, 1) = ";" Then
-    sValores = Left(sValores, Len(sValores) - 1)
-  Endif
+  If Right(sValores, 1) = ";" Then sValores = Left(sValores, Len(sValores) - 1)
 
   For i = 1 To Len(sValores)
     c = Mid(sValores, i, 1)
 
-    ' Detectar comilla simple (ignorar si está escapada)
     If c = "'" And cAnterior <> "\\" Then
       bDentroComilla = Not bDentroComilla
       sRegistro &= c
@@ -1225,14 +1237,12 @@ Private Function DividirRegistros(sValores As String) As String[]
       If iParentesis > 0 Then
         sRegistro &= c
       Else
-        ' Fin de un registro
         If Trim(sRegistro) <> "" Then
           aResultado.Add(sRegistro)
           sRegistro = ""
         Endif
       Endif
     Else If c = "," And Not bDentroComilla And iParentesis = 0 Then
-      ' Coma entre registros, ignorar
       Continue
     Else
       sRegistro &= c
@@ -1241,67 +1251,63 @@ Private Function DividirRegistros(sValores As String) As String[]
     cAnterior = c
   Next
 
-  ' Agregar el último si quedó algo
-  If Trim(sRegistro) <> "" Then
-    aResultado.Add(sRegistro)
-  Endif
+  If Trim(sRegistro) <> "" Then aResultado.Add(sRegistro)
 
   Return aResultado
 
 End
 
+' ============================================
+' Función   : ParsearValores
+' Propósito : Separa los valores individuales de un registro
+'             respetando comillas simples
+' Parámetros: sRegistro As String — un grupo de valores
+' Retorna   : String[] — array con un elemento por valor
+' ============================================
 Private Function ParsearValores(sRegistro As String) As String[]
 
   Dim aResultado As New String[]
-  Dim sValor As String
-  Dim bDentroComilla As Boolean
+  Dim sValor As String = ""
+  Dim bDentroComilla As Boolean = False
+  Dim cAnterior As String = ""
   Dim i As Integer
   Dim c As String
-  Dim cAnterior As String
-
-  sValor = ""
-  bDentroComilla = False
-  cAnterior = ""
 
   For i = 1 To Len(sRegistro)
     c = Mid(sRegistro, i, 1)
-
-    ' Detectar comilla simple (ignorar si está escapada)
     If c = "'" And cAnterior <> "\\" Then
       bDentroComilla = Not bDentroComilla
     Else If c = "," And Not bDentroComilla Then
-      ' Fin de un valor
       aResultado.Add(LimpiarValor(sValor))
       sValor = ""
     Else
       sValor &= c
     Endif
-
     cAnterior = c
   Next
 
-  ' Agregar el último valor
   aResultado.Add(LimpiarValor(sValor))
-
   Return aResultado
 
 End
 
+' ============================================
+' Función   : LimpiarValor
+' Propósito : Elimina comillas y decodifica caracteres
+'             escapados de un valor SQL
+' Parámetros: sValor As String — valor crudo del SQL
+' Retorna   : String — valor limpio y legible
+' ============================================
 Private Function LimpiarValor(sValor As String) As String
 
   sValor = Trim(sValor)
 
-  ' NULL
-  If UCase(sValor) = "NULL" Then
-    Return ""
-  Endif
+  If UCase(sValor) = "NULL" Then Return ""
 
-  ' Remover comillas
   If Left(sValor, 1) = "'" And Right(sValor, 1) = "'" Then
     sValor = Mid(sValor, 2, Len(sValor) - 2)
   Endif
 
-  ' Decodificar caracteres escapados
   sValor = Replace(sValor, "\\'", "'")
   sValor = Replace(sValor, "\\n", "\n")
   sValor = Replace(sValor, "\\t", "\t")
@@ -1311,82 +1317,61 @@ Private Function LimpiarValor(sValor As String) As String
 
 End
 
+' ============================================
+' Función   : btnEliminarBase_Click
+' Propósito : Elimina el archivo de respaldo seleccionado
+'             tras confirmación del usuario
+' ============================================
 Public Sub btnEliminarBase_Click()
 
-  Dim sRutaRespaldo As String
-  Dim sArchivoSQL As String
-  Dim iRespuesta As Integer
-
-  ' VERIFICAR QUE HAY ALGO SELECCIONADO
+  ' --- 1. Verificar selección ---
   If Not ListarBases.Current Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar un archivo de respaldo para eliminar")
+    Message.Warning("Debe seleccionar un archivo de respaldo para eliminar.")
     Return
   Endif
 
-  ' CONFIRMAR LA ELIMINACIÓN
+  ' --- 2. Confirmar eliminación ---
   m_Sonido.sonar("Question")
-  iRespuesta = Message.Question("¿Está seguro de que desea eliminar el archivo de respaldo?\n\n" &
-    ListarBases.Current.Key & "\n\n" &
+  Dim iRespuesta As Integer = Message.Question(
+    "¿Está seguro de que desea eliminar el archivo de respaldo?" & Chr(10) & Chr(10) &
+    ListarBases.Current.Key & Chr(10) & Chr(10) &
     "Esta acción no se puede deshacer.",
     "Sí", "No")
 
-  If iRespuesta <> 1 Then Return  ' Si no confirmó, salir
+  If iRespuesta <> 1 Then Return
 
-  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
-  sArchivoSQL = sRutaRespaldo &/ ListarBases.Current.Key
+  ' --- 3. Eliminar y actualizar vista ---
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim sArchivoSQL As String = sRutaRespaldo &/ ListarBases.Current.Key
 
-  ' ELIMINAR EL ARCHIVO
   Try Kill sArchivoSQL
-
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("Error al eliminar el archivo:\n" & Error.Text)
+    Message.Error("Error al eliminar el archivo:" & Chr(10) & Error.Text)
     Return
   Endif
 
-  ' ACTUALIZAR LA LISTA
   CargarListaRespaldos()
-
-  ' LIMPIAR EL LISTBOX DE TABLAS Y EL TABLEVIEW
   ListarTablas.Clear()
   ListarContenido.Rows.Count = 0
   ListarContenido.Columns.Count = 0
 
   m_Sonido.sonar("Info")
-  Message.Info("Archivo de respaldo eliminado correctamente")
+  Message.Info("Archivo de respaldo eliminado correctamente.")
 
 End
-'
-'
-'
-' Gambas class file
 
-' ============================================================================
-' FORMULARIO: FApiCredenciales
-' DESCRIPCIÓN: ABM (ALTA, BAJA LÓGICA, MODIFICACIÓN) DE CREDENCIALES DE API
-' AUTOR: gbpublisher
-' DEPENDENCIAS: m_ApiCredenciales, MConexion
-' ============================================================================
-'
-' COMPONENTES DEL FORMULARIO:
-'   - btnNuevaAPI: BOTÓN PARA LIMPIAR FORMULARIO Y PREPARAR NUEVA ENTRADA
-'   - btnGuardarAPI: BOTÓN PARA GUARDAR NUEVA CREDENCIAL
-'   - btnGuardarCambiosAPI: BOTÓN PARA ACTUALIZAR CREDENCIAL EXISTENTE
-'   - ID_apis: VALUEBOX PARA MOSTRAR ID (SOLO LECTURA)
-'   - txtProveedor: TEXTBOX PARA NOMBRE DEL PROVEEDOR
-'   - ckbActivo: CHECKBOX PARA ESTADO ACTIVO/INACTIVO
-'   - txtIdentificador: TEXTBOX PARA DATO ADICIONAL (SUBSCRIPTION KEY, ETC.)
-'   - txtRegion: TEXTBOX PARA REGIÓN DEL SERVICIO
-'   - txtApiKey: TEXTBOX PARA LA API KEY (PASSWORD MODE)
-'   - txtComentarios: TEXTAREA PARA NOTAS
-'   - gvAPIkeys: GRIDVIEW PARA LISTAR TODAS LAS CREDENCIALES
-' ============================================================================
+' ============================================
+' SECCIÓN: GESTIÓN DE CREDENCIALES DE API
+' Las siguientes funciones gestionan el ABM de API Keys
+' en la tabla api_credenciales de MySQL
+' ============================================
 
-' ============================================================================
-' PROCEDIMIENTO: ConfigurarGridView
-' DESCRIPCIÓN: ESTABLECE LA ESTRUCTURA DEL GRIDVIEW
-' ============================================================================
+' ============================================
+' Función   : ConfigurarGridView
+' Propósito : Establece la estructura del GridView de APIs
+' ============================================
 Private Sub ConfigurarGridView()
 
   With gvAPIkeys
@@ -1395,24 +1380,18 @@ Private Sub ConfigurarGridView()
     .Mode = Select.Single
     .Columns.Count = 6
 
-    ' CONFIGURAR COLUMNAS
     .Columns[0].Title = "ID"
     .Columns[0].Width = 40
     .Columns[0].Alignment = Align.Center
-
     .Columns[1].Title = "Proveedor"
     .Columns[1].Width = 150
-
     .Columns[2].Title = "Identificador"
     .Columns[2].Width = 150
-
     .Columns[3].Title = "Región"
     .Columns[3].Width = 150
-
     .Columns[4].Title = "Activo"
     .Columns[4].Width = 50
     .Columns[4].Alignment = Align.Center
-
     .Columns[5].Title = "Última modificación"
     .Columns[5].Width = 150
 
@@ -1421,32 +1400,23 @@ Private Sub ConfigurarGridView()
 
 End
 
-' ============================================================================
-' PROCEDIMIENTO: CargarCredenciales
-' DESCRIPCIÓN: CARGA TODAS LAS CREDENCIALES EN EL GRIDVIEW
-' ============================================================================
+' ============================================
+' Función   : CargarCredenciales
+' Propósito : Carga todas las credenciales de API en el GridView
+' ============================================
 Private Sub CargarCredenciales()
 
-  Dim hResult As Result
-  Dim iRow As Integer
-
-  ' OBTENER TODAS LAS CREDENCIALES (ACTIVAS E INACTIVAS)
-  hResult = m_ApiCredenciales.ListarCredenciales(False)
+  Dim hResult As Result = m_ApiCredenciales.ListarCredenciales(False)
 
   If hResult = Null Then
     gvAPIkeys.Rows.Count = 0
     Return
   Endif
 
-  ' ESTABLECER NÚMERO DE FILAS
   gvAPIkeys.Rows.Count = hResult.Count
+  If hResult.Count = 0 Then Return
 
-  If hResult.Count = 0 Then
-    Return
-  Endif
-
-  ' LLENAR EL GRIDVIEW
-  iRow = 0
+  Dim iRow As Integer = 0
   For Each hResult
     gvAPIkeys[iRow, 0].Text = Str$(hResult!id)
     gvAPIkeys[iRow, 1].Text = hResult!proveedor
@@ -1455,14 +1425,12 @@ Private Sub CargarCredenciales()
     gvAPIkeys[iRow, 4].Text = If(hResult!activo, "Sí", "No")
     gvAPIkeys[iRow, 5].Text = Format$(hResult!date_modif, "dd/mm/yyyy hh:nn")
 
-    ' COLOREAR FILAS INACTIVAS
+    ' FILAS INACTIVAS CON FONDO GRIS
     If Not hResult!activo Then
-      gvAPIkeys[iRow, 0].Background = Color.LightGray
-      gvAPIkeys[iRow, 1].Background = Color.LightGray
-      gvAPIkeys[iRow, 2].Background = Color.LightGray
-      gvAPIkeys[iRow, 3].Background = Color.LightGray
-      gvAPIkeys[iRow, 4].Background = Color.LightGray
-      gvAPIkeys[iRow, 5].Background = Color.LightGray
+      Dim k As Integer
+      For k = 0 To 5
+        gvAPIkeys[iRow, k].Background = Color.LightGray
+      Next
     Endif
 
     Inc iRow
@@ -1470,14 +1438,14 @@ Private Sub CargarCredenciales()
 
 End
 
-' ============================================================================
-' PROCEDIMIENTO: LimpiarFormulario
-' DESCRIPCIÓN: LIMPIA TODOS LOS CAMPOS Y PREPARA PARA NUEVA ENTRADA
-' ============================================================================
+' ============================================
+' Función   : LimpiarFormulario
+' Propósito : Limpia el formulario de API Keys y lo prepara
+'             para una nueva entrada
+' ============================================
 Private Sub LimpiarFormulario()
 
   $bModoEdicion = False
-
   ID_apis.Value = 0
   txtProveedor.Text = ""
   txtApiKey.Text = ""
@@ -1485,35 +1453,28 @@ Private Sub LimpiarFormulario()
   txtRegion.Text = ""
   txtComentarios.Text = ""
   ckbActivo.Value = True
-
-  ' AJUSTAR ESTADO DE BOTONES
   btnGuardarAPI.Enabled = True
   btnGuardarCambiosAPI.Enabled = False
-
-  ' ENFOCAR EN PROVEEDOR
   txtProveedor.SetFocus()
 
 End
 
-' ============================================================================
-' PROCEDIMIENTO: CargarCredencialEnFormulario
-' DESCRIPCIÓN: CARGA LOS DATOS DE UNA CREDENCIAL EN EL FORMULARIO PARA EDICIÓN
-' PARÁMETROS:
-'   iId - ID DE LA CREDENCIAL A CARGAR
-' ============================================================================
+' ============================================
+' Función   : CargarCredencialEnFormulario
+' Propósito : Carga los datos de una credencial existente
+'             en el formulario para su edición
+' Parámetros: iId As Integer — ID de la credencial a cargar
+' ============================================
 Private Sub CargarCredencialEnFormulario(iId As Integer)
 
-  Dim hResult As Result
-
-  hResult = m_ApiCredenciales.ObtenerCredencialPorId(iId)
+  Dim hResult As Result = m_ApiCredenciales.ObtenerCredencialPorId(iId)
 
   If hResult = Null Or Not hResult.Available Then
-    Message.Error("No se pudo cargar la credencial seleccionada")
+    Message.Error("No se pudo cargar la credencial seleccionada.")
     Return
   Endif
 
   $bModoEdicion = True
-
   ID_apis.Value = hResult!id
   txtProveedor.Text = hResult!proveedor
   txtApiKey.Text = ""  ' NO SE MUESTRA LA API KEY POR SEGURIDAD
@@ -1521,30 +1482,27 @@ Private Sub CargarCredencialEnFormulario(iId As Integer)
   txtRegion.Text = If(hResult!region, hResult!region, "")
   txtComentarios.Text = If(hResult!comentarios, hResult!comentarios, "")
   ckbActivo.Value = hResult!activo
-
-  ' AJUSTAR ESTADO DE BOTONES
   btnGuardarAPI.Enabled = False
   btnGuardarCambiosAPI.Enabled = True
 
 End
 
-' ============================================================================
-' FUNCIÓN: ValidarFormulario
-' DESCRIPCIÓN: VALIDA QUE LOS CAMPOS OBLIGATORIOS ESTÉN COMPLETOS
-' RETORNA: BOOLEAN - TRUE SI LA VALIDACIÓN ES CORRECTA
-' ============================================================================
+' ============================================
+' Función   : ValidarFormulario
+' Propósito : Verifica que los campos obligatorios del
+'             formulario de API estén completos
+' Retorna   : Boolean — True si la validación es correcta
+' ============================================
 Private Function ValidarFormulario() As Boolean
 
-  ' VALIDAR PROVEEDOR
   If Not Trim$(txtProveedor.Text) Then
-    Message.Warning("El nombre del proveedor es obligatorio")
+    Message.Warning("El nombre del proveedor es obligatorio.")
     txtProveedor.SetFocus()
     Return False
   Endif
 
-  ' VALIDAR API KEY (SOLO PARA NUEVAS ENTRADAS)
   If Not $bModoEdicion And Not Trim$(txtApiKey.Text) Then
-    Message.Warning("La API Key es obligatoria para nuevas credenciales")
+    Message.Warning("La API Key es obligatoria para nuevas credenciales.")
     txtApiKey.SetFocus()
     Return False
   Endif
@@ -1553,139 +1511,121 @@ Private Function ValidarFormulario() As Boolean
 
 End
 
-' ============================================================================
-' EVENTO: btnNuevaAPI_Click
-' DESCRIPCIÓN: PREPARA EL FORMULARIO PARA UNA NUEVA CREDENCIAL
-' ============================================================================
+' ============================================
+' Función   : btnNuevaAPI_Click
+' Propósito : Prepara el formulario para una nueva credencial
+' ============================================
 Public Sub btnNuevaAPI_Click()
 
   LimpiarFormulario()
 
 End
 
-' ============================================================================
-' EVENTO: btnGuardarAPI_Click
-' DESCRIPCIÓN: GUARDA UNA NUEVA CREDENCIAL EN LA BASE DE DATOS
-' ============================================================================
+' ============================================
+' Función   : btnGuardarAPI_Click
+' Propósito : Guarda una nueva credencial de API en la BD
+' ============================================
 Public Sub btnGuardarAPI_Click()
 
-  Dim iId As Integer
+  If Not ValidarFormulario() Then Return
 
-  ' VALIDAR FORMULARIO
-  If Not ValidarFormulario() Then
-    Return
-  Endif
-
-  ' VERIFICAR QUE NO EXISTA EL PROVEEDOR
   If m_ApiCredenciales.ExisteProveedor(Trim$(txtProveedor.Text)) Then
     Message.Warning("Ya existe una credencial para el proveedor: " & txtProveedor.Text)
     txtProveedor.SetFocus()
     Return
   Endif
 
-  ' GUARDAR EN LA BASE DE DATOS
-  iId = m_ApiCredenciales.GuardarNuevaAPI(Trim$(txtProveedor.Text), Trim$(txtApiKey.Text), Trim$(txtIdentificador.Text), Trim$(txtRegion.Text), Trim$(txtComentarios.Text))
+  Dim iId As Integer = m_ApiCredenciales.GuardarNuevaAPI(
+    Trim$(txtProveedor.Text), Trim$(txtApiKey.Text),
+    Trim$(txtIdentificador.Text), Trim$(txtRegion.Text),
+    Trim$(txtComentarios.Text))
 
   If iId > 0 Then
     Message.Info("Credencial guardada correctamente con ID: " & Str$(iId))
     CargarCredenciales()
     LimpiarFormulario()
   Else
-    Message.Error("Error al guardar la credencial")
+    Message.Error("Error al guardar la credencial.")
   Endif
 
 End
 
-' ============================================================================
-' EVENTO: btnGuardarCambiosAPI_Click
-' DESCRIPCIÓN: ACTUALIZA UNA CREDENCIAL EXISTENTE
-' ============================================================================
+' ============================================
+' Función   : btnGuardarCambiosAPI_Click
+' Propósito : Actualiza una credencial de API existente
+' ============================================
 Public Sub btnGuardarCambiosAPI_Click()
 
-  Dim iId As Integer
+  If Not ValidarFormulario() Then Return
 
-  ' VALIDAR FORMULARIO
-  If Not ValidarFormulario() Then
-    Return
-  Endif
-
-  iId = ID_apis.Value
+  Dim iId As Integer = ID_apis.Value
 
   If iId <= 0 Then
-    Message.Error("No hay una credencial seleccionada para actualizar")
+    Message.Error("No hay una credencial seleccionada para actualizar.")
     Return
   Endif
 
-  ' VERIFICAR QUE NO EXISTA OTRO PROVEEDOR CON EL MISMO NOMBRE
   If m_ApiCredenciales.ExisteProveedor(Trim$(txtProveedor.Text), iId) Then
     Message.Warning("Ya existe otra credencial con el proveedor: " & txtProveedor.Text)
     txtProveedor.SetFocus()
     Return
   Endif
 
-  ' CONFIRMAR SI SE ESTÁ DESACTIVANDO
   If Not ckbActivo.Value Then
-    If Message.Question("¿Está seguro de desactivar esta credencial?\n\nLos servicios que la utilicen dejarán de funcionar.", "Sí", "No") = 2 Then
+    If Message.Question("¿Está seguro de desactivar esta credencial?" & Chr(10) & Chr(10) &
+        "Los servicios que la utilicen dejarán de funcionar.", "Sí", "No") = 2 Then
       Return
     Endif
   Endif
 
-  ' ACTUALIZAR EN LA BASE DE DATOS
-  ' NOTA: SI txtApiKey ESTÁ VACÍO, NO SE MODIFICA LA API KEY EXISTENTE
-  If m_ApiCredenciales.ActualizarAPI(iId, Trim$(txtProveedor.Text), Trim$(txtApiKey.Text), Trim$(txtIdentificador.Text), Trim$(txtRegion.Text), Trim$(txtComentarios.Text), ckbActivo.Value) Then
-    Message.Info("Credencial actualizada correctamente")
+  If m_ApiCredenciales.ActualizarAPI(iId, Trim$(txtProveedor.Text), Trim$(txtApiKey.Text),
+      Trim$(txtIdentificador.Text), Trim$(txtRegion.Text),
+      Trim$(txtComentarios.Text), ckbActivo.Value) Then
+    Message.Info("Credencial actualizada correctamente.")
     CargarCredenciales()
     LimpiarFormulario()
   Else
-    Message.Error("Error al actualizar la credencial")
+    Message.Error("Error al actualizar la credencial.")
   Endif
 
 End
 
-' ============================================================================
-' EVENTO: gvAPIkeys_Click
-' DESCRIPCIÓN: CARGA LA CREDENCIAL SELECCIONADA EN EL FORMULARIO
-' ============================================================================
+' ============================================
+' Función   : gvAPIkeys_Click
+' Propósito : Carga la credencial seleccionada en el formulario
+' ============================================
 Public Sub gvAPIkeys_Click()
 
-  Dim iRow As Integer
-  Dim iId As Integer
+  Dim iRow As Integer = gvAPIkeys.Row
 
-  iRow = gvAPIkeys.Row
+  If iRow < 0 Or iRow >= gvAPIkeys.Rows.Count Then Return
 
-  If iRow < 0 Or iRow >= gvAPIkeys.Rows.Count Then
-    Return
-  Endif
-
-  ' OBTENER EL ID DE LA FILA SELECCIONADA
-  iId = Val(gvAPIkeys[iRow, 0].Text)
-
-  If iId > 0 Then
-    CargarCredencialEnFormulario(iId)
-  Endif
+  Dim iId As Integer = Val(gvAPIkeys[iRow, 0].Text)
+  If iId > 0 Then CargarCredencialEnFormulario(iId)
 
 End
 
-' ============================================================================
-' EVENTO: gvAPIkeys_DblClick
-' DESCRIPCIÓN: DOBLE CLIC CARGA LA CREDENCIAL (MISMO COMPORTAMIENTO QUE CLIC)
-' ============================================================================
+' ============================================
+' Función   : gvAPIkeys_DblClick
+' Propósito : Doble clic carga la credencial (igual que clic)
+' ============================================
 Public Sub gvAPIkeys_DblClick()
 
   gvAPIkeys_Click()
 
 End
 
-' ============================================================================
-' EVENTO: txtApiKey_Enter
-' DESCRIPCIÓN: MUESTRA TOOLTIP AL ENTRAR EN EL CAMPO DE API KEY
-' ============================================================================
+' ============================================
+' Función   : txtApiKey_Enter
+' Propósito : Muestra tooltip contextual al entrar en el
+'             campo de API Key según el modo activo
+' ============================================
 Public Sub txtApiKey_Enter()
 
   If $bModoEdicion Then
-    txtApiKey.ToolTip = "Dejar vacío para mantener la API Key actual"
+    txtApiKey.ToolTip = "Dejar vacío para mantener la API Key actual."
   Else
-    txtApiKey.ToolTip = "Ingrese la API Key del proveedor"
+    txtApiKey.ToolTip = "Ingrese la API Key del proveedor."
   Endif
 
 End
