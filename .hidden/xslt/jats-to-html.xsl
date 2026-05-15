@@ -71,6 +71,15 @@
   <xsl:param name="modo_salida" as="xs:string" select="'control'"
              xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
 
+  <!-- MODO DE FIGURA EN EL HTML:
+       'png'  → IMAGEN ESTÁTICA (fi*.png). APLICA A TODAS LAS FIGURAS.
+                ÚNICO MODO DISPONIBLE EN SALIDA BORRADOR.
+       'html' → FIGURA INTERACTIVA (fh*.html EN IFRAME).
+                SOLO APLICA A FIGURAS GENERADAS POR gbpublisher (fi*.png).
+                FIGURAS DEL AUTOR (NOMBRE LIBRE) CAEN AUTOMÁTICAMENTE A PNG. -->
+  <xsl:param name="modo_figura" as="xs:string" select="'png'"
+             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+
   <!-- ================================================
        SALIDA: HTML5
        ================================================ -->
@@ -2900,8 +2909,18 @@
        FIGURA
        ================================================ -->
   <xsl:template match="fig">
+    <!--
+      LÓGICA DE RENDERIZADO SEGÚN modo_figura Y NOMENCLATURA DEL ARCHIVO:
+      - modo_figura='png'  → SIEMPRE <img>. APLICA A TODAS LAS FIGURAS.
+      - modo_figura='html' Y nombre empieza con 'fi' → <iframe> AL fh*.html.
+                             FIGURAS GENERADAS POR gbpublisher.
+      - modo_figura='html' Y nombre NO empieza con 'fi' → <img>.
+                             FIGURAS DEL AUTOR (NOMBRE LIBRE, SIN VERSIÓN INTERACTIVA).
+    -->
     <xsl:variable name="href"   select="graphic/@xlink:href"/>
     <xsl:variable name="nombre" select="tokenize($href, '/')[last()]"/>
+
+    <!-- RUTA DE LA IMAGEN PNG -->
     <xsl:variable name="src">
       <xsl:choose>
         <xsl:when test="$ruta_media != ''">
@@ -2914,10 +2933,47 @@
         </xsl:otherwise>
       </xsl:choose>
     </xsl:variable>
+
+    <!-- RUTA DEL HTML INTERACTIVO (SOLO RELEVANTE SI nombre empieza con 'fi') -->
+    <xsl:variable name="nombre_html"
+      select="replace(replace($nombre, '^fi', 'fh'), '\.png$', '.html')"/>
+    <xsl:variable name="src_html">
+      <xsl:choose>
+        <xsl:when test="$ruta_media != ''">
+          <xsl:value-of select="$ruta_media"/>
+          <xsl:text>/</xsl:text>
+          <xsl:value-of select="$nombre_html"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="$nombre_html"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
     <div class="fig-wrapper"
          data-fig-id="{@id}"
          onclick="highlightPanel('figs', '{@id}')">
-      <img src="{$src}" alt="{normalize-space(caption/p)}"/>
+
+      <xsl:choose>
+        <!-- MODO INTERACTIVO: SOLO PARA FIGURAS CON NOMENCLATURA gbpublisher -->
+        <xsl:when test="$modo_figura = 'html' and starts-with($nombre, 'fi')">
+          <iframe src="{$src_html}"
+                  width="844"
+                  height="520"
+                  frameborder="0"
+                  scrolling="no"
+                  loading="lazy"
+                  title="{normalize-space(caption/p)}">
+            <!-- FALLBACK PARA NAVEGADORES SIN SOPORTE DE IFRAME -->
+            <img src="{$src}" alt="{normalize-space(caption/p)}"/>
+          </iframe>
+        </xsl:when>
+        <!-- MODO PNG: TODAS LAS FIGURAS, O FIGURA DEL AUTOR EN MODO html -->
+        <xsl:otherwise>
+          <img src="{$src}" alt="{normalize-space(caption/p)}"/>
+        </xsl:otherwise>
+      </xsl:choose>
+
       <div class="fig-label">
         <xsl:text>Figura </xsl:text>
         <xsl:number count="fig" level="any"/>
