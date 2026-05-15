@@ -1,18 +1,25 @@
 ' Gambas class file
 
-' VARIABLES PRIVADAS DEL FORMULARIO — ACCESIBLES DESDE TODOS LOS EVENTOS
-Private sNombreBase As String
-Private sRutaMedia As String
-Private iNumFigura As Integer
-Private sUltimoCSV As String
+' ============================================
+' Formulario : FFiguras
+' Propósito  : Visualizador y gestor de figuras para artículos
+'              académicos. El grid muestra los datos del CSV
+'              seleccionado en modo solo lectura. La edición
+'              completa se delega a FFigurasEditar.
+'              Acciones disponibles: cargar, editar, borrar.
+' ============================================
 
-' ============================================
-' Evento   : Form_Open
-' Propósito: Inicializa el formulario verificando que hay
-'            un artículo activo, configura el grid de datos,
-'            carga los archivos fd* existentes en el combobox
-'            y prepara el WebView con el HTML base de chart.js
-' ============================================
+Private sNombreBase As String   ' NOMBRE BASE DEL ARTÍCULO ACTIVO (SIN PREFIJO a-)
+Private sRutaMedia As String   ' RUTA ABSOLUTA A LA CARPETA /media DEL PROYECTO
+Private iNumFigura As Integer  ' NÚMERO DE FIGURA SIGUIENTE DISPONIBLE
+Private sCSVActual As String   ' RUTA DEL CSV ACTUALMENTE CARGADO EN EL GRID
+
+'' ============================================
+'' Función   : Form_Open
+'' Propósito : Inicializa el formulario verificando artículo
+''             activo, configura el grid en modo solo lectura
+''             y carga los archivos fd* existentes en el combo
+'' ============================================
 Public Sub Form_Open()
 
   ' --- 1. Verificar artículo activo ---
@@ -30,7 +37,7 @@ Public Sub Form_Open()
   sRutaMedia = File.Dir(FMain.txtProyecto.Text) &/ "media"
 
   ' --- 3. Mostrar artículo activo en el label ---
-  lblArticulo.Text = "Artículo: " & sArchivoActivo
+  lblArticulo.Text = "Figuras asociadas al artículo: " & sArchivoActivo
 
   ' --- 4. Configurar tipos de gráfico ---
   cmbTipoGrafico.Clear
@@ -51,53 +58,44 @@ Public Sub Form_Open()
   cmbColorPaleta.Add("Escala de grises")
   cmbColorPaleta.Index = 0
 
-  ' --- 6. Configurar GridView de datos ---
-  gvDatos.Columns.Count = 3
-  gvDatos.Rows.Count = 5
+  ' --- 6. Configurar GridView en modo solo lectura ---
   gvDatos.Header = GridView.Both
-  gvDatos.Columns[0].Text = "Etiqueta"
-  gvDatos.Columns[0].Width = 150
-  gvDatos.Columns[1].Text = "Serie 1"
-  gvDatos.Columns[1].Width = 100
-  gvDatos.Columns[2].Text = "Serie 2"
-  gvDatos.Columns[2].Width = 100
-  ' COLUMNA FANTASMA
-  gvDatos.Columns.Count = 4
-  gvDatos.Columns[3].Text = ""
-  gvDatos.Columns[3].Width = 10
+  gvDatos.Mode = Select.None
 
-  ' --- 7. Cargar archivos fd* existentes en cmbCargarDatos ---
+  ' --- 7. Cargar archivos fd* existentes en el combo ---
   CargarComboFiguras()
 
   ' --- 8. Calcular número de figura siguiente ---
-  Dim iSiguiente As Integer = ContarFiguras(sRutaMedia, sNombreBase) + 1
-  txtNombreFigura.Text = "Figura " & CStr(iSiguiente)
-  iNumFigura = iSiguiente
+  iNumFigura = ContarFiguras(sRutaMedia, sNombreBase) + 1
 
   ' --- 9. Inicializar WebView con página en blanco ---
   wvFigura.URL = "about:blank"
 
-End Sub
-
-' EN EL EVENTO CLICK DEL TABLEVIEW — ACTIVA EDICIÓN
-Public Sub gvDatos_Click()
-
-  gvDatos.Edit
+  ' --- 10. Estado inicial ---
+  sCSVActual = ""
+  ActualizarBotones()
 
 End Sub
 
-' EN EL EVENTO SAVE — GUARDA EL VALOR EDITADO EN LA CELDA
-Public Sub gvDatos_Save(Row As Integer, Column As Integer, Value As String)
+'' ============================================
+'' Función   : ActualizarBotones
+'' Propósito : Gestiona la visibilidad de los botones que
+''             dependen de si hay un CSV cargado en el grid
+'' ============================================
+Private Sub ActualizarBotones()
 
-  gvDatos[Row, Column].Text = Value
+  Dim bHayCSV As Boolean = (sCSVActual <> "")
+
+  btnBorrarArchivoCSV.Visible = bHayCSV
+  btnEditarCSV.Visible = bHayCSV
 
 End Sub
 
-' ============================================
-' Función   : CargarComboFiguras
-' Propósito : Puebla cmbCargarDatos con los fd*-nombrebase.csv
-'             existentes en /media para el artículo activo
-' ============================================
+'' ============================================
+'' Función   : CargarComboFiguras
+'' Propósito : Puebla cmbCargarDatos con los fd*-nombrebase.csv
+''             existentes en /media para el artículo activo
+'' ============================================
 Private Sub CargarComboFiguras()
 
   cmbCargarDatos.Clear
@@ -115,11 +113,14 @@ Private Sub CargarComboFiguras()
 
 End Sub
 
-' ============================================
-' Función   : ContarFiguras
-' Propósito : Cuenta los fd*-nombrebase.csv existentes
-'             para determinar el número de figura siguiente
-' ============================================
+'' ============================================
+'' Función   : ContarFiguras
+'' Propósito : Cuenta los fd*-nombrebase.csv existentes
+''             para determinar el número de figura siguiente
+'' Parámetros: sRutaMedia  As String — ruta a /media
+''             sNombreBase As String — nombre base del artículo
+'' Retorna   : Integer — cantidad de figuras existentes
+'' ============================================
 Private Function ContarFiguras(sRutaMedia As String, sNombreBase As String) As Integer
 
   If Not Exist(sRutaMedia) Then Return 0
@@ -129,102 +130,26 @@ Private Function ContarFiguras(sRutaMedia As String, sNombreBase As String) As I
 
 End Function
 
-' ============================================
-' Evento   : btnGuardarDatos_Click
-' Propósito: Guarda el contenido del gvDatos como CSV
-'            en /media con el nombre fd0N-nombrebase.csv
-'            Es condición necesaria para poder dibujar
-' ============================================
-Public Sub btnGuardarDatos_Click()
+'' ============================================
+'' Función   : cmbCargarDatos_Click
+'' Propósito : Carga automáticamente el CSV seleccionado
+''             en el grid al cambiar la selección del combo
+'' ============================================
+Public Sub cmbCargarDatos_Click()
 
-  If Not Exist(sRutaMedia) Then
-    Try Mkdir sRutaMedia
-  Endif
-
-  ' NOMBRE: fd01-02-revistaAlgo-v01-n01.csv
-  Dim sNumero As String = Format(iNumFigura, "00")
-  Dim sNombreCSV As String = "fd" & sNumero & "-" & sNombreBase & ".csv"
-  Dim sRutaCSV As String = sRutaMedia &/ sNombreCSV
-
-  ' CONSTRUIR CSV DESDE EL GRID
-  Dim sCSV As String = ""
-  Dim iCol As Integer
-  Dim iRow As Integer
-
-  ' ENCABEZADOS — COLUMNAS 0 A N-2 (SIN LA COLUMNA FANTASMA)
-  For iCol = 0 To gvDatos.Columns.Count - 2
-    If iCol > 0 Then sCSV &= ","
-    sCSV &= gvDatos.Columns[iCol].Text
-  Next
-  sCSV &= Chr(10)
-
-  ' DATOS
-  For iRow = 0 To gvDatos.Rows.Count - 1
-    For iCol = 0 To gvDatos.Columns.Count - 2
-      If iCol > 0 Then sCSV &= ","
-      Dim sCelda As String = Trim(gvDatos[iRow, iCol].Text)
-      ' SI CONTIENE COMA O COMILLAS — ENCERRAR EN COMILLAS
-      If InStr(sCelda, ",") > 0 Or InStr(sCelda, Chr(34)) > 0 Then
-        sCelda = Chr(34) & Replace(sCelda, Chr(34), Chr(34) & Chr(34)) & Chr(34)
-      Endif
-      sCSV &= sCelda
-    Next
-    sCSV &= Chr(10)
-  Next
-
-  Try File.Save(sRutaCSV, sCSV)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo guardar el CSV:" & Chr(10) & Error.Text)
-    Return
-  Endif
-
-  ' ACTUALIZAR NÚMERO DE FIGURA Y COMBOBOX
-  sUltimoCSV = sRutaCSV
-  CargarComboFiguras()
-  m_Sonido.sonar("Info")
-  lblEstado.Text = "Datos guardados: " & sNombreCSV
-
-End Sub
-
-' ============================================
-' Evento   : btnCargarDatos_Click
-' Propósito: Carga el CSV seleccionado en cmbCargarDatos
-'            al gvDatos para edición
-' ============================================
-Public Sub btnCargarDatos_Click()
-
-  If cmbCargarDatos.Index < 0 Then
-    Message.Info("Seleccioná un archivo de datos del listado.")
-    Return
-  Endif
+  If cmbCargarDatos.Index < 0 Then Return
 
   Dim sRutaCSV As String = sRutaMedia &/ cmbCargarDatos.Text
   CargarCSVEnGrid(sRutaCSV)
 
 End Sub
 
-' ============================================
-' Evento   : btnImportarCSV_Click
-' Propósito: Abre un FileChooser para importar cualquier
-'            CSV externo (del autor, de Excel) al gvDatos
-' ============================================
-Public Sub btnImportarCSV_Click()
-
-  Dialog.Title = "Importar CSV"
-  Dialog.Filter = ["*.csv", "Archivos CSV", "*", "Todos los archivos"]
-  If Dialog.OpenFile() Then Return
-
-  CargarCSVEnGrid(Dialog.Path)
-
-End Sub
-
-' ============================================
-' Función   : CargarCSVEnGrid
-' Propósito : Lee un CSV y puebla el gvDatos
-'             Primera fila = encabezados de columnas
-'             Resto = datos
-' ============================================
+'' ============================================
+'' Función   : CargarCSVEnGrid
+'' Propósito : Lee un CSV y puebla el gvDatos en modo
+''             solo lectura. Actualiza sCSVActual.
+'' Parámetros: sRutaCSV As String — ruta absoluta al archivo CSV
+'' ============================================
 Private Sub CargarCSVEnGrid(sRutaCSV As String)
 
   If Not Exist(sRutaCSV) Then
@@ -240,11 +165,12 @@ Private Sub CargarCSVEnGrid(sRutaCSV As String)
     Return
   Endif
 
-  ' PRIMERA LÍNEA = ENCABEZADOS
+  ' --- LIMPIAR Y CONFIGURAR COLUMNAS ---
+  gvDatos.Clear()
   Dim aEncabezados As String[] = Split(aLineas[0], ",")
   Dim nCols As Integer = aEncabezados.Count
 
-  ' CONFIGURAR COLUMNAS DEL GRID + FANTASMA
+  ' COLUMNAS DE DATOS + COLUMNA FANTASMA
   gvDatos.Columns.Count = nCols + 1
   Dim iCol As Integer
   For iCol = 0 To nCols - 1
@@ -254,7 +180,7 @@ Private Sub CargarCSVEnGrid(sRutaCSV As String)
   gvDatos.Columns[nCols].Text = ""
   gvDatos.Columns[nCols].Width = 10
 
-  ' CONFIGURAR FILAS Y CARGAR DATOS
+  ' --- CARGAR FILAS DE DATOS ---
   gvDatos.Rows.Count = aLineas.Count - 1
   Dim iRow As Integer
   For iRow = 1 To aLineas.Count - 1
@@ -263,7 +189,6 @@ Private Sub CargarCSVEnGrid(sRutaCSV As String)
       Dim sCelda As String = ""
       If iCol < aCeldas.Count Then
         sCelda = Trim(aCeldas[iCol])
-        ' LIMPIAR COMILLAS SI EL CAMPO ESTABA ENTRE COMILLAS
         If sCelda Begins Chr(34) And sCelda Ends Chr(34) Then
           sCelda = Mid(sCelda, 2, Len(sCelda) - 2)
         Endif
@@ -272,34 +197,117 @@ Private Sub CargarCSVEnGrid(sRutaCSV As String)
     Next
   Next
 
-  lblEstado.Text = "CSV cargado: " & File.Name(sRutaCSV)
+  ' --- ACTUALIZAR ESTADO ---
+  sCSVActual = sRutaCSV
+  ActualizarBotones()
 
 End Sub
 
-' ============================================
-' Evento   : btnDibujar_Click
-' Propósito: Lee el último CSV guardado y renderiza
-'            el gráfico en el WebView usando chart.js
-'            CONDICIÓN: debe existir un CSV guardado
-' ============================================
-Public Sub btnDibujar_Click()
+'' ============================================
+'' Función   : btnEditarCSV_Click
+'' Propósito : Abre FFigurasEditar con el CSV activo para
+''             edición avanzada en texto plano. Al cerrar,
+''             refresca el combo y el grid con los cambios.
+'' ============================================
+Public Sub btnEditarCSV_Click()
 
-  If sUltimoCSV = "" Or Not Exist(sUltimoCSV) Then
+  If sCSVActual = "" Or Not Exist(sCSVActual) Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Primero guardá los datos con 'Guardar datos'." & Chr(10) &
-      "El gráfico se genera desde el CSV guardado.")
+    Message.Warning("No hay un archivo CSV activo para editar.")
     Return
   Endif
 
-  ' LEER CSV
-  Dim sContenido As String = File.Load(sUltimoCSV)
+  ' --- PASAR CONTEXTO AL EDITOR ---
+  FFigurasEditar.sRutaCSV = sCSVActual
+  FFigurasEditar.sRutaMedia = sRutaMedia
+  FFigurasEditar.sNombreBase = sNombreBase
+  FFigurasEditar.iNumFigura = iNumFigura
+
+  FFigurasEditar.ShowModal()
+
+  ' --- AL VOLVER: REFRESCAR SIN LEER DEL FORMULARIO CERRADO ---
+  iNumFigura = ContarFiguras(sRutaMedia, sNombreBase) + 1
+  CargarComboFiguras()
+
+  ' RECARGAR EL GRID DESDE EL ARCHIVO CONOCIDO EN DISCO
+  If sCSVActual <> "" And Exist(sCSVActual) Then
+    CargarCSVEnGrid(sCSVActual)
+  Endif
+
+End Sub
+
+'' ============================================
+'' Función   : btnBorrarArchivoCSV_Click
+'' Propósito : Elimina el CSV actualmente cargado en el grid
+''             junto con los archivos de figura asociados
+''             (fi0N-*.png y fh0N-*.html), y limpia el grid
+'' ============================================
+Public Sub btnBorrarArchivoCSV_Click()
+
+  If sCSVActual = "" Or Not Exist(sCSVActual) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un archivo CSV activo para eliminar.")
+    Return
+  Endif
+
+  ' --- CONFIRMAR LA OPERACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question(
+      "¿Eliminar el archivo y todas las figuras asociadas?" & Chr(10) & Chr(10) &
+      File.Name(sCSVActual) & Chr(10) &
+      "(también se eliminarán el PNG y el HTML generados)" & Chr(10) & Chr(10) &
+      "Esta acción no se puede deshacer.",
+      "Sí", "No") <> 1 Then Return
+
+    ' --- EXTRAER NÚMERO Y CONSTRUIR RUTAS ASOCIADAS ---
+    Dim sNombreCSV As String = File.Name(sCSVActual)
+    Dim sNumero As String = Mid(sNombreCSV, 3, 2)
+    Dim sRutaPNG As String = sRutaMedia &/ "fi" & sNumero & "-" & sNombreBase & ".png"
+    Dim sRutaHTML As String = sRutaMedia &/ "fh" & sNumero & "-" & sNombreBase & ".html"
+
+    ' --- ELIMINAR ARCHIVOS ---
+    Try Kill sCSVActual
+    If Exist(sRutaPNG) Then Try Kill sRutaPNG
+    If Exist(sRutaHTML) Then Try Kill sRutaHTML
+
+    ' --- LIMPIAR ESTADO ---
+    gvDatos.Clear()
+    gvDatos.Rows.Count = 0
+    sCSVActual = ""
+    iNumFigura = ContarFiguras(sRutaMedia, sNombreBase) + 1
+
+    CargarComboFiguras()
+    ActualizarBotones()
+    wvFigura.URL = "about:blank"
+
+    m_Sonido.sonar("Info")
+    Message.Info("Archivos eliminados correctamente.")
+
+End Sub
+
+'' ============================================
+'' Función   : btnDibujar_Click
+'' Propósito : Lee el CSV activo y renderiza el gráfico
+''             en el WebView usando chart.js
+'' ============================================
+Public Sub btnDibujar_Click()
+
+  If sCSVActual = "" Or Not Exist(sCSVActual) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Primero cargá un archivo de datos." & Chr(10) &
+      "El gráfico se genera desde el CSV activo.")
+    Return
+  Endif
+
+  ' --- LEER CSV ---
+  Dim sContenido As String = File.Load(sCSVActual)
   Dim aLineas As String[] = Split(Trim(sContenido), Chr(10))
   If aLineas.Count < 2 Then
     Message.Warning("El CSV no tiene datos suficientes.")
     Return
   Endif
 
-  ' PARSEAR ENCABEZADOS Y DATOS
+  ' --- PARSEAR ENCABEZADOS Y DATOS ---
   Dim aEncabezados As String[] = Split(aLineas[0], ",")
   Dim nCols As Integer = aEncabezados.Count
 
@@ -316,8 +324,8 @@ Public Sub btnDibujar_Click()
   Dim sDatasets As String = ""
   Dim sColores As String = ObtenerPaleta(cmbColorPaleta.Text)
   Dim aColores As String[] = Split(sColores, "|")
-
   Dim iCol As Integer
+
   For iCol = 1 To nCols - 1
     Dim sValores As String = ""
     For iRow = 1 To aLineas.Count - 1
@@ -339,28 +347,25 @@ Public Sub btnDibujar_Click()
       "}"
   Next
 
-  ' TIPO DE GRÁFICO EN CHART.JS
+  ' --- CONSTRUIR Y MOSTRAR HTML ---
   Dim sTipo As String = ObtenerTipoChartJS(cmbTipoGrafico.Text)
-
-  ' LEER chart.min.js EMBEBIDO
   Dim sChartJS As String = User.Home &/ ".gbpublisher/chart/chart.min.js"
   Dim sScriptJS As String = File.Load(sChartJS)
-
-  ' CONSTRUIR HTML COMPLETO
-  Dim sTitulo As String = Trim(txtTituloGrafico.Text)
+  Dim sTitulo As String = Trim(txtNombreFigura.Text)
   Dim sHTML As String = GenerarHTMLChart(sTipo, sLabels, sDatasets, sTitulo, sScriptJS, chkLeyenda.Value)
 
-  ' MOSTRAR EN WEBVIEW VIA ARCHIVO TEMPORAL
   Dim sTmp As String = "/tmp/gbpublisher-figura-preview.html"
   File.Save(sTmp, sHTML)
   wvFigura.URL = "file://" & sTmp
 
 End Sub
 
-' ============================================
-' Función   : ObtenerTipoChartJS
-' Propósito : Convierte el texto del combo al tipo chart.js
-' ============================================
+'' ============================================
+'' Función   : ObtenerTipoChartJS
+'' Propósito : Convierte el texto del combo al tipo chart.js
+'' Parámetros: sTipo As String — texto seleccionado en el combo
+'' Retorna   : String — identificador de tipo chart.js
+'' ============================================
 Private Function ObtenerTipoChartJS(sTipo As String) As String
 
   Select Case sTipo
@@ -376,16 +381,18 @@ Private Function ObtenerTipoChartJS(sTipo As String) As String
       Return "pie"
     Case "Dona"
       Return "doughnut"
-    Default
+    Case Else
       Return "bar"
   End Select
 
 End Function
 
-' ============================================
-' Función   : ObtenerPaleta
-' Propósito : Devuelve colores ColorBrewer separados por |
-' ============================================
+'' ============================================
+'' Función   : ObtenerPaleta
+'' Propósito : Devuelve colores ColorBrewer separados por |
+'' Parámetros: sPaleta As String — nombre de la paleta
+'' Retorna   : String — colores hex separados por |
+'' ============================================
 Private Function ObtenerPaleta(sPaleta As String) As String
 
   Select Case sPaleta
@@ -405,12 +412,12 @@ Private Function ObtenerPaleta(sPaleta As String) As String
 
 End Function
 
-' ============================================
-' Función   : GenerarHTMLChart
-' Propósito : Construye el HTML standalone con chart.js embebido
-'             Válido tanto para preview en WebView como para
-'             exportar como fh0N-*.html
-' ============================================
+'' ============================================
+'' Función   : GenerarHTMLChart
+'' Propósito : Construye el HTML standalone con chart.js
+''             embebido. Válido para preview y para exportar
+''             como fh0N-*.html
+'' ============================================
 Private Function GenerarHTMLChart(sTipo As String, sLabels As String, sDatasets As String, sTitulo As String, sScriptJS As String, bLeyenda As Boolean) As String
 
   Dim sIndexAxis As String = If(sTipo = "bar" And cmbTipoGrafico.Text = "Barras horizontales",
@@ -423,26 +430,19 @@ Private Function GenerarHTMLChart(sTipo As String, sLabels As String, sDatasets 
   sHTML &= "<meta name='viewport' content='width=device-width, initial-scale=1.0'>" & Chr(10)
   sHTML &= "<title>" & sTitulo & "</title>" & Chr(10)
   sHTML &= "<style>" & Chr(10)
-  sHTML &= "  body { margin: 0; padding: 16px; font-family: sans-serif; background: #fff; }" & Chr(10)
-  sHTML &= "  .chart-container { position: relative; width: 100%; max-width: 800px; margin: 0 auto; }" & Chr(10)
-  sHTML &= "  h2 { font-size: 1rem; text-align: center; color: #333; margin-bottom: 12px; }" & Chr(10)
+  sHTML &= "  body { margin:0; padding:16px; font-family:sans-serif; background:#fff; }" & Chr(10)
+  sHTML &= "  .chart-container { position:relative; width:100%; max-width:800px; margin:0 auto; }" & Chr(10)
+  sHTML &= "  h2 { font-size:1rem; text-align:center; color:#333; margin-bottom:12px; }" & Chr(10)
   sHTML &= "</style>" & Chr(10)
   sHTML &= "</head><body>" & Chr(10)
   If sTitulo <> "" Then sHTML &= "<h2>" & sTitulo & "</h2>" & Chr(10)
-  sHTML &= "<div class='chart-container'>" & Chr(10)
-  sHTML &= "  <canvas id='gbChart'></canvas>" & Chr(10)
-  sHTML &= "</div>" & Chr(10)
-  sHTML &= "<script>" & Chr(10)
-  sHTML &= sScriptJS & Chr(10)
-  sHTML &= "</script>" & Chr(10)
+  sHTML &= "<div class='chart-container'><canvas id='gbChart'></canvas></div>" & Chr(10)
+  sHTML &= "<script>" & Chr(10) & sScriptJS & Chr(10) & "</script>" & Chr(10)
   sHTML &= "<script>" & Chr(10)
   sHTML &= "const ctx = document.getElementById('gbChart');" & Chr(10)
   sHTML &= "new Chart(ctx, {" & Chr(10)
   sHTML &= "  type: '" & sTipo & "'," & Chr(10)
-  sHTML &= "  data: {" & Chr(10)
-  sHTML &= "    labels: [" & sLabels & "]," & Chr(10)
-  sHTML &= "    datasets: [" & sDatasets & "]" & Chr(10)
-  sHTML &= "  }," & Chr(10)
+  sHTML &= "  data: { labels: [" & sLabels & "], datasets: [" & sDatasets & "] }," & Chr(10)
   sHTML &= "  options: {" & Chr(10)
   sHTML &= "    " & sIndexAxis & Chr(10)
   sHTML &= "    responsive: true," & Chr(10)
@@ -459,36 +459,28 @@ Private Function GenerarHTMLChart(sTipo As String, sLabels As String, sDatasets 
 
 End Function
 
-' ============================================
-' Evento   : btnGenerar_Click
-' Propósito: Genera simultáneamente el PNG estático (fi0N-*.png)
-'            y el HTML dinámico standalone (fh0N-*.html)
-'            en la carpeta /media del proyecto
-' ============================================
+'' ============================================
+'' Función   : btnGenerar_Click
+'' Propósito : Genera el PNG (fi0N-*.png) y el HTML standalone
+''             (fh0N-*.html) en la carpeta /media del proyecto
+'' ============================================
 Public Sub btnGenerar_Click()
 
-  Dim sUltimoCSV As String = sUltimoCSV
-
-  If sUltimoCSV = "" Or Not Exist(sUltimoCSV) Then
+  If sCSVActual = "" Or Not Exist(sCSVActual) Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Primero guardá los datos con 'Guardar datos'.")
+    Message.Warning("Primero cargá un archivo de datos.")
     Return
   Endif
 
   Dim sNumero As String = Format(iNumFigura, "00")
-
   Dim sNombreHTML As String = "fh" & sNumero & "-" & sNombreBase & ".html"
   Dim sNombrePNG As String = "fi" & sNumero & "-" & sNombreBase & ".png"
   Dim sRutaHTML As String = sRutaMedia &/ sNombreHTML
   Dim sRutaPNG As String = sRutaMedia &/ sNombrePNG
 
-  ' --- GENERAR HTML ---
-  ' REUTILIZAR LOS MISMOS DATOS QUE USÓ btnDibujar
-  ' FORZAR UN REDIBUJO PARA ASEGURAR QUE EL PREVIEW ESTÁ ACTUALIZADO
   btnDibujar_Click()
   Wait 1
 
-  ' COPIAR EL HTML TEMPORAL AL DESTINO FINAL
   Dim sTmp As String = "/tmp/gbpublisher-figura-preview.html"
   If Not Exist(sTmp) Then
     m_Sonido.sonar("Error")
@@ -503,8 +495,6 @@ Public Sub btnGenerar_Click()
     Return
   Endif
 
-  ' --- GENERAR PNG DESDE EL WEBVIEW ---
-  ' ESPERAR QUE EL WEBVIEW TERMINE DE RENDERIZAR EL CANVAS DE CHART.JS
   Wait 1
 
   Dim img As Image = wvFigura.Grab()
@@ -523,22 +513,24 @@ Public Sub btnGenerar_Click()
 
   If Exist(sRutaPNG) Then
     m_Sonido.sonar("Info")
-    lblEstado.Text = "Generado: " & sNombrePNG & " y " & sNombreHTML
     Message.Info("Figuras generadas correctamente:" & Chr(10) &
       "  " & sNombrePNG & Chr(10) &
       "  " & sNombreHTML)
   Else
     m_Sonido.sonar("Warning")
-    Message.Warning("El HTML se generó correctamente pero falló la captura PNG." & Chr(10) &
+    Message.Warning("El HTML se generó pero falló la captura PNG." & Chr(10) &
       "Verificá que chromium esté instalado:" & Chr(10) &
       "sudo apt install chromium-browser")
-    lblEstado.Text = "HTML OK — PNG falló (chromium no encontrado)"
   Endif
 
 End Sub
 
-Public Sub ButtonCerrarLegal_Click()
+'' ============================================
+'' Función   : btnCerrar_Click
+'' Propósito : Cierra el formulario
+'' ============================================
+Public Sub btnCerrar_Click()
 
   Me.Close
 
-End
+End Sub

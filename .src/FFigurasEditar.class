@@ -1,0 +1,182 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FFigurasEditar
+' Propósito  : Editor de texto plano para archivos CSV de
+'              figuras. Permite edición avanzada: renombrar
+'              cabeceras, agregar/eliminar columnas y filas,
+'              y modificar valores directamente en el texto.
+'              Se abre desde FFiguras como modal.
+'
+'              Dos modos de guardado:
+'              - btnEditorGuardarCambios: sobreescribe el CSV actual
+'              - btnEditorGuardarNuevo: crea un nuevo fd0N-*.csv
+' Componentes: txtArea, btnEditorGuardarCambios, btnEditorGuardarNuevo
+' ============================================
+
+Public sRutaCSV As String   ' RUTA DEL CSV ACTIVO, ASIGNADA POR FFiguras
+Public sRutaMedia As String   ' RUTA A /media DEL PROYECTO
+Public sNombreBase As String   ' NOMBRE BASE DEL ARTÍCULO
+Public iNumFigura As Integer  ' NÚMERO DE FIGURA SIGUIENTE DISPONIBLE
+
+'' ============================================
+'' Función   : Form_Open
+'' Propósito : Carga el contenido del CSV en el TextArea
+''             y configura la tipografía del editor
+'' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. Verificar que se recibió una ruta válida ---
+  If sRutaCSV = "" Or Not Exist(sRutaCSV) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el archivo CSV para editar:" & Chr(10) & sRutaCSV)
+    Me.Close()
+    Return
+  Endif
+
+  ' --- 2. Tipografía del editor al tamaño de la interfaz ---
+  txtArea.Font = Font["IBM Plex Mono," & CStr(CInt(Application.Font.Size))]
+
+  ' --- 3. Mostrar nombre del archivo en el título ---
+  Me.Text = "Editar CSV: " & File.Name(sRutaCSV)
+
+  ' --- 4. Cargar contenido en el TextArea ---
+  Try txtArea.Text = File.Load(sRutaCSV)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el archivo:" & Chr(10) & Error.Text)
+    Me.Close()
+    Return
+  Endif
+
+  txtArea.SetFocus()
+
+End Sub
+
+'' ============================================
+'' Función   : ValidarContenido
+'' Propósito : Verifica que el contenido del TextArea tenga
+''             estructura CSV mínima válida antes de guardar
+'' Retorna   : Boolean — True si el contenido es válido
+'' ============================================
+Private Function ValidarContenido() As Boolean
+
+  Dim sContenido As String = Trim(txtArea.Text)
+
+  ' --- 1. Verificar que no esté vacío ---
+  If sContenido = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El contenido no puede estar vacío.")
+    txtArea.SetFocus()
+    Return False
+  Endif
+
+  ' --- 2. Verificar estructura mínima ---
+  Dim aLineas As String[] = Split(sContenido, Chr(10))
+  If aLineas.Count < 2 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El CSV debe tener al menos una línea de cabecera y una fila de datos.")
+    txtArea.SetFocus()
+    Return False
+  Endif
+
+  ' --- 3. Verificar consistencia de columnas ---
+  Dim nColsEsperadas As Integer = Split(aLineas[0], ",").Count
+  Dim iLinea As Integer
+  For iLinea = 1 To aLineas.Count - 1
+    Dim sLinea As String = Trim(aLineas[iLinea])
+    If sLinea = "" Then Continue
+    If Split(sLinea, ",").Count <> nColsEsperadas Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("La fila " & CStr(iLinea + 1) & " tiene un número distinto de columnas." & Chr(10) &
+        "Revisá el contenido antes de guardar.")
+      txtArea.SetFocus()
+      Return False
+    Endif
+  Next
+
+  Return True
+
+End Function
+
+'' ============================================
+'' Función   : btnEditorGuardarCambios_Click
+'' Propósito : Sobreescribe el CSV actualmente cargado con
+''             el contenido editado en el TextArea.
+''             sRutaCSV no cambia.
+'' ============================================
+Public Sub btnEditorGuardarCambios_Click()
+
+  If Not ValidarContenido() Then Return
+
+  ' --- GUARDAR EN EL ARCHIVO ACTUAL ---
+  Try File.Save(sRutaCSV, Trim(txtArea.Text))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el archivo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  m_Sonido.sonar("Info")
+  Message.Info("Cambios guardados en:" & Chr(10) & File.Name(sRutaCSV))
+
+End Sub
+
+'' ============================================
+'' Función   : btnEditorGuardarNuevo_Click
+'' Propósito : Guarda el contenido del TextArea como un nuevo
+''             archivo fd0N-nombrebase.csv en /media.
+''             Actualiza sRutaCSV al nuevo archivo y refleja
+''             el nombre en el título del formulario.
+'' ============================================
+Public Sub btnEditorGuardarNuevo_Click()
+
+  If Not ValidarContenido() Then Return
+
+  ' --- 1. Verificar que hay contexto de proyecto ---
+  If sRutaMedia = "" Or sNombreBase = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo determinar la carpeta de destino.")
+    Return
+  Endif
+
+  If Not Exist(sRutaMedia) Then
+    Try Mkdir sRutaMedia
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta de destino:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  Endif
+
+  ' --- 2. Construir nombre del nuevo archivo ---
+  ' FORMATO: fd01-02-revistaAlgo-v01-n01.csv
+  Dim sNumero As String = Format(iNumFigura, "00")
+  Dim sNombreNuevo As String = "fd" & sNumero & "-" & sNombreBase & ".csv"
+  Dim sRutaNueva As String = sRutaMedia &/ sNombreNuevo
+
+  ' --- 3. Guardar el contenido en el nuevo archivo ---
+  Try File.Save(sRutaNueva, Trim(txtArea.Text))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el archivo nuevo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. Actualizar contexto para que quede apuntando al nuevo archivo ---
+  sRutaCSV = sRutaNueva
+  iNumFigura += 1
+
+  ' --- 5. Reflejar el nuevo nombre en el título del formulario ---
+  Me.Text = "Editar CSV: " & sNombreNuevo
+
+  m_Sonido.sonar("Info")
+  Message.Info("Nuevo archivo creado:" & Chr(10) & sNombreNuevo)
+
+End Sub
+
+Public Sub btnCerrarEditar_Click()
+
+  Me.Close
+
+End
