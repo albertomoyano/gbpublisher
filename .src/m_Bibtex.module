@@ -208,75 +208,72 @@ Public Sub MostrarRefereciasEnTableViewBibtexEnCurso(iRow As Integer)
 
 End Sub
 
+' ============================================
+' Función   : AgregarClaveBib
+' Propósito : Genera automáticamente la clave BibTeX a partir de los campos
+'             del formulario (prefijo, autor/editor, año/fecha) y la escribe
+'             en el campo de destino ya sanitizada
+' Parámetros: ninguno — opera directamente sobre los controles de FMain
+' Retorna   : nada
+' ============================================
 Public Sub AgregarClaveBib()
 
+  ' --- 1. Inicialización de variables ---
   Dim textoOrigen As String
   Dim posicion As Integer
   Dim cadenaTercerTextBox As String
   Dim cadenaCuartoTextBox As String
   Dim Header As String
 
-  'PREFIJO DE LA CLAVE BIB
+  ' --- 2. Construcción del prefijo ---
+  ' EL PREFIJO ES EL ID DEL REGISTRO BIBTEX SEGUIDO DE UN GUIÓN
   Header = FMain.id_bibtex.Text & "-"
 
-  ' OBTÉN EL TEXTO DEL TEXTBOX DE ORIGEN
+  ' --- 3. Determinación del texto de origen (autor o editor) ---
+  ' SI NO HAY AUTOR SE USA EL CAMPO EDITOR COMO ALTERNATIVA
   If Trim(FMain.txtAuthor.Text) = "" Then
-    ' SI EL TEXTBOX DE ORIGEN ESTÁ VACÍO, USA EL CONTENIDO DE OTRO TEXTBOX
     textoOrigen = FMain.txtEditor.Text
   Else
     textoOrigen = FMain.txtAuthor.Text
   End If
 
-  ' ENCUENTRA LA POSICIÓN DE LA PRIMERA COMA, PUNTO, PUNTO Y COMA  O ESPACIO EN EL TEXTO
+  ' --- 4. Extracción del primer token (apellido) ---
+  ' SE BUSCA EL PRIMER DELIMITADOR EN ORDEN DE PRIORIDAD
   posicion = InStr(textoOrigen, ",")
+  If posicion = 0 Then posicion = InStr(textoOrigen, ";")
+  If posicion = 0 Then posicion = InStr(textoOrigen, ".")
+  If posicion = 0 Then posicion = InStr(textoOrigen, " ")
 
-  If posicion = 0 Then
-    posicion = InStr(textoOrigen, ";")
-  End If
-
-  If posicion = 0 Then
-    posicion = InStr(textoOrigen, ".")
-  End If
-
-  If posicion = 0 Then
-    posicion = InStr(textoOrigen, " ")
-  End If
-
-  ' SI SE ENCONTRÓ UNA COMA, PUNTO O ESPACIO, COPIA EL TEXTO HASTA ESA POSICIÓN
+  ' SI SE ENCONTRÓ UN DELIMITADOR SE TOMA SOLO EL TEXTO ANTERIOR
   If posicion > 0 Then
     textoOrigen = Left(textoOrigen, posicion - 1)
   End If
 
-  ' AQUÍ ES DONDE CAMBIAS TODO POR UNA SOLA LÍNEA
+  ' NORMALIZACIÓN DEL FRAGMENTO DE AUTOR (ACENTOS, CARACTERES ESPECIALES, ETC.)
   textoOrigen = LimpiarTexto(textoOrigen)
 
-  ' AGREGAR EL TEXTO AL FINAL DEL TEXTBOX DE DESTINO SIN BORRAR SU CONTENIDO ACTUAL
+  ' --- 5. Ensamblado parcial: prefijo + autor ---
   FMain.txtClaveBibtex.Text = Header & textoOrigen
 
-  ' OBTÉN EL TEXTO DEL TERCER TEXTBOX
-  cadenaTercerTextBox = FMain.txtYear.Text
-  cadenaTercerTextBox = Replace(cadenaTercerTextBox, "/", "")
-  cadenaTercerTextBox = UCase(cadenaTercerTextBox)
+  ' --- 6. Resolución del componente año/fecha ---
+  ' SE INTENTA PRIMERO txtYear; SI ESTÁ VACÍO SE RECURRE A txtDate
+  cadenaTercerTextBox = UCase(Replace(FMain.txtYear.Text, "/", ""))
 
-  ' VERIFICA SI EL TERCER TEXTBOX ESTÁ VACÍO
   If Trim(cadenaTercerTextBox) = "" Then
-    ' SI EL TERCER TEXTBOX ESTÁ VACÍO, OBTÉN EL TEXTO DEL CUARTO TEXTBOX
-    cadenaCuartoTextBox = FMain.txtDate.Text
-    cadenaCuartoTextBox = Replace(cadenaCuartoTextBox, "/", "")
-    cadenaCuartoTextBox = UCase(cadenaCuartoTextBox)
-
-    ' VERIFICA SI EL CUARTO TEXTBOX TAMBIÉN ESTÁ VACÍO
+    cadenaCuartoTextBox = UCase(Replace(FMain.txtDate.Text, "/", ""))
     If Trim(cadenaCuartoTextBox) = "" Then
-      ' EN CASO DE QUE AMBOS TEXTBOX ESTÉN VACÍOS, AGREGA "-SINFECHA"
+      ' NINGÚN CAMPO DE FECHA DISPONIBLE
       FMain.txtClaveBibtex.Text = FMain.txtClaveBibtex.Text & "-SINFECHA"
     Else
-      ' SI EL CUARTO TEXTBOX NO ESTÁ VACÍO, TOMA LOS PRIMEROS 4 CARACTERES
       FMain.txtClaveBibtex.Text = FMain.txtClaveBibtex.Text & Left(cadenaCuartoTextBox, 4)
     End If
   Else
-    ' SI EL TERCER TEXTBOX NO ESTÁ VACÍO, TOMA LOS PRIMEROS 4 CARACTERES
-    FMain.txtClaveBibtex.Text = FMain.txtClaveBibtex.Text & cadenaTercerTextBox '& Left(cadenaTercerTextBox, 4)
+    FMain.txtClaveBibtex.Text = FMain.txtClaveBibtex.Text & cadenaTercerTextBox
   End If
+
+  ' --- 7. Sanitización final de la clave completa ---
+  ' SE APLICA AL RESULTADO ENSAMBLADO: SOLO A-Z, 0-9 Y GUIÓN CORTO
+  FMain.txtClaveBibtex.Text = SanitizarClaveBibtex(FMain.txtClaveBibtex.Text)
 
 End Sub
 
@@ -552,6 +549,37 @@ Public Sub LimpiarTextboxBibtex()
 
 End
 
+' ============================================
+' Función   : SanitizarClaveBibtex
+' Propósito : Normaliza una clave BibTeX eliminando caracteres no permitidos
+'             Solo se aceptan A-Z (normalizados a mayúscula), 0-9 y guión corto
+' Parámetros: sClave As String — texto crudo ingresado por el usuario
+' Retorna   : String — clave sanitizada, o cadena vacía si no hay caracteres válidos
+' ============================================
+Private Function SanitizarClaveBibtex(sClave As String) As String
+
+  ' --- 1. Normalización inicial ---
+  Dim sNormalizada As String
+
+  sNormalizada = UCase(Trim(sClave))
+
+  ' --- 2. Filtrado carácter por carácter ---
+  Dim sResultado As String
+  Dim i As Integer
+  Dim c As String
+
+  For i = 1 To String.Len(sNormalizada)
+    c = String.Mid(sNormalizada, i, 1)
+    ' SOLO SE ACEPTAN LETRAS MAYÚSCULAS, DÍGITOS Y GUIÓN CORTO
+    If c Like "[A-Z0-9-]" Then
+      sResultado &= c
+    Endif
+  Next
+
+  Return sResultado
+
+End Function
+
 Public Sub GuardarCamposBib()
 
   ContenidoBib!id = FMain.id_bibtex.Value
@@ -560,7 +588,10 @@ Public Sub GuardarCamposBib()
   ContenidoBib!author = Trim(FMain.txtAuthor.Text)
   ContenidoBib!title = Trim(FMain.txtTitle.Text)
   ContenidoBib!tipo_de_tesis = FMain.cmbTipoDeTesis.Text
-  ContenidoBib!clave_bibtex = Trim(FMain.txtClaveBibtex.Text)
+  ' --- Sanitización y validación de la clave BibTeX antes de guardar ---
+  Dim sClaveSanitizada As String
+  sClaveSanitizada = SanitizarClaveBibtex(FMain.txtClaveBibtex.Text)
+  ContenidoBib!clave_bibtex = sClaveSanitizada
   ContenidoBib!tipo_de_entrada = FMain.cmbTipoDeEntrada.Text
   ContenidoBib!name_addon = Trim(FMain.txtNameAddOn.Text)
   ContenidoBib!book_author = Trim(FMain.book_author.Text)
