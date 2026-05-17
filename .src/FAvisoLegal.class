@@ -1,26 +1,100 @@
 ' Gambas class file
 
-Public EsFormularioInicial As Boolean = True  ' Es pública para que se pueda modificar desde FMain
+' ============================================
+' Formulario : FAvisoLegal
+' Propósito  : Primer formulario en ejecutarse al arrancar la aplicación.
+'              Realiza todas las verificaciones de entorno, prepara el sistema
+'              de archivos y muestra los términos legales.
+'              También puede abrirse desde FMain sin repetir el arranque.
+' ============================================
 
+Public EsFormularioInicial As Boolean = True  ' ES PÚBLICA PARA QUE FMAIN PUEDA MODIFICARLA ANTES DE ShowModal
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Secuencia completa de arranque y presentación del aviso legal
+' Parámetros: (ninguno — evento de formulario)
+' Retorna   : (nada)
+' ============================================
 Public Sub Form_Open()
 
-  ' --- 1. Analizamos la tipografía de la interfaz ---
-  m_InicioCierre.VerificarFuentesIBMPlex()
+  ' --- 1. Declaración de variables ---
+  Dim name As String
+  Dim sSesion As String
+  Dim sDesktop As String
+  Dim sDistro As String
+  Dim sOsRelease As String
+  Dim aLineas As String[]
+  Dim sL As String
+  Dim sMensaje As String
+  Dim bMint As Boolean
+  Dim bCinnamon As Boolean
+  Dim bX11 As Boolean
+  Dim carpetas As String[]
+  Dim carpeta As String
+  Dim sConfigPath As String
+  Dim sIPSpath As String
+  Dim hSettings As Settings
+  Dim iInterfaceSize As Integer
+  Dim iAncho As Integer
+  Dim sHTML As String
 
-  ' --- 1b. Crear directorio base si no existe ---
-  Dim sBase As String = User.Home &/ ".gbpublisher"
-
-  If Not Exist(sBase) Then
-    Try Mkdir sBase
-    If Error Then
-      m_Sonido.sonar("Error")
-      Message.Error("No se pudo crear el directorio base de la aplicación:" & Chr(10) & sBase)
-      Return
-    Endif
+  ' --- 2. Verificación de instancias múltiples ---
+  ' IMPIDE QUE EL USUARIO ABRA DOS VECES LA MISMA APLICACIÓN
+  Exec ["pgrep", "-fl", Application.Name] Wait To name
+  If Split(Trim$(name), gb.NewLine, "", True).Count > 1 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(Application.Name & " ya se está ejecutando en este equipo.")
+    Quit
   Endif
 
-  ' --- 2. Asegurar que el archivo de configuración existe ---
-  Dim sConfigPath As String = User.Home &/ ".gbpublisher" &/ "gbpublisher.conf"
+  ' --- 3. Verificación de entorno soportado ---
+  ' PLATAFORMA CERTIFICADA: LINUX MINT + CINNAMON + X11
+  ' SE ADVIERTE ANTES DE CUALQUIER OPERACIÓN CON EFECTOS SECUNDARIOS
+  sSesion = LCase(Trim(Env["XDG_SESSION_TYPE"]))
+  sDesktop = LCase(Trim(Env["XDG_CURRENT_DESKTOP"]))
+  sDistro = ""
+
+  ' LEER NOMBRE DE LA DISTRIBUCIÓN DESDE /etc/os-release
+  If Exist("/etc/os-release") Then
+    sOsRelease = File.Load("/etc/os-release")
+    aLineas = Split(sOsRelease, Chr(10))
+    For Each sL In aLineas
+      If sL Begins "NAME=" Then
+        sDistro = LCase(Replace(Replace(Mid(sL, 6), Chr(34), ""), "'", ""))
+        Break
+      Endif
+    Next
+  Endif
+
+  bMint = InStr(sDistro, "linux mint") > 0
+  bCinnamon = InStr(sDesktop, "cinnamon") > 0
+  bX11 = (sSesion = "x11")
+
+  If Not (bMint And bCinnamon And bX11) Then
+    sMensaje = "gbpublisher está certificado para Linux Mint + Cinnamon + X11." & Chr(10) & Chr(10)
+    sMensaje &= "Entorno detectado:" & Chr(10)
+    sMensaje &= "  Distribución:  " & If(sDistro <> "", sDistro, "(no detectada)") & Chr(10)
+    sMensaje &= "  Escritorio:    " & If(sDesktop <> "", sDesktop, "(no detectado)") & Chr(10)
+    sMensaje &= "  Sesión:        " & If(sSesion <> "", sSesion, "(no detectada)") & Chr(10) & Chr(10)
+    sMensaje &= "No hay soporte ni garantías de estabilidad en este entorno."
+    m_Sonido.sonar("Warning")
+    Message.Warning(sMensaje)
+    ' NO HACE Quit — PERMITE CONTINUAR BAJO RESPONSABILIDAD DEL USUARIO
+  Endif
+
+  ' --- 4. Verificación de fuentes requeridas ---
+  ' SI FALTA IBM PLEX SANS LA INTERFAZ NO PUEDE RENDERIZARSE CORRECTAMENTE
+  ' SE VERIFICA ANTES DE TOCAR EL SISTEMA DE ARCHIVOS
+  m_InicioCierre.VerificarFuentesIBMPlex()
+
+  ' --- 5. Directorio oculto y estructura base ---
+  ' CREA ~/.gbpublisher Y COPIA LOS ARCHIVOS BASE CON COMPORTAMIENTO NO-SOBRESCRITURA
+  m_InicioCierre.DirectorioOcultoApp()
+
+  ' --- 6. Asegurar que el archivo de configuración existe ---
+  ' SE CREA VACÍO SOLO SI NO EXISTE; NUNCA SE SOBRESCRIBE
+  sConfigPath = User.Home &/ ".gbpublisher" &/ "gbpublisher.conf"
 
   If Not Exist(sConfigPath) Then
     Try File.Save(sConfigPath, "")
@@ -30,50 +104,63 @@ Public Sub Form_Open()
     Endif
   Endif
 
-  ' --- 2b. Asegurar que el archivo de ips existe ---
-  Dim sIPSpath As String = User.Home &/ ".gbpublisher" &/ ".ips.txt"
+  ' --- 7. Asegurar que el archivo de IPs existe ---
+  ' EL VALOR POR DEFECTO ES 127.0.0.1 (MODO LOCAL)
+  sIPSpath = User.Home &/ ".gbpublisher" &/ ".ips.txt"
 
   If Not Exist(sIPSpath) Then
     Try File.Save(sIPSpath, "127.0.0.1")
     If Error Then
       m_Sonido.sonar("Error")
-      Message.Error("No se pudo crear el archivo de configuración:" & Chr(10) & Error.Text)
+      Message.Error("No se pudo crear el archivo de IPs:" & Chr(10) & Error.Text)
     Endif
   Endif
 
-  ' --- 3. Copiar el contenido de carpetas del sistema ---
-  Dim carpetas As String[] = ["biblatex", "chart", "csl", "dtd", "filters",
+  ' --- 8. Copiar carpetas de recursos al directorio del usuario ---
+  ' CADA CARPETA SE COPIA SIN SOBRESCRIBIR, PRESERVANDO PERSONALIZACIONES DEL USUARIO
+  carpetas = ["biblatex", "chart", "csl", "dtd", "filters",
     "fonts", "media", "ott", "schemas",
     "schematron", "scripts", "sonido", "xslt"]
 
-  Dim carpeta As String
   For Each carpeta In carpetas
-    m_InicioCierre.CopiarDirectorio(m_InicioCierre.RutaRecursos() & "/" & carpeta, User.Home & "/.gbpublisher/" & carpeta)
-    ' DESPUÉS DE FUENTES, COPIAR ICONOS SVG CON COLOR AJUSTADO
+    m_InicioCierre.CopiarDirectorio(m_InicioCierre.RutaRecursos() &/ carpeta,
+      User.Home &/ ".gbpublisher" &/ carpeta)
+    ' DESPUÉS DE COPIAR FUENTES, AJUSTAR LOS ICONOS SVG AL COLOR DEL TEMA ACTUAL
     If carpeta = "fonts" Then m_InicioCierre.CopiarIconosSVG()
   Next
 
-  If Not Exist(User.Home & "/.gbpublisher/respaldo") Then
-    Try Mkdir User.Home & "/.gbpublisher/respaldo"
+  ' CREAR DIRECTORIO DE RESPALDO SI NO EXISTE
+  If Not Exist(User.Home &/ ".gbpublisher" &/ "respaldo") Then
+    Try Mkdir User.Home &/ ".gbpublisher" &/ "respaldo"
     If Error Then
       m_Sonido.sonar("Error")
       Message.Error("Error al crear el directorio de respaldo.")
     Endif
   Endif
 
-  If Not File.RealPath(User.Home & "/.gbpublisher/buscador.py") Then
-    Copy "buscador.py" To User.Home & "/.gbpublisher/buscador.py"
-  End If
+  ' COPIAR SCRIPT DE BÚSQUEDA SI TODAVÍA NO EXISTE EN EL DIRECTORIO DEL USUARIO
+  If Not Exist(User.Home &/ ".gbpublisher" &/ "buscador.py") Then
+    Try Copy "buscador.py" To User.Home &/ ".gbpublisher" &/ "buscador.py"
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo copiar buscador.py:" & Chr(10) & Error.Text)
+    Endif
+  Endif
 
-  ' --- TIPOGRAFÍA: APLICAR ANTES DE RENDERIZAR CUALQUIER CONTROL ---
-  Dim hSettings As New Settings(sConfigPath)
-  Dim iInterfaceSize As Integer = 0
+  ' --- 9. Respaldo de base de datos ---
+  ' SOLO EN EL ARRANQUE INICIAL — NO SE REPITE CUANDO SE ABRE DESDE FMAIN
+  If EsFormularioInicial Then FMain.RespaldarBaseDatos()
+
+  ' --- 10. Tipografía de interfaz ---
+  ' LA FUENTE SE APLICA ANTES DE RENDERIZAR CONTROLES
+  hSettings = New Settings(sConfigPath)
+  iInterfaceSize = 0
 
   Try iInterfaceSize = CInt(hSettings["Interface/FontSize"])
 
-  ' SI NO EXISTE CONFIGURACIÓN, DETECTAR RESOLUCIÓN Y ESTABLECER TAMAÑO
+  ' SI NO EXISTE CONFIGURACIÓN PREVIA, DETECTAR RESOLUCIÓN Y CALCULAR TAMAÑO ÓPTIMO
   If Error Or iInterfaceSize < 8 Or iInterfaceSize > 20 Then
-    Dim iAncho As Integer = Desktop.Width
+    iAncho = Desktop.Width
     Select Case True
       Case iAncho <= 1366
         iInterfaceSize = 11   ' HD
@@ -84,99 +171,186 @@ Public Sub Form_Open()
       Case Else
         iInterfaceSize = 17   ' 4K
     End Select
-    ' GUARDAR PARA QUE EN EL PRÓXIMO ARRANQUE YA EXISTA EL ARCHIVO
+    ' PERSISTIR PARA QUE EN EL PRÓXIMO ARRANQUE YA EXISTA EL VALOR
     hSettings["Interface/FontSize"] = iInterfaceSize
   Endif
 
   Application.Font = Font["IBM Plex Sans," & CStr(iInterfaceSize)]
 
+  ' --- 11. Visibilidad del botón Aceptar según contexto de apertura ---
+  ' EN ARRANQUE INICIAL: MUESTRA EL BOTÓN Y EMITE SONIDO DE BIENVENIDA
+  ' ABIERTO DESDE FMAIN: OCULTA EL BOTÓN, EL USUARIO SOLO PUEDE CERRAR
   If EsFormularioInicial Then
-    hbAceptar.Visible = True
+    btnAceptar.Visible = True
     m_Sonido.sonar("Info")
   Else
-    hbAceptar.Visible = False
+    btnAceptar.Visible = False
   Endif
 
-  Dim sHTML As String
-
+  ' --- 12. Construcción y asignación del contenido HTML legal ---
+  ' EL HTML SE ENSAMBLA COMPLETO EN MEMORIA Y SE ASIGNA AL CONTROL UNA SOLA VEZ
   sHTML = "<html><head>" &
     "<meta charset='utf-8'>" &
     "<style>" &
-    "html, body { line-height: 1.5; padding: 4px; margin: 0; overflow-x: hidden; word-wrap: break-word; box-sizing:border-box; }" &
-    "h3 {color: #004080;}" &
+    "html, body { line-height: 1.5; padding: 4px; margin: 0; overflow-x: hidden;" &
+    " word-wrap: break-word; box-sizing: border-box; }" &
+    "h3 { color: #004080; }" &
     "</style></head><body>"
 
   sHTML &= "<h3>DESCARGO DE RESPONSABILIDAD</h3>" &
-    "<p>Este software se proporciona <strong>TAL CUAL, SIN GARANTÍA DE NINGÚN TIPO</strong>, expresa o implícita, incluyendo, entre otras, las garantías de comerciabilidad, idoneidad para un propósito particular y no infracción. En ningún caso los autores o titulares de los derechos de autor serán responsables por reclamos, daños u otras responsabilidades, ya sea en una acción contractual, extracontractual o de otro tipo, que surjan del uso del software o de cualquier actividad relacionada con él.</p>"
+    "<p>Este software se proporciona <strong>TAL CUAL, SIN GARANTÍA DE NINGÚN TIPO</strong>, " &
+    "expresa o implícita, incluyendo, entre otras, las garantías de comerciabilidad, idoneidad " &
+    "para un propósito particular y no infracción. En ningún caso los autores o titulares de los " &
+    "derechos de autor serán responsables por reclamos, daños u otras responsabilidades, ya sea " &
+    "en una acción contractual, extracontractual o de otro tipo, que surjan del uso del software " &
+    "o de cualquier actividad relacionada con él.</p>"
 
   sHTML &= "<h3>LICENCIA DEL SOFTWARE</h3>" &
     "<p>Este software se distribuye bajo la <strong>Business Source License 1.1 (BSL 1.1)</strong>.<br>" &
     "Condiciones principales:</p>" &
     "<ul style='margin-left:10px; list-style-type:disc;'>" &
-    "<li><strong>Uso gratuito:</strong> exclusivo para revistas científicas sin cobro de APC (Article Processing Charges) a los autores (se entiende por APC cualquier tarifa que el autor deba abonar para la publicación de su trabajo, bajo cualquier denominación).</li>" &
-    "<li><strong>Licencia comercial:</strong> revistas que cobren APC (Article Processing Charges) a los autores.</li>" &
+    "<li><strong>Uso gratuito:</strong> exclusivo para revistas científicas sin cobro de APC " &
+    "(Article Processing Charges) a los autores (se entiende por APC cualquier tarifa que el autor " &
+    "deba abonar para la publicación de su trabajo, bajo cualquier denominación).</li>" &
+    "<li><strong>Licencia comercial:</strong> revistas que cobren APC (Article Processing Charges) " &
+    "a los autores.</li>" &
     "<li><strong>Fecha de cambio:</strong> 5 años después de cada lanzamiento.</li>" &
     "<li><strong>Licencia de cambio:</strong> GNU General Public License v3.0 o posterior.</li>" &
     "<li><strong>Prohibiciones:</strong> hosting comercial como servicio, reventa o sublicenciamiento.</li>" &
     "</ul>" &
-    "<p>Véase la licencia completa en: <a href='https://github.com/albertomoyano/gbpublisher/blob/main/LICENSE.md'>LICENSE.md</a><br>" &
+    "<p>Véase la licencia completa en: " &
+    "<a href='https://github.com/albertomoyano/gbpublisher/blob/main/LICENSE.md'>LICENSE.md</a><br>" &
     "Copyright (c) 2026 Alberto Moyano.</p>"
 
   sHTML &= "<h3>USO DE API KEYS Y SERVICIOS EN LÍNEA</h3>" &
-    "<p>Este software utiliza servicios en línea de terceros que requieren el uso de <strong>API Keys</strong> para habilitar determinadas funciones (por ejemplo: diccionarios, Inteligencia Artificial u otros servicios).<br>" &
+    "<p>Este software utiliza servicios en línea de terceros que requieren el uso de " &
+    "<strong>API Keys</strong> para habilitar determinadas funciones (por ejemplo: diccionarios, " &
+    "Inteligencia Artificial u otros servicios).<br>" &
     "<strong>gbpublisher no incluye, no proporciona ni redistribuye ninguna API Key.</strong><br>" &
-    "Las claves de acceso deben ser obtenidas, gestionadas y configuradas exclusivamente por el usuario, utilizando los formularios provistos por la aplicación. Las API Keys utilizadas pueden estar disponibles bajo modalidades gratuitas ofrecidas por los respectivos proveedores, las cuales están sujetas a límites de uso, condiciones técnicas y términos de servicio definidos por dichos proveedores. El usuario es el <strong>único responsable</strong> del uso de sus API Keys, del cumplimiento de los términos de servicio, políticas de privacidad, límites de consumo, restricciones técnicas y cualquier consecuencia derivada de su utilización.<br><br>" &
-    "<strong>Nota sobre privacidad:</strong> las API Keys ingresadas por el usuario se almacenan en la base de datos (MySQL) utilizada por el programa con el único fin de permitir el funcionamiento de las funciones configuradas por el propio usuario. Estas claves no son compartidas, cedidas ni transmitidas a terceros distintos del proveedor del servicio correspondiente.<br>" &
-    "El software actúa únicamente como un cliente que realiza solicitudes en nombre del usuario utilizando las credenciales configuradas por éste. En ningún caso los autores del software serán responsables por suspensiones de servicio, revocación de claves, cambios en las condiciones de uso, interrupciones, costos asociados o cualquier otra consecuencia derivada del uso de servicios externos.</p>"
+    "Las claves de acceso deben ser obtenidas, gestionadas y configuradas exclusivamente por el " &
+    "usuario, utilizando los formularios provistos por la aplicación. Las API Keys utilizadas pueden " &
+    "estar disponibles bajo modalidades gratuitas ofrecidas por los respectivos proveedores, las " &
+    "cuales están sujetas a límites de uso, condiciones técnicas y términos de servicio definidos " &
+    "por dichos proveedores. El usuario es el <strong>único responsable</strong> del uso de sus " &
+    "API Keys, del cumplimiento de los términos de servicio, políticas de privacidad, límites de " &
+    "consumo, restricciones técnicas y cualquier consecuencia derivada de su utilización.<br><br>" &
+    "<strong>Nota sobre privacidad:</strong> las API Keys ingresadas por el usuario se almacenan " &
+    "en la base de datos (MySQL) utilizada por el programa con el único fin de permitir el " &
+    "funcionamiento de las funciones configuradas por el propio usuario. Estas claves no son " &
+    "compartidas, cedidas ni transmitidas a terceros distintos del proveedor del servicio " &
+    "correspondiente.<br>" &
+    "El software actúa únicamente como un cliente que realiza solicitudes en nombre del usuario " &
+    "utilizando las credenciales configuradas por éste. En ningún caso los autores del software " &
+    "serán responsables por suspensiones de servicio, revocación de claves, cambios en las " &
+    "condiciones de uso, interrupciones, costos asociados o cualquier otra consecuencia derivada " &
+    "del uso de servicios externos.</p>"
 
-  sHTML &= "<h3>DEPENDENCIAS EXTERNAS</h3>"
-    "<p> Este programa utiliza herramientas de terceros que deben estar instaladas en el sistema para su correcto funcionamiento. gbpublisher invoca estos programas mediante el sistema operativo, sin modificar ni redistribuir sus binarios o código fuente.<br> Se incluyen archivos de definición de tipo de documento (DTD) para validación de formatos editoriales: CrossRef, SciELO, PubMed/NLM, JATS4R y Redalyc. Estos archivos son redistribuidos para facilitar la validación consistente del contenido editorial y se mantienen bajo sus respectivas licencias originales.<br> Se incluye la biblioteca <strong>Chart.js</strong> (versión minificada, licencia MIT) para la generación de gráficos. gbpublisher gestiona la actualización de todas estas dependencias incluidas según criterios técnicos del proyecto, independientemente de los repositorios del sistema operativo.</p>"
+  sHTML &= "<h3>DEPENDENCIAS EXTERNAS</h3>" &
+    "<p>Este programa utiliza herramientas de terceros que deben estar instaladas en el sistema " &
+    "para su correcto funcionamiento. gbpublisher invoca estos programas mediante el sistema " &
+    "operativo, sin modificar ni redistribuir sus binarios o código fuente.<br>" &
+    "Se incluyen archivos de definición de tipo de documento (DTD) para validación de formatos " &
+    "editoriales: CrossRef, SciELO, PubMed/NLM, JATS4R y Redalyc. Estos archivos son " &
+    "redistribuidos para facilitar la validación consistente del contenido editorial y se " &
+    "mantienen bajo sus respectivas licencias originales.<br>" &
+    "Se incluye la biblioteca <strong>Chart.js</strong> (versión minificada, licencia MIT) para " &
+    "la generación de gráficos. gbpublisher gestiona la actualización de todas estas dependencias " &
+    "incluidas según criterios técnicos del proyecto, independientemente de los repositorios del " &
+    "sistema operativo.</p>"
 
   sHTML &= "<h3>RESPONSABILIDAD SOBRE BASES DE DATOS Y GESTIÓN DE INFORMACIÓN</h3>" &
-    "<p>Este software utiliza un motor de gestión de bases de datos <strong>MySQL</strong> para almacenar información necesaria para su funcionamiento. La <strong>instalación, configuración, administración, mantenimiento, seguridad, control de accesos, copias de respaldo y recuperación de datos</strong> son responsabilidad exclusiva del usuario o de la entidad que implemente el software.<br>" &
-    "En entornos institucionales (editoriales, universidades, centros de investigación u organizaciones similares), estas tareas corresponden al <strong>área de sistemas, informática o infraestructura tecnológica</strong> de la institución usuaria.<br>" &
-    "Los autores de gbpublisher no asumen NINGUNA responsabilidad por configuraciones incorrectas, fallos de seguridad, fallas de hardware, pérdida, corrupción o exposición de datos, accesos no autorizados, interrupciones del servicio o incumplimientos normativos derivados de la gestión de la base de datos.<br>" &
-    "Cuando el motor de gestión de bases de datos se utiliza en <strong>modo local (IP 127.0.0.1)</strong>, el usuario es el <strong>único responsable</strong> de los datos almacenados, de su integridad, confidencialidad, disponibilidad y respaldo, así como del uso que haga de dicha información.<br>" &
-    "El software actúa únicamente como una herramienta cliente que interactúa con la base de datos configurada por el usuario, sin imponer políticas de seguridad, retención, auditoría, cifrado ni control de acceso sobre la información almacenada.</p>"
+    "<p>Este software utiliza un motor de gestión de bases de datos <strong>MySQL</strong> para " &
+    "almacenar información necesaria para su funcionamiento. La <strong>instalación, configuración, " &
+    "administración, mantenimiento, seguridad, control de accesos, copias de respaldo y recuperación " &
+    "de datos</strong> son responsabilidad exclusiva del usuario o de la entidad que implemente el " &
+    "software.<br>" &
+    "En entornos institucionales (editoriales, universidades, centros de investigación u " &
+    "organizaciones similares), estas tareas corresponden al <strong>área de sistemas, informática " &
+    "o infraestructura tecnológica</strong> de la institución usuaria.<br>" &
+    "Los autores de gbpublisher no asumen NINGUNA responsabilidad por configuraciones incorrectas, " &
+    "fallos de seguridad, fallas de hardware, pérdida, corrupción o exposición de datos, accesos " &
+    "no autorizados, interrupciones del servicio o incumplimientos normativos derivados de la " &
+    "gestión de la base de datos.<br>" &
+    "Cuando el motor de gestión de bases de datos se utiliza en <strong>modo local (IP 127.0.0.1)" &
+    "</strong>, el usuario es el <strong>único responsable</strong> de los datos almacenados, de " &
+    "su integridad, confidencialidad, disponibilidad y respaldo, así como del uso que haga de dicha " &
+    "información.<br>" &
+    "El software actúa únicamente como una herramienta cliente que interactúa con la base de datos " &
+    "configurada por el usuario, sin imponer políticas de seguridad, retención, auditoría, cifrado " &
+    "ni control de acceso sobre la información almacenada.</p>"
 
   sHTML &= "<h3>ALCANCE Y COMPATIBILIDAD</h3>" &
-    "<p>Esta aplicación está diseñada, desarrollada y probada exclusivamente para <strong>Linux Mint con escritorio Cinnamon</strong>. Su correcto funcionamiento está garantizado únicamente en esta plataforma.<br>" &
-    "El desarrollo y las pruebas no contemplan otros escritorios de Linux ni distribuciones derivadas. Si bien el software podría funcionar en sistemas similares, esto no está garantizado ni soportado oficialmente.<br>" &
-    "Más información sobre Linux Mint: <a href='https://linuxmint.com/ '>https://linuxmint.com/ </a></p>" &
+    "<p>Esta aplicación está diseñada, desarrollada y probada exclusivamente para " &
+    "<strong>Linux Mint con escritorio Cinnamon</strong>. Su correcto funcionamiento está " &
+    "garantizado únicamente en esta plataforma.<br>" &
+    "El desarrollo y las pruebas no contemplan otros escritorios de Linux ni distribuciones " &
+    "derivadas. Si bien el software podría funcionar en sistemas similares, esto no está " &
+    "garantizado ni soportado oficialmente.<br>" &
+    "Más información sobre Linux Mint: <a href='https://linuxmint.com/'>https://linuxmint.com/</a></p>" &
     "<h3>REQUISITOS DEL SISTEMA DE VENTANAS</h3>" &
-    "<p>Esta aplicación requiere un servidor de pantalla X11 (X.Org) para funcionar correctamente. No es compatible con entornos Wayland. Si su sistema utiliza Wayland, gbpublisher podría presentar fallos en el posicionamiento de ventanas, atajos de teclado globales u otras funcionalidades críticas. <strong> Se recomienda ejecutar la aplicación bajo X11.</strong><br> Linux Mint con Cinnamon utiliza X11 de forma predeterminada, por lo que no se requiere ninguna configuración adicional en la plataforma soportada.</p>"
+    "<p>Esta aplicación requiere un servidor de pantalla X11 (X.Org) para funcionar correctamente. " &
+    "No es compatible con entornos Wayland. Si su sistema utiliza Wayland, gbpublisher podría " &
+    "presentar fallos en el posicionamiento de ventanas, atajos de teclado globales u otras " &
+    "funcionalidades críticas. <strong>Se recomienda ejecutar la aplicación bajo X11.</strong><br>" &
+    "Linux Mint con Cinnamon utiliza X11 de forma predeterminada, por lo que no se requiere " &
+    "ninguna configuración adicional en la plataforma soportada.</p>"
 
   sHTML &= "<h3>NOTA SOBRE LA INTERFAZ</h3>" &
-    "<p>Esta aplicación está configurada para usar tema claro independientemente de la configuración del sistema.</p><br>"
+    "<p>Esta aplicación está configurada para usar tema claro independientemente de la " &
+    "configuración del sistema.</p><br>"
 
   sHTML &= "</body></html>"
 
-  ' ASIGNAMOS EL HTML AL CONTROL
   HtmlViewLegales.Html = sHTML
 
 End
 
+' ============================================
+' Función   : HtmlViewLegales_Link
+' Propósito : Abrir en el navegador del sistema los enlaces del aviso legal
+' Parámetros: Url As String — URL del enlace activado por el usuario
+' Retorna   : (nada)
+' ============================================
 Public Sub HtmlViewLegales_Link(Url As String)
 
+  ' xdg-open DELEGA EN EL NAVEGADOR PREDETERMINADO DEL SISTEMA
   Shell "xdg-open " & Quote(Url) & " &"
 
 End
 
-' SOLO CIERRA EL FORMULARIO SI FUE ABIERTO DESDE FMAIN
+' ============================================
+' Función   : ButtonCerrarLegal_Click
+' Propósito : Cerrar el formulario cuando fue abierto desde FMain
+' Parámetros: (ninguno — evento de control)
+' Retorna   : (nada)
+' ============================================
 Public Sub ButtonCerrarLegal_Click()
 
   Me.Close()
 
 End
 
+' ============================================
+' Función   : menuSalir_Click
+' Propósito : Cerrar el formulario desde el menú
+' Parámetros: (ninguno — evento de control)
+' Retorna   : (nada)
+' ============================================
 Public Sub menuSalir_Click()
 
   Me.Close()
 
 End
 
+' ============================================
+' Función   : btnAceptar_Click
+' Propósito : Aceptar los términos legales y abrir FMain en el arranque inicial
+' Parámetros: (ninguno — evento de control)
+' Retorna   : (nada)
+' ============================================
 Public Sub btnAceptar_Click()
 
+  ' CIERRA EL AVISO LEGAL Y DA PASO A LA INTERFAZ PRINCIPAL
   Me.Close()
   FMain.Show()
   Wait 0.2
