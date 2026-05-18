@@ -1,0 +1,208 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_GitHub
+' Propósito : Genera .estado-proyecto.json como puente
+'             entre la BD MySQL y GitHub Actions para
+'             el seguimiento editorial del director.
+'             Los IDs de GitHub NO se guardan en la BD,
+'             solo viven en el JSON en disco.
+' Requiere  : gb.util.web (JSON, JSONCollection)
+' ============================================
+
+' ============================================
+' Función   : GenerarEstadoProyecto
+' Propósito : Consulta la BD y escribe .estado-proyecto.json
+'             en la raíz del proyecto. Si el archivo ya
+'             existe, preserva los IDs de GitHub asignados
+'             en pushes anteriores para evitar duplicados
+'             en Discussions y Project Board.
+' Parámetros: sRutaProyecto   As String  — raíz del proyecto
+'             iIdProyecto     As Integer — ID del proyecto en BD
+'             sNombreProyecto As String  — nombre legible
+' Retorna   : Boolean — True si el archivo se generó sin error
+' ============================================
+Public Function GenerarEstadoProyecto(sRutaProyecto As String, iIdProyecto As Integer, sNombreProyecto As String) As Boolean
+
+  ' --- 1. DEFINIR RUTA DEL ARCHIVO JSON ---
+  Dim sRutaJSON As String = sRutaProyecto &/ ".estado-proyecto.json"
+
+  ' --- 2. LEER IDS DE GITHUB PRESERVADOS DEL JSON ANTERIOR ---
+  ' SI EL ARCHIVO YA EXISTE SE EXTRAEN LOS IDs POR ARTÍCULO
+  ' PARA QUE EL ACTION NO CREE DISCUSSIONS DUPLICADAS EN PUSHES SUCESIVOS
+  Dim hIDsGitHub As New Collection
+
+  If Exist(sRutaJSON) Then
+    Dim sTextoExistente As String
+    Try sTextoExistente = File.Load(sRutaJSON)
+    If Not Error Then
+      Dim jExistente As JSONCollection
+      Try jExistente = JSON.Decode(sTextoExistente, True)
+      If Not Error Then
+        Dim aArtsExistentes As Variant[]
+        Try aArtsExistentes = jExistente["articulos"]
+        If Not Error And Not IsNull(aArtsExistentes) Then
+          Dim vArt As Variant
+          For Each vArt In aArtsExistentes
+            Dim jArt As JSONCollection = vArt
+            Dim sNombreArt As String
+            Try sNombreArt = CStr(jArt["nombre_archivo"])
+            If Not Error And sNombreArt <> "" Then
+              ' PRESERVAR LOS TRES CAMPOS QUE VIENEN DE GITHUB, NO DE LA BD
+              Dim jIDsNuevos As New JSONCollection
+              jIDsNuevos["discussion_id"] = jArt["github_discussion_id"]
+              jIDsNuevos["project_item_id"] = jArt["github_project_item_id"]
+              jIDsNuevos["estado_previo"] = jArt["estado"]
+              hIDsGitHub[sNombreArt] = jIDsNuevos
+            Endif
+          Next
+        Endif
+      Endif
+    Endif
+  Endif
+
+  ' --- 3. CONSULTAR ARTÍCULOS DEL PROYECTO EN LA BD ---
+  Dim hDB As Result
+  Try hDB = m_ConexionBD.mConn.Exec(
+    "SELECT id_articulo, nombre_archivo, titulo_articulo, doi, " &
+    "estado_articulo, tipo_articulo, " &
+    "fecha_recepcion, fecha_aceptacion, fecha_publicacion_online, " &
+    "responsable_edicion " &
+    "FROM articulos WHERE id_proyecto = " & iIdProyecto &
+    " ORDER BY nombre_archivo")
+  If Error Then Return False
+
+  ' PROYECTO SIN ARTÍCULOS AÚN: NO HAY NADA QUE REPORTAR
+  If Not hDB.Available Then Return True
+
+  ' --- 4. CONSTRUIR ARRAY DE ARTÍCULOS COMBINANDO BD E IDS PRESERVADOS ---
+  Dim aArticulos As New Variant[]
+
+  While hDB.Available
+
+    Dim jArticulo As New JSONCollection
+    Dim sNombreArchivo As String = CStr(hDB["nombre_archivo"])
+
+    ' DATOS EDITORIALES DESDE LA BD
+    jArticulo["nombre_archivo"] = sNombreArchivo
+    jArticulo["titulo"] = CStr(hDB["titulo_articulo"])
+    jArticulo["doi"] = ValorONull(hDB["doi"])
+    jArticulo["tipo_articulo"] = ValorONull(hDB["tipo_articulo"])
+    jArticulo["estado"] = CStr(hDB["estado_articulo"])
+    jArticulo["fecha_recepcion"] = FechaONull(hDB["fecha_recepcion"])
+    jArticulo["fecha_aceptacion"] = FechaONull(hDB["fecha_aceptacion"])
+    jArticulo["fecha_publicacion_online"] = FechaONull(hDB["fecha_publicacion_online"])
+    jArticulo["responsable_edicion"] = ValorONull(hDB["responsable_edicion"])
+
+    ' AUTORES ORDENADOS POR ORDEN DE AUTORÍA
+    jArticulo["autores"] = ObtenerAutoresArticulo(CInt(hDB["id_articulo"]))
+
+    ' IDS DE GITHUB: PRESERVADOS SI EL ARTÍCULO YA EXISTÍA, NULOS SI ES NUEVO
+    If hIDsGitHub.Exist(sNombreArchivo) Then
+      Dim jIDs As JSONCollection = hIDsGitHub[sNombreArchivo]
+      jArticulo["github_discussion_id"] = jIDs["discussion_id"]
+      jArticulo["github_project_item_id"] = jIDs["project_item_id"]
+      ' ESTADO_ANTERIOR PERMITE AL ACTION DETECTAR CAMBIOS Y AGREGAR COMENTARIOS
+      jArticulo["estado_anterior"] = jIDs["estado_previo"]
+    Else
+      ' ARTÍCULO NUEVO: EL ACTION CREARÁ SU DISCUSSION Y DEVOLVERÁ EL ID
+      jArticulo["github_discussion_id"] = JSON.Null
+      jArticulo["github_project_item_id"] = JSON.Null
+      jArticulo["estado_anterior"] = JSON.Null
+    Endif
+
+    aArticulos.Add(jArticulo)
+    hDB.MoveNext()
+
+  Wend
+
+  ' --- 5. CONSTRUIR JSON RAÍZ Y GUARDAR EN DISCO ---
+  Dim jRaiz As New JSONCollection
+  jRaiz["proyecto"] = sNombreProyecto
+  jRaiz["generado"] = Format(Now(), "yyyy-mm-ddThh:nn:ss")
+  jRaiz["articulos"] = aArticulos
+
+  Try File.Save(sRutaJSON, JSON.Encode(jRaiz))
+  Return Not Error
+
+Catch
+  Return False
+
+End Function
+
+' ============================================
+' Función   : ObtenerAutoresArticulo
+' Propósito : Devuelve Variant[] con los apellidos_nombre
+'             de los autores del artículo ordenados por
+'             orden de autoría. Usa apellidos_nombre porque
+'             ya viene formateado desde la BD.
+' Parámetros: iIdArticulo As Integer
+' Retorna   : Variant[] — ["Apellidos, Nombre", ...]
+' ============================================
+Private Function ObtenerAutoresArticulo(iIdArticulo As Integer) As Variant[]
+
+  Dim aAutores As New Variant[]
+
+  ' --- 1. CONSULTAR AUTORES ORDENADOS ---
+  Dim hAut As Result
+
+  Try hAut = m_ConexionBD.mConn.Exec(
+    "SELECT a.apellidos_nombre " &
+    "FROM autores a " &
+    "JOIN articulo_autor aa ON a.id_autor = aa.id_autor " &
+    "WHERE aa.id_articulo = " & iIdArticulo &
+    " ORDER BY aa.orden_autoria")
+  If Error Then Return aAutores
+
+  ' --- 2. ACUMULAR NOMBRES NO NULOS ---
+  While hAut.Available
+    If Not IsNull(hAut["apellidos_nombre"]) Then
+      aAutores.Add(CStr(hAut["apellidos_nombre"]))
+    Endif
+    hAut.MoveNext()
+  Wend
+
+  Return aAutores
+
+Catch
+  Return aAutores
+
+End Function
+
+' ============================================
+' Función   : ValorONull
+' Propósito : Devuelve el valor como String o JSON.Null
+'             si es nulo o vacío. Centraliza la lógica
+'             repetitiva de campos opcionales de la BD.
+' Parámetros: vValor As Variant — valor proveniente de la BD
+' Retorna   : Variant — String o JSON.Null
+' ============================================
+Private Function ValorONull(vValor As Variant) As Variant
+
+  If IsNull(vValor) Then Return JSON.Null
+  Dim sValor As String
+  Try sValor = CStr(vValor)
+  If Error Or sValor = "" Then Return JSON.Null
+  Return sValor
+
+End Function
+
+' ============================================
+' Función   : FechaONull
+' Propósito : Convierte fecha de BD a string ISO 8601
+'             (yyyy-mm-dd) o JSON.Null si es nula.
+'             JSON no tiene tipo Date nativo; el formato
+'             ISO 8601 es el estándar para intercambio.
+' Parámetros: vFecha As Variant — valor de fecha de la BD
+' Retorna   : Variant — String "yyyy-mm-dd" o JSON.Null
+' ============================================
+Private Function FechaONull(vFecha As Variant) As Variant
+
+  If IsNull(vFecha) Then Return JSON.Null
+  Try Return Format(CDate(vFecha), "yyyy-mm-dd")
+  Return JSON.Null
+
+Catch
+  Return JSON.Null
+
+End Function
