@@ -1,0 +1,176 @@
+name: Estado Editorial
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.estado-proyecto.json'
+
+permissions:
+  discussions: write
+  contents: write
+
+jobs:
+  procesar-estado:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Procesar articulos y actualizar Discussions
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const estado = JSON.parse(fs.readFileSync('.estado-proyecto.json', 'utf8'));
+            const idsPath = '.github-ids.json';
+
+            var idsData = {};
+            try {
+              var getIdsResult = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: idsPath
+              });
+              idsData = JSON.parse(Buffer.from(getIdsResult.data.content, 'base64').toString('utf8'));
+            } catch (e) {
+              idsData = {};
+            }
+
+            const repoData = await github.graphql(`
+              query($owner: String!, $name: String!) {
+                repository(owner: $owner, name: $name) {
+                  id
+                  discussionCategories(first: 20) {
+                    nodes { id name }
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              name: context.repo.repo
+            });
+
+            const repoId = repoData.repository.id;
+            const categoria = repoData.repository.discussionCategories.nodes
+              .find(c => c.name === 'Seguimiento Editorial');
+
+            if (!categoria) {
+              core.setFailed('No se encontro la categoria "Seguimiento Editorial".');
+              return;
+            }
+
+            for (const articulo of estado.articulos) {
+              const clave = articulo.nombre_archivo;
+              const entrada = idsData[clave] || {};
+
+              if (!entrada.discussion_id) {
+
+                const autores = Array.isArray(articulo.autores) && articulo.autores.length > 0
+                  ? articulo.autores.join(' - ')
+                  : 'N/D';
+
+                const lineas = [
+                  '**Proyecto:** ' + estado.proyecto,
+                  '**Archivo:** `' + articulo.nombre_archivo + '`',
+                  '**Tipo:** ' + (articulo.tipo_articulo || 'N/D'),
+                  '**DOI:** ' + (articulo.doi || 'pendiente'),
+                  '**Autores:** ' + autores,
+                  '**Responsable:** ' + (articulo.responsable_edicion || 'N/D'),
+                  '',
+                  '| Evento | Fecha |',
+                  '|--------|-------|',
+                  '| Recepcion | ' + (articulo.fecha_recepcion || '-') + ' |',
+                  '| Aceptacion | ' + (articulo.fecha_aceptacion || '-') + ' |',
+                  '| Publicacion online | ' + (articulo.fecha_publicacion_online || '-') + ' |',
+                  '',
+                  '**Estado inicial:** `' + articulo.estado + '`',
+                  '',
+                  '---',
+                  '*Seguimiento generado automaticamente por gbpublisher*'
+                ];
+
+                const resultado = await github.graphql(`
+                  mutation($repoId: ID!, $catId: ID!, $titulo: String!, $cuerpo: String!) {
+                    createDiscussion(input: {
+                      repositoryId: $repoId
+                      categoryId: $catId
+                      title: $titulo
+                      body: $cuerpo
+                    }) {
+                      discussion { id url }
+                    }
+                  }
+                `, {
+                  repoId: repoId,
+                  catId: categoria.id,
+                  titulo: '[' + articulo.estado.toUpperCase() + '] ' + articulo.titulo,
+                  cuerpo: lineas.join('\n')
+                });
+
+                idsData[clave] = {
+                  discussion_id: resultado.createDiscussion.discussion.id,
+                  ultimo_estado: articulo.estado
+                };
+                core.info('Discussion creada: ' + resultado.createDiscussion.discussion.url);
+
+              } else if (entrada.ultimo_estado && articulo.estado !== entrada.ultimo_estado) {
+
+                const lineasComentario = [
+                  '### Cambio de estado',
+                  '',
+                  '| | |',
+                  '|---|---|',
+                  '| **Estado anterior** | `' + entrada.ultimo_estado + '` |',
+                  '| **Estado actual** | `' + articulo.estado + '` |',
+                  '| **Fecha** | ' + new Date().toISOString().split('T')[0] + ' |',
+                  '',
+                  '*Actualizacion automatica por gbpublisher*'
+                ];
+
+                await github.graphql(`
+                  mutation($discId: ID!, $cuerpo: String!) {
+                    addDiscussionComment(input: {
+                      discussionId: $discId
+                      body: $cuerpo
+                    }) {
+                      comment { id }
+                    }
+                  }
+                `, {
+                  discId: entrada.discussion_id,
+                  cuerpo: lineasComentario.join('\n')
+                });
+
+                idsData[clave].ultimo_estado = articulo.estado;
+                core.info('Comentario agregado: ' + clave);
+              }
+            }
+
+            var shaActual;
+            try {
+              var getShaResult = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: idsPath
+              });
+              shaActual = getShaResult.data.sha;
+            } catch (e) {
+              shaActual = undefined;
+            }
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: idsPath,
+              message: 'meta: IDs de GitHub actualizados [skip ci]',
+              content: Buffer.from(JSON.stringify(idsData, null, 2)).toString('base64'),
+              sha: shaActual,
+              branch: 'main'
+            });
+
+            core.info('IDs actualizados en .github-ids.json');
