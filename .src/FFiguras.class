@@ -639,3 +639,108 @@ Public Sub btnCerrar_Click()
   Me.Close
 
 End Sub
+
+' ============================================
+' Función   : btnEditarCSVconOffice_Click
+' Propósito : Abre el CSV activo en LibreOffice Calc para
+'             edición visual. Avisa al usuario que debe
+'             refrescar el grid manualmente al terminar.
+' Parámetros: (ninguno — usa sCSVActual del formulario)
+' Retorna   : (nada)
+' ============================================
+Public Sub btnEditarCSVconOffice_Click()
+
+  ' --- 1. VALIDACIÓN: DEBE HABER UN CSV ACTIVO Y EXISTENTE EN DISCO ---
+  If sCSVActual = "" Or Not Exist(sCSVActual) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un archivo CSV activo para editar.")
+    Return
+  Endif
+
+  ' --- 2. AVISO AL USUARIO ANTES DE ABRIR LIBREOFFICE ---
+  ' SE INFORMA QUE EL GRID NO SE ACTUALIZA AUTOMÁTICAMENTE
+  Dim iRespuesta As Integer
+  m_Sonido.sonar("Question")
+  iRespuesta = Message.Question("LibreOffice Calc se abrirá con el archivo CSV." &
+    "\n\nCuando termine de editar y guarde los cambios en LibreOffice, " &
+    "vuelva a seleccionar el archivo en el combo para refrescar la tabla." &
+    "\n\n¿Desea continuar?", "Abrir", "Cancelar")
+
+  ' --- 3. EL USUARIO CANCELÓ ---
+  If iRespuesta = 2 Then Return
+
+  ' --- 4. APERTURA NO BLOQUEANTE EN LIBREOFFICE CALC ---
+  ' SHELL SIN WAIT DEJA LIBREOFFICE CORRIENDO INDEPENDIENTE DE GBPUBLISHER
+  Shell "libreoffice --calc " & Chr(34) & sCSVActual & Chr(34)
+
+End Sub
+
+' ============================================
+' Función   : btnImportarCSV_Click
+' Propósito : Abre un diálogo para seleccionar un CSV
+'             externo (local o en ruta de red montada),
+'             lo copia a /media con la convención
+'             fd0N-nombrebase.csv, refresca el combo
+'             y carga el archivo en el grid.
+' Parámetros: (ninguno — usa sNombreBase, sRutaMedia,
+'              iNumFigura del formulario)
+' Retorna   : (nada)
+' ============================================
+Public Sub btnImportarCSV_Click()
+
+  ' --- 1. VALIDAR QUE EL DIRECTORIO MEDIA EXISTE ---
+  If Not Exist(sRutaMedia) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró la carpeta media del proyecto.")
+    Return
+  Endif
+
+  ' --- 2. ABRIR DIÁLOGO DE SELECCIÓN FILTRADO A CSV ---
+  Dialog.Filter = ["Archivos CSV (*.csv)|*.csv"]
+  If Dialog.OpenFile() Then Return
+
+  Dim sOrigen As String = Dialog.Path
+
+  ' --- 3. VERIFICAR ACCESIBILIDAD DEL ARCHIVO SELECCIONADO ---
+  If Not Exist(sOrigen) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se puede acceder al archivo seleccionado.")
+    Return
+  Endif
+
+  ' --- 4. CONSTRUIR NOMBRE DE DESTINO SEGÚN CONVENCIÓN fd0N-nombrebase.csv ---
+  Dim sNumero As String = Format(iNumFigura, "00")
+  Dim sNombreDestino As String = "fd" & sNumero & "-" & sNombreBase & ".csv"
+  Dim sRutaDestino As String = sRutaMedia &/ sNombreDestino
+
+  ' --- 5. ADVERTIR SI YA EXISTE UN ARCHIVO CON ESE NÚMERO ---
+  ' ESTO NO DEBERÍA OCURRIR NORMALMENTE PORQUE iNumFigura ES EL SIGUIENTE DISPONIBLE
+  If Exist(sRutaDestino) Then
+    m_Sonido.sonar("Question")
+    If Message.Question("Ya existe el archivo:" & Chr(10) & sNombreDestino &
+        Chr(10) & Chr(10) & "¿Desea reemplazarlo?",
+        "Reemplazar", "Cancelar") <> 1 Then Return
+      Try Kill sRutaDestino
+    Endif
+
+    ' --- 6. COPIAR EL ARCHIVO AL DIRECTORIO MEDIA ---
+    Try Copy sOrigen To sRutaDestino
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo copiar el archivo:" & Chr(10) & Error.Text)
+      Return
+    Endif
+
+    ' --- 7. REFRESCAR ESTADO, COMBO Y GRID ---
+    ' iNumFigura SE RECALCULA DESDE DISCO PARA MANTENER CONSISTENCIA
+    iNumFigura = ContarFiguras(sRutaMedia, sNombreBase) + 1
+    CargarComboFiguras()
+
+    ' SINCRONIZAR EL COMBO CON EL ARCHIVO RECIÉN IMPORTADO
+    ' SIN DISPARAR EL EVENTO Click (la carga se hace explícitamente abajo)
+    cmbCargarDatos.Text = sNombreDestino
+
+    ' CARGAR EL CSV IMPORTADO EN EL GRID Y ACTUALIZAR BOTONES
+    CargarCSVEnGrid(sRutaDestino)
+
+End Sub
