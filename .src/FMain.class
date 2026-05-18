@@ -821,70 +821,99 @@ Public Sub btnEmpujarGitHubRemoto_Click()
 End
 
 Private Sub EjecutarPushGitHub(mensajeCommit As String)
-  ' EJECUTA LOS COMANDOS GIT PARA EMPUJAR AL REPOSITORIO REMOTO
-  '
-  ' PARÁMETROS:
-  '   mensajeCommit: TEXTO DEL MENSAJE PARA EL COMMIT
-  '
-  ' REQUISITOS:
-  '   - USUARIO DE GITHUB YA VALIDADO PREVIAMENTE
-  '   - PROYECTO ABIERTO CON NOMBRE VÁLIDO
-  '   - ACCESO SSH CONFIGURADO PARA GITHUB
 
   Dim usuario As String = Trim(txtUsuarioGit.Text)
   Dim IdGitHub As String
-  Dim resultado As String
   Dim repoLocal As Boolean = False
   Dim repoConfigurado As Boolean = False
   Dim ramaMain As Boolean = False
+  Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
 
-  ' MOSTRAMOS LA CONSOLA
-  FMain.TabPanelIzquierdaInferior.Index = 0
+  ' MOSTRAMOS LA CONSOLA Y POSICIONAMOS LA TERMINAL
+  TabPanelIzquierdaInferior.Index = 0
+  TerminalViewProyecto.Input("cd " & Chr(34) & sRutaProyecto & Chr(34) & "\n")
 
   IdGitHub = "git@github.com:" & usuario & "/" & NombreProyecto & ".git"
 
-  ' VERIFICAR SI EL DIRECTORIO ACTUAL ES UN REPOSITORIO GIT
-  resultado = Shell$(NombreProyecto & "/git rev-parse --is-inside-work-tree 2>/dev/null")
-  If Trim(resultado) = "true" Then
-    repoLocal = True
-  Endif
+  ' VERIFICAR SI ES REPOSITORIO GIT: EXISTE EL DIRECTORIO .git
+  repoLocal = Exist(sRutaProyecto &/ ".git")
 
-  ' SI NO ES UN REPOSITORIO, INICIALIZARLO
   If Not repoLocal Then
-    TerminalViewProyecto.Input("git init" & "\n")
+    TerminalViewProyecto.Input("git init --initial-branch=main" & "\n")
   Endif
 
-  ' VERIFICAR SI EL REPOSITORIO YA TIENE UN ORIGIN CONFIGURADO
-  resultado = Shell$("git remote -v")
-  If InStr(resultado, IdGitHub) > 0 Then
-    repoConfigurado = True
+  ' VERIFICAR SI TIENE ORIGIN CONFIGURADO: LEER .git/config
+  Dim sRutaConfig As String = sRutaProyecto &/ ".git" &/ "config"
+  If Exist(sRutaConfig) Then
+    Dim sConfig As String
+    Try sConfig = File.Load(sRutaConfig)
+    If Not Error And InStr(sConfig, "[remote " & Chr(34) & "origin" & Chr(34) & "]") > 0 Then
+      repoConfigurado = True
+    Endif
   Endif
 
-  ' VERIFICAR SI LA RAMA ACTUAL ES MAIN
-  resultado = Shell$("git branch --show-current")
-  If Trim(resultado) = "main" Then
-    ramaMain = True
+  ' VERIFICAR RAMA ACTUAL: LEER .git/HEAD
+  Dim sRutaHEAD As String = sRutaProyecto &/ ".git" &/ "HEAD"
+  If Exist(sRutaHEAD) Then
+    Dim sHEAD As String
+    Try sHEAD = File.Load(sRutaHEAD)
+    If Not Error And Trim(sHEAD) = "ref: refs/heads/main" Then
+      ramaMain = True
+    Endif
   Endif
 
-  ' SI EL REPO NO ESTÁ CONFIGURADO, AGREGAR ORIGIN
+  ' CONFIGURAR ORIGIN SI NO EXISTE
   If Not repoConfigurado Then
     TerminalViewProyecto.Input("git remote add origin " & IdGitHub & "\n")
   Endif
 
-  ' SI LA RAMA NO ES MAIN, CAMBIAR A MAIN
+  ' RENOMBRAR RAMA A MAIN SI ES NECESARIO
   If Not ramaMain Then
     TerminalViewProyecto.Input("git branch -M main" & "\n")
   Endif
 
-  ' EJECUTAR LOS COMANDOS PRINCIPALES
-  TerminalViewProyecto.Input("git add ." & "\n")
-  ' USAR EL MENSAJE DE COMMIT PROPORCIONADO POR EL USUARIO
-  ' ESCAPAR COMILLAS SIMPLES EN EL MENSAJE PARA EVITAR PROBLEMAS EN SHELL
-  TerminalViewProyecto.Input("git commit -m '" & Replace$(mensajeCommit, "'", "'\\''") & "'" & "\n")
-  TerminalViewProyecto.Input("git push --set-upstream origin main" & "\n")
-  TerminalViewProyecto.SetFocus()
+  ' --- INTEGRACIÓN GITHUB: GENERAR JSON ANTES DEL ADD ---
+  ' EL JSON ENTRA EN EL MISMO COMMIT EDITORIAL, SIN COMMIT SEPARADO
+  If UsaIntegracionGitHub() Then
+    Dim bJsonOk As Boolean
+    bJsonOk = m_GitHub.GenerarEstadoProyecto(File.Dir(txtProyecto.Text), CInt(id_proyecto.Value), File.BaseName(txtProyecto.Text))
+    If Not bJsonOk Then
+      m_Sonido.sonar("Warning")
+      If Message.Question(
+          "No se pudo generar el archivo de integración con GitHub." &
+          Chr(10) & Chr(10) &
+          "¿Desea continuar el push sin él?",
+          "Continuar", "Cancelar") <> 1 Then Return
+      Endif
+    Endif
+
+    ' EJECUTAR LOS COMANDOS PRINCIPALES
+    TerminalViewProyecto.Input("git add ." & "\n")
+    ' ESCAPAR COMILLAS SIMPLES EN EL MENSAJE PARA EVITAR PROBLEMAS EN SHELL
+    TerminalViewProyecto.Input("git commit -m '" & Replace$(mensajeCommit, "'", "'\\''") & "'" & "\n")
+    TerminalViewProyecto.Input("git push --set-upstream origin main" & "\n")
+    TerminalViewProyecto.SetFocus()
 
 End
+
+' ============================================
+' Función   : UsaIntegracionGitHub
+' Propósito : Consulta si el proyecto activo tiene
+'             activada la integración con GitHub Actions.
+'             Se llama solo desde EjecutarPushGitHub.
+' Retorna   : Boolean — True si debe generar el JSON
+' ============================================
+Private Function UsaIntegracionGitHub() As Boolean
+
+  Dim hProyecto As Result
+
+  Try hProyecto = m_ConexionBD.mConn.Exec(
+    "SELECT integracion_github FROM proyectos WHERE id = " & CInt(id_proyecto.Value))
+  If Error Then Return False
+  If Not hProyecto.Available Then Return False
+  Return CStr(hProyecto["integracion_github"]) = "con_integracion"
+
+End Function
 
 ' OCULTAR EL COMBOBOX CUANDO EL TEXTBOX PIERDE EL FOCO
 Public Sub txtPublisher_LostFocus()
@@ -6624,5 +6653,11 @@ Public Sub ButtonVerTitle_Click()
 
   FTXTextendido.OriginalTextBox = txtTitle
   FTXTextendido.ShowModal
+
+End
+
+Public Sub Button1_Click()
+
+  m_GitHub.GenerarEstadoProyecto(File.Dir(txtProyecto.Text), CInt(id_proyecto.Value), File.BaseName(txtProyecto.Text))
 
 End
