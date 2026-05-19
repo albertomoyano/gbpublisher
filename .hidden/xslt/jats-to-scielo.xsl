@@ -3,30 +3,29 @@
   =====================================================
   jats-to-scielo.xsl
   =====================================================
-  DESCRIPCIÓN:
-    TRANSFORMA EL CANÓNICO JATS 1.4 ARCHIVING AL
-    FORMATO SCIELO PUBLISHING SCHEMA (SPS) 1.3
-    BASADO EN JATS PUBLISHING 1.0 + ESTILO SCIELO.
-
+  DESCRIPCIÓN   : Transforma el canónico JATS 1.4 Archiving
+                  al formato SciELO Publishing Schema (SPS) 1.9
+                  basado en JATS Publishing 1.0 + estilo SciELO.
+  FAMILIA       : indexadores
+  ENTRADA       : c-NN-slug-vNN-nNN.xml (canónico JATS 1.4)
+  SALIDA        : s-NN-slug-vNN-nNN.xml (SPS 1.9 / JATS Publishing 1.0)
+  MOTOR         : Saxon-HE (XSLT 2.0)
+  PARÁMETROS    : acronimo_scielo — acrónimo SciELO de la revista (ej: hind)
+                  issn_scielo     — ISSN preferido (impreso si existe, sino electrónico)
+                  url_articulo    — URL canónica del artículo
+  VALIDACIÓN    : python3 -m packtools.stylechecker archivo.xml
+  DOCUMENTACIÓN : https://scielo.readthedocs.io/projects/scielo-publishing-schema/
+  =====================================================
   DIFERENCIAS CON EL CANÓNICO:
     — DOCTYPE: JATS Publishing 1.0 (no Archiving 1.4)
     — <journal-id> con journal-id-type="nlm-ta" (acrónimo SciELO)
     — <article-id pub-id-type="publisher-id"> con PID SciELO
     — <aff> estructurada con institution/addr-line/country
     — <ref> incluye <mixed-citation> además de <element-citation>
+      (diferencia crítica con Redalyc que prohíbe mixed-citation)
     — <custom-meta-group> eliminado (no SPS)
-
-  PARÁMETROS REQUERIDOS DESDE GAMBAS:
-    acronimo_scielo — acrónimo SciELO de la revista (ej: hind)
-    issn_scielo     — ISSN preferido (impreso si existe, sino electrónico)
-    url_articulo    — URL canónica del artículo
-
-  VALIDACIÓN:
-    Usar packtools StyleChecker:
-    python3 -m packtools.stylechecker archivo.xml
-
-  DOCUMENTACIÓN SPS:
-    https://scielo.readthedocs.io/projects/scielo-publishing-schema/
+    — abstract sin @xml:lang (idioma inferido de article/@xml:lang)
+    — <contrib-id> sin @authenticated (no existe en JATS Publishing 1.0)
   =====================================================
 -->
 <xsl:stylesheet
@@ -103,7 +102,6 @@
   <!-- ================================================
        ELEMENTO RAÍZ: <article>
        SPS REQUIERE dtd-version="1.0" Y specific-use="sps-1.9"
-       PACKTOOLS 2.6.4 SOPORTA sps-1.8 Y sps-1.9 POR DEFECTO
        ================================================ -->
   <xsl:template match="article">
     <article
@@ -123,9 +121,7 @@
        ================================================ -->
   <xsl:template match="journal-meta">
     <journal-meta>
-      <!-- journal-id CON PUBLISHER-ID (YA EXISTE EN EL CANÓNICO) -->
       <xsl:apply-templates select="journal-id"/>
-      <!-- journal-id nlm-ta CON ACRÓNIMO SCIELO — OBLIGATORIO EN SPS -->
       <xsl:if test="$acronimo_scielo != ''">
         <journal-id journal-id-type="nlm-ta">
           <xsl:value-of select="$acronimo_scielo"/>
@@ -142,7 +138,6 @@
   <xsl:template match="journal-title-group">
     <journal-title-group>
       <xsl:apply-templates select="journal-title | trans-title-group"/>
-      <!-- abbrev-journal-title CON ACRÓNIMO SCIELO — OBLIGATORIO EN SPS -->
       <xsl:choose>
         <xsl:when test="abbrev-journal-title[@abbrev-type='publisher']">
           <xsl:apply-templates select="abbrev-journal-title"/>
@@ -162,16 +157,13 @@
        ================================================ -->
   <xsl:template match="article-meta">
     <article-meta>
-      <!-- article-id publisher-id CON PID SCIELO -->
       <xsl:if test="$pid-scielo != ''">
         <article-id pub-id-type="publisher-id">
           <xsl:value-of select="$pid-scielo"/>
         </article-id>
       </xsl:if>
-      <!-- COPIAR article-id EXISTENTES (doi, pmid, etc) -->
       <xsl:apply-templates select="article-id"/>
       <xsl:apply-templates select="article-categories | title-group | contrib-group | aff | author-notes"/>
-      <!-- pub-date EN POSICIÓN CORRECTA SEGÚN DTD: ANTES DE volume -->
       <xsl:apply-templates select="pub-date" mode="sps"/>
       <xsl:if test="history/date[@date-type='pub']">
         <pub-date date-type="pub" publication-format="electronic">
@@ -185,7 +177,6 @@
         </pub-date>
       </xsl:if>
       <xsl:apply-templates select="volume | issue | fpage | lpage | elocation-id | history | permissions"/>
-      <!-- SELF-URI VA ANTES DE abstract SEGÚN DTD JATS PUBLISHING 1.0 -->
       <xsl:if test="$url_articulo != ''">
         <self-uri xlink:href="{$url_articulo}"/>
       </xsl:if>
@@ -196,8 +187,6 @@
   <!-- ================================================
        PUB-DATE EN MODO SPS:
        AGREGA date-type Y publication-format OBLIGATORIOS
-       ORDEN JATS PUBLISHING 1.0: year, month, day
-       USA value-of EN VEZ DE copy-of PARA EVITAR NAMESPACES ali/xsi
        ================================================ -->
   <xsl:template match="pub-date" mode="sps">
     <pub-date date-type="collection" publication-format="electronic">
@@ -251,34 +240,28 @@
   <!-- ================================================
        AFF: ESTRUCTURAR SEGÚN SPS
        SPS REQUIERE institution CON content-type
-       EL CANÓNICO TIENE TEXTO LIBRE EN <institution>
        ================================================ -->
   <xsl:template match="aff">
     <aff>
       <xsl:copy-of select="@*"/>
       <xsl:choose>
-        <!-- SI YA TIENE institution CON content-type, COPIAR TAL CUAL -->
         <xsl:when test="institution[@content-type]">
           <xsl:apply-templates select="@* | node()"/>
         </xsl:when>
-        <!-- SI TIENE institution SIN content-type, ESTRUCTURAR PARA SPS -->
         <xsl:when test="institution">
           <institution content-type="orgname">
             <xsl:value-of select="normalize-space(institution)"/>
           </institution>
-          <!-- COPIAR addr-line Y country SI EXISTEN -->
           <xsl:if test="addr-line">
             <xsl:apply-templates select="addr-line"/>
           </xsl:if>
           <xsl:if test="country">
             <xsl:apply-templates select="country"/>
           </xsl:if>
-          <!-- SI NO HAY country, INTENTAR INFERIR DEL CONTEXTO -->
           <xsl:if test="not(country)">
             <country>Argentina</country>
           </xsl:if>
         </xsl:when>
-        <!-- FALLBACK: COPIAR TAL CUAL -->
         <xsl:otherwise>
           <xsl:apply-templates select="@* | node()"/>
         </xsl:otherwise>
@@ -288,23 +271,20 @@
 
   <!-- ================================================
        REF: AGREGAR <mixed-citation> ADEMÁS DE
-       <element-citation> — OBLIGATORIO EN SPS
-       mixed-citation ES EL TEXTO FORMATEADO DE LA CITA
+       <element-citation> — OBLIGATORIO EN SPS.
+       DIFERENCIA CRÍTICA CON REDALYC QUE PROHÍBE
+       mixed-citation (JATS4R).
        ================================================ -->
   <xsl:template match="ref">
     <ref>
       <xsl:copy-of select="@*"/>
-      <!-- GENERAR mixed-citation DESDE element-citation -->
       <xsl:apply-templates select="element-citation" mode="mixed"/>
-      <!-- COPIAR element-citation ORIGINAL -->
       <xsl:apply-templates select="element-citation"/>
     </ref>
   </xsl:template>
 
   <!-- ================================================
        MIXED-CITATION: TEXTO FORMATEADO SEGÚN TIPO
-       GENERA UN TEXTO CONTINUO LEGIBLE A PARTIR DE
-       LOS CAMPOS ESTRUCTURADOS DE element-citation
        ================================================ -->
   <xsl:template match="element-citation" mode="mixed">
     <mixed-citation publication-type="{@publication-type}">
@@ -324,27 +304,22 @@
 
       <!-- ARTÍCULO DE REVISTA -->
       <xsl:when test="$cit/@publication-type = 'journal'">
-        <!-- AUTORES -->
-        <xsl:call-template name="autores-mixto">
+        <xsl:call-template name="autores-texto">
           <xsl:with-param name="cit" select="$cit"/>
         </xsl:call-template>
-        <!-- AÑO -->
         <xsl:if test="$cit/year">
           <xsl:text> (</xsl:text>
           <xsl:value-of select="$cit/year"/>
           <xsl:text>). </xsl:text>
         </xsl:if>
-        <!-- TÍTULO ARTÍCULO -->
         <xsl:if test="$cit/article-title">
           <xsl:value-of select="normalize-space($cit/article-title)"/>
           <xsl:text>. </xsl:text>
         </xsl:if>
-        <!-- FUENTE -->
         <xsl:if test="$cit/source">
           <italic><xsl:value-of select="normalize-space($cit/source)"/></italic>
           <xsl:text>, </xsl:text>
         </xsl:if>
-        <!-- VOLUMEN E ISSUE -->
         <xsl:if test="$cit/volume">
           <italic><xsl:value-of select="$cit/volume"/></italic>
         </xsl:if>
@@ -353,7 +328,6 @@
           <xsl:value-of select="$cit/issue"/>
           <xsl:text>)</xsl:text>
         </xsl:if>
-        <!-- PÁGINAS -->
         <xsl:if test="$cit/fpage">
           <xsl:text>, </xsl:text>
           <xsl:value-of select="$cit/fpage"/>
@@ -362,7 +336,6 @@
             <xsl:value-of select="$cit/lpage"/>
           </xsl:if>
         </xsl:if>
-        <!-- DOI -->
         <xsl:if test="$cit/pub-id[@pub-id-type='doi']">
           <xsl:text>. https://doi.org/</xsl:text>
           <xsl:value-of select="$cit/pub-id[@pub-id-type='doi']"/>
@@ -372,7 +345,7 @@
 
       <!-- LIBRO -->
       <xsl:when test="$cit/@publication-type = 'book'">
-        <xsl:call-template name="autores-mixto">
+        <xsl:call-template name="autores-texto">
           <xsl:with-param name="cit" select="$cit"/>
         </xsl:call-template>
         <xsl:if test="$cit/year">
@@ -400,7 +373,7 @@
 
       <!-- CAPÍTULO DE LIBRO -->
       <xsl:when test="$cit/@publication-type = 'book-chapter'">
-        <xsl:call-template name="autores-mixto">
+        <xsl:call-template name="autores-texto">
           <xsl:with-param name="cit" select="$cit"/>
         </xsl:call-template>
         <xsl:if test="$cit/year">
@@ -446,9 +419,9 @@
         <xsl:text>.</xsl:text>
       </xsl:when>
 
-      <!-- FALLBACK: CONCATENAR LO QUE HAYA -->
+      <!-- FALLBACK -->
       <xsl:otherwise>
-        <xsl:call-template name="autores-mixto">
+        <xsl:call-template name="autores-texto">
           <xsl:with-param name="cit" select="$cit"/>
         </xsl:call-template>
         <xsl:if test="$cit/year">
@@ -468,10 +441,12 @@
   </xsl:template>
 
   <!-- ================================================
-       NAMED TEMPLATE: autores-mixto
+       NAMED TEMPLATE: autores-texto
        GENERA LA LISTA DE AUTORES EN TEXTO CONTINUO
+       NOMBRE UNIFICADO EN TODOS LOS XSL DEL PROYECTO
+       (anteriormente: autores-mixto en este archivo)
        ================================================ -->
-  <xsl:template name="autores-mixto">
+  <xsl:template name="autores-texto">
     <xsl:param name="cit"/>
     <xsl:variable name="autores" select="$cit/person-group[@person-group-type='author']/name"/>
     <xsl:variable name="colabs"  select="$cit/person-group[@person-group-type='author']/collab"/>
@@ -517,7 +492,6 @@
 
   <!-- ================================================
        LICENSE: SPS 1.9 REQUIERE @xml:lang OBLIGATORIO
-       SE USA EL IDIOMA DEL ARTÍCULO COMO DEFAULT
        ================================================ -->
   <xsl:template match="license">
     <license>
@@ -533,23 +507,18 @@
 
   <!-- ================================================
        CAPTION: SPS REQUIERE <title> DENTRO DE <caption>
-       SI NO EXISTE SE AGREGA USANDO EL TEXTO DEL PRIMER <p>
-       EL <title> SIEMPRE VA PRIMERO — LUEGO EL RESTO
        ================================================ -->
   <xsl:template match="caption">
     <caption>
       <xsl:copy-of select="@*"/>
       <xsl:choose>
-        <!-- SI YA TIENE title, COPIAR EN ORDEN NORMAL -->
         <xsl:when test="title">
           <xsl:apply-templates/>
         </xsl:when>
-        <!-- SI NO TIENE title, GENERARLO DESDE EL PRIMER <p> -->
         <xsl:otherwise>
           <title>
             <xsl:value-of select="normalize-space(p[1])"/>
           </title>
-          <!-- COPIAR EL RESTO DEL CONTENIDO (sin el primer p que ya está en title) -->
           <xsl:apply-templates select="p[position() > 1] | *[not(self::p)]"/>
         </xsl:otherwise>
       </xsl:choose>
@@ -557,8 +526,7 @@
   </xsl:template>
 
   <!-- ================================================
-       ELIMINAR article-id pmid FICTICIO SI TIENE
-       VALOR PLACEHOLDER
+       ELIMINAR article-id pmid FICTICIO
        ================================================ -->
   <xsl:template match="article-id[@pub-id-type='pmid'][normalize-space(.) = 'pm-id']"/>
 

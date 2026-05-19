@@ -1,255 +1,210 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ============================================================
-  Hoja     : jats-to-redalyc.xsl
-  Propósito: Transforma el canónico JATS 1.4 al formato
-             JATS4R requerido por Redalyc / Marcalyc.
-             Redalyc no tiene schema propio: usa NISO JATS 1.4
-             con JATS4R más un conjunto de elementos obligatorios
-             y convenciones de uso propias.
-  Entrada  : c-NN-revistaSlug-vNN-nNN.xml  (canónico JATS)
-  Salida   : r-NN-revistaSlug-vNN-nNN.xml  (Redalyc JATS4R)
-  Motor    : Saxon-HE (XSLT 2.0)
-  Notas    : - La transformación es esencialmente una copia
-               identidad con los siguientes ajustes específicos
-               para Redalyc:
-               1. Se elimina el namespace xlink del elemento
-                  raíz y se re-declara correctamente.
-               2. Se normaliza el atributo license-type a
-                  "open-access" en <license> (obligatorio).
-               3. Se garantiza que <abstract> tenga xml:lang.
-               4. Se normaliza <trans-abstract> con xml:lang.
-               5. Se agrega <journal-id journal-id-type="redalyc">
-                  si no existe, derivado del e_issn o issn.
-             - Redalyc acepta XMLs generados con otras
-               herramientas siempre que pasen el validador
-               PMC: https://www.ncbi.nlm.nih.gov/pmc/tools/xmlchecker/
-             - La validación de reglas de negocio propias de
-               Redalyc se realiza en Gambas (ValidarArchivoRedalyc).
-  Versión  : 1.0
-  ============================================================
+  =====================================================
+  jats-to-redalyc.xsl
+  =====================================================
+  DESCRIPCIÓN   : Transforma el canónico JATS 1.4 Archiving
+                  al formato JATS requerido por Redalyc/Marcalyc.
+                  Basado en JATS4R + requisitos Marcalyc 4.0.
+  FAMILIA       : indexadores
+  ENTRADA       : c-NN-slug-vNN-nNN.xml (canónico JATS 1.4)
+  SALIDA        : r-NN-slug-vNN-nNN.xml (JATS Archiving 1.4 para Redalyc)
+  MOTOR         : Saxon-HE (XSLT 2.0)
+  PARÁMETROS    : (ninguno — transformación autónoma)
+  VALIDACIÓN    : ValidarArchivoRedalyc() en m_XML.gambas
+                  Basado en JATS4R + Marcalyc 4.0
+  DOCUMENTACIÓN : https://xmljatsredalyc.org/
+                  https://jats4r.org/
+  =====================================================
+  DIFERENCIAS CON EL CANÓNICO:
+    — custom-meta-group eliminado (canal interno de gbpublisher,
+      no debe enviarse a indexadores)
+    — Solo element-citation en <ref> (sin mixed-citation).
+      Diferencia crítica con SciELO, que requiere mixed-citation.
+      JATS4R exige element-citation puro.
+    — ORCID normalizado a URL https://orcid.org/XXXX
+      según JATS4R contributor-identifier best practice.
+    — sec-type inferido desde títulos comunes de sección
+      (IMRaD + humanidades) para mejorar recuperación.
+    — DTD: JATS Archiving 1.4 (igual que el canónico,
+      a diferencia de SciELO que usa JATS Publishing 1.0).
+  =====================================================
 -->
 <xsl:stylesheet
   version="2.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xlink="http://www.w3.org/1999/xlink"
-  exclude-result-prefixes="xlink">
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  xmlns:xml="http://www.w3.org/XML/1998/namespace"
+  exclude-result-prefixes="xs">
 
+  <!-- ================================================
+       SALIDA: XML JATS ARCHIVING 1.4
+       REDALYC ACEPTA JATS ARCHIVING (A DIFERENCIA DE
+       SCIELO QUE REQUIERE JATS PUBLISHING 1.0)
+       ================================================ -->
   <xsl:output
     method="xml"
     version="1.0"
     encoding="UTF-8"
     indent="yes"
-    doctype-public="-//NLM//DTD JATS (Z39.96) Article Authoring DTD v1.4//EN"
-    doctype-system="https://jats.nlm.nih.gov/authoring/1.4/JATS-articleauthoring1-4.dtd"/>
+    doctype-public="-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD v1.4 20151215//EN"
+    doctype-system="JATS-archivearticle1.dtd"/>
 
-  <!-- ============================================================
-       PLANTILLA DE IDENTIDAD — COPIA TODO POR DEFECTO
-       Las plantillas específicas a continuación sobreescriben
-       solo los casos que requieren ajuste para Redalyc.
-       ============================================================ -->
+  <!-- ================================================
+       PLANTILLA IDENTIDAD — COPIA TODO POR DEFECTO
+       copy-namespaces="no" EVITA QUE XMLNS AUXILIARES
+       DEL CANÓNICO SE PROPAGUEN A TODOS LOS ELEMENTOS
+       ================================================ -->
   <xsl:template match="@* | node()">
-    <xsl:copy>
+    <xsl:copy copy-namespaces="no">
       <xsl:apply-templates select="@* | node()"/>
     </xsl:copy>
   </xsl:template>
 
-
-  <!-- ============================================================
-       PLANTILLA RAÍZ
-       ============================================================ -->
-  <xsl:template match="/">
-    <xsl:comment> ARCHIVO GENERADO AUTOMÁTICAMENTE POR GBPUBLISHER </xsl:comment>
-    <xsl:comment> Validar en: https://www.ncbi.nlm.nih.gov/pmc/tools/xmlchecker/ </xsl:comment>
-    <xsl:apply-templates select="article"/>
-  </xsl:template>
-
-
-  <!-- ============================================================
-       PLANTILLA: <article>
-       Garantiza que el namespace xlink esté declarado
-       correctamente en el elemento raíz.
-       ============================================================ -->
+  <!-- ================================================
+       ELEMENTO RAÍZ: <article>
+       SE DECLARAN SOLO LOS NAMESPACES NECESARIOS.
+       dtd-version="1.4" REQUERIDO EXPLÍCITAMENTE.
+       ================================================ -->
   <xsl:template match="article">
-    <article>
-      <!-- COPIAR ATRIBUTOS DEL ELEMENTO RAÍZ -->
+    <article
+      xmlns:xlink="http://www.w3.org/1999/xlink"
+      xmlns:mml="http://www.w3.org/1998/Math/MathML"
+      dtd-version="1.4">
       <xsl:copy-of select="@article-type"/>
       <xsl:copy-of select="@xml:lang"/>
-      <!-- NAMESPACE XLINK OBLIGATORIO PARA JATS4R -->
-      <xsl:namespace name="xlink">http://www.w3.org/1999/xlink</xsl:namespace>
       <xsl:apply-templates select="front | body | back"/>
     </article>
   </xsl:template>
 
+  <!-- ================================================
+       ELIMINAR custom-meta-group
+       ES EL CANAL DE METADATOS INTERNOS DE GBPUBLISHER
+       (idioma principal, URL texto completo, etc.).
+       NO FORMA PARTE DEL ESQUEMA REDALYC/MARCALYC.
+       ================================================ -->
+  <xsl:template match="custom-meta-group"/>
 
-  <!-- ============================================================
-       PLANTILLA: <journal-meta>
-       Agrega <journal-id journal-id-type="redalyc"> si no existe.
-       Redalyc utiliza este identificador para vincular la revista
-       en su sistema interno. Se deriva del ISSN electrónico o
-       impreso disponible.
-       ============================================================ -->
-  <xsl:template match="journal-meta">
-    <journal-meta>
-      <!-- COPIAR journal-id EXISTENTES -->
-      <xsl:apply-templates select="journal-id"/>
-
-      <!-- AGREGAR journal-id TIPO redalyc SI NO EXISTE -->
-      <xsl:if test="not(journal-id[@journal-id-type='redalyc'])">
-        <xsl:variable name="idRedalyc">
-          <xsl:choose>
-            <xsl:when test="issn[@pub-type='epub']">
-              <xsl:value-of select="normalize-space(issn[@pub-type='epub'])"/>
-            </xsl:when>
-            <xsl:when test="issn[@pub-type='ppub']">
-              <xsl:value-of select="normalize-space(issn[@pub-type='ppub'])"/>
-            </xsl:when>
-            <xsl:otherwise></xsl:otherwise>
-          </xsl:choose>
-        </xsl:variable>
-        <xsl:if test="$idRedalyc != ''">
-          <journal-id journal-id-type="redalyc">
-            <xsl:value-of select="$idRedalyc"/>
-          </journal-id>
-        </xsl:if>
-      </xsl:if>
-
-      <!-- COPIAR EL RESTO DE ELEMENTOS DE journal-meta -->
-      <xsl:apply-templates select="journal-title-group | issn | publisher"/>
-    </journal-meta>
-  </xsl:template>
-
-
-  <!-- ============================================================
-       PLANTILLA: <license>
-       Normaliza license-type a "open-access" (requerido por
-       Redalyc que indexa exclusivamente revistas AA).
-       Preserva xlink:href y el contenido del elemento.
-       ============================================================ -->
-  <xsl:template match="license">
-    <license license-type="open-access">
-      <!-- PRESERVAR xlink:href SI EXISTE -->
-      <xsl:if test="@xlink:href">
-        <xsl:attribute name="xlink:href">
-          <xsl:value-of select="@xlink:href"/>
-        </xsl:attribute>
-      </xsl:if>
-      <xsl:apply-templates select="node()"/>
-    </license>
-  </xsl:template>
-
-
-  <!-- ============================================================
-       PLANTILLA: <abstract>
-       Garantiza que abstract tenga xml:lang.
-       Usa la cascada estándar del proyecto:
-         abstract/@xml:lang → custom-meta xml-lang → article/@xml:lang → 'es'
-       ============================================================ -->
-  <xsl:template match="abstract">
-    <xsl:variable name="xmlLang">
-      <xsl:choose>
-        <xsl:when test="@xml:lang">
-          <xsl:value-of select="@xml:lang"/>
-        </xsl:when>
-        <xsl:when test="ancestor::article-meta/custom-meta-group/custom-meta[meta-name='xml-lang']/meta-value">
-          <xsl:value-of select="normalize-space(ancestor::article-meta/custom-meta-group/custom-meta[meta-name='xml-lang']/meta-value)"/>
-        </xsl:when>
-        <xsl:when test="ancestor::article/@xml:lang">
-          <xsl:value-of select="ancestor::article/@xml:lang"/>
-        </xsl:when>
-        <xsl:otherwise>es</xsl:otherwise>
-      </xsl:choose>
-    </xsl:variable>
-    <abstract>
-      <xsl:attribute name="xml:lang">
-        <xsl:value-of select="$xmlLang"/>
-      </xsl:attribute>
-      <xsl:apply-templates select="node()"/>
-    </abstract>
-  </xsl:template>
-
-
-  <!-- ============================================================
-       PLANTILLA: <trans-abstract>
-       Garantiza xml:lang en todos los resúmenes traducidos.
-       ============================================================ -->
-  <xsl:template match="trans-abstract">
-    <xsl:if test="@xml:lang and normalize-space(.) != ''">
-      <trans-abstract>
-        <xsl:attribute name="xml:lang">
-          <xsl:value-of select="@xml:lang"/>
-        </xsl:attribute>
-        <xsl:apply-templates select="node()"/>
-      </trans-abstract>
-    </xsl:if>
-  </xsl:template>
-
-
-  <!-- ============================================================
-       PLANTILLA: <kwd-group>
-       Garantiza xml:lang en todos los grupos de palabras clave.
-       ============================================================ -->
-  <xsl:template match="kwd-group">
-    <xsl:if test="kwd">
-      <kwd-group>
-        <xsl:if test="@xml:lang">
-          <xsl:attribute name="xml:lang">
-            <xsl:value-of select="@xml:lang"/>
-          </xsl:attribute>
-        </xsl:if>
-        <xsl:if test="@kwd-group-type">
-          <xsl:attribute name="kwd-group-type">
-            <xsl:value-of select="@kwd-group-type"/>
-          </xsl:attribute>
-        </xsl:if>
-        <xsl:apply-templates select="kwd"/>
-      </kwd-group>
-    </xsl:if>
-  </xsl:template>
-
-
-  <!-- ============================================================
-       PLANTILLA: <contrib>
-       Redalyc requiere que contrib-id ORCID tenga la URL completa
-       (https://orcid.org/XXXX-XXXX-XXXX-XXXX).
-       Si solo tiene el número, se completa la URL.
-       ============================================================ -->
+  <!-- ================================================
+       CONTRIB-ID ORCID: NORMALIZAR A URL COMPLETA
+       JATS4R BEST PRACTICE: https://orcid.org/XXXX-XXXX-XXXX-XXXX
+       EL CANÓNICO PUEDE TRAER SOLO EL ID (0000-0000-...)
+       O LA URL CON HTTP (NO HTTPS)
+       ================================================ -->
   <xsl:template match="contrib-id[@contrib-id-type='orcid']">
-    <xsl:variable name="valorOrcid" select="normalize-space(.)"/>
-    <contrib-id contrib-id-type="orcid">
-      <xsl:if test="@authenticated">
-        <xsl:attribute name="authenticated">
-          <xsl:value-of select="@authenticated"/>
-        </xsl:attribute>
-      </xsl:if>
+    <contrib-id contrib-id-type="orcid" authenticated="true">
+      <xsl:variable name="orcid" select="normalize-space(.)"/>
       <xsl:choose>
-        <!-- YA TIENE URL COMPLETA -->
-        <xsl:when test="starts-with($valorOrcid, 'https://orcid.org/')">
-          <xsl:value-of select="$valorOrcid"/>
+        <!-- YA TIENE URL HTTPS CORRECTA -->
+        <xsl:when test="starts-with($orcid, 'https://orcid.org/')">
+          <xsl:value-of select="$orcid"/>
         </xsl:when>
-        <!-- TIENE SOLO EL NÚMERO: COMPLETAR URL -->
-        <xsl:when test="$valorOrcid != ''">
-          <xsl:text>https://orcid.org/</xsl:text>
-          <xsl:value-of select="$valorOrcid"/>
+        <!-- TIENE URL HTTP — CONVERTIR A HTTPS -->
+        <xsl:when test="starts-with($orcid, 'http://orcid.org/')">
+          <xsl:value-of select="concat('https://orcid.org/', substring-after($orcid, 'http://orcid.org/'))"/>
         </xsl:when>
+        <!-- TIENE URL HTTPS GENÉRICA — NORMALIZAR DOMINIO -->
+        <xsl:when test="starts-with($orcid, 'https://')">
+          <xsl:value-of select="$orcid"/>
+        </xsl:when>
+        <!-- SOLO EL ID: AGREGAR PREFIJO DE URL -->
+        <xsl:otherwise>
+          <xsl:value-of select="concat('https://orcid.org/', $orcid)"/>
+        </xsl:otherwise>
       </xsl:choose>
     </contrib-id>
   </xsl:template>
 
-
-  <!-- ============================================================
-       PLANTILLA: <ref>
-       Redalyc / JATS4R recomienda element-citation sobre
-       mixed-citation. El canónico de gbpublisher ya genera
-       element-citation, así que la copia es directa.
-       Se preserva el id del <ref> para que las <xref> funcionen.
-       ============================================================ -->
-  <xsl:template match="ref">
-    <ref>
-      <xsl:copy-of select="@id"/>
-      <xsl:apply-templates select="element-citation | mixed-citation | note"/>
-    </ref>
+  <!-- ================================================
+       SECCIONES SIN sec-type: INFERIR DESDE TÍTULO
+       JATS4R RECOMIENDA sec-type EN SECCIONES PRINCIPALES
+       PARA MEJORAR RECUPERACIÓN E INTEROPERABILIDAD.
+       CUBRE IMRaD + TIPOS FRECUENTES EN HUMANIDADES Y
+       CIENCIAS SOCIALES LATINOAMERICANAS.
+       SECCIONES NO RECONOCIDAS PASAN SIN ATRIBUTO.
+       ================================================ -->
+  <xsl:template match="sec[not(@sec-type)]">
+    <xsl:variable name="titulo-norm"
+      select="lower-case(normalize-space(title))"/>
+    <xsl:variable name="tipo-inferido">
+      <xsl:choose>
+        <!-- INTRODUCCIÓN -->
+        <xsl:when test="$titulo-norm = 'introducción'
+                     or $titulo-norm = 'introduccion'
+                     or $titulo-norm = 'introduction'">intro</xsl:when>
+        <!-- MÉTODOS -->
+        <xsl:when test="$titulo-norm = 'metodología'
+                     or $titulo-norm = 'metodologia'
+                     or $titulo-norm = 'métodos'
+                     or $titulo-norm = 'metodos'
+                     or $titulo-norm = 'methods'
+                     or $titulo-norm = 'material y métodos'
+                     or $titulo-norm = 'material y metodos'
+                     or $titulo-norm = 'materials and methods'">methods</xsl:when>
+        <!-- RESULTADOS -->
+        <xsl:when test="$titulo-norm = 'resultados'
+                     or $titulo-norm = 'results'">results</xsl:when>
+        <!-- DISCUSIÓN -->
+        <xsl:when test="$titulo-norm = 'discusión'
+                     or $titulo-norm = 'discusion'
+                     or $titulo-norm = 'discussion'">discussion</xsl:when>
+        <!-- RESULTADOS Y DISCUSIÓN (sección combinada) -->
+        <xsl:when test="$titulo-norm = 'resultados y discusión'
+                     or $titulo-norm = 'resultados y discusion'
+                     or $titulo-norm = 'results and discussion'">results-discussion</xsl:when>
+        <!-- CONCLUSIONES -->
+        <xsl:when test="$titulo-norm = 'conclusiones'
+                     or $titulo-norm = 'conclusión'
+                     or $titulo-norm = 'conclusion'
+                     or $titulo-norm = 'conclusions'">conclusions</xsl:when>
+        <!-- AGRADECIMIENTOS -->
+        <xsl:when test="$titulo-norm = 'agradecimientos'
+                     or $titulo-norm = 'agradecimiento'
+                     or $titulo-norm = 'acknowledgments'
+                     or $titulo-norm = 'acknowledgements'">acknowledgments</xsl:when>
+        <!-- MARCO TEÓRICO / REVISIÓN DE LITERATURA -->
+        <xsl:when test="$titulo-norm = 'marco teórico'
+                     or $titulo-norm = 'marco teorico'
+                     or $titulo-norm = 'antecedentes'
+                     or $titulo-norm = 'revisión de literatura'
+                     or $titulo-norm = 'revision de literatura'
+                     or $titulo-norm = 'revisión bibliográfica'
+                     or $titulo-norm = 'literature review'">literature-review</xsl:when>
+        <!-- NO RECONOCIDO: SIN SEC-TYPE -->
+        <xsl:otherwise></xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <sec>
+      <xsl:copy-of select="@*"/>
+      <xsl:if test="$tipo-inferido != ''">
+        <xsl:attribute name="sec-type">
+          <xsl:value-of select="$tipo-inferido"/>
+        </xsl:attribute>
+      </xsl:if>
+      <xsl:apply-templates/>
+    </sec>
   </xsl:template>
 
+  <!-- ================================================
+       SECCIONES CON sec-type YA DECLARADO
+       PASAN INTACTAS POR LA IDENTIDAD ESTÁNDAR
+       PERO SE DECLARA EXPLÍCITAMENTE PARA CLARIDAD
+       ================================================ -->
+  <xsl:template match="sec[@sec-type]">
+    <xsl:copy copy-namespaces="no">
+      <xsl:apply-templates select="@* | node()"/>
+    </xsl:copy>
+  </xsl:template>
+
+  <!-- ================================================
+       MIXED-CITATION: SUPRIMIR EXPLÍCITAMENTE
+       EL CANÓNICO NO GENERA mixed-citation, PERO SE
+       EXCLUYE POR TRAZABILIDAD Y COMO RED DE SEGURIDAD.
+       DIFERENCIA CRÍTICA CON SCIELO:
+         SciELO  → REQUIERE mixed-citation en <ref>
+         Redalyc → PROHÍBE mixed-citation (JATS4R)
+       ================================================ -->
+  <xsl:template match="mixed-citation"/>
 
 </xsl:stylesheet>

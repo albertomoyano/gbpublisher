@@ -3,24 +3,31 @@
   =====================================================
   jats-to-crossref.xsl
   =====================================================
-  DESCRIPCIÓN:
-    TRANSFORMA EL CANÓNICO JATS 1.4 AL FORMATO DE
-    DEPÓSITO CROSSREF SCHEMA 5.3.1.
-    GENERA UN doi_batch CON METADATOS COMPLETOS DEL
-    ARTÍCULO PARA REGISTRO DE DOI EN CROSSREF.
-
-  PARÁMETROS REQUERIDOS DESDE GAMBAS:
-    depositor_name  — nombre de la editorial depositante
-    email_address   — email del depositante
-    registrant      — institución registrante
-    doi_prefix      — prefijo DOI de la revista (ej: 10.56503)
-    url_articulo    — URL canónica del artículo
-    timestamp       — timestamp único del batch (yyyymmddHHnnss)
-    batch_id        — ID único del batch
-
-  DOCUMENTACIÓN CROSSREF SCHEMA 5.3.1:
-    https://www.crossref.org/documentation/schema-library/
-    /metadata-deposit-schema-5-3-1/
+  DESCRIPCIÓN   : Transforma el canónico JATS 1.4 al formato
+                  de depósito Crossref Schema 5.3.1.
+                  Genera un doi_batch con metadatos completos
+                  del artículo para registro de DOI en Crossref.
+  FAMILIA       : indexadores
+  ENTRADA       : c-NN-slug-vNN-nNN.xml (canónico JATS 1.4)
+  SALIDA        : o-NN-slug-vNN-nNN.xml (Crossref Schema 5.3.1)
+  MOTOR         : Saxon-HE (XSLT 2.0)
+  PARÁMETROS    : depositor_name — nombre de la editorial depositante
+                  email_address  — email del depositante
+                  registrant     — institución registrante
+                  doi_prefix     — prefijo DOI de la revista (ej: 10.56503)
+                  url_articulo   — URL canónica del artículo
+                  timestamp      — timestamp único del batch (yyyymmddHHnnss)
+                  batch_id       — ID único del batch
+  VALIDACIÓN    : https://apps.crossref.org/XSDParse/
+  DOCUMENTACIÓN : https://www.crossref.org/documentation/schema-library/
+                  metadata-deposit-schema-5-3-1/
+  =====================================================
+  DIFERENCIAS CON EL CANÓNICO:
+    — Salida en schema Crossref 5.3.1 (no JATS)
+    — Estructura doi_batch/head + body/journal
+    — Resúmenes envueltos en namespace jats:abstract
+    — Citas como unstructured_citation en texto continuo
+    — Licencia CC como AccessIndicators program
   =====================================================
 -->
 <xsl:stylesheet
@@ -296,10 +303,10 @@
   <!-- ================================================
        NAMED TEMPLATE: publication-date
        EXTRAE DÍA, MES Y AÑO DEL pub-date DEL CANÓNICO
+       xsl:element CON namespace EXPLÍCITO EVITA xmlns=""
        ================================================ -->
   <xsl:template name="publication-date">
     <xsl:variable name="pd" select="//article-meta/pub-date[1]"/>
-    <!-- xsl:element CON namespace EXPLÍCITO EVITA QUE SAXON EMITA xmlns="" -->
     <xsl:if test="normalize-space($pd/month) != ''">
       <xsl:element name="month" namespace="http://www.crossref.org/schema/5.3.1">
         <xsl:value-of select="normalize-space($pd/month)"/>
@@ -438,6 +445,7 @@
   <!-- ================================================
        NAMED TEMPLATE: autores-texto
        GENERA LISTA DE AUTORES EN TEXTO CONTINUO
+       NOMBRE UNIFICADO EN TODOS LOS XSL DEL PROYECTO
        ================================================ -->
   <xsl:template name="autores-texto">
     <xsl:param name="cit"/>

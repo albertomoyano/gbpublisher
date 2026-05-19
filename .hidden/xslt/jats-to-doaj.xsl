@@ -1,38 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ============================================================
-  Hoja     : jats-to-doaj.xsl
-  Propósito: Transforma el canónico JATS 1.4 al formato DOAJ
-             XML nativo (doajArticles.xsd v1.3).
-  Entrada  : c-NN-revistaSlug-vNN-nNN.xml  (canónico JATS)
-  Salida   : d-NN-revistaSlug-vNN-nNN.xml  (DOAJ XML)
-  Motor    : Saxon-HE (XSLT 2.0)
-  Notas    : - El campo fullTextUrl NO está en el canónico.
-               Debe pasarse como parámetro Saxon ($fullTextUrl)
-               o incorporarse como custom-meta en el canónico
-               antes de la transformación.
-             - DOAJ acepta solo un idioma para título y abstract.
-               Se usa el idioma principal del artículo (xml:lang
-               en <article> o custom-meta 'xml-lang').
-             - Idiomas: ISO 639-1 → ISO 639-2b (es→spa, en→eng,
-               pt→por, fr→fre, de→ger, it→ita, pt→por)
-             - Orden de elementos según doajArticles.xsd v1.3:
-               abstract → fullTextUrl → keywords
-  Versión  : 1.4
-  Cambios  : 1.1 — normalize-space() en eissn, issn, orcid_id,
-                    doi, publisherRecordId, title, afiliaciones,
-                    abstract/p, keywords y campos de fecha para
-             1.2 — string-join(aff/institution) para soportar autores
-                    con múltiples afiliaciones institucionales.
-             1.3 — Renombrado elemento <n> a <name> segun doajArticles.xsd.
-                    eliminar whitespace de indentación del canónico.
-  ============================================================
+  =====================================================
+  jats-to-doaj.xsl
+  =====================================================
+  DESCRIPCIÓN   : Transforma el canónico JATS 1.4 al formato
+                  DOAJ XML nativo (doajArticles.xsd v1.3).
+  FAMILIA       : indexadores
+  ENTRADA       : c-NN-slug-vNN-nNN.xml (canónico JATS 1.4)
+  SALIDA        : d-NN-slug-vNN-nNN.xml (DOAJ XML)
+  MOTOR         : Saxon-HE (XSLT 2.0)
+  PARÁMETROS    : fullTextUrl    — URL del texto completo (obligatoria en práctica)
+                  fullTextFormat — text/html | application/pdf
+                  documentType   — article | review | other (sobrescribe detección)
+  VALIDACIÓN    : ~/.gbpublisher/schemas/doajArticles.xsd
+  DOCUMENTACIÓN : https://doaj.org/docs/xml-upload/
+  =====================================================
+  DIFERENCIAS CON EL CANÓNICO:
+    — Salida en schema DOAJ doajArticles.xsd v1.3 (no JATS)
+    — Idioma convertido de ISO 639-1 a ISO 639-2b
+    — Solo un idioma para título y abstract (idioma principal)
+    — fullTextUrl requerida pero no está en el canónico:
+      se pasa como parámetro o via custom-meta
+    — Orden de elementos XSD v1.3: abstract → fullTextUrl → keywords
+  =====================================================
 -->
 <xsl:stylesheet
   version="2.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xlink="http://www.w3.org/1999/xlink"
-  exclude-result-prefixes="xlink">
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  exclude-result-prefixes="xlink xs">
 
   <xsl:output
     method="xml"
@@ -40,28 +37,25 @@
     encoding="UTF-8"
     indent="yes"/>
 
-  <!-- ============================================================
+  <!-- ================================================
        PARÁMETROS EXTERNOS
-       Pueden pasarse desde Saxon con -param:nombre valor
-       o desde Gambas vía Shell al invocar el proceso Saxon.
-       ============================================================ -->
+       ================================================ -->
 
   <!-- URL DEL TEXTO COMPLETO: obligatoria en la práctica para DOAJ.
        Si no se pasa y tampoco está en custom-meta, el campo se omite
        y se inserta un comentario XML como advertencia. -->
-  <xsl:param name="fullTextUrl" select="''"/>
+  <xsl:param name="fullTextUrl"    as="xs:string" select="''"/>
 
   <!-- FORMATO DEL TEXTO COMPLETO: text/html | application/pdf -->
-  <xsl:param name="fullTextFormat" select="'text/html'"/>
+  <xsl:param name="fullTextFormat" as="xs:string" select="'text/html'"/>
 
   <!-- TIPO DE DOCUMENTO: sobrescribe la detección automática si se
        proporciona. Valores válidos: article | review | other -->
-  <xsl:param name="documentType" select="''"/>
+  <xsl:param name="documentType"   as="xs:string" select="''"/>
 
-
-  <!-- ============================================================
+  <!-- ================================================
        PLANTILLA RAÍZ
-       ============================================================ -->
+       ================================================ -->
   <xsl:template match="/">
     <xsl:comment> ARCHIVO GENERADO AUTOMÁTICAMENTE POR GBPUBLISHER </xsl:comment>
     <xsl:comment> Validar contra: ~/.gbpublisher/schemas/doajArticles.xsd </xsl:comment>
@@ -70,20 +64,17 @@
     </records>
   </xsl:template>
 
-
-  <!-- ============================================================
+  <!-- ================================================
        PLANTILLA PRINCIPAL: <article> → <record>
-       ============================================================ -->
+       ================================================ -->
   <xsl:template match="article">
 
-    <!-- 1. RESOLUCIÓN DEL IDIOMA PRINCIPAL -->
-    <!--
-      Cascada de detección:
-      1. abstract/@xml:lang (idioma declarado en el resumen principal)
-      2. custom-meta[meta-name='xml-lang']/meta-value
-      3. article/@xml:lang
-      4. 'es' como último recurso
-    -->
+    <!-- 1. RESOLUCIÓN DEL IDIOMA PRINCIPAL
+         Cascada estándar del proyecto:
+         1. abstract/@xml:lang (idioma del resumen principal)
+         2. custom-meta[xml-lang]/meta-value (canal gbpublisher)
+         3. article/@xml:lang (declaración del artículo)
+         4. 'es' como último recurso -->
     <xsl:variable name="langISO1">
       <xsl:choose>
         <xsl:when test="front/article-meta/abstract/@xml:lang">
@@ -106,14 +97,11 @@
       </xsl:call-template>
     </xsl:variable>
 
-    <!-- 2. RESOLUCIÓN DE LA URL DEL TEXTO COMPLETO -->
-    <!--
-      Cascada de resolución:
-      1. Parámetro externo Saxon $fullTextUrl
-      2. custom-meta[meta-name='fullTextUrl'] en el canónico
-      3. self-uri en article-meta
-      4. Cadena vacía (se emite advertencia)
-    -->
+    <!-- 2. RESOLUCIÓN DE LA URL DEL TEXTO COMPLETO
+         1. Parámetro externo Saxon $fullTextUrl
+         2. custom-meta[fullTextUrl] en el canónico
+         3. self-uri en article-meta
+         4. Cadena vacía (se emite advertencia) -->
     <xsl:variable name="resolvedUrl">
       <xsl:choose>
         <xsl:when test="$fullTextUrl != ''">
@@ -195,19 +183,21 @@
         </volume>
       </xsl:if>
 
-      <!-- NÚMERO / FASCÍCULO -->
+      <!-- NÚMERO -->
       <xsl:if test="front/article-meta/issue != ''">
         <issue>
           <xsl:value-of select="normalize-space(front/article-meta/issue)"/>
         </issue>
       </xsl:if>
 
-      <!-- PÁGINAS -->
+      <!-- PÁGINA INICIO -->
       <xsl:if test="front/article-meta/fpage != ''">
         <startPage>
           <xsl:value-of select="normalize-space(front/article-meta/fpage)"/>
         </startPage>
       </xsl:if>
+
+      <!-- PÁGINA FIN -->
       <xsl:if test="front/article-meta/lpage != ''">
         <endPage>
           <xsl:value-of select="normalize-space(front/article-meta/lpage)"/>
@@ -215,37 +205,23 @@
       </xsl:if>
 
       <!-- DOI -->
-      <xsl:if test="front/article-meta/article-id[@pub-id-type='doi']">
+      <xsl:if test="front/article-meta/article-id[@pub-id-type='doi'] != ''">
         <doi>
           <xsl:value-of select="normalize-space(front/article-meta/article-id[@pub-id-type='doi'])"/>
         </doi>
       </xsl:if>
 
-      <!-- ID INTERNO DEL EDITOR -->
-      <xsl:if test="front/article-meta/article-id[@pub-id-type='publisher-id']">
-        <publisherRecordId>
-          <xsl:value-of select="normalize-space(front/article-meta/article-id[@pub-id-type='publisher-id'])"/>
-        </publisherRecordId>
-      </xsl:if>
-
-      <!-- TIPO DE DOCUMENTO -->
+      <!-- TIPO DE DOCUMENTO (DOAJ) -->
       <documentType>
         <xsl:value-of select="$resolvedDocType"/>
       </documentType>
 
       <!-- TÍTULO DEL ARTÍCULO EN EL IDIOMA PRINCIPAL -->
-      <title>
-        <xsl:attribute name="language">
-          <xsl:value-of select="$langISO2b"/>
-        </xsl:attribute>
+      <title language="{$langISO2b}">
         <xsl:value-of select="normalize-space(front/article-meta/title-group/article-title)"/>
       </title>
 
-      <!-- ======================================================
-           AUTORES Y AFILIACIONES
-           Las afiliaciones están inline en <aff> dentro de
-           cada <contrib>. Se generan IDs correlativos.
-           ====================================================== -->
+      <!-- AUTORES Y AFILIACIONES -->
       <xsl:if test="front/article-meta/contrib-group/contrib[@contrib-type='author']">
         <authors>
           <xsl:for-each select="front/article-meta/contrib-group/contrib[@contrib-type='author']">
@@ -274,9 +250,7 @@
           </xsl:for-each>
         </authors>
 
-        <!-- LISTA DE AFILIACIONES: se itera sobre TODOS los autores
-             (mismo conjunto que <authors>) para que position() coincida.
-             Solo se emite <affiliationName> si el autor tiene <aff>. -->
+        <!-- LISTA DE AFILIACIONES: position() coincide con affiliationId -->
         <xsl:if test="front/article-meta/contrib-group/contrib[@contrib-type='author'][aff/institution]">
           <affiliationsList>
             <xsl:for-each select="front/article-meta/contrib-group/contrib[@contrib-type='author']">
@@ -349,13 +323,10 @@
     </record>
   </xsl:template>
 
-
-  <!-- ============================================================
-       PLANTILLA NOMBRADA: build-date
+  <!-- ================================================
+       NAMED TEMPLATE: build-date
        Construye fecha en formato DOAJ (YYYY | YYYY-MM | YYYY-MM-DD)
-       desde un nodo JATS <pub-date> o <date>.
-       normalize-space() elimina whitespace de indentación del canónico.
-       ============================================================ -->
+       ================================================ -->
   <xsl:template name="build-date">
     <xsl:param name="dateNode"/>
     <xsl:param name="fallbackNode"/>
@@ -386,13 +357,10 @@
     </xsl:choose>
   </xsl:template>
 
-
-  <!-- ============================================================
-       PLANTILLA NOMBRADA: iso1-to-iso2b
+  <!-- ================================================
+       NAMED TEMPLATE: iso1-to-iso2b
        Convierte código ISO 639-1 (2 letras) a ISO 639-2b (3 letras)
-       para los idiomas más frecuentes en publicaciones académicas
-       latinoamericanas. Extender según necesidad.
-       ============================================================ -->
+       ================================================ -->
   <xsl:template name="iso1-to-iso2b">
     <xsl:param name="lang"/>
     <xsl:choose>
@@ -416,11 +384,10 @@
     </xsl:choose>
   </xsl:template>
 
-
-  <!-- ============================================================
-       PLANTILLA NOMBRADA: map-article-type
+  <!-- ================================================
+       NAMED TEMPLATE: map-article-type
        Mapea article-type JATS a documentType DOAJ
-       ============================================================ -->
+       ================================================ -->
   <xsl:template name="map-article-type">
     <xsl:param name="type"/>
     <xsl:choose>
@@ -432,7 +399,6 @@
       <xsl:when test="$type = 'case-report'">case report</xsl:when>
       <xsl:when test="$type = 'correction'">correction</xsl:when>
       <xsl:when test="$type = 'retraction'">retraction</xsl:when>
-      <!-- TIPOS SIN EQUIVALENTE DIRECTO EN DOAJ -->
       <xsl:otherwise>article</xsl:otherwise>
     </xsl:choose>
   </xsl:template>
