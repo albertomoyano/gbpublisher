@@ -23,9 +23,11 @@
     — <aff> estructurada con institution/addr-line/country
     — <ref> incluye <mixed-citation> además de <element-citation>
       (diferencia crítica con Redalyc que prohíbe mixed-citation)
+    — publication-type="book-chapter" mapeado a "book" (SPS no acepta book-chapter)
     — <custom-meta-group> eliminado (no SPS)
     — abstract sin @xml:lang (idioma inferido de article/@xml:lang)
     — <contrib-id> sin @authenticated (no existe en JATS Publishing 1.0)
+    — whitespace normalizado en elementos de fecha (month, year, day)
   =====================================================
 -->
 <xsl:stylesheet
@@ -71,7 +73,7 @@
        EJEMPLO: 1851-703X-hind-01-01-00023 -->
   <xsl:variable name="pid-scielo">
     <xsl:choose>
-      <xsl:when test="$issn_scielo != '' and $acronimo_scielo != ''">
+      <xsl:when test="$issn_scielo != '' and $acronimo_scielo != '' and $volume != '' and $issue != '' and $fpage != ''">
         <xsl:value-of select="$issn_scielo"/>
         <xsl:text>-</xsl:text>
         <xsl:value-of select="$acronimo_scielo"/>
@@ -168,12 +170,12 @@
       <xsl:if test="history/date[@date-type='pub']">
         <pub-date date-type="pub" publication-format="electronic">
           <xsl:if test="history/date[@date-type='pub']/day">
-            <day><xsl:value-of select="history/date[@date-type='pub']/day"/></day>
+            <day><xsl:value-of select="normalize-space(history/date[@date-type='pub']/day)"/></day>
           </xsl:if>
           <xsl:if test="history/date[@date-type='pub']/month">
-            <month><xsl:value-of select="history/date[@date-type='pub']/month"/></month>
+            <month><xsl:value-of select="normalize-space(history/date[@date-type='pub']/month)"/></month>
           </xsl:if>
-          <year><xsl:value-of select="history/date[@date-type='pub']/year"/></year>
+          <year><xsl:value-of select="normalize-space(history/date[@date-type='pub']/year)"/></year>
         </pub-date>
       </xsl:if>
       <xsl:apply-templates select="volume | issue | fpage | lpage | elocation-id | history | permissions"/>
@@ -190,9 +192,35 @@
        ================================================ -->
   <xsl:template match="pub-date" mode="sps">
     <pub-date date-type="collection" publication-format="electronic">
-      <xsl:if test="month"><month><xsl:value-of select="month"/></month></xsl:if>
-      <year><xsl:value-of select="year"/></year>
+      <xsl:if test="month">
+        <month><xsl:value-of select="normalize-space(month)"/></month>
+      </xsl:if>
+      <year><xsl:value-of select="normalize-space(year)"/></year>
     </pub-date>
+  </xsl:template>
+
+  <!-- ================================================
+       NORMALIZAR WHITESPACE EN ELEMENTOS DE FECHA
+       PACKTOOLS VALIDA month, year, day CON PATRÓN
+       NUMÉRICO ESTRICTO QUE RECHAZA SALTOS DE LÍNEA
+       DEL indent="yes" DEL CANÓNICO
+       ================================================ -->
+  <xsl:template match="year | month | day | season">
+    <xsl:copy copy-namespaces="no">
+      <xsl:apply-templates select="@*"/>
+      <xsl:value-of select="normalize-space(.)"/>
+    </xsl:copy>
+  </xsl:template>
+
+  <!-- ================================================
+       SPS NO ACEPTA publication-type="book-chapter"
+       EN JATS PUBLISHING 1.0. UN CAPÍTULO SE EXPRESA
+       COMO book + chapter-title. SE MAPEA AQUÍ PARA
+       NO MODIFICAR EL CANÓNICO NI CROSSREF.
+       ================================================ -->
+  <xsl:template match="element-citation/@publication-type[. = 'book-chapter']
+                     | mixed-citation/@publication-type[. = 'book-chapter']">
+    <xsl:attribute name="publication-type">book</xsl:attribute>
   </xsl:template>
 
   <!-- ================================================
@@ -210,7 +238,10 @@
     </contrib>
   </xsl:template>
 
-  <!-- ELIMINAR @authenticated — NO EXISTE EN JATS PUBLISHING 1.0 -->
+  <!-- ================================================
+       CONTRIB-ID: ELIMINAR @authenticated (NO EXISTE EN
+       JATS PUBLISHING 1.0) Y NORMALIZAR WHITESPACE
+       ================================================ -->
   <xsl:template match="contrib-id">
     <contrib-id>
       <xsl:for-each select="@*">
@@ -218,7 +249,7 @@
           <xsl:copy/>
         </xsl:if>
       </xsl:for-each>
-      <xsl:value-of select="."/>
+      <xsl:value-of select="normalize-space(.)"/>
     </contrib-id>
   </xsl:template>
 
@@ -287,7 +318,13 @@
        MIXED-CITATION: TEXTO FORMATEADO SEGÚN TIPO
        ================================================ -->
   <xsl:template match="element-citation" mode="mixed">
-    <mixed-citation publication-type="{@publication-type}">
+    <xsl:variable name="pubtype">
+      <xsl:choose>
+        <xsl:when test="@publication-type = 'book-chapter'">book</xsl:when>
+        <xsl:otherwise><xsl:value-of select="@publication-type"/></xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <mixed-citation publication-type="{$pubtype}">
       <xsl:call-template name="formato-mixto">
         <xsl:with-param name="cit" select="."/>
       </xsl:call-template>
@@ -309,7 +346,7 @@
         </xsl:call-template>
         <xsl:if test="$cit/year">
           <xsl:text> (</xsl:text>
-          <xsl:value-of select="$cit/year"/>
+          <xsl:value-of select="normalize-space($cit/year)"/>
           <xsl:text>). </xsl:text>
         </xsl:if>
         <xsl:if test="$cit/article-title">
@@ -321,79 +358,51 @@
           <xsl:text>, </xsl:text>
         </xsl:if>
         <xsl:if test="$cit/volume">
-          <italic><xsl:value-of select="$cit/volume"/></italic>
+          <italic><xsl:value-of select="normalize-space($cit/volume)"/></italic>
         </xsl:if>
         <xsl:if test="$cit/issue">
           <xsl:text>(</xsl:text>
-          <xsl:value-of select="$cit/issue"/>
+          <xsl:value-of select="normalize-space($cit/issue)"/>
           <xsl:text>)</xsl:text>
         </xsl:if>
         <xsl:if test="$cit/fpage">
           <xsl:text>, </xsl:text>
-          <xsl:value-of select="$cit/fpage"/>
+          <xsl:value-of select="normalize-space($cit/fpage)"/>
           <xsl:if test="$cit/lpage">
             <xsl:text>-</xsl:text>
-            <xsl:value-of select="$cit/lpage"/>
+            <xsl:value-of select="normalize-space($cit/lpage)"/>
           </xsl:if>
         </xsl:if>
         <xsl:if test="$cit/pub-id[@pub-id-type='doi']">
           <xsl:text>. https://doi.org/</xsl:text>
-          <xsl:value-of select="$cit/pub-id[@pub-id-type='doi']"/>
+          <xsl:value-of select="normalize-space($cit/pub-id[@pub-id-type='doi'])"/>
         </xsl:if>
         <xsl:text>.</xsl:text>
       </xsl:when>
 
-      <!-- LIBRO -->
-      <xsl:when test="$cit/@publication-type = 'book'">
+      <!-- LIBRO Y CAPÍTULO DE LIBRO (book-chapter → book EN SPS) -->
+      <xsl:when test="$cit/@publication-type = 'book' or $cit/@publication-type = 'book-chapter'">
         <xsl:call-template name="autores-texto">
           <xsl:with-param name="cit" select="$cit"/>
         </xsl:call-template>
         <xsl:if test="$cit/year">
           <xsl:text> (</xsl:text>
-          <xsl:value-of select="$cit/year"/>
-          <xsl:text>). </xsl:text>
-        </xsl:if>
-        <xsl:if test="$cit/source">
-          <italic><xsl:value-of select="normalize-space($cit/source)"/></italic>
-          <xsl:text>. </xsl:text>
-        </xsl:if>
-        <xsl:if test="$cit/edition">
-          <xsl:value-of select="$cit/edition"/>
-          <xsl:text>. </xsl:text>
-        </xsl:if>
-        <xsl:if test="$cit/publisher-loc">
-          <xsl:value-of select="normalize-space($cit/publisher-loc)"/>
-          <xsl:text>: </xsl:text>
-        </xsl:if>
-        <xsl:if test="$cit/publisher-name">
-          <xsl:value-of select="normalize-space($cit/publisher-name)"/>
-        </xsl:if>
-        <xsl:text>.</xsl:text>
-      </xsl:when>
-
-      <!-- CAPÍTULO DE LIBRO -->
-      <xsl:when test="$cit/@publication-type = 'book-chapter'">
-        <xsl:call-template name="autores-texto">
-          <xsl:with-param name="cit" select="$cit"/>
-        </xsl:call-template>
-        <xsl:if test="$cit/year">
-          <xsl:text> (</xsl:text>
-          <xsl:value-of select="$cit/year"/>
+          <xsl:value-of select="normalize-space($cit/year)"/>
           <xsl:text>). </xsl:text>
         </xsl:if>
         <xsl:if test="$cit/chapter-title">
           <xsl:value-of select="normalize-space($cit/chapter-title)"/>
           <xsl:text>. En </xsl:text>
         </xsl:if>
-        <xsl:if test="$cit/person-group[@person-group-type='editor']">
-          <xsl:for-each select="$cit/person-group[@person-group-type='editor']/name">
-            <xsl:value-of select="surname"/>
+        <xsl:if test="$cit/person-group[@person-group-type='editor' or @person-group-type='compiler'] and $cit/chapter-title">
+          <xsl:for-each select="$cit/person-group[@person-group-type='editor' or @person-group-type='compiler']/name">
+            <xsl:value-of select="normalize-space(surname)"/>
             <xsl:text>, </xsl:text>
-            <xsl:value-of select="given-names"/>
+            <xsl:value-of select="normalize-space(given-names)"/>
             <xsl:if test="position() != last()"><xsl:text>; </xsl:text></xsl:if>
           </xsl:for-each>
           <xsl:text> (Ed</xsl:text>
-          <xsl:if test="count($cit/person-group[@person-group-type='editor']/name) > 1">s</xsl:if>
+          <xsl:if test="count($cit/person-group[@person-group-type='editor' or @person-group-type='compiler']/name) > 1">s</xsl:if>
           <xsl:text>.), </xsl:text>
         </xsl:if>
         <xsl:if test="$cit/source">
@@ -401,10 +410,10 @@
         </xsl:if>
         <xsl:if test="$cit/fpage">
           <xsl:text> (pp. </xsl:text>
-          <xsl:value-of select="$cit/fpage"/>
+          <xsl:value-of select="normalize-space($cit/fpage)"/>
           <xsl:if test="$cit/lpage">
             <xsl:text>-</xsl:text>
-            <xsl:value-of select="$cit/lpage"/>
+            <xsl:value-of select="normalize-space($cit/lpage)"/>
           </xsl:if>
           <xsl:text>)</xsl:text>
         </xsl:if>
@@ -425,7 +434,9 @@
           <xsl:with-param name="cit" select="$cit"/>
         </xsl:call-template>
         <xsl:if test="$cit/year">
-          <xsl:text> (</xsl:text><xsl:value-of select="$cit/year"/><xsl:text>). </xsl:text>
+          <xsl:text> (</xsl:text>
+          <xsl:value-of select="normalize-space($cit/year)"/>
+          <xsl:text>). </xsl:text>
         </xsl:if>
         <xsl:if test="$cit/source">
           <italic><xsl:value-of select="normalize-space($cit/source)"/></italic>
@@ -445,11 +456,13 @@
        GENERA LA LISTA DE AUTORES EN TEXTO CONTINUO
        NOMBRE UNIFICADO EN TODOS LOS XSL DEL PROYECTO
        (anteriormente: autores-mixto en este archivo)
+       MANEJA: author, editor, compiler, collab
        ================================================ -->
   <xsl:template name="autores-texto">
     <xsl:param name="cit"/>
-    <xsl:variable name="autores" select="$cit/person-group[@person-group-type='author']/name"/>
-    <xsl:variable name="colabs"  select="$cit/person-group[@person-group-type='author']/collab"/>
+    <xsl:variable name="autores"  select="$cit/person-group[@person-group-type='author']/name"/>
+    <xsl:variable name="editores" select="$cit/person-group[@person-group-type='editor' or @person-group-type='compiler']/name"/>
+    <xsl:variable name="colabs"   select="$cit/person-group[@person-group-type='author']/collab"/>
     <xsl:choose>
       <xsl:when test="$autores">
         <xsl:for-each select="$autores">
@@ -467,6 +480,19 @@
             </xsl:when>
           </xsl:choose>
         </xsl:for-each>
+      </xsl:when>
+      <xsl:when test="$editores">
+        <xsl:for-each select="$editores">
+          <xsl:value-of select="normalize-space(surname)"/>
+          <xsl:if test="given-names">
+            <xsl:text>, </xsl:text>
+            <xsl:value-of select="normalize-space(given-names)"/>
+          </xsl:if>
+          <xsl:if test="position() != last()"><xsl:text>; </xsl:text></xsl:if>
+        </xsl:for-each>
+        <xsl:text> (Ed</xsl:text>
+        <xsl:if test="count($editores) > 1">s</xsl:if>
+        <xsl:text>.)</xsl:text>
       </xsl:when>
       <xsl:when test="$colabs">
         <xsl:value-of select="normalize-space($colabs[1])"/>
