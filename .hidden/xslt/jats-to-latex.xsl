@@ -1148,37 +1148,45 @@
     <xsl:choose>
 
       <!-- TABLA APAISADA — sidewaystable, ancho total, página propia -->
-      <xsl:when test="@specific-use='landscape'">
-        <xsl:text>&#10;\begin{sidewaystable}&#10;</xsl:text>
-        <xsl:text>\centering&#10;</xsl:text>
-        <xsl:text>{\sf\footnotesize\setlength\tabcolsep{4pt}%&#10;</xsl:text>
-        <xsl:apply-templates select="table | alternatives/table"/>
-        <xsl:if test="table-wrap-foot">
-          <xsl:text>  \smallskip&#10;</xsl:text>
-          <xsl:text>  {\small\raggedright </xsl:text>
-          <xsl:apply-templates select="table-wrap-foot//p"/>
-          <xsl:text>}&#10;</xsl:text>
-        </xsl:if>
-        <xsl:text>}%&#10;</xsl:text>
-        <xsl:if test="caption">
-          <xsl:text>\caption{</xsl:text>
-          <xsl:if test="caption/title">
-            <xsl:apply-templates select="caption/title/node()"/>
-            <xsl:if test="caption/p">. </xsl:if>
-          </xsl:if>
-          <xsl:for-each select="caption/p">
-            <xsl:if test="position() > 1"> </xsl:if>
-            <xsl:apply-templates/>
-          </xsl:for-each>
-          <xsl:text>}</xsl:text>
-        </xsl:if>
-        <xsl:if test="@id">
-          <xsl:text>\label{</xsl:text>
-          <xsl:value-of select="@id"/>
-          <xsl:text>}&#10;</xsl:text>
-        </xsl:if>
-        <xsl:text>\end{sidewaystable}&#10;&#10;</xsl:text>
-      </xsl:when>
+<xsl:when test="@specific-use='landscape'">
+  <xsl:text>&#10;\clearpage&#10;</xsl:text>
+  <xsl:text>\noindent\begin{minipage}[c][\textheight][c]{\dimexpr\textwidth+\marginparsep+\marginparwidth\relax}%&#10;</xsl:text>
+  <xsl:text>\centering&#10;</xsl:text>
+  <xsl:text>\rotatebox{90}{%&#10;</xsl:text>
+  <xsl:text>  \begin{minipage}[c]{\linewidth}&#10;</xsl:text>
+  <xsl:text>  \centering&#10;</xsl:text>
+  <xsl:text>  {\sf\footnotesize\setlength\tabcolsep{4pt}%&#10;</xsl:text>
+  <xsl:apply-templates select="table | alternatives/table"/>
+  <xsl:if test="table-wrap-foot">
+    <xsl:text>    \smallskip&#10;</xsl:text>
+    <xsl:text>    {\small\raggedright </xsl:text>
+    <xsl:apply-templates select="table-wrap-foot//p"/>
+    <xsl:text>}&#10;</xsl:text>
+  </xsl:if>
+  <xsl:text>  }%&#10;</xsl:text>
+  <xsl:if test="caption">
+    <xsl:text>  \captionof{table}{</xsl:text>
+    <xsl:if test="caption/title">
+      <xsl:apply-templates select="caption/title/node()"/>
+      <xsl:if test="caption/p">. </xsl:if>
+    </xsl:if>
+    <xsl:for-each select="caption/p">
+      <xsl:if test="position() > 1"> </xsl:if>
+      <xsl:apply-templates/>
+    </xsl:for-each>
+    <xsl:text>}&#10;</xsl:text>
+  </xsl:if>
+  <xsl:if test="@id">
+    <xsl:text>  \label{</xsl:text>
+    <xsl:value-of select="@id"/>
+    <xsl:text>}&#10;</xsl:text>
+  </xsl:if>
+  <xsl:text>  \vspace{\intextsep}&#10;</xsl:text>
+  <xsl:text>  \end{minipage}%&#10;</xsl:text>
+  <xsl:text>}%&#10;</xsl:text>
+  <xsl:text>\end{minipage}%&#10;</xsl:text>
+  <xsl:text>\clearpage&#10;&#10;</xsl:text>
+</xsl:when>
 
       <!-- TABLA ANCHO TOTAL — adjustwidth al margen derecho, centrada -->
       <xsl:when test="@specific-use='fullwidth'">

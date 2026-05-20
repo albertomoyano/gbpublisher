@@ -198,4 +198,52 @@
     </xsl:choose>
   </xsl:template>
 
+<!-- ================================================
+     TABLA FULLWIDTH: EL FILTRO LUA PONE fw- EN EL
+     id DEL <table> INTERIOR. SE DETECTA EN EL
+     <table-wrap> PADRE, SE MUEVE EL ID Y SE AGREGA
+     specific-use="fullwidth"
+     ================================================ -->
+<xsl:template match="table-wrap[table[starts-with(@id, 'fw-')]]">
+  <xsl:variable name="orig-id"
+    select="substring-after(table[starts-with(@id, 'fw-')]/@id, 'fw-')"/>
+  <table-wrap specific-use="fullwidth">
+    <xsl:copy-of select="@*"/>
+    <xsl:if test="$orig-id != ''">
+      <xsl:attribute name="id">
+        <xsl:value-of select="$orig-id"/>
+      </xsl:attribute>
+    </xsl:if>
+    <xsl:apply-templates select="node()"/>
+  </table-wrap>
+</xsl:template>
+
+<!-- ================================================
+     TABLA ROTADA: EL FILTRO LUA PONE rot- EN EL
+     id DEL <table> INTERIOR → specific-use="landscape"
+     → \begin{sidewaystable} EN LATEX
+     ================================================ -->
+<xsl:template match="table-wrap[table[starts-with(@id, 'rot-')]]">
+  <xsl:variable name="orig-id"
+    select="substring-after(table[starts-with(@id, 'rot-')]/@id, 'rot-')"/>
+  <table-wrap specific-use="landscape">
+    <xsl:copy-of select="@*"/>
+    <xsl:if test="$orig-id != ''">
+      <xsl:attribute name="id">
+        <xsl:value-of select="$orig-id"/>
+      </xsl:attribute>
+    </xsl:if>
+    <xsl:apply-templates select="node()"/>
+  </table-wrap>
+</xsl:template>
+
+<!-- LIMPIAR PREFIJOS fw- Y rot- DEL <table> INTERIOR
+     EL ID YA FUE PROMOVIDO AL <table-wrap> -->
+<xsl:template match="table[starts-with(@id, 'fw-') or starts-with(@id, 'rot-')]">
+  <table>
+    <xsl:apply-templates select="@* except @id"/>
+    <xsl:apply-templates select="node()"/>
+  </table>
+</xsl:template>
+
 </xsl:stylesheet>
