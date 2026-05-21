@@ -239,3 +239,104 @@ Public Sub CerrarTodo()
   Quit
 
 End
+
+' ============================================
+' Función   : ObtenerEsquemaEsperado
+' Propósito : Define el índice de referencia del esquema de la BD:
+'             nombre de tabla → cantidad de columnas esperadas.
+'             ACTUALIZAR ESTE ÍNDICE CADA VEZ QUE SE MODIFIQUE
+'             LA ESTRUCTURA DE LA BASE DE DATOS (agregar/quitar
+'             columnas o tablas).
+' Parámetros: (ninguno)
+' Retorna   : Collection — clave: nombre de tabla, valor: Integer
+' ============================================
+Private Function ObtenerEsquemaEsperado() As Collection
+
+  Dim hEsquema As New Collection
+  ' --- 1. Tablas del esquema gbpublisher ---
+  ' FORMATO: hEsquema["nombre_tabla"] = cantidad_de_columnas
+  ' VERIFICAR CON: SELECT COUNT(*) FROM information_schema.columns
+  '               WHERE table_schema = 'gbpublisher'
+  '               AND table_name = 'nombre_tabla';
+  hEsquema["api_credenciales"] = 9
+  hEsquema["articulo_autor"] = 18
+  hEsquema["articulo_revisor"] = 9
+  hEsquema["articulos"] = 220
+  hEsquema["autores"] = 135
+  hEsquema["bibtex"] = 111
+  hEsquema["block_notas"] = 5
+  hEsquema["capitulo_autor"] = 16
+  hEsquema["capitulos"] = 87
+  hEsquema["cmb_biblatex"] = 5
+  hEsquema["consultas"] = 8
+  hEsquema["consultas_eliminadas"] = 10
+  hEsquema["contador_tiempo"] = 3
+  hEsquema["credit_roles"] = 3
+  hEsquema["libros_latex"] = 105
+  hEsquema["libros_md"] = 102
+  hEsquema["manual_ayudas"] = 9
+  hEsquema["orden_taller"] = 20
+  hEsquema["perfil_shortcode_rel"] = 4
+  hEsquema["perfiles_shortcode"] = 7
+  hEsquema["postits"] = 11
+  hEsquema["proyectos"] = 9
+  hEsquema["revistas_md"] = 70
+  hEsquema["shortcodes"] = 20
+  hEsquema["siglas"] = 11
+  hEsquema["usuarios"] = 12
+  hEsquema["usuarios_sistema"] = 9
+  Return hEsquema
+
+End Function
+
+' ============================================
+' Función   : ValidarEsquemaBD
+' Propósito : Compara la estructura real de la BD contra el
+'             índice definido en ObtenerEsquemaEsperado().
+'             Detecta tablas faltantes y columnas discordantes
+'             (indicador de esquema desactualizado).
+'             Llamar después de una conexión exitosa, antes de
+'             habilitar FMain.
+' Parámetros: (ninguno)
+' Retorna   : String — descripción de errores encontrados,
+'             cadena vacía si el esquema es correcto
+' ============================================
+Public Function ValidarEsquemaBD() As String
+  ' --- 1. Inicialización ---
+
+  Dim hEsquema As Collection = ObtenerEsquemaEsperado()
+  Dim sErrores As String = ""
+  Dim iColsEsperadas As Integer
+  Dim sTabla As String
+  Dim hRes As Result
+
+  ' --- 2. Verificar cada tabla del esquema esperado ---
+  For Each iColsEsperadas In hEsquema
+    sTabla = hEsquema.Key
+
+    ' CONTAR COLUMNAS REALES EN information_schema
+    Try hRes = mConn.Exec(
+      "SELECT COUNT(*) AS total FROM information_schema.columns " &
+      "WHERE table_schema = DATABASE() AND table_name = &1", sTabla)
+
+    If Error Then
+      sErrores &= "  — " & sTabla & ": error al consultar" & Chr(10)
+      Continue
+    Endif
+
+    Dim iColsReales As Integer = CInt(hRes!total)
+
+    ' --- 3. Clasificar discrepancias ---
+    If iColsReales = 0 Then
+      ' TABLA COMPLETAMENTE AUSENTE: BD no inicializada o incorrecta
+      sErrores &= "  — " & sTabla & ": tabla no encontrada" & Chr(10)
+    Else If iColsReales <> iColsEsperadas Then
+      ' CANTIDAD DE COLUMNAS DIFERENTE: esquema desactualizado
+      sErrores &= "  — " & sTabla & ": " & iColsReales &
+        " columnas (se esperaban " & CStr(iColsEsperadas) & ")" & Chr(10)
+    Endif
+  Next
+
+  Return sErrores
+
+End Function

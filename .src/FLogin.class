@@ -69,6 +69,7 @@ Public Sub btnConectarServer_Click()
   Dim usuario As String = TextBoxUsuario.Text
   Dim clave As String = TextBoxClave.Text
   Dim iResultado As Integer
+  Dim sErroresEsquema As String
 
   ' VALIDACIONES BÁSICAS
   If Trim(ip) = "" Then
@@ -107,9 +108,26 @@ Public Sub btnConectarServer_Click()
 
   Select Case iResultado
     Case 1
+      ' --- 1. Validar estructura del esquema ---
+      ' ANTES DE HABILITAR FMAIN VERIFICAMOS QUE LA BD TIENE
+      ' EL ESQUEMA CORRECTO PARA ESTA VERSIÓN DE GBPUBLISHER
+      If sErroresEsquema <> "" Then
+        m_Sonido.sonar("Error")
+        Message.Error("La base de datos en <b>" & ip & "</b> tiene " &
+          "un esquema incompatible con esta versión de gbpublisher." &
+          Chr(10) & Chr(10) & sErroresEsquema & Chr(10) &
+          "Contacte al área de IT.")
+        ' LIBERAR AL USUARIO ANTES DE CERRAR LA CONEXIÓN
+        ' SIN ESTE RESET EL FLAG en_linea QUEDA EN 1 Y EL PRÓXIMO
+        ' INTENTO DE LOGIN RETORNA Case 2 ("usuario ya conectado")
+        Try m_ConexionBD.mConn.Exec(
+          "UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", usuario)
+        Try m_ConexionBD.mConn.Close()
+        Return
+      Endif
+      ' --- 2. Esquema válido: iniciar sesión ---
       m_Sonido.sonar("Info")
       Message.Info("Conexión exitosa al servidor " & ip)
-
       m_InicioCierre.UsuarioEnCurso = usuario
       FMain.MenuInicio.Enabled = True
       FMain.menuHerramientas.Enabled = True
@@ -121,10 +139,8 @@ Public Sub btnConectarServer_Click()
       FMain.TextBoxServidor.Text = ip
       FMain.TableViewUsuarios.Visible = True
       FMain.tbMostrarPanelInferior.Visible = False
-
       m_InicioCierre.CargarUsuarios()
-
-      ' CARGAMOS LOS COMBOBOX
+      ' --- 3. Cargar combobox ---
       m_Bibtex.RellenarTipoDeEntrada([FMain.cmbTipoDeEntrada])
       m_Bibtex.RellenarEditorTypes([FMain.cmbEditorType])
       m_Bibtex.RellenarEditorTypes([FMain.cmbEditorTypeA])
@@ -141,17 +157,13 @@ Public Sub btnConectarServer_Click()
       m_Bibtex.RellenarRelatedType([FMain.cmbRelatedType])
       m_Bibtex.RellenarTipoDeTesis([FMain.cmbTipoDeTesis])
       m_Bibtex.RellenarTipoDeEntrada([FMain.cmbTipoDeEntrada])
-
       Me.Close()
-
     Case 2
       m_Sonido.sonar("Error")
       Message.Error("El usuario ya está conectado o está inactivo.")
-
     Case 3
       m_Sonido.sonar("Error")
       Message.Error("Usuario y/o clave incorrectos.")
-
     Case Else
       m_Sonido.sonar("Error")
       Message.Error("Error al intentar conectar al servidor.")
