@@ -158,6 +158,9 @@ verificar_comando "xsltproc" \
 verificar_python_modulo "packtools" \
   "packtools (validador SciELO PS)" \
   "pip install packtools --break-system-packages"
+verificar_comando "verapdf" \
+  "veraPDF (validador PDF/A)" \
+  "Descargar desde verapdf.org/software → ./verapdf-install"
 
 # ============================================================
 # CONTROL DE VERSIONES
