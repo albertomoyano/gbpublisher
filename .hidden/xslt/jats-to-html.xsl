@@ -3,73 +3,77 @@
   =====================================================
   jats-to-html.xsl
   =====================================================
-  DESCRIPCIÓN:
-    TRANSFORMA UN ARTÍCULO JATS 1.4 CANÓNICO A HTML5
-    CON DISEÑO DE 7 COLUMNAS TIPO LENS/DOCSY:
-
-    - COLUMNA IZQUIERDA (2/7): METADATOS FIJOS (sticky)
-    - COLUMNA CENTRAL  (3/7): TÍTULO + RESÚMENES + CUERPO
-    - COLUMNA DERECHA  (2/7): PANEL NOTAS/REFS/FIGURAS (sticky, ocultable)
-
-  PARÁMETROS:
-    imagen_tapa  - NOMBRE DEL ARCHIVO DE TAPA EN /media
-    ruta_media   - RUTA RELATIVA AL DIRECTORIO /media
-                   VACÍO = solo nombre de archivo (para OJS)
-                   ../media = revisión interna desde docs/
-    estilo_cita  - 'autor-anio' (humanidades) | 'vancouver' (numérico) |
-                   'apa' (APA 7) | 'iso690' (ISO 690 autor-fecha)
-                   DETERMINADO AUTOMÁTICAMENTE POR LeerTipoCSL() EN m_GenerarSalidas
-    ruta_meta    - RUTA AL XML AUXILIAR m-*.xml GENERADO POR
-                   GenerarMetaArticuloXML() EN m_XML.gambas
-                   CONTIENE: CRediT POR AUTOR, ROR DE AFILIACIÓN,
-                   URL TEXTO COMPLETO, ROR DEL EDITOR
-                   VACÍO = HTML SE GENERA SIN METADATOS ENRIQUECIDOS
-
-  VERSIÓN XSLT: 2.0 (REQUIERE SAXON-HE)
+  DESCRIPCIÓN   : Transforma el canónico JATS 1.4 a HTML5
+                  con diseño de 3 columnas tipo Lens/Docsy.
+                  Col. izq (2/7): metadatos sticky.
+                  Col. central (3/7): título + resúmenes + cuerpo.
+                  Col. der (2/7): panel notas/refs/figuras.
+  FAMILIA       : presentación
+  ENTRADA       : c-NN-slug-vNN-nNN.xml (canónico JATS 1.4)
+  SALIDA        : h-NN-slug-vNN-nNN.html (HTML5)
+  MOTOR         : Saxon-HE (XSLT 2.0)
+  PARÁMETROS    : imagen_tapa  — nombre del archivo de tapa en /media
+                  ruta_media   — ruta relativa a /media
+                                 vacío = solo nombre (para OJS)
+                                 ../media = revisión interna
+                  estilo_cita  — autor-anio | vancouver | apa | iso690
+                                 determinado por LeerTipoCSL()
+                  ruta_meta    — ruta al XML auxiliar m-*.xml
+                                 (CRediT, ROR, URL, editor ROR)
+                  url_articulo — URL canónica del artículo
+                  url_pdf      — URL de descarga del PDF
+                  modo_salida  — control | final
+                  modo_figura  — png | html
+  VALIDACIÓN    : W3C HTML Validator
+  DOCUMENTACIÓN : (interna gbpublisher)
+  =====================================================
+  DIFERENCIAS CON jats-to-epub.xsl:
+    — Layout 3 columnas con CSS Grid
+    — JavaScript para interactividad
+    — Google Fonts (IBM Plex Sans)
+    — Metadatos enriquecidos: Highwire, Dublin Core,
+      Open Graph, Schema.org JSON-LD
+    — Figuras interactivas (iframe fh*.html)
   =====================================================
 -->
+
 <xsl:stylesheet
+  version="2.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xlink="http://www.w3.org/1999/xlink"
-  version="2.0">
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  exclude-result-prefixes="xs xlink">
 
   <!-- ================================================
        PARÁMETROS EXTERNOS
        ================================================ -->
-  <xsl:param name="imagen_tapa" as="xs:string" select="''"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
-  <xsl:param name="ruta_media"  as="xs:string" select="''"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="imagen_tapa" as="xs:string" select="''"/>
+  <xsl:param name="ruta_media"  as="xs:string" select="''"/>
 
   <!-- ESTILO DE CITAS EN TEXTO
        'autor-anio' = (Apellido, 2024) — humanidades/sociales
        'vancouver'  = [1]  [1-3]       — ciencias de la salud
        'apa'        = APA 7ª edición
        'iso690'     = ISO 690 autor-fecha (aproximación) -->
-  <xsl:param name="estilo_cita" as="xs:string" select="'autor-anio'"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="estilo_cita" as="xs:string" select="'autor-anio'"/>
 
   <!-- RUTA AL XML AUXILIAR DE METADATOS (m-*.xml)
        GENERADO POR GenerarMetaArticuloXML() EN m_XML.gambas
        CONTIENE: CRediT POR AUTOR, ROR DE AFILIACIÓN,
        URL TEXTO COMPLETO, ROR DEL EDITOR
        VACÍO = NO SE CARGAN METADATOS ENRIQUECIDOS (DEGRADACIÓN ELEGANTE) -->
-  <xsl:param name="ruta_meta" as="xs:string" select="''"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="ruta_meta" as="xs:string" select="''"/>
 
   <!-- URL CANÓNICA DEL ARTÍCULO — PARA COMPARTIR EN REDES -->
-  <xsl:param name="url_articulo" as="xs:string" select="''"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="url_articulo" as="xs:string" select="''"/>
 
   <!-- URL DE DESCARGA DEL PDF — PARA BOTÓN DESCARGAR PDF -->
-  <xsl:param name="url_pdf" as="xs:string" select="''"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="url_pdf" as="xs:string" select="''"/>
 
   <!-- MODO DE SALIDA:
        'control' → HTML interno para GitHub Pages (sin canonical)
        'final'   → HTML para subir a OJS con canonical apuntando a url_articulo -->
-  <xsl:param name="modo_salida" as="xs:string" select="'control'"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="modo_salida" as="xs:string" select="'control'"/>
 
   <!-- MODO DE FIGURA EN EL HTML:
        'png'  → IMAGEN ESTÁTICA (fi*.png). APLICA A TODAS LAS FIGURAS.
@@ -77,8 +81,7 @@
        'html' → FIGURA INTERACTIVA (fh*.html EN IFRAME).
                 SOLO APLICA A FIGURAS GENERADAS POR gbpublisher (fi*.png).
                 FIGURAS DEL AUTOR (NOMBRE LIBRE) CAEN AUTOMÁTICAMENTE A PNG. -->
-  <xsl:param name="modo_figura" as="xs:string" select="'png'"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="modo_figura" as="xs:string" select="'png'"/>
 
   <!-- ================================================
        SALIDA: HTML5
@@ -96,22 +99,22 @@
     select="normalize-space(//article-meta/article-id[@pub-id-type='doi'])"/>
   <!-- ================================================
        VARIABLE $lang: IDIOMA PRINCIPAL DEL ARTÍCULO
-       CASCADA DE PRIORIDAD (DE MAYOR A MENOR):
-         1. custom-meta[xml-lang]  → ELECCIÓN EXPLÍCITA DEL EDITOR EN LA BBDD
-         2. /article/@xml:lang     → ATRIBUTO DEL ELEMENTO RAÍZ (ENSAMBLADOR)
-         3. abstract/@xml:lang     → IDIOMA DEL PRIMER RESUMEN
+       CASCADA ESTÁNDAR DEL PROYECTO:
+         1. abstract/@xml:lang     → IDIOMA DEL PRIMER RESUMEN
+         2. custom-meta[xml-lang]  → ELECCIÓN EXPLÍCITA DEL EDITOR EN LA BBDD
+         3. /article/@xml:lang     → ATRIBUTO DEL ELEMENTO RAÍZ (ENSAMBLADOR)
          4. 'es'                   → FALLBACK FINAL
        ================================================ -->
   <xsl:variable name="lang">
     <xsl:choose>
+      <xsl:when test="normalize-space(//article-meta/abstract/@xml:lang) != ''">
+        <xsl:value-of select="normalize-space(//article-meta/abstract/@xml:lang)"/>
+      </xsl:when>
       <xsl:when test="normalize-space(//article-meta/custom-meta-group/custom-meta[meta-name='xml-lang']/meta-value) != ''">
         <xsl:value-of select="normalize-space(//article-meta/custom-meta-group/custom-meta[meta-name='xml-lang']/meta-value)"/>
       </xsl:when>
       <xsl:when test="normalize-space(/article/@xml:lang) != ''">
         <xsl:value-of select="normalize-space(/article/@xml:lang)"/>
-      </xsl:when>
-      <xsl:when test="//article-meta/abstract/@xml:lang">
-        <xsl:value-of select="//article-meta/abstract/@xml:lang"/>
       </xsl:when>
       <xsl:otherwise>es</xsl:otherwise>
     </xsl:choose>
@@ -315,8 +318,7 @@
             <xsl:choose>
               <xsl:when test="//article-meta/pub-date/month">
                 <xsl:value-of
-                  select="format-number(xs:integer(//article-meta/pub-date/month), '00')"
-                  xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+                  select="format-number(xs:integer(//article-meta/pub-date/month), '00')"/>
               </xsl:when>
               <xsl:otherwise>01</xsl:otherwise>
             </xsl:choose>
@@ -324,8 +326,7 @@
             <xsl:choose>
               <xsl:when test="//article-meta/pub-date/day">
                 <xsl:value-of
-                  select="format-number(xs:integer(//article-meta/pub-date/day), '00')"
-                  xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+                  select="format-number(xs:integer(//article-meta/pub-date/day), '00')"/>
               </xsl:when>
               <xsl:otherwise>01</xsl:otherwise>
             </xsl:choose>
@@ -3320,7 +3321,7 @@
 
       <!-- RECOLECTAR TODOS LOS rid DEL GRUPO -->
       <xsl:variable name="rids" as="xs:string*"
-                    xmlns:xs="http://www.w3.org/2001/XMLSchema">
+>
         <xsl:call-template name="recolectarRidsGrupo">
           <xsl:with-param name="xrefActual" select="."/>
         </xsl:call-template>
@@ -3341,8 +3342,7 @@
       <!-- ORDENAR PARES POR NÚMERO ASCENDENTE -->
       <xsl:variable name="paresOrdenados" as="element()*">
         <xsl:perform-sort select="$pares/par">
-          <xsl:sort select="xs:integer(@num)" order="ascending"
-                    xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+          <xsl:sort select="xs:integer(@num)" order="ascending"/>
         </xsl:perform-sort>
       </xsl:variable>
 
@@ -3386,7 +3386,7 @@
        RECORRE XREFS CONSECUTIVOS Y DEVUELVE SUS @rid
        ================================================ -->
   <xsl:template name="recolectarRidsGrupo" as="xs:string*"
-                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+>
     <xsl:param name="xrefActual" as="element()"/>
 
     <xsl:sequence select="string($xrefActual/@rid)"/>
@@ -4191,9 +4191,9 @@
        CON SOPORTE DE SINGULAR Y PLURAL SEGÚN CANTIDAD
        ================================================ -->
   <xsl:template name="abrev-tipo-persona">
-    <xsl:param name="tipo" as="xs:string" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
-    <xsl:param name="cantidad" as="xs:integer" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
-    <xsl:param name="minuscula" as="xs:boolean" select="false()" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+    <xsl:param name="tipo" as="xs:string"/>
+    <xsl:param name="cantidad" as="xs:integer"/>
+    <xsl:param name="minuscula" as="xs:boolean" select="false()"/>
     <xsl:variable name="texto">
       <xsl:choose>
         <xsl:when test="$tipo = 'compiler'">

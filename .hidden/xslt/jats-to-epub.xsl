@@ -832,8 +832,7 @@
 
     <xsl:if test="$esPrimera">
       <xsl:if test="$prefijo != ''"><xsl:value-of select="$prefijo"/><xsl:text> </xsl:text></xsl:if>
-      <xsl:variable name="rids" as="xs:string*"
-                    xmlns:xs="http://www.w3.org/2001/XMLSchema">
+      <xsl:variable name="rids" as="xs:string*">
         <xsl:call-template name="recolectarRidsGrupo">
           <xsl:with-param name="xrefActual" select="."/>
         </xsl:call-template>
@@ -847,9 +846,8 @@
         </xsl:for-each>
       </xsl:variable>
       <xsl:variable name="paresOrdenados" as="element()*">
-        <xsl:perform-sort select="$pares/par">
-          <xsl:sort select="xs:integer(@num)" order="ascending"
-                    xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+        <xsl:perform-sort select="$pares/*">
+          <xsl:sort select="xs:integer(@num)" order="ascending"/>
         </xsl:perform-sort>
       </xsl:variable>
       <xsl:text>[</xsl:text>
@@ -1357,9 +1355,9 @@
        MAPEA @person-group-type A SU ABREVIATURA EN ESPAÑOL
        ================================================ -->
   <xsl:template name="abrev-tipo-persona">
-    <xsl:param name="tipo" as="xs:string" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
-    <xsl:param name="cantidad" as="xs:integer" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
-    <xsl:param name="minuscula" as="xs:boolean" select="false()" xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+    <xsl:param name="tipo" as="xs:string"/>
+    <xsl:param name="cantidad" as="xs:integer"/>
+    <xsl:param name="minuscula" as="xs:boolean" select="false()"/>
     <xsl:variable name="texto">
       <xsl:choose>
         <xsl:when test="$tipo = 'compiler'"><xsl:choose><xsl:when test="$cantidad > 1">Comps.</xsl:when><xsl:otherwise>Comp.</xsl:otherwise></xsl:choose></xsl:when>
@@ -1393,8 +1391,7 @@
   <!-- ================================================
        NAMED TEMPLATE: recolectarRidsGrupo
        ================================================ -->
-  <xsl:template name="recolectarRidsGrupo" as="xs:string*"
-                xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xsl:template name="recolectarRidsGrupo" as="xs:string*">
     <xsl:param name="xrefActual" as="element()"/>
     <xsl:sequence select="string($xrefActual/@rid)"/>
     <xsl:variable name="sig1" select="$xrefActual/following-sibling::node()[1]"/>
