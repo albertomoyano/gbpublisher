@@ -1,12 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
+
 <!--
   =====================================================
   jats-to-epub.xsl
   =====================================================
-  DESCRIPCIÓN:
-    TRANSFORMA UN ARTÍCULO JATS 1.4 CANÓNICO A XHTML
-    VÁLIDO PARA EPUB 3. GENERA UN CAPÍTULO POR ARTÍCULO.
-
+  DESCRIPCIÓN   : Transforma el canónico JATS 1.4 a XHTML
+                  válido para EPUB 3. Genera un capítulo
+                  por artículo (flujo lineal sin columnas).
+  FAMILIA       : presentación
+  ENTRADA       : c-NN-slug-vNN-nNN.xml (canónico JATS 1.4)
+  SALIDA        : e-NN-slug-vNN-nNN.xhtml (capítulo EPUB 3)
+  MOTOR         : Saxon-HE (XSLT 2.0)
+  PARÁMETROS    : ruta_meta   — ruta al XML auxiliar m-*.xml
+                               (CRediT, ROR, URL, editor ROR)
+                               vacío = sin metadatos DC enriquecidos
+                  estilo_cita — autor-anio | vancouver | apa | iso690
+                               determinado por LeerTipoCSL()
+  VALIDACIÓN    : epubcheck 4.2.6+
+  DOCUMENTACIÓN : https://www.w3.org/publishing/epub/
+  =====================================================
   DIFERENCIAS CON jats-to-html.xsl:
     — Sin layout de columnas (flujo lineal)
     — Sin JavaScript
@@ -15,34 +27,23 @@
     — Referencias al final como sección <section>
     — Imágenes referenciadas como ../images/nombre
     — Salida XHTML con namespace y DOCTYPE HTML5
-
-  PARÁMETROS:
-    ruta_meta  - RUTA AL XML AUXILIAR m-*.xml GENERADO POR
-                 GenerarMetaArticuloXML() EN m_XML.gambas
-                 CONTIENE: CRediT POR AUTOR, ROR DE AFILIACIÓN,
-                 URL TEXTO COMPLETO, ROR DEL EDITOR
-                 VACÍO = HTML SE GENERA SIN METADATOS DC ENRIQUECIDOS
-    estilo_cita - 'autor-anio' | 'vancouver' | 'apa' | 'iso690'
-                  DETERMINADO AUTOMÁTICAMENTE POR LeerTipoCSL()
-
-  VERSIÓN XSLT: 2.0 (REQUIERE SAXON-HE)
   =====================================================
 -->
+
 <xsl:stylesheet
+  version="2.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xlink="http://www.w3.org/1999/xlink"
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:epub="http://www.idpf.org/2007/ops"
   xmlns="http://www.w3.org/1999/xhtml"
-  version="2.0">
+  exclude-result-prefixes="xs xlink">
 
   <!-- ================================================
        PARÁMETROS EXTERNOS
        ================================================ -->
-  <xsl:param name="ruta_meta" as="xs:string" select="''"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
-
-  <xsl:param name="estilo_cita" as="xs:string" select="'autor-anio'"
-             xmlns:xs="http://www.w3.org/2001/XMLSchema"/>
+  <xsl:param name="ruta_meta"   as="xs:string" select="''"/>
+  <xsl:param name="estilo_cita" as="xs:string" select="'autor-anio'"/>
 
   <!-- ================================================
        SALIDA: XHTML5
@@ -59,16 +60,19 @@
   <xsl:variable name="doi"
     select="normalize-space(//article-meta/article-id[@pub-id-type='doi'])"/>
 
+  <!-- CASCADA ESTÁNDAR DEL PROYECTO:
+       1. abstract/@xml:lang  2. custom-meta[xml-lang]
+       3. /article/@xml:lang  4. 'es' -->
   <xsl:variable name="lang">
     <xsl:choose>
+      <xsl:when test="normalize-space(//article-meta/abstract/@xml:lang) != ''">
+        <xsl:value-of select="normalize-space(//article-meta/abstract/@xml:lang)"/>
+      </xsl:when>
       <xsl:when test="normalize-space(//article-meta/custom-meta-group/custom-meta[meta-name='xml-lang']/meta-value) != ''">
         <xsl:value-of select="normalize-space(//article-meta/custom-meta-group/custom-meta[meta-name='xml-lang']/meta-value)"/>
       </xsl:when>
       <xsl:when test="normalize-space(/article/@xml:lang) != ''">
         <xsl:value-of select="normalize-space(/article/@xml:lang)"/>
-      </xsl:when>
-      <xsl:when test="//article-meta/abstract/@xml:lang">
-        <xsl:value-of select="//article-meta/abstract/@xml:lang"/>
       </xsl:when>
       <xsl:otherwise>es</xsl:otherwise>
     </xsl:choose>
