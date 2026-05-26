@@ -21,6 +21,7 @@
     — <journal-id> con journal-id-type="nlm-ta" (acrónimo SciELO)
     — <article-id pub-id-type="publisher-id"> con PID SciELO
     — <aff> estructurada con institution/addr-line/country
+    — <aff/city> convertido a <addr-line> (city no existe en JATS Publishing 1.0)
     — <ref> incluye <mixed-citation> además de <element-citation>
       (diferencia crítica con Redalyc que prohíbe mixed-citation)
     — publication-type="book-chapter" mapeado a "book" (SPS no acepta book-chapter)
@@ -28,6 +29,8 @@
     — abstract sin @xml:lang (idioma inferido de article/@xml:lang)
     — <contrib-id> sin @authenticated (no existe en JATS Publishing 1.0)
     — whitespace normalizado en elementos de fecha (month, year, day)
+    — <funding-group> sin <award-group> suprimido (SPS requiere award-group;
+      aplica a editoriales, reseñas, obituarios y similares sin financiamiento)
   =====================================================
 -->
 <xsl:stylesheet
@@ -298,6 +301,35 @@
         </xsl:otherwise>
       </xsl:choose>
     </aff>
+  </xsl:template>
+
+  <!-- ================================================
+       AFF/CITY: <city> NO EXISTE EN JATS PUBLISHING 1.0
+       SE CONVIERTE A <addr-line> QUE SÍ ES VÁLIDO.
+       APLICA SOLO DENTRO DE <aff> PARA NO AFECTAR
+       OTROS CONTEXTOS DONDE city PUEDA APARECER.
+       ================================================ -->
+  <xsl:template match="aff/city">
+    <addr-line>
+      <xsl:value-of select="normalize-space(.)"/>
+    </addr-line>
+  </xsl:template>
+
+  <!-- ================================================
+       FUNDING-GROUP: SPS 1.9 EXIGE AL MENOS UN
+       <award-group> DENTRO DE <funding-group>.
+       SI NO HAY FINANCIAMIENTO REAL (SIN award-group),
+       EL BLOQUE SE OMITE COMPLETAMENTE PARA EVITAR
+       ERROR DE VALIDACIÓN SPS.
+       APLICA A: editoriales, reseñas, obituarios
+       Y CUALQUIER TIPO SIN FINANCIAMIENTO DECLARADO.
+       ================================================ -->
+  <xsl:template match="funding-group">
+    <xsl:if test="award-group">
+      <funding-group>
+        <xsl:apply-templates/>
+      </funding-group>
+    </xsl:if>
   </xsl:template>
 
   <!-- ================================================
