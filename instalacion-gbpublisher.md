@@ -167,7 +167,7 @@ Si todo salió bien, el resumen final muestra:
     1. Abrí gbpublisher
     2. En la pantalla principal, hacé clic en el ícono de
        administración (mano abierta con cubos) en la esquina
-       inferior izquierda
+       inferior derecha
     3. Iniciá sesión con:  usuario: admin  /  contraseña: admin123
     4. Creá al menos 1 usuario operativo
     5. Cerrá Administración y logueate con ese usuario
