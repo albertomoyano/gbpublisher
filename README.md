@@ -55,16 +55,6 @@ La aplicación verifica las dependencias al iniciar e informa al usuario si falt
 
 ---
 
-## Instalación
-
-La distribución se realiza mediante paquete `.deb`. Para solicitar una copia:
-
-[Formulario de solicitud](https://docs.google.com/forms/d/e/1FAIpQLSdz-Tp6750Hq9rKZsWDmaVSBiCQSm3FAkMq8y9SV3tfqXcI5Q/viewform?usp=publish-editor)
-
-El repositorio contiene el código fuente bajo los términos descritos en `LICENSE.md`.
-
----
-
 ## Licencia
 
 gbpublisher se distribuye bajo la **Business Source License 1.1 (BSL 1.1)**.
