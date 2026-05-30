@@ -91,6 +91,62 @@ verificar_python_modulo() {
   fi
 }
 
+# verificar_ruta_fija <ruta_ejecutable> <descripcion> <accion>
+# USA -x PARA VERIFICAR QUE EL ARCHIVO EXISTE Y ES EJECUTABLE
+# NECESARIO PARA HERRAMIENTAS QUE NO SE INSTALAN VÍA APT NI ESTÁN EN EL PATH
+# DE LAS APLICACIONES GRÁFICAS (EJ: VERAPDF INSTALADO EN /opt/)
+verificar_ruta_fija() {
+  local RUTA="$1"
+  local DESC="$2"
+  local ACCION="$3"
+  TOTAL=$((TOTAL + 1))
+  printf "  %-${ANCHO}s" "$DESC"
+  if [ -x "$RUTA" ]; then
+    echo -e "${VERDE}OK${RESET}"
+  else
+    echo -e "${ROJO}FALLO${RESET}   →  $ACCION"
+    FALLOS=$((FALLOS + 1))
+  fi
+}
+
+# verificar_version_gambas <version_minima> <descripcion>
+# VERIFICA QUE gambas3-runtime ESTÁ INSTALADO Y QUE SU VERSIÓN
+# ES IGUAL O SUPERIOR A LA MÍNIMA REQUERIDA POR GBPUBLISHER.
+# USA sort -V PARA COMPARACIÓN SEMÁNTICA CORRECTA (3.9 < 3.21)
+verificar_version_gambas() {
+  local VERSION_MIN="$1"
+  local DESC="$2"
+  TOTAL=$((TOTAL + 1))
+  printf "  %-${ANCHO}s" "$DESC"
+  # VERIFICAR QUE EL PAQUETE ESTÁ INSTALADO
+  if ! dpkg -l gambas3-runtime 2>/dev/null | grep -q '^ii'; then
+    echo -e "${ROJO}FALLO${RESET}   →  Gambas3 no está instalado"
+    FALLOS=$((FALLOS + 1))
+    return
+  fi
+  # EXTRAER VERSIÓN INSTALADA — EJEMPLO DE SALIDA dpkg: "3.21.0-1ubuntu1"
+  # cut -d'-' -f1 QUEDA CON "3.21.0" DESCARTANDO EL SUFIJO DE DISTRO
+  local VERSION_INST
+  VERSION_INST=$(dpkg -l gambas3-runtime 2>/dev/null | grep '^ii' | awk '{print $3}' | cut -d'-' -f1)
+  # sort -V ORDENA POR VERSIÓN SEMÁNTICA; tail -n1 DEVUELVE LA MÁS ALTA
+  # SI LA MÁS ALTA ES LA INSTALADA (O SON IGUALES), LA VERSIÓN ES SUFICIENTE
+  local VERSION_MAYOR
+  VERSION_MAYOR=$(printf '%s\n' "$VERSION_MIN" "$VERSION_INST" | sort -V | tail -n1)
+  if [ "$VERSION_MAYOR" = "$VERSION_INST" ] || [ "$VERSION_INST" = "$VERSION_MIN" ]; then
+    echo -e "${VERDE}OK${RESET}      (versión $VERSION_INST)"
+  else
+    echo -e "${ROJO}FALLO${RESET}   →  Versión instalada: $VERSION_INST — Se requiere >= $VERSION_MIN"
+    echo -e "           ${AMARILLO}Agregar repositorio Gambas $VERSION_MIN para Linux Mint 22.x / Ubuntu 24.04:${RESET}"
+    echo    "           echo 'deb http://download.opensuse.org/repositories/home:/gambas:/3.21/xUbuntu_24.04/ /' \\"
+    echo    "             | sudo tee /etc/apt/sources.list.d/home:gambas:3.21.list"
+    echo    "           curl -fsSL https://download.opensuse.org/repositories/home:gambas:3.21/xUbuntu_24.04/Release.key \\"
+    echo    "             | gpg --dearmor \\"
+    echo    "             | sudo tee /etc/apt/trusted.gpg.d/home_gambas_3.21.gpg > /dev/null"
+    echo    "           sudo apt update && sudo apt install gambas3"
+    FALLOS=$((FALLOS + 1))
+  fi
+}
+
 # ============================================================
 # INICIO
 # ============================================================
@@ -117,8 +173,11 @@ verificar_comando "java" \
   "Java Runtime Environment" \
   "sudo apt install default-jre"
 verificar_jar "/opt/Saxon-HE" "saxon-he-*.jar" \
-  "Saxon-HE XSLT Processor" \
-  "Descargar desde saxonica.com → sudo mkdir -p /opt/Saxon-HE → sudo cp saxon-he-*.jar /opt/Saxon-HE/"
+  "Saxon-HE — JAR principal" \
+  "Descargar ZIP desde saxonica.com → sudo mkdir -p /opt/Saxon-HE → sudo cp saxon-he-*.jar /opt/Saxon-HE/"
+verificar_jar "/opt/Saxon-HE/lib" "xmlresolver-*.jar" \
+  "Saxon-HE — dependencias lib/xmlresolver" \
+  "Copiar carpeta lib/ del ZIP de Saxon → sudo mkdir -p /opt/Saxon-HE/lib → sudo cp lib/xmlresolver-*.jar /opt/Saxon-HE/lib/"
 
 # ============================================================
 # PROCESADORES DE DOCUMENTOS
@@ -158,9 +217,11 @@ verificar_comando "xsltproc" \
 verificar_python_modulo "packtools" \
   "packtools (validador SciELO PS)" \
   "pip install packtools --break-system-packages"
-verificar_comando "verapdf" \
+# VERAPDF SE INSTALA EN RUTA FIJA /opt/verapdf/ — NO ESTÁ EN EL PATH
+# DE LAS APPS GRÁFICAS, POR LO QUE command -v DARÍA FALSO POSITIVO
+verificar_ruta_fija "/opt/verapdf/verapdf" \
   "veraPDF (validador PDF/A)" \
-  "Descargar desde verapdf.org/software → ./verapdf-install"
+  "Descargar desde verapdf.org → sudo ./verapdf-installer --installpath /opt/verapdf"
 
 # ============================================================
 # CONTROL DE VERSIONES
@@ -176,6 +237,10 @@ verificar_comando "git" \
 # ============================================================
 echo ""
 echo -e "${NEGRITA}  Componentes Gambas 3${RESET}"
+# LA VERSIÓN SE VERIFICA PRIMERO: SI ES INSUFICIENTE, LOS PAQUETES
+# INDIVIDUALES PUEDEN ESTAR INSTALADOS Y AUN ASÍ CAUSAR FALLOS EN RUNTIME
+verificar_version_gambas "3.21.0" \
+  "Gambas3 versión mínima requerida (>= 3.21)"
 verificar_paquete "gambas3-runtime"           "Gambas3 Runtime"               "sudo apt install gambas3-runtime"
 verificar_paquete "gambas3-gb-complex"        "Gambas3 gb.complex"            "sudo apt install gambas3-gb-complex"
 verificar_paquete "gambas3-gb-crypt"          "Gambas3 gb.crypt"              "sudo apt install gambas3-gb-crypt"

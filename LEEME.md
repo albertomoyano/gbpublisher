@@ -49,7 +49,8 @@ El script recorre una lista de programas y muestra el estado de cada uno:
 
   Java y procesadores XSLT
   Java Runtime Environment                            OK
-  Saxon-HE XSLT Processor                            OK
+  Saxon-HE — JAR principal                            OK
+  Saxon-HE — dependencias lib/xmlresolver             OK
 
   Procesadores de documentos
   Pandoc                                              OK
@@ -86,6 +87,55 @@ Cada línea con FALLO muestra el comando exacto para instalar esa dependencia. P
 Pasá esa información al responsable técnico para que instale lo que falta. Una vez resuelto, volvé a ejecutar `integridad.sh` para confirmar que todo está en orden.
 
 > **Importante:** No pases al Paso 2 si quedan dependencias con FALLO. La aplicación puede abrirse pero algunas funciones no van a funcionar correctamente.
+
+---
+
+### Herramientas que requieren instalación manual
+
+La mayoría de las dependencias se instalan con un solo comando `apt`. Dos herramientas son la excepción: tienen su propio instalador y deben colocarse en una ruta específica para que gbpublisher pueda encontrarlas. Si `integridad.sh` reporta FALLO para alguna de ellas, seguí las instrucciones correspondientes.
+
+---
+
+#### Saxon-HE (procesador XSLT)
+
+Saxon-HE se distribuye como un archivo ZIP que contiene varios archivos. Es importante copiar **todo el contenido**, no solo el archivo principal.
+
+**Instalación:**
+
+1. Descargá el ZIP de Saxon-HE desde [saxonica.com](https://www.saxonica.com/download/java.xml)
+2. Descomprimí el archivo. Vas a ver una carpeta con este contenido:
+   ```
+   saxon-he-XX.X.jar
+   lib/
+     xmlresolver-X.X.X.jar
+     xmlresolver-X.X.X-data.jar
+     ...
+   ```
+3. Copiá el JAR principal y la carpeta `lib/` completa a `/opt/Saxon-HE/`:
+   ```bash
+   sudo mkdir -p /opt/Saxon-HE/lib
+   sudo cp saxon-he-*.jar /opt/Saxon-HE/
+   sudo cp lib/xmlresolver-*.jar /opt/Saxon-HE/lib/
+   ```
+
+> **Error frecuente:** copiar solo el archivo `saxon-he-XX.X.jar` e ignorar la carpeta `lib/`. En ese caso Saxon arranca pero falla al procesar documentos con el error `NoClassDefFoundError: org/xmlresolver/ResolverConfiguration`. La carpeta `lib/` es obligatoria.
+
+---
+
+#### veraPDF (validador PDF/A)
+
+veraPDF tiene su propio instalador gráfico y debe instalarse en la ruta exacta `/opt/verapdf/` para que gbpublisher pueda encontrarlo.
+
+**Instalación:**
+
+1. Descargá el instalador desde [verapdf.org/software](https://verapdf.org/software/)
+2. Abrí una terminal en la carpeta donde descargaste el archivo y ejecutá:
+   ```bash
+   sudo ./verapdf-installer --installpath /opt/verapdf
+   ```
+3. Seguí los pasos del instalador gráfico.
+
+> **Error frecuente:** instalar veraPDF sin `sudo` o sin especificar `--installpath`. En ese caso el instalador lo coloca en `~/verapdf/` (directorio personal del usuario), que gbpublisher no lo puede encontrar. `integridad.sh` reportará FALLO aunque veraPDF funcione desde la terminal.
 
 ---
 

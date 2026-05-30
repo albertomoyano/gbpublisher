@@ -87,7 +87,7 @@ CREATE TABLE `articulo_autor` (
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION' */ ;
 DELIMITER ;;
-/*!50003 CREATE*/ /*!50017 DEFINER=`adminphp`@`localhost`*/ /*!50003 TRIGGER `trg_solo_un_autor_correspondencia_insert` BEFORE INSERT ON `articulo_autor` FOR EACH ROW BEGIN
+/*!50003 CREATE*/ /*!50017 DEFINER=CURRENT_USER*/ /*!50003 TRIGGER `trg_solo_un_autor_correspondencia_insert` BEFORE INSERT ON `articulo_autor` FOR EACH ROW BEGIN
   IF NEW.es_autor_correspondencia = 1 THEN
     IF EXISTS (
       SELECT 1 FROM articulo_autor 
@@ -113,7 +113,7 @@ DELIMITER ;
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION' */ ;
 DELIMITER ;;
-/*!50003 CREATE*/ /*!50017 DEFINER=`adminphp`@`localhost`*/ /*!50003 TRIGGER `trg_solo_un_autor_correspondencia_update` BEFORE UPDATE ON `articulo_autor` FOR EACH ROW BEGIN
+/*!50003 CREATE*/ /*!50017 DEFINER=CURRENT_USER*/ /*!50003 TRIGGER `trg_solo_un_autor_correspondencia_update` BEFORE UPDATE ON `articulo_autor` FOR EACH ROW BEGIN
   IF NEW.es_autor_correspondencia = 1 AND OLD.es_autor_correspondencia = 0 THEN
     IF EXISTS (
       SELECT 1 FROM articulo_autor 
