@@ -517,50 +517,106 @@ End
 
 ' ============================================
 ' Función   : VerificarFuentesIBMPlex
-' Propósito : Verifica que las fuentes IBM Plex estén registradas
-'             en el sistema. Si no lo están, las instala desde
-'             ~/.gbpublisher/fonts/, avisa al usuario y cierra la app.
+' Propósito : Verifica que las fuentes IBM Plex estén instaladas en el
+'             directorio de fuentes del usuario. Si faltan, las copia desde
+'             los recursos del paquete. Si la fuente de recursos no existe,
+'             informa el problema de instalación y cierra. Si se copian
+'             fuentes nuevas, registra y pide reinicio.
 ' ============================================
 Public Sub VerificarFuentesIBMPlex()
 
-  ' --- 1. Verificar por presencia del archivo, no por fc-list ---
-  ' FC-LIST PUEDE DAR FALSOS POSITIVOS DESDE TEXLIVE U OTRAS FUENTES DEL SISTEMA
+  ' --- 1. Verificar presencia de la fuente centinela ---
+  ' SI YA ESTÁ INSTALADA NO HAY NADA QUE HACER
   Dim sFontDst As String = User.Home &/ ".local/share/fonts/gbpublisher"
 
   If Exist(sFontDst &/ "IBMPlexSans-Regular.otf") Then Return
 
-  ' --- 2. Copiar fuentes desde el directorio de recursos ---
+  ' --- 2. Verificar que el directorio fuente del paquete existe ---
+  ' SI FALTA, EL PAQUETE ESTÁ MAL INSTALADO — ES UN ERROR DE INSTALACIÓN, NO DE USO
   Dim sFontSrc As String = RutaRecursos() &/ "fonts"
+  If Not Exist(sFontSrc) Then
+    m_Sonido.sonar("Error")
+    Message.Error(
+      "No se encontró el directorio de fuentes del paquete:" & Chr(10) &
+      sFontSrc & Chr(10) & Chr(10) &
+      "La instalación de gbpublisher puede estar incompleta." & Chr(10) &
+      "Reinstale el paquete e intente nuevamente.")
+    Quit
+  Endif
 
-  If Not Exist(sFontDst) Then Mkdir sFontDst
+  ' --- 3. Crear directorio de destino si no existe ---
+  If Not Exist(sFontDst) Then
+    Try Mkdir sFontDst
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error(
+        "No se pudo crear el directorio de fuentes del usuario:" & Chr(10) &
+        sFontDst & Chr(10) & Chr(10) &
+        "Verifique los permisos de escritura en su directorio personal.")
+      Quit
+    Endif
+  Endif
 
+  ' --- 4. Copiar fuentes disponibles y contabilizar ---
   Dim aFuentes As String[] = [
     "IBMPlexSans-Regular.otf", "IBMPlexSans-Bold.otf",
     "IBMPlexSans-Italic.otf", "IBMPlexSans-BoldItalic.otf",
     "IBMPlexMono-Regular.otf", "IBMPlexMono-Bold.otf",
     "IBMPlexMono-Italic.otf", "IBMPlexMono-BoldItalic.otf"
   ]
-
   Dim sFuente As String
+  Dim iCopiadas As Integer = 0
+  Dim iEsperadas As Integer = aFuentes.Count
+  Dim aFaltantes As New String[]
+
   For Each sFuente In aFuentes
     If Exist(sFontSrc &/ sFuente) Then
-      Copy sFontSrc &/ sFuente To sFontDst &/ sFuente
+      Try Copy sFontSrc &/ sFuente To sFontDst &/ sFuente
+      If Error Then
+        aFaltantes.Add(sFuente)
+      Else
+        Inc iCopiadas
+      Endif
+    Else
+      aFaltantes.Add(sFuente)
     Endif
   Next
 
-  ' --- 3. Registrar fuentes en el sistema ---
-  Shell "fc-cache -f" Wait
+  ' --- 5. Evaluar resultado de la copia ---
+  ' SI NO SE COPIÓ NINGUNA FUENTE, EL PROBLEMA ES DE INSTALACIÓN
+  If iCopiadas = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error(
+      "No se encontraron fuentes IBM Plex en el paquete instalado." & Chr(10) & Chr(10) &
+      "Directorio buscado:" & Chr(10) &
+      sFontSrc & Chr(10) & Chr(10) &
+      "La instalación de gbpublisher puede estar incompleta." & Chr(10) &
+      "Reinstale el paquete e intente nuevamente.")
+    Quit
+  Endif
 
-  ' --- 4. Avisar y cerrar ---
+  ' --- 6. Registrar fuentes copiadas en el sistema ---
+  Shell "fc-cache -f " & Shell.Quote(sFontDst) Wait
+
+  ' --- 7. Informar resultado y solicitar reinicio ---
+  ' ADVERTENCIA ADICIONAL SI FALTAN ALGUNAS FUENTES (INSTALACIÓN PARCIAL)
+  Dim sMensaje As String
+  If aFaltantes.Count > 0 Then
+    sMensaje =
+      "Se instalaron " & CStr(iCopiadas) & " de " & CStr(iEsperadas) & " fuentes IBM Plex." & Chr(10) & Chr(10) &
+      "Las siguientes fuentes no pudieron copiarse:" & Chr(10) &
+      aFaltantes.Join(Chr(10)) & Chr(10) & Chr(10) &
+      "La interfaz puede no visualizarse correctamente." & Chr(10) & Chr(10) &
+      "Cierre y vuelva a abrir la aplicación para continuar."
+  Else
+    sMensaje =
+      "Su sistema no tenía instalada la familia tipográfica IBM Plex." & Chr(10) & Chr(10) &
+      "Las fuentes se instalaron correctamente en:" & Chr(10) &
+      sFontDst & Chr(10) & Chr(10) &
+      "Cierre la aplicación y vuelva a abrirla para continuar."
+  Endif
   m_Sonido.sonar("Info")
-  Message.Info(
-    "Su sistema no tiene instalada la familia tipográfica IBM Plex (Sans y Mono), se instalaron las tipografías necesarias para la interfaz." & Chr(10) &
-    Chr(10) &
-    "Las fuentes se registraron en:" & Chr(10) &
-    sFontDst & Chr(10) &
-    Chr(10) & Chr(10) &
-    "Es necesario que cierre la aplicación y la abra nuevamente.")
-
+  Message.Info(sMensaje)
   Quit
 
 End Sub
