@@ -1,9 +1,9 @@
 # gbpublisher
 
-Plataforma de producción editorial académica para revistas científicas, series académicas y proyectos editoriales institucionales sobre Linux Mint con escritorio Cinnamon.
+## Plataforma de producción editorial académica para revistas científicas y proyectos editoriales institucionales
 
 > **Plataforma requerida**
-> gbpublisher funciona y soportado exclusivamente en **Linux Mint con escritorio Cinnamon y servidor de pantalla X11**. No está soportado en otras distribuciones Linux ni ningún otro sistema operativo. Antes de instalar, verificá que tu sistema cumple este requisito.
+> gbpublisher funciona y es soportado exclusivamente en **Linux Mint con escritorio Cinnamon y servidor de pantalla X11**. No está soportado en otras distribuciones Linux ni ningún otro sistema operativo. Antes de instalar, verificá que tu sistema cumple este requisito.
 
 ---
 
