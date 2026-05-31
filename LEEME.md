@@ -288,10 +288,10 @@ A partir de este punto gbpublisher está listo para usar.
 
 Para confirmar que la instalación está completa y funcional, verificá que podés:
 
-- [ ] Abrir gbpublisher sin mensajes de error
-- [ ] Conectarte con el usuario creado
-- [ ] Ver el menú principal habilitado
-- [ ] Acceder a Acerca de... → la integridad del sistema sin elementos en rojo
+- [x] Abrir gbpublisher sin mensajes de error
+- [x] Conectarte con el usuario creado
+- [x] Ver el menú principal habilitado
+- [x] Acceder a Acerca de... → la integridad del sistema sin elementos en rojo
 
 ---
 
