@@ -4615,14 +4615,6 @@ Public Sub hTimerXML_Timer()
 
 End
 
-Public Sub btnCercania_Click()
-
-  m_Sonido.sonar("Info")
-  ' LLAMAR A LA FUNCIÓN DEL MÓDULO m_EscanerTipografico
-  m_EscanerTipografico.MostrarControlCercania()
-
-End
-
 ' ARRAYS PARALELOS PARA ALMACENAR LAS COINCIDENCIAS DE BÚSQUEDA
 Private $aBusqNumeroLinea As New Integer[]    ' NÚMERO DE LÍNEA (BASE 1)
 Private $aBusqPosicionEnLinea As New Integer[] ' POSICIÓN DENTRO DE LA LÍNEA
@@ -6189,12 +6181,28 @@ Public Sub btnChequearCrossref_Click()
   Endif
 
   ' --- 7. Configurar FEstructuraResultados ---
+  Dim aResultadosTSV As New String[]
+  Dim aColores As New Collection
+
+  ' --- 8. Agregar filas de comparación ---
+  ' CADA LLAMADA ACUMULA UNA FILA EN aResultadosTSV Y SUS COLORES EN aColores
+  AgregarFilaComparacion("DOI", sDoiLocal, sDoiCr, aResultadosTSV, aColores)
+  AgregarFilaComparacion("Título", sTituloLocal, sTituloCr, aResultadosTSV, aColores)
+  AgregarFilaComparacion("Año", sAnioLocal, sAnioCr, aResultadosTSV, aColores)
+  AgregarFilaComparacion("Páginas", sPaginaLocal, sPaginaCr, aResultadosTSV, aColores)
+  AgregarFilaComparacion("ISSN", sIssnLocal, sIssnCr, aResultadosTSV, aColores)
+  AgregarFilaComparacion("Primer autor", sAutorLocal, sAutorCr, aResultadosTSV, aColores)
+
   FEstructuraResultados.blTitulo.Text = "Verificación Crossref — DOI: " & sDoi
+  FEstructuraResultados.aResultados = aResultadosTSV
+  FEstructuraResultados.aColores = aColores
 
   With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
+    .Rows.Count = aResultadosTSV.Count
     .Columns.Count = 5
-    .Header = GridView.Horizontal
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
     .Columns[0].Title = "Campo"
     .Columns[0].Width = 130
     .Columns[1].Title = "BD local"
@@ -6207,14 +6215,7 @@ Public Sub btnChequearCrossref_Click()
     .Columns[4].Width = 2
   End With
 
-  ' --- 8. Agregar filas de comparación ---
-  AgregarFilaComparacion("DOI", sDoiLocal, sDoiCr)
-  AgregarFilaComparacion("Título", sTituloLocal, sTituloCr)
-  AgregarFilaComparacion("Año", sAnioLocal, sAnioCr)
-  AgregarFilaComparacion("Páginas", sPaginaLocal, sPaginaCr)
-  AgregarFilaComparacion("ISSN", sIssnLocal, sIssnCr)
-  AgregarFilaComparacion("Primer autor", sAutorLocal, sAutorCr)
-
+  FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
 
@@ -6222,24 +6223,21 @@ End Sub
 
 ' ============================================
 ' Función   : AgregarFilaComparacion
-' Propósito : Agrega una fila al gvResultados comparando
-'             valor local con el de Crossref.
+' Propósito : Acumula una fila de comparación en los arrays
+'             aResultadosTSV y aColores para su posterior
+'             renderizado por el evento Data del TableView.
 '             Verde = coincide, Amarillo = difiere, Gris = vacío.
+' Parámetros: sCampo       As String     — nombre del campo
+'             sLocal       As String     — valor de la BD local
+'             sCrossref    As String     — valor de Crossref
+'             aResultadosTSV As String[] — acumulador de filas TSV
+'             aColores     As Collection — acumulador de colores por celda
 ' ============================================
-Private Sub AgregarFilaComparacion(sCampo As String, sLocal As String, sCrossref As String)
+Private Sub AgregarFilaComparacion(sCampo As String, sLocal As String, sCrossref As String, aResultadosTSV As String[], aColores As Collection)
 
-  Dim gv As GridView = FEstructuraResultados.gvResultados
-  Dim iFila As Integer = gv.Rows.Count
-
-  gv.Rows.Count = iFila + 1
-
-  gv[iFila, 0].Text = sCampo
-  gv[iFila, 1].Text = sLocal
-  gv[iFila, 2].Text = sCrossref
-
+  ' --- 1. Determinar estado y color de fondo ---
   Dim sLocalNorm As String = LCase(Trim(sLocal))
   Dim sCrossNorm As String = LCase(Trim(sCrossref))
-
   Dim cFondo As Integer
   Dim sEstado As String
 
@@ -6254,10 +6252,15 @@ Private Sub AgregarFilaComparacion(sCampo As String, sLocal As String, sCrossref
     sEstado = "DIFIERE"
   Endif
 
-  gv[iFila, 3].Text = sEstado
+  ' --- 2. Acumular fila TSV ---
+  Dim iFila As Integer = aResultadosTSV.Count
+  aResultadosTSV.Add(sCampo & Chr(9) & sLocal & Chr(9) & sCrossref & Chr(9) & sEstado)
+
+  ' --- 3. Registrar color para todas las columnas de la fila ---
+  ' EL COLOR SE APLICA A LAS 4 COLUMNAS DE DATOS (0 A 3)
   Dim j As Integer
   For j = 0 To 3
-    gv[iFila, j].Background = cFondo
+    aColores[CStr(iFila) & "," & CStr(j)] = cFondo
   Next
 
 End Sub
@@ -6376,8 +6379,9 @@ End Function
 ' ============================================
 ' Evento    : btnCrossrefTitulo_Click
 ' Propósito : Busca en Crossref por título y muestra hasta 5
-'             candidatos en FEstructuraResultados para que el
-'             editor identifique la referencia correcta.
+'             candidatos en FEstructuraResultados. Incluye tipo
+'             de documento y score de relevancia para que el
+'             editor pueda evaluar cada resultado.
 ' ============================================
 Public Sub btnCrossrefTitulo_Click()
 
@@ -6390,20 +6394,14 @@ Public Sub btnCrossrefTitulo_Click()
     Return
   Endif
 
-  ' --- 2. URL-encodear el título ---
-  ' PYTHON MANEJA EL ENCODING — PASAMOS EL TÍTULO SIN MODIFICAR
+  ' --- 2. Definir archivos temporales ---
   Dim sTmpResp As String = "/tmp/gbpublisher-f-search.json"
   Dim sTmpResult As String = "/tmp/gbpublisher-f-search-results.txt"
   Dim sTmpCode As String = "/tmp/gbpublisher-f-search-code.txt"
 
-  ' CONSTRUIR URL CON urllib.parse PARA ENCODING CORRECTO
-  Shell "python3 -c \"" &
-    "import urllib.request, urllib.parse; " &
-    "url = 'https://api.crossref.org/works?rows=5&query.title=' + " &
-    "urllib.parse.quote(open('/dev/stdin').read()); " &
-    "\" <<< '" & Replace(sTitulo, "'", "") & "'" Wait
-
-  ' USAR curl CON --data-urlencode PARA EL ENCODING
+  ' --- 3. Consultar la API de Crossref ---
+  ' --data-urlencode MANEJA EL ENCODING CORRECTO DEL TÍTULO
+  ' -w '%{http_code}' ESCRIBE EL CÓDIGO HTTP EN ARCHIVO SEPARADO
   Shell "curl -s -o '" & sTmpResp & "' " &
     "-w '%{http_code}' " &
     "--max-time 15 " &
@@ -6412,7 +6410,7 @@ Public Sub btnCrossrefTitulo_Click()
     "'https://api.crossref.org/works?rows=5' " &
     "> '" & sTmpCode & "'" Wait
 
-  ' LEER CÓDIGO HTTP
+  ' --- 4. Verificar código HTTP ---
   Dim sHttpCode As String = ""
   If Exist(sTmpCode) Then sHttpCode = Trim(File.Load(sTmpCode))
 
@@ -6425,20 +6423,34 @@ Public Sub btnCrossrefTitulo_Click()
     Return
   Endif
 
-  ' --- 3. PARSEAR CON PYTHON Y EXTRAER CAMPOS ---
-  ' PYTHON ESCRIBE UN ARCHIVO TSV: doi TAB titulo TAB anio TAB autor
+  ' --- 5. Parsear JSON con Python ---
+  ' EXTRAE: score TAB tipo TAB doi TAB titulo TAB anio TAB autor TAB revista
+  ' type SE NORMALIZA A ETIQUETA LEGIBLE PARA EL EDITOR
+  ' score SE REDONDEA A UN DECIMAL PARA LEGIBILIDAD
   Dim sPyScript As String =
     "import json; " &
+    "TIPOS = {" &
+    "  'journal-article': 'Artículo'," &
+    "  'book': 'Libro'," &
+    "  'book-chapter': 'Capítulo'," &
+    "  'proceedings-article': 'Congreso'," &
+    "  'posted-content': 'Preprint'," &
+    "  'dissertation': 'Tesis'," &
+    "  'report': 'Informe'," &
+    "  'dataset': 'Dataset'" &
+    "}; " &
     "f=open('" & sTmpResp & "',encoding='utf-8'); d=json.load(f); f.close(); " &
     "items=d.get('message',{}).get('items',[]); " &
     "out=open('" & sTmpResult & "','w',encoding='utf-8'); " &
     "[out.write(" &
-    "(i.get('DOI','')+'\\t'+" &
+    "str(round(float(i.get('score',0)),1))+'\\t'+" &
+    "TIPOS.get(i.get('type',''),i.get('type',''))+'\\t'+" &
+    "(i.get('DOI',''))+'\\t'+" &
     "(i.get('title',[''])[0] if i.get('title') else '')+'\\t'+" &
     "(str(i.get('published',{}).get('date-parts',[['']])[0][0]) if i.get('published') else '')+'\\t'+" &
     "((i.get('author',[{}])[0].get('family','')+', '+i.get('author',[{}])[0].get('given','')) if i.get('author') else '')+'\\t'+" &
-    "(i.get('container-title',[''])[0] if i.get('container-title') else '')+'\\n')) " &
-    "for i in items[:5]]; " &
+    "(i.get('container-title',[''])[0] if i.get('container-title') else '')+'\\n'" &
+    ") for i in items[:5]]; " &
     "out.close()"
 
   Shell "python3 -c " & Chr(34) & sPyScript & Chr(34) Wait
@@ -6446,13 +6458,13 @@ Public Sub btnCrossrefTitulo_Click()
   Try Kill sTmpResp
   Try Kill sTmpCode
 
+  ' --- 6. Verificar que hay resultados ---
   If Not Exist(sTmpResult) Then
     m_Sonido.sonar("Warning")
     Message.Warning("No se encontraron resultados para ese título.")
     Return
   Endif
 
-  ' --- 4. Leer resultados TSV ---
   Dim sContenido As String = Trim(File.Load(sTmpResult))
   Try Kill sTmpResult
 
@@ -6462,49 +6474,42 @@ Public Sub btnCrossrefTitulo_Click()
     Return
   Endif
 
-  ' --- 5. Configurar FEstructuraResultados ---
-  FEstructuraResultados.blTitulo.Text = "Búsqueda Crossref por título: " &
+  ' --- 7. Configurar FEstructuraResultados ---
+  FEstructuraResultados.blTitulo.Text = "Búsqueda en Crossref: " &
     Left(sTitulo, 60) & If(Len(sTitulo) > 60, "...", "")
 
+  ' PASAR LOS DATOS AL FORMULARIO ANTES DE CONFIGURAR EL TABLEVIEW
+  FEstructuraResultados.aResultados = Split(sContenido, Chr(10))
+
   With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
-    .Columns.Count = 6
-    .Header = GridView.Horizontal
-    .Columns[0].Title = "DOI"
-    .Columns[0].Width = 250
-    .Columns[1].Title = "Título"
-    .Columns[1].Width = 310
-    .Columns[2].Title = "Año"
-    .Columns[2].Width = 60
-    .Columns[3].Title = "Primer autor"
-    .Columns[3].Width = 150
-    .Columns[4].Title = "Revista"
-    .Columns[4].Width = 170
-    .Columns[5].Title = ""
-    .Columns[5].Width = 2
+    .Rows.Count = FEstructuraResultados.aResultados.Count
+    .Columns.Count = 8
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
+    ' SCORE PRIMERO — INDICA CONFIANZA DE CROSSREF EN EL RESULTADO
+    .Columns[0].Title = "Score"
+    .Columns[0].Width = 60
+    ' TIPO SEGUNDO — PERMITE DESCARTAR RESULTADOS IRRELEVANTES DE INMEDIATO
+    .Columns[1].Title = "Tipo"
+    .Columns[1].Width = 80
+    .Columns[2].Title = "DOI"
+    .Columns[2].Width = 220
+    .Columns[3].Title = "Título"
+    .Columns[3].Width = 290
+    .Columns[4].Title = "Año"
+    .Columns[4].Width = 50
+    .Columns[5].Title = "Primer autor"
+    .Columns[5].Width = 140
+    .Columns[6].Title = "Revista"
+    .Columns[6].Width = 150
+    .Columns[7].Title = ""
+    .Columns[7].Width = 2
   End With
 
-  ' --- 6. Poblar grid con los resultados ---
-  Dim aLineas As String[] = Split(sContenido, Chr(10))
-  Dim sLinea As String
-  Dim iFila As Integer = 0
-
-  For Each sLinea In aLineas
-    sLinea = Trim(sLinea)
-    If sLinea = "" Then Continue
-
-    Dim aCampos As String[] = Split(sLinea, Chr(9))
-    If aCampos.Count < 4 Then Continue
-
-    FEstructuraResultados.gvResultados.Rows.Count = iFila + 1
-    FEstructuraResultados.gvResultados[iFila, 0].Text = If(aCampos.Count > 0, Trim(aCampos[0]), "")
-    FEstructuraResultados.gvResultados[iFila, 1].Text = If(aCampos.Count > 1, Trim(aCampos[1]), "")
-    FEstructuraResultados.gvResultados[iFila, 2].Text = If(aCampos.Count > 2, Trim(aCampos[2]), "")
-    FEstructuraResultados.gvResultados[iFila, 3].Text = If(aCampos.Count > 3, Trim(aCampos[3]), "")
-    FEstructuraResultados.gvResultados[iFila, 4].Text = If(aCampos.Count > 4, Trim(aCampos[4]), "")
-    Inc iFila
-  Next
-
+  ' --- 8. Refrescar y mostrar ---
+  ' REFRESH FORZADO PARA QUE EL EVENTO Data SE DISPARE CON LOS NUEVOS DATOS
+  FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
 

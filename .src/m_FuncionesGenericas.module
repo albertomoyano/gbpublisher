@@ -1914,7 +1914,7 @@ End
 ' ============================================
 ' Función   : ContarCaracteresMD
 ' Propósito : Cuenta los caracteres de cada archivo .md del proyecto
-'             y muestra los resultados en FEstrcuturaResultados
+'             y muestra los resultados en FEstructuraResultados
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -1928,31 +1928,27 @@ Public Sub ContarCaracteresMD()
   Dim rutaProyecto As String
   Dim rutaArticulos As String
   Dim rutaCompleta As String
-  Dim iFila As Integer
 
   ' --- 2. Resolución de rutas del proyecto ---
   rutaProyecto = File.Dir(FMain.txtProyecto.Text)
   rutaArticulos = rutaProyecto &/ "articulos"
 
   ' --- 3. Recolección de archivos y cálculo de caracteres ---
-  ' SE USA UN ARRAY AUXILIAR PARA ACUMULAR LAS FILAS ANTES DE SABER EL TOTAL
-  Dim aNombres As New String[]
-  Dim aCaracteres As New String[]
+  ' LAS FILAS SE ACUMULAN COMO TSV PARA EL EVENTO Data DEL TABLEVIEW
+  Dim aResultados As New String[]
 
   ' ARCHIVOS EN LA RAÍZ DEL PROYECTO
   If Exist(rutaProyecto) Then
     archivos = Dir(rutaProyecto, "*.md")
-    archivos.Sort()                    ' ORDEN ALFABÉTICO GARANTIZADO
+    archivos.Sort()
     For Each archivo In archivos
       rutaCompleta = rutaProyecto &/ archivo
-      contenido = File.Load(rutaCompleta)
+      Try contenido = File.Load(rutaCompleta)
       If Error Then
-        aNombres.Add(archivo)
-        aCaracteres.Add("Error")
+        aResultados.Add(archivo & Chr(9) & "Error")
       Else
         caracteres = Len(contenido)
-        aNombres.Add(archivo)
-        aCaracteres.Add(Format(caracteres, "#,##0"))
+        aResultados.Add(archivo & Chr(9) & Format(caracteres, "#,##0"))
       Endif
     Next
   Endif
@@ -1960,59 +1956,53 @@ Public Sub ContarCaracteresMD()
   ' ARCHIVOS EN LA SUBCARPETA /ARTICULOS
   If Exist(rutaArticulos) Then
     archivos = Dir(rutaArticulos, "*.md")
-    archivos.Sort()                    ' ORDEN ALFABÉTICO GARANTIZADO
+    archivos.Sort()
     For Each archivo In archivos
       rutaCompleta = rutaArticulos &/ archivo
-      caracteres = 0                          ' RESET EXPLÍCITO ANTES DE CADA LECTURA
-      Try contenido = File.Load(rutaCompleta) ' Try NECESARIO PARA QUE Error FUNCIONE
+      caracteres = 0
+      Try contenido = File.Load(rutaCompleta)
       If Error Then
-        aNombres.Add("articulos/" & archivo)
-        aCaracteres.Add("Error")
+        aResultados.Add("articulos/" & archivo & Chr(9) & "Error")
       Else
         caracteres = Len(contenido)
-        aNombres.Add("articulos/" & archivo)
-        aCaracteres.Add(Format(caracteres, "#,##0"))
+        aResultados.Add("articulos/" & archivo & Chr(9) & Format(caracteres, "#,##0"))
       Endif
     Next
   Endif
 
-  ' --- 4. Configuración del formulario ---
+  ' --- 4. Verificar que hay resultados ---
+  If aResultados.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron archivos .md en el proyecto.")
+    Return
+  Endif
+
+  ' --- 5. Configurar FEstructuraResultados ---
   FEstructuraResultados.blTitulo.Text = "Estadísticas de caracteres por artículo"
+  FEstructuraResultados.aResultados = aResultados
 
   With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
-    .Columns.Count = 2
-    ' ... etc
-  End With
-
-  ' --- 5. Configuración de columnas del GridView ---
-  With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
-    .Columns.Count = 3                 ' COLUMNA EXTRA COMO RELLENO
-    .Header = GridView.Horizontal
+    .Rows.Count = aResultados.Count
+    .Columns.Count = 3
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
     .Columns[0].Title = "Archivo"
     .Columns[0].Width = 600
     .Columns[0].Alignment = Align.Left
     .Columns[1].Title = "Caracteres"
     .Columns[1].Width = 100
     .Columns[1].Alignment = Align.Right
-    .Columns[2].Title = ""             ' COLUMNA VACÍA QUE ABSORBE EL ESPACIO SOBRANTE
+    .Columns[2].Title = ""
     .Columns[2].Width = 10
   End With
 
-  ' --- 6. Carga de datos en el GridView ---
-  FEstructuraResultados.gvResultados.Rows.Count = aNombres.Count
-
-  For iFila = 0 To aNombres.Count - 1
-    FEstructuraResultados.gvResultados[iFila, 0].Text = aNombres[iFila]
-    FEstructuraResultados.gvResultados[iFila, 1].Text = aCaracteres[iFila]
-  Next
-
-  ' --- 7. Presentación del formulario ---
+  ' --- 6. Presentación del formulario ---
+  FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
 
-End
+End Sub
 
 ' ============================================
 ' Función   : ContarCaracteresPares
@@ -2032,22 +2022,19 @@ Public Sub ContarCaracteresPares()
   Dim rutaCompleta As String
   Dim iFila As Integer
   Dim iCol As Integer
-  Dim cantidad As Integer
   Dim caracteresContar As String[]
-
-  ' ARRAYS AUXILIARES: RUTAS FÍSICAS Y ETIQUETAS PARA EL GRID
   Dim aRutas As New String[]
   Dim aEtiquetas As New String[]
 
   ' --- 2. Definición de caracteres a contar ---
+  ' LOS PARES SON: [0,1]=¿? [2,3]=¡! [4,5]=() [6,7]=[] [8,9]={}
   caracteresContar = ["¿", "?", "¡", "!", "(", ")", "[", "]", "{", "}"]
 
   ' --- 3. Resolución de rutas ---
   rutaProyecto = File.Dir(FMain.txtProyecto.Text)
   rutaArticulos = rutaProyecto &/ "articulos"
 
-  ' --- 4. Recolección de rutas — primer paso sin leer contenido ---
-  ' ARCHIVOS EN LA RAÍZ DEL PROYECTO
+  ' --- 4. Recolección de rutas ---
   If Exist(rutaProyecto) Then
     archivos = Dir(rutaProyecto, "*.md")
     archivos.Sort()
@@ -2057,7 +2044,6 @@ Public Sub ContarCaracteresPares()
     Next
   Endif
 
-  ' ARCHIVOS EN LA SUBCARPETA /ARTICULOS
   If Exist(rutaArticulos) Then
     archivos = Dir(rutaArticulos, "*.md")
     archivos.Sort()
@@ -2067,70 +2053,76 @@ Public Sub ContarCaracteresPares()
     Next
   Endif
 
-  ' --- 5. Configuración del formulario ---
+  ' --- 5. Verificar que hay archivos ---
+  If aRutas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron archivos .md en el proyecto.")
+    Return
+  Endif
+
+  ' --- 6. Construir aResultados y aColores ---
+  ' SE RESETEAN AMBAS ESTRUCTURAS ANTES DE POPLAR — DATOS DE LLAMADAS ANTERIORES
+  Dim aResultados As New String[]
+  Dim aColores As New Collection
+
+  For iFila = 0 To aRutas.Count - 1
+    rutaCompleta = aRutas[iFila]
+    Try contenido = File.Load(rutaCompleta)
+    If Error Then
+      ' FILA DE ERROR: SOLO NOMBRE, RESTO VACÍO — CELDA DE NOMBRE EN ROJO
+      aResultados.Add(aEtiquetas[iFila])
+      aColores[CStr(iFila) & ",0"] = Color.RGB(255, 180, 180)
+    Else
+      ' CONSTRUIR LÍNEA TSV: ETIQUETA + CONTEOS DE CADA CARACTER
+      Dim sLinea As String = aEtiquetas[iFila]
+      Dim cantA As Integer
+      Dim cantB As Integer
+      Dim iPar As Integer
+      For iPar = 0 To 4
+        cantA = ContarCaracter(contenido, caracteresContar[iPar * 2])
+        cantB = ContarCaracter(contenido, caracteresContar[iPar * 2 + 1])
+        sLinea &= Chr(9) & Str(cantA) & Chr(9) & Str(cantB)
+        ' SI EL PAR NO COINCIDE, REGISTRAR AMBAS CELDAS EN ROJO
+        If cantA <> cantB Then
+          aColores[CStr(iFila) & "," & CStr(iPar * 2 + 1)] = Color.RGB(255, 180, 180)
+          aColores[CStr(iFila) & "," & CStr(iPar * 2 + 2)] = Color.RGB(255, 180, 180)
+        Endif
+      Next
+      aResultados.Add(sLinea)
+    Endif
+  Next
+
+  ' --- 7. Configurar FEstructuraResultados ---
   FEstructuraResultados.blTitulo.Text = "Conteo de caracteres de apertura y cierre"
+  FEstructuraResultados.aResultados = aResultados
+  FEstructuraResultados.aColores = aColores
 
-  ' --- 6. Configuración de columnas del GridView ---
-  ' UNA COLUMNA POR ARCHIVO + UNA POR CADA CARACTER + COLUMNA FANTASMA AL FINAL
   With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
+    .Rows.Count = aResultados.Count
     .Columns.Count = caracteresContar.Count + 2  ' ARCHIVO + 10 CARACTERES + FANTASMA
-    .Header = GridView.Horizontal
-
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
     .Columns[0].Title = "Archivo"
     .Columns[0].Width = 400
     .Columns[0].Alignment = Align.Left
-
-    ' COLUMNA POR CADA CARACTER A CONTAR
+    ' UNA COLUMNA POR CADA CARACTER A CONTAR
     For iCol = 0 To caracteresContar.Count - 1
       .Columns[iCol + 1].Title = caracteresContar[iCol]
       .Columns[iCol + 1].Width = 53
       .Columns[iCol + 1].Alignment = Align.Center
     Next
-
     ' COLUMNA FANTASMA QUE ABSORBE EL ESPACIO SOBRANTE
     .Columns[caracteresContar.Count + 1].Title = ""
     .Columns[caracteresContar.Count + 1].Width = 10
   End With
 
-  ' --- 7. Carga de datos y coloreado de celdas ---
-  FEstructuraResultados.gvResultados.Rows.Count = aRutas.Count
-
-  For iFila = 0 To aRutas.Count - 1
-    FEstructuraResultados.gvResultados[iFila, 0].Text = aEtiquetas[iFila]
-
-    Try contenido = File.Load(aRutas[iFila])
-    If Error Then
-      ' CELDA DE NOMBRE EN ROJO SI EL ARCHIVO NO SE PUDO LEER
-      FEstructuraResultados.gvResultados[iFila, 0].Background = Color.RGB(255, 180, 180)
-    Else
-      ' --- 7b. COMPARACIÓN POR PARES, NO POR PARIDAD ---
-      ' LOS PARES SON: [0,1] [2,3] [4,5] [6,7] [8,9]
-      Dim cantA As Integer
-      Dim cantB As Integer
-      Dim iPar As Integer
-
-      For iPar = 0 To 4
-        cantA = ContarCaracter(contenido, caracteresContar[iPar * 2])
-        cantB = ContarCaracter(contenido, caracteresContar[iPar * 2 + 1])
-
-        FEstructuraResultados.gvResultados[iFila, iPar * 2 + 1].Text = Str(cantA)
-        FEstructuraResultados.gvResultados[iFila, iPar * 2 + 2].Text = Str(cantB)
-
-        ' SI EL PAR NO COINCIDE, AMBAS CELDAS EN ROJO
-        If cantA <> cantB Then
-          FEstructuraResultados.gvResultados[iFila, iPar * 2 + 1].Background = Color.RGB(255, 180, 180)
-          FEstructuraResultados.gvResultados[iFila, iPar * 2 + 2].Background = Color.RGB(255, 180, 180)
-        Endif
-      Next
-    Endif
-  Next
-
   ' --- 8. Presentación del formulario ---
+  FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
 
-End
+End Sub
 
 ' ============================================
 ' Función   : VerificarFootnotes
@@ -2152,7 +2144,7 @@ Public Sub VerificarFootnotes()
 
   ' ARRAYS AUXILIARES PARA ACUMULAR FILAS ANTES DE CONFIGURAR EL GRID
   Dim aEtiquetas As New String[]
-  Dim aResultados As New String[]   ' CADA ELEMENTO ES infoArchivo SERIALIZADO
+  Dim aSerializados As New String[]
 
   ' --- 2. Resolución de rutas ---
   rutaProyecto = File.Dir(FMain.txtProyecto.Text)
@@ -2167,7 +2159,7 @@ Public Sub VerificarFootnotes()
       infoArchivo = ProcesarArchivoFootnote(rutaProyecto &/ archivo)
       aEtiquetas.Add(archivo)
       ' SE SERIALIZA EL ARRAY CON PIPE COMO SEPARADOR PARA RECONSTRUIRLO EN EL LOOP
-      aResultados.Add(infoArchivo.Join("|"))
+      aSerializados.Add(infoArchivo.Join("|"))
     Next
   Endif
 
@@ -2178,68 +2170,72 @@ Public Sub VerificarFootnotes()
     For Each archivo In archivos
       infoArchivo = ProcesarArchivoFootnote(rutaArticulos &/ archivo)
       aEtiquetas.Add("articulos/" & archivo)
-      aResultados.Add(infoArchivo.Join("|"))
+      aSerializados.Add(infoArchivo.Join("|"))
     Next
   Endif
 
-  ' --- 4. Configuración del formulario ---
-  FEstructuraResultados.blTitulo.Text = "Verificación de notas al pie (footnotes)"
+  ' --- 4. Verificar que hay archivos ---
+  If aEtiquetas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron archivos .md en el proyecto.")
+    Return
+  Endif
 
-  ' --- 5. Configuración de columnas del GridView ---
-  With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
-    .Columns.Count = 7
-    .Header = GridView.Horizontal
-
-    .Columns[0].Title = "Archivo"
-    .Columns[0].Width = 380
-    .Columns[0].Alignment = Align.Left
-
-    .Columns[1].Title = "Estado"
-    .Columns[1].Width = 80
-    .Columns[1].Alignment = Align.Center
-
-    .Columns[2].Title = "Ref s/definición"
-    .Columns[2].Width = 120
-    .Columns[2].Alignment = Align.Center
-
-    .Columns[3].Title = "Def s/referencia"
-    .Columns[3].Width = 120
-    .Columns[3].Alignment = Align.Center
-
-    .Columns[4].Title = "Ref duplicada"
-    .Columns[4].Width = 120
-    .Columns[4].Alignment = Align.Center
-
-    .Columns[5].Title = "Def duplicada"
-    .Columns[5].Width = 120
-    .Columns[5].Alignment = Align.Center
-
-    ' COLUMNA FANTASMA QUE ABSORBE EL ESPACIO SOBRANTE
-    .Columns[6].Title = ""
-    .Columns[6].Width = 10
-  End With
-
-  ' --- 6. Carga de datos y coloreado de celdas ---
-  FEstructuraResultados.gvResultados.Rows.Count = aEtiquetas.Count
+  ' --- 5. Construir aResultados y aColores para FEstructuraResultados ---
+  ' SE RECONSTRUYE CADA FILA COMO TSV DESDE EL ARRAY SERIALIZADO CON PIPE
+  Dim aResultadosTSV As New String[]
+  Dim aColores As New Collection
 
   For iFila = 0 To aEtiquetas.Count - 1
-    infoArchivo = Split(aResultados[iFila], "|")
-
-    FEstructuraResultados.gvResultados[iFila, 0].Text = aEtiquetas[iFila]
-    FEstructuraResultados.gvResultados[iFila, 1].Text = infoArchivo[0]
-    FEstructuraResultados.gvResultados[iFila, 2].Text = infoArchivo[1]
-    FEstructuraResultados.gvResultados[iFila, 3].Text = infoArchivo[2]
-    FEstructuraResultados.gvResultados[iFila, 4].Text = infoArchivo[3]
-    FEstructuraResultados.gvResultados[iFila, 5].Text = infoArchivo[4]
-
-    ' CELDA ESTADO EN ROJO SI NO ES OK
+    infoArchivo = Split(aSerializados[iFila], "|")
+    ' TSV: ARCHIVO + ESTADO + 4 COLUMNAS DE CONTEO
+    Dim sLinea As String = aEtiquetas[iFila]
+    Dim iCampo As Integer
+    For iCampo = 0 To infoArchivo.Max
+      sLinea &= Chr(9) & infoArchivo[iCampo]
+    Next
+    aResultadosTSV.Add(sLinea)
+    ' COLOREAR COLUMNA DE ESTADO EN ROJO SI NO ES OK NI OK (reorg)
     If infoArchivo[0] <> "OK" And infoArchivo[0] <> "OK (reorg)" Then
-      FEstructuraResultados.gvResultados[iFila, 1].Background = Color.RGB(255, 180, 180)
+      aColores[CStr(iFila) & ",1"] = Color.RGB(255, 180, 180)
     Endif
   Next
 
+  ' --- 6. Configurar FEstructuraResultados ---
+  FEstructuraResultados.blTitulo.Text = "Verificación de notas al pie (footnotes)"
+  FEstructuraResultados.aResultados = aResultadosTSV
+  FEstructuraResultados.aColores = aColores
+
+  With FEstructuraResultados.gvResultados
+    .Rows.Count = aResultadosTSV.Count
+    .Columns.Count = 7
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 330
+    .Columns[0].Alignment = Align.Left
+    .Columns[1].Title = "Estado"
+    .Columns[1].Width = 100
+    .Columns[1].Alignment = Align.Center
+    .Columns[2].Title = "Ref. s/definición"
+    .Columns[2].Width = 140
+    .Columns[2].Alignment = Align.Center
+    .Columns[3].Title = "Def. s/referencia"
+    .Columns[3].Width = 140
+    .Columns[3].Alignment = Align.Center
+    .Columns[4].Title = "Ref. duplicada"
+    .Columns[4].Width = 140
+    .Columns[4].Alignment = Align.Center
+    .Columns[5].Title = "Def. duplicada"
+    .Columns[5].Width = 140
+    .Columns[5].Alignment = Align.Center
+    .Columns[6].Title = ""
+    .Columns[6].Width = 5
+  End With
+
   ' --- 7. Presentación del formulario ---
+  FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
 
@@ -2411,47 +2407,51 @@ Public Sub VerificarEstructuraMD()
     Next
   Endif
 
-  ' --- 4. Configuración del formulario ---
-  FEstructuraResultados.blTitulo.Text = "Verificación de estructura de encabezados Markdown"
+  ' --- 4. Verificar que hay archivos ---
+  If aEtiquetas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron archivos .md en el proyecto.")
+    Return
+  Endif
 
-  ' --- 5. Configuración de columnas del GridView ---
-  With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
-    .Columns.Count = 4
-    .Header = GridView.Horizontal
-
-    .Columns[0].Title = "Archivo"
-    .Columns[0].Width = 400
-    .Columns[0].Alignment = Align.Left
-
-    .Columns[1].Title = "Estructura"
-    .Columns[1].Width = 80
-    .Columns[1].Alignment = Align.Center
-
-    .Columns[2].Title = "Línea / Error"
-    .Columns[2].Width = 450
-    .Columns[2].Alignment = Align.Left
-
-    ' COLUMNA FANTASMA QUE ABSORBE EL ESPACIO SOBRANTE
-    .Columns[3].Title = ""
-    .Columns[3].Width = 10
-  End With
-
-  ' --- 6. Carga de datos y coloreado de celdas ---
-  FEstructuraResultados.gvResultados.Rows.Count = aEtiquetas.Count
+  ' --- 5. Construir aResultados y aColores ---
+  Dim aResultados As New String[]
+  Dim aColores As New Collection
 
   For iFila = 0 To aEtiquetas.Count - 1
-    FEstructuraResultados.gvResultados[iFila, 0].Text = aEtiquetas[iFila]
-    FEstructuraResultados.gvResultados[iFila, 1].Text = aEstado[iFila]
-    FEstructuraResultados.gvResultados[iFila, 2].Text = aLineas[iFila]
-
-    ' CELDA ESTADO EN ROJO SI HAY ERROR
+    aResultados.Add(aEtiquetas[iFila] & Chr(9) & aEstado[iFila] & Chr(9) & aLineas[iFila])
+    ' COLOREAR COLUMNA DE ESTADO EN ROJO SI HAY ERROR
     If aEstado[iFila] <> "OK" Then
-      FEstructuraResultados.gvResultados[iFila, 1].Background = Color.RGB(255, 180, 180)
+      aColores[CStr(iFila) & ",1"] = Color.RGB(255, 180, 180)
     Endif
   Next
 
+  ' --- 6. Configurar FEstructuraResultados ---
+  FEstructuraResultados.blTitulo.Text = "Verificación de estructura de encabezados Markdown"
+  FEstructuraResultados.aResultados = aResultados
+  FEstructuraResultados.aColores = aColores
+
+  With FEstructuraResultados.gvResultados
+    .Rows.Count = aResultados.Count
+    .Columns.Count = 4
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 400
+    .Columns[0].Alignment = Align.Left
+    .Columns[1].Title = "Estructura"
+    .Columns[1].Width = 100
+    .Columns[1].Alignment = Align.Center
+    .Columns[2].Title = "Línea / Error"
+    .Columns[2].Width = 400
+    .Columns[2].Alignment = Align.Left
+    .Columns[3].Title = ""
+    .Columns[3].Width = 5
+  End With
+
   ' --- 7. Presentación del formulario ---
+  FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
 
@@ -2467,87 +2467,58 @@ End
 Public Sub ButtonInfoPC()
 
   ' --- 1. Inicialización ---
-  Dim iFila As Integer
-
-  ' PARES CLAVE/VALOR ORDENADOS POR SECCIÓN
-  Dim aInfo As New String[]
-  Dim aValor As New String[]
+  ' LAS FILAS SE CONSTRUYEN COMO TSV PARA EL EVENTO Data DEL TABLEVIEW
+  Dim aResultados As New String[]
 
   ' --- 2. Construcción de filas ---
-
   ' SECCIÓN APLICACIÓN
-  aInfo.Add("Aplicación")
-  aValor.Add("gbpublisher v" & Application.Version)
-  aInfo.Add("Desarrollada por")
-  aValor.Add("Alberto Moyano")
-  aInfo.Add("LinkedIn")
-  aValor.Add("https://www.linkedin.com/in/edicion-cientifica/")
-  aInfo.Add("Estudio 2A")
-  aValor.Add("https://estudio2a.netlify.app/")
-  aInfo.Add("Documentación")
-  aValor.Add("https://albertomoyano.github.io/gbpublisher-docs/")
-
+  aResultados.Add("Aplicación" & Chr(9) & "gbpublisher v" & Application.Version)
+  aResultados.Add("Desarrollada por" & Chr(9) & "Alberto Moyano")
+  aResultados.Add("LinkedIn" & Chr(9) & "https://www.linkedin.com/in/edicion-cientifica/")
+  aResultados.Add("Estudio 2A" & Chr(9) & "https://estudio2a.netlify.app/")
+  aResultados.Add("Documentación" & Chr(9) & "https://albertomoyano.github.io/gbpublisher-docs/")
   ' SECCIÓN SISTEMA
-  aInfo.Add("Motor gráfico")
-  aValor.Add(Desktop.Platform)
-  aInfo.Add("Entorno gráfico")
-  aValor.Add(Desktop.Type)
-  aInfo.Add("Nombre del equipo")
-  aValor.Add(System.Host)
-
+  aResultados.Add("Motor gráfico" & Chr(9) & Desktop.Platform)
+  aResultados.Add("Entorno gráfico" & Chr(9) & Desktop.Type)
+  aResultados.Add("Nombre del equipo" & Chr(9) & System.Host)
   ' SECCIÓN GAMBAS
-  aInfo.Add("Versión de Gambas")
-  aValor.Add(System.FullVersion)
-  aInfo.Add("Codificación del sistema")
-  aValor.Add(System.Charset)
-
+  aResultados.Add("Versión de Gambas" & Chr(9) & System.FullVersion)
+  aResultados.Add("Codificación del sistema" & Chr(9) & System.Charset)
   ' SECCIÓN HARDWARE
-  aInfo.Add("Arquitectura")
-  aValor.Add(System.Architecture)
+  aResultados.Add("Arquitectura" & Chr(9) & System.Architecture)
   If Exist("/proc/cpuinfo") Then
-    aInfo.Add("Procesador")
-    aValor.Add(GetCPUInfo())
+    aResultados.Add("Procesador" & Chr(9) & GetCPUInfo())
   Endif
-  aInfo.Add("Memoria total")
-  aValor.Add(GetMemoryInfo())
-  aInfo.Add("Resolución de pantalla")
-  aValor.Add(Desktop.W & "x" & Desktop.H)
+  aResultados.Add("Memoria total" & Chr(9) & GetMemoryInfo())
+  aResultados.Add("Resolución de pantalla" & Chr(9) & CStr(Desktop.W) & "x" & CStr(Desktop.H))
 
-  ' --- 3. Configuración del formulario ---
+  ' --- 3. Configurar FEstructuraResultados ---
   FEstructuraResultados.blTitulo.Text = "Información del sistema"
+  FEstructuraResultados.aResultados = aResultados
+  FEstructuraResultados.aColores = New Collection  ' SIN COLORES ESPECIALES EN ESTA FUNCIÓN
 
-  ' --- 4. Configuración de columnas del GridView ---
   With FEstructuraResultados.gvResultados
-    .Rows.Count = 0
+    .Rows.Count = aResultados.Count
     .Columns.Count = 3
-    .Header = GridView.Horizontal
-
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
     .Columns[0].Title = "Información"
-    .Columns[0].Width = 250
+    .Columns[0].Width = 300
     .Columns[0].Alignment = Align.Left
-
     .Columns[1].Title = "Valor"
-    .Columns[1].Width = 700
+    .Columns[1].Width = 600
     .Columns[1].Alignment = Align.Left
-
-    ' COLUMNA FANTASMA QUE ABSORBE EL ESPACIO SOBRANTE
     .Columns[2].Title = ""
-    .Columns[2].Width = 10
+    .Columns[2].Width = 5
   End With
 
-  ' --- 5. Carga de datos ---
-  FEstructuraResultados.gvResultados.Rows.Count = aInfo.Count
-
-  For iFila = 0 To aInfo.Count - 1
-    FEstructuraResultados.gvResultados[iFila, 0].Text = aInfo[iFila]
-    FEstructuraResultados.gvResultados[iFila, 1].Text = aValor[iFila]
-  Next
-
-  ' --- 6. Presentación del formulario ---
+  ' --- 4. Presentación del formulario ---
+  FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
 
-End
+End Sub
 
 ' ============================================
 ' Función   : IntegridadSistema
@@ -2602,11 +2573,17 @@ Public Function IntegridadSistema(bMostrarModal As Boolean) As Integer
 
   ' ============================================================
   ' --- 4. VERIFICACIÓN DE SAXON-HE (instalación manual en /opt) ---
-  ' Estructura obligatoria: /opt/Saxon-HE/saxon-he-[version].jar
-  ' Descargar desde: https://www.saxonica.com/download/download_page.xml
+  ' Estructura obligatoria:
+  '   /opt/Saxon-HE/saxon-he-[version].jar  — JAR principal
+  '   /opt/Saxon-HE/lib/xmlresolver-*.jar   — dependencias obligatorias
+  ' Descargar ZIP desde: https://www.saxonica.com/download/download_page.xml
+  ' COPIAR AMBOS: el JAR principal Y la carpeta lib/ completa
   ' ============================================================
-  VerificarJar("/opt/Saxon-HE", "saxon-he-*.jar", "Saxon-HE XSLT Processor",
-    "1. Descargar JAR desde saxonica.com  2. sudo mkdir -p /opt/Saxon-HE  3. sudo cp saxon-he-*.jar /opt/Saxon-HE/",
+  VerificarJar("/opt/Saxon-HE", "saxon-he-*.jar", "Saxon-HE — JAR principal",
+    "Descargar ZIP desde saxonica.com → sudo mkdir -p /opt/Saxon-HE → sudo cp saxon-he-*.jar /opt/Saxon-HE/",
+    aNombres, aEstados, aComentarios)
+  VerificarJar("/opt/Saxon-HE/lib", "xmlresolver-*.jar", "Saxon-HE — dependencias lib/xmlresolver",
+    "Copiar carpeta lib/ del ZIP de Saxon → sudo mkdir -p /opt/Saxon-HE/lib → sudo cp lib/xmlresolver-*.jar /opt/Saxon-HE/lib/",
     aNombres, aEstados, aComentarios)
 
   ' ============================================================
@@ -2697,32 +2674,42 @@ Public Function IntegridadSistema(bMostrarModal As Boolean) As Integer
 
   ' --- 9. Mostrar modal solo si fue solicitado ---
   If bMostrarModal Then
+    ' CONSTRUIR aResultados Y aColores DESDE LOS ARRAYS ACUMULADORES
+    Dim aResultados As New String[]
+    Dim aColores As New Collection
+
+    For iFila = 0 To aNombres.Count - 1
+      aResultados.Add(aNombres[iFila] & Chr(9) & aEstados[iFila] & Chr(9) & aComentarios[iFila])
+      ' COLOREAR COLUMNA DE ESTADO EN ROJO SI ES FALLO
+      If aEstados[iFila] = "Fallo" Then
+        aColores[CStr(iFila) & ",1"] = Color.RGB(255, 180, 180)
+      Endif
+    Next
+
     FEstructuraResultados.blTitulo.Text = "Integridad del sistema — dependencias de gbpublisher"
+    FEstructuraResultados.aResultados = aResultados
+    FEstructuraResultados.aColores = aColores
+
     With FEstructuraResultados.gvResultados
-      .Rows.Count = 0
+      .Rows.Count = aResultados.Count
       .Columns.Count = 4
-      .Header = GridView.Horizontal
+      .ScrollBar = Scroll.Both
+      .Resizable = True
+      .Header = TableView.Horizontal
       .Columns[0].Title = "Programa / Librería"
-      .Columns[0].Width = 320
+      .Columns[0].Width = 400
       .Columns[0].Alignment = Align.Left
       .Columns[1].Title = "Estado"
       .Columns[1].Width = 80
       .Columns[1].Alignment = Align.Center
       .Columns[2].Title = "Comentarios"
-      .Columns[2].Width = 500
+      .Columns[2].Width = 420
       .Columns[2].Alignment = Align.Left
       .Columns[3].Title = ""
-      .Columns[3].Width = 10
+      .Columns[3].Width = 5
     End With
-    FEstructuraResultados.gvResultados.Rows.Count = aNombres.Count
-    For iFila = 0 To aNombres.Count - 1
-      FEstructuraResultados.gvResultados[iFila, 0].Text = aNombres[iFila]
-      FEstructuraResultados.gvResultados[iFila, 1].Text = aEstados[iFila]
-      FEstructuraResultados.gvResultados[iFila, 2].Text = aComentarios[iFila]
-      If aEstados[iFila] = "Fallo" Then
-        FEstructuraResultados.gvResultados[iFila, 1].Background = Color.RGB(255, 180, 180)
-      Endif
-    Next
+
+    FEstructuraResultados.gvResultados.Refresh
     m_Sonido.sonar("Info")
     FEstructuraResultados.ShowModal
   Endif
