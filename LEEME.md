@@ -9,6 +9,11 @@
 
 ---
 
+> **Plataforma requerida**
+> gbpublisher funciona y soportado exclusivamente en **Linux Mint con escritorio Cinnamon y servidor de pantalla X11**. No está soportado en otras distribuciones Linux ni ningún otro sistema operativo. Antes de instalar, verificá que tu sistema cumple este requisito.
+
+---
+
 ## ¿Qué es cada archivo?
 
 La distribución de gbpublisher incluye cuatro archivos que trabajás en este orden:

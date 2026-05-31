@@ -51,6 +51,7 @@ Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de lo
 - Gambas 3.21 o superior
 - TeXLive full
 - Pandoc
+- veraPDF (validador PDF/A)
 - Saxon-HE (JAR principal + carpeta `lib/`)
 - Java (para Saxon-HE)
 
