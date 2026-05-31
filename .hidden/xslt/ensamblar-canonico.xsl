@@ -89,7 +89,6 @@
 
     <!-- CARGAR FRAGMENTOS EXTERNOS -->
     <xsl:variable name="bodyDoc"    select="document($body)"/>
-    <xsl:variable name="reflistDoc" select="document($reflist)"/>
 
     <!-- ELEMENTO RAÍZ <article> -->
     <article

@@ -583,9 +583,22 @@
     </caption>
   </xsl:template>
 
-  <!-- ================================================
+<!-- ================================================
        ELIMINAR article-id pmid FICTICIO
        ================================================ -->
   <xsl:template match="article-id[@pub-id-type='pmid'][normalize-space(.) = 'pm-id']"/>
+
+  <!-- ================================================
+       COL ES ELEMENTO VACÍO SEGÚN DTD JATS PUBLISHING 1.0
+       LA PLANTILLA IDENTIDAD CON node() Y indent="yes"
+       HACE QUE SAXON SERIALICE <col ...></col> CON
+       WHITESPACE INTERIOR, LO QUE INVALIDA EL DOCUMENTO.
+       COPIANDO SOLO @* SE FUERZA <col .../> SIN CONTENIDO.
+       ================================================ -->
+  <xsl:template match="col">
+    <xsl:copy copy-namespaces="no">
+      <xsl:apply-templates select="@*"/>
+    </xsl:copy>
+  </xsl:template>
 
 </xsl:stylesheet>
