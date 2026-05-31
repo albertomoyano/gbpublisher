@@ -2,11 +2,14 @@
 
 Plataforma de producción editorial académica para revistas científicas, series académicas y proyectos editoriales institucionales sobre Linux Mint con escritorio Cinnamon.
 
+> **Plataforma requerida**
+> gbpublisher funciona y soportado exclusivamente en **Linux Mint con escritorio Cinnamon y servidor de pantalla X11**. No está soportado en otras distribuciones Linux ni ningún otro sistema operativo. Antes de instalar, verificá que tu sistema cumple este requisito.
+
 ---
 
 ## Modelo de producción
 
-gbpublisher implementa un flujo **Single Source Publishing**: el contenido se redacta en Markdown, se transforma a JATS XML y se enriquece con metadatos desde una base de datos SQL. El resultado es un **JATS canónico validado** que actúa como fuente única para todas las salidas editoriales.
+gbpublisher implementa un flujo **Single Source Publishing**: el contenido se redacta en Markdown, se transforma a JATS XML y se enriquece con metadatos desde una base de datos MySQL. El resultado es un **JATS canónico validado** que actúa como fuente única para todas las salidas editoriales.
 
 ![Single Source Publishing](diagrama.png)
 
@@ -42,16 +45,16 @@ Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de lo
 
 ## Requisitos del sistema
 
-- Linux Mint con escritorio Cinnamon (única plataforma soportada)
-- Servidor de pantalla X11 (no compatible con Wayland)
+- **Linux Mint con escritorio Cinnamon** (única plataforma soportada)
+- **Servidor de pantalla X11** (no compatible con Wayland)
 - MySQL/MariaDB
-- Gambas 3 runtime
+- Gambas 3.21 o superior
 - TeXLive full
 - Pandoc
-- Saxon-HE
+- Saxon-HE (JAR principal + carpeta `lib/`)
 - Java (para Saxon-HE)
 
-La aplicación verifica las dependencias al iniciar e informa al usuario si falta alguna.
+La aplicación verifica las dependencias al iniciar e informa al usuario si falta alguna. El script `integridad.sh` incluido en la distribución permite verificar el entorno antes de instalar.
 
 ---
 

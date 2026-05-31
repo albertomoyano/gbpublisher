@@ -148,12 +148,65 @@ verificar_version_gambas() {
 }
 
 # ============================================================
+# VERIFICACIÓN DE ENTORNO — DEBE EJECUTARSE ANTES DE TODO
+# gbpublisher ESTÁ CERTIFICADO EXCLUSIVAMENTE PARA
+# LINUX MINT CON ESCRITORIO CINNAMON Y SERVIDOR X11.
+# EN OTROS ENTORNOS SE ADVIERTE PERO NO SE ABORTA,
+# PARA PERMITIR LA VERIFICACIÓN DE DEPENDENCIAS IGUALMENTE.
+# ============================================================
+verificar_entorno() {
+  local DISTRO=""
+  local DESKTOP=""
+  local SESSION=""
+  local OK=true
+
+  # LEER NOMBRE DE LA DISTRIBUCIÓN DESDE /etc/os-release
+  if [ -f /etc/os-release ]; then
+    DISTRO=$(grep '^NAME=' /etc/os-release | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
+  fi
+  DESKTOP=$(echo "${XDG_CURRENT_DESKTOP:-}" | tr '[:upper:]' '[:lower:]')
+  SESSION=$(echo "${XDG_SESSION_TYPE:-}" | tr '[:upper:]' '[:lower:]')
+
+  # EVALUAR CADA CONDICIÓN POR SEPARADO PARA DAR MENSAJES PRECISOS
+  if ! echo "$DISTRO" | grep -q "linux mint"; then
+    OK=false
+  fi
+  if ! echo "$DESKTOP" | grep -q "cinnamon"; then
+    OK=false
+  fi
+  if [ "$SESSION" != "x11" ]; then
+    OK=false
+  fi
+
+  if [ "$OK" = false ]; then
+    echo ""
+    echo -e "  ${AMARILLO}${NEGRITA}ADVERTENCIA — Entorno no certificado${RESET}"
+    echo -e "  ${AMARILLO}gbpublisher está diseñado y probado exclusivamente para:${RESET}"
+    echo -e "  ${AMARILLO}  • Distribución : Linux Mint${RESET}"
+    echo -e "  ${AMARILLO}  • Escritorio   : Cinnamon${RESET}"
+    echo -e "  ${AMARILLO}  • Sesión       : X11${RESET}"
+    echo ""
+    echo -e "  ${AMARILLO}Entorno detectado:${RESET}"
+    echo -e "  ${AMARILLO}  • Distribución : ${DISTRO:-no detectada}${RESET}"
+    echo -e "  ${AMARILLO}  • Escritorio   : ${DESKTOP:-no detectado}${RESET}"
+    echo -e "  ${AMARILLO}  • Sesión       : ${SESSION:-no detectada}${RESET}"
+    echo ""
+    echo -e "  ${AMARILLO}En este entorno no hay garantías de estabilidad ni soporte oficial.${RESET}"
+    echo -e "  ${AMARILLO}Se continúa la verificación de dependencias a modo informativo.${RESET}"
+    echo "  ────────────────────────────────────────────────────────────────────"
+  fi
+}
+
+# ============================================================
 # INICIO
 # ============================================================
 echo ""
 echo -e "${NEGRITA}gbpublisher — Verificación de integridad del sistema${RESET}"
 echo "  $(uname -n)  |  $(lsb_release -ds 2>/dev/null || echo Linux)  |  $(date '+%d/%m/%Y %H:%M')"
 echo "  ────────────────────────────────────────────────────────────────────"
+
+# VERIFICACIÓN DE ENTORNO: PRIMERA EN EJECUTARSE, ANTES DE CUALQUIER DEPENDENCIA
+verificar_entorno
 
 # ============================================================
 # BASE DE DATOS
@@ -218,7 +271,7 @@ verificar_python_modulo "packtools" \
   "packtools (validador SciELO PS)" \
   "pip install packtools --break-system-packages"
 # VERAPDF SE INSTALA EN RUTA FIJA /opt/verapdf/ — NO ESTÁ EN EL PATH
-# DE LAS APPS GRÁFICAS, POR LO QUE command -v DARÍA FALSO POSITIVO
+# DE LAS APLICACIONES GRÁFICAS, POR LO QUE command -v DARÍA FALSO POSITIVO
 verificar_ruta_fija "/opt/verapdf/verapdf" \
   "veraPDF (validador PDF/A)" \
   "Descargar desde verapdf.org → sudo ./verapdf-installer --installpath /opt/verapdf"
