@@ -309,7 +309,3 @@ Esta sección es para el responsable técnico de la institución.
 
 La contraseña del usuario `app_user` está configurada en el archivo de conexión de la aplicación. No se muestra en esta guía por razones de seguridad.
 
----
-
-*gbpublisher — Sistema de producción editorial académica*
-*Estudio 2A — Buenos Aires*
