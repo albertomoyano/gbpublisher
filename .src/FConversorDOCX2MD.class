@@ -1,24 +1,267 @@
 ' Gambas class file
 
+' ============================================
+' Formulario: FConversorDOCX2MD
+' Propósito : Convertir archivos DOCX y ODT a Markdown
+'             usando Pandoc, organizando los archivos
+'             en la estructura del proyecto
+' ============================================
+
+' ============================================
+' Función   : btnBuscar_Click
+' Propósito : Seleccionar archivo DOCX u ODT de origen
+' ============================================
 Public Sub btnBuscar_Click()
 
+  ' --- 1. ABRIR DIÁLOGO DE SELECCIÓN DE ARCHIVO ---
   m_Sonido.sonar("Info")
-  Dialog.Title = "Seleccionar archivo"
-  Dialog.Filter = ["*.docx", ("Archivos word"), ("Todos los archivos")]
+  Dialog.Title = "Seleccionar archivo DOCX u ODT"
+  Dialog.Filter = ["*.docx;*.odt", "Documentos (DOCX, ODT)", "*.docx", "Archivos Word", "*.odt", "Archivos LibreOffice", "*", "Todos los archivos"]
   Dialog.AutoExt = True
   Dialog.Path = User.Home
   If Dialog.OpenFile() Then
     Return
-  Else
-    If Not Exist(File.Dir(Dialog.Path) & "/media") Then
-      Mkdir File.Dir(Dialog.Path) & "/media"
-    End If
-    txtArchivoOrigen.Text = Dialog.Path
-    btnCONVERTIR.Enabled = True
   Endif
+
+  ' --- 2. MOSTRAR RUTA SELECCIONADA ---
+  txtArchivoOrigen.Text = Dialog.Path
+
+  ' --- 3. HABILITAR CONVERSIÓN SI YA HAY CARPETA DESTINO ---
+  btnCONVERTIR.Visible = (Trim(txtCarpetaDestino.Text) <> "")
+
 Catch
   m_Sonido.sonar("Error")
   Message.Error("No se pudo abrir el archivo")
+
+End
+
+' ============================================
+' Función   : btnProyecto_Click
+' Propósito : Seleccionar carpeta de proyecto destino
+' ============================================
+Public Sub btnProyecto_Click()
+
+  ' --- 1. ABRIR DIÁLOGO DE SELECCIÓN DE CARPETA ---
+  Dialog.Title = "Seleccionar carpeta del proyecto"
+  Dialog.Path = User.Home
+  If Dialog.SelectDirectory() Then
+    Return
+  Endif
+
+  ' --- 2. MOSTRAR RUTA SELECCIONADA ---
+  txtCarpetaDestino.Text = Dialog.Path
+
+  ' --- 3. HABILITAR CONVERSIÓN SI YA HAY ARCHIVO ORIGEN ---
+  btnCONVERTIR.Visible = (Trim(txtArchivoOrigen.Text) <> "")
+
+End
+
+' ============================================
+' Función   : btnCONVERTIR_Click
+' Propósito : Validar entradas y ejecutar la conversión
+' ============================================
+Public Sub btnCONVERTIR_Click()
+
+  Dim sRutaOrigen As String
+  Dim sCarpetaProyecto As String
+  Dim sNombreDestino As String
+  Dim sExtension As String
+  Dim sFormato As String
+
+  ' --- 1. OBTENER VALORES DE LA INTERFAZ ---
+  sRutaOrigen = Trim(txtArchivoOrigen.Text)
+  sCarpetaProyecto = Trim(txtCarpetaDestino.Text)
+  sNombreDestino = Trim(txtArchivoDestino.Text)
+
+  ' --- 2. VALIDAR QUE TODOS LOS CAMPOS ESTÉN COMPLETOS ---
+  If sRutaOrigen = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Debe seleccionar un archivo de origen.")
+    Return
+  Endif
+
+  If sCarpetaProyecto = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Debe seleccionar una carpeta de proyecto.")
+    Return
+  Endif
+
+  If sNombreDestino = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El campo de nombre de archivo no puede estar vacío.")
+    Return
+  Endif
+
+  ' --- 3. VERIFICAR QUE EL ARCHIVO ORIGEN EXISTE ---
+  If Not Exist(sRutaOrigen) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo de origen no existe: " & sRutaOrigen)
+    Return
+  Endif
+
+  ' --- 4. DETERMINAR FORMATO SEGÚN EXTENSIÓN ---
+  sExtension = LCase(File.Ext(sRutaOrigen))
+  Select Case sExtension
+    Case "docx"
+      sFormato = "docx"
+    Case "odt"
+      sFormato = "odt"
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("Formato no soportado. Use archivos DOCX u ODT.")
+      Return
+  End Select
+
+  ' --- 5. EJECUTAR CONVERSIÓN ---
+  If ConvertirAMarkdown(sRutaOrigen, sFormato, sCarpetaProyecto, sNombreDestino) Then
+    m_Sonido.sonar("Info")
+    Message.Info("Conversión completada con éxito.")
+    ' --- 6. ACTUALIZAR INTERFAZ ---
+    btnSalir.Visible = True
+    btnCONVERTIR.Visible = False
+    txtArchivoOrigen.Text = ""
+    txtCarpetaDestino.Text = ""
+    txtArchivoDestino.Text = ""
+  Endif
+
+End
+
+' ============================================
+' Función   : ConvertirAMarkdown
+' Propósito : Ejecutar Pandoc para convertir DOCX/ODT a MD,
+'             mover archivos a la estructura del proyecto
+' Parámetros: sRutaOrigen As String — ruta completa del archivo fuente
+'             sFormato As String — "docx" u "odt"
+'             sCarpetaProyecto As String — carpeta raíz del proyecto
+'             sNombreDestino As String — nombre sin prefijo ni extensión
+' Retorna   : Boolean — True si la conversión fue exitosa
+' ============================================
+Private Function ConvertirAMarkdown(sRutaOrigen As String, sFormato As String, sCarpetaProyecto As String, sNombreDestino As String) As Boolean
+
+  Dim sCarpetaArticulos As String
+  Dim sCarpetaOriginales As String
+  Dim sCarpetaMedia As String
+  Dim sArchivoMD As String
+  Dim sComando As String
+
+  ' --- 1. DEFINIR RUTAS DE DESTINO ---
+  sCarpetaArticulos = sCarpetaProyecto & "/articulos"
+  sCarpetaOriginales = sCarpetaProyecto & "/originales"
+  sCarpetaMedia = sCarpetaProyecto & "/media"
+  sArchivoMD = sCarpetaArticulos & "/a-" & sNombreDestino & ".md"
+
+  ' --- 2. CREAR SUBDIRECTORIOS SI NO EXISTEN ---
+  If Not Exist(sCarpetaArticulos) Then
+    Mkdir sCarpetaArticulos
+  Endif
+  If Not Exist(sCarpetaOriginales) Then
+    Mkdir sCarpetaOriginales
+  Endif
+  If Not Exist(sCarpetaMedia) Then
+    Mkdir sCarpetaMedia
+  Endif
+
+  ' --- 3. VERIFICAR QUE NO EXISTA UN MD CON EL MISMO NOMBRE ---
+  If Exist(sArchivoMD) Then
+    If Message.Question("Ya existe el archivo: " & File.Name(sArchivoMD) & Chr(10) & "¿Desea sobrescribirlo?", "Sí", "No") = 2 Then
+      Return False
+    Endif
+  Endif
+
+  ' --- 4. CONSTRUIR Y EJECUTAR COMANDO PANDOC ---
+  sComando = "pandoc " & Quote$(sRutaOrigen) &
+    " -o " & Quote$(sArchivoMD) &
+    " --from=" & sFormato & " --to=markdown" &
+    " --wrap=none" &
+    " --extract-media=" & Quote$(sCarpetaProyecto)
+
+  Try Shell sComando Wait
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al ejecutar Pandoc: " & Error.Text)
+    Return False
+  Endif
+
+  ' --- 5. VERIFICAR QUE EL MD SE GENERÓ ---
+  If Not Exist(sArchivoMD) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Pandoc no generó el archivo: " & sArchivoMD)
+    Return False
+  Endif
+
+  ' --- 6. MOVER ARCHIVO ORIGEN A /originales ---
+  Try Move sRutaOrigen To sCarpetaOriginales & "/" & File.Name(sRutaOrigen)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo mover el archivo original: " & Error.Text)
+    ' LA CONVERSIÓN FUE EXITOSA AUNQUE EL MOVE HAYA FALLADO
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : txtArchivoDestino_KeyPress
+' Propósito : Filtrar caracteres permitidos en el nombre de archivo
+' ============================================
+Public Sub txtArchivoDestino_KeyPress()
+
+  ' --- 1. PERMITIR TECLAS DE CONTROL ---
+  If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or
+      Key.Code = Key.Left Or Key.Code = Key.Right Or
+      Key.Code = Key.Tab Or Key.Code = Key.Enter Or
+      Key.Code = Key.Home Or Key.Code = Key.End Then
+    Return
+  Endif
+
+  ' --- 2. VALIDAR LONGITUD MÁXIMA ---
+  If String.Len(txtArchivoDestino.Text) >= 24 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre del archivo no puede tener más de 24 caracteres.")
+    Stop Event
+    Return
+  Endif
+
+  ' --- 3. PERMITIR SOLO NÚMEROS, LETRAS Y GUION ---
+  If Key.Text = "-" Or
+      (Key.Text >= "0" And Key.Text <= "9") Or
+      (Key.Text >= "A" And Key.Text <= "Z") Or
+      (Key.Text >= "a" And Key.Text <= "z") Then
+    Return
+  Endif
+
+  ' --- 4. BLOQUEAR CUALQUIER OTRO CARÁCTER ---
+  Stop Event
+
+End
+
+' ============================================
+' Función   : txtArchivoDestino_KeyRelease
+' Propósito : Forzar mayúsculas y validar longitud
+' ============================================
+Public Sub txtArchivoDestino_KeyRelease()
+
+  Dim sTexto As String
+  Dim iPosicionCursor As Integer
+
+  ' --- 1. GUARDAR POSICIÓN DEL CURSOR ---
+  iPosicionCursor = txtArchivoDestino.Pos
+
+  ' --- 2. CONVERTIR A MAYÚSCULAS ---
+  sTexto = UCase(txtArchivoDestino.Text)
+
+  ' --- 3. VALIDAR LONGITUD MÁXIMA ---
+  If String.Len(sTexto) > 24 Then
+    sTexto = String.Left(sTexto, 24)
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre del archivo no puede tener más de 24 caracteres.")
+    iPosicionCursor = 24
+  Endif
+
+  ' --- 4. ACTUALIZAR TEXTO Y RESTAURAR CURSOR ---
+  txtArchivoDestino.Text = sTexto
+  txtArchivoDestino.Pos = iPosicionCursor
 
 End
 
@@ -31,133 +274,5 @@ End
 Public Sub btnSalir_Click()
 
   Me.Close()
-
-End
-
-Public Sub btnListo_Click()
-
-  Me.Close()
-
-End
-
-Public Sub btnCONVERTIR_Click()
-
-  txtArchivoOrigen.Text = Dialog.Path
-  Dim rutaOrigen As String = txtArchivoOrigen.Text
-
-  ' Validación del campo destino
-  If Trim(txtArchivoDestino.Text) = "" Then
-    m_Sonido.sonar("Error")
-    Message.Error("El campo de Destino no puede estar vacío", "Cancelar")
-    Return
-  Endif
-
-  ' Configuración de rutas
-  ' Pandoc creará automáticamente una carpeta "media" dentro del directorio especificado
-  Dim mediaBasePath As String = File.Dir(rutaOrigen)  ' Solo el directorio base
-  Dim archivoFinal As String = File.Dir(rutaOrigen) & "/" & ComboBoxLoR.Text & txtArchivoDestino.Text & ".md"
-
-  ' Validación más estricta del ComboBox
-  If Trim(ComboBoxLoR.Text) = "" Or (ComboBoxLoR.Text <> "l-" And ComboBoxLoR.Text <> "r-") Then
-    m_Sonido.sonar("Error")
-    Message.Error("Debe seleccionar una opción válida: <b>l-</b> o <b>r-</b> para el nombre del archivo", "Error de Validación")
-    Return
-  Endif
-
-  ' Verificar que el archivo origen existe
-  If Not Exist(rutaOrigen) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo de origen no existe: " & rutaOrigen)
-    Return
-  Endif
-
-  ' Construir comando pandoc
-  ' Pandoc creará automáticamente la carpeta "media" dentro de mediaBasePath
-  Dim comando As String = "pandoc " & Quote$(rutaOrigen) &
-    " -o " & Quote$(archivoFinal) &
-    " --from=docx --to=markdown" &
-    " --wrap=none" &
-    " --extract-media=" & Quote$(mediaBasePath)
-
-  ' Ejecutar comando con Shell Wait
-  Try Shell comando Wait
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al ejecutar pandoc: " & Error.Text & "\nComando: " & comando)
-    Return
-  Endif
-
-  ' Verificar si el archivo se generó correctamente
-  If Not Exist(archivoFinal) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo no se pudo generar: " & archivoFinal)
-    Return
-  Else
-    m_Sonido.sonar("Info")
-    Message.Info("El archivo se generó con éxito en: " & archivoFinal & "\nLas imágenes están en: " & mediaBasePath & "/media/")
-  Endif
-
-  ' Actualizar interfaz
-  btnListo.Visible = True
-  btnListo.Default = True
-  btnSalir.Visible = False
-
-End Sub
-
-Public Sub txtArchivoDestino_KeyPress()
-
-  ' PERMITIR TECLAS DE CONTROL (NAVEGACIÓN Y EDICIÓN)
-  If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or
-      Key.Code = Key.Left Or Key.Code = Key.Right Or
-      Key.Code = Key.Tab Or Key.Code = Key.Enter Or
-      Key.Code = Key.Home Or Key.Code = Key.End Then
-    Return
-  Endif
-
-  ' VALIDAR LONGITUD MÁXIMA (12 CARACTERES)
-  If Len(txtArchivoDestino.Text) >= 24 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("El nombre del archivo no puede tener más de 16 caracteres.")
-    Stop Event
-    Return
-  Endif
-
-  ' PERMITIR SOLO: NÚMEROS (0-9), LETRAS (A-Z, a-z) Y GUION (-)
-  If Key.Text = "-" Or
-      (Key.Text >= "0" And Key.Text <= "9") Or
-      (Key.Text >= "A" And Key.Text <= "Z") Or
-      (Key.Text >= "a" And Key.Text <= "z") Then
-    Return
-  Endif
-
-  ' BLOQUEAR CUALQUIER OTRO CARÁCTER
-  Stop Event
-
-End
-
-Public Sub txtArchivoDestino_KeyRelease()
-
-  Dim texto As String
-  Dim posicionCursor As Integer
-
-  ' GUARDAR POSICIÓN DEL CURSOR
-  posicionCursor = txtArchivoDestino.Pos
-
-  ' CONVERTIR A MAYÚSCULAS
-  texto = UCase(txtArchivoDestino.Text)
-
-  ' VALIDAR LONGITUD MÁXIMA
-  If Len(texto) > 24 Then
-    texto = Left(texto, 24)
-    m_Sonido.sonar("Warning")
-    Message.Warning("El nombre del archivo no puede tener más de 24 caracteres.")
-    posicionCursor = 24  ' MOVER CURSOR AL FINAL
-  Endif
-
-  ' ACTUALIZAR TEXTO
-  txtArchivoDestino.Text = texto
-
-  ' RESTAURAR POSICIÓN DEL CURSOR
-  txtArchivoDestino.Pos = posicionCursor
 
 End
