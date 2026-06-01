@@ -90,11 +90,11 @@ DELIMITER ;;
 /*!50003 CREATE*/ /*!50017 DEFINER=CURRENT_USER*/ /*!50003 TRIGGER `trg_solo_un_autor_correspondencia_insert` BEFORE INSERT ON `articulo_autor` FOR EACH ROW BEGIN
   IF NEW.es_autor_correspondencia = 1 THEN
     IF EXISTS (
-      SELECT 1 FROM articulo_autor 
-      WHERE id_articulo = NEW.id_articulo 
+      SELECT 1 FROM articulo_autor
+      WHERE id_articulo = NEW.id_articulo
         AND es_autor_correspondencia = 1
     ) THEN
-      SIGNAL SQLSTATE '45000' 
+      SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'Ya existe un autor de correspondencia para este artículo';
     END IF;
   END IF;
@@ -116,12 +116,12 @@ DELIMITER ;;
 /*!50003 CREATE*/ /*!50017 DEFINER=CURRENT_USER*/ /*!50003 TRIGGER `trg_solo_un_autor_correspondencia_update` BEFORE UPDATE ON `articulo_autor` FOR EACH ROW BEGIN
   IF NEW.es_autor_correspondencia = 1 AND OLD.es_autor_correspondencia = 0 THEN
     IF EXISTS (
-      SELECT 1 FROM articulo_autor 
-      WHERE id_articulo = NEW.id_articulo 
+      SELECT 1 FROM articulo_autor
+      WHERE id_articulo = NEW.id_articulo
         AND es_autor_correspondencia = 1
         AND id_relacion <> NEW.id_relacion
     ) THEN
-      SIGNAL SQLSTATE '45000' 
+      SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'Ya existe un autor de correspondencia para este artículo';
     END IF;
   END IF;
@@ -1094,7 +1094,7 @@ CREATE TABLE `libros_latex` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `libros_md`
+-- Table structure for table `|`
 --
 
 DROP TABLE IF EXISTS `libros_md`;
