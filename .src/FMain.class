@@ -1322,7 +1322,6 @@ Public Sub AbrirRevistaMD()
   SplitterPrincipal.Visible = True
 
   ' LIMPIAMOS LOS FORMULARIOS
-  m_Metadatos.LimpiarCamposMetadatos()
   m_Bibtex.LimpiarTextboxBibtex()
   m_Siglas.LimpiarTextboxSigla()
 
@@ -1430,6 +1429,10 @@ Public Sub AbrirRevistaMD()
   ' anulamos en spring
   SpringTemporal.Visible = False
   FMain.Splitter1.Visible = True
+  btnMetadatosLibro.Visible = False
+  btnMetadatosCapitulos.Visible = False
+  btnMetadatosRevista.Visible = True
+  btnMetadatosArticulos.Visible = True
   FMain.MenuButtonSalidas.Menu = "menuSalidaRevistaMD"
 
   ' ASEGURAMOS LA RUTA EN LA TERMINAL Y EN DirViewProyecto
@@ -1626,10 +1629,6 @@ Public Sub cmbArticulosRevista_Click()
 
 End
 
-Public Sub AbrirLibroMD()
-
-End
-
 Public Sub AbrirLibroTEX()
 
   Dim sRutaSeleccionada As String = Dialog.Path
@@ -1753,7 +1752,6 @@ Public Sub AbrirLibroTEX()
   SplitterPrincipal.Visible = True
 
   ' LIMPIAMOS LOS FORMULARIOS
-  m_Metadatos.LimpiarCamposMetadatos()
   m_Bibtex.LimpiarTextboxBibtex()
   m_Siglas.LimpiarTextboxSigla()
 
@@ -6526,5 +6524,255 @@ Public Sub menuReflexionEditorial_Click()
 
   m_Sonido.sonar("Info")
   FReflexionEditorial.ShowModal()
+
+End
+
+Public Sub AbrirLibroMD()
+
+  Dim sRutaSeleccionada As String = Dialog.Path
+
+  If sRutaSeleccionada = "" Then
+    Return
+  Endif
+
+  ' ASIGNAMOS EL NOMBRE Y RUTA DEL PROYECTO A LAS VARIABLES GLOBALES
+  NombreProyecto = File.Name(sRutaSeleccionada)
+  RutaProyecto = File.Dir(sRutaSeleccionada)
+
+  Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
+  Dim sNombreArchivo As String = LCase(File.Name(sRutaSeleccionada))
+
+  ' DETERMINAR TIPO SEGÚN NORMAS: r- (revista .md), l- (libro .md/.tex)
+  Dim iTipoSeleccionado As Integer = -1
+
+  Select Case True
+    Case Left(sNombreArchivo, 2) = "r-" And sExtension = "md"
+      iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
+
+    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "md"
+      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD
+
+    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
+      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_TEX
+
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine &
+        "Formatos válidos:" & gb.NewLine &
+        "• Revista Markdown: r-nombre.md" & gb.NewLine &
+        "• Libro Markdown: l-nombre.md" & gb.NewLine &
+        "• Libro LaTeX: l-nombre.tex" & gb.NewLine &
+        "Archivo recibido: " & sNombreArchivo)
+      Return
+  End Select
+
+  ' BUSCAR EN LA BBDD SI EL PROYECTO QUE VAMOS A ABRIR EXISTE
+  Dim sSQL As String = "SELECT * FROM proyectos WHERE nombre = &1"
+  Dim Contenido As Result = m_ConexionBD.mConn.Exec(sSQL, NombreProyecto)
+  Dim nuevoID As Integer
+
+  ' LIBERAR PROYECTO QUE ESTA ABIERTO
+  If NombreProyecto <> "" Then
+    ' *** DETENER EL TIMER DE ARCHIVOS ANTES DE LIBERAR ***
+    DetenerTimerArchivosProyecto()
+
+    Dim sProyectoEnCurso As String = File.Name(txtProyecto.Text)
+    m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoEnCurso)
+    m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE nombre = &1", sProyectoEnCurso)
+    m_ConexionBD.mConn.Commit
+    m_Timer.DetenerContador()
+  Endif
+
+  If Contenido.Available Then
+    ' VALIDACIONES SOBRE EL REGISTRO EXISTENTE
+    Dim iTipoBD As Integer = Contenido["tipo_producto"]
+
+    ' 1) COINCIDENCIA DE TIPO
+    If iTipoBD <> iTipoSeleccionado Then
+      m_Sonido.sonar("Error")
+      Message.Error("El tipo de archivo no coincide con el tipo registrado en la base de datos." & gb.NewLine &
+        "Se esperaba: " & ObtenerDescripcionTipo(iTipoSeleccionado) & gb.NewLine &
+        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
+      Return
+    Endif
+
+    ' 2) ACTIVO? (0 ES FALSE Y 1 ES TRUE)
+    If Not Contenido["activo"] Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El proyecto '" & NombreProyecto & "' está archivado." & gb.NewLine &
+        "Debe solicitar al editor que lo reactive para poder abrirlo.")
+      Return
+    Endif
+
+    ' 3) NO OCUPADO?
+    If Contenido["ocupado"] Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El proyecto '" & NombreProyecto & "' está ocupado en otra máquina." & gb.NewLine &
+        "Lo puede abrir en modo parcial o espere a que se libere.")
+      Return
+    Endif
+
+    nuevoID = Contenido["id"]
+    m_Sonido.sonar("Info")
+    Message.Info("Proyecto encontrado en la base de datos y listo para abrir.")
+  Else
+    ' NO EXISTE: CREAR REGISTRO NUEVO (MySQL)
+    m_ConexionBD.mConn.Exec("INSERT INTO proyectos (nombre, tipo_producto, usuario_propietario, activo, ocupado) VALUES (&1, &2, &3, 1, 0)",
+      NombreProyecto, iTipoSeleccionado, m_InicioCierre.UsuarioEnCurso)
+
+    ' OBTENER LAST_INSERT_ID() EN MYSQL
+    Dim rLast As Result = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
+    If rLast.Available Then
+      nuevoID = rLast[0]
+    Else
+      ' FALLBACK: SI NO PODEMOS RECUPERAR EL ID, AVISAR Y ABORTAR
+      m_ConexionBD.mConn.Rollback
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo obtener el ID del proyecto insertado. Abortando apertura.")
+      Return
+    Endif
+
+    m_ConexionBD.mConn.Commit
+    m_Sonido.sonar("Info")
+    Message.Info("Proyecto nuevo registrado en la base de datos.")
+  Endif
+
+  ' INICIALIZAR TODAS LAS TABLAS RELACIONADAS CON EL PROYECTO
+  m_FuncionesGenericas.InicializarTablasProyecto(nuevoID)
+
+  ' MARCAR NUEVO PROYECTO COMO OCUPADO
+  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 1 WHERE id = &1", nuevoID)
+  m_ConexionBD.mConn.Commit
+
+  ' MARCAR PROYECTO CON PROPIETARIO
+  m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = &1 WHERE id = &2", m_InicioCierre.UsuarioEnCurso, nuevoID)
+  m_ConexionBD.mConn.Commit
+
+  ' ACTUALIZAR RUTA DEL PROYECTO
+  txtProyecto.Text = sRutaSeleccionada
+
+  ' MOSTRAR / OCULTAR BARRA DE MENUES
+  HBoxGuardarTextArea.Visible = True
+  PanelXML.Visible = True
+  SplitterPrincipal.Visible = True
+
+  ' LIMPIAMOS LOS FORMULARIOS
+  m_Bibtex.LimpiarTextboxBibtex()
+  m_Siglas.LimpiarTextboxSigla()
+
+  ' LIMPIAR CACHÉ O ENTORNO PREVIO
+  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
+
+  ' CONTROLOMANOS EXISTAN LOS ARCHIVOS BASE PARA UN PROYECTO
+  m_FuncionesGenericas.CopiarArchivosBase_MD()
+
+  ' MOSTRAR EL ID DEL PROYECTO
+  id_proyecto.Value = nuevoID
+  id_revista.Value = m_XML.ObtenerIdLibro(id_proyecto.Value)
+  ' CARGAMOS LOS SCRIPTS PARA MANIPULAR CON LOS *.md
+  m_InicioCierre.CargarScripts()
+
+  ' CARGAMOS LOS METADATOS DEL LIBRO
+  m_Metadatos.CargarMetadatosDeLibro
+
+  ' CARGAMOS LAS REFERENCIAS BIBTEX
+  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
+  m_Bibtex.IniciarBibtex()
+
+  ' CARGAMOS LAS SIGLAS
+  m_Siglas.ConfigurarTableViewGlosarioEnCurso(FSiglas.gvSiglasEnCurso)
+  m_Siglas.IniciarSiglas()
+
+  ' ARRANCAMOS EL CONTADOR
+  m_Timer.IniciarContadorReloj(id_proyecto.Value)
+
+  ' MARCAR QUE SE ABRIÓ EN MODO completo
+  FMain.ValueBoxParcial.Value = 0
+
+  '   ' CARGAR LISTA DE ARTÍCULOS EN EL COMBOBOX
+  '   CargarListaArticulosMD()
+  IniciarTimerArchivosProyecto()
+
+  ' CARGAR LISTA DE ARCHIVOS MDL EN EL COMBOBOX DEL FRONT y BACK MATTER
+  m_ComboBox.CargarTodosLosComboBox()
+  IniciarTimerArchivosXML()
+
+  ' CARGAR EL PRIMER ARCHIVO XML O LIMPIAR EDITOR SI NO HAY ARCHIVOS
+  If cmbArchivosXML.Count > 0 Then
+    cmbArchivosXML.Index = 0
+    cmbArchivosXML_Click()  ' EJECUTAR LA FUNCIÓN QUE CARGA EL CONTENIDO
+    txtEditorXML.ReadOnly = True
+    txtEditorXML.Enabled = True
+  Else
+    txtEditorXML.Clear()
+    txtEditorXML.ReadOnly = True
+    txtEditorXML.Enabled = False
+  Endif
+
+  ' CARGAMOS EL ARCHIVO DEL PROYECTO EN EL EDITOR
+  txtEditorProyecto.Text = File.Load(sRutaSeleccionada)
+  txtEditorProyecto.ReadOnly = False
+  txtEditorProyecto.Enabled = True
+
+  ' GUARDAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
+  sRutaArchivoAbierto = sRutaSeleccionada
+  sContenidoOriginal = txtEditorProyecto.Text
+  vbPanelIzquierdo.Visible = True
+
+  ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
+  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
+
+  ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO
+  TabPanelIzquierdaInferior.Visible = False
+  HBoxBuscar.Visible = False
+
+  ' ACTUALIZAMOS EL CONTEO DE LINEAS
+  ActualizarContadorLineas()
+
+  ' HABILITAMOS EL PANEL INFERIOR
+  tbMostrarPanelInferior.Visible = True
+  tbMostrarPanelInferior.Value = False
+
+  ' MOSTRAR EL ID DE REVISTA
+  id_revista.Value = m_XML.ObtenerIdLibro(id_proyecto.Value)
+
+  '   ' MOSTRAMOS ARCHIVOS DE DIFERENTES SABORES Y SALIDAS
+  '   lbDOAJ.Clear
+  '   gvDOAJ.Clear
+  '   gvDOAJ.Refresh
+  '   m_XML.MostrarArchivosDOAJ()
+  '   lbCROSSREF.Clear
+  '   gvCROSSREF.Clear
+  '   gvCROSSREF.Refresh
+  '   m_XML.MostrarArchivosCrossref()
+  '   lbRedalyc.Clear
+  '   gvRedalyc.Clear
+  '   gvRedalyc.Refresh
+  '   m_XML.MostrarArchivosRedalyc()
+  '   lbLatex.Clear
+  '   gvLatex.Clear
+  '   gvLatex.Refresh
+  '   m_XML.MostrarArchivosLatex()
+  '   lbSciELO.Clear
+  '   gvSciELO.Clear
+  '   gvSciELO.Refresh
+  '   m_XML.MostrarArchivosScielo()
+  '
+  ' HABILITAMOS EL MENU DE SALIDAS
+  MenuButtonSalidas.Visible = True
+
+  ' anulamos en spring
+  SpringTemporal.Visible = False
+  FMain.Splitter1.Visible = True
+  btnMetadatosLibro.Visible = True
+  btnMetadatosCapitulos.Visible = True
+  btnMetadatosRevista.Visible = False
+  btnMetadatosArticulos.Visible = False
+  FMain.MenuButtonSalidas.Menu = "mnuSalidaLibroMD"
+
+  ' ASEGURAMOS LA RUTA EN LA TERMINAL Y EN DirViewProyecto
+  FMain.TerminalViewProyecto.Input("cd " & File.Dir(sRutaSeleccionada) & "\n" & "clear" & "\n")
+  FMain.DirViewProyecto.Root = File.Dir(sRutaSeleccionada)
+  '
 
 End

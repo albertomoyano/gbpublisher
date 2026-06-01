@@ -1,77 +1,137 @@
 #!/bin/bash
-# ═══════════════════════════════════════════════════════════
-# gbpublisher — Migración de tablas de libros
-# Versión: 0.x.x
-# Fecha: 2026-06-01
-#
-# Ejecutar como sysadmin con privilegios DDL sobre la BD.
-# Uso: bash migracion-libros.sh
-# ═══════════════════════════════════════════════════════════
+# ============================================================
+# migracion-libros.sh
+# ============================================================
+# DESCRIPCIÓN : Actualiza las tablas de libros en la base de
+#               datos gbpublisher al nuevo esquema.
+#               Reemplaza: libros_md, capitulos, capitulo_autor.
+#               Las tablas de revistas NO se modifican.
+# USO         : bash migracion-libros.sh
+# REQUISITO   : La base de datos gbpublisher debe existir.
+# ============================================================
 
-set -e
+# --- COLORES ---
+VERDE='\033[0;32m'
+ROJO='\033[0;31m'
+AMARILLO='\033[1;33m'
+NEGRITA='\033[1m'
+RESET='\033[0m'
 
-DB="gbpublisher"
+# --- PARÁMETROS ---
+DB_NOMBRE="gbpublisher"
 
-echo "══════════════════════════════════════════════════"
-echo " gbpublisher — Migración de esquema (libros)"
-echo "══════════════════════════════════════════════════"
+# ============================================================
+# FUNCIÓN: título de sección
+# ============================================================
+seccion() {
+  echo ""
+  echo -e "${NEGRITA}$1${RESET}"
+  echo "  ────────────────────────────────────────────────────────────────────"
+}
+
+# ============================================================
+# INICIO
+# ============================================================
+clear
 echo ""
-echo "Esta operación reemplaza las tablas:"
-echo "  • capitulo_autor"
-echo "  • capitulos"
-echo "  • libros_md"
-echo ""
-echo "Las tablas de revistas NO se modifican."
-echo ""
+echo -e "${NEGRITA}  gbpublisher — Migración de tablas de libros${RESET}"
+echo "  $(uname -n)  |  $(lsb_release -ds 2>/dev/null || echo Linux)  |  $(date '+%d/%m/%Y %H:%M')"
+echo "  ════════════════════════════════════════════════════════════════════"
 
-# SOLICITAR CREDENCIALES
-read -p "Host MySQL [localhost]: " DB_HOST
-DB_HOST=${DB_HOST:-localhost}
-
-read -p "Usuario MySQL con privilegios DDL: " DB_USER
-
-read -sp "Contraseña: " DB_PASS
-echo ""
-
-# VERIFICAR CONEXIÓN
-if ! mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -e "USE $DB" 2>/dev/null; then
-    echo "Error: no se pudo conectar a la base de datos $DB"
-    exit 1
+# ============================================================
+# PASO 1 — VERIFICAR QUE MYSQL ESTÁ CORRIENDO
+# ============================================================
+seccion "  Paso 1: Verificando servicio MySQL"
+if systemctl is-active --quiet mysql; then
+  echo -e "  MySQL             ${VERDE}activo${RESET}"
+else
+  echo -e "  ${ROJO}ERROR: El servicio MySQL no está corriendo.${RESET}"
+  echo ""
+  echo "  Inicialo con:"
+  echo "    sudo systemctl start mysql"
+  echo ""
+  exit 1
 fi
 
-# VERIFICAR QUE LAS TABLAS DE LIBROS ESTÉN VACÍAS
-FILAS_LIBROS=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -N -e \
-    "SELECT COUNT(*) FROM $DB.libros_md" 2>/dev/null)
-FILAS_CAPITULOS=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -N -e \
-    "SELECT COUNT(*) FROM $DB.capitulos" 2>/dev/null)
-FILAS_CAP_AUTOR=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -N -e \
-    "SELECT COUNT(*) FROM $DB.capitulo_autor" 2>/dev/null)
+# ============================================================
+# PASO 2 — VERIFICAR QUE LA BASE DE DATOS EXISTE
+# ============================================================
+seccion "  Paso 2: Verificando base de datos"
+DB_EXISTE=$(sudo mysql -se "SELECT SCHEMA_NAME FROM information_schema.schemata WHERE SCHEMA_NAME='${DB_NOMBRE}';" 2>/dev/null)
+if [ -z "$DB_EXISTE" ]; then
+  echo -e "  ${ROJO}ERROR: La base de datos '${DB_NOMBRE}' no existe.${RESET}"
+  echo ""
+  echo "  Ejecutá primero generar_bbdd.sh para crear la base de datos."
+  echo ""
+  exit 1
+fi
+echo -e "  ${DB_NOMBRE}       ${VERDE}encontrada${RESET}"
 
-if [ "$FILAS_LIBROS" -gt 0 ] || [ "$FILAS_CAPITULOS" -gt 0 ] || [ "$FILAS_CAP_AUTOR" -gt 0 ]; then
+# ============================================================
+# PASO 3 — VERIFICAR TABLAS Y DATOS
+# ============================================================
+seccion "  Paso 3: Verificando tablas a migrar"
+
+TABLAS_LIBROS=$(sudo mysql -se "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NOMBRE}' AND table_name IN ('libros_md','capitulos','capitulo_autor');" 2>/dev/null)
+
+if [ "$TABLAS_LIBROS" -lt 3 ]; then
+  echo -e "  ${AMARILLO}Algunas tablas de libros no existen (${TABLAS_LIBROS}/3).${RESET}"
+  echo "  Se crearán desde cero."
+else
+  echo -e "  libros_md         ${VERDE}encontrada${RESET}"
+  echo -e "  capitulos          ${VERDE}encontrada${RESET}"
+  echo -e "  capitulo_autor     ${VERDE}encontrada${RESET}"
+
+  # VERIFICAR SI CONTIENEN DATOS
+  FILAS_LIBROS=$(sudo mysql -se "SELECT COUNT(*) FROM ${DB_NOMBRE}.libros_md;" 2>/dev/null)
+  FILAS_CAPITULOS=$(sudo mysql -se "SELECT COUNT(*) FROM ${DB_NOMBRE}.capitulos;" 2>/dev/null)
+  FILAS_CAP_AUTOR=$(sudo mysql -se "SELECT COUNT(*) FROM ${DB_NOMBRE}.capitulo_autor;" 2>/dev/null)
+
+  if [ "$FILAS_LIBROS" -gt 0 ] || [ "$FILAS_CAPITULOS" -gt 0 ] || [ "$FILAS_CAP_AUTOR" -gt 0 ]; then
     echo ""
-    echo "ATENCIÓN: las tablas contienen datos:"
-    echo "  libros_md:      $FILAS_LIBROS registros"
-    echo "  capitulos:       $FILAS_CAPITULOS registros"
-    echo "  capitulo_autor:  $FILAS_CAP_AUTOR registros"
-    echo ""
-    read -p "¿Continuar y ELIMINAR estos datos? (escriba SI en mayúsculas): " CONFIRMA
-    if [ "$CONFIRMA" != "SI" ]; then
-        echo "Operación cancelada."
-        exit 0
-    fi
+    echo -e "  ${AMARILLO}${NEGRITA}Las tablas contienen datos:${RESET}"
+    echo "    libros_md:      ${FILAS_LIBROS} registros"
+    echo "    capitulos:       ${FILAS_CAPITULOS} registros"
+    echo "    capitulo_autor:  ${FILAS_CAP_AUTOR} registros"
+  fi
 fi
 
+# ============================================================
+# PASO 4 — CONFIRMACIÓN
+# ============================================================
+seccion "  Paso 4: Confirmación"
 echo ""
-echo "Ejecutando migración..."
+echo -e "  ${AMARILLO}${NEGRITA}ATENCIÓN${RESET}"
+echo ""
+echo "  Este proceso realizará las siguientes acciones:"
+echo ""
+echo "    1. Eliminar las tablas capitulo_autor, capitulos y libros_md"
+echo "    2. Recrearlas con el nuevo esquema"
+echo ""
+echo "  Las tablas de revistas (revistas_md, articulos, articulo_autor)"
+echo "  y todas las demás tablas NO se modifican."
+echo ""
+read -rp "  ¿Confirmar? Escribí 'si' para continuar: " CONFIRMAR
+if [ "$CONFIRMAR" != "si" ]; then
+  echo ""
+  echo "  Operación cancelada."
+  echo ""
+  exit 0
+fi
 
-mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB" <<'SQL'
+# ============================================================
+# PASO 5 — EJECUTAR MIGRACIÓN
+# ============================================================
+seccion "  Paso 5: Ejecutando migración"
 
--- PASO 1: ELIMINAR TABLAS EN ORDEN DE DEPENDENCIA
+sudo mysql "$DB_NOMBRE" <<'SQL'
+
+-- ELIMINAR TABLAS EN ORDEN DE DEPENDENCIA
 DROP TABLE IF EXISTS `capitulo_autor`;
 DROP TABLE IF EXISTS `capitulos`;
 DROP TABLE IF EXISTS `libros_md`;
 
--- PASO 2: CREAR libros_md
+-- CREAR libros_md
 CREATE TABLE `libros_md` (
   `id_libro` INT NOT NULL AUTO_INCREMENT,
   `id_proyecto` INT NOT NULL,
@@ -160,7 +220,7 @@ CREATE TABLE `libros_md` (
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_unicode_ci;
 
--- PASO 3: CREAR capitulos
+-- CREAR capitulos
 CREATE TABLE `capitulos` (
   `id_capitulo` INT NOT NULL AUTO_INCREMENT,
   `id_proyecto` INT NOT NULL,
@@ -272,7 +332,7 @@ CREATE TABLE `capitulos` (
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_unicode_ci;
 
--- PASO 4: CREAR capitulo_autor
+-- CREAR capitulo_autor
 CREATE TABLE `capitulo_autor` (
   `id_relacion` INT NOT NULL AUTO_INCREMENT,
   `id_capitulo` INT NOT NULL,
@@ -315,14 +375,40 @@ CREATE TABLE `capitulo_autor` (
 
 SQL
 
+if [ $? -ne 0 ]; then
+  echo ""
+  echo -e "  ${ROJO}ERROR: Falló la migración.${RESET}"
+  echo "  La base de datos puede haber quedado en estado incompleto."
+  echo "  Restaurá desde el backup y volvé a intentar."
+  echo ""
+  exit 1
+fi
+
+# VERIFICAR CONTEO DE COLUMNAS
 echo ""
-echo "══════════════════════════════════════════════════"
-echo " Migración completada"
-echo "══════════════════════════════════════════════════"
+echo "  Verificando estructura:"
+while IFS=$'\t' read -r TABLA COLS; do
+  echo -e "    ${TABLA}  ${VERDE}${COLS} columnas${RESET}"
+done < <(sudo mysql -se "
+  SELECT table_name, COUNT(*) FROM information_schema.columns
+  WHERE table_schema='${DB_NOMBRE}'
+  AND table_name IN ('libros_md','capitulos','capitulo_autor')
+  GROUP BY table_name ORDER BY table_name;" 2>/dev/null)
+
+# ============================================================
+# RESUMEN FINAL
+# ============================================================
 echo ""
-echo "Tablas recreadas:"
-echo "  ✓ libros_md       (66 columnas)"
-echo "  ✓ capitulos        (78 columnas)"
-echo "  ✓ capitulo_autor   (18 columnas)"
+echo "  ════════════════════════════════════════════════════════════════════"
+echo -e "  ${VERDE}${NEGRITA}Migración completada con éxito.${RESET}"
+echo "  ════════════════════════════════════════════════════════════════════"
 echo ""
-echo "La app gbpublisher requiere versión 0.x.x o superior."
+echo "  Tablas recreadas:"
+echo "    ✓ libros_md       (66 columnas)"
+echo "    ✓ capitulos        (78 columnas)"
+echo "    ✓ capitulo_autor   (18 columnas)"
+echo ""
+echo "  Las tablas de revistas no fueron modificadas."
+echo ""
+
+exit 0
