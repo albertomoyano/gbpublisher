@@ -327,6 +327,12 @@ Private Function FormatearJSON(jsonCompacto As String) As String
 
 End
 
+' ============================================
+' Función   : ImportarJSON
+' Propósito : Importar entradas bibtex desde archivo JSON a la tabla bibtex
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si se importó al menos una entrada
+' ============================================
 Public Sub ImportarJSON() As Boolean
 
   Dim jsonFile As String
@@ -342,11 +348,13 @@ Public Sub ImportarJSON() As Boolean
   Dim contador As Integer = 0
   Dim aClavesEntrada As String[]
   Dim i As Integer
+  Dim aColumnasValidas As String[]
+  Dim rColumnas As Result
+  Dim sDescartados As String
 
-  ' ABRIR DIÁLOGO PARA SELECCIONAR ARCHIVO JSON
+  ' --- 1. ABRIR DIÁLOGO PARA SELECCIONAR ARCHIVO JSON ---
   Dialog.Title = "Seleccionar archivo JSON para importar"
   Dialog.Filter = ["*.json", "Archivos JSON"]
-
   If Not Dialog.OpenFile() Then
     jsonFile = Dialog.Path
   Else
@@ -358,48 +366,101 @@ Public Sub ImportarJSON() As Boolean
     Return False
   Endif
 
+  ' --- 2. LEER Y DECODIFICAR EL JSON ---
   jsonContent = File.Load(jsonFile)
 
-  dDatos = JSON.Decode(jsonContent)
+  Try dDatos = JSON.Decode(jsonContent)
+  If Error Then
+    Message.Error("El archivo JSON no es válido: " & Error.Text)
+    Return False
+  Endif
 
   If Not dDatos.Exist("entries") Then
-    Message.Error("El archivo JSON no tiene la estructura correcta (falta 'entries')")
+    Message.Error("El archivo JSON no tiene la estructura correcta (falta " & Chr(34) & "entries" & Chr(34) & ")")
     Return False
   Endif
 
   aEntradas = dDatos["entries"]
 
+  ' --- 3. OBTENER COLUMNAS VÁLIDAS DE LA TABLA BIBTEX ---
+  ' SE CONSULTA LA ESTRUCTURA REAL PARA FILTRAR CAMPOS DEL JSON (RC-GM-04)
+  aColumnasValidas = New String[]
+
+  Try rColumnas = m_ConexionBD.mConn.Exec("SHOW COLUMNS FROM bibtex")
+  If Error Then
+    Message.Error("No se pudo leer la estructura de la tabla bibtex: " & Error.Text)
+    Return False
+  Endif
+
+  For Each rColumnas
+    ' EXCLUIR id (AUTO_INCREMENT), id_articulo E id_proyecto (SE MANEJAN APARTE)
+    If rColumnas["Field"] <> "id" And rColumnas["Field"] <> "id_articulo" And rColumnas["Field"] <> "id_proyecto" Then
+      aColumnasValidas.Add(rColumnas["Field"])
+    Endif
+  Next
+
+  ' --- 4. ITERAR ENTRADAS E INSERTAR EN LA BASE ---
+  sDescartados = ""
+
   For Each entrada In aEntradas
     sCampos = "id_articulo"
     sValores = "0"
 
-    ' OBTENER LAS CLAVES DE LA ENTRADA
+    ' OBTENER LAS CLAVES DE LA ENTRADA JSON
     aClavesEntrada = entrada.Keys
 
-    ' ITERAR SOBRE LAS CLAVES
     For i = 0 To aClavesEntrada.Max
       sCampo = aClavesEntrada[i]
+
+      ' SOLO INSERTAR CAMPOS QUE EXISTAN EN LA TABLA
+      If aColumnasValidas.Find(sCampo) < 0 Then
+        ' REGISTRAR CAMPO DESCARTADO PARA AVISO POSTERIOR
+        If InStr(sDescartados, sCampo) = 0 Then
+          If sDescartados <> "" Then
+            sDescartados &= ", "
+          Endif
+          sDescartados &= sCampo
+        Endif
+        Continue
+      Endif
+
       sValor = entrada[sCampo]
       sCampos &= ", " & sCampo
 
       If TypeOf(sValor) = gb.String Then
         sValor = Replace(sValor, "'", "''")
-        sValores &= ", '" & sValor & "'"
+        sValores &= ", " & Chr(39) & sValor & Chr(39)
+      Else If IsNull(sValor) Then
+        sValores &= ", NULL"
       Else
         sValores &= ", " & CStr(sValor)
       Endif
     Next
 
+    ' AGREGAR id_proyecto DEL PROYECTO EN CURSO
     sCampos &= ", id_proyecto"
     sValores &= ", " & FMain.id_proyecto.Text
 
     sQuery = "INSERT INTO bibtex (" & sCampos & ") VALUES (" & sValores & ")"
 
-    m_ConexionBD.mConn.Exec(sQuery)
+    Try m_ConexionBD.mConn.Exec(sQuery)
+    If Error Then
+      Debug "ERROR AL INSERTAR ENTRADA BIBTEX: " & Error.Text
+      Debug "QUERY: " & sQuery
+      Continue
+    Endif
+
     contador += 1
   Next
 
+  ' --- 5. INFORMAR RESULTADO ---
+  ' AVISAR SI HUBO CAMPOS DEL JSON QUE NO COINCIDEN CON LA TABLA
+  If sDescartados <> "" Then
+    Message.Warning("Se ignoraron campos del JSON que no existen en la tabla bibtex:" & Chr(10) & Chr(10) & sDescartados)
+  Endif
+
   If contador > 0 Then
+    m_Bibtex.RefrescarTableViewBibtexEnCurso()
     Return True
   Else
     Return False
