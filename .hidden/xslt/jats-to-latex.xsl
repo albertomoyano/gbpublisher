@@ -792,6 +792,11 @@
     <xsl:variable name="prev2" select="preceding-sibling::node()[2]"/>
 
     <!-- SI ES PARTE DE UN GRUPO — EL PRIMERO YA INCLUYÓ ESTA CLAVE -->
+    <!-- LIMITACIÓN CONOCIDA: EL AGRUPAMIENTO NO DISTINGUE MODOS.          -->
+    <!-- [@key1; -@key2] GENERA \autocite{key1,key2} EN LUGAR DE           -->
+    <!-- \autocite{key1}\autocite*{key2}. PARA SUPRESIÓN PARCIAL EN UN     -->
+    <!-- GRUPO, REESCRIBIR recopilar-grupo-citas PARA CORTAR EL GRUPO      -->
+    <!-- CUANDO CAMBIA EL @specific-use ENTRE XREFS CONSECUTIVOS.          -->
     <xsl:if test="not(
       $prev1/self::text()[matches(normalize-space(.), '^[\p{Pd},;]\s*$')] and
       $prev2/self::xref[@ref-type='bibr'])">
@@ -842,16 +847,24 @@
         <!-- SUPPRESS AUTHOR: [-@key] → \autocite* — SOLO AÑO -->
         <xsl:when test="$modo = 'suppress'">
           <xsl:text>\autocite*</xsl:text>
-          <xsl:if test="$prefijo != ''">
-            <xsl:text>[</xsl:text>
-            <xsl:value-of select="$prefijo"/>
-            <xsl:text>]</xsl:text>
-          </xsl:if>
-          <xsl:if test="$sufijo != ''">
-            <xsl:text>[</xsl:text>
-            <xsl:value-of select="$sufijo"/>
-            <xsl:text>]</xsl:text>
-          </xsl:if>
+          <!-- BIBLATEX: \cmd[prenote][postnote]{key}                        -->
+          <!-- CON UN SOLO [], BIBLATEX LO TRATA COMO POSTNOTE (SUFIJO).     -->
+          <!-- SI HAY PREFIJO SIN SUFIJO: [prefijo][] PARA FORZAR PRENOTE.   -->
+          <xsl:choose>
+            <xsl:when test="$prefijo != '' and $sufijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+              <xsl:text>][</xsl:text><xsl:value-of select="$sufijo"/>
+              <xsl:text>]</xsl:text>
+            </xsl:when>
+            <xsl:when test="$prefijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+              <xsl:text>][]</xsl:text>
+            </xsl:when>
+            <xsl:when test="$sufijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$sufijo"/>
+              <xsl:text>]</xsl:text>
+            </xsl:when>
+          </xsl:choose>
           <xsl:text>{</xsl:text>
           <xsl:value-of select="substring-after(@rid, 'bib-')"/>
           <xsl:call-template name="recopilar-grupo-citas">
@@ -863,16 +876,21 @@
         <!-- AUTHOR IN TEXT: @key → \textcite — AUTOR INLINE -->
         <xsl:when test="$modo = 'author-in-text'">
           <xsl:text>\textcite</xsl:text>
-          <xsl:if test="$prefijo != ''">
-            <xsl:text>[</xsl:text>
-            <xsl:value-of select="$prefijo"/>
-            <xsl:text>]</xsl:text>
-          </xsl:if>
-          <xsl:if test="$sufijo != ''">
-            <xsl:text>[</xsl:text>
-            <xsl:value-of select="$sufijo"/>
-            <xsl:text>]</xsl:text>
-          </xsl:if>
+          <xsl:choose>
+            <xsl:when test="$prefijo != '' and $sufijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+              <xsl:text>][</xsl:text><xsl:value-of select="$sufijo"/>
+              <xsl:text>]</xsl:text>
+            </xsl:when>
+            <xsl:when test="$prefijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+              <xsl:text>][]</xsl:text>
+            </xsl:when>
+            <xsl:when test="$sufijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$sufijo"/>
+              <xsl:text>]</xsl:text>
+            </xsl:when>
+          </xsl:choose>
           <xsl:text>{</xsl:text>
           <xsl:value-of select="substring-after(@rid, 'bib-')"/>
           <xsl:call-template name="recopilar-grupo-citas">
@@ -884,16 +902,21 @@
         <!-- NORMAL: [@key] → \autocite CON PREFIJO Y SUFIJO OPCIONALES -->
         <xsl:otherwise>
           <xsl:text>\autocite</xsl:text>
-          <xsl:if test="$prefijo != ''">
-            <xsl:text>[</xsl:text>
-            <xsl:value-of select="$prefijo"/>
-            <xsl:text>]</xsl:text>
-          </xsl:if>
-          <xsl:if test="$sufijo != ''">
-            <xsl:text>[</xsl:text>
-            <xsl:value-of select="$sufijo"/>
-            <xsl:text>]</xsl:text>
-          </xsl:if>
+          <xsl:choose>
+            <xsl:when test="$prefijo != '' and $sufijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+              <xsl:text>][</xsl:text><xsl:value-of select="$sufijo"/>
+              <xsl:text>]</xsl:text>
+            </xsl:when>
+            <xsl:when test="$prefijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+              <xsl:text>][]</xsl:text>
+            </xsl:when>
+            <xsl:when test="$sufijo != ''">
+              <xsl:text>[</xsl:text><xsl:value-of select="$sufijo"/>
+              <xsl:text>]</xsl:text>
+            </xsl:when>
+          </xsl:choose>
           <xsl:text>{</xsl:text>
           <xsl:value-of select="substring-after(@rid, 'bib-')"/>
           <xsl:call-template name="recopilar-grupo-citas">
@@ -921,6 +944,11 @@
   <!-- NAMED TEMPLATE: recopilar-grupo-citas                       -->
   <!-- AGREGA CLAVES DE XREFS CONSECUTIVOS EN cmd{k1,k2,...}       -->
   <!-- RECURSIVO: AVANZA DE A DOS NODOS (separador + xref)         -->
+  <!-- LIMITACIÓN: AGRUPA TODOS LOS XREFS CONSECUTIVOS SIN         -->
+  <!-- VERIFICAR SI COMPARTEN EL MISMO @specific-use. SI EL PRIMER -->
+  <!-- XREF ES normal Y EL SIGUIENTE suppress, AMBOS QUEDAN EN     -->
+  <!-- \autocite{k1,k2} Y SE PIERDE EL MODO suppress DEL SEGUNDO. -->
+  <!-- FIX PENDIENTE: DETENER EL GRUPO CUANDO CAMBIE EL MODO.      -->
   <!-- ============================================================ -->
   <xsl:template name="recopilar-grupo-citas">
     <xsl:param name="nodos" as="node()*"/>

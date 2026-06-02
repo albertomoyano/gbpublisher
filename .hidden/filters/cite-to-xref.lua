@@ -3,20 +3,50 @@
 -- FILTRO LUA PARA PANDOC - CONVERSIONES JATS
 -- =====================================================
 -- FUNCIONES:
---   Cite  → CONVIERTE [@citekey] A <xref ref-type="bibr">
+--   Cite  → CONVIERTE CITAS PANDOC A <xref ref-type="bibr">
+--           CON ATRIBUTO specific-use PARA MODO, PREFIJO Y SUFIJO
 --   Div   → MANEJA FIGURAS, TABLAS, EPÍGRAFES, VERSOS,
 --           CÓDIGO, RECUADROS, FÓRMULAS, ENTREVISTAS
 --           Y SECCIONES
 --   Note  → CONVIERTE NOTAS AL PIE A <fn> INLINE
 -- =====================================================
 
--- CONVIERTE CITAS [@citekey] A <xref ref-type="bibr" rid="bib-citekey">
+-- CONVIERTE CITAS PANDOC A <xref ref-type="bibr"> CON MODO DE CITA
 -- SIN USAR --citeproc NI NECESITAR ARCHIVO .bib
+-- PRESERVA EL MODO DEL AST DE PANDOC EN specific-use="modo|prefijo|sufijo":
+--   NormalCitation  → normal         → jats-to-latex.xsl → \autocite{key}
+--   SuppressAuthor  → suppress       → jats-to-latex.xsl → \autocite*{key}
+--   AuthorInText    → author-in-text → jats-to-latex.xsl → \textcite{key}
 function Cite(el)
   local result = {}
   for i, citation in ipairs(el.citations) do
+
+    -- DETERMINAR MODO DE CITA SEGÚN PANDOC AST
+    local modo
+    if citation.mode == "SuppressAuthor" then
+      modo = "suppress"
+    elseif citation.mode == "AuthorInText" then
+      modo = "author-in-text"
+    else
+      modo = "normal"
+    end
+
+    -- EXTRAER PREFIJO Y SUFIJO COMO TEXTO PLANO
+    local prefijo = pandoc.utils.stringify(citation.prefix)
+    local sufijo  = pandoc.utils.stringify(citation.suffix)
+
+    -- PANDOC INCLUYE LA COMA SEPARADORA EN EL SUFIJO: ", p. 5" → "p. 5"
+    sufijo = sufijo:gsub("^,%s*", "")
+
+    -- CONSTRUIR ATRIBUTO specific-use SOLO SI APORTA INFORMACIÓN
+    -- FORMATO: "modo|prefijo|sufijo"
+    local specific_use = ""
+    if modo ~= "normal" or prefijo ~= "" or sufijo ~= "" then
+      specific_use = ' specific-use="' .. modo .. '|' .. prefijo .. '|' .. sufijo .. '"'
+    end
+
     local xref = pandoc.RawInline('jats',
-      '<xref ref-type="bibr" rid="bib-' .. citation.id .. '">' ..
+      '<xref ref-type="bibr" rid="bib-' .. citation.id .. '"' .. specific_use .. '>' ..
       citation.id .. '</xref>')
     table.insert(result, xref)
     if i < #el.citations then
