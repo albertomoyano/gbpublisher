@@ -249,6 +249,9 @@ verificar_paquete "imagemagick" \
 verificar_paquete "texlive-full" \
   "TeX Live (completo)" \
   "sudo apt install texlive-full"
+verificar_comando "lua" \
+  "Lua (intérprete)" \
+  "sudo apt install lua5.4"
 verificar_paquete "epubcheck" \
   "epubcheck (validador EPUB)" \
   "sudo apt install epubcheck"
