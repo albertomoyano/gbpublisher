@@ -580,10 +580,26 @@
     <xsl:text>&#10;</xsl:text>
   </xsl:template>
 
-  <!-- SUPRIMIR TÍTULO DE LA PRIMERA SECCIÓN DEL BODY              -->
-  <!-- EN JATS EL ARTÍCULO COMIENZA CON UNA <sec> CUYO <title>    -->
-  <!-- REPITE EL TÍTULO DEL ARTÍCULO YA PRESENTE EN EL PREÁMBULO  -->
-  <xsl:template match="body/sec[1]/title" priority="5"/>
+  <!-- PRIMERA SECCIÓN DEL BODY: SUPRIMIR SOLO SI DUPLICA EL       -->
+  <!-- TÍTULO DEL ARTÍCULO (YA EMITIDO POR emitir-titulo-ancho).  -->
+  <!-- SI ES UN TÍTULO DE SECCIÓN GENUINO, EMITIR NORMALMENTE.    -->
+  <xsl:template match="body/sec[1]/title" priority="5">
+    <xsl:variable name="tituloArticulo"
+      select="normalize-space(/article/front/article-meta/
+              title-group/article-title)"/>
+    <xsl:variable name="tituloSec" select="normalize-space(.)"/>
+    <xsl:if test="$tituloSec != $tituloArticulo">
+      <xsl:variable name="profundidad" select="count(ancestor::sec) - 1"/>
+      <xsl:choose>
+        <xsl:when test="$profundidad = 0">\section{</xsl:when>
+        <xsl:when test="$profundidad = 1">\subsection{</xsl:when>
+        <xsl:when test="$profundidad = 2">\subsubsection{</xsl:when>
+        <xsl:otherwise>\paragraph{</xsl:otherwise>
+      </xsl:choose>
+      <xsl:value-of select="$tituloSec"/>
+      <xsl:text>}&#10;</xsl:text>
+    </xsl:if>
+  </xsl:template>
 
   <!-- SEC/TITLE: normalize-space() EVITA WHITESPACE DE indent=yes  -->
   <!-- QUE ROMPE \section{} CON titlesec                           -->
@@ -1116,11 +1132,6 @@
   <xsl:if test="caption">
     <xsl:text>\captionof{figure}{</xsl:text>
     <xsl:apply-templates select="caption/p/node()"/>
-    <xsl:text>}&#10;</xsl:text>
-  </xsl:if>
-  <xsl:if test="@id">
-    <xsl:text>\label{</xsl:text>
-    <xsl:value-of select="@id"/>
     <xsl:text>}&#10;</xsl:text>
   </xsl:if>
   <xsl:if test="@id">
