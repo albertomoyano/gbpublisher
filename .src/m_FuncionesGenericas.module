@@ -2871,3 +2871,59 @@ Public Function VerificarAccesoSSHGitHub() As Boolean
   Return False
 
 End Function
+
+' ============================================
+' Función   : VerificarProtocoloRemoto
+' Propósito : Detecta si el remote origin usa HTTPS y lo
+'             corrige automáticamente a SSH
+' Parámetros: sRutaProyecto As String — ruta del repo git
+' Retorna   : Boolean — True si el remote usa SSH (o fue corregido)
+' ============================================
+Public Function VerificarProtocoloRemoto(sRutaProyecto As String) As Boolean
+
+  ' --- 1. Obtener la URL actual del remote ---
+  Dim sUrl As String
+
+  Shell "cd " & Chr(34) & sRutaProyecto & Chr(34) & " && git remote get-url origin 2>&1" To sUrl
+  Wait
+  sUrl = Trim(sUrl)
+
+  ' --- 2. Si ya usa SSH, no hay nada que corregir ---
+  If Left(sUrl, 4) = "git@" Then
+    Return True
+  Endif
+
+  ' --- 3. Si usa HTTPS, ofrecer corrección automática ---
+  If Left(sUrl, 8) = "https://" Then
+    ' EXTRAER USUARIO/REPO DE LA URL HTTPS
+    ' FORMATO: https://github.com/usuario/repo.git
+    Dim sRuta As String
+    sRuta = Replace(sUrl, "https://github.com/", "")
+    ' ASEGURAR QUE TERMINE EN .git
+    If Not Right(sRuta, 4) = ".git" Then
+      sRuta = sRuta & ".git"
+    Endif
+    Dim sUrlSSH As String
+    sUrlSSH = "git@github.com:" & sRuta
+
+    Select Case Message.Question("El remote está configurado con HTTPS:\n\n" & sUrl & "\n\nEsto provoca que pida usuario y clave.\n¿Corregir automáticamente a SSH?\n\n" & sUrlSSH, "Corregir", "Cancelar")
+      Case 1
+        ' CAMBIAR EL REMOTE A SSH
+        Shell "cd " & Chr(34) & sRutaProyecto & Chr(34) & " && git remote set-url origin " & Chr(34) & sUrlSSH & Chr(34) & " 2>&1" To sUrl
+        Wait
+        If Error Then
+          Message.Error("No se pudo cambiar el remote:\n" & sUrl)
+          Return False
+        Endif
+        Message.Info("Remote corregido a SSH.\nEl push ahora usará la clave SSH.")
+        Return True
+      Case 2
+        Return False
+    End Select
+  Endif
+
+  ' --- 4. Protocolo no reconocido ---
+  Message.Warning("El remote tiene una URL no reconocida:\n\n" & sUrl)
+  Return False
+
+End Function
