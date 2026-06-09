@@ -4,7 +4,8 @@
 ' Formulario: FConversorDOCX2MD
 ' Propósito : Convertir archivos DOCX y ODT a Markdown
 '             usando Pandoc, organizando los archivos
-'             en la estructura del proyecto
+'             en la estructura del proyecto según el
+'             tipo de pieza (frontmatter / cuerpo / backmatter)
 ' ============================================
 
 ' ============================================
@@ -58,7 +59,9 @@ End
 
 ' ============================================
 ' Función   : btnCONVERTIR_Click
-' Propósito : Validar entradas y ejecutar la conversión
+' Propósito : Validar entradas, determinar prefijo y carpeta
+'             según el tipo de pieza (FM / cuerpo / BM)
+'             y ejecutar la conversión
 ' ============================================
 Public Sub btnCONVERTIR_Click()
 
@@ -67,6 +70,8 @@ Public Sub btnCONVERTIR_Click()
   Dim sNombreDestino As String
   Dim sExtension As String
   Dim sFormato As String
+  Dim sPrefijo As String
+  Dim sCarpetaTexto As String
 
   ' --- 1. OBTENER VALORES DE LA INTERFAZ ---
   sRutaOrigen = Trim(txtArchivoOrigen.Text)
@@ -92,14 +97,26 @@ Public Sub btnCONVERTIR_Click()
     Return
   Endif
 
-  ' --- 3. VERIFICAR QUE EL ARCHIVO ORIGEN EXISTE ---
+  ' --- 3. VALIDAR PATRÓN NN- EN EL NOMBRE DE DESTINO ---
+  ' DEFENSA EN PROFUNDIDAD: AUNQUE EL KEYPRESS YA LO IMPIDE,
+  ' VERIFICAMOS QUE EL NOMBRE TENGA AL MENOS NN- SEGUIDO DE UN CUERPO
+  If String.Len(sNombreDestino) < 4 Or
+      String.Mid(sNombreDestino, 1, 1) < "0" Or String.Mid(sNombreDestino, 1, 1) > "9" Or
+      String.Mid(sNombreDestino, 2, 1) < "0" Or String.Mid(sNombreDestino, 2, 1) > "9" Or
+      String.Mid(sNombreDestino, 3, 1) <> "-" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El nombre debe comenzar con dos dígitos seguidos de un guion, por ejemplo 01-introduccion.")
+    Return
+  Endif
+
+  ' --- 4. VERIFICAR QUE EL ARCHIVO ORIGEN EXISTE ---
   If Not Exist(sRutaOrigen) Then
     m_Sonido.sonar("Error")
     Message.Error("El archivo de origen no existe: " & sRutaOrigen)
     Return
   Endif
 
-  ' --- 4. DETERMINAR FORMATO SEGÚN EXTENSIÓN ---
+  ' --- 5. DETERMINAR FORMATO SEGÚN EXTENSIÓN ---
   sExtension = LCase(File.Ext(sRutaOrigen))
   Select Case sExtension
     Case "docx"
@@ -112,11 +129,25 @@ Public Sub btnCONVERTIR_Click()
       Return
   End Select
 
-  ' --- 5. EJECUTAR CONVERSIÓN ---
-  If ConvertirAMarkdown(sRutaOrigen, sFormato, sCarpetaProyecto, sNombreDestino) Then
+  ' --- 6. DETERMINAR PREFIJO Y CARPETA SEGÚN RADIO SELECCIONADO ---
+  ' RBMAIN ES EL DEFAULT DEL FORMULARIO Y CAE EN EL CASE ELSE
+  Select Case True
+    Case rbFront.Value
+      sPrefijo = "fm-"
+      sCarpetaTexto = "frontmatter"
+    Case rbBack.Value
+      sPrefijo = "bm-"
+      sCarpetaTexto = "backmatter"
+    Case Else
+      sPrefijo = "a-"
+      sCarpetaTexto = "articulos"
+  End Select
+
+  ' --- 7. EJECUTAR CONVERSIÓN ---
+  If ConvertirAMarkdown(sRutaOrigen, sFormato, sCarpetaProyecto, sNombreDestino, sPrefijo, sCarpetaTexto) Then
     m_Sonido.sonar("Info")
     Message.Info("Conversión completada con éxito.")
-    ' --- 6. ACTUALIZAR INTERFAZ ---
+    ' --- 8. ACTUALIZAR INTERFAZ ---
     btnCerrar.Visible = True
     btnCONVERTIR.Visible = False
     txtArchivoOrigen.Text = ""
@@ -129,30 +160,37 @@ End
 ' ============================================
 ' Función   : ConvertirAMarkdown
 ' Propósito : Ejecutar Pandoc para convertir DOCX/ODT a MD,
-'             mover archivos a la estructura del proyecto
-' Parámetros: sRutaOrigen As String — ruta completa del archivo fuente
-'             sFormato As String — "docx" u "odt"
+'             ubicarlo en la subcarpeta que corresponde a su tipo
+'             (frontmatter / articulos / backmatter) y mover el
+'             original a /originales con el prefijo correcto
+' Parámetros: sRutaOrigen      As String — ruta completa del archivo fuente
+'             sFormato         As String — "docx" u "odt"
 '             sCarpetaProyecto As String — carpeta raíz del proyecto
-'             sNombreDestino As String — nombre sin prefijo ni extensión
+'             sNombreDestino   As String — nombre sin prefijo, ya con NN-
+'             sPrefijo         As String — "fm-", "a-" o "bm-"
+'             sCarpetaTexto    As String — subcarpeta destino del .md
 ' Retorna   : Boolean — True si la conversión fue exitosa
 ' ============================================
-Private Function ConvertirAMarkdown(sRutaOrigen As String, sFormato As String, sCarpetaProyecto As String, sNombreDestino As String) As Boolean
+Private Function ConvertirAMarkdown(sRutaOrigen As String, sFormato As String, sCarpetaProyecto As String, sNombreDestino As String, sPrefijo As String, sCarpetaTexto As String) As Boolean
 
-  Dim sCarpetaArticulos As String
+  Dim sCarpetaTextos As String
   Dim sCarpetaOriginales As String
   Dim sCarpetaMedia As String
   Dim sArchivoMD As String
   Dim sComando As String
 
   ' --- 1. DEFINIR RUTAS DE DESTINO ---
-  sCarpetaArticulos = sCarpetaProyecto & "/articulos"
+  ' LA SUBCARPETA DEL .MD DEPENDE DEL TIPO DE PIEZA ELEGIDO EN EL FORMULARIO
+  sCarpetaTextos = sCarpetaProyecto & "/" & sCarpetaTexto
   sCarpetaOriginales = sCarpetaProyecto & "/originales"
   sCarpetaMedia = sCarpetaProyecto & "/media"
-  sArchivoMD = sCarpetaArticulos & "/a-" & sNombreDestino & ".md"
+  sArchivoMD = sCarpetaTextos & "/" & sPrefijo & sNombreDestino & ".md"
 
   ' --- 2. CREAR SUBDIRECTORIOS SI NO EXISTEN ---
-  If Not Exist(sCarpetaArticulos) Then
-    Mkdir sCarpetaArticulos
+  ' /ORIGINALES ES ÚNICA PARA TODA LA REVISTA O LIBRO;
+  ' /MEDIA TAMBIÉN ES ÚNICA Y LA POBLA PANDOC
+  If Not Exist(sCarpetaTextos) Then
+    Mkdir sCarpetaTextos
   Endif
   If Not Exist(sCarpetaOriginales) Then
     Mkdir sCarpetaOriginales
@@ -169,6 +207,7 @@ Private Function ConvertirAMarkdown(sRutaOrigen As String, sFormato As String, s
   Endif
 
   ' --- 4. CONSTRUIR Y EJECUTAR COMANDO PANDOC ---
+  ' --EXTRACT-MEDIA DEPOSITA LAS IMÁGENES EN <PROYECTO>/MEDIA POR CONVENCIÓN DE PANDOC
   sComando = "pandoc " & Quote$(sRutaOrigen) &
     " -o " & Quote$(sArchivoMD) &
     " --from=" & sFormato & " --to=markdown" &
@@ -190,8 +229,8 @@ Private Function ConvertirAMarkdown(sRutaOrigen As String, sFormato As String, s
   Endif
 
   ' --- 6. MOVER Y RENOMBRAR ARCHIVO ORIGEN A /originales ---
-  ' EL ARCHIVO SE RENOMBRA PARA COINCIDIR CON EL MD GENERADO
-  Try Move sRutaOrigen To sCarpetaOriginales & "/a-" & sNombreDestino & "." & sFormato
+  ' EL ORIGINAL CONSERVA EL MISMO PREFIJO QUE EL .MD PARA TRAZABILIDAD
+  Try Move sRutaOrigen To sCarpetaOriginales & "/" & sPrefijo & sNombreDestino & "." & sFormato
   If Error Then
     ' EL MOVE PUEDE FALLAR POR PERMISOS, DISCO DIFERENTE O RECURSO DE RED
     m_Sonido.sonar("Warning")
@@ -204,9 +243,12 @@ End
 
 ' ============================================
 ' Función   : txtArchivoDestino_KeyPress
-' Propósito : Filtrar caracteres permitidos en el nombre de archivo
+' Propósito : Filtrar caracteres permitidos y forzar
+'             que el nombre comience con el patrón NN-
 ' ============================================
 Public Sub txtArchivoDestino_KeyPress()
+
+  Dim iPos As Integer
 
   ' --- 1. PERMITIR TECLAS DE CONTROL ---
   If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or
@@ -216,7 +258,7 @@ Public Sub txtArchivoDestino_KeyPress()
     Return
   Endif
 
-  ' --- 2. VALIDAR LONGITUD MÁXIMA ---
+  ' --- 2. VALIDAR LONGITUD MÁXIMA (INCLUYE EL PREFIJO NN-) ---
   If String.Len(txtArchivoDestino.Text) >= 24 Then
     m_Sonido.sonar("Warning")
     Message.Warning("El nombre del archivo no puede tener más de 24 caracteres.")
@@ -224,7 +266,31 @@ Public Sub txtArchivoDestino_KeyPress()
     Return
   Endif
 
-  ' --- 3. PERMITIR SOLO NÚMEROS, LETRAS Y GUION ---
+  ' --- 3. FORZAR PATRÓN POSICIONAL NN- EN LAS PRIMERAS TRES POSICIONES ---
+  ' POS ES 0-INDEXED: 0 Y 1 SON LOS DOS DÍGITOS, 2 ES EL GUION
+  iPos = txtArchivoDestino.Pos
+
+  If iPos = 0 Or iPos = 1 Then
+    ' LAS DOS PRIMERAS POSICIONES SOLO ACEPTAN DÍGITOS
+    If Key.Text < "0" Or Key.Text > "9" Then
+      m_Sonido.sonar("Warning")
+      Stop Event
+      Return
+    Endif
+    Return
+  Endif
+
+  If iPos = 2 Then
+    ' LA TERCERA POSICIÓN SOLO ACEPTA EL GUION
+    If Key.Text <> "-" Then
+      m_Sonido.sonar("Warning")
+      Stop Event
+      Return
+    Endif
+    Return
+  Endif
+
+  ' --- 4. POSICIÓN 4 EN ADELANTE: NÚMEROS, LETRAS Y GUION ---
   If Key.Text = "-" Or
       (Key.Text >= "0" And Key.Text <= "9") Or
       (Key.Text >= "A" And Key.Text <= "Z") Or
@@ -232,7 +298,7 @@ Public Sub txtArchivoDestino_KeyPress()
     Return
   Endif
 
-  ' --- 4. BLOQUEAR CUALQUIER OTRO CARÁCTER ---
+  ' --- 5. BLOQUEAR CUALQUIER OTRO CARÁCTER ---
   Stop Event
 
 End
