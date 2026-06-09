@@ -1,5 +1,16 @@
 ' Gambas class file
 
+' COLLECTION CON LOS VALORES OBTENIDOS DE CROSSREF
+' CLAVES CANÓNICAS: "titulo", "autor", "anio", "paginas", "issn", "doi"
+' LA POBLA EL LLAMADOR (P. EJ. FMain.btnChequearCrossref_Click) ANTES DEL ShowModal
+' LA LEE FAplicarCrossRef PARA MOSTRAR LOS VALORES EN EL .Text DE SUS CheckBox
+Public cValoresAplicar As Collection
+
+' MODO DE OPERACIÓN ACTIVO PARA ESTA INVOCACIÓN
+' DEFAULT 0 (NORMAL); EL LLAMADOR LO SETEA ANTES DE ShowModal CUANDO
+' NECESITA ACTIVAR CONTROLES ADICIONALES (P. EJ. btnAplicar EN MODO CROSSREF)
+Public iModo As Integer
+
 ' DATOS DE TEXTO — TSV POR FILA
 Public aResultados As String[]
 ' DATOS DE COLOR — CLAVE "fila,columna" → valor Integer de color
@@ -36,12 +47,73 @@ Public Sub btnCerrar_Click()
 End
 
 Public Sub Form_Close()
-  ' SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO
 
-  If bCierrePermitido Then Return
-  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
-  m_Sonido.sonar("info")
-  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
-  Stop Event
+  ' --- 1. Bloquear cierre no autorizado (X de la ventana) ---
+  If Not bCierrePermitido Then
+    m_Sonido.sonar("info")
+    Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+    Stop Event
+    Return
+  Endif
+
+  ' --- 2. Reset de estado para la próxima invocación ---
+  ' EL FORMULARIO ES SINGLETON: SUS PROPIEDADES PÚBLICAS PERSISTEN
+  ' ENTRE INVOCACIONES. EL RESET CORRE SOLO CUANDO EL CIERRE FUE AUTORIZADO,
+  ' GARANTIZANDO QUE LA PRÓXIMA INVOCACIÓN ARRANCA EN MODO NORMAL Y SIN
+  ' RESIDUOS DE LA COLLECTION DE CROSSREF.
+  iModo = m_Constantes.MODO_RESULTADOS_NORMAL
+  cValoresAplicar = Null
+
+End
+
+' ============================================
+' Evento    : btnAplicar_Click
+' Propósito : Abre FAplicarCrossRef como modal para que el editor
+'             seleccione qué valores de Crossref aplicar sobre los
+'             TextBox de FMain. Si el editor aplicó, autocierra este
+'             formulario; si canceló, permanece abierto para revisar.
+'             El guardado en BD queda delegado al botón propio de FMain.
+' ============================================
+Public Sub btnAplicar_Click()
+
+  ' --- 1. Validación de entrada ---
+  ' SIN COLLECTION POBLADA NO HAY NADA QUE APLICAR
+  If IsNull(cValoresAplicar) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay valores de Crossref disponibles para aplicar.")
+    Return
+  Endif
+
+  ' --- 2. Abrir formulario de selección de campos a aplicar ---
+  FAplicarCrossRef.ShowModal
+
+  ' --- 3. Autocerrar si el editor aplicó cambios ---
+  ' SI bAplicado=False, EL EDITOR CANCELÓ; ESTE FORMULARIO SIGUE ABIERTO
+  If FAplicarCrossRef.bAplicado Then
+    bCierrePermitido = True
+    Me.Close
+  Endif
+
+End
+
+' ============================================
+' Evento    : Form_Open
+' Propósito : Configura la visibilidad de los controles de acción
+'             según el modo de invocación activo (iModo). Resetea
+'             el estado al final para no contaminar las próximas
+'             invocaciones desde llamadores que no fijan modo.
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. Configuración por defecto de controles de acción ---
+  ' SE PARTE DE UN ESTADO LIMPIO: TODOS LOS BOTONES OPCIONALES OCULTOS
+  btnAplicar.Visible = False
+
+  ' --- 2. Activar controles según el modo de invocación ---
+  ' AGREGAR UN Case POR CADA NUEVO MODO QUE NECESITE BOTONES ADICIONALES
+  Select Case iModo
+    Case m_Constantes.MODO_RESULTADOS_CROSSREF
+      btnAplicar.Visible = True
+  End Select
 
 End
