@@ -39,7 +39,6 @@ Public Sub Form_Open()
   PictureBoxProyecto.Visible = False
   PanelXML.Visible = False
   SplitterPrincipal.Visible = False
-  vbPanelIzquierdo.Visible = False
 
   SplitterPrincipal.Layout = [1, 1]
   Splitter1.Layout = [1, 1]
@@ -1356,6 +1355,7 @@ Public Sub AbrirRevistaMD()
 
   ' MOSTRAR / OCULTAR BARRA DE MENUES
   HBoxGuardarTextArea.Visible = True
+  HBoxBotones.Visible = True
   PanelXML.Visible = True
   SplitterPrincipal.Visible = True
 
@@ -1420,7 +1420,6 @@ Public Sub AbrirRevistaMD()
   ' GUARDAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
   sRutaArchivoAbierto = sRutaSeleccionada
   sContenidoOriginal = txtEditorProyecto.Text
-  vbPanelIzquierdo.Visible = True
 
   ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
@@ -1786,6 +1785,7 @@ Public Sub AbrirLibroTEX()
 
   ' MOSTRAR / OCULTAR BARRA DE BOTONES
   HBoxGuardarTextArea.Visible = False
+  HBoxBotones.Visible = False
   PanelXML.Visible = False
   SplitterPrincipal.Visible = True
 
@@ -2950,23 +2950,6 @@ Public Sub ButtonRepositorioGithub_Click()
   Endif
 
   Desktop.Open(sTITULO)
-
-End
-
-Public Sub btnAbrirTerminal_Click()
-
-  Dim sText As String = RutaProyecto
-
-  If Trim(sText) = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No tiene ningún proyecto abierto.")
-    Return
-  Endif
-
-  If Exist(sText) Then
-    ' ABRIR TERMINAL POR DEFECTO EN LA RUTA DEL PROYECTO
-    Shell "kitty --working-directory " "" & sText & "" " &"
-  Endif
 
 End
 
@@ -4425,64 +4408,6 @@ Private Sub LimpiarBusqueda()
 End
 
 ' ============================================================================
-' ESPALABRACOMPLETA - VERIFICA SI LA COINCIDENCIA ES UNA PALABRA COMPLETA
-' ============================================================================
-' PARÁMETROS:
-'   sLinea: LÍNEA DE TEXTO
-'   iPosicion: POSICIÓN INICIAL DE LA COINCIDENCIA
-'   iLongitud: LONGITUD DEL TÉRMINO
-' RETORNA:
-'   TRUE SI ES PALABRA COMPLETA, FALSE SI ES PARTE DE OTRA PALABRA
-' ============================================================================
-Private Function EsPalabraCompletaBusq(sLinea As String, iPosicion As Integer, iLongitud As Integer) As Boolean
-
-  Dim sCarAntes As String
-  Dim sCarDespues As String
-
-  ' VERIFICAR CARÁCTER ANTES
-  If iPosicion > 1 Then
-    sCarAntes = Mid$(sLinea, iPosicion - 1, 1)
-    If EsCaracterPalabraBusq(sCarAntes) Then
-      Return False
-    Endif
-  Endif
-
-  ' VERIFICAR CARÁCTER DESPUÉS
-  If iPosicion + iLongitud <= Len(sLinea) Then
-    sCarDespues = Mid$(sLinea, iPosicion + iLongitud, 1)
-    If EsCaracterPalabraBusq(sCarDespues) Then
-      Return False
-    Endif
-  Endif
-
-  Return True
-
-End
-
-' ============================================================================
-' ESCARACTERPALABRABUSC - VERIFICA SI UN CARÁCTER ES PARTE DE UNA PALABRA
-' ============================================================================
-Private Function EsCaracterPalabraBusq(sCar As String) As Boolean
-
-  Dim iCodigo As Integer
-
-  If Len(sCar) = 0 Then Return False
-
-  iCodigo = Asc(sCar)
-
-  ' LETRAS A-Z, a-z, NÚMEROS 0-9, GUIÓN BAJO
-  ' TAMBIÉN INCLUIR LETRAS CON ACENTOS (RANGO EXTENDIDO)
-  If (iCodigo >= 65 And iCodigo <= 90) Then Return True       ' A-Z
-  If (iCodigo >= 97 And iCodigo <= 122) Then Return True      ' a-z
-  If (iCodigo >= 48 And iCodigo <= 57) Then Return True       ' 0-9
-  If iCodigo = 95 Then Return True                             ' _
-  If (iCodigo >= 192 And iCodigo <= 255) Then Return True     ' LETRAS ACENTUADAS
-
-  Return False
-
-End
-
-' ============================================================================
 ' IRALINEABUSQUEDA - POSICIONA UNA LÍNEA AL TOPE DE LA VENTANA DEL EDITOR
 ' ============================================================================
 ' PARÁMETROS:
@@ -4648,30 +4573,25 @@ Public Sub menuSabores_Click()
 
 End
 
-' ============================================================================
-' EJECUTARBUSQUEDA - FUNCIÓN PRINCIPAL DE BÚSQUEDA
-' ============================================================================
-' BUSCA EL TÉRMINO EN txtEditorProyecto.Text
-' RESPETA btnMayMin Y btnExacta
-' ACTUALIZA vConteo, LLENA gvResultados Y POSICIONA EN LA PRIMERA COINCIDENCIA
-' PUEDE SER LLAMADA DESDE btnBuscar_Click O txtBuscarPalabra_KeyPress
-' ============================================================================
+'' ============================================================================
+'' Función   : EjecutarBusqueda
+'' Propósito : Búsqueda de un término dentro de txtEditorProyecto. Valida
+''             entrada, delega la lógica de búsqueda en
+''             m_FuncionesGenericas.BuscarEnTexto, llena el GridView de
+''             resultados y aplica la lógica de UI según la cantidad de
+''             coincidencias. Puede ser llamada desde btnBuscar_Click o
+''             desde txtBuscarPalabra_KeyPress.
+'' ============================================================================
 Private Sub EjecutarBusqueda()
 
   Dim sTermino As String
   Dim sContenido As String
-  Dim aLineas As String[]
-  Dim sLinea As String
-  Dim sLineaBusqueda As String
-  Dim sTerminoBusqueda As String
-  Dim iLinea As Integer
-  Dim iPosicion As Integer
-  Dim iFilaGrid As Integer
-  Dim sCoincidenciaTexto As String
-  Dim bDistingueMayusculas As Boolean
-  Dim bPalabraExacta As Boolean
+  Dim aTextos As New String[]
+  Dim iResultados As Integer
+  Dim iFila As Integer
+  Dim i As Integer
 
-  ' VALIDAR QUE HAY TÉRMINO DE BÚSQUEDA
+  ' --- 1. VALIDACIÓN DEL TÉRMINO DE BÚSQUEDA ---
   sTermino = Trim(txtBuscarPalabra.Text)
   If sTermino = "" Then
     m_Sonido.sonar("Warning")
@@ -4680,10 +4600,12 @@ Private Sub EjecutarBusqueda()
     Return
   Endif
 
-  ' LIMPIAR RESULTADOS ANTERIORES
+  ' --- 2. LIMPIEZA DE RESULTADOS PREVIOS ---
+  ' LimpiarBusqueda DEBE DEJAR $aBusqNumeroLinea Y $aBusqPosicionEnLinea VACÍOS
+  ' PORQUE BuscarEnTexto LOS LLENA CON Add (NO LOS LIMPIA INTERNAMENTE)
   LimpiarBusqueda()
 
-  ' OBTENER CONTENIDO DEL EDITOR
+  ' --- 3. OBTENCIÓN DEL CONTENIDO DEL EDITOR ---
   sContenido = txtEditorProyecto.Text
   If sContenido = "" Then
     m_Sonido.sonar("Info")
@@ -4691,20 +4613,7 @@ Private Sub EjecutarBusqueda()
     Return
   Endif
 
-  aLineas = Split(sContenido, "\n")
-
-  ' OBTENER CONFIGURACIÓN DE BÚSQUEDA
-  bDistingueMayusculas = btnMayMin.Value
-  bPalabraExacta = btnExacta.Value
-
-  ' PREPARAR TÉRMINO DE BÚSQUEDA
-  If bDistingueMayusculas Then
-    sTerminoBusqueda = sTermino
-  Else
-    sTerminoBusqueda = LCase(sTermino)
-  Endif
-
-  ' CONFIGURAR GRIDVIEW (2 COLUMNAS: LÍNEA, COINCIDENCIA)
+  ' --- 4. CONFIGURACIÓN DEL GRIDVIEW ---
   With gvResultados
     .Columns.Count = 2
     .Rows.Count = 0
@@ -4717,75 +4626,45 @@ Private Sub EjecutarBusqueda()
     .Columns[1].Width = 500
   End With
 
-  ' RECORRER CADA LÍNEA
-  For iLinea = 0 To aLineas.Max
-    sLinea = aLineas[iLinea]
+  ' --- 5. INVOCACIÓN DE LA BÚSQUEDA GENÉRICA ---
+  ' LOS ARRAYS DEL FORM $aBusqNumeroLinea Y $aBusqPosicionEnLinea SE LLENAN
+  ' POR REFERENCIA. aTextos ES LOCAL PORQUE SOLO ALIMENTA EL GRIDVIEW.
+  iResultados = m_FuncionesGenericas.BuscarEnTexto(sContenido, sTermino, btnMayMin.Value, btnExacta.Value, $aBusqNumeroLinea, $aBusqPosicionEnLinea, aTextos)
 
-    ' PREPARAR LÍNEA PARA BÚSQUEDA
-    If bDistingueMayusculas Then
-      sLineaBusqueda = sLinea
-    Else
-      sLineaBusqueda = LCase(sLinea)
-    Endif
-
-    ' BUSCAR TODAS LAS OCURRENCIAS EN LA LÍNEA
-    iPosicion = 0
-    Do
-      ' BUSCAR SIGUIENTE OCURRENCIA
-      ' SINTAXIS GAMBAS: InStr(String, Substring [, Start, Comparison])
-      iPosicion = InStr(sLineaBusqueda, sTerminoBusqueda, iPosicion)
-
-      If iPosicion > 0 Then
-        ' VERIFICAR PALABRA EXACTA SI ES NECESARIO
-        If bPalabraExacta Then
-          If Not EsPalabraCompletaBusq(sLineaBusqueda, iPosicion, Len(sTerminoBusqueda)) Then
-            iPosicion = iPosicion + 1
-            Continue
-          Endif
-        Endif
-
-        ' AÑADIR A LOS ARRAYS PARALELOS
-        $aBusqNumeroLinea.Add(iLinea + 1)  ' BASE 1 PARA MOSTRAR
-        $aBusqPosicionEnLinea.Add(iPosicion)
-
-        ' PREPARAR TEXTO DE COINCIDENCIA (DESDE LA POSICIÓN HASTA FIN DE LÍNEA)
-        sCoincidenciaTexto = Mid$(sLinea, iPosicion)
-
-        ' AÑADIR FILA AL GRIDVIEW
-        iFilaGrid = gvResultados.Rows.Count
-        gvResultados.Rows.Count = iFilaGrid + 1
-        gvResultados[iFilaGrid, 0].Text = Str(iLinea + 1)
-        gvResultados[iFilaGrid, 1].Text = sCoincidenciaTexto
-
-        ' AVANZAR POSICIÓN PARA BUSCAR SIGUIENTE OCURRENCIA
-        iPosicion = iPosicion + Len(sTerminoBusqueda)
-      Endif
-    Loop While iPosicion > 0
+  ' --- 6. VOLCADO DE RESULTADOS AL GRIDVIEW ---
+  For i = 0 To iResultados - 1
+    iFila = gvResultados.Rows.Count
+    gvResultados.Rows.Count = iFila + 1
+    gvResultados[iFila, 0].Text = Str($aBusqNumeroLinea[i])
+    gvResultados[iFila, 1].Text = aTextos[i]
   Next
 
-  ' ACTUALIZAR CONTEO
-  vConteo.Value = $aBusqNumeroLinea.Count
+  ' --- 7. ACTUALIZACIÓN DEL CONTEO ---
+  vConteo.Value = iResultados
 
-  ' PROCESAR RESULTADOS SEGÚN CANTIDAD
-  Select Case $aBusqNumeroLinea.Count
+  ' --- 8. RUTAS DE UI SEGÚN CANTIDAD DE RESULTADOS ---
+  Select Case iResultados
+
     Case 0
-      ' NO HAY COINCIDENCIAS
+      ' NO HAY COINCIDENCIAS: AVISAR Y OCULTAR EL PANEL DE RESULTADOS
       m_Sonido.sonar("Info")
       Message.Info("No se encontraron coincidencias.")
       btnResultados.Value = False
       TabPanelIzquierdaInferior[5].Visible = False
 
     Case 1
-      ' UNA SOLA COINCIDENCIA - IR A ESA LÍNEA
+      ' UNA SOLA COINCIDENCIA: IR DIRECTO Y OCULTAR EL PANEL
       $iBusqIndiceActual = 0
       IrALineaBusqueda($aBusqNumeroLinea[0])
       btnResultados.Value = False
       TabPanelIzquierdaInferior[5].Visible = False
 
     Case Else
-      ' DOS O MÁS COINCIDENCIAS - IR A LA PRIMERA
+      ' VARIAS COINCIDENCIAS: IR A LA PRIMERA Y MOSTRAR EL PANEL CON LA LISTA
       $iBusqIndiceActual = 0
       IrALineaBusqueda($aBusqNumeroLinea[0])
+      btnResultados.Value = True
+      TabPanelIzquierdaInferior[5].Visible = True
 
   End Select
 
@@ -6597,6 +6476,7 @@ Public Sub AbrirLibroMD()
 
   ' MOSTRAR / OCULTAR BARRA DE MENUES
   HBoxGuardarTextArea.Visible = True
+  HBoxBotones.Visible = True
   PanelXML.Visible = True
   SplitterPrincipal.Visible = True
 
@@ -6661,7 +6541,6 @@ Public Sub AbrirLibroMD()
   ' GUARDAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
   sRutaArchivoAbierto = sRutaSeleccionada
   sContenidoOriginal = txtEditorProyecto.Text
-  vbPanelIzquierdo.Visible = True
 
   ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)

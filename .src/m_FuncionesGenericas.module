@@ -2928,3 +2928,164 @@ Public Function VerificarProtocoloRemoto(sRutaProyecto As String) As Boolean
   Return False
 
 End Function
+
+' ============================================================================
+' Función   : BuscarEnTexto
+' Propósito : Buscar todas las ocurrencias de un término en un texto UTF-8
+'             y devolver tres arrays paralelos con número de línea, posición
+'             en la línea (en caracteres) y texto desde la posición al fin
+'             de línea. Lógica pura: NO toca UI, NO emite sonidos, NO muestra
+'             mensajes. Reusable desde cualquier formulario.
+' Parámetros: sContenido           As String     — texto donde buscar (UTF-8)
+'             sTermino             As String     — término literal a buscar
+'             bDistingueMayusculas As Boolean    — True = case-sensitive
+'             bPalabraExacta       As Boolean    — True = palabra completa
+'             aNumerosLinea        As Integer[]  — OUT: números de línea base 1
+'             aPosiciones          As Integer[]  — OUT: posiciones base 1 (caracteres)
+'             aTextosCoincidencia  As String[]   — OUT: texto desde la posición a fin de línea
+' Retorna   : Integer — cantidad de coincidencias encontradas
+' Notas     : Los arrays de salida se LLENAN con Add, no se limpian. Esto
+'             permite acumular resultados de varios contenidos sucesivos
+'             (caso de uso: FBuscarReemplazar barriendo varios archivos).
+'             El caller debe limpiarlos antes si quiere un resultado fresco.
+' ============================================================================
+Public Function BuscarEnTexto(sContenido As String, sTermino As String, bDistingueMayusculas As Boolean, bPalabraExacta As Boolean, aNumerosLinea As Integer[], aPosiciones As Integer[], aTextosCoincidencia As String[]) As Integer
+
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim iLinea As Integer
+  Dim iPosicion As Integer
+  Dim iLongTermino As Integer
+  Dim iModoBusqueda As Integer
+  Dim iResultados As Integer
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  ' SE EVITA ENTRAR AL ALGORITMO CON DATOS QUE GARANTIZAN CERO MATCHES
+  iResultados = 0
+  If sContenido = "" Then Return 0
+  If sTermino = "" Then Return 0
+
+  ' --- 2. NORMALIZACIÓN DE FINES DE LÍNEA ---
+  ' SE FUERZA LF (Chr(10)) PARA OBTENER UN ESQUEMA ÚNICO Y CONTEOS DE LÍNEA
+  ' CONSISTENTES INDEPENDIENTEMENTE DEL ORIGEN DEL CONTENIDO (SC-01).
+  ' Replace ES SEGURO SOBRE BYTES PORQUE CR Y LF SON ASCII QUE NUNCA APARECEN
+  ' COMO BYTE INTERNO DE UNA SECUENCIA UTF-8 MULTIBYTE
+  sContenido = Replace(sContenido, Chr(13) & Chr(10), Chr(10))
+  sContenido = Replace(sContenido, Chr(13), Chr(10))
+
+  ' --- 3. PARTICIÓN EN LÍNEAS USANDO LF EXPLÍCITO ---
+  aLineas = Split(sContenido, Chr(10))
+
+  ' --- 4. PREPARACIÓN DE PARÁMETROS DE BÚSQUEDA ---
+  ' EL TOGGLE EN TRUE EXIGE CASE-SENSITIVE; EN FALSE SE USA gb.IgnoreCase
+  ' QUE SÍ MANEJA Ñ↔ñ, Á↔á, ETC. SOBRE UTF-8 (LCase ESTÁNDAR ES ASCII-ONLY)
+  If bDistingueMayusculas Then
+    iModoBusqueda = 0
+  Else
+    iModoBusqueda = gb.IgnoreCase
+  Endif
+
+  iLongTermino = String.Len(sTermino)
+
+  ' --- 5. RECORRIDO LÍNEA POR LÍNEA ---
+  For iLinea = 0 To aLineas.Max
+    sLinea = aLineas[iLinea]
+
+    ' --- 6. BÚSQUEDA DE TODAS LAS OCURRENCIAS EN LA LÍNEA ---
+    ' String.InStr USA POSICIÓN BASE 1 EN CARACTERES UTF-8 (NO BYTES)
+    iPosicion = 1
+    Do
+      iPosicion = String.InStr(sLinea, sTermino, iPosicion, iModoBusqueda)
+      ' SIN MÁS COINCIDENCIAS EN ESTA LÍNEA: SALIDA DEL BUCLE INTERNO
+      If iPosicion = 0 Then Break
+
+      ' DESCARTA SI NO ES PALABRA COMPLETA Y EL TOGGLE LO EXIGE
+      If bPalabraExacta Then
+        If Not EsPalabraCompleta(sLinea, iPosicion, iLongTermino) Then
+          iPosicion = iPosicion + 1
+          Continue
+        Endif
+      Endif
+
+      ' REGISTRO DE LA COINCIDENCIA EN LOS ARRAYS DE SALIDA
+      aNumerosLinea.Add(iLinea + 1)
+      aPosiciones.Add(iPosicion)
+      aTextosCoincidencia.Add(String.Mid(sLinea, iPosicion))
+      iResultados = iResultados + 1
+
+      ' AVANCE A LA SIGUIENTE POSIBLE OCURRENCIA EN LA MISMA LÍNEA
+      iPosicion = iPosicion + iLongTermino
+    Loop
+  Next
+
+  Return iResultados
+
+End
+
+' ============================================================================
+' Función   : EsPalabraCompleta
+' Propósito : Determinar si una coincidencia hallada representa una palabra
+'             completa, evaluando los caracteres adyacentes en UTF-8.
+' Parámetros: sLinea    As String  — línea donde se halló la coincidencia
+'             iPosicion As Integer — posición (en CARACTERES, base 1)
+'             iLongitud As Integer — longitud del término en CARACTERES
+' Retorna   : Boolean — True si está delimitada por no-palabra a ambos lados
+' Visibilidad: Private — auxiliar interno de BuscarEnTexto. Si en el futuro
+'             algún caller externo la necesita, cambiar a Public.
+' ============================================================================
+Private Function EsPalabraCompleta(sLinea As String, iPosicion As Integer, iLongitud As Integer) As Boolean
+
+  Dim sCarAntes As String
+  Dim sCarDespues As String
+
+  ' --- 1. CHEQUEO DEL CARÁCTER PREVIO ---
+  If iPosicion > 1 Then
+    sCarAntes = String.Mid(sLinea, iPosicion - 1, 1)
+    If EsCaracterPalabra(sCarAntes) Then Return False
+  Endif
+
+  ' --- 2. CHEQUEO DEL CARÁCTER POSTERIOR ---
+  If iPosicion + iLongitud <= String.Len(sLinea) Then
+    sCarDespues = String.Mid(sLinea, iPosicion + iLongitud, 1)
+    If EsCaracterPalabra(sCarDespues) Then Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================================================
+' Función   : EsCaracterPalabra
+' Propósito : Determinar si un carácter UTF-8 forma parte de una palabra
+'             (letras ASCII, dígitos, guion bajo y rango Latin-1 acentuado
+'             que cubre Á-ÿ incluyendo Ñ, ñ y todas las vocales acentuadas).
+' Parámetros: sCar As String — un único carácter UTF-8 a evaluar
+' Retorna   : Boolean — True si pertenece al conjunto de caracteres de palabra
+' Visibilidad: Private — auxiliar interno de EsPalabraCompleta.
+' Notas     : Se usa String.Code para obtener el codepoint Unicode real,
+'             no el byte. Se excluyen explícitamente × (215) y ÷ (247) del
+'             rango Latin-1 por no ser letras.
+' ============================================================================
+Private Function EsCaracterPalabra(sCar As String) As Boolean
+
+  Dim iCodigo As Integer
+
+  If String.Len(sCar) = 0 Then Return False
+
+  iCodigo = String.Code(sCar)
+
+  ' --- 1. EXCLUSIONES PUNTUALES DENTRO DEL RANGO LATIN-1 ---
+  ' × (MULTIPLICACIÓN) Y ÷ (DIVISIÓN) NO SON LETRAS
+  If iCodigo = 215 Then Return False
+  If iCodigo = 247 Then Return False
+
+  ' --- 2. RANGOS DE CARACTERES DE PALABRA ---
+  If (iCodigo >= 65 And iCodigo <= 90) Then Return True     ' A-Z
+  If (iCodigo >= 97 And iCodigo <= 122) Then Return True    ' a-z
+  If (iCodigo >= 48 And iCodigo <= 57) Then Return True     ' 0-9
+  If iCodigo = 95 Then Return True                           ' _
+  If (iCodigo >= 192 And iCodigo <= 255) Then Return True    ' LATIN-1 ACENTUADAS
+
+  Return False
+
+End
