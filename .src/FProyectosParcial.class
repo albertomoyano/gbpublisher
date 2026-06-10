@@ -1,20 +1,24 @@
 ' Gambas class file
 
-' EL TABLEVIEW DEBE MOSTRAR LOS PROYECTOS ORDENADOS:
-' PRIMERO LOS QUE SE ENCUENTRAN ABIERTOS INDICANDO USUARIO QUE LO POSEE
-' SEGUNDO LOS PROYECTOS ACTIVOS
-
+' ============================================
+' Función   : Form_Open
+' Propósito : Carga la lista de proyectos activos en TableViewModoParcial,
+'             configurando columnas, ancho, encabezados, y coloreando la
+'             columna "Ocupado" según el estado.
+' Parámetros: (Evento de formulario, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub Form_Open()
 
   Dim rs As Result
   Dim sSQL As String
   Dim i As Integer
-  ' CONFIGURAR EL TABLEVIEW
+
+  ' --- 1. CONFIGURACIÓN DEL TABLEVIEW ---
   With TableViewModoParcial
     .Clear
     .Rows.Count = 0
     .Columns.Count = 8
-    ' DEFINIR ENCABEZADOS DE COLUMNAS
     .Columns[0].Title = "ID"
     .Columns[0].Width = 0
     .Columns[1].Title = "Proyecto"
@@ -31,88 +35,103 @@ Public Sub Form_Open()
     .Columns[6].Width = 0
     .Columns[7].Title = "Usuario"
     .Columns[7].Width = 300
-    ' OPCIONAL: MÁS PROPIEDADES DEL TABLEVIEW
-    .Mode = Select.Single  ' Selección simple
-    .Header = True         ' Mostrar encabezados
+    .Mode = Select.Single
+    .Header = True
   End With
-  ' Consulta: solo proyectos activos
+
+  ' --- 2. CONSULTAR PROYECTOS ACTIVOS EN BD ---
   sSQL = "SELECT * FROM proyectos WHERE activo = 1"
-  rs = m_ConexionBD.mConn.Exec(sSQL)
-
-  If rs.Available Then
-    TableViewModoParcial.Rows.Count = rs.Count
-    ' LLENAR EL TABLEVIEW CON LOS DATOS
-    i = 0
-    For Each rs
-      TableViewModoParcial[i, 0].Text = rs["id"]
-      TableViewModoParcial[i, 1].Text = rs["nombre"]
-      TableViewModoParcial[i, 2].Text = rs["activo"]
-      TableViewModoParcial[i, 7].Text = rs["usuario_propietario"]
-
-      ' COLUMNA "TIPO" CON TEXTO SEGÚN EL VALOR
-      Select Case rs["tipo_producto"]
-        Case 1
-          TableViewModoParcial[i, 4].Text = "Revista en markdown"
-        Case 2
-          TableViewModoParcial[i, 4].Text = "Libro en markdown"
-        Case 3
-          TableViewModoParcial[i, 4].Text = "Libro en LaTeX"
-        Default
-          TableViewModoParcial[i, 4].Text = "Desconocido"
-      End Select
-
-      ' COLUMNA "OCUPADO" CON COLOR
-      If rs["ocupado"] = True Or rs["ocupado"] = 1 Then
-        TableViewModoParcial[i, 3].Text = "SÍ"
-        TableViewModoParcial[i, 3].Background = Color.RGB(255, 200, 200)  ' Rojo suave
-      Else
-        TableViewModoParcial[i, 3].Text = "NO"
-        TableViewModoParcial[i, 3].Background = Color.RGB(200, 255, 200)  ' Verde suave
-      Endif
-      i += 1
-    Next
-  End If
-Catch
-  Message.Error("Error al obtener los proyectos activos: " & Error.Text)
-
-End
-
-' FLAG PARA PERMITIR EL CIERRE DESDE EL BOTÓN
-Private bCierrePermitido As Boolean
-
-Public Sub btnCerrar_Click()
-  ' HABILITAR EL CIERRE Y CERRAR
-
-  bCierrePermitido = True
-  Me.Close()
-
-End
-
-Public Sub Form_Close()
-  ' SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO
-
-  If bCierrePermitido Then Return
-  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
-  m_Sonido.sonar("info")
-  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
-  Stop Event
-
-End
-
-' BOTON QUE ABRE EL ARCHIVO SELECCIONADO EN EL GRID
-Public Sub ButtonAbrirParcial_Click()
-
-  ' VERIFICAR SI EL USUARIO TIENE UN PROYECTO COMPLETO OCUPADO
-  Dim rsCheck As Result
-
-  rsCheck = m_ConexionBD.mConn.Exec("SELECT id FROM proyectos WHERE usuario_propietario = &1 AND ocupado = 1", m_InicioCierre.UsuarioEnCurso)
-  If rsCheck.Available Then
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE id = &1", FMain.id_proyecto.Value)
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE id = &1", FMain.id_proyecto.Value)
-    m_ConexionBD.mConn.Commit
+  Try rs = m_ConexionBD.mConn.Exec(sSQL)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron obtener los proyectos activos:" & gb.NewLine & Error.Text)
+    Return
   Endif
 
-  ' DETENER TERMINAL SI QUEDÓ ACTIVA DE UN MODO COMPLETO ANTERIOR
+  If Not rs.Available Then Return
+
+  ' --- 3. LLENAR FILAS DEL TABLEVIEW ---
+  TableViewModoParcial.Rows.Count = rs.Count
+  i = 0
+  For Each rs
+
+    ' DATOS BÁSICOS DE LA FILA
+    TableViewModoParcial[i, 0].Text = rs["id"]
+    TableViewModoParcial[i, 1].Text = rs["nombre"]
+    TableViewModoParcial[i, 2].Text = rs["activo"]
+    TableViewModoParcial[i, 7].Text = rs["usuario_propietario"]
+
+    ' TIPO DE PROYECTO — USAR CONSTANTES DE m_Constantes, NO VALORES HARDCODED
+    Select Case rs["tipo_producto"]
+      Case m_Constantes.TIPO_REVISTA_MD
+        TableViewModoParcial[i, 4].Text = "Revista en Markdown"
+      Case m_Constantes.TIPO_LIBRO_MD
+        TableViewModoParcial[i, 4].Text = "Libro en Markdown"
+      Case m_Constantes.TIPO_LIBRO_LATEX
+        TableViewModoParcial[i, 4].Text = "Libro en LaTeX"
+      Default
+        TableViewModoParcial[i, 4].Text = "Desconocido"
+    End Select
+
+    ' ESTADO "OCUPADO" CON COLOR
+    ' RC-GM-01: TINYINT(1) DE MySQL ES Boolean EN GAMBAS, COMPARACIÓN DIRECTA
+    If rs["ocupado"] Then
+      TableViewModoParcial[i, 3].Text = "SÍ"
+      TableViewModoParcial[i, 3].Background = Color.RGB(255, 200, 200)
+    Else
+      TableViewModoParcial[i, 3].Text = "NO"
+      TableViewModoParcial[i, 3].Background = Color.RGB(200, 255, 200)
+    Endif
+
+    i += 1
+  Next
+
+End
+
+' ============================================
+' Función   : ButtonAbrirParcial_Click
+' Propósito : Abre el proyecto seleccionado en TableViewModoParcial en modo
+'             parcial (solo BBDD, sin editor). Antes libera cualquier proyecto
+'             completo previo del usuario y limpia recursos asociados.
+' Parámetros: (Evento de botón, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ButtonAbrirParcial_Click()
+
+  Dim fila As Integer
+  Dim idProyecto As Integer
+  Dim nombreProyecto As String
+  Dim tipoProyecto As Integer
+  Dim sSQL As String
+  Dim rs As Result
+
+  ' --- 1. VALIDAR SELECCIÓN EN EL TABLEVIEW ---
+  fila = TableViewModoParcial.Row
+  If fila < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un proyecto de la lista.")
+    Return
+  Endif
+
+  ' --- 2. LIBERAR PROYECTOS COMPLETOS PREVIOS DEL USUARIO EN BD ---
+  ' SE LIBERAN TODOS LOS PROYECTOS DEL USUARIO QUE ESTÉN OCUPADOS,
+  ' EN UNA SOLA SENTENCIA ATÓMICA. ASÍ SE CUBREN INCONSISTENCIAS
+  ' DONDE FMain.id_proyecto.Value PUDIERA NO COINCIDIR CON EL REAL
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE proyectos SET usuario_propietario = NULL, ocupado = 0 WHERE usuario_propietario = &1 AND ocupado = 1",
+    m_InicioCierre.UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo liberar el proyecto completo anterior:" & gb.NewLine &
+      Error.Text & gb.NewLine & gb.NewLine &
+      "La apertura en modo parcial continúa, pero verificá el estado en BD al cerrar.")
+  Else
+    Try m_ConexionBD.mConn.Commit
+  Endif
+
+  ' --- 3. DETENER LA TERMINAL DE BASH DEL MODO COMPLETO PREVIO ---
+  ' NOTA: ACCESO A VARIABLE PRIVADA FMain.$Bash. DEUDA TÉCNICA — MOVER
+  ' ESTA LÓGICA A UNA FUNCIÓN PÚBLICA EN FMain (DetenerBashEnCurso)
   If FMain.$Bash Then
     If Object.IsValid(FMain.$Bash) Then
       If FMain.$Bash.State = Process.Running Then
@@ -123,29 +142,18 @@ Public Sub ButtonAbrirParcial_Click()
     FMain.$Bash = Null
   Endif
 
-  Dim fila As Integer
-  Dim idProyecto As Integer
-  Dim nombreProyecto As String
-  Dim tipoProyecto As Integer
-  Dim sSQL As String
-  Dim rs As Result
-  Dim sRutaEnBD As String
-
-  ' VALIDAR SELECCIÓN EN EL TABLEVIEW
-  fila = TableViewModoParcial.Row
-  If fila < 0 Then
-    Message.Warning("Debe seleccionar un proyecto de la lista.")
+  ' --- 4. LEER EL REGISTRO COMPLETO DEL PROYECTO ELEGIDO ---
+  idProyecto = Val(TableViewModoParcial[fila, 0].Text)
+  sSQL = "SELECT * FROM proyectos WHERE id = &1"
+  Try rs = m_ConexionBD.mConn.Exec(sSQL, idProyecto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo recuperar el proyecto desde la base de datos:" & gb.NewLine & Error.Text)
     Return
   Endif
 
-  idProyecto = Val(TableViewModoParcial[fila, 0].Text)
-  nombreProyecto = TableViewModoParcial[fila, 1].Text
-
-  ' LEER REGISTRO COMPLETO DESDE LA BD
-  sSQL = "SELECT * FROM proyectos WHERE id = &1"
-  rs = m_ConexionBD.mConn.Exec(sSQL, idProyecto)
-
   If Not rs.Available Then
+    m_Sonido.sonar("Error")
     Message.Error("No se pudo recuperar el proyecto desde la base de datos.")
     Return
   Endif
@@ -154,57 +162,87 @@ Public Sub ButtonAbrirParcial_Click()
   nombreProyecto = rs["nombre"]
   idProyecto = rs["id"]
 
-  ' VALIDAR QUE ESTÉ ACTIVO
+  ' --- 5. VALIDAR QUE EL PROYECTO ESTÉ ACTIVO (RC-GM-01) ---
   If Not rs["activo"] Then
-    Message.Warning("El proyecto está archivado. Debe activarlo antes de trabajar.")
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto '" & nombreProyecto & "' está archivado." & gb.NewLine &
+      "Debe activarlo antes de trabajar.")
     Return
   Endif
 
-  ' MOSTRAR NOMBRE e ID EN EL FORMULARIO PRINCIPAL
+  ' --- 6. ACTUALIZAR EL ESTADO EN EL FORMULARIO PRINCIPAL ---
   FMain.txtProyecto.Text = nombreProyecto
   FMain.id_proyecto.Value = idProyecto
 
-  ' LIMPIAR CACHÉ O ENTORNO PREVIO
-  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-
-  ' LIMPIAMOS LOS FORMULARIOS
+  ' --- 7. LIMPIAR FORMULARIOS DE BIBTEX Y SIGLAS ---
+  ' (LA LIMPIEZA DE CACHÉ EN ~/.local/share/org.gambas.* ERA RESIDUO DE LA
+  ' ETAPA gtk; YA NO APLICA CON qt5 Y LA CARPETA TARGET NO EXISTE)
   m_Bibtex.LimpiarTextboxBibtex()
   m_Siglas.LimpiarTextboxSigla()
 
-  ' CARGAMOS LOS METADATOS SEGÚN TIPO DE PROYECTO
-  If tipoProyecto = m_Constantes.TIPO_REVISTA_MD Then
-    m_Metadatos.CargarMetadatosDeRevista
-    FMain.PictureBox9.Visible = False ' icono del menú de salidas
-    FMain.PictureBox12.Visible = False ' icono del menú de salidas
-  Else
-    ' m_Metadatos.CargarMetadatosDeLibro
-    FMain.PictureBox9.Visible = False ' icono del menú de salidas
-    FMain.PictureBox12.Visible = False ' icono del menú de salidas
-  Endif
+  ' --- 8. CARGAR METADATOS SEGÚN TIPO DE PROYECTO ---
+  Select Case tipoProyecto
+    Case m_Constantes.TIPO_REVISTA_MD
+      m_Metadatos.CargarMetadatosDeRevista
+    Case m_Constantes.TIPO_LIBRO_MD
+      ' TODO: IMPLEMENTAR m_Metadatos.CargarMetadatosDeLibro CUANDO ESTÉ LISTO
+  End Select
+  FMain.PictureBox9.Visible = False
+  FMain.PictureBox12.Visible = False
 
-  ' CARGAMOS LAS REFERENCIAS BIBTEX
+  ' --- 9. CARGAR REFERENCIAS BIBTEX E INICIAR CONTADOR ---
   m_Bibtex.ConfigurarTableViewBibtexEnCurso(FMain.gvReferenciasEnCurso)
   m_Bibtex.IniciarBibtex
+  m_Timer.IniciarContadorReloj(idProyecto)
 
-  ' ARRANCAMOS EL CONTADOR
-  m_Timer.IniciarContadorReloj(rs["id"])
-
-  ' MARCAR QUE SE ABRIÓ EN MODO PARCIAL
+  ' --- 10. MARCAR MODO PARCIAL Y CONFIGURAR VISIBILIDAD DE PANELES ---
   FMain.ValueBoxParcial.Value = 1
-
   FMain.SplitterPrincipal.Visible = True
   FMain.PanelEditorPrincipal.Visible = True
   FMain.Splitter1.Visible = False
   FMain.PanelPrincipalDerecho.Visible = True
   FMain.MenuButtonSalidas.Visible = False
   FMain.SpringTemporal.Visible = False
-  '
-  ' ALTERNAMOS BOTONES SEGÚN TIPO DE PROYECTO
+
+  ' --- 11. CONFIGURAR BOTONES SEGÚN TIPO DE PROYECTO ---
   m_FuncionesGenericas.BotonesLibroRevista(tipoProyecto = m_Constantes.TIPO_REVISTA_MD)
 
+  ' --- 12. FEEDBACK Y CIERRE DEL FORMULARIO ---
+  ' SOLO SONIDO COMO FEEDBACK DE ÉXITO. EL MENSAJE MODAL ANTERIOR ERA REDUNDANTE
   m_Sonido.sonar("Info")
-  Message.Info("Proyecto <b>'" & nombreProyecto & "'</b> abierto en modo parcial.")
-
+  bCierrePermitido = True
   Me.Close
+
+End
+
+' --- BANDERA QUE PERMITE EL CIERRE DESDE EL BOTÓN Y BLOQUEA EL CIERRE
+' --- DESDE LA X DEL SISTEMA. PATRÓN CANÓNICO DEL PROYECTO ---
+Private bCierrePermitido As Boolean
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Habilita el flag de cierre permitido y cierra el formulario.
+' ============================================
+Public Sub btnCerrar_Click()
+
+  bCierrePermitido = True
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Si el cierre viene del botón, permitirlo. Si viene de la X
+'             del sistema, bloquearlo e informar al usuario.
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO ---
+  If bCierrePermitido Then Return
+
+  ' --- 2. SI VIENE DE LA X DEL SISTEMA, BLOQUEAR Y AVISAR ---
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+  Stop Event
 
 End
