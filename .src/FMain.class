@@ -11,7 +11,12 @@ Public NombreProyecto As String
 Public RutaProyecto As String
 Public ProyectoActualCompleto As String
 Public sRutaArchivoAbierto As String
-Public sContenidoOriginal As String  ' PARA COMPARAR SI HUBO CAMBIOS
+' PARA COMPARAR SI HUBO CAMBIOS
+Public sContenidoOriginal As String
+' --- BANDERA QUE INDICA QUE SE ESTÁ ABRIENDO UN PROYECTO NUEVO ---
+' SUPRIME LA VERIFICACIÓN DE CAMBIOS SIN GUARDAR EN cmbArticulosRevista_Click
+' MIENTRAS DURA LA APERTURA, PORQUE EL GUARD YA SE EVALUÓ AL INICIO DE AbrirProyecto
+Public bAbriendoProyecto As Boolean = False
 
 Public Sub Form_Open()
 
@@ -1088,36 +1093,65 @@ Public Sub ComboBoxArticuloAsociadoEnbibtex_Click()
 
 End
 
+' ============================================
+' Función   : btnGuardarCambiosEditor_Click
+' Propósito : Persiste el contenido del editor al archivo abierto, refresca
+'             el snapshot de contenido original, extrae las referencias
+'             citadas a la base de datos, actualiza el grid de comentarios
+'             y deja el foco en el editor para continuar la edición.
+' Parámetros: (Evento de botón, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub btnGuardarCambiosEditor_Click()
 
+  Dim sContenidoActual As String
+
+  ' --- 1. VALIDACIÓN DE ARCHIVO ABIERTO ---
+  ' SE REQUIERE UNA RUTA NO VACÍA Y QUE EL ARCHIVO EXISTA EN DISCO
   If sRutaArchivoAbierto = "" Or Not Exist(sRutaArchivoAbierto) Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay un archivo válido cargado para guardar.")
     Return
   Endif
 
-  ' INTENTAR GUARDAR
-  Try File.Save(sRutaArchivoAbierto, txtEditorProyecto.Text)
+  ' --- 2. GUARDAR EN DISCO ---
+  ' SE CAPTURA EL CONTENIDO UNA SOLA VEZ PARA EVITAR LECTURAS REDUNDANTES
+  ' DEL EDITOR EN LOS PASOS POSTERIORES
+  sContenidoActual = txtEditorProyecto.Text
+  Try File.Save(sRutaArchivoAbierto, sContenidoActual)
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("Error al guardar el archivo: " & Error.Text)
-    Error.Clear
     Return
   Endif
 
-  ' ACTUALIZAR EL CONTENIDO ORIGINAL DESPUÉS DE GUARDAR
-  sContenidoOriginal = txtEditorProyecto.Text
+  ' --- 3. ACTUALIZAR SNAPSHOT DE CONTENIDO ORIGINAL ---
+  ' ESTE SNAPSHOT SE USA PARA DETECTAR CAMBIOS NO GUARDADOS EN COMPARACIONES POSTERIORES
+  sContenidoOriginal = sContenidoActual
 
-  ' EXTRAER Y GUARDAR REFERENCIAS CITADAS EN LA BD (SOLO PARA ARTÍCULOS)
-  m_Bibtex.ExtraerYGuardarReferenciasDelArticulo(txtEditorProyecto.Text, sRutaArchivoAbierto)
+  ' --- 4. EXTRAER REFERENCIAS Y REFRESCAR GRID DE COMENTARIOS ---
+  ' SON PROCESOS DE VALOR AGREGADO: SI FALLAN, EL ARCHIVO YA ESTÁ EN DISCO,
+  ' POR LO QUE SE INFORMA AL USUARIO PERO NO SE ABORTA LA FUNCIÓN
+  Try m_Bibtex.ExtraerYGuardarReferenciasDelArticulo(sContenidoActual, sRutaArchivoAbierto)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El archivo se guardó, pero falló la extracción de referencias:" & gb.NewLine & Error.Text)
+  Endif
 
-  ' ACTUALIZAR EL LISTADO DE MARCAS
-  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
+  Try m_GestorComentarios.ActualizarGridComentarios(gvComentarios, sContenidoActual)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El archivo se guardó, pero falló la actualización del grid de comentarios:" & gb.NewLine & Error.Text)
+  Endif
+
+  ' --- 5. FEEDBACK AL USUARIO Y ACTUALIZACIÓN DE CONTADOR DE LÍNEAS ---
   m_Sonido.sonar("Info")
-  Message.Info("Archivo guardado correctamente.")
-
-  ' ACTUALIZAMOS EL CONTEO DE LINEAS
   ActualizarContadorLineas()
+
+  ' --- 6. RESTAURAR FOCO EN EL EDITOR ---
+  ' EL CLICK EN EL BOTÓN Y EL Message.Info SUCESIVO QUITAN EL FOCO;
+  ' SE DEVUELVE AL EDITOR PARA QUE EL USUARIO PUEDA SEGUIR TIPEANDO
+  txtEditorProyecto.SetFocus()
 
 End
 
@@ -1138,43 +1172,6 @@ Public Sub menuAbrirLibroMD_Click()
 
   TipoProyectoActual = m_Constantes.TIPO_LIBRO_MD
   AbrirProyecto(m_Constantes.TIPO_LIBRO_MD)
-
-End
-
-Public Sub AbrirProyecto(nTipoProyecto As Integer)
-
-  Select Case nTipoProyecto
-    Case m_Constantes.TIPO_REVISTA_MD
-      Dialog.Title = "Abrir proyecto en Markdown"
-      Dialog.Filter = ["r-*.md", "Markdown"]
-    Case m_Constantes.TIPO_LIBRO_MD
-      Dialog.Title = "Abrir libro (Markdown)"
-      Dialog.Filter = ["l-*.md", "Libro en Markdown"]
-    Case m_Constantes.TIPO_LIBRO_LATEX
-      Dialog.Title = "Abrir proyecto en LaTeX"
-      Dialog.Filter = ["l-*.tex", "LaTeX"]
-  End Select
-
-  m_Sonido.sonar("Info")
-
-  ' IMPORTANTE: NO CAMBIAR EXTENSIONES AUTOMÁTICAMENTE
-  Dialog.AutoExt = False
-  Dialog.Path = User.Home
-
-  If Dialog.OpenFile() Then Return
-
-  ' GUARDAMOS EL TIPO DE PROYECTO PARA USAR EN OTRAS CONDICIONES
-  TipoProyectoActual = nTipoProyecto
-
-  ' LLAMAMOS A LA FUNCIÓN CORRESPONDIENTE SEGÚN EL TIPO
-  Select Case nTipoProyecto
-    Case m_Constantes.TIPO_REVISTA_MD
-      AbrirRevistaMD()
-    Case m_Constantes.TIPO_LIBRO_MD
-      AbrirLibroMD()
-    Case m_Constantes.TIPO_LIBRO_LATEX
-      AbrirLibroTEX()
-  End Select
 
 End
 
@@ -1226,255 +1223,6 @@ Public Sub InicializarTerminalProyecto(sRutaDirectorio As String)
   ' --- 3. POSICIONAR EN EL DIRECTORIO DEL PROYECTO ---
   TerminalViewProyecto.Input("cd " & Quote$(sRutaDirectorio) & "\n")
   TerminalViewProyecto.Input("clear\n")
-
-End
-
-Public Sub AbrirRevistaMD()
-
-  Dim sRutaSeleccionada As String = Dialog.Path
-
-  If sRutaSeleccionada = "" Then
-    Return
-  Endif
-
-  ' ASIGNAMOS EL NOMBRE Y RUTA DEL PROYECTO A LAS VARIABLES GLOBALES
-  NombreProyecto = File.Name(sRutaSeleccionada)
-  RutaProyecto = File.Dir(sRutaSeleccionada)
-
-  Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
-  Dim sNombreArchivo As String = LCase(File.Name(sRutaSeleccionada))
-
-  ' DETERMINAR TIPO SEGÚN NORMAS: r- (revista .md), l- (libro .md/.tex)
-  Dim iTipoSeleccionado As Integer = -1
-
-  Select Case True
-    Case Left(sNombreArchivo, 2) = "r-" And sExtension = "md"
-      iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
-
-    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "md"
-      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD
-
-    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
-      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_TEX
-
-    Case Else
-      m_Sonido.sonar("Error")
-      Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine &
-        "Formatos válidos:" & gb.NewLine &
-        "• Revista Markdown: r-nombre.md" & gb.NewLine &
-        "• Libro Markdown: l-nombre.md" & gb.NewLine &
-        "• Libro LaTeX: l-nombre.tex" & gb.NewLine &
-        "Archivo recibido: " & sNombreArchivo)
-      Return
-  End Select
-
-  ' BUSCAR EN LA BBDD SI EL PROYECTO QUE VAMOS A ABRIR EXISTE
-  Dim sSQL As String = "SELECT * FROM proyectos WHERE nombre = &1"
-  Dim Contenido As Result = m_ConexionBD.mConn.Exec(sSQL, NombreProyecto)
-  Dim nuevoID As Integer
-
-  ' LIBERAR PROYECTO QUE ESTA ABIERTO
-  If NombreProyecto <> "" Then
-    ' *** DETENER EL TIMER DE ARCHIVOS ANTES DE LIBERAR ***
-    DetenerTimerArchivosProyecto()
-
-    Dim sProyectoEnCurso As String = File.Name(txtProyecto.Text)
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoEnCurso)
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE nombre = &1", sProyectoEnCurso)
-    m_ConexionBD.mConn.Commit
-    m_Timer.DetenerContador()
-  Endif
-
-  If Contenido.Available Then
-    ' VALIDACIONES SOBRE EL REGISTRO EXISTENTE
-    Dim iTipoBD As Integer = Contenido["tipo_producto"]
-
-    ' 1) COINCIDENCIA DE TIPO
-    If iTipoBD <> iTipoSeleccionado Then
-      m_Sonido.sonar("Error")
-      Message.Error("El tipo de archivo no coincide con el tipo registrado en la base de datos." & gb.NewLine &
-        "Se esperaba: " & ObtenerDescripcionTipo(iTipoSeleccionado) & gb.NewLine &
-        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
-      Return
-    Endif
-
-    ' 2) ACTIVO? (0 ES FALSE Y 1 ES TRUE)
-    If Not Contenido["activo"] Then
-      m_Sonido.sonar("Warning")
-      Message.Warning("El proyecto '" & NombreProyecto & "' está archivado." & gb.NewLine &
-        "Debe solicitar al editor que lo reactive para poder abrirlo.")
-      Return
-    Endif
-
-    ' 3) NO OCUPADO?
-    If Contenido["ocupado"] Then
-      m_Sonido.sonar("Warning")
-      Message.Warning("El proyecto '" & NombreProyecto & "' está ocupado en otra máquina." & gb.NewLine &
-        "Lo puede abrir en modo parcial o espere a que se libere.")
-      Return
-    Endif
-
-    nuevoID = Contenido["id"]
-    m_Sonido.sonar("Info")
-    Message.Info("Proyecto encontrado en la base de datos y listo para abrir.")
-  Else
-    ' NO EXISTE: CREAR REGISTRO NUEVO (MySQL)
-    m_ConexionBD.mConn.Exec("INSERT INTO proyectos (nombre, tipo_producto, usuario_propietario, activo, ocupado) VALUES (&1, &2, &3, 1, 0)",
-      NombreProyecto, iTipoSeleccionado, m_InicioCierre.UsuarioEnCurso)
-
-    ' OBTENER LAST_INSERT_ID() EN MYSQL
-    Dim rLast As Result = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
-    If rLast.Available Then
-      nuevoID = rLast[0]
-    Else
-      ' FALLBACK: SI NO PODEMOS RECUPERAR EL ID, AVISAR Y ABORTAR
-      m_ConexionBD.mConn.Rollback
-      m_Sonido.sonar("Error")
-      Message.Error("No se pudo obtener el ID del proyecto insertado. Abortando apertura.")
-      Return
-    Endif
-
-    m_ConexionBD.mConn.Commit
-    m_Sonido.sonar("Info")
-    Message.Info("Proyecto nuevo registrado en la base de datos.")
-  Endif
-
-  ' INICIALIZAR TODAS LAS TABLAS RELACIONADAS CON EL PROYECTO
-  m_FuncionesGenericas.InicializarTablasProyecto(nuevoID)
-
-  ' MARCAR NUEVO PROYECTO COMO OCUPADO
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 1 WHERE id = &1", nuevoID)
-  m_ConexionBD.mConn.Commit
-
-  ' MARCAR PROYECTO CON PROPIETARIO
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = &1 WHERE id = &2", m_InicioCierre.UsuarioEnCurso, nuevoID)
-  m_ConexionBD.mConn.Commit
-
-  ' ACTUALIZAR RUTA DEL PROYECTO
-  txtProyecto.Text = sRutaSeleccionada
-
-  ' MOSTRAR / OCULTAR BARRA DE MENUES
-  HBoxGuardarTextArea.Visible = True
-  HBoxBotones.Visible = True
-  PanelXML.Visible = True
-  SplitterPrincipal.Visible = True
-
-  ' LIMPIAMOS LOS FORMULARIOS
-  m_Bibtex.LimpiarTextboxBibtex()
-  m_Siglas.LimpiarTextboxSigla()
-
-  ' LIMPIAR CACHÉ O ENTORNO PREVIO
-  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-
-  ' CONTROLOMANOS EXISTAN LOS ARCHIVOS BASE PARA UN PROYECTO
-  m_FuncionesGenericas.CopiarArchivosBase_MD()
-
-  ' MOSTRAR EL ID DEL PROYECTO
-  id_proyecto.Value = nuevoID
-  id_revista.Value = m_XML.ObtenerIdRevista(id_proyecto.Value)
-  ' CARGAMOS LOS SCRIPTS PARA MANIPULAR CON LOS *.md
-  m_InicioCierre.CargarScripts()
-
-  ' CARGAMOS LOS METADATOS DE LA REVISTA
-  m_Metadatos.CargarMetadatosDeRevista
-
-  ' CARGAMOS LAS REFERENCIAS BIBTEX
-  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-  m_Bibtex.IniciarBibtex()
-
-  ' CARGAMOS LAS SIGLAS
-  m_Siglas.ConfigurarTableViewGlosarioEnCurso(FSiglas.gvSiglasEnCurso)
-  m_Siglas.IniciarSiglas()
-
-  ' ARRANCAMOS EL CONTADOR
-  m_Timer.IniciarContadorReloj(id_proyecto.Value)
-
-  ' MARCAR QUE SE ABRIÓ EN MODO completo
-  FMain.ValueBoxParcial.Value = 0
-
-  ' CARGAR LISTA DE ARTÍCULOS EN EL COMBOBOX
-  CargarListaArticulosMD()
-  IniciarTimerArchivosProyecto()
-
-  ' CARGAR LISTA DE ARCHIVOS MDL EN EL COMBOBOX DEL FRONT y BACK MATTER
-  m_ComboBox.CargarTodosLosComboBox()
-  IniciarTimerArchivosXML()
-
-  ' CARGAR EL PRIMER ARCHIVO XML O LIMPIAR EDITOR SI NO HAY ARCHIVOS
-  If cmbArchivosXML.Count > 0 Then
-    cmbArchivosXML.Index = 0
-    cmbArchivosXML_Click()  ' EJECUTAR LA FUNCIÓN QUE CARGA EL CONTENIDO
-    txtEditorXML.ReadOnly = True
-    txtEditorXML.Enabled = True
-  Else
-    txtEditorXML.Clear()
-    txtEditorXML.ReadOnly = True
-    txtEditorXML.Enabled = False
-  Endif
-
-  ' CARGAMOS EL ARCHIVO DEL PROYECTO EN EL EDITOR
-  txtEditorProyecto.Text = File.Load(sRutaSeleccionada)
-  txtEditorProyecto.ReadOnly = False
-  txtEditorProyecto.Enabled = True
-
-  ' GUARDAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
-  sRutaArchivoAbierto = sRutaSeleccionada
-  sContenidoOriginal = txtEditorProyecto.Text
-
-  ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
-  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
-
-  ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO
-  TabPanelIzquierdaInferior.Visible = False
-  HBoxBuscar.Visible = False
-
-  ' ACTUALIZAMOS EL CONTEO DE LINEAS
-  ActualizarContadorLineas()
-
-  ' HABILITAMOS EL PANEL INFERIOR
-  tbMostrarPanelInferior.Visible = True
-  tbMostrarPanelInferior.Value = False
-
-  ' MOSTRAR EL ID DE REVISTA
-  id_revista.Value = m_XML.ObtenerIdRevista(id_proyecto.Value)
-
-  ' MOSTRAMOS ARCHIVOS DE DIFERENTES SABORES Y SALIDAS
-  lbDOAJ.Clear
-  gvDOAJ.Clear
-  gvDOAJ.Refresh
-  m_XML.MostrarArchivosDOAJ()
-  lbCROSSREF.Clear
-  gvCROSSREF.Clear
-  gvCROSSREF.Refresh
-  m_XML.MostrarArchivosCrossref()
-  lbRedalyc.Clear
-  gvRedalyc.Clear
-  gvRedalyc.Refresh
-  m_XML.MostrarArchivosRedalyc()
-  lbLatex.Clear
-  gvLatex.Clear
-  gvLatex.Refresh
-  m_XML.MostrarArchivosLatex()
-  lbSciELO.Clear
-  gvSciELO.Clear
-  gvSciELO.Refresh
-  m_XML.MostrarArchivosScielo()
-
-  ' HABILITAMOS EL MENU DE SALIDAS
-  MenuButtonSalidas.Visible = True
-
-  ' anulamos en spring
-  SpringTemporal.Visible = False
-  FMain.Splitter1.Visible = True
-  FMain.MenuButtonSalidas.Menu = "menuSalidaRevistaMD"
-  FMain.PictureBox9.Visible = True ' icono del menú de salidas
-  FMain.PictureBox12.Visible = True ' icono del menú de salidas
-  m_FuncionesGenericas.BotonesLibroRevista(True)   ' MODO REVISTA
-  ' m_FuncionesGenericas.BotonesLibroRevista(False)  ' MODO LIBRO
-
-  ' ASEGURAMOS LA RUTA EN LA TERMINAL Y EN DirViewProyecto
-  InicializarTerminalProyecto(File.Dir(sRutaSeleccionada))
-  FMain.DirViewProyecto.Root = File.Dir(sRutaSeleccionada)
 
 End
 
@@ -1566,106 +1314,6 @@ Public Sub CargarListaArticulosMD(Optional bPreservarSeleccion As Boolean = Fals
 
 End
 
-' MANEJA LA SELECCIÓN DE ARCHIVOS MARKDOWN DEL COMBOBOX
-' VERIFICA CAMBIOS SIN GUARDAR ANTES DE CAMBIAR DE ARCHIVO
-' CARGA EL CONTENIDO DEL ARCHIVO SELECCIONADO EN EL EDITOR
-Public Sub cmbArticulosRevista_Click()
-
-  Dim sArchivoSeleccionado As String
-  Dim sRutaCompleta As String
-  Dim sContenido As String
-  Dim iRespuesta As Integer
-
-  ' VERIFICAR QUE HAY ALGO SELECCIONADO
-  If cmbArticulosRevista.Index = -1 Then Return
-
-  ' OBTENER EL ARCHIVO SELECCIONADO
-  sArchivoSeleccionado = cmbArticulosRevista.Text
-  If sArchivoSeleccionado = "" Then Return
-
-  ' VERIFICAR SI HAY CAMBIOS SIN GUARDAR
-  If sRutaArchivoAbierto <> "" Then
-    If txtEditorProyecto.Text <> sContenidoOriginal Then
-      m_Sonido.sonar("Warning")
-      iRespuesta = Message.Question("Hay cambios sin guardar en el archivo actual." & gb.NewLine &
-        "¿Desea guardar los cambios antes de continuar?",
-        "Sí", "No", "Cancelar")
-      Select Case iRespuesta
-        Case 1  ' SÍ - GUARDAR
-          btnGuardarCambiosEditor_Click()
-        Case 2  ' NO - CONTINUAR SIN GUARDAR
-          ' NO HACER NADA, CONTINUAR
-        Case 3, 0  ' CANCELAR O CERRAR DIÁLOGO
-          Return
-      End Select
-    Endif
-  Endif
-
-  ' DETERMINAR LA RUTA COMPLETA SEGÚN LA SELECCIÓN
-  If cmbArticulosRevista.Index = 0 Then
-    ' ES EL ARCHIVO PRINCIPAL DEL PROYECTO
-    sRutaCompleta = txtProyecto.Text
-  Else
-    ' ES UN ARCHIVO DE ALGUNA DE LAS SUBCARPETAS
-    ' EL TEXTO YA INCLUYE LA RUTA RELATIVA (front-matter/, articulos/, back-matter/)
-    sRutaCompleta = RutaProyecto &/ sArchivoSeleccionado
-  Endif
-
-  ' VERIFICAR QUE EL ARCHIVO EXISTE
-  If Not Exist(sRutaCompleta) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo no existe:" & gb.NewLine & sRutaCompleta)
-    Return
-  Endif
-
-  ' CARGAR EL CONTENIDO EN EL EDITOR
-  Try sContenido = File.Load(sRutaCompleta)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al cargar el archivo:" & gb.NewLine & Error.Text)
-    Return
-  Endif
-
-  If sContenido Then
-    txtEditorProyecto.Text = sContenido
-    ' ACTUALIZAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
-    sRutaArchivoAbierto = sRutaCompleta
-    sContenidoOriginal = sContenido
-  Else
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo cargar el contenido del archivo")
-  Endif
-
-  ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
-  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
-
-  ' ACTUALIZAMOS EL CONTEO DE LINEAS
-  ActualizarContadorLineas()
-
-  ' ====================================================
-  ' ACTUALIZAR id_articulo SEGÚN EL ARCHIVO SELECCIONADO
-  ' SOLO PARA ARCHIVOS DE LA CARPETA articulos/ (prefijo a-)
-  ' ====================================================
-  id_articulo.Value = 0
-
-  If Left(sArchivoSeleccionado, 10) = "articulos/" Then
-    Dim sNombreArchivo As String = File.BaseName(Mid(sArchivoSeleccionado, 11))
-    If Left(sNombreArchivo, 2) = "a-" Then
-      Dim hResult As Result
-      Try hResult = m_ConexionBD.mConn.Exec(
-        "SELECT id_articulo FROM articulos WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
-        sNombreArchivo,
-        id_proyecto.Value)
-      If Not Error Then
-        If hResult.Available Then
-          id_articulo.Value = hResult["id_articulo"]
-        Endif
-      Endif
-    Endif
-  Endif
-
-End
-
 Public Sub AbrirLibroTEX()
 
   Dim sRutaSeleccionada As String = Dialog.Path
@@ -1750,7 +1398,6 @@ Public Sub AbrirLibroTEX()
 
     nuevoID = Contenido["id"]
     m_Sonido.sonar("Info")
-    Message.Info("Proyecto encontrado en la base de datos y listo para abrir.")
   Else
     ' NO EXISTE: CREAR REGISTRO NUEVO (MySQL)
     m_ConexionBD.mConn.Exec("INSERT INTO proyectos (nombre, tipo_producto, activo, ocupado) VALUES (&1, &2, 1, 0)",
@@ -3063,27 +2710,6 @@ Public Sub TimerNotitas_Timer()
 
 End
 
-Public Sub AbrirFormularioModoMedia()
-
-  Dim rs As Result
-  Dim sSQL As String
-
-  ' VERIFICAR SI HAY PROYECTOS ACTIVOS ANTES DE ABRIR EL FORMULARIO
-  sSQL = "SELECT COUNT(*) as total FROM proyectos WHERE activo = 1"
-  rs = m_ConexionBD.mConn.Exec(sSQL)
-
-  If rs["total"] = 0 Then
-    Message.Info("No hay proyectos activos")
-    Return
-  End If
-
-  FProyectosParcial.ShowModal()
-
-Catch
-  Message.Error("Error al verificar proyectos: " & Error.Text)
-
-End
-
 Public Sub ButtonVerFunding_Click()
 
   FTXTextendido.OriginalTextBox = txtFundingStatement
@@ -3526,143 +3152,223 @@ Public Sub mERRORcomentario_Click()
 
 End
 
+' ============================================
+' Función   : AplicarMarcadorMarkdown
+' Propósito : Envuelve el texto seleccionado en el editor con un marcador
+'             Markdown (negrita, cursiva, etc.) tras validar la selección.
+' Parámetros: sMarcador As String  — secuencia que envuelve el texto
+'                                    (ej. "**" para Bold, "*" para Italic)
+'             sNombreFormato As String — etiqueta legible para los mensajes
+' Retorna   : nada
+' ============================================
+Private Sub AplicarMarcadorMarkdown(sMarcador As String, sNombreFormato As String)
+
+  Dim sTextoSeleccionado As String
+  Dim sNuevoTexto As String
+  Dim sDobleLF As String
+  Dim sDobleCRLF As String
+
+  ' --- 1. INICIALIZACIÓN DE CONSTANTES LOCALES ---
+  ' DEFINIMOS LOS PATRONES DE PÁRRAFO VACÍO PARA DETECTAR SELECCIONES MULTIPÁRRAFO
+  sDobleLF = Chr(10) & Chr(10)
+  sDobleCRLF = Chr(13) & Chr(10) & Chr(13) & Chr(10)
+
+  ' --- 2. VALIDACIÓN DE ENTRADA: HAY TEXTO SELECCIONADO ---
+  sTextoSeleccionado = txtEditorProyecto.SelectedText
+  If String.Len(sTextoSeleccionado) = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar texto para aplicar formato " & sNombreFormato & ".")
+    Return
+  Endif
+
+  ' --- 3. VALIDACIÓN DE ENTRADA: SELECCIÓN NO ATRAVIESA PÁRRAFOS ---
+  ' LOS MARCADORES MARKDOWN INLINE NO PUEDEN CRUZAR UN PÁRRAFO VACÍO
+  If (String.InStr(sTextoSeleccionado, sDobleLF) > 0) Or (String.InStr(sTextoSeleccionado, sDobleCRLF) > 0) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La selección contiene líneas vacías." & gb.NewLine &
+      "No se puede aplicar formato " & sNombreFormato & " a través de párrafos separados.")
+    Return
+  Endif
+
+  ' --- 4. APLICACIÓN DEL MARCADOR E INSERCIÓN ---
+  sNuevoTexto = sMarcador & sTextoSeleccionado & sMarcador
+  Try txtEditorProyecto.Insert(sNuevoTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo aplicar el formato " & sNombreFormato & "." & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. RESTAURAR FOCO EN EL EDITOR ---
+  ' EL CLICK EN EL BOTÓN TRANSFIRIÓ EL FOCO; LO DEVOLVEMOS AL EDITOR PARA QUE
+  ' EL CARET QUEDE TITILANDO AL FINAL DEL TEXTO RECIÉN INSERTADO
+  txtEditorProyecto.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnBold_Click
+' Propósito : Aplica formato Markdown de negrita (**texto**) a la selección.
+' ============================================
 Public Sub btnBold_Click()
 
-  Dim sTextoSeleccionado As String
-  Dim iInicio As Integer
-  Dim iLongitud As Integer
-  Dim sNuevoTexto As String
-
-  ' VALIDACIÓN 1: Verificar que hay texto seleccionado
-  If Not txtEditorProyecto.SelectedText
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar texto para aplicar formato Bold.")
-    Return
-  Endif
-
-  ' Obtener el texto seleccionado
-  sTextoSeleccionado = txtEditorProyecto.SelectedText
-
-  ' VALIDACIÓN 2: Verificar que no hay líneas vacías en la selección
-  If InStr(sTextoSeleccionado, "\n\n") > 0 Or
-      InStr(sTextoSeleccionado, "\r\n\r\n") > 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("La selección contiene líneas vacías." & gb.NewLine &
-      "No se puede aplicar formato Bold a través de párrafos separados.")
-    Return
-  Endif
-
-  ' GUARDAR POSICIÓN INICIAL DE LA SELECCIÓN
-  iInicio = txtEditorProyecto.Column
-  iLongitud = Len(sTextoSeleccionado)
-
-  ' APLICAR FORMATO BOLD
-  sNuevoTexto = "**" & sTextoSeleccionado & "**"
-
-  ' INSERTAR EL TEXTO FORMATEADO
-  txtEditorProyecto.Insert(sNuevoTexto)
+  AplicarMarcadorMarkdown("**", "Bold")
 
 End
 
+' ============================================
+' Función   : btnItalic_Click
+' Propósito : Aplica formato Markdown de cursiva (*texto*) a la selección.
+' ============================================
 Public Sub btnItalic_Click()
 
-  Dim sTextoSeleccionado As String
-  Dim iInicio As Integer
-  Dim iLongitud As Integer
-  Dim sNuevoTexto As String
-
-  ' VALIDACIÓN 1: VERIFICAR QUE HAY TEXTO SELECCIONADO
-  If Not txtEditorProyecto.SelectedText
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar texto para aplicar formato Italic.")
-    Return
-  Endif
-
-  ' OBTENER EL TEXTO SELECCIONADO
-  sTextoSeleccionado = txtEditorProyecto.SelectedText
-
-  ' VALIDACIÓN 2: VERIFICAR QUE NO HAY LÍNEAS VACÍAS EN LA SELECCIÓN
-  If InStr(sTextoSeleccionado, "\n\n") > 0 Or
-      InStr(sTextoSeleccionado, "\r\n\r\n") > 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("La selección contiene líneas vacías." & gb.NewLine &
-      "No se puede aplicar formato Italic a través de párrafos separados.")
-    Return
-  Endif
-
-  ' GUARDAR POSICIÓN INICIAL DE LA SELECCIÓN
-  iInicio = txtEditorProyecto.Column
-  iLongitud = Len(sTextoSeleccionado)
-
-  ' APLICAR FORMATO ITALIC
-  sNuevoTexto = "*" & sTextoSeleccionado & "*"
-
-  ' INSERTAR EL TEXTO FORMATEADO
-  txtEditorProyecto.Insert(sNuevoTexto)
+  AplicarMarcadorMarkdown("*", "Italic")
 
 End
 
+' ============================================
+' Función   : btnFootnote_Click
+' Propósito : Inserta una marca de footnote en la posición actual del cursor
+'             y agrega su definición correspondiente al final del archivo.
+'             Deja el placeholder seleccionado y el foco en el editor para
+'             que el usuario reemplace el texto al escribir.
+' Parámetros: (Evento de botón, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub btnFootnote_Click()
 
   Dim iNumeroFootnote As Integer
   Dim sMarcaFootnote As String
-  Dim sDefinicionFootnote As String
-  Dim iLineaOriginal As Integer
-  Dim iColumnaOriginal As Integer
-  ' Dim iUltimaLinea As Integer
-  ' Dim sUltimaLinea As String
+  Dim sPrefijoDef As String
+  Dim iLineaFinal As Integer
+  Dim iColumnaFinal As Integer
+  Dim iLineaInicio As Integer
+  Dim iColumnaInicio As Integer
+  Dim iLineaFin As Integer
+  Dim iColumnaFin As Integer
 
-  ' GUARDAR POSICIÓN ORIGINAL DEL CURSOR
-  iLineaOriginal = txtEditorProyecto.Line
-  iColumnaOriginal = txtEditorProyecto.Column
+  ' --- 1. CALCULAR EL SIGUIENTE NÚMERO DE FOOTNOTE ---
+  ' SE BUSCA EL MÁXIMO NÚMERO YA USADO Y SE SUMA 1, PARA EVITAR
+  ' COLISIONES SI EL USUARIO BORRA UNA NOTA INTERMEDIA
+  iNumeroFootnote = ObtenerSiguienteNumeroFootnote(txtEditorProyecto.Text)
 
-  ' Obtener el texto completo del editor
-  Dim sTextoCompleto As String = txtEditorProyecto.Text
-
-  ' CALCULAR EL SIGUIENTE NÚMERO DE FOOTNOTE
-  iNumeroFootnote = ContarFootnotes(sTextoCompleto) + 1
-
-  ' CREAR LA MARCA Y LA DEFINICIÓN
+  ' --- 2. CONSTRUIR MARCA Y PREFIJO DE LA DEFINICIÓN ---
+  ' SC-01: SEPARADORES Y COMILLAS COMO Chr(...), NUNCA COMO ESCAPES "\n"
   sMarcaFootnote = "[^" & CStr(iNumeroFootnote) & "]"
-  sDefinicionFootnote = "[^" & CStr(iNumeroFootnote) & "]: Texto del footnote aquí"
+  sPrefijoDef = sMarcaFootnote & ": "
 
-  ' INSERTAR LA MARCA EN LA POSICIÓN ACTUAL DEL CURSOR
-  txtEditorProyecto.Insert(sMarcaFootnote)
+  ' --- 3. INSERTAR LA MARCA EN LA POSICIÓN ACTUAL DEL CURSOR ---
+  ' Insert AVANZA EL CURSOR JUSTO DESPUÉS DEL TEXTO INSERTADO
+  Try txtEditorProyecto.Insert(sMarcaFootnote)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo insertar la marca del footnote." & gb.NewLine & Error.Text)
+    Return
+  Endif
 
-  ' AHORA IR AL FINAL ABSOLUTO DEL ARCHIVO
-  txtEditorProyecto.Text = txtEditorProyecto.Text & "\n\n" & sDefinicionFootnote
+  ' --- 4. POSICIONAR EL CURSOR AL FINAL DEL ARCHIVO ---
+  ' SE USA Goto EN LUGAR DE REASIGNAR .Text PARA EVITAR EL RESET A (0,0)
+  ' String.Len GARANTIZA CONTEO CORRECTO ANTE CARACTERES UTF-8 MULTIBYTE
+  iLineaFinal = txtEditorProyecto.Max
+  iColumnaFinal = String.Len(txtEditorProyecto[iLineaFinal].Text)
+  Try txtEditorProyecto.Goto(iColumnaFinal, iLineaFinal)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo posicionar el cursor al final del archivo." & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. INSERTAR SEPARADOR Y PREFIJO DE LA DEFINICIÓN ---
+  ' SE INSERTA EN DOS PASOS PARA PODER CAPTURAR LA POSICIÓN EXACTA
+  ' DEL INICIO DEL PLACEHOLDER DESDE EL PROPIO EDITOR
+  Try txtEditorProyecto.Insert(Chr(10) & Chr(10) & sPrefijoDef)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo insertar el prefijo de la definición." & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 6. CAPTURAR POSICIÓN DE INICIO DEL PLACEHOLDER ---
+  ' DESPUÉS DE INSERTAR EL PREFIJO, EL CURSOR ESTÁ DONDE EMPEZARÁ EL PLACEHOLDER
+  iLineaInicio = txtEditorProyecto.Line
+  iColumnaInicio = txtEditorProyecto.Column
+
+  ' --- 7. INSERTAR EL PLACEHOLDER Y CAPTURAR POSICIÓN FINAL ---
+  Try txtEditorProyecto.Insert(m_Constantes.FOOTNOTE_PLACEHOLDER)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo insertar el placeholder del footnote." & gb.NewLine & Error.Text)
+    Return
+  Endif
+  iLineaFin = txtEditorProyecto.Line
+  iColumnaFin = txtEditorProyecto.Column
+
+  ' --- 8. SELECCIONAR EL PLACEHOLDER PARA EDICIÓN INMEDIATA ---
+  ' FIRMA CONFIRMADA EN gb.form.editor:
+  '   Select(Column1, Line1, Column2, Line2)
+  ' MISMO ORDEN QUE Goto(Column, Line) — NO (Line, Column, ...)
+  Try txtEditorProyecto.Select(iColumnaInicio, iLineaInicio, iColumnaFin, iLineaFin)
+
+  ' --- 9. RESTAURAR FOCO EN EL EDITOR ---
+  ' EL CLICK EN EL BOTÓN TRANSFIRIÓ EL FOCO; LO DEVOLVEMOS AL EDITOR
+  ' PARA QUE LA SELECCIÓN SEA VISIBLE Y EDITABLE INMEDIATAMENTE
+  txtEditorProyecto.SetFocus()
 
 End
 
-' FUNCIÓN AUXILIAR PARA CONTAR FOOTNOTES EXISTENTES
-Private Function ContarFootnotes(sTexto As String) As Integer
+' ============================================
+' Función   : ObtenerSiguienteNumeroFootnote
+' Propósito : Recorre el texto buscando todas las marcas [^N] y devuelve
+'             el siguiente número disponible (máximo + 1). Inmune a borrados
+'             intermedios: nunca colisiona con una marca preexistente.
+' Parámetros: sTexto As String — contenido completo del editor
+' Retorna   : Integer — siguiente número de footnote a usar (≥ 1)
+' ============================================
+Public Function ObtenerSiguienteNumeroFootnote(sTexto As String) As Integer
 
-  Dim iContador As Integer
-  Dim iPos As Integer
+  Dim iPosBusqueda As Integer
+  Dim iInicio As Integer
+  Dim iFin As Integer
+  Dim iMaximo As Integer
+  Dim iNumero As Integer
+  Dim sCandidato As String
 
-  iContador = 0
-  iPos = 1
+  ' --- 1. INICIALIZACIÓN ---
+  ' SI NO SE ENCUENTRA NINGUNA MARCA, EL PRIMER NÚMERO A USAR SERÁ 1
+  iMaximo = 0
+  iPosBusqueda = 1
 
-  ' BUSCAR TODAS LAS OCURRENCIAS DE [^N]: (SOLO LAS DEFINICIONES)
-  While True
-    iPos = InStr(sTexto, "[^", iPos)
-    If iPos = 0 Then Break
+  ' --- 2. BÚSQUEDA ITERATIVA DE PATRONES [^N] EN EL TEXTO ---
+  ' EN CADA VUELTA SE BUSCA EL SIGUIENTE "[^", LUEGO SU "]" DE CIERRE,
+  ' Y SE EVALÚA SI EL CONTENIDO ENTRE AMBOS ES UN ENTERO VÁLIDO
+  Do
+    ' UBICAR EL SIGUIENTE INICIO DE MARCA
+    iInicio = String.InStr(sTexto, "[^", iPosBusqueda)
+    If iInicio = 0 Then Break
 
-    ' BUSCAR EL CIERRE ] Y VERIFICAR SI TIENE :
-    Dim iPosCierre As Integer = InStr(sTexto, "]", iPos)
-    If iPosCierre > 0 Then
-      ' VERIFICAR SI DESPUÉS DEL ] HAY UN :
-      If iPosCierre < Len(sTexto) Then
-        If Mid(sTexto, iPosCierre + 1, 1) = ":" Then
-          iContador += 1
-        Endif
-      Endif
+    ' UBICAR EL CIERRE "]" CORRESPONDIENTE
+    iFin = String.InStr(sTexto, "]", iInicio + 2)
+    If iFin = 0 Then Break
+
+    ' EXTRAER EL TEXTO ENTRE "[^" Y "]" Y VALIDAR QUE SEA UN ENTERO
+    sCandidato = String.Mid(sTexto, iInicio + 2, iFin - iInicio - 2)
+    Try iNumero = CInt(sCandidato)
+    If Error Then
+      ' NO ERA UN ENTERO: PROBABLEMENTE NO ES UNA MARCA REAL ("[^abc]")
+      ' AVANZAMOS Y CONTINUAMOS LA BÚSQUEDA SIN ACTUALIZAR EL MÁXIMO
+      iPosBusqueda = iFin + 1
+      Continue
     Endif
 
-    iPos += 2
-  Wend
+    ' ACTUALIZAR EL MÁXIMO SI CORRESPONDE
+    If iNumero > iMaximo Then iMaximo = iNumero
 
-  Return iContador
+    ' AVANZAR EL PUNTERO DE BÚSQUEDA MÁS ALLÁ DEL "]" ACTUAL
+    iPosBusqueda = iFin + 1
+  Loop
+
+  ' --- 3. RETORNO ---
+  Return iMaximo + 1
 
 End
 
@@ -3803,75 +3509,64 @@ Public Sub menuContarCoincidencias_Click()
 
 End
 
-'------------------------------------------------------------------------------
-' btnUpperCase_Click
-'------------------------------------------------------------------------------
-' Convierte el texto seleccionado en el editor a MAYÚSCULAS.
-'
-' Validaciones:
-'   - Verifica que exista texto seleccionado antes de proceder.
-'
-' Comportamiento:
-'   - Obtiene el texto seleccionado del editor.
-'   - Lo convierte a mayúsculas usando String.UCase() para soporte UTF-8.
-'   - Reemplaza la selección con el texto transformado.
-'
-' Notas técnicas:
-'   - Se usa String.UCase() en lugar de UCase() porque la función nativa
-'     solo maneja ASCII (7 bits). String.UCase() es el método de la clase
-'     estática String que soporta caracteres UTF-8 como acentos (á, é, í, ó, ú),
-'     eñes (ñ) y otros caracteres multibyte.
-'   - Referencia: https://gambaswiki.org/wiki/comp/gb/string/ucase
-'
-' Dependencias:
-'   - txtEditorProyecto: TextArea del editor principal.
-'   - m_Sonido: Módulo para reproducir sonidos de feedback.
-'------------------------------------------------------------------------------
-Public Sub btnUpperCase_Click()
+' ============================================
+' Función   : AplicarTransformacionCase
+' Propósito : Convierte la selección del editor a mayúsculas o minúsculas
+'             usando los métodos nativos UpperCase/LowerCase del TextEditor.
+'             Conserva la selección y respeta UTF-8 (tildes, eñes).
+' Parámetros: bAMayusculas As Boolean — True para mayúsculas, False para minúsculas
+'             sNombreFormato As String — etiqueta legible ("mayúsculas" / "minúsculas")
+' Retorna   : nada
+' ============================================
+Private Sub AplicarTransformacionCase(bAMayusculas As Boolean, sNombreFormato As String)
 
-  Dim sTextoSeleccionado As String
-  Dim sNuevoTexto As String
-
-  ' VALIDACIÓN: VERIFICAR QUE HAY TEXTO SELECCIONADO
-  If Not txtEditorProyecto.SelectedText Then
+  ' --- 1. VALIDACIÓN DE ENTRADA: HAY TEXTO SELECCIONADO ---
+  ' EVITAR LA TRANSFORMACIÓN SOBRE UNA SELECCIÓN VACÍA, QUE NO TIENE EFECTO ÚTIL
+  If String.Len(txtEditorProyecto.SelectedText) = 0 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar texto para convertir a mayúsculas.")
+    Message.Warning("Debe seleccionar texto para convertir a " & sNombreFormato & ".")
     Return
   Endif
 
-  ' OBTENER EL TEXTO SELECCIONADO
-  sTextoSeleccionado = txtEditorProyecto.SelectedText
+  ' --- 2. APLICAR LA TRANSFORMACIÓN NATIVA ---
+  ' UpperCase/LowerCase OPERAN IN-PLACE SOBRE LA SELECCIÓN ACTUAL,
+  ' SON UTF-8 SAFE Y MANTIENEN LA SELECCIÓN PARA ENCADENAR ACCIONES
+  ' (POR EJEMPLO, APLICAR BOLD INMEDIATAMENTE DESPUÉS)
+  If bAMayusculas Then
+    Try txtEditorProyecto.UpperCase
+  Else
+    Try txtEditorProyecto.LowerCase
+  Endif
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo convertir el texto a " & sNombreFormato & "." & gb.NewLine & Error.Text)
+    Return
+  Endif
 
-  ' CONVERTIR A MAYÚSCULAS (UTF-8)
-  ' String.UCase() maneja correctamente caracteres acentuados y ñ
-  sNuevoTexto = String.UCase(sTextoSeleccionado)
-
-  ' INSERTAR EL TEXTO TRANSFORMADO
-  txtEditorProyecto.Insert(sNuevoTexto)
+  ' --- 3. RESTAURAR FOCO EN EL EDITOR ---
+  ' EL CLICK EN EL BOTÓN TRANSFIRIÓ EL FOCO; SE DEVUELVE AL EDITOR PARA QUE
+  ' EL USUARIO PUEDA SEGUIR TIPEANDO O ENCADENAR OTRAS TRANSFORMACIONES
+  txtEditorProyecto.SetFocus()
 
 End
 
+' ============================================
+' Función   : btnUpperCase_Click
+' Propósito : Convierte el texto seleccionado del editor a mayúsculas.
+' ============================================
+Public Sub btnUpperCase_Click()
+
+  AplicarTransformacionCase(True, "mayúsculas")
+
+End
+
+' ============================================
+' Función   : btnConvertirMinusculas_Click
+' Propósito : Convierte el texto seleccionado del editor a minúsculas.
+' ============================================
 Public Sub btnConvertirMinusculas_Click()
 
-  Dim sTextoSeleccionado As String
-  Dim sNuevoTexto As String
-
-  ' VALIDACIÓN: VERIFICAR QUE HAY TEXTO SELECCIONADO
-  If Not txtEditorProyecto.SelectedText Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe seleccionar texto para convertir a minúsculas.")
-    Return
-  Endif
-
-  ' OBTENER EL TEXTO SELECCIONADO
-  sTextoSeleccionado = txtEditorProyecto.SelectedText
-
-  ' CONVERTIR A MAYÚSCULAS (UTF-8)
-  ' String.LCase() maneja correctamente caracteres acentuados y ñ
-  sNuevoTexto = String.LCase(sTextoSeleccionado)
-
-  ' INSERTAR EL TEXTO TRANSFORMADO
-  txtEditorProyecto.Insert(sNuevoTexto)
+  AplicarTransformacionCase(False, "minúsculas")
 
 End
 
@@ -3887,95 +3582,82 @@ Public Sub menuCercania_Click()
 
 End
 
-' ============================================================================
-' EVENTO CLICK DEL BOTÓN AGREGAR IMAGEN
-' ============================================================================
-' INSERTA CÓDIGO MARKDOWN PARA UNA IMAGEN EN EL EDITOR DE TEXTO.
-' LA IMAGEN SE SELECCIONA MEDIANTE UN DIÁLOGO Y SE COPIA A LA CARPETA
-' /MEDIA DEL PROYECTO SI NO ESTÁ UBICADA AHÍ.
-' EL CÓDIGO SE INSERTA ASEGURANDO QUE QUEDE EN UNA LÍNEA NUEVA Y VACÍA,
-' CON UNA LÍNEA VACÍA ANTES Y DESPUÉS.
-' ============================================================================
-
+' ============================================
+' Función   : btnAgregarImagen_Click
+' Propósito : Inserta el bloque Markdown de una figura en el editor.
+'             Si la imagen seleccionada no reside en /media del proyecto,
+'             se copia ahí (con confirmación de sobrescritura).
+'             Precondición: el proyecto está abierto y /media existe
+'             (garantizado al abrir el proyecto).
+' Parámetros: (ninguno)
+' Retorna   : (ninguno)
+' ============================================
 Public Sub btnAgregarImagen_Click()
 
+  ' --- 1. Inicialización de variables ---
   Dim sRutaImagen As String
   Dim sNombreArchivo As String
   Dim sRutaMedia As String
   Dim sRutaDestino As String
   Dim sCodigoMarkdown As String
+  Dim iRespuesta As Integer
 
-  ' VALIDAR QUE EL CURSOR ESTÉ AL INICIO DE UNA LÍNEA VACÍA
+  ' RUTA CANÓNICA DE LA CARPETA /MEDIA DEL PROYECTO, SIN BARRA FINAL.
+  ' SE USA TANTO PARA APUNTAR EL DIÁLOGO COMO PARA COMPARAR ORIGEN/DESTINO.
+  sRutaMedia = RutaProyecto &/ "media"
+
+  ' --- 2. Validación de posición del cursor ---
+  ' EL BLOQUE DE FIGURA DEBE INSERTARSE EN UNA LÍNEA PROPIA Y VACÍA,
+  ' PARA NO ROMPER PÁRRAFOS NI ESTRUCTURAS MARKDOWN ADYACENTES.
   If Not ValidarPosicionCursorImagen() Then
     m_Sonido.sonar("Error")
     Message.Title = "Error de posición."
-    Message.Error("No se puede insertar una imagen dentro de una línea o párrafo.\nEl cursor debe estar al inicio de una línea vacía.")
+    Message.Error("No se puede insertar una imagen dentro de una línea o párrafo." & Chr(10) & "El cursor debe estar al inicio de una línea vacía.")
     Return
   Endif
 
-  ' VERIFICAR QUE HAY UN PROYECTO ABIERTO Y OBTENER RUTA DE MEDIA
-  ' NOTA: AJUSTAR SEGÚN CÓMO SE ALMACENA LA RUTA DEL PROYECTO EN TU APLICACIÓN
-  If Not RutaProyecto Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay ningún proyecto abierto.")
-    Return
-  Endif
-
-  sRutaMedia = RutaProyecto &/ "media/"
-
-  ' CREAR CARPETA MEDIA SI NO EXISTE
-  If Not Exist(sRutaMedia) Then
-    Try Mkdir sRutaMedia
-    If Error Then
-      m_Sonido.sonar("Error")
-      Message.Error("No se pudo crear la carpeta media: " & Error.Text)
-      Return
-    Endif
-  Endif
-
-  ' CONFIGURAR Y MOSTRAR DIÁLOGO DE SELECCIÓN DE IMAGEN
+  ' --- 3. Selección de imagen ---
   Dialog.Title = "Seleccionar imagen"
   Dialog.Filter = ["*.png;*.jpg;*.jpeg", "Archivos de imagen (PNG, JPG)", "*", "Todos los archivos"]
   Dialog.Path = sRutaMedia
 
-  ' SI EL USUARIO CANCELA, SALIR
+  ' SI EL USUARIO CANCELA, SALIR SILENCIOSAMENTE.
   If Dialog.OpenFile() Then Return
 
   sRutaImagen = Dialog.Path
   sNombreArchivo = File.Name(sRutaImagen)
   sRutaDestino = sRutaMedia &/ sNombreArchivo
 
-  ' COPIAR IMAGEN A CARPETA MEDIA SOLO SI FUE SELECCIONADA DESDE OTRA UBICACIÓN
-  ' SI LA IMAGEN YA ESTÁ EN LA CARPETA MEDIA, NO HACER NADA
-  If File.Dir(sRutaImagen) & "/" <> sRutaMedia Then
-    ' LA IMAGEN VIENE DE OTRA UBICACIÓN, VERIFICAR SI YA EXISTE EN MEDIA
+  ' --- 4. Copia condicional a /media ---
+  ' SI LA IMAGEN YA RESIDE EN /MEDIA NO SE COPIA NADA.
+  ' SI VIENE DE OTRA UBICACIÓN SE COPIA, CONFIRMANDO ANTES DE SOBRESCRIBIR.
+  If File.Dir(sRutaImagen) <> sRutaMedia Then
+
     If Exist(sRutaDestino) Then
-      ' PREGUNTAR SI DESEA SOBRESCRIBIR
       m_Sonido.sonar("Question")
-      If Message.Question("Ya existe una imagen con el nombre '" & sNombreArchivo & "' en la carpeta media.\n¿Desea sobrescribirla?", "Sí", "No") = 2 Then
-        Return
-      Endif
+      iRespuesta = Message.Question("Ya existe una imagen con el nombre '" & sNombreArchivo & "' en la carpeta media." & Chr(10) & "¿Desea sobrescribirla?", "Sí", "No")
+      ' EL USUARIO ELIGIÓ "NO" → SE ABORTA LA INSERCIÓN COMPLETA.
+      If iRespuesta <> 1 Then Return
     Endif
 
-    ' COPIAR EL ARCHIVO
     Try Copy sRutaImagen To sRutaDestino
     If Error Then
       m_Sonido.sonar("Error")
       Message.Error("No se pudo copiar la imagen: " & Error.Text)
       Return
     Endif
+
   Endif
 
-  ' CONSTRUIR EL CÓDIGO MARKDOWN Y SHORTCODE
-  ' RUTA RELATIVA DESDE EL DOCUMENTO: media/nombre_archivo
-  sCodigoMarkdown = ":::{.figure #fig-id-valor}" & gb.NewLine
-  sCodigoMarkdown &= "![descripción de la imagen](media/" & sNombreArchivo & ")" & gb.NewLine
+  ' --- 5. Construcción del bloque Markdown ---
+  ' LOS PLACEHOLDERS "fig-id-valor" Y "descripción de la imagen" SON
+  ' INTENCIONALES: EL MAQUETADOR LOS REEMPLAZA AL ARMAR EL ARTÍCULO.
+  sCodigoMarkdown = ":::{.figure #fig-id-valor}" & Chr(10)
+  sCodigoMarkdown &= "![descripción de la imagen](media/" & sNombreArchivo & ")" & Chr(10)
   sCodigoMarkdown &= ":::"
 
-  ' INSERTAR EL CÓDIGO EN EL EDITOR CON POSICIONAMIENTO CORRECTO
+  ' --- 6. Inserción y cierre ---
   InsertarCodigoImagen(sCodigoMarkdown)
-
-  ' DEVOLVER FOCO AL EDITOR
   txtEditorProyecto.SetFocus
 
 End
@@ -6350,34 +6032,317 @@ Public Sub menuReflexionEditorial_Click()
 
 End
 
-Public Sub AbrirLibroMD()
+Public Sub btnImportarJASON_Click()
 
-  Dim sRutaSeleccionada As String = Dialog.Path
+  m_Sonido.sonar("Info")
+  m_Json.ImportarJSON()
 
-  If sRutaSeleccionada = "" Then
+End
+
+' ============================================
+' Función   : txtEditorProyecto_KeyPress
+' Propósito : Intercepta atajos de teclado dentro del editor.
+'             Actualmente: Ctrl+S dispara el guardado del archivo abierto.
+' Parámetros: (Evento de teclado, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtEditorProyecto_KeyPress()
+
+  ' --- 1. Ctrl + s → DISPARAR EL EVENTO DEL BOTÓN GUARDAR ---
+  ' Stop Event EVITA QUE EL EDITOR PROCESE Ctrl+S COMO CARÁCTER DE CONTROL
+  ' Y QUE INSERTE ALGO RARO EN EL TEXTO
+  If Key.Control And Key.Code = Key["s"] Then
+    Stop Event
+    btnGuardarCambiosEditor_Click()
     Return
   Endif
 
-  ' ASIGNAMOS EL NOMBRE Y RUTA DEL PROYECTO A LAS VARIABLES GLOBALES
+End
+
+' ============================================
+' Función   : ConfirmarDescartarCambios
+' Propósito : Si hay cambios sin guardar en el archivo abierto en el editor,
+'             pregunta al usuario si guardar, descartar o cancelar. Encapsula
+'             el patrón canónico de "guard antes de cambiar de contexto".
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si se puede continuar (guardó o descartó),
+'             False si el usuario canceló y el flujo debe abortar.
+' ============================================
+Private Function ConfirmarDescartarCambios() As Boolean
+
+  Dim iRespuesta As Integer
+
+  ' --- 1. SIN ARCHIVO ABIERTO: NO HAY NADA QUE GUARDAR ---
+  If sRutaArchivoAbierto = "" Then Return True
+
+  ' --- 2. SIN CAMBIOS: NO HAY NADA QUE PREGUNTAR ---
+  If txtEditorProyecto.Text = sContenidoOriginal Then Return True
+
+  ' --- 3. HAY CAMBIOS: PREGUNTAR AL USUARIO ---
+  m_Sonido.sonar("Warning")
+  iRespuesta = Message.Question("Hay cambios sin guardar en " & gb.NewLine &
+    File.Name(sRutaArchivoAbierto) & gb.NewLine & gb.NewLine &
+    "¿Desea guardar los cambios antes de continuar?",
+    "Guardar", "Descartar", "Cancelar")
+
+  ' --- 4. PROCESAR LA RESPUESTA ---
+  Select Case iRespuesta
+    Case 1
+      ' GUARDAR: DELEGAMOS AL EVENTO DEL BOTÓN, QUE YA TIENE TODO EL FLUJO
+      ' (FILE.SAVE, ACTUALIZAR SNAPSHOT, REFRESCAR REFERENCIAS Y GRID)
+      btnGuardarCambiosEditor_Click()
+      Return True
+
+    Case 2
+      ' DESCARTAR: SINCRONIZAR EL SNAPSHOT PARA QUE FUTUROS CHEQUEOS
+      ' NO VUELVAN A DETECTAR DIFERENCIAS HASTA UNA NUEVA EDICIÓN
+      sContenidoOriginal = txtEditorProyecto.Text
+      Return True
+
+    Case Else
+      ' CANCELAR O CERRAR DIÁLOGO (0)
+      Return False
+
+  End Select
+
+End
+
+' ============================================
+' Función   : AbrirFormularioModoMedia
+' Propósito : Punto de entrada al modo parcial (solo BBDD, sin editor).
+'             Antes de abrir el formulario de selección de proyecto parcial,
+'             verifica que no haya cambios sin guardar en el proyecto actual.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub AbrirFormularioModoMedia()
+
+  Dim rs As Result
+  Dim sSQL As String
+  Dim iCantidadProyectos As Integer
+
+  ' --- 1. GUARD: CAMBIOS SIN GUARDAR EN EL PROYECTO PREVIO ---
+  ' SE EVALÚA ANTES DE TOCAR NADA. SI EL USUARIO CANCELA, EL FLUJO ABORTA
+  ' SIN ABRIR NI EL FORMULARIO DE SELECCIÓN NI HACER CONSULTAS A BD
+  If Not ConfirmarDescartarCambios() Then Return
+
+  ' --- 2. VERIFICAR QUE EXISTEN PROYECTOS ACTIVOS EN BD ---
+  sSQL = "SELECT COUNT(*) AS total FROM proyectos WHERE activo = 1"
+  Try rs = m_ConexionBD.mConn.Exec(sSQL)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo consultar la base de datos:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  iCantidadProyectos = rs["total"]
+  If iCantidadProyectos = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay proyectos activos para abrir en modo parcial.")
+    Return
+  Endif
+
+  ' --- 3. ABRIR EL FORMULARIO DE SELECCIÓN DE PROYECTO PARCIAL ---
+  FProyectosParcial.ShowModal()
+
+End
+
+' ============================================
+' Función   : AbrirProyecto
+' Propósito : Punto de entrada único para abrir un proyecto desde el menú.
+'             Verifica cambios sin guardar del proyecto previo, configura el
+'             diálogo según el tipo, y delega la carga al handler específico.
+' Parámetros: nTipoProyecto As Integer — uno de m_Constantes.TIPO_*
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub AbrirProyecto(nTipoProyecto As Integer)
+
+  ' --- 1. GUARD: CAMBIOS SIN GUARDAR EN EL PROYECTO PREVIO ---
+  ' SE VERIFICA ANTES DE TODO LO DEMÁS PARA QUE LA PREGUNTA APAREZCA
+  ' EN EL CONTEXTO CORRECTO (PROYECTO ANTERIOR, NO EL NUEVO)
+  If Not ConfirmarDescartarCambios() Then Return
+
+  ' --- 2. CONFIGURAR EL DIÁLOGO SEGÚN EL TIPO DE PROYECTO ---
+  Select Case nTipoProyecto
+    Case m_Constantes.TIPO_REVISTA_MD
+      Dialog.Title = "Abrir proyecto en Markdown"
+      Dialog.Filter = ["r-*.md", "Markdown"]
+    Case m_Constantes.TIPO_LIBRO_MD
+      Dialog.Title = "Abrir libro (Markdown)"
+      Dialog.Filter = ["l-*.md", "Libro en Markdown"]
+    Case m_Constantes.TIPO_LIBRO_LATEX
+      Dialog.Title = "Abrir proyecto en LaTeX"
+      Dialog.Filter = ["l-*.tex", "LaTeX"]
+  End Select
+
+  m_Sonido.sonar("Info")
+  Dialog.AutoExt = False
+  Dialog.Path = User.Home
+
+  ' --- 3. MOSTRAR EL DIÁLOGO Y MANEJAR CANCELACIÓN ---
+  ' Dialog.OpenFile RETORNA True CUANDO EL USUARIO CANCELA
+  If Dialog.OpenFile() Then Return
+
+  ' --- 4. GUARDAR EL TIPO ELEGIDO PARA QUE OTRAS RUTINAS LO USEN ---
+  TipoProyectoActual = nTipoProyecto
+
+  ' --- 5. ACTIVAR LA BANDERA DE APERTURA EN CURSO ---
+  ' EVITA QUE EL Click DE cmbArticulosRevista DISPARE OTRA VEZ EL GUARD
+  ' CUANDO CargarListaArticulosMD ASIGNE EL Index DEL COMBOBOX
+  bAbriendoProyecto = True
+
+  ' --- 6. DELEGAR LA CARGA AL HANDLER ESPECÍFICO DEL TIPO ---
+  ' LLAMAMOS A LA FUNCIÓN CORRESPONDIENTE SEGÚN EL TIPO
+  Select Case nTipoProyecto
+    Case m_Constantes.TIPO_REVISTA_MD, m_Constantes.TIPO_LIBRO_MD
+      AbrirProyectoMD(nTipoProyecto)
+    Case m_Constantes.TIPO_LIBRO_LATEX
+      AbrirLibroTEX()
+  End Select
+
+  ' --- 7. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
+  bAbriendoProyecto = False
+
+End
+
+' MANEJA LA SELECCIÓN DE ARCHIVOS MARKDOWN DEL COMBOBOX
+' VERIFICA CAMBIOS SIN GUARDAR ANTES DE CAMBIAR DE ARCHIVO
+' CARGA EL CONTENIDO DEL ARCHIVO SELECCIONADO EN EL EDITOR
+Public Sub cmbArticulosRevista_Click()
+
+  Dim sArchivoSeleccionado As String
+  Dim sRutaCompleta As String
+  Dim sContenido As String
+
+  ' VERIFICAR QUE HAY ALGO SELECCIONADO
+  If cmbArticulosRevista.Index = -1 Then Return
+
+  ' OBTENER EL ARCHIVO SELECCIONADO
+  sArchivoSeleccionado = cmbArticulosRevista.Text
+  If sArchivoSeleccionado = "" Then Return
+
+  ' --- VERIFICAR CAMBIOS SIN GUARDAR (SALVO QUE SE ESTÉ ABRIENDO UN PROYECTO) ---
+  ' DURANTE LA APERTURA, EL GUARD YA SE EVALUÓ EN AbrirProyecto Y NO DEBE
+  ' VOLVER A PREGUNTAR CUANDO CargarListaArticulosMD ASIGNE EL Index INICIAL
+  If Not bAbriendoProyecto Then
+    If Not ConfirmarDescartarCambios() Then Return
+  Endif
+
+  ' DETERMINAR LA RUTA COMPLETA SEGÚN LA SELECCIÓN
+  If cmbArticulosRevista.Index = 0 Then
+    ' ES EL ARCHIVO PRINCIPAL DEL PROYECTO
+    sRutaCompleta = txtProyecto.Text
+  Else
+    ' ES UN ARCHIVO DE ALGUNA DE LAS SUBCARPETAS
+    ' EL TEXTO YA INCLUYE LA RUTA RELATIVA (front-matter/, articulos/, back-matter/)
+    sRutaCompleta = RutaProyecto &/ sArchivoSeleccionado
+  Endif
+
+  ' VERIFICAR QUE EL ARCHIVO EXISTE
+  If Not Exist(sRutaCompleta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo no existe:" & gb.NewLine & sRutaCompleta)
+    Return
+  Endif
+
+  ' CARGAR EL CONTENIDO EN EL EDITOR
+  Try sContenido = File.Load(sRutaCompleta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar el archivo:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  If sContenido Then
+    txtEditorProyecto.Text = sContenido
+    ' ACTUALIZAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
+    sRutaArchivoAbierto = sRutaCompleta
+    sContenidoOriginal = sContenido
+  Else
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el contenido del archivo")
+  Endif
+
+  ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
+  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
+
+  ' ACTUALIZAMOS EL CONTEO DE LINEAS
+  ActualizarContadorLineas()
+
+  ' ====================================================
+  ' ACTUALIZAR id_articulo SEGÚN EL ARCHIVO SELECCIONADO
+  ' SOLO PARA ARCHIVOS DE LA CARPETA articulos/ (prefijo a-)
+  ' ====================================================
+  id_articulo.Value = 0
+
+  If Left(sArchivoSeleccionado, 10) = "articulos/" Then
+    Dim sNombreArchivo As String = File.BaseName(Mid(sArchivoSeleccionado, 11))
+    If Left(sNombreArchivo, 2) = "a-" Then
+      Dim hResult As Result
+      Try hResult = m_ConexionBD.mConn.Exec(
+        "SELECT id_articulo FROM articulos WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
+        sNombreArchivo,
+        id_proyecto.Value)
+      If Not Error Then
+        If hResult.Available Then
+          id_articulo.Value = hResult["id_articulo"]
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+' ============================================
+' Función   : AbrirProyectoMD
+' Propósito : Función única para abrir un proyecto Markdown (revista o libro).
+'             Centraliza el flujo común y despacha por tipo en los pocos puntos
+'             donde el comportamiento difiere (IDs, metadatos, lista de
+'             artículos, menú de salidas, configuración de botones).
+' Parámetros: iTipoEsperado As Integer — m_Constantes.TIPO_REVISTA_MD o
+'             m_Constantes.TIPO_LIBRO_MD; valida que el archivo elegido
+'             coincida con el tipo que disparó el menú.
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
+
+  Dim sRutaSeleccionada As String
+  Dim sExtension As String
+  Dim sNombreArchivo As String
+  Dim iTipoSeleccionado As Integer
+  Dim sProyectoPrevio As String
+  Dim sSQL As String
+  Dim Contenido As Result
+  Dim rLast As Result
+  Dim nuevoID As Integer
+
+  ' --- 1. CAPTURAR LA RUTA ELEGIDA EN EL DIÁLOGO ---
+  sRutaSeleccionada = Dialog.Path
+  If sRutaSeleccionada = "" Then Return
+
+  ' --- 2. CAPTURAR EL PROYECTO PREVIO ANTES DE REASIGNAR LAS GLOBALES ---
+  ' SE USA PARA LIBERAR EL REGISTRO EN BD. SI ES LA PRIMERA APERTURA DE
+  ' LA SESIÓN, QUEDA VACÍO Y EL BLOQUE DE LIBERACIÓN SE SALTA LIMPIAMENTE
+  sProyectoPrevio = NombreProyecto
+
+  ' --- 3. REASIGNAR VARIABLES GLOBALES AL NUEVO PROYECTO ---
   NombreProyecto = File.Name(sRutaSeleccionada)
   RutaProyecto = File.Dir(sRutaSeleccionada)
+  sExtension = LCase(File.Ext(sRutaSeleccionada))
+  sNombreArchivo = LCase(File.Name(sRutaSeleccionada))
 
-  Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
-  Dim sNombreArchivo As String = LCase(File.Name(sRutaSeleccionada))
-
-  ' DETERMINAR TIPO SEGÚN NORMAS: r- (revista .md), l- (libro .md/.tex)
-  Dim iTipoSeleccionado As Integer = -1
-
+  ' --- 4. VALIDAR NOMENCLATURA DEL ARCHIVO ELEGIDO ---
+  ' r-*.md → REVISTA MARKDOWN
+  ' l-*.md → LIBRO MARKDOWN
+  ' l-*.tex → LIBRO LATEX (NO SOPORTADO POR ESTA FUNCIÓN, USAR AbrirLibroTEX)
+  iTipoSeleccionado = -1
   Select Case True
     Case Left(sNombreArchivo, 2) = "r-" And sExtension = "md"
       iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
-
     Case Left(sNombreArchivo, 2) = "l-" And sExtension = "md"
       iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD
-
     Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
       iTipoSeleccionado = m_Constantes.TIPO_LIBRO_TEX
-
     Case Else
       m_Sonido.sonar("Error")
       Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine &
@@ -6389,37 +6354,59 @@ Public Sub AbrirLibroMD()
       Return
   End Select
 
-  ' BUSCAR EN LA BBDD SI EL PROYECTO QUE VAMOS A ABRIR EXISTE
-  Dim sSQL As String = "SELECT * FROM proyectos WHERE nombre = &1"
-  Dim Contenido As Result = m_ConexionBD.mConn.Exec(sSQL, NombreProyecto)
-  Dim nuevoID As Integer
+  ' --- 5. VERIFICAR QUE EL TIPO DETECTADO COINCIDE CON EL ESPERADO ---
+  ' SI EL USUARIO ENTRÓ POR "ABRIR REVISTA" Y ELIGIÓ UN l-*.md, AVISAR Y ABORTAR
+  If iTipoSeleccionado <> iTipoEsperado Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo elegido no corresponde al tipo de proyecto solicitado." & gb.NewLine &
+      "Se esperaba: " & ObtenerDescripcionTipo(iTipoEsperado) & gb.NewLine &
+      "Se encontró: " & ObtenerDescripcionTipo(iTipoSeleccionado))
+    Return
+  Endif
 
-  ' LIBERAR PROYECTO QUE ESTA ABIERTO
-  If NombreProyecto <> "" Then
-    ' *** DETENER EL TIMER DE ARCHIVOS ANTES DE LIBERAR ***
+  ' --- 6. LIBERAR EN BD EL PROYECTO PREVIO, SI HABÍA UNO ---
+  ' SE INTENTA EN UNA TRANSACCIÓN: SI ALGO FALLA, EL PROYECTO PREVIO PUEDE
+  ' QUEDAR MARCADO COMO OCUPADO HASTA LA PRÓXIMA APERTURA, PERO NO IMPIDE
+  ' QUE EL FLUJO ACTUAL CONTINÚE
+  If sProyectoPrevio <> "" Then
     DetenerTimerArchivosProyecto()
-
-    Dim sProyectoEnCurso As String = File.Name(txtProyecto.Text)
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoEnCurso)
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE nombre = &1", sProyectoEnCurso)
-    m_ConexionBD.mConn.Commit
+    Try m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoPrevio)
+    Try m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE nombre = &1", sProyectoPrevio)
+    Try m_ConexionBD.mConn.Commit
+    If Error Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("No se pudo liberar el proyecto anterior en la base de datos:" & gb.NewLine &
+        Error.Text & gb.NewLine & gb.NewLine &
+        "El proyecto '" & sProyectoPrevio & "' puede quedar marcado como ocupado." & gb.NewLine &
+        "La apertura del nuevo proyecto continúa.")
+    Endif
     m_Timer.DetenerContador()
+  Endif
+
+  ' --- 7. BUSCAR EL NUEVO PROYECTO EN BD O CREAR REGISTRO NUEVO ---
+  sSQL = "SELECT * FROM proyectos WHERE nombre = &1"
+  Try Contenido = m_ConexionBD.mConn.Exec(sSQL, NombreProyecto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo consultar la base de datos para verificar el proyecto:" & gb.NewLine &
+      Error.Text & gb.NewLine & gb.NewLine &
+      "Abortando apertura.")
+    Return
   Endif
 
   If Contenido.Available Then
     ' VALIDACIONES SOBRE EL REGISTRO EXISTENTE
-    Dim iTipoBD As Integer = Contenido["tipo_producto"]
 
-    ' 1) COINCIDENCIA DE TIPO
-    If iTipoBD <> iTipoSeleccionado Then
+    ' 7.1 COINCIDENCIA DE TIPO ENTRE ARCHIVO Y BD
+    If Contenido["tipo_producto"] <> iTipoSeleccionado Then
       m_Sonido.sonar("Error")
       Message.Error("El tipo de archivo no coincide con el tipo registrado en la base de datos." & gb.NewLine &
         "Se esperaba: " & ObtenerDescripcionTipo(iTipoSeleccionado) & gb.NewLine &
-        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
+        "Se encontró: " & ObtenerDescripcionTipo(Contenido["tipo_producto"]))
       Return
     Endif
 
-    ' 2) ACTIVO? (0 ES FALSE Y 1 ES TRUE)
+    ' 7.2 PROYECTO ACTIVO (RC-GM-01: TINYINT(1) ES Boolean EN GAMBAS)
     If Not Contenido["activo"] Then
       m_Sonido.sonar("Warning")
       Message.Warning("El proyecto '" & NombreProyecto & "' está archivado." & gb.NewLine &
@@ -6427,7 +6414,7 @@ Public Sub AbrirLibroMD()
       Return
     Endif
 
-    ' 3) NO OCUPADO?
+    ' 7.3 PROYECTO NO OCUPADO EN OTRA MÁQUINA
     If Contenido["ocupado"] Then
       m_Sonido.sonar("Warning")
       Message.Warning("El proyecto '" & NombreProyecto & "' está ocupado en otra máquina." & gb.NewLine &
@@ -6437,94 +6424,120 @@ Public Sub AbrirLibroMD()
 
     nuevoID = Contenido["id"]
     m_Sonido.sonar("Info")
-    Message.Info("Proyecto encontrado en la base de datos y listo para abrir.")
-  Else
-    ' NO EXISTE: CREAR REGISTRO NUEVO (MySQL)
-    m_ConexionBD.mConn.Exec("INSERT INTO proyectos (nombre, tipo_producto, usuario_propietario, activo, ocupado) VALUES (&1, &2, &3, 1, 0)",
-      NombreProyecto, iTipoSeleccionado, m_InicioCierre.UsuarioEnCurso)
 
-    ' OBTENER LAST_INSERT_ID() EN MYSQL
-    Dim rLast As Result = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
-    If rLast.Available Then
-      nuevoID = rLast[0]
-    Else
-      ' FALLBACK: SI NO PODEMOS RECUPERAR EL ID, AVISAR Y ABORTAR
-      m_ConexionBD.mConn.Rollback
+  Else
+    ' NO EXISTE EN BD: CREAR REGISTRO NUEVO
+    Try m_ConexionBD.mConn.Exec(
+      "INSERT INTO proyectos (nombre, tipo_producto, usuario_propietario, activo, ocupado) VALUES (&1, &2, &3, 1, 0)",
+      NombreProyecto, iTipoSeleccionado, m_InicioCierre.UsuarioEnCurso)
+    If Error Then
       m_Sonido.sonar("Error")
-      Message.Error("No se pudo obtener el ID del proyecto insertado. Abortando apertura.")
+      Message.Error("No se pudo registrar el nuevo proyecto en la base de datos:" & gb.NewLine &
+        Error.Text & gb.NewLine & gb.NewLine &
+        "Abortando apertura.")
       Return
     Endif
 
-    m_ConexionBD.mConn.Commit
+    Try rLast = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
+    If Error Or If Not rLast.Available Then
+      Try m_ConexionBD.mConn.Rollback
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo obtener el ID del proyecto insertado." & gb.NewLine &
+        "Abortando apertura.")
+      Return
+    Endif
+    nuevoID = rLast[0]
+
+    Try m_ConexionBD.mConn.Commit
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo confirmar la inserción del proyecto:" & gb.NewLine &
+        Error.Text)
+      Return
+    Endif
+
     m_Sonido.sonar("Info")
     Message.Info("Proyecto nuevo registrado en la base de datos.")
   Endif
 
-  ' INICIALIZAR TODAS LAS TABLAS RELACIONADAS CON EL PROYECTO
+  ' --- 8. INICIALIZAR ESTRUCTURAS Y MARCAR EL PROYECTO COMO OCUPADO ---
+  ' SE COMBINA EN UN ÚNICO UPDATE PARA QUE LA OPERACIÓN SEA ATÓMICA
+  ' (ANTES SE HACÍAN DOS UPDATES CON DOS COMMITS, INNECESARIO)
   m_FuncionesGenericas.InicializarTablasProyecto(nuevoID)
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE proyectos SET ocupado = 1, usuario_propietario = &1 WHERE id = &2",
+    m_InicioCierre.UsuarioEnCurso, nuevoID)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo marcar el proyecto como ocupado:" & gb.NewLine &
+      Error.Text & gb.NewLine & gb.NewLine &
+      "Abortando apertura.")
+    Return
+  Endif
+  Try m_ConexionBD.mConn.Commit
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo confirmar el bloqueo del proyecto:" & gb.NewLine &
+      Error.Text & gb.NewLine & gb.NewLine &
+      "La apertura continúa pero verificá el estado en BD al cerrar.")
+  Endif
 
-  ' MARCAR NUEVO PROYECTO COMO OCUPADO
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 1 WHERE id = &1", nuevoID)
-  m_ConexionBD.mConn.Commit
-
-  ' MARCAR PROYECTO CON PROPIETARIO
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = &1 WHERE id = &2", m_InicioCierre.UsuarioEnCurso, nuevoID)
-  m_ConexionBD.mConn.Commit
-
-  ' ACTUALIZAR RUTA DEL PROYECTO
+  ' --- 9. CONFIGURAR UI BASE DEL EDITOR ---
   txtProyecto.Text = sRutaSeleccionada
-
-  ' MOSTRAR / OCULTAR BARRA DE MENUES
   HBoxGuardarTextArea.Visible = True
   HBoxBotones.Visible = True
   PanelXML.Visible = True
   SplitterPrincipal.Visible = True
 
-  ' LIMPIAMOS LOS FORMULARIOS
+  ' --- 10. LIMPIAR FORMULARIOS ---
+  ' (LA LIMPIEZA DE CACHÉ EN ~/.local/share/org.gambas.* ERA RESIDUO DE LA
+  ' ETAPA gtk; YA NO APLICA CON qt5 Y LA CARPETA TARGET NO EXISTE)
   m_Bibtex.LimpiarTextboxBibtex()
   m_Siglas.LimpiarTextboxSigla()
 
-  ' LIMPIAR CACHÉ O ENTORNO PREVIO
-  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-
-  ' CONTROLOMANOS EXISTAN LOS ARCHIVOS BASE PARA UN PROYECTO
+  ' --- 11. ASEGURAR ARCHIVOS BASE DEL PROYECTO ---
   m_FuncionesGenericas.CopiarArchivosBase_MD()
 
-  ' MOSTRAR EL ID DEL PROYECTO
+  ' --- 12. ASIGNAR IDs Y CARGAR SCRIPTS DE MANIPULACIÓN ---
   id_proyecto.Value = nuevoID
-  id_revista.Value = m_XML.ObtenerIdLibro(id_proyecto.Value)
-  ' CARGAMOS LOS SCRIPTS PARA MANIPULAR CON LOS *.md
+  Select Case iTipoSeleccionado
+    Case m_Constantes.TIPO_REVISTA_MD
+      id_revista.Value = m_XML.ObtenerIdRevista(id_proyecto.Value)
+    Case m_Constantes.TIPO_LIBRO_MD
+      id_revista.Value = m_XML.ObtenerIdLibro(id_proyecto.Value)
+  End Select
   m_InicioCierre.CargarScripts()
 
-  ' CARGAMOS LOS METADATOS DEL LIBRO
-  m_Metadatos.CargarMetadatosDeLibro
+  ' --- 13. CARGAR METADATOS SEGÚN EL TIPO DE PROYECTO ---
+  Select Case iTipoSeleccionado
+    Case m_Constantes.TIPO_REVISTA_MD
+      m_Metadatos.CargarMetadatosDeRevista
+    Case m_Constantes.TIPO_LIBRO_MD
+      m_Metadatos.CargarMetadatosDeLibro
+  End Select
 
-  ' CARGAMOS LAS REFERENCIAS BIBTEX
+  ' --- 14. CARGAR REFERENCIAS BIBTEX Y SIGLAS ---
   m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
   m_Bibtex.IniciarBibtex()
-
-  ' CARGAMOS LAS SIGLAS
   m_Siglas.ConfigurarTableViewGlosarioEnCurso(FSiglas.gvSiglasEnCurso)
   m_Siglas.IniciarSiglas()
 
-  ' ARRANCAMOS EL CONTADOR
+  ' --- 15. INICIAR CONTADOR Y MODO DE APERTURA COMPLETO ---
   m_Timer.IniciarContadorReloj(id_proyecto.Value)
-
-  ' MARCAR QUE SE ABRIÓ EN MODO completo
   FMain.ValueBoxParcial.Value = 0
 
-  '   ' CARGAR LISTA DE ARTÍCULOS EN EL COMBOBOX
-  '   CargarListaArticulosMD()
+  ' --- 16. CARGAR LISTA DE ARTÍCULOS (SOLO PARA REVISTAS POR AHORA) Y COMBOBOXES ---
+  If iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD Then
+    CargarListaArticulosMD()
+  Endif
   IniciarTimerArchivosProyecto()
-
-  ' CARGAR LISTA DE ARCHIVOS MDL EN EL COMBOBOX DEL FRONT y BACK MATTER
   m_ComboBox.CargarTodosLosComboBox()
   IniciarTimerArchivosXML()
 
-  ' CARGAR EL PRIMER ARCHIVO XML O LIMPIAR EDITOR SI NO HAY ARCHIVOS
+  ' --- 17. CARGAR EL PRIMER ARCHIVO XML O LIMPIAR EL EDITOR XML ---
   If cmbArchivosXML.Count > 0 Then
     cmbArchivosXML.Index = 0
-    cmbArchivosXML_Click()  ' EJECUTAR LA FUNCIÓN QUE CARGA EL CONTENIDO
+    cmbArchivosXML_Click()
     txtEditorXML.ReadOnly = True
     txtEditorXML.Enabled = True
   Else
@@ -6533,76 +6546,74 @@ Public Sub AbrirLibroMD()
     txtEditorXML.Enabled = False
   Endif
 
-  ' CARGAMOS EL ARCHIVO DEL PROYECTO EN EL EDITOR
-  txtEditorProyecto.Text = File.Load(sRutaSeleccionada)
+  ' --- 18. CARGAR EL ARCHIVO DEL PROYECTO Y ACTUALIZAR EL SNAPSHOT ---
+  ' SI EL ARCHIVO DESAPARECIÓ ENTRE EL Dialog Y ESTE PUNTO (CASO RARO PERO
+  ' POSIBLE: BORRADO POR OTRA APP, USB DESCONECTADO, ETC.), ABORTAMOS LA
+  ' CARGA DEL EDITOR PERO YA QUEDÓ EL REGISTRO EN BD DEL PROYECTO NUEVO
+  Dim sContenidoArchivo As String
+  Try sContenidoArchivo = File.Load(sRutaSeleccionada)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el archivo del proyecto:" & gb.NewLine &
+      sRutaSeleccionada & gb.NewLine & gb.NewLine &
+      Error.Text & gb.NewLine & gb.NewLine &
+      "El proyecto quedó registrado en BD pero el editor no se cargó.")
+    Return
+  Endif
+  txtEditorProyecto.Text = sContenidoArchivo
   txtEditorProyecto.ReadOnly = False
   txtEditorProyecto.Enabled = True
-
-  ' GUARDAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
   sRutaArchivoAbierto = sRutaSeleccionada
-  sContenidoOriginal = txtEditorProyecto.Text
+  sContenidoOriginal = sContenidoArchivo
 
-  ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
+  ' --- 19. ACTUALIZAR GRID DE COMENTARIOS Y CONTADOR DE LÍNEAS ---
   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
-
-  ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO
   TabPanelIzquierdaInferior.Visible = False
   HBoxBuscar.Visible = False
-
-  ' ACTUALIZAMOS EL CONTEO DE LINEAS
   ActualizarContadorLineas()
-
-  ' HABILITAMOS EL PANEL INFERIOR
   tbMostrarPanelInferior.Visible = True
   tbMostrarPanelInferior.Value = False
 
-  ' MOSTRAR EL ID DE REVISTA
-  id_revista.Value = m_XML.ObtenerIdLibro(id_proyecto.Value)
+  ' --- 20. ACTUALIZAR LISTAS DE ARCHIVOS DE SALIDAS PARA INDEXADORES ---
+  lbDOAJ.Clear
+  gvDOAJ.Clear
+  gvDOAJ.Refresh
+  m_XML.MostrarArchivosDOAJ()
+  lbCROSSREF.Clear
+  gvCROSSREF.Clear
+  gvCROSSREF.Refresh
+  m_XML.MostrarArchivosCrossref()
+  lbRedalyc.Clear
+  gvRedalyc.Clear
+  gvRedalyc.Refresh
+  m_XML.MostrarArchivosRedalyc()
+  lbLatex.Clear
+  gvLatex.Clear
+  gvLatex.Refresh
+  m_XML.MostrarArchivosLatex()
+  lbSciELO.Clear
+  gvSciELO.Clear
+  gvSciELO.Refresh
+  m_XML.MostrarArchivosScielo()
 
-  '   ' MOSTRAMOS ARCHIVOS DE DIFERENTES SABORES Y SALIDAS
-  '   lbDOAJ.Clear
-  '   gvDOAJ.Clear
-  '   gvDOAJ.Refresh
-  '   m_XML.MostrarArchivosDOAJ()
-  '   lbCROSSREF.Clear
-  '   gvCROSSREF.Clear
-  '   gvCROSSREF.Refresh
-  '   m_XML.MostrarArchivosCrossref()
-  '   lbRedalyc.Clear
-  '   gvRedalyc.Clear
-  '   gvRedalyc.Refresh
-  '   m_XML.MostrarArchivosRedalyc()
-  '   lbLatex.Clear
-  '   gvLatex.Clear
-  '   gvLatex.Refresh
-  '   m_XML.MostrarArchivosLatex()
-  '   lbSciELO.Clear
-  '   gvSciELO.Clear
-  '   gvSciELO.Refresh
-  '   m_XML.MostrarArchivosScielo()
-  '
-  ' HABILITAMOS EL MENU DE SALIDAS
+  ' --- 21. CONFIGURAR MENÚ DE SALIDAS Y BOTONES DEL TIPO DE PROYECTO ---
   MenuButtonSalidas.Visible = True
-
-  ' anulamos en spring
   SpringTemporal.Visible = False
   FMain.Splitter1.Visible = True
-  FMain.MenuButtonSalidas.Menu = "mnuSalidaLibroMD"
-  FMain.PictureBox9.Visible = True ' icono del menú de salidas
-  FMain.PictureBox12.Visible = True ' icono del menú de salidas
-  ' m_FuncionesGenericas.BotonesLibroRevista(True)   ' MODO REVISTA
-  m_FuncionesGenericas.BotonesLibroRevista(False)  ' MODO LIBRO
+  FMain.PictureBox9.Visible = True
+  FMain.PictureBox12.Visible = True
 
-  ' ASEGURAMOS LA RUTA EN LA TERMINAL Y EN DirViewProyecto
+  Select Case iTipoSeleccionado
+    Case m_Constantes.TIPO_REVISTA_MD
+      FMain.MenuButtonSalidas.Menu = "menuSalidaRevistaMD"
+      m_FuncionesGenericas.BotonesLibroRevista(True)
+    Case m_Constantes.TIPO_LIBRO_MD
+      FMain.MenuButtonSalidas.Menu = "mnuSalidaLibroMD"
+      m_FuncionesGenericas.BotonesLibroRevista(False)
+  End Select
+
+  ' --- 22. ASEGURAR LA RUTA EN LA TERMINAL Y EN DirViewProyecto ---
   InicializarTerminalProyecto(File.Dir(sRutaSeleccionada))
   FMain.DirViewProyecto.Root = File.Dir(sRutaSeleccionada)
-  '
-
-End
-
-Public Sub btnImportarJASON_Click()
-
-  m_Sonido.sonar("Info")
-  m_Json.ImportarJSON()
 
 End
