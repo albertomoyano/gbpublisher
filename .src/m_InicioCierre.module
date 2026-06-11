@@ -1,13 +1,45 @@
 ' Gambas module file
 
+' ==============================================================================
+' Módulo    : m_InicioCierre
+' Propósito : Setup inicial y teardown de la aplicación. Mantiene el estado
+'             de sesión (UsuarioEnCurso e IdUsuarioEnCurso) y centraliza:
+'             - Creación de directorios y copia de recursos al ~/.gbpublisher
+'             - Verificación e instalación de fuentes IBM Plex
+'             - Carga del TableView de usuarios conectados
+'             - Carga del ComboBox de scripts disponibles
+'             - Cierre de proyecto y cierre total de la aplicación
+'             - Utility: ruta de recursos, mapeo de estilos CSL
+' Dependencias: m_ConexionBD, m_Sonido, m_Timer, m_Bibtex, m_Siglas,
+'             m_FuncionesGenericas, FMain.
+' ==============================================================================
+
+' --- ESTADO DE SESIÓN ACTIVA AL SERVIDOR ---
+' SE ASIGNAN AL VALIDAR CREDENCIALES EN FLogin.btnConectarServer_Click Y
+' SE LIMPIAN AL DESCONECTAR O CERRAR LA APP. SIRVEN COMO IDENTIDAD DEL
+' USUARIO LOGUEADO PARA VALIDACIONES DE AUTORÍA EN TODA LA APP
 Public UsuarioEnCurso As String
 Public IdUsuarioEnCurso As Integer
 
+' ============================================
+' Función   : DirectorioOcultoApp
+' Propósito : Crea el directorio oculto ~/.gbpublisher con sus subcarpetas
+'             de recursos, copia los archivos base desde el paquete instalado
+'             (o desde .hidden/ si se ejecuta desde el IDE), crea el archivo
+'             de IPs y asegura la existencia del buscador.py.
+'             Esta función se llama una vez al inicio de la app.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub DirectorioOcultoApp()
 
-  ' --- 1. Crear directorio base si no existe ---
-  Dim sBase As String = User.Home &/ ".gbpublisher"
+  Dim sBase As String
+  Dim carpetas As String[]
+  Dim carpeta As String
+  Dim sRutaIPs As String
 
+  ' --- 1. CREAR DIRECTORIO BASE SI NO EXISTE ---
+  sBase = User.Home &/ ".gbpublisher"
   If Not Exist(sBase) Then
     Try Mkdir sBase
     If Error Then
@@ -17,18 +49,18 @@ Public Sub DirectorioOcultoApp()
     Endif
   Endif
 
-  ' --- COPIAR CONTENIDO DE CARPETAS DEL SISTEMA ---
-  Dim carpetas As String[] = ["biblatex", "chart", "csl", "dtd", "filters",
+  ' --- 2. COPIAR CONTENIDO DE CARPETAS DEL SISTEMA ---
+  carpetas = ["biblatex", "chart", "csl", "dtd", "filters",
     "fonts", "github", "media", "ott", "schemas",
     "schematron", "scripts", "sonido", "xslt"]
 
-  Dim carpeta As String
   For Each carpeta In carpetas
     CopiarDirectorio(RutaRecursos() & "/" & carpeta, User.Home & "/.gbpublisher/" & carpeta)
-    ' DESPUÉS DE FUENTES, COPIAR ICONOS SVG CON COLOR AJUSTADO
+    ' DESPUÉS DE COPIAR LA CARPETA fonts, AJUSTAR EL COLOR DE LOS ICONOS SVG
     If carpeta = "fonts" Then CopiarIconosSVG()
   Next
 
+  ' --- 3. CREAR DIRECTORIO DE RESPALDO ---
   If Not Exist(User.Home & "/.gbpublisher/respaldo") Then
     Try Mkdir User.Home & "/.gbpublisher/respaldo"
     If Error Then
@@ -37,9 +69,8 @@ Public Sub DirectorioOcultoApp()
     Endif
   Endif
 
-  ' --- VERIFICAR Y CREAR ARCHIVO DE IPS SI NO EXISTE ---
-  Dim sRutaIPs As String = User.Home &/ ".gbpublisher/.ips.txt"
-
+  ' --- 4. VERIFICAR Y CREAR ARCHIVO DE IPS SI NO EXISTE ---
+  sRutaIPs = User.Home &/ ".gbpublisher/.ips.txt"
   If Not Exist(sRutaIPs) Then
     Try File.Save(sRutaIPs, "127.0.0.1" & Chr(10))
     If Error Then
@@ -49,11 +80,20 @@ Public Sub DirectorioOcultoApp()
     Endif
   Endif
 
-  ' --- VERIFICAR Y CREAR BUSCADOR.PY SI NO EXISTE ---
+  ' --- 5. VERIFICAR Y CREAR BUSCADOR.PY SI NO EXISTE ---
   If Not m_FuncionesGenericas.CrearBuscadorPy() Then Return
 
 End
 
+' ============================================
+' Función   : CopiarIconosSVG
+' Propósito : Copia los archivos .svg de la carpeta de recursos al directorio
+'             del usuario reemplazando el color "currentColor" por el azul
+'             institucional de la app. Útil para que los iconos hereden el
+'             color de la app sin depender del navegador.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub CopiarIconosSVG()
 
   Dim srcDir As String
@@ -61,9 +101,11 @@ Public Sub CopiarIconosSVG()
   Dim f As String
   Dim sContenido As String
 
+  ' --- 1. RUTAS ORIGEN Y DESTINO ---
   srcDir = RutaRecursos() &/ "fonts"
   dstDir = User.Home &/ ".gbpublisher" &/ "fonts"
 
+  ' --- 2. PROCESAR CADA ARCHIVO SVG ---
   For Each f In Dir(srcDir, "*.svg")
 
     ' LEER CONTENIDO DEL SVG ORIGINAL
@@ -81,39 +123,39 @@ Public Sub CopiarIconosSVG()
 
   Next
 
-End Sub
+End
 
 ' ============================================
 ' Función   : CopiarDirectorio
-' Propósito : Copia recursivamente el contenido de un directorio
-'             hacia un destino, preservando la estructura de
-'             subdirectorios y omitiendo archivos ya existentes
+' Propósito : Copia recursivamente el contenido de un directorio hacia un
+'             destino, preservando la estructura de subdirectorios y omitiendo
+'             archivos ya existentes.
 ' Parámetros: srcDir As String — ruta absoluta del directorio origen
 '             dstDir As String — ruta absoluta del directorio destino
-' Retorna   : (ninguno)
+' Retorna   : (Sub, sin retorno)
 ' ============================================
 Public Sub CopiarDirectorio(srcDir As String, dstDir As String)
 
-  ' --- 1. Inicialización de variables ---
   Dim f As String
 
-  ' --- 2. Verificar que el directorio origen existe ---
+  ' --- 1. VERIFICAR QUE EL DIRECTORIO ORIGEN EXISTE ---
   If Not Exist(srcDir) Then
-    ' DIAGNÓSTICO: REGISTRAR QUÉ DIRECTORIO ORIGEN FALTA
+    ' DIAGNÓSTICO: REGISTRAR QUÉ DIRECTORIO ORIGEN FALTA EN LA TERMINAL
     FMain.TerminalViewProyecto.Input("echo 'FALTA srcDir: " & srcDir & "'" & Chr(10))
     Return
   Endif
-  ' --- 3. Crear carpeta destino si no existe ---
+
+  ' --- 2. CREAR CARPETA DESTINO SI NO EXISTE ---
   If Not Exist(dstDir) Then
     Mkdir dstDir
   Endif
 
-  ' --- 4. Primera pasada: subdirectorios ---
+  ' --- 3. PRIMERA PASADA: COPIAR SUBDIRECTORIOS RECURSIVAMENTE ---
   For Each f In Dir(srcDir, "*", gb.Directory)
     CopiarDirectorio(srcDir & "/" & f, dstDir & "/" & f)
   Next
 
-  ' --- 5. Segunda pasada: archivos ---
+  ' --- 4. SEGUNDA PASADA: COPIAR ARCHIVOS ---
   For Each f In Dir(srcDir, "*.*")
     If Not Exist(dstDir & "/" & f) Then
       Copy srcDir & "/" & f To dstDir & "/" & f
@@ -122,42 +164,63 @@ Public Sub CopiarDirectorio(srcDir As String, dstDir As String)
 
 End
 
+' ============================================
+' Función   : CargarUsuarios
+' Propósito : Pobla el TableViewUsuarios de FMain con los usuarios activos
+'             del sistema, mostrando "Conectado" en la columna en_linea para
+'             los que tienen sesión activa.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub CargarUsuarios()
 
   Dim rUsuarios As Result
   Dim iRow As Integer
   Dim iCol As Integer
 
-  rUsuarios = m_ConexionBD.mConn.Exec("SELECT usuario, en_linea FROM usuarios WHERE activo = 1 ORDER BY en_linea DESC, usuario ASC")
+  ' --- 1. CONSULTAR USUARIOS ACTIVOS, ORDENADOS POR ESTADO Y NOMBRE ---
+  Try rUsuarios = m_ConexionBD.mConn.Exec(
+    "SELECT usuario, en_linea FROM usuarios WHERE activo = 1 ORDER BY en_linea DESC, usuario ASC")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los usuarios:" & gb.NewLine & Error.Text)
+    Return
+  Endif
 
-  ' LIMPIAR EL GRIDVIEW
+  ' --- 2. LIMPIAR EL GRID ---
   FMain.TableViewUsuarios.Clear
 
-  ' SI NO HAY DATOS, ESTABLECER EL GRID VACÍO Y SALIR
-  If rUsuarios = Null Or rUsuarios.Count = 0 Then
+  ' --- 3. SI NO HAY DATOS, DEJAR EL GRID VACÍO Y SALIR ---
+  ' NULL CHECK ANIDADO PORQUE Or NO ES SHORT-CIRCUIT EN GAMBAS
+  If rUsuarios = Null Then
+    FMain.TableViewUsuarios.Rows.Count = 0
+    FMain.TableViewUsuarios.Columns.Count = 0
+    Return
+  Endif
+  If rUsuarios.Count = 0 Then
     FMain.TableViewUsuarios.Rows.Count = 0
     FMain.TableViewUsuarios.Columns.Count = 0
     Return
   Endif
 
-  ' CONFIGURAR COLUMNAS Y FILAS
+  ' --- 4. CONFIGURAR COLUMNAS Y FILAS ---
   FMain.TableViewUsuarios.Columns.Count = rUsuarios.Fields.Count
   FMain.TableViewUsuarios.Rows.Count = rUsuarios.Count
   FMain.TableViewUsuarios.MoveTo(0, 0)
 
-  ' POBLAR LOS DATOS DEL RESULTADO EN EL GRIDVIEW
+  ' --- 5. POBLAR LAS CELDAS ---
   iRow = 0
   For Each rUsuarios
     For iCol = 0 To rUsuarios.Fields.Count - 1
       If IsNull(rUsuarios[iCol]) Then
         FMain.TableViewUsuarios[iRow, iCol].Text = ""
       Else
-        ' SI ES LA COLUMNA "EN_LINEA" (ÍNDICE 1), MOSTRAR TEXTO
+        ' COLUMNA en_linea (ÍNDICE 1): MOSTRAR "Conectado" SI ES TRUE
         If iCol = 1 Then
           FMain.TableViewUsuarios[iRow, iCol].Text = IIf(CBool(rUsuarios[iCol]), "Conectado", "")
         Else
           FMain.TableViewUsuarios[iRow, iCol].Text = rUsuarios[iCol]
-        End If
+        Endif
       Endif
     Next
     iRow += 1
@@ -165,14 +228,22 @@ Public Sub CargarUsuarios()
 
 End
 
+' ============================================
+' Función   : DisenarTableViewUsuarios
+' Propósito : Configura el aspecto del TableView de usuarios: tres columnas
+'             (Usuario, Estado, Proyecto) con anchos predefinidos.
+' Parámetros: grid As GridView — control TableView a configurar
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub DisenarTableViewUsuarios(grid As GridView)
 
+  ' --- 1. CONFIGURACIÓN BÁSICA Y NÚMERO DE COLUMNAS ---
   With grid
     .Header = True
     .Grid = True
     .Columns.Count = 3
 
-    ' CONFIGURACIÓN DE COLUMNAS
+    ' --- 2. TÍTULOS Y ANCHOS DE COLUMNAS ---
     For i As Integer = 0 To 2
       Select Case i
         Case 0
@@ -190,9 +261,18 @@ Public Sub DisenarTableViewUsuarios(grid As GridView)
 
 End
 
+' ============================================
+' Función   : CargarScripts
+' Propósito : Carga el ComboBox de scripts disponibles desde ~/.gbpublisher/scripts.
+'             Soporta extensiones .py, .lua, .sh, .pl, .R. La descripción se
+'             extrae de la primera línea de comentario del archivo (salteando
+'             el shebang si existe).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub CargarScripts()
 
-  Dim rutaScripts As String = User.Home &/ ".gbpublisher/scripts"
+  Dim rutaScripts As String
   Dim archivos As String[]
   Dim archivo As String
   Dim linea As String
@@ -202,8 +282,13 @@ Public Sub CargarScripts()
   Dim extension As String
   Dim extensionOriginal As String
   Dim prefijo As String
+  Dim extensiones As String[]
+  Dim todosArchivos As New String[]
+  Dim rutaCompleta As String
 
-  ' VERIFICAR QUE EL DIRECTORIO EXISTE
+  rutaScripts = User.Home &/ ".gbpublisher/scripts"
+
+  ' --- 1. VERIFICAR QUE EL DIRECTORIO EXISTE ---
   If Not Exist(rutaScripts) Then
     m_Sonido.sonar("Error")
     Message.Error("El directorio de scripts no existe: " & rutaScripts)
@@ -212,11 +297,8 @@ Public Sub CargarScripts()
 
   FMain.ComboBoxScripts.Clear
 
-  ' DEFINIR LAS EXTENSIONES SOPORTADAS
-  Dim extensiones As String[] = ["*.py", "*.lua", "*.sh", "*.pl", "*.R"]
-  Dim todosArchivos As New String[]
-
-  ' OBTENER ARCHIVOS DE TODAS LAS EXTENSIONES
+  ' --- 2. RECOPILAR ARCHIVOS DE TODAS LAS EXTENSIONES SOPORTADAS ---
+  extensiones = ["*.py", "*.lua", "*.sh", "*.pl", "*.R"]
   For Each extension In extensiones
     archivos = Dir(rutaScripts, extension)
     If Not Error Then
@@ -226,24 +308,22 @@ Public Sub CargarScripts()
     Endif
   Next
 
-  ' VERIFICAR SI HAY ARCHIVOS
+  ' --- 3. SALIR SI NO HAY ARCHIVOS ---
   If todosArchivos.Count = 0 Then
     m_Sonido.sonar("Info")
     Message.Info("No se encontraron scripts en el directorio")
     Return
   Endif
 
-  ' PROCESAR CADA ARCHIVO
+  ' --- 4. PROCESAR CADA ARCHIVO Y EXTRAER SU DESCRIPCIÓN ---
   For Each archivo In todosArchivos
     descripcion = "Sin descripción"
 
-    ' OBTENER EXTENSIÓN ORIGINAL SIN CONVERTIR
+    ' EXTENSIÓN ORIGINAL (PRESERVA CAPITALIZACIÓN, EJ. ".R")
     extensionOriginal = File.Ext(archivo)
-
-    ' CONVERTIR SOLO PARA LA COMPARACIÓN
     extension = LCase(extensionOriginal)
 
-    ' DETERMINAR EL PREFIJO DE COMENTARIO SEGÚN LA EXTENSIÓN
+    ' PREFIJO DE COMENTARIO SEGÚN EL LENGUAJE
     Select Case extension
       Case "py"
         prefijo = "#"
@@ -259,113 +339,81 @@ Public Sub CargarScripts()
         prefijo = "#"
     End Select
 
-    ' CONSTRUIR RUTA COMPLETA DEL ARCHIVO
-    Dim rutaCompleta As String = rutaScripts &/ archivo
+    rutaCompleta = rutaScripts &/ archivo
 
-    ' INTENTAR LEER LA PRIMERA LÍNEA DEL ARCHIVO PARA OBTENER DESCRIPCIÓN
-    hFile = Open rutaCompleta For Read
-    If Not Error Then
-      Line Input #hFile, linea
-      If Not Error And linea <> "" Then
+    ' --- 5. LEER LA PRIMERA LÍNEA DE COMENTARIO PARA OBTENER DESCRIPCIÓN ---
+    Try hFile = Open rutaCompleta For Read
+    If Error Then
+      descripcion = "Error al leer archivo"
+    Else
+      Try Line Input #hFile, linea
+      If Not Error And If linea <> "" Then
         linea = Trim(linea)
-        ' SALTAR SHEBANG SI EXISTE (#!/...)
+        ' SALTAR SHEBANG (#!/...) SI ESTÁ EN LA PRIMERA LÍNEA
         If Left(linea, 2) = "#!" Then
           If Not Eof(hFile) Then
-            Line Input #hFile, linea
-            linea = Trim(linea)
+            Try Line Input #hFile, linea
+            If Not Error Then
+              linea = Trim(linea)
+            Else
+              linea = ""
+            Endif
           Else
             linea = ""
           Endif
         Endif
-        ' VERIFICAR SI LA LÍNEA COMIENZA CON EL PREFIJO DE COMENTARIO
-        If linea <> "" And Left(linea, Len(prefijo)) = prefijo Then
-          ' EXTRAER DESCRIPCIÓN, ELIMINANDO EL PREFIJO Y ESPACIOS
+        ' SI LA LÍNEA EMPIEZA CON EL PREFIJO DE COMENTARIO, EXTRAER DESCRIPCIÓN
+        If linea <> "" And If Left(linea, Len(prefijo)) = prefijo Then
           If Len(linea) > Len(prefijo) Then
             descripcion = Trim(Mid(linea, Len(prefijo) + 1))
           Endif
         Endif
       Endif
       Close #hFile
-    Else
-      descripcion = "Error al leer archivo"
     Endif
 
-    ' AGREGAR AL COMBOBOX CON LA EXTENSIÓN ORIGINAL
+    ' --- 6. AGREGAR AL COMBOBOX CON DESCRIPCIÓN Y NOMBRE DE ARCHIVO ---
     archivoBase = File.BaseName(archivo) & "." & extensionOriginal
     FMain.ComboBoxScripts.Add(descripcion & " [" & archivoBase & "]")
   Next
 
 End
 
-' FUNCIÓN AUXILIAR PARA FORMATEAR LÍNEAS CON ESPACIOS NO-BREAKING
-Private Function FormatearLinea(columna1 As String, columna2 As String) As String
-
-  Dim linea As String
-  Dim espacios As String
-  Dim i As Integer
-  Dim anchoCol1 As Integer = 30
-  Dim anchoCol2 As Integer = 10
-
-  ' COLUMNA 1: ALINEADA A LA IZQUIERDA
-  espacios = ""
-  For i = 1 To anchoCol1 - Len(columna1)
-    espacios &= "&nbsp;"
-  Next
-  linea = columna1 & espacios & " | "
-
-  ' COLUMNA 2: ALINEADA A LA DERECHA
-  espacios = ""
-  For i = 1 To anchoCol2 - Len(columna2)
-    espacios &= "&nbsp;"
-  Next
-  linea &= espacios & columna2 & "\n"
-
-  Return linea
-
-End
-
-' FUNCIÓN PARA FORMATEAR NÚMEROS CON SEPARADOR DE MILES
-Private Function FormatearNumero(numero As Long) As String
-
-  Dim resultado As String
-  Dim strNumero As String
-  Dim i As Integer
-  Dim contador As Integer
-
-  strNumero = Str(numero)
-  resultado = ""
-  contador = 0
-
-  ' RECORRER EL NÚMERO DE DERECHA A IZQUIERDA
-  For i = Len(strNumero) To 1 Step -1
-    If contador = 3 Then
-      resultado = "." & resultado
-      contador = 0
-    Endif
-    resultado = Mid(strNumero, i, 1) & resultado
-    contador += 1
-  Next
-
-  Return resultado
-
-End
-
+' ============================================
+' Función   : RutaRecursos
+' Propósito : Devuelve la ruta base de los recursos del paquete. Si se está
+'             ejecutando desde el IDE de Gambas, los recursos están en
+'             .hidden/ dentro del proyecto. Si se está ejecutando instalado,
+'             están en /usr/share/gbpublisher/.
+' Parámetros: (ninguno)
+' Retorna   : String — ruta absoluta a la carpeta de recursos
+' ============================================
 Public Function RutaRecursos() As String
 
-  ' EN EL IDE: LAS CARPETAS ESTÁN EN .hidden/ DENTRO DEL PROYECTO
+  ' --- IDE DE GAMBAS: LOS RECURSOS ESTÁN EN .hidden/ DEL PROYECTO ---
   If Exist(Application.Path &/ ".hidden" &/ "fonts") Then
     Return Application.Path &/ ".hidden"
   Endif
 
-  ' INSTALADO: LOS ARCHIVOS ESTÁN EN /usr/share/gbpublisher/
+  ' --- INSTALADO: LOS RECURSOS ESTÁN EN /usr/share/gbpublisher/ ---
   Return "/usr/share/gbpublisher"
 
 End
 
+' ============================================
+' Función   : LeerTipoCSL
+' Propósito : Mapea el nombre de un archivo CSL a su identificador interno
+'             de estilo. gbpublisher soporta exactamente 4 estilos con nombres
+'             fijos. Si el archivo no coincide con ninguno, avisa al usuario
+'             y devuelve cadena vacía.
+'             Nota: para soporte de CSLs personalizados habría que leer el
+'             citation-format del XML del archivo, no solo el nombre.
+' Parámetros: sRutaCSL As String — ruta al archivo .csl
+' Retorna   : String — identificador del estilo ("apa", "ieee", "vancouver",
+'             "iso690") o "" si no se reconoce
+' ============================================
 Public Function LeerTipoCSL(sRutaCSL As String) As String
 
-  ' MAPEO DIRECTO: nombre de archivo CSL → identificador de estilo
-  ' gbpublisher SOPORTA EXACTAMENTE 4 ESTILOS CON NOMBRES FIJOS
   Select Case Lower(File.Name(sRutaCSL))
     Case "apa.csl"
       Return "apa"
@@ -376,86 +424,11 @@ Public Function LeerTipoCSL(sRutaCSL As String) As String
     Case "iso690-author-date-es.csl"
       Return "iso690"
     Case Else
+      m_Sonido.sonar("Error")
       Message.Error("Estilo de cita no reconocido: " & File.Name(sRutaCSL) & Chr(10) &
         "Los estilos soportados son: apa.csl, ieee.csl, vancouver.csl, iso690-author-date-es.csl")
       Return ""
   End Select
-
-Catch
-  Return "apa"
-
-End Function
-
-Public Sub CerrarTodoMySQL()
-
-  ' CONFIRMACIÓN DE SALIDA
-  m_Sonido.sonar("Question")
-  If Message.Question("¿Está seguro que desea salir de la aplicación?") = 2 Then ' Usuario eligió 2 = Cancelar
-    Return
-  Endif
-
-  m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", UsuarioEnCurso)
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE id = &1", FMain.id_proyecto.Value)
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE id = &1", FMain.id_proyecto.Value)
-
-  m_ConexionBD.mConn.Commit
-  m_Timer.DetenerContador()
-
-  'DETENEMOS EL CONTADOR PARA ARCHIVOS XML
-  FMain.DetenerTimerArchivosXML()
-
-  ' DETENEMOS EL CONTADOR PARA ARCHIVOS MD
-  FMain.DetenerTimerArchivosProyecto()
-
-  ' LIMPIAR TERMINAL Y PROCESOS
-  Try FMain.TerminalViewProyecto.Input("rm -rf " & User.Home & "/.local/share/org.gambas.*" & "\n")
-  Try FMain.TerminalViewProyecto.Input("clear" & "\n")
-  Wait 0.2
-
-  ' DETIENE EL PROCESO BASH
-  If FMain.$Bash Then
-    If Object.IsValid(FMain.$Bash) Then
-      If FMain.$Bash.State = Process.Running Then
-        Dim tries As Integer = 0
-        While FMain.$Bash.State = Process.Running And tries < 20
-          FMain.$Bash.Kill
-          Wait 0.05
-          tries = tries + 1
-        Wend
-        ' FALLBACK: SI KILL NO ALCANZÓ, INTENTAR TERMINATE
-        If FMain.$Bash.State = Process.Running Then
-          FMain.$Bash.Terminate
-          Wait 0.2
-          If FMain.$Bash.State = Process.Running Then
-            m_Sonido.sonar("Warning")
-            Message.Warning("El proceso no pudo ser detenido.")
-          Endif
-        Endif
-      Endif
-    Endif
-    FMain.$Bash = Null
-  Endif
-
-  ' LIMPIAR INTERFAZ
-  FMain.txtProyecto.Clear
-  FMain.DirViewProyecto.Root = User.Home
-  FMain.TextBoxUsuario.Clear
-  FMain.TextBoxServidor.Clear
-
-  ' CIERRA LA CONEXIÓN A LA BBDD SI EXISTE Y ESTÁ ABIERTA
-  If Not IsNull(m_ConexionBD.mConn) Then
-    If m_ConexionBD.mConn.Opened Then
-      m_ConexionBD.mConn.Close()
-    Endif
-    m_ConexionBD.mConn = Null
-  Endif
-
-  ' --- LIMPIAR ESTADO DE SESIÓN ---
-  UsuarioEnCurso = ""
-  IdUsuarioEnCurso = 0
-
-  ' FORZAMOS SALIDA PARA NO QUEDAR EN ESTADO INCONSISTENTE
-  Quit
 
 End
 
@@ -466,18 +439,28 @@ End
 '             los recursos del paquete. Si la fuente de recursos no existe,
 '             informa el problema de instalación y cierra. Si se copian
 '             fuentes nuevas, registra y pide reinicio.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
 ' ============================================
 Public Sub VerificarFuentesIBMPlex()
 
-  ' --- 1. Verificar presencia de la fuente centinela ---
-  ' SI YA ESTÁ INSTALADA NO HAY NADA QUE HACER
-  Dim sFontDst As String = User.Home &/ ".local/share/fonts/gbpublisher"
+  Dim sFontDst As String
+  Dim sFontSrc As String
+  Dim aFuentes As String[]
+  Dim sFuente As String
+  Dim iCopiadas As Integer
+  Dim iEsperadas As Integer
+  Dim aFaltantes As New String[]
+  Dim sMensaje As String
 
+  ' --- 1. VERIFICAR PRESENCIA DE LA FUENTE CENTINELA ---
+  ' SI YA ESTÁ INSTALADA NO HAY NADA QUE HACER
+  sFontDst = User.Home &/ ".local/share/fonts/gbpublisher"
   If Exist(sFontDst &/ "IBMPlexSans-Regular.otf") Then Return
 
-  ' --- 2. Verificar que el directorio fuente del paquete existe ---
+  ' --- 2. VERIFICAR QUE EL DIRECTORIO FUENTE DEL PAQUETE EXISTE ---
   ' SI FALTA, EL PAQUETE ESTÁ MAL INSTALADO — ES UN ERROR DE INSTALACIÓN, NO DE USO
-  Dim sFontSrc As String = RutaRecursos() &/ "fonts"
+  sFontSrc = RutaRecursos() &/ "fonts"
   If Not Exist(sFontSrc) Then
     m_Sonido.sonar("Error")
     Message.Error(
@@ -488,7 +471,7 @@ Public Sub VerificarFuentesIBMPlex()
     Quit
   Endif
 
-  ' --- 3. Crear directorio de destino si no existe ---
+  ' --- 3. CREAR DIRECTORIO DE DESTINO SI NO EXISTE ---
   If Not Exist(sFontDst) Then
     Try Mkdir sFontDst
     If Error Then
@@ -501,17 +484,15 @@ Public Sub VerificarFuentesIBMPlex()
     Endif
   Endif
 
-  ' --- 4. Copiar fuentes disponibles y contabilizar ---
-  Dim aFuentes As String[] = [
+  ' --- 4. COPIAR FUENTES DISPONIBLES Y CONTABILIZAR ---
+  aFuentes = [
     "IBMPlexSans-Regular.otf", "IBMPlexSans-Bold.otf",
     "IBMPlexSans-Italic.otf", "IBMPlexSans-BoldItalic.otf",
     "IBMPlexMono-Regular.otf", "IBMPlexMono-Bold.otf",
     "IBMPlexMono-Italic.otf", "IBMPlexMono-BoldItalic.otf"
   ]
-  Dim sFuente As String
-  Dim iCopiadas As Integer = 0
-  Dim iEsperadas As Integer = aFuentes.Count
-  Dim aFaltantes As New String[]
+  iCopiadas = 0
+  iEsperadas = aFuentes.Count
 
   For Each sFuente In aFuentes
     If Exist(sFontSrc &/ sFuente) Then
@@ -526,7 +507,7 @@ Public Sub VerificarFuentesIBMPlex()
     Endif
   Next
 
-  ' --- 5. Evaluar resultado de la copia ---
+  ' --- 5. EVALUAR RESULTADO DE LA COPIA ---
   ' SI NO SE COPIÓ NINGUNA FUENTE, EL PROBLEMA ES DE INSTALACIÓN
   If iCopiadas = 0 Then
     m_Sonido.sonar("Error")
@@ -539,12 +520,11 @@ Public Sub VerificarFuentesIBMPlex()
     Quit
   Endif
 
-  ' --- 6. Registrar fuentes copiadas en el sistema ---
+  ' --- 6. REGISTRAR FUENTES COPIADAS EN EL SISTEMA ---
   Shell "fc-cache -f '" & sFontDst & "'" Wait
 
-  ' --- 7. Informar resultado y solicitar reinicio ---
+  ' --- 7. INFORMAR RESULTADO Y SOLICITAR REINICIO ---
   ' ADVERTENCIA ADICIONAL SI FALTAN ALGUNAS FUENTES (INSTALACIÓN PARCIAL)
-  Dim sMensaje As String
   If aFaltantes.Count > 0 Then
     sMensaje =
       "Se instalaron " & CStr(iCopiadas) & " de " & CStr(iEsperadas) & " fuentes IBM Plex." & Chr(10) & Chr(10) &
@@ -563,16 +543,82 @@ Public Sub VerificarFuentesIBMPlex()
   Message.Info(sMensaje)
   Quit
 
-End Sub
+End
+
+' ============================================
+' Función   : DetenerProcesoBash
+' Propósito : Helper privado que detiene el proceso bash asociado al proyecto
+'             (FMain.$Bash). Intenta primero con Kill (hasta 20 intentos con
+'             pausas de 50ms) y como fallback usa Terminate. Anula la
+'             referencia al final.
+'             DEUDA TÉCNICA: acceso directo a FMain.$Bash (variable privada
+'             por convención $ en Gambas). Cuando se refactorice FMain,
+'             mover esta lógica a una función pública FMain.DetenerBashEnCurso().
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub DetenerProcesoBash()
+
+  Dim tries As Integer
+
+  ' --- 1. VALIDAR QUE EXISTE Y ESTÁ CORRIENDO ---
+  If Not FMain.$Bash Then Return
+  If Not Object.IsValid(FMain.$Bash) Then
+    FMain.$Bash = Null
+    Return
+  Endif
+  If FMain.$Bash.State <> Process.Running Then
+    FMain.$Bash = Null
+    Return
+  Endif
+
+  ' --- 2. INTENTAR DETENER CON Kill HASTA 20 VECES ---
+  tries = 0
+  While FMain.$Bash.State = Process.Running And tries < 20
+    FMain.$Bash.Kill
+    Wait 0.05
+    tries = tries + 1
+  Wend
+
+  ' --- 3. FALLBACK CON Terminate SI Kill NO ALCANZÓ ---
+  If FMain.$Bash.State = Process.Running Then
+    FMain.$Bash.Terminate
+    Wait 0.2
+    If FMain.$Bash.State = Process.Running Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El proceso bash no pudo ser detenido.")
+    Endif
+  Endif
+
+  ' --- 4. ANULAR LA REFERENCIA ---
+  FMain.$Bash = Null
+
+End
+
+' ============================================
+' Función   : LimpiarTerminalProyecto
+' Propósito : Helper privado que envía un comando "clear" a la terminal
+'             embebida de FMain con una pequeña espera para que se procese.
+'             Centraliza el patrón que aparecía duplicado en CerrarProyecto
+'             y CerrarTodoMySQL.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub LimpiarTerminalProyecto()
+
+  Try FMain.TerminalViewProyecto.Input("clear" & Chr(10))
+  Wait 0.2
+
+End
 
 ' ============================================
 ' Función   : CerrarProyecto
 ' Propósito : Libera el proyecto actualmente abierto: marca como no-ocupado
-'             en BD, detiene timers, mata el proceso bash de la terminal,
-'             limpia la UI de FMain. NO pregunta al usuario — la decisión
-'             debe tomarla el caller antes de invocar esta función.
-'             Tampoco toca usuarios.en_linea — eso es responsabilidad del
-'             flujo de desconexión, no del cierre de proyecto.
+'             en BD, detiene timers, mata el proceso bash, limpia la UI
+'             de FMain. NO pregunta al usuario — la decisión debe tomarla
+'             el caller antes de invocar esta función. Tampoco toca
+'             usuarios.en_linea — eso es responsabilidad del flujo de
+'             desconexión, no del cierre de proyecto.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
@@ -600,41 +646,15 @@ Public Sub CerrarProyecto()
   FMain.DetenerTimerArchivosXML()
   FMain.DetenerTimerArchivosProyecto()
 
-  ' --- 4. LIMPIAR LA TERMINAL EMBEBIDA ---
-  Try FMain.TerminalViewProyecto.Input("clear" & Chr(10))
-  Wait 0.2
+  ' --- 4. LIMPIAR TERMINAL EMBEBIDA Y DETENER PROCESO BASH ---
+  LimpiarTerminalProyecto()
+  DetenerProcesoBash()
 
-  ' --- 5. DETENER EL PROCESO BASH ASOCIADO ---
-  ' NOTA: ACCESO DIRECTO A FMain.$Bash. DEUDA TÉCNICA — MOVER A UNA FUNCIÓN
-  ' PÚBLICA EN FMain (DetenerBashEnCurso) CUANDO SE REFACTORICE FMain
-  If FMain.$Bash Then
-    If Object.IsValid(FMain.$Bash) Then
-      If FMain.$Bash.State = Process.Running Then
-        Dim tries As Integer = 0
-        While FMain.$Bash.State = Process.Running And tries < 20
-          FMain.$Bash.Kill
-          Wait 0.05
-          tries = tries + 1
-        Wend
-        ' FALLBACK: SI KILL NO ALCANZÓ, INTENTAR TERMINATE
-        If FMain.$Bash.State = Process.Running Then
-          FMain.$Bash.Terminate
-          Wait 0.2
-          If FMain.$Bash.State = Process.Running Then
-            m_Sonido.sonar("Warning")
-            Message.Warning("El proceso bash no pudo ser detenido.")
-          Endif
-        Endif
-      Endif
-    Endif
-    FMain.$Bash = Null
-  Endif
-
-  ' --- 6. LIMPIAR FORMULARIOS DE BIBTEX Y SIGLAS ---
+  ' --- 5. LIMPIAR FORMULARIOS DE BIBTEX Y SIGLAS ---
   m_Bibtex.LimpiarTextboxBibtex()
   m_Siglas.LimpiarTextboxSigla()
 
-  ' --- 7. RESETEAR UI DE FMain Y CONTADORES VISUALES ---
+  ' --- 6. RESETEAR UI DE FMain Y CONTADORES VISUALES ---
   FMain.TimerHOY.Delay = 1000
   FMain.TimerHOY.Stop
   FMain.TextHoraParcial.Text = "00:00:00"
@@ -644,5 +664,70 @@ Public Sub CerrarProyecto()
   FMain.DirViewProyecto.Root = User.Home
   FMain.SplitterPrincipal.Visible = False
   FMain.SpringTemporal.Visible = True
+
+End
+
+' ============================================
+' Función   : CerrarTodoMySQL
+' Propósito : Cierra completamente la aplicación: pregunta al usuario, libera
+'             al usuario en BD (en_linea = 0), libera el proyecto si lo había,
+'             detiene timers y proceso bash, cierra la conexión a la BD,
+'             limpia el estado de sesión y termina el proceso con Quit.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub CerrarTodoMySQL()
+
+  ' --- 1. CONFIRMACIÓN DE SALIDA ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Está seguro que desea salir de la aplicación?", "Sí", "No") <> 1 Then Return
+
+  ' --- 2. LIBERAR EL USUARIO Y EL PROYECTO EN BD ---
+  ' SE USAN UPDATEs SEPARADOS PORQUE TIENEN FILTROS DISTINTOS (usuario vs id_proyecto)
+  Try m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo liberar al usuario en la base de datos:" & gb.NewLine & Error.Text)
+  Endif
+
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE proyectos SET usuario_propietario = NULL, ocupado = 0 WHERE id = &1",
+    FMain.id_proyecto.Value)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo liberar el proyecto en la base de datos:" & gb.NewLine & Error.Text)
+  Endif
+
+  Try m_ConexionBD.mConn.Commit
+
+  ' --- 3. DETENER TIMERS Y CONTADORES ---
+  m_Timer.DetenerContador()
+  FMain.DetenerTimerArchivosXML()
+  FMain.DetenerTimerArchivosProyecto()
+
+  ' --- 4. LIMPIAR TERMINAL EMBEBIDA Y DETENER PROCESO BASH ---
+  LimpiarTerminalProyecto()
+  DetenerProcesoBash()
+
+  ' --- 5. LIMPIAR UI DE FMain ---
+  FMain.txtProyecto.Clear
+  FMain.DirViewProyecto.Root = User.Home
+  FMain.TextBoxUsuario.Clear
+  FMain.TextBoxServidor.Clear
+
+  ' --- 6. CERRAR LA CONEXIÓN A LA BD SI ESTÁ ABIERTA ---
+  If Not IsNull(m_ConexionBD.mConn) Then
+    If m_ConexionBD.mConn.Opened Then
+      Try m_ConexionBD.mConn.Close()
+    Endif
+    m_ConexionBD.mConn = Null
+  Endif
+
+  ' --- 7. LIMPIAR ESTADO DE SESIÓN ---
+  UsuarioEnCurso = ""
+  IdUsuarioEnCurso = 0
+
+  ' --- 8. FORZAR SALIDA PARA NO QUEDAR EN ESTADO INCONSISTENTE ---
+  Quit
 
 End
