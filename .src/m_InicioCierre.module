@@ -1,7 +1,7 @@
 ' Gambas module file
 
 Public UsuarioEnCurso As String
-Public IdUsuario As Integer
+Public IdUsuarioEnCurso As Integer
 
 Public Sub DirectorioOcultoApp()
 
@@ -386,78 +386,6 @@ Catch
 
 End Function
 
-Public Sub CerrarProyecto()
-
-  If FMain.txtProyecto.Text = "" Then
-    Return
-  Endif
-
-  ' CONFIRMACIÓN DE SALIDA
-  m_Sonido.sonar("Question")
-  If Message.Question("¿Está seguro que desea cerrar este proyecto?") = 2 Then ' Usuario eligió 2 = Cancelar
-    Return
-  Endif
-
-  m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", UsuarioEnCurso)
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE id = &1", FMain.id_proyecto.Value)
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE id = &1", FMain.id_proyecto.Value)
-
-  m_ConexionBD.mConn.Commit
-  m_Timer.DetenerContador()
-
-  'DETENEMOS EL CONTADOR PARA ARCHIVOS XML
-  FMain.DetenerTimerArchivosXML()
-
-  ' DETENEMOS EL CONTADOR PARA ARCHIVOS MD
-  FMain.DetenerTimerArchivosProyecto()
-
-  ' LIMPIAR TERMINAL Y PROCESOS
-  Try FMain.TerminalViewProyecto.Input("rm -rf " & User.Home & "/.local/share/org.gambas.*" & "\n")
-  Try FMain.TerminalViewProyecto.Input("clear" & "\n")
-  Wait 0.2
-
-  ' LIMPIAR CACHÉ DE GAMBAS
-  Shell "rm -rf " & Quote$(User.Home & "/.local/share/org.gambas.*")
-  Wait
-
-  ' DETIENE EL PROCESO BASH
-  If FMain.$Bash Then
-    If Object.IsValid(FMain.$Bash) Then
-      If FMain.$Bash.State = Process.Running Then
-        Dim tries As Integer = 0
-        While FMain.$Bash.State = Process.Running And tries < 20
-          FMain.$Bash.Kill
-          Wait 0.05
-          tries = tries + 1
-        Wend
-        If FMain.$Bash.State = Process.Running Then
-          FMain.$Bash.Terminate
-          Wait 0.2
-          If FMain.$Bash.State = Process.Running Then
-            m_Sonido.sonar("Warning")
-            Message.Warning("El proceso bash no pudo ser detenido.")
-          Endif
-        Endif
-      Endif
-    Endif
-    FMain.$Bash = Null
-  Endif
-
-  ' LIMPIAR INTERFAZ Y LOS FORMULARIOS
-  m_Bibtex.LimpiarTextboxBibtex()
-  m_Siglas.LimpiarTextboxSigla()
-  FMain.TimerHOY.Delay = 1000
-  FMain.TimerHOY.Stop' detenemos el reloj
-  FMain.TextHoraParcial.Text = "00:00:00"
-  FMain.TextHoraTotal.Text = ""
-  FMain.txtProyecto.Text = ""
-  FMain.id_proyecto.Value = ""
-  FMain.DirViewProyecto.Root = User.Home
-  FMain.SplitterPrincipal.Visible = False
-  FMain.SpringTemporal.Visible = True
-
-End
-
 Public Sub CerrarTodoMySQL()
 
   ' CONFIRMACIÓN DE SALIDA
@@ -521,6 +449,10 @@ Public Sub CerrarTodoMySQL()
     Endif
     m_ConexionBD.mConn = Null
   Endif
+
+  ' --- LIMPIAR ESTADO DE SESIÓN ---
+  UsuarioEnCurso = ""
+  IdUsuarioEnCurso = 0
 
   ' FORZAMOS SALIDA PARA NO QUEDAR EN ESTADO INCONSISTENTE
   Quit
@@ -632,3 +564,85 @@ Public Sub VerificarFuentesIBMPlex()
   Quit
 
 End Sub
+
+' ============================================
+' Función   : CerrarProyecto
+' Propósito : Libera el proyecto actualmente abierto: marca como no-ocupado
+'             en BD, detiene timers, mata el proceso bash de la terminal,
+'             limpia la UI de FMain. NO pregunta al usuario — la decisión
+'             debe tomarla el caller antes de invocar esta función.
+'             Tampoco toca usuarios.en_linea — eso es responsabilidad del
+'             flujo de desconexión, no del cierre de proyecto.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub CerrarProyecto()
+
+  ' --- 1. SIN PROYECTO ABIERTO: NADA QUE HACER ---
+  If FMain.txtProyecto.Text = "" Then Return
+
+  ' --- 2. LIBERAR EL PROYECTO EN BD ---
+  ' UPDATE ATÓMICO QUE COMBINA OWNER Y FLAG DE OCUPADO EN UNA SOLA SENTENCIA
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE proyectos SET usuario_propietario = NULL, ocupado = 0 WHERE id = &1",
+    FMain.id_proyecto.Value)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo liberar el proyecto en la base de datos:" & gb.NewLine &
+      Error.Text & gb.NewLine & gb.NewLine &
+      "El cierre continúa, pero el proyecto puede quedar marcado como ocupado.")
+  Else
+    Try m_ConexionBD.mConn.Commit
+  Endif
+
+  ' --- 3. DETENER TIMERS Y CONTADORES ---
+  m_Timer.DetenerContador()
+  FMain.DetenerTimerArchivosXML()
+  FMain.DetenerTimerArchivosProyecto()
+
+  ' --- 4. LIMPIAR LA TERMINAL EMBEBIDA ---
+  Try FMain.TerminalViewProyecto.Input("clear" & Chr(10))
+  Wait 0.2
+
+  ' --- 5. DETENER EL PROCESO BASH ASOCIADO ---
+  ' NOTA: ACCESO DIRECTO A FMain.$Bash. DEUDA TÉCNICA — MOVER A UNA FUNCIÓN
+  ' PÚBLICA EN FMain (DetenerBashEnCurso) CUANDO SE REFACTORICE FMain
+  If FMain.$Bash Then
+    If Object.IsValid(FMain.$Bash) Then
+      If FMain.$Bash.State = Process.Running Then
+        Dim tries As Integer = 0
+        While FMain.$Bash.State = Process.Running And tries < 20
+          FMain.$Bash.Kill
+          Wait 0.05
+          tries = tries + 1
+        Wend
+        ' FALLBACK: SI KILL NO ALCANZÓ, INTENTAR TERMINATE
+        If FMain.$Bash.State = Process.Running Then
+          FMain.$Bash.Terminate
+          Wait 0.2
+          If FMain.$Bash.State = Process.Running Then
+            m_Sonido.sonar("Warning")
+            Message.Warning("El proceso bash no pudo ser detenido.")
+          Endif
+        Endif
+      Endif
+    Endif
+    FMain.$Bash = Null
+  Endif
+
+  ' --- 6. LIMPIAR FORMULARIOS DE BIBTEX Y SIGLAS ---
+  m_Bibtex.LimpiarTextboxBibtex()
+  m_Siglas.LimpiarTextboxSigla()
+
+  ' --- 7. RESETEAR UI DE FMain Y CONTADORES VISUALES ---
+  FMain.TimerHOY.Delay = 1000
+  FMain.TimerHOY.Stop
+  FMain.TextHoraParcial.Text = "00:00:00"
+  FMain.TextHoraTotal.Text = ""
+  FMain.txtProyecto.Text = ""
+  FMain.id_proyecto.Value = ""
+  FMain.DirViewProyecto.Root = User.Home
+  FMain.SplitterPrincipal.Visible = False
+  FMain.SpringTemporal.Visible = True
+
+End

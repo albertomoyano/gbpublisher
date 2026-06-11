@@ -145,9 +145,36 @@ Public Sub btnConectarServer_Click()
       Endif
       ' --- 2. Esquema válido: iniciar sesión ---
       m_Sonido.sonar("Info")
+      m_Sonido.sonar("Info")
       Message.Info("Conexión exitosa al servidor " & ip)
       m_InicioCierre.UsuarioEnCurso = usuario
+
+      ' --- CACHEAR EL ID DEL USUARIO PARA VALIDACIONES DE AUTORÍA POSTERIORES ---
+      ' SE OBTIENE UNA SOLA VEZ AL LOGIN PARA EVITAR CONSULTAS REPETIDAS DESDE
+      ' FORMULARIOS QUE NECESITAN VERIFICAR QUIÉN ES EL DUEÑO DE UN REGISTRO
+      ' (BLOCK DE NOTAS, COMENTARIOS, REFERENCIAS, ETC.)
+      Dim rsIdUsuario As Result
+      Try rsIdUsuario = m_ConexionBD.mConn.Exec(
+        "SELECT id FROM usuarios WHERE usuario = &1 LIMIT 1", usuario)
+      If Error Or If Not rsIdUsuario.Available Then
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo recuperar el ID del usuario logueado:" & Chr(10) &
+          IIf(Error, Error.Text, "Usuario no encontrado en la BD") & Chr(10) & Chr(10) &
+          "Se desconectará la sesión para evitar inconsistencias.")
+        ' LIBERAR AL USUARIO Y CERRAR CONEXIÓN — MISMO PATRÓN QUE EN ESQUEMA INVÁLIDO
+        m_ConexionBD.mConn.Exec(
+          "UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", usuario)
+        m_ConexionBD.mConn.Commit
+        Try m_ConexionBD.mConn.Close()
+        m_InicioCierre.UsuarioEnCurso = ""
+        m_InicioCierre.IdUsuarioEnCurso = 0
+        Return
+      Endif
+      m_InicioCierre.IdUsuarioEnCurso = rsIdUsuario["id"]
+
       FMain.MenuInicio.Enabled = True
+
+      '
       FMain.menuHerramientas.Enabled = True
       FMain.ButtonCerrarApp.Visible = False
       FMain.menuAcercaAyuda.Enabled = True
@@ -185,57 +212,6 @@ Public Sub btnConectarServer_Click()
       m_Sonido.sonar("Error")
       Message.Error("Error al intentar conectar al servidor.")
   End Select
-
-End
-
-Public Sub btnDesconectarServer_Click()
-
-  m_InicioCierre.CerrarProyecto()
-
-  ' CONFIRMAR DESCONEXIÓN
-  m_Sonido.sonar("Question")
-  If Message.Question("¿Desea desconectarse del servidor actual?", "Sí", "No") = 1 Then
-
-    ' LIBERAR AL USUARIO
-    Dim sUsuarioEnCurso As String = m_InicioCierre.UsuarioEnCurso
-    If sUsuarioEnCurso <> "" Then
-      m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", sUsuarioEnCurso)
-      m_ConexionBD.mConn.Commit
-    End If
-
-    Try m_ConexionBD.mConn.Close
-
-    If Not Error Then
-      m_Sonido.sonar("Info")
-      Message.Info("Se ha desconectado correctamente del servidor.")
-
-      ' ACTUALIZAR BOTONES
-      btnConectarServer.Visible = True
-      btnDesconectarServer.Visible = False
-
-      ' LIMPIAR DATOS Y HABILITAR CAMPOS
-      TextBoxUsuario.Enabled = True
-      TextBoxClave.Enabled = True
-      TextBoxIP.Enabled = True
-      TextBoxUsuario.Text = ""
-      TextBoxClave.Text = ""
-
-      ' LIMPIAR EN FMAIN
-      FMain.TextBoxServidor.Text = ""
-      FMain.TextBoxUsuario.Text = ""
-      FMain.MenuInicio.Enabled = False
-      FMain.ButtonCerrarApp.Visible = True
-      FMain.TableViewUsuarios.Visible = False
-
-      ' DESHABILITAR BOTONES DEL MENÚ
-      FMain.menuHerramientas.Enabled = False
-      FMain.menuAcercaAyuda.Enabled = False
-    Else
-      m_Sonido.sonar("Error")
-      Message.Error("No se pudo cerrar la conexión correctamente: " & Error.Text)
-    End If
-
-  End If
 
 End
 
@@ -298,3 +274,68 @@ Public Sub btnNuevaIP_Click()
   m_FuncionesGenericas.CargarComboBoxIP(TextBoxIP)
 
 End Sub
+
+' ============================================
+' Función   : btnDesconectarServer_Click
+' Propósito : Desconecta al usuario del servidor. Antes verifica cambios
+'             sin guardar y confirma la acción; luego cierra el proyecto
+'             abierto (si lo hay), libera al usuario en BD, cierra la
+'             conexión y resetea el estado de la sesión.
+' ============================================
+Public Sub btnDesconectarServer_Click()
+
+  Dim sUsuarioEnCurso As String
+
+  ' --- 1. GUARD: CAMBIOS SIN GUARDAR EN EL EDITOR ---
+  If Not FMain.ConfirmarDescartarCambios() Then Return
+
+  ' --- 2. CONFIRMAR DESCONEXIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Desea desconectarse del servidor actual?", "Sí", "No") <> 1 Then Return
+
+  ' --- 3. CERRAR EL PROYECTO EN CURSO (SI LO HAY) ---
+  ' CerrarProyecto YA NO PREGUNTA NI TOCA usuarios.en_linea
+  m_InicioCierre.CerrarProyecto()
+
+  ' --- 4. LIBERAR AL USUARIO EN BD ---
+  sUsuarioEnCurso = m_InicioCierre.UsuarioEnCurso
+  If sUsuarioEnCurso <> "" Then
+    Try m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", sUsuarioEnCurso)
+    Try m_ConexionBD.mConn.Commit
+  Endif
+
+  ' --- 5. CERRAR LA CONEXIÓN ---
+  Try m_ConexionBD.mConn.Close
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cerrar la conexión correctamente: " & Error.Text)
+    Return
+  Endif
+
+  ' --- 6. LIMPIAR ESTADO DE SESIÓN ---
+  m_InicioCierre.UsuarioEnCurso = ""
+  m_InicioCierre.IdUsuarioEnCurso = 0
+
+  ' --- 7. FEEDBACK AL USUARIO ---
+  m_Sonido.sonar("Info")
+  Message.Info("Se ha desconectado correctamente del servidor.")
+
+  ' --- 8. RESETEAR UI DEL FORMULARIO DE LOGIN ---
+  btnConectarServer.Visible = True
+  btnDesconectarServer.Visible = False
+  TextBoxUsuario.Enabled = True
+  TextBoxClave.Enabled = True
+  TextBoxIP.Enabled = True
+  TextBoxUsuario.Text = ""
+  TextBoxClave.Text = ""
+
+  ' --- 9. RESETEAR UI DE FMain ---
+  FMain.TextBoxServidor.Text = ""
+  FMain.TextBoxUsuario.Text = ""
+  FMain.MenuInicio.Enabled = False
+  FMain.ButtonCerrarApp.Visible = True
+  FMain.TableViewUsuarios.Visible = False
+  FMain.menuHerramientas.Enabled = False
+  FMain.menuAcercaAyuda.Enabled = False
+
+End
