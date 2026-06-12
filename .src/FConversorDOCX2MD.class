@@ -1,67 +1,74 @@
 ' Gambas class file
 
-' ============================================
+' ==============================================================================
 ' Formulario: FConversorDOCX2MD
-' Propósito : Convertir archivos DOCX y ODT a Markdown
-'             usando Pandoc, organizando los archivos
-'             en la estructura del proyecto según el
-'             tipo de pieza (front-matter / cuerpo / back-matter)
-' ============================================
+' Propósito : Convierte archivos DOCX y ODT a Markdown usando Pandoc,
+'             organizándolos en la estructura del proyecto actualmente abierto
+'             según el tipo de pieza elegido (front-matter / cuerpo / back-matter).
+'             SUPUESTO: el formulario se invoca solo con un proyecto abierto.
+'             La carpeta destino se toma de FMain.txtProyecto.
+'             La salida de Pandoc se vuelca al TerminalView del proyecto para
+'             que el usuario vea warnings (imágenes faltantes, estilos no
+'             mapeados, etc.).
+' Dependencias: m_Sonido, FMain.
+' ==============================================================================
+
+' --- FLAG QUE PERMITE EL CIERRE DESDE EL BOTÓN Y BLOQUEA LA X DEL SISTEMA ---
+Private bCierrePermitido As Boolean
 
 ' ============================================
-' Función   : btnBuscar_Click
-' Propósito : Seleccionar archivo DOCX u ODT de origen
+' Función   : Form_Open
+' Propósito : Estado inicial — campos limpios y botón Convertir oculto hasta
+'             que el usuario complete archivo de origen y nombre de destino.
+'             Se llama cada vez que se hace ShowModal, lo que asegura un
+'             estado consistente incluso después de conversiones previas
+'             (la instancia del formulario es persistente entre llamadas).
 ' ============================================
-Public Sub btnBuscar_Click()
+Public Sub Form_Open()
 
-  ' --- 1. ABRIR DIÁLOGO DE SELECCIÓN DE ARCHIVO ---
-  m_Sonido.sonar("Info")
-  Dialog.Title = "Seleccionar archivo DOCX u ODT"
-  Dialog.Filter = ["*.docx;*.odt", "Documentos (DOCX, ODT)", "*.docx", "Archivos Word", "*.odt", "Archivos LibreOffice", "*", "Todos los archivos"]
-  Dialog.AutoExt = True
-  Dialog.Path = User.Home
-  If Dialog.OpenFile() Then
-    Return
-  Endif
+  ' --- 1. RESETEAR CAMPOS DE ENTRADA ---
+  txtArchivoOrigen.Text = ""
+  txtArchivoDestino.Text = ""
+  lblNombreArchivo.Text = ""
 
-  ' --- 2. MOSTRAR RUTA SELECCIONADA ---
-  txtArchivoOrigen.Text = Dialog.Path
-
-  ' --- 3. HABILITAR CONVERSIÓN SI YA HAY CARPETA DESTINO ---
-  btnCONVERTIR.Visible = (Trim(txtCarpetaDestino.Text) <> "")
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("No se pudo abrir el archivo")
+  ' --- 2. ESTADO INICIAL DE BOTONES ---
+  ' btnCerrar SIEMPRE VISIBLE: SI EL USUARIO ABRE EL FORM Y SE ARREPIENTE,
+  ' DEBE PODER SALIR SIN CONVERTIR
+  btnCONVERTIR.Visible = False
+  btnCerrar.Visible = True
 
 End
 
 ' ============================================
-' Función   : btnProyecto_Click
-' Propósito : Seleccionar carpeta de proyecto destino
+' Función   : btnBuscar_Click
+' Propósito : Permite al usuario seleccionar el archivo DOCX u ODT de origen.
 ' ============================================
-Public Sub btnProyecto_Click()
+Public Sub btnBuscar_Click()
 
-  ' --- 1. ABRIR DIÁLOGO DE SELECCIÓN DE CARPETA ---
-  Dialog.Title = "Seleccionar carpeta del proyecto"
+  ' --- 1. CONFIGURAR Y ABRIR EL DIÁLOGO ---
+  Dialog.Title = "Seleccionar archivo DOCX u ODT"
+  Dialog.Filter = ["*.docx;*.odt", "Documentos (DOCX, ODT)",
+    "*.docx", "Archivos Word",
+    "*.odt", "Archivos LibreOffice",
+    "*", "Todos los archivos"]
+  Dialog.AutoExt = True
   Dialog.Path = User.Home
-  If Dialog.SelectDirectory() Then
-    Return
-  Endif
+
+  ' Dialog.OpenFile DEVUELVE True CUANDO EL USUARIO CANCELA
+  If Dialog.OpenFile() Then Return
 
   ' --- 2. MOSTRAR RUTA SELECCIONADA ---
-  txtCarpetaDestino.Text = Dialog.Path
+  txtArchivoOrigen.Text = Dialog.Path
 
-  ' --- 3. HABILITAR CONVERSIÓN SI YA HAY ARCHIVO ORIGEN ---
-  btnCONVERTIR.Visible = (Trim(txtArchivoOrigen.Text) <> "")
+  ' --- 3. ACTUALIZAR VISIBILIDAD DEL BOTÓN CONVERTIR ---
+  ActualizarBotonConvertir()
 
 End
 
 ' ============================================
 ' Función   : btnCONVERTIR_Click
-' Propósito : Validar entradas, determinar prefijo y carpeta
-'             según el tipo de pieza (FM / cuerpo / BM)
-'             y ejecutar la conversión
+' Propósito : Valida entradas, determina prefijo y carpeta según el tipo
+'             de pieza (FM / cuerpo / BM) y ejecuta la conversión.
 ' ============================================
 Public Sub btnCONVERTIR_Click()
 
@@ -75,19 +82,15 @@ Public Sub btnCONVERTIR_Click()
 
   ' --- 1. OBTENER VALORES DE LA INTERFAZ ---
   sRutaOrigen = Trim(txtArchivoOrigen.Text)
-  sCarpetaProyecto = Trim(txtCarpetaDestino.Text)
   sNombreDestino = Trim(txtArchivoDestino.Text)
 
-  ' --- 2. VALIDAR QUE TODOS LOS CAMPOS ESTÉN COMPLETOS ---
+  ' LA CARPETA DEL PROYECTO SE DERIVA DEL PROYECTO ABIERTO EN FMain
+  sCarpetaProyecto = File.Dir(FMain.txtProyecto.Text)
+
+  ' --- 2. VALIDAR QUE LOS CAMPOS NECESARIOS ESTÉN COMPLETOS ---
   If sRutaOrigen = "" Then
     m_Sonido.sonar("Error")
     Message.Error("Debe seleccionar un archivo de origen.")
-    Return
-  Endif
-
-  If sCarpetaProyecto = "" Then
-    m_Sonido.sonar("Error")
-    Message.Error("Debe seleccionar una carpeta de proyecto.")
     Return
   Endif
 
@@ -98,14 +101,15 @@ Public Sub btnCONVERTIR_Click()
   Endif
 
   ' --- 3. VALIDAR PATRÓN NN- EN EL NOMBRE DE DESTINO ---
-  ' DEFENSA EN PROFUNDIDAD: AUNQUE EL KEYPRESS YA LO IMPIDE,
+  ' DEFENSA EN PROFUNDIDAD: AUNQUE EL KeyPress YA LO IMPIDE,
   ' VERIFICAMOS QUE EL NOMBRE TENGA AL MENOS NN- SEGUIDO DE UN CUERPO
   If String.Len(sNombreDestino) < 4 Or
       String.Mid(sNombreDestino, 1, 1) < "0" Or String.Mid(sNombreDestino, 1, 1) > "9" Or
       String.Mid(sNombreDestino, 2, 1) < "0" Or String.Mid(sNombreDestino, 2, 1) > "9" Or
       String.Mid(sNombreDestino, 3, 1) <> "-" Then
     m_Sonido.sonar("Error")
-    Message.Error("El nombre debe comenzar con dos dígitos seguidos de un guion, por ejemplo 01-introduccion.")
+    Message.Error("El nombre debe comenzar con dos dígitos seguidos de un guion," &
+      gb.NewLine & "por ejemplo 01-introduccion.")
     Return
   Endif
 
@@ -130,7 +134,7 @@ Public Sub btnCONVERTIR_Click()
   End Select
 
   ' --- 6. DETERMINAR PREFIJO Y CARPETA SEGÚN RADIO SELECCIONADO ---
-  ' RBMAIN ES EL DEFAULT DEL FORMULARIO Y CAE EN EL CASE ELSE
+  ' rbBody ES EL DEFAULT DEL FORMULARIO Y CAE EN EL Case Else
   Select Case True
     Case rbFront.Value
       sPrefijo = "fm-"
@@ -147,22 +151,24 @@ Public Sub btnCONVERTIR_Click()
   If ConvertirAMarkdown(sRutaOrigen, sFormato, sCarpetaProyecto, sNombreDestino, sPrefijo, sCarpetaTexto) Then
     m_Sonido.sonar("Info")
     Message.Info("Conversión completada con éxito.")
-    ' --- 8. ACTUALIZAR INTERFAZ ---
+
+    ' --- 8. RESET DE LA INTERFAZ PARA UNA EVENTUAL NUEVA CONVERSIÓN ---
     btnCerrar.Visible = True
     btnCONVERTIR.Visible = False
     txtArchivoOrigen.Text = ""
-    txtCarpetaDestino.Text = ""
     txtArchivoDestino.Text = ""
+    lblNombreArchivo.Text = ""
   Endif
 
 End
 
 ' ============================================
 ' Función   : ConvertirAMarkdown
-' Propósito : Ejecutar Pandoc para convertir DOCX/ODT a MD,
-'             ubicarlo en la subcarpeta que corresponde a su tipo
-'             (front-matter / articulos / back-matter) y mover el
-'             original a /originales con el prefijo correcto
+' Propósito : Ejecuta Pandoc para convertir DOCX/ODT a MD, lo ubica en la
+'             subcarpeta que corresponde a su tipo y copia el original a
+'             /originales con el prefijo correcto. La salida de Pandoc se
+'             vuelca al TerminalView del proyecto para que el usuario vea
+'             warnings.
 ' Parámetros: sRutaOrigen      As String — ruta completa del archivo fuente
 '             sFormato         As String — "docx" u "odt"
 '             sCarpetaProyecto As String — carpeta raíz del proyecto
@@ -177,64 +183,145 @@ Private Function ConvertirAMarkdown(sRutaOrigen As String, sFormato As String, s
   Dim sCarpetaOriginales As String
   Dim sCarpetaMedia As String
   Dim sArchivoMD As String
+  Dim sArchivoOriginalDestino As String
   Dim sComando As String
+  Dim sSalidaPandoc As String
 
   ' --- 1. DEFINIR RUTAS DE DESTINO ---
-  ' LA SUBCARPETA DEL .MD DEPENDE DEL TIPO DE PIEZA ELEGIDO EN EL FORMULARIO
-  sCarpetaTextos = sCarpetaProyecto & "/" & sCarpetaTexto
-  sCarpetaOriginales = sCarpetaProyecto & "/originales"
-  sCarpetaMedia = sCarpetaProyecto & "/media"
-  sArchivoMD = sCarpetaTextos & "/" & sPrefijo & sNombreDestino & ".md"
+  ' LA SUBCARPETA DEL .md DEPENDE DEL TIPO DE PIEZA ELEGIDO EN EL FORMULARIO
+  sCarpetaTextos = sCarpetaProyecto &/ sCarpetaTexto
+  sCarpetaOriginales = sCarpetaProyecto &/ "originales"
+  sCarpetaMedia = sCarpetaProyecto &/ "media"
+  sArchivoMD = sCarpetaTextos &/ sPrefijo & sNombreDestino & ".md"
+  sArchivoOriginalDestino = sCarpetaOriginales &/ sPrefijo & sNombreDestino & "." & sFormato
 
   ' --- 2. CREAR SUBDIRECTORIOS SI NO EXISTEN ---
-  ' /ORIGINALES ES ÚNICA PARA TODA LA REVISTA O LIBRO;
-  ' /MEDIA TAMBIÉN ES ÚNICA Y LA POBLA PANDOC
-  If Not Exist(sCarpetaTextos) Then
-    Mkdir sCarpetaTextos
-  Endif
-  If Not Exist(sCarpetaOriginales) Then
-    Mkdir sCarpetaOriginales
-  Endif
-  If Not Exist(sCarpetaMedia) Then
-    Mkdir sCarpetaMedia
-  Endif
+  ' /originales ES ÚNICA PARA TODA LA REVISTA O LIBRO;
+  ' /media TAMBIÉN ES ÚNICA Y LA POBLA PANDOC. EL EDITING POSTERIOR SE
+  ' ENCARGA DE RESOLVER COLISIONES DE NOMBRES DE IMÁGENES
+  If Not CrearDirectorioSiNoExiste(sCarpetaTextos) Then Return False
+  If Not CrearDirectorioSiNoExiste(sCarpetaOriginales) Then Return False
+  If Not CrearDirectorioSiNoExiste(sCarpetaMedia) Then Return False
 
   ' --- 3. VERIFICAR QUE NO EXISTA UN MD CON EL MISMO NOMBRE ---
   If Exist(sArchivoMD) Then
-    If Message.Question("Ya existe el archivo: " & File.Name(sArchivoMD) & Chr(10) & "¿Desea sobrescribirlo?", "Sí", "No") = 2 Then
+    If Message.Question("Ya existe el archivo:" & gb.NewLine &
+        File.Name(sArchivoMD) & gb.NewLine & gb.NewLine &
+        "¿Desea sobrescribirlo?", "Sí", "No") <> 1 Then
       Return False
     Endif
   Endif
 
-  ' --- 4. CONSTRUIR Y EJECUTAR COMANDO PANDOC ---
-  ' --EXTRACT-MEDIA DEPOSITA LAS IMÁGENES EN <PROYECTO>/MEDIA POR CONVENCIÓN DE PANDOC
+  ' --- 4. VERIFICAR QUE NO EXISTA UN ORIGINAL CON EL MISMO NOMBRE ---
+  ' SIMÉTRICO AL CHEQUEO DEL MD: SI HAY UN ORIGINAL DEL MISMO NOMBRE EN
+  ' /originales, EL Copy POSTERIOR LO SOBRESCRIBIRÍA SILENCIOSAMENTE
+  If Exist(sArchivoOriginalDestino) Then
+    If Message.Question("Ya existe el original:" & gb.NewLine &
+        File.Name(sArchivoOriginalDestino) & gb.NewLine & gb.NewLine &
+        "¿Desea sobrescribirlo?", "Sí", "No") <> 1 Then
+      Return False
+    Endif
+  Endif
+
+  ' --- 5. CONSTRUIR COMANDO PANDOC ---
+  ' --extract-media DEPOSITA LAS IMÁGENES EN <proyecto>/media POR CONVENCIÓN DE PANDOC.
+  ' 2>&1 REDIRIGE STDERR A STDOUT PARA CAPTURAR TAMBIÉN LOS WARNINGS QUE PANDOC EMITE
+  ' POR ESE CANAL (PROBLEMAS DE IMÁGENES, ESTILOS NO MAPEADOS, ETC.)
   sComando = "pandoc " & Quote$(sRutaOrigen) &
     " -o " & Quote$(sArchivoMD) &
     " --from=" & sFormato & " --to=markdown" &
     " --wrap=none" &
-    " --extract-media=" & Quote$(sCarpetaProyecto)
+    " --extract-media=" & Quote$(sCarpetaProyecto) &
+    " 2>&1"
 
-  Try Shell sComando Wait
+  ' --- 6. EJECUTAR PANDOC Y CAPTURAR SALIDA ---
+  Try Shell sComando To sSalidaPandoc
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("Error al ejecutar Pandoc: " & Error.Text)
+    Message.Error("No se pudo lanzar Pandoc:" & gb.NewLine & Error.Text)
     Return False
   Endif
 
-  ' --- 5. VERIFICAR QUE EL MD SE GENERÓ ---
+  ' --- 7. VOLCAR LA SALIDA DE PANDOC AL TERMINALVIEW DEL PROYECTO ---
+  ' SI PANDOC NO TUVO NADA QUE DECIR (CASO IDEAL: SIN WARNINGS), NO MOSTRAMOS NADA.
+  ' SI TUVO WARNINGS O INFO, EL USUARIO LO VE EN LA TERMINAL DEL PROYECTO
+  If Trim(sSalidaPandoc) <> "" Then
+    FMain.TerminalViewProyecto.Input("echo '--- Pandoc: " &
+      File.Name(sRutaOrigen) & " ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input("cat << 'PANDOC_EOF'" & Chr(10) &
+      sSalidaPandoc & Chr(10) & "PANDOC_EOF" & Chr(10))
+  Endif
+
+  ' --- 8. VERIFICAR QUE EL MD SE GENERÓ ---
+  ' POST-CHECK: SI ARCHIVO NO EXISTE, PANDOC FALLÓ AUNQUE EL Shell NO LO REPORTÓ
   If Not Exist(sArchivoMD) Then
     m_Sonido.sonar("Error")
-    Message.Error("Pandoc no generó el archivo: " & sArchivoMD)
+    Message.Error("Pandoc no generó el archivo:" & gb.NewLine & sArchivoMD &
+      gb.NewLine & gb.NewLine &
+      "Revise la terminal del proyecto para ver el motivo.")
     Return False
   Endif
 
-  ' --- 6. MOVER Y RENOMBRAR ARCHIVO ORIGEN A /originales ---
-  ' EL ORIGINAL CONSERVA EL MISMO PREFIJO QUE EL .MD PARA TRAZABILIDAD
-  Try Move sRutaOrigen To sCarpetaOriginales & "/" & sPrefijo & sNombreDestino & "." & sFormato
+  ' --- 8b. NORMALIZAR EL MD GENERADO A NFC ---
+  ' PANDOC PUEDE PRESERVAR LA FORMA DESCOMPUESTA (NFD) DE WORD/macOS, DONDE
+  ' ç SE ALMACENA COMO c + U+0327, ñ COMO n + U+0303, ETC. NFC ES LA
+  ' CONVENCIÓN DE LINUX Y LA WEB, Y EVITA FALSOS POSITIVOS EN EL ESCÁNER
+  ' UTF-8 Y BÚSQUEDAS QUE NO MATCHEAN POR FORMA NORMAL DISTINTA
+  Dim sComandoNormalizar As String
+  Dim sSalidaNorm As String
+  sComandoNormalizar = "python3 -c 'import sys,unicodedata; sys.stdout.write(unicodedata.normalize(" & Chr(34) & "NFC" & Chr(34) & ", sys.stdin.read()))' < " & Quote$(sArchivoMD) & " > " & Quote$(sArchivoMD & ".tmp") & " && mv " & Quote$(sArchivoMD & ".tmp") & " " & Quote$(sArchivoMD) & " 2>&1"
+
+  Try Shell sComandoNormalizar To sSalidaNorm
+  If Error Or If Trim(sSalidaNorm) <> "" Then
+    ' NO ES BLOQUEANTE: EL MD YA ESTÁ GENERADO Y FUNCIONA, SOLO QUEDA EN NFD.
+    ' SE REGISTRA EN LA TERMINAL DEL PROYECTO Y SE CONTINÚA
+    FMain.TerminalViewProyecto.Input("echo '--- Advertencia: no se pudo normalizar a NFC ---'" & Chr(10))
+    If Trim(sSalidaNorm) <> "" Then
+      FMain.TerminalViewProyecto.Input("cat << 'NORM_EOF'" & Chr(10) & sSalidaNorm & Chr(10) & "NORM_EOF" & Chr(10))
+    Endif
+    If Error Then
+      FMain.TerminalViewProyecto.Input("echo '" & Error.Text & "'" & Chr(10))
+    Endif
+  Endif
+
+  ' --- 9. COPIAR ARCHIVO ORIGEN A /originales ---
+  ' SE USA Copy EN LUGAR DE Move POR SEGURIDAD: SI LA CONVERSIÓN SALIÓ MAL
+  ' Y EL USUARIO QUIERE REINTENTAR (CON OTROS PARÁMETROS O CON OTRO TIPO DE
+  ' PIEZA), EL ORIGINAL SIGUE EN SU UBICACIÓN INICIAL
+  Try Copy sRutaOrigen To sArchivoOriginalDestino
   If Error Then
-    ' EL MOVE PUEDE FALLAR POR PERMISOS, DISCO DIFERENTE O RECURSO DE RED
+    ' EL Copy PUEDE FALLAR POR PERMISOS, DISCO LLENO O RECURSO DE RED
     m_Sonido.sonar("Warning")
-    Message.Warning("La conversión a Markdown se completó correctamente y las figuras fueron extraídas." & Chr(10) & Chr(10) & "Sin embargo, no se pudo mover el archivo original a la carpeta /originales:" & Chr(10) & Error.Text & Chr(10) & Chr(10) & "Deberá copiarlo manualmente.")
+    Message.Warning("La conversión a Markdown se completó correctamente y las figuras fueron extraídas." &
+      gb.NewLine & gb.NewLine &
+      "Sin embargo, no se pudo copiar el archivo original a /originales:" &
+      gb.NewLine & Error.Text & gb.NewLine & gb.NewLine &
+      "Deberá copiarlo manualmente.")
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : CrearDirectorioSiNoExiste
+' Propósito : Helper privado que crea un directorio si no existe, con
+'             verificación defensiva post-Mkdir. Centraliza el patrón usado
+'             para las tres subcarpetas del proyecto.
+' Parámetros: sRuta As String — ruta absoluta del directorio
+' Retorna   : Boolean — True si el directorio existe al final (creado o ya existía)
+' ============================================
+Private Function CrearDirectorioSiNoExiste(sRuta As String) As Boolean
+
+  If Exist(sRuta) Then Return True
+
+  Try Mkdir sRuta
+  If Error Or If Not Exist(sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear el directorio:" & gb.NewLine & sRuta &
+      gb.NewLine & gb.NewLine &
+      IIf(Error, Error.Text, "Mkdir no reportó error pero el directorio no se creó."))
+    Return False
   Endif
 
   Return True
@@ -243,8 +330,8 @@ End
 
 ' ============================================
 ' Función   : txtArchivoDestino_KeyPress
-' Propósito : Filtrar caracteres permitidos y forzar
-'             que el nombre comience con el patrón NN-
+' Propósito : Filtra caracteres permitidos y fuerza que el nombre comience
+'             con el patrón posicional NN-.
 ' ============================================
 Public Sub txtArchivoDestino_KeyPress()
 
@@ -267,7 +354,7 @@ Public Sub txtArchivoDestino_KeyPress()
   Endif
 
   ' --- 3. FORZAR PATRÓN POSICIONAL NN- EN LAS PRIMERAS TRES POSICIONES ---
-  ' POS ES 0-INDEXED: 0 Y 1 SON LOS DOS DÍGITOS, 2 ES EL GUION
+  ' Pos ES 0-INDEXED: 0 Y 1 SON LOS DOS DÍGITOS, 2 ES EL GUION
   iPos = txtArchivoDestino.Pos
 
   If iPos = 0 Or iPos = 1 Then
@@ -290,7 +377,7 @@ Public Sub txtArchivoDestino_KeyPress()
     Return
   Endif
 
-  ' --- 4. POSICIÓN 4 EN ADELANTE: NÚMEROS, LETRAS Y GUION ---
+  ' --- 4. POSICIÓN 3 EN ADELANTE: NÚMEROS, LETRAS Y GUION ---
   If Key.Text = "-" Or
       (Key.Text >= "0" And Key.Text <= "9") Or
       (Key.Text >= "A" And Key.Text <= "Z") Or
@@ -305,7 +392,8 @@ End
 
 ' ============================================
 ' Función   : txtArchivoDestino_KeyRelease
-' Propósito : Forzar mayúsculas y validar longitud
+' Propósito : Fuerza mayúsculas, valida longitud y actualiza el preview
+'             del nombre final con el prefijo de tipo seleccionado.
 ' ============================================
 Public Sub txtArchivoDestino_KeyRelease()
 
@@ -330,26 +418,109 @@ Public Sub txtArchivoDestino_KeyRelease()
   txtArchivoDestino.Text = sTexto
   txtArchivoDestino.Pos = iPosicionCursor
 
+  ' --- 5. ACTUALIZAR PREVIEW Y VISIBILIDAD DEL BOTÓN CONVERTIR ---
+  ActualizarPreviewNombre()
+  ActualizarBotonConvertir()
+
 End
 
-' FLAG PARA PERMITIR EL CIERRE DESDE EL BOTÓN
-Private bCierrePermitido As Boolean
+' ============================================
+' Función   : rbFront_Click
+' Propósito : Actualiza el preview del nombre final cuando se cambia el tipo
+'             de pieza a Front Matter.
+' ============================================
+Public Sub rbFront_Click()
 
+  ActualizarPreviewNombre()
+
+End
+
+' ============================================
+' Función   : rbBody_Click
+' Propósito : Actualiza el preview del nombre final cuando se cambia el tipo
+'             de pieza a cuerpo del documento.
+' ============================================
+Public Sub rbBody_Click()
+
+  ActualizarPreviewNombre()
+
+End
+
+' ============================================
+' Función   : rbBack_Click
+' Propósito : Actualiza el preview del nombre final cuando se cambia el tipo
+'             de pieza a Back Matter.
+' ============================================
+Public Sub rbBack_Click()
+
+  ActualizarPreviewNombre()
+
+End
+
+' ============================================
+' Función   : ActualizarPreviewNombre
+' Propósito : Helper privado que reconstruye y muestra el nombre final del
+'             archivo (con prefijo y extensión) en lblNombreArchivo, basado
+'             en el tipo de pieza seleccionado y el nombre tipeado.
+' ============================================
+Private Sub ActualizarPreviewNombre()
+
+  Dim sPrefijo As String
+  Dim sNombre As String
+
+  ' --- 1. DETERMINAR PREFIJO SEGÚN EL TIPO DE PIEZA ACTUAL ---
+  Select Case True
+    Case rbFront.Value
+      sPrefijo = "fm-"
+    Case rbBack.Value
+      sPrefijo = "bm-"
+    Case Else
+      sPrefijo = "a-"
+  End Select
+
+  ' --- 2. CONSTRUIR Y MOSTRAR EL NOMBRE FINAL O DEJAR VACÍO ---
+  sNombre = Trim(txtArchivoDestino.Text)
+  If sNombre = "" Then
+    lblNombreArchivo.Text = ""
+  Else
+    lblNombreArchivo.Text = sPrefijo & sNombre & ".md"
+  Endif
+
+End
+
+' ============================================
+' Función   : ActualizarBotonConvertir
+' Propósito : Helper privado que muestra u oculta btnCONVERTIR según haya
+'             archivo de origen seleccionado Y nombre de destino tipeado.
+' ============================================
+Private Sub ActualizarBotonConvertir()
+
+  btnCONVERTIR.Visible = (Trim(txtArchivoOrigen.Text) <> "" And Trim(txtArchivoDestino.Text) <> "")
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Habilita el flag de cierre permitido y cierra el formulario.
+' ============================================
 Public Sub btnCerrar_Click()
-  ' HABILITAR EL CIERRE Y CERRAR
 
   bCierrePermitido = True
   Me.Close()
 
 End
 
+' ============================================
+' Función   : Form_Close
+' Propósito : Si el cierre viene del botón, permitirlo. Si viene de la X
+'             del sistema, bloquearlo e informar al usuario.
+' ============================================
 Public Sub Form_Close()
-  ' SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO
 
   If bCierrePermitido Then Return
-  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
-  m_Sonido.sonar("info")
-  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario correctamente," & Chr(10) &
+    "use el botón <b>Cerrar</b>.")
   Stop Event
 
 End

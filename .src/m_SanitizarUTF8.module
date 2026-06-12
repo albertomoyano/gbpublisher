@@ -1,0 +1,329 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_SanitizarUTF8
+' Propósito : Elimina caracteres invisibles "basura" de los archivos .md del
+'             proyecto. Estos caracteres son introducidos típicamente por
+'             conversiones desde DOCX vía Pandoc, copias desde PDF, o por
+'             Word/LibreOffice al exportar a Markdown.
+'             Antes de modificar cualquier archivo hace respaldo automático
+'             a /tmp/gbpublisher-respaldo/<proyecto>-<timestamp>/ preservando
+'             la estructura de subcarpetas.
+' Dependencias: m_FuncionesGenericas, m_Sonido, FMain.
+' ==============================================================================
+
+' --- IDENTIFICADORES DE TIPOS DE CARACTERES SANITIZABLES ---
+' SE USAN COMO CLAVES EN LA Collection QUE RECIBE SanitizarArchivos Y EN LOS
+' CONTADORES DEL RESUMEN FINAL. CONSTANTES PARA EVITAR TYPOS QUE ROMPERÍAN
+' SILENCIOSAMENTE EL FLUJO (CLAVE INEXISTENTE EN Collection DEVUELVE Null)
+Public Const TIPO_SOFT_HYPHEN As String = "soft_hyphen"
+Public Const TIPO_ZWSP As String = "zwsp"
+Public Const TIPO_ZWNJ As String = "zwnj"
+Public Const TIPO_ZWJ As String = "zwj"
+Public Const TIPO_BOM As String = "bom"
+Public Const TIPO_VARIATION_SELECTORS As String = "variation_selectors"
+Public Const TIPO_NBSP As String = "nbsp"
+
+' ============================================
+' Función   : SanitizarArchivos
+' Propósito : Recorre todos los archivos .md del proyecto, identifica los
+'             que contienen alguno de los caracteres seleccionados para
+'             eliminar, hace respaldo automático y los limpia. Muestra un
+'             resumen al usuario al terminar.
+' Parámetros: cTipos As Collection — claves TIPO_* a Boolean (T=eliminar / F=no)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub SanitizarArchivos(cTipos As Collection)
+
+  Dim aRutas As New String[]
+  Dim aEtiquetas As New String[]
+  Dim aRutasAfectadas As New String[]
+  Dim aEtiquetasAfectadas As New String[]
+  Dim cContadores As New Collection
+  Dim sContenido As String
+  Dim sContenidoNuevo As String
+  Dim sRutaBackup As String
+  Dim sMensaje As String
+  Dim iArchivo As Integer
+  Dim iArchivosTocados As Integer
+
+  ' --- 1. OBTENER LISTA DE ARCHIVOS .md DEL PROYECTO ---
+  m_FuncionesGenericas.ObtenerArchivosMD(aRutas, aEtiquetas)
+  If aRutas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron archivos .md en el proyecto.")
+    Return
+  Endif
+
+  ' --- 2. INICIALIZAR CONTADORES POR TIPO ---
+  cContadores[TIPO_SOFT_HYPHEN] = 0
+  cContadores[TIPO_ZWSP] = 0
+  cContadores[TIPO_ZWNJ] = 0
+  cContadores[TIPO_ZWJ] = 0
+  cContadores[TIPO_BOM] = 0
+  cContadores[TIPO_VARIATION_SELECTORS] = 0
+  cContadores[TIPO_NBSP] = 0
+
+  ' --- 3. PRIMERA PASADA: DETECTAR Y CONTAR SOBRE COPIA TEMPORAL ---
+  ' SE APLICA LA SANITIZACIÓN A UN STRING EN MEMORIA Y SE COMPARA CON EL
+  ' CONTENIDO ORIGINAL. SI DIFIEREN, EL ARCHIVO REQUIERE LIMPIEZA Y SE
+  ' REGISTRA PARA LA SEGUNDA PASADA (Y PARA EL RESPALDO)
+  For iArchivo = 0 To aRutas.Count - 1
+    Try sContenido = File.Load(aRutas[iArchivo])
+    If Error Then Continue   ' ARCHIVO NO LEGIBLE — IGNORAR, EL ESCÁNER LO REPORTÓ
+
+    sContenidoNuevo = AplicarSanitizacion(sContenido, cTipos, cContadores)
+
+    If sContenidoNuevo <> sContenido Then
+      aRutasAfectadas.Add(aRutas[iArchivo])
+      aEtiquetasAfectadas.Add(aEtiquetas[iArchivo])
+    Endif
+  Next
+
+  If aRutasAfectadas.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("No se encontraron caracteres a eliminar en los archivos del proyecto." & gb.NewLine &
+      "(Con los tipos seleccionados)")
+    Return
+  Endif
+
+  ' --- 4. RESPALDO AUTOMÁTICO ANTES DE TOCAR NADA ---
+  ' SI FALLA EL RESPALDO SE ABORTA LA SANITIZACIÓN. PRINCIPIO: SI NO PODEMOS
+  ' DESHACER, MEJOR NO HACER
+  sRutaBackup = RespaldarArchivos(aRutasAfectadas, aEtiquetasAfectadas)
+  If sRutaBackup = "" Then Return
+
+  ' --- 5. SEGUNDA PASADA: APLICAR SANITIZACIÓN Y GUARDAR ---
+  ' SE VUELVE A LEER + LIMPIAR + ESCRIBIR. LOS CONTADORES YA SE LLEVARON EN LA
+  ' PRIMERA PASADA, POR ESO EL TERCER PARÁMETRO ES Null AHORA
+  iArchivosTocados = 0
+  For iArchivo = 0 To aRutasAfectadas.Count - 1
+    Try sContenido = File.Load(aRutasAfectadas[iArchivo])
+    If Error Then Continue
+
+    sContenidoNuevo = AplicarSanitizacion(sContenido, cTipos, Null)
+
+    Try File.Save(aRutasAfectadas[iArchivo], sContenidoNuevo)
+    If Error Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("No se pudo guardar el archivo sanitizado:" & gb.NewLine &
+        aEtiquetasAfectadas[iArchivo] & gb.NewLine & gb.NewLine &
+        Error.Text & gb.NewLine & gb.NewLine &
+        "Continuando con el resto.")
+      Continue
+    Endif
+    iArchivosTocados += 1
+  Next
+
+  ' --- 6. MOSTRAR RESUMEN AL USUARIO ---
+  sMensaje = "Sanitización completada." & gb.NewLine & gb.NewLine &
+    "Archivos modificados: " & CStr(iArchivosTocados) & " de " & CStr(aRutas.Count) & gb.NewLine & gb.NewLine &
+    "Caracteres eliminados:" & gb.NewLine
+
+  If cTipos[TIPO_SOFT_HYPHEN] Then
+    sMensaje &= "  Soft Hyphen:            " & CStr(cContadores[TIPO_SOFT_HYPHEN]) & gb.NewLine
+  Endif
+  If cTipos[TIPO_ZWSP] Then
+    sMensaje &= "  Zero Width Space:        " & CStr(cContadores[TIPO_ZWSP]) & gb.NewLine
+  Endif
+  If cTipos[TIPO_ZWNJ] Then
+    sMensaje &= "  Zero Width Non-Joiner:   " & CStr(cContadores[TIPO_ZWNJ]) & gb.NewLine
+  Endif
+  If cTipos[TIPO_ZWJ] Then
+    sMensaje &= "  Zero Width Joiner:       " & CStr(cContadores[TIPO_ZWJ]) & gb.NewLine
+  Endif
+  If cTipos[TIPO_BOM] Then
+    sMensaje &= "  BOM:                     " & CStr(cContadores[TIPO_BOM]) & gb.NewLine
+  Endif
+  If cTipos[TIPO_VARIATION_SELECTORS] Then
+    sMensaje &= "  Variation Selectors:     " & CStr(cContadores[TIPO_VARIATION_SELECTORS]) & gb.NewLine
+  Endif
+  If cTipos[TIPO_NBSP] Then
+    sMensaje &= "  No-Break Space:         " & CStr(cContadores[TIPO_NBSP]) & gb.NewLine
+  Endif
+
+  sMensaje &= gb.NewLine & "Respaldo guardado en:" & gb.NewLine & sRutaBackup & gb.NewLine & gb.NewLine &
+    "Si tenías un archivo abierto en el editor que fue afectado," & gb.NewLine &
+    "cerralo y volvelo a abrir para ver los cambios."
+
+  m_Sonido.sonar("Info")
+  Message.Info(sMensaje)
+
+End
+
+' ============================================
+' Función   : AplicarSanitizacion
+' Propósito : Aplica los Replace correspondientes al contenido de un archivo
+'             según los tipos seleccionados. Opcionalmente acumula contadores
+'             con la cantidad de caracteres eliminados por tipo.
+' Parámetros: sContenido  As String     — contenido del archivo
+'             cTipos      As Collection — tipos a aplicar (clave→Boolean)
+'             cContadores As Collection — contadores a acumular, o Null para no contar
+' Retorna   : String — contenido sanitizado
+' ============================================
+Private Function AplicarSanitizacion(sContenido As String, cTipos As Collection, cContadores As Collection) As String
+
+  Dim sResultado As String
+  Dim sCaracter As String
+  Dim iEncontrados As Integer
+  Dim i As Integer
+
+  sResultado = sContenido
+
+  ' --- 1. SOFT HYPHEN U+00AD ---
+  If cTipos[TIPO_SOFT_HYPHEN] Then
+    sCaracter = String.Chr$(173)
+    iEncontrados = m_FuncionesGenericas.ContarCaracter(sResultado, sCaracter)
+    If iEncontrados > 0 Then sResultado = Replace(sResultado, sCaracter, "")
+    If cContadores Then cContadores[TIPO_SOFT_HYPHEN] = cContadores[TIPO_SOFT_HYPHEN] + iEncontrados
+  Endif
+
+  ' --- 2. ZERO WIDTH SPACE U+200B ---
+  If cTipos[TIPO_ZWSP] Then
+    sCaracter = String.Chr$(8203)
+    iEncontrados = m_FuncionesGenericas.ContarCaracter(sResultado, sCaracter)
+    If iEncontrados > 0 Then sResultado = Replace(sResultado, sCaracter, "")
+    If cContadores Then cContadores[TIPO_ZWSP] = cContadores[TIPO_ZWSP] + iEncontrados
+  Endif
+
+  ' --- 3. ZERO WIDTH NON-JOINER U+200C ---
+  If cTipos[TIPO_ZWNJ] Then
+    sCaracter = String.Chr$(8204)
+    iEncontrados = m_FuncionesGenericas.ContarCaracter(sResultado, sCaracter)
+    If iEncontrados > 0 Then sResultado = Replace(sResultado, sCaracter, "")
+    If cContadores Then cContadores[TIPO_ZWNJ] = cContadores[TIPO_ZWNJ] + iEncontrados
+  Endif
+
+  ' --- 4. ZERO WIDTH JOINER U+200D ---
+  If cTipos[TIPO_ZWJ] Then
+    sCaracter = String.Chr$(8205)
+    iEncontrados = m_FuncionesGenericas.ContarCaracter(sResultado, sCaracter)
+    If iEncontrados > 0 Then sResultado = Replace(sResultado, sCaracter, "")
+    If cContadores Then cContadores[TIPO_ZWJ] = cContadores[TIPO_ZWJ] + iEncontrados
+  Endif
+
+  ' --- 5. BOM U+FEFF ---
+  If cTipos[TIPO_BOM] Then
+    sCaracter = String.Chr$(65279)
+    iEncontrados = m_FuncionesGenericas.ContarCaracter(sResultado, sCaracter)
+    If iEncontrados > 0 Then sResultado = Replace(sResultado, sCaracter, "")
+    If cContadores Then cContadores[TIPO_BOM] = cContadores[TIPO_BOM] + iEncontrados
+  Endif
+
+  ' --- 6. VARIATION SELECTORS U+FE00–U+FE0F (16 CODEPOINTS CONSECUTIVOS) ---
+  If cTipos[TIPO_VARIATION_SELECTORS] Then
+    For i = 65024 To 65039
+      sCaracter = String.Chr$(i)
+      iEncontrados = m_FuncionesGenericas.ContarCaracter(sResultado, sCaracter)
+      If iEncontrados > 0 Then sResultado = Replace(sResultado, sCaracter, "")
+      If cContadores Then cContadores[TIPO_VARIATION_SELECTORS] = cContadores[TIPO_VARIATION_SELECTORS] + iEncontrados
+    Next
+  Endif
+
+  ' --- 7. NO-BREAK SPACE U+00A0 (CONTROVERSIAL: PUEDE SER INTENCIONAL) ---
+  If cTipos[TIPO_NBSP] Then
+    sCaracter = String.Chr$(160)
+    iEncontrados = m_FuncionesGenericas.ContarCaracter(sResultado, sCaracter)
+    If iEncontrados > 0 Then sResultado = Replace(sResultado, sCaracter, " ")
+    If cContadores Then cContadores[TIPO_NBSP] = cContadores[TIPO_NBSP] + iEncontrados
+  Endif
+
+  Return sResultado
+
+End
+
+' ============================================
+' Función   : RespaldarArchivos
+' Propósito : Copia los archivos afectados a la carpeta de respaldos del
+'             proyecto, preservando la estructura de subcarpetas. La carpeta
+'             tmp/ ya existe (la crea el setup del proyecto); dentro creamos
+'             respaldo-sanitizar/ y dentro un subdirectorio con timestamp
+'             que identifica cada corrida.
+'             Ruta final: <proyecto>/tmp/respaldo-sanitizar/<proyecto>-<ts>/
+'             NOTA: la limpieza de respaldos antiguos es responsabilidad del
+'             usuario. El módulo no borra nada automáticamente.
+'             Verificación defensiva: cada Mkdir y Copy se valida no solo
+'             por If Error sino también verificando que la entidad realmente
+'             exista después, por si Gambas no propaga algún fallo.
+' Parámetros: aRutas     As String[] — rutas absolutas a respaldar
+'             aEtiquetas As String[] — etiquetas relativas (con subcarpeta)
+' Retorna   : String — ruta del directorio de respaldo, o "" si falló
+' ============================================
+Private Function RespaldarArchivos(aRutas As String[], aEtiquetas As String[]) As String
+
+  Dim sRutaProyecto As String
+  Dim sNombreProyecto As String
+  Dim sBase As String
+  Dim sTimestamp As String
+  Dim sRutaBackup As String
+  Dim sSubDir As String
+  Dim sRutaDestino As String
+  Dim i As Integer
+
+  ' --- 1. CONSTRUIR RUTA DEL DIRECTORIO DE RESPALDO ---
+  ' TIMESTAMP CON Format() POR CAMPOS PARA EVITAR LA AMBIGÜEDAD ENTRE mm (MES)
+  ' Y nn (MINUTOS) EN UNA MISMA CADENA DE FORMATO
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sNombreProyecto = File.BaseName(sRutaProyecto)
+  sNombreProyecto = Replace(sNombreProyecto, " ", "_")
+  sBase = sRutaProyecto &/ "tmp" &/ "respaldo-sanitizar"
+  sTimestamp = Format(Now, "yyyy") & Format(Now, "mm") & Format(Now, "dd") &
+    "-" & Format(Now, "hh") & Format(Now, "nn") & Format(Now, "ss")
+  sRutaBackup = sBase &/ sNombreProyecto & "-" & sTimestamp
+
+  ' --- 2. CREAR DIRECTORIO BASE CON VERIFICACIÓN DEFENSIVA ---
+  ' tmp/ EXISTE PORQUE LO CREA EL SETUP DEL PROYECTO. PERO respaldo-sanitizar/
+  ' PUEDE NO EXISTIR EN LA PRIMERA SANITIZACIÓN, POR ESO LO CREAMOS ACÁ
+  If Not Exist(sBase) Then
+    Try Mkdir sBase
+    If Error Or If Not Exist(sBase) Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear el directorio de respaldo:" & gb.NewLine &
+        sBase & gb.NewLine & gb.NewLine &
+        IIf(Error, Error.Text, "Mkdir no reportó error pero el directorio no se creó."))
+      Return ""
+    Endif
+  Endif
+
+  ' --- 3. CREAR DIRECTORIO DE TIMESTAMP CON VERIFICACIÓN DEFENSIVA ---
+  Try Mkdir sRutaBackup
+  If Error Or If Not Exist(sRutaBackup) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear el directorio de respaldo:" & gb.NewLine &
+      sRutaBackup & gb.NewLine & gb.NewLine &
+      IIf(Error, Error.Text, "Mkdir no reportó error pero el directorio no se creó."))
+    Return ""
+  Endif
+
+  ' --- 4. COPIAR CADA ARCHIVO PRESERVANDO ESTRUCTURA DE SUBCARPETAS ---
+  For i = 0 To aRutas.Count - 1
+    ' SI LA ETIQUETA TIENE SUBCARPETA (EJ. articulos/cap-01.md), CREARLA EN EL BACKUP
+    If InStr(aEtiquetas[i], "/") > 0 Then
+      sSubDir = sRutaBackup &/ File.Dir(aEtiquetas[i])
+      If Not Exist(sSubDir) Then
+        Try Mkdir sSubDir
+        If Error Or If Not Exist(sSubDir) Then
+          m_Sonido.sonar("Error")
+          Message.Error("No se pudo crear subdirectorio en el respaldo:" & gb.NewLine &
+            sSubDir & gb.NewLine & gb.NewLine &
+            IIf(Error, Error.Text, "Mkdir no reportó error pero el directorio no se creó."))
+          Return ""
+        Endif
+      Endif
+    Endif
+
+    ' COPIAR Y VERIFICAR QUE EL ARCHIVO LLEGÓ A DESTINO
+    sRutaDestino = sRutaBackup &/ aEtiquetas[i]
+    Try Copy aRutas[i] To sRutaDestino
+    If Error Or If Not Exist(sRutaDestino) Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo copiar al respaldo:" & gb.NewLine &
+        aRutas[i] & gb.NewLine & "→" & gb.NewLine & sRutaDestino & gb.NewLine & gb.NewLine &
+        IIf(Error, Error.Text, "Copy no reportó error pero el archivo no se copió."))
+      Return ""
+    Endif
+  Next
+
+  Return sRutaBackup
+
+End

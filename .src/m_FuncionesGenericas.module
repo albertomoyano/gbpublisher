@@ -973,19 +973,37 @@ Public Sub InsertarFechaHoraComentario(Optional tipoComentario As String = "INFO
 
 End
 
-' FUNCIÓN AUXILIAR PARA CONTAR OCURRENCIAS DE UN CARACTER
-Private Function ContarCaracter(texto As String, caracter As String) As Integer
+' ============================================
+' Función   : ContarCaracter
+' Propósito : Cuenta ocurrencias de un caracter (o secuencia) en un texto.
+'             Implementación UTF-8 segura: usa InStr con offset, que es
+'             byte-oriented pero correcto en UTF-8 válido porque ningún byte
+'             de un caracter multibyte aparece como byte de otro caracter.
+' Parámetros: sTexto    As String — texto a recorrer
+'             sCaracter As String — caracter (o secuencia) a contar
+' Retorna   : Integer — número de ocurrencias encontradas
+' ============================================
+Public Function ContarCaracter(sTexto As String, sCaracter As String) As Integer
 
-  Dim i As Integer
-  Dim cuenta As Integer
+  Dim iCuenta As Integer
+  Dim iPos As Integer
+  Dim iLen As Integer
 
-  For i = 1 To Len(texto)
-    If Mid(texto, i, 1) = caracter Then
-      cuenta += 1
-    Endif
-  Next
+  ' --- 1. VALIDAR ENTRADA ---
+  iLen = Len(sCaracter)
+  If iLen = 0 Then Return 0
 
-  Return cuenta
+  ' --- 2. BUSCAR Y CONTAR OCURRENCIAS USANDO InStr CON OFFSET ---
+  iCuenta = 0
+  iPos = 1
+  Do
+    iPos = InStr(sTexto, sCaracter, iPos)
+    If iPos = 0 Then Break
+    Inc iCuenta
+    iPos += iLen
+  Loop
+
+  Return iCuenta
 
 End
 
@@ -1914,126 +1932,6 @@ Public Sub ContarCaracteresMD()
   End With
 
   ' --- 6. Presentación del formulario ---
-  FEstructuraResultados.gvResultados.Refresh
-  m_Sonido.sonar("Info")
-  FEstructuraResultados.ShowModal
-
-End Sub
-
-' ============================================
-' Función   : ContarCaracteresPares
-' Propósito : Cuenta caracteres de apertura/cierre en archivos .md
-'             y marca en rojo las celdas con cantidad impar
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Public Sub ContarCaracteresPares()
-
-  ' --- 1. Inicialización de variables ---
-  Dim archivos As String[]
-  Dim archivo As String
-  Dim contenido As String
-  Dim rutaProyecto As String
-  Dim rutaArticulos As String
-  Dim rutaCompleta As String
-  Dim iFila As Integer
-  Dim iCol As Integer
-  Dim caracteresContar As String[]
-  Dim aRutas As New String[]
-  Dim aEtiquetas As New String[]
-
-  ' --- 2. Definición de caracteres a contar ---
-  ' LOS PARES SON: [0,1]=¿? [2,3]=¡! [4,5]=() [6,7]=[] [8,9]={}
-  caracteresContar = ["¿", "?", "¡", "!", "(", ")", "[", "]", "{", "}"]
-
-  ' --- 3. Resolución de rutas ---
-  rutaProyecto = File.Dir(FMain.txtProyecto.Text)
-  rutaArticulos = rutaProyecto &/ "articulos"
-
-  ' --- 4. Recolección de rutas ---
-  If Exist(rutaProyecto) Then
-    archivos = Dir(rutaProyecto, "*.md")
-    archivos.Sort()
-    For Each archivo In archivos
-      aRutas.Add(rutaProyecto &/ archivo)
-      aEtiquetas.Add(archivo)
-    Next
-  Endif
-
-  If Exist(rutaArticulos) Then
-    archivos = Dir(rutaArticulos, "*.md")
-    archivos.Sort()
-    For Each archivo In archivos
-      aRutas.Add(rutaArticulos &/ archivo)
-      aEtiquetas.Add("articulos/" & archivo)
-    Next
-  Endif
-
-  ' --- 5. Verificar que hay archivos ---
-  If aRutas.Count = 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No se encontraron archivos .md en el proyecto.")
-    Return
-  Endif
-
-  ' --- 6. Construir aResultados y aColores ---
-  ' SE RESETEAN AMBAS ESTRUCTURAS ANTES DE POPLAR — DATOS DE LLAMADAS ANTERIORES
-  Dim aResultados As New String[]
-  Dim aColores As New Collection
-
-  For iFila = 0 To aRutas.Count - 1
-    rutaCompleta = aRutas[iFila]
-    Try contenido = File.Load(rutaCompleta)
-    If Error Then
-      ' FILA DE ERROR: SOLO NOMBRE, RESTO VACÍO — CELDA DE NOMBRE EN ROJO
-      aResultados.Add(aEtiquetas[iFila])
-      aColores[CStr(iFila) & ",0"] = Color.RGB(255, 180, 180)
-    Else
-      ' CONSTRUIR LÍNEA TSV: ETIQUETA + CONTEOS DE CADA CARACTER
-      Dim sLinea As String = aEtiquetas[iFila]
-      Dim cantA As Integer
-      Dim cantB As Integer
-      Dim iPar As Integer
-      For iPar = 0 To 4
-        cantA = ContarCaracter(contenido, caracteresContar[iPar * 2])
-        cantB = ContarCaracter(contenido, caracteresContar[iPar * 2 + 1])
-        sLinea &= Chr(9) & Str(cantA) & Chr(9) & Str(cantB)
-        ' SI EL PAR NO COINCIDE, REGISTRAR AMBAS CELDAS EN ROJO
-        If cantA <> cantB Then
-          aColores[CStr(iFila) & "," & CStr(iPar * 2 + 1)] = Color.RGB(255, 180, 180)
-          aColores[CStr(iFila) & "," & CStr(iPar * 2 + 2)] = Color.RGB(255, 180, 180)
-        Endif
-      Next
-      aResultados.Add(sLinea)
-    Endif
-  Next
-
-  ' --- 7. Configurar FEstructuraResultados ---
-  FEstructuraResultados.blTitulo.Text = "Conteo de caracteres de apertura y cierre"
-  FEstructuraResultados.aResultados = aResultados
-  FEstructuraResultados.aColores = aColores
-
-  With FEstructuraResultados.gvResultados
-    .Rows.Count = aResultados.Count
-    .Columns.Count = caracteresContar.Count + 2  ' ARCHIVO + 10 CARACTERES + FANTASMA
-    .ScrollBar = Scroll.Both
-    .Resizable = True
-    .Header = TableView.Horizontal
-    .Columns[0].Title = "Archivo"
-    .Columns[0].Width = 400
-    .Columns[0].Alignment = Align.Left
-    ' UNA COLUMNA POR CADA CARACTER A CONTAR
-    For iCol = 0 To caracteresContar.Count - 1
-      .Columns[iCol + 1].Title = caracteresContar[iCol]
-      .Columns[iCol + 1].Width = 53
-      .Columns[iCol + 1].Alignment = Align.Center
-    Next
-    ' COLUMNA FANTASMA QUE ABSORBE EL ESPACIO SOBRANTE
-    .Columns[caracteresContar.Count + 1].Title = ""
-    .Columns[caracteresContar.Count + 1].Width = 10
-  End With
-
-  ' --- 8. Presentación del formulario ---
   FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
@@ -3096,3 +2994,241 @@ End
 ' de ShowModal()
 ' ============================================
 Public sCreditSeleccionado As String
+
+' ============================================
+' Función   : ContarCaracteresPares
+' Propósito : Cuenta en cada archivo .md del proyecto la cantidad de
+'             caracteres de apertura/cierre. Para pares asimétricos (¿?, ¡!,
+'             «», paréntesis...) compara cantidad de aperturas vs cierres
+'             y marca rojo si no coinciden. Para self-paired (comilla recta)
+'             verifica que el conteo total sea par.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ContarCaracteresPares()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim archivos As String[]
+  Dim archivo As String
+  Dim contenido As String
+  Dim rutaProyecto As String
+  Dim rutaArticulos As String
+  Dim rutaCompleta As String
+  Dim iFila As Integer
+  Dim iPar As Integer
+  Dim iColTabla As Integer
+  Dim sLinea As String
+  Dim cantA As Integer
+  Dim cantB As Integer
+  Dim aAperturas As String[]
+  Dim aCierres As String[]
+  Dim aRutas As New String[]
+  Dim aEtiquetas As New String[]
+  Dim aResultados As New String[]
+  Dim aColores As New Collection
+  Dim iTotalColumnasConteo As Integer
+  Dim sSubcarpeta As String
+  Dim sRuta As String
+  Dim sPrefijo As String
+  Dim aSubcarpetas As String[]
+
+  ' --- 2. DEFINIR PARES DE CARACTERES A CONTAR ---
+  ' aAperturas[i] Y aCierres[i] FORMAN UN PAR. SI SON IGUALES, EL PAR ES
+  ' SELF-PAIRED (LA COMILLA RECTA): GENERA UNA SOLA COLUMNA Y SE VERIFICA
+  ' QUE EL CONTEO TOTAL SEA PAR. SI SON DISTINTOS, GENERA DOS COLUMNAS Y
+  ' SE VERIFICA QUE LOS CONTEOS COINCIDAN.
+  ' COMILLAS TIPOGRÁFICAS CURVAS PUESTAS CON String.Chr$ PARA EVITAR PROBLEMAS
+  ' DE CODIFICACIÓN AL COPIAR/PEGAR EL .module
+  ' COMILLA RECTA PUESTA CON Chr(34) POR SC-01
+  aAperturas = ["¿", "¡", "«", String.Chr$(8220), "(", "[", "{", Chr(34)]
+  aCierres = ["?", "!", "»", String.Chr$(8221), ")", "]", "}", Chr(34)]
+
+  ' CALCULAR EL TOTAL DE COLUMNAS DE CONTEO PARA DIMENSIONAR LA TABLA
+  iTotalColumnasConteo = 0
+  For iPar = 0 To aAperturas.Count - 1
+    If aAperturas[iPar] = aCierres[iPar] Then
+      iTotalColumnasConteo += 1
+    Else
+      iTotalColumnasConteo += 2
+    Endif
+  Next
+
+  ' --- 3. RESOLUCIÓN DE LA RUTA RAÍZ DEL PROYECTO ---
+  rutaProyecto = File.Dir(FMain.txtProyecto.Text)
+
+  ' --- 4. RECOLECCIÓN DE RUTAS ---
+  ' EL ORDEN DE aSubcarpetas DETERMINA EL ORDEN DE LOS ARCHIVOS EN LA TABLA.
+  ' SE SIGUE EL ORDEN NATURAL DE LECTURA DEL LIBRO/REVISTA:
+  '   "" = RAÍZ (METADATOS) → front-matter → articulos → back-matter
+  ' LA CADENA VACÍA REPRESENTA LA RAÍZ DEL PROYECTO Y NO LLEVA PREFIJO EN
+  ' LA ETIQUETA. LAS SUBCARPETAS LLEVAN "nombre/" COMO PREFIJO.
+  aSubcarpetas = ["", "front-matter", "articulos", "back-matter"]
+
+  For Each sSubcarpeta In aSubcarpetas
+    If sSubcarpeta = "" Then
+      sRuta = rutaProyecto
+      sPrefijo = ""
+    Else
+      sRuta = rutaProyecto &/ sSubcarpeta
+      sPrefijo = sSubcarpeta & "/"
+    Endif
+
+    If Exist(sRuta) Then
+      archivos = Dir(sRuta, "*.md")
+      archivos.Sort()
+      For Each archivo In archivos
+        aRutas.Add(sRuta &/ archivo)
+        aEtiquetas.Add(sPrefijo & archivo)
+      Next
+    Endif
+  Next
+
+  ' --- 5. VERIFICAR QUE HAY ARCHIVOS ---
+  If aRutas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron archivos .md en el proyecto.")
+    Return
+  Endif
+
+  ' --- 6. PROCESAR CADA ARCHIVO Y CONSTRUIR aResultados Y aColores ---
+  For iFila = 0 To aRutas.Count - 1
+    rutaCompleta = aRutas[iFila]
+    Try contenido = File.Load(rutaCompleta)
+    If Error Then
+      ' FILA DE ERROR: SOLO NOMBRE, RESTO VACÍO — CELDA DE NOMBRE EN ROJO
+      aResultados.Add(aEtiquetas[iFila])
+      aColores[CStr(iFila) & ",0"] = Color.RGB(255, 180, 180)
+      Continue
+    Endif
+
+    ' CONSTRUIR LÍNEA TSV: ETIQUETA + CONTEOS DE CADA PAR
+    sLinea = aEtiquetas[iFila]
+    iColTabla = 1  ' COLUMNA 0 ES "Archivo"; LAS DE CONTEO EMPIEZAN EN 1
+    For iPar = 0 To aAperturas.Count - 1
+      cantA = ContarCaracter(contenido, aAperturas[iPar])
+
+      If aAperturas[iPar] = aCierres[iPar] Then
+        ' SELF-PAIRED: UNA SOLA COLUMNA, ERROR SI EL CONTEO ES IMPAR
+        sLinea &= Chr(9) & Str(cantA)
+        If cantA Mod 2 <> 0 Then
+          aColores[CStr(iFila) & "," & CStr(iColTabla)] = Color.RGB(255, 180, 180)
+        Endif
+        iColTabla += 1
+      Else
+        ' ASIMÉTRICO: DOS COLUMNAS, ERROR SI APERTURA <> CIERRE
+        cantB = ContarCaracter(contenido, aCierres[iPar])
+        sLinea &= Chr(9) & Str(cantA) & Chr(9) & Str(cantB)
+        If cantA <> cantB Then
+          aColores[CStr(iFila) & "," & CStr(iColTabla)] = Color.RGB(255, 180, 180)
+          aColores[CStr(iFila) & "," & CStr(iColTabla + 1)] = Color.RGB(255, 180, 180)
+        Endif
+        iColTabla += 2
+      Endif
+    Next
+    aResultados.Add(sLinea)
+  Next
+
+  ' --- 7. CONFIGURAR FEstructuraResultados ---
+  FEstructuraResultados.blTitulo.Text = "Conteo de caracteres de apertura y cierre"
+  FEstructuraResultados.aResultados = aResultados
+  FEstructuraResultados.aColores = aColores
+
+  With FEstructuraResultados.gvResultados
+    .Rows.Count = aResultados.Count
+    .Columns.Count = iTotalColumnasConteo + 2  ' ARCHIVO + CONTEOS + FANTASMA
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+    .Header = TableView.Horizontal
+
+    ' COLUMNA "Archivo"
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 400
+    .Columns[0].Alignment = Align.Left
+
+    ' COLUMNAS DE CONTEO: TÍTULO = CARACTER, ANCHO 53, ALINEADO CENTRO
+    iColTabla = 1
+    For iPar = 0 To aAperturas.Count - 1
+      If aAperturas[iPar] = aCierres[iPar] Then
+        ' SELF-PAIRED: UNA COLUMNA
+        .Columns[iColTabla].Title = aAperturas[iPar]
+        .Columns[iColTabla].Width = 53
+        .Columns[iColTabla].Alignment = Align.Center
+        iColTabla += 1
+      Else
+        ' ASIMÉTRICO: DOS COLUMNAS
+        .Columns[iColTabla].Title = aAperturas[iPar]
+        .Columns[iColTabla].Width = 53
+        .Columns[iColTabla].Alignment = Align.Center
+        .Columns[iColTabla + 1].Title = aCierres[iPar]
+        .Columns[iColTabla + 1].Width = 53
+        .Columns[iColTabla + 1].Alignment = Align.Center
+        iColTabla += 2
+      Endif
+    Next
+
+    ' COLUMNA FANTASMA QUE ABSORBE EL ESPACIO SOBRANTE
+    .Columns[iTotalColumnasConteo + 1].Title = ""
+    .Columns[iTotalColumnasConteo + 1].Width = 10
+  End With
+
+  ' --- 8. PRESENTACIÓN DEL FORMULARIO ---
+  FEstructuraResultados.gvResultados.Refresh
+  m_Sonido.sonar("Info")
+  FEstructuraResultados.ShowModal
+
+End
+
+' ============================================
+' Función   : ObtenerArchivosMD
+' Propósito : Recolecta todos los archivos .md del proyecto actual desde las
+'             subcarpetas relevantes (raíz, front-matter, articulos,
+'             back-matter) en el orden natural de lectura. Devuelve dos
+'             arrays paralelos por referencia: rutas absolutas y etiquetas
+'             con prefijo de subcarpeta para mostrar al usuario.
+'             Las carpetas inexistentes se ignoran silenciosamente, lo que
+'             permite que la misma función sirva para revistas (sin front-/
+'             back-matter) y libros (con las cuatro carpetas).
+' Parámetros: aRutas      As String[] — array destino para rutas absolutas
+'             aEtiquetas  As String[] — array destino para etiquetas
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ObtenerArchivosMD(aRutas As String[], aEtiquetas As String[])
+
+  Dim rutaProyecto As String
+  Dim aSubcarpetas As String[]
+  Dim sSubcarpeta As String
+  Dim sRuta As String
+  Dim sPrefijo As String
+  Dim archivos As String[]
+  Dim archivo As String
+
+  ' --- 1. LIMPIAR ARRAYS POR SI VENÍAN CON CONTENIDO PREVIO ---
+  aRutas.Clear
+  aEtiquetas.Clear
+
+  ' --- 2. RUTA RAÍZ DEL PROYECTO ---
+  rutaProyecto = File.Dir(FMain.txtProyecto.Text)
+
+  ' --- 3. ORDEN NATURAL DE LECTURA ---
+  aSubcarpetas = ["", "front-matter", "articulos", "back-matter"]
+
+  For Each sSubcarpeta In aSubcarpetas
+    If sSubcarpeta = "" Then
+      sRuta = rutaProyecto
+      sPrefijo = ""
+    Else
+      sRuta = rutaProyecto &/ sSubcarpeta
+      sPrefijo = sSubcarpeta & "/"
+    Endif
+
+    If Not Exist(sRuta) Then Continue
+
+    archivos = Dir(sRuta, "*.md")
+    archivos.Sort()
+    For Each archivo In archivos
+      aRutas.Add(sRuta &/ archivo)
+      aEtiquetas.Add(sPrefijo & archivo)
+    Next
+  Next
+
+End
