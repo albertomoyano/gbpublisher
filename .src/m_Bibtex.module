@@ -1193,8 +1193,11 @@ End
 ' =====================================================
 ' FUNCIÓN: ExtraerYGuardarReferenciasDelArticulo
 ' DESCRIPCIÓN: PARSEA EL CONTENIDO DEL ARCHIVO MD BUSCANDO
-'              CITEKEYS EN FORMATO [@citekey] Y LAS GUARDA
-'              EN EL CAMPO referencias_citadas DE LA TABLA articulos
+'              CITEKEYS EN TODOS LOS FORMATOS PANDOC:
+'              [@key], [-@key], [ver @key], [@key, p. 5],
+'              [@key1; @key2], [@key1; -@key2], ETC.
+'              Y LAS GUARDA EN EL CAMPO referencias_citadas
+'              DE LA TABLA articulos
 ' PARÁMETROS:
 '   sContenidoMD   - CONTENIDO COMPLETO DEL ARCHIVO .md
 '   sRutaArchivo   - RUTA COMPLETA AL ARCHIVO .md ABIERTO
@@ -1238,55 +1241,68 @@ Public Function ExtraerYGuardarReferenciasDelArticulo(sContenidoMD As String, sR
 
   iIdArticulo = hResult!id_articulo
 
-  ' PARSEAR EL CONTENIDO MD BUSCANDO CITEKEYS EN FORMATO [@citekey]
-  ' UNA CITA PUEDE CONTENER MÚLTIPLES CITEKEYS: [@key1; @key2; @key3]
+  ' PARSEAR EL CONTENIDO MD BUSCANDO CITEKEYS EN TODOS LOS FORMATOS PANDOC:
+  ' [@key], [-@key], [ver @key], [@key, p. 5], [@key1; @key2], ETC.
   aLineas = Split(sContenidoMD, Chr(10))
 
   For Each sLinea In aLineas
 
-    ' BUSCAR TODAS LAS OCURRENCIAS DE [@ EN LA LÍNEA
+    ' BUSCAR TODOS LOS BLOQUES ENTRE CORCHETES [ ... ] EN LA LÍNEA
     iPos = 1
 
-    While InStr(sLinea, "[@", iPos) > 0
+    While InStr(sLinea, "[", iPos) > 0
 
-      iPos = InStr(sLinea, "[@", iPos)
+      iPos = InStr(sLinea, "[", iPos)
 
       ' BUSCAR EL CIERRE ]
       iPosFin = InStr(sLinea, "]", iPos)
       If iPosFin = 0 Then Break
 
-      ' EXTRAER EL CONTENIDO ENTRE [@ Y ]
+      ' EXTRAER EL CONTENIDO ENTRE [ Y ]
       Dim sBloque As String = Mid(sLinea, iPos + 1, iPosFin - iPos - 1)
 
-      ' EL BLOQUE PUEDE TENER MÚLTIPLES CITAS: @key1; @key2
+      ' DESCARTAR BLOQUES SIN @ (LINKS DE MARKDOWN, IMÁGENES, ATRIBUTOS, ETC.)
+      If InStr(sBloque, "@") = 0 Then
+        iPos = iPosFin + 1
+        Continue
+      Endif
+
+      ' EL BLOQUE PUEDE TENER MÚLTIPLES CITAS SEPARADAS POR ;
+      ' EJEMPLOS: @key1; @key2 / @key1; -@key2 / ver @key1; @key2
       Dim aPartes As String[] = Split(sBloque, ";")
       Dim sParte As String
 
       For Each sParte In aPartes
         sParte = Trim(sParte)
 
-        ' VERIFICAR QUE EMPIEZA CON @
-        If Left(sParte, 1) = "@" Then
-          sCitekey = Trim(Mid(sParte, 2))
+        ' BUSCAR @ DENTRO DE LA PARTE
+        ' CUBRE: @key, -@key, ver @key, cf. @key, ETC.
+        Dim iPosAt As Integer = InStr(sParte, "@")
+        If iPosAt = 0 Then Continue
 
-          ' PUEDE TENER PREFIJO O SUFIJO DE PÁGINA: @key, p. 45
-          ' TOMAR SOLO HASTA EL PRIMER ESPACIO O COMA
-          Dim iPosEspacio As Integer = InStr(sCitekey, " ")
-          Dim iPosComa As Integer = InStr(sCitekey, ",")
+        sCitekey = Trim(Mid(sParte, iPosAt + 1))
 
-          If iPosEspacio > 0 And (iPosComa = 0 Or iPosEspacio < iPosComa) Then
-            sCitekey = Left(sCitekey, iPosEspacio - 1)
-          Else If iPosComa > 0 Then
-            sCitekey = Left(sCitekey, iPosComa - 1)
-          Endif
+        ' ELIMINAR LOCALIZADOR: @key, p. 45 → key
+        ' TOMAR SOLO HASTA EL PRIMER ESPACIO O COMA
+        Dim iPosEspacio As Integer = InStr(sCitekey, " ")
+        Dim iPosComa As Integer = InStr(sCitekey, ",")
 
-          sCitekey = Trim(sCitekey)
+        If iPosEspacio > 0 And (iPosComa = 0 Or iPosEspacio < iPosComa) Then
+          sCitekey = Left(sCitekey, iPosEspacio - 1)
+        Else If iPosComa > 0 Then
+          sCitekey = Left(sCitekey, iPosComa - 1)
+        Endif
 
-          ' GUARDAR SOLO SI NO ESTÁ DUPLICADA
-          If sCitekey <> "" And Not colUnicas.Exist(sCitekey) Then
-            colUnicas[sCitekey] = True
-            aEncontradas.Add(sCitekey)
-          Endif
+        sCitekey = Trim(sCitekey)
+
+        ' FILTRAR FALSOS POSITIVOS: LOS CITEKEYS NO CONTIENEN PUNTO
+        ' ESTO DESCARTA EMAILS COMO usuario@dominio.com
+        If InStr(sCitekey, ".") > 0 Then Continue
+
+        ' GUARDAR SOLO SI NO ESTÁ DUPLICADA Y TIENE CONTENIDO
+        If sCitekey <> "" And Not colUnicas.Exist(sCitekey) Then
+          colUnicas[sCitekey] = True
+          aEncontradas.Add(sCitekey)
         Endif
       Next
 
