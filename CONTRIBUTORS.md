@@ -7,23 +7,36 @@ Este documento reconoce a todas las personas que han contribuido al desarrollo d
 ## Autor principal
 
 **Alberto Moyano** ([@albertomoyano](https://github.com/albertomoyano))
-* Arquitectura del sistema
-* Desarrollo principal
-* Documentación técnica
-* Diseño del modelo editorial
-* Mantenimiento del proyecto
+
+- Arquitectura del sistema
+- Desarrollo principal
+- Documentación técnica
+- Diseño del modelo editorial
+- Mantenimiento del proyecto
 
 ---
 
 ## Contribuciones de documentación
 
 **Federico Moyano**
-* 📖 Revisión y corrección de documentación
-* 📖 Mejoras en claridad expositiva
+
+- 📖 Revisión y corrección de documentación
+- 📖 Mejoras en claridad expositiva
+
 
 **Segio Santamaría**
-* 📖 Revisión y corrección de documentación
-* 📖 Mejoras en claridad expositiva
+
+- 📖 Revisión y corrección de documentación
+- 📖 Mejoras en claridad expositiva
+
+---
+
+## Contribuciones de código
+
+**Jonatán Perren** ([@gxono](https://github.com/gxono))
+
+- 💻 Soporte para todas las variantes de cita Pandoc en el parser de citekeys
+- 💻 Preservación del modo de cita en el pipeline JATS → LaTeX/HTML/EPUB
 
 ---
 
@@ -31,16 +44,17 @@ Este documento reconoce a todas las personas que han contribuido al desarrollo d
 
 Si has contribuido a gbpublisher mediante:
 
-* Código (correcciones, nuevas funcionalidades, mejoras)
-* Documentación (correcciones, traducciones, ejemplos)
-* Reportes de errores significativos
-* Diseño (iconos, interfaz, flujos)
-* Testing (pruebas en entornos reales, validación)
-* Infraestructura (configuración, scripts, automatización)
+- Código (correcciones, nuevas funcionalidades, mejoras)
+- Documentación (correcciones, traducciones, ejemplos)
+- Reportes de errores significativos
+- Diseño (iconos, interfaz, flujos)
+- Testing (pruebas en entornos reales, validación)
+- Infraestructura (configuración, scripts, automatización)
+
 
 Tu nombre puede aparecer aquí.
 
-Consulta el archivo [CONTRIBUTING](CONTRIBUTING.md) para conocer el proceso de contribución.
+Consulta el archivo [CONTRIBUTING](https://github.com/albertomoyano/gbpublisher/blob/main/CONTRIBUTING.md) para conocer el proceso de contribución.
 
 ---
 
@@ -48,16 +62,16 @@ Consulta el archivo [CONTRIBUTING](CONTRIBUTING.md) para conocer el proceso de c
 
 Esta lista utiliza los siguientes símbolos para identificar tipos de contribución:
 
-| Símbolo | Tipo de Contribución |
-|---------|---------------------|
-| 💻 | Código |
-| 📖 | Documentación |
-| 🐛 | Reporte de errores |
-| 🎨 | Diseño |
-| 🔧 | Infraestructura |
-| ✅ | Testing |
-| 💡 | Ideas y planificación |
-| 🔍 | Revisión de código |
+| Símbolo | Tipo de Contribución  |
+| ------- | --------------------- |
+| 💻       | Código                |
+| 📖       | Documentación         |
+| 🐛       | Reporte de errores    |
+| 🎨       | Diseño                |
+| 🔧       | Infraestructura       |
+| ✅       | Testing               |
+| 💡       | Ideas y planificación |
+| 🔍       | Revisión de código    |
 
 ---
 
@@ -66,12 +80,15 @@ Esta lista utiliza los siguientes símbolos para identificar tipos de contribuci
 Todas las contribuciones a gbpublisher se realizan bajo los términos de la **Business Source License 1.1**.
 
 Al contribuir, aceptas que tu trabajo:
-* Será licenciado bajo BSL 1.1 durante el período de protección comercial
-* Se convertirá automáticamente a GPL-3.0 transcurridos 5 años desde la publicación de cada versión
+
+- Será licenciado bajo BSL 1.1 durante el período de protección comercial
+- Se convertirá automáticamente a GPL-3.0 transcurridos 5 años desde la publicación de cada versión
+
 
 Para más detalles, véase
-* [LICENSE](LICENSE.md) — Términos completos de licenciamiento
-* [CONTRIBUTING](CONTRIBUTING.md) — Guía de contribución y proceso
+
+- [LICENSE](https://github.com/albertomoyano/gbpublisher/blob/main/LICENSE.md) — Términos completos de licenciamiento
+- [CONTRIBUTING](https://github.com/albertomoyano/gbpublisher/blob/main/CONTRIBUTING.md) — Guía de contribución y proceso
 
 ---
 
@@ -79,12 +96,12 @@ Para más detalles, véase
 
 Para consultas sobre contribuciones o reconocimientos:
 
-* Email: estudio2a@outlook.com.ar
-* Issues: https://github.com/albertomoyano/gbpublisher/issues
+- Email: <estudio2a@outlook.com.ar>
+- Issues: <https://github.com/albertomoyano/gbpublisher/issues>
 
 ---
 
-**Última actualización:** 20 de enero de 2026
+**Última actualización:** 17 de junio de 2026
 
 ---
 
