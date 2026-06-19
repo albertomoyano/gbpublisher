@@ -1,10 +1,672 @@
 ' Gambas class file
 
-' FLAG PARA PERMITIR EL CIERRE DESDE EL BOTÓN
+' ════════════════════════════════════════════════════════════════════════════
+' FORMULARIO: FMetadatosLibro
+' PROPÓSITO : Editar todos los metadatos del libro asociado al proyecto
+'             actualmente abierto. Es el análogo de FMetadatosRevista pero
+'             para proyectos de tipo libro (m_Constantes.TIPO_LIBRO_MD).
+'             LA CARGA Y GUARDADO DE DATOS REALES SE DELEGAN A m_Metadatos:
+'             CargarMetadatosDeLibro / GuardarMetadatosDeLibro.
+'             EL FORMULARIO SOLO MANEJA UI, COMBOS Y VALIDACIONES DE ENTRADA.
+' ════════════════════════════════════════════════════════════════════════════
+
+' FLAG QUE PERMITE EL CIERRE DESDE EL BOTÓN Y BLOQUEA LA X DEL SISTEMA
 Private bCierrePermitido As Boolean
 
+' ARRAYS PARALELOS A LOS COMBOBOX DE FK.
+' MAPEAN Index DEL COMBOBOX → ID NUMÉRICO DE LA ENTIDAD.
+' ÍNDICE 0 SIEMPRE TIENE VALOR 0 (REPRESENTA "(sin ...)").
+Private aIdsColeccion As New Integer[]
+Private aIdsSerie As New Integer[]
+
+' ════════════════════════════════════════════════════════════════════════════
+' EVENTO QUE SE EJECUTA AL ABRIR EL FORMULARIO
+' POBLAR COMBOS, VERIFICAR PROYECTO ABIERTO Y CARGAR METADATOS DEL LIBRO
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub Form_Open()
+
+  ' --- 1. POBLAR COMBOBOX DE ESTILO DE CITA DESDE ~/.gbpublisher/csl/ ---
+  ' FORMATO DE PANTALLA: "Nombre legible  [archivo.csl]"
+  ' SE GUARDA EN BD SOLO EL NOMBRE DEL ARCHIVO
+  Dim sRutaCSL As String = User.Home &/ ".gbpublisher" &/ "csl"
+
+  cmb_tipo_csl.Clear
+
+  If Exist(sRutaCSL) Then
+    Dim sArch As String
+    For Each sArch In Dir(sRutaCSL, "*.csl")
+      Dim sNombreArch As String = File.Name(sArch)
+      Dim sLeyenda As String = LeerLeyendaCSL(sRutaCSL &/ sNombreArch)
+
+      If sLeyenda <> "" Then
+        cmb_tipo_csl.Add(sLeyenda & "  [" & sNombreArch & "]")
+      Else
+        cmb_tipo_csl.Add(sNombreArch)
+      Endif
+    Next
+  Endif
+
+  ' DEFAULT: SELECCIONAR EL PRIMER ESTILO DE LA LISTA SI HAY AL MENOS UNO.
+  ' EL EDITOR LO CAMBIA SI NECESITA OTRO ESTILO.
+  If cmb_tipo_csl.Count > 0 Then cmb_tipo_csl.Index = 0
+
+  ' --- 2. VERIFICAR QUE HAY UN PROYECTO ABIERTO ---
+  If FMain.id_proyecto.Value <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe abrir un libro antes de editar metadatos.")
+    bCierrePermitido = True
+    Me.Close
+    Return
+  Endif
+
+  ' --- 3. SINCRONIZAR id_proyecto ---
+  id_proyecto.Value = FMain.id_proyecto.Value
+
+  ' --- 4. POBLAR COMBOBOX DE ENUMs ---
+  ' EL ÍNDICE 0 DE CADA COMBO MAPEA AL PRIMER VALOR DEL ENUM EN m_Metadatos.
+  ' EL TEXTO MOSTRADO ES LEGIBLE (CON TILDE, MAYÚSCULA INICIAL).
+  ' EL VALOR DEL ENUM EN BD SE OBTIENE DEL ARRAY PARALELO EN m_Metadatos.
+  ' SI SE AGREGAN VALORES AL ENUM EN BD, ACTUALIZAR ACÁ Y EN m_Metadatos.
+
+  ' TIPO DE LIBRO
+  tipo_libro.Clear
+  tipo_libro.Add("Monografía")          ' ÍNDICE 0 → monografia
+  tipo_libro.Add("Obra colectiva")      ' ÍNDICE 1 → obra_colectiva
+  tipo_libro.Add("Compilación")         ' ÍNDICE 2 → compilacion
+  tipo_libro.Add("Traducción")          ' ÍNDICE 3 → traduccion
+  tipo_libro.Add("Obra de referencia")  ' ÍNDICE 4 → referencia
+  tipo_libro.Add("Manual")              ' ÍNDICE 5 → manual
+  tipo_libro.Add("Actas")               ' ÍNDICE 6 → actas
+
+  ' LUGAR DE LA BIBLIOGRAFÍA
+  lugar_bibliografia.Clear
+  lugar_bibliografia.Add("Una al final del libro")             ' ÍNDICE 0 → consolidada
+  lugar_bibliografia.Add("Una al final de cada capítulo")      ' ÍNDICE 1 → por_capitulo
+
+  ' ESTADO DE PUBLICACIÓN
+  estado_publicacion.Clear
+  estado_publicacion.Add("En preparación")  ' ÍNDICE 0 → en_preparacion
+  estado_publicacion.Add("Publicado")       ' ÍNDICE 1 → publicado
+  estado_publicacion.Add("Agotado")         ' ÍNDICE 2 → agotado
+  estado_publicacion.Add("Descatalogado")   ' ÍNDICE 3 → descatalogado
+
+  ' TIPO DE ACCESO
+  tipo_acceso.Clear
+  tipo_acceso.Add("Acceso abierto")  ' ÍNDICE 0 → abierto
+  tipo_acceso.Add("Venta")           ' ÍNDICE 1 → venta
+  tipo_acceso.Add("Mixto")           ' ÍNDICE 2 → mixto
+  tipo_acceso.Add("Embargado")       ' ÍNDICE 3 → embargado
+
+  ' MES DE PUBLICACIÓN — INCLUYE OPCIÓN VACÍA EN ÍNDICE 0
+  ' EN BD SE GUARDA EL TEXTO DEL MES TAL CUAL (ES UN VARCHAR, NO UN ENUM)
+  mes_publicacion.Clear
+  mes_publicacion.Add("")             ' ÍNDICE 0 → sin mes
+  mes_publicacion.Add("Enero")        ' ÍNDICE 1
+  mes_publicacion.Add("Febrero")      ' ÍNDICE 2
+  mes_publicacion.Add("Marzo")        ' ÍNDICE 3
+  mes_publicacion.Add("Abril")        ' ÍNDICE 4
+  mes_publicacion.Add("Mayo")         ' ÍNDICE 5
+  mes_publicacion.Add("Junio")        ' ÍNDICE 6
+  mes_publicacion.Add("Julio")        ' ÍNDICE 7
+  mes_publicacion.Add("Agosto")       ' ÍNDICE 8
+  mes_publicacion.Add("Septiembre")   ' ÍNDICE 9
+  mes_publicacion.Add("Octubre")      ' ÍNDICE 10
+  mes_publicacion.Add("Noviembre")    ' ÍNDICE 11
+  mes_publicacion.Add("Diciembre")    ' ÍNDICE 12
+
+  ' --- 5. POBLAR COMBOBOX DE COLECCIONES ---
+  ' SE MUESTRA EL nombre COMPLETO DE LA COLECCIÓN.
+  ' EL ÍNDICE 0 ES SIEMPRE "(sin colección)" PARA LIBROS SUELTOS.
+  PoblarComboColecciones()
+
+  ' --- 6. POBLAR COMBOBOX DE INTEGRACIÓN GITHUB ---
+  cmb_github.Clear
+  cmb_github.Add("Sin integración")  ' ÍNDICE 0 → sin_integracion
+  cmb_github.Add("Con integración")  ' ÍNDICE 1 → con_integracion
+
+  ' DEFAULT CONSERVADOR: SI ALGO FALLA, QUEDA EN SIN INTEGRACIÓN
+  cmb_github.Index = 0
+
+  Dim hProyecto As Result
+  Try hProyecto = m_ConexionBD.mConn.Exec("SELECT integracion_github FROM proyectos WHERE id = " & CInt(id_proyecto.Value))
+  If Not Error Then
+    If hProyecto.Available Then
+      cmb_github.Index = If(CStr(hProyecto["integracion_github"]) = "con_integracion", 1, 0)
+    Endif
+  Endif
+
+  ' --- 7. CARGAR LOS METADATOS DEL LIBRO ---
+  ' EL MÓDULO m_Metadatos SE ENCARGA DEL MAPEO BD → CONTROLES.
+  ' INCLUYE EL POBLADO DE id_serie SEGÚN id_coleccion.
+  m_Metadatos.CargarMetadatosDeLibro()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' POBLAR COMBOBOX DE COLECCIONES DESDE LA TABLA colecciones
+' SE MUESTRA EL nombre COMPLETO (NO EL ABREVIADO)
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub PoblarComboColecciones()
+
+  Dim hRes As Result
+
+  ' --- 1. RESET ARRAY Y COMBO ---
+  aIdsColeccion = New Integer[]
+  id_coleccion.Clear
+
+  ' --- 2. ÍNDICE 0: "(sin colección)" → ID 0 ---
+  id_coleccion.Add("(sin colección)")
+  aIdsColeccion.Add(0)
+
+  ' --- 3. CONSULTAR COLECCIONES ACTIVAS ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_coleccion, nombre FROM colecciones " &
+    "WHERE activa = 1 ORDER BY nombre")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar las colecciones:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. POBLAR COMBO Y ARRAY EN PARALELO ---
+  While hRes.Available
+    id_coleccion.Add(CStr(hRes["nombre"]))
+    aIdsColeccion.Add(CInt(hRes["id_coleccion"]))
+    hRes.MoveNext
+  Wend
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' EVENTO CLICK DEL COMBOBOX DE COLECCIONES
+' AL CAMBIAR LA COLECCIÓN, FILTRA EL COMBO DE SERIES PARA SOLO MOSTRAR
+' LAS SERIES DE ESA COLECCIÓN. SI NO HAY COLECCIÓN ELEGIDA (ÍNDICE 0),
+' DESHABILITA EL COMBO DE SERIES.
+' SE MUESTRA EL nombre COMPLETO DE LA SERIE (NO EL ABREVIADO)
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub id_coleccion_Click()
+
+  Dim iIdColeccion As Integer
+  Dim hRes As Result
+
+  ' --- 1. RESET ARRAY Y COMBO DE SERIES ---
+  aIdsSerie = New Integer[]
+  id_serie.Clear
+  id_serie.Add("(sin serie)")
+  aIdsSerie.Add(0)
+
+  ' --- 2. CASO "(sin colección)" → DESHABILITAR ---
+  If id_coleccion.Index <= 0 Then
+    id_serie.Index = 0
+    id_serie.Enabled = False
+    Return
+  Endif
+
+  ' --- 3. OBTENER id_coleccion DEL ARRAY PARALELO ---
+  iIdColeccion = aIdsColeccion[id_coleccion.Index]
+
+  If iIdColeccion <= 0 Then
+    id_serie.Index = 0
+    id_serie.Enabled = False
+    Return
+  Endif
+
+  ' --- 4. POBLAR COMBO DE SERIES DE LA COLECCIÓN ELEGIDA ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_serie, nombre FROM series " &
+    "WHERE id_coleccion = &1 AND activa = 1 ORDER BY nombre", iIdColeccion)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar las series:" & gb.NewLine & Error.Text)
+    id_serie.Enabled = False
+    Return
+  Endif
+
+  While hRes.Available
+    id_serie.Add(CStr(hRes["nombre"]))
+    aIdsSerie.Add(CInt(hRes["id_serie"]))
+    hRes.MoveNext
+  Wend
+
+  ' --- 5. HABILITAR Y POSICIONAR EN ÍNDICE 0 ---
+  id_serie.Enabled = (id_serie.Count > 1)
+  id_serie.Index = 0
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' FUNCIÓN AUXILIAR PRIVADA
+' EXTRAE LA LEYENDA DEL COMENTARIO EN LA SEGUNDA LÍNEA DEL .csl
+' RETORNA CADENA VACÍA SI FALLA O NO ENCUENTRA EL COMENTARIO
+' ════════════════════════════════════════════════════════════════════════════
+Private Function LeerLeyendaCSL(sRutaArchivo As String) As String
+
+  Dim hFile As File
+  Dim sLinea As String
+  Dim iLinea As Integer = 0
+
+  ' --- 1. ABRIR Y LEER HASTA LA SEGUNDA LÍNEA ---
+  hFile = Open sRutaArchivo For Input
+  While Not Eof(hFile) And iLinea < 2
+    Line Input #hFile, sLinea
+    Inc iLinea
+  Wend
+  Close #hFile
+
+  ' --- 2. EXTRAER TEXTO ENTRE <!-- Y --> ---
+  sLinea = m_XML.TrimUTF8(sLinea)
+  If sLinea Begins "<!--" And sLinea Ends "-->" Then
+    Return m_XML.TrimUTF8(Mid(sLinea, 5, Len(sLinea) - 7))
+  Endif
+
+  Return ""
+
+Catch
+  ' SI FALLA LA LECTURA RETORNAR VACÍO → SE USARÁ SOLO EL NOMBRE DEL ARCHIVO
+  Return ""
+
+End Function
+
+' DETECTA CTRL + F1 PARA INVOCAR LA AYUDA CONTEXTUAL
+Public Sub Form_KeyRelease()
+
+  If Key.Control And Key.Code = Key.F1 Then
+    m_FuncionesGenericas.MostrarAyuda()
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' EVENTO CLICK DEL BOTÓN GUARDAR CAMBIOS METADATOS LIBRO
+' VALIDA Y GUARDA TODOS LOS METADATOS EN LA BASE DE DATOS
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardarCambiosMetadatosLibro_Click()
+
+  Dim bExito As Boolean
+
+  ' --- 1. VALIDACIONES BÁSICAS ANTES DE GUARDAR ---
+  If Trim(titulo_libro.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El título del libro es obligatorio.")
+    titulo_libro.SetFocus
+    Return
+  Endif
+
+  ' --- 2. CONFIRMACIÓN DEL USUARIO ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Desea guardar los cambios en los metadatos del libro?",
+      "Guardar", "Cancelar") = 2 Then
+    Return
+  Endif
+
+  ' --- 3. GUARDAR LOS METADATOS DEL LIBRO (tabla libros_md) ---
+  m_Sonido.sonar("Info")
+  bExito = m_Metadatos.GuardarMetadatosDeLibro()
+
+  ' --- 4. GUARDAR INTEGRACIÓN GITHUB (tabla proyectos) ---
+  Dim sIntegracion As String = If(cmb_github.Index = 1, "con_integracion", "sin_integracion")
+  Try m_ConexionBD.mConn.Exec("UPDATE proyectos SET integracion_github = '" & sIntegracion & "' WHERE id = " & CInt(id_proyecto.Value))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar integración GitHub:" & gb.NewLine & Error.Text)
+  Endif
+
+  ' --- 5. RECARGAR PARA MOSTRAR VALORES NORMALIZADOS ---
+  If bExito Then
+    m_Metadatos.CargarMetadatosDeLibro()
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' VALIDACIONES DE TECLADO PARA CAMPOS NUMÉRICOS
+' ════════════════════════════════════════════════════════════════════════════
+
+Public Sub ano_publicacion_KeyPress()
+  ' PERMITIR SOLO DÍGITOS Y TECLAS DE CONTROL
+
+  If Not IsDigit(Key.Text) And Key.Code <> Key.BackSpace And Key.Code <> Key.Delete Then
+    Stop Event
+  Endif
+
+End
+
+Public Sub periodo_embargo_KeyPress()
+  ' PERMITIR SOLO DÍGITOS Y TECLAS DE CONTROL
+
+  If Not IsDigit(Key.Text) And Key.Code <> Key.BackSpace And Key.Code <> Key.Delete Then
+    Stop Event
+  Endif
+
+End
+
+Public Sub numero_edicion_KeyPress()
+  ' PERMITIR SOLO DÍGITOS Y TECLAS DE CONTROL
+
+  If Not IsDigit(Key.Text) And Key.Code <> Key.BackSpace And Key.Code <> Key.Delete Then
+    Stop Event
+  Endif
+
+End
+
+Public Sub numero_paginas_KeyPress()
+  ' PERMITIR SOLO DÍGITOS Y TECLAS DE CONTROL
+
+  If Not IsDigit(Key.Text) And Key.Code <> Key.BackSpace And Key.Code <> Key.Delete Then
+    Stop Event
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' HELPER PRIVADO PARA VALIDAR FORMATO ISBN AL PERDER FOCO
+' OPERA SOBRE Last
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ValidarISBN()
+
+  Dim sText As String = Trim(Last.Text)
+  Dim iDigitos As Integer = 0
+  Dim iGuiones As Integer = 0
+  Dim i As Integer
+  Dim sChar As String
+
+  ' --- 1. SI ESTÁ VACÍO, PERMITIR (ES OPCIONAL) ---
+  If sText = "" Then
+    Last.Background = Color.White
+    Return
+  Endif
+
+  ' --- 2. VERIFICAR LONGITUD TOTAL ACEPTABLE (13 A 17) ---
+  If Len(sText) < 13 Or Len(sText) > 17 Then
+    Last.Background = Color.Pink
+    m_Sonido.sonar("Warning")
+    Message.Warning("El ISBN debe tener entre 13 y 17 caracteres" & gb.NewLine &
+      "(13 dígitos, con 0 a 4 guiones opcionales).")
+    Last.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. CONTAR DÍGITOS Y GUIONES, VERIFICAR QUE NO HAYA OTRA COSA ---
+  For i = 1 To Len(sText)
+    sChar = Mid(sText, i, 1)
+    If IsDigit(sChar) Then
+      Inc iDigitos
+    Else If sChar = "-" Then
+      Inc iGuiones
+    Else
+      Last.Background = Color.Pink
+      m_Sonido.sonar("Warning")
+      Message.Warning("El ISBN solo puede contener dígitos y guiones.")
+      Last.SetFocus()
+      Return
+    Endif
+  Next
+
+  ' --- 4. DEBE HABER EXACTAMENTE 13 DÍGITOS ---
+  If iDigitos <> 13 Then
+    Last.Background = Color.Pink
+    m_Sonido.sonar("Warning")
+    Message.Warning("El ISBN debe contener exactamente 13 dígitos" & gb.NewLine &
+      "(actualmente tiene " & iDigitos & ").")
+    Last.SetFocus()
+    Return
+  Endif
+
+  ' --- 5. ISBN-13 DEBE EMPEZAR CON 978 O 979 ---
+  Dim sPrefijo As String = ""
+  Dim j As Integer
+  For j = 1 To Len(sText)
+    sChar = Mid(sText, j, 1)
+    If IsDigit(sChar) Then
+      sPrefijo = sPrefijo & sChar
+      If Len(sPrefijo) = 3 Then Break
+    Endif
+  Next
+
+  If sPrefijo <> "978" And sPrefijo <> "979" Then
+    Last.Background = Color.Pink
+    m_Sonido.sonar("Warning")
+    Message.Warning("El ISBN-13 debe empezar con 978 o 979" & gb.NewLine &
+      "(actualmente empieza con " & sPrefijo & ").")
+    Last.SetFocus()
+    Return
+  Endif
+
+  ' --- 6. TODO VÁLIDO ---
+  Last.Background = Color.White
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' BOTONES DE VERIFICACIÓN DE URLs
+' DELEGAN EN m_FuncionesGenericas.VerificarURLDesdeCampo
+' ════════════════════════════════════════════════════════════════════════════
+
+Public Sub btnURLlibro_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(url_libro)
+
+End
+
+Public Sub btnVerificarOAI_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(url_oai_pmh)
+
+End
+
+Public Sub btnVerificarLicencia_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(url_licencia)
+
+End
+
+Public Sub btnVerificarRepositorio_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(repositorio_produccion_url)
+
+End
+
+Public Sub btnVerificarPreservacion_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(repositorio_preservacion_url)
+
+End
+
+Public Sub btnVerificarHandle_Click()
+
+  m_FuncionesGenericas.VerificarURLDesdeCampo(handle_prefix)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' VERIFICACIÓN DEL PREFIJO DOI VIA CROSSREF
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnVerificarDOI_Click()
+
+  m_DOI.VerificarDOI(doi_prefix)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' BOTONES DE EDICIÓN EXTENDIDA DE CAMPOS TEXT
+' ABREN FTXTextendido EN MODAL, REFERENCIANDO EL TEXTBOX ORIGINAL
+' ════════════════════════════════════════════════════════════════════════════
+
+Public Sub btnDescripcion_Click()
+
+  FTXTextendido.OriginalTextBox = descripcion_libro
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnNotasInternas_Click()
+
+  FTXTextendido.OriginalTextBox = notas_internas
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnPalabrasClave_Click()
+
+  FTXTextendido.OriginalTextBox = palabras_clave_libro
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnPoliticaAccesoAbierto_Click()
+
+  FTXTextendido.OriginalTextBox = politica_acceso_abierto
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnObjetivosAlcance_Click()
+
+  FTXTextendido.OriginalTextBox = objetivos_alcance
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnResumenLibro_Click()
+
+  FTXTextendido.OriginalTextBox = resumen_libro
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnResumenTraducido_Click()
+
+  FTXTextendido.OriginalTextBox = resumen_traducido
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnIndexadoEn_Click()
+
+  FTXTextendido.OriginalTextBox = indexado_en
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnSubdisciplina_Click()
+
+  FTXTextendido.OriginalTextBox = subdisciplina
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnDireccionEditorial_Click()
+
+  FTXTextendido.OriginalTextBox = direccion_editorial
+  FTXTextendido.ShowModal
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' BUSCAR IMAGEN DE TAPA
+' ABRE DIÁLOGO DE SELECCIÓN, COPIA AL DIRECTORIO /media DEL PROYECTO CON EL
+' NOMBRE NORMALIZADO foto-tapa.EXT (jpg o png) Y ESCRIBE EL NOMBRE EN
+' imagen_tapa (readonly)
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnBuscarTapa_Click()
+
+  ' --- 1. ABRIR DIÁLOGO DE SELECCIÓN ---
+  Dialog.Title = "Seleccionar imagen de tapa"
+  Dialog.Filter = ["*.jpg;*.jpeg;*.png", "Imágenes (JPG, PNG)"]
+  If Dialog.OpenFile() Then Return
+
+  Dim sOrigen As String = Dialog.Path
+  Dim sExtOrig As String = LCase(File.Ext(sOrigen))
+  Dim sDirectorioMedia As String = File.Dir(FMain.txtProyecto.Text) &/ "media"
+
+  ' --- 2. NORMALIZAR EXTENSIÓN: jpeg → jpg ---
+  Dim sExt As String
+  If sExtOrig = "jpeg" Then
+    sExt = "jpg"
+  Else
+    sExt = sExtOrig
+  Endif
+
+  Dim sNombreDestino As String = "foto-tapa." & sExt
+  Dim sDestino As String = sDirectorioMedia &/ sNombreDestino
+
+  ' --- 3. DETECTAR SI EL ORIGEN YA ES EL DESTINO ---
+  If sOrigen = sDestino Then
+    Message.Info("La imagen '" & sNombreDestino & "' ya está en el directorio /media." &
+      Chr(10) & "No es necesario copiarla.")
+    imagen_tapa.Text = sNombreDestino
+    Return
+  Endif
+
+  ' --- 4. VERIFICAR QUE EL DIRECTORIO /media EXISTE ---
+  If Not Exist(sDirectorioMedia) Then
+    Try Mkdir sDirectorioMedia
+    If Error Then
+      Message.Error("No se pudo crear el directorio /media:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  Endif
+
+  ' --- 5. ADVERTIR SI YA EXISTE foto-tapa EN /media ---
+  If Exist(sDestino) Then
+    If Message.Question("Ya existe '" & sNombreDestino & "' en /media." & Chr(10) &
+        "¿Deseás reemplazarla?", "Sí", "No") <> 1 Then
+      Return
+    Endif
+    Try Kill sDestino
+    If Error Then
+      Message.Error("Error al eliminar archivo anterior:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  Endif
+
+  ' --- 6. COPIAR CON NOMBRE NORMALIZADO ---
+  Try Copy sOrigen To sDestino
+  If Error Then
+    Message.Error("Error al copiar la imagen:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 7. REGISTRAR NOMBRE NORMALIZADO EN EL CAMPO ---
+  imagen_tapa.Text = sNombreDestino
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' FUNCIÓN AUXILIAR PÚBLICA
+' EXTRAE "apa.csl" DE "American Psychological... [apa.csl]"
+' USADA TAMBIÉN POR m_Metadatos PARA GUARDAR SOLO EL NOMBRE DEL ARCHIVO
+' ════════════════════════════════════════════════════════════════════════════
+Public Function ExtraerNombreCSL(sTexto As String) As String
+
+  Dim iAbre As Integer = 0
+  Dim iCierra As Integer = 0
+  Dim i As Integer
+
+  ' --- 1. BUSCAR EL ÚLTIMO [ Y EL ÚLTIMO ] ---
+  For i = Len(sTexto) To 1 Step -1
+    If Mid(sTexto, i, 1) = "]" And iCierra = 0 Then iCierra = i
+    If Mid(sTexto, i, 1) = "[" And iCierra > 0 Then
+      iAbre = i
+      Break
+    Endif
+  Next
+
+  ' --- 2. EXTRAER EL CONTENIDO ENTRE LOS CORCHETES ---
+  If iAbre > 0 And iCierra > iAbre Then
+    Return m_XML.TrimUTF8(Mid(sTexto, iAbre + 1, iCierra - iAbre - 1))
+  Endif
+
+  ' --- 3. FALLBACK: YA ES SOLO EL NOMBRE DEL ARCHIVO ---
+  Return m_XML.TrimUTF8(sTexto)
+
+End Function
+
+' ════════════════════════════════════════════════════════════════════════════
+' CIERRE DEL FORMULARIO — PATRÓN bCierrePermitido
+' ════════════════════════════════════════════════════════════════════════════
+
 Public Sub btnCerrar_Click()
-  ' HABILITAR EL CIERRE Y CERRAR
 
   bCierrePermitido = True
   Me.Close()
@@ -19,5 +681,92 @@ Public Sub Form_Close()
   m_Sonido.sonar("info")
   Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
   Stop Event
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' HELPERS PARA LEER Y SETEAR LOS COMBOS DE FK POR ID NUMÉRICO
+' USADOS POR m_Metadatos PARA CARGAR Y GUARDAR
+' ════════════════════════════════════════════════════════════════════════════
+
+Public Function ObtenerIdColeccionSeleccionada() As Integer
+
+  If id_coleccion.Index < 0 Or id_coleccion.Index >= aIdsColeccion.Count Then Return 0
+  Return aIdsColeccion[id_coleccion.Index]
+
+End Function
+
+Public Sub SeleccionarColeccionPorId(iId As Integer)
+
+  Dim i As Integer
+
+  If iId <= 0 Then
+    id_coleccion.Index = 0
+    Return
+  Endif
+
+  For i = 1 To aIdsColeccion.Count - 1
+    If aIdsColeccion[i] = iId Then
+      id_coleccion.Index = i
+      Return
+    Endif
+  Next
+
+  id_coleccion.Index = 0
+
+End
+
+Public Function ObtenerIdSerieSeleccionada() As Integer
+
+  If id_serie.Index < 0 Or id_serie.Index >= aIdsSerie.Count Then Return 0
+  Return aIdsSerie[id_serie.Index]
+
+End Function
+
+Public Sub SeleccionarSeriePorId(iId As Integer)
+
+  Dim i As Integer
+
+  If iId <= 0 Then
+    id_serie.Index = 0
+    Return
+  Endif
+
+  For i = 1 To aIdsSerie.Count - 1
+    If aIdsSerie[i] = iId Then
+      id_serie.Index = i
+      Return
+    Endif
+  Next
+
+  id_serie.Index = 0
+
+End
+
+Public Sub btnChequearISBN_Click()
+
+  Dim ISBN As String = isbn_impreso.Text
+
+  If m_FuncionesGenericas.EsISBNValido(ISBN) Then
+    m_Sonido.sonar("Info")
+    Message.Info("El ISBN es válido.")
+  Else
+    m_Sonido.sonar("Warning")
+    Message.Warning("El ISBN no es válido.")
+  End If
+
+End
+
+Public Sub btnChequearEISBN_Click()
+
+  Dim eISBN As String = isbn_electronico.Text
+
+  If m_FuncionesGenericas.EsISBNValido(eISBN) Then
+    m_Sonido.sonar("Info")
+    Message.Info("El eISBN es válido.")
+  Else
+    m_Sonido.sonar("Warning")
+    Message.Warning("El eISBN no es válido.")
+  End If
 
 End

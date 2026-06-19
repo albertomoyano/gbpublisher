@@ -1,8 +1,10 @@
 ' Gambas module file
 
 Private ContenidoMeta As Result
-' Private id_proyecto As Integer
 
+' ════════════════════════════════════════════════════════════════════════════
+' DEVUELVE LA DESCRIPCIÓN LEGIBLE DEL TIPO DE PROYECTO
+' ════════════════════════════════════════════════════════════════════════════
 Public Function ObtenerDescripcionTipo(valor As Integer) As String
 
   Select Case valor
@@ -15,6 +17,64 @@ Public Function ObtenerDescripcionTipo(valor As Integer) As String
     Case Else
       Return "Tipo desconocido"
   End Select
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' CONVERTIR NULL A STRING VACÍO
+' PARA CARGAR DATOS DE LA BASE DE DATOS A COMPONENTES
+' ════════════════════════════════════════════════════════════════════════════
+Public Function NullToString(valor As Variant) As String
+
+  If IsNull(valor) Then
+    Return ""
+  Else
+    Return CStr(valor)
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' NORMALIZA VALORES PARA ENVIAR A LA BASE DE DATOS (TRIM AL STRING)
+' ════════════════════════════════════════════════════════════════════════════
+Private Function StringToNull(valor As String) As String
+
+  Return Trim(valor)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' HELPERS PRIVADOS PARA COMBOBOX DE ENUMS DE LIBROS
+' ════════════════════════════════════════════════════════════════════════════
+
+' SELECCIONA EN UN COMBOBOX DE ENUM EL ITEM CUYO ÍNDICE MAPEA AL VALOR DE BD.
+' aValores ES EL ARRAY DE STRINGS DEL ENUM EN EL MISMO ORDEN QUE ESTÁN
+' AGREGADOS LOS ITEMS EN EL COMBOBOX (VER FMetadatosLibro.Form_Open).
+' SI EL VALOR NO COINCIDE CON NINGUNO, DEJA EL COMBOBOX EN ÍNDICE 0.
+Private Sub SeleccionarComboEnum(oCombo As ComboBox, sValor As String, aValores As String[])
+
+  Dim iIdx As Integer
+
+  ' GUARD: SI EL COMBO ESTÁ VACÍO, NO HACER NADA
+  If oCombo.Count <= 0 Then Return
+
+  iIdx = aValores.Find(sValor)
+  If iIdx >= 0 And iIdx < oCombo.Count Then
+    oCombo.Index = iIdx
+  Else
+    oCombo.Index = 0
+  Endif
+
+End
+
+' LEE EL VALOR DEL ENUM ASOCIADO AL ÍNDICE ACTUAL DEL COMBOBOX.
+' SI EL ÍNDICE ESTÁ FUERA DE RANGO, DEVUELVE EL PRIMER VALOR (DEFAULT DEL ENUM).
+Private Function ObtenerEnumDeCombo(oCombo As ComboBox, aValores As String[]) As String
+
+  If oCombo.Index >= 0 And oCombo.Index < aValores.Count Then
+    Return aValores[oCombo.Index]
+  Endif
+  Return aValores[0]
 
 End
 
@@ -44,20 +104,18 @@ Public Function CargarMetadatosDeRevista() As Boolean
     ' CAMPOS DE IDENTIFICACIÓN
     .id_revista.Value = resultado["id_revista"]
     .ror_editorial.Text = resultado["ror_editorial"]
-    .id_proyecto.Value = FMain.id_proyecto.Value  ' SINCRONIZAR CON FMain
+    .id_proyecto.Value = FMain.id_proyecto.Value
     .issn_impreso.Text = NullToString(resultado["issn_impreso"])
     .e_issn.Text = NullToString(resultado["e_issn"])
     .acronimo_scielo.Text = NullToString(resultado["acronimo_scielo"])
 
-    ' sEstiloCita = valor leído de la BD, ej: "apa.csl"
-    ' HAY QUE BUSCAR EN EL COMBOBOX EL ITEM QUE CONTIENE ESE NOMBRE
+    ' ESTILO DE CITA — BUSCAR EN EL COMBOBOX EL ITEM CON EL NOMBRE DE ARCHIVO
     Dim sEstiloCita As String = m_XML.TrimUTF8(resultado["estilo_cita"])
     FMetadatosRevista.cmb_tipo_csl.Text = ""
     If sEstiloCita <> "" Then
       Dim i As Integer
       For i = 0 To FMetadatosRevista.cmb_tipo_csl.Count - 1
         Dim sItem As String = FMetadatosRevista.cmb_tipo_csl.List[i]
-        ' EXTRAER NOMBRE DEL ARCHIVO DEL ITEM: "Nombre legible  [archivo.csl]" → "archivo.csl"
         Dim sNombre As String = sItem
         Dim iAbre As Integer = 0
         Dim iCierra As Integer = 0
@@ -130,7 +188,12 @@ Public Function CargarMetadatosDeRevista() As Boolean
     .repositorio_produccion_url.Text = NullToString(resultado["repositorio_produccion_url"])
     .repositorio_produccion_plataforma.Text = NullToString(resultado["repositorio_produccion_plataforma"])
     .repositorio_produccion_tipo.Text = NullToString(resultado["repositorio_produccion_tipo"])
-    .repositorio_produccion_privado.Value = resultado["repositorio_produccion_privado"]
+    ' MANEJO DEFENSIVO DE BOOLEAN NULL
+    If IsNull(resultado["repositorio_produccion_privado"]) Then
+      .repositorio_produccion_privado.Value = False
+    Else
+      .repositorio_produccion_privado.Value = resultado["repositorio_produccion_privado"]
+    Endif
     .sistema_gestion_contenidos.Text = NullToString(resultado["sistema_gestion_contenidos"])
 
     ' REPOSITORIOS DE PRESERVACIÓN
@@ -171,14 +234,16 @@ Public Function CargarMetadatosDeRevista() As Boolean
 
 Catch
   m_Sonido.sonar("Error")
-  Message.Error("Error al cargar metadatos de revista: " & Error.Text)
+  Message.Error("Error al cargar metadatos de revista:" & gb.NewLine &
+    "Mensaje: " & Error.Text & gb.NewLine &
+    "Lugar: " & Error.Where & gb.NewLine &
+    "Código: " & Error.Code)
   Return False
 
 End
 
 ' ════════════════════════════════════════════════════════════════════════════
 ' GUARDAR METADATOS DE REVISTA EN LA TABLA REVISTAS_MD
-' USA EL MÉTODO Edit() PARA SIMPLIFICAR LA ACTUALIZACIÓN
 ' ════════════════════════════════════════════════════════════════════════════
 Public Function GuardarMetadatosDeRevista() As Boolean
 
@@ -186,7 +251,6 @@ Public Function GuardarMetadatosDeRevista() As Boolean
   Dim idProyecto As Integer
   Dim verificacion As Result
 
-  ' OBTENER EL ID_PROYECTO DE FMain (que es la fuente de verdad)
   idProyecto = FMain.id_proyecto.Value
 
   If idProyecto <= 0 Then
@@ -195,11 +259,10 @@ Public Function GuardarMetadatosDeRevista() As Boolean
     Return False
   Endif
 
-  ' VERIFICAR QUE EXISTE EL REGISTRO EN REVISTAS_MD
+  ' VERIFICAR QUE EXISTE EL REGISTRO EN REVISTAS_MD; SI NO, CREARLO
   verificacion = m_ConexionBD.mConn.Exec("SELECT id_revista FROM revistas_md WHERE id_proyecto = &1", idProyecto)
 
   If Not verificacion.Available Then
-    ' SI NO EXISTE, CREARLO AHORA
     m_ConexionBD.mConn.Exec("INSERT INTO revistas_md (" &
       "  id_proyecto, " &
       "  titulo_revista, " &
@@ -215,7 +278,6 @@ Public Function GuardarMetadatosDeRevista() As Boolean
     m_ConexionBD.mConn.Commit()
   Endif
 
-  ' EDITAR EL REGISTRO USANDO Edit() CON EL ID_PROYECTO
   resultado = m_ConexionBD.mConn.Edit("revistas_md", "id_proyecto=" & idProyecto)
 
   If Not resultado.Available Then
@@ -284,6 +346,8 @@ Public Function GuardarMetadatosDeRevista() As Boolean
     resultado!repositorio_produccion_url = StringToNull(.repositorio_produccion_url.Text)
     resultado!repositorio_produccion_plataforma = StringToNull(.repositorio_produccion_plataforma.Text)
     resultado!repositorio_produccion_tipo = StringToNull(.repositorio_produccion_tipo.Text)
+    ' BUG FIX: ANTES TENÍA UN BLOQUE DE CARGA (Else .CheckBox.Value = resultado[]),
+    ' QUE NO CORRESPONDE EN GUARDAR. ACÁ ESCRIBIMOS EL VALOR DEL CHECKBOX A LA BD.
     resultado!repositorio_produccion_privado = .repositorio_produccion_privado.Value
     resultado!sistema_gestion_contenidos = StringToNull(.sistema_gestion_contenidos.Text)
 
@@ -318,308 +382,31 @@ Public Function GuardarMetadatosDeRevista() As Boolean
 
   End With
 
-  ' ACTUALIZAR Y CONFIRMAR
   resultado.Update
   m_ConexionBD.mConn.Commit()
-
-  ' LIBERAR RESULTADO
   resultado = Null
 
   m_Sonido.sonar("Info")
   Message.Info("Metadatos de revista guardados correctamente.")
 
-  ' RECARGAR PARA MOSTRAR EL id_revista ACTUALIZADO
   CargarMetadatosDeRevista()
 
   Return True
 
 Catch
   m_Sonido.sonar("Error")
-  Message.Error("Error al guardar metadatos de revista: " & Error.Text)
+  Message.Error("Error al guardar metadatos de revista:" & gb.NewLine &
+    "Mensaje: " & Error.Text & gb.NewLine &
+    "Lugar: " & Error.Where & gb.NewLine &
+    "Código: " & Error.Code)
   Return False
 
 End
 
 ' ════════════════════════════════════════════════════════════════════════════
-' CONVERTIR NULL A STRING VACÍO
-' PARA CARGAR DATOS DE LA BASE DE DATOS A COMPONENTES
-' ════════════════════════════════════════════════════════════════════════════
-Public Function NullToString(valor As Variant) As String
-
-  If IsNull(valor) Then
-    Return ""
-  Else
-    Return CStr(valor)
-  Endif
-
-End
-
-' ════════════════════════════════════════════════════════════════════════════
-' CONVERTIR STRING VACÍO A STRING VACÍO (SIN NULL)
-' NORMALIZA VALORES PARA ENVIAR A LA BASE DE DATOS
-' ════════════════════════════════════════════════════════════════════════════
-Private Function StringToNull(valor As String) As String
-
-  Return Trim(valor)
-
-End
-'
-'
-'
-'
-'
-'
-'' TODO ESTE CODIGO SERA REMOVIDO CUANDO LATEX PASE AL FLUJO FINAL
-'' FUNCIONES EN ESTADO DE TRANSICIÓN
-'
-' Public Function CargarMetadatosDelProyecto() As Boolean
-'
-'   Dim sSQL As String
-'
-'   ' Buscar en tabla metadatos
-'   sSQL = "SELECT * FROM metadatos WHERE id_proyecto = &1"
-'   ContenidoMeta = m_ConexionBD.mConn.Exec(sSQL, FMain.id_proyecto.Value)
-'
-'   If ContenidoMeta.Available Then
-'     ' Asignación con manejo de NULL
-'     With FMain
-'       .cmbAutoriaLibro.Text = NullToString(ContenidoMeta["cmb_autoria_libro"])
-'       .txtLibroAutoria.Text = NullToString(ContenidoMeta["libro_autoria"])
-'       ' .cmb_tipo_csl.Text = NullToString(ContenidoMeta["estilo_cita"])
-'       .txtMostrarFiltrosLua.Text = NullToString(ContenidoMeta["mostrar_filtros_lua"])
-'       .txtImagenTapita.Text = NullToString(ContenidoMeta["imagen_tapita"])
-'       .txtRevistaTitulo.Text = NullToString(ContenidoMeta["revista_titulo"])
-'       .txtLibroSubtitulo.Text = NullToString(ContenidoMeta["libro_subtitulo"])
-'       .txtRevistaAbreviatura.Text = NullToString(ContenidoMeta["revista_abreviatura"])
-'       .txtRevistaISSN.Text = NullToString(ContenidoMeta["revista_issn"])
-'       .txtRevistaISSNPrint.Text = NullToString(ContenidoMeta["revista_issn_print"])
-'       .txtRevistaISSNOnLine.Text = NullToString(ContenidoMeta["revista_issn_online"])
-'       .txtRevistaDOIPrefix.Text = NullToString(ContenidoMeta["revista_doi_prefix"])
-'       .txtRevistaVolumen.Text = NullToString(ContenidoMeta["revista_volumen"])
-'       .txtRevistaNumero.Text = NullToString(ContenidoMeta["revista_numero"])
-'       .txtRevistaAnio.Text = NullToString(ContenidoMeta["revista_anio"])
-'       .txtRevistaMes.Text = NullToString(ContenidoMeta["revista_mes"])
-'       .txtRevistaEditor.Text = NullToString(ContenidoMeta["revista_editor"])
-'       .txtRevistaEditorial.Text = NullToString(ContenidoMeta["revista_editorial"])
-'       .txtRevistaPais.Text = NullToString(ContenidoMeta["revista_pais"])
-'       .txtRevistaIdioma.Text = NullToString(ContenidoMeta["revista_idioma"])
-'       .txtRevistaFrecuencia.Text = NullToString(ContenidoMeta["revista_frecuencia"])
-'       .txtRevistaURL.Text = NullToString(ContenidoMeta["revista_url"])
-'       .txtRevistaEmail.Text = NullToString(ContenidoMeta["revista_email"])
-'       .txtRevistaTipoAcceso.Text = NullToString(ContenidoMeta["revista_tipo_acceso"])
-'       .txtRevistaAreaTematica.Text = NullToString(ContenidoMeta["revista_area_tematica"])
-'       .txtRevistaIndexadaEn.Text = NullToString(ContenidoMeta["revista_indexada_en"])
-'       .txtRevistaPoliticaEticaURL.Text = NullToString(ContenidoMeta["revista_politica_etica_url"])
-'       .txtPoliticaRevisoresURL.Text = NullToString(ContenidoMeta["politica_revisores_url"])
-'       .txtPoliticaOpenAccessURL.Text = NullToString(ContenidoMeta["politica_open_access_url"])
-'       .txtFormatoPublicacion.Text = NullToString(ContenidoMeta["formato_publicacion"])
-'       .txtRevistaArchivadaEn.Text = NullToString(ContenidoMeta["revista_archivada_en"])
-'       .txtEditorJefe.Text = NullToString(ContenidoMeta["editor_jefe"])
-'       .txtEditorJefeEmail.Text = NullToString(ContenidoMeta["editor_jefe_email"])
-'       .txtEditorAsociado.Text = NullToString(ContenidoMeta["editor_asociado"])
-'       .txtEditorAsociadoEmail.Text = NullToString(ContenidoMeta["editor_asociado_email"])
-'       .txtCoordinadorEditorial.Text = NullToString(ContenidoMeta["coordinador_editorial"])
-'       .txtCoordinadorEditorialEmail.Text = NullToString(ContenidoMeta["coordinador_editorial_email"])
-'       .txtLibroEditor.Text = NullToString(ContenidoMeta["libro_editor"])
-'
-'       ' Las fechas se manejan directamente (NULL queda como Null en DateBox)
-'       .DateBoxFechaRecepcionApertura.Value = ContenidoMeta["fecha_recepcion_apertura"]
-'       .DateBoxFechaRecepcionCierre.Value = ContenidoMeta["fecha_recepcion_cierre"]
-'       .DateBoxFechaPublicacion.Value = ContenidoMeta["fecha_publicacion"]
-'       .DateBoxFechaProximaEdicion.Value = ContenidoMeta["fecha_proxima_edicion"]
-'
-'       .txtLicencia.Text = NullToString(ContenidoMeta["licencia"])
-'       .txtDerechosAutor.Text = NullToString(ContenidoMeta["derechos_autor"])
-'       .txtDepositarioLegal.Text = NullToString(ContenidoMeta["depositario_legal"])
-'       .txtLibroResumenEs.Text = NullToString(ContenidoMeta["libro_resumen_es"])
-'       .txtLibroPalabrasClaveEs.Text = NullToString(ContenidoMeta["libro_palabras_clave_es"])
-'       .txtLibroResumenEn.Text = NullToString(ContenidoMeta["libro_resumen_en"])
-'       .txtLibroPalabrasClaveEn.Text = NullToString(ContenidoMeta["libro_palabras_clave_en"])
-'       .txtLibroSerie.Text = NullToString(ContenidoMeta["libro_serie"])
-'       .txtLibroPaginas.Text = NullToString(ContenidoMeta["libro_paginas"])
-'       .txtLibroISBN.Text = NullToString(ContenidoMeta["libro_isbn"])
-'       .txtLibroAudiencia.Text = NullToString(ContenidoMeta["libro_audiencia"])
-'       .txtRevistaDoi.Text = NullToString(ContenidoMeta["revista_doi"])
-'       .txtRevistaPURL.Text = NullToString(ContenidoMeta["revista_purl"])
-'       .txtLibroAsunto.Text = NullToString(ContenidoMeta["libro_asunto"])
-'       .txtGoogleAnalytics.Text = NullToString(ContenidoMeta["google_analytics"])
-'       .txtCopyrightYearTwo.Text = NullToString(ContenidoMeta["copyright_year"])
-'       .txtCopyrightHolder.Text = NullToString(ContenidoMeta["copyright_holder"])
-'       .txtRepositorioGithub.Text = NullToString(ContenidoMeta["repositorio_github"])
-'       .txtFundingSource.Text = NullToString(ContenidoMeta["funding_source"])
-'     End With
-'
-'     Return True
-'   Else
-'     Return False
-'   Endif
-'
-' Catch
-'   m_Sonido.sonar("Error")
-'   Message.Error("Error al cargar metadatos: " & Error.Text)
-'   Return False
-'
-' End
-
-' Public Sub GuardarMetadatos()
-'
-'   ContenidoMeta = m_ConexionBD.mConn.Edit("metadatos", "id_proyecto=" & FMain.id_proyecto.Value)
-'
-'   If Not ContenidoMeta.Available Then
-'     m_Sonido.sonar("Error")
-'     Message.Error("No se encontró la tabla metadatos para editar.")
-'     Return
-'   Endif
-'
-'   ContenidoMeta!cmb_autoria_libro = StringToNull(FMain.cmbAutoriaLibro.Text)
-'   ContenidoMeta!libro_autoria = StringToNull(FMain.txtLibroAutoria.Text)
-'   ContenidoMeta!estilo_cita = StringToNull(FMain.cmb_tipo_csl.Text)
-'   ContenidoMeta!mostrar_filtros_lua = StringToNull(FMain.txtMostrarFiltrosLua.Text)
-'   ContenidoMeta!imagen_tapita = StringToNull(FMain.txtImagenTapita.Text)
-'   ContenidoMeta!revista_titulo = StringToNull(FMain.txtRevistaTitulo.Text)
-'   ContenidoMeta!libro_subtitulo = StringToNull(FMain.txtLibroSubtitulo.Text)
-'   ContenidoMeta!revista_abreviatura = StringToNull(FMain.txtRevistaAbreviatura.Text)
-'   ContenidoMeta!revista_issn = StringToNull(FMain.txtRevistaISSN.Text)
-'   ContenidoMeta!revista_issn_print = StringToNull(FMain.txtRevistaISSNPrint.Text)
-'   ContenidoMeta!revista_issn_online = StringToNull(FMain.txtRevistaISSNOnLine.Text)
-'   ContenidoMeta!revista_doi_prefix = StringToNull(FMain.txtRevistaDOIPrefix.Text)
-'   ContenidoMeta!revista_volumen = StringToNull(FMain.txtRevistaVolumen.Text)
-'   ContenidoMeta!revista_numero = StringToNull(FMain.txtRevistaNumero.Text)
-'   ContenidoMeta!revista_anio = StringToNull(FMain.txtRevistaAnio.Text)
-'   ContenidoMeta!revista_mes = StringToNull(FMain.txtRevistaMes.Text)
-'   ContenidoMeta!revista_editor = StringToNull(FMain.txtRevistaEditor.Text)
-'   ContenidoMeta!revista_editorial = StringToNull(FMain.txtRevistaEditorial.Text)
-'   ContenidoMeta!revista_pais = StringToNull(FMain.txtRevistaPais.Text)
-'   ContenidoMeta!revista_idioma = StringToNull(FMain.txtRevistaIdioma.Text)
-'   ContenidoMeta!revista_frecuencia = StringToNull(FMain.txtRevistaFrecuencia.Text)
-'   ContenidoMeta!revista_url = StringToNull(FMain.txtRevistaURL.Text)
-'   ContenidoMeta!revista_email = StringToNull(FMain.txtRevistaEmail.Text)
-'   ContenidoMeta!revista_tipo_acceso = StringToNull(FMain.txtRevistaTipoAcceso.Text)
-'   ContenidoMeta!revista_area_tematica = StringToNull(FMain.txtRevistaAreaTematica.Text)
-'   ContenidoMeta!revista_indexada_en = StringToNull(FMain.txtRevistaIndexadaEn.Text)
-'   ContenidoMeta!revista_politica_etica_url = StringToNull(FMain.txtRevistaPoliticaEticaURL.Text)
-'   ContenidoMeta!politica_revisores_url = StringToNull(FMain.txtPoliticaRevisoresURL.Text)
-'   ContenidoMeta!politica_open_access_url = StringToNull(FMain.txtPoliticaOpenAccessURL.Text)
-'   ContenidoMeta!formato_publicacion = StringToNull(FMain.txtFormatoPublicacion.Text)
-'   ContenidoMeta!revista_archivada_en = StringToNull(FMain.txtRevistaArchivadaEn.Text)
-'   ContenidoMeta!editor_jefe = StringToNull(FMain.txtEditorJefe.Text)
-'   ContenidoMeta!editor_jefe_email = StringToNull(FMain.txtEditorJefeEmail.Text)
-'   ContenidoMeta!editor_asociado = StringToNull(FMain.txtEditorAsociado.Text)
-'   ContenidoMeta!editor_asociado_email = StringToNull(FMain.txtEditorAsociadoEmail.Text)
-'   ContenidoMeta!coordinador_editorial = StringToNull(FMain.txtCoordinadorEditorial.Text)
-'   ContenidoMeta!coordinador_editorial_email = StringToNull(FMain.txtCoordinadorEditorialEmail.Text)
-'   ContenidoMeta!fecha_recepcion_apertura = FMain.DateBoxFechaRecepcionApertura.Value
-'   ContenidoMeta!fecha_recepcion_cierre = FMain.DateBoxFechaRecepcionCierre.Value
-'   ContenidoMeta!fecha_publicacion = FMain.DateBoxFechaPublicacion.Value
-'   ContenidoMeta!fecha_proxima_edicion = FMain.DateBoxFechaProximaEdicion.Value
-'   ContenidoMeta!licencia = StringToNull(FMain.txtLicencia.Text)
-'   ContenidoMeta!derechos_autor = StringToNull(FMain.txtDerechosAutor.Text)
-'   ContenidoMeta!depositario_legal = StringToNull(FMain.txtDepositarioLegal.Text)
-'   ContenidoMeta!libro_resumen_es = StringToNull(FMain.txtLibroResumenEs.Text)
-'   ContenidoMeta!libro_palabras_clave_es = StringToNull(FMain.txtLibroPalabrasClaveEs.Text)
-'   ContenidoMeta!libro_resumen_en = StringToNull(FMain.txtLibroResumenEn.Text)
-'   ContenidoMeta!libro_palabras_clave_en = StringToNull(FMain.txtLibroPalabrasClaveEn.Text)
-'   ContenidoMeta!libro_serie = StringToNull(FMain.txtLibroSerie.Text)
-'   ContenidoMeta!libro_paginas = StringToNull(FMain.txtLibroPaginas.Text)
-'   ContenidoMeta!libro_isbn = StringToNull(FMain.txtLibroISBN.Text)
-'   ContenidoMeta!libro_audiencia = StringToNull(FMain.txtLibroAudiencia.Text)
-'   ContenidoMeta!revista_doi = StringToNull(FMain.txtRevistaDoi.Text)
-'   ContenidoMeta!revista_purl = StringToNull(FMain.txtRevistaPURL.Text)
-'   ContenidoMeta!libro_asunto = StringToNull(FMain.txtLibroAsunto.Text)
-'   ContenidoMeta!google_analytics = StringToNull(FMain.txtGoogleAnalytics.Text)
-'   ContenidoMeta!copyright_year = StringToNull(FMain.txtCopyrightYearTwo.Text)
-'   ContenidoMeta!copyright_holder = StringToNull(FMain.txtCopyrightHolder.Text)
-'   ContenidoMeta!repositorio_github = StringToNull(FMain.txtRepositorioGithub.Text)
-'   ContenidoMeta!funding_source = StringToNull(FMain.txtFundingSource.Text)
-'   ContenidoMeta!libro_editor = StringToNull(FMain.txtLibroEditor.Text)
-'
-'   ContenidoMeta.Update
-'   m_ConexionBD.mConn.Commit()
-'
-'   ContenidoMeta = Null
-'
-'   m_Sonido.sonar("Info")
-'   Message.Info("Cambios guardados correctamente.")
-'
-' End
-
-' Public Sub LimpiarCamposMetadatos()
-'
-'   With FMain
-'     ' Combobox
-'     .cmbAutoriaLibro.Text = ""
-'     ' Textbox
-'     .txtLibroAutoria.Text = ""
-'     .txtMostrarFiltrosLua.Text = ""
-'     .txtImagenTapita.Text = ""
-'     .txtRevistaTitulo.Text = ""
-'     .txtLibroSubtitulo.Text = ""
-'     .txtRevistaAbreviatura.Text = ""
-'     .txtRevistaISSN.Text = ""
-'     .txtRevistaISSNPrint.Text = ""
-'     .txtRevistaISSNOnLine.Text = ""
-'     .txtRevistaDOIPrefix.Text = ""
-'     .txtRevistaVolumen.Text = ""
-'     .txtRevistaNumero.Text = ""
-'     .txtRevistaAnio.Text = ""
-'     .txtRevistaMes.Text = ""
-'     .txtRevistaEditor.Text = ""
-'     .txtRevistaEditorial.Text = ""
-'     .txtRevistaPais.Text = ""
-'     .txtRevistaIdioma.Text = ""
-'     .txtRevistaFrecuencia.Text = ""
-'     .txtRevistaURL.Text = ""
-'     .txtRevistaEmail.Text = ""
-'     .txtRevistaTipoAcceso.Text = ""
-'     .txtRevistaAreaTematica.Text = ""
-'     .txtRevistaIndexadaEn.Text = ""
-'     .txtRevistaPoliticaEticaURL.Text = ""
-'     .txtPoliticaRevisoresURL.Text = ""
-'     .txtPoliticaOpenAccessURL.Text = ""
-'     .txtFormatoPublicacion.Text = ""
-'     .txtRevistaArchivadaEn.Text = ""
-'     .txtEditorJefe.Text = ""
-'     .txtEditorJefeEmail.Text = ""
-'     .txtEditorAsociado.Text = ""
-'     .txtEditorAsociadoEmail.Text = ""
-'     .txtCoordinadorEditorial.Text = ""
-'     .txtCoordinadorEditorialEmail.Text = ""
-'     .txtLibroEditor.Text = ""
-'
-'     ' DateBox - USAR Null en lugar de ""
-'     .DateBoxFechaRecepcionApertura.Value = Null
-'     .DateBoxFechaRecepcionCierre.Value = Null
-'     .DateBoxFechaPublicacion.Value = Null
-'     .DateBoxFechaProximaEdicion.Value = Null
-'
-'     .txtLicencia.Text = ""
-'     .txtLogoLicencia.Text = ""
-'     .txtDerechosAutor.Text = ""
-'     .txtDepositarioLegal.Text = ""
-'     .txtLibroResumenEs.Text = ""
-'     .txtLibroPalabrasClaveEs.Text = ""
-'     .txtLibroResumenEn.Text = ""
-'     .txtLibroPalabrasClaveEn.Text = ""
-'     .txtLibroSerie.Text = ""
-'     .txtLibroPaginas.Text = ""
-'     .txtLibroISBN.Text = ""
-'     .txtLibroAudiencia.Text = ""
-'     .txtRevistaDoi.Text = ""
-'     .txtRevistaPURL.Text = ""
-'     .txtLibroAsunto.Text = ""
-'     .txtGoogleAnalytics.Text = ""
-'     .txtCopyrightYearTwo.Text = ""
-'     .txtCopyrightHolder.Text = ""
-'     .txtRepositorioGithub.Text = ""
-'     .txtFundingSource.Text = ""
-'   End With
-'
-' End
-
-' ════════════════════════════════════════════════════════════════════════════
 ' CARGAR METADATOS DE LIBRO DESDE LA TABLA LIBROS_MD
-' BUSCA EL REGISTRO BASÁNDOSE EN EL ID_PROYECTO Y CARGA TODOS LOS CAMPOS
-' EN LOS COMPONENTES DEL FORMULARIO FMetadatosLibro
+' BUSCA EL REGISTRO POR ID_PROYECTO Y CARGA TODOS LOS CAMPOS EN
+' LOS COMPONENTES DEL FORMULARIO FMetadatosLibro
 ' ════════════════════════════════════════════════════════════════════════════
 Public Function CargarMetadatosDeLibro() As Boolean
 
@@ -636,138 +423,401 @@ Public Function CargarMetadatosDeLibro() As Boolean
     Return False
   Endif
 
-  ' ' --- 2. CARGAR CAMPOS EN EL FORMULARIO FMetadatosLibro ---
-  ' With FMetadatosLibro
-  '
-  '   ' IDENTIFICACIÓN
-  '   .id_libro.Value = resultado["id_libro"]
-  '   .id_proyecto.Value = FMain.id_proyecto.Value
-  '   .isbn_impreso.Text = NullToString(resultado["isbn_impreso"])
-  '   .isbn_electronico.Text = NullToString(resultado["isbn_electronico"])
-  '   .doi_libro.Text = NullToString(resultado["doi_libro"])
-  '   .doi_prefix.Text = NullToString(resultado["doi_prefix"])
-  '   .handle_prefix.Text = NullToString(resultado["handle_prefix"])
-  '
-  '   ' TÍTULO
-  '   .titulo_libro.Text = NullToString(resultado["titulo_libro"])
-  '   .subtitulo.Text = NullToString(resultado["subtitulo"])
-  '   .titulo_abreviado.Text = NullToString(resultado["titulo_abreviado"])
-  '   .titulo_original.Text = NullToString(resultado["titulo_original"])
-  '   .idioma_titulo_original.Text = NullToString(resultado["idioma_titulo_original"])
-  '
-  '   ' TIPO, EDICIÓN Y FORMATO
-  '   .tipo_libro.Text = NullToString(resultado["tipo_libro"])
-  '   .edicion.Text = NullToString(resultado["edicion"])
-  '   .numero_edicion.Text = NullToString(resultado["numero_edicion"])
-  '   .numero_paginas.Text = NullToString(resultado["numero_paginas"])
-  '
-  '   ' PUBLICACIÓN
-  '   .ano_publicacion.Text = NullToString(resultado["ano_publicacion"])
-  '   .mes_publicacion.Text = NullToString(resultado["mes_publicacion"])
-  '   .fecha_publicacion_completa.Value = resultado["fecha_publicacion_completa"]
-  '   .idioma_principal.Text = NullToString(resultado["idioma_principal"])
-  '   .idiomas_publicacion.Text = NullToString(resultado["idiomas_publicacion"])
-  '   .estado_publicacion.Text = NullToString(resultado["estado_publicacion"])
-  '
-  '   ' EDITORIAL
-  '   .editorial.Text = NullToString(resultado["editorial"])
-  '   .institucion_editora.Text = NullToString(resultado["institucion_editora"])
-  '   .ror_editorial.Text = NullToString(resultado["ror_editorial"])
-  '   .ciudad_publicacion.Text = NullToString(resultado["ciudad_publicacion"])
-  '   .pais_publicacion.Text = NullToString(resultado["pais_publicacion"])
-  '   .direccion_editorial.Text = NullToString(resultado["direccion_editorial"])
-  '   .email_editorial.Text = NullToString(resultado["email_editorial"])
-  '
-  '   ' COLECCIÓN / SERIE
-  '   .nombre_coleccion.Text = NullToString(resultado["nombre_coleccion"])
-  '   .issn_coleccion.Text = NullToString(resultado["issn_coleccion"])
-  '   .numero_en_coleccion.Text = NullToString(resultado["numero_en_coleccion"])
-  '
-  '   ' CLASIFICACIÓN TEMÁTICA
-  '   .area_conocimiento.Text = NullToString(resultado["area_conocimiento"])
-  '   .disciplina.Text = NullToString(resultado["disciplina"])
-  '   .subdisciplina.Text = NullToString(resultado["subdisciplina"])
-  '   .palabras_clave_libro.Text = NullToString(resultado["palabras_clave_libro"])
-  '   .clasificacion_unesco.Text = NullToString(resultado["clasificacion_unesco"])
-  '   .clasificacion_oecd.Text = NullToString(resultado["clasificacion_oecd"])
-  '
-  '   ' ACCESO Y LICENCIA
-  '   .tipo_acceso.Text = NullToString(resultado["tipo_acceso"])
-  '   .licencia_defecto.Text = NullToString(resultado["licencia_defecto"])
-  '   .url_licencia.Text = NullToString(resultado["url_licencia"])
-  '   .politica_acceso_abierto.Text = NullToString(resultado["politica_acceso_abierto"])
-  '   .periodo_embargo.Text = NullToString(resultado["periodo_embargo"])
-  '
-  '   ' URLs Y REPOSITORIOS
-  '   .url_libro.Text = NullToString(resultado["url_libro"])
-  '   .url_oai_pmh.Text = NullToString(resultado["url_oai_pmh"])
-  '   .url_logo.Text = NullToString(resultado["url_logo"])
-  '   .imagen_tapa.Text = NullToString(resultado["imagen_tapa"])
-  '
-  '   ' REPOSITORIOS DE PRODUCCIÓN
-  '   .repositorio_produccion_url.Text = NullToString(resultado["repositorio_produccion_url"])
-  '   .repositorio_produccion_plataforma.Text = NullToString(resultado["repositorio_produccion_plataforma"])
-  '   .repositorio_produccion_tipo.Text = NullToString(resultado["repositorio_produccion_tipo"])
-  '   .repositorio_produccion_privado.Value = resultado["repositorio_produccion_privado"]
-  '   .sistema_gestion_contenidos.Text = NullToString(resultado["sistema_gestion_contenidos"])
-  '
-  '   ' REPOSITORIOS DE PRESERVACIÓN
-  '   .repositorio_preservacion_url.Text = NullToString(resultado["repositorio_preservacion_url"])
-  '   .repositorio_preservacion_plataforma.Text = NullToString(resultado["repositorio_preservacion_plataforma"])
-  '
-  '   ' INDEXACIÓN
-  '   .indexado_en.Text = NullToString(resultado["indexado_en"])
-  '   .identificador_scielo.Text = NullToString(resultado["identificador_scielo"])
-  '
-  '   ' RESUMEN Y DESCRIPCIÓN
-  '   .resumen_libro.Text = NullToString(resultado["resumen_libro"])
-  '   .resumen_traducido.Text = NullToString(resultado["resumen_traducido"])
-  '   .idioma_resumen_traducido.Text = NullToString(resultado["idioma_resumen_traducido"])
-  '   .descripcion_libro.Text = NullToString(resultado["descripcion_libro"])
-  '   .objetivos_alcance.Text = NullToString(resultado["objetivos_alcance"])
-  '
-  '   ' ESTILO DE CITA (COMBOBOX CON BÚSQUEDA POR NOMBRE DE ARCHIVO)
-  '   Dim sEstiloCita As String = m_XML.TrimUTF8(resultado["estilo_cita"])
-  '   FMetadatosLibro.cmb_tipo_csl.Text = ""
-  '   If sEstiloCita <> "" Then
-  '     Dim i As Integer
-  '     For i = 0 To FMetadatosLibro.cmb_tipo_csl.Count - 1
-  '       Dim sItem As String = FMetadatosLibro.cmb_tipo_csl.List[i]
-  '       ' EXTRAER NOMBRE DEL ARCHIVO DEL ITEM: "Nombre legible  [archivo.csl]" → "archivo.csl"
-  '       Dim sNombre As String = sItem
-  '       Dim iAbre As Integer = 0
-  '       Dim iCierra As Integer = 0
-  '       Dim j As Integer
-  '       For j = Len(sItem) To 1 Step -1
-  '         If Mid(sItem, j, 1) = "]" And iCierra = 0 Then iCierra = j
-  '         If Mid(sItem, j, 1) = "[" And iCierra > 0 Then
-  '           iAbre = j
-  '           Break
-  '         Endif
-  '       Next
-  '       If iAbre > 0 And iCierra > iAbre Then
-  '         sNombre = m_XML.TrimUTF8(Mid(sItem, iAbre + 1, iCierra - iAbre - 1))
-  '       Endif
-  '       If sNombre = sEstiloCita Then
-  '         FMetadatosLibro.cmb_tipo_csl.Text = sItem
-  '         Break
-  '       Endif
-  '     Next
-  '   Endif
-  '
-  '   ' AUDITORÍA
-  '   .fecha_creacion.Value = resultado["fecha_creacion"]
-  '   .fecha_actualizacion.Value = resultado["fecha_actualizacion"]
-  '   .usuario_creacion.Text = NullToString(resultado["usuario_creacion"])
-  '   .notas_internas.Text = NullToString(resultado["notas_internas"])
-  '
-  ' End With
+  ' --- 2. ARRAYS DE ENUM (MISMO ORDEN QUE EL POBLADO EN FMetadatosLibro.Form_Open) ---
+  Dim aTipoLibro As New String[]
+  Dim aLugarBib As New String[]
+  Dim aEstadoPub As New String[]
+  Dim aTipoAcceso As New String[]
+
+  aTipoLibro.Add("monografia")
+  aTipoLibro.Add("obra_colectiva")
+  aTipoLibro.Add("compilacion")
+  aTipoLibro.Add("traduccion")
+  aTipoLibro.Add("referencia")
+  aTipoLibro.Add("manual")
+  aTipoLibro.Add("actas")
+
+  aLugarBib.Add("consolidada")
+  aLugarBib.Add("por_capitulo")
+
+  aEstadoPub.Add("en_preparacion")
+  aEstadoPub.Add("publicado")
+  aEstadoPub.Add("agotado")
+  aEstadoPub.Add("descatalogado")
+
+  aTipoAcceso.Add("abierto")
+  aTipoAcceso.Add("venta")
+  aTipoAcceso.Add("mixto")
+  aTipoAcceso.Add("embargado")
+
+  ' --- 3. CARGAR CAMPOS EN EL FORMULARIO FMetadatosLibro ---
+  With FMetadatosLibro
+
+    ' IDENTIFICACIÓN
+    .id_libro.Value = resultado["id_libro"]
+    .id_proyecto.Value = FMain.id_proyecto.Value
+
+    ' CÓDIGOS
+    .isbn_impreso.Text = NullToString(resultado["isbn_impreso"])
+    .isbn_electronico.Text = NullToString(resultado["isbn_electronico"])
+    .doi_libro.Text = NullToString(resultado["doi_libro"])
+    .doi_prefix.Text = NullToString(resultado["doi_prefix"])
+    .handle_prefix.Text = NullToString(resultado["handle_prefix"])
+    .identificador_scielo.Text = NullToString(resultado["identificador_scielo"])
+
+    ' TÍTULOS
+    .titulo_libro.Text = NullToString(resultado["titulo_libro"])
+    .subtitulo.Text = NullToString(resultado["subtitulo"])
+    .titulo_abreviado.Text = NullToString(resultado["titulo_abreviado"])
+    .titulo_original.Text = NullToString(resultado["titulo_original"])
+    .idioma_titulo_original.Text = NullToString(resultado["idioma_titulo_original"])
+
+    ' TIPOLOGÍA Y EDICIÓN (COMBOBOX ENUM)
+    SeleccionarComboEnum(.tipo_libro, NullToString(resultado["tipo_libro"]), aTipoLibro)
+    SeleccionarComboEnum(.lugar_bibliografia, NullToString(resultado["lugar_bibliografia"]), aLugarBib)
+    .edicion.Text = NullToString(resultado["edicion"])
+    .numero_edicion.Text = NullToString(resultado["numero_edicion"])
+    .numero_paginas.Text = NullToString(resultado["numero_paginas"])
+
+    ' COLECCIÓN Y SERIE (USAN ARRAYS PARALELOS EN EL FORMULARIO)
+    Dim iIdCol As Integer = 0
+    If Not IsNull(resultado["id_coleccion"]) Then iIdCol = CInt(resultado["id_coleccion"])
+    .SeleccionarColeccionPorId(iIdCol)
+
+    ' EL EVENT HANDLER POBLA EL COMBO DE SERIES SEGÚN LA COLECCIÓN ELEGIDA
+    .id_coleccion_Click()
+
+    Dim iIdSer As Integer = 0
+    If Not IsNull(resultado["id_serie"]) Then iIdSer = CInt(resultado["id_serie"])
+    .SeleccionarSeriePorId(iIdSer)
+
+    .numero_en_coleccion.Text = NullToString(resultado["numero_en_coleccion"])
+    .numero_en_serie.Text = NullToString(resultado["numero_en_serie"])
+
+    ' PUBLICACIÓN
+    .ano_publicacion.Text = NullToString(resultado["ano_publicacion"])
+    .mes_publicacion.Text = NullToString(resultado["mes_publicacion"])
+    .fecha_publicacion_completa.Value = resultado["fecha_publicacion_completa"]
+    .idioma_principal.Text = NullToString(resultado["idioma_principal"])
+    .idiomas_publicacion.Text = NullToString(resultado["idiomas_publicacion"])
+    SeleccionarComboEnum(.estado_publicacion, NullToString(resultado["estado_publicacion"]), aEstadoPub)
+
+    ' EDITORIAL
+    .editorial.Text = NullToString(resultado["editorial"])
+    .institucion_editora.Text = NullToString(resultado["institucion_editora"])
+    .ror_editorial.Text = NullToString(resultado["ror_editorial"])
+    .ciudad_publicacion.Text = NullToString(resultado["ciudad_publicacion"])
+    .pais_publicacion.Text = NullToString(resultado["pais_publicacion"])
+    .direccion_editorial.Text = NullToString(resultado["direccion_editorial"])
+    .email_editorial.Text = NullToString(resultado["email_editorial"])
+
+    ' DISCIPLINAS
+    .area_conocimiento.Text = NullToString(resultado["area_conocimiento"])
+    .disciplina.Text = NullToString(resultado["disciplina"])
+    .subdisciplina.Text = NullToString(resultado["subdisciplina"])
+    .palabras_clave_libro.Text = NullToString(resultado["palabras_clave_libro"])
+    .clasificacion_unesco.Text = NullToString(resultado["clasificacion_unesco"])
+    .clasificacion_oecd.Text = NullToString(resultado["clasificacion_oecd"])
+
+    ' ACCESO Y LICENCIA
+    SeleccionarComboEnum(.tipo_acceso, NullToString(resultado["tipo_acceso"]), aTipoAcceso)
+    .licencia_defecto.Text = NullToString(resultado["licencia_defecto"])
+    .url_licencia.Text = NullToString(resultado["url_licencia"])
+    .politica_acceso_abierto.Text = NullToString(resultado["politica_acceso_abierto"])
+    .periodo_embargo.Text = NullToString(resultado["periodo_embargo"])
+
+    ' URLS Y ACTIVOS
+    .url_libro.Text = NullToString(resultado["url_libro"])
+    .url_oai_pmh.Text = NullToString(resultado["url_oai_pmh"])
+    .url_logo.Text = NullToString(resultado["url_logo"])
+    .imagen_tapa.Text = NullToString(resultado["imagen_tapa"])
+
+    ' REPOSITORIOS DE PRODUCCIÓN
+    .repositorio_produccion_url.Text = NullToString(resultado["repositorio_produccion_url"])
+    .repositorio_produccion_plataforma.Text = NullToString(resultado["repositorio_produccion_plataforma"])
+    .repositorio_produccion_tipo.Text = NullToString(resultado["repositorio_produccion_tipo"])
+    ' MANEJO DEFENSIVO DE BOOLEAN NULL
+    If IsNull(resultado["repositorio_produccion_privado"]) Then
+      .repositorio_produccion_privado.Value = False
+    Else
+      .repositorio_produccion_privado.Value = resultado["repositorio_produccion_privado"]
+    Endif
+    .sistema_gestion_contenidos.Text = NullToString(resultado["sistema_gestion_contenidos"])
+
+    ' REPOSITORIOS DE PRESERVACIÓN
+    .repositorio_preservacion_url.Text = NullToString(resultado["repositorio_preservacion_url"])
+    .repositorio_preservacion_plataforma.Text = NullToString(resultado["repositorio_preservacion_plataforma"])
+
+    ' INDEXACIÓN
+    .indexado_en.Text = NullToString(resultado["indexado_en"])
+
+    ' RESUMEN Y DESCRIPCIÓN
+    .resumen_libro.Text = NullToString(resultado["resumen_libro"])
+    .resumen_traducido.Text = NullToString(resultado["resumen_traducido"])
+    .idioma_resumen_traducido.Text = NullToString(resultado["idioma_resumen_traducido"])
+    .descripcion_libro.Text = NullToString(resultado["descripcion_libro"])
+    .objetivos_alcance.Text = NullToString(resultado["objetivos_alcance"])
+
+    ' ESTILO DE CITA (COMBOBOX CON BÚSQUEDA POR NOMBRE DE ARCHIVO)
+    Dim sEstiloCita As String = m_XML.TrimUTF8(NullToString(resultado["estilo_cita"]))
+    FMetadatosLibro.cmb_tipo_csl.Text = ""
+    If sEstiloCita <> "" Then
+      Dim i As Integer
+      For i = 0 To FMetadatosLibro.cmb_tipo_csl.Count - 1
+        Dim sItem As String = FMetadatosLibro.cmb_tipo_csl.List[i]
+        Dim sNombre As String = sItem
+        Dim iAbre As Integer = 0
+        Dim iCierra As Integer = 0
+        Dim j As Integer
+        For j = Len(sItem) To 1 Step -1
+          If Mid(sItem, j, 1) = "]" And iCierra = 0 Then iCierra = j
+          If Mid(sItem, j, 1) = "[" And iCierra > 0 Then
+            iAbre = j
+            Break
+          Endif
+        Next
+        If iAbre > 0 And iCierra > iAbre Then
+          sNombre = m_XML.TrimUTF8(Mid(sItem, iAbre + 1, iCierra - iAbre - 1))
+        Endif
+        If sNombre = sEstiloCita Then
+          FMetadatosLibro.cmb_tipo_csl.Text = sItem
+          Break
+        Endif
+      Next
+    Endif
+
+    ' AUDITORÍA (READONLY EN EL FORM)
+    .usuario_creacion.Text = NullToString(resultado["usuario_creacion"])
+    .notas_internas.Text = NullToString(resultado["notas_internas"])
+
+  End With
 
   Return True
 
 Catch
   m_Sonido.sonar("Error")
-  Message.Error("Error al cargar metadatos de libro: " & Error.Text)
+  Message.Error("Error al cargar metadatos de libro:" & gb.NewLine &
+    "Mensaje: " & Error.Text & gb.NewLine &
+    "Lugar: " & Error.Where & gb.NewLine &
+    "Código: " & Error.Code)
+  Return False
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' GUARDAR METADATOS DE LIBRO EN LA TABLA LIBROS_MD
+' SI NO EXISTE EL REGISTRO, LO CREA CON UN INSERT MÍNIMO Y LUEGO LO EDITA.
+' ════════════════════════════════════════════════════════════════════════════
+Public Function GuardarMetadatosDeLibro() As Boolean
+
+  Dim resultado As Result
+  Dim idProyecto As Integer
+  Dim verificacion As Result
+
+  ' --- 1. VALIDACIÓN: PROYECTO ABIERTO ---
+  idProyecto = FMain.id_proyecto.Value
+
+  If idProyecto <= 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No hay un proyecto válido abierto.")
+    Return False
+  Endif
+
+  ' --- 2. ARRAYS DE ENUM (MISMO ORDEN QUE EL POBLADO EN FMetadatosLibro.Form_Open) ---
+  Dim aTipoLibro As New String[]
+  Dim aLugarBib As New String[]
+  Dim aEstadoPub As New String[]
+  Dim aTipoAcceso As New String[]
+
+  aTipoLibro.Add("monografia")
+  aTipoLibro.Add("obra_colectiva")
+  aTipoLibro.Add("compilacion")
+  aTipoLibro.Add("traduccion")
+  aTipoLibro.Add("referencia")
+  aTipoLibro.Add("manual")
+  aTipoLibro.Add("actas")
+
+  aLugarBib.Add("consolidada")
+  aLugarBib.Add("por_capitulo")
+
+  aEstadoPub.Add("en_preparacion")
+  aEstadoPub.Add("publicado")
+  aEstadoPub.Add("agotado")
+  aEstadoPub.Add("descatalogado")
+
+  aTipoAcceso.Add("abierto")
+  aTipoAcceso.Add("venta")
+  aTipoAcceso.Add("mixto")
+  aTipoAcceso.Add("embargado")
+
+  ' --- 3. VERIFICAR QUE EXISTE EL REGISTRO; SI NO, CREARLO ---
+  verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
+
+  If Not verificacion.Available Then
+    ' INSERT MÍNIMO CON LOS DEFAULTS Y EL TÍTULO ACTUAL DEL FORMULARIO.
+    ' INICIALIZA LAS TRES FECHAS (año, mes, fecha completa) AL MOMENTO DE
+    ' CREACIÓN PARA EVITAR Null Y POR COHERENCIA EDITORIAL.
+    m_ConexionBD.mConn.Exec("INSERT INTO libros_md (" &
+      "  id_proyecto, " &
+      "  titulo_libro, " &
+      "  tipo_libro, " &
+      "  lugar_bibliografia, " &
+      "  estado_publicacion, " &
+      "  tipo_acceso, " &
+      "  repositorio_produccion_privado, " &
+      "  idioma_principal, " &
+      "  ano_publicacion, " &
+      "  mes_publicacion, " &
+      "  fecha_publicacion_completa, " &
+      "  usuario_creacion" &
+      ") VALUES (&1, &2, 'monografia', 'por_capitulo', 'en_preparacion', 'abierto', 1, 'es', " &
+      "  YEAR(CURDATE()), " &
+      "  ELT(MONTH(CURDATE()), 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', " &
+      "                        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'), " &
+      "  CURDATE(), " &
+      "  &3)",
+      idProyecto,
+      StringToNull(FMetadatosLibro.titulo_libro.Text),
+      m_InicioCierre.UsuarioEnCurso)
+    m_ConexionBD.mConn.Commit()
+  Endif
+
+  ' --- 4. EDITAR EL REGISTRO ---
+  resultado = m_ConexionBD.mConn.Edit("libros_md", "id_proyecto=" & idProyecto)
+
+  If Not resultado.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el registro de libro para editar.")
+    Return False
+  Endif
+
+  With FMetadatosLibro
+
+    ' CÓDIGOS
+    resultado!isbn_impreso = StringToNull(.isbn_impreso.Text)
+    resultado!isbn_electronico = StringToNull(.isbn_electronico.Text)
+    resultado!doi_libro = StringToNull(.doi_libro.Text)
+    resultado!doi_prefix = StringToNull(.doi_prefix.Text)
+    resultado!handle_prefix = StringToNull(.handle_prefix.Text)
+    resultado!identificador_scielo = StringToNull(.identificador_scielo.Text)
+
+    ' TÍTULOS
+    resultado!titulo_libro = StringToNull(.titulo_libro.Text)
+    resultado!subtitulo = StringToNull(.subtitulo.Text)
+    resultado!titulo_abreviado = StringToNull(.titulo_abreviado.Text)
+    resultado!titulo_original = StringToNull(.titulo_original.Text)
+    resultado!idioma_titulo_original = StringToNull(.idioma_titulo_original.Text)
+
+    ' TIPOLOGÍA Y EDICIÓN
+    resultado!tipo_libro = ObtenerEnumDeCombo(.tipo_libro, aTipoLibro)
+    resultado!lugar_bibliografia = ObtenerEnumDeCombo(.lugar_bibliografia, aLugarBib)
+    resultado!edicion = StringToNull(.edicion.Text)
+    resultado!numero_edicion = StringToNull(.numero_edicion.Text)
+    resultado!numero_paginas = StringToNull(.numero_paginas.Text)
+
+    ' COLECCIÓN Y SERIE (FK) — IDs DESDE LOS HELPERS DEL FORMULARIO
+    Dim iIdCol As Integer = .ObtenerIdColeccionSeleccionada()
+    Dim iIdSer As Integer = .ObtenerIdSerieSeleccionada()
+    If iIdCol > 0 Then
+      resultado!id_coleccion = iIdCol
+    Else
+      resultado!id_coleccion = Null
+    Endif
+    If iIdSer > 0 Then
+      resultado!id_serie = iIdSer
+    Else
+      resultado!id_serie = Null
+    Endif
+    resultado!numero_en_coleccion = StringToNull(.numero_en_coleccion.Text)
+    resultado!numero_en_serie = StringToNull(.numero_en_serie.Text)
+
+    ' PUBLICACIÓN
+    resultado!ano_publicacion = StringToNull(.ano_publicacion.Text)
+    resultado!mes_publicacion = StringToNull(.mes_publicacion.Text)
+    resultado!fecha_publicacion_completa = .fecha_publicacion_completa.Value
+    resultado!idioma_principal = StringToNull(.idioma_principal.Text)
+    resultado!idiomas_publicacion = StringToNull(.idiomas_publicacion.Text)
+    resultado!estado_publicacion = ObtenerEnumDeCombo(.estado_publicacion, aEstadoPub)
+
+    ' EDITORIAL
+    resultado!editorial = StringToNull(.editorial.Text)
+    resultado!institucion_editora = StringToNull(.institucion_editora.Text)
+    resultado!ror_editorial = StringToNull(.ror_editorial.Text)
+    resultado!ciudad_publicacion = StringToNull(.ciudad_publicacion.Text)
+    resultado!pais_publicacion = StringToNull(.pais_publicacion.Text)
+    resultado!direccion_editorial = StringToNull(.direccion_editorial.Text)
+    resultado!email_editorial = StringToNull(.email_editorial.Text)
+
+    ' DISCIPLINAS
+    resultado!area_conocimiento = StringToNull(.area_conocimiento.Text)
+    resultado!disciplina = StringToNull(.disciplina.Text)
+    resultado!subdisciplina = StringToNull(.subdisciplina.Text)
+    resultado!palabras_clave_libro = StringToNull(.palabras_clave_libro.Text)
+    resultado!clasificacion_unesco = StringToNull(.clasificacion_unesco.Text)
+    resultado!clasificacion_oecd = StringToNull(.clasificacion_oecd.Text)
+
+    ' ACCESO Y LICENCIA
+    resultado!tipo_acceso = ObtenerEnumDeCombo(.tipo_acceso, aTipoAcceso)
+    resultado!licencia_defecto = StringToNull(.licencia_defecto.Text)
+    resultado!url_licencia = StringToNull(.url_licencia.Text)
+    resultado!politica_acceso_abierto = StringToNull(.politica_acceso_abierto.Text)
+    resultado!periodo_embargo = StringToNull(.periodo_embargo.Text)
+
+    ' URLS Y ACTIVOS
+    resultado!url_libro = StringToNull(.url_libro.Text)
+    resultado!url_oai_pmh = StringToNull(.url_oai_pmh.Text)
+    resultado!url_logo = StringToNull(.url_logo.Text)
+    resultado!imagen_tapa = StringToNull(.imagen_tapa.Text)
+
+    ' REPOSITORIOS DE PRODUCCIÓN
+    resultado!repositorio_produccion_url = StringToNull(.repositorio_produccion_url.Text)
+    resultado!repositorio_produccion_plataforma = StringToNull(.repositorio_produccion_plataforma.Text)
+    resultado!repositorio_produccion_tipo = StringToNull(.repositorio_produccion_tipo.Text)
+    ' BUG FIX: ACÁ ESCRIBIMOS EL CHECKBOX A LA BD (NO AL REVÉS)
+    resultado!repositorio_produccion_privado = .repositorio_produccion_privado.Value
+    resultado!sistema_gestion_contenidos = StringToNull(.sistema_gestion_contenidos.Text)
+
+    ' REPOSITORIOS DE PRESERVACIÓN
+    resultado!repositorio_preservacion_url = StringToNull(.repositorio_preservacion_url.Text)
+    resultado!repositorio_preservacion_plataforma = StringToNull(.repositorio_preservacion_plataforma.Text)
+
+    ' INDEXACIÓN
+    resultado!indexado_en = StringToNull(.indexado_en.Text)
+
+    ' RESUMEN Y DESCRIPCIÓN
+    resultado!resumen_libro = StringToNull(.resumen_libro.Text)
+    resultado!resumen_traducido = StringToNull(.resumen_traducido.Text)
+    resultado!idioma_resumen_traducido = StringToNull(.idioma_resumen_traducido.Text)
+    resultado!descripcion_libro = StringToNull(.descripcion_libro.Text)
+    resultado!objetivos_alcance = StringToNull(.objetivos_alcance.Text)
+
+    ' ESTILO DE CITA (EXTRAE EL NOMBRE DEL ARCHIVO DEL TEXTO MOSTRADO)
+    resultado!estilo_cita = FMetadatosLibro.ExtraerNombreCSL(FMetadatosLibro.cmb_tipo_csl.Text)
+
+    ' NOTAS INTERNAS
+    resultado!notas_internas = StringToNull(.notas_internas.Text)
+
+  End With
+
+  ' --- 5. ACTUALIZAR Y CONFIRMAR ---
+  resultado.Update
+  m_ConexionBD.mConn.Commit()
+  resultado = Null
+
+  m_Sonido.sonar("Info")
+  Message.Info("Metadatos de libro guardados correctamente.")
+
+  ' RECARGAR PARA MOSTRAR EL id_libro ACTUALIZADO Y NORMALIZADOS
+  CargarMetadatosDeLibro()
+
+  Return True
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al guardar metadatos de libro:" & gb.NewLine &
+    "Mensaje: " & Error.Text & gb.NewLine &
+    "Lugar: " & Error.Where & gb.NewLine &
+    "Código: " & Error.Code)
   Return False
 
 End
