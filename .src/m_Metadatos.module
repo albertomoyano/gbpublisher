@@ -821,3 +821,459 @@ Catch
   Return False
 
 End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : IIfIdParteNullable
+' Propósito : Devolver Null si el id_parte seleccionado es 0
+'             ("(sin parte)"), o el valor entero en caso contrario.
+'             Necesario porque capitulos.id_parte es FK nullable.
+' Parámetros: iId As Integer — id seleccionado en el ComboBox
+' Retorna   : Variant — Null o Integer
+' ════════════════════════════════════════════════════════════════════════════
+Public Function IIfIdParteNullable(iId As Integer) As Variant
+
+  If iId <= 0 Then Return Null
+  Return iId
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : NullSiVacio
+' Propósito : Devolver Null si la cadena está vacía o solo tiene espacios.
+'             Útil para campos numéricos guardados como TextBox que pueden
+'             quedar en blanco y NO deben guardarse como 0 sino como NULL.
+' Parámetros: sValor As String — texto del TextBox
+' Retorna   : Variant — Null o el String original
+' ════════════════════════════════════════════════════════════════════════════
+Public Function NullSiVacio(sValor As String) As Variant
+
+  If String.Len(Trim(sValor)) = 0 Then Return Null
+  Return sValor
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' BLOQUE A AGREGAR A m_Metadatos.module
+' ----------------------------------------------------------------------------
+' Pegar este contenido al final del archivo m_Metadatos.module, después de
+' la última función existente (GuardarMetadatosDeLibro).
+'
+' VERSIÓN 2 — usa el patrón canónico Edit + Update de FMetadatosArticulos.
+' Reemplaza la versión 1 que usaba un Exec con 73 parámetros y rompía el
+' límite de argumentos variádicos de Gambas. Las funciones helper
+' IIfIdParteNullable y NullSiVacio fueron eliminadas (ya no se necesitan
+' porque el patrón Edit/Update permite usar If(text<>"", text, Null) inline).
+' ════════════════════════════════════════════════════════════════════════════
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarMetadatosDeCapitulo
+' Propósito : Leer desde la BD el capítulo indicado y volcar todos sus
+'             campos en los controles de FMetadatosCapitulos.
+' Parámetros: iIdCapitulo As Integer — PK del capítulo a cargar
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub CargarMetadatosDeCapitulo(iIdCapitulo As Integer)
+
+  Dim hRes As Result
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If iIdCapitulo <= 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("CargarMetadatosDeCapitulo: id inválido (" & iIdCapitulo & ").")
+    Return
+  Endif
+
+  ' --- 2. CONSULTA A capitulos ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT * FROM capitulos WHERE id_capitulo = &1", iIdCapitulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar capítulo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If Not hRes.Available Then
+    m_Sonido.sonar("info")
+    Message.Info("El capítulo solicitado no existe en la base de datos.")
+    Return
+  Endif
+
+  ' --- 3. ASIGNACIÓN DE CADA CAMPO AL CONTROL CORRESPONDIENTE ---
+  With FMetadatosCapitulos
+
+    ' IDS DE CONTEXTO
+    .id_capitulo.Value = hRes["id_capitulo"]
+    .id_proyecto.Value = hRes["id_proyecto"]
+    .id_libro.Value = hRes["id_libro"]
+
+    ' PARTE (FK, vía helper que recorre el array paralelo)
+    If IsNull(hRes["id_parte"]) Then
+      .SeleccionarPartePorId(0)
+    Else
+      .SeleccionarPartePorId(CInt(hRes["id_parte"]))
+    Endif
+
+    ' IDENTIFICACIÓN
+    .nombre_archivo.Text = CStr(hRes["nombre_archivo"])
+    .tipo_capitulo.Text = CStr(hRes["tipo_capitulo"])
+    .tipo_capitulo_otro.Text = CStr(hRes["tipo_capitulo_otro"])
+
+    ' TÍTULOS
+    .titulo_capitulo.Text = CStr(hRes["titulo_capitulo"])
+    .subtitulo.Text = CStr(hRes["subtitulo"])
+    .titulo_corto.Text = CStr(hRes["titulo_corto"])
+    .titulo_traducido.Text = CStr(hRes["titulo_traducido"])
+    .idioma_titulo_traducido.Text = CStr(hRes["idioma_titulo_traducido"])
+
+    ' DOI E IDENTIFICADORES
+    .doi.Text = CStr(hRes["doi"])
+    .crossref_estado.Text = CStr(hRes["crossref_estado"])
+    If Not IsNull(hRes["crossref_fecha_deposito"]) Then
+      .crossref_fecha_deposito.Value = hRes["crossref_fecha_deposito"]
+    Endif
+    .elocation_id.Text = CStr(hRes["elocation_id"])
+    .pagina_inicio.Text = CStr(hRes["pagina_inicio"])
+    .pagina_fin.Text = CStr(hRes["pagina_fin"])
+    If IsNull(hRes["numero_paginas"]) Then
+      .numero_paginas.Text = ""
+    Else
+      .numero_paginas.Text = CStr(hRes["numero_paginas"])
+    Endif
+
+    ' IDIOMA Y FECHAS EDITORIALES
+    .idioma_capitulo.Text = CStr(hRes["idioma_capitulo"])
+    If Not IsNull(hRes["fecha_publicacion_online"]) Then
+      .fecha_publicacion_online.Value = hRes["fecha_publicacion_online"]
+    Endif
+    If Not IsNull(hRes["fecha_recepcion"]) Then
+      .fecha_recepcion.Value = hRes["fecha_recepcion"]
+    Endif
+    If Not IsNull(hRes["fecha_aceptacion"]) Then
+      .fecha_aceptacion.Value = hRes["fecha_aceptacion"]
+    Endif
+    If Not IsNull(hRes["fecha_revision"]) Then
+      .fecha_revision.Value = hRes["fecha_revision"]
+    Endif
+
+    ' AUTORÍA (datos a nivel capítulo, no del bloque autor-por-autor)
+    .autor_corporativo.Text = CStr(hRes["autor_corporativo"])
+    ' RC-GM-01: TINYINT(1) ES BOOLEAN
+    .autores_anonimos.Value = hRes["autores_anonimos"]
+    .grupo_autores.Text = CStr(hRes["grupo_autores"])
+    .author_notes.Text = CStr(hRes["author_notes"])
+
+    ' RESÚMENES MULTILINGÜES
+    .resumen_1.Text = CStr(hRes["resumen_1"])
+    .idioma_resumen_1.Text = CStr(hRes["idioma_resumen_1"])
+    .resumen_2.Text = CStr(hRes["resumen_2"])
+    .idioma_resumen_2.Text = CStr(hRes["idioma_resumen_2"])
+    .resumen_3.Text = CStr(hRes["resumen_3"])
+    .idioma_resumen_3.Text = CStr(hRes["idioma_resumen_3"])
+
+    ' PALABRAS CLAVE MULTILINGÜES
+    .palabras_clave_1.Text = CStr(hRes["palabras_clave_1"])
+    .idioma_kwd_1.Text = CStr(hRes["idioma_kwd_1"])
+    .palabras_clave_2.Text = CStr(hRes["palabras_clave_2"])
+    .idioma_kwd_2.Text = CStr(hRes["idioma_kwd_2"])
+    .palabras_clave_3.Text = CStr(hRes["palabras_clave_3"])
+    .idioma_kwd_3.Text = CStr(hRes["idioma_kwd_3"])
+
+    ' CLASIFICACIÓN TEMÁTICA
+    .mesh_terms.Text = CStr(hRes["mesh_terms"])
+    .descriptores_decs.Text = CStr(hRes["descriptores_decs"])
+    .clasificacion_tematica.Text = CStr(hRes["clasificacion_tematica"])
+
+    ' MÉTRICAS DEL CAPÍTULO
+    If IsNull(hRes["numero_figuras"]) Then
+      .numero_figuras.Text = ""
+    Else
+      .numero_figuras.Text = CStr(hRes["numero_figuras"])
+    Endif
+    If IsNull(hRes["numero_tablas"]) Then
+      .numero_tablas.Text = ""
+    Else
+      .numero_tablas.Text = CStr(hRes["numero_tablas"])
+    Endif
+    If IsNull(hRes["numero_ecuaciones"]) Then
+      .numero_ecuaciones.Text = ""
+    Else
+      .numero_ecuaciones.Text = CStr(hRes["numero_ecuaciones"])
+    Endif
+    .material_suplementario.Text = CStr(hRes["material_suplementario"])
+    .dataset_asociado.Text = CStr(hRes["dataset_asociado"])
+
+    ' FINANCIAMIENTO
+    .financiamiento.Text = CStr(hRes["financiamiento"])
+    .numero_proyecto.Text = CStr(hRes["numero_proyecto"])
+    .funding_statement.Text = CStr(hRes["funding_statement"])
+
+    ' ÉTICA
+    .conflictos_interes.Text = CStr(hRes["conflictos_interes"])
+    .tiene_conflictos.Value = hRes["tiene_conflictos"]
+    .declaracion_etica.Text = CStr(hRes["declaracion_etica"])
+    .consentimiento_informado.Value = hRes["consentimiento_informado"]
+    .aprobacion_comite_etica.Value = hRes["aprobacion_comite_etica"]
+    .numero_aprobacion_etica.Text = CStr(hRes["numero_aprobacion_etica"])
+    .disponibilidad_datos.Text = CStr(hRes["disponibilidad_datos"])
+    .data_availability_statement.Text = CStr(hRes["data_availability_statement"])
+
+    ' LICENCIA Y COPYRIGHT
+    .licencia.Text = CStr(hRes["licencia"])
+    .url_licencia.Text = CStr(hRes["url_licencia"])
+    .copyright_holder.Text = CStr(hRes["copyright_holder"])
+    If IsNull(hRes["copyright_year"]) Then
+      .copyright_year.Text = ""
+    Else
+      .copyright_year.Text = CStr(hRes["copyright_year"])
+    Endif
+    .declaracion_copyright.Text = CStr(hRes["declaracion_copyright"])
+    .url_capitulo.Text = CStr(hRes["url_capitulo"])
+    .url_pdf.Text = CStr(hRes["url_pdf"])
+
+    ' ESTADO Y AUDITORÍA
+    .revisado_xml.Value = hRes["revisado_xml"]
+    .validado_docbook.Value = hRes["validado_docbook"]
+    .errores_validacion.Text = CStr(hRes["errores_validacion"])
+    .calidad_metadatos.Text = CStr(hRes["calidad_metadatos"])
+    .completitud_metadatos.Text = CStr(hRes["completitud_metadatos"])
+    .estado_capitulo.Text = CStr(hRes["estado_capitulo"])
+
+    If Not IsNull(hRes["fecha_creacion_registro"]) Then
+      .fecha_creacion_registro.Value = hRes["fecha_creacion_registro"]
+    Endif
+    If Not IsNull(hRes["fecha_actualizacion_registro"]) Then
+      .fecha_actualizacion_registro.Value = hRes["fecha_actualizacion_registro"]
+    Endif
+    .usuario_creacion.Text = CStr(hRes["usuario_creacion"])
+    .responsable_edicion.Text = CStr(hRes["responsable_edicion"])
+    .notas_internas.Text = CStr(hRes["notas_internas"])
+
+  End With
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : GuardarMetadatosDeCapitulo
+' Propósito : Persistir en BD los valores actuales de FMetadatosCapitulos
+'             usando el patrón canónico Edit + Update (igual que
+'             FMetadatosArticulos). Edit abre el registro como Result en
+'             modo edición, se asignan campos uno por uno con $result!campo,
+'             y Update aplica los cambios. No tiene el límite de argumentos
+'             que tiene Exec con parámetros posicionales.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub GuardarMetadatosDeCapitulo()
+
+  Dim iIdCap As Integer
+  Dim $result As Result
+  Dim iIdParte As Integer
+
+  ' --- 1. VALIDACIÓN: HAY CAPÍTULO ACTIVO? ---
+  iIdCap = FMetadatosCapitulos.id_capitulo.Value
+  If iIdCap <= 0 Then
+    m_Sonido.sonar("info")
+    Message.Info("No hay capítulo seleccionado.")
+    Return
+  Endif
+
+  ' --- 2. VALIDACIÓN MÍNIMA DE TÍTULO ---
+  If String.Len(Trim(FMetadatosCapitulos.titulo_capitulo.Text)) = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El título del capítulo no puede estar vacío.")
+    FMetadatosCapitulos.titulo_capitulo.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. ABRIR EL REGISTRO EN MODO EDICIÓN ---
+  Try $result = m_ConexionBD.mConn.Edit("capitulos", "id_capitulo = " & Str(iIdCap))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al abrir capítulo para edición:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If Not $result.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El capítulo no se encontró en la base de datos.")
+    Return
+  Endif
+
+  ' --- 4. RESOLVER id_parte (PUEDE SER 0 = "(sin parte)") ---
+  iIdParte = FMetadatosCapitulos.ObtenerIdParteSeleccionada()
+
+  ' --- 5. ASIGNAR TODOS LOS CAMPOS UNO POR UNO ---
+  With FMetadatosCapitulos
+
+    ' PARTE (FK nullable)
+    $result!id_parte = If(iIdParte > 0, iIdParte, Null)
+
+    ' IDENTIFICACIÓN
+    $result!nombre_archivo = If(.nombre_archivo.Text <> "", .nombre_archivo.Text, Null)
+    $result!tipo_capitulo = .tipo_capitulo.Text
+    $result!tipo_capitulo_otro = If(.tipo_capitulo_otro.Text <> "", .tipo_capitulo_otro.Text, Null)
+
+    ' TÍTULOS
+    $result!titulo_capitulo = .titulo_capitulo.Text
+    $result!subtitulo = If(.subtitulo.Text <> "", .subtitulo.Text, Null)
+    $result!titulo_corto = If(.titulo_corto.Text <> "", .titulo_corto.Text, Null)
+    $result!titulo_traducido = If(.titulo_traducido.Text <> "", .titulo_traducido.Text, Null)
+    $result!idioma_titulo_traducido = If(.idioma_titulo_traducido.Text <> "", .idioma_titulo_traducido.Text, Null)
+
+    ' DOI E IDENTIFICADORES
+    $result!doi = If(.doi.Text <> "", .doi.Text, Null)
+    $result!crossref_estado = .crossref_estado.Text
+    $result!crossref_fecha_deposito = .crossref_fecha_deposito.Value
+    $result!elocation_id = If(.elocation_id.Text <> "", .elocation_id.Text, Null)
+    $result!pagina_inicio = If(.pagina_inicio.Text <> "", .pagina_inicio.Text, Null)
+    $result!pagina_fin = If(.pagina_fin.Text <> "", .pagina_fin.Text, Null)
+    $result!numero_paginas = If(.numero_paginas.Text <> "", Val(.numero_paginas.Text), Null)
+
+    ' IDIOMA Y FECHAS EDITORIALES
+    $result!idioma_capitulo = .idioma_capitulo.Text
+    $result!fecha_publicacion_online = .fecha_publicacion_online.Value
+    $result!fecha_recepcion = .fecha_recepcion.Value
+    $result!fecha_aceptacion = .fecha_aceptacion.Value
+    $result!fecha_revision = .fecha_revision.Value
+
+    ' AUTORÍA A NIVEL CAPÍTULO
+    $result!autor_corporativo = If(.autor_corporativo.Text <> "", .autor_corporativo.Text, Null)
+    $result!autores_anonimos = If(.autores_anonimos.Value = -1, 1, 0)
+    $result!grupo_autores = If(.grupo_autores.Text <> "", .grupo_autores.Text, Null)
+    $result!author_notes = If(.author_notes.Text <> "", .author_notes.Text, Null)
+
+    ' RESÚMENES MULTILINGÜES
+    $result!resumen_1 = If(.resumen_1.Text <> "", .resumen_1.Text, Null)
+    $result!idioma_resumen_1 = If(.idioma_resumen_1.Text <> "", .idioma_resumen_1.Text, Null)
+    $result!resumen_2 = If(.resumen_2.Text <> "", .resumen_2.Text, Null)
+    $result!idioma_resumen_2 = If(.idioma_resumen_2.Text <> "", .idioma_resumen_2.Text, Null)
+    $result!resumen_3 = If(.resumen_3.Text <> "", .resumen_3.Text, Null)
+    $result!idioma_resumen_3 = If(.idioma_resumen_3.Text <> "", .idioma_resumen_3.Text, Null)
+
+    ' PALABRAS CLAVE
+    $result!palabras_clave_1 = If(.palabras_clave_1.Text <> "", .palabras_clave_1.Text, Null)
+    $result!idioma_kwd_1 = If(.idioma_kwd_1.Text <> "", .idioma_kwd_1.Text, Null)
+    $result!palabras_clave_2 = If(.palabras_clave_2.Text <> "", .palabras_clave_2.Text, Null)
+    $result!idioma_kwd_2 = If(.idioma_kwd_2.Text <> "", .idioma_kwd_2.Text, Null)
+    $result!palabras_clave_3 = If(.palabras_clave_3.Text <> "", .palabras_clave_3.Text, Null)
+    $result!idioma_kwd_3 = If(.idioma_kwd_3.Text <> "", .idioma_kwd_3.Text, Null)
+
+    ' CLASIFICACIÓN TEMÁTICA
+    $result!mesh_terms = If(.mesh_terms.Text <> "", .mesh_terms.Text, Null)
+    $result!descriptores_decs = If(.descriptores_decs.Text <> "", .descriptores_decs.Text, Null)
+    $result!clasificacion_tematica = If(.clasificacion_tematica.Text <> "", .clasificacion_tematica.Text, Null)
+
+    ' MÉTRICAS DEL CAPÍTULO
+    $result!numero_figuras = If(.numero_figuras.Text <> "", Val(.numero_figuras.Text), Null)
+    $result!numero_tablas = If(.numero_tablas.Text <> "", Val(.numero_tablas.Text), Null)
+    $result!numero_ecuaciones = If(.numero_ecuaciones.Text <> "", Val(.numero_ecuaciones.Text), Null)
+    $result!material_suplementario = If(.material_suplementario.Text <> "", .material_suplementario.Text, Null)
+    $result!dataset_asociado = If(.dataset_asociado.Text <> "", .dataset_asociado.Text, Null)
+
+    ' FINANCIAMIENTO
+    $result!financiamiento = If(.financiamiento.Text <> "", .financiamiento.Text, Null)
+    $result!numero_proyecto = If(.numero_proyecto.Text <> "", .numero_proyecto.Text, Null)
+    $result!funding_statement = If(.funding_statement.Text <> "", .funding_statement.Text, Null)
+
+    ' ÉTICA
+    $result!conflictos_interes = If(.conflictos_interes.Text <> "", .conflictos_interes.Text, Null)
+    $result!tiene_conflictos = If(.tiene_conflictos.Value = -1, 1, 0)
+    $result!declaracion_etica = If(.declaracion_etica.Text <> "", .declaracion_etica.Text, Null)
+    $result!consentimiento_informado = If(.consentimiento_informado.Value = -1, 1, 0)
+    $result!aprobacion_comite_etica = If(.aprobacion_comite_etica.Value = -1, 1, 0)
+    $result!numero_aprobacion_etica = If(.numero_aprobacion_etica.Text <> "", .numero_aprobacion_etica.Text, Null)
+    $result!disponibilidad_datos = If(.disponibilidad_datos.Text <> "", .disponibilidad_datos.Text, Null)
+    $result!data_availability_statement = If(.data_availability_statement.Text <> "", .data_availability_statement.Text, Null)
+
+    ' LICENCIA Y COPYRIGHT
+    $result!licencia = If(.licencia.Text <> "", .licencia.Text, Null)
+    $result!url_licencia = If(.url_licencia.Text <> "", .url_licencia.Text, Null)
+    $result!copyright_holder = If(.copyright_holder.Text <> "", .copyright_holder.Text, Null)
+    $result!copyright_year = If(.copyright_year.Text <> "", Val(.copyright_year.Text), Null)
+    $result!declaracion_copyright = If(.declaracion_copyright.Text <> "", .declaracion_copyright.Text, Null)
+    $result!url_capitulo = If(.url_capitulo.Text <> "", .url_capitulo.Text, Null)
+    $result!url_pdf = If(.url_pdf.Text <> "", .url_pdf.Text, Null)
+
+    ' ESTADO Y AUDITORÍA
+    $result!revisado_xml = If(.revisado_xml.Value = -1, 1, 0)
+    $result!validado_docbook = If(.validado_docbook.Value = -1, 1, 0)
+    $result!errores_validacion = If(.errores_validacion.Text <> "", .errores_validacion.Text, Null)
+    $result!calidad_metadatos = If(.calidad_metadatos.Text <> "", .calidad_metadatos.Text, Null)
+    $result!completitud_metadatos = If(.completitud_metadatos.Text <> "", .completitud_metadatos.Text, Null)
+    $result!estado_capitulo = .estado_capitulo.Text
+    $result!responsable_edicion = If(.responsable_edicion.Text <> "", .responsable_edicion.Text, Null)
+    $result!notas_internas = If(.notas_internas.Text <> "", .notas_internas.Text, Null)
+
+    ' fecha_actualizacion_registro: ACTUALIZADA AUTOMÁTICAMENTE POR MySQL
+    ' (ON UPDATE CURRENT_TIMESTAMP en la definición de la columna)
+
+  End With
+
+  ' --- 6. APLICAR LOS CAMBIOS ---
+  Try $result.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar capítulo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  m_Sonido.sonar("ok")
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : GuardarCreditAutorArticulo
+' Propósito : Escribir taxonomia_credit en articulo_autor para el par
+'             artículo/autor indicado. Se invoca desde
+'             FMetadatosArticulos al editar los roles CRediT.
+' Parámetros: iIdArticulo As Integer — id del artículo
+'             iIdAutor    As Integer — id del autor
+'             sCredit     As String  — string de roles separados por ";"
+'                                      (cadena vacía → NULL en BD)
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub GuardarCreditAutorArticulo(iIdArticulo As Integer, iIdAutor As Integer, sCredit As String)
+
+  ' --- 1. VALIDACIONES DE GUARDIA ---
+  If iIdArticulo <= 0 Then Return
+  If iIdAutor <= 0 Then Return
+
+  ' --- 2. ESCRIBIR EN articulo_autor ---
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE articulo_autor SET taxonomia_credit = &1 " &
+    "WHERE id_articulo = &2 AND id_autor = &3",
+    If(sCredit <> "", sCredit, Null),
+      iIdArticulo,
+      iIdAutor)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar roles CRediT (artículo):" & Chr(10) & Error.Text)
+    Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : GuardarCreditAutorCapitulo
+' Propósito : Escribir taxonomia_credit en capitulo_autor para el par
+'             capítulo/autor indicado. Se invoca desde
+'             FMetadatosCapitulos al editar los roles CRediT.
+' Parámetros: iIdCapitulo As Integer — id del capítulo
+'             iIdAutor    As Integer — id del autor
+'             sCredit     As String  — string de roles separados por ";"
+'                                      (cadena vacía → NULL en BD)
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub GuardarCreditAutorCapitulo(iIdCapitulo As Integer, iIdAutor As Integer, sCredit As String)
+
+  ' --- 1. VALIDACIONES DE GUARDIA ---
+  If iIdCapitulo <= 0 Then Return
+  If iIdAutor <= 0 Then Return
+
+  ' --- 2. ESCRIBIR EN capitulo_autor ---
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE capitulo_autor SET taxonomia_credit = &1 " &
+    "WHERE id_capitulo = &2 AND id_autor = &3",
+    If(sCredit <> "", sCredit, Null),
+      iIdCapitulo,
+      iIdAutor)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar roles CRediT (capítulo):" & Chr(10) & Error.Text)
+    Endif
+
+End

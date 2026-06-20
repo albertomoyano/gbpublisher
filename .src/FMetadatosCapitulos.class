@@ -1,7 +1,731 @@
 ' Gambas class file
 
-' FLAG PARA PERMITIR EL CIERRE DESDE EL BOTÓN
+' ════════════════════════════════════════════════════════════════════════════
+' FORMULARIO : FMetadatosCapitulos
+' PROPÓSITO  : Editor de metadatos de capítulos de un libro. Se invoca
+'              desde FMain con un proyecto-libro abierto. Muestra arriba
+'              un grid con los capítulos del libro y abajo el editor del
+'              capítulo seleccionado.
+' ════════════════════════════════════════════════════════════════════════════
+
+' ── 1. VARIABLES DE INSTANCIA ────────────────────────────────────────────
+'    bCierrePermitido      flag de control de cierre (igual que libros)
+'    iCapituloActual       id del capítulo cargado actualmente en el editor
+'    iLibroActual          id del libro padre (obtenido desde libros_md)
+'    aIdsParte             array paralelo al ComboBox id_parte (FK)
+'    aIdsAutores           array paralelo al listadoAutores (futuro)
+'    iAutorSeleccionado    índice del autor en listadoAutores (futuro)
+'    iAutorCreditActual    id del autor activo para taxonomia_credit (futuro)
+
 Private bCierrePermitido As Boolean
+Private iCapituloActual As Integer = 0
+Private iLibroActual As Integer = 0
+Private aIdsParte As New Integer[]
+Private aIdsAutores As New Integer[]
+Public iAutorSeleccionado As Integer = 0
+Private iAutorCreditActual As Integer = 0
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : Form_Open
+' Propósito : Inicialización completa del formulario.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub Form_Open()
+
+  Dim hRes As Result
+
+  ' --- 1. VERIFICAR QUE HAY UN PROYECTO ABIERTO ---
+  If FMain.id_proyecto.Value <= 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No hay ningún proyecto abierto.")
+    bCierrePermitido = True
+    Me.Close()
+    Return
+  Endif
+
+  ' --- 2. OBTENER ID_LIBRO DEL PROYECTO ABIERTO ---
+  ' EL LIBRO DEBE EXISTIR EN libros_md ANTES DE ABRIR ESTE FORMULARIO.
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_libro FROM libros_md WHERE id_proyecto = &1", FMain.id_proyecto.Value)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al obtener el libro del proyecto:" & Chr(10) & Error.Text)
+    bCierrePermitido = True
+    Me.Close()
+    Return
+  Endif
+
+  If Not hRes.Available Then
+    m_Sonido.sonar("info")
+    Message.Info("Este proyecto no tiene libro configurado." & Chr(10) &
+      "Configurá los metadatos del libro antes de agregar capítulos.")
+    bCierrePermitido = True
+    Me.Close()
+    Return
+  Endif
+
+  iLibroActual = hRes["id_libro"]
+
+  ' --- 3. SETEAR LOS VALUEBOX DE CONTEXTO ---
+  id_proyecto.Value = FMain.id_proyecto.Value
+  id_libro.Value = iLibroActual
+
+  ' --- 4. POBLAR LOS COMBOBOX ESTÁTICOS ---
+  CargarComboBoxes()
+
+  ' --- 5. POBLAR EL COMBO id_parte (DEPENDE DE iLibroActual) ---
+  PoblarComboIdParte()
+
+  ' --- 6. CONFIGURAR EL GRIDVIEW ---
+  ConfigurarGridView()
+
+  ' --- 7. CARGAR LOS CAPÍTULOS DEL LIBRO EN EL GRID ---
+  RefrescarGbCapitulos()
+
+  ' --- 8. AUTOSELECCIONAR EL PRIMER CAPÍTULO (SI HAY) ---
+  If gbCapitulos.Rows.Count > 0 Then
+    gbCapitulos.Row = 0
+    gbCapitulos_Click()
+  Else
+    LimpiarFormulario()
+    HabilitarBotonesCapitulo(False)
+  Endif
+
+  ' fijamos el hbox
+  hbCapitulos.Layout = [1, 1]
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarComboBoxes
+' Propósito : Poblar todos los ComboBox de valores cerrados (ENUM) y
+'             editables (idiomas, licencias). Sigue el patrón de
+'             FMetadatosArticulos: valores raw del ENUM como display.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarComboBoxes()
+
+  Dim sIdiomas As String[] = ["es", "en", "pt"]
+
+  ' --- 1. TIPO DE CAPÍTULO (26 VALORES DEL ENUM) ---
+  tipo_capitulo.Clear()
+  tipo_capitulo.List = ["prologo", "prefacio", "presentacion", "palabras_preliminares",
+    "introduccion", "dedicatoria", "agradecimientos", "nota_traductor",
+    "nota_editor", "lista_figuras", "lista_tablas", "lista_abreviaturas",
+    "capitulo", "epilogo", "posfacio", "post_scriptum",
+    "apendice", "glosario", "bibliografia", "sobre_autores",
+    "cronologia", "indice_onomastico", "indice_tematico", "indice_analitico",
+    "colofon", "otro"]
+  tipo_capitulo.ReadOnly = True
+  tipo_capitulo.Text = "capitulo"
+
+  ' --- 2. CROSSREF_ESTADO ---
+  crossref_estado.Clear()
+  crossref_estado.List = ["pendiente", "sandbox", "produccion"]
+  crossref_estado.ReadOnly = True
+  crossref_estado.Text = "pendiente"
+
+  ' --- 3. ROL_AUTOR (para el bloque de autores, futuro) ---
+  rol_autor.Clear()
+  rol_autor.List = ["autor", "traductor"]
+  rol_autor.ReadOnly = True
+  rol_autor.Text = "autor"
+
+  ' --- 4. ESTADO_CAPITULO ---
+  estado_capitulo.Clear()
+  estado_capitulo.List = ["borrador", "en_revision", "aceptado", "en_produccion", "publicado"]
+  estado_capitulo.ReadOnly = True
+  estado_capitulo.Text = "borrador"
+
+  ' --- 5. LICENCIA (LISTA CANÓNICA, EDITABLE) ---
+  licencia.Clear()
+  licencia.List = [
+    "CC BY 4.0",
+    "CC BY-SA 4.0",
+    "CC BY-NC 4.0",
+    "CC BY-NC-SA 4.0",
+    "CC BY-ND 4.0",
+    "CC BY-NC-ND 4.0",
+    "CC0 1.0",
+    "MIT",
+    "GPL v3",
+    "Apache 2.0",
+    "BSD 3-Clause",
+    "Todos los derechos reservados",
+    "Otra"
+  ]
+  licencia.ReadOnly = False
+
+  ' --- 6. IDIOMAS (TODOS EDITABLES, MISMA LISTA REUTILIZADA) ---
+  idioma_capitulo.Clear()
+  idioma_capitulo.List = sIdiomas
+  idioma_capitulo.ReadOnly = False
+  idioma_capitulo.Text = "es"
+
+  idioma_titulo_traducido.Clear()
+  idioma_titulo_traducido.List = sIdiomas
+  idioma_titulo_traducido.ReadOnly = False
+
+  idioma_resumen_1.Clear()
+  idioma_resumen_1.List = sIdiomas
+  idioma_resumen_1.ReadOnly = False
+
+  idioma_resumen_2.Clear()
+  idioma_resumen_2.List = sIdiomas
+  idioma_resumen_2.ReadOnly = False
+
+  idioma_resumen_3.Clear()
+  idioma_resumen_3.List = sIdiomas
+  idioma_resumen_3.ReadOnly = False
+
+  idioma_kwd_1.Clear()
+  idioma_kwd_1.List = sIdiomas
+  idioma_kwd_1.ReadOnly = False
+
+  idioma_kwd_2.Clear()
+  idioma_kwd_2.List = sIdiomas
+  idioma_kwd_2.ReadOnly = False
+
+  idioma_kwd_3.Clear()
+  idioma_kwd_3.List = sIdiomas
+  idioma_kwd_3.ReadOnly = False
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : PoblarComboIdParte
+' Propósito : Llenar id_parte con las partes del libro actual, manteniendo
+'             un array paralelo aIdsParte con los IDs reales de la BD.
+'             Si el libro no tiene partes, el combo queda deshabilitado.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub PoblarComboIdParte()
+
+  Dim hRes As Result
+
+  ' --- 1. INICIALIZAR ---
+  aIdsParte = New Integer[]
+  id_parte.Clear()
+
+  ' OPCIÓN "SIN PARTE" SIEMPRE PRIMERA
+  id_parte.Add("(sin parte)")
+  aIdsParte.Add(0)
+
+  ' --- 2. CONSULTA A partes_libro ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_parte, titulo FROM partes_libro WHERE id_libro = &1 ORDER BY orden",
+    iLibroActual)
+  If Error Then
+    ' SI FALLA LA CONSULTA, EL COMBO QUEDA CON SOLO "(sin parte)"
+    id_parte.Enabled = False
+    id_parte.Index = 0
+    Return
+  Endif
+
+  ' --- 3. CARGAR LAS PARTES EN EL COMBO Y EN EL ARRAY PARALELO ---
+  While hRes.Available
+    id_parte.Add(CStr(hRes["titulo"]))
+    aIdsParte.Add(CInt(hRes["id_parte"]))
+    hRes.MoveNext
+  Wend
+
+  ' --- 4. HABILITAR SOLO SI HAY PARTES REALES ---
+  id_parte.Enabled = (id_parte.Count > 1)
+  id_parte.Index = 0
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ConfigurarGridView
+' Propósito : Establecer columnas, headers y modo de selección del grid.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ConfigurarGridView()
+
+  With gbCapitulos
+    .Columns.Count = 4
+    .Header = GridView.Both
+    .Mode = Select.Single
+    .Scrollbar = Scroll.Vertical
+    ' COLUMNA 0: ID OCULTA (sirve solo como cache para gbCapitulos_Click)
+    .Columns[0].Title = "ID"
+    .Columns[0].Width = 0
+    .Columns[1].Title = "Título"
+    .Columns[1].Width = 450
+    .Columns[2].Title = "Tipo"
+    .Columns[2].Width = 130
+    .Columns[3].Title = "Estado"
+    .Columns[3].Width = 130
+  End With
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : RefrescarGbCapitulos
+' Propósito : Volver a leer la lista de capítulos del libro actual y
+'             poblar el GridView. Aplica el coloreo por estado al final.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub RefrescarGbCapitulos()
+
+  Dim hRes As Result
+  Dim iRow As Integer
+  Dim sTitulo As String
+
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_capitulo, titulo_capitulo, tipo_capitulo, estado_capitulo " &
+    "FROM capitulos WHERE id_libro = &1 " &
+    "ORDER BY id_parte, id_capitulo", iLibroActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar capítulos:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  gbCapitulos.Rows.Count = 0
+
+  If Not hRes.Available Then Return
+
+  iRow = 0
+  For Each hRes
+    gbCapitulos.Rows.Count = iRow + 1
+
+    ' COLUMNA 0: ID OCULTA
+    gbCapitulos[iRow, 0].Text = hRes["id_capitulo"]
+
+    ' COLUMNA 1: TÍTULO (TRUNCADO SI ES MUY LARGO)
+    sTitulo = CStr(hRes["titulo_capitulo"])
+    If String.Len(sTitulo) > 80 Then
+      sTitulo = String.Left(sTitulo, 77) & "..."
+    Endif
+    gbCapitulos[iRow, 1].Text = sTitulo
+
+    ' COLUMNA 2: TIPO
+    gbCapitulos[iRow, 2].Text = CStr(hRes["tipo_capitulo"])
+
+    ' COLUMNA 3: ESTADO
+    gbCapitulos[iRow, 3].Text = CStr(hRes["estado_capitulo"])
+    gbCapitulos[iRow, 3].Alignment = Align.Center
+
+    Inc iRow
+  Next
+
+  ColorearFilasPorEstado()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ColorearFilasPorEstado
+' Propósito : Aplicar color de fondo a la celda de estado de cada fila.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ColorearFilasPorEstado()
+
+  Dim iRow As Integer
+  Dim sEstado As String
+
+  For iRow = 0 To gbCapitulos.Rows.Max
+    sEstado = gbCapitulos[iRow, 3].Text
+    Select Case sEstado
+      Case "borrador"
+        gbCapitulos[iRow, 3].Background = Color.LightGray
+      Case "en_revision"
+        gbCapitulos[iRow, 3].Background = Color.RGB(255, 255, 200)
+      Case "aceptado"
+        gbCapitulos[iRow, 3].Background = Color.RGB(200, 255, 200)
+      Case "en_produccion"
+        gbCapitulos[iRow, 3].Background = Color.RGB(255, 220, 180)
+      Case "publicado"
+        gbCapitulos[iRow, 3].Background = Color.RGB(200, 230, 255)
+    End Select
+  Next
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : gbCapitulos_Click
+' Propósito : Cargar en el editor el capítulo cuya fila acaba de
+'             seleccionarse en el GridView.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub gbCapitulos_Click()
+
+  Dim iRow As Integer
+  Dim iIdCapitulo As Integer
+
+  ' --- 1. OBTENER LA FILA ACTIVA ---
+  iRow = gbCapitulos.Row
+  If iRow < 0 Then Return
+
+  ' --- 2. OBTENER EL ID DESDE LA COLUMNA 0 ---
+  iIdCapitulo = Val(gbCapitulos[iRow, 0].Text)
+  If iIdCapitulo <= 0 Then Return
+
+  ' --- 3. DELEGAR LA CARGA A m_Metadatos ---
+  m_Metadatos.CargarMetadatosDeCapitulo(iIdCapitulo)
+  iCapituloActual = iIdCapitulo
+
+  ' --- 4. HABILITAR BOTONES DE EDICIÓN ---
+  HabilitarBotonesCapitulo(True)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnCapituloNuevo_Click
+' Propósito : Crear un capítulo nuevo con un INSERT mínimo. No usa
+'             "guardar primera vez": el registro existe inmediatamente
+'             y se edita normalmente con btnGuardarCambiosMetadatosCapitulo.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnCapituloNuevo_Click()
+
+  Dim iRespuesta As Byte
+  Dim iIdNuevo As Integer
+  Dim iRow As Integer
+
+  ' --- 1. CONFIRMAR ---
+  iRespuesta = Message.Question("¿Crear un nuevo capítulo en este libro?", "Crear", "Cancelar")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 2. INSERT MÍNIMO ---
+  Try m_ConexionBD.mConn.Exec(
+    "INSERT INTO capitulos (id_proyecto, id_libro, titulo_capitulo, tipo_capitulo, " &
+    "estado_capitulo, idioma_capitulo, usuario_creacion, fecha_creacion_registro) " &
+    "VALUES (&1, &2, &3, &4, &5, &6, &7, NOW())",
+    FMain.id_proyecto.Value,
+    iLibroActual,
+    "Capítulo sin título",
+    "capitulo",
+    "borrador",
+    "es",
+    m_InicioCierre.UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al crear capítulo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. RECUPERAR EL ID GENERADO ---
+  iIdNuevo = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID() AS ult")["ult"]
+
+  ' --- 4. REFRESCAR EL GRID ---
+  RefrescarGbCapitulos()
+
+  ' --- 5. BUSCAR LA FILA DEL NUEVO CAPÍTULO Y SELECCIONARLA ---
+  For iRow = 0 To gbCapitulos.Rows.Max
+    If Val(gbCapitulos[iRow, 0].Text) = iIdNuevo Then
+      gbCapitulos.Row = iRow
+      gbCapitulos_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("ok")
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnCapituloBorrar_Click
+' Propósito : Eliminar el capítulo activo de la BD previa confirmación.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnCapituloBorrar_Click()
+
+  Dim iRespuesta As Byte
+
+  ' --- 1. VALIDAR QUE HAY CAPÍTULO ACTIVO ---
+  If iCapituloActual <= 0 Then
+    m_Sonido.sonar("info")
+    Message.Info("No hay ningún capítulo seleccionado.")
+    Return
+  Endif
+
+  ' --- 2. CONFIRMAR ---
+  iRespuesta = Message.Question(
+    "¿Eliminar el capítulo y todos sus autores asociados?" & Chr(10) &
+    "Esta operación no se puede deshacer.",
+    "Eliminar", "Cancelar")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 3. DELETE (LAS FK CON ON DELETE CASCADE LIMPIAN capitulo_autor) ---
+  Try m_ConexionBD.mConn.Exec(
+    "DELETE FROM capitulos WHERE id_capitulo = &1", iCapituloActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al eliminar capítulo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. REFRESCAR EL GRID Y AJUSTAR ESTADO ---
+  iCapituloActual = 0
+  RefrescarGbCapitulos()
+
+  If gbCapitulos.Rows.Count > 0 Then
+    gbCapitulos.Row = 0
+    gbCapitulos_Click()
+  Else
+    LimpiarFormulario()
+    HabilitarBotonesCapitulo(False)
+  Endif
+
+  m_Sonido.sonar("ok")
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnGuardarCambiosMetadatosCapitulo_Click
+' Propósito : Persistir en BD los valores actuales del editor.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardarCambiosMetadatosCapitulo_Click()
+
+  If iCapituloActual <= 0 Then
+    m_Sonido.sonar("info")
+    Message.Info("No hay ningún capítulo seleccionado.")
+    Return
+  Endif
+
+  ' --- DELEGAR EL GUARDADO A m_Metadatos ---
+  m_Metadatos.GuardarMetadatosDeCapitulo()
+
+  ' --- REFRESCAR EL GRID PARA QUE LA FILA REFLEJE TÍTULO/TIPO/ESTADO ACTUALES ---
+  Dim iIdGuardado As Integer = iCapituloActual
+  Dim iRow As Integer
+  RefrescarGbCapitulos()
+  For iRow = 0 To gbCapitulos.Rows.Max
+    If Val(gbCapitulos[iRow, 0].Text) = iIdGuardado Then
+      gbCapitulos.Row = iRow
+      Break
+    Endif
+  Next
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : LimpiarFormulario
+' Propósito : Vaciar todos los campos del editor. Se llama cuando no hay
+'             ningún capítulo seleccionado (libro vacío o post-borrar).
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub LimpiarFormulario()
+
+  ' --- IDs DE CONTEXTO ---
+  id_capitulo.Value = 0
+
+  ' --- PARTE ---
+  If id_parte.Count > 0 Then id_parte.Index = 0
+
+  ' --- TÍTULOS ---
+  nombre_archivo.Clear()
+  tipo_capitulo.Text = "capitulo"
+  tipo_capitulo_otro.Clear()
+  titulo_capitulo.Clear()
+  subtitulo.Clear()
+  titulo_corto.Clear()
+  titulo_traducido.Clear()
+  idioma_titulo_traducido.Text = ""
+
+  ' --- IDENTIFICADORES ---
+  doi.Clear()
+  crossref_estado.Text = "pendiente"
+  elocation_id.Clear()
+  pagina_inicio.Clear()
+  pagina_fin.Clear()
+  numero_paginas.Clear()
+
+  ' --- IDIOMA Y FECHAS ---
+  idioma_capitulo.Text = "es"
+
+  ' --- AUTORES ---
+  autor_corporativo.Clear()
+  grupo_autores.Clear()
+  autores_anonimos.Value = False
+  author_notes.Clear()
+  autor_seleccionado.Clear()
+  rol_autor.Text = "autor"
+  publicar_email.Value = False
+  taxonomia_credit.Clear()
+
+  ' --- RESÚMENES ---
+  resumen_1.Clear()
+  idioma_resumen_1.Text = ""
+  resumen_2.Clear()
+  idioma_resumen_2.Text = ""
+  resumen_3.Clear()
+  idioma_resumen_3.Text = ""
+
+  ' --- PALABRAS CLAVE ---
+  palabras_clave_1.Clear()
+  idioma_kwd_1.Text = ""
+  palabras_clave_2.Clear()
+  idioma_kwd_2.Text = ""
+  palabras_clave_3.Clear()
+  idioma_kwd_3.Text = ""
+
+  ' --- CLASIFICACIONES TEMÁTICAS ---
+  mesh_terms.Clear()
+  descriptores_decs.Clear()
+  clasificacion_tematica.Clear()
+
+  ' --- MÉTRICAS ---
+  numero_figuras.Clear()
+  numero_tablas.Clear()
+  numero_ecuaciones.Clear()
+  material_suplementario.Clear()
+  dataset_asociado.Clear()
+
+  ' --- FINANCIAMIENTO ---
+  financiamiento.Clear()
+  numero_proyecto.Clear()
+  funding_statement.Clear()
+
+  ' --- ÉTICA ---
+  conflictos_interes.Clear()
+  tiene_conflictos.Value = False
+  declaracion_etica.Clear()
+  consentimiento_informado.Value = False
+  aprobacion_comite_etica.Value = False
+  numero_aprobacion_etica.Clear()
+  disponibilidad_datos.Clear()
+  data_availability_statement.Clear()
+
+  ' --- LICENCIA Y COPYRIGHT ---
+  licencia.Text = ""
+  url_licencia.Clear()
+  copyright_holder.Clear()
+  copyright_year.Clear()
+  declaracion_copyright.Clear()
+  url_capitulo.Clear()
+  url_pdf.Clear()
+
+  ' --- ESTADO Y AUDITORÍA ---
+  revisado_xml.Value = False
+  validado_docbook.Value = False
+  errores_validacion.Clear()
+  calidad_metadatos.Clear()
+  completitud_metadatos.Clear()
+  estado_capitulo.Text = "borrador"
+  usuario_creacion.Clear()
+  responsable_edicion.Clear()
+  notas_internas.Clear()
+
+  ' --- LIMPIAR LISTADO DE AUTORES (FUTURO) ---
+  listadoAutores.Clear()
+  aIdsAutores = New Integer[]
+  iAutorCreditActual = 0
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : HabilitarBotonesCapitulo
+' Propósito : Habilitar/deshabilitar los botones que requieren un
+'             capítulo activo (guardar, borrar, vincular autor, etc.).
+' Parámetros: bSi As Boolean — True para habilitar, False para deshabilitar
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub HabilitarBotonesCapitulo(bSi As Boolean)
+
+  btnGuardarCambiosMetadatosCapitulo.Enabled = bSi
+  btnCapituloBorrar.Enabled = bSi
+  btnVincularAutor.Enabled = bSi
+  btnDesvincularAutor.Enabled = bSi
+  ' btnCreditRoles SE GESTIONA EN LA SEGUNDA PASADA (CON SELECCIÓN DE AUTOR)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : Form_KeyRelease
+' Propósito : Atajos de teclado del formulario (Ctrl+F1 para ayuda).
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub Form_KeyRelease()
+
+  ' --- Ctrl+F1 → AYUDA CONTEXTUAL (FUTURA) ---
+  If Key.Code = Key.F1 And If Key.Control Then
+    ' PLACEHOLDER PARA AYUDA CONTEXTUAL DEL FORMULARIO
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' VALIDADORES DE TECLA — solo números enteros
+' Aplica a: numero_paginas, numero_figuras, numero_tablas, numero_ecuaciones,
+'           copyright_year
+' ════════════════════════════════════════════════════════════════════════════
+Private Function EsTeclaPermitidaEnNumerico() As Boolean
+
+  ' --- 1. BACKSPACE Y DELETE: SIEMPRE PERMITIDAS ---
+  If Key.Code = Key.BackSpace Or If Key.Code = Key.Delete Then Return True
+
+  ' --- 2. TECLAS DE NAVEGACIÓN/CONTROL (flechas, Home, End, Tab, ---
+  ' --- Enter, Ctrl+C/V/Z/etc): Key.Text VIENE VACÍO ---
+  If String.Len(Key.Text) = 0 Then Return True
+
+  ' --- 3. DÍGITOS: PERMITIDOS ---
+  If InStr("0123456789", Key.Text) > 0 Then Return True
+
+  ' --- 4. CUALQUIER OTRO CARACTER VISIBLE: RECHAZADO ---
+  Return False
+
+End
+
+Public Sub numero_paginas_KeyPress()
+
+  If Not EsTeclaPermitidaEnNumerico() Then Stop Event
+
+End
+
+Public Sub numero_figuras_KeyPress()
+
+  If Not EsTeclaPermitidaEnNumerico() Then Stop Event
+
+End
+
+Public Sub numero_tablas_KeyPress()
+
+  If Not EsTeclaPermitidaEnNumerico() Then Stop Event
+
+End
+
+Public Sub numero_ecuaciones_KeyPress()
+
+  If Not EsTeclaPermitidaEnNumerico() Then Stop Event
+
+End
+
+Public Sub copyright_year_KeyPress()
+
+  If Not EsTeclaPermitidaEnNumerico() Then Stop Event
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ObtenerIdParteSeleccionada
+' Propósito : Devolver el id_parte real (de la BD) que corresponde al
+'             item seleccionado en el ComboBox id_parte. Devuelve 0 si
+'             la selección es "(sin parte)" o el combo está vacío.
+' Retorna   : Integer
+' ════════════════════════════════════════════════════════════════════════════
+Public Function ObtenerIdParteSeleccionada() As Integer
+
+  If id_parte.Index < 0 Then Return 0
+  If id_parte.Index >= aIdsParte.Count Then Return 0
+  Return aIdsParte[id_parte.Index]
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : SeleccionarPartePorId
+' Propósito : Posicionar el ComboBox id_parte en la fila cuyo id_parte
+'             coincide con el parámetro. Si no se encuentra, deja
+'             seleccionado "(sin parte)".
+' Parámetros: iId As Integer — id_parte real a buscar
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub SeleccionarPartePorId(iId As Integer)
+
+  Dim i As Integer
+
+  For i = 0 To aIdsParte.Max
+    If aIdsParte[i] = iId Then
+      id_parte.Index = i
+      Return
+    Endif
+  Next
+  ' SI NO SE ENCONTRÓ, "(sin parte)" ES EL DEFAULT
+  id_parte.Index = 0
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' EVENTOS DE CIERRE (heredados del .class original)
+' ════════════════════════════════════════════════════════════════════════════
 
 Public Sub btnCerrar_Click()
   ' HABILITAR EL CIERRE Y CERRAR
@@ -19,5 +743,11 @@ Public Sub Form_Close()
   m_Sonido.sonar("info")
   Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
   Stop Event
+
+End
+
+Public Sub hbCapitulos_Resize()
+
+  hbCapitulos.Layout = [1, 1]
 
 End
