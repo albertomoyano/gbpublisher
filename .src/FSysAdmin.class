@@ -13,14 +13,24 @@
 
 Private $idSeleccionado As Integer
 Public $claveSeleccionada As String
-Public hConn As Connection           ' CONEXIÓN SQLITE LOCAL PARA ADMIN
-Public hConnServidor As Connection   ' CONEXIÓN AL SERVIDOR MYSQL
+' CONEXIÓN SQLITE LOCAL PARA ADMIN
+Public hConn As Connection
+' CONEXIÓN AL SERVIDOR MYSQL
+Public hConnServidor As Connection
 Public sUsuarioActual As String
 Public sRolActual As String
 Public sServidorActual As String
 Private $aColumnas As String[]
 Private $aRegistros As String[][]
-Private $bModoEdicion As Boolean     ' CONTROLA SI ESTAMOS EN MODO EDICIÓN O NUEVO
+' CONTROLA SI ESTAMOS EN MODO EDICIÓN O NUEVO
+Private $bModoEdicion As Boolean
+' --- VARIABLES PARA ABM DE COLECCIONES / SERIES (TabStrip 4) ---
+Private $iColeccionActual As Integer = 0
+Private $iSerieActual As Integer = 0
+Private $aIdsColecciones As New Integer[]
+Private $aColeccionesActivas As New Boolean[]
+Private $aIdsSeries As New Integer[]
+Private $bActivaColeccionOriginal As Boolean = False
 
 ' ============================================
 ' Función   : Form_Open
@@ -197,6 +207,11 @@ Public Sub btnValidarSuperuser_Click()
 
   HabilitarABMUsuarios()
   PanelAdmin.Visible = False
+
+  ' --- INICIALIZAR TABSTRIP 4: COLECCIONES / SERIES ---
+  ' (AQUÍ YA hConnServidor ESTÁ ABIERTO POR ConectarMySQL)
+  ConfigurarGridViewColecciones()
+  CargarColecciones()
 
   ' --- 6. Limpiar campos de acceso ---
   txtAdministrador.Text = ""
@@ -1626,6 +1641,686 @@ Public Sub txtApiKey_Enter()
     txtApiKey.ToolTip = "Dejar vacío para mantener la API Key actual."
   Else
     txtApiKey.ToolTip = "Ingrese la API Key del proveedor."
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ConfigurarGridViewColecciones
+' Propósito : Define columnas y propiedades del GridView de colecciones.
+'             Solo nombre + indicador de estado (el id queda implícito en
+'             $aIdsColecciones, no es información útil al editor).
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ConfigurarGridViewColecciones()
+
+  With gvColecciones
+    .Header = GridView.Horizontal
+    .Columns.Count = 2
+    .Columns[0].Title = "Nombre"
+    .Columns[0].Width = 380
+    .Columns[1].Title = "Estado"
+    .Columns[1].Width = 50
+    .Rows.Count = 0
+  End With
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarColecciones
+' Propósito : Lee todas las colecciones de BD (activas e inactivas), pinta
+'             el GridView con color gris en las inactivas, resetea editores
+'             y listbox de series, y deshabilita botones contextuales.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarColecciones()
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iRow As Integer
+  Dim bActiva As Boolean
+
+  ' --- 0. GUARD: CONEXIÓN MYSQL DEBE ESTAR ABIERTA ---
+  If Not hConnServidor Or Not hConnServidor.Opened Then Return
+
+  ' --- 1. RESET ARRAYS PARALELOS ---
+  $aIdsColecciones.Clear()
+  $aColeccionesActivas.Clear()
+
+  ' --- 2. QUERY ORDENADO POR NOMBRE ---
+  sQuery = "SELECT id_coleccion, nombre, activa FROM colecciones ORDER BY nombre"
+
+  Try $result = hConnServidor.Exec(sQuery)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar colecciones:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. PRE-DIMENSIONAR EL GRIDVIEW ---
+  If $result.Available Then
+    gvColecciones.Rows.Count = $result.Count
+  Else
+    gvColecciones.Rows.Count = 0
+  Endif
+
+  ' --- 4. POBLAR ARRAYS PARALELOS Y CELDAS ---
+  iRow = 0
+  If $result.Available Then
+    For Each $result
+      $aIdsColecciones.Add($result!id_coleccion)
+      ' RC-GM-01: TINYINT(1) DEVUELVE Boolean DIRECTAMENTE
+      bActiva = $result!activa
+      $aColeccionesActivas.Add(bActiva)
+
+      gvColecciones[iRow, 0].Text = $result!nombre
+      gvColecciones[iRow, 1].Text = If(bActiva, "Activa", "Inactiva")
+
+      ' --- COLOREAR EN GRIS LAS INACTIVAS ---
+      If Not bActiva Then
+        gvColecciones[iRow, 0].Foreground = Color.Gray
+        gvColecciones[iRow, 1].Foreground = Color.Gray
+      Endif
+
+      Inc iRow
+    Next
+  Endif
+
+  ' --- 5. LIMPIAR ESTADO DE EDITORES Y SERIE ---
+  LimpiarEditorColeccion()
+  LimpiarEditorSerie()
+  lbSeries.Clear()
+  $aIdsSeries.Clear()
+  $iColeccionActual = 0
+  $iSerieActual = 0
+  HabilitarBotonesColeccion(False)
+  HabilitarBotonesSerie(False, False)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarSeriesDeColeccion
+' Propósito : Lee las series de la colección indicada, las muestra en
+'             lbSeries. Si la colección está inactiva, todas las series se
+'             muestran en gris (heredan estado por cascada).
+' Parámetros: iIdColeccion As Integer — id de la colección madre
+'             bColeccionActiva As Boolean — estado de la colección madre
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarSeriesDeColeccion(iIdColeccion As Integer, bColeccionActiva As Boolean)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iIndex As Integer
+
+  ' --- 1. RESET LISTBOX Y ARRAY PARALELO ---
+  lbSeries.Clear()
+  $aIdsSeries.Clear()
+
+  ' --- 2. QUERY ORDENADA POR NOMBRE ---
+  sQuery = "SELECT id_serie, nombre FROM series WHERE id_coleccion = &1 ORDER BY nombre"
+
+  Try $result = hConnServidor.Exec(sQuery, iIdColeccion)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar series:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If Not $result.Available Then Return
+
+  ' --- 3. POBLAR LISTBOX Y APLICAR COLOR SI LA COLECCIÓN ESTÁ INACTIVA ---
+  iIndex = 0
+  For Each $result
+    lbSeries.Add($result!nombre)
+    $aIdsSeries.Add($result!id_serie)
+
+    ' SI LA COLECCIÓN MADRE ESTÁ INACTIVA, TODAS LAS SERIES EN GRIS
+    If Not bColeccionActiva Then
+      lbSeries[iIndex].Foreground = Color.Gray
+    Endif
+
+    Inc iIndex
+  Next
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarColeccionEnEditor
+' Propósito : Lee el registro completo de una colección y vuelca todos
+'             los campos al editor del tabstrip 4.
+' Parámetros: iIdColeccion As Integer — id de la colección a cargar
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarColeccionEnEditor(iIdColeccion As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  ' --- 1. QUERY COMPLETA ---
+  sQuery = "SELECT * FROM colecciones WHERE id_coleccion = &1"
+
+  Try $result = hConnServidor.Exec(sQuery, iIdColeccion)
+  If Error Or If Not $result.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la colección.")
+    Return
+  Endif
+
+  ' --- 2. VOLCAR CAMPOS AL EDITOR ---
+  idColeccion.Value = $result!id_coleccion
+  nombreColeccion.Text = If(IsNull($result!nombre), "", $result!nombre)
+  nombreAbreviadoColeccion.Text = If(IsNull($result!nombre_abreviado), "", $result!nombre_abreviado)
+  issnColeccion.Text = If(IsNull($result!issn), "", $result!issn)
+  doiPrefixColeccion.Text = If(IsNull($result!doi_prefix), "", $result!doi_prefix)
+  editorialColeccion.Text = If(IsNull($result!editorial), "", $result!editorial)
+  directorColeccion.Text = If(IsNull($result!director_coleccion), "", $result!director_coleccion)
+  emailContactoColeccion.Text = If(IsNull($result!email_contacto), "", $result!email_contacto)
+  descripcionColeccion.Text = If(IsNull($result!descripcion), "", $result!descripcion)
+  areaConocimientoColeccion.Text = If(IsNull($result!area_conocimiento), "", $result!area_conocimiento)
+  disciplinaColeccion.Text = If(IsNull($result!disciplina), "", $result!disciplina)
+  anoInicioColeccion.Text = If(IsNull($result!ano_inicio), "", CStr($result!ano_inicio))
+  anoFinColeccion.Text = If(IsNull($result!ano_fin), "", CStr($result!ano_fin))
+
+  ' RC-GM-01: TINYINT(1) ES Boolean
+  activaColeccion.Value = $result!activa
+  $bActivaColeccionOriginal = $result!activa
+
+  urlColeccion.Text = If(IsNull($result!url_coleccion), "", $result!url_coleccion)
+  urlLogoColeccion.Text = If(IsNull($result!url_logo), "", $result!url_logo)
+  notasInternasColeccion.Text = If(IsNull($result!notas_internas), "", $result!notas_internas)
+
+  ' --- 3. CAMPOS DE AUDITORÍA (READONLY) ---
+  If $result!fecha_creacion Then fechaCreacionColeccion.Value = $result!fecha_creacion Else fechaCreacionColeccion.Value = Null
+  If $result!fecha_actualizacion Then fechaActualizacionColeccion.Value = $result!fecha_actualizacion Else fechaActualizacionColeccion.Value = Null
+  usuarioCreacionColeccion.Text = If(IsNull($result!usuario_creacion), "", $result!usuario_creacion)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarSerieEnEditor
+' Propósito : Lee el registro completo de una serie y vuelca los campos
+'             al editor.
+' Parámetros: iIdSerie As Integer — id de la serie a cargar
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarSerieEnEditor(iIdSerie As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  sQuery = "SELECT * FROM series WHERE id_serie = &1"
+
+  Try $result = hConnServidor.Exec(sQuery, iIdSerie)
+  If Error Or If Not $result.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la serie.")
+    Return
+  Endif
+
+  idSerie.Value = $result!id_serie
+  nombreSerie.Text = If(IsNull($result!nombre), "", $result!nombre)
+  nombreAbreviadoSerie.Text = If(IsNull($result!nombre_abreviado), "", $result!nombre_abreviado)
+  issnSerie.Text = If(IsNull($result!issn), "", $result!issn)
+  coordinadorSerie.Text = If(IsNull($result!coordinador_serie), "", $result!coordinador_serie)
+  descripcionSerie.Text = If(IsNull($result!descripcion), "", $result!descripcion)
+  anoInicioSerie.Text = If(IsNull($result!ano_inicio), "", CStr($result!ano_inicio))
+  anoFinSerie.Text = If(IsNull($result!ano_fin), "", CStr($result!ano_fin))
+  notasInternasSerie.Text = If(IsNull($result!notas_internas), "", $result!notas_internas)
+
+  ' --- AUDITORÍA ---
+  If $result!fecha_creacion Then fechaCreacionSerie.Value = $result!fecha_creacion Else fechaCreacionSerie.Value = Null
+  If $result!fecha_actualizacion Then fechaActualizacionSerie.Value = $result!fecha_actualizacion Else fechaActualizacionSerie.Value = Null
+  usuarioCreacionSerie.Text = If(IsNull($result!usuario_creacion), "", $result!usuario_creacion)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : LimpiarEditorColeccion
+' Propósito : Limpia todos los campos del editor de colección.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub LimpiarEditorColeccion()
+
+  idColeccion.Value = 0
+  nombreColeccion.Text = ""
+  nombreAbreviadoColeccion.Text = ""
+  issnColeccion.Text = ""
+  doiPrefixColeccion.Text = ""
+  editorialColeccion.Text = ""
+  directorColeccion.Text = ""
+  emailContactoColeccion.Text = ""
+  descripcionColeccion.Text = ""
+  areaConocimientoColeccion.Text = ""
+  disciplinaColeccion.Text = ""
+  anoInicioColeccion.Text = ""
+  anoFinColeccion.Text = ""
+  activaColeccion.Value = False
+  $bActivaColeccionOriginal = False
+  urlColeccion.Text = ""
+  urlLogoColeccion.Text = ""
+  notasInternasColeccion.Text = ""
+  fechaCreacionColeccion.Value = Null
+  fechaActualizacionColeccion.Value = Null
+  usuarioCreacionColeccion.Text = ""
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : LimpiarEditorSerie
+' Propósito : Limpia todos los campos del editor de serie.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub LimpiarEditorSerie()
+
+  idSerie.Value = 0
+  nombreSerie.Text = ""
+  nombreAbreviadoSerie.Text = ""
+  issnSerie.Text = ""
+  coordinadorSerie.Text = ""
+  descripcionSerie.Text = ""
+  anoInicioSerie.Text = ""
+  anoFinSerie.Text = ""
+  notasInternasSerie.Text = ""
+  fechaCreacionSerie.Value = Null
+  fechaActualizacionSerie.Value = Null
+  usuarioCreacionSerie.Text = ""
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : HabilitarBotonesColeccion
+' Propósito : Habilita o deshabilita el botón Guardar Cambios de colección.
+'             También gestiona los botones del bloque de serie en cascada.
+' Parámetros: bHabilitar As Boolean — True = colección seleccionada
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub HabilitarBotonesColeccion(bHabilitar As Boolean)
+
+  btnGuardarCambiosColeccion.Enabled = bHabilitar
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : HabilitarBotonesSerie
+' Propósito : Habilita o deshabilita los botones de serie según haya
+'             colección activa y/o serie seleccionada.
+' Parámetros: bNueva As Boolean    — True habilita btnNuevaSerie
+'             bGuardar As Boolean  — True habilita btnGuardarCambiosSerie
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub HabilitarBotonesSerie(bNueva As Boolean, bGuardar As Boolean)
+
+  btnNuevaSerie.Enabled = bNueva
+  btnGuardarCambiosSerie.Enabled = bGuardar
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : gvColecciones_Click
+' Propósito : Al seleccionar una colección, carga su editor y muestra sus
+'             series en lbSeries. Habilita btnNuevaSerie SOLO si la
+'             colección está activa.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub gvColecciones_Click()
+
+  Dim iRow As Integer
+  Dim iIdColeccion As Integer
+  Dim bColActiva As Boolean
+
+  ' --- 1. VALIDAR FILA ---
+  iRow = gvColecciones.Row
+  If iRow < 0 Or If iRow >= $aIdsColecciones.Count Then Return
+
+  ' --- 2. OBTENER ID Y ESTADO DE LA COLECCIÓN ---
+  iIdColeccion = $aIdsColecciones[iRow]
+  bColActiva = $aColeccionesActivas[iRow]
+  $iColeccionActual = iIdColeccion
+
+  ' --- 3. CARGAR EDITOR DE COLECCIÓN ---
+  CargarColeccionEnEditor(iIdColeccion)
+
+  ' --- 4. CARGAR SERIES EN LBSERIES (CON COLOR HEREDADO) ---
+  CargarSeriesDeColeccion(iIdColeccion, bColActiva)
+  $iSerieActual = 0
+  LimpiarEditorSerie()
+
+  ' --- 5. ESTADO DE BOTONES ---
+  HabilitarBotonesColeccion(True)
+  ' btnNuevaSerie SOLO SI LA COLECCIÓN ESTÁ ACTIVA
+  ' btnGuardarCambiosSerie DESHABILITADO HASTA QUE SE ELIJA UNA SERIE
+  HabilitarBotonesSerie(bColActiva, False)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : lbSeries_Click
+' Propósito : Al seleccionar una serie del listbox, carga su editor.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub lbSeries_Click()
+
+  Dim iIndex As Integer
+  Dim iIdSerie As Integer
+
+  ' --- 1. VALIDAR ÍNDICE ---
+  iIndex = lbSeries.Index
+  If iIndex < 0 Or If iIndex >= $aIdsSeries.Count Then Return
+
+  ' --- 2. OBTENER ID Y CARGAR EDITOR ---
+  iIdSerie = $aIdsSeries[iIndex]
+  $iSerieActual = iIdSerie
+  CargarSerieEnEditor(iIdSerie)
+
+  ' --- 3. HABILITAR BOTÓN GUARDAR DE SERIE ---
+  ' (btnNuevaSerie SIGUE SIENDO CONDICIONAL AL ESTADO DE LA COLECCIÓN)
+  btnGuardarCambiosSerie.Enabled = True
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnNuevaColeccion_Click
+' Propósito : INSERT mínimo de colección nueva con valores por defecto.
+'             Refresca el grid y autoselecciona el nuevo registro.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnNuevaColeccion_Click()
+
+  Dim iNuevoId As Integer
+  Dim iRow As Integer
+
+  ' --- 1. INSERT MÍNIMO ---
+  Try hConnServidor.Exec(
+    "INSERT INTO colecciones (nombre, activa, usuario_creacion) " &
+    "VALUES (&1, 1, &2)",
+    "(Nueva colección)", sUsuarioActual)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al crear colección:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  iNuevoId = hConnServidor.LastInsertId
+
+  ' --- 2. REFRESH ---
+  CargarColecciones()
+
+  ' --- 3. AUTOSELECT DEL NUEVO REGISTRO ---
+  For iRow = 0 To $aIdsColecciones.Count - 1
+    If $aIdsColecciones[iRow] = iNuevoId Then
+      gvColecciones.Row = iRow
+      gvColecciones_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("Info")
+  nombreColeccion.SetFocus()
+  nombreColeccion.SelectAll()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnNuevaSerie_Click
+' Propósito : INSERT mínimo de serie nueva en la colección actualmente
+'             seleccionada. La colección debe estar activa (validado por
+'             el botón deshabilitado, pero doble check por seguridad).
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnNuevaSerie_Click()
+
+  Dim iNuevoId As Integer
+  Dim iIndex As Integer
+  Dim iRow As Integer
+
+  ' --- 1. VALIDAR COLECCIÓN ACTIVA ---
+  If $iColeccionActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione primero una colección.")
+    Return
+  Endif
+
+  iRow = gvColecciones.Row
+  If iRow < 0 Or If Not $aColeccionesActivas[iRow] Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pueden crear series en una colección inactiva.")
+    Return
+  Endif
+
+  ' --- 2. INSERT MÍNIMO ---
+  Try hConnServidor.Exec(
+    "INSERT INTO series (id_coleccion, nombre, activa, usuario_creacion) " &
+    "VALUES (&1, &2, 1, &3)",
+    $iColeccionActual, "(Nueva serie)", sUsuarioActual)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al crear serie:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  iNuevoId = hConnServidor.LastInsertId
+
+  ' --- 3. REFRESH SERIES (COLECCIÓN ACTIVA) ---
+  CargarSeriesDeColeccion($iColeccionActual, True)
+
+  ' --- 4. AUTOSELECT ---
+  For iIndex = 0 To $aIdsSeries.Count - 1
+    If $aIdsSeries[iIndex] = iNuevoId Then
+      lbSeries.Index = iIndex
+      lbSeries_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("Info")
+  nombreSerie.SetFocus()
+  nombreSerie.SelectAll()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnGuardarCambiosColeccion_Click
+' Propósito : UPDATE de la colección usando patrón Edit+Update. Si `activa`
+'             cambió respecto del estado original, aplica cascada a `series`
+'             dentro de una transacción atómica.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardarCambiosColeccion_Click()
+
+  Dim rColec As Result
+  Dim bActivaNueva As Boolean
+  Dim bCambioCascada As Boolean
+  Dim iRowGuardado As Integer
+
+  ' --- 1. VALIDAR COLECCIÓN ACTIVA ---
+  If $iColeccionActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay colección seleccionada.")
+    Return
+  Endif
+
+  ' --- 2. VALIDACIONES DE CAMPO ---
+  If Trim(nombreColeccion.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de la colección no puede quedar vacío.")
+    nombreColeccion.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. DETERMINAR SI HAY CAMBIO DE ESTADO (PARA CASCADA) ---
+  bActivaNueva = activaColeccion.Value
+  bCambioCascada = (bActivaNueva <> $bActivaColeccionOriginal)
+
+  iRowGuardado = gvColecciones.Row
+
+  ' --- 4. EJECUTAR TRANSACCIÓN ---
+  Try hConnServidor.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al iniciar transacción:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4.1 EDIT + UPDATE COLECCIÓN ---
+  Try rColec = hConnServidor.Edit("colecciones", "id_coleccion = &1", $iColeccionActual)
+  If Error Then
+    hConnServidor.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("Error al abrir la colección para edición:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  With rColec
+    !nombre = Trim(nombreColeccion.Text)
+    !nombre_abreviado = If(Trim(nombreAbreviadoColeccion.Text) = "", Null, Trim(nombreAbreviadoColeccion.Text))
+    !issn = If(Trim(issnColeccion.Text) = "", Null, Trim(issnColeccion.Text))
+    !doi_prefix = If(Trim(doiPrefixColeccion.Text) = "", Null, Trim(doiPrefixColeccion.Text))
+    !editorial = If(Trim(editorialColeccion.Text) = "", Null, Trim(editorialColeccion.Text))
+    !director_coleccion = If(Trim(directorColeccion.Text) = "", Null, Trim(directorColeccion.Text))
+    !email_contacto = If(Trim(emailContactoColeccion.Text) = "", Null, Trim(emailContactoColeccion.Text))
+    !descripcion = If(Trim(descripcionColeccion.Text) = "", Null, descripcionColeccion.Text)
+    !area_conocimiento = If(Trim(areaConocimientoColeccion.Text) = "", Null, Trim(areaConocimientoColeccion.Text))
+    !disciplina = If(Trim(disciplinaColeccion.Text) = "", Null, Trim(disciplinaColeccion.Text))
+
+    ' AÑOS (YEAR EN BD): NULL SI VACÍO
+    If Trim(anoInicioColeccion.Text) = "" Then
+      !ano_inicio = Null
+    Else
+      !ano_inicio = Val(Trim(anoInicioColeccion.Text))
+    Endif
+
+    If Trim(anoFinColeccion.Text) = "" Then
+      !ano_fin = Null
+    Else
+      !ano_fin = Val(Trim(anoFinColeccion.Text))
+    Endif
+
+    !activa = If(bActivaNueva, 1, 0)
+    !url_coleccion = If(Trim(urlColeccion.Text) = "", Null, Trim(urlColeccion.Text))
+    !url_logo = If(Trim(urlLogoColeccion.Text) = "", Null, Trim(urlLogoColeccion.Text))
+    !notas_internas = If(Trim(notasInternasColeccion.Text) = "", Null, notasInternasColeccion.Text)
+
+    Try .Update()
+    If Error Then
+      hConnServidor.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar colección:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  End With
+
+  ' --- 4.2 CASCADA A SERIES SI EL ESTADO CAMBIÓ ---
+  If bCambioCascada Then
+    Try hConnServidor.Exec(
+      "UPDATE series SET activa = &1 WHERE id_coleccion = &2",
+      If(bActivaNueva, 1, 0), $iColeccionActual)
+
+      If Error Then
+        hConnServidor.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("Error al actualizar series en cascada:" & Chr(10) & Error.Text)
+        Return
+      Endif
+    Endif
+
+    ' --- 4.3 COMMIT ---
+    Try hConnServidor.Commit()
+    If Error Then
+      hConnServidor.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("Error al confirmar cambios:" & Chr(10) & Error.Text)
+      Return
+    Endif
+
+    ' --- 5. REFRESH MANTENIENDO SELECCIÓN ---
+    m_Sonido.sonar("Info")
+    CargarColecciones()
+
+    If iRowGuardado >= 0 And If iRowGuardado < $aIdsColecciones.Count Then
+      gvColecciones.Row = iRowGuardado
+      gvColecciones_Click()
+    Endif
+
+    ' --- 6. MENSAJE FINAL CON CONTEXTO ---
+    If bCambioCascada Then
+      If bActivaNueva Then
+        Message.Info("Colección guardada y reactivada (con sus series).")
+      Else
+        Message.Info("Colección guardada y desactivada (con sus series).")
+      Endif
+    Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnGuardarCambiosSerie_Click
+' Propósito : UPDATE de la serie usando patrón Edit+Update. Sin cascadas.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardarCambiosSerie_Click()
+
+  Dim rSerie As Result
+  Dim iIndexGuardado As Integer
+  Dim iRow As Integer
+  Dim bColActiva As Boolean
+
+  ' --- 1. VALIDAR SERIE ACTIVA ---
+  If $iSerieActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay serie seleccionada.")
+    Return
+  Endif
+
+  ' --- 2. VALIDACIONES DE CAMPO ---
+  If Trim(nombreSerie.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de la serie no puede quedar vacío.")
+    nombreSerie.SetFocus()
+    Return
+  Endif
+
+  iIndexGuardado = lbSeries.Index
+
+  ' --- 3. EDIT + UPDATE ---
+  Try rSerie = hConnServidor.Edit("series", "id_serie = &1", $iSerieActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al abrir la serie para edición:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  With rSerie
+    !nombre = Trim(nombreSerie.Text)
+    !nombre_abreviado = If(Trim(nombreAbreviadoSerie.Text) = "", Null, Trim(nombreAbreviadoSerie.Text))
+    !issn = If(Trim(issnSerie.Text) = "", Null, Trim(issnSerie.Text))
+    !coordinador_serie = If(Trim(coordinadorSerie.Text) = "", Null, Trim(coordinadorSerie.Text))
+    !descripcion = If(Trim(descripcionSerie.Text) = "", Null, descripcionSerie.Text)
+
+    If Trim(anoInicioSerie.Text) = "" Then
+      !ano_inicio = Null
+    Else
+      !ano_inicio = Val(Trim(anoInicioSerie.Text))
+    Endif
+
+    If Trim(anoFinSerie.Text) = "" Then
+      !ano_fin = Null
+    Else
+      !ano_fin = Val(Trim(anoFinSerie.Text))
+    Endif
+
+    !notas_internas = If(Trim(notasInternasSerie.Text) = "", Null, notasInternasSerie.Text)
+
+    Try .Update()
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar serie:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  End With
+
+  ' --- 4. REFRESH MANTENIENDO SELECCIÓN ---
+  m_Sonido.sonar("Info")
+
+  iRow = gvColecciones.Row
+  If iRow >= 0 And If iRow < $aColeccionesActivas.Count Then
+    bColActiva = $aColeccionesActivas[iRow]
+  Else
+    bColActiva = True
+  Endif
+
+  CargarSeriesDeColeccion($iColeccionActual, bColActiva)
+
+  If iIndexGuardado >= 0 And If iIndexGuardado < lbSeries.Count Then
+    lbSeries.Index = iIndexGuardado
+    lbSeries_Click()
   Endif
 
 End

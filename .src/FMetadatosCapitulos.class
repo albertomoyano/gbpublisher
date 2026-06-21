@@ -14,7 +14,6 @@
 '    iLibroActual          id del libro padre (obtenido desde libros_md)
 '    aIdsParte             array paralelo al ComboBox id_parte (FK)
 '    aIdsAutores           array paralelo al listadoAutores (futuro)
-'    iAutorSeleccionado    índice del autor en listadoAutores (futuro)
 '    iAutorCreditActual    id del autor activo para taxonomia_credit (futuro)
 
 Private bCierrePermitido As Boolean
@@ -22,7 +21,6 @@ Private iCapituloActual As Integer = 0
 Private iLibroActual As Integer = 0
 Private aIdsParte As New Integer[]
 Private aIdsAutores As New Integer[]
-Public iAutorSeleccionado As Integer = 0
 Private iAutorCreditActual As Integer = 0
 
 ' ════════════════════════════════════════════════════════════════════════════
@@ -354,11 +352,14 @@ Public Sub gbCapitulos_Click()
   iIdCapitulo = Val(gbCapitulos[iRow, 0].Text)
   If iIdCapitulo <= 0 Then Return
 
-  ' --- 3. DELEGAR LA CARGA A m_Metadatos ---
+  ' --- 3. DELEGAR LA CARGA DE METADATOS A m_Metadatos ---
   m_Metadatos.CargarMetadatosDeCapitulo(iIdCapitulo)
   iCapituloActual = iIdCapitulo
 
-  ' --- 4. HABILITAR BOTONES DE EDICIÓN ---
+  ' --- 4. CARGAR EL LISTADO DE AUTORES DEL CAPÍTULO ---
+  CargarAutoresCapitulo(iIdCapitulo)
+
+  ' --- 5. HABILITAR BOTONES DE EDICIÓN ---
   HabilitarBotonesCapitulo(True)
 
 End
@@ -598,10 +599,11 @@ Private Sub LimpiarFormulario()
   responsable_edicion.Clear()
   notas_internas.Clear()
 
-  ' --- LIMPIAR LISTADO DE AUTORES (FUTURO) ---
+  ' --- LIMPIAR LISTADO DE AUTORES Y ESTADO ASOCIADO ---
   listadoAutores.Clear()
   aIdsAutores = New Integer[]
   iAutorCreditActual = 0
+  btnCreditRoles.Enabled = False
 
 End
 
@@ -724,6 +726,425 @@ Public Sub SeleccionarPartePorId(iId As Integer)
 End
 
 ' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnVincularAutor_Click
+' Propósito : Abrir FAutores modal para que el usuario elija un autor de la
+'             tabla autores y vincularlo al capítulo activo.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnVincularAutor_Click()
+
+  ' --- 1. VALIDAR QUE HAY CAPÍTULO ACTIVO ---
+  If iCapituloActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un capítulo antes de vincular autores.")
+    Return
+  Endif
+
+  ' --- 2. RESET DEL CANAL DE COMUNICACIÓN CON FAutores ---
+  ' LA VARIABLE VIVE EN m_FuncionesGenericas PORQUE FAutores SE DESTRUYE
+  ' AL CERRAR EL MODAL Y SUS VARIABLES Public NO PERSISTEN.
+  m_FuncionesGenericas.iAutorSeleccionadoEnFAutores = 0
+
+  ' --- 3. ABRIR EL MODAL DE SELECCIÓN ---
+  m_Sonido.sonar("Info")
+  FAutores.ShowModal()
+
+  ' --- 4. SI EL USUARIO ELIGIÓ UN AUTOR, VINCULARLO ---
+  If m_FuncionesGenericas.iAutorSeleccionadoEnFAutores > 0 Then
+    VincularAutorAlCapitulo(m_FuncionesGenericas.iAutorSeleccionadoEnFAutores)
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : VincularAutorAlCapitulo
+' Propósito : Insertar la relación (id_capitulo, id_autor) en capitulo_autor
+'             con orden_autoria = MAX+1. Verifica duplicados antes de
+'             insertar. Refresca el listadoAutores al terminar.
+' Parámetros: iIdAutor As Integer — id del autor a vincular
+' ════════════════════════════════════════════════════════════════════════════
+
+Private Sub VincularAutorAlCapitulo(iIdAutor As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iOrden As Integer
+
+  ' --- 1. VERIFICAR QUE EL AUTOR NO ESTÉ YA VINCULADO ---
+  sQuery = "SELECT COUNT(*) AS total FROM capitulo_autor " &
+    "WHERE id_capitulo = &1 AND id_autor = &2"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iCapituloActual, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al verificar autor:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If $result!total > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Este autor ya está vinculado al capítulo.")
+    Return
+  Endif
+
+  ' --- 2. CALCULAR EL SIGUIENTE orden_autoria ---
+  ' RC-GM-09: USAR MAX + 1, NO COUNT + 1
+  sQuery = "SELECT IFNULL(MAX(orden_autoria), 0) + 1 AS siguiente " &
+    "FROM capitulo_autor WHERE id_capitulo = &1"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iCapituloActual)
+  If Error Then
+    iOrden = 1
+  Else
+    iOrden = $result!siguiente
+  Endif
+
+  ' --- 3. INSERT EN capitulo_autor ---
+  ' SNAPSHOTS DE AFILIACIÓN/EMAIL QUEDAN NULL: SE COMPLETAN MANUALMENTE SI
+  ' EL EDITOR QUIERE OVERRIDE DEL DATO ACTUAL DE autores.
+  sQuery = "INSERT INTO capitulo_autor (" &
+    "id_capitulo, id_autor, orden_autoria, rol_autor, publicar_email, " &
+    "fecha_asignacion, usuario_asignacion" &
+    ") VALUES (" &
+    "&1, &2, &3, 'autor', 0, NOW(), &4" &
+    ")"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery,
+    iCapituloActual, iIdAutor, iOrden, m_InicioCierre.UsuarioEnCurso)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al vincular autor:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. REFRESCAR EL LISTADO ---
+  m_Sonido.sonar("ok")
+  CargarAutoresCapitulo(iCapituloActual)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnDesvincularAutor_Click
+' Propósito : Eliminar el vínculo capitulo_autor del autor seleccionado en
+'             listadoAutores. Compactar los orden_autoria posteriores.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnDesvincularAutor_Click()
+
+  Dim iIndice As Integer
+  Dim iIdAutor As Integer
+  Dim sQuery As String
+
+  ' --- 1. VALIDAR CAPÍTULO ACTIVO ---
+  If iCapituloActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay capítulo seleccionado.")
+    Return
+  Endif
+
+  ' --- 2. VALIDAR SELECCIÓN EN LISTADO ---
+  iIndice = listadoAutores.Index
+  If iIndice < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione un autor del listado antes de desvincular.")
+    Return
+  Endif
+
+  If aIdsAutores.Count = 0 Or If iIndice >= aIdsAutores.Count Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo obtener el ID del autor seleccionado.")
+    Return
+  Endif
+
+  iIdAutor = aIdsAutores[iIndice]
+
+  ' --- 3. CONFIRMAR ---
+  m_Sonido.sonar("info")
+  If Message.Question("¿Desvincular este autor del capítulo?", "Sí", "No") = 2 Then
+    Return
+  Endif
+
+  ' --- 4. DELETE ---
+  sQuery = "DELETE FROM capitulo_autor WHERE id_capitulo = &1 AND id_autor = &2"
+  Try m_ConexionBD.mConn.Exec(sQuery, iCapituloActual, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al desvincular autor:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. COMPACTAR orden_autoria DE LOS AUTORES POSTERIORES ---
+  ' SIN ESTO QUEDARÍAN HUECOS (1, 3, 4) DESPUÉS DE BORRAR EL 2.
+  ' SE COMPACTA SIN BUSCAR EL ORDEN DEL ELIMINADO PORQUE YA NO EXISTE.
+  sQuery = "SET @rownum := 0"
+  Try m_ConexionBD.mConn.Exec(sQuery)
+
+  sQuery = "UPDATE capitulo_autor SET orden_autoria = (@rownum := @rownum + 1) " &
+    "WHERE id_capitulo = &1 ORDER BY orden_autoria"
+  Try m_ConexionBD.mConn.Exec(sQuery, iCapituloActual)
+
+  ' --- 6. LIMPIAR UI Y REFRESCAR ---
+  m_Sonido.sonar("ok")
+  autor_seleccionado.Clear()
+  rol_autor.Text = "autor"
+  publicar_email.Value = False
+  taxonomia_credit.Text = ""
+  iAutorCreditActual = 0
+  btnCreditRoles.Enabled = False
+  CargarAutoresCapitulo(iCapituloActual)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : listadoAutores_Click
+' Propósito : Cargar en el editor los datos del autor seleccionado en el
+'             listado. Hace autosave del CRediT del autor anterior antes
+'             de cambiar. Pre-rellena CRediT desde credit_roles_tipicos
+'             de la tabla autores si no hay dato guardado.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub listadoAutores_Click()
+
+  Dim iIndice As Integer
+  Dim iIdAutor As Integer
+  Dim $result As Result
+  Dim sQuery As String
+  Dim sCreditGuardado As String
+  Dim sCreditTipico As String
+
+  ' --- 1. AUTOSAVE DEL CRediT DEL AUTOR ANTERIOR ---
+  ' SI EL USUARIO ESTABA EDITANDO CRediT DE OTRO AUTOR Y CAMBIA DE FILA,
+  ' GUARDAR ANTES DE CARGAR EL NUEVO PARA NO PERDER EL CAMBIO.
+  If iAutorCreditActual > 0 Then
+    m_Metadatos.GuardarCreditAutorCapitulo(iCapituloActual, iAutorCreditActual, taxonomia_credit.Text)
+  Endif
+
+  ' --- 2. VALIDAR ÍNDICE DEL ITEM SELECCIONADO ---
+  iIndice = listadoAutores.Index
+  If iIndice < 0 Then
+    autor_seleccionado.Text = ""
+    rol_autor.Text = "autor"
+    publicar_email.Value = False
+    taxonomia_credit.Text = ""
+    btnCreditRoles.Enabled = False
+    iAutorCreditActual = 0
+    Return
+  Endif
+
+  ' --- 3. VALIDAR ARRAY PARALELO ---
+  If aIdsAutores.Count = 0 Or If iIndice >= aIdsAutores.Count Then
+    autor_seleccionado.Text = ""
+    rol_autor.Text = "autor"
+    publicar_email.Value = False
+    taxonomia_credit.Text = ""
+    btnCreditRoles.Enabled = False
+    iAutorCreditActual = 0
+    Return
+  Endif
+
+  ' --- 4. OBTENER id_autor DESDE EL ARRAY PARALELO ---
+  iIdAutor = aIdsAutores[iIndice]
+
+  ' --- 5. CONSULTAR DATOS DEL AUTOR + DATOS DE LA RELACIÓN ---
+  sQuery = "SELECT a.apellidos, a.nombre, a.credit_roles_tipicos, " &
+    "ca.rol_autor, ca.publicar_email, ca.taxonomia_credit " &
+    "FROM autores a " &
+    "INNER JOIN capitulo_autor ca ON a.id_autor = ca.id_autor " &
+    "WHERE ca.id_capitulo = &1 AND ca.id_autor = &2"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iCapituloActual, iIdAutor)
+  If Error Or If Not $result.Available Then
+    autor_seleccionado.Text = ""
+    rol_autor.Text = "autor"
+    publicar_email.Value = False
+    taxonomia_credit.Text = ""
+    btnCreditRoles.Enabled = False
+    iAutorCreditActual = 0
+    Return
+  Endif
+
+  ' --- 6. MOSTRAR APELLIDOS, NOMBRE EN EL TEXTBOX ---
+  autor_seleccionado.Text = $result!apellidos & ", " & $result!nombre
+
+  ' --- 7. CARGAR rol_autor Y publicar_email DE LA RELACIÓN ---
+  rol_autor.Text = $result!rol_autor
+  ' RC-GM-01: TINYINT(1) ES BOOLEAN
+  publicar_email.Value = $result!publicar_email
+
+  ' --- 8. CARGAR CRediT: GUARDADO O PRE-RELLENADO DESDE ROLES TÍPICOS ---
+  sCreditGuardado = If(IsNull($result!taxonomia_credit), "", Trim($result!taxonomia_credit))
+  If sCreditGuardado <> "" Then
+    taxonomia_credit.Text = sCreditGuardado
+  Else
+    sCreditTipico = If(IsNull($result!credit_roles_tipicos), "", Trim($result!credit_roles_tipicos))
+    taxonomia_credit.Text = sCreditTipico
+  Endif
+
+  ' --- 9. HABILITAR BOTÓN CRediT Y REGISTRAR AUTOR ACTIVO ---
+  btnCreditRoles.Enabled = True
+  iAutorCreditActual = iIdAutor
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarAutoresCapitulo
+' Propósito : Leer capitulo_autor del capítulo indicado, poblar el ListBox
+'             listadoAutores y el array paralelo aIdsAutores. Sufija "(traductor)"
+'             cuando el rol no es 'autor'.
+' Parámetros: iIdCapitulo As Integer — id del capítulo a leer
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarAutoresCapitulo(iIdCapitulo As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim sNombreCompleto As String
+
+  sQuery = "SELECT a.id_autor, a.nombre, a.apellidos, " &
+    "ca.orden_autoria, ca.rol_autor " &
+    "FROM capitulo_autor ca " &
+    "INNER JOIN autores a ON ca.id_autor = a.id_autor " &
+    "WHERE ca.id_capitulo = &1 " &
+    "ORDER BY ca.orden_autoria"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iIdCapitulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar autores del capítulo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- LIMPIAR LISTADO Y ARRAY ANTES DE REPOBLAR ---
+  listadoAutores.Clear()
+  aIdsAutores.Clear()
+  iAutorCreditActual = 0
+  btnCreditRoles.Enabled = False
+  autor_seleccionado.Text = ""
+
+  If Not $result.Available Then Return
+
+  ' --- ITERAR Y POBLAR ---
+  For Each $result
+    sNombreCompleto = $result!apellidos & ", " & $result!nombre
+    If $result!rol_autor <> "autor" Then
+      sNombreCompleto &= " (" & $result!rol_autor & ")"
+    Endif
+    listadoAutores.Add(sNombreCompleto)
+    aIdsAutores.Add($result!id_autor)
+  Next
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : rol_autor_Click
+' Propósito : Persistir inmediatamente el cambio de rol_autor en
+'             capitulo_autor (RC-GM-03: guardar en el evento, no en el
+'             botón). Refrescar el listadoAutores para que el sufijo
+'             "(traductor)" aparezca/desaparezca según el nuevo rol.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub rol_autor_Click()
+
+  Dim iIndice As Integer
+  Dim iIdAutor As Integer
+
+  ' --- 1. VALIDACIONES DE GUARDIA ---
+  If iCapituloActual <= 0 Then Return
+  iIndice = listadoAutores.Index
+  If iIndice < 0 Or If iIndice >= aIdsAutores.Count Then Return
+
+  iIdAutor = aIdsAutores[iIndice]
+
+  ' --- 2. UPDATE INMEDIATO ---
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE capitulo_autor SET rol_autor = &1 " &
+    "WHERE id_capitulo = &2 AND id_autor = &3",
+    rol_autor.Text, iCapituloActual, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al actualizar rol del autor:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. REFRESCAR EL LISTADO PARA QUE EL SUFIJO SE ACTUALICE ---
+  ' GUARDAMOS EL ÍNDICE PORQUE Clear+Add LO PIERDE
+  Dim iIndiceGuardado As Integer = iIndice
+  CargarAutoresCapitulo(iCapituloActual)
+  If iIndiceGuardado < listadoAutores.Count Then
+    listadoAutores.Index = iIndiceGuardado
+    listadoAutores_Click()
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : publicar_email_Click
+' Propósito : Persistir inmediatamente el cambio de publicar_email en
+'             capitulo_autor (RC-GM-03).
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub publicar_email_Click()
+
+  Dim iIndice As Integer
+  Dim iIdAutor As Integer
+  Dim iValor As Integer
+
+  ' --- 1. VALIDACIONES DE GUARDIA ---
+  If iCapituloActual <= 0 Then Return
+  iIndice = listadoAutores.Index
+  If iIndice < 0 Or If iIndice >= aIdsAutores.Count Then Return
+
+  iIdAutor = aIdsAutores[iIndice]
+
+  ' --- 2. CONVERTIR Boolean A 0/1 ---
+  iValor = If(publicar_email.Value = -1, 1, 0)
+
+  ' --- 3. UPDATE INMEDIATO ---
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE capitulo_autor SET publicar_email = &1 " &
+    "WHERE id_capitulo = &2 AND id_autor = &3",
+    iValor, iCapituloActual, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al actualizar publicar_email:" & Chr(10) & Error.Text)
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnCreditRoles_Click
+' Propósito : Abrir FCreditRoles modal para editar la taxonomía CRediT del
+'             autor activo. Detecta cancelación por comparación de variable
+'             global. Guarda inmediato vía m_Metadatos.GuardarCreditAutorCapitulo.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnCreditRoles_Click()
+
+  Dim sCreditAnterior As String
+
+  ' --- 1. VALIDACIONES DE GUARDIA ---
+  If iCapituloActual <= 0 Then Return
+  If listadoAutores.Index < 0 Then Return
+  If iAutorCreditActual <= 0 Then Return
+
+  ' --- 2. PASAR EL CRediT ACTUAL AL MODAL ---
+  m_FuncionesGenericas.sCreditSeleccionado = taxonomia_credit.Text
+
+  ' --- 3. GUARDAR VALOR PREVIO PARA DETECTAR CANCELACIÓN ---
+  sCreditAnterior = taxonomia_credit.Text
+
+  ' --- 4. ABRIR EL MODAL ---
+  FCreditRoles.ShowModal()
+
+  ' --- 5. SI EL USUARIO CANCELÓ, LA VARIABLE NO CAMBIÓ ---
+  If m_FuncionesGenericas.sCreditSeleccionado = sCreditAnterior Then Return
+
+  ' --- 6. APLICAR EL NUEVO VALOR AL TEXTBOX ---
+  taxonomia_credit.Text = m_FuncionesGenericas.sCreditSeleccionado
+
+  ' --- 7. GUARDAR INMEDIATAMENTE EN BD (función centralizada en m_Metadatos) ---
+  m_Metadatos.GuardarCreditAutorCapitulo(iCapituloActual, iAutorCreditActual, taxonomia_credit.Text)
+
+  ' --- 8. FEEDBACK AUDITIVO ---
+  m_Sonido.sonar("Info")
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
 ' EVENTOS DE CIERRE (heredados del .class original)
 ' ════════════════════════════════════════════════════════════════════════════
 
@@ -749,5 +1170,103 @@ End
 Public Sub hbCapitulos_Resize()
 
   hbCapitulos.Layout = [1, 1]
+
+End
+
+Public Sub btnTituloCapitulo_Click()
+
+  FTXTextendido.OriginalTextBox = titulo_capitulo
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnSubTituloCapitulo_Click()
+
+  FTXTextendido.OriginalTextBox = subtitulo
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnAuthorNotes_Click()
+
+  FTXTextendido.OriginalTextBox = author_notes
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnResumen1_Click()
+
+  FTXTextendido.OriginalTextBox = resumen_1
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnResumen2_Click()
+
+  FTXTextendido.OriginalTextBox = resumen_2
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnResumen3_Click()
+
+  FTXTextendido.OriginalTextBox = resumen_3
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnPalabrasClave1_Click()
+
+  FTXTextendido.OriginalTextBox = palabras_clave_1
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnPalabrasClave2_Click()
+
+  FTXTextendido.OriginalTextBox = palabras_clave_2
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnPalabrasClave3_Click()
+
+  FTXTextendido.OriginalTextBox = palabras_clave_3
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnMaterialSuplementario_Click()
+
+  FTXTextendido.OriginalTextBox = material_suplementario
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnFinanciamiento_Click()
+
+  FTXTextendido.OriginalTextBox = financiamiento
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnDeclaracionEtica_Click()
+
+  FTXTextendido.OriginalTextBox = declaracion_etica
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnDataAvailabilityStatement_Click()
+
+  FTXTextendido.OriginalTextBox = data_availability_statement
+  FTXTextendido.ShowModal
+
+End
+
+Public Sub btnNotasInternas_Click()
+
+  FTXTextendido.OriginalTextBox = notas_internas
+  FTXTextendido.ShowModal
 
 End
