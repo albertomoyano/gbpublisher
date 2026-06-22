@@ -691,7 +691,25 @@
        ================================================ -->
   <xsl:template name="xref-autor-anio-epub">
     <xsl:variable name="rid" select="@rid"/>
+    <!-- CITEKEY VISIBLE: rid SIN EL PREFIJO INTERNO bib- (PARA RENDER A USUARIO) -->
+    <xsl:variable name="citekey"
+                  select="if (starts-with($rid, 'bib-')) then substring-after($rid, 'bib-') else $rid"/>
     <xsl:variable name="cit" select="//ref[@id=$rid]/element-citation"/>
+
+    <!-- CITA HUÉRFANA: rid NO ENCONTRADO EN reflist.
+         CAUSAS TÍPICAS: typo en la key del .md, key cortada por Pandoc en doble guion,
+         ref no extraída por el generador del reflist, key con caracteres no válidos. -->
+    <xsl:if test="count($cit) = 0">
+      <xsl:message>[gbpublisher] Cita huérfana: <xsl:value-of select="$citekey"/> no existe en el reflist.</xsl:message>
+      <span class="xref-bibr-orphan" title="Referencia no encontrada en la bibliografía">
+        <xsl:text>[?</xsl:text>
+        <xsl:value-of select="$citekey"/>
+        <xsl:text>]</xsl:text>
+      </span>
+    </xsl:if>
+
+    <!-- RENDER NORMAL SOLO CUANDO HAY ref ASOCIADA -->
+    <xsl:if test="count($cit) &gt; 0">
     <xsl:variable name="autor">
       <xsl:choose>
         <xsl:when test="$cit/person-group[@person-group-type='author']/name">
@@ -745,7 +763,7 @@
         <xsl:when test="$cit/person-group/name[1]/surname">
           <xsl:value-of select="$cit/person-group/name[1]/surname"/>
         </xsl:when>
-        <xsl:otherwise><xsl:value-of select="$rid"/></xsl:otherwise>
+        <xsl:otherwise><xsl:value-of select="$citekey"/></xsl:otherwise>
       </xsl:choose>
     </xsl:variable>
     <xsl:variable name="anio" select="$cit/year"/>
@@ -811,6 +829,7 @@
         <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
       </xsl:otherwise>
     </xsl:choose>
+    </xsl:if>
   </xsl:template>
 
   <!-- ================================================

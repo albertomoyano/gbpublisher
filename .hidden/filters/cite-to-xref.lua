@@ -11,6 +11,30 @@
 --   Note  → CONVIERTE NOTAS AL PIE A <fn> INLINE
 -- =====================================================
 
+-- =====================================================
+-- HELPERS DE ESCAPE XML
+-- =====================================================
+-- ESCAPADO XML PARA TEXTO DE ELEMENTO
+-- ORDEN OBLIGATORIO: & PRIMERO PARA EVITAR DOBLE ESCAPE
+local function escape_xml_text(s)
+  if s == nil then return '' end
+  s = s:gsub('&', '&amp;')
+  s = s:gsub('<', '&lt;')
+  s = s:gsub('>', '&gt;')
+  return s
+end
+
+-- ESCAPADO XML PARA VALOR DE ATRIBUTO (CON COMILLAS DOBLES)
+-- ORDEN OBLIGATORIO: & PRIMERO PARA EVITAR DOBLE ESCAPE
+local function escape_xml_attr(s)
+  if s == nil then return '' end
+  s = s:gsub('&', '&amp;')
+  s = s:gsub('<', '&lt;')
+  s = s:gsub('>', '&gt;')
+  s = s:gsub('"', '&quot;')
+  return s
+end
+
 -- CONVIERTE CITAS PANDOC A <xref ref-type="bibr"> CON MODO DE CITA
 -- SIN USAR --citeproc NI NECESITAR ARCHIVO .bib
 -- PRESERVA EL MODO DEL AST DE PANDOC EN specific-use="modo|prefijo|sufijo":
@@ -38,16 +62,34 @@ function Cite(el)
     -- PANDOC INCLUYE LA COMA SEPARADORA EN EL SUFIJO: ", p. 5" → "p. 5"
     sufijo = sufijo:gsub("^,%s*", "")
 
+    -- NORMALIZAR LLAVES DE LOCATOR EXPLÍCITO (SINTAXIS PANDOC AVANZADA):
+    -- LAS LLAVES SON DELIMITADOR DE LOCATOR EN PANDOC, NO TEXTO RENDERIZABLE.
+    -- DEBEN DESAPARECER EN EL CANÓNICO PARA QUE EL XSL NO LAS MUESTRE EN PANTALLA.
+    -- CASO 1: "{}, X"      → "X"    (locator vacío explícito + sufijo real)
+    -- CASO 2: "{}X"        → "X"    (locator vacío sin coma separadora)
+    -- CASO 3: "{X}"        → "X"    (locator forzado entre llaves)
+    -- CASO 4: "{X}, Y"     → "X, Y" (locator entre llaves + sufijo real)
+    -- CASO 5: "X {Y} Z"    → "X Y Z" (llaves embebidas, raro pero seguro de tratar)
+    -- ORDEN: PRIMERO LLAVES VACÍAS (PATRÓN MÁS ESPECÍFICO), DESPUÉS NO-VACÍAS
+    sufijo = sufijo:gsub("^%{%}%s*,?%s*", "")  -- CASO 1 Y 2
+    sufijo = sufijo:gsub("%{(.-)%}", "%1")     -- CASOS 3, 4, 5
+
     -- CONSTRUIR ATRIBUTO specific-use SOLO SI APORTA INFORMACIÓN
     -- FORMATO: "modo|prefijo|sufijo"
     local specific_use = ""
     if modo ~= "normal" or prefijo ~= "" or sufijo ~= "" then
-      specific_use = ' specific-use="' .. modo .. '|' .. prefijo .. '|' .. sufijo .. '"'
+      specific_use = ' specific-use="' .. modo .. '|' ..
+                     escape_xml_attr(prefijo) .. '|' ..
+                     escape_xml_attr(sufijo) .. '"'
     end
 
+    -- ESCAPAR citation.id PARA AMBOS CONTEXTOS:
+    -- ATRIBUTO rid (escape_xml_attr) Y TEXTO DEL ELEMENTO (escape_xml_text)
+    local id_attr = escape_xml_attr(citation.id)
+    local id_text = escape_xml_text(citation.id)
     local xref = pandoc.RawInline('jats',
-      '<xref ref-type="bibr" rid="bib-' .. citation.id .. '"' .. specific_use .. '>' ..
-      citation.id .. '</xref>')
+      '<xref ref-type="bibr" rid="bib-' .. id_attr .. '"' .. specific_use .. '>' ..
+      id_text .. '</xref>')
     table.insert(result, xref)
     if i < #el.citations then
       table.insert(result, pandoc.RawInline('jats', ', '))
@@ -95,10 +137,11 @@ function Div(el)
                 local href = inline.src
                 local alt  = pandoc.utils.stringify(inline.caption)
                 local ext  = href:match("%.(%w+)$") or "png"
+                -- ESCAPAR: href Y ext VAN A ATRIBUTO, alt VA A TEXTO DE ELEMENTO
                 local raw  = '<fig id="fig-' .. fig_counter .. '">\n' ..
-                             '  <caption><p>' .. alt .. '</p></caption>\n' ..
-                             '  <graphic mimetype="image" mime-subtype="' .. ext .. '"' ..
-                             ' xlink:href="' .. href .. '"/>\n' ..
+                             '  <caption><p>' .. escape_xml_text(alt) .. '</p></caption>\n' ..
+                             '  <graphic mimetype="image" mime-subtype="' .. escape_xml_attr(ext) .. '"' ..
+                             ' xlink:href="' .. escape_xml_attr(href) .. '"/>\n' ..
                              '</fig>'
                 return pandoc.RawBlock('jats', raw)
               end
@@ -143,13 +186,15 @@ function Div(el)
     end
     local raw
     if attrib then
+      -- ESCAPAR: texto Y attrib VAN A TEXTO DE ELEMENTO
       raw = '<disp-quote specific-use="epigraph">\n' ..
-            '  <p>' .. texto .. '</p>\n' ..
-            '  <attrib>' .. attrib .. '</attrib>\n' ..
+            '  <p>' .. escape_xml_text(texto) .. '</p>\n' ..
+            '  <attrib>' .. escape_xml_text(attrib) .. '</attrib>\n' ..
             '</disp-quote>'
     else
+      -- ESCAPAR: plain VA A TEXTO DE ELEMENTO
       raw = '<disp-quote specific-use="epigraph">\n' ..
-            '  <p>' .. plain .. '</p>\n' ..
+            '  <p>' .. escape_xml_text(plain) .. '</p>\n' ..
             '</disp-quote>'
     end
     return pandoc.RawBlock('jats', raw)
@@ -169,7 +214,8 @@ function Div(el)
       if block.t == 'Para' or block.t == 'Plain' then
         for _, inline in ipairs(block.content) do
           if inline.t == 'Str' then
-            table.insert(tokens, inline.text)
+            -- ESCAPAR: el texto va dentro de <verse-line>, contexto de texto de elemento
+            table.insert(tokens, escape_xml_text(inline.text))
           elseif inline.t == 'SoftBreak' or inline.t == 'LineBreak' then
             table.insert(tokens, '\n')
           elseif inline.t == 'Space' then
@@ -223,7 +269,8 @@ function Div(el)
     content = content:gsub('>', '&gt;')
     local lang_attr = ''
     if language ~= '' then
-      lang_attr = ' language="' .. language .. '"'
+      -- ESCAPAR: language va a atributo
+      lang_attr = ' language="' .. escape_xml_attr(language) .. '"'
     end
     local raw = '<code' .. lang_attr .. '>' .. content .. '</code>'
     return pandoc.RawBlock('jats', raw)
@@ -242,7 +289,8 @@ function Div(el)
     content_jats = content_jats:gsub("^%s+", ""):gsub("%s+$", "")
     local type_attr = ''
     if box_type ~= '' then
-      type_attr = ' content-type="' .. box_type .. '"'
+      -- ESCAPAR: box_type va a atributo
+      type_attr = ' content-type="' .. escape_xml_attr(box_type) .. '"'
     end
     local raw = '<boxed-text' .. type_attr .. '>\n' ..
                 content_jats .. '\n' ..
@@ -272,7 +320,8 @@ function Div(el)
     end
     local id_attr = ''
     if eq_id ~= '' then
-      id_attr = ' id="' .. eq_id .. '"'
+      -- ESCAPAR: eq_id va a atributo
+      id_attr = ' id="' .. escape_xml_attr(eq_id) .. '"'
     end
     local raw = '<disp-formula' .. id_attr .. '>\n' ..
                 '  <tex-math><![CDATA[' .. math_text .. ']]></tex-math>\n' ..
@@ -293,7 +342,8 @@ function Div(el)
     content_jats = content_jats:gsub("^%s+", ""):gsub("%s+$", "")
     local raw = '<speech>\n'
     if speaker ~= '' then
-      raw = raw .. '  <speaker>' .. speaker .. '</speaker>\n'
+      -- ESCAPAR: speaker va a texto de elemento <speaker>
+      raw = raw .. '  <speaker>' .. escape_xml_text(speaker) .. '</speaker>\n'
     end
     raw = raw .. content_jats .. '\n</speech>'
     return pandoc.RawBlock('jats', raw)

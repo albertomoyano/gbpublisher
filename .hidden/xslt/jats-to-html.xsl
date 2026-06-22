@@ -1338,6 +1338,19 @@
             padding: 0 2px;
           }
 
+          /* CITA HUÉRFANA — ref no encontrada en el reflist
+             VISUALMENTE DISTINGUIBLE PARA QUE EL OPERADOR/REVISOR LA NOTE */
+          .xref-bibr-orphan {
+            color: #c0392b;
+            background: #fdecea;
+            border: 1px dashed #c0392b;
+            border-radius: 2px;
+            padding: 0 4px;
+            font-style: italic;
+            font-size: 0.92em;
+            cursor: help;
+          }
+
           /* ============================================
              COLUMNA DERECHA — PANEL LATERAL
              ============================================ */
@@ -3120,7 +3133,25 @@
        ================================================ -->
   <xsl:template name="xref-autor-anio">
     <xsl:variable name="rid" select="@rid"/>
+    <!-- CITEKEY VISIBLE: rid SIN EL PREFIJO INTERNO bib- (PARA RENDER A USUARIO) -->
+    <xsl:variable name="citekey"
+                  select="if (starts-with($rid, 'bib-')) then substring-after($rid, 'bib-') else $rid"/>
     <xsl:variable name="cit" select="//ref[@id=$rid]/element-citation"/>
+
+    <!-- CITA HUÉRFANA: rid NO ENCONTRADO EN reflist.
+         CAUSAS TÍPICAS: typo en la key del .md, key cortada por Pandoc en doble guion,
+         ref no extraída por el generador del reflist, key con caracteres no válidos. -->
+    <xsl:if test="count($cit) = 0">
+      <xsl:message>[gbpublisher] Cita huérfana: <xsl:value-of select="$citekey"/> no existe en el reflist.</xsl:message>
+      <span class="xref-bibr-orphan" title="Referencia no encontrada en la bibliografía">
+        <xsl:text>[?</xsl:text>
+        <xsl:value-of select="$citekey"/>
+        <xsl:text>]</xsl:text>
+      </span>
+    </xsl:if>
+
+    <!-- RENDER NORMAL SOLO CUANDO HAY ref ASOCIADA -->
+    <xsl:if test="count($cit) &gt; 0">
     <xsl:variable name="autor">
       <xsl:choose>
         <!-- AUTORES -->
@@ -3202,7 +3233,7 @@
         <xsl:when test="$cit/person-group/name[1]/surname">
           <xsl:value-of select="$cit/person-group/name[1]/surname"/>
         </xsl:when>
-        <xsl:otherwise><xsl:value-of select="$rid"/></xsl:otherwise>
+        <xsl:otherwise><xsl:value-of select="$citekey"/></xsl:otherwise>
       </xsl:choose>
     </xsl:variable>
     <xsl:variable name="anio" select="$cit/year"/>
@@ -3288,6 +3319,7 @@
       </xsl:otherwise>
 
     </xsl:choose>
+    </xsl:if>
   </xsl:template>
 
   <!-- ================================================
