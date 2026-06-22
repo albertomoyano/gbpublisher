@@ -74,6 +74,21 @@ function Cite(el)
     sufijo = sufijo:gsub("^%{%}%s*,?%s*", "")  -- CASO 1 Y 2
     sufijo = sufijo:gsub("%{(.-)%}", "%1")     -- CASOS 3, 4, 5
 
+    -- LOCATOR IMPLÍCITO (DOC OFICIAL PANDOC: "If no locator term is used, 'page' is assumed."):
+    -- SI EL SUFIJO ARRANCA CON DÍGITOS Y NO CONTIENE LETRAS, ES UN LOCATOR IMPLÍCITO PURO.
+    -- PREPENDER "p." O "pp." SEGÚN HAYA RANGO (GUION) O MÚLTIPLES (COMA).
+    -- CASOS POSITIVOS: "33" → "p. 33", "55-60" → "pp. 55-60", "33, 45" → "pp. 33, 45"
+    -- CASOS NEGATIVOS: "p. 5" (ya tiene "p.") → sin cambio,
+    --                  "2020 es un año" (tiene letras) → sin cambio,
+    --                  "" (vacío) → sin cambio
+    if sufijo:match("^%d") and not sufijo:match("%a") then
+      if sufijo:match("[%-,]") then
+        sufijo = "pp. " .. sufijo
+      else
+        sufijo = "p. " .. sufijo
+      end
+    end
+
     -- CONSTRUIR ATRIBUTO specific-use SOLO SI APORTA INFORMACIÓN
     -- FORMATO: "modo|prefijo|sufijo"
     local specific_use = ""

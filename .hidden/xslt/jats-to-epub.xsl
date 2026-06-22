@@ -603,9 +603,27 @@
       role="doc-noteref"><xsl:value-of select="$fn-num"/></a></sup>
   </xsl:template>
 
-  <!-- MODO TEXT-ONLY -->
+  <!-- MODO TEXT-ONLY: PARA QUE LOS TEMPLATES ESPECÍFICOS EN ESTE MODO
+       (XREF BIBR, ETC.) PUEDAN DISPARARSE, EL GENÉRICO DEBE RECURSAR
+       EN HIJOS Y NO APLANAR CON value-of -->
   <xsl:template match="*" mode="text-only">
+    <xsl:apply-templates mode="text-only"/>
+  </xsl:template>
+
+  <!-- NODOS DE TEXTO EN TEXT-ONLY: EMITIRLOS TAL CUAL -->
+  <xsl:template match="text()" mode="text-only">
     <xsl:value-of select="."/>
+  </xsl:template>
+
+  <!-- TEMPLATE ESPECÍFICO PARA xref bibr EN MODO text-only:
+       RENDERIZA LA CITA EN MODO DEFAULT, CAPTURA Y EXTRAE TEXTO PLANO.
+       ASÍ LAS NOTAS AL PIE AL FINAL DEL CAPÍTULO MUESTRAN
+       "(Autor, Año, sufijo)" EN LUGAR DEL CITEKEY CRUDO. -->
+  <xsl:template match="xref[@ref-type='bibr']" mode="text-only">
+    <xsl:variable name="render">
+      <xsl:apply-templates select="."/>
+    </xsl:variable>
+    <xsl:value-of select="string($render)"/>
   </xsl:template>
 
   <!-- ================================================
@@ -885,6 +903,12 @@
   <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
     [preceding-sibling::node()[1][self::xref[@ref-type='bibr']]]
     [following-sibling::node()[1][self::xref[@ref-type='bibr']]]"/>
+
+  <!-- MISMO SUPRESOR PERO EN MODO text-only -->
+  <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
+    [preceding-sibling::node()[1][self::xref[@ref-type='bibr']]]
+    [following-sibling::node()[1][self::xref[@ref-type='bibr']]]"
+    mode="text-only"/>
 
   <!-- ================================================
        REFERENCIAS EN SECCIÓN FINAL
