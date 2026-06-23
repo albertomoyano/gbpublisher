@@ -807,55 +807,67 @@
     <xsl:variable name="prev1" select="preceding-sibling::node()[1]"/>
     <xsl:variable name="prev2" select="preceding-sibling::node()[2]"/>
 
-    <!-- SI ES PARTE DE UN GRUPO — EL PRIMERO YA INCLUYÓ ESTA CLAVE -->
-    <!-- LIMITACIÓN CONOCIDA: EL AGRUPAMIENTO NO DISTINGUE MODOS.          -->
-    <!-- [@key1; -@key2] GENERA \autocite{key1,key2} EN LUGAR DE           -->
-    <!-- \autocite{key1}\autocite*{key2}. PARA SUPRESIÓN PARCIAL EN UN     -->
-    <!-- GRUPO, REESCRIBIR recopilar-grupo-citas PARA CORTAR EL GRUPO      -->
-    <!-- CUANDO CAMBIA EL @specific-use ENTRE XREFS CONSECUTIVOS.          -->
+    <!-- MODO DEL XREF ACTUAL Y DEL XREF INMEDIATAMENTE PREVIO (SI EXISTE).
+         SE USAN PARA DECIDIR SI ESTE XREF YA FUE INCORPORADO AL GRUPO DEL
+         XREF PREVIO (MISMO MODO) O SI ARRANCA UN GRUPO PROPIO (MODO DISTINTO). -->
+    <xsl:variable name="actual-su" select="normalize-space(@specific-use)"/>
+    <xsl:variable name="actual-modo" select="
+      if ($actual-su = '') then 'normal'
+      else if (contains($actual-su, '|')) then substring-before($actual-su, '|')
+      else $actual-su
+    "/>
+    <xsl:variable name="prev-su"
+      select="normalize-space($prev2/self::xref[@ref-type='bibr']/@specific-use)"/>
+    <xsl:variable name="prev-modo" select="
+      if (count($prev2/self::xref[@ref-type='bibr']) = 0) then ''
+      else if ($prev-su = '') then 'normal'
+      else if (contains($prev-su, '|')) then substring-before($prev-su, '|')
+      else $prev-su
+    "/>
+
+    <!-- SALTAR ESTE XREF SI:
+         1. EL NODO ANTERIOR ES UN SEPARADOR (text node ,;-)
+         2. EL NODO ANTES DEL SEPARADOR ES UN XREF BIBR
+         3. ESTAMOS EN VANCOUVER (TODO SE AGRUPA), O ESE XREF PREVIO
+            COMPARTE EL MISMO MODO QUE ESTE (YA FUE INCORPORADO).
+         CASO CONTRARIO: PROCESAR COMO PRIMERO DE UN GRUPO NUEVO. -->
     <xsl:if test="not(
       $prev1/self::text()[matches(normalize-space(.), '^[\p{Pd},;]\s*$')] and
-      $prev2/self::xref[@ref-type='bibr'])">
+      $prev2/self::xref[@ref-type='bibr'] and
+      ($estilo_cita = 'vancouver' or $prev-modo = $actual-modo)
+    )">
 
-      <!-- PARSEAR specific-use: modo|prefijo|sufijo -->
+      <!-- MODO: VIENE EN @specific-use; SI NO HAY ATRIBUTO, ES "normal".
+           PREFIJO Y SUFIJO: HIJOS named-content (PRESERVAN MARKUP INLINE).
+           tienePrefijo/tieneSufijo SE USAN EN <xsl:when test>; PARA EMITIR
+           CONTENIDO SE USA <xsl:apply-templates select="..."/> QUE INVOCA
+           LOS TEMPLATES DE italic→\textit, bold→\textbf, monospace→\texttt. -->
       <xsl:variable name="su" select="normalize-space(@specific-use)"/>
-      <xsl:variable name="modo">
-        <xsl:choose>
-          <xsl:when test="$su != ''">
-            <xsl:value-of select="tokenize($su, '\|')[1]"/>
-          </xsl:when>
-          <xsl:otherwise>normal</xsl:otherwise>
-        </xsl:choose>
-      </xsl:variable>
-      <xsl:variable name="prefijo">
-        <xsl:if test="$su != ''">
-          <xsl:value-of select="normalize-space(tokenize($su, '\|')[2])"/>
-        </xsl:if>
-      </xsl:variable>
-      <xsl:variable name="sufijo">
-        <xsl:if test="$su != ''">
-          <xsl:value-of select="normalize-space(tokenize($su, '\|')[3])"/>
-        </xsl:if>
-      </xsl:variable>
+      <xsl:variable name="modo" select="if ($su = '') then 'normal' else $su"/>
+      <xsl:variable name="tienePrefijo"
+        select="exists(named-content[@content-type='cite-prefix'])"/>
+      <xsl:variable name="tieneSufijo"
+        select="exists(named-content[@content-type='cite-suffix'])"/>
 
       <xsl:choose>
 
 <!-- VANCOUVER: prefijo como texto libre + \cite[sufijo]{key} -->
 <xsl:when test="$estilo_cita = 'vancouver'">
-  <xsl:if test="$prefijo != ''">
-    <xsl:value-of select="$prefijo"/>
+  <xsl:if test="$tienePrefijo">
+    <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
     <xsl:text> </xsl:text>
   </xsl:if>
   <xsl:text>\cite</xsl:text>
-  <xsl:if test="$sufijo != ''">
+  <xsl:if test="$tieneSufijo">
     <xsl:text>[</xsl:text>
-    <xsl:value-of select="$sufijo"/>
+    <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
     <xsl:text>]</xsl:text>
   </xsl:if>
   <xsl:text>{</xsl:text>
   <xsl:value-of select="substring-after(@rid, 'bib-')"/>
   <xsl:call-template name="recopilar-grupo-citas">
     <xsl:with-param name="nodos" select="following-sibling::node()"/>
+    <xsl:with-param name="comparar-modo" select="false()"/>
   </xsl:call-template>
   <xsl:text>}</xsl:text>
 </xsl:when>
@@ -867,17 +879,21 @@
           <!-- CON UN SOLO [], BIBLATEX LO TRATA COMO POSTNOTE (SUFIJO).     -->
           <!-- SI HAY PREFIJO SIN SUFIJO: [prefijo][] PARA FORZAR PRENOTE.   -->
           <xsl:choose>
-            <xsl:when test="$prefijo != '' and $sufijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
-              <xsl:text>][</xsl:text><xsl:value-of select="$sufijo"/>
+            <xsl:when test="$tienePrefijo and $tieneSufijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
+              <xsl:text>][</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
               <xsl:text>]</xsl:text>
             </xsl:when>
-            <xsl:when test="$prefijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+            <xsl:when test="$tienePrefijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
               <xsl:text>][]</xsl:text>
             </xsl:when>
-            <xsl:when test="$sufijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$sufijo"/>
+            <xsl:when test="$tieneSufijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
               <xsl:text>]</xsl:text>
             </xsl:when>
           </xsl:choose>
@@ -885,6 +901,7 @@
           <xsl:value-of select="substring-after(@rid, 'bib-')"/>
           <xsl:call-template name="recopilar-grupo-citas">
             <xsl:with-param name="nodos" select="following-sibling::node()"/>
+            <xsl:with-param name="modo-grupo" select="'suppress'"/>
           </xsl:call-template>
           <xsl:text>}</xsl:text>
         </xsl:when>
@@ -893,17 +910,21 @@
         <xsl:when test="$modo = 'author-in-text'">
           <xsl:text>\textcite</xsl:text>
           <xsl:choose>
-            <xsl:when test="$prefijo != '' and $sufijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
-              <xsl:text>][</xsl:text><xsl:value-of select="$sufijo"/>
+            <xsl:when test="$tienePrefijo and $tieneSufijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
+              <xsl:text>][</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
               <xsl:text>]</xsl:text>
             </xsl:when>
-            <xsl:when test="$prefijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+            <xsl:when test="$tienePrefijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
               <xsl:text>][]</xsl:text>
             </xsl:when>
-            <xsl:when test="$sufijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$sufijo"/>
+            <xsl:when test="$tieneSufijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
               <xsl:text>]</xsl:text>
             </xsl:when>
           </xsl:choose>
@@ -911,6 +932,7 @@
           <xsl:value-of select="substring-after(@rid, 'bib-')"/>
           <xsl:call-template name="recopilar-grupo-citas">
             <xsl:with-param name="nodos" select="following-sibling::node()"/>
+            <xsl:with-param name="modo-grupo" select="'author-in-text'"/>
           </xsl:call-template>
           <xsl:text>}</xsl:text>
         </xsl:when>
@@ -919,17 +941,21 @@
         <xsl:otherwise>
           <xsl:text>\autocite</xsl:text>
           <xsl:choose>
-            <xsl:when test="$prefijo != '' and $sufijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
-              <xsl:text>][</xsl:text><xsl:value-of select="$sufijo"/>
+            <xsl:when test="$tienePrefijo and $tieneSufijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
+              <xsl:text>][</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
               <xsl:text>]</xsl:text>
             </xsl:when>
-            <xsl:when test="$prefijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$prefijo"/>
+            <xsl:when test="$tienePrefijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
               <xsl:text>][]</xsl:text>
             </xsl:when>
-            <xsl:when test="$sufijo != ''">
-              <xsl:text>[</xsl:text><xsl:value-of select="$sufijo"/>
+            <xsl:when test="$tieneSufijo">
+              <xsl:text>[</xsl:text>
+              <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
               <xsl:text>]</xsl:text>
             </xsl:when>
           </xsl:choose>
@@ -937,6 +963,7 @@
           <xsl:value-of select="substring-after(@rid, 'bib-')"/>
           <xsl:call-template name="recopilar-grupo-citas">
             <xsl:with-param name="nodos" select="following-sibling::node()"/>
+            <xsl:with-param name="modo-grupo" select="'normal'"/>
           </xsl:call-template>
           <xsl:text>}</xsl:text>
         </xsl:otherwise>
@@ -947,36 +974,86 @@
 
   <!-- ============================================================ -->
   <!-- SUPRIMIR SEPARADORES ENTRE CITAS AGRUPADAS                  -->
-  <!-- APLICA A TODOS LOS ESTILOS — LOS SEPARADORES , ; - ENTRE    -->
-  <!-- DOS XREF DE CITA QUEDAN ABSORBIDOS POR EL AGRUPAMIENTO      -->
+  <!--                                                             -->
+  <!-- COMPORTAMIENTO POR ESCENARIO:                               -->
+  <!-- - VANCOUVER: SIEMPRE SUPRIMIR (TODOS LOS XREF VAN A         -->
+  <!--   \cite{1,2,3}, NO HAY MODOS QUE DISTINGUIR).               -->
+  <!-- - OTROS ESTILOS, MISMO MODO ENTRE LOS DOS XREF ADYACENTES:  -->
+  <!--   SUPRIMIR (LOS XREF VAN A \autocite{k1,k2} AGRUPADOS).     -->
+  <!-- - OTROS ESTILOS, MODOS DISTINTOS:                           -->
+  <!--   PRESERVAR COMO ESPACIO PARA QUE LOS DOS \autocite QUEDEN  -->
+  <!--   SEPARADOS VISUALMENTE EN EL PDF (EJ: (K,2016) (1999)).    -->
   <!-- ============================================================ -->
   <xsl:template match="text()[
       matches(normalize-space(.), '^[\p{Pd},;]\s*$') and
       preceding-sibling::node()[1]/self::xref[@ref-type='bibr'] and
       following-sibling::node()[1]/self::xref[@ref-type='bibr']
-    ]"/>
+    ]">
+    <xsl:variable name="prev-su"
+      select="normalize-space(preceding-sibling::xref[1]/@specific-use)"/>
+    <xsl:variable name="next-su"
+      select="normalize-space(following-sibling::xref[1]/@specific-use)"/>
+    <xsl:variable name="prev-modo" select="
+      if ($prev-su = '') then 'normal'
+      else if (contains($prev-su, '|')) then substring-before($prev-su, '|')
+      else $prev-su
+    "/>
+    <xsl:variable name="next-modo" select="
+      if ($next-su = '') then 'normal'
+      else if (contains($next-su, '|')) then substring-before($next-su, '|')
+      else $next-su
+    "/>
+    <xsl:choose>
+      <!-- VANCOUVER: SUPRIMIR SIEMPRE (NO IMPORTA EL MODO) -->
+      <xsl:when test="$estilo_cita = 'vancouver'"/>
+      <!-- MISMO MODO: SUPRIMIR (LOS XREF SE AGRUPAN EN UN SOLO COMANDO) -->
+      <xsl:when test="$prev-modo = $next-modo"/>
+      <!-- MODOS DISTINTOS: PRESERVAR SEPARADOR COMO ESPACIO -->
+      <xsl:otherwise>
+        <xsl:text> </xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
 
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: recopilar-grupo-citas                       -->
   <!-- AGREGA CLAVES DE XREFS CONSECUTIVOS EN cmd{k1,k2,...}       -->
   <!-- RECURSIVO: AVANZA DE A DOS NODOS (separador + xref)         -->
-  <!-- LIMITACIÓN: AGRUPA TODOS LOS XREFS CONSECUTIVOS SIN         -->
-  <!-- VERIFICAR SI COMPARTEN EL MISMO @specific-use. SI EL PRIMER -->
-  <!-- XREF ES normal Y EL SIGUIENTE suppress, AMBOS QUEDAN EN     -->
-  <!-- \autocite{k1,k2} Y SE PIERDE EL MODO suppress DEL SEGUNDO. -->
-  <!-- FIX PENDIENTE: DETENER EL GRUPO CUANDO CAMBIE EL MODO.      -->
+  <!--                                                             -->
+  <!-- COMPORTAMIENTO POR MODO:                                    -->
+  <!-- - SI EL SIGUIENTE XREF TIENE EL MISMO MODO QUE EL GRUPO,    -->
+  <!--   LO INCORPORA Y CONTINÚA LA RECURSIÓN.                     -->
+  <!-- - SI EL MODO CAMBIA, DETIENE EL GRUPO ACTUAL.               -->
+  <!--   EL XREF SIGUIENTE SE PROCESARÁ APARTE EN SU PROPIO        -->
+  <!--   match, GENERANDO UN COMANDO LATEX INDEPENDIENTE QUE       -->
+  <!--   PRESERVA SU MODO ORIGINAL.                                -->
+  <!-- - EN VANCOUVER EL MODO NO AFECTA EL RENDER (\cite ES        -->
+  <!--   ÚNICO), POR ESO comparar-modo PUEDE DESHABILITARSE        -->
+  <!--   DESDE EL CALL SITE PARA AGRUPAR TODO EN UN SOLO \cite.    -->
   <!-- ============================================================ -->
   <xsl:template name="recopilar-grupo-citas">
     <xsl:param name="nodos" as="node()*"/>
+    <xsl:param name="modo-grupo" as="xs:string" select="'normal'"/>
+    <xsl:param name="comparar-modo" as="xs:boolean" select="true()"/>
     <xsl:if test="count($nodos) >= 2">
       <xsl:variable name="sep"  select="$nodos[1]"/>
       <xsl:variable name="next" select="$nodos[2]"/>
+      <!-- EXTRAER MODO DEL SIGUIENTE XREF (default 'normal' si no hay attr) -->
+      <xsl:variable name="next-su" select="normalize-space($next/@specific-use)"/>
+      <xsl:variable name="next-modo" select="
+        if ($next-su = '') then 'normal'
+        else if (contains($next-su, '|')) then substring-before($next-su, '|')
+        else $next-su
+      "/>
       <xsl:if test="$sep/self::text()[matches(normalize-space(.), '^[\p{Pd},;]\s*$')] and
-                    $next/self::xref[@ref-type='bibr']">
+                    $next/self::xref[@ref-type='bibr'] and
+                    (not($comparar-modo) or $next-modo = $modo-grupo)">
         <xsl:text>,</xsl:text>
         <xsl:value-of select="substring-after($next/@rid, 'bib-')"/>
         <xsl:call-template name="recopilar-grupo-citas">
           <xsl:with-param name="nodos" select="$nodos[position() > 2]"/>
+          <xsl:with-param name="modo-grupo" select="$modo-grupo"/>
+          <xsl:with-param name="comparar-modo" select="$comparar-modo"/>
         </xsl:call-template>
       </xsl:if>
     </xsl:if>

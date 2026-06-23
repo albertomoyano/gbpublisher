@@ -4,7 +4,8 @@
 -- =====================================================
 -- FUNCIONES:
 --   Cite  → CONVIERTE CITAS PANDOC A <xref ref-type="bibr">
---           CON ATRIBUTO specific-use PARA MODO, PREFIJO Y SUFIJO
+--           CON specific-use="modo" Y PREFIJO/SUFIJO COMO
+--           named-content HIJOS (PRESERVA MARKUP INLINE)
 --   Div   → MANEJA FIGURAS, TABLAS, EPÍGRAFES, VERSOS,
 --           CÓDIGO, RECUADROS, FÓRMULAS, ENTREVISTAS
 --           Y SECCIONES
@@ -35,12 +36,121 @@ local function escape_xml_attr(s)
   return s
 end
 
--- CONVIERTE CITAS PANDOC A <xref ref-type="bibr"> CON MODO DE CITA
--- SIN USAR --citeproc NI NECESITAR ARCHIVO .bib
--- PRESERVA EL MODO DEL AST DE PANDOC EN specific-use="modo|prefijo|sufijo":
---   NormalCitation  → normal         → jats-to-latex.xsl → \autocite{key}
---   SuppressAuthor  → suppress       → jats-to-latex.xsl → \autocite*{key}
---   AuthorInText    → author-in-text → jats-to-latex.xsl → \textcite{key}
+-- =====================================================
+-- HELPERS PARA PRESERVAR MARKUP INLINE EN PREFIJO/SUFIJO DE CITAS
+-- =====================================================
+
+-- inlines_a_jats(inlines): SERIALIZA UNA LISTA DE INLINES PANDOC
+-- A STRING JATS PRESERVANDO MARKUP (italic, bold, monospace, etc.).
+-- USADO PARA EMITIR PREFIJO Y SUFIJO COMO HIJOS named-content DEL
+-- <xref>, EN LUGAR DEL ANTIGUO TRANSPORTE pipe-separated POR ATRIBUTO
+-- (QUE NO PERMITE SUBELEMENTOS).
+local function inlines_a_jats(inlines)
+  if not inlines or #inlines == 0 then return '' end
+  -- ENVOLVER EN UN PANDOC DOC + Plain BLOCK PARA QUE pandoc.write
+  -- LOS PROCESE Y GENERE EL MARKUP JATS APROPIADO
+  local jats = pandoc.write(pandoc.Pandoc({pandoc.Plain(inlines)}), 'jats')
+  -- pandoc.write CON UN Plain BLOCK ENVUELVE EL CONTENIDO EN <p>...</p>.
+  -- REMOVERLO PARA QUEDARNOS SOLO CON EL MARKUP INLINE.
+  jats = jats:gsub('^%s*<p[^>]*>', '')
+  jats = jats:gsub('</p>%s*$', '')
+  jats = jats:gsub('^%s+', ''):gsub('%s+$', '')
+  return jats
+end
+
+-- normalizar_inlines_sufijo(inlines): APLICA LAS NORMALIZACIONES DE
+-- TEXTO DEL SUFIJO (STRIP COMA INICIAL, STRIP LLAVES DE LOCATOR,
+-- LOCATOR IMPLÍCITO p./pp.) SOBRE LA LISTA DE INLINES.
+-- OPERA SOBRE EL TEXTO DEL PRIMER Str CUANDO CORRESPONDE,
+-- PRESERVANDO LOS DEMÁS INLINES (Emph, Strong, Code, etc.).
+-- DEVUELVE UNA NUEVA LISTA DE INLINES.
+local function normalizar_inlines_sufijo(inlines)
+  if not inlines or #inlines == 0 then return inlines end
+  -- COPIA MUTABLE
+  local lista = {}
+  for i, v in ipairs(inlines) do lista[i] = v end
+
+  -- STRIP COMA INICIAL SOBRE EL PRIMER Str (PANDOC INCLUYE ", " EN EL SUFIJO)
+  if lista[1] and lista[1].t == 'Str' then
+    local nuevo = lista[1].text:gsub("^,%s*", "")
+    if nuevo == '' then
+      table.remove(lista, 1)
+      while lista[1] and lista[1].t == 'Space' do
+        table.remove(lista, 1)
+      end
+    else
+      lista[1] = pandoc.Str(nuevo)
+    end
+  end
+
+  -- STRIP LLAVES VACÍAS INICIAL: "{} X" O "{}, X" → "X"
+  if lista[1] and lista[1].t == 'Str' then
+    local nuevo = lista[1].text:gsub("^%{%}%s*,?%s*", "")
+    if nuevo ~= lista[1].text then
+      if nuevo == '' then
+        table.remove(lista, 1)
+        while lista[1] and lista[1].t == 'Space' do
+          table.remove(lista, 1)
+        end
+      else
+        lista[1] = pandoc.Str(nuevo)
+      end
+    end
+  end
+
+  -- STRIP LLAVES CON CONTENIDO EN TODOS LOS Str: "{X}" → "X"
+  for i, inline in ipairs(lista) do
+    if inline.t == 'Str' then
+      lista[i] = pandoc.Str(inline.text:gsub("%{(.-)%}", "%1"))
+    end
+  end
+
+  -- LOCATOR IMPLÍCITO: DÍGITOS AL INICIO SIN LETRAS EN NINGÚN INLINE
+  -- SOLO APLICA SI TODA LA LISTA ES Str/Space (NO HAY MARKUP)
+  local todos_texto = true
+  local hay_letras = false
+  for _, inline in ipairs(lista) do
+    if inline.t ~= 'Str' and inline.t ~= 'Space' then
+      todos_texto = false
+      break
+    end
+    if inline.t == 'Str' and inline.text:match("%a") then
+      hay_letras = true
+    end
+  end
+  if todos_texto and not hay_letras and lista[1] and lista[1].t == 'Str'
+     and lista[1].text:match("^%d") then
+    -- DETECTAR RANGO O MÚLTIPLES (algún Str con '-' o ',')
+    local tiene_rango = false
+    for _, inline in ipairs(lista) do
+      if inline.t == 'Str' and inline.text:match("[%-,]") then
+        tiene_rango = true
+        break
+      end
+    end
+    local prefijo_pp = tiene_rango and "pp." or "p."
+    table.insert(lista, 1, pandoc.Space())
+    table.insert(lista, 1, pandoc.Str(prefijo_pp))
+  end
+
+  return lista
+end
+
+-- CONVIERTE CITAS PANDOC A <xref ref-type="bibr"> CON MODO DE CITA.
+-- SIN USAR --citeproc NI NECESITAR ARCHIVO .bib.
+-- PRESERVA EL MODO DEL AST DE PANDOC EN specific-use:
+--   NormalCitation  → (sin atributo)    → \autocite{key}
+--   SuppressAuthor  → "suppress"        → \autocite*{key}
+--   AuthorInText    → "author-in-text"  → \textcite{key}
+-- PREFIJO Y SUFIJO VIAJAN COMO HIJOS <named-content content-type="cite-prefix"/>
+-- Y <named-content content-type="cite-suffix"/> DEL <xref>, LO QUE PERMITE
+-- PRESERVAR MARKUP INLINE (italic, bold, monospace, super/subscript, etc.).
+-- ESTRUCTURA RESULTANTE:
+--   <xref ref-type="bibr" rid="bib-KEY" specific-use="MODO">
+--     <named-content content-type="cite-prefix">PREFIJO</named-content>
+--     KEY
+--     <named-content content-type="cite-suffix">SUFIJO CON <italic>markup</italic></named-content>
+--   </xref>
 function Cite(el)
   local result = {}
   for i, citation in ipairs(el.citations) do
@@ -55,47 +165,32 @@ function Cite(el)
       modo = "normal"
     end
 
-    -- EXTRAER PREFIJO Y SUFIJO COMO TEXTO PLANO
-    local prefijo = pandoc.utils.stringify(citation.prefix)
-    local sufijo  = pandoc.utils.stringify(citation.suffix)
+    -- NORMALIZAR INLINES DEL SUFIJO (strip coma, strip llaves, locator implícito)
+    -- ESTAS NORMALIZACIONES OPERAN SOBRE EL TEXTO DEL PRIMER Str CUANDO
+    -- APLICAN; LOS INLINES CON MARKUP (Emph, Strong, Code, ...) SE PRESERVAN.
+    local sufijo_inlines = normalizar_inlines_sufijo(citation.suffix)
 
-    -- PANDOC INCLUYE LA COMA SEPARADORA EN EL SUFIJO: ", p. 5" → "p. 5"
-    sufijo = sufijo:gsub("^,%s*", "")
+    -- SERIALIZAR INLINES A STRING JATS PRESERVANDO EL MARKUP
+    local prefijo_jats = inlines_a_jats(citation.prefix)
+    local sufijo_jats  = inlines_a_jats(sufijo_inlines)
 
-    -- NORMALIZAR LLAVES DE LOCATOR EXPLÍCITO (SINTAXIS PANDOC AVANZADA):
-    -- LAS LLAVES SON DELIMITADOR DE LOCATOR EN PANDOC, NO TEXTO RENDERIZABLE.
-    -- DEBEN DESAPARECER EN EL CANÓNICO PARA QUE EL XSL NO LAS MUESTRE EN PANTALLA.
-    -- CASO 1: "{}, X"      → "X"    (locator vacío explícito + sufijo real)
-    -- CASO 2: "{}X"        → "X"    (locator vacío sin coma separadora)
-    -- CASO 3: "{X}"        → "X"    (locator forzado entre llaves)
-    -- CASO 4: "{X}, Y"     → "X, Y" (locator entre llaves + sufijo real)
-    -- CASO 5: "X {Y} Z"    → "X Y Z" (llaves embebidas, raro pero seguro de tratar)
-    -- ORDEN: PRIMERO LLAVES VACÍAS (PATRÓN MÁS ESPECÍFICO), DESPUÉS NO-VACÍAS
-    sufijo = sufijo:gsub("^%{%}%s*,?%s*", "")  -- CASO 1 Y 2
-    sufijo = sufijo:gsub("%{(.-)%}", "%1")     -- CASOS 3, 4, 5
-
-    -- LOCATOR IMPLÍCITO (DOC OFICIAL PANDOC: "If no locator term is used, 'page' is assumed."):
-    -- SI EL SUFIJO ARRANCA CON DÍGITOS Y NO CONTIENE LETRAS, ES UN LOCATOR IMPLÍCITO PURO.
-    -- PREPENDER "p." O "pp." SEGÚN HAYA RANGO (GUION) O MÚLTIPLES (COMA).
-    -- CASOS POSITIVOS: "33" → "p. 33", "55-60" → "pp. 55-60", "33, 45" → "pp. 33, 45"
-    -- CASOS NEGATIVOS: "p. 5" (ya tiene "p.") → sin cambio,
-    --                  "2020 es un año" (tiene letras) → sin cambio,
-    --                  "" (vacío) → sin cambio
-    if sufijo:match("^%d") and not sufijo:match("%a") then
-      if sufijo:match("[%-,]") then
-        sufijo = "pp. " .. sufijo
-      else
-        sufijo = "p. " .. sufijo
-      end
+    -- ATRIBUTO specific-use: SOLO EL MODO, Y SOLO SI NO ES "normal"
+    -- (LA AUSENCIA DEL ATRIBUTO EQUIVALE A modo=normal EN LOS XSL)
+    local specific_use = ""
+    if modo ~= "normal" then
+      specific_use = ' specific-use="' .. modo .. '"'
     end
 
-    -- CONSTRUIR ATRIBUTO specific-use SOLO SI APORTA INFORMACIÓN
-    -- FORMATO: "modo|prefijo|sufijo"
-    local specific_use = ""
-    if modo ~= "normal" or prefijo ~= "" or sufijo ~= "" then
-      specific_use = ' specific-use="' .. modo .. '|' ..
-                     escape_xml_attr(prefijo) .. '|' ..
-                     escape_xml_attr(sufijo) .. '"'
+    -- HIJOS named-content: SOLO SI HAY CONTENIDO QUE TRANSPORTAR
+    local prefijo_nc = ""
+    if prefijo_jats ~= "" then
+      prefijo_nc = '<named-content content-type="cite-prefix">' ..
+                   prefijo_jats .. '</named-content>'
+    end
+    local sufijo_nc = ""
+    if sufijo_jats ~= "" then
+      sufijo_nc = '<named-content content-type="cite-suffix">' ..
+                  sufijo_jats .. '</named-content>'
     end
 
     -- ESCAPAR citation.id PARA AMBOS CONTEXTOS:
@@ -104,7 +199,7 @@ function Cite(el)
     local id_text = escape_xml_text(citation.id)
     local xref = pandoc.RawInline('jats',
       '<xref ref-type="bibr" rid="bib-' .. id_attr .. '"' .. specific_use .. '>' ..
-      id_text .. '</xref>')
+      prefijo_nc .. id_text .. sufijo_nc .. '</xref>')
     table.insert(result, xref)
     if i < #el.citations then
       table.insert(result, pandoc.RawInline('jats', ', '))

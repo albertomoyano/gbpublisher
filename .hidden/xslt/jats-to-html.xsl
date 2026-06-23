@@ -3259,20 +3259,15 @@
     </xsl:variable>
     <xsl:variable name="anio" select="$cit/year"/>
 
-    <!-- PARSEAR specific-use: modo|prefijo|sufijo -->
+    <!-- MODO: VIENE EN @specific-use; SI NO HAY ATRIBUTO, ES "normal".
+         PREFIJO Y SUFIJO: VIENEN COMO HIJOS <named-content content-type="cite-prefix|cite-suffix">
+         DEL <xref>. PUEDEN CONTENER MARKUP INLINE (italic, bold, monospace, etc.). -->
     <xsl:variable name="su" select="normalize-space(@specific-use)"/>
-    <xsl:variable name="modo">
-      <xsl:choose>
-        <xsl:when test="$su != ''"><xsl:value-of select="tokenize($su, '\|')[1]"/></xsl:when>
-        <xsl:otherwise>normal</xsl:otherwise>
-      </xsl:choose>
-    </xsl:variable>
-    <xsl:variable name="prefijo">
-      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[2])"/></xsl:if>
-    </xsl:variable>
-    <xsl:variable name="sufijo">
-      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[3])"/></xsl:if>
-    </xsl:variable>
+    <xsl:variable name="modo" select="if ($su = '') then 'normal' else $su"/>
+    <xsl:variable name="tienePrefijo"
+      select="exists(named-content[@content-type='cite-prefix'])"/>
+    <xsl:variable name="tieneSufijo"
+      select="exists(named-content[@content-type='cite-suffix'])"/>
 
     <xsl:variable name="esPrimera" select="not(
       preceding-sibling::node()[1][self::text() and matches(., '^\s*,\s*$')] and
@@ -3300,7 +3295,10 @@
            href="#panel-ref-{$rid}">
           <xsl:value-of select="$anio"/>
         </a>
-        <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
+        <xsl:if test="$tieneSufijo">
+          <xsl:text>, </xsl:text>
+          <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
+        </xsl:if>
         <xsl:text>)</xsl:text>
       </xsl:when>
 
@@ -3308,7 +3306,10 @@
       <xsl:when test="$modo = 'suppress'">
         <xsl:if test="$esPrimera">
           <xsl:text>(</xsl:text>
-          <xsl:if test="$prefijo != ''"><xsl:value-of select="$prefijo"/><xsl:text> </xsl:text></xsl:if>
+          <xsl:if test="$tienePrefijo">
+            <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
+            <xsl:text> </xsl:text>
+          </xsl:if>
         </xsl:if>
         <xsl:if test="not($esPrimera)"><xsl:text>; </xsl:text></xsl:if>
         <a class="xref-bibr"
@@ -3316,7 +3317,10 @@
            onclick="highlightPanel('refs', '{$rid}')"
            href="#panel-ref-{$rid}">
           <xsl:value-of select="$anio"/>
-          <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
+          <xsl:if test="$tieneSufijo">
+            <xsl:text>, </xsl:text>
+            <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
+          </xsl:if>
         </a>
         <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
       </xsl:when>
@@ -3325,7 +3329,10 @@
       <xsl:otherwise>
         <xsl:if test="$esPrimera">
           <xsl:text>(</xsl:text>
-          <xsl:if test="$prefijo != ''"><xsl:value-of select="$prefijo"/><xsl:text> </xsl:text></xsl:if>
+          <xsl:if test="$tienePrefijo">
+            <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
+            <xsl:text> </xsl:text>
+          </xsl:if>
         </xsl:if>
         <xsl:if test="not($esPrimera)"><xsl:text>; </xsl:text></xsl:if>
         <a class="xref-bibr"
@@ -3334,7 +3341,10 @@
            href="#panel-ref-{$rid}">
           <xsl:value-of select="$autor"/>
           <xsl:if test="$anio != ''">, <xsl:value-of select="$anio"/></xsl:if>
-          <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
+          <xsl:if test="$tieneSufijo">
+            <xsl:text>, </xsl:text>
+            <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
+          </xsl:if>
         </a>
         <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
       </xsl:otherwise>
@@ -3355,20 +3365,17 @@
       preceding-sibling::node()[2][self::xref[@ref-type='bibr']]
     )"/>
 
-    <!-- PARSEAR specific-use: modo|prefijo|sufijo -->
-    <xsl:variable name="su" select="normalize-space(@specific-use)"/>
-    <xsl:variable name="prefijo">
-      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[2])"/></xsl:if>
-    </xsl:variable>
-    <xsl:variable name="sufijo">
-      <xsl:if test="$su != ''"><xsl:value-of select="normalize-space(tokenize($su, '\|')[3])"/></xsl:if>
-    </xsl:variable>
+    <!-- PREFIJO Y SUFIJO COMO HIJOS named-content (PRESERVAN MARKUP INLINE) -->
+    <xsl:variable name="tienePrefijo"
+      select="exists(named-content[@content-type='cite-prefix'])"/>
+    <xsl:variable name="tieneSufijo"
+      select="exists(named-content[@content-type='cite-suffix'])"/>
 
     <xsl:if test="$esPrimera">
 
       <!-- PREFIJO ANTES DEL CORCHETE -->
-      <xsl:if test="$prefijo != ''">
-        <xsl:value-of select="$prefijo"/>
+      <xsl:if test="$tienePrefijo">
+        <xsl:apply-templates select="named-content[@content-type='cite-prefix']/node()"/>
         <xsl:text> </xsl:text>
       </xsl:if>
 
@@ -3404,7 +3411,10 @@
       <xsl:call-template name="generarLinksVancouver">
         <xsl:with-param name="pares" select="$paresOrdenados"/>
       </xsl:call-template>
-      <xsl:if test="$sufijo != ''">, <xsl:value-of select="$sufijo"/></xsl:if>
+      <xsl:if test="$tieneSufijo">
+        <xsl:text>, </xsl:text>
+        <xsl:apply-templates select="named-content[@content-type='cite-suffix']/node()"/>
+      </xsl:if>
       <xsl:text>]</xsl:text>
 
     </xsl:if>
