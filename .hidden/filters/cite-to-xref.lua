@@ -136,6 +136,24 @@ local function normalizar_inlines_sufijo(inlines)
   return lista
 end
 
+-- sanitizar_citekey(s): CONVIERTE UN CITEKEY ARBITRARIO A NMTOKEN
+-- VÁLIDO PARA EL ATRIBUTO rid DEL <xref>. REGLAS:
+--   1. CARACTERES ASCII PERMITIDOS (a-zA-Z0-9.-_) SE MANTIENEN.
+--   2. CUALQUIER OTRO CARÁCTER (URLs CON /, DOIs CON :, ESPACIOS,
+--      PIPES, CARACTERES MULTIBYTE) SE REEMPLAZA POR '_'.
+--   3. UNDERSCORES MÚLTIPLES SE COLAPSAN A UNO.
+-- DETERMINÍSTICA: MISMO INPUT → MISMO OUTPUT.
+-- LA MISMA LÓGICA ESTÁ IMPLEMENTADA EN m_XML.SanitizarCitekey EN EL
+-- CÓDIGO GAMBAS QUE GENERA <ref-list>, GARANTIZANDO QUE EL rid DEL
+-- xref EN EL CUERPO Y EL id DEL <ref> EN LA BIBLIOGRAFÍA COINCIDAN
+-- EXACTAMENTE PARA CUALQUIER CITEKEY ORIGINAL POSIBLE.
+local function sanitizar_citekey(s)
+  if s == nil or s == '' then return '' end
+  local r = s:gsub('[^a-zA-Z0-9._-]', '_')
+  r = r:gsub('__+', '_')
+  return r
+end
+
 -- CONVIERTE CITAS PANDOC A <xref ref-type="bibr"> CON MODO DE CITA.
 -- SIN USAR --citeproc NI NECESITAR ARCHIVO .bib.
 -- PRESERVA EL MODO DEL AST DE PANDOC EN specific-use:
@@ -193,9 +211,12 @@ function Cite(el)
                   sufijo_jats .. '</named-content>'
     end
 
-    -- ESCAPAR citation.id PARA AMBOS CONTEXTOS:
-    -- ATRIBUTO rid (escape_xml_attr) Y TEXTO DEL ELEMENTO (escape_xml_text)
-    local id_attr = escape_xml_attr(citation.id)
+    -- SANITIZAR EL CITEKEY PARA NMTOKEN-VALIDEZ EN EL rid (R-03).
+    -- EL TEXTO DEL xref SIGUE MOSTRANDO EL CITEKEY ORIGINAL (PARA
+    -- DEBUGGING Y EXPORTS), PERO EL rid USA LA FORMA SANITIZADA QUE
+    -- TAMBIÉN APLICA m_XML.GenerarRefListXML AL id DEL <ref>.
+    local citekey_sanitizado = sanitizar_citekey(citation.id)
+    local id_attr = escape_xml_attr(citekey_sanitizado)
     local id_text = escape_xml_text(citation.id)
     local xref = pandoc.RawInline('jats',
       '<xref ref-type="bibr" rid="bib-' .. id_attr .. '"' .. specific_use .. '>' ..
