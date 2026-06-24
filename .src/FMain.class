@@ -2,7 +2,7 @@
 
 Public rutaApp As String = User.Home &/ ".gbpublisher"
 Public $Bash As Process
-Private TipoProyectoActual As Integer
+Public TipoProyectoActual As Integer
 Private ContenidoArt As Result
 Private ContenidoAut As Result
 Private LastTextBox As TextBox
@@ -1311,198 +1311,6 @@ Public Sub CargarListaArticulosMD(Optional bPreservarSeleccion As Boolean = Fals
     ' SELECCIONAR EL ARCHIVO PRINCIPAL POR DEFECTO
     cmbArticulosRevista.Index = 0
   Endif
-
-End
-
-Public Sub AbrirLibroTEX()
-
-  Dim sRutaSeleccionada As String = Dialog.Path
-
-  If sRutaSeleccionada = "" Then
-    Return
-  Endif
-
-  ' ASIGNAMOS EL NOMBRE Y RUTA DEL PROYECTO A LAS VARIABLES GLOBALES
-  NombreProyecto = File.Name(sRutaSeleccionada)
-  RutaProyecto = File.Dir(sRutaSeleccionada)
-
-  Dim sExtension As String = LCase(File.Ext(sRutaSeleccionada))
-  Dim sNombreArchivo As String = LCase(File.Name(sRutaSeleccionada))
-
-  ' DETERMINAR TIPO SEGÚN NORMAS: r- (revista .md), l- (libro .md/.tex)
-  Dim iTipoSeleccionado As Integer = -1
-
-  Select Case True
-    Case Left(sNombreArchivo, 2) = "r-" And sExtension = "md"
-      iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
-
-    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "md"
-      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD
-
-    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
-      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_LATEX
-
-    Case Else
-      m_Sonido.sonar("Error")
-      Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine &
-        "Formatos válidos:" & gb.NewLine &
-        "• Revista Markdown: r-nombre.md" & gb.NewLine &
-        "• Libro Markdown: l-nombre.md" & gb.NewLine &
-        "• Libro LaTeX: l-nombre.tex" & gb.NewLine &
-        "Archivo recibido: " & sNombreArchivo)
-      Return
-  End Select
-
-  ' BUSCAR EN LA BBDD SI EL PROYECTO QUE VAMOS A ABRIR EXISTE
-  Dim sSQL As String = "SELECT * FROM proyectos WHERE nombre = &1"
-  Dim Contenido As Result = m_ConexionBD.mConn.Exec(sSQL, NombreProyecto)
-  Dim nuevoID As Integer
-
-  ' LIBERAR PROYECTO QUE ESTA ABIERTO
-  If NombreProyecto <> "" Then
-    Dim sProyectoEnCurso As String = File.Name(txtProyecto.Text)
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 0 WHERE nombre = &1", sProyectoEnCurso)
-    m_ConexionBD.mConn.Exec("UPDATE proyectos SET usuario_propietario = NULL WHERE nombre = &1", sProyectoEnCurso)
-    m_ConexionBD.mConn.Commit
-    m_Timer.DetenerContador()
-  Endif
-
-  If Contenido.Available Then
-    ' VALIDACIONES SOBRE EL REGISTRO EXISTENTE
-    Dim iTipoBD As Integer = Contenido["tipo_producto"]
-
-    ' 1) COINCIDENCIA DE TIPO
-    If iTipoBD <> iTipoSeleccionado Then
-      m_Sonido.sonar("Error")
-      Message.Error("El tipo de archivo no coincide con el tipo registrado en la base de datos." & gb.NewLine &
-        "Se esperaba: " & ObtenerDescripcionTipo(iTipoSeleccionado) & gb.NewLine &
-        "Se encontró: " & ObtenerDescripcionTipo(iTipoBD))
-      Return
-    Endif
-
-    ' 2) ACTIVO? (0 ES FALSE Y 1 ES TRUE)
-    If Not Contenido["activo"] Then
-      m_Sonido.sonar("Warning")
-      Message.Warning("El proyecto '" & NombreProyecto & "' está archivado." & gb.NewLine &
-        "Debe solicitar al editor que lo reactive para poder abrirlo.")
-      Return
-    Endif
-
-    ' 3) NO OCUPADO?
-    If Contenido["ocupado"] Then
-      m_Sonido.sonar("Warning")
-      Message.Warning("El proyecto '" & NombreProyecto & "' está ocupado en otra máquina." & gb.NewLine &
-        "Lo puede abrir en modo parcial o espere a que se libere.")
-      Return
-    Endif
-
-    nuevoID = Contenido["id"]
-    m_Sonido.sonar("Info")
-  Else
-    ' NO EXISTE: CREAR REGISTRO NUEVO (MySQL)
-    m_ConexionBD.mConn.Exec("INSERT INTO proyectos (nombre, tipo_producto, activo, ocupado) VALUES (&1, &2, 1, 0)",
-      NombreProyecto, iTipoSeleccionado)
-
-    ' OBTENER LAST_INSERT_ID() EN MYSQL
-    Dim rLast As Result = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
-    If rLast.Available Then
-      nuevoID = rLast[0]
-    Else
-      ' FALLBACK: SI NO PODEMOS RECUPERAR EL ID, AVISAR Y ABORTAR
-      m_ConexionBD.mConn.Rollback
-      m_Sonido.sonar("Error")
-      Message.Error("No se pudo obtener el ID del proyecto insertado. Abortando apertura.")
-      Return
-    Endif
-
-    m_ConexionBD.mConn.Commit
-    m_Sonido.sonar("Info")
-    Message.Info("Proyecto nuevo registrado en la base de datos.")
-  Endif
-
-  ' INICIALIZAR TODAS LAS TABLAS RELACIONADAS CON EL PROYECTO
-  m_FuncionesGenericas.InicializarTablasProyecto(nuevoID)
-
-  ' MARCAR PROYECTO COMO OCUPADO
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 1 WHERE id = &1", nuevoID)
-  m_ConexionBD.mConn.Commit
-
-  ' ACTUALIZAR RUTA DEL PROYECTO
-  txtProyecto.Text = sRutaSeleccionada
-
-  ' MOSTRAR / OCULTAR BARRA DE BOTONES
-  HBoxGuardarTextArea.Visible = False
-  HBoxBotones.Visible = False
-  PanelXML.Visible = False
-  SplitterPrincipal.Visible = True
-
-  ' LIMPIAMOS LOS FORMULARIOS
-  m_Bibtex.LimpiarTextboxBibtex()
-  m_Siglas.LimpiarTextboxSigla()
-
-  ' LIMPIAR CACHÉ O ENTORNO PREVIO
-  Shell Quote$("rm -rf " & User.Home & "/.local/share/org.gambas.*") & "\n" Wait
-
-  ' CONTROLOMANOS EXISTAN LOS ARCHIVOS BASE PARA UN PROYECTO
-  m_FuncionesGenericas.CopiarArchivosBase()
-
-  ' CONFIGURAR INTERFAZ PARA LIBRO LATEX
-  m_FuncionesGenericas.ConfigurarFormulariosLibroLaTeX()
-
-  ' MOSTRAR EL ID DEL PROYECTO
-  id_proyecto.Value = nuevoID
-
-  ' CARGAMOS LOS SCRIPTS PARA MANIPULAR CON LOS *.tex
-  m_InicioCierre.CargarScripts()
-
-  ' ' CARGAMOS LOS METADATOS DEL PROYECTO
-  ' m_Metadatos.CargarMetadatosDelProyecto()
-
-  ' ' CARGAMOS LOS DATOS DE LA ORDEN DE TALLER
-  ' m_OrdenTaller.CargarOrdenTaller()
-
-  ' CARGAMOS LAS REFERENCIAS BIBTEX
-  m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
-  m_Bibtex.IniciarBibtex()
-
-  ' CARGAMOS LAS SIGLAS
-  m_Siglas.ConfigurarTableViewGlosarioEnCurso(FSiglas.gvSiglasEnCurso)
-  m_Siglas.IniciarSiglas()
-
-  ' ARRANCAMOS EL CONTADOR
-  m_Timer.IniciarContadorReloj(id_proyecto.Value)
-
-  ' MARCAR PROYECTO COMO OCUPADO CON PROPIETARIO
-  Dim usuarioPropietario As String = Trim(FMain.TextBoxUsuario.Text)
-  Dim idProyecto As Integer = CInt(FMain.id_proyecto.Value)
-  m_ConexionBD.mConn.Exec("UPDATE proyectos SET ocupado = 1, usuario_propietario = &1 WHERE id = &2", usuarioPropietario, idProyecto)
-
-  If Error Then
-    Message.Error("Error al ejecutar UPDATE: " & Error.Text)
-    Return
-  Endif
-
-  m_ConexionBD.mConn.Commit
-
-  ' LIMPIAMOS EL EDITOR Y LO ESCONDEMOS
-  ' TODA ESTA FUNCION ES TEMPORAL, UNA VEZ TERMINADA MD
-  ' SE REPLICA CON CAMBIOS PARA TEX
-  txtEditorProyecto.Text = ""
-  txtEditorProyecto.ReadOnly = True
-  txtEditorProyecto.Enabled = False
-  txtEditorProyecto.Visible = False
-
-  ' OCULTAMOS EL PANEL INFERIOR IZQUIERDO
-  TabPanelIzquierdaInferior.Visible = False
-  HBoxBuscar.Visible = False
-
-  ' HABILITAMOS EL PANEL INFERIOR
-  tbMostrarPanelInferior.Visible = True
-  SpringTemporal.Visible = False
-
-  ' ASEGURAMOS LA RUTA EN LA TERMINAL Y EN DirViewProyecto
-  InicializarTerminalProyecto(File.Dir(sRutaSeleccionada))
-  DirViewProyecto.Root = File.Dir(sRutaSeleccionada)
 
 End
 
@@ -5988,13 +5796,6 @@ Public Sub btnValidaPDF_Click()
 
 End Sub
 
-Public Sub menuLaTeX_Click()
-
-  TipoProyectoActual = m_Constantes.TIPO_LIBRO_LATEX
-  AbrirProyecto(m_Constantes.TIPO_LIBRO_LATEX)
-
-End
-
 Public Sub menuReflexionEditorial_Click()
 
   m_Sonido.sonar("Info")
@@ -6166,8 +5967,9 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
   Select Case nTipoProyecto
     Case m_Constantes.TIPO_REVISTA_MD, m_Constantes.TIPO_LIBRO_MD
       AbrirProyectoMD(nTipoProyecto)
-    Case m_Constantes.TIPO_LIBRO_LATEX
-      AbrirLibroTEX()
+      m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, TextEditorPreview)
+      ' Case m_Constantes.TIPO_LIBRO_LATEX ' QUEDA CONDICIONADO AL AVANCE DE LATEX EN LOS USUARIOS
+      '   AbrirLibroTEX()
   End Select
 
   ' --- 7. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
@@ -6311,15 +6113,14 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
     Case Left(sNombreArchivo, 2) = "l-" And sExtension = "md"
       iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD
-    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
-      iTipoSeleccionado = m_Constantes.TIPO_LIBRO_TEX
+      ' Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
+      '   iTipoSeleccionado = m_Constantes.TIPO_LIBRO_TEX
     Case Else
       m_Sonido.sonar("Error")
       Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine &
         "Formatos válidos:" & gb.NewLine &
         "• Revista Markdown: r-nombre.md" & gb.NewLine &
-        "• Libro Markdown: l-nombre.md" & gb.NewLine &
-        "• Libro LaTeX: l-nombre.tex" & gb.NewLine &
+        "• Libro Markdown:   l-nombre.md" & gb.NewLine &
         "Archivo recibido: " & sNombreArchivo)
       Return
   End Select
@@ -6653,5 +6454,103 @@ Public Sub btnConvertir_Click()
 
   m_Sonido.sonar("Info")
   FConversorDOCX2MD.ShowModal()
+
+End
+
+' ============================================
+' Evento    : cmbShortcodes_Click
+' Propósito : Disparado al cambiar la opción del ComboBox de tipo de marcado.
+'             Determina qué tipo de marcado se eligió y le pide al módulo
+'             m_Shortcodes que recargue el listbox con los shortcodes que
+'             correspondan. Limpia el TextEditor de preview porque al cambiar
+'             el listbox se invalida cualquier selección previa.
+' Parámetros: (evento UI, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub cmbShortcodes_Click()
+
+  Dim sTipoMarcado As String
+
+  ' --- 1. VALIDAR SELECCIÓN ---
+  If cmbShortcodes.Index < 0 Then Return
+
+  ' --- 2. DETERMINAR EL TIPO DE MARCADO SEGÚN LA OPCIÓN ELEGIDA ---
+  Select Case cmbShortcodes.Text
+    Case m_Shortcodes.OPCION_BLOQUES
+      sTipoMarcado = m_Shortcodes.TIPO_FENCED
+    Case m_Shortcodes.OPCION_INLINE
+      sTipoMarcado = m_Shortcodes.TIPO_INLINE
+    Default
+      Return
+  End Select
+
+  ' --- 3. LIMPIAR PREVIEW (LA SELECCIÓN ANTERIOR YA NO APLICA) ---
+  TextEditorPreview.Text = ""
+
+  ' --- 4. DELEGAR LA CARGA AL MÓDULO ---
+  m_Shortcodes.CargarShortcodesPorTipo(sTipoMarcado, lbDefiniciones)
+
+End
+
+' ============================================
+' Evento    : lbDefiniciones_Click
+' Propósito : Disparado al hacer click simple en el listbox de definiciones.
+'             Si la fila clickeada corresponde a un shortcode (no a un
+'             separador visual), renderiza la información del shortcode
+'             en el TextEditor de preview.
+' Parámetros: (evento UI, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub lbDefiniciones_Click()
+
+  Dim cShortcode As Collection
+  Dim iIndice As Integer
+
+  ' --- 1. VALIDAR ÍNDICE ---
+  iIndice = lbDefiniciones.Index
+  If iIndice < 0 Then Return
+  If iIndice >= m_Shortcodes.aShortcodesActuales.Count Then Return
+
+  ' --- 2. OBTENER EL SHORTCODE DEL ARRAY PARALELO ---
+  ' SI ES Null, ES UN SEPARADOR VISUAL — IGNORAR Y LIMPIAR PREVIEW
+  cShortcode = m_Shortcodes.aShortcodesActuales[iIndice]
+  If IsNull(cShortcode) Then
+    TextEditorPreview.Text = ""
+    Return
+  Endif
+
+  ' --- 3. DELEGAR EL RENDERIZADO AL MÓDULO ---
+  m_Shortcodes.RenderizarInfoShortcode(cShortcode, TextEditorPreview)
+
+End
+
+' ============================================
+' Evento    : lbDefiniciones_DblClick
+' Propósito : Disparado al hacer doble click en el listbox de definiciones.
+'             Si la fila clickeada corresponde a un shortcode (no a un
+'             separador visual), inserta el shortcode en el editor de
+'             proyecto envolviendo la selección actual (o avisando si
+'             falta selección, según corresponda al tipo de shortcode).
+' Parámetros: (evento UI, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub lbDefiniciones_DblClick()
+
+  Dim cShortcode As Collection
+  Dim iIndice As Integer
+
+  ' --- 1. VALIDAR ÍNDICE ---
+  iIndice = lbDefiniciones.Index
+  If iIndice < 0 Then Return
+  If iIndice >= m_Shortcodes.aShortcodesActuales.Count Then Return
+
+  ' --- 2. OBTENER EL SHORTCODE DEL ARRAY PARALELO ---
+  ' SI ES Null, ES UN SEPARADOR — IGNORAR (NO HACER FEEDBACK SONORO TAMPOCO,
+  ' UN DBLCLICK EN UN SEPARADOR ES ACCIDENTAL Y NO REQUIERE ATENCIÓN)
+  cShortcode = m_Shortcodes.aShortcodesActuales[iIndice]
+  If IsNull(cShortcode) Then Return
+
+  ' --- 3. DELEGAR LA INSERCIÓN AL MÓDULO ---
+  m_Shortcodes.InsertarShortcode(cShortcode, txtEditorProyecto)
 
 End

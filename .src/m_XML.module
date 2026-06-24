@@ -136,8 +136,73 @@ Public Function EscaparXML(sTexto As String) As String
   sResultado = Replace(sResultado, "&", "&amp;")
   sResultado = Replace(sResultado, "<", "&lt;")
   sResultado = Replace(sResultado, ">", "&gt;")
+  ' COMILLA DOBLE: USAR Chr(34) (SC-01). EL "\"" LITERAL NO FUNCIONA
+  ' EN GAMBAS — BUSCA LA SECUENCIA backslash+comilla, NO LA COMILLA SOLA.
   sResultado = Replace(sResultado, Chr(34), "&quot;")
   sResultado = Replace(sResultado, "'", "&apos;")
+
+  Return sResultado
+
+End
+
+' ============================================
+' Función   : SanitizarCitekey
+' Propósito : Convierte un citekey arbitrario a NMTOKEN válido para
+'             el atributo id de <ref> y rid de <xref> en JATS.
+'             - Caracteres ASCII permitidos (a-zA-Z0-9.-_): se mantienen
+'             - Cualquier otro carácter (URLs con /, DOIs con :,
+'               espacios, pipes, caracteres multibyte): se reemplaza por '_'
+'             - Underscores múltiples se colapsan a uno
+'             Determinística: mismo input siempre produce mismo output.
+'             La misma lógica está implementada en el filtro Lua
+'             cite-to-xref.lua, en la función sanitizar_citekey(),
+'             garantizando que el rid del xref en el cuerpo y el id
+'             del <ref> en la bibliografía coincidan exactamente para
+'             cualquier citekey original posible.
+' Parámetros: sCitekey As String — citekey original (puede contener
+'             cualquier carácter, incluyendo multibyte)
+' Retorna   : String — citekey sanitizado, NMTOKEN-válido
+' ============================================
+Public Function SanitizarCitekey(sCitekey As String) As String
+
+  Dim sResultado As String
+  Dim i As Integer
+  Dim sChar As String
+  Dim iCodigo As Integer
+
+  ' --- 1. Validación de entrada ---
+  If sCitekey = "" Then Return ""
+
+  ' --- 2. Reemplazar caracteres no permitidos por '_' ---
+  ' RECORRER CODEPOINT A CODEPOINT CON String.* (SC-02 — UTF-8 SAFE).
+  ' SÓLO ACEPTAR ASCII a-zA-Z0-9.-_. CUALQUIER OTRO VA A '_'.
+  ' LOS MULTIBYTE (TILDES, EÑES, ETC.) NUNCA SON ASCII PURO → '_'.
+  sResultado = ""
+  For i = 1 To String.Len(sCitekey)
+    sChar = String.Mid(sCitekey, i, 1)
+    ' SI EL CODEPOINT OCUPA MÁS DE UN BYTE ES MULTIBYTE → REEMPLAZAR
+    If Len(sChar) > 1 Then
+      sResultado &= "_"
+      Continue
+    Endif
+    iCodigo = Asc(sChar)
+    ' RANGOS ASCII PERMITIDOS:
+    '   a-z = 97-122, A-Z = 65-90, 0-9 = 48-57
+    '   . = 46, - = 45, _ = 95
+    If (iCodigo >= 97 And iCodigo <= 122) Or
+       (iCodigo >= 65 And iCodigo <= 90) Or
+       (iCodigo >= 48 And iCodigo <= 57) Or
+       iCodigo = 46 Or iCodigo = 45 Or iCodigo = 95 Then
+      sResultado &= sChar
+    Else
+      sResultado &= "_"
+    Endif
+  Next
+
+  ' --- 3. Colapsar underscores múltiples a uno ---
+  While InStr(sResultado, "__") > 0
+    sResultado = Replace(sResultado, "__", "_")
+  Wend
 
   Return sResultado
 
@@ -402,7 +467,25 @@ End Function
 '              POR CITEKEYS DEL ARTÍCULO ACTIVO
 ' RETORNA:    Boolean — TRUE SI SE EXPORTÓ EXITOSAMENTE
 ' =====================================================
+' ============================================
+' Función   : ExportarJATSdesdeBIB
+' Propósito : Exporta todas las referencias del .bib a un archivo
+'             XML-JATS completo (ref-*.xml) en /referencias.
+'             A diferencia de GenerarRefListXML() que filtra por los
+'             citekeys citados en el artículo activo, esta función
+'             exporta la bibliografía COMPLETA del .bib sin filtrar.
+'             Mantiene la misma simetría que GenerarRefListXML:
+'             - Prefijo "bib-" en el id (R-03)
+'             - Sanitización del citekey vía SanitizarCitekey
+'             - Detección de colisión: dos citekeys distintos que
+'               sanitizan al mismo valor abortan con error explícito
+' Retorna   : Boolean — True si el archivo se generó correctamente
+' ============================================
 Public Function ExportarJATSdesdeBIB() As Boolean
+
+  ' COMILLA DOBLE COMO VARIABLE LOCAL PARA LEGIBILIDAD EN CONSTRUCCIÓN
+  ' DE ATRIBUTOS XML (SC-01)
+  Dim cQ As String = Chr(34)
 
   Dim sBibFile As String
   Dim sBibContent As String
@@ -411,14 +494,17 @@ Public Function ExportarJATSdesdeBIB() As Boolean
   Dim aEntries As String[]
   Dim sEntry As String
   Dim sCitekey As String
+  Dim sCitekeySanitizado As String
   Dim sType As String
   Dim iPosLlave As Integer
   Dim iPosComa As Integer
   Dim dictEntries As New Collection
   Dim dictTypes As New Collection
+  Dim colSanitizados As New Collection
 
   ' --- 1. Verificar y leer el .bib ---
-  sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" & File.BaseName(FMain.txtProyecto.Text) & ".bib"
+  sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
+    File.BaseName(FMain.txtProyecto.Text) & ".bib"
 
   If Not Exist(sBibFile) Then
     m_Sonido.sonar("Error")
@@ -444,10 +530,15 @@ Public Function ExportarJATSdesdeBIB() As Boolean
   Next
 
   ' --- 3. Segunda pasada: generar XML ---
-  sXML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
   ' EL NAMESPACE xlink ES OBLIGATORIO PORQUE ext-link USA xlink:href
-  sXML &= "<ref-list xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">\n"
+  sXML = "<?xml version=" & cQ & "1.0" & cQ & " encoding=" & cQ & "UTF-8" & cQ & "?>" & gb.NewLine
+  sXML &= "<ref-list xmlns:xlink=" & cQ & "http://www.w3.org/1999/xlink" & cQ & ">" & gb.NewLine
 
+  ' DETECCIÓN DE COLISIÓN: SI DOS CITEKEYS DISTINTOS PRODUCEN EL MISMO
+  ' RESULTADO AL SANITIZARSE (POSIBLE EN BIBLIOGRAFÍAS HEREDADAS CON
+  ' CARACTERES ESPECIALES EN LAS KEYS), ABORTAR Y AVISAR AL USUARIO.
+  ' NO APLICAR UN HEURÍSTICO SILENCIOSO QUE PUEDA FUNDIR DOS REFERENCIAS
+  ' DISTINTAS BAJO EL MISMO id.
   For Each sEntry In aEntries
     If TrimUTF8(sEntry) = "" Then Continue
     iPosLlave = InStr(sEntry, "{")
@@ -456,15 +547,39 @@ Public Function ExportarJATSdesdeBIB() As Boolean
     sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
     If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
     sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
-    sXML &= "  <ref id=\"" & EscaparXML(sCitekey) & "\">\n"
+
+    ' SANITIZAR Y VERIFICAR COLISIÓN ANTES DE EMITIR EL <ref>
+    sCitekeySanitizado = SanitizarCitekey(sCitekey)
+    If colSanitizados.Exist(sCitekeySanitizado) Then
+      If colSanitizados[sCitekeySanitizado] <> sCitekey Then
+        m_Sonido.sonar("Error")
+        Message.Error(
+          "Colisión de citekeys al sanitizar para XML JATS:" & gb.NewLine & gb.NewLine &
+          "Original 1: " & colSanitizados[sCitekeySanitizado] & gb.NewLine &
+          "Original 2: " & sCitekey & gb.NewLine &
+          "Ambos resultan en: " & sCitekeySanitizado & gb.NewLine & gb.NewLine &
+          "Renombre uno de los dos en el archivo .bib y reintente.")
+        Return False
+      Endif
+      ' MISMO CITEKEY APARECE DOS VECES EN EL .bib: SALTAR
+      Continue
+    Endif
+    colSanitizados[sCitekeySanitizado] = sCitekey
+
+    ' EL id USA EL FORMATO "bib-{citekey_sanitizado}", IGUAL QUE
+    ' GenerarRefListXML Y QUE EL rid DEL <xref> GENERADO POR
+    ' cite-to-xref.lua. AMBOS COINCIDEN EXACTAMENTE Y EL XML
+    ' RESULTANTE ES NMTOKEN-VÁLIDO SEGÚN LA DTD DE JATS.
+    sXML &= "  <ref id=" & cQ & "bib-" & sCitekeySanitizado & cQ & ">" & gb.NewLine
     sXML &= GenerarElementCitationDesdeBib(sEntry, sType, dictEntries, dictTypes)
-    sXML &= "  </ref>\n"
+    sXML &= "  </ref>" & gb.NewLine
   Next
 
-  sXML &= "</ref-list>\n"
+  sXML &= "</ref-list>" & gb.NewLine
 
   ' --- 4. Guardar y postprocesar ---
-  outputFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" & File.BaseName(FMain.txtProyecto.Text) & ".xml"
+  outputFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
+    File.BaseName(FMain.txtProyecto.Text) & ".xml"
   File.Save(outputFile, sXML)
 
   If Not AplicarReglasPostproceso(outputFile) Then
@@ -488,6 +603,11 @@ End
 ' RETORNA:    String — XML DE <element-citation>
 ' =====================================================
 Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As String, dictEntries As Collection, dictTypes As Collection) As String
+
+
+  ' COMILLA DOBLE COMO VARIABLE LOCAL — LEGIBILIDAD EN CONSTRUCCIÓN
+  ' DE ATRIBUTOS XML (SC-01)
+  Dim cQ As String = Chr(34)
 
   Dim sXML As String = ""
   Dim sPubType As String
@@ -661,7 +781,7 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
   sBookauthor = ParsearCampoBib(sEntry, "bookauthor")
 
   ' --- 3. Abrir <element-citation> ---
-  sXML &= "    <element-citation publication-type=\"" & sPubType & "\">\n"
+  sXML &= "    <element-citation publication-type=" & cQ & sPubType & cQ & ">" & gb.NewLine
 
   ' --- 4. Person-groups ---
   If sAuthor <> "" Then sXML &= GenerarPersonGroup(sAuthor, "author")
@@ -690,85 +810,85 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
 
   If sBookTitleCompleto <> "" Then
     If sTituloCompleto <> "" Then
-      sXML &= "      <chapter-title>" & sTituloCompleto & "</chapter-title>\n"
+      sXML &= "      <chapter-title>" & sTituloCompleto & "</chapter-title>" & gb.NewLine
     Endif
-    sXML &= "      <source>" & sBookTitleCompleto & "</source>\n"
+    sXML &= "      <source>" & sBookTitleCompleto & "</source>" & gb.NewLine
   Else
     If sTituloCompleto <> "" Then
       Select Case sPubType
         Case "journal", "newspaper"
-          sXML &= "      <article-title>" & sTituloCompleto & "</article-title>\n"
+          sXML &= "      <article-title>" & sTituloCompleto & "</article-title>" & gb.NewLine
         Case Else
-          sXML &= "      <source>" & sTituloCompleto & "</source>\n"
+          sXML &= "      <source>" & sTituloCompleto & "</source>" & gb.NewLine
       End Select
     Endif
   Endif
 
   If sJournal <> "" And (sPubType = "journal" Or sPubType = "newspaper") Then
-    sXML &= "      <source>" & sJournal & "</source>\n"
+    sXML &= "      <source>" & sJournal & "</source>" & gb.NewLine
   Endif
 
   If sSeries <> "" And (sPubType = "book" Or InStr(Lower(sType), "collection") > 0) Then
-    sXML &= "      <series>" & sSeries & "</series>\n"
+    sXML &= "      <series>" & sSeries & "</series>" & gb.NewLine
   Endif
 
   ' --- 6. Publisher y ubicación ---
-  If sPublisher <> "" Then sXML &= "      <publisher-name>" & sPublisher & "</publisher-name>\n"
-  If sAddress <> "" Then sXML &= "      <publisher-loc>" & sAddress & "</publisher-loc>\n"
+  If sPublisher <> "" Then sXML &= "      <publisher-name>" & sPublisher & "</publisher-name>" & gb.NewLine
+  If sAddress <> "" Then sXML &= "      <publisher-loc>" & sAddress & "</publisher-loc>" & gb.NewLine
 
   ' --- 7. Año, volumen, número ---
-  If sFinalYear <> "" Then sXML &= "      <year>" & sFinalYear & "</year>\n"
-  If sVolume <> "" Then sXML &= "      <volume>" & sVolume & "</volume>\n"
+  If sFinalYear <> "" Then sXML &= "      <year>" & sFinalYear & "</year>" & gb.NewLine
+  If sVolume <> "" Then sXML &= "      <volume>" & sVolume & "</volume>" & gb.NewLine
 
   If sNumber <> "" Then
     Select Case sPubType
       Case "patent"
-        sXML &= "      <patent>" & sNumber & "</patent>\n"
+        sXML &= "      <patent>" & sNumber & "</patent>" & gb.NewLine
       Case "report"
-        sXML &= "      <pub-id pub-id-type=\"report-number\">" & sNumber & "</pub-id>\n"
+        sXML &= "      <pub-id pub-id-type=" & cQ & "report-number" & cQ & ">" & sNumber & "</pub-id>" & gb.NewLine
       Case Else
-        sXML &= "      <issue>" & sNumber & "</issue>\n"
+        sXML &= "      <issue>" & sNumber & "</issue>" & gb.NewLine
     End Select
   Endif
 
   ' --- 8. Paginación o elocation-id ---
   If sEid <> "" Then
-    sXML &= "      <elocation-id>" & sEid & "</elocation-id>\n"
+    sXML &= "      <elocation-id>" & sEid & "</elocation-id>" & gb.NewLine
   Else If sPages <> "" Then
     If InStr(sPages, "--") > 0 Then
       aPages = Split(sPages, "--")
     Else If InStr(sPages, "-") > 0 Then
       aPages = Split(sPages, "-")
     Else
-      sXML &= "      <fpage>" & TrimUTF8(sPages) & "</fpage>\n"
-      sXML &= "      <lpage>" & TrimUTF8(sPages) & "</lpage>\n"
+      sXML &= "      <fpage>" & TrimUTF8(sPages) & "</fpage>" & gb.NewLine
+      sXML &= "      <lpage>" & TrimUTF8(sPages) & "</lpage>" & gb.NewLine
       aPages = Null
     Endif
     If aPages Then
       If aPages.Count >= 2 Then
-        sXML &= "      <fpage>" & TrimUTF8(aPages[0]) & "</fpage>\n"
-        sXML &= "      <lpage>" & TrimUTF8(aPages[1]) & "</lpage>\n"
+        sXML &= "      <fpage>" & TrimUTF8(aPages[0]) & "</fpage>" & gb.NewLine
+        sXML &= "      <lpage>" & TrimUTF8(aPages[1]) & "</lpage>" & gb.NewLine
       Else If aPages.Count = 1 Then
-        sXML &= "      <fpage>" & TrimUTF8(aPages[0]) & "</fpage>\n"
-        sXML &= "      <lpage>" & TrimUTF8(aPages[0]) & "</lpage>\n"
+        sXML &= "      <fpage>" & TrimUTF8(aPages[0]) & "</fpage>" & gb.NewLine
+        sXML &= "      <lpage>" & TrimUTF8(aPages[0]) & "</lpage>" & gb.NewLine
       Endif
     Endif
   Endif
 
   ' --- 9. Edición, institución, nota ---
-  If sEdition <> "" Then sXML &= "      <edition>" & sEdition & "</edition>\n"
+  If sEdition <> "" Then sXML &= "      <edition>" & sEdition & "</edition>" & gb.NewLine
 
   If sPubType = "thesis" Or sPubType = "report" Then
     If sInstitution <> "" Then
-      sXML &= "      <institution>" & sInstitution & "</institution>\n"
+      sXML &= "      <institution>" & sInstitution & "</institution>" & gb.NewLine
     Else If sSchool <> "" Then
-      sXML &= "      <institution>" & sSchool & "</institution>\n"
+      sXML &= "      <institution>" & sSchool & "</institution>" & gb.NewLine
     Endif
   Endif
 
-  If sNote <> "" Then sXML &= "      <comment>" & sNote & "</comment>\n"
+  If sNote <> "" Then sXML &= "      <comment>" & sNote & "</comment>" & gb.NewLine
   If sVersion <> "" And sPubType = "web" Then
-    sXML &= "      <comment>Version " & sVersion & "</comment>\n"
+    sXML &= "      <comment>Version " & sVersion & "</comment>" & gb.NewLine
   Endif
 
   If sHolder <> "" And sPubType = "patent" Then
@@ -778,22 +898,22 @@ Private Function GenerarElementCitationDesdeBib(sEntry As String, sType As Strin
     sHolderLimpio = Replace(sHolderLimpio, "{", "")
     sHolderLimpio = Replace(sHolderLimpio, "}", "")
     sHolderLimpio = Replace(sHolderLimpio, " and ", ", ")
-    sXML &= "      <comment>Patent holder: " & sHolderLimpio & "</comment>\n"
+    sXML &= "      <comment>Patent holder: " & sHolderLimpio & "</comment>" & gb.NewLine
   Endif
 
   ' --- 10. Identificadores ---
-  If sIsbn <> "" Then sXML &= "      <isbn>" & sIsbn & "</isbn>\n"
-  If sIssn <> "" Then sXML &= "      <issn>" & sIssn & "</issn>\n"
-  If sDoi <> "" Then sXML &= "      <pub-id pub-id-type=\"doi\">" & sDoi & "</pub-id>\n"
+  If sIsbn <> "" Then sXML &= "      <isbn>" & sIsbn & "</isbn>" & gb.NewLine
+  If sIssn <> "" Then sXML &= "      <issn>" & sIssn & "</issn>" & gb.NewLine
+  If sDoi <> "" Then sXML &= "      <pub-id pub-id-type=" & cQ & "doi" & cQ & ">" & sDoi & "</pub-id>" & gb.NewLine
   If sEprint <> "" Then
     If sEprintType <> "" Then sEprintType = Lower(sEprintType)
-    sXML &= "      <pub-id pub-id-type=\"" & sEprintType & "\">" & sEprint & "</pub-id>\n"
+    sXML &= "      <pub-id pub-id-type=" & cQ & sEprintType & cQ & ">" & sEprint & "</pub-id>" & gb.NewLine
   Endif
   If sUrl <> "" Then
-    sXML &= "      <ext-link ext-link-type=\"uri\" xlink:href=\"" & sUrl & "\">" & sUrl & "</ext-link>\n"
+    sXML &= "      <ext-link ext-link-type=" & cQ & "uri" & cQ & " xlink:href=" & cQ & sUrl & cQ & ">" & sUrl & "</ext-link>" & gb.NewLine
   Endif
 
-  sXML &= "    </element-citation>\n"
+  sXML &= "    </element-citation>" & gb.NewLine
 
   Return sXML
 
@@ -2316,9 +2436,35 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   ' SIN ESTA DECLARACIÓN EL PARSER XML RECHAZA EL DOCUMENTO Y SAXON LO TRUNCA
   sXML = "<ref-list xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">" & Chr(10)
 
+  ' DETECCIÓN DE COLISIÓN: SI DOS CITEKEYS DISTINTOS PRODUCEN EL MISMO
+  ' RESULTADO AL SANITIZARSE (POSIBLE EN BIBLIOGRAFÍAS HEREDADAS CON
+  ' CARACTERES ESPECIALES), ABORTAR Y AVISAR. NO APLICAR UN HEURÍSTICO
+  ' SILENCIOSO QUE PUEDA FUNDIR DOS REFERENCIAS DISTINTAS BAJO EL MISMO id.
+  Dim colSanitizados As New Collection
+  Dim sCkSanitizado As String
+
   For Each sCk In aCitekeys
     sCk = TrimUTF8(sCk)
     If sCk = "" Then Continue
+
+    ' SANITIZAR Y VERIFICAR COLISIÓN ANTES DE PROCESAR LA ENTRADA
+    sCkSanitizado = SanitizarCitekey(sCk)
+    If colSanitizados.Exist(sCkSanitizado) Then
+      ' SI YA SE VIO ESTE SANITIZADO, REVISAR SI ERA EL MISMO ORIGINAL
+      If colSanitizados[sCkSanitizado] <> sCk Then
+        m_Sonido.sonar("Error")
+        Message.Error(
+          "Colisión de citekeys al sanitizar para XML JATS:" & Chr(10) & Chr(10) &
+          "Original 1: " & colSanitizados[sCkSanitizado] & Chr(10) &
+          "Original 2: " & sCk & Chr(10) &
+          "Ambos resultan en: " & sCkSanitizado & Chr(10) & Chr(10) &
+          "Renombre uno de los dos en el archivo .bib y vuelva a generar el reflist.")
+        Return False
+      Endif
+      ' MISMO CITEKEY APARECE DOS VECES EN referencias_citadas: SALTAR
+      Continue
+    Endif
+    colSanitizados[sCkSanitizado] = sCk
 
     If Not dictEntries.Exist(sCk) Then
       sXML &= "  <!-- ADVERTENCIA: citekey '" & sCk & "' no encontrado en el .bib -->" & Chr(10)
@@ -2328,7 +2474,10 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
     sEntry = dictEntries[sCk]
     sType = dictTypes[sCk]
 
-    sXML &= "  <ref id=" & Chr(34) & "bib-" & EscaparXML(sCk) & Chr(34) & ">" & Chr(10)
+    ' EL id DEL <ref> USA LA FORMA SANITIZADA, IGUAL QUE EL rid DEL xref
+    ' GENERADO POR cite-to-xref.lua. AMBOS COINCIDEN EXACTAMENTE Y EL XML
+    ' RESULTANTE ES NMTOKEN-VÁLIDO SEGÚN LA DTD DE JATS.
+    sXML &= "  <ref id=" & Chr(34) & "bib-" & sCkSanitizado & Chr(34) & ">" & Chr(10)
     sXML &= GenerarElementCitationDesdeBib(sEntry, sType, dictEntries, dictTypes)
     sXML &= "  </ref>" & Chr(10)
   Next
