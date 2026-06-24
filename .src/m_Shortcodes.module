@@ -1,0 +1,563 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo: m_Shortcodes
+' ------------------------------------------------------------------------------
+' Concentra toda la lógica de manejo de shortcodes:
+'   - Carga de shortcodes según contexto (tipo de proyecto activo)
+'   - Filtrado por tipo de marcado (fenced/inline) y por perfil disciplinar
+'   - Renderizado del listbox con agrupamiento visual
+'   - Renderizado del textarea de información
+'   - Inserción en el editor con cierre nombrado (convención link reference)
+'   - Helpers para el highlighter (matching de aperturas/cierres)
+'
+' LA UI DEL TAB VIVE EN FMain. ESTE MÓDULO ES LÓGICA PURA, SIN CONTROLES.
+' LOS HANDLERS DE EVENTOS EN FMain DELEGAN EN FUNCIONES DE ESTE MÓDULO.
+'
+' CONTROLES DEL TAB EN FMain:
+'   - cmbShortcodes      (ComboBox, ReadOnly): selector de tipo de marcado
+'   - lbDefiniciones     (ListBox): lista de shortcodes filtrados
+'   - TextEditorPreview  (TextEditor, ReadOnly): info del shortcode
+'
+' VARIABLE DE SESIÓN LEÍDA:
+'   - FMain.TipoProyectoActual As Integer (m_Constantes.TIPO_REVISTA_MD o TIPO_LIBRO_MD)
+' ==============================================================================
+
+' --- 1. CONSTANTES PÚBLICAS DE OPCIONES DEL COMBOBOX ---
+
+Public Const OPCION_BLOQUES As String = "Bloques (fenced)"
+Public Const OPCION_INLINE As String = "Marcas inline (inline)"
+
+' --- 2. CONSTANTES DE TIPOS DE MARCADO ---
+
+Public Const TIPO_FENCED As String = "fenced"
+Public Const TIPO_INLINE As String = "inline"
+
+' --- 3. CONSTANTES VISUALES DEL LISTBOX ---
+
+' SEPARADORES NO CLICKABLES PARA AGRUPAR VISUALMENTE
+Public Const SEP_COMUNES As String = "── Comunes ──"
+Public Const SEP_ESTRUCTURA As String = "── Estructura del producto ──"
+Public Const SEP_DISCIPLINARES As String = "── Disciplinares ──"
+
+' PREFIJOS PARA INDENTACIÓN DENTRO DEL LISTBOX
+Public Const PREFIJO_ITEM As String = "    "          ' SHORTCODE SELECCIONABLE
+Public Const PREFIJO_SUBGRUPO As String = "  · "      ' SUBGRUPO DISCIPLINAR
+
+' --- 4. CACHE DE DATOS POR ÍNDICE DEL LISTBOX ---
+
+' ARRAY PARALELO AL LISTBOX. CADA ENTRADA CONTIENE LA Collection DEL
+' SHORTCODE EN ESA POSICIÓN, O Null SI ES UN SEPARADOR.
+Public aShortcodesActuales As Collection[]
+
+' ==============================================================================
+' Función   : InicializarTabShortcodes
+' Propósito : Punto único de entrada al abrir un proyecto. Carga el ComboBox
+'             con las dos opciones (Bloques, Marcas inline), configura el
+'             TextEditor de preview, y dispara la carga inicial del listbox
+'             con la opción por defecto (Bloques).
+' Parámetros: cmb As ComboBox  — referencia a FMain.cmbShortcodes
+'             lst As ListBox   — referencia a FMain.lbDefiniciones
+'             txt As TextEditor — referencia a FMain.TextEditorPreview
+' Retorna   : (Sub, sin retorno)
+' ==============================================================================
+Public Sub InicializarTabShortcodes(cmb As ComboBox, lst As ListBox, txt As TextEditor)
+
+  ' --- 1. RESET DE COMPONENTES ---
+  cmb.Clear
+  lst.Clear
+  txt.Text = ""
+
+  ' --- 2. CONFIGURAR PREVIEW COMO SOLO LECTURA ---
+  txt.ReadOnly = True
+
+  ' --- 3. POBLAR EL COMBOBOX CON LAS DOS OPCIONES ---
+  cmb.Add(OPCION_BLOQUES)
+  cmb.Add(OPCION_INLINE)
+  cmb.ReadOnly = True
+
+  ' --- 4. INICIALIZAR EL ARRAY DE SHORTCODES (PARALELO AL LISTBOX) ---
+  aShortcodesActuales = New Collection[]
+
+  ' --- 5. SELECCIONAR LA PRIMERA OPCIÓN Y CARGAR EL LISTBOX ---
+  ' SETEAR Index DISPARA EL HANDLER cmbShortcodes_Click EN FMain,
+  ' QUE A SU VEZ INVOCA CargarShortcodesPorTipo. ASÍ EL FLUJO ES
+  ' UNIFORME (NO HAY DOS CAMINOS DE INICIALIZACIÓN).
+  cmb.Index = 0
+
+End
+
+' ==============================================================================
+' Función   : CargarShortcodesPorTipo
+' Propósito : Consulta a BD los shortcodes aplicables al proyecto activo
+'             filtrados por tipo de marcado. Llena el listbox con grupos
+'             visuales (Comunes, Estructura del producto, Disciplinares).
+'             La consulta a BD se hace siempre, sin cache (decisión cerrada).
+' Parámetros: sTipoMarcado As String  — TIPO_FENCED o TIPO_INLINE
+'             lst As ListBox          — listbox a poblar
+' Retorna   : Boolean — True si la carga fue exitosa
+' ==============================================================================
+Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListBox) As Boolean
+
+  Dim hResultado As Result
+  Dim sSQL As String
+  Dim sCampoAplica As String
+  Dim sPerfilAnterior As String
+  Dim sPerfilActual As String
+  Dim bAbrioSeccionDisciplinares As Boolean
+
+  ' --- 1. RESET DEL LISTBOX Y DEL ARRAY PARALELO ---
+  lst.Clear
+  aShortcodesActuales.Clear
+
+  ' --- 2. DETERMINAR EL CAMPO DE FILTRO SEGÚN TIPO DE PROYECTO ACTIVO ---
+  ' LECTURA DE FMain.TipoProyectoActual: SI ES REVISTA → FILTRAR POR aplica_revista,
+  ' SI ES LIBRO → FILTRAR POR aplica_libro. LA VARIABLE DEBE SER Public EN FMain.
+  Select Case FMain.TipoProyectoActual
+    Case m_Constantes.TIPO_REVISTA_MD
+      sCampoAplica = "aplica_revista"
+    Case m_Constantes.TIPO_LIBRO_MD
+      sCampoAplica = "aplica_libro"
+    Default
+      ' NO HAY PROYECTO ABIERTO O ES UN TIPO NO MANEJADO (EJ. TIPO_LIBRO_LATEX)
+      Return False
+  End Select
+
+  ' --- 3. CONSTRUIR LA QUERY ---
+  ' ORDEN: PRIMERO LOS COMUNES (perfil_disciplinar IS NULL), DENTRO DE
+  ' COMUNES SEPARANDO ESTRUCTURALES DE NO ESTRUCTURALES POR NOMBRE LIKE
+  ' 'sec-%'. DESPUÉS LOS DISCIPLINARES ORDENADOS POR PERFIL Y NOMBRE.
+  '
+  ' EL CAMPO sCampoAplica SE INCRUSTA POR CONCATENACIÓN PORQUE NO ES UN
+  ' VALOR SINO UN NOMBRE DE COLUMNA — Connection.Exec NO PERMITE
+  ' PARAMETRIZAR NOMBRES DE COLUMNAS. ES SEGURO PORQUE EL VALOR SALE
+  ' DEL Select Case INTERNO, NO DE INPUT DEL USUARIO.
+  sSQL = "SELECT id, nombre, etiqueta, descripcion, ejemplo, "
+  sSQL &= "       sintaxis_apertura, sintaxis_cierre, tiene_contenido, "
+  sSQL &= "       tipo_marcado, perfil_disciplinar, mapeo_revista, mapeo_libro, "
+  sSQL &= "       atributos_requeridos "
+  sSQL &= "FROM   shortcodes "
+  sSQL &= "WHERE  activo = 1 "
+  sSQL &= "  AND  tipo_marcado = &1 "
+  sSQL &= "  AND  " & sCampoAplica & " = 1 "
+  sSQL &= "ORDER BY "
+  sSQL &= "  CASE "
+  sSQL &= "    WHEN perfil_disciplinar IS NULL AND nombre NOT LIKE 'sec-%' THEN 1 "
+  sSQL &= "    WHEN perfil_disciplinar IS NULL AND nombre LIKE 'sec-%' THEN 2 "
+  sSQL &= "    ELSE 3 "
+  sSQL &= "  END, "
+  sSQL &= "  perfil_disciplinar, "
+  sSQL &= "  nombre"
+
+  Try hResultado = m_ConexionBD.mConn.Exec(sSQL, sTipoMarcado)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar shortcodes:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hResultado Then Return False
+
+  ' --- 4. POBLAR LISTBOX CON SEPARADORES VISUALES Y SHORTCODES ---
+  ' SE LLEVA UN ESTADO (sPerfilAnterior) PARA DETECTAR CAMBIOS DE GRUPO
+  ' Y EMITIR LOS SEPARADORES EN LOS LUGARES CORRECTOS.
+
+  sPerfilAnterior = "###INICIO###"   ' VALOR CENTINELA PARA FORZAR EMISIÓN DEL PRIMER SEPARADOR
+  bAbrioSeccionDisciplinares = False
+
+  For Each hResultado
+    sPerfilActual = IIf(IsNull(hResultado["perfil_disciplinar"]), "", hResultado["perfil_disciplinar"])
+
+    ' EMISIÓN DE SEPARADORES PRINCIPALES SEGÚN CAMBIO DE GRUPO
+    If sPerfilActual = "" And InStr(hResultado["nombre"], "sec-") = 0 Then
+      ' GRUPO 1: COMUNES (TRANSVERSALES NO ESTRUCTURALES)
+      If sPerfilAnterior = "###INICIO###" Then
+        lst.Add(SEP_COMUNES)
+        aShortcodesActuales.Add(Null)
+        sPerfilAnterior = "COMUNES"
+      Endif
+    Else If sPerfilActual = "" And InStr(hResultado["nombre"], "sec-") = 1 Then
+      ' GRUPO 2: ESTRUCTURA DEL PRODUCTO
+      If sPerfilAnterior <> "ESTRUCTURA" Then
+        lst.Add(SEP_ESTRUCTURA)
+        aShortcodesActuales.Add(Null)
+        sPerfilAnterior = "ESTRUCTURA"
+      Endif
+    Else
+      ' GRUPO 3: DISCIPLINARES (CON SUB-GRUPOS POR PERFIL)
+      If Not bAbrioSeccionDisciplinares Then
+        lst.Add(SEP_DISCIPLINARES)
+        aShortcodesActuales.Add(Null)
+        bAbrioSeccionDisciplinares = True
+        sPerfilAnterior = ""
+      Endif
+      ' SUBGRUPO POR PERFIL DISCIPLINAR
+      If sPerfilActual <> sPerfilAnterior Then
+        lst.Add(PREFIJO_SUBGRUPO & FormatearNombrePerfil(sPerfilActual))
+        aShortcodesActuales.Add(Null)
+        sPerfilAnterior = sPerfilActual
+      Endif
+    Endif
+
+    ' EMISIÓN DEL ITEM DEL SHORTCODE
+    lst.Add(PREFIJO_ITEM & hResultado["etiqueta"])
+    aShortcodesActuales.Add(CrearCollectionDesdeResult(hResultado))
+  Next
+
+  Return True
+
+End
+
+' ==============================================================================
+' Función   : CrearCollectionDesdeResult
+' Propósito : Convierte una fila del Result en una Collection para guardar en
+'             aShortcodesActuales. Se usa para que el manejo posterior no
+'             dependa de Result (que se cierra cuando termina el For Each).
+' Parámetros: hRes As Result — fila actual del cursor
+' Retorna   : Collection con todos los campos del shortcode
+' ==============================================================================
+Private Function CrearCollectionDesdeResult(hRes As Result) As Collection
+
+  Dim c As New Collection
+
+  c["id"] = hRes["id"]
+  c["nombre"] = hRes["nombre"]
+  c["etiqueta"] = hRes["etiqueta"]
+  c["descripcion"] = hRes["descripcion"]
+  c["ejemplo"] = hRes["ejemplo"]
+  c["sintaxis_apertura"] = hRes["sintaxis_apertura"]
+  c["sintaxis_cierre"] = hRes["sintaxis_cierre"]
+  c["tiene_contenido"] = hRes["tiene_contenido"]
+  c["tipo_marcado"] = hRes["tipo_marcado"]
+  c["perfil_disciplinar"] = hRes["perfil_disciplinar"]
+  c["mapeo_revista"] = hRes["mapeo_revista"]
+  c["mapeo_libro"] = hRes["mapeo_libro"]
+  c["atributos_requeridos"] = hRes["atributos_requeridos"]
+
+  Return c
+
+End
+
+Private Function FormatearNombrePerfil(sPerfil As String) As String
+
+  Dim s As String
+
+  s = Replace(sPerfil, "_", " ")
+  s = String.UCase(String.Left(s, 1)) & String.Mid(s, 2)
+  Return s
+
+End
+
+' ==============================================================================
+' Función   : ExtraerClaseDeApertura
+' Propósito : Extrae la primera clase Pandoc de una sintaxis de apertura
+'             fenced. Esta clase es lo que debe usarse en el cierre nombrado,
+'             NO el campo nombre del shortcode (que puede llevar prefijos
+'             identificatorios internos de BD como "sec-").
+'             Soporta las dos notaciones de Pandoc:
+'               - Con llaves: "::: {.editorial}" o "::: {.fig #id .fullwidth}"
+'               - Forma corta: "::: epigraph" o ":::epigraph"
+' Parámetros: sApertura As String — sintaxis de apertura tal como está en BD
+' Retorna   : String — clase Pandoc (ej. "editorial", "fig", "epigraph")
+' ==============================================================================
+Private Function ExtraerClaseDeApertura(sApertura As String) As String
+
+  Dim iPosLlave As Integer
+  Dim iFinLlave As Integer
+  Dim iEspacio As Integer
+  Dim sResto As String
+
+  ' --- 1. CASO LLAVES: "::: {.clase ...}" ---
+  ' BUSCAR LA PRIMERA APARICIÓN DE "{." Y EXTRAER HASTA EL PRIMER ESPACIO O "}"
+  iPosLlave = String.InStr(sApertura, "{.")
+  If iPosLlave > 0 Then
+    sResto = String.Mid(sApertura, iPosLlave + 2)
+    iEspacio = String.InStr(sResto, " ")
+    iFinLlave = String.InStr(sResto, "}")
+    ' EL FIN DE LA CLASE ES LO QUE OCURRA PRIMERO: ESPACIO O LLAVE
+    If iEspacio > 0 And If (iFinLlave = 0 Or iEspacio < iFinLlave) Then
+      Return String.Left(sResto, iEspacio - 1)
+    Else If iFinLlave > 0 Then
+      Return String.Left(sResto, iFinLlave - 1)
+    Endif
+  Endif
+
+  ' --- 2. CASO FORMA CORTA: "::: nombre" (SIN LLAVES) ---
+  ' EXTRAER LO QUE VIENE DESPUÉS DE ":::" HASTA UN ESPACIO O FIN DE LÍNEA
+  sResto = Trim(String.Mid(sApertura, 4))
+  iEspacio = String.InStr(sResto, " ")
+  If iEspacio > 0 Then
+    Return String.Left(sResto, iEspacio - 1)
+  Endif
+
+  Return sResto
+
+End
+
+' ==============================================================================
+' Función   : RenderizarInfoShortcode
+' Propósito : Formatea descripción + ejemplo + mapeo del shortcode en el
+'             TextEditor de preview. Tres bloques visualmente separados.
+' Parámetros: cShortcode As Collection  — datos del shortcode (o Null si separador)
+'             txt As TextEditor         — control TextEditorPreview
+' ==============================================================================
+Public Sub RenderizarInfoShortcode(cShortcode As Collection, txt As TextEditor)
+
+  Dim sTexto As String
+  Dim sMapeo As String
+  Dim sLineaSep As String
+
+  ' --- 1. SI ES UN SEPARADOR (Null), LIMPIAR Y SALIR ---
+  If IsNull(cShortcode) Then
+    txt.Text = ""
+    Return
+  Endif
+
+  ' --- 2. CONSTRUIR EL TEXTO DE INFO ---
+  sLineaSep = String$(60, "─")
+
+  ' BLOQUE 1: ¿QUÉ ES?
+  sTexto = "¿QUÉ ES?" & Chr(10)
+  sTexto &= sLineaSep & Chr(10)
+  sTexto &= cShortcode["descripcion"] & Chr(10) & Chr(10)
+
+  ' BLOQUE 2: ¿CÓMO SE ESCRIBE?
+  sTexto &= "¿CÓMO SE ESCRIBE?" & Chr(10)
+  sTexto &= sLineaSep & Chr(10)
+  sTexto &= IIf(IsNull(cShortcode["ejemplo"]), "(sin ejemplo)", cShortcode["ejemplo"]) & Chr(10) & Chr(10)
+
+  ' BLOQUE 3: MAPEO CANÓNICO (SEGÚN TIPO DE PROYECTO ACTIVO)
+  sTexto &= "MAPEA A:" & Chr(10)
+  sTexto &= sLineaSep & Chr(10)
+
+  Select Case FMain.TipoProyectoActual
+    Case m_Constantes.TIPO_REVISTA_MD
+      sMapeo = IIf(IsNull(cShortcode["mapeo_revista"]), "(sin mapeo definido)", "<" & cShortcode["mapeo_revista"] & "> (JATS)")
+    Case m_Constantes.TIPO_LIBRO_MD
+      sMapeo = IIf(IsNull(cShortcode["mapeo_libro"]), "(sin mapeo definido)", "<" & cShortcode["mapeo_libro"] & "> (DocBook)")
+    Default
+      sMapeo = "(tipo de proyecto desconocido)"
+  End Select
+  sTexto &= sMapeo
+
+  ' BLOQUE 4 OPCIONAL: ATRIBUTOS REQUERIDOS
+  If Not IsNull(cShortcode["atributos_requeridos"]) Then
+    sTexto &= Chr(10) & Chr(10) & "ATRIBUTOS REQUERIDOS:" & Chr(10)
+    sTexto &= sLineaSep & Chr(10)
+    sTexto &= cShortcode["atributos_requeridos"]
+  Endif
+
+  ' --- 3. ASIGNAR AL TEXT EDITOR ---
+  txt.Text = sTexto
+
+End
+
+' ==============================================================================
+' Función   : InsertarShortcode
+' Propósito : Inserta el shortcode en el editor según su tipo:
+'             - fenced + tiene_contenido=1: envuelve selección con apertura,
+'               cierre nombrado link reference, y ::: final
+'             - fenced + tiene_contenido=0: inserta plantilla con placeholder,
+'               previa confirmación si hay selección a reemplazar
+'             - inline + tiene_contenido=1: envuelve selección en una línea
+'             - inline + tiene_contenido=0: caso no usado hoy, pero soportado
+'               por simetría
+' Parámetros: cShortcode As Collection
+'             txt As TextEditor — FMain.txtEditorProyecto
+' ==============================================================================
+Public Sub InsertarShortcode(cShortcode As Collection, txt As TextEditor)
+
+  Dim sApertura As String
+  Dim sCierre As String
+  Dim sSeleccion As String
+  Dim sCierreAncla As String
+  Dim sInsertar As String
+  Dim iRespuesta As Integer
+  Dim bTieneContenido As Boolean
+  Dim bEsFenced As Boolean
+
+  ' --- 1. VALIDAR ENTRADA ---
+  If IsNull(cShortcode) Then Return
+
+  ' --- 2. EXTRAER DATOS DEL SHORTCODE ---
+  sApertura = cShortcode["sintaxis_apertura"]
+  sCierre = cShortcode["sintaxis_cierre"]
+  bTieneContenido = cShortcode["tiene_contenido"]
+  bEsFenced = (cShortcode["tipo_marcado"] = TIPO_FENCED)
+
+  ' --- 3. OBTENER TEXTO SELECCIONADO ---
+  sSeleccion = txt.SelectedText
+
+  ' --- 4. VALIDACIONES Y CONFIRMACIONES ---
+  If bTieneContenido Then
+    ' REQUIERE SELECCIÓN PARA ENVOLVER
+    If sSeleccion = "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Debe seleccionar el texto al que desea aplicar el shortcode.")
+      Return
+    Endif
+  Else
+    ' SHORTCODE SIN CONTENIDO: SI HAY SELECCIÓN, CONFIRMAR REEMPLAZO
+    If sSeleccion <> "" Then
+      m_Sonido.sonar("Warning")
+      iRespuesta = Message.Question("Este shortcode no envuelve contenido." & Chr(10) & Chr(10) &
+        "El texto seleccionado será reemplazado por el shortcode." & Chr(10) & Chr(10) &
+        "¿Desea continuar?", "Sí", "No")
+      If iRespuesta <> 1 Then Return
+    Endif
+  Endif
+
+  ' --- 5. CONSTRUIR EL TEXTO A INSERTAR SEGÚN TIPO DE MARCADO ---
+  If bEsFenced Then
+    ' FENCED DIV: BLOQUE CON LÍNEAS PROPIAS.
+    '
+    ' CONVENCIÓN DE CIERRE NOMBRADO (RC-MD-01):
+    ' EL CIERRE LLEVA UN LINK REFERENCE MARKDOWN "[/clase]: # ()" ANTES DEL
+    ' ":::" FINAL. PANDOC LO PROCESA COMO BLOQUE SUELTO Y LO DESCARTA EN EL
+    ' AST (NO LLEGA AL OUTPUT) SIEMPRE QUE TENGA LÍNEA EN BLANCO ANTES.
+    '
+    ' SI LA LÍNEA EN BLANCO SE PIERDE (POR EDICIÓN MANUAL POSTERIOR),
+    ' PANDOC INTERPRETA EL LINK REFERENCE COMO CONTINUACIÓN DEL PÁRRAFO
+    ' ANTERIOR Y APARECE COMO TEXTO VISIBLE EN EL OUTPUT.
+    ' POR ESO ESTE Insert() GENERA SIEMPRE LÍNEA EN BLANCO ANTES Y DESPUÉS
+    ' DEL CONTENIDO DEL BLOQUE.
+    '
+    ' LA CLASE PANDOC SE EXTRAE DE LA APERTURA (NO DEL CAMPO nombre, QUE
+    ' PUEDE LLEVAR PREFIJOS INTERNOS DE BD COMO "sec-"). ASÍ EL CIERRE
+    ' SIEMPRE MATCHEA LA APERTURA, INDEPENDIENTEMENTE DEL nombre EN BD.
+    sCierreAncla = "[/" & ExtraerClaseDeApertura(sApertura) & "]: # ()"
+    If bTieneContenido Then
+      sInsertar = sApertura & Chr(10) & Chr(10) & sSeleccion & Chr(10) & Chr(10) & sCierreAncla & Chr(10) & sCierre
+    Else
+      sInsertar = sApertura & Chr(10) & Chr(10) & "{{contenido}}" & Chr(10) & Chr(10) & sCierreAncla & Chr(10) & sCierre
+    Endif
+  Else
+    ' INLINE SPAN: UNA SOLA LÍNEA, SIN CIERRE NOMBRADO (NO ES NECESARIO,
+    ' EL DELIMITADOR ]{.X} YA NOMBRA EL CIERRE EN LA MISMA LÍNEA)
+    If bTieneContenido Then
+      sInsertar = sApertura & sSeleccion & sCierre
+    Else
+      sInsertar = sApertura & "{{texto}}" & sCierre
+    Endif
+  Endif
+
+  ' --- 6. INSERTAR EN EL EDITOR (REEMPLAZA SELECCIÓN AUTOMÁTICAMENTE) ---
+  Try txt.Insert(sInsertar)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al insertar el shortcode:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 7. RESTAURAR FOCO AL EDITOR (RC-GM-07) ---
+  txt.SetFocus
+
+End
+
+' ==============================================================================
+' Función   : EsLineaAperturaFenced
+' Propósito : Helper para m_EditorHighlight. Detecta líneas tipo "::: {.X}"
+'             y extrae el nombre del shortcode. Patrón aceptado:
+'                ::: {.nombre}          → con clase Pandoc estándar
+'                ::: nombre             → forma corta sin llaves
+'             Devuelve True si la línea matchea alguno de los patrones.
+' Parámetros: sLinea As String         — línea completa del editor
+'             ByRef sNombre As String  — nombre del shortcode extraído
+' Retorna   : Boolean — True si es apertura fenced
+' ==============================================================================
+Public Function EsLineaAperturaFenced(sLinea As String, ByRef sNombre As String) As Boolean
+
+  Dim sLineaLimpia As String
+  Dim iPosLlave As Integer
+  Dim iPosFinLlave As Integer
+  Dim iPosPunto As Integer
+  Dim sResto As String
+
+  sNombre = ""
+
+  ' --- 1. NORMALIZAR LA LÍNEA ---
+  sLineaLimpia = Trim(sLinea)
+
+  ' --- 2. VERIFICAR PREFIJO ::: ---
+  If String.Left(sLineaLimpia, 3) <> ":::" Then Return False
+
+  ' --- 3. OBTENER EL RESTO DESPUÉS DE ::: ---
+  sResto = Trim(String.Mid(sLineaLimpia, 4))
+  If sResto = "" Then Return False  ' SOLO ":::" ES CIERRE, NO APERTURA
+
+  ' --- 4. CASO {.nombre} ---
+  iPosLlave = String.InStr(sResto, "{.")
+  If iPosLlave = 1 Then
+    iPosFinLlave = String.InStr(sResto, "}")
+    If iPosFinLlave > 3 Then
+      ' EXTRAER ENTRE "{." Y "}" — PUEDE TENER ATRIBUTOS DESPUÉS DEL NOMBRE
+      Dim sInterior As String
+      Dim iEspacio As Integer
+      sInterior = String.Mid(sResto, 3, iPosFinLlave - 3)
+      ' SI HAY ATRIBUTOS, EL NOMBRE TERMINA EN EL PRIMER ESPACIO
+      iEspacio = String.InStr(sInterior, " ")
+      If iEspacio > 0 Then
+        sNombre = String.Left(sInterior, iEspacio - 1)
+      Else
+        sNombre = sInterior
+      Endif
+      Return True
+    Endif
+  Endif
+
+  ' --- 5. CASO forma corta: ::: nombre (sin llaves) ---
+  ' EL NOMBRE ES TODO LO QUE VA HASTA EL PRIMER ESPACIO O FIN DE LÍNEA
+  Dim iEspacioCorta As Integer
+  iEspacioCorta = String.InStr(sResto, " ")
+  If iEspacioCorta > 0 Then
+    sNombre = String.Left(sResto, iEspacioCorta - 1)
+  Else
+    sNombre = sResto
+  Endif
+
+  Return True
+
+End
+
+' ==============================================================================
+' Función   : EsLineaCierreNombrado
+' Propósito : Helper para m_EditorHighlight. Detecta líneas tipo
+'             "[/nombre]: # (texto)" o "[/nombre]: # ()" que son link
+'             references Markdown invisibles, usadas como ancla de cierre
+'             para los fenced divs.
+' Parámetros: sLinea As String         — línea completa del editor
+'             ByRef sNombre As String  — nombre del shortcode extraído
+' Retorna   : Boolean — True si es cierre nombrado
+' ==============================================================================
+Public Function EsLineaCierreNombrado(sLinea As String, ByRef sNombre As String) As Boolean
+
+  Dim sLineaLimpia As String
+  Dim iPosCierreCorch As Integer
+  Dim sContenidoCorch As String
+
+  sNombre = ""
+
+  ' --- 1. NORMALIZAR ---
+  sLineaLimpia = Trim(sLinea)
+
+  ' --- 2. DEBE EMPEZAR CON [/ ---
+  If String.Left(sLineaLimpia, 2) <> "[/" Then Return False
+
+  ' --- 3. DEBE TENER ]: # EN EL CUERPO ---
+  iPosCierreCorch = String.InStr(sLineaLimpia, "]:")
+  If iPosCierreCorch < 4 Then Return False  ' MÍNIMO [/x]: ES 5 CARACTERES
+
+  ' --- 4. EXTRAER NOMBRE ENTRE "[/" Y "]:" ---
+  sContenidoCorch = String.Mid(sLineaLimpia, 3, iPosCierreCorch - 3)
+  If sContenidoCorch = "" Then Return False
+
+  ' --- 5. VERIFICAR QUE DESPUÉS DE ]: VENGA # (CONVENCIÓN PANDOC) ---
+  ' EL CARÁCTER # APARECE DESPUÉS DE ]: Y OPCIONALES ESPACIOS
+  Dim sResto As String
+  sResto = Trim(String.Mid(sLineaLimpia, iPosCierreCorch + 2))
+  If String.Left(sResto, 1) <> "#" Then Return False
+
+  sNombre = sContenidoCorch
+  Return True
+
+End
