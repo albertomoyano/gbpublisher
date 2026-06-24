@@ -14,6 +14,7 @@
 ' Componentes formulario:
 '               - btnMayusculaMinuscula  ToggleButton  distingue may/min
 '               - btnExacta              ToggleButton  palabra completa
+'               - btnExpresionRegular    ToggleButton  modo expresión regular (PCRE)
 '               - txtBuscarPalabra       TextBox       término a buscar
 '               - btnMostrarBuscar       Button        ejecuta búsqueda
 '               - txtReemplazar          TextBox       texto de reemplazo
@@ -29,11 +30,19 @@
 
 ' --- ARRAYS PARALELOS DE COINCIDENCIAS ---
 ' CADA ÍNDICE REPRESENTA UNA FILA DEL GRIDVIEW Y AGRUPA LOS DATOS NECESARIOS
-' PARA APLICAR UN REEMPLAZO PUNTUAL SIN VOLVER A BUSCAR
-' LAS POSICIONES SON EN CARACTERES (NO EN BYTES) PARA SER COMPATIBLES CON String.*
+' PARA APLICAR UN REEMPLAZO PUNTUAL SIN VOLVER A BUSCAR.
+' EN MODO LITERAL: $aPosicionEnLinea CONTIENE POSICIÓN EN CARACTERES (BASE 1).
+' EN MODO REGEX:   $aPosicionEnLinea CONTIENE OFFSET EN BYTES (BASE 0) Y
+'                  $aLongitudMatch   CONTIENE LA LONGITUD DEL MATCH EN BYTES.
 Private $aRutaArchivo As New String[]
 Private $aNumeroLinea As New Integer[]
 Private $aPosicionEnLinea As New Integer[]
+Private $aLongitudMatch As New Integer[]
+
+' --- MODO REGEX ---
+' TRUE CUANDO EL USUARIO ACTIVÓ EL TOGGLE DE EXPRESIÓN REGULAR EN LA ÚLTIMA BÚSQUEDA.
+' DETERMINA QUÉ FUNCIÓN DE APLICACIÓN SE USA: POSICIÓN EN CARACTERES VS OFFSET EN BYTES.
+Private $bModoRegex As Boolean
 
 ' --- BLOQUEO DE CIERRE POR LA X DEL SISTEMA ---
 ' SOLO btnCerrar_Click PUEDE PONERLO EN TRUE
@@ -49,6 +58,7 @@ Public Sub Form_Open()
   ' --- 1. RESET DE FLAGS DE INSTANCIA ---
   ' EVITA ARRASTRAR EL PERMISO DE CIERRE SI LA INSTANCIA SE REUSA
   bCierrePermitido = False
+  $bModoRegex = False
 
   ' --- 2. CONFIGURACIÓN DEL GRIDVIEW ---
   With gvBuscarReemplazar
@@ -85,6 +95,21 @@ Private Sub LimpiarArrays()
   $aRutaArchivo.Clear()
   $aNumeroLinea.Clear()
   $aPosicionEnLinea.Clear()
+  $aLongitudMatch.Clear()
+
+End
+
+' ============================================================================
+' Función   : btnExpresionRegular_Click
+' Propósito : Activar o desactivar el modo de búsqueda por expresión regular.
+'             Cuando está activo, deshabilita "palabra exacta" (redundante con \b)
+'             y mantiene "distinguir mayúsculas" (equivale a no usar flag /i).
+' ============================================================================
+Public Sub btnExpresionRegular_Click()
+
+  Dim bActivo As Boolean = btnExpresionRegular.Value
+  btnExacta.Enabled = Not bActivo
+  If bActivo Then btnExacta.Value = False
 
 End
 
@@ -92,7 +117,7 @@ End
 ' Función   : btnMostrarBuscar_Click
 ' Propósito : Ejecutar la búsqueda del término en el archivo principal del
 '             proyecto y en todos los .md/.tex de /articulos, respetando
-'             los toggles de mayúsculas y palabra exacta.
+'             los toggles de mayúsculas, palabra exacta y expresión regular.
 ' ============================================================================
 Public Sub btnMostrarBuscar_Click()
 
@@ -105,12 +130,23 @@ Public Sub btnMostrarBuscar_Click()
   Dim aArchivos As String[]
   Dim sArchivo As String
 
+
   ' --- 1. VALIDACIÓN DEL TÉRMINO DE BÚSQUEDA ---
   sTermino = Trim(txtBuscarPalabra.Text)
   If sTermino = "" Then
     Message.Warning("Debe ingresar un término de búsqueda.")
     txtBuscarPalabra.SetFocus()
     Return
+  Endif
+
+  ' --- 1b. VALIDACIÓN DEL PATRÓN REGEX (ANTES DE TOCAR EL GRIDVIEW) ---
+  If btnExpresionRegular.Value Then
+    Try Regexp.Match("", sTermino)
+    If Error Then
+      Message.Warning("La expresión regular no es válida:" & Chr(10) & Error.Text)
+      txtBuscarPalabra.SetFocus()
+      Return
+    Endif
   Endif
 
   ' --- 2. LIMPIEZA DE RESULTADOS PREVIOS ---
@@ -134,6 +170,7 @@ Public Sub btnMostrarBuscar_Click()
   Endif
 
   ' --- 5. BÚSQUEDA EN EL ARCHIVO PRINCIPAL ---
+  $bModoRegex = btnExpresionRegular.Value
   BuscarEnArchivo(sArchivoPrincipal, sTermino)
 
   ' --- 6. BÚSQUEDA EN LAS CARPETAS DE CONTENIDO ---
@@ -208,6 +245,7 @@ Private Sub BuscarEnArchivo(sRutaArchivo As String, sTermino As String)
   Dim aNumerosLinea As New Integer[]
   Dim aPosiciones As New Integer[]
   Dim aTextos As New String[]
+  Dim aLongitudes As New Integer[]
   Dim iResultados As Integer
   Dim iFila As Integer
   Dim i As Integer
@@ -220,17 +258,25 @@ Private Sub BuscarEnArchivo(sRutaArchivo As String, sTermino As String)
   Try sContenido = File.Load(sRutaArchivo)
   If Error Then Return
 
-  ' --- 3. INVOCACIÓN DE LA BÚSQUEDA GENÉRICA ---
-  ' LOS ARRAYS LOCALES SE LLENAN POR REFERENCIA DENTRO DE BuscarEnTexto
-  iResultados = m_FuncionesGenericas.BuscarEnTexto(sContenido, sTermino, btnMayusculaMinuscula.Value, btnExacta.Value, aNumerosLinea, aPosiciones, aTextos)
+  ' --- 3. INVOCACIÓN DE LA BÚSQUEDA ---
+  If $bModoRegex Then
+    iResultados = m_FuncionesGenericas.BuscarEnTextoRegex(sContenido, sTermino, btnMayusculaMinuscula.Value, aNumerosLinea, aPosiciones, aTextos, aLongitudes)
+    If iResultados < 0 Then Return
+  Else
+    iResultados = m_FuncionesGenericas.BuscarEnTexto(sContenido, sTermino, btnMayusculaMinuscula.Value, btnExacta.Value, aNumerosLinea, aPosiciones, aTextos)
+  Endif
 
   ' --- 4. VOLCADO DE RESULTADOS A LOS ARRAYS DEL FORM Y AL GRIDVIEW ---
-  ' LOS ARRAYS DEL FORM SUMAN LA RUTA DEL ARCHIVO (DATO PROPIO DE ESTE FORM)
   sNombreArchivo = File.Name(sRutaArchivo)
   For i = 0 To iResultados - 1
     $aRutaArchivo.Add(sRutaArchivo)
     $aNumeroLinea.Add(aNumerosLinea[i])
     $aPosicionEnLinea.Add(aPosiciones[i])
+    If $bModoRegex Then
+      $aLongitudMatch.Add(aLongitudes[i])
+    Else
+      $aLongitudMatch.Add(0)
+    Endif
 
     iFila = gvBuscarReemplazar.Rows.Count
     gvBuscarReemplazar.Rows.Count = iFila + 1
@@ -271,13 +317,18 @@ Public Sub btnAplicar_Click()
   Endif
 
   ' --- 3. APLICACIÓN DEL REEMPLAZO ---
-  AplicarReemplazoEnArchivo(iFilaSeleccionada, txtBuscarPalabra.Text, sReemplazo)
+  If $bModoRegex Then
+    AplicarReemplazoRegexEnArchivo(iFilaSeleccionada, sReemplazo)
+  Else
+    AplicarReemplazoEnArchivo(iFilaSeleccionada, txtBuscarPalabra.Text, sReemplazo)
+  Endif
 
   ' --- 4. ELIMINACIÓN DE LA FILA Y SU ENTRADA EN LOS ARRAYS ---
   gvBuscarReemplazar.Rows.Remove(iFilaSeleccionada)
   $aRutaArchivo.Remove(iFilaSeleccionada)
   $aNumeroLinea.Remove(iFilaSeleccionada)
   $aPosicionEnLinea.Remove(iFilaSeleccionada)
+  $aLongitudMatch.Remove(iFilaSeleccionada)
 
 End
 
@@ -309,7 +360,11 @@ Public Sub btnAplicarTodo_Click()
   ' --- 3. APLICACIÓN EN ORDEN INVERSO ---
   ' DE ABAJO HACIA ARRIBA PARA PRESERVAR POSICIONES VÁLIDAS EN CADA LÍNEA
   For i = $aRutaArchivo.Max To 0 Step -1
-    AplicarReemplazoEnArchivo(i, txtBuscarPalabra.Text, sReemplazo)
+    If $bModoRegex Then
+      AplicarReemplazoRegexEnArchivo(i, sReemplazo)
+    Else
+      AplicarReemplazoEnArchivo(i, txtBuscarPalabra.Text, sReemplazo)
+    Endif
   Next
 
   ' --- 4. LIMPIEZA TOTAL DEL GRID Y LOS ARRAYS ---
@@ -442,6 +497,86 @@ Private Function ReemplazarEnPosicion(sLinea As String, sTermino As String, sRee
 
   ' --- 3. RECONSTRUCCIÓN CON EL REEMPLAZO INTERCALADO ---
   Return sAntes & sReemplazo & sDespues
+
+End
+
+' ============================================================================
+' Función   : AplicarReemplazoRegexEnArchivo
+' Propósito : Aplicar un reemplazo regex usando los offsets en bytes almacenados
+'             en los arrays paralelos. El slicing se hace con Left/Mid
+'             (byte-oriented) para que los offsets de Regexp sean directamente
+'             usables sin conversión a caracteres.
+' Parámetros: iIndice    As Integer — índice en los arrays paralelos
+'             sReemplazo As String  — texto sustituto
+' TODO       : Soportar referencias a grupos de captura (\1, \2, ...) en
+'             sReemplazo. Requiere re-ejecutar el match para extraer SubMatches
+'             y expandirlos antes del reemplazo. Planificado para PR futura.
+' ============================================================================
+Private Sub AplicarReemplazoRegexEnArchivo(iIndice As Integer, sReemplazo As String)
+
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim iIndiceLinea As Integer
+  Dim sRutaArchivo As String
+  Dim iByteOffset As Integer
+  Dim iByteLen As Integer
+
+  sRutaArchivo = $aRutaArchivo[iIndice]
+  iIndiceLinea = $aNumeroLinea[iIndice] - 1
+  iByteOffset = $aPosicionEnLinea[iIndice]
+  iByteLen = $aLongitudMatch[iIndice]
+
+  If sRutaArchivo = FMain.sRutaArchivoAbierto Then
+    ModificarEnEditorRegex(iIndiceLinea, iByteOffset, iByteLen, sReemplazo)
+    Return
+  Endif
+
+  Try sContenido = File.Load(sRutaArchivo)
+  If Error Then Return
+
+  sContenido = Replace(sContenido, Chr(13) & Chr(10), Chr(10))
+  sContenido = Replace(sContenido, Chr(13), Chr(10))
+  aLineas = Split(sContenido, Chr(10))
+
+  If iIndiceLinea >= 0 And iIndiceLinea <= aLineas.Max Then
+    sLinea = aLineas[iIndiceLinea]
+    aLineas[iIndiceLinea] = Left(sLinea, iByteOffset) & sReemplazo & Mid(sLinea, iByteOffset + iByteLen + 1)
+
+    sContenido = aLineas.Join(Chr(10))
+    Try File.Save(sRutaArchivo, sContenido)
+    If Error Then
+      Message.Warning("No se pudo guardar el archivo:" & Chr(10) & sRutaArchivo)
+    Endif
+  Endif
+
+End
+
+' ============================================================================
+' Función   : ModificarEnEditorRegex
+' Propósito : Aplicar el reemplazo regex sobre el editor de FMain cuando el
+'             archivo objetivo es el que está abierto en ese momento.
+' Parámetros: iIndiceLinea As Integer — índice de la línea (base 0)
+'             iByteOffset  As Integer — offset en bytes del match (base 0)
+'             iByteLen     As Integer — longitud en bytes del match
+'             sReemplazo   As String  — texto sustituto
+' ============================================================================
+Private Sub ModificarEnEditorRegex(iIndiceLinea As Integer, iByteOffset As Integer, iByteLen As Integer, sReemplazo As String)
+
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+
+  sContenido = FMain.txtEditorProyecto.Text
+  sContenido = Replace(sContenido, Chr(13) & Chr(10), Chr(10))
+  sContenido = Replace(sContenido, Chr(13), Chr(10))
+  aLineas = Split(sContenido, Chr(10))
+
+  If iIndiceLinea >= 0 And iIndiceLinea <= aLineas.Max Then
+    sLinea = aLineas[iIndiceLinea]
+    aLineas[iIndiceLinea] = Left(sLinea, iByteOffset) & sReemplazo & Mid(sLinea, iByteOffset + iByteLen + 1)
+    FMain.txtEditorProyecto.Text = aLineas.Join(Chr(10))
+  Endif
 
 End
 

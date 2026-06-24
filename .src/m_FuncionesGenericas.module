@@ -2693,6 +2693,81 @@ Private Function EsCaracterPalabra(sCar As String) As Boolean
 
 End
 
+' ============================================================================
+' Función   : BuscarEnTextoRegex
+' Propósito : Buscar todas las ocurrencias de un patrón PCRE en un texto
+'             UTF-8 y devolver arrays paralelos con número de línea, offset
+'             en bytes (base 0), texto desde el match al fin de línea, y
+'             longitud en bytes del match. Retorna -1 si el patrón es inválido.
+'             Lógica pura: NO toca UI, NO emite sonidos, NO muestra mensajes.
+' Parámetros: sContenido           As String    — texto donde buscar (UTF-8)
+'             sPatron              As String    — patrón PCRE
+'             bDistingueMayusculas As Boolean   — True = case-sensitive
+'             aNumerosLinea        As Integer[] — OUT: números de línea base 1
+'             aPosiciones          As Integer[] — OUT: offsets en bytes base 0
+'             aTextosCoincidencia  As String[]  — OUT: texto desde el match a fin de línea
+'             aLongitudes          As Integer[] — OUT: longitudes en bytes del match
+' Retorna   : Integer — cantidad de coincidencias, o -1 si patrón inválido
+' Notas     : aPosiciones contiene BYTES (base 0), no caracteres. El caller
+'             debe usar Left()/Mid() byte-oriented para slicing en el reemplazo.
+'             Los arrays de salida se LLENAN con Add, no se limpian.
+' ============================================================================
+Public Function BuscarEnTextoRegex(sContenido As String, sPatron As String, bDistingueMayusculas As Boolean, aNumerosLinea As Integer[], aPosiciones As Integer[], aTextosCoincidencia As String[], aLongitudes As Integer[]) As Integer
+
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sSub As String
+  Dim iLinea As Integer
+  Dim iResultados As Integer
+  Dim iStart As Integer
+  Dim iCharPos As Integer
+  Dim sPatronFinal As String
+  Dim oReg As Regexp
+
+  iResultados = 0
+  If sContenido = "" Or sPatron = "" Then Return 0
+
+  ' INCRUSTAR FLAG (?i) EN EL PATRÓN PARA MANEJO CASE-INSENSITIVE SIN FLAGS EXTERNOS
+  sPatronFinal = If(Not bDistingueMayusculas, "(?i)" & sPatron, sPatron)
+
+  ' COMPILAR PATRÓN UNA SOLA VEZ — Compile es método de instancia, no estático
+  oReg = New Regexp
+  Try oReg.Compile(sPatronFinal)
+  If Error Then Return -1
+
+  sContenido = Replace(sContenido, Chr(13) & Chr(10), Chr(10))
+  sContenido = Replace(sContenido, Chr(13), Chr(10))
+  aLineas = Split(sContenido, Chr(10))
+
+  For iLinea = 0 To aLineas.Max
+    sLinea = aLineas[iLinea]
+    iStart = 0
+    Do
+      ' Exec ES UN Sub VOID — ejecuta el match sobre la subcadena y actualiza propiedades
+      sSub = Mid(sLinea, iStart + 1)
+      If sSub = "" Then Break
+      oReg.Exec(sSub)
+      If oReg.Text = "" Then Break
+
+      aNumerosLinea.Add(iLinea + 1)
+      aPosiciones.Add(iStart + oReg.Offset)
+      aLongitudes.Add(Len(oReg.Text))
+
+      ' CONVERTIR OFFSET DE BYTES A POSICIÓN EN CARACTERES PARA EL TEXTO DE CONTEXTO
+      iCharPos = String.Len(Left(sLinea, iStart + oReg.Offset)) + 1
+      aTextosCoincidencia.Add(String.Mid(sLinea, iCharPos))
+
+      Inc iResultados
+
+      ' AVANZAR PASANDO EL MATCH; SI FUE VACÍO AVANZAR UN BYTE
+      iStart = iStart + oReg.Offset + Len(oReg.Text)
+      If Len(oReg.Text) = 0 Then Inc iStart
+    Loop
+  Next
+
+  Return iResultados
+
+End
 ' ============================================
 ' Variable pública para retorno de FCreditRoles
 ' El formulario llamador lee este valor después
