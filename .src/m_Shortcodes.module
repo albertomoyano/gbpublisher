@@ -33,22 +33,25 @@ Public Const OPCION_INLINE As String = "Marcas inline (inline)"
 Public Const TIPO_FENCED As String = "fenced"
 Public Const TIPO_INLINE As String = "inline"
 
-' --- 3. CONSTANTES VISUALES DEL LISTBOX ---
+' --- 3. CONSTANTES VISUALES DEL LISTVIEW ---
 
-' SEPARADORES NO CLICKABLES PARA AGRUPAR VISUALMENTE
-Public Const SEP_COMUNES As String = "── Comunes ──"
-Public Const SEP_ESTRUCTURA As String = "── Estructura del producto ──"
-Public Const SEP_DISCIPLINARES As String = "── Disciplinares ──"
+' SEPARADORES NO CLICKABLES PARA AGRUPAR VISUALMENTE.
+' SE DESTACAN MEDIANTE RichText + Background DEL ÍTEM, NO MEDIANTE
+' CARACTERES DECORATIVOS EN EL TEXTO.
+Public Const SEP_COMUNES As String = "Comunes"
+Public Const SEP_ESTRUCTURA As String = "Estructura del producto"
+Public Const SEP_DISCIPLINARES As String = "Disciplinares"
 
-' PREFIJOS PARA INDENTACIÓN DENTRO DEL LISTBOX
-Public Const PREFIJO_ITEM As String = "    "          ' SHORTCODE SELECCIONABLE
-Public Const PREFIJO_SUBGRUPO As String = "  · "      ' SUBGRUPO DISCIPLINAR
+' PREFIJOS DE INDENTACIÓN DENTRO DEL LISTVIEW
+Public Const PREFIJO_ITEM As String = "      "    ' SHORTCODE SELECCIONABLE (6 ESPACIOS)
+Public Const PREFIJO_SUBGRUPO As String = ""      ' SUBGRUPO DISCIPLINAR (SIN INDENT, BOLD+BG)
 
-' --- 4. CACHE DE DATOS POR ÍNDICE DEL LISTBOX ---
+' --- 4. CACHE DE DATOS POR KEY DEL LISTVIEW ---
 
-' ARRAY PARALELO AL LISTBOX. CADA ENTRADA CONTIENE LA Collection DEL
-' SHORTCODE EN ESA POSICIÓN, O Null SI ES UN SEPARADOR.
-Public aShortcodesActuales As Collection[]
+' COLLECTION INDEXADA POR LA KEY DEL ÍTEM. SOLO CONTIENE ENTRADAS PARA
+' SHORTCODES SELECCIONABLES (CLAVE "sc:nombre"). LOS SEPARADORES NO TIENEN
+' ENTRADA AQUÍ — SE DETECTAN POR EL PREFIJO "sep:" DE LA KEY.
+Public cShortcodesActuales As Collection
 
 ' ==============================================================================
 ' Función   : InicializarTabShortcodes
@@ -61,7 +64,7 @@ Public aShortcodesActuales As Collection[]
 '             txt As TextEditor — referencia a FMain.TextEditorPreview
 ' Retorna   : (Sub, sin retorno)
 ' ==============================================================================
-Public Sub InicializarTabShortcodes(cmb As ComboBox, lst As ListBox, txt As TextEditor)
+Public Sub InicializarTabShortcodes(cmb As ComboBox, lst As ListView, txt As TextEditor)
 
   ' --- 1. RESET DE COMPONENTES ---
   cmb.Clear
@@ -76,8 +79,8 @@ Public Sub InicializarTabShortcodes(cmb As ComboBox, lst As ListBox, txt As Text
   cmb.Add(OPCION_INLINE)
   cmb.ReadOnly = True
 
-  ' --- 4. INICIALIZAR EL ARRAY DE SHORTCODES (PARALELO AL LISTBOX) ---
-  aShortcodesActuales = New Collection[]
+  ' --- 4. INICIALIZAR LA COLLECTION DE SHORTCODES (INDEXADA POR KEY) ---
+  cShortcodesActuales = New Collection
 
   ' --- 5. SELECCIONAR LA PRIMERA OPCIÓN Y CARGAR EL LISTBOX ---
   ' SETEAR Index DISPARA EL HANDLER cmbShortcodes_Click EN FMain,
@@ -90,14 +93,18 @@ End
 ' ==============================================================================
 ' Función   : CargarShortcodesPorTipo
 ' Propósito : Consulta a BD los shortcodes aplicables al proyecto activo
-'             filtrados por tipo de marcado. Llena el listbox con grupos
+'             filtrados por tipo de marcado. Llena el listview con grupos
 '             visuales (Comunes, Estructura del producto, Disciplinares).
-'             La consulta a BD se hace siempre, sin cache (decisión cerrada).
+'             Cada ítem del ListView lleva una Key única:
+'               - "sc:nombre" para shortcodes seleccionables
+'               - "sep:N" para separadores no clickables
+'             Los separadores se destacan con RichText en bold y Background
+'             en Color.Background; los items se muestran con Text normal.
 ' Parámetros: sTipoMarcado As String  — TIPO_FENCED o TIPO_INLINE
-'             lst As ListBox          — listbox a poblar
+'             lst As ListView         — listview a poblar
 ' Retorna   : Boolean — True si la carga fue exitosa
 ' ==============================================================================
-Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListBox) As Boolean
+Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListView) As Boolean
 
   Dim hResultado As Result
   Dim sSQL As String
@@ -105,10 +112,14 @@ Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListBox) 
   Dim sPerfilAnterior As String
   Dim sPerfilActual As String
   Dim bAbrioSeccionDisciplinares As Boolean
+  Dim iContadorSep As Integer
+  Dim sKey As String
+  Dim sTextoSep As String
 
-  ' --- 1. RESET DEL LISTBOX Y DEL ARRAY PARALELO ---
+  ' --- 1. RESET DEL LISTVIEW Y DE LA COLLECTION DE ESTADO ---
   lst.Clear
-  aShortcodesActuales.Clear
+  cShortcodesActuales = New Collection
+  iContadorSep = 0
 
   ' --- 2. DETERMINAR EL CAMPO DE FILTRO SEGÚN TIPO DE PROYECTO ACTIVO ---
   ' LECTURA DE FMain.TipoProyectoActual: SI ES REVISTA → FILTRAR POR aplica_revista,
@@ -158,9 +169,11 @@ Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListBox) 
 
   If Not hResultado Then Return False
 
-  ' --- 4. POBLAR LISTBOX CON SEPARADORES VISUALES Y SHORTCODES ---
+  ' --- 4. POBLAR LISTVIEW CON SEPARADORES VISUALES Y SHORTCODES ---
   ' SE LLEVA UN ESTADO (sPerfilAnterior) PARA DETECTAR CAMBIOS DE GRUPO
   ' Y EMITIR LOS SEPARADORES EN LOS LUGARES CORRECTOS.
+  ' CADA Add USA UNA KEY ÚNICA: "sc:nombre" PARA SHORTCODES,
+  ' "sep:N" PARA SEPARADORES (CON N AUTOINCREMENTAL).
 
   sPerfilAnterior = "###INICIO###"   ' VALOR CENTINELA PARA FORZAR EMISIÓN DEL PRIMER SEPARADOR
   bAbrioSeccionDisciplinares = False
@@ -172,39 +185,88 @@ Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListBox) 
     If sPerfilActual = "" And InStr(hResultado["nombre"], "sec-") = 0 Then
       ' GRUPO 1: COMUNES (TRANSVERSALES NO ESTRUCTURALES)
       If sPerfilAnterior = "###INICIO###" Then
-        lst.Add(SEP_COMUNES)
-        aShortcodesActuales.Add(Null)
+        iContadorSep += 1
+        sKey = "sep:" & iContadorSep
+        lst.Add(sKey, SEP_COMUNES)
+        EstilarSeparadorPrincipal(lst, sKey, SEP_COMUNES)
         sPerfilAnterior = "COMUNES"
       Endif
     Else If sPerfilActual = "" And InStr(hResultado["nombre"], "sec-") = 1 Then
       ' GRUPO 2: ESTRUCTURA DEL PRODUCTO
       If sPerfilAnterior <> "ESTRUCTURA" Then
-        lst.Add(SEP_ESTRUCTURA)
-        aShortcodesActuales.Add(Null)
+        iContadorSep += 1
+        sKey = "sep:" & iContadorSep
+        lst.Add(sKey, SEP_ESTRUCTURA)
+        EstilarSeparadorPrincipal(lst, sKey, SEP_ESTRUCTURA)
         sPerfilAnterior = "ESTRUCTURA"
       Endif
     Else
       ' GRUPO 3: DISCIPLINARES (CON SUB-GRUPOS POR PERFIL)
       If Not bAbrioSeccionDisciplinares Then
-        lst.Add(SEP_DISCIPLINARES)
-        aShortcodesActuales.Add(Null)
+        iContadorSep += 1
+        sKey = "sep:" & iContadorSep
+        lst.Add(sKey, SEP_DISCIPLINARES)
+        EstilarSeparadorPrincipal(lst, sKey, SEP_DISCIPLINARES)
         bAbrioSeccionDisciplinares = True
         sPerfilAnterior = ""
       Endif
       ' SUBGRUPO POR PERFIL DISCIPLINAR
       If sPerfilActual <> sPerfilAnterior Then
-        lst.Add(PREFIJO_SUBGRUPO & FormatearNombrePerfil(sPerfilActual))
-        aShortcodesActuales.Add(Null)
+        iContadorSep += 1
+        sKey = "sep:" & iContadorSep
+        sTextoSep = FormatearNombrePerfil(sPerfilActual)
+        lst.Add(sKey, sTextoSep)
+        EstilarSeparadorSubgrupo(lst, sKey, sTextoSep)
         sPerfilAnterior = sPerfilActual
       Endif
     Endif
 
     ' EMISIÓN DEL ITEM DEL SHORTCODE
-    lst.Add(PREFIJO_ITEM & hResultado["etiqueta"])
-    aShortcodesActuales.Add(CrearCollectionDesdeResult(hResultado))
+    sKey = "sc:" & hResultado["nombre"]
+    lst.Add(sKey, PREFIJO_ITEM & hResultado["etiqueta"])
+    cShortcodesActuales[sKey] = CrearCollectionDesdeResult(hResultado)
   Next
 
   Return True
+
+End
+
+' ==============================================================================
+' Función   : EstilarSeparadorPrincipal
+' Propósito : Aplica estilo visual a un separador principal del ListView:
+'             texto en bold (vía RichText) y fondo en Color.Background.
+'             Los separadores principales son los grupos primarios
+'             (Comunes, Estructura del producto, Disciplinares).
+' Parámetros: lst As ListView  — control destino
+'             sKey As String   — key del ítem a estilar
+'             sTexto As String — texto plano (se envuelve en <b>...</b>)
+' ==============================================================================
+Private Sub EstilarSeparadorPrincipal(lst As ListView, sKey As String, sTexto As String)
+
+  ' SEPARADOR PRINCIPAL (Comunes, Estructura del producto, Disciplinares):
+  ' BOLD + FONDO AMARILLO ARENA SUAVE. SE DISTINGUE VISUALMENTE DEL
+  ' SUBGRUPO (QUE LLEVA BOLD + FONDO Color.Background), MARCANDO QUE
+  ' ESTÁ EN UN NIVEL JERÁRQUICO SUPERIOR.
+  lst[sKey].RichText = "<b>" & sTexto & "</b>"
+  lst[sKey].Background = &HF5EBC8&
+
+End
+
+' ==============================================================================
+' Función   : EstilarSeparadorSubgrupo
+' Propósito : Aplica estilo visual a un separador de subgrupo del ListView:
+'             texto en bold (vía RichText) y fondo en Color.Background.
+'             Hoy coincide con el estilo del separador principal; se mantiene
+'             como función separada para futuros refinamientos visuales
+'             (ej. tamaño de fuente o color distinto).
+' Parámetros: lst As ListView  — control destino
+'             sKey As String   — key del ítem a estilar
+'             sTexto As String — texto plano (se envuelve en <b>...</b>)
+' ==============================================================================
+Private Sub EstilarSeparadorSubgrupo(lst As ListView, sKey As String, sTexto As String)
+
+  lst[sKey].RichText = "<b>" & sTexto & "</b>"
+  lst[sKey].Background = Color.Background
 
 End
 
