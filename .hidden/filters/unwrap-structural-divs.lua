@@ -9,8 +9,14 @@
 -- DEBE CORRER  : ANTES QUE LOS DEMÁS FILTROS EN GenerarBodyXML()
 -- ============================================================
 
--- LISTA DE CLASES ESTRUCTURALES (TABLA shortcodes, categoria='estructural')
--- EXCLUYE table-fullwidth Y table-landscape QUE TIENEN MAPEO PROPIO
+-- LISTA DE CLASES PANDOC ESTRUCTURALES
+-- DERIVADA DE shortcodes WHERE tipo_marcado='fenced' AND mapeo_revista='sec'.
+-- ACTUALIZAR ESTA LISTA CUANDO SE AGREGUE/QUITE UN SHORTCODE FENCED QUE
+-- MAPEE A <sec>. VERIFICAR CON:
+--   SELECT nombre, sintaxis_apertura FROM shortcodes
+--   WHERE tipo_marcado='fenced' AND mapeo_revista='sec' AND activo=1;
+-- LA CLAVE DE LA TABLA ES LA CLASE PANDOC (lo que va en sintaxis_apertura),
+-- NO EL nombre DEL SHORTCODE EN BD (que puede llevar prefijo "sec-").
 local estructurales = {
   ["abstract"]             = true,
   ["acknowledgments"]      = true,
@@ -24,6 +30,7 @@ local estructurales = {
   ["correspondence"]       = true,
   ["discussion"]           = true,
   ["editorial"]            = true,
+  ["experimental-procedure"] = true,
   ["intro"]                = true,
   ["methods"]              = true,
   ["obituary"]             = true,
