@@ -98,12 +98,43 @@ local function normalizar_inlines_sufijo(inlines)
     end
   end
 
-  -- STRIP LLAVES CON CONTENIDO EN TODOS LOS Str: "{X}" → "X"
-  for i, inline in ipairs(lista) do
-    if inline.t == 'Str' then
-      lista[i] = pandoc.Str(inline.text:gsub("%{(.-)%}", "%1"))
+  -- STRIP LLAVES MULTI-TOKEN: SI EL PRIMER Str EMPIEZA CON "{" Y EL
+  -- ÚLTIMO Str TERMINA CON "}", REMOVER AMBOS DELIMITADORES.
+  -- ESTE CASO OCURRE CUANDO EL USUARIO ESCRIBE {libro IV, cap. 3} O
+  -- {pp. iv, vi-xi, (xv)-(xvii)} — Pandoc TOKENIZA EL CONTENIDO POR
+  -- ESPACIOS, DEJANDO LA "{" EN EL PRIMER Str Y LA "}" EN EL ÚLTIMO,
+  -- INACCESIBLES PARA UN gsub LOCAL POR INLINE.
+  if #lista >= 1 then
+    local primero = lista[1]
+    if primero and primero.t == 'Str' and primero.text:sub(1,1) == '{' then
+      local ultimo = lista[#lista]
+      if ultimo and ultimo.t == 'Str' and ultimo.text:sub(-1) == '}' then
+        -- REMOVER "{" DEL PRIMER Str (Y EL Str COMPLETO SI ERA SOLO "{")
+        if primero.text == '{' then
+          table.remove(lista, 1)
+          while lista[1] and lista[1].t == 'Space' do
+            table.remove(lista, 1)
+          end
+        else
+          lista[1] = pandoc.Str(primero.text:sub(2))
+        end
+        -- RE-CAPTURAR EL ÚLTIMO Str DESPUÉS DEL REMOVE (LA LISTA CAMBIÓ
+        -- DE TAMAÑO Y EL PRIMER Y ÚLTIMO PUEDEN COINCIDIR EN LISTAS CORTAS).
+        local nuevo_ultimo = lista[#lista]
+        if nuevo_ultimo and nuevo_ultimo.t == 'Str' then
+          if nuevo_ultimo.text == '}' then
+            table.remove(lista, #lista)
+            while lista[#lista] and lista[#lista].t == 'Space' do
+              table.remove(lista, #lista)
+            end
+          else
+            lista[#lista] = pandoc.Str(nuevo_ultimo.text:sub(1, -2))
+          end
+        end
+      end
     end
   end
+
 
   -- LOCATOR IMPLÍCITO: DÍGITOS AL INICIO SIN LETRAS EN NINGÚN INLINE
   -- SOLO APLICA SI TODA LA LISTA ES Str/Space (NO HAY MARKUP)
