@@ -103,12 +103,14 @@ Private Sub CargarComboBoxes()
 
   Dim sIdiomas As String[] = ["es", "en", "pt"]
 
-  ' --- 1. TIPO DE CAPÍTULO (26 VALORES DEL ENUM) ---
+  ' --- 1. TIPO DE CAPÍTULO (27 VALORES DEL ENUM) ---
+  ' "conclusiones" UBICADO DESPUÉS DE "capitulo" Y ANTES DE "epilogo":
+  ' ORDEN NATURAL DE APARICIÓN EN UN LIBRO ACADÉMICO.
   tipo_capitulo.Clear()
   tipo_capitulo.List = ["prologo", "prefacio", "presentacion", "palabras_preliminares",
     "introduccion", "dedicatoria", "agradecimientos", "nota_traductor",
     "nota_editor", "lista_figuras", "lista_tablas", "lista_abreviaturas",
-    "capitulo", "epilogo", "posfacio", "post_scriptum",
+    "capitulo", "conclusiones", "epilogo", "posfacio", "post_scriptum",
     "apendice", "glosario", "bibliografia", "sobre_autores",
     "cronologia", "indice_onomastico", "indice_tematico", "indice_analitico",
     "colofon", "otro"]
@@ -224,9 +226,53 @@ Private Sub PoblarComboIdParte()
     hRes.MoveNext
   Wend
 
-  ' --- 4. HABILITAR SOLO SI HAY PARTES REALES ---
-  id_parte.Enabled = (id_parte.Count > 1)
+  ' --- 4. ESTADO FINAL DEL COMBO SEGÚN PREFIJO DEL ARCHIVO ---
   id_parte.Index = 0
+  AjustarEstadoComboIdParte()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : AjustarEstadoComboIdParte
+' Propósito : Habilitar o deshabilitar el combo id_parte según el prefijo
+'             del nombre del archivo. fm-NN-* y bm-NN-* nunca pueden tener
+'             parte asignada (las partes solo aplican al cuerpo del libro).
+'             Si detecta inconsistencia previa (capítulo fm-/bm- con id_parte
+'             no-NULL en BD), fuerza "(sin parte)" en UI y avisa al usuario.
+' Notas     : Se debe llamar después de cargar un capítulo en el editor o
+'             después de repoblar el combo. NO toca la BD; la corrección
+'             persiste cuando el usuario guarda con btnGuardarCambiosMetadatosCapitulo.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub AjustarEstadoComboIdParte()
+
+  Dim sNombre As String
+  Dim bEsFmBm As Boolean
+  Dim iParteSeleccionada As Integer
+
+  ' --- 1. EVALUAR PREFIJO DEL ARCHIVO ---
+  sNombre = LCase(nombre_archivo.Text)
+  bEsFmBm = (sNombre Begins "fm-" Or sNombre Begins "bm-")
+
+  ' --- 2. SI ES fm-/bm- Y EL COMBO YA TENÍA UNA PARTE NO NULA, AVISAR ---
+  ' ESTO COMPENSA INCONSISTENCIAS HISTÓRICAS: CAPÍTULOS fm-/bm- A LOS QUE
+  ' SE LES ASIGNÓ UNA PARTE ANTES DE QUE EXISTIERA ESTE GUARD.
+  If bEsFmBm Then
+    iParteSeleccionada = ObtenerIdParteSeleccionada()
+    If iParteSeleccionada > 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning(
+        "Este capítulo es de front-matter o back-matter y no puede tener parte asignada." & Chr(10) &
+        "Se desasigna automáticamente. Guarde los cambios para persistir la corrección.")
+    Endif
+  Endif
+
+  ' --- 3. APLICAR ESTADO ---
+  If bEsFmBm Then
+    id_parte.Index = 0
+    id_parte.Enabled = False
+  Else
+    id_parte.Enabled = (id_parte.Count > 1)
+  Endif
 
 End
 
@@ -361,6 +407,10 @@ Public Sub gbCapitulos_Click()
 
   ' --- 5. HABILITAR BOTONES DE EDICIÓN ---
   HabilitarBotonesCapitulo(True)
+
+  ' --- 6. AJUSTAR EL COMBO id_parte SEGÚN EL PREFIJO DEL ARCHIVO ---
+  ' EL CAPÍTULO RECIÉN CARGADO PUEDE SER fm-/bm- Y REQUIERE DESHABILITAR EL COMBO.
+  AjustarEstadoComboIdParte()
 
 End
 
@@ -1302,5 +1352,103 @@ Public Sub licencia_Click()
       url_licencia.Text = ""
       url_licencia.SetFocus
   End Select
+
+End
+
+' EVENTO YA EXISTENTE, REEMPLAZAR CONTENIDO POR:
+Public Sub btnPartes_Click()
+
+  If iLibroActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay libro activo.")
+    Return
+  Endif
+
+  Dim fp As New FPartesLibro
+  fp.iLibroActual = iLibroActual
+  fp.ShowModal()
+
+  ' AL VOLVER, REPOBLAR EL COMBO POR SI HUBO CAMBIOS
+  PoblarComboIdParte()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnSeleccionArchivo_Click
+' Propósito : Abrir un diálogo de selección de archivo .md desde la raíz del
+'             proyecto activo. Validar que el archivo esté en una de las 3
+'             carpetas canónicas (front-matter, articulos, back-matter) y que
+'             su prefijo coincida con la carpeta (fm-, a-, bm-). Asignar el
+'             nombre sin extensión al TextBox nombre_archivo y disparar
+'             AjustarEstadoComboIdParte() para que el combo id_parte reaccione
+'             al nuevo prefijo.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnSeleccionArchivo_Click()
+
+  Dim sRutaArchivo As String
+  Dim sCarpeta As String
+  Dim sNombreSinExt As String
+  Dim sNombreLower As String
+  Dim sPrefijoEsperado As String
+
+  ' --- 1. CONFIGURAR EL DIÁLOGO ---
+  Dialog.Title = "Seleccionar archivo MD"
+  Dialog.Filter = ["*.md", "Documentos (MD)",
+    "*.md", "Archivos Markdown",
+    "*", "Todos los archivos"]
+  Dialog.AutoExt = True
+  Dialog.Path = File.Dir(FMain.txtProyecto.Text)
+
+  ' --- 2. ABRIR EL DIÁLOGO ---
+  ' Dialog.OpenFile() RETORNA True SI EL USUARIO CANCELÓ.
+  If Dialog.OpenFile() Then Return
+
+  sRutaArchivo = Dialog.Path
+
+  ' --- 3. DETERMINAR LA CARPETA INMEDIATA QUE CONTIENE AL ARCHIVO ---
+  ' File.Dir DEVUELVE EL DIRECTORIO COMPLETO; File.Name SOBRE ESE DIRECTORIO
+  ' DEVUELVE SOLO EL NOMBRE DE LA CARPETA FINAL.
+  ' Ej: /home/x/libro1/front-matter/fm-01.md → "front-matter"
+  sCarpeta = LCase(File.Name(File.Dir(sRutaArchivo)))
+
+  ' --- 4. EXTRAER NOMBRE SIN EXTENSIÓN ---
+  sNombreSinExt = File.BaseName(sRutaArchivo)
+  sNombreLower = LCase(sNombreSinExt)
+
+  ' --- 5. DETERMINAR PREFIJO ESPERADO SEGÚN LA CARPETA ---
+  Select Case sCarpeta
+    Case "front-matter"
+      sPrefijoEsperado = "fm-"
+    Case "articulos"
+      sPrefijoEsperado = "a-"
+    Case "back-matter"
+      sPrefijoEsperado = "bm-"
+    Case Else
+      m_Sonido.sonar("Warning")
+      Message.Warning(
+        "El archivo debe estar en una de estas carpetas del proyecto:" & Chr(10) & Chr(10) &
+        "  • front-matter (archivos fm-*)" & Chr(10) &
+        "  • articulos (archivos a-*)" & Chr(10) &
+        "  • back-matter (archivos bm-*)" & Chr(10) & Chr(10) &
+        "Carpeta detectada: " & sCarpeta)
+      Return
+  End Select
+
+  ' --- 6. VALIDAR COINCIDENCIA PREFIJO-CARPETA ---
+  If Not (sNombreLower Begins sPrefijoEsperado) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(
+      "El archivo está en la carpeta '" & sCarpeta & "'," & Chr(10) &
+      "pero su nombre no empieza con el prefijo '" & sPrefijoEsperado & "'." & Chr(10) & Chr(10) &
+      "Archivo: " & sNombreSinExt)
+    Return
+  Endif
+
+  ' --- 7. ASIGNAR EL NOMBRE AL TEXTBOX ---
+  nombre_archivo.Text = sNombreSinExt
+
+  ' --- 8. AJUSTAR EL COMBO id_parte SEGÚN EL NUEVO PREFIJO ---
+  ' EL COMBO SE BLOQUEA SI EL ARCHIVO ES fm-/bm-, SE HABILITA SI ES a-.
+  AjustarEstadoComboIdParte()
 
 End

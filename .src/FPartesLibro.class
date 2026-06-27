@@ -1,0 +1,542 @@
+' Gambas class file
+
+' ════════════════════════════════════════════════════════════════════════════
+' FORMULARIO : FPartesLibro
+' PROPÓSITO  : ABM de partes de libro (partes_libro). Se invoca modal desde
+'              FMetadatosCapitulos al hacer click en btnPartes. Al cerrarse,
+'              el llamador repuebla el combo id_parte con las novedades.
+' ENTRADA    : iLibroActual (Public) — id del libro activo. Debe fijarse
+'              antes de llamar a ShowModal().
+' PATRÓN     : Idéntico a FMetadatosCapitulos — INSERT mínimo para "Nueva",
+'              edición directa del registro, columna 0 oculta como ID en grid.
+' ════════════════════════════════════════════════════════════════════════════
+
+' ── 1. VARIABLES DE INSTANCIA ────────────────────────────────────────────
+'    bCierrePermitido    flag de control de cierre (patrón canónico)
+'    iParteActual        id de la parte cargada actualmente en el editor
+'    iLibroActual        id del libro padre (lo fija el llamador)
+
+Private bCierrePermitido As Boolean
+Private iParteActual As Integer = 0
+Public iLibroActual As Integer = 0
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : Form_Open
+' Propósito : Inicialización completa del formulario.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub Form_Open()
+
+  ' --- 1. VALIDAR CONTEXTO RECIBIDO DEL LLAMADOR ---
+  If iLibroActual <= 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("FPartesLibro: no se recibió iLibroActual." & Chr(10) &
+      "El llamador debe asignar el ID del libro antes de ShowModal().")
+    bCierrePermitido = True
+    Me.Close()
+    Return
+  Endif
+
+  ' --- 2. CARGAR TÍTULO DEL LIBRO EN EL HEADER ---
+  CargarTituloLibro()
+
+  ' --- 3. CONFIGURAR EL GRIDVIEW ---
+  ConfigurarGridView()
+
+  ' --- 4. CARGAR LAS PARTES DEL LIBRO EN EL GRID ---
+  RefrescarGvPartes()
+
+  ' --- 5. AUTOSELECCIONAR LA PRIMERA PARTE (SI HAY) ---
+  If gvPartes.Rows.Count > 0 Then
+    gvPartes.Row = 0
+    gvPartes_Click()
+  Else
+    LimpiarEditor()
+    HabilitarBotonesParte(False)
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarTituloLibro
+' Propósito : Leer titulo_libro de libros_md y mostrarlo en lblTituloLibro.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarTituloLibro()
+
+  Dim hRes As Result
+
+  ' --- 1. CONSULTA ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT titulo_libro FROM libros_md WHERE id_libro = &1", iLibroActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al leer el título del libro:" & Chr(10) & Error.Text)
+    lblTituloLibro.Text = "Partes del libro"
+    Return
+  Endif
+
+  ' --- 2. ASIGNACIÓN ---
+  If hRes.Available Then
+    lblTituloLibro.Text = "Partes del libro: " & CStr(hRes["titulo_libro"])
+  Else
+    lblTituloLibro.Text = "Partes del libro (sin título)"
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ConfigurarGridView
+' Propósito : Establecer columnas, headers y modo de selección del grid.
+'             COLUMNA 0 OCULTA (Width = 0) ALMACENA EL id_parte REAL.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ConfigurarGridView()
+
+  With gvPartes
+    .Columns.Count = 4
+    .Header = GridView.Both
+    .Mode = Select.Single
+    .Scrollbar = Scroll.Vertical
+    ' COLUMNA 0: ID OCULTA (cache para gvPartes_Click)
+    .Columns[0].Title = "ID"
+    .Columns[0].Width = 0
+    .Columns[1].Title = "Orden"
+    .Columns[1].Width = 70
+    .Columns[2].Title = "Título"
+    .Columns[2].Width = 420
+    .Columns[3].Title = "DOI"
+    .Columns[3].Width = 200
+  End With
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : RefrescarGvPartes
+' Propósito : Volver a leer las partes del libro actual y poblar el grid.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub RefrescarGvPartes()
+
+  Dim hRes As Result
+  Dim iRow As Integer
+
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_parte, orden, titulo, doi_parte FROM partes_libro " &
+    "WHERE id_libro = &1 ORDER BY orden ASC, id_parte ASC", iLibroActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar partes del libro:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  gvPartes.Rows.Count = 0
+
+  If Not hRes.Available Then Return
+
+  iRow = 0
+  For Each hRes
+    gvPartes.Rows.Count = iRow + 1
+    ' COLUMNA 0: ID OCULTA
+    gvPartes[iRow, 0].Text = hRes["id_parte"]
+    ' COLUMNA 1: ORDEN
+    gvPartes[iRow, 1].Text = CStr(hRes["orden"])
+    gvPartes[iRow, 1].Alignment = Align.Center
+    ' COLUMNA 2: TÍTULO
+    gvPartes[iRow, 2].Text = If(IsNull(hRes["titulo"]), "", CStr(hRes["titulo"]))
+    ' COLUMNA 3: DOI
+    gvPartes[iRow, 3].Text = If(IsNull(hRes["doi_parte"]), "", CStr(hRes["doi_parte"]))
+    Inc iRow
+  Next
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : gvPartes_Click
+' Propósito : Cargar en el editor la parte cuya fila acaba de seleccionarse.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub gvPartes_Click()
+
+  Dim iRow As Integer
+  Dim iIdParte As Integer
+
+  ' --- 1. OBTENER LA FILA ACTIVA ---
+  iRow = gvPartes.Row
+  If iRow < 0 Then Return
+
+  ' --- 2. OBTENER EL ID DESDE LA COLUMNA 0 OCULTA ---
+  iIdParte = Val(gvPartes[iRow, 0].Text)
+  If iIdParte <= 0 Then Return
+
+  ' --- 3. CARGAR EL REGISTRO EN EL EDITOR ---
+  CargarEditor(iIdParte)
+
+  ' --- 4. HABILITAR BOTONES DE EDICIÓN ---
+  HabilitarBotonesParte(True)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarEditor
+' Propósito : Leer la parte indicada y poblar el editor.
+' Parámetros: iId As Integer — id de la parte a cargar.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarEditor(iId As Integer)
+
+  Dim hRes As Result
+
+  ' --- 1. CONSULTA ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT * FROM partes_libro WHERE id_parte = &1", iId)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar la parte:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If Not hRes.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La parte ya no existe en la base. Se recarga la lista.")
+    RefrescarGvPartes()
+    LimpiarEditor()
+    HabilitarBotonesParte(False)
+    Return
+  Endif
+
+  ' --- 2. CAMPOS PRINCIPALES ---
+  orden.Value = CInt(hRes!orden)
+  titulo.Text = If(IsNull(hRes!titulo), "", CStr(hRes!titulo))
+  subtitulo.Text = If(IsNull(hRes!subtitulo), "", CStr(hRes!subtitulo))
+  epigrafe.Text = If(IsNull(hRes!epigrafe), "", CStr(hRes!epigrafe))
+  doi_parte.Text = If(IsNull(hRes!doi_parte), "", CStr(hRes!doi_parte))
+  notas_internas.Text = If(IsNull(hRes!notas_internas), "", CStr(hRes!notas_internas))
+
+  ' --- 3. AUDITORÍA ---
+  ' lblUsuarioCreacion ES TextBox (ReadOnly); LAS FECHAS SON DateBox
+  ' (Enabled = False). RC-GM-14: DateBox.ReadOnly NO BLOQUEA EL CALENDARIO,
+  ' POR ESO VAN COMO DateBox CON Enabled = False EN EL .form.
+  ' NOMBRES DE COLUMNAS EN partes_libro: fecha_creacion / fecha_actualizacion
+  ' (SIN SUFIJO _registro, A DIFERENCIA DE capitulos).
+  lblUsuarioCreacion.Text = If(IsNull(hRes!usuario_creacion), "", CStr(hRes!usuario_creacion))
+  If IsNull(hRes!fecha_creacion) Then
+    lblFechaCreacion.Value = Null
+  Else
+    lblFechaCreacion.Value = hRes!fecha_creacion
+  Endif
+  If IsNull(hRes!fecha_actualizacion) Then
+    lblFechaActualizacion.Value = Null
+  Else
+    lblFechaActualizacion.Value = hRes!fecha_actualizacion
+  Endif
+
+  ' --- 4. ESTADO INTERNO ---
+  iParteActual = iId
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : LimpiarEditor
+' Propósito : Vaciar todos los campos del editor. Se llama cuando no hay
+'             ninguna parte seleccionada (libro sin partes o post-borrar último).
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub LimpiarEditor()
+
+  ' --- 1. CAMPOS PRINCIPALES ---
+  orden.Value = 0
+  titulo.Clear()
+  subtitulo.Clear()
+  epigrafe.Clear()
+  doi_parte.Clear()
+  notas_internas.Clear()
+
+  ' --- 2. AUDITORÍA ---
+  lblUsuarioCreacion.Text = ""
+  lblFechaCreacion.Value = Null
+  lblFechaActualizacion.Value = Null
+
+  ' --- 3. ESTADO INTERNO ---
+  iParteActual = 0
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : HabilitarBotonesParte
+' Propósito : Habilitar/deshabilitar los botones que requieren una parte
+'             activa (guardar, borrar).
+' Parámetros: bSi As Boolean — True para habilitar, False para deshabilitar.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub HabilitarBotonesParte(bSi As Boolean)
+
+  btnGuardar.Enabled = bSi
+  btnBorrar.Enabled = bSi
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : SugerirOrden
+' Propósito : Devolver MAX(orden) + 1 del libro activo, o 1 si no hay partes.
+'             RC-GM-09: NUMERACIÓN POR MÁXIMO, NO POR CONTEO.
+' Retorna   : Integer — siguiente orden libre.
+' ════════════════════════════════════════════════════════════════════════════
+Private Function SugerirOrden() As Integer
+
+  Dim hRes As Result
+
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT COALESCE(MAX(orden), 0) + 1 AS sig FROM partes_libro WHERE id_libro = &1",
+    iLibroActual)
+  If Error Then Return 1
+
+  If hRes.Available Then Return CInt(hRes!sig)
+  Return 1
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnNueva_Click
+' Propósito : Crear una parte nueva con INSERT mínimo. No usa "modo creación":
+'             el registro existe inmediatamente en BD y se edita normalmente
+'             con btnGuardar. Patrón idéntico a btnCapituloNuevo en
+'             FMetadatosCapitulos.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnNueva_Click()
+
+  Dim iRespuesta As Byte
+  Dim iIdNuevo As Integer
+  Dim iRow As Integer
+
+  ' --- 1. CONFIRMAR ---
+  iRespuesta = Message.Question("¿Crear una nueva parte en este libro?", "Crear", "Cancelar")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 2. INSERT MÍNIMO ---
+  ' fecha_creacion TIENE DEFAULT CURRENT_TIMESTAMP — NO HACE FALTA NOW() EXPLÍCITO.
+  Try m_ConexionBD.mConn.Exec(
+    "INSERT INTO partes_libro (id_libro, orden, titulo, usuario_creacion) " &
+    "VALUES (&1, &2, &3, &4)",
+    iLibroActual,
+    SugerirOrden(),
+    "Parte sin título",
+    m_InicioCierre.UsuarioEnCurso)
+
+  ' --- 3. RECUPERAR EL ID GENERADO ---
+  iIdNuevo = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID() AS ult")["ult"]
+
+  ' --- 4. REFRESCAR EL GRID ---
+  RefrescarGvPartes()
+
+  ' --- 5. BUSCAR LA FILA DE LA NUEVA PARTE Y SELECCIONARLA ---
+  For iRow = 0 To gvPartes.Rows.Max
+    If Val(gvPartes[iRow, 0].Text) = iIdNuevo Then
+      gvPartes.Row = iRow
+      gvPartes_Click()
+      Break
+    Endif
+  Next
+
+  ' --- 6. PONER FOCO EN EL TÍTULO PARA QUE EL USUARIO REEMPLACE EL PLACEHOLDER ---
+  titulo.SetFocus()
+  m_Sonido.sonar("ok")
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnBorrar_Click
+' Propósito : Eliminar la parte activa. Si tiene capítulos vinculados,
+'             avisa y los desvincula (id_parte = NULL) dentro de una
+'             transacción atómica.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnBorrar_Click()
+
+  Dim iRespuesta As Byte
+  Dim hRes As Result
+  Dim iVinculados As Integer = 0
+  Dim sMsg As String
+
+  ' --- 1. VALIDAR PARTE ACTIVA ---
+  If iParteActual <= 0 Then
+    m_Sonido.sonar("info")
+    Message.Info("No hay ninguna parte seleccionada.")
+    Return
+  Endif
+
+  ' --- 2. CONTAR CAPÍTULOS VINCULADOS ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT COUNT(*) AS n FROM capitulos WHERE id_parte = &1", iParteActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al contar capítulos vinculados:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If hRes.Available Then iVinculados = CInt(hRes!n)
+
+  ' --- 3. MENSAJE DE CONFIRMACIÓN SEGÚN VINCULACIÓN ---
+  If iVinculados > 0 Then
+    sMsg = "Esta parte tiene " & CStr(iVinculados) & " capítulo(s) vinculado(s)." & Chr(10) &
+      "Si continúa, esos capítulos quedarán sin parte asignada (id_parte = NULL)." & Chr(10) &
+      "Esta operación no se puede deshacer." & Chr(10) & Chr(10) &
+      "¿Desea continuar?"
+  Else
+    sMsg = "¿Eliminar la parte '" & titulo.Text & "'?" & Chr(10) &
+      "Esta operación no se puede deshacer."
+  Endif
+
+  iRespuesta = Message.Question(sMsg, "Eliminar", "Cancelar")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 4. TRANSACCIÓN: DESVINCULAR CAPÍTULOS + BORRAR PARTE ---
+  Try m_ConexionBD.mConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al iniciar la transacción:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' 4.A — DESVINCULAR CAPÍTULOS (UPDATE NO-OP SI iVinculados = 0)
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE capitulos SET id_parte = NULL WHERE id_parte = &1", iParteActual)
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("Error al desvincular capítulos:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' 4.B — DELETE DE LA PARTE
+  Try m_ConexionBD.mConn.Exec(
+    "DELETE FROM partes_libro WHERE id_parte = &1", iParteActual)
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("Error al borrar la parte:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' 4.C — COMMIT
+  Try m_ConexionBD.mConn.Commit()
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("Error al confirmar la transacción:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. REFRESCAR GRID Y AJUSTAR ESTADO (PATRÓN btnCapituloBorrar) ---
+  iParteActual = 0
+  RefrescarGvPartes()
+
+  If gvPartes.Rows.Count > 0 Then
+    gvPartes.Row = 0
+    gvPartes_Click()
+  Else
+    LimpiarEditor()
+    HabilitarBotonesParte(False)
+  Endif
+
+  m_Sonido.sonar("ok")
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnGuardar_Click
+' Propósito : Persistir en BD los valores actuales del editor (UPDATE).
+'             El registro siempre existe en BD desde que se hace btnNueva
+'             (INSERT mínimo), así que esto es siempre UPDATE, nunca INSERT.
+'             RC-GM-15: usar patrón Edit + Update por estabilidad con
+'             muchos campos.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardar_Click()
+
+  Dim hRes As Result
+  Dim iIdGuardado As Integer
+  Dim iRow As Integer
+
+  ' --- 1. VALIDAR PARTE ACTIVA ---
+  If iParteActual <= 0 Then
+    m_Sonido.sonar("info")
+    Message.Info("No hay ninguna parte seleccionada.")
+    Return
+  Endif
+
+  ' --- 2. VALIDACIÓN: TÍTULO NO VACÍO ---
+  If Trim(titulo.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El título de la parte es obligatorio.")
+    titulo.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. VALIDACIÓN: ORDEN > 0 ---
+  If orden.Value <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El orden debe ser un número entero positivo.")
+    orden.SetFocus()
+    Return
+  Endif
+
+  ' --- 4. UPDATE CON Edit + Update (RC-GM-15) ---
+  Try hRes = m_ConexionBD.mConn.Edit("partes_libro", "id_parte = &1", iParteActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al preparar el UPDATE:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If Not hRes.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La parte ya no existe en la base. Se recarga la lista.")
+    RefrescarGvPartes()
+    LimpiarEditor()
+    HabilitarBotonesParte(False)
+    Return
+  Endif
+
+  With hRes
+    !orden = orden.Value
+    !titulo = titulo.Text
+    !subtitulo = If(Trim(subtitulo.Text) <> "", subtitulo.Text, Null)
+    !epigrafe = If(Trim(epigrafe.Text) <> "", epigrafe.Text, Null)
+    !doi_parte = If(Trim(doi_parte.Text) <> "", doi_parte.Text, Null)
+    !notas_internas = If(Trim(notas_internas.Text) <> "", notas_internas.Text, Null)
+    Try .Update()
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar la parte:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  End With
+
+  ' --- 5. REFRESCAR EL GRID Y MANTENER SELECCIÓN EN LA FILA EDITADA ---
+  iIdGuardado = iParteActual
+  RefrescarGvPartes()
+  For iRow = 0 To gvPartes.Rows.Max
+    If Val(gvPartes[iRow, 0].Text) = iIdGuardado Then
+      gvPartes.Row = iRow
+      gvPartes_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("ok")
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' EVENTOS DE CIERRE (patrón canónico — idéntico a FMetadatosCapitulos)
+' ════════════════════════════════════════════════════════════════════════════
+
+Public Sub btnCerrar_Click()
+  ' HABILITAR EL CIERRE Y CERRAR
+
+  bCierrePermitido = True
+  Me.Close()
+
+End
+
+Public Sub Form_Close()
+  ' SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO
+
+  If bCierrePermitido Then Return
+  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
+  m_Sonido.sonar("info")
+  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+  Stop Event
+
+End
