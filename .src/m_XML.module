@@ -1441,10 +1441,6 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   Dim sPaisAfil As String
   Dim sEmail As String
 
-  ' IDs LEÍDOS DIRECTAMENTE DESDE LOS VALUEBOX DE FMain
-  iIdRevista = CInt(FMain.id_revista.Value)
-  iIdArticulo = CInt(FMain.id_articulo.Value)
-
   ' ====================================================
   ' PASO 0: PREPARAR DIRECTORIO TEMPORAL
   ' ====================================================
@@ -2222,8 +2218,6 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   Dim sFileBody As String
   Dim iEspera As Integer
 
-  iIdArticulo = CInt(FMain.id_articulo.Value)
-
   ' --- 1. Obtener nombre_archivo ---
   Try hArticulo = m_ConexionBD.mConn.Exec(
     "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1", iIdArticulo)
@@ -2343,8 +2337,6 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Dim sNombreBase As String
   Dim sFilePath As String
   Dim sCk As String
-
-  iIdArticulo = CInt(FMain.id_articulo.Value)
 
   ' --- 1. Obtener nombre_archivo y referencias_citadas ---
   Try hArticulo = m_ConexionBD.mConn.Exec(
@@ -6364,6 +6356,1077 @@ Public Function GenerarBiblioLibroXML(iIdLibro As Integer) As Boolean
 Catch
   m_Sonido.sonar("Error")
   Message.Error("Error inesperado en GenerarBiblioLibroXML:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' ==========================================================
+' FUNCIÓN PÚBLICA: GenerarInfoCapituloXML
+' ==========================================================
+' AGREGAR AL FINAL DE m_XML.module, JUNTO CON LAS DEMÁS FUNCIONES
+' DE GENERACIÓN DE FRAGMENTOS DOCBOOK.
+'
+' ANÁLOGA A GenerarFrontXML (REVISTAS), CON LAS SIGUIENTES
+' DIFERENCIAS PROPIAS DE LIBROS ACADÉMICOS:
+'   - Tabla: capitulo_autor (no articulo_autor)
+'   - Enum rol_autor: solo 'autor', 'traductor' (sin 'editor')
+'   - Sin es_autor_correspondencia
+'   - Sin emisión de <email> en el XML (queda solo en BD)
+'   - ROR del momento (ror_afiliacion_momento) + fallback al
+'     ror_afiliacion_actual de autores
+'   - contribuciones_credit JSON + taxonomia_credit TEXT (fallback)
+'   - notas_autor (por autor) → <personblurb> dentro de <author>
+'   - author_notes (global del capítulo) → <authorblurb> al cierre
+'
+' ESTRUCTURA DEL <info> GENERADO (16 BLOQUES):
+'   1.  Título, subtítulo, título corto, título traducido
+'   2.  Identificadores (DOI, elocation-id)
+'   3.  Autores (loop sobre capitulo_autor + autores)
+'   4.  Autores corporativos / anónimos / grupales
+'   5.  Resúmenes (hasta 3 idiomas)
+'   6.  Palabras clave (hasta 3 idiomas)
+'   7.  Clasificaciones (MeSH, DeCS, temática)
+'   8.  Fechas (publicación online, recepción, aceptación, revisión)
+'   9.  Paginación
+'   10. Financiamiento
+'   11. Conflictos de interés
+'   12. Ética
+'   13. Datos asociados
+'   14. Licencia y copyright
+'   15. URLs
+'   16. Conteos de figuras / tablas / ecuaciones
+'
+' SALIDA: tmp/info-{nombre_archivo_sin_prefijo}.xml
+'   ej.: capítulo a-02-metodologia.md → tmp/info-02-metodologia.xml
+' ==========================================================
+
+' ============================================
+' Función   : GenerarInfoCapituloXML
+' Propósito : Genera el fragmento <info> en DocBook 5.2 para un capítulo
+'             específico, leyendo la tabla capitulos y el JOIN de
+'             capitulo_autor + autores. Escribe el resultado en tmp/.
+' Parámetros: iIdCapitulo As Integer — id_capitulo de la BD
+' Retorna   : Boolean — True si el archivo fue generado exitosamente
+' ============================================
+Public Function GenerarInfoCapituloXML(iIdCapitulo As Integer) As Boolean
+
+  ' --- 0. DECLARACIÓN DE VARIABLES ---
+  ' COMILLA DOBLE COMO VARIABLE LOCAL PARA RESPETAR SC-01
+  Dim cQ As String = Chr(34)
+
+  Dim hCapitulo As Result
+  Dim hAutores As Result
+  Dim sXML As String
+  Dim sDirTmp As String
+  Dim sFilePath As String
+  Dim sNombreBase As String
+  Dim sNombreArchivo As String
+
+  ' VARIABLES PARA EL LOOP DE AUTORES
+  Dim sRolAutor As String
+  Dim sElementoAutor As String
+  Dim sAtributosAutor As String
+  Dim sAfil As String
+  Dim sDept As String
+  Dim sCiudadAfil As String
+  Dim sPaisAfil As String
+  Dim sRor As String
+  Dim sCredit As String
+  Dim aRoles As String[]
+  Dim sRole As String
+
+  ' VARIABLES PARA FECHAS
+  Dim sFechaPubOnline As String
+  Dim sFechaRecep As String
+  Dim sFechaAcept As String
+  Dim sFechaRev As String
+
+  ' VARIABLES PARA KEYWORDS
+  Dim aKwd As String[]
+  Dim sKwd As String
+
+  ' VARIABLES PARA CLASIFICACIONES
+  Dim aTerminos As String[]
+  Dim sTermino As String
+
+  ' --- 1. PREPARAR DIRECTORIO TEMPORAL ---
+  sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
+
+  ' --- 2. CONSULTAR DATOS DEL CAPÍTULO ---
+  ' LAS FECHAS SE PIDEN EN FORMATO ISO YYYY-MM-DD PARA EVITAR
+  ' PROBLEMAS DE LOCALIZACIÓN EN LA CONVERSIÓN DE GAMBAS.
+  Try hCapitulo = m_ConexionBD.mConn.Exec(
+    "SELECT *, " &
+    "DATE_FORMAT(fecha_publicacion_online, '%Y-%m-%d') AS fecha_online_iso, " &
+    "DATE_FORMAT(fecha_recepcion,          '%Y-%m-%d') AS fecha_rec_iso, " &
+    "DATE_FORMAT(fecha_aceptacion,         '%Y-%m-%d') AS fecha_ace_iso, " &
+    "DATE_FORMAT(fecha_revision,           '%Y-%m-%d') AS fecha_rev_iso " &
+    "FROM capitulos WHERE id_capitulo = &1 LIMIT 1", iIdCapitulo)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar el capítulo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hCapitulo.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontraron datos para el capítulo id=" & CStr(iIdCapitulo))
+    Return False
+  Endif
+
+  ' NOMBRE DEL ARCHIVO DE SALIDA:
+  ' "a-02-metodologia"  → "info-02-metodologia"
+  ' "fm-01-prologo"     → "info-01-prologo"
+  ' "bm-99-colofon"     → "info-99-colofon"
+  ' EL PREFIJO SE DESCARTA TOMANDO EL TEXTO DESDE EL PRIMER GUIÓN.
+  sNombreArchivo = TrimUTF8(hCapitulo["nombre_archivo"])
+  sNombreBase = "info-" & Mid(sNombreArchivo, InStr(sNombreArchivo, "-") + 1)
+  sFilePath = sDirTmp & "/" & File.BaseName(sNombreBase) & ".xml"
+
+  ' --- 3. CONSULTAR AUTORES DEL CAPÍTULO ---
+  ' JOIN capitulo_autor + autores CON PRIORIDAD A LOS DATOS DEL MOMENTO
+  ' (capturados al asignar el autor al capítulo) SOBRE LOS DATOS VIGENTES
+  ' DEL AUTOR (que pueden haber cambiado).
+  Try hAutores = m_ConexionBD.mConn.Exec(
+    "SELECT a.id_autor, a.apellidos, a.nombre, a.sufijo, a.orcid, " &
+    "a.afiliacion_actual, a.departamento, a.ciudad_afiliacion, a.pais_afiliacion, " &
+    "a.ror_afiliacion_actual, a.biografia_corta, " &
+    "ca.orden_autoria, ca.rol_autor, " &
+    "ca.afiliacion_momento, ca.departamento_momento, ca.ciudad_momento, " &
+    "ca.pais_momento, ca.ror_afiliacion_momento, " &
+    "ca.taxonomia_credit, ca.contribuciones_credit, ca.notas_autor " &
+    "FROM autores a " &
+    "INNER JOIN capitulo_autor ca ON a.id_autor = ca.id_autor " &
+    "WHERE ca.id_capitulo = &1 " &
+    "ORDER BY ca.orden_autoria ASC",
+    iIdCapitulo)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar autores del capítulo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 4. ABRIR EL ELEMENTO RAÍZ <info> ---
+  ' EL NAMESPACE xlink ES NECESARIO PORQUE <legalnotice> Y POSIBLES
+  ' bibliosource USAN <link xlink:href="...">. EL XSL DE ENSAMBLADO
+  ' LO RE-DECLARA EN EL WRAPPER RAÍZ DEL CANÓNICO.
+  sXML = "<info xmlns=" & cQ & "http://docbook.org/ns/docbook" & cQ &
+    " xmlns:xlink=" & cQ & "http://www.w3.org/1999/xlink" & cQ & ">" & Chr(10)
+
+  ' ==========================================================
+  ' BLOQUE 1. TÍTULO Y SUBTÍTULO
+  ' ==========================================================
+  ' EL <title> ES OBLIGATORIO EN DOCBOOK 5.2 PARA <chapter>/<preface>/etc.
+  ' SI ESTÁ VACÍO, EMITIMOS UN PLACEHOLDER PARA QUE EL DOCUMENTO RESULTANTE
+  ' AL MENOS VALIDE; EL EDITOR DEBE COMPLETARLO ANTES DE PUBLICAR.
+  If Not IsNull(hCapitulo["titulo_capitulo"]) And
+      Len(TrimUTF8(hCapitulo["titulo_capitulo"])) > 0 Then
+    sXML &= "  <title>" & EscaparXML(TrimUTF8(hCapitulo["titulo_capitulo"])) &
+      "</title>" & Chr(10)
+  Else
+    sXML &= "  <title>[SIN TÍTULO]</title>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["subtitulo"]) And
+      Len(TrimUTF8(hCapitulo["subtitulo"])) > 0 Then
+    sXML &= "  <subtitle>" & EscaparXML(TrimUTF8(hCapitulo["subtitulo"])) &
+      "</subtitle>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["titulo_corto"]) And
+      Len(TrimUTF8(hCapitulo["titulo_corto"])) > 0 Then
+    sXML &= "  <titleabbrev>" & EscaparXML(TrimUTF8(hCapitulo["titulo_corto"])) &
+      "</titleabbrev>" & Chr(10)
+  Endif
+
+  ' TÍTULO TRADUCIDO: SE EMITE COMO SEGUNDO <title> CON xml:lang Y role="traducido"
+  ' DOCBOOK 5.2 PERMITE MÚLTIPLES <title> EN <info>.
+  If Not IsNull(hCapitulo["titulo_traducido"]) And
+      Len(TrimUTF8(hCapitulo["titulo_traducido"])) > 0 Then
+    Dim sIdiomaTit As String = ""
+    If Not IsNull(hCapitulo["idioma_titulo_traducido"]) Then
+      sIdiomaTit = TrimUTF8(hCapitulo["idioma_titulo_traducido"])
+    Endif
+    sXML &= "  <title role=" & cQ & "traducido" & cQ
+    If sIdiomaTit <> "" Then
+      sXML &= " xml:lang=" & cQ & EscaparXML(sIdiomaTit) & cQ
+    Endif
+    sXML &= ">" & EscaparXML(TrimUTF8(hCapitulo["titulo_traducido"])) &
+      "</title>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 2. IDENTIFICADORES
+  ' ==========================================================
+  If Not IsNull(hCapitulo["doi"]) And Len(TrimUTF8(hCapitulo["doi"])) > 0 Then
+    sXML &= "  <biblioid class=" & cQ & "doi" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["doi"])) & "</biblioid>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["elocation_id"]) And
+      Len(TrimUTF8(hCapitulo["elocation_id"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "elocation-id" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["elocation_id"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 3. AUTORES (LOOP CAPITULO_AUTOR + AUTORES)
+  ' ==========================================================
+  ' SE EMITE CADA AUTOR/TRADUCTOR EN ORDEN DE orden_autoria.
+  ' EL ENUM rol_autor SOLO TIENE 'autor' Y 'traductor' EN LIBROS.
+  While hAutores.Available
+
+    ' DETERMINAR ELEMENTO Y ATRIBUTOS SEGÚN ROL
+    sRolAutor = "autor"
+    If Not IsNull(hAutores["rol_autor"]) Then
+      sRolAutor = TrimUTF8(hAutores["rol_autor"])
+    Endif
+
+    Select Case sRolAutor
+      Case "traductor"
+        sElementoAutor = "othercredit"
+        sAtributosAutor = " class=" & cQ & "translator" & cQ
+      Case Else
+        sElementoAutor = "author"
+        sAtributosAutor = ""
+    End Select
+
+    sXML &= "  <" & sElementoAutor & sAtributosAutor & ">" & Chr(10)
+
+    ' NOMBRE (PERSONNAME)
+    sXML &= "    <personname>" & Chr(10)
+    sXML &= "      <firstname>" &
+      EscaparXML(TrimUTF8(hAutores["nombre"])) & "</firstname>" & Chr(10)
+    sXML &= "      <surname>" &
+      EscaparXML(TrimUTF8(hAutores["apellidos"])) & "</surname>" & Chr(10)
+    If Not IsNull(hAutores["sufijo"]) And
+        Len(TrimUTF8(hAutores["sufijo"])) > 0 Then
+      ' DOCBOOK 5.2 USA <lineage> PARA SUFIJOS DE LINAJE (Jr., III).
+      ' NO USAMOS <honorific> PORQUE ESE ELEMENTO ES PARA TRATAMIENTOS
+      ' (Dr., Prof.) QUE VAN ANTES DEL NOMBRE.
+      sXML &= "      <lineage>" &
+        EscaparXML(TrimUTF8(hAutores["sufijo"])) & "</lineage>" & Chr(10)
+    Endif
+    sXML &= "    </personname>" & Chr(10)
+
+    ' ORCID COMO <uri type="orcid">
+    If Not IsNull(hAutores["orcid"]) And
+        Len(TrimUTF8(hAutores["orcid"])) > 0 Then
+      sXML &= "    <uri type=" & cQ & "orcid" & cQ & ">" &
+        "https://orcid.org/" & EscaparXML(TrimUTF8(hAutores["orcid"])) &
+        "</uri>" & Chr(10)
+    Endif
+
+    ' AFILIACIÓN CON PRIORIDAD _momento → DATO ACTUAL DEL AUTOR
+    sAfil = ""
+    sDept = ""
+    sCiudadAfil = ""
+    sPaisAfil = ""
+    sRor = ""
+
+    If Not IsNull(hAutores["afiliacion_momento"]) And
+        Len(TrimUTF8(hAutores["afiliacion_momento"])) > 0 Then
+      sAfil = TrimUTF8(hAutores["afiliacion_momento"])
+    Else If Not IsNull(hAutores["afiliacion_actual"]) And
+        Len(TrimUTF8(hAutores["afiliacion_actual"])) > 0 Then
+      sAfil = TrimUTF8(hAutores["afiliacion_actual"])
+    Endif
+
+    If Not IsNull(hAutores["departamento_momento"]) And
+        Len(TrimUTF8(hAutores["departamento_momento"])) > 0 Then
+      sDept = TrimUTF8(hAutores["departamento_momento"])
+    Else If Not IsNull(hAutores["departamento"]) And
+        Len(TrimUTF8(hAutores["departamento"])) > 0 Then
+      sDept = TrimUTF8(hAutores["departamento"])
+    Endif
+
+    If Not IsNull(hAutores["ciudad_momento"]) And
+        Len(TrimUTF8(hAutores["ciudad_momento"])) > 0 Then
+      sCiudadAfil = TrimUTF8(hAutores["ciudad_momento"])
+    Else If Not IsNull(hAutores["ciudad_afiliacion"]) And
+        Len(TrimUTF8(hAutores["ciudad_afiliacion"])) > 0 Then
+      sCiudadAfil = TrimUTF8(hAutores["ciudad_afiliacion"])
+    Endif
+
+    If Not IsNull(hAutores["pais_momento"]) And
+        Len(TrimUTF8(hAutores["pais_momento"])) > 0 Then
+      sPaisAfil = TrimUTF8(hAutores["pais_momento"])
+    Else If Not IsNull(hAutores["pais_afiliacion"]) And
+        Len(TrimUTF8(hAutores["pais_afiliacion"])) > 0 Then
+      sPaisAfil = TrimUTF8(hAutores["pais_afiliacion"])
+    Endif
+
+    If Not IsNull(hAutores["ror_afiliacion_momento"]) And
+        Len(TrimUTF8(hAutores["ror_afiliacion_momento"])) > 0 Then
+      sRor = TrimUTF8(hAutores["ror_afiliacion_momento"])
+    Else If Not IsNull(hAutores["ror_afiliacion_actual"]) And
+        Len(TrimUTF8(hAutores["ror_afiliacion_actual"])) > 0 Then
+      sRor = TrimUTF8(hAutores["ror_afiliacion_actual"])
+    Endif
+
+    If sAfil <> "" Or sDept <> "" Or sCiudadAfil <> "" Or sPaisAfil <> "" Or sRor <> "" Then
+      sXML &= "    <affiliation>" & Chr(10)
+      If sDept <> "" Then
+        sXML &= "      <orgdiv>" & EscaparXML(sDept) & "</orgdiv>" & Chr(10)
+      Endif
+      If sAfil <> "" Then
+        sXML &= "      <orgname>" & EscaparXML(sAfil) & "</orgname>" & Chr(10)
+      Endif
+      If sCiudadAfil <> "" Or sPaisAfil <> "" Then
+        sXML &= "      <address>" & Chr(10)
+        If sCiudadAfil <> "" Then
+          sXML &= "        <city>" & EscaparXML(sCiudadAfil) & "</city>" & Chr(10)
+        Endif
+        If sPaisAfil <> "" Then
+          sXML &= "        <country>" & EscaparXML(sPaisAfil) & "</country>" & Chr(10)
+        Endif
+        sXML &= "      </address>" & Chr(10)
+      Endif
+      ' ROR: SE EMITE COMO <otheraddr role="ror"> DENTRO DE <affiliation>.
+      ' DOCBOOK 5.2 NO TIENE UN ELEMENTO ESTÁNDAR PARA IDENTIFICADORES
+      ' DE ORGANIZACIÓN; <otheraddr> ES EL MÁS APROPIADO SEMÁNTICAMENTE.
+      If sRor <> "" Then
+        sXML &= "      <otheraddr role=" & cQ & "ror" & cQ & ">" &
+          EscaparXML(sRor) & "</otheraddr>" & Chr(10)
+      Endif
+      sXML &= "    </affiliation>" & Chr(10)
+    Endif
+
+    ' NOTAS DEL AUTOR (PROPIAS DE ESTE AUTOR EN ESTE CAPÍTULO)
+    If Not IsNull(hAutores["notas_autor"]) And
+        Len(TrimUTF8(hAutores["notas_autor"])) > 0 Then
+      sXML &= "    <personblurb><para>" &
+        EscaparXML(TrimUTF8(hAutores["notas_autor"])) &
+        "</para></personblurb>" & Chr(10)
+    Endif
+
+    ' ROLES CRediT: PRIORIDAD AL JSON contribuciones_credit;
+    ' FALLBACK A taxonomia_credit (TEXT)
+    sCredit = ""
+    If Not IsNull(hAutores["contribuciones_credit"]) Then
+      sCredit = TrimUTF8(hAutores["contribuciones_credit"])
+    Endif
+
+    If sCredit <> "" And sCredit <> "null" And sCredit <> "[]" Then
+      ' PARSER MÍNIMO DE JSON ARRAY: ["Conceptualization", "Investigation", ...]
+      ' SE LIMPIAN CORCHETES, COMILLAS Y SPLIT POR COMA.
+      Dim sJsonLimpio As String = sCredit
+      sJsonLimpio = Replace(sJsonLimpio, "[", "")
+      sJsonLimpio = Replace(sJsonLimpio, "]", "")
+      sJsonLimpio = Replace(sJsonLimpio, cQ, "")
+      sJsonLimpio = TrimUTF8(sJsonLimpio)
+      If sJsonLimpio <> "" Then
+        aRoles = Split(sJsonLimpio, ",")
+        For Each sRole In aRoles
+          sRole = TrimUTF8(sRole)
+          If sRole <> "" Then
+            sXML &= "    <bibliomisc role=" & cQ & "credit-role" & cQ & ">" &
+              EscaparXML(sRole) & "</bibliomisc>" & Chr(10)
+          Endif
+        Next
+      Endif
+    Else If Not IsNull(hAutores["taxonomia_credit"]) And
+        Len(TrimUTF8(hAutores["taxonomia_credit"])) > 0 Then
+      ' FALLBACK: TEXTO PLANO
+      sXML &= "    <bibliomisc role=" & cQ & "credit-roles-texto" & cQ & ">" &
+        EscaparXML(TrimUTF8(hAutores["taxonomia_credit"])) &
+        "</bibliomisc>" & Chr(10)
+    Endif
+
+    sXML &= "  </" & sElementoAutor & ">" & Chr(10)
+    hAutores.MoveNext
+  Wend
+
+  ' ==========================================================
+  ' BLOQUE 4. AUTORES CORPORATIVOS / ANÓNIMOS / GRUPALES
+  ' ==========================================================
+  ' AUTOR CORPORATIVO: <author><orgname>...
+  If Not IsNull(hCapitulo["autor_corporativo"]) And
+      Len(TrimUTF8(hCapitulo["autor_corporativo"])) > 0 Then
+    sXML &= "  <author>" & Chr(10)
+    sXML &= "    <orgname>" &
+      EscaparXML(TrimUTF8(hCapitulo["autor_corporativo"])) &
+      "</orgname>" & Chr(10)
+    sXML &= "  </author>" & Chr(10)
+  Endif
+
+  ' AUTORES ANÓNIMOS: <author><othername role="anonymous"/></author>
+  If hCapitulo["autores_anonimos"] = True Then
+    sXML &= "  <author><personname><othername role=" & cQ & "anonymous" & cQ &
+      "/></personname></author>" & Chr(10)
+  Endif
+
+  ' GRUPO DE AUTORES: <authorgroup><collab><orgname>...
+  If Not IsNull(hCapitulo["grupo_autores"]) And
+      Len(TrimUTF8(hCapitulo["grupo_autores"])) > 0 Then
+    sXML &= "  <authorgroup>" & Chr(10)
+    sXML &= "    <collab>" & Chr(10)
+    sXML &= "      <orgname>" &
+      EscaparXML(TrimUTF8(hCapitulo["grupo_autores"])) &
+      "</orgname>" & Chr(10)
+    sXML &= "    </collab>" & Chr(10)
+    sXML &= "  </authorgroup>" & Chr(10)
+  Endif
+
+  ' NOTAS DE AUTORÍA (A NIVEL CAPÍTULO, NO DE AUTOR INDIVIDUAL)
+  If Not IsNull(hCapitulo["author_notes"]) And
+      Len(TrimUTF8(hCapitulo["author_notes"])) > 0 Then
+    sXML &= "  <authorblurb><para>" &
+      EscaparXML(TrimUTF8(hCapitulo["author_notes"])) &
+      "</para></authorblurb>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 5. RESÚMENES (HASTA 3 IDIOMAS)
+  ' ==========================================================
+  Dim iIdxResumen As Integer
+  Dim sResumen As String
+  Dim sIdiomaResumen As String
+  Dim sCampoResumen As String
+  Dim sCampoIdiomaResumen As String
+
+  For iIdxResumen = 1 To 3
+    sCampoResumen = "resumen_" & CStr(iIdxResumen)
+    sCampoIdiomaResumen = "idioma_resumen_" & CStr(iIdxResumen)
+    sResumen = ""
+    sIdiomaResumen = ""
+
+    If Not IsNull(hCapitulo[sCampoResumen]) And
+        Len(TrimUTF8(hCapitulo[sCampoResumen])) > 0 Then
+      sResumen = TrimUTF8(hCapitulo[sCampoResumen])
+    Endif
+
+    If sResumen = "" Then Continue
+
+    If Not IsNull(hCapitulo[sCampoIdiomaResumen]) Then
+      sIdiomaResumen = TrimUTF8(hCapitulo[sCampoIdiomaResumen])
+    Endif
+
+    sXML &= "  <abstract"
+    If sIdiomaResumen <> "" Then
+      sXML &= " xml:lang=" & cQ & EscaparXML(sIdiomaResumen) & cQ
+    Endif
+    sXML &= ">" & Chr(10)
+    sXML &= "    <para>" & EscaparXML(sResumen) & "</para>" & Chr(10)
+    sXML &= "  </abstract>" & Chr(10)
+  Next
+
+  ' ==========================================================
+  ' BLOQUE 6. PALABRAS CLAVE (HASTA 3 IDIOMAS)
+  ' ==========================================================
+  Dim iIdxKwd As Integer
+  Dim sCsvKwd As String
+  Dim sIdiomaKwd As String
+  Dim sCampoKwd As String
+  Dim sCampoIdiomaKwd As String
+
+  For iIdxKwd = 1 To 3
+    sCampoKwd = "palabras_clave_" & CStr(iIdxKwd)
+    sCampoIdiomaKwd = "idioma_kwd_" & CStr(iIdxKwd)
+    sCsvKwd = ""
+    sIdiomaKwd = ""
+
+    If Not IsNull(hCapitulo[sCampoKwd]) And
+        Len(TrimUTF8(hCapitulo[sCampoKwd])) > 0 Then
+      sCsvKwd = TrimUTF8(hCapitulo[sCampoKwd])
+    Endif
+
+    If sCsvKwd = "" Then Continue
+
+    If Not IsNull(hCapitulo[sCampoIdiomaKwd]) Then
+      sIdiomaKwd = TrimUTF8(hCapitulo[sCampoIdiomaKwd])
+    Endif
+
+    sXML &= "  <keywordset"
+    If sIdiomaKwd <> "" Then
+      sXML &= " xml:lang=" & cQ & EscaparXML(sIdiomaKwd) & cQ
+    Endif
+    sXML &= ">" & Chr(10)
+
+    ' SPLIT POR COMA (PATRÓN ESTÁNDAR EN BIBLIOTECONOMÍA Y EN REVISTAS)
+    aKwd = Split(sCsvKwd, ",")
+    For Each sKwd In aKwd
+      sKwd = TrimUTF8(sKwd)
+      If sKwd <> "" Then
+        sXML &= "    <keyword>" & EscaparXML(sKwd) & "</keyword>" & Chr(10)
+      Endif
+    Next
+    sXML &= "  </keywordset>" & Chr(10)
+  Next
+
+  ' ==========================================================
+  ' BLOQUE 7. CLASIFICACIONES (MeSH, DeCS, TEMÁTICA)
+  ' ==========================================================
+  ' MeSH (MEDICAL SUBJECT HEADINGS) — CSV
+  If Not IsNull(hCapitulo["mesh_terms"]) And
+      Len(TrimUTF8(hCapitulo["mesh_terms"])) > 0 Then
+    sXML &= "  <subjectset scheme=" & cQ & "MeSH" & cQ & ">" & Chr(10)
+    aTerminos = Split(TrimUTF8(hCapitulo["mesh_terms"]), ",")
+    For Each sTermino In aTerminos
+      sTermino = TrimUTF8(sTermino)
+      If sTermino <> "" Then
+        sXML &= "    <subject><subjectterm>" & EscaparXML(sTermino) &
+          "</subjectterm></subject>" & Chr(10)
+      Endif
+    Next
+    sXML &= "  </subjectset>" & Chr(10)
+  Endif
+
+  ' DeCS (DESCRIPTORES EN CIENCIAS DE LA SALUD) — CSV
+  If Not IsNull(hCapitulo["descriptores_decs"]) And
+      Len(TrimUTF8(hCapitulo["descriptores_decs"])) > 0 Then
+    sXML &= "  <subjectset scheme=" & cQ & "DeCS" & cQ & ">" & Chr(10)
+    aTerminos = Split(TrimUTF8(hCapitulo["descriptores_decs"]), ",")
+    For Each sTermino In aTerminos
+      sTermino = TrimUTF8(sTermino)
+      If sTermino <> "" Then
+        sXML &= "    <subject><subjectterm>" & EscaparXML(sTermino) &
+          "</subjectterm></subject>" & Chr(10)
+      Endif
+    Next
+    sXML &= "  </subjectset>" & Chr(10)
+  Endif
+
+  ' CLASIFICACIÓN TEMÁTICA EDITORIAL — CSV
+  If Not IsNull(hCapitulo["clasificacion_tematica"]) And
+      Len(TrimUTF8(hCapitulo["clasificacion_tematica"])) > 0 Then
+    sXML &= "  <subjectset role=" & cQ & "tematica" & cQ & ">" & Chr(10)
+    aTerminos = Split(TrimUTF8(hCapitulo["clasificacion_tematica"]), ",")
+    For Each sTermino In aTerminos
+      sTermino = TrimUTF8(sTermino)
+      If sTermino <> "" Then
+        sXML &= "    <subject><subjectterm>" & EscaparXML(sTermino) &
+          "</subjectterm></subject>" & Chr(10)
+      Endif
+    Next
+    sXML &= "  </subjectset>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 8. FECHAS
+  ' ==========================================================
+  sFechaPubOnline = ""
+  sFechaRecep = ""
+  sFechaAcept = ""
+  sFechaRev = ""
+
+  If Not IsNull(hCapitulo["fecha_online_iso"]) Then
+    sFechaPubOnline = CStr(hCapitulo["fecha_online_iso"])
+  Endif
+  If Not IsNull(hCapitulo["fecha_rec_iso"]) Then
+    sFechaRecep = CStr(hCapitulo["fecha_rec_iso"])
+  Endif
+  If Not IsNull(hCapitulo["fecha_ace_iso"]) Then
+    sFechaAcept = CStr(hCapitulo["fecha_ace_iso"])
+  Endif
+  If Not IsNull(hCapitulo["fecha_rev_iso"]) Then
+    sFechaRev = CStr(hCapitulo["fecha_rev_iso"])
+  Endif
+
+  If sFechaPubOnline <> "" Then
+    sXML &= "  <date role=" & cQ & "publicacion-online" & cQ & ">" &
+      EscaparXML(sFechaPubOnline) & "</date>" & Chr(10)
+  Endif
+  If sFechaRecep <> "" Then
+    sXML &= "  <date role=" & cQ & "recepcion" & cQ & ">" &
+      EscaparXML(sFechaRecep) & "</date>" & Chr(10)
+  Endif
+  If sFechaAcept <> "" Then
+    sXML &= "  <date role=" & cQ & "aceptacion" & cQ & ">" &
+      EscaparXML(sFechaAcept) & "</date>" & Chr(10)
+  Endif
+  If sFechaRev <> "" Then
+    sXML &= "  <date role=" & cQ & "revision" & cQ & ">" &
+      EscaparXML(sFechaRev) & "</date>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 9. PAGINACIÓN
+  ' ==========================================================
+  Dim sPagIni As String = ""
+  Dim sPagFin As String = ""
+
+  If Not IsNull(hCapitulo["pagina_inicio"]) Then
+    sPagIni = TrimUTF8(hCapitulo["pagina_inicio"])
+  Endif
+  If Not IsNull(hCapitulo["pagina_fin"]) Then
+    sPagFin = TrimUTF8(hCapitulo["pagina_fin"])
+  Endif
+
+  If sPagIni <> "" Or sPagFin <> "" Then
+    sXML &= "  <bibliomisc role=" & cQ & "paginas" & cQ & ">" &
+      EscaparXML(sPagIni)
+    If sPagFin <> "" Then
+      sXML &= "-" & EscaparXML(sPagFin)
+    Endif
+    sXML &= "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["numero_paginas"]) And
+      CInt(hCapitulo["numero_paginas"]) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "numero-paginas" & cQ & ">" &
+      CStr(hCapitulo["numero_paginas"]) & "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 10. FINANCIAMIENTO
+  ' ==========================================================
+  If Not IsNull(hCapitulo["financiamiento"]) And
+      Len(TrimUTF8(hCapitulo["financiamiento"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "financiamiento" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["financiamiento"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["numero_proyecto"]) And
+      Len(TrimUTF8(hCapitulo["numero_proyecto"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "numero-proyecto" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["numero_proyecto"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["funding_statement"]) And
+      Len(TrimUTF8(hCapitulo["funding_statement"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "funding-statement" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["funding_statement"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 11. CONFLICTOS DE INTERÉS
+  ' ==========================================================
+  ' SOLO EMITIMOS SI tiene_conflictos = True. EL FLAG ES LA AUTORIDAD;
+  ' EL CAMPO conflictos_interes ES SU TEXTO ASOCIADO.
+  If hCapitulo["tiene_conflictos"] = True Then
+    If Not IsNull(hCapitulo["conflictos_interes"]) And
+        Len(TrimUTF8(hCapitulo["conflictos_interes"])) > 0 Then
+      sXML &= "  <bibliomisc role=" & cQ & "conflictos-interes" & cQ & ">" &
+        EscaparXML(TrimUTF8(hCapitulo["conflictos_interes"])) &
+        "</bibliomisc>" & Chr(10)
+    Else
+      ' FLAG SIN TEXTO: EMITIR DECLARACIÓN VACÍA EXPLÍCITA
+      sXML &= "  <bibliomisc role=" & cQ & "conflictos-interes" & cQ &
+        ">Los autores declaran conflictos de interés.</bibliomisc>" & Chr(10)
+    Endif
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 12. ÉTICA
+  ' ==========================================================
+  If Not IsNull(hCapitulo["declaracion_etica"]) And
+      Len(TrimUTF8(hCapitulo["declaracion_etica"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "declaracion-etica" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["declaracion_etica"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  If hCapitulo["consentimiento_informado"] = True Then
+    sXML &= "  <bibliomisc role=" & cQ & "consentimiento-informado" & cQ &
+      ">yes</bibliomisc>" & Chr(10)
+  Endif
+
+  If hCapitulo["aprobacion_comite_etica"] = True Then
+    sXML &= "  <bibliomisc role=" & cQ & "aprobacion-comite-etica" & cQ &
+      ">yes</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["numero_aprobacion_etica"]) And
+      Len(TrimUTF8(hCapitulo["numero_aprobacion_etica"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "numero-aprobacion-etica" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["numero_aprobacion_etica"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 13. DATOS ASOCIADOS
+  ' ==========================================================
+  If Not IsNull(hCapitulo["material_suplementario"]) And
+      Len(TrimUTF8(hCapitulo["material_suplementario"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "material-suplementario" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["material_suplementario"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["dataset_asociado"]) And
+      Len(TrimUTF8(hCapitulo["dataset_asociado"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "dataset-asociado" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["dataset_asociado"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["disponibilidad_datos"]) And
+      Len(TrimUTF8(hCapitulo["disponibilidad_datos"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "disponibilidad-datos" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["disponibilidad_datos"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["data_availability_statement"]) And
+      Len(TrimUTF8(hCapitulo["data_availability_statement"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "data-availability-statement" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["data_availability_statement"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 14. LICENCIA Y COPYRIGHT
+  ' ==========================================================
+  ' LICENCIA: USAMOS <legalnotice role="licencia"> CON <para> INTERNO.
+  ' SI HAY URL DE LICENCIA, SE EMITE EN UN <para> SEPARADO CON <link>.
+  If Not IsNull(hCapitulo["licencia"]) And
+      Len(TrimUTF8(hCapitulo["licencia"])) > 0 Then
+    sXML &= "  <legalnotice role=" & cQ & "licencia" & cQ & ">" & Chr(10)
+    sXML &= "    <para>" & EscaparXML(TrimUTF8(hCapitulo["licencia"])) &
+      "</para>" & Chr(10)
+    If Not IsNull(hCapitulo["url_licencia"]) And
+        Len(TrimUTF8(hCapitulo["url_licencia"])) > 0 Then
+      Dim sUrlLic As String = TrimUTF8(hCapitulo["url_licencia"])
+      sXML &= "    <para><link xlink:href=" & cQ & EscaparXML(sUrlLic) & cQ &
+        ">" & EscaparXML(sUrlLic) & "</link></para>" & Chr(10)
+    Endif
+    sXML &= "  </legalnotice>" & Chr(10)
+  Endif
+
+  ' COPYRIGHT: ESTRUCTURADO CON <year> Y <holder>
+  Dim sCopyHolder As String = ""
+  Dim sCopyYear As String = ""
+
+  If Not IsNull(hCapitulo["copyright_holder"]) And
+      Len(TrimUTF8(hCapitulo["copyright_holder"])) > 0 Then
+    sCopyHolder = TrimUTF8(hCapitulo["copyright_holder"])
+  Endif
+  If Not IsNull(hCapitulo["copyright_year"]) And
+      CStr(hCapitulo["copyright_year"]) <> "0" Then
+    sCopyYear = CStr(hCapitulo["copyright_year"])
+  Endif
+
+  If sCopyHolder <> "" Or sCopyYear <> "" Then
+    sXML &= "  <copyright>" & Chr(10)
+    If sCopyYear <> "" Then
+      sXML &= "    <year>" & EscaparXML(sCopyYear) & "</year>" & Chr(10)
+    Endif
+    If sCopyHolder <> "" Then
+      sXML &= "    <holder>" & EscaparXML(sCopyHolder) & "</holder>" & Chr(10)
+    Endif
+    sXML &= "  </copyright>" & Chr(10)
+  Endif
+
+  ' DECLARACIÓN DE COPYRIGHT (TEXTO LIBRE COMPLEMENTARIO)
+  If Not IsNull(hCapitulo["declaracion_copyright"]) And
+      Len(TrimUTF8(hCapitulo["declaracion_copyright"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "declaracion-copyright" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["declaracion_copyright"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 15. URLs
+  ' ==========================================================
+  If Not IsNull(hCapitulo["url_capitulo"]) And
+      Len(TrimUTF8(hCapitulo["url_capitulo"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "url-capitulo" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["url_capitulo"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["url_pdf"]) And
+      Len(TrimUTF8(hCapitulo["url_pdf"])) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "url-pdf" & cQ & ">" &
+      EscaparXML(TrimUTF8(hCapitulo["url_pdf"])) &
+      "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' BLOQUE 16. CONTEOS (FIGURAS, TABLAS, ECUACIONES)
+  ' ==========================================================
+  If Not IsNull(hCapitulo["numero_figuras"]) And
+      CInt(hCapitulo["numero_figuras"]) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "numero-figuras" & cQ & ">" &
+      CStr(hCapitulo["numero_figuras"]) & "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["numero_tablas"]) And
+      CInt(hCapitulo["numero_tablas"]) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "numero-tablas" & cQ & ">" &
+      CStr(hCapitulo["numero_tablas"]) & "</bibliomisc>" & Chr(10)
+  Endif
+
+  If Not IsNull(hCapitulo["numero_ecuaciones"]) And
+      CInt(hCapitulo["numero_ecuaciones"]) > 0 Then
+    sXML &= "  <bibliomisc role=" & cQ & "numero-ecuaciones" & cQ & ">" &
+      CStr(hCapitulo["numero_ecuaciones"]) & "</bibliomisc>" & Chr(10)
+  Endif
+
+  ' ==========================================================
+  ' CIERRE Y GRABADO
+  ' ==========================================================
+  sXML &= "</info>" & Chr(10)
+
+  Try File.Save(sFilePath, sXML)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar info xml en " & sFilePath & ":" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return Exist(sFilePath)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error inesperado en GenerarInfoCapituloXML:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' ============================================
+' Función   : ExportarDocBookdesdeBIB
+' Propósito : Exporta todas las referencias del .bib a un archivo
+'             XML DocBook 5.2 completo (ref-*.xml) en /referencias.
+'             A diferencia de GenerarBiblioCapituloXML que filtra por
+'             los citekeys citados en el capítulo activo, esta función
+'             exporta la bibliografía COMPLETA del .bib sin filtrar.
+'             Mantiene la misma simetría que ExportarJATSdesdeBIB:
+'             - Prefijo "bib-" en el xml:id
+'             - Sanitización del citekey vía SanitizarCitekey
+'             - Detección de colisión: dos citekeys distintos que
+'               sanitizan al mismo valor abortan con error explícito
+' Retorna   : Boolean — True si el archivo se generó correctamente
+' ============================================
+Public Function ExportarDocBookdesdeBIB() As Boolean
+
+  ' COMILLA DOBLE COMO VARIABLE LOCAL (SC-01)
+  Dim cQ As String = Chr(34)
+
+  Dim sBibFile As String
+  Dim sBibContent As String
+  Dim sXML As String
+  Dim outputFile As String
+  Dim aEntries As String[]
+  Dim sEntry As String
+  Dim sCitekey As String
+  Dim sCitekeySanitizado As String
+  Dim sType As String
+  Dim iPosLlave As Integer
+  Dim iPosComa As Integer
+  Dim dictEntries As New Collection
+  Dim dictTypes As New Collection
+  Dim colSanitizados As New Collection
+
+  ' --- 1. VERIFICAR Y LEER EL .bib ---
+  sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
+    File.BaseName(FMain.txtProyecto.Text) & ".bib"
+
+  If Not Exist(sBibFile) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo .bib no existe. Exporte primero las referencias.")
+    Return False
+  Endif
+
+  sBibContent = File.Load(sBibFile)
+
+  ' --- 2. PRIMERA PASADA: ALMACENAR ENTRADAS PARA RESOLVER CROSSREF ---
+  aEntries = Split(sBibContent, "@", "", True)
+
+  For Each sEntry In aEntries
+    If TrimUTF8(sEntry) = "" Then Continue
+    iPosLlave = InStr(sEntry, "{")
+    iPosComa = InStr(sEntry, ",")
+    If iPosLlave = 0 Or iPosComa = 0 Then Continue
+    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
+    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
+    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
+    dictEntries[sCitekey] = sEntry
+    dictTypes[sCitekey] = sType
+  Next
+
+  ' --- 3. SEGUNDA PASADA: GENERAR XML ---
+  ' DECLARA xmlns + xmlns:xlink EN EL <bibliography>, IGUAL QUE
+  ' GenerarBiblioCapituloXML PARA QUE EL FRAGMENTO SEA AUTÓNOMO Y
+  ' POSTPROCESABLE POR HERRAMIENTAS QUE NO HEREDEN NAMESPACES.
+  sXML = "<?xml version=" & cQ & "1.0" & cQ & " encoding=" & cQ & "UTF-8" & cQ & "?>" & gb.NewLine
+  sXML &= "<bibliography xmlns=" & cQ & "http://docbook.org/ns/docbook" & cQ &
+    " xmlns:xlink=" & cQ & "http://www.w3.org/1999/xlink" & cQ & ">" & gb.NewLine
+  sXML &= "  <title>Referencias</title>" & gb.NewLine
+
+  For Each sEntry In aEntries
+    If TrimUTF8(sEntry) = "" Then Continue
+    iPosLlave = InStr(sEntry, "{")
+    iPosComa = InStr(sEntry, ",")
+    If iPosLlave = 0 Or iPosComa = 0 Then Continue
+    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
+    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
+    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
+
+    ' SANITIZAR Y VERIFICAR COLISIÓN ANTES DE EMITIR LA ENTRADA
+    sCitekeySanitizado = SanitizarCitekey(sCitekey)
+    If colSanitizados.Exist(sCitekeySanitizado) Then
+      If colSanitizados[sCitekeySanitizado] <> sCitekey Then
+        m_Sonido.sonar("Error")
+        Message.Error(
+          "Colisión de citekeys al sanitizar para XML DocBook:" & gb.NewLine & gb.NewLine &
+          "Original 1: " & colSanitizados[sCitekeySanitizado] & gb.NewLine &
+          "Original 2: " & sCitekey & gb.NewLine &
+          "Ambos resultan en: " & sCitekeySanitizado & gb.NewLine & gb.NewLine &
+          "Renombre uno de los dos en el archivo .bib y reintente.")
+        Return False
+      Endif
+      ' MISMO CITEKEY APARECE DOS VECES EN EL .bib: SALTAR
+      Continue
+    Endif
+    colSanitizados[sCitekeySanitizado] = sCitekey
+
+    sXML &= GenerarBiblioentryDesdeBib(sEntry, sType, sCitekeySanitizado,
+      dictEntries, dictTypes)
+  Next
+
+  sXML &= "</bibliography>" & gb.NewLine
+
+  ' --- 4. GUARDAR ARCHIVO ---
+  outputFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
+    File.BaseName(FMain.txtProyecto.Text) & ".xml"
+  File.Save(outputFile, sXML)
+
+  Return Exist(outputFile)
+
+End
+
+' ============================================
+' Función   : GenerarBodyCapituloXML
+' Propósito : Genera el fragmento body del capítulo invocando pandoc
+'             con los filtros Lua DocBook. El resultado se escribe en
+'             {proyecto}/tmp/body-{nombre_sin_prefijo}.xml
+' Parámetros: iIdCapitulo As Integer — id del capítulo en BD
+' Retorna   : Boolean — True si body-*.xml fue generado
+' ============================================
+Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
+
+  Dim hCapitulo As Result
+  Dim sNombreArchivo As String
+  Dim sNombreSinPrefijo As String
+  Dim sRutaProyecto As String
+  Dim sCarpetaMD As String
+  Dim sRutaMD As String
+  Dim sDirTmp As String
+  Dim sFileBody As String
+  Dim iEspera As Integer
+  Dim sPrefijoTres As String
+  Dim sPrefijoDos As String
+
+  ' --- 1. OBTENER nombre_archivo ---
+  Try hCapitulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo FROM capitulos WHERE id_capitulo = &1 LIMIT 1", iIdCapitulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar el capítulo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+  If Not hCapitulo.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontraron datos para el capítulo id=" & CStr(iIdCapitulo))
+    Return False
+  Endif
+
+  sNombreArchivo = TrimUTF8(hCapitulo["nombre_archivo"])
+  If sNombreArchivo = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El capítulo id=" & CStr(iIdCapitulo) & " no tiene nombre de archivo registrado.")
+    Return False
+  Endif
+
+  ' --- 2. RESOLVER LA CARPETA DEL .md SEGÚN EL PREFIJO ---
+  sPrefijoTres = Left(sNombreArchivo, 3)
+  sPrefijoDos = Left(sNombreArchivo, 2)
+
+  Select Case True
+    Case sPrefijoTres = "fm-"
+      sCarpetaMD = "front-matter"
+    Case sPrefijoDos = "a-"
+      sCarpetaMD = "articulos"
+    Case sPrefijoTres = "bm-"
+      sCarpetaMD = "back-matter"
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("Prefijo de archivo no reconocido para el capítulo:" & Chr(10) &
+        sNombreArchivo & Chr(10) &
+        "Se esperaba un prefijo fm-, a- o bm-.")
+      Return False
+  End Select
+
+  ' --- 3. CONSTRUIR RUTAS ---
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  ' EL nombre_archivo SIN PREFIJO: a-02-metodologia → 02-metodologia
+  sNombreSinPrefijo = Mid(sNombreArchivo, InStr(sNombreArchivo, "-") + 1)
+  sDirTmp = sRutaProyecto & "/tmp"
+  sRutaMD = sRutaProyecto & "/" & sCarpetaMD & "/" & sNombreArchivo & ".md"
+  sFileBody = sDirTmp & "/body-" & sNombreSinPrefijo & ".xml"
+
+  If Not Exist(sRutaMD) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el archivo del capítulo:" & Chr(10) & sRutaMD)
+    Return False
+  Endif
+
+  ' --- 4. ELIMINAR FRAGMENTO ANTERIOR ---
+  If Exist(sFileBody) Then
+    Shell "rm '" & sFileBody & "'" Wait
+  Endif
+
+  ' --- 5. INVOCAR PANDOC ---
+  ' SE INVOCA DESDE LA TERMINAL EMBEBIDA (TerminalViewProyecto)
+  ' IGUAL QUE EN REVISTAS. EL ORDEN DE LOS FILTROS ES IMPORTANTE:
+  '   1° cite-to-biblioref-db.lua  (PROCESA LAS CITAS PRIMERO)
+  '   2° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
+  '      QUE PUEDEN CONTENER PÁRRAFOS CON CITAS YA TRANSFORMADAS)
+  '
+  ' EL WRAPPER <section xmlns="..." xmlns:mml="..." xmlns:xlink="...">
+  ' ES OBLIGATORIO PARA QUE EL XSLT DE ENSAMBLADO PUEDA CARGAR EL
+  ' FRAGMENTO CON document() SIN ERRORES DE NAMESPACE NO DECLARADO
+  ' (VER RC-DB-06 EN LA DOCUMENTACIÓN DEL PROYECTO).
+  FMain.TerminalViewProyecto.Input(
+    "{ echo '<section xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &
+    " xmlns:mml=" & Chr(34) & "http://www.w3.org/1998/Math/MathML" & Chr(34) &
+    " xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">'; " &
+    "pandoc '" & sRutaMD & "' " &
+    "--from markdown --to docbook5 --mathml --no-highlight --wrap=none " &
+    "--lua-filter ~/.gbpublisher/filters/cite-to-biblioref-db.lua " &
+    "--lua-filter ~/.gbpublisher/filters/fenced-divs-to-elements-db.lua " &
+    "--output -; " &
+    "echo '</section>'; } > '" & sFileBody & "'" & Chr(10))
+
+  ' --- 6. ESPERAR HASTA QUE EL ARCHIVO EXISTA (MÁXIMO 30 S) ---
+  iEspera = 0
+  While Not Exist(sFileBody) And iEspera < 300
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileBody) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Pandoc no generó el fragmento body en el tiempo esperado." & Chr(10) &
+      "Verifique que pandoc está instalado y el archivo .md es válido." & Chr(10) &
+      "Ruta MD: " & sRutaMD)
+    Return False
+  Endif
+
+  Wait 0.3
+
+  If File.Load(sFileBody) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El fragmento body generado está vacío." & Chr(10) &
+      "Verifique que el archivo .md tiene contenido válido.")
+    Return False
+  Endif
+
+  Return True
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error inesperado en GenerarBodyCapituloXML:" & Chr(10) &
     Error.Text & Chr(10) & "Donde: " & Error.Where)
   Return False
 

@@ -4192,10 +4192,8 @@ Public Sub btnGenerarXMLcanonico_Click()
   Dim sSaxon As String
   Dim hResult As Result
   Dim iEspera As Integer
-
-  ' IDs LEÍDOS DIRECTAMENTE DESDE LOS VALUEBOX DE FMain
   Dim idRevista As Integer = CInt(FMain.id_revista.Value)
-  Dim idArticulo As Integer = CInt(FMain.id_articulo.Value)
+  Dim idArticulo As Integer = m_InicioCierre.IdArticuloEnCurso
 
   ' MOSTRAMOS CONSOLA
   tbMostrarPanelInferior.Value = True
@@ -5964,6 +5962,13 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
   ' CUANDO CargarListaArticulosMD ASIGNE EL Index DEL COMBOBOX
   bAbriendoProyecto = True
 
+  ' --- 5.B. RESET DE IDs DE SESIÓN DE ARTÍCULO/CAPÍTULO ---
+  ' AL ABRIR UN PROYECTO NUEVO LOS IDs DEL PROYECTO PREVIO YA NO APLICAN.
+  ' SE LIMPIAN PARA QUE cmbArticulosRevista_Click LOS POPULE CON
+  ' VALORES DEL NUEVO PROYECTO CUANDO EL USUARIO SELECCIONE UN ARCHIVO.
+  m_InicioCierre.IdArticuloEnCurso = 0
+  m_InicioCierre.IdCapituloEnCurso = 0
+
   ' --- 6. DELEGAR LA CARGA AL HANDLER ESPECÍFICO DEL TIPO ---
   ' LLAMAMOS A LA FUNCIÓN CORRESPONDIENTE SEGÚN EL TIPO
   Select Case nTipoProyecto
@@ -6044,22 +6049,73 @@ Public Sub cmbArticulosRevista_Click()
   ActualizarContadorLineas()
 
   ' ====================================================
-  ' ACTUALIZAR id_articulo SEGÚN EL ARCHIVO SELECCIONADO
-  ' SOLO PARA ARCHIVOS DE LA CARPETA articulos/ (prefijo a-)
+  ' ACTUALIZAR id_articulo (REVISTAS) O id_capitulo (LIBROS)
+  ' SEGÚN EL ARCHIVO SELECCIONADO Y SU CARPETA DE ORIGEN.
+  '
+  ' LA FUENTE DE VERDAD ES m_InicioCierre.IdArticuloEnCurso /
+  ' IdCapituloEnCurso (RC-GM-11). LOS ValueBox id_articulo /
+  ' id_capitulo SE ESCRIBEN SOLO POR REDUNDANCIA VISUAL (DEBUGGING).
+  ' NO LEER LOS ValueBox EN OTROS HANDLERS — LEER LAS GLOBALES.
   ' ====================================================
   id_articulo.Value = 0
+  id_capitulo.Value = 0
+  m_InicioCierre.IdArticuloEnCurso = 0
+  m_InicioCierre.IdCapituloEnCurso = 0
 
+  ' --- REVISTAS: SOLO ARCHIVOS DE articulos/ TIENEN id_articulo ---
   If Left(sArchivoSeleccionado, 10) = "articulos/" Then
-    Dim sNombreArchivo As String = File.BaseName(Mid(sArchivoSeleccionado, 11))
-    If Left(sNombreArchivo, 2) = "a-" Then
-      Dim hResult As Result
-      Try hResult = m_ConexionBD.mConn.Exec(
+    Dim sNombreArchivoArt As String = File.BaseName(Mid(sArchivoSeleccionado, 11))
+    If Left(sNombreArchivoArt, 2) = "a-" Then
+      Dim hResultArt As Result
+      Try hResultArt = m_ConexionBD.mConn.Exec(
         "SELECT id_articulo FROM articulos WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
-        sNombreArchivo,
+        sNombreArchivoArt,
         id_proyecto.Value)
       If Not Error Then
-        If hResult.Available Then
-          id_articulo.Value = hResult["id_articulo"]
+        If hResultArt.Available Then
+          id_articulo.Value = hResultArt["id_articulo"]
+          m_InicioCierre.IdArticuloEnCurso = hResultArt["id_articulo"]
+        Endif
+      Endif
+    Endif
+  Endif
+
+  ' --- LIBROS: front-matter/, articulos/ Y back-matter/ TODOS POPULAN id_capitulo ---
+  ' EL MISMO ARCHIVO articulos/a-NN-X.md SIRVE DE FUENTE EN REVISTAS Y EN LIBROS.
+  ' AMBAS RAMAS PUEDEN POPULAR SUS RESPECTIVOS IDs SIN INTERFERENCIA: SOLO
+  ' UNO DE LOS DOS RESOLVERÁ EN BD SEGÚN EL TIPO DEL PROYECTO.
+  Dim sCarpeta As String = ""
+  Dim sNombreArchivoCap As String = ""
+
+  Select Case True
+    Case Left(sArchivoSeleccionado, 13) = "front-matter/"
+      sCarpeta = "front-matter/"
+      sNombreArchivoCap = File.BaseName(Mid(sArchivoSeleccionado, 14))
+    Case Left(sArchivoSeleccionado, 10) = "articulos/"
+      sCarpeta = "articulos/"
+      sNombreArchivoCap = File.BaseName(Mid(sArchivoSeleccionado, 11))
+    Case Left(sArchivoSeleccionado, 12) = "back-matter/"
+      sCarpeta = "back-matter/"
+      sNombreArchivoCap = File.BaseName(Mid(sArchivoSeleccionado, 13))
+  End Select
+
+  If sCarpeta <> "" And sNombreArchivoCap <> "" Then
+    ' VALIDAR PREFIJO Y EXCLUIR EL COLOFÓN RESERVADO
+    Dim sPrefijoTres As String = Left(sNombreArchivoCap, 3)
+    Dim sPrefijoDos As String = Left(sNombreArchivoCap, 2)
+    Dim bPrefijoValido As Boolean
+    bPrefijoValido = (sPrefijoTres = "fm-" Or sPrefijoTres = "bm-" Or sPrefijoDos = "a-")
+
+    If bPrefijoValido And sNombreArchivoCap <> "bm-99-colofon" Then
+      Dim hResultCap As Result
+      Try hResultCap = m_ConexionBD.mConn.Exec(
+        "SELECT id_capitulo FROM capitulos WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
+        sNombreArchivoCap,
+        id_proyecto.Value)
+      If Not Error Then
+        If hResultCap.Available Then
+          id_capitulo.Value = hResultCap["id_capitulo"]
+          m_InicioCierre.IdCapituloEnCurso = hResultCap["id_capitulo"]
         Endif
       Endif
     Endif
@@ -6568,8 +6624,259 @@ Public Sub SplitterShortcodes1_Resize()
 
 End
 
-Public Sub btnGenerarDocBookcanonico_Click()
+' ==========================================================
+' PATCH 4: menuExportarReferenciasXMLDocBook_Click
+' ==========================================================
+' VIVE EN: FMain (AGREGAR JUNTO A menuExportarReferenciasXMLJATS_Click)
+'
+' ANÁLOGO AL HANDLER DE REVISTAS. EXPORTA LAS REFERENCIAS DEL .bib
+' A UN ARCHIVO XML DOCBOOK COMPLETO.
+' ==========================================================
+Public Sub menuExportarReferenciasXMLDocBook_Click()
+  ' NOS ASEGURAMOS DE QUE EXISTA EL ARCHIVO .BIB ANTES DE GENERAR EL XML
 
-  FResultadosProcesos.ShowModal()
+  m_Bibtex.ExportarBibTeX()
+  Dim resultado As Boolean
+  resultado = m_XML.ExportarDocBookdesdeBIB()
+  If resultado Then
+    m_Sonido.sonar("Info")
+    Message.Info("Archivo XML-DocBook generado exitosamente")
+  Else
+    m_Sonido.sonar("Error")
+    Message.Error("Error al generar el archivo XML-DocBook")
+  Endif
 
 End
+
+' ==========================================================
+' ORQUESTADOR DEL FLUJO DE GENERACIÓN DEL XML CANÓNICO DOCBOOK 5.2.
+' ANÁLOGO A btnGenerarXMLcanonico_Click DE REVISTAS.
+'
+'   PASO 1.0 — ExportarReferenciasXMLDocBook (.bib + ref-*.xml)
+'   PASO 1.1 — GenerarInfoCapituloXML()   → tmp/info-*.xml
+'   PASO 1.2 — GenerarBodyCapituloXML()   → tmp/body-*.xml
+'   PASO 1.3 — GenerarBiblioCapituloXML() → tmp/biblio-*.xml
+'   PASO 1.4 — Saxon-HE                   → jats/c-*.xml
+'   PASO 1.5 — Validación RELAX NG (jing) contra docbook.rng-5.2
+'
+' OUTPUT: jats/c-{nombre_archivo}.xml (MISMA CARPETA QUE REVISTAS)
+' ==========================================================
+Public Sub btnGenerarDocBookcanonico_Click()
+
+  Dim sNombreArchivo As String
+  Dim sNombreSinPrefijo As String
+  Dim sRutaProyecto As String
+  Dim sFileInfo As String
+  Dim sFileBody As String
+  Dim sFileBiblio As String
+  Dim sFileCanonico As String
+  Dim sXsl As String
+  Dim sSaxon As String
+  Dim sRng As String
+  Dim hResult As Result
+  Dim iEspera As Integer
+  Dim idCapitulo As Integer = m_InicioCierre.IdCapituloEnCurso
+
+  ' MOSTRAR CONSOLA
+  tbMostrarPanelInferior.Value = True
+  TabPanelIzquierdaInferior.Index = 0
+
+  ' VERIFICAR QUE HAY UN CAPÍTULO SELECCIONADO
+  If idCapitulo = 0 Then
+    Message.Warning("No hay ningún capítulo seleccionado." & Chr(10) &
+      "Seleccione un archivo de front-matter/, articulos/ o back-matter/.")
+    Return
+  Endif
+
+  ' PASO 1.0: EXPORTAR REFERENCIAS (.BIB + ref-*.xml DOCBOOK COMPLETO)
+  ' MISMO PATRÓN QUE REVISTAS: PRIMERO ASEGURAMOS QUE EL .bib ESTÉ
+  ' ACTUALIZADO Y EL XML COMPLETO TAMBIÉN, PARA QUE LAS SALIDAS
+  ' POSTERIORES (HTML/EPUB/PDF) PUEDAN CONSUMIRLOS.
+  m_Bibtex.ExportarBibTeX()
+  m_XML.ExportarDocBookdesdeBIB()
+
+  ' VERIFICAR QUE SAXON-HE ESTÁ INSTALADO
+  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
+      "Instale Saxon-HE y cree el symlink:" & Chr(10) &
+      "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
+    Return
+  Endif
+
+  ' VERIFICAR QUE EL XSLT ESTÁ INSTALADO
+  sXsl = User.Home & "/.gbpublisher/xslt/ensamblar-capitulo-canonico.xsl"
+  If Not Exist(sXsl) Then
+    Message.Error("XSLT de ensamblado no encontrado en:" & Chr(10) & sXsl)
+    Return
+  Endif
+
+  ' VERIFICAR QUE EL SCHEMA RNG ESTÁ INSTALADO
+  sRng = User.Home & "/.gbpublisher/schemas/docbook/docbook.rng"
+  ' EL RNG ES OPCIONAL PARA LA GENERACIÓN; SI FALTA, SE OMITE EL PASO 1.5
+  ' Y SE INFORMA. EL CANÓNICO IGUAL SE PRODUCE.
+
+  ' OBTENER nombre_archivo Y tipo_capitulo, idioma_capitulo
+  ' EL XSLT ESPERA tipo_capitulo COMO PARÁMETRO SAXON (DEFAULT 'capitulo'
+  ' SI NO SE PASA O ES VACÍO).
+  Try hResult = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, tipo_capitulo, idioma_capitulo " &
+    "FROM capitulos WHERE id_capitulo = &1 LIMIT 1",
+    idCapitulo)
+
+  If Not hResult.Available Then
+    Message.Error("No se encontró el capítulo id=" & CStr(idCapitulo))
+    Return
+  Endif
+
+  sNombreArchivo = m_XML.TrimUTF8(hResult["nombre_archivo"])
+  Dim sTipoCapitulo As String = "capitulo"
+  If Not IsNull(hResult["tipo_capitulo"]) And
+      Len(m_XML.TrimUTF8(hResult["tipo_capitulo"])) > 0 Then
+    sTipoCapitulo = m_XML.TrimUTF8(hResult["tipo_capitulo"])
+  Endif
+  Dim sIdiomaCap As String = "es"
+  If Not IsNull(hResult["idioma_capitulo"]) And
+      Len(m_XML.TrimUTF8(hResult["idioma_capitulo"])) > 0 Then
+    sIdiomaCap = m_XML.TrimUTF8(hResult["idioma_capitulo"])
+  Endif
+
+  ' EXCEPCIÓN: bm-99-colofon NO SE PROCESA — EL COLOFÓN SE GENERA
+  ' AUTOMÁTICAMENTE AL EXPORTAR EPUB/PDF/HTML COMPLETO DEL LIBRO,
+  ' NO REQUIERE CANÓNICO INTERMEDIO.
+  If sNombreArchivo = "bm-99-colofon" Then
+    Message.Info("El colofón se genera automáticamente al exportar " &
+      "EPUB/PDF/HTML completo del libro." & Chr(10) &
+      "No requiere canónico intermedio.")
+    Return
+  Endif
+
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  ' NOMBRE SIN PREFIJO: a-02-metodologia → 02-metodologia
+  sNombreSinPrefijo = Mid(sNombreArchivo, InStr(sNombreArchivo, "-") + 1)
+
+  sFileInfo = sRutaProyecto & "/tmp/info-" & sNombreSinPrefijo & ".xml"
+  sFileBody = sRutaProyecto & "/tmp/body-" & sNombreSinPrefijo & ".xml"
+  sFileBiblio = sRutaProyecto & "/tmp/biblio-" & sNombreSinPrefijo & ".xml"
+  sFileCanonico = sRutaProyecto & "/jats/c-" & sNombreArchivo & ".xml"
+
+  ' ====================================================
+  ' PASO 1.1: GENERAR info.xml
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.1: GENERANDO info ---'" & Chr(10))
+
+  If Not m_XML.GenerarInfoCapituloXML(idCapitulo) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló info.xml'" & Chr(10))
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: info generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileInfo &
+    "' && echo 'info: bien formado' || echo 'info: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.2: GENERAR body.xml
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.2: GENERANDO body ---'" & Chr(10))
+
+  If Not m_XML.GenerarBodyCapituloXML(idCapitulo) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló body.xml'" & Chr(10))
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: body generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileBody &
+    "' && echo 'body: bien formado' || echo 'body: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.3: GENERAR biblio.xml
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.3: GENERANDO biblio ---'" & Chr(10))
+
+  If Not m_XML.GenerarBiblioCapituloXML(idCapitulo) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló biblio.xml'" & Chr(10))
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: biblio generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileBiblio &
+    "' && echo 'biblio: bien formado' || echo 'biblio: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.4: ENSAMBLAR CANÓNICO CON SAXON-HE
+  ' SE PASAN COMO PARÁMETROS: body, biblio, tipo_capitulo,
+  '   xml_id_capitulo (cap-{idCapitulo}) E idioma.
+  ' ELIMINAR CANÓNICO ANTERIOR PARA QUE EL POLLING POSTERIOR
+  ' DETECTE LA NUEVA GENERACIÓN (RC-GM-02).
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.4: ENSAMBLANDO CANÓNICO ---'" & Chr(10))
+
+  If Exist(sFileCanonico) Then
+    Shell "rm '" & sFileCanonico & "'" Wait
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "java -jar " & sSaxon & " " &
+    "-s:'" & sFileInfo & "' " &
+    "-xsl:'" & sXsl & "' " &
+    "-o:'" & sFileCanonico & "' " &
+    "body='" & sFileBody & "' " &
+    "biblio='" & sFileBiblio & "' " &
+    "tipo_capitulo=" & sTipoCapitulo & " " &
+    "xml_id_capitulo=cap-" & CStr(idCapitulo) & " " &
+    "idioma=" & sIdiomaCap & Chr(10))
+
+  ' ESPERAR HASTA QUE SAXON GENERE EL CANÓNICO (MÁXIMO 60 SEGUNDOS)
+  iEspera = 0
+  While Not Exist(sFileCanonico) And iEspera < 600
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileCanonico) Then
+    FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el canónico'" & Chr(10))
+    Message.Error("Saxon-HE no generó el archivo canónico en el tiempo esperado." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input("echo 'OK: canónico generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sFileCanonico & "'" & Chr(10))
+  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileCanonico &
+    "' && echo 'canónico: bien formado' || echo 'canónico: ERROR'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 1.5: VALIDACIÓN RELAX NG CONTRA docbook.rng-5.2
+  ' SE USA jing (DEBE ESTAR INSTALADO EN EL SISTEMA).
+  ' SI EL RNG NO ESTÁ DISPONIBLE LOCALMENTE, SE OMITE EL PASO
+  ' Y SE INFORMA AL USUARIO.
+  ' ====================================================
+  If Not Exist(sRng) Then
+    FMain.TerminalViewProyecto.Input("echo 'AVISO: RNG local no encontrado en " &
+      sRng & ", omitiendo validación'" & Chr(10))
+  Else
+    FMain.TerminalViewProyecto.Input("echo '--- PASO 1.5: VALIDANDO CONTRA DocBook 5.2 RNG ---'" & Chr(10))
+    FMain.TerminalViewProyecto.Input(
+      "jing '" & sRng & "' '" & sFileCanonico & "' " &
+      "&& echo 'RNG válido: DocBook 5.2 OK' " &
+      "|| echo 'RNG INVÁLIDO: revisar errores arriba'" & Chr(10))
+  Endif
+
+  ' ====================================================
+  ' VERIFICACIÓN FINAL: CONFIRMAR QUE EL CANÓNICO EXISTE
+  ' PEQUEÑA ESPERA PARA QUE LA TERMINAL TERMINE
+  ' ====================================================
+  Wait 2.0
+
+  If Exist(sFileCanonico) Then
+    m_Sonido.sonar("Info")
+    Message.Info("Proceso completado." & Chr(10) & Chr(10) &
+      "Archivo canónico DocBook 5.2 generado:" & Chr(10) &
+      sFileCanonico)
+  Else
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proceso terminó pero no se encontró el archivo canónico." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+  Endif
+
+End Sub
