@@ -6,11 +6,14 @@
 -- DIFERENCIAS CLAVE CON LA VERSIÓN JATS:
 --   1. EMITE TRES ELEMENTOS HERMANOS EN VEZ DE UNO ENVOLVENTE:
 --      <phrase role="cite-prefix">PREFIJO</phrase>
---      <biblioref linkend="bib-KEY" role="modo">KEY</biblioref>
+--      <biblioref linkend="bib-KEY" role="modo"/>     (EMPTY)
 --      <phrase role="cite-suffix">SUFIJO</phrase>
 --   2. EL TARGET DE pandoc.write ES 'docbook5' (NO 'jats').
 --   3. EL ATRIBUTO DEL MODO ES role (NO specific-use).
 --   4. EL ATRIBUTO DEL ID ES linkend (NO rid).
+--   5. <biblioref> ES EMPTY EN DOCBOOK 5.2 (CONTENT MODEL: empty).
+--      EL CITEKEY ORIGINAL NO SE PRESERVA COMO TEXTO INTERIOR;
+--      EL TEXTO DE LA CITA LO GENERA EL XSLT DE SALIDA SEGÚN CSL.
 -- CONVENCIÓN DE MODO (IDÉNTICA A REVISTAS):
 --   NormalCitation  → (SIN ATRIBUTO role)
 --   SuppressAuthor  → role="suppress"
@@ -225,12 +228,10 @@ end
 -- super/subscript, etc.).
 -- ESTRUCTURA RESULTANTE:
 --   <phrase role="cite-prefix">PREFIJO CON <emphasis>markup</emphasis></phrase>
---   <biblioref linkend="bib-KEY" role="MODO">KEY</biblioref>
+--   <biblioref linkend="bib-KEY" role="MODO"/>     (EMPTY)
 --   <phrase role="cite-suffix">SUFIJO CON <emphasis>markup</emphasis></phrase>
--- EL TEXTO DEL <biblioref> SIGUE MOSTRANDO EL CITEKEY ORIGINAL (PARA
--- DEBUGGING Y EXPORTS), PERO EL linkend USA LA FORMA SANITIZADA QUE
--- TAMBIÉN APLICA m_XML.GenerarBiblioCapituloXML AL xml:id DEL
--- <biblioentry>.
+-- EL linkend USA LA FORMA SANITIZADA DEL CITEKEY, QUE TAMBIÉN
+-- APLICA m_XML.GenerarBiblioCapituloXML AL xml:id DEL <biblioentry>.
 function Cite(el)
   local result = {}
   for i, citation in ipairs(el.citations) do
@@ -271,15 +272,16 @@ function Cite(el)
     end
 
     -- SANITIZAR EL CITEKEY PARA NMTOKEN-VALIDEZ EN EL linkend.
-    -- EL TEXTO DEL biblioref SIGUE MOSTRANDO EL CITEKEY ORIGINAL.
+    -- EN DOCBOOK 5.2, <biblioref> ES EMPTY (NO ACEPTA CONTENIDO).
+    -- EL TEXTO VISIBLE DE LA CITA SE GENERA EN EL XSL DE SALIDA
+    -- (HTML/PDF) A PARTIR DEL CSL ELEGIDO, USANDO EL linkend PARA
+    -- LOCALIZAR EL <biblioentry> CORRESPONDIENTE.
     local citekey_sanitizado = sanitizar_citekey(citation.id)
     local linkend_attr = escape_xml_attr(citekey_sanitizado)
-    local id_text = escape_xml_text(citation.id)
 
-    -- ELEMENTO CENTRAL <biblioref linkend="..." role="...">CITEKEY</biblioref>
+    -- ELEMENTO CENTRAL <biblioref linkend="..." role="..."/>  (EMPTY)
     local biblioref = pandoc.RawInline('docbook',
-      '<biblioref linkend="bib-' .. linkend_attr .. '"' .. role_attr .. '>' ..
-      id_text .. '</biblioref>')
+      '<biblioref linkend="bib-' .. linkend_attr .. '"' .. role_attr .. '/>')
     table.insert(result, biblioref)
 
     -- ELEMENTO HERMANO <phrase role="cite-suffix">: SOLO SI HAY SUFIJO

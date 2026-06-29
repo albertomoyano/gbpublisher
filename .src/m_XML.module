@@ -5341,3 +5341,1030 @@ Catch
   Return 0
 
 End Function
+
+' ==========================================================
+' BLOQUE DE FUNCIONES PARA GENERACIÓN DE BIBLIOGRAFÍA DOCBOOK 5.2
+' ==========================================================
+'
+' DEPENDENCIAS (YA EXISTEN EN m_XML):
+'   - ParsearCampoBib(sEntry, sCampo) As String
+'   - FusionarEntradas(sEntryBase, sEntryActual) As String
+'   - ExtraerAnio(sFecha) As String
+'   - EscaparXML(sTexto) As String
+'   - SanitizarCitekey(sCitekey) As String
+'   - TrimUTF8(sTexto) As String
+'   - LimpiarMarcasLatex(sTexto) As String
+'
+' ANÁLOGOS JATS (REVISTAS) QUE SE REPLICAN:
+'   - ConvertirTipoJATS         → ConvertirTipoDocBook
+'   - MapearTipoEditor          → MapearTipoEditorDocBook
+'   - GenerarPersonGroup        → GenerarPersonGroupDocBook
+'   - GenerarElementCitationDesdeBib → GenerarBiblioentryDesdeBib
+'   - GenerarRefListXML         → GenerarBiblioCapituloXML
+'                                  (+ GenerarBiblioLibroXML PARA CONSOLIDADA)
+'
+' CONVENCIÓN DE ASOCIACIÓN (RC-BIB-01):
+'   La asociación bibtex ↔ artículo/capítulo NO usa FKs ni id_articulo.
+'   El matching es por clave_bibtex contra el CSV de citekeys en
+'   articulos.referencias_citadas (revistas) o capitulos.referencias_citadas
+'   (libros). El .bib es compartido a nivel proyecto.
+' ==========================================================
+
+' ==========================================================
+' FUNCIÓN PRIVADA AUXILIAR: ConvertirTipoDocBook
+' ==========================================================
+' Función   : ConvertirTipoDocBook
+' Propósito : MAPEA UN TIPO DE ENTRADA BIBTEX/BIBLATEX AL VALOR DEL
+'             ATRIBUTO pubwork DE <biblioentry> EN DOCBOOK 5.2.
+'             ANÁLOGA A ConvertirTipoJATS PERO CON EL VOCABULARIO
+'             DE DOCBOOK 5.2 EN VEZ DE JATS.
+' Parámetros: sTipoBibTeX As String — TIPO DE ENTRADA (article, book, ...)
+' Retorna   : String — VALOR pubwork ("article", "book", "chapter", ...)
+'             DEVUELVE STRING VACÍO PARA TIPOS QUE NO TIENEN pubwork
+'             ESPECÍFICO EN DOCBOOK 5.2; EN ESE CASO EL <biblioentry>
+'             SE EMITE SIN ATRIBUTO pubwork.
+' ==========================================================
+Private Function ConvertirTipoDocBook(sTipoBibTeX As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE TABLA DE MAPEO ---
+  ' EL CONJUNTO DE VALORES VÁLIDOS DE pubwork EN DOCBOOK 5.2:
+  ' article, book, chapter, inseries, inbook, inproceedings, journal,
+  ' manuscript, newspaper, magazine, patent, report, thesis, webpage
+  Dim mapeo As New Collection
+
+  mapeo["article"] = "article"
+  mapeo["book"] = "book"
+  mapeo["inbook"] = "chapter"
+  mapeo["incollection"] = "chapter"
+  mapeo["bookinbook"] = "chapter"
+  mapeo["collection"] = "book"
+  mapeo["inproceedings"] = "inproceedings"
+  mapeo["conference"] = "inproceedings"
+  mapeo["proceedings"] = "book"
+  mapeo["thesis"] = "thesis"
+  mapeo["phdthesis"] = "thesis"
+  mapeo["mastersthesis"] = "thesis"
+  mapeo["techreport"] = "report"
+  mapeo["report"] = "report"
+  mapeo["manual"] = "book"
+  mapeo["booklet"] = "book"
+  mapeo["periodical"] = "newspaper"
+  mapeo["patent"] = "patent"
+  mapeo["online"] = "webpage"
+  mapeo["misc"] = ""           ' SIN pubwork — DEMASIADO GENÉRICO
+  mapeo["unpublished"] = "manuscript"
+  mapeo["software"] = ""           ' NO HAY pubwork="software" EN 5.2 BASE
+  mapeo["dataset"] = ""           ' IDEM
+
+  ' --- 2. RETORNAR EL VALOR O CADENA VACÍA SI NO HAY MATCH ---
+  If mapeo.Exist(Lower(sTipoBibTeX)) Then
+    Return mapeo[Lower(sTipoBibTeX)]
+  Else
+    Return ""
+  Endif
+
+End
+
+' ==========================================================
+' FUNCIÓN PRIVADA AUXILIAR: MapearTipoEditorDocBook
+' ==========================================================
+' Función   : MapearTipoEditorDocBook
+' Propósito : MAPEA EL VALOR DE editortype DE BIBLATEX AL ELEMENTO
+'             DOCBOOK 5.2 APROPIADO. DEVUELVE UNA STRUCT CON DOS CAMPOS
+'             (ELEMENTO Y ATRIBUTOS) CODIFICADA COMO STRING SEPARADO
+'             POR "|" PARA MANTENER LA SIGNATURA SIMPLE.
+'             FORMATO: "elemento|atributos_xml"
+'               editor       → "editor|"                    (SIN ATRIBUTOS)
+'               compiler     → "othercredit|class=" & cQ & "other" & cQ &
+'                                  " otherclass=" & cQ & "compiler" & cQ
+'               translator   → "othercredit|class=" & cQ & "translator" & cQ
+'               director     → "othercredit|class=" & cQ & "other" & cQ &
+'                                  " otherclass=" & cQ & "director" & cQ
+'               coordinator  → IDEM CON otherclass="coordinator"
+'               organizer    → IDEM CON otherclass="organizer"
+' Parámetros: sTipoBibLaTeX As String — VALOR DE editortype (editor,
+'                                  compiler, translator, director, etc.)
+' Retorna   : String — "elemento|atributos" SEGÚN MAPA ARRIBA
+' ==========================================================
+Private Function MapearTipoEditorDocBook(sTipoBibLaTeX As String) As String
+
+  Dim cQ As String = Chr(34)
+
+  ' --- 1. NORMALIZAR ENTRADA ---
+  If sTipoBibLaTeX = "" Then Return "editor|"
+
+  ' --- 2. MAPEAR SEGÚN VALOR ---
+  Select Case Lower(TrimUTF8(sTipoBibLaTeX))
+
+    Case "editor"
+      Return "editor|"
+
+    Case "translator"
+      Return "othercredit|class=" & cQ & "translator" & cQ
+
+    Case "compiler"
+      Return "othercredit|class=" & cQ & "other" & cQ &
+        " otherclass=" & cQ & "compiler" & cQ
+
+    Case "director"
+      Return "othercredit|class=" & cQ & "other" & cQ &
+        " otherclass=" & cQ & "director" & cQ
+
+    Case "organizer"
+      Return "othercredit|class=" & cQ & "other" & cQ &
+        " otherclass=" & cQ & "organizer" & cQ
+
+    Case "coordinator"
+      Return "othercredit|class=" & cQ & "other" & cQ &
+        " otherclass=" & cQ & "coordinator" & cQ
+
+    Case Else
+      ' FALLBACK PARA VALORES NO PREVISTOS: PRESERVAR EL TIPO COMO otherclass
+      Return "othercredit|class=" & cQ & "other" & cQ &
+        " otherclass=" & cQ & EscaparXML(Lower(TrimUTF8(sTipoBibLaTeX))) & cQ
+
+  End Select
+
+End
+
+' ==========================================================
+' FUNCIÓN PRIVADA AUXILIAR: GenerarPersonGroupDocBook
+' ==========================================================
+' Función   : GenerarPersonGroupDocBook
+' Propósito : GENERA UN GRUPO DE PERSONAS (author/editor/othercredit) EN
+'             DOCBOOK 5.2 A PARTIR DE UN STRING BIBLATEX CON FORMATO
+'             "Apellido, Nombre and Apellido, Nombre". ANÁLOGA A
+'             GenerarPersonGroup PERO EMITIENDO ELEMENTOS DOCBOOK:
+'                <author><personname><surname/><firstname/></personname></author>
+' Parámetros: sNombres As String — STRING BIBLATEX DE NOMBRES
+'             sTipo    As String — TIPO MAPEADO POR MapearTipoEditorDocBook,
+'                                  FORMATO "elemento|atributos".
+'                                  PARA AUTORES SE PASA "author|".
+' Retorna   : String — FRAGMENTO XML DOCBOOK CON UN ELEMENTO POR PERSONA
+' ==========================================================
+Private Function GenerarPersonGroupDocBook(sNombres As String, sTipo As String) As String
+
+  Dim sXML As String
+  Dim aNombres As String[]
+  Dim nombreCompleto As String
+  Dim apellido As String
+  Dim nombre As String
+  Dim posComa As Integer
+  Dim i As Integer
+  Dim aTipo As String[]
+  Dim sElemento As String
+  Dim sAtributos As String
+
+  ' --- 1. PARSEAR EL TIPO "elemento|atributos" ---
+  aTipo = Split(sTipo, "|")
+  If aTipo.Count < 1 Then Return ""
+  sElemento = aTipo[0]
+  If aTipo.Count >= 2 Then
+    sAtributos = aTipo[1]
+  Else
+    sAtributos = ""
+  Endif
+
+  ' --- 2. NORMALIZAR ESPACIOS DEL STRING DE ENTRADA ---
+  sNombres = Replace(sNombres, Chr(9), " ")
+  sNombres = Replace(sNombres, Chr(160), " ")
+  While InStr(sNombres, "  ")
+    sNombres = Replace(sNombres, "  ", " ")
+  Wend
+  sNombres = TrimUTF8(sNombres)
+
+  ' --- 3. SEPARAR AUTORES POR " and " ---
+  ' SE USA "|||" COMO SEPARADOR INTERMEDIO PORQUE EL TEXTO NO LO CONTIENE
+  sNombres = Replace(sNombres, " and ", "|||")
+  aNombres = Split(sNombres, "|||")
+
+  ' --- 4. EMITIR UN ELEMENTO POR PERSONA ---
+  For i = 0 To aNombres.Max
+    nombreCompleto = TrimUTF8(aNombres[i])
+    If Len(nombreCompleto) = 0 Then Continue
+
+    ' AUTORES COLECTIVOS / "OTROS"
+    ' EN DOCBOOK 5.2 NO HAY EQUIVALENTE DIRECTO A <etal/>; SE USA
+    ' <othercredit class="other" otherclass="etal"/> COMO MARCADOR
+    If nombreCompleto = "others" Or nombreCompleto = "et al" Or nombreCompleto = "et al." Then
+      sXML &= "      <othercredit class=" & Chr(34) & "other" & Chr(34) &
+        " otherclass=" & Chr(34) & "etal" & Chr(34) & "/>" & gb.NewLine
+      Continue
+    Endif
+
+    ' FORMATO BIBLATEX: "Apellido, Nombre"
+    posComa = InStr(nombreCompleto, ",")
+    If posComa > 0 Then
+      apellido = TrimUTF8(Left(nombreCompleto, posComa - 1))
+      nombre = TrimUTF8(Mid(nombreCompleto, posComa + 1))
+    Else
+      ' SIN COMA: CONSIDERAR TODO COMO APELLIDO (LO MÁS CONSERVADOR)
+      apellido = nombreCompleto
+      nombre = ""
+    Endif
+
+    ' --- EMITIR EL ELEMENTO ---
+    If sAtributos = "" Then
+      sXML &= "      <" & sElemento & ">" & gb.NewLine
+    Else
+      sXML &= "      <" & sElemento & " " & sAtributos & ">" & gb.NewLine
+    Endif
+    sXML &= "        <personname>" & gb.NewLine
+    sXML &= "          <surname>" & EscaparXML(apellido) & "</surname>" & gb.NewLine
+    If Len(nombre) > 0 Then
+      sXML &= "          <firstname>" & EscaparXML(nombre) & "</firstname>" & gb.NewLine
+    Endif
+    sXML &= "        </personname>" & gb.NewLine
+    sXML &= "      </" & sElemento & ">" & gb.NewLine
+  Next
+
+  Return sXML
+
+End
+
+' ==========================================================
+' FUNCIÓN PRIVADA: GenerarBiblioentryDesdeBib
+' ==========================================================
+' Función   : GenerarBiblioentryDesdeBib
+' Propósito : GENERA UN <biblioentry> DE DOCBOOK 5.2 COMPLETO A PARTIR
+'             DE UNA ENTRADA BIBLATEX. ANÁLOGA A GenerarElementCitationDesdeBib
+'             PERO CON MAPEO BIBLATEX → DOCBOOK EN VEZ DE BIBLATEX → JATS.
+'             RESUELVE crossref AL INICIO (IGUAL QUE SU PAR JATS).
+' Parámetros: sEntry      As String     — TEXTO COMPLETO DE LA ENTRADA BIBTEX
+'             sType       As String     — TIPO (article, book, ...)
+'             sClave      As String     — CLAVE BIBTEX SANITIZADA (PARA xml:id)
+'             dictEntries As Collection — DICCIONARIO citekey → entry (PARA crossref)
+'             dictTypes   As Collection — DICCIONARIO citekey → type   (PARA crossref)
+' Retorna   : String — FRAGMENTO <biblioentry>...</biblioentry>
+' ==========================================================
+Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, sClave As String, dictEntries As Collection, dictTypes As Collection) As String
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  ' COMILLA DOBLE COMO VARIABLE LOCAL (SC-01)
+  Dim cQ As String = Chr(34)
+  Dim sXML As String = ""
+  Dim sPubwork As String
+  Dim sAuthor As String
+  Dim sEditor As String
+  Dim sEditorType As String
+  Dim sEditorA As String
+  Dim sEditorAType As String
+  Dim sEditorB As String
+  Dim sEditorBType As String
+  Dim sEditorC As String
+  Dim sEditorCType As String
+  Dim sTranslator As String
+  Dim sTitle As String
+  Dim sSubtitle As String
+  Dim sJournal As String
+  Dim sBookTitle As String
+  Dim sBookSubtitle As String
+  Dim sYear As String
+  Dim sDate As String
+  Dim sFinalYear As String
+  Dim sVolume As String
+  Dim sNumber As String
+  Dim sPages As String
+  Dim sPublisher As String
+  Dim sAddress As String
+  Dim sDoi As String
+  Dim sIsbn As String
+  Dim sIssn As String
+  Dim sUrl As String
+  Dim sUrlDate As String
+  Dim sEdition As String
+  Dim sSchool As String
+  Dim sInstitution As String
+  Dim sOrganization As String
+  Dim sNote As String
+  Dim sEid As String
+  Dim sEprint As String
+  Dim sEprintType As String
+  Dim sSeries As String
+  Dim sVersion As String
+  Dim sHolder As String
+  Dim sMaintitle As String
+  Dim sMainsubtitle As String
+  Dim sBookauthor As String
+  Dim sChapter As String
+  Dim sCrossref As String
+  Dim sEntryBase As String
+  Dim sTituloCompleto As String
+  Dim sBookTitleCompleto As String
+  Dim sMaintitleCompleto As String
+
+  ' --- 1. RESOLVER crossref SI EXISTE (HERENCIA DE CAMPOS) ---
+  sCrossref = ParsearCampoBib(sEntry, "crossref")
+  If sCrossref <> "" And dictEntries.Exist(sCrossref) Then
+    sEntryBase = dictEntries[sCrossref]
+    ' SI EL HIJO ES INCOLLECTION/INBOOK, EL title DEL PADRE PASA A booktitle
+    If Lower(TrimUTF8(sType)) = "incollection" Or
+        Lower(TrimUTF8(sType)) = "inbook" Or
+        Lower(TrimUTF8(sType)) = "bookinbook" Then
+      sEntryBase = Replace(sEntryBase, "  title ", "  booktitle ", gb.IgnoreCase)
+    Endif
+    sEntry = FusionarEntradas(sEntryBase, sEntry)
+  Endif
+
+  ' --- 2. DETERMINAR pubwork ---
+  sPubwork = ConvertirTipoDocBook(sType)
+
+  ' --- 3. EXTRAER CAMPOS DEL BIBLATEX ---
+  sAuthor = ParsearCampoBib(sEntry, "author")
+  sEditor = ParsearCampoBib(sEntry, "editor")
+  sEditorType = ParsearCampoBib(sEntry, "editortype")
+  sEditorA = ParsearCampoBib(sEntry, "editora")
+  sEditorAType = ParsearCampoBib(sEntry, "editoratype")
+  sEditorB = ParsearCampoBib(sEntry, "editorb")
+  sEditorBType = ParsearCampoBib(sEntry, "editorbtype")
+  sEditorC = ParsearCampoBib(sEntry, "editorc")
+  sEditorCType = ParsearCampoBib(sEntry, "editorctype")
+  sTranslator = ParsearCampoBib(sEntry, "translator")
+  sTitle = ParsearCampoBib(sEntry, "title")
+  sSubtitle = ParsearCampoBib(sEntry, "subtitle")
+  sBookauthor = ParsearCampoBib(sEntry, "bookauthor")
+  sMaintitle = ParsearCampoBib(sEntry, "maintitle")
+  sMainsubtitle = ParsearCampoBib(sEntry, "mainsubtitle")
+
+  ' JOURNAL: PRIORIZAR journaltitle SOBRE journal (PATRÓN BIBLATEX MODERNO)
+  sJournal = ParsearCampoBib(sEntry, "journaltitle")
+  If sJournal = "" Then sJournal = ParsearCampoBib(sEntry, "journal")
+
+  sBookTitle = ParsearCampoBib(sEntry, "booktitle")
+  sBookSubtitle = ParsearCampoBib(sEntry, "booksubtitle")
+
+  ' AÑO: PRIORIZAR date SOBRE year (BIBLATEX MODERNO)
+  sDate = ParsearCampoBib(sEntry, "date")
+  sYear = ParsearCampoBib(sEntry, "year")
+  If sDate <> "" Then
+    sFinalYear = ExtraerAnio(sDate)
+  Else If sYear <> "" Then
+    sFinalYear = sYear
+  Else
+    sFinalYear = ""
+  Endif
+
+  sVolume = ParsearCampoBib(sEntry, "volume")
+  sNumber = ParsearCampoBib(sEntry, "number")
+  sPages = ParsearCampoBib(sEntry, "pages")
+  sPublisher = ParsearCampoBib(sEntry, "publisher")
+
+  ' UBICACIÓN: location (BIBLATEX) o address (BIBTEX VIEJO)
+  sAddress = ParsearCampoBib(sEntry, "location")
+  If sAddress = "" Then sAddress = ParsearCampoBib(sEntry, "address")
+
+  sDoi = ParsearCampoBib(sEntry, "doi")
+  sIsbn = ParsearCampoBib(sEntry, "isbn")
+  sIssn = ParsearCampoBib(sEntry, "issn")
+  sUrl = ParsearCampoBib(sEntry, "url")
+  sUrlDate = ParsearCampoBib(sEntry, "urldate")
+  sEdition = ParsearCampoBib(sEntry, "edition")
+  sSchool = ParsearCampoBib(sEntry, "school")
+  sInstitution = ParsearCampoBib(sEntry, "institution")
+  sOrganization = ParsearCampoBib(sEntry, "organization")
+  sNote = ParsearCampoBib(sEntry, "note")
+  sEid = ParsearCampoBib(sEntry, "eid")
+  sEprint = ParsearCampoBib(sEntry, "eprint")
+  sEprintType = ParsearCampoBib(sEntry, "eprinttype")
+  sSeries = ParsearCampoBib(sEntry, "series")
+  sVersion = ParsearCampoBib(sEntry, "version")
+  sHolder = ParsearCampoBib(sEntry, "holder")
+  sChapter = ParsearCampoBib(sEntry, "chapter")
+
+  ' --- 4. ABRIR <biblioentry> CON xml:id Y, OPCIONALMENTE, pubwork ---
+  ' EL xml:id USA LA FORMA SANITIZADA: COINCIDE CON EL linkend DEL
+  ' <biblioref/> QUE EMITE cite-to-biblioref-db.lua.
+  If sPubwork = "" Then
+    sXML &= "    <biblioentry xml:id=" & cQ & "bib-" & sClave & cQ & ">" & gb.NewLine
+  Else
+    sXML &= "    <biblioentry xml:id=" & cQ & "bib-" & sClave & cQ &
+      " pubwork=" & cQ & sPubwork & cQ & ">" & gb.NewLine
+  Endif
+
+  ' --- 5. AUTORES Y EDITORES ---
+  ' EL ORDEN ES: <author> PRIMERO, LUEGO <editor>, LUEGO <othercredit>.
+  If sAuthor <> "" Then
+    sXML &= GenerarPersonGroupDocBook(sAuthor, "author|")
+  Endif
+
+  If sEditor <> "" Then
+    Dim sTipoEditor As String = MapearTipoEditorDocBook(sEditorType)
+    sXML &= GenerarPersonGroupDocBook(sEditor, sTipoEditor)
+  Endif
+  If sEditorA <> "" Then
+    Dim sTipoEditorA As String = MapearTipoEditorDocBook(sEditorAType)
+    sXML &= GenerarPersonGroupDocBook(sEditorA, sTipoEditorA)
+  Endif
+  If sEditorB <> "" Then
+    Dim sTipoEditorB As String = MapearTipoEditorDocBook(sEditorBType)
+    sXML &= GenerarPersonGroupDocBook(sEditorB, sTipoEditorB)
+  Endif
+  If sEditorC <> "" Then
+    Dim sTipoEditorC As String = MapearTipoEditorDocBook(sEditorCType)
+    sXML &= GenerarPersonGroupDocBook(sEditorC, sTipoEditorC)
+  Endif
+  If sTranslator <> "" Then
+    sXML &= GenerarPersonGroupDocBook(sTranslator,
+      "othercredit|class=" & cQ & "translator" & cQ)
+  Endif
+
+  ' --- 6. TÍTULOS ---
+  ' COMPONER TÍTULOS COMPLETOS CON SUBTÍTULOS (PATRÓN BIBLATEX: title + ": " + subtitle).
+  sTituloCompleto = If(sSubtitle <> "", sTitle & ": " & sSubtitle, sTitle)
+  sBookTitleCompleto = If(sBookSubtitle <> "", sBookTitle & ": " & sBookSubtitle, sBookTitle)
+  sMaintitleCompleto = If(sMainsubtitle <> "", sMaintitle & ": " & sMainsubtitle, sMaintitle)
+
+  ' DECISIÓN: EN INCOLLECTION/INBOOK, EL title ES EL CAPÍTULO Y booktitle
+  ' ES EL CONTENEDOR. EN DOCBOOK, USAMOS <title> PARA EL CHAPTER-TITLE Y
+  ' <citetitle pubwork="book"> PARA EL CONTENEDOR.
+  If sBookTitleCompleto <> "" Then
+    If sTituloCompleto <> "" Then
+      sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
+    Endif
+    sXML &= "      <citetitle pubwork=" & cQ & "book" & cQ & ">" &
+      EscaparXML(sBookTitleCompleto) & "</citetitle>" & gb.NewLine
+  Else
+    ' SIN BOOKTITLE: EL title VA SEGÚN EL TIPO DE PUBLICACIÓN
+    If sTituloCompleto <> "" Then
+      Select Case sPubwork
+        Case "article", "newspaper"
+          ' EL title DEL ARTÍCULO ES UN <title>; EL journal VA COMO <citetitle>
+          sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
+        Case Else
+          ' LIBROS, REPORTES, TESIS, ETC.: title COMO <citetitle pubwork="X">
+          sXML &= "      <citetitle"
+          If sPubwork <> "" Then
+            sXML &= " pubwork=" & cQ & sPubwork & cQ
+          Endif
+          sXML &= ">" & EscaparXML(sTituloCompleto) & "</citetitle>" & gb.NewLine
+      End Select
+    Endif
+  Endif
+
+  ' MAINTITLE (TÍTULO DE OBRA MULTI-VOLUMEN, BIBLATEX-ESPECÍFICO)
+  If sMaintitleCompleto <> "" Then
+    sXML &= "      <citetitle pubwork=" & cQ & "set" & cQ & ">" &
+      EscaparXML(sMaintitleCompleto) & "</citetitle>" & gb.NewLine
+  Endif
+
+  ' JOURNAL: PARA article/newspaper, EL journal_title VA COMO <citetitle pubwork="journal">
+  If sJournal <> "" And (sPubwork = "article" Or sPubwork = "newspaper") Then
+    sXML &= "      <citetitle pubwork=" & cQ & "journal" & cQ & ">" &
+      EscaparXML(sJournal) & "</citetitle>" & gb.NewLine
+  Endif
+
+  ' SERIES (BIBLATEX series): SOLO APLICA A LIBROS Y COLECCIONES
+  If sSeries <> "" And (sPubwork = "book" Or sPubwork = "chapter" Or
+      InStr(Lower(sType), "collection") > 0) Then
+    sXML &= "      <bibliomisc role=" & cQ & "series" & cQ & ">" &
+      EscaparXML(sSeries) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 7. PUBLISHER Y UBICACIÓN ---
+  If sPublisher <> "" Then
+    sXML &= "      <publisher>" & gb.NewLine
+    sXML &= "        <publishername>" & EscaparXML(sPublisher) & "</publishername>" & gb.NewLine
+    If sAddress <> "" Then
+      sXML &= "        <address><city>" & EscaparXML(sAddress) & "</city></address>" & gb.NewLine
+    Endif
+    sXML &= "      </publisher>" & gb.NewLine
+  Else If sAddress <> "" Then
+    ' ADDRESS SIN PUBLISHER: EMITIR COMO bibliomisc PARA NO PERDER EL DATO
+    sXML &= "      <bibliomisc role=" & cQ & "address" & cQ & ">" &
+      EscaparXML(sAddress) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 8. FECHA, VOLUMEN, NÚMERO ---
+  If sFinalYear <> "" Then
+    sXML &= "      <pubdate>" & EscaparXML(sFinalYear) & "</pubdate>" & gb.NewLine
+  Endif
+  If sVolume <> "" Then
+    sXML &= "      <volumenum>" & EscaparXML(sVolume) & "</volumenum>" & gb.NewLine
+  Endif
+
+  If sNumber <> "" Then
+    Select Case sPubwork
+      Case "patent"
+        sXML &= "      <bibliomisc role=" & cQ & "patent-number" & cQ & ">" &
+          EscaparXML(sNumber) & "</bibliomisc>" & gb.NewLine
+      Case "report"
+        sXML &= "      <bibliomisc role=" & cQ & "report-number" & cQ & ">" &
+          EscaparXML(sNumber) & "</bibliomisc>" & gb.NewLine
+      Case Else
+        sXML &= "      <issuenum>" & EscaparXML(sNumber) & "</issuenum>" & gb.NewLine
+    End Select
+  Endif
+
+  ' --- 9. PAGINACIÓN ---
+  ' DOCBOOK 5.2 NO TIENE <fpage>/<lpage> COMO JATS — USA <artpagenums>
+  ' QUE ES UN STRING CON EL RANGO COMPLETO. SE PRESERVA EL FORMATO ORIGINAL.
+  If sEid <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "elocation" & cQ & ">" &
+      EscaparXML(sEid) & "</bibliomisc>" & gb.NewLine
+  Else If sPages <> "" Then
+    ' NORMALIZAR "--" A "-" PARA LECTURA EN HTML
+    Dim sPagesNorm As String = Replace(TrimUTF8(sPages), "--", "-")
+    sXML &= "      <artpagenums>" & EscaparXML(sPagesNorm) & "</artpagenums>" & gb.NewLine
+  Endif
+
+  ' --- 10. EDICIÓN, INSTITUCIÓN, NOTAS ---
+  If sEdition <> "" Then
+    sXML &= "      <edition>" & EscaparXML(sEdition) & "</edition>" & gb.NewLine
+  Endif
+
+  ' INSTITUTION/ORGANIZATION: PARA TESIS Y REPORTES
+  If sPubwork = "thesis" Or sPubwork = "report" Then
+    If sInstitution <> "" Then
+      sXML &= "      <orgname>" & EscaparXML(sInstitution) & "</orgname>" & gb.NewLine
+    Else If sSchool <> "" Then
+      sXML &= "      <orgname>" & EscaparXML(sSchool) & "</orgname>" & gb.NewLine
+    Else If sOrganization <> "" Then
+      sXML &= "      <orgname>" & EscaparXML(sOrganization) & "</orgname>" & gb.NewLine
+    Endif
+  Endif
+
+  If sNote <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "note" & cQ & ">" &
+      EscaparXML(sNote) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  If sVersion <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "version" & cQ & ">" &
+      EscaparXML(sVersion) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  If sHolder <> "" And sPubwork = "patent" Then
+    ' LIMPIAR LLAVES BIBLATEX DEL CAMPO holder
+    Dim sHolderLimpio As String
+    sHolderLimpio = Replace(sHolder, "{{", "")
+    sHolderLimpio = Replace(sHolderLimpio, "}}", "")
+    sHolderLimpio = Replace(sHolderLimpio, "{", "")
+    sHolderLimpio = Replace(sHolderLimpio, "}", "")
+    sHolderLimpio = Replace(sHolderLimpio, " and ", ", ")
+    sXML &= "      <bibliomisc role=" & cQ & "patent-holder" & cQ & ">" &
+      EscaparXML(sHolderLimpio) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 11. IDENTIFICADORES ESTÁNDAR ---
+  ' EN DOCBOOK 5.2, TODOS LOS IDENTIFICADORES DE PUBLICACIÓN VAN COMO
+  ' <biblioid class="X">VALOR</biblioid>. EL ATRIBUTO class TIENE VALORES
+  ' ENUMERADOS QUE INCLUYEN: doi, isbn, issn, pubnumber, uri, etc.
+  If sIsbn <> "" Then
+    sXML &= "      <biblioid class=" & cQ & "isbn" & cQ & ">" &
+      EscaparXML(sIsbn) & "</biblioid>" & gb.NewLine
+  Endif
+  If sIssn <> "" Then
+    sXML &= "      <biblioid class=" & cQ & "issn" & cQ & ">" &
+      EscaparXML(sIssn) & "</biblioid>" & gb.NewLine
+  Endif
+  If sDoi <> "" Then
+    sXML &= "      <biblioid class=" & cQ & "doi" & cQ & ">" &
+      EscaparXML(sDoi) & "</biblioid>" & gb.NewLine
+  Endif
+  If sEprint <> "" Then
+    ' EL ATRIBUTO class DE biblioid NO TIENE UN VALOR PARA cada eprint type;
+    ' USAMOS class="other" CON otherclass PARA PRESERVAR EL TIPO ORIGINAL.
+    Dim sEprintTypeLower As String = Lower(sEprintType)
+    If sEprintTypeLower = "" Then sEprintTypeLower = "eprint"
+    sXML &= "      <biblioid class=" & cQ & "other" & cQ &
+      " otherclass=" & cQ & EscaparXML(sEprintTypeLower) & cQ & ">" &
+      EscaparXML(sEprint) & "</biblioid>" & gb.NewLine
+  Endif
+
+  ' URL: SE EMITE COMO <bibliosource> CON <link xlink:href="...">
+  ' EL NAMESPACE xlink LO DECLARA EL WRAPPER DEL CANÓNICO (RC-DB-06).
+  If sUrl <> "" Then
+    sXML &= "      <bibliosource><link xlink:href=" & cQ & EscaparXML(sUrl) & cQ & ">" &
+      EscaparXML(sUrl) & "</link></bibliosource>" & gb.NewLine
+  Endif
+
+  ' URLDATE: FECHA DE CONSULTA
+  If sUrlDate <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "urldate" & cQ & ">" &
+      EscaparXML(sUrlDate) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 12. CIERRE ---
+  sXML &= "    </biblioentry>" & gb.NewLine
+
+  Return sXML
+
+End
+
+' ==========================================================
+' FUNCIÓN PÚBLICA: GenerarBiblioCapituloXML
+' ==========================================================
+' Función   : GenerarBiblioCapituloXML
+' Propósito : GENERA EL FRAGMENTO <bibliography> EN DOCBOOK 5.2 PARA UN
+'             CAPÍTULO ESPECÍFICO. FILTRA EL .bib DEL PROYECTO USANDO
+'             LOS CITEKEYS EN capitulos.referencias_citadas.
+'             ESCRIBE EL RESULTADO EN tmp/biblio-cap-NN.xml.
+'             ANÁLOGA A GenerarRefListXML DE REVISTAS.
+'
+'             COMPORTAMIENTO SEGÚN libros_md.lugar_bibliografia:
+'             - 'por_capitulo': GENERA EL FRAGMENTO NORMALMENTE.
+'             - 'consolidada':  GENERA UN <bibliography/> VACÍO Y RETORNA
+'                               True (LA BIBLIOGRAFÍA REAL VA EN UN CAPÍTULO
+'                               APARTE GENERADO POR GenerarBiblioLibroXML).
+'
+' Parámetros: iIdCapitulo As Integer — id_capitulo de la BD
+' Retorna   : Boolean — True si el archivo fue generado exitosamente
+' ==========================================================
+Public Function GenerarBiblioCapituloXML(iIdCapitulo As Integer) As Boolean
+
+  ' --- 0. DECLARACIÓN DE VARIABLES ---
+  Dim hCapitulo As Result
+  Dim hLibro As Result
+  Dim sNombreArchivo As String
+  Dim sReferenciasCSV As String
+  Dim sLugarBibliografia As String
+  Dim iIdLibro As Integer
+  Dim aCitekeys As String[]
+  Dim sBibFile As String
+  Dim sBibContent As String
+  Dim sEntry As String
+  Dim aEntries As String[]
+  Dim sType As String
+  Dim sCitekey As String
+  Dim iPosLlave As Integer
+  Dim iPosComa As Integer
+  Dim dictEntries As New Collection
+  Dim dictTypes As New Collection
+  Dim sXML As String
+  Dim sDirTmp As String
+  Dim sNombreBase As String
+  Dim sFilePath As String
+  Dim sCk As String
+  Dim sCkSanitizado As String
+  Dim colSanitizados As New Collection
+
+  ' --- 1. OBTENER NOMBRE DEL CAPÍTULO Y REFERENCIAS_CITADAS ---
+  Try hCapitulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, referencias_citadas, id_libro FROM capitulos WHERE id_capitulo = &1 LIMIT 1",
+    iIdCapitulo)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar el capítulo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  If Not hCapitulo.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontraron datos para el capítulo id=" & CStr(iIdCapitulo))
+    Return False
+  Endif
+
+  sNombreArchivo = TrimUTF8(hCapitulo["nombre_archivo"])
+  iIdLibro = CInt(hCapitulo["id_libro"])
+  sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
+  ' CONVENCIÓN DE NOMBRES: biblio-{nombre_archivo_sin_prefijo}.xml
+  ' EL PREFIJO a-, fm- O bm- SE PRESERVA EN EL NOMBRE DEL ARCHIVO
+  ' COMPLETO; biblio- REEMPLAZA AL PREFIJO PARA QUE EL ENSAMBLADOR
+  ' SAXON LO TOME COMO PARÁMETRO biblio=...
+  sNombreBase = "biblio-" & Mid(sNombreArchivo, InStr(sNombreArchivo, "-") + 1)
+  sFilePath = sDirTmp & "/" & File.BaseName(sNombreBase) & ".xml"
+
+  ' --- 2. DETERMINAR lugar_bibliografia DEL LIBRO ---
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT lugar_bibliografia FROM libros_md WHERE id_libro = &1 LIMIT 1",
+    iIdLibro)
+  If Error Or Not hLibro.Available Then
+    ' SI NO SE PUEDE DETERMINAR, ASUMIR el default por_capitulo
+    sLugarBibliografia = "por_capitulo"
+  Else
+    sLugarBibliografia = TrimUTF8(hLibro["lugar_bibliografia"])
+    If sLugarBibliografia = "" Then sLugarBibliografia = "por_capitulo"
+  Endif
+
+  ' --- 3. SI ES CONSOLIDADA, EMITIR FRAGMENTO VACÍO Y SALIR ---
+  ' EL XSL DE ENSAMBLADO IGNORA EL PARÁMETRO biblio CUANDO EL DOCUMENTO
+  ' ESTÁ VACÍO (NO HAY db:bibliography/db:biblioentry). VER LA CONDICIÓN
+  ' EN ensamblar-capitulo-canonico.xsl § PASO 3.
+  If sLugarBibliografia = "consolidada" Then
+    Try File.Save(sFilePath, "<bibliography xmlns=" & Chr(34) &
+      "http://docbook.org/ns/docbook" & Chr(34) & "/>" & Chr(10))
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar biblio vacío en " & sFilePath & ":" & Chr(10) & Error.Text)
+      Return False
+    Endif
+    Return True
+  Endif
+
+  ' --- 4. CAPÍTULO SIN REFERENCIAS: <bibliography/> VACÍO ---
+  If IsNull(hCapitulo["referencias_citadas"]) Or
+      TrimUTF8(hCapitulo["referencias_citadas"]) = "" Then
+    Try File.Save(sFilePath, "<bibliography xmlns=" & Chr(34) &
+      "http://docbook.org/ns/docbook" & Chr(34) & "/>" & Chr(10))
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar biblio vacío en " & sFilePath & ":" & Chr(10) & Error.Text)
+      Return False
+    Endif
+    Return True
+  Endif
+
+  sReferenciasCSV = TrimUTF8(hCapitulo["referencias_citadas"])
+
+  ' --- 5. CONSTRUIR LISTA DE CITEKEYS ---
+  aCitekeys = Split(sReferenciasCSV, ",")
+
+  ' --- 6. VERIFICAR QUE EXISTE EL .bib DEL PROYECTO ---
+  sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
+    File.BaseName(FMain.txtProyecto.Text) & ".bib"
+
+  If Not Exist(sBibFile) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el archivo de referencias:" & Chr(10) & sBibFile & Chr(10) &
+      "Exporte primero las referencias desde la base de datos.")
+    Return False
+  Endif
+
+  ' --- 7. LEER EL .bib ---
+  Try sBibContent = File.Load(sBibFile)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al leer el archivo .bib:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 8. PRIMERA PASADA: INDEXAR TODAS LAS ENTRADAS PARA CROSSREF ---
+  ' SE PARTE EL ARCHIVO EN ENTRADAS USANDO "@" COMO DELIMITADOR.
+  ' DESCARTA ENTRADAS @comment Y @string (NO SON BIBLIOGRAFÍA).
+  aEntries = Split(sBibContent, "@", "", True)
+  For Each sEntry In aEntries
+    If TrimUTF8(sEntry) = "" Then Continue
+    iPosLlave = InStr(sEntry, "{")
+    iPosComa = InStr(sEntry, ",")
+    If iPosLlave = 0 Or iPosComa = 0 Then Continue
+    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
+    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
+    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
+    If sCitekey = "" Then Continue
+    dictEntries[sCitekey] = sEntry
+    dictTypes[sCitekey] = sType
+  Next
+
+  ' --- 9. SEGUNDA PASADA: GENERAR XML EN ORDEN DE referencias_citadas ---
+  ' EL NAMESPACE xlink ES OBLIGATORIO PORQUE <link xlink:href="..."> SE USA
+  ' EN bibliosource. EL XSL DE ENSAMBLADO LO RE-DECLARA EN EL WRAPPER RAÍZ.
+  sXML = "<bibliography xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &
+    " xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">" & Chr(10)
+  sXML &= "  <title>Referencias</title>" & Chr(10)
+
+  ' DETECCIÓN DE COLISIÓN DE CITEKEYS AL SANITIZAR (MISMO PATRÓN QUE
+  ' GenerarRefListXML DE REVISTAS). SI DOS CITEKEYS DISTINTOS PRODUCEN
+  ' EL MISMO RESULTADO SANITIZADO, ABORTAR EXPLÍCITAMENTE.
+  For Each sCk In aCitekeys
+    sCk = TrimUTF8(sCk)
+    If sCk = "" Then Continue
+
+    sCkSanitizado = SanitizarCitekey(sCk)
+    If colSanitizados.Exist(sCkSanitizado) Then
+      If colSanitizados[sCkSanitizado] <> sCk Then
+        m_Sonido.sonar("Error")
+        Message.Error(
+          "Colisión de citekeys al sanitizar para XML DocBook:" & Chr(10) & Chr(10) &
+          "Original 1: " & colSanitizados[sCkSanitizado] & Chr(10) &
+          "Original 2: " & sCk & Chr(10) &
+          "Ambos resultan en: " & sCkSanitizado & Chr(10) & Chr(10) &
+          "Renombre uno de los dos en el archivo .bib y vuelva a generar el biblio.")
+        Return False
+      Endif
+      ' MISMO CITEKEY APARECE DOS VECES EN referencias_citadas: SALTAR
+      Continue
+    Endif
+    colSanitizados[sCkSanitizado] = sCk
+
+    If Not dictEntries.Exist(sCk) Then
+      sXML &= "  <!-- ADVERTENCIA: citekey '" & sCk & "' no encontrado en el .bib -->" & Chr(10)
+      Continue
+    Endif
+
+    sEntry = dictEntries[sCk]
+    sType = dictTypes[sCk]
+
+    ' GENERAR EL <biblioentry> CON xml:id="bib-{sanitizado}"
+    sXML &= GenerarBiblioentryDesdeBib(sEntry, sType, sCkSanitizado, dictEntries, dictTypes)
+  Next
+
+  sXML &= "</bibliography>" & Chr(10)
+
+  ' --- 10. GUARDAR ARCHIVO ---
+  Try File.Save(sFilePath, sXML)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar biblio xml en " & sFilePath & ":" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return Exist(sFilePath)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error inesperado en GenerarBiblioCapituloXML:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
+
+' ==========================================================
+' FUNCIÓN PÚBLICA: GenerarBiblioLibroXML
+' ==========================================================
+' Función   : GenerarBiblioLibroXML
+' Propósito : GENERA EL FRAGMENTO <bibliography> CONSOLIDADO PARA UN LIBRO
+'             COMPLETO CUANDO libros_md.lugar_bibliografia='consolidada'.
+'             DERIVA AUTOMÁTICAMENTE LOS CITEKEYS UNIENDO LOS
+'             capitulos.referencias_citadas DE TODOS LOS CAPÍTULOS DEL
+'             LIBRO (PATRÓN DE LATEX, NO HAY CAMPO MANUAL EN libros_md).
+'             ESCRIBE EL RESULTADO EN tmp/biblio-libro-{nombre_proyecto}.xml.
+'
+' Parámetros: iIdLibro As Integer — id_libro de la BD
+' Retorna   : Boolean — True si el archivo fue generado exitosamente
+' ==========================================================
+Public Function GenerarBiblioLibroXML(iIdLibro As Integer) As Boolean
+
+  ' --- 0. DECLARACIÓN DE VARIABLES ---
+  Dim hLibro As Result
+  Dim hCapitulos As Result
+  Dim sLugarBibliografia As String
+  Dim sCsvCapitulo As String
+  Dim sCsvConsolidado As String
+  Dim aCitekeys As String[]
+  Dim colCitekeysUnicos As New Collection
+  Dim sBibFile As String
+  Dim sBibContent As String
+  Dim sEntry As String
+  Dim aEntries As String[]
+  Dim sType As String
+  Dim sCitekey As String
+  Dim iPosLlave As Integer
+  Dim iPosComa As Integer
+  Dim dictEntries As New Collection
+  Dim dictTypes As New Collection
+  Dim sXML As String
+  Dim sDirTmp As String
+  Dim sFilePath As String
+  Dim sCk As String
+  Dim sCkSanitizado As String
+  Dim colSanitizados As New Collection
+
+  ' --- 1. VERIFICAR QUE EL LIBRO USA BIBLIOGRAFÍA CONSOLIDADA ---
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT lugar_bibliografia FROM libros_md WHERE id_libro = &1 LIMIT 1",
+    iIdLibro)
+  If Error Or Not hLibro.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontraron datos para el libro id=" & CStr(iIdLibro))
+    Return False
+  Endif
+
+  sLugarBibliografia = TrimUTF8(hLibro["lugar_bibliografia"])
+  If sLugarBibliografia <> "consolidada" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro no usa bibliografía consolidada (lugar_bibliografia=" &
+      sLugarBibliografia & "). Use GenerarBiblioCapituloXML para cada capítulo.")
+    Return False
+  Endif
+
+  sDirTmp = File.Dir(FMain.txtProyecto.Text) & "/tmp"
+  sFilePath = sDirTmp & "/biblio-libro-" & File.BaseName(FMain.txtProyecto.Text) & ".xml"
+
+  ' --- 2. UNIR referencias_citadas DE TODOS LOS CAPÍTULOS DEL LIBRO ---
+  ' EL PATRÓN ES ANÁLOGO A LO QUE HACE BIBER EN LATEX: ESCANEAR TODOS LOS
+  ' \cite Y EMITIR LA UNIÓN. ACÁ EL "ESCANEO" YA ESTÁ HECHO POR EL ABM,
+  ' QUE POPULA capitulos.referencias_citadas POR CAPÍTULO.
+  Try hCapitulos = m_ConexionBD.mConn.Exec(
+    "SELECT referencias_citadas FROM capitulos " &
+    "WHERE id_libro = &1 AND referencias_citadas IS NOT NULL " &
+    "AND TRIM(referencias_citadas) <> ''",
+    iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar capítulos del libro:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' RECORRER LOS CSV DE CADA CAPÍTULO Y AGREGAR A LA COLECCIÓN DE ÚNICOS.
+  ' SE PRESERVA EL ORDEN DE APARICIÓN: PRIMERO LOS DEL PRIMER CAPÍTULO,
+  ' LUEGO LOS NUEVOS DEL SEGUNDO, ETC.
+  While hCapitulos.Available
+    sCsvCapitulo = TrimUTF8(hCapitulos["referencias_citadas"])
+    If sCsvCapitulo <> "" Then
+      aCitekeys = Split(sCsvCapitulo, ",")
+      For Each sCk In aCitekeys
+        sCk = TrimUTF8(sCk)
+        If sCk <> "" And Not colCitekeysUnicos.Exist(sCk) Then
+          colCitekeysUnicos[sCk] = True
+          ' ACUMULAR EN ORDEN PARA SEGUNDO PASS
+          If sCsvConsolidado <> "" Then sCsvConsolidado &= ","
+          sCsvConsolidado &= sCk
+        Endif
+      Next
+    Endif
+    hCapitulos.MoveNext
+  Wend
+
+  ' --- 3. SI NO HAY REFERENCIAS, EMITIR BIBLIOGRAFÍA VACÍA ---
+  If sCsvConsolidado = "" Then
+    Try File.Save(sFilePath, "<bibliography xmlns=" & Chr(34) &
+      "http://docbook.org/ns/docbook" & Chr(34) &
+      "><title>Referencias</title></bibliography>" & Chr(10))
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar biblio vacío en " & sFilePath & ":" & Chr(10) & Error.Text)
+      Return False
+    Endif
+    Return True
+  Endif
+
+  ' --- 4. VERIFICAR Y LEER EL .bib DEL PROYECTO ---
+  sBibFile = File.Dir(FMain.txtProyecto.Text) & "/referencias/ref-" &
+    File.BaseName(FMain.txtProyecto.Text) & ".bib"
+
+  If Not Exist(sBibFile) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el archivo de referencias:" & Chr(10) & sBibFile & Chr(10) &
+      "Exporte primero las referencias desde la base de datos.")
+    Return False
+  Endif
+
+  Try sBibContent = File.Load(sBibFile)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al leer el archivo .bib:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 5. INDEXAR ENTRADAS DEL .bib ---
+  aEntries = Split(sBibContent, "@", "", True)
+  For Each sEntry In aEntries
+    If TrimUTF8(sEntry) = "" Then Continue
+    iPosLlave = InStr(sEntry, "{")
+    iPosComa = InStr(sEntry, ",")
+    If iPosLlave = 0 Or iPosComa = 0 Then Continue
+    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
+    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
+    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
+    If sCitekey = "" Then Continue
+    dictEntries[sCitekey] = sEntry
+    dictTypes[sCitekey] = sType
+  Next
+
+  ' --- 6. GENERAR XML EN ORDEN DEL CSV CONSOLIDADO ---
+  sXML = "<bibliography xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &
+    " xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">" & Chr(10)
+  sXML &= "  <title>Referencias</title>" & Chr(10)
+
+  aCitekeys = Split(sCsvConsolidado, ",")
+  For Each sCk In aCitekeys
+    sCk = TrimUTF8(sCk)
+    If sCk = "" Then Continue
+
+    sCkSanitizado = SanitizarCitekey(sCk)
+    If colSanitizados.Exist(sCkSanitizado) Then
+      If colSanitizados[sCkSanitizado] <> sCk Then
+        m_Sonido.sonar("Error")
+        Message.Error(
+          "Colisión de citekeys al sanitizar para XML DocBook:" & Chr(10) & Chr(10) &
+          "Original 1: " & colSanitizados[sCkSanitizado] & Chr(10) &
+          "Original 2: " & sCk & Chr(10) &
+          "Ambos resultan en: " & sCkSanitizado & Chr(10) & Chr(10) &
+          "Renombre uno de los dos en el archivo .bib y vuelva a generar el biblio.")
+        Return False
+      Endif
+      Continue
+    Endif
+    colSanitizados[sCkSanitizado] = sCk
+
+    If Not dictEntries.Exist(sCk) Then
+      sXML &= "  <!-- ADVERTENCIA: citekey '" & sCk & "' no encontrado en el .bib -->" & Chr(10)
+      Continue
+    Endif
+
+    sEntry = dictEntries[sCk]
+    sType = dictTypes[sCk]
+
+    sXML &= GenerarBiblioentryDesdeBib(sEntry, sType, sCkSanitizado, dictEntries, dictTypes)
+  Next
+
+  sXML &= "</bibliography>" & Chr(10)
+
+  ' --- 7. GUARDAR ARCHIVO ---
+  Try File.Save(sFilePath, sXML)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar biblio xml en " & sFilePath & ":" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return Exist(sFilePath)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error inesperado en GenerarBiblioLibroXML:" & Chr(10) &
+    Error.Text & Chr(10) & "Donde: " & Error.Where)
+  Return False
+
+End Function
