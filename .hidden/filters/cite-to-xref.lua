@@ -135,6 +135,16 @@ local function normalizar_inlines_sufijo(inlines)
     end
   end
 
+  -- STRIP LLAVES SINGLE-TOKEN: "{X}" DENTRO DE UN SOLO Str → "X"
+  -- ESTO CUBRE CASOS COMO {p. xiv} O {99} DONDE PANDOC AGRUPA EL
+  -- CONTENIDO COMPLETO EN UN ÚNICO Str. NO COLISIONA CON EL STRIP
+  -- MULTI-TOKEN PORQUE ESE YA REMOVIÓ LAS DELIMITADORAS EXTERNAS.
+  for i, inline in ipairs(lista) do
+    if inline.t == 'Str' then
+      lista[i] = pandoc.Str(inline.text:gsub("%{(.-)%}", "%1"))
+    end
+  end
+
 
   -- LOCATOR IMPLÍCITO: DÍGITOS AL INICIO SIN LETRAS EN NINGÚN INLINE
   -- SOLO APLICA SI TODA LA LISTA ES Str/Space (NO HAY MARKUP)
