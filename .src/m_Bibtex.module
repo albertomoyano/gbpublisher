@@ -1190,24 +1190,42 @@ Public Sub CargarDatosResultados(Grid As GridView, resultado As Result)
 
 End
 
-' =====================================================
-' FUNCIÓN: ExtraerYGuardarReferenciasDelArticulo
-' DESCRIPCIÓN: PARSEA EL CONTENIDO DEL ARCHIVO MD BUSCANDO
-'              CITEKEYS EN TODOS LOS FORMATOS PANDOC:
-'              [@key], [-@key], [ver @key], [@key, p. 5],
-'              [@key1; @key2], [@key1; -@key2], ETC.
-'              Y LAS GUARDA EN EL CAMPO referencias_citadas
-'              DE LA TABLA articulos
-' PARÁMETROS:
-'   sContenidoMD   - CONTENIDO COMPLETO DEL ARCHIVO .md
-'   sRutaArchivo   - RUTA COMPLETA AL ARCHIVO .md ABIERTO
-'   m_ConexionBD   - OBJETO DE CONEXIÓN A LA BASE DE DATOS
-' RETORNA: Boolean - TRUE SI SE GUARDÓ EXITOSAMENTE
-' =====================================================
-Public Function ExtraerYGuardarReferenciasDelArticulo(sContenidoMD As String, sRutaArchivo As String) As Boolean
+' ============================================
+' Función   : ExtraerYGuardarReferenciasDelEditor
+' Propósito : Parsea el contenido del archivo abierto en el editor
+'             buscando citekeys en todos los formatos Pandoc:
+'               [@key], [-@key], [ver @key], [@key, p. 5],
+'               [@key1; @key2], [@key1; -@key2], etc.
+'             y los guarda como CSV en la columna referencias_citadas
+'             de la tabla correspondiente según el tipo de proyecto:
+'               - TIPO_REVISTA_MD → articulos.referencias_citadas
+'               - TIPO_LIBRO_MD   → capitulos.referencias_citadas
+'
+'             Reemplaza a ExtraerYGuardarReferenciasDelArticulo
+'             (versión anterior solo para revistas). El renombre
+'             refleja que la función es agnóstica del tipo: opera
+'             sobre lo que hay en el editor, sea artículo o capítulo.
+'
+'             Prefijos válidos: fm-, a-, bm-. Cualquier otro archivo
+'             se ignora silenciosamente. El caso especial bm-99-colofon
+'             no tiene registro en BD por diseño y también se ignora.
+'
+' Parámetros: sContenidoMD  As String — contenido completo del .md
+'             sRutaArchivo  As String — ruta completa del .md abierto
+' Retorna   : Boolean — True si se guardó exitosamente o si el archivo
+'                       no requiere procesamiento (prefijo no aplicable
+'                       o colofón reservado)
+' ============================================
+Public Function ExtraerYGuardarReferenciasDelEditor(sContenidoMD As String, sRutaArchivo As String) As Boolean
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sNombreArchivo As String
-  Dim iIdArticulo As Integer
+  Dim sPrefijoTres As String
+  Dim sPrefijoDos As String
+  Dim bPrefijoValido As Boolean
+  Dim sTabla As String
+  Dim sColumnaId As String
+  Dim iIdRegistro As Integer
   Dim sLinea As String
   Dim aLineas As String[]
   Dim sCitekeys As String
@@ -1215,34 +1233,77 @@ Public Function ExtraerYGuardarReferenciasDelArticulo(sContenidoMD As String, sR
   Dim colUnicas As New Collection
   Dim iPos As Integer
   Dim iPosFin As Integer
+  Dim iPosAt As Integer
+  Dim iPosEspacio As Integer
+  Dim iPosComa As Integer
+  Dim sBloque As String
+  Dim aPartes As String[]
+  Dim sParte As String
   Dim sCitekey As String
   Dim hResult As Result
 
+  ' --- 2. VALIDACIÓN DE ENTRADA: NOMBRE Y PREFIJO ---
   ' EXTRAER NOMBRE DE ARCHIVO SIN EXTENSIÓN NI RUTA
   sNombreArchivo = File.BaseName(sRutaArchivo)
 
-  ' VERIFICAR QUE ES UN ARTÍCULO (comienza con a-)
-  If Not (Left(sNombreArchivo, 2) = "a-") Then
-    ' NO ES UN ARTÍCULO, NO HAY NADA QUE HACER
+  ' CHEQUEAR PREFIJOS VÁLIDOS EN LIBROS Y REVISTAS
+  '   fm-  → front-matter (LIBROS)
+  '   a-   → articulos    (LIBROS Y REVISTAS)
+  '   bm-  → back-matter  (LIBROS)
+  sPrefijoTres = Left(sNombreArchivo, 3)
+  sPrefijoDos = Left(sNombreArchivo, 2)
+  bPrefijoValido = (sPrefijoTres = "fm-" Or sPrefijoTres = "bm-" Or sPrefijoDos = "a-")
+
+  If Not bPrefijoValido Then
+    ' NO ES UN CAPÍTULO/ARTÍCULO: NO HAY NADA QUE HACER
     Return True
   Endif
 
-  ' BUSCAR id_articulo EN LA BD POR nombre_archivo
-  Try hResult = m_ConexionBD.mConn.Exec("SELECT id_articulo FROM articulos WHERE nombre_archivo = &1", sNombreArchivo)
+  ' EL COLOFÓN NO TIENE REGISTRO EN BD (CONVENCIÓN DE LIBROS)
+  If sNombreArchivo = "bm-99-colofon" Then
+    Return True
+  Endif
+
+  ' --- 3. RESOLVER TABLA DESTINO SEGÚN TIPO DE PROYECTO ---
+  ' USAR FMain.TipoProyectoActual (SETEADO EN AbrirProyecto) EN LUGAR
+  ' DE INTENTAR AMBAS TABLAS: EVITA AMBIGÜEDAD Y AHORRA UNA QUERY.
+  Select Case FMain.TipoProyectoActual
+    Case m_Constantes.TIPO_REVISTA_MD
+      sTabla = "articulos"
+      sColumnaId = "id_articulo"
+    Case m_Constantes.TIPO_LIBRO_MD
+      sTabla = "capitulos"
+      sColumnaId = "id_capitulo"
+    Case Else
+      ' TIPO NO SOPORTADO PARA GUARDADO DE REFERENCIAS (EJ. LATEX)
+      Return True
+  End Select
+
+  ' --- 4. BUSCAR REGISTRO EN LA BD POR nombre_archivo ---
+  Try hResult = m_ConexionBD.mConn.Exec(
+    "SELECT " & sColumnaId & " FROM " & sTabla &
+    " WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
+    sNombreArchivo,
+    FMain.id_proyecto.Value)
   If Error Then
-    Message.Error("Error al buscar el artículo en la base de datos:" & Chr(10) & Error.Text)
+    m_Sonido.sonar("Error")
+    Message.Error("Error al buscar el archivo en la base de datos:" & Chr(10) &
+      Error.Text)
     Return False
   Endif
 
-  If hResult.Count = 0 Then
-    Message.Warning("El archivo " & sNombreArchivo & " no tiene registro en la base de datos." & Chr(10) & "Las referencias citadas no se pudieron guardar.")
+  If Not hResult.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El archivo " & sNombreArchivo &
+      " no tiene registro en la base de datos." & Chr(10) &
+      "Las referencias citadas no se pudieron guardar.")
     Return False
   Endif
 
-  iIdArticulo = hResult!id_articulo
+  iIdRegistro = hResult[sColumnaId]
 
-  ' PARSEAR EL CONTENIDO MD BUSCANDO CITEKEYS EN TODOS LOS FORMATOS PANDOC:
-  ' [@key], [-@key], [ver @key], [@key, p. 5], [@key1; @key2], ETC.
+  ' --- 5. PARSEAR EL CONTENIDO MD BUSCANDO CITEKEYS EN FORMATOS PANDOC ---
+  ' CUBRE: [@key], [-@key], [ver @key], [@key, p. 5], [@key1; @key2], ETC.
   aLineas = Split(sContenidoMD, Chr(10))
 
   For Each sLinea In aLineas
@@ -1251,7 +1312,6 @@ Public Function ExtraerYGuardarReferenciasDelArticulo(sContenidoMD As String, sR
     iPos = 1
 
     While InStr(sLinea, "[", iPos) > 0
-
       iPos = InStr(sLinea, "[", iPos)
 
       ' BUSCAR EL CIERRE ]
@@ -1259,33 +1319,32 @@ Public Function ExtraerYGuardarReferenciasDelArticulo(sContenidoMD As String, sR
       If iPosFin = 0 Then Break
 
       ' EXTRAER EL CONTENIDO ENTRE [ Y ]
-      Dim sBloque As String = Mid(sLinea, iPos + 1, iPosFin - iPos - 1)
+      sBloque = Mid(sLinea, iPos + 1, iPosFin - iPos - 1)
 
-      ' DESCARTAR BLOQUES SIN @ (LINKS DE MARKDOWN, IMÁGENES, ATRIBUTOS, ETC.)
+      ' DESCARTAR BLOQUES SIN @ (LINKS DE MARKDOWN, IMÁGENES, ATRIBUTOS)
       If InStr(sBloque, "@") = 0 Then
         iPos = iPosFin + 1
         Continue
       Endif
 
       ' EL BLOQUE PUEDE TENER MÚLTIPLES CITAS SEPARADAS POR ;
-      ' EJEMPLOS: @key1; @key2 / @key1; -@key2 / ver @key1; @key2
-      Dim aPartes As String[] = Split(sBloque, ";")
-      Dim sParte As String
+      ' EJEMPLOS: @key1; @key2  /  @key1; -@key2  /  ver @key1; @key2
+      aPartes = Split(sBloque, ";")
 
       For Each sParte In aPartes
         sParte = Trim(sParte)
 
         ' BUSCAR @ DENTRO DE LA PARTE
         ' CUBRE: @key, -@key, ver @key, cf. @key, ETC.
-        Dim iPosAt As Integer = InStr(sParte, "@")
+        iPosAt = InStr(sParte, "@")
         If iPosAt = 0 Then Continue
 
         sCitekey = Trim(Mid(sParte, iPosAt + 1))
 
         ' ELIMINAR LOCALIZADOR: @key, p. 45 → key
         ' TOMAR SOLO HASTA EL PRIMER ESPACIO O COMA
-        Dim iPosEspacio As Integer = InStr(sCitekey, " ")
-        Dim iPosComa As Integer = InStr(sCitekey, ",")
+        iPosEspacio = InStr(sCitekey, " ")
+        iPosComa = InStr(sCitekey, ",")
 
         If iPosEspacio > 0 And (iPosComa = 0 Or iPosEspacio < iPosComa) Then
           sCitekey = Left(sCitekey, iPosEspacio - 1)
@@ -1308,27 +1367,31 @@ Public Function ExtraerYGuardarReferenciasDelArticulo(sContenidoMD As String, sR
 
       ' AVANZAR LA POSICIÓN PARA SEGUIR BUSCANDO EN LA MISMA LÍNEA
       iPos = iPosFin + 1
-
     Wend
-
   Next
 
-  ' CONSTRUIR EL STRING SEPARADO POR COMAS
+  ' --- 6. CONSTRUIR EL STRING SEPARADO POR COMAS ---
   sCitekeys = aEncontradas.Join(",")
 
-  ' GUARDAR EN LA BD
-  Try m_ConexionBD.mConn.Exec("UPDATE articulos SET referencias_citadas = &1 WHERE id_articulo = &2",
+  ' --- 7. GUARDAR EN LA TABLA CORRESPONDIENTE ---
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE " & sTabla & " SET referencias_citadas = &1 " &
+    "WHERE " & sColumnaId & " = &2",
     sCitekeys,
-    iIdArticulo)
+    iIdRegistro)
   If Error Then
-    Message.Error("Error al guardar las referencias citadas:" & Chr(10) & Error.Text)
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar las referencias citadas:" & Chr(10) &
+      Error.Text)
     Return False
   Endif
 
   Return True
 
 Catch
-  Message.Error("Error inesperado al procesar referencias:" & Chr(10) & Error.Text)
+  m_Sonido.sonar("Error")
+  Message.Error("Error inesperado al procesar referencias:" & Chr(10) &
+    Error.Text)
   Return False
 
 End Function

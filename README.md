@@ -76,7 +76,7 @@ Véase [LICENSE.md](LICENSE.md) para los términos completos.
 ## Información del proyecto
 
 - Repositorio: [https://github.com/albertomoyano/gbpublisher](https://github.com/albertomoyano/gbpublisher)
-- Consultas sobre licenciamiento: estudio2a@outlook.com.ar
+- Consultas sobre licenciamiento: [contacto@estudio2a.ar](contacto@estudio2a.ar)
 - Cómo apoyar el proyecto: [SUPPORT_MODEL.md](SUPPORT_MODEL.md)
 
 **Copyright © 2026 Alberto Moyano**
