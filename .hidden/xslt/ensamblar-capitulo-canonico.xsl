@@ -280,12 +280,32 @@
        AUTOR: fig-N, tbl-N, eq-N, cap-N) SE PRESERVAN.
        ================================================ -->
   <xsl:template match="@xml:id">
+    <!-- PASO 1: NORMALIZAR A ASCII SI TIENE CARACTERES NO-LATINOS -->
+    <xsl:variable name="idNormalizado" as="xs:string">
+      <xsl:choose>
+        <xsl:when test="matches(., '[^\p{IsBasicLatin}]')">
+          <xsl:value-of select="db:slugify(.)"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="."/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
+    <!-- PASO 2: PREFIJAR CON $xml_id_capitulo PARA EVITAR COLISIONES
+         AL ENSAMBLAR EL LIBRO COMPLETO.
+         EXCEPCIONES: IDs bib-* (biblioentry) YA SON GLOBALMENTE ÚNICOS
+         POR id DE BIBTEX, NO SE PREFIJAN. -->
     <xsl:choose>
-      <xsl:when test="matches(., '[^\p{IsBasicLatin}]')">
-        <xsl:attribute name="xml:id" select="db:slugify(.)"/>
+      <xsl:when test="starts-with($idNormalizado, 'bib-')">
+        <xsl:attribute name="xml:id" select="$idNormalizado"/>
+      </xsl:when>
+      <xsl:when test="$xml_id_capitulo != ''">
+        <xsl:attribute name="xml:id"
+                       select="concat($xml_id_capitulo, '.', $idNormalizado)"/>
       </xsl:when>
       <xsl:otherwise>
-        <xsl:copy/>
+        <xsl:attribute name="xml:id" select="$idNormalizado"/>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
@@ -300,13 +320,67 @@
        ================================================ -->
   <xsl:template match="@xlink:href[starts-with(., '#')]">
     <xsl:variable name="targetId" select="substring-after(., '#')"/>
+
+    <!-- PASO 1: NORMALIZAR A ASCII -->
+    <xsl:variable name="targetIdNormalizado" as="xs:string">
+      <xsl:choose>
+        <xsl:when test="matches($targetId, '[^\p{IsBasicLatin}]')">
+          <xsl:value-of select="db:slugify($targetId)"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="$targetId"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
+    <!-- PASO 2: PREFIJAR CONSISTENTE CON EL TEMPLATE @xml:id -->
     <xsl:choose>
-      <xsl:when test="matches($targetId, '[^\p{IsBasicLatin}]')">
+      <xsl:when test="starts-with($targetIdNormalizado, 'bib-')">
         <xsl:attribute name="xlink:href"
-          select="concat('#', db:slugify($targetId))"/>
+                       select="concat('#', $targetIdNormalizado)"/>
+      </xsl:when>
+      <xsl:when test="$xml_id_capitulo != ''">
+        <xsl:attribute name="xlink:href"
+                       select="concat('#', $xml_id_capitulo, '.', $targetIdNormalizado)"/>
       </xsl:when>
       <xsl:otherwise>
-        <xsl:copy/>
+        <xsl:attribute name="xlink:href"
+                       select="concat('#', $targetIdNormalizado)"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+
+  <!-- ================================================
+       PREFIJAR @linkend INTERNO (biblioref, xref)
+       APLICA EL MISMO CRITERIO QUE @xml:id Y @xlink:href
+       PARA MANTENER CONSISTENCIA CON LOS IDs PREFIJADOS.
+       LOS linkend A bib-* SE PRESERVAN INTACTOS.
+       ================================================ -->
+  <xsl:template match="@linkend">
+    <!-- PASO 1: NORMALIZAR A ASCII -->
+    <xsl:variable name="targetNormalizado" as="xs:string">
+      <xsl:choose>
+        <xsl:when test="matches(., '[^\p{IsBasicLatin}]')">
+          <xsl:value-of select="db:slugify(.)"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="."/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
+    <!-- PASO 2: PREFIJAR CONSISTENTE -->
+    <xsl:choose>
+      <xsl:when test="starts-with($targetNormalizado, 'bib-')">
+        <xsl:attribute name="linkend" select="$targetNormalizado"/>
+      </xsl:when>
+      <xsl:when test="$xml_id_capitulo != ''">
+        <xsl:attribute name="linkend"
+                       select="concat($xml_id_capitulo, '.', $targetNormalizado)"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:attribute name="linkend" select="$targetNormalizado"/>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
