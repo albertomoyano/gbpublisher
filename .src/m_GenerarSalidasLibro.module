@@ -1,0 +1,322 @@
+' Gambas module file
+
+' ==========================================================
+' PROPÓSITO:
+'   Orquesta la generación del HTML del libro (Fase 1: solo index.html).
+'   Prepara la estructura docs/ con assets compartidos (CSS/JS/tapa),
+'   invoca Saxon con docbook-to-html.xsl una sola vez y valida output.
+'
+' FASE 1: GENERA SOLO docs/index.html
+'   Fases futuras agregarán h-{nombre}.html por capítulo, drawer,
+'   metadatos por capítulo y widget "Citar este libro/capítulo".
+'
+' PRE-REQUISITO:
+'   El canónico del libro (jats/c-libro-{nombre}.xml) debe estar
+'   generado y validado. Igual patrón que btnGenerarLibroCanonico:
+'   confía en el estado del disco, alerta previa y fail-fast.
+' ==========================================================
+Public Sub GenerarLibroHTML()
+
+  Dim sRutaProyecto As String
+  Dim sNombreArchivoMadre As String
+  Dim sNombreBase As String
+  Dim sFileCanonicoLibro As String
+  Dim sFileManifiesto As String
+  Dim sFileIndex As String
+  Dim sDirDocs As String
+  Dim sDirDocsAssets As String
+  Dim sXsl As String
+  Dim sSaxon As String
+  Dim sAssetsSrcCss As String
+  Dim sAssetsSrcJs As String
+  Dim sAssetsDestCss As String
+  Dim sAssetsDestJs As String
+  Dim iIdLibro As Integer
+  Dim hLibro As Result
+  Dim sImagenTapa As String
+  Dim sImagenTapaSrc As String
+  Dim sImagenTapaDest As String
+  Dim iEspera As Integer
+  Dim iRespuesta As Integer
+
+  ' --- 0. MOSTRAR CONSOLA ---
+  FMain.tbMostrarPanelInferior.Value = True
+  FMain.TabPanelIzquierdaInferior.Index = 0
+
+  ' --- 1. ALERTA PREVIA ---
+  ' EL HTML CONSUME EL CANÓNICO DEL LIBRO ENSAMBLADO. SI ESE CANÓNICO
+  ' ESTÁ DESACTUALIZADO EL HTML SALDRÁ CON CONTENIDO VIEJO.
+  iRespuesta = Message.Question(
+    "GENERACIÓN HTML DEL LIBRO (Fase 1)" & Chr(10) & Chr(10) &
+    "Este proceso genera docs/index.html a partir del canónico" & Chr(10) &
+    "del libro ensamblado (jats/c-libro-*.xml)." & Chr(10) & Chr(10) &
+    "IMPORTANTE: El canónico del libro debe estar ACTUALIZADO." & Chr(10) &
+    "Si modificó capítulos, primero regenere los canónicos" & Chr(10) &
+    "individuales y luego el canónico del libro completo." & Chr(10) & Chr(10) &
+    "En esta fase solo se genera index.html. Las páginas de" & Chr(10) &
+    "cada capítulo se agregarán en fases posteriores." & Chr(10) & Chr(10) &
+    "¿Desea continuar?",
+    "Sí, continuar", "Cancelar")
+
+  If iRespuesta <> 1 Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'Generación HTML cancelada por el usuario.'" & Chr(10))
+    Return
+  Endif
+
+  ' --- 2. RESOLVER id_libro ---
+  iIdLibro = m_XML.ObtenerIdLibro(CInt(FMain.id_proyecto.Value))
+  If iIdLibro = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo resolver el id_libro para el proyecto activo." & Chr(10) &
+      "Verifique que existe una fila en libros_md para este proyecto.")
+    Return
+  Endif
+
+  ' --- 3. VERIFICAR BINARIOS Y RECURSOS ---
+  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
+  If Not Exist(sSaxon) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no encontrado en " & sSaxon)
+    Return
+  Endif
+
+  sXsl = User.Home & "/.gbpublisher/xslt/docbook-to-html.xsl"
+  If Not Exist(sXsl) Then
+    m_Sonido.sonar("Error")
+    Message.Error("XSLT docbook-to-html no encontrado en:" & Chr(10) & sXsl)
+    Return
+  Endif
+
+  sAssetsSrcCss = User.Home & "/.gbpublisher/assets/css/gbpublisher.css"
+  sAssetsSrcJs = User.Home & "/.gbpublisher/assets/js/gbpublisher.js"
+
+  If Not Exist(sAssetsSrcCss) Then
+    m_Sonido.sonar("Error")
+    Message.Error("CSS compartido no encontrado en:" & Chr(10) & sAssetsSrcCss)
+    Return
+  Endif
+
+  If Not Exist(sAssetsSrcJs) Then
+    m_Sonido.sonar("Error")
+    Message.Error("JS compartido no encontrado en:" & Chr(10) & sAssetsSrcJs)
+    Return
+  Endif
+
+  ' --- 4. CONSTRUIR PATHS DEL PROYECTO ---
+  sRutaProyecto = File.Dir(FMain.txtProyecto.Text)
+  sNombreArchivoMadre = File.BaseName(FMain.txtProyecto.Text)
+
+  ' STRIP DEL PREFIJO "l-" (CONVENCIÓN DE ARCHIVOS DE LIBRO)
+  If Left(sNombreArchivoMadre, 2) = "l-" Then
+    sNombreBase = Mid(sNombreArchivoMadre, 3)
+  Else
+    sNombreBase = sNombreArchivoMadre
+  Endif
+
+  sFileCanonicoLibro = sRutaProyecto & "/jats/c-libro-" & sNombreBase & ".xml"
+  sFileManifiesto = sRutaProyecto & "/tmp/manifiesto-libro-" & sNombreBase & ".xml"
+  sDirDocs = sRutaProyecto & "/docs"
+  sDirDocsAssets = sDirDocs & "/assets"
+  sFileIndex = sDirDocs & "/index.html"
+
+  sAssetsDestCss = sDirDocsAssets & "/css/gbpublisher.css"
+  sAssetsDestJs = sDirDocsAssets & "/js/gbpublisher.js"
+
+  ' --- 5. VERIFICAR QUE EL CANÓNICO Y MANIFIESTO EXISTAN ---
+  If Not Exist(sFileCanonicoLibro) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El canónico del libro no existe:" & Chr(10) &
+      sFileCanonicoLibro & Chr(10) & Chr(10) &
+      "Genérelo primero con el botón 'Generar canónico DocBook del libro'.")
+    Return
+  Endif
+
+  If Not Exist(sFileManifiesto) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El manifiesto del libro no existe:" & Chr(10) &
+      sFileManifiesto & Chr(10) & Chr(10) &
+      "Genérelo primero con el botón 'Generar canónico DocBook del libro'.")
+    Return
+  Endif
+
+  ' ====================================================
+  ' PASO 1: PREPARAR ESTRUCTURA docs/ Y COPIAR ASSETS
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- PASO 1: PREPARANDO docs/ Y ASSETS ---'" & Chr(10))
+
+  ' CREAR ESTRUCTURA DE CARPETAS SI NO EXISTE
+  ' mkdir -p es idempotente
+  FMain.TerminalViewProyecto.Input(
+    "mkdir -p '" & sDirDocsAssets & "/css'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "mkdir -p '" & sDirDocsAssets & "/js'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "mkdir -p '" & sDirDocsAssets & "/media'" & Chr(10))
+
+  ' COPIAR CSS Y JS DESDE ~/.gbpublisher/assets/
+  ' OPCIÓN A CONSENSUADA: SIEMPRE SOBRESCRIBIR PARA PROPAGAR ACTUALIZACIONES
+  FMain.TerminalViewProyecto.Input(
+    "cp '" & sAssetsSrcCss & "' '" & sAssetsDestCss & "'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "cp '" & sAssetsSrcJs & "' '" & sAssetsDestJs & "'" & Chr(10))
+
+  ' --- 6. COPIAR IMAGEN DE TAPA (SI EXISTE) ---
+  ' EL nombre_archivo DE LA IMAGEN SE LEE DE libros_md.imagen_tapa,
+  ' Y VIVE EN /media DEL PROYECTO. AL COPIARLA A docs/assets/media
+  ' EL XSLT LA REFERENCIA COMO assets/media/{archivo}.
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT imagen_tapa FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
+
+  If Not Error And hLibro.Available Then
+    If Not IsNull(hLibro["imagen_tapa"]) Then
+      sImagenTapa = m_XML.TrimUTF8(hLibro["imagen_tapa"])
+      If Len(sImagenTapa) > 0 Then
+        sImagenTapaSrc = sRutaProyecto & "/media/" & sImagenTapa
+        sImagenTapaDest = sDirDocsAssets & "/media/" & sImagenTapa
+
+        If Exist(sImagenTapaSrc) Then
+          FMain.TerminalViewProyecto.Input(
+            "cp '" & sImagenTapaSrc & "' '" & sImagenTapaDest & "'" & Chr(10))
+          FMain.TerminalViewProyecto.Input(
+            "echo 'OK: tapa copiada'" & Chr(10))
+        Else
+          FMain.TerminalViewProyecto.Input(
+            "echo 'AVISO: imagen_tapa referida en BD pero no encontrada en /media: " &
+            sImagenTapa & "'" & Chr(10))
+        Endif
+      Endif
+    Endif
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: docs/ preparado'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 2: INVOCAR SAXON CON docbook-to-html.xsl
+  ' EL XSLT USA xsl:result-document CON PATH RELATIVO docs/index.html
+  ' PARA QUE EL RESULT SE ESCRIBA RELATIVO A LA URI BASE DE SAXON,
+  ' HAY QUE PASAR EL DIRECTORIO DEL PROYECTO COMO WORKING DIRECTORY.
+  ' PARA CONSEGUIRLO USAMOS cd EN EL SHELL EMBEBIDO ANTES DE Saxon.
+  ' ====================================================
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- PASO 2: GENERANDO HTML CON SAXON ---'" & Chr(10))
+
+  ' ELIMINAR index.html ANTERIOR PARA VERIFICAR CON POLLING (RC-GM-02)
+  If Exist(sFileIndex) Then
+    Shell "rm '" & sFileIndex & "'" Wait
+  Endif
+
+  ' EJECUTAR SAXON DESDE EL DIRECTORIO DEL PROYECTO PARA QUE
+  ' docs/index.html DE xsl:result-document APUNTE ADENTRO DEL PROYECTO.
+  FMain.TerminalViewProyecto.Input(
+    "cd '" & sRutaProyecto & "' && " &
+    "java -jar " & sSaxon & " " &
+    "-s:'" & sFileCanonicoLibro & "' " &
+    "-xsl:'" & sXsl & "' " &
+    "proyecto_dir='" & sRutaProyecto & "' " &
+    "manifiesto_libro='tmp/manifiesto-libro-" & sNombreBase & ".xml'" & Chr(10))
+
+  ' --- ESPERAR HASTA QUE index.html EXISTA (MÁXIMO 60 S) ---
+  iEspera = 0
+  While Not Exist(sFileIndex) And iEspera < 600
+    Wait 0.1
+    Inc iEspera
+  Wend
+
+  If Not Exist(sFileIndex) Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'ERROR: Saxon no generó docs/index.html'" & Chr(10))
+    m_Sonido.sonar("Error")
+    Message.Error("Saxon-HE no generó docs/index.html en el tiempo esperado." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: docs/index.html generado'" & Chr(10))
+  FMain.TerminalViewProyecto.Input(
+    "echo 'Ruta: " & sFileIndex & "'" & Chr(10))
+
+  ' ====================================================
+  ' PASO 3: VALIDACIÓN BÁSICA HTML (bien formado)
+  ' ====================================================
+  ' No usamos jing (es RNG), usamos xmllint con --html para reportar
+  ' errores sintácticos sin ser demasiado estricto.
+  FMain.TerminalViewProyecto.Input(
+    "xmllint --html --noout '" & sFileIndex &
+    "' 2>&1 | head -5 && echo 'index.html: verificación completada'" & Chr(10))
+
+  ' --- VERIFICACIÓN FINAL ---
+  Wait 2.0
+
+  If Exist(sFileIndex) Then
+    m_Sonido.sonar("Info")
+    Message.Info("HTML Fase 1 generado exitosamente." & Chr(10) & Chr(10) &
+      "Archivo: " & sFileIndex & Chr(10) & Chr(10) &
+      "Para revisar visualmente:" & Chr(10) &
+      "xdg-open " & sFileIndex)
+  Else
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proceso terminó pero no se encontró index.html." & Chr(10) &
+      "Revise los mensajes en la terminal.")
+  Endif
+
+End Sub
+
+' ' Gambas module file
+'
+' ' ====================================================
+' ' VARIABLES PRIVADAS DEL MÓDULO
+' ' ====================================================
+' Private sRutaProyecto As String
+' Private sArchivoProyecto As String
+' Private sBaseNombreProyecto As String
+' Private sNombreArchivo As String
+' Private sFileCanonico As String
+' Private sSQL As String
+' Private rConsulta As Result
+' Private sComando As String
+' Private sSaxon As String
+' Private sEstiloCita As String
+' Private sRutaMedia As String
+'
+' ' ====================================================
+' ' GENERAR PDF DESDE LATEX es para archivo LaTeX puro
+' ' ====================================================
+' Public Sub GenerarPDFdesdeLATEX()
+'
+'   If FMain.txtProyecto.Text = "" Then
+'     m_Sonido.sonar("Warning")
+'     Message.Warning("No hay ningún proyecto abierto")
+'     Return
+'   Endif
+'
+'   ' EXPORTAR DEPENDENCIAS
+'   m_Json.ExportarMetadatosJSON2PDF()
+'   m_Bibtex.ExportarBibTeX()
+'
+'   ' CARGAR Y CONCATENAR PREÁMBULO + CONTENIDO
+'   Dim sPreambulo As String = File.Load(File.Dir(FMain.txtProyecto.Text) &/ "files/pdf-preambulo.tex")
+'   Dim sContenido As String = File.Load(File.Dir(FMain.txtProyecto.Text) &/ File.Name(FMain.txtProyecto.Text))
+'   Dim sMain As String = sPreambulo & gb.NewLine & gb.NewLine & sContenido
+'
+'   ' GUARDAR ARCHIVO TEMPORAL
+'   Dim outputFile As String = File.Dir(FMain.txtProyecto.Text) &/ "temporal.tex"
+'   File.Save(outputFile, sMain)
+'
+'   ' COMPILAR CON LATEXMK
+'   FMain.TerminalViewProyecto.Input("cd " & File.Dir(FMain.txtProyecto.Text) & "\n")
+'   FMain.TerminalViewProyecto.Input("clear" & "\n")
+'   FMain.TerminalViewProyecto.Input(
+'     "latexmk -l -f -g --interaction=nonstopmode -pdflatex=lualatex -pdflua temporal.tex" & "\n")
+'   Wait 1
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "mv temporal.pdf " & File.Dir(FMain.txtProyecto.Text) &/ "salidas/pdf/" &
+'     File.BaseName(FMain.txtProyecto.Text) & ".pdf" & "\n")
+'
+'   m_FuncionesGenericas.BorrarArchivosAuxiliares
+'
+' End

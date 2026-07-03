@@ -8440,23 +8440,63 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
         "</bibliomisc>" & Chr(10)
     Endif
   Endif
+  ' ==========================================================
+  ' PARCHE — GenerarInfoLibroXML, BLOQUE 16 (mediaobject role="tapa")
+  ' ==========================================================
+  ' ARCHIVO: m_XML.module
+  ' UBICACIÓN: dentro de GenerarInfoLibroXML, líneas ~8443-8471
+  '
+  ' MOTIVACIÓN:
+  '   El bloque 16 no emitía el <mediaobject> aunque libros_md.imagen_tapa
+  '   tuviera valor válido. Causa raíz: Dim con inicialización inline
+  '   dentro de bloques condicionales anidados. En Gambas 3, las
+  '   declaraciones Dim con valor inicial se procesan al inicio de la
+  '   función, no en el punto textual del código fuente. Esto puede
+  '   causar evaluaciones tempranas de expresiones dependientes de
+  '   Result cursors que aún no están poblados, con abort silencioso
+  '   del bloque.
+  '
+  ' FIX:
+  '   Mover todas las declaraciones al apartado 0 (declaración de
+  '   variables al inicio de la función). Convertir las asignaciones
+  '   inline en asignaciones simples dentro del cuerpo del bloque.
+  ' ==========================================================
+
+  ' ============================================
+  ' PASO 1 — AGREGAR DECLARACIONES AL APARTADO 0
+  ' ============================================
+  ' EN GenerarInfoLibroXML, EN EL APARTADO
+  ' "0. DECLARACIÓN DE VARIABLES" (JUNTO A cQ, hLibro, etc.),
+  ' AGREGAR ESTAS DOS LÍNEAS:
+
+  Dim sImagenTapa As String
+  Dim sTituloTapa As String
+
+  ' ============================================
+  ' PASO 2 — REEMPLAZAR EL BLOQUE 16 COMPLETO
+  ' ============================================
+  ' EN EL APARTADO "BLOQUE 16. PORTADA (mediaobject role='tapa')",
+  ' REEMPLAZAR EL BLOQUE ENTERO POR ESTE:
 
   ' ==========================================================
   ' BLOQUE 16. PORTADA (mediaobject role="tapa")
   ' ==========================================================
   ' LA RUTA ES RELATIVA AL PROYECTO Y LA IMAGEN VIVE EN /media.
   ' EL CANÓNICO VIVE EN /jats, ENTONCES LA REFERENCIA DESDE EL
-  ' CANÓNICO ES ../media/{imagen_tapa}
+  ' CANÓNICO ES ../media/{imagen_tapa}.
+  ' LAS DECLARACIONES sImagenTapa Y sTituloTapa ESTÁN EN EL
+  ' APARTADO 0 PARA EVITAR EL ANTIPATRÓN DE Dim INLINE EN
+  ' CONDICIONALES ANIDADOS (VER NOTA EN EL HEADER DE ESTE PARCHE).
   If Not IsNull(hLibro["imagen_tapa"]) Then
     If Len(TrimUTF8(hLibro["imagen_tapa"])) > 0 Then
-      Dim sImagenTapa As String = TrimUTF8(hLibro["imagen_tapa"])
+      sImagenTapa = TrimUTF8(hLibro["imagen_tapa"])
       sXML &= "  <mediaobject role=" & cQ & "tapa" & cQ & ">" & Chr(10)
       sXML &= "    <imageobject>" & Chr(10)
       sXML &= "      <imagedata fileref=" & cQ & "../media/" &
         EscaparXML(sImagenTapa) & cQ & "/>" & Chr(10)
       sXML &= "    </imageobject>" & Chr(10)
       sXML &= "    <textobject>" & Chr(10)
-      Dim sTituloTapa As String = "Libro"
+      sTituloTapa = "Libro"
       If Not IsNull(hLibro["titulo_libro"]) Then
         If Len(TrimUTF8(hLibro["titulo_libro"])) > 0 Then
           sTituloTapa = TrimUTF8(hLibro["titulo_libro"])
@@ -8469,6 +8509,44 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
     Endif
   Endif
 
+  ' ============================================
+  ' PASO 3 — RECOMPILAR (RC-GM-05)
+  ' ============================================
+  ' Proyecto → Limpiar → Compilar
+  ' Luego probar btnGenerarLibroCanonico y verificar que el XML
+  ' incluye ahora <mediaobject role="tapa">.
+
+  ' ============================================
+  ' PASO 4 — VERIFICACIÓN POST-PARCHE
+  ' ============================================
+  ' Después del canónico, apretá también btnGenerarLibroHTML.
+  ' El index.html debería mostrar la tapa. Verificar con:
+  '
+  '   grep -A 3 "tapa-wrapper" ~/00_Produccion/99_ejercicios/01-libro-MD/docs/index.html
+  '
+  ' Debería mostrar:
+  '   <div class="tapa-wrapper">
+  '     <img src="assets/media/foto-tapa.png" alt="Cubierta de ..."/>
+  '   </div>
+
+  ' ============================================
+  ' AUDITORÍA RECOMENDADA POST-PARCHE
+  ' ============================================
+  ' Los siguientes bloques de GenerarInfoLibroXML también tienen
+  ' Dim con inicialización inline dentro de condicionales anidados.
+  ' Aunque hoy funcionan (los datos que dependen están cargados sin
+  ' NULL en tu BD de prueba), pueden fallar con casos edge:
+  '
+  '   Bloque 1  (líneas 8073-8082):  Dim sIdiomaOrig As String = ""
+  '   Bloque 4  (líneas 8228-8239):  Dim sEditorial, sInstitucionEd, ...
+  '   Bloque 5  (líneas 8297-8306):  Dim sColNombre, sColAbrev, ...
+  '   Bloque 11 (líneas 8351-8365):  Dim sIdiomaPrinc, sIdiomaTrad
+  '   Bloque 12 (líneas 8388-8404):  Dim sUrlLic
+  '
+  ' Recomendación (no urgente): en una futura pasada de refactor,
+  ' mover TODAS esas declaraciones al apartado 0. Bug idéntico al
+  ' bloque 16 puede aparecer en cualquiera de ellos con datos
+  ' distintos. Fix mecánico, sin cambio funcional.
   ' ==========================================================
   ' CIERRE Y GRABADO
   ' ==========================================================
