@@ -80,7 +80,7 @@ function generarCita(formato) {
     });
     var autStr = lista.length === 1
       ? lista[0]
-      : lista.slice(0, -1).join(', ') + ', &amp; ' + lista[lista.length - 1];
+      : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
     var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '. ';
     cita += d.revista;
     if (d.volumen) cita += ', ' + d.volumen;
@@ -96,7 +96,7 @@ function generarCita(formato) {
     var lista = d.autores.map(function(a) {
       return iniciales(a.nombre) + ' ' + a.apellido;
     });
-    var autStr = lista.length &lt;= 3
+    var autStr = lista.length <= 3
       ? lista.join(', ')
       : lista[0] + ' et al.';
     var cita = autStr + ', "' + d.titulo + '," ';
@@ -226,6 +226,10 @@ function buildNotesPanel() {
     var item  = document.createElement('div');
     item.className = 'panel-item';
     item.id = 'panel-fn-' + id;
+    item.setAttribute('data-fn-id', id);
+    // NAVEGACIÓN INVERSA (LIBROS): CLICK EN LA NOTA → MARCA EN EL TEXTO
+    item.setAttribute('onclick', "irAlTexto('notas','" + id + "')");
+    item.style.cursor = 'pointer';
     item.innerHTML =
       '<div class="panel-item-label">Nota ' + num + '</div>' +
       '<div class="panel-item-text">' + texto + '</div>';
@@ -256,6 +260,10 @@ function buildFigsPanel() {
     var item    = document.createElement('div');
     item.className = 'panel-item panel-fig';
     item.id = 'panel-fig-' + id;
+    item.setAttribute('data-fig-id', id);
+    // NAVEGACIÓN INVERSA (LIBROS): CLICK EN LA FIGURA → MARCA EN EL TEXTO
+    item.setAttribute('onclick', "irAlTexto('figs','" + id + "')");
+    item.style.cursor = 'pointer';
 
     var html = '';
     if (img)     html += '<img src="' + img.src + '" alt="' + (img.alt || '') + '"/>';
@@ -356,18 +364,52 @@ function highlightPanel(tipo, id) {
 // BUSCA SU PRIMERA APARICIÓN EN EL CUERPO Y
 // HACE SCROLL CON FLASH TEMPORAL DE HIGHLIGHT
 // ============================================
-function irAlTexto(refId) {
+// ============================================
+// NAVEGACIÓN INVERSA (PANEL → TEXTO) BIDIRECCIONAL EN LIBROS
+// ============================================
+// A diferencia de revistas (solo refs), en libros las 3 pestañas
+// son bidireccionales: al hacer click en un item del panel (nota,
+// referencia o figura) se navega a la primera aparición de su marca
+// en el cuerpo del capítulo. La razón es la lectura en tablet/celular,
+// donde el drawer tapa el contexto y hace falta un retorno explícito.
+//
+// Se llama con (refId) para referencias (compatibilidad con revistas)
+// o con (tipo, id) para notas y figuras.
+function irAlTexto(arg1, arg2) {
+  var tipo, id;
+  if (arg2 === undefined) {
+    // FORMA COMPATIBLE CON REVISTAS: irAlTexto(refId) → referencia
+    tipo = 'refs';
+    id = arg1;
+  } else {
+    tipo = arg1;
+    id = arg2;
+  }
 
-  // BUSCAR PRIMERA OCURRENCIA EN EL CUERPO DEL ARTÍCULO
-  var el = document.querySelector(
-    '.xref-bibr[data-ref-id="' + refId + '"], ' +
-    '.xref-vancouver[data-ref-id="' + refId + '"]'
-  );
+  // SELECTOR DE LA MARCA EN EL CUERPO SEGÚN TIPO
+  var selectorTexto, selectorPanel;
+  if (tipo === 'refs') {
+    selectorTexto = '.xref-bibr[data-ref-id="' + id + '"], .xref-vancouver[data-ref-id="' + id + '"]';
+    selectorPanel = '#panel-refs [data-ref-id="' + id + '"]';
+  } else if (tipo === 'notas') {
+    selectorTexto = '.fn-ref[data-fn-id="' + id + '"]';
+    selectorPanel = '#panel-fn-' + id;
+  } else if (tipo === 'figs') {
+    // EN LIBROS LA FIGURA ES UN BLOQUE COMPLETO (.fig-wrapper) EN EL
+    // CUERPO, NO UNA MARCA INLINE. LA NAVEGACIÓN INVERSA LLEVA AL BLOQUE.
+    selectorTexto = '.fig-wrapper[data-fig-id="' + id + '"]';
+    selectorPanel = '#panel-fig-' + id;
+  } else {
+    return;
+  }
+
+  // BUSCAR PRIMERA OCURRENCIA DE LA MARCA EN EL CUERPO
+  var el = document.querySelector(selectorTexto);
   if (!el) return;
 
   // LIMPIAR SELECCIONES ANTERIORES EN EL TEXTO
   document.querySelectorAll(
-    '.xref-bibr.selected, .xref-vancouver.selected'
+    '.xref-bibr.selected, .xref-vancouver.selected, .fn-ref.selected, .fig-ref.selected'
   ).forEach(function(e) { e.classList.remove('selected'); });
 
   // LIMPIAR HIGHLIGHT ANTERIOR EN EL PANEL
@@ -376,16 +418,14 @@ function irAlTexto(refId) {
   );
 
   // HIGHLIGHT EN EL PANEL
-  var panelItem = document.querySelector(
-    '#panel-refs [data-ref-id="' + refId + '"]'
-  );
+  var panelItem = document.querySelector(selectorPanel);
   if (panelItem) panelItem.classList.add('highlighted');
 
   // SCROLL AL TEXTO Y FLASH DE HIGHLIGHT
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   el.classList.add('selected');
 
-  // LIMPIAR TRAS 5 SEGUNDOS
+  // LIMPIAR TRAS 10 SEGUNDOS
   setTimeout(function() {
     el.classList.remove('selected');
     if (panelItem) panelItem.classList.remove('highlighted');

@@ -834,7 +834,7 @@ RC APLICADAS:
               <button class="fab-panel-tablet" onclick="openDrawerPanel()">&#x2192;</button>
               <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawers()"></div>
 
-              <div class="layout layout-3col" id="mainLayout">
+              <div class="layout layout-3col panel-hidden" id="mainLayout">
                 <xsl:call-template name="emitir-col-left-capitulo">
                   <xsl:with-param name="capInfo" select="$capInfo"/>
                   <xsl:with-param name="capTitulo" select="$capTitulo"/>
@@ -846,7 +846,9 @@ RC APLICADAS:
                   <xsl:with-param name="capTitulo" select="$capTitulo"/>
                 </xsl:call-template>
 
-                <xsl:call-template name="emitir-col-right-drawer"/>
+                <xsl:call-template name="emitir-col-right-drawer">
+                  <xsl:with-param name="capitulo" select="$capitulo"/>
+                </xsl:call-template>
               </div>
 
               <!-- JS EXTERNO COMPARTIDO -->
@@ -1079,39 +1081,56 @@ RC APLICADAS:
   </xsl:template>
 
   <!-- ==========================================================
-       COL-RIGHT: DRAWER CON 3 PESTAÑAS (VACÍO EN FASE 2)
+       COL-RIGHT: DRAWER CON 3 PESTAÑAS (Fase 3)
        ==========================================================
-       Estructura de las pestañas Notas / Referencias / Figuras.
-       El contenido y la navegación cruzada se cablean en Fase 3. -->
+       Usa las clases reales de revistas (panel-tab, panel-section,
+       switchTab, contadores) para reutilizar el CSS de gbpublisher.css.
+       - Notas y Figuras: construidas por JS en runtime desde las
+         marcas del cuerpo (.nota-ref / .fig-wrapper).
+       - Referencias: renderizadas por el XSLT desde <bibliography>. -->
   <xsl:template name="emitir-col-right-drawer">
+    <xsl:param name="capitulo"/>
+
     <aside class="col-right" id="rightPanel">
 
-      <div class="drawer-header">
-        <button class="drawer-close" onclick="closeDrawers()">&#x2715;</button>
-        <div class="drawer-tabs">
-          <button class="drawer-tab active" data-tab="notas" onclick="mostrarTab('notas')">
-            <xsl:text>Notas</xsl:text>
-          </button>
-          <button class="drawer-tab" data-tab="referencias" onclick="mostrarTab('referencias')">
-            <xsl:text>Referencias</xsl:text>
-          </button>
-          <button class="drawer-tab" data-tab="figuras" onclick="mostrarTab('figuras')">
-            <xsl:text>Figuras</xsl:text>
-          </button>
-        </div>
+      <div class="panel-tabs">
+        <button class="panel-tab active" id="tab-notas" onclick="switchTab('notas')">
+          <xsl:text>Notas </xsl:text>
+          <span class="tab-count" id="count-notas">0</span>
+        </button>
+        <button class="panel-tab" id="tab-refs" onclick="switchTab('refs')">
+          <xsl:text>Referencias </xsl:text>
+          <span class="tab-count" id="count-refs">0</span>
+        </button>
+        <button class="panel-tab" id="tab-figs" onclick="switchTab('figs')">
+          <xsl:text>Figuras </xsl:text>
+          <span class="tab-count" id="count-figs">0</span>
+        </button>
       </div>
 
-      <div class="drawer-body">
-        <!-- LAS 3 PESTAÑAS SE POBLARÁN EN FASE 3 -->
-        <div class="drawer-tab-content active" id="tab-notas">
-          <p class="drawer-vacio">Sin notas.</p>
+      <div class="panel-content">
+
+        <!-- SECCIÓN NOTAS: CONSTRUIDA POR JS (buildNotesPanel) -->
+        <div class="panel-section active" id="panel-notas"></div>
+
+        <!-- SECCIÓN REFERENCIAS: RENDERIZADA POR EL XSLT -->
+        <div class="panel-section" id="panel-refs">
+          <xsl:variable name="biblio"
+                        select="$capitulo/db:bibliography | $capitulo/bibliography"/>
+          <xsl:choose>
+            <xsl:when test="$biblio/db:biblioentry | $biblio/biblioentry">
+              <xsl:apply-templates select="$biblio/db:biblioentry | $biblio/biblioentry"
+                                    mode="panel-ref"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <p class="drawer-vacio">Sin referencias.</p>
+            </xsl:otherwise>
+          </xsl:choose>
         </div>
-        <div class="drawer-tab-content" id="tab-referencias">
-          <p class="drawer-vacio">Sin referencias.</p>
-        </div>
-        <div class="drawer-tab-content" id="tab-figuras">
-          <p class="drawer-vacio">Sin figuras.</p>
-        </div>
+
+        <!-- SECCIÓN FIGURAS: CONSTRUIDA POR JS (buildFigsPanel) -->
+        <div class="panel-section" id="panel-figs"></div>
+
       </div>
 
     </aside>
@@ -1177,6 +1196,45 @@ RC APLICADAS:
     </li>
   </xsl:template>
 
+  <!-- FIGURE / INFORMALFIGURE → .fig-wrapper CON data-fig-id.
+       EL JS (buildFigsPanel) LEE ESTAS MARCAS PARA CONSTRUIR EL
+       PANEL DE FIGURAS Y CABLEAR LA NAVEGACIÓN CRUZADA.
+       LA NUMERACIÓN ES CORRELATIVA POR CAPÍTULO. -->
+  <xsl:template match="db:figure | figure | db:informalfigure | informalfigure">
+    <xsl:variable name="num">
+      <xsl:number count="db:figure | figure | db:informalfigure | informalfigure"
+                  from="db:chapter | db:preface | db:appendix | db:dedication
+                        | db:colophon | db:glossary
+                        | chapter | preface | appendix | dedication
+                        | colophon | glossary"
+                  level="any"/>
+    </xsl:variable>
+    <xsl:variable name="figId" select="if (@xml:id) then @xml:id else concat('fig-', $num)"/>
+    <xsl:variable name="imgdata"
+                  select="(db:mediaobject/db:imageobject/db:imagedata
+                          | mediaobject/imageobject/imagedata)[1]"/>
+    <xsl:variable name="fileref" select="$imgdata/@fileref"/>
+    <xsl:variable name="titulo"
+                  select="normalize-space((db:title | title)[1])"/>
+
+    <figure class="fig-wrapper"
+            id="{$figId}"
+            data-fig-id="{$figId}">
+      <xsl:if test="$fileref != ''">
+        <!-- LA IMAGEN VIVE EN media/; EN docs/ VA A assets/media/ -->
+        <img src="assets/media/{tokenize($fileref, '/')[last()]}"
+             alt="{$titulo}"/>
+      </xsl:if>
+      <figcaption class="fig-caption">
+        <span class="fig-label">Figura <xsl:value-of select="$num"/></span>
+        <xsl:if test="$titulo != ''">
+          <xsl:text>. </xsl:text>
+          <xsl:value-of select="$titulo"/>
+        </xsl:if>
+      </figcaption>
+    </figure>
+  </xsl:template>
+
   <!-- BLOCKQUOTE → BLOCKQUOTE -->
   <xsl:template match="db:blockquote | blockquote">
     <blockquote>
@@ -1197,7 +1255,9 @@ RC APLICADAS:
   </xsl:template>
 
   <!-- FOOTNOTE → MARCA <sup> NUMERADA POR CAPÍTULO.
-       EL CONTENIDO VA AL DRAWER EN FASE 3; ACÁ SOLO LA MARCA CON ANCLA.
+       LLEVA data-fn-id Y data-fn-text PARA QUE EL JS CONSTRUYA
+       EL PANEL DE NOTAS Y CABLEE LA NAVEGACIÓN CRUZADA.
+       CLASES fn-ref ALINEADAS CON REVISTAS.
        NUMERACIÓN CORRELATIVA POR CAPÍTULO CON xsl:number. -->
   <xsl:template match="db:footnote | footnote">
     <xsl:variable name="num">
@@ -1208,17 +1268,39 @@ RC APLICADAS:
                         | colophon | glossary"
                   level="any"/>
     </xsl:variable>
-    <sup class="nota-ref">
-      <a href="#nota-{$num}" id="ref-nota-{$num}" data-nota="{$num}">
-        <xsl:value-of select="$num"/>
-      </a>
+    <!-- EL TEXTO DE LA NOTA SE SERIALIZA A TEXTO PLANO PARA EL data-attribute.
+         SE NORMALIZAN ESPACIOS. EL JS LO INYECTA EN EL PANEL. -->
+    <xsl:variable name="notaTexto">
+      <xsl:apply-templates select="db:para | para" mode="texto-plano"/>
+    </xsl:variable>
+    <sup class="fn-ref nota-ref"
+         data-fn-id="{$num}"
+         data-fn-text="{normalize-space($notaTexto)}"
+         onclick="highlightPanel('notas','{$num}')"
+         style="cursor:pointer">
+      <xsl:value-of select="$num"/>
     </sup>
   </xsl:template>
 
-  <!-- BIBLIOREF → MARCA DE CITA (PLACEHOLDER DISCRETO).
-       EL RENDERING CSL REAL VA EN FASE POSTERIOR. ANCLA AL DRAWER. -->
+  <!-- MODO texto-plano: SERIALIZA EL CONTENIDO DE UNA NOTA A TEXTO
+       SIN MARKUP, PARA EL data-fn-text. -->
+  <xsl:template match="*" mode="texto-plano">
+    <xsl:apply-templates mode="texto-plano"/>
+    <xsl:text> </xsl:text>
+  </xsl:template>
+  <xsl:template match="text()" mode="texto-plano">
+    <xsl:value-of select="."/>
+  </xsl:template>
+
+  <!-- BIBLIOREF → MARCA DE CITA. CLASE xref-bibr Y data-ref-id
+       ALINEADAS CON REVISTAS PARA LA NAVEGACIÓN CRUZADA.
+       PLACEHOLDER [cita] POR AHORA; EL RENDERING CSL (APELLIDO-AÑO)
+       SE OPTIMIZA EN FASE POSTERIOR. ANCLA AL PANEL DE REFERENCIAS. -->
   <xsl:template match="db:biblioref | biblioref">
-    <a class="cita-ref" href="#{@linkend}" data-ref="{@linkend}">
+    <a class="xref-bibr cita-ref"
+       data-ref-id="{@linkend}"
+       onclick="highlightPanel('refs','{@linkend}')"
+       style="cursor:pointer">
       <xsl:text>[cita]</xsl:text>
     </a>
   </xsl:template>
@@ -1244,6 +1326,127 @@ RC APLICADAS:
        EVITA QUE CONTENIDO DESCONOCIDO DESAPAREZCA SILENCIOSAMENTE. -->
   <xsl:template match="*">
     <xsl:apply-templates/>
+  </xsl:template>
+
+  <!-- ==========================================================
+       BIBLIOENTRY EN MODO panel-ref (Fase 3)
+       ==========================================================
+       Renderiza cada entrada bibliográfica en el panel de referencias.
+       Por ahora un formato funcional único (autor-título-editorial-año)
+       para habilitar la navegación cruzada. La bifurcación por estilo
+       (APA/Vancouver/ISO690/IEEE) se optimiza en fase posterior.
+
+       El data-ref-id (el xml:id bib-XXX) permite que:
+       - la marca [cita] del centro ancle a esta entrada (ida)
+       - el click en esta entrada lleve a la primera cita (vuelta)
+       onclick=irAlTexto para la navegación inversa (bidireccional en libros). -->
+  <xsl:template match="db:biblioentry | biblioentry" mode="panel-ref">
+    <div class="panel-item ref-item"
+         data-ref-id="{@xml:id}"
+         onclick="irAlTexto('{@xml:id}')"
+         style="cursor:pointer">
+
+      <!-- AUTORES: UN <author> POR PERSONA, CON personname/surname+firstname -->
+      <span class="ref-authors">
+        <xsl:for-each select="db:author | author">
+          <xsl:variable name="pn" select="db:personname | personname"/>
+          <xsl:value-of select="normalize-space($pn/db:surname | $pn/surname)"/>
+          <xsl:if test="$pn/db:firstname | $pn/firstname">
+            <xsl:text>, </xsl:text>
+            <xsl:value-of select="normalize-space($pn/db:firstname | $pn/firstname)"/>
+          </xsl:if>
+          <xsl:choose>
+            <xsl:when test="position() = last() - 1"><xsl:text> y </xsl:text></xsl:when>
+            <xsl:when test="position() != last()"><xsl:text>, </xsl:text></xsl:when>
+          </xsl:choose>
+        </xsl:for-each>
+        <!-- EDITORES COMO FALLBACK SI NO HAY AUTORES -->
+        <xsl:if test="not(db:author | author) and (db:editor | editor)">
+          <xsl:for-each select="db:editor | editor">
+            <xsl:variable name="pn" select="db:personname | personname"/>
+            <xsl:value-of select="normalize-space($pn/db:surname | $pn/surname)"/>
+            <xsl:if test="$pn/db:firstname | $pn/firstname">
+              <xsl:text>, </xsl:text>
+              <xsl:value-of select="normalize-space($pn/db:firstname | $pn/firstname)"/>
+            </xsl:if>
+            <xsl:choose>
+              <xsl:when test="position() = last() - 1"><xsl:text> y </xsl:text></xsl:when>
+              <xsl:when test="position() != last()"><xsl:text>, </xsl:text></xsl:when>
+            </xsl:choose>
+          </xsl:for-each>
+          <xsl:text> (ed.)</xsl:text>
+        </xsl:if>
+      </span>
+
+      <!-- AÑO -->
+      <xsl:if test="db:pubdate | pubdate">
+        <xsl:text> (</xsl:text>
+        <span class="ref-year"><xsl:value-of select="normalize-space((db:pubdate | pubdate)[1])"/></span>
+        <xsl:text>). </xsl:text>
+      </xsl:if>
+
+      <!-- TÍTULO DEL ARTÍCULO/CAPÍTULO (title) EN REDONDA -->
+      <xsl:if test="db:title | title">
+        <span class="ref-title-roman">
+          <xsl:value-of select="normalize-space((db:title | title)[1])"/>
+          <xsl:text>. </xsl:text>
+        </span>
+      </xsl:if>
+
+      <!-- FUENTE / TÍTULO DEL LIBRO (citetitle) EN CURSIVA -->
+      <xsl:if test="db:citetitle | citetitle">
+        <span class="ref-source-italic">
+          <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
+        </span>
+      </xsl:if>
+
+      <!-- VOLUMEN / NÚMERO / PÁGINAS -->
+      <xsl:if test="db:volumenum | volumenum">
+        <xsl:text>, vol. </xsl:text>
+        <xsl:value-of select="normalize-space((db:volumenum | volumenum)[1])"/>
+      </xsl:if>
+      <xsl:if test="db:issuenum | issuenum">
+        <xsl:text>, n.º </xsl:text>
+        <xsl:value-of select="normalize-space((db:issuenum | issuenum)[1])"/>
+      </xsl:if>
+      <xsl:if test="db:artpagenums | artpagenums">
+        <xsl:text>, pp. </xsl:text>
+        <xsl:value-of select="normalize-space((db:artpagenums | artpagenums)[1])"/>
+      </xsl:if>
+
+      <!-- EDITORIAL Y CIUDAD -->
+      <xsl:variable name="pubname"
+                    select="normalize-space((db:publisher/db:publishername
+                                            | publisher/publishername)[1])"/>
+      <xsl:variable name="pubcity"
+                    select="normalize-space((db:publisher/db:address/db:city
+                                            | publisher/address/city)[1])"/>
+      <xsl:if test="$pubname != '' or $pubcity != ''">
+        <xsl:text>. </xsl:text>
+        <xsl:if test="$pubcity != ''">
+          <xsl:value-of select="$pubcity"/>
+          <xsl:text>: </xsl:text>
+        </xsl:if>
+        <xsl:if test="$pubname != ''">
+          <xsl:value-of select="$pubname"/>
+        </xsl:if>
+      </xsl:if>
+
+      <xsl:text>.</xsl:text>
+
+      <!-- DOI SI TIENE -->
+      <xsl:variable name="doi"
+                    select="normalize-space((db:biblioid[@class='doi']
+                                            | biblioid[@class='doi'])[1])"/>
+      <xsl:if test="$doi != ''">
+        <div class="ref-doi">
+          <a href="https://doi.org/{$doi}" target="_blank" rel="noopener noreferrer">
+            <xsl:text>DOI: </xsl:text><xsl:value-of select="$doi"/>
+          </a>
+        </div>
+      </xsl:if>
+
+    </div>
   </xsl:template>
 
   <!-- ==========================================================
