@@ -296,11 +296,9 @@ RC APLICADAS:
           </div>
 
           <!-- ==========================================
-               JAVASCRIPT: EN FASE 1 NO HAY DRAWER NI CITAR
-               El JS externo se carga por si en el futuro
-               se agregan interacciones. citaData se
-               inyectará en Fase 5.
+               INYECCIÓN DE citaData (Fase 5) + JS EXTERNO
                ========================================== -->
+          <xsl:call-template name="emitir-citadata-libro"/>
           <script src="assets/js/gbpublisher.js"></script>
 
         </body>
@@ -594,6 +592,9 @@ RC APLICADAS:
         </div>
       </xsl:for-each>
 
+      <!-- WIDGET "CÓMO CITAR" (FASE 5) -->
+      <xsl:call-template name="emitir-widget-citar"/>
+
     </aside>
   </xsl:template>
 
@@ -810,7 +811,8 @@ RC APLICADAS:
                 <xsl:value-of select="$titulo_libro"/>
               </title>
 
-              <xsl:call-template name="emitir-meta-highwire-capitulo">
+              <xsl:call-template name="emitir-metadatos-capitulo">
+                <xsl:with-param name="capitulo" select="$capitulo"/>
                 <xsl:with-param name="capInfo" select="$capInfo"/>
                 <xsl:with-param name="capTitulo" select="$capTitulo"/>
               </xsl:call-template>
@@ -850,6 +852,12 @@ RC APLICADAS:
                   <xsl:with-param name="capitulo" select="$capitulo"/>
                 </xsl:call-template>
               </div>
+
+              <!-- INYECCIÓN DE citaData (Fase 5) ANTES DEL JS EXTERNO -->
+              <xsl:call-template name="emitir-citadata-capitulo">
+                <xsl:with-param name="capInfo" select="$capInfo"/>
+                <xsl:with-param name="capTitulo" select="$capTitulo"/>
+              </xsl:call-template>
 
               <!-- JS EXTERNO COMPARTIDO -->
               <script src="assets/js/gbpublisher.js"></script>
@@ -981,11 +989,8 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <!-- PLACEHOLDER "CÓMO CITAR" (WIDGET COMPLETO EN FASE 5) -->
-      <div class="meta-seccion citar-placeholder">
-        <div class="meta-label">Cómo citar</div>
-        <div class="meta-valor citar-reservado">Disponible próximamente</div>
-      </div>
+      <!-- WIDGET "CÓMO CITAR" (FASE 5) -->
+      <xsl:call-template name="emitir-widget-citar"/>
 
       <!-- ENLACE DE VUELTA AL ÍNDICE -->
       <div class="meta-seccion">
@@ -1450,31 +1455,99 @@ RC APLICADAS:
   </xsl:template>
 
   <!-- ==========================================================
-       META TAGS HIGHWIRE PARA CAPÍTULO (Fase 2 — básico)
+       ========= FASE 4: METADATOS COMPLETOS POR CAPÍTULO =======
        ==========================================================
-       Detalle fino de metadatos por capítulo en Fase 4. -->
-  <xsl:template name="emitir-meta-highwire-capitulo">
+       Orquestador: emite Highwire + Dublin Core + Open Graph +
+       Twitter Cards + JSON-LD Schema.org para cada capítulo.
+
+       FUENTES DE DATOS:
+       - Del capítulo (cambia): $capInfo (título, autores, abstract,
+         keywords, DOI, licencia).
+       - Del libro (heredado, constante): variables globales de Fase 1
+         ($titulo_libro, $isbn_print, $editorial, $anio_publicacion,
+         $idioma_principal, $imagen_tapa, $doi_libro).
+
+       BASE DOCUMENTAL (Google Scholar Inclusion Guidelines):
+       - citation_title = título del capítulo (NO el del libro).
+       - citation_book_title = título del libro contenedor.
+       - citation_isbn / citation_publisher / citation_publication_date
+         para la obra contenedora.
+       - DC como complemento (last resort per Scholar); precisión de
+         "capítulo" en JSON-LD @type=Chapter (schema.org). -->
+  <xsl:template name="emitir-metadatos-capitulo">
+    <xsl:param name="capitulo"/>
     <xsl:param name="capInfo"/>
     <xsl:param name="capTitulo"/>
 
+    <!-- VARIABLES DERIVADAS DEL CAPÍTULO, REUSADAS POR TODOS LOS BLOQUES -->
+    <xsl:variable name="capDoi"
+                  select="normalize-space(($capInfo/db:biblioid[@class='doi']
+                                          | $capInfo/biblioid[@class='doi'])[1])"/>
+    <xsl:variable name="capResumen"
+                  select="normalize-space(($capInfo/db:abstract/db:para
+                                          | $capInfo/abstract/para)[1])"/>
+    <xsl:variable name="capLicUrl"
+                  select="normalize-space(($capInfo/db:legalnotice[@role='licencia']/db:para/db:link/@xlink:href
+                                          | $capInfo/legalnotice[@role='licencia']/para/link/@xlink:href)[1])"/>
+    <xsl:variable name="capLang">
+      <xsl:choose>
+        <xsl:when test="normalize-space($capitulo/@xml:lang) != ''">
+          <xsl:value-of select="$capitulo/@xml:lang"/>
+        </xsl:when>
+        <xsl:otherwise><xsl:value-of select="$idioma_principal"/></xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+
+    <xsl:call-template name="meta-highwire-cap">
+      <xsl:with-param name="capInfo" select="$capInfo"/>
+      <xsl:with-param name="capTitulo" select="$capTitulo"/>
+      <xsl:with-param name="capDoi" select="$capDoi"/>
+      <xsl:with-param name="capResumen" select="$capResumen"/>
+      <xsl:with-param name="capLang" select="$capLang"/>
+    </xsl:call-template>
+
+    <xsl:call-template name="meta-dc-cap">
+      <xsl:with-param name="capInfo" select="$capInfo"/>
+      <xsl:with-param name="capTitulo" select="$capTitulo"/>
+      <xsl:with-param name="capDoi" select="$capDoi"/>
+      <xsl:with-param name="capResumen" select="$capResumen"/>
+      <xsl:with-param name="capLicUrl" select="$capLicUrl"/>
+      <xsl:with-param name="capLang" select="$capLang"/>
+    </xsl:call-template>
+
+    <xsl:call-template name="meta-og-twitter-cap">
+      <xsl:with-param name="capTitulo" select="$capTitulo"/>
+      <xsl:with-param name="capResumen" select="$capResumen"/>
+      <xsl:with-param name="capLang" select="$capLang"/>
+    </xsl:call-template>
+
+    <xsl:call-template name="meta-jsonld-cap">
+      <xsl:with-param name="capInfo" select="$capInfo"/>
+      <xsl:with-param name="capTitulo" select="$capTitulo"/>
+      <xsl:with-param name="capDoi" select="$capDoi"/>
+      <xsl:with-param name="capResumen" select="$capResumen"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- ==========================================================
+       BLOQUE 1: HIGHWIRE PRESS (Google Scholar) — CAPÍTULO
+       ========================================================== -->
+  <xsl:template name="meta-highwire-cap">
+    <xsl:param name="capInfo"/>
+    <xsl:param name="capTitulo"/>
+    <xsl:param name="capDoi"/>
+    <xsl:param name="capResumen"/>
+    <xsl:param name="capLang"/>
+
+    <xsl:comment> METADATOS: Highwire Press — Google Scholar (capítulo) </xsl:comment>
+
+    <!-- TÍTULO DEL CAPÍTULO (NO EL DEL LIBRO) -->
     <meta name="citation_title" content="{$capTitulo}"/>
-    <meta name="citation_inbook_title" content="{$titulo_libro}"/>
 
-    <xsl:if test="$editorial != ''">
-      <meta name="citation_publisher" content="{$editorial}"/>
-    </xsl:if>
+    <!-- TÍTULO DEL LIBRO CONTENEDOR -->
+    <meta name="citation_book_title" content="{$titulo_libro}"/>
 
-    <xsl:if test="$isbn_print != ''">
-      <meta name="citation_isbn" content="{$isbn_print}"/>
-    </xsl:if>
-
-    <xsl:if test="$anio_publicacion != ''">
-      <meta name="citation_publication_date" content="{$anio_publicacion}"/>
-    </xsl:if>
-
-    <meta name="citation_language" content="{$idioma_principal}"/>
-
-    <!-- AUTORES DEL CAPÍTULO -->
+    <!-- AUTORES DEL CAPÍTULO CON ORCID Y AFILIACIÓN -->
     <xsl:for-each select="$capInfo/db:author | $capInfo/author">
       <meta name="citation_author"
             content="{normalize-space(db:personname/db:surname | personname/surname)}, {normalize-space(db:personname/db:firstname | personname/firstname)}"/>
@@ -1482,15 +1555,360 @@ RC APLICADAS:
       <xsl:if test="$orcid_url != ''">
         <meta name="citation_author_orcid" content="{$orcid_url}"/>
       </xsl:if>
+      <xsl:variable name="orgname" select="(db:affiliation/db:orgname | affiliation/orgname)[1]"/>
+      <xsl:if test="$orgname != ''">
+        <meta name="citation_author_institution" content="{normalize-space($orgname)}"/>
+      </xsl:if>
     </xsl:for-each>
 
-    <!-- DOI DEL CAPÍTULO SI TIENE -->
-    <xsl:variable name="capDoi"
-                  select="normalize-space(($capInfo/db:biblioid[@class='doi']
-                                          | $capInfo/biblioid[@class='doi'])[1])"/>
+    <!-- DATOS HEREDADOS DE LA OBRA CONTENEDORA -->
     <xsl:if test="$capDoi != ''">
       <meta name="citation_doi" content="{$capDoi}"/>
     </xsl:if>
+    <xsl:if test="$isbn_print != ''">
+      <meta name="citation_isbn" content="{$isbn_print}"/>
+    </xsl:if>
+    <xsl:if test="$isbn_electronic != ''">
+      <meta name="citation_isbn" content="{$isbn_electronic}"/>
+    </xsl:if>
+    <xsl:if test="$editorial != ''">
+      <meta name="citation_publisher" content="{$editorial}"/>
+    </xsl:if>
+    <xsl:if test="$anio_publicacion != ''">
+      <meta name="citation_publication_date" content="{$anio_publicacion}"/>
+    </xsl:if>
+
+    <meta name="citation_language" content="{$capLang}"/>
+
+    <!-- RESUMEN DEL CAPÍTULO SI TIENE -->
+    <xsl:if test="$capResumen != ''">
+      <meta name="citation_abstract" content="{$capResumen}"/>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
+       BLOQUE 2: DUBLIN CORE — CAPÍTULO
+       ==========================================================
+       DC como complemento (Scholar lo trata como last resort).
+       DC.type = Text (valor DCMI oficial); la precisión "capítulo"
+       va en el JSON-LD (@type=Chapter). -->
+  <xsl:template name="meta-dc-cap">
+    <xsl:param name="capInfo"/>
+    <xsl:param name="capTitulo"/>
+    <xsl:param name="capDoi"/>
+    <xsl:param name="capResumen"/>
+    <xsl:param name="capLicUrl"/>
+    <xsl:param name="capLang"/>
+
+    <xsl:comment> METADATOS: Dublin Core (capítulo) </xsl:comment>
+
+    <meta name="DC.title" content="{$capTitulo}"/>
+    <meta name="DC.language" content="{$capLang}"/>
+    <meta name="DC.type" content="Text"/>
+    <meta name="DC.format" content="text/html"/>
+
+    <!-- OBRA CONTENEDORA -->
+    <meta name="DC.relation.ispartof" content="{$titulo_libro}"/>
+
+    <xsl:if test="$editorial != ''">
+      <meta name="DC.publisher" content="{$editorial}"/>
+    </xsl:if>
+    <xsl:if test="$capDoi != ''">
+      <meta name="DC.identifier" content="https://doi.org/{$capDoi}"/>
+    </xsl:if>
+    <xsl:if test="$anio_publicacion != ''">
+      <meta name="DC.date" content="{$anio_publicacion}"/>
+    </xsl:if>
+    <xsl:if test="$capResumen != ''">
+      <meta name="DC.description" content="{$capResumen}"/>
+    </xsl:if>
+    <xsl:if test="$capLicUrl != ''">
+      <meta name="DC.rights" content="{$capLicUrl}"/>
+    </xsl:if>
+
+    <!-- AUTORES COMO DC.creator -->
+    <xsl:for-each select="$capInfo/db:author | $capInfo/author">
+      <meta name="DC.creator"
+            content="{normalize-space(db:personname/db:surname | personname/surname)}, {normalize-space(db:personname/db:firstname | personname/firstname)}"/>
+    </xsl:for-each>
+
+    <!-- KEYWORDS COMO DC.subject (UNO POR TÉRMINO, TODOS LOS IDIOMAS) -->
+    <xsl:for-each select="$capInfo/db:keywordset/db:keyword | $capInfo/keywordset/keyword">
+      <meta name="DC.subject" content="{normalize-space(.)}"/>
+    </xsl:for-each>
+  </xsl:template>
+
+  <!-- ==========================================================
+       BLOQUE 3: OPEN GRAPH + TWITTER CARDS — CAPÍTULO
+       ========================================================== -->
+  <xsl:template name="meta-og-twitter-cap">
+    <xsl:param name="capTitulo"/>
+    <xsl:param name="capResumen"/>
+    <xsl:param name="capLang"/>
+
+    <xsl:comment> METADATOS: Open Graph + Twitter Cards (capítulo) </xsl:comment>
+
+    <!-- og:type=book: el capítulo es parte de un libro -->
+    <meta property="og:type" content="book"/>
+    <meta property="og:title" content="{$capTitulo}"/>
+    <meta property="og:site_name" content="{$titulo_libro}"/>
+    <meta property="og:locale" content="{$capLang}"/>
+    <xsl:if test="$capResumen != ''">
+      <meta property="og:description" content="{$capResumen}"/>
+    </xsl:if>
+    <xsl:if test="$imagen_tapa != ''">
+      <meta property="og:image" content="{$imagen_tapa}"/>
+    </xsl:if>
+    <xsl:if test="$isbn_print != ''">
+      <meta property="og:book:isbn" content="{$isbn_print}"/>
+    </xsl:if>
+
+    <meta name="twitter:card" content="summary"/>
+    <meta name="twitter:title" content="{$capTitulo}"/>
+    <xsl:if test="$capResumen != ''">
+      <meta name="twitter:description" content="{$capResumen}"/>
+    </xsl:if>
+    <xsl:if test="$imagen_tapa != ''">
+      <meta name="twitter:image" content="{$imagen_tapa}"/>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
+       BLOQUE 4: JSON-LD Schema.org — CAPÍTULO (@type=Chapter)
+       ==========================================================
+       El capítulo es un Chapter que es isPartOf un Book.
+       El Book lleva su publisher (Organization) e isbn.
+       Los autores son Person con affiliation Organization.
+       Construido con xsl:text para control preciso del JSON. -->
+  <xsl:template name="meta-jsonld-cap">
+    <xsl:param name="capInfo"/>
+    <xsl:param name="capTitulo"/>
+    <xsl:param name="capDoi"/>
+    <xsl:param name="capResumen"/>
+
+    <xsl:comment> METADATOS: Schema.org JSON-LD (Chapter) </xsl:comment>
+
+    <script type="application/ld+json">
+      <xsl:text>{"@context":"https://schema.org","@type":"Chapter",</xsl:text>
+      <xsl:text>"name":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$capTitulo"/></xsl:call-template>
+      <xsl:text>"</xsl:text>
+
+      <!-- DOI COMO identifier -->
+      <xsl:if test="$capDoi != ''">
+        <xsl:text>,"identifier":{"@type":"PropertyValue","propertyID":"DOI","value":"</xsl:text>
+        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$capDoi"/></xsl:call-template>
+        <xsl:text>"}</xsl:text>
+      </xsl:if>
+
+      <!-- ABSTRACT -->
+      <xsl:if test="$capResumen != ''">
+        <xsl:text>,"abstract":"</xsl:text>
+        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$capResumen"/></xsl:call-template>
+        <xsl:text>"</xsl:text>
+      </xsl:if>
+
+      <!-- AUTORES (Person CON affiliation) -->
+      <xsl:if test="$capInfo/db:author | $capInfo/author">
+        <xsl:text>,"author":[</xsl:text>
+        <xsl:for-each select="$capInfo/db:author | $capInfo/author">
+          <xsl:if test="position() &gt; 1"><xsl:text>,</xsl:text></xsl:if>
+          <xsl:text>{"@type":"Person","name":"</xsl:text>
+          <xsl:call-template name="escapar-json">
+            <xsl:with-param name="txt"
+              select="concat(normalize-space(db:personname/db:firstname | personname/firstname),
+                             ' ',
+                             normalize-space(db:personname/db:surname | personname/surname))"/>
+          </xsl:call-template>
+          <xsl:text>"</xsl:text>
+          <xsl:variable name="orgname" select="(db:affiliation/db:orgname | affiliation/orgname)[1]"/>
+          <xsl:if test="$orgname != ''">
+            <xsl:text>,"affiliation":{"@type":"Organization","name":"</xsl:text>
+            <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="normalize-space($orgname)"/></xsl:call-template>
+            <xsl:text>"}</xsl:text>
+          </xsl:if>
+          <xsl:variable name="orcid_url" select="(db:uri[@type='orcid'] | uri[@type='orcid'])[1]"/>
+          <xsl:if test="$orcid_url != ''">
+            <xsl:text>,"identifier":"</xsl:text>
+            <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="normalize-space($orcid_url)"/></xsl:call-template>
+            <xsl:text>"</xsl:text>
+          </xsl:if>
+          <xsl:text>}</xsl:text>
+        </xsl:for-each>
+        <xsl:text>]</xsl:text>
+      </xsl:if>
+
+      <!-- isPartOf: EL LIBRO CONTENEDOR -->
+      <xsl:text>,"isPartOf":{"@type":"Book","name":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$titulo_libro"/></xsl:call-template>
+      <xsl:text>"</xsl:text>
+      <xsl:if test="$isbn_print != ''">
+        <xsl:text>,"isbn":"</xsl:text>
+        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$isbn_print"/></xsl:call-template>
+        <xsl:text>"</xsl:text>
+      </xsl:if>
+      <xsl:if test="$editorial != ''">
+        <xsl:text>,"publisher":{"@type":"Organization","name":"</xsl:text>
+        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$editorial"/></xsl:call-template>
+        <xsl:text>"}</xsl:text>
+      </xsl:if>
+      <xsl:if test="$anio_publicacion != ''">
+        <xsl:text>,"datePublished":"</xsl:text>
+        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_publicacion"/></xsl:call-template>
+        <xsl:text>"</xsl:text>
+      </xsl:if>
+      <xsl:text>}</xsl:text>
+
+      <xsl:text>}</xsl:text>
+    </script>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: ESCAPAR STRING PARA JSON
+       ==========================================================
+       Escapa backslash, comilla doble y saltos de línea, que son
+       los caracteres que romperían el JSON embebido en el script. -->
+  <xsl:template name="escapar-json">
+    <xsl:param name="txt" as="xs:string"/>
+    <xsl:variable name="t1" select="replace($txt, '\\', '\\\\')"/>
+    <xsl:variable name="t2" select="replace($t1, '&quot;', '\\&quot;')"/>
+    <xsl:variable name="t3" select="replace($t2, '&#10;', ' ')"/>
+    <xsl:variable name="t4" select="replace($t3, '&#13;', ' ')"/>
+    <xsl:variable name="t5" select="replace($t4, '&#9;', ' ')"/>
+    <xsl:value-of select="$t5"/>
+  </xsl:template>
+
+  <!-- ==========================================================
+       ============= FASE 5: WIDGET "CÓMO CITAR" ================
+       ==========================================================
+       - emitir-widget-citar: el bloque visual (botones + área + copiar).
+         Reutilizable en index (libro) y en capítulo.
+       - emitir-citadata-libro / emitir-citadata-capitulo: el <script>
+         inline con var citaData = {...} que el gbpublisher.js consume.
+         Se inyecta ANTES del <script src> externo (Opción A, Fase 1). -->
+
+  <!-- WIDGET VISUAL: BOTONES DE FORMATO + ÁREA DE CITA + COPIAR.
+       Estructura alineada con revistas para reusar CSS (.citar-wrapper,
+       .citar-toggle, .citar-formatos, .citar-btn, .citar-texto,
+       .citar-copiar) e IDs que el JS espera (citar-output para el área,
+       citar-copiar-btn para el botón). El <details> lo hace colapsable.
+       El JS inicializa el contenido en DOMContentLoaded (APA por defecto). -->
+  <xsl:template name="emitir-widget-citar">
+    <div class="citar-wrapper">
+      <details>
+        <summary class="citar-toggle">Cómo citar</summary>
+        <div class="citar-formatos">
+          <button class="citar-btn active" onclick="mostrarFormato(this,'apa')">APA</button>
+          <button class="citar-btn" onclick="mostrarFormato(this,'ieee')">IEEE</button>
+          <button class="citar-btn" onclick="mostrarFormato(this,'vancouver')">Vancouver</button>
+          <button class="citar-btn" onclick="mostrarFormato(this,'bibtex')">BibTeX</button>
+          <button class="citar-btn" onclick="mostrarFormato(this,'ris')">RIS</button>
+        </div>
+        <pre class="citar-texto" id="citar-output"></pre>
+        <button class="citar-copiar" id="citar-copiar-btn" onclick="copiarCita()">Copiar</button>
+      </details>
+    </div>
+  </xsl:template>
+
+  <!-- INYECCIÓN DE citaData PARA EL LIBRO (index.html) -->
+  <xsl:template name="emitir-citadata-libro">
+    <script>
+      <xsl:text>var citaData = {</xsl:text>
+      <xsl:text>"tipo":"libro",</xsl:text>
+      <xsl:text>"titulo":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$titulo_libro"/></xsl:call-template>
+      <xsl:text>","editorial":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$editorial"/></xsl:call-template>
+      <xsl:text>","ciudad":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$ciudad_pub"/></xsl:call-template>
+      <xsl:text>","isbn":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$isbn_print"/></xsl:call-template>
+      <xsl:text>","doi":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$doi_libro"/></xsl:call-template>
+      <xsl:text>","url":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$url_libro"/></xsl:call-template>
+      <xsl:text>","anio":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_publicacion"/></xsl:call-template>
+      <xsl:text>",</xsl:text>
+
+      <!-- AUTORES DEL LIBRO -->
+      <xsl:text>"autores":[</xsl:text>
+      <xsl:for-each select="$info/db:author | $info/author">
+        <xsl:if test="position() &gt; 1"><xsl:text>,</xsl:text></xsl:if>
+        <xsl:call-template name="persona-json"><xsl:with-param name="persona" select="."/></xsl:call-template>
+      </xsl:for-each>
+      <xsl:text>],</xsl:text>
+
+      <!-- EDITORES DEL LIBRO -->
+      <xsl:text>"editores":[</xsl:text>
+      <xsl:for-each select="$info/db:editor | $info/editor">
+        <xsl:if test="position() &gt; 1"><xsl:text>,</xsl:text></xsl:if>
+        <xsl:call-template name="persona-json"><xsl:with-param name="persona" select="."/></xsl:call-template>
+      </xsl:for-each>
+      <xsl:text>]</xsl:text>
+
+      <xsl:text>};</xsl:text>
+    </script>
+  </xsl:template>
+
+  <!-- INYECCIÓN DE citaData PARA UN CAPÍTULO (h-*.html) -->
+  <xsl:template name="emitir-citadata-capitulo">
+    <xsl:param name="capInfo"/>
+    <xsl:param name="capTitulo"/>
+
+    <xsl:variable name="capDoi"
+                  select="normalize-space(($capInfo/db:biblioid[@class='doi']
+                                          | $capInfo/biblioid[@class='doi'])[1])"/>
+    <script>
+      <xsl:text>var citaData = {</xsl:text>
+      <xsl:text>"tipo":"capitulo",</xsl:text>
+      <xsl:text>"titulo":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$capTitulo"/></xsl:call-template>
+      <xsl:text>","tituloLibro":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$titulo_libro"/></xsl:call-template>
+      <xsl:text>","editorial":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$editorial"/></xsl:call-template>
+      <xsl:text>","ciudad":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$ciudad_pub"/></xsl:call-template>
+      <xsl:text>","doi":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$capDoi"/></xsl:call-template>
+      <xsl:text>","url":"","anio":"</xsl:text>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_publicacion"/></xsl:call-template>
+      <xsl:text>",</xsl:text>
+
+      <!-- AUTORES DEL CAPÍTULO -->
+      <xsl:text>"autores":[</xsl:text>
+      <xsl:for-each select="$capInfo/db:author | $capInfo/author">
+        <xsl:if test="position() &gt; 1"><xsl:text>,</xsl:text></xsl:if>
+        <xsl:call-template name="persona-json"><xsl:with-param name="persona" select="."/></xsl:call-template>
+      </xsl:for-each>
+      <xsl:text>],</xsl:text>
+
+      <!-- EDITORES DEL LIBRO (PARA "En: ...") -->
+      <xsl:text>"editores":[</xsl:text>
+      <xsl:for-each select="$info/db:editor | $info/editor">
+        <xsl:if test="position() &gt; 1"><xsl:text>,</xsl:text></xsl:if>
+        <xsl:call-template name="persona-json"><xsl:with-param name="persona" select="."/></xsl:call-template>
+      </xsl:for-each>
+      <xsl:text>]</xsl:text>
+
+      <xsl:text>};</xsl:text>
+    </script>
+  </xsl:template>
+
+  <!-- AUXILIAR: UNA PERSONA COMO {"apellido":"X","nombre":"Y"} -->
+  <xsl:template name="persona-json">
+    <xsl:param name="persona"/>
+    <xsl:variable name="pn" select="$persona/db:personname | $persona/personname"/>
+    <xsl:text>{"apellido":"</xsl:text>
+    <xsl:call-template name="escapar-json">
+      <xsl:with-param name="txt" select="normalize-space($pn/db:surname | $pn/surname)"/>
+    </xsl:call-template>
+    <xsl:text>","nombre":"</xsl:text>
+    <xsl:call-template name="escapar-json">
+      <xsl:with-param name="txt" select="normalize-space($pn/db:firstname | $pn/firstname)"/>
+    </xsl:call-template>
+    <xsl:text>"}</xsl:text>
   </xsl:template>
 
 </xsl:stylesheet>

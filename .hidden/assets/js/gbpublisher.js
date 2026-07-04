@@ -69,18 +69,41 @@ function iniciales(nombre) {
 // GENERAR CITA SEGÚN FORMATO
 // ============================================
 function generarCita(formato) {
-  var d      = citaData;
+  var d = citaData;
+  if (d.tipo === 'libro')    return generarCitaLibro(formato, d);
+  if (d.tipo === 'capitulo') return generarCitaCapitulo(formato, d);
+  return generarCitaArticulo(formato, d);
+}
+
+// ============================================
+// LOCALIZADOR HTML: DOI Y/O URL (NO PÁGINAS)
+// ============================================
+function localizadorHtml(d) {
+  var loc = '';
+  if (d.doi) loc = 'https://doi.org/' + d.doi;
+  else if (d.url) loc = d.url;
+  return loc;
+}
+
+// ============================================
+// AUTORES O EDITORES SEGÚN DISPONIBILIDAD
+// ============================================
+function personasCita(d) {
+  if (d.autores && d.autores.length > 0) return { lista: d.autores, esEditor: false };
+  if (d.editores && d.editores.length > 0) return { lista: d.editores, esEditor: true };
+  return { lista: [], esEditor: false };
+}
+
+// ============================================
+// CITA DE ARTÍCULO (REVISTAS)
+// ============================================
+function generarCitaArticulo(formato, d) {
   var doiUrl = d.doi ? 'https://doi.org/' + d.doi : '';
   var pages  = d.paginaI ? d.paginaI + (d.paginaF ? '\u2013' + d.paginaF : '') : '';
 
-  // APA 7
   if (formato === 'apa') {
-    var lista = d.autores.map(function(a) {
-      return a.apellido + ', ' + iniciales(a.nombre);
-    });
-    var autStr = lista.length === 1
-      ? lista[0]
-      : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
+    var lista = d.autores.map(function(a) { return a.apellido + ', ' + iniciales(a.nombre); });
+    var autStr = lista.length === 1 ? lista[0] : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
     var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '. ';
     cita += d.revista;
     if (d.volumen) cita += ', ' + d.volumen;
@@ -90,15 +113,9 @@ function generarCita(formato) {
     if (doiUrl) cita += ' ' + doiUrl;
     return cita;
   }
-
-  // IEEE
   if (formato === 'ieee') {
-    var lista = d.autores.map(function(a) {
-      return iniciales(a.nombre) + ' ' + a.apellido;
-    });
-    var autStr = lista.length <= 3
-      ? lista.join(', ')
-      : lista[0] + ' et al.';
+    var lista = d.autores.map(function(a) { return iniciales(a.nombre) + ' ' + a.apellido; });
+    var autStr = lista.length <= 3 ? lista.join(', ') : lista[0] + ' et al.';
     var cita = autStr + ', "' + d.titulo + '," ';
     cita += d.revista;
     if (d.volumen) cita += ', vol. ' + d.volumen;
@@ -109,15 +126,9 @@ function generarCita(formato) {
     cita += '.';
     return cita;
   }
-
-  // VANCOUVER
   if (formato === 'vancouver') {
-    var lista = d.autores.map(function(a) {
-      return a.apellido + ' ' + iniciales(a.nombre).replace(/\./g, '').replace(/ /g, '');
-    });
-    var autStr = lista.length > 6
-      ? lista.slice(0, 6).join(', ') + ', et al'
-      : lista.join(', ');
+    var lista = d.autores.map(function(a) { return a.apellido + ' ' + iniciales(a.nombre).replace(/\./g, '').replace(/ /g, ''); });
+    var autStr = lista.length > 6 ? lista.slice(0, 6).join(', ') + ', et al' : lista.join(', ');
     var cita = autStr + '. ' + d.titulo + '. ';
     cita += d.revista + '. ';
     cita += d.anio;
@@ -128,14 +139,9 @@ function generarCita(formato) {
     if (d.doi) cita += ' doi:' + d.doi;
     return cita;
   }
-
-  // BIBTEX
   if (formato === 'bibtex') {
-    var citekey = (d.autores[0] ? d.autores[0].apellido.toLowerCase() : 'autor')
-                  + d.anio;
-    var autStr = d.autores.map(function(a) {
-      return a.apellido + ', ' + a.nombre;
-    }).join(' and ');
+    var citekey = (d.autores[0] ? d.autores[0].apellido.toLowerCase() : 'autor') + d.anio;
+    var autStr = d.autores.map(function(a) { return a.apellido + ', ' + a.nombre; }).join(' and ');
     var cita = '@article{' + citekey + ',\n';
     cita += '  author  = {' + autStr + '},\n';
     cita += '  title   = {' + d.titulo + '},\n';
@@ -148,13 +154,9 @@ function generarCita(formato) {
     cita += '\n}';
     return cita;
   }
-
-  // RIS
   if (formato === 'ris') {
     var cita = 'TY  - JOUR\n';
-    d.autores.forEach(function(a) {
-      cita += 'AU  - ' + a.apellido + ', ' + a.nombre + '\n';
-    });
+    d.autores.forEach(function(a) { cita += 'AU  - ' + a.apellido + ', ' + a.nombre + '\n'; });
     cita += 'TI  - ' + d.titulo + '\n';
     cita += 'JO  - ' + d.revista + '\n';
     cita += 'PY  - ' + d.anio + '\n';
@@ -166,7 +168,154 @@ function generarCita(formato) {
     cita += 'ER  - ';
     return cita;
   }
+  return '';
+}
 
+// ============================================
+// CITA DE LIBRO (index.html)
+// ============================================
+function generarCitaLibro(formato, d) {
+  var p       = personasCita(d);
+  var loc     = localizadorHtml(d);
+  var edMarca = p.esEditor ? (p.lista.length > 1 ? ' (Eds.)' : ' (Ed.)') : '';
+
+  if (formato === 'apa') {
+    var lista = p.lista.map(function(a) { return a.apellido + ', ' + iniciales(a.nombre); });
+    var autStr = lista.length === 1 ? lista[0] : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
+    if (p.esEditor) autStr += edMarca;
+    var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '.';
+    if (d.editorial) cita += ' ' + d.editorial + '.';
+    if (loc) cita += ' ' + loc;
+    return cita;
+  }
+  if (formato === 'ieee') {
+    var lista = p.lista.map(function(a) { return iniciales(a.nombre) + ' ' + a.apellido; });
+    var autStr = lista.length <= 3 ? lista.join(', ') : lista[0] + ' et al.';
+    var cita = autStr + ', ' + d.titulo + '. ';
+    if (d.ciudad)    cita += d.ciudad + ': ';
+    if (d.editorial) cita += d.editorial;
+    if (d.anio)      cita += ', ' + d.anio;
+    cita += '.';
+    if (d.doi) cita += ' doi: ' + d.doi;
+    return cita;
+  }
+  if (formato === 'vancouver') {
+    var lista = p.lista.map(function(a) { return a.apellido + ' ' + iniciales(a.nombre).replace(/\./g, '').replace(/ /g, ''); });
+    var autStr = lista.length > 6 ? lista.slice(0, 6).join(', ') + ', et al' : lista.join(', ');
+    var cita = autStr + '. ' + d.titulo + '. ';
+    if (d.ciudad)    cita += d.ciudad + ': ';
+    if (d.editorial) cita += d.editorial + '; ';
+    cita += d.anio + '.';
+    if (d.doi) cita += ' doi:' + d.doi;
+    return cita;
+  }
+  if (formato === 'bibtex') {
+    var citekey = (p.lista[0] ? p.lista[0].apellido.toLowerCase().replace(/\s/g, '') : 'libro') + d.anio;
+    var campo   = p.esEditor ? 'editor' : 'author';
+    var persStr = p.lista.map(function(a) { return a.apellido + ', ' + a.nombre; }).join(' and ');
+    var cita = '@book{' + citekey + ',\n';
+    cita += '  ' + campo + '    = {' + persStr + '},\n';
+    cita += '  title     = {' + d.titulo + '},\n';
+    if (d.editorial) cita += '  publisher = {' + d.editorial + '},\n';
+    if (d.ciudad)    cita += '  address   = {' + d.ciudad + '},\n';
+    cita += '  year      = {' + d.anio + '}';
+    if (d.isbn) cita += ',\n  isbn      = {' + d.isbn + '}';
+    if (d.doi)  cita += ',\n  doi       = {' + d.doi + '}';
+    if (d.url)  cita += ',\n  url       = {' + d.url + '}';
+    cita += '\n}';
+    return cita;
+  }
+  if (formato === 'ris') {
+    var campo = p.esEditor ? 'A2' : 'AU';
+    var cita = 'TY  - BOOK\n';
+    p.lista.forEach(function(a) { cita += campo + '  - ' + a.apellido + ', ' + a.nombre + '\n'; });
+    cita += 'TI  - ' + d.titulo + '\n';
+    if (d.editorial) cita += 'PB  - ' + d.editorial + '\n';
+    if (d.ciudad)    cita += 'CY  - ' + d.ciudad + '\n';
+    cita += 'PY  - ' + d.anio + '\n';
+    if (d.isbn) cita += 'SN  - ' + d.isbn + '\n';
+    if (d.doi)  cita += 'DO  - ' + d.doi + '\n';
+    if (d.url)  cita += 'UR  - ' + d.url + '\n';
+    cita += 'ER  - ';
+    return cita;
+  }
+  return '';
+}
+
+// ============================================
+// CITA DE CAPÍTULO (h-*.html)
+// ============================================
+function generarCitaCapitulo(formato, d) {
+  var loc = localizadorHtml(d);
+  var eds = (d.editores && d.editores.length > 0) ? d.editores : [];
+
+  if (formato === 'apa') {
+    var lista = d.autores.map(function(a) { return a.apellido + ', ' + iniciales(a.nombre); });
+    var autStr = lista.length === 1 ? lista[0] : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
+    var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '. En ';
+    if (eds.length > 0) {
+      var edStr = eds.map(function(e) { return iniciales(e.nombre) + ' ' + e.apellido; }).join(', ');
+      cita += edStr + (eds.length > 1 ? ' (Eds.), ' : ' (Ed.), ');
+    }
+    cita += d.tituloLibro + '.';
+    if (d.editorial) cita += ' ' + d.editorial + '.';
+    if (loc) cita += ' ' + loc;
+    return cita;
+  }
+  if (formato === 'ieee') {
+    var lista = d.autores.map(function(a) { return iniciales(a.nombre) + ' ' + a.apellido; });
+    var autStr = lista.length <= 3 ? lista.join(', ') : lista[0] + ' et al.';
+    var cita = autStr + ', "' + d.titulo + '," in ' + d.tituloLibro + ', ';
+    if (d.ciudad)    cita += d.ciudad + ': ';
+    if (d.editorial) cita += d.editorial;
+    if (d.anio)      cita += ', ' + d.anio;
+    cita += '.';
+    if (d.doi) cita += ' doi: ' + d.doi;
+    return cita;
+  }
+  if (formato === 'vancouver') {
+    var lista = d.autores.map(function(a) { return a.apellido + ' ' + iniciales(a.nombre).replace(/\./g, '').replace(/ /g, ''); });
+    var autStr = lista.length > 6 ? lista.slice(0, 6).join(', ') + ', et al' : lista.join(', ');
+    var cita = autStr + '. ' + d.titulo + '. En: ' + d.tituloLibro + '. ';
+    if (d.ciudad)    cita += d.ciudad + ': ';
+    if (d.editorial) cita += d.editorial + '; ';
+    cita += d.anio + '.';
+    if (d.doi) cita += ' doi:' + d.doi;
+    return cita;
+  }
+  if (formato === 'bibtex') {
+    var citekey = (d.autores[0] ? d.autores[0].apellido.toLowerCase().replace(/\s/g, '') : 'cap') + d.anio;
+    var autStr = d.autores.map(function(a) { return a.apellido + ', ' + a.nombre; }).join(' and ');
+    var cita = '@incollection{' + citekey + ',\n';
+    cita += '  author    = {' + autStr + '},\n';
+    cita += '  title     = {' + d.titulo + '},\n';
+    cita += '  booktitle = {' + d.tituloLibro + '},\n';
+    if (eds.length > 0) {
+      var edStr = eds.map(function(e) { return e.apellido + ', ' + e.nombre; }).join(' and ');
+      cita += '  editor    = {' + edStr + '},\n';
+    }
+    if (d.editorial) cita += '  publisher = {' + d.editorial + '},\n';
+    if (d.ciudad)    cita += '  address   = {' + d.ciudad + '},\n';
+    cita += '  year      = {' + d.anio + '}';
+    if (d.doi) cita += ',\n  doi       = {' + d.doi + '}';
+    if (d.url) cita += ',\n  url       = {' + d.url + '}';
+    cita += '\n}';
+    return cita;
+  }
+  if (formato === 'ris') {
+    var cita = 'TY  - CHAP\n';
+    d.autores.forEach(function(a) { cita += 'AU  - ' + a.apellido + ', ' + a.nombre + '\n'; });
+    cita += 'TI  - ' + d.titulo + '\n';
+    cita += 'T2  - ' + d.tituloLibro + '\n';
+    eds.forEach(function(e) { cita += 'A2  - ' + e.apellido + ', ' + e.nombre + '\n'; });
+    if (d.editorial) cita += 'PB  - ' + d.editorial + '\n';
+    if (d.ciudad)    cita += 'CY  - ' + d.ciudad + '\n';
+    cita += 'PY  - ' + d.anio + '\n';
+    if (d.doi) cita += 'DO  - ' + d.doi + '\n';
+    if (d.url) cita += 'UR  - ' + d.url + '\n';
+    cita += 'ER  - ';
+    return cita;
+  }
   return '';
 }
 
