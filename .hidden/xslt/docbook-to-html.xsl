@@ -162,6 +162,22 @@ RC APLICADAS:
        | $info/bibliomisc[@role='mes-publicacion'])[1])"/>
   </xsl:variable>
 
+  <!-- Año para CITACIÓN: prioriza el año de la fecha_completa (que refleja
+       la última publicación, el objeto que se cita), y cae al pubdate sin
+       role solo si no hay fecha completa. Un libro puede tener pubdate=2006
+       (papel original) y fecha_completa=2026-07-04 (HTML/EPUB): se cita 2026. -->
+  <xsl:variable name="anio_cita" as="xs:string">
+    <xsl:choose>
+      <xsl:when test="$fecha_completa != ''">
+        <!-- EXTRAER LOS 4 DÍGITOS DEL AÑO DE UNA FECHA ISO YYYY-MM-DD -->
+        <xsl:value-of select="substring($fecha_completa, 1, 4)"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="$anio_publicacion"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:variable>
+
   <!-- Fecha "amigable" para mostrar en col-left, según cascada -->
   <xsl:variable name="fecha_display" as="xs:string">
     <xsl:choose>
@@ -333,8 +349,8 @@ RC APLICADAS:
       <meta name="citation_publisher" content="{$editorial}"/>
     </xsl:if>
 
-    <xsl:if test="$anio_publicacion != ''">
-      <meta name="citation_publication_date" content="{$anio_publicacion}"/>
+    <xsl:if test="$anio_cita != ''">
+      <meta name="citation_publication_date" content="{$anio_cita}"/>
     </xsl:if>
 
     <meta name="citation_language" content="{$idioma_principal}"/>
@@ -389,8 +405,8 @@ RC APLICADAS:
       <meta name="DC.identifier" content="https://doi.org/{$doi_libro}"/>
     </xsl:if>
 
-    <xsl:if test="$anio_publicacion != ''">
-      <meta name="DC.date" content="{$anio_publicacion}"/>
+    <xsl:if test="$anio_cita != ''">
+      <meta name="DC.date" content="{$anio_cita}"/>
     </xsl:if>
 
     <xsl:if test="$licencia_url != ''">
@@ -1574,8 +1590,8 @@ RC APLICADAS:
     <xsl:if test="$editorial != ''">
       <meta name="citation_publisher" content="{$editorial}"/>
     </xsl:if>
-    <xsl:if test="$anio_publicacion != ''">
-      <meta name="citation_publication_date" content="{$anio_publicacion}"/>
+    <xsl:if test="$anio_cita != ''">
+      <meta name="citation_publication_date" content="{$anio_cita}"/>
     </xsl:if>
 
     <meta name="citation_language" content="{$capLang}"/>
@@ -1616,8 +1632,8 @@ RC APLICADAS:
     <xsl:if test="$capDoi != ''">
       <meta name="DC.identifier" content="https://doi.org/{$capDoi}"/>
     </xsl:if>
-    <xsl:if test="$anio_publicacion != ''">
-      <meta name="DC.date" content="{$anio_publicacion}"/>
+    <xsl:if test="$anio_cita != ''">
+      <meta name="DC.date" content="{$anio_cita}"/>
     </xsl:if>
     <xsl:if test="$capResumen != ''">
       <meta name="DC.description" content="{$capResumen}"/>
@@ -1752,9 +1768,9 @@ RC APLICADAS:
         <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$editorial"/></xsl:call-template>
         <xsl:text>"}</xsl:text>
       </xsl:if>
-      <xsl:if test="$anio_publicacion != ''">
+      <xsl:if test="$anio_cita != ''">
         <xsl:text>,"datePublished":"</xsl:text>
-        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_publicacion"/></xsl:call-template>
+        <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_cita"/></xsl:call-template>
         <xsl:text>"</xsl:text>
       </xsl:if>
       <xsl:text>}</xsl:text>
@@ -1828,7 +1844,7 @@ RC APLICADAS:
       <xsl:text>","url":"</xsl:text>
       <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$url_libro"/></xsl:call-template>
       <xsl:text>","anio":"</xsl:text>
-      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_publicacion"/></xsl:call-template>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_cita"/></xsl:call-template>
       <xsl:text>",</xsl:text>
 
       <!-- AUTORES DEL LIBRO -->
@@ -1873,7 +1889,7 @@ RC APLICADAS:
       <xsl:text>","doi":"</xsl:text>
       <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$capDoi"/></xsl:call-template>
       <xsl:text>","url":"","anio":"</xsl:text>
-      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_publicacion"/></xsl:call-template>
+      <xsl:call-template name="escapar-json"><xsl:with-param name="txt" select="$anio_cita"/></xsl:call-template>
       <xsl:text>",</xsl:text>
 
       <!-- AUTORES DEL CAPÍTULO -->

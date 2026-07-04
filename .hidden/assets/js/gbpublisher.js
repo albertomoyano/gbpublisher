@@ -66,6 +66,17 @@ function iniciales(nombre) {
 }
 
 // ============================================
+// FORMATEO APA DE LISTA DE AUTORES (DEFENSIVO)
+// ============================================
+// Maneja lista vacía (''), 1 autor, y N autores con "& " antes del
+// último. Evita el bug "& undefined" cuando la lista viene vacía.
+function formatAutoresApa(lista) {
+  if (!lista || lista.length === 0) return '';
+  if (lista.length === 1) return lista[0];
+  return lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
+}
+
+// ============================================
 // GENERAR CITA SEGÚN FORMATO
 // ============================================
 function generarCita(formato) {
@@ -103,7 +114,7 @@ function generarCitaArticulo(formato, d) {
 
   if (formato === 'apa') {
     var lista = d.autores.map(function(a) { return a.apellido + ', ' + iniciales(a.nombre); });
-    var autStr = lista.length === 1 ? lista[0] : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
+    var autStr = formatAutoresApa(lista);
     var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '. ';
     cita += d.revista;
     if (d.volumen) cita += ', ' + d.volumen;
@@ -181,7 +192,7 @@ function generarCitaLibro(formato, d) {
 
   if (formato === 'apa') {
     var lista = p.lista.map(function(a) { return a.apellido + ', ' + iniciales(a.nombre); });
-    var autStr = lista.length === 1 ? lista[0] : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
+    var autStr = formatAutoresApa(lista);
     if (p.esEditor) autStr += edMarca;
     var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '.';
     if (d.editorial) cita += ' ' + d.editorial + '.';
@@ -251,7 +262,7 @@ function generarCitaCapitulo(formato, d) {
 
   if (formato === 'apa') {
     var lista = d.autores.map(function(a) { return a.apellido + ', ' + iniciales(a.nombre); });
-    var autStr = lista.length === 1 ? lista[0] : lista.slice(0, -1).join(', ') + ', & ' + lista[lista.length - 1];
+    var autStr = formatAutoresApa(lista);
     var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '. En ';
     if (eds.length > 0) {
       var edStr = eds.map(function(e) { return iniciales(e.nombre) + ' ' + e.apellido; }).join(', ');
