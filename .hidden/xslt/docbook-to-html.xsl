@@ -1319,18 +1319,344 @@ RC APLICADAS:
     <xsl:value-of select="."/>
   </xsl:template>
 
-  <!-- BIBLIOREF → MARCA DE CITA. CLASE xref-bibr Y data-ref-id
-       ALINEADAS CON REVISTAS PARA LA NAVEGACIÓN CRUZADA.
-       PLACEHOLDER [cita] POR AHORA; EL RENDERING CSL (APELLIDO-AÑO)
-       SE OPTIMIZA EN FASE POSTERIOR. ANCLA AL PANEL DE REFERENCIAS. -->
+  <!-- ==========================================================
+       ========= MARCAS DE CITA EN EL TEXTO (biblioref) =========
+       ==========================================================
+       Renderiza las marcas de cita del cuerpo según $estilo_cita:
+         - APA / ISO690 (author-date): (Autor, año) / Autor (año)
+         - Vancouver / IEEE (numérico): [N]
+       Portado del jats-to-html.xsl al vocabulario DocBook.
+
+       VOCABULARIO DOCBOOK (RC-DB-01: biblioref es EMPTY):
+         <phrase role="cite-prefix">ver</phrase>
+         <biblioref linkend="bib-X" role="suppress|author-in-text"/>
+         <phrase role="cite-suffix">p. 5</phrase>
+       El modo viaja en @role; prefijo/sufijo como phrase HERMANOS.
+
+       AGRUPACIÓN POR ADYACENCIA: citas consecutivas [@a; @b] llegan
+       como biblioref separados por texto ', '. Se agrupan detectando
+       adyacencia, saltando los phrase de prefijo/sufijo intercalados. -->
+
+  <!-- DESPACHADOR: author-date o numérico según estilo -->
   <xsl:template match="db:biblioref | biblioref">
-    <a class="xref-bibr cita-ref"
-       data-ref-id="{@linkend}"
-       onclick="highlightPanel('refs','{@linkend}')"
-       style="cursor:pointer">
-      <xsl:text>[cita]</xsl:text>
-    </a>
+    <xsl:choose>
+      <xsl:when test="$estilo_cita = 'vancouver' or $estilo_cita = 'ieee'">
+        <xsl:call-template name="xref-numerico-db"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:call-template name="xref-autor-anio-db"/>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
+
+  <!-- ==========================================================
+       SUPRESORES: phrase de prefijo/sufijo y separadores de grupo
+       ==========================================================
+       Los phrase cite-prefix/cite-suffix los ABSORBE el template del
+       biblioref (para meterlos dentro del paréntesis en author-date).
+       Se suprimen aquí para que no se rendericen sueltos. -->
+  <xsl:template match="db:phrase[@role='cite-prefix'] | phrase[@role='cite-prefix']"/>
+  <xsl:template match="db:phrase[@role='cite-suffix'] | phrase[@role='cite-suffix']"/>
+
+  <!-- SUPRIMIR EL WHITESPACE RESIDUAL QUE SEPARA UN phrase (PREFIJO O
+       SUFIJO, YA ABSORBIDO POR EL biblioref) DEL TEXTO CONTIGUO. SIN
+       ESTO, EL NAVEGADOR COLAPSA ESE SALTO DE LÍNEA A UN ESPACIO Y
+       QUEDA ' .' O '( ' ALREDEDOR DE LA CITA.
+       CASO 1: whitespace ENTRE biblioref Y SU phrase-suffix. -->
+  <xsl:template match="text()[normalize-space(.) = '']
+    [preceding-sibling::node()[1][self::db:biblioref or self::biblioref]]
+    [following-sibling::node()[1][self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]"/>
+  <!-- CASO 2: whitespace ENTRE un phrase-prefix Y SU biblioref. -->
+  <xsl:template match="text()[normalize-space(.) = '']
+    [preceding-sibling::node()[1][self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]
+    [following-sibling::node()[1][self::db:biblioref or self::biblioref]]"/>
+
+  <!-- SUPRIMIR EL TEXTO SEPARADOR ', ' / '; ' ENTRE DOS biblioref
+       DE UN MISMO GRUPO (LA AGRUPACIÓN LO EMITE EL PRIMERO).
+       SE COMPARA CONTRA EL VECINO NO-WHITESPACE. -->
+  <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
+    [preceding-sibling::node()[not(self::text() and normalize-space(.)='')][1]
+       [self::db:biblioref or self::biblioref
+        or self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]
+    [following-sibling::node()[not(self::text() and normalize-space(.)='')][1]
+       [self::db:biblioref or self::biblioref
+        or self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]"/>
+
+  <!-- ==========================================================
+       AUXILIAR: prefijo/sufijo hermanos de un biblioref
+       ==========================================================
+       Devuelven el phrase adyacente (o vacío). El prefijo es el
+       phrase inmediatamente anterior; el sufijo, el posterior. -->
+  <xsl:template name="phrase-prefijo-de">
+    <!-- EL PHRASE PREFIJO PUEDE ESTAR SEPARADO DEL biblioref POR UN
+         text() DE SOLO ESPACIOS (SALTO DE LÍNEA + SANGRÍA DEL CANÓNICO).
+         SE BUSCA EL PRIMER preceding-sibling NO-WHITESPACE. -->
+    <xsl:variable name="prev"
+      select="preceding-sibling::node()[not(self::text() and normalize-space(.) = '')][1]"/>
+    <xsl:if test="$prev[self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]">
+      <xsl:apply-templates select="$prev/node()"/>
+      <xsl:text> </xsl:text>
+    </xsl:if>
+  </xsl:template>
+
+  <xsl:template name="phrase-sufijo-de">
+    <!-- ÍDEM: EL PHRASE SUFIJO PUEDE ESTAR SEPARADO POR WHITESPACE. -->
+    <xsl:variable name="next"
+      select="following-sibling::node()[not(self::text() and normalize-space(.) = '')][1]"/>
+    <xsl:if test="$next[self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]">
+      <xsl:text>, </xsl:text>
+      <xsl:apply-templates select="$next/node()"/>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: resolver autor de una cita desde su biblioentry
+       ==========================================================
+       Busca el biblioentry por xml:id (= linkend) y devuelve el
+       surname formateado: 1 autor → "Apellido"; 2 → "A y B";
+       3+ → "A et al.". Usa autores, o editores como fallback. -->
+  <xsl:template name="resolver-autor-cita-db">
+    <xsl:param name="rid"/>
+    <xsl:variable name="entry"
+                  select="(//db:biblioentry | //biblioentry)[@xml:id = $rid][1]"/>
+    <xsl:variable name="personas"
+                  select="$entry/db:author | $entry/author"/>
+    <xsl:variable name="editores"
+                  select="$entry/db:editor | $entry/editor"/>
+    <xsl:choose>
+      <xsl:when test="$personas">
+        <xsl:call-template name="formatear-surnames-cita">
+          <xsl:with-param name="lista" select="$personas"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:when test="$editores">
+        <xsl:call-template name="formatear-surnames-cita">
+          <xsl:with-param name="lista" select="$editores"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:otherwise>
+        <!-- SIN AUTOR: USAR EL citekey VISIBLE (SIN PREFIJO bib-) -->
+        <xsl:value-of select="if (starts-with($rid, 'bib-'))
+                              then substring-after($rid, 'bib-') else $rid"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- FORMATEA SURNAMES SEGÚN CANTIDAD (1 / 2 / 3+) -->
+  <xsl:template name="formatear-surnames-cita">
+    <xsl:param name="lista"/>
+    <xsl:variable name="n" select="count($lista)"/>
+    <xsl:choose>
+      <xsl:when test="$n = 1">
+        <xsl:value-of select="normalize-space(($lista[1]/db:personname/db:surname
+                                              | $lista[1]/personname/surname)[1])"/>
+      </xsl:when>
+      <xsl:when test="$n = 2">
+        <xsl:value-of select="normalize-space(($lista[1]/db:personname/db:surname
+                                              | $lista[1]/personname/surname)[1])"/>
+        <xsl:text> y </xsl:text>
+        <xsl:value-of select="normalize-space(($lista[2]/db:personname/db:surname
+                                              | $lista[2]/personname/surname)[1])"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="normalize-space(($lista[1]/db:personname/db:surname
+                                              | $lista[1]/personname/surname)[1])"/>
+        <xsl:text> et al.</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- AÑO DE UNA CITA DESDE SU biblioentry (pubdate) -->
+  <xsl:template name="resolver-anio-cita-db">
+    <xsl:param name="rid"/>
+    <xsl:variable name="entry"
+                  select="(//db:biblioentry | //biblioentry)[@xml:id = $rid][1]"/>
+    <xsl:value-of select="normalize-space(($entry/db:pubdate | $entry/pubdate)[1])"/>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: detectar si un biblioref es PRIMERO de su grupo
+       ==========================================================
+       Es primero si NO hay, inmediatamente antes (saltando su phrase
+       prefijo), un separador ',/;' precedido por otro biblioref/sufijo. -->
+  <xsl:template name="es-primera-cita-grupo">
+    <!-- NODO ANTERIOR NO-WHITESPACE, SALTANDO EL PHRASE DE PREFIJO SI EXISTE -->
+    <xsl:variable name="prev1"
+      select="preceding-sibling::node()[not(self::text() and normalize-space(.)='')][1]"/>
+    <xsl:variable name="ancla"
+      select="if ($prev1[self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']])
+              then preceding-sibling::node()[not(self::text() and normalize-space(.)='')][2]
+              else $prev1"/>
+    <!-- ES PRIMERA SI EL ANCLA NO ES UN SEPARADOR DE GRUPO -->
+    <xsl:sequence select="not($ancla[self::text() and matches(., '^\s*[,;]\s*$')])"/>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUTHOR-DATE (APA / ISO690): (Autor, año) con 3 modos
+       ==========================================================
+       Modos: normal (Autor, año) · suppress (año) · author-in-text
+       Autor (año). Prefijo/sufijo dentro del paréntesis. Agrupa
+       citas consecutivas con '; '. -->
+  <xsl:template name="xref-autor-anio-db">
+    <xsl:variable name="rid" select="@linkend"/>
+    <xsl:variable name="modo" select="if (@role != '') then @role else 'normal'"/>
+    <xsl:variable name="autor">
+      <xsl:call-template name="resolver-autor-cita-db">
+        <xsl:with-param name="rid" select="$rid"/>
+      </xsl:call-template>
+    </xsl:variable>
+    <xsl:variable name="anio">
+      <xsl:call-template name="resolver-anio-cita-db">
+        <xsl:with-param name="rid" select="$rid"/>
+      </xsl:call-template>
+    </xsl:variable>
+    <xsl:variable name="esPrimera">
+      <xsl:call-template name="es-primera-cita-grupo"/>
+    </xsl:variable>
+    <!-- ¿ES LA ÚLTIMA DEL GRUPO? EL SIGUIENTE (SALTANDO SUFIJO) NO ES SEP -->
+    <xsl:variable name="next1"
+      select="following-sibling::node()[not(self::text() and normalize-space(.)='')][1]"/>
+    <xsl:variable name="anclaSig"
+      select="if ($next1[self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']])
+              then following-sibling::node()[not(self::text() and normalize-space(.)='')][2]
+              else $next1"/>
+    <xsl:variable name="esUltima"
+      select="not($anclaSig[self::text() and matches(., '^\s*[,;]\s*$')])"/>
+
+    <xsl:choose>
+
+      <!-- AUTHOR-IN-TEXT: Autor (año) — SIN PARÉNTESIS EXTERIOR -->
+      <xsl:when test="$modo = 'author-in-text'">
+        <!-- PREFIJO ANTES DEL AUTOR (RARO EN ESTE MODO, PERO SE RESPETA) -->
+        <xsl:call-template name="phrase-prefijo-de"/>
+        <a class="xref-bibr cita-ref" data-ref-id="{$rid}"
+           onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
+          <xsl:value-of select="$autor"/>
+        </a>
+        <xsl:text> (</xsl:text>
+        <a class="xref-bibr cita-ref" data-ref-id="{$rid}"
+           onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
+          <xsl:value-of select="$anio"/>
+        </a>
+        <xsl:call-template name="phrase-sufijo-de"/>
+        <xsl:text>)</xsl:text>
+      </xsl:when>
+
+      <!-- SUPPRESS: (año) — SIN AUTOR -->
+      <xsl:when test="$modo = 'suppress'">
+        <xsl:if test="$esPrimera = true()">
+          <xsl:text>(</xsl:text>
+          <xsl:call-template name="phrase-prefijo-de"/>
+        </xsl:if>
+        <xsl:if test="$esPrimera = false()"><xsl:text>; </xsl:text></xsl:if>
+        <a class="xref-bibr cita-ref" data-ref-id="{$rid}"
+           onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
+          <xsl:value-of select="$anio"/>
+          <xsl:call-template name="phrase-sufijo-de"/>
+        </a>
+        <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
+      </xsl:when>
+
+      <!-- NORMAL: (Autor, año) -->
+      <xsl:otherwise>
+        <xsl:if test="$esPrimera = true()">
+          <xsl:text>(</xsl:text>
+          <xsl:call-template name="phrase-prefijo-de"/>
+        </xsl:if>
+        <xsl:if test="$esPrimera = false()"><xsl:text>; </xsl:text></xsl:if>
+        <a class="xref-bibr cita-ref" data-ref-id="{$rid}"
+           onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
+          <xsl:value-of select="$autor"/>
+          <xsl:if test="$anio != ''">
+            <xsl:text>, </xsl:text><xsl:value-of select="$anio"/>
+          </xsl:if>
+          <xsl:call-template name="phrase-sufijo-de"/>
+        </a>
+        <xsl:if test="$esUltima"><xsl:text>)</xsl:text></xsl:if>
+      </xsl:otherwise>
+
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- ==========================================================
+       NUMÉRICO (Vancouver / IEEE): [N]
+       ==========================================================
+       N = posición del biblioentry en la bibliography del capítulo
+       (reinicia por capítulo). Agrupa consecutivas como [1,2,3],
+       un <a> por número. Prefijo antes del corchete, sufijo dentro. -->
+  <xsl:template name="xref-numerico-db">
+    <xsl:variable name="rid" select="@linkend"/>
+    <xsl:variable name="modo" select="if (@role != '') then @role else 'normal'"/>
+    <xsl:variable name="esPrimera">
+      <xsl:call-template name="es-primera-cita-grupo"/>
+    </xsl:variable>
+    <xsl:variable name="next1"
+      select="following-sibling::node()[not(self::text() and normalize-space(.)='')][1]"/>
+    <xsl:variable name="anclaSig"
+      select="if ($next1[self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']])
+              then following-sibling::node()[not(self::text() and normalize-space(.)='')][2]
+              else $next1"/>
+    <xsl:variable name="esUltima"
+      select="not($anclaSig[self::text() and matches(., '^\s*[,;]\s*$')])"/>
+
+    <!-- AUTHOR-IN-TEXT: EN NUMÉRICO SE EMITE 'Autor [N]'. EL AUTOR VA
+         ANTES DEL CORCHETE (SOLO PARA LA PRIMERA CITA DEL GRUPO). -->
+    <xsl:if test="$modo = 'author-in-text' and $esPrimera = true()">
+      <xsl:variable name="autor">
+        <xsl:call-template name="resolver-autor-cita-db">
+          <xsl:with-param name="rid" select="$rid"/>
+        </xsl:call-template>
+      </xsl:variable>
+      <a class="xref-vancouver cita-ref" data-ref-id="{$rid}"
+         onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
+        <xsl:value-of select="$autor"/>
+      </a>
+      <xsl:text> </xsl:text>
+    </xsl:if>
+
+    <!-- PREFIJO ANTES DEL CORCHETE (SOLO EN LA PRIMERA DEL GRUPO) -->
+    <xsl:if test="$esPrimera = true()">
+      <xsl:call-template name="phrase-prefijo-de"/>
+      <xsl:text>[</xsl:text>
+    </xsl:if>
+    <xsl:if test="$esPrimera = false()"><xsl:text>,</xsl:text></xsl:if>
+
+    <!-- EL NÚMERO: POSICIÓN DEL biblioentry EN LA bibliography -->
+    <xsl:variable name="num">
+      <xsl:call-template name="numero-referencia-db">
+        <xsl:with-param name="rid" select="$rid"/>
+      </xsl:call-template>
+    </xsl:variable>
+    <a class="xref-vancouver cita-ref" data-ref-id="{$rid}"
+       onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
+      <xsl:value-of select="$num"/>
+    </a>
+
+    <!-- SUFIJO DENTRO DEL CORCHETE (EN LA ÚLTIMA DEL GRUPO) -->
+    <xsl:if test="$esUltima">
+      <xsl:call-template name="phrase-sufijo-de"/>
+      <xsl:text>]</xsl:text>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- NÚMERO DE UNA REFERENCIA: POSICIÓN EN LA bibliography DEL CAP.
+       CUENTA biblioentry PRECEDENTES DENTRO DE LA MISMA bibliography. -->
+  <xsl:template name="numero-referencia-db">
+    <xsl:param name="rid"/>
+    <xsl:variable name="entry"
+                  select="(//db:biblioentry | //biblioentry)[@xml:id = $rid][1]"/>
+    <xsl:choose>
+      <xsl:when test="$entry">
+        <xsl:value-of select="count($entry[1]/preceding-sibling::db:biblioentry
+                                    | $entry[1]/preceding-sibling::biblioentry) + 1"/>
+      </xsl:when>
+      <!-- CITA HUÉRFANA: linkend SIN biblioentry -->
+      <xsl:otherwise>
+        <xsl:text>?</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
 
   <!-- LINK EXTERNO → A -->
   <xsl:template match="db:link | link">
