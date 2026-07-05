@@ -38,6 +38,11 @@ Public Sub GenerarLibroHTML()
   Dim sImagenTapaDest As String
   Dim iEspera As Integer
   Dim iRespuesta As Integer
+  ' ESTILO DE CITA: NOMBRE DEL .csl EN BD Y RUTA ABSOLUTA AL ARCHIVO.
+  Dim sEstiloArchivoCsl As String
+  Dim sRutaCsl As String
+  Dim sEstiloCita As String
+  Dim hEstilo As Result
 
   ' --- 0. MOSTRAR CONSOLA ---
   FMain.tbMostrarPanelInferior.Value = True
@@ -193,6 +198,42 @@ Public Sub GenerarLibroHTML()
   FMain.TerminalViewProyecto.Input(
     "echo 'OK: docs/ preparado'" & Chr(10))
 
+  ' --- 7. RESOLVER EL ESTILO DE CITA DEL LIBRO ---
+  ' EL NOMBRE DEL .csl SE GUARDA EN libros_md.estilo_cita (EJ. 'apa.csl').
+  ' LOS ARCHIVOS .csl VIVEN EN ~/.gbpublisher/csl/. LeerTipoCSL() MAPEA
+  ' EL NOMBRE AL IDENTIFICADOR INTERNO ('apa' | 'ieee' | 'vancouver' | 'iso690').
+  ' SI NO HAY ESTILO O NO SE RECONOCE, SE USA 'apa' COMO FALLBACK SEGURO
+  ' (COINCIDE CON EL DEFAULT DEL PARÁMETRO estilo_cita EN EL XSLT).
+  sEstiloCita = "apa"
+
+  Try hEstilo = m_ConexionBD.mConn.Exec(
+    "SELECT estilo_cita FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
+  If Error Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'AVISO: no se pudo leer estilo_cita, se usa APA por defecto'" & Chr(10))
+  Else
+    If hEstilo.Available Then
+      If Not IsNull(hEstilo["estilo_cita"]) Then
+        sEstiloArchivoCsl = m_XML.TrimUTF8(hEstilo["estilo_cita"])
+        If Len(sEstiloArchivoCsl) > 0 Then
+          sRutaCsl = User.Home & "/.gbpublisher/csl/" & sEstiloArchivoCsl
+          If Exist(sRutaCsl) Then
+            ' LeerTipoCSL DEVUELVE "" SI EL NOMBRE NO ES RECONOCIDO;
+            ' SOLO SOBRESCRIBIR EL FALLBACK SI DEVUELVE UN ESTILO VÁLIDO.
+            sEstiloCita = m_InicioCierre.LeerTipoCSL(sRutaCsl)
+            If Len(sEstiloCita) = 0 Then sEstiloCita = "apa"
+          Else
+            FMain.TerminalViewProyecto.Input(
+              "echo 'AVISO: .csl no encontrado en ~/.gbpublisher/csl/, se usa APA'" & Chr(10))
+          Endif
+        Endif
+      Endif
+    Endif
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: estilo de cita = " & sEstiloCita & "'" & Chr(10))
+
   ' ====================================================
   ' PASO 2: INVOCAR SAXON CON docbook-to-html.xsl
   ' EL XSLT USA xsl:result-document CON PATH RELATIVO docs/index.html
@@ -216,7 +257,8 @@ Public Sub GenerarLibroHTML()
     "-s:'" & sFileCanonicoLibro & "' " &
     "-xsl:'" & sXsl & "' " &
     "proyecto_dir='" & sRutaProyecto & "' " &
-    "manifiesto_libro='tmp/manifiesto-libro-" & sNombreBase & ".xml'" & Chr(10))
+    "manifiesto_libro='tmp/manifiesto-libro-" & sNombreBase & ".xml' " &
+    "estilo_cita='" & sEstiloCita & "'" & Chr(10))
 
   ' --- ESPERAR HASTA QUE index.html EXISTA (MÁXIMO 60 S) ---
   iEspera = 0
@@ -264,59 +306,3 @@ Public Sub GenerarLibroHTML()
   Endif
 
 End Sub
-
-' ' Gambas module file
-'
-' ' ====================================================
-' ' VARIABLES PRIVADAS DEL MÓDULO
-' ' ====================================================
-' Private sRutaProyecto As String
-' Private sArchivoProyecto As String
-' Private sBaseNombreProyecto As String
-' Private sNombreArchivo As String
-' Private sFileCanonico As String
-' Private sSQL As String
-' Private rConsulta As Result
-' Private sComando As String
-' Private sSaxon As String
-' Private sEstiloCita As String
-' Private sRutaMedia As String
-'
-' ' ====================================================
-' ' GENERAR PDF DESDE LATEX es para archivo LaTeX puro
-' ' ====================================================
-' Public Sub GenerarPDFdesdeLATEX()
-'
-'   If FMain.txtProyecto.Text = "" Then
-'     m_Sonido.sonar("Warning")
-'     Message.Warning("No hay ningún proyecto abierto")
-'     Return
-'   Endif
-'
-'   ' EXPORTAR DEPENDENCIAS
-'   m_Json.ExportarMetadatosJSON2PDF()
-'   m_Bibtex.ExportarBibTeX()
-'
-'   ' CARGAR Y CONCATENAR PREÁMBULO + CONTENIDO
-'   Dim sPreambulo As String = File.Load(File.Dir(FMain.txtProyecto.Text) &/ "files/pdf-preambulo.tex")
-'   Dim sContenido As String = File.Load(File.Dir(FMain.txtProyecto.Text) &/ File.Name(FMain.txtProyecto.Text))
-'   Dim sMain As String = sPreambulo & gb.NewLine & gb.NewLine & sContenido
-'
-'   ' GUARDAR ARCHIVO TEMPORAL
-'   Dim outputFile As String = File.Dir(FMain.txtProyecto.Text) &/ "temporal.tex"
-'   File.Save(outputFile, sMain)
-'
-'   ' COMPILAR CON LATEXMK
-'   FMain.TerminalViewProyecto.Input("cd " & File.Dir(FMain.txtProyecto.Text) & "\n")
-'   FMain.TerminalViewProyecto.Input("clear" & "\n")
-'   FMain.TerminalViewProyecto.Input(
-'     "latexmk -l -f -g --interaction=nonstopmode -pdflatex=lualatex -pdflua temporal.tex" & "\n")
-'   Wait 1
-'
-'   FMain.TerminalViewProyecto.Input(
-'     "mv temporal.pdf " & File.Dir(FMain.txtProyecto.Text) &/ "salidas/pdf/" &
-'     File.BaseName(FMain.txtProyecto.Text) & ".pdf" & "\n")
-'
-'   m_FuncionesGenericas.BorrarArchivosAuxiliares
-'
-' End

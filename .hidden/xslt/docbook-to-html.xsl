@@ -70,6 +70,12 @@ RC APLICADAS:
   <xsl:param name="proyecto_dir" as="xs:string" required="yes"/>
   <xsl:param name="manifiesto_libro" as="xs:string" required="yes"/>
 
+  <!-- ESTILO DE CITA: LO RESUELVE GAMBAS CON LeerTipoCSL() Y LO PASA COMO
+       PARÁMETRO SAXON, IGUAL QUE EN REVISTAS. VALORES POSIBLES:
+       'apa' | 'vancouver' | 'iso690' | 'ieee' | 'autor-anio' (fallback).
+       DEFAULT 'apa' SI NO SE PASA (LIBROS ACADÉMICOS SUELEN USAR APA). -->
+  <xsl:param name="estilo_cita" as="xs:string" select="'apa'"/>
+
   <!-- ==========================================================
        CARGA DEL MANIFIESTO Y KEY PARA MAPEAR xml:id → nombre_archivo
        ========================================================== -->
@@ -1361,113 +1367,493 @@ RC APLICADAS:
        - la marca [cita] del centro ancle a esta entrada (ida)
        - el click en esta entrada lleve a la primera cita (vuelta)
        onclick=irAlTexto para la navegación inversa (bidireccional en libros). -->
+  <!-- ==========================================================
+       BIBLIOENTRY EN MODO panel-ref — 4 ESTILOS DE CITA
+       ==========================================================
+       Rendering de cada referencia según $estilo_cita, portado del
+       jats-to-html.xsl de revistas al vocabulario DocBook biblioentry.
+       Estilos: apa | vancouver | iso690 | ieee + fallback autor-año.
+
+       MAPEO DE VOCABULARIO JATS → DOCBOOK:
+         person-group[@type='author']/name → author/personname
+         surname/given-names               → surname/firstname
+         article-title / chapter-title     → title
+         source                            → citetitle
+         year                              → pubdate
+         volume / issue                    → volumenum / issuenum
+         fpage-lpage                       → artpagenums
+         publisher-name / publisher-loc    → publishername / address/city
+         pub-id[@type='doi']               → biblioid[@class='doi'] -->
   <xsl:template match="db:biblioentry | biblioentry" mode="panel-ref">
     <div class="panel-item ref-item"
          data-ref-id="{@xml:id}"
          onclick="irAlTexto('{@xml:id}')"
          style="cursor:pointer">
+      <xsl:choose>
 
-      <!-- AUTORES: UN <author> POR PERSONA, CON personname/surname+firstname -->
-      <span class="ref-authors">
-        <xsl:for-each select="db:author | author">
-          <xsl:variable name="pn" select="db:personname | personname"/>
-          <xsl:value-of select="normalize-space($pn/db:surname | $pn/surname)"/>
-          <xsl:if test="$pn/db:firstname | $pn/firstname">
-            <xsl:text>, </xsl:text>
-            <xsl:value-of select="normalize-space($pn/db:firstname | $pn/firstname)"/>
-          </xsl:if>
-          <xsl:choose>
-            <xsl:when test="position() = last() - 1"><xsl:text> y </xsl:text></xsl:when>
-            <xsl:when test="position() != last()"><xsl:text>, </xsl:text></xsl:when>
-          </xsl:choose>
-        </xsl:for-each>
-        <!-- EDITORES COMO FALLBACK SI NO HAY AUTORES -->
-        <xsl:if test="not(db:author | author) and (db:editor | editor)">
-          <xsl:for-each select="db:editor | editor">
-            <xsl:variable name="pn" select="db:personname | personname"/>
-            <xsl:value-of select="normalize-space($pn/db:surname | $pn/surname)"/>
-            <xsl:if test="$pn/db:firstname | $pn/firstname">
-              <xsl:text>, </xsl:text>
-              <xsl:value-of select="normalize-space($pn/db:firstname | $pn/firstname)"/>
-            </xsl:if>
-            <xsl:choose>
-              <xsl:when test="position() = last() - 1"><xsl:text> y </xsl:text></xsl:when>
-              <xsl:when test="position() != last()"><xsl:text>, </xsl:text></xsl:when>
-            </xsl:choose>
-          </xsl:for-each>
-          <xsl:text> (ed.)</xsl:text>
-        </xsl:if>
-      </span>
-
-      <!-- AÑO -->
-      <xsl:if test="db:pubdate | pubdate">
-        <xsl:text> (</xsl:text>
-        <span class="ref-year"><xsl:value-of select="normalize-space((db:pubdate | pubdate)[1])"/></span>
-        <xsl:text>). </xsl:text>
-      </xsl:if>
-
-      <!-- TÍTULO DEL ARTÍCULO/CAPÍTULO (title) EN REDONDA -->
-      <xsl:if test="db:title | title">
-        <span class="ref-title-roman">
-          <xsl:value-of select="normalize-space((db:title | title)[1])"/>
+        <!-- ══════════ VANCOUVER ══════════ -->
+        <xsl:when test="$estilo_cita = 'vancouver'">
+          <xsl:call-template name="ref-personas-db">
+            <xsl:with-param name="estilo" select="'vancouver'"/>
+          </xsl:call-template>
           <xsl:text>. </xsl:text>
-        </span>
-      </xsl:if>
 
-      <!-- FUENTE / TÍTULO DEL LIBRO (citetitle) EN CURSIVA -->
-      <xsl:if test="db:citetitle | citetitle">
-        <span class="ref-source-italic">
-          <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
-        </span>
-      </xsl:if>
+          <!-- TÍTULO (redonda) -->
+          <xsl:if test="db:title | title">
+            <span class="ref-title-roman">
+              <xsl:value-of select="normalize-space((db:title | title)[1])"/>
+              <xsl:text>. </xsl:text>
+            </span>
+          </xsl:if>
 
-      <!-- VOLUMEN / NÚMERO / PÁGINAS -->
-      <xsl:if test="db:volumenum | volumenum">
-        <xsl:text>, vol. </xsl:text>
-        <xsl:value-of select="normalize-space((db:volumenum | volumenum)[1])"/>
-      </xsl:if>
-      <xsl:if test="db:issuenum | issuenum">
-        <xsl:text>, n.º </xsl:text>
-        <xsl:value-of select="normalize-space((db:issuenum | issuenum)[1])"/>
-      </xsl:if>
-      <xsl:if test="db:artpagenums | artpagenums">
-        <xsl:text>, pp. </xsl:text>
-        <xsl:value-of select="normalize-space((db:artpagenums | artpagenums)[1])"/>
-      </xsl:if>
+          <!-- FUENTE / LIBRO (cursiva) -->
+          <xsl:if test="db:citetitle | citetitle">
+            <span class="ref-source-italic">
+              <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
+            </span>
+          </xsl:if>
 
-      <!-- EDITORIAL Y CIUDAD -->
-      <xsl:variable name="pubname"
-                    select="normalize-space((db:publisher/db:publishername
-                                            | publisher/publishername)[1])"/>
-      <xsl:variable name="pubcity"
-                    select="normalize-space((db:publisher/db:address/db:city
-                                            | publisher/address/city)[1])"/>
-      <xsl:if test="$pubname != '' or $pubcity != ''">
-        <xsl:text>. </xsl:text>
-        <xsl:if test="$pubcity != ''">
-          <xsl:value-of select="$pubcity"/>
-          <xsl:text>: </xsl:text>
-        </xsl:if>
-        <xsl:if test="$pubname != ''">
-          <xsl:value-of select="$pubname"/>
-        </xsl:if>
-      </xsl:if>
+          <!-- AÑO;VOLUMEN(NÚMERO):PÁGINAS -->
+          <xsl:if test="db:pubdate | pubdate">
+            <xsl:text>. </xsl:text>
+            <span class="ref-year"><xsl:value-of select="normalize-space((db:pubdate | pubdate)[1])"/></span>
+          </xsl:if>
+          <xsl:if test="db:volumenum | volumenum">
+            <xsl:text>;</xsl:text>
+            <xsl:value-of select="normalize-space((db:volumenum | volumenum)[1])"/>
+          </xsl:if>
+          <xsl:if test="db:issuenum | issuenum">
+            <xsl:text>(</xsl:text>
+            <xsl:value-of select="normalize-space((db:issuenum | issuenum)[1])"/>
+            <xsl:text>)</xsl:text>
+          </xsl:if>
+          <xsl:if test="db:artpagenums | artpagenums">
+            <xsl:text>:</xsl:text>
+            <xsl:value-of select="normalize-space((db:artpagenums | artpagenums)[1])"/>
+          </xsl:if>
 
-      <xsl:text>.</xsl:text>
+          <!-- EDITORIAL: CIUDAD: EDITORIAL -->
+          <xsl:call-template name="ref-editorial-db">
+            <xsl:with-param name="sep-inicial" select="'. '"/>
+          </xsl:call-template>
+          <xsl:text>.</xsl:text>
 
-      <!-- DOI SI TIENE -->
-      <xsl:variable name="doi"
-                    select="normalize-space((db:biblioid[@class='doi']
-                                            | biblioid[@class='doi'])[1])"/>
-      <xsl:if test="$doi != ''">
-        <div class="ref-doi">
-          <a href="https://doi.org/{$doi}" target="_blank" rel="noopener noreferrer">
-            <xsl:text>DOI: </xsl:text><xsl:value-of select="$doi"/>
-          </a>
-        </div>
-      </xsl:if>
+          <xsl:call-template name="ref-doi-db">
+            <xsl:with-param name="etiqueta" select="'DOI: '"/>
+          </xsl:call-template>
+        </xsl:when>
 
+        <!-- ══════════ APA 7 ══════════ -->
+        <xsl:when test="$estilo_cita = 'apa'">
+          <xsl:call-template name="ref-personas-db">
+            <xsl:with-param name="estilo" select="'apa'"/>
+          </xsl:call-template>
+
+          <!-- AÑO ENTRE PARÉNTESIS -->
+          <xsl:if test="db:pubdate | pubdate">
+            <span class="ref-year">
+              <xsl:text> (</xsl:text>
+              <xsl:value-of select="normalize-space((db:pubdate | pubdate)[1])"/>
+              <xsl:text>). </xsl:text>
+            </span>
+          </xsl:if>
+
+          <!-- TÍTULO DEL ARTÍCULO/CAPÍTULO (redonda, sin cursiva en APA) -->
+          <xsl:if test="db:title | title">
+            <span class="ref-title-roman">
+              <xsl:value-of select="normalize-space((db:title | title)[1])"/>
+              <xsl:text>. </xsl:text>
+            </span>
+          </xsl:if>
+
+          <!-- FUENTE / LIBRO (cursiva) -->
+          <xsl:if test="db:citetitle | citetitle">
+            <span class="ref-source-italic">
+              <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
+            </span>
+          </xsl:if>
+
+          <!-- VOLUMEN (cursiva), NÚMERO (paréntesis) -->
+          <xsl:if test="db:volumenum | volumenum">
+            <xsl:text>, </xsl:text>
+            <em><xsl:value-of select="normalize-space((db:volumenum | volumenum)[1])"/></em>
+          </xsl:if>
+          <xsl:if test="db:issuenum | issuenum">
+            <xsl:text>(</xsl:text>
+            <xsl:value-of select="normalize-space((db:issuenum | issuenum)[1])"/>
+            <xsl:text>)</xsl:text>
+          </xsl:if>
+
+          <!-- PÁGINAS -->
+          <xsl:if test="db:artpagenums | artpagenums">
+            <xsl:text>, </xsl:text>
+            <xsl:value-of select="normalize-space((db:artpagenums | artpagenums)[1])"/>
+          </xsl:if>
+
+          <!-- EDITORIAL (APA libros: solo editorial, sin ciudad desde 7ª ed.) -->
+          <xsl:variable name="pubname-apa"
+                        select="normalize-space((db:publisher/db:publishername
+                                                | publisher/publishername)[1])"/>
+          <xsl:if test="$pubname-apa != ''">
+            <xsl:text>. </xsl:text>
+            <xsl:value-of select="$pubname-apa"/>
+          </xsl:if>
+
+          <!-- DOI como URL sin etiqueta (APA 7) -->
+          <xsl:call-template name="ref-doi-db">
+            <xsl:with-param name="etiqueta" select="'https://doi.org/'"/>
+            <xsl:with-param name="solo-url" select="true()"/>
+          </xsl:call-template>
+        </xsl:when>
+
+        <!-- ══════════ ISO 690 (autor-fecha, versalitas) ══════════ -->
+        <xsl:when test="$estilo_cita = 'iso690'">
+          <xsl:call-template name="ref-personas-db">
+            <xsl:with-param name="estilo" select="'iso690'"/>
+          </xsl:call-template>
+
+          <!-- AÑO ENTRE PARÉNTESIS -->
+          <xsl:if test="db:pubdate | pubdate">
+            <span class="ref-year">
+              <xsl:text> (</xsl:text>
+              <xsl:value-of select="normalize-space((db:pubdate | pubdate)[1])"/>
+              <xsl:text>). </xsl:text>
+            </span>
+          </xsl:if>
+
+          <!-- TÍTULO ENTRE COMILLAS -->
+          <xsl:if test="db:title | title">
+            <span class="ref-title-roman">
+              <xsl:text>&#x201C;</xsl:text>
+              <xsl:value-of select="normalize-space((db:title | title)[1])"/>
+              <xsl:text>&#x201D;. </xsl:text>
+            </span>
+          </xsl:if>
+
+          <!-- FUENTE / LIBRO (cursiva) -->
+          <xsl:if test="db:citetitle | citetitle">
+            <span class="ref-source-italic">
+              <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
+            </span>
+          </xsl:if>
+
+          <!-- VOLUMEN, NÚMERO -->
+          <xsl:if test="db:volumenum | volumenum">
+            <xsl:text>, vol. </xsl:text>
+            <xsl:value-of select="normalize-space((db:volumenum | volumenum)[1])"/>
+          </xsl:if>
+          <xsl:if test="db:issuenum | issuenum">
+            <xsl:text>, n.&#xBA; </xsl:text>
+            <xsl:value-of select="normalize-space((db:issuenum | issuenum)[1])"/>
+          </xsl:if>
+
+          <!-- PÁGINAS -->
+          <xsl:if test="db:artpagenums | artpagenums">
+            <xsl:text>, pp. </xsl:text>
+            <xsl:value-of select="normalize-space((db:artpagenums | artpagenums)[1])"/>
+          </xsl:if>
+
+          <!-- EDITORIAL: CIUDAD: EDITORIAL -->
+          <xsl:call-template name="ref-editorial-db">
+            <xsl:with-param name="sep-inicial" select="'. '"/>
+          </xsl:call-template>
+          <xsl:text>.</xsl:text>
+
+          <xsl:call-template name="ref-doi-db">
+            <xsl:with-param name="etiqueta" select="'DOI: '"/>
+          </xsl:call-template>
+        </xsl:when>
+
+        <!-- ══════════ IEEE (inicial primero, año al final) ══════════ -->
+        <xsl:when test="$estilo_cita = 'ieee'">
+          <xsl:call-template name="ref-personas-db">
+            <xsl:with-param name="estilo" select="'ieee'"/>
+          </xsl:call-template>
+          <xsl:text>. </xsl:text>
+
+          <!-- TÍTULO ENTRE COMILLAS, TERMINADO EN COMA -->
+          <xsl:if test="db:title | title">
+            <span class="ref-title-roman">
+              <xsl:text>&#x201C;</xsl:text>
+              <xsl:value-of select="normalize-space((db:title | title)[1])"/>
+              <xsl:text>,&#x201D;</xsl:text>
+            </span>
+          </xsl:if>
+
+          <!-- FUENTE / LIBRO (cursiva) -->
+          <xsl:if test="db:citetitle | citetitle">
+            <span class="ref-source-italic">
+              <xsl:text> </xsl:text>
+              <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
+            </span>
+          </xsl:if>
+
+          <!-- VOLUMEN, NÚMERO -->
+          <xsl:if test="db:volumenum | volumenum">
+            <xsl:text>, vol. </xsl:text>
+            <xsl:value-of select="normalize-space((db:volumenum | volumenum)[1])"/>
+          </xsl:if>
+          <xsl:if test="db:issuenum | issuenum">
+            <xsl:text>, n.&#xBA; </xsl:text>
+            <xsl:value-of select="normalize-space((db:issuenum | issuenum)[1])"/>
+          </xsl:if>
+
+          <!-- PÁGINAS -->
+          <xsl:if test="db:artpagenums | artpagenums">
+            <xsl:text>, pp. </xsl:text>
+            <xsl:value-of select="normalize-space((db:artpagenums | artpagenums)[1])"/>
+          </xsl:if>
+
+          <!-- EDITORIAL: CIUDAD: EDITORIAL -->
+          <xsl:call-template name="ref-editorial-db">
+            <xsl:with-param name="sep-inicial" select="'. '"/>
+          </xsl:call-template>
+
+          <!-- AÑO AL FINAL -->
+          <xsl:if test="db:pubdate | pubdate">
+            <xsl:text>, </xsl:text>
+            <span class="ref-year"><xsl:value-of select="normalize-space((db:pubdate | pubdate)[1])"/></span>
+          </xsl:if>
+          <xsl:text>.</xsl:text>
+
+          <xsl:call-template name="ref-doi-db">
+            <xsl:with-param name="etiqueta" select="'DOI: '"/>
+          </xsl:call-template>
+        </xsl:when>
+
+        <!-- ══════════ FALLBACK: AUTOR-AÑO GENÉRICO ══════════ -->
+        <xsl:otherwise>
+          <xsl:call-template name="ref-personas-db">
+            <xsl:with-param name="estilo" select="'fallback'"/>
+          </xsl:call-template>
+          <xsl:if test="db:pubdate | pubdate">
+            <xsl:text> (</xsl:text>
+            <span class="ref-year"><xsl:value-of select="normalize-space((db:pubdate | pubdate)[1])"/></span>
+            <xsl:text>). </xsl:text>
+          </xsl:if>
+          <xsl:if test="db:title | title">
+            <span class="ref-title-roman">
+              <xsl:value-of select="normalize-space((db:title | title)[1])"/>
+              <xsl:text>. </xsl:text>
+            </span>
+          </xsl:if>
+          <xsl:if test="db:citetitle | citetitle">
+            <span class="ref-source-italic">
+              <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
+            </span>
+          </xsl:if>
+          <xsl:call-template name="ref-editorial-db">
+            <xsl:with-param name="sep-inicial" select="'. '"/>
+          </xsl:call-template>
+          <xsl:text>.</xsl:text>
+          <xsl:call-template name="ref-doi-db">
+            <xsl:with-param name="etiqueta" select="'DOI: '"/>
+          </xsl:call-template>
+        </xsl:otherwise>
+
+      </xsl:choose>
     </div>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: ref-personas-db
+       ==========================================================
+       Emite autores (o editores como fallback) de un biblioentry
+       DocBook según el estilo. Encapsula los 4 formatos de nombre.
+       Portado del jats-to-html.xsl (person-group → author/editor). -->
+  <xsl:template name="ref-personas-db">
+    <xsl:param name="estilo" as="xs:string"/>
+
+    <span class="ref-authors">
+      <xsl:choose>
+        <!-- HAY AUTORES -->
+        <xsl:when test="db:author | author">
+          <xsl:for-each select="db:author | author">
+            <xsl:call-template name="ref-una-persona-db">
+              <xsl:with-param name="estilo" select="$estilo"/>
+              <xsl:with-param name="total" select="last()"/>
+            </xsl:call-template>
+          </xsl:for-each>
+        </xsl:when>
+        <!-- FALLBACK: EDITORES CON MARCA (Ed.)/(Eds.) -->
+        <xsl:when test="db:editor | editor">
+          <xsl:for-each select="db:editor | editor">
+            <xsl:call-template name="ref-una-persona-db">
+              <xsl:with-param name="estilo" select="$estilo"/>
+              <xsl:with-param name="total" select="last()"/>
+            </xsl:call-template>
+          </xsl:for-each>
+          <!-- MARCA DE EDITOR SEGÚN ESTILO -->
+          <xsl:choose>
+            <xsl:when test="$estilo = 'apa'">
+              <xsl:text> (Ed</xsl:text>
+              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
+              <xsl:text>.)</xsl:text>
+            </xsl:when>
+            <xsl:when test="$estilo = 'vancouver'">
+              <xsl:text> (ed</xsl:text>
+              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
+              <xsl:text>.)</xsl:text>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:text> (Ed</xsl:text>
+              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
+              <xsl:text>.)</xsl:text>
+            </xsl:otherwise>
+          </xsl:choose>
+        </xsl:when>
+      </xsl:choose>
+    </span>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: ref-una-persona-db
+       ==========================================================
+       Emite UNA persona (surname/firstname) en el formato del estilo,
+       con el separador correcto según su posición en la lista. -->
+  <xsl:template name="ref-una-persona-db">
+    <xsl:param name="estilo" as="xs:string"/>
+    <xsl:param name="total" as="xs:integer"/>
+
+    <xsl:variable name="pn" select="db:personname | personname"/>
+    <xsl:variable name="surname" select="normalize-space($pn/db:surname | $pn/surname)"/>
+    <xsl:variable name="firstname" select="normalize-space($pn/db:firstname | $pn/firstname)"/>
+
+    <xsl:choose>
+      <!-- VANCOUVER: Apellido II (iniciales pegadas sin puntos) -->
+      <xsl:when test="$estilo = 'vancouver'">
+        <xsl:value-of select="$surname"/>
+        <xsl:if test="$firstname != ''">
+          <xsl:text> </xsl:text>
+          <!-- INICIALES SIN PUNTOS NI ESPACIOS: 'Juan Carlos' → 'JC'.
+               EN DOCBOOK firstname VIENE COMPLETO, HAY QUE ABREVIAR. -->
+          <xsl:for-each select="tokenize(normalize-space($firstname), '\s+')">
+            <xsl:value-of select="substring(., 1, 1)"/>
+          </xsl:for-each>
+        </xsl:if>
+        <xsl:if test="position() != last()"><xsl:text>, </xsl:text></xsl:if>
+      </xsl:when>
+
+      <!-- APA: Apellido, I. I. -->
+      <xsl:when test="$estilo = 'apa'">
+        <xsl:value-of select="$surname"/>
+        <xsl:if test="$firstname != ''">
+          <xsl:text>, </xsl:text>
+          <xsl:call-template name="iniciales-apa">
+            <xsl:with-param name="nombres" select="$firstname"/>
+          </xsl:call-template>
+        </xsl:if>
+        <xsl:choose>
+          <xsl:when test="position() = last() - 1"><xsl:text>, &amp; </xsl:text></xsl:when>
+          <xsl:when test="position() != last()"><xsl:text>, </xsl:text></xsl:when>
+        </xsl:choose>
+      </xsl:when>
+
+      <!-- ISO 690: APELLIDO (versalitas), Nombre -->
+      <xsl:when test="$estilo = 'iso690'">
+        <span style="font-variant:small-caps">
+          <xsl:value-of select="upper-case($surname)"/>
+        </span>
+        <xsl:if test="$firstname != ''">
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="$firstname"/>
+        </xsl:if>
+        <xsl:if test="position() != last()"><xsl:text>; </xsl:text></xsl:if>
+      </xsl:when>
+
+      <!-- IEEE: I. Apellido (inicial primero) -->
+      <xsl:when test="$estilo = 'ieee'">
+        <xsl:if test="$firstname != ''">
+          <!-- EXTRAER INICIALES: EN DOCBOOK firstname VIENE COMPLETO
+               ('Marcela'), NO ABREVIADO. iniciales-apa PRODUCE 'M.' -->
+          <xsl:call-template name="iniciales-apa">
+            <xsl:with-param name="nombres" select="$firstname"/>
+          </xsl:call-template>
+          <xsl:text> </xsl:text>
+        </xsl:if>
+        <xsl:value-of select="$surname"/>
+        <xsl:choose>
+          <xsl:when test="position() = last() - 1 and last() &gt; 1"><xsl:text> and </xsl:text></xsl:when>
+          <xsl:when test="position() != last()"><xsl:text>, </xsl:text></xsl:when>
+        </xsl:choose>
+      </xsl:when>
+
+      <!-- FALLBACK: Apellido, Nombre -->
+      <xsl:otherwise>
+        <xsl:value-of select="$surname"/>
+        <xsl:if test="$firstname != ''">
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="$firstname"/>
+        </xsl:if>
+        <xsl:if test="position() != last()"><xsl:text>; </xsl:text></xsl:if>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: ref-editorial-db
+       ==========================================================
+       Emite "Ciudad: Editorial" desde publisher/publishername +
+       publisher/address/city. Convierte " and " → " y " en el nombre. -->
+  <xsl:template name="ref-editorial-db">
+    <xsl:param name="sep-inicial" as="xs:string" select="'. '"/>
+
+    <xsl:variable name="pubname"
+                  select="normalize-space((db:publisher/db:publishername
+                                          | publisher/publishername)[1])"/>
+    <xsl:variable name="pubcity"
+                  select="normalize-space((db:publisher/db:address/db:city
+                                          | publisher/address/city)[1])"/>
+    <xsl:if test="$pubname != '' or $pubcity != ''">
+      <xsl:value-of select="$sep-inicial"/>
+      <xsl:if test="$pubcity != ''">
+        <xsl:value-of select="$pubcity"/>
+        <xsl:text>: </xsl:text>
+      </xsl:if>
+      <xsl:if test="$pubname != ''">
+        <xsl:value-of select="replace($pubname, '(\s)and(\s)', '$1y$2')"/>
+      </xsl:if>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: ref-doi-db
+       ==========================================================
+       Emite el DOI como enlace, con etiqueta configurable. -->
+  <xsl:template name="ref-doi-db">
+    <xsl:param name="etiqueta" as="xs:string" select="'DOI: '"/>
+    <xsl:param name="solo-url" as="xs:boolean" select="false()"/>
+
+    <xsl:variable name="doi"
+                  select="normalize-space((db:biblioid[@class='doi']
+                                          | biblioid[@class='doi'])[1])"/>
+    <xsl:if test="$doi != ''">
+      <div class="ref-doi">
+        <a href="https://doi.org/{$doi}" target="_blank" rel="noopener noreferrer">
+          <xsl:choose>
+            <xsl:when test="$solo-url">
+              <xsl:value-of select="$etiqueta"/><xsl:value-of select="$doi"/>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="$etiqueta"/><xsl:value-of select="$doi"/>
+            </xsl:otherwise>
+          </xsl:choose>
+        </a>
+      </div>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: iniciales-apa (idéntico a revistas)
+       ==========================================================
+       "Juan Carlos" → "J. C." -->
+  <xsl:template name="iniciales-apa">
+    <xsl:param name="nombres"/>
+    <xsl:for-each select="tokenize(normalize-space($nombres), '\s+')">
+      <xsl:value-of select="substring(., 1, 1)"/>
+      <xsl:text>.</xsl:text>
+      <xsl:if test="position() != last()"><xsl:text> </xsl:text></xsl:if>
+    </xsl:for-each>
   </xsl:template>
 
   <!-- ==========================================================
