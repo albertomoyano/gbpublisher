@@ -18,6 +18,13 @@ Private bCierrePermitido As Boolean
 ' ÍNDICE 0 SIEMPRE TIENE VALOR 0 (REPRESENTA "(sin ...)").
 Private aIdsColeccion As New Integer[]
 Private aIdsSerie As New Integer[]
+' ARRAY PARALELO A LAS FILAS DE gbLibro: MAPEA Row → id_autor.
+Private aIdsAutoresLibro As New Integer[]
+' ARRAY PARALELO A LAS FILAS DE gbLibro: MAPEA Row → rol_libro (STRING DEL ENUM).
+Private aRolesAutoresLibro As New String[]
+' BANDERA ANTI-ECO: SUPRIME EFECTOS COLATERALES AL CARGAR EL COMBO DE ROL
+' DESDE gbLibro_Click (EL COMBO SE ACTUALIZA SOLO PARA REFLEJAR, NO PARA GUARDAR).
+Private bCargandoRolLibro As Boolean
 
 ' ════════════════════════════════════════════════════════════════════════════
 ' EVENTO QUE SE EJECUTA AL ABRIR EL FORMULARIO
@@ -158,6 +165,19 @@ Public Sub Form_Open()
   ' EL MÓDULO m_Metadatos SE ENCARGA DEL MAPEO BD → CONTROLES.
   ' INCLUYE EL POBLADO DE id_serie SEGÚN id_coleccion.
   m_Metadatos.CargarMetadatosDeLibro()
+
+  ' --- 8. INICIALIZAR LA SECCIÓN DE AUTORÍA DEL VOLUMEN ---
+  ' CONFIGURAR LA TABLA, POBLAR EL COMBO DE ROLES Y CARGAR LOS AUTORES
+  ' YA VINCULADOS AL LIBRO. SE HACE AL FINAL, CUANDO tipo_libro YA ESTÁ
+  ' CARGADO (RolPorDefectoSegunTipoLibro DEPENDE DE tipo_libro.Index).
+  ConfigurarTablaAutoresLibro()
+  PoblarComboRolLibro()
+  CargarAutoresLibro(m_XML.ObtenerIdLibro(CInt(id_proyecto.Value)))
+
+  ' --- 9. ESTADO INICIAL DE BOTONES DE SELECCIÓN ---
+  ' NO HAY FILA SELECCIONADA AL ABRIR: DESHABILITAR GUARDAR/BORRAR/COMBO.
+  ' btnAutorLibro (AGREGAR) QUEDA SIEMPRE HABILITADO.
+  HabilitarBotonesAutorLibro(False)
 
 End
 
@@ -828,5 +848,414 @@ Public Sub licencia_defecto_Click()
       url_licencia.Text = ""
       url_licencia.SetFocus
   End Select
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ConfigurarTablaAutoresLibro
+' Propósito : Definir columnas, cabeceras y modo de selección de la TableView
+'             gbLibro. Se llama UNA vez desde Form_Open.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ConfigurarTablaAutoresLibro()
+
+  ' --- 1. MODO Y CABECERAS ---
+  ' Select.Single: SOLO UNA FILA SELECCIONABLE A LA VEZ.
+  ' Header.Horizontal: MUESTRA LOS TÍTULOS DE COLUMNA (Persona | Rol).
+  gbLibro.Mode = Select.Single
+  gbLibro.Header = GridView.Horizontal
+
+  ' --- 2. DOS COLUMNAS: PERSONA | ROL ---
+  gbLibro.Columns.Count = 2
+  gbLibro.Columns[0].Text = "Persona"
+  gbLibro.Columns[0].Width = 600
+  gbLibro.Columns[1].Text = "Rol"
+  gbLibro.Columns[1].Width = 200
+
+  ' --- 3. ARRANCAR SIN FILAS ---
+  gbLibro.Rows.Count = 0
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : PoblarComboRolLibro
+' Propósito : Cargar el ComboBox cmbAutoria_rol con los 8 valores del enum
+'             rol_libro. Se llama UNA vez desde Form_Open. El combo es de
+'             solo selección (ReadOnly), el usuario elige uno de la lista.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub PoblarComboRolLibro()
+
+  ' LOS 8 VALORES DEL ENUM rol_libro EN libro_autor, EN ORDEN.
+  ' EL TEXTO MOSTRADO COINCIDE CON EL VALOR DEL ENUM (SIN MAYÚSCULA INICIAL)
+  ' PARA QUE EL GUARDADO SEA DIRECTO (cmbAutoria_rol.Text → rol_libro).
+  cmbAutoria_rol.Clear
+  cmbAutoria_rol.Add("autor")
+  cmbAutoria_rol.Add("editor")
+  cmbAutoria_rol.Add("compilador")
+  cmbAutoria_rol.Add("coordinador")
+  cmbAutoria_rol.Add("prologuista_externo")
+  cmbAutoria_rol.Add("traductor")
+  cmbAutoria_rol.Add("ilustrador")
+  cmbAutoria_rol.Add("director_coleccion")
+  cmbAutoria_rol.ReadOnly = True
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : RolPorDefectoSegunTipoLibro
+' Propósito : Devolver el rol_libro más probable según el tipo de libro
+'             seleccionado en el combo tipo_libro. El tipo NO restringe, solo
+'             sugiere: el usuario puede cambiarlo luego con cmbAutoria_rol.
+' Retorna   : String — valor del enum rol_libro
+' ════════════════════════════════════════════════════════════════════════════
+Private Function RolPorDefectoSegunTipoLibro() As String
+
+  ' EL ÍNDICE DEL COMBO tipo_libro MAPEA (VER Form_Open):
+  ' 0 monografia · 1 obra_colectiva · 2 compilacion · 3 traduccion
+  ' 4 referencia · 5 manual · 6 actas
+  ' MONOGRAFÍA / OBRA COLECTIVA / MANUAL / TRADUCCIÓN → autor
+  ' COMPILACIÓN / REFERENCIA / ACTAS → editor
+  Select Case tipo_libro.Index
+    Case 2, 4, 6
+      Return "editor"
+    Case Else
+      Return "autor"
+  End Select
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarAutoresLibro
+' Propósito : Consultar libro_autor + autores del libro dado y poblar la
+'             TableView gbLibro (2 columnas) junto con los arrays paralelos
+'             aIdsAutoresLibro y aRolesAutoresLibro. Ordena por orden_autoria.
+' Parámetros: iIdLibro As Integer — id del libro cuya autoría se carga
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarAutoresLibro(iIdLibro As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim sNombre As String
+  Dim sRol As String
+  Dim iFila As Integer
+
+  ' --- 1. VALIDAR ID DE LIBRO ---
+  If iIdLibro <= 0 Then
+    gbLibro.Rows.Count = 0
+    aIdsAutoresLibro.Clear()
+    aRolesAutoresLibro.Clear()
+    Return
+  Endif
+
+  ' --- 2. CONSULTAR AUTORES DEL LIBRO ---
+  ' JOIN libro_autor + autores; ORDEN POR orden_autoria PARA CITA CORRECTA.
+  sQuery = "SELECT a.id_autor, a.nombre, a.apellidos, " &
+    "la.orden_autoria, la.rol_libro " &
+    "FROM libro_autor la " &
+    "INNER JOIN autores a ON la.id_autor = a.id_autor " &
+    "WHERE la.id_libro = &1 " &
+    "ORDER BY la.orden_autoria"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar autores del libro:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. LIMPIAR TABLA Y ARRAYS ANTES DE REPOBLAR ---
+  gbLibro.Rows.Count = 0
+  aIdsAutoresLibro.Clear()
+  aRolesAutoresLibro.Clear()
+
+  If Not $result.Available Then Return
+
+  ' --- 4. ITERAR Y POBLAR TABLA + ARRAYS PARALELOS ---
+  ' POBLADO DIRECTO (celda a celda): LOS AUTORES DE UN LIBRO SON POCOS,
+  ' NO SE JUSTIFICA EL EVENTO _Data (RESERVADO PARA MILES DE FILAS).
+  iFila = 0
+  For Each $result
+    sNombre = $result!apellidos & ", " & $result!nombre
+
+    ' EL ROL PUEDE VENIR NULL (DEFAULT DEL ENUM ES 'autor'): NORMALIZAR.
+    If IsNull($result!rol_libro) Then
+      sRol = "autor"
+    Else
+      sRol = $result!rol_libro
+    Endif
+
+    ' AGREGAR FILA Y PINTAR CELDAS.
+    gbLibro.Rows.Count = iFila + 1
+    gbLibro[iFila, 0].Text = sNombre
+    gbLibro[iFila, 1].Text = sRol
+
+    ' ARRAYS PARALELOS: MISMO ÍNDICE QUE LA FILA.
+    aIdsAutoresLibro.Add($result!id_autor)
+    aRolesAutoresLibro.Add(sRol)
+
+    Inc iFila
+  Next
+
+  ' --- 5. TRAS RECARGAR, NO HAY FILA SELECCIONADA: DESHABILITAR BOTONES ---
+  ' LA RECARGA (POST-INSERT/UPDATE/DELETE) RESETEA LA SELECCIÓN. EL ESTADO
+  ' CONSISTENTE ES "SIN SELECCIÓN" HASTA QUE EL USUARIO VUELVA A ELEGIR FILA.
+  HabilitarBotonesAutorLibro(False)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : gbLibro_Click
+' Propósito : Al seleccionar una fila de la tabla, reflejar el rol de esa
+'             persona en el ComboBox cmbAutoria_rol. NO guarda: solo muestra.
+'             Usa la bandera bCargandoRolLibro para que el _Click del combo
+'             (si existiera) no interprete esto como un cambio del usuario.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub gbLibro_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. VALIDAR FILA SELECCIONADA CONTRA EL ARRAY (RC-GM-04 ANÁLOGO) ---
+  ' SI NO HAY FILA VÁLIDA, DESHABILITAR LOS BOTONES DE SELECCIÓN Y SALIR.
+  iFila = gbLibro.Row
+  If iFila < 0 Or If iFila >= aRolesAutoresLibro.Count Then
+    HabilitarBotonesAutorLibro(False)
+    Return
+  Endif
+
+  ' --- 2. REFLEJAR EL ROL DE LA FILA EN EL COMBO (SIN GUARDAR) ---
+  bCargandoRolLibro = True
+  cmbAutoria_rol.Text = aRolesAutoresLibro[iFila]
+  bCargandoRolLibro = False
+
+  ' --- 3. HABILITAR LOS BOTONES QUE OPERAN SOBRE LA FILA SELECCIONADA ---
+  HabilitarBotonesAutorLibro(True)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnAutorLibro_Click
+' Propósito : Abrir FAutores (modal) para elegir una persona de la tabla
+'             autores y vincularla al libro activo con un rol por defecto
+'             según el tipo de libro.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnAutorLibro_Click()
+
+  Dim iIdLibro As Integer
+
+  ' --- 1. RESOLVER EL LIBRO ACTIVO DESDE EL PROYECTO ---
+  iIdLibro = m_XML.ObtenerIdLibro(CInt(id_proyecto.Value))
+  If iIdLibro <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo determinar el libro del proyecto activo.")
+    Return
+  Endif
+
+  ' --- 2. RESET DEL CANAL DE RETORNO DE FAutores (RC-GM-13) ---
+  ' LA VARIABLE VIVE EN m_FuncionesGenericas PORQUE FAutores SE DESTRUYE
+  ' AL CERRAR EL MODAL Y SUS Public NO PERSISTEN.
+  m_FuncionesGenericas.iAutorSeleccionadoEnFAutores = 0
+
+  ' --- 3. ABRIR EL MODAL DE SELECCIÓN ---
+  m_Sonido.sonar("Info")
+  FAutores.ShowModal()
+
+  ' --- 4. SI EL USUARIO ELIGIÓ UNA PERSONA, VINCULARLA ---
+  If m_FuncionesGenericas.iAutorSeleccionadoEnFAutores > 0 Then
+    VincularAutorAlLibro(iIdLibro, m_FuncionesGenericas.iAutorSeleccionadoEnFAutores)
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : VincularAutorAlLibro
+' Propósito : Insertar la relación (id_libro, id_autor) en libro_autor con
+'             orden_autoria = MAX+1 y rol por defecto según el tipo de libro.
+'             Verifica que la persona no esté ya vinculada (persona↔rol 1 a 1).
+' Parámetros: iIdLibro As Integer — libro destino
+'             iIdAutor As Integer — persona a vincular
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub VincularAutorAlLibro(iIdLibro As Integer, iIdAutor As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iOrden As Integer
+  Dim sRolDefecto As String
+
+  ' --- 1. VERIFICAR QUE LA PERSONA NO ESTÉ YA VINCULADA ---
+  ' REGLA persona↔rol 1 A 1: LA MISMA PERSONA NO PUEDE FIGURAR DOS VECES.
+  sQuery = "SELECT COUNT(*) AS total FROM libro_autor " &
+    "WHERE id_libro = &1 AND id_autor = &2"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iIdLibro, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al verificar autor del libro:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If $result!total > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Esta persona ya está vinculada al libro.")
+    Return
+  Endif
+
+  ' --- 2. CALCULAR EL SIGUIENTE orden_autoria (RC-GM-09: MAX + 1) ---
+  sQuery = "SELECT IFNULL(MAX(orden_autoria), 0) + 1 AS siguiente " &
+    "FROM libro_autor WHERE id_libro = &1"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery, iIdLibro)
+  If Error Then
+    iOrden = 1
+  Else
+    iOrden = $result!siguiente
+  Endif
+
+  ' --- 3. DETERMINAR EL ROL POR DEFECTO SEGÚN EL TIPO DE LIBRO ---
+  sRolDefecto = RolPorDefectoSegunTipoLibro()
+
+  ' --- 4. INSERT EN libro_autor ---
+  ' SNAPSHOTS DE AFILIACIÓN/EMAIL QUEDAN NULL: SON OVERRIDE OPCIONAL DEL
+  ' DATO ACTUAL DE autores, QUE SE COMPLETA MANUALMENTE SI HACE FALTA.
+  sQuery = "INSERT INTO libro_autor (" &
+    "id_libro, id_autor, orden_autoria, rol_libro, publicar_email, " &
+    "fecha_asignacion, usuario_asignacion" &
+    ") VALUES (" &
+    "&1, &2, &3, &4, 0, NOW(), &5" &
+    ")"
+
+  Try $result = m_ConexionBD.mConn.Exec(sQuery,
+    iIdLibro, iIdAutor, iOrden, sRolDefecto, m_InicioCierre.UsuarioEnCurso)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al vincular autor al libro:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. REFRESCAR LA TABLA ---
+  m_Sonido.sonar("ok")
+  CargarAutoresLibro(iIdLibro)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnGuardarCambiosAutorLibro_Click
+' Propósito : Guardar (UPDATE) el rol de la persona seleccionada en gbLibro,
+'             tomando el valor del ComboBox cmbAutoria_rol. Guardado EXPLÍCITO
+'             (Opción 1), independiente del guardar de metadatos del libro.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardarCambiosAutorLibro_Click()
+
+  Dim iIdLibro As Integer
+  Dim iFila As Integer
+  Dim iIdAutor As Integer
+  Dim sRolNuevo As String
+  Dim sQuery As String
+
+  ' --- 1. RESOLVER EL LIBRO ACTIVO ---
+  iIdLibro = m_XML.ObtenerIdLibro(CInt(id_proyecto.Value))
+  If iIdLibro <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo determinar el libro del proyecto activo.")
+    Return
+  Endif
+
+  ' --- 2. VALIDAR FILA SELECCIONADA EN LA TABLA ---
+  iFila = gbLibro.Row
+  If iFila < 0 Or If iFila >= aIdsAutoresLibro.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione una persona de la tabla antes de guardar el rol.")
+    Return
+  Endif
+
+  ' --- 3. VALIDAR QUE HAYA UN ROL ELEGIDO EN EL COMBO ---
+  sRolNuevo = Trim(cmbAutoria_rol.Text)
+  If sRolNuevo = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione un rol para la persona.")
+    Return
+  Endif
+
+  ' --- 4. UPDATE DEL ROL ---
+  iIdAutor = aIdsAutoresLibro[iFila]
+  sQuery = "UPDATE libro_autor SET rol_libro = &1 " &
+    "WHERE id_libro = &2 AND id_autor = &3"
+
+  Try m_ConexionBD.mConn.Exec(sQuery, sRolNuevo, iIdLibro, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al guardar el rol:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. REFRESCAR LA TABLA (REFLEJA EL ROL ACTUALIZADO) ---
+  m_Sonido.sonar("ok")
+  CargarAutoresLibro(iIdLibro)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnBorrarAutorLibro_Click
+' Propósito : Eliminar el vínculo libro_autor de la persona seleccionada en
+'             gbLibro. Pide confirmación antes de borrar.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnBorrarAutorLibro_Click()
+
+  Dim iIdLibro As Integer
+  Dim iFila As Integer
+  Dim iIdAutor As Integer
+  Dim sQuery As String
+
+  ' --- 1. RESOLVER EL LIBRO ACTIVO ---
+  iIdLibro = m_XML.ObtenerIdLibro(CInt(id_proyecto.Value))
+  If iIdLibro <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo determinar el libro del proyecto activo.")
+    Return
+  Endif
+
+  ' --- 2. VALIDAR FILA SELECCIONADA ---
+  iFila = gbLibro.Row
+  If iFila < 0 Or If iFila >= aIdsAutoresLibro.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione una persona de la tabla antes de descartar.")
+    Return
+  Endif
+
+  iIdAutor = aIdsAutoresLibro[iFila]
+
+  ' --- 3. CONFIRMAR ---
+  m_Sonido.sonar("info")
+  If Message.Question("¿Descartar esta persona de la autoría del libro?", "Sí", "No") = 2 Then
+    Return
+  Endif
+
+  ' --- 4. DELETE ---
+  sQuery = "DELETE FROM libro_autor WHERE id_libro = &1 AND id_autor = &2"
+  Try m_ConexionBD.mConn.Exec(sQuery, iIdLibro, iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al descartar la persona:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. REFRESCAR LA TABLA ---
+  m_Sonido.sonar("ok")
+  CargarAutoresLibro(iIdLibro)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : HabilitarBotonesAutorLibro
+' Propósito : Habilitar/deshabilitar los controles que requieren una fila
+'             (persona) seleccionada en la tabla gbLibro. El botón de AGREGAR
+'             (btnAutorLibro) queda siempre habilitado y NO se toca aquí.
+' Parámetros: bSi As Boolean — True para habilitar, False para deshabilitar
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub HabilitarBotonesAutorLibro(bSi As Boolean)
+
+  ' CONTROLES QUE OPERAN SOBRE LA PERSONA SELECCIONADA EN LA TABLA.
+  btnGuardarCambiosAutorLibro.Visible = bSi
+  btnBorrarAutorLibro.Visible = bSi
+  cmbAutoria_rol.Visible = bSi
 
 End
