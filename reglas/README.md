@@ -6,8 +6,8 @@
 
 - **Nombre:** gbpublisher
 - **Repositorio:** https://github.com/albertomoyano/gbpublisher
-- **Propósito:** Aplicación de escritorio para manejar flujo de producción editorial académica. con lógica Single Source Publishing. La aplicación NO está orientada al uso por parte de autores.
-- **Stack:** Single Source Publishibng · Markdown · Docbook · XML-JATS · XSLT · MySQL
+- **Propósito:** Aplicación de escritorio para manejar flujo de producción editorial académica, con lógica *Single Source Publishing*. La aplicación NO está orientada al uso de autores, así como tampoco lleva la lógica de un escritor.
+- **Stack:** Markdown, Docbook, XML, JATS, XSLT, LaTeX y MySQL
 - **SO objetivo:** Linux Mint Cinnamon con X11 (exclusivamente)
 - **Rutas:** siempre Unix/Linux (`/home/usuario/`, nunca `C:\`)
 
@@ -42,7 +42,7 @@ Cada sección lógica delimitada con:\
 
 Secciones típicas (agregar o eliminar según la función):
 
-1. Inicialización de variables privilegiar declararlas al principio de la función, no agregarlas dentro de If
+1. Inicialización de variables declararlas al principio de la función, no agregarlas dentro del If
 2. Validación de entrada
 3. Consulta a base de datos
 4. Procesamiento de resultados
