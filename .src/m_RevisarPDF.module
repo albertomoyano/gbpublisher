@@ -1,1 +1,346 @@
 ' Gambas module file
+
+' --- DECLARACIONES GLOBALES DE SESIÓN DEL VISOR (RESET AL ABRIR PROYECTO / LOGOUT) ---
+Public hDocActual As PdfDocument      ' DOCUMENTO ABIERTO (Null SI NO HAY)
+Public iPaginaActual As Integer       ' PÁGINA EN PANTALLA (BASE 0)
+Public fZoom As Float                 ' FACTOR DE ZOOM ACTUAL
+Public iRotacion As Integer           ' 0 / 90 / 180 / 270
+Public sDirPDFActual As String        ' <raiz>/salidas/pdf RESUELTO AL POBLAR
+
+' --- PARÁMETROS DE ZOOM Y LAYOUT ---
+Private Const PASO_ZOOM As Float = 1.25       ' MULTIPLICADOR POR PULSACIÓN
+Private Const ZOOM_MIN As Float = 0.25        ' TOPE INFERIOR
+Private Const ZOOM_MAX As Float = 5.0         ' TOPE SUPERIOR
+Private Const MARGEN_SCROLL As Integer = 34   ' HOLGURA PARA LA BARRA VERTICAL EN AJUSTE AL ANCHO
+
+' ============================================
+' Función   : PoblarComboPDF
+' Propósito : Lista los .pdf de <raíz>/salidas/pdf en cmbVerPDF. Se invoca
+'             una sola vez desde el flujo de "abrir proyecto".
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub PoblarComboPDF()
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRaiz As String
+  Dim sArch As String
+  Dim aArchivos As String[]
+
+  ' --- 1. LIMPIAR ESTADO PREVIO DEL VISOR ---
+  ResetVisorPDF()
+
+  ' --- 2. RESOLVER EL DIRECTORIO <raíz>/salidas/pdf ---
+  ' LA RAÍZ SE OBTIENE DEL DIRECTORIO DEL ARCHIVO DE PROYECTO
+  sRaiz = File.Dir(FMain.txtProyecto.Text)
+  sDirPDFActual = sRaiz &/ "salidas/pdf"
+
+  ' --- 3. GUARDA: EL DIRECTORIO DEBE EXISTIR ---
+  If Not Exist(sDirPDFActual) Then Return
+
+  ' --- 4. LISTAR Y ORDENAR LOS .pdf (SOLO ARCHIVOS) ---
+  aArchivos = New String[]
+  For Each sArch In Dir(sDirPDFActual, "*.pdf", gb.File)
+    aArchivos.Add(sArch)
+  Next
+  aArchivos.Sort()
+
+  ' --- 5. POBLAR EL COMBOBOX ---
+  For Each sArch In aArchivos
+    FMain.cmbVerPDF.Add(sArch)
+  Next
+
+End
+
+' ============================================
+' Función   : SeleccionarPDF
+' Propósito : Carga el PDF elegido en cmbVerPDF. Invocada desde el _Click
+'             del combo.
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub SeleccionarPDF()
+
+  ' --- 1. GUARDAS: DEBE HABER DIRECTORIO Y SELECCIÓN VÁLIDA ---
+  If sDirPDFActual = "" Then Return
+  If FMain.cmbVerPDF.Index < 0 Then Return
+
+  ' --- 2. CARGAR EL ARCHIVO SELECCIONADO ---
+  CargarPDF(sDirPDFActual &/ FMain.cmbVerPDF.Text)
+
+End
+
+' ============================================
+' Función   : CargarPDF
+' Propósito : Abre un PDF, fija el estado inicial (página 0, sin rotación,
+'             zoom = ajuste al ancho) y hace el primer render.
+' Parámetros: sRutaCompleta As String — ruta absoluta al archivo .pdf
+' Retorna   : —
+' ============================================
+Public Sub CargarPDF(sRutaCompleta As String)
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim hDoc As PdfDocument
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If Not Exist(sRutaCompleta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el archivo:" & Chr(10) & sRutaCompleta)
+    Return
+  Endif
+
+  ' --- 2. APERTURA DEL DOCUMENTO (RC-GM-02: TRY + IF ERROR) ---
+  Try hDoc = New PdfDocument(sRutaCompleta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el PDF (¿encriptado o dañado?):" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. VALIDAR QUE TENGA PÁGINAS ---
+  If hDoc.Count <= 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("El PDF no contiene páginas.")
+    Return
+  Endif
+
+  ' --- 4. FIJAR ESTADO INICIAL DEL VISOR ---
+  ' EL ORDEN IMPORTA: CalcularZoomAjusteAncho LEE hDocActual/iPaginaActual/iRotacion
+  hDocActual = hDoc
+  iPaginaActual = 0
+  iRotacion = 0
+  fZoom = CalcularZoomAjusteAncho()
+
+  ' --- 5. RENDER INICIAL ---
+  RenderizarPagina()
+
+End
+
+' ============================================
+' Función   : RenderizarPagina
+' Propósito : FUNCIÓN CENTRAL. Rasteriza la página actual con el zoom y la
+'             rotación vigentes, la vuelca al PictureBox y actualiza los
+'             indicadores. Todo el resto del visor solo muta estado y la llama.
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub RenderizarPagina()
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim img As Image
+  Dim fPtsW As Float
+  Dim fPtsH As Float
+  Dim iRecorteW As Integer
+  Dim iRecorteH As Integer
+  Dim fResolucion As Float
+
+  ' --- 1. GUARDA: DEBE HABER UN DOCUMENTO ABIERTO ---
+  If hDocActual = Null Then Return
+
+  ' --- 2. CLAMP DE PÁGINA ACTUAL AL RANGO VÁLIDO ---
+  If iPaginaActual < 0 Then iPaginaActual = 0
+  If iPaginaActual > hDocActual.Max Then iPaginaActual = hDocActual.Max
+
+  ' --- 3. DIMENSIONES DE PÁGINA EN PUNTOS ---
+  fPtsW = hDocActual[iPaginaActual].W
+  fPtsH = hDocActual[iPaginaActual].H
+
+  ' --- 4. VENTANA DE RECORTE EN PÍXELES (INTERCAMBIA EJES A 90/270) ---
+  ' RC-GM-17: OR NO ES SHORT-CIRCUIT, PERO AMBAS SON COMPARACIONES SEGURAS
+  If iRotacion = 90 Or iRotacion = 270 Then
+    iRecorteW = CInt(fPtsH * fZoom)
+    iRecorteH = CInt(fPtsW * fZoom)
+  Else
+    iRecorteW = CInt(fPtsW * fZoom)
+    iRecorteH = CInt(fPtsH * fZoom)
+  Endif
+
+  ' --- 5. RESOLUCIÓN = 72 dpi * FACTOR DE ZOOM ---
+  fResolucion = 72 * fZoom
+
+  ' --- 6. RENDER DE LA PÁGINA (RC-GM-02: VERIFICAR ERROR) ---
+  Try img = hDocActual[iPaginaActual].Render(0, 0, iRecorteW, iRecorteH, iRotacion, fResolucion)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo renderizar la página." & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 7. VOLCADO AL PICTUREBOX Y AJUSTE DE TAMAÑO (DISPARA EL SCROLL) ---
+  FMain.pbPDF.Picture = img.Picture
+  FMain.pbPDF.Move(0, 0, img.W, img.H)
+
+  ' --- 8. ACTUALIZAR INDICADORES DE PÁGINA ---
+  ' txtGotoPage MUESTRA LA PÁGINA ACTUAL (BASE 1); lblInformacion, EL TOTAL
+  FMain.txtGotoPage.Text = CStr(iPaginaActual + 1)
+  FMain.lblInformacion.Text = " de " & CStr(hDocActual.Count)
+
+End
+
+' ============================================
+' Función   : CalcularZoomAjusteAncho
+' Propósito : Devuelve el factor de zoom que hace que la página actual (con
+'             la rotación vigente) llene el ancho útil del viewport.
+' Parámetros: —
+' Retorna   : Float — factor de zoom acotado a [ZOOM_MIN, ZOOM_MAX]
+' ============================================
+Private Function CalcularZoomAjusteAncho() As Float
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim fPtsAncho As Float
+  Dim iAnchoVista As Integer
+  Dim fZoomCalc As Float
+
+  ' --- 1. GUARDA: SIN DOC, ZOOM NEUTRO ---
+  If hDocActual = Null Then Return 1.0
+
+  ' --- 2. ANCHO EFECTIVO EN PUNTOS SEGÚN ROTACIÓN ---
+  If iRotacion = 90 Or iRotacion = 270 Then
+    fPtsAncho = hDocActual[iPaginaActual].H
+  Else
+    fPtsAncho = hDocActual[iPaginaActual].W
+  Endif
+
+  ' --- 3. ANCHO ÚTIL DEL VIEWPORT (MENOS HOLGURA PARA LA BARRA VERTICAL) ---
+  iAnchoVista = FMain.svViewPDF.Width - MARGEN_SCROLL
+
+  ' --- 4. GUARDA: VIEWPORT NO REALIZADO O DATO INVÁLIDO -> ZOOM NEUTRO ---
+  If iAnchoVista <= 0 Or fPtsAncho <= 0 Then Return 1.0
+
+  ' --- 5. CÁLCULO Y CLAMP ---
+  fZoomCalc = iAnchoVista / fPtsAncho
+  If fZoomCalc < ZOOM_MIN Then fZoomCalc = ZOOM_MIN
+  If fZoomCalc > ZOOM_MAX Then fZoomCalc = ZOOM_MAX
+
+  Return fZoomCalc
+
+End
+
+' ============================================
+' Función   : SiguientePagina / AnteriorPagina
+' Propósito : Navegación secuencial con clamp a [0, Max].
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub SiguientePagina()
+
+  If hDocActual = Null Then Return
+  If iPaginaActual < hDocActual.Max Then
+    Inc iPaginaActual
+    RenderizarPagina()
+  Endif
+
+End
+
+Public Sub AnteriorPagina()
+
+  If hDocActual = Null Then Return
+  If iPaginaActual > 0 Then
+    Dec iPaginaActual
+    RenderizarPagina()
+  Endif
+
+End
+
+' ============================================
+' Función   : AumentarZoom / ReducirZoom
+' Propósito : Escala fZoom por PASO_ZOOM con clamp. El zoom PERSISTE al
+'             navegar entre páginas.
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub AumentarZoom()
+
+  If hDocActual = Null Then Return
+  fZoom = fZoom * PASO_ZOOM
+  If fZoom > ZOOM_MAX Then fZoom = ZOOM_MAX
+  RenderizarPagina()
+
+End
+
+Public Sub ReducirZoom()
+
+  If hDocActual = Null Then Return
+  fZoom = fZoom / PASO_ZOOM
+  If fZoom < ZOOM_MIN Then fZoom = ZOOM_MIN
+  RenderizarPagina()
+
+End
+
+' ============================================
+' Función   : RotarPagina
+' Propósito : Rota +90° a la derecha, acumulativo (0->90->180->270->0).
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub RotarPagina()
+
+  If hDocActual = Null Then Return
+  iRotacion = (iRotacion + 90) Mod 360
+  RenderizarPagina()
+
+End
+
+' ============================================
+' Función   : IrAPagina
+' Propósito : Salta a la página escrita en txtGotoPage. Solo enteros en
+'             rango 1..Count; si no, beep y revierte al valor actual.
+' Parámetros: sTexto As String — contenido crudo del TextBox
+' Retorna   : —
+' ============================================
+Public Sub IrAPagina(sTexto As String)
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim iPag As Integer
+
+  ' --- 1. GUARDA: DEBE HABER DOCUMENTO ---
+  If hDocActual = Null Then Return
+
+  ' --- 2. VALIDAR QUE SEA ENTERO (RC-GM-02) ---
+  Try iPag = CInt(Trim(sTexto))
+  If Error Then
+    m_Sonido.sonar("Error")
+    FMain.txtGotoPage.Text = CStr(iPaginaActual + 1)
+    Return
+  Endif
+
+  ' --- 3. VALIDAR RANGO 1..Count ---
+  If iPag < 1 Or iPag > hDocActual.Count Then
+    m_Sonido.sonar("Error")
+    FMain.txtGotoPage.Text = CStr(iPaginaActual + 1)
+    Return
+  Endif
+
+  ' --- 4. IR A LA PÁGINA (INTERNO BASE 0) ---
+  iPaginaActual = iPag - 1
+  RenderizarPagina()
+
+End
+
+' ============================================
+' Función   : ResetVisorPDF
+' Propósito : Libera el documento y limpia estado y controles. Se llama al
+'             abrir proyecto (vía PoblarComboPDF) y al hacer logout.
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub ResetVisorPDF()
+
+  ' --- 1. LIBERAR ESTADO ---
+  hDocActual = Null
+  iPaginaActual = 0
+  fZoom = 1.0
+  iRotacion = 0
+  sDirPDFActual = ""
+
+  ' --- 2. DEFENSIVO: GARANTIZAR ARRANGEMENT NONE EN EL SCROLLVIEW ---
+  ' (YA ESTÁ EN NONE EN EL DISEÑADOR; ESTO PROTEGE ANTE CAMBIOS FUTUROS)
+  FMain.svViewPDF.Arrangement = Arrange.None
+
+  ' --- 3. LIMPIAR CONTROLES ---
+  FMain.cmbVerPDF.Clear
+  FMain.pbPDF.Picture = Null
+  FMain.txtGotoPage.Text = ""
+  FMain.lblInformacion.Text = ""
+
+End
