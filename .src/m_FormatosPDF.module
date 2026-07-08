@@ -1,0 +1,356 @@
+' Gambas module file
+
+' ============================================================
+' Módulo   : m_FormatosPDF
+' Propósito: Lógica ABM del catálogo de formatos de página PDF.
+'            Concentra queries, carga de controles, generación
+'            de nombres CUSTOM y persistencia. Los handlers de
+'            FSysAdmin solo delegan aquí (salvo la lógica de
+'            componentes inherente al formulario).
+' Tabla    : formatos_pdf
+' Unidades : ancho/alto/márgenes en CENTÍMETROS. La conversión
+'            a bp la hace la función de preámbulo, no este módulo.
+' ============================================================
+
+' --- CONSTANTES INTERNAS DEL MÓDULO ---
+Private Const TABLA As String = "formatos_pdf"
+Private Const CLASIF_CUSTOM As String = "Custom"
+Private Const ORIGEN_SISTEMA As String = "sistema"
+Private Const ORIGEN_CUSTOM As String = "custom"
+Private Const PREFIJO_CUSTOM As String = "CUSTOM"
+
+' ============================================================
+' Función   : Conexion
+' Propósito : Devolver la conexión global de la aplicación.
+' Retorna   : Connection — la conexión MySQL abierta.
+' ============================================================
+' <<< CONFIRMAR EL NOMBRE CUALIFICADO REAL DE LA CONEXIÓN GLOBAL. >>>
+' Según el snippet de login es "mConn". Si vive en otro módulo
+' (p.ej. m_InicioCierre.mConn), corregir SOLO esta línea. Es el
+' único punto del módulo que asume el nombre de la conexión.
+Private Function Conexion() As Connection
+
+  Return m_ConexionBD.mConn
+
+End
+
+' ============================================================
+' Función   : ConfigurarColumnView
+' Propósito : Definir columnas, cabecera y modo del ColumnView
+'             de formatos. Se llama UNA vez desde Form_Open.
+' Parámetros: cvF As ColumnView — control cvFormatos del form.
+' ============================================================
+Public Sub ConfigurarColumnView(cvF As ColumnView)
+
+  ' --- 1. ESTRUCTURA DE COLUMNAS: Nombre / Tamaño / Margen / Activo ---
+  ' LA CLAVE DE CADA FILA SERÁ EL id_formato_pdf (INVISIBLE).
+  cvF.Columns.Count = 4
+
+  cvF.Columns[0].Text = "Nombre"
+  cvF.Columns[0].Width = 180
+
+  cvF.Columns[1].Text = "Tamaño"
+  cvF.Columns[1].Width = 110
+
+  cvF.Columns[2].Text = "Margen"
+  cvF.Columns[2].Width = 80
+
+  cvF.Columns[3].Text = "Activo"
+  cvF.Columns[3].Width = 60
+
+  ' --- 2. MOSTRAR CABECERA Y SELECCIÓN DE UNA SOLA FILA ---
+  cvF.Header = 1
+  cvF.Mode = Select.Single
+
+End
+
+' ============================================================
+' Función   : CargarClasificaciones
+' Propósito : Poblar el ListBox de clasificaciones con los
+'             valores distintos existentes en la tabla.
+' Parámetros: lbC As ListBox — control lbClasificacion del form.
+' ============================================================
+Public Sub CargarClasificaciones(lbC As ListBox)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rs As Result
+
+  ' --- 2. LIMPIAR ANTES DE RECARGAR ---
+  lbC.Clear()
+
+  ' --- 3. CONSULTA: CLASIFICACIONES DISTINTAS, ORDEN ALFABÉTICO ---
+  Try rs = Conexion().Exec("SELECT DISTINCT clasificacion FROM " & TABLA & " ORDER BY clasificacion")
+  If Error Then
+    Message.Error("No se pudieron cargar las clasificaciones:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. VOLCADO AL LISTBOX ---
+  While rs.Available
+    lbC.Add(rs["clasificacion"])
+    rs.MoveNext()
+  Wend
+
+End
+
+' ============================================================
+' Función   : CargarFormatosDe
+' Propósito : Poblar el ColumnView con los formatos de una
+'             clasificación dada. La clave de cada fila es el
+'             id_formato_pdf, para lectura directa al click.
+' Parámetros: cvF As ColumnView — control cvFormatos del form.
+'             sClasificacion As String — clasificación filtrada.
+' ============================================================
+Public Sub CargarFormatosDe(cvF As ColumnView, sClasificacion As String)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rs As Result
+  Dim hItem As _TreeView_Item
+  Dim sActivo As String
+
+  ' --- 2. LIMPIAR ANTES DE RECARGAR ---
+  cvF.Clear()
+
+  ' --- 3. CONSULTA: FORMATOS DE LA CLASIFICACIÓN, ORDEN POR 'orden' ---
+  Try rs = Conexion().Exec("SELECT id_formato_pdf, nombre_formato, ancho, alto, " &
+    "margen_interior, activo FROM " & TABLA & " WHERE clasificacion = &1 ORDER BY orden", sClasificacion)
+  If Error Then
+    Message.Error("No se pudieron cargar los formatos:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. VOLCADO FILA A FILA (CLAVE = id_formato_pdf) ---
+  While rs.Available
+
+    ' RC-GM-01: activo es TINYINT(1) => se lee como Boolean, no CInt.
+    If rs["activo"] = True Then
+      sActivo = "Sí"
+    Else
+      sActivo = "No"
+    Endif
+
+    ' COLUMNA 0 (NOMBRE) VIA Add; RESTO DE COLUMNAS VIA hItem[n].
+    hItem = cvF.Add(CStr(rs["id_formato_pdf"]), rs["nombre_formato"])
+    hItem[1] = Format(rs["ancho"], "0.0") & " x " & Format(rs["alto"], "0.0") & " cm"
+    hItem[2] = Format(rs["margen_interior"], "0.0") & " cm"
+    hItem[3] = sActivo
+
+    rs.MoveNext()
+  Wend
+
+End
+
+' ============================================================
+' Función   : LeerFormato
+' Propósito : Devolver el registro completo de un formato para
+'             que el formulario pueble sus controles de detalle.
+' Parámetros: iId As Integer — id_formato_pdf a leer.
+' Retorna   : Result — cursor posicionado en la fila (o Null).
+'             El llamador debe verificar .Available.
+' ============================================================
+Public Function LeerFormato(iId As Integer) As Result
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rs As Result
+
+  ' --- 2. CONSULTA POR CLAVE PRIMARIA ---
+  Try rs = Conexion().Exec("SELECT * FROM " & TABLA & " WHERE id_formato_pdf = &1", iId)
+  If Error Then
+    Message.Error("No se pudo leer el formato:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  ' --- 3. RETORNO DEL CURSOR ---
+  Return rs
+
+End
+
+' ============================================================
+' Función   : ObtenerSiguienteNombreCustom
+' Propósito : Generar el próximo nombre CUSTOMxx buscando el
+'             MÁXIMO sufijo numérico ya usado y sumando 1
+'             (RC-GM-09: por máximo, nunca por conteo).
+' Retorna   : String — p.ej. "CUSTOM01", "CUSTOM07".
+' ============================================================
+Public Function ObtenerSiguienteNombreCustom() As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rs As Result
+  Dim iSiguiente As Integer
+
+  iSiguiente = 1
+
+  ' --- 2. MÁXIMO SUFIJO NUMÉRICO ENTRE LOS CUSTOM EXISTENTES ---
+  ' SUBSTRING DESDE POS. 7 (TRAS "CUSTOM") -> PARTE NUMÉRICA.
+  Try rs = Conexion().Exec("SELECT MAX(CAST(SUBSTRING(nombre_formato, 7) AS UNSIGNED)) AS maxnum " &
+    "FROM " & TABLA & " WHERE origen = &1", ORIGEN_CUSTOM)
+  If Error Then
+    Message.Error("No se pudo calcular el nombre CUSTOM:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 3. SIGUIENTE = MAX + 1 (NULL => NO HAY CUSTOM AÚN => 1) ---
+  ' RC-GM-17: And NO es short-circuit; separar el null-check en If anidado.
+  If rs.Available Then
+    If Not IsNull(rs["maxnum"]) Then
+      iSiguiente = rs["maxnum"] + 1
+    Endif
+  Endif
+
+  ' --- 4. NOMBRE CON CERO-PADDING A 2 DÍGITOS ---
+  Return PREFIJO_CUSTOM & Format(iSiguiente, "00")
+
+End
+
+' ============================================================
+' Función   : CrearFormatoCustom
+' Propósito : Insertar un formato CUSTOM nuevo. El nombre y el
+'             orden los calcula este módulo; el usuario no elige
+'             nombre. clasificacion='Custom', origen='custom'.
+' Parámetros: rAncho, rAlto As Float — dimensiones en cm.
+'             rMargInt, rMargExt, rMargSup, rMargInf As Float —
+'               márgenes en cm.
+'             sComentario As String — comentario libre.
+'             bActivo As Boolean — estado inicial.
+' Retorna   : Integer — id del formato creado, o -1 si falla.
+' ============================================================
+Public Function CrearFormatoCustom(rAncho As Float, rAlto As Float, rMargInt As Float, rMargExt As Float, rMargSup As Float, rMargInf As Float, sComentario As String, bActivo As Boolean) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim hConn As Connection
+  Dim rs As Result
+  Dim r As Result
+  Dim sNombre As String
+  Dim iOrden As Integer
+
+  hConn = Conexion()
+  iOrden = 10
+
+  ' --- 2. NOMBRE CUSTOM AUTOMÁTICO (RC-GM-09) ---
+  sNombre = ObtenerSiguienteNombreCustom()
+  If sNombre = "" Then Return -1
+
+  ' --- 3. ORDEN = MÁX(orden) EN 'Custom' + 10 (RC-GM-09) ---
+  Try rs = hConn.Exec("SELECT MAX(orden) AS maxorden FROM " & TABLA & " WHERE clasificacion = &1", CLASIF_CUSTOM)
+  If Error Then
+    Message.Error("No se pudo calcular el orden:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+  If rs.Available Then
+    If Not IsNull(rs["maxorden"]) Then
+      iOrden = rs["maxorden"] + 10
+    Endif
+  Endif
+
+  ' --- 4. INSERT VIA Create (RC-GM-15: sin placeholders &N) ---
+  Try r = hConn.Create(TABLA)
+  If Error Then
+    Message.Error("No se pudo iniciar el alta:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  r["clasificacion"] = CLASIF_CUSTOM
+  r["nombre_formato"] = sNombre
+  r["ancho"] = rAncho
+  r["alto"] = rAlto
+  r["margen_interior"] = rMargInt
+  r["margen_exterior"] = rMargExt
+  r["margen_superior"] = rMargSup
+  r["margen_inferior"] = rMargInf
+  r["comentario"] = sComentario
+  r["origen"] = ORIGEN_CUSTOM
+  r["activo"] = bActivo
+  r["orden"] = iOrden
+
+  ' --- 5. PERSISTENCIA Y RETORNO DEL id NUEVO ---
+  Try r.Update()
+  If Error Then
+    Message.Error("No se pudo guardar el formato:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  Return hConn.LastInsertId
+
+End
+
+' ============================================================
+' Función   : ActualizarFormatoCustom
+' Propósito : Actualizar los datos editables de un CUSTOM
+'             (tamaño, 4 márgenes, comentario, activo). NO toca
+'             identidad (nombre, clasificación, origen).
+' Parámetros: iId As Integer — id_formato_pdf a modificar.
+'             rAncho, rAlto As Float — dimensiones en cm.
+'             rMargInt, rMargExt, rMargSup, rMargInf As Float.
+'             sComentario As String.
+'             bActivo As Boolean.
+' Retorna   : Boolean — True si actualizó, False si falló.
+' ============================================================
+Public Function ActualizarFormatoCustom(iId As Integer, rAncho As Float, rAlto As Float, rMargInt As Float, rMargExt As Float, rMargSup As Float, rMargInf As Float, sComentario As String, bActivo As Boolean) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim r As Result
+
+  ' --- 2. EDIT POR CLAVE PRIMARIA (RC-GM-15: Edit + Update) ---
+  Try r = Conexion().Edit(TABLA, "id_formato_pdf = &1", iId)
+  If Error Then
+    Message.Error("No se pudo iniciar la edición:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If Not r.Available Then Return False
+
+  ' --- 3. ASIGNACIÓN POR NOMBRE (SOLO CAMPOS EDITABLES) ---
+  r["ancho"] = rAncho
+  r["alto"] = rAlto
+  r["margen_interior"] = rMargInt
+  r["margen_exterior"] = rMargExt
+  r["margen_superior"] = rMargSup
+  r["margen_inferior"] = rMargInf
+  r["comentario"] = sComentario
+  r["activo"] = bActivo
+
+  ' --- 4. PERSISTENCIA ---
+  Try r.Update()
+  If Error Then
+    Message.Error("No se pudo guardar los cambios:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================================
+' Función   : ActualizarEstadoActivo
+' Propósito : Cambiar solo el estado activo/inactivo de un
+'             formato. Único cambio permitido en formatos de
+'             sistema (inmutables en sus valores).
+' Parámetros: iId As Integer — id_formato_pdf a modificar.
+'             bActivo As Boolean — nuevo estado.
+' Retorna   : Boolean — True si actualizó, False si falló.
+' ============================================================
+Public Function ActualizarEstadoActivo(iId As Integer, bActivo As Boolean) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim r As Result
+
+  ' --- 2. EDIT POR CLAVE PRIMARIA ---
+  Try r = Conexion().Edit(TABLA, "id_formato_pdf = &1", iId)
+  If Error Then
+    Message.Error("No se pudo iniciar la edición:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If Not r.Available Then Return False
+
+  ' --- 3. SOLO EL CAMPO 'activo' ---
+  r["activo"] = bActivo
+
+  ' --- 4. PERSISTENCIA ---
+  Try r.Update()
+  If Error Then
+    Message.Error("No se pudo cambiar el estado:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
