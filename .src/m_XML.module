@@ -5362,26 +5362,26 @@ End Function
 '   (libros). El .bib es compartido a nivel proyecto.
 ' ==========================================================
 
-' ==========================================================
-' FUNCIÓN PRIVADA AUXILIAR: ConvertirTipoDocBook
-' ==========================================================
+' ============================================
 ' Función   : ConvertirTipoDocBook
 ' Propósito : MAPEA UN TIPO DE ENTRADA BIBTEX/BIBLATEX AL VALOR DEL
 '             ATRIBUTO pubwork DE <biblioentry> EN DOCBOOK 5.2.
-'             ANÁLOGA A ConvertirTipoJATS PERO CON EL VOCABULARIO
-'             DE DOCBOOK 5.2 EN VEZ DE JATS.
+'             PARA TIPOS SIN EQUIVALENTE NATIVO (TESIS, REPORTE,
+'             PONENCIA, PATENTE, PERIÓDICO) DEVUELVE "other"; EL TIPO
+'             REAL SE PRESERVA VÍA ConvertirOtherpubwork EN EL ATRIBUTO
+'             otherpubwork.
 ' Parámetros: sTipoBibTeX As String — TIPO DE ENTRADA (article, book, ...)
-' Retorna   : String — VALOR pubwork ("article", "book", "chapter", ...)
-'             DEVUELVE STRING VACÍO PARA TIPOS QUE NO TIENEN pubwork
-'             ESPECÍFICO EN DOCBOOK 5.2; EN ESE CASO EL <biblioentry>
-'             SE EMITE SIN ATRIBUTO pubwork.
-' ==========================================================
+' Retorna   : String — VALOR pubwork VÁLIDO EN DOCBOOK 5.2, O CADENA
+'             VACÍA PARA TIPOS DEMASIADO GENÉRICOS (misc, software).
+' ============================================
 Private Function ConvertirTipoDocBook(sTipoBibTeX As String) As String
 
-  ' --- 1. INICIALIZACIÓN DE TABLA DE MAPEO ---
-  ' EL CONJUNTO DE VALORES VÁLIDOS DE pubwork EN DOCBOOK 5.2:
-  ' article, book, chapter, inseries, inbook, inproceedings, journal,
-  ' manuscript, newspaper, magazine, patent, report, thesis, webpage
+  ' --- 1. TABLA DE MAPEO A VALORES VÁLIDOS DE pubwork EN DOCBOOK 5.2 ---
+  ' VALORES VÁLIDOS: article, bbs, book, cdrom, chapter, dvd, emailmessage,
+  ' gopher, journal, manuscript, newsposting, other, part, refentry, section,
+  ' series, set, webpage, wiki.
+  ' LOS TIPOS SIN EQUIVALENTE NATIVO SE MAPEAN A "other" Y PRESERVAN SU
+  ' NATURALEZA EN otherpubwork (VER ConvertirOtherpubwork).
   Dim mapeo As New Collection
 
   mapeo["article"] = "article"
@@ -5390,27 +5390,73 @@ Private Function ConvertirTipoDocBook(sTipoBibTeX As String) As String
   mapeo["incollection"] = "chapter"
   mapeo["bookinbook"] = "chapter"
   mapeo["collection"] = "book"
-  mapeo["inproceedings"] = "inproceedings"
-  mapeo["conference"] = "inproceedings"
   mapeo["proceedings"] = "book"
-  mapeo["thesis"] = "thesis"
-  mapeo["phdthesis"] = "thesis"
-  mapeo["mastersthesis"] = "thesis"
-  mapeo["techreport"] = "report"
-  mapeo["report"] = "report"
   mapeo["manual"] = "book"
   mapeo["booklet"] = "book"
-  mapeo["periodical"] = "newspaper"
-  mapeo["patent"] = "patent"
   mapeo["online"] = "webpage"
-  mapeo["misc"] = ""           ' SIN pubwork — DEMASIADO GENÉRICO
   mapeo["unpublished"] = "manuscript"
-  mapeo["software"] = ""           ' NO HAY pubwork="software" EN 5.2 BASE
-  mapeo["dataset"] = ""           ' IDEM
+
+  ' TIPOS SIN EQUIVALENTE NATIVO: pubwork="other", TIPO REAL EN otherpubwork
+  mapeo["thesis"] = "other"
+  mapeo["phdthesis"] = "other"
+  mapeo["mastersthesis"] = "other"
+  mapeo["techreport"] = "other"
+  mapeo["report"] = "other"
+  mapeo["inproceedings"] = "other"
+  mapeo["conference"] = "other"
+  mapeo["periodical"] = "other"
+  mapeo["patent"] = "other"
+
+  ' TIPOS DEMASIADO GENÉRICOS: SIN pubwork (SE EMITE SIN EL ATRIBUTO)
+  mapeo["misc"] = ""
+  mapeo["software"] = ""
+  mapeo["dataset"] = ""
 
   ' --- 2. RETORNAR EL VALOR O CADENA VACÍA SI NO HAY MATCH ---
   If mapeo.Exist(Lower(sTipoBibTeX)) Then
     Return mapeo[Lower(sTipoBibTeX)]
+  Else
+    Return ""
+  Endif
+
+End
+
+' ────────────────────────────────────────────────────────────────────────────
+' MODIFICACIÓN 2 — Agregar la función auxiliar ConvertirOtherpubwork
+' (colocar inmediatamente después de ConvertirTipoDocBook)
+' ────────────────────────────────────────────────────────────────────────────
+
+' ============================================
+' Función   : ConvertirOtherpubwork
+' Propósito : PARA TIPOS BIBLATEX SIN EQUIVALENTE NATIVO EN @pubwork,
+'             DEVUELVE EL VALOR DEL ATRIBUTO otherpubwork (NMTOKEN) QUE
+'             PRESERVA LA NATURALEZA REAL DE LA OBRA. SOLO SE USA CUANDO
+'             ConvertirTipoDocBook DEVOLVIÓ "other".
+'             DEVUELVE CADENA VACÍA PARA TIPOS CON pubwork NATIVO.
+' Parámetros: sTipoBibTeX As String — TIPO DE ENTRADA (thesis, report, ...)
+' Retorna   : String — VALOR otherpubwork (NMTOKEN: SIN ESPACIOS), O
+'             CADENA VACÍA SI EL TIPO TIENE pubwork NATIVO.
+' ============================================
+Private Function ConvertirOtherpubwork(sTipoBibTeX As String) As String
+
+  ' --- 1. TABLA DE TIPOS QUE VAN A pubwork="other" ---
+  ' EL VALOR ES UN NMTOKEN (SIN ESPACIOS NI CARACTERES ESPECIALES) QUE
+  ' IDENTIFICA LA NATURALEZA REAL DE LA OBRA PARA EL XSLT DE SALIDA.
+  Dim mapeoOtro As New Collection
+
+  mapeoOtro["thesis"] = "thesis"
+  mapeoOtro["phdthesis"] = "thesis"
+  mapeoOtro["mastersthesis"] = "thesis"
+  mapeoOtro["techreport"] = "report"
+  mapeoOtro["report"] = "report"
+  mapeoOtro["inproceedings"] = "inproceedings"
+  mapeoOtro["conference"] = "inproceedings"
+  mapeoOtro["periodical"] = "periodical"
+  mapeoOtro["patent"] = "patent"
+
+  ' --- 2. RETORNAR EL VALOR O CADENA VACÍA SI NO APLICA ---
+  If mapeoOtro.Exist(Lower(sTipoBibTeX)) Then
+    Return mapeoOtro[Lower(sTipoBibTeX)]
   Else
     Return ""
   Endif
@@ -5644,6 +5690,10 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
   Dim sTituloCompleto As String
   Dim sBookTitleCompleto As String
   Dim sMaintitleCompleto As String
+  ' TIPO REAL PRESERVADO PARA pubwork="other" (thesis, report, ...) Y
+  ' TIPO EFECTIVO PARA LAS COMPARACIONES INTERNAS DE LA FUNCIÓN.
+  Dim sOtherpubwork As String
+  Dim sTipoEfectivo As String
 
   ' --- 1. RESOLVER crossref SI EXISTE (HERENCIA DE CAMPOS) ---
   sCrossref = ParsearCampoBib(sEntry, "crossref")
@@ -5658,8 +5708,17 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
     sEntry = FusionarEntradas(sEntryBase, sEntry)
   Endif
 
-  ' --- 2. DETERMINAR pubwork ---
+  ' --- 2. DETERMINAR pubwork Y TIPO EFECTIVO ---
   sPubwork = ConvertirTipoDocBook(sType)
+  sOtherpubwork = ConvertirOtherpubwork(sType)
+
+  ' TIPO EFECTIVO: PARA pubwork="other" LAS COMPARACIONES INTERNAS
+  ' (TESIS→orgname, PATENTE→patent-number, ETC.) USAN EL TIPO REAL.
+  If sPubwork = "other" Then
+    sTipoEfectivo = sOtherpubwork
+  Else
+    sTipoEfectivo = sPubwork
+  Endif
 
   ' --- 3. EXTRAER CAMPOS DEL BIBLATEX ---
   sAuthor = ParsearCampoBib(sEntry, "author")
