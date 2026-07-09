@@ -18,6 +18,12 @@ Private bCierrePermitido As Boolean
 ' ÍNDICE 0 SIEMPRE TIENE VALOR 0 (REPRESENTA "(sin ...)").
 Private aIdsColeccion As New Integer[]
 Private aIdsSerie As New Integer[]
+' ARRAY PARALELO AL COMBOBOX formato_pdf: MAPEA Index → id_formato_pdf.
+' ÍNDICE 0 SIEMPRE TIENE VALOR 0 (REPRESENTA "(sin formato asignado)").
+Private aIdsFormatoPDF As New Integer[]
+' ARRAY PARALELO: MAPEA Index → DESCRIPCIÓN LEGIBLE (tamaño + comentario)
+' PARA MOSTRAR EN descripcion_formato_pdf AL SELECCIONAR.
+Private aDescFormatoPDF As New String[]
 ' ARRAY PARALELO A LAS FILAS DE gbLibro: MAPEA Row → id_autor.
 Private aIdsAutoresLibro As New Integer[]
 ' ARRAY PARALELO A LAS FILAS DE gbLibro: MAPEA Row → rol_libro (STRING DEL ENUM).
@@ -160,6 +166,12 @@ Public Sub Form_Open()
       cmb_github.Index = If(CStr(hProyecto["integracion_github"]) = "con_integracion", 1, 0)
     Endif
   Endif
+
+  ' --- 6.c POBLAR COMBOBOX DE FORMATO PDF ---
+  ' MUESTRA LOS FORMATOS activo=1 MÁS EL ASIGNADO ACTUAL AUNQUE ESTÉ
+  ' INACTIVO (PARA NO PERDER LA SELECCIÓN DEL LIBRO). LA SELECCIÓN
+  ' REAL LA HACE m_Metadatos.CargarMetadatosDeLibro VÍA SeleccionarFormatoPorId.
+  PoblarComboFormatoPDF()
 
   ' --- 7. CARGAR LOS METADATOS DEL LIBRO ---
   ' EL MÓDULO m_Metadatos SE ENCARGA DEL MAPEO BD → CONTROLES.
@@ -1264,5 +1276,143 @@ Public Sub btnSubtitulo_Click()
 
   FTXTextendido.OriginalTextBox = subtitulo
   FTXTextendido.ShowModal
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' POBLAR COMBOBOX DE FORMATO PDF DESDE LA TABLA formatos_pdf
+' INCLUYE LOS ACTIVOS + EL ASIGNADO ACTUAL AUNQUE ESTÉ DESHABILITADO.
+' ETIQUETA: "Clasificación · Nombre" (ÚNICA POR EL UNIQUE DE LA TABLA).
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub PoblarComboFormatoPDF()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim hRes As Result
+  Dim hActual As Result
+  Dim iIdLibro As Integer
+  Dim iFormatoActual As Integer
+  Dim sDesc As String
+
+  iFormatoActual = 0
+
+  ' --- 2. RESET ARRAYS Y COMBO ---
+  aIdsFormatoPDF = New Integer[]
+  aDescFormatoPDF = New String[]
+  formato_pdf.Clear
+
+  ' --- 3. ÍNDICE 0: "(sin formato asignado)" → ID 0 ---
+  formato_pdf.Add("(sin formato asignado)")
+  aIdsFormatoPDF.Add(0)
+  aDescFormatoPDF.Add("")
+
+  ' --- 4. FORMATO ACTUALMENTE ASIGNADO (PARA INCLUIRLO AUNQUE ESTÉ INACTIVO) ---
+  iIdLibro = m_XML.ObtenerIdLibro(CInt(id_proyecto.Value))
+  If iIdLibro > 0 Then
+    Try hActual = m_ConexionBD.mConn.Exec("SELECT id_formato_pdf FROM libros_md WHERE id_libro = &1", iIdLibro)
+    If Not Error Then
+      If hActual.Available Then
+        ' RC-GM-17: null-check separado del CInt.
+        If Not IsNull(hActual["id_formato_pdf"]) Then
+          iFormatoActual = CInt(hActual["id_formato_pdf"])
+        Endif
+      Endif
+    Endif
+  Endif
+
+  ' --- 5. CONSULTAR ACTIVOS + EL ASIGNADO (AUNQUE ESTÉ INACTIVO) ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_formato_pdf, clasificacion, nombre_formato, ancho, alto, comentario, activo " &
+    "FROM formatos_pdf WHERE activo = 1 OR id_formato_pdf = &1 " &
+    "ORDER BY clasificacion, orden", iFormatoActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los formatos PDF:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 6. POBLAR COMBO Y ARRAYS EN PARALELO ---
+  While hRes.Available
+
+    ' ETIQUETA: "Clasificación · Nombre" (DESAMBIGUA NOMBRES REPETIDOS).
+    formato_pdf.Add(CStr(hRes["clasificacion"]) & " · " & CStr(hRes["nombre_formato"]))
+    aIdsFormatoPDF.Add(CInt(hRes["id_formato_pdf"]))
+
+    ' DESCRIPCIÓN: "ancho × alto cm — comentario  [INACTIVO]".
+    sDesc = Format(hRes["ancho"], "0.0") & " × " & Format(hRes["alto"], "0.0") & " cm"
+
+    ' COMENTARIO OPCIONAL (RC-GM-17: null-check anidado, no en la misma línea).
+    If Not IsNull(hRes["comentario"]) Then
+      If Trim(hRes["comentario"]) <> "" Then
+        sDesc = sDesc & " — " & CStr(hRes["comentario"])
+      Endif
+    Endif
+
+    ' MARCAR EL ASIGNADO-PERO-INACTIVO (RC-GM-01: activo es Boolean).
+    If hRes["activo"] <> True Then
+      sDesc = sDesc & "  [INACTIVO]"
+    Endif
+
+    aDescFormatoPDF.Add(sDesc)
+
+    hRes.MoveNext
+  Wend
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' EVENTO CLICK DEL COMBOBOX DE FORMATO PDF
+' MUESTRA LA DESCRIPCIÓN DEL FORMATO SELECCIONADO EN EL TEXTBOX READONLY.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub formato_pdf_Click()
+
+  ' RANGO VÁLIDO? (Or If ES SHORT-CIRCUIT EN GAMBAS)
+  If formato_pdf.Index < 0 Or If formato_pdf.Index >= aDescFormatoPDF.Count Then
+    descripcion_formato_pdf.Text = ""
+    Return
+  Endif
+
+  descripcion_formato_pdf.Text = aDescFormatoPDF[formato_pdf.Index]
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' HELPER PÚBLICO — LEER EL id_formato_pdf SELECCIONADO
+' USADO POR m_Metadatos AL GUARDAR. Devuelve 0 si es "(sin formato)";
+' m_Metadatos debe traducir 0 → NULL (la columna es FK nullable).
+' ════════════════════════════════════════════════════════════════════════════
+Public Function ObtenerIdFormatoSeleccionado() As Integer
+
+  If formato_pdf.Index < 0 Or If formato_pdf.Index >= aIdsFormatoPDF.Count Then Return 0
+  Return aIdsFormatoPDF[formato_pdf.Index]
+
+End Function
+
+' ════════════════════════════════════════════════════════════════════════════
+' HELPER PÚBLICO — SELECCIONAR EL COMBO POR id_formato_pdf
+' USADO POR m_Metadatos AL CARGAR. Setea también la descripción.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub SeleccionarFormatoPorId(iId As Integer)
+
+  Dim i As Integer
+
+  ' --- 1. SIN FORMATO (0 O NULL EN BD) → ÍNDICE 0 ---
+  If iId <= 0 Then
+    formato_pdf.Index = 0
+    descripcion_formato_pdf.Text = ""
+    Return
+  Endif
+
+  ' --- 2. BUSCAR EL id EN EL ARRAY PARALELO ---
+  For i = 1 To aIdsFormatoPDF.Count - 1
+    If aIdsFormatoPDF[i] = iId Then
+      formato_pdf.Index = i
+      descripcion_formato_pdf.Text = aDescFormatoPDF[i]
+      Return
+    Endif
+  Next
+
+  ' --- 3. NO ENCONTRADO → ÍNDICE 0 (DEFENSIVO) ---
+  formato_pdf.Index = 0
+  descripcion_formato_pdf.Text = ""
 
 End
