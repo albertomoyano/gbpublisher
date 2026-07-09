@@ -31,6 +31,9 @@ Private $aIdsColecciones As New Integer[]
 Private $aColeccionesActivas As New Boolean[]
 Private $aIdsSeries As New Integer[]
 Private $bActivaColeccionOriginal As Boolean = False
+' --- VARIABLES PARA ABM DE FORMATOS PDF ---
+Private $iFormatoActual As Integer = 0
+Private $bFormatoEsCustom As Boolean = False
 
 ' ============================================
 ' Función   : Form_Open
@@ -62,6 +65,7 @@ Public Sub Form_Open()
   HBox2a.Visible = True
   HBox3a.Visible = True
   HBox4a.Visible = True
+  SplitterPDF.Layout = [1, 3]
 
   txtAdministrador.SetFocus()
 
@@ -314,6 +318,14 @@ Private Sub HabilitarABMUsuarios()
   txtApiKey.Password = True
   CargarCredenciales()
   LimpiarFormulario()
+
+  ' --- 4. Inicializar ABM de formatos PDF ---
+  m_FormatosPDF.EstablecerConexion(hConnServidor)
+  m_FormatosPDF.ConfigurarColumnView(cvFormatos)
+  m_FormatosPDF.CargarClasificaciones(lbClasificacion)
+  ' CORRIGE Password=True HEREDADO DEL DISEÑADOR EN EL COMENTARIO
+  txtComentarioFormatoPDF.Password = False
+  LimpiarDetalleFormato()
 
 End
 
@@ -568,6 +580,7 @@ End
 ' ============================================
 Public Sub btnCerrar_Click()
 
+  m_FormatosPDF.LiberarConexion()
   m_ApiCredenciales.LiberarConexion()
 
   If hConnServidor And hConnServidor.Opened Then hConnServidor.Close()
@@ -2432,5 +2445,329 @@ Public Function ValidarPatronUsuario(sUsuario As String) As Boolean
   Next
   ' --- 4. CUMPLE EL PATRÓN COMPLETO ---
   Return True
+
+End
+
+' ============================================
+' Función   : lbClasificacion_Click
+' Propósito : Al elegir una clasificación, cargar sus formatos
+'             en el ColumnView y resetear el detalle.
+' ============================================
+Public Sub lbClasificacion_Click()
+
+  ' --- 1. GUARD: DEBE HABER CLASIFICACIÓN SELECCIONADA ---
+  If lbClasificacion.Index < 0 Then Return
+
+  ' --- 2. CARGAR FORMATOS DE ESA CLASIFICACIÓN ---
+  m_FormatosPDF.CargarFormatosDe(cvFormatos, lbClasificacion.Text)
+
+  ' --- 3. RESET DEL DETALLE (AÚN NO HAY FORMATO SELECCIONADO) ---
+  LimpiarDetalleFormato()
+
+End
+
+' ============================================
+' Función   : cvFormatos_Click
+' Propósito : Al seleccionar un formato, poblar los controles de
+'             detalle y fijar editabilidad según el origen.
+' ============================================
+Public Sub cvFormatos_Click()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rs As Result
+
+  ' --- 2. GUARD: DEBE HABER FILA SELECCIONADA ---
+  If Not cvFormatos.Current Then Return
+
+  ' --- 3. ID DESDE LA CLAVE DE LA FILA (RC-GM-16: id en variable) ---
+  $iFormatoActual = CInt(cvFormatos.Current.Key)
+
+  ' --- 4. LEER REGISTRO COMPLETO ---
+  rs = m_FormatosPDF.LeerFormato($iFormatoActual)
+  If IsNull(rs) Then Return
+  If Not rs.Available Then Return
+
+  ' --- 5. POBLAR CAMPOS (Str => PUNTO DECIMAL, ROUND-TRIP SEGURO) ---
+  ancho_formato_pdf.Text = Str(rs["ancho"])
+  alto_formato_pdf.Text = Str(rs["alto"])
+  margen_interior.Text = Str(rs["margen_interior"])
+  margen_exterior.Text = Str(rs["margen_exterior"])
+  margen_superior.Text = Str(rs["margen_superior"])
+  margen_inferior.Text = Str(rs["margen_inferior"])
+  txtComentarioFormatoPDF.Text = If(rs["comentario"], rs["comentario"], "")
+  ' RC-GM-01: activo es TINYINT(1) => Boolean.
+  chbActivoFormatoPDF.Value = (rs["activo"] = True)
+
+  ' --- 6. EDITABILIDAD SEGÚN ORIGEN ---
+  ' SISTEMA => campos readonly (solo 'activo' editable).
+  ' CUSTOM  => todo editable.
+  $bFormatoEsCustom = (rs["origen"] = "custom")
+  EstablecerEdicionCampos($bFormatoEsCustom)
+
+  ' --- 7. BOTONES: MODO EDICIÓN ---
+  btnNuevoFormatoPDF.Visible = True
+  btnGuardarFormatoPDF.Visible = False
+  btnGuardarCambiosFormatoPDF.Visible = True
+
+End
+
+' ============================================
+' Función   : btnNuevoFormatoPDF_Click
+' Propósito : Entrar en modo ALTA de un formato CUSTOM: limpia
+'             campos, habilita edición y ajusta botones.
+' ============================================
+Public Sub btnNuevoFormatoPDF_Click()
+
+  ' --- 1. MODO ALTA: UN ALTA SIEMPRE ES CUSTOM ---
+  $iFormatoActual = 0
+  $bFormatoEsCustom = True
+
+  ' --- 2. LIMPIAR CAMPOS Y HABILITAR EDICIÓN ---
+  ancho_formato_pdf.Text = ""
+  alto_formato_pdf.Text = ""
+  margen_interior.Text = ""
+  margen_exterior.Text = ""
+  margen_superior.Text = ""
+  margen_inferior.Text = ""
+  txtComentarioFormatoPDF.Text = ""
+  chbActivoFormatoPDF.Value = True
+  EstablecerEdicionCampos(True)
+
+  ' --- 3. BOTONES: MODO ALTA (OCULTAR NUEVO PARA NO ABANDONAR A MEDIAS) ---
+  btnNuevoFormatoPDF.Visible = False
+  btnGuardarFormatoPDF.Visible = True
+  btnGuardarCambiosFormatoPDF.Visible = False
+
+  ' --- 4. FOCO EN EL PRIMER CAMPO ---
+  ancho_formato_pdf.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarFormatoPDF_Click
+' Propósito : Persistir un formato CUSTOM nuevo (modo ALTA).
+'             El nombre CUSTOMxx lo genera el módulo.
+' ============================================
+Public Sub btnGuardarFormatoPDF_Click()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rAncho As Float
+  Dim rAlto As Float
+  Dim rMargInt As Float
+  Dim rMargExt As Float
+  Dim rMargSup As Float
+  Dim rMargInf As Float
+  Dim iNuevoId As Integer
+
+  ' --- 2. LEER Y NORMALIZAR NÚMEROS (COMA O PUNTO -> PUNTO) ---
+  rAncho = LeerNumero(ancho_formato_pdf.Text)
+  rAlto = LeerNumero(alto_formato_pdf.Text)
+  rMargInt = LeerNumero(margen_interior.Text)
+  rMargExt = LeerNumero(margen_exterior.Text)
+  rMargSup = LeerNumero(margen_superior.Text)
+  rMargInf = LeerNumero(margen_inferior.Text)
+
+  ' --- 3. VALIDACIÓN ---
+  If rAncho <= 0 Or rAlto <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ancho y alto deben ser mayores que cero.")
+    Return
+  Endif
+  If rMargInt < 0 Or rMargExt < 0 Or rMargSup < 0 Or rMargInf < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Los márgenes no pueden ser negativos.")
+    Return
+  Endif
+
+  ' --- 4. ALTA VÍA MÓDULO ---
+  iNuevoId = m_FormatosPDF.CrearFormatoCustom(rAncho, rAlto, rMargInt, rMargExt, rMargSup, rMargInf, Trim(txtComentarioFormatoPDF.Text), chbActivoFormatoPDF.Value)
+  ' -1 => FALLÓ EL ALTA (EL MÓDULO YA MOSTRÓ EL ERROR).
+  If iNuevoId = -1 Then Return
+
+  ' --- 5. REFRESCO: 'Custom' PUEDE SER CLASIFICACIÓN NUEVA ---
+  m_FormatosPDF.CargarClasificaciones(lbClasificacion)
+  SeleccionarClasificacion("Custom")
+  m_FormatosPDF.CargarFormatosDe(cvFormatos, "Custom")
+
+  ' --- 6. RESET DE ESTADO Y AVISO ---
+  LimpiarDetalleFormato()
+  m_Sonido.sonar("Info")
+  Message.Info("Formato personalizado creado.")
+
+End
+
+' ============================================
+' Función   : btnGuardarCambiosFormatoPDF_Click
+' Propósito : Guardar cambios del formato seleccionado. Si es
+'             CUSTOM actualiza todo; si es SISTEMA, solo 'activo'.
+' ============================================
+Public Sub btnGuardarCambiosFormatoPDF_Click()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rAncho As Float
+  Dim rAlto As Float
+  Dim rMargInt As Float
+  Dim rMargExt As Float
+  Dim rMargSup As Float
+  Dim rMargInf As Float
+  Dim bOk As Boolean
+
+  ' --- 2. GUARD: DEBE HABER FORMATO SELECCIONADO ---
+  If $iFormatoActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione un formato para modificar.")
+    Return
+  Endif
+
+  ' --- 3. RAMA SEGÚN ORIGEN ---
+  If $bFormatoEsCustom Then
+
+    ' CUSTOM: LEER, VALIDAR Y ACTUALIZAR TODOS LOS CAMPOS.
+    rAncho = LeerNumero(ancho_formato_pdf.Text)
+    rAlto = LeerNumero(alto_formato_pdf.Text)
+    rMargInt = LeerNumero(margen_interior.Text)
+    rMargExt = LeerNumero(margen_exterior.Text)
+    rMargSup = LeerNumero(margen_superior.Text)
+    rMargInf = LeerNumero(margen_inferior.Text)
+
+    If rAncho <= 0 Or rAlto <= 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Ancho y alto deben ser mayores que cero.")
+      Return
+    Endif
+    If rMargInt < 0 Or rMargExt < 0 Or rMargSup < 0 Or rMargInf < 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Los márgenes no pueden ser negativos.")
+      Return
+    Endif
+
+    bOk = m_FormatosPDF.ActualizarFormatoCustom($iFormatoActual, rAncho, rAlto, rMargInt, rMargExt, rMargSup, rMargInf, Trim(txtComentarioFormatoPDF.Text), chbActivoFormatoPDF.Value)
+
+  Else
+
+    ' SISTEMA: SOLO EL ESTADO ACTIVO ES MODIFICABLE.
+    bOk = m_FormatosPDF.ActualizarEstadoActivo($iFormatoActual, chbActivoFormatoPDF.Value)
+
+  Endif
+
+  ' EL MÓDULO YA MOSTRÓ EL ERROR SI bOk = False.
+  If Not bOk Then Return
+
+  ' --- 4. REFRESCO DE LA CLASIFICACIÓN ACTUAL ---
+  If lbClasificacion.Index >= 0 Then
+    m_FormatosPDF.CargarFormatosDe(cvFormatos, lbClasificacion.Text)
+  Endif
+
+  ' --- 5. RESET DE ESTADO Y AVISO ---
+  LimpiarDetalleFormato()
+  m_Sonido.sonar("Info")
+  Message.Info("Cambios guardados correctamente.")
+
+End
+
+' ============================================
+' Función   : EstablecerEdicionCampos
+' Propósito : Alternar readonly + fondo de los campos de detalle.
+'             chbActivoFormatoPDF queda SIEMPRE editable (activo
+'             es modificable en sistema y en custom).
+' Parámetros: bEditable As Boolean — True: editable; False: readonly
+' ============================================
+Private Sub EstablecerEdicionCampos(bEditable As Boolean)
+
+  ' --- 1. FONDO: BLANCO SI EDITABLE, GRIS (Color.Background) SI READONLY ---
+  Dim iBg As Integer
+
+  If bEditable Then
+    iBg = Color.TextBackground
+  Else
+    iBg = Color.Background
+  Endif
+
+  ' --- 2. APLICAR A LOS 6 NUMÉRICOS + COMENTARIO ---
+  ancho_formato_pdf.ReadOnly = Not bEditable
+  ancho_formato_pdf.Background = iBg
+  alto_formato_pdf.ReadOnly = Not bEditable
+  alto_formato_pdf.Background = iBg
+  margen_interior.ReadOnly = Not bEditable
+  margen_interior.Background = iBg
+  margen_exterior.ReadOnly = Not bEditable
+  margen_exterior.Background = iBg
+  margen_superior.ReadOnly = Not bEditable
+  margen_superior.Background = iBg
+  margen_inferior.ReadOnly = Not bEditable
+  margen_inferior.Background = iBg
+  txtComentarioFormatoPDF.ReadOnly = Not bEditable
+  txtComentarioFormatoPDF.Background = iBg
+
+End
+
+' ============================================
+' Función   : LimpiarDetalleFormato
+' Propósito : Dejar el panel de detalle en estado inicial:
+'             campos vacíos, readonly, sin selección y botones
+'             en su disposición base.
+' ============================================
+Private Sub LimpiarDetalleFormato()
+
+  ' --- 1. VACIAR CAMPOS ---
+  ancho_formato_pdf.Text = ""
+  alto_formato_pdf.Text = ""
+  margen_interior.Text = ""
+  margen_exterior.Text = ""
+  margen_superior.Text = ""
+  margen_inferior.Text = ""
+  txtComentarioFormatoPDF.Text = ""
+  chbActivoFormatoPDF.Value = True
+
+  ' --- 2. RESET DE ESTADO INTERNO ---
+  $iFormatoActual = 0
+  $bFormatoEsCustom = False
+
+  ' --- 3. CAMPOS READONLY ---
+  EstablecerEdicionCampos(False)
+
+  ' --- 4. BOTONES: DISPOSICIÓN BASE ---
+  btnNuevoFormatoPDF.Visible = True
+  btnGuardarFormatoPDF.Visible = False
+  btnGuardarCambiosFormatoPDF.Visible = False
+
+End
+
+' ============================================
+' Función   : SeleccionarClasificacion
+' Propósito : Posicionar el ListBox en la clasificación indicada
+'             (usada tras crear un CUSTOM para saltar a 'Custom').
+' Parámetros: sClasif As String — texto de la clasificación.
+' ============================================
+Private Sub SeleccionarClasificacion(sClasif As String)
+
+  Dim i As Integer
+
+  For i = 0 To lbClasificacion.List.Max
+    If lbClasificacion.List[i] = sClasif Then
+      lbClasificacion.Index = i
+      Break
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : LeerNumero
+' Propósito : Convertir texto a Float aceptando coma o punto
+'             como separador decimal (normaliza a punto para
+'             Val, que es locale-independiente).
+' Parámetros: sTexto As String — texto del textbox.
+' Retorna   : Float — valor numérico (0 si el texto es inválido).
+' ============================================
+Private Function LeerNumero(sTexto As String) As Float
+
+  Return Val(Replace(Trim(sTexto), ",", "."))
+
+End
+
+Public Sub SplitterPDF_Resize()
+
+  SplitterPDF.Layout = [1, 3]
 
 End
