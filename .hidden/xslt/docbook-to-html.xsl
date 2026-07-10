@@ -271,21 +271,24 @@ RC APLICADAS:
     <!-- 2. UNA PÁGINA POR CADA CAPÍTULO (Fase 2) -->
     <!-- xsl:result-document DENTRO DE xsl:for-each ES VÁLIDO EN SAXON.
          CADA CAPÍTULO GENERA UN docs/h-{nombre_archivo}.html. -->
-    <xsl:for-each select="$book/db:chapter
-                          | $book/db:preface
-                          | $book/db:appendix
-                          | $book/db:dedication
-                          | $book/db:colophon
-                          | $book/db:glossary
-                          | $book/chapter
-                          | $book/preface
-                          | $book/appendix
-                          | $book/dedication
-                          | $book/colophon
-                          | $book/glossary">
-      <xsl:call-template name="emitir-capitulo-html">
-        <xsl:with-param name="capitulo" select="."/>
-      </xsl:call-template>
+    <!-- xsl:result-document DENTRO DE xsl:for-each ES VÁLIDO EN SAXON.
+         SE RECORRE EL MANIFIESTO (NO LISTAS DE TIPOS DE ELEMENTO): ASÍ
+         CADA CAPÍTULO DECLARADO GENERA SU PÁGINA, SEA CUAL SEA EL
+         ELEMENTO DOCBOOK QUE LO REPRESENTE (chapter, preface,
+         acknowledgements, appendix, etc.). FUENTE ÚNICA DE VERDAD,
+         SINCRONIZADA CON EL ÍNDICE DE LA COLUMNA CENTRAL. -->
+    <xsl:for-each select="$manifiesto//capitulo">
+      <!-- RESOLVER EL NODO DEL CAPÍTULO EN EL CANÓNICO POR
+           xml:id = concat('cap-', @id_capitulo). local-name() != ''
+           EXCLUYE LOS ELEMENTOS QUE NO SEAN CAPÍTULOS DE PRIMER NIVEL. -->
+      <xsl:variable name="capIdEsperado" select="concat('cap-', @id_capitulo)"/>
+      <xsl:variable name="capNodo"
+                    select="$book/*[@xml:id = $capIdEsperado]"/>
+      <xsl:if test="$capNodo">
+        <xsl:call-template name="emitir-capitulo-html">
+          <xsl:with-param name="capitulo" select="$capNodo"/>
+        </xsl:call-template>
+      </xsl:if>
     </xsl:for-each>
   </xsl:template>
 
@@ -492,59 +495,54 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <!-- ISBN(s) -->
+      <!-- ==========================================================
+           BLOQUE DE IDENTIFICADORES: ISBN, eISBN, DOI, LICENCIA
+           Van juntos tras la tapa. Rótulos en mayúscula con dos puntos
+           (mismo patrón: meta-key negro + valor/enlace).
+           ========================================================== -->
+
+      <!-- ISBN (IMPRESO) -->
       <xsl:if test="$isbn_print != ''">
-        <div class="meta-issn"><span class="meta-key">ISBN impreso: </span>
+        <div class="meta-issn"><span class="meta-key">ISBN: </span>
           <xsl:value-of select="$isbn_print"/>
         </div>
       </xsl:if>
 
+      <!-- eISBN (ELECTRÓNICO) -->
       <xsl:if test="$isbn_electronic != ''">
-        <div class="meta-issn"><span class="meta-key">ISBN electrónico: </span>
+        <div class="meta-issn"><span class="meta-key">eISBN: </span>
           <xsl:value-of select="$isbn_electronic"/>
         </div>
       </xsl:if>
 
-      <!-- AUTORÍA -->
-      <xsl:if test="$info/db:author | $info/author | $info/db:editor | $info/editor">
+      <!-- DOI -->
+      <xsl:if test="$doi_libro != ''">
         <div class="meta-seccion">
-          <div class="meta-label">Autoría</div>
-          <xsl:for-each select="$info/db:author | $info/author">
-            <div class="autor-item">
-              <div class="autor-nombre-linea">
-                <span class="autor-nombre">
-                  <xsl:value-of select="normalize-space(db:personname/db:firstname | personname/firstname)"/>
-                  <xsl:text> </xsl:text>
-                  <xsl:value-of select="normalize-space(db:personname/db:surname | personname/surname)"/>
-                </span>
-                <xsl:variable name="orcid_url"
-                              select="(db:uri[@type='orcid'] | uri[@type='orcid'])[1]"/>
-                <xsl:if test="$orcid_url != ''">
-                  <a class="autor-orcid" href="{$orcid_url}" target="_blank" rel="noopener noreferrer">ORCID ↗</a>
-                </xsl:if>
-              </div>
-              <xsl:variable name="orgname"
-                            select="(db:affiliation/db:orgname | affiliation/orgname)[1]"/>
-              <xsl:if test="$orgname != ''">
-                <div class="autor-afil">
-                  <xsl:value-of select="normalize-space($orgname)"/>
-                </div>
-              </xsl:if>
-            </div>
-          </xsl:for-each>
+          <div class="meta-valor"><span class="meta-key">DOI: </span>
+            <a class="doi-link" href="https://doi.org/{$doi_libro}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:value-of select="$doi_libro"/>
+            </a>
+          </div>
+        </div>
+      </xsl:if>
 
-          <xsl:for-each select="$info/db:editor | $info/editor">
-            <div class="autor-item">
-              <div class="autor-nombre-linea">
-                <span class="autor-nombre">
-                  <xsl:value-of select="normalize-space(db:personname/db:firstname | personname/firstname)"/>
-                  <xsl:text> </xsl:text>
-                  <xsl:value-of select="normalize-space(db:personname/db:surname | personname/surname)"/>
-                </span>
-                <span class="autor-rol"> (ed.)</span>
-              </div>
-            </div>
-          </xsl:for-each>
+      <!-- LICENCIA (mismo patrón que DOI: meta-key inline + link, MAYÚSCULA) -->
+      <xsl:if test="$licencia_texto != ''">
+        <div class="meta-seccion">
+          <div class="meta-valor"><span class="meta-key">LICENCIA: </span>
+            <xsl:choose>
+              <xsl:when test="$licencia_url != ''">
+                <a class="licencia-link" href="{$licencia_url}"
+                   target="_blank" rel="noopener noreferrer">
+                  <xsl:value-of select="$licencia_texto"/>
+                </a>
+              </xsl:when>
+              <xsl:otherwise>
+                <xsl:value-of select="$licencia_texto"/>
+              </xsl:otherwise>
+            </xsl:choose>
+          </div>
         </div>
       </xsl:if>
 
@@ -574,56 +572,6 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <!-- DOI -->
-      <xsl:if test="$doi_libro != ''">
-        <div class="meta-seccion">
-          <div class="meta-valor"><span class="meta-key">DOI: </span>
-            <a class="doi-link" href="https://doi.org/{$doi_libro}"
-               target="_blank" rel="noopener noreferrer">
-              <xsl:value-of select="$doi_libro"/>
-            </a>
-          </div>
-        </div>
-      </xsl:if>
-
-      <!-- LICENCIA (mismo patrón que DOI: meta-key inline + link) -->
-      <xsl:if test="$licencia_texto != ''">
-        <div class="meta-seccion">
-          <div class="meta-valor"><span class="meta-key">Licencia: </span>
-            <xsl:choose>
-              <xsl:when test="$licencia_url != ''">
-                <a class="licencia-link" href="{$licencia_url}"
-                   target="_blank" rel="noopener noreferrer">
-                  <xsl:value-of select="$licencia_texto"/>
-                </a>
-              </xsl:when>
-              <xsl:otherwise>
-                <xsl:value-of select="$licencia_texto"/>
-              </xsl:otherwise>
-            </xsl:choose>
-          </div>
-        </div>
-      </xsl:if>
-
-      <!-- BOTONES DE DESCARGA (LIBRO COMPLETO): PDF Y EPUB.
-           SOLO EN EL INDEX. CADA BOTÓN APARECE SI SU URL EXISTE. -->
-      <xsl:if test="$url_descarga_pdf != '' or $url_descarga_epub != ''">
-        <div class="meta-seccion descarga-libro-wrapper">
-          <xsl:if test="$url_descarga_pdf != ''">
-            <a class="btn-descargar-pdf" href="{$url_descarga_pdf}"
-               target="_blank" rel="noopener noreferrer">
-              <xsl:text>Descargar PDF</xsl:text>
-            </a>
-          </xsl:if>
-          <xsl:if test="$url_descarga_epub != ''">
-            <a class="btn-descargar-epub" href="{$url_descarga_epub}"
-               target="_blank" rel="noopener noreferrer">
-              <xsl:text>Descargar EPUB</xsl:text>
-            </a>
-          </xsl:if>
-        </div>
-      </xsl:if>
-
       <!-- COLECCIÓN / SERIE -->
       <xsl:for-each select="$info/db:biblioset | $info/biblioset">
         <div class="meta-seccion">
@@ -643,6 +591,25 @@ RC APLICADAS:
           </div>
         </div>
       </xsl:for-each>
+
+      <!-- BOTONES DE DESCARGA (LIBRO COMPLETO): PDF Y EPUB.
+           SOLO EN EL INDEX. CADA BOTÓN APARECE SI SU URL EXISTE. -->
+      <xsl:if test="$url_descarga_pdf != '' or $url_descarga_epub != ''">
+        <div class="meta-seccion descarga-libro-wrapper">
+          <xsl:if test="$url_descarga_pdf != ''">
+            <a class="btn-descargar-pdf" href="{$url_descarga_pdf}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:text>Descargar PDF</xsl:text>
+            </a>
+          </xsl:if>
+          <xsl:if test="$url_descarga_epub != ''">
+            <a class="btn-descargar-epub" href="{$url_descarga_epub}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:text>Descargar EPUB</xsl:text>
+            </a>
+          </xsl:if>
+        </div>
+      </xsl:if>
 
       <!-- WIDGET "CÓMO CITAR" (FASE 5) -->
       <xsl:call-template name="emitir-widget-citar"/>
@@ -676,14 +643,14 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <!-- Autoría visible en el centro -->
+      <!-- Autoría visible en el centro (nombre enlaza al ORCID si existe) -->
       <xsl:if test="$info/db:author | $info/author | $info/db:editor | $info/editor">
         <div class="autoria-inline">
           <xsl:for-each select="$info/db:author | $info/author">
             <xsl:if test="position() &gt; 1">, </xsl:if>
-            <xsl:value-of select="normalize-space(db:personname/db:firstname | personname/firstname)"/>
-            <xsl:text> </xsl:text>
-            <xsl:value-of select="normalize-space(db:personname/db:surname | personname/surname)"/>
+            <xsl:call-template name="emitir-nombre-autor">
+              <xsl:with-param name="persona" select="."/>
+            </xsl:call-template>
           </xsl:for-each>
           <xsl:if test="($info/db:author | $info/author)
                     and ($info/db:editor | $info/editor)">
@@ -691,9 +658,9 @@ RC APLICADAS:
           </xsl:if>
           <xsl:for-each select="$info/db:editor | $info/editor">
             <xsl:if test="position() &gt; 1">, </xsl:if>
-            <xsl:value-of select="normalize-space(db:personname/db:firstname | personname/firstname)"/>
-            <xsl:text> </xsl:text>
-            <xsl:value-of select="normalize-space(db:personname/db:surname | personname/surname)"/>
+            <xsl:call-template name="emitir-nombre-autor">
+              <xsl:with-param name="persona" select="."/>
+            </xsl:call-template>
             <xsl:text> (ed.)</xsl:text>
           </xsl:for-each>
         </div>
@@ -701,53 +668,189 @@ RC APLICADAS:
 
       <div class="article-body">
 
-        <!-- Resumen del libro (si tiene) -->
+        <!-- ==========================================================
+             RESUMEN DEL LIBRO (desplegable, patrón del artículo)
+             ==========================================================
+             <details>/<summary> igual que el abstract de revistas:
+             "Resumen" como etiqueta chica en sans con la flecha nativa
+             del <details>; texto y palabras clave dentro. -->
         <xsl:if test="$resumen_libro != ''">
-          <section class="abstract-block">
-            <h2>Resumen</h2>
-            <p><xsl:value-of select="$resumen_libro"/></p>
-
-            <!-- Keywords si tiene -->
-            <xsl:variable name="keywords"
-                          select="$info/db:keywordset/db:keyword | $info/keywordset/keyword"/>
-            <xsl:if test="$keywords">
-              <p class="keywords-line">
-                <strong>Palabras clave: </strong>
-                <xsl:for-each select="$keywords">
-                  <xsl:if test="position() &gt; 1">, </xsl:if>
-                  <xsl:value-of select="normalize-space(.)"/>
-                </xsl:for-each>
-              </p>
-            </xsl:if>
-          </section>
+          <div class="abstracts-wrapper">
+            <details class="abstract-block" open="open">
+              <summary class="abstract-lang-label">Resumen</summary>
+              <div class="abstract-texto">
+                <p><xsl:value-of select="$resumen_libro"/></p>
+              </div>
+              <!-- PALABRAS CLAVE -->
+              <xsl:variable name="keywords"
+                            select="$info/db:keywordset/db:keyword | $info/keywordset/keyword"/>
+              <xsl:if test="$keywords">
+                <p class="abstract-keywords">
+                  <strong>Palabras clave: </strong>
+                  <xsl:for-each select="$keywords">
+                    <xsl:if test="position() &gt; 1">, </xsl:if>
+                    <xsl:value-of select="normalize-space(.)"/>
+                  </xsl:for-each>
+                </p>
+              </xsl:if>
+            </details>
+          </div>
         </xsl:if>
 
-        <!-- Índice de capítulos -->
+        <!-- ==========================================================
+             ÍNDICE POR PARTES ESTRUCTURALES
+             ==========================================================
+             Los capítulos se agrupan en 3 partes estructurales según
+             el PREFIJO del nombre_archivo del manifiesto:
+               fm-  → Preliminares
+               a-   → Cuerpo principal (ÚNICO CON NUMERACIÓN)
+               bm-  → Material complementario
+             El manifiesto ya trae las entradas en orden de lectura.
+             Cada parte se muestra solo si tiene capítulos. -->
         <section class="indice-capitulos">
-          <h2>Contenido</h2>
-          <ol class="lista-capitulos">
-            <xsl:for-each select="$book/db:chapter
-                                  | $book/db:preface
-                                  | $book/db:appendix
-                                  | $book/db:dedication
-                                  | $book/db:colophon
-                                  | $book/db:glossary
-                                  | $book/chapter
-                                  | $book/preface
-                                  | $book/appendix
-                                  | $book/dedication
-                                  | $book/colophon
-                                  | $book/glossary">
 
-              <xsl:call-template name="emitir-item-capitulo">
-                <xsl:with-param name="capitulo" select="."/>
-              </xsl:call-template>
-            </xsl:for-each>
-          </ol>
+          <!-- PRELIMINARES (fm-) -->
+          <xsl:variable name="caps_fm"
+                        select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'fm-')]"/>
+          <xsl:if test="$caps_fm">
+            <div class="parte-estructural">
+              <h3 class="parte-titulo">Preliminares</h3>
+              <ul class="lista-capitulos">
+                <xsl:for-each select="$caps_fm">
+                  <xsl:call-template name="emitir-item-parte">
+                    <xsl:with-param name="capManif" select="."/>
+                    <xsl:with-param name="numero" select="''"/>
+                  </xsl:call-template>
+                </xsl:for-each>
+              </ul>
+            </div>
+          </xsl:if>
+
+          <!-- CUERPO PRINCIPAL (a-) — CON NUMERACIÓN -->
+          <xsl:variable name="caps_a"
+                        select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'a-')]"/>
+          <xsl:if test="$caps_a">
+            <div class="parte-estructural">
+              <h3 class="parte-titulo">Cuerpo principal</h3>
+              <ol class="lista-capitulos lista-numerada">
+                <xsl:for-each select="$caps_a">
+                  <xsl:call-template name="emitir-item-parte">
+                    <xsl:with-param name="capManif" select="."/>
+                    <xsl:with-param name="numero" select="string(position())"/>
+                  </xsl:call-template>
+                </xsl:for-each>
+              </ol>
+            </div>
+          </xsl:if>
+
+          <!-- MATERIAL COMPLEMENTARIO (bm-) -->
+          <xsl:variable name="caps_bm"
+                        select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'bm-')]"/>
+          <xsl:if test="$caps_bm">
+            <div class="parte-estructural">
+              <h3 class="parte-titulo">Material complementario</h3>
+              <ul class="lista-capitulos">
+                <xsl:for-each select="$caps_bm">
+                  <xsl:call-template name="emitir-item-parte">
+                    <xsl:with-param name="capManif" select="."/>
+                    <xsl:with-param name="numero" select="''"/>
+                  </xsl:call-template>
+                </xsl:for-each>
+              </ul>
+            </div>
+          </xsl:if>
+
         </section>
 
       </div>
     </main>
+  </xsl:template>
+
+  <!-- ==========================================================
+       PARTE ESTRUCTURAL A PARTIR DEL nombre_archivo
+       ==========================================================
+       Deriva la parte estructural del PREFIJO del nombre_archivo:
+         fm-  → Preliminares
+         a-   → Cuerpo principal
+         bm-  → Material complementario
+       Es la misma clasificación que usa el índice de la portada. -->
+  <xsl:template name="parte-estructural-de">
+    <xsl:param name="nombreArchivo"/>
+    <xsl:choose>
+      <xsl:when test="starts-with($nombreArchivo, 'fm-')">Preliminares</xsl:when>
+      <xsl:when test="starts-with($nombreArchivo, 'a-')">Cuerpo principal</xsl:when>
+      <xsl:when test="starts-with($nombreArchivo, 'bm-')">Material complementario</xsl:when>
+      <xsl:otherwise>Cuerpo principal</xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- ==========================================================
+       NOMBRE DE AUTOR/EDITOR CON ENLACE AL ORCID (SI EXISTE)
+       ==========================================================
+       Emite "Nombre Apellido". Si el <author>/<editor> tiene
+       <uri type="orcid">, el nombre se envuelve en un enlace a esa
+       URL (sin escribir la palabra ORCID). Sin ORCID, texto plano. -->
+  <xsl:template name="emitir-nombre-autor">
+    <xsl:param name="persona"/>
+    <xsl:variable name="nombreCompleto"
+                  select="concat(
+                    normalize-space($persona/db:personname/db:firstname | $persona/personname/firstname),
+                    ' ',
+                    normalize-space($persona/db:personname/db:surname | $persona/personname/surname))"/>
+    <xsl:variable name="orcid"
+                  select="normalize-space(
+                    ($persona/db:uri[@type='orcid'] | $persona/uri[@type='orcid'])[1])"/>
+    <xsl:choose>
+      <xsl:when test="$orcid != ''">
+        <a class="autor-orcid-link" href="{$orcid}"
+           target="_blank" rel="noopener noreferrer">
+          <xsl:value-of select="$nombreCompleto"/>
+        </a>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="$nombreCompleto"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- ==========================================================
+       ITEM DE UNA PARTE ESTRUCTURAL DEL ÍNDICE
+       ==========================================================
+       Recibe la entrada <capitulo> del manifiesto y el número
+       (posición dentro del Cuerpo principal, o '' si no numera).
+       Resuelve el título yendo al capítulo del canónico por
+       xml:id = concat('cap-', @id_capitulo). Solo muestra el
+       título (sin etiqueta de tipo). -->
+  <xsl:template name="emitir-item-parte">
+    <xsl:param name="capManif"/>
+    <xsl:param name="numero" as="xs:string" select="''"/>
+
+    <xsl:variable name="nombreArchivo" select="$capManif/@nombre_archivo"/>
+    <xsl:variable name="capIdEsperado" select="concat('cap-', $capManif/@id_capitulo)"/>
+
+    <!-- BUSCAR EL CAPÍTULO EN EL CANÓNICO PARA SACAR EL TÍTULO -->
+    <xsl:variable name="capNodo"
+                  select="($book/db:chapter | $book/chapter
+                         | $book/db:preface | $book/preface
+                         | $book/db:acknowledgements | $book/acknowledgements
+                         | $book/db:appendix | $book/appendix
+                         | $book/db:dedication | $book/dedication
+                         | $book/db:colophon | $book/colophon
+                         | $book/db:glossary | $book/glossary)
+                         [@xml:id = $capIdEsperado]"/>
+
+    <xsl:variable name="capTitulo"
+                  select="normalize-space(
+                    ($capNodo/db:info/db:title | $capNodo/info/title)[1])"/>
+
+    <li class="item-capitulo">
+      <a class="link-capitulo" href="h-{$nombreArchivo}.html">
+        <xsl:if test="$numero != ''">
+          <span class="cap-numero"><xsl:value-of select="$numero"/></span>
+        </xsl:if>
+        <span class="cap-titulo"><xsl:value-of select="$capTitulo"/></span>
+      </a>
+    </li>
   </xsl:template>
 
   <!-- ==========================================================
@@ -940,6 +1043,13 @@ RC APLICADAS:
 
     <aside class="col-left">
 
+      <!-- BOTÓN "IR AL INICIO" (vuelve al index del libro).
+           Mismo tratamiento que el botón Descargar EPUB: fondo blanco,
+           texto azul, semibold. -->
+      <a href="index.html" class="btn-ir-inicio">
+        <xsl:text>Ir al inicio</xsl:text>
+      </a>
+
       <!-- TAPA DEL LIBRO -->
       <xsl:if test="$imagen_tapa != ''">
         <div class="tapa-wrapper">
@@ -947,105 +1057,24 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <!-- MARCA EDITORIAL: TÍTULO DEL LIBRO -->
-      <div class="marca-libro">
-        <a href="index.html" class="link-volver-libro">
-          <xsl:value-of select="$titulo_libro"/>
+      <!-- BOTÓN "DESCARGAR PDF" DEL CAPÍTULO.
+           Lee la URL de descarga del PDF del capítulo desde el canónico
+           (bibliomisc role="url-descarga-pdf-capitulo"), que provendrá de
+           un campo del formulario de capítulos (aún no implementado).
+           El botón aparece SOLO si la URL existe. Mismo estilo que EPUB. -->
+      <xsl:variable name="capUrlPdf"
+                    select="normalize-space(
+                      ($capInfo/db:bibliomisc[@role='url-descarga-pdf-capitulo']
+                       | $capInfo/bibliomisc[@role='url-descarga-pdf-capitulo'])[1])"/>
+      <xsl:if test="$capUrlPdf != ''">
+        <a class="btn-descargar-pdf" href="{$capUrlPdf}"
+           target="_blank" rel="noopener noreferrer">
+          <xsl:text>Descargar PDF</xsl:text>
         </a>
-      </div>
-
-      <!-- BOTÓN DESCARGA DEL CAPÍTULO (PLACEHOLDER — FRACCIONADO PDF EN FASE FUTURA) -->
-      <div class="descarga-wrapper">
-        <span class="btn-descarga btn-descarga-disabled" title="Disponible próximamente">
-          <xsl:text>Descargar capítulo (PDF)</xsl:text>
-        </span>
-      </div>
-
-      <!-- AUTORÍA DEL CAPÍTULO -->
-      <xsl:if test="$capInfo/db:author | $capInfo/author">
-        <div class="meta-seccion">
-          <div class="meta-label">Autoría</div>
-          <xsl:for-each select="$capInfo/db:author | $capInfo/author">
-            <div class="autor-item">
-              <div class="autor-nombre-linea">
-                <span class="autor-nombre">
-                  <xsl:value-of select="normalize-space(db:personname/db:firstname | personname/firstname)"/>
-                  <xsl:text> </xsl:text>
-                  <xsl:value-of select="normalize-space(db:personname/db:surname | personname/surname)"/>
-                </span>
-                <xsl:variable name="orcid_url"
-                              select="(db:uri[@type='orcid'] | uri[@type='orcid'])[1]"/>
-                <xsl:if test="$orcid_url != ''">
-                  <a class="autor-orcid" href="{$orcid_url}" target="_blank" rel="noopener noreferrer">ORCID ↗</a>
-                </xsl:if>
-              </div>
-              <xsl:variable name="orgname"
-                            select="(db:affiliation/db:orgname | affiliation/orgname)[1]"/>
-              <xsl:if test="$orgname != ''">
-                <div class="autor-afil">
-                  <xsl:value-of select="normalize-space($orgname)"/>
-                </div>
-              </xsl:if>
-            </div>
-          </xsl:for-each>
-        </div>
-      </xsl:if>
-
-      <!-- DOI DEL CAPÍTULO (SI TIENE) -->
-      <xsl:variable name="capDoi"
-                    select="normalize-space(($capInfo/db:biblioid[@class='doi']
-                                            | $capInfo/biblioid[@class='doi'])[1])"/>
-      <xsl:if test="$capDoi != ''">
-        <div class="meta-seccion">
-          <div class="meta-valor"><span class="meta-key">DOI: </span>
-            <a class="doi-link" href="https://doi.org/{$capDoi}"
-               target="_blank" rel="noopener noreferrer">
-              <xsl:value-of select="$capDoi"/>
-            </a>
-          </div>
-        </div>
-      </xsl:if>
-
-      <!-- LICENCIA DEL CAPÍTULO -->
-      <xsl:variable name="capLicTexto"
-                    select="normalize-space(($capInfo/db:legalnotice[@role='licencia']/db:para[1]
-                                            | $capInfo/legalnotice[@role='licencia']/para[1])[1])"/>
-      <xsl:if test="$capLicTexto != ''">
-        <div class="meta-seccion">
-          <div class="meta-label">Licencia</div>
-          <div class="meta-valor">
-            <xsl:value-of select="$capLicTexto"/>
-          </div>
-        </div>
-      </xsl:if>
-
-      <!-- HERENCIA DEL LIBRO: ISBN + EDITORIAL -->
-      <xsl:if test="$isbn_print != '' or $editorial != ''">
-        <div class="meta-seccion meta-seccion-libro">
-          <div class="meta-label">En el libro</div>
-          <xsl:if test="$editorial != ''">
-            <div class="meta-valor">
-              <xsl:value-of select="$editorial"/>
-              <xsl:if test="$ciudad_pub != ''">
-                <xsl:text>, </xsl:text><xsl:value-of select="$ciudad_pub"/>
-              </xsl:if>
-            </div>
-          </xsl:if>
-          <xsl:if test="$isbn_print != ''">
-            <div class="meta-valor"><span class="meta-key">ISBN: </span>
-              <xsl:value-of select="$isbn_print"/>
-            </div>
-          </xsl:if>
-        </div>
       </xsl:if>
 
       <!-- WIDGET "CÓMO CITAR" (FASE 5) -->
       <xsl:call-template name="emitir-widget-citar"/>
-
-      <!-- ENLACE DE VUELTA AL ÍNDICE -->
-      <div class="meta-seccion">
-        <a href="index.html" class="link-indice">&#x2190; Índice del libro</a>
-      </div>
 
     </aside>
   </xsl:template>
@@ -1064,10 +1093,15 @@ RC APLICADAS:
 
     <main class="col-center">
 
-      <!-- CHIP DE TIPO -->
+      <!-- BARRA SUPERIOR: PARTE ESTRUCTURAL (Preliminares / Cuerpo
+           principal / Material complementario), derivada del prefijo
+           del nombre_archivo del capítulo (resuelto vía manifiesto). -->
+      <xsl:variable name="capIdBarra" select="$capitulo/@xml:id"/>
+      <xsl:variable name="capManifBarra"
+                    select="key('cap-por-id', $capIdBarra, $manifiesto)"/>
       <div class="article-type-bar">
-        <xsl:call-template name="etiqueta-tipo-capitulo">
-          <xsl:with-param name="elemento" select="local-name($capitulo)"/>
+        <xsl:call-template name="parte-estructural-de">
+          <xsl:with-param name="nombreArchivo" select="$capManifBarra/@nombre_archivo"/>
         </xsl:call-template>
       </div>
 
@@ -1085,45 +1119,60 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <!-- AUTORÍA INLINE -->
+      <!-- AUTORÍA INLINE (nombre enlaza al ORCID si existe) -->
       <xsl:if test="$capInfo/db:author | $capInfo/author">
         <div class="autoria-inline">
           <xsl:for-each select="$capInfo/db:author | $capInfo/author">
             <xsl:if test="position() &gt; 1">, </xsl:if>
-            <xsl:value-of select="normalize-space(db:personname/db:firstname | personname/firstname)"/>
-            <xsl:text> </xsl:text>
-            <xsl:value-of select="normalize-space(db:personname/db:surname | personname/surname)"/>
+            <xsl:call-template name="emitir-nombre-autor">
+              <xsl:with-param name="persona" select="."/>
+            </xsl:call-template>
           </xsl:for-each>
         </div>
       </xsl:if>
 
       <div class="article-body">
 
-        <!-- RESÚMENES (UNO POR IDIOMA) -->
-        <xsl:for-each select="$capInfo/db:abstract | $capInfo/abstract">
-          <section class="abstract-block">
-            <h2>
-              <xsl:text>Resumen</xsl:text>
-              <xsl:if test="@xml:lang">
-                <xsl:text> (</xsl:text><xsl:value-of select="@xml:lang"/><xsl:text>)</xsl:text>
-              </xsl:if>
-            </h2>
-            <xsl:for-each select="db:para | para">
-              <p><xsl:value-of select="normalize-space(.)"/></p>
+        <!-- ==========================================================
+             RESUMEN(ES) DEL CAPÍTULO (desplegable, patrón del index)
+             ==========================================================
+             <details>/<summary> igual que la portada y las revistas.
+             Uno por idioma. Las palabras clave del mismo idioma se
+             incluyen dentro del <details> correspondiente. -->
+        <xsl:if test="$capInfo/db:abstract | $capInfo/abstract">
+          <div class="abstracts-wrapper">
+            <xsl:for-each select="$capInfo/db:abstract | $capInfo/abstract">
+              <details class="abstract-block" open="open">
+                <summary class="abstract-lang-label">
+                  <xsl:text>Resumen</xsl:text>
+                  <xsl:if test="@xml:lang">
+                    <xsl:text> (</xsl:text><xsl:value-of select="@xml:lang"/><xsl:text>)</xsl:text>
+                  </xsl:if>
+                </summary>
+                <div class="abstract-texto">
+                  <xsl:for-each select="db:para | para">
+                    <p><xsl:value-of select="normalize-space(.)"/></p>
+                  </xsl:for-each>
+                </div>
+                <!-- PALABRAS CLAVE DEL MISMO IDIOMA (si hay keywordset con
+                     el mismo xml:lang, o el único keywordset si no hay lang) -->
+                <xsl:variable name="lang" select="@xml:lang"/>
+                <xsl:variable name="kws"
+                              select="../db:keywordset[not(@xml:lang) or @xml:lang = $lang]/db:keyword
+                                    | ../keywordset[not(@xml:lang) or @xml:lang = $lang]/keyword"/>
+                <xsl:if test="$kws">
+                  <p class="abstract-keywords">
+                    <strong>Palabras clave: </strong>
+                    <xsl:for-each select="$kws">
+                      <xsl:if test="position() &gt; 1">, </xsl:if>
+                      <xsl:value-of select="normalize-space(.)"/>
+                    </xsl:for-each>
+                  </p>
+                </xsl:if>
+              </details>
             </xsl:for-each>
-          </section>
-        </xsl:for-each>
-
-        <!-- KEYWORDS (UNO POR IDIOMA) -->
-        <xsl:for-each select="$capInfo/db:keywordset | $capInfo/keywordset">
-          <p class="keywords-line">
-            <strong>Palabras clave: </strong>
-            <xsl:for-each select="db:keyword | keyword">
-              <xsl:if test="position() &gt; 1">, </xsl:if>
-              <xsl:value-of select="normalize-space(.)"/>
-            </xsl:for-each>
-          </p>
-        </xsl:for-each>
+          </div>
+        </xsl:if>
 
         <!-- CUERPO DEL CAPÍTULO -->
         <!-- SE APLICAN TEMPLATES SOBRE TODO EL CONTENIDO EXCEPTO <info> Y
