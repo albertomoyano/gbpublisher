@@ -117,6 +117,20 @@ RC APLICADAS:
       ($info/db:biblioid[@class='doi'] | $info/biblioid[@class='doi'])[1])"/>
   </xsl:variable>
 
+  <!-- URLs DE DESCARGA (LIBRO COMPLETO): LAS EMITE GenerarInfoLibroXML
+       COMO bibliomisc DESDE libros_md.url_descarga_pdf/epub. -->
+  <xsl:variable name="url_descarga_pdf" as="xs:string">
+    <xsl:value-of select="normalize-space(
+      ($info/db:bibliomisc[@role='url-descarga-pdf']
+       | $info/bibliomisc[@role='url-descarga-pdf'])[1])"/>
+  </xsl:variable>
+
+  <xsl:variable name="url_descarga_epub" as="xs:string">
+    <xsl:value-of select="normalize-space(
+      ($info/db:bibliomisc[@role='url-descarga-epub']
+       | $info/bibliomisc[@role='url-descarga-epub'])[1])"/>
+  </xsl:variable>
+
   <xsl:variable name="isbn_print" as="xs:string">
     <xsl:value-of select="normalize-space(
       ($info/db:biblioid[@class='isbn'][@role='print']
@@ -262,14 +276,12 @@ RC APLICADAS:
                           | $book/db:appendix
                           | $book/db:dedication
                           | $book/db:colophon
-                          | $book/db:bibliography
                           | $book/db:glossary
                           | $book/chapter
                           | $book/preface
                           | $book/appendix
                           | $book/dedication
                           | $book/colophon
-                          | $book/bibliography
                           | $book/glossary">
       <xsl:call-template name="emitir-capitulo-html">
         <xsl:with-param name="capitulo" select="."/>
@@ -297,7 +309,7 @@ RC APLICADAS:
 
           <!-- Fuentes tipográficas (compartidas con revistas) -->
           <link rel="preconnect" href="https://fonts.googleapis.com"/>
-          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="crossorigin"/>
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"/>
           <link rel="stylesheet"
                 href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"/>
 
@@ -574,23 +586,41 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <!-- LICENCIA -->
+      <!-- LICENCIA (mismo patrón que DOI: meta-key inline + link) -->
       <xsl:if test="$licencia_texto != ''">
         <div class="meta-seccion">
-          <div class="meta-label">Licencia</div>
-          <xsl:choose>
-            <xsl:when test="$licencia_url != ''">
-              <a class="licencia-badge" href="{$licencia_url}"
-                 target="_blank" rel="noopener noreferrer">
+          <div class="meta-valor"><span class="meta-key">Licencia: </span>
+            <xsl:choose>
+              <xsl:when test="$licencia_url != ''">
+                <a class="licencia-link" href="{$licencia_url}"
+                   target="_blank" rel="noopener noreferrer">
+                  <xsl:value-of select="$licencia_texto"/>
+                </a>
+              </xsl:when>
+              <xsl:otherwise>
                 <xsl:value-of select="$licencia_texto"/>
-              </a>
-            </xsl:when>
-            <xsl:otherwise>
-              <div class="meta-valor">
-                <xsl:value-of select="$licencia_texto"/>
-              </div>
-            </xsl:otherwise>
-          </xsl:choose>
+              </xsl:otherwise>
+            </xsl:choose>
+          </div>
+        </div>
+      </xsl:if>
+
+      <!-- BOTONES DE DESCARGA (LIBRO COMPLETO): PDF Y EPUB.
+           SOLO EN EL INDEX. CADA BOTÓN APARECE SI SU URL EXISTE. -->
+      <xsl:if test="$url_descarga_pdf != '' or $url_descarga_epub != ''">
+        <div class="meta-seccion descarga-libro-wrapper">
+          <xsl:if test="$url_descarga_pdf != ''">
+            <a class="btn-descargar-pdf" href="{$url_descarga_pdf}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:text>Descargar PDF</xsl:text>
+            </a>
+          </xsl:if>
+          <xsl:if test="$url_descarga_epub != ''">
+            <a class="btn-descargar-epub" href="{$url_descarga_epub}"
+               target="_blank" rel="noopener noreferrer">
+              <xsl:text>Descargar EPUB</xsl:text>
+            </a>
+          </xsl:if>
         </div>
       </xsl:if>
 
@@ -701,14 +731,12 @@ RC APLICADAS:
                                   | $book/db:appendix
                                   | $book/db:dedication
                                   | $book/db:colophon
-                                  | $book/db:bibliography
                                   | $book/db:glossary
                                   | $book/chapter
                                   | $book/preface
                                   | $book/appendix
                                   | $book/dedication
                                   | $book/colophon
-                                  | $book/bibliography
                                   | $book/glossary">
 
               <xsl:call-template name="emitir-item-capitulo">
@@ -840,7 +868,7 @@ RC APLICADAS:
               </xsl:call-template>
 
               <link rel="preconnect" href="https://fonts.googleapis.com"/>
-              <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="crossorigin"/>
+              <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"/>
               <link rel="stylesheet"
                     href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"/>
               <link rel="stylesheet" href="assets/css/gbpublisher.css"/>
@@ -1142,8 +1170,20 @@ RC APLICADAS:
 
         <!-- SECCIÓN REFERENCIAS: RENDERIZADA POR EL XSLT -->
         <div class="panel-section" id="panel-refs">
-          <xsl:variable name="biblio"
+          <!-- FUENTE DE LA BIBLIOGRAFÍA DEL DRAWER:
+               - por_capitulo: cada capítulo tiene su <bibliography> propia.
+               - consolidada: el capítulo NO tiene bibliografía; se usa la
+                 <bibliography> única del final del <book>, idéntica en todas
+                 las páginas. La numeración sale corrida por su posición en
+                 esa lista única.
+               Se detecta sin parámetro de modelo: si el capítulo tiene
+               bibliografía propia, se usa; si no, la consolidada del book. -->
+          <xsl:variable name="biblioCap"
                         select="$capitulo/db:bibliography | $capitulo/bibliography"/>
+          <xsl:variable name="biblio"
+                        select="if ($biblioCap/db:biblioentry | $biblioCap/biblioentry)
+                                then $biblioCap
+                                else ($book/db:bibliography | $book/bibliography)"/>
           <xsl:choose>
             <xsl:when test="$biblio/db:biblioentry | $biblio/biblioentry">
               <xsl:apply-templates select="$biblio/db:biblioentry | $biblio/biblioentry"
@@ -1715,6 +1755,20 @@ RC APLICADAS:
          data-ref-id="{@xml:id}"
          onclick="irAlTexto('{@xml:id}')"
          style="cursor:pointer">
+      <!-- NÚMERO DE REFERENCIA: SOLO EN ESTILOS NUMÉRICOS (vancouver, ieee).
+           ES EL ANCLA VISUAL QUE CONECTA LA MARCA [n] DEL CUERPO CON LA
+           ENTRADA DEL DRAWER. SE CALCULA CON numero-referencia-db (EL MISMO
+           QUE USAN LAS MARCAS), PASÁNDOLE EL PROPIO xml:id, ASÍ EL NÚMERO
+           COINCIDE EXACTAMENTE. EN APA/ISO690 (AUTOR-AÑO) NO SE EMITE. -->
+      <xsl:if test="$estilo_cita = 'vancouver' or $estilo_cita = 'ieee'">
+        <span class="ref-numero">
+          <xsl:text>[</xsl:text>
+          <xsl:call-template name="numero-referencia-db">
+            <xsl:with-param name="rid" select="string(@xml:id)"/>
+          </xsl:call-template>
+          <xsl:text>] </xsl:text>
+        </span>
+      </xsl:if>
       <xsl:choose>
 
         <!-- ══════════ VANCOUVER ══════════ -->
@@ -1738,6 +1792,11 @@ RC APLICADAS:
               <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
             </span>
           </xsl:if>
+
+          <!-- TESIS: [tipo]. Institución -->
+          <xsl:call-template name="ref-tesis-db">
+            <xsl:with-param name="estilo" select="'vancouver'"/>
+          </xsl:call-template>
 
           <!-- AÑO;VOLUMEN(NÚMERO):PÁGINAS -->
           <xsl:if test="db:pubdate | pubdate">
@@ -1798,6 +1857,11 @@ RC APLICADAS:
               <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
             </span>
           </xsl:if>
+
+          <!-- TESIS: [Tipo, Institución] tras el título/fuente -->
+          <xsl:call-template name="ref-tesis-db">
+            <xsl:with-param name="estilo" select="'apa'"/>
+          </xsl:call-template>
 
           <!-- VOLUMEN (cursiva), NÚMERO (paréntesis) -->
           <xsl:if test="db:volumenum | volumenum">
@@ -1863,6 +1927,11 @@ RC APLICADAS:
             </span>
           </xsl:if>
 
+          <!-- TESIS: . Tipo. Institución -->
+          <xsl:call-template name="ref-tesis-db">
+            <xsl:with-param name="estilo" select="'iso690'"/>
+          </xsl:call-template>
+
           <!-- VOLUMEN, NÚMERO -->
           <xsl:if test="db:volumenum | volumenum">
             <xsl:text>, vol. </xsl:text>
@@ -1913,6 +1982,11 @@ RC APLICADAS:
               <xsl:value-of select="normalize-space((db:citetitle | citetitle)[1])"/>
             </span>
           </xsl:if>
+
+          <!-- TESIS: , tipo, Institución -->
+          <xsl:call-template name="ref-tesis-db">
+            <xsl:with-param name="estilo" select="'ieee'"/>
+          </xsl:call-template>
 
           <!-- VOLUMEN, NÚMERO -->
           <xsl:if test="db:volumenum | volumenum">
@@ -2166,6 +2240,90 @@ RC APLICADAS:
           </xsl:choose>
         </a>
       </div>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
+       AUXILIAR: ref-tesis-db
+       ==========================================================
+       Emite el tipo de tesis + institución en el formato del estilo.
+       Solo aplica si el biblioentry es una tesis (otherpubwork='thesis').
+       El tipo (nombre en español) viene de bibliomisc[@role='thesis-type'],
+       ya resuelto por Gambas desde cmb_biblatex. Si no hay thesis-type,
+       usa "Tesis" genérico. La institución sale de orgname.
+       FORMATOS:
+         apa:       [Tesis Doctoral, Universidad X]
+         vancouver: [tesis doctoral]. Universidad X
+         iso690:    Tesis Doctoral. Universidad X
+         ieee:      tesis doctoral, Universidad X -->
+  <xsl:template name="ref-tesis-db">
+    <xsl:param name="estilo" as="xs:string"/>
+
+    <!-- ¿ES TESIS? SOLO ACTÚA SI otherpubwork='thesis' -->
+    <xsl:variable name="es-tesis"
+                  select="(@otherpubwork = 'thesis')
+                          or (db:citetitle/@pubwork = 'thesis')
+                          or (citetitle/@pubwork = 'thesis')"/>
+
+    <xsl:if test="$es-tesis">
+      <!-- TIPO: bibliomisc[@role='thesis-type'] O "Tesis" GENÉRICO -->
+      <xsl:variable name="tipo-tesis">
+        <xsl:variable name="tt"
+          select="normalize-space((db:bibliomisc[@role='thesis-type']
+                                  | bibliomisc[@role='thesis-type'])[1])"/>
+        <xsl:choose>
+          <xsl:when test="$tt != ''"><xsl:value-of select="$tt"/></xsl:when>
+          <xsl:otherwise><xsl:text>Tesis</xsl:text></xsl:otherwise>
+        </xsl:choose>
+      </xsl:variable>
+
+      <!-- INSTITUCIÓN: orgname -->
+      <xsl:variable name="institucion"
+        select="normalize-space((db:orgname | orgname)[1])"/>
+
+      <xsl:choose>
+        <!-- APA: [Tesis Doctoral, Universidad X] -->
+        <xsl:when test="$estilo = 'apa'">
+          <xsl:text> [</xsl:text>
+          <xsl:value-of select="$tipo-tesis"/>
+          <xsl:if test="$institucion != ''">
+            <xsl:text>, </xsl:text>
+            <xsl:value-of select="$institucion"/>
+          </xsl:if>
+          <xsl:text>]</xsl:text>
+        </xsl:when>
+
+        <!-- VANCOUVER: [tesis doctoral]. Universidad X (tipo en minúscula) -->
+        <xsl:when test="$estilo = 'vancouver'">
+          <xsl:text> [</xsl:text>
+          <xsl:value-of select="lower-case($tipo-tesis)"/>
+          <xsl:text>]</xsl:text>
+          <xsl:if test="$institucion != ''">
+            <xsl:text>. </xsl:text>
+            <xsl:value-of select="$institucion"/>
+          </xsl:if>
+        </xsl:when>
+
+        <!-- ISO 690: Tesis Doctoral. Universidad X -->
+        <xsl:when test="$estilo = 'iso690'">
+          <xsl:text>. </xsl:text>
+          <xsl:value-of select="$tipo-tesis"/>
+          <xsl:if test="$institucion != ''">
+            <xsl:text>. </xsl:text>
+            <xsl:value-of select="$institucion"/>
+          </xsl:if>
+        </xsl:when>
+
+        <!-- IEEE: tesis doctoral, Universidad X (minúscula) -->
+        <xsl:when test="$estilo = 'ieee'">
+          <xsl:text>, </xsl:text>
+          <xsl:value-of select="lower-case($tipo-tesis)"/>
+          <xsl:if test="$institucion != ''">
+            <xsl:text>, </xsl:text>
+            <xsl:value-of select="$institucion"/>
+          </xsl:if>
+        </xsl:when>
+      </xsl:choose>
     </xsl:if>
   </xsl:template>
 

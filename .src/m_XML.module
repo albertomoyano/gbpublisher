@@ -5621,388 +5621,6 @@ Private Function GenerarPersonGroupDocBook(sNombres As String, sTipo As String) 
 End
 
 ' ==========================================================
-' FUNCIÓN PRIVADA: GenerarBiblioentryDesdeBib
-' ==========================================================
-' Función   : GenerarBiblioentryDesdeBib
-' Propósito : GENERA UN <biblioentry> DE DOCBOOK 5.2 COMPLETO A PARTIR
-'             DE UNA ENTRADA BIBLATEX. ANÁLOGA A GenerarElementCitationDesdeBib
-'             PERO CON MAPEO BIBLATEX → DOCBOOK EN VEZ DE BIBLATEX → JATS.
-'             RESUELVE crossref AL INICIO (IGUAL QUE SU PAR JATS).
-' Parámetros: sEntry      As String     — TEXTO COMPLETO DE LA ENTRADA BIBTEX
-'             sType       As String     — TIPO (article, book, ...)
-'             sClave      As String     — CLAVE BIBTEX SANITIZADA (PARA xml:id)
-'             dictEntries As Collection — DICCIONARIO citekey → entry (PARA crossref)
-'             dictTypes   As Collection — DICCIONARIO citekey → type   (PARA crossref)
-' Retorna   : String — FRAGMENTO <biblioentry>...</biblioentry>
-' ==========================================================
-Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, sClave As String, dictEntries As Collection, dictTypes As Collection) As String
-
-  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
-  ' COMILLA DOBLE COMO VARIABLE LOCAL (SC-01)
-  Dim cQ As String = Chr(34)
-  Dim sXML As String = ""
-  Dim sPubwork As String
-  Dim sAuthor As String
-  Dim sEditor As String
-  Dim sEditorType As String
-  Dim sEditorA As String
-  Dim sEditorAType As String
-  Dim sEditorB As String
-  Dim sEditorBType As String
-  Dim sEditorC As String
-  Dim sEditorCType As String
-  Dim sTranslator As String
-  Dim sTitle As String
-  Dim sSubtitle As String
-  Dim sJournal As String
-  Dim sBookTitle As String
-  Dim sBookSubtitle As String
-  Dim sYear As String
-  Dim sDate As String
-  Dim sFinalYear As String
-  Dim sVolume As String
-  Dim sNumber As String
-  Dim sPages As String
-  Dim sPublisher As String
-  Dim sAddress As String
-  Dim sDoi As String
-  Dim sIsbn As String
-  Dim sIssn As String
-  Dim sUrl As String
-  Dim sUrlDate As String
-  Dim sEdition As String
-  Dim sSchool As String
-  Dim sInstitution As String
-  Dim sOrganization As String
-  Dim sNote As String
-  Dim sEid As String
-  Dim sEprint As String
-  Dim sEprintType As String
-  Dim sSeries As String
-  Dim sVersion As String
-  Dim sHolder As String
-  Dim sMaintitle As String
-  Dim sMainsubtitle As String
-  Dim sBookauthor As String
-  Dim sChapter As String
-  Dim sCrossref As String
-  Dim sEntryBase As String
-  Dim sTituloCompleto As String
-  Dim sBookTitleCompleto As String
-  Dim sMaintitleCompleto As String
-  ' TIPO REAL PRESERVADO PARA pubwork="other" (thesis, report, ...) Y
-  ' TIPO EFECTIVO PARA LAS COMPARACIONES INTERNAS DE LA FUNCIÓN.
-  Dim sOtherpubwork As String
-  Dim sTipoEfectivo As String
-
-  ' --- 1. RESOLVER crossref SI EXISTE (HERENCIA DE CAMPOS) ---
-  sCrossref = ParsearCampoBib(sEntry, "crossref")
-  If sCrossref <> "" And dictEntries.Exist(sCrossref) Then
-    sEntryBase = dictEntries[sCrossref]
-    ' SI EL HIJO ES INCOLLECTION/INBOOK, EL title DEL PADRE PASA A booktitle
-    If Lower(TrimUTF8(sType)) = "incollection" Or
-        Lower(TrimUTF8(sType)) = "inbook" Or
-        Lower(TrimUTF8(sType)) = "bookinbook" Then
-      sEntryBase = Replace(sEntryBase, "  title ", "  booktitle ", gb.IgnoreCase)
-    Endif
-    sEntry = FusionarEntradas(sEntryBase, sEntry)
-  Endif
-
-  ' --- 2. DETERMINAR pubwork Y TIPO EFECTIVO ---
-  sPubwork = ConvertirTipoDocBook(sType)
-  sOtherpubwork = ConvertirOtherpubwork(sType)
-
-  ' TIPO EFECTIVO: PARA pubwork="other" LAS COMPARACIONES INTERNAS
-  ' (TESIS→orgname, PATENTE→patent-number, ETC.) USAN EL TIPO REAL.
-  If sPubwork = "other" Then
-    sTipoEfectivo = sOtherpubwork
-  Else
-    sTipoEfectivo = sPubwork
-  Endif
-
-  ' --- 3. EXTRAER CAMPOS DEL BIBLATEX ---
-  sAuthor = ParsearCampoBib(sEntry, "author")
-  sEditor = ParsearCampoBib(sEntry, "editor")
-  sEditorType = ParsearCampoBib(sEntry, "editortype")
-  sEditorA = ParsearCampoBib(sEntry, "editora")
-  sEditorAType = ParsearCampoBib(sEntry, "editoratype")
-  sEditorB = ParsearCampoBib(sEntry, "editorb")
-  sEditorBType = ParsearCampoBib(sEntry, "editorbtype")
-  sEditorC = ParsearCampoBib(sEntry, "editorc")
-  sEditorCType = ParsearCampoBib(sEntry, "editorctype")
-  sTranslator = ParsearCampoBib(sEntry, "translator")
-  sTitle = ParsearCampoBib(sEntry, "title")
-  sSubtitle = ParsearCampoBib(sEntry, "subtitle")
-  sBookauthor = ParsearCampoBib(sEntry, "bookauthor")
-  sMaintitle = ParsearCampoBib(sEntry, "maintitle")
-  sMainsubtitle = ParsearCampoBib(sEntry, "mainsubtitle")
-
-  ' JOURNAL: PRIORIZAR journaltitle SOBRE journal (PATRÓN BIBLATEX MODERNO)
-  sJournal = ParsearCampoBib(sEntry, "journaltitle")
-  If sJournal = "" Then sJournal = ParsearCampoBib(sEntry, "journal")
-
-  sBookTitle = ParsearCampoBib(sEntry, "booktitle")
-  sBookSubtitle = ParsearCampoBib(sEntry, "booksubtitle")
-
-  ' AÑO: PRIORIZAR date SOBRE year (BIBLATEX MODERNO)
-  sDate = ParsearCampoBib(sEntry, "date")
-  sYear = ParsearCampoBib(sEntry, "year")
-  If sDate <> "" Then
-    sFinalYear = ExtraerAnio(sDate)
-  Else If sYear <> "" Then
-    sFinalYear = sYear
-  Else
-    sFinalYear = ""
-  Endif
-
-  sVolume = ParsearCampoBib(sEntry, "volume")
-  sNumber = ParsearCampoBib(sEntry, "number")
-  sPages = ParsearCampoBib(sEntry, "pages")
-  sPublisher = ParsearCampoBib(sEntry, "publisher")
-
-  ' UBICACIÓN: location (BIBLATEX) o address (BIBTEX VIEJO)
-  sAddress = ParsearCampoBib(sEntry, "location")
-  If sAddress = "" Then sAddress = ParsearCampoBib(sEntry, "address")
-
-  sDoi = ParsearCampoBib(sEntry, "doi")
-  sIsbn = ParsearCampoBib(sEntry, "isbn")
-  sIssn = ParsearCampoBib(sEntry, "issn")
-  sUrl = ParsearCampoBib(sEntry, "url")
-  sUrlDate = ParsearCampoBib(sEntry, "urldate")
-  sEdition = ParsearCampoBib(sEntry, "edition")
-  sSchool = ParsearCampoBib(sEntry, "school")
-  sInstitution = ParsearCampoBib(sEntry, "institution")
-  sOrganization = ParsearCampoBib(sEntry, "organization")
-  sNote = ParsearCampoBib(sEntry, "note")
-  sEid = ParsearCampoBib(sEntry, "eid")
-  sEprint = ParsearCampoBib(sEntry, "eprint")
-  sEprintType = ParsearCampoBib(sEntry, "eprinttype")
-  sSeries = ParsearCampoBib(sEntry, "series")
-  sVersion = ParsearCampoBib(sEntry, "version")
-  sHolder = ParsearCampoBib(sEntry, "holder")
-  sChapter = ParsearCampoBib(sEntry, "chapter")
-
-  ' --- 4. ABRIR <biblioentry> CON xml:id Y, OPCIONALMENTE, pubwork ---
-  ' EL xml:id USA LA FORMA SANITIZADA: COINCIDE CON EL linkend DEL
-  ' <biblioref/> QUE EMITE cite-to-biblioref-db.lua.
-  If sPubwork = "" Then
-    sXML &= "    <biblioentry xml:id=" & cQ & "bib-" & sClave & cQ & ">" & gb.NewLine
-  Else
-    sXML &= "    <biblioentry xml:id=" & cQ & "bib-" & sClave & cQ &
-      " pubwork=" & cQ & sPubwork & cQ & ">" & gb.NewLine
-  Endif
-
-  ' --- 5. AUTORES Y EDITORES ---
-  ' EL ORDEN ES: <author> PRIMERO, LUEGO <editor>, LUEGO <othercredit>.
-  If sAuthor <> "" Then
-    sXML &= GenerarPersonGroupDocBook(sAuthor, "author|")
-  Endif
-
-  If sEditor <> "" Then
-    Dim sTipoEditor As String = MapearTipoEditorDocBook(sEditorType)
-    sXML &= GenerarPersonGroupDocBook(sEditor, sTipoEditor)
-  Endif
-  If sEditorA <> "" Then
-    Dim sTipoEditorA As String = MapearTipoEditorDocBook(sEditorAType)
-    sXML &= GenerarPersonGroupDocBook(sEditorA, sTipoEditorA)
-  Endif
-  If sEditorB <> "" Then
-    Dim sTipoEditorB As String = MapearTipoEditorDocBook(sEditorBType)
-    sXML &= GenerarPersonGroupDocBook(sEditorB, sTipoEditorB)
-  Endif
-  If sEditorC <> "" Then
-    Dim sTipoEditorC As String = MapearTipoEditorDocBook(sEditorCType)
-    sXML &= GenerarPersonGroupDocBook(sEditorC, sTipoEditorC)
-  Endif
-  If sTranslator <> "" Then
-    sXML &= GenerarPersonGroupDocBook(sTranslator,
-      "othercredit|class=" & cQ & "translator" & cQ)
-  Endif
-
-  ' --- 6. TÍTULOS ---
-  ' COMPONER TÍTULOS COMPLETOS CON SUBTÍTULOS (PATRÓN BIBLATEX: title + ": " + subtitle).
-  sTituloCompleto = If(sSubtitle <> "", sTitle & ": " & sSubtitle, sTitle)
-  sBookTitleCompleto = If(sBookSubtitle <> "", sBookTitle & ": " & sBookSubtitle, sBookTitle)
-  sMaintitleCompleto = If(sMainsubtitle <> "", sMaintitle & ": " & sMainsubtitle, sMaintitle)
-
-  ' DECISIÓN: EN INCOLLECTION/INBOOK, EL title ES EL CAPÍTULO Y booktitle
-  ' ES EL CONTENEDOR. EN DOCBOOK, USAMOS <title> PARA EL CHAPTER-TITLE Y
-  ' <citetitle pubwork="book"> PARA EL CONTENEDOR.
-  If sBookTitleCompleto <> "" Then
-    If sTituloCompleto <> "" Then
-      sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
-    Endif
-    sXML &= "      <citetitle pubwork=" & cQ & "book" & cQ & ">" &
-      EscaparXML(sBookTitleCompleto) & "</citetitle>" & gb.NewLine
-  Else
-    ' SIN BOOKTITLE: EL title VA SEGÚN EL TIPO DE PUBLICACIÓN
-    If sTituloCompleto <> "" Then
-      Select Case sPubwork
-        Case "article", "newspaper"
-          ' EL title DEL ARTÍCULO ES UN <title>; EL journal VA COMO <citetitle>
-          sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
-        Case Else
-          ' LIBROS, REPORTES, TESIS, ETC.: title COMO <citetitle pubwork="X">
-          sXML &= "      <citetitle"
-          If sPubwork <> "" Then
-            sXML &= " pubwork=" & cQ & sPubwork & cQ
-          Endif
-          sXML &= ">" & EscaparXML(sTituloCompleto) & "</citetitle>" & gb.NewLine
-      End Select
-    Endif
-  Endif
-
-  ' MAINTITLE (TÍTULO DE OBRA MULTI-VOLUMEN, BIBLATEX-ESPECÍFICO)
-  If sMaintitleCompleto <> "" Then
-    sXML &= "      <citetitle pubwork=" & cQ & "set" & cQ & ">" &
-      EscaparXML(sMaintitleCompleto) & "</citetitle>" & gb.NewLine
-  Endif
-
-  ' JOURNAL: PARA article/newspaper, EL journal_title VA COMO <citetitle pubwork="journal">
-  If sJournal <> "" And (sPubwork = "article" Or sPubwork = "newspaper") Then
-    sXML &= "      <citetitle pubwork=" & cQ & "journal" & cQ & ">" &
-      EscaparXML(sJournal) & "</citetitle>" & gb.NewLine
-  Endif
-
-  ' SERIES (BIBLATEX series): SOLO APLICA A LIBROS Y COLECCIONES
-  If sSeries <> "" And (sPubwork = "book" Or sPubwork = "chapter" Or
-      InStr(Lower(sType), "collection") > 0) Then
-    sXML &= "      <bibliomisc role=" & cQ & "series" & cQ & ">" &
-      EscaparXML(sSeries) & "</bibliomisc>" & gb.NewLine
-  Endif
-
-  ' --- 7. PUBLISHER Y UBICACIÓN ---
-  If sPublisher <> "" Then
-    sXML &= "      <publisher>" & gb.NewLine
-    sXML &= "        <publishername>" & EscaparXML(sPublisher) & "</publishername>" & gb.NewLine
-    If sAddress <> "" Then
-      sXML &= "        <address><city>" & EscaparXML(sAddress) & "</city></address>" & gb.NewLine
-    Endif
-    sXML &= "      </publisher>" & gb.NewLine
-  Else If sAddress <> "" Then
-    ' ADDRESS SIN PUBLISHER: EMITIR COMO bibliomisc PARA NO PERDER EL DATO
-    sXML &= "      <bibliomisc role=" & cQ & "address" & cQ & ">" &
-      EscaparXML(sAddress) & "</bibliomisc>" & gb.NewLine
-  Endif
-
-  ' --- 8. FECHA, VOLUMEN, NÚMERO ---
-  If sFinalYear <> "" Then
-    sXML &= "      <pubdate>" & EscaparXML(sFinalYear) & "</pubdate>" & gb.NewLine
-  Endif
-  If sVolume <> "" Then
-    sXML &= "      <volumenum>" & EscaparXML(sVolume) & "</volumenum>" & gb.NewLine
-  Endif
-
-  If sNumber <> "" Then
-    Select Case sPubwork
-      Case "patent"
-        sXML &= "      <bibliomisc role=" & cQ & "patent-number" & cQ & ">" &
-          EscaparXML(sNumber) & "</bibliomisc>" & gb.NewLine
-      Case "report"
-        sXML &= "      <bibliomisc role=" & cQ & "report-number" & cQ & ">" &
-          EscaparXML(sNumber) & "</bibliomisc>" & gb.NewLine
-      Case Else
-        sXML &= "      <issuenum>" & EscaparXML(sNumber) & "</issuenum>" & gb.NewLine
-    End Select
-  Endif
-
-  ' --- 9. PAGINACIÓN ---
-  ' DOCBOOK 5.2 NO TIENE <fpage>/<lpage> COMO JATS — USA <artpagenums>
-  ' QUE ES UN STRING CON EL RANGO COMPLETO. SE PRESERVA EL FORMATO ORIGINAL.
-  If sEid <> "" Then
-    sXML &= "      <bibliomisc role=" & cQ & "elocation" & cQ & ">" &
-      EscaparXML(sEid) & "</bibliomisc>" & gb.NewLine
-  Else If sPages <> "" Then
-    ' NORMALIZAR "--" A "-" PARA LECTURA EN HTML
-    Dim sPagesNorm As String = Replace(TrimUTF8(sPages), "--", "-")
-    sXML &= "      <artpagenums>" & EscaparXML(sPagesNorm) & "</artpagenums>" & gb.NewLine
-  Endif
-
-  ' --- 10. EDICIÓN, INSTITUCIÓN, NOTAS ---
-  If sEdition <> "" Then
-    sXML &= "      <edition>" & EscaparXML(sEdition) & "</edition>" & gb.NewLine
-  Endif
-
-  ' INSTITUTION/ORGANIZATION: PARA TESIS Y REPORTES
-  If sPubwork = "thesis" Or sPubwork = "report" Then
-    If sInstitution <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(sInstitution) & "</orgname>" & gb.NewLine
-    Else If sSchool <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(sSchool) & "</orgname>" & gb.NewLine
-    Else If sOrganization <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(sOrganization) & "</orgname>" & gb.NewLine
-    Endif
-  Endif
-
-  If sNote <> "" Then
-    sXML &= "      <bibliomisc role=" & cQ & "note" & cQ & ">" &
-      EscaparXML(sNote) & "</bibliomisc>" & gb.NewLine
-  Endif
-
-  If sVersion <> "" Then
-    sXML &= "      <bibliomisc role=" & cQ & "version" & cQ & ">" &
-      EscaparXML(sVersion) & "</bibliomisc>" & gb.NewLine
-  Endif
-
-  If sHolder <> "" And sPubwork = "patent" Then
-    ' LIMPIAR LLAVES BIBLATEX DEL CAMPO holder
-    Dim sHolderLimpio As String
-    sHolderLimpio = Replace(sHolder, "{{", "")
-    sHolderLimpio = Replace(sHolderLimpio, "}}", "")
-    sHolderLimpio = Replace(sHolderLimpio, "{", "")
-    sHolderLimpio = Replace(sHolderLimpio, "}", "")
-    sHolderLimpio = Replace(sHolderLimpio, " and ", ", ")
-    sXML &= "      <bibliomisc role=" & cQ & "patent-holder" & cQ & ">" &
-      EscaparXML(sHolderLimpio) & "</bibliomisc>" & gb.NewLine
-  Endif
-
-  ' --- 11. IDENTIFICADORES ESTÁNDAR ---
-  ' EN DOCBOOK 5.2, TODOS LOS IDENTIFICADORES DE PUBLICACIÓN VAN COMO
-  ' <biblioid class="X">VALOR</biblioid>. EL ATRIBUTO class TIENE VALORES
-  ' ENUMERADOS QUE INCLUYEN: doi, isbn, issn, pubnumber, uri, etc.
-  If sIsbn <> "" Then
-    sXML &= "      <biblioid class=" & cQ & "isbn" & cQ & ">" &
-      EscaparXML(sIsbn) & "</biblioid>" & gb.NewLine
-  Endif
-  If sIssn <> "" Then
-    sXML &= "      <biblioid class=" & cQ & "issn" & cQ & ">" &
-      EscaparXML(sIssn) & "</biblioid>" & gb.NewLine
-  Endif
-  If sDoi <> "" Then
-    sXML &= "      <biblioid class=" & cQ & "doi" & cQ & ">" &
-      EscaparXML(sDoi) & "</biblioid>" & gb.NewLine
-  Endif
-  If sEprint <> "" Then
-    ' EL ATRIBUTO class DE biblioid NO TIENE UN VALOR PARA cada eprint type;
-    ' USAMOS class="other" CON otherclass PARA PRESERVAR EL TIPO ORIGINAL.
-    Dim sEprintTypeLower As String = Lower(sEprintType)
-    If sEprintTypeLower = "" Then sEprintTypeLower = "eprint"
-    sXML &= "      <biblioid class=" & cQ & "other" & cQ &
-      " otherclass=" & cQ & EscaparXML(sEprintTypeLower) & cQ & ">" &
-      EscaparXML(sEprint) & "</biblioid>" & gb.NewLine
-  Endif
-
-  ' URL: SE EMITE COMO <bibliosource> CON <link xlink:href="...">
-  ' EL NAMESPACE xlink LO DECLARA EL WRAPPER DEL CANÓNICO (RC-DB-06).
-  If sUrl <> "" Then
-    sXML &= "      <bibliosource><link xlink:href=" & cQ & EscaparXML(sUrl) & cQ & ">" &
-      EscaparXML(sUrl) & "</link></bibliosource>" & gb.NewLine
-  Endif
-
-  ' URLDATE: FECHA DE CONSULTA
-  If sUrlDate <> "" Then
-    sXML &= "      <bibliomisc role=" & cQ & "urldate" & cQ & ">" &
-      EscaparXML(sUrlDate) & "</bibliomisc>" & gb.NewLine
-  Endif
-
-  ' --- 12. CIERRE ---
-  sXML &= "    </biblioentry>" & gb.NewLine
-
-  Return sXML
-
-End
-
-' ==========================================================
 ' FUNCIÓN PÚBLICA: GenerarBiblioCapituloXML
 ' ==========================================================
 ' Función   : GenerarBiblioCapituloXML
@@ -7776,6 +7394,24 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
     Endif
   Endif
 
+  ' URL DE DESCARGA PDF (LIBRO COMPLETO)
+  If Not IsNull(hLibro["url_descarga_pdf"]) Then
+    If Len(TrimUTF8(hLibro["url_descarga_pdf"])) > 0 Then
+      sXML &= "  <bibliomisc role=" & cQ & "url-descarga-pdf" & cQ & ">" &
+        EscaparXML(TrimUTF8(hLibro["url_descarga_pdf"])) &
+        "</bibliomisc>" & Chr(10)
+    Endif
+  Endif
+
+  ' URL DE DESCARGA EPUB (LIBRO COMPLETO)
+  If Not IsNull(hLibro["url_descarga_epub"]) Then
+    If Len(TrimUTF8(hLibro["url_descarga_epub"])) > 0 Then
+      sXML &= "  <bibliomisc role=" & cQ & "url-descarga-epub" & cQ & ">" &
+        EscaparXML(TrimUTF8(hLibro["url_descarga_epub"])) &
+        "</bibliomisc>" & Chr(10)
+    Endif
+  Endif
+
   ' ==========================================================
   ' BLOQUE 3. AUTORES DEL LIBRO (LOOP libro_autor + autores)
   ' ==========================================================
@@ -8766,3 +8402,509 @@ Catch
   Return False
 
 End Function
+
+' ==========================================================
+' FUNCIÓN PRIVADA: GenerarBiblioentryDesdeBib
+' ==========================================================
+' Función   : GenerarBiblioentryDesdeBib
+' Propósito : GENERA UN <biblioentry> DE DOCBOOK 5.2 COMPLETO A PARTIR
+'             DE UNA ENTRADA BIBLATEX. ANÁLOGA A GenerarElementCitationDesdeBib
+'             PERO CON MAPEO BIBLATEX → DOCBOOK EN VEZ DE BIBLATEX → JATS.
+'             RESUELVE crossref AL INICIO (IGUAL QUE SU PAR JATS).
+' Parámetros: sEntry      As String     — TEXTO COMPLETO DE LA ENTRADA BIBTEX
+'             sType       As String     — TIPO (article, book, ...)
+'             sClave      As String     — CLAVE BIBTEX SANITIZADA (PARA xml:id)
+'             dictEntries As Collection — DICCIONARIO citekey → entry (PARA crossref)
+'             dictTypes   As Collection — DICCIONARIO citekey → type   (PARA crossref)
+' Retorna   : String — FRAGMENTO <biblioentry>...</biblioentry>
+' ==========================================================
+Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, sClave As String, dictEntries As Collection, dictTypes As Collection) As String
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  ' COMILLA DOBLE COMO VARIABLE LOCAL (SC-01)
+  Dim cQ As String = Chr(34)
+  Dim sXML As String = ""
+  Dim sPubwork As String
+  Dim sAuthor As String
+  Dim sEditor As String
+  Dim sEditorType As String
+  Dim sEditorA As String
+  Dim sEditorAType As String
+  Dim sEditorB As String
+  Dim sEditorBType As String
+  Dim sEditorC As String
+  Dim sEditorCType As String
+  Dim sTranslator As String
+  Dim sTitle As String
+  Dim sSubtitle As String
+  Dim sJournal As String
+  Dim sBookTitle As String
+  Dim sBookSubtitle As String
+  Dim sYear As String
+  Dim sDate As String
+  Dim sFinalYear As String
+  Dim sVolume As String
+  Dim sNumber As String
+  Dim sPages As String
+  Dim sPublisher As String
+  Dim sAddress As String
+  Dim sDoi As String
+  Dim sIsbn As String
+  Dim sIssn As String
+  Dim sUrl As String
+  Dim sUrlDate As String
+  Dim sEdition As String
+  Dim sSchool As String
+  Dim sCampoTypeTesis As String
+  Dim sCodigoTesis As String
+  Dim sNombreTesis As String
+  Dim sInstitution As String
+  Dim sOrganization As String
+  Dim sNote As String
+  Dim sEid As String
+  Dim sEprint As String
+  Dim sEprintType As String
+  Dim sSeries As String
+  Dim sVersion As String
+  Dim sHolder As String
+  Dim sMaintitle As String
+  Dim sMainsubtitle As String
+  Dim sBookauthor As String
+  Dim sChapter As String
+  Dim sCrossref As String
+  Dim sEntryBase As String
+  Dim sTituloCompleto As String
+  Dim sBookTitleCompleto As String
+  Dim sMaintitleCompleto As String
+  ' TIPO REAL PRESERVADO PARA pubwork="other" (thesis, report, ...) Y
+  ' TIPO EFECTIVO PARA LAS COMPARACIONES INTERNAS DE LA FUNCIÓN.
+  Dim sOtherpubwork As String
+  Dim sTipoEfectivo As String
+
+  ' --- 1. RESOLVER crossref SI EXISTE (HERENCIA DE CAMPOS) ---
+  sCrossref = ParsearCampoBib(sEntry, "crossref")
+  If sCrossref <> "" And dictEntries.Exist(sCrossref) Then
+    sEntryBase = dictEntries[sCrossref]
+    ' SI EL HIJO ES INCOLLECTION/INBOOK, EL title DEL PADRE PASA A booktitle
+    If Lower(TrimUTF8(sType)) = "incollection" Or
+        Lower(TrimUTF8(sType)) = "inbook" Or
+        Lower(TrimUTF8(sType)) = "bookinbook" Then
+      sEntryBase = Replace(sEntryBase, "  title ", "  booktitle ", gb.IgnoreCase)
+    Endif
+    sEntry = FusionarEntradas(sEntryBase, sEntry)
+  Endif
+
+  ' --- 2. DETERMINAR pubwork Y TIPO EFECTIVO ---
+  sPubwork = ConvertirTipoDocBook(sType)
+  sOtherpubwork = ConvertirOtherpubwork(sType)
+
+  ' TIPO EFECTIVO: PARA pubwork="other" LAS COMPARACIONES INTERNAS
+  ' (TESIS→orgname, PATENTE→patent-number, ETC.) USAN EL TIPO REAL.
+  If sPubwork = "other" Then
+    sTipoEfectivo = sOtherpubwork
+  Else
+    sTipoEfectivo = sPubwork
+  Endif
+
+  ' --- 3. EXTRAER CAMPOS DEL BIBLATEX ---
+  sAuthor = ParsearCampoBib(sEntry, "author")
+  sEditor = ParsearCampoBib(sEntry, "editor")
+  sEditorType = ParsearCampoBib(sEntry, "editortype")
+  sEditorA = ParsearCampoBib(sEntry, "editora")
+  sEditorAType = ParsearCampoBib(sEntry, "editoratype")
+  sEditorB = ParsearCampoBib(sEntry, "editorb")
+  sEditorBType = ParsearCampoBib(sEntry, "editorbtype")
+  sEditorC = ParsearCampoBib(sEntry, "editorc")
+  sEditorCType = ParsearCampoBib(sEntry, "editorctype")
+  sTranslator = ParsearCampoBib(sEntry, "translator")
+  sTitle = ParsearCampoBib(sEntry, "title")
+  sSubtitle = ParsearCampoBib(sEntry, "subtitle")
+  sBookauthor = ParsearCampoBib(sEntry, "bookauthor")
+  sMaintitle = ParsearCampoBib(sEntry, "maintitle")
+  sMainsubtitle = ParsearCampoBib(sEntry, "mainsubtitle")
+
+  ' JOURNAL: PRIORIZAR journaltitle SOBRE journal (PATRÓN BIBLATEX MODERNO)
+  sJournal = ParsearCampoBib(sEntry, "journaltitle")
+  If sJournal = "" Then sJournal = ParsearCampoBib(sEntry, "journal")
+
+  sBookTitle = ParsearCampoBib(sEntry, "booktitle")
+  sBookSubtitle = ParsearCampoBib(sEntry, "booksubtitle")
+
+  ' AÑO: PRIORIZAR date SOBRE year (BIBLATEX MODERNO)
+  sDate = ParsearCampoBib(sEntry, "date")
+  sYear = ParsearCampoBib(sEntry, "year")
+  If sDate <> "" Then
+    sFinalYear = ExtraerAnio(sDate)
+  Else If sYear <> "" Then
+    sFinalYear = sYear
+  Else
+    sFinalYear = ""
+  Endif
+
+  sVolume = ParsearCampoBib(sEntry, "volume")
+  sNumber = ParsearCampoBib(sEntry, "number")
+  sPages = ParsearCampoBib(sEntry, "pages")
+  sPublisher = ParsearCampoBib(sEntry, "publisher")
+
+  ' UBICACIÓN: location (BIBLATEX) o address (BIBTEX VIEJO)
+  sAddress = ParsearCampoBib(sEntry, "location")
+  If sAddress = "" Then sAddress = ParsearCampoBib(sEntry, "address")
+
+  sDoi = ParsearCampoBib(sEntry, "doi")
+  sIsbn = ParsearCampoBib(sEntry, "isbn")
+  sIssn = ParsearCampoBib(sEntry, "issn")
+  sUrl = ParsearCampoBib(sEntry, "url")
+  sUrlDate = ParsearCampoBib(sEntry, "urldate")
+  sEdition = ParsearCampoBib(sEntry, "edition")
+  sSchool = ParsearCampoBib(sEntry, "school")
+  ' CAMPO type: REFINA EL TIPO DE TESIS (phdthesis, mathesis, ...) EN
+  ' BIBLATEX MODERNO (@thesis + type=). SE RESUELVE MÁS ABAJO.
+  sCampoTypeTesis = ParsearCampoBib(sEntry, "type")
+
+  sInstitution = ParsearCampoBib(sEntry, "institution")
+  sOrganization = ParsearCampoBib(sEntry, "organization")
+  sNote = ParsearCampoBib(sEntry, "note")
+  sEid = ParsearCampoBib(sEntry, "eid")
+  sEprint = ParsearCampoBib(sEntry, "eprint")
+  sEprintType = ParsearCampoBib(sEntry, "eprinttype")
+  sSeries = ParsearCampoBib(sEntry, "series")
+  sVersion = ParsearCampoBib(sEntry, "version")
+  sHolder = ParsearCampoBib(sEntry, "holder")
+  sChapter = ParsearCampoBib(sEntry, "chapter")
+
+  ' --- 4. ABRIR <biblioentry> CON xml:id Y, OPCIONALMENTE, pubwork ---
+  ' EL xml:id USA LA FORMA SANITIZADA: COINCIDE CON EL linkend DEL
+  ' <biblioref/> QUE EMITE cite-to-biblioref-db.lua.
+  If sPubwork = "" Then
+    sXML &= "    <biblioentry xml:id=" & cQ & "bib-" & sClave & cQ & ">" & gb.NewLine
+  Else If sPubwork = "other" And sOtherpubwork <> "" Then
+    ' pubwork="other" + otherpubwork="<tipo>": PRESERVA LA NATURALEZA
+    ' REAL DE LA OBRA (SPEC DOCBOOK 5.2, ATRIBUTO otherpubwork NMTOKEN).
+    sXML &= "    <biblioentry xml:id=" & cQ & "bib-" & sClave & cQ &
+      " pubwork=" & cQ & "other" & cQ &
+      " otherpubwork=" & cQ & sOtherpubwork & cQ & ">" & gb.NewLine
+  Else
+    sXML &= "    <biblioentry xml:id=" & cQ & "bib-" & sClave & cQ &
+      " pubwork=" & cQ & sPubwork & cQ & ">" & gb.NewLine
+  Endif
+
+  ' --- 5. AUTORES Y EDITORES ---
+  ' EL ORDEN ES: <author> PRIMERO, LUEGO <editor>, LUEGO <othercredit>.
+  If sAuthor <> "" Then
+    sXML &= GenerarPersonGroupDocBook(sAuthor, "author|")
+  Endif
+
+  If sEditor <> "" Then
+    Dim sTipoEditor As String = MapearTipoEditorDocBook(sEditorType)
+    sXML &= GenerarPersonGroupDocBook(sEditor, sTipoEditor)
+  Endif
+  If sEditorA <> "" Then
+    Dim sTipoEditorA As String = MapearTipoEditorDocBook(sEditorAType)
+    sXML &= GenerarPersonGroupDocBook(sEditorA, sTipoEditorA)
+  Endif
+  If sEditorB <> "" Then
+    Dim sTipoEditorB As String = MapearTipoEditorDocBook(sEditorBType)
+    sXML &= GenerarPersonGroupDocBook(sEditorB, sTipoEditorB)
+  Endif
+  If sEditorC <> "" Then
+    Dim sTipoEditorC As String = MapearTipoEditorDocBook(sEditorCType)
+    sXML &= GenerarPersonGroupDocBook(sEditorC, sTipoEditorC)
+  Endif
+  If sTranslator <> "" Then
+    sXML &= GenerarPersonGroupDocBook(sTranslator,
+      "othercredit|class=" & cQ & "translator" & cQ)
+  Endif
+
+  ' --- 6. TÍTULOS ---
+  ' COMPONER TÍTULOS COMPLETOS CON SUBTÍTULOS (PATRÓN BIBLATEX: title + ": " + subtitle).
+  sTituloCompleto = If(sSubtitle <> "", sTitle & ": " & sSubtitle, sTitle)
+  sBookTitleCompleto = If(sBookSubtitle <> "", sBookTitle & ": " & sBookSubtitle, sBookTitle)
+  sMaintitleCompleto = If(sMainsubtitle <> "", sMaintitle & ": " & sMainsubtitle, sMaintitle)
+
+  ' DECISIÓN: EN INCOLLECTION/INBOOK, EL title ES EL CAPÍTULO Y booktitle
+  ' ES EL CONTENEDOR. EN DOCBOOK, USAMOS <title> PARA EL CHAPTER-TITLE Y
+  ' <citetitle pubwork="book"> PARA EL CONTENEDOR.
+  If sBookTitleCompleto <> "" Then
+    If sTituloCompleto <> "" Then
+      sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
+    Endif
+    sXML &= "      <citetitle pubwork=" & cQ & "book" & cQ & ">" &
+      EscaparXML(sBookTitleCompleto) & "</citetitle>" & gb.NewLine
+  Else
+    ' SIN BOOKTITLE: EL title VA SEGÚN EL TIPO DE PUBLICACIÓN
+    If sTituloCompleto <> "" Then
+      Select Case sTipoEfectivo
+        Case "article", "periodical"
+          ' EL title DEL ARTÍCULO ES UN <title>; EL journal VA COMO <citetitle>
+          sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
+        Case Else
+          ' LIBROS, REPORTES, TESIS, ETC.: title COMO <citetitle pubwork="X">
+          sXML &= "      <citetitle"
+          If sPubwork <> "" Then
+            sXML &= " pubwork=" & cQ & sPubwork & cQ
+          Endif
+          sXML &= ">" & EscaparXML(sTituloCompleto) & "</citetitle>" & gb.NewLine
+      End Select
+    Endif
+  Endif
+
+  ' MAINTITLE (TÍTULO DE OBRA MULTI-VOLUMEN, BIBLATEX-ESPECÍFICO)
+  If sMaintitleCompleto <> "" Then
+    sXML &= "      <citetitle pubwork=" & cQ & "set" & cQ & ">" &
+      EscaparXML(sMaintitleCompleto) & "</citetitle>" & gb.NewLine
+  Endif
+
+  ' JOURNAL: PARA article/periodical, EL journal_title VA COMO <citetitle pubwork="journal">
+  If sJournal <> "" And (sTipoEfectivo = "article" Or sTipoEfectivo = "periodical") Then
+    sXML &= "      <citetitle pubwork=" & cQ & "journal" & cQ & ">" &
+      EscaparXML(sJournal) & "</citetitle>" & gb.NewLine
+  Endif
+
+  ' SERIES (BIBLATEX series): SOLO APLICA A LIBROS Y COLECCIONES
+  If sSeries <> "" And (sPubwork = "book" Or sPubwork = "chapter" Or
+      InStr(Lower(sType), "collection") > 0) Then
+    sXML &= "      <bibliomisc role=" & cQ & "series" & cQ & ">" &
+      EscaparXML(sSeries) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 7. PUBLISHER Y UBICACIÓN ---
+  If sPublisher <> "" Then
+    sXML &= "      <publisher>" & gb.NewLine
+    sXML &= "        <publishername>" & EscaparXML(sPublisher) & "</publishername>" & gb.NewLine
+    If sAddress <> "" Then
+      sXML &= "        <address><city>" & EscaparXML(sAddress) & "</city></address>" & gb.NewLine
+    Endif
+    sXML &= "      </publisher>" & gb.NewLine
+  Else If sAddress <> "" Then
+    ' ADDRESS SIN PUBLISHER: EMITIR COMO bibliomisc PARA NO PERDER EL DATO
+    sXML &= "      <bibliomisc role=" & cQ & "address" & cQ & ">" &
+      EscaparXML(sAddress) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 8. FECHA, VOLUMEN, NÚMERO ---
+  If sFinalYear <> "" Then
+    sXML &= "      <pubdate>" & EscaparXML(sFinalYear) & "</pubdate>" & gb.NewLine
+  Endif
+  If sVolume <> "" Then
+    sXML &= "      <volumenum>" & EscaparXML(sVolume) & "</volumenum>" & gb.NewLine
+  Endif
+
+  If sNumber <> "" Then
+    Select Case sTipoEfectivo
+      Case "patent"
+        sXML &= "      <bibliomisc role=" & cQ & "patent-number" & cQ & ">" &
+          EscaparXML(sNumber) & "</bibliomisc>" & gb.NewLine
+      Case "report"
+        sXML &= "      <bibliomisc role=" & cQ & "report-number" & cQ & ">" &
+          EscaparXML(sNumber) & "</bibliomisc>" & gb.NewLine
+      Case Else
+        sXML &= "      <issuenum>" & EscaparXML(sNumber) & "</issuenum>" & gb.NewLine
+    End Select
+  Endif
+
+  ' --- 9. PAGINACIÓN ---
+  ' DOCBOOK 5.2 NO TIENE <fpage>/<lpage> COMO JATS — USA <artpagenums>
+  ' QUE ES UN STRING CON EL RANGO COMPLETO. SE PRESERVA EL FORMATO ORIGINAL.
+  If sEid <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "elocation" & cQ & ">" &
+      EscaparXML(sEid) & "</bibliomisc>" & gb.NewLine
+  Else If sPages <> "" Then
+    ' NORMALIZAR "--" A "-" PARA LECTURA EN HTML
+    Dim sPagesNorm As String = Replace(TrimUTF8(sPages), "--", "-")
+    sXML &= "      <artpagenums>" & EscaparXML(sPagesNorm) & "</artpagenums>" & gb.NewLine
+  Endif
+
+  ' --- 10. EDICIÓN, INSTITUCIÓN, NOTAS ---
+  If sEdition <> "" Then
+    sXML &= "      <edition>" & EscaparXML(sEdition) & "</edition>" & gb.NewLine
+  Endif
+
+  ' INSTITUTION/ORGANIZATION: PARA TESIS Y REPORTES
+  If sTipoEfectivo = "thesis" Or sTipoEfectivo = "report" Then
+    If sInstitution <> "" Then
+      sXML &= "      <orgname>" & EscaparXML(sInstitution) & "</orgname>" & gb.NewLine
+    Else If sSchool <> "" Then
+      sXML &= "      <orgname>" & EscaparXML(sSchool) & "</orgname>" & gb.NewLine
+    Else If sOrganization <> "" Then
+      sXML &= "      <orgname>" & EscaparXML(sOrganization) & "</orgname>" & gb.NewLine
+    Endif
+  Endif
+
+  ' TIPO DE TESIS: EMITIR EL NOMBRE EN ESPAÑOL (DESDE cmb_biblatex) COMO
+  ' bibliomisc. SOLO PARA TESIS. SI EL type NO ESTÁ EN LA TABLA PERO EL
+  ' BIB TRAE UN VALOR LIBRE (EJ. TIPO LOCAL NO CATALOGADO), SE PRESERVA
+  ' ESE TEXTO. SI NO HAY type ALGUNO, NO SE EMITE NADA Y EL XSLT PONDRÁ
+  ' "Tesis" GENÉRICO AL VER otherpubwork='thesis'.
+  If sTipoEfectivo = "thesis" Then
+    ' DECLARADAS EN APARTADO 0: sCodigoTesis, sNombreTesis
+    sCodigoTesis = ResolverCodigoTesis(sType, sCampoTypeTesis)
+    If sCodigoTesis <> "" Then
+      sNombreTesis = TraducirTipoTesis(sCodigoTesis)
+      If sNombreTesis <> "" Then
+        ' CÓDIGO CONOCIDO: NOMBRE EN ESPAÑOL DESDE LA BD.
+        sXML &= "      <bibliomisc role=" & cQ & "thesis-type" & cQ & ">" &
+          EscaparXML(sNombreTesis) & "</bibliomisc>" & gb.NewLine
+      Else If TrimUTF8(sCampoTypeTesis) <> "" Then
+        ' CÓDIGO NO CATALOGADO PERO CON TEXTO LIBRE: PRESERVARLO TAL CUAL
+        ' (RESPETA TIPOS LOCALES NO CARGADOS EN cmb_biblatex).
+        sXML &= "      <bibliomisc role=" & cQ & "thesis-type" & cQ & ">" &
+          EscaparXML(TrimUTF8(sCampoTypeTesis)) & "</bibliomisc>" & gb.NewLine
+      Endif
+    Endif
+  Endif
+
+  If sNote <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "note" & cQ & ">" &
+      EscaparXML(sNote) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  If sVersion <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "version" & cQ & ">" &
+      EscaparXML(sVersion) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  If sHolder <> "" And sTipoEfectivo = "patent" Then
+    ' LIMPIAR LLAVES BIBLATEX DEL CAMPO holder
+    Dim sHolderLimpio As String
+    sHolderLimpio = Replace(sHolder, "{{", "")
+    sHolderLimpio = Replace(sHolderLimpio, "}}", "")
+    sHolderLimpio = Replace(sHolderLimpio, "{", "")
+    sHolderLimpio = Replace(sHolderLimpio, "}", "")
+    sHolderLimpio = Replace(sHolderLimpio, " and ", ", ")
+    sXML &= "      <bibliomisc role=" & cQ & "patent-holder" & cQ & ">" &
+      EscaparXML(sHolderLimpio) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 11. IDENTIFICADORES ESTÁNDAR ---
+  ' EN DOCBOOK 5.2, TODOS LOS IDENTIFICADORES DE PUBLICACIÓN VAN COMO
+  ' <biblioid class="X">VALOR</biblioid>. EL ATRIBUTO class TIENE VALORES
+  ' ENUMERADOS QUE INCLUYEN: doi, isbn, issn, pubnumber, uri, etc.
+  If sIsbn <> "" Then
+    sXML &= "      <biblioid class=" & cQ & "isbn" & cQ & ">" &
+      EscaparXML(sIsbn) & "</biblioid>" & gb.NewLine
+  Endif
+  If sIssn <> "" Then
+    sXML &= "      <biblioid class=" & cQ & "issn" & cQ & ">" &
+      EscaparXML(sIssn) & "</biblioid>" & gb.NewLine
+  Endif
+  If sDoi <> "" Then
+    sXML &= "      <biblioid class=" & cQ & "doi" & cQ & ">" &
+      EscaparXML(sDoi) & "</biblioid>" & gb.NewLine
+  Endif
+  If sEprint <> "" Then
+    ' EL ATRIBUTO class DE biblioid NO TIENE UN VALOR PARA cada eprint type;
+    ' USAMOS class="other" CON otherclass PARA PRESERVAR EL TIPO ORIGINAL.
+    Dim sEprintTypeLower As String = Lower(sEprintType)
+    If sEprintTypeLower = "" Then sEprintTypeLower = "eprint"
+    sXML &= "      <biblioid class=" & cQ & "other" & cQ &
+      " otherclass=" & cQ & EscaparXML(sEprintTypeLower) & cQ & ">" &
+      EscaparXML(sEprint) & "</biblioid>" & gb.NewLine
+  Endif
+
+  ' URL: SE EMITE COMO <bibliosource> CON <link xlink:href="...">
+  ' EL NAMESPACE xlink LO DECLARA EL WRAPPER DEL CANÓNICO (RC-DB-06).
+  If sUrl <> "" Then
+    sXML &= "      <bibliosource><link xlink:href=" & cQ & EscaparXML(sUrl) & cQ & ">" &
+      EscaparXML(sUrl) & "</link></bibliosource>" & gb.NewLine
+  Endif
+
+  ' URLDATE: FECHA DE CONSULTA
+  If sUrlDate <> "" Then
+    sXML &= "      <bibliomisc role=" & cQ & "urldate" & cQ & ">" &
+      EscaparXML(sUrlDate) & "</bibliomisc>" & gb.NewLine
+  Endif
+
+  ' --- 12. CIERRE ---
+  sXML &= "    </biblioentry>" & gb.NewLine
+
+  Return sXML
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' PARCHE: TIPO DE TESIS EN EL CANÓNICO (thesis-type)
+' ════════════════════════════════════════════════════════════════════════════
+' Emite <bibliomisc role="thesis-type">Nombre en español</bibliomisc> para
+' que el XSLT de salida formatee la referencia de tesis correctamente.
+'
+' PATRÓN (Opción A, coherente con RC-XJ-02): la traducción código→nombre
+' vive en la BD (cmb_biblatex). Gambas la resuelve y emite el NOMBRE en
+' español ya listo; el canónico queda autónomo, el XSLT solo lo coloca.
+'
+' TRES MODIFICACIONES:
+
+'   3. En GenerarBiblioentryDesdeBib: capturar 'type' y emitir el bibliomisc.
+' ════════════════════════════════════════════════════════════════════════════
+
+' ============================================
+' Función   : TraducirTipoTesis
+' Propósito : TRADUCE UN CÓDIGO DE TIPO DE TESIS (phdthesis, mathesis, ...)
+'             A SU NOMBRE EN ESPAÑOL CONSULTANDO cmb_biblatex. LA BD ES
+'             LA FUENTE CANÓNICA DE LA TRADUCCIÓN (RC-XJ-02).
+' Parámetros: sCodigo As String — CÓDIGO biblatex DEL TIPO DE TESIS
+' Retorna   : String — NOMBRE EN ESPAÑOL (ej. "Tesis Doctoral"), O CADENA
+'             VACÍA SI EL CÓDIGO NO ESTÁ EN LA TABLA (EL LLAMADOR DECIDE
+'             EL FALLBACK).
+' ============================================
+Private Function TraducirTipoTesis(sCodigo As String) As String
+
+  Dim hRes As Result
+
+  ' --- 1. VALIDAR ENTRADA ---
+  If TrimUTF8(sCodigo) = "" Then Return ""
+
+  ' --- 2. CONSULTAR cmb_biblatex (thesis_type ACTIVO) ---
+  ' RC-GM-15: Exec CON POCOS PLACEHOLDERS ES SEGURO; AQUÍ SOLO 1.
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT nombre FROM cmb_biblatex " &
+    "WHERE tipo = 'thesis_type' AND codigo = &1 AND activo = TRUE LIMIT 1",
+    Lower(TrimUTF8(sCodigo)))
+  If Error Then
+    ' NO ABORTAR LA GENERACIÓN POR UN FALLO DE TRADUCCIÓN: EL LLAMADOR
+    ' USARÁ SU FALLBACK. SOLO DEVOLVER VACÍO.
+    Return ""
+  Endif
+
+  ' --- 3. RETORNAR EL NOMBRE O VACÍO ---
+  If hRes.Available Then
+    Return TrimUTF8(hRes["nombre"])
+  Endif
+  Return ""
+
+End
+
+' ============================================
+' Función   : ResolverCodigoTesis
+' Propósito : DETERMINA EL CÓDIGO DE TIPO DE TESIS A PARTIR DE LAS DOS
+'             FORMAS EN QUE biblatex LO INDICA:
+'               (a) TIPO DE ENTRADA: @phdthesis / @mastersthesis (bibtex)
+'               (b) CAMPO type EN @thesis: type = {phdthesis} (biblatex)
+'             EL CAMPO type EXPLÍCITO TIENE PRIORIDAD (BIBLATEX MODERNO).
+'             NORMALIZA A MINÚSCULAS PARA MATCHEAR cmb_biblatex.codigo.
+' Parámetros: sType      As String — TIPO DE ENTRADA (phdthesis, thesis, ...)
+'             sCampoType As String — VALOR DEL CAMPO type DEL BIB (PUEDE
+'                                    ESTAR VACÍO)
+' Retorna   : String — CÓDIGO NORMALIZADO (ej. "phdthesis"), O CADENA VACÍA
+'             SI NO SE PUEDE DETERMINAR.
+' ============================================
+Private Function ResolverCodigoTesis(sType As String, sCampoType As String) As String
+
+  Dim sT As String
+  Dim sCampo As String
+
+  sT = Lower(TrimUTF8(sType))
+  sCampo = Lower(TrimUTF8(sCampoType))
+
+  ' --- 1. PRIORIDAD: CAMPO type EXPLÍCITO (BIBLATEX MODERNO) ---
+  ' EJ: @thesis{..., type = {phdthesis}} → "phdthesis"
+  If sCampo <> "" Then Return sCampo
+
+  ' --- 2. TIPO DE ENTRADA CLÁSICO (@phdthesis / @mastersthesis) ---
+  ' bibtex USA @mastersthesis; cmb_biblatex USA "mathesis".
+  If sT = "phdthesis" Then Return "phdthesis"
+  If sT = "mastersthesis" Then Return "mathesis"
+
+  ' --- 3. ENTRADA @thesis SIN CAMPO type: SIN CÓDIGO ESPECÍFICO ---
+  Return ""
+
+End

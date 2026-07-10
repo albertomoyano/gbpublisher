@@ -60,6 +60,26 @@ DOCUMENTACIÓN DE REFERENCIA:
   <xsl:param name="proyecto_dir" as="xs:string" required="yes"/>
 
   <!-- ==========================================================
+       MODELO DE BIBLIOGRAFÍA: 'por_capitulo' | 'consolidada'.
+       Lo pasa el handler desde libros_md.lugar_bibliografia.
+       EN 'por_capitulo' LA MISMA OBRA SE LISTA EN CADA CAPÍTULO
+       QUE LA CITA, GENERANDO xml:id DUPLICADOS ENTRE CAPÍTULOS.
+       PARA EVITAR LA COLISIÓN DE ID (INVÁLIDA EN XML), SE PREFIJAN
+       LOS xml:id DE <biblioentry> Y LOS linkend DE <biblioref> CON
+       EL xml:id DEL CAPÍTULO CONTENEDOR, DE FORMA COORDINADA.
+       DEFAULT 'por_capitulo' (EL MÁS COMÚN Y EL DEL LIBRO DE PRUEBA). -->
+  <xsl:param name="lugar_bibliografia" as="xs:string" select="'por_capitulo'"/>
+
+  <!-- ==========================================================
+       RUTA (RELATIVA A proyecto_dir) DEL FRAGMENTO DE BIBLIOGRAFÍA
+       CONSOLIDADA QUE GENERA GenerarBiblioLibroXML EN GAMBAS. SOLO
+       SE USA CUANDO lugar_bibliografia = 'consolidada'. EL FRAGMENTO
+       ES UN <bibliography> CON TODAS LAS ENTRADAS DEL LIBRO, YA
+       DEDUPLICADAS Y EN ORDEN, DERIVADAS DEL .bib ÚNICO.
+       VACÍO EN por_capitulo (NO SE USA). -->
+  <xsl:param name="biblio_libro" as="xs:string" select="''"/>
+
+  <!-- ==========================================================
        PLANTILLA PRINCIPAL: MATCH /manifiesto-libro
        ========================================================== -->
   <xsl:template match="/manifiesto-libro">
@@ -127,11 +147,30 @@ DOCUMENTACIÓN DE REFERENCIA:
 
         <xsl:choose>
           <xsl:when test="doc-available($capituloPath)">
-            <!-- COPIAR EL NODO RAÍZ TAL CUAL (chapter/preface/bibliography/etc.) -->
-            <!-- EL XSLT DE CAPÍTULO YA EMITIÓ EL ELEMENTO RAÍZ CORRECTO -->
-            <!-- SEGÚN tipo_capitulo, ACÁ SOLO SE CONCATENA AL <book>       -->
-            <xsl:copy-of select="doc($capituloPath)/*"
-                         copy-namespaces="no"/>
+            <!-- CARGAR EL NODO RAÍZ DEL CAPÍTULO (chapter/preface/appendix/...) -->
+            <xsl:variable name="raizCapitulo" select="doc($capituloPath)/*"/>
+
+            <xsl:choose>
+              <!-- MODELO por_capitulo: PREFIJAR IDs DE BIBLIOGRAFÍA CON EL
+                   xml:id DEL CAPÍTULO PARA EVITAR COLISIONES ENTRE CAPÍTULOS.
+                   EL PREFIJO SE PASA POR TÚNEL PARA LLEGAR A biblioentry Y
+                   biblioref AUNQUE ESTÉN ANIDADOS. -->
+              <xsl:when test="$lugar_bibliografia = 'por_capitulo'">
+                <xsl:apply-templates select="$raizCapitulo" mode="prefijar-biblio">
+                  <xsl:with-param name="prefijo-cap"
+                                  select="string($raizCapitulo/@xml:id)"
+                                  tunnel="yes"/>
+                </xsl:apply-templates>
+              </xsl:when>
+              <!-- MODELO consolidada: COPIAR EL CAPÍTULO SIN SU
+                   <bibliography> (LA BIBLIO VA EN UNA LISTA ÚNICA AL
+                   FINAL DEL LIBRO). LOS biblioref QUEDAN APUNTANDO AL
+                   CITEKEY BASE (SIN PREFIJO), QUE ES EL xml:id DE LA
+                   ENTRADA CONSOLIDADA. -->
+              <xsl:otherwise>
+                <xsl:apply-templates select="$raizCapitulo" mode="sin-biblio"/>
+              </xsl:otherwise>
+            </xsl:choose>
           </xsl:when>
           <xsl:otherwise>
             <xsl:message terminate="yes">
@@ -145,8 +184,86 @@ DOCUMENTACIÓN DE REFERENCIA:
 
       </xsl:for-each>
 
+      <!-- ==========================================================
+           BIBLIOGRAFÍA CONSOLIDADA (solo si lugar_bibliografia =
+           'consolidada'): SE INSERTA EL <bibliography> ÚNICO QUE
+           GENERÓ GenerarBiblioLibroXML (GAMBAS) EN tmp/biblio-libro-*.xml,
+           CON TODAS LAS ENTRADAS DEL LIBRO YA DEDUPLICADAS Y ORDENADAS
+           (DERIVADAS DEL .bib ÚNICO, UNIENDO referencias_citadas DE
+           TODOS LOS CAPÍTULOS). LA NUMERACIÓN DEL DRAWER SALE CORRIDA
+           POR LA POSICIÓN EN ESTA LISTA. LOS CAPÍTULOS YA SE COPIARON
+           SIN SU <bibliography> (MODO sin-biblio).
+           ========================================================== -->
+      <xsl:if test="$lugar_bibliografia = 'consolidada'">
+        <xsl:variable name="biblioLibroPath"
+                      select="concat($proyecto_dir, '/', $biblio_libro)"/>
+        <xsl:choose>
+          <xsl:when test="$biblio_libro != '' and doc-available($biblioLibroPath)">
+            <!-- INSERTAR EL <bibliography> DEL FRAGMENTO TAL CUAL -->
+            <xsl:copy-of select="doc($biblioLibroPath)/*" copy-namespaces="no"/>
+          </xsl:when>
+          <xsl:otherwise>
+            <xsl:message terminate="yes">
+              <xsl:text>ERROR: bibliografía consolidada no disponible en: </xsl:text>
+              <xsl:value-of select="$biblioLibroPath"/>
+              <xsl:text>&#10;Verifique que GenerarBiblioLibroXML se ejecutó antes del ensamblado.</xsl:text>
+            </xsl:message>
+          </xsl:otherwise>
+        </xsl:choose>
+      </xsl:if>
+
     </book>
 
+  </xsl:template>
+
+  <!-- ==========================================================
+       MODO sin-biblio: COPIA IDENTIDAD QUE OMITE EL <bibliography>
+       ==========================================================
+       Solo se usa cuando lugar_bibliografia = 'consolidada'. Copia
+       el capítulo entero SALVO su <bibliography> (que se consolida
+       en una lista única al final del libro). Los biblioref quedan
+       intactos, apuntando al citekey base. -->
+  <xsl:template match="@* | node()" mode="sin-biblio">
+    <xsl:copy copy-namespaces="no">
+      <xsl:apply-templates select="@* | node()" mode="sin-biblio"/>
+    </xsl:copy>
+  </xsl:template>
+
+  <!-- OMITIR EL <bibliography> DEL CAPÍTULO (NO SE COPIA) -->
+  <xsl:template match="db:bibliography" mode="sin-biblio"/>
+
+  <!-- ==========================================================
+       MODO prefijar-biblio: COPIA IDENTIDAD QUE PREFIJA LOS IDs
+       DE BIBLIOGRAFÍA CON EL xml:id DEL CAPÍTULO.
+       ==========================================================
+       Solo se usa cuando lugar_bibliografia = 'por_capitulo'.
+       - biblioentry/@xml:id → prefijado con "{cap}-"
+       - biblioref/@linkend  → prefijado igual (coordinado)
+       El resto del árbol se copia sin cambios. El prefijo llega
+       por parámetro de túnel desde la plantilla principal.
+       RC-DB-08: copy-namespaces implícito controlado por xsl:copy. -->
+
+  <!-- IDENTIDAD GENERAL: COPIAR CADA NODO Y SUS ATRIBUTOS -->
+  <xsl:template match="@* | node()" mode="prefijar-biblio">
+    <xsl:copy copy-namespaces="no">
+      <xsl:apply-templates select="@* | node()" mode="prefijar-biblio"/>
+    </xsl:copy>
+  </xsl:template>
+
+  <!-- OVERRIDE: xml:id DE biblioentry → PREFIJAR CON EL CAPÍTULO -->
+  <xsl:template match="db:biblioentry/@xml:id" mode="prefijar-biblio">
+    <xsl:param name="prefijo-cap" tunnel="yes"/>
+    <xsl:attribute name="xml:id">
+      <xsl:value-of select="concat($prefijo-cap, '-', .)"/>
+    </xsl:attribute>
+  </xsl:template>
+
+  <!-- OVERRIDE: linkend DE biblioref → PREFIJAR IGUAL (COORDINADO) -->
+  <xsl:template match="db:biblioref/@linkend" mode="prefijar-biblio">
+    <xsl:param name="prefijo-cap" tunnel="yes"/>
+    <xsl:attribute name="linkend">
+      <xsl:value-of select="concat($prefijo-cap, '-', .)"/>
+    </xsl:attribute>
   </xsl:template>
 
 </xsl:stylesheet>

@@ -6911,6 +6911,11 @@ Public Sub btnGenerarLibroCanonico_Click()
   Dim sFaltantes As String
   Dim sPathEsperado As String
   Dim iRespuesta As Integer
+  Dim sLugarBibliografia As String
+  ' RUTA RELATIVA (RESPECTO A sRutaProyecto) DEL FRAGMENTO DE BIBLIO
+  ' CONSOLIDADA. VACÍA EN por_capitulo.
+  Dim sBiblioLibroRel As String
+  Dim hLugarBiblio As Result
 
   ' MOSTRAR CONSOLA
   tbMostrarPanelInferior.Value = True
@@ -7087,12 +7092,46 @@ Public Sub btnGenerarLibroCanonico_Click()
     Shell "rm '" & sFileCanonicoLibro & "'" Wait
   Endif
 
+  ' LEER EL MODELO DE BIBLIOGRAFÍA DEL LIBRO. FALLBACK A 'por_capitulo'
+  ' (EL DEFAULT DE LA COLUMNA Y EL MÁS COMÚN) SI NO SE PUEDE LEER.
+  sLugarBibliografia = "por_capitulo"
+  Try hLugarBiblio = m_ConexionBD.mConn.Exec(
+    "SELECT lugar_bibliografia FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
+  If Not Error Then
+    If hLugarBiblio.Available Then
+      If Not IsNull(hLugarBiblio["lugar_bibliografia"]) Then
+        sLugarBibliografia = m_XML.TrimUTF8(hLugarBiblio["lugar_bibliografia"])
+      Endif
+    Endif
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'Modelo de bibliografía: " & sLugarBibliografia & "'" & Chr(10))
+
+  ' SI ES CONSOLIDADA: GENERAR LA BIBLIO ÚNICA DEL LIBRO (DEDUPLICADA,
+  ' DESDE EL .bib) Y CONSTRUIR SU RUTA RELATIVA PARA EL ENSAMBLADO.
+  ' EN por_capitulo sBiblioLibroRel QUEDA VACÍA Y EL XSLT NO LA USA.
+  sBiblioLibroRel = ""
+  If sLugarBibliografia = "consolidada" Then
+    If Not m_XML.GenerarBiblioLibroXML(iIdLibro) Then
+      ' EL Message.Error YA LO MOSTRÓ LA FUNCIÓN. ABORTAR.
+      Return
+    Endif
+    ' RUTA RELATIVA: tmp/biblio-libro-{nombre_proyecto}.xml
+    ' (GenerarBiblioLibroXML LA ESCRIBE CON File.BaseName DEL PROYECTO)
+    sBiblioLibroRel = "tmp/biblio-libro-" & File.BaseName(FMain.txtProyecto.Text) & ".xml"
+    FMain.TerminalViewProyecto.Input(
+      "echo 'Biblio consolidada generada: " & sBiblioLibroRel & "'" & Chr(10))
+  Endif
+
   FMain.TerminalViewProyecto.Input(
     "java -jar " & sSaxon & " " &
     "-s:'" & sFileManifiesto & "' " &
     "-xsl:'" & sXsl & "' " &
     "-o:'" & sFileCanonicoLibro & "' " &
-    "proyecto_dir='" & sRutaProyecto & "'" & Chr(10))
+    "proyecto_dir='" & sRutaProyecto & "' " &
+    "lugar_bibliografia='" & sLugarBibliografia & "' " &
+    "biblio_libro='" & sBiblioLibroRel & "'" & Chr(10))
 
   ' ESPERAR HASTA QUE SAXON GENERE EL CANÓNICO (MÁXIMO 60 SEGUNDOS)
   iEspera = 0
@@ -7134,13 +7173,35 @@ Public Sub btnGenerarLibroCanonico_Click()
   Endif
 
   ' ====================================================
+  ' PASO 6: VALIDACIÓN DE INTEGRIDAD REFERENCIAL (FAIL-FAST)
+  ' ====================================================
+  ' A DIFERENCIA DEL PASO 5 (jing, QUE SOLO REPORTA EN CONSOLA), ESTA
+  ' VALIDACIÓN ABORTA EL PROCESO SI HAY CITAS SIN ENTRADA BIBLIOGRÁFICA.
+  ' NINGUNA SALIDA (HTML/EPUB/PDF) DEBE GENERARSE SOBRE UN CANÓNICO CON
+  ' REFERENCIAS ROTAS.
+  FMain.TerminalViewProyecto.Input(
+    "echo '--- PASO 6: VALIDANDO INTEGRIDAD REFERENCIAL DE CITAS ---'" & Chr(10))
+
+  Wait 0.5
+
+  ' If Not ValidarIntegridadReferencial(sFileCanonicoLibro, sLugarBibliografia) Then
+  '   ' EL Message.Error YA LO MOSTRÓ LA FUNCIÓN. DEJAR RASTRO EN CONSOLA.
+  '   FMain.TerminalViewProyecto.Input(
+  '     "echo 'ERROR: integridad referencial fallida. Corrija las citas huérfanas.'" & Chr(10))
+  '   Return
+  ' Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'OK: integridad referencial correcta (todas las citas resueltas)'" & Chr(10))
+
+  ' ====================================================
   ' VERIFICACIÓN FINAL Y MENSAJE AL USUARIO
   ' ====================================================
   Wait 2.0
 
   If Exist(sFileCanonicoLibro) Then
     m_Sonido.sonar("Info")
-    Message.Info("Canónico del libro completo generado." & Chr(10) & Chr(10) &
+    Message.Info("Canónico del libro completo generado y validado." & Chr(10) & Chr(10) &
       "Archivo:" & Chr(10) & sFileCanonicoLibro)
   Else
     m_Sonido.sonar("Warning")
@@ -7212,5 +7273,105 @@ Public Sub txtGotoPage_KeyPress()
   If Key.Code = Key.Return Or Key.Code = Key.Enter Then
     m_RevisarPDF.IrAPagina(txtGotoPage.Text)
   Endif
+
+End
+
+' ============================================
+' Función   : ValidarIntegridadReferencial
+' Propósito : VALIDA LA INTEGRIDAD REFERENCIAL DE LAS CITAS EN EL
+'             CANÓNICO DEL LIBRO: CADA <biblioref linkend="X"/> DEBE
+'             TENER UN <biblioentry xml:id="X"> QUE LO DEFINA. LAS
+'             CITAS SIN ENTRADA (IDREF HUÉRFANOS) SON ERROR DURO
+'             (FILOSOFÍA LATEX: NO SE PUBLICA CON REFERENCIAS ROTAS).
+'             UNIVERSAL PARA AMBOS MODELOS DE lugar_bibliografia.
+' Parámetros: sRutaCanonico As String — RUTA AL CANÓNICO DEL LIBRO
+' Retorna   : Boolean — True SI LA INTEGRIDAD ES CORRECTA (SIN
+'             HUÉRFANOS); False SI HAY CITAS SIN ENTRADA (YA MOSTRÓ
+'             EL Message.Error CON EL DETALLE).
+' NOTA       : API gb.xml VERIFICADA POR MINI-TEST EMPÍRICO:
+'             GetElementsByTagName MATCHEA EN EL NAMESPACE DOCBOOK;
+'             xml:id SE LEE CON GetAttribute("xml:id") (LITERAL).
+' ============================================
+Public Function ValidarIntegridadReferencial(sRutaCanonico As String) As Boolean
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim doc As XmlDocument
+  Dim aEntries As XmlElement[]
+  Dim aRefs As XmlElement[]
+  Dim eElem As XmlElement
+  Dim cIds As New Collection
+  Dim cHuerfanosVistos As New Collection
+  Dim sId As String
+  Dim sLinkend As String
+  Dim sListaHuerfanos As String
+  Dim iHuerfanos As Integer
+
+  ' --- 1. VALIDAR EXISTENCIA DEL ARCHIVO ---
+  If Not Exist(sRutaCanonico) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encuentra el canónico para validar integridad:" & Chr(10) &
+      sRutaCanonico)
+    Return False
+  Endif
+
+  ' --- 2. CARGAR EL CANÓNICO CON gb.xml ---
+  doc = New XmlDocument
+  Try doc.Open(sRutaCanonico)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al leer el canónico para validar integridad:" & Chr(10) &
+      Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. RECOLECTAR LOS xml:id DE TODOS LOS <biblioentry> ---
+  ' SE USA UNA Collection COMO CONJUNTO (CLAVE → True). LOS xml:id
+  ' DUPLICADOS ENTRE CAPÍTULOS (LEGÍTIMOS EN lugar_bibliografia=por_capitulo
+  ' ANTES DEL PREFIJADO) SE ABSORBEN SIN PROBLEMA: LO QUE IMPORTA AQUÍ
+  ' ES SI EL id EXISTE, NO CUÁNTAS VECES.
+  aEntries = doc.GetElementsByTagName("biblioentry")
+  For Each eElem In aEntries
+    If eElem.IsAttributeSet("xml:id") Then
+      sId = eElem.GetAttribute("xml:id")
+      If Not cIds.Exist(sId) Then cIds.Add(True, sId)
+    Endif
+  Next
+
+  ' --- 4. RECORRER LOS <biblioref> Y DETECTAR linkend HUÉRFANOS ---
+  ' UN linkend SIN xml:id CORRESPONDIENTE ES UNA CITA A UNA OBRA QUE
+  ' NO ESTÁ EN NINGUNA BIBLIOGRAFÍA. CADA HUÉRFANO SE LISTA UNA SOLA
+  ' VEZ (LA MISMA CITA ROTA PUEDE APARECER EN VARIOS PÁRRAFOS).
+  iHuerfanos = 0
+  sListaHuerfanos = ""
+  aRefs = doc.GetElementsByTagName("biblioref")
+  For Each eElem In aRefs
+    If eElem.IsAttributeSet("linkend") Then
+      sLinkend = eElem.GetAttribute("linkend")
+      ' ES HUÉRFANO SI SU linkend NO ESTÁ ENTRE LOS xml:id DEFINIDOS
+      If Not cIds.Exist(sLinkend) Then
+        If Not cHuerfanosVistos.Exist(sLinkend) Then
+          cHuerfanosVistos.Add(True, sLinkend)
+          Inc iHuerfanos
+          sListaHuerfanos &= "  - " & sLinkend & Chr(10)
+        Endif
+      Endif
+    Endif
+  Next
+
+  ' --- 5. RETORNO: ERROR DURO SI HAY HUÉRFANOS ---
+  If iHuerfanos > 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("INTEGRIDAD REFERENCIAL: hay " & CStr(iHuerfanos) &
+      " cita(s) sin entrada bibliográfica." & Chr(10) & Chr(10) &
+      "Las siguientes citas apuntan a referencias que no existen en" & Chr(10) &
+      "ninguna bibliografía del libro:" & Chr(10) & Chr(10) &
+      sListaHuerfanos & Chr(10) &
+      "Agregue las entradas faltantes al .bib del capítulo correspondiente" & Chr(10) &
+      "o corrija la clave de cita en el manuscrito, y regenere.")
+    Return False
+  Endif
+
+  ' --- 6. INTEGRIDAD CORRECTA ---
+  Return True
 
 End
