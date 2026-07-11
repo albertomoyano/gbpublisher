@@ -1351,11 +1351,270 @@ RC APLICADAS:
     </figure>
   </xsl:template>
 
+  <!-- CITA DE FUENTE (blockquote role="source") → cita documental
+       con la procedencia (attribution) al pie. Se distingue de la
+       cita en bloque común por el role y la atribución. -->
+  <xsl:template match="db:blockquote[@role='source'] | blockquote[@role='source']">
+    <div class="cita-fuente">
+      <xsl:for-each select="db:para | para">
+        <p class="cita-fuente-texto"><xsl:apply-templates/></p>
+      </xsl:for-each>
+      <xsl:if test="db:attribution | attribution">
+        <p class="cita-fuente-proc">
+          <xsl:value-of select="normalize-space((db:attribution | attribution)[1])"/>
+        </p>
+      </xsl:if>
+    </div>
+  </xsl:template>
+
   <!-- BLOCKQUOTE → BLOCKQUOTE -->
   <xsl:template match="db:blockquote | blockquote">
     <blockquote>
       <xsl:apply-templates/>
     </blockquote>
+  </xsl:template>
+
+  <!-- ==========================================================
+       TABLA (informaltable / table) → HTML <table>
+       ==========================================================
+       Modelo CALS de DocBook: tgroup > (thead|tbody) > row > entry.
+       - entry en thead → <th>; en tbody → <td>.
+       - La alineación de cada columna viene de colspec/@align (por
+         posición). Se resuelve por el índice de la celda.
+       - Si hay <title> (tabla formal), se emite como <caption>. -->
+  <xsl:template match="db:table | table | db:informaltable | informaltable">
+    <div class="tabla-wrapper">
+      <table class="tabla-datos">
+        <xsl:variable name="titulo" select="normalize-space((db:title | title)[1])"/>
+        <xsl:if test="$titulo != ''">
+          <caption><xsl:value-of select="$titulo"/></caption>
+        </xsl:if>
+        <!-- ALINEACIONES POR COLUMNA (de los colspec del tgroup) -->
+        <xsl:variable name="aligns"
+                      select="(db:tgroup | tgroup)[1]/(db:colspec | colspec)/@align"/>
+        <xsl:for-each select="(db:tgroup | tgroup)[1]/(db:thead | thead)">
+          <thead>
+            <xsl:for-each select="db:row | row">
+              <tr>
+                <xsl:for-each select="db:entry | entry">
+                  <xsl:variable name="pos" select="position()"/>
+                  <th>
+                    <xsl:if test="$aligns[$pos]">
+                      <xsl:attribute name="style">
+                        <xsl:text>text-align: </xsl:text>
+                        <xsl:value-of select="$aligns[$pos]"/>
+                      </xsl:attribute>
+                    </xsl:if>
+                    <xsl:apply-templates/>
+                  </th>
+                </xsl:for-each>
+              </tr>
+            </xsl:for-each>
+          </thead>
+        </xsl:for-each>
+        <xsl:for-each select="(db:tgroup | tgroup)[1]/(db:tbody | tbody)">
+          <tbody>
+            <xsl:for-each select="db:row | row">
+              <tr>
+                <xsl:for-each select="db:entry | entry">
+                  <xsl:variable name="pos" select="position()"/>
+                  <td>
+                    <xsl:if test="$aligns[$pos]">
+                      <xsl:attribute name="style">
+                        <xsl:text>text-align: </xsl:text>
+                        <xsl:value-of select="$aligns[$pos]"/>
+                      </xsl:attribute>
+                    </xsl:if>
+                    <xsl:apply-templates/>
+                  </td>
+                </xsl:for-each>
+              </tr>
+            </xsl:for-each>
+          </tbody>
+        </xsl:for-each>
+      </table>
+    </div>
+  </xsl:template>
+
+  <!-- CÓDIGO EN BLOQUE (programlisting) → <pre><code>.
+       El atributo language se traslada como clase (para un futuro
+       resaltador de sintaxis tipo highlight.js). -->
+  <xsl:template match="db:programlisting | programlisting">
+    <pre class="code-block">
+      <code>
+        <xsl:if test="@language">
+          <xsl:attribute name="class">
+            <xsl:text>language-</xsl:text><xsl:value-of select="@language"/>
+          </xsl:attribute>
+        </xsl:if>
+        <xsl:value-of select="."/>
+      </code>
+    </pre>
+  </xsl:template>
+
+  <!-- CÓDIGO INLINE (literal) → <code> -->
+  <xsl:template match="db:literal | literal">
+    <code class="code-inline"><xsl:apply-templates/></code>
+  </xsl:template>
+
+  <!-- LISTA DE DEFINICIÓN (variablelist) → <dl>.
+       varlistentry > term → <dt>; varlistentry > listitem → <dd>. -->
+  <xsl:template match="db:variablelist | variablelist">
+    <dl class="lista-definicion">
+      <xsl:for-each select="db:varlistentry | varlistentry">
+        <xsl:for-each select="db:term | term">
+          <dt><xsl:apply-templates/></dt>
+        </xsl:for-each>
+        <xsl:for-each select="db:listitem | listitem">
+          <dd>
+            <!-- SI EL listitem TIENE UN SOLO para, DESENVOLVERLO -->
+            <xsl:choose>
+              <xsl:when test="count(*) = 1 and (db:para | para)">
+                <xsl:apply-templates select="(db:para | para)/node()"/>
+              </xsl:when>
+              <xsl:otherwise>
+                <xsl:apply-templates/>
+              </xsl:otherwise>
+            </xsl:choose>
+          </dd>
+        </xsl:for-each>
+      </xsl:for-each>
+    </dl>
+  </xsl:template>
+
+  <!-- ==========================================================
+       EPÍGRAFE (epigraph) → cita al inicio con atribución
+       ==========================================================
+       Estructura DocBook: <epigraph><attribution>...</attribution>
+       <para>...</para></epigraph>. La atribución va al pie, alineada
+       a la derecha. -->
+  <xsl:template match="db:epigraph | epigraph">
+    <div class="epigrafe">
+      <xsl:for-each select="db:para | para">
+        <p class="epigrafe-texto"><xsl:apply-templates/></p>
+      </xsl:for-each>
+      <xsl:if test="db:attribution | attribution">
+        <p class="epigrafe-atrib">
+          <xsl:text>— </xsl:text>
+          <xsl:value-of select="normalize-space((db:attribution | attribution)[1])"/>
+        </p>
+      </xsl:if>
+    </div>
+  </xsl:template>
+
+  <!-- ==========================================================
+       ALERTAS / RECUADROS (admonitions + sidebar)
+       ==========================================================
+       El shortcode ::: {.box type="X"} mapea (vía filtro Lua) a:
+         - type="info"      → <sidebar role="info">
+         - type="warning"   → <warning>
+         - type="note"      → <note>
+         - type="tip"       → <tip>
+         - type="important" → <important>
+         - type="caution"   → <caution>
+       Cada uno se emite como .alerta con una clase de tipo que
+       controla color e icono. Un template auxiliar unifica la
+       estructura (icono a la izquierda, contenido a la derecha). -->
+  <xsl:template match="db:note | note">
+    <xsl:call-template name="emitir-alerta">
+      <xsl:with-param name="tipo" select="'note'"/>
+      <xsl:with-param name="etiqueta" select="'Nota'"/>
+    </xsl:call-template>
+  </xsl:template>
+  <xsl:template match="db:tip | tip">
+    <xsl:call-template name="emitir-alerta">
+      <xsl:with-param name="tipo" select="'tip'"/>
+      <xsl:with-param name="etiqueta" select="'Sugerencia'"/>
+    </xsl:call-template>
+  </xsl:template>
+  <xsl:template match="db:important | important">
+    <xsl:call-template name="emitir-alerta">
+      <xsl:with-param name="tipo" select="'important'"/>
+      <xsl:with-param name="etiqueta" select="'Importante'"/>
+    </xsl:call-template>
+  </xsl:template>
+  <xsl:template match="db:warning | warning">
+    <xsl:call-template name="emitir-alerta">
+      <xsl:with-param name="tipo" select="'warning'"/>
+      <xsl:with-param name="etiqueta" select="'Advertencia'"/>
+    </xsl:call-template>
+  </xsl:template>
+  <xsl:template match="db:caution | caution">
+    <xsl:call-template name="emitir-alerta">
+      <xsl:with-param name="tipo" select="'caution'"/>
+      <xsl:with-param name="etiqueta" select="'Precaución'"/>
+    </xsl:call-template>
+  </xsl:template>
+  <!-- MATERIAL SUPLEMENTARIO (sidebar role="supplementary") → recuadro
+       con etiqueta propia y el xml:id conservado para referencia. -->
+  <xsl:template match="db:sidebar[@role='supplementary'] | sidebar[@role='supplementary']">
+    <div class="suplementario">
+      <xsl:if test="@xml:id">
+        <xsl:attribute name="id"><xsl:value-of select="@xml:id"/></xsl:attribute>
+      </xsl:if>
+      <div class="suplementario-etiqueta">Material suplementario</div>
+      <div class="suplementario-cuerpo">
+        <xsl:apply-templates/>
+      </div>
+    </div>
+  </xsl:template>
+
+  <!-- SIDEBAR: recuadro genérico. role determina el tipo (ej. info). -->
+  <xsl:template match="db:sidebar | sidebar">
+    <xsl:call-template name="emitir-alerta">
+      <xsl:with-param name="tipo" select="if (@role != '') then @role else 'info'"/>
+      <xsl:with-param name="etiqueta"
+                      select="if (@role = 'info') then 'Información' else 'Nota'"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- ESTRUCTURA COMÚN DE ALERTA: icono a la izquierda + contenido -->
+  <xsl:template name="emitir-alerta">
+    <xsl:param name="tipo"/>
+    <xsl:param name="etiqueta"/>
+    <div class="alerta alerta-{$tipo}" role="note">
+      <div class="alerta-icono" aria-hidden="true"></div>
+      <div class="alerta-cuerpo">
+        <xsl:apply-templates/>
+      </div>
+    </div>
+  </xsl:template>
+
+  <!-- ==========================================================
+       VERSO (literallayout role="verse") → estrofa
+       ==========================================================
+       Preserva los saltos de línea del original. Cada línea del
+       texto se convierte en una línea de verso. -->
+  <xsl:template match="db:literallayout[@role='verse'] | literallayout[@role='verse']">
+    <div class="verso">
+      <xsl:for-each select="tokenize(., '&#10;')">
+        <xsl:if test="normalize-space(.) != '' or position() &gt; 1">
+          <span class="verso-linea"><xsl:value-of select="normalize-space(.)"/></span>
+          <xsl:text>&#10;</xsl:text>
+        </xsl:if>
+      </xsl:for-each>
+    </div>
+  </xsl:template>
+
+  <!-- LITERALLAYOUT GENÉRICO (sin role verse) → pre simple -->
+  <xsl:template match="db:literallayout | literallayout">
+    <pre class="literallayout"><xsl:value-of select="."/></pre>
+  </xsl:template>
+
+  <!-- ==========================================================
+       DISCURSO / DIÁLOGO (para role="speech")
+       ==========================================================
+       <para role="speech"> con <emphasis role="speaker"> al inicio.
+       Se emite como .speech con el hablante destacado. -->
+  <xsl:template match="db:para[@role='speech'] | para[@role='speech']">
+    <p class="speech">
+      <xsl:apply-templates/>
+    </p>
+  </xsl:template>
+
+  <!-- HABLANTE del discurso (emphasis role="speaker") -->
+  <xsl:template match="db:emphasis[@role='speaker'] | emphasis[@role='speaker']">
+    <span class="speech-speaker"><xsl:apply-templates/></span>
   </xsl:template>
 
   <!-- EMPHASIS → EM / STRONG SEGÚN role -->

@@ -582,6 +582,79 @@ function Div(el)
   end
 
   -- =====================================================
+  -- 6.10b. CITA DE FUENTE PRIMARIA (.source archivo= / .primary-source fuente=)
+  -- =====================================================
+  -- ESTRUCTURA EN MD:
+  --   ::: {.source archivo="AGN, Sala IX, Legajo 23-5-6"}
+  --   Texto de la cita documental.
+  --   :::
+  -- O:
+  --   ::: {.primary-source fuente="BNE Ms. 1234, f. 23r"}
+  --   Texto de la cita.
+  --   :::
+  --
+  -- AMBAS SON CITAS DE FUENTE CON PROCEDENCIA. EN DOCBOOK 5.2 SE
+  -- MODELAN COMO <blockquote> CON <attribution> (LA PROCEDENCIA) Y
+  -- role="source" PARA DISTINGUIRLAS DE UNA CITA COMÚN.
+  if el.classes:includes('source') or el.classes:includes('primary-source') then
+    -- LA PROCEDENCIA VIENE DEL ATRIBUTO archivo= O fuente=
+    local procedencia = el.attributes['archivo'] or el.attributes['fuente'] or ''
+    local contenido_db = blocks_a_docbook(el.content)
+    local raw = '<blockquote role="source">\n'
+    if procedencia ~= '' then
+      raw = raw .. '  <attribution>' ..
+            escape_xml_text(procedencia) ..
+            '</attribution>\n'
+    end
+    raw = raw .. contenido_db .. '\n</blockquote>'
+    return pandoc.RawBlock('docbook', raw)
+  end
+
+  -- =====================================================
+  -- 6.10c. GLOSARIO (.glossary term=)
+  -- =====================================================
+  -- ESTRUCTURA EN MD:
+  --   ::: {.glossary term="Hermenéutica"}
+  --   Método de interpretación de textos.
+  --   :::
+  --
+  -- SE MODELA COMO <variablelist role="glossary"> CON UNA ENTRADA
+  -- (term + listitem), PARA REUSAR EL RENDER DE LISTA DE DEFINICIÓN.
+  if el.classes:includes('glossary') then
+    local term = el.attributes['term'] or ''
+    local contenido_db = blocks_a_docbook(el.content)
+    local raw = '<variablelist role="glossary">\n' ..
+                '  <varlistentry>\n' ..
+                '    <term>' .. escape_xml_text(term) .. '</term>\n' ..
+                '    <listitem>\n' .. contenido_db .. '\n    </listitem>\n' ..
+                '  </varlistentry>\n' ..
+                '</variablelist>'
+    return pandoc.RawBlock('docbook', raw)
+  end
+
+  -- =====================================================
+  -- 6.10d. MATERIAL SUPLEMENTARIO (.supplementary #id)
+  -- =====================================================
+  -- ESTRUCTURA EN MD:
+  --   ::: {.supplementary #supp-datos}
+  --   Descripción del material adicional.
+  --   :::
+  --
+  -- DOCBOOK 5.2 BASE NO TIENE UN ELEMENTO NATIVO DE "MATERIAL
+  -- SUPLEMENTARIO"; SE MODELA COMO <sidebar role="supplementary">
+  -- CONSERVANDO EL xml:id PARA REFERENCIA CRUZADA.
+  if el.classes:includes('supplementary') then
+    local id_attr = ''
+    if el.identifier ~= '' then
+      id_attr = ' xml:id="' .. escape_xml_attr(el.identifier) .. '"'
+    end
+    local contenido_db = blocks_a_docbook(el.content)
+    local raw = '<sidebar role="supplementary"' .. id_attr .. '>\n' ..
+                contenido_db .. '\n</sidebar>'
+    return pandoc.RawBlock('docbook', raw)
+  end
+
+  -- =====================================================
   -- 6.10. FORMAL (.theorem, .definition, .proof, etc.)
   -- =====================================================
   -- ESTRUCTURA EN MD:

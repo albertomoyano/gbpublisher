@@ -1368,7 +1368,7 @@
           /* BOTÓN TOGGLE PANEL */
           .panel-toggle {
             position: fixed;
-            top: 1rem;
+            top: 2.5rem;
             right: 1rem;
             z-index: 100;
             background: var(--color-surface);
