@@ -9,13 +9,13 @@
 
 ## Modelo de producción
 
-gbpublisher implementa un flujo **Single Source Publishing**: el contenido se redacta en Markdown, se transforma a JATS XML y se enriquece con metadatos desde una base de datos MySQL. El resultado es un **JATS canónico validado** que actúa como fuente única para todas las salidas editoriales.
+gbpublisher implementa un flujo **Single Source Publishing**: el contenido se redacta en Markdown, se transforma a un XML canónico y se enriquece con metadatos desde una base de datos MySQL. El resultado es un **XML canónico validado** (JATS para revistas y DocBook para libros) que actúa como fuente única para todas las salidas editoriales.
 
 ![Single Source Publishing](diagrama.png)
 
-Desde ese JATS canónico se generan:
+Desde ese XML canónico se generan:
 
-- ODT, EPUB 3, HTML, PDF (vía LuaLaTeX)
+- ODT, EPUB 3, HTML y PDF
 - XML para indexadores: DOAJ, Crossref, SciELO, PubMed, Redalyc
 
 Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de los contenidos, sin depender de plataformas propietarias ni servicios externos.
@@ -32,9 +32,8 @@ Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de lo
 
 **Edición y producción**
 - Editor integrado con resaltado de sintaxis para Markdown y XML
-- Generación y validación del JATS canónico con `xmllint`
-- Transformación a múltiples salidas mediante XSLT 2.0 (Saxon-HE)
-- Integración con Pandoc y LuaLaTeX
+- Generación y validación del XML canónico con Saxon-HE
+- Transformación a múltiples salidas mediante XSLT 2.0
 
 **Validación y calidad**
 - Validación de JATS por flavor (CrossRef, SciELO, PubMed, JATS4R, Redalyc)
@@ -54,8 +53,6 @@ Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de lo
 - veraPDF (validador PDF/A)
 - Saxon-HE (JAR principal + carpeta `lib/`)
 - Java (para Saxon-HE)
-
-La aplicación verifica las dependencias al iniciar e informa al usuario si falta alguna. El script `integridad.sh` incluido en la distribución permite verificar el entorno antes de instalar.
 
 ---
 
