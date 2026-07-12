@@ -495,6 +495,12 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
+      <!-- FILA DE COMPARTIR EN REDES (COMPARTE EL LIBRO) -->
+      <xsl:call-template name="fila-compartir">
+        <xsl:with-param name="url" select="$url_libro"/>
+        <xsl:with-param name="titulo" select="$titulo_libro"/>
+      </xsl:call-template>
+
       <!-- ==========================================================
            BLOQUE DE IDENTIFICADORES: ISBN, eISBN, DOI, LICENCIA
            Van juntos tras la tapa. Rótulos en mayúscula con dos puntos
@@ -993,6 +999,7 @@ RC APLICADAS:
                 <xsl:call-template name="emitir-col-left-capitulo">
                   <xsl:with-param name="capInfo" select="$capInfo"/>
                   <xsl:with-param name="capTitulo" select="$capTitulo"/>
+                  <xsl:with-param name="nombreArchivo" select="$nombreArchivo"/>
                 </xsl:call-template>
 
                 <xsl:call-template name="emitir-col-center-capitulo">
@@ -1040,6 +1047,7 @@ RC APLICADAS:
   <xsl:template name="emitir-col-left-capitulo">
     <xsl:param name="capInfo"/>
     <xsl:param name="capTitulo"/>
+    <xsl:param name="nombreArchivo"/>
 
     <aside class="col-left">
 
@@ -1055,6 +1063,17 @@ RC APLICADAS:
         <div class="tapa-wrapper">
           <img src="{$imagen_tapa}" alt="Cubierta de {$titulo_libro}"/>
         </div>
+      </xsl:if>
+
+      <!-- FILA DE COMPARTIR EN REDES (COMPARTE EL CAPÍTULO).
+           LA URL DEL CAPÍTULO SE DERIVA DE LA BASE DEL LIBRO
+           (QUE TERMINA EN '/') + h-<nombre_archivo>.html. -->
+      <xsl:if test="$url_libro != ''">
+        <xsl:call-template name="fila-compartir">
+          <xsl:with-param name="url"
+            select="concat($url_libro, 'h-', $nombreArchivo, '.html')"/>
+          <xsl:with-param name="titulo" select="$capTitulo"/>
+        </xsl:call-template>
       </xsl:if>
 
       <!-- BOTÓN "DESCARGAR PDF" DEL CAPÍTULO.
@@ -3130,6 +3149,81 @@ RC APLICADAS:
       <xsl:with-param name="txt" select="normalize-space($pn/db:firstname | $pn/firstname)"/>
     </xsl:call-template>
     <xsl:text>"}</xsl:text>
+  </xsl:template>
+
+  <!-- ==========================================================
+       PLANTILLA: fila-compartir
+       Genera la fila de iconos de redes sociales para compartir.
+       Reusable: la llama el index (con url del libro) y cada
+       página de capítulo (con url del capítulo). Portada de
+       jats-to-html.xsl (mismos SVG inline, color institucional).
+       Parámetros:
+         url    : URL absoluta a compartir
+         titulo : título a incluir en el texto de compartir
+       ========================================================== -->
+  <xsl:template name="fila-compartir">
+    <xsl:param name="url" as="xs:string"/>
+    <xsl:param name="titulo" as="xs:string"/>
+    <xsl:if test="$url != ''">
+      <div class="meta-compartir">
+        <xsl:variable name="url-enc" select="encode-for-uri($url)"/>
+        <xsl:variable name="tit-enc" select="encode-for-uri($titulo)"/>
+                <!-- BLUESKY -->
+                <a class="compartir-icono"
+                   href="https://bsky.app/intent/compose?text={$url-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Compartir en Bluesky">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M439.8 358.7C436.5 358.3 433.1 357.9 429.8 357.4C433.2 357.8 436.5 358.3 439.8 358.7zM320 291.1C293.9 240.4 222.9 145.9 156.9 99.3C93.6 54.6 69.5 62.3 53.6 69.5C35.3 77.8 32 105.9 32 122.4C32 138.9 41.1 258 47 277.9C66.5 343.6 136.1 365.8 200.2 358.6C203.5 358.1 206.8 357.7 210.2 357.2C206.9 357.7 203.6 358.2 200.2 358.6C106.3 372.6 22.9 406.8 132.3 528.5C252.6 653.1 297.1 501.8 320 425.1C342.9 501.8 369.2 647.6 505.6 528.5C608 425.1 533.7 372.5 439.8 358.6C436.5 358.2 433.1 357.8 429.8 357.3C433.2 357.7 436.5 358.2 439.8 358.6C503.9 365.7 573.4 343.5 593 277.9C598.9 258 608 139 608 122.4C608 105.8 604.7 77.7 586.4 69.5C570.6 62.4 546.4 54.6 483.2 99.3C417.1 145.9 346.1 240.4 320 291.1z"/></svg>
+                </a>
+                <!-- ENVELOPE -->
+                <a class="compartir-icono"
+                   href="mailto:?subject={$tit-enc}&amp;body={$url-enc}"
+                   title="Compartir por email">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M125.4 128C91.5 128 64 155.5 64 189.4C64 190.3 64 191.1 64.1 192L64 192L64 448C64 483.3 92.7 512 128 512L512 512C547.3 512 576 483.3 576 448L576 192L575.9 192C575.9 191.1 576 190.3 576 189.4C576 155.5 548.5 128 514.6 128L125.4 128zM528 256.3L528 448C528 456.8 520.8 464 512 464L128 464C119.2 464 112 456.8 112 448L112 256.3L266.8 373.7C298.2 397.6 341.7 397.6 373.2 373.7L528 256.3zM112 189.4C112 182 118 176 125.4 176L514.6 176C522 176 528 182 528 189.4C528 193.6 526 197.6 522.7 200.1L344.2 335.5C329.9 346.3 310.1 346.3 295.8 335.5L117.3 200.1C114 197.6 112 193.6 112 189.4z"/></svg>
+                </a>
+                <!-- FACEBOOK -->
+                <a class="compartir-icono"
+                   href="https://www.facebook.com/sharer/sharer.php?u={$url-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Compartir en Facebook">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M576 320C576 178.6 461.4 64 320 64C178.6 64 64 178.6 64 320C64 440 146.7 540.8 258.2 568.5L258.2 398.2L205.4 398.2L205.4 320L258.2 320L258.2 286.3C258.2 199.2 297.6 158.8 383.2 158.8C399.4 158.8 427.4 162 438.9 165.2L438.9 236C432.9 235.4 422.4 235 409.3 235C367.3 235 351.1 250.9 351.1 292.2L351.1 320L434.7 320L420.3 398.2L351 398.2L351 574.1C477.8 558.8 576 450.9 576 320z"/></svg>
+                </a>
+                <!-- LINKEDIN -->
+                <a class="compartir-icono"
+                   href="https://www.linkedin.com/sharing/share-offsite/?url={$url-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Compartir en LinkedIn">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M512 96L127.9 96C110.3 96 96 110.5 96 128.3L96 511.7C96 529.5 110.3 544 127.9 544L512 544C529.6 544 544 529.5 544 511.7L544 128.3C544 110.5 529.6 96 512 96zM231.4 480L165 480L165 266.2L231.5 266.2L231.5 480L231.4 480zM198.2 160C219.5 160 236.7 177.2 236.7 198.5C236.7 219.8 219.5 237 198.2 237C176.9 237 159.7 219.8 159.7 198.5C159.7 177.2 176.9 160 198.2 160zM480.3 480L413.9 480L413.9 376C413.9 351.2 413.4 319.3 379.4 319.3C344.8 319.3 339.5 346.3 339.5 374.2L339.5 480L273.1 480L273.1 266.2L336.8 266.2L336.8 295.4L337.7 295.4C346.6 278.6 368.3 260.9 400.6 260.9C467.8 260.9 480.3 305.2 480.3 362.8L480.3 480z"/></svg>
+                </a>
+                <!-- REDDIT -->
+                <a class="compartir-icono"
+                   href="https://www.reddit.com/submit?url={$url-enc}&amp;title={$tit-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Compartir en Reddit">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M64 320C64 178.6 178.6 64 320 64C461.4 64 576 178.6 576 320C576 461.4 461.4 576 320 576L101.1 576C87.4 576 80.6 559.5 90.2 549.8L139 501C92.7 454.7 64 390.7 64 320zM413.6 217.6C437.2 217.6 456.3 198.5 456.3 174.9C456.3 151.3 437.2 132.2 413.6 132.2C393 132.2 375.8 146.8 371.8 166.2C337.3 169.9 310.4 199.2 310.4 234.6L310.4 234.8C272.9 236.4 238.6 247.1 211.4 263.9C201.3 256.1 188.6 251.4 174.9 251.4C141.9 251.4 115.1 278.2 115.1 311.2C115.1 335.2 129.2 355.8 149.5 365.3C151.5 434.7 227.1 490.5 320.1 490.5C413.1 490.5 488.8 434.6 490.7 365.2C510.9 355.6 524.8 335 524.8 311.2C524.8 278.2 498 251.4 465 251.4C451.3 251.4 438.7 256 428.6 263.8C401.2 246.8 366.5 236.1 328.6 234.7L328.6 234.5C328.6 209.1 347.5 188 372 184.6C376.4 203.4 393.3 217.4 413.5 217.4L413.6 217.6zM241.1 310.9C257.8 310.9 270.6 328.5 269.6 350.2C268.6 371.9 256.1 379.8 239.3 379.8C222.5 379.8 207.9 371 208.9 349.3C209.9 327.6 224.3 311 241 311L241.1 310.9zM431.2 349.2C432.2 370.9 417.5 379.7 400.8 379.7C384.1 379.7 371.5 371.8 370.5 350.1C369.5 328.4 382.3 310.8 399 310.8C415.7 310.8 430.2 327.4 431.1 349.1L431.2 349.2zM383.1 405.9C372.8 430.5 348.5 447.8 320.1 447.8C291.7 447.8 267.4 430.5 257.1 405.9C255.9 403 257.9 399.7 261 399.4C279.4 397.5 299.3 396.5 320.1 396.5C340.9 396.5 360.8 397.5 379.2 399.4C382.3 399.7 384.3 403 383.1 405.9z"/></svg>
+                </a>
+                <!-- RESEARCHGATE -->
+                <a class="compartir-icono"
+                   href="https://www.researchgate.net/search?q={$tit-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Buscar en ResearchGate">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M96 96L96 544L544 544L544 96L96 96zM358.2 430.4C351.6 433.4 325 436.4 308.2 416.2C299 405.6 282.9 382.9 266 352.6C257.1 352.6 251.3 352.6 244.6 352L244.6 398.4C244.6 421.9 250.6 419.6 270.4 422.3L270.4 430.4C263.5 430.1 247.3 429.6 234.8 429.6C221.7 429.6 208.7 430.2 201.2 430.4L201.2 422.3C216.7 419.4 223.2 421 223.2 398.4L223.2 289C223.2 266.4 216.8 268 201.2 265.1L201.2 257C227 258 254.3 256.4 272.1 256.4C303.8 256.4 328 270.8 328 302C328 323.1 311.3 344.2 288.8 349.5C302.4 373.7 318.8 395.1 331 408.4C338.2 416.2 348.2 423.1 358.2 423.1L358.2 430.4zM381.1 295.4C357.8 295.4 348.9 279.7 348.9 263.2L348.9 231C348.9 218.8 357.7 200.6 382.9 200.6C408.1 200.6 413.3 218.5 413.3 218.5L402.6 225.7C402.6 225.7 397.1 213.2 382.9 213.2C375 213.2 363.2 220.5 363.2 232.9L363.2 259.7C363.2 273.1 369.8 283 381.1 283C395.2 283 402.6 272.1 402.6 256.2L384.7 256.2L384.7 245.5L415.1 245.5C415.1 266 419.8 295.4 381.1 295.4zM264.6 340.1C255.2 340.1 251 339.8 244.6 339.3L244.6 269.6C251 269 259.6 269 267.1 269C290.4 269 304.3 281.2 304.3 303.5C304.3 325.4 289.3 340.1 264.6 340.1z"/></svg>
+                </a>
+                <!-- TELEGRAM -->
+                <a class="compartir-icono"
+                   href="https://t.me/share/url?url={$url-enc}&amp;text={$tit-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Compartir en Telegram">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M320 72C183 72 72 183 72 320C72 457 183 568 320 568C457 568 568 457 568 320C568 183 457 72 320 72zM435 240.7C431.3 279.9 415.1 375.1 406.9 419C403.4 437.6 396.6 443.8 390 444.4C375.6 445.7 364.7 434.9 350.7 425.7C328.9 411.4 316.5 402.5 295.4 388.5C270.9 372.4 286.8 363.5 300.7 349C304.4 345.2 367.8 287.5 369 282.3C369.2 281.6 369.3 279.2 367.8 277.9C366.3 276.6 364.2 277.1 362.7 277.4C360.5 277.9 325.6 300.9 258.1 346.5C248.2 353.3 239.2 356.6 231.2 356.4C222.3 356.2 205.3 351.4 192.6 347.3C177.1 342.3 164.7 339.6 165.8 331C166.4 326.5 172.5 322 184.2 317.3C256.5 285.8 304.7 265 328.8 255C397.7 226.4 412 221.4 421.3 221.2C423.4 221.2 427.9 221.7 430.9 224.1C432.9 225.8 434.1 228.2 434.4 230.8C434.9 234 435 237.3 434.8 240.6z"/></svg>
+                </a>
+                <!-- WHATSAPP -->
+                <a class="compartir-icono"
+                   href="https://wa.me/?text={$url-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Compartir en WhatsApp">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M476.9 161.1C435 119.1 379.2 96 319.9 96C197.5 96 97.9 195.6 97.9 318C97.9 357.1 108.1 395.3 127.5 429L96 544L213.7 513.1C246.1 530.8 282.6 540.1 319.8 540.1L319.9 540.1C442.2 540.1 544 440.5 544 318.1C544 258.8 518.8 203.1 476.9 161.1zM319.9 502.7C286.7 502.7 254.2 493.8 225.9 477L219.2 473L149.4 491.3L168 423.2L163.6 416.2C145.1 386.8 135.4 352.9 135.4 318C135.4 216.3 218.2 133.5 320 133.5C369.3 133.5 415.6 152.7 450.4 187.6C485.2 222.5 506.6 268.8 506.5 318.1C506.5 419.9 421.6 502.7 319.9 502.7zM421.1 364.5C415.6 361.7 388.3 348.3 383.2 346.5C378.1 344.6 374.4 343.7 370.7 349.3C367 354.9 356.4 367.3 353.1 371.1C349.9 374.8 346.6 375.3 341.1 372.5C308.5 356.2 287.1 343.4 265.6 306.5C259.9 296.7 271.3 297.4 281.9 276.2C283.7 272.5 282.8 269.3 281.4 266.5C280 263.7 268.9 236.4 264.3 225.3C259.8 214.5 255.2 216 251.8 215.8C248.6 215.6 244.9 215.6 241.2 215.6C237.5 215.6 231.5 217 226.4 222.5C221.3 228.1 207 241.5 207 268.8C207 296.1 226.9 322.5 229.6 326.2C232.4 329.9 268.7 385.9 324.4 410C359.6 425.2 373.4 426.5 391 423.9C401.7 422.3 423.8 410.5 428.4 397.5C433 384.5 433 373.4 431.6 371.1C430.3 368.6 426.6 367.2 421.1 364.5z"/></svg>
+                </a>
+                <!-- X-TWITTER -->
+                <a class="compartir-icono"
+                   href="https://twitter.com/intent/tweet?url={$url-enc}&amp;text={$tit-enc}"
+                   target="_blank" rel="noopener noreferrer" title="Compartir en X">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path fill="#2D5A8E" d="M453.2 112L523.8 112L369.6 288.2L551 528L409 528L297.7 382.6L170.5 528L99.8 528L264.7 339.5L90.8 112L236.4 112L336.9 244.9L453.2 112zM428.4 485.8L467.5 485.8L215.1 152L173.1 152L428.4 485.8z"/></svg>
+                </a>
+      </div>
+    </xsl:if>
   </xsl:template>
 
 </xsl:stylesheet>
