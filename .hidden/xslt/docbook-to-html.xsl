@@ -1335,7 +1335,9 @@ RC APLICADAS:
 
     <figure class="fig-wrapper"
             id="{$figId}"
-            data-fig-id="{$figId}">
+            data-fig-id="{$figId}"
+            onclick="highlightPanel('figs','{$figId}')"
+            style="cursor:pointer">
       <xsl:if test="$fileref != ''">
         <!-- LA IMAGEN VIVE EN media/; EN docs/ VA A assets/media/ -->
         <img src="assets/media/{tokenize($fileref, '/')[last()]}"
@@ -1343,9 +1345,12 @@ RC APLICADAS:
       </xsl:if>
       <figcaption class="fig-caption">
         <span class="fig-label">Figura <xsl:value-of select="$num"/></span>
-        <xsl:if test="$titulo != ''">
+        <!-- EL TÍTULO SE RENDERIZA CON apply-templates (NO value-of) PARA
+             QUE LOS biblioref DEL CAPTION SE RESUELVAN COMO REFERENCIA
+             VISIBLE "(Autor, año)" EN LUGAR DE PERDERSE. -->
+        <xsl:if test="normalize-space((db:title | title)[1]) != ''">
           <xsl:text>. </xsl:text>
-          <xsl:value-of select="$titulo"/>
+          <xsl:apply-templates select="(db:title | title)[1]/node()"/>
         </xsl:if>
       </figcaption>
     </figure>
@@ -1665,6 +1670,28 @@ RC APLICADAS:
   </xsl:template>
   <xsl:template match="text()" mode="texto-plano">
     <xsl:value-of select="."/>
+  </xsl:template>
+
+  <!-- TEMPLATE ESPECÍFICO PARA biblioref EN MODO texto-plano:
+       EL biblioref ES EMPTY (RC-DB-01), ASÍ QUE EL GENÉRICO "*" NO
+       PRODUCE NADA Y LA CITA SE PIERDE DEL data-fn-text. SOLUCIÓN
+       (PORTADA DE jats-to-html.xsl): RENDERIZAR EL biblioref EN MODO
+       DEFAULT (QUE PRODUCE "(Autor, año)" O "[N]") Y EXTRAER EL TEXTO
+       PLANO CON string(). ASÍ LA NOTA MUESTRA LA CITA RESUELTA EN LUGAR
+       DE PERDERLA. NO HAY RECURSIÓN: texto-plano Y default SON MODOS
+       DISTINTOS. -->
+  <xsl:template match="db:biblioref | biblioref" mode="texto-plano">
+    <xsl:variable name="render">
+      <xsl:apply-templates select="."/>
+    </xsl:variable>
+    <xsl:value-of select="string($render)"/>
+  </xsl:template>
+  <!-- LOS phrase de prefijo/sufijo SÍ deben aportar su texto en la nota -->
+  <xsl:template match="db:phrase[@role='cite-prefix'] | phrase[@role='cite-prefix']
+                     | db:phrase[@role='cite-suffix'] | phrase[@role='cite-suffix']"
+                mode="texto-plano">
+    <xsl:value-of select="."/>
+    <xsl:text> </xsl:text>
   </xsl:template>
 
   <!-- ==========================================================
