@@ -45,14 +45,17 @@ Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de lo
 ## Requisitos del sistema
 
 - **Linux Mint con escritorio Cinnamon** (única plataforma soportada)
-- **Servidor de pantalla X11** (no compatible con Wayland)
-- MySQL/MariaDB
+- **Servidor de pantalla X11**
 - Gambas 3.21 o superior
-- TeXLive full
 - Pandoc
-- veraPDF (validador PDF/A)
+- MySQL
+- xmllint
+- docbook
 - Saxon-HE (JAR principal + carpeta `lib/`)
-- Java (para Saxon-HE)
+- Java
+- TeXLive full
+- veraPDF
+- vnu
 
 ---
 
