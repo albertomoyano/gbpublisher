@@ -17,6 +17,7 @@ Private $hUndoStack As New Image[]    ' PILA DE DESHACER — SOLO EN MEMORIA (SE
 Private $bModify As Boolean           ' HAY CAMBIOS SIN GUARDAR EN LA FIGURA ACTUAL
 Private $sModo As String              ' "" (NORMAL) O "recorte" (ARRASTRE DIBUJA SELECCIÓN)
 Private $sArchivoActual As String     ' NOMBRE DEL fig-* CARGADO (SIN RUTA)
+Private $sFirmaMedia As String        ' FOTO DEL CONTENIDO DE /media PARA DETECTAR CAMBIOS
 
 ' ============================================
 ' Función   : ResetearEstado
@@ -40,49 +41,6 @@ Public Sub ResetearEstado()
   FMain.pbImagen.Image = Null
   FMain.pbSemaforo.Picture = Null
   FMain.iIndiceImagenCargada = -1
-
-End
-
-' ============================================
-' Función   : PoblarComboImagenes
-' Propósito : CARGAR EN cmbImagenes LOS fig-* DE /media DEL PROYECTO ABIERTO.
-' Parámetros: (NINGUNO)
-' Retorna   : (NADA)
-' ============================================
-Public Sub PoblarComboImagenes()
-
-  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
-  Dim sRutaMedia As String
-  Dim aArchivos As New String[]
-  Dim aPng As String[]
-  Dim aJpg As String[]
-  Dim sArchivo As String
-
-  ' --- 1. VALIDACIÓN DE ENTRADA: DEBE HABER PROYECTO ABIERTO ---
-  If FMain.RutaProyecto = "" Then Return
-
-  ' --- 2. CONSTRUIR RUTA A /media Y LIMPIAR EL COMBO ---
-  sRutaMedia = FMain.RutaProyecto &/ "media"
-  FMain.cmbImagenes.Clear()
-  If Not Exist(sRutaMedia) Then Return
-
-  ' --- 3. LISTAR fig-* EN MINÚSCULA (DOS PATRONES, UNIENDO SIN Null) ---
-  aPng = Dir(sRutaMedia, "fig-*.png")
-  aJpg = Dir(sRutaMedia, "fig-*.jpg")
-  If aPng Then aArchivos.Insert(aPng)
-  If aJpg Then aArchivos.Insert(aJpg)
-  aArchivos.Sort()
-
-  ' --- 4. POBLAR EL COMBO (SOLO NOMBRE PELADO, UBICACIÓN CONOCIDA) ---
-  For Each sArchivo In aArchivos
-    FMain.cmbImagenes.Add(sArchivo)
-  Next
-
-  ' --- 5. SELECCIÓN INICIAL: SI HAY FIGURAS, CARGA LA PRIMERA ---
-  ' NOTA: cmbImagenes.Index = 0 DISPARA EL _Click, QUE LLAMARÁ A CargarImagen (HANDLER EN FMain)
-  If FMain.cmbImagenes.Count > 0 Then
-    FMain.cmbImagenes.Index = 0
-  Endif
 
 End
 
@@ -201,7 +159,7 @@ Public Sub ActualizarSemaforo()
 
   ' --- 3. GEOMETRÍA E IMAGEN OPACA ---
   iLado = 36
-  iDisco = 28
+  iDisco = 20
   iMargen = (iLado - iDisco) / 2
   hImg = New Image(iLado, iLado, False)
 
@@ -591,5 +549,375 @@ Public Sub GuardarCambios()
   ' --- 5. CONFIRMAR: CAMBIOS PERSISTIDOS (SOLO SONIDO) ---
   $bModify = False
   m_Sonido.sonar("Info")
+
+End
+
+' ============================================
+' Función   : IniciarBalance
+' Propósito : GUARDAR UNA COPIA PRÍSTINA EN $hTemp ANTES DE EMPEZAR A PREVISUALIZAR.
+'             CADA PREVIEW RE-APLICA DESDE ESTA COPIA (NUNCA ACUMULA REDONDEOS).
+' Parámetros: (NINGUNO)
+' Retorna   : Boolean — True SI SE PUDO INICIAR (HAY IMAGEN)
+' ============================================
+Public Function IniciarBalance() As Boolean
+
+  ' --- 1. GUARD: DEBE HABER IMAGEN CARGADA ---
+  If Not $hImage Then Return False
+
+  ' --- 2. COPIA PRÍSTINA DE REFERENCIA ---
+  $hTemp = $hImage.Copy()
+  Return True
+
+End
+
+' ============================================
+' Función   : PreviewBalance
+' Propósito : APLICAR BALANCE DESDE LA COPIA PRÍSTINA Y MOSTRAR EL RESULTADO.
+'             NO TOCA $bModify NI EL UNDO: ES SOLO PREVISUALIZACIÓN.
+'             REFRESCO LIVIANO: PRESERVA EL ZOOM (EL BALANCE NO CAMBIA DIMENSIONES).
+' Parámetros: fBrillo As Float — -1..1
+'             fContraste As Float — -1..1
+'             fGamma As Float — -1..1
+' Retorna   : (NADA)
+' ============================================
+Public Sub PreviewBalance(fBrillo As Float, fContraste As Float, fGamma As Float)
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim fZoom As Float
+
+  ' --- 1. GUARD: DEBE HABER COPIA DE REFERENCIA ---
+  If Not $hTemp Then Return
+
+  ' --- 2. RESTAURAR DESDE LA COPIA PRÍSTINA (EVITA ACUMULACIÓN) ---
+  $hImage = $hTemp.Copy()
+
+  ' --- 3. APLICAR LOS TRES AJUSTES EN UNA SOLA LLAMADA (Balance MUTA IN-PLACE) ---
+  Try $hImage.Balance(fBrillo, fContraste, fGamma)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se pudo aplicar el balance:") & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. REFRESCO LIVIANO PRESERVANDO EL ZOOM DEL USUARIO ---
+  fZoom = FMain.pbImagen.Zoom
+  FMain.pbImagen.Image = $hImage
+  Try FMain.pbImagen.Zoom = fZoom
+
+End
+
+' ============================================
+' Función   : AplicarBalance
+' Propósito : CONFIRMAR EL BALANCE PREVISUALIZADO: APILAR EL ESTADO PREVIO PARA
+'             DESHACER, MARCAR CAMBIOS Y LIBERAR LA COPIA DE REFERENCIA.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub AplicarBalance()
+
+  ' --- 1. GUARD: DEBE HABER COPIA DE REFERENCIA ---
+  If Not $hTemp Then Return
+
+  ' --- 2. APILAR EL ESTADO PREVIO REAL ($hTemp, NO $hImage QUE YA ESTÁ BALANCEADA) ---
+  ' NO SE USA PushUndo() PORQUE APILARÍA LA IMAGEN YA MODIFICADA
+  $hUndoStack.Add($hTemp.Copy())
+
+  ' --- 3. MARCAR CAMBIOS SIN GUARDAR Y LIBERAR REFERENCIA ---
+  $bModify = True
+  $hTemp = Null
+
+End
+
+' ============================================
+' Función   : CancelarBalance
+' Propósito : DESCARTAR EL PREVIEW Y VOLVER A LA IMAGEN PREVIA AL DIÁLOGO.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub CancelarBalance()
+
+  ' --- 1. SIN COPIA DE REFERENCIA: NADA QUE RESTAURAR ---
+  If Not $hTemp Then Return
+
+  ' --- 2. RESTAURAR Y LIBERAR ---
+  $hImage = $hTemp
+  $hTemp = Null
+
+  ' --- 3. REFRESCAR VISTAS ---
+  RefrescarVisor()
+
+End
+
+' ============================================
+' Función   : DeshacerCambios
+' Propósito : RESTAURAR EL ESTADO ANTERIOR DESDE LA PILA DE DESHACER (SOLO EN MEMORIA).
+'             SI LA PILA QUEDA VACÍA, SE VOLVIÓ AL ESTADO DE LA ÚLTIMA CARGA/GUARDADO.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub DeshacerCambios()
+
+  ' --- 1. GUARD: DEBE HABER IMAGEN CARGADA ---
+  If Not HayImagenCargada() Then Return
+
+  ' --- 2. SIN NADA QUE DESHACER: AVISAR CON SONIDO Y SALIR ---
+  If $hUndoStack.Count = 0 Then
+    m_Sonido.sonar("Error")
+    Return
+  Endif
+
+  ' --- 3. RESTAURAR EL ÚLTIMO ESTADO APILADO Y QUITARLO DE LA PILA ---
+  $hImage = $hUndoStack[$hUndoStack.Max]
+  $hUndoStack.Remove($hUndoStack.Max)
+
+  ' --- 4. ESTADO DE CAMBIOS ---
+  ' SI LA PILA QUEDÓ VACÍA, VOLVIMOS AL ESTADO DE LA ÚLTIMA CARGA/GUARDADO: SIN CAMBIOS.
+  ' SI AÚN QUEDAN ESTADOS, SIGUE HABIENDO CAMBIOS PENDIENTES.
+  If $hUndoStack.Count = 0 Then
+    $bModify = False
+  Else
+    $bModify = True
+  Endif
+
+  ' --- 5. REFRESCAR (RECALCULA FIT Y SEMÁFORO: EL UNDO PUEDE CAMBIAR DIMENSIONES) ---
+  RefrescarVisor()
+
+End
+
+' ============================================
+' Función   : EnfocarImagen
+' Propósito : APLICAR ENFOQUE (Sharpen) A LA IMAGEN ACTIVA. NO CAMBIA DIMENSIONES.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub EnfocarImagen()
+
+  ' --- 1. GUARD: DEBE HABER IMAGEN CARGADA ---
+  If Not HayImagenCargada() Then Return
+
+  ' --- 2. APILAR ESTADO PARA DESHACER ---
+  PushUndo()
+
+  ' --- 3. OPERAR SOBRE LA IMAGEN EN MEMORIA ---
+  Try $hImage.Sharpen()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se pudo enfocar la imagen:") & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. MARCAR CAMBIOS SIN GUARDAR ---
+  $bModify = True
+
+  ' --- 5. REFRESCAR VISTAS ---
+  RefrescarVisor()
+
+End
+
+' ============================================
+' Función   : NormalizarImagen
+' Propósito : NORMALIZAR (Normalize): ESTIRA EL RANGO TONAL A TODO EL ESPECTRO.
+'             NO CAMBIA DIMENSIONES.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub NormalizarImagen()
+
+  ' --- 1. GUARD: DEBE HABER IMAGEN CARGADA ---
+  If Not HayImagenCargada() Then Return
+
+  ' --- 2. APILAR ESTADO PARA DESHACER ---
+  PushUndo()
+
+  ' --- 3. OPERAR SOBRE LA IMAGEN EN MEMORIA ---
+  Try $hImage.Normalize()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se pudo normalizar la imagen:") & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. MARCAR CAMBIOS SIN GUARDAR ---
+  $bModify = True
+
+  ' --- 5. REFRESCAR VISTAS ---
+  RefrescarVisor()
+
+End
+
+' ============================================
+' Función   : QuitarMotasImagen
+' Propósito : QUITAR MOTAS/RUIDO (Despeckle). NO CAMBIA DIMENSIONES.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub QuitarMotasImagen()
+
+  ' --- 1. GUARD: DEBE HABER IMAGEN CARGADA ---
+  If Not HayImagenCargada() Then Return
+
+  ' --- 2. APILAR ESTADO PARA DESHACER ---
+  PushUndo()
+
+  ' --- 3. OPERAR SOBRE LA IMAGEN EN MEMORIA ---
+  Try $hImage.Despeckle()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se pudieron quitar las motas:") & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. MARCAR CAMBIOS SIN GUARDAR ---
+  $bModify = True
+
+  ' --- 5. REFRESCAR VISTAS ---
+  RefrescarVisor()
+
+End
+
+' ============================================
+' Función   : CorreccionAutomatica
+' Propósito : CORRECCIÓN AUTOMÁTICA POR ECUALIZACIÓN DE HISTOGRAMA (Equalize).
+'             DISTINTO DE Normalize: REDISTRIBUYE TONOS, NO SOLO ESTIRA EL RANGO.
+'             NO CAMBIA DIMENSIONES.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub CorreccionAutomatica()
+
+  ' --- 1. GUARD: DEBE HABER IMAGEN CARGADA ---
+  If Not HayImagenCargada() Then Return
+
+  ' --- 2. APILAR ESTADO PARA DESHACER ---
+  PushUndo()
+
+  ' --- 3. OPERAR SOBRE LA IMAGEN EN MEMORIA ---
+  Try $hImage.Equalize()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se pudo aplicar la corrección automática:") & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. MARCAR CAMBIOS SIN GUARDAR ---
+  $bModify = True
+
+  ' --- 5. REFRESCAR VISTAS ---
+  RefrescarVisor()
+
+End
+
+' ============================================
+' Función   : RefrescarComboSiCambio
+' Propósito : REPOBLAR EL COMBO SOLO SI EL CONTENIDO DE /media CAMBIÓ.
+'             COMPARA POR FIRMA (LISTA COMPLETA), NO POR CANTIDAD: DETECTA TAMBIÉN
+'             RENOMBRADOS Y ALTA+BAJA ENTRE DOS TICKS.
+' Parámetros: (NINGUNO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub RefrescarComboSiCambio()
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim sFirma As String
+
+  ' --- 1. SIN PROYECTO ABIERTO: NADA QUE HACER ---
+  If FMain.RutaProyecto = "" Then Return
+
+  ' --- 2. FIRMA ACTUAL DEL DIRECTORIO ---
+  sFirma = ListarFiguras().Join(Chr(10))
+
+  ' --- 3. SIN CAMBIOS: SALIR SIN TOCAR LA UI ---
+  If sFirma = $sFirmaMedia Then Return
+
+  ' --- 4. HAY CAMBIOS: ACTUALIZAR FIRMA Y REPOBLAR PRESERVANDO SELECCIÓN ---
+  $sFirmaMedia = sFirma
+  PoblarComboImagenes(True)
+
+End
+
+' ============================================
+' Función   : ListarFiguras
+' Propósito : DEVOLVER LA LISTA ORDENADA DE fig-* DE /media (png + jpg, MINÚSCULA).
+'             FUENTE ÚNICA DEL LISTADO: LA USAN EL POBLADO Y LA DETECCIÓN DE CAMBIOS.
+' Parámetros: (NINGUNO)
+' Retorna   : String[] — NOMBRES PELADOS ORDENADOS (VACÍO SI NO HAY /media)
+' ============================================
+Private Function ListarFiguras() As String[]
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRutaMedia As String
+  Dim aArchivos As New String[]
+  Dim aPng As String[]
+  Dim aJpg As String[]
+
+  ' --- 1. SIN PROYECTO O SIN /media: LISTA VACÍA ---
+  If FMain.RutaProyecto = "" Then Return aArchivos
+  sRutaMedia = FMain.RutaProyecto &/ "media"
+  If Not Exist(sRutaMedia) Then Return aArchivos
+
+  ' --- 2. LISTAR SOLO fig-* (EL PREFIJO ES EL DISCRIMINADOR CONTRA EL RESTO DE /media) ---
+  aPng = Dir(sRutaMedia, "fig-*.png")
+  aJpg = Dir(sRutaMedia, "fig-*.jpg")
+  If aPng Then aArchivos.Insert(aPng)
+  If aJpg Then aArchivos.Insert(aJpg)
+  aArchivos.Sort()
+
+  Return aArchivos
+
+End
+
+' ============================================
+' Función   : PoblarComboImagenes
+' Propósito : CARGAR EN cmbImagenes LOS fig-* DE /media DEL PROYECTO ABIERTO.
+' Parámetros: bPreservarSeleccion As Boolean — SI ES True, MANTIENE LA FIGURA ACTUAL
+'             Y SUPRIME EL _Click (REFRESCO EN CALIENTE: NO TOCA LA IMAGEN EN MEMORIA)
+' Retorna   : (NADA)
+' ============================================
+Public Sub PoblarComboImagenes(Optional bPreservarSeleccion As Boolean = False)
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+  Dim sSeleccionAnterior As String
+  Dim i As Integer
+
+  ' --- 1. VALIDACIÓN DE ENTRADA: DEBE HABER PROYECTO ABIERTO ---
+  If FMain.RutaProyecto = "" Then Return
+
+  ' --- 2. GUARDAR LA SELECCIÓN ACTUAL SI SE REQUIERE PRESERVARLA ---
+  If bPreservarSeleccion Then
+    If FMain.cmbImagenes.Index >= 0 Then sSeleccionAnterior = FMain.cmbImagenes.Text
+  Endif
+
+  ' --- 3. SUPRIMIR EL _Click MIENTRAS REPOBLAMOS EN CALIENTE ---
+  ' SIN ESTO, Clear() Y LA REASIGNACIÓN DE Index DISPARARÍAN CargarImagen Y EL
+  ' GUARD DE DESCARTE APARECERÍA SOLO, PISANDO EL TRABAJO DEL MAQUETADOR
+  FMain.bPoblandoComboImagen = bPreservarSeleccion
+
+  ' --- 4. REPOBLAR DESDE DISCO ---
+  FMain.cmbImagenes.Clear()
+  aArchivos = ListarFiguras()
+  For Each sArchivo In aArchivos
+    FMain.cmbImagenes.Add(sArchivo)
+  Next
+
+  ' --- 5. RESTAURAR SELECCIÓN O CARGAR LA PRIMERA ---
+  If bPreservarSeleccion And If sSeleccionAnterior <> "" Then
+    ' BUSCAR POR TEXTO: EL ÍNDICE PUDO CORRERSE SI ENTRÓ UNA FIGURA ANTES ALFABÉTICAMENTE
+    For i = 0 To FMain.cmbImagenes.Count - 1
+      If FMain.cmbImagenes[i].Text = sSeleccionAnterior Then
+        FMain.cmbImagenes.Index = i
+        ' RESINCRONIZAR EL ÍNDICE DE REVERSIÓN CON LA NUEVA POSICIÓN
+        FMain.iIndiceImagenCargada = i
+        Break
+      Endif
+    Next
+  Else
+    ' POBLADO INICIAL: EL _Click NO ESTÁ SUPRIMIDO Y CARGARÁ LA PRIMERA FIGURA
+    If FMain.cmbImagenes.Count > 0 Then FMain.cmbImagenes.Index = 0
+  Endif
+
+  ' --- 6. LEVANTAR LA SUPRESIÓN ---
+  FMain.bPoblandoComboImagen = False
 
 End
