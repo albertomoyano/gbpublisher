@@ -1,0 +1,244 @@
+' Gambas class file
+
+' --- 0. ESTADO LOCAL DEL DIÁLOGO ---
+Private $iAnchoOriginal As Integer      ' DIMENSIONES REALES DE LA IMAGEN
+Private $iAltoOriginal As Integer
+Private $fEscala As Float               ' FACTOR VISTA/IMAGEN (<= 1, NUNCA AMPLÍA)
+Private $iVistaX As Integer             ' OFFSET DE LA IMAGEN DIBUJADA (CENTRADO)
+Private $iVistaY As Integer
+Private $iVistaW As Integer             ' TAMAÑO DE LA IMAGEN DIBUJADA EN LA VISTA
+Private $iVistaH As Integer
+Private $bArrastrando As Boolean        ' HAY UN ARRASTRE EN CURSO
+Private $bHaySeleccion As Boolean       ' HAY UN MARCO VÁLIDO DIBUJADO
+Private $iX1 As Integer                 ' MARCO EN COORDENADAS DE VISTA
+Private $iY1 As Integer
+Private $iX2 As Integer
+Private $iY2 As Integer
+
+' ============================================
+' Función   : Form_Open
+' Propósito : CAPTURAR LAS DIMENSIONES ORIGINALES Y PREPARAR EL DIÁLOGO.
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. GUARD: DEBE HABER IMAGEN CARGADA ---
+  $iAnchoOriginal = m_GestionImagenes.AnchoImagen()
+  $iAltoOriginal = m_GestionImagenes.AltoImagen()
+  If $iAnchoOriginal = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Warning(("No hay ninguna imagen cargada."))
+    Me.Close()
+    Return
+  Endif
+
+  ' --- 2. SIN SELECCIÓN INICIAL ---
+  $bHaySeleccion = False
+  $bArrastrando = False
+
+  ' --- 3. INFORME INICIAL (SIN SELECCIÓN MUESTRA EL TAMAÑO COMPLETO) ---
+  ActualizarInforme()
+
+End
+
+' ============================================
+' Función   : CalcularGeometriaVista
+' Propósito : DETERMINAR ESCALA Y POSICIÓN DE LA IMAGEN DENTRO DEL ScrollArea,
+'             AJUSTADA Y CENTRADA, SIN AMPLIAR (TOPE 1) Y PRESERVANDO EL ASPECTO.
+' ============================================
+Private Sub CalcularGeometriaVista()
+
+  ' --- 1. FACTOR QUE HACE ENTRAR LA IMAGEN COMPLETA, CON TOPE EN 1 ---
+  $fEscala = Min(saRecortar.ClientW / $iAnchoOriginal, saRecortar.ClientH / $iAltoOriginal)
+  If $fEscala > 1 Then $fEscala = 1
+
+  ' --- 2. TAMAÑO DIBUJADO (PRESERVA ASPECTO: MISMO FACTOR EN AMBOS EJES) ---
+  $iVistaW = Round($iAnchoOriginal * $fEscala)
+  $iVistaH = Round($iAltoOriginal * $fEscala)
+
+  ' --- 3. CENTRADO EN EL ÁREA DISPONIBLE ---
+  $iVistaX = (saRecortar.ClientW - $iVistaW) / 2
+  $iVistaY = (saRecortar.ClientH - $iVistaH) / 2
+
+End
+
+' ============================================
+' Función   : saRecortar_Draw
+' Propósito : DIBUJAR LA IMAGEN AJUSTADA Y, SI HAY, EL MARCO DE SELECCIÓN ENCIMA.
+' ============================================
+Public Sub saRecortar_Draw()
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim hImg As Image
+
+  ' --- 1. SIN IMAGEN: NADA QUE DIBUJAR ---
+  hImg = m_GestionImagenes.ImagenActiva()
+  If Not hImg Then Return
+
+  ' --- 2. RECALCULAR GEOMETRÍA (EL DIÁLOGO PUDO REDIMENSIONARSE) ---
+  CalcularGeometriaVista()
+
+  ' --- 3. DIBUJAR LA IMAGEN ESCALADA Y CENTRADA ---
+  Try Paint.DrawImage(hImg, $iVistaX, $iVistaY, $iVistaW, $iVistaH)
+
+  ' --- 4. DIBUJAR EL MARCO DE SELECCIÓN SI HAY ---
+  If $bHaySeleccion Or If $bArrastrando Then
+    Paint.Rectangle(Min($iX1, $iX2), Min($iY1, $iY2), Abs($iX2 - $iX1), Abs($iY2 - $iY1))
+    Paint.Background = &HFFFFFF&
+    Paint.LineWidth = 1
+    Paint.Stroke
+  Endif
+
+End
+
+' ============================================
+' Función   : saRecortar_MouseDown
+' Propósito : INICIAR EL ARRASTRE DEL MARCO DESDE EL PUNTO PULSADO.
+' ============================================
+Public Sub saRecortar_MouseDown()
+
+  ' --- 1. ANCLAR EL ORIGEN DEL MARCO ---
+  $iX1 = Mouse.X
+  $iY1 = Mouse.Y
+  $iX2 = Mouse.X
+  $iY2 = Mouse.Y
+  $bArrastrando = True
+  $bHaySeleccion = False
+
+  saRecortar.Refresh()
+
+End
+
+' ============================================
+' Función   : saRecortar_MouseMove
+' Propósito : EXTENDER EL MARCO MIENTRAS SE ARRASTRA Y REFLEJAR EL TAMAÑO EN VIVO.
+' ============================================
+Public Sub saRecortar_MouseMove()
+
+  ' --- 1. SIN ARRASTRE EN CURSO: IGNORAR ---
+  If Not $bArrastrando Then Return
+
+  ' --- 2. EXTENDER EL MARCO HASTA EL PUNTERO ---
+  $iX2 = Mouse.X
+  $iY2 = Mouse.Y
+
+  ' --- 3. REDIBUJAR E INFORMAR EN VIVO ---
+  saRecortar.Refresh()
+  ActualizarInforme()
+
+End
+
+' ============================================
+' Función   : saRecortar_MouseUp
+' Propósito : CERRAR EL ARRASTRE Y FIJAR LA SELECCIÓN SI TIENE TAMAÑO ÚTIL.
+' ============================================
+Public Sub saRecortar_MouseUp()
+
+  ' --- 1. CERRAR EL ARRASTRE ---
+  $bArrastrando = False
+
+  ' --- 2. UN CLICK SIN ARRASTRE NO ES UNA SELECCIÓN VÁLIDA ---
+  If Abs($iX2 - $iX1) < 3 Or If Abs($iY2 - $iY1) < 3 Then
+    $bHaySeleccion = False
+  Else
+    $bHaySeleccion = True
+  Endif
+
+  saRecortar.Refresh()
+  ActualizarInforme()
+
+End
+
+' ============================================
+' Función   : RecorteEnImagen
+' Propósito : TRADUCIR EL MARCO DE COORDENADAS DE VISTA A PÍXELES DE IMAGEN,
+'             DESCONTANDO EL CENTRADO Y DIVIDIENDO POR LA ESCALA. RECORTA LA REGIÓN
+'             AL ÁREA VÁLIDA DE LA IMAGEN (EL MARCO PUEDE SALIRSE DE LA FIGURA).
+' Retorna   : Integer[] — [x, y, ancho, alto] EN PX DE IMAGEN
+' ============================================
+Private Function RecorteEnImagen() As Integer[]
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim iVx1, iVy1, iVx2, iVy2 As Integer
+  Dim iIx1, iIy1, iIx2, iIy2 As Integer
+
+  ' --- 1. NORMALIZAR EL MARCO (EL ARRASTRE PUDO SER EN CUALQUIER DIRECCIÓN) ---
+  iVx1 = Min($iX1, $iX2)
+  iVy1 = Min($iY1, $iY2)
+  iVx2 = Max($iX1, $iX2)
+  iVy2 = Max($iY1, $iY2)
+
+  ' --- 2. DESCONTAR EL OFFSET DE CENTRADO Y ESCALAR A PÍXELES DE IMAGEN ---
+  iIx1 = Round((iVx1 - $iVistaX) / $fEscala)
+  iIy1 = Round((iVy1 - $iVistaY) / $fEscala)
+  iIx2 = Round((iVx2 - $iVistaX) / $fEscala)
+  iIy2 = Round((iVy2 - $iVistaY) / $fEscala)
+
+  ' --- 3. ACOTAR AL ÁREA VÁLIDA DE LA IMAGEN ---
+  If iIx1 < 0 Then iIx1 = 0
+  If iIy1 < 0 Then iIy1 = 0
+  If iIx2 > $iAnchoOriginal Then iIx2 = $iAnchoOriginal
+  If iIy2 > $iAltoOriginal Then iIy2 = $iAltoOriginal
+
+  Return [iIx1, iIy1, iIx2 - iIx1, iIy2 - iIy1]
+
+End
+
+' ============================================
+' Función   : ActualizarInforme
+' Propósito : MOSTRAR EN lblRecortar EL TAMAÑO ORIGINAL Y EL DEL RECORTE, Y PINTAR
+'             EL SEMÁFORO CON EL ANCHO HIPOTÉTICO RESULTANTE.
+' ============================================
+Private Sub ActualizarInforme()
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim aRec As Integer[]
+
+  ' --- 1. SIN SELECCIÓN: EL RESULTADO SERÍA LA IMAGEN COMPLETA ---
+  If Not $bHaySeleccion And If Not $bArrastrando Then
+    lblRecortar.Text = "[" & $iAnchoOriginal & "x" & $iAltoOriginal & "] → [" &
+      $iAnchoOriginal & "x" & $iAltoOriginal & "]px"
+    m_GestionImagenes.PintarSemaforoEn(pbRecortar, $iAnchoOriginal)
+    Return
+  Endif
+
+  ' --- 2. CON SELECCIÓN: MOSTRAR EL RECORTE RESULTANTE ---
+  aRec = RecorteEnImagen()
+  lblRecortar.Text = "[" & $iAnchoOriginal & "x" & $iAltoOriginal & "] → [" &
+    aRec[2] & "x" & aRec[3] & "]px"
+
+  ' --- 3. SEMÁFORO DEL ESTADO HIPOTÉTICO (EL DE LA PESTAÑA NO SE TOCA) ---
+  m_GestionImagenes.PintarSemaforoEn(pbRecortar, aRec[2])
+
+End
+
+' ============================================
+' Función   : btnAplicar_Click
+' Propósito : EJECUTAR EL RECORTE CON LA REGIÓN SELECCIONADA Y CERRAR.
+' ============================================
+Public Sub btnAplicar_Click()
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim aRec As Integer[]
+
+  ' --- 1. SIN SELECCIÓN: AVISAR CON SONIDO Y NO CERRAR ---
+  If Not $bHaySeleccion Then
+    m_Sonido.sonar("Error")
+    Return
+  Endif
+
+  ' --- 2. APLICAR Y CERRAR ---
+  aRec = RecorteEnImagen()
+  m_GestionImagenes.AplicarRecorte(aRec[0], aRec[1], aRec[2], aRec[3])
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : CERRAR SIN APLICAR (NADA QUE DESHACER: NO SE TOCÓ LA IMAGEN).
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
