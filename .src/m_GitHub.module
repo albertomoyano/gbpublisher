@@ -152,3 +152,370 @@ Catch
   Return JSON.Null
 
 End Function
+
+Public Sub EmpujarGitLocal()
+  ' EMPUJA LOS CAMBIOS AL REPOSITORIO GIT LOCAL
+  ' MUESTRA UN FORMULARIO PARA INGRESAR EL MENSAJE DEL COMMIT
+
+  Dim rutaGit As String
+  Dim rutaProyecto As String
+
+  ' OBTENER LA RUTA DEL PROYECTO
+  rutaProyecto = m_InicioCierre.ArchivoProyectoEnCurso
+  rutaGit = rutaProyecto & "/.git"
+
+  ' MOSTRAR EL FORMULARIO MODAL PARA INGRESAR EL MENSAJE DE COMMIT
+  If Not FCommits.ShowModal() Then
+    ' EL USUARIO CANCELÓ LA OPERACIÓN
+    Return
+  Endif
+
+  ' MOSTRAMOS LA CONSOLA
+  FMain.TabPanelIzquierdaInferior.Index = 0
+
+  ' CAMBIAR AL DIRECTORIO DEL PROYECTO
+  FMain.TerminalViewProyecto.Input("cd " & Shell$(rutaProyecto) & "\n")
+
+  ' VERIFICAR SI EL DIRECTORIO .GIT EXISTE
+  If Not Exist(rutaGit) Then
+    ' INICIALIZAR EL REPOSITORIO SI NO EXISTE
+    FMain.TerminalViewProyecto.Input("git init --initial-branch=main" & "\n")
+  Endif
+
+  ' EJECUTAR LOS COMANDOS DE GIT
+  FMain.TerminalViewProyecto.Input("git add ." & "\n")
+  FMain.TerminalViewProyecto.Input("git commit -m '" & Replace$(FCommits.MensajeCommit, "'", "'\\''") & "'" & "\n")
+  FMain.TerminalViewProyecto.SetFocus()
+
+End
+
+Public Sub EmpujarGitHubRemoto()
+  ' VALIDAR PRIMERO QUE EXISTA UN USUARIO DE GITHUB CONFIGURADO
+  ' ESTA VALIDACIÓN SE HACE ANTES DE MOSTRAR EL FORMULARIO DE COMMITS
+  ' PARA EVITAR QUE EL USUARIO ESCRIBA UN MENSAJE INNECESARIAMENTE
+
+  ' Y VERIFICAR ACCESO SSH ANTES DE EMPUJAR
+  Dim sRutaProyecto As String = m_InicioCierre.RutaProyectoEnCurso
+
+  If Not VerificarAccesoSSHGitHub() Then Return
+  If Not VerificarProtocoloRemoto(sRutaProyecto) Then Return
+
+  If Trim(FMain.txtUsuarioGit.Text) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Debe indicar su nombre de usuario en GitHub", "Ok")
+    FMain.txtUsuarioGit.SetFocus()
+    Return
+  Endif
+
+  ' MOSTRAR EL FORMULARIO MODAL PARA INGRESAR EL MENSAJE DE COMMIT
+  ' SHOWMODAL() RETORNA EL VALOR PASADO A ME.CLOSE()
+  ' SI EL USUARIO CANCELA O CIERRA LA VENTANA, RETORNA 0 (FALSE)
+  If Not FCommits.ShowModal() Then
+    ' EL USUARIO CANCELÓ LA OPERACIÓN
+    Return
+  Endif
+
+  ' SI LLEGAMOS AQUÍ, EL USUARIO CONFIRMÓ CON UN MENSAJE VÁLIDO
+  ' LLAMAR AL PROCEDIMIENTO QUE EJECUTA EL PUSH
+  EjecutarPushGitHub(FCommits.MensajeCommit)
+
+End
+
+Private Sub EjecutarPushGitHub(mensajeCommit As String)
+
+  Dim usuario As String = Trim(FMain.txtUsuarioGit.Text)
+  Dim IdGitHub As String
+  Dim repoLocal As Boolean = False
+  Dim repoConfigurado As Boolean = False
+  Dim ramaMain As Boolean = False
+  Dim sRutaProyecto As String = m_InicioCierre.RutaProyectoEnCurso
+
+  ' MOSTRAMOS LA CONSOLA Y ASEGURAMOS LA POSICION DE LA RUTA
+  FMain.TabPanelIzquierdaInferior.Index = 0
+  FMain.TerminalViewProyecto.Input("cd " & Chr(34) & sRutaProyecto & Chr(34) & "\n")
+
+  IdGitHub = "git@github.com:" & usuario & "/" & m_InicioCierre.NombreProyectoEnCurso & ".git"
+
+  ' VERIFICAR SI ES REPOSITORIO GIT: EXISTE EL DIRECTORIO .git
+  repoLocal = Exist(sRutaProyecto &/ ".git")
+
+  If Not repoLocal Then
+    FMain.TerminalViewProyecto.Input("git init --initial-branch=main" & "\n")
+  Endif
+
+  ' VERIFICAR SI TIENE ORIGIN CONFIGURADO: LEER .git/config
+  Dim sRutaConfig As String = sRutaProyecto &/ ".git" &/ "config"
+  If Exist(sRutaConfig) Then
+    Dim sConfig As String
+    Try sConfig = File.Load(sRutaConfig)
+    If Not Error And InStr(sConfig, "[remote " & Chr(34) & "origin" & Chr(34) & "]") > 0 Then
+      repoConfigurado = True
+    Endif
+  Endif
+
+  ' VERIFICAR RAMA ACTUAL: LEER .git/HEAD
+  Dim sRutaHEAD As String = sRutaProyecto &/ ".git" &/ "HEAD"
+  If Exist(sRutaHEAD) Then
+    Dim sHEAD As String
+    Try sHEAD = File.Load(sRutaHEAD)
+    If Not Error And Trim(sHEAD) = "ref: refs/heads/main" Then
+      ramaMain = True
+    Endif
+  Endif
+
+  ' CONFIGURAR ORIGIN SI NO EXISTE
+  If Not repoConfigurado Then
+    FMain.TerminalViewProyecto.Input("git remote add origin " & IdGitHub & "\n")
+  Endif
+
+  ' RENOMBRAR RAMA A MAIN SI ES NECESARIO
+  If Not ramaMain Then
+    FMain.TerminalViewProyecto.Input("git branch -M main" & "\n")
+  Endif
+
+  ' --- INTEGRACIÓN GITHUB: GENERAR JSON ANTES DEL ADD ---
+  ' EL JSON ENTRA EN EL MISMO COMMIT EDITORIAL, SIN COMMIT SEPARADO
+  If UsaIntegracionGitHub() Then
+    Dim bJsonOk As Boolean
+    bJsonOk = m_GitHub.GenerarEstadoProyecto(m_InicioCierre.ArchivoProyectoEnCurso, CInt(FMain.id_proyecto.Value), File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
+    If Not bJsonOk Then
+      m_Sonido.sonar("Warning")
+      If Message.Question(
+          "No se pudo generar el archivo de integración con GitHub." &
+          Chr(10) & Chr(10) &
+          "¿Desea continuar el push sin él?",
+          "Continuar", "Cancelar") <> 1 Then Return
+      Endif
+    Endif
+
+    ' SINCRONIZAR CON EL REMOTO ANTES DE AGREGAR CAMBIOS
+    ' INCORPORA LOS COMMITS AUTOMÁTICOS DEL ACTION (IDs DE DISCUSSION)
+    ' SINCRONIZAR CON EL REMOTO ANTES DE COMMITEAR
+    ' git fetch DESCARGA LOS COMMITS DEL ACTION (incluyendo .github-ids.json)
+    ' git reset --mixed MUEVE HEAD AL REMOTE PRESERVANDO EL WORKING DIRECTORY
+    ' ASÍ EL COMMIT QUEDA SIEMPRE ENCIMA DEL REMOTE: PUSH FAST-FORWARD SIN CONFLICTOS
+    FMain.TerminalViewProyecto.Input("git fetch origin" & "\n")
+    FMain.TerminalViewProyecto.Input("git reset --mixed origin/main" & "\n")
+    FMain.TerminalViewProyecto.Input("git add ." & "\n")
+    ' .github-ids.json VIVE SOLO EN EL REPO, GESTIONADO POR EL ACTION
+    ' git add . LO MARCA COMO ELIMINADO PORQUE NO EXISTE EN EL WORKING DIR
+    ' git restore --staged LO DEVUELVE AL ESTADO DEL HEAD SIN TOCARLO
+    FMain.TerminalViewProyecto.Input("git restore --staged .github-ids.json 2>/dev/null; true" & "\n")
+    FMain.TerminalViewProyecto.Input("git commit -m '" & Replace$(mensajeCommit, "'", "'\\''") & "'" & "\n")
+    FMain.TerminalViewProyecto.Input("git push --set-upstream origin main" & "\n")
+    FMain.TerminalViewProyecto.SetFocus()
+
+End
+
+' ============================================
+' Función   : UsaIntegracionGitHub
+' Propósito : Consulta si el proyecto activo tiene
+'             activada la integración con GitHub Actions.
+'             Se llama solo desde EjecutarPushGitHub.
+' Retorna   : Boolean — True si debe generar el JSON
+' ============================================
+Public Function UsaIntegracionGitHub() As Boolean
+
+  Dim hProyecto As Result
+
+  Try hProyecto = m_ConexionBD.mConn.Exec(
+    "SELECT integracion_github FROM proyectos WHERE id = " & CInt(FMain.id_proyecto.Value))
+  If Error Then Return False
+  If Not hProyecto.Available Then Return False
+  Return CStr(hProyecto["integracion_github"]) = "con_integracion"
+
+End Function
+
+' ============================================
+' Función   : VerificarAccesoSSHGitHub
+' Propósito : Confirma que el usuario tiene clave SSH funcional
+'             contra GitHub antes de intentar un push
+' Parámetros: ninguno
+' Retorna   : Boolean — True si la autenticación SSH es exitosa
+' ============================================
+Public Function VerificarAccesoSSHGitHub() As Boolean
+
+  ' --- 1. Verificación rápida: ¿existe alguna clave SSH? ---
+  If Not Exist(User.Home &/ ".ssh/id_ed25519.pub") And Not Exist(User.Home &/ ".ssh/id_rsa.pub") Then
+    Message.Warning("No se encontró ninguna clave SSH en ~/.ssh/\n\nPara generar una:\n  ssh-keygen -t ed25519\n\nLuego agregar la clave pública en:\n  GitHub → Settings → SSH and GPG keys")
+    Return False
+  Endif
+
+  ' --- 2. Verificación real: ¿GitHub acepta la clave? ---
+  Dim sSalida As String
+  Shell "ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1" To sSalida
+  Wait
+
+  If InStr(sSalida, "successfully authenticated") > 0 Then
+    ' AUTENTICACIÓN EXITOSA
+    Return True
+  Endif
+
+  ' --- 3. Diagnóstico del fallo ---
+  If InStr(sSalida, "Permission denied") > 0 Then
+    Message.Warning("La clave SSH existe pero GitHub la rechazó.\n\nVerificá que la clave pública esté cargada en:\n  GitHub → Settings → SSH and GPG keys")
+  Else
+    Message.Warning("No se pudo conectar con GitHub.\n\nVerificá la conexión a internet.\n\nDetalle: " & sSalida)
+  Endif
+
+  Return False
+
+End Function
+
+' ============================================
+' Función   : VerificarProtocoloRemoto
+' Propósito : Detecta si el remote origin usa HTTPS y lo
+'             corrige automáticamente a SSH
+' Parámetros: sRutaProyecto As String — ruta del repo git
+' Retorna   : Boolean — True si el remote usa SSH (o fue corregido)
+' ============================================
+Public Function VerificarProtocoloRemoto(sRutaProyecto As String) As Boolean
+
+  ' --- 1. Obtener la URL actual del remote ---
+  Dim sUrl As String
+
+  Shell "cd " & Chr(34) & sRutaProyecto & Chr(34) & " && git remote get-url origin 2>&1" To sUrl
+  Wait
+  sUrl = Trim(sUrl)
+
+  ' --- 2. Si ya usa SSH, no hay nada que corregir ---
+  If Left(sUrl, 4) = "git@" Then
+    Return True
+  Endif
+
+  ' --- 3. Si usa HTTPS, ofrecer corrección automática ---
+  If Left(sUrl, 8) = "https://" Then
+    ' EXTRAER USUARIO/REPO DE LA URL HTTPS
+    ' FORMATO: https://github.com/usuario/repo.git
+    Dim sRuta As String
+    sRuta = Replace(sUrl, "https://github.com/", "")
+    ' ASEGURAR QUE TERMINE EN .git
+    If Not Right(sRuta, 4) = ".git" Then
+      sRuta = sRuta & ".git"
+    Endif
+    Dim sUrlSSH As String
+    sUrlSSH = "git@github.com:" & sRuta
+
+    Select Case Message.Question("El remote está configurado con HTTPS:\n\n" & sUrl & "\n\nEsto provoca que pida usuario y clave.\n¿Corregir automáticamente a SSH?\n\n" & sUrlSSH, "Corregir", "Cancelar")
+      Case 1
+        ' CAMBIAR EL REMOTE A SSH
+        Shell "cd " & Chr(34) & sRutaProyecto & Chr(34) & " && git remote set-url origin " & Chr(34) & sUrlSSH & Chr(34) & " 2>&1" To sUrl
+        Wait
+        If Error Then
+          Message.Error("No se pudo cambiar el remote:\n" & sUrl)
+          Return False
+        Endif
+        Message.Info("Remote corregido a SSH.\nEl push ahora usará la clave SSH.")
+        Return True
+      Case 2
+        Return False
+    End Select
+  Endif
+
+  ' --- 4. Protocolo no reconocido ---
+  Message.Warning("El remote tiene una URL no reconocida:\n\n" & sUrl)
+  Return False
+
+End Function
+
+' Gambas module file
+
+' ============================================
+' Módulo    : m_Git
+' Propósito : ÚNICO PUNTO DE CONTACTO ENTRE GBPUBLISHER Y GIT.
+'             SE DIVIDE EN DOS FAMILIAS QUE NO DEBEN MEZCLARSE:
+'             - INTERACTIVA: ESCRIBE EN TerminalViewProyecto. LA SALIDA LA
+'               LEE EL HUMANO. NO DEVUELVE NADA UTILIZABLE POR EL PROGRAMA.
+'               EL SILENCIO DE LA TERMINAL NO ES ÉXITO (RC-GM-02).
+'             - PROGRAMÁTICA: USA Exec ... To. LA SALIDA LA LEE LA APLICACIÓN
+'               Y DECIDE CON ELLA. NUNCA PASA POR LA TERMINAL.
+'             INVARIANTE: UN REPO = UN PROYECTO, POR LO TANTO LA RAÍZ DEL
+'             REPOSITORIO ES LA RAÍZ DEL PROYECTO Y NO HAY QUE PREGUNTÁRSELA
+'             A GIT.
+' ============================================
+
+' --- ESTADOS DEL ÁRBOL DE TRABAJO (VALORES DE RETORNO DE EstadoArbol) ---
+Public Const ARBOL_LIMPIO As Integer = 0
+Public Const ARBOL_SUCIO As Integer = 1
+Public Const ARBOL_SIN_REPO As Integer = 2
+Public Const ARBOL_ERROR As Integer = 3
+
+' ============================================
+' Función   : EstadoArbol
+' Propósito : INFORMA SI EL ÁRBOL DE TRABAJO DEL PROYECTO TIENE CAMBIOS SIN
+'             COMMITEAR. LO CONSUME TODA OPERACIÓN DESTRUCTIVA MASIVA, PORQUE
+'             EL ÚNICO DESHACER DISPONIBLE ES GIT Y SOBRE UN ÁRBOL SUCIO ESE
+'             DESHACER SE LLEVA PUESTO TRABAJO NO RELACIONADO.
+' Parámetros: sRutaProyecto As String — RAÍZ DEL PROYECTO (= RAÍZ DEL REPO)
+' Retorna   : Integer — ARBOL_LIMPIO / ARBOL_SUCIO / ARBOL_SIN_REPO / ARBOL_ERROR
+' ============================================
+Public Function EstadoArbol(sRutaProyecto As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES (RC-GM-18: TODOS LOS Dim ACÁ) ---
+  Dim sSalida As String
+  Dim iCodigoSalida As Integer
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  If Trim(sRutaProyecto) = "" Then Return ARBOL_ERROR
+  If Not Exist(sRutaProyecto) Then Return ARBOL_ERROR
+
+  ' UN REPO = UN PROYECTO: ALCANZA CON MIRAR EL .git, SIN LANZAR PROCESOS.
+  ' TAMBIÉN CUBRE EL CASO DE QUE GIT NO ESTÉ INSTALADO SIN DEPENDER DE ÉL:
+  ' git ES Priority: optional EN DEBIAN/UBUNTU, NO ESTÁ GARANTIZADO.
+  If Not Exist(sRutaProyecto &/ ".git") Then Return ARBOL_SIN_REPO
+
+  ' --- 3. CONSULTA A GIT ---
+  ' -C EVITA CAMBIAR EL DIRECTORIO DE TRABAJO DEL PROCESO (NADA DE cd NI Chdir).
+  ' --porcelain GARANTIZA FORMATO ESTABLE ENTRE VERSIONES DE GIT.
+  ' SIN SHELL: EL ARRAY VA DIRECTO A execvp, NO HAY sh -c QUE INTERPRETE NADA.
+  Try Exec ["git", "-C", sRutaProyecto, "status", "--porcelain"] To sSalida
+  If Error Then Return ARBOL_ERROR
+
+  ' Process.LastValue ES GLOBAL AL PROCESO Y LO PISA CUALQUIER OTRO PROCESO
+  ' QUE TERMINE: SE LEE EN LA LÍNEA INMEDIATAMENTE SIGUIENTE, SIN NADA EN MEDIO.
+  iCodigoSalida = Process.LastValue
+  If iCodigoSalida <> 0 Then Return ARBOL_ERROR
+
+  ' --- 4. PROCESAMIENTO DE RESULTADOS ---
+  ' SALIDA VACÍA = NO HAY NADA PENDIENTE. Trim DESCARTA TODO BYTE <= 0x20,
+  ' O SEA TAMBIÉN EL LF FINAL.
+  If Trim(sSalida) = "" Then Return ARBOL_LIMPIO
+
+  Return ARBOL_SUCIO
+
+Catch
+  Return ARBOL_ERROR
+
+End
+
+' ============================================
+' Función   : ObtenerHead
+' Propósito : DEVUELVE EL HASH DEL COMMIT ACTUAL PARA ASENTARLO EN EL LOG DE
+'             OPERACIONES DESTRUCTIVAS. ES EL DATO QUE CONVIERTE AL LOG DE
+'             "SE REEMPLAZARON 127 COINCIDENCIAS EL MARTES" EN "VOLVÉ ACÁ".
+' Parámetros: sRutaProyecto As String — RAÍZ DEL PROYECTO (= RAÍZ DEL REPO)
+' Retorna   : String — HASH COMPLETO, O CADENA VACÍA SI NO SE PUDO OBTENER
+' ============================================
+Public Function ObtenerHead(sRutaProyecto As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  If Trim(sRutaProyecto) = "" Then Return ""
+  If Not Exist(sRutaProyecto &/ ".git") Then Return ""
+
+  ' --- 3. CONSULTA A GIT ---
+  ' UN REPO RECIÉN INICIALIZADO Y SIN COMMITS HACE FALLAR rev-parse.
+  ' ESE CASO SE INFORMA COMO CADENA VACÍA: ES AUSENCIA DE DATO, NO ERROR.
+  Try Exec ["git", "-C", sRutaProyecto, "rev-parse", "HEAD"] To sSalida
+  If Error Then Return ""
+  If Process.LastValue <> 0 Then Return ""
+
+  ' --- 4. RETORNO Y LIMPIEZA ---
+  Return Trim(sSalida)
+
+Catch
+  Return ""
+
+End
