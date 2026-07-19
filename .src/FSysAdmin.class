@@ -215,6 +215,7 @@ Public Sub btnValidarSuperuser_Click()
   ' --- INICIALIZAR TABSTRIP 4: COLECCIONES / SERIES ---
   ' (AQUÍ YA hConnServidor ESTÁ ABIERTO POR ConectarMySQL)
   ConfigurarGridViewColecciones()
+  ConfigurarGridViewSeries()
   CargarColecciones()
 
   ' --- 6. Limpiar campos de acceso ---
@@ -1564,10 +1565,16 @@ Private Sub CargarColecciones()
       gvColecciones[iRow, 0].Text = $result!nombre
       gvColecciones[iRow, 1].Text = If(bActiva, "Activa", "Inactiva")
 
-      ' --- COLOREAR EN GRIS LAS INACTIVAS ---
-      If Not bActiva Then
-        gvColecciones[iRow, 0].Foreground = Color.Gray
-        gvColecciones[iRow, 1].Foreground = Color.Gray
+      ' --- COLOR SEGÚN ESTADO: GRIS SI INACTIVA, DEFAULT SI ACTIVA ---
+      ' EL RESET EXPLÍCITO A Color.Default ES OBLIGATORIO: EL GRIDVIEW NO
+      ' LIMPIA EL FOREGROUND AL REDIMENSIONAR FILAS. SIN LA RAMA ELSE, UNA
+      ' FILA QUE ESTUVO GRIS SE QUEDA GRIS AL REACTIVARSE.
+      If bActiva Then
+        gvColecciones[iRow, 0].Background = Color.Default
+        gvColecciones[iRow, 1].Background = Color.Default
+      Else
+        gvColecciones[iRow, 0].Background = Color.Background
+        gvColecciones[iRow, 1].Background = Color.Background
       Endif
 
       Inc iRow
@@ -1577,7 +1584,7 @@ Private Sub CargarColecciones()
   ' --- 5. LIMPIAR ESTADO DE EDITORES Y SERIE ---
   LimpiarEditorColeccion()
   LimpiarEditorSerie()
-  lbSeries.Clear()
+  gvSeries.Rows.Count = 0
   $aIdsSeries.Clear()
   $iColeccionActual = 0
   $iSerieActual = 0
@@ -1588,8 +1595,8 @@ End
 
 ' ════════════════════════════════════════════════════════════════════════════
 ' Función   : CargarSeriesDeColeccion
-' Propósito : Lee las series de la colección indicada, las muestra en
-'             lbSeries. Si la colección está inactiva, todas las series se
+' Propósito : Lee las series de la colección indicada y las muestra en
+'             gvSeries. Si la colección está inactiva, todas las series se
 '             muestran en gris (heredan estado por cascada).
 ' Parámetros: iIdColeccion As Integer — id de la colección madre
 '             bColeccionActiva As Boolean — estado de la colección madre
@@ -1598,10 +1605,11 @@ Private Sub CargarSeriesDeColeccion(iIdColeccion As Integer, bColeccionActiva As
 
   Dim $result As Result
   Dim sQuery As String
-  Dim iIndex As Integer
+  Dim iRow As Integer
 
-  ' --- 1. RESET LISTBOX Y ARRAY PARALELO ---
-  lbSeries.Clear()
+  ' --- 1. RESET GRIDVIEW Y ARRAY PARALELO ---
+  ' PONER LAS FILAS EN 0 GARANTIZA CELDAS NUEVAS SIN FORMATO HEREDADO
+  gvSeries.Rows.Count = 0
   $aIdsSeries.Clear()
 
   ' --- 2. QUERY ORDENADA POR NOMBRE ---
@@ -1616,18 +1624,25 @@ Private Sub CargarSeriesDeColeccion(iIdColeccion As Integer, bColeccionActiva As
 
   If Not $result.Available Then Return
 
-  ' --- 3. POBLAR LISTBOX Y APLICAR COLOR SI LA COLECCIÓN ESTÁ INACTIVA ---
-  iIndex = 0
+  ' --- 3. PRE-DIMENSIONAR EL GRIDVIEW ---
+  gvSeries.Rows.Count = $result.Count
+
+  ' --- 4. POBLAR CELDAS Y COLOREAR SI LA COLECCIÓN ESTÁ INACTIVA ---
+  iRow = 0
   For Each $result
-    lbSeries.Add($result!nombre)
+    gvSeries[iRow, 0].Text = $result!nombre
     $aIdsSeries.Add($result!id_serie)
 
-    ' ' SI LA COLECCIÓN MADRE ESTÁ INACTIVA, TODAS LAS SERIES EN GRIS
-    ' If Not bColeccionActiva Then
-    '   lbSeries[iIndex].Foreground = Color.Gray
-    ' Endif
+    ' COLOR POR CASCADA: GRIS SI LA COLECCIÓN MADRE ESTÁ INACTIVA, DEFAULT SI
+    ' ACTIVA. EL ELSE ES OBLIGATORIO POR LA MISMA RAZÓN QUE EN COLECCIONES:
+    ' EL GRIDVIEW NO RESETEA EL FOREGROUND AL REDIMENSIONAR FILAS.
+    If bColeccionActiva Then
+      gvSeries[iRow, 0].Background = Color.Default
+    Else
+      gvSeries[iRow, 0].Background = Color.Background
+    Endif
 
-    Inc iIndex
+    Inc iRow
   Next
 
 End
@@ -1779,7 +1794,7 @@ End
 ' ════════════════════════════════════════════════════════════════════════════
 Private Sub HabilitarBotonesColeccion(bHabilitar As Boolean)
 
-  btnGuardarCambiosColeccion.Enabled = bHabilitar
+  btnGuardarCambiosColeccion.Visible = bHabilitar
 
 End
 
@@ -1793,7 +1808,7 @@ End
 Private Sub HabilitarBotonesSerie(bNueva As Boolean, bGuardar As Boolean)
 
   btnNuevaSerie.Enabled = bNueva
-  btnGuardarCambiosSerie.Enabled = bGuardar
+  btnGuardarCambiosSerie.Visible = bGuardar
 
 End
 
@@ -1835,26 +1850,26 @@ Public Sub gvColecciones_Click()
 End
 
 ' ════════════════════════════════════════════════════════════════════════════
-' Función   : lbSeries_Click
-' Propósito : Al seleccionar una serie del listbox, carga su editor.
+' Función   : gvSeries_Click
+' Propósito : Al seleccionar una serie del grid, carga su editor.
 ' ════════════════════════════════════════════════════════════════════════════
-Public Sub lbSeries_Click()
+Public Sub gvSeries_Click()
 
-  Dim iIndex As Integer
+  Dim iRow As Integer
   Dim iIdSerie As Integer
 
-  ' --- 1. VALIDAR ÍNDICE ---
-  iIndex = lbSeries.Index
-  If iIndex < 0 Or If iIndex >= $aIdsSeries.Count Then Return
+  ' --- 1. VALIDAR FILA ---
+  iRow = gvSeries.Row
+  If iRow < 0 Or If iRow >= $aIdsSeries.Count Then Return
 
   ' --- 2. OBTENER ID Y CARGAR EDITOR ---
-  iIdSerie = $aIdsSeries[iIndex]
+  iIdSerie = $aIdsSeries[iRow]
   $iSerieActual = iIdSerie
   CargarSerieEnEditor(iIdSerie)
 
   ' --- 3. HABILITAR BOTÓN GUARDAR DE SERIE ---
   ' (btnNuevaSerie SIGUE SIENDO CONDICIONAL AL ESTADO DE LA COLECCIÓN)
-  btnGuardarCambiosSerie.Enabled = True
+  btnGuardarCambiosSerie.Visible = True
 
 End
 
@@ -1946,8 +1961,8 @@ Public Sub btnNuevaSerie_Click()
   ' --- 4. AUTOSELECT ---
   For iIndex = 0 To $aIdsSeries.Count - 1
     If $aIdsSeries[iIndex] = iNuevoId Then
-      lbSeries.Index = iIndex
-      lbSeries_Click()
+      gvSeries.Row = iIndex
+      gvSeries_Click()
       Break
     Endif
   Next
@@ -2117,7 +2132,7 @@ Public Sub btnGuardarCambiosSerie_Click()
     Return
   Endif
 
-  iIndexGuardado = lbSeries.Index
+  iIndexGuardado = gvSeries.Row
 
   ' --- 3. EDIT + UPDATE ---
   Try rSerie = hConnServidor.Edit("series", "id_serie = &1", $iSerieActual)
@@ -2168,9 +2183,9 @@ Public Sub btnGuardarCambiosSerie_Click()
 
   CargarSeriesDeColeccion($iColeccionActual, bColActiva)
 
-  If iIndexGuardado >= 0 And If iIndexGuardado < lbSeries.Count Then
-    lbSeries.Index = iIndexGuardado
-    lbSeries_Click()
+  If iIndexGuardado >= 0 And If iIndexGuardado < gvSeries.Rows.Count Then
+    gvSeries.Row = iIndexGuardado
+    gvSeries_Click()
   Endif
 
 End
@@ -2769,5 +2784,23 @@ End
 Public Sub SplitterPDF_Resize()
 
   SplitterPDF.Layout = [1, 3]
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ConfigurarGridViewSeries
+' Propósito : Define la única columna del GridView de series. El estado no
+'             se muestra como columna: las series heredan el estado de la
+'             colección madre por cascada y se reflejan con color de fila.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ConfigurarGridViewSeries()
+
+  With gvSeries
+    .Header = GridView.Horizontal
+    .Columns.Count = 1
+    .Columns[0].Title = "Serie"
+    .Columns[0].Width = 380
+    .Rows.Count = 0
+  End With
 
 End
