@@ -83,7 +83,73 @@ Catch
 End
 
 ' ============================================
-' Función   : ObtenerHead
+' Función   : EstadoArbolDeArchivos
+' Propósito : COMO EstadoArbol, PERO ACOTADO A UNA LISTA DE ARCHIVOS. Informa si
+'             SOLO ESOS ARCHIVOS tienen cambios sin commitear, ignorando el
+'             resto del árbol. Es el guard del reemplazo regex: como el proyecto
+'             versiona TODO (incluidos los derivados de salidas/ y latex/), el
+'             árbol global está sucio la mayor parte del tiempo por PDFs y XML
+'             regenerados; un guard global daría "sucio" siempre y sería ruido.
+'             Preguntando solo por los .md que se van a tocar, el aviso aparece
+'             únicamente cuando deshacer el reemplazo (git checkout) se llevaría
+'             puesto trabajo no commiteado en ESOS archivos.
+' Parámetros: sRutaProyecto As String — RAÍZ DEL PROYECTO (= RAÍZ DEL REPO)
+'             aRutasAbsolutas As String[] — rutas absolutas de los archivos a
+'               consultar. Se convierten a relativas a la raíz para git.
+' Retorna   : Integer — ARBOL_LIMPIO / ARBOL_SUCIO / ARBOL_SIN_REPO / ARBOL_ERROR
+' ============================================
+Public Function EstadoArbolDeArchivos(sRutaProyecto As String, aRutasAbsolutas As String[]) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+  Dim aComando As String[]
+  Dim sAbs As String
+  Dim sRel As String
+  Dim sPrefijo As String
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  If Trim(sRutaProyecto) = "" Then Return ARBOL_ERROR
+  If Not Exist(sRutaProyecto) Then Return ARBOL_ERROR
+  If Not Exist(sRutaProyecto &/ ".git") Then Return ARBOL_SIN_REPO
+  If IsNull(aRutasAbsolutas) Then Return ARBOL_ERROR
+  If aRutasAbsolutas.Count = 0 Then Return ARBOL_LIMPIO
+
+  ' --- 3. ARMAR EL COMANDO CON RUTAS RELATIVAS A LA RAÍZ ---
+  ' git status --porcelain -- <ruta> <ruta> ... acota el reporte a esos paths.
+  ' Se usan rutas RELATIVAS a la raíz (el -C ya posiciona git ahí). El prefijo
+  ' a quitar es la raíz con una barra final, para no dejar la barra inicial en
+  ' la ruta relativa.
+  aComando = ["git", "-C", sRutaProyecto, "status", "--porcelain", "--"]
+  sPrefijo = sRutaProyecto
+  ' NORMALIZAR: LA RAÍZ NO DEBE TERMINAR EN BARRA, ASÍ EL &/ NO DUPLICA
+  If Right(sPrefijo, 1) = "/" Then sPrefijo = Left(sPrefijo, String.Len(sPrefijo) - 1)
+
+  For Each sAbs In aRutasAbsolutas
+    ' CONVERTIR ABSOLUTA -> RELATIVA QUITANDO "raíz/". Si por lo que sea una
+    ' ruta no cuelga de la raíz, se pasa tal cual: git la resolverá o la
+    ' reportará, pero no rompemos el bucle.
+    If Left(sAbs, String.Len(sPrefijo) + 1) = sPrefijo & "/" Then
+      sRel = Mid(sAbs, String.Len(sPrefijo) + 2)
+    Else
+      sRel = sAbs
+    Endif
+    aComando.Add(sRel)
+  Next
+
+  ' --- 4. CONSULTA A GIT ---
+  Try Exec aComando To sSalida
+  If Error Then Return ARBOL_ERROR
+  If Process.LastValue <> 0 Then Return ARBOL_ERROR
+
+  ' --- 5. PROCESAMIENTO ---
+  If Trim(sSalida) = "" Then Return ARBOL_LIMPIO
+  Return ARBOL_SUCIO
+
+Catch
+  Return ARBOL_ERROR
+
+End
+
 ' Propósito : DEVUELVE EL HASH DEL COMMIT ACTUAL PARA ASENTARLO EN EL LOG DE
 '             OPERACIONES DESTRUCTIVAS. ES EL DATO QUE CONVIERTE AL LOG DE
 '             "SE REEMPLAZARON 127 COINCIDENCIAS EL MARTES" EN "VOLVÉ A ESTE

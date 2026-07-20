@@ -47,6 +47,15 @@ Private $bBuscando As Boolean
 ' script: archivo, offset, linea, columna, largo, antes, despues, linea_texto.
 Private $aResultados As New Object[]
 
+' --- SNAPSHOT DE ESTADO DE CADA ARCHIVO AL MOMENTO DE LA BÚSQUEDA ---
+' Clave: ruta absoluta. Valor: "mtime|size" capturado con Stat al buscar. Antes
+' de escribir un archivo en el reemplazo se recalcula y se compara: si cambió,
+' se aborta TODO el reemplazo. Es defensa en profundidad barata (dos números por
+' archivo) que no depende del guard de cambios sin guardar ni de que ShowModal
+' congele la UI: si por lo que sea el archivo cambió entre buscar y reemplazar,
+' no se escribe encima.
+Private $cSnapshot As New Collection
+
 ' --- ÍNDICES DE CAMPO EN CADA REGISTRO (deben coincidir con el .pl) ---
 Private Const C_ARCHIVO As Integer = 0
 Private Const C_OFFSET As Integer = 1
@@ -144,7 +153,6 @@ Private Sub IniciarBusqueda()
   $bBuscando = True
   gvResultados.Rows.Count = 0
   lblContador.Text = "Buscando…"
-  btnCancelar.Enabled = True
 
   ' --- 2. ARMAR EL COMANDO: perl -CSA script buscar patron reemplazo flags aplicar <archivos...> ---
   ' Se arma como String[] y se agregan los archivos uno a uno: así la lista no
@@ -163,7 +171,6 @@ Private Sub IniciarBusqueda()
   Try $hProc = Exec aComando For Read As "Proceso"
   If Error Then
     $bBuscando = False
-    btnCancelar.Enabled = False
     lblContador.Text = "Error al lanzar la búsqueda: " & Error.Text
     m_Sonido.sonar("Error")
   Endif
@@ -192,7 +199,6 @@ End
 Public Sub Proceso_Kill()
 
   $bBuscando = False
-  btnCancelar.Enabled = False
 
   ' --- 1. SI FUE CANCELADO, DESCARTAR TODO ---
   If $bCancelado Then
@@ -203,15 +209,17 @@ Public Sub Proceso_Kill()
     Return
   Endif
 
-  Debug "buffer len: " & String.Len($sBuffer)
-  Debug "buffer ini: " & Left($sBuffer, 200)
-
   ' --- 2. PARSEAR EL BUFFER COMPLETO A REGISTROS ---
   ' Para cuando Kill se dispara, el evento Read ya entregó todo hasta EOF: el
   ' buffer está completo. No hace falta un drenaje extra.
   ParsearResultados()
 
-  ' --- 3. VOLCAR A LA GRILLA Y CONTAR ---
+  ' --- 3. CAPTURAR EL ESTADO DE LOS ARCHIVOS CON COINCIDENCIAS ---
+  ' Se guarda mtime|size de cada archivo que aparece en los resultados, para
+  ' verificar antes de escribir que no cambió entre buscar y reemplazar.
+  CapturarSnapshot()
+
+  ' --- 4. VOLCAR A LA GRILLA Y CONTAR ---
   gvResultados.Rows.Count = $aResultados.Count
   gvResultados.Refresh
   ActualizarContador()
@@ -221,6 +229,48 @@ Public Sub Proceso_Kill()
   Else
     m_Sonido.sonar("Info")
   Endif
+
+End
+
+' ============================================
+' Función   : CapturarSnapshot
+' Propósito : Guarda mtime|size de cada archivo distinto que tiene coincidencias.
+'             Es el estado contra el que se compara antes de escribir en el
+'             reemplazo: si un archivo cambió, el reemplazo se aborta entero.
+' ============================================
+Private Sub CapturarSnapshot()
+
+  Dim aReg As String[]
+  Dim sRuta As String
+
+  $cSnapshot.Clear
+
+  For Each aReg In $aResultados
+    sRuta = aReg[C_ARCHIVO]
+    ' UN ARCHIVO PUEDE TENER VARIAS COINCIDENCIAS: SE CAPTURA UNA SOLA VEZ
+    If Not $cSnapshot.Exist(sRuta) Then
+      $cSnapshot[sRuta] = FirmaArchivo(sRuta)
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : FirmaArchivo
+' Propósito : Devuelve "mtime|size" de un archivo, o "" si no se puede leer.
+'             Stat().Time es el mtime (verificado en el fuente: info.mtime);
+'             Stat().Size el tamaño en bytes. Juntos detectan tanto ediciones
+'             que cambian el tamaño como las que solo tocan el mtime.
+' Parámetros: sRuta As String
+' Retorna   : String — "mtime|size" o "" si Stat falla
+' ============================================
+Private Function FirmaArchivo(sRuta As String) As String
+
+  Dim hStat As Stat
+
+  Try hStat = Stat(sRuta)
+  If Error Then Return ""
+  Return CStr(hStat.Time) & "|" & CStr(hStat.Size)
 
 End
 
@@ -285,20 +335,63 @@ Public Sub gvResultados_Data(Row As Integer, Column As Integer)
 
 End
 
-' EVENTO Select DE LA GRILLA: MOSTRAR EL CONTEXTO DE LA COINCIDENCIA ACTIVA
+' EVENTO Select DE LA GRILLA: MOSTRAR EL PREVIEW DE LA COINCIDENCIA ACTIVA
 Public Sub gvResultados_Select()
 
   Dim aReg As String[]
   Dim iFila As Integer
+  Dim sLineaOriginal As String
+  Dim sLineaResultante As String
+  Dim sTexto As String
 
   iFila = gvResultados.Row
   If iFila < 0 Or If iFila >= $aResultados.Count Then Return
   aReg = $aResultados[iFila]
 
-  ' CONTEXTO SIMPLE EN LA CAPA 1: LA LÍNEA COMPLETA DONDE ESTÁ LA COINCIDENCIA.
-  ' El preview antes→después resaltado llega en la Capa 2.
-  txtContexto.Text = File.Name(aReg[C_ARCHIVO]) & "  (línea " & CStr(CInt(aReg[C_LINEA]) + 1) & ")" &
-    Chr(10) & Chr(10) & aReg[C_LINEA_TEXTO]
+  ' --- 1. ENCABEZADO: ARCHIVO Y POSICIÓN ---
+  sTexto = File.Name(aReg[C_ARCHIVO]) & "  ·  línea " & CStr(CInt(aReg[C_LINEA]) + 1) &
+    ", columna " & CStr(CInt(aReg[C_COLUMNA]) + 1) & Chr(10) & Chr(10)
+
+  ' --- 2. LÍNEA ORIGINAL ---
+  sLineaOriginal = aReg[C_LINEA_TEXTO]
+  sTexto &= "ANTES:" & Chr(10) & sLineaOriginal & Chr(10) & Chr(10)
+
+  ' --- 3. LÍNEA RESULTANTE (SOLO SI HAY REEMPLAZO) ---
+  ' Se reconstruye la línea aplicando el reemplazo SOLO a esta coincidencia,
+  ' usando la columna dentro de la línea. Es un preview de una coincidencia, no
+  ' del archivo entero: muestra cómo quedaría ESTA línea si se aplicara ESTE
+  ' reemplazo. TextArea es texto plano, sin resaltado; el contraste ANTES/DESPUÉS
+  ' lo da la comparación visual línea a línea.
+  If $sAplicar = "1" Then
+    sLineaResultante = ReemplazarEnLinea(sLineaOriginal, CInt(aReg[C_COLUMNA]), CInt(aReg[C_LARGO]), aReg[C_DESPUES])
+    sTexto &= "DESPUÉS:" & Chr(10) & sLineaResultante
+  Endif
+
+  txtContexto.Text = sTexto
+
+End
+
+' ============================================
+' Función   : ReemplazarEnLinea
+' Propósito : Devuelve la línea con el reemplazo aplicado en una posición. Es
+'             solo para el preview de UNA coincidencia: corta la línea en la
+'             columna, inserta el texto nuevo y pega el resto. Usa String.Mid
+'             (por caracteres, UTF-8) coherente con los offsets del script.
+' Parámetros: sLinea As String — la línea completa original
+'             iColumna As Integer — columna 0-based donde empieza la coincidencia
+'             iLargo As Integer — largo en caracteres de la coincidencia
+'             sNuevo As String — texto de reemplazo ya expandido
+' Retorna   : String — la línea con el reemplazo
+' ============================================
+Private Function ReemplazarEnLinea(sLinea As String, iColumna As Integer, iLargo As Integer, sNuevo As String) As String
+
+  Dim sAntes As String
+  Dim sDespues As String
+
+  ' String.Mid ES 1-BASED; LA COLUMNA DEL SCRIPT ES 0-BASED
+  sAntes = String.Mid(sLinea, 1, iColumna)
+  sDespues = String.Mid(sLinea, iColumna + iLargo + 1)
+  Return sAntes & sNuevo & sDespues
 
 End
 
@@ -324,28 +417,11 @@ Private Sub ActualizarContador()
 End
 
 ' ============================================
-' Función   : btnCancelar_Click
-' Propósito : Corta la búsqueda en curso. Levanta $bCancelado ANTES del Kill
-'             para que Proceso_Kill sepa que fue cancelación y descarte los
-'             resultados (patrón de MT-B: Kill dispara el mismo evento que una
-'             terminación normal).
-' ============================================
-Public Sub btnCancelar_Click()
-
-  If Not $bBuscando Then Return
-  If IsNull($hProc) Then Return
-
-  $bCancelado = True
-  If Object.IsValid($hProc) Then
-    If $hProc.State = Process.Running Then Try $hProc.Kill
-  Endif
-
-End
-
-' ============================================
 ' Función   : btnCerrar_Click
-' Propósito : Cierra el formulario. Si hay una búsqueda en curso, la cancela
-'             primero para no dejar un proceso huérfano.
+' Propósito : Cierra el formulario. Si hay una búsqueda en curso, mata el
+'             proceso primero para no dejarlo huérfano. $bCancelado se levanta
+'             para que Proceso_Kill sepa que la terminación fue provocada y no
+'             procese resultados a medio drenar (patrón de MT-B).
 ' ============================================
 Public Sub btnCerrar_Click()
 
@@ -382,5 +458,387 @@ Public Sub Form_Close()
       Endif
     Endif
   Endif
+
+End
+
+' ============================================
+' Función   : btnReemplazar_Click
+' Propósito : Aplica el reemplazo a las coincidencias SELECCIONADAS en la grilla.
+'             Es la única acción destructiva del formulario. Flujo:
+'               1. validar que haya reemplazo y selección
+'               2. guard de git ACOTADO a los archivos afectados
+'               3. pre-chequeo de mtime de TODOS los afectados (todo o nada)
+'               4. escribir cada archivo (coincidencias de atrás para adelante)
+'               5. log en log/ del proyecto
+'               6. re-correr la búsqueda para confirmar convergencia
+' ============================================
+Public Sub btnReemplazar_Click()
+
+  Dim aSel As Integer[]
+  Dim cPorArchivo As Collection
+  Dim sHead As String
+  Dim iEstado As Integer
+  Dim aArchivosAfectados As String[]
+  Dim sArchivoTocado As String
+  Dim iTotalReemplazos As Integer
+
+  ' --- 1. VALIDACIONES DE ENTRADA ---
+  If $sAplicar <> "1" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay texto de reemplazo: esta fue una búsqueda pura.")
+    Return
+  Endif
+
+  aSel = FilasSeleccionadas()
+  If aSel.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccioná al menos una coincidencia para reemplazar." & Chr(10) &
+      "Podés usar Ctrl+A para seleccionar todas.")
+    Return
+  Endif
+
+  ' --- 2. AGRUPAR LAS SELECCIONADAS POR ARCHIVO ---
+  cPorArchivo = AgruparPorArchivo(aSel)
+  aArchivosAfectados = ClavesColeccion(cPorArchivo)
+
+  ' --- 3. GUARD DE GIT ACOTADO A LOS ARCHIVOS AFECTADOS ---
+  If Not PasarGuardGit(aArchivosAfectados) Then Return
+
+  ' --- 4. PRE-CHEQUEO DE mtime: TODO O NADA ---
+  ' Se verifica el estado de TODOS los archivos afectados ANTES de escribir uno
+  ' solo. Si alguno cambió desde la búsqueda, se aborta la operación entera y no
+  ' se toca ningún archivo.
+  If Not PreChequearMtime(aArchivosAfectados) Then Return
+
+  ' --- 5. CAPTURAR EL HEAD PARA EL LOG (ANTES DE ESCRIBIR) ---
+  sHead = m_Git.ObtenerHead(m_InicioCierre.RutaProyectoEnCurso)
+
+  ' --- 6. ESCRIBIR CADA ARCHIVO ---
+  iTotalReemplazos = 0
+  For Each sArchivoTocado In aArchivosAfectados
+    If Not EscribirArchivo(sArchivoTocado, cPorArchivo[sArchivoTocado]) Then
+      ' UN FALLO A MITAD ES EL PEOR CASO: SE INFORMA Y SE FRENA. LOS ARCHIVOS YA
+      ' ESCRITOS QUEDAN ESCRITOS; git ES EL DESHACER. NO SE SIGUE ESCRIBIENDO.
+      m_Sonido.sonar("Error")
+      Message.Error("Error al escribir " & File.Name(sArchivoTocado) & "." & Chr(10) &
+        "Se detuvo el reemplazo. Revisá el estado con git." & Chr(10) &
+        "Los archivos ya modificados se pueden revertir con:" & Chr(10) &
+        "git checkout " & sHead & " -- .")
+      Return
+    Endif
+    iTotalReemplazos += cPorArchivo[sArchivoTocado].Count
+  Next
+
+  ' --- 7. LOG ---
+  EscribirLog(aArchivosAfectados, cPorArchivo, sHead, iTotalReemplazos)
+
+  ' --- 8. AVISO Y RE-CORRIDA ---
+  m_Sonido.sonar("Info")
+  Message.Info(CStr(iTotalReemplazos) & " reemplazo(s) en " & CStr(aArchivosAfectados.Count) & " archivo(s)." & Chr(10) &
+    "Se relanza la búsqueda para confirmar el resultado.")
+
+  ' MARCAR QUE HUBO ESCRITURA, PARA QUE FMain RECARGUE EL EDITOR SI EL ARCHIVO
+  ' EN CURSO FUE TOCADO (RC-GM-13: canal de retorno por módulo, no Public del form)
+  m_FuncionesGenericas.bRegexHuboEscritura = True
+
+  ' RE-CORRER: confirma convergencia y detecta patrones que no convergen (si el
+  ' reemplazo vuelve a matchear, el contador no baja).
+  IniciarBusqueda()
+
+End
+
+' ============================================
+' Función   : FilasSeleccionadas
+' Propósito : Devuelve los índices de las filas seleccionadas en la grilla.
+' Retorna   : Integer[] — índices en $aResultados
+' ============================================
+Private Function FilasSeleccionadas() As Integer[]
+
+  Dim aSel As New Integer[]
+  Dim i As Integer
+
+  For i = 0 To $aResultados.Count - 1
+    If gvResultados.Rows[i].Selected Then aSel.Add(i)
+  Next
+
+  Return aSel
+
+End
+
+' ============================================
+' Función   : AgruparPorArchivo
+' Propósito : Agrupa los índices seleccionados por archivo. Clave: ruta
+'             absoluta. Valor: Integer[] con los índices de $aResultados de ese
+'             archivo.
+' Parámetros: aSel As Integer[] — índices seleccionados
+' Retorna   : Collection de Integer[]
+' ============================================
+Private Function AgruparPorArchivo(aSel As Integer[]) As Collection
+
+  Dim c As New Collection
+  Dim iIdx As Integer
+  Dim sArchivo As String
+  Dim aIdx As Integer[]
+
+  For Each iIdx In aSel
+    sArchivo = $aResultados[iIdx][C_ARCHIVO]
+    If c.Exist(sArchivo) Then
+      aIdx = c[sArchivo]
+    Else
+      aIdx = New Integer[]
+      c[sArchivo] = aIdx
+    Endif
+    aIdx.Add(iIdx)
+  Next
+
+  Return c
+
+End
+
+' ============================================
+' Función   : ClavesColeccion
+' Propósito : Devuelve las claves de una Collection como String[]. Gambas no
+'             expone las claves directamente como array; se recorre con el
+'             enumerador y se usa Collection.Key.
+' Parámetros: c As Collection
+' Retorna   : String[]
+' ============================================
+Private Function ClavesColeccion(c As Collection) As String[]
+
+  Dim aClaves As New String[]
+  Dim v As Variant
+
+  For Each v In c
+    aClaves.Add(c.Key)
+  Next
+
+  Return aClaves
+
+End
+
+' ============================================
+' Función   : PasarGuardGit
+' Propósito : Guard de git acotado a los archivos afectados. Si esos .md tienen
+'             cambios sin commitear, el deshacer del reemplazo (git checkout) se
+'             los llevaría puestos: se avisa y se ofrece commitear, continuar o
+'             cancelar. El conjunto es atómico (opción a): si algo está sucio,
+'             el usuario decide para todo.
+' Parámetros: aArchivos As String[] — rutas absolutas afectadas
+' Retorna   : Boolean — True si se puede proceder con el reemplazo
+' ============================================
+Private Function PasarGuardGit(aArchivos As String[]) As Boolean
+
+  Dim iEstado As Integer
+  Dim iResp As Integer
+
+  iEstado = m_Git.EstadoArbolDeArchivos(m_InicioCierre.RutaProyectoEnCurso, aArchivos)
+
+  Select Case iEstado
+
+    Case m_Git.ARBOL_LIMPIO
+      ' LOS ARCHIVOS AFECTADOS ESTÁN COMITEADOS: EL DESHACER ES SEGURO
+      Return True
+
+    Case m_Git.ARBOL_SUCIO
+      ' EL GUARD NO COMMITEA: ESO ES FAMILIA INTERACTIVA (EmpujarGitLocal ESCRIBE
+      ' EN LA TERMINAL Y ABRE FCommits.ShowModal, QUE ANIDARÍA UN MODAL SOBRE
+      ' ESTE). EL COMMIT LO HACE EL USUARIO EN FMain, CON EL BOTÓN DE GIT QUE YA
+      ' FUNCIONA Y DEJA VER LA TERMINAL. ACÁ SOLO AVISAMOS Y DEJAMOS DECIDIR.
+      iResp = Message.Question("Algunos de los archivos que se van a modificar tienen cambios sin commitear en git." & Chr(10) & Chr(10) &
+        "Si continuás y después querés deshacer el reemplazo con git, esos cambios se perderían." & Chr(10) & Chr(10) &
+        "Lo recomendable es cancelar, commitear desde el botón de git de la ventana principal, y volver a buscar." & Chr(10) & Chr(10) &
+        "¿Continuar igual?", "Continuar igual", "Cancelar")
+      ' Message.Question DEVUELVE 1 PARA EL PRIMER BOTÓN, 2 PARA EL SEGUNDO
+      Return (iResp = 1)
+
+    Case m_Git.ARBOL_SIN_REPO
+      iResp = Message.Question("El proyecto no es un repositorio git." & Chr(10) & Chr(10) &
+        "Esta operación NO se podrá deshacer automáticamente." & Chr(10) & Chr(10) &
+        "¿Continuar de todos modos?", "Continuar", "Cancelar")
+      Return (iResp = 1)
+
+    Case Else
+      ' ARBOL_ERROR: NO ESCRIBIMOS A CIEGAS SI NO PODEMOS EVALUAR EL ESTADO
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo evaluar el estado de git del proyecto." & Chr(10) &
+        "El reemplazo se cancela por precaución.")
+      Return False
+
+  End Select
+
+End
+
+' ============================================
+' Función   : PreChequearMtime
+' Propósito : Verifica que NINGÚN archivo afectado haya cambiado desde la
+'             búsqueda, comparando su firma actual contra $cSnapshot. Todo o
+'             nada: si uno cambió, se aborta sin escribir ninguno.
+' Parámetros: aArchivos As String[] — rutas absolutas afectadas
+' Retorna   : Boolean — True si todos coinciden con su snapshot
+' ============================================
+Private Function PreChequearMtime(aArchivos As String[]) As Boolean
+
+  Dim sArchivo As String
+  Dim sAhora As String
+  Dim sSnapshot As String
+
+  For Each sArchivo In aArchivos
+    sAhora = FirmaArchivo(sArchivo)
+    sSnapshot = ""
+    If $cSnapshot.Exist(sArchivo) Then sSnapshot = $cSnapshot[sArchivo]
+
+    ' FIRMA VACÍA (STAT FALLÓ) O DISTINTA A LA CAPTURADA: EL ARCHIVO NO ES EL
+    ' QUE BUSCAMOS. SE ABORTA TODO.
+    If sAhora = "" Or If sAhora <> sSnapshot Then
+      m_Sonido.sonar("Error")
+      Message.Error("El archivo " & File.Name(sArchivo) & " cambió desde la búsqueda." & Chr(10) &
+        "El reemplazo se cancela por completo para no escribir sobre datos desactualizados." & Chr(10) & Chr(10) &
+        "Volvé a buscar y reintentá.")
+      Return False
+    Endif
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirArchivo
+' Propósito : Aplica al archivo todas sus coincidencias seleccionadas, de atrás
+'             para adelante (offset descendente), para que los offsets anteriores
+'             no se corran. Un solo File.Load y un solo File.Save por archivo.
+' Parámetros: sRuta As String — ruta absoluta del archivo
+'             aIndices As Integer[] — índices en $aResultados de este archivo
+' Retorna   : Boolean — True si se escribió sin error
+' ============================================
+Private Function EscribirArchivo(sRuta As String, aIndices As Integer[]) As Boolean
+
+  Dim sContenido As String
+  Dim aOrdenados As Integer[]
+  Dim iIdx As Integer
+  Dim aReg As String[]
+  Dim iOffset As Integer
+  Dim iLargo As Integer
+  Dim sDespues As String
+  Dim sAntes As String
+  Dim sResto As String
+
+  ' --- 1. CARGAR EL ARCHIVO ENTERO ---
+  Try sContenido = File.Load(sRuta)
+  If Error Then Return False
+
+  ' --- 2. ORDENAR LOS ÍNDICES POR OFFSET DESCENDENTE ---
+  ' Aplicar de atrás para adelante mantiene válidos los offsets de las
+  ' coincidencias anteriores (que están antes en el texto).
+  aOrdenados = OrdenarPorOffsetDesc(aIndices)
+
+  ' --- 3. APLICAR CADA COINCIDENCIA ---
+  ' String.Mid es 1-based y por caracteres (UTF-8), coherente con los offsets
+  ' del script, que están en caracteres (no bytes).
+  For Each iIdx In aOrdenados
+    aReg = $aResultados[iIdx]
+    iOffset = CInt(aReg[C_OFFSET])
+    iLargo = CInt(aReg[C_LARGO])
+    sDespues = aReg[C_DESPUES]
+
+    sAntes = String.Mid(sContenido, 1, iOffset)
+    sResto = String.Mid(sContenido, iOffset + iLargo + 1)
+    sContenido = sAntes & sDespues & sResto
+  Next
+
+  ' --- 4. GUARDAR ---
+  ' File.Save es UTF-8 nativo (SC-02): preserva acentos, NBSP y demás.
+  Try File.Save(sRuta, sContenido)
+  If Error Then Return False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : OrdenarPorOffsetDesc
+' Propósito : Devuelve los índices ordenados por el offset de su coincidencia,
+'             de mayor a menor. Selection sort simple: la cantidad de
+'             coincidencias por archivo es chica (decenas), no justifica más.
+' Parámetros: aIndices As Integer[]
+' Retorna   : Integer[] — mismos índices, orden descendente por offset
+' ============================================
+Private Function OrdenarPorOffsetDesc(aIndices As Integer[]) As Integer[]
+
+  Dim a As Integer[] = aIndices.Copy()
+  Dim i As Integer
+  Dim j As Integer
+  Dim iMax As Integer
+  Dim iTmp As Integer
+
+  For i = 0 To a.Count - 2
+    iMax = i
+    For j = i + 1 To a.Count - 1
+      If CInt($aResultados[a[j]][C_OFFSET]) > CInt($aResultados[a[iMax]][C_OFFSET]) Then iMax = j
+    Next
+    If iMax <> i Then
+      iTmp = a[i]
+      a[i] = a[iMax]
+      a[iMax] = iTmp
+    Endif
+  Next
+
+  Return a
+
+End
+
+' ============================================
+' Función   : EscribirLog
+' Propósito : Registra la operación en log/ del proyecto (ignorado por git). El
+'             log es la hoja de ruta LOCAL: qué se cambió y con qué hash volver
+'             atrás. Formato texto plano legible, acumulativo (se agrega al
+'             final del mismo archivo).
+' Parámetros: aArchivos As String[], cPorArchivo As Collection, sHead As String,
+'             iTotal As Integer
+' ============================================
+Private Sub EscribirLog(aArchivos As String[], cPorArchivo As Collection, sHead As String, iTotal As Integer)
+
+  Dim sRutaLog As String
+  Dim sLog As String
+  Dim sArchivo As String
+  Dim sLinea As String
+  Dim hArchivo As File
+
+  sRutaLog = m_InicioCierre.RutaProyectoEnCurso &/ "log" &/ "reemplazos-regex.log"
+
+  ' --- CONSTRUIR EL BLOQUE ---
+  sLog = "════════════════════════════════════════" & Chr(10)
+  sLog &= "Operación de reemplazo regex" & Chr(10)
+  sLog &= "Fecha:     " & Format(Now(), "yyyy-mm-dd hh:nn:ss") & Chr(10)
+  sLog &= "Usuario:   " & m_InicioCierre.UsuarioEnCurso & Chr(10)
+  If sHead <> "" Then sLog &= "Commit:    " & sHead & Chr(10)
+  sLog &= "Patrón:    " & $sPatron & Chr(10)
+  sLog &= "Reemplazo: " & $sReemplazo & Chr(10)
+  sLog &= "Flags:     " & $sFlags & Chr(10)
+  sLog &= "────────────────────────────────────────" & Chr(10)
+  For Each sArchivo In aArchivos
+    sLinea = File.Name(sArchivo) & ": " & CStr(cPorArchivo[sArchivo].Count) & " reemplazo(s)"
+    sLog &= sLinea & Chr(10)
+  Next
+  sLog &= "────────────────────────────────────────" & Chr(10)
+  sLog &= "Total: " & CStr(iTotal) & " reemplazo(s) en " & CStr(aArchivos.Count) & " archivo(s)" & Chr(10)
+  If sHead <> "" Then sLog &= "Para deshacer: git checkout " & sHead & " -- ." & Chr(10)
+  sLog &= "════════════════════════════════════════" & Chr(10) & Chr(10)
+
+  ' --- APENDER AL ARCHIVO (CREAR SI NO EXISTE) ---
+  ' Un fallo de log NO debe abortar nada: el reemplazo ya se hizo. Se avisa
+  ' suave y se sigue. Try por línea (patrón del proyecto), no Try de bloque.
+  If Exist(sRutaLog) Then
+    Try hArchivo = Open sRutaLog For Append
+  Else
+    Try hArchivo = Open sRutaLog For Create
+  Endif
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Return
+  Endif
+
+  Try Print #hArchivo, sLog;
+  Try Close #hArchivo
 
 End
