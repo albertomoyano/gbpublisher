@@ -1,7 +1,386 @@
 ' Gambas class file
 
+' ============================================
+' Formulario: FRegexResultados
+' Propósito : Muestra las coincidencias de una búsqueda por expresiones
+'             regulares sobre una lista de archivos ya resuelta. CAPA 1:
+'             SOLO BÚSQUEDA Y VISUALIZACIÓN. No escribe en ningún archivo.
+'             El reemplazo (preview, git, log, escritura) llega en la Capa 2.
+'
+'             La búsqueda corre como PROCESO ASÍNCRONO (perl): la grilla se
+'             puebla incremental por el evento Read y el usuario puede Cancelar
+'             en cualquier momento (Process.Kill). La UI no se congela ni con el
+'             peor patrón, porque el trabajo pesado vive en otro proceso — es la
+'             razón por la que se eligió perl externo sobre gb.pcre.
+'
+'             La grilla es VIRTUAL (evento Data): el array de coincidencias que
+'             devuelve perl ES el modelo, la grilla solo lo pinta bajo demanda.
+'             No se duplica estado; las filas son índices en ese array. Eso es
+'             además lo que hará consumible el reemplazo de la Capa 2: las filas
+'             seleccionadas serán índices directos en la lista de coincidencias.
+'
+' Controles del .form:
+'   gvResultados (GridView)          — la grilla de coincidencias
+'   lblContador (Label)              — "N coincidencias en M archivos"
+'   lblEncabezado (Label)            — patrón / ámbito, solo lectura
+'   btnCancelar (Button)             — corta la búsqueda en curso
+'   btnCerrar (Button)               — cierra el formulario
+'   txtContexto (TextArea, ReadOnly) — contexto de la coincidencia seleccionada
+' ============================================
+
+' --- CONFIGURACIÓN RECIBIDA DE m_BuscarRegex (por Configurar) ---
+Private $aArchivos As String[]
+Private $sPatron As String
+Private $sReemplazo As String
+Private $sFlags As String
+Private $sAplicar As String
+Private $sRutaScript As String
+
+' --- PROCESO DE BÚSQUEDA Y SU ESTADO ---
+Private $hProc As Process
+Private $sBuffer As String            ' ACUMULA LA SALIDA CRUDA DEL PROCESO
+Private $bCancelado As Boolean        ' EL Kill FUE PEDIDO POR EL USUARIO (MT-B)
+Private $bBuscando As Boolean
+
+' --- MODELO DE RESULTADOS ---
+' Cada coincidencia es un String[] de 8 campos, en el orden del protocolo del
+' script: archivo, offset, linea, columna, largo, antes, despues, linea_texto.
+Private $aResultados As New Object[]
+
+' --- ÍNDICES DE CAMPO EN CADA REGISTRO (deben coincidir con el .pl) ---
+Private Const C_ARCHIVO As Integer = 0
+Private Const C_OFFSET As Integer = 1
+Private Const C_LINEA As Integer = 2
+Private Const C_COLUMNA As Integer = 3
+Private Const C_LARGO As Integer = 4
+Private Const C_ANTES As Integer = 5
+Private Const C_DESPUES As Integer = 6
+Private Const C_LINEA_TEXTO As Integer = 7
+
+' --- BANDERA DE CIERRE CONTROLADO (patrón canónico del proyecto) ---
+Private bCierrePermitido As Boolean
+
+' ============================================
+' Función   : Configurar
+' Propósito : Recibe de m_BuscarRegex todo el estado necesario para buscar. El
+'             formulario es autónomo: no lee ningún control de FMain. Se llama
+'             ANTES de ShowModal.
+' Parámetros: aArchivos As String[] — rutas absolutas a buscar (ya resueltas
+'               según el ámbito; puede ser una, varias o toda la whitelist)
+'             sPatron, sReemplazo, sFlags, sAplicar As String — parámetros del
+'               script (sFlags "-" si ninguno; sAplicar "1"/"0")
+'             sRutaScript As String — ruta del motor perl
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Configurar(aArchivos As String[], sPatron As String, sReemplazo As String, sFlags As String, sAplicar As String, sRutaScript As String)
+
+  $aArchivos = aArchivos
+  $sPatron = sPatron
+  $sReemplazo = sReemplazo
+  $sFlags = sFlags
+  $sAplicar = sAplicar
+  $sRutaScript = sRutaScript
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Configura la grilla y lanza la búsqueda.
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. CONFIGURAR LA GRILLA VIRTUAL ---
+  With gvResultados
+    .Clear
+    .Columns.Count = 5
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 200
+    .Columns[1].Title = "Línea"
+    .Columns[1].Width = 60
+    .Columns[2].Title = "Col"
+    .Columns[2].Width = 50
+    .Columns[3].Title = "Coincidencia"
+    .Columns[3].Width = 240
+    .Columns[4].Title = "Reemplazo"
+    ' EL ANCHO DE ESTA COLUMNA SE DECIDE ABAJO SEGÚN HAYA REEMPLAZO O NO
+    .Mode = Select.Multiple
+    .Header = True
+    .Rows.Count = 0
+  End With
+
+  ' EN LA CAPA 1 LA COLUMNA "REEMPLAZO" SOLO TIENE SENTIDO SI HAY REEMPLAZO.
+  ' GridView.Columns NO TIENE Visible: SE OCULTA CON ANCHO 0 (IGUAL QUE EN
+  ' FProyectosParcial). SI HAY REEMPLAZO SE LE DA ANCHO; SI NO, 0.
+  If $sAplicar = "1" Then
+    gvResultados.Columns[4].Width = 240
+  Else
+    gvResultados.Columns[4].Width = 0
+  Endif
+
+  ' --- 2. ENCABEZADO INFORMATIVO ---
+  lblEncabezado.Text = "Patrón: " & $sPatron & "   ·   Archivos: " & $aArchivos.Count
+  txtContexto.Text = ""
+
+  ' --- 3. LANZAR LA BÚSQUEDA ---
+  IniciarBusqueda()
+
+End
+
+' ============================================
+' Función   : IniciarBusqueda
+' Propósito : Lanza el proceso perl en modo 'buscar' de forma asíncrona. La
+'             lista de archivos va como argumentos después de los parámetros
+'             fijos. La salida llega por el evento Proceso_Read y se procesa al
+'             terminar, en Proceso_Kill.
+' ============================================
+Private Sub IniciarBusqueda()
+
+  Dim aComando As New String[]
+
+  ' --- 1. ESTADO INICIAL ---
+  $aResultados.Clear
+  $sBuffer = ""
+  $bCancelado = False
+  $bBuscando = True
+  gvResultados.Rows.Count = 0
+  lblContador.Text = "Buscando…"
+  btnCancelar.Enabled = True
+
+  ' --- 2. ARMAR EL COMANDO: perl -CSA script buscar patron reemplazo flags aplicar <archivos...> ---
+  ' Se arma como String[] y se agregan los archivos uno a uno: así la lista no
+  ' tiene límite y ningún nombre con espacios necesita comillas (no hay shell).
+  aComando.Add("perl")
+  aComando.Add("-CSA")
+  aComando.Add($sRutaScript)
+  aComando.Add("buscar")
+  aComando.Add($sPatron)
+  aComando.Add($sReemplazo)
+  aComando.Add($sFlags)
+  aComando.Add($sAplicar)
+  aComando.Insert($aArchivos)   ' AGREGA TODAS LAS RUTAS AL FINAL
+
+  ' --- 3. LANZAR ASÍNCRONO CON LECTURA ---
+  Try $hProc = Exec aComando For Read As "Proceso"
+  If Error Then
+    $bBuscando = False
+    btnCancelar.Enabled = False
+    lblContador.Text = "Error al lanzar la búsqueda: " & Error.Text
+    m_Sonido.sonar("Error")
+  Endif
+
+End
+
+' EVENTO Read: LLEGA SALIDA DEL PROCESO. SE ACUMULA CRUDA Y SE PROCESA AL FINAL.
+' Se acumula en lugar de parsear incremental porque una coincidencia puede
+' quedar partida entre dos lecturas; el parseo por registros completos se hace
+' una vez que el proceso terminó, con todo el buffer.
+' La forma Read #Last, -N es la verificada en el mini-test MT-B: lee hasta N
+' bytes de lo disponible sin bloquear. El evento Read se dispara repetidamente
+' mientras haya datos, así que el buffer se completa a lo largo de varias
+' llamadas hasta el EOF que precede a Kill.
+Public Sub Proceso_Read()
+
+  Dim sTrozo As String
+
+  Try sTrozo = Read #Last, -4096
+  If Not Error Then $sBuffer &= sTrozo
+
+End
+
+' EVENTO Kill: EL PROCESO TERMINÓ (SOLO O POR Cancelar). Proceso_Kill se dispara
+' en ambos casos; $bCancelado distingue cuál fue (patrón de MT-B).
+Public Sub Proceso_Kill()
+
+  $bBuscando = False
+  btnCancelar.Enabled = False
+
+  ' --- 1. SI FUE CANCELADO, DESCARTAR TODO ---
+  If $bCancelado Then
+    $aResultados.Clear
+    gvResultados.Rows.Count = 0
+    lblContador.Text = "Búsqueda cancelada."
+    m_Sonido.sonar("Info")
+    Return
+  Endif
+
+  Debug "buffer len: " & String.Len($sBuffer)
+  Debug "buffer ini: " & Left($sBuffer, 200)
+
+  ' --- 2. PARSEAR EL BUFFER COMPLETO A REGISTROS ---
+  ' Para cuando Kill se dispara, el evento Read ya entregó todo hasta EOF: el
+  ' buffer está completo. No hace falta un drenaje extra.
+  ParsearResultados()
+
+  ' --- 3. VOLCAR A LA GRILLA Y CONTAR ---
+  gvResultados.Rows.Count = $aResultados.Count
+  gvResultados.Refresh
+  ActualizarContador()
+
+  If $aResultados.Count = 0 Then
+    m_Sonido.sonar("Warning")
+  Else
+    m_Sonido.sonar("Info")
+  Endif
+
+End
+
+' ============================================
+' Función   : ParsearResultados
+' Propósito : Convierte el buffer crudo (campos separados por NUL, 8 por
+'             registro) en $aResultados: una lista de String[] de 8 campos.
+'             El script termina cada campo con NUL, incluido el último de cada
+'             registro, así que el total de campos es múltiplo de 8.
+' ============================================
+Private Sub ParsearResultados()
+
+  Dim aCampos As String[]
+  Dim iBase As Integer
+  Dim aRegistro As String[]
+  Dim j As Integer
+
+  $aResultados.Clear
+  If $sBuffer = "" Then Return
+
+  ' Split por NUL. El buffer termina en NUL, lo que genera un último elemento
+  ' vacío; se descarta al iterar por bloques exactos de 8.
+  aCampos = Split($sBuffer, Chr(0), "", False)
+
+  ' Se recorre en bloques de 8. Si el último bloque está incompleto (proceso
+  ' cortado a la mitad pese a no ser cancelación), se descarta.
+  iBase = 0
+  While iBase + 8 <= aCampos.Count
+    aRegistro = New String[]
+    For j = 0 To 7
+      aRegistro.Add(aCampos[iBase + j])
+    Next
+    $aResultados.Add(aRegistro)
+    iBase += 8
+  Wend
+
+End
+
+' EVENTO Data DE LA GRILLA VIRTUAL: PINTA LA CELDA (Row, Column) BAJO DEMANDA
+' LEYENDO DEL MODELO $aResultados. No hay estado duplicado.
+Public Sub gvResultados_Data(Row As Integer, Column As Integer)
+
+  Dim aReg As String[]
+
+  If Row < 0 Or If Row >= $aResultados.Count Then Return
+  aReg = $aResultados[Row]
+
+  Select Case Column
+    Case 0
+      ' SOLO EL NOMBRE, NO LA RUTA ENTERA (LA COLUMNA ES ANGOSTA)
+      gvResultados.Data.Text = File.Name(aReg[C_ARCHIVO])
+    Case 1
+      ' LÍNEA EN BASE 1 PARA EL USUARIO (EL SCRIPT LA DA EN BASE 0)
+      gvResultados.Data.Text = CStr(CInt(aReg[C_LINEA]) + 1)
+    Case 2
+      gvResultados.Data.Text = CStr(CInt(aReg[C_COLUMNA]) + 1)
+    Case 3
+      gvResultados.Data.Text = aReg[C_ANTES]
+    Case 4
+      gvResultados.Data.Text = aReg[C_DESPUES]
+  End Select
+
+End
+
+' EVENTO Select DE LA GRILLA: MOSTRAR EL CONTEXTO DE LA COINCIDENCIA ACTIVA
+Public Sub gvResultados_Select()
+
+  Dim aReg As String[]
+  Dim iFila As Integer
+
+  iFila = gvResultados.Row
+  If iFila < 0 Or If iFila >= $aResultados.Count Then Return
+  aReg = $aResultados[iFila]
+
+  ' CONTEXTO SIMPLE EN LA CAPA 1: LA LÍNEA COMPLETA DONDE ESTÁ LA COINCIDENCIA.
+  ' El preview antes→después resaltado llega en la Capa 2.
+  txtContexto.Text = File.Name(aReg[C_ARCHIVO]) & "  (línea " & CStr(CInt(aReg[C_LINEA]) + 1) & ")" &
+    Chr(10) & Chr(10) & aReg[C_LINEA_TEXTO]
+
+End
+
+' ============================================
+' Función   : ActualizarContador
+' Propósito : "N coincidencias en M archivos". M es la cantidad de archivos
+'             DISTINTOS que aparecen en los resultados, no la cantidad buscada.
+' ============================================
+Private Sub ActualizarContador()
+
+  Dim aReg As String[]
+  Dim cArchivos As New Collection
+  Dim iCoincidencias As Integer
+
+  iCoincidencias = $aResultados.Count
+  For Each aReg In $aResultados
+    ' LA CLAVE DE LA COLECCIÓN HACE DE CONJUNTO: ARCHIVOS DISTINTOS
+    cArchivos[aReg[C_ARCHIVO]] = True
+  Next
+
+  lblContador.Text = CStr(iCoincidencias) & " coincidencia(s) en " & CStr(cArchivos.Count) & " archivo(s)"
+
+End
+
+' ============================================
+' Función   : btnCancelar_Click
+' Propósito : Corta la búsqueda en curso. Levanta $bCancelado ANTES del Kill
+'             para que Proceso_Kill sepa que fue cancelación y descarte los
+'             resultados (patrón de MT-B: Kill dispara el mismo evento que una
+'             terminación normal).
+' ============================================
+Public Sub btnCancelar_Click()
+
+  If Not $bBuscando Then Return
+  If IsNull($hProc) Then Return
+
+  $bCancelado = True
+  If Object.IsValid($hProc) Then
+    If $hProc.State = Process.Running Then Try $hProc.Kill
+  Endif
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario. Si hay una búsqueda en curso, la cancela
+'             primero para no dejar un proceso huérfano.
+' ============================================
 Public Sub btnCerrar_Click()
 
-  Me.Close
+  If $bBuscando Then
+    $bCancelado = True
+    If Not IsNull($hProc) Then
+      If Object.IsValid($hProc) Then
+        If $hProc.State = Process.Running Then Try $hProc.Kill
+      Endif
+    Endif
+  Endif
+
+  bCierrePermitido = True
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Bloquea el cierre por la X del sistema mientras busca, para no
+'             dejar el proceso corriendo. Con búsqueda terminada, permite cerrar.
+' ============================================
+Public Sub Form_Close()
+
+  ' SI SE PERMITIÓ EXPLÍCITAMENTE (btnCerrar), DEJAR CERRAR
+  If bCierrePermitido Then Return
+
+  ' SI HAY BÚSQUEDA EN CURSO, CANCELARLA ANTES DE CERRAR
+  If $bBuscando Then
+    $bCancelado = True
+    If Not IsNull($hProc) Then
+      If Object.IsValid($hProc) Then
+        If $hProc.State = Process.Running Then Try $hProc.Kill
+      Endif
+    Endif
+  Endif
 
 End

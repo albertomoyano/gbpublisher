@@ -1,0 +1,634 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_BuscarRegex
+' Propósito : LADO GAMBAS DEL BUSCADOR POR EXPRESIONES REGULARES. Es dueño del
+'             estado de la pestaña "regexp" de FMain; los handlers de FMain solo
+'             delegan acá (patrón módulo-dueño-del-estado, como m_GestionImagenes
+'             y m_RevisarPDF).
+'
+'             El motor real es el script perl engine/buscar_regex.pl. Este módulo
+'             NUNCA aplica regex por su cuenta: arma la invocación, parsea la
+'             salida y gobierna la UI. La división es la misma que con Saxon o
+'             Pandoc: Gambas orquesta, el proceso externo procesa.
+'
+'             RESPONSABILIDADES DE ESTA ENTREGA:
+'               - Resolver la ruta del script (instalación del sistema, no
+'                 ~/.gbpublisher: el motor no se personaliza).
+'               - Armar la whitelist de archivos del proyecto (ObtenerArchivosMD).
+'               - Validación continua del patrón con debounce.
+'               - btnProbar: banco de pruebas en seco sobre areaEditor.
+'               - Gobernar el ámbito (los tres radiobutton + txtFiltrar).
+'             btnBuscarRegex queda como stub hasta construir FRegexResultados.
+'
+' Convención de nombres de controles en la pestaña (FMain):
+'   rbProyecto rbEnCurso rbFiltrar   — ámbito (radiobutton)
+'   txtFiltrar                       — filtro de archivos (solo con rbFiltrar)
+'   cmbPatronesBBDD                  — biblioteca de modelos (pendiente)
+'   txtBuscar txtReemplazo           — patrón y reemplazo
+'   ckbCaseless ckbMultiline ckbDotAll ckbExtended — flags /i /m /s /x
+'   btnProbar btnBuscarRegex         — acciones
+'   areaEditor areaEditorMostrarResultado — banco de pruebas (TextArea)
+' ============================================
+
+' --- SEPARADOR DE AVISOS DEL VALIDADOR (debe coincidir con el .pl) ---
+' Los campos del protocolo se separan con NUL (Chr(0)); dentro del campo de
+' avisos, cada aviso se separa con este carácter (0x1F). El NUL se maneja con
+' Chr(0) directamente en el parseo, por claridad.
+Private Const SEP_LISTA As String = "\x1F"
+
+' --- PREFIJOS DE ARCHIVO POR CARPETA (whitelist) ---
+' front-matter → fm-  |  articulos → a-  |  back-matter → bm-
+' El patrón completo exige prefijo + "-" + 2 dígitos + "-": fm-NN-, a-NN-, bm-NN-
+' Un notas.md o un a-1.md (sin los dos dígitos) quedan fuera del proyecto.
+Private Const PREFIJO_FRONT As String = "fm"
+Private Const PREFIJO_ARTICULOS As String = "a"
+Private Const PREFIJO_BACK As String = "bm"
+
+' --- DEBOUNCE DE LA VALIDACIÓN CONTINUA ---
+' Cada cambio en patrón/reemplazo/flags reinicia el timer; la validación
+' dispara cuando el usuario deja de tipear DEMORA_VALIDACION ms. Evita lanzar
+' un proceso perl por cada tecla.
+Private Const DEMORA_VALIDACION As Integer = 300
+Private $hTimerValidar As Timer
+
+' --- ESTADO DE LA ÚLTIMA VALIDACIÓN ---
+' Lo consume btnBuscarRegex: solo se busca si el patrón compiló.
+Private $bPatronValido As Boolean
+
+' ============================================
+' Función   : RutaScript
+' Propósito : DEVUELVE LA RUTA ABSOLUTA DEL MOTOR PERL. Vive en la instalación
+'             del sistema (engine/), NO en ~/.gbpublisher: no es personalizable,
+'             y así el script y este módulo viajan siempre en el mismo .deb, sin
+'             posibilidad de quedar desincronizados.
+' Retorna   : String — ruta al script
+' ============================================
+Private Function RutaScript() As String
+
+  Return m_InicioCierre.RutaRecursos() &/ "engine" &/ "buscar_regex.pl"
+
+End
+
+' ============================================
+' Función   : InicializarTabRegex
+' Propósito : Prepara la pestaña al abrir un proyecto. La habilita solo si hay
+'             archivos en disco: en modo parcial RutaProyectoEnCurso está vacía
+'             (SC-06) y no hay nada que buscar. Se llama desde FMain.AbrirProyecto
+'             junto a las demás Inicializar* (shortcodes, PDF, imágenes).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub InicializarTabRegex()
+
+  ' --- 1. CREAR EL TIMER DE DEBOUNCE UNA SOLA VEZ ---
+  If IsNull($hTimerValidar) Then
+    $hTimerValidar = New Timer As "TimerValidarRegex"
+    $hTimerValidar.Delay = DEMORA_VALIDACION
+  Endif
+  $hTimerValidar.Stop
+
+  ' --- 2. ÁMBITO POR DEFECTO: TODO EL PROYECTO ---
+  FMain.rbProyecto.Value = True
+  FMain.txtFiltrar.Text = ""
+  FMain.txtFiltrar.Enabled = False
+
+  ' --- 3. LIMPIAR ENTRADAS Y RESULTADO DEL BANCO DE PRUEBAS ---
+  FMain.txtBuscar.Text = ""
+  FMain.txtReemplazo.Text = ""
+  FMain.areaEditor.Text = ""
+  FMain.areaEditorMostrarResultado.Text = ""
+
+  ' --- 4. FLAGS EN FALSO ---
+  FMain.ckbCaseless.Value = False
+  FMain.ckbMultiline.Value = False
+  FMain.ckbDotAll.Value = False
+  FMain.ckbExtended.Value = False
+
+  ' --- 5. ESTADO INICIAL: SIN PATRÓN NO HAY NADA HABILITADO ---
+  $bPatronValido = False
+  FMain.btnProbar.Enabled = False
+  FMain.btnBuscarRegex.Enabled = False
+
+End
+
+' ============================================
+' Función   : ObtenerArchivosMD
+' Propósito : DEFINICIÓN ÚNICA DE "CUÁLES SON LOS ARCHIVOS DE CONTENIDO DEL
+'             PROYECTO". Devuelve las rutas absolutas de los .md de front-matter,
+'             articulos y back-matter que cumplen la nomenclatura, en orden
+'             editorial. NO incluye el .md principal del proyecto ni toca la UI.
+'             Es la whitelist del buscador: perl recibe exactamente esta lista y
+'             no enumera el filesystem por su cuenta.
+' Parámetros: (ninguno)
+' Retorna   : String[] — rutas absolutas; orden: front-matter, articulos,
+'             back-matter; alfabético dentro de cada carpeta. Vacío si no hay
+'             proyecto con archivos (modo parcial o sin abrir).
+' ============================================
+Public Function ObtenerArchivosMD() As String[]
+
+  Dim aResultado As New String[]
+
+  ' --- 1. SIN ARCHIVOS EN DISCO NO HAY NADA QUE LISTAR ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then Return aResultado
+
+  ' --- 2. RECORRER LAS TRES CARPETAS EN ORDEN EDITORIAL ---
+  AcumularArchivosCarpeta(aResultado, "front-matter", PREFIJO_FRONT)
+  AcumularArchivosCarpeta(aResultado, "articulos", PREFIJO_ARTICULOS)
+  AcumularArchivosCarpeta(aResultado, "back-matter", PREFIJO_BACK)
+
+  Return aResultado
+
+End
+
+' ============================================
+' Función   : AcumularArchivosCarpeta
+' Propósito : Agrega a la lista las rutas absolutas de los .md de una carpeta que
+'             cumplen la nomenclatura prefijo-NN-*. Auxiliar de ObtenerArchivosMD.
+' Parámetros: aDestino As String[] — lista donde acumular (se modifica)
+'             sCarpeta As String — nombre de la subcarpeta del proyecto
+'             sPrefijo As String — prefijo esperado (fm, a, bm)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub AcumularArchivosCarpeta(aDestino As String[], sCarpeta As String, sPrefijo As String)
+
+  Dim sRutaCarpeta As String
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  ' --- 1. LA CARPETA PUEDE NO EXISTIR (PROYECTO INCOMPLETO) ---
+  sRutaCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ sCarpeta
+  If Not Exist(sRutaCarpeta) Then Return
+
+  ' --- 2. LISTAR .md Y ORDENAR ALFABÉTICO (= EDITORIAL CON NN DE DOS DÍGITOS) ---
+  aArchivos = Dir(sRutaCarpeta, "*.md")
+  If Not aArchivos Then Return
+  aArchivos.Sort()
+
+  ' --- 3. FILTRAR POR NOMENCLATURA Y ACUMULAR RUTA ABSOLUTA ---
+  For Each sArchivo In aArchivos
+    If CumpleNomenclatura(sArchivo, sPrefijo) Then
+      aDestino.Add(sRutaCarpeta &/ sArchivo)
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : CumpleNomenclatura
+' Propósito : Verifica que un nombre de archivo siga el patrón prefijo-NN-*.md:
+'             el prefijo, un guion, exactamente dos dígitos, otro guion, y luego
+'             lo que sea. Deja fuera notas.md, a-1-x.md, fm.md, etc.
+'             Se resuelve con String.* (no gb.pcre): el nombre es corto y la
+'             regla es fija, no hace falta un motor de regex para esto.
+' Parámetros: sNombre As String — nombre de archivo (sin ruta)
+'             sPrefijo As String — prefijo esperado
+' Retorna   : Boolean
+' ============================================
+Private Function CumpleNomenclatura(sNombre As String, sPrefijo As String) As Boolean
+
+  Dim sEsperado As String
+  Dim sResto As String
+  Dim iLargoPref As Integer
+
+  ' --- 1. DEBE EMPEZAR CON "prefijo-" ---
+  sEsperado = sPrefijo & "-"
+  iLargoPref = String.Len(sEsperado)
+  If String.Left(sNombre, iLargoPref) <> sEsperado Then Return False
+
+  ' --- 2. DESPUÉS DEL PREFIJO: DOS DÍGITOS Y UN GUION ---
+  ' sResto ARRANCA JUSTO DESPUÉS DE "prefijo-"
+  sResto = String.Mid(sNombre, iLargoPref + 1)
+  If String.Len(sResto) < 3 Then Return False
+  If Not IsDigit(String.Mid(sResto, 1, 1)) Then Return False
+  If Not IsDigit(String.Mid(sResto, 2, 1)) Then Return False
+  If String.Mid(sResto, 3, 1) <> "-" Then Return False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ArchivoEnCursoEsBuscable
+' Propósito : Indica si el archivo actualmente cargado en el editor
+'             (m_InicioCierre.sRutaArchivoAbierto... via FMain) cumple la
+'             whitelist. El .md principal del proyecto es el "cuaderno de notas"
+'             del maquetador y NO es contenido editorial: queda fuera, igual que
+'             cualquier notas.md. Por eso rbEnCurso se habilita solo cuando el
+'             archivo en curso es un fm-/a-/bm- con nomenclatura -NN-.
+' Retorna   : Boolean
+' ============================================
+Public Function ArchivoEnCursoEsBuscable() As Boolean
+
+  Dim sRuta As String
+  Dim sCarpeta As String
+  Dim sNombre As String
+
+  ' --- 1. RUTA DEL ARCHIVO EN EL EDITOR ---
+  ' sRutaArchivoAbierto se mantiene actualizada en el _Click del combo con la
+  ' ruta absoluta del archivo cargado.
+  sRuta = FMain.sRutaArchivoAbierto
+  If Trim(sRuta) = "" Then Return False
+  If Not Exist(sRuta) Then Return False
+
+  ' --- 2. LA CARPETA CONTENEDORA DEBE SER UNA DE LAS TRES ---
+  ' El prefijo esperado depende de la carpeta: un a-01-*.md en front-matter no
+  ' es válido. Se deriva el prefijo de la carpeta y se verifica la nomenclatura.
+  sNombre = File.Name(sRuta)
+  sCarpeta = File.Name(File.Dir(sRuta))
+
+  Select Case sCarpeta
+    Case "front-matter"
+      Return CumpleNomenclatura(sNombre, PREFIJO_FRONT)
+    Case "articulos"
+      Return CumpleNomenclatura(sNombre, PREFIJO_ARTICULOS)
+    Case "back-matter"
+      Return CumpleNomenclatura(sNombre, PREFIJO_BACK)
+    Default
+      Return False
+  End Select
+
+End
+
+' ============================================
+' Función   : ResolverAmbito
+' Propósito : Arma la lista de archivos sobre la que se va a buscar, según el
+'             radiobutton de ámbito activo. Es el ÚNICO lugar donde el ámbito se
+'             traduce a archivos concretos: FRegexResultados recibe la lista ya
+'             hecha y no sabe de radios ni de filtros.
+'               rbProyecto → toda la whitelist
+'               rbFiltrar  → la whitelist filtrada por substring (sensible) sobre
+'                            el nombre del archivo
+'               rbEnCurso  → el archivo del editor, si es buscable (ya se validó
+'                            al habilitar el radio, pero se revalida por las dudas)
+' Retorna   : String[] — rutas absolutas; vacío si no hay nada que buscar
+' ============================================
+Public Function ResolverAmbito() As String[]
+
+  Dim aTodos As String[]
+  Dim aResultado As New String[]
+  Dim sRuta As String
+  Dim sFiltro As String
+
+  ' --- 1. ARCHIVO EN CURSO: UN SOLO ELEMENTO ---
+  If FMain.rbEnCurso.Value Then
+    If ArchivoEnCursoEsBuscable() Then aResultado.Add(FMain.sRutaArchivoAbierto)
+    Return aResultado
+  Endif
+
+  ' --- 2. LOS OTROS DOS MODOS PARTEN DE LA WHITELIST COMPLETA ---
+  aTodos = ObtenerArchivosMD()
+
+  ' --- 3. TODO EL PROYECTO: LA WHITELIST TAL CUAL ---
+  If FMain.rbProyecto.Value Then Return aTodos
+
+  ' --- 4. FILTRAR: SUBSTRING SENSIBLE SOBRE EL NOMBRE DEL ARCHIVO ---
+  ' El filtro estrecha DENTRO de la whitelist, nunca la ensancha: se recorre la
+  ' lista ya filtrada por nomenclatura y se conservan los que contienen el texto.
+  If FMain.rbFiltrar.Value Then
+    sFiltro = Trim(FMain.txtFiltrar.Text)
+    ' FILTRO VACÍO EN MODO FILTRAR: NO ASUMIMOS "TODO", DEVOLVEMOS VACÍO. EL
+    ' USUARIO ELIGIÓ FILTRAR PERO NO DIJO POR QUÉ; BUSCAR EN TODO SERÍA UNA
+    ' SORPRESA.
+    If sFiltro = "" Then Return aResultado
+    For Each sRuta In aTodos
+      If InStr(File.Name(sRuta), sFiltro) > 0 Then aResultado.Add(sRuta)
+    Next
+    Return aResultado
+  Endif
+
+  ' --- 5. NINGÚN RADIO (NO DEBERÍA PASAR): VACÍO ---
+  Return aResultado
+
+End
+' Propósito : Traduce los cuatro checkbox al string de flags que espera el
+'             script (letras concatenadas, o "-" si no hay ninguno). El orden es
+'             indiferente para el .pl, pero se mantiene imsx por prolijidad.
+' Retorna   : String — p. ej. "im", "x", o "-"
+' ============================================
+
+Private Function ArmarFlags() As String
+
+  Dim sFlags As String
+
+  If FMain.ckbCaseless.Value Then sFlags &= "i"
+  If FMain.ckbMultiline.Value Then sFlags &= "m"
+  If FMain.ckbDotAll.Value Then sFlags &= "s"
+  If FMain.ckbExtended.Value Then sFlags &= "x"
+
+  If sFlags = "" Then Return "-"
+  Return sFlags
+
+End
+
+' ============================================
+' Función   : SolicitarValidacion
+' Propósito : Punto de entrada de la validación continua. Lo llaman los eventos
+'             _Change de txtBuscar, txtReemplazo y los _Click de los flags.
+'             No valida en el acto: reinicia el timer de debounce. Restart
+'             reinicia la cuenta atrás, así que solo se valida cuando el usuario
+'             deja de tipear (DEMORA_VALIDACION ms sin actividad).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub SolicitarValidacion()
+
+  ' MIENTRAS EL USUARIO EDITA, NADA ESTÁ VALIDADO
+  $bPatronValido = False
+  FMain.btnProbar.Enabled = False
+  FMain.btnBuscarRegex.Enabled = False
+
+  ' PATRÓN VACÍO: NO HAY QUÉ VALIDAR, NO SE LANZA PROCESO
+  If Trim(FMain.txtBuscar.Text) = "" Then
+    $hTimerValidar.Stop
+    FMain.areaEditorMostrarResultado.Text = ""
+    Return
+  Endif
+
+  ' REINICIAR EL DEBOUNCE
+  $hTimerValidar.Restart
+
+End
+
+' EVENTO DEL TIMER DE DEBOUNCE: EL USUARIO DEJÓ DE TIPEAR, VALIDAR AHORA
+Public Sub TimerValidarRegex_Timer()
+
+  $hTimerValidar.Stop
+  ValidarPatronAhora()
+
+End
+
+' ============================================
+' Función   : ValidarPatronAhora
+' Propósito : Corre el modo 'validar' del script de forma síncrona (es 5 ms) y
+'             refleja el resultado en la UI: habilita o no las acciones y
+'             muestra el mensaje de error o los avisos. No toca ningún archivo
+'             del proyecto.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub ValidarPatronAhora()
+
+  Dim sSalida As String
+  Dim sVeredicto As String
+  Dim sResto As String
+  Dim iPrimerNul As Integer
+  Dim iSegundoNul As Integer
+  Dim sPatron As String
+  Dim sReemplazo As String
+  Dim sFlags As String
+  Dim sAplicar As String
+
+  ' --- 1. ARMAR ARGUMENTOS ---
+  sPatron = FMain.txtBuscar.Text
+  sReemplazo = FMain.txtReemplazo.Text
+  sFlags = ArmarFlags()
+  ' EL REEMPLAZO SOLO SE AUDITA SI EL USUARIO ESCRIBIÓ ALGO EN ÉL
+  sAplicar = If(Trim(sReemplazo) <> "", "1", "0")
+
+  ' --- 2. INVOCAR EL VALIDADOR (SÍNCRONO, SIN SHELL) ---
+  ' -CSA: STDIN/STDOUT/STDERR y @ARGV en UTF-8. El patrón puede tener acentos,
+  ' comillas tipográficas o NBSP y debe llegar intacto.
+  Try Exec ["perl", "-CSA", RutaScript(), "validar", sPatron, sReemplazo, sFlags, sAplicar] To sSalida
+  If Error Then
+    ' FALLO DEL PROCESO EN SÍ (perl ausente, script ilegible): NO ES UN PATRÓN
+    ' INVÁLIDO SINO UN PROBLEMA DE ENTORNO. SE INFORMA Y SE DEJA TODO INHIBIDO.
+    $bPatronValido = False
+    FMain.areaEditorMostrarResultado.Text = "No se pudo ejecutar el validador:" & Chr(10) & Error.Text
+    Return
+  Endif
+
+  ' --- 3. SEPARAR VEREDICTO / RESTO POR EL PRIMER NUL ---
+  ' Split completo fragmentaría el mensaje si tuviera separadores; se corta a
+  ' mano por los dos primeros Chr(0).
+  iPrimerNul = InStr(sSalida, Chr(0))
+  If iPrimerNul = 0 Then
+    $bPatronValido = False
+    FMain.areaEditorMostrarResultado.Text = "Respuesta inesperada del validador."
+    Return
+  Endif
+  sVeredicto = Left(sSalida, iPrimerNul - 1)
+  sResto = Mid(sSalida, iPrimerNul + 1)
+
+  ' --- 4. ACTUAR SEGÚN EL VEREDICTO ---
+  If sVeredicto = "ERROR" Then
+    ' EL SEGUNDO CAMPO (HASTA EL SIGUIENTE NUL) ES EL MENSAJE DE PERL CON <-- HERE
+    iSegundoNul = InStr(sResto, Chr(0))
+    If iSegundoNul > 0 Then sResto = Left(sResto, iSegundoNul - 1)
+    $bPatronValido = False
+    FMain.areaEditorMostrarResultado.Text = "Patrón inválido:" & Chr(10) & sResto
+    Return
+  Endif
+
+  ' OK: sResto = <n_grupos> Chr(0) <avisos>. Extraemos los avisos (pueden estar
+  ' vacíos). Los avisos internamente están separados por SEP_LISTA.
+  iSegundoNul = InStr(sResto, Chr(0))
+  Dim sAvisos As String
+  If iSegundoNul > 0 Then sAvisos = Mid(sResto, iSegundoNul + 1)
+
+  $bPatronValido = True
+  FMain.btnProbar.Enabled = True
+  FMain.btnBuscarRegex.Enabled = True
+
+  ' MOSTRAR AVISOS (NBSP LITERAL, $N INEXISTENTE, MATCH VACÍO) SIN QUE SEAN
+  ' BLOQUEANTES: EL PATRÓN ES VÁLIDO, PERO CONVIENE VERLOS.
+  If Trim(sAvisos) <> "" Then
+    FMain.areaEditorMostrarResultado.Text = "Avisos:" & Chr(10) & Replace(sAvisos, SEP_LISTA, Chr(10))
+  Else
+    FMain.areaEditorMostrarResultado.Text = ""
+  Endif
+
+End
+
+' ============================================
+' Función   : Probar
+' Propósito : Banco de pruebas en seco. Corre el modo 'probar' del script sobre
+'             el texto de areaEditor y vuelca el resultado en
+'             areaEditorMostrarResultado. Prueba SEMÁNTICA (¿el patrón hace lo
+'             que quiero?), no alcance. No toca el proyecto.
+'             La llama FMain.btnProbar_Click.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Probar()
+
+  Dim sTexto As String
+  Dim sSalida As String
+  Dim sVeredicto As String
+  Dim sResto As String
+  Dim iPrimerNul As Integer
+  Dim iSegundoNul As Integer
+  Dim sCuenta As String
+  Dim sCuerpo As String
+  Dim sFlags As String
+  Dim sAplicar As String
+  Dim sRutaTmp As String
+
+  ' --- 1. GUARDAS ---
+  If Not $bPatronValido Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El patrón no es válido todavía.")
+    Return
+  Endif
+
+  sTexto = FMain.areaEditor.Text
+  If sTexto = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Escribí o pegá un texto de prueba en el área de la izquierda.")
+    Return
+  Endif
+
+  ' --- 2. ARGUMENTOS ---
+  sFlags = ArmarFlags()
+  sAplicar = If(Trim(FMain.txtReemplazo.Text) <> "", "1", "0")
+
+  ' --- 3. VOLCAR EL TEXTO DE PRUEBA A UN TEMPORAL ---
+  ' La forma Exec ... To de Gambas no expone stdin (la cláusula With en esa
+  ' forma es solo With Error), así que el texto viaja por un archivo temporal
+  ' que se pasa como argumento y se borra al terminar. File.Save es UTF-8
+  ' nativo (SC-02), que es lo que el script espera.
+  sRutaTmp = Temp$()
+  Try File.Save(sRutaTmp, sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    FMain.areaEditorMostrarResultado.Text = "No se pudo preparar el texto de prueba:" & Chr(10) & Error.Text
+    Return
+  Endif
+
+  ' --- 4. INVOCAR EL MODO probar (ARRAY EN UNA SOLA LÍNEA: RC DEL Type mismatch) ---
+  Try Exec ["perl", "-CSA", RutaScript(), "probar", FMain.txtBuscar.Text, FMain.txtReemplazo.Text, sFlags, sAplicar, sRutaTmp] To sSalida
+  ' EL TEMPORAL YA CUMPLIÓ SU FUNCIÓN, SE BORRA HAYA IDO BIEN O MAL
+  Try Kill sRutaTmp
+  If Error Then
+    m_Sonido.sonar("Error")
+    FMain.areaEditorMostrarResultado.Text = "No se pudo ejecutar la prueba:" & Chr(10) & Error.Text
+    Return
+  Endif
+
+  ' --- 5. PARSEAR: OK Chr(0) <cuenta> Chr(0) <cuerpo>  |  ERROR Chr(0) <msg> ---
+  iPrimerNul = InStr(sSalida, Chr(0))
+  If iPrimerNul = 0 Then
+    FMain.areaEditorMostrarResultado.Text = "Respuesta inesperada de la prueba."
+    Return
+  Endif
+  sVeredicto = Left(sSalida, iPrimerNul - 1)
+  sResto = Mid(sSalida, iPrimerNul + 1)
+
+  If sVeredicto = "ERROR" Then
+    iSegundoNul = InStr(sResto, Chr(0))
+    If iSegundoNul > 0 Then sResto = Left(sResto, iSegundoNul - 1)
+    m_Sonido.sonar("Error")
+    FMain.areaEditorMostrarResultado.Text = "Patrón inválido:" & Chr(10) & sResto
+    Return
+  Endif
+
+  ' OK: sResto = <cuenta> Chr(0) <cuerpo>. El cuerpo es todo lo que sigue al
+  ' segundo NUL y se toma entero, sin volver a partir.
+  iSegundoNul = InStr(sResto, Chr(0))
+  If iSegundoNul = 0 Then
+    sCuenta = sResto
+    sCuerpo = ""
+  Else
+    sCuenta = Left(sResto, iSegundoNul - 1)
+    sCuerpo = Mid(sResto, iSegundoNul + 1)
+  Endif
+
+  ' --- 6. VOLCAR RESULTADO ---
+  ' El contador va como prefijo informativo: distingue "no matcheó" (0) de
+  ' "reemplazó por idéntico" o "búsqueda pura" (N pero texto sin cambios).
+  m_Sonido.sonar("Info")
+  FMain.areaEditorMostrarResultado.Text = "[" & sCuenta & " coincidencia(s)]" & Chr(10) & Chr(10) & sCuerpo
+
+End
+
+' ============================================
+' Función   : CambiarAmbito
+' Propósito : Responde a los tres radiobutton de ámbito. Solo con rbFiltrar el
+'             txtFiltrar queda habilitado para escribir el substring de filtrado;
+'             en los otros dos modos se deshabilita y se limpia. El filtro
+'             estrecha SIEMPRE dentro de la whitelist, nunca la ensancha.
+'             La llaman los _Click de rbProyecto, rbEnCurso y rbFiltrar.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub CambiarAmbito()
+
+  If FMain.rbFiltrar.Value Then
+    FMain.txtFiltrar.Enabled = True
+    FMain.txtFiltrar.SetFocus()
+  Else
+    FMain.txtFiltrar.Enabled = False
+    FMain.txtFiltrar.Text = ""
+  Endif
+
+End
+
+' ============================================
+' Función   : ActualizarDisponibilidadEnCurso
+' Propósito : Habilita o deshabilita el radio rbEnCurso según si el archivo
+'             cargado en el editor es buscable (whitelist). Si el usuario está
+'             parado en el .md principal (sus notas) o en un archivo fuera de la
+'             whitelist, "buscar en el archivo en curso" no tiene sentido y la
+'             opción se apaga. Si rbEnCurso estaba elegido y deja de estar
+'             disponible, el ámbito cae a rbProyecto.
+'             Se llama al abrir la pestaña y cada vez que cambia el archivo del
+'             editor (desde el _Click de cmbArticulosRevista).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ActualizarDisponibilidadEnCurso()
+
+  Dim bBuscable As Boolean
+
+  bBuscable = ArchivoEnCursoEsBuscable()
+  FMain.rbEnCurso.Enabled = bBuscable
+
+  ' SI EL ÁMBITO ACTIVO ERA "EN CURSO" Y YA NO SE PUEDE, VOLVER A "TODO EL
+  ' PROYECTO" PARA NO DEJAR UN RADIO DESHABILITADO SELECCIONADO.
+  If Not bBuscable And FMain.rbEnCurso.Value Then
+    FMain.rbProyecto.Value = True
+    CambiarAmbito()
+  Endif
+
+End
+
+' ============================================
+' Función   : BuscarRegex
+' Propósito : Abre FRegexResultados con el estado actual ya resuelto: la lista de
+'             archivos (según el ámbito), el patrón, el reemplazo y los flags.
+'             El formulario es autónomo: recibe todo por parámetro y no lee los
+'             controles de FMain.
+'             La llama FMain.btnBuscarRegex_Click.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub BuscarRegex()
+
+  Dim aArchivos As String[]
+  Dim sAplicar As String
+
+  ' --- 1. GUARDA: SOLO CON PATRÓN VÁLIDO ---
+  If Not $bPatronValido Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El patrón no es válido todavía.")
+    Return
+  Endif
+
+  ' --- 2. RESOLVER EL ÁMBITO A UNA LISTA CONCRETA DE ARCHIVOS ---
+  aArchivos = ResolverAmbito()
+  If aArchivos.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay archivos sobre los que buscar con el ámbito elegido." & Chr(10) &
+      "Verificá el ámbito o el filtro.")
+    Return
+  Endif
+
+  ' --- 3. DELEGAR AL FORMULARIO DE RESULTADOS ---
+  ' Se le pasa todo hecho: archivos, patrón, reemplazo, flags. El aplicar se
+  ' deriva de si hay reemplazo escrito (en la Capa 1 el formulario solo busca;
+  ' el reemplazo llega en la Capa 2).
+  sAplicar = If(Trim(FMain.txtReemplazo.Text) <> "", "1", "0")
+  FRegexResultados.Configurar(aArchivos, FMain.txtBuscar.Text, FMain.txtReemplazo.Text, ArmarFlags(), sAplicar, RutaScript())
+  FRegexResultados.ShowModal()
+
+End

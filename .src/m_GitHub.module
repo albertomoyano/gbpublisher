@@ -161,7 +161,7 @@ Public Sub EmpujarGitLocal()
   Dim rutaProyecto As String
 
   ' OBTENER LA RUTA DEL PROYECTO
-  rutaProyecto = m_InicioCierre.ArchivoProyectoEnCurso
+  rutaProyecto = m_InicioCierre.RutaProyectoEnCurso
   rutaGit = rutaProyecto & "/.git"
 
   ' MOSTRAR EL FORMULARIO MODAL PARA INGRESAR EL MENSAJE DE COMMIT
@@ -417,105 +417,3 @@ Public Function VerificarProtocoloRemoto(sRutaProyecto As String) As Boolean
   Return False
 
 End Function
-
-' Gambas module file
-
-' ============================================
-' Módulo    : m_Git
-' Propósito : ÚNICO PUNTO DE CONTACTO ENTRE GBPUBLISHER Y GIT.
-'             SE DIVIDE EN DOS FAMILIAS QUE NO DEBEN MEZCLARSE:
-'             - INTERACTIVA: ESCRIBE EN TerminalViewProyecto. LA SALIDA LA
-'               LEE EL HUMANO. NO DEVUELVE NADA UTILIZABLE POR EL PROGRAMA.
-'               EL SILENCIO DE LA TERMINAL NO ES ÉXITO (RC-GM-02).
-'             - PROGRAMÁTICA: USA Exec ... To. LA SALIDA LA LEE LA APLICACIÓN
-'               Y DECIDE CON ELLA. NUNCA PASA POR LA TERMINAL.
-'             INVARIANTE: UN REPO = UN PROYECTO, POR LO TANTO LA RAÍZ DEL
-'             REPOSITORIO ES LA RAÍZ DEL PROYECTO Y NO HAY QUE PREGUNTÁRSELA
-'             A GIT.
-' ============================================
-
-' --- ESTADOS DEL ÁRBOL DE TRABAJO (VALORES DE RETORNO DE EstadoArbol) ---
-Public Const ARBOL_LIMPIO As Integer = 0
-Public Const ARBOL_SUCIO As Integer = 1
-Public Const ARBOL_SIN_REPO As Integer = 2
-Public Const ARBOL_ERROR As Integer = 3
-
-' ============================================
-' Función   : EstadoArbol
-' Propósito : INFORMA SI EL ÁRBOL DE TRABAJO DEL PROYECTO TIENE CAMBIOS SIN
-'             COMMITEAR. LO CONSUME TODA OPERACIÓN DESTRUCTIVA MASIVA, PORQUE
-'             EL ÚNICO DESHACER DISPONIBLE ES GIT Y SOBRE UN ÁRBOL SUCIO ESE
-'             DESHACER SE LLEVA PUESTO TRABAJO NO RELACIONADO.
-' Parámetros: sRutaProyecto As String — RAÍZ DEL PROYECTO (= RAÍZ DEL REPO)
-' Retorna   : Integer — ARBOL_LIMPIO / ARBOL_SUCIO / ARBOL_SIN_REPO / ARBOL_ERROR
-' ============================================
-Public Function EstadoArbol(sRutaProyecto As String) As Integer
-
-  ' --- 1. INICIALIZACIÓN DE VARIABLES (RC-GM-18: TODOS LOS Dim ACÁ) ---
-  Dim sSalida As String
-  Dim iCodigoSalida As Integer
-
-  ' --- 2. VALIDACIÓN DE ENTRADA ---
-  If Trim(sRutaProyecto) = "" Then Return ARBOL_ERROR
-  If Not Exist(sRutaProyecto) Then Return ARBOL_ERROR
-
-  ' UN REPO = UN PROYECTO: ALCANZA CON MIRAR EL .git, SIN LANZAR PROCESOS.
-  ' TAMBIÉN CUBRE EL CASO DE QUE GIT NO ESTÉ INSTALADO SIN DEPENDER DE ÉL:
-  ' git ES Priority: optional EN DEBIAN/UBUNTU, NO ESTÁ GARANTIZADO.
-  If Not Exist(sRutaProyecto &/ ".git") Then Return ARBOL_SIN_REPO
-
-  ' --- 3. CONSULTA A GIT ---
-  ' -C EVITA CAMBIAR EL DIRECTORIO DE TRABAJO DEL PROCESO (NADA DE cd NI Chdir).
-  ' --porcelain GARANTIZA FORMATO ESTABLE ENTRE VERSIONES DE GIT.
-  ' SIN SHELL: EL ARRAY VA DIRECTO A execvp, NO HAY sh -c QUE INTERPRETE NADA.
-  Try Exec ["git", "-C", sRutaProyecto, "status", "--porcelain"] To sSalida
-  If Error Then Return ARBOL_ERROR
-
-  ' Process.LastValue ES GLOBAL AL PROCESO Y LO PISA CUALQUIER OTRO PROCESO
-  ' QUE TERMINE: SE LEE EN LA LÍNEA INMEDIATAMENTE SIGUIENTE, SIN NADA EN MEDIO.
-  iCodigoSalida = Process.LastValue
-  If iCodigoSalida <> 0 Then Return ARBOL_ERROR
-
-  ' --- 4. PROCESAMIENTO DE RESULTADOS ---
-  ' SALIDA VACÍA = NO HAY NADA PENDIENTE. Trim DESCARTA TODO BYTE <= 0x20,
-  ' O SEA TAMBIÉN EL LF FINAL.
-  If Trim(sSalida) = "" Then Return ARBOL_LIMPIO
-
-  Return ARBOL_SUCIO
-
-Catch
-  Return ARBOL_ERROR
-
-End
-
-' ============================================
-' Función   : ObtenerHead
-' Propósito : DEVUELVE EL HASH DEL COMMIT ACTUAL PARA ASENTARLO EN EL LOG DE
-'             OPERACIONES DESTRUCTIVAS. ES EL DATO QUE CONVIERTE AL LOG DE
-'             "SE REEMPLAZARON 127 COINCIDENCIAS EL MARTES" EN "VOLVÉ ACÁ".
-' Parámetros: sRutaProyecto As String — RAÍZ DEL PROYECTO (= RAÍZ DEL REPO)
-' Retorna   : String — HASH COMPLETO, O CADENA VACÍA SI NO SE PUDO OBTENER
-' ============================================
-Public Function ObtenerHead(sRutaProyecto As String) As String
-
-  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
-  Dim sSalida As String
-
-  ' --- 2. VALIDACIÓN DE ENTRADA ---
-  If Trim(sRutaProyecto) = "" Then Return ""
-  If Not Exist(sRutaProyecto &/ ".git") Then Return ""
-
-  ' --- 3. CONSULTA A GIT ---
-  ' UN REPO RECIÉN INICIALIZADO Y SIN COMMITS HACE FALLAR rev-parse.
-  ' ESE CASO SE INFORMA COMO CADENA VACÍA: ES AUSENCIA DE DATO, NO ERROR.
-  Try Exec ["git", "-C", sRutaProyecto, "rev-parse", "HEAD"] To sSalida
-  If Error Then Return ""
-  If Process.LastValue <> 0 Then Return ""
-
-  ' --- 4. RETORNO Y LIMPIEZA ---
-  Return Trim(sSalida)
-
-Catch
-  Return ""
-
-End

@@ -39,6 +39,20 @@
 #              Sale siempre con código 0: el veredicto está en stdout. Un
 #              código distinto de 0 significa que falló perl, no el patrón.
 #
+#   probar   → BANCO DE PRUEBAS EN SECO. Lee un texto desde el archivo que se
+#              pasa como PRIMER archivo de la lista (no de STDIN: la forma
+#              Exec ... To de Gambas no expone stdin), aplica el patrón sobre el
+#              texto completo como un solo documento (multilínea real) y escribe
+#              a STDOUT el texto ya transformado. Alimenta
+#              areaEditorMostrarResultado. No toca el proyecto: el archivo es un
+#              temporal que Gambas crea y borra.
+#              Salida: primera línea de control, terminada en \0:
+#                      OK\0<n_coincidencias>\0   seguida del texto transformado
+#                      ERROR\0<mensaje>\0        si el patrón no compila
+#              El texto va DESPUÉS del \0 de control para que Gambas separe el
+#              veredicto del cuerpo con un solo Split del primer \0.
+#              Sale siempre con código 0 (igual que validar).
+#
 #   buscar   → aplica el patrón a cada archivo de la lista.
 #              Salida: registros de 8 campos, cada campo terminado en \0:
 #                1 archivo        ruta tal como se recibió
@@ -93,7 +107,7 @@ if (!defined $modo || !defined $patron || !defined $reemplazo
     print STDERR "Argumentos insuficientes.\n";
     exit 2;
 }
-if ($modo ne 'validar' && $modo ne 'buscar') {
+if ($modo ne 'validar' && $modo ne 'buscar' && $modo ne 'probar') {
     print STDERR "Modo desconocido: $modo\n";
     exit 2;
 }
@@ -103,6 +117,8 @@ $aplicar = ($aplicar eq '1') ? 1 : 0;
 # --- 3. DESPACHO ---
 if ($modo eq 'validar') {
     modo_validar();
+} elsif ($modo eq 'probar') {
+    modo_probar();
 } else {
     modo_buscar();
 }
@@ -262,17 +278,25 @@ sub modo_validar {
 # ============================================
 # Función   : expandir_reemplazo
 # Propósito : Expande las referencias del reemplazo contra las capturas de la
-#             coincidencia actual. TODO LO QUE NO SEA UNA REFERENCIA SE COPIA
-#             LITERAL. Se hace a mano, carácter por carácter, porque el atajo
-#             (s///ee) es ejecución de código arbitrario del usuario.
+#             coincidencia actual. TODO LO QUE NO SEA UNA REFERENCIA O UN ESCAPE
+#             DE CARÁCTER SE COPIA LITERAL. Se hace a mano, carácter por
+#             carácter, porque el atajo (s///ee) es ejecución de código
+#             arbitrario del usuario.
 # Sintaxis  : $0        la coincidencia completa
 #             $1..$99   grupo numerado
 #             ${12}     grupo numerado, forma con llaves (necesaria si al
 #                       número le sigue un dígito literal)
 #             ${nombre} grupo nombrado, de (?<nombre>...)
 #             $$        un $ literal
-#             Un $ suelto que no encabece ninguna de esas formas se copia como
-#             $ literal: es lo que el usuario quiso decir.
+#             \n \t \r  salto de línea, tabulador, retorno de carro
+#             \xHH      carácter por código hexadecimal de 2 dígitos
+#             \x{HHHH}  carácter Unicode por codepoint (p.ej. \x{00A0} = NBSP)
+#             \\        una barra invertida literal
+#             Un $ o un \ que no encabece ninguna de esas formas se copia
+#             literal: es lo que el usuario quiso decir.
+#             LOS ESCAPES SON SOLO DE CARÁCTER: PRODUCEN UN CARÁCTER, NUNCA
+#             CÓDIGO. La regla anti-/e sigue intacta: acá no se evalúa nada, se
+#             traduce una notación a un carácter y se copia.
 # Parámetros: $plantilla — texto de reemplazo crudo
 #             $completa  — texto de la coincidencia completa
 #             $caps      — arrayref con las capturas numeradas (índice 0 = $1)
@@ -289,6 +313,62 @@ sub expandir_reemplazo {
     while ($i < $len) {
 
         my $c = substr($plantilla, $i, 1);
+
+        # --- ESCAPES DE CARÁCTER (barra invertida) ---
+        if ($c eq "\\") {
+
+            # \ AL FINAL DE LA PLANTILLA: LITERAL
+            if ($i + 1 >= $len) {
+                $salida .= "\\";
+                $i++;
+                next;
+            }
+
+            my $sigue = substr($plantilla, $i + 1, 1);
+
+            if ($sigue eq 'n') { $salida .= "\n"; $i += 2; next; }
+            if ($sigue eq 't') { $salida .= "\t"; $i += 2; next; }
+            if ($sigue eq 'r') { $salida .= "\r"; $i += 2; next; }
+            if ($sigue eq "\\") { $salida .= "\\"; $i += 2; next; }
+
+            # \x{HHHH} — CODEPOINT UNICODE ENTRE LLAVES
+            if ($sigue eq 'x' && substr($plantilla, $i + 2, 1) eq '{') {
+                my $cierre = index($plantilla, '}', $i + 3);
+                if ($cierre >= 0) {
+                    my $hex = substr($plantilla, $i + 3, $cierre - $i - 3);
+                    if ($hex =~ /^[0-9A-Fa-f]+$/) {
+                        $salida .= chr(hex($hex));
+                        $i = $cierre + 1;
+                        next;
+                    }
+                }
+                # MAL FORMADO: \ LITERAL, SEGUIMOS DESDE x
+                $salida .= "\\";
+                $i++;
+                next;
+            }
+
+            # \xHH — DOS DÍGITOS HEXADECIMALES
+            if ($sigue eq 'x') {
+                my $hex = substr($plantilla, $i + 2, 2);
+                if ($hex =~ /^[0-9A-Fa-f]{2}$/) {
+                    $salida .= chr(hex($hex));
+                    $i += 4;
+                    next;
+                }
+                # MAL FORMADO: \ LITERAL
+                $salida .= "\\";
+                $i++;
+                next;
+            }
+
+            # CUALQUIER OTRO \X: SE COPIAN AMBOS CARACTERES LITERALES. NO SE
+            # INVENTA UN ESCAPE NUEVO NI SE COME LA BARRA: EL USUARIO VE LO QUE
+            # ESCRIBIÓ.
+            $salida .= "\\" . $sigue;
+            $i += 2;
+            next;
+        }
 
         # TEXTO LITERAL
         if ($c ne '$') {
@@ -494,3 +574,97 @@ sub modo_buscar {
         print STDERR "Se descartaron $vacias coincidencia(s) de largo cero.\n";
     }
 }
+
+# ============================================
+# Función   : modo_probar
+# Propósito : Banco de pruebas en seco. Lee el texto de STDIN, aplica el patrón
+#             sobre el documento completo y escribe el texto transformado a
+#             STDOUT, precedido de una línea de control con el veredicto y el
+#             número de coincidencias. No abre ningún archivo ni toca el
+#             proyecto: opera solo sobre lo que el usuario pegó en areaEditor.
+#             Igual que modo_buscar: expande el reemplazo a mano, nunca /e, y
+#             descarta las coincidencias de largo cero para no colgarse con
+#             patrones que matcheen la cadena vacía.
+# ============================================
+sub modo_probar {
+
+    # --- 1. COMPILAR ---
+    my ($re, $err) = compilar_patron();
+    if (!$re) {
+        print 'ERROR', $SEP_CAMPO, $err, $SEP_CAMPO;
+        return;
+    }
+
+    # --- 2. LEER EL TEXTO DE PRUEBA DESDE EL ARCHIVO TEMPORAL ---
+    # Gambas pasa el texto en un archivo temporal (su forma Exec ... To no
+    # expone stdin). El archivo es el primer elemento de @archivos.
+    # slurp: se procesa como un solo documento, así el patrón multilínea (/s,
+    # /m) funciona igual que sobre un archivo real del proyecto.
+    my $ruta_tmp = $archivos[0];
+    if (!defined $ruta_tmp) {
+        print 'ERROR', $SEP_CAMPO, 'Falta el archivo de texto de prueba.', $SEP_CAMPO;
+        return;
+    }
+    my $texto;
+    if (open(my $fh, '<:encoding(UTF-8)', $ruta_tmp)) {
+        $texto = do { local $/; <$fh> };
+        close $fh;
+    }
+    $texto = '' unless defined $texto;
+
+    # --- 3. RECORRER Y RECONSTRUIR ---
+    # Se reconstruye el texto tramo por tramo en vez de usar s///g, porque s///g
+    # con reemplazo dinámico obligaría a /e. Acá copiamos lo que hay entre
+    # coincidencias y expandimos el reemplazo a mano en cada una.
+    my $salida = '';
+    my $cursor = 0;
+    my $cuenta = 0;
+    my $ultimo_ini = -1;
+
+    while ($texto =~ /$re/g) {
+
+        my $ini   = $-[0];
+        my $largo = $+[0] - $ini;
+
+        # LARGO CERO: SE IGNORA, IGUAL QUE EN modo_buscar
+        next if $largo == 0;
+
+        # SALVAGUARDA DE PROGRESO
+        last if $ini <= $ultimo_ini;
+        $ultimo_ini = $ini;
+
+        # COPIAR EL TEXTO ANTERIOR A LA COINCIDENCIA
+        $salida .= substr($texto, $cursor, $ini - $cursor);
+
+        # EXPANDIR EL REEMPLAZO CON LAS CAPTURAS DE ESTA COINCIDENCIA
+        my $completa = substr($texto, $ini, $largo);
+        if ($aplicar) {
+            my @caps;
+            for my $g (1 .. $#+) {
+                push @caps, defined($-[$g])
+                          ? substr($texto, $-[$g], $+[$g] - $-[$g])
+                          : undef;
+            }
+            my %nombradas = %+;
+            $salida .= expandir_reemplazo($reemplazo, $completa,
+                                          \@caps, \%nombradas);
+        } else {
+            # SIN REEMPLAZO: EL BANCO MUESTRA EL TEXTO INTACTO. LA COINCIDENCIA
+            # SE COPIA TAL CUAL. (LO QUE CAMBIA ES EL CONTADOR, QUE DICE CUÁNTAS
+            # HUBO.)
+            $salida .= $completa;
+        }
+
+        $cursor = $ini + $largo;
+        $cuenta++;
+    }
+
+    # COPIAR EL RESTO DEL TEXTO DESPUÉS DE LA ÚLTIMA COINCIDENCIA
+    $salida .= substr($texto, $cursor);
+
+    # --- 4. EMITIR VEREDICTO + CUERPO ---
+    # El \0 tras el contador separa la línea de control del texto transformado:
+    # Gambas hace Split del primer \0 y todo lo que sigue es el cuerpo.
+    print 'OK', $SEP_CAMPO, $cuenta, $SEP_CAMPO, $salida;
+}
+

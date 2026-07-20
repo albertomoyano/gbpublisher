@@ -1,0 +1,118 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_Git
+' Propósito : FAMILIA PROGRAMÁTICA DEL CONTACTO CON GIT. La salida la lee la
+'             APLICACIÓN y decide con ella; NUNCA pasa por la terminal.
+'             Es la contraparte de la familia INTERACTIVA de m_GitHub
+'             (EmpujarGitLocal, EmpujarGitHubRemoto), que escribe en
+'             TerminalViewProyecto para que la lea el humano y no devuelve nada
+'             utilizable por el programa.
+'             Se separan en dos módulos a propósito: una escribe a un humano y
+'             la otra le contesta a un If. Mezclarlas invita a leer el éxito de
+'             un comando en el silencio de una terminal, que no es éxito
+'             (RC-GM-02).
+'
+'             INVARIANTE: UN REPO = UN PROYECTO. Por lo tanto la raíz del
+'             repositorio es la raíz del proyecto (m_InicioCierre.
+'             RutaProyectoEnCurso) y no hay que preguntársela a git. El .git
+'             cuelga de esa raíz, no del archivo .md (RC-GM-16: pasar la ruta
+'             del archivo en lugar del directorio produce un .git colgando de un
+'             archivo, que no existe, y hace correr git init cada vez).
+'
+'             Toda función usa Exec ["git", "-C", <raíz>, ...] To <salida>:
+'             -C evita cambiar el directorio de trabajo del proceso (nada de cd
+'             ni Chdir), y el array va directo a execvp sin sh -c que interprete
+'             metacaracteres. El veredicto se lee de Process.LastValue en la
+'             línea inmediatamente siguiente al Exec, sin nada en medio, porque
+'             esa propiedad es global al proceso y la pisa cualquier otro
+'             proceso que termine.
+' ============================================
+
+' --- ESTADOS DEL ÁRBOL DE TRABAJO (VALORES DE RETORNO DE EstadoArbol) ---
+Public Const ARBOL_LIMPIO As Integer = 0
+Public Const ARBOL_SUCIO As Integer = 1
+Public Const ARBOL_SIN_REPO As Integer = 2
+Public Const ARBOL_ERROR As Integer = 3
+
+' ============================================
+' Función   : EstadoArbol
+' Propósito : INFORMA SI EL ÁRBOL DE TRABAJO DEL PROYECTO TIENE CAMBIOS SIN
+'             COMMITEAR. LO CONSUME TODA OPERACIÓN DESTRUCTIVA MASIVA (EL
+'             REEMPLAZO REGEX ENTRE ELLAS), PORQUE EL ÚNICO DESHACER DISPONIBLE
+'             ES GIT Y SOBRE UN ÁRBOL SUCIO ESE DESHACER SE LLEVA PUESTO TRABAJO
+'             NO RELACIONADO.
+' Parámetros: sRutaProyecto As String — RAÍZ DEL PROYECTO (= RAÍZ DEL REPO).
+'             DEBE SER m_InicioCierre.RutaProyectoEnCurso, NO
+'             ArchivoProyectoEnCurso (RC-GM-16).
+' Retorna   : Integer — ARBOL_LIMPIO / ARBOL_SUCIO / ARBOL_SIN_REPO / ARBOL_ERROR
+' ============================================
+Public Function EstadoArbol(sRutaProyecto As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES (RC-GM-18: TODOS LOS Dim ACÁ) ---
+  Dim sSalida As String
+  Dim iCodigoSalida As Integer
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  If Trim(sRutaProyecto) = "" Then Return ARBOL_ERROR
+  If Not Exist(sRutaProyecto) Then Return ARBOL_ERROR
+
+  ' UN REPO = UN PROYECTO: ALCANZA CON MIRAR EL .git, SIN LANZAR PROCESOS.
+  ' TAMBIÉN CUBRE EL CASO DE QUE GIT NO ESTÉ INSTALADO SIN DEPENDER DE ÉL:
+  ' git ES Priority: optional EN DEBIAN/UBUNTU, NO ESTÁ GARANTIZADO.
+  If Not Exist(sRutaProyecto &/ ".git") Then Return ARBOL_SIN_REPO
+
+  ' --- 3. CONSULTA A GIT ---
+  ' --porcelain GARANTIZA FORMATO ESTABLE ENTRE VERSIONES DE GIT.
+  Try Exec ["git", "-C", sRutaProyecto, "status", "--porcelain"] To sSalida
+  If Error Then Return ARBOL_ERROR
+
+  iCodigoSalida = Process.LastValue
+  If iCodigoSalida <> 0 Then Return ARBOL_ERROR
+
+  ' --- 4. PROCESAMIENTO DE RESULTADOS ---
+  ' SALIDA VACÍA = NO HAY NADA PENDIENTE. Trim DESCARTA TODO BYTE <= 0x20,
+  ' O SEA TAMBIÉN EL LF FINAL, SIN TOCAR BYTES UTF-8 (>= 0x80).
+  If Trim(sSalida) = "" Then Return ARBOL_LIMPIO
+
+  Return ARBOL_SUCIO
+
+Catch
+  Return ARBOL_ERROR
+
+End
+
+' ============================================
+' Función   : ObtenerHead
+' Propósito : DEVUELVE EL HASH DEL COMMIT ACTUAL PARA ASENTARLO EN EL LOG DE
+'             OPERACIONES DESTRUCTIVAS. ES EL DATO QUE CONVIERTE AL LOG DE
+'             "SE REEMPLAZARON 127 COINCIDENCIAS EL MARTES" EN "VOLVÉ A ESTE
+'             COMMIT": git checkout <hash> deshace todo.
+' Parámetros: sRutaProyecto As String — RAÍZ DEL PROYECTO (= RAÍZ DEL REPO)
+' Retorna   : String — HASH COMPLETO, O CADENA VACÍA SI NO SE PUDO OBTENER
+'             (REPO SIN COMMITS, GIT AUSENTE, ETC. — ES AUSENCIA DE DATO, NO
+'             ERROR: EL LLAMADOR DECIDE SI ESO LO FRENA)
+' ============================================
+Public Function ObtenerHead(sRutaProyecto As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  If Trim(sRutaProyecto) = "" Then Return ""
+  If Not Exist(sRutaProyecto &/ ".git") Then Return ""
+
+  ' --- 3. CONSULTA A GIT ---
+  ' UN REPO RECIÉN INICIALIZADO Y SIN COMMITS HACE FALLAR rev-parse.
+  ' ESE CASO SE INFORMA COMO CADENA VACÍA: ES AUSENCIA DE DATO, NO ERROR.
+  Try Exec ["git", "-C", sRutaProyecto, "rev-parse", "HEAD"] To sSalida
+  If Error Then Return ""
+  If Process.LastValue <> 0 Then Return ""
+
+  ' --- 4. RETORNO Y LIMPIEZA ---
+  Return Trim(sSalida)
+
+Catch
+  Return ""
+
+End
