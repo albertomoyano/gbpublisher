@@ -273,33 +273,43 @@ Private Sub EjecutarPushGitHub(mensajeCommit As String)
     FMain.TerminalViewProyecto.Input("git branch -M main" & "\n")
   Endif
 
-  ' --- INTEGRACIÓN GITHUB: GENERAR JSON ANTES DEL ADD ---
-  ' EL JSON ENTRA EN EL MISMO COMMIT EDITORIAL, SIN COMMIT SEPARADO
+  ' --- INTEGRACIÓN GITHUB: SOLO SI EL PROYECTO LA USA ---
+  ' ESTE BLOQUE ENVUELVE ÚNICAMENTE LO QUE ES ESPECÍFICO DE LA INTEGRACIÓN:
+  ' GENERAR EL JSON Y SINCRONIZAR CON LOS COMMITS DEL ACTION. EL add/commit/push
+  ' VA AFUERA, INCONDICIONAL: UN PROYECTO SIN INTEGRACIÓN TAMBIÉN DEBE PUSHEAR.
+  ' (BUG PREVIO: EL push ESTABA DENTRO DE ESTE If, ASÍ QUE LOS PROYECTOS SIN
+  ' INTEGRACIÓN —EL DEFAULT— NO EMPUJABAN NADA.)
   If UsaIntegracionGitHub() Then
+
+    ' EL JSON ENTRA EN EL MISMO COMMIT EDITORIAL, SIN COMMIT SEPARADO
     Dim bJsonOk As Boolean
-    bJsonOk = m_GitHub.GenerarEstadoProyecto(m_InicioCierre.ArchivoProyectoEnCurso, CInt(FMain.id_proyecto.Value), File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
+    bJsonOk = m_GitHub.GenerarEstadoProyecto(m_InicioCierre.RutaProyectoEnCurso, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
     If Not bJsonOk Then
       m_Sonido.sonar("Warning")
+      ' SI EL USUARIO NO CONFIRMA CONTINUAR SIN EL JSON, SE ABORTA EL PUSH
       If Message.Question(
           "No se pudo generar el archivo de integración con GitHub." &
           Chr(10) & Chr(10) &
           "¿Desea continuar el push sin él?",
           "Continuar", "Cancelar") <> 1 Then Return
       Endif
+
+      ' SINCRONIZAR CON EL REMOTO ANTES DE COMMITEAR
+      ' git fetch DESCARGA LOS COMMITS DEL ACTION (incluyendo .github-ids.json)
+      ' git reset --mixed MUEVE HEAD AL REMOTE PRESERVANDO EL WORKING DIRECTORY
+      ' ASÍ EL COMMIT QUEDA SIEMPRE ENCIMA DEL REMOTE: PUSH FAST-FORWARD SIN CONFLICTOS
+      FMain.TerminalViewProyecto.Input("git fetch origin" & "\n")
+      FMain.TerminalViewProyecto.Input("git reset --mixed origin/main" & "\n")
+
     Endif
 
-    ' SINCRONIZAR CON EL REMOTO ANTES DE AGREGAR CAMBIOS
-    ' INCORPORA LOS COMMITS AUTOMÁTICOS DEL ACTION (IDs DE DISCUSSION)
-    ' SINCRONIZAR CON EL REMOTO ANTES DE COMMITEAR
-    ' git fetch DESCARGA LOS COMMITS DEL ACTION (incluyendo .github-ids.json)
-    ' git reset --mixed MUEVE HEAD AL REMOTE PRESERVANDO EL WORKING DIRECTORY
-    ' ASÍ EL COMMIT QUEDA SIEMPRE ENCIMA DEL REMOTE: PUSH FAST-FORWARD SIN CONFLICTOS
-    FMain.TerminalViewProyecto.Input("git fetch origin" & "\n")
-    FMain.TerminalViewProyecto.Input("git reset --mixed origin/main" & "\n")
+    ' --- ADD / COMMIT / PUSH: INCONDICIONAL, CON O SIN INTEGRACIÓN ---
     FMain.TerminalViewProyecto.Input("git add ." & "\n")
-    ' .github-ids.json VIVE SOLO EN EL REPO, GESTIONADO POR EL ACTION
-    ' git add . LO MARCA COMO ELIMINADO PORQUE NO EXISTE EN EL WORKING DIR
-    ' git restore --staged LO DEVUELVE AL ESTADO DEL HEAD SIN TOCARLO
+
+    ' .github-ids.json VIVE SOLO EN EL REPO, GESTIONADO POR EL ACTION.
+    ' git add . LO MARCARÍA COMO ELIMINADO (NO EXISTE EN EL WORKING DIR);
+    ' git restore --staged LO DEVUELVE AL ESTADO DEL HEAD SIN TOCARLO. INOFENSIVO
+    ' EN PROYECTOS SIN INTEGRACIÓN (EL ARCHIVO NO EXISTE Y EL 2>/dev/null LO CALLA).
     FMain.TerminalViewProyecto.Input("git restore --staged .github-ids.json 2>/dev/null; true" & "\n")
     FMain.TerminalViewProyecto.Input("git commit -m '" & Replace$(mensajeCommit, "'", "'\\''") & "'" & "\n")
     FMain.TerminalViewProyecto.Input("git push --set-upstream origin main" & "\n")
@@ -318,8 +328,10 @@ Public Function UsaIntegracionGitHub() As Boolean
 
   Dim hProyecto As Result
 
+  ' RC-GM-16: EL ID SALE DE LA GLOBAL, NO DEL ValueBox (QUE PUEDE HABERSE
+  ' RESETEADO POR UN EVENTO DE UI)
   Try hProyecto = m_ConexionBD.mConn.Exec(
-    "SELECT integracion_github FROM proyectos WHERE id = " & CInt(FMain.id_proyecto.Value))
+    "SELECT integracion_github FROM proyectos WHERE id = " & m_InicioCierre.IdProyectoEnCurso)
   If Error Then Return False
   If Not hProyecto.Available Then Return False
   Return CStr(hProyecto["integracion_github"]) = "con_integracion"
@@ -372,11 +384,23 @@ End Function
 Public Function VerificarProtocoloRemoto(sRutaProyecto As String) As Boolean
 
   ' --- 1. Obtener la URL actual del remote ---
+  ' Exec (no Shell): sin sh -c, sin 2>&1. Con 2>&1 el error de "no hay remote"
+  ' caería en sUrl y el apartado 4 lo reportaría como "URL no reconocida"
+  ' (diagnóstico falso). Con Exec, stderr va aparte (With Error) y sUrl solo
+  ' tiene stdout: si no hay remote, sUrl queda vacío y Process.LastValue <> 0.
   Dim sUrl As String
+  Dim sErr As String
 
-  Shell "cd " & Chr(34) & sRutaProyecto & Chr(34) & " && git remote get-url origin 2>&1" To sUrl
-  Wait
+  Try Exec ["git", "-C", sRutaProyecto, "remote", "get-url", "origin"] To sUrl
+  ' SI NO HAY REMOTE, git SALE CON CÓDIGO <> 0 Y sUrl QUEDA VACÍO: NO ES UN
+  ' PROTOCOLO NO RECONOCIDO, ES QUE NO HAY REMOTE TODAVÍA. SE DEJA SEGUIR: EL
+  ' push POSTERIOR LO CONFIGURA (git remote add). RETORNAR True NO CORRIGE NADA
+  ' PORQUE NO HAY NADA QUE CORREGIR.
+  If Process.LastValue <> 0 Then Return True
   sUrl = Trim(sUrl)
+
+  ' REMOTE VACÍO POR OTRA RAZÓN: TAMPOCO HAY QUÉ CORREGIR
+  If sUrl = "" Then Return True
 
   ' --- 2. Si ya usa SSH, no hay nada que corregir ---
   If Left(sUrl, 4) = "git@" Then
@@ -398,14 +422,15 @@ Public Function VerificarProtocoloRemoto(sRutaProyecto As String) As Boolean
 
     Select Case Message.Question("El remote está configurado con HTTPS:\n\n" & sUrl & "\n\nEsto provoca que pida usuario y clave.\n¿Corregir automáticamente a SSH?\n\n" & sUrlSSH, "Corregir", "Cancelar")
       Case 1
-        ' CAMBIAR EL REMOTE A SSH
-        Shell "cd " & Chr(34) & sRutaProyecto & Chr(34) & " && git remote set-url origin " & Chr(34) & sUrlSSH & Chr(34) & " 2>&1" To sUrl
-        Wait
-        If Error Then
-          Message.Error("No se pudo cambiar el remote:\n" & sUrl)
+        ' CAMBIAR EL REMOTE A SSH. Exec (no Shell): el veredicto real es
+        ' Process.LastValue, no If Error (que con Shell...To ni siquiera se
+        ' seteaba — era una comprobación muerta).
+        Try Exec ["git", "-C", sRutaProyecto, "remote", "set-url", "origin", sUrlSSH] To sUrl
+        If Error Or If Process.LastValue <> 0 Then
+          Message.Error("No se pudo cambiar el remote a SSH.")
           Return False
         Endif
-        Message.Info("Remote corregido a SSH.\nEl push ahora usará la clave SSH.")
+        Message.Info("Remote corregido a SSH." & Chr(10) & "El push ahora usará la clave SSH.")
         Return True
       Case 2
         Return False

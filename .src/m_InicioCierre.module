@@ -680,10 +680,13 @@ Public Sub CerrarProyecto()
   If IdProyectoEnCurso = 0 Then Return
 
   ' --- 2. LIBERAR EL PROYECTO EN BD ---
-  ' UPDATE ATÓMICO QUE COMBINA OWNER Y FLAG DE OCUPADO EN UNA SOLA SENTENCIA
+  ' SC-07: LIBERAR POR usuario_propietario, NO POR EL id QUE DIGA LA UI.
+  ' SI FMain.id_proyecto.Value SE RESETEÓ POR UN EVENTO (RC-GM-16), UN
+  ' WHERE id = <ese valor> LIBERARÍA EL PROYECTO EQUIVOCADO O NINGUNO. FILTRAR
+  ' POR EL DUEÑO LIBERA LO QUE ESTE USUARIO TIENE OCUPADO, HAYA DESYNC O NO.
   Try m_ConexionBD.mConn.Exec(
-    "UPDATE proyectos SET usuario_propietario = NULL, ocupado = 0 WHERE id = &1",
-    FMain.id_proyecto.Value)
+    "UPDATE proyectos SET usuario_propietario = NULL, ocupado = 0 WHERE usuario_propietario = &1 AND ocupado = 1",
+    UsuarioEnCurso)
   If Error Then
     m_Sonido.sonar("Warning")
     Message.Warning("No se pudo liberar el proyecto en la base de datos:" & gb.NewLine &
@@ -743,21 +746,31 @@ Public Sub CerrarTodoMySQL()
   m_Sonido.sonar("Question")
   If Message.Question("¿Está seguro que desea salir de la aplicación?", "Sí", "No") <> 1 Then Return
 
-  ' --- 2. LIBERAR EL USUARIO Y EL PROYECTO EN BD ---
-  ' SE USAN UPDATEs SEPARADOS PORQUE TIENEN FILTROS DISTINTOS (usuario vs id_proyecto)
-  Try m_ConexionBD.mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = &1", UsuarioEnCurso)
-  If Error Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No se pudo liberar al usuario en la base de datos:" & gb.NewLine & Error.Text)
-  Endif
-
   Try m_ConexionBD.mConn.Exec(
-    "UPDATE proyectos SET usuario_propietario = NULL, ocupado = 0 WHERE id = &1",
-    FMain.id_proyecto.Value)
+    "UPDATE proyectos SET usuario_propietario = NULL, ocupado = 0 WHERE usuario_propietario = &1 AND ocupado = 1",
+    UsuarioEnCurso)
   If Error Then
     m_Sonido.sonar("Warning")
     Message.Warning("No se pudo liberar el proyecto en la base de datos:" & gb.NewLine & Error.Text)
   Endif
+
+  ' --- 2b. LIBERAR AL USUARIO EN BD (en_linea = 0) ---
+  ' ESTA ERA LA LIBERACIÓN QUE EL DOCSTRING PROMETÍA Y EL CUERPO NO HACÍA:
+  ' EL SEGUNDO UPDATE ERA UN COPY-PASTE DEL PRIMERO Y APUNTABA A proyectos,
+  ' NO A usuarios. SC-07: FILTRAR POR usuario (STRING ESTABLE DE SESIÓN), NO
+  ' POR IdUsuarioEnCurso, PARA NO DEPENDER DE QUE EL CACHÉ SIGA INTACTO AL
+  ' CIERRE. VA ANTES DE CERRAR LA CONEXIÓN (APARTADO 6) Y ANTES DE VACIAR
+  ' UsuarioEnCurso (APARTADO 7), CUANDO EL STRING TODAVÍA ESTÁ POBLADO.
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE usuarios SET en_linea = 0 WHERE usuario = &1",
+    UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo marcar al usuario como desconectado en la base de datos:" & gb.NewLine & Error.Text)
+  Endif
+
+  ' --- 2c. CONFIRMAR AMBAS LIBERACIONES EN UNA SOLA TRANSACCIÓN ---
+  Try m_ConexionBD.mConn.Commit
 
   Try m_ConexionBD.mConn.Commit
 
@@ -814,5 +827,137 @@ Private Function ArchivoProyectoEnCurso_Read() As String
 
   ' --- 2. RECOMPONER ---
   Return RutaProyectoEnCurso &/ NombreProyectoEnCurso
+
+End
+
+' ============================================
+' Función   : OtraInstanciaActiva
+' Propósito : Determina si YA hay otra instancia viva de gbpublisher para
+'             este usuario en esta máquina. Valida el PID guardado contra
+'             /proc: comprueba que el proceso exista Y que su cmdline sea
+'             la de la app (descarta locks huérfanos y PIDs reutilizados).
+'             Si el lock está libre, lo reescribe con el PID propio.
+' Retorna   : Boolean — True si hay otra instancia viva; False si libre.
+' ============================================
+Public Function OtraInstanciaActiva() As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRuta As String
+  Dim sContenido As String
+  Dim iPid As Integer
+  Dim sCmdline As String
+
+  sRuta = RutaLock()
+
+  ' --- 2. SIN LOCK PREVIO: INSTANCIA LIBRE ---
+  If Not Exist(sRuta) Then
+    EscribirLock()
+    Return False
+  Endif
+
+  ' --- 3. LEER EL PID GUARDADO ---
+  Try sContenido = Trim$(File.Load(sRuta))
+  If Error Then
+    ' LOCK ILEGIBLE: TRATARLO COMO LIBRE Y REESCRIBIR
+    EscribirLock()
+    Return False
+  Endif
+
+  iPid = CInt(Val(sContenido))
+
+  ' PID INVÁLIDO EN EL ARCHIVO: LOCK CORRUPTO → LIBRE
+  If iPid <= 0 Then
+    EscribirLock()
+    Return False
+  Endif
+
+  ' --- 4. ¿EL PROCESO SIGUE VIVO? (/proc/PID) ---
+  If Not Exist("/proc/" & CStr(iPid)) Then
+    ' PROCESO MUERTO: LOCK HUÉRFANO → LIBRE
+    EscribirLock()
+    Return False
+  Endif
+
+  ' --- 5. ¿ES REALMENTE gbpublisher? (evita falso positivo por PID reutilizado) ---
+  ' /proc/PID/cmdline SEPARA ARGUMENTOS CON NUL; BUSCAR EL NOMBRE ALCANZA
+  Try sCmdline = File.Load("/proc/" & CStr(iPid) & "/cmdline")
+  If Error Then
+    ' NO SE PUDO LEER (proceso ajeno o ya terminado): TRATAR COMO LIBRE
+    EscribirLock()
+    Return False
+  Endif
+
+  If InStr(sCmdline, Application.Name) = 0 Then
+    ' EL PID FUE REUTILIZADO POR OTRO PROGRAMA: LOCK HUÉRFANO → LIBRE
+    EscribirLock()
+    Return False
+  Endif
+
+  ' --- 6. INSTANCIA VIVA Y CONFIRMADA ---
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirLock
+' Propósito : Escribe el lockfile con el PID del proceso actual, leído de
+'             /proc/self/stat (primer campo). No es crítico: si falla, la
+'             app arranca igual (solo se pierde la protección).
+' ============================================
+Private Sub EscribirLock()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sStat As String
+  Dim iEspacio As Integer
+  Dim sPid As String
+
+  ' --- 2. LEER EL PID PROPIO ---
+  Try sStat = File.Load("/proc/self/stat")
+  If Error Then Return
+
+  ' EL PID ES EL PRIMER CAMPO, ANTES DEL PRIMER ESPACIO
+  ' (comm PUEDE CONTENER ESPACIOS/PARÉNTESIS; SOLO USAMOS EL PREFIJO NUMÉRICO)
+  iEspacio = InStr(sStat, " ")
+  If iEspacio = 0 Then Return
+  sPid = Left$(sStat, iEspacio - 1)
+
+  ' --- 3. ESCRIBIR EL LOCK ---
+  Try File.Save(RutaLock(), sPid)
+
+End
+
+' ============================================
+' Función   : LiberarLock
+' Propósito : Elimina el lockfile de instancia única. Llamar en el cierre
+'             limpio de la app (p. ej. desde CerrarTodoMySQL).
+' ============================================
+Public Sub LiberarLock()
+
+  ' --- 1. BORRADO DEFENSIVO ---
+  Try Kill RutaLock()
+
+End
+
+' ============================================
+' Función   : RutaLock
+' Propósito : Ruta del lockfile de instancia única. Incluye User.Name
+'             (por usuario) y Application.Path sanitizado (separa la app
+'             instalada de la corrida desde el IDE, que tienen distinta
+'             ruta base). /tmp se limpia al reiniciar → sin huérfanos
+'             persistentes; local a la máquina → válido con HOME en NFS.
+' Retorna   : String — ruta absoluta del lockfile.
+' ============================================
+Private Function RutaLock() As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sPathSanitizado As String
+
+  ' --- 2. SANITIZAR LA RUTA BASE (LAS BARRAS ROMPEN EL NOMBRE DE ARCHIVO) ---
+  ' INSTALADO Y IDE DIFIEREN EN Application.Path → LOCKS DISTINTOS,
+  ' PERO LA MISMA APP INSTALADA COLISIONA CONSIGO MISMA
+  sPathSanitizado = Replace(Application.Path, "/", "_")
+
+  ' --- 3. RETORNO ---
+  Return "/tmp/gbpublisher-" & User.Name & "-" & sPathSanitizado & ".lock"
 
 End
