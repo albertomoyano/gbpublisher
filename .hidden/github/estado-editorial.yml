@@ -19,7 +19,7 @@ jobs:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
 
-      - name: Procesar articulos y actualizar Discussions
+      - name: Procesar estado editorial y actualizar Discussions
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -29,6 +29,9 @@ jobs:
             const estado = JSON.parse(fs.readFileSync('.estado-proyecto.json', 'utf8'));
             const idsPath = '.github-ids.json';
 
+            // ══════════════════════════════════════════════════════════════
+            // 1. LEER EL MAPEO DE IDs QUE VIVE SOLO EN EL REPOSITORIO
+            // ══════════════════════════════════════════════════════════════
             var idsData = {};
             try {
               var getIdsResult = await github.rest.repos.getContent({
@@ -41,6 +44,9 @@ jobs:
               idsData = {};
             }
 
+            // ══════════════════════════════════════════════════════════════
+            // 2. RESOLVER REPOSITORIO Y CATEGORIA DE DISCUSSIONS
+            // ══════════════════════════════════════════════════════════════
             const repoData = await github.graphql(`
               query($owner: String!, $name: String!) {
                 repository(owner: $owner, name: $name) {
@@ -64,35 +70,87 @@ jobs:
               return;
             }
 
-            for (const articulo of estado.articulos) {
-              const clave = articulo.nombre_archivo;
-              const entrada = idsData[clave] || {};
+            // ══════════════════════════════════════════════════════════════
+            // 3. DETERMINAR LA FORMA DEL DOCUMENTO
+            // El campo "tipo" lo emite gbpublisher. El fallback cubre los
+            // JSON generados antes de que ese campo existiera.
+            // ══════════════════════════════════════════════════════════════
+            const tipo = estado.tipo || (estado.libro ? 'libro' : 'revista');
 
-              if (!entrada.discussion_id) {
+            // Se marca cuando hubo alta o transicion, para no commitear
+            // .github-ids.json en pushes que no cambiaron nada.
+            var modificado = false;
 
-                const autores = Array.isArray(articulo.autores) && articulo.autores.length > 0
-                  ? articulo.autores.join(' - ')
-                  : 'N/D';
+            // ══════════════════════════════════════════════════════════════
+            // 4. RAMA LIBRO: UNA SOLA DISCUSSION POR REPOSITORIO
+            // La unidad de seguimiento es el libro completo, no el capitulo:
+            // la interlocucion editorial pasa siempre por la coordinadora.
+            // Los capitulos viajan como manifiesto informativo, sin estado.
+            // ══════════════════════════════════════════════════════════════
+            const ESTADOS_LIBRO = {
+              borrador:      'Borrador',
+              en_correccion: 'En correccion',
+              en_produccion: 'En produccion',
+              publicado:     'Publicado'
+            };
 
-                const lineas = [
-                  '**Proyecto:** ' + estado.proyecto,
-                  '**Archivo:** `' + articulo.nombre_archivo + '`',
-                  '**Tipo:** ' + (articulo.tipo_articulo || 'N/D'),
-                  '**DOI:** ' + (articulo.doi || 'pendiente'),
-                  '**Autores:** ' + autores,
-                  '**Responsable:** ' + (articulo.responsable_edicion || 'N/D'),
-                  '',
-                  '| Evento | Fecha |',
-                  '|--------|-------|',
-                  '| Recepcion | ' + (articulo.fecha_recepcion || '-') + ' |',
-                  '| Aceptacion | ' + (articulo.fecha_aceptacion || '-') + ' |',
-                  '| Publicacion online | ' + (articulo.fecha_publicacion_online || '-') + ' |',
-                  '',
-                  '**Estado inicial:** `' + articulo.estado + '`',
-                  '',
-                  '---',
-                  '*Seguimiento generado automaticamente por gbpublisher*'
-                ];
+            function legible(e) {
+              return ESTADOS_LIBRO[e] || e || 'N/D';
+            }
+
+            function cuerpoLibro(libro) {
+              const fila = (k, v) => (v ? '| ' + k + ' | ' + v + ' |\n' : '');
+              var md = '';
+
+              if (libro.subtitulo) {
+                md += '**' + libro.subtitulo + '**\n\n';
+              }
+
+              md += '**Proyecto:** ' + estado.proyecto + '\n\n';
+
+              md += '| Campo | Valor |\n|---|---|\n';
+              md += fila('Tipo de obra', libro.tipo_libro);
+              md += fila('Editorial', libro.editorial);
+              md += fila('Anio', libro.ano_publicacion);
+              md += fila('Idioma', libro.idioma);
+              md += fila('ISBN impreso', libro.isbn_impreso);
+              md += fila('ISBN electronico', libro.isbn_electronico);
+              md += fila('DOI', libro.doi);
+              md += fila('Estado editorial', legible(libro.estado));
+              md += fila('Estado de publicacion', libro.estado_publicacion);
+              md += fila('Responsable del empuje', libro.responsable);
+
+              // MANIFIESTO: INDICE DE LECTURA, SIN ESTADO POR CAPITULO.
+              // El orden lo fija nombre_archivo (convencion fm- / a- / bm-),
+              // el mismo que usa el ensamblado del EPUB.
+              if (Array.isArray(libro.capitulos) && libro.capitulos.length > 0) {
+                md += '\n## Indice (' + libro.capitulos.length + ' capitulos)\n\n';
+                md += '| Archivo | Titulo | Tipo |\n|---|---|---|\n';
+                for (const c of libro.capitulos) {
+                  md += '| `' + (c.orden || '') + '` | ' + (c.titulo || '') +
+                        ' | ' + (c.tipo || '') + ' |\n';
+                }
+              }
+
+              md += '\n---\n*Seguimiento generado automaticamente por gbpublisher*';
+              return md;
+            }
+
+            async function procesarLibro() {
+              const libro = estado.libro;
+
+              if (!libro) {
+                core.warning('El JSON declara tipo "libro" pero no trae objeto libro.');
+                return;
+              }
+
+              const registro = idsData.libro;
+
+              // PRIMERA VEZ: CREAR LA UNICA DISCUSSION DEL REPOSITORIO.
+              // El titulo NO lleva el estado entre corchetes a proposito:
+              // esta Discussion vive toda la produccion del libro y un
+              // estado incrustado en el titulo quedaria desactualizado.
+              if (!registro || !registro.discussion_id) {
 
                 const resultado = await github.graphql(`
                   mutation($repoId: ID!, $catId: ID!, $titulo: String!, $cuerpo: String!) {
@@ -108,26 +166,41 @@ jobs:
                 `, {
                   repoId: repoId,
                   catId: categoria.id,
-                  titulo: '[' + articulo.estado.toUpperCase() + '] ' + articulo.titulo,
-                  cuerpo: lineas.join('\n')
+                  titulo: '[LIBRO] ' + libro.titulo,
+                  cuerpo: cuerpoLibro(libro)
                 });
 
-                idsData[clave] = {
+                idsData.libro = {
                   discussion_id: resultado.createDiscussion.discussion.id,
-                  ultimo_estado: articulo.estado
+                  ultimo_estado: libro.estado
                 };
+                modificado = true;
                 core.info('Discussion creada: ' + resultado.createDiscussion.discussion.url);
+                return;
+              }
 
-              } else if (entrada.ultimo_estado && articulo.estado !== entrada.ultimo_estado) {
+              // YA EXISTE Y EL ESTADO CAMBIO: COMENTAR LA TRANSICION.
+              // Se compara contra ultimo_estado; si falta (registro viejo),
+              // se adopta el estado actual sin comentar, para no inventar
+              // una transicion que no ocurrio.
+              if (!registro.ultimo_estado) {
+                registro.ultimo_estado = libro.estado;
+                modificado = true;
+                core.info('Registro sin ultimo_estado: se adopta el actual sin comentar.');
+                return;
+              }
+
+              if (registro.ultimo_estado !== libro.estado) {
 
                 const lineasComentario = [
                   '### Cambio de estado',
                   '',
                   '| | |',
                   '|---|---|',
-                  '| **Estado anterior** | `' + entrada.ultimo_estado + '` |',
-                  '| **Estado actual** | `' + articulo.estado + '` |',
-                  '| **Fecha** | ' + new Date().toISOString().split('T')[0] + ' |',
+                  '| **Estado anterior** | `' + legible(registro.ultimo_estado) + '` |',
+                  '| **Estado actual** | `' + legible(libro.estado) + '` |',
+                  '| **Fecha** | ' + (estado.generado || new Date().toISOString()) + ' |',
+                  '| **Responsable** | ' + (libro.responsable || 'N/D') + ' |',
                   '',
                   '*Actualizacion automatica por gbpublisher*'
                 ];
@@ -142,13 +215,131 @@ jobs:
                     }
                   }
                 `, {
-                  discId: entrada.discussion_id,
+                  discId: registro.discussion_id,
                   cuerpo: lineasComentario.join('\n')
                 });
 
-                idsData[clave].ultimo_estado = articulo.estado;
-                core.info('Comentario agregado: ' + clave);
+                registro.ultimo_estado = libro.estado;
+                modificado = true;
+                core.info('Comentario agregado al libro: ' + libro.titulo);
               }
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // 5. RAMA REVISTA: UNA DISCUSSION POR ARTICULO
+            // ══════════════════════════════════════════════════════════════
+            async function procesarArticulos() {
+
+              if (!Array.isArray(estado.articulos)) {
+                core.warning('El JSON declara tipo "revista" pero no trae array de articulos.');
+                return;
+              }
+
+              for (const articulo of estado.articulos) {
+                const clave = articulo.nombre_archivo;
+                const entrada = idsData[clave] || {};
+
+                if (!entrada.discussion_id) {
+
+                  const autores = Array.isArray(articulo.autores) && articulo.autores.length > 0
+                    ? articulo.autores.join(' - ')
+                    : 'N/D';
+
+                  const lineas = [
+                    '**Proyecto:** ' + estado.proyecto,
+                    '**Archivo:** `' + articulo.nombre_archivo + '`',
+                    '**Tipo:** ' + (articulo.tipo_articulo || 'N/D'),
+                    '**DOI:** ' + (articulo.doi || 'pendiente'),
+                    '**Autores:** ' + autores,
+                    '**Responsable:** ' + (articulo.responsable_edicion || 'N/D'),
+                    '',
+                    '| Evento | Fecha |',
+                    '|--------|-------|',
+                    '| Recepcion | ' + (articulo.fecha_recepcion || '-') + ' |',
+                    '| Aceptacion | ' + (articulo.fecha_aceptacion || '-') + ' |',
+                    '| Publicacion online | ' + (articulo.fecha_publicacion_online || '-') + ' |',
+                    '',
+                    '**Estado inicial:** `' + articulo.estado + '`',
+                    '',
+                    '---',
+                    '*Seguimiento generado automaticamente por gbpublisher*'
+                  ];
+
+                  const resultado = await github.graphql(`
+                    mutation($repoId: ID!, $catId: ID!, $titulo: String!, $cuerpo: String!) {
+                      createDiscussion(input: {
+                        repositoryId: $repoId
+                        categoryId: $catId
+                        title: $titulo
+                        body: $cuerpo
+                      }) {
+                        discussion { id url }
+                      }
+                    }
+                  `, {
+                    repoId: repoId,
+                    catId: categoria.id,
+                    titulo: '[' + articulo.estado.toUpperCase() + '] ' + articulo.titulo,
+                    cuerpo: lineas.join('\n')
+                  });
+
+                  idsData[clave] = {
+                    discussion_id: resultado.createDiscussion.discussion.id,
+                    ultimo_estado: articulo.estado
+                  };
+                  modificado = true;
+                  core.info('Discussion creada: ' + resultado.createDiscussion.discussion.url);
+
+                } else if (entrada.ultimo_estado && articulo.estado !== entrada.ultimo_estado) {
+
+                  const lineasComentario = [
+                    '### Cambio de estado',
+                    '',
+                    '| | |',
+                    '|---|---|',
+                    '| **Estado anterior** | `' + entrada.ultimo_estado + '` |',
+                    '| **Estado actual** | `' + articulo.estado + '` |',
+                    '| **Fecha** | ' + new Date().toISOString().split('T')[0] + ' |',
+                    '',
+                    '*Actualizacion automatica por gbpublisher*'
+                  ];
+
+                  await github.graphql(`
+                    mutation($discId: ID!, $cuerpo: String!) {
+                      addDiscussionComment(input: {
+                        discussionId: $discId
+                        body: $cuerpo
+                      }) {
+                        comment { id }
+                      }
+                    }
+                  `, {
+                    discId: entrada.discussion_id,
+                    cuerpo: lineasComentario.join('\n')
+                  });
+
+                  idsData[clave].ultimo_estado = articulo.estado;
+                  modificado = true;
+                  core.info('Comentario agregado: ' + clave);
+                }
+              }
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // 6. DESPACHO SEGUN TIPO DE PROYECTO
+            // ══════════════════════════════════════════════════════════════
+            if (tipo === 'libro') {
+              await procesarLibro();
+            } else {
+              await procesarArticulos();
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // 7. PERSISTIR EL MAPEO DE IDs SOLO SI HUBO CAMBIOS
+            // ══════════════════════════════════════════════════════════════
+            if (!modificado) {
+              core.info('Sin cambios de estado: no se reescribe .github-ids.json');
+              return;
             }
 
             var shaActual;

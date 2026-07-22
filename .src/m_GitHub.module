@@ -65,6 +65,9 @@ Public Function GenerarEstadoProyecto(sRutaProyecto As String, iIdProyecto As In
 
   ' --- 4. CONSTRUIR JSON RAÍZ Y GUARDAR EN DISCO ---
   Dim jRaiz As New JSONCollection
+  ' DISCRIMINADOR DE FORMA PARA EL ACTION: UN ARRAY "articulos" (REVISTA)
+  ' O UN OBJETO "libro". EVITA QUE EL WORKFLOW TENGA QUE INFERIRLO.
+  jRaiz["tipo"] = "revista"
   jRaiz["proyecto"] = sNombreProyecto
   jRaiz["generado"] = Format(Now(), "yyyy-mm-ddThh:nn:ss")
   jRaiz["articulos"] = aArticulos
@@ -112,6 +115,140 @@ Private Function ObtenerAutoresArticulo(iIdArticulo As Integer) As Variant[]
 
 Catch
   Return aAutores
+
+End Function
+
+' ============================================
+' Función   : GenerarEstadoLibro
+' Propósito : Consulta la BD y escribe .estado-proyecto.json
+'             en la raíz del proyecto con el estado editorial
+'             del libro. A DIFERENCIA DE LAS REVISTAS, LA UNIDAD
+'             DE SEGUIMIENTO ES EL LIBRO COMPLETO, NO EL CAPÍTULO:
+'             una sola Discussion por repositorio, porque la
+'             interlocución editorial pasa siempre por la
+'             coordinadora/editora. Los capítulos viajan como
+'             manifiesto informativo, sin estado propio.
+'             No incluye ningún campo de GitHub — esos viven en
+'             .github-ids.json exclusivamente.
+' Parámetros: sRutaProyecto   As String  — raíz del proyecto
+'             iIdProyecto     As Integer — ID del proyecto en BD
+'             sNombreProyecto As String  — nombre legible
+' Retorna   : Boolean — True si el archivo se generó sin error
+' ============================================
+Public Function GenerarEstadoLibro(sRutaProyecto As String, iIdProyecto As Integer, sNombreProyecto As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRutaJSON As String
+  Dim hDB As Result
+  Dim jLibro As New JSONCollection
+  Dim jRaiz As New JSONCollection
+
+  sRutaJSON = sRutaProyecto &/ ".estado-proyecto.json"
+
+  ' --- 2. CONSULTAR EL LIBRO DEL PROYECTO ---
+  ' libros_md.id_proyecto ES UNIQUE: HAY UN SOLO LIBRO POR PROYECTO.
+  ' POR ESO NO HAY BUCLE NI ARRAY, A DIFERENCIA DE LOS ARTÍCULOS.
+  Try hDB = m_ConexionBD.mConn.Exec(
+    "SELECT id_libro, titulo_libro, subtitulo, tipo_libro, " &
+    "isbn_impreso, isbn_electronico, doi_libro, editorial, " &
+    "ano_publicacion, idioma_principal, " &
+    "estado_libro, estado_publicacion " &
+    "FROM libros_md WHERE id_proyecto = " & iIdProyecto)
+  If Error Then Return False
+
+  ' PROYECTO SIN REGISTRO DE LIBRO AÚN: NO HAY NADA QUE REPORTAR
+  If Not hDB.Available Then Return True
+
+  ' --- 3. CONSTRUIR EL OBJETO LIBRO ---
+  jLibro["titulo"] = CStr(hDB["titulo_libro"])
+  jLibro["subtitulo"] = ValorONull(hDB["subtitulo"])
+  jLibro["tipo_libro"] = ValorONull(hDB["tipo_libro"])
+  jLibro["isbn_impreso"] = ValorONull(hDB["isbn_impreso"])
+  jLibro["isbn_electronico"] = ValorONull(hDB["isbn_electronico"])
+  jLibro["doi"] = ValorONull(hDB["doi_libro"])
+  jLibro["editorial"] = ValorONull(hDB["editorial"])
+  jLibro["ano_publicacion"] = ValorONull(hDB["ano_publicacion"])
+  jLibro["idioma"] = ValorONull(hDB["idioma_principal"])
+
+  ' EL ESTADO DE PROCESO NUNCA DEBE VIAJAR NULO: ES EL CAMPO QUE EL ACTION
+  ' COMPARA CONTRA ultimo_estado PARA DETECTAR TRANSICIONES. RC-GM-17:
+  ' EL NULL-CHECK VA EN If ANIDADO, NO COMBINADO CON LA CONVERSIÓN.
+  If IsNull(hDB["estado_libro"]) Then
+    jLibro["estado"] = "borrador"
+  Else
+    jLibro["estado"] = CStr(hDB["estado_libro"])
+  Endif
+
+  ' ESTADO BIBLIOGRÁFICO: VIAJA COMO DATO DE CONTEXTO, NO DISPARA TRANSICIONES
+  jLibro["estado_publicacion"] = ValorONull(hDB["estado_publicacion"])
+
+  ' RESPONSABLE = QUIEN EJECUTA EL EMPUJE (EL MAQUETADOR), NO EL CREADOR
+  ' DEL REGISTRO. SALE DE LA GLOBAL DE SESIÓN CACHEADA AL LOGIN (RC-GM-11).
+  jLibro["responsable"] = m_InicioCierre.UsuarioEnCurso
+
+  ' MANIFIESTO DE CAPÍTULOS: ÍNDICE PARA LECTURA DEL DIRECTOR
+  jLibro["capitulos"] = ObtenerManifiestoCapitulos(CInt(hDB["id_libro"]))
+
+  ' --- 4. CONSTRUIR JSON RAÍZ Y GUARDAR EN DISCO ---
+  jRaiz["tipo"] = "libro"
+  jRaiz["proyecto"] = sNombreProyecto
+  jRaiz["generado"] = Format(Now(), "yyyy-mm-ddThh:nn:ss")
+  jRaiz["libro"] = jLibro
+
+  Try File.Save(sRutaJSON, JSON.Encode(jRaiz))
+  Return Not Error
+
+Catch
+  Return False
+
+End Function
+
+' ============================================
+' Función   : ObtenerManifiestoCapitulos
+' Propósito : Devuelve Variant[] con el índice de capítulos del
+'             libro, ordenado por nombre de archivo (la convención
+'             fm- / a- / bm- fija el orden editorial, el mismo que
+'             usa el ensamblado del EPUB).
+'             Es INFORMATIVO: el capítulo no lleva estado porque
+'             no es unidad de seguimiento.
+' Parámetros: iIdLibro As Integer — ID del libro en libros_md
+' Retorna   : Variant[] — objetos {orden, titulo, tipo}
+' ============================================
+Private Function ObtenerManifiestoCapitulos(iIdLibro As Integer) As Variant[]
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aCapitulos As New Variant[]
+  Dim hCap As Result
+  Dim jCapitulo As JSONCollection
+
+  ' --- 2. CONSULTAR CAPÍTULOS EN ORDEN EDITORIAL ---
+  ' EL ORDEN ALFABÉTICO NO SIRVE: DA a- < bm- < fm-, EXACTAMENTE EL INVERSO
+  ' DEL ORDEN DE LECTURA. SE ORDENA PRIMERO POR FAMILIA (PRELIMINARES,
+  ' CUERPO, FINALES) Y DENTRO DE CADA UNA POR NOMBRE DE ARCHIVO.
+  Try hCap = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, titulo_capitulo, tipo_capitulo " &
+    "FROM capitulos WHERE id_libro = " & iIdLibro &
+    " ORDER BY CASE " &
+    "  WHEN nombre_archivo LIKE 'fm-%' THEN 1 " &
+    "  WHEN nombre_archivo LIKE 'a-%'  THEN 2 " &
+    "  WHEN nombre_archivo LIKE 'bm-%' THEN 3 " &
+    "  ELSE 4 END, nombre_archivo")
+  If Error Then Return aCapitulos
+
+  ' --- 3. ACUMULAR CADA CAPÍTULO COMO OBJETO ---
+  While hCap.Available
+    jCapitulo = New JSONCollection
+    jCapitulo["orden"] = ValorONull(hCap["nombre_archivo"])
+    jCapitulo["titulo"] = CStr(hCap["titulo_capitulo"])
+    jCapitulo["tipo"] = ValorONull(hCap["tipo_capitulo"])
+    aCapitulos.Add(jCapitulo)
+    hCap.MoveNext()
+  Wend
+
+  Return aCapitulos
+
+Catch
+  Return aCapitulos
 
 End Function
 
@@ -283,7 +420,28 @@ Private Sub EjecutarPushGitHub(mensajeCommit As String)
 
     ' EL JSON ENTRA EN EL MISMO COMMIT EDITORIAL, SIN COMMIT SEPARADO
     Dim bJsonOk As Boolean
-    bJsonOk = m_GitHub.GenerarEstadoProyecto(m_InicioCierre.RutaProyectoEnCurso, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
+
+    ' LA FORMA DEL JSON DEPENDE DEL TIPO DE PROYECTO: LA REVISTA EMITE UN ARRAY
+    ' DE ARTÍCULOS; EL LIBRO, UN OBJETO ÚNICO CON MANIFIESTO DE CAPÍTULOS.
+    ' EL TIPO SALE DE FMain.TipoProyectoActual, FUENTE CANÓNICA YA USADA POR
+    ' m_Shortcodes, m_Bibtex Y m_FuncionesGenericas.
+    Select Case FMain.TipoProyectoActual
+
+      Case m_Constantes.TIPO_LIBRO_MD
+        bJsonOk = m_GitHub.GenerarEstadoLibro(m_InicioCierre.RutaProyectoEnCurso, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
+
+      Case m_Constantes.TIPO_REVISTA_MD
+        bJsonOk = m_GitHub.GenerarEstadoProyecto(m_InicioCierre.RutaProyectoEnCurso, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
+
+      Default
+        ' TIPO NO CONTEMPLADO (LATEX LEGACY): NO SE GENERA JSON.
+        ' ES PREFERIBLE NO EMITIR NADA A EMITIR UN DOCUMENTO CON LA FORMA
+        ' EQUIVOCADA, QUE EL ACTION PROCESARÍA COMO SI FUERA OTRA COSA.
+        ' bJsonOk = True PARA QUE EL PUSH SIGA NORMAL, SIN PEDIR CONFIRMACIÓN.
+        bJsonOk = True
+
+    End Select
+
     If Not bJsonOk Then
       m_Sonido.sonar("Warning")
       ' SI EL USUARIO NO CONFIRMA CONTINUAR SIN EL JSON, SE ABORTA EL PUSH
