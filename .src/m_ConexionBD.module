@@ -22,6 +22,7 @@
 
 Public mConn As Connection        ' OBJETO DE CONEXIÓN REUTILIZADO GLOBALMENTE
 Public usuarioActual As String    ' USUARIO LOGUEADO ACTUALMENTE
+Public ipServidorActual As String   ' IP CON LA QUE SE ABRIÓ mConn — PARA SONDEO DEL SEMÁFORO
 
 ' ==============================================================================
 ' Función: ConexionAbierta(ip, usuario, claveEncriptada) As Integer
@@ -91,12 +92,13 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
     Return 0
   Endif
 
-  ' CONSTRUCCIÓN DEL SQL DE VALIDACIÓN
+  ' CONSTRUCCIÓN DEL SQL DE VALIDACIÓN — PARAMETRIZADA (ANTI-INYECCIÓN)
+  ' EL DRIVER ESCAPA usuario Y claveEncriptada; NO SE CONCATENAN CRUDOS.
   Error.Clear
-  sSQL = "SELECT * FROM usuarios WHERE usuario = '" & usuario & "' AND clave = '" & claveEncriptada & "'"
+  sSQL = "SELECT * FROM usuarios WHERE usuario = &1 AND clave = &2"
 
-  ' EJECUTAR CONSULTA
-  hResultado = mConn.Exec(sSQL)
+  ' EJECUTAR CONSULTA PARAMETRIZADA
+  hResultado = mConn.Exec(sSQL, usuario, claveEncriptada)
 
   If Error Then
     m_Sonido.sonar("Error")
@@ -129,6 +131,8 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
 
   ' GUARDAR EL USUARIO ACTUAL EN LA VARIABLE GLOBAL
   usuarioActual = usuario
+  ' CACHEAR LA IP PARA EL SONDEO DEL SEMÁFORO DE CONEXIÓN
+  ipServidorActual = ip
 
   Return 1
 
@@ -156,12 +160,16 @@ Public Sub ConexionCerrada()
         Try mConn.Exec("UPDATE usuarios SET en_linea = 0 WHERE usuario = '" & usuarioActual & "'")
       Endif
       Try mConn.Close
+      ' --- N. DETENER SEMÁFORO DE CONEXIÓN ---
+      FMain.TimerRed.Stop()
+      FMain.pbRedSemaforo.Picture = Null
     Endif
     mConn = Null
   Endif
 
   ' LIMPIAR VARIABLE DE USUARIO
   usuarioActual = ""
+  ipServidorActual = ""
 
 End
 
@@ -328,3 +336,56 @@ Public Function ValidarEsquemaBD() As String
   Return sErrores
 
 End Function
+
+' ============================================
+' Función   : SondearEstadoConexion
+' Propósito : SONDEA SI EL SERVIDOR MYSQL SIGUE ALCANZABLE ABRIENDO UNA
+'             CONEXIÓN DESCARTABLE A LA MISMA IP CON TIMEOUT ACOTADO.
+'             NO USA mConn (NO INTERFIERE CON LA CONEXIÓN DE TRABAJO).
+'             ADVERTENCIA: ES SÍNCRONA Y PUEDE BLOQUEAR LA UI HASTA
+'             EL VALOR DE TIMEOUT (3s) SI EL SERVIDOR NO RESPONDE.
+'             VERIFICADO EMPÍRICAMENTE: Connection.Timeout EN SEGUNDOS,
+'             ABORTA Open() AL VENCER.
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True SI LA CONEXIÓN ABRIÓ, False SI FALLÓ/TIMEOUT
+' ============================================
+Public Function SondearEstadoConexion() As Boolean
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim hSonda As Connection
+  Dim bViva As Boolean = False
+
+  ' --- 1. VALIDACIÓN: DEBE HABER IP CACHEADA ---
+  If ipServidorActual = "" Then Return False
+
+  ' --- 2. CONEXIÓN DE SONDEO DESCARTABLE (MISMAS CREDENCIALES QUE mConn) ---
+  ' PENDIENTE: CUANDO app_user/PASSWORD PASEN AL ARCHIVO CONF, ACTUALIZAR
+  ' ESTE BLOQUE Y EL DE ConexionAbierta EN PARALELO (HOY DUPLICADOS).
+  hSonda = New Connection
+  hSonda.Type = "mysql"
+  hSonda.Host = ipServidorActual
+  hSonda.Port = 3306
+  hSonda.Name = "gbpublisher"
+  hSonda.User = "app_user"
+  hSonda.Password = "AppUser2024!"
+  ' TIMEOUT ACOTADO — VERIFICADO: CORTA Open() A LOS N SEGUNDOS
+  hSonda.Timeout = 3
+
+  ' --- 3. INTENTAR ABRIR (RC-GM-02: VERIFICAR If Error) ---
+  Try hSonda.Open
+  If Error Then
+    bViva = False
+  Else
+    bViva = hSonda.Opened
+  Endif
+
+  ' --- 4. CERRAR Y DESCARTAR LA SONDA ---
+  If hSonda Then
+    If hSonda.Opened Then Try hSonda.Close
+    hSonda = Null
+  Endif
+
+  ' --- 5. RETORNO ---
+  Return bViva
+
+End

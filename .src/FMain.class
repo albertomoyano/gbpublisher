@@ -7331,3 +7331,74 @@ Public Sub ActualizarEstadoBotonNotitas()
   btnNotitas.Visible = m_ConexionBD.mConn.Opened
 
 End
+
+' ============================================
+' Función   : TimerRed_Timer
+' Propósito : LATIDO PERIÓDICO (30s) QUE SONDEA LA CONEXIÓN Y REPINTA EL
+'             SEMÁFORO. PINTA ÁMBAR ANTES DE SONDEAR PARA DAR FEEDBACK
+'             DURANTE LA ESPERA BLOQUEANTE (HASTA 3s SI EL SERVIDOR CAYÓ).
+' Parámetros: (NINGUNO — EVENTO DEL Timer)
+' Retorna   : (NADA)
+' ============================================
+Public Sub TimerRed_Timer()
+  ' --- 1. FEEDBACK VISUAL: SONDEANDO (ÁMBAR) ANTES DE LA LLAMADA CARA ---
+  ' REPAINT FUERZA EL DIBUJO INMEDIATO ANTES DE QUE EL SONDEO BLOQUEE.
+
+  PintarSemaforoConexion(1)
+  pbRedSemaforo.Refresh
+
+  ' --- 2. SONDEAR (PUEDE BLOQUEAR HASTA EL TIMEOUT DE LA SONDA, 3s) ---
+  ' RC-GM-02: SondearEstadoConexion YA MANEJA SU PROPIO If Error INTERNO.
+  If m_ConexionBD.SondearEstadoConexion() Then
+    ' --- 3a. CONEXIÓN VIVA: VERDE ---
+    PintarSemaforoConexion(2)
+  Else
+    ' --- 3b. CONEXIÓN CAÍDA: ROJO ---
+    PintarSemaforoConexion(0)
+  Endif
+
+End
+
+' ============================================
+' Función   : PintarSemaforoConexion
+' Propósito : PINTAR EL SEMÁFORO DE CONEXIÓN EN pbRedSemaforo SEGÚN UN
+'             ESTADO YA RESUELTO. NO SONDEA — SOLO PINTA (INSTANTÁNEO).
+'             REUTILIZA ColorSemaforo/ColorFondoSemaforo DE m_GestionImagenes
+'             (AHORA PÚBLICAS) PARA COHERENCIA VISUAL CON EL SEMÁFORO DE IMÁGENES.
+' Parámetros: iEstado As Integer — 2 VIVA (VERDE), 1 SONDEANDO (ÁMBAR),
+'                                  0 CAÍDA (ROJO)
+' Retorna   : (NADA)
+' ============================================
+Public Sub PintarSemaforoConexion(iEstado As Integer)
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+
+  Dim hImg As Image
+  Dim iLado As Integer
+  Dim iDisco As Integer
+  Dim iMargen As Integer
+
+  ' --- 1. GEOMETRÍA E IMAGEN OPACA (IDÉNTICA AL SEMÁFORO DE IMÁGENES) ---
+  iLado = 36
+  iDisco = 20
+  iMargen = (iLado - iDisco) / 2
+  hImg = New Image(iLado, iLado, False)
+
+  ' --- 2. PINTAR FONDO INTEGRADO Y LUEGO EL CÍRCULO DEL ESTADO ---
+  Paint.Begin(hImg)
+  Paint.Rectangle(0, 0, iLado, iLado)
+  Paint.Brush = Paint.Color(m_GestionImagenes.ColorFondoSemaforo(FMain.pbRedSemaforo))
+  Paint.Fill
+  Paint.Ellipse(iMargen, iMargen, iDisco, iDisco)
+  Paint.Brush = Paint.Color(m_GestionImagenes.ColorSemaforo(iEstado))
+  Paint.Fill
+  Paint.End
+
+  ' --- 3. ASIGNAR AL CONTROL ---
+  FMain.pbRedSemaforo.Picture = hImg.Picture
+
+Catch
+  ' EL FALLO DEL SEMÁFORO NO DEBE INTERRUMPIR EL FLUJO (RC-GM-02 VÍA Catch)
+  m_Sonido.sonar("Error")
+  Print "PintarSemaforoConexion FALLA: " & Error.Text
+
+End
