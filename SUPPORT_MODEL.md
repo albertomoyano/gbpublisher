@@ -48,7 +48,7 @@ Las instituciones que colaboran pueden ser mencionadas en la documentación del 
 
 ## Contacto
 
-Si su institución está interesada en colaborar o quiere conocer más sobre el proyecto antes de tomar una decisión, puede escribir a [estudio2a@outlook.com.ar](mailto:estudio2a@outlook.com.ar).
+Si su institución está interesada en colaborar o quiere conocer más sobre el proyecto antes de tomar una decisión, puede escribir a [contacto@estudio2a.ar](mailto:contacto@estudio2a.ar).
 
 No hay formularios ni procesos formales. Una conversación es suficiente para empezar.
 

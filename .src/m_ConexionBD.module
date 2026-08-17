@@ -92,6 +92,8 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
     Return 0
   Endif
 
+  mConn.Exec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+
   ' CONSTRUCCIÓN DEL SQL DE VALIDACIÓN — PARAMETRIZADA (ANTI-INYECCIÓN)
   ' EL DRIVER ESCAPA usuario Y claveEncriptada; NO SE CONCATENAN CRUDOS.
   Error.Clear
@@ -126,8 +128,19 @@ Public Function ConexionAbierta(ip As String, usuario As String, claveEncriptada
     Return 2
   End If
 
-  ' MARCAR USUARIO COMO CONECTADO
-  mConn.Exec("UPDATE usuarios SET en_linea = 1, ultimo_acceso = CURRENT_TIMESTAMP WHERE usuario = '" & usuario & "'")
+  ' MARCAR USUARIO COMO CONECTADO Y LIMPIAR SU PROYECTO ACTUAL (BORRÓN INICIAL)
+  ' id_proyecto_actual = NULL DEJA LA SESIÓN EN BLANCO AL LOGIN: SI UNA CAÍDA O
+  ' UN CORTE DE VPN DEJÓ EL CAMPO PEGADO CON EL PROYECTO DE LA SESIÓN ANTERIOR,
+  ' EL PANEL NO MOSTRARÁ UN PROYECTO QUE EL USUARIO TODAVÍA NO ABRIÓ EN ESTA SESIÓN.
+  ' PARAMETRIZADO (&1): LA VERSIÓN ANTERIOR CONCATENABA usuario CRUDO — INYECCIÓN
+  ' POSIBLE VÍA NOMBRE DE USUARIO. ADEMÁS SE AGREGA CHEQUEO DE ERROR (RC-GM-02).
+  Try mConn.Exec(
+    "UPDATE usuarios SET en_linea = 1, id_proyecto_actual = NULL, ultimo_acceso = CURRENT_TIMESTAMP WHERE usuario = &1",
+    usuario)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Conexión establecida, pero no se pudo actualizar el estado en línea del usuario:" & Chr(10) & Error.Text)
+  Endif
 
   ' GUARDAR EL USUARIO ACTUAL EN LA VARIABLE GLOBAL
   usuarioActual = usuario

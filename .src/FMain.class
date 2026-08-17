@@ -67,9 +67,6 @@ Public Sub Form_Open()
   TabPanelIzquierdaInferior.Visible = False
   hbGoTo.Visible = False
 
-  ' --- 3. Configuración de la tabla de usuarios ---
-  m_InicioCierre.DisenarTableViewUsuarios(TableViewUsuarios)
-
   ' --- 4. Configuración del editor Markdown ---
   ' PENDIENTE: LA LÓGICA DE TEMAS SE MOVERÁ A UN MÓDULO EXTERNO CON SELECCIÓN POR COMBOBOX
   txtEditorProyecto.ShowLineNumber = True
@@ -568,20 +565,6 @@ Public Sub menuXMLpmd_Click()
 
 End
 
-' Public Sub btnGuardarCambiosMetadatosLibro_Click()
-'
-'   m_Metadatos.GuardarMetadatos()
-'   ' Refrescás Orden de Taller
-'   m_OrdenTaller.CargarOrdenTaller()
-'
-' End
-
-' Public Sub ComboBoxArticuloAsociado_Click()
-'
-'   m_FuncionesGenericas.ComboBoxArticuloAsociado()
-'
-' End
-
 Public Sub BtnNuevoBib_Click()
   ' VERIFICAR SI HAY UN PROYECTO ACTIVO
 
@@ -597,7 +580,12 @@ Public Sub BtnNuevoBib_Click()
   btnGuardarCambiosBib.Visible = False
   BtnEliminarBib.Visible = False
   Wait   ' PROCESA EVENTOS PENDIENTES PARA ACTUALIZAR LA INTERFAZ
-
+  ' RESTAURAR EL GRID COMPLETO DEL PROYECTO ANTES DE LA ENTRADA NUEVA.
+  ' mostrarIguales PUDO DEJAR ContenidoBib FILTRADO CON SOLO LAS COINCIDENCIAS
+  ' DE UN "YA EXISTE"; IniciarBibtex RECONSULTA WHERE id_proyecto COMPLETO Y
+  ' RESIEMBRA LA HUELLA. TAMBIÉN LIMPIA LOS TEXTBOX, POR ESO EL Limpiar DE ABAJO
+  ' ES REDUNDANTE PERO SE DEJA POR CLARIDAD DEL FLUJO
+  m_Bibtex.IniciarBibtex()
   ' LIMPIAMOS LOS TEXTBOX
   m_Bibtex.LimpiarTextboxBibtex()
 
@@ -756,7 +744,7 @@ End
 
 Public Sub BtnBuscarClaveBib_Click()
 
-  m_Bibtex.BuscarPorCampo(txtClaveBibtex, gvReferenciasEnCurso, "clave_bibtex")
+  m_Bibtex.BuscarPorCampo(ClaveBiBlatex, gvReferenciasEnCurso, "clave_bibtex")
 
 End
 
@@ -1005,6 +993,8 @@ Public Sub CargarListaArticulosMD(Optional bPreservarSeleccion As Boolean = Fals
 
   ' LIMPIAR EL COMBOBOX
   cmbArticulosRevista.Clear()
+  cmbArticulosRevista.Text = ""
+  cmbArticulosRevista.Refresh
 
   ' AGREGAR PRIMERO EL ARCHIVO PRINCIPAL DEL PROYECTO
   cmbArticulosRevista.Add(m_InicioCierre.NombreProyectoEnCurso)
@@ -1047,22 +1037,25 @@ Public Sub CargarListaArticulosMD(Optional bPreservarSeleccion As Boolean = Fals
     Endif
   Endif
 
-  ' RESTAURAR LA SELECCIÓN ANTERIOR O SELECCIONAR EL ARCHIVO PRINCIPAL
-  If bPreservarSeleccion And sSeleccionAnterior Then
-    ' BUSCAR EL ARCHIVO QUE ESTABA SELECCIONADO
-    Dim i As Integer
-    For i = 0 To cmbArticulosRevista.Count - 1
-      If cmbArticulosRevista[i].Text = sSeleccionAnterior Then
-        cmbArticulosRevista.Index = i
-        Return
-      Endif
-    Next
-    ' SI NO SE ENCONTRÓ, SELECCIONAR EL ARCHIVO PRINCIPAL
-    cmbArticulosRevista.Index = 0
-  Else
-    ' SELECCIONAR EL ARCHIVO PRINCIPAL POR DEFECTO
-    cmbArticulosRevista.Index = 0
+  ' --- RESTAURAR SELECCIÓN O SELECCIONAR EL ARCHIVO PRINCIPAL ---
+  ' EL EDITOR SE CARGA EN cmbArticulosRevista_Click AL ASIGNAR EL Index. PARA
+  ' PROYECTOS RECIÉN ABIERTOS EL Index PASA DE -1 (POST-Clear) A iDestino, LO QUE
+  ' SIEMPRE ES UNA TRANSICIÓN REAL Y DISPARA EL EVENTO SIN NECESIDAD DE FORZARLA.
+  Dim i As Integer
+  Dim iDestino As Integer = 0
+
+  If bPreservarSeleccion Then
+    If sSeleccionAnterior <> "" Then
+      For i = 0 To cmbArticulosRevista.Count - 1
+        If cmbArticulosRevista[i].Text = sSeleccionAnterior Then
+          iDestino = i
+          Break
+        Endif
+      Next
+    Endif
   Endif
+
+  cmbArticulosRevista.Index = iDestino
 
 End
 
@@ -1680,27 +1673,28 @@ End
 
 Public Sub btnGuardarIGUAL_Click()
 
-  ' VERIFICAR QUE HAY UNA TEXTO EN LA CLAVEBIB
+  ' --- 1. VALIDAR CLAVE ---
   If Trim(txtClaveBibtex.Text) = "" Then
     m_Sonido.sonar("Info")
     Message.Info("Debe generar una clave. No es posible guardar la entrada.")
     Return
   Endif
 
+  ' --- 2. VALIDACIONES DE CONTENIDO ---
   If m_Bibtex.VerificarCaracteresInvalidos() Then Return
-
   If m_Bibtex.VerificacionBase() Then Return
 
+  ' --- 3. GUARDAR FORZADO (TÍTULO REPETIDO LEGÍTIMO: OTRO OBJETO) ---
+  ' GuardarBibtexPrimeraVez YA HACE Commit + IniciarBibtex (RECARGA, RESIEMBRA
+  ' HUELLA Y LIMPIA TEXTBOX). NO SE VUELVE A RECARGAR ACÁ PARA NO DUPLICAR EL
+  ' RELOAD NI MEZCLAR CON RefrescarTableViewBibtexEnCurso (POBLADO MANUAL)
   m_Bibtex.GuardarBibtexPrimeraVez()
-  m_Bibtex.RefrescarTableViewBibtexEnCurso()
-  m_Bibtex.LimpiarTextboxBibtex()
-  gvReferenciasEnCurso.Refresh
 
+  ' --- 4. ESTADO FINAL DE UI ---
   txtTMPbiblio.Enabled = False
   txtTMPbiblio.Background = Color.Background
   txtTMPbiblio.Clear
   TabPanel5.Index = 0
-
   BtnNuevoBib.Visible = True
   btnGuardarBib.Visible = False
   btnGuardarCambiosBib.Visible = False
@@ -1748,6 +1742,10 @@ Public Sub gvReferenciasEnCurso_Data(Row As Integer, Column As Integer)
 End
 
 Public Sub gvReferenciasEnCurso_Click()
+  ' GUARD DEFENSIVO: SI EL REFRESCO DE FONDO ESTÁ REASIGNANDO .Row, NO RE-VOLCAR
+  ' LA FILA A LOS TEXTBOX (PROTEGE UNA EDICIÓN EN CURSO). PATRÓN bAbriendoProyecto
+
+  If m_Bibtex.bRefrescandoReferencias Then Return
 
   ' CONFIGURAR COMO SE MUESTRAN LOS BOTONES
   BtnNuevoBib.Visible = True
@@ -1766,62 +1764,6 @@ Public Sub btnGuardarCambiosBib_Click()
   m_Bibtex.GuardarCambiosBibtex()
 
 End
-'
-' Public Sub btbBuscarTapita_Click()
-'
-'   Dim rutaOrigen As String
-'   Dim rutaDestino As String
-'   Dim nombreArchivo As String
-'
-'   Dialog.Title = "Seleccionar archivo"
-'   Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
-'   Dialog.AutoExt = True
-'   Dialog.Path = RutaProyecto & "/media/"
-'
-'   If Dialog.OpenFile() Then
-'     Return
-'   Else
-'     nombreArchivo = File.Name(Dialog.Path)
-'     txtImagenTapita.Text = nombreArchivo
-'
-'     rutaOrigen = Dialog.Path
-'     rutaDestino = RutaProyecto & "/docs/" & nombreArchivo
-'
-'     ' VERIFICAR SI ORIGEN Y DESTINO SON EL MISMO ARCHIVO
-'     If rutaOrigen = rutaDestino Then
-'       m_Sonido.sonar("Info")
-'       Message.Info("El archivo ya está en la ubicación correcta")
-'       Return
-'     Endif
-'
-'     ' VERIFICAR SI EL ARCHIVO YA EXISTE EN DESTINO
-'     If Exist(rutaDestino) Then
-'       m_Sonido.sonar("Info")
-'       Message.Info("El archivo ya existe y será sobreescrito")
-'       Kill rutaDestino
-'     Endif
-'
-'     ' COPIAR EL ARCHIVO
-'     Copy rutaOrigen To rutaDestino
-'   Endif
-' Catch
-'   m_Sonido.sonar("Error")
-'   Message.Error("Error al procesar el archivo: " & Error.Text)
-'
-' End
-'
-' Public Sub ButtonGoogleAnalytics_Click()
-'
-'   ' ABRIR LA BÚSQUEDA EN EL NAVEGADOR PREDETERMINADO
-'   Desktop.Open("https://analytics.google.com/")
-'
-' End
-'
-' Public Sub btnVerificarDoiLibro_Click()
-'
-'   m_DOI.VerificarDOI(txtRevistaDoi)
-'
-' End
 
 Public Sub ComboBoxJournal_Click()
 
@@ -1992,41 +1934,6 @@ Public Sub TimerNotitas_Timer()
     m_Sonido.sonar("Info")
     FNotasRecibidas.Show
   Endif
-
-End
-
-Public Sub btnGuardarCambiosOT_Click()
-
-  m_OrdenTaller.GuardarOrdenTaller()
-
-End
-
-Public Sub btnBuscarCabecera_Click()
-
-  Dialog.Title = "Seleccionar archivo"
-  Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
-  Dialog.AutoExt = True
-  Dialog.Path = m_InicioCierre.RutaProyectoEnCurso & "/media/"
-  If Dialog.OpenFile() Then
-    Return
-  Else
-    txtCabeceraOT.Text = File.Name(Dialog.Path)
-  Endif
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("No se pudo abrir el archivo")
-
-End
-
-Public Sub btnLimpiarCabecera_Click()
-
-  txtCabeceraOT.Clear
-
-End
-
-Public Sub btnGenerarSalidaPDF_Click()
-
-  m_OrdenTaller.GenerarSalidaPDF()
 
 End
 
@@ -2340,29 +2247,6 @@ End
 Public Sub menuXMLbase_Click()
 
   Message.Info("XML-JATS maestro de las restantes salidas.")
-
-End
-
-Public Sub btnLimpiarImagenTapa_Click()
-
-  txtImagenTapaOT.Clear
-
-End
-
-Public Sub btnBuscarImagenTapa_Click()
-
-  Dialog.Title = "Seleccionar archivo"
-  Dialog.Filter = ["*.png", ("Archivos png"), ("Todos los archivos")]
-  Dialog.AutoExt = True
-  Dialog.Path = m_InicioCierre.RutaProyectoEnCurso & "/media/"
-  If Dialog.OpenFile() Then
-    Return
-  Else
-    txtImagenTapaOT.Text = File.Name(Dialog.Path)
-  Endif
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("No se pudo abrir el archivo")
 
 End
 
@@ -3494,13 +3378,6 @@ End
 Public Sub btnSiglas_Click()
 
   FSiglas.ShowModal()
-
-End
-
-Public Sub btnMostrarNotas_Click()
-
-  FTXTextendido.OriginalTextBox = txtNotasOT
-  FTXTextendido.ShowModal
 
 End
 
@@ -5444,6 +5321,8 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
       FMain.svPCRE.Visible = True
       pAreaEditor.Layout = [1, 1]
   End Select
+  ' --- REFRESCAMOS EL COMOBOBOX ---
+  cmbArticulosRevista.Refresh
 
   ' --- 7. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
   bAbriendoProyecto = False
@@ -7046,7 +6925,6 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
   ' --- 8. INICIALIZAR ESTRUCTURAS Y MARCAR EL PROYECTO COMO OCUPADO ---
   ' SE COMBINA EN UN ÚNICO UPDATE PARA QUE LA OPERACIÓN SEA ATÓMICA
   ' (ANTES SE HACÍAN DOS UPDATES CON DOS COMMITS, INNECESARIO)
-  m_FuncionesGenericas.InicializarTablasProyecto(nuevoID)
   Try m_ConexionBD.mConn.Exec(
     "UPDATE proyectos SET ocupado = 1, usuario_propietario = &1 WHERE id = &2",
     m_InicioCierre.UsuarioEnCurso, nuevoID)
@@ -7057,7 +6935,26 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       "Abortando apertura.")
     Return
   Endif
+
+  ' REGISTRAR EL PROYECTO ABIERTO COMO PROYECTO ACTUAL DEL USUARIO.
+  ' ES EL ESPEJO PER-USUARIO DEL LOCK (proyectos.ocupado ES PER-PROYECTO;
+  ' usuarios.id_proyecto_actual ES PER-USUARIO) Y ES EL DATO QUE ALIMENTA
+  ' EL PANEL DE USUARIOS EN LÍNEA. VA EN EL MISMO BLOQUE, ANTES DEL MISMO
+  ' Commit, PARA CONFIRMARSE JUNTO A LA TOMA DEL PROYECTO. SI FALLA, NO SE
+  ' ABORTA LA APERTURA: EL PROYECTO YA QUEDÓ TOMADO Y EDITABLE; SOLO EL DATO
+  ' DEL PANEL QUEDA SIN ACTUALIZAR (Y EL PANEL LO OCULTA IGUAL SI en_linea ES 0)
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE usuarios SET id_proyecto_actual = &1 WHERE usuario = &2",
+    nuevoID, m_InicioCierre.UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto se abrió, pero no se pudo registrar como proyecto actual del usuario:" & gb.NewLine &
+      Error.Text & gb.NewLine & gb.NewLine &
+      "El panel de usuarios en línea podría no mostrar este proyecto.")
+  Endif
+
   Try m_ConexionBD.mConn.Commit
+
   If Error Then
     m_Sonido.sonar("Warning")
     Message.Warning("No se pudo confirmar el bloqueo del proyecto:" & gb.NewLine &
@@ -7107,6 +7004,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
   ' --- 13. CARGAR REFERENCIAS BIBTEX Y SIGLAS ---
   m_Bibtex.ConfigurarTableViewBibtexEnCurso(gvReferenciasEnCurso)
   m_Bibtex.IniciarBibtex()
+  TimerReferencias.Start()
   m_Siglas.ConfigurarTableViewGlosarioEnCurso(FSiglas.gvSiglasEnCurso)
   m_Siglas.IniciarSiglas()
 
@@ -7114,10 +7012,12 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
   m_Timer.IniciarContadorReloj(m_InicioCierre.IdProyectoEnCurso)
   FMain.ValueBoxParcial.Value = 0
 
-  ' --- 15. CARGAR LISTA DE ARTÍCULOS (SOLO PARA REVISTAS POR AHORA) Y COMBOBOXES ---
-  If iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD Then
-    CargarListaArticulosMD()
-  Endif
+  ' --- 15. CARGAR LISTA DE ARCHIVOS DEL PROYECTO (REVISTAS Y LIBROS) Y COMBOBOXES ---
+  ' AMBOS TIPOS USAN LA MISMA ESTRUCTURA front-matter/articulos/back-matter, ASÍ QUE
+  ' EL POBLADO INICIAL DEL COMBOBOX APLICA A LOS DOS. NO DELEGAR EL PRIMER POBLADO AL
+  ' TIMER: SI EL PROYECTO NO TIENE ARCHIVOS, EL TIMER NO DETECTA CAMBIO DE CANTIDAD Y
+  ' EL COMBOBOX QUEDA CON EL PROYECTO ANTERIOR.
+  CargarListaArticulosMD()
   IniciarTimerArchivosProyecto()
   m_ComboBox.CargarTodosLosComboBox()
   IniciarTimerArchivosXML()
@@ -7399,6 +7299,23 @@ Public Sub PintarSemaforoConexion(iEstado As Integer)
 Catch
   ' EL FALLO DEL SEMÁFORO NO DEBE INTERRUMPIR EL FLUJO (RC-GM-02 VÍA Catch)
   m_Sonido.sonar("Error")
-  Print "PintarSemaforoConexion FALLA: " & Error.Text
+
+End
+
+Public Sub menuUsuariosEnLinea_Click()
+
+  FUsuariosLinea.ShowModal()
+
+End
+
+Public Sub TimerReferencias_Timer()
+
+  m_Bibtex.VerificarCambiosReferencias()
+
+End
+
+Public Sub menuImprenta_Click()
+
+  FOrdenTaller.ShowModal()
 
 End

@@ -214,103 +214,6 @@ Public Sub CopiarDirectorio(srcDir As String, dstDir As String)
 End
 
 ' ============================================
-' Función   : CargarUsuarios
-' Propósito : Pobla el TableViewUsuarios de FMain con los usuarios activos
-'             del sistema, mostrando "Conectado" en la columna en_linea para
-'             los que tienen sesión activa.
-' Parámetros: (ninguno)
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub CargarUsuarios()
-
-  Dim rUsuarios As Result
-  Dim iRow As Integer
-  Dim iCol As Integer
-
-  ' --- 1. CONSULTAR USUARIOS ACTIVOS, ORDENADOS POR ESTADO Y NOMBRE ---
-  Try rUsuarios = m_ConexionBD.mConn.Exec(
-    "SELECT usuario, en_linea FROM usuarios WHERE activo = 1 ORDER BY en_linea DESC, usuario ASC")
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudieron cargar los usuarios:" & gb.NewLine & Error.Text)
-    Return
-  Endif
-
-  ' --- 2. LIMPIAR EL GRID ---
-  FMain.TableViewUsuarios.Clear
-
-  ' --- 3. SI NO HAY DATOS, DEJAR EL GRID VACÍO Y SALIR ---
-  ' NULL CHECK ANIDADO PORQUE Or NO ES SHORT-CIRCUIT EN GAMBAS
-  If rUsuarios = Null Then
-    FMain.TableViewUsuarios.Rows.Count = 0
-    FMain.TableViewUsuarios.Columns.Count = 0
-    Return
-  Endif
-  If rUsuarios.Count = 0 Then
-    FMain.TableViewUsuarios.Rows.Count = 0
-    FMain.TableViewUsuarios.Columns.Count = 0
-    Return
-  Endif
-
-  ' --- 4. CONFIGURAR COLUMNAS Y FILAS ---
-  FMain.TableViewUsuarios.Columns.Count = rUsuarios.Fields.Count
-  FMain.TableViewUsuarios.Rows.Count = rUsuarios.Count
-  FMain.TableViewUsuarios.MoveTo(0, 0)
-
-  ' --- 5. POBLAR LAS CELDAS ---
-  iRow = 0
-  For Each rUsuarios
-    For iCol = 0 To rUsuarios.Fields.Count - 1
-      If IsNull(rUsuarios[iCol]) Then
-        FMain.TableViewUsuarios[iRow, iCol].Text = ""
-      Else
-        ' COLUMNA en_linea (ÍNDICE 1): MOSTRAR "Conectado" SI ES TRUE
-        If iCol = 1 Then
-          FMain.TableViewUsuarios[iRow, iCol].Text = IIf(CBool(rUsuarios[iCol]), "Conectado", "")
-        Else
-          FMain.TableViewUsuarios[iRow, iCol].Text = rUsuarios[iCol]
-        Endif
-      Endif
-    Next
-    iRow += 1
-  Next
-
-End
-
-' ============================================
-' Función   : DisenarTableViewUsuarios
-' Propósito : Configura el aspecto del TableView de usuarios: tres columnas
-'             (Usuario, Estado, Proyecto) con anchos predefinidos.
-' Parámetros: grid As GridView — control TableView a configurar
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub DisenarTableViewUsuarios(grid As GridView)
-
-  ' --- 1. CONFIGURACIÓN BÁSICA Y NÚMERO DE COLUMNAS ---
-  With grid
-    .Header = True
-    .Grid = True
-    .Columns.Count = 3
-
-    ' --- 2. TÍTULOS Y ANCHOS DE COLUMNAS ---
-    For i As Integer = 0 To 2
-      Select Case i
-        Case 0
-          .Columns[i].Title = "Usuario"
-          .Columns[i].Width = 150
-        Case 1
-          .Columns[i].Title = "Estado"
-          .Columns[i].Width = 150
-        Case 2
-          .Columns[i].Title = "Proyecto"
-          .Columns[i].Width = 300
-      End Select
-    Next
-  End With
-
-End
-
-' ============================================
 ' Función   : CargarScripts
 ' Propósito : Carga el ComboBox de scripts disponibles desde ~/.gbpublisher/scripts.
 '             Soporta extensiones .py, .lua, .sh, .pl, .R. La descripción se
@@ -696,10 +599,26 @@ Public Sub CerrarProyecto()
     Try m_ConexionBD.mConn.Commit
   Endif
 
+  ' --- 2.B. LIMPIAR EL PROYECTO ACTUAL DEL USUARIO ---
+  ' SENTENCIA APARTE E INCONDICIONAL: LA LIBERACIÓN DE proyectos (APARTADO 2) SOLO
+  ' MATCHEA EN MODO COMPLETO (DONDE EL USUARIO ES usuario_propietario). EN PARCIAL
+  ' NO HAY LOCK, PERO id_proyecto_actual SÍ QUEDÓ ESCRITO Y HAY QUE BORRARLO IGUAL.
+  ' FILTRA POR usuario (SC-07). CUBRE CIERRE-DE-PROYECTO Y LOGOUT (QUE LLAMA A ESTA).
+  Try m_ConexionBD.mConn.Exec(
+    "UPDATE usuarios SET id_proyecto_actual = NULL WHERE usuario = &1",
+    UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo limpiar el proyecto actual del usuario en la base de datos:" & gb.NewLine & Error.Text)
+  Else
+    Try m_ConexionBD.mConn.Commit
+  Endif
+
   ' --- 3. DETENER TIMERS Y CONTADORES ---
   m_Timer.DetenerContador()
   FMain.DetenerTimerArchivosXML()
   FMain.DetenerTimerArchivosProyecto()
+  FMain.TimerReferencias.Stop()
 
   ' --- 4. LIMPIAR TERMINAL EMBEBIDA Y DETENER PROCESO BASH ---
   LimpiarTerminalProyecto()
@@ -762,7 +681,7 @@ Public Sub CerrarTodoMySQL()
   ' CIERRE. VA ANTES DE CERRAR LA CONEXIÓN (APARTADO 6) Y ANTES DE VACIAR
   ' UsuarioEnCurso (APARTADO 7), CUANDO EL STRING TODAVÍA ESTÁ POBLADO.
   Try m_ConexionBD.mConn.Exec(
-    "UPDATE usuarios SET en_linea = 0 WHERE usuario = &1",
+    "UPDATE usuarios SET en_linea = 0, id_proyecto_actual = NULL WHERE usuario = &1",
     UsuarioEnCurso)
   If Error Then
     m_Sonido.sonar("Warning")
@@ -772,12 +691,11 @@ Public Sub CerrarTodoMySQL()
   ' --- 2c. CONFIRMAR AMBAS LIBERACIONES EN UNA SOLA TRANSACCIÓN ---
   Try m_ConexionBD.mConn.Commit
 
-  Try m_ConexionBD.mConn.Commit
-
   ' --- 3. DETENER TIMERS Y CONTADORES ---
   m_Timer.DetenerContador()
   FMain.DetenerTimerArchivosXML()
   FMain.DetenerTimerArchivosProyecto()
+  FMain.TimerReferencias.Stop()
 
   ' --- 4. LIMPIAR TERMINAL EMBEBIDA Y DETENER PROCESO BASH ---
   LimpiarTerminalProyecto()

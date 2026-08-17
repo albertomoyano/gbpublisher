@@ -8,6 +8,17 @@ Public mEprint As New Collection
 Public mRelatedType As New Collection
 Public mTipoDeTesis As New Collection
 Public mTipoDeEntrada As New Collection
+' --- ESTADO DEL REFRESCO DE REFERENCIAS ---
+' HUELLA (CANTIDAD + MAX(id)) DE LA ÚLTIMA CARGA CONOCIDA DEL GRID.
+' PRIVADAS: SOLO LAS USA ESTE MÓDULO.
+Private $iUltimoCountRef As Integer = -1
+Private $iUltimoMaxIdRef As Integer = -1
+
+' GUARD DE RE-ENTRADA (DEFENSIVO): True MIENTRAS EL REFRESCO DE FONDO REASIGNA
+' gvReferenciasEnCurso.Row. LO LEE gvReferenciasEnCurso_Click POR SI SETEAR .Row
+' LLEGARA A DISPARAR EL Click, PARA NO RE-VOLCAR LA FILA A LOS TEXTBOX. Public
+' PORQUE LO LEE FMain.
+Public bRefrescandoReferencias As Boolean = False
 
 Public Sub ConfigurarTableViewBibtexEnCurso(grid As GridView)
 
@@ -398,7 +409,7 @@ Public Sub RefrescarTableViewBibtexEnCurso()
   Dim iRow As Integer
   Dim iCol As Integer
 
-  Try ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC", FMain.id_proyecto.Value)
+  Try ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC", m_InicioCierre.IdProyectoEnCurso)
   If Error Then
     Debug "ERROR EN REFRESCO BIBTEX: " & Error.Text
     Return
@@ -593,7 +604,8 @@ End Function
 Public Sub GuardarCamposBib()
 
   ContenidoBib!id = FMain.id_bibtex.Value
-  ContenidoBib!id_proyecto = FMain.id_proyecto.Value
+  ' FUENTE DE VERDAD DEL ID: GLOBAL DE SESIÓN, NO EL CONTROL (RC-GM-16)
+  ContenidoBib!id_proyecto = m_InicioCierre.IdProyectoEnCurso
   ContenidoBib!id_articulo = FMain.id_articulo.Value
   ContenidoBib!author = Trim(FMain.txtAuthor.Text)
   ContenidoBib!title = Trim(FMain.txtTitle.Text)
@@ -717,7 +729,8 @@ Public Sub mostrarIguales()
     Return
   Else
     Dim sConsulta As String = "SELECT * FROM bibtex WHERE title LIKE &1 AND id_proyecto = &2"
-    ContenidoBib = m_ConexionBD.mConn.Exec(sConsulta, "%" & Trim(FMain.txtTitle.Text) & "%", FMain.id_proyecto.Value)
+    ' ID DESDE LA GLOBAL (RC-GM-16)
+    ContenidoBib = m_ConexionBD.mConn.Exec(sConsulta, "%" & Trim(FMain.txtTitle.Text) & "%", m_InicioCierre.IdProyectoEnCurso)
     CargarDatosResultados(FMain.gvReferenciasEnCurso, ContenidoBib)
   Endif
 
@@ -725,21 +738,34 @@ End
 
 Public Sub EliminarBibtex()
 
-  'CHEQUEAMOS PRIMERO QUE SE HAYA ELEGIDO UNA ENTRADA
+  ' --- 1. VALIDAR QUE HAYA UNA ENTRADA SELECCIONADA ---
   If FMain.id_bibtex.Text = "" Then
     m_Sonido.sonar("Info")
     Message.Info("Debe primero seleccionarse la entrada a borrar.")
     Return
   Endif
 
+  ' --- 2. CONFIRMAR LA BAJA (CANCELAR = NO TOCAR NADA) ---
   m_Sonido.sonar("Question")
-  If Message.Question("¿Desea borrar la entrada?", "Si", "No") = 1 Then
-    ContenidoBib = m_ConexionBD.mConn.Exec("delete from bibtex where id=" & FMain.id_bibtex.Text)
+  If Message.Question("¿Desea borrar la entrada?", "Sí", "No") <> 1 Then Return
+
+  ' --- 3. BORRAR EN BD Y CONFIRMAR ---
+  ' PARAMETRIZADO + Commit: SIN Commit LA BAJA NO SE PERSISTE, NO LA VEN LAS OTRAS
+  ' MÁQUINAS (autocommit OFF) Y SE PIERDE POR ROLLBACK AL DESCONECTAR. RC-GM-02.
+  Try m_ConexionBD.mConn.Exec("DELETE FROM bibtex WHERE id = &1", FMain.id_bibtex.Text)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar la entrada:" & Chr(10) & Error.Text)
+    Return
   Endif
+  Try m_ConexionBD.mConn.Commit
 
-  LimpiarTextboxBibtex()
-  RefrescarTableViewBibtexEnCurso()
+  ' --- 4. RECARGAR EL GRID ---
+  ' IniciarBibtex UNIFICA EL RELOAD (LIMPIA TEXTBOX + RECARGA POR EVENTO Data) Y
+  ' YA RESIEMBRA LA HUELLA, ASÍ QUE EL TIMER LOCAL NO RECARGA DE MÁS
+  IniciarBibtex()
 
+  ' --- 5. ESTADO FINAL DE BOTONES ---
   FMain.BtnNuevoBib.Visible = True
   FMain.btnGuardarBib.Visible = False
   FMain.btnGuardarCambiosBib.Visible = False
@@ -754,7 +780,8 @@ Public Sub IniciarBibtex()
 
   LimpiarTextboxBibtex()
   iniBIB = "SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC"
-  ContenidoBib = m_ConexionBD.mConn.Exec(iniBIB, FMain.id_proyecto.Value)
+  ' FUENTE DE VERDAD DEL ID: GLOBAL DE SESIÓN, NO EL CONTROL (RC-GM-16)
+  ContenidoBib = m_ConexionBD.mConn.Exec(iniBIB, m_InicioCierre.IdProyectoEnCurso)
   If ContenidoBib.Available Then
     FMain.gvReferenciasEnCurso.Clear
     FMain.gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
@@ -762,6 +789,8 @@ Public Sub IniciarBibtex()
   Else
     FMain.gvReferenciasEnCurso.Rows.Count = 0
   Endif
+  ' SEMBRAR LA HUELLA CON LO RECIÉN CARGADO (BASE PARA EL TIMER DE FONDO)
+  SembrarHuellaReferencias()
 
 End
 
@@ -774,6 +803,7 @@ Public Sub GuardarBibtexPrimeraVez()
   GuardarCamposBib()
   ContenidoBib.Update()
   m_ConexionBD.mConn.Commit()
+  IniciarBibtex()   ' ERA RefrescarTableViewBibtexEnCurso()
 
   RefrescarTableViewBibtexEnCurso()
   m_Sonido.sonar("Info")
@@ -837,10 +867,14 @@ Public Sub GuardarBibtex()
   ' VERIFICAMOS CAMPOS
   If VerificacionBase() Then Return
 
-  ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE title = &1 AND id_proyecto = &2", Trim(FMain.txtTitle.Text), FMain.id_proyecto.Value)
+  ' Result LOCAL PARA NO PISAR ContenidoBib (FUENTE DE DATOS DEL GRID), E ID
+  ' DESDE LA GLOBAL (RC-GM-16): SI id_proyecto SE RESETEÓ POR UN EVENTO, EL
+  ' CHEQUEO CORRERÍA CONTRA id_proyecto = 0 Y TRAERÍA UN CONJUNTO EQUIVOCADO
+  Dim rDuplicado As Result
+  rDuplicado = m_ConexionBD.mConn.Exec("SELECT id FROM bibtex WHERE title = &1 AND id_proyecto = &2", Trim(FMain.txtTitle.Text), m_InicioCierre.IdProyectoEnCurso)
 
   ' VERIFICAR SI SE ENCONTRARON RESULTADOS EN LA CONSULTA
-  If ContenidoBib.Count > 0 Then
+  If rDuplicado.Count > 0 Then
     m_Sonido.sonar("Error")
     Message.Error("El título que desea agregar ya existe en este libro/revista.")
 
@@ -890,8 +924,9 @@ Public Sub ExportarBibTeX() As Boolean
   Dim filtrarBib As String
   Dim outputFile As String
 
-  filtrarBib = "select * from bibtex where id_proyecto = " & FMain.id_proyecto.Text
-  sResultado = m_ConexionBD.mConn.Exec(filtrarBib)
+  ' PARAMETRIZADO (&1) + GLOBAL DE SESIÓN (RC-GM-16): SIN CONCATENAR EL ID CRUDO
+  filtrarBib = "SELECT * FROM bibtex WHERE id_proyecto = &1"
+  sResultado = m_ConexionBD.mConn.Exec(filtrarBib, m_InicioCierre.IdProyectoEnCurso)
   aFields.Clear
   For Each f In sResultado.Fields
     aFields.Add(f.Name)
@@ -1227,7 +1262,7 @@ Public Function ExtraerYGuardarReferenciasDelEditor(sContenidoMD As String, sRut
     "SELECT " & sColumnaId & " FROM " & sTabla &
     " WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
     sNombreArchivo,
-    FMain.id_proyecto.Value)
+    m_InicioCierre.IdProyectoEnCurso)
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("Error al buscar el archivo en la base de datos:" & Chr(10) &
@@ -1627,11 +1662,12 @@ Public Sub BuscarPorCampo(campo As TextBox, grid As GridView, campoBD As String)
   ' ESCAPAR COMILLAS SIMPLES PARA EVITAR ERRORES SQL
   sValor = Replace(sValor, "'", "''")
 
-  ' CONSTRUIR LA CONSULTA
-  sConsulta = "SELECT * FROM bibtex WHERE " & campoBD & " LIKE '%" & sValor & "%' AND id_proyecto = " & FMain.id_proyecto.Text & ";"
-
+  ' campoBD ES NOMBRE DE COLUMNA (NO PARAMETRIZABLE), VIENE DE UNA LISTA CERRADA
+  ' DEL CÓDIGO, NO DEL USUARIO. sValor E id_proyecto SÍ VAN PARAMETRIZADOS:
+  ' ANTES SE CONCATENABAN CRUDOS (DOBLE INYECCIÓN). ID DESDE LA GLOBAL (RC-GM-16)
+  sConsulta = "SELECT * FROM bibtex WHERE " & campoBD & " LIKE &1 AND id_proyecto = &2"
   ' EJECUTAR CONSULTA EN VARIABLE LOCAL
-  resultado = m_ConexionBD.mConn.Exec(sConsulta)
+  resultado = m_ConexionBD.mConn.Exec(sConsulta, "%" & sValor & "%", m_InicioCierre.IdProyectoEnCurso)
 
   ' VERIFICAR SI HAY RESULTADOS
   If resultado.Count = 0 Then
@@ -1696,10 +1732,12 @@ Public Sub BuscarBibTeXEnEditor(grid As GridView, campoBD As String)
   ' ESCAPAR COMILLAS SIMPLES
   sValor = Replace(sValor, "'", "''")
 
-  ' CONSTRUIR LA CONSULTA
-  sConsulta = "SELECT * FROM bibtex WHERE " & campoBD & " LIKE '%" & sValor & "%' AND id_proyecto = " & FMain.id_proyecto.Text & ";"
-
-  resultado = m_ConexionBD.mConn.Exec(sConsulta)
+  ' campoBD ES NOMBRE DE COLUMNA (NO PARAMETRIZABLE), VIENE DE UNA LISTA CERRADA
+  ' DEL CÓDIGO, NO DEL USUARIO. sValor E id_proyecto SÍ VAN PARAMETRIZADOS:
+  ' ANTES SE CONCATENABAN CRUDOS (DOBLE INYECCIÓN). ID DESDE LA GLOBAL (RC-GM-16)
+  sConsulta = "SELECT * FROM bibtex WHERE " & campoBD & " LIKE &1 AND id_proyecto = &2"
+  ' EJECUTAR CONSULTA EN VARIABLE LOCAL
+  resultado = m_ConexionBD.mConn.Exec(sConsulta, "%" & sValor & "%", m_InicioCierre.IdProyectoEnCurso)
 
   If resultado.Count = 0 Then
     m_Sonido.sonar("Info")
@@ -1708,5 +1746,184 @@ Public Sub BuscarBibTeXEnEditor(grid As GridView, campoBD As String)
   Endif
 
   CargarDatosResultados(grid, resultado)
+
+End
+
+' ============================================
+' Función   : SembrarHuellaReferencias
+' Propósito : Fija la huella (cantidad + MAX(id)) del estado actual, derivándola
+'             de ContenidoBib ya cargado SIN consulta extra (la primera fila es
+'             el MAX(id) por el ORDER BY id DESC). Se llama al final de cada
+'             recarga para que el timer solo detecte cambios posteriores.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub SembrarHuellaReferencias()
+
+  ' --- 1. SIN RESULTADO: HUELLA EN CERO ---
+  If ContenidoBib = Null Then
+    $iUltimoCountRef = 0
+    $iUltimoMaxIdRef = 0
+    Return
+  Endif
+
+  ' --- 2. CANTIDAD ---
+  $iUltimoCountRef = ContenidoBib.Count
+
+  ' --- 3. MAX(id): PRIMERA FILA POR EL ORDER BY id DESC ---
+  If ContenidoBib.Count = 0 Then
+    $iUltimoMaxIdRef = 0
+  Else
+    ContenidoBib.MoveTo(0)
+    $iUltimoMaxIdRef = ContenidoBib["id"]
+  Endif
+
+End
+
+' ============================================
+' Función   : RecargarSoloGridReferencias
+' Propósito : Recarga ContenidoBib y reconstruye el grid SIN tocar los textbox
+'             de edición. Variante no invasiva de IniciarBibtex para el refresco
+'             de fondo (IniciarBibtex llama a LimpiarTextboxBibtex, que borraría
+'             una edición en curso). Al terminar, resiembra la huella.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub RecargarSoloGridReferencias()
+
+  ' --- 1. RECARGAR EL RESULTADO (MISMO SCOPE QUE IniciarBibtex: id_proyecto) ---
+  ' GLOBAL DE SESIÓN COMO FUENTE DE VERDAD DEL ID (RC-GM-16)
+  Try ContenidoBib = m_ConexionBD.mConn.Exec(
+    "SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC",
+    m_InicioCierre.IdProyectoEnCurso)
+  If Error Then Return   ' FALLO TRANSITORIO: NO TOCAR LA UI, REINTENTA AL SIGUIENTE TICK
+
+  ' --- 2. RECONSTRUIR EL GRID (NULL CHECK ANIDADO, RC-GM-17) ---
+  If ContenidoBib = Null Then
+    FMain.gvReferenciasEnCurso.Rows.Count = 0
+    SembrarHuellaReferencias()
+    Return
+  Endif
+
+  If ContenidoBib.Available Then
+    FMain.gvReferenciasEnCurso.Clear
+    FMain.gvReferenciasEnCurso.Rows.Count = ContenidoBib.Count
+    FMain.gvReferenciasEnCurso.Refresh
+  Else
+    FMain.gvReferenciasEnCurso.Rows.Count = 0
+  Endif
+
+  ' --- 3. RESEMBRAR LA HUELLA CON EL NUEVO ESTADO ---
+  SembrarHuellaReferencias()
+
+End
+
+' ============================================
+' Función   : RestaurarSeleccionReferencia
+' Propósito : Reselecciona en el grid la referencia cuyo id se pasa, por clave
+'             estable, tras una recarga que pudo mover las filas (alta/baja ajena).
+'             Si la referencia ya no existe (borrada por otro), deja sin selección.
+' Parámetros: iId As Integer — id de bibtex de la fila a reseleccionar
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub RestaurarSeleccionReferencia(iId As Integer)
+
+  Dim iPos As Integer
+
+  ' --- 1. NADA QUE RESTAURAR ---
+  If iId <= 0 Then Return
+  If ContenidoBib = Null Then Return
+  If ContenidoBib.Count = 0 Then Return
+
+  ' --- 2. BUSCAR LA POSICIÓN DE LA FILA CON ESE id Y RESELECCIONAR ---
+  iPos = 0
+  For Each ContenidoBib
+    If ContenidoBib["id"] = iId Then
+      bRefrescandoReferencias = True
+      FMain.gvReferenciasEnCurso.Row = iPos   ' SELECCIONA Y HACE VISIBLE LA FILA
+      bRefrescandoReferencias = False
+      Return
+    Endif
+    Inc iPos
+  Next
+
+  ' --- 3. NO ENCONTRADA: FUE BORRADA POR OTRO, SIN SELECCIÓN ---
+
+End
+
+' ============================================
+' Función   : VerificarCambiosReferencias
+' Propósito : Handler de fondo (lo invoca el Timer de FMain). Con una consulta
+'             barata (COUNT + MAX(id)) detecta si OTRO usuario dio de alta o baja
+'             una referencia del proyecto abierto y, solo en ese caso, recarga el
+'             grid preservando la fila seleccionada. Las modificaciones in-place
+'             NO disparan recarga (la BD es la fuente de verdad; el .bib se
+'             regenera al compilar).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub VerificarCambiosReferencias()
+
+  Dim rHuella As Result
+  Dim iCount As Integer
+  Dim iMaxId As Integer
+  Dim iIdSeleccionado As Integer
+
+  ' --- 1. GATE: SOLO CON PROYECTO ABIERTO ---
+  ' VALE EN COMPLETO Y EN PARCIAL: OTRO USUARIO EN PARCIAL PUEDE TOCAR LAS
+  ' REFERENCIAS DEL MISMO PROYECTO QUE ESTE TIENE EN COMPLETO (bibtex ES COMPARTIDA)
+  If m_InicioCierre.IdProyectoEnCurso = 0 Then Return
+
+  ' --- 2. GATE: NO REFRESCAR DURANTE UN ALTA EN PROGRESO ---
+  ' btnGuardarBib VISIBLE = EL USUARIO ESTÁ CARGANDO UNA REFERENCIA NUEVA.
+  ' SE DIFIERE AL PRÓXIMO TICK (CORTESÍA: NO MOVER FILAS MIENTRAS DA DE ALTA)
+  If FMain.btnGuardarBib.Visible Then Return
+
+  ' --- 3. LEER LA HUELLA (CONSULTA BARATA) ---
+  ' REINICIAR EL SNAPSHOT DE LECTURA ANTES DE LEER: autocommit OFF + REPEATABLE
+  ' READ (default InnoDB) DEJAN A ESTA SESIÓN VIENDO UN SNAPSHOT CONGELADO, POR LO
+  ' QUE NUNCA DETECTARÍA LAS ALTAS/BAJAS COMMITEADAS POR OTRAS MÁQUINAS. UN Commit
+  ' SIN NADA PENDIENTE CIERRA LA TRANSACCIÓN DE LECTURA Y FUERZA UN SNAPSHOT NUEVO.
+  ' (EL TIMER NO PUEDE INTERLEAVEAR CON UN HANDLER EN CURSO — LOOP DE EVENTOS
+  '  SINGLE-THREAD —, ASÍ QUE ACÁ NUNCA HAY UNA ESCRITURA A MEDIO CONFIRMAR.)
+  Try m_ConexionBD.mConn.Commit
+  Try rHuella = m_ConexionBD.mConn.Exec(
+    "SELECT COUNT(*) AS c, MAX(id) AS m FROM bibtex WHERE id_proyecto = &1",
+    m_InicioCierre.IdProyectoEnCurso)
+  If Error Then Return
+  If rHuella = Null Then Return
+  If Not rHuella.Available Then Return
+
+  iCount = rHuella["c"]
+  ' MAX(id) ES NULL SI EL PROYECTO NO TIENE REFERENCIAS
+  If IsNull(rHuella["m"]) Then
+    iMaxId = 0
+  Else
+    iMaxId = rHuella["m"]
+  Endif
+
+  ' --- 4. COMPARAR CON LA ÚLTIMA HUELLA CONOCIDA ---
+  ' COUNT DETECTA BAJAS; MAX(id) (auto_increment MONÓTONO) DETECTA ALTAS AUNQUE
+  ' HAYA UNA BAJA SIMULTÁNEA. If ANIDADO (RC-GM-17)
+  If iCount = $iUltimoCountRef Then
+    If iMaxId = $iUltimoMaxIdRef Then Return   ' SIN CAMBIOS: NO TOCAR LA UI
+  Endif
+
+  ' --- 5. HUBO ALTA O BAJA: CAPTURAR LA SELECCIÓN ACTUAL POR id ESTABLE ---
+  ' NULL CHECKS ANIDADOS (RC-GM-17). Row MAPEA 1:1 CON LA POSICIÓN EN ContenidoBib
+  iIdSeleccionado = -1
+  If FMain.gvReferenciasEnCurso.Row >= 0 Then
+    If ContenidoBib <> Null Then
+      If FMain.gvReferenciasEnCurso.Row < ContenidoBib.Count Then
+        ContenidoBib.MoveTo(FMain.gvReferenciasEnCurso.Row)
+        iIdSeleccionado = ContenidoBib["id"]
+      Endif
+    Endif
+  Endif
+
+  ' --- 6. RECARGAR SIN TOCAR TEXTBOX Y RESTAURAR SELECCIÓN ---
+  ' RecargarSoloGridReferencias YA RESEMBRÓ LA HUELLA CON EL NUEVO ESTADO
+  RecargarSoloGridReferencias()
+  RestaurarSeleccionReferencia(iIdSeleccionado)
 
 End

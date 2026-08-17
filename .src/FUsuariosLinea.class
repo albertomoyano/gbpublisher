@@ -1,0 +1,130 @@
+' Gambas class file
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Inicializa el formulario de usuarios en línea: diseña la
+'             grilla y carga los datos una sola vez (sin refresco).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Form_Open()
+  ' --- 1. DISEÑO DE LA GRILLA (COLUMNAS FIJAS) ---
+
+  DisenarGrid()
+  ' --- 2. CARGA INICIAL DE DATOS ---
+  CargarUsuariosEnLinea()
+
+End
+
+' ============================================
+' Función   : DisenarGrid
+' Propósito : Configura gvUsuariosEnLinea: header, grid visible y tres
+'             columnas fijas (Usuario / Estado / Proyecto) con sus anchos.
+'             La carga de datos NO vuelve a tocar Columns.Count.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub DisenarGrid()
+  ' --- 1. CONFIGURACIÓN BÁSICA Y NÚMERO DE COLUMNAS ---
+
+  With gvUsuariosEnLinea
+    .Header = True
+    .Grid = True
+    .Columns.Count = 3
+    ' --- 2. TÍTULOS Y ANCHOS DE COLUMNAS ---
+    .Columns[0].Title = "Usuario"
+    .Columns[0].Width = 150
+    .Columns[1].Title = "Estado"
+    .Columns[1].Width = 150
+    .Columns[2].Title = "Proyecto"
+    .Columns[2].Width = 300
+  End With
+
+End
+
+' ============================================
+' Función   : CargarUsuariosEnLinea
+' Propósito : Consulta los usuarios activos y puebla gvUsuariosEnLinea.
+'             El proyecto se resuelve por LEFT JOIN sobre id_proyecto_actual
+'             y se muestra solo para usuarios en línea.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub CargarUsuariosEnLinea()
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+
+  Dim rUsuarios As Result
+  Dim iFila As Integer
+  Dim sEstado As String
+  Dim sProyecto As String
+
+  ' --- 2. CONSULTA: USUARIOS ACTIVOS + PROYECTO ACTUAL (CAMINO A) ---
+  ' EL LEFT JOIN TRAE nombre DEL PROYECTO ABIERTO VÍA id_proyecto_actual;
+  ' proyecto SERÁ NULL SI EL USUARIO NO TIENE PROYECTO ASIGNADO.
+  Try rUsuarios = m_ConexionBD.mConn.Exec(
+    "SELECT u.usuario, u.en_linea, p.nombre AS proyecto " &
+    "FROM usuarios u " &
+    "LEFT JOIN proyectos p ON p.id = u.id_proyecto_actual " &
+    "WHERE u.activo = 1 " &
+    "ORDER BY u.en_linea DESC, u.usuario ASC")
+  ' RC-GM-02: VERIFICAR EL ERROR INMEDIATAMENTE DESPUÉS DEL Try
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los usuarios en línea:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. RESETEAR FILAS (NO TOCAR COLUMNAS: LAS FIJA DisenarGrid) ---
+  gvUsuariosEnLinea.Rows.Count = 0
+
+  ' --- 4. SI NO HAY DATOS, SALIR CON LA GRILLA VACÍA ---
+  ' NULL CHECK EN If ANIDADO PORQUE And/Or NO SON SHORT-CIRCUIT (RC-GM-17)
+  If rUsuarios = Null Then Return
+  If rUsuarios.Count = 0 Then Return
+
+  ' --- 5. DIMENSIONAR FILAS SEGÚN CANTIDAD DE USUARIOS ---
+  gvUsuariosEnLinea.Rows.Count = rUsuarios.Count
+
+  ' --- 6. POBLAR CELDAS FILA POR FILA ---
+  iFila = 0
+  For Each rUsuarios
+    ' COLUMNA 0: NOMBRE DE USUARIO
+    gvUsuariosEnLinea[iFila, 0].Text = rUsuarios["usuario"]
+
+    ' COLUMNA 1: ESTADO — en_linea ES TINYINT(1), LLEGA COMO Boolean (RC-GM-01)
+    If rUsuarios["en_linea"] Then
+      sEstado = "Conectado"
+    Else
+      sEstado = "No conectado"
+    Endif
+    gvUsuariosEnLinea[iFila, 1].Text = sEstado
+
+    ' COLUMNA 2: PROYECTO — SOLO SI EL USUARIO ESTÁ EN LÍNEA
+    ' (PARA MOSTRAR SIEMPRE EL ÚLTIMO PROYECTO AUNQUE ESTÉ OFFLINE,
+    '  QUITAR EL If EXTERNO DE en_linea Y DEJAR SOLO EL NULL CHECK)
+    sProyecto = ""
+    If rUsuarios["en_linea"] Then
+      ' NULL CHECK SEPARADO DEL ACCESO (RC-GM-17)
+      If Not IsNull(rUsuarios["proyecto"]) Then
+        sProyecto = rUsuarios["proyecto"]
+      Endif
+    Endif
+    gvUsuariosEnLinea[iFila, 2].Text = sProyecto
+
+    Inc iFila
+  Next
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario. Es de solo lectura: no requiere guard
+'             de cambios sin guardar ni bandera bCierrePermitido.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
