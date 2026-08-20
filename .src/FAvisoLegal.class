@@ -87,26 +87,25 @@ Public Sub Form_Open()
   Dim iAncho As Integer
   Dim sHTML As String
 
-  ' SI FALTA IBM PLEX SANS LA INTERFAZ NO PUEDE RENDERIZARSE CORRECTAMENTE
-  ' ES LO PRIMERO QUE SE DEBE VERIFICAR
-  ' --- 1. Verificación de fuentes requeridas ---
-  m_InicioCierre.VerificarFuentesIBMPlex()
-
-  ' --- 2. Estructura de directorios y recursos del usuario ---
-  ' CREA ~/.gbpublisher Y COPIA TODOS LOS RECURSOS CON COMPORTAMIENTO NO-SOBRESCRITURA
-  m_InicioCierre.DirectorioOcultoApp()
-
-  ' --- 3. Detener el reloj para que no cuente el tiempo de arranque ---
-  FMain.TimerHOY.Delay = 1000
-  FMain.TimerHOY.Stop
-
-  ' --- 4. Verificación de instancias múltiples ---
+  ' --- 1. Verificación de instancias múltiples ---
   ' IMPIDE QUE EL USUARIO ABRA DOS VECES LA MISMA APLICACIÓN
   If m_InicioCierre.OtraInstanciaActiva() Then
     m_Sonido.sonar("Warning")
     Message.Warning(Application.Name & " ya se está ejecutando en este equipo.")
     Quit
   Endif
+
+  ' SI FALTA IBM PLEX SANS LA INTERFAZ NO PUEDE RENDERIZARSE CORRECTAMENTE
+  ' --- 2. Verificación de fuentes requeridas ---
+  m_InicioCierre.VerificarFuentesIBMPlex()
+
+  ' --- 3. Estructura de directorios y recursos del usuario ---
+  ' CREA ~/.gbpublisher Y COPIA TODOS LOS RECURSOS CON COMPORTAMIENTO NO-SOBRESCRITURA
+  m_InicioCierre.DirectorioOcultoApp()
+
+  ' --- 4. Detener el reloj para que no cuente el tiempo de arranque ---
+  FMain.TimerHOY.Delay = 1000
+  FMain.TimerHOY.Stop
 
   ' --- 5. Verificación no bloqueante de dependencias del sistema ---
   ' NO INTERRUMPE EL ARRANQUE — SOLO INFORMA SI HAY FALLOS
@@ -116,7 +115,7 @@ Public Sub Form_Open()
     Message.Warning("gbpublisher se abrirá con <b>" & CStr(iFallos) &
       "</b> dependencia(s) incumplida(s) que limitan su funcionamiento." & Chr(10) & Chr(10) &
       "Verificá el estado completo desde:" & Chr(10) &
-      "Acera de... --> la integridad del sistema")
+      "Acerca de... --> la integridad del sistema")
   Endif
 
   ' --- 6. Verificación de entorno soportado ---
@@ -132,7 +131,13 @@ Public Sub Form_Open()
     aLineas = Split(sOsRelease, Chr(10))
     For Each sL In aLineas
       If sL Begins "NAME=" Then
-        sDistro = LCase(Replace(Replace(Mid(sL, 6), Chr(34), ""), "'", ""))
+        ' String.Mid Y String.LCase OPERAN EN CARACTERES, NO EN BYTES (SC-02 / RC-GM-12).
+        ' "NAME=" ES ASCII Y ACÁ NO CAMBIA EL RESULTADO, PERO EL VALOR DE LA CLAVE
+        ' PUEDE TRAER MULTIBYTE Y EL PATRÓN NO DEBE COPIARSE MAL A OTRO CONTEXTO.
+        ' SE PASA LA LONGITUD EXPLÍCITA: LA DOC NO DOCUMENTA QUE SEA OPCIONAL EN String.Mid.
+        ' Replace SE DEJA GLOBAL: String.Replace NO EXISTE, Y EL REEMPLAZO DE SUBSTRING
+        ' ES SEGURO EN UTF-8 VÁLIDO CON AGUJAS ASCII.
+        sDistro = String.LCase(Replace(Replace(String.Mid(sL, 6, String.Len(sL) - 5), Chr(34), ""), "'", ""))
         Break
       Endif
     Next
@@ -226,16 +231,22 @@ Public Sub Form_Open()
 
 End
 
-' ============================================
-' Función   : HtmlViewLegales_Link
-' Propósito : Abrir en el navegador del sistema los enlaces del aviso legal
-' Parámetros: sUrl As String — URL del enlace activado por el usuario
-' Retorna   : (nada)
-' ============================================
 Public Sub HtmlViewLegales_Link(sUrl As String)
-  ' xdg-open DELEGA EN EL NAVEGADOR PREDETERMINADO DEL SISTEMA
 
-  Shell "xdg-open " & Quote(sUrl) & " &"
+  ' --- 1. ABRIR LA URL EN EL NAVEGADOR PREDETERMINADO ---
+  ' Exec Y NO Shell: LA URL LLEGA DE UN CLICK EN EL HtmlView Y NO DEBE PASAR
+  ' POR sh -c (SC-05). Quote() CITA CON SINTAXIS DE STRING DE GAMBAS, NO DE
+  ' SHELL, ASÍ QUE NO PROTEGE EN ESE CONTEXTO.
+  ' SIN Wait: NO DEBE BLOQUEAR EL LOOP DE EVENTOS MIENTRAS ABRE EL NAVEGADOR.
+  ' EL ARRAY LITERAL DE Exec VA EN UNA SOLA LÍNEA.
+  Try Exec ["xdg-open", sUrl]
+
+  ' --- 2. VERIFICAR EL LANZAMIENTO (RC-GM-02) ---
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el enlace en el navegador:" & Chr(10) &
+      sUrl & Chr(10) & Chr(10) & Error.Text)
+  Endif
 
 End
 

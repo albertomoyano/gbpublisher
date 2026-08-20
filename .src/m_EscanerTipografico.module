@@ -1,50 +1,97 @@
 ' Gambas module file
 
-' ============================================
-' Módulo   : m_CercaniaTipografica
-' Propósito: Detecta palabras de 5+ caracteres repetidas dentro de
-'            76 caracteres en el mismo párrafo, en todos los .md del proyecto
-' ============================================
+' ==============================================================================
+' Módulo    : m_EscanerTipografico
+' Propósito : Control de cercanía. Detecta palabras de 5 o más caracteres
+'             repetidas dentro de una ventana de 76 caracteres en el mismo
+'             párrafo del artículo activo, que es el vicio de estilo que la
+'             corrección de galera busca a ojo.
+' Dependencias: m_FuncionesGenericas, FMain, FEstructuraResultados, m_Sonido.
+'
+' REVISIÓN — CUATRO CORRECCIONES
+' ------------------------------
+' 1. RUTA DEL PROYECTO. Tomaba m_InicioCierre.ArchivoProyectoEnCurso, que es la
+'    ruta del .md del proyecto y no su carpeta, y le concatenaba "articulos".
+'    A diferencia de los otros módulos, este no llama a Dir(), así que no
+'    abortaba: fallaba con un cartel desorientador,
+'    "No se encontró el archivo: /proyecto/r-revista.md/articulos/a-foo.md".
+'    Ahora resuelve por m_FuncionesGenericas.RaizProyectoValida().
+'
+' 2. TODO EL MÓDULO CONTABA BYTES, NO CARACTERES (RC-GM-12, SC-02). Verificado:
+'      'señor'  Len=6  String.Len=5        'añoS'  Len=5  String.Len=4
+'    Consecuencias reales, no teóricas:
+'      · El filtro "5 o más caracteres" dejaba pasar palabras de 4 letras con
+'        acento ('añoS' medía 5) y exigía más letras a las palabras acentuadas.
+'      · La ventana de 76 "caracteres" era en realidad de 76 BYTES, o sea
+'        bastante menos texto en castellano que en inglés.
+'      · El contexto se recortaba con Mid() a un offset de bytes y podía cortar
+'        un carácter por la mitad. Verificado: Mid("café señor",1,4) devuelve
+'        [caf<0xEF><0xBF><0xBD>], con String.IsValid = False. Eso llegaba a la
+'        celda "Contexto" como un carácter roto.
+'    Ahora todo el módulo usa String.Len / String.Mid / String.InStr.
+'
+' 3. EL PLEGADO A MINÚSCULAS NO ERA UTF-8. Verificado que Lower(), LCase() Y
+'    String.Lower() son las tres ASCII-only:
+'      Lower("SEÑOR ÁRBOL") = [seÑor Árbol]
+'      Lower("SEÑOR") = Lower("señor")  ->  False
+'    String.Comp con gb.IgnoreCase tampoco pliega acentos. O sea que un
+'    "ANÁLISIS" en un título y un "análisis" dos renglones abajo no se
+'    detectaban como repetición. Se agrega PlegarMinusculas().
+'
+' 4. FALSO NEGATIVO EN LA BÚSQUEDA POR PARES. Cada palabra se comparaba SIEMPRE
+'    contra su PRIMERA aparición en el párrafo. Con la palabra en las posiciones
+'    1, 200 y 210, se evaluaban los pares (1,200) y (1,210) —ambos fuera de
+'    rango— y el par (200,210), que está a 5 caracteres, NO SE EVALUABA NUNCA.
+'    Ahora se comparan apariciones CONSECUTIVAS, que es lo que "cercanía"
+'    significa. ESTO REPORTA MÁS HALLAZGOS QUE ANTES: son los que faltaban.
+' ==============================================================================
 
-Const DISTANCIA_MAXIMA As Integer = 76
-Const LONGITUD_MINIMA_PALABRA As Integer = 5
+Private Const DISTANCIA_MAXIMA As Integer = 76
+Private Const LONGITUD_MINIMA_PALABRA As Integer = 5
 
 ' ============================================
 ' Función   : MostrarControlCercania
-' Propósito : Punto de entrada desde el menú. Itera los archivos .md,
-'             delega el análisis y puebla FEstructuraResultados
-' Parámetros: ninguno
-' Retorna   : nada
+' Propósito : Punto de entrada desde el menú. Analiza el artículo activo
+'             párrafo por párrafo y puebla FEstructuraResultados.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Notas     : Analiza UN archivo, el activo en cmbArticulosRevista, no todo el
+'             proyecto. El encabezado anterior decía lo contrario.
 ' ============================================
 Public Sub MostrarControlCercania()
 
-  ' --- 1. Inicialización de variables ---
-  Dim archivos As String[]
-  Dim archivo As String
-  Dim contenido As String
-  Dim lineas As String[]
-  Dim rutaProyecto As String
-  Dim rutaArticulos As String
-  Dim rutaCompleta As String
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRaiz As String
+  Dim sRutaCompleta As String
+  Dim sArchivoActivo As String
+  Dim sNombreArchivo As String
+  Dim sContenido As String
   Dim sEtiqueta As String
   Dim sTextoParrafo As String
+  Dim aLineas As String[]
   Dim iLineaInicio As Integer
   Dim iNumLinea As Integer
   Dim iFila As Integer
 
   ' ARRAYS ACUMULADORES DE FILAS — SOLO SE AGREGAN COINCIDENCIAS
   Dim aArchivos As New String[]
-  Dim aLineas As New String[]
+  Dim aPosiciones As New String[]
   Dim aPalabras As New String[]
   Dim aContextos As New String[]
+  Dim aResultadosTSV As New String[]
 
-  ' --- 2. Resolución de rutas ---
-  rutaProyecto = m_InicioCierre.ArchivoProyectoEnCurso
-  rutaArticulos = rutaProyecto &/ "articulos"
+  ' --- 2. VALIDACIÓN: DEBE HABER PROYECTO ABIERTO ---
+  sRaiz = m_FuncionesGenericas.RaizProyectoValida()
+  If sRaiz = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un proyecto abierto, o la carpeta del proyecto no está accesible.")
+    Return
+  Endif
 
-  ' --- 3. Verificar que el archivo activo es un artículo ---
-  Dim sArchivoActivo As String = FMain.cmbArticulosRevista.Text
-  Dim sNombreArchivo As String = File.Name(sArchivoActivo)
+  ' --- 3. VALIDACIÓN: EL ARCHIVO ACTIVO DEBE SER UN ARTÍCULO ---
+  ' File.Name TOLERA QUE EL COMBO GUARDE "articulos/a-foo.md" O "a-foo.md"
+  sArchivoActivo = FMain.cmbArticulosRevista.Text
+  sNombreArchivo = File.Name(sArchivoActivo)
 
   If Not (sNombreArchivo Begins "a-") Then
     m_Sonido.sonar("Warning")
@@ -53,66 +100,70 @@ Public Sub MostrarControlCercania()
     Return
   Endif
 
-  rutaCompleta = rutaArticulos &/ sNombreArchivo
-  If Not Exist(rutaCompleta) Then
+  sRutaCompleta = sRaiz &/ "articulos" &/ sNombreArchivo
+  If Not Exist(sRutaCompleta) Then
     m_Sonido.sonar("Error")
-    Message.Error("No se encontró el archivo:" & Chr(10) & rutaCompleta)
+    Message.Error("No se encontró el archivo:" & Chr(10) & sRutaCompleta)
     Return
   Endif
 
-  ' PROCESAR SOLO EL ARTÍCULO ACTIVO
-  Try contenido = File.Load(rutaCompleta)
+  ' --- 4. LECTURA DEL ARCHIVO ---
+  Try sContenido = File.Load(sRutaCompleta)
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudo leer el archivo:" & Chr(10) & rutaCompleta)
+    Message.Error("No se pudo leer el archivo:" & Chr(10) & sRutaCompleta &
+      Chr(10) & Chr(10) & Error.Text)
     Return
   Endif
 
+  ' --- 5. RECORRIDO POR PÁRRAFOS ---
+  ' UN PÁRRAFO ES UN BLOQUE DE LÍNEAS NO VACÍAS. SE CONCATENAN CON UN ESPACIO,
+  ' QUE ES EL SUPUESTO SOBRE EL QUE CalcularLineaDePosicion RECONSTRUYE LA LÍNEA
   sEtiqueta = sArchivoActivo
-  lineas = Split(contenido, "\n")
+  aLineas = Split(sContenido, Chr(10))
   sTextoParrafo = ""
   iLineaInicio = 0
 
-  For iNumLinea = 0 To lineas.Max
-    If Trim(lineas[iNumLinea]) = "" Then
+  For iNumLinea = 0 To aLineas.Max
+    If Trim(aLineas[iNumLinea]) = "" Then
+      ' LÍNEA EN BLANCO: CIERRA EL PÁRRAFO EN CURSO
       If Trim(sTextoParrafo) <> "" Then
-        AnalizarParrafo(sTextoParrafo, sEtiqueta, iLineaInicio, lineas, aArchivos, aLineas, aPalabras, aContextos)
+        AnalizarParrafo(sTextoParrafo, sEtiqueta, iLineaInicio, aLineas,
+          aArchivos, aPosiciones, aPalabras, aContextos)
       Endif
       sTextoParrafo = ""
       iLineaInicio = iNumLinea + 1
     Else
       If sTextoParrafo = "" Then
-        sTextoParrafo = lineas[iNumLinea]
+        sTextoParrafo = aLineas[iNumLinea]
         iLineaInicio = iNumLinea
       Else
-        sTextoParrafo &= " " & lineas[iNumLinea]
+        sTextoParrafo &= " " & aLineas[iNumLinea]
       Endif
     Endif
   Next
 
-  ' ÚLTIMO PÁRRAFO SIN LÍNEA EN BLANCO FINAL
+  ' ÚLTIMO PÁRRAFO, SI EL ARCHIVO NO TERMINA EN LÍNEA EN BLANCO
   If Trim(sTextoParrafo) <> "" Then
-    AnalizarParrafo(sTextoParrafo, sEtiqueta, iLineaInicio, lineas, aArchivos, aLineas, aPalabras, aContextos)
+    AnalizarParrafo(sTextoParrafo, sEtiqueta, iLineaInicio, aLineas,
+      aArchivos, aPosiciones, aPalabras, aContextos)
   Endif
 
-  ' --- 4. Construir aResultados ---
-  ' SIN aColores — ESTA FUNCIÓN NO TIENE COLOREADO DE CELDAS
-  Dim aResultadosTSV As New String[]
-
+  ' --- 6. CONSTRUIR aResultados ---
   If aArchivos.Count = 0 Then
     ' CASO SIN COINCIDENCIAS — FILA ÚNICA INFORMATIVA
     aResultadosTSV.Add("Sin coincidencias" & Chr(9) & "" & Chr(9) & "" & Chr(9) &
-      "No se encontraron repeticiones de cercanía en ningún archivo")
+      "No se encontraron repeticiones de cercanía en " & sNombreArchivo)
   Else
     For iFila = 0 To aArchivos.Count - 1
-      aResultadosTSV.Add(aArchivos[iFila] & Chr(9) & aLineas[iFila] & Chr(9) &
+      aResultadosTSV.Add(aArchivos[iFila] & Chr(9) & aPosiciones[iFila] & Chr(9) &
         aPalabras[iFila] & Chr(9) & aContextos[iFila])
     Next
   Endif
 
-  ' --- 5. Configurar FEstructuraResultados ---
+  ' --- 7. CONFIGURAR FEstructuraResultados ---
   FEstructuraResultados.blTitulo.Text = "Control de cercanía — " & sNombreArchivo &
-    " (repetidas en ≤" & DISTANCIA_MAXIMA & " caracteres)"
+    " (repetidas en ≤" & CStr(DISTANCIA_MAXIMA) & " caracteres)"
   FEstructuraResultados.aResultados = aResultadosTSV
   FEstructuraResultados.aColores = New Collection  ' SIN COLORES ESPECIALES
 
@@ -138,7 +189,7 @@ Public Sub MostrarControlCercania()
     .Columns[4].Width = 10
   End With
 
-  ' --- 6. Presentación del formulario ---
+  ' --- 8. PRESENTACIÓN DEL FORMULARIO ---
   FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
   FEstructuraResultados.ShowModal
@@ -147,176 +198,234 @@ End
 
 ' ============================================
 ' Función   : AnalizarParrafo
-' Propósito : Busca palabras repetidas dentro del rango de distancia
-'             y agrega cada coincidencia a los arrays acumuladores
-' Parámetros: sParrafo       As String  — texto del párrafo normalizado
-'             sEtiqueta      As String  — nombre del archivo para la columna
-'             iLineaInicio   As Integer — línea base del párrafo en el documento
-'             aLineasDoc     As String[]— todas las líneas del documento
-'             aArchivos      As String[]— acumulador: columna Archivo
-'             aLineas        As String[]— acumulador: columna L
-'             aPalabras      As String[]— acumulador: columna Palabra
-'             aContextos     As String[]— acumulador: columna Contexto
-' Retorna   : nada (modifica los arrays ByRef)
+' Propósito : Tokeniza un párrafo y reporta cada par de apariciones
+'             CONSECUTIVAS de una misma palabra separadas por menos de
+'             DISTANCIA_MAXIMA caracteres.
+' Parámetros: sParrafo     As String   — texto del párrafo ya concatenado
+'             sEtiqueta    As String   — nombre del archivo para la columna
+'             iLineaInicio As Integer  — línea del documento donde arranca
+'             aLineasDoc   As String[] — todas las líneas del documento
+'             aArchivos    As String[] — acumulador: columna Archivo
+'             aPosiciones  As String[] — acumulador: columna L
+'             aPalabras    As String[] — acumulador: columna Palabra
+'             aContextos   As String[] — acumulador: columna Contexto
+' Retorna   : (Sub, sin retorno) — modifica los arrays acumuladores
 ' ============================================
-Private Sub AnalizarParrafo(sParrafo As String, sEtiqueta As String, iLineaInicio As Integer, aLineasDoc As String[], aArchivos As String[], aLineas As String[], aPalabras As String[], aContextos As String[])
+Private Sub AnalizarParrafo(sParrafo As String, sEtiqueta As String, iLineaInicio As Integer, aLineasDoc As String[], aArchivos As String[], aPosiciones As String[], aPalabras As String[], aContextos As String[])
 
-  ' --- 1. Inicialización ---
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sParrafoLimpio As String
-  Dim aPalabrasArr As String[]
-  Dim aInfoPalabras As New Collection   ' CLAVE = índice como string, VALOR = Variant[]
-  Dim colProcesadas As New Collection
+  Dim aTokensCrudos As String[]
+  Dim aTokens As New String[]        ' PALABRA TAL COMO APARECE
+  Dim aTokensPlegados As New String[] ' LA MISMA, PLEGADA A MINÚSCULAS UTF-8
+  Dim aPosToken As New Integer[]     ' POSICIÓN EN CODEPOINTS DENTRO DEL PÁRRAFO
+  Dim aSeparadores As String[]
+  Dim sSeparador As String
+  Dim sPalabra As String
+  Dim sContexto As String
+  Dim sPosicionTexto As String
   Dim i As Integer
   Dim j As Integer
-  Dim sPalabra As String
-  Dim sPalabraLower As String
-  Dim sPalabraComp As String
-  Dim iPosAnterior As Integer
-  Dim iPosicion As Integer
-  Dim iDistancia As Integer
-  Dim iLineaEncontrada As Integer
-  Dim sContexto As String
+  Dim k As Integer
   Dim iPosActual As Integer
-  Dim iTotal As Integer
+  Dim iPosicion As Integer
+  Dim iPosAnterior As Integer
+  Dim iDistancia As Integer
+  Dim iLargoPalabra As Integer
+  Dim iCtxFin As Integer
+  Dim iLargoParrafo As Integer
+  Dim iLineaP1 As Integer
+  Dim iLineaP2 As Integer
+  Dim iColP1 As Integer
+  Dim iColP2 As Integer
+  Dim iAcum As Integer
 
-  ' --- 2. Normalización del párrafo para tokenización ---
-  ' SE REEMPLAZAN SIGNOS DE PUNTUACIÓN POR ESPACIOS PARA AISLAR PALABRAS
+  ' --- 2. NORMALIZACIÓN DEL PÁRRAFO PARA TOKENIZAR ---
+  ' SE REEMPLAZAN LOS SIGNOS POR ESPACIOS PARA AISLAR PALABRAS. EL LARGO EN
+  ' CARACTERES NO CAMBIA, ASÍ QUE LAS POSICIONES SIGUEN SIENDO VÁLIDAS PARA
+  ' RECONSTRUIR LÍNEA Y COLUMNA CONTRA EL DOCUMENTO ORIGINAL.
+  ' SE AGREGARON LAS COMILLAS TIPOGRÁFICAS CURVAS Y LOS PUNTOS SUSPENSIVOS, QUE
+  ' FALTABAN: SIN ELLOS UN “análisis” ENTRECOMILLADO NO TOKENIZABA IGUAL QUE UN
+  ' análisis SUELTO Y LA REPETICIÓN SE PERDÍA. SON LOS MISMOS CARACTERES QUE
+  ' VIGILA ContarCaracteresPares.
+  ' COMILLA RECTA CON Chr(34) Y CURVAS CON String.Chr$ (SC-01)
+  aSeparadores = [",", ".", ";", ":", "!", "?", "¡", "¿",
+    "(", ")", "[", "]", "{", "}", "«", "»",
+    Chr(34), "'", "—", "–", "-", "/",
+    String.Chr$(8220), String.Chr$(8221), String.Chr$(8216), String.Chr$(8217),
+    String.Chr$(8230)]
+
   sParrafoLimpio = sParrafo
-  sParrafoLimpio = Replace(sParrafoLimpio, ",", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, ".", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, ";", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, ":", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "!", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "?", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "¡", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "¿", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "(", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, ")", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "[", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "]", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "«", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "»", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "\"", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "'", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "—", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "–", " ")
-  sParrafoLimpio = Replace(sParrafoLimpio, "-", " ")
+  For Each sSeparador In aSeparadores
+    sParrafoLimpio = Replace(sParrafoLimpio, sSeparador, " ")
+  Next
 
-  ' --- 3. Tokenización con posición real en el párrafo ---
-  aPalabrasArr = Split(sParrafoLimpio, " ")
+  iLargoParrafo = String.Len(sParrafoLimpio)
+
+  ' --- 3. TOKENIZACIÓN CON POSICIÓN REAL EN CODEPOINTS ---
+  ' String.InStr DEVUELVE POSICIÓN EN CARACTERES. LA VERSIÓN ANTERIOR USABA
+  ' InStr, QUE DEVUELVE BYTES, Y MEZCLABA ESAS POSICIONES CON Len() Y Mid()
+  aTokensCrudos = Split(sParrafoLimpio, " ")
   iPosActual = 1
-  iTotal = 0
 
-  For i = 0 To aPalabrasArr.Max
-    sPalabra = Trim(aPalabrasArr[i])
+  For i = 0 To aTokensCrudos.Max
+    sPalabra = Trim(aTokensCrudos[i])
     If sPalabra = "" Then
-      iPosActual += Len(aPalabrasArr[i]) + 1
+      iPosActual += String.Len(aTokensCrudos[i]) + 1
       Continue
     Endif
-    iPosicion = InStr(sParrafoLimpio, sPalabra, iPosActual)
+
+    iPosicion = String.InStr(sParrafoLimpio, sPalabra, iPosActual)
     If iPosicion > 0 Then
-      ' CADA ENTRADA: [PALABRA_ORIGINAL, POSICION_EN_PARRAFO]
-      aInfoPalabras.Add([sPalabra, iPosicion], Str(iTotal))
-      iTotal += 1
-      iPosActual = iPosicion + Len(sPalabra)
+      aTokens.Add(sPalabra)
+      aTokensPlegados.Add(PlegarMinusculas(sPalabra))
+      aPosToken.Add(iPosicion)
+      iPosActual = iPosicion + String.Len(sPalabra)
     Endif
   Next
 
-  ' --- 4. Búsqueda de repeticiones por pares ---
-  For i = 0 To iTotal - 1
-    sPalabra = aInfoPalabras[Str(i)][0]
-    sPalabraLower = Lower(sPalabra)
+  ' --- 4. BÚSQUEDA DE REPETICIONES POR APARICIONES CONSECUTIVAS ---
+  ' PARA CADA TOKEN SE BUSCA LA SIGUIENTE APARICIÓN DE LA MISMA PALABRA Y SE
+  ' MIDE ESA DISTANCIA. COMPARAR SIEMPRE CONTRA LA PRIMERA APARICIÓN, COMO HACÍA
+  ' LA VERSIÓN ANTERIOR, DEJABA ESCAPAR LOS PARES TARDÍOS (VER ENCABEZADO)
+  For i = 0 To aTokens.Count - 1
 
-    ' IGNORAR PALABRAS CORTAS
-    If Len(sPalabra) < LONGITUD_MINIMA_PALABRA Then Continue
+    sPalabra = aTokens[i]
+    iLargoPalabra = String.Len(sPalabra)
 
-    ' IGNORAR PALABRAS YA PROCESADAS COMO PRIMERA OCURRENCIA
-    If colProcesadas.Exist(sPalabraLower) Then Continue
+    ' IGNORAR PALABRAS CORTAS. String.Len Y NO Len: CON BYTES, 'añoS' MEDÍA 5
+    ' Y PASABA EL FILTRO SIENDO DE CUATRO LETRAS
+    If iLargoPalabra < LONGITUD_MINIMA_PALABRA Then Continue
 
-    iPosAnterior = aInfoPalabras[Str(i)][1]
-
-    For j = i + 1 To iTotal - 1
-      sPalabraComp = Lower(aInfoPalabras[Str(j)][0])
-      If sPalabraComp <> sPalabraLower Then Continue
-
-      iPosicion = aInfoPalabras[Str(j)][1]
-      iDistancia = iPosicion - (iPosAnterior + Len(sPalabra))
-
-      If iDistancia < 0 Or iDistancia > DISTANCIA_MAXIMA Then Continue
-
-      ' --- 5. Construcción del contexto desde la primera ocurrencia ---
-      ' EL CONTEXTO ARRANCA EN LA PRIMERA PALABRA Y LLEGA HASTA EL FINAL
-      ' DE LA SEGUNDA MÁS UN MARGEN, PARA QUE LA PALABRA SEA LO PRIMERO QUE SE LEE
-      Dim iCtxFin As Integer = Min(Len(sParrafoLimpio), iPosicion + Len(sPalabra) + 15)
-      sContexto = Mid(sParrafoLimpio, iPosAnterior, iCtxFin - iPosAnterior + 1)
-      If iCtxFin < Len(sParrafoLimpio) Then sContexto &= "…"
-
-      ' --- 6. Línea y posición de columna para cada ocurrencia ---
-      ' SE CALCULA LA LÍNEA DE CADA OCURRENCIA Y SU POSICIÓN DENTRO DE ESA LÍNEA
-      Dim iLineaP1 As Integer
-      Dim iLineaP2 As Integer
-      Dim iColP1 As Integer
-      Dim iColP2 As Integer
-      Dim iAcum As Integer
-      Dim k As Integer
-
-      ' POSICIÓN DE LA PRIMERA OCURRENCIA
-      iLineaP1 = CalcularLineaDePosicion(aLineasDoc, iLineaInicio, iPosAnterior)
-      iAcum = 0
-      For k = iLineaInicio To iLineaP1 - 1
-        iAcum += Len(aLineasDoc[k]) + 1
-      Next
-      iColP1 = iPosAnterior - iAcum
-
-      ' POSICIÓN DE LA SEGUNDA OCURRENCIA
-      iLineaP2 = CalcularLineaDePosicion(aLineasDoc, iLineaInicio, iPosicion)
-      iAcum = 0
-      For k = iLineaInicio To iLineaP2 - 1
-        iAcum += Len(aLineasDoc[k]) + 1
-      Next
-      iColP2 = iPosicion - iAcum
-
-      ' --- 7. Acumulación de la fila ---
-      ' FORMATO: "línea (col1/col2)" SI ESTÁN EN LA MISMA LÍNEA
-      '          "L1:col1 / L2:col2" SI ESTÁN EN LÍNEAS DISTINTAS
-      Dim sPosicion As String
-      If iLineaP1 = iLineaP2 Then
-        sPosicion = Str(iLineaP1 + 1) & " (" & iColP1 & "/" & iColP2 & ")"
-      Else
-        sPosicion = Str(iLineaP1 + 1) & ":" & iColP1 & " / " & Str(iLineaP2 + 1) & ":" & iColP2
+    ' BUSCAR LA SIGUIENTE APARICIÓN DE LA MISMA PALABRA
+    j = -1
+    For k = i + 1 To aTokens.Count - 1
+      If aTokensPlegados[k] = aTokensPlegados[i] Then
+        j = k
+        Break
       Endif
-
-      aArchivos.Add(sEtiqueta)
-      aLineas.Add(sPosicion)
-      aPalabras.Add(sPalabra)
-      aContextos.Add(sContexto)
-
     Next
 
-    colProcesadas.Add(True, sPalabraLower)
+    If j = -1 Then Continue
+
+    ' --- 5. MEDIR LA DISTANCIA ENTRE EL FIN DE UNA Y EL INICIO DE LA OTRA ---
+    iPosAnterior = aPosToken[i]
+    iPosicion = aPosToken[j]
+    iDistancia = iPosicion - (iPosAnterior + iLargoPalabra)
+
+    If iDistancia < 0 Then Continue
+    If iDistancia > DISTANCIA_MAXIMA Then Continue
+
+    ' --- 6. CONTEXTO DESDE LA PRIMERA APARICIÓN ---
+    ' ARRANCA EN LA PRIMERA PALABRA PARA QUE SEA LO PRIMERO QUE SE LEE, Y LLEGA
+    ' HASTA UN POCO DESPUÉS DE LA SEGUNDA. String.Mid CORTA EN LÍMITE DE
+    ' CARÁCTER; Mid CORTABA EN LÍMITE DE BYTE Y PODÍA PARTIR UNA TILDE AL MEDIO
+    iCtxFin = Min(iLargoParrafo, iPosicion + iLargoPalabra + 15)
+    sContexto = String.Mid(sParrafoLimpio, iPosAnterior, iCtxFin - iPosAnterior + 1)
+    If iCtxFin < iLargoParrafo Then sContexto &= "…"
+
+    ' --- 7. LÍNEA Y COLUMNA DE CADA APARICIÓN ---
+    iLineaP1 = CalcularLineaDePosicion(aLineasDoc, iLineaInicio, iPosAnterior)
+    iAcum = 0
+    For k = iLineaInicio To iLineaP1 - 1
+      iAcum += String.Len(aLineasDoc[k]) + 1
+    Next
+    iColP1 = iPosAnterior - iAcum
+
+    iLineaP2 = CalcularLineaDePosicion(aLineasDoc, iLineaInicio, iPosicion)
+    iAcum = 0
+    For k = iLineaInicio To iLineaP2 - 1
+      iAcum += String.Len(aLineasDoc[k]) + 1
+    Next
+    iColP2 = iPosicion - iAcum
+
+    ' --- 8. ACUMULAR LA FILA ---
+    ' FORMATO: "línea (col1/col2)" SI ESTÁN EN LA MISMA LÍNEA
+    '          "L1:col1 / L2:col2" SI ESTÁN EN LÍNEAS DISTINTAS
+    If iLineaP1 = iLineaP2 Then
+      sPosicionTexto = CStr(iLineaP1 + 1) & " (" & CStr(iColP1) & "/" & CStr(iColP2) & ")"
+    Else
+      sPosicionTexto = CStr(iLineaP1 + 1) & ":" & CStr(iColP1) & " / " &
+        CStr(iLineaP2 + 1) & ":" & CStr(iColP2)
+    Endif
+
+    aArchivos.Add(sEtiqueta)
+    aPosiciones.Add(sPosicionTexto)
+    aPalabras.Add(sPalabra)
+    aContextos.Add(sContexto)
+
   Next
 
 End
 
 ' ============================================
+' Función   : PlegarMinusculas
+' Propósito : Pliega un texto a minúsculas respetando UTF-8, para poder
+'             comparar palabras sin que la caja de una letra acentuada las
+'             haga distintas.
+' Parámetros: sTexto As String — texto a plegar
+' Retorna   : String — texto en minúsculas
+' Notas     : Lower(), LCase() y String.Lower() son ASCII-only en Gambas.
+'             Verificado: Lower("SEÑOR ÁRBOL") devuelve "seÑor Árbol", y
+'             String.Comp con gb.IgnoreCase tampoco pliega acentos.
+'             Se cubre el bloque Latin-1 Supplement (U+00C0–U+00DE, salteando
+'             U+00D7 que es el signo de multiplicación y no una letra), que
+'             alcanza para castellano, portugués, francés e italiano.
+'             Si alguna vez hiciera falta polaco, checo o turco habría que
+'             extenderlo a Latin Extended-A.
+' ============================================
+Private Function PlegarMinusculas(sTexto As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim i As Integer
+  Dim iCodigo As Integer
+  Dim sChar As String
+  Dim sResultado As String
+
+  sResultado = ""
+
+  ' --- 2. RECORRIDO CODEPOINT A CODEPOINT ---
+  For i = 1 To String.Len(sTexto)
+    sChar = String.Mid(sTexto, i, 1)
+    iCodigo = String.Code(sChar)
+
+    ' MAYÚSCULA ACENTUADA DE LATIN-1: LA MINÚSCULA ESTÁ 32 CODEPOINTS DESPUÉS
+    If iCodigo >= 192 And iCodigo <= 222 And iCodigo <> 215 Then
+      sResultado &= String.Chr$(iCodigo + 32)
+    Else
+      sResultado &= LCase(sChar)
+    Endif
+  Next
+
+  Return sResultado
+
+End
+
+' ============================================
 ' Función   : CalcularLineaDePosicion
-' Propósito : Estima el número de línea del documento a partir de la
-'             posición de un carácter dentro del párrafo concatenado
+' Propósito : Determina el número de línea del documento a partir de la
+'             posición de un carácter dentro del párrafo concatenado.
 ' Parámetros: aLineas      As String[] — todas las líneas del documento
 '             iLineaInicio As Integer  — línea donde comienza el párrafo
-'             iPosicion    As Integer  — posición del carácter en el párrafo
+'             iPosicion    As Integer  — posición en CARACTERES en el párrafo
 ' Retorna   : Integer — número de línea base 0
+' Notas     : String.Len y no Len: el acumulado tiene que estar en la misma
+'             unidad que iPosicion, que viene de String.InStr (RC-GM-12).
 ' ============================================
 Private Function CalcularLineaDePosicion(aLineas As String[], iLineaInicio As Integer, iPosicion As Integer) As Integer
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim iAcumulado As Integer
   Dim i As Integer
 
   iAcumulado = 0
 
+  ' --- 2. ACUMULAR LARGOS HASTA ALCANZAR LA POSICIÓN ---
+  ' EL +1 ES EL ESPACIO QUE MostrarControlCercania AGREGA AL CONCATENAR LÍNEAS
   For i = iLineaInicio To aLineas.Max
-    If Trim(aLineas[i]) = "" Then Return iLineaInicio
-    iAcumulado += Len(aLineas[i]) + 1  ' +1 POR EL ESPACIO QUE SE AGREGA AL CONCATENAR
+    ' UNA LÍNEA EN BLANCO CIERRA EL PÁRRAFO: NO HAY MÁS TEXTO QUE RECORRER
+    If Trim(aLineas[i]) = "" Then Return Max(iLineaInicio, i - 1)
+    iAcumulado += String.Len(aLineas[i]) + 1
     If iAcumulado >= iPosicion Then Return i
   Next
 

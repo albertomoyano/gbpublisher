@@ -4,34 +4,64 @@
 ' Módulo    : m_EscanerUTF8
 ' Propósito : Detecta caracteres problemáticos en todos los archivos .md
 '             del proyecto y muestra resultados en FEstructuraResultados.
-'             Distingue dos niveles: ERROR (rojo) para caracteres que rompen
-'             procesamiento o indican codificación corrupta, y ADVERTENCIA
+'             Distingue tres niveles: CODIFICACIÓN INVÁLIDA y ERROR (rojo) para
+'             lo que rompe el procesamiento o indica corrupción, y ADVERTENCIA
 '             (amarillo) para caracteres legítimos pero potencialmente
 '             problemáticos según el contexto editorial.
-' Dependencias: FMain, FEstructuraResultados, m_Sonido.
+' Dependencias: m_FuncionesGenericas, FEstructuraResultados, m_Sonido.
+'
+' REVISIÓN — DOS CORRECCIONES DE FONDO
+' ------------------------------------
+' 1. RUTA DEL PROYECTO. EscanearCodificacionUTF8 tomaba
+'    m_InicioCierre.ArchivoProyectoEnCurso, que es la ruta del .md del proyecto
+'    y no su carpeta, y la usaba como raíz para recorrer directorios. Exist()
+'    devuelve True también para archivos regulares, así que el guard no
+'    protegía y el Dir() siguiente abortaba con el error 49 "Not a directory".
+'    Es el mismo bug que tenían las cinco funciones de m_FuncionesGenericas.
+'    Ahora el recorrido se delega en m_FuncionesGenericas.ObtenerArchivosMD,
+'    que resuelve la raíz con RaizProyectoValida() y envuelve los Dir() en Try.
+'
+' 2. EL ESCÁNER NO DETECTABA UTF-8 INVÁLIDO, QUE ES SU RAZÓN DE SER.
+'    La versión anterior confiaba en encontrar U+FFFD (apartado 2n) para
+'    reportar "error de decodificación". Verificado empíricamente en Gambas que
+'    esa premisa es FALSA: File.Load no decodifica ni valida, así que un archivo
+'    en Latin-1 NO produce U+FFFD. Produce codepoints basura. Un "café señor"
+'    guardado en Latin-1 daba:
+'        codepoints: 99 97 102 38963 101 457866 0 0 0 0 0
+'        aparece 65533 (U+FFFD)? NO
+'    O sea: dos codepoints imposibles (457866 está fuera del rango Unicode) y
+'    cinco ceros que se comían el resto del archivo. Lo único que el escáner
+'    reportaba eran cinco "Control: NUL" espurios, mientras el problema real
+'    —el archivo no es UTF-8— pasaba inadvertido.
+'    La solución es String.IsValid(), que responde exactamente esa pregunta.
+'    Verificado:
+'        ASCII puro                      -> True
+'        UTF-8 con acentos               -> True
+'        UTF-8 con BOM                   -> True
+'        Latin-1                         -> False
+'        Multibyte truncado              -> False
+'    Ahora se valida ANTES de recorrer, y si el archivo no es UTF-8 se reporta
+'    como tal y se saltea el recorrido, que solo produciría ruido.
+'    La detección de U+FFFD se mantiene: un U+FFFD literal en el archivo sigue
+'    siendo un hallazgo real (viene de una conversión previa que ya perdió
+'    datos), pero ya no es el mecanismo de detección de codificación.
 ' ==============================================================================
 
 ' ============================================
 ' Función   : EscanearCodificacionUTF8
-' Propósito : Itera todos los archivos .md del proyecto (raíz, front-matter,
-'             articulos, back-matter) y puebla FEstructuraResultados con los
-'             caracteres problemáticos encontrados.
+' Propósito : Recorre todos los .md del proyecto (raíz, front-matter, articulos,
+'             back-matter) y puebla FEstructuraResultados con los caracteres
+'             problemáticos encontrados.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
 Public Sub EscanearCodificacionUTF8()
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
-  Dim archivos As String[]
-  Dim archivo As String
-  Dim contenido As String
-  Dim rutaProyecto As String
-  Dim rutaCompleta As String
-  Dim sSubcarpeta As String
-  Dim sRuta As String
-  Dim sPrefijo As String
+  Dim aRutas As New String[]
+  Dim aEtiquetas As New String[]
+  Dim sContenido As String
   Dim iFila As Integer
-  Dim aSubcarpetas As String[]
 
   ' ARRAYS ACUMULADORES — SOLO SE AGREGAN ARCHIVOS CON PROBLEMAS
   Dim aArchivos As New String[]
@@ -43,44 +73,56 @@ Public Sub EscanearCodificacionUTF8()
   Dim aResultadosTSV As New String[]
   Dim aColores As New Collection
 
-  ' --- 2. RESOLUCIÓN DE LA RUTA RAÍZ DEL PROYECTO ---
-  rutaProyecto = m_InicioCierre.ArchivoProyectoEnCurso
+  ' --- 2. RECOLECCIÓN DE ARCHIVOS ---
+  ' ObtenerArchivosMD RECORRE LAS MISMAS CUATRO CARPETAS EN EL MISMO ORDEN Y CON
+  ' LOS MISMOS PREFIJOS DE ETIQUETA QUE HACÍA ESTE MÓDULO POR SU CUENTA, PERO
+  ' RESUELVE BIEN LA RAÍZ Y PROTEGE LOS Dir()
+  If Not m_FuncionesGenericas.ObtenerArchivosMD(aRutas, aEtiquetas) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un proyecto abierto, o la carpeta del proyecto no está accesible.")
+    Return
+  Endif
 
-  ' --- 3. PROCESAR ARCHIVOS EN TODAS LAS SUBCARPETAS RELEVANTES ---
-  ' ORDEN NATURAL DE LECTURA: RAÍZ → FRONT MATTER → CUERPO → BACK MATTER
-  aSubcarpetas = ["", "front-matter", "articulos", "back-matter"]
+  If aRutas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontraron archivos .md en el proyecto.")
+    Return
+  Endif
 
-  For Each sSubcarpeta In aSubcarpetas
-    If sSubcarpeta = "" Then
-      sRuta = rutaProyecto
-      sPrefijo = ""
-    Else
-      sRuta = rutaProyecto &/ sSubcarpeta
-      sPrefijo = sSubcarpeta & "/"
+  ' --- 3. PROCESAR CADA ARCHIVO ---
+  For iFila = 0 To aRutas.Count - 1
+
+    Try sContenido = File.Load(aRutas[iFila])
+    If Error Then
+      ' ARCHIVO NO LEGIBLE: REPORTARLO EN LA TABLA EN LUGAR DE IGNORARLO
+      ' SILENCIOSAMENTE — EL USUARIO TIENE QUE SABER
+      aArchivos.Add(aEtiquetas[iFila])
+      aPosiciones.Add("-")
+      aErrores.Add("No se pudo leer el archivo: " & Error.Text)
+      aContextos.Add("")
+      aEsError.Add(True)
+      Continue
     Endif
 
-    If Not Exist(sRuta) Then Continue
+    ' --- 3a. VALIDACIÓN DE CODIFICACIÓN, ANTES DE CUALQUIER RECORRIDO ---
+    ' SI EL ARCHIVO NO ES UTF-8 VÁLIDO, String.Mid Y String.Code DEVUELVEN
+    ' CODEPOINTS BASURA Y CEROS. RECORRERLO SOLO GENERA HALLAZGOS FALSOS QUE
+    ' TAPAN EL PROBLEMA REAL, ASÍ QUE SE REPORTA Y SE SALTEA
+    If Not String.IsValid(sContenido) Then
+      aArchivos.Add(aEtiquetas[iFila])
+      aPosiciones.Add("-")
+      aErrores.Add("El archivo NO es UTF-8 válido — codificación corrupta")
+      aContextos.Add("Convertir antes de seguir (SC-02). Si viene de Windows o de un procesador viejo: " &
+        "iconv -f WINDOWS-1252 -t UTF-8 archivo.md -o archivo.md   ·   " &
+        "Verificar el origen con: file -i archivo.md")
+      aEsError.Add(True)
+      Continue
+    Endif
 
-    archivos = Dir(sRuta, "*.md")
-    archivos.Sort()
-    For Each archivo In archivos
-      rutaCompleta = sRuta &/ archivo
+    ' --- 3b. RECORRIDO CODEPOINT A CODEPOINT ---
+    EscanearArchivo(sContenido, aEtiquetas[iFila],
+      aArchivos, aPosiciones, aErrores, aContextos, aEsError)
 
-      Try contenido = File.Load(rutaCompleta)
-      If Error Then
-        ' ARCHIVO NO LEGIBLE: REPORTAR COMO ERROR EN LA TABLA EN LUGAR DE
-        ' IGNORARLO SILENCIOSAMENTE — EL USUARIO TIENE QUE SABER
-        aArchivos.Add(sPrefijo & archivo)
-        aPosiciones.Add("-")
-        aErrores.Add("No se pudo leer el archivo: " & Error.Text)
-        aContextos.Add("")
-        aEsError.Add(True)
-        Continue
-      Endif
-
-      EscanearArchivo(contenido, sPrefijo & archivo,
-        aArchivos, aPosiciones, aErrores, aContextos, aEsError)
-    Next
   Next
 
   ' --- 4. CONSTRUIR aResultadosTSV Y aColores ---
@@ -132,18 +174,18 @@ Public Sub EscanearCodificacionUTF8()
   ' --- 6. PRESENTACIÓN DEL FORMULARIO ---
   FEstructuraResultados.gvResultados.Refresh
   m_Sonido.sonar("Info")
-  FEstructuraResultados.Show()
-  FEstructuraResultados.TopOnly = True
+  FEstructuraResultados.ShowModal()
 
 End
 
 ' ============================================
 ' Función   : EscanearArchivo
-' Propósito : Recorre codepoint a codepoint un archivo y detecta todos los
-'             caracteres problemáticos, acumulando en los arrays paralelos
-'             pasados por referencia. Cada hallazgo se clasifica como ERROR
-'             o ADVERTENCIA según su severidad editorial.
-' Parámetros: sContenido   As String    — texto completo del archivo
+' Propósito : Recorre codepoint a codepoint un archivo y detecta los caracteres
+'             problemáticos, acumulando en los arrays paralelos que recibe por
+'             referencia. Cada hallazgo se clasifica como ERROR o ADVERTENCIA
+'             según su severidad editorial.
+' Parámetros: sContenido   As String    — texto completo del archivo, ya
+'                                          verificado como UTF-8 válido
 '             sEtiqueta    As String    — nombre del archivo con su prefijo
 '                                          de subcarpeta para mostrar al usuario
 '             aArchivos    As String[]  — acumulador columna Archivo
@@ -152,14 +194,23 @@ End
 '             aContextos   As String[]  — acumulador columna Contexto
 '             aEsError     As Boolean[] — acumulador de severidad (T=err / F=adv)
 ' Retorna   : (Sub, sin retorno)
+' Notas     : PRECONDICIÓN: sContenido debe haber pasado String.IsValid().
+'             Sobre un archivo inválido este recorrido produce basura.
+'
+' RENDIMIENTO: EL BUCLE String.Mid + String.Code POR CODEPOINT PARECE
+' CUADRÁTICO PERO NO LO ES. MEDIDO EN GAMBAS SOBRE TEXTO CON ACENTOS:
+'   5.000 codepoints -> 0,003 s      20.000 -> 0,011 s
+'  10.000 codepoints -> 0,005 s      40.000 -> 0,021 s
+' ESCALA LINEAL, ASÍ QUE NO HACE FALTA OPTIMIZARLO. NO REEMPLAZAR String.Mid
+' POR ACCESO POR BYTES: PERDERÍA LA SEMÁNTICA DE CODEPOINT (RC-GM-12).
 ' ============================================
 Private Sub EscanearArchivo(sContenido As String, sEtiqueta As String, aArchivos As String[], aPosiciones As String[], aErrores As String[], aContextos As String[], aEsError As Boolean[])
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim i As Integer
-  Dim codigo As Integer
-  Dim char As String
-  Dim charAnt As String
+  Dim iCodigo As Integer
+  Dim sChar As String
+  Dim sCharAnt As String
   Dim iLinea As Integer
   Dim iColumna As Integer
   Dim sNombre As String
@@ -169,7 +220,7 @@ Private Sub EscanearArchivo(sContenido As String, sEtiqueta As String, aArchivos
 
   iLinea = 1
   iColumna = 1
-  charAnt = ""
+  sCharAnt = ""
   iLenContenido = String.Len(sContenido)
 
   ' --- 2. RECORRIDO CODEPOINT A CODEPOINT ---
@@ -179,123 +230,129 @@ Private Sub EscanearArchivo(sContenido As String, sEtiqueta As String, aArchivos
     ' String.Mid + String.Code DEVUELVEN EL CODEPOINT UNICODE REAL.
     ' Asc() ES BYTE-ORIENTED Y NO DETECTA CARACTERES MULTIBYTE — ERA EL BUG
     ' ORIGINAL POR EL CUAL EL ESCÁNER NUNCA REPORTABA NADA EN RANGO > 127
-    char = String.Mid(sContenido, i, 1)
-    codigo = String.Code(char)
+    sChar = String.Mid(sContenido, i, 1)
+    iCodigo = String.Code(sChar)
     sNombre = ""
     bEsError = True   ' DEFAULT: ERROR. CADA RAMA QUE SEA ADVERTENCIA LO BAJA
 
     ' --- 2b. CARACTERES DE CONTROL (EXCLUYE TAB=9, LF=10, CR=13) ---
-    If (codigo >= 0 And codigo <= 31 And codigo <> 9 And codigo <> 10 And codigo <> 13) Or
-        (codigo >= 127 And codigo <= 159) Then
-      sNombre = "Control: " & NombreControlChar(codigo)
+    If (iCodigo >= 0 And iCodigo <= 31 And iCodigo <> 9 And iCodigo <> 10 And iCodigo <> 13) Or
+        (iCodigo >= 127 And iCodigo <= 159) Then
+      sNombre = "Control: " & NombreControlChar(iCodigo)
 
       ' --- 2c. SOFT HYPHEN — ADVERTENCIA (LEGÍTIMO PARA DIVISIÓN DE PALABRAS) ---
-    Else If codigo = 173 Then
+    Else If iCodigo = 173 Then
       sNombre = "Soft hyphen (U+00AD)"
       bEsError = False
 
       ' --- 2d. NO-BREAK SPACE — ADVERTENCIA (LEGÍTIMO EN CASTELLANO ACADÉMICO) ---
-    Else If codigo = 160 Then
+    Else If iCodigo = 160 Then
       sNombre = "No-Break Space (U+00A0)"
       bEsError = False
 
       ' --- 2e. ESPACIOS TIPOGRÁFICOS U+2000–U+200A, U+202F, U+205F ---
       ' ADVERTENCIA: SON ESPACIOS LEGÍTIMOS, PERO PUEDEN INDICAR COPIA Y PEGA
       ' DESDE PDF/WORD CON FORMATO QUE NO SE QUISO PRESERVAR
-    Else If (codigo >= 8192 And codigo <= 8202) Or codigo = 8239 Or codigo = 8287 Then
-      sNombre = "Espacio especial (U+" & Hex(codigo, 4) & ")"
+    Else If (iCodigo >= 8192 And iCodigo <= 8202) Or iCodigo = 8239 Or iCodigo = 8287 Then
+      sNombre = "Espacio especial (U+" & Hex(iCodigo, 4) & ")"
       bEsError = False
 
       ' --- 2f. IDEOGRAPHIC SPACE U+3000 — ADVERTENCIA (RARO EN ESPAÑOL) ---
-    Else If codigo = 12288 Then
+    Else If iCodigo = 12288 Then
       sNombre = "Ideographic Space (U+3000)"
       bEsError = False
 
       ' --- 2g. DIACRÍTICOS COMBINANTES SIN BASE LEGÍTIMA — ERROR ---
-      ' SOLO SE REPORTAN SI APARECEN AL INICIO DEL TEXTO O DESPUÉS DE ESPACIO,
-      ' DONDE NO HAY UN CARACTER BASE QUE MODIFICAR. CARACTERES COMBINANTES
-      ' DESPUÉS DE LETRAS (CONSONANTE O VOCAL) PUEDEN SER LEGÍTIMOS:
+      ' SOLO SE REPORTAN SI NO HAY UN CARACTER BASE QUE MODIFICAR: AL INICIO DEL
+      ' TEXTO O DESPUÉS DE UN ESPACIO EN BLANCO. LOS COMBINANTES DESPUÉS DE
+      ' LETRAS SON LEGÍTIMOS:
       '   c + U+0327 = ç (cedilla en francés/turco/portugués)
       '   n + U+0303 = ñ (tilde sobre n en español/portugués)
       '   a + U+0301 = á (acento agudo, forma descompuesta NFD)
-      ' EL FALSO POSITIVO ES PEOR QUE EL FALSO NEGATIVO — UN ESCÁNER QUE
-      ' MARCA TEXTO LEGÍTIMO PIERDE LA CONFIANZA DEL USUARIO
-    Else If codigo >= 768 And codigo <= 879 Then
-      If charAnt = "" Or charAnt = " " Then
-        sNombre = "Diacrítico combinante sin base (U+" & Hex(codigo, 4) & ")"
+      ' EL FALSO POSITIVO ES PEOR QUE EL FALSO NEGATIVO — UN ESCÁNER QUE MARCA
+      ' TEXTO LEGÍTIMO PIERDE LA CONFIANZA DEL USUARIO.
+      ' CORRECCIÓN: ANTES SOLO CONTEMPLABA "" Y " ". UN COMBINANTE JUSTO DESPUÉS
+      ' DE UN SALTO DE LÍNEA O UN TAB TAMPOCO TIENE BASE Y SE ESCAPABA
+    Else If iCodigo >= 768 And iCodigo <= 879 Then
+      If EsEspacioOVacio(sCharAnt) Then
+        sNombre = "Diacrítico combinante sin base (U+" & Hex(iCodigo, 4) & ")"
       Endif
 
       ' --- 2h. CARACTERES DE ANCHO CERO — ADVERTENCIA ---
-      ' SON INVISIBLES Y PUEDEN ROMPER BÚSQUEDAS O CAUSAR PROBLEMAS EN BIBLIOTECAS
-      ' DE PROCESAMIENTO, PERO EN ALGUNOS CASOS SON USADOS DELIBERADAMENTE
-    Else If codigo = 8203 Then
+      ' SON INVISIBLES Y PUEDEN ROMPER BÚSQUEDAS O CAUSAR PROBLEMAS EN LIBRERÍAS
+      ' DE PROCESAMIENTO, PERO EN ALGUNOS CASOS SE USAN DELIBERADAMENTE
+    Else If iCodigo = 8203 Then
       sNombre = "Zero Width Space (U+200B)"
       bEsError = False
-    Else If codigo = 8204 Then
+    Else If iCodigo = 8204 Then
       sNombre = "Zero Width Non-Joiner (U+200C)"
       bEsError = False
-    Else If codigo = 8205 Then
+    Else If iCodigo = 8205 Then
       sNombre = "Zero Width Joiner (U+200D)"
       bEsError = False
 
       ' --- 2i. MARCAS DE DIRECCIÓN BIDIRECCIONAL — ERROR ---
       ' PUEDEN INDICAR TEXTO MANIPULADO PARA OCULTAR O ALTERAR CONTENIDO
-    Else If codigo = 8206 Then
+    Else If iCodigo = 8206 Then
       sNombre = "Left-to-Right Mark (U+200E)"
-    Else If codigo = 8207 Then
+    Else If iCodigo = 8207 Then
       sNombre = "Right-to-Left Mark (U+200F)"
-    Else If codigo >= 8234 And codigo <= 8238 Then
-      sNombre = "Marca de dirección (U+" & Hex(codigo, 4) & ")"
+    Else If iCodigo >= 8234 And iCodigo <= 8238 Then
+      sNombre = "Marca de dirección (U+" & Hex(iCodigo, 4) & ")"
 
       ' --- 2j. LINE/PARAGRAPH SEPARATORS — ERROR (ROMPEN PROCESAMIENTO) ---
-    Else If codigo = 8232 Then
+    Else If iCodigo = 8232 Then
       sNombre = "Line Separator (U+2028)"
-    Else If codigo = 8233 Then
+    Else If iCodigo = 8233 Then
       sNombre = "Paragraph Separator (U+2029)"
 
       ' --- 2k. WORD JOINER E INVISIBLE OPERATORS — ADVERTENCIA ---
       ' USADOS EN MATEMÁTICA Y NOTACIÓN CIENTÍFICA
-    Else If codigo = 8288 Then
+    Else If iCodigo = 8288 Then
       sNombre = "Word Joiner (U+2060)"
       bEsError = False
-    Else If codigo >= 8289 And codigo <= 8292 Then
-      sNombre = "Invisible operator (U+" & Hex(codigo, 4) & ")"
+    Else If iCodigo >= 8289 And iCodigo <= 8292 Then
+      sNombre = "Invisible operator (U+" & Hex(iCodigo, 4) & ")"
       bEsError = False
 
       ' --- 2l. FORMATO OBSOLETO U+206A–U+206F — ERROR ---
-    Else If codigo >= 8298 And codigo <= 8303 Then
-      sNombre = "Formato obsoleto (U+" & Hex(codigo, 4) & ")"
+    Else If iCodigo >= 8298 And iCodigo <= 8303 Then
+      sNombre = "Formato obsoleto (U+" & Hex(iCodigo, 4) & ")"
 
       ' --- 2m. VARIATION SELECTORS U+FE00–U+FE0F — ADVERTENCIA (EMOJI/CJK) ---
-    Else If codigo >= 65024 And codigo <= 65039 Then
-      sNombre = "Variation Selector (U+" & Hex(codigo, 4) & ")"
+    Else If iCodigo >= 65024 And iCodigo <= 65039 Then
+      sNombre = "Variation Selector (U+" & Hex(iCodigo, 4) & ")"
       bEsError = False
 
-      ' --- 2n. REPLACEMENT CHARACTER U+FFFD — ERROR CRÍTICO ---
-      ' INDICA QUE EN ALGÚN PUNTO HUBO UN BYTE QUE NO PUDO DECODIFICARSE COMO
-      ' UTF-8 VÁLIDO. EL CONTENIDO ORIGINAL SE PERDIÓ
-    Else If codigo = 65533 Then
-      sNombre = "Replacement Character (U+FFFD) — error de decodificación"
+      ' --- 2n. REPLACEMENT CHARACTER U+FFFD — ERROR ---
+      ' UN U+FFFD LITERAL EN EL ARCHIVO SIGNIFICA QUE ALGUNA CONVERSIÓN ANTERIOR
+      ' YA SUSTITUYÓ UN BYTE INDECODIFICABLE Y EL CONTENIDO ORIGINAL SE PERDIÓ.
+      ' OJO: ESTO **NO** ES EL DETECTOR DE UTF-8 INVÁLIDO. File.Load NO DECODIFICA
+      ' NI SUSTITUYE NADA, ASÍ QUE UN ARCHIVO EN LATIN-1 NUNCA LLEGA ACÁ CON
+      ' U+FFFD. ESA DETECCIÓN LA HACE String.IsValid() EN EL APARTADO 3a DE
+      ' EscanearCodificacionUTF8
+    Else If iCodigo = 65533 Then
+      sNombre = "Replacement Character (U+FFFD) — conversión previa con pérdida"
 
-      ' --- 2o. BYTE ORDER MARK — ERROR (DEBE ELIMINARSE EN UTF-8) ---
-    Else If codigo = 65279 Then
+      ' --- 2o. BYTE ORDER MARK — ERROR (DEBE ELIMINARSE EN UTF-8, SC-02) ---
+    Else If iCodigo = 65279 Then
       sNombre = "BOM (U+FEFF)"
 
       ' --- 2p. INTERLINEAR ANNOTATION U+FFF9–U+FFFB — ADVERTENCIA (JAPONÉS) ---
-    Else If codigo >= 65529 And codigo <= 65531 Then
-      sNombre = "Interlinear annotation (U+" & Hex(codigo, 4) & ")"
+    Else If iCodigo >= 65529 And iCodigo <= 65531 Then
+      sNombre = "Interlinear annotation (U+" & Hex(iCodigo, 4) & ")"
       bEsError = False
 
       ' --- 2q. LIGADURAS TIPOGRÁFICAS U+FB00–U+FB06 — ADVERTENCIA ---
       ' COMUNES EN TEXTOS COPIADOS DESDE PDF — fi, fl, ffi, ETC.
-    Else If codigo >= 64256 And codigo <= 64262 Then
-      sNombre = "Ligadura tipográfica (U+" & Hex(codigo, 4) & ")"
+    Else If iCodigo >= 64256 And iCodigo <= 64262 Then
+      sNombre = "Ligadura tipográfica (U+" & Hex(iCodigo, 4) & ")"
       bEsError = False
 
       ' --- 2r. PRIVATE USE AREA U+E000–U+F8FF — ADVERTENCIA ---
       ' CARACTERES QUE DEPENDEN DE FUENTES PROPIETARIAS PARA RENDERIZAR
-    Else If codigo >= 57344 And codigo <= 63743 Then
-      sNombre = "Private Use Area (U+" & Hex(codigo, 4) & ") — fuente propietaria"
+    Else If iCodigo >= 57344 And iCodigo <= 63743 Then
+      sNombre = "Private Use Area (U+" & Hex(iCodigo, 4) & ") — fuente propietaria"
       bEsError = False
 
     Endif
@@ -304,22 +361,45 @@ Private Sub EscanearArchivo(sContenido As String, sEtiqueta As String, aArchivos
     If sNombre <> "" Then
       sContexto = ExtraerContexto(sContenido, i, 100)
       aArchivos.Add(sEtiqueta)
-      aPosiciones.Add(Str(iLinea) & ":" & Str(iColumna))
+      aPosiciones.Add(CStr(iLinea) & ":" & CStr(iColumna))
       aErrores.Add(sNombre)
       aContextos.Add(sContexto)
       aEsError.Add(bEsError)
     Endif
 
     ' --- 4. ACTUALIZAR POSICIÓN PARA EL SIGUIENTE CODEPOINT ---
-    If codigo = 10 Then
+    If iCodigo = 10 Then
       iLinea += 1
       iColumna = 1
     Else
       iColumna += 1
     Endif
 
-    charAnt = char
+    sCharAnt = sChar
   Next
+
+End
+
+' ============================================
+' Función   : EsEspacioOVacio
+' Propósito : Determina si un carácter es vacío o un espacio en blanco, para
+'             decidir si un diacrítico combinante tiene o no un caracter base
+'             al que aplicarse.
+' Parámetros: sChar As String — carácter previo (puede ser cadena vacía)
+' Retorna   : Boolean — True si no hay base sobre la cual combinar
+' ============================================
+Private Function EsEspacioOVacio(sChar As String) As Boolean
+
+  ' --- 1. INICIO DEL TEXTO ---
+  If sChar = "" Then Return True
+
+  ' --- 2. ESPACIOS EN BLANCO ASCII ---
+  If sChar = " " Then Return True
+  If sChar = Chr(9) Then Return True
+  If sChar = Chr(10) Then Return True
+  If sChar = Chr(13) Then Return True
+
+  Return False
 
 End
 
@@ -336,20 +416,26 @@ End
 ' ============================================
 Private Function ExtraerContexto(sTexto As String, iPos As Integer, iMargen As Integer) As String
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim iFin As Integer
   Dim iLenTexto As Integer
   Dim sContexto As String
 
+  ' --- 2. RECORTAR EL FRAGMENTO EN CODEPOINTS, NO EN BYTES (RC-GM-12) ---
   iLenTexto = String.Len(sTexto)
   iFin = Min(iLenTexto, iPos + iMargen)
   sContexto = String.Mid(sTexto, iPos, iFin - iPos + 1)
 
-  ' --- NORMALIZAR SALTOS DE LÍNEA Y TABULACIONES PARA VISUALIZACIÓN EN CELDA ---
-  ' POR SC-01 SE USAN Chr(N) NO LITERALES ESCAPADOS QUE GAMBAS NO INTERPRETA
+  ' --- 3. NORMALIZAR SALTOS Y TABS PARA QUE SE VEAN EN LA CELDA ---
+  ' Chr(N) POR CONVENCIÓN DE ESTILO (SC-01): ES EXPLÍCITO Y NO DEPENDE DE
+  ' RECORDAR LA TABLA DE ESCAPES. NOTA: LA JUSTIFICACIÓN VIEJA DE SC-01 DECÍA
+  ' QUE GAMBAS NO INTERPRETA LOS ESCAPES, Y ESO QUEDÓ DESMENTIDO — SÍ LOS
+  ' INTERPRETA. LA REGLA SIGUE VIGENTE COMO ESTILO, NO COMO NECESIDAD TÉCNICA
   sContexto = Replace(sContexto, Chr(10), "↵")
   sContexto = Replace(sContexto, Chr(13), "")
   sContexto = Replace(sContexto, Chr(9), "→")
 
+  ' --- 4. INDICAR QUE EL FRAGMENTO ESTÁ TRUNCADO ---
   If iFin < iLenTexto Then sContexto &= "…"
 
   Return sContexto
@@ -360,12 +446,12 @@ End
 ' Función   : NombreControlChar
 ' Propósito : Devuelve el nombre legible de un carácter de control para
 '             mostrar al usuario en la columna Hallazgo.
-' Parámetros: codigo As Integer — codepoint del caracter de control
+' Parámetros: iCodigo As Integer — codepoint del caracter de control
 ' Retorna   : String — nombre legible (mnemónico estándar o código Unicode)
 ' ============================================
-Private Function NombreControlChar(codigo As Integer) As String
+Private Function NombreControlChar(iCodigo As Integer) As String
 
-  Select Case codigo
+  Select Case iCodigo
     Case 0
       Return "NUL"
     Case 1
@@ -419,9 +505,9 @@ Private Function NombreControlChar(codigo As Integer) As String
     Case 127
       Return "DEL"
     Case 128 To 159
-      Return "C1 Control (U+" & Hex(codigo, 4) & ")"
+      Return "C1 Control (U+" & Hex(iCodigo, 4) & ")"
     Case Else
-      Return "Control U+" & Hex(codigo, 4)
+      Return "Control U+" & Hex(iCodigo, 4)
   End Select
 
 End

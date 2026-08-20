@@ -385,119 +385,6 @@ Public Function LeerTipoCSL(sRutaCSL As String) As String
 End
 
 ' ============================================
-' Función   : VerificarFuentesIBMPlex
-' Propósito : Verifica que las fuentes IBM Plex estén instaladas en el
-'             directorio de fuentes del usuario. Si faltan, las copia desde
-'             los recursos del paquete. Si la fuente de recursos no existe,
-'             informa el problema de instalación y cierra. Si se copian
-'             fuentes nuevas, registra y pide reinicio.
-' Parámetros: (ninguno)
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub VerificarFuentesIBMPlex()
-
-  Dim sFontDst As String
-  Dim sFontSrc As String
-  Dim aFuentes As String[]
-  Dim sFuente As String
-  Dim iCopiadas As Integer
-  Dim iEsperadas As Integer
-  Dim aFaltantes As New String[]
-  Dim sMensaje As String
-
-  ' --- 1. VERIFICAR PRESENCIA DE LA FUENTE CENTINELA ---
-  ' SI YA ESTÁ INSTALADA NO HAY NADA QUE HACER
-  sFontDst = User.Home &/ ".local/share/fonts/gbpublisher"
-  If Exist(sFontDst &/ "IBMPlexSans-Regular.otf") Then Return
-
-  ' --- 2. VERIFICAR QUE EL DIRECTORIO FUENTE DEL PAQUETE EXISTE ---
-  ' SI FALTA, EL PAQUETE ESTÁ MAL INSTALADO — ES UN ERROR DE INSTALACIÓN, NO DE USO
-  sFontSrc = RutaRecursos() &/ "fonts"
-  If Not Exist(sFontSrc) Then
-    m_Sonido.sonar("Error")
-    Message.Error(
-      "No se encontró el directorio de fuentes del paquete:" & Chr(10) &
-      sFontSrc & Chr(10) & Chr(10) &
-      "La instalación de gbpublisher puede estar incompleta." & Chr(10) &
-      "Reinstale el paquete e intente nuevamente.")
-    Quit
-  Endif
-
-  ' --- 3. CREAR DIRECTORIO DE DESTINO SI NO EXISTE ---
-  If Not Exist(sFontDst) Then
-    Try Mkdir sFontDst
-    If Error Then
-      m_Sonido.sonar("Error")
-      Message.Error(
-        "No se pudo crear el directorio de fuentes del usuario:" & Chr(10) &
-        sFontDst & Chr(10) & Chr(10) &
-        "Verifique los permisos de escritura en su directorio personal.")
-      Quit
-    Endif
-  Endif
-
-  ' --- 4. COPIAR FUENTES DISPONIBLES Y CONTABILIZAR ---
-  aFuentes = [
-    "IBMPlexSans-Regular.otf", "IBMPlexSans-Bold.otf",
-    "IBMPlexSans-Italic.otf", "IBMPlexSans-BoldItalic.otf",
-    "IBMPlexMono-Regular.otf", "IBMPlexMono-Bold.otf",
-    "IBMPlexMono-Italic.otf", "IBMPlexMono-BoldItalic.otf"
-  ]
-  iCopiadas = 0
-  iEsperadas = aFuentes.Count
-
-  For Each sFuente In aFuentes
-    If Exist(sFontSrc &/ sFuente) Then
-      Try Copy sFontSrc &/ sFuente To sFontDst &/ sFuente
-      If Error Then
-        aFaltantes.Add(sFuente)
-      Else
-        Inc iCopiadas
-      Endif
-    Else
-      aFaltantes.Add(sFuente)
-    Endif
-  Next
-
-  ' --- 5. EVALUAR RESULTADO DE LA COPIA ---
-  ' SI NO SE COPIÓ NINGUNA FUENTE, EL PROBLEMA ES DE INSTALACIÓN
-  If iCopiadas = 0 Then
-    m_Sonido.sonar("Error")
-    Message.Error(
-      "No se encontraron fuentes IBM Plex en el paquete instalado." & Chr(10) & Chr(10) &
-      "Directorio buscado:" & Chr(10) &
-      sFontSrc & Chr(10) & Chr(10) &
-      "La instalación de gbpublisher puede estar incompleta." & Chr(10) &
-      "Reinstale el paquete e intente nuevamente.")
-    Quit
-  Endif
-
-  ' --- 6. REGISTRAR FUENTES COPIADAS EN EL SISTEMA ---
-  Shell "fc-cache -f '" & sFontDst & "'" Wait
-
-  ' --- 7. INFORMAR RESULTADO Y SOLICITAR REINICIO ---
-  ' ADVERTENCIA ADICIONAL SI FALTAN ALGUNAS FUENTES (INSTALACIÓN PARCIAL)
-  If aFaltantes.Count > 0 Then
-    sMensaje =
-      "Se instalaron " & CStr(iCopiadas) & " de " & CStr(iEsperadas) & " fuentes IBM Plex." & Chr(10) & Chr(10) &
-      "Las siguientes fuentes no pudieron copiarse:" & Chr(10) &
-      aFaltantes.Join(Chr(10)) & Chr(10) & Chr(10) &
-      "La interfaz puede no visualizarse correctamente." & Chr(10) & Chr(10) &
-      "Cierre y vuelva a abrir la aplicación para continuar."
-  Else
-    sMensaje =
-      "Su sistema no tenía instalada la familia tipográfica IBM Plex." & Chr(10) & Chr(10) &
-      "Las fuentes se instalaron correctamente en:" & Chr(10) &
-      sFontDst & Chr(10) & Chr(10) &
-      "Cierre la aplicación y vuelva a abrirla para continuar."
-  Endif
-  m_Sonido.sonar("Info")
-  Message.Info(sMensaje)
-  Quit
-
-End
-
-' ============================================
 ' Función   : DetenerProcesoBash
 ' Propósito : Helper privado que detiene el proceso bash asociado al proyecto
 '             (FMain.$Bash). Intenta primero con Kill (hasta 20 intentos con
@@ -877,5 +764,245 @@ Private Function RutaLock() As String
 
   ' --- 3. RETORNO ---
   Return "/tmp/gbpublisher-" & User.Name & "-" & sPathSanitizado & ".lock"
+
+End
+
+' ============================================
+' Función   : FamiliaDisponibleEnSistema
+' Propósito : Pregunta a fontconfig si una familia tipográfica está
+'             efectivamente disponible. Usa fc-match, que devuelve la
+'             familia REALMENTE resuelta: si la pedida no está instalada
+'             devuelve la de reemplazo (típicamente DejaVu).
+' Parámetros: sFamilia As String — nombre exacto de la familia
+' Retorna   : Boolean — True si fontconfig resuelve la familia pedida.
+'             Devuelve False también cuando fontconfig no está disponible;
+'             en ese caso el llamador cae al chequeo por archivos, que es
+'             el camino seguro.
+' ============================================
+Private Function FamiliaDisponibleEnSistema(sFamilia As String) As Boolean
+
+  Dim sSalida As String
+
+  ' --- 1. CONSULTAR A fontconfig ---
+  ' Exec Y NO Shell: EL NOMBRE DE FAMILIA LLEVA ESPACIOS Y NO DEBE PASAR
+  ' POR sh -c (SC-05). EL ARRAY LITERAL VA EN UNA SOLA LÍNEA.
+  ' LA FORMA "Exec ... To" NO LLEVA ASIGNACIÓN ADELANTE NI ADMITE Wait:
+  ' YA ES SÍNCRONA Y VUELCA stdout EN LA VARIABLE DE LA CLÁUSULA To.
+  sSalida = ""
+  Try Exec ["fc-match", "-f", "%{family}", sFamilia] To sSalida
+
+  ' --- 2. SIN fontconfig NO SE PUEDE AFIRMAR NADA (RC-GM-02) ---
+  If Error Then Return False
+
+  ' --- 3. COMPARAR LA FAMILIA RESUELTA CON LA PEDIDA ---
+  ' COMPARACIÓN ASCII: InStr ES CORRECTO Y SUFICIENTE AQUÍ (RC-GM-12)
+  Return (InStr(sSalida, sFamilia) > 0)
+
+End
+
+' ============================================
+' Función   : VerificarFuentesIBMPlex
+' Propósito : Garantiza que la familia IBM Plex esté disponible antes de que
+'             la interfaz se renderice. Si el sistema ya la provee, no hace
+'             nada. Si falta total o parcialmente, copia SOLO los archivos
+'             ausentes desde los recursos del paquete, registra el cambio en
+'             fontconfig y solicita reinicio: Qt fija su caché tipográfica al
+'             arrancar el proceso y no la relee en caliente.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno). Termina con Quit ante error de instalación
+'             o tras copiar fuentes nuevas.
+' ============================================
+Public Sub VerificarFuentesIBMPlex()
+
+  Dim sFontDst As String
+  Dim sFontSrc As String
+  Dim sFuente As String
+  Dim sParte As String
+  Dim sAcum As String
+  Dim sMensaje As String
+  Dim aFuentes As String[]
+  Dim aPartes As String[]
+  Dim aNoEnPaquete As New String[]
+  Dim aErrorCopia As New String[]
+  Dim iPresentes As Integer
+  Dim iCopiadas As Integer
+  Dim iEsperadas As Integer
+  Dim lTamOrigen As Long
+  Dim lTamDestino As Long
+  Dim bOrigenValido As Boolean
+  Dim bCacheFallo As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  sFontDst = User.Home &/ m_Constantes.DIR_FUENTES_USUARIO
+  sFontSrc = RutaRecursos() &/ "fonts"
+  aFuentes = Split(m_Constantes.FUENTES_IBMPLEX, ",")
+  iEsperadas = aFuentes.Count
+  iPresentes = 0
+  iCopiadas = 0
+  bOrigenValido = False
+  bCacheFallo = False
+
+  ' --- 2. INVENTARIO COMPLETO DEL DESTINO ---
+  ' SE CUENTAN LAS OCHO, NO UNA CENTINELA: UNA COPIA PARCIAL PREVIA DEBE
+  ' PODER COMPLETARSE EN EL ARRANQUE SIGUIENTE EN LUGAR DE QUEDAR CONGELADA
+  For Each sFuente In aFuentes
+    If Exist(sFontDst &/ sFuente) Then Inc iPresentes
+  Next
+
+  ' NADA QUE HACER: LA INSTALACIÓN LOCAL ESTÁ COMPLETA
+  If iPresentes = iEsperadas Then Return
+
+  ' --- 3. FAMILIA YA PROVISTA POR EL SISTEMA ---
+  ' SOLO VÁLIDO CON CERO ARCHIVOS PROPIOS: SI HAY ALGUNO, LA FAMILIA PODRÍA
+  ' ESTAR RESOLVIENDO GRACIAS A NUESTRA PROPIA COPIA PARCIAL Y HAY QUE
+  ' COMPLETARLA. If ANIDADO PORQUE And NO ES SHORT-CIRCUIT (RC-GM-17).
+  If iPresentes = 0 Then
+    If FamiliaDisponibleEnSistema(m_Constantes.FAMILIA_IBMPLEX_SANS) Then
+      If FamiliaDisponibleEnSistema(m_Constantes.FAMILIA_IBMPLEX_MONO) Then Return
+    Endif
+  Endif
+
+  ' --- 4. VERIFICAR EL ORIGEN EN EL PAQUETE ---
+  ' IsDir DISTINGUE UN DIRECTORIO DE UN ARCHIVO SUELTO CON EL MISMO NOMBRE
+  If Exist(sFontSrc) Then
+    If IsDir(sFontSrc) Then bOrigenValido = True
+  Endif
+
+  If Not bOrigenValido Then
+    m_Sonido.sonar("Error")
+    Message.Error(
+      "No se encontró el directorio de fuentes del paquete:" & Chr(10) &
+      sFontSrc & Chr(10) & Chr(10) &
+      "La instalación de gbpublisher puede estar incompleta." & Chr(10) &
+      "Reinstale el paquete e intente nuevamente.")
+    Quit
+  Endif
+
+  ' --- 5. CREAR EL ÁRBOL DE DESTINO NIVEL POR NIVEL ---
+  ' Mkdir NO ES RECURSIVO. DOC OFICIAL: "If some parent directory of the
+  ' specified path does not exist, then the command fails" (ERROR 45).
+  ' EN UN HOME NUEVO ~/.local/share/fonts NORMALMENTE NO EXISTE TODAVÍA.
+  aPartes = Split(m_Constantes.DIR_FUENTES_USUARIO, "/")
+  sAcum = User.Home
+  For Each sParte In aPartes
+    sAcum = sAcum &/ sParte
+    If Not Exist(sAcum) Then
+      Try Mkdir sAcum
+      ' RC-GM-02: Try NO INTERRUMPE LA EJECUCIÓN
+      If Error Then
+        m_Sonido.sonar("Error")
+        Message.Error(
+          "No se pudo crear el directorio de fuentes del usuario:" & Chr(10) &
+          sAcum & Chr(10) & Chr(10) &
+          Error.Text & Chr(10) & Chr(10) &
+          "Verifique el espacio libre y los permisos de escritura en su " &
+          "directorio personal.")
+        Quit
+      Endif
+    Endif
+  Next
+
+  ' --- 6. COPIAR ÚNICAMENTE LAS FUENTES AUSENTES ---
+  For Each sFuente In aFuentes
+
+    ' YA PRESENTE: NO SE RECOPIA, LA OPERACIÓN ES IDEMPOTENTE
+    If Exist(sFontDst &/ sFuente) Then Continue
+
+    ' AUSENTE EN EL PAQUETE: CAUSA DISTINTA DE UN FALLO DE ESCRITURA,
+    ' SE CONTABILIZA APARTE PARA NO EMITIR UN DIAGNÓSTICO FALSO
+    If Not Exist(sFontSrc &/ sFuente) Then
+      aNoEnPaquete.Add(sFuente)
+      Continue
+    Endif
+
+    Try Copy sFontSrc &/ sFuente To sFontDst &/ sFuente
+    If Error Then
+      aErrorCopia.Add(sFuente)
+      Continue
+    Endif
+
+    ' VERIFICAR TAMAÑO: UNA COPIA TRUNCADA POR DISCO LLENO DEJA UN .otf QUE
+    ' EXISTE, QUE fontconfig IGNORA Y QUE EL INVENTARIO DEL APARTADO 2 DARÍA
+    ' POR BUENO PARA SIEMPRE. SE BORRA PARA QUE EL PRÓXIMO ARRANQUE REINTENTE.
+    lTamOrigen = -1
+    lTamDestino = -2
+    Try lTamOrigen = Stat(sFontSrc &/ sFuente).Size
+    Try lTamDestino = Stat(sFontDst &/ sFuente).Size
+    If lTamOrigen <> lTamDestino Then
+      Try Kill sFontDst &/ sFuente
+      aErrorCopia.Add(sFuente)
+      Continue
+    Endif
+
+    Inc iCopiadas
+
+  Next
+
+  ' --- 7. NINGUNA COPIA NUEVA: DISTINGUIR LA CAUSA REAL ---
+  If iCopiadas = 0 Then
+    If aErrorCopia.Count > 0 Then
+      ' EL PAQUETE ESTÁ BIEN, LO QUE FALLA ES LA ESCRITURA: PEDIR UNA
+      ' REINSTALACIÓN ACÁ SERÍA MANDAR AL USUARIO A UN CALLEJÓN SIN SALIDA
+      sMensaje =
+        "No se pudieron escribir las fuentes IBM Plex en:" & Chr(10) &
+        sFontDst & Chr(10) & Chr(10) &
+        "Archivos afectados:" & Chr(10) &
+        aErrorCopia.Join(Chr(10)) & Chr(10) & Chr(10) &
+        "Verifique el espacio libre y los permisos de escritura en su " &
+        "directorio personal."
+    Else
+      sMensaje =
+        "No se encontraron las fuentes IBM Plex en el paquete instalado." & Chr(10) & Chr(10) &
+        "Directorio buscado:" & Chr(10) &
+        sFontSrc & Chr(10) & Chr(10) &
+        "La instalación de gbpublisher puede estar incompleta." & Chr(10) &
+        "Reinstale el paquete e intente nuevamente."
+    Endif
+    m_Sonido.sonar("Error")
+    Message.Error(sMensaje)
+    Quit
+  Endif
+
+  ' --- 8. REGISTRAR LAS FUENTES EN fontconfig ---
+  ' NO ES CRÍTICO: fontconfig REDETECTA EL DIRECTORIO POR mtime EN EL PRÓXIMO
+  ' ARRANQUE Y fc-cache SOLO ADELANTA ESE TRABAJO. POR ESO SU FALLA SE INFORMA
+  ' PERO NO ABORTA. Exec Y NO Shell: LA RUTA NO DEBE PASAR POR sh -c (SC-05).
+  Try Exec ["fc-cache", "-f", sFontDst] Wait
+  If Error Then bCacheFallo = True
+
+  ' --- 9. INFORMAR RESULTADO Y SOLICITAR REINICIO ---
+  If (iPresentes + iCopiadas) < iEsperadas Then
+    ' INSTALACIÓN PARCIAL: DETALLAR CADA CAUSA POR SEPARADO
+    sMensaje =
+      "Se instalaron " & CStr(iPresentes + iCopiadas) & " de " &
+      CStr(iEsperadas) & " fuentes IBM Plex." & Chr(10) & Chr(10)
+    If aNoEnPaquete.Count > 0 Then
+      sMensaje &= "No están presentes en el paquete instalado:" & Chr(10) &
+        aNoEnPaquete.Join(Chr(10)) & Chr(10) & Chr(10)
+    Endif
+    If aErrorCopia.Count > 0 Then
+      sMensaje &= "No se pudieron escribir (espacio o permisos):" & Chr(10) &
+        aErrorCopia.Join(Chr(10)) & Chr(10) & Chr(10)
+    Endif
+    sMensaje &= "La interfaz puede no visualizarse correctamente." & Chr(10) & Chr(10) &
+      "Cierre y vuelva a abrir la aplicación para continuar."
+  Else
+    sMensaje =
+      "Su sistema no tenía instalada la familia tipográfica IBM Plex." & Chr(10) & Chr(10) &
+      "Las fuentes se instalaron correctamente en:" & Chr(10) &
+      sFontDst & Chr(10) & Chr(10) &
+      "Cierre la aplicación y vuelva a abrirla para continuar."
+  Endif
+
+  ' AVISO DIAGNÓSTICO: SI TRAS EL REINICIO LAS FUENTES SIGUEN SIN VERSE,
+  ' ESTA LÍNEA EXPLICA POR QUÉ PUDO HACER FALTA UN SEGUNDO ARRANQUE
+  If bCacheFallo Then
+    sMensaje &= Chr(10) & Chr(10) &
+      "Nota: no se pudo actualizar la caché de fuentes del sistema (fc-cache)."
+  Endif
+
+  m_Sonido.sonar("Info")
+  Message.Info(sMensaje)
+  Quit
 
 End
