@@ -5304,7 +5304,15 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
   ' LLAMAMOS A LA FUNCIÓN CORRESPONDIENTE SEGÚN EL TIPO
   Select Case nTipoProyecto
     Case m_Constantes.TIPO_REVISTA_MD, m_Constantes.TIPO_LIBRO_MD
-      AbrirProyectoMD(nTipoProyecto)
+      ' SI LA APERTURA ABORTÓ, SE SALE SIN TOCAR NADA DE LA UI: EL USUARIO SIGUE
+      ' EN SU PROYECTO ANTERIOR Y LOS PANELES DEBEN SEGUIR DESCRIBIÉNDOLO.
+      ' bAbriendoProyecto SE APAGA ACÁ PORQUE ESTE Return SALTEA EL APARTADO 7:
+      ' SI QUEDARA EN True, EL PRÓXIMO cmbArticulosRevista_Click SUPRIMIRÍA EL
+      ' GUARD DE CAMBIOS SIN GUARDAR Y EL USUARIO PERDERÍA TRABAJO SIN AVISO
+      If Not AbrirProyectoMD(nTipoProyecto) Then
+        bAbriendoProyecto = False
+        Return
+      Endif
       m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, TextEditorPreview)
       m_RevisarPDF.PoblarComboPDF()
       m_GestionImagenes.PoblarComboImagenes()
@@ -6700,7 +6708,12 @@ End
 ' Parámetros: iTipoEsperado As Integer — m_Constantes.TIPO_REVISTA_MD o
 '             m_Constantes.TIPO_LIBRO_MD; valida que el archivo elegido
 '             coincida con el tipo que disparó el menú.
-' Retorna   : (Sub, sin retorno)
+' Retorna   : Boolean — True si el proyecto quedó efectivamente abierto y
+'             cargado en el editor; False si la apertura abortó por cualquier
+'             motivo (nomenclatura, tipo, BD, lock, archivo ilegible). EL
+'             LLAMADOR DEBE RESPETARLO: si es False no puede inicializar los
+'             paneles del área de edición, porque describirían un proyecto
+'             que no se abrió
 '
 ' CAMBIOS DE ESTA REVISIÓN
 ' ------------------------
@@ -6739,12 +6752,8 @@ End
 ' 7. RENUMERACIÓN: EL VIEJO 7 (VERIFICAR EN BD) ES AHORA EL 6, Y EL VIEJO 6
 '    (LIBERAR PREVIO) ES AHORA EL 7. DEL 8 EN ADELANTE LA NUMERACIÓN NO CAMBIA.
 ' ============================================
-Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
+Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
 
-  Dim sRutaSeleccionada As String
-  Dim sExtension As String
-  Dim sNombreArchivo As String
-  Dim sNombreProyectoNuevo As String
   Dim iTipoSeleccionado As Integer
   Dim sProyectoPrevio As String
   Dim sSQL As String
@@ -6752,10 +6761,13 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
   Dim rLast As Result
   Dim nuevoID As Integer
   Dim sContenidoArchivo As String
+  Dim sRutaSeleccionada As String
+  Dim sMotivoInvalido As String
+  Dim sNombreProyectoNuevo As String
 
   ' --- 1. CAPTURAR LA RUTA ELEGIDA EN EL DIÁLOGO ---
   sRutaSeleccionada = Dialog.Path
-  If sRutaSeleccionada = "" Then Return
+  If sRutaSeleccionada = "" Then Return False
 
   ' --- 2. CAPTURAR EL PROYECTO PREVIO ---
   ' SE USA PARA LIBERAR EL REGISTRO EN BD (APARTADO 7) Y PARA DETECTAR LA
@@ -6768,29 +6780,35 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
   ' QUE EL PROYECTO NUEVO NO ESTÉ EFECTIVAMENTE ABIERTO, EL ESTADO GLOBAL DEBE
   ' SEGUIR DESCRIBIENDO EL PROYECTO QUE REALMENTE HAY EN EL EDITOR
   sNombreProyectoNuevo = File.Name(sRutaSeleccionada)
-  sExtension = LCase(File.Ext(sRutaSeleccionada))
-  sNombreArchivo = LCase(File.Name(sRutaSeleccionada))
 
   ' --- 4. VALIDAR NOMENCLATURA DEL ARCHIVO ELEGIDO ---
-  ' r-*.md → REVISTA MARKDOWN
-  ' l-*.md → LIBRO MARKDOWN
-  ' l-*.tex → LIBRO LATEX (NO SOPORTADO POR ESTA FUNCIÓN, USAR AbrirLibroTEX)
+  ' LA VALIDACIÓN CORRE SOBRE EL NOMBRE ORIGINAL, SIN LCase: LA CAJA ES PARTE
+  ' DE LA NORMA. REGLA DURA, SIN EXCEPCIÓN POR HISTORIAL: UN NOMBRE FUERA DE
+  ' NORMA NO SE ABRE AUNQUE YA TENGA REGISTRO EN BD
+  sMotivoInvalido = m_FuncionesGenericas.MotivoNombreProyectoInvalido(sNombreProyectoNuevo)
+  If sMotivoInvalido <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine & gb.NewLine &
+      sMotivoInvalido & gb.NewLine & gb.NewLine &
+      "Forma obligatoria:" & gb.NewLine &
+      "• Revista Markdown: r-CUERPO.md" & gb.NewLine &
+      "• Libro Markdown:   l-CUERPO.md" & gb.NewLine &
+      "El cuerpo admite A-Z, 0-9 y guion medio, sin guiones dobles" & gb.NewLine &
+      "ni guion al principio o al final." & gb.NewLine & gb.NewLine &
+      "Ejemplos: l-ALGO.md o r-ALGO-V99-N01.md" & gb.NewLine & gb.NewLine &
+      "Archivo recibido: " & sNombreProyectoNuevo)
+    Return False
+  Endif
+
+  ' EL NOMBRE YA ESTÁ VALIDADO, ASÍ QUE EL PRIMER CARÁCTER ALCANZA PARA
+  ' DETERMINAR EL TIPO. SI POR ALGUNA RAZÓN NO MATCHEA, iTipoSeleccionado QUEDA
+  ' EN -1 Y EL APARTADO 5 ABORTA
   iTipoSeleccionado = -1
-  Select Case True
-    Case Left(sNombreArchivo, 2) = "r-" And sExtension = "md"
-      iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
-    Case Left(sNombreArchivo, 2) = "l-" And sExtension = "md"
+  Select Case String.Mid(sNombreProyectoNuevo, 1, 1)
+    Case "l"
       iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD
-      ' Case Left(sNombreArchivo, 2) = "l-" And sExtension = "tex"
-      '   iTipoSeleccionado = m_Constantes.TIPO_LIBRO_TEX
-    Case Else
-      m_Sonido.sonar("Error")
-      Message.Error("El archivo seleccionado no cumple las normas de nomenclatura." & gb.NewLine &
-        "Formatos válidos:" & gb.NewLine &
-        "• Revista Markdown: r-nombre.md" & gb.NewLine &
-        "• Libro Markdown:   l-nombre.md" & gb.NewLine &
-        "Archivo recibido: " & sNombreArchivo)
-      Return
+    Case "r"
+      iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD
   End Select
 
   ' --- 5. VERIFICAR QUE EL TIPO DETECTADO COINCIDE CON EL ESPERADO ---
@@ -6800,9 +6818,8 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
     Message.Error("El archivo elegido no corresponde al tipo de proyecto solicitado." & gb.NewLine &
       "Se esperaba: " & ObtenerDescripcionTipo(iTipoEsperado) & gb.NewLine &
       "Se encontró: " & ObtenerDescripcionTipo(iTipoSeleccionado))
-    Return
+    Return False
   Endif
-
   ' --- 6. BUSCAR EL NUEVO PROYECTO EN BD O CREAR REGISTRO NUEVO ---
   ' TODA LA VERIFICACIÓN DEL PROYECTO NUEVO OCURRE ANTES DE TOCAR NADA DEL
   ' PROYECTO ANTERIOR: SI ALGO ACÁ ABORTA, EL USUARIO SE QUEDA EXACTAMENTE
@@ -6814,7 +6831,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
     Message.Error("No se pudo consultar la base de datos para verificar el proyecto:" & gb.NewLine &
       Error.Text & gb.NewLine & gb.NewLine &
       "Abortando apertura.")
-    Return
+    Return False
   Endif
 
   If Contenido.Available Then
@@ -6826,7 +6843,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       Message.Error("El tipo de archivo no coincide con el tipo registrado en la base de datos." & gb.NewLine &
         "Se esperaba: " & ObtenerDescripcionTipo(iTipoSeleccionado) & gb.NewLine &
         "Se encontró: " & ObtenerDescripcionTipo(Contenido["tipo_producto"]))
-      Return
+      Return False
     Endif
 
     ' 6.2 PROYECTO ACTIVO (RC-GM-01: TINYINT(1) ES Boolean EN GAMBAS)
@@ -6834,7 +6851,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       m_Sonido.sonar("Warning")
       Message.Warning("El proyecto '" & sNombreProyectoNuevo & "' está archivado." & gb.NewLine &
         "Debe solicitar al editor que lo reactive para poder abrirlo.")
-      Return
+      Return False
     Endif
 
     ' 6.3 PROYECTO NO OCUPADO EN OTRA MÁQUINA
@@ -6848,14 +6865,18 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
         m_Sonido.sonar("Warning")
         Message.Warning("El proyecto '" & sNombreProyectoNuevo & "' está ocupado en otra máquina." & gb.NewLine &
           "Lo puede abrir en modo parcial o espere a que se libere.")
-        Return
+        Return False
       Endif
     Endif
 
+    ' EL REGISTRO EXISTE Y PASÓ LAS TRES VALIDACIONES: SE REUSA SU ID.
+    ' ESTAS DOS LÍNEAS VAN FUERA DEL If DE 6.3 PORQUE APLICAN TANTO AL PROYECTO
+    ' LIBRE COMO AL CASO DE REAPERTURA EXENTA
     nuevoID = Contenido["id"]
     m_Sonido.sonar("Info")
 
   Else
+
     ' NO EXISTE EN BD: CREAR REGISTRO NUEVO
     Try m_ConexionBD.mConn.Exec(
       "INSERT INTO proyectos (nombre, tipo_producto, usuario_propietario, activo, ocupado) VALUES (&1, &2, &3, 1, 0)",
@@ -6865,7 +6886,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       Message.Error("No se pudo registrar el nuevo proyecto en la base de datos:" & gb.NewLine &
         Error.Text & gb.NewLine & gb.NewLine &
         "Abortando apertura.")
-      Return
+      Return False
     Endif
 
     Try rLast = m_ConexionBD.mConn.Exec("SELECT LAST_INSERT_ID()")
@@ -6874,8 +6895,9 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       m_Sonido.sonar("Error")
       Message.Error("No se pudo obtener el ID del proyecto insertado." & gb.NewLine &
         "Abortando apertura.")
-      Return
+      Return False
     Endif
+
     nuevoID = rLast[0]
 
     Try m_ConexionBD.mConn.Commit
@@ -6883,7 +6905,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       m_Sonido.sonar("Error")
       Message.Error("No se pudo confirmar la inserción del proyecto:" & gb.NewLine &
         Error.Text)
-      Return
+      Return False
     Endif
 
     m_Sonido.sonar("Info")
@@ -6927,7 +6949,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
     Message.Error("No se pudo marcar el proyecto como ocupado:" & gb.NewLine &
       Error.Text & gb.NewLine & gb.NewLine &
       "Abortando apertura.")
-    Return
+    Return False
   Endif
 
   ' REGISTRAR EL PROYECTO ABIERTO COMO PROYECTO ACTUAL DEL USUARIO.
@@ -6958,7 +6980,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
 
   ' --- 9. FIJAR EL ESTADO DEL PROYECTO ABIERTO Y LA UI BASE DEL EDITOR ---
   ' EL RESET DE IDs DE ARTÍCULO/CAPÍTULO VA ACÁ Y NO EN EL LLAMADOR: SI CORRE
-  ' ANTES, LAS OCHO RUTAS DE ABORTO DE ESTA FUNCIÓN DEJAN AL USUARIO EN SU
+  ' ANTES, LAS DOCE RUTAS DE ABORTO DE ESTA FUNCIÓN DEJAN AL USUARIO EN SU
   ' PROYECTO ANTERIOR CON LOS IDs YA BORRADOS (RC-GM-16). ADEMÁS NO PUEDE
   ' CORRER ANTES DEL APARTADO 2, QUE LEE NombreProyectoEnCurso COMO PREVIO
   m_InicioCierre.ResetearEstadoDeProyecto()
@@ -7040,8 +7062,12 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
       sRutaSeleccionada & gb.NewLine & gb.NewLine &
       Error.Text & gb.NewLine & gb.NewLine &
       "El proyecto quedó registrado en BD pero el editor no se cargó.")
-    Return
+    ' False AUNQUE EL PROYECTO YA ESTÉ TOMADO EN BD Y LAS GLOBALES FIJADAS: NO
+    ' HAY CONTENIDO QUE MAQUETAR, Y LOS PANELES DEL ÁREA DE EDICIÓN APUNTANDO A
+    ' UN PROYECTO SIN ARCHIVO CARGADO CONFUNDEN MÁS QUE SI QUEDAN OCULTOS
+    Return False
   Endif
+
   txtEditorProyecto.Text = sContenidoArchivo
   txtEditorProyecto.ReadOnly = False
   txtEditorProyecto.Enabled = True
@@ -7096,6 +7122,11 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer)
   ' SE LEE LA GLOBAL, YA FIJADA EN EL APARTADO 9
   InicializarTerminalProyecto(m_InicioCierre.RutaProyectoEnCurso)
   FMain.DirViewProyecto.Root = m_InicioCierre.RutaProyectoEnCurso
+
+  ' --- 22. RETORNO ---
+  ' ÚNICA SALIDA CON True: SE LLEGA ACÁ SOLO SI EL PROYECTO QUEDÓ TOMADO EN BD,
+  ' LAS GLOBALES FIJADAS Y EL ARCHIVO CARGADO EN EL EDITOR
+  Return True
 
 End
 

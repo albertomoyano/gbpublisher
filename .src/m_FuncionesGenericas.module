@@ -3322,3 +3322,118 @@ Private Function EsCaracterPalabra(sCar As String) As Boolean
   Return False
 
 End
+
+' ============================================
+' Función   : MotivoNombreProyectoInvalido
+' Propósito : Validar que el nombre de archivo de un proyecto Markdown cumpla
+'             la nomenclatura obligatoria de gbpublisher:
+'                 [lr]-CUERPO.md
+'             donde el prefijo es 'l' o 'r' EN MINÚSCULA, sigue un guion medio,
+'             el cuerpo usa solo A-Z, 0-9 y guion medio (sin guion inicial ni
+'             final y sin guiones consecutivos) y la extensión es '.md' EN
+'             MINÚSCULA. Ejemplos válidos: r-POZZI.md, l-ALGO-V99-N01.md
+' Parámetros: sNombre As String — nombre del archivo CON extensión, tal como lo
+'             devuelve File.Name(). NO pasar la ruta completa ni una versión
+'             pasada por LCase: la validación es sensible a la caja
+' Retorna   : String — cadena VACÍA si el nombre es válido; si no, la
+'             descripción del PRIMER incumplimiento encontrado, lista para
+'             mostrar al usuario
+' ============================================
+Public Function MotivoNombreProyectoInvalido(sNombre As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iLargo As Integer
+  Dim iFinCuerpo As Integer
+  Dim i As Integer
+  Dim iCodigo As Integer
+  Dim sCaracter As String
+  Dim sPrefijo As String
+  Dim bCaracterValido As Boolean
+  Dim bGuionAnterior As Boolean
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  If sNombre = "" Then Return "No se recibió ningún nombre de archivo."
+
+  ' UN NOMBRE MAL CODIFICADO HARÍA QUE String.Mid DEVOLVIERA CODEPOINTS BASURA
+  ' Y EL DIAGNÓSTICO POSTERIOR SEÑALARÍA UN CARÁCTER INEXISTENTE
+  If Not String.IsValid(sNombre) Then
+    Return "El nombre del archivo no es UTF-8 válido. Renombrarlo desde el gestor de archivos."
+  Endif
+
+  ' --- 3. LONGITUD MÍNIMA Y EXTENSIÓN ---
+  ' TODAS LAS MEDIDAS EN CODEPOINTS, NO EN BYTES (SC-02 / RC-GM-12)
+  iLargo = String.Len(sNombre)
+
+  ' MÍNIMO ABSOLUTO: 'l-A.md' = 6 CODEPOINTS
+  If iLargo < 6 Then
+    Return "El nombre es demasiado corto: la forma mínima es l-X.md o r-X.md."
+  Endif
+
+  ' LA COMPARACIÓN CON '=' EN GAMBAS DISTINGUE MAYÚSCULAS, ASÍ QUE ESTO
+  ' RECHAZA '.MD' Y '.Md' SIN NECESIDAD DE CHEQUEO ADICIONAL
+  If String.Mid(sNombre, iLargo - 2, 3) <> ".md" Then
+    Return "La extensión debe ser exactamente .md en minúscula."
+  Endif
+
+  ' --- 4. PREFIJO DE TIPO Y SEPARADOR ---
+  sPrefijo = String.Mid(sNombre, 1, 1)
+  If sPrefijo <> "l" Then
+    If sPrefijo <> "r" Then
+      Return "El nombre debe empezar con " & Chr(34) & "l" & Chr(34) &
+        " (libro) o " & Chr(34) & "r" & Chr(34) & " (revista), en minúscula."
+    Endif
+  Endif
+
+  If String.Mid(sNombre, 2, 1) <> "-" Then
+    Return "El segundo carácter debe ser un guion medio."
+  Endif
+
+  ' --- 5. RECORRER EL CUERPO CODEPOINT A CODEPOINT ---
+  ' EL CUERPO VA DE LA POSICIÓN 3 HASTA TRES CODEPOINTS ANTES DEL FINAL,
+  ' QUE ES DONDE EMPIEZA LA EXTENSIÓN YA VALIDADA
+  iFinCuerpo = iLargo - 3
+  bGuionAnterior = False
+
+  For i = 3 To iFinCuerpo
+    sCaracter = String.Mid(sNombre, i, 1)
+    iCodigo = String.Code(sCaracter)
+
+    ' 5.1 REPERTORIO PERMITIDO: A-Z (65-90), 0-9 (48-57), GUION MEDIO (45)
+    bCaracterValido = False
+    If iCodigo >= 65 Then
+      If iCodigo <= 90 Then bCaracterValido = True
+    Endif
+    If iCodigo >= 48 Then
+      If iCodigo <= 57 Then bCaracterValido = True
+    Endif
+    If iCodigo = 45 Then bCaracterValido = True
+
+    ' DIAGNÓSTICO DIFERENCIADO: LA MINÚSCULA ES EL ERROR MÁS FRECUENTE Y
+    ' MERECE UN MENSAJE QUE DIGA QUÉ HACER, NO SOLO QUE ESTÁ MAL
+    If Not bCaracterValido Then
+      If iCodigo >= 97 Then
+        If iCodigo <= 122 Then
+          Return "El carácter " & Chr(34) & sCaracter & Chr(34) & " (posición " & i &
+            ") está en minúscula. El cuerpo del nombre va todo en MAYÚSCULAS."
+        Endif
+      Endif
+      Return "El carácter " & Chr(34) & sCaracter & Chr(34) & " (posición " & i &
+        ") no está permitido. Solo se admiten A-Z, 0-9 y el guion medio."
+    Endif
+
+    ' 5.2 REGLAS DE POSICIÓN DEL GUION DENTRO DEL CUERPO
+    If iCodigo = 45 Then
+      If i = 3 Then Return "El cuerpo del nombre no puede empezar con guion."
+      If i = iFinCuerpo Then Return "El cuerpo del nombre no puede terminar con guion."
+      If bGuionAnterior Then Return "Hay dos guiones seguidos en la posición " & i & "."
+      bGuionAnterior = True
+    Else
+      bGuionAnterior = False
+    Endif
+  Next
+
+  ' --- 6. RETORNO ---
+  ' CADENA VACÍA = NOMBRE VÁLIDO
+  Return ""
+
+End
