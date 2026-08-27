@@ -3437,3 +3437,142 @@ Public Function MotivoNombreProyectoInvalido(sNombre As String) As String
   Return ""
 
 End
+
+' ============================================
+' Función   : EsLetra
+' Propósito : Determina si un codepoint es una letra a los efectos de la
+'             capitalización. Criterio amplio: incluye letras sin plegado
+'             conocido (Latin Extended) y diacríticos combinantes, para que
+'             no partan una palabra en dos.
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : Boolean — True si el carácter forma parte de una palabra
+' ============================================
+Public Function EsLetra(iCodigo As Integer) As Boolean
+
+  ' --- 1. ASCII ---
+  If iCodigo >= 65 And iCodigo <= 90 Then Return True
+  If iCodigo >= 97 And iCodigo <= 122 Then Return True
+
+  ' --- 2. LATIN-1 SUPLEMENTARIO, SALTEANDO × (215) Y ÷ (247) ---
+  ' 170 (ª) Y 186 (º) QUEDAN FUERA: SON INDICADORES ORDINALES, NO LETRAS
+  If iCodigo = 215 Then Return False
+  If iCodigo = 247 Then Return False
+  If iCodigo >= 192 And iCodigo <= 255 Then Return True
+
+  ' --- 3. LATIN EXTENDED-A Y B ---
+  ' SE CUENTAN COMO LETRAS AUNQUE NO SE PLIEGUEN: SI Ł NO FUERA LETRA,
+  ' "ŁUKASZ" DARÍA "ŁUkasz" PORQUE LA U ABRIRÍA PALABRA
+  If iCodigo >= 256 And iCodigo <= 591 Then Return True
+
+  ' --- 4. DIACRÍTICOS COMBINANTES (U+0300–U+036F) ---
+  ' TEXTO PEGADO EN NFD: "ÁRBOL" ES A + COMBINANTE + RBOL. SI EL
+  ' COMBINANTE NO FUERA LETRA, LA R ABRIRÍA PALABRA → "ÁRbol"
+  If iCodigo >= 768 And iCodigo <= 879 Then Return True
+
+  Return False
+
+End
+
+' ============================================
+' Función   : PlegarAMayuscula
+' Propósito : Devuelve la mayúscula de un codepoint, con tabla explícita
+'             (no depende del locale, a diferencia de Upper/String.Upper).
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : String — el carácter en mayúscula, o sin cambio si no hay plegado
+' ============================================
+Public Function PlegarAMayuscula(iCodigo As Integer) As String
+
+  ' --- 1. ASCII a-z ---
+  If iCodigo >= 97 And iCodigo <= 122 Then Return String.Chr(iCodigo - 32)
+
+  ' --- 2. LATIN-1: à-ö Y ø-þ, LA MAYÚSCULA ESTÁ 32 CODEPOINTS ANTES ---
+  ' 247 (÷) NO ES LETRA; 255 (ÿ) SE EXCLUYE PORQUE SU MAYÚSCULA (Ÿ, U+0178)
+  ' CAE FUERA DEL BLOQUE Y NO SIGUE LA REGLA DE -32
+  If iCodigo >= 224 And iCodigo <= 246 Then Return String.Chr(iCodigo - 32)
+  If iCodigo >= 248 And iCodigo <= 254 Then Return String.Chr(iCodigo - 32)
+
+  ' --- 3. SIN PLEGADO CONOCIDO: SE DEVUELVE TAL CUAL ---
+  ' INCLUYE ß (223), ÿ (255) Y TODO LATIN EXTENDED
+  Return String.Chr(iCodigo)
+
+End
+
+' ============================================
+' Función   : PlegarAMinuscula
+' Propósito : Devuelve la minúscula de un codepoint, con tabla explícita.
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : String — el carácter en minúscula, o sin cambio si no hay plegado
+' ============================================
+Public Function PlegarAMinuscula(iCodigo As Integer) As String
+
+  ' --- 1. ASCII A-Z ---
+  If iCodigo >= 65 And iCodigo <= 90 Then Return String.Chr(iCodigo + 32)
+
+  ' --- 2. LATIN-1: À-Ö Y Ø-Þ, SALTEANDO × (215) ---
+  If iCodigo >= 192 And iCodigo <= 214 Then Return String.Chr(iCodigo + 32)
+  If iCodigo >= 216 And iCodigo <= 222 Then Return String.Chr(iCodigo + 32)
+
+  ' --- 3. SIN PLEGADO CONOCIDO ---
+  Return String.Chr(iCodigo)
+
+End
+
+' ============================================
+' Función   : CapitalizarTexto
+' Propósito : Devuelve el texto con la primera letra de cada palabra en
+'             mayúscula y el resto en minúscula. Una palabra abre después de
+'             cualquier carácter que no sea letra ni dígito. El primer
+'             carácter del texto siempre abre palabra.
+' Parámetros: sTexto As String — texto a transformar
+' Retorna   : String — texto transformado, de igual cantidad de codepoints
+' ============================================
+Public Function CapitalizarTexto(sTexto As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iPos As Integer
+  Dim iLongitud As Integer
+  Dim iCodigo As Integer
+  Dim sCaracter As String
+  Dim sResultado As String
+  Dim bAbrePalabra As Boolean
+
+  sResultado = ""
+  iLongitud = String.Len(sTexto)
+  ' EL PRIMER CARÁCTER SE TRATA SIEMPRE COMO INICIO DE PALABRA, SIN MIRAR
+  ' QUÉ HAY ANTES EN LA LÍNEA: ASÍ "ELOT" EN "PELOTA" DA "Elot" → "PElotA"
+  bAbrePalabra = True
+
+  ' --- 2. RECORRIDO CODEPOINT A CODEPOINT (RC-GM-12) ---
+  For iPos = 1 To iLongitud
+
+    sCaracter = String.Mid(sTexto, iPos, 1)
+    iCodigo = String.Code(sCaracter)
+
+    If EsLetra(iCodigo) Then
+      ' LA LETRA SE PLIEGA SEGÚN ABRA O NO PALABRA, Y CIERRA LA APERTURA
+      If bAbrePalabra Then
+        sResultado &= PlegarAMayuscula(iCodigo)
+      Else
+        sResultado &= PlegarAMinuscula(iCodigo)
+      Endif
+      bAbrePalabra = False
+    Else
+      ' LO QUE NO ES LETRA SE COPIA SIN TOCAR
+      sResultado &= sCaracter
+      If iCodigo >= 48 And iCodigo <= 57 Then
+        ' EL DÍGITO ES PARTE DE LA PALABRA Y NO ABRE UNA NUEVA:
+        ' "3RA EDICIÓN" DEBE DAR "3ra Edición", NO "3Ra Edición"
+        bAbrePalabra = False
+      Else
+        ' CUALQUIER OTRO SIGNO (ESPACIO, GUION, APÓSTROFO, PARÉNTESIS,
+        ' COMILLA, SALTO DE LÍNEA) ABRE LA PALABRA SIGUIENTE
+        bAbrePalabra = True
+      Endif
+    Endif
+
+  Next
+
+  ' --- 3. RETORNO ---
+  Return sResultado
+
+End
