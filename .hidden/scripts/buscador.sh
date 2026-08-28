@@ -32,13 +32,13 @@ fi
 # --- 5. BÚSQUEDA, ORDEN Y FORMATO ---
 echo
 echo "Buscando «$BUSCAR» en archivos .$EXT..."
-echo "--------------------------------------------"
+echo "================================================================================"
 grep -Rn --include="*.$EXT" -F "${PALABRA[@]}" -- "$BUSCAR" . \
     | sort -t: -k1,1 -k2,2n \
     | awk -F: -v ca="$C_ARCHIVO" -v cl="$C_LINEA" -v cr="$C_RESET" \
         '{printf "%s%-45s%s %slínea %s%s\n", ca, $1, cr, cl, $2, cr}'
 RET=${PIPESTATUS[0]}
-echo "--------------------------------------------"
+echo "================================================================================"
 if [[ $RET -ne 0 ]]; then
     echo "No se encontraron coincidencias."
 fi
