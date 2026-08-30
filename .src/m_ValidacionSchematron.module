@@ -1,285 +1,485 @@
 ' Gambas module file
 
-' ============================================================================
-' MÓDULO: m_ValidacionSchematron
-' DESCRIPCIÓN: VALIDACIÓN SCHEMATRON JATS4R PARA ARTÍCULOS ACADÉMICOS
-' PIPELINE: .sch → Saxon-HE (SchXslt) → SVRL → ANÁLISIS DE RESULTADOS
-' ESTÁNDAR: JATS4R (https://jats4r.org)
-' VERSIÓN SCHXSLT: 1.10.1
-' AUTOR: gbpublisher
-' ============================================================================
+' ============================================
+' Módulo    : m_ValidacionSchematron
+' Propósito : Servicio compartido de validación Schematron. Lo
+'             consumen tanto el pipeline propio, para verificar el
+'             JATS que produce gbpublisher, como el auditor de XML
+'             externos.
+'
+' PIPELINE:  .sch precompilado a .xsl  →  Saxon-HE  →  SVRL  →  objetos
+'
+' ============================================
+' POR QUÉ ESTE MÓDULO SE REESCRIBIÓ POR COMPLETO
+'
+' La versión anterior tenía cuatro defectos, verificados en consola:
+'
+' 1. pipeline-for-svrl.xsl de SchXslt COMPILA el Schematron pero NO lo
+'    ejecuta. El archivo que quedaba en disco no era un SVRL sino el
+'    XSLT compilado, cuya raíz es <xsl:transform>. Al contar los
+'    <failed-assert> de ese archivo se contaban las REGLAS, no los
+'    incumplimientos, de modo que el resultado era idéntico para
+'    cualquier XML de entrada.
+'
+' 2. Los archivos temáticos de JATS4R (permissions-errors.sch y
+'    compañía) NO son documentos Schematron completos: son fragmentos
+'    que empiezan en <pattern> y están pensados para entrar por
+'    <include> en el maestro. Pasados sueltos al compilador dan
+'    'this document contains more than one top-level element'.
+'    Necesitan un envoltorio con las declaraciones de namespace.
+'
+' 3. Finally NO se ejecuta en un Return normal, solo si se disparó un
+'    error (RC-GM-20). El Close del archivo abierto nunca corría en el
+'    camino exitoso, con fuga de descriptores en cada validación.
+'
+' 4. Los <successful-report> también tienen <svrl:text>, así que el
+'    parseo por líneas los emitía como si fueran errores.
+'
+' DECISIÓN DE DISEÑO: los .sch se compilan UNA VEZ con
+' compilar-schematron.sh y los .xsl resultantes se distribuyen. En
+' tiempo de ejecución hay una sola invocación de Saxon por regla, sin
+' pasos de compilación. Y el SVRL se recibe por STDOUT en lugar de
+' escribirse a disco: 'Exec ... To' captura stdout, verificado, y así
+' no hay archivos temporales que limpiar.
+' ============================================
 
-' RUTAS BASE DE LA INFRAESTRUCTURA DE VALIDACIÓN
+
+' ============================================
+' 1. RUTAS
+' Gambas no expande la tilde, así que se arma con User.Home. La
+' versión anterior tenía '~/...' literal y funcionaba solo porque
+' pasaba por Shell, que sí la expande; al migrar a Exec dejaría de
+' funcionar en silencio.
+' ============================================
+
 Private Const SAXON_JAR As String = "/opt/Saxon-HE/saxon-he.jar"
-Private Const SCHXSLT_XSL As String = "~/.gbpublisher/schematron/schxslt-xslt/xslt/2.0/pipeline-for-svrl.xsl"
-Private Const SCH_DIR As String = "~/.gbpublisher/schematron/jats-schematrons/schematrons/1.0"
-Private Const SCH_PATRON As String = "*-errors.sch"
+Private Const DIR_COMPILADOS As String = "/usr/share/gbpublisher/schematron/compilados"
 
-' ============================================================================
-' FUNCIÓN PRINCIPAL: ValidarSchematronJATS
-' DESCRIPCIÓN: EJECUTA TODOS LOS SCHEMATRONS JATS4R CONTRA UN ARCHIVO XML
-'              Y DEVUELVE TRUE SI EL DOCUMENTO PASA TODAS LAS VALIDACIONES
-' PARÁMETROS:
-'   sArchivoXML  - RUTA ABSOLUTA AL ARCHIVO JATS XML A VALIDAR
-'   sDirectorioSalida - DIRECTORIO DONDE SE GUARDARÁN LOS REPORTES SVRL
-'   aErrores     - ARRAY (POR REFERENCIA) QUE RECIBIRÁ LOS MENSAJES DE ERROR
-' RETORNA: TRUE SI NO HAY ERRORES, FALSE SI HAY AL MENOS UN ERROR
-' ============================================================================
+
+' ============================================
+' 2. NÚCLEO: EJECUCIÓN Y PARSEO
+' ============================================
+
+' ============================================
+' Función   : ValidarConSchematron
+' Propósito : Ejecuta una regla Schematron ya compilada sobre un XML y
+'             devuelve las aserciones incumplidas como objetos.
+'
+'             Es el punto único de entrada del módulo. Todo lo demás
+'             se apoya en esta función.
+'
+' Parámetros: sArchivoXML As String — ruta absoluta del XML a validar
+'             sRegla As String — nombre del .xsl compilado, sin extensión
+'             sError As String — POR REFERENCIA: mensaje de fallo
+' Retorna   : CAsercionSVRL[] — aserciones incumplidas, o Null si falló
+' ============================================
+Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, ByRef sError As String) As CAsercionSVRL[]
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRutaXsl As String
+  Dim sSvrl As String
+
+  sError = ""
+
+  ' --- 2. GUARDAS ---
+  If Not Exist(sArchivoXML) Then
+    sError = ("No se encuentra el archivo XML: ") & sArchivoXML
+    Return Null
+  Endif
+
+  If Not Exist(SAXON_JAR) Then
+    sError = ("No se encuentra Saxon-HE en ") & SAXON_JAR
+    Return Null
+  Endif
+
+  sRutaXsl = DIR_COMPILADOS &/ sRegla & ".xsl"
+  If Not Exist(sRutaXsl) Then
+    sError = ("No se encuentra la regla compilada: ") & sRutaXsl
+    Return Null
+  Endif
+
+  ' --- 3. EJECUCIÓN ---
+  ' Sin -o: Saxon escribe el resultado en stdout, que 'Exec ... To'
+  ' sí captura. Los diagnósticos van a stderr y se pierden, pero eso
+  ' no es un problema: si Saxon falló, la salida queda vacía y eso se
+  ' detecta en el apartado siguiente.
+  ' SC-05: Exec con array, nunca Shell. La ruta del XML puede venir de
+  ' una carpeta elegida por el usuario y no debe pasar por sh -c.
+  Try Exec ["java", "-jar", SAXON_JAR, "-s:" & sArchivoXML, "-xsl:" & sRutaXsl] To sSvrl
+  If Error Then
+    sError = ("Falló la ejecución de Saxon: ") & Error.Text
+    Return Null
+  Endif
+
+  ' --- 4. VERIFICACIÓN DE QUE LA SALIDA ES UN SVRL ---
+  ' Esta comprobación es la que habría detectado el defecto anterior:
+  ' un XSLT compilado tiene raíz <xsl:transform> y no contiene
+  ' schematron-output.
+  If sSvrl = "" Then
+    sError = ("Saxon no produjo salida para ") & sRegla
+    Return Null
+  Endif
+
+  If InStr(sSvrl, "schematron-output") = 0 Then
+    sError = ("La salida de ") & sRegla & (" no es un informe SVRL.")
+    Return Null
+  Endif
+
+  ' --- 5. PARSEO ---
+  Return ParsearSVRL(sSvrl)
+
+End
+
+
+' ============================================
+' Función   : ParsearSVRL
+' Propósito : Convierte el texto de un informe SVRL en objetos.
+'
+'             El recorrido es por BLOQUES y no por líneas: los
+'             atributos de una aserción pueden quedar repartidos en
+'             varias líneas según cómo indente el serializador, y un
+'             parseo línea a línea los pierde.
+'
+'             Se toman SOLO los <failed-assert>. Los
+'             <successful-report> también llevan <svrl:text> y la
+'             versión anterior los emitía como si fueran errores.
+'
+' Parámetros: sSvrl As String — informe SVRL completo
+' Retorna   : CAsercionSVRL[] — las aserciones incumplidas
+' ============================================
+Private Function ParsearSVRL(sSvrl As String) As CAsercionSVRL[]
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aResultado As New CAsercionSVRL[]
+  Dim oAsercion As CAsercionSVRL
+  Dim sPatron As String
+  Dim sContexto As String
+  Dim iPos As Integer
+  Dim iSiguiente As Integer
+  Dim iFin As Integer
+  Dim sBloque As String
+
+  iPos = 1
+
+  ' --- 2. RECORRIDO SECUENCIAL DEL INFORME ---
+  ' El patrón activo y el contexto de la regla se declaran ANTES de
+  ' las aserciones que les corresponden, así que se van recordando a
+  ' medida que aparecen.
+  Do
+
+    iPos = ProximaEtiqueta(sSvrl, iPos, iSiguiente)
+    If iPos = 0 Then Break
+
+    sBloque = Mid(sSvrl, iPos, iSiguiente - iPos)
+
+    ' 2.1 PATRÓN ACTIVO
+    If InStr(sBloque, "active-pattern") > 0 Then
+      sPatron = ValorAtributoSVRL(sBloque, "id")
+      If sPatron = "" Then sPatron = ValorAtributoSVRL(sBloque, "name")
+    Endif
+
+    ' 2.2 REGLA DISPARADA
+    If InStr(sBloque, "fired-rule") > 0 Then
+      sContexto = ValorAtributoSVRL(sBloque, "context")
+    Endif
+
+    ' 2.3 ASERCIÓN INCUMPLIDA
+    ' Se excluye la etiqueta de cierre, que también contiene la cadena
+    If InStr(sBloque, "failed-assert") > 0 Then
+      If InStr(sBloque, "</") = 0 Then
+        oAsercion = New CAsercionSVRL
+        oAsercion.sPatron = sPatron
+        oAsercion.sContexto = sContexto
+        oAsercion.sTest = ValorAtributoSVRL(sBloque, "test")
+        oAsercion.sRol = ValorAtributoSVRL(sBloque, "role")
+        oAsercion.sUbicacion = ValorAtributoSVRL(sBloque, "location")
+        oAsercion.sTexto = TextoDeAsercion(sSvrl, iSiguiente)
+        aResultado.Add(oAsercion)
+      Endif
+    Endif
+
+    iPos = iSiguiente
+
+  Loop
+
+  Return aResultado
+
+End
+
+
+' ============================================
+' Función   : ProximaEtiqueta
+' Propósito : Localiza la próxima etiqueta de apertura a partir de una
+'             posición, y devuelve también dónde termina.
+' Parámetros: sTexto As String — informe completo
+'             iDesde As Integer — posición desde la que buscar
+'             iFin As Integer — POR REFERENCIA: posición tras el '>'
+' Retorna   : Integer — posición del '<', o 0 si no hay más
+' ============================================
+Private Function ProximaEtiqueta(sTexto As String, iDesde As Integer, ByRef iFin As Integer) As Integer
+
+  Dim iIni As Integer
+  Dim iCierre As Integer
+
+  iIni = InStr(sTexto, "<", iDesde)
+  If iIni = 0 Then Return 0
+
+  iCierre = InStr(sTexto, ">", iIni)
+  If iCierre = 0 Then Return 0
+
+  iFin = iCierre + 1
+  Return iIni
+
+End
+
+
+' ============================================
+' Función   : TextoDeAsercion
+' Propósito : Devuelve el contenido del <svrl:text> que sigue a una
+'             aserción, normalizando el espacio en blanco.
+' Parámetros: sSvrl As String — informe completo
+'             iDesde As Integer — posición tras la etiqueta de apertura
+' Retorna   : String — el texto, o cadena vacía
+' ============================================
+Private Function TextoDeAsercion(sSvrl As String, iDesde As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim sTexto As String
+
+  ' --- 2. LOCALIZACIÓN ---
+  ' Se busca la etiqueta sin prefijo para no depender de cómo se haya
+  ' declarado el namespace
+  iIni = InStr(sSvrl, ":text>", iDesde)
+  If iIni = 0 Then Return ""
+
+  iIni += 6
+  iFin = InStr(sSvrl, "</", iIni)
+  If iFin = 0 Then Return ""
+
+  sTexto = Mid(sSvrl, iIni, iFin - iIni)
+
+  ' --- 3. NORMALIZACIÓN ---
+  sTexto = Replace(sTexto, Chr(10), " ")
+  sTexto = Replace(sTexto, Chr(9), " ")
+  While InStr(sTexto, "  ") > 0
+    sTexto = Replace(sTexto, "  ", " ")
+  Wend
+
+  ' --- 4. LAS ENTIDADES DEL TEXTO SE RESUELVEN PARA MOSTRAR ---
+  sTexto = Replace(sTexto, "&lt;", "<")
+  sTexto = Replace(sTexto, "&gt;", ">")
+  sTexto = Replace(sTexto, "&quot;", Chr(34))
+  sTexto = Replace(sTexto, "&amp;", "&")
+
+  Return Trim(sTexto)
+
+End
+
+
+' ============================================
+' Función   : ValorAtributoSVRL
+' Propósito : Extrae el valor de un atributo de una etiqueta.
+' Parámetros: sBloque As String — etiqueta completa
+'             sAtributo As String — nombre del atributo
+' Retorna   : String — el valor, o cadena vacía
+' ============================================
+Private Function ValorAtributoSVRL(sBloque As String, sAtributo As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim sComilla As String
+
+  ' SC-01: Chr(34) en lugar del escape
+  sComilla = Chr(34)
+
+  iIni = InStr(sBloque, sAtributo & "=" & sComilla)
+  If iIni = 0 Then Return ""
+
+  iIni += Len(sAtributo) + 2
+  iFin = InStr(sBloque, sComilla, iIni)
+  If iFin = 0 Then Return ""
+
+  Return Mid(sBloque, iIni, iFin - iIni)
+
+End
+
+
+' ============================================
+' Función   : ReglasDisponibles
+' Propósito : Lista las reglas compiladas presentes en la instalación.
+' Parámetros: ninguno
+' Retorna   : String[] — nombres sin extensión, ordenados
+' ============================================
+Public Function ReglasDisponibles() As String[]
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aArchivos As String[]
+  Dim aResultado As New String[]
+  Dim sNombre As String
+
+  ' --- 2. GUARDA ---
+  ' RC-GM-17: Exist e IsDir en If separados, porque And no cortocircuita
+  If Not Exist(DIR_COMPILADOS) Then Return aResultado
+  If Not IsDir(DIR_COMPILADOS) Then Return aResultado
+
+  ' --- 3. LISTADO ---
+  Try aArchivos = Dir(DIR_COMPILADOS, "*.xsl")
+  If Error Then Return aResultado
+
+  For Each sNombre In aArchivos
+    aResultado.Add(File.BaseName(sNombre))
+  Next
+
+  aResultado.Sort()
+  Return aResultado
+
+End
+
+
+' ============================================
+' Función   : EstaInstalado
+' Propósito : Verifica que estén Saxon y al menos una regla compilada.
+' Parámetros: ninguno
+' Retorna   : Boolean
+' ============================================
+Public Function EstaInstalado() As Boolean
+
+  If Not Exist(SAXON_JAR) Then Return False
+  If ReglasDisponibles().Count = 0 Then Return False
+
+  Return True
+
+End
+
+
+' ============================================
+' 3. API HEREDADA
+' Se conserva para no tocar los llamadores existentes, pero ahora se
+' apoya en el núcleo corregido. Un solo mecanismo.
+' ============================================
+
+' ============================================
+' Función   : ValidarSchematronJATS
+' Propósito : Ejecuta todas las reglas compiladas contra un XML y
+'             devuelve True si no hay ninguna aserción incumplida.
+'
+'             El parámetro sDirectorioSalida se conserva por
+'             compatibilidad de firma pero YA NO SE USA: el SVRL se
+'             recibe por stdout y no se escribe a disco.
+'
+' Parámetros: sArchivoXML As String — XML a validar
+'             sDirectorioSalida As String — ignorado
+'             aErrores As String[] — POR REFERENCIA: mensajes
+' Retorna   : Boolean — True si el documento no incumple ninguna regla
+' ============================================
 Public Function ValidarSchematronJATS(sArchivoXML As String, sDirectorioSalida As String, aErrores As String[]) As Boolean
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aReglas As String[]
+  Dim sRegla As String
+  Dim aAserciones As CAsercionSVRL[]
+  Dim oAsercion As CAsercionSVRL
+  Dim sError As String
   Dim bValido As Boolean
-  Dim aArchivosSchematron As String[]
-  Dim sArchivo As String
-  Dim sNombre As String
-  Dim sReporte As String
-  Dim sComando As String
-  ' Dim sSalida As String
-  Dim iErrores As Integer
-  ' Dim sMensaje As String
 
-  ' INICIALIZAR RESULTADO COMO VÁLIDO
   bValido = True
 
-  ' VALIDAR QUE EL ARCHIVO XML EXISTE
-  If Not Exist(sArchivoXML) Then
-    aErrores.Add("ERROR FATAL: No se encuentra el archivo XML: " & sArchivoXML)
-    Return False
-  Endif
-
-  ' VALIDAR QUE LAS DEPENDENCIAS ESTÁN INSTALADAS
+  ' --- 2. GUARDA DE INFRAESTRUCTURA ---
   If Not EstaInstalado() Then
-    aErrores.Add("ERROR FATAL: Dependencias de validación no encontradas. " &
-      "Verificar Saxon-HE y SchXslt en " & SAXON_JAR)
+    aErrores.Add(("ERROR: falta Saxon-HE o no hay reglas compiladas en ") & DIR_COMPILADOS)
     Return False
   Endif
 
-  ' CREAR DIRECTORIO DE REPORTES SI NO EXISTE
-  If Not Exist(sDirectorioSalida) Then
-    Try Mkdir sDirectorioSalida
-    If Error Then
-      aErrores.Add("ERROR: No se pudo crear directorio de reportes: " & sDirectorioSalida)
-      Return False
-    Endif
-  Endif
+  ' --- 3. UNA INVOCACIÓN POR REGLA ---
+  aReglas = ReglasDisponibles()
+  For Each sRegla In aReglas
 
-  ' OBTENER LISTA DE SCHEMATRONS DISPONIBLES
-  aArchivosSchematron = ObtenerSchematrons()
-  If aArchivosSchematron.Count = 0 Then
-    aErrores.Add("ERROR: No se encontraron archivos .sch en: " & SCH_DIR)
-    Return False
-  Endif
+    aAserciones = ValidarConSchematron(sArchivoXML, sRegla, sError)
 
-  ' EJECUTAR CADA SCHEMATRON
-  For Each sArchivo In aArchivosSchematron
-
-    ' EXTRAER NOMBRE SIN EXTENSIÓN PARA EL REPORTE
-    sNombre = File.BaseName(sArchivo)
-    sReporte = sDirectorioSalida &/ sNombre & "-svrl.xml"
-
-    ' CONSTRUIR COMANDO SAXON CON PARÁMETRO document= REQUERIDO POR PIPELINE-FOR-SVRL
-    sComando = "java -jar " & SAXON_JAR &
-      " -s:" & SCH_DIR &/ sArchivo &
-      " -xsl:" & SCHXSLT_XSL &
-      " document=" & sArchivoXML &
-      " -o:" & sReporte &
-      " 2>&1"
-
-    ' EJECUTAR VALIDACIÓN Y CAPTURAR SALIDA
-    Try Shell sComando Wait
-    If Error Then
-      aErrores.Add("ERROR en schematron [" & sNombre & "]: " & Error.Text)
+    ' 3.1 FALLO DE EJECUCIÓN
+    ' RC-GM-02: el error se informa, no se traga. Un fallo silencioso
+    ' acá se manifestaría como 'el documento es válido'.
+    If Not aAserciones Then
+      aErrores.Add("[" & sRegla & "] " & sError)
       bValido = False
       Continue
     Endif
 
-    ' ANALIZAR EL REPORTE SVRL GENERADO
-    iErrores = ContarErroresSVRL(sReporte, aErrores, sNombre)
-    If iErrores > 0 Then
-      bValido = False
-    Endif
+    ' 3.2 ASERCIONES INCUMPLIDAS
+    For Each oAsercion In aAserciones
+      aErrores.Add("[" & sRegla & "] " & oAsercion.sRol & " · " &
+                   oAsercion.sUbicacion & " · " & oAsercion.sTexto)
+      If oAsercion.sRol = "error" Then bValido = False
+    Next
 
   Next
 
   Return bValido
 
-End Function
+End
 
-' ============================================================================
-' FUNCIÓN: ContarErroresSVRL
-' DESCRIPCIÓN: ANALIZA EL ARCHIVO SVRL Y EXTRAE LOS MENSAJES DE ERROR
-' ============================================================================
-Private Function ContarErroresSVRL(sArchivoSVRL As String, aErrores As String[], sContexto As String) As Integer
 
-  Dim hArchivo As File
-  Dim sLinea As String
-  Dim iContador As Integer
-  Dim sUbicacion As String
-  Dim sTest As String
-  Dim sMensaje As String
-
-  iContador = 0
-
-  If Not Exist(sArchivoSVRL) Then
-    aErrores.Add("[" & sContexto & "] No se generó reporte SVRL")
-    Return 1
-  Endif
-
-  hArchivo = Open sArchivoSVRL For Read
-  While Not Eof(hArchivo)
-    Line Input #hArchivo, sLinea
-    sLinea = Trim(sLinea)
-
-    If InStr(sLinea, "failed-assert") > 0 And InStr(sLinea, "</") = 0 Then
-      Inc iContador
-      sUbicacion = ExtraerAtributo(sLinea, "location")
-      sTest = ExtraerAtributo(sLinea, "test")
-    Endif
-
-    If InStr(sLinea, "<svrl:text>") > 0 Then
-      sMensaje = Replace(sLinea, "<svrl:text>", "")
-      sMensaje = Replace(sMensaje, "</svrl:text>", "")
-      sMensaje = Trim(sMensaje)
-      aErrores.Add("[" & sContexto & "] " &
-        "Ubicación: " & sUbicacion & " | " &
-        "Regla: " & sTest & " | " &
-        "Mensaje: " & sMensaje)
-    Endif
-  Wend
-
-  Return iContador
-
-Finally
-  ' CERRAR EL ARCHIVO SIEMPRE, HAYA O NO ERROR
-  If hArchivo Then Close #hArchivo
-
-Catch
-  aErrores.Add("[" & sContexto & "] Error leyendo reporte: " & Error.Text)
-  Return 1
-
-End Function
-
-' ============================================================================
-' FUNCIÓN: ObtenerSchematrons
-' DESCRIPCIÓN: DEVUELVE LA LISTA DE ARCHIVOS .sch DISPONIBLES
-' ============================================================================
-Private Function ObtenerSchematrons() As String[]
-
-  Dim aResultado As New String[]
-
-  Try aResultado = Dir(SCH_DIR, SCH_PATRON)
-  If Error Then Return aResultado
-
-  aResultado.Sort()
-  Return aResultado
-
-End Function
-
-' ============================================================================
-' FUNCIÓN: EstaInstalado
-' DESCRIPCIÓN: VERIFICA QUE LAS DEPENDENCIAS MÍNIMAS ESTÁN DISPONIBLES:
-'              - Saxon-HE JAR
-'              - SchXslt pipeline-for-svrl.xsl
-'              - Directorio de schematrons JATS4R
-' RETORNA: TRUE SI TODO ESTÁ EN ORDEN
-' ============================================================================
-Private Function EstaInstalado() As Boolean
-
-  If Not Exist(SAXON_JAR) Then Return False
-  If Not Exist(SCHXSLT_XSL) Then Return False
-  If Not Exist(SCH_DIR) Then Return False
-
-  Return True
-
-End Function
-
-' ============================================================================
-' FUNCIÓN: ExtraerAtributo
-' DESCRIPCIÓN: EXTRAE EL VALOR DE UN ATRIBUTO XML DE UNA CADENA DE TEXTO
-'              EJEMPLO: ExtraerAtributo('<foo bar="hola">', "bar") → "hola"
-' PARÁMETROS:
-'   sLinea    - LÍNEA DE TEXTO QUE CONTIENE EL ATRIBUTO
-'   sAtributo - NOMBRE DEL ATRIBUTO A EXTRAER
-' RETORNA: VALOR DEL ATRIBUTO O CADENA VACÍA SI NO SE ENCUENTRA
-' ============================================================================
-Private Function ExtraerAtributo(sLinea As String, sAtributo As String) As String
-
-  Dim iPosInicio As Integer
-  Dim iPosFin As Integer
-  Dim sBuscar As String
-
-  sBuscar = sAtributo & "=\""
-  iPosInicio = InStr(sLinea, sBuscar)
-  If iPosInicio = 0 Then Return ""
-
-  iPosInicio = iPosInicio + Len(sBuscar)
-  iPosFin = InStr(Mid(sLinea, iPosInicio), "\"")
-  If iPosFin = 0 Then Return ""
-
-  Return Mid(sLinea, iPosInicio, iPosFin - 1)
-
-End Function
-
-' ============================================================================
-' FUNCIÓN: GenerarResumenValidacion
-' DESCRIPCIÓN: CREA UN RESUMEN LEGIBLE PARA MOSTRAR EN LA INTERFAZ
-'              A PARTIR DE LOS ERRORES ACUMULADOS EN aErrores
-' PARÁMETROS:
-'   aErrores - ARRAY CON LOS MENSAJES DE ERROR RECOPILADOS
-'   bValido  - RESULTADO GENERAL DE LA VALIDACIÓN
-' RETORNA: STRING CON EL RESUMEN FORMATEADO PARA MOSTRAR AL USUARIO
-' ============================================================================
+' ============================================
+' Función   : GenerarResumenValidacion
+' Propósito : Arma un resumen legible para la interfaz.
+' Parámetros: aErrores As String[] — mensajes acumulados
+'             bValido As Boolean — resultado general
+' Retorna   : String — resumen formateado
+' ============================================
 Public Function GenerarResumenValidacion(aErrores As String[], bValido As Boolean) As String
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sResumen As String
-  Dim sError As String
+  Dim sLinea As String
 
+  ' --- 2. DICTAMEN ---
+  ' Nunca CStr sobre un Boolean para salida: CStr(False) devuelve
+  ' cadena vacía y el resultado quedaría indistinguible de un dato
+  ' ausente
   If bValido Then
-    sResumen = "✓ Validación Schematron JATS4R completada sin errores." & Chr(10)
-    sResumen &= "  Todos los controles de calidad pasaron correctamente."
+    sResumen = ("El documento cumple todas las reglas Schematron aplicadas.")
   Else
-    sResumen = "✗ Se encontraron " & CStr(aErrores.Count) &
-      " problema(s) en la validación Schematron JATS4R:" & Chr(10) & Chr(10)
-    For Each sError In aErrores
-      sResumen &= "  • " & sError & Chr(10)
-    Next
-    sResumen &= Chr(10) & "Consulte los reportes SVRL para detalle completo."
+    sResumen = ("El documento incumple ") & CStr(aErrores.Count) & (" reglas Schematron.")
   Endif
+
+  sResumen &= Chr(10) & Chr(10)
+
+  ' --- 3. DETALLE ---
+  For Each sLinea In aErrores
+    sResumen &= sLinea & Chr(10)
+  Next
 
   Return sResumen
 
-End Function
+End
 
-' ============================================================================
-' FUNCIÓN: EjecutarValidacionCompleta
-' DESCRIPCIÓN: FUNCIÓN DE ALTO NIVEL PARA USO DESDE LA INTERFAZ GRÁFICA
-'              INTEGRA VALIDACIÓN DTD (PASO 1.5) + SCHEMATRON (PASO 1.6)
-'              Y MUESTRA LOS RESULTADOS EN UN MESSAGEBOX
-' PARÁMETROS:
-'   sArchivoXML - RUTA AL ARCHIVO JATS XML CANÓNICO (PREFIJO c-)
-' RETORNA: TRUE SI EL DOCUMENTO PASA TODAS LAS VALIDACIONES
-' ============================================================================
+
+' ============================================
+' Función   : EjecutarValidacionCompleta
+' Propósito : Valida un XML y muestra el resultado al usuario.
+' Parámetros: sArchivoXML As String — XML a validar
+' Retorna   : Boolean — True si el documento es válido
+' ============================================
 Public Function EjecutarValidacionCompleta(sArchivoXML As String) As Boolean
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim aErrores As New String[]
   Dim bValido As Boolean
-  Dim sDirectorioSVRL As String
-  Dim sResumen As String
 
-  ' DIRECTORIO DE REPORTES JUNTO AL ARCHIVO VALIDADO
-  sDirectorioSVRL = File.Dir(sArchivoXML) &/ "svrl-reports"
+  ' --- 2. VALIDACIÓN ---
+  bValido = ValidarSchematronJATS(sArchivoXML, "", aErrores)
 
-  ' EJECUTAR VALIDACIÓN SCHEMATRON
-  bValido = ValidarSchematronJATS(sArchivoXML, sDirectorioSVRL, aErrores)
-
-  ' GENERAR Y MOSTRAR RESUMEN
-  sResumen = GenerarResumenValidacion(aErrores, bValido)
-
+  ' --- 3. INFORME AL USUARIO ---
   If bValido Then
-    Message.Info(sResumen)
+    Message.Info(GenerarResumenValidacion(aErrores, bValido))
   Else
-    Message.Error(sResumen)
+    m_Sonido.sonar("Error")
+    Message.Warning(GenerarResumenValidacion(aErrores, bValido))
   Endif
 
   Return bValido
 
-End Function
+End

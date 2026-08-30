@@ -27,10 +27,18 @@
        mirar; el informe los ordena por esfuerzo, que es como se
        planifica qué hacer.
     6. Detalle por archivo
+
+  LOTE CON MÁS DE UNA REVISTA: la frecuencia n/N pierde sentido,
+  porque el denominador pasa a ser la cantidad de archivos y no la de
+  artículos de UNA publicación. En ese caso el informe se emite igual
+  —los hallazgos por archivo son ciertos— pero omite las frecuencias y
+  declara por qué. Es la misma disciplina del bloque de
+  defensibilidad: declarar el límite de lo que se afirma.
 -->
 <xsl:stylesheet version="2.0"
                 xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
-                exclude-result-prefixes="xsl">
+                xmlns:local="urn:local"
+                exclude-result-prefixes="xsl local">
 
   <xsl:output method="html" version="5.0" encoding="UTF-8" indent="yes"/>
 
@@ -39,11 +47,15 @@
 
   <xsl:variable name="cat" select="document($catalogo)"/>
 
+  <!-- LA FRECUENCIA SOLO TIENE SENTIDO DENTRO DE UNA REVISTA -->
+  <xsl:variable name="hayFrecuencia"
+                select="/auditoria/revista/@revista-unica = 'sí'"/>
+
   <!-- BÚSQUEDA DE MENSAJE POR CÓDIGO -->
   <xsl:key name="msg" match="mensaje" use="@codigo"/>
 
   <!-- PESO DE CADA NIVEL DE IMPACTO, PARA ORDENAR -->
-  <xsl:function name="local:peso" xmlns:local="urn:local">
+  <xsl:function name="local:peso">
     <xsl:param name="i"/>
     <xsl:choose>
       <xsl:when test="$i = 'bloqueante'">1</xsl:when>
@@ -53,7 +65,9 @@
     </xsl:choose>
   </xsl:function>
 
-  <xsl:function name="local:etiquetaImpacto" xmlns:local="urn:local">
+  <!-- ETIQUETAS PARA EL EDITOR: NO SE USA EL VOCABULARIO INTERNO.
+       Adentro decimos 'bloqueante'; acá decimos qué significa. -->
+  <xsl:function name="local:etiquetaImpacto">
     <xsl:param name="i"/>
     <xsl:choose>
       <xsl:when test="$i = 'bloqueante'">Impide procesar el archivo</xsl:when>
@@ -80,6 +94,9 @@
           <p class="rotulo">Informe de auditoría de marcación JATS</p>
           <h1>
             <xsl:choose>
+              <xsl:when test="revista/@revista-unica = 'no'">
+                Artículos de varias publicaciones
+              </xsl:when>
               <xsl:when test="revista/titulo != ''">
                 <xsl:value-of select="revista/titulo"/>
               </xsl:when>
@@ -87,22 +104,38 @@
             </xsl:choose>
           </h1>
           <p class="sub">
-            <xsl:if test="revista/issn[@tipo='epub'] != ''">
-              <span>ISSN electrónico <xsl:value-of select="revista/issn[@tipo='epub']"/></span>
-            </xsl:if>
-            <xsl:if test="revista/issn[@tipo='ppub'] != ''">
-              <span>ISSN impreso <xsl:value-of select="revista/issn[@tipo='ppub']"/></span>
+            <xsl:if test="revista/@revista-unica = 'sí'">
+              <xsl:if test="revista/issn[@tipo='epub'] != ''">
+                <span>ISSN electrónico <xsl:value-of select="revista/issn[@tipo='epub']"/></span>
+              </xsl:if>
+              <xsl:if test="revista/issn[@tipo='ppub'] != ''">
+                <span>ISSN impreso <xsl:value-of select="revista/issn[@tipo='ppub']"/></span>
+              </xsl:if>
             </xsl:if>
             <span><xsl:value-of select="revista/@archivos"/> artículos analizados</span>
             <span><xsl:value-of select="cabecera/fecha"/></span>
           </p>
 
-          <xsl:if test="revista/@muestra-suficiente = 'no'">
-            <p class="aviso">Se analizaron menos de tres artículos. Con esa cantidad
-            no es posible distinguir un defecto sistemático de un descuido puntual,
-            de modo que las frecuencias que aparecen más abajo deben leerse con
-            reserva.</p>
-          </xsl:if>
+          <!-- LOS DOS AVISOS DE ALCANCE SON EXCLUYENTES: SI LA CARPETA
+               MEZCLA PUBLICACIONES, LA ADVERTENCIA DE MUESTRA CHICA
+               SOBRA, PORQUE NO HAY FRECUENCIAS QUE MATIZAR -->
+          <xsl:choose>
+            <xsl:when test="revista/@revista-unica = 'no'">
+              <p class="aviso"><strong>Los archivos analizados pertenecen a más de una
+              publicación.</strong> Este informe describe cada artículo por separado y
+              todo lo que afirma sobre ellos es correcto, pero no puede establecer qué
+              problemas son propios de una revista y cuáles aparecen de forma aislada.
+              Esa distinción es la que separa un defecto del procedimiento de producción
+              de un descuido en un artículo puntual, y es la más útil para decidir qué
+              corregir. Para obtenerla hay que analizar cada revista por separado.</p>
+            </xsl:when>
+            <xsl:when test="revista/@muestra-suficiente = 'no'">
+              <p class="aviso">Se analizaron menos de tres artículos. Con esa cantidad
+              no es posible distinguir un defecto sistemático de un descuido puntual,
+              de modo que las frecuencias que aparecen más abajo deben leerse con
+              reserva.</p>
+            </xsl:when>
+          </xsl:choose>
 
           <xsl:if test="revista/generador/@nombre != ''">
             <p class="generador">
@@ -137,7 +170,7 @@
             <dt>Herramientas</dt>
             <dd>
               <xsl:for-each select="cabecera/herramientas/herramienta">
-                <xsl:value-of select="@nombre"/> <xsl:text> </xsl:text>
+                <xsl:value-of select="@nombre"/><xsl:text> </xsl:text>
                 <xsl:value-of select="@version"/>
                 <xsl:if test="position() != last()"><xsl:text> · </xsl:text></xsl:if>
               </xsl:for-each>
@@ -195,7 +228,10 @@
             </table>
             <p class="nota">Los números cuentan problemas distintos, no repeticiones.
             Un mismo problema presente en sesenta y siete lugares de un artículo
-            cuenta como uno.</p>
+            cuenta como uno.<xsl:if test="not($hayFrecuencia)"><xsl:text> </xsl:text>
+            Como los artículos pertenecen a publicaciones distintas, estos totales
+            suman hallazgos de varias revistas y no describen a ninguna en
+            particular.</xsl:if></p>
           </section>
 
           <!-- ==== 5. HALLAZGOS POR ESFUERZO DE CORRECCIÓN ==== -->
@@ -272,7 +308,7 @@
   <!-- ============================================================
        UN GRUPO DE HALLAZGOS, POR ESFUERZO DE CORRECCIÓN
        ============================================================ -->
-  <xsl:template name="grupo" xmlns:local="urn:local">
+  <xsl:template name="grupo">
     <xsl:param name="clave"/>
     <xsl:param name="titulo"/>
     <xsl:param name="bajada"/>
@@ -284,10 +320,14 @@
         <h2><xsl:value-of select="$titulo"/></h2>
         <p class="bajada"><xsl:value-of select="$bajada"/></p>
 
-        <!-- DENTRO DEL GRUPO, LO MÁS GRAVE PRIMERO -->
+        <!-- DENTRO DEL GRUPO, LO MÁS GRAVE PRIMERO.
+             SIN FRECUENCIA VÁLIDA NO TIENE SENTIDO ORDENAR POR ELLA:
+             SE USA EL TOTAL DE APARICIONES, QUE SIGUE SIENDO CIERTO -->
         <xsl:for-each select="$items">
           <xsl:sort select="local:peso(@impacto)" data-type="number"/>
-          <xsl:sort select="number(@frecuencia)" data-type="number" order="descending"/>
+          <xsl:sort select="if ($hayFrecuencia) then number(@frecuencia)
+                            else sum(ocurrencia/number(@veces))"
+                    data-type="number" order="descending"/>
 
           <xsl:variable name="m" select="key('msg', @codigo, $cat)"/>
 
@@ -306,9 +346,23 @@
               <span class="chip i{local:peso(@impacto)}">
                 <xsl:value-of select="local:etiquetaImpacto(@impacto)"/>
               </span>
-              <span class="chip">
-                <xsl:value-of select="@frecuencia"/> de <xsl:value-of select="@de"/> artículos
-              </span>
+              <!-- 'En 1 artículo' ES CIERTO EN UN LOTE MEZCLADO;
+                   '1 de 3' NO LO ES -->
+              <xsl:choose>
+                <xsl:when test="$hayFrecuencia">
+                  <span class="chip">
+                    <xsl:value-of select="@frecuencia"/> de <xsl:value-of select="@de"/> artículos
+                  </span>
+                </xsl:when>
+                <xsl:otherwise>
+                  <span class="chip">
+                    <xsl:choose>
+                      <xsl:when test="number(@frecuencia) = 1">En 1 artículo</xsl:when>
+                      <xsl:otherwise>En <xsl:value-of select="@frecuencia"/> artículos</xsl:otherwise>
+                    </xsl:choose>
+                  </span>
+                </xsl:otherwise>
+              </xsl:choose>
               <span class="cod"><xsl:value-of select="@codigo"/></span>
             </p>
 
