@@ -1,1 +1,462 @@
 ' Gambas class file
+
+' ============================================
+' Clase     : FAuditoriaXML
+' Propósito : Interfaz de la auditoría de XML JATS externos.
+'
+'             El formulario NO tiene lógica de auditoría: todos los
+'             handlers son delgados y delegan en m_AuditarJats, que es
+'             dueño del estado. Acá solo vive lo que es estrictamente
+'             de presentación: anchos de columna, textos de los
+'             desplegables y habilitación de botones.
+'
+'             Los dos GridView son VIRTUALES y no cachean: vuelven a
+'             pedir cada celda en cada repintado. Por eso los eventos
+'             Data no hacen ningún trabajo, solo indexan.
+'
+'             Está aislado del flujo de producción: no escribe en la
+'             base, no requiere proyecto abierto, no requiere conexión
+'             a MySQL. Por eso NO corresponde el guard de SC-06: no
+'             cambia el editor ni el proyecto activo.
+' ============================================
+
+' ============================================
+' 1. ESTADO DEL FORMULARIO
+' ============================================
+
+' BANDERA DEL PATRÓN DE CIERRE: DISTINGUE UN Me.Close() PROGRAMÁTICO
+' DEL BOTÓN X DE LA VENTANA
+Private $bCierrePermitido As Boolean = False
+
+' VALORES DE FILTRO PARALELOS A LOS ÍTEMS DE LOS DESPLEGABLES. LOS
+' DESPLEGABLES MUESTRAN ETIQUETAS EN CASTELLANO Y EL MODELO TRABAJA
+' CON LOS CÓDIGOS DE m_Constantes; ESTE ES EL PUENTE.
+Private $aValoresImpacto As New String[]
+Private $aValoresCorreccion As New String[]
+
+' ANCHOS DE COLUMNA. SC-03 PEDIRÍA LLEVARLOS A m_Constantes, PERO SON
+' MEDIDAS DE ESTE FORMULARIO Y NO SE COMPARTEN CON NADIE.
+Private Const ANCHO_MENSAJE As Integer = 380
+
+' ============================================
+' 2. APERTURA Y CIERRE
+' ============================================
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Arma las dos grillas, puebla los desplegables y deja el
+'             formulario en estado inicial sin auditoría.
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. LIMPIEZA DEL ESTADO DEL MÓDULO ---
+  ' EL FORMULARIO ES MODAL Y DESECHABLE, PERO EL MÓDULO PERSISTE ENTRE
+  ' APERTURAS: SIN ESTO, LA SEGUNDA VEZ SE VERÍA EL LOTE ANTERIOR
+  m_AuditarJats.Limpiar()
+
+  ' --- 2. ARMADO DE LAS GRILLAS ---
+  PrepararGrillaArchivos()
+  PrepararGrillaHallazgos()
+
+  ' --- 3. DESPLEGABLES DE FILTRO ---
+  PoblarFiltros()
+
+  ' --- 4. ESTADO INICIAL ---
+  ActualizarPantalla()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Impide el cierre por el botón X sin pasar por el flujo
+'             del formulario.
+' ============================================
+Public Sub Form_Close()
+
+  If Not $bCierrePermitido Then
+    Stop Event
+    CerrarFormulario()
+  Endif
+
+End
+
+' ============================================
+' Función   : CerrarFormulario
+' Propósito : Cierre programático. Descarta el lote para no dejar el
+'             modelo cargado en memoria entre aperturas.
+' ============================================
+Private Sub CerrarFormulario()
+
+  m_AuditarJats.Limpiar()
+  $bCierrePermitido = True
+  Me.Close()
+
+End
+
+Public Sub btnCerrar_Click()
+
+  CerrarFormulario()
+
+End
+
+' ============================================
+' 3. ARMADO DE LA INTERFAZ
+' ============================================
+
+' ============================================
+' Función   : PrepararGrillaArchivos
+' Propósito : Define columnas y anchos de gvAuditoria. Son entre 4 y 7
+'             filas, así que entran sin scroll en el alto disponible.
+' ============================================
+Private Sub PrepararGrillaArchivos()
+
+  gvAuditoria.Clear
+  gvAuditoria.Rows.Count = 0
+  gvAuditoria.Columns.Count = 10
+
+  gvAuditoria.Columns[0].Text = ("Archivo")
+  gvAuditoria.Columns[1].Text = ("BF")
+  gvAuditoria.Columns[2].Text = ("JATS")
+  gvAuditoria.Columns[3].Text = ("Generador")
+  gvAuditoria.Columns[4].Text = ("Palabras")
+  gvAuditoria.Columns[5].Text = ("Recursos")
+  gvAuditoria.Columns[6].Text = ("Bloq.")
+  gvAuditoria.Columns[7].Text = ("Sin art.")
+  gvAuditoria.Columns[8].Text = ("Degr.")
+  gvAuditoria.Columns[9].Text = ("Reut.")
+
+  gvAuditoria.Columns[0].Width = 190
+  gvAuditoria.Columns[1].Width = 34
+  gvAuditoria.Columns[2].Width = 66
+  gvAuditoria.Columns[3].Width = 150
+  gvAuditoria.Columns[4].Width = 66
+  gvAuditoria.Columns[5].Width = 70
+  gvAuditoria.Columns[6].Width = 50
+  gvAuditoria.Columns[7].Width = 56
+  gvAuditoria.Columns[8].Width = 50
+  gvAuditoria.Columns[9].Width = 50
+
+End
+
+' ============================================
+' Función   : PrepararGrillaHallazgos
+' Propósito : Define columnas y anchos de gvHallazgos.
+'
+'             Dos calificadores no llevan columna propia para no
+'             gastar ancho: los hallazgos universales del ecosistema
+'             se marcan con "·eco" en la columna de frecuencia, y los
+'             de detección heurística anteponen "Posible:" al mensaje.
+' ============================================
+Private Sub PrepararGrillaHallazgos()
+
+  gvHallazgos.Clear
+  gvHallazgos.Rows.Count = 0
+  gvHallazgos.Columns.Count = 7
+
+  gvHallazgos.Columns[0].Text = ("Impacto")
+  gvHallazgos.Columns[1].Text = ("n/N")
+  gvHallazgos.Columns[2].Text = ("Corrección")
+  gvHallazgos.Columns[3].Text = ("Código")
+  gvHallazgos.Columns[4].Text = ("Mensaje")
+  gvHallazgos.Columns[5].Text = ("Ocurr.")
+  gvHallazgos.Columns[6].Text = ("Ubicación")
+
+  gvHallazgos.Columns[0].Width = 92
+  gvHallazgos.Columns[1].Width = 62
+  gvHallazgos.Columns[2].Width = 90
+  gvHallazgos.Columns[3].Width = 110
+  gvHallazgos.Columns[4].Width = ANCHO_MENSAJE
+  gvHallazgos.Columns[5].Width = 52
+  gvHallazgos.Columns[6].Width = 130
+
+End
+
+' ============================================
+' Función   : PoblarFiltros
+' Propósito : Carga los desplegables con etiquetas legibles y arma los
+'             arrays paralelos con los códigos que entiende el modelo.
+'             La primera opción de cada uno es cadena vacía, que en
+'             m_AuditarJats significa "sin filtrar".
+' ============================================
+Private Sub PoblarFiltros()
+
+  ' --- 1. IMPACTO ---
+  cmbImpacto.Clear
+  $aValoresImpacto = New String[]
+
+  cmbImpacto.Add(("Todo impacto"))
+  $aValoresImpacto.Add("")
+  cmbImpacto.Add(("Bloqueante"))
+  $aValoresImpacto.Add(m_Constantes.GBA_IMPACTO_BLOQUEANTE)
+  cmbImpacto.Add(("Sin artículo"))
+  $aValoresImpacto.Add(m_Constantes.GBA_IMPACTO_VACIO)
+  cmbImpacto.Add(("Degradante"))
+  $aValoresImpacto.Add(m_Constantes.GBA_IMPACTO_DEGRADANTE)
+  cmbImpacto.Add(("Reutilización"))
+  $aValoresImpacto.Add(m_Constantes.GBA_IMPACTO_REUTILIZACION)
+  cmbImpacto.Index = 0
+
+  ' --- 2. CORRECCIÓN ---
+  cmbCorreccion.Clear
+  $aValoresCorreccion = New String[]
+
+  cmbCorreccion.Add(("Toda corrección"))
+  $aValoresCorreccion.Add("")
+  cmbCorreccion.Add(("Automática"))
+  $aValoresCorreccion.Add(m_Constantes.GBA_CORRECCION_AUTOMATICA)
+  cmbCorreccion.Add(("Editorial"))
+  $aValoresCorreccion.Add(m_Constantes.GBA_CORRECCION_EDITORIAL)
+  cmbCorreccion.Add(("En origen"))
+  $aValoresCorreccion.Add(m_Constantes.GBA_CORRECCION_ORIGEN)
+  cmbCorreccion.Index = 0
+
+End
+
+' ============================================
+' 4. REFRESCO
+' ============================================
+
+' ============================================
+' Función   : ActualizarPantalla
+' Propósito : Sincroniza las dos grillas, el aviso y la habilitación
+'             de botones con el estado del módulo. Punto único de
+'             refresco: ningún handler toca la interfaz por su cuenta.
+' ============================================
+Private Sub ActualizarPantalla()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim bHay As Boolean
+
+  bHay = m_AuditarJats.HayAuditoria()
+
+  ' --- 2. GRILLAS ---
+  ' FIJAR Rows.Count ALCANZA: EL EVENTO Data VUELVE A PEDIR LAS CELDAS
+  gvAuditoria.Rows.Count = m_AuditarJats.FilasArchivos()
+  gvHallazgos.Rows.Count = m_AuditarJats.FilasVista()
+  gvAuditoria.Refresh
+  gvHallazgos.Refresh
+
+  ' --- 3. LÍNEA DE RESUMEN ---
+  txtAviso.Text = m_AuditarJats.TextoResumen()
+
+  ' --- 4. PANEL DE DETALLE ---
+  txtHallazgos.Text = ""
+
+  ' --- 5. HABILITACIÓN ---
+  btnGenerarInforme.Enabled = m_AuditarJats.PuedeGenerarInforme()
+  ' btnGenerarInforme.Enabled = bHay
+  btnLimpiar.Enabled = bHay
+  cmbImpacto.Enabled = bHay
+  cmbCorreccion.Enabled = bHay
+
+End
+
+' ============================================
+' 5. CARGA Y ANÁLISIS
+' ============================================
+
+' ============================================
+' Función   : btnBuscarXML_Click
+' Propósito : Pide la carpeta y dispara la auditoría del lote.
+'
+'             La selección es POR CARPETA y no por archivos sueltos.
+'             Eso resuelve tres cosas de una: la carpeta es la unidad
+'             de revista, es donde se escribe el informe sin
+'             preguntarle nada al usuario, y es contra ella que se
+'             resuelven las imágenes referenciadas por los XML.
+' ============================================
+Public Sub btnBuscarXML_Click()
+
+  ' --- 1. SELECCIÓN Y GUARDAS ---
+  ' EL ORDEN ES: CARPETA LEGIBLE, ESCRIBIBLE, CON XML. TODO ESO VIVE
+  ' EN EL MÓDULO; ACÁ SOLO SE MIRA EL RESULTADO
+  If Not m_AuditarJats.SeleccionarCarpeta() Then Return
+
+  '   ' --- 2. ANÁLISIS DEL LOTE ---
+  Me.Mouse = Mouse.Wait
+  txtAviso.Text = ("Analizando...")
+  btnBuscarXML.Enabled = False
+  btnLimpiar.Enabled = False
+  btnGenerarInforme.Enabled = False
+
+  If Not m_AuditarJats.AuditarCarpeta() Then
+    btnBuscarXML.Enabled = True
+    Me.Mouse = Mouse.Default
+    ActualizarPantalla()
+    Return
+  Endif
+
+  btnBuscarXML.Enabled = True
+  Me.Mouse = Mouse.Default
+
+  ' --- 3. REFRESCO ---
+  ActualizarPantalla()
+
+End
+
+' ============================================
+' Función   : btnLimpiar_Click
+' Propósito : Descarta el lote actual sin cerrar el formulario.
+' ============================================
+Public Sub btnLimpiar_Click()
+
+  m_AuditarJats.Limpiar()
+  cmbImpacto.Index = 0
+  cmbCorreccion.Index = 0
+  ActualizarPantalla()
+
+End
+
+' ============================================
+' 6. EVENTOS DE LAS GRILLAS
+' ============================================
+
+' ============================================
+' Función   : gvAuditoria_Data
+' Propósito : Provee una celda de la grilla de archivos. Solo indexa.
+' ============================================
+Public Sub gvAuditoria_Data(Row As Integer, Column As Integer)
+
+  gvAuditoria.Data.Text = m_AuditarJats.CeldaArchivo(Row, Column)
+
+End
+
+' ============================================
+' Función   : gvHallazgos_Data
+' Propósito : Provee una celda de la grilla de hallazgos.
+'
+'             ES RUTA CALIENTE: el grid vuelve a pedir las celdas en
+'             cada repintado y no cachea nada, así que acá no puede
+'             haber concatenación, formateo ni resolución de códigos
+'             contra el catálogo. Todo eso ya se hizo una sola vez al
+'             reconstruir la vista.
+' ============================================
+Public Sub gvHallazgos_Data(Row As Integer, Column As Integer)
+
+  gvHallazgos.Data.Text = m_AuditarJats.CeldaVista(Row, Column)
+
+End
+
+' ============================================
+' Función   : gvAuditoria_Click
+' Propósito : Filtra los hallazgos por el archivo seleccionado. Un
+'             segundo click sobre el mismo archivo vuelve a la vista
+'             consolidada, que es la que muestra la frecuencia y es
+'             donde se decide sobre qué artículo informar.
+' ============================================
+Public Sub gvAuditoria_Click()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oArchivo As CArchivoAuditado
+
+  oArchivo = m_AuditarJats.ArchivoEnFila(gvAuditoria.Row)
+  If Not oArchivo Then Return
+
+  ' --- 2. ALTERNANCIA ENTRE FILTRADO Y CONSOLIDADO ---
+  If m_AuditarJats.FiltroArchivoActivo() = oArchivo.sId Then
+    m_AuditarJats.FiltrarPorArchivo("")
+  Else
+    m_AuditarJats.FiltrarPorArchivo(oArchivo.sId)
+  Endif
+
+  ' --- 3. REFRESCO SOLO DE LA GRILLA DE HALLAZGOS ---
+  gvHallazgos.Rows.Count = m_AuditarJats.FilasVista()
+  gvHallazgos.Refresh
+  txtHallazgos.Text = ""
+
+End
+
+' ============================================
+' Función   : gvHallazgos_Click
+' Propósito : Vuelca el detalle largo del hallazgo seleccionado. El
+'             mensaje completo no entra en una celda, y el mensaje es
+'             el producto.
+' ============================================
+Public Sub gvHallazgos_Click()
+
+  Dim oHallazgo As CHallazgo
+
+  oHallazgo = m_AuditarJats.HallazgoEnFila(gvHallazgos.Row)
+  If Not oHallazgo Then
+    txtHallazgos.Text = ""
+    Return
+  Endif
+
+  txtHallazgos.Text = m_AuditarJats.DetalleHallazgo(oHallazgo)
+
+End
+
+' ============================================
+' Función   : gvHallazgos_ColumnClick
+' Propósito : Ordena por la columna clickeada. El módulo reordena el
+'             MODELO y reconstruye la vista; acá solo se refresca.
+'             Sin columna elegida rige el orden canónico, que pone
+'             arriba lo más grave aunque su corrección sea trivial.
+' ============================================
+Public Sub gvHallazgos_ColumnClick(Column As Integer)
+
+  m_AuditarJats.OrdenarVistaHallazgos(Column)
+  gvHallazgos.Refresh
+
+End
+
+' ============================================
+' 7. FILTROS
+' ============================================
+
+Public Sub cmbImpacto_Click()
+
+  ' --- 1. GUARDA: EL ÍNDICE PUEDE VENIR EN -1 AL LIMPIAR EL COMBO ---
+  If cmbImpacto.Index < 0 Then Return
+  If cmbImpacto.Index > $aValoresImpacto.Max Then Return
+
+  ' --- 2. APLICACIÓN ---
+  m_AuditarJats.FiltrarPorImpacto($aValoresImpacto[cmbImpacto.Index])
+  gvHallazgos.Rows.Count = m_AuditarJats.FilasVista()
+  gvHallazgos.Refresh
+  txtHallazgos.Text = ""
+
+End
+
+Public Sub cmbCorreccion_Click()
+
+  ' --- 1. GUARDA ---
+  If cmbCorreccion.Index < 0 Then Return
+  If cmbCorreccion.Index > $aValoresCorreccion.Max Then Return
+
+  ' --- 2. APLICACIÓN ---
+  m_AuditarJats.FiltrarPorCorreccion($aValoresCorreccion[cmbCorreccion.Index])
+  gvHallazgos.Rows.Count = m_AuditarJats.FilasVista()
+  gvHallazgos.Refresh
+  txtHallazgos.Text = ""
+
+End
+
+' ============================================
+' 8. INFORME
+' ============================================
+
+' ============================================
+' Función   : btnGenerarInforme_Click
+' Propósito : Emite el informe HTML autocontenido en la misma carpeta
+'             de la que salieron los XML, sin preguntarle al usuario
+'             dónde guardarlo.
+'
+'             El informe es de la REVISTA, no de un archivo suelto: la
+'             frecuencia n/N solo tiene sentido sobre el lote. El
+'             archivo seleccionado en gvAuditoria, si hay uno, se usa
+'             como caso de referencia para los ejemplos concretos.
+' ============================================
+Public Sub btnGenerarInforme_Click()
+
+  ' --- 1. GUARDA ---
+  If Not m_AuditarJats.HayAuditoria() Then Return
+
+  ' --- 2. GENERACIÓN ---
+  ' PENDIENTE: escribir el informe canónico XML y transformarlo con
+  ' Saxon a HTML autocontenido. Requiere el catálogo de mensajes, que
+  ' es el trabajo que sigue.
+  m_Sonido.sonar("Error")
+  Message.Info(("La generación del informe todavía no está implementada."))
+
+End

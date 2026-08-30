@@ -3576,3 +3576,136 @@ Public Function CapitalizarTexto(sTexto As String) As String
   Return sResultado
 
 End
+
+' ============================================
+' Función   : PlegarTextoAMinuscula
+' Propósito : Devuelve el texto completo en minúsculas, plegando
+'             codepoint a codepoint con la tabla explícita del módulo.
+'             Es el envoltorio por texto de PlegarAMinuscula, para los
+'             casos en que hay que comparar cadenas sin distinguir
+'             caja de manera reproducible entre máquinas.
+' Parámetros: sTexto As String — texto a plegar
+' Retorna   : String — texto en minúsculas, de igual cantidad de codepoints
+' ============================================
+Public Function PlegarTextoAMinuscula(sTexto As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iPos As Integer
+  Dim iLongitud As Integer
+  Dim iCodigo As Integer
+  Dim sCaracter As String
+  Dim sResultado As String
+
+  sResultado = ""
+  iLongitud = String.Len(sTexto)
+
+  ' --- 2. RECORRIDO CODEPOINT A CODEPOINT (RC-GM-12) ---
+  For iPos = 1 To iLongitud
+
+    sCaracter = String.Mid(sTexto, iPos, 1)
+    iCodigo = String.Code(sCaracter)
+
+    ' LO QUE NO TIENE PLEGADO CONOCIDO ATRAVIESA SIN TOCAR:
+    ' PlegarAMinuscula YA DEVUELVE EL CARÁCTER TAL CUAL EN ESE CASO
+    sResultado &= PlegarAMinuscula(iCodigo)
+
+  Next
+
+  ' --- 3. RETORNO ---
+  Return sResultado
+
+End
+
+' ============================================
+' Función   : SanearNombreArchivo
+' Propósito : Convierte un texto arbitrario en un fragmento de nombre
+'             de archivo utilizable: letras en minúscula, dígitos y
+'             guiones. Se usa para derivar el nombre del informe de
+'             auditoría a partir de la clave de la revista, que suele
+'             ser un ISSN pero puede ser el título completo cuando el
+'             archivo no declara ninguno.
+'
+'             Los acentos SE CONSERVAN. UTF-8 es estándar en los
+'             sistemas de archivos actuales y no hay razón para
+'             degradar "Educación" a "educacion".
+'
+'             El criterio de aceptación es lista blanca: se admite lo
+'             que EsLetra reconoce como letra, más los dígitos. Todo
+'             lo demás actúa como separador. Eso deja fuera, sin
+'             necesidad de enumerarlos, la barra de directorio, los
+'             dos puntos, el asterisco, las comillas y el resto de los
+'             caracteres que rompen un nombre de archivo en un sistema
+'             u otro.
+'
+' Parámetros: sTexto As String — texto de origen
+' Retorna   : String — fragmento saneado, nunca vacío
+' ============================================
+
+Private Const LARGO_MAXIMO_NOMBRE As Integer = 60
+
+Public Function SanearNombreArchivo(sTexto As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iPos As Integer
+  Dim iLongitud As Integer
+  Dim iCodigo As Integer
+  Dim sCaracter As String
+  Dim sResultado As String
+  Dim bAdmitido As Boolean
+  Dim bGuionPendiente As Boolean
+
+  sResultado = ""
+  ' LA BANDERA ARRANCA EN FALSE PARA QUE UN TEXTO QUE EMPIEZA CON
+  ' SIGNOS NO GENERE UN GUION INICIAL, QUE ADEMÁS OCULTARÍA EL ARCHIVO
+  ' SI FUERA UN PUNTO
+  bGuionPendiente = False
+
+  ' --- 2. PLEGADO A MINÚSCULA POR TABLA EXPLÍCITA ---
+  sTexto = PlegarTextoAMinuscula(sTexto)
+  iLongitud = String.Len(sTexto)
+
+  ' --- 3. RECORRIDO CODEPOINT A CODEPOINT (RC-GM-12) ---
+  For iPos = 1 To iLongitud
+
+    sCaracter = String.Mid(sTexto, iPos, 1)
+    iCodigo = String.Code(sCaracter)
+
+    ' LISTA BLANCA: LETRA O DÍGITO.
+    ' RC-GM-17: LOS DOS CRITERIOS SE EVALÚAN POR SEPARADO Y SE DECIDE
+    ' DESPUÉS, SIN COMBINARLOS EN UNA EXPRESIÓN Or
+    bAdmitido = False
+    If EsLetra(iCodigo) Then bAdmitido = True
+    If iCodigo >= 48 Then
+      If iCodigo <= 57 Then bAdmitido = True
+    Endif
+
+    If bAdmitido Then
+      ' EL GUION PENDIENTE SE ESCRIBE RECIÉN CUANDO HAY ALGO DESPUÉS,
+      ' ASÍ NO QUEDAN GUIONES REPETIDOS NI UN GUION FINAL
+      If bGuionPendiente Then
+        sResultado &= "-"
+        bGuionPendiente = False
+      Endif
+      sResultado &= sCaracter
+    Else
+      ' CUALQUIER SIGNO O ESPACIO MARCA SEPARACIÓN, PERO SOLO SI YA
+      ' HAY CONTENIDO ACUMULADO
+      If sResultado <> "" Then bGuionPendiente = True
+    Endif
+
+    ' --- CORTE POR LARGO, MEDIDO EN CODEPOINTS Y NO EN BYTES ---
+    If String.Len(sResultado) >= LARGO_MAXIMO_NOMBRE Then Break
+  Next
+
+  ' --- 4. RED DE SEGURIDAD ---
+  ' EL NOMBRE DEL INFORME DEPENDE DE ESTO, ASÍ QUE NUNCA SE DEVUELVE
+  ' CADENA VACÍA. EsLetra NO RECONOCE CIRÍLICO, GRIEGO NI CJK, DE MODO
+  ' QUE UN TÍTULO ÍNTEGRAMENTE EN ESOS ALFABETOS NO DEJA NINGÚN
+  ' CARÁCTER UTILIZABLE. NO ES HIPOTÉTICO: EN EL CORPUS DE REFERENCIA
+  ' HAY UNA REVISTA RUSA
+  If sResultado = "" Then Return "revista"
+
+  ' --- 5. RETORNO ---
+  Return sResultado
+
+End
