@@ -206,4 +206,263 @@ Los no encontrados van a **stderr**, no a stdout, y la salida viene ordenada alf
 
 **El servidor de base de datos no debe verificarse en el cliente.** gbpublisher es multiusuario contra una base compartida que normalmente vive en otra máquina, así que buscar `mysqld` en el PATH local da fallo en toda instalación cliente. Lo que el cliente necesita es el driver (`gambas3-gb-db2-mysql`); que el servidor responda lo prueba la conexión real.
 
+---
+
+# Sesión del auditor de XML JATS (agosto 2026)
+
+Los comportamientos de abajo se verificaron sobre **Gambas 3.22 / Qt5 / Linux Mint**, durante el desarrollo de `m_AuditarJats` y del banco de pruebas `FPruebaAuditor`. A diferencia del resto del documento, estas pruebas corrieron en la máquina de desarrollo real y no en contenedor.
+
+Tres de ellos costaron más de una hora de diagnóstico cada uno, y en los tres casos por la misma razón: **el error se manifiesta lejos de su causa**.
+
+---
+
+## 9. Nombres reservados
+
+**`Log` es una función interna de Gambas** — el logaritmo natural — y no puede usarse como nombre de un `Sub`. La declaración compila sin quejarse; el error aparece en el *punto de llamada* como incompatibilidad de tipos, porque el compilador resuelve a la función matemática.
+
+```
+Private Sub Log(sTexto As String)   ' COMPILA
+...
+Log("hola")                          ' ERROR DE TIPO: espera un número
+```
+
+Del mismo tenor: `Exp`, `Abs`, `Int`, `Sgn`, `Str`, `Val`, `Left`, `Right`, `Mid`, `Len`, `Space`, `Format`, `Timer`, `Point`, `Line`.
+
+REGLA: para funciones internas de un módulo, nombres de dos palabras o con prefijo del módulo. Viene de VB, donde no hay colisión.
+
+---
+
+## 10. Conversión de Boolean a texto
+
+**`CStr(True)` devuelve `"T"` y `CStr(False)` devuelve CADENA VACÍA.** No `"True"`/`"False"`.
+
+```
+CStr(True)   = T
+CStr(False)  =            (vacío)
+```
+
+Esto es peor que una convención rara: un `False` se vuelve **indistinguible de un campo vacío, de un NULL o de un dato que nunca se calculó**. En una grilla o en un informe, "no cumple" se renderiza como nada.
+
+Y engancha con RC-GM-01: MySQL devuelve `TINYINT(1)` como Boolean, así que cualquier campo booleano de la base que pase por `CStr()` para mostrarse tiene este comportamiento.
+
+REGLA: nunca `CStr()` sobre un Boolean para salida. Conversión explícita, `IIf(bValor, "sí", "no")` o un helper.
+
+---
+
+## 11. Ámbito de `Const`
+
+**`Const` no se puede declarar dentro de un `Sub` o `Function`.** Es declaración de módulo o de clase; un `Const` local es error de compilación.
+
+Combinado con lo ya verificado —que `Const` y `Private` a mitad de módulo compilan y funcionan— la regla práctica es: la constante va inmediatamente antes de la función que la usa si es de uso interno, o en `m_Constantes` si la comparten varias.
+
+Otra herencia de VB/.NET, donde el `Const` local sí existe.
+
+---
+
+## 12. Precedencia de `Not`
+
+**`Not` es unario y liga antes que los operadores de comparación de cadenas.**
+
+```
+If Not sNombre Begins "auditoria-" Then    ' SE LEE (Not sNombre) Begins "..."
+                                          ' -> ERROR DE TIPO
+```
+
+Es la misma familia que RC-GM-17, con otra causa: allí el problema es que `And`/`Or` no cortocircuitan; acá es la precedencia. La salida es la misma en los dos casos: **separar**.
+
+```gambas
+For Each sNombre In aTodos
+  If sNombre Begins "auditoria-" Then Continue
+  aFiltrados.Add(sNombre)
+Next
+```
+
+REGLA: no encadenar un operador lógico con otro operador en la misma expresión.
+
+---
+
+## 13. `Array.Insert` no inserta un elemento
+
+**`Insert()` empalma OTRO ARRAY dentro del array.** Para insertar un elemento en una posición se usa `Add(Valor, Índice)`.
+
+```
+aOrdenados.Insert(oHallazgo, j)   ' ERROR DE TIPO: espera un array
+aOrdenados.Add(oHallazgo, j)      ' CORRECTO
+```
+
+---
+
+## 14. Arrays de clases propias
+
+**`Dim a As New CMiClase[]` compila y funciona**, y el array guarda **referencias, no copias**.
+
+```
+aHallazgos[0].iOcurrencias = 999
+For Each o In aHallazgos : Print o.iOcurrencias   ' 999 -> son referencias
+```
+
+Consecuencia práctica: una vista filtrada puede ser un segundo array con punteros a los mismos objetos. Filtrar es barato y no duplica datos.
+
+`Remove(i)` reindexa, así que nunca borrar dentro de un `For` ascendente sobre el mismo array.
+
+---
+
+## 15. GridView virtual
+
+**El GridView es virtual: el evento `Data` solo se dispara para las celdas visibles.** Medido con 5.000 filas × 3 columnas:
+
+| celdas declaradas | disparos de `Data` en el primer pintado |
+|---|---|
+| 15.000 | 72 |
+
+**Pero NO cachea.** Vuelve a pedir cada celda en cada repintado, para siempre: los incrementos observados fueron +18, +18, +18, +39, +21 con cada click.
+
+Consecuencia dura: el handler `Data` es ruta caliente. No puede tener concatenación, formateo, búsqueda en `Collection` ni resolución contra un catálogo en disco. Solo indexar un array ya formateado.
+
+La celda se escribe con `gvNombre.Data.Text` dentro del evento. Y `ColumnClick(Column As Integer)` **existe** y devuelve el índice de la columna, así que el ordenamiento por encabezado se cuelga de ahí.
+
+---
+
+## 16. `Dialog.SelectDirectory()` devuelve True al CANCELAR
+
+Convención de Gambas, al revés de lo que sugiere el instinto. `Dialog.Path` conserva la ruta elegida, y preasignarlo antes fija la carpeta inicial.
+
+```gambas
+Dialog.Title = "Seleccionar carpeta"
+Dialog.Path = $sUltimaCarpeta
+If Dialog.SelectDirectory() Then Return   ' TRUE = EL USUARIO CANCELÓ
+```
+
+---
+
+## 17. Procesos: `Wait()` y los eventos son incompatibles
+
+**El más caro de la sesión.** La documentación oficial lo dice, pero es fácil no reparar en ello: mientras se ejecuta un procedimiento, el intérprete **no entra al bucle de eventos**.
+
+Por lo tanto `hProceso.Wait()` bloquea el procedimiento y los eventos `Read` y `Error` **no se disparan nunca**. Nadie drena las tuberías del proceso hijo, y si el hijo escribe lo suficiente para llenar el búfer del sistema queda bloqueado escribiendo. Espera mutua: la aplicación espera al proceso y el proceso espera a que alguien lea. **La aplicación se cuelga sin ningún mensaje.**
+
+La forma correcta usa la **sentencia** `Wait`, que es el mecanismo documentado para forzar la entrada al bucle de eventos, con una señal levantada por el evento `Kill`:
+
+```gambas
+$bProcesoTerminado = False
+Try hProceso = Exec aComando For Read As "ProcHerramienta"
+If Error Then ...
+
+fVencimiento = Timer + 30.0
+While Not $bProcesoTerminado
+  Wait 0.01
+  If Timer > fVencimiento Then
+    Try hProceso.Kill()
+    Return -2
+  Endif
+Wend
+
+' EL EVENTO Kill PUEDE LLEGAR ANTES QUE LOS ÚLTIMOS TROZOS
+For iDrenaje = 1 To 10
+  Wait 0.01
+Next
+```
+
+El vencimiento de plazo no es opcional cuando la entrada viene de terceros: una herramienta puede colgarse con un archivo patológico.
+
+Y como la sentencia `Wait` deja correr los eventos de la interfaz, durante la espera **los botones son pulsables**: hace falta una bandera de reentrada.
+
+---
+
+## 18. Las firmas de los handlers de eventos NO son uniformes
+
+**Y se validan al LANZAR, no al compilar.**
+
+| evento de `Process` | firma |
+|---|---|
+| `Read` | **sin parámetros**; se lee con `Line Input #Last` o `Read #Last, sVar, Lof(Last)` |
+| `Error` | **con parámetro**: `Error(sDatos As String)` |
+| `Kill` | sin parámetros; el código de salida en `Last.Value` |
+
+Una firma equivocada compila perfectamente y hace fallar el `Exec` en tiempo de ejecución:
+
+```
+ERROR AL LANZAR: Bad event handler in Modulo.ProcX_Error(): Not enough arguments
+```
+
+Esto obliga a `Try` + `If Error` sobre el propio `Exec` (RC-GM-02), y a que ese error **se informe a algún lado**: en nuestro caso el mensaje existía pero se escribía en el canal de stderr, que el llamador descartaba cuando el código de salida no era cero. El síntoma visible fue "todos los archivos aparecen como no válidos", a metros de la causa.
+
+---
+
+## 19. stderr llega FRAGMENTADO
+
+Los datos del evento `Error` llegan en **trozos de 256 bytes que parten líneas al medio**, e incluso pueden partir un carácter multibyte:
+
+```
+[STDERR] largo=256 -> ...Premature end of data in tag a line 1\n<a><b>sin cerrar</a>\n
+[STDERR] largo=18  -> ^\n
+```
+
+REGLA: el handler **solo acumula**. Nunca parsear ahí. Concatenar primero y recién después usar `String.*`; validar o cortar trozo por trozo rompería la codificación (SC-02, RC-GM-12).
+
+Lo mismo vale para stdout cuando la salida es larga.
+
+---
+
+## 20. `Exec ... To` para stdout, eventos para stderr
+
+**`Exec ... To` NO captura stderr.** Verificado: con un XML mal formado, `xmllint` reportó el error y la variable quedó con largo 0.
+
+Pero **sí captura stdout**, y eso alcanza y sobra cuando la herramienta entrega su resultado por la salida estándar:
+
+```gambas
+' RESULTADO POR STDOUT: FORMA SÍNCRONA, CINCO LÍNEAS
+Try Exec ["xmllint", "--nonet", "--xpath", sExpresion, sRuta] To sSalida
+
+' DIAGNÓSTICOS POR STDERR: HACE FALTA EL MECANISMO DE EVENTOS
+```
+
+REGLA: el aparato asíncrono, con su bucle de espera, su drenaje y su vencimiento de plazo, se reserva para cuando hay que leer la **salida de error**. Para todo lo demás, la forma síncrona.
+
+---
+
+## 21. Saxon-HE no expone NINGUNA función de extensión `saxon:`
+
+No es que falte `saxon:line-number()`: es el namespace entero.
+
+```
+XPST0017  Cannot find a 1-argument function named Q{http://saxon.sf.net/}line-number().
+Saxon extension functions are not available under Saxon-HE
+```
+
+Verificado sobre **SaxonJ-HE 12.9 / Java 21**, con `-l:on` y sin él.
+
+Vale para todos los XSLT del proyecto, no solo para el auditor: cualquier `saxon:evaluate()`, `saxon:serialize()` o `saxon:parse()` de un ejemplo de internet está fuera de alcance.
+
+---
+
+## 22. `xmllint --xpath` no conoce los namespaces del documento
+
+Aunque el documento declare `xmlns:xlink`, la expresión falla:
+
+```
+xmllint --xpath '//graphic/@xlink:href' archivo.xml
+  -> XPath error : Undefined namespace prefix
+```
+
+La forma agnóstica funciona y además sirve para los archivos que declaran el mismo namespace con otro prefijo:
+
+```
+xmllint --xpath "//graphic/@*[local-name()='href']" archivo.xml
+```
+
+Consecuencia para el auditor: los XPath que se muestran como ubicación de un hallazgo deben escribirse así, no con el prefijo — si no, el proveedor de la revista los pega en su editor y no funcionan.
+
+---
+
+## 23. El patrón que se repitió tres veces en esta sesión
+
+No es un comportamiento de Gambas sino una consecuencia de varios de ellos, y merece quedar escrito:
+
+> **Un `Try` seguido de `Return` silencioso es un canal mudo.** Si el `If Error` no informa a algún lado —ni siquiera con un `Print` durante el desarrollo— el fallo se manifiesta lejos de su causa, como un resultado vacío que parece un dato legítimo.
+
+Los tres casos de la sesión: el `Exec` que fallaba por una firma de handler y devolvía su mensaje por un canal que el llamador descartaba; el `Line Input` que perdía la salida sin salto de línea final y devolvía cadena vacía; y los `Return Null` de `AnalizarArchivo`, que hacían desaparecer archivos de la grilla sin explicación.
+
+RC-GM-02 no pide solo verificar el error: pide **hacer algo** con él.
+
 
