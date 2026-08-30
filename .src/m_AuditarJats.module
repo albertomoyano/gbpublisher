@@ -607,6 +607,12 @@ Private Function AnalizarArchivo(sRuta As String, sId As String) As CArchivoAudi
     Endif
   Endif
 
+  ' 4.5 IDENTIFICACIÓN DE LA REVISTA
+  ' Se toma del primer archivo que la declare y después se verifica
+  ' que los demás coincidan. La carpeta es la unidad de revista; el
+  ' ISSN sirve para confirmar que efectivamente hay una sola adentro.
+  IdentificarRevista(oArchivo)
+
   ' --- 5. CAPA B: BUENA FORMACIÓN ---
   oArchivo.bBienFormado = VerificarBuenaFormacion(oArchivo, bDesfasajeEncoding)
 
@@ -2570,5 +2576,140 @@ Private Function BuscarMensaje(sCodigo As String) As CMensaje
   If Not $cCatalogo.Exist(sCodigo) Then Return Null
 
   Return $cCatalogo[sCodigo]
+
+End
+
+' ============================================
+' Función   : IdentificarRevista
+' Propósito : Completa el título y los ISSN de la revista a partir de
+'             un archivo, y verifica que todos los archivos del lote
+'             declaren la misma.
+'
+'             La carpeta es la unidad de agrupamiento; el ISSN es una
+'             VERIFICACIÓN de coherencia. Si aparecen dos revistas
+'             distintas, no es un caso a soportar en silencio: es un
+'             aviso de que la carpeta está mezclada, y probablemente
+'             un error al armarla.
+'
+' Parámetros: oArchivo As CArchivoAuditado — archivo ya parseado
+' Retorna   : nada
+' ============================================
+Private Sub IdentificarRevista(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTitulo As String
+  Dim sElectronico As String
+  Dim sImpreso As String
+
+  If Not $oRevista Then Return
+
+  ' --- 2. LECTURA ---
+  sTitulo = Trim(ConsultarXPath(oArchivo.sRuta, "string(//journal-meta//journal-title)"))
+  sElectronico = LeerIssn(oArchivo.sRuta, "electronico")
+  sImpreso = LeerIssn(oArchivo.sRuta, "impreso")
+
+  ' --- 3. PRIMER ARCHIVO QUE DECLARA CADA DATO: SE ADOPTA ---
+  ' No todos los archivos declaran todo, así que se completa de a
+  ' partes en lugar de tomar todo del primero
+  If $oRevista.sTitulo = "" Then $oRevista.sTitulo = sTitulo
+  If $oRevista.sIssnElectronico = "" Then $oRevista.sIssnElectronico = sElectronico
+  If $oRevista.sIssnImpreso = "" Then $oRevista.sIssnImpreso = sImpreso
+
+  ' --- 4. COHERENCIA DEL LOTE ---
+  ' Solo se compara contra lo ya adoptado y solo si el archivo declara
+  ' algo: un archivo sin ISSN no contradice a nadie
+  If sElectronico <> "" Then
+    If $oRevista.sIssnElectronico <> "" Then
+      If sElectronico <> $oRevista.sIssnElectronico Then $oRevista.bRevistaUnica = False
+    Endif
+  Endif
+
+  If sImpreso <> "" Then
+    If $oRevista.sIssnImpreso <> "" Then
+      If sImpreso <> $oRevista.sIssnImpreso Then $oRevista.bRevistaUnica = False
+    Endif
+  Endif
+
+End
+
+' ============================================
+' Función   : LeerIssn
+' Propósito : Devuelve el ISSN de un tipo dado, buscándolo en las dos
+'             convenciones de atributo que conviven en la práctica.
+'
+'             @pub-type es la forma legacy y @publication-format la
+'             moderna. Ambas están vivas en producción, así que se
+'             consultan las dos y gana la primera que devuelva algo.
+'
+' Parámetros: sRuta As String — archivo a consultar
+'             sTipo As String — 'electronico' o 'impreso'
+' Retorna   : String — el ISSN, o cadena vacía
+' ============================================
+Private Function LeerIssn(sRuta As String, sTipo As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sLegacy As String
+  Dim sModerno As String
+  Dim sValor As String
+
+  ' --- 2. VALORES DE ATRIBUTO SEGÚN EL TIPO PEDIDO ---
+  If sTipo = "electronico" Then
+    sLegacy = "epub"
+    sModerno = "electronic"
+  Else
+    sLegacy = "ppub"
+    sModerno = "print"
+  Endif
+
+  ' --- 3. CONVENCIÓN LEGACY, QUE ES LA MÁS EXTENDIDA ---
+  sValor = Trim(ConsultarXPath(sRuta, "string(//journal-meta/issn[@pub-type='" & sLegacy & "'])"))
+  If sValor <> "" Then Return NormalizarIssn(sValor)
+
+  ' --- 4. CONVENCIÓN MODERNA ---
+  sValor = Trim(ConsultarXPath(sRuta, "string(//journal-meta/issn[@publication-format='" & sModerno & "'])"))
+  If sValor <> "" Then Return NormalizarIssn(sValor)
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : NormalizarIssn
+' Propósito : Deja el ISSN en la forma canónica NNNN-NNNN. Hace falta
+'             porque el valor va a la clave de agrupamiento y al
+'             nombre del archivo de informe: dos escrituras distintas
+'             del mismo ISSN partirían el lote en dos revistas.
+' Parámetros: sValor As String — ISSN tal como viene del archivo
+' Retorna   : String — ISSN normalizado, o el original si no encaja
+' ============================================
+Private Function NormalizarIssn(sValor As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sLimpio As String
+  Dim iPos As Integer
+  Dim iCodigo As Integer
+  Dim sCaracter As String
+
+  ' --- 2. SE CONSERVAN SOLO DÍGITOS Y LA X DE CONTROL ---
+  ' RC-GM-12: recorrido por codepoint, no por byte
+  For iPos = 1 To String.Len(sValor)
+
+    sCaracter = String.Mid(sValor, iPos, 1)
+    iCodigo = String.Code(sCaracter)
+
+    If iCodigo >= 48 Then
+      If iCodigo <= 57 Then sLimpio &= sCaracter
+    Endif
+    If iCodigo = 88 Then sLimpio &= "X"   ' X MAYÚSCULA
+    If iCodigo = 120 Then sLimpio &= "X"  ' x MINÚSCULA, SE UNIFICA
+
+  Next
+
+  ' --- 3. UN ISSN TIENE OCHO CARACTERES ---
+  ' Si no encaja, se devuelve el original sin tocar: es preferible una
+  ' clave rara a una clave inventada
+  If String.Len(sLimpio) <> 8 Then Return Trim(sValor)
+
+  Return String.Mid(sLimpio, 1, 4) & "-" & String.Mid(sLimpio, 5, 4)
 
 End

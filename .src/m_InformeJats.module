@@ -1,0 +1,326 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_InformeJats
+' Propósito : Emite el informe de auditoría.
+'
+'             ARQUITECTURA: el informe NO se escribe directamente en
+'             HTML. Se escribe primero un XML canónico en vocabulario
+'             propio, y de ahí sale el HTML por XSLT. Son dos pasos en
+'             lugar de uno, y las razones son tres:
+'
+'             1. Escribir HTML por concatenación de cadenas en Gambas
+'                envejece muy mal en cuanto el informe crece.
+'             2. El XML canónico queda archivado junto al HTML. Se
+'                puede volver a mostrar la auditoría de marzo en
+'                septiembre y comparar las dos, que frente a una
+'                revista que hizo el trabajo es el artefacto más
+'                persuasivo que hay.
+'             3. El XML guarda CÓDIGOS, no textos. Un informe
+'                archivado se puede regenerar con los mensajes
+'                mejorados sobre los mismos hechos medidos.
+'
+'             El HTML es AUTOCONTENIDO: CSS embebido, sin recursos
+'             externos, sin tipografías web, sin JavaScript. Se abre
+'             con doble clic desde un pendrive, sin red, y se imprime
+'             a PDF desde el navegador con la hoja de impresión que
+'             trae. Por eso no hay una rama LaTeX.
+'
+'             Ambos archivos se escriben en la MISMA CARPETA de la que
+'             salieron los XML. No se le pregunta al usuario dónde
+'             guardar: en una reunión eso es una fricción innecesaria.
+' ============================================
+
+' ============================================
+' 1. ESTADO DEL MÓDULO
+' ============================================
+
+Private $sUltimoInforme As String
+
+' ============================================
+' 2. PUNTO DE ENTRADA
+' ============================================
+
+' ============================================
+' Función   : GenerarInforme
+' Propósito : Escribe el XML canónico y lo transforma a HTML.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si el informe quedó escrito
+' ============================================
+Public Function GenerarInforme() As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oRevista As CRevistaAuditada
+  Dim sCarpeta As String
+  Dim sBase As String
+  Dim sRutaXml As String
+  Dim sRutaHtml As String
+
+  ' --- 2. GUARDAS ---
+  oRevista = m_AuditarJats.RevistaEnCurso()
+  If Not oRevista Then Return False
+
+  sCarpeta = m_AuditarJats.CarpetaEnCurso()
+  If sCarpeta = "" Then Return False
+
+  If Not Exist(m_Constantes.GBA_RUTA_INFORME_XSL) Then
+    m_Sonido.sonar("Error")
+    Message.Error(("Falta la hoja de estilo del informe:") & Chr(10) & m_Constantes.GBA_RUTA_INFORME_XSL)
+    Return False
+  Endif
+
+  ' --- 3. NOMBRES DE SALIDA ---
+  ' LLEVAN MARCA DE TIEMPO PARA NO PISAR UN INFORME ANTERIOR, QUE
+  ' PODRÍA SER JUSTO EL QUE SE ACABA DE ENVIAR POR CORREO
+  sBase = File.BaseName(oRevista.NombreArchivoInforme())
+  sRutaXml = sCarpeta &/ sBase & ".xml"
+  sRutaHtml = sCarpeta &/ sBase & ".html"
+
+  ' --- 4. FUENTE CANÓNICA ---
+  If Not EscribirXmlCanonico(oRevista, sRutaXml) Then Return False
+
+  ' --- 5. TRANSFORMACIÓN ---
+  If Not TransformarAHtml(sRutaXml, sRutaHtml) Then Return False
+
+  $sUltimoInforme = sRutaHtml
+  Return True
+
+End
+
+' ============================================
+' Función   : UltimoInforme
+' Propósito : Ruta del último informe emitido, para que el formulario
+'             pueda ofrecer abrirlo.
+' Retorna   : String
+' ============================================
+Public Function UltimoInforme() As String
+
+  Return $sUltimoInforme
+
+End
+
+' ============================================
+' 3. ESCRITURA DE LA FUENTE CANÓNICA
+' ============================================
+
+' ============================================
+' Función   : EscribirXmlCanonico
+' Propósito : Vuelca el modelo completo a un XML en vocabulario propio.
+'
+'             NO se escribe ningún texto de mensaje: solo códigos. Los
+'             textos los resuelve el XSLT contra el catálogo, de modo
+'             que corregir la redacción no obliga a rehacer las
+'             auditorías archivadas.
+'
+' Parámetros: oRevista As CRevistaAuditada — modelo a volcar
+'             sRuta As String — archivo de salida
+' Retorna   : Boolean — True si se escribió
+' ============================================
+Private Function EscribirXmlCanonico(oRevista As CRevistaAuditada, sRuta As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sXml As String
+  Dim oArchivo As CArchivoAuditado
+  Dim oHallazgo As CHallazgo
+  Dim oOcurrencia As COcurrencia
+
+  ' --- 2. CABECERA Y BLOQUE DE DEFENSIBILIDAD ---
+  ' ES LO QUE HACE REPRODUCIBLE EL INFORME POR UN TERCERO. SIN ESTO,
+  ' EL INFORME ES UN PDF CON LOGO Y EL PROVEEDOR DE LA REVISTA PUEDE
+  ' DISCUTIRLO SIN COSTO
+  sXml = "<?xml version=" & Chr(34) & "1.0" & Chr(34) & " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  sXml &= "<auditoria version=" & Chr(34) & "1" & Chr(34) & ">" & Chr(10)
+
+  sXml &= "  <cabecera>" & Chr(10)
+  sXml &= "    <fecha>" & Format(Now, "yyyy-mm-dd hh:nn") & "</fecha>" & Chr(10)
+  sXml &= "    <carpeta>" & Escapar(oRevista.sCarpeta) & "</carpeta>" & Chr(10)
+  sXml &= "    <perfil>" & Escapar(m_Constantes.GBA_PERFIL_POR_DEFECTO) & "</perfil>" & Chr(10)
+  sXml &= "    <herramientas>" & Chr(10)
+  sXml &= "      <herramienta nombre=" & Chr(34) & "xmllint" & Chr(34) & " version=" & Chr(34) & Escapar(VersionXmllint()) & Chr(34) & "/>" & Chr(10)
+  sXml &= "      <herramienta nombre=" & Chr(34) & "gbpublisher" & Chr(34) & " version=" & Chr(34) & Escapar(Application.Version) & Chr(34) & "/>" & Chr(10)
+  sXml &= "    </herramientas>" & Chr(10)
+  sXml &= "    <no-evaluado>" & Escapar(m_AuditarJats.AlcanceNoEvaluado()) & "</no-evaluado>" & Chr(10)
+  sXml &= "  </cabecera>" & Chr(10)
+
+  ' --- 3. REVISTA ---
+  ' LA FRECUENCIA SOLO TIENE SENTIDO DENTRO DE UNA REVISTA, ASÍ QUE EL
+  ' DENOMINADOR VIVE ACÁ
+  sXml &= "  <revista clave=" & Chr(34) & Escapar(oRevista.sClave) & Chr(34)
+  sXml &= " clave-origen=" & Chr(34) & Escapar(oRevista.sClaveOrigen) & Chr(34)
+  sXml &= " archivos=" & Chr(34) & CStr(oRevista.Archivos) & Chr(34)
+  sXml &= " muestra-suficiente=" & Chr(34) & m_AuditarJats.TextoBooleano(oRevista.MuestraSuficiente) & Chr(34) & ">" & Chr(10)
+  sXml &= "    <titulo>" & Escapar(oRevista.sTitulo) & "</titulo>" & Chr(10)
+  sXml &= "    <issn tipo=" & Chr(34) & "epub" & Chr(34) & ">" & Escapar(oRevista.sIssnElectronico) & "</issn>" & Chr(10)
+  sXml &= "    <issn tipo=" & Chr(34) & "ppub" & Chr(34) & ">" & Escapar(oRevista.sIssnImpreso) & "</issn>" & Chr(10)
+  sXml &= "    <generador nombre=" & Chr(34) & Escapar(oRevista.sGenerador) & Chr(34)
+  sXml &= " version=" & Chr(34) & Escapar(oRevista.sVersionGenerador) & Chr(34)
+  sXml &= " confianza=" & Chr(34) & Escapar(oRevista.sConfianza) & Chr(34)
+  sXml &= " vigente=" & Chr(34) & Escapar(oRevista.sVersionVigente) & Chr(34) & "/>" & Chr(10)
+  sXml &= "    <resumen bloqueantes=" & Chr(34) & CStr(oRevista.Bloqueantes) & Chr(34)
+  sXml &= " vacios=" & Chr(34) & CStr(oRevista.Vacios) & Chr(34)
+  sXml &= " degradantes=" & Chr(34) & CStr(oRevista.Degradantes) & Chr(34)
+  sXml &= " reutilizacion=" & Chr(34) & CStr(oRevista.Reutilizacion) & Chr(34) & "/>" & Chr(10)
+  sXml &= "  </revista>" & Chr(10)
+
+  ' --- 4. ARCHIVOS ---
+  sXml &= "  <archivos>" & Chr(10)
+  For Each oArchivo In oRevista.aArchivos
+    sXml &= "    <archivo id=" & Chr(34) & Escapar(oArchivo.sId) & Chr(34)
+    sXml &= " nombre=" & Chr(34) & Escapar(oArchivo.sNombre) & Chr(34)
+    sXml &= " bytes=" & Chr(34) & CStr(oArchivo.iBytes) & Chr(34)
+    sXml &= " sha256=" & Chr(34) & Escapar(oArchivo.sSha256) & Chr(34)
+    sXml &= " bien-formado=" & Chr(34) & m_AuditarJats.TextoBooleano(oArchivo.bBienFormado) & Chr(34)
+    sXml &= " dtd-version=" & Chr(34) & Escapar(oArchivo.sDtdVersion) & Chr(34)
+    sXml &= " encoding-declarado=" & Chr(34) & Escapar(oArchivo.sEncodingDeclarado) & Chr(34)
+    sXml &= " encoding-real=" & Chr(34) & Escapar(oArchivo.sEncodingReal) & Chr(34)
+    sXml &= " cuerpo=" & Chr(34) & CStr(oArchivo.iPalabrasBody) & Chr(34)
+    sXml &= " recursos=" & Chr(34) & CStr(oArchivo.iRecursosReferenciados) & Chr(34)
+    sXml &= " recursos-faltantes=" & Chr(34) & CStr(oArchivo.iRecursosFaltantes) & Chr(34) & "/>" & Chr(10)
+  Next
+  sXml &= "  </archivos>" & Chr(10)
+
+  ' --- 5. HALLAZGOS ---
+  ' UNA OCURRENCIA POR ARCHIVO, CON SU CONTADOR. LOS SESENTA Y SIETE
+  ' TÍTULOS EN NEGRITA DE UN ARTÍCULO SON UN PROBLEMA, NO SESENTA Y SIETE
+  sXml &= "  <hallazgos>" & Chr(10)
+  For Each oHallazgo In oRevista.aHallazgos
+    sXml &= "    <hallazgo codigo=" & Chr(34) & Escapar(oHallazgo.sCodigo) & Chr(34)
+    sXml &= " impacto=" & Chr(34) & Escapar(oHallazgo.sImpacto) & Chr(34)
+    sXml &= " correccion=" & Chr(34) & Escapar(oHallazgo.sCorreccion) & Chr(34)
+    sXml &= " certeza=" & Chr(34) & Escapar(oHallazgo.sCerteza) & Chr(34)
+    sXml &= " universal=" & Chr(34) & m_AuditarJats.TextoBooleano(oHallazgo.bUniversal) & Chr(34)
+    sXml &= " frecuencia=" & Chr(34) & CStr(oHallazgo.iFrecuencia) & Chr(34)
+    sXml &= " de=" & Chr(34) & CStr(oHallazgo.iTotalArchivos) & Chr(34) & ">" & Chr(10)
+    For Each oOcurrencia In oHallazgo.aOcurrencias
+      sXml &= "      <ocurrencia archivo=" & Chr(34) & Escapar(oOcurrencia.sIdArchivo) & Chr(34)
+      sXml &= " veces=" & Chr(34) & CStr(oOcurrencia.iVeces) & Chr(34)
+      sXml &= " linea=" & Chr(34) & CStr(oOcurrencia.iLinea) & Chr(34)
+      sXml &= " xpath=" & Chr(34) & Escapar(oOcurrencia.sXPath) & Chr(34) & "/>" & Chr(10)
+    Next
+    sXml &= "    </hallazgo>" & Chr(10)
+  Next
+  sXml &= "  </hallazgos>" & Chr(10)
+
+  sXml &= "</auditoria>" & Chr(10)
+
+  ' --- 6. VOLCADO ---
+  Try File.Save(sRuta, sXml)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se pudo escribir el informe:") & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Escapar
+' Propósito : Escapa los caracteres que no pueden aparecer literales
+'             en XML. El orden importa: el ampersand va primero,
+'             porque si no se re-escaparían las secuencias recién
+'             introducidas.
+' Parámetros: sTexto As String
+' Retorna   : String — texto apto para contenido o para atributo
+' ============================================
+Private Function Escapar(sTexto As String) As String
+
+  Dim sSalida As String
+
+  sSalida = Replace(sTexto, "&", "&amp;")
+  sSalida = Replace(sSalida, "<", "&lt;")
+  sSalida = Replace(sSalida, ">", "&gt;")
+  sSalida = Replace(sSalida, Chr(34), "&quot;")
+
+  Return sSalida
+
+End
+
+' ============================================
+' 4. TRANSFORMACIÓN
+' ============================================
+
+' ============================================
+' Función   : TransformarAHtml
+' Propósito : Aplica la hoja de estilo con Saxon y deja el HTML junto
+'             al XML canónico.
+'
+'             La ruta del catálogo de mensajes se pasa como parámetro
+'             porque el XSLT lo resuelve con document(): así los
+'             textos salen del catálogo y no del XML archivado.
+'
+' Parámetros: sRutaXml As String — fuente canónica
+'             sRutaHtml As String — salida
+' Retorna   : Boolean — True si la transformación funcionó
+' ============================================
+Private Function TransformarAHtml(sRutaXml As String, sRutaHtml As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aComando As New String[]
+  Dim sStdErr As String
+  Dim sStdOut As String
+  Dim iCodigo As Integer
+
+  ' --- 2. INVOCACIÓN ---
+  ' EL CLASSPATH INCLUYE lib/ PORQUE saxon-he.jar NECESITA xmlresolver
+  aComando.Add("java")
+  aComando.Add("-cp")
+  aComando.Add(m_Constantes.GBA_RUTA_SAXON & ":" & File.Dir(m_Constantes.GBA_RUTA_SAXON) &/ "lib/*")
+  aComando.Add("net.sf.saxon.Transform")
+  aComando.Add("-s:" & sRutaXml)
+  aComando.Add("-xsl:" & m_Constantes.GBA_RUTA_INFORME_XSL)
+  aComando.Add("-o:" & sRutaHtml)
+  aComando.Add("catalogo=" & m_Constantes.GBA_RUTA_CATALOGO_MENSAJES)
+
+  iCodigo = m_AuditarJats.EjecutarHerramienta(aComando, sStdErr, sStdOut)
+
+  ' --- 3. VERIFICACIÓN ---
+  ' RC-GM-02: EL ERROR SE INFORMA. UN INFORME QUE NO SE GENERÓ Y NO
+  ' AVISA ES PEOR QUE UNO QUE FALLA CON UN MENSAJE
+  If iCodigo <> 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se pudo transformar el informe.") & Chr(10) & sStdErr)
+    Return False
+  Endif
+
+  If Not Exist(sRutaHtml) Then
+    m_Sonido.sonar("Error")
+    Message.Error(("La transformación no produjo ningún archivo."))
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : VersionXmllint
+' Propósito : Devuelve la versión de xmllint para el bloque de
+'             defensibilidad. La escribe en stderr, igual que
+'             'java -version', así que la forma síncrona no sirve.
+' Parámetros: ninguno
+' Retorna   : String — la primera línea de la salida, o 'desconocida'
+' ============================================
+Private Function VersionXmllint() As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aComando As New String[]
+  Dim sStdErr As String
+  Dim sStdOut As String
+  Dim aLineas As String[]
+
+  aComando.Add("xmllint")
+  aComando.Add("--version")
+
+  m_AuditarJats.EjecutarHerramienta(aComando, sStdErr, sStdOut)
+
+  ' --- 2. PRIMERA LÍNEA DE LO QUE HAYA LLEGADO ---
+  If sStdErr = "" Then Return ("desconocida")
+
+  aLineas = Split(sStdErr, Chr(10))
+  If aLineas.Count = 0 Then Return ("desconocida")
+
+  Return Trim(aLineas[0])
+
+End
