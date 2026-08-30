@@ -1,0 +1,253 @@
+' Gambas class file
+
+' ============================================
+' Clase     : CRevistaAuditada
+' Propósito : La unidad de agrupamiento y la unidad de informe. Una
+'             carpeta equivale a una revista, con entre 4 y 7
+'             archivos.
+'
+'             El ISSN NO es la clave de agrupamiento: la carpeta lo
+'             es. El ISSN sirve para VERIFICAR que efectivamente hay
+'             una sola revista adentro. Si aparecen dos, no es un caso
+'             a soportar en silencio: es un aviso de que la carpeta
+'             está mezclada.
+'
+'             Acá viven las frecuencias, porque n/N solo tiene sentido
+'             dentro de una revista. Con N = 4, un hallazgo en 1 de 4
+'             es un descuido de un artículo y uno en 4 de 4 es un
+'             defecto de la herramienta. Son dos conversaciones
+'             distintas, con destinatarios distintos.
+' ============================================
+
+' --- 1. CONSTANTE DE UMBRAL ---
+' POR DEBAJO DE ESTE N, LA FRECUENCIA NO DISTINGUE SISTEMÁTICO DE
+' ACCIDENTAL Y EL INFORME TIENE QUE DECLARARLO. LA DISCIPLINA ES LA
+' MISMA QUE LA DEL BLOQUE DE DEFENSIBILIDAD: DECLARAR EL LÍMITE DE LO
+' QUE SE AFIRMA.
+
+Public Const MINIMO_ARCHIVOS_FRECUENCIA As Integer = 3
+
+' --- 2. IDENTIDAD ---
+
+Public sCarpeta As String
+Public sTitulo As String
+Public sIssnElectronico As String
+Public sIssnImpreso As String
+
+' CLAVE DERIVADA Y SU PROCEDENCIA, PARA QUE EL INFORME PUEDA DECIR DE
+' DÓNDE SALIÓ. ORDEN ACORDADO: ELECTRÓNICO, IMPRESO, NOMBRE DE REVISTA.
+Public sClave As String
+Public sClaveOrigen As String       ' issn-electronico | issn-impreso | titulo
+
+' COHERENCIA: FALSE SI LOS ARCHIVOS DE LA CARPETA DECLARAN MÁS DE UNA
+' REVISTA. NO SE AGRUPA EN SILENCIO; SE AVISA.
+Public bRevistaUnica As Boolean = True
+
+' --- 3. GENERADOR PREDOMINANTE Y VERSIÓN VIGENTE ---
+' sVersionVigente PERMITE EL HALLAZGO MÁS ÚTIL DE TODOS: "la versión
+' actual de la misma herramienta ya corrige cinco de estos ocho
+' puntos; pidan reexportar". Deja de ser un reproche y pasa a ser una
+' recomendación accionable que además les ahorra dinero.
+
+Public sGenerador As String
+Public sVersionGenerador As String
+Public sConfianza As String = "inferido"
+Public sVersionVigente As String
+
+' --- 4. COLECCIONES ---
+
+Public aArchivos As New CArchivoAuditado[]
+Public aHallazgos As New CHallazgo[]
+
+' CÓDIGOS QUE SE CUMPLEN, PARA LA SECCIÓN DE CONFORMES DEL INFORME.
+' NO SON HALLAZGOS CON IMPACTO 'conforme': LO QUE ESTÁ BIEN NO TIENE
+' UBICACIÓN NI OCURRENCIAS NI DETALLE CRUDO. FORMA DISTINTA, LISTA
+' DISTINTA. Y VAN ARRIBA DEL INFORME, NO AL FINAL: al final son una
+' disculpa, al principio son una credencial.
+Public aConformes As New String[]
+
+
+' ============================================
+' Propiedades de solo lectura
+' ============================================
+
+Property Read Archivos As Integer
+Property Read MuestraSuficiente As Boolean
+Property Read Bloqueantes As Integer
+Property Read Vacios As Integer
+Property Read Degradantes As Integer
+Property Read Reutilizacion As Integer
+
+
+Private Function Archivos_Read() As Integer
+
+  Return aArchivos.Count
+
+End
+
+
+' ============================================
+' Función   : MuestraSuficiente_Read
+' Propósito : Indica si N alcanza para que la frecuencia signifique
+'             algo. Con N < 3 el informe lleva advertencia visible.
+' Retorna   : Boolean
+' ============================================
+Private Function MuestraSuficiente_Read() As Boolean
+
+  Return aArchivos.Count >= MINIMO_ARCHIVOS_FRECUENCIA
+
+End
+
+
+' ============================================
+' Función   : ContarPorImpacto
+' Propósito : Cuenta hallazgos distintos (no ocurrencias) de un nivel
+'             de impacto dado.
+' Parámetros: sImpacto As String — nivel a contar
+' Retorna   : Integer
+' ============================================
+Private Function ContarPorImpacto(sImpacto As String) As Integer
+
+  Dim iCuenta As Integer = 0
+  Dim oHallazgo As CHallazgo
+
+  For Each oHallazgo In aHallazgos
+    If oHallazgo.sImpacto = sImpacto Then Inc iCuenta
+  Next
+
+  Return iCuenta
+
+End
+
+
+Private Function Bloqueantes_Read() As Integer
+
+  Return ContarPorImpacto(m_Constantes.GBA_IMPACTO_BLOQUEANTE)
+
+End
+
+
+Private Function Vacios_Read() As Integer
+
+  Return ContarPorImpacto(m_Constantes.GBA_IMPACTO_VACIO)
+
+End
+
+
+Private Function Degradantes_Read() As Integer
+
+  Return ContarPorImpacto(m_Constantes.GBA_IMPACTO_DEGRADANTE)
+
+End
+
+
+Private Function Reutilizacion_Read() As Integer
+
+  Return ContarPorImpacto(m_Constantes.GBA_IMPACTO_REUTILIZACION)
+
+End
+
+
+' ============================================
+' Función   : BuscarHallazgo
+' Propósito : Devuelve el hallazgo de un código, o Null si todavía no
+'             se registró en esta revista. El agrupamiento es SIEMPRE
+'             por código, nunca por ubicación.
+' Parámetros: sCodigo As String
+' Retorna   : CHallazgo — el hallazgo, o Null
+' ============================================
+Public Function BuscarHallazgo(sCodigo As String) As CHallazgo
+
+  Dim oHallazgo As CHallazgo
+
+  For Each oHallazgo In aHallazgos
+    If oHallazgo.sCodigo = sCodigo Then Return oHallazgo
+  Next
+
+  Return Null
+
+End
+
+
+' ============================================
+' Función   : BuscarArchivo
+' Propósito : Devuelve el archivo de un id interno, o Null.
+' Parámetros: sId As String — 'a1', 'a2'
+' Retorna   : CArchivoAuditado — el archivo, o Null
+' ============================================
+Public Function BuscarArchivo(sId As String) As CArchivoAuditado
+
+  Dim oArchivo As CArchivoAuditado
+
+  For Each oArchivo In aArchivos
+    If oArchivo.sId = sId Then Return oArchivo
+  Next
+
+  Return Null
+
+End
+
+
+' ============================================
+' Función   : DerivarClave
+' Propósito : Fija sClave y sClaveOrigen según el orden acordado:
+'             ISSN electrónico, ISSN impreso, título de revista. Se
+'             invoca una sola vez, al terminar de leer los archivos.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub DerivarClave()
+
+  ' --- 1. ISSN ELECTRÓNICO, PRIMERA OPCIÓN ---
+  If sIssnElectronico <> "" Then
+    sClave = sIssnElectronico
+    sClaveOrigen = "issn-electronico"
+    Return
+  Endif
+
+  ' --- 2. ISSN IMPRESO, SEGUNDA ---
+  If sIssnImpreso <> "" Then
+    sClave = sIssnImpreso
+    sClaveOrigen = "issn-impreso"
+    Return
+  Endif
+
+  ' --- 3. TÍTULO DE REVISTA, ÚLTIMO RECURSO ---
+  If sTitulo <> "" Then
+    sClave = sTitulo
+    sClaveOrigen = "titulo"
+    Return
+  Endif
+
+  ' --- 4. SIN NINGUNO DE LOS TRES: LA CARPETA ---
+  ' NO SE DEJA VACÍO, PORQUE EL NOMBRE DEL INFORME DEPENDE DE ESTO.
+  sClave = File.Name(sCarpeta)
+  sClaveOrigen = "carpeta"
+
+End
+
+
+' ============================================
+' Función   : NombreArchivoInforme
+' Propósito : Arma el nombre del HTML de auditoría. Lleva marca de
+'             tiempo para no pisar un informe anterior, que podría ser
+'             justo el que se acaba de enviar por correo, y para que
+'             la carpeta quede ordenada cronológicamente.
+' Parámetros: ninguno
+' Retorna   : String — p. ej. 'auditoria-2011-9003-20260830-1420.html'
+' ============================================
+Public Function NombreArchivoInforme() As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRaiz As String
+  Dim sMarca As String
+
+  ' --- 2. RAÍZ SANEADA: LA CLAVE PUEDE SER UN TÍTULO CON ESPACIOS ---
+  sRaiz = m_FuncionesGenericas.SanearNombreArchivo(sClave)
+
+  ' --- 3. MARCA DE TIEMPO ORDENABLE ---
+  sMarca = Format(Now, "yyyymmdd-hhnn")
+
+  Return "auditoria-" & sRaiz & "-" & sMarca & ".html"
+
+End

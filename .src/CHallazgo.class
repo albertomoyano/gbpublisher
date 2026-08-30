@@ -1,0 +1,175 @@
+' Gambas class file
+
+' ============================================
+' Clase     : CHallazgo
+' Propósito : Un código de hallazgo, agrupado a través de TODOS los
+'             archivos de una revista. La clave de agrupamiento es
+'             sCodigo, nunca la ubicación: dos apariciones del mismo
+'             defecto en artículos distintos tienen distinta línea y
+'             distinto XPath, y tienen que caer en el mismo hallazgo.
+'
+'             LA CLASE NO GUARDA TEXTO. Ni mensaje, ni consecuencia,
+'             ni remedio. Todo eso vive en el catálogo XML, indexado
+'             por sCodigo, y se resuelve al construir la vista o al
+'             renderizar el informe. Así se puede corregir la
+'             redacción sin tocar el motor, traducir, y regenerar un
+'             informe archivado con los mensajes mejorados sobre los
+'             mismos hechos medidos.
+' ============================================
+
+' --- 1. IDENTIDAD Y CLASIFICACIÓN ---
+
+Public sCodigo As String            ' 'GBA-DOI-01' — CLAVE DE AGRUPAMIENTO
+
+' ORIGEN: QUÉ HERRAMIENTA O ETAPA LO DETECTÓ. VALORES EN m_Constantes.
+'   identificacion | xmllint-wf | xmllint-dtd | schematron |
+'   recursos | coherencia
+Public sOrigen As String
+
+' IMPACTO: CUATRO NIVELES. VALORES EN m_Constantes.
+'   bloqueante   — NO SE PUEDE PROCESAR
+'   vacio        — PROCESA PERO NO HAY ARTÍCULO (VACÍO ESTRUCTURAL)
+'   degradante   — SALIDA CON DEFECTO VISIBLE
+'   reutilizacion— NO SE VE, AFECTA INDEXACIÓN Y COSECHA
+Public sImpacto As String
+
+' CORRECCIÓN: QUIÉN PUEDE ARREGLARLO Y CON CUÁNTO ESFUERZO.
+'   automatica | editorial | origen
+Public sCorreccion As String
+
+' --- 2. CALIFICADORES DEL HALLAZGO ---
+
+' CERTEZA: 'cierto' O 'probable'. LA INVERSIÓN DE APELLIDO Y NOMBRE
+' DETECTADA CONTRA EL CORREO ES UNA HEURÍSTICA, NO UN HECHO. EL
+' INFORME DEBE PODER DECIR "POSIBLE, VERIFICAR" SIN DEGRADAR EL RESTO.
+Public sCerteza As String = "cierto"
+
+' UNIVERSAL: EL DEFECTO APARECE EN TODOS LOS GENERADORES CONOCIDOS.
+' ES PROPIEDAD DEL CÓDIGO EN EL CATÁLOGO, NO DEL ARCHIVO: SE RESUELVE
+' AL CARGAR, NO SE CALCULA. CAMBIA EL TEXTO DE REPROCHE A OPORTUNIDAD:
+' ninguna de las seis herramientas analizadas emite <institution-id>,
+' así que reportarlo como falla DE ESA REVISTA sería injusto.
+Public bUniversal As Boolean = False
+
+' --- 3. OCURRENCIAS Y DETALLE CRUDO ---
+
+Public aOcurrencias As New COcurrencia[]
+
+' RUTA DEL ARCHIVO DONDE SE VOLCÓ LA SALIDA TEXTUAL DE LA HERRAMIENTA.
+' NO SE GUARDA EN MEMORIA: CON CIENTOS DE HALLAZGOS PESA, Y SOLO SE
+' NECESITA AL RENDERIZAR EL ANEXO DEL INFORME.
+Public sRutaDetalleCrudo As String
+
+' --- 4. FRECUENCIA, CALCULADA AL CERRAR EL LOTE ---
+' n/N DONDE N ES LA CANTIDAD DE ARCHIVOS DE LA REVISTA. NO ES UN DATO
+' DEL HALLAZGO EN SÍ: ES UNA PROPIEDAD DEL PAR (REVISTA, CÓDIGO), Y
+' POR ESO LA ESCRIBE m_AuditarJats.ConsolidarFrecuencias() Y NO EL
+' DETECTOR.
+
+Public iFrecuencia As Integer = 0   ' n — EN CUÁNTOS ARCHIVOS APARECE
+Public iTotalArchivos As Integer = 0 ' N — DENOMINADOR
+
+' ============================================
+' Propiedades de solo lectura
+' Se usan Property Read y no Function porque, si se olvidan los
+' paréntesis en la llamada, un Function da error en tiempo de
+' ejecución y una Property no.
+' ============================================
+
+Property Read OcurrenciasTotales As Integer
+Property Read EsSistemico As Boolean
+
+' ============================================
+' Función   : OcurrenciasTotales_Read
+' Propósito : Suma las apariciones del código en todos los archivos.
+' Parámetros: ninguno
+' Retorna   : Integer — total de apariciones físicas
+' ============================================
+Private Function OcurrenciasTotales_Read() As Integer
+
+  Dim iTotal As Integer = 0
+  Dim oUna As COcurrencia
+
+  For Each oUna In aOcurrencias
+    iTotal += oUna.iVeces
+  Next
+
+  Return iTotal
+
+End
+
+' ============================================
+' Función   : EsSistemico_Read
+' Propósito : Indica si el hallazgo aparece en TODOS los archivos de
+'             la revista, que es lo que distingue un defecto de la
+'             herramienta de un descuido de un artículo.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si n = N
+' ============================================
+Private Function EsSistemico_Read() As Boolean
+
+  ' RC-GM-17: NO COMBINAR LA GUARDA CON LA COMPARACIÓN EN UNA SOLA
+  ' EXPRESIÓN And, QUE NO CORTOCIRCUITA.
+  If iTotalArchivos = 0 Then Return False
+  If iFrecuencia = iTotalArchivos Then Return True
+
+  Return False
+
+End
+
+' ============================================
+' Función   : BuscarOcurrencia
+' Propósito : Devuelve la ocurrencia correspondiente a un archivo, o
+'             Null si el código todavía no apareció en ese archivo.
+'             La usa el detector para incrementar iVeces en lugar de
+'             agregar una ocurrencia nueva.
+' Parámetros: sIdArchivo As String — id interno del archivo
+' Retorna   : COcurrencia — la ocurrencia existente, o Null
+' ============================================
+Public Function BuscarOcurrencia(sIdArchivo As String) As COcurrencia
+
+  Dim oUna As COcurrencia
+
+  For Each oUna In aOcurrencias
+    If oUna.sIdArchivo = sIdArchivo Then Return oUna
+  Next
+
+  Return Null
+
+End
+
+' ============================================
+' Función   : Registrar
+' Propósito : Suma una aparición del código en un archivo. Si ya hay
+'             una ocurrencia para ese archivo, incrementa el contador;
+'             si no, crea la ocurrencia con su ubicación.
+' Parámetros: sIdArchivo As String — id interno del archivo
+'             iLinea As Integer — línea, o 0 si no aplica
+'             sXPath As String — XPath, o cadena vacía si no aplica
+' Retorna   : nada
+' ============================================
+Public Sub Registrar(sIdArchivo As String, iLinea As Integer, sXPath As String)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oOcurrencia As COcurrencia
+
+  ' --- 2. ¿YA HAY OCURRENCIA PARA ESTE ARCHIVO? ---
+  oOcurrencia = BuscarOcurrencia(sIdArchivo)
+
+  ' --- 3. SI EXISTE, SOLO SE INCREMENTA EL CONTADOR ---
+  ' LA UBICACIÓN QUEDA LA DE LA PRIMERA APARICIÓN: ES LA QUE SIRVE
+  ' PARA IR A VERLO, Y LISTAR LAS 67 SERÍA RUIDO.
+  If oOcurrencia Then
+    Inc oOcurrencia.iVeces
+    Return
+  Endif
+
+  ' --- 4. PRIMERA APARICIÓN EN ESTE ARCHIVO ---
+  oOcurrencia = New COcurrencia
+  oOcurrencia.sIdArchivo = sIdArchivo
+  oOcurrencia.iVeces = 1
+  oOcurrencia.iLinea = iLinea
+  oOcurrencia.sXPath = sXPath
+  aOcurrencias.Add(oOcurrencia)
+
+End

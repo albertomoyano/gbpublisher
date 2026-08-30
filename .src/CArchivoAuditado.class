@@ -1,0 +1,168 @@
+' Gambas class file
+
+' ============================================
+' Clase     : CArchivoAuditado
+' Propósito : Los hechos medidos de UN archivo XML. Es una fila de
+'             gvAuditoria y un <archivo> del informe canónico.
+'
+'             Todo lo que hay acá es medición, no juicio: el juicio
+'             vive en los CHallazgo. Esta clase responde "qué es este
+'             archivo", no "qué está mal en él".
+' ============================================
+
+' --- 1. IDENTIFICACIÓN Y DEFENSIBILIDAD ---
+' EL SHA-256 Y EL TAMAÑO SON LO QUE HACE REPRODUCIBLE EL INFORME POR
+' UN TERCERO. SIN ESO, EL INFORME ES UN PDF CON LOGO Y EL PROVEEDOR
+' DE LA REVISTA PUEDE DISCUTIRLO SIN COSTO.
+
+Public sId As String                ' 'a1', 'a2' — REFERENCIA INTERNA
+Public sRuta As String
+Public sNombre As String
+Public iBytes As Integer
+Public sSha256 As String
+
+' --- 2. CODIFICACIÓN ---
+' EL DESFASAJE ENTRE DECLARADO Y REAL ES UN HALLAZGO BLOQUEANTE: un
+' archivo que declara utf-16 con contenido UTF-8 no lo abre ningún
+' parser conforme, y el arreglo son cuatro caracteres.
+
+Public sEncodingDeclarado As String
+Public sEncodingReal As String
+
+' --- 3. GRAMÁTICA DECLARADA ---
+' EL PRIMER APARTADO DEL ANÁLISIS NO ES VALIDAR, ES IDENTIFICAR.
+' VALIDAR UN JATS 1.1 CONTRA LA DTD 1.3 PRODUCE CIENTOS DE ERRORES
+' QUE NO SON ERRORES DEL DOCUMENTO.
+
+Public bBienFormado As Boolean = False
+Public sDoctypePublico As String
+Public sDoctypeSistema As String
+Public sDtdVersion As String        ' ATRIBUTO @dtd-version DEL RAÍZ
+Public sSpecificUse As String       ' PUEDE CONTRADECIR A @dtd-version
+
+' --- 4. GENERADOR ---
+' sConfianza DISTINGUE 'declarado' DE 'inferido'. Marcalyc 1.3 SE
+' DECLARA SOLO EN @specific-use; Marcalyc 1.1d3 HAY QUE INFERIRLO; LA
+' PLANTILLA DE PLOS ES INFERENCIA POR TEXTO RESIDUAL. EL INFORME DEBE
+' DECIR CUÁL DE LAS DOS COSAS ES Y NUNCA AFIRMAR DE MÁS.
+
+Public sGenerador As String
+Public sVersionGenerador As String
+Public sConfianza As String = "inferido"
+
+' --- 5. RECURSOS EXTERNOS ---
+' UN XML IMPECABLE CON NUEVE IMÁGENES FALTANTES ES INSERVIBLE, Y ESE
+' HALLAZGO NO LO PRODUCE NINGUNA DE LAS CAPAS DE VALIDACIÓN: LO
+' PRODUCE EL SISTEMA DE ARCHIVOS.
+
+Public iRecursosReferenciados As Integer = 0
+Public iRecursosFaltantes As Integer = 0
+
+' --- 6. MEDIDA DEL VACÍO ESTRUCTURAL ---
+' UN <body/> VACÍO CON 227 REFERENCIAS Y METADATOS EXCELENTES SIGUE
+' SIENDO UN ARCHIVO SIN ARTÍCULO. CERO ES CERO; MENOS DE ~150
+' PALABRAS EN UN research-article ES REPORTABLE.
+
+Public iPalabrasBody As Integer = 0
+
+' --- 7. CONTADORES POR IMPACTO ---
+' NO SE CALCULAN ACÁ PARA NO OBLIGAR A UNA REFERENCIA INVERSA HACIA
+' LA LISTA DE HALLAZGOS. LOS ESCRIBE m_AuditarJats EN LA
+' CONSOLIDACIÓN, CUANDO YA ESTÁ TODO MEDIDO.
+
+Public iBloqueantes As Integer = 0
+Public iVacios As Integer = 0
+Public iDegradantes As Integer = 0
+Public iReutilizacion As Integer = 0
+
+
+' ============================================
+' Propiedades de solo lectura
+' ============================================
+
+Property Read TotalHallazgos As Integer
+Property Read GeneradorParaMostrar As String
+Property Read RecursosParaMostrar As String
+
+
+' ============================================
+' Función   : TotalHallazgos_Read
+' Propósito : Suma de los cuatro contadores por impacto.
+' Retorna   : Integer
+' ============================================
+Private Function TotalHallazgos_Read() As Integer
+
+  Return iBloqueantes + iVacios + iDegradantes + iReutilizacion
+
+End
+
+
+' ============================================
+' Función   : GeneradorParaMostrar_Read
+' Propósito : Arma la etiqueta del generador para el grid, marcando
+'             con "?" cuando la detección fue inferida y no declarada.
+' Retorna   : String — p. ej. "Marcalyc 1.1d3 ?" o "Marcalyc 1.3"
+' ============================================
+Private Function GeneradorParaMostrar_Read() As String
+
+  Dim sEtiqueta As String
+
+  ' --- 1. SIN DETECCIÓN, TEXTO EXPLÍCITO Y NO CADENA VACÍA ---
+  If sGenerador = "" Then Return "no identificado"
+
+  ' --- 2. NOMBRE Y VERSIÓN ---
+  sEtiqueta = sGenerador
+  If sVersionGenerador <> "" Then sEtiqueta &= " " & sVersionGenerador
+
+  ' --- 3. MARCA DE INFERENCIA ---
+  If sConfianza = "inferido" Then sEtiqueta &= " ?"
+
+  Return sEtiqueta
+
+End
+
+
+' ============================================
+' Función   : RecursosParaMostrar_Read
+' Propósito : Columna "Recursos" del grid, en formato faltantes/total.
+' Retorna   : String — p. ej. "9/9" o "—" si no referencia recursos
+' ============================================
+Private Function RecursosParaMostrar_Read() As String
+
+  If iRecursosReferenciados = 0 Then Return "—"
+
+  Return CStr(iRecursosFaltantes) & "/" & CStr(iRecursosReferenciados)
+
+End
+
+
+' ============================================
+' Función   : HayDesfasajeDeEncoding
+' Propósito : Indica si la codificación declarada difiere de la real.
+'             Se compara en minúsculas plegadas por tabla explícita y
+'             no con Lower(), que es dependiente del locale (regla ya
+'             documentada para el proyecto).
+' Parámetros: ninguno
+' Retorna   : Boolean — True si declarado y real no coinciden
+' ============================================
+Public Function HayDesfasajeDeEncoding() As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sDeclarado As String
+  Dim sReal As String
+
+  ' --- 2. SIN DATO NO SE AFIRMA NADA ---
+  If sEncodingDeclarado = "" Then Return False
+  If sEncodingReal = "" Then Return False
+
+  ' --- 3. NORMALIZACIÓN LOCALE-INDEPENDIENTE ---
+  sDeclarado = m_FuncionesGenericas.PlegarTextoAMinuscula(sEncodingDeclarado)
+  sReal = m_FuncionesGenericas.PlegarTextoAMinuscula(sEncodingReal)
+
+  ' --- 4. UTF8 Y UTF-8 SON EL MISMO JUEGO DE CARACTERES ---
+  sDeclarado = Replace(sDeclarado, "-", "")
+  sReal = Replace(sReal, "-", "")
+
+  Return sDeclarado <> sReal
+
+End

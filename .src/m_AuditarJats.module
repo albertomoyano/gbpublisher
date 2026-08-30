@@ -1,0 +1,2574 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_AuditarJats
+' Propósito : Motor de auditoría de XML JATS externos. Está AISLADO
+'             del flujo de producción: no escribe en la base, no
+'             requiere proyecto abierto, no requiere conexión MySQL.
+'             Eso último, que parece una restricción, es una ventaja
+'             de campo: el auditor funciona en un portátil sin red.
+'
+'             Todo el estado vive acá como privadas de módulo;
+'             FAuditoriaXML solo tiene handlers delgados que delegan.
+'
+' ARQUITECTURA EN TRES CAPAS, IMPUESTA POR LA PRUEBA 3:
+'   1. MODELO      — CRevistaAuditada con objetos, referencias
+'   2. VISTA       — arrays de String YA RESUELTOS contra el catálogo
+'   3. GRID        — renderer puro; el evento Data solo indexa
+'
+'   Se verificó que el GridView es virtual (72 celdas de 15.000 en el
+'   primer pintado) pero NO cachea: vuelve a pedir las celdas en cada
+'   repintado, para siempre. Por eso el handler Data no puede resolver
+'   códigos contra el catálogo XML ni formatear nada: sería releer el
+'   catálogo varias veces por segundo mientras el usuario navega.
+'
+' Verificado empíricamente antes de escribir este módulo:
+'   - Dialog.SelectDirectory() devuelve True al CANCELAR
+'   - los arrays de clases propias guardan REFERENCIAS, no copias
+'   - GridView virtual sin caché; se escribe con gv.Data.Text
+'   - GridView emite ColumnClick(Column)
+'   - el evento Error de Process lleva parámetro: Error(sDatos As String)
+'   - stderr llega en TROZOS de 256 bytes que parten líneas al medio
+'   - Exec ... To NO captura stderr (largo 0 con un XML roto)
+'   - Saxon-HE no expone NINGUNA función de extensión saxon:
+' ============================================
+
+' ============================================
+' 1. ESTADO DEL MÓDULO
+' ============================================
+
+' --- MODELO ---
+Private $oRevista As CRevistaAuditada
+Private $sCarpeta As String
+
+' --- VISTA DE HALLAZGOS ---
+' $aVistaHallazgos ES LA LISTA DE REFERENCIAS VISIBLES; NO DUPLICA
+' OBJETOS, PORQUE LOS ARRAYS DE CLASES PROPIAS GUARDAN REFERENCIAS
+' (VERIFICADO EN LA PRUEBA 2). FILTRAR ES BARATO.
+Private $aVistaHallazgos As New CHallazgo[]
+
+' $aCeldas ES LA MATRIZ YA FORMATEADA QUE CONSUME EL EVENTO Data.
+' SE RECONSTRUYE AL FILTRAR U ORDENAR, NUNCA AL PINTAR.
+Private $aCeldas As New String[]
+Private $iColumnasVista As Integer = 7
+
+' --- ESTADO DE ORDENAMIENTO ---
+Private $iColumnaOrden As Integer = -1
+Private $bOrdenDescendente As Boolean = True
+
+' --- FILTROS ACTIVOS ---
+Private $sFiltroArchivo As String = ""    ' VACÍO = CONSOLIDADO
+Private $sFiltroImpacto As String = ""
+Private $sFiltroCorreccion As String = ""
+
+' --- EJECUCIÓN DE HERRAMIENTAS ---
+' EL BÚFER ES DE MÓDULO PORQUE stderr LLEGA FRAGMENTADO Y HAY QUE
+' ACUMULAR ANTES DE INTERPRETAR NADA.
+Private $sBufferError As String
+Private $sBufferSalida As String
+Private $iCodigoSalida As Integer
+
+' --- CAPACIDADES DISPONIBLES EN ESTA INSTALACIÓN ---
+' SE RESUELVEN UNA VEZ POR LOTE Y CONDICIONAN QUÉ CAPAS CORREN. LO QUE
+' NO ESTÁ DISPONIBLE VA AL BLOQUE "NO EVALUADO" DEL INFORME.
+
+Private $bPuedeParsear As Boolean = False        ' xmllint — REQUISITO DURO
+Private $bPuedeValidarDTD As Boolean = False     ' catálogo local de DTD
+Private $bPuedeSchematron As Boolean = False     ' java + saxon + .xsl compilado
+Private $bHayCatalogoMensajes As Boolean = False ' mensajes.xml
+
+' --- SEÑAL DE FIN DE PROCESO ---
+' La escribe el evento Kill y la lee el bucle de espera. Es la única
+' condición de corte que se apoya en comportamiento verificado.
+Private $bProcesoTerminado As Boolean = False
+
+' --- GUARDA DE REENTRADA ---
+' La sentencia Wait deja correr los eventos de la interfaz, así que
+' durante el análisis el usuario PUEDE volver a pulsar Buscar. Sin
+' esta bandera, dos lotes se pisarían sobre el mismo modelo.
+Private $bAnalizando As Boolean = False
+
+' --- CATÁLOGO DE MENSAJES, INDEXADO POR CÓDIGO ---
+' Se carga una vez por lote y se consulta muchas veces. Las claves de
+' Collection son sensibles a mayúsculas, y los códigos se escriben
+' siempre en mayúsculas, de modo que no hace falta normalizar.
+Private $cCatalogo As New Collection
+
+' ============================================
+' 2. GUARDAS Y SELECCIÓN DE CARPETA
+' ============================================
+
+' ============================================
+' Función   : SeleccionarCarpeta
+' Propósito : Pide la carpeta con los XML y aplica el orden de guardas
+'             acordado: legible, escribible, con XML adentro. La
+'             escritura se verifica ANTES de analizar y no después:
+'             no tiene sentido procesar siete archivos para descubrir
+'             al guardar que la carpeta es de solo lectura.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si la carpeta quedó lista para auditar
+' ============================================
+Public Function SeleccionarCarpeta() As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRuta As String
+  Dim sTestigo As String
+  Dim aXml As String[]
+
+  ' --- 2. DIÁLOGO ---
+  ' VERIFICADO: SelectDirectory DEVUELVE True CUANDO EL USUARIO
+  ' CANCELA. LA GUARDA VA AL REVÉS DE COMO UNO LA ESCRIBIRÍA.
+  Dialog.Title = ("Seleccionar la carpeta con los XML a auditar")
+  If $sCarpeta <> "" Then Dialog.Path = $sCarpeta
+  If Dialog.SelectDirectory() Then Return False
+
+  sRuta = Dialog.Path
+  If sRuta = "" Then Return False
+
+  ' --- 3. GUARDA: LA RUTA EXISTE Y ES CARPETA ---
+  ' RC-GM-17: If ANIDADO, PORQUE And NO CORTOCIRCUITA Y IsDir SOBRE
+  ' UNA RUTA INEXISTENTE FALLA.
+  If Not Exist(sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error(("La carpeta seleccionada no existe."))
+    Return False
+  Endif
+  If Not IsDir(sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error(("La ruta seleccionada no es una carpeta."))
+    Return False
+  Endif
+
+  ' --- 4. GUARDA: SE PUEDE ESCRIBIR EL INFORME ACÁ MISMO ---
+  ' EL HTML SE GUARDA EN LA MISMA CARPETA DE ORIGEN, SIN PREGUNTARLE
+  ' NADA AL USUARIO. POR ESO LA ESCRITURA ES PRECONDICIÓN, NO UN
+  ' PROBLEMA A DESCUBRIR AL FINAL.
+  sTestigo = sRuta &/ ".gbaudit-escritura"
+  Try File.Save(sTestigo, "x")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se puede escribir en la carpeta seleccionada.") & Chr(10) & Error.Text)
+    Return False
+  Endif
+  Try Kill sTestigo
+
+  ' --- 5. GUARDA: HAY XML PARA AUDITAR ---
+  ' SE EXCLUYEN LOS PROPIOS INFORMES POR SI LA CARPETA YA FUE AUDITADA.
+  aXml = ArchivosXmlDeLaCarpeta(sRuta)
+  If aXml.Count = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error(("La carpeta no contiene archivos XML."))
+    Return False
+  Endif
+
+  ' --- 6. AVISO SI LA MUESTRA ES CHICA ---
+  ' NO ABORTA: SOLO ADVIERTE. LA FRECUENCIA VA A LLEVAR LA MISMA
+  ' MARCA EN EL GRID Y EN EL INFORME.
+  If aXml.Count < CRevistaAuditada.MINIMO_ARCHIVOS_FRECUENCIA Then
+    Message.Warning(("La carpeta tiene solo ") & CStr(aXml.Count) &
+      ("  archivos. Con menos de ") &
+      CStr(CRevistaAuditada.MINIMO_ARCHIVOS_FRECUENCIA) &
+      (" no se puede distinguir un defecto sistemático de un descuido puntual."))
+  Endif
+
+  $sCarpeta = sRuta
+  Return True
+
+End
+
+' ============================================
+' Función   : ArchivosXmlDeLaCarpeta
+' Propósito : Lista los .xml de una carpeta, excluyendo los informes
+'             de auditoría generados por la propia herramienta.
+' Parámetros: sRuta As String — carpeta a listar
+' Retorna   : String[] — nombres de archivo, ordenados
+' ============================================
+Private Function ArchivosXmlDeLaCarpeta(sRuta As String) As String[]
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aTodos As String[]
+  Dim aFiltrados As New String[]
+  Dim sNombre As String
+
+  ' --- 2. LISTADO ---
+  ' NO SE USA "*.*", QUE ES UN MODISMO DE WINDOWS Y OMITE LOS ARCHIVOS
+  ' SIN EXTENSIÓN.
+  Try aTodos = Dir(sRuta, "*.xml", gb.File)
+  If Error Then Return aFiltrados
+
+  ' --- 3. EXCLUSIÓN DE INFORMES PROPIOS ---
+  ' POR SI SE AUDITA UNA CARPETA QUE YA FUE AUDITADA ANTES
+  For Each sNombre In aTodos
+    If sNombre Begins "auditoria-" Then Continue
+    aFiltrados.Add(sNombre)
+  Next
+
+  aFiltrados.Sort()
+  Return aFiltrados
+
+End
+
+' ============================================
+' Función   : VerificarHerramientas
+' Propósito : Resuelve qué capacidades están disponibles. Solo aborta
+'             si falta el requisito duro; el resto reduce el alcance y
+'             queda declarado.
+'
+'             Orden fail-fast: infraestructura, configuración,
+'             interacción. Esta es la de infraestructura.
+'
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se puede auditar aunque sea en parte
+' ============================================
+Public Function VerificarHerramientas() As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sReducciones As String = ""
+
+  $bPuedeParsear = False
+  $bPuedeValidarDTD = False
+  $bPuedeSchematron = False
+  $bHayCatalogoMensajes = False
+
+  ' --- 2. REQUISITO DURO: SIN PARSER NO HAY AUDITORÍA ---
+  ' LA BUENA FORMACIÓN ES LA ÚNICA CAPA QUE NO DEPENDE DE NINGÚN
+  ' RECURSO DE DATOS, Y ES PRECONDICIÓN DE TODAS LAS DEMÁS
+  If Not HayEjecutable("xmllint") Then
+    m_Sonido.sonar("Error")
+    Message.Error(("No se encuentra xmllint, que es imprescindible para auditar.") &
+      Chr(10) & ("Instalar el paquete libxml2-utils."))
+    Return False
+  Endif
+  $bPuedeParsear = True
+
+  ' --- 3. VALIDEZ CONTRA DTD LOCAL ---
+  ' NUNCA POR RED: si el DOCTYPE apunta a jats.nlm.nih.gov y no hay
+  ' catálogo local, xmllint sale a internet, tarda, o falla y reporta
+  ' un error que parece del documento y no lo es
+  If IsDir(m_Constantes.GBA_RUTA_CATALOGO_DTD) Then
+    $bPuedeValidarDTD = True
+  Else
+    sReducciones &= Chr(10) & ("  · validez contra la DTD declarada (falta el catálogo local de DTD JATS)")
+  Endif
+
+  ' --- 4. SCHEMATRON ---
+  ' RC-GM-17: TRES CONDICIONES, TRES If ANIDADOS. And NO CORTOCIRCUITA
+  If HayEjecutable("java") Then
+    If Exist(m_Constantes.GBA_RUTA_SAXON) Then
+      If Exist(m_Constantes.GBA_RUTA_SCHEMATRON_XSL) Then
+        $bPuedeSchematron = True
+      Endif
+    Endif
+  Endif
+  If Not $bPuedeSchematron Then
+    sReducciones &= Chr(10) & ("  · conformidad con JATS4R y perfil Crossref (falta el Schematron compilado)")
+  Endif
+
+  ' --- 5. CATÁLOGO DE MENSAJES ---
+  ' SIN ÉL LOS HALLAZGOS SE MUESTRAN POR CÓDIGO. ALCANZA PARA TRABAJAR
+  ' EN DESARROLLO, PERO NO PARA EMITIR UN INFORME: btnGenerarInforme
+  ' LO VERIFICA POR SEPARADO
+  If Exist(m_Constantes.GBA_RUTA_CATALOGO_MENSAJES) Then
+    $bHayCatalogoMensajes = True
+  Else
+    sReducciones &= Chr(10) & ("  · textos en castellano de los hallazgos (falta el catálogo de mensajes)")
+  Endif
+
+  ' --- 6. AVISO DE ALCANCE REDUCIDO ---
+  ' NO ABORTA. INFORMA UNA SOLA VEZ, ANTES DE EMPEZAR, QUÉ NO SE VA A
+  ' EVALUAR
+  If sReducciones <> "" Then
+    Message.Warning(("La auditoría va a correr con alcance reducido.") & Chr(10) &
+      ("No se va a evaluar:") & Chr(10) & sReducciones)
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : HayEjecutable
+' Propósito : Determina si un ejecutable está en el PATH.
+' Parámetros: sNombre As String — nombre del ejecutable
+' Retorna   : Boolean
+' ============================================
+Private Function HayEjecutable(sNombre As String) As Boolean
+
+  Dim sSalida As String
+
+  ' command -v ES BUILTIN DE POSIX sh; which VIVE EN debianutils Y
+  ' PUEDE NO ESTAR INSTALADO.
+  Try Exec ["sh", "-c", "command -v " & sNombre] To sSalida
+  If Error Then Return False
+
+  Return Trim(sSalida) <> ""
+
+End
+
+' ============================================
+' 3. EJECUCIÓN DE HERRAMIENTAS EXTERNAS
+' ============================================
+
+' ============================================
+' Función   : EjecutarHerramienta
+' Propósito : Lanza un proceso externo y devuelve su stderr completo,
+'             que es donde xmllint escribe TODOS sus diagnósticos.
+'
+'             Se usa la forma asíncrona con eventos y no 'Exec ... To',
+'             porque se verificó que esa forma devuelve cadena vacía
+'             aunque la herramienta haya reportado errores.
+'
+'             La espera se hace con la sentencia Wait y no con
+'             hProceso.Wait(): la primera entra al bucle de eventos y
+'             la segunda no. Con la segunda, los eventos Read y Error
+'             no se disparan y el proceso puede quedar bloqueado
+'             escribiendo en una tubería que nadie lee.
+'
+'             Los búferes se acumulan sin interpretar: stderr llega en
+'             trozos de 256 bytes que parten líneas al medio e incluso
+'             pueden partir un carácter multibyte. Concatenar primero
+'             y recién después usar String.* lo resuelve; validar o
+'             cortar trozo por trozo lo rompería (SC-02, RC-GM-12).
+'
+' Parámetros: aComando As String[] — comando y argumentos
+'             sStdErr As String — POR REFERENCIA: recibe stderr
+'             sStdOut As String — POR REFERENCIA: recibe stdout
+' Retorna   : Integer — código de salida, -1 si no arrancó, -2 si venció el plazo
+' ============================================
+Public Function EjecutarHerramienta(aComando As String[], ByRef sStdErr As String, ByRef sStdOut As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim hProceso As Process
+  Dim fVencimiento As Float
+  Dim iDrenaje As Integer
+
+  $sBufferError = ""
+  $sBufferSalida = ""
+  $iCodigoSalida = -1
+  $bProcesoTerminado = False
+  sStdErr = ""
+  sStdOut = ""
+
+  ' --- 2. LANZAMIENTO ---
+  ' SC-05: SIEMPRE Exec CON ARRAY, NUNCA Shell. Las rutas de los
+  ' archivos auditados vienen de afuera y no deben pasar por sh -c.
+  Try hProceso = Exec aComando For Read As "ProcHerramienta"
+  If Error Then
+    ' EL FALLO AL LANZAR ES DE CONFIGURACIÓN, NO DEL ARCHIVO AUDITADO:
+    ' NO PUEDE QUEDAR ESCONDIDO EN UN CANAL QUE EL LLAMADOR DESCARTA
+    sStdErr = ("No se pudo ejecutar ") & aComando[0] & ": " & Error.Text
+    Return -1
+  Endif
+
+  ' --- 3. ESPERA QUE SÍ ENTRA AL BUCLE DE EVENTOS ---
+  ' Cada Wait cede el control al intérprete, que dispara los eventos
+  ' Read, Error y Kill pendientes. Sin esto, nada llega nunca.
+  fVencimiento = Timer + m_Constantes.GBA_TIMEOUT_HERRAMIENTA
+
+  While Not $bProcesoTerminado
+
+    Wait 0.01
+
+    ' 3.1 VENCIMIENTO DEL PLAZO
+    ' El auditor no puede quedarse colgado delante de un cliente. Se
+    ' mata el proceso y se devuelve un resultado honesto.
+    If Timer > fVencimiento Then
+      Try hProceso.Kill()
+      sStdErr = $sBufferError
+      Return -2
+    Endif
+
+  Wend
+
+  ' --- 4. DRENAJE FINAL ---
+  ' El evento Kill puede llegar antes que los últimos trozos de las
+  ' tuberías. Unas pocas vueltas más aseguran que los búferes queden
+  ' completos antes de entregarlos.
+  For iDrenaje = 1 To 10
+    Wait 0.01
+  Next
+
+  ' --- 5. ENTREGA DE LOS BÚFERES YA COMPLETOS ---
+  sStdErr = $sBufferError
+  sStdOut = $sBufferSalida
+
+  Return $iCodigoSalida
+
+End
+
+' ============================================
+' Función   : ProcHerramienta_Read
+' Propósito : Drena stdout. Se lee CRUDO y no por líneas: la salida de
+'             xmllint --xpath no termina en salto de línea, y con
+'             Line Input el último trozo se pierde sin aviso. Igual
+'             que stderr, los datos llegan fragmentados y se acumulan
+'             sin interpretar.
+' ============================================
+Public Sub ProcHerramienta_Read()
+
+  Dim sDatos As String
+
+  Try sDatos = Read #Last, Lof(Last)
+  If Error Then
+    Print "== READ FALLÓ: "; Error.Text
+    Return
+  Endif
+
+  $sBufferSalida &= sDatos
+
+End
+
+' ============================================
+' Función   : ProcHerramienta_Error
+' Propósito : Acumula stderr. La firma CON PARÁMETRO está verificada:
+'             la forma sin argumentos falla al lanzar el proceso con
+'             'Bad event handler ... Not enough arguments', y ese
+'             fallo es de ejecución y no de compilación.
+' ============================================
+Public Sub ProcHerramienta_Error(sDatos As String)
+
+  $sBufferError &= sDatos
+
+End
+
+' ============================================
+' Función   : ProcHerramienta_Kill
+' Propósito : Guarda el código de salida y levanta la señal que corta
+'             el bucle de espera.
+' ============================================
+Public Sub ProcHerramienta_Kill()
+
+  $iCodigoSalida = Last.Value
+  $bProcesoTerminado = True
+
+End
+
+' ============================================
+' 4. ORQUESTACIÓN
+' ============================================
+
+' ============================================
+' Función   : AuditarCarpeta
+' Propósito : Recorre los XML de la carpeta seleccionada, los analiza
+'             y consolida el resultado en una CRevistaAuditada.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si el lote se completó
+' ============================================
+Public Function AuditarCarpeta() As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aXml As String[]
+  Dim sNombre As String
+  Dim oArchivo As CArchivoAuditado
+  Dim iIndice As Integer = 0
+
+  ' --- 2. GUARDA DE REENTRADA ---
+  ' Durante el análisis la sentencia Wait deja correr los eventos de
+  ' la interfaz, así que el usuario puede volver a pulsar Buscar. Sin
+  ' esta guarda, dos lotes escribirían sobre el mismo modelo.
+  If $bAnalizando Then Return False
+  $bAnalizando = True
+
+  ' --- 3. GUARDA DE INFRAESTRUCTURA ---
+  If Not VerificarHerramientas() Then
+    $bAnalizando = False
+    Return False
+  Endif
+
+  ' --- 4. MODELO LIMPIO PARA ESTE LOTE ---
+  CargarCatalogo()
+  $oRevista = New CRevistaAuditada
+  $oRevista.sCarpeta = $sCarpeta
+
+  ' --- 5. ANÁLISIS ARCHIVO POR ARCHIVO ---
+  aXml = ArchivosXmlDeLaCarpeta($sCarpeta)
+  For Each sNombre In aXml
+    Inc iIndice
+    oArchivo = AnalizarArchivo($sCarpeta &/ sNombre, "a" & CStr(iIndice))
+    If oArchivo Then $oRevista.aArchivos.Add(oArchivo)
+  Next
+
+  ' --- 6. CIERRE DEL LOTE ---
+  $oRevista.DerivarClave()
+  ConsolidarFrecuencias()
+  ConsolidarContadoresPorArchivo()
+  ReconstruirVista()
+
+  ' --- 7. LIBERACIÓN EXPLÍCITA ---
+  ' No se usa Finally: no corre en un Return normal, así que no sirve
+  ' para liberar recursos en funciones con salidas tempranas, que son
+  ' casi todas. La liberación va explícita en cada camino.
+  $bAnalizando = False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AnalizarArchivo
+' Propósito : Ejecuta las capas de análisis sobre un archivo y
+'             devuelve sus hechos medidos. Los hallazgos se registran
+'             en $oRevista, no en el archivo: el agrupamiento es por
+'             código y por revista.
+'
+'             ORDEN DE LAS CAPAS. Cada una es precondición de la
+'             siguiente, y la primera que falla detiene el resto:
+'               A. identificación (encoding real, DOCTYPE, generador)
+'               B. buena formación (xmllint)
+'               C. validez contra la DTD LOCAL de la versión declarada
+'               D. Schematron (JATS4R + perfil Crossref) vía Saxon
+'               E. recursos externos contra el sistema de archivos
+'               F. coherencia interna (licencias, nombres, fechas)
+'               G. vacío estructural (palabras del body)
+'
+' Parámetros: sRuta As String — ruta completa del XML
+'             sId As String — id interno a asignar ('a1', 'a2')
+' Retorna   : CArchivoAuditado — los hechos medidos, o Null si falló
+' ============================================
+Private Function AnalizarArchivo(sRuta As String, sId As String) As CArchivoAuditado
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oArchivo As New CArchivoAuditado
+  Dim sContenido As String
+  Dim sCabecera As String
+  Dim bDesfasajeEncoding As Boolean
+
+  oArchivo.sId = sId
+  oArchivo.sRuta = sRuta
+  oArchivo.sNombre = File.Name(sRuta)
+
+  Try oArchivo.iBytes = Stat(sRuta).Size
+  If Error Then
+    ' NO SE DESCARTA EL ARCHIVO: SE DEVUELVE CON LO POCO QUE SE SABE,
+    ' PARA QUE APAREZCA EN LA GRILLA CON SU PROBLEMA A LA VISTA
+    RegistrarHallazgo(m_Constantes.GBA_COD_NO_LEGIBLE, sId, 0, "")
+    Return oArchivo
+  Endif
+
+  ' --- 2. LECTURA CRUDA ---
+  ' File.Load NO decodifica ni valida: devuelve los bytes tal cual.
+  ' Eso es exactamente lo que hace falta acá, porque el archivo puede
+  ' no ser UTF-8 y queremos averiguarlo, no suponerlo.
+  Try sContenido = File.Load(sRuta)
+  If Error Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_NO_LEGIBLE, sId, 0, "")
+    Return oArchivo
+  Endif
+
+  ' --- 3. DEFENSIBILIDAD ---
+  ' El hash y el tamaño son lo que hace reproducible el informe por un
+  ' tercero. Sin eso, el informe es discutible sin costo.
+  oArchivo.sSha256 = CalcularSha256(sRuta)
+
+  ' --- 4. CAPA A: IDENTIFICACIÓN ---
+  ' EL PRIMER APARTADO NO ES VALIDAR, ES IDENTIFICAR. Validar un JATS
+  ' 1.1 contra la DTD 1.3 produce cientos de errores que no son
+  ' errores del documento.
+  ' SE TOMAN LOS PRIMEROS BYTES CON Mid Y NO CON String.Mid: acá se
+  ' inspeccionan BYTES a propósito, porque todavía no sabemos si el
+  ' contenido es UTF-8 válido.
+  sCabecera = Mid(sContenido, 1, 2048)
+
+  oArchivo.sEncodingDeclarado = ValorAtributo(FragmentoDeclaracion(sCabecera), "encoding")
+  oArchivo.sEncodingReal = DetectarEncodingReal(sContenido)
+  oArchivo.sDoctypePublico = ExtraerPublicoDoctype(sCabecera)
+  oArchivo.sDtdVersion = ValorAtributo(FragmentoRaiz(sCabecera), "dtd-version")
+  oArchivo.sSpecificUse = ValorAtributo(FragmentoRaiz(sCabecera), "specific-use")
+
+  ' 4.1 ENCODING NO DECLARADO
+  If oArchivo.sEncodingDeclarado = "" Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_ENC_NO_DECLARADO, sId, 1, "")
+  Endif
+
+  ' 4.2 DESFASAJE ENTRE DECLARADO Y REAL
+  ' Es el defecto más barato de arreglar y el más caro de tener: un
+  ' archivo que declara utf-16 con contenido UTF-8 no lo abre ningún
+  ' parser conforme, y el arreglo son cuatro caracteres.
+  bDesfasajeEncoding = oArchivo.HayDesfasajeDeEncoding()
+  If bDesfasajeEncoding Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_ENC_DESFASAJE, sId, 1, "")
+  Endif
+
+  ' 4.3 VERSIÓN DE DTD QUE NUNCA FUE NORMA
+  ' La 'd' de 1.1d3 es de draft. Arrastra además la errata del
+  ' namespace ALI sin barra final, que anula la declaración de licencia.
+  If oArchivo.sDtdVersion Like "*d?" Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_DTD_BORRADOR, sId, 0, "/article/@dtd-version")
+  Endif
+
+  ' 4.4 EL ARCHIVO DICE SER DOS COSAS A LA VEZ
+  If oArchivo.sSpecificUse <> "" Then
+    If oArchivo.sDtdVersion <> "" Then
+      If EsVersionJats(oArchivo.sSpecificUse) Then
+        If oArchivo.sSpecificUse <> oArchivo.sDtdVersion Then
+          RegistrarHallazgo(m_Constantes.GBA_COD_DTD_CONTRADICTORIA, sId, 0, "/article/@specific-use")
+        Endif
+      Endif
+    Endif
+  Endif
+
+  ' --- 5. CAPA B: BUENA FORMACIÓN ---
+  oArchivo.bBienFormado = VerificarBuenaFormacion(oArchivo, bDesfasajeEncoding)
+
+  ' --- 6. SIN PARSEO NO HAY CAPAS POSTERIORES ---
+  ' Todas las demás necesitan el documento parseado. Se devuelve acá
+  ' con lo medido hasta el momento, que ya es suficiente para explicar
+  ' por qué el archivo no sirve.
+  If Not oArchivo.bBienFormado Then Return oArchivo
+
+  ' --- 7. CAPA C: VALIDEZ CONTRA LA DTD LOCAL ---
+  ' PENDIENTE: xmllint --valid --nonet con XML_CATALOG_FILES apuntando
+  ' al catálogo local. NUNCA por red. La DTD se elige según la versión
+  ' DECLARADA por el archivo, no según una fija.
+  ' If $bPuedeValidarDTD Then ...
+
+  ' --- 8. CAPA D: SCHEMATRON ---
+  ' PENDIENTE: saxon con el .xsl ya compilado, salida SVRL.
+  ' If $bPuedeSchematron Then ...
+
+  ' --- 9. CAPA E: RECURSOS EXTERNOS ---
+  ' Se resuelven contra la carpeta del propio archivo, que es la
+  ' unidad de trabajo. Los @xlink:href se piden de forma agnóstica al
+  ' prefijo: xmllint --xpath no conoce los namespaces declarados en el
+  ' documento y '//graphic/@xlink:href' falla con 'Undefined namespace
+  ' prefix'. Verificado empíricamente.
+  VerificarRecursosExternos(oArchivo)
+
+  ' --- 10. CAPA F: COHERENCIA INTERNA ---
+  ' Comparar un dato del archivo contra otro dato del mismo archivo.
+  ' Ninguna gramática puede expresar estas reglas.
+  VerificarCoherenciaInterna(oArchivo, sContenido)
+
+  ' --- 11. CAPA G: VACÍO ESTRUCTURAL ---
+  VerificarVacioEstructural(oArchivo)
+
+  Return oArchivo
+
+End
+
+' ============================================
+' Función   : VerificarBuenaFormacion
+' Propósito : Corre xmllint sobre el archivo y registra el hallazgo si
+'             no parsea.
+'
+'             NO se interpreta el TEXTO del mensaje de error, solo se
+'             extrae el número de línea. El texto en castellano sale
+'             del catálogo por código, y la salida cruda va al anexo
+'             del informe tal como la emitió la herramienta. Así el
+'             parseo no depende del idioma con que corra xmllint.
+'
+' Parámetros: oArchivo As CArchivoAuditado — archivo a verificar
+'             bDesfasajeEncoding As Boolean — si ya se detectó
+'               desfasaje de codificación
+' Retorna   : Boolean — True si el archivo está bien formado
+' ============================================
+Private Function VerificarBuenaFormacion(oArchivo As CArchivoAuditado, bDesfasajeEncoding As Boolean) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aComando As New String[]
+  Dim sStdErr As String
+  Dim sStdOut As String
+  Dim iCodigo As Integer
+  Dim iLinea As Integer
+
+  ' --- 2. INVOCACIÓN ---
+  ' --nonet ES OBLIGATORIO: el archivo viene de un tercero desconocido
+  ' y no debe poder hacer que la aplicación salga a la red. Tampoco se
+  ' usa --noent, que expandiría entidades externas, ni --huge, que
+  ' desactivaría el límite de expansión.
+  aComando.Add("xmllint")
+  aComando.Add("--noout")
+  aComando.Add("--nonet")
+  aComando.Add(oArchivo.sRuta)
+
+  iCodigo = EjecutarHerramienta(aComando, sStdErr, sStdOut)
+
+  ' --- 3. CÓDIGO DE SALIDA CERO: ESTÁ BIEN FORMADO ---
+  If iCodigo = 0 Then Return True
+
+  ' --- 4. NO PARSEA: SE REGISTRA LA CAUSA, NO EL SÍNTOMA ---
+  ' Si ya se detectó desfasaje de codificación, el fallo de parseo es
+  ' su consecuencia directa y NO se registra por separado. Dos
+  ' bloqueantes para una sola causa inflarían el contador, y un
+  ' informe con cuentas infladas se discute en vez de leerse.
+  If Not bDesfasajeEncoding Then
+    iLinea = PrimeraLineaDeError(sStdErr, oArchivo.sRuta)
+    RegistrarHallazgo(m_Constantes.GBA_COD_NO_BIEN_FORMADO, oArchivo.sId, iLinea, "")
+  Endif
+
+  ' --- 5. LA SALIDA CRUDA VA AL ANEXO ---
+  GuardarDetalleCrudo(oArchivo.sId, sStdErr)
+
+  Return False
+
+End
+
+' ============================================
+' Función   : PrimeraLineaDeError
+' Propósito : Extrae el número de línea del primer diagnóstico de
+'             xmllint, cuyo formato es 'ruta:LINEA: tipo : mensaje'.
+'             Solo se toma el número; el texto no se interpreta.
+' Parámetros: sStdErr As String — stderr completo ya acumulado
+'             sRuta As String — ruta del archivo, que xmllint antepone
+' Retorna   : Integer — número de línea, o 0 si no se pudo extraer
+' ============================================
+Private Function PrimeraLineaDeError(sStdErr As String, sRuta As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sResto As String
+  Dim iCorte As Integer
+  Dim iValor As Integer
+
+  If sStdErr = "" Then Return 0
+
+  ' --- 2. RECORRIDO HASTA EL PRIMER DIAGNÓSTICO CON POSICIÓN ---
+  aLineas = Split(sStdErr, Chr(10))
+  For Each sLinea In aLineas
+
+    ' SOLO INTERESAN LAS LÍNEAS QUE EMPIEZAN CON LA RUTA DEL ARCHIVO
+    If Not (sLinea Begins sRuta & ":") Then Continue
+
+    ' LO QUE SIGUE A 'ruta:' HASTA EL PRÓXIMO ':' ES EL NÚMERO
+    sResto = Mid(sLinea, Len(sRuta) + 2)
+    iCorte = InStr(sResto, ":")
+    If iCorte = 0 Then Continue
+
+    Try iValor = CInt(Trim(Mid(sResto, 1, iCorte - 1)))
+    If Error Then Continue
+    If iValor > 0 Then Return iValor
+
+  Next
+
+  Return 0
+
+End
+
+' ============================================
+' Función   : GuardarDetalleCrudo
+' Propósito : Vuelca la salida textual de una herramienta a un archivo
+'             temporal y guarda su ruta en el hallazgo.
+'
+'             No se conserva en memoria: con cientos de hallazgos pesa
+'             y solo se necesita al renderizar el anexo del informe.
+'             Ese anexo es lo que sostiene el informe cuando el
+'             proveedor de la revista lo discute.
+'
+' Parámetros: sIdArchivo As String — archivo al que corresponde
+'             sTexto As String — salida cruda de la herramienta
+' Retorna   : nada
+' ============================================
+Private Sub GuardarDetalleCrudo(sIdArchivo As String, sTexto As String)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRutaTemp As String
+
+  If sTexto = "" Then Return
+
+  ' --- 2. VOLCADO ---
+  sRutaTemp = Temp$() & "-" & sIdArchivo & ".txt"
+  Try File.Save(sRutaTemp, sTexto)
+  If Error Then Return
+
+  ' PENDIENTE: asociar sRutaTemp al hallazgo correspondiente. Requiere
+  ' que RegistrarHallazgo devuelva el CHallazgo que creó o actualizó.
+
+End
+
+' ============================================
+' Función   : CalcularSha256
+' Propósito : Devuelve el hash SHA-256 del archivo, para el bloque de
+'             defensibilidad del informe. Se usa la herramienta del
+'             sistema en lugar de una API de Gambas, que no está
+'             verificada.
+' Parámetros: sRuta As String
+' Retorna   : String — 64 caracteres hexadecimales, o cadena vacía
+' ============================================
+Private Function CalcularSha256(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+
+  ' --- 2. INVOCACIÓN ---
+  ' sha256sum SÍ escribe en stdout, así que la forma 'To' alcanza y no
+  ' hace falta el mecanismo asíncrono
+  Try Exec ["sha256sum", sRuta] To sSalida
+  If Error Then Return ""
+
+  ' --- 3. EL HASH SON LOS PRIMEROS 64 CARACTERES ---
+  If Len(sSalida) < 64 Then Return ""
+
+  Return Mid(sSalida, 1, 64)
+
+End
+
+' ============================================
+' Función   : DetectarEncodingReal
+' Propósito : Determina la codificación efectiva del contenido, que es
+'             lo único que permite detectar un archivo mal declarado.
+'
+'             String.IsValid es la única forma de saber si una cadena
+'             es UTF-8 válido. Buscar U+FFFD NO sirve: File.Load no
+'             decodifica, así que un archivo Latin-1 no produce
+'             caracteres de reemplazo sino codepoints basura y ceros.
+'
+' Parámetros: sContenido As String — bytes crudos del archivo
+' Retorna   : String — 'UTF-8', 'UTF-16', 'UTF-8-BOM' o 'no-UTF-8'
+' ============================================
+Private Function DetectarEncodingReal(sContenido As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sPrimeros As String
+
+  If sContenido = "" Then Return ""
+
+  sPrimeros = Mid(sContenido, 1, 3)
+
+  ' --- 2. MARCAS DE ORDEN DE BYTES ---
+  If sPrimeros = Chr(239) & Chr(187) & Chr(191) Then Return "UTF-8"
+  If Mid(sContenido, 1, 2) = Chr(255) & Chr(254) Then Return "UTF-16"
+  If Mid(sContenido, 1, 2) = Chr(254) & Chr(255) Then Return "UTF-16"
+
+  ' --- 3. VALIDEZ UTF-8 ---
+  If String.IsValid(sContenido) Then Return "UTF-8"
+
+  ' --- 4. SIN BOM Y SIN SER UTF-8 VÁLIDO ---
+  ' NO se aventura cuál es: decir 'Latin-1' sin evidencia sería
+  ' afirmar de más. El hallazgo es que no es UTF-8, que ya alcanza.
+  Return "no-UTF-8"
+
+End
+
+' ============================================
+' Función   : FragmentoDeclaracion
+' Propósito : Devuelve el texto de la declaración XML inicial, entre
+'             '<?xml' y '?>', para extraerle atributos sin parsear.
+' Parámetros: sCabecera As String — primeros bytes del archivo
+' Retorna   : String — el fragmento, o cadena vacía si no hay declaración
+' ============================================
+Private Function FragmentoDeclaracion(sCabecera As String) As String
+
+  Dim iIni As Integer
+  Dim iFin As Integer
+
+  iIni = InStr(sCabecera, "<?xml")
+  If iIni = 0 Then Return ""
+
+  iFin = InStr(sCabecera, "?>", iIni)
+  If iFin = 0 Then Return ""
+
+  Return Mid(sCabecera, iIni, iFin - iIni)
+
+End
+
+' ============================================
+' Función   : FragmentoRaiz
+' Propósito : Devuelve la etiqueta de apertura del elemento raíz
+'             <article ...>, para extraerle atributos sin parsear.
+' Parámetros: sCabecera As String — primeros bytes del archivo
+' Retorna   : String — el fragmento, o cadena vacía
+' ============================================
+Private Function FragmentoRaiz(sCabecera As String) As String
+
+  Dim iIni As Integer
+  Dim iFin As Integer
+
+  iIni = InStr(sCabecera, "<article")
+  If iIni = 0 Then Return ""
+
+  iFin = InStr(sCabecera, ">", iIni)
+  If iFin = 0 Then Return ""
+
+  Return Mid(sCabecera, iIni, iFin - iIni)
+
+End
+
+' ============================================
+' Función   : ValorAtributo
+' Propósito : Extrae el valor de un atributo de un fragmento de
+'             marcado, admitiendo comillas dobles o simples. Es
+'             búsqueda de subcadena, no análisis XML: alcanza para la
+'             declaración y la etiqueta raíz, que es lo único que hay
+'             que leer antes de saber si el archivo parsea.
+' Parámetros: sFragmento As String — texto donde buscar
+'             sAtributo As String — nombre del atributo
+' Retorna   : String — el valor, o cadena vacía
+' ============================================
+Private Function ValorAtributo(sFragmento As String, sAtributo As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim sComilla As String
+
+  If sFragmento = "" Then Return ""
+
+  ' --- 2. COMILLAS DOBLES (SC-01: Chr(34), NO EL ESCAPE) ---
+  sComilla = Chr(34)
+  iIni = InStr(sFragmento, sAtributo & "=" & sComilla)
+
+  ' --- 3. COMILLAS SIMPLES SI NO HUBO DOBLES ---
+  If iIni = 0 Then
+    sComilla = Chr(39)
+    iIni = InStr(sFragmento, sAtributo & "=" & sComilla)
+    If iIni = 0 Then Return ""
+  Endif
+
+  ' --- 4. RECORTE DEL VALOR ---
+  iIni += Len(sAtributo) + 2
+  iFin = InStr(sFragmento, sComilla, iIni)
+  If iFin = 0 Then Return ""
+
+  Return Mid(sFragmento, iIni, iFin - iIni)
+
+End
+
+' ============================================
+' Función   : ExtraerPublicoDoctype
+' Propósito : Devuelve el identificador público del DOCTYPE, que es la
+'             clave con la que después hay que resolver la DTD contra
+'             el catálogo local.
+' Parámetros: sCabecera As String — primeros bytes del archivo
+' Retorna   : String — el identificador público, o cadena vacía
+' ============================================
+Private Function ExtraerPublicoDoctype(sCabecera As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim sComilla As String
+
+  iIni = InStr(sCabecera, "PUBLIC")
+  If iIni = 0 Then Return ""
+
+  ' --- 2. EL PÚBLICO ES LA PRIMERA CADENA ENTRECOMILLADA DESPUÉS ---
+  sComilla = Chr(34)
+  iIni = InStr(sCabecera, sComilla, iIni)
+  If iIni = 0 Then Return ""
+
+  iFin = InStr(sCabecera, sComilla, iIni + 1)
+  If iFin = 0 Then Return ""
+
+  Return Mid(sCabecera, iIni + 1, iFin - iIni - 1)
+
+End
+
+' ============================================
+' Función   : EsVersionJats
+' Propósito : Indica si una cadena tiene forma de número de versión de
+'             JATS. Hace falta porque @specific-use se usa para cosas
+'             distintas según la herramienta: unas ponen la versión
+'             ('1.2'), otras el nombre del marcador ('Marcalyc 1.3') y
+'             otras el perfil ('sps-1.9'). Solo tiene sentido
+'             compararlo con @dtd-version cuando es lo primero.
+' Parámetros: sValor As String
+' Retorna   : Boolean
+' ============================================
+Private Function EsVersionJats(sValor As String) As Boolean
+
+  ' --- 1. FORMA 'N.N' O 'N.NdN', SIN LETRAS AL PRINCIPIO ---
+  If sValor Like "[0-9].[0-9]" Then Return True
+  If sValor Like "[0-9].[0-9]d[0-9]" Then Return True
+
+  Return False
+
+End
+
+' ============================================
+' Función   : RegistrarHallazgo
+' Propósito : Punto único de entrada de todos los detectores. Agrupa
+'             por código: si el código ya existe en la revista, suma
+'             una ocurrencia; si no, crea el hallazgo resolviendo su
+'             clasificación contra el catálogo.
+' Parámetros: sCodigo As String — código de regla
+'             sIdArchivo As String — archivo donde apareció
+'             iLinea As Integer — línea, o 0
+'             sXPath As String — XPath, o cadena vacía
+' Retorna   : nada
+' ============================================
+Public Sub RegistrarHallazgo(sCodigo As String, sIdArchivo As String, iLinea As Integer, sXPath As String)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oHallazgo As CHallazgo
+
+  ' --- 2. GUARDA ---
+  If Not $oRevista Then Return
+
+  ' --- 3. AGRUPAMIENTO POR CÓDIGO, NUNCA POR UBICACIÓN ---
+  oHallazgo = $oRevista.BuscarHallazgo(sCodigo)
+
+  ' --- 4. PRIMERA APARICIÓN DEL CÓDIGO EN ESTA REVISTA ---
+  If Not oHallazgo Then
+    oHallazgo = New CHallazgo
+    oHallazgo.sCodigo = sCodigo
+    ' PENDIENTE: resolver contra el catálogo de mensajes cuando exista.
+    ' MIENTRAS TANTO, CLASIFICACIÓN MÍNIMA EMBEBIDA: SIN ESTO EL
+    ' IMPACTO QUEDA VACÍO, LOS CONTADORES MIENTEN Y EL ORDEN CANÓNICO
+    ' NO ORDENA.
+    ClasificarPorDefecto(oHallazgo)
+    $oRevista.aHallazgos.Add(oHallazgo)
+  Endif
+
+  ' --- 5. REGISTRO DE LA OCURRENCIA ---
+  oHallazgo.Registrar(sIdArchivo, iLinea, sXPath)
+
+End
+
+' ============================================
+' Función   : ClasificarPorDefecto
+' Propósito : Asigna origen, impacto, corrección, certeza y marca de
+'             carencia universal a un hallazgo recién creado,
+'             leyéndolos del catálogo.
+'
+'             Agregar una regla nueva ya no requiere tocar código:
+'             alcanza con agregar un <mensaje> al catálogo. Si el
+'             código no está catalogado, se aplica una clasificación
+'             conservadora y el hallazgo se muestra igual, para que
+'             una omisión del catálogo no lo haga desaparecer.
+'
+' Parámetros: oHallazgo As CHallazgo — hallazgo recién creado
+' Retorna   : nada
+' ============================================
+Private Sub ClasificarPorDefecto(oHallazgo As CHallazgo)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oMensaje As CMensaje
+
+  ' --- 2. CLASIFICACIÓN CONSERVADORA POR SI NO ESTÁ CATALOGADO ---
+  ' NUNCA SE DEJA EL IMPACTO VACÍO: LOS CONTADORES MENTIRÍAN Y EL
+  ' ORDEN CANÓNICO NO ORDENARÍA
+  oHallazgo.sOrigen = m_Constantes.GBA_ORIGEN_IDENTIFICACION
+  oHallazgo.sImpacto = m_Constantes.GBA_IMPACTO_REUTILIZACION
+  oHallazgo.sCorreccion = m_Constantes.GBA_CORRECCION_EDITORIAL
+  oHallazgo.sCerteza = m_Constantes.GBA_CERTEZA_CIERTO
+  oHallazgo.bUniversal = False
+
+  ' --- 3. VALORES DEL CATÁLOGO ---
+  oMensaje = BuscarMensaje(oHallazgo.sCodigo)
+  If Not oMensaje Then Return
+
+  If oMensaje.sOrigen <> "" Then oHallazgo.sOrigen = oMensaje.sOrigen
+  If oMensaje.sImpacto <> "" Then oHallazgo.sImpacto = oMensaje.sImpacto
+  If oMensaje.sCorreccion <> "" Then oHallazgo.sCorreccion = oMensaje.sCorreccion
+  If oMensaje.sCerteza <> "" Then oHallazgo.sCerteza = oMensaje.sCerteza
+  oHallazgo.bUniversal = oMensaje.bUniversal
+
+End
+
+' ============================================
+' Función   : ConsolidarFrecuencias
+' Propósito : Calcula n/N para cada hallazgo, al cerrar el lote. n es
+'             en cuántos archivos de ESTA revista aparece el código y
+'             N es la cantidad de archivos de la revista.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ConsolidarFrecuencias()
+
+  Dim oHallazgo As CHallazgo
+  Dim iTotal As Integer
+
+  If Not $oRevista Then Return
+
+  iTotal = $oRevista.aArchivos.Count
+
+  For Each oHallazgo In $oRevista.aHallazgos
+    oHallazgo.iTotalArchivos = iTotal
+    oHallazgo.iFrecuencia = oHallazgo.aOcurrencias.Count
+  Next
+
+End
+
+' ============================================
+' Función   : ConsolidarContadoresPorArchivo
+' Propósito : Reparte los contadores por impacto en cada archivo. Se
+'             hace acá y no en CArchivoAuditado para no obligar a una
+'             referencia inversa desde el archivo hacia los hallazgos.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ConsolidarContadoresPorArchivo()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oHallazgo As CHallazgo
+  Dim oOcurrencia As COcurrencia
+  Dim oArchivo As CArchivoAuditado
+
+  If Not $oRevista Then Return
+
+  ' --- 2. PUESTA A CERO ---
+  For Each oArchivo In $oRevista.aArchivos
+    oArchivo.iBloqueantes = 0
+    oArchivo.iVacios = 0
+    oArchivo.iDegradantes = 0
+    oArchivo.iReutilizacion = 0
+  Next
+
+  ' --- 3. REPARTO: UN HALLAZGO SUMA 1 A CADA ARCHIVO EN QUE APARECE ---
+  ' SE CUENTAN HALLAZGOS DISTINTOS, NO OCURRENCIAS FÍSICAS: 67 TÍTULOS
+  ' EN <bold> SON UN PROBLEMA, NO SESENTA Y SIETE.
+  For Each oHallazgo In $oRevista.aHallazgos
+    For Each oOcurrencia In oHallazgo.aOcurrencias
+      oArchivo = $oRevista.BuscarArchivo(oOcurrencia.sIdArchivo)
+      If oArchivo Then
+        Select Case oHallazgo.sImpacto
+          Case m_Constantes.GBA_IMPACTO_BLOQUEANTE
+            Inc oArchivo.iBloqueantes
+          Case m_Constantes.GBA_IMPACTO_VACIO
+            Inc oArchivo.iVacios
+          Case m_Constantes.GBA_IMPACTO_DEGRADANTE
+            Inc oArchivo.iDegradantes
+          Case m_Constantes.GBA_IMPACTO_REUTILIZACION
+            Inc oArchivo.iReutilizacion
+        End Select
+      Endif
+    Next
+  Next
+
+End
+
+' ============================================
+' 5. CAPA DE VISTA
+' El grid vuelve a pedir las celdas en CADA repintado y no cachea
+' nada, así que el evento Data no puede hacer trabajo. Toda la
+' resolución contra el catálogo y todo el formateo ocurren acá, una
+' sola vez por filtro o por ordenamiento.
+' ============================================
+
+' ============================================
+' Función   : ReconstruirVista
+' Propósito : Aplica los filtros activos, ordena, y deja $aCeldas con
+'             todas las cadenas ya formateadas listas para el grid.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ReconstruirVista()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oHallazgo As CHallazgo
+  Dim iFila As Integer = 0
+
+  $aVistaHallazgos = New CHallazgo[]
+  $aCeldas = New String[]
+
+  If Not $oRevista Then Return
+
+  ' --- 2. FILTRADO: SOLO REFERENCIAS, NO SE DUPLICA NADA ---
+  For Each oHallazgo In $oRevista.aHallazgos
+    If PasaLosFiltros(oHallazgo) Then $aVistaHallazgos.Add(oHallazgo)
+  Next
+
+  ' --- 3. ORDENAMIENTO ---
+  OrdenarVista()
+
+  ' --- 4. FORMATEO ---
+  ' ACÁ SE RESUELVEN LOS CÓDIGOS CONTRA EL CATÁLOGO, UNA SOLA VEZ.
+  $aCeldas = New String[$aVistaHallazgos.Count * $iColumnasVista]
+  For Each oHallazgo In $aVistaHallazgos
+    $aCeldas[iFila * $iColumnasVista + 0] = EtiquetaImpacto(oHallazgo.sImpacto)
+    $aCeldas[iFila * $iColumnasVista + 1] = TextoFrecuencia(oHallazgo)
+    $aCeldas[iFila * $iColumnasVista + 2] = EtiquetaCorreccion(oHallazgo.sCorreccion)
+    $aCeldas[iFila * $iColumnasVista + 3] = oHallazgo.sCodigo
+    $aCeldas[iFila * $iColumnasVista + 4] = TextoMensajeCorto(oHallazgo)
+    $aCeldas[iFila * $iColumnasVista + 5] = CStr(oHallazgo.OcurrenciasTotales)
+    $aCeldas[iFila * $iColumnasVista + 6] = TextoUbicacion(oHallazgo)
+    Inc iFila
+  Next
+
+End
+
+' ============================================
+' Función   : CeldaVista
+' Propósito : Devuelve una celda ya formateada. ES LA RUTA CALIENTE:
+'             se llama varias veces por segundo mientras el usuario
+'             navega, así que no hace absolutamente nada más que
+'             indexar.
+' Parámetros: iFila As Integer, iColumna As Integer
+' Retorna   : String — la celda, o cadena vacía si está fuera de rango
+' ============================================
+Public Function CeldaVista(iFila As Integer, iColumna As Integer) As String
+
+  Dim iIndice As Integer
+
+  iIndice = iFila * $iColumnasVista + iColumna
+  If iIndice < 0 Then Return ""
+  If iIndice > $aCeldas.Max Then Return ""
+
+  Return $aCeldas[iIndice]
+
+End
+
+' ============================================
+' Función   : FilasVista
+' Propósito : Cantidad de filas visibles, para fijar gv.Rows.Count.
+' Retorna   : Integer
+' ============================================
+Public Function FilasVista() As Integer
+
+  Return $aVistaHallazgos.Count
+
+End
+
+' ============================================
+' Función   : PasaLosFiltros
+' Propósito : Decide si un hallazgo entra en la vista actual.
+' Parámetros: oHallazgo As CHallazgo
+' Retorna   : Boolean
+' ============================================
+Private Function PasaLosFiltros(oHallazgo As CHallazgo) As Boolean
+
+  ' --- 1. FILTRO POR ARCHIVO ---
+  ' VACÍO SIGNIFICA VISTA CONSOLIDADA, QUE ES EL DEFECTO: ES DONDE
+  ' VIVE LA FRECUENCIA Y ES LO QUE PERMITE ELEGIR EL ARCHIVO A INFORMAR.
+  If $sFiltroArchivo <> "" Then
+    If Not oHallazgo.BuscarOcurrencia($sFiltroArchivo) Then Return False
+  Endif
+
+  ' --- 2. FILTRO POR IMPACTO ---
+  If $sFiltroImpacto <> "" Then
+    If oHallazgo.sImpacto <> $sFiltroImpacto Then Return False
+  Endif
+
+  ' --- 3. FILTRO POR CORRECCIÓN ---
+  If $sFiltroCorreccion <> "" Then
+    If oHallazgo.sCorreccion <> $sFiltroCorreccion Then Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : OrdenarVistaHallazgos
+' Propósito : Handler del click en encabezado. Alterna el sentido si
+'             se repite la misma columna. Reordena el MODELO y
+'             reconstruye la vista; el grid solo se refresca.
+' Parámetros: iColumna As Integer — columna clickeada
+' Retorna   : nada
+' ============================================
+Public Sub OrdenarVistaHallazgos(iColumna As Integer)
+
+  ' --- 1. ALTERNANCIA DE SENTIDO ---
+  If iColumna = $iColumnaOrden Then
+    $bOrdenDescendente = Not $bOrdenDescendente
+  Else
+    $iColumnaOrden = iColumna
+    $bOrdenDescendente = True
+  Endif
+
+  ReconstruirVista()
+
+End
+
+' ============================================
+' Función   : OrdenarVista
+' Propósito : Ordena $aVistaHallazgos. Sin columna elegida aplica el
+'             ORDEN CANÓNICO, que es fijo y no configurable: impacto,
+'             frecuencia, ocurrencias, código. Ese orden es el que
+'             pone arriba el desfasaje de encoding que se arregla con
+'             cuatro caracteres y que, ordenado por esfuerzo, quedaría
+'             al fondo de la lista.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub OrdenarVista()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aOrdenados As New CHallazgo[]
+  Dim aClavesOrdenadas As New String[]
+  Dim oHallazgo As CHallazgo
+  Dim sClave As String
+  Dim bVaAntes As Boolean
+  Dim i As Integer
+  Dim j As Integer
+
+  If $aVistaHallazgos.Count = 0 Then Return
+
+  ' --- 2. INSERCIÓN SOBRE DOS ARRAYS PARALELOS ---
+  ' LA CLAVE SE CALCULA UNA SOLA VEZ POR HALLAZGO Y SE CONSERVA EN
+  ' aClavesOrdenadas, QUE ACOMPAÑA POSICIÓN A POSICIÓN AL ARRAY DE
+  ' OBJETOS. CON A LO SUMO UNAS CENTENAS DE HALLAZGOS LA INSERCIÓN ES
+  ' INSTANTÁNEA Y NO HACE FALTA UN COMPARADOR EXTERNO.
+  For i = 0 To $aVistaHallazgos.Max
+
+    oHallazgo = $aVistaHallazgos[i]
+    sClave = ClaveDeOrden(oHallazgo)
+
+    ' BÚSQUEDA DE LA POSICIÓN, RETROCEDIENDO MIENTRAS LA CLAVE NUEVA
+    ' DEBA IR ANTES QUE LA QUE YA ESTÁ EN ESE LUGAR
+    j = aOrdenados.Count
+    While j > 0
+      bVaAntes = ClaveVaAntes(sClave, aClavesOrdenadas[j - 1])
+      If Not bVaAntes Then Break
+      Dec j
+    Wend
+
+    ' Add CON ÍNDICE INSERTA EN LA POSICIÓN. Insert NO SIRVE ACÁ:
+    ' EMPALMA OTRO ARRAY, NO UN ELEMENTO SUELTO
+    aOrdenados.Add(oHallazgo, j)
+    aClavesOrdenadas.Add(sClave, j)
+
+  Next
+
+  ' --- 3. LA VISTA PASA A SER LA ORDENADA ---
+  $aVistaHallazgos = aOrdenados
+
+End
+
+' ============================================
+' Función   : ClaveDeOrden
+' Propósito : Arma una clave textual ordenable para un hallazgo, según
+'             la columna activa o el orden canónico.
+' Parámetros: oHallazgo As CHallazgo
+' Retorna   : String — clave comparable lexicográficamente
+' ============================================
+Private Function ClaveDeOrden(oHallazgo As CHallazgo) As String
+
+  ' --- 1. LOS NUMÉRICOS VAN CON RELLENO PARA QUE ORDENEN BIEN COMO TEXTO ---
+  Select Case $iColumnaOrden
+    Case 0
+      Return PesoImpacto(oHallazgo.sImpacto) & oHallazgo.sCodigo
+    Case 1
+      Return Format(oHallazgo.iFrecuencia, "000") & oHallazgo.sCodigo
+    Case 2
+      Return oHallazgo.sCorreccion & oHallazgo.sCodigo
+    Case 3
+      Return oHallazgo.sCodigo
+    Case 5
+      Return Format(oHallazgo.OcurrenciasTotales, "00000") & oHallazgo.sCodigo
+  End Select
+
+  ' --- 2. ORDEN CANÓNICO ---
+  Return PesoImpacto(oHallazgo.sImpacto) &
+    Format(oHallazgo.iFrecuencia, "000") &
+    Format(oHallazgo.OcurrenciasTotales, "00000") &
+    oHallazgo.sCodigo
+
+End
+
+' ============================================
+' Función   : ClaveVaAntes
+' Propósito : Comparación de dos claves respetando el sentido activo.
+' Parámetros: sUna As String, sOtra As String
+' Retorna   : Boolean — True si sUna debe ir antes que sOtra
+' ============================================
+Private Function ClaveVaAntes(sUna As String, sOtra As String) As Boolean
+
+  If $bOrdenDescendente Then Return sUna > sOtra
+
+  Return sUna < sOtra
+
+End
+
+' ============================================
+' Función   : PesoImpacto
+' Propósito : Traduce el nivel de impacto a un dígito ordenable, de
+'             mayor a menor gravedad.
+' Parámetros: sImpacto As String
+' Retorna   : String — un dígito
+' ============================================
+Private Function PesoImpacto(sImpacto As String) As String
+
+  Select Case sImpacto
+    Case m_Constantes.GBA_IMPACTO_BLOQUEANTE
+      Return "4"
+    Case m_Constantes.GBA_IMPACTO_VACIO
+      Return "3"
+    Case m_Constantes.GBA_IMPACTO_DEGRADANTE
+      Return "2"
+    Case m_Constantes.GBA_IMPACTO_REUTILIZACION
+      Return "1"
+  End Select
+
+  Return "0"
+
+End
+
+' ============================================
+' 6. FORMATEO DE CELDAS
+' ============================================
+
+' ============================================
+' Función   : TextoFrecuencia
+' Propósito : Columna n/N. Marca con "·eco" los hallazgos universales
+'             del ecosistema, para no gastar una columna entera: si un
+'             defecto aparece en las seis herramientas conocidas,
+'             reportarlo como falla de esta revista sería injusto y le
+'             daría al proveedor el argumento fácil de que nadie lo hace.
+' Parámetros: oHallazgo As CHallazgo
+' Retorna   : String — p. ej. "4/4" o "4/4 ·eco"
+' ============================================
+Private Function TextoFrecuencia(oHallazgo As CHallazgo) As String
+
+  Dim sTexto As String
+
+  sTexto = CStr(oHallazgo.iFrecuencia) & "/" & CStr(oHallazgo.iTotalArchivos)
+  If oHallazgo.bUniversal Then sTexto &= " ·eco"
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : TextoMensajeCorto
+' Propósito : Mensaje del catálogo para la columna de la grilla,
+'             antecedido por Posible cuando la detección es
+'             heurística. Que el auditor distinga lo que sabe de lo
+'             que sospecha es parte de lo que lo hace creíble.
+' Parámetros: oHallazgo As CHallazgo
+' Retorna   : String
+' ============================================
+Private Function TextoMensajeCorto(oHallazgo As CHallazgo) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oMensaje As CMensaje
+  Dim sTexto As String
+
+  ' --- 2. SIN CATÁLOGO SE MUESTRA EL CÓDIGO ---
+  ' ES POBRE PERO NO ES FALSO, Y PERMITE TRABAJAR MIENTRAS EL CATÁLOGO
+  ' SE ESCRIBE
+  oMensaje = BuscarMensaje(oHallazgo.sCodigo)
+  If Not oMensaje Then Return oHallazgo.sCodigo
+
+  sTexto = oMensaje.sCorto
+  If sTexto = "" Then sTexto = oHallazgo.sCodigo
+
+  ' --- 3. MARCA DE HEURÍSTICA ---
+  If oHallazgo.sCerteza = m_Constantes.GBA_CERTEZA_PROBABLE Then Return ("Posible: ") & sTexto
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : TextoUbicacion
+' Propósito : Ubicación de la primera ocurrencia visible. Conviven
+'             línea (xmllint) y XPath (Schematron); no se deriva una
+'             desde la otra.
+' Parámetros: oHallazgo As CHallazgo
+' Retorna   : String
+' ============================================
+Private Function TextoUbicacion(oHallazgo As CHallazgo) As String
+
+  If oHallazgo.aOcurrencias.Count = 0 Then Return ""
+
+  Return oHallazgo.aOcurrencias[0].Ubicacion()
+
+End
+
+' ============================================
+' Función   : EtiquetaImpacto
+' Propósito : Nombre legible del nivel de impacto.
+' Parámetros: sImpacto As String
+' Retorna   : String
+' ============================================
+Private Function EtiquetaImpacto(sImpacto As String) As String
+
+  Select Case sImpacto
+    Case m_Constantes.GBA_IMPACTO_BLOQUEANTE
+      Return ("Bloqueante")
+    Case m_Constantes.GBA_IMPACTO_VACIO
+      Return ("Sin artículo")
+    Case m_Constantes.GBA_IMPACTO_DEGRADANTE
+      Return ("Degradante")
+    Case m_Constantes.GBA_IMPACTO_REUTILIZACION
+      Return ("Reutilización")
+  End Select
+
+  Return sImpacto
+
+End
+
+' ============================================
+' Función   : EtiquetaCorreccion
+' Propósito : Nombre legible del nivel de corrección. Es el eje que
+'             responde a la pregunta que el editor se hace de verdad:
+'             quién lo puede arreglar y con cuánto esfuerzo.
+' Parámetros: sCorreccion As String
+' Retorna   : String
+' ============================================
+Private Function EtiquetaCorreccion(sCorreccion As String) As String
+
+  Select Case sCorreccion
+    Case m_Constantes.GBA_CORRECCION_AUTOMATICA
+      Return ("Automática")
+    Case m_Constantes.GBA_CORRECCION_EDITORIAL
+      Return ("Editorial")
+    Case m_Constantes.GBA_CORRECCION_ORIGEN
+      Return ("En origen")
+  End Select
+
+  Return sCorreccion
+
+End
+
+' ============================================
+' Función   : TextoBooleano
+' Propósito : Convierte un Boolean a texto legible. NUNCA usar CStr()
+'             para esto: se verificó que CStr(True) devuelve "T" y
+'             CStr(False) devuelve CADENA VACÍA, con lo que un False
+'             se vuelve indistinguible de un dato ausente o nunca
+'             calculado. En un informe de auditoría donde "no cumple"
+'             se renderizaría como nada, eso es un error silencioso
+'             caro. Vale también para los TINYINT(1) de MySQL, que
+'             llegan como Boolean (RC-GM-01).
+' Parámetros: bValor As Boolean
+' Retorna   : String — "sí" o "no"
+' ============================================
+Public Function TextoBooleano(bValor As Boolean) As String
+
+  If bValor Then Return ("sí")
+
+  Return ("no")
+
+End
+
+' ============================================
+' 7. ACCESO PARA EL FORMULARIO
+' ============================================
+
+Public Function RevistaEnCurso() As CRevistaAuditada
+
+  Return $oRevista
+
+End
+
+Public Function CarpetaEnCurso() As String
+
+  Return $sCarpeta
+
+End
+
+' ============================================
+' Función   : FiltrarPorArchivo
+' Propósito : Filtra los hallazgos por archivo. Cadena vacía vuelve a
+'             la vista consolidada, que es donde vive la frecuencia.
+' Parámetros: sIdArchivo As String — id interno, o cadena vacía
+' Retorna   : nada
+' ============================================
+Public Sub FiltrarPorArchivo(sIdArchivo As String)
+
+  $sFiltroArchivo = sIdArchivo
+  ReconstruirVista()
+
+End
+
+Public Sub FiltrarPorImpacto(sImpacto As String)
+
+  $sFiltroImpacto = sImpacto
+  ReconstruirVista()
+
+End
+
+Public Sub FiltrarPorCorreccion(sCorreccion As String)
+
+  $sFiltroCorreccion = sCorreccion
+  ReconstruirVista()
+
+End
+
+' ============================================
+' Función   : Limpiar
+' Propósito : Descarta el lote actual. La carpeta se conserva para
+'             que el diálogo vuelva a abrirse donde estaba.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Limpiar()
+
+  $oRevista = Null
+  $aVistaHallazgos = New CHallazgo[]
+  $aCeldas = New String[]
+  $sFiltroArchivo = ""
+  $sFiltroImpacto = ""
+  $sFiltroCorreccion = ""
+  $iColumnaOrden = -1
+  $bOrdenDescendente = True
+
+End
+
+' ============================================
+' Función   : HallazgoEnFila
+' Propósito : Devuelve el hallazgo que corresponde a una fila de la
+'             vista actual, para poblar el panel de detalle.
+' Parámetros: iFila As Integer — índice de fila en la vista
+' Retorna   : CHallazgo — el hallazgo, o Null si está fuera de rango
+' ============================================
+Public Function HallazgoEnFila(iFila As Integer) As CHallazgo
+
+  If iFila < 0 Then Return Null
+  If iFila > $aVistaHallazgos.Max Then Return Null
+
+  Return $aVistaHallazgos[iFila]
+
+End
+
+' ============================================
+' Función   : ArchivoEnFila
+' Propósito : Devuelve el archivo que corresponde a una fila de
+'             gvAuditoria.
+' Parámetros: iFila As Integer — índice de fila
+' Retorna   : CArchivoAuditado — el archivo, o Null
+' ============================================
+Public Function ArchivoEnFila(iFila As Integer) As CArchivoAuditado
+
+  If Not $oRevista Then Return Null
+  If iFila < 0 Then Return Null
+  If iFila > $oRevista.aArchivos.Max Then Return Null
+
+  Return $oRevista.aArchivos[iFila]
+
+End
+
+' ============================================
+' Función   : FilasArchivos
+' Propósito : Cantidad de archivos auditados, para fijar Rows.Count
+'             de gvAuditoria.
+' Retorna   : Integer
+' ============================================
+Public Function FilasArchivos() As Integer
+
+  If Not $oRevista Then Return 0
+
+  Return $oRevista.aArchivos.Count
+
+End
+
+' ============================================
+' Función   : CeldaArchivo
+' Propósito : Celda ya formateada de gvAuditoria. Como son entre 4 y 7
+'             filas, acá no hace falta la matriz precalculada que sí
+'             necesita gvHallazgos: el costo de formatear diez celdas
+'             por repintado es irrelevante.
+' Parámetros: iFila As Integer, iColumna As Integer
+' Retorna   : String
+' ============================================
+Public Function CeldaArchivo(iFila As Integer, iColumna As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oArchivo As CArchivoAuditado
+
+  oArchivo = ArchivoEnFila(iFila)
+  If Not oArchivo Then Return ""
+
+  ' --- 2. REPARTO POR COLUMNA ---
+  Select Case iColumna
+    Case 0
+      Return oArchivo.sNombre
+    Case 1
+      ' BUENA FORMACIÓN: NO SE USA CStr SOBRE UN BOOLEAN, QUE DEVUELVE
+      ' CADENA VACÍA PARA False Y LO VOLVERÍA INDISTINGUIBLE DE UN DATO
+      ' NUNCA CALCULADO
+      Return TextoBooleano(oArchivo.bBienFormado)
+    Case 2
+      If oArchivo.sDtdVersion = "" Then Return "—"
+      Return oArchivo.sDtdVersion
+    Case 3
+      Return oArchivo.GeneradorParaMostrar
+    Case 4
+      Return CStr(oArchivo.iPalabrasBody)
+    Case 5
+      Return oArchivo.RecursosParaMostrar
+    Case 6
+      Return CStr(oArchivo.iBloqueantes)
+    Case 7
+      Return CStr(oArchivo.iVacios)
+    Case 8
+      Return CStr(oArchivo.iDegradantes)
+    Case 9
+      Return CStr(oArchivo.iReutilizacion)
+  End Select
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : TextoResumen
+' Propósito : Línea de resumen para txtAviso. Es lo primero que mira
+'             alguien cuando se le muestra la pantalla, y es lo que
+'             después encabeza el informe.
+' Retorna   : String
+' ============================================
+Public Function TextoResumen() As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTexto As String
+
+  If Not $oRevista Then Return ("Sin auditoría cargada.")
+
+  ' --- 2. IDENTIDAD DE LA REVISTA ---
+  If $oRevista.sTitulo <> "" Then
+    sTexto = $oRevista.sTitulo
+  Else
+    sTexto = File.Name($oRevista.sCarpeta)
+  Endif
+  If $oRevista.sClave <> "" Then sTexto &= " · " & $oRevista.sClave
+
+  ' --- 3. TAMAÑO DEL LOTE ---
+  sTexto &= " · " & CStr($oRevista.Archivos) & (" archivos")
+
+  ' --- 4. GENERADOR, CON LA MARCA DE INFERENCIA ---
+  If $oRevista.sGenerador <> "" Then
+    sTexto &= " · " & $oRevista.sGenerador
+    If $oRevista.sVersionGenerador <> "" Then sTexto &= " " & $oRevista.sVersionGenerador
+    If $oRevista.sConfianza = "inferido" Then sTexto &= (" (inferido)")
+    ' EL HALLAZGO MÁS ÚTIL DE TODOS: LA VERSIÓN VIGENTE DE LA MISMA
+    ' HERRAMIENTA PUEDE CORREGIR BUENA PARTE DE LOS DEFECTOS
+    If $oRevista.sVersionVigente <> "" Then
+      If $oRevista.sVersionVigente <> $oRevista.sVersionGenerador Then
+        sTexto &= (", vigente ") & $oRevista.sVersionVigente
+      Endif
+    Endif
+  Endif
+
+  ' --- 5. CONTADORES POR IMPACTO ---
+  sTexto &= " · " & CStr($oRevista.Bloqueantes) & (" bloq.")
+  sTexto &= " · " & CStr($oRevista.Vacios) & (" sin art.")
+  sTexto &= " · " & CStr($oRevista.Degradantes) & (" degr.")
+  sTexto &= " · " & CStr($oRevista.Reutilizacion) & (" reut.")
+
+  ' --- 6. ADVERTENCIAS DE ALCANCE ---
+  ' SE DECLARAN LOS LÍMITES DE LO QUE SE AFIRMA, IGUAL QUE EN EL
+  ' BLOQUE DE DEFENSIBILIDAD DEL INFORME
+  If Not $oRevista.MuestraSuficiente Then sTexto &= (" · MUESTRA INSUFICIENTE PARA FRECUENCIA")
+  If Not $oRevista.bRevistaUnica Then sTexto &= (" · LA CARPETA MEZCLA MÁS DE UNA REVISTA")
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : DetalleHallazgo
+' Propósito : Texto largo del panel de detalle. Es el mismo contenido
+'             que va al informe, así que no es trabajo duplicado: la
+'             grilla lleva la versión corta y el panel la larga.
+' Parámetros: oHallazgo As CHallazgo
+' Retorna   : String — bloque de varias líneas
+' ============================================
+Public Function DetalleHallazgo(oHallazgo As CHallazgo) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTexto As String
+  Dim oMensaje As CMensaje
+  Dim oOcurrencia As COcurrencia
+  Dim oArchivo As CArchivoAuditado
+  Dim sLista As String
+
+  If Not oHallazgo Then Return ""
+
+  ' --- 2. ENCABEZADO ---
+  sTexto = oHallazgo.sCodigo & "  ·  " & EtiquetaImpacto(oHallazgo.sImpacto)
+  sTexto &= "  ·  " & EtiquetaCorreccion(oHallazgo.sCorreccion)
+  sTexto &= "  ·  " & TextoFrecuencia(oHallazgo) & Chr(10)
+
+  ' --- 3. LOS TRES TEXTOS DEL CATÁLOGO ---
+  ' QUÉ SE ENCONTRÓ, POR QUÉ IMPORTA, QUÉ HACER. EL SEGUNDO ES EL QUE
+  ' CONVIERTE UN LISTADO EN UN DICTAMEN
+  oMensaje = BuscarMensaje(oHallazgo.sCodigo)
+  If oMensaje Then
+    If oMensaje.sLargo <> "" Then sTexto &= oMensaje.sLargo & Chr(10)
+    If oMensaje.sConsecuencia <> "" Then sTexto &= ("Por qué importa: ") & oMensaje.sConsecuencia & Chr(10)
+    If oMensaje.sRemedio <> "" Then sTexto &= ("Qué hacer: ") & oMensaje.sRemedio & Chr(10)
+  Else
+    sTexto &= ("Código no catalogado.") & Chr(10)
+  Endif
+
+  ' --- 4. AVISO DE HEURÍSTICA ---
+  If oHallazgo.sCerteza = m_Constantes.GBA_CERTEZA_PROBABLE Then
+    sTexto &= ("Detección heurística: requiere verificación humana.") & Chr(10)
+  Endif
+
+  ' --- 5. AVISO DE CARENCIA UNIVERSAL ---
+  ' CAMBIA EL SENTIDO DEL HALLAZGO DE REPROCHE A OPORTUNIDAD: SI
+  ' NINGUNA HERRAMIENTA DEL MERCADO LO RESUELVE, REPORTARLO COMO FALLA
+  ' DE ESTA REVISTA SERÍA INJUSTO
+  If oHallazgo.bUniversal Then
+    sTexto &= ("Ninguna de las herramientas de marcación conocidas resuelve este punto.") & Chr(10)
+  Endif
+
+  ' --- 6. UBICACIONES ---
+  For Each oOcurrencia In oHallazgo.aOcurrencias
+    oArchivo = $oRevista.BuscarArchivo(oOcurrencia.sIdArchivo)
+    If oArchivo Then
+      If sLista <> "" Then sLista &= "; "
+      sLista &= oArchivo.sNombre
+      If oOcurrencia.iVeces > 1 Then sLista &= " (×" & CStr(oOcurrencia.iVeces) & ")"
+      If oOcurrencia.Ubicacion() <> "" Then sLista &= " " & oOcurrencia.Ubicacion()
+    Endif
+  Next
+  If sLista <> "" Then sTexto &= ("En: ") & sLista
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : HayAuditoria
+' Propósito : Indica si hay un lote cargado, para habilitar botones.
+' Retorna   : Boolean
+' ============================================
+Public Function HayAuditoria() As Boolean
+
+  If Not $oRevista Then Return False
+
+  Return $oRevista.aArchivos.Count > 0
+
+End
+
+' ============================================
+' Función   : FiltroArchivoActivo
+' Propósito : Devuelve el id de archivo por el que está filtrada la
+'             vista, o cadena vacía si está consolidada.
+' Retorna   : String
+' ============================================
+Public Function FiltroArchivoActivo() As String
+
+  Return $sFiltroArchivo
+
+End
+
+' ============================================
+' Función   : PuedeGenerarInforme
+' Propósito : Indica si están las condiciones mínimas para emitir un
+'             informe presentable. El catálogo de mensajes es
+'             requisito duro acá aunque sea blando para analizar: un
+'             informe donde los hallazgos aparecen como GBA-DOI-01 no
+'             se le manda a nadie.
+' Parámetros: ninguno
+' Retorna   : Boolean
+' ============================================
+Public Function PuedeGenerarInforme() As Boolean
+
+  If Not HayAuditoria() Then Return False
+  If Not $bHayCatalogoMensajes Then Return False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AlcanceNoEvaluado
+' Propósito : Devuelve el texto de lo que la auditoría NO evaluó, para
+'             el bloque de defensibilidad del informe y para el
+'             desplegable de detalle. Declarar los límites de lo que
+'             se afirma es parte de lo que hace creíble al auditor.
+' Parámetros: ninguno
+' Retorna   : String — separado por punto y coma, o cadena vacía
+' ============================================
+Public Function AlcanceNoEvaluado() As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTexto As String = ""
+
+  ' --- 2. LO QUE NUNCA SE EVALÚA, POR DEFINICIÓN DEL ALCANCE ---
+  sTexto = ("calidad del contenido; corrección bibliográfica; conformidad con SciELO")
+
+  ' --- 3. LO QUE NO SE EVALUÓ POR FALTA DE UNA CAPACIDAD ---
+  If Not $bPuedeValidarDTD Then sTexto &= ("; validez contra la DTD declarada")
+  If Not $bPuedeSchematron Then sTexto &= ("; conformidad con JATS4R y Crossref")
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : Analizando
+' Propósito : Indica si hay un lote en curso, para que el formulario
+'             pueda deshabilitar los controles durante el análisis.
+' Retorna   : Boolean
+' ============================================
+Public Function Analizando() As Boolean
+
+  Return $bAnalizando
+
+End
+
+' ============================================
+' Función   : VerificarVacioEstructural
+' Propósito : Mide el contenido real del <body> y reporta el documento
+'             que procesa perfecto y no contiene artículo.
+'
+'             Es la categoría que ningún validador del mercado
+'             reporta, y en el corpus de referencia alcanzaba a cinco
+'             de veintiún archivos. Un <body/> completamente vacío
+'             junto a doscientas referencias y metadatos bilingües
+'             sigue siendo un archivo sin artículo.
+'
+'             Se mide con string-length() y no extrayendo el texto:
+'             la salida es un número corto en lugar de setenta mil
+'             caracteres por la tubería.
+'
+' Parámetros: oArchivo As CArchivoAuditado — archivo ya parseado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarVacioEstructural(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+  Dim iCaracteres As Integer
+
+  ' --- 2. MEDICIÓN ---
+  sSalida = ConsultarXPath(oArchivo.sRuta, "string-length(normalize-space(//body))")
+  If sSalida = "" Then Return
+
+  Try iCaracteres = CInt(Trim(sSalida))
+  If Error Then Return
+
+  ' SE GUARDA EN EL CAMPO DE PALABRAS, QUE ES LA COLUMNA DE LA GRILLA.
+  ' LA MAGNITUD IMPORTA MÁS QUE LA UNIDAD: LO QUE SE LEE DE UN VISTAZO
+  ' ES SI HAY CONTENIDO O NO
+  oArchivo.iPalabrasBody = iCaracteres
+
+  ' --- 3. CUERPO VACÍO: CERO ES CERO, NO HAY MATIZ ---
+  If iCaracteres = 0 Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_BODY_VACIO, oArchivo.sId, 0, "/article/body")
+    Return
+  Endif
+
+  ' --- 4. CUERPO SOSPECHOSAMENTE BREVE ---
+  ' Se registra como probable y no como cierto: una reseña corta o un
+  ' obituario legítimo pueden quedar por debajo del umbral, y el
+  ' auditor tiene que distinguir lo que sabe de lo que sospecha
+  If iCaracteres < m_Constantes.GBA_MINIMO_CARACTERES_BODY Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_BODY_MINIMO, oArchivo.sId, 0, "/article/body")
+  Endif
+
+End
+
+' ============================================
+' Función   : VerificarRecursosExternos
+' Propósito : Resuelve las imágenes referenciadas por el XML contra la
+'             carpeta que lo contiene y reporta las que faltan.
+'
+'             Un XML impecable con nueve imágenes ausentes es
+'             inservible, y ese hallazgo no lo produce ninguna capa de
+'             validación: lo produce el sistema de archivos.
+'
+' Parámetros: oArchivo As CArchivoAuditado — archivo ya parseado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarRecursosExternos(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+  Dim aRecursos As String[]
+  Dim sRecurso As String
+  Dim sCarpeta As String
+
+  sCarpeta = File.Dir(oArchivo.sRuta)
+
+  ' --- 2. EXTRACCIÓN DE LAS REFERENCIAS ---
+  ' EL PREFIJO xlink NO SE PUEDE USAR: xmllint --xpath no conoce los
+  ' namespaces del documento y devuelve 'Undefined namespace prefix'.
+  ' local-name() lo evita y además sirve para los archivos que
+  ' declaran el namespace con otro prefijo
+  sSalida = ConsultarXPath(oArchivo.sRuta, "//graphic/@*[local-name()='href']")
+  If sSalida = "" Then Return
+
+  aRecursos = ExtraerValoresAtributo(sSalida)
+  oArchivo.iRecursosReferenciados = aRecursos.Count
+
+  ' --- 3. RESOLUCIÓN CONTRA LA CARPETA ---
+  For Each sRecurso In aRecursos
+
+    ' LAS REFERENCIAS ABSOLUTAS O REMOTAS NO SE RESUELVEN ACÁ
+    If sRecurso Begins "http" Then Continue
+    If sRecurso Begins "/" Then Continue
+
+    If Not Exist(sCarpeta &/ sRecurso) Then
+      Inc oArchivo.iRecursosFaltantes
+      RegistrarHallazgo(m_Constantes.GBA_COD_RECURSO_FALTANTE, oArchivo.sId, 0, "//graphic[@*[local-name()='href']='" & sRecurso & "']")
+    Endif
+
+  Next
+
+End
+
+' ============================================
+' Función   : ConsultarXPath
+' Propósito : Resuelve una expresión XPath sobre un archivo con
+'             xmllint y devuelve su salida.
+'
+'             Usa la forma síncrona 'Exec ... To' y NO el mecanismo de
+'             eventos. La razón: --xpath escribe su resultado en
+'             stdout, que esa forma sí captura. El aparato asíncrono
+'             existe únicamente porque los DIAGNÓSTICOS de xmllint van
+'             a stderr, que 'To' no captura; acá no hacen falta.
+'
+' Parámetros: sRuta As String — archivo a consultar
+'             sExpresion As String — expresión XPath
+' Retorna   : String — la salida, o cadena vacía si falló
+' ============================================
+Private Function ConsultarXPath(sRuta As String, sExpresion As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+
+  ' --- 2. INVOCACIÓN SÍNCRONA ---
+  ' SC-05: Exec con array, nunca Shell. --nonet sigue siendo
+  ' obligatorio: el archivo viene de un tercero desconocido.
+  Try Exec ["xmllint", "--nonet", "--xpath", sExpresion, sRuta] To sSalida
+  If Error Then
+    ' UNA EXPRESIÓN QUE NO ENCUENTRA NADA TAMBIÉN LLEGA ACÁ, Y NO ES
+    ' UNA FALLA: ES UN RESULTADO VACÍO LEGÍTIMO
+    Return ""
+  Endif
+
+  ' --- 3. RETORNO ---
+  Return sSalida
+
+End
+
+' ============================================
+' Función   : ExtraerValoresAtributo
+' Propósito : Separa los valores de una lista de atributos tal como la
+'             devuelve xmllint --xpath, que los emite en la forma
+'             'prefijo:nombre="valor"' separados por espacios.
+' Parámetros: sSalida As String — salida cruda de xmllint
+' Retorna   : String[] — los valores, sin comillas
+' ============================================
+Private Function ExtraerValoresAtributo(sSalida As String) As String[]
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aValores As New String[]
+  Dim sComilla As String
+  Dim iIni As Integer
+  Dim iFin As Integer
+
+  ' SC-01: Chr(34) EN LUGAR DEL ESCAPE
+  sComilla = Chr(34)
+  iIni = 1
+
+  ' --- 2. RECORRIDO POR PARES DE COMILLAS ---
+  ' NO SE PARTE POR ESPACIOS: UN NOMBRE DE ARCHIVO PUEDE TENERLOS
+  Do
+
+    iIni = InStr(sSalida, sComilla, iIni)
+    If iIni = 0 Then Break
+
+    iFin = InStr(sSalida, sComilla, iIni + 1)
+    If iFin = 0 Then Break
+
+    If iFin > iIni + 1 Then aValores.Add(Mid(sSalida, iIni + 1, iFin - iIni - 1))
+    iIni = iFin + 1
+
+  Loop
+
+  Return aValores
+
+End
+
+' ============================================
+' Función   : VerificarCoherenciaInterna
+' Propósito : Aplica las cinco reglas de coherencia interna sobre un
+'             archivo ya parseado.
+' Parámetros: oArchivo As CArchivoAuditado — archivo a revisar
+'             sContenido As String — bytes crudos, para las reglas que
+'               operan sobre el marcado y no sobre el texto resuelto
+' Retorna   : nada
+' ============================================
+Private Sub VerificarCoherenciaInterna(oArchivo As CArchivoAuditado, sContenido As String)
+
+  VerificarLicencia(oArchivo)
+  VerificarNombresAutores(oArchivo)
+  VerificarFechasHistoria(oArchivo)
+  VerificarCodigoIdioma(oArchivo)
+  VerificarEntidadesDobles(oArchivo, sContenido)
+
+End
+
+' ============================================
+' Función   : VerificarLicencia
+' Propósito : Compara la licencia declarada en el atributo contra la
+'             mencionada en el texto visible.
+'
+'             El caso real que motiva la regla: un archivo con
+'             @xlink:href apuntando a /licenses/by/4.0/ y el texto del
+'             enlace diciendo 'CC BY-NC 4.0'. Son licencias
+'             materialmente distintas. Las máquinas leen el atributo y
+'             concluyen BY; los humanos leen el texto y concluyen
+'             BY-NC. La condición de reuso del artículo queda ambigua.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarLicencia(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sEnlace As String
+  Dim sTexto As String
+  Dim sCodigoEnlace As String
+  Dim sCodigoTexto As String
+
+  ' --- 2. LECTURA DE LAS DOS FUENTES ---
+  ' EL PREFIJO xlink NO SE PUEDE USAR EN --xpath: local-name() LO EVITA
+  sEnlace = ConsultarXPath(oArchivo.sRuta, "string(//license/@*[local-name()='href'])")
+  sTexto = ConsultarXPath(oArchivo.sRuta, "string(//license)")
+
+  If sEnlace = "" Then Return
+  If sTexto = "" Then Return
+
+  ' --- 3. EXTRACCIÓN DEL CÓDIGO DE LICENCIA DE CADA UNA ---
+  sCodigoEnlace = CodigoCreativeCommons(sEnlace)
+  sCodigoTexto = CodigoCreativeCommons(sTexto)
+
+  ' --- 4. SOLO SE COMPARA SI LAS DOS DECLARAN ALGO ---
+  ' RC-GM-17: TRES CONDICIONES EN If ANIDADOS
+  If sCodigoEnlace = "" Then Return
+  If sCodigoTexto = "" Then Return
+
+  If sCodigoEnlace <> sCodigoTexto Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_LICENCIA_DISCORDANTE, oArchivo.sId, 0, "//license")
+  Endif
+
+End
+
+' ============================================
+' Función   : CodigoCreativeCommons
+' Propósito : Extrae el código de licencia Creative Commons de un
+'             texto, sea una URL o prosa. Busca de la variante más
+'             larga a la más corta, porque 'by-nc-sa' contiene a
+'             'by-nc' y este a 'by'.
+' Parámetros: sTexto As String — URL o texto donde buscar
+' Retorna   : String — 'by-nc-sa', 'by-nc', 'by-sa', 'by-nd', 'by', o vacío
+' ============================================
+Private Function CodigoCreativeCommons(sTexto As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sPlegado As String
+  Dim aVariantes As String[]
+  Dim sVariante As String
+
+  ' PLEGADO POR TABLA EXPLÍCITA, NO CON Lower(), QUE DEPENDE DEL LOCALE
+  sPlegado = m_FuncionesGenericas.PlegarTextoAMinuscula(sTexto)
+
+  ' --- 2. ORDEN DE BÚSQUEDA: DE LA MÁS ESPECÍFICA A LA MÁS GENERAL ---
+  aVariantes = ["by-nc-nd", "by-nc-sa", "by-nc", "by-nd", "by-sa", "by"]
+
+  For Each sVariante In aVariantes
+    If InStr(sPlegado, sVariante) > 0 Then Return sVariante
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : VerificarNombresAutores
+' Propósito : Detecta una probable inversión entre apellido y nombre,
+'             contrastándolos con la dirección de correo.
+'
+'             El caso real: <surname>Said</surname>
+'             <given-names>Gulyamov</given-names> con el correo
+'             said.gulyamov@... La persona es Said Gulyamov y el XML
+'             dice lo contrario. Eso corrompe toda cita del artículo y
+'             rompe la vinculación con Crossref y con ORCID.
+'
+'             La heurística: en un correo institucional el nombre de
+'             pila casi siempre precede al apellido. Si en la parte
+'             local aparece primero lo que el XML declara como
+'             APELLIDO y después lo que declara como NOMBRE, hay
+'             sospecha de inversión.
+'
+'             Se registra como PROBABLE, nunca como cierto. Que el
+'             auditor distinga lo que sabe de lo que sospecha es parte
+'             de lo que lo hace creíble.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarNombresAutores(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sCorreo As String
+  Dim sLocal As String
+  Dim sApellido As String
+  Dim sNombre As String
+  Dim iPosApellido As Integer
+  Dim iPosNombre As Integer
+
+  ' --- 2. CORREO Y NOMBRE DEL PRIMER AUTOR ---
+  ' SE MIRA SOLO EL PRIMERO: SIN UN VÍNCULO EXPLÍCITO ENTRE CADA
+  ' CORREO Y SU AUTOR, EXTENDERLO A TODOS PRODUCIRÍA FALSOS POSITIVOS
+  sCorreo = ConsultarXPath(oArchivo.sRuta, "string((//email)[1])")
+  If sCorreo = "" Then Return
+
+  sApellido = Trim(ConsultarXPath(oArchivo.sRuta, "string((//contrib//surname)[1])"))
+  sNombre = Trim(ConsultarXPath(oArchivo.sRuta, "string((//contrib//given-names)[1])"))
+
+  If sApellido = "" Then Return
+  If sNombre = "" Then Return
+
+  ' --- 3. PARTE LOCAL DEL CORREO, PLEGADA ---
+  sLocal = ParteLocalCorreo(sCorreo)
+  If sLocal = "" Then Return
+
+  sApellido = m_FuncionesGenericas.PlegarTextoAMinuscula(sApellido)
+  sNombre = m_FuncionesGenericas.PlegarTextoAMinuscula(sNombre)
+
+  ' --- 4. LOS DOS TIENEN QUE APARECER PARA PODER COMPARAR EL ORDEN ---
+  iPosApellido = InStr(sLocal, sApellido)
+  iPosNombre = InStr(sLocal, sNombre)
+
+  If iPosApellido = 0 Then Return
+  If iPosNombre = 0 Then Return
+
+  ' --- 5. ORDEN INVERTIDO RESPECTO DE LO HABITUAL ---
+  If iPosApellido < iPosNombre Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_NOMBRE_INVERTIDO, oArchivo.sId, 0, "(//contrib//name)[1]")
+  Endif
+
+End
+
+' ============================================
+' Función   : ParteLocalCorreo
+' Propósito : Devuelve la parte anterior a la arroba, plegada a
+'             minúsculas. El texto de origen puede traer adornos
+'             ('* E-mail: alguien@dominio'), así que se recorta desde
+'             el último espacio previo a la arroba.
+' Parámetros: sCorreo As String — texto que contiene una dirección
+' Retorna   : String — la parte local, o cadena vacía
+' ============================================
+Private Function ParteLocalCorreo(sCorreo As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iArroba As Integer
+  Dim sAntes As String
+  Dim iEspacio As Integer
+
+  iArroba = InStr(sCorreo, "@")
+  If iArroba = 0 Then Return ""
+
+  sAntes = Mid(sCorreo, 1, iArroba - 1)
+
+  ' --- 2. DESCARTE DE LO QUE PRECEDE A LA DIRECCIÓN ---
+  iEspacio = RInStr(sAntes, " ")
+  If iEspacio > 0 Then sAntes = Mid(sAntes, iEspacio + 1)
+
+  Return m_FuncionesGenericas.PlegarTextoAMinuscula(sAntes)
+
+End
+
+' ============================================
+' Función   : VerificarFechasHistoria
+' Propósito : Reporta cuando la fecha de recepción y la de aceptación
+'             son la misma.
+'
+'             El auditor informa el HECHO y nada más. Es un dato
+'             verificable en el archivo y es exactamente el tipo de
+'             campo de transparencia editorial que miran Latindex y
+'             DOAJ. No corresponde que la herramienta lo califique: el
+'             dato habla solo.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarFechasHistoria(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sRecibido As String
+  Dim sAceptado As String
+
+  ' --- 2. LECTURA DE LAS DOS FECHAS ---
+  sRecibido = FechaDeHistoria(oArchivo.sRuta, "received")
+  sAceptado = FechaDeHistoria(oArchivo.sRuta, "accepted")
+
+  If sRecibido = "" Then Return
+  If sAceptado = "" Then Return
+
+  ' --- 3. COMPARACIÓN ---
+  If sRecibido = sAceptado Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_FECHAS_IGUALES, oArchivo.sId, 0, "//history")
+  Endif
+
+End
+
+' ============================================
+' Función   : FechaDeHistoria
+' Propósito : Arma la fecha de un tipo dado de <history/date> como
+'             cadena comparable. Se concatenan los tres campos con un
+'             separador para que un día 1 y un mes 1 no se confundan
+'             con un día 11.
+' Parámetros: sRuta As String — archivo a consultar
+'             sTipo As String — valor de @date-type
+' Retorna   : String — 'aaaa-mm-dd', o cadena vacía si falta algo
+' ============================================
+Private Function FechaDeHistoria(sRuta As String, sTipo As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sBase As String
+  Dim sAnio As String
+  Dim sMes As String
+  Dim sDia As String
+
+  sBase = "//history/date[@date-type='" & sTipo & "']/"
+
+  sAnio = Trim(ConsultarXPath(sRuta, "string(" & sBase & "year)"))
+  sMes = Trim(ConsultarXPath(sRuta, "string(" & sBase & "month)"))
+  sDia = Trim(ConsultarXPath(sRuta, "string(" & sBase & "day)"))
+
+  ' --- 2. SIN LOS TRES CAMPOS NO SE AFIRMA NADA ---
+  If sAnio = "" Then Return ""
+  If sMes = "" Then Return ""
+  If sDia = "" Then Return ""
+
+  Return sAnio & "-" & sMes & "-" & sDia
+
+End
+
+' ============================================
+' Función   : VerificarCodigoIdioma
+' Propósito : Detecta un @xml:lang que trae el NOMBRE del idioma en
+'             lugar de su código.
+'
+'             El caso real: xml:lang="English" en lugar de "en". Es un
+'             NMTOKEN válido, así que NINGUNA DTD lo detecta jamás, y
+'             sin embargo rompe a todo consumidor que espere un código
+'             BCP 47: indexadores, cosechadores OAI y el propio
+'             renderizador.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarCodigoIdioma(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sLang As String
+
+  sLang = Trim(ConsultarXPath(oArchivo.sRuta, "string(/article/@*[local-name()='lang'])"))
+  If sLang = "" Then Return
+
+  ' --- 2. UN CÓDIGO BCP 47 EMPIEZA CON DOS O TRES LETRAS ---
+  ' 'es', 'en', 'pt-BR' SON VÁLIDOS; 'English', 'Espanol' NO
+  If EsCodigoIdioma(sLang) Then Return
+
+  RegistrarHallazgo(m_Constantes.GBA_COD_IDIOMA_NO_CODIGO, oArchivo.sId, 0, "/article/@xml:lang")
+
+End
+
+' ============================================
+' Función   : EsCodigoIdioma
+' Propósito : Indica si una cadena tiene forma de código de idioma
+'             BCP 47: subetiqueta primaria de dos o tres letras,
+'             opcionalmente seguida de un guion y más subetiquetas.
+' Parámetros: sValor As String
+' Retorna   : Boolean
+' ============================================
+Private Function EsCodigoIdioma(sValor As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iGuion As Integer
+  Dim sPrimaria As String
+  Dim iLargo As Integer
+
+  ' --- 2. SUBETIQUETA PRIMARIA ---
+  iGuion = InStr(sValor, "-")
+  If iGuion > 0 Then
+    sPrimaria = Mid(sValor, 1, iGuion - 1)
+  Else
+    sPrimaria = sValor
+  Endif
+
+  ' --- 3. LARGO ADMISIBLE ---
+  iLargo = String.Len(sPrimaria)
+  If iLargo < 2 Then Return False
+  If iLargo > 3 Then Return False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : VerificarEntidadesDobles
+' Propósito : Detecta entidades HTML doblemente escapadas.
+'
+'             El caso real: el resumen contenía siete veces la cadena
+'             '&amp;nbsp;'. El origen traía la entidad HTML '&nbsp;',
+'             que no es válida en XML sin declararla, y el generador
+'             escapó el ampersand en lugar de resolverla. Resultado:
+'             el texto contiene literalmente '&nbsp;' y así se ve en
+'             cualquier salida.
+'
+'             Se busca sobre el marcado CRUDO y no sobre el texto
+'             resuelto, porque después de parsear la doble escapatura
+'             ya no se distingue de un ampersand legítimo.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+'             sContenido As String — bytes crudos del archivo
+' Retorna   : nada
+' ============================================
+Private Sub VerificarEntidadesDobles(oArchivo As CArchivoAuditado, sContenido As String)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aEntidades As String[]
+  Dim sEntidad As String
+  Dim iPos As Integer
+
+  If sContenido = "" Then Return
+
+  ' --- 2. ENTIDADES HTML QUE APARECEN ESCAPADAS DOS VECES ---
+  ' NO SE INCLUYE '&amp;amp;' PORQUE PUEDE SER LEGÍTIMO: UN TÍTULO QUE
+  ' CONTIENE UN AMPERSAND LITERAL SE ESCRIBE ASÍ CORRECTAMENTE
+  aEntidades = ["&amp;nbsp;", "&amp;lt;", "&amp;gt;", "&amp;quot;", "&amp;#"]
+
+  ' --- 3. UNA OCURRENCIA POR CADA APARICIÓN, PARA QUE EL CONTADOR
+  '        DEL HALLAZGO REFLEJE LA MAGNITUD REAL ---
+  For Each sEntidad In aEntidades
+
+    iPos = 1
+    Do
+      iPos = InStr(sContenido, sEntidad, iPos)
+      If iPos = 0 Then Break
+      RegistrarHallazgo(m_Constantes.GBA_COD_ENTIDAD_DOBLE, oArchivo.sId, 0, "")
+      iPos += Len(sEntidad)
+    Loop
+
+  Next
+
+End
+
+' ============================================
+' Función   : CargarCatalogo
+' Propósito : Lee el catálogo de mensajes a memoria. Se invoca una vez
+'             por lote; si el archivo no está, el motor sigue
+'             funcionando y los hallazgos se muestran por código.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se cargó al menos un mensaje
+' ============================================
+Private Function CargarCatalogo() As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sContenido As String
+  Dim iPos As Integer
+  Dim iFin As Integer
+  Dim sBloque As String
+  Dim oMensaje As CMensaje
+
+  $cCatalogo = New Collection
+
+  ' --- 2. GUARDA ---
+  If Not $bHayCatalogoMensajes Then Return False
+
+  Try sContenido = File.Load(m_Constantes.GBA_RUTA_CATALOGO_MENSAJES)
+  If Error Then Return False
+
+  ' --- 3. RECORRIDO POR BLOQUES <mensaje> ---
+  iPos = 1
+  Do
+
+    iPos = InStr(sContenido, "<mensaje ", iPos)
+    If iPos = 0 Then Break
+
+    iFin = InStr(sContenido, "</mensaje>", iPos)
+    If iFin = 0 Then Break
+
+    sBloque = Mid(sContenido, iPos, iFin - iPos)
+    oMensaje = MensajeDesdeBloque(sBloque)
+
+    ' UN BLOQUE SIN CÓDIGO NO SE INDEXA: SERÍA INALCANZABLE
+    If oMensaje Then
+      If oMensaje.sCodigo <> "" Then $cCatalogo[oMensaje.sCodigo] = oMensaje
+    Endif
+
+    iPos = iFin + 10
+
+  Loop
+
+  Return $cCatalogo.Count > 0
+
+End
+
+' ============================================
+' Función   : MensajeDesdeBloque
+' Propósito : Construye un CMensaje a partir del fragmento de texto
+'             que va desde la apertura de <mensaje> hasta su cierre.
+' Parámetros: sBloque As String — fragmento del catálogo
+' Retorna   : CMensaje — la entrada, o Null si no se pudo leer
+' ============================================
+Private Function MensajeDesdeBloque(sBloque As String) As CMensaje
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim oMensaje As New CMensaje
+  Dim iCierre As Integer
+  Dim sAtributos As String
+
+  ' --- 2. LOS ATRIBUTOS ESTÁN EN LA ETIQUETA DE APERTURA ---
+  ' SE ACOTA LA BÚSQUEDA AL PRIMER '>' PARA QUE ValorAtributo NO
+  ' ENCUENTRE COINCIDENCIAS DENTRO DE LOS TEXTOS
+  iCierre = InStr(sBloque, ">")
+  If iCierre = 0 Then Return Null
+  sAtributos = Mid(sBloque, 1, iCierre)
+
+  oMensaje.sCodigo = ValorAtributo(sAtributos, "codigo")
+  oMensaje.sOrigen = ValorAtributo(sAtributos, "origen")
+  oMensaje.sImpacto = ValorAtributo(sAtributos, "impacto")
+  oMensaje.sCorreccion = ValorAtributo(sAtributos, "correccion")
+  oMensaje.sCerteza = ValorAtributo(sAtributos, "certeza")
+  oMensaje.bUniversal = (ValorAtributo(sAtributos, "universal") = "si")
+
+  ' --- 3. LOS CUATRO TEXTOS ---
+  oMensaje.sCorto = TextoElemento(sBloque, "corto")
+  oMensaje.sLargo = TextoElemento(sBloque, "largo")
+  oMensaje.sConsecuencia = TextoElemento(sBloque, "consecuencia")
+  oMensaje.sRemedio = TextoElemento(sBloque, "remedio")
+
+  Return oMensaje
+
+End
+
+' ============================================
+' Función   : TextoElemento
+' Propósito : Devuelve el contenido de un elemento simple del
+'             catálogo, con los saltos de línea y la sangría del
+'             archivo convertidos en espacios simples.
+' Parámetros: sBloque As String — fragmento donde buscar
+'             sEtiqueta As String — nombre del elemento
+' Retorna   : String — el texto normalizado, o cadena vacía
+' ============================================
+Private Function TextoElemento(sBloque As String, sEtiqueta As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim sTexto As String
+
+  iIni = InStr(sBloque, "<" & sEtiqueta & ">")
+  If iIni = 0 Then Return ""
+
+  iFin = InStr(sBloque, "</" & sEtiqueta & ">", iIni)
+  If iFin = 0 Then Return ""
+
+  iIni += Len(sEtiqueta) + 2
+  sTexto = Mid(sBloque, iIni, iFin - iIni)
+
+  ' --- 2. NORMALIZACIÓN DEL ESPACIO EN BLANCO ---
+  ' EL CATÁLOGO ESTÁ SANGRADO PARA QUE SEA LEGIBLE AL EDITARLO; ESA
+  ' SANGRÍA NO DEBE APARECER EN LA GRILLA NI EN EL INFORME
+  sTexto = Replace(sTexto, Chr(10), " ")
+  sTexto = Replace(sTexto, Chr(9), " ")
+  While InStr(sTexto, "  ") > 0
+    sTexto = Replace(sTexto, "  ", " ")
+  Wend
+
+  Return Trim(sTexto)
+
+End
+
+' ============================================
+' Función   : BuscarMensaje
+' Propósito : Devuelve la entrada de catálogo de un código, o Null si
+'             no está catalogado.
+' Parámetros: sCodigo As String
+' Retorna   : CMensaje — la entrada, o Null
+' ============================================
+Private Function BuscarMensaje(sCodigo As String) As CMensaje
+
+  ' RC-GM-17: LA COMPROBACIÓN DE EXISTENCIA VA EN UN If PROPIO, PORQUE
+  ' And NO CORTOCIRCUITA Y EL ACCESO A UNA CLAVE INEXISTENTE FALLA
+  If Not $cCatalogo.Exist(sCodigo) Then Return Null
+
+  Return $cCatalogo[sCodigo]
+
+End
