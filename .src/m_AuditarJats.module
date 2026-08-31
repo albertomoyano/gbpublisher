@@ -692,17 +692,26 @@ Private Function VerificarBuenaFormacion(oArchivo As CArchivoAuditado, bDesfasaj
 
   iCodigo = EjecutarHerramienta(aComando, sStdErr, sStdOut)
 
-  ' --- 3. CÓDIGO DE SALIDA CERO: ESTÁ BIEN FORMADO ---
+  ' --- 3. LECTURA REAL DE LA SALIDA DE ERROR ---
+  ' Se lee del accesor y NO de la variable local: en Gambas los
+  ' primitivos se pasan siempre por valor, así que el parámetro ByRef
+  ' no propaga nada y sStdErr quedaría vacía
+  sStdErr = UltimoStdErr()
+
+  ' --- 4. CÓDIGO DE SALIDA CERO: ESTÁ BIEN FORMADO ---
   If iCodigo = 0 Then Return True
 
-  ' --- 4. NO PARSEA: SE REGISTRA LA CAUSA, NO EL SÍNTOMA ---
+  ' --- 5. NO PARSEA: SE REGISTRA LA CAUSA, NO EL SÍNTOMA ---
+  ' Si ya se detectó desfasaje de codificación, el fallo de parseo es
+  ' su consecuencia directa y NO se registra por separado. Dos
+  ' bloqueantes para una sola causa inflarían el contador, y un
+  ' informe con cuentas infladas se discute en vez de leerse.
   If Not bDesfasajeEncoding Then
-    iLinea = PrimeraLineaDeError(m_AuditarJats.UltimoStdErr(), oArchivo.sRuta)
-    Print "WF stderr largo="; Len(m_AuditarJats.UltimoStdErr()); " linea="; iLinea
+    iLinea = PrimeraLineaDeError(sStdErr, oArchivo.sRuta)
     RegistrarHallazgo(m_Constantes.GBA_COD_NO_BIEN_FORMADO, oArchivo.sId, iLinea, "")
   Endif
 
-  ' --- 5. LA SALIDA CRUDA VA AL ANEXO ---
+  ' --- 6. LA SALIDA CRUDA VA AL ANEXO ---
   GuardarDetalleCrudo(oArchivo.sId, sStdErr)
 
   Return False
@@ -1880,7 +1889,10 @@ Public Function AlcanceNoEvaluado() As String
   Dim sTexto As String = ""
 
   ' --- 2. LO QUE NUNCA SE EVALÚA, POR DEFINICIÓN DEL ALCANCE ---
-  sTexto = ("calidad del contenido; corrección bibliográfica; conformidad con SciELO")
+  ' Se distingue la FORMA del marcado, que sí se revisa, del CONTENIDO
+  ' de la cita, que no: verificar que un año o un volumen sean los
+  ' reales exige consultar fuentes externas y es otra herramienta
+  sTexto = ("calidad y pertinencia del contenido; exactitud de los datos bibliográficos de las referencias, es decir si los años, volúmenes, títulos e identificadores citados se corresponden con las obras reales; conformidad con esquemas de indexadores específicos como SciELO")
 
   ' --- 3. LO QUE NO SE EVALUÓ POR FALTA DE UNA CAPACIDAD ---
   If Not $bPuedeValidarDTD Then sTexto &= ("; validez contra la DTD declarada")
@@ -2945,10 +2957,14 @@ Private Sub VerificarIdentificadorInstitucional(oArchivo As CArchivoAuditado)
   Dim i As Integer
 
   ' --- 2. CONTEO ---
+  ' SE BUSCA EN CUALQUIER DESCENDIENTE Y NO COMO HIJO DIRECTO: JATS
+  ' admite <institution-wrap> como envoltorio de <institution> y su
+  ' <institution-id>, y hay generadores que lo usan y otros que no.
+  ' Con hijo directo, los que usan el envoltorio dan falso positivo.
   iTotal = ContarPorXPath(oArchivo.sRuta, "count(//aff)")
   If iTotal = 0 Then Return
 
-  iConId = ContarPorXPath(oArchivo.sRuta, "count(//aff[institution-id])")
+  iConId = ContarPorXPath(oArchivo.sRuta, "count(//aff[.//institution-id])")
 
   ' --- 3. UNA OCURRENCIA POR AFILIACIÓN SIN IDENTIFICAR ---
   For i = 1 To iTotal - iConId
@@ -2987,10 +3003,10 @@ Private Sub VerificarAltTextDecorativo(oArchivo As CArchivoAuditado)
   ' Se miran los dos: en el corpus, la misma herramienta que copia el
   ' epígrafe en las figuras lo copia también en las tablas
   iFiguras = ContarPorXPath(oArchivo.sRuta,
-    "count(//fig[contains(normalize-space(alt-text), normalize-space(caption/title))])")
+    "count(//fig[contains(normalize-space(.//alt-text), normalize-space(.//caption/title))])")
 
   iTablas = ContarPorXPath(oArchivo.sRuta,
-    "count(//table-wrap[contains(normalize-space(alt-text), normalize-space(caption/title))])")
+    "count(//table-wrap[contains(normalize-space(.//alt-text), normalize-space(.//caption/title))])")
 
   If iFiguras + iTablas = 0 Then Return
 

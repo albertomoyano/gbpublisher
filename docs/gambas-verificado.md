@@ -588,4 +588,6 @@ REGLA: verificar siempre que la salida contenga `schematron-output` antes de par
 
 El pipeline correcto es de tres pasos: `include.xsl` → esqueleto ISO para compilar → ejecutar el `.xsl` resultante sobre el documento. Y los dos primeros se hacen **una sola vez**, en la compilación del paquete.
 
+## 29. Ejemplo a revisar en otros escenarios donde exista envoltorio
 
+Al escribir XPath sobre JATS, usar .// y no el hijo directo, salvo que el modelo de contenido lo prohíba. JATS admite envoltorios opcionales —<institution-wrap>, <alternatives>, <name-alternatives>, <person-group>— que una herramienta emite y otra no. Una expresión con hijo directo funciona con un generador y produce falsos positivos con otro. Y un falso positivo en una herramienta que se muestra a un cliente cuesta mucho más que un hallazgo perdido.
