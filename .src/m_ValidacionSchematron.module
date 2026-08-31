@@ -40,21 +40,49 @@
 ' tiempo de ejecución hay una sola invocación de Saxon por regla, sin
 ' pasos de compilación. Y el SVRL se recibe por STDOUT en lugar de
 ' escribirse a disco: 'Exec ... To' captura stdout, verificado, y así
-' no hay archivos temporales que limpiar.
+' no hay archivos de salida que limpiar.
+'
+' ============================================
+' RENDIMIENTO: POR QUÉ SE QUITA EL DOCTYPE
+'
+' Saxon tardaba OCHO SEGUNDOS por archivo, con solo dos de CPU. El
+' desglose ubicó la causa sin ambigüedad:
+'
+'   arranque de la JVM sin hacer nada           0,24 s
+'   ese XML con una plantilla que no hace nada 12,87 s   <-- acá
+'   una regla real sobre un XML mínimo           0,57 s
+'
+' No era la JVM ni eran las reglas: era PARSEAR ESE XML. La prueba
+' definitiva, el mismo comando sin red con 'unshare -rn', dio 0,42 s
+' y falló con 'I/O error reported by XML parser'.
+'
+' Saxon sale a buscar la DTD de JATS a jats.nlm.nih.gov EN CADA
+' ARCHIVO, y no hay forma de impedírselo desde la línea de comandos.
+' Se probaron -Djavax.xml.accessExternalDTD, -Djavax.xml.
+' accessExternalSchema, -dtd:off, -Dxml.catalog.ignoreMissing y
+' -Dxmlresolver.properties: ninguna cambió el tiempo. El resolvedor
+' de Saxon 12 ignora las propiedades estándar de JAXP.
+'
+' Es la CONTRACARA de RC-XJ-03: allí el problema era que Saxon no
+' conseguía la DTD y la solución fue permitirle buscarla; acá la
+' busca cuando no hace falta y no se la puede prohibir.
+'
+' Solución: se le entrega una copia temporal SIN DOCTYPE. Las reglas
+' de JATS4R validan estructura, no gramática. Verificado: 0,43 s en
+' lugar de 8,1 s, con hallazgos IDÉNTICOS.
 ' ============================================
 
-
 ' ============================================
-' 1. RUTAS
-' Gambas no expande la tilde, así que se arma con User.Home. La
-' versión anterior tenía '~/...' literal y funcionaba solo porque
-' pasaba por Shell, que sí la expande; al migrar a Exec dejaría de
-' funcionar en silencio.
+' 1. RUTAS Y OPCIONES
 ' ============================================
 
 Private Const SAXON_JAR As String = "/opt/Saxon-HE/saxon-he.jar"
 Private Const DIR_COMPILADOS As String = "/usr/share/gbpublisher/schematron/compilados"
 
+' --- TRAZA DE TIEMPOS ---
+' Imprime en consola cuánto tarda cada invocación de Saxon. Sirve para
+' diagnosticar lentitud sin adivinar. Poner en False para producción.
+Public bTrazaTiempos As Boolean = False
 
 ' ============================================
 ' 2. NÚCLEO: EJECUCIÓN Y PARSEO
@@ -78,6 +106,8 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, By
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sRutaXsl As String
   Dim sSvrl As String
+  Dim sRutaTemp As String
+  Dim fInicio As Float
 
   sError = ""
 
@@ -98,22 +128,46 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, By
     Return Null
   Endif
 
-  ' --- 3. EJECUCIÓN ---
+  ' --- 3. COPIA SIN DOCTYPE ---
+  ' Sin esto Saxon resuelve la DTD por red y cada archivo cuesta ocho
+  ' segundos en lugar de medio.
+  If bTrazaTiempos Then Print "  → entrando "; sRegla; " ("; File.Name(sArchivoXML); ")"
+
+  fInicio = Timer
+  sRutaTemp = CopiaSinDoctype(sArchivoXML)
+  If sRutaTemp = "" Then
+    sError = ("No se pudo preparar el archivo para validar.")
+    Return Null
+  Endif
+
+  If bTrazaTiempos Then Print "    temp: "; sRutaTemp; "  bytes="; Stat(sRutaTemp).Size
+
+  ' --- 4. EJECUCIÓN ---
+  ' SC-05: Exec con array, nunca Shell. La ruta puede venir de una
+  ' carpeta elegida por el usuario y no debe pasar por sh -c.
   ' Sin -o: Saxon escribe el resultado en stdout, que 'Exec ... To'
-  ' sí captura. Los diagnósticos van a stderr y se pierden, pero eso
-  ' no es un problema: si Saxon falló, la salida queda vacía y eso se
-  ' detecta en el apartado siguiente.
-  ' SC-05: Exec con array, nunca Shell. La ruta del XML puede venir de
-  ' una carpeta elegida por el usuario y no debe pasar por sh -c.
-  Try Exec ["java", "-jar", SAXON_JAR, "-s:" & sArchivoXML, "-xsl:" & sRutaXsl] To sSvrl
+  ' captura. Los diagnósticos van a stderr y se pierden, pero eso se
+  ' detecta en el apartado 5: si Saxon falló, la salida no es un SVRL.
+  Try Exec ["java", "-jar", SAXON_JAR, "-s:" & sRutaTemp, "-xsl:" & sRutaXsl] To sSvrl
   If Error Then
+    Try Kill sRutaTemp
     sError = ("Falló la ejecución de Saxon: ") & Error.Text
     Return Null
   Endif
 
-  ' --- 4. VERIFICACIÓN DE QUE LA SALIDA ES UN SVRL ---
-  ' Esta comprobación es la que habría detectado el defecto anterior:
-  ' un XSLT compilado tiene raíz <xsl:transform> y no contiene
+  ' --- 5. LIMPIEZA ---
+  ' Explícita y en cada camino de salida. No se usa Finally: no corre
+  ' en un Return normal (RC-GM-20), que era justamente el defecto de
+  ' la versión anterior de este módulo.
+  Try Kill sRutaTemp
+
+  If bTrazaTiempos Then
+    Print "  SAXON "; sRegla; " "; Format(Timer - fInicio, "0.00"); "s  ("; File.Name(sArchivoXML); ")"
+  Endif
+
+  ' --- 6. VERIFICACIÓN DE QUE LA SALIDA ES UN SVRL ---
+  ' Esta guarda es la que habría detectado el defecto original: un
+  ' XSLT compilado tiene raíz <xsl:transform> y no contiene
   ' schematron-output.
   If sSvrl = "" Then
     sError = ("Saxon no produjo salida para ") & sRegla
@@ -125,11 +179,10 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, By
     Return Null
   Endif
 
-  ' --- 5. PARSEO ---
+  ' --- 7. PARSEO ---
   Return ParsearSVRL(sSvrl)
 
 End
-
 
 ' ============================================
 ' Función   : ParsearSVRL
@@ -141,8 +194,14 @@ End
 '             parseo línea a línea los pierde.
 '
 '             Se toman SOLO los <failed-assert>. Los
-'             <successful-report> también llevan <svrl:text> y la
+'             <successful-report> también llevan <svrl:text> y una
 '             versión anterior los emitía como si fueran errores.
+'
+'             El recorrido NO usa una función auxiliar con ByRef: la
+'             posición se calcula en línea. Si el paso por referencia
+'             no propaga el valor, el índice queda en cero, InStr
+'             vuelve a encontrar la primera etiqueta y el bucle no
+'             termina nunca.
 '
 ' Parámetros: sSvrl As String — informe SVRL completo
 ' Retorna   : CAsercionSVRL[] — las aserciones incumplidas
@@ -154,12 +213,14 @@ Private Function ParsearSVRL(sSvrl As String) As CAsercionSVRL[]
   Dim oAsercion As CAsercionSVRL
   Dim sPatron As String
   Dim sContexto As String
-  Dim iPos As Integer
-  Dim iSiguiente As Integer
-  Dim iFin As Integer
   Dim sBloque As String
+  Dim iApertura As Integer
+  Dim iCierre As Integer
+  Dim iPos As Integer
+  Dim iVueltas As Integer
 
   iPos = 1
+  iVueltas = 0
 
   ' --- 2. RECORRIDO SECUENCIAL DEL INFORME ---
   ' El patrón activo y el contexto de la regla se declaran ANTES de
@@ -167,23 +228,27 @@ Private Function ParsearSVRL(sSvrl As String) As CAsercionSVRL[]
   ' medida que aparecen.
   Do
 
-    iPos = ProximaEtiqueta(sSvrl, iPos, iSiguiente)
-    If iPos = 0 Then Break
+    ' 2.1 LOCALIZACIÓN DE LA PRÓXIMA ETIQUETA
+    iApertura = InStr(sSvrl, "<", iPos)
+    If iApertura = 0 Then Break
 
-    sBloque = Mid(sSvrl, iPos, iSiguiente - iPos)
+    iCierre = InStr(sSvrl, ">", iApertura)
+    If iCierre = 0 Then Break
 
-    ' 2.1 PATRÓN ACTIVO
+    sBloque = Mid(sSvrl, iApertura, iCierre - iApertura + 1)
+
+    ' 2.2 PATRÓN ACTIVO
     If InStr(sBloque, "active-pattern") > 0 Then
       sPatron = ValorAtributoSVRL(sBloque, "id")
       If sPatron = "" Then sPatron = ValorAtributoSVRL(sBloque, "name")
     Endif
 
-    ' 2.2 REGLA DISPARADA
+    ' 2.3 REGLA DISPARADA
     If InStr(sBloque, "fired-rule") > 0 Then
       sContexto = ValorAtributoSVRL(sBloque, "context")
     Endif
 
-    ' 2.3 ASERCIÓN INCUMPLIDA
+    ' 2.4 ASERCIÓN INCUMPLIDA
     ' Se excluye la etiqueta de cierre, que también contiene la cadena
     If InStr(sBloque, "failed-assert") > 0 Then
       If InStr(sBloque, "</") = 0 Then
@@ -193,45 +258,29 @@ Private Function ParsearSVRL(sSvrl As String) As CAsercionSVRL[]
         oAsercion.sTest = ValorAtributoSVRL(sBloque, "test")
         oAsercion.sRol = ValorAtributoSVRL(sBloque, "role")
         oAsercion.sUbicacion = ValorAtributoSVRL(sBloque, "location")
-        oAsercion.sTexto = TextoDeAsercion(sSvrl, iSiguiente)
+        oAsercion.sTexto = TextoDeAsercion(sSvrl, iCierre + 1)
         aResultado.Add(oAsercion)
       Endif
     Endif
 
-    iPos = iSiguiente
+    ' 2.5 AVANCE
+    ' GUARDA CONTRA BUCLE INFINITO: si por cualquier motivo la posición
+    ' no avanzara, el análisis quedaría colgado y la interfaz
+    ' bloqueada, sin ningún mensaje. Vale un contador.
+    If iCierre + 1 <= iPos Then Break
+    iPos = iCierre + 1
+
+    Inc iVueltas
+    If iVueltas > 200000 Then
+      Print "PARSEAR SVRL: recorrido interrumpido por exceso de vueltas"
+      Break
+    Endif
 
   Loop
 
   Return aResultado
 
 End
-
-
-' ============================================
-' Función   : ProximaEtiqueta
-' Propósito : Localiza la próxima etiqueta de apertura a partir de una
-'             posición, y devuelve también dónde termina.
-' Parámetros: sTexto As String — informe completo
-'             iDesde As Integer — posición desde la que buscar
-'             iFin As Integer — POR REFERENCIA: posición tras el '>'
-' Retorna   : Integer — posición del '<', o 0 si no hay más
-' ============================================
-Private Function ProximaEtiqueta(sTexto As String, iDesde As Integer, ByRef iFin As Integer) As Integer
-
-  Dim iIni As Integer
-  Dim iCierre As Integer
-
-  iIni = InStr(sTexto, "<", iDesde)
-  If iIni = 0 Then Return 0
-
-  iCierre = InStr(sTexto, ">", iIni)
-  If iCierre = 0 Then Return 0
-
-  iFin = iCierre + 1
-  Return iIni
-
-End
-
 
 ' ============================================
 ' Función   : TextoDeAsercion
@@ -268,6 +317,8 @@ Private Function TextoDeAsercion(sSvrl As String, iDesde As Integer) As String
   Wend
 
   ' --- 4. LAS ENTIDADES DEL TEXTO SE RESUELVEN PARA MOSTRAR ---
+  ' El ampersand va ÚLTIMO: si fuera primero volvería a interpretar
+  ' las secuencias que se acaban de generar
   sTexto = Replace(sTexto, "&lt;", "<")
   sTexto = Replace(sTexto, "&gt;", ">")
   sTexto = Replace(sTexto, "&quot;", Chr(34))
@@ -276,7 +327,6 @@ Private Function TextoDeAsercion(sSvrl As String, iDesde As Integer) As String
   Return Trim(sTexto)
 
 End
-
 
 ' ============================================
 ' Función   : ValorAtributoSVRL
@@ -306,6 +356,109 @@ Private Function ValorAtributoSVRL(sBloque As String, sAtributo As String) As St
 
 End
 
+' ============================================
+' 3. PREPARACIÓN DEL DOCUMENTO
+' ============================================
+
+' ============================================
+' Función   : CopiaSinDoctype
+' Propósito : Deja en el directorio temporal una copia del XML sin su
+'             declaración DOCTYPE, para que Saxon no salga a resolver
+'             la DTD por red.
+'
+'             El archivo original NO SE MODIFICA.
+'
+' Parámetros: sRuta As String — XML original
+' Retorna   : String — ruta de la copia, o cadena vacía si falló
+' ============================================
+Private Function CopiaSinDoctype(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sContenido As String
+  Dim sSalida As String
+  Dim sRutaTemp As String
+  Dim iIni As Integer
+  Dim iFin As Integer
+
+  ' --- 2. LECTURA ---
+  ' File.Load no decodifica ni valida, que es lo correcto acá: el
+  ' contenido se copia tal cual salvo el fragmento que se quita
+  Try sContenido = File.Load(sRuta)
+  If Error Then Return ""
+
+  ' --- 3. LOCALIZACIÓN DEL DOCTYPE ---
+  iIni = InStr(sContenido, "<!DOCTYPE")
+
+  If iIni = 0 Then
+    ' SIN DOCTYPE NO HAY NADA QUE QUITAR, PERO IGUAL SE COPIA PARA QUE
+    ' EL LLAMADOR TENGA UN SOLO CAMINO DE LIMPIEZA
+    sSalida = sContenido
+  Else
+    iFin = FinDeDoctype(sContenido, iIni)
+    If iFin = 0 Then Return ""
+    sSalida = Mid(sContenido, 1, iIni - 1) & Mid(sContenido, iFin + 1)
+  Endif
+
+  ' --- 4. VOLCADO ---
+  sRutaTemp = Temp$() & ".xml"
+  Try File.Save(sRutaTemp, sSalida)
+  If Error Then Return ""
+
+  Return sRutaTemp
+
+End
+
+' ============================================
+' Función   : FinDeDoctype
+' Propósito : Devuelve la posición del '>' que cierra la declaración
+'             DOCTYPE, respetando el subconjunto interno.
+'
+'             Hace falta contar corchetes porque un DOCTYPE de JATS
+'             trae declaraciones de entidades entre corchetes, y esas
+'             declaraciones contienen sus propios '>'. Cortar en el
+'             primero rompe el documento: probado con sed ingenuo,
+'             dejó el prefijo ali sin enlazar.
+'
+' Parámetros: sContenido As String — texto completo
+'             iIni As Integer — posición del '<!DOCTYPE'
+' Retorna   : Integer — posición del '>' de cierre, o 0 si no se halló
+' ============================================
+Private Function FinDeDoctype(sContenido As String, iIni As Integer) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iPos As Integer
+  Dim iProfundidad As Integer
+  Dim sCaracter As String
+  Dim iLargo As Integer
+
+  iProfundidad = 0
+  iLargo = Len(sContenido)
+
+  ' --- 2. RECORRIDO ---
+  ' Por bytes a propósito: los caracteres que interesan son ASCII y un
+  ' DOCTYPE no contiene texto multibyte, así que no hace falta el
+  ' costo de String.Mid
+  For iPos = iIni To iLargo
+
+    sCaracter = Mid(sContenido, iPos, 1)
+
+    If sCaracter = "[" Then Inc iProfundidad
+    If sCaracter = "]" Then Dec iProfundidad
+
+    ' SOLO CIERRA SI NO ESTAMOS DENTRO DEL SUBCONJUNTO INTERNO
+    If sCaracter = ">" Then
+      If iProfundidad <= 0 Then Return iPos
+    Endif
+
+  Next
+
+  Return 0
+
+End
+
+' ============================================
+' 4. INFRAESTRUCTURA
+' ============================================
 
 ' ============================================
 ' Función   : ReglasDisponibles
@@ -338,7 +491,6 @@ Public Function ReglasDisponibles() As String[]
 
 End
 
-
 ' ============================================
 ' Función   : EstaInstalado
 ' Propósito : Verifica que estén Saxon y al menos una regla compilada.
@@ -354,9 +506,8 @@ Public Function EstaInstalado() As Boolean
 
 End
 
-
 ' ============================================
-' 3. API HEREDADA
+' 5. API HEREDADA
 ' Se conserva para no tocar los llamadores existentes, pero ahora se
 ' apoya en el núcleo corregido. Un solo mecanismo.
 ' ============================================
@@ -411,7 +562,7 @@ Public Function ValidarSchematronJATS(sArchivoXML As String, sDirectorioSalida A
     ' 3.2 ASERCIONES INCUMPLIDAS
     For Each oAsercion In aAserciones
       aErrores.Add("[" & sRegla & "] " & oAsercion.sRol & " · " &
-                   oAsercion.sUbicacion & " · " & oAsercion.sTexto)
+        oAsercion.sUbicacion & " · " & oAsercion.sTexto)
       If oAsercion.sRol = "error" Then bValido = False
     Next
 
@@ -420,7 +571,6 @@ Public Function ValidarSchematronJATS(sArchivoXML As String, sDirectorioSalida A
   Return bValido
 
 End
-
 
 ' ============================================
 ' Función   : GenerarResumenValidacion
@@ -455,7 +605,6 @@ Public Function GenerarResumenValidacion(aErrores As String[], bValido As Boolea
   Return sResumen
 
 End
-
 
 ' ============================================
 ' Función   : EjecutarValidacionCompleta

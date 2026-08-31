@@ -94,6 +94,11 @@ Private $bAnalizando As Boolean = False
 ' siempre en mayúsculas, de modo que no hace falta normalizar.
 Private $cCatalogo As New Collection
 
+' --- GRUPOS DE REGLAS QUE NO SE PUDIERON EJECUTAR ---
+' Van al bloque de alcance del informe. Que una regla no corra no
+' puede parecer que el archivo la cumple.
+Private $sGruposNoEvaluados As String
+
 ' ============================================
 ' 2. GUARDAS Y SELECCIÓN DE CARPETA
 ' ============================================
@@ -251,17 +256,10 @@ Public Function VerificarHerramientas() As Boolean
     sReducciones &= Chr(10) & ("  · validez contra la DTD declarada (falta el catálogo local de DTD JATS)")
   Endif
 
-  ' --- 4. SCHEMATRON ---
-  ' RC-GM-17: TRES CONDICIONES, TRES If ANIDADOS. And NO CORTOCIRCUITA
-  If HayEjecutable("java") Then
-    If Exist(m_Constantes.GBA_RUTA_SAXON) Then
-      If Exist(m_Constantes.GBA_RUTA_SCHEMATRON_XSL) Then
-        $bPuedeSchematron = True
-      Endif
-    Endif
-  Endif
+  '   ' --- 4. SCHEMATRON ---
+  $bPuedeSchematron = m_ValidacionSchematron.EstaInstalado()
   If Not $bPuedeSchematron Then
-    sReducciones &= Chr(10) & ("  · conformidad con JATS4R y perfil Crossref (falta el Schematron compilado)")
+    sReducciones &= Chr(10) & ("  · conformidad con JATS4R (faltan las reglas compiladas)")
   Endif
 
   ' --- 5. CATÁLOGO DE MENSAJES ---
@@ -476,9 +474,9 @@ Public Function AuditarCarpeta() As Boolean
   Endif
 
   ' --- 4. MODELO LIMPIO PARA ESTE LOTE ---
+  $sGruposNoEvaluados = ""
   CargarCatalogo()
   $oRevista = New CRevistaAuditada
-  $oRevista.sCarpeta = $sCarpeta
 
   ' --- 5. ANÁLISIS ARCHIVO POR ARCHIVO ---
   aXml = ArchivosXmlDeLaCarpeta($sCarpeta)
@@ -628,9 +626,14 @@ Private Function AnalizarArchivo(sRuta As String, sId As String) As CArchivoAudi
   ' DECLARADA por el archivo, no según una fija.
   ' If $bPuedeValidarDTD Then ...
 
-  ' --- 8. CAPA D: SCHEMATRON ---
-  ' PENDIENTE: saxon con el .xsl ya compilado, salida SVRL.
-  ' If $bPuedeSchematron Then ...
+  ' --- 8. CAPA D: CONFORMIDAD CON JATS4R ---
+  ' Las reglas son de un estándar público y no opiniones propias. Esa
+  ' es la razón de fondo para usarlas: el informe puede decir 'no
+  ' cumple una recomendación de JATS4R' en lugar de 'no cumple una
+  ' regla de gbpublisher', y eso se verifica contra un tercero.
+  If $bPuedeSchematron Then
+    VerificarConformidadJats4r(oArchivo)
+  Endif
 
   ' --- 9. CAPA E: RECURSOS EXTERNOS ---
   ' Se resuelven contra la carpeta del propio archivo, que es la
@@ -693,12 +696,9 @@ Private Function VerificarBuenaFormacion(oArchivo As CArchivoAuditado, bDesfasaj
   If iCodigo = 0 Then Return True
 
   ' --- 4. NO PARSEA: SE REGISTRA LA CAUSA, NO EL SÍNTOMA ---
-  ' Si ya se detectó desfasaje de codificación, el fallo de parseo es
-  ' su consecuencia directa y NO se registra por separado. Dos
-  ' bloqueantes para una sola causa inflarían el contador, y un
-  ' informe con cuentas infladas se discute en vez de leerse.
   If Not bDesfasajeEncoding Then
-    iLinea = PrimeraLineaDeError(sStdErr, oArchivo.sRuta)
+    iLinea = PrimeraLineaDeError(m_AuditarJats.UltimoStdErr(), oArchivo.sRuta)
+    Print "WF stderr largo="; Len(m_AuditarJats.UltimoStdErr()); " linea="; iLinea
     RegistrarHallazgo(m_Constantes.GBA_COD_NO_BIEN_FORMADO, oArchivo.sId, iLinea, "")
   Endif
 
@@ -713,7 +713,8 @@ End
 ' Función   : PrimeraLineaDeError
 ' Propósito : Extrae el número de línea del primer diagnóstico de
 '             xmllint, cuyo formato es 'ruta:LINEA: tipo : mensaje'.
-'             Solo se toma el número; el texto no se interpreta.
+'             Solo se toma el número; el texto no se interpreta, así
+'             que el parseo no depende del idioma de la herramienta.
 ' Parámetros: sStdErr As String — stderr completo ya acumulado
 '             sRuta As String — ruta del archivo, que xmllint antepone
 ' Retorna   : Integer — número de línea, o 0 si no se pudo extraer
@@ -723,27 +724,37 @@ Private Function PrimeraLineaDeError(sStdErr As String, sRuta As String) As Inte
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim aLineas As String[]
   Dim sLinea As String
+  Dim sPrefijo As String
   Dim sResto As String
   Dim iCorte As Integer
   Dim iValor As Integer
 
   If sStdErr = "" Then Return 0
 
+  ' EL PREFIJO SE ARMA APARTE Y NO DENTRO DE LA COMPARACIÓN: mezclar
+  ' Not, Begins y & en una sola expresión depende de precedencias que
+  ' no son las esperadas
+  sPrefijo = sRuta & ":"
+
   ' --- 2. RECORRIDO HASTA EL PRIMER DIAGNÓSTICO CON POSICIÓN ---
   aLineas = Split(sStdErr, Chr(10))
   For Each sLinea In aLineas
 
     ' SOLO INTERESAN LAS LÍNEAS QUE EMPIEZAN CON LA RUTA DEL ARCHIVO
-    If Not (sLinea Begins sRuta & ":") Then Continue
+    If sLinea Begins sPrefijo Then
 
-    ' LO QUE SIGUE A 'ruta:' HASTA EL PRÓXIMO ':' ES EL NÚMERO
-    sResto = Mid(sLinea, Len(sRuta) + 2)
-    iCorte = InStr(sResto, ":")
-    If iCorte = 0 Then Continue
+      ' LO QUE SIGUE A 'ruta:' HASTA EL PRÓXIMO ':' ES EL NÚMERO
+      sResto = Mid(sLinea, Len(sPrefijo) + 1)
+      iCorte = InStr(sResto, ":")
 
-    Try iValor = CInt(Trim(Mid(sResto, 1, iCorte - 1)))
-    If Error Then Continue
-    If iValor > 0 Then Return iValor
+      If iCorte > 1 Then
+        Try iValor = CInt(Trim(Mid(sResto, 1, iCorte - 1)))
+        If Not Error Then
+          If iValor > 0 Then Return iValor
+        Endif
+      Endif
+
+    Endif
 
   Next
 
@@ -1875,6 +1886,10 @@ Public Function AlcanceNoEvaluado() As String
   If Not $bPuedeValidarDTD Then sTexto &= ("; validez contra la DTD declarada")
   If Not $bPuedeSchematron Then sTexto &= ("; conformidad con JATS4R y Crossref")
 
+  If $sGruposNoEvaluados <> "" Then
+    sTexto &= ("; reglas de JATS4R no ejecutadas: ") & $sGruposNoEvaluados
+  Endif
+
   Return sTexto
 
 End
@@ -2082,6 +2097,14 @@ Private Sub VerificarCoherenciaInterna(oArchivo As CArchivoAuditado, sContenido 
   VerificarFechasHistoria(oArchivo)
   VerificarCodigoIdioma(oArchivo)
   VerificarEntidadesDobles(oArchivo, sContenido)
+  VerificarLicencia(oArchivo)
+  VerificarNombresAutores(oArchivo)
+  VerificarFechasHistoria(oArchivo)
+  VerificarCodigoIdioma(oArchivo)
+  VerificarEntidadesDobles(oArchivo, sContenido)
+  VerificarDoiReferencias(oArchivo)
+  VerificarIdentificadorInstitucional(oArchivo)
+  VerificarAltTextDecorativo(oArchivo)
 
 End
 
@@ -2711,5 +2734,298 @@ Private Function NormalizarIssn(sValor As String) As String
   If String.Len(sLimpio) <> 8 Then Return Trim(sValor)
 
   Return String.Mid(sLimpio, 1, 4) & "-" & String.Mid(sLimpio, 5, 4)
+
+End
+
+' ============================================
+' Función   : VerificarConformidadJats4r
+' Propósito : Ejecuta el subconjunto verificado de reglas JATS4R y
+'             traduce cada aserción incumplida a un hallazgo propio.
+' Parámetros: oArchivo As CArchivoAuditado — archivo ya parseado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarConformidadJats4r(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aGrupos As String[]
+  Dim sGrupo As String
+  Dim aAserciones As CAsercionSVRL[]
+  Dim oAsercion As CAsercionSVRL
+  Dim sCodigo As String
+  Dim sError As String
+
+  ' --- 2. SUBCONJUNTO VERIFICADO ---
+  ' Lista explícita y no todo el directorio de compilados: ese
+  ' directorio lo comparte la validación del pipeline propio, que
+  ' aplica más reglas porque valida salida conocida y no archivos
+  ' ajenos de estructura impredecible.
+  aGrupos = ["accessibility-errors", "general-citations-errors",
+    "general-citations-warnings", "funding-errors"]
+
+  ' --- 3. UNA INVOCACIÓN POR GRUPO ---
+  For Each sGrupo In aGrupos
+
+    aAserciones = m_ValidacionSchematron.ValidarConSchematron(oArchivo.sRuta, sGrupo, sError)
+
+    ' 3.1 FALLO DE EJECUCIÓN
+    ' RC-GM-02: no se traga. Que un grupo falle no invalida el
+    ' análisis, pero tiene que quedar registrado para que no parezca
+    ' que el archivo cumple lo que nunca se evaluó.
+    If Not aAserciones Then
+      RegistrarGrupoNoEvaluado(sGrupo, sError)
+      Continue
+    Endif
+
+    ' 3.2 TRADUCCIÓN DE CADA ASERCIÓN A UN CÓDIGO PROPIO
+    For Each oAsercion In aAserciones
+
+      sCodigo = CodigoDesdeAsercion(oAsercion)
+
+      ' LO NO CATALOGADO SE MIDE PERO NO SE MUESTRA: el texto original
+      ' de JATS4R está en inglés y escrito para gente técnica
+      If sCodigo = "" Then Continue
+
+      RegistrarHallazgo(sCodigo, oArchivo.sId, 0, oAsercion.sUbicacion)
+
+    Next
+
+  Next
+
+End
+
+' ============================================
+' Función   : CodigoDesdeAsercion
+' Propósito : Traduce una aserción de JATS4R a un código propio.
+'
+'             El SVRL no trae identificador por aserción, así que la
+'             clave estable es el par patrón + test. Verificado sobre
+'             el corpus: 'general-citations-errors' con
+'             test='@publication-type' identifica una regla de forma
+'             unívoca y además es autoexplicativa.
+'
+'             Se devuelve cadena vacía para lo que no está catalogado,
+'             que es la mayoría: el subconjunto crece agregando
+'             mensajes, no tocando esta función.
+'
+' Parámetros: oAsercion As CAsercionSVRL — aserción incumplida
+' Retorna   : String — código propio, o cadena vacía si no está catalogada
+' ============================================
+Private Function CodigoDesdeAsercion(oAsercion As CAsercionSVRL) As String
+
+  ' --- 1. ACCESIBILIDAD ---
+  If oAsercion.sPatron = "accessibility-errors" Then
+    If oAsercion.sTest = "alt-text" Then Return m_Constantes.GBA_COD_SIN_ALT_TEXT
+    If oAsercion.sTest = "table or alternatives/table" Then Return m_Constantes.GBA_COD_TABLA_IMAGEN
+    Return ""
+  Endif
+
+  ' --- 2. CITAS: TIPO DE PUBLICACIÓN ---
+  If oAsercion.sPatron = "general-citations-errors" Then
+    If oAsercion.sTest = "@publication-type" Then Return m_Constantes.GBA_COD_CITA_SIN_TIPO
+    Return ""
+  Endif
+
+  ' --- 3. CITAS: TIPO DE GRUPO DE PERSONAS ---
+  If oAsercion.sPatron = "general-citations-warnings" Then
+    If oAsercion.sTest = "person-group[@person-group-type]" Then Return m_Constantes.GBA_COD_AUTORES_SIN_TIPO
+    Return ""
+  Endif
+
+  ' --- 4. FINANCIACIÓN ---
+  ' Se acepta cualquier test del grupo: son pocas reglas y todas
+  ' apuntan al mismo problema práctico
+  If oAsercion.sPatron = "funding-errors" Then Return m_Constantes.GBA_COD_FUNDING
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : RegistrarGrupoNoEvaluado
+' Propósito : Deja constancia de que un grupo de reglas no pudo
+'             ejecutarse, para que su ausencia no se confunda con
+'             cumplimiento.
+' Parámetros: sGrupo As String — grupo que falló
+'             sError As String — motivo
+' Retorna   : nada
+' ============================================
+Private Sub RegistrarGrupoNoEvaluado(sGrupo As String, sError As String)
+
+  If $sGruposNoEvaluados <> "" Then $sGruposNoEvaluados &= "; "
+  $sGruposNoEvaluados &= sGrupo
+
+  ' DURANTE EL DESARROLLO, A LA CONSOLA. UN Try CON Return SILENCIOSO
+  ' ES UN CANAL MUDO Y YA NOS COSTÓ CARO TRES VECES EN ESTE MÓDULO.
+  Print "CAPA D: no se pudo evaluar "; sGrupo; ": "; sError
+
+End
+
+' ============================================
+' Función   : UltimoStdErr
+' Propósito : Devuelve el stderr de la última herramienta ejecutada.
+'             Existe porque en Gambas los tipos primitivos se pasan
+'             SIEMPRE por valor: un parámetro ByRef As String no
+'             propaga nada al llamador, compila sin aviso y deja la
+'             variable como estaba.
+' Retorna   : String
+' ============================================
+Public Function UltimoStdErr() As String
+
+  Return $sBufferError
+
+End
+
+Public Function UltimoStdOut() As String
+
+  Return $sBufferSalida
+
+End
+
+' ============================================
+' Función   : VerificarDoiReferencias
+' Propósito : Detecta las referencias cuyo DOI no está en forma
+'             procesable.
+'
+'             Es el hallazgo más caro del corpus: 18 de 801
+'             referencias tenían el DOI donde una máquina puede
+'             leerlo. En el resto está dentro de un comentario o de un
+'             enlace de texto, o directamente no está.
+'
+'             Se reporta solo cuando la referencia SÍ tiene un DOI en
+'             algún lado pero en el lugar equivocado. Una referencia
+'             sin DOI puede ser legítima: no todo lo citado lo tiene,
+'             y acusar de eso sería un falso positivo.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarDoiReferencias(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iConDoiSuelto As Integer
+  Dim i As Integer
+
+  ' --- 2. REFERENCIAS CON UN DOI QUE NO ESTÁ EN <pub-id> ---
+  ' La expresión pide: hay un enlace a doi.org y NO hay pub-id de tipo
+  ' doi. El @href se busca de forma agnóstica al prefijo porque
+  ' xmllint --xpath no conoce los namespaces del documento.
+  iConDoiSuelto = ContarPorXPath(oArchivo.sRuta,
+    "count(//ref[.//ext-link[contains(@*[local-name()='href'],'doi.org')]][not(.//pub-id[@pub-id-type='doi'])])")
+
+  If iConDoiSuelto = 0 Then Return
+
+  ' --- 3. UNA OCURRENCIA POR REFERENCIA AFECTADA ---
+  ' El contador del hallazgo tiene que reflejar la magnitud: no es lo
+  ' mismo una referencia que treinta
+  For i = 1 To iConDoiSuelto
+    RegistrarHallazgo(m_Constantes.GBA_COD_REF_SIN_DOI, oArchivo.sId, 0, "//ref-list")
+  Next
+
+End
+
+' ============================================
+' Función   : VerificarIdentificadorInstitucional
+' Propósito : Detecta las afiliaciones sin identificador institucional.
+'
+'             En el corpus de referencia fueron 64 de 64: ninguna de
+'             las seis herramientas de marcación analizadas emite
+'             identificador de institución. Por eso el hallazgo va
+'             marcado como carencia universal del ecosistema, y el
+'             informe lo presenta como oportunidad y no como falla de
+'             la revista.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarIdentificadorInstitucional(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iTotal As Integer
+  Dim iConId As Integer
+  Dim i As Integer
+
+  ' --- 2. CONTEO ---
+  iTotal = ContarPorXPath(oArchivo.sRuta, "count(//aff)")
+  If iTotal = 0 Then Return
+
+  iConId = ContarPorXPath(oArchivo.sRuta, "count(//aff[institution-id])")
+
+  ' --- 3. UNA OCURRENCIA POR AFILIACIÓN SIN IDENTIFICAR ---
+  For i = 1 To iTotal - iConId
+    RegistrarHallazgo(m_Constantes.GBA_COD_AFF_SIN_ID, oArchivo.sId, 0, "//aff")
+  Next
+
+End
+
+' ============================================
+' Función   : VerificarAltTextDecorativo
+' Propósito : Detecta descripciones alternativas que se limitan a
+'             repetir el epígrafe.
+'
+'             Complementa a la regla de JATS4R que detecta la AUSENCIA
+'             de alt-text: acá el elemento está pero no cumple su
+'             función. Un lector de pantalla anuncia dos veces lo
+'             mismo y quien no ve la imagen sigue sin saber qué hay
+'             en ella.
+'
+'             La comparación es por CONTENCIÓN y no por igualdad: el
+'             caso real del corpus es 'Figura 1. ' seguido del título
+'             completo, de modo que las cadenas no son idénticas pero
+'             una contiene a la otra.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarAltTextDecorativo(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iFiguras As Integer
+  Dim iTablas As Integer
+  Dim i As Integer
+
+  ' --- 2. CONTEO EN FIGURAS Y EN TABLAS ---
+  ' Se miran los dos: en el corpus, la misma herramienta que copia el
+  ' epígrafe en las figuras lo copia también en las tablas
+  iFiguras = ContarPorXPath(oArchivo.sRuta,
+    "count(//fig[contains(normalize-space(alt-text), normalize-space(caption/title))])")
+
+  iTablas = ContarPorXPath(oArchivo.sRuta,
+    "count(//table-wrap[contains(normalize-space(alt-text), normalize-space(caption/title))])")
+
+  If iFiguras + iTablas = 0 Then Return
+
+  ' --- 3. REGISTRO ---
+  For i = 1 To iFiguras + iTablas
+    RegistrarHallazgo(m_Constantes.GBA_COD_ALT_DECORATIVO, oArchivo.sId, 0, "//alt-text")
+  Next
+
+End
+
+' ============================================
+' Función   : ContarPorXPath
+' Propósito : Resuelve una expresión XPath que devuelve un número y lo
+'             entrega como entero. Evita repetir la conversión y la
+'             guarda en cada regla que cuenta.
+' Parámetros: sRuta As String — archivo a consultar
+'             sExpresion As String — expresión XPath de tipo count()
+' Retorna   : Integer — el conteo, o 0 si no se pudo obtener
+' ============================================
+Private Function ContarPorXPath(sRuta As String, sExpresion As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+  Dim iValor As Integer
+
+  sSalida = Trim(ConsultarXPath(sRuta, sExpresion))
+  If sSalida = "" Then Return 0
+
+  ' --- 2. CONVERSIÓN PROTEGIDA ---
+  ' RC-GM-02: si la expresión devolviera algo no numérico, el Try lo
+  ' contiene y se devuelve cero, que es el valor seguro: no reportar
+  ' es preferible a reportar mal
+  Try iValor = CInt(sSalida)
+  If Error Then Return 0
+
+  Return iValor
 
 End

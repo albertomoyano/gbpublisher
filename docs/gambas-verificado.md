@@ -465,4 +465,127 @@ Los tres casos de la sesión: el `Exec` que fallaba por una firma de handler y d
 
 RC-GM-02 no pide solo verificar el error: pide **hacer algo** con él.
 
+---
+
+# Sesión de Schematron y conformidad JATS4R (agosto 2026)
+
+Continúa la numeración anterior. Mismo entorno: **Gambas 3.22 / Qt5 / Linux Mint**, máquina de desarrollo real.
+
+El primero de estos apartados es el más importante de todo el documento, porque invalida una suposición que el proyecto arrastraba en seis funciones de cuatro módulos distintos.
+
+---
+
+## 24. `ByRef` NO EXISTE en la práctica: los primitivos van siempre por valor
+
+**Verificado en seis variantes, todas fallan:**
+
+| caso | resultado |
+|---|---|
+| `Sub` con `ByRef Integer` | no propaga |
+| `Function` con `ByRef Integer` | no propaga |
+| `Function` con `ByRef String` | no propaga |
+| parámetro sin la palabra `ByRef` | no propaga |
+| función **pública** llamada desde otro módulo | no propaga |
+| **array como parámetro** | **SÍ propaga** |
+
+```gambas
+Private Sub PonerEnDiez(ByRef iSalida As Integer)
+  iSalida = 10
+End
+
+iValor = 0
+PonerEnDiez(iValor)
+Print iValor        ' -> 0, NO 10
+```
+
+En Gambas los tipos primitivos se pasan **siempre por valor**, con `ByRef` o sin él. Los objetos —arrays y clases— se pasan **siempre por referencia**. No hay forma de devolver un `Integer` o un `String` por parámetro.
+
+Es herencia de VB, donde `ByRef` no solo existe sino que es el modo **por defecto**. Por eso el error es tan fácil de cometer y tan difícil de ver: **compila, no da ningún aviso, y la variable del llamador simplemente queda como estaba**. El fallo se manifiesta lejos, como un dato vacío que parece legítimo.
+
+En este proyecto había seis funciones así, y las seis estaban rotas en silencio: una convertía posiciones a línea y columna para el corrector ortográfico, dos extraían el nombre de un shortcode, una leía configuración de un XSLT, y dos devolvían la salida de procesos externos.
+
+Y produjo un síntoma que costó tres intentos diagnosticar: una función auxiliar que devolvía la posición de avance por `ByRef` dejaba el índice en cero, `InStr` volvía a encontrar la primera coincidencia y **el bucle no terminaba nunca**, con la interfaz congelada y sin ningún mensaje.
+
+REGLA: nunca usar un parámetro como canal de salida para un primitivo. Las alternativas, por orden de preferencia:
+
+1. **Invertir el retorno.** Si la función devuelve `Boolean` más un dato, que devuelva el dato y que el vacío signifique falso.
+2. **Una clase pequeña**, cuando los datos tienen sentido juntos: una posición es línea y columna, no dos enteros sueltos.
+3. **Un array como canal**, que sí funciona por ser objeto.
+4. **Variable de módulo con accesor**, cuando el dato es un subproducto y no el resultado.
+
+---
+
+## 25. Saxon 12 resuelve la DTD por red y NO se lo puede impedir
+
+Un XML de 70 KB con DOCTYPE de JATS tarda **ocho segundos** en parsear con Saxon. El desglose ubica la causa sin ambigüedad:
+
+| medición | tiempo |
+|---|---|
+| arranque de la JVM sin hacer nada | 0,24 s |
+| ese XML con una plantilla que no hace nada | 12,87 s |
+| una regla real sobre un XML mínimo | 0,57 s |
+| el mismo comando **sin red** (`unshare -rn`) | 0,42 s, y falla |
+
+No es la JVM ni son las reglas: es **parsear ese XML**. `strace` confirma dos conexiones salientes. Saxon va a buscar la DTD a `jats.nlm.nih.gov` en cada archivo.
+
+**Ninguna opción lo evita.** Se probaron `-Djavax.xml.accessExternalDTD`, `-Djavax.xml.accessExternalSchema`, `-dtd:off`, `-Dxml.catalog.ignoreMissing` y `-Dxmlresolver.properties`: el tiempo no cambió en ningún caso. El resolvedor de Saxon 12 ignora las propiedades estándar de JAXP.
+
+SOLUCIÓN: cuando la DTD no hace falta para la transformación, entregarle a Saxon una copia **sin DOCTYPE**. Verificado: 0,43 s en lugar de 8,1 s, con resultados idénticos.
+
+Al recortar el DOCTYPE hay que **contar corchetes**: el de JATS trae declaraciones de entidades entre `[` y `]`, que contienen sus propios `>`. Cortar en el primero rompe el documento — un `sed` ingenuo dejó el prefijo `ali` sin enlazar.
+
+Esto es la **contracara de RC-XJ-03**, y las dos reglas deben leerse juntas: allí el problema era que Saxon *no conseguía* la DTD y la solución fue permitirle buscarla; acá la busca cuando no hace falta.
+
+Vale para todo el proyecto, no solo para el auditor: cualquier cadena XSLT que reciba un JATS con DOCTYPE remoto está pagando esos ocho segundos por archivo.
+
+---
+
+## 26. Los Schematron de JATS4R no se ejecutan tal como se distribuyen
+
+Cuatro problemas distintos, todos verificados:
+
+**El `.xsl` publicado en el repositorio está mal compilado.** Un `<xsl:function>` quedó sin `@name`, con lo que tres de las cuatro funciones `j4r:` no se declaran y Saxon aborta con `XPST0017`.
+
+**`compile-for-svrl.xsl` de SchXslt 1.10.1 copia solo la primera `<xsl:function>`** del `<schema>` y descarta las demás. De las cuatro de `jats4r.sch` sobrevive una.
+
+**Los archivos temáticos no son documentos Schematron completos.** Empiezan en `<pattern>` y están pensados para entrar por `<include>`. Sueltos dan *"this document contains more than one top-level element"*. Necesitan un envoltorio con las declaraciones de namespace del maestro.
+
+**Y hay reglas que abortan con estructuras normales.** Una regla sobre `<sec>` llama a `normalize-space()` sobre un conjunto de títulos y falla con `XPTY0004` en cuanto un artículo tiene subsecciones. En el corpus de referencia, doce secciones de un solo artículo tenían más de un título. Como Saxon aborta, **se pierde el análisis del archivo entero**, no solo esa regla.
+
+COMBINACIÓN QUE FUNCIONA: `include.xsl` de SchXslt para resolver los includes, esqueleto ISO `iso_svrl_for_xslt2.xsl` para compilar. Cada implementación aporta lo que la otra rompe.
+
+REGLA: compilar y ejecutar **temático por temático**, nunca el maestro completo, y verificar cada grupo contra un corpus real antes de darlo por bueno. Que una regla compile no garantiza que ejecute.
+
+---
+
+## 27. El SVRL no trae identificador por aserción
+
+Un `<svrl:failed-assert>` trae `@test`, `@role` y `@location`, pero **no `@id`**. La clave estable para identificar una regla es el par **patrón + test**:
+
+```xml
+<svrl:active-pattern id="general-citations-errors"/>
+<svrl:fired-rule context="element-citation|mixed-citation"/>
+<svrl:failed-assert test="@publication-type" role="error"
+                    location="/article[1]/back[1]/ref-list[1]/ref[3]/mixed-citation[1]"/>
+```
+
+El `@location` viene **resuelto, con predicados numéricos y sin prefijos de namespace**, así que se puede pegar en cualquier editor XML y funciona.
+
+Dos detalles del parseo:
+
+- La severidad se lee del `@role` de la aserción y **no de la fase ejecutada**: la fase `errors` de JATS4R activa un patrón de advertencias, así que fiarse de la fase da severidades equivocadas.
+- Los `<successful-report>` **también llevan `<svrl:text>`**. Un parseo que emita un mensaje cada vez que ve esa etiqueta cuenta reportes informativos como errores.
+
+---
+
+## 28. `pipeline-for-svrl.xsl` de SchXslt compila pero no ejecuta
+
+Invocado con `document=archivo.xml`, produce el **XSLT compilado**, no el informe SVRL. La raíz de la salida es `<xsl:transform>` y los atributos aparecen como plantillas sin evaluar: `location="{schxslt:location(.)}"`.
+
+Consecuencia práctica en este proyecto: durante un tiempo se contaron los `<failed-assert>` de ese archivo creyendo que eran incumplimientos. Eran **las reglas**, así que el resultado era idéntico para cualquier XML de entrada.
+
+REGLA: verificar siempre que la salida contenga `schematron-output` antes de parsearla. Es una comprobación de dos líneas que habría ahorrado el diagnóstico entero.
+
+El pipeline correcto es de tres pasos: `include.xsl` → esqueleto ISO para compilar → ejecutar el `.xsl` resultante sobre el documento. Y los dos primeros se hacen **una sola vez**, en la compilación del paquete.
+
 
