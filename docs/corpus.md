@@ -821,6 +821,52 @@ Sobre `gb.pcre`: el motor de expresiones regulares del proyecto es perl externo 
 
 **Relaciones:** vinculo:SC-05
 
+### RF-07 — Estructura de la base de gbKumula
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** gbKumula / SQLite 3.45 / Gambas 3.22 · **Verificado:** 2026-09
+
+Base local en `~/.gbkumula/kumula.sqlite`, con los PDF generados en `~/.gbkumula/pdfs/`. Lo que viaja entre máquinas es la CARPETA entera, no el archivo `.sqlite` suelto: la base guarda el nombre del PDF, nunca la ruta absoluta.
+
+Esquema en versión 7: 22 tablas y 13 vistas, aplicadas por siete scripts numerados. Nivel registrado en `esquema_version`, igual que en gbCorpus y gbpublisher.
+
+CUATRO GRUPOS DE TABLAS
+
+Transversales, sin prefijo: `vocabulario`, `institucion`, `persona`, `persona_afiliacion`, `sesion`, `documento`, `documento_evento`, `esquema_version`.
+
+Investigación, prefijo `inv_`: `inv_revista` (ficha de producción actual), `inv_revista_indexador`, `inv_revista_persona` (masthead fechado), `inv_auditoria`.
+
+Relación, prefijo `rel_`: `rel_iniciativa`, `rel_iniciativa_revista` (alcance N:M), `rel_iniciativa_estado`, `rel_iniciativa_persona`, `rel_iniciativa_vinculo`, `rel_evento`, `rel_evento_participante`.
+
+Producción, prefijo `pro_`: `pro_tarifa`, `pro_encargo`, `pro_cobro`.
+
+DECISIONES DE MODELO QUE NO SE REDISCUTEN
+
+El pipeline vive en la INICIATIVA, no en la revista ni en la institución. Una iniciativa abarca de una a muchas revistas: el caso de una editorial con dieciséis títulos y un solo interlocutor no entra de otra forma.
+
+La revista es unidad de evidencia. Su ficha es corta a propósito: plataforma, periodicidad, artículos por número, páginas promedio, modo de producción, tres salidas y observaciones. Una ficha de quince campos no se completa y la base miente por omisión.
+
+Las salidas (`tiene_pdf`, `tiene_html`, `tiene_xml`) son de TRES estados: 1 tiene, 0 no tiene, NULL no verificado. La distinción decide si hace falta volver a mirar.
+
+Los estados se derivan de eventos fechados, no se guardan como atributo. El estado actual de una iniciativa sale del último registro de `rel_iniciativa_estado`.
+
+`sesion` es la única medida de esfuerzo de las tres capas y cuelga de exactamente uno de tres objetos, con `CHECK` que lo garantiza. El vocabulario de actividad se elige por contexto con una columna generada con `CASE` (ver GV-30). Toda sesión lleva naturaleza económica: facturado, facturable no cobrado, o inversión.
+
+Los documentos se numeran `AAAA-NNNN` con reinicio anual. El siguiente sale de `MAX(secuencia) WHERE anio = N` (RC-GM-09 con filtro de período), nunca del conteo ni del máximo global. Borrador editable con el PDF descartable; enviado congelado por trigger, y una corrección posterior emite un documento nuevo que referencia al anterior.
+
+`PRAGMA foreign_keys = ON` en cada apertura, sin excepción (GV-30).
+
+VISTAS
+
+`v_tarifa_vigente`, `v_iniciativa_estado`, `v_esfuerzo`, `v_encargo_rentabilidad`, `v_revista_brecha`, `v_revista_valor`, `v_agenda`, `v_iniciativa_esfuerzo`, `v_prioridad_iniciativa`, `v_prioridad_revista`, `v_ejecucion`, `v_alcance_sin_relevar`, `v_iniciativa_cobertura`.
+
+Medidas a escala de cinco años (400 revistas, 900 personas, 150 iniciativas, 3.000 sesiones): el panel de detalle de un objeto se arma en menos de 1 ms y el listado más caro tarda 11 ms. No hace falta caché ni precálculo.
+
+ADVERTENCIA SOBRE LOS TOTALES
+
+`v_iniciativa_esfuerzo` atribuye a cada iniciativa las horas de las revistas de su alcance. Si una revista está en dos iniciativas, sus horas aparecen en las dos: la columna es correcta leída de a una, pero SUMARLA da un total inflado. El total global se saca de `v_esfuerzo` sumando sesiones, nunca sumando por iniciativa.
+
+**Relaciones:** vinculo:GV-30, vinculo:RC-GM-09, vinculo:RC-GM-15
+
 ---
 
 ## GV — Comportamientos verificados
@@ -1306,3 +1352,55 @@ REGLA: verificar siempre que la salida contenga `schematron-output` antes de par
 El pipeline correcto es de tres pasos: `include.xsl` → esqueleto ISO para compilar → ejecutar el `.xsl` resultante sobre el documento. Y los dos primeros se hacen UNA SOLA VEZ, en la compilación del paquete.
 
 **Relaciones:** apoya:GV-23
+
+### GV-29 — El driver colapsa todas las restricciones en un solo mensaje
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.db.sqlite3 / SQLite 3.45.1 / Linux Mint · **Verificado:** 2026-09
+
+gb.db.sqlite3 devuelve el mismo texto para cinco clases de restricción distintas. Verificado con las cinco:
+
+    FOREIGN KEY   -> Abort due to constraint violation
+    CHECK         -> Abort due to constraint violation
+    UNIQUE        -> Abort due to constraint violation
+    RAISE(ABORT)  -> Abort due to constraint violation
+    NOT NULL      -> Abort due to constraint violation
+
+Lo único que varía es el prefijo según la vía: por `Exec` llega pelado; por `Edit` + `Update` llega como `Cannot modify record: Abort due to constraint violation`. Eso informa CÓMO falló, no POR QUÉ.
+
+Tres consecuencias directas:
+
+Un `RAISE(ABORT, 'mensaje redactado')` en un trigger NO le llega al usuario. El texto sobrevive para quien abra la base con el cliente `sqlite3` desde la consola, pero es inservible como mensaje de interfaz.
+
+`Error.Text` no sirve para diagnosticar. Cualquier `InStr(Error.Text, "FOREIGN KEY")` para decidir qué salió mal está descartado de entrada.
+
+Las restricciones no pierden valor: cambian de función. Dejan de ser fuente de mensaje y pasan a ser red de seguridad silenciosa, que impide que un error de la aplicación escriba datos malos. Por eso se mantienen todas, trigger incluido.
+
+REGLA: toda operación con restricciones asociadas lleva su guarda previa en Gambas, con el mensaje propio, ANTES de tocar la base. El error del driver queda como último recurso y solo puede decir que la base rechazó el cambio.
+
+Es la versión atenuada de GV-23: un error que se informa pero no dice nada.
+
+**Relaciones:** apoya:GV-23, vinculo:RC-GM-02
+
+**PENDIENTE:** Verificar si gb.db.mysql colapsa igual o propaga el mensaje del servidor, que sí distingue. Si propaga, la regla vale solo para SQLite y gbpublisher no está afectado.
+
+### GV-30 — SQLite desde Gambas: el PRAGMA es por conexión y las columnas generadas no molestan
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.db.sqlite3 / SQLite 3.45.1 / Linux Mint · **Verificado:** 2026-09
+
+Dos comportamientos verificados sobre el mismo esquema.
+
+`PRAGMA foreign_keys = ON` se acepta por `Connection.Exec` y se aplica: un insert que viola una FK se rechaza. Pero es POR CONEXIÓN y no persiste en el archivo. Si no se emite después de cada `Open`, todas las `FOREIGN KEY` declaradas quedan decorativas y nada avisa. Va en la función de apertura, inmediatamente después del `Open`, con su `Try` + `If Error`.
+
+Las columnas generadas (`GENERATED ALWAYS AS ... VIRTUAL`) conviven con el patrón `Edit` + `Update` de RC-GM-15: el driver no las incluye en el `UPDATE` y la operación pasa limpia. SQLite sí rechaza escribirlas por SQL directo, como corresponde.
+
+Esto habilita un patrón útil: una sola tabla de vocabulario con clave primaria `(dominio, codigo)`, y cada tabla hija atando su `FOREIGN KEY` a un subconjunto mediante una columna generada con el dominio fijo:
+
+    dom_tipo TEXT GENERATED ALWAYS AS ('tipo_institucion') VIRTUAL,
+    FOREIGN KEY (dom_tipo, tipo_institucion)
+      REFERENCES vocabulario (dominio, codigo)
+
+Un código que existe pero pertenece a otro dominio es rechazado. La expresión admite `CASE`, así que el dominio puede elegirse según el contexto de la fila.
+
+Dos requisitos: SQLite >= 3.31 para columnas generadas, y las definiciones de columna deben ir ANTES de las restricciones de tabla (`CHECK`, `FOREIGN KEY`, `UNIQUE`). Puestas al final, el error es `near "dom_tipo": syntax error`, que no dice nada sobre la causa.
+
+**Relaciones:** vinculo:RC-GM-15, vinculo:GV-29
