@@ -1404,3 +1404,82 @@ Un código que existe pero pertenece a otro dominio es rechazado. La expresión 
 Dos requisitos: SQLite >= 3.31 para columnas generadas, y las definiciones de columna deben ir ANTES de las restricciones de tabla (`CHECK`, `FOREIGN KEY`, `UNIQUE`). Puestas al final, el error es `near "dom_tipo": syntax error`, que no dice nada sobre la causa.
 
 **Relaciones:** vinculo:RC-GM-15, vinculo:GV-29
+
+### GV-31 — Property en un módulo: sin Public y calificada desde adentro
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
+
+Dos comportamientos verificados al escribir `m_Conexion` en gbKumula.
+
+NO ADMITE `Public`
+
+`Public Property Read X As Tipo` es error de compilación: "Public inesperado". Una `Property` es pública por definición y el único modificador válido es `Private`. La forma correcta es:
+
+    Property Read RutaBase As String
+
+    Private Function RutaBase_Read() As String
+      Return $sRuta
+    End
+
+SE ACCEDE CALIFICADA DESDE EL PROPIO MÓDULO
+
+Dentro del mismo módulo donde está declarada, el identificador simple NO se resuelve: da "identificador desconocido". Hay que calificar con el nombre del módulo.
+
+    ' MAL, DENTRO DE m_Conexion:
+    If Not Exist(RutaBase) Then ...
+
+    ' BIEN:
+    If Not Exist(m_Conexion.RutaBase) Then ...
+
+Razón: una `Property` no es un símbolo del ámbito del módulo, como sí lo es una variable `Public`. Es una entrada en la interfaz externa, cuyo valor produce la función `_Read`. En una clase el equivalente sería `Me.X`; un módulo no tiene `Me`, así que se califica con su propio nombre.
+
+Consecuencia práctica: la ventaja de RC sobre usar `Function` —que evita el error de paréntesis olvidados— se paga con la calificación en cada uso interno. Vale igual, pero hay que saberlo antes de escribir el módulo entero.
+
+**Relaciones:** vinculo:GV-05
+
+### GV-32 — New con argumentos no puede ir anidado dentro de otra llamada
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
+
+Un constructor con parámetros no se puede usar como argumento de otra función. El compilador responde "Cannot use NEW operator here".
+
+    ' MAL
+    aFilas.Add(New CFilaLista(iId, iTipo, aCeldas))
+
+    ' BIEN
+    oFila = New CFilaLista(iId, iTipo, aCeldas)
+    aFilas.Add(oFila)
+
+LO PELIGROSO ES LA CORRECCIÓN EQUIVOCADA
+
+Quitar el `New` hace que la línea COMPILE, porque `NombreClase(...)` es sintaxis válida para otra cosa. Pero falla en tiempo de EJECUCIÓN, al hacer click en la grilla, lejos de donde estaba el problema. Es GV-23 en estado puro: el fallo se manifiesta lejos de su causa, y el arreglo que hace compilar es peor que el error original.
+
+DIAGNÓSTICO DE LA SESIÓN
+
+Se atribuyó primero al array literal multilínea de SC-05, que también estaba presente. Eran dos cosas distintas: el literal se resolvió pasando a `String[]` con `.Add()`, y el `New` seguía fallando hasta sacarlo a una variable. Cuando dos causas se superponen, arreglar una y ver que el síntoma persiste no significa que la primera no fuera real.
+
+REGLA: todo `New` con argumentos va a una variable primero. Sin excepción, aunque parezca que compila.
+
+**Relaciones:** apoya:GV-23, vinculo:SC-05
+
+### GV-33 — String.Repeat no existe
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
+
+No hay función de repetición de cadena en la clase `String`. `String.Repeat("─", n)` da "Repeat es desconocido" en tiempo de ejecución.
+
+Para armar separadores o rellenos, bucle explícito:
+
+    sSubrayado = ""
+
+    For iPos = 1 To String.Len(sTexto)
+      sSubrayado &= "─"
+    Next
+
+`String.Len` y no `Len` (SC-02): con `Len` el subrayado queda más largo que el título cuando este lleva acentos, porque cuenta bytes.
+
+VERIFICADO EN LA MISMA SESIÓN, POR CONTRASTE
+
+`TypeOf(vValor) = gb.Boolean` SÍ funciona y sirve para distinguir un Boolean de un nulo antes de convertirlo a texto, que es lo que pide GV-10.
+
+**Relaciones:** vinculo:SC-02, vinculo:GV-10
