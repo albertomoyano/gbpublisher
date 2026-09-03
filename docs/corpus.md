@@ -697,6 +697,34 @@ La justificación de esta regla incluía además que "Gambas no interpreta secue
 
 **Relaciones:** reemplazada_por:SC-05
 
+### SC-11 — Modelo de recursos: sistema inmutable, copia local de trabajo
+
+**Estado:** vigente · **Evidencia:** inferida
+
+Los recursos que la aplicación distribuye viven en dos lugares con roles distintos.
+
+`/usr/share/gbpublisher/` es la fuente de verdad INMUTABLE. Se sobrescribe por completo en cada actualización del paquete. Nadie la edita: ni el usuario ni el departamento de sistemas.
+
+`~/.gbpublisher/` es la copia efectiva de trabajo. Es la que la aplicación LEE, y la única que se ajusta. NO se sobrescribe nunca. Si una actualización cambia alguno de esos archivos, se avisa para que se borren y el arranque los vuelve a escribir desde el sistema.
+
+La copia la realiza `m_InicioCierre.DirectorioOcultoApp()` recorriendo una lista de carpetas. Agregar una carpeta de recursos nueva OBLIGA a agregarla a esa lista; si no, la aplicación leerá del sistema y el recurso quedará fuera del modelo sin que nada lo advierta.
+
+QUÉ NO SE COPIA
+
+Lo que, modificado, invalidaría algo que la aplicación afirma. Hoy: `engine/`, el motor de expresiones regulares, y las reglas compiladas de Schematron. Un informe que dice "no cumple una recomendación de JATS4R" solo se sostiene si las reglas son las que vinieron en el paquete.
+
+CONTRAPARTIDA OBLIGATORIA
+
+Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un archivo ajeno debe poder DECLARAR si fue modificado. La comparación es directa contra `/usr/share/`, que por definición del modelo conserva siempre el original: no hace falta guardar ni versionar sumas de verificación. Es lo que hace `m_AuditarJats.EstadoRecurso()` con el catálogo de mensajes y la hoja de estilo del informe de auditoría.
+
+RAZÓN DEL MODELO
+
+Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se hacen sobre la copia local y se distribuyen a las estaciones; donde no lo hay, el usuario es a la vez administrador y necesita poder ajustar sin privilegios de root. En los dos casos el punto de intervención es el mismo, y la actualización del paquete nunca pisa lo ajustado.
+
+**Relaciones:** vinculo:SC-05
+
+**PENDIENTE:** Los XSLT de salida se copian a local y hoy no declaran si fueron modificados. Bajo el criterio de la contrapartida deberían hacerlo, sobre todo si el auditor llega a auditar la producción propia. Pendiente de decisión.
+
 ---
 
 ## RF — Referencia de API
@@ -866,6 +894,80 @@ ADVERTENCIA SOBRE LOS TOTALES
 `v_iniciativa_esfuerzo` atribuye a cada iniciativa las horas de las revistas de su alcance. Si una revista está en dos iniciativas, sus horas aparecen en las dos: la columna es correcta leída de a una, pero SUMARLA da un total inflado. El total global se saca de `v_esfuerzo` sumando sesiones, nunca sumando por iniciativa.
 
 **Relaciones:** vinculo:GV-30, vinculo:RC-GM-09, vinculo:RC-GM-15
+
+### RF-08 — Estructura de la base de gbCorpus
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbCorpus / SQLite / esquema versión 1 · **Verificado:** 2026-09
+
+Base local en `~/.gbcorpus/corpus.sqlite`. Tres tablas, sin vistas. Nivel registrado en `esquema_version`, igual que en gbpublisher y gbKumula.
+
+ESTA ENTRADA DESCRIBE LA VERSIÓN 1 DEL ESQUEMA. Si `esquema_version` no dice 1, hay migraciones posteriores y esta descripción quedó vieja.
+
+TABLA `entradas`
+
+    id_entrada          INTEGER PRIMARY KEY
+    prefijo             TEXT NOT NULL REFERENCES familias(prefijo)
+    numero              INTEGER NOT NULL
+    codigo              TEXT NOT NULL UNIQUE
+    titulo              TEXT NOT NULL
+    cuerpo              TEXT NOT NULL DEFAULT ''
+    estado              TEXT NOT NULL DEFAULT 'vigente'
+    evidencia           TEXT
+    entorno             TEXT
+    fecha_verificacion  TEXT
+    relaciones          TEXT NOT NULL DEFAULT ''
+    pendiente           TEXT
+    orden               INTEGER NOT NULL
+    fecha_alta          TEXT NOT NULL
+    fecha_modificacion  TEXT NOT NULL
+    UNIQUE (prefijo, numero)
+
+Índices: `ix_entradas_estado`, `ix_entradas_familia`.
+
+DOS CAMPOS QUE NO ADMITEN NULL Y SUELEN CONFUNDIRSE
+
+`cuerpo` y `relaciones` son NOT NULL con DEFAULT cadena vacía. Un INSERT que les pase NULL falla, y el mensaje del driver no dice cuál de los dos fue (GV-29). Cuando no hay relaciones, va cadena vacía.
+
+VALORES ADMITIDOS POR CHECK
+
+    estado      vigente | corregida | deprecada | hipotesis
+    evidencia   empirica | doc_oficial | inferida
+
+Solo `vigente` obliga. `corregida`, `deprecada` e `hipotesis` están en la base como memoria, no como norma.
+
+CONVENCIÓN DE `orden`
+
+Dentro de cada familia, `orden = numero * 10`. Deja lugar para intercalar sin renumerar. No es una restricción del esquema: es convención, y hay que respetarla al insertar porque el campo es NOT NULL y no tiene default.
+
+FORMATO DE `relaciones`
+
+Texto libre, pares `tipo:CODIGO` separados por coma. Tipos en uso: `apoya`, `vinculo`, `contracara`, `reemplazada_por`. No hay integridad referencial: una relación a un código inexistente se guarda igual y nadie avisa.
+
+TABLA `familias`
+
+    prefijo         TEXT PRIMARY KEY
+    nombre          TEXT NOT NULL
+    descripcion     TEXT
+    orden           INTEGER NOT NULL
+    ancho_numero    INTEGER NOT NULL DEFAULT 2
+    en_operativo    INTEGER NOT NULL DEFAULT 1
+
+Las familias son extensibles: agregar una es un INSERT, no un cambio de esquema. `orden` fija la secuencia de los capítulos en la exportación; `en_operativo` decide si la familia entra en el perfil operativo, y hoy solo GV está en 0.
+
+TABLA `esquema_version`
+
+    version  INTEGER NOT NULL
+    fecha    TEXT NOT NULL
+
+ALCANCE DELIBERADO DE LA APLICACIÓN
+
+gbCorpus NO da de alta ni elimina entradas ni familias. Solo lee, navega relaciones, edita texto y exporta. Las altas, bajas, cambios de estado y relaciones nuevas se acuerdan en conversación y se aplican por script SQL.
+
+REGLA DE TRABAJO
+
+Antes de pedir cambios sobre el corpus, exportar y compartir el `corpus.md` vigente, para que el trabajo se haga contra el estado real y no contra una copia vieja.
+
+**Relaciones:** vinculo:RF-07, vinculo:GV-29
 
 ---
 
