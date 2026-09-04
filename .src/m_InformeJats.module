@@ -63,9 +63,10 @@ Public Function GenerarInforme() As Boolean
   sCarpeta = m_AuditarJats.CarpetaEnCurso()
   If sCarpeta = "" Then Return False
 
-  If Not Exist(m_Constantes.GBA_RUTA_INFORME_XSL) Then
+  If Not Exist(m_AuditarJats.RutaInformeXsl()) Then
     m_Sonido.sonar("Error")
-    Message.Error(("Falta la hoja de estilo del informe:") & Chr(10) & m_Constantes.GBA_RUTA_INFORME_XSL)
+    Message.Error(("Falta la hoja de estilo del informe:") & Chr(10) &
+      m_AuditarJats.RutaInformeXsl())
     Return False
   Endif
 
@@ -139,6 +140,18 @@ Private Function EscribirXmlCanonico(oRevista As CRevistaAuditada, sRuta As Stri
   sXml &= "      <herramienta nombre=" & Chr(34) & "xmllint" & Chr(34) & " version=" & Chr(34) & Escapar(VersionXmllint()) & Chr(34) & "/>" & Chr(10)
   sXml &= "      <herramienta nombre=" & Chr(34) & "gbpublisher" & Chr(34) & " version=" & Chr(34) & Escapar(Application.Version) & Chr(34) & "/>" & Chr(10)
   sXml &= "    </herramientas>" & Chr(10)
+  sXml &= "    <recursos>" & Chr(10)
+  sXml &= "      <recurso nombre=" & Chr(34) & "catalogo-mensajes" & Chr(34)
+  sXml &= " estado=" & Chr(34) &
+    Escapar(m_AuditarJats.EstadoRecurso(m_AuditarJats.RutaCatalogoMensajes(),
+    m_Constantes.GBA_RUTA_SISTEMA_CATALOGO)) &
+    Chr(34) & "/>" & Chr(10)
+  sXml &= "      <recurso nombre=" & Chr(34) & "hoja-de-estilo" & Chr(34)
+  sXml &= " estado=" & Chr(34) &
+    Escapar(m_AuditarJats.EstadoRecurso(m_AuditarJats.RutaInformeXsl(),
+    m_Constantes.GBA_RUTA_SISTEMA_INFORME_XSL)) &
+    Chr(34) & "/>" & Chr(10)
+  sXml &= "    </recursos>" & Chr(10)
   sXml &= "    <no-evaluado>" & Escapar(m_AuditarJats.AlcanceNoEvaluado()) & "</no-evaluado>" & Chr(10)
   sXml &= "  </cabecera>" & Chr(10)
 
@@ -271,9 +284,9 @@ Private Function TransformarAHtml(sRutaXml As String, sRutaHtml As String) As Bo
   aComando.Add(m_Constantes.GBA_RUTA_SAXON & ":" & File.Dir(m_Constantes.GBA_RUTA_SAXON) &/ "lib/*")
   aComando.Add("net.sf.saxon.Transform")
   aComando.Add("-s:" & sRutaXml)
-  aComando.Add("-xsl:" & m_Constantes.GBA_RUTA_INFORME_XSL)
+  aComando.Add("-xsl:" & m_AuditarJats.RutaInformeXsl())
   aComando.Add("-o:" & sRutaHtml)
-  aComando.Add("catalogo=" & m_Constantes.GBA_RUTA_CATALOGO_MENSAJES)
+  aComando.Add("catalogo=" & m_AuditarJats.RutaCatalogoMensajes())
 
   iCodigo = m_AuditarJats.EjecutarHerramienta(aComando, sStdErr, sStdOut)
 
@@ -302,7 +315,7 @@ End
 '             defensibilidad. La escribe en stderr, igual que
 '             'java -version', así que la forma síncrona no sirve.
 ' Parámetros: ninguno
-' Retorna   : String — la primera línea de la salida, o 'desconocida'
+' Retorna   : String — la versión, o 'desconocida'
 ' ============================================
 Private Function VersionXmllint() As String
 
@@ -311,6 +324,8 @@ Private Function VersionXmllint() As String
   Dim sStdErr As String
   Dim sStdOut As String
   Dim aLineas As String[]
+  Dim sLinea As String
+  Dim iPos As Integer
 
   aComando.Add("xmllint")
   aComando.Add("--version")
@@ -323,12 +338,24 @@ Private Function VersionXmllint() As String
   ' no propaga nada y sStdErr quedaría siempre vacía. Por eso el
   ' informe venía diciendo 'desconocida'.
   sStdErr = m_AuditarJats.UltimoStdErr()
-
   If sStdErr = "" Then Return ("desconocida")
 
   aLineas = Split(sStdErr, Chr(10))
   If aLineas.Count = 0 Then Return ("desconocida")
 
-  Return Trim(aLineas[0])
+  sLinea = Trim(aLineas[0])
+  If sLinea = "" Then Return ("desconocida")
+
+  ' --- 3. SOLO EL NÚMERO DE VERSIÓN ---
+  ' La línea completa es 'xmllint: using libxml version 20914'. Como
+  ' el informe antepone el nombre de la herramienta, sin recortar
+  ' quedaría 'xmllint xmllint: using libxml version 20914'.
+  ' Se toma lo que sigue al último espacio, que es el número.
+  iPos = RInStr(sLinea, " ")
+  If iPos > 0 Then Return "libxml " & Mid(sLinea, iPos + 1)
+
+  ' --- 4. FORMA INESPERADA: SE DEVUELVE TAL CUAL ---
+  ' Preferible un texto raro a inventar una versión.
+  Return sLinea
 
 End

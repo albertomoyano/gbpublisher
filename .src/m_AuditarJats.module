@@ -73,7 +73,6 @@ Private $iCodigoSalida As Integer
 ' NO ESTÁ DISPONIBLE VA AL BLOQUE "NO EVALUADO" DEL INFORME.
 
 Private $bPuedeParsear As Boolean = False        ' xmllint — REQUISITO DURO
-Private $bPuedeValidarDTD As Boolean = False     ' catálogo local de DTD
 Private $bPuedeSchematron As Boolean = False     ' java + saxon + .xsl compilado
 Private $bHayCatalogoMensajes As Boolean = False ' mensajes.xml
 
@@ -98,6 +97,11 @@ Private $cCatalogo As New Collection
 ' Van al bloque de alcance del informe. Que una regla no corra no
 ' puede parecer que el archivo la cumple.
 Private $sGruposNoEvaluados As String
+
+' --- CAPACIDAD DE VALIDAR CONTRA DTD ---
+' La resuelve VerificarHerramientas comprobando que exista el catálogo
+' que encadena las versiones instaladas.
+Private $bPuedeValidarDTD As Boolean = False
 
 ' ============================================
 ' 2. GUARDAS Y SELECCIÓN DE CARPETA
@@ -247,13 +251,13 @@ Public Function VerificarHerramientas() As Boolean
   $bPuedeParsear = True
 
   ' --- 3. VALIDEZ CONTRA DTD LOCAL ---
-  ' NUNCA POR RED: si el DOCTYPE apunta a jats.nlm.nih.gov y no hay
-  ' catálogo local, xmllint sale a internet, tarda, o falla y reporta
-  ' un error que parece del documento y no lo es
-  If IsDir(m_Constantes.GBA_RUTA_CATALOGO_DTD) Then
-    $bPuedeValidarDTD = True
-  Else
-    sReducciones &= Chr(10) & ("  · validez contra la DTD declarada (falta el catálogo local de DTD JATS)")
+  ' NUNCA por red: si el DOCTYPE apunta a jats.nlm.nih.gov y no hay
+  ' catálogo local, xmllint sale a internet, tarda, o falla y
+  ' reporta un error que parece del documento y no lo es.
+  $bPuedeValidarDTD = Exist(m_Constantes.GBA_RUTA_CATALOGO_DTD)
+  If Not $bPuedeValidarDTD Then
+    sReducciones &= Chr(10) &
+      ("  · validez contra la gramática declarada (falta el catálogo local de DTD)")
   Endif
 
   '   ' --- 4. SCHEMATRON ---
@@ -266,7 +270,7 @@ Public Function VerificarHerramientas() As Boolean
   ' SIN ÉL LOS HALLAZGOS SE MUESTRAN POR CÓDIGO. ALCANZA PARA TRABAJAR
   ' EN DESARROLLO, PERO NO PARA EMITIR UN INFORME: btnGenerarInforme
   ' LO VERIFICA POR SEPARADO
-  If Exist(m_Constantes.GBA_RUTA_CATALOGO_MENSAJES) Then
+  If Exist(RutaCatalogoMensajes()) Then
     $bHayCatalogoMensajes = True
   Else
     sReducciones &= Chr(10) & ("  · textos en castellano de los hallazgos (falta el catálogo de mensajes)")
@@ -620,11 +624,16 @@ Private Function AnalizarArchivo(sRuta As String, sId As String) As CArchivoAudi
   ' por qué el archivo no sirve.
   If Not oArchivo.bBienFormado Then Return oArchivo
 
-  ' --- 7. CAPA C: VALIDEZ CONTRA LA DTD LOCAL ---
-  ' PENDIENTE: xmllint --valid --nonet con XML_CATALOG_FILES apuntando
-  ' al catálogo local. NUNCA por red. La DTD se elige según la versión
-  ' DECLARADA por el archivo, no según una fija.
-  ' If $bPuedeValidarDTD Then ...
+  ' --- 7. CAPA C: VALIDEZ CONTRA LA GRAMÁTICA DECLARADA ---
+  ' Se conserva el DOCTYPE, al revés que en la capa D: acá la DTD es
+  ' justamente lo que se necesita. Y se valida contra la versión que
+  ' el archivo DECLARA, no contra una fija: comparar un JATS 1.1 con
+  ' la DTD 1.3 produce cientos de errores que no son del documento.
+  ' De eso se encarga el catálogo, que resuelve el identificador
+  ' público sin que haya que elegir versión en el código.
+  If $bPuedeValidarDTD Then
+    VerificarValidezDTD(oArchivo)
+  Endif
 
   ' --- 8. CAPA D: CONFORMIDAD CON JATS4R ---
   ' Las reglas son de un estándar público y no opiniones propias. Esa
@@ -2109,14 +2118,11 @@ Private Sub VerificarCoherenciaInterna(oArchivo As CArchivoAuditado, sContenido 
   VerificarFechasHistoria(oArchivo)
   VerificarCodigoIdioma(oArchivo)
   VerificarEntidadesDobles(oArchivo, sContenido)
-  VerificarLicencia(oArchivo)
-  VerificarNombresAutores(oArchivo)
-  VerificarFechasHistoria(oArchivo)
-  VerificarCodigoIdioma(oArchivo)
-  VerificarEntidadesDobles(oArchivo, sContenido)
   VerificarDoiReferencias(oArchivo)
   VerificarIdentificadorInstitucional(oArchivo)
   VerificarAltTextDecorativo(oArchivo)
+  VerificarTituloRevista(oArchivo)
+  VerificarTablaSinAltText(oArchivo)
 
 End
 
@@ -2492,7 +2498,7 @@ Private Function CargarCatalogo() As Boolean
   ' --- 2. GUARDA ---
   If Not $bHayCatalogoMensajes Then Return False
 
-  Try sContenido = File.Load(m_Constantes.GBA_RUTA_CATALOGO_MENSAJES)
+  Try sContenido = File.Load(RutaCatalogoMensajes())
   If Error Then Return False
 
   ' --- 3. RECORRIDO POR BLOQUES <mensaje> ---
@@ -3043,5 +3049,356 @@ Private Function ContarPorXPath(sRuta As String, sExpresion As String) As Intege
   If Error Then Return 0
 
   Return iValor
+
+End
+
+' ============================================
+' Función   : RutaCatalogoMensajes
+' Propósito : Ruta de trabajo del catálogo de mensajes, que es la copia
+'             local y no el original del sistema.
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta
+' ============================================
+Public Function RutaCatalogoMensajes() As String
+
+  Return User.Home &/ ".gbpublisher" &/ m_Constantes.GBA_SUBRUTA_CATALOGO
+
+End
+
+' ============================================
+' Función   : RutaInformeXsl
+' Propósito : Ruta de trabajo de la hoja de estilo del informe.
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta
+' ============================================
+Public Function RutaInformeXsl() As String
+
+  Return User.Home &/ ".gbpublisher" &/ m_Constantes.GBA_SUBRUTA_INFORME_XSL
+
+End
+
+' ============================================
+' Función   : EstadoRecurso
+' Propósito : Indica si un recurso de trabajo coincide con el original
+'             que vino en el paquete.
+'
+'             Es la contrapartida de permitir la copia local. El informe
+'             no impide que el catálogo se ajuste, pero declara si lo
+'             está: sin eso, dos instalaciones podrían emitir informes
+'             distintos sobre el mismo archivo sin que nada lo advierta.
+'
+'             La comparación es directa contra /usr/share, que por
+'             definición del modelo conserva siempre el original. No
+'             hace falta guardar ni versionar ninguna suma.
+'
+' Parámetros: sRutaTrabajo As String — copia local
+'             sRutaSistema As String — original del paquete
+' Retorna   : String — 'original', 'modificado' o 'sin referencia'
+' ============================================
+Public Function EstadoRecurso(sRutaTrabajo As String, sRutaSistema As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTrabajo As String
+  Dim sSistema As String
+
+  ' --- 2. SIN ORIGINAL NO HAY NADA CONTRA QUÉ COMPARAR ---
+  ' Pasa cuando se ejecuta desde el IDE, donde los recursos salen de
+  ' .hidden y no del paquete instalado
+  If Not Exist(sRutaSistema) Then Return ("sin referencia")
+  If Not Exist(sRutaTrabajo) Then Return ("sin referencia")
+
+  ' --- 3. COMPARACIÓN POR CONTENIDO ---
+  ' Se comparan los bytes y no una suma calculada: los archivos son
+  ' chicos y así no se depende de ninguna herramienta externa
+  Try sTrabajo = File.Load(sRutaTrabajo)
+  If Error Then Return ("sin referencia")
+
+  Try sSistema = File.Load(sRutaSistema)
+  If Error Then Return ("sin referencia")
+
+  If sTrabajo = sSistema Then Return ("original")
+
+  Return ("modificado")
+
+End
+
+' ============================================
+' Función   : VerificarTituloRevista
+' Propósito : Detecta una probable inversión entre el título de la
+'             revista y su abreviatura.
+'
+'             Tres señales que deben darse a la vez:
+'               - el campo de la abreviatura es MÁS LARGO que el del
+'                 título completo
+'               - el campo del título completo CONTIENE puntos, que es
+'                 lo propio de una abreviatura normalizada
+'                 ('Rev. econ. polít. B. Aires')
+'               - el campo de la abreviatura NO contiene puntos, que es
+'                 lo propio de un título completo
+'
+'             Las dos últimas van en ese sentido y no al revés: en un
+'             archivo invertido, journal-title es el que lleva la
+'             abreviatura y por lo tanto el que tiene los puntos.
+'
+'             El largo se mide sobre el texto NORMALIZADO: varios
+'             generadores parten estos elementos en varias líneas con
+'             sangría, y medir en crudo daba falsos positivos en dos de
+'             los siete corpus de referencia.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarTituloRevista(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTitulo As String
+  Dim sAbrev As String
+
+  ' --- 2. LECTURA NORMALIZADA ---
+  sTitulo = Trim(ConsultarXPath(oArchivo.sRuta,
+    "normalize-space(//journal-meta//journal-title)"))
+  sAbrev = Trim(ConsultarXPath(oArchivo.sRuta,
+    "normalize-space(//journal-meta//abbrev-journal-title)"))
+
+  If sTitulo = "" Then Return
+  If sAbrev = "" Then Return
+
+  ' --- 3. LAS TRES SEÑALES, EN If ANIDADOS (RC-GM-17) ---
+  If String.Len(sAbrev) > String.Len(sTitulo) Then
+    If InStr(sTitulo, ".") > 0 Then
+      If InStr(sAbrev, ".") = 0 Then
+        RegistrarHallazgo(m_Constantes.GBA_COD_TITULO_INVERTIDO, oArchivo.sId, 0,
+          "//journal-meta//journal-title")
+      Endif
+    Endif
+  Endif
+
+End
+
+' ============================================
+' Función   : VerificarTablaSinAltText
+' Propósito : Detecta tablas sin descripción alternativa.
+'
+'             Complementa a GBA-J4R-01, que es la regla de JATS4R para
+'             figuras y no alcanza a las tablas, y a GBA-COH-08, que
+'             detecta la descripción que copia el epígrafe. Los tres
+'             conjuntos son disjuntos.
+'
+'             Medido sobre los siete corpus de referencia: 43 de 57
+'             tablas sin descripción, y de las catorce que la tienen,
+'             todas son de un mismo generador que copia el epígrafe.
+'             Por eso lleva la marca de carencia universal.
+'
+' Parámetros: oArchivo As CArchivoAuditado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarTablaSinAltText(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim iSinAlt As Integer
+  Dim i As Integer
+
+  ' --- 2. CONTEO ---
+  ' Se busca en cualquier descendiente y no como hijo directo: JATS
+  ' admite envoltorios y hay generadores que los usan
+  iSinAlt = ContarPorXPath(oArchivo.sRuta, "count(//table-wrap[not(.//alt-text)])")
+  If iSinAlt = 0 Then Return
+
+  ' --- 3. UNA OCURRENCIA POR TABLA, PARA REFLEJAR LA MAGNITUD ---
+  For i = 1 To iSinAlt
+    RegistrarHallazgo(m_Constantes.GBA_COD_TABLA_SIN_ALT, oArchivo.sId, 0, "//table-wrap")
+  Next
+
+End
+
+' ============================================
+' Función   : VerificarValidezDTD
+' Propósito : Valida el archivo contra la gramática que declara y
+'             registra los hallazgos que correspondan.
+'
+'             Distingue los tres resultados posibles. El más delicado
+'             es el tercero: si la gramática no se pudo resolver, NO
+'             se reporta un defecto del archivo sino que se declara
+'             que no se pudo comprobar. Confundirlos es el falso
+'             diagnóstico que este auditor existe para evitar.
+'
+' Parámetros: oArchivo As CArchivoAuditado — archivo ya parseado
+' Retorna   : nada
+' ============================================
+Private Sub VerificarValidezDTD(oArchivo As CArchivoAuditado)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sSalida As String
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim iLinea As Integer
+  Dim iErrores As Integer
+
+  ' --- 2. GUARDA: SIN DOCTYPE NO HAY NADA CONTRA QUÉ VALIDAR ---
+  ' Se detecta antes de invocar la herramienta porque es un hallazgo
+  ' en sí mismo y no hace falta gastar un proceso para confirmarlo.
+  ' El archivo declara un tipo de documento pero no dice a qué
+  ' gramática se ajusta, de modo que NINGUNA herramienta puede
+  ' validarlo y nadie se entera.
+  If oArchivo.sDoctypePublico = "" Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_SIN_GRAMATICA, oArchivo.sId, 1, "")
+    Return
+  Endif
+
+  ' --- 3. VALIDACIÓN ---
+  sSalida = EjecutarValidacionDTD(oArchivo.sRuta)
+
+  ' --- 4. SIN SALIDA: EL ARCHIVO ES VÁLIDO ---
+  ' xmllint calla cuando todo está bien. Ese silencio es el resultado
+  ' positivo y no un fallo de la herramienta.
+  If Trim(sSalida) = "" Then Return
+
+  ' --- 5. LA GRAMÁTICA NO SE PUDO RESOLVER ---
+  ' Puede ser porque la versión declarada no está instalada, o porque
+  ' el identificador no coincide con ninguno del catálogo. En los dos
+  ' casos el archivo NO tiene un defecto: no se pudo comprobar.
+  If InStr(sSalida, "no DTD found") > 0 Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_GRAMATICA_AUSENTE, oArchivo.sId, 0, "")
+    Return
+  Endif
+  If InStr(sSalida, "failed to load external entity") > 0 Then
+    RegistrarHallazgo(m_Constantes.GBA_COD_GRAMATICA_AUSENTE, oArchivo.sId, 0, "")
+    Return
+  Endif
+
+  ' --- 6. ERRORES DE VALIDEZ REALES ---
+  ' Una ocurrencia por error, con su número de línea. En el corpus de
+  ' referencia el máximo fue de dos por archivo, así que no hace falta
+  ' agrupar ni recortar.
+  aLineas = Split(sSalida, Chr(10))
+  For Each sLinea In aLineas
+
+    If InStr(sLinea, "validity error") = 0 Then Continue
+
+    iLinea = PrimeraLineaDeError(sLinea, oArchivo.sRuta)
+    RegistrarHallazgo(m_Constantes.GBA_COD_INVALIDO, oArchivo.sId, iLinea, "")
+    Inc iErrores
+
+  Next
+
+  ' --- 7. LA SALIDA CRUDA VA AL ANEXO ---
+  ' El mensaje de xmllint dice qué elemento falló y qué esperaba la
+  ' gramática. Es información técnica que el editor no necesita pero
+  ' que su proveedor de marcación sí, y es lo que sostiene el informe
+  ' cuando alguien lo discute.
+  If iErrores > 0 Then GuardarDetalleCrudo(oArchivo.sId, sSalida)
+
+End
+
+' ============================================
+' Función   : EjecutarValidacionDTD
+' Propósito : Corre xmllint en modo validación y devuelve su salida de
+'             error completa.
+'
+'             El catálogo se pasa por la variable de entorno
+'             XML_CATALOG_FILES, verificada como la forma que funciona
+'             en Gambas: 'Exec ... With [...] To'. Con el catálogo,
+'             xmllint resuelve solo el identificador público que
+'             declara cada archivo y encuentra la versión que
+'             corresponde, sin que haya que elegirla en el código.
+'
+'             Se usa la forma síncrona porque xmllint escribe sus
+'             diagnósticos en stderr y NO en stdout, de modo que
+'             'Exec ... To' devolvería cadena vacía. Hace falta el
+'             mecanismo de eventos.
+'
+' Parámetros: sRuta As String — archivo a validar
+' Retorna   : String — la salida de error, o cadena vacía si es válido
+' ============================================
+Private Function EjecutarValidacionDTD(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim aComando As New String[]
+  Dim sStdErr As String
+  Dim sStdOut As String
+
+  ' --- 2. INVOCACIÓN ---
+  ' --nonet sigue siendo obligatorio: el catálogo local es justamente
+  ' lo que evita salir a la red, y sin esa opción xmllint podría
+  ' hacerlo igual si el catálogo no resolviera.
+  ' --noent NO se usa: expandiría las entidades externas del documento,
+  ' que viene de un tercero desconocido.
+  aComando.Add("xmllint")
+  aComando.Add("--noout")
+  aComando.Add("--valid")
+  aComando.Add("--nonet")
+  aComando.Add(sRuta)
+
+  EjecutarHerramientaConEntorno(aComando,
+    "XML_CATALOG_FILES=" & m_Constantes.GBA_RUTA_CATALOGO_DTD)
+
+  ' --- 3. LA SALIDA REAL VIVE EN EL ACCESOR ---
+  ' En Gambas los primitivos se pasan SIEMPRE por valor: un parámetro
+  ' ByRef no propaga nada y la variable local quedaría vacía.
+  Return UltimoStdErr()
+
+End
+
+' ============================================
+' Función   : EjecutarHerramientaConEntorno
+' Propósito : Igual que EjecutarHerramienta, pero pasándole al proceso
+'             una variable de entorno.
+'
+'             Existe como función aparte para no cambiar la firma de
+'             EjecutarHerramienta, que ya tiene varios llamadores. Si
+'             en el futuro hiciera falta entorno en más lugares,
+'             conviene unificarlas.
+'
+'             La forma 'Exec ... With [...] To' está verificada
+'             empíricamente.
+'
+' Parámetros: aComando As String[] — comando y argumentos
+'             sVariable As String — una asignación 'NOMBRE=valor'
+' Retorna   : Integer — código de salida, -1 si no arrancó, -2 si venció el plazo
+' ============================================
+Public Function EjecutarHerramientaConEntorno(aComando As String[], sVariable As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim hProceso As Process
+  Dim aEntorno As New String[]
+  Dim fVencimiento As Float
+  Dim iDrenaje As Integer
+
+  $sBufferError = ""
+  $sBufferSalida = ""
+  $iCodigoSalida = -1
+  $bProcesoTerminado = False
+
+  aEntorno.Add(sVariable)
+
+  ' --- 2. LANZAMIENTO ---
+  ' SC-05: Exec con array, nunca Shell. La ruta viene de una carpeta
+  ' elegida por el usuario y no debe pasar por sh -c.
+  Try hProceso = Exec aComando With aEntorno For Read As "ProcHerramienta"
+  If Error Then
+    $sBufferError = ("No se pudo ejecutar ") & aComando[0] & ": " & Error.Text
+    Return -1
+  Endif
+
+  ' --- 3. ESPERA QUE SÍ ENTRA AL BUCLE DE EVENTOS ---
+  ' hProceso.Wait() bloquearía el procedimiento sin entrar al bucle, y
+  ' entonces los eventos Read y Error no se dispararían nunca.
+  fVencimiento = Timer + m_Constantes.GBA_TIMEOUT_HERRAMIENTA
+
+  While Not $bProcesoTerminado
+    Wait 0.01
+    If Timer > fVencimiento Then
+      Try hProceso.Kill()
+      Return -2
+    Endif
+  Wend
+
+  ' --- 4. DRENAJE FINAL ---
+  ' El evento Kill puede llegar antes que los últimos trozos.
+  For iDrenaje = 1 To 10
+    Wait 0.01
+  Next
+
+  Return $iCodigoSalida
 
 End

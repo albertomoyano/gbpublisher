@@ -177,6 +177,16 @@
             </dd>
             <dt>No se evaluó</dt>
             <dd><xsl:value-of select="cabecera/no-evaluado"/></dd>
+            <xsl:if test="cabecera/recursos/recurso[@estado = 'modificado']">
+              <dt>Recursos modificados</dt>
+              <dd>
+                <xsl:for-each select="cabecera/recursos/recurso[@estado = 'modificado']">
+                  <xsl:value-of select="@nombre"/>
+                  <xsl:if test="position() != last()"><xsl:text>, </xsl:text></xsl:if>
+                </xsl:for-each>
+                <xsl:text>. Los textos o la presentación de este informe fueron ajustados respecto de los que distribuye la aplicación.</xsl:text>
+              </dd>
+            </xsl:if>
           </dl>
           <p class="nota">Cada artículo se identifica más abajo por su huella
           SHA-256. Repetir este análisis sobre los mismos archivos, con las mismas
