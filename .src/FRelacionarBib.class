@@ -1,0 +1,781 @@
+' Gambas class file
+
+' ============================================
+' Clase     : FRelacionarBib
+' Propósito : Construir la relación biblatex (related / related_type /
+'             related_string) entre una referencia del proyecto en curso
+'             y otra referencia cualquiera de la base.
+'             La escritura es SIEMPRE sobre la fila del grid superior
+'             (proyecto en curso); el grid inferior es solo lectura.
+' ============================================
+
+' --- CONSULTAS BASE ---
+' SELECT ACOTADO, NO "SELECT *": FIJA LAS POSICIONES DE COLUMNA DESDE ACÁ Y
+' NO DEPENDE DEL ORDEN FÍSICO DE LA TABLA, QUE UN ALTER TABLE PUEDE CORRER.
+Private Const CONSULTA_EN_CURSO As String = "SELECT id, clave_bibtex, author, title, year, related, related_type, related_string FROM bibtex"
+
+Private Const CONSULTA_TOTAL As String = "SELECT id, clave_bibtex, author, title, year FROM bibtex"
+
+' --- POSICIONES DE COLUMNA EN LOS GRIDS (NO EN LA TABLA) ---
+Private Const COL_CLAVE As Integer = 0
+Private Const COL_AUTOR As Integer = 1
+Private Const COL_TITULO As Integer = 2
+Private Const COL_ANIO As Integer = 3
+Private Const COL_RELACION As Integer = 4
+
+' --- ESTRUCTURAS PARALELAS DEL GRID SUPERIOR (PROYECTO EN CURSO) ---
+' EL GRID PINTA; ESTOS ARRAYS SON LA FUENTE DE VERDAD DE LOS DATOS QUE
+' NO SE MUESTRAN (id) O QUE HAY QUE COMPARAR SIN REPARSEAR TEXTO.
+Private $aIdEnCurso As Integer[]
+Private $aClaveEnCurso As String[]
+Private $aRelatedEnCurso As String[]
+Private $aTipoEnCurso As String[]
+Private $aCadenaEnCurso As String[]
+
+' --- ESTRUCTURAS PARALELAS DEL GRID INFERIOR (TODA LA BASE) ---
+Private $aIdTotal As Integer[]
+Private $aClaveTotal As String[]
+Private $aAutorTotal As String[]
+Private $aTituloTotal As String[]
+
+' --- SELECCIÓN EFECTIVA DEL USUARIO ---
+' -1 SIGNIFICA "NO ELIGIÓ". NO SE USA GridView.Row COMO FUENTE DE VERDAD:
+' NO ESTÁ VERIFICADO QUÉ DEVUELVE ANTES DEL PRIMER CLICK, Y UN 0 POR DEFECTO
+' HARÍA PASAR LA GUARDA DE "DEBE HABER DOS SELECCIONES" SIN QUE NADIE ELIGIERA.
+Private $iFilaEnCurso As Integer = -1
+Private $iFilaTotal As Integer = -1
+
+' --- BANDERA DE REENTRADA DE LA EXCLUSIÓN MUTUA ---
+' ASIGNAR .Text POR CÓDIGO DISPARA EL EVENTO DEL OTRO CONTROL. MISMO MECANISMO
+' QUE bAbriendoProyecto EN SC-06.
+Private $bAjustandoCampos As Boolean = False
+
+' --- HUBO ESCRITURA EN LA BASE ---
+' DECIDE SI AL CERRAR HAY QUE RECARGAR EL GRID DE FMain.
+Private $bHuboCambios As Boolean = False
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Configura los dos grids, carga el combo de tipos de relación
+'             y vuelca las referencias del proyecto en curso.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. TÍTULO Y ESTADO INICIAL ---
+  Me.Title = "Relacionar referencias bibliográficas"
+  $bHuboCambios = False
+
+  ' --- 2. CONFIGURACIÓN DE LOS GRIDS ---
+  ConfigurarGrid(Me.gridRefEnCurso, True)
+  ConfigurarGrid(Me.gridRefTotal, False)
+
+  ' --- 3. COMBO DE TIPOS DE RELACIÓN ---
+  CargarComboRelatedType()
+
+  ' --- 4. REFERENCIAS DEL PROYECTO EN CURSO, SIN FILTRO ---
+  CargarGridEnCurso("")
+
+  ' --- 5. CAMPOS DE RELACIÓN EN ESTADO NEUTRO ---
+  $bAjustandoCampos = True
+  Me.cmbRelatedType.Text = ""
+  Me.cmbRelatedType.Enabled = True
+  Me.txtRelatedString.Text = ""
+  Me.txtRelatedString.Enabled = True
+  $bAjustandoCampos = False
+
+End
+
+' ============================================
+' Función   : ConfigurarGrid
+' Propósito : Fija columnas, anchos y títulos de un grid de referencias.
+' Parámetros: grid As TableView — el control a configurar
+'             bConRelacion As Boolean — True agrega la columna de relación
+'                                       actual (solo el grid del proyecto)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub ConfigurarGrid(grid As TableView, bConRelacion As Boolean)
+
+  ' --- 1. CANTIDAD DE COLUMNAS SEGÚN EL GRID ---
+  With grid
+    .Header = GridView.Horizontal
+    .Grid = True
+
+    If bConRelacion Then
+      .Columns.Count = 5
+    Else
+      .Columns.Count = 4
+    Endif
+
+    ' --- 2. TÍTULOS Y ANCHOS ---
+    .Columns[COL_CLAVE].Title = "Clave"
+    .Columns[COL_CLAVE].Width = 200
+
+    .Columns[COL_AUTOR].Title = "Autor"
+    .Columns[COL_AUTOR].Width = 150
+
+    .Columns[COL_TITULO].Title = "Título"
+    .Columns[COL_TITULO].Width = 330
+
+    .Columns[COL_ANIO].Title = "Año"
+    .Columns[COL_ANIO].Alignment = Align.Center
+    .Columns[COL_ANIO].Width = 60
+
+    ' --- 3. COLUMNA DE RELACIÓN ACTUAL, SOLO EN EL GRID DEL PROYECTO ---
+    ' EL USUARIO TIENE QUE VER SI LA REFERENCIA YA ESTABA RELACIONADA ANTES
+    ' DE PISARLE EL DATO: related ES varchar(64) Y ADMITE UNA SOLA CLAVE.
+    If bConRelacion Then
+      .Columns[COL_RELACION].Title = "Relación actual"
+      .Columns[COL_RELACION].Width = 170
+    Endif
+  End With
+
+End
+
+' ============================================
+' Función   : CargarComboRelatedType
+' Propósito : Llena el combo con los códigos de related_type de cmb_biblatex
+'             y garantiza un elemento vacío para poder desmarcar.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub CargarComboRelatedType()
+
+  Dim aCombos As ComboBox[]
+  Dim aLista As String[]
+  Dim sItem As String
+  Dim bTieneVacio As Boolean
+
+  ' --- 1. ARRAY DE COMBOS EN VARIABLE, NO LITERAL ---
+  ' EL LITERAL MULTILÍNEA DA TYPE MISMATCH (SC-05) Y EL New CON ARGUMENTOS NO
+  ' PUEDE IR ANIDADO EN OTRA LLAMADA (GV-32). SE ARMA APARTE Y SE PASA.
+  aCombos = New ComboBox[]
+  aCombos.Add(Me.cmbRelatedType)
+
+  m_Bibtex.RellenarRelatedType(aCombos)
+
+  ' --- 2. SOLO SELECCIÓN, NADA DE TEXTO LIBRE ---
+  ' LO QUE SE TIPEE ACÁ SE ESCRIBE EN LA BASE: EL COMBO NO PUEDE SER EDITABLE.
+  Me.cmbRelatedType.ReadOnly = True
+
+  ' --- 3. GARANTIZAR EL ELEMENTO VACÍO ---
+  ' SIN ÉL NO HAY FORMA DE VOLVER A "SIN TIPO" DESPUÉS DE ELEGIR UNO.
+  bTieneVacio = False
+  aLista = Me.cmbRelatedType.List
+
+  If aLista <> Null Then
+    For Each sItem In aLista
+      If Trim(sItem) = "" Then bTieneVacio = True
+    Next
+  Endif
+
+  If Not bTieneVacio Then
+    ' LA FIRMA CON POSICIÓN NO ESTÁ VERIFICADA EN 3.22.1: SI NO EXISTE,
+    ' EL VACÍO VA AL FINAL Y LA FUNCIÓN SIGUE SIENDO USABLE.
+    Try Me.cmbRelatedType.Add("", 0)
+    If Error Then
+      Error.Clear
+      Me.cmbRelatedType.Add("")
+    Endif
+  Endif
+
+  Me.cmbRelatedType.Text = ""
+
+End
+
+' ============================================
+' Función   : CargarGridEnCurso
+' Propósito : Vuelca en el grid superior las referencias del proyecto en curso,
+'             opcionalmente filtradas por autor o título.
+' Parámetros: sFiltro As String — texto a buscar; vacío trae todas
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub CargarGridEnCurso(sFiltro As String)
+
+  Dim rDatos As Result
+  Dim sPatron As String
+  Dim sConsulta As String
+  Dim iFila As Integer
+
+  ' --- 1. VACIAR ESTRUCTURAS Y GRID ANTES DE CONSULTAR ---
+  $aIdEnCurso = New Integer[]
+  $aClaveEnCurso = New String[]
+  $aRelatedEnCurso = New String[]
+  $aTipoEnCurso = New String[]
+  $aCadenaEnCurso = New String[]
+  $iFilaEnCurso = -1
+
+  Me.gridRefEnCurso.Clear
+  Me.gridRefEnCurso.Rows.Count = 0
+
+  ' --- 2. CONSULTA, CON O SIN FILTRO ---
+  ' EL ID DEL PROYECTO SALE DE LA GLOBAL DE SESIÓN (RC-GM-16).
+  ' EL PATRÓN VA DOS VECES EN DOS MARCADORES DISTINTOS: NO SE REUSA &2, PARA NO
+  ' APOYARSE EN CÓMO EL PARSER RESUELVE UN MARCADOR REPETIDO (RC-GM-15).
+  If sFiltro = "" Then
+
+    Try rDatos = m_ConexionBD.mConn.Exec(
+      CONSULTA_EN_CURSO & " WHERE id_proyecto = &1 ORDER BY id DESC",
+      m_InicioCierre.IdProyectoEnCurso)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudieron leer las referencias del proyecto:" & Chr(10) & Error.Text)
+      Return
+    Endif
+
+  Else
+
+    ' COMODINES DEL USUARIO COMO LITERALES (SC-08)
+    sPatron = EscaparParaLike(sFiltro)
+
+    ' LA CONSULTA SE ARMA ANTES: LA CONTINUACIÓN DE LÍNEA SE MARCA AL FINAL DE
+    ' LA LÍNEA ANTERIOR, NUNCA ABRIENDO LA SIGUIENTE CON UN OPERADOR.
+    sConsulta = CONSULTA_EN_CURSO & " WHERE id_proyecto = &1"
+    sConsulta &= " AND (author LIKE &2 ESCAPE '!' OR title LIKE &3 ESCAPE '!')"
+    sConsulta &= " ORDER BY id DESC"
+
+    Try rDatos = m_ConexionBD.mConn.Exec(sConsulta, m_InicioCierre.IdProyectoEnCurso, sPatron, sPatron)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo realizar la búsqueda:" & Chr(10) & Error.Text)
+      Return
+    Endif
+
+  Endif
+
+  ' --- 3. RESULTADO VACÍO: AVISAR Y SALIR SIN TOCAR MÁS ---
+  If rDatos = Null Then Return
+
+  If rDatos.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("No hay referencias que coincidan con la búsqueda.")
+    Return
+  Endif
+
+  ' --- 4. VOLCADO A LAS ESTRUCTURAS PARALELAS Y AL GRID ---
+  Me.gridRefEnCurso.Rows.Count = rDatos.Count
+  iFila = 0
+
+  For Each rDatos
+    $aIdEnCurso.Add(rDatos["id"])
+    $aClaveEnCurso.Add(TextoDe(rDatos["clave_bibtex"]))
+    $aRelatedEnCurso.Add(TextoDe(rDatos["related"]))
+    $aTipoEnCurso.Add(TextoDe(rDatos["related_type"]))
+    $aCadenaEnCurso.Add(TextoDe(rDatos["related_string"]))
+
+    Me.gridRefEnCurso[iFila, COL_CLAVE].Text = TextoDe(rDatos["clave_bibtex"])
+    Me.gridRefEnCurso[iFila, COL_AUTOR].Text = TextoDe(rDatos["author"])
+    Me.gridRefEnCurso[iFila, COL_TITULO].Text = TextoDe(rDatos["title"])
+    Me.gridRefEnCurso[iFila, COL_ANIO].Text = TextoDe(rDatos["year"])
+    Me.gridRefEnCurso[iFila, COL_RELACION].Text = DescribirRelacion(
+      TextoDe(rDatos["related"]), TextoDe(rDatos["related_type"]), TextoDe(rDatos["related_string"]))
+
+    Inc iFila
+  Next
+
+End
+
+' ============================================
+' Función   : CargarGridTotal
+' Propósito : Vuelca en el grid inferior el resultado de buscar por autor o
+'             título en TODA la base, sin filtro de proyecto.
+' Parámetros: sFiltro As String — texto a buscar
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub CargarGridTotal(sFiltro As String)
+
+  Dim rDatos As Result
+  Dim sPatron As String
+  Dim sConsulta As String
+  Dim iFila As Integer
+
+  ' --- 1. VACIAR ESTRUCTURAS Y GRID ---
+  $aIdTotal = New Integer[]
+  $aClaveTotal = New String[]
+  $aAutorTotal = New String[]
+  $aTituloTotal = New String[]
+  $iFilaTotal = -1
+
+  Me.gridRefTotal.Clear
+  Me.gridRefTotal.Rows.Count = 0
+
+  ' --- 2. CONSULTA SOBRE TODA LA BASE ---
+  ' SIN id_proyecto EN EL WHERE: EL DESTINO DE LA RELACIÓN PUEDE SER DE
+  ' CUALQUIER PROYECTO, Y LA CLAVE ES ÚNICA EN TODO EL SISTEMA.
+  sPatron = EscaparParaLike(sFiltro)
+
+  sConsulta = CONSULTA_TOTAL & " WHERE author LIKE &1 ESCAPE '!' OR title LIKE &2 ESCAPE '!'"
+  sConsulta &= " ORDER BY clave_bibtex"
+
+  Try rDatos = m_ConexionBD.mConn.Exec(sConsulta, sPatron, sPatron)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo realizar la búsqueda:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. RESULTADO VACÍO ---
+  If rDatos = Null Then Return
+
+  If rDatos.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("No se ha encontrado ninguna referencia.")
+    Return
+  Endif
+
+  ' --- 4. VOLCADO ---
+  Me.gridRefTotal.Rows.Count = rDatos.Count
+  iFila = 0
+
+  For Each rDatos
+    $aIdTotal.Add(rDatos["id"])
+    $aClaveTotal.Add(TextoDe(rDatos["clave_bibtex"]))
+    $aAutorTotal.Add(TextoDe(rDatos["author"]))
+    $aTituloTotal.Add(TextoDe(rDatos["title"]))
+
+    Me.gridRefTotal[iFila, COL_CLAVE].Text = TextoDe(rDatos["clave_bibtex"])
+    Me.gridRefTotal[iFila, COL_AUTOR].Text = TextoDe(rDatos["author"])
+    Me.gridRefTotal[iFila, COL_TITULO].Text = TextoDe(rDatos["title"])
+    Me.gridRefTotal[iFila, COL_ANIO].Text = TextoDe(rDatos["year"])
+
+    Inc iFila
+  Next
+
+End
+
+' ============================================
+' Función   : TextoDe
+' Propósito : Devuelve un campo de Result como texto, con NULL como vacío.
+' Parámetros: vValor As Variant — valor leído del Result
+' Retorna   : String — el valor, o cadena vacía si era NULL
+' ============================================
+Private Function TextoDe(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return vValor
+
+End
+
+' ============================================
+' Función   : EscaparParaLike
+' Propósito : Prepara un texto de búsqueda para LIKE, tratando % y _ como
+'             literales (SC-08). No escapa comillas: el valor va parametrizado.
+' Parámetros: sTexto As String — texto tal como lo escribió el usuario
+' Retorna   : String — patrón listo, con comodines de envoltura
+' ============================================
+Private Function EscaparParaLike(sTexto As String) As String
+
+  Dim sSalida As String
+
+  ' --- 1. PRIMERO EL CARÁCTER DE ESCAPE, DESPUÉS LOS COMODINES (SC-08) ---
+  sSalida = Replace(Trim(sTexto), "!", "!!")
+  sSalida = Replace(sSalida, "%", "!%")
+  sSalida = Replace(sSalida, "_", "!_")
+
+  Return "%" & sSalida & "%"
+
+End
+
+' ============================================
+' Función   : DescribirRelacion
+' Propósito : Arma el texto legible de una relación ya cargada, para mostrarlo
+'             en la columna del grid y en el mensaje de confirmación.
+' Parámetros: sClave As String — contenido de related
+'             sTipo As String — contenido de related_type
+'             sCadena As String — contenido de related_string
+' Retorna   : String — descripción, o cadena vacía si no hay relación
+' ============================================
+Private Function DescribirRelacion(sClave As String, sTipo As String, sCadena As String) As String
+
+  Dim sTextoRelacion As String
+
+  ' --- 1. SIN CLAVE NO HAY RELACIÓN, AUNQUE HAYA TIPO O CADENA ---
+  If Trim(sClave) = "" Then Return ""
+
+  ' --- 2. LA LEYENDA SALE DEL TIPO O DE LA REDACCIÓN MANUAL ---
+  If Trim(sTipo) <> "" Then
+    sTextoRelacion = Trim(sTipo)
+  Else
+    sTextoRelacion = Trim(sCadena)
+  Endif
+
+  If sTextoRelacion = "" Then Return Trim(sClave)
+
+  Return sTextoRelacion & " → " & Trim(sClave)
+
+End
+
+' ============================================
+' Función   : btnBuscarEnCurso_Click
+' Propósito : Filtra el grid superior por autor o título dentro del proyecto.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnBuscarEnCurso_Click()
+
+  Dim sTextoBuscado As String
+
+  ' --- 1. SIN TEXTO SE RECARGA LA LISTA COMPLETA, NO ES UN ERROR ---
+  sTextoBuscado = Trim(Me.txtRefEnCurso.Text)
+
+  CargarGridEnCurso(sTextoBuscado)
+
+End
+
+' ============================================
+' Función   : txtRefEnCurso_Activate
+' Propósito : Permite disparar la búsqueda del proyecto con Enter.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtRefEnCurso_Activate()
+
+  btnBuscarEnCurso_Click()
+
+End
+
+' ============================================
+' Función   : btnBuscarRefTotal_Click
+' Propósito : Busca por autor o título en toda la base y llena el grid inferior.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnBuscarRefTotal_Click()
+
+  Dim sTextoBuscado As String
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  ' ACÁ SÍ ES OBLIGATORIO: TRAER LA TABLA ENTERA NO TIENE SENTIDO.
+  sTextoBuscado = Trim(Me.txtRefTotal.Text)
+
+  If sTextoBuscado = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe introducir un autor o un título para buscar.")
+    Me.txtRefTotal.SetFocus
+    Return
+  Endif
+
+  ' --- 2. BÚSQUEDA ---
+  CargarGridTotal(sTextoBuscado)
+
+End
+
+' ============================================
+' Función   : txtRefTotal_Activate
+' Propósito : Permite disparar la búsqueda global con Enter.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtRefTotal_Activate()
+
+  btnBuscarRefTotal_Click()
+
+End
+
+' ============================================
+' Función   : gridRefEnCurso_Click
+' Propósito : Registra la fila elegida por el usuario en el grid superior.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub gridRefEnCurso_Click()
+
+  ' --- 1. LA SELECCIÓN SE REGISTRA SOLO SI HUBO CLICK ---
+  If Me.gridRefEnCurso.Row < 0 Then Return
+  If Me.gridRefEnCurso.Row >= $aIdEnCurso.Count Then Return
+
+  $iFilaEnCurso = Me.gridRefEnCurso.Row
+
+End
+
+' ============================================
+' Función   : gridRefTotal_Click
+' Propósito : Registra la fila elegida por el usuario en el grid inferior.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub gridRefTotal_Click()
+
+  ' --- 1. LA SELECCIÓN SE REGISTRA SOLO SI HUBO CLICK ---
+  If Me.gridRefTotal.Row < 0 Then Return
+  If Me.gridRefTotal.Row >= $aIdTotal.Count Then Return
+
+  $iFilaTotal = Me.gridRefTotal.Row
+
+End
+
+' ============================================
+' Función   : cmbRelatedType_Click
+' Propósito : Aplica la exclusión mutua con related_string y muestra la
+'             descripción del tipo elegido.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub cmbRelatedType_Click()
+
+  Dim sCodigo As String
+
+  ' --- 1. GUARD DE REENTRADA ---
+  ' ESTE HANDLER ESCRIBE EN txtRelatedString, CUYO Change VUELVE ACÁ.
+  If $bAjustandoCampos Then Return
+
+  sCodigo = Trim(Me.cmbRelatedType.Text)
+  $bAjustandoCampos = True
+
+  ' --- 2. SIN TIPO: SE HABILITA LA REDACCIÓN MANUAL ---
+  If sCodigo = "" Then
+    Me.txtRelatedString.Enabled = True
+    Me.cmbRelatedType.ToolTip = ""
+    $bAjustandoCampos = False
+    Return
+  Endif
+
+  ' --- 3. CON TIPO: LA REDACCIÓN MANUAL SE VACÍA Y SE BLOQUEA ---
+  ' SI LOS DOS CAMPOS TIENEN CONTENIDO, BIBLATEX IMPRIME EL DEL TIPO Y
+  ' related_string QUEDA EN LA BASE SIN SALIR NUNCA. VERIFICADO.
+  Me.txtRelatedString.Text = ""
+  Me.txtRelatedString.Enabled = False
+
+  ' --- 4. AYUDA: LA DESCRIPCIÓN DEL CÓDIGO VA AL TOOLTIP ---
+  ' NULL-CHECK ANIDADO, NO ENCADENADO CON And (RC-GM-17).
+  Me.cmbRelatedType.ToolTip = ""
+
+  If m_Bibtex.mRelatedType <> Null Then
+    If m_Bibtex.mRelatedType.Exist(sCodigo) Then
+      Me.cmbRelatedType.ToolTip = m_Bibtex.mRelatedType[sCodigo]
+    Endif
+  Endif
+
+  $bAjustandoCampos = False
+
+End
+
+' ============================================
+' Función   : txtRelatedString_Change
+' Propósito : Aplica la exclusión mutua con el combo de tipos.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtRelatedString_Change()
+
+  ' --- 1. GUARD DE REENTRADA ---
+  If $bAjustandoCampos Then Return
+
+  $bAjustandoCampos = True
+
+  ' --- 2. CON REDACCIÓN MANUAL, EL COMBO SE VACÍA Y SE BLOQUEA ---
+  If Trim(Me.txtRelatedString.Text) <> "" Then
+    Me.cmbRelatedType.Text = ""
+    Me.cmbRelatedType.ToolTip = ""
+    Me.cmbRelatedType.Enabled = False
+  Else
+    Me.cmbRelatedType.Enabled = True
+  Endif
+
+  $bAjustandoCampos = False
+
+End
+
+' ============================================
+' Función   : btnAplicarRelacion_Click
+' Propósito : Valida las dos selecciones, confirma con el usuario y escribe
+'             related / related_type / related_string en la referencia del
+'             proyecto en curso.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnAplicarRelacion_Click()
+
+  Dim iIdDestino As Integer
+  Dim iIdOrigen As Integer
+  Dim sClaveDestino As String
+  Dim sClaveOrigen As String
+  Dim sTipo As String
+  Dim sCadena As String
+  Dim sRelacionPrevia As String
+  Dim sMensaje As String
+  Dim rReg As Result
+
+  ' --- 1. LAS DOS SELECCIONES SON OBLIGATORIAS ---
+  If $iFilaEnCurso < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar la referencia del proyecto que va a recibir la relación.")
+    Return
+  Endif
+
+  If $iFilaTotal < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar, en la búsqueda general, la referencia con la que se va a relacionar.")
+    Return
+  Endif
+
+  ' --- 2. DATOS DE LAS DOS FILAS ---
+  iIdDestino = $aIdEnCurso[$iFilaEnCurso]
+  sClaveDestino = $aClaveEnCurso[$iFilaEnCurso]
+  sRelacionPrevia = DescribirRelacion($aRelatedEnCurso[$iFilaEnCurso],
+    $aTipoEnCurso[$iFilaEnCurso], $aCadenaEnCurso[$iFilaEnCurso])
+
+  iIdOrigen = $aIdTotal[$iFilaTotal]
+  sClaveOrigen = Trim($aClaveTotal[$iFilaTotal])
+
+  ' --- 3. GUARDAS SOBRE LAS REFERENCIAS ELEGIDAS ---
+  ' clave_bibtex ADMITE NULL: SIN CLAVE NO PUEDE SER DESTINO DE UNA RELACIÓN.
+  If sClaveOrigen = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La referencia seleccionada en la búsqueda general no tiene clave BibTeX." & Chr(10) &
+      "Sin clave no puede ser el destino de una relación.")
+    Return
+  Endif
+
+  ' AUTORRELACIÓN: SE COMPARA POR id, QUE ES LO ÚNICO ESTABLE
+  If iIdOrigen = iIdDestino Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se puede relacionar una referencia consigo misma.")
+    Return
+  Endif
+
+  ' YA ESTABA APUNTANDO A LA MISMA CLAVE
+  If Trim($aRelatedEnCurso[$iFilaEnCurso]) = sClaveOrigen Then
+    m_Sonido.sonar("Info")
+    Message.Info("Esa relación ya está cargada en la referencia seleccionada.")
+    Return
+  Endif
+
+  ' --- 4. EXCLUSIÓN MUTUA ENTRE TIPO Y REDACCIÓN MANUAL ---
+  ' LA GUARDA VA ACÁ AUNQUE LOS EVENTOS YA LA APLIQUEN: LOS EVENTOS SON
+  ' COMODIDAD, ESTA ES LA VALIDACIÓN QUE MANDA.
+  sTipo = Trim(Me.cmbRelatedType.Text)
+  sCadena = Trim(Me.txtRelatedString.Text)
+
+  If sTipo = "" Then
+    If sCadena = "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Debe elegir un tipo de relación o escribir la redacción manual.")
+      Me.cmbRelatedType.SetFocus
+      Return
+    Endif
+  Endif
+
+  If sTipo <> "" Then
+    If sCadena <> "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Solo puede usarse uno de los dos: el tipo de relación o la redacción manual.")
+      Return
+    Endif
+  Endif
+
+  ' --- 5. MENSAJE DE CONFIRMACIÓN ---
+  sMensaje = "Se va a relacionar la referencia del proyecto:" & Chr(10) & Chr(10)
+  sMensaje &= "    " & sClaveDestino & Chr(10) & Chr(10)
+  sMensaje &= "con la referencia:" & Chr(10) & Chr(10)
+  sMensaje &= "    " & sClaveOrigen & Chr(10) & Chr(10)
+
+  If sTipo <> "" Then
+    sMensaje &= "Tipo de relación: " & sTipo & Chr(10)
+  Else
+    sMensaje &= "Redacción manual: " & sCadena & Chr(10)
+  Endif
+
+  ' EL REEMPLAZO SE AVISA: related ES varchar(64) Y GUARDA UNA SOLA CLAVE,
+  ' ASÍ QUE LA RELACIÓN ANTERIOR SE PIERDE.
+  If sRelacionPrevia <> "" Then
+    sMensaje &= Chr(10) & "ATENCIÓN: esta referencia ya estaba relacionada con:" & Chr(10)
+    sMensaje &= "    " & sRelacionPrevia & Chr(10)
+    sMensaje &= "Esa relación va a ser reemplazada." & Chr(10)
+  Endif
+
+  m_Sonido.sonar("Question")
+
+  If Message.Question(sMensaje, "Aceptar", "Cancelar") <> 1 Then Return
+
+  ' --- 6. ESCRITURA: Edit + Update, NUNCA Exec INTERPOLADO (RC-GM-15) ---
+  Try rReg = m_ConexionBD.mConn.Edit("bibtex", "id = &1", iIdDestino)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la referencia para modificarla:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If rReg = Null Then
+    m_Sonido.sonar("Error")
+    Message.Error("La referencia ya no está disponible en la base.")
+    Return
+  Endif
+
+  With rReg
+    ' EL CAMPO NO USADO VA A NULL, NO A CADENA VACÍA: NULL ES "NO APLICA".
+    !related = sClaveOrigen
+
+    If sTipo <> "" Then
+      !related_type = sTipo
+      !related_string = Null
+    Else
+      !related_type = Null
+      !related_string = sCadena
+    Endif
+
+    Try .Update()
+  End With
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar la relación:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 7. ESTADO POSTERIOR ---
+  $bHuboCambios = True
+
+  m_Sonido.sonar("Info")
+  Message.Info("La relación se guardó correctamente.")
+
+  ' SE RECARGA EL GRID SUPERIOR PARA QUE LA COLUMNA DE RELACIÓN REFLEJE
+  ' LO ESCRITO. LA RECARGA PIERDE LA SELECCIÓN: ES DELIBERADO, OBLIGA A
+  ' VOLVER A ELEGIR ANTES DE APLICAR OTRA RELACIÓN.
+  CargarGridEnCurso(Trim(Me.txtRefEnCurso.Text))
+
+  $bAjustandoCampos = True
+  Me.cmbRelatedType.Text = ""
+  Me.cmbRelatedType.Enabled = True
+  Me.cmbRelatedType.ToolTip = ""
+  Me.txtRelatedString.Text = ""
+  Me.txtRelatedString.Enabled = True
+  $bAjustandoCampos = False
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario. El refresco de FMain lo hace Form_Close,
+'             que es el único camino de salida garantizado.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Si hubo escritura, recarga el grid de referencias de FMain, que
+'             no se entera solo: el temporizador de fondo detecta altas y bajas
+'             por COUNT + MAX(id) y no ve las modificaciones in situ.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. SIN CAMBIOS NO SE TOCA NADA DE FMain ---
+  If Not $bHuboCambios Then Return
+
+  ' --- 2. RECARGA DEL GRID DE FMain ---
+  Try m_Bibtex.RecargarSoloGridReferencias()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("La relación se guardó, pero no se pudo refrescar la lista de referencias:" & Chr(10) & Error.Text)
+  Endif
+
+End
