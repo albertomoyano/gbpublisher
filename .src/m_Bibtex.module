@@ -20,6 +20,10 @@ Private $iUltimoMaxIdRef As Integer = -1
 ' PORQUE LO LEE FMain.
 Public bRefrescandoReferencias As Boolean = False
 
+' --- MAPA DE NOMBRES DE COLUMNA A CAMPOS DE biblatex ---
+' SE CONSTRUYE UNA SOLA VEZ Y SE REUSA. Private DE MÓDULO CON PREFIJO $.
+Private $cMapaBiblatex As Collection
+
 Public Sub ConfigurarTableViewBibtexEnCurso(grid As GridView)
 
   With grid
@@ -912,114 +916,111 @@ Catch
 
 End
 
-Public Sub ExportarBibTeX() As Boolean
-
-  Dim s As String
-  Dim f As ResultField
-  Dim aFields As New String[]
-  Dim i As Integer
-  Dim w As Integer
-  Dim tab As String
-  Dim sResultado As Result
-  Dim filtrarBib As String
-  Dim outputFile As String
-
-  ' PARAMETRIZADO (&1) + GLOBAL DE SESIÓN (RC-GM-16): SIN CONCATENAR EL ID CRUDO
-  filtrarBib = "SELECT * FROM bibtex WHERE id_proyecto = &1"
-  sResultado = m_ConexionBD.mConn.Exec(filtrarBib, m_InicioCierre.IdProyectoEnCurso)
-  aFields.Clear
-  For Each f In sResultado.Fields
-    aFields.Add(f.Name)
-    If Len(f.Name) > w Then
-      w = Len(f.Name)
-    Endif
-  Next
-  ' INICIALIZA LA CADENA VACÍA
-  s = ""
-  While sResultado.Available
-    s &= "\n@" & sResultado["tipo_de_entrada"] & "{" & sResultado[aFields[4]] & ",\n"
-    For i = 5 To aFields.Max
-      If Not IsNull(sResultado[aFields[i]]) And Len(sResultado[aFields[i]]) > 0 Then
-        tab = String(w - Len(aFields[i]), " ")
-        s &= "  " & aFields[i] & tab & " = {" & sResultado[aFields[i]] & "},\n"
-      Endif
-    Next
-    s &= "}\n"
-    sResultado.MoveNext
-  Wend
-
-  ' REEMPLAZOS DE LAS CLAVES
-  s = Replace(s, "how_published", "howpublished")
-  s = Replace(s, "index_title", "indextitle")
-  s = Replace(s, "short_hand", "shorthand")
-  s = Replace(s, "url_date", "urldate")
-  s = Replace(s, "book_title_addon", "booktitleaddon")
-  s = Replace(s, "journal_title_addon", "journaltitleaddon")
-  s = Replace(s, "main_title_addon", "maintitleaddon")
-  s = Replace(s, "main_title", "maintitle")
-  s = Replace(s, "issue_title_addon", "issuetitleaddon")
-  s = Replace(s, "event_title_addon", "eventtitleaddon")
-  s = Replace(s, "book_pagination", "bookpagination")
-  s = Replace(s, "orig_publisher", "origpublisher")
-  s = Replace(s, "orig_location", "origlocation")
-  s = Replace(s, "index_sort_title", "indexsorttitle")
-  s = Replace(s, "orig_language", "origlanguage")
-  s = Replace(s, "cross_ref", "crossref")
-  s = Replace(s, "entry_set", "entryset")
-  s = Replace(s, "sort_key", "sortkey")
-  s = Replace(s, "pre_sort", "presort")
-  s = Replace(s, "short_hand_intro", "shorthandintro")
-  s = Replace(s, "how_published", "howpublished")
-  s = Replace(s, "page_total", "pagetotal")
-  s = Replace(s, "event_title", "eventtitle")
-  s = Replace(s, "short_title", "shorttitle")
-  s = Replace(s, "short_hand", "sorthand")
-  s = Replace(s, "editor_type_c", "editortypec")
-  s = Replace(s, "editor_type_b", "editortypeb")
-  s = Replace(s, "editor_type_a", "editortypea")
-  s = Replace(s, "editor_type", "editortype")
-  s = Replace(s, "title_addon", "titleaddon")
-  s = Replace(s, "issue_title", "issuetitle")
-  s = Replace(s, "short_author", "shortauthor")
-  s = Replace(s, "reprint_title", "reprinttitle")
-  s = Replace(s, "event_date", "eventdate")
-  s = Replace(s, "orig_date", "origdate")
-  s = Replace(s, "land_id_opts", "landidopts")
-  s = Replace(s, "sort_title", "sorttitle")
-  s = Replace(s, "sort_name", "sortname")
-  s = Replace(s, "sort_year", "sortyear")
-  s = Replace(s, "related_type", "relatedtype")
-  s = Replace(s, "entry_sub_type", "entrysubtype")
-  s = Replace(s, "tipo_de_tesis", "type")
-  s = Replace(s, "book_author", "bookauthor")
-  s = Replace(s, "journal_title", "journaltitle")
-  s = Replace(s, "eprint_type", "eprinttype")
-  s = Replace(s, "related_string", "relatedstring")
-  s = Replace(s, "name_addon", "nameaddon")
-  s = Replace(s, "editor_c", "editorc")
-  s = Replace(s, "editor_b", "editorb")
-  s = Replace(s, "editor_a", "editora")
-  s = Replace(s, "book_title", "booktitle")
-  s = Replace(s, "sub_title", "subtitle")
-  s = Replace(s, "lang_id", "langid")
-  s = Replace(s, "pub_state", "pubstate")
-
-  Dim fecha As String
-  fecha = Format(Now, "dd/mm/yyyy [hh:nn:ss]")
-  s &= "\n\n@Comment{generado con gbpublisher; databaseType:biblatex; fecha de creación: " & fecha & "}"
-
-  ' GUARDAR ARCHIVO
-  outputFile = m_InicioCierre.RutaProyectoEnCurso & "/referencias/ref-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".bib"
-  File.Save(outputFile, s)
-
-  ' VERIFICAR QUE EL ARCHIVO SE HAYA CREADO
-  If Exist(outputFile) Then
-    Return True
-  Else
-    Return False
-  Endif
-
-End
+' Public Sub ExportarBibTeX() As Boolean
+'
+'   Dim s As String
+'   Dim f As ResultField
+'   Dim aFields As New String[]
+'   Dim i As Integer
+'   Dim w As Integer
+'   Dim tab As String
+'   Dim sResultado As Result
+'   Dim filtrarBib As String
+'   Dim outputFile As String
+'
+'   ' PARAMETRIZADO (&1) + GLOBAL DE SESIÓN (RC-GM-16): SIN CONCATENAR EL ID CRUDO
+'   filtrarBib = "SELECT * FROM bibtex WHERE id_proyecto = &1"
+'   sResultado = m_ConexionBD.mConn.Exec(filtrarBib, m_InicioCierre.IdProyectoEnCurso)
+'   aFields.Clear
+'   For Each f In sResultado.Fields
+'     aFields.Add(f.Name)
+'     If Len(f.Name) > w Then
+'       w = Len(f.Name)
+'     Endif
+'   Next
+'   ' INICIALIZA LA CADENA VACÍA
+'   s = ""
+'   While sResultado.Available
+'     s &= "\n@" & sResultado["tipo_de_entrada"] & "{" & sResultado[aFields[4]] & ",\n"
+'     For i = 5 To aFields.Max
+'       If Not IsNull(sResultado[aFields[i]]) And Len(sResultado[aFields[i]]) > 0 Then
+'         tab = String(w - Len(aFields[i]), " ")
+'         s &= "  " & aFields[i] & tab & " = {" & sResultado[aFields[i]] & "},\n"
+'       Endif
+'     Next
+'     s &= "}\n"
+'     sResultado.MoveNext
+'   Wend
+'
+'   ' REEMPLAZOS DE LAS CLAVES
+'   s = Replace(s, "how_published", "howpublished")
+'   s = Replace(s, "index_title", "indextitle")
+'   s = Replace(s, "short_hand", "shorthand")
+'   s = Replace(s, "url_date", "urldate")
+'   s = Replace(s, "book_title_addon", "booktitleaddon")
+'   s = Replace(s, "journal_title_addon", "journaltitleaddon")
+'   s = Replace(s, "main_title_addon", "maintitleaddon")
+'   s = Replace(s, "main_title", "maintitle")
+'   s = Replace(s, "issue_title_addon", "issuetitleaddon")
+'   s = Replace(s, "event_title_addon", "eventtitleaddon")
+'   s = Replace(s, "book_pagination", "bookpagination")
+'   s = Replace(s, "orig_publisher", "origpublisher")
+'   s = Replace(s, "orig_location", "origlocation")
+'   s = Replace(s, "index_sort_title", "indexsorttitle")
+'   s = Replace(s, "orig_language", "origlanguage")
+'   s = Replace(s, "cross_ref", "crossref")
+'   s = Replace(s, "entry_set", "entryset")
+'   s = Replace(s, "sort_key", "sortkey")
+'   s = Replace(s, "pre_sort", "presort")
+'   s = Replace(s, "short_hand_intro", "shorthandintro")
+'   s = Replace(s, "how_published", "howpublished")
+'   s = Replace(s, "page_total", "pagetotal")
+'   s = Replace(s, "event_title", "eventtitle")
+'   s = Replace(s, "short_title", "shorttitle")
+'   s = Replace(s, "short_hand", "sorthand")
+'   s = Replace(s, "editor_type_c", "editortypec")
+'   s = Replace(s, "editor_type_b", "editortypeb")
+'   s = Replace(s, "editor_type_a", "editortypea")
+'   s = Replace(s, "editor_type", "editortype")
+'   s = Replace(s, "title_addon", "titleaddon")
+'   s = Replace(s, "issue_title", "issuetitle")
+'   s = Replace(s, "short_author", "shortauthor")
+'   s = Replace(s, "reprint_title", "reprinttitle")
+'   s = Replace(s, "event_date", "eventdate")
+'   s = Replace(s, "orig_date", "origdate")
+'   s = Replace(s, "land_id_opts", "landidopts")
+'   s = Replace(s, "sort_title", "sorttitle")
+'   s = Replace(s, "sort_name", "sortname")
+'   s = Replace(s, "sort_year", "sortyear")
+'   s = Replace(s, "related_type", "relatedtype")
+'   s = Replace(s, "entry_sub_type", "entrysubtype")
+'   s = Replace(s, "tipo_de_tesis", "type")
+'   s = Replace(s, "book_author", "bookauthor")
+'   s = Replace(s, "journal_title", "journaltitle")
+'   s = Replace(s, "eprint_type", "eprinttype")
+'   s = Replace(s, "related_string", "relatedstring")
+'   s = Replace(s, "name_addon", "nameaddon")
+'   s = Replace(s, "editor_c", "editorc")
+'   s = Replace(s, "editor_b", "editorb")
+'   s = Replace(s, "editor_a", "editora")
+'   s = Replace(s, "book_title", "booktitle")
+'   s = Replace(s, "sub_title", "subtitle")
+'   s = Replace(s, "lang_id", "langid")
+'   s = Replace(s, "pub_state", "pubstate")
+'   s &= "\n\n@Comment{generado con gbpublisher}"
+'
+'   ' GUARDAR ARCHIVO
+'   outputFile = m_InicioCierre.RutaProyectoEnCurso & "/referencias/ref-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".bib"
+'   File.Save(outputFile, s)
+'
+'   ' VERIFICAR QUE EL ARCHIVO SE HAYA CREADO
+'   If Exist(outputFile) Then
+'     Return True
+'   Else
+'     Return False
+'   Endif
+'
+' End
 
 ' MOSTRAMOS AYUDA SOBRE EL ITEM
 Public Sub InicializarMapaCampos()
@@ -1925,5 +1926,265 @@ Public Sub VerificarCambiosReferencias()
   ' RecargarSoloGridReferencias YA RESEMBRÓ LA HUELLA CON EL NUEVO ESTADO
   RecargarSoloGridReferencias()
   RestaurarSeleccionReferencia(iIdSeleccionado)
+
+End
+
+' ============================================
+' Función   : NombreArchivoBib
+' Propósito : Nombre del archivo .bib del proyecto en curso, derivado del
+'             nombre del archivo del proyecto: l-LIBRO-PRUEBA.md produce
+'             ref-l-LIBRO-PRUEBA.bib.
+'             ÚNICO LUGAR DONDE ESTÁ ESCRITA ESA DERIVACIÓN. La consumen
+'             ExportarBibTeX, que escribe el archivo, y
+'             m_GenerarPDFLibro.GenerarPreambuloProyecto, que emite el
+'             \addbibresource que lo busca. Si se calculara en los dos, el día
+'             que cambie el prefijo el .bib se escribiría con un nombre y el
+'             preámbulo apuntaría a otro: el libro compilaría con todas las
+'             citas sin resolver y sin ningún error visible.
+' Parámetros: (ninguno)
+' Retorna   : String — nombre con extensión, sin ruta
+' Nota      : File.BaseName devuelve el nombre SIN extensión (GV-01).
+' ============================================
+Public Function NombreArchivoBib() As String
+
+  Return "ref-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".bib"
+
+End
+
+' ============================================
+' Función   : InicializarMapaBiblatex
+' Propósito : Construye la tabla que traduce el nombre de una columna de la
+'             tabla bibtex al campo que espera biblatex. Las columnas usan
+'             snake_case y biblatex no.
+'             Una columna que no está acá se emite con su propio nombre, que
+'             es lo correcto para author, title, volume, doi y compañía.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno) — deja $cMapaBiblatex poblada
+' Nota      : LAS CLAVES DE Collection SON CASE-SENSITIVE (GV-04). LOS NOMBRES
+'             DE COLUMNA LLEGAN EN MINÚSCULA DESDE EL DRIVER, ASÍ QUE SE
+'             ESCRIBEN EN MINÚSCULA ACÁ.
+' ============================================
+Private Sub InicializarMapaBiblatex()
+
+  If $cMapaBiblatex Then Return
+
+  $cMapaBiblatex = New Collection
+
+  ' --- 1. PERSONAS Y ROLES ---
+  $cMapaBiblatex["book_author"] = "bookauthor"
+  $cMapaBiblatex["short_author"] = "shortauthor"
+  $cMapaBiblatex["name_addon"] = "nameaddon"
+  $cMapaBiblatex["editor_a"] = "editora"
+  $cMapaBiblatex["editor_b"] = "editorb"
+  $cMapaBiblatex["editor_c"] = "editorc"
+  $cMapaBiblatex["editor_type"] = "editortype"
+  $cMapaBiblatex["editor_type_a"] = "editortypea"
+  $cMapaBiblatex["editor_type_b"] = "editortypeb"
+  $cMapaBiblatex["editor_type_c"] = "editortypec"
+
+  ' --- 2. TÍTULOS ---
+  $cMapaBiblatex["sub_title"] = "subtitle"
+  $cMapaBiblatex["title_addon"] = "titleaddon"
+  $cMapaBiblatex["book_title"] = "booktitle"
+  $cMapaBiblatex["book_title_addon"] = "booktitleaddon"
+  $cMapaBiblatex["main_title"] = "maintitle"
+  $cMapaBiblatex["main_title_addon"] = "maintitleaddon"
+  $cMapaBiblatex["journal_title"] = "journaltitle"
+  $cMapaBiblatex["journal_title_addon"] = "journaltitleaddon"
+  $cMapaBiblatex["issue_title"] = "issuetitle"
+  $cMapaBiblatex["issue_title_addon"] = "issuetitleaddon"
+  $cMapaBiblatex["event_title"] = "eventtitle"
+  $cMapaBiblatex["event_title_addon"] = "eventtitleaddon"
+  $cMapaBiblatex["index_title"] = "indextitle"
+  $cMapaBiblatex["short_title"] = "shorttitle"
+  $cMapaBiblatex["reprint_title"] = "reprinttitle"
+
+  ' --- 3. FECHAS ---
+  $cMapaBiblatex["event_date"] = "eventdate"
+  $cMapaBiblatex["orig_date"] = "origdate"
+  $cMapaBiblatex["url_date"] = "urldate"
+
+  ' --- 4. IDIOMA ---
+  ' hyphenation ES EL NOMBRE VIEJO DE langid: SE RENOMBRÓ EN biblatex 2.8, EN
+  ' 2013, Y SOLO SE CONSERVA COMO ALIAS DE COMPATIBILIDAD. LAS DOS COLUMNAS
+  ' EXISTEN EN LA TABLA Y APUNTAN AL MISMO CAMPO, ASÍ QUE EL BUCLE DE EMISIÓN
+  ' TIENE UNA GUARDA PARA NO ESCRIBIRLO DOS VECES.
+  $cMapaBiblatex["hyphenation"] = "langid"
+  $cMapaBiblatex["lang_id"] = "langid"
+  ' LA COLUMNA TIENE UN TYPO DE ORIGEN: land POR lang. EL CAMPO DE biblatex ES
+  ' langidopts, Y EL MAPEO ANTERIOR EMITÍA landidopts, QUE biber IGNORABA.
+  $cMapaBiblatex["land_id_opts"] = "langidopts"
+  $cMapaBiblatex["orig_language"] = "origlanguage"
+
+  ' --- 5. PAGINACIÓN ---
+  $cMapaBiblatex["page_total"] = "pagetotal"
+  $cMapaBiblatex["book_pagination"] = "bookpagination"
+
+  ' --- 6. EDICIÓN Y LUGAR ---
+  $cMapaBiblatex["orig_publisher"] = "origpublisher"
+  $cMapaBiblatex["orig_location"] = "origlocation"
+  $cMapaBiblatex["how_published"] = "howpublished"
+  $cMapaBiblatex["pub_state"] = "pubstate"
+
+  ' --- 7. IDENTIFICADORES Y RELACIONES ---
+  $cMapaBiblatex["eprint_type"] = "eprinttype"
+  $cMapaBiblatex["related_type"] = "relatedtype"
+  $cMapaBiblatex["related_string"] = "relatedstring"
+  $cMapaBiblatex["cross_ref"] = "crossref"
+  $cMapaBiblatex["entry_set"] = "entryset"
+  $cMapaBiblatex["entry_sub_type"] = "entrysubtype"
+
+  ' --- 8. ETIQUETAS Y ORDENAMIENTO ---
+  $cMapaBiblatex["short_hand"] = "shorthand"
+  $cMapaBiblatex["short_hand_intro"] = "shorthandintro"
+  ' NO TENÍA MAPEO Y SALÍA LITERAL. EL CAMPO ES sortshorthand.
+  $cMapaBiblatex["sort_hand"] = "sortshorthand"
+  $cMapaBiblatex["pre_sort"] = "presort"
+  $cMapaBiblatex["sort_key"] = "sortkey"
+  $cMapaBiblatex["sort_name"] = "sortname"
+  $cMapaBiblatex["sort_year"] = "sortyear"
+  $cMapaBiblatex["sort_title"] = "sorttitle"
+  $cMapaBiblatex["index_sort_title"] = "indexsorttitle"
+
+  ' --- 9. TIPO DE TESIS ---
+  ' EN biblatex EL TIPO DE UNA @thesis VA EN EL CAMPO type.
+  $cMapaBiblatex["tipo_de_tesis"] = "type"
+
+End
+
+' ============================================
+' Función   : CampoBiblatex
+' Propósito : Traduce el nombre de una columna al campo de biblatex. Si no
+'             está en el mapa, devuelve el nombre tal cual.
+' Parámetros: sColumna As String — nombre de la columna
+' Retorna   : String — nombre del campo para el .bib
+' ============================================
+Private Function CampoBiblatex(sColumna As String) As String
+
+  InicializarMapaBiblatex()
+
+  If $cMapaBiblatex.Exist(sColumna) Then
+    Return $cMapaBiblatex[sColumna]
+  Endif
+
+  Return sColumna
+
+End
+
+' ============================================
+' Función   : ExportarBibTeX
+' Propósito : Escribe {proyecto}/referencias/ref-{proyecto}.bib con todas las
+'             referencias del proyecto en curso.
+'             El archivo se versiona, así que la salida tiene que ser
+'             DETERMINISTA: mismos datos, mismo archivo, byte a byte. De ahí
+'             el ORDER BY y la ausencia de marca de tiempo.
+' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
+' Retorna   : Boolean — True si se escribió, False si falló con mensaje
+' ============================================
+Public Function ExportarBibTeX() As Boolean
+
+  Dim hRes As Result
+  Dim oCampo As ResultField
+  Dim aColumnas As New String[]
+  Dim cEmitidos As Collection
+  Dim sSQL As String
+  Dim s As String
+  Dim sColumna As String
+  Dim sCampo As String
+  Dim sValor As String
+  Dim sRelleno As String
+  Dim sArchivo As String
+  Dim iAncho As Integer
+
+  ' COLUMNAS DE CONTROL: NO SON CAMPOS BIBLIOGRÁFICOS Y NO VAN AL .bib.
+  ' SE SALTEAN POR NOMBRE Y NO POR POSICIÓN: UNA COLUMNA NUEVA INSERTADA EN EL
+  ' MEDIO CORRÍA TODO Y EL .bib SALÍA CON LA CLAVE EQUIVOCADA, SIN ERROR.
+  Dim aControl As String[] = ["id", "id_proyecto", "id_articulo",
+    "tipo_de_entrada", "clave_bibtex"]
+
+  ' --- 1. CONSULTA ---
+  ' EL ORDER BY NO ES COSMÉTICO: SIN ÉL MySQL NO GARANTIZA EL ORDEN DE LAS
+  ' FILAS, Y EL .bib PODRÍA SALIR DISTINTO CON LOS MISMOS DATOS. COMO EL
+  ' ARCHIVO ESTÁ VERSIONADO, ESO PRODUCE UN DIFF QUE NO CORRESPONDE A NINGÚN
+  ' CAMBIO REAL.
+  sSQL = "SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY clave_bibtex"
+
+  Try hRes = m_ConexionBD.mConn.Exec(sSQL, m_InicioCierre.IdProyectoEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las referencias del proyecto:" &
+      gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. INVENTARIO DE COLUMNAS Y ANCHO DE ALINEACIÓN ---
+  ' EL ANCHO SE CALCULA SOBRE EL NOMBRE YA TRADUCIDO, QUE ES EL QUE SE IMPRIME.
+  For Each oCampo In hRes.Fields
+    If Not aControl.Exist(oCampo.Name) Then
+      aColumnas.Add(oCampo.Name)
+      sCampo = CampoBiblatex(oCampo.Name)
+      If Len(sCampo) > iAncho Then iAncho = Len(sCampo)
+    Endif
+  Next
+
+  ' --- 3. RECORRIDO DE LAS ENTRADAS ---
+  s = ""
+
+  While hRes.Available
+
+    s &= "\n@" & hRes["tipo_de_entrada"] & "{" & hRes["clave_bibtex"] & ",\n"
+
+    ' GUARDA DE CAMPO YA EMITIDO. hyphenation Y lang_id SON DOS COLUMNAS QUE
+    ' APUNTAN AL MISMO CAMPO langid: SIN ESTO, UNA ENTRADA CON LAS DOS
+    ' CARGADAS SALE CON langid DUPLICADO Y biber AVISA.
+    cEmitidos = New Collection
+
+    For Each sColumna In aColumnas
+
+      ' RC-GM-17: And NO CORTOCIRCUITA. CON EL CAMPO EN NULL, EL Len(NULL) DE
+      ' LA VERSIÓN ANTERIOR SE EJECUTABA IGUAL. VAN ANIDADOS.
+      If Not IsNull(hRes[sColumna]) Then
+        sValor = Trim(CStr(hRes[sColumna]))
+        If sValor <> "" Then
+
+          sCampo = CampoBiblatex(sColumna)
+
+          If Not cEmitidos.Exist(sCampo) Then
+            cEmitidos[sCampo] = True
+            sRelleno = String$(iAncho - Len(sCampo), " ")
+            s &= "  " & sCampo & sRelleno & " = {" & sValor & "},\n"
+          Endif
+
+        Endif
+      Endif
+
+    Next
+
+    s &= "}\n"
+    hRes.MoveNext
+
+  Wend
+
+  ' --- 4. FIRMA ---
+  ' SIN FECHA NI VERSIÓN: CUALQUIER DATO QUE CAMBIE ENTRE DOS GENERACIONES
+  ' IGUALES ENSUCIA EL DIFF Y ROMPE LA GUARDA DE DESACTUALIZACIÓN. EL
+  ' REPOSITORIO YA FECHA EL COMMIT, QUE ES EL EVENTO REAL.
+  s &= "\n\n@Comment{generado con gbpublisher}"
+
+  ' --- 5. ESCRITURA ---
+  ' File.Save OPERA EN UTF-8 NATIVAMENTE (SC-02).
+  sArchivo = m_InicioCierre.RutaProyectoEnCurso &/ "referencias" &/ NombreArchivoBib()
+
+  Try File.Save(sArchivo, s)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el archivo de referencias:" & gb.NewLine &
+      sArchivo & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' NO SE VERIFICA CON Exist(): SI EL ARCHIVO QUEDÓ DE UNA CORRIDA ANTERIOR Y
+  ' EL GUARDADO FALLÓ, DEVOLVERÍA True IGUAL. EL Try ES LA VERIFICACIÓN.
+  Return True
 
 End

@@ -1,0 +1,594 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_GenerarPDFLibro
+' Propósito : Generación de la salida PDF de LIBROS. Escribe los archivos
+'             derivados que consume LuaLaTeX:
+'               preambulo-proyecto.tex — valores que salen de la base
+'               main.tex               — declarativo de piezas y zonas
+'             Los preámbulos de contrato y estética, y los cita-*-config.tex,
+'             son recursos de la app: se copian desde ~/.gbpublisher/latex/
+'             sin modificarlos.
+'
+'             Se separa de m_GenerarPDF, que es de revistas, porque los dos
+'             pipelines divergen en todo lo que importa: revistas compila un
+'             artículo con clase article y una sola bibliografía; libros
+'             compila un documento con clase book, cuatro zonas, bibliografía
+'             por capítulo y autonomía fuera de la app.
+'
+' Principio : ABORTAR ANTE CUALQUIER DATO FALTANTE. Un libro compuesto con un
+'             formato que nadie eligió, o con un estilo de cita adivinado, es
+'             peor que un error: sale mal y nadie se entera. El mensaje dice
+'             qué falta y dónde cargarlo.
+'
+' Dependencias: m_ConexionBD, m_InicioCierre, m_Sonido
+' ==============================================================================
+
+' --- CONSTANTES DE GENERACIÓN ---
+' VAN ACÁ Y NO EN m_Constantes PORQUE SON INTERNAS DE ESTE PIPELINE.
+' SI ALGUNA LA NECESITA OTRO MÓDULO, MIGRARLA (SC-03).
+Private Const NOMBRE_PREAMBULO_PROYECTO As String = "preambulo-proyecto.tex"
+Private Const CARPETA_LATEX As String = "latex"
+Private Const CARPETA_REFERENCIAS As String = "referencias"
+
+' VERSIÓN DEL CONTRATO QUE ESTE GENERADOR REQUIERE. SI SE AGREGA VOCABULARIO
+' AL XSLT, SUBE ACÁ Y EN preambulo-contrato.tex, Y UN PREÁMBULO DE EDITORIAL
+' VIEJO FRENA EN LA PRIMERA LÍNEA EN VEZ DE DAR UN "Undefined control
+' sequence" EN LA PÁGINA 140.
+Public Const CONTRATO_VERSION As Integer = 1
+
+
+' ============================================
+' Función   : EscaparTeX
+' Propósito : Escapa los diez caracteres activos de LaTeX en un texto que
+'             viene de la base. Un título con & o % rompe la compilación
+'             igual que si viniera del cuerpo del manuscrito.
+' Parámetros: sTexto As String — texto crudo de la base
+' Retorna   : String — texto seguro para modo texto de LaTeX
+' Nota      : PASADA ÚNICA POR CODEPOINT, NO CADENA DE Replace().
+'             ENCADENAR Replace() CON LA BARRA INVERTIDA PRIMERO ROMPE: EL
+'             REEMPLAZO INYECTA \textbackslash{}, QUE CONTIENE LLAVES, Y EL
+'             PASO SIGUIENTE LAS ESCAPA. NO TIENE ARREGLO POR REORDENAMIENTO,
+'             PORQUE SI LAS LLAVES VAN PRIMERO EL \{ QUE PRODUCEN QUEDA
+'             EXPUESTO AL PASO DE LA BARRA. ES EL MISMO BUG QUE SE CORRIGIÓ EN
+'             tex-comun.xsl.
+'             SE RECORRE CON String.Mid Y String.Len, NO CON Mid Y Len, QUE
+'             OPERAN EN BYTES Y CORTAN LOS MULTIBYTE (RC-GM-12, SC-02).
+'             GV-03 MIDIÓ QUE ESTE BUCLE ESCALA LINEALMENTE.
+'             < > Y | NO SE ESCAPAN: BAJO LuaLaTeX CON fontspec Y UNA FUENTE
+'             UNICODE SE COMPONEN COMO SÍ MISMOS.
+' ============================================
+Private Function EscaparTeX(sTexto As String) As String
+
+  Dim iPos As Integer
+  Dim sCar As String
+  Dim sRes As String = ""
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If sTexto = "" Then Return ""
+
+  ' --- 2. RECORRIDO POR CODEPOINT ---
+  ' CADA CARÁCTER SE MIRA UNA SOLA VEZ: EL REEMPLAZO NO VUELVE A ENTRAR AL
+  ' PROCESO, ASÍ QUE NO HAY ORDEN QUE RESPETAR.
+  For iPos = 1 To String.Len(sTexto)
+    sCar = String.Mid(sTexto, iPos, 1)
+    Select Case sCar
+      Case "\\"
+        sRes &= "\\textbackslash{}"
+      Case "{"
+        sRes &= "\\{"
+      Case "}"
+        sRes &= "\\}"
+      Case "$"
+        sRes &= "\\$"
+      Case "%"
+        sRes &= "\\%"
+      Case "&"
+        sRes &= "\\&"
+      Case "#"
+        sRes &= "\\#"
+      Case "_"
+        sRes &= "\\_"
+      Case "^"
+        sRes &= "\\textasciicircum{}"
+      Case "~"
+        sRes &= "\\textasciitilde{}"
+      Case Else
+        sRes &= sCar
+    End Select
+  Next
+
+  Return sRes
+
+End
+
+
+' ============================================
+' Función   : EscaparURL
+' Propósito : Escapa una URL para usarla como argumento de \href o dentro de
+'             \hypersetup. Solo % y # son problemáticos: el primero comenta
+'             el resto de la línea y el segundo es el parámetro de destino.
+' Parámetros: sURL As String — URL cruda de la base
+' Retorna   : String — URL segura
+' ============================================
+Private Function EscaparURL(sURL As String) As String
+
+  Dim sRes As String
+
+  If sURL = "" Then Return ""
+
+  sRes = Replace(sURL, "%", "\\%")
+  sRes = Replace(sRes, "#", "\\#")
+
+  Return sRes
+
+End
+
+
+' ============================================
+' Función   : CodigoABabel
+' Propósito : Convierte un código ISO 639-1 al nombre de idioma que reconoce
+'             babel. Lo consume \usepackage[\gbidiomas]{babel} en la capa de
+'             estética.
+' Parámetros: sCodigo As String — código ISO 639-1 (es, en, pt, ...)
+' Retorna   : String — nombre para babel, o "" si no se reconoce
+' Nota      : DEVUELVE VACÍO EN VEZ DE CAER A spanish: EL LLAMADOR DECIDE SI
+'             ESO ES UN ERROR. UN IDIOMA ADIVINADO ROMPE LA PARTICIÓN DE
+'             PALABRAS DE TODO EL LIBRO SIN QUE NADA AVISE.
+' ============================================
+Private Function CodigoABabel(sCodigo As String) As String
+
+  Select Case LCase(Trim(sCodigo))
+    Case "es"
+      Return "spanish"
+    Case "en"
+      Return "english"
+    Case "pt"
+      Return "portuguese"
+    Case "fr"
+      Return "french"
+    Case "de"
+      Return "german"
+    Case "it"
+      Return "italian"
+    Case "ca"
+      Return "catalan"
+    Case Else
+      Return ""
+  End Select
+
+End
+
+
+' ============================================
+' Función   : ModoDeSalida
+' Propósito : Deriva el modo de salida del estado editorial del libro.
+'             En la lógica editorial "publicado" significa también impreso,
+'             así que el estado ya carga esa información y no hace falta una
+'             columna aparte.
+' Parámetros: sEstadoLibro As String — libros_md.estado_libro
+' Retorna   : String — "borrador" | "final" | "imprenta"
+' ============================================
+Private Function ModoDeSalida(sEstadoLibro As String) As String
+
+  Select Case LCase(Trim(sEstadoLibro))
+    Case "borrador", "en_correccion"
+      Return "borrador"
+    Case "en_produccion"
+      Return "final"
+    Case "publicado"
+      Return "imprenta"
+    Case Else
+      Return "final"
+  End Select
+
+End
+
+
+' ============================================
+' Función   : RolesDeAutoriaSegunTipo
+' Propósito : Devuelve la cláusula IN de roles que corresponde a la autoría
+'             del LIBRO según su tipo. En obras de autoría van los autores;
+'             en compilaciones va quien edita, con su rol.
+'             No se usa el modelo anglosajón de poner un editor en libros de
+'             un solo autor.
+' Parámetros: sTipoLibro As String — libros_md.tipo_libro
+' Retorna   : String — lista de roles entre comillas, lista para un IN
+' ============================================
+Private Function RolesDeAutoriaSegunTipo(sTipoLibro As String) As String
+
+  Select Case LCase(Trim(sTipoLibro))
+    Case "obra_colectiva", "compilacion", "actas", "referencia"
+      Return "'editor','compilador','coordinador'"
+    Case Else
+      ' monografia, manual, traduccion
+      Return "'autor'"
+  End Select
+
+End
+
+
+' ============================================
+' Función   : AbreviaturaDeRol
+' Propósito : Abreviatura con la que se acompaña el nombre de quien edita en
+'             la portada y en los metadatos. Vacía para el rol de autor.
+' Parámetros: sRol As String — libro_autor.rol_libro
+' Retorna   : String — "comp.", "ed.", "coord." o ""
+' ============================================
+Private Function AbreviaturaDeRol(sRol As String) As String
+
+  Select Case LCase(Trim(sRol))
+    Case "editor"
+      Return "ed."
+    Case "compilador"
+      Return "comp."
+    Case "coordinador"
+      Return "coord."
+    Case Else
+      Return ""
+  End Select
+
+End
+
+
+' ============================================
+' Función   : ObtenerAutoresLibro
+' Propósito : Arma la cadena de autoría del libro para los metadatos del PDF,
+'             ordenada por orden_autoria.
+' Parámetros: iIdLibro    As Integer — libros_md.id_libro
+'             sTipoLibro  As String  — libros_md.tipo_libro
+' Retorna   : String — "Apellidos, Nombre; Apellidos, Nombre (comp.)" o ""
+'             si no hay ninguno, que el llamador trata como error.
+' Nota      : SE USAN apellidos Y nombre, QUE SON NOT NULL, Y NO
+'             apellidos_nombre NI nombre_publicaciones, QUE SON ANULABLES.
+' ============================================
+Private Function ObtenerAutoresLibro(iIdLibro As Integer, sTipoLibro As String) As String
+
+  Dim hRes As Result
+  Dim sSQL As String
+  Dim sNombre As String
+  Dim sAbrev As String
+  Dim aNombres As New String[]
+
+  ' --- 1. CONSULTA ---
+  ' EL IN DE ROLES SE INTERPOLA PORQUE ES UN LITERAL CONSTRUIDO POR NOSOTROS
+  ' A PARTIR DE UN enum CERRADO, NO UN DATO DEL USUARIO. EL ÚNICO VALOR
+  ' EXTERNO VA POR PLACEHOLDER.
+  sSQL = "SELECT a.apellidos, a.nombre, la.rol_libro " &
+         "FROM libro_autor la " &
+         "JOIN autores a ON a.id_autor = la.id_autor " &
+         "WHERE la.id_libro = &1 " &
+         "AND la.rol_libro IN (" & RolesDeAutoriaSegunTipo(sTipoLibro) & ") " &
+         "ORDER BY la.orden_autoria"
+
+  Try hRes = m_ConexionBD.mConn.Exec(sSQL, iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la autoría del libro:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 2. RECORRIDO Y ARMADO ---
+  If Not hRes.Available Then Return ""
+
+  For Each hRes
+    sNombre = Trim(hRes["apellidos"]) & ", " & Trim(hRes["nombre"])
+    sAbrev = AbreviaturaDeRol(hRes["rol_libro"])
+    If sAbrev <> "" Then
+      sNombre &= " (" & sAbrev & ")"
+    Endif
+    aNombres.Add(sNombre)
+  Next
+
+  ' --- 3. RETORNO ---
+  Return aNombres.Join("; ")
+
+End
+
+
+' ============================================
+' Función   : GenerarPreambuloProyecto
+' Propósito : Escribe {proyecto}/latex/preambulo-proyecto.tex con los valores
+'             que salen de libros_md, formatos_pdf y libro_autor.
+'
+'             El archivo es DERIVADO: se reescribe en cada generación sin
+'             preguntar. Pero SÍ se versiona, porque el commit es la garantía
+'             de traza de qué se publicó. Por eso no lleva marca de tiempo ni
+'             nada que cambie entre dos generaciones iguales: compilar dos
+'             veces sin tocar datos debe dejar git status limpio.
+'
+'             Va PRIMERO en el orden de \input porque geometry y fontspec
+'             necesitan los valores en el momento del \usepackage, y eso no
+'             se puede diferir.
+'
+' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
+' Retorna   : Boolean — True si se escribió, False si abortó con mensaje
+' ============================================
+Public Function GenerarPreambuloProyecto() As Boolean
+
+  Dim hLibro As Result
+  Dim sSQL As String
+  Dim s As String
+  Dim sRutaLatex As String
+  Dim sRutaArchivo As String
+  Dim sModo As String
+  Dim sEstilo As String
+  Dim sAutores As String
+  Dim sIdiomaPrincipal As String
+  Dim sIdiomasBabel As String
+  Dim sCodigo As String
+  Dim aCodigos As String[]
+  Dim aIdiomas As New String[]
+  Dim iIdLibro As Integer
+  Dim iFormato As Integer
+  Dim bHayMontaje As Boolean
+
+  ' --- 1. VALIDACIÓN DE PROYECTO ABIERTO ---
+  If m_InicioCierre.IdProyectoEnCurso = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Abrí un proyecto antes de generar la salida PDF.")
+    Return False
+  Endif
+
+  sRutaLatex = m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_LATEX
+  If Not Exist(sRutaLatex) Then
+    Try Mkdir sRutaLatex
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear el directorio:" & gb.NewLine & sRutaLatex &
+        gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
+
+  ' --- 2. LECTURA DEL LIBRO Y SU FORMATO ---
+  ' UN SOLO Exec CON JOIN: SI EL LIBRO NO TIENE FORMATO ASIGNADO, EL LEFT JOIN
+  ' DEVUELVE NULL EN LAS COLUMNAS DEL FORMATO Y SE DETECTA EN EL APARTADO 3.
+  sSQL = "SELECT l.id_libro, l.titulo_libro, l.subtitulo, l.titulo_abreviado, " &
+         "       l.tipo_libro, l.lugar_bibliografia, l.estado_libro, " &
+         "       l.estilo_cita, l.idioma_principal, l.idiomas_publicacion, " &
+         "       l.isbn_impreso, l.isbn_electronico, l.doi_libro, " &
+         "       l.editorial, l.ciudad_publicacion, l.ano_publicacion, " &
+         "       l.licencia_defecto, l.url_licencia, l.palabras_clave_libro, " &
+         "       l.id_formato_pdf, " &
+         "       f.nombre_formato, f.ancho, f.alto, " &
+         "       f.margen_interior, f.margen_exterior, " &
+         "       f.margen_superior, f.margen_inferior, " &
+         "       f.ancho_montaje, f.alto_montaje " &
+         "FROM libros_md l " &
+         "LEFT JOIN formatos_pdf f ON f.id_formato_pdf = l.id_formato_pdf " &
+         "WHERE l.id_proyecto = &1 LIMIT 1"
+
+  Try hLibro = m_ConexionBD.mConn.Exec(sSQL, m_InicioCierre.IdProyectoEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el libro del proyecto:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' RC-GM-17: And NO CORTOCIRCUITA. EL CHEQUEO DE Available VA EN UN If
+  ' ANIDADO, NO ENCADENADO CON EL DE Error.
+  If Not hLibro.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El proyecto abierto no tiene un libro asociado en la base.")
+    Return False
+  Endif
+
+  iIdLibro = hLibro["id_libro"]
+
+  ' --- 3. VALIDACIÓN DEL FORMATO DE PÁGINA ---
+  ' SIN FORMATO NO HAY PÁGINA. ABORTAR ES LA SALIDA CORRECTA: UN LIBRO
+  ' COMPUESTO EN UN FORMATO QUE NADIE ELIGIÓ SALE MAL Y NADIE SE ENTERA.
+  If IsNull(hLibro["id_formato_pdf"]) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El libro no tiene formato de página asignado." & gb.NewLine &
+      "Cargalo en la ficha del libro antes de generar el PDF.")
+    Return False
+  Endif
+
+  iFormato = hLibro["id_formato_pdf"]
+
+  If IsNull(hLibro["ancho"]) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El formato de página " & CStr(iFormato) &
+      " no existe en formatos_pdf.")
+    Return False
+  Endif
+
+  ' --- 4. MODO DE SALIDA Y MEDIDAS DE MONTAJE ---
+  sModo = ModoDeSalida(hLibro["estado_libro"])
+
+  ' LAS DOS MEDIDAS DE MONTAJE SON UN DATO DE PRODUCCIÓN Y NO UNA DERIVACIÓN
+  ' DEL FORMATO: LA APP NO LAS CALCULA. SI FALTAN, EL MODO IMPRENTA NO PUEDE
+  ' PONER LAS CRUCES DE CORTE.
+  bHayMontaje = False
+  If Not IsNull(hLibro["ancho_montaje"]) Then
+    If Not IsNull(hLibro["alto_montaje"]) Then
+      bHayMontaje = True
+    Endif
+  Endif
+
+  If sModo = "imprenta" Then
+    If Not bHayMontaje Then
+      m_Sonido.sonar("Error")
+      Message.Error("El formato «" & hLibro["nombre_formato"] &
+        "» no tiene cargadas las medidas de la hoja de montaje." & gb.NewLine &
+        "Sin ellas no se pueden poner las cruces de corte.")
+      Return False
+    Endif
+  Endif
+
+  ' --- 5. ESTILO DE CITA ---
+  ' EL CANÓNICO TAMBIÉN LO TRAE, PERO LA FUENTE ES LA BASE: EL XML ES COPIA.
+  If IsNull(hLibro["estilo_cita"]) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El libro no tiene estilo de cita asignado.")
+    Return False
+  Endif
+
+  sEstilo = m_InicioCierre.LeerTipoCSL(hLibro["estilo_cita"])
+  If sEstilo = "" Then Return False   ' LeerTipoCSL YA AVISÓ
+
+  ' vancouver VA POR bibtex Y LA RAMA NO ESTÁ IMPLEMENTADA. EL XSLT TAMBIÉN
+  ' CORTA, PERO CONVIENE FRENAR ACÁ Y NO DESPUÉS DE HABER ESCRITO ARCHIVOS.
+  If sEstilo = "vancouver" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El estilo vancouver usa bibtex y todavía no está " &
+      "implementado para libros." & gb.NewLine &
+      "Los estilos disponibles son apa, iso690 e ieee.")
+    Return False
+  Endif
+
+  ' --- 6. IDIOMAS ---
+  sIdiomaPrincipal = CodigoABabel(hLibro["idioma_principal"])
+  If sIdiomaPrincipal = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El idioma principal del libro no está entre los " &
+      "reconocidos por babel: " & hLibro["idioma_principal"])
+    Return False
+  Endif
+
+  ' LOS SECUNDARIOS SON OPCIONALES. SE CARGA babel SOLO CON LOS DEL LIBRO Y NO
+  ' CON SIETE SIEMPRE. EL PRINCIPAL VA CON main= PARA QUE NO DEPENDA DEL ORDEN.
+  If Not IsNull(hLibro["idiomas_publicacion"]) Then
+    aCodigos = Split(hLibro["idiomas_publicacion"], ",")
+    For Each sCodigo In aCodigos
+      sCodigo = CodigoABabel(sCodigo)
+      If sCodigo <> "" Then
+        If sCodigo <> sIdiomaPrincipal Then
+          If Not aIdiomas.Exist(sCodigo) Then aIdiomas.Add(sCodigo)
+        Endif
+      Endif
+    Next
+  Endif
+
+  aIdiomas.Add("main=" & sIdiomaPrincipal)
+  sIdiomasBabel = aIdiomas.Join(",")
+
+  ' --- 7. AUTORÍA ---
+  sAutores = ObtenerAutoresLibro(iIdLibro, hLibro["tipo_libro"])
+  If sAutores = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El libro no tiene cargada la autoría que corresponde a su " &
+      "tipo (" & hLibro["tipo_libro"] & ").")
+    Return False
+  Endif
+
+  ' --- 8. ARMADO DEL ARCHIVO ---
+  s = "% ============================================================" & gb.NewLine
+  s &= "% preambulo-proyecto.tex" & gb.NewLine
+  s &= "% ------------------------------------------------------------" & gb.NewLine
+  s &= "% ARCHIVO DERIVADO — GENERADO POR gbpublisher" & gb.NewLine
+  s &= "% NO EDITAR A MANO: SE REESCRIBE EN CADA GENERACIÓN DEL" & gb.NewLine
+  s &= "% main.tex. LOS CAMBIOS SE HACEN EN LA BASE." & gb.NewLine
+  s &= "%" & gb.NewLine
+  s &= "% SÍ SE VERSIONA: EL COMMIT ES LA GARANTÍA DE TRAZA DE QUÉ SE" & gb.NewLine
+  s &= "% PUBLICÓ. POR ESO NO LLEVA MARCA DE TIEMPO." & gb.NewLine
+  s &= "% ------------------------------------------------------------" & gb.NewLine
+  s &= "% ESTA CAPA SOLO DEFINE VALORES. NO CARGA NINGÚN PAQUETE." & gb.NewLine
+  s &= "% VA PRIMERA PORQUE geometry Y fontspec NECESITAN LOS VALORES" & gb.NewLine
+  s &= "% EN EL MOMENTO DEL \\usepackage." & gb.NewLine
+  s &= "% ============================================================" & gb.NewLine
+  s &= gb.NewLine
+
+  ' 8.1 MODO DE SALIDA
+  s &= "% --- MODO DE SALIDA (derivado de estado_libro) ---" & gb.NewLine
+  s &= "\\newif\\ifgbborrador   \\gbborrador" & IIf(sModo = "borrador", "true", "false") & gb.NewLine
+  s &= "\\newif\\ifgbimprenta   \\gbimprenta" & IIf(sModo = "imprenta", "true", "false") & gb.NewLine
+  s &= gb.NewLine
+
+  ' 8.2 FORMATO DE PÁGINA
+  s &= "% --- FORMATO DE PÁGINA (formatos_pdf id=" & CStr(iFormato) & ") ---" & gb.NewLine
+  s &= "\\def\\gbanchopagina{" & Format(hLibro["ancho"], "0.00") & "cm}" & gb.NewLine
+  s &= "\\def\\gbaltopagina{" & Format(hLibro["alto"], "0.00") & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargeninterior{" & Format(hLibro["margen_interior"], "0.00") & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargenexterior{" & Format(hLibro["margen_exterior"], "0.00") & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargensuperior{" & Format(hLibro["margen_superior"], "0.00") & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargeninferior{" & Format(hLibro["margen_inferior"], "0.00") & "cm}" & gb.NewLine
+  s &= "\\def\\gbnombreformato{" & EscaparTeX(hLibro["nombre_formato"]) & "}" & gb.NewLine
+
+  ' truecm Y NO cm: ES LA UNIDAD INMUNE A \mag, QUE ES LO QUE CORRESPONDE EN
+  ' UNA MEDIDA DE MONTAJE.
+  If bHayMontaje Then
+    s &= "\\def\\gbanchomontaje{" & Format(hLibro["ancho_montaje"], "0.00") & "truecm}" & gb.NewLine
+    s &= "\\def\\gbaltomontaje{" & Format(hLibro["alto_montaje"], "0.00") & "truecm}" & gb.NewLine
+  Else
+    s &= "% SIN MEDIDAS DE MONTAJE: EL MODO IMPRENTA NO ESTÁ DISPONIBLE" & gb.NewLine
+    s &= "\\def\\gbanchomontaje{}" & gb.NewLine
+    s &= "\\def\\gbaltomontaje{}" & gb.NewLine
+  Endif
+  s &= gb.NewLine
+
+  ' 8.3 IDIOMA
+  s &= "% --- IDIOMA ---" & gb.NewLine
+  s &= "\\def\\gbidiomas{" & sIdiomasBabel & "}" & gb.NewLine
+  s &= "\\def\\gbidiomaprincipal{" & sIdiomaPrincipal & "}" & gb.NewLine
+  s &= "\\newif\\ifgbcjk   \\gbcjkfalse" & gb.NewLine
+  s &= gb.NewLine
+
+  ' 8.4 BIBLIOGRAFÍA
+  s &= "% --- BIBLIOGRAFÍA ---" & gb.NewLine
+  s &= "\\def\\estandar{" & sEstilo & "}" & gb.NewLine
+  s &= "\\newif\\ifgbbibporcapitulo   \\gbbibporcapitulo" &
+       IIf(LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada", "false", "true") & gb.NewLine
+  s &= "\\def\\gbarchivobib{./" & CARPETA_REFERENCIAS & "/" &
+       m_Bibtex.NombreArchivoBib() & "}" & gb.NewLine
+  s &= gb.NewLine
+
+  ' 8.5 METADATOS DEL PDF
+  s &= "% --- METADATOS DEL PDF ---" & gb.NewLine
+  s &= "\\def\\gbtitulo{" & EscaparTeX(hLibro["titulo_libro"]) & "}" & gb.NewLine
+  s &= "\\def\\gbsubtitulo{" & EscaparTeX(NuloAVacio(hLibro["subtitulo"])) & "}" & gb.NewLine
+  s &= "\\def\\gbtituloabreviado{" & EscaparTeX(NuloAVacio(hLibro["titulo_abreviado"])) & "}" & gb.NewLine
+  s &= "\\def\\gbautores{" & EscaparTeX(sAutores) & "}" & gb.NewLine
+  s &= "\\def\\gbeditorial{" & EscaparTeX(NuloAVacio(hLibro["editorial"])) & "}" & gb.NewLine
+  s &= "\\def\\gbciudad{" & EscaparTeX(NuloAVacio(hLibro["ciudad_publicacion"])) & "}" & gb.NewLine
+  s &= "\\def\\gbanio{" & NuloAVacio(hLibro["ano_publicacion"]) & "}" & gb.NewLine
+  s &= "\\def\\gbisbn{" & EscaparTeX(NuloAVacio(hLibro["isbn_impreso"])) & "}" & gb.NewLine
+  s &= "\\def\\gbisbnelectronico{" & EscaparTeX(NuloAVacio(hLibro["isbn_electronico"])) & "}" & gb.NewLine
+  s &= "\\def\\gbdoi{" & EscaparTeX(NuloAVacio(hLibro["doi_libro"])) & "}" & gb.NewLine
+  s &= "\\def\\gblicencia{" & EscaparTeX(NuloAVacio(hLibro["licencia_defecto"])) & "}" & gb.NewLine
+  s &= "\\def\\gburllicencia{" & EscaparURL(NuloAVacio(hLibro["url_licencia"])) & "}" & gb.NewLine
+  s &= "\\def\\gbpalabrasclave{" & EscaparTeX(NuloAVacio(hLibro["palabras_clave_libro"])) & "}" & gb.NewLine
+  s &= gb.NewLine
+
+  ' 8.6 VERSIÓN
+  ' NO ES UNA MARCA DE TIEMPO: CAMBIA SOLO CUANDO CAMBIA LA APP, Y ESE CAMBIO
+  ' ES SEÑAL LEGÍTIMA EN EL DIFF, NO RUIDO.
+  s &= "% --- VERSIÓN DE gbpublisher ---" & gb.NewLine
+  s &= "\\def\\gbversion{" & Application.Version & "}" & gb.NewLine
+
+  ' --- 9. ESCRITURA ---
+  ' File.Save OPERA EN UTF-8 NATIVAMENTE: NO PASAR PARÁMETROS DE CODIFICACIÓN
+  ' NI RECODIFICAR (SC-02).
+  sRutaArchivo = sRutaLatex &/ NOMBRE_PREAMBULO_PROYECTO
+
+  Try File.Save(sRutaArchivo, s)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el preámbulo del proyecto:" & gb.NewLine &
+      sRutaArchivo & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+
+' ============================================
+' Función   : NuloAVacio
+' Propósito : Convierte un valor NULL de la base en cadena vacía. Sin esto,
+'             concatenar un campo NULL propaga el nulo a toda la expresión.
+' Parámetros: vValor As Variant — valor leído de un Result
+' Retorna   : String — el valor como texto, o "" si era NULL
+' Nota      : NO USAR CStr() SOBRE UN Boolean: DEVUELVE "T" O CADENA VACÍA, Y
+'             UN False SE VUELVE INDISTINGUIBLE DE UN NULL (GV-10). ACÁ NO
+'             ENTRAN BOOLEANOS, PERO LA REGLA VALE SI SE EXTIENDE LA FUNCIÓN.
+' ============================================
+Private Function NuloAVacio(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return Trim(CStr(vValor))
+
+End
