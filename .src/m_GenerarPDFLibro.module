@@ -35,6 +35,12 @@ Private Const ZONA_BODY As Integer = 2
 Private Const ZONA_APENDICE As Integer = 3
 Private Const ZONA_BACK As Integer = 4
 
+' MARGEN QUE SE AGREGA POR LADO PARA LAS CRUCES DE CORTE, EN CENTÍMETROS.
+' CUBRE EL SANGRADO —DE 3 A 5 mm— MÁS EL LARGO DE LA MARCA. LAS CRUCES SOLO
+' NECESITAN LUGAR, Y ESE LUGAR ES EL MISMO PARA CUALQUIER FORMATO: 150×220
+' DA 175×245, QUE ES LA PRÁCTICA CORRIENTE.
+Private Const MARGEN_MONTAJE As Float = 1.25
+
 ' ============================================
 ' Función   : EscaparTeX
 ' Propósito : Escapa los diez caracteres activos de LaTeX en un texto que
@@ -432,7 +438,6 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Dim s As String
   Dim sRutaLatex As String
   Dim sRutaArchivo As String
-  Dim sModo As String
   Dim sEstilo As String
   Dim sAutores As String
   Dim sIdiomaPrincipal As String
@@ -440,10 +445,9 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Dim sCodigo As String
   Dim aCodigos As String[]
   Dim aIdiomas As New String[]
+  Dim aPrest As String[]
   Dim iIdLibro As Integer
   Dim iFormato As Integer
-  Dim bHayMontaje As Boolean
-  Dim aPrest As String
 
   ' --- 1. VALIDACIÓN DE PROYECTO ABIERTO ---
   If m_InicioCierre.IdProyectoEnCurso = 0 Then
@@ -476,8 +480,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
     "       l.id_formato_pdf, " &
     "       f.nombre_formato, f.ancho, f.alto, " &
     "       f.margen_interior, f.margen_exterior, " &
-    "       f.margen_superior, f.margen_inferior, " &
-    "       f.ancho_montaje, f.alto_montaje " &
+    "       f.margen_superior, f.margen_inferior " &
     "FROM libros_md l " &
     "LEFT JOIN formatos_pdf f ON f.id_formato_pdf = l.id_formato_pdf " &
     "WHERE l.id_proyecto = &1 LIMIT 1"
@@ -518,27 +521,11 @@ Public Function GenerarPreambuloProyecto() As Boolean
     Return False
   Endif
 
-  ' --- 4. MODO DE SALIDA Y MEDIDAS DE MONTAJE ---
-  sModo = PrestacionesDeSalida(hLibro["estado_libro"])
-
-  ' LAS DOS MEDIDAS DE MONTAJE SON UN DATO DE PRODUCCIÓN Y NO UNA DERIVACIÓN
-  ' DEL FORMATO: LA APP NO LAS CALCULA.
-  bHayMontaje = False
-  If Not IsNull(hLibro["ancho_montaje"]) Then
-    If Not IsNull(hLibro["alto_montaje"]) Then
-      bHayMontaje = True
-    Endif
-  Endif
-
-  If sModo = "imprenta" Then
-    If Not bHayMontaje Then
-      m_Sonido.sonar("Error")
-      Message.Error("El formato «" & hLibro["nombre_formato"] &
-        "» no tiene cargadas las medidas de la hoja de montaje." & gb.NewLine &
-        "Sin ellas no se pueden poner las cruces de corte.")
-      Return False
-    Endif
-  Endif
+  ' --- 4. PRESTACIONES DE SALIDA ---
+  ' SE EMITEN PRESTACIONES Y NO UN «MODO»: ASÍ, AGREGAR UN ESTADO EDITORIAL
+  ' NUEVO NO OBLIGA A TOCAR EL PREÁMBULO, Y CADA BANDERA DICE QUÉ HACE EN VEZ
+  ' DE CÓMO SE LLAMA.
+  aPrest = PrestacionesDeSalida(hLibro["estado_libro"])
 
   ' --- 5. ESTILO DE CITA ---
   ' EL CANÓNICO TAMBIÉN LO TRAE, PERO LA FUENTE ES LA BASE: EL XML ES COPIA.
@@ -615,16 +602,10 @@ Public Function GenerarPreambuloProyecto() As Boolean
   s &= "% ============================================================" & gb.NewLine
   s &= gb.NewLine
 
-  ' ' 8.1 MODO DE SALIDA
-  ' s &= "% --- MODO DE SALIDA (derivado de estado_libro) ---" & gb.NewLine
-  ' s &= "\\newif\\ifgbborrador   \\gbborrador" &
-  '   IIf(sModo = "borrador", "true", "false") & gb.NewLine
-  ' s &= "\\newif\\ifgbimprenta   \\gbimprenta" &
-  '   IIf(sModo = "imprenta", "true", "false") & gb.NewLine
-  ' s &= gb.NewLine
-
   ' 8.1 PRESTACIONES DE SALIDA
-  aPrest = PrestacionesDeSalida(hLibro["estado_libro"])
+  ' aPrest YA VIENE CARGADO DEL APARTADO 4. NO SE VUELVE A LLAMAR A
+  ' PrestacionesDeSalida: DOS LLAMADAS SON DOS LUGARES QUE ALGUIEN PUEDE
+  ' CAMBIAR POR SEPARADO, Y EL DERIVADO SALDRÍA CON BANDERAS INCONSISTENTES.
   s &= "% --- PRESTACIONES DE SALIDA (derivadas de estado_libro) ---" & gb.NewLine
   s &= "\\newif\\ifgbshowframe    \\gbshowframe" & aPrest[0] & gb.NewLine
   s &= "\\newif\\ifgbhomeoarchy   \\gbhomeoarchy" & aPrest[1] & gb.NewLine
@@ -642,16 +623,15 @@ Public Function GenerarPreambuloProyecto() As Boolean
   s &= "\\def\\gbmargeninferior{" & NumeroLatex(hLibro["margen_inferior"]) & "cm}" & gb.NewLine
   s &= "\\def\\gbnombreformato{" & EscaparTeX(hLibro["nombre_formato"]) & "}" & gb.NewLine
 
+  ' LA HOJA DE MONTAJE ES EL FORMATO FINAL MÁS EL MARGEN DE CRUCES POR LADO.
+  ' NO SE GUARDA EN LA BASE PORQUE NO HACE FALTA: LAS CRUCES SOLO NECESITAN
+  ' LUGAR, Y ESE LUGAR ES EL MISMO PARA CUALQUIER FORMATO. 15x23 DA 17,5x25,5.
   ' truecm Y NO cm: ES LA UNIDAD INMUNE A \mag, QUE ES LO QUE CORRESPONDE EN
   ' UNA MEDIDA DE MONTAJE.
-  If bHayMontaje Then
-    s &= "\\def\\gbanchomontaje{" & NumeroLatex(hLibro["ancho_montaje"]) & "truecm}" & gb.NewLine
-    s &= "\\def\\gbaltomontaje{" & NumeroLatex(hLibro["alto_montaje"]) & "truecm}" & gb.NewLine
-  Else
-    s &= "% SIN MEDIDAS DE MONTAJE: EL MODO IMPRENTA NO ESTÁ DISPONIBLE" & gb.NewLine
-    s &= "\\def\\gbanchomontaje{}" & gb.NewLine
-    s &= "\\def\\gbaltomontaje{}" & gb.NewLine
-  Endif
+  s &= "\\def\\gbanchomontaje{" &
+    NumeroLatex(hLibro["ancho"] + 2 * MARGEN_MONTAJE) & "truecm}" & gb.NewLine
+  s &= "\\def\\gbaltomontaje{" &
+    NumeroLatex(hLibro["alto"] + 2 * MARGEN_MONTAJE) & "truecm}" & gb.NewLine
   s &= gb.NewLine
 
   ' 8.3 IDIOMA
@@ -969,14 +949,7 @@ Public Function GenerarMainTeX() As Boolean
   iIdLibro = hLibro["id_libro"]
   bConsolidada = (LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada")
 
-  ' --- 2. COPIA DE RECURSOS ---
-  ' SE REPITE AUNQUE YA SE HAYA HECHO AL ABRIR EL PROYECTO: UNA ACTUALIZACIÓN
-  ' DE gbpublisher ENTRE UNA COSA Y LA OTRA DEJARÍA EL PROYECTO CON PREÁMBULOS
-  ' VIEJOS, Y \gbRequiereContrato NO FRENARÍA PORQUE LA COPIA LOCAL SERÍA VIEJA
-  ' PERO CONSISTENTE.
-  If Not m_InicioCierre.CopiarRecursosLatex(sDirLatex) Then Return False
-
-  ' --- 3. LISTA DE PIEZAS DECLARADAS ---
+  ' --- 2. LISTA DE PIEZAS DECLARADAS ---
   ' EL ORDEN SALE DEL NOMBRE DE ARCHIVO Y NO DE UN id: UN id REFLEJA CUÁNDO SE
   ' CARGÓ LA PIEZA, NO DÓNDE VA. LOS CAPÍTULOS NO LLEGAN JUNTOS NI EN ORDEN.
   ' LA NUMERACIÓN DE DOS DÍGITOS HACE QUE EL ORDEN ALFABÉTICO EQUIVALGA AL
@@ -1014,7 +987,7 @@ Public Function GenerarMainTeX() As Boolean
     aSubtituloParte.Add(NuloAVacio(hPiezas["subtitulo_parte"]))
   Next
 
-  ' --- 4. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
+  ' --- 3. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
   ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX.
   For i = 0 To aNombre.Max
     sComando = ComandoGenerado(aTipo[i])
@@ -1027,11 +1000,11 @@ Public Function GenerarMainTeX() As Boolean
 
   BorrarTexHuerfanos(sDirLatex, cDeclarados)
 
-  ' --- 5. PREÁMBULO DERIVADO Y BIBLIOGRAFÍA ---
+  ' --- 4. PREÁMBULO DERIVADO Y BIBLIOGRAFÍA ---
   If Not GenerarPreambuloProyecto() Then Return False
   If Not m_Bibtex.ExportarBibTeX() Then Return False
 
-  ' --- 6. PIEZAS QUE EL GENERADOR NO DEBE DUPLICAR ---
+  ' --- 5. PIEZAS QUE EL GENERADOR NO DEBE DUPLICAR ---
   ' SI EL EDITOR DECLARÓ UNA PIEZA DE BIBLIOGRAFÍA O DE COLOFÓN, ESA
   ' DECLARACIÓN ES LA QUE MANDA Y FIJA DÓNDE VAN. SIN ESTE CHEQUEO SALDRÍAN
   ' DOS VECES.
@@ -1043,7 +1016,7 @@ Public Function GenerarMainTeX() As Boolean
     If LCase(aTipo[i]) = "colofon" Then bHayColofon = True
   Next
 
-  ' --- 7. CABECERA DEL main.tex ---
+  ' --- 6. CABECERA DEL main.tex ---
   s = "%%GB:MAIN:1" & gb.NewLine
   s &= "% ============================================================" & gb.NewLine
   s &= "% main.tex — GENERADO POR gbpublisher" & gb.NewLine
@@ -1067,7 +1040,7 @@ Public Function GenerarMainTeX() As Boolean
   s &= "% PAQUETE FUERA DE TeX Live, NINGÚN --shell-escape." & gb.NewLine
   s &= "% ============================================================" & gb.NewLine
   s &= gb.NewLine
-  s &= "\\documentclass[11pt,twoside,openright]{book}" & gb.NewLine
+  s &= "\\documentclass[twoside,openright]{book}" & gb.NewLine
   s &= gb.NewLine
   s &= "%%GB:PREAMBULO:INICIO" & gb.NewLine
   s &= "\\input{preambulo-proyecto}" & gb.NewLine
@@ -1105,7 +1078,7 @@ Public Function GenerarMainTeX() As Boolean
   s &= "% book, NO UN ERROR DEL GENERADOR." & gb.NewLine
   s &= "% ============================================================" & gb.NewLine
 
-  ' --- 8. RECORRIDO DE LAS PIEZAS POR ZONA ---
+  ' --- 7. RECORRIDO DE LAS PIEZAS POR ZONA ---
   iZonaActual = 0
   iParteActual = -1
 
@@ -1116,14 +1089,14 @@ Public Function GenerarMainTeX() As Boolean
     iZona = ZonaDeTipo(sTipo)
     sComando = ComandoGenerado(sTipo)
 
-    ' 8.1 CAMBIO DE ZONA
+    ' 7.1 CAMBIO DE ZONA
     If iZona <> iZonaActual Then
       s &= CerrarZona(iZonaActual)
       s &= AbrirZona(iZona)
       iZonaActual = iZona
     Endif
 
-    ' 8.2 APERTURA DE PARTE
+    ' 7.2 APERTURA DE PARTE
     ' LAS PARTES NO SON ARCHIVOS: SON METADATOS DE partes_libro Y NO LLEVAN
     ' TEXTO PROPIO. LAS EMITE EL GENERADOR ANTES DEL PRIMER CAPÍTULO DE CADA
     ' UNA.
@@ -1135,7 +1108,7 @@ Public Function GenerarMainTeX() As Boolean
       Endif
     Endif
 
-    ' 8.3 LA PIEZA
+    ' 7.3 LA PIEZA
     If sComando <> "" Then
       ' PIEZA SIN CUERPO: LA PRODUCE LaTeX, NO HAY ARCHIVO QUE INCLUIR
       s &= sComando & gb.NewLine
@@ -1160,7 +1133,7 @@ Public Function GenerarMainTeX() As Boolean
 
   Next
 
-  ' --- 9. CIERRE ---
+  ' --- 8. CIERRE ---
   ' SI FALTA ALGO QUE VA EN POSLIMINARES Y NO SE DECLARÓ COMO PIEZA, SE ABRE LA
   ' ZONA ACÁ.
   If Not bHayColofon Or If (bConsolidada And Not bHayBibliografia) Then
