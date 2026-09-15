@@ -197,7 +197,7 @@
   <!-- ============================================================ -->
 
   <xsl:template match="chapter | preface | acknowledgements |
-                       appendix | colophon | dedication">
+                       appendix | colophon | dedication | glossary">
 
     <!-- 1. CLASIFICACIÓN DE LA PIEZA -->
     <xsl:variable name="seccion"
@@ -219,12 +219,29 @@
       and $orden castable as xs:integer
       and xs:integer($orden) &lt; 10"/>
 
-    <!-- 2. HAY QUE ABRIR refsection -->
-    <!-- CADA PIEZA ES AUTOCONTENIDA: ABRE SU PROPIA refsection Y   -->
-    <!-- EMITE SU \printbibliography SIN NÚMERO. ASÍ \includeonly   -->
-    <!-- NO DESPLAZA LA NUMERACIÓN DE LAS SECCIONES BIBLIOGRÁFICAS. -->
+    <!-- ==========================================================
+         2. BIBLIOGRAFÍA POR CAPÍTULO
+         ==========================================================
+         LA SEÑAL ES LA PRESENCIA DE <bibliography> EN LA PIEZA, Y NO
+         LA DE CITAS.
+
+         ensamblar-capitulo-canonico.xsl INSERTA ESE ELEMENTO SOLO SI
+         GAMBAS LE PASA EL PARÁMETRO biblio, Y SE LO PASA SOLO CUANDO
+         libros_md.lugar_bibliografia ES 'por_capitulo'. ASÍ QUE EL
+         MODO YA ESTÁ EXPRESADO EN EL DOCUMENTO Y NO HACE FALTA
+         PASARLO POR PARÁMETRO NI POR MARCADOR.
+
+         CON 'consolidada' LA PIEZA TIENE CITAS PERO NO <bibliography>:
+         NO ABRE refsection Y NO EMITE LISTA. LA ÚNICA LA PONE EL
+         main.tex DESPUÉS DEL \backmatter, QUE ES EL ÚNICO LUGAR DESDE
+         DONDE SE PUEDE EMITIR.
+
+         CADA PIEZA ES AUTOCONTENIDA: ABRE SU PROPIA refsection Y EMITE
+         SU \printbibliography SIN NÚMERO, ASÍ \includeonly NO DESPLAZA
+         LA NUMERACIÓN DE LAS SECCIONES BIBLIOGRÁFICAS.
+         ========================================================== -->
     <xsl:variable name="conCitas" as="xs:boolean"
-      select="exists(.//biblioref) or exists(.//bibliography)"/>
+      select="exists(.//bibliography)"/>
 
     <xsl:choose>
 
@@ -253,16 +270,33 @@
         <!-- LOS PRELIMINARES Y POSLIMINARES NO SE NUMERAN, PERO SÍ -->
         <!-- ENTRAN AL ÍNDICE GENERAL: POR ESO \chapter* MÁS        -->
         <!-- \addcontentsline Y NO \chapter A SECAS.                -->
-        <!-- SOLO DOS TIPOS LLEVAN NÚMERO: EL CAPÍTULO CORRIENTE Y  -->
-        <!-- EL APÉNDICE, QUE NUMERA CON LETRA POR EFECTO DE          -->
-        <!-- \appendix. TODO LO DEMÁS VA CON \chapter* MÁS            -->
-        <!-- \addcontentsline, QUE ENTRA AL SUMARIO SIN NÚMERO.       -->
-        <!-- SIN tipo-capitulo SE CAE AL CRITERIO DE CARPETA, QUE ES  -->
-        <!-- LO ÚNICO DISPONIBLE MIENTRAS EL ENSAMBLADOR NO LO EMITA. -->
+        <!-- ==========================================================
+             NUMERACIÓN
+             ==========================================================
+             SE DERIVA DEL ELEMENTO Y DEL role, QUE YA ESTÁN EN EL
+             CANÓNICO: ensamblar-capitulo-canonico.xsl LOS ESCRIBE A
+             PARTIR DE capitulos.tipo_capitulo. NO HACE FALTA UN
+             MARCADOR ADICIONAL PARA UN DATO QUE EL DOCUMENTO YA
+             EXPRESA EN VOCABULARIO DocBook.
+
+               <chapter> sin role            → capítulo, NUMERADO
+               <chapter role="introduccion">  → SIN NUMERAR
+               <chapter role="conclusiones">  → SIN NUMERAR
+               <chapter role="epilogo">       → SIN NUMERAR
+               <appendix>                     → NUMERADO, CON LETRA
+               todo lo demás                  → SIN NUMERAR
+
+             LO NO NUMERADO VA CON \chapter* MÁS \addcontentsline, QUE
+             ENTRA AL SUMARIO SIN NÚMERO.
+
+             bibliomisc[@role='tipo-capitulo'] SE RESPETA SI ESTÁ, PARA
+             EL CANÓNICO ENSAMBLADO DEL LIBRO, QUE SÍ LO TRAE.
+             ========================================================== -->
         <xsl:variable name="numerado" as="xs:boolean" select="
           if ($tipo != '')
           then $tipo = ('capitulo', 'apendice')
-          else (self::chapter and $seccion != 'fm' and $seccion != 'bm')"/>
+          else ((self::chapter and normalize-space(@role) = '')
+                or self::appendix)"/>
         <xsl:variable name="titulo"
           select="normalize-space((info/title, title)[1])"/>
 

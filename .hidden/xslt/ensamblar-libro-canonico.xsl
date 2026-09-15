@@ -102,14 +102,27 @@ DOCUMENTACIÓN DE REFERENCIA:
     <!-- ==========================================================
          EMITIR EL <book> RAÍZ CON xml:lang
          ========================================================== -->
-    <book xml:lang="{$idiomaPrincipal}">
+    <!-- @version VA EN LA RAÍZ, QUE ES DONDE DocBook LA ESPERA. LAS PIEZAS
+         LA TRAEN EN SU PROPIA RAÍZ Y AL COPIARSE QUEDABA REDUNDANTE ADENTRO:
+         SE LES QUITA EN LOS MODOS DE COPIA. -->
+    <book version="5.2" xml:lang="{$idiomaPrincipal}">
 
-      <!-- INSERTAR EL <info> DEL LIBRO -->
-      <!-- copy-namespaces="no" EVITA RE-DECLARAR NAMESPACES REDUNDANTES -->
+      <!-- INSERTAR EL <info> DEL LIBRO, CON EL MODELO DE BIBLIOGRAFÍA
+           INYECTADO COMO custom-meta.
+           RC-XJ-02: EL DATO VIENE DE LA BASE Y NO DEL MANUSCRITO, ASÍ QUE SE
+           ESCRIBE EN EL XML Y NO SE PASA COMO PARÁMETRO DE SAXON A LAS HOJAS
+           DE SALIDA. ESTA HOJA SÍ LO RECIBE POR PARÁMETRO PORQUE ES LA QUE
+           CONSTRUYE EL CANÓNICO; DE ACÁ EN ADELANTE VIAJA EN EL DOCUMENTO Y
+           docbook-to-latex.xsl NO NECESITA SABER NADA DE LA LÍNEA DE COMANDOS. -->
       <xsl:choose>
         <xsl:when test="doc-available($infoLibroPath)">
-          <xsl:copy-of select="doc($infoLibroPath)/*"
-                       copy-namespaces="no"/>
+          <info>
+            <xsl:copy-of select="doc($infoLibroPath)/*/@*" copy-namespaces="no"/>
+            <xsl:copy-of select="doc($infoLibroPath)/*/node()" copy-namespaces="no"/>
+            <bibliomisc role="lugar-bibliografia">
+              <xsl:value-of select="$lugar_bibliografia"/>
+            </bibliomisc>
+          </info>
         </xsl:when>
         <xsl:otherwise>
           <xsl:message terminate="yes">
@@ -141,6 +154,30 @@ DOCUMENTACIÓN DE REFERENCIA:
         <!-- LA NUMERACIÓN NN GARANTIZA EL ORDEN CORRECTO -->
         <xsl:sort select="@nombre_archivo" data-type="text"/>
 
+        <!-- ==========================================================
+             MARCADORES DE UBICACIÓN DE LA PIEZA
+             ==========================================================
+             seccion-libro Y orden-seccion SE DERIVAN DEL NOMBRE DE ARCHIVO,
+             QUE ES DONDE VIVE ESE HECHO: LA CARPETA DA LA SECCIÓN Y EL NÚMERO
+             DA EL ORDEN. HASTA AHORA ESO SE PERDÍA AL ENSAMBLAR Y EL CANÓNICO
+             NO PODÍA DECIR SI UNA PIEZA ERA PRELIMINAR O POSLIMINAR: TODAS
+             SALÍAN COMO <chapter> PLANOS.
+
+             tipo-capitulo NO SE PUEDE DERIVAR DEL NOMBRE: SALE DE
+             capitulos.tipo_capitulo Y TIENE QUE VENIR EN EL MANIFIESTO. SI
+             FALTA, NO SE EMITE Y LAS HOJAS DE SALIDA CAEN AL CRITERIO DE
+             CARPETA, QUE ES MÁS POBRE PERO NO ROMPE.
+             ES EL DATO QUE DECIDE LA ZONA LaTeX, Y LA ZONA NO COINCIDE CON LA
+             CARPETA: UNAS CONCLUSIONES VIVEN EN bm/ PERO VAN EN EL CUERPO,
+             SIN NUMERAR, ANTES DE \appendix.
+             ========================================================== -->
+        <xsl:variable name="seccion" as="xs:string"
+                      select="substring-before(@nombre_archivo, '-')"/>
+        <xsl:variable name="orden" as="xs:string"
+                      select="substring-before(substring-after(@nombre_archivo, '-'), '-')"/>
+        <xsl:variable name="tipo" as="xs:string"
+                      select="normalize-space(@tipo_capitulo)"/>
+
         <!-- CARGAR EL CANÓNICO DEL CAPÍTULO -->
         <xsl:variable name="capituloPath"
                       select="concat($proyecto_dir, '/', @path)"/>
@@ -160,6 +197,9 @@ DOCUMENTACIÓN DE REFERENCIA:
                   <xsl:with-param name="prefijo-cap"
                                   select="string($raizCapitulo/@xml:id)"
                                   tunnel="yes"/>
+                  <xsl:with-param name="seccion" select="$seccion" tunnel="yes"/>
+                  <xsl:with-param name="orden"   select="$orden"   tunnel="yes"/>
+                  <xsl:with-param name="tipo"    select="$tipo"    tunnel="yes"/>
                 </xsl:apply-templates>
               </xsl:when>
               <!-- MODELO consolidada: COPIAR EL CAPÍTULO SIN SU
@@ -168,7 +208,11 @@ DOCUMENTACIÓN DE REFERENCIA:
                    CITEKEY BASE (SIN PREFIJO), QUE ES EL xml:id DE LA
                    ENTRADA CONSOLIDADA. -->
               <xsl:otherwise>
-                <xsl:apply-templates select="$raizCapitulo" mode="sin-biblio"/>
+                <xsl:apply-templates select="$raizCapitulo" mode="sin-biblio">
+                  <xsl:with-param name="seccion" select="$seccion" tunnel="yes"/>
+                  <xsl:with-param name="orden"   select="$orden"   tunnel="yes"/>
+                  <xsl:with-param name="tipo"    select="$tipo"    tunnel="yes"/>
+                </xsl:apply-templates>
               </xsl:otherwise>
             </xsl:choose>
           </xsl:when>
@@ -199,8 +243,28 @@ DOCUMENTACIÓN DE REFERENCIA:
                       select="concat($proyecto_dir, '/', $biblio_libro)"/>
         <xsl:choose>
           <xsl:when test="$biblio_libro != '' and doc-available($biblioLibroPath)">
-            <!-- INSERTAR EL <bibliography> DEL FRAGMENTO TAL CUAL -->
-            <xsl:copy-of select="doc($biblioLibroPath)/*" copy-namespaces="no"/>
+            <!-- UNA <bibliography> CON SOLO EL <title> Y NINGUNA ENTRADA ES
+                 INVÁLIDA EN DocBook 5.2: EL MODELO DE CONTENIDO EXIGE AL
+                 MENOS UNA. Y EL DIAGNÓSTICO ES PÉSIMO, PORQUE RELAX NG NO
+                 SEÑALA LA BIBLIOGRAFÍA SINO EL PRIMER ELEMENTO DESPUÉS DEL
+                 <info>: "Element book has extra content: acknowledgements".
+                 UNA BIBLIOGRAFÍA SIN ENTRADAS NO ES UNA BIBLIOGRAFÍA VACÍA:
+                 ES UNA BIBLIOGRAFÍA QUE NO EXISTE. NO SE EMITE. -->
+            <xsl:variable name="biblioDoc" select="doc($biblioLibroPath)/*"/>
+            <xsl:choose>
+              <xsl:when test="$biblioDoc/db:biblioentry
+                              or $biblioDoc/db:bibliomixed
+                              or $biblioDoc/db:bibliodiv">
+                <xsl:copy-of select="$biblioDoc" copy-namespaces="no"/>
+              </xsl:when>
+              <xsl:otherwise>
+                <xsl:message>
+                  <xsl:text>AVISO: la bibliografía consolidada no tiene </xsl:text>
+                  <xsl:text>entradas. No se emite el elemento, porque una </xsl:text>
+                  <xsl:text>&lt;bibliography&gt; vacía invalida el canónico.</xsl:text>
+                </xsl:message>
+              </xsl:otherwise>
+            </xsl:choose>
           </xsl:when>
           <xsl:otherwise>
             <xsl:message terminate="yes">
@@ -215,6 +279,69 @@ DOCUMENTACIÓN DE REFERENCIA:
     </book>
 
   </xsl:template>
+
+  <!-- ==========================================================
+       RAÍZ DE LA PIEZA: INYECTAR LOS MARCADORES DE UBICACIÓN
+       ==========================================================
+       Vale para los dos modos de copia. Hace tres cosas:
+
+       1. QUITA @version DE LA PIEZA. Cada canónico de capítulo la trae en su
+          propia raíz, pero al copiarse dentro del <book> queda redundante:
+          la versión de DocBook es del documento, no de cada pieza.
+
+       2. INYECTA seccion-libro, orden-seccion y tipo-capitulo en el <info>.
+          Si la pieza no tiene <info>, se crea.
+
+       3. PRESERVA el resto del <info> tal como venía.
+
+       SIN ESTOS MARCADORES EL CANÓNICO NO PUEDE DECIR SI UNA PIEZA ES
+       PRELIMINAR, CUERPO O POSLIMINAR: TODAS SALEN COMO <chapter> PLANOS Y
+       LAS TRES RAMAS DE SALIDA —LaTeX, HTML Y EPUB— TIENEN QUE ADIVINAR.
+       ========================================================== -->
+  <xsl:template match="*[not(parent::*)]" mode="prefijar-biblio sin-biblio">
+    <xsl:param name="seccion" as="xs:string" tunnel="yes" select="''"/>
+    <xsl:param name="orden"   as="xs:string" tunnel="yes" select="''"/>
+    <xsl:param name="tipo"    as="xs:string" tunnel="yes" select="''"/>
+
+    <xsl:copy copy-namespaces="no">
+      <xsl:apply-templates select="@* except @version" mode="#current"/>
+
+      <info>
+        <xsl:apply-templates select="db:info/@* | db:info/node()" mode="#current"/>
+        <xsl:if test="$seccion != ''">
+          <bibliomisc role="seccion-libro">
+            <xsl:value-of select="$seccion"/>
+          </bibliomisc>
+        </xsl:if>
+        <xsl:if test="$orden != ''">
+          <bibliomisc role="orden-seccion">
+            <xsl:value-of select="$orden"/>
+          </bibliomisc>
+        </xsl:if>
+        <xsl:if test="$tipo != ''">
+          <bibliomisc role="tipo-capitulo">
+            <xsl:value-of select="$tipo"/>
+          </bibliomisc>
+        </xsl:if>
+      </info>
+
+      <xsl:apply-templates select="node() except db:info" mode="#current"/>
+    </xsl:copy>
+  </xsl:template>
+
+  <!-- ==========================================================
+       BIBLIOGRAFÍA DE CAPÍTULO SIN ENTRADAS: NO SE EMITE
+       ==========================================================
+       Mismo motivo que la consolidada: DocBook 5.2 exige al menos una
+       entrada, y una <bibliography> con solo el <title> invalida el
+       canónico entero con un mensaje que señala el primer elemento
+       después del <info>, no la bibliografía.
+       En modo sin-biblio todas se omiten igual, así que esto solo
+       aplica a por_capitulo. -->
+  <xsl:template match="db:bibliography[not(db:biblioentry
+                                           | db:bibliomixed
+                                           | db:bibliodiv)]"
+                mode="prefijar-biblio"/>
 
   <!-- ==========================================================
        MODO sin-biblio: COPIA IDENTIDAD QUE OMITE EL <bibliography>

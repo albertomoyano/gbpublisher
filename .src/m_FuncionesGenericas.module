@@ -3709,3 +3709,137 @@ Public Function SanearNombreArchivo(sTexto As String) As String
   Return sResultado
 
 End
+
+' ============================================
+' Función   : DescripcionInvisible
+' Propósito : Nombre legible de un carácter invisible o problemático, para
+'             poder decirle al usuario qué se encontró.
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : String — descripción, o "" si el carácter no es problemático
+' ============================================
+Private Function DescripcionInvisible(iCodigo As Integer) As String
+
+  Select Case iCodigo
+      ' --- SE ELIMINAN: NO APORTAN NADA Y SON PURO DAÑO ---
+    Case 173
+      Return "guion suave (partición automática de Word)"
+    Case 8203
+      Return "espacio de ancho cero"
+    Case 8204, 8205
+      Return "marca de unión de caracteres"
+    Case 8206, 8207
+      Return "marca de dirección de escritura"
+    Case 8288
+      Return "unión de palabras"
+    Case 65279
+      Return "marca de orden de bytes"
+
+      ' --- SE NORMALIZAN A SU EQUIVALENTE VISIBLE ---
+    Case 160
+      Return "espacio irrompible"
+    Case 8199
+      Return "espacio de cifra"
+    Case 8239
+      Return "espacio irrompible angosto"
+    Case 8209
+      Return "guion irrompible"
+    Case 8232, 8233
+      Return "salto de línea de Word"
+
+    Case Else
+      Return ""
+  End Select
+
+End
+
+' ============================================
+' Función   : DetectarInvisibles
+' Propósito : Lista los caracteres invisibles que hay en un texto, sin
+'             modificarlo. Sirve para avisarle al usuario antes de limpiar.
+' Parámetros: sTexto As String — texto a revisar
+' Retorna   : String[] — descripciones sin repetir; vacío si está limpio
+' Nota      : SE DEVUELVE EL HALLAZGO COMO RETORNO Y NO POR PARÁMETRO: EN
+'             GAMBAS LOS PRIMITIVOS SE PASAN SIEMPRE POR VALOR, CON ByRef O
+'             SIN ÉL, ASÍ QUE UN PARÁMETRO DE SALIDA NO PROPAGA NADA (GV-24).
+'             SE RECORRE POR CODEPOINT CON String.Len Y String.Code, NO CON
+'             Len Y Mid, QUE OPERAN EN BYTES Y CORTAN LOS MULTIBYTE
+'             (RC-GM-12, SC-02).
+' ============================================
+Public Function DetectarInvisibles(sTexto As String) As String[]
+
+  Dim aHallazgos As New String[]
+  Dim sDesc As String
+  Dim iPos As Integer
+  Dim iCod As Integer
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If sTexto = "" Then Return aHallazgos
+
+  ' --- 2. RECORRIDO POR CODEPOINT ---
+  For iPos = 1 To String.Len(sTexto)
+    iCod = String.Code(sTexto, iPos)
+    sDesc = DescripcionInvisible(iCod)
+    If sDesc <> "" Then
+      If Not aHallazgos.Exist(sDesc) Then aHallazgos.Add(sDesc)
+    Endif
+  Next
+
+  Return aHallazgos
+
+End
+
+' ============================================
+' Función   : LimpiarTextoPegado
+' Propósito : Quita los caracteres invisibles de un texto y normaliza los
+'             espacios y guiones especiales a su equivalente común.
+' Parámetros: sTexto As String — texto tal como lo pegó el usuario
+' Retorna   : String — texto limpio
+' Nota      : NO SE TOCAN LAS COMILLAS TIPOGRÁFICAS NI EL APÓSTROFO CURVO:
+'             SON DECISIONES TIPOGRÁFICAS LEGÍTIMAS Y NO BASURA DE PEGADO.
+'             LA COMILLA RECTA TAMPOCO SE CONVIERTE ACÁ: ESO ES NORMA
+'             EDITORIAL, NO LIMPIEZA, Y SE VALIDA APARTE (SC-09).
+' ============================================
+Public Function LimpiarTextoPegado(sTexto As String) As String
+
+  Dim sRes As String = ""
+  Dim iPos As Integer
+  Dim iCod As Integer
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If sTexto = "" Then Return ""
+
+  ' --- 2. RECORRIDO POR CODEPOINT ---
+  ' PASADA ÚNICA: CADA CARÁCTER SE MIRA UNA VEZ Y SU REEMPLAZO NO VUELVE A
+  ' ENTRAR AL PROCESO. NO SE ENCADENAN Replace(), QUE ES EL PATRÓN QUE YA
+  ' PRODUJO BUGS DE REENTRADA EN EL ESCAPE DE LaTeX Y EN LA EXPORTACIÓN BibTeX.
+  For iPos = 1 To String.Len(sTexto)
+    iCod = String.Code(sTexto, iPos)
+
+    Select Case iCod
+        ' --- SE ELIMINAN ---
+      Case 173, 8203, 8204, 8205, 8206, 8207, 8288, 65279
+        ' NO SE AGREGA NADA
+
+        ' --- SE NORMALIZAN A ESPACIO COMÚN ---
+      Case 160, 8199, 8239, 8232, 8233, 9, 10, 13
+        sRes &= " "
+
+        ' --- SE NORMALIZA A GUION COMÚN ---
+      Case 8209
+        sRes &= "-"
+
+      Case Else
+        sRes &= String.Mid(sTexto, iPos, 1)
+    End Select
+  Next
+
+  ' --- 3. COLAPSO DE ESPACIOS Y RECORTE ---
+  ' EL TEXTO PEGADO DESDE WORD TRAE ESPACIOS DOBLES CON FRECUENCIA, Y UN CAMPO
+  ' BIBLIOGRÁFICO NO TIENE MOTIVO PARA LLEVARLOS.
+  While InStr(sRes, "  ") > 0
+    sRes = Replace(sRes, "  ", " ")
+  Wend
+
+  Return Trim(sRes)
+
+End

@@ -818,210 +818,6 @@ Catch
 
 End
 
-Public Sub GuardarCambiosBibtex()
-  ' VERIFICAMOS CAMPOS
-
-  If VerificacionBase() Then Return
-
-  ' ACTUALIZAR INTERFAZ INMEDIATAMENTE
-  FMain.btnGuardarCambiosBib.Visible = False
-  FMain.BtnEliminarBib.Visible = False
-  Wait
-
-  ContenidoBib = m_ConexionBD.mConn.Edit("bibtex", "id=" & FMain.id_bibtex.Text)
-  If Not ContenidoBib.Available Then
-    ' RESTAURAR BOTONES SI HAY ERROR
-    FMain.btnGuardarCambiosBib.Visible = True
-    FMain.BtnEliminarBib.Visible = True
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontró la referencia para editar.")
-    Return
-  Endif
-
-  GuardarCamposBib()
-  ContenidoBib.Update
-  m_ConexionBD.mConn.Commit()
-  RefrescarTableViewBibtexEnCurso()
-  FMain.gvReferenciasEnCurso.Refresh()
-  LimpiarTextboxBibtex()
-  m_Sonido.sonar("Info")
-  Message.Info("Cambios guardados correctamente.")
-
-  ' CONFIGURAR ESTADO FINAL DE BOTONES
-  FMain.BtnNuevoBib.Visible = True
-  FMain.btnGuardarBib.Visible = False
-  FMain.HBoxTipoDeTesis.Visible = False
-Catch
-  ' RESTAURAR BOTONES SI HAY ERROR
-  FMain.btnGuardarCambiosBib.Visible = True
-  FMain.BtnEliminarBib.Visible = True
-  m_Sonido.sonar("Error")
-  Message.Error("Error al guardar los cambios: " & Error.Text)
-
-End
-
-Public Sub GuardarBibtex()
-
-  If Trim(FMain.txtClaveBibtex.Text) = "" Then
-    m_Sonido.sonar("Info")
-    Message.Info("Debe generar una clave.\nNo es posible guardar la entrada.")
-    Return
-  Endif
-
-  ' VERIFICAMOS CAMPOS
-  If VerificacionBase() Then Return
-
-  ' Result LOCAL PARA NO PISAR ContenidoBib (FUENTE DE DATOS DEL GRID), E ID
-  ' DESDE LA GLOBAL (RC-GM-16): SI id_proyecto SE RESETEÓ POR UN EVENTO, EL
-  ' CHEQUEO CORRERÍA CONTRA id_proyecto = 0 Y TRAERÍA UN CONJUNTO EQUIVOCADO
-  Dim rDuplicado As Result
-  rDuplicado = m_ConexionBD.mConn.Exec("SELECT id FROM bibtex WHERE title = &1 AND id_proyecto = &2", Trim(FMain.txtTitle.Text), m_InicioCierre.IdProyectoEnCurso)
-
-  ' VERIFICAR SI SE ENCONTRARON RESULTADOS EN LA CONSULTA
-  If rDuplicado.Count > 0 Then
-    m_Sonido.sonar("Error")
-    Message.Error("El título que desea agregar ya existe en este libro/revista.")
-
-    ' CAMBIAR LA VISIBILIDAD DEL BOTÓN
-    mostrarIguales()
-    FMain.gvReferenciasEnCurso.ScrollY = 0
-    FMain.BtnNuevoBib.Visible = True
-    FMain.btnGuardarBib.Visible = False
-    FMain.btnGuardarIGUAL.Visible = True
-    FMain.TabPanel5.Index = 0
-    Return ' SALIR DE LA FUNCIÓN SI EL TÍTULO YA EXISTE
-  Endif
-
-  If VerificarCaracteresInvalidos() Then Return
-
-  If VerificacionBase() Then Return
-
-  GuardarBibtexPrimeraVez()
-  LimpiarTextboxBibtex()
-
-  FMain.txtTMPbiblio.Enabled = False
-  FMain.txtTMPbiblio.Background = Color.Background
-  FMain.txtTMPbiblio.Clear
-  FMain.TabPanel5.Index = 0
-
-  FMain.BtnNuevoBib.Visible = True
-  FMain.btnGuardarBib.Visible = False
-  FMain.btnGuardarCambiosBib.Visible = False
-  FMain.BtnEliminarBib.Visible = False
-  FMain.HBoxTipoDeTesis.Visible = False 'ASEGURAMOS ESCONDER EL TIPO DE TESIS
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Se obtuvo el siguiente error al intentar guardar: <b>" & Error.Text & "</b>.")
-
-End
-
-' Public Sub ExportarBibTeX() As Boolean
-'
-'   Dim s As String
-'   Dim f As ResultField
-'   Dim aFields As New String[]
-'   Dim i As Integer
-'   Dim w As Integer
-'   Dim tab As String
-'   Dim sResultado As Result
-'   Dim filtrarBib As String
-'   Dim outputFile As String
-'
-'   ' PARAMETRIZADO (&1) + GLOBAL DE SESIÓN (RC-GM-16): SIN CONCATENAR EL ID CRUDO
-'   filtrarBib = "SELECT * FROM bibtex WHERE id_proyecto = &1"
-'   sResultado = m_ConexionBD.mConn.Exec(filtrarBib, m_InicioCierre.IdProyectoEnCurso)
-'   aFields.Clear
-'   For Each f In sResultado.Fields
-'     aFields.Add(f.Name)
-'     If Len(f.Name) > w Then
-'       w = Len(f.Name)
-'     Endif
-'   Next
-'   ' INICIALIZA LA CADENA VACÍA
-'   s = ""
-'   While sResultado.Available
-'     s &= "\n@" & sResultado["tipo_de_entrada"] & "{" & sResultado[aFields[4]] & ",\n"
-'     For i = 5 To aFields.Max
-'       If Not IsNull(sResultado[aFields[i]]) And Len(sResultado[aFields[i]]) > 0 Then
-'         tab = String(w - Len(aFields[i]), " ")
-'         s &= "  " & aFields[i] & tab & " = {" & sResultado[aFields[i]] & "},\n"
-'       Endif
-'     Next
-'     s &= "}\n"
-'     sResultado.MoveNext
-'   Wend
-'
-'   ' REEMPLAZOS DE LAS CLAVES
-'   s = Replace(s, "how_published", "howpublished")
-'   s = Replace(s, "index_title", "indextitle")
-'   s = Replace(s, "short_hand", "shorthand")
-'   s = Replace(s, "url_date", "urldate")
-'   s = Replace(s, "book_title_addon", "booktitleaddon")
-'   s = Replace(s, "journal_title_addon", "journaltitleaddon")
-'   s = Replace(s, "main_title_addon", "maintitleaddon")
-'   s = Replace(s, "main_title", "maintitle")
-'   s = Replace(s, "issue_title_addon", "issuetitleaddon")
-'   s = Replace(s, "event_title_addon", "eventtitleaddon")
-'   s = Replace(s, "book_pagination", "bookpagination")
-'   s = Replace(s, "orig_publisher", "origpublisher")
-'   s = Replace(s, "orig_location", "origlocation")
-'   s = Replace(s, "index_sort_title", "indexsorttitle")
-'   s = Replace(s, "orig_language", "origlanguage")
-'   s = Replace(s, "cross_ref", "crossref")
-'   s = Replace(s, "entry_set", "entryset")
-'   s = Replace(s, "sort_key", "sortkey")
-'   s = Replace(s, "pre_sort", "presort")
-'   s = Replace(s, "short_hand_intro", "shorthandintro")
-'   s = Replace(s, "how_published", "howpublished")
-'   s = Replace(s, "page_total", "pagetotal")
-'   s = Replace(s, "event_title", "eventtitle")
-'   s = Replace(s, "short_title", "shorttitle")
-'   s = Replace(s, "short_hand", "sorthand")
-'   s = Replace(s, "editor_type_c", "editortypec")
-'   s = Replace(s, "editor_type_b", "editortypeb")
-'   s = Replace(s, "editor_type_a", "editortypea")
-'   s = Replace(s, "editor_type", "editortype")
-'   s = Replace(s, "title_addon", "titleaddon")
-'   s = Replace(s, "issue_title", "issuetitle")
-'   s = Replace(s, "short_author", "shortauthor")
-'   s = Replace(s, "reprint_title", "reprinttitle")
-'   s = Replace(s, "event_date", "eventdate")
-'   s = Replace(s, "orig_date", "origdate")
-'   s = Replace(s, "land_id_opts", "landidopts")
-'   s = Replace(s, "sort_title", "sorttitle")
-'   s = Replace(s, "sort_name", "sortname")
-'   s = Replace(s, "sort_year", "sortyear")
-'   s = Replace(s, "related_type", "relatedtype")
-'   s = Replace(s, "entry_sub_type", "entrysubtype")
-'   s = Replace(s, "tipo_de_tesis", "type")
-'   s = Replace(s, "book_author", "bookauthor")
-'   s = Replace(s, "journal_title", "journaltitle")
-'   s = Replace(s, "eprint_type", "eprinttype")
-'   s = Replace(s, "related_string", "relatedstring")
-'   s = Replace(s, "name_addon", "nameaddon")
-'   s = Replace(s, "editor_c", "editorc")
-'   s = Replace(s, "editor_b", "editorb")
-'   s = Replace(s, "editor_a", "editora")
-'   s = Replace(s, "book_title", "booktitle")
-'   s = Replace(s, "sub_title", "subtitle")
-'   s = Replace(s, "lang_id", "langid")
-'   s = Replace(s, "pub_state", "pubstate")
-'   s &= "\n\n@Comment{generado con gbpublisher}"
-'
-'   ' GUARDAR ARCHIVO
-'   outputFile = m_InicioCierre.RutaProyectoEnCurso & "/referencias/ref-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".bib"
-'   File.Save(outputFile, s)
-'
-'   ' VERIFICAR QUE EL ARCHIVO SE HAYA CREADO
-'   If Exist(outputFile) Then
-'     Return True
-'   Else
-'     Return False
-'   Endif
-'
-' End
-
 ' MOSTRAMOS AYUDA SOBRE EL ITEM
 Public Sub InicializarMapaCampos()
 
@@ -2186,5 +1982,325 @@ Public Function ExportarBibTeX() As Boolean
   ' NO SE VERIFICA CON Exist(): SI EL ARCHIVO QUEDÓ DE UNA CORRIDA ANTERIOR Y
   ' EL GUARDADO FALLÓ, DEVOLVERÍA True IGUAL. EL Try ES LA VERIFICACIÓN.
   Return True
+
+End
+
+' ============================================
+' Función   : LimpiarControlesPegados
+' Propósito : Recorre los controles de texto de un contenedor y les quita los
+'             caracteres invisibles que llegan pegados desde Word.
+'             Actúa SOBRE LOS CONTROLES y no sobre los valores al escribir en
+'             la base, porque las validaciones posteriores comparan el
+'             contenido del control.
+' Parámetros: hContenedor As Container — contenedor a recorrer
+'             aExcluidos  As String[]  — nombres de control a saltear
+' Retorna   : String[] — descripciones de lo encontrado, sin repetir
+' Nota      : RECURSIVA, PORQUE LOS CAMPOS ESTÁN EN CONTENEDORES ANIDADOS.
+'             EL HALLAZGO VUELVE POR RETORNO Y NO POR PARÁMETRO DE SALIDA: EN
+'             GAMBAS LOS PRIMITIVOS SE PASAN SIEMPRE POR VALOR, CON ByRef O
+'             SIN ÉL (GV-24).
+' ============================================
+Public Function LimpiarControlesPegados(hContenedor As Container, aExcluidos As String[]) As String[]
+
+  Dim hCtrl As Control
+  Dim aTotal As New String[]
+  Dim aParcial As String[]
+  Dim sDesc As String
+
+  ' --- 1. RECORRIDO DE LOS HIJOS ---
+  For Each hCtrl In hContenedor.Children
+
+    ' --- 2. CONTENEDOR: BAJAR UN NIVEL ---
+    If hCtrl Is Container Then
+      aParcial = LimpiarControlesPegados(hCtrl, aExcluidos)
+      For Each sDesc In aParcial
+        If Not aTotal.Exist(sDesc) Then aTotal.Add(sDesc)
+      Next
+      Continue
+    Endif
+
+    ' --- 3. CONTROL DE TEXTO: LIMPIAR SI NO ESTÁ EXCLUIDO ---
+    ' LOS If VAN ANIDADOS Y NO ENCADENADOS CON And, QUE NO CORTOCIRCUITA
+    ' (RC-GM-17)
+    If hCtrl Is TextBox Then
+      If Not aExcluidos.Exist(hCtrl.Name) Then
+        aParcial = m_FuncionesGenericas.DetectarInvisibles(TextBox(hCtrl).Text)
+        If aParcial.Count > 0 Then
+          TextBox(hCtrl).Text = m_FuncionesGenericas.LimpiarTextoPegado(TextBox(hCtrl).Text)
+          For Each sDesc In aParcial
+            If Not aTotal.Exist(sDesc) Then aTotal.Add(sDesc)
+          Next
+        Endif
+      Endif
+    Endif
+
+  Next
+
+  Return aTotal
+
+End
+
+' ============================================
+' Función   : GuardarBibtex
+' Propósito : Guarda una entrada bibliográfica nueva en el proyecto en curso,
+'             después de validar la clave, los duplicados de título y los
+'             caracteres inválidos.
+' Parámetros: (ninguno — trabaja sobre los controles de FMain)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GuardarBibtex()
+
+  Dim rDuplicado As Result
+  Dim aInvisibles As String[]
+
+  ' --- 1. LIMPIEZA DE TEXTO PEGADO ---
+  ' VA ANTES DEL CHEQUEO DE DUPLICADOS: ESE CHEQUEO COMPARA txtTitle.Text
+  ' CRUDO, Y UN CARÁCTER INVISIBLE HACE QUE NO ENCUENTRE LA ENTRADA EXISTENTE.
+  ' url, doi, file Y eprint QUEDAN AFUERA: AHÍ UN CARÁCTER QUE PARECE BASURA
+  ' PUEDE SER PARTE DEL IDENTIFICADOR.
+  aInvisibles = LimpiarTabStrip(FMain.TabPanelBibliografia,
+    ["txtUrl", "txtDoi", "txtFile", "txtEprint"])
+
+  If aInvisibles.Count > 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("El texto pegado traía caracteres invisibles de Word:" &
+      gb.NewLine & "  " & aInvisibles.Join(gb.NewLine & "  ") & gb.NewLine &
+      gb.NewLine & "Se limpiaron antes de guardar.")
+  Endif
+
+  ' --- 2. VALIDACIÓN DE LA CLAVE ---
+  If Trim(FMain.txtClaveBibtex.Text) = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Debe generar una clave." & gb.NewLine &
+      "No es posible guardar la entrada.")
+    Return
+  Endif
+
+  ' --- 3. VALIDACIONES DE CONTENIDO ---
+  If VerificacionBase() Then Return
+  If VerificarCaracteresInvalidos() Then Return
+
+  ' --- 4. CHEQUEO DE TÍTULO DUPLICADO EN EL PROYECTO ---
+  ' Result LOCAL PARA NO PISAR ContenidoBib, QUE ES LA FUENTE DE DATOS DEL
+  ' GRID. EL ID DEL PROYECTO SALE DE LA GLOBAL (RC-GM-16): SI SE LEYERA DE UN
+  ' CONTROL QUE UN EVENTO DE UI RESETEÓ, EL CHEQUEO CORRERÍA CONTRA
+  ' id_proyecto = 0 Y TRAERÍA UN CONJUNTO EQUIVOCADO.
+  Try rDuplicado = m_ConexionBD.mConn.Exec(
+    "SELECT id FROM bibtex WHERE title = &1 AND id_proyecto = &2",
+    Trim(FMain.txtTitle.Text), m_InicioCierre.IdProyectoEnCurso)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar si el título ya existe:" & gb.NewLine &
+      Error.Text)
+    Return
+  Endif
+
+  If rDuplicado.Count > 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("El título que desea agregar ya existe en este libro/revista.")
+
+    ' MOSTRAR LAS COINCIDENCIAS Y OFRECER GUARDAR IGUAL
+    mostrarIguales()
+    FMain.gvReferenciasEnCurso.ScrollY = 0
+    FMain.BtnNuevoBib.Visible = True
+    FMain.btnGuardarBib.Visible = False
+    FMain.btnGuardarIGUAL.Visible = True
+    FMain.TabPanel5.Index = 0
+    Return
+  Endif
+
+  ' --- 5. ALTA ---
+  GuardarBibtexPrimeraVez()
+  LimpiarTextboxBibtex()
+
+  ' --- 6. ESTADO FINAL DE LA INTERFAZ ---
+  FMain.txtTMPbiblio.Enabled = False
+  FMain.txtTMPbiblio.Background = Color.Background
+  FMain.txtTMPbiblio.Clear
+  FMain.TabPanel5.Index = 0
+
+  FMain.BtnNuevoBib.Visible = True
+  FMain.btnGuardarBib.Visible = False
+  FMain.btnGuardarCambiosBib.Visible = False
+  FMain.BtnEliminarBib.Visible = False
+  ' ASEGURAR QUE EL TIPO DE TESIS QUEDE ESCONDIDO
+  FMain.HBoxTipoDeTesis.Visible = False
+
+Catch
+  ' RED DE ÚLTIMO RECURSO (RC-GM-20). LOS FALLOS PREVISIBLES SE ATRAPAN CON
+  ' Try + If Error EN SU PUNTO, PARA QUE EL MENSAJE DIGA QUÉ PASÓ.
+  m_Sonido.sonar("Error")
+  Message.Error("Se obtuvo el siguiente error al intentar guardar: <b>" &
+    Error.Text & "</b>.")
+
+End
+
+' ============================================
+' Función   : GuardarCambiosBibtex
+' Propósito : Guarda los cambios de una entrada bibliográfica ya existente.
+' Parámetros: (ninguno — trabaja sobre los controles de FMain)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GuardarCambiosBibtex()
+
+  Dim aInvisibles As String[]
+  Dim iIdBibtex As Integer
+
+  ' --- 1. LIMPIEZA DE TEXTO PEGADO ---
+  ' MISMO CRITERIO QUE EN EL ALTA: SOBRE LOS CONTROLES Y ANTES DE VALIDAR.
+  aInvisibles = LimpiarTabStrip(FMain.TabPanelBibliografia,
+    ["txtUrl", "txtDoi", "txtFile", "txtEprint"])
+
+  If aInvisibles.Count > 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("El texto pegado traía caracteres invisibles de Word:" &
+      gb.NewLine & "  " & aInvisibles.Join(gb.NewLine & "  ") & gb.NewLine &
+      gb.NewLine & "Se limpiaron antes de guardar.")
+  Endif
+
+  ' --- 2. VALIDACIÓN DE CONTENIDO ---
+  If VerificacionBase() Then Return
+
+  ' --- 3. VALIDACIÓN DEL IDENTIFICADOR ---
+  ' PENDIENTE (RC-GM-16): ESTE ID DEBERÍA SALIR DE UNA VARIABLE Public DE
+  ' m_InicioCierre Y NO DE UN CONTROL DE FMain, QUE PUEDE RESETEARSE POR UN
+  ' EVENTO DE UI. MIENTRAS TANTO SE VALIDA, PARA QUE UN CONTROL VACÍO DÉ UN
+  ' MENSAJE Y NO UN Edit CONTRA id = 0.
+  If Not IsInteger(Trim(FMain.id_bibtex.Text)) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No hay una referencia seleccionada para editar." & gb.NewLine &
+      "Volvé a seleccionarla en la grilla.")
+    Return
+  Endif
+
+  iIdBibtex = CInt(Trim(FMain.id_bibtex.Text))
+
+  If iIdBibtex <= 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No hay una referencia seleccionada para editar." & gb.NewLine &
+      "Volvé a seleccionarla en la grilla.")
+    Return
+  Endif
+
+  ' --- 4. BLOQUEO DE LA INTERFAZ DURANTE LA ESCRITURA ---
+  FMain.btnGuardarCambiosBib.Visible = False
+  FMain.BtnEliminarBib.Visible = False
+  Wait
+
+  ' --- 5. APERTURA DEL REGISTRO ---
+  ' PLACEHOLDER Y NO CONCATENACIÓN (RC-GM-15)
+  Try ContenidoBib = m_ConexionBD.mConn.Edit("bibtex", "id = &1", iIdBibtex)
+
+  If Error Then
+    FMain.btnGuardarCambiosBib.Visible = True
+    FMain.BtnEliminarBib.Visible = True
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la referencia para editar:" & gb.NewLine &
+      Error.Text)
+    Return
+  Endif
+
+  If Not ContenidoBib.Available Then
+    FMain.btnGuardarCambiosBib.Visible = True
+    FMain.BtnEliminarBib.Visible = True
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró la referencia para editar.")
+    Return
+  Endif
+
+  ' --- 6. ESCRITURA ---
+  GuardarCamposBib()
+
+  Try ContenidoBib.Update
+
+  If Error Then
+    FMain.btnGuardarCambiosBib.Visible = True
+    FMain.BtnEliminarBib.Visible = True
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar los cambios:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' EL Commit SOLO CORRE SI EL Update FUE BIEN. ANTES CORRÍA IGUAL, AUNQUE LA
+  ' ESCRITURA HUBIERA FALLADO.
+  Try m_ConexionBD.mConn.Commit()
+
+  If Error Then
+    FMain.btnGuardarCambiosBib.Visible = True
+    FMain.BtnEliminarBib.Visible = True
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar la transacción:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 7. REFRESCO Y AVISO ---
+  RefrescarTableViewBibtexEnCurso()
+  FMain.gvReferenciasEnCurso.Refresh()
+  LimpiarTextboxBibtex()
+  m_Sonido.sonar("Info")
+  Message.Info("Cambios guardados correctamente.")
+
+  ' --- 8. ESTADO FINAL DE LA INTERFAZ ---
+  FMain.BtnNuevoBib.Visible = True
+  FMain.btnGuardarBib.Visible = False
+  FMain.HBoxTipoDeTesis.Visible = False
+
+Catch
+  ' RED DE ÚLTIMO RECURSO (RC-GM-20)
+  FMain.btnGuardarCambiosBib.Visible = True
+  FMain.BtnEliminarBib.Visible = True
+  m_Sonido.sonar("Error")
+  Message.Error("Error al guardar los cambios: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : LimpiarTabStrip
+' Propósito : Recorre TODAS las solapas de un TabStrip, no solo la visible.
+' Parámetros: hPanel     As TabStrip — control a recorrer
+'             aExcluidos As String[] — nombres de control a saltear
+' Retorna   : String[] — descripciones de lo encontrado, sin repetir
+' Nota      : DOS COMPORTAMIENTOS VERIFICADOS EMPÍRICAMENTE:
+'             1. .Children DEVUELVE SOLO LA SOLAPA VISIBLE. RECORRER CON
+'                .Children LIMPIABA ÚNICAMENTE LO QUE EL USUARIO TENÍA A LA
+'                VISTA AL APRETAR GUARDAR, QUE ES PEOR QUE NO LIMPIAR: DA LA
+'                IMPRESIÓN DE ESTAR RESUELTO.
+'             2. EL ACCESO INDEXADO hPanel[i] DEVUELVE UN OBJETO VIRTUAL Y DA
+'                "Bad use of virtual class", TANTO ASIGNADO A UNA VARIABLE
+'                COMO PASADO DIRECTO COMO ARGUMENTO. ES DE LA MISMA FAMILIA
+'                QUE txtEditor[i] (RF-02) Y gvNombre.Data (GV-15).
+'             POR ESO SE RECORRE CAMBIANDO Index, QUE ES PROPIEDAD COMÚN, Y SE
+'             RESTAURA LA SOLAPA ORIGINAL AL TERMINAR.
+' ============================================
+Public Function LimpiarTabStrip(hPanel As TabStrip, aExcluidos As String[]) As String[]
+
+  Dim aTotal As New String[]
+  Dim aParcial As String[]
+  Dim sDesc As String
+  Dim i As Integer
+  Dim iIndiceOriginal As Integer
+
+  ' --- 1. RECORDAR LA SOLAPA QUE EL USUARIO TENÍA A LA VISTA ---
+  iIndiceOriginal = hPanel.Index
+
+  ' --- 2. RECORRIDO DE TODAS LAS SOLAPAS ---
+  ' SE OCULTA EL CONTROL DURANTE EL RECORRIDO PARA QUE NO SE VEA PASAR LAS
+  ' SEIS SOLAPAS.
+  hPanel.Visible = False
+
+  For i = 0 To hPanel.Count - 1
+    hPanel.Index = i
+    aParcial = LimpiarControlesPegados(hPanel, aExcluidos)
+    For Each sDesc In aParcial
+      If Not aTotal.Exist(sDesc) Then aTotal.Add(sDesc)
+    Next
+  Next
+
+  ' --- 3. RESTAURACIÓN ---
+  hPanel.Index = iIndiceOriginal
+  hPanel.Visible = True
+
+  Return aTotal
 
 End

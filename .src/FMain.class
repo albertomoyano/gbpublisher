@@ -5264,6 +5264,92 @@ Public Sub AbrirFormularioModoMedia()
 End
 
 ' ============================================
+' Función   : CopiarRecursosLatex
+' Propósito : Copia al proyecto los preámbulos y las configuraciones de estilo
+'             de cita desde ~/.gbpublisher/latex/, sobrescribiendo siempre.
+'             Es lo que da autonomía al proyecto: llevando la carpeta a otra
+'             máquina con TeX Live completo, y sin gbpublisher, compila.
+' Parámetros: sDirLatex As String — {proyecto}/latex
+'             bSilencioso As Boolean — True no muestra mensajes de error
+' Retorna   : Boolean — True si copió todo
+' Nota      : SE COPIAN LOS CUATRO cita-*-config.tex Y NO SOLO EL ACTIVO: SON
+'             ARCHIVOS DE VEINTE LÍNEAS, Y QUE ESTÉN TODOS PERMITE QUE UN
+'             SCRIPT DE PERSONALIZACIÓN CAMBIE DE ESTILO SIN gbpublisher
+'             INSTALADO, QUE ES EL CASO DE USO DE LOS ESTILOS PROPIOS.
+'             LOS ARCHIVOS DERIVADOS —preambulo-proyecto.tex Y main.tex— NO SE
+'             COPIAN: LOS ESCRIBE GAMBAS CON DATOS DE LA BASE.
+'             Dir() CON "*.tex" Y gb.File; NUNCA "*.*", QUE ES UN MODISMO DE
+'             WINDOWS Y OMITE LOS ARCHIVOS SIN EXTENSIÓN (GV-01).
+' ============================================
+Public Function CopiarRecursosLatex(sDirLatex As String, Optional bSilencioso As Boolean = False) As Boolean
+
+  Dim sOrigen As String
+  Dim sArchivo As String
+  Dim aArchivos As String[]
+
+  ' --- 1. VALIDACIÓN DEL ORIGEN ---
+  sOrigen = User.Home &/ ".gbpublisher" &/ "latex"
+
+  If Not Exist(sOrigen) Then
+    If Not bSilencioso Then
+      m_Sonido.sonar("Error")
+      Message.Error("No existe el directorio de recursos LaTeX:" & gb.NewLine &
+        sOrigen & gb.NewLine & "Verificá la instalación de gbpublisher.")
+    Endif
+    Return False
+  Endif
+
+  ' --- 2. VALIDACIÓN DEL DESTINO ---
+  If Not Exist(sDirLatex) Then
+    Try Mkdir sDirLatex
+    If Error Then
+      If Not bSilencioso Then
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo crear el directorio:" & gb.NewLine &
+          sDirLatex & gb.NewLine & Error.Text)
+      Endif
+      Return False
+    Endif
+  Endif
+
+  ' --- 3. INVENTARIO DEL ORIGEN ---
+  Try aArchivos = Dir(sOrigen, "*.tex", gb.File)
+  If Error Then
+    If Not bSilencioso Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer el directorio de recursos:" & gb.NewLine &
+        Error.Text)
+    Endif
+    Return False
+  Endif
+
+  If aArchivos.Count = 0 Then
+    If Not bSilencioso Then
+      m_Sonido.sonar("Error")
+      Message.Error("El directorio de recursos LaTeX está vacío:" & gb.NewLine &
+        sOrigen)
+    Endif
+    Return False
+  Endif
+
+  ' --- 4. COPIA ---
+  For Each sArchivo In aArchivos
+    Try Copy sOrigen &/ sArchivo To sDirLatex &/ sArchivo
+    If Error Then
+      If Not bSilencioso Then
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo copiar el recurso " & sArchivo & ":" &
+          gb.NewLine & Error.Text)
+      Endif
+      Return False
+    Endif
+  Next
+
+  Return True
+
+End
+
+' ============================================
 ' Función   : AbrirProyecto
 ' Propósito : Punto de entrada único para abrir un proyecto desde el menú.
 '             Verifica cambios sin guardar del proyecto previo, configura el
@@ -5279,6 +5365,8 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
   If Not ConfirmarDescartarCambios() Then Return
 
   ' --- 2. CONFIGURAR EL DIÁLOGO SEGÚN EL TIPO DE PROYECTO ---
+  ' RC-GM-19: EL FILTRO ES COMODIDAD VISUAL Y NO VALIDACIÓN. EN Qt5 ES
+  ' CASE-INSENSITIVE, ASÍ QUE l-*.md LISTA TAMBIÉN l-LIBRO.MD.
   Select Case nTipoProyecto
     Case m_Constantes.TIPO_REVISTA_MD
       Dialog.Title = "Abrir proyecto en Markdown"
@@ -5286,9 +5374,10 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
     Case m_Constantes.TIPO_LIBRO_MD
       Dialog.Title = "Abrir libro (Markdown)"
       Dialog.Filter = ["l-*.md", "Libro en Markdown"]
-    Case m_Constantes.TIPO_LIBRO_LATEX
-      Dialog.Title = "Abrir proyecto en LaTeX"
-      Dialog.Filter = ["l-*.tex", "LaTeX"]
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error("Tipo de proyecto no contemplado: " & CStr(nTipoProyecto))
+      Return
   End Select
 
   m_Sonido.sonar("Info")
@@ -5308,35 +5397,122 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
   bAbriendoProyecto = True
 
   ' --- 6. DELEGAR LA CARGA AL HANDLER ESPECÍFICO DEL TIPO ---
-  ' LLAMAMOS A LA FUNCIÓN CORRESPONDIENTE SEGÚN EL TIPO
-  Select Case nTipoProyecto
-    Case m_Constantes.TIPO_REVISTA_MD, m_Constantes.TIPO_LIBRO_MD
-      ' SI LA APERTURA ABORTÓ, SE SALE SIN TOCAR NADA DE LA UI: EL USUARIO SIGUE
-      ' EN SU PROYECTO ANTERIOR Y LOS PANELES DEBEN SEGUIR DESCRIBIÉNDOLO.
-      ' bAbriendoProyecto SE APAGA ACÁ PORQUE ESTE Return SALTEA EL APARTADO 7:
-      ' SI QUEDARA EN True, EL PRÓXIMO cmbArticulosRevista_Click SUPRIMIRÍA EL
-      ' GUARD DE CAMBIOS SIN GUARDAR Y EL USUARIO PERDERÍA TRABAJO SIN AVISO
-      If Not AbrirProyectoMD(nTipoProyecto) Then
-        bAbriendoProyecto = False
-        Return
-      Endif
-      m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, TextEditorPreview)
-      m_RevisarPDF.PoblarComboPDF()
-      m_GestionImagenes.PoblarComboImagenes()
-      m_BuscarRegex.InicializarTabRegex()
-      FMain.PanelRetocarImagenes.Visible = True
-      FMain.PanelRevisarPDF.Visible = True
-      FMain.PanelShortCodes.Visible = True
-      FMain.svPCRE.Visible = True
-      pAreaEditor.Layout = [1, 1]
-  End Select
-  ' --- REFRESCAMOS EL COMOBOBOX ---
+  ' SI LA APERTURA ABORTÓ, SE SALE SIN TOCAR NADA DE LA UI: EL USUARIO SIGUE
+  ' EN SU PROYECTO ANTERIOR Y LOS PANELES DEBEN SEGUIR DESCRIBIÉNDOLO.
+  ' bAbriendoProyecto SE APAGA ACÁ PORQUE ESTE Return SALTEA EL APARTADO 8:
+  ' SI QUEDARA EN True, EL PRÓXIMO cmbArticulosRevista_Click SUPRIMIRÍA EL
+  ' GUARD DE CAMBIOS SIN GUARDAR Y EL USUARIO PERDERÍA TRABAJO SIN AVISO
+  If Not AbrirProyectoMD(nTipoProyecto) Then
+    bAbriendoProyecto = False
+    Return
+  Endif
+
+  m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, TextEditorPreview)
+  m_RevisarPDF.PoblarComboPDF()
+  m_GestionImagenes.PoblarComboImagenes()
+  m_BuscarRegex.InicializarTabRegex()
+
+  FMain.PanelRetocarImagenes.Visible = True
+  FMain.PanelRevisarPDF.Visible = True
+  FMain.PanelShortCodes.Visible = True
+  FMain.svPCRE.Visible = True
+  pAreaEditor.Layout = [1, 1]
+
+  ' --- 7. COPIA DE RECURSOS LaTeX (SOLO LIBROS) ---
+  ' LA SALIDA PDF DE REVISTAS NO SALE DE LA APP Y NO NECESITA LOS PREÁMBULOS
+  ' EN LA CARPETA DEL PROYECTO.
+  ' SE COPIA TAMBIÉN AL GENERAR EL main.tex, PORQUE UNA ACTUALIZACIÓN DE
+  ' gbpublisher ENTRE LA APERTURA Y LA COMPILACIÓN DEJARÍA EL PROYECTO CON
+  ' PREÁMBULOS VIEJOS, Y \gbRequiereContrato NO FRENARÍA: LA COPIA LOCAL SERÍA
+  ' VIEJA PERO CONSISTENTE.
+  ' NO SE ABORTA SI FALLA: EL PROYECTO SE ABRE IGUAL Y EL PROBLEMA SE DETECTA
+  ' AL GENERAR, QUE ES DONDE IMPORTA.
+  If nTipoProyecto = m_Constantes.TIPO_LIBRO_MD Then
+    m_InicioCierre.CopiarRecursosLatex(m_InicioCierre.RutaProyectoEnCurso &/ "latex", True)
+  Endif
+
+  ' --- REFRESCAMOS EL COMBOBOX ---
   cmbArticulosRevista.Refresh
 
-  ' --- 7. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
+  ' --- 8. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
   bAbriendoProyecto = False
 
 End
+
+' ' ============================================
+' ' Función   : AbrirProyecto
+' ' Propósito : Punto de entrada único para abrir un proyecto desde el menú.
+' '             Verifica cambios sin guardar del proyecto previo, configura el
+' '             diálogo según el tipo, y delega la carga al handler específico.
+' ' Parámetros: nTipoProyecto As Integer — uno de m_Constantes.TIPO_*
+' ' Retorna   : (Sub, sin retorno)
+' ' ============================================
+' Public Sub AbrirProyecto(nTipoProyecto As Integer)
+'
+'   ' --- 1. GUARD: CAMBIOS SIN GUARDAR EN EL PROYECTO PREVIO ---
+'   ' SE VERIFICA ANTES DE TODO LO DEMÁS PARA QUE LA PREGUNTA APAREZCA
+'   ' EN EL CONTEXTO CORRECTO (PROYECTO ANTERIOR, NO EL NUEVO)
+'   If Not ConfirmarDescartarCambios() Then Return
+'
+'   ' --- 2. CONFIGURAR EL DIÁLOGO SEGÚN EL TIPO DE PROYECTO ---
+'   Select Case nTipoProyecto
+'     Case m_Constantes.TIPO_REVISTA_MD
+'       Dialog.Title = "Abrir proyecto en Markdown"
+'       Dialog.Filter = ["r-*.md", "Markdown"]
+'     Case m_Constantes.TIPO_LIBRO_MD
+'       Dialog.Title = "Abrir libro (Markdown)"
+'       Dialog.Filter = ["l-*.md", "Libro en Markdown"]
+'     Case m_Constantes.TIPO_LIBRO_LATEX
+'       Dialog.Title = "Abrir proyecto en LaTeX"
+'       Dialog.Filter = ["l-*.tex", "LaTeX"]
+'   End Select
+'
+'   m_Sonido.sonar("Info")
+'   Dialog.AutoExt = False
+'   Dialog.Path = User.Home
+'
+'   ' --- 3. MOSTRAR EL DIÁLOGO Y MANEJAR CANCELACIÓN ---
+'   ' Dialog.OpenFile RETORNA True CUANDO EL USUARIO CANCELA
+'   If Dialog.OpenFile() Then Return
+'
+'   ' --- 4. GUARDAR EL TIPO ELEGIDO PARA QUE OTRAS RUTINAS LO USEN ---
+'   TipoProyectoActual = nTipoProyecto
+'
+'   ' --- 5. ACTIVAR LA BANDERA DE APERTURA EN CURSO ---
+'   ' EVITA QUE EL Click DE cmbArticulosRevista DISPARE OTRA VEZ EL GUARD
+'   ' CUANDO CargarListaArticulosMD ASIGNE EL Index DEL COMBOBOX
+'   bAbriendoProyecto = True
+'
+'   ' --- 6. DELEGAR LA CARGA AL HANDLER ESPECÍFICO DEL TIPO ---
+'   ' LLAMAMOS A LA FUNCIÓN CORRESPONDIENTE SEGÚN EL TIPO
+'   Select Case nTipoProyecto
+'     Case m_Constantes.TIPO_REVISTA_MD, m_Constantes.TIPO_LIBRO_MD
+'       ' SI LA APERTURA ABORTÓ, SE SALE SIN TOCAR NADA DE LA UI: EL USUARIO SIGUE
+'       ' EN SU PROYECTO ANTERIOR Y LOS PANELES DEBEN SEGUIR DESCRIBIÉNDOLO.
+'       ' bAbriendoProyecto SE APAGA ACÁ PORQUE ESTE Return SALTEA EL APARTADO 7:
+'       ' SI QUEDARA EN True, EL PRÓXIMO cmbArticulosRevista_Click SUPRIMIRÍA EL
+'       ' GUARD DE CAMBIOS SIN GUARDAR Y EL USUARIO PERDERÍA TRABAJO SIN AVISO
+'       If Not AbrirProyectoMD(nTipoProyecto) Then
+'         bAbriendoProyecto = False
+'         Return
+'       Endif
+'       m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, TextEditorPreview)
+'       m_RevisarPDF.PoblarComboPDF()
+'       m_GestionImagenes.PoblarComboImagenes()
+'       m_BuscarRegex.InicializarTabRegex()
+'       FMain.PanelRetocarImagenes.Visible = True
+'       FMain.PanelRevisarPDF.Visible = True
+'       FMain.PanelShortCodes.Visible = True
+'       FMain.svPCRE.Visible = True
+'       pAreaEditor.Layout = [1, 1]
+'   End Select
+'   ' --- REFRESCAMOS EL COMOBOBOX ---
+'   cmbArticulosRevista.Refresh
+'
+'   ' --- 7. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
+'   bAbriendoProyecto = False
+'
+' End
 
 ' MANEJA LA SELECCIÓN DE ARCHIVOS MARKDOWN DEL COMBOBOX
 ' VERIFICA CAMBIOS SIN GUARDAR ANTES DE CAMBIAR DE ARCHIVO
@@ -7491,5 +7667,14 @@ End
 Public Sub btnRelacionBIB_Click()
 
   FRelacionarBib.ShowModal()
+
+End
+
+Public Sub btnTemporal_Click()
+
+  If m_GenerarPDFLibro.GenerarMainTeX() Then
+    m_Sonido.sonar("Info")
+    Message.Info("main.tex generado correctamente.")
+  Endif
 
 End

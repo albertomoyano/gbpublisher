@@ -7,29 +7,21 @@
 '               preambulo-proyecto.tex — valores que salen de la base
 '               main.tex               — declarativo de piezas y zonas
 '             Los preámbulos de contrato y estética, y los cita-*-config.tex,
-'             son recursos de la app: se copian desde ~/.gbpublisher/latex/
-'             sin modificarlos.
-'
-'             Se separa de m_GenerarPDF, que es de revistas, porque los dos
-'             pipelines divergen en todo lo que importa: revistas compila un
-'             artículo con clase article y una sola bibliografía; libros
-'             compila un documento con clase book, cuatro zonas, bibliografía
-'             por capítulo y autonomía fuera de la app.
+'             son recursos de la app: los copia
+'             m_InicioCierre.CopiarRecursosLatex sin modificarlos.
 '
 ' Principio : ABORTAR ANTE CUALQUIER DATO FALTANTE. Un libro compuesto con un
 '             formato que nadie eligió, o con un estilo de cita adivinado, es
-'             peor que un error: sale mal y nadie se entera. El mensaje dice
-'             qué falta y dónde cargarlo.
+'             peor que un error: sale mal y nadie se entera.
 '
-' Dependencias: m_ConexionBD, m_InicioCierre, m_Sonido
+' Dependencias: m_ConexionBD, m_InicioCierre, m_Constantes, m_Bibtex, m_Sonido
 ' ==============================================================================
 
 ' --- CONSTANTES DE GENERACIÓN ---
-' VAN ACÁ Y NO EN m_Constantes PORQUE SON INTERNAS DE ESTE PIPELINE.
-' SI ALGUNA LA NECESITA OTRO MÓDULO, MIGRARLA (SC-03).
 Private Const NOMBRE_PREAMBULO_PROYECTO As String = "preambulo-proyecto.tex"
 Private Const CARPETA_LATEX As String = "latex"
 Private Const CARPETA_REFERENCIAS As String = "referencias"
+Private Const CARPETA_CANONICOS As String = "jats"
 
 ' VERSIÓN DEL CONTRATO QUE ESTE GENERADOR REQUIERE. SI SE AGREGA VOCABULARIO
 ' AL XSLT, SUBE ACÁ Y EN preambulo-contrato.tex, Y UN PREÁMBULO DE EDITORIAL
@@ -37,6 +29,11 @@ Private Const CARPETA_REFERENCIAS As String = "referencias"
 ' sequence" EN LA PÁGINA 140.
 Public Const CONTRATO_VERSION As Integer = 1
 
+' --- ZONAS DEL LIBRO ---
+Private Const ZONA_FRONT As Integer = 1
+Private Const ZONA_BODY As Integer = 2
+Private Const ZONA_APENDICE As Integer = 3
+Private Const ZONA_BACK As Integer = 4
 
 ' ============================================
 ' Función   : EscaparTeX
@@ -48,13 +45,11 @@ Public Const CONTRATO_VERSION As Integer = 1
 ' Nota      : PASADA ÚNICA POR CODEPOINT, NO CADENA DE Replace().
 '             ENCADENAR Replace() CON LA BARRA INVERTIDA PRIMERO ROMPE: EL
 '             REEMPLAZO INYECTA \textbackslash{}, QUE CONTIENE LLAVES, Y EL
-'             PASO SIGUIENTE LAS ESCAPA. NO TIENE ARREGLO POR REORDENAMIENTO,
-'             PORQUE SI LAS LLAVES VAN PRIMERO EL \{ QUE PRODUCEN QUEDA
-'             EXPUESTO AL PASO DE LA BARRA. ES EL MISMO BUG QUE SE CORRIGIÓ EN
-'             tex-comun.xsl.
+'             PASO SIGUIENTE LAS ESCAPA. NO TIENE ARREGLO POR REORDENAMIENTO.
+'             ES EL MISMO BUG QUE SE CORRIGIÓ EN tex-comun.xsl Y EN LA
+'             EXPORTACIÓN BibTeX.
 '             SE RECORRE CON String.Mid Y String.Len, NO CON Mid Y Len, QUE
 '             OPERAN EN BYTES Y CORTAN LOS MULTIBYTE (RC-GM-12, SC-02).
-'             GV-03 MIDIÓ QUE ESTE BUCLE ESCALA LINEALMENTE.
 '             < > Y | NO SE ESCAPAN: BAJO LuaLaTeX CON fontspec Y UNA FUENTE
 '             UNICODE SE COMPONEN COMO SÍ MISMOS.
 ' ============================================
@@ -68,8 +63,6 @@ Private Function EscaparTeX(sTexto As String) As String
   If sTexto = "" Then Return ""
 
   ' --- 2. RECORRIDO POR CODEPOINT ---
-  ' CADA CARÁCTER SE MIRA UNA SOLA VEZ: EL REEMPLAZO NO VUELVE A ENTRAR AL
-  ' PROCESO, ASÍ QUE NO HAY ORDEN QUE RESPETAR.
   For iPos = 1 To String.Len(sTexto)
     sCar = String.Mid(sTexto, iPos, 1)
     Select Case sCar
@@ -102,12 +95,11 @@ Private Function EscaparTeX(sTexto As String) As String
 
 End
 
-
 ' ============================================
 ' Función   : EscaparURL
-' Propósito : Escapa una URL para usarla como argumento de \href o dentro de
-'             \hypersetup. Solo % y # son problemáticos: el primero comenta
-'             el resto de la línea y el segundo es el parámetro de destino.
+' Propósito : Escapa una URL para usarla dentro de \hypersetup o \href. Solo
+'             % y # son problemáticos: el primero comenta el resto de la línea
+'             y el segundo es el parámetro de destino.
 ' Parámetros: sURL As String — URL cruda de la base
 ' Retorna   : String — URL segura
 ' ============================================
@@ -124,12 +116,26 @@ Private Function EscaparURL(sURL As String) As String
 
 End
 
+' ============================================
+' Función   : NuloAVacio
+' Propósito : Convierte un valor NULL de la base en cadena vacía. Sin esto,
+'             concatenar un campo NULL propaga el nulo a toda la expresión.
+' Parámetros: vValor As Variant — valor leído de un Result
+' Retorna   : String — el valor como texto, o "" si era NULL
+' Nota      : NO USAR CStr() SOBRE UN Boolean: DEVUELVE "T" O CADENA VACÍA, Y
+'             UN False SE VUELVE INDISTINGUIBLE DE UN NULL (GV-10).
+' ============================================
+Private Function NuloAVacio(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return Trim(CStr(vValor))
+
+End
 
 ' ============================================
 ' Función   : CodigoABabel
 ' Propósito : Convierte un código ISO 639-1 al nombre de idioma que reconoce
-'             babel. Lo consume \usepackage[\gbidiomas]{babel} en la capa de
-'             estética.
+'             babel. Lo consume \usepackage[\gbidiomas]{babel}.
 ' Parámetros: sCodigo As String — código ISO 639-1 (es, en, pt, ...)
 ' Retorna   : String — nombre para babel, o "" si no se reconoce
 ' Nota      : DEVUELVE VACÍO EN VEZ DE CAER A spanish: EL LLAMADOR DECIDE SI
@@ -159,32 +165,6 @@ Private Function CodigoABabel(sCodigo As String) As String
 
 End
 
-
-' ============================================
-' Función   : ModoDeSalida
-' Propósito : Deriva el modo de salida del estado editorial del libro.
-'             En la lógica editorial "publicado" significa también impreso,
-'             así que el estado ya carga esa información y no hace falta una
-'             columna aparte.
-' Parámetros: sEstadoLibro As String — libros_md.estado_libro
-' Retorna   : String — "borrador" | "final" | "imprenta"
-' ============================================
-Private Function ModoDeSalida(sEstadoLibro As String) As String
-
-  Select Case LCase(Trim(sEstadoLibro))
-    Case "borrador", "en_correccion"
-      Return "borrador"
-    Case "en_produccion"
-      Return "final"
-    Case "publicado"
-      Return "imprenta"
-    Case Else
-      Return "final"
-  End Select
-
-End
-
-
 ' ============================================
 ' Función   : RolesDeAutoriaSegunTipo
 ' Propósito : Devuelve la cláusula IN de roles que corresponde a la autoría
@@ -207,11 +187,10 @@ Private Function RolesDeAutoriaSegunTipo(sTipoLibro As String) As String
 
 End
 
-
 ' ============================================
 ' Función   : AbreviaturaDeRol
-' Propósito : Abreviatura con la que se acompaña el nombre de quien edita en
-'             la portada y en los metadatos. Vacía para el rol de autor.
+' Propósito : Abreviatura con la que se acompaña el nombre de quien edita.
+'             Vacía para el rol de autor.
 ' Parámetros: sRol As String — libro_autor.rol_libro
 ' Retorna   : String — "comp.", "ed.", "coord." o ""
 ' ============================================
@@ -230,13 +209,158 @@ Private Function AbreviaturaDeRol(sRol As String) As String
 
 End
 
+' ============================================
+' Función   : ZonaDeTipo
+' Propósito : Zona de LaTeX que corresponde a un tipo_capitulo.
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+' Retorna   : Integer — una de las constantes ZONA_*
+' Nota      : LA ZONA NO LA DECIDE LA CARPETA. Una pieza de bm/ puede terminar
+'             en el cuerpo, en los apéndices o en los posliminares. Unas
+'             conclusiones viven en bm/ pero van en el cuerpo, sin numerar,
+'             ANTES de \appendix: con \appendix después de \backmatter los
+'             apéndices dejan de numerarse con letra y sus figuras arrastran
+'             el prefijo del último capítulo del cuerpo. Verificado.
+'             LOS TIPOS QUE VAN EN EL CUERPO SIN NUMERAR devuelven ZONA_BODY
+'             igual que capitulo; la diferencia entre numerado y no la
+'             resuelve docbook-to-latex.xsl, que lee el mismo tipo-capitulo
+'             del canónico. Acá solo importa el orden y la zona.
+' ============================================
+Private Function ZonaDeTipo(sTipo As String) As Integer
+
+  Select Case LCase(Trim(sTipo))
+
+      ' --- PRELIMINARES ---
+    Case "prologo", "prefacio", "presentacion", "palabras_preliminares",
+        "introduccion", "dedicatoria", "agradecimientos",
+        "nota_traductor", "nota_editor",
+        "lista_figuras", "lista_tablas", "lista_abreviaturas"
+      Return ZONA_FRONT
+
+      ' --- CUERPO: CAPÍTULOS Y PIEZAS DE CIERRE SIN NUMERAR ---
+    Case "capitulo", "conclusiones", "epilogo", "posfacio", "post_scriptum"
+      Return ZONA_BODY
+
+      ' --- APÉNDICES ---
+    Case "apendice"
+      Return ZONA_APENDICE
+
+      ' --- POSLIMINARES ---
+      ' indice_analitico NO ESTÁ ACÁ A PROPÓSITO: ES CÓDIGO MUERTO Y
+      ' ComandoGenerado ABORTA SI APARECE.
+    Case "glosario", "bibliografia", "sobre_autores", "cronologia",
+        "indice_onomastico", "indice_tematico",
+        "indice_autores_bibliografia", "colofon"
+      Return ZONA_BACK
+
+    Case Else
+      ' otro Y CUALQUIER TIPO NUEVO QUE SE AGREGUE AL enum SIN TOCAR ESTA
+      ' FUNCIÓN. VA AL CUERPO, QUE ES EL DESTINO MENOS SORPRENDENTE.
+      Return ZONA_BODY
+
+  End Select
+
+End
+
+' ============================================
+' Función   : EsPiezaSinNumerar
+' Propósito : Dice si una pieza del cuerpo va sin numerar, y por lo tanto
+'             necesita \gbPiezaSinNumerar antes de su \include.
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+' Retorna   : Boolean
+' ============================================
+Private Function EsPiezaSinNumerar(sTipo As String) As Boolean
+
+  Select Case LCase(Trim(sTipo))
+    Case "conclusiones", "epilogo", "posfacio", "post_scriptum"
+      Return True
+    Case Else
+      Return False
+  End Select
+
+End
+
+' ============================================
+' Función   : ComandoGenerado
+' Propósito : Comando de LaTeX que corresponde a una pieza SIN CUERPO PROPIO.
+'             Esas piezas no tienen .md ni canónico: las produce LaTeX, así
+'             que NO llevan \include. Si el generador las tratara como piezas
+'             normales, el main.tex declararía un archivo inexistente y LaTeX
+'             fallaría con un "I can't find file" que no dice de dónde salió
+'             la referencia.
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+' Retorna   : String — el comando, "" si la pieza tiene cuerpo, o "ABORTAR"
+'
+' LOS TRES ÍNDICES DEL PREÁMBULO
+'   names       lo llena biblatex vía esindex con los autores del aparato
+'               bibliográfico. El editor no escribe nada.
+'   onomastico  lo carga el editor con \index[onomastico]{...}
+'   concepto    lo carga el editor con \index[concepto]{...}
+'
+' indice_analitico ES CÓDIGO MUERTO: viene de un índice temático que se
+' propuso para un diccionario y que los editores descartaron. Conviene sacarlo
+' del enum. Mientras esté, aborta: emitir un \printindex sobre un índice que el
+' preámbulo no declara da un error de LaTeX que no explica nada.
+'
+' PENDIENTE MAYOR: el canónico no tiene ningún <indexterm>, así que hoy los dos
+' índices manuales saldrían vacíos aunque se pida la pieza. Falta el shortcode,
+' con su representación en DocBook y su plantilla en las dos ramas.
+'
+' PENDIENTE: lista_abreviaturas y glosario se tratan como piezas CON cuerpo,
+' porque el ABM de siglas todavía no se encaró. Si esas piezas pasan a
+' generarse desde glossaries, hay que moverlas acá con \printglossary.
+' ============================================
+Private Function ComandoGenerado(sTipo As String) As String
+
+  Select Case LCase(Trim(sTipo))
+
+    Case "lista_figuras"
+      Return "\\listoffigures"
+
+    Case "lista_tablas"
+      Return "\\listoftables"
+
+    Case "indice_onomastico"
+      Return "\\printindex[onomastico]"
+
+    Case "indice_tematico"
+      Return "\\printindex[concepto]"
+
+    Case "indice_autores_bibliografia"
+      Return "\\printindex[names]"
+
+      ' LA BIBLIOGRAFÍA LA CONSTRUYE biblatex Y NO SALE DE UN .md. DECLARAR LA
+      ' PIEZA ES LA FORMA DE ELEGIR DÓNDE VA; SI NO SE DECLARA Y EL LIBRO ES
+      ' consolidada, EL GENERADOR LA PONE AL FINAL DE POSLIMINARES.
+    Case "bibliografia"
+      Return "\\printbibliography[heading=bibintoc]"
+
+      ' EL COLOFÓN LO EMITE EL GENERADOR Y NO SALE DE UN .md: CADA RAMA DE SALIDA
+      ' PRODUCE EL SUYO, Y EL DEL PDF DECLARA CON QUÉ FUENTES Y CON QUÉ VERSIÓN
+      ' SE COMPUSO. DECLARAR LA PIEZA ES LA FORMA DE ELEGIR DÓNDE VA.
+    Case "colofon"
+      Return "\\begin{gbcolofon}" & gb.NewLine & "\\gbTextoColofon" &
+        gb.NewLine & "\\end{gbcolofon}"
+
+    Case "indice_analitico"
+      m_Sonido.sonar("Error")
+      Message.Error("El tipo «indice_analitico» quedó sin uso." & gb.NewLine &
+        "Cambiá la pieza a indice_tematico, indice_onomastico o al índice " &
+        "de autores del aparato bibliográfico.")
+      Return "ABORTAR"
+
+    Case Else
+      Return ""
+
+  End Select
+
+End
 
 ' ============================================
 ' Función   : ObtenerAutoresLibro
 ' Propósito : Arma la cadena de autoría del libro para los metadatos del PDF,
 '             ordenada por orden_autoria.
-' Parámetros: iIdLibro    As Integer — libros_md.id_libro
-'             sTipoLibro  As String  — libros_md.tipo_libro
+' Parámetros: iIdLibro   As Integer — libros_md.id_libro
+'             sTipoLibro As String  — libros_md.tipo_libro
 ' Retorna   : String — "Apellidos, Nombre; Apellidos, Nombre (comp.)" o ""
 '             si no hay ninguno, que el llamador trata como error.
 ' Nota      : SE USAN apellidos Y nombre, QUE SON NOT NULL, Y NO
@@ -251,15 +375,15 @@ Private Function ObtenerAutoresLibro(iIdLibro As Integer, sTipoLibro As String) 
   Dim aNombres As New String[]
 
   ' --- 1. CONSULTA ---
-  ' EL IN DE ROLES SE INTERPOLA PORQUE ES UN LITERAL CONSTRUIDO POR NOSOTROS
-  ' A PARTIR DE UN enum CERRADO, NO UN DATO DEL USUARIO. EL ÚNICO VALOR
-  ' EXTERNO VA POR PLACEHOLDER.
+  ' EL IN DE ROLES SE INTERPOLA PORQUE ES UN LITERAL CONSTRUIDO POR NOSOTROS A
+  ' PARTIR DE UN enum CERRADO, NO UN DATO DEL USUARIO. EL ÚNICO VALOR EXTERNO
+  ' VA POR PLACEHOLDER.
   sSQL = "SELECT a.apellidos, a.nombre, la.rol_libro " &
-         "FROM libro_autor la " &
-         "JOIN autores a ON a.id_autor = la.id_autor " &
-         "WHERE la.id_libro = &1 " &
-         "AND la.rol_libro IN (" & RolesDeAutoriaSegunTipo(sTipoLibro) & ") " &
-         "ORDER BY la.orden_autoria"
+    "FROM libro_autor la " &
+    "JOIN autores a ON a.id_autor = la.id_autor " &
+    "WHERE la.id_libro = &1 " &
+    "AND la.rol_libro IN (" & RolesDeAutoriaSegunTipo(sTipoLibro) & ") " &
+    "ORDER BY la.orden_autoria"
 
   Try hRes = m_ConexionBD.mConn.Exec(sSQL, iIdLibro)
   If Error Then
@@ -280,11 +404,9 @@ Private Function ObtenerAutoresLibro(iIdLibro As Integer, sTipoLibro As String) 
     aNombres.Add(sNombre)
   Next
 
-  ' --- 3. RETORNO ---
   Return aNombres.Join("; ")
 
 End
-
 
 ' ============================================
 ' Función   : GenerarPreambuloProyecto
@@ -298,8 +420,7 @@ End
 '             veces sin tocar datos debe dejar git status limpio.
 '
 '             Va PRIMERO en el orden de \input porque geometry y fontspec
-'             necesitan los valores en el momento del \usepackage, y eso no
-'             se puede diferir.
+'             necesitan los valores en el momento del \usepackage.
 '
 ' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
 ' Retorna   : Boolean — True si se escribió, False si abortó con mensaje
@@ -322,6 +443,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Dim iIdLibro As Integer
   Dim iFormato As Integer
   Dim bHayMontaje As Boolean
+  Dim aPrest As String
 
   ' --- 1. VALIDACIÓN DE PROYECTO ABIERTO ---
   If m_InicioCierre.IdProyectoEnCurso = 0 Then
@@ -331,6 +453,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Endif
 
   sRutaLatex = m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_LATEX
+
   If Not Exist(sRutaLatex) Then
     Try Mkdir sRutaLatex
     If Error Then
@@ -345,19 +468,19 @@ Public Function GenerarPreambuloProyecto() As Boolean
   ' UN SOLO Exec CON JOIN: SI EL LIBRO NO TIENE FORMATO ASIGNADO, EL LEFT JOIN
   ' DEVUELVE NULL EN LAS COLUMNAS DEL FORMATO Y SE DETECTA EN EL APARTADO 3.
   sSQL = "SELECT l.id_libro, l.titulo_libro, l.subtitulo, l.titulo_abreviado, " &
-         "       l.tipo_libro, l.lugar_bibliografia, l.estado_libro, " &
-         "       l.estilo_cita, l.idioma_principal, l.idiomas_publicacion, " &
-         "       l.isbn_impreso, l.isbn_electronico, l.doi_libro, " &
-         "       l.editorial, l.ciudad_publicacion, l.ano_publicacion, " &
-         "       l.licencia_defecto, l.url_licencia, l.palabras_clave_libro, " &
-         "       l.id_formato_pdf, " &
-         "       f.nombre_formato, f.ancho, f.alto, " &
-         "       f.margen_interior, f.margen_exterior, " &
-         "       f.margen_superior, f.margen_inferior, " &
-         "       f.ancho_montaje, f.alto_montaje " &
-         "FROM libros_md l " &
-         "LEFT JOIN formatos_pdf f ON f.id_formato_pdf = l.id_formato_pdf " &
-         "WHERE l.id_proyecto = &1 LIMIT 1"
+    "       l.tipo_libro, l.lugar_bibliografia, l.estado_libro, " &
+    "       l.estilo_cita, l.idioma_principal, l.idiomas_publicacion, " &
+    "       l.isbn_impreso, l.isbn_electronico, l.doi_libro, " &
+    "       l.editorial, l.ciudad_publicacion, l.ano_publicacion, " &
+    "       l.licencia_defecto, l.url_licencia, l.palabras_clave_libro, " &
+    "       l.id_formato_pdf, " &
+    "       f.nombre_formato, f.ancho, f.alto, " &
+    "       f.margen_interior, f.margen_exterior, " &
+    "       f.margen_superior, f.margen_inferior, " &
+    "       f.ancho_montaje, f.alto_montaje " &
+    "FROM libros_md l " &
+    "LEFT JOIN formatos_pdf f ON f.id_formato_pdf = l.id_formato_pdf " &
+    "WHERE l.id_proyecto = &1 LIMIT 1"
 
   Try hLibro = m_ConexionBD.mConn.Exec(sSQL, m_InicioCierre.IdProyectoEnCurso)
   If Error Then
@@ -396,11 +519,10 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Endif
 
   ' --- 4. MODO DE SALIDA Y MEDIDAS DE MONTAJE ---
-  sModo = ModoDeSalida(hLibro["estado_libro"])
+  sModo = PrestacionesDeSalida(hLibro["estado_libro"])
 
   ' LAS DOS MEDIDAS DE MONTAJE SON UN DATO DE PRODUCCIÓN Y NO UNA DERIVACIÓN
-  ' DEL FORMATO: LA APP NO LAS CALCULA. SI FALTAN, EL MODO IMPRENTA NO PUEDE
-  ' PONER LAS CRUCES DE CORTE.
+  ' DEL FORMATO: LA APP NO LAS CALCULA.
   bHayMontaje = False
   If Not IsNull(hLibro["ancho_montaje"]) Then
     If Not IsNull(hLibro["alto_montaje"]) Then
@@ -441,6 +563,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
 
   ' --- 6. IDIOMAS ---
   sIdiomaPrincipal = CodigoABabel(hLibro["idioma_principal"])
+
   If sIdiomaPrincipal = "" Then
     m_Sonido.sonar("Error")
     Message.Error("El idioma principal del libro no está entre los " &
@@ -467,6 +590,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
 
   ' --- 7. AUTORÍA ---
   sAutores = ObtenerAutoresLibro(iIdLibro, hLibro["tipo_libro"])
+
   If sAutores = "" Then
     m_Sonido.sonar("Error")
     Message.Error("El libro no tiene cargada la autoría que corresponde a su " &
@@ -491,27 +615,38 @@ Public Function GenerarPreambuloProyecto() As Boolean
   s &= "% ============================================================" & gb.NewLine
   s &= gb.NewLine
 
-  ' 8.1 MODO DE SALIDA
-  s &= "% --- MODO DE SALIDA (derivado de estado_libro) ---" & gb.NewLine
-  s &= "\\newif\\ifgbborrador   \\gbborrador" & IIf(sModo = "borrador", "true", "false") & gb.NewLine
-  s &= "\\newif\\ifgbimprenta   \\gbimprenta" & IIf(sModo = "imprenta", "true", "false") & gb.NewLine
+  ' ' 8.1 MODO DE SALIDA
+  ' s &= "% --- MODO DE SALIDA (derivado de estado_libro) ---" & gb.NewLine
+  ' s &= "\\newif\\ifgbborrador   \\gbborrador" &
+  '   IIf(sModo = "borrador", "true", "false") & gb.NewLine
+  ' s &= "\\newif\\ifgbimprenta   \\gbimprenta" &
+  '   IIf(sModo = "imprenta", "true", "false") & gb.NewLine
+  ' s &= gb.NewLine
+
+  ' 8.1 PRESTACIONES DE SALIDA
+  aPrest = PrestacionesDeSalida(hLibro["estado_libro"])
+  s &= "% --- PRESTACIONES DE SALIDA (derivadas de estado_libro) ---" & gb.NewLine
+  s &= "\\newif\\ifgbshowframe    \\gbshowframe" & aPrest[0] & gb.NewLine
+  s &= "\\newif\\ifgbhomeoarchy   \\gbhomeoarchy" & aPrest[1] & gb.NewLine
+  s &= "\\newif\\ifgbenlaces      \\gbenlaces" & aPrest[2] & gb.NewLine
+  s &= "\\newif\\ifgbcruces       \\gbcruces" & aPrest[3] & gb.NewLine
   s &= gb.NewLine
 
   ' 8.2 FORMATO DE PÁGINA
   s &= "% --- FORMATO DE PÁGINA (formatos_pdf id=" & CStr(iFormato) & ") ---" & gb.NewLine
-  s &= "\\def\\gbanchopagina{" & Format(hLibro["ancho"], "0.00") & "cm}" & gb.NewLine
-  s &= "\\def\\gbaltopagina{" & Format(hLibro["alto"], "0.00") & "cm}" & gb.NewLine
-  s &= "\\def\\gbmargeninterior{" & Format(hLibro["margen_interior"], "0.00") & "cm}" & gb.NewLine
-  s &= "\\def\\gbmargenexterior{" & Format(hLibro["margen_exterior"], "0.00") & "cm}" & gb.NewLine
-  s &= "\\def\\gbmargensuperior{" & Format(hLibro["margen_superior"], "0.00") & "cm}" & gb.NewLine
-  s &= "\\def\\gbmargeninferior{" & Format(hLibro["margen_inferior"], "0.00") & "cm}" & gb.NewLine
+  s &= "\\def\\gbanchopagina{" & NumeroLatex(hLibro["ancho"]) & "cm}" & gb.NewLine
+  s &= "\\def\\gbaltopagina{" & NumeroLatex(hLibro["alto"]) & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargeninterior{" & NumeroLatex(hLibro["margen_interior"]) & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargenexterior{" & NumeroLatex(hLibro["margen_exterior"]) & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargensuperior{" & NumeroLatex(hLibro["margen_superior"]) & "cm}" & gb.NewLine
+  s &= "\\def\\gbmargeninferior{" & NumeroLatex(hLibro["margen_inferior"]) & "cm}" & gb.NewLine
   s &= "\\def\\gbnombreformato{" & EscaparTeX(hLibro["nombre_formato"]) & "}" & gb.NewLine
 
   ' truecm Y NO cm: ES LA UNIDAD INMUNE A \mag, QUE ES LO QUE CORRESPONDE EN
   ' UNA MEDIDA DE MONTAJE.
   If bHayMontaje Then
-    s &= "\\def\\gbanchomontaje{" & Format(hLibro["ancho_montaje"], "0.00") & "truecm}" & gb.NewLine
-    s &= "\\def\\gbaltomontaje{" & Format(hLibro["alto_montaje"], "0.00") & "truecm}" & gb.NewLine
+    s &= "\\def\\gbanchomontaje{" & NumeroLatex(hLibro["ancho_montaje"]) & "truecm}" & gb.NewLine
+    s &= "\\def\\gbaltomontaje{" & NumeroLatex(hLibro["alto_montaje"]) & "truecm}" & gb.NewLine
   Else
     s &= "% SIN MEDIDAS DE MONTAJE: EL MODO IMPRENTA NO ESTÁ DISPONIBLE" & gb.NewLine
     s &= "\\def\\gbanchomontaje{}" & gb.NewLine
@@ -530,9 +665,10 @@ Public Function GenerarPreambuloProyecto() As Boolean
   s &= "% --- BIBLIOGRAFÍA ---" & gb.NewLine
   s &= "\\def\\estandar{" & sEstilo & "}" & gb.NewLine
   s &= "\\newif\\ifgbbibporcapitulo   \\gbbibporcapitulo" &
-       IIf(LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada", "false", "true") & gb.NewLine
+    IIf(LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada",
+    "false", "true") & gb.NewLine
   s &= "\\def\\gbarchivobib{./" & CARPETA_REFERENCIAS & "/" &
-       m_Bibtex.NombreArchivoBib() & "}" & gb.NewLine
+    m_Bibtex.NombreArchivoBib() & "}" & gb.NewLine
   s &= gb.NewLine
 
   ' 8.5 METADATOS DEL PDF
@@ -575,20 +711,571 @@ Public Function GenerarPreambuloProyecto() As Boolean
 
 End
 
-
 ' ============================================
-' Función   : NuloAVacio
-' Propósito : Convierte un valor NULL de la base en cadena vacía. Sin esto,
-'             concatenar un campo NULL propaga el nulo a toda la expresión.
-' Parámetros: vValor As Variant — valor leído de un Result
-' Retorna   : String — el valor como texto, o "" si era NULL
-' Nota      : NO USAR CStr() SOBRE UN Boolean: DEVUELVE "T" O CADENA VACÍA, Y
-'             UN False SE VUELVE INDISTINGUIBLE DE UN NULL (GV-10). ACÁ NO
-'             ENTRAN BOOLEANOS, PERO LA REGLA VALE SI SE EXTIENDE LA FUNCIÓN.
+' Función   : BorrarTexHuerfanos
+' Propósito : Elimina de {proyecto}/latex los c-*.tex que no corresponden a
+'             ninguna pieza declarada en la base.
+' Parámetros: sDirLatex   As String     — {proyecto}/latex
+'             cDeclarados As Collection — claves = nombres de archivo esperados
+' Retorna   : (Sub, sin retorno)
+' Nota      : SI NO SE BORRAN, LA CARPETA MIENTE SOBRE QUÉ ES EL LIBRO. Y HAY
+'             UN CASO PEOR QUE EL RUIDO: SI SE BORRA UNA PIEZA DE LA BASE, SU
+'             .tex VIEJO QUEDA, ALGUIEN LO AGREGA AL main.tex A MANO Y COMPILA
+'             CONTENIDO QUE YA NO ES PARTE DEL PROYECTO.
 ' ============================================
-Private Function NuloAVacio(vValor As Variant) As String
+Private Sub BorrarTexHuerfanos(sDirLatex As String, cDeclarados As Collection)
 
-  If IsNull(vValor) Then Return ""
-  Return Trim(CStr(vValor))
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  Try aArchivos = Dir(sDirLatex, "c-*.tex", gb.File)
+  If Error Then Return
+
+  For Each sArchivo In aArchivos
+    If Not cDeclarados.Exist(sArchivo) Then
+      Try Kill sDirLatex &/ sArchivo
+      If Error Then
+        ' NO SE ABORTA POR ESTO: UN HUÉRFANO QUE NO SE PUDO BORRAR NO IMPIDE
+        ' COMPILAR. PERO SE INFORMA, PORQUE UN Try MUDO ES UN CANAL MUDO
+        ' (GV-23).
+        Message.Warning("No se pudo borrar el archivo huérfano " & sArchivo &
+          ":" & gb.NewLine & Error.Text)
+      Endif
+    Endif
+  Next
 
 End
+
+' ============================================
+' Función   : GenerarTexDePieza
+' Propósito : Corre docbook-to-latex.xsl sobre el canónico de una pieza.
+' Parámetros: sNombreArchivo As String — capitulos.nombre_archivo
+'             sRutaProyecto  As String — raíz del proyecto
+' Retorna   : Boolean — True si generó
+' Nota      : Exec CON ARRAY Y NUNCA Shell: LOS NOMBRES DE ARCHIVO PUEDEN
+'             TENER CARACTERES QUE sh -c INTERPRETARÍA (SC-05).
+'             EL ARRAY SE ARMA CON .Add Y NO COMO LITERAL MULTILÍNEA: UN
+'             LITERAL PARTIDO CON COMA FINAL SE LEE COMO String Y DA
+'             Type mismatch (SC-05, GV-06).
+'             SI LA HOJA ABORTA POR VOCABULARIO NO PREVISTO, EL CÓDIGO DE
+'             SALIDA NO ES CERO Y EL Try LO ATRAPA.
+' PENDIENTE : NO VERIFIQUÉ QUE "Exec ... Wait" SEA LA SINTAXIS CORRECTA EN
+'             GAMBAS 3.22. SI NO COMPILA, LA ALTERNATIVA DOCUMENTADA ES
+'             "Exec ... To sSalidaStd" (GV-20).
+' ============================================
+Private Function GenerarTexDePieza(sNombreArchivo As String, sRutaProyecto As String) As Boolean
+
+  Dim sCanonico As String
+  Dim sSalida As String
+  Dim sHoja As String
+  Dim aComando As New String[]
+
+  sCanonico = sRutaProyecto &/ CARPETA_CANONICOS &/ "c-" & sNombreArchivo & ".xml"
+  sSalida = sRutaProyecto &/ CARPETA_LATEX &/ "c-" & sNombreArchivo & ".tex"
+  sHoja = User.Home &/ ".gbpublisher" &/ "xslt" &/ "docbook-to-latex.xsl"
+
+  ' --- 1. VALIDACIONES ---
+  If Not Exist(sCanonico) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No existe el canónico de la pieza:" & gb.NewLine & sCanonico &
+      gb.NewLine & gb.NewLine &
+      "Generá primero el DocBook canónico de " & sNombreArchivo & ".")
+    Return False
+  Endif
+
+  If Not Exist(sHoja) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró la hoja de transformación:" & gb.NewLine & sHoja)
+    Return False
+  Endif
+
+  ' --- 2. INVOCACIÓN ---
+  aComando.Add("java")
+  aComando.Add("-jar")
+  aComando.Add(m_Constantes.RUTA_SAXON)
+  aComando.Add("-s:" & sCanonico)
+  aComando.Add("-xsl:" & sHoja)
+  aComando.Add("-o:" & sSalida)
+
+  Try Exec aComando Wait
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Falló la transformación de " & sNombreArchivo & ":" &
+      gb.NewLine & Error.Text & gb.NewLine & gb.NewLine &
+      "Si el mensaje habla de vocabulario no previsto, hay un elemento del " &
+      "canónico que la hoja todavía no contempla.")
+    Return False
+  Endif
+
+  If Not Exist(sSalida) Then
+    m_Sonido.sonar("Error")
+    Message.Error("La transformación de " & sNombreArchivo &
+      " no produjo salida.")
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AbrirZona
+' Propósito : Texto que abre una zona del libro en el main.tex.
+' Parámetros: iZona As Integer — una de las constantes ZONA_*
+' Retorna   : String
+' Nota      : secnumdepth EN 0 Y NO EN -1: ALCANZA PARA APAGAR LOS NÚMEROS DE
+'             SECCIÓN Y NO DEJA \part SIN NUMERAR. VERIFICADO.
+' ============================================
+Private Function AbrirZona(iZona As Integer) As String
+
+  Dim s As String
+
+  Select Case iZona
+
+    Case ZONA_FRONT
+      s = gb.NewLine & "%%GB:FRONT:INICIO" & gb.NewLine
+      s &= "\\frontmatter" & gb.NewLine
+      s &= "\\setcounter{secnumdepth}{0}" & gb.NewLine
+      s &= "\\gbContadoresSinCapitulo" & gb.NewLine
+      s &= "\\tableofcontents" & gb.NewLine
+
+    Case ZONA_BODY
+      s = gb.NewLine & "%%GB:BODY:INICIO" & gb.NewLine
+      s &= "\\mainmatter" & gb.NewLine
+      s &= "\\setcounter{secnumdepth}{3}" & gb.NewLine
+
+    Case ZONA_APENDICE
+      ' LOS APÉNDICES VAN ANTES DE \backmatter: CON \appendix DESPUÉS QUEDAN
+      ' SIN NUMERAR Y SUS FIGURAS ARRASTRAN EL PREFIJO DEL ÚLTIMO CAPÍTULO DEL
+      ' CUERPO. VERIFICADO.
+      ' SE VUELVE A ENCENDER LA NUMERACIÓN QUE PUDO HABER APAGADO
+      ' \gbPiezaSinNumerar EN LAS CONCLUSIONES.
+      s = gb.NewLine & "%%GB:APENDICES:INICIO" & gb.NewLine
+      s &= "\\setcounter{secnumdepth}{3}" & gb.NewLine
+      s &= "\\appendix" & gb.NewLine
+
+    Case ZONA_BACK
+      s = gb.NewLine & "%%GB:BACK:INICIO" & gb.NewLine
+      s &= "\\backmatter" & gb.NewLine
+      s &= "\\setcounter{secnumdepth}{0}" & gb.NewLine
+      s &= "\\gbContadoresSinCapitulo" & gb.NewLine
+
+  End Select
+
+  Return s
+
+End
+
+' ============================================
+' Función   : CerrarZona
+' Propósito : Marcador de cierre de una zona del libro.
+' Parámetros: iZona As Integer — zona que se cierra, 0 si no hay
+' Retorna   : String
+' ============================================
+Private Function CerrarZona(iZona As Integer) As String
+
+  Select Case iZona
+    Case ZONA_FRONT
+      Return "%%GB:FRONT:FIN" & gb.NewLine
+    Case ZONA_BODY
+      Return "%%GB:BODY:FIN" & gb.NewLine
+    Case ZONA_APENDICE
+      Return "%%GB:APENDICES:FIN" & gb.NewLine
+    Case ZONA_BACK
+      Return "%%GB:BACK:FIN" & gb.NewLine
+    Case Else
+      Return ""
+  End Select
+
+End
+
+' ============================================
+' Función   : GenerarMainTeX
+' Propósito : Orquesta la generación completa de los archivos LaTeX del libro
+'             y escribe el main.tex declarativo.
+'
+' ORDEN, Y POR QUÉ
+'   1. Validar proyecto y libro
+'   2. Copiar los recursos de ~/.gbpublisher/latex/ al proyecto
+'   3. Leer la lista de piezas declaradas en la base
+'   4. Generar los .tex de cada pieza con Saxon y borrar los huérfanos
+'   5. Generar preambulo-proyecto.tex y exportar el .bib
+'   6. Escribir el main.tex — ÚLTIMO
+'
+' El main.tex va último porque es lo que DECLARA la existencia de todo lo
+' demás, y es el testigo de fecha de la guarda de desactualización. Si algo
+' falla antes, se aborta sin escribirlo: el proyecto queda con piezas nuevas y
+' sin declarativo —estado detectable— en vez de con un declarativo que promete
+' \include de archivos que no existen. Es el criterio de SC-07.
+'
+' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
+' Retorna   : Boolean — True si se escribió el main.tex
+' ============================================
+Public Function GenerarMainTeX() As Boolean
+
+  Dim hLibro As Result
+  Dim hPiezas As Result
+  Dim cDeclarados As New Collection
+  Dim s As String
+  Dim sRutaProyecto As String
+  Dim sDirLatex As String
+  Dim sNombre As String
+  Dim sTipo As String
+  Dim sComando As String
+  Dim iIdLibro As Integer
+  Dim iZona As Integer
+  Dim iZonaActual As Integer
+  Dim iParteActual As Integer
+  Dim i As Integer
+  Dim bConsolidada As Boolean
+  Dim bHayBibliografia As Boolean
+  Dim bHayColofon As Boolean
+
+  ' LOS DATOS DE LAS PIEZAS SE VUELCAN A ARRAYS PARALELOS EN UNA SOLA PASADA.
+  ' ASÍ SE RECORREN DOS VECES —UNA PARA GENERAR LOS .tex Y OTRA PARA ARMAR EL
+  ' main.tex— SIN DEPENDER DE REPOSICIONAR EL CURSOR DEL Result.
+  Dim aNombre As New String[]
+  Dim aTipo As New String[]
+  Dim aIdParte As New String[]
+  Dim aTituloParte As New String[]
+  Dim aSubtituloParte As New String[]
+
+  ' --- 1. VALIDACIÓN DE PROYECTO Y LIBRO ---
+  If m_InicioCierre.IdProyectoEnCurso = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Abrí un proyecto antes de generar la salida PDF.")
+    Return False
+  Endif
+
+  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  sDirLatex = sRutaProyecto &/ CARPETA_LATEX
+
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT id_libro, lugar_bibliografia FROM libros_md " &
+    "WHERE id_proyecto = &1 LIMIT 1", m_InicioCierre.IdProyectoEnCurso)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el libro del proyecto:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  If Not hLibro.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El proyecto abierto no tiene un libro asociado en la base.")
+    Return False
+  Endif
+
+  iIdLibro = hLibro["id_libro"]
+  bConsolidada = (LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada")
+
+  ' --- 2. COPIA DE RECURSOS ---
+  ' SE REPITE AUNQUE YA SE HAYA HECHO AL ABRIR EL PROYECTO: UNA ACTUALIZACIÓN
+  ' DE gbpublisher ENTRE UNA COSA Y LA OTRA DEJARÍA EL PROYECTO CON PREÁMBULOS
+  ' VIEJOS, Y \gbRequiereContrato NO FRENARÍA PORQUE LA COPIA LOCAL SERÍA VIEJA
+  ' PERO CONSISTENTE.
+  If Not m_InicioCierre.CopiarRecursosLatex(sDirLatex) Then Return False
+
+  ' --- 3. LISTA DE PIEZAS DECLARADAS ---
+  ' EL ORDEN SALE DEL NOMBRE DE ARCHIVO Y NO DE UN id: UN id REFLEJA CUÁNDO SE
+  ' CARGÓ LA PIEZA, NO DÓNDE VA. LOS CAPÍTULOS NO LLEGAN JUNTOS NI EN ORDEN.
+  ' LA NUMERACIÓN DE DOS DÍGITOS HACE QUE EL ORDEN ALFABÉTICO EQUIVALGA AL
+  ' NUMÉRICO.
+  Try hPiezas = m_ConexionBD.mConn.Exec(
+    "SELECT c.nombre_archivo, c.tipo_capitulo, c.id_parte, " &
+    "       p.titulo AS titulo_parte, p.subtitulo AS subtitulo_parte " &
+    "FROM capitulos c " &
+    "LEFT JOIN partes_libro p ON p.id_parte = c.id_parte " &
+    "WHERE c.id_libro = &1 AND c.nombre_archivo IS NOT NULL " &
+    "ORDER BY CASE " &
+    "  WHEN c.nombre_archivo LIKE 'fm-%' THEN 1 " &
+    "  WHEN c.nombre_archivo LIKE 'a-%'  THEN 2 " &
+    "  WHEN c.nombre_archivo LIKE 'bm-%' THEN 3 " &
+    "  ELSE 9 END, c.nombre_archivo", iIdLibro)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la lista de piezas del libro:" & gb.NewLine &
+      Error.Text)
+    Return False
+  Endif
+
+  If Not hPiezas.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El libro no tiene piezas declaradas.")
+    Return False
+  Endif
+
+  For Each hPiezas
+    aNombre.Add(Trim(hPiezas["nombre_archivo"]))
+    aTipo.Add(Trim(hPiezas["tipo_capitulo"]))
+    aIdParte.Add(NuloAVacio(hPiezas["id_parte"]))
+    aTituloParte.Add(NuloAVacio(hPiezas["titulo_parte"]))
+    aSubtituloParte.Add(NuloAVacio(hPiezas["subtitulo_parte"]))
+  Next
+
+  ' --- 4. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
+  ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX.
+  For i = 0 To aNombre.Max
+    sComando = ComandoGenerado(aTipo[i])
+    If sComando = "ABORTAR" Then Return False
+    If sComando = "" Then
+      If Not GenerarTexDePieza(aNombre[i], sRutaProyecto) Then Return False
+      cDeclarados["c-" & aNombre[i] & ".tex"] = True
+    Endif
+  Next
+
+  BorrarTexHuerfanos(sDirLatex, cDeclarados)
+
+  ' --- 5. PREÁMBULO DERIVADO Y BIBLIOGRAFÍA ---
+  If Not GenerarPreambuloProyecto() Then Return False
+  If Not m_Bibtex.ExportarBibTeX() Then Return False
+
+  ' --- 6. PIEZAS QUE EL GENERADOR NO DEBE DUPLICAR ---
+  ' SI EL EDITOR DECLARÓ UNA PIEZA DE BIBLIOGRAFÍA O DE COLOFÓN, ESA
+  ' DECLARACIÓN ES LA QUE MANDA Y FIJA DÓNDE VAN. SIN ESTE CHEQUEO SALDRÍAN
+  ' DOS VECES.
+  bHayBibliografia = False
+  bHayColofon = False
+
+  For i = 0 To aTipo.Max
+    If LCase(aTipo[i]) = "bibliografia" Then bHayBibliografia = True
+    If LCase(aTipo[i]) = "colofon" Then bHayColofon = True
+  Next
+
+  ' --- 7. CABECERA DEL main.tex ---
+  s = "%%GB:MAIN:1" & gb.NewLine
+  s &= "% ============================================================" & gb.NewLine
+  s &= "% main.tex — GENERADO POR gbpublisher" & gb.NewLine
+  s &= "% ------------------------------------------------------------" & gb.NewLine
+  s &= "% ARCHIVO DECLARATIVO. NO CONTIENE TEXTO DEL LIBRO: SOLO" & gb.NewLine
+  s &= "% DECLARA QUÉ SE COMPILA Y EN QUÉ ORDEN." & gb.NewLine
+  s &= "%" & gb.NewLine
+  s &= "% LA LISTA DE PIEZAS SALE DE LA BASE, NO DE UN LISTADO DE LA" & gb.NewLine
+  s &= "% CARPETA. UN CANÓNICO QUE ESTÉ EN " & CARPETA_CANONICOS & "/ Y NO" & gb.NewLine
+  s &= "% ESTÉ DECLARADO EN EL PROYECTO NO ENTRA." & gb.NewLine
+  s &= "%" & gb.NewLine
+  s &= "% LOS MARCADORES %%GB: SON CONTRATO CON LOS SCRIPTS EXTERNOS" & gb.NewLine
+  s &= "% DE PERSONALIZACIÓN, NO COMENTARIOS DECORATIVOS. %%GB:MAIN:1" & gb.NewLine
+  s &= "% ES LA VERSIÓN DEL FORMATO: UN SCRIPT QUE ENTIENDE LA 1 Y" & gb.NewLine
+  s &= "% ENCUENTRA UNA 2 DEBE FRENAR EN VEZ DE HACER UN REEMPLAZO A" & gb.NewLine
+  s &= "% MEDIAS." & gb.NewLine
+  s &= "%" & gb.NewLine
+  s &= "% ESTE ARCHIVO Y TODO LO QUE DECLARA SON AUTÓNOMOS: LLEVANDO" & gb.NewLine
+  s &= "% LA CARPETA DEL PROYECTO A OTRA MÁQUINA CON TeX Live COMPLETO," & gb.NewLine
+  s &= "% Y SIN gbpublisher, COMPILA. NINGUNA RUTA ABSOLUTA, NINGÚN" & gb.NewLine
+  s &= "% PAQUETE FUERA DE TeX Live, NINGÚN --shell-escape." & gb.NewLine
+  s &= "% ============================================================" & gb.NewLine
+  s &= gb.NewLine
+  s &= "\\documentclass[11pt,twoside,openright]{book}" & gb.NewLine
+  s &= gb.NewLine
+  s &= "%%GB:PREAMBULO:INICIO" & gb.NewLine
+  s &= "\\input{preambulo-proyecto}" & gb.NewLine
+  s &= "\\input{preambulo-contrato}" & gb.NewLine
+  s &= "\\input{preambulo-estetica}" & gb.NewLine
+  s &= "%%GB:PREAMBULO:FIN" & gb.NewLine
+  s &= gb.NewLine
+  s &= "\\gbRequiereContrato{" & CStr(CONTRATO_VERSION) & "}" & gb.NewLine
+  s &= gb.NewLine
+  s &= "%%GB:SELECCION:INICIO" & gb.NewLine
+  s &= "% PARA COMPILAR UNA SOLA PIEZA, DESCOMENTAR Y EDITAR." & gb.NewLine
+  s &= "% ATENCIÓN: CON \\includeonly LA PAGINACIÓN Y LAS REFERENCIAS" & gb.NewLine
+  s &= "% CRUZADAS SALEN DE LOS .aux EXISTENTES. SI EL LIBRO NUNCA SE" & gb.NewLine
+  s &= "% COMPILÓ ENTERO, LOS NÚMEROS ESTÁN MAL." & gb.NewLine
+  s &= "% \\includeonly{}" & gb.NewLine
+  s &= "%%GB:SELECCION:FIN" & gb.NewLine
+  s &= gb.NewLine
+  s &= "%%GB:MODO:INICIO" & gb.NewLine
+  s &= "% COMPILACIÓN RÁPIDA SIN TOCAR EL PREÁMBULO." & gb.NewLine
+  s &= "% \\setkeys{Gin}{draft}" & gb.NewLine
+  s &= "% \\overfullrule=5pt" & gb.NewLine
+  s &= "%%GB:MODO:FIN" & gb.NewLine
+  s &= gb.NewLine
+  s &= "\\begin{document}" & gb.NewLine
+  s &= gb.NewLine
+  s &= "% ============================================================" & gb.NewLine
+  s &= "% CONTADORES EN PRELIMINARES Y POSLIMINARES" & gb.NewLine
+  s &= "% ------------------------------------------------------------" & gb.NewLine
+  s &= "% EN ESAS ZONAS \\chapter NO EJECUTA \\refstepcounter{chapter}," & gb.NewLine
+  s &= "% QUE ES LO ÚNICO QUE REINICIA section, footnote, figure, table" & gb.NewLine
+  s &= "% Y equation. SIN LOS AJUSTES DE ABAJO, UNA SECCIÓN DE" & gb.NewLine
+  s &= "% PRELIMINARES SALE «0.1», UNA DE POSLIMINARES CONTINÚA «1.3»," & gb.NewLine
+  s &= "% LA NOTA DE LA SEGUNDA PIEZA ARRANCA EN 2 Y UNA FIGURA DE" & gb.NewLine
+  s &= "% POSLIMINARES SALE «Figura 1.2». ES CÓMO ESTÁ ESCRITA LA CLASE" & gb.NewLine
+  s &= "% book, NO UN ERROR DEL GENERADOR." & gb.NewLine
+  s &= "% ============================================================" & gb.NewLine
+
+  ' --- 8. RECORRIDO DE LAS PIEZAS POR ZONA ---
+  iZonaActual = 0
+  iParteActual = -1
+
+  For i = 0 To aNombre.Max
+
+    sNombre = aNombre[i]
+    sTipo = aTipo[i]
+    iZona = ZonaDeTipo(sTipo)
+    sComando = ComandoGenerado(sTipo)
+
+    ' 8.1 CAMBIO DE ZONA
+    If iZona <> iZonaActual Then
+      s &= CerrarZona(iZonaActual)
+      s &= AbrirZona(iZona)
+      iZonaActual = iZona
+    Endif
+
+    ' 8.2 APERTURA DE PARTE
+    ' LAS PARTES NO SON ARCHIVOS: SON METADATOS DE partes_libro Y NO LLEVAN
+    ' TEXTO PROPIO. LAS EMITE EL GENERADOR ANTES DEL PRIMER CAPÍTULO DE CADA
+    ' UNA.
+    If aIdParte[i] <> "" Then
+      If CInt(aIdParte[i]) <> iParteActual Then
+        iParteActual = CInt(aIdParte[i])
+        s &= gb.NewLine & "\\gbParte{" & EscaparTeX(aTituloParte[i]) & "}{" &
+          EscaparTeX(aSubtituloParte[i]) & "}" & gb.NewLine
+      Endif
+    Endif
+
+    ' 8.3 LA PIEZA
+    If sComando <> "" Then
+      ' PIEZA SIN CUERPO: LA PRODUCE LaTeX, NO HAY ARCHIVO QUE INCLUIR
+      s &= sComando & gb.NewLine
+    Else
+      ' EN PRELIMINARES Y POSLIMINARES LA NOTA AL PIE SE REINICIA POR PIEZA:
+      ' \thefootnote ES ARÁBIGO PELADO Y NO HAY PREFIJO QUE COLISIONE.
+      If iZona = ZONA_FRONT Or If iZona = ZONA_BACK Then
+        s &= "\\setcounter{footnote}{0}" & gb.NewLine
+      Endif
+
+      ' UNA PIEZA DEL CUERPO SIN NUMERAR NECESITA CORTAR EL ARRASTRE DE
+      ' CONTADORES Y APAGAR LA NUMERACIÓN DE SECCIONES: SIN ESO SU PRIMERA
+      ' SECCIÓN SALE «1.1» Y COLISIONA CON LA DEL CAPÍTULO 1.
+      If iZona = ZONA_BODY Then
+        If EsPiezaSinNumerar(sTipo) Then
+          s &= "\\gbPiezaSinNumerar" & gb.NewLine
+        Endif
+      Endif
+
+      s &= "\\include{c-" & sNombre & "}" & gb.NewLine
+    Endif
+
+  Next
+
+  ' --- 9. CIERRE ---
+  ' SI FALTA ALGO QUE VA EN POSLIMINARES Y NO SE DECLARÓ COMO PIEZA, SE ABRE LA
+  ' ZONA ACÁ.
+  If Not bHayColofon Or If (bConsolidada And Not bHayBibliografia) Then
+    If iZonaActual <> ZONA_BACK Then
+      s &= CerrarZona(iZonaActual)
+      s &= AbrirZona(ZONA_BACK)
+      iZonaActual = ZONA_BACK
+    Endif
+  Endif
+
+  ' BIBLIOGRAFÍA CONSOLIDADA NO DECLARADA COMO PIEZA: VA AL FINAL.
+  ' CON bibliografía POR CAPÍTULO NO VA NADA ACÁ: CADA PIEZA ABRE SU refsection
+  ' Y EMITE SU PROPIA LISTA.
+  If bConsolidada Then
+    If Not bHayBibliografia Then
+      s &= "\\printbibliography[heading=bibintoc]" & gb.NewLine
+    Endif
+  Endif
+
+  ' COLOFÓN NO DECLARADO COMO PIEZA: VA SIEMPRE ÚLTIMO.
+  If Not bHayColofon Then
+    s &= gb.NewLine & "\\begin{gbcolofon}" & gb.NewLine
+    s &= "\\gbTextoColofon" & gb.NewLine
+    s &= "\\end{gbcolofon}" & gb.NewLine
+  Endif
+
+  s &= CerrarZona(iZonaActual)
+  s &= gb.NewLine & "\\end{document}" & gb.NewLine
+
+  ' --- 10. ESCRITURA ---
+  ' EL main.tex SE ESCRIBE ÚLTIMO: ES LO QUE DECLARA LA EXISTENCIA DE TODO LO
+  ' DEMÁS Y EL TESTIGO DE FECHA DE LA GUARDA DE DESACTUALIZACIÓN.
+  Try File.Save(sDirLatex &/ "main.tex", s)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el main.tex:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : NumeroLatex
+' Propósito : Formatea un número decimal con DOS DECIMALES Y PUNTO, sin
+'             importar el locale del sistema.
+' Parámetros: vValor As Variant — valor numérico leído de un Result
+' Retorna   : String — "15.00"
+' Nota      : Format() USA EL SEPARADOR DECIMAL DEL LOCALE. EN es_AR ES LA
+'             COMA, ASÍ QUE Format(15, "0.00") DEVUELVE "15,00" Y EL PREÁMBULO
+'             SALÍA CON \def\gbanchopagina{15,00cm}. geometry LEE ENTONCES
+'             paperwidth=15 Y TOMA "00cm" COMO UNA CLAVE DESCONOCIDA:
+'               Package keyval Error: 00cm undefined
+'             QUE NO DICE NADA SOBRE LA CAUSA.
+'             LaTeX SIEMPRE ESPERA PUNTO. ES LA MISMA FAMILIA QUE GV-03:
+'             COMPORTAMIENTO DEPENDIENTE DEL ENTORNO EN UNA SALIDA QUE DEBE
+'             SER REPRODUCIBLE ENTRE MÁQUINAS.
+' ============================================
+Private Function NumeroLatex(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return "0.00"
+  Return Replace(Format(vValor, "0.00"), ",", ".")
+
+End
+
+' ============================================
+' Función   : PrestacionesDeSalida
+' Propósito : Deriva las cuatro prestaciones del estado editorial del libro.
+'             Se emiten PRESTACIONES y no un «modo»: así agregar un estado
+'             nuevo no obliga a tocar el preámbulo, y cada bandera dice qué
+'             hace en vez de qué nombre tiene.
+' Parámetros: sEstado As String — libros_md.estado_libro
+' Retorna   : String[] — cuatro "true"/"false" en el orden
+'             showframe, homeoarchy, enlaces, cruces
+' ============================================
+Private Function PrestacionesDeSalida(sEstado As String) As String[]
+
+  Select Case LCase(Trim(sEstado))
+    Case "borrador"
+      Return ["true", "true", "true", "false"]
+    Case "en_correccion"
+      Return ["false", "true", "true", "false"]
+    Case "en_produccion"
+      Return ["false", "false", "true", "false"]
+    Case "publicado"
+      Return ["false", "false", "false", "true"]
+    Case Else
+      ' SIN ESTADO RECONOCIDO SE ASUME PRODUCCIÓN: SIN MARCAS DE TRABAJO
+      ' Y SIN CRUCES DE CORTE, QUE ES LO MENOS DESTRUCTIVO.
+      Return ["false", "false", "true", "false"]
+  End Select
+
+End
+
+' ' ============================================
+' ' Función   : ModoDeSalida
+' ' Propósito : Deriva el modo de salida del estado editorial del libro.
+' '             En la lógica editorial "publicado" significa también impreso,
+' '             así que el estado ya carga esa información y no hace falta una
+' '             columna aparte.
+' ' Parámetros: sEstadoLibro As String — libros_md.estado_libro
+' ' Retorna   : String — "borrador" | "final" | "imprenta"
+' ' ============================================
+' Private Function ModoDeSalida(sEstadoLibro As String) As String
+'
+'   Select Case LCase(Trim(sEstadoLibro))
+'     Case "borrador", "en_correccion"
+'       Return "borrador"
+'     Case "en_produccion"
+'       Return "final"
+'     Case "publicado"
+'       Return "imprenta"
+'     Case Else
+'       Return "final"
+'   End Select
+'
+' End
