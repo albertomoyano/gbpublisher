@@ -251,11 +251,8 @@ Private Function ZonaDeTipo(sTipo As String) As Integer
       Return ZONA_APENDICE
 
       ' --- POSLIMINARES ---
-      ' indice_analitico NO ESTÁ ACÁ A PROPÓSITO: ES CÓDIGO MUERTO Y
-      ' ComandoGenerado ABORTA SI APARECE.
     Case "glosario", "bibliografia", "sobre_autores", "cronologia",
-        "indice_onomastico", "indice_tematico",
-        "indice_autores_bibliografia", "colofon"
+        "indice_onomastico", "indice_concepto", "indice_autores", "colofon"
       Return ZONA_BACK
 
     Case Else
@@ -302,10 +299,9 @@ End
 '   onomastico  lo carga el editor con \index[onomastico]{...}
 '   concepto    lo carga el editor con \index[concepto]{...}
 '
-' indice_analitico ES CÓDIGO MUERTO: viene de un índice temático que se
-' propuso para un diccionario y que los editores descartaron. Conviene sacarlo
-' del enum. Mientras esté, aborta: emitir un \printindex sobre un índice que el
-' preámbulo no declara da un error de LaTeX que no explica nada.
+' LOS TRES ÍNDICES DEL LIBRO. LOS DOS PRIMEROS LOS CARGA EL EDITOR CON
+' \index[onomastico]{} Y \index[concepto]{}; EL TERCERO LO LLENA biblatex
+' CON indexing=true, Y EL EDITOR NO ESCRIBE NADA.
 '
 ' PENDIENTE MAYOR: el canónico no tiene ningún <indexterm>, así que hoy los dos
 ' índices manuales saldrían vacíos aunque se pida la pieza. Falta el shortcode,
@@ -315,30 +311,38 @@ End
 ' porque el ABM de siglas todavía no se encaró. Si esas piezas pasan a
 ' generarse desde glossaries, hay que moverlas acá con \printglossary.
 ' ============================================
-Private Function ComandoGenerado(sTipo As String) As String
+Private Function ComandoGenerado(sTipo As String, sTitulo As String) As String
 
   Select Case LCase(Trim(sTipo))
 
     Case "lista_figuras"
       Return "\\listoffigures"
-
     Case "lista_tablas"
       Return "\\listoftables"
-
+      ' LOS TRES ÍNDICES DEL LIBRO. LOS DOS PRIMEROS LOS CARGA EL EDITOR CON
+      ' \index[onomastico]{} Y \index[concepto]{}; EL TERCERO LO LLENA biblatex
+      ' CON indexing=true, Y EL EDITOR NO ESCRIBE NADA.
+      ' LOS TRES ÍNDICES LLEVAN ENCABEZADO PROPIO. EL \makeindex DE LA ESTÉTICA
+      ' LOS DECLARA CON title={} A PROPÓSITO: EL TÍTULO SALE DE
+      ' capitulos.titulo_capitulo, QUE ES DONDE EL EDITOR LO ESCRIBE, Y NO DEL
+      ' PREÁMBULO. SIN EL ENCABEZADO, \printindex IMPRIME LA LISTA DE NOMBRES
+      ' SIN DECIR QUÉ ES.
     Case "indice_onomastico"
-      Return "\\printindex[onomastico]"
+      Return "\\gbIndice{" & EscaparTeX(sTitulo) & "}{onomastico}"
 
-    Case "indice_tematico"
-      Return "\\printindex[concepto]"
+    Case "indice_concepto"
+      Return "\\gbIndice{" & EscaparTeX(sTitulo) & "}{concepto}"
 
-    Case "indice_autores_bibliografia"
-      Return "\\printindex[names]"
+    Case "indice_autores"
+      Return "\\gbIndice{" & EscaparTeX(sTitulo) & "}{names}"
 
       ' LA BIBLIOGRAFÍA LA CONSTRUYE biblatex Y NO SALE DE UN .md. DECLARAR LA
-      ' PIEZA ES LA FORMA DE ELEGIR DÓNDE VA; SI NO SE DECLARA Y EL LIBRO ES
-      ' consolidada, EL GENERADOR LA PONE AL FINAL DE POSLIMINARES.
+      ' PIEZA ES LA FORMA DE ELEGIR DÓNDE VA Y CÓMO SE TITULA: CON heading=none
+      ' EL TÍTULO SALE DE capitulos.titulo_capitulo, IGUAL QUE EN LOS ÍNDICES,
+      ' Y NO DE LA CADENA LOCALIZADA DE biblatex.
     Case "bibliografia"
-      Return "\\printbibliography[heading=bibintoc]"
+      Return "\\gbEncabezadoPieza{" & EscaparTeX(sTitulo) & "}" & gb.NewLine &
+        "\\printbibliography[heading=none]"
 
       ' EL COLOFÓN LO EMITE EL GENERADOR Y NO SALE DE UN .md: CADA RAMA DE SALIDA
       ' PRODUCE EL SUYO, Y EL DEL PDF DECLARA CON QUÉ FUENTES Y CON QUÉ VERSIÓN
@@ -346,13 +350,6 @@ Private Function ComandoGenerado(sTipo As String) As String
     Case "colofon"
       Return "\\begin{gbcolofon}" & gb.NewLine & "\\gbTextoColofon" &
         gb.NewLine & "\\end{gbcolofon}"
-
-    Case "indice_analitico"
-      m_Sonido.sonar("Error")
-      Message.Error("El tipo «indice_analitico» quedó sin uso." & gb.NewLine &
-        "Cambiá la pieza a indice_tematico, indice_onomastico o al índice " &
-        "de autores del aparato bibliográfico.")
-      Return "ABORTAR"
 
     Case Else
       Return ""
@@ -817,6 +814,9 @@ Private Function AbrirZona(iZona As Integer) As String
       s &= "\\frontmatter" & gb.NewLine
       s &= "\\setcounter{secnumdepth}{0}" & gb.NewLine
       s &= "\\gbContadoresSinCapitulo" & gb.NewLine
+      ' LAS HOJAS DE CORTESÍA VAN ANTES DE TODO Y CUENTAN EN LA PAGINACIÓN:
+      ' SON i Y ii, Y EL SUMARIO EMPIEZA EN iii.
+      s &= "\\gbHojasCortesia" & gb.NewLine
       s &= "\\tableofcontents" & gb.NewLine
 
     Case ZONA_BODY
@@ -916,6 +916,7 @@ Public Function GenerarMainTeX() As Boolean
   ' main.tex— SIN DEPENDER DE REPOSICIONAR EL CURSOR DEL Result.
   Dim aNombre As New String[]
   Dim aTipo As New String[]
+  Dim aTitulo As New String[]
   Dim aIdParte As New String[]
   Dim aTituloParte As New String[]
   Dim aSubtituloParte As New String[]
@@ -955,7 +956,7 @@ Public Function GenerarMainTeX() As Boolean
   ' LA NUMERACIÓN DE DOS DÍGITOS HACE QUE EL ORDEN ALFABÉTICO EQUIVALGA AL
   ' NUMÉRICO.
   Try hPiezas = m_ConexionBD.mConn.Exec(
-    "SELECT c.nombre_archivo, c.tipo_capitulo, c.id_parte, " &
+    "SELECT c.nombre_archivo, c.tipo_capitulo, c.titulo_capitulo, c.id_parte, " &
     "       p.titulo AS titulo_parte, p.subtitulo AS subtitulo_parte " &
     "FROM capitulos c " &
     "LEFT JOIN partes_libro p ON p.id_parte = c.id_parte " &
@@ -982,6 +983,7 @@ Public Function GenerarMainTeX() As Boolean
   For Each hPiezas
     aNombre.Add(Trim(hPiezas["nombre_archivo"]))
     aTipo.Add(Trim(hPiezas["tipo_capitulo"]))
+    aTitulo.Add(NuloAVacio(hPiezas["titulo_capitulo"]))
     aIdParte.Add(NuloAVacio(hPiezas["id_parte"]))
     aTituloParte.Add(NuloAVacio(hPiezas["titulo_parte"]))
     aSubtituloParte.Add(NuloAVacio(hPiezas["subtitulo_parte"]))
@@ -990,7 +992,7 @@ Public Function GenerarMainTeX() As Boolean
   ' --- 3. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
   ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX.
   For i = 0 To aNombre.Max
-    sComando = ComandoGenerado(aTipo[i])
+    sComando = ComandoGenerado(aTipo[i], aTitulo[i])
     If sComando = "ABORTAR" Then Return False
     If sComando = "" Then
       If Not GenerarTexDePieza(aNombre[i], sRutaProyecto) Then Return False
@@ -1046,6 +1048,7 @@ Public Function GenerarMainTeX() As Boolean
   s &= "\\input{preambulo-proyecto}" & gb.NewLine
   s &= "\\input{preambulo-contrato}" & gb.NewLine
   s &= "\\input{preambulo-estetica}" & gb.NewLine
+  s &= "\\input{preambulo-hyperref}" & gb.NewLine
   s &= "%%GB:PREAMBULO:FIN" & gb.NewLine
   s &= gb.NewLine
   s &= "\\gbRequiereContrato{" & CStr(CONTRATO_VERSION) & "}" & gb.NewLine
@@ -1087,7 +1090,7 @@ Public Function GenerarMainTeX() As Boolean
     sNombre = aNombre[i]
     sTipo = aTipo[i]
     iZona = ZonaDeTipo(sTipo)
-    sComando = ComandoGenerado(sTipo)
+    sComando = ComandoGenerado(sTipo, aTitulo[i])
 
     ' 7.1 CAMBIO DE ZONA
     If iZona <> iZonaActual Then
