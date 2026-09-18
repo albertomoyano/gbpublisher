@@ -334,3 +334,174 @@ Public Sub GenerarLibroHTML()
   Endif
 
 End Sub
+
+' ==========================================================
+' PROPÓSITO:
+'   Punto de entrada único para la salida PDF de un libro.
+'   Muestra qué se va a hacer y con qué prestaciones, y ofrece
+'   generar los archivos LaTeX con o sin compilar.
+'
+' POR QUÉ DOS OPCIONES Y NO TRES
+' ----------------------------------------------------------
+'   GenerarMainTeX no solo escribe el maestro: copia los recursos,
+'   transforma los canónicos con Saxon, borra los .tex huérfanos,
+'   escribe el preámbulo derivado y exporta el .bib. Es todo el
+'   trabajo salvo llamar a LuaLaTeX.
+'
+'   Así que «solo main.tex» y «salida PDF» no son dos operaciones
+'   distintas: la segunda es la primera más compilar. Lo único que
+'   cambia es si se ejecuta el compilador.
+'
+'   «Solo generar» sirve para revisar el main.tex o personalizarlo
+'   antes de compilar, que es el caso de los scripts de
+'   personalización del diseño.
+'
+' LAS PRESTACIONES SE MUESTRAN ANTES DE GENERAR
+' ----------------------------------------------------------
+'   Salen de libros_md.estado_libro y el editor no las elige acá:
+'   son consecuencia del estado editorial del libro. Mostrarlas
+'   evita la sorpresa de un PDF con cruces de corte cuando se
+'   esperaba uno para revisar en pantalla.
+' ==========================================================
+Public Sub GenerarPDFLibro()
+
+  Dim hLibro As Result
+  Dim sEstado As String
+  Dim sPrestaciones As String
+  Dim sNombreSalida As String
+  Dim sComando As String
+  Dim sScript As String
+  Dim iRespuesta As Integer
+
+  ' --- 0. MOSTRAR CONSOLA ---
+  FMain.tbMostrarPanelInferior.Value = True
+  FMain.TabPanelIzquierdaInferior.Index = 0
+
+  ' --- 1. GUARD DE CAMBIOS SIN GUARDAR ---
+  ' SE VERIFICA ANTES DE TODO: LA GENERACIÓN LEE LOS CANÓNICOS DEL DISCO, Y
+  ' UN CAMBIO SIN GUARDAR EN EL EDITOR NO ESTÁ EN NINGUNO DE ELLOS (SC-06).
+  If Not FMain.ConfirmarDescartarCambios() Then Return
+
+  ' --- 2. LEER EL ESTADO EDITORIAL ---
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT estado_libro FROM libros_md WHERE id_proyecto = &1 LIMIT 1",
+    m_InicioCierre.IdProyectoEnCurso)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el estado del libro:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  If Not hLibro.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El proyecto abierto no tiene un libro asociado en la base.")
+    Return
+  Endif
+
+  sEstado = LCase(Trim(hLibro["estado_libro"]))
+  sPrestaciones = DescribirPrestaciones(sEstado)
+
+  ' --- 3. CONSULTA AL USUARIO ---
+  ' Message.Question DEVUELVE 1 PARA EL PRIMER BOTÓN, 2 PARA EL SEGUNDO Y 3
+  ' PARA EL TERCERO.
+  iRespuesta = Message.Question(
+    "GENERAR LA SALIDA PDF DEL LIBRO" & gb.NewLine & gb.NewLine &
+    "Se van a regenerar todos los archivos LaTeX del proyecto a partir" & gb.NewLine &
+    "de los canónicos DocBook y de los datos de la base." & gb.NewLine & gb.NewLine &
+    "Estado del libro: " & sEstado & gb.NewLine &
+    sPrestaciones & gb.NewLine & gb.NewLine &
+    "Los canónicos deben estar actualizados: la generación no los" & gb.NewLine &
+    "regenera, los lee tal como están en el disco.",
+    "Generar y compilar", "Solo generar", "Cancelar")
+
+  If iRespuesta = 3 Then Return
+
+  ' --- 4. GENERACIÓN DE LOS ARCHIVOS LaTeX ---
+  ' MOSTRAR LA CONSOLA ANTES DE EMPEZAR: ES LA VENTANA DE ESTADO DEL PROCESO.
+  FMain.tbMostrarPanelInferior.Value = True
+  FMain.TabPanelIzquierdaInferior.Index = 0
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'Generando los archivos LaTeX del libro...'" & gb.NewLine)
+
+  ' GenerarMainTeX YA AVISA CON SU PROPIO MENSAJE CUANDO ABORTA.
+  If Not m_GenerarPDFLibro.GenerarMainTeX() Then
+    FMain.TerminalViewProyecto.Input(
+      "echo 'La generación se interrumpió. No se escribió el main.tex.'" & gb.NewLine)
+    Return
+  Endif
+
+  FMain.TerminalViewProyecto.Input(
+    "echo 'Archivos LaTeX generados en latex/'" & gb.NewLine)
+
+  ' --- 5. SOLO GENERAR: TERMINAR ACÁ ---
+  If iRespuesta = 2 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Archivos LaTeX generados." & gb.NewLine & gb.NewLine &
+      "El main.tex está en latex/ y se puede revisar o personalizar" & gb.NewLine &
+      "antes de compilar.")
+    Return
+  Endif
+
+  ' --- 6. COMPILACIÓN ---
+  sScript = "/usr/share/gbpublisher/engine/compilar_pdf_libro.sh"
+
+  If Not Exist(sScript) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el compilador de PDF:" & gb.NewLine & sScript &
+      gb.NewLine & gb.NewLine & "Verificá la instalación de gbpublisher.")
+    Return
+  Endif
+
+  ' EL NOMBRE DEL PDF ES EL DEL PROYECTO, NO «main». EL MAESTRO SE LLAMA
+  ' main.tex POR CONVENIENCIA INTERNA; EL ARCHIVO QUE RECIBE EL EDITOR TIENE
+  ' QUE DECIR DE QUÉ LIBRO ES.
+  sNombreSalida = File.BaseName(m_InicioCierre.NombreProyectoEnCurso)
+
+  ' Shell$() Y NO Quote(): Quote() DEVUELVE EL TEXTO ENTRE COMILLAS DOBLES, Y
+  ' DENTRO DE COMILLAS DOBLES sh SIGUE EXPANDIENDO $(...) Y LOS BACKTICKS.
+  ' LA RUTA DEL PROYECTO LA ELIGE EL USUARIO CON UN DIÁLOGO, ASÍ QUE PUEDE
+  ' CONTENER CUALQUIER COSA (GV-06).
+  sComando = "bash " & Shell$(sScript) & " " &
+    Shell$(m_InicioCierre.RutaProyectoEnCurso) & " " &
+    Shell$(m_Bibtex.NombreArchivoBib()) & " " &
+    Shell$(sNombreSalida)
+
+  FMain.TerminalViewProyecto.Input(sComando & gb.NewLine)
+
+Catch
+  ' RED DE ÚLTIMO RECURSO (RC-GM-20). LOS FALLOS PREVISIBLES SE ATRAPAN CON
+  ' Try + If Error EN SU PUNTO.
+  m_Sonido.sonar("Error")
+  Message.Error("Error al preparar la salida PDF: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : DescribirPrestaciones
+' Propósito : Describe en lenguaje llano qué prestaciones produce un estado
+'             editorial, para mostrarlas antes de generar.
+' Parámetros: sEstado As String — libros_md.estado_libro
+' Retorna   : String — descripción de una línea
+' Nota      : LA TABLA TIENE QUE COINCIDIR CON PrestacionesDeSalida DE
+'             m_GenerarPDFLibro. SON DOS LUGARES PARA EL MISMO HECHO, PERO
+'             UNO PRODUCE BANDERAS Y EL OTRO TEXTO PARA UN HUMANO. SI SE
+'             AGREGA UN ESTADO, HAY QUE TOCAR LOS DOS.
+' ============================================
+Private Function DescribirPrestaciones(sEstado As String) As String
+
+  Select Case LCase(Trim(sEstado))
+    Case "borrador"
+      Return "  marcas de caja, marcas tipográficas de trabajo y enlaces en color"
+    Case "en_correccion"
+      Return "  marcas tipográficas de trabajo y enlaces en color"
+    Case "en_produccion"
+      Return "  enlaces en color, sin marcas de trabajo"
+    Case "publicado"
+      Return "  cruces de corte, enlaces sin color, hoja de montaje"
+    Case Else
+      Return "  estado no reconocido: se compone como en producción"
+  End Select
+
+End

@@ -1,28 +1,46 @@
 ' Gambas class file
 
 ' ==============================================================================
-' Formulario: FConversorDOCX2MD
-' Propósito : Convierte archivos DOCX y ODT a Markdown usando Pandoc,
-'             organizándolos en la estructura del proyecto actualmente abierto
-'             según el tipo de pieza elegido (front-matter / cuerpo / back-matter).
-'             SUPUESTO: el formulario se invoca solo con un proyecto abierto.
-'             La carpeta destino se toma de m_InicioCierre.ArchivoProyectoEnCurso.
-'             La salida de Pandoc se vuelca al TerminalView del proyecto para
-'             que el usuario vea warnings (imágenes faltantes, estilos no
-'             mapeados, etc.).
-' Dependencias: m_Sonido, FMain.
+' Formulario  : FConversorDOCX2MD
+' Propósito   : Interfaz de la conversión de .docx a Markdown. Junta y valida
+'               los parámetros, pregunta por las sobrescrituras y ejecuta
+'               engine/convertir_docx.sh en la terminal propia del formulario,
+'               donde el usuario ve cada etapa. El veredicto llega por el
+'               código de salida, en el evento Kill de la terminal.
+'               La lógica de conversión NO vive acá: está en el script y en el
+'               filtro engine/limpiar_docx.lua (contrato de ingreso).
+'               SUPUESTO: el formulario se invoca con un proyecto abierto.
+' Dependencias: m_Sonido, m_FuncionesGenericas (RaizProyectoValida),
+'               m_InicioCierre (RutaRecursos), gb.form.terminal.
 ' ==============================================================================
 
-' --- FLAG QUE PERMITE EL CIERRE DESDE EL BOTÓN Y BLOQUEA LA X DEL SISTEMA ---
-Private bCierrePermitido As Boolean
+' --- CARACTERES PERMITIDOS EN EL NOMBRE. EL "_" QUEDA FUERA A PROPÓSITO: EL ---
+' --- SCRIPT LO USA PARA SEPARAR EL NOMBRE DE LA PIEZA DEL DE SUS IMÁGENES    ---
+Private Const CARACTERES_NOMBRE As String = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+Private Const DIGITOS As String = "0123456789"
+Private Const LARGO_MAXIMO_NOMBRE As Integer = 24
+
+' --- PERMITE EL CIERRE DESDE EL BOTÓN Y BLOQUEA LA X DEL SISTEMA ---
+Private $bCierrePermitido As Boolean
+
+' --- HAY UN PROCESO CORRIENDO EN LA TERMINAL ---
+Private $bConvirtiendo As Boolean
+
+' --- PROCESO DEVUELTO POR TerminalView.Exec: EL CÓDIGO DE SALIDA SE LEE DE ---
+' --- ACÁ, NO DE Last, PORQUE EL EMISOR DEL EVENTO Kill ES LA TERMINAL       ---
+Private $hProceso As Process
+
+' --- DESTINO DE LA CONVERSIÓN EN CURSO, PARA EL MENSAJE FINAL ---
+Private $sDestinoEnCurso As String
 
 ' ============================================
 ' Función   : Form_Open
-' Propósito : Estado inicial — campos limpios y botón Convertir oculto hasta
-'             que el usuario complete archivo de origen y nombre de destino.
-'             Se llama cada vez que se hace ShowModal, lo que asegura un
-'             estado consistente incluso después de conversiones previas
-'             (la instancia del formulario es persistente entre llamadas).
+' Propósito : Estado inicial: campos limpios, controles habilitados y botón
+'             Convertir oculto hasta completar origen y nombre. Me.Close()
+'             destruye la instancia (RC-GM-13), así que cada apertura parte
+'             de cero; igual se fija todo explícitamente
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub Form_Open()
 
@@ -30,28 +48,37 @@ Public Sub Form_Open()
   txtArchivoOrigen.Text = ""
   txtArchivoDestino.Text = ""
   lblNombreArchivo.Text = ""
+  rbBody.Value = True
 
-  ' --- 2. ESTADO INICIAL DE BOTONES ---
-  ' btnCerrar SIEMPRE VISIBLE: SI EL USUARIO ABRE EL FORM Y SE ARREPIENTE,
-  ' DEBE PODER SALIR SIN CONVERTIR
+  ' --- 2. ESTADO INICIAL ---
+  $bCierrePermitido = False
+  $bConvirtiendo = False
+  $hProceso = Null
+  $sDestinoEnCurso = ""
+  HabilitarControles(True)
   btnCONVERTIR.Visible = False
-  btnCerrar.Visible = True
+
+  ' --- 3. FUENTE DEL TERMINAL: EXPLÍCITA, NO HEREDADA ---
+  ' SI SE DEJA EN «FUENTE POR DEFECTO», QT SINTETIZA EL BOLD Y SE VE MAL
+  TerminalViewConversor.Font.Name = "IBM Plex Mono"
+  TerminalViewConversor.Font.Size = 12
+  TerminalViewConversor.Background = Color.RGB(45, 30, 20)   ' MARRÓN OSCURO
+  TerminalViewConversor.Foreground = Color.RGB(230, 220, 210)
 
 End
 
 ' ============================================
 ' Función   : btnBuscar_Click
-' Propósito : Permite al usuario seleccionar el archivo DOCX u ODT de origen.
+' Propósito : Permite seleccionar el .docx de origen
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub btnBuscar_Click()
 
   ' --- 1. CONFIGURAR Y ABRIR EL DIÁLOGO ---
-  Dialog.Title = "Seleccionar archivo DOCX u ODT"
-  Dialog.Filter = ["*.docx;*.odt", "Documentos (DOCX, ODT)",
-    "*.docx", "Archivos Word",
-    "*.odt", "Archivos LibreOffice",
-    "*", "Todos los archivos"]
-  Dialog.AutoExt = True
+  ' EL FILTRO ES COSMÉTICO (RC-GM-19): LA EXTENSIÓN SE VALIDA EN btnCONVERTIR_Click
+  Dialog.Title = "Seleccionar archivo .docx"
+  Dialog.Filter = ["*.docx", "Documentos de Word (.docx)"]
   Dialog.Path = User.Home
 
   ' Dialog.OpenFile DEVUELVE True CUANDO EL USUARIO CANCELA
@@ -67,262 +94,286 @@ End
 
 ' ============================================
 ' Función   : btnCONVERTIR_Click
-' Propósito : Valida entradas, determina prefijo y carpeta según el tipo
-'             de pieza (FM / cuerpo / BM) y ejecuta la conversión.
+' Propósito : Valida las entradas, pregunta por las sobrescrituras y lanza
+'             engine/convertir_docx.sh en la terminal del formulario. No
+'             espera el resultado: lo recibe TerminalViewConversor_Kill
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub btnCONVERTIR_Click()
 
   Dim sRutaOrigen As String
-  Dim sCarpetaProyecto As String
-  Dim sNombreDestino As String
-  Dim sExtension As String
-  Dim sFormato As String
+  Dim sRaiz As String
+  Dim sNombre As String
   Dim sPrefijo As String
-  Dim sCarpetaTexto As String
+  Dim sSubcarpeta As String
+  Dim sNombreFinal As String
+  Dim sScript As String
+  Dim aComando As New String[]
 
   ' --- 1. OBTENER VALORES DE LA INTERFAZ ---
+  ' ANTE UN DOBLE CLICK DURANTE UNA CONVERSIÓN NO SE HACE NADA
+  If $bConvirtiendo Then Return
+
   sRutaOrigen = Trim(txtArchivoOrigen.Text)
-  sNombreDestino = Trim(txtArchivoDestino.Text)
+  ' UCase CUBRE EL TEXTO PEGADO CON EL MOUSE, QUE NO DISPARA KeyRelease
+  sNombre = UCase(Trim(txtArchivoDestino.Text))
 
-  ' LA CARPETA DEL PROYECTO SE DERIVA DEL PROYECTO ABIERTO EN FMain
-  sCarpetaProyecto = m_InicioCierre.ArchivoProyectoEnCurso
+  ' LA CARPETA DEL PROYECTO ES LA RAÍZ, NO EL .md DEL PROYECTO (GV-01).
+  ' RaizProyectoValida DEVUELVE "" SI NO HAY PROYECTO O SI NO ES UN DIRECTORIO
+  sRaiz = m_FuncionesGenericas.RaizProyectoValida()
 
-  ' --- 2. VALIDAR QUE LOS CAMPOS NECESARIOS ESTÉN COMPLETOS ---
+  ' --- 2. VALIDAR CAMPOS Y PROYECTO ---
   If sRutaOrigen = "" Then
     m_Sonido.sonar("Error")
     Message.Error("Debe seleccionar un archivo de origen.")
     Return
   Endif
 
-  If sNombreDestino = "" Then
+  If sNombre = "" Then
     m_Sonido.sonar("Error")
     Message.Error("El campo de nombre de archivo no puede estar vacío.")
     Return
   Endif
 
-  ' --- 3. VALIDAR PATRÓN NN- EN EL NOMBRE DE DESTINO ---
-  ' DEFENSA EN PROFUNDIDAD: AUNQUE EL KeyPress YA LO IMPIDE,
-  ' VERIFICAMOS QUE EL NOMBRE TENGA AL MENOS NN- SEGUIDO DE UN CUERPO
-  If String.Len(sNombreDestino) < 4 Or
-      String.Mid(sNombreDestino, 1, 1) < "0" Or String.Mid(sNombreDestino, 1, 1) > "9" Or
-      String.Mid(sNombreDestino, 2, 1) < "0" Or String.Mid(sNombreDestino, 2, 1) > "9" Or
-      String.Mid(sNombreDestino, 3, 1) <> "-" Then
+  If sRaiz = "" Then
     m_Sonido.sonar("Error")
-    Message.Error("El nombre debe comenzar con dos dígitos seguidos de un guion," &
-      gb.NewLine & "por ejemplo 01-introduccion.")
+    Message.Error("No hay un proyecto abierto o su carpeta no es un directorio válido.")
     Return
   Endif
 
-  ' --- 4. VERIFICAR QUE EL ARCHIVO ORIGEN EXISTE ---
+  ' --- 3. VALIDAR EL NOMBRE COMPLETO ---
+  ' DEFENSA EN PROFUNDIDAD: KeyPress NO CUBRE EL PEGADO CON EL MOUSE
+  If Not NombreDestinoValido(sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El nombre debe comenzar con dos dígitos y un guion, y usar solo" &
+      gb.NewLine & "mayúsculas, dígitos y guiones (máximo " & LARGO_MAXIMO_NOMBRE & " caracteres)," &
+      gb.NewLine & "por ejemplo 01-INTRODUCCION.")
+    Return
+  Endif
+
+  ' --- 4. VERIFICAR QUE EL ORIGEN ES UN ARCHIVO ---
+  ' Exist ES True TAMBIÉN PARA CARPETAS (GV-01): IsDir EN If APARTE
   If Not Exist(sRutaOrigen) Then
     m_Sonido.sonar("Error")
-    Message.Error("El archivo de origen no existe: " & sRutaOrigen)
+    Message.Error("El archivo de origen no existe:" & gb.NewLine & sRutaOrigen)
     Return
   Endif
 
-  ' --- 5. DETERMINAR FORMATO SEGÚN EXTENSIÓN ---
-  sExtension = LCase(File.Ext(sRutaOrigen))
-  Select Case sExtension
-    Case "docx"
-      sFormato = "docx"
-    Case "odt"
-      sFormato = "odt"
-    Case Else
-      m_Sonido.sonar("Error")
-      Message.Error("Formato no soportado. Use archivos DOCX u ODT.")
-      Return
-  End Select
+  If IsDir(sRutaOrigen) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El origen seleccionado es una carpeta, no un archivo.")
+    Return
+  Endif
 
-  ' --- 6. DETERMINAR PREFIJO Y CARPETA SEGÚN RADIO SELECCIONADO ---
+  ' --- 5. VERIFICAR LA EXTENSIÓN ---
+  ' SIN DISTINGUIR CAJA A PROPÓSITO: UN .DOCX DE WINDOWS ES VÁLIDO
+  If LCase(File.Ext(sRutaOrigen)) <> "docx" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Formato no soportado. Solo se convierten archivos .docx.")
+    Return
+  Endif
+
+  ' --- 6. DETERMINAR PREFIJO Y SUBCARPETA SEGÚN EL TIPO DE PIEZA ---
   ' rbBody ES EL DEFAULT DEL FORMULARIO Y CAE EN EL Case Else
   Select Case True
     Case rbFront.Value
       sPrefijo = "fm-"
-      sCarpetaTexto = "front-matter"
+      sSubcarpeta = "front-matter"
     Case rbBack.Value
       sPrefijo = "bm-"
-      sCarpetaTexto = "back-matter"
+      sSubcarpeta = "back-matter"
     Case Else
       sPrefijo = "a-"
-      sCarpetaTexto = "articulos"
+      sSubcarpeta = "articulos"
   End Select
 
-  ' --- 7. EJECUTAR CONVERSIÓN ---
-  If ConvertirAMarkdown(sRutaOrigen, sFormato, sCarpetaProyecto, sNombreDestino, sPrefijo, sCarpetaTexto) Then
-    m_Sonido.sonar("Info")
-    Message.Info("Conversión completada con éxito.")
+  sNombreFinal = sPrefijo & sNombre
 
-    ' --- 8. RESET DE LA INTERFAZ PARA UNA EVENTUAL NUEVA CONVERSIÓN ---
-    btnCerrar.Visible = True
-    btnCONVERTIR.Visible = False
+  ' --- 7. VERIFICAR QUE EL SCRIPT ESTÁ INSTALADO ---
+  ' engine/ NO SE COPIA A ~/.gbpublisher (SC-11): SE LEE DE LOS RECURSOS
+  sScript = m_InicioCierre.RutaRecursos() &/ "engine" &/ "convertir_docx.sh"
+
+  If Not Exist(sScript) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encuentra el script de conversión:" & gb.NewLine & sScript &
+      gb.NewLine & gb.NewLine & "Reinstale el paquete de gbpublisher.")
+    Return
+  Endif
+
+  ' --- 8. CONFIRMAR SOBRESCRITURAS ---
+  ' LAS PREGUNTAS SON INTERFAZ Y VAN ACÁ: EL SCRIPT NO PREGUNTA NI LEE stdin.
+  ' SI SE CONFIRMA, EL SCRIPT REEMPLAZA TAMBIÉN EL INFORME Y LAS IMÁGENES DE LA PIEZA
+  If Exist(sRaiz &/ sSubcarpeta &/ sNombreFinal & ".md") Then
+    If Message.Question("Ya existe el archivo:" & gb.NewLine &
+        sNombreFinal & ".md" & gb.NewLine & gb.NewLine &
+        "¿Desea sobrescribirlo?", "Sí", "No") <> 1 Then
+      Return
+    Endif
+  Endif
+
+  If Exist(sRaiz &/ "originales" &/ sNombreFinal & ".docx") Then
+    If Message.Question("Ya existe el original:" & gb.NewLine &
+        sNombreFinal & ".docx" & gb.NewLine & gb.NewLine &
+        "¿Desea sobrescribirlo?", "Sí", "No") <> 1 Then
+      Return
+    Endif
+  Endif
+
+  ' --- 9. LANZAR EL SCRIPT EN LA TERMINAL ---
+  ' ARRAY SIN SHELL INTERMEDIO (SC-05, GV-06): LAS RUTAS VIAJAN INTACTAS
+  ' AUNQUE TENGAN COMILLAS, $ O ESPACIOS
+  aComando.Add("bash")
+  aComando.Add(sScript)
+  aComando.Add(sRutaOrigen)
+  aComando.Add(sRaiz)
+  aComando.Add(sSubcarpeta)
+  aComando.Add(sNombreFinal)
+
+  Try $hProceso = TerminalViewConversor.Exec(aComando)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo lanzar la conversión:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 10. ESTADO DE CONVERSIÓN EN CURSO ---
+  $bConvirtiendo = True
+  $sDestinoEnCurso = sSubcarpeta &/ sNombreFinal & ".md"
+  HabilitarControles(False)
+
+  ' EL FOCO EN LA TERMINAL PERMITE INTERRUMPIR CON Ctrl+C (RC-GM-07)
+  TerminalViewConversor.SetFocus()
+
+End
+
+' ============================================
+' Función   : TerminalViewConversor_Kill
+' Propósito : Recibe el fin del script y comunica el veredicto según el
+'             estado y el código de salida del proceso
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub TerminalViewConversor_Kill()
+
+  Dim iEstado As Integer
+  Dim iValor As Integer
+
+  ' --- 1. CAPTURAR EL RESULTADO Y LIBERAR EL ESTADO ---
+  ' SI NO HAY PROCESO PROPIO, EL EVENTO NO CORRESPONDE A UNA CONVERSIÓN
+  If $hProceso = Null Then Return
+
+  iEstado = $hProceso.State
+  iValor = $hProceso.Value
+  $hProceso = Null
+  $bConvirtiendo = False
+  HabilitarControles(True)
+
+  ' --- 2. PROCESO TERMINADO POR SEÑAL (Ctrl+C O Kill) ---
+  ' CON State = Crashed, Value ES EL NÚMERO DE SEÑAL, NO UN CÓDIGO DE SALIDA
+  If iEstado <> Process.Stopped Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La conversión fue interrumpida (señal " & iValor & ")." &
+      gb.NewLine & gb.NewLine &
+      "Si ocurrió antes de la etapa 6, el proyecto no se modificó." &
+      gb.NewLine & "Revise la terminal para ver hasta dónde llegó.")
+    Return
+  Endif
+
+  ' --- 3. CONVERSIÓN COMPLETA ---
+  If iValor = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Conversión completada:" & gb.NewLine & $sDestinoEnCurso &
+      gb.NewLine & gb.NewLine & "El informe quedó en /originales.")
+
+    ' RESET PARA UNA EVENTUAL NUEVA CONVERSIÓN
     txtArchivoOrigen.Text = ""
     txtArchivoDestino.Text = ""
     lblNombreArchivo.Text = ""
+    btnCONVERTIR.Visible = False
+    Return
   Endif
+
+  ' --- 4. FALLO CON CÓDIGO DE LA TABLA ---
+  m_Sonido.sonar("Error")
+  Message.Error(MensajeCodigoSalida(iValor) & gb.NewLine & gb.NewLine &
+    "Revise la terminal para ver el detalle.")
 
 End
 
 ' ============================================
-' Función   : ConvertirAMarkdown
-' Propósito : Ejecuta Pandoc para convertir DOCX/ODT a MD, lo ubica en la
-'             subcarpeta que corresponde a su tipo y copia el original a
-'             /originales con el prefijo correcto. La salida de Pandoc se
-'             vuelca al TerminalView del proyecto para que el usuario vea
-'             warnings.
-' Parámetros: sRutaOrigen      As String — ruta completa del archivo fuente
-'             sFormato         As String — "docx" u "odt"
-'             sCarpetaProyecto As String — carpeta raíz del proyecto
-'             sNombreDestino   As String — nombre sin prefijo, ya con NN-
-'             sPrefijo         As String — "fm-", "a-" o "bm-"
-'             sCarpetaTexto    As String — subcarpeta destino del .md
-' Retorna   : Boolean — True si la conversión fue exitosa
+' Función   : MensajeCodigoSalida
+' Propósito : Traduce el código de salida de convertir_docx.sh a un mensaje
+' Parámetros: iCodigo As Integer — código de salida del script
+' Retorna   : String — mensaje para el usuario
 ' ============================================
-Private Function ConvertirAMarkdown(sRutaOrigen As String, sFormato As String, sCarpetaProyecto As String, sNombreDestino As String, sPrefijo As String, sCarpetaTexto As String) As Boolean
+Private Function MensajeCodigoSalida(iCodigo As Integer) As String
 
-  Dim sCarpetaTextos As String
-  Dim sCarpetaOriginales As String
-  Dim sCarpetaMedia As String
-  Dim sArchivoMD As String
-  Dim sArchivoOriginalDestino As String
-  Dim sComando As String
-  Dim sSalidaPandoc As String
-
-  ' --- 1. DEFINIR RUTAS DE DESTINO ---
-  ' LA SUBCARPETA DEL .md DEPENDE DEL TIPO DE PIEZA ELEGIDO EN EL FORMULARIO
-  sCarpetaTextos = sCarpetaProyecto &/ sCarpetaTexto
-  sCarpetaOriginales = sCarpetaProyecto &/ "originales"
-  sCarpetaMedia = sCarpetaProyecto &/ "media"
-  sArchivoMD = sCarpetaTextos &/ sPrefijo & sNombreDestino & ".md"
-  sArchivoOriginalDestino = sCarpetaOriginales &/ sPrefijo & sNombreDestino & "." & sFormato
-
-  ' --- 2. CREAR SUBDIRECTORIOS SI NO EXISTEN ---
-  ' /originales ES ÚNICA PARA TODA LA REVISTA O LIBRO;
-  ' /media TAMBIÉN ES ÚNICA Y LA POBLA PANDOC. EL EDITING POSTERIOR SE
-  ' ENCARGA DE RESOLVER COLISIONES DE NOMBRES DE IMÁGENES
-  If Not CrearDirectorioSiNoExiste(sCarpetaTextos) Then Return False
-  If Not CrearDirectorioSiNoExiste(sCarpetaOriginales) Then Return False
-  If Not CrearDirectorioSiNoExiste(sCarpetaMedia) Then Return False
-
-  ' --- 3. VERIFICAR QUE NO EXISTA UN MD CON EL MISMO NOMBRE ---
-  If Exist(sArchivoMD) Then
-    If Message.Question("Ya existe el archivo:" & gb.NewLine &
-        File.Name(sArchivoMD) & gb.NewLine & gb.NewLine &
-        "¿Desea sobrescribirlo?", "Sí", "No") <> 1 Then
-      Return False
-    Endif
-  Endif
-
-  ' --- 4. VERIFICAR QUE NO EXISTA UN ORIGINAL CON EL MISMO NOMBRE ---
-  ' SIMÉTRICO AL CHEQUEO DEL MD: SI HAY UN ORIGINAL DEL MISMO NOMBRE EN
-  ' /originales, EL Copy POSTERIOR LO SOBRESCRIBIRÍA SILENCIOSAMENTE
-  If Exist(sArchivoOriginalDestino) Then
-    If Message.Question("Ya existe el original:" & gb.NewLine &
-        File.Name(sArchivoOriginalDestino) & gb.NewLine & gb.NewLine &
-        "¿Desea sobrescribirlo?", "Sí", "No") <> 1 Then
-      Return False
-    Endif
-  Endif
-
-  ' --- 5. CONSTRUIR COMANDO PANDOC ---
-  ' --extract-media DEPOSITA LAS IMÁGENES EN <proyecto>/media POR CONVENCIÓN DE PANDOC.
-  ' 2>&1 REDIRIGE STDERR A STDOUT PARA CAPTURAR TAMBIÉN LOS WARNINGS QUE PANDOC EMITE
-  ' POR ESE CANAL (PROBLEMAS DE IMÁGENES, ESTILOS NO MAPEADOS, ETC.)
-  sComando = "pandoc " & Quote$(sRutaOrigen) &
-    " -o " & Quote$(sArchivoMD) &
-    " --from=" & sFormato & " --to=markdown" &
-    " --wrap=none" &
-    " --extract-media=" & Quote$(sCarpetaProyecto) &
-    " 2>&1"
-
-  ' --- 6. EJECUTAR PANDOC Y CAPTURAR SALIDA ---
-  Try Shell sComando To sSalidaPandoc
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo lanzar Pandoc:" & gb.NewLine & Error.Text)
-    Return False
-  Endif
-
-  ' --- 7. VOLCAR LA SALIDA DE PANDOC AL TERMINALVIEW DEL PROYECTO ---
-  ' SI PANDOC NO TUVO NADA QUE DECIR (CASO IDEAL: SIN WARNINGS), NO MOSTRAMOS NADA.
-  ' SI TUVO WARNINGS O INFO, EL USUARIO LO VE EN LA TERMINAL DEL PROYECTO
-  If Trim(sSalidaPandoc) <> "" Then
-    FMain.TerminalViewProyecto.Input("echo '--- Pandoc: " &
-      File.Name(sRutaOrigen) & " ---'" & Chr(10))
-    FMain.TerminalViewProyecto.Input("cat << 'PANDOC_EOF'" & Chr(10) &
-      sSalidaPandoc & Chr(10) & "PANDOC_EOF" & Chr(10))
-  Endif
-
-  ' --- 8. VERIFICAR QUE EL MD SE GENERÓ ---
-  ' POST-CHECK: SI ARCHIVO NO EXISTE, PANDOC FALLÓ AUNQUE EL Shell NO LO REPORTÓ
-  If Not Exist(sArchivoMD) Then
-    m_Sonido.sonar("Error")
-    Message.Error("Pandoc no generó el archivo:" & gb.NewLine & sArchivoMD &
-      gb.NewLine & gb.NewLine &
-      "Revise la terminal del proyecto para ver el motivo.")
-    Return False
-  Endif
-
-  ' --- 8b. NORMALIZAR EL MD GENERADO A NFC ---
-  ' PANDOC PUEDE PRESERVAR LA FORMA DESCOMPUESTA (NFD) DE WORD/macOS, DONDE
-  ' ç SE ALMACENA COMO c + U+0327, ñ COMO n + U+0303, ETC. NFC ES LA
-  ' CONVENCIÓN DE LINUX Y LA WEB, Y EVITA FALSOS POSITIVOS EN EL ESCÁNER
-  ' UTF-8 Y BÚSQUEDAS QUE NO MATCHEAN POR FORMA NORMAL DISTINTA
-  Dim sComandoNormalizar As String
-  Dim sSalidaNorm As String
-  sComandoNormalizar = "python3 -c 'import sys,unicodedata; sys.stdout.write(unicodedata.normalize(" & Chr(34) & "NFC" & Chr(34) & ", sys.stdin.read()))' < " & Quote$(sArchivoMD) & " > " & Quote$(sArchivoMD & ".tmp") & " && mv " & Quote$(sArchivoMD & ".tmp") & " " & Quote$(sArchivoMD) & " 2>&1"
-
-  Try Shell sComandoNormalizar To sSalidaNorm
-  If Error Or If Trim(sSalidaNorm) <> "" Then
-    ' NO ES BLOQUEANTE: EL MD YA ESTÁ GENERADO Y FUNCIONA, SOLO QUEDA EN NFD.
-    ' SE REGISTRA EN LA TERMINAL DEL PROYECTO Y SE CONTINÚA
-    FMain.TerminalViewProyecto.Input("echo '--- Advertencia: no se pudo normalizar a NFC ---'" & Chr(10))
-    If Trim(sSalidaNorm) <> "" Then
-      FMain.TerminalViewProyecto.Input("cat << 'NORM_EOF'" & Chr(10) & sSalidaNorm & Chr(10) & "NORM_EOF" & Chr(10))
-    Endif
-    If Error Then
-      FMain.TerminalViewProyecto.Input("echo '" & Error.Text & "'" & Chr(10))
-    Endif
-  Endif
-
-  ' --- 9. COPIAR ARCHIVO ORIGEN A /originales ---
-  ' SE USA Copy EN LUGAR DE Move POR SEGURIDAD: SI LA CONVERSIÓN SALIÓ MAL
-  ' Y EL USUARIO QUIERE REINTENTAR (CON OTROS PARÁMETROS O CON OTRO TIPO DE
-  ' PIEZA), EL ORIGINAL SIGUE EN SU UBICACIÓN INICIAL
-  Try Copy sRutaOrigen To sArchivoOriginalDestino
-  If Error Then
-    ' EL Copy PUEDE FALLAR POR PERMISOS, DISCO LLENO O RECURSO DE RED
-    m_Sonido.sonar("Warning")
-    Message.Warning("La conversión a Markdown se completó correctamente y las figuras fueron extraídas." &
-      gb.NewLine & gb.NewLine &
-      "Sin embargo, no se pudo copiar el archivo original a /originales:" &
-      gb.NewLine & Error.Text & gb.NewLine & gb.NewLine &
-      "Deberá copiarlo manualmente.")
-  Endif
-
-  Return True
+  ' LA TABLA ESTÁ DOCUMENTADA EN EL ENCABEZADO DE engine/convertir_docx.sh
+  Select Case iCodigo
+    Case 10
+      Return "Argumentos inválidos para la conversión (código 10)."
+    Case 11
+      Return "Falta una dependencia: pandoc 3.1.3 o posterior, python3 o el filtro de limpieza (código 11)."
+    Case 20
+      Return "Pandoc no pudo convertir el archivo (código 20). El proyecto no se modificó."
+    Case 30
+      Return "Falló la normalización del texto (código 30). El proyecto no se modificó."
+    Case 40
+      Return "Falló una escritura en el proyecto (código 40). El proyecto puede haber quedado incompleto."
+    Case 50
+      Return "Falló el armado del informe (código 50). El proyecto no se modificó."
+    Case Else
+      Return "La conversión terminó con un código inesperado (" & iCodigo & ")."
+  End Select
 
 End
 
 ' ============================================
-' Función   : CrearDirectorioSiNoExiste
-' Propósito : Helper privado que crea un directorio si no existe, con
-'             verificación defensiva post-Mkdir. Centraliza el patrón usado
-'             para las tres subcarpetas del proyecto.
-' Parámetros: sRuta As String — ruta absoluta del directorio
-' Retorna   : Boolean — True si el directorio existe al final (creado o ya existía)
+' Función   : HabilitarControles
+' Propósito : Bloquea o libera la interfaz mientras corre una conversión
+' Parámetros: bHabilitar As Boolean — True para liberar, False para bloquear
+' Retorna   : nada
 ' ============================================
-Private Function CrearDirectorioSiNoExiste(sRuta As String) As Boolean
+Private Sub HabilitarControles(bHabilitar As Boolean)
 
-  If Exist(sRuta) Then Return True
+  btnBuscar.Enabled = bHabilitar
+  txtArchivoDestino.Enabled = bHabilitar
+  rbFront.Enabled = bHabilitar
+  rbBody.Enabled = bHabilitar
+  rbBack.Enabled = bHabilitar
+  btnCONVERTIR.Enabled = bHabilitar
+  btnCerrar.Enabled = bHabilitar
 
-  Try Mkdir sRuta
-  If Error Or If Not Exist(sRuta) Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo crear el directorio:" & gb.NewLine & sRuta &
-      gb.NewLine & gb.NewLine &
-      IIf(Error, Error.Text, "Mkdir no reportó error pero el directorio no se creó."))
-    Return False
-  Endif
+End
+
+' ============================================
+' Función   : NombreDestinoValido
+' Propósito : Verifica el patrón NN- y que todos los caracteres estén permitidos
+' Parámetros: sNombre As String — nombre sin prefijo de tipo, ya en mayúsculas
+' Retorna   : Boolean — True si el nombre es válido
+' ============================================
+Private Function NombreDestinoValido(sNombre As String) As Boolean
+
+  Dim iLargo As Integer
+  Dim iPos As Integer
+
+  ' --- 1. LARGO: NN- MÁS AL MENOS UN CARÁCTER ---
+  iLargo = String.Len(sNombre)
+  If iLargo < 4 Then Return False
+  If iLargo > LARGO_MAXIMO_NOMBRE Then Return False
+
+  ' --- 2. PATRÓN POSICIONAL NN- ---
+  ' CONDICIONES SEPARADAS: And/Or NO CORTOCIRCUITAN (RC-GM-17, GV-12)
+  If InStr(DIGITOS, String.Mid(sNombre, 1, 1)) = 0 Then Return False
+  If InStr(DIGITOS, String.Mid(sNombre, 2, 1)) = 0 Then Return False
+  If String.Mid(sNombre, 3, 1) <> "-" Then Return False
+
+  ' --- 3. RESTO DEL NOMBRE: SOLO CARACTERES PERMITIDOS ---
+  ' String.Mid POR CODEPOINT: UNA Ñ O UNA TILDE NO ESTÁN EN LA LISTA Y SE RECHAZAN
+  For iPos = 4 To iLargo
+    If InStr(CARACTERES_NOMBRE, String.Mid(sNombre, iPos, 1)) = 0 Then Return False
+  Next
 
   Return True
 
@@ -331,7 +382,9 @@ End
 ' ============================================
 ' Función   : txtArchivoDestino_KeyPress
 ' Propósito : Filtra caracteres permitidos y fuerza que el nombre comience
-'             con el patrón posicional NN-.
+'             con el patrón posicional NN-
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub txtArchivoDestino_KeyPress()
 
@@ -345,10 +398,13 @@ Public Sub txtArchivoDestino_KeyPress()
     Return
   Endif
 
+  ' TECLAS SIN TEXTO (SHIFT, CTRL, FLECHAS): NO ESCRIBEN NADA Y NO DEBEN SONAR
+  If Key.Text = "" Then Return
+
   ' --- 2. VALIDAR LONGITUD MÁXIMA (INCLUYE EL PREFIJO NN-) ---
-  If String.Len(txtArchivoDestino.Text) >= 24 Then
+  If String.Len(txtArchivoDestino.Text) >= LARGO_MAXIMO_NOMBRE Then
     m_Sonido.sonar("Warning")
-    Message.Warning("El nombre del archivo no puede tener más de 24 caracteres.")
+    Message.Warning("El nombre del archivo no puede tener más de " & LARGO_MAXIMO_NOMBRE & " caracteres.")
     Stop Event
     Return
   Endif
@@ -359,10 +415,9 @@ Public Sub txtArchivoDestino_KeyPress()
 
   If iPos = 0 Or iPos = 1 Then
     ' LAS DOS PRIMERAS POSICIONES SOLO ACEPTAN DÍGITOS
-    If Key.Text < "0" Or Key.Text > "9" Then
+    If InStr(DIGITOS, Key.Text) = 0 Then
       m_Sonido.sonar("Warning")
       Stop Event
-      Return
     Endif
     Return
   Endif
@@ -372,18 +427,13 @@ Public Sub txtArchivoDestino_KeyPress()
     If Key.Text <> "-" Then
       m_Sonido.sonar("Warning")
       Stop Event
-      Return
     Endif
     Return
   Endif
 
-  ' --- 4. POSICIÓN 3 EN ADELANTE: NÚMEROS, LETRAS Y GUION ---
-  If Key.Text = "-" Or
-      (Key.Text >= "0" And Key.Text <= "9") Or
-      (Key.Text >= "A" And Key.Text <= "Z") Or
-      (Key.Text >= "a" And Key.Text <= "z") Then
-    Return
-  Endif
+  ' --- 4. POSICIÓN 3 EN ADELANTE: DÍGITOS, LETRAS Y GUION ---
+  ' LAS MINÚSCULAS SE ACEPTAN: KeyRelease LAS PASA A MAYÚSCULAS
+  If InStr(CARACTERES_NOMBRE, UCase(Key.Text)) > 0 Then Return
 
   ' --- 5. BLOQUEAR CUALQUIER OTRO CARÁCTER ---
   Stop Event
@@ -393,7 +443,9 @@ End
 ' ============================================
 ' Función   : txtArchivoDestino_KeyRelease
 ' Propósito : Fuerza mayúsculas, valida longitud y actualiza el preview
-'             del nombre final con el prefijo de tipo seleccionado.
+'             del nombre final con el prefijo de tipo seleccionado
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub txtArchivoDestino_KeyRelease()
 
@@ -407,11 +459,11 @@ Public Sub txtArchivoDestino_KeyRelease()
   sTexto = UCase(txtArchivoDestino.Text)
 
   ' --- 3. VALIDAR LONGITUD MÁXIMA ---
-  If String.Len(sTexto) > 24 Then
-    sTexto = String.Left(sTexto, 24)
+  If String.Len(sTexto) > LARGO_MAXIMO_NOMBRE Then
+    sTexto = String.Left(sTexto, LARGO_MAXIMO_NOMBRE)
     m_Sonido.sonar("Warning")
-    Message.Warning("El nombre del archivo no puede tener más de 24 caracteres.")
-    iPosicionCursor = 24
+    Message.Warning("El nombre del archivo no puede tener más de " & LARGO_MAXIMO_NOMBRE & " caracteres.")
+    iPosicionCursor = LARGO_MAXIMO_NOMBRE
   Endif
 
   ' --- 4. ACTUALIZAR TEXTO Y RESTAURAR CURSOR ---
@@ -426,8 +478,9 @@ End
 
 ' ============================================
 ' Función   : rbFront_Click
-' Propósito : Actualiza el preview del nombre final cuando se cambia el tipo
-'             de pieza a Front Matter.
+' Propósito : Actualiza el preview al elegir Front Matter
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub rbFront_Click()
 
@@ -437,8 +490,9 @@ End
 
 ' ============================================
 ' Función   : rbBody_Click
-' Propósito : Actualiza el preview del nombre final cuando se cambia el tipo
-'             de pieza a cuerpo del documento.
+' Propósito : Actualiza el preview al elegir el cuerpo
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub rbBody_Click()
 
@@ -448,8 +502,9 @@ End
 
 ' ============================================
 ' Función   : rbBack_Click
-' Propósito : Actualiza el preview del nombre final cuando se cambia el tipo
-'             de pieza a Back Matter.
+' Propósito : Actualiza el preview al elegir Back Matter
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub rbBack_Click()
 
@@ -459,9 +514,10 @@ End
 
 ' ============================================
 ' Función   : ActualizarPreviewNombre
-' Propósito : Helper privado que reconstruye y muestra el nombre final del
-'             archivo (con prefijo y extensión) en lblNombreArchivo, basado
-'             en el tipo de pieza seleccionado y el nombre tipeado.
+' Propósito : Muestra el nombre final del archivo (prefijo, nombre y
+'             extensión) en lblNombreArchivo
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Private Sub ActualizarPreviewNombre()
 
@@ -490,8 +546,9 @@ End
 
 ' ============================================
 ' Función   : ActualizarBotonConvertir
-' Propósito : Helper privado que muestra u oculta btnCONVERTIR según haya
-'             archivo de origen seleccionado Y nombre de destino tipeado.
+' Propósito : Muestra u oculta btnCONVERTIR según haya origen y nombre
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Private Sub ActualizarBotonConvertir()
 
@@ -501,23 +558,43 @@ End
 
 ' ============================================
 ' Función   : btnCerrar_Click
-' Propósito : Habilita el flag de cierre permitido y cierra el formulario.
+' Propósito : Habilita el cierre y cierra el formulario
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub btnCerrar_Click()
 
-  bCierrePermitido = True
+  ' EL BOTÓN ESTÁ DESHABILITADO DURANTE LA CONVERSIÓN; ESTO ES LA RED
+  If $bConvirtiendo Then Return
+
+  $bCierrePermitido = True
   Me.Close()
 
 End
 
 ' ============================================
 ' Función   : Form_Close
-' Propósito : Si el cierre viene del botón, permitirlo. Si viene de la X
-'             del sistema, bloquearlo e informar al usuario.
+' Propósito : Bloquea el cierre durante una conversión y el cierre desde la X
+'             del sistema; permite el que viene del botón Cerrar
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub Form_Close()
 
-  If bCierrePermitido Then Return
+  ' --- 1. CONVERSIÓN EN CURSO: NO SE CIERRA ---
+  ' CERRAR MATARÍA LA TERMINAL CON EL SCRIPT A MEDIAS
+  If $bConvirtiendo Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Hay una conversión en curso." & gb.NewLine &
+      "Espere a que termine o interrúmpala con Ctrl+C en la terminal.")
+    Stop Event
+    Return
+  Endif
+
+  ' --- 2. CIERRE DESDE EL BOTÓN: PERMITIDO ---
+  If $bCierrePermitido Then Return
+
+  ' --- 3. CIERRE DESDE LA X: BLOQUEADO ---
   m_Sonido.sonar("Info")
   Message.Info("Para cerrar el formulario correctamente," & Chr(10) &
     "use el botón <b>Cerrar</b>.")

@@ -814,8 +814,10 @@ Private Function AbrirZona(iZona As Integer) As String
       s &= "\\frontmatter" & gb.NewLine
       s &= "\\setcounter{secnumdepth}{0}" & gb.NewLine
       s &= "\\gbContadoresSinCapitulo" & gb.NewLine
-      ' LAS HOJAS DE CORTESÍA VAN ANTES DE TODO Y CUENTAN EN LA PAGINACIÓN:
-      ' SON i Y ii, Y EL SUMARIO EMPIEZA EN iii.
+      ' LAS MARCAS DEL FOLIO SE VACÍAN AL ENTRAR A LA ZONA: LAS PIEZAS SIN
+      ' CUERPO —LISTAS, ÍNDICES, COLOFÓN— NO EMITEN \gbMarcasPieza, ASÍ QUE
+      ' SIN ESTO CONSERVARÍAN LAS DE LA ÚLTIMA PIEZA QUE SÍ LAS PUSO.
+      s &= "\\gbMarcasPieza{}{}" & gb.NewLine
       s &= "\\gbHojasCortesia" & gb.NewLine
       s &= "\\tableofcontents" & gb.NewLine
 
@@ -839,6 +841,7 @@ Private Function AbrirZona(iZona As Integer) As String
       s &= "\\backmatter" & gb.NewLine
       s &= "\\setcounter{secnumdepth}{0}" & gb.NewLine
       s &= "\\gbContadoresSinCapitulo" & gb.NewLine
+      s &= "\\gbMarcasPieza{}{}" & gb.NewLine
 
   End Select
 
@@ -868,7 +871,6 @@ Private Function CerrarZona(iZona As Integer) As String
   End Select
 
 End
-
 ' ============================================
 ' Función   : GenerarMainTeX
 ' Propósito : Orquesta la generación completa de los archivos LaTeX del libro
@@ -876,11 +878,14 @@ End
 '
 ' ORDEN, Y POR QUÉ
 '   1. Validar proyecto y libro
-'   2. Copiar los recursos de ~/.gbpublisher/latex/ al proyecto
-'   3. Leer la lista de piezas declaradas en la base
-'   4. Generar los .tex de cada pieza con Saxon y borrar los huérfanos
-'   5. Generar preambulo-proyecto.tex y exportar el .bib
-'   6. Escribir el main.tex — ÚLTIMO
+'   2. Leer la lista de piezas declaradas en la base
+'   3. Generar los .tex de cada pieza con Saxon y borrar los huérfanos
+'   4. Generar preambulo-proyecto.tex y exportar el .bib
+'   5. Detectar las piezas que el generador no debe duplicar
+'   6. Escribir la cabecera del main.tex
+'   7. Recorrer las piezas por zona
+'   8. Cerrar el documento
+'   9. Escribir el main.tex — ÚLTIMO
 '
 ' El main.tex va último porque es lo que DECLARA la existencia de todo lo
 ' demás, y es el testigo de fecha de la guarda de desactualización. Si algo
@@ -891,6 +896,7 @@ End
 ' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
 ' Retorna   : Boolean — True si se escribió el main.tex
 ' ============================================
+
 Public Function GenerarMainTeX() As Boolean
 
   Dim hLibro As Result
@@ -902,6 +908,7 @@ Public Function GenerarMainTeX() As Boolean
   Dim sNombre As String
   Dim sTipo As String
   Dim sComando As String
+  Dim sAutoriaLibro As String
   Dim iIdLibro As Integer
   Dim iZona As Integer
   Dim iZonaActual As Integer
@@ -920,6 +927,8 @@ Public Function GenerarMainTeX() As Boolean
   Dim aIdParte As New String[]
   Dim aTituloParte As New String[]
   Dim aSubtituloParte As New String[]
+  Dim aTituloFolio As New String[]
+  Dim aAutoriaFolio As New String[]
 
   ' --- 1. VALIDACIÓN DE PROYECTO Y LIBRO ---
   If m_InicioCierre.IdProyectoEnCurso = 0 Then
@@ -956,7 +965,8 @@ Public Function GenerarMainTeX() As Boolean
   ' LA NUMERACIÓN DE DOS DÍGITOS HACE QUE EL ORDEN ALFABÉTICO EQUIVALGA AL
   ' NUMÉRICO.
   Try hPiezas = m_ConexionBD.mConn.Exec(
-    "SELECT c.nombre_archivo, c.tipo_capitulo, c.titulo_capitulo, c.id_parte, " &
+    "SELECT c.id_capitulo, c.nombre_archivo, c.tipo_capitulo, " &
+    "       c.titulo_capitulo, c.id_parte, " &
     "       p.titulo AS titulo_parte, p.subtitulo AS subtitulo_parte " &
     "FROM capitulos c " &
     "LEFT JOIN partes_libro p ON p.id_parte = c.id_parte " &
@@ -980,6 +990,11 @@ Public Function GenerarMainTeX() As Boolean
     Return False
   Endif
 
+  ' LA AUTORÍA DEL LIBRO SE LEE UNA SOLA VEZ Y SE USA COMO RESPALDO PARA TODA
+  ' PIEZA SIN AUTORES PROPIOS. EN UNA MONOGRAFÍA NINGUNA PIEZA TIENE AUTORÍA
+  ' PROPIA Y TODAS CAEN ACÁ, QUE ES LO CORRECTO.
+  sAutoriaLibro = EscaparTeX(NombreDirectoAutoriaLibro(iIdLibro))
+
   For Each hPiezas
     aNombre.Add(Trim(hPiezas["nombre_archivo"]))
     aTipo.Add(Trim(hPiezas["tipo_capitulo"]))
@@ -987,6 +1002,8 @@ Public Function GenerarMainTeX() As Boolean
     aIdParte.Add(NuloAVacio(hPiezas["id_parte"]))
     aTituloParte.Add(NuloAVacio(hPiezas["titulo_parte"]))
     aSubtituloParte.Add(NuloAVacio(hPiezas["subtitulo_parte"]))
+    aTituloFolio.Add(EscaparTeX(TituloFolio(hPiezas["id_capitulo"])))
+    aAutoriaFolio.Add(AutoriaFolio(hPiezas["id_capitulo"], sAutoriaLibro))
   Next
 
   ' --- 3. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
@@ -1131,6 +1148,12 @@ Public Function GenerarMainTeX() As Boolean
         Endif
       Endif
 
+      ' LAS MARCAS DEL FOLIO CORRIENTE VAN ANTES DE LA PIEZA: EL ESTILO DE
+      ' PÁGINA LAS LEE AL COMPONER CADA PÁGINA, ASÍ QUE TIENEN QUE ESTAR
+      ' DEFINIDAS CUANDO EMPIEZA EL CAPÍTULO.
+      s &= "\\gbMarcasPieza{" & aTituloFolio[i] & "}{" &
+        aAutoriaFolio[i] & "}" & gb.NewLine
+
       s &= "\\include{c-" & sNombre & "}" & gb.NewLine
     Endif
 
@@ -1166,7 +1189,7 @@ Public Function GenerarMainTeX() As Boolean
   s &= CerrarZona(iZonaActual)
   s &= gb.NewLine & "\\end{document}" & gb.NewLine
 
-  ' --- 10. ESCRITURA ---
+  ' --- 9. ESCRITURA ---
   ' EL main.tex SE ESCRIBE ÚLTIMO: ES LO QUE DECLARA LA EXISTENCIA DE TODO LO
   ' DEMÁS Y EL TESTIGO DE FECHA DE LA GUARDA DE DESACTUALIZACIÓN.
   Try File.Save(sDirLatex &/ "main.tex", s)
@@ -1177,6 +1200,56 @@ Public Function GenerarMainTeX() As Boolean
   Endif
 
   Return True
+
+End
+
+' ============================================
+' Función   : NombreDirectoAutoriaLibro
+' Propósito : Autoría del libro en forma directa, para el folio corriente de
+'             las piezas que no tienen autoría propia.
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : String — sin escapar; el llamador escapa
+' Nota      : ObtenerAutoresLibro DEVUELVE LA FORMA INVERTIDA —«Moyano,
+'             Alberto»— PORQUE VA A LOS METADATOS DEL PDF, DONDE SE ORDENA.
+'             EL FOLIO SE LEE, ASÍ QUE VA LA DIRECTA.
+'             MISMA REGLA DE CORTE QUE EN LA AUTORÍA DE CAPÍTULO: HASTA TRES
+'             SEPARADOS POR BARRA, CUATRO O MÁS EL PRIMERO Y «et al.».
+' ============================================
+Private Function NombreDirectoAutoriaLibro(iIdLibro As Integer) As String
+
+  Dim hRes As Result
+  Dim hLibro As Result
+  Dim sSQL As String
+  Dim aNombres As New String[]
+
+  ' EL TIPO DE LIBRO DECIDE QUÉ ROLES CUENTAN COMO AUTORÍA: EN UNA
+  ' COMPILACIÓN FIRMA QUIEN EDITA, NO QUIEN ESCRIBIÓ CADA CAPÍTULO.
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT tipo_libro FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
+
+  If Error Then Return ""
+  If Not hLibro.Available Then Return ""
+
+  sSQL = "SELECT a.nombre, a.apellidos " &
+    "FROM libro_autor la " &
+    "JOIN autores a ON a.id_autor = la.id_autor " &
+    "WHERE la.id_libro = &1 " &
+    "AND la.rol_libro IN (" & RolesDeAutoriaSegunTipo(hLibro["tipo_libro"]) & ") " &
+    "ORDER BY la.orden_autoria"
+
+  Try hRes = m_ConexionBD.mConn.Exec(sSQL, iIdLibro)
+
+  If Error Then Return ""
+  If Not hRes.Available Then Return ""
+
+  For Each hRes
+    aNombres.Add(Trim(hRes["nombre"]) & " " & Trim(hRes["apellidos"]))
+  Next
+
+  If aNombres.Count = 0 Then Return ""
+  If aNombres.Count >= 4 Then Return aNombres[0] & " et al."
+
+  Return aNombres.Join(" | ")
 
 End
 
@@ -1232,26 +1305,93 @@ Private Function PrestacionesDeSalida(sEstado As String) As String[]
 
 End
 
-' ' ============================================
-' ' Función   : ModoDeSalida
-' ' Propósito : Deriva el modo de salida del estado editorial del libro.
-' '             En la lógica editorial "publicado" significa también impreso,
-' '             así que el estado ya carga esa información y no hace falta una
-' '             columna aparte.
-' ' Parámetros: sEstadoLibro As String — libros_md.estado_libro
-' ' Retorna   : String — "borrador" | "final" | "imprenta"
-' ' ============================================
-' Private Function ModoDeSalida(sEstadoLibro As String) As String
+' ============================================
+' Función   : TituloFolio
+' Propósito : Título que va en el folio corriente de una pieza.
+' Parámetros: iIdCapitulo As Integer — capitulos.id_capitulo
+' Retorna   : String — titulo_corto si tiene contenido, si no titulo_capitulo
+' Nota      : titulo_capitulo ES NOT NULL, ASÍ QUE SIEMPRE HAY ALGO QUE
+'             DEVOLVER. titulo_corto ES ANULABLE Y EXISTE PARA ESTE CASO:
+'             UN TÍTULO DE CINCUENTA PALABRAS NO ENTRA EN UN FOLIO.
+' ============================================
+Private Function TituloFolio(iIdCapitulo As Integer) As String
+
+  Dim hRes As Result
+  Dim sCorto As String
+
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT titulo_capitulo, titulo_corto FROM capitulos " &
+    "WHERE id_capitulo = &1 LIMIT 1", iIdCapitulo)
+
+  If Error Then Return ""
+  If Not hRes.Available Then Return ""
+
+  sCorto = NuloAVacio(hRes["titulo_corto"])
+  If sCorto <> "" Then Return sCorto
+
+  Return NuloAVacio(hRes["titulo_capitulo"])
+
+End
+
+' ============================================
+' Función   : AutoriaFolio
+' Propósito : Autoría que va en el folio corriente de una pieza.
+' Parámetros: iIdCapitulo As Integer — capitulos.id_capitulo
+'             sAutoriaLibro As String — se usa si el capítulo no tiene autores
+' Retorna   : String — ya escapado para LaTeX
 '
-'   Select Case LCase(Trim(sEstadoLibro))
-'     Case "borrador", "en_correccion"
-'       Return "borrador"
-'     Case "en_produccion"
-'       Return "final"
-'     Case "publicado"
-'       Return "imprenta"
-'     Case Else
-'       Return "final"
-'   End Select
+' FORMA
+'   Alberto Moyano
+'   Alberto Moyano | Juan Sotelo
+'   Alberto Moyano | Juan Sotelo | Marcelo Campanaro
+'   Alberto Moyano \emph{et al.}
 '
-' End
+' LA BARRA EVITA TENER QUE DECIDIR DÓNDE VA LA CONJUNCIÓN, QUE EN UN FOLIO DE
+' UNA LÍNEA ES RUIDO. EL «et al.» VA EN BASTARDILLA, COMO EN LA BIBLIOGRAFÍA.
+'
+' NOMBRE DIRECTO —«Alberto Moyano»— Y NO INVERTIDO: EL FOLIO SE LEE, NO SE
+' ALFABETIZA. LA FORMA INVERTIDA ES DE LA BIBLIOGRAFÍA Y DE LOS METADATOS.
+'
+' SOLO EL ROL «autor»: UN TRADUCTOR NO FIRMA EL FOLIO.
+' ============================================
+Private Function AutoriaFolio(iIdCapitulo As Integer, sAutoriaLibro As String) As String
+
+  Dim hRes As Result
+  Dim aNombres As New String[]
+
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT a.nombre, a.apellidos " &
+    "FROM capitulo_autor ca " &
+    "JOIN autores a ON a.id_autor = ca.id_autor " &
+    "WHERE ca.id_capitulo = &1 AND ca.rol_autor = 'autor' " &
+    "ORDER BY ca.orden_autoria", iIdCapitulo)
+
+  If Error Then Return sAutoriaLibro
+  If Not hRes.Available Then Return sAutoriaLibro
+
+  For Each hRes
+    aNombres.Add(Trim(hRes["nombre"]) & " " & Trim(hRes["apellidos"]))
+  Next
+
+  If aNombres.Count = 0 Then Return sAutoriaLibro
+
+  ' CUATRO O MÁS: EL PRIMERO Y «et al.». EL \emph VA SIN ESCAPAR PORQUE ES
+  ' VOCABULARIO NUESTRO, NO TEXTO DEL USUARIO; EL NOMBRE SÍ SE ESCAPA.
+  If aNombres.Count >= 4 Then
+    Return EscaparTeX(aNombres[0]) & " \\emph{et al.}"
+  Endif
+
+  ' HASTA TRES: TODOS, SEPARADOS POR BARRA.
+  ' SE ESCAPA CADA NOMBRE POR SEPARADO Y SE UNE DESPUÉS: SI SE ESCAPARA LA
+  ' CADENA YA UNIDA, LA BARRA SOBREVIVE IGUAL —NO ES CARÁCTER ACTIVO— PERO EL
+  ' CRITERIO ES NO PASAR NUNCA POR EL ESCAPE UN TEXTO QUE YA TIENE MARCADO.
+  Dim i As Integer
+  Dim aEscapados As New String[]
+
+  For i = 0 To aNombres.Max
+    aEscapados.Add(EscaparTeX(aNombres[i]))
+  Next
+
+  Return aEscapados.Join(" | ")
+
+End

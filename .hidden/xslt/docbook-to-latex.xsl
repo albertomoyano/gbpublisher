@@ -322,7 +322,16 @@
         <xsl:apply-templates select="* except info"/>
 
         <xsl:if test="$conCitas">
-          <xsl:text>&#10;\printbibliography[heading=subbibliography]&#10;</xsl:text>
+          <!-- EL heading DE biblatex HACE \markboth CON «REFERENCIAS», Y ESA
+               MARCA REEMPLAZA LA DEL CAPÍTULO EN EL FOLIO CORRIDO. EL FOLIO
+               TIENE QUE SEGUIR DICIENDO DE QUÉ PIEZA ES LA PÁGINA, NO QUE AHÍ
+               EMPIEZA LA BIBLIOGRAFÍA.
+               POR ESO EL TÍTULO VA COMO \section* ESCRITO APARTE Y biblatex SE
+               LLAMA CON heading=none.
+               \refname TOMA LA CADENA DE babel, ASÍ QUE UN CAPÍTULO EN INGLÉS
+               DICE «References». -->
+          <xsl:text>&#10;\section*{\refname}&#10;</xsl:text>
+          <xsl:text>\printbibliography[heading=none]&#10;</xsl:text>
           <xsl:text>\end{refsection}&#10;&#10;</xsl:text>
         </xsl:if>
       </xsl:otherwise>
