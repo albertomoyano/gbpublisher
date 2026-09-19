@@ -1,0 +1,1614 @@
+' Gambas module file
+
+'''
+''' MÓDULO: m_EditorHTML
+''' DESCRIPCIÓN: EDITOR DE LA BIBLIOGRAFÍA DE TRABAJO DEL LIBRO
+''' PROYECTO: gbpublisher
+'''
+''' PARA QUÉ EXISTE
+'''
+''' DURANTE EL ABM DE REFERENCIAS BIBLIOGRÁFICAS HAY QUE COTEJAR CONTRA EL
+''' LISTADO COMPLETO DEL LIBRO. ESTE PANEL EVITA TENER LIBREOFFICE ABIERTO EN
+''' PARALELO. EL LISTADO SE MARCA CON DOS SEMÁFOROS:
+'''
+'''   FONDO AMARILLO  la entrada YA ESTÁ VOLCADA EN LA BASE
+'''   LETRAS ROJAS    la entrada NO ESTÁ en el .md del artículo o capítulo
+'''
+''' NO SON DECORACIÓN: SON EL REGISTRO DE AVANCE DE VARIOS DÍAS DE TRABAJO.
+''' PERDER UNA MARCA ES PERDER TRABAJO HECHO Y, PEOR, NO ENTERARSE: UNA ENTRADA
+''' QUE PIERDE EL AMARILLO SE VUELVE A DAR DE ALTA, Y UNA QUE PIERDE EL ROJO SE
+''' DA POR REVISADA SIN ESTARLO. DE AHÍ EL GUARDADO ATÓMICO CON RESPALDO Y EL
+''' CONTADOR DE MARCAS.
+'''
+''' FORMATO DE TRABAJO: HTML
+'''
+''' EL ARCHIVO DE TRABAJO ES .html Y NO .rtf. RAZONES MEDIDAS SOBRE ARCHIVOS
+''' REALES, 2026-09:
+'''
+''' 1. HTML ES EL FORMATO NATIVO DEL CONTROL TextEdit —SU PROPIEDAD RichText ES
+'''    UN SUBCONJUNTO DE HTML, NO EL FORMATO RTF—, ASÍ QUE CARGAR Y GUARDAR SON
+'''    UNA LÍNEA CADA UNO. NO HAY SERIALIZADOR PROPIO Y POR LO TANTO NO HAY
+'''    RIESGO DE PERDER UNA MARCA AL ESCRIBIR.
+'''
+''' 2. SERIALIZAR A RTF EXIGIRÍA RECORRER EL DOCUMENTO LEYENDO Format EN CADA
+'''    POSICIÓN, PORQUE Format.Font.Bold DEVUELVE True SOBRE UNA SELECCIÓN
+'''    MIXTA Y NO HAY MANERA DE DETECTAR UNIFORMIDAD. MEDIDO: 2,8 s POR CADA
+'''    100.000 CARACTERES, EN CADA GUARDADO.
+'''
+''' 3. EL RTF NO SE COMPARTE CON NADIE. NADIE DEL OTRO LADO ESPERA RTF.
+'''
+''' IMPORTACIÓN
+'''
+''' PANDOC ESTÁ DESCARTADO PARA ESTO: SU MODELO INTERNO NO REPRESENTA COLOR DE
+''' TEXTO NI DE FONDO. VERIFICADO SOBRE UN ARCHIVO REAL DE 119 TRAMOS AMARILLOS
+''' Y 7 PÁRRAFOS ROJOS: LA SALIDA TRAE EL TEXTO, LAS ITÁLICAS Y LAS NEGRITAS
+''' PERFECTAS, Y CERO COLORES.
+'''
+''' LIBREOFFICE EN MODO SIN INTERFAZ SÍ CONSERVA TODO, Y CONVIERTE TANTO .docx
+''' COMO .rtf CON EL MISMO COMANDO. LA CONVERSIÓN DIRECTA DESDE .docx ADEMÁS
+''' CONSERVA LOS ENLACES DOI, QUE LA VUELTA POR RTF PIERDE.
+'''
+''' LA IMPORTACIÓN CORRE UNA SOLA VEZ POR ARCHIVO. DESPUÉS EL .html ES DE LA
+''' APLICACIÓN Y LIBREOFFICE NO VUELVE A INTERVENIR.
+'''
+
+' ============================================
+' ESTADO PÚBLICO
+' ============================================
+
+' CANAL DE DIAGNÓSTICO. CADENA VACÍA = LA ÚLTIMA OPERACIÓN SALIÓ BIEN.
+' ES LA ALTERNATIVA 4 DE GV-24: VARIABLE DE MÓDULO CUANDO EL DATO ES UN
+' SUBPRODUCTO Y NO EL RESULTADO.
+Public UltimoError As String
+
+' BANDERA DE SUPRESIÓN DEL GUARD INTERNO DEL COMBO (SC-06). LA LEVANTA QUIEN
+' CAMBIA EL Index POR CÓDIGO, PARA QUE EL HANDLER NO VUELVA A PREGUNTAR.
+Public bCargandoLista As Boolean
+
+' ============================================
+' CONSTANTES
+' ============================================
+
+Private Const SUBCARPETA_ORIGINALES As String = "originales"
+Private Const EXTENSION_TRABAJO As String = ".html"
+Private Const SEGUNDOS_ESPERA_IMPORTACION As Float = 90.0
+
+' COLORES DE LOS SEMÁFOROS, NORMALIZADOS
+Private Const COLOR_AMARILLO As String = "#ffff00"
+Private Const COLOR_ROJO As String = "#ff0000"
+
+' ============================================
+' ESTADO PRIVADO
+' ============================================
+
+Private $hEditor As TextEdit         ' EL CONTROL QUE EDITA, INYECTADO AL INICIAR
+Private $sCarpeta As String          ' CARPETA /originales DEL PROYECTO EN CURSO
+Private $sArchivoActual As String    ' RUTA COMPLETA DEL .html ABIERTO
+Private $bModificado As Boolean      ' HAY CAMBIOS SIN GUARDAR
+
+' ESTADO DE LA BÚSQUEDA. VA EN VARIABLES DEL MÓDULO Y NO EN CONTROLES DE UI,
+' QUE PUEDEN RESETEARSE SILENCIOSAMENTE POR EVENTOS DE FOCO (RC-GM-16).
+Private $aResultados As New Integer[]
+Private $iResultado As Integer
+Private $sUltimaBusqueda As String
+
+' ESTADO DEL PROCESO DE CONVERSIÓN
+Private $bProcesoTerminado As Boolean
+Private $bImportando As Boolean      ' BANDERA DE REENTRADA (GV-17)
+Private $bSofficeVerificado As Boolean
+Private $bSofficePresente As Boolean
+
+' TIPOGRAFÍA DE VISTA. VIVE EN EL MÓDULO Y NO EN FMain PORQUE HAY QUE
+' REAPLICARLA CADA VEZ QUE SE CARGA UN DOCUMENTO: ASIGNAR RichText REHACE EL
+' DOCUMENTO Y LA VISTA VUELVE AL VALOR POR OMISIÓN DEL CONTROL.
+Private $sFuenteVista As String
+Private $iCuerpoVista As Integer
+Private $sErrorProceso As String
+
+' ============================================
+' Función   : Iniciar
+' Propósito : Inyecta el control y la carpeta del proyecto. Se llama al abrir
+'             un proyecto, antes de cualquier otra función del módulo.
+' Parámetros: hControl As TextEdit — el editor del panel
+'             sCarpetaProyecto As String — carpeta raíz del proyecto en curso
+' Retorna   : nada
+' ============================================
+
+Public Sub Iniciar(hControl As TextEdit, sCarpetaProyecto As String)
+
+  $hEditor = hControl
+  $sCarpeta = sCarpetaProyecto &/ SUBCARPETA_ORIGINALES
+  $sArchivoActual = ""
+  $bModificado = False
+
+  LimpiarBusqueda()
+
+  ' EL SALTO DE LÍNEA VISUAL ES SIEMPRE ACTIVO: UNA REFERENCIA ES UN PÁRRAFO
+  ' LÓGICO AUNQUE OCUPE CINCO RENGLONES EN PANTALLA.
+  $hEditor.Wrap = True
+
+  ' TIPOGRAFÍA GUARDADA EN LA SESIÓN ANTERIOR
+  RecuperarTipografiaVista()
+
+End
+
+' ============================================
+' Función   : RecuperarTipografiaVista
+' Propósito : Lee del archivo de configuración la tipografía elegida y la aplica
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Private Sub RecuperarTipografiaVista()
+
+  Dim sFuente As String
+  Dim iCuerpo As Integer
+
+  ' REQUIERE EL COMPONENTE gb.settings. SI NO ESTÁ EN EL PROYECTO, ESTAS DOS
+  ' LÍNEAS NO COMPILAN Y LA TIPOGRAFÍA PASA A SER POR SESIÓN.
+  Try sFuente = Settings["EditorHTML/Fuente", ""]
+  Try iCuerpo = Settings["EditorHTML/Cuerpo", 0]
+
+  ' SIN PREFERENCIA GUARDADA SE DEJA LA DEL CONTROL. LAS DOS COMPROBACIONES VAN
+  ' EN If SEPARADOS PORQUE And NO CORTOCIRCUITA (RC-GM-17).
+  If sFuente = "" Then Return
+  If iCuerpo <= 0 Then Return
+
+  AplicarFuenteVista(sFuente, iCuerpo)
+
+End
+
+' ============================================
+' Función   : Terminar
+' Propósito : Limpia el estado al cerrar el proyecto o la sesión
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub Terminar()
+
+  $sArchivoActual = ""
+  $bModificado = False
+  $sCarpeta = ""
+
+  LimpiarBusqueda()
+
+End
+
+' ============================================
+' Función   : MarcarModificado
+' Propósito : Registra que el documento cambió. La invoca el evento Change.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub MarcarModificado()
+
+  If $sArchivoActual = "" Then Return
+
+  $bModificado = True
+
+  ' LAS POSICIONES DE LA BÚSQUEDA ANTERIOR YA NO VALEN
+  LimpiarBusqueda()
+
+End
+
+' ============================================
+' Función   : HayCambiosSinGuardar
+' Propósito : Informa si el documento tiene cambios pendientes
+' Parámetros: ninguno
+' Retorna   : Boolean — True si hay cambios sin guardar
+' ============================================
+
+Public Function HayCambiosSinGuardar() As Boolean
+
+  Return $bModificado
+
+End
+
+' ============================================
+' Función   : ConfirmarDescartarCambios
+' Propósito : Guard previo a cualquier cambio de contexto del editor
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se puede continuar, False si el usuario cancela
+' ============================================
+
+Public Function ConfirmarDescartarCambios() As Boolean
+
+  Dim iRespuesta As Integer
+
+  ' SE INVOCA AL INICIO DE LA ACCIÓN, ANTES DE CUALQUIER CAMBIO VISIBLE EN LA
+  ' INTERFAZ O REASIGNACIÓN DE VARIABLES GLOBALES (SC-06). SI SE EVALÚA
+  ' DESPUÉS, «CANCELAR» NO CANCELA: ABORTA EL HANDLER PERO NO LA ACCIÓN RAÍZ.
+  If Not $bModificado Then Return True
+
+  iRespuesta = Message.Question("La bibliografía tiene cambios sin guardar." & gb.NewLine &
+    "¿Desea guardarlos?", "Guardar", "Descartar", "Cancelar")
+
+  Select Case iRespuesta
+
+    Case 1
+      Return GuardarArchivo()
+
+    Case 2
+      $bModificado = False
+      Return True
+
+    Case Else
+      Return False
+
+  End Select
+
+End
+
+' ============================================
+' Función   : ListarArchivos
+' Propósito : Devuelve los archivos de bibliografía disponibles en /originales
+' Parámetros: ninguno
+' Retorna   : String[] — nombres de archivo, ordenados. Los .docx y .rtf que ya
+'             tienen su .html de trabajo NO se listan: aparece el .html.
+' ============================================
+
+Public Function ListarArchivos() As String[]
+
+  Dim aResultado As New String[]
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  ' --- 1. VALIDACIÓN DE LA CARPETA ---
+  UltimoError = ""
+
+  If $sCarpeta = "" Then
+    UltimoError = "No hay proyecto abierto."
+    Return aResultado
+  Endif
+
+  ' Exist() DEVUELVE True TAMBIÉN PARA ARCHIVOS REGULARES Y Dir() SOBRE UN
+  ' ARCHIVO LANZA EL ERROR 49 (GV-01). EL IsDir VA EN If ANIDADO PORQUE And NO
+  ' CORTOCIRCUITA (RC-GM-17).
+  If Not Exist($sCarpeta) Then
+    UltimoError = "No existe la carpeta " & $sCarpeta
+    Return aResultado
+  Endif
+
+  If Not IsDir($sCarpeta) Then
+    UltimoError = "La ruta de originales no es una carpeta: " & $sCarpeta
+    Return aResultado
+  Endif
+
+  ' --- 2. ARCHIVOS DE TRABAJO YA IMPORTADOS ---
+  Try aArchivos = Dir($sCarpeta, "*" & EXTENSION_TRABAJO, gb.File)
+  If Error Then
+    UltimoError = "No se pudo leer la carpeta de originales: " & Error.Text
+    Return aResultado
+  Endif
+
+  For Each sArchivo In aArchivos
+    aResultado.Add(sArchivo)
+  Next
+
+  ' --- 3. ORIGINALES TODAVÍA SIN IMPORTAR ---
+  ' SOLO .rtf. LA CARPETA /originales GUARDA TODOS LOS ORIGINALES DEL LIBRO Y
+  ' PUEDE TENER DECENAS DE .doc Y .docx QUE NO SON LA BIBLIOGRAFÍA: LISTARLOS
+  ' LLENA EL COMBO DE RUIDO. EL PASO .docx -> .rtf LO HACE EL USUARIO EN
+  ' WRITER, QUE ES LO QUE YA VENÍA HACIENDO.
+  ' SE LISTAN SOLO LOS QUE NO TIENEN SU .html HERMANO, PARA QUE CADA
+  ' BIBLIOGRAFÍA APAREZCA UNA SOLA VEZ EN EL COMBO.
+  AgregarSinImportar(aResultado, "*.rtf")
+
+  aResultado.Sort()
+
+  Return aResultado
+
+End
+
+' ============================================
+' Función   : AgregarSinImportar
+' Propósito : Suma a la lista los originales que aún no tienen archivo de trabajo
+' Parámetros: aDestino As String[] — lista en construcción
+'             sPatron As String — patrón de archivo (ej: "*.docx")
+' Retorna   : nada
+' ============================================
+
+Private Sub AgregarSinImportar(aDestino As String[], sPatron As String)
+
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  ' EL ARRAY SE PASA POR REFERENCIA POR SER OBJETO, ASÍ QUE SIRVE COMO CANAL
+  ' DE SALIDA. UN Integer O UN String NO SERVIRÍAN (GV-24).
+  Try aArchivos = Dir($sCarpeta, sPatron, gb.File)
+  If Error Then Return
+
+  For Each sArchivo In aArchivos
+    If Not Exist($sCarpeta &/ File.BaseName(sArchivo) & EXTENSION_TRABAJO) Then
+      aDestino.Add(sArchivo)
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : AbrirArchivo
+' Propósito : Abre un archivo del combo, importándolo antes si hace falta
+' Parámetros: sNombre As String — nombre de archivo tal como figura en el combo
+' Retorna   : Boolean — True si quedó cargado en el editor
+' ============================================
+
+Public Function AbrirArchivo(sNombre As String) As Boolean
+
+  Dim sRutaOrigen As String
+  Dim sRutaTrabajo As String
+  Dim sContenido As String
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  UltimoError = ""
+
+  ' GUARD DE REENTRADA. LA SENTENCIA Wait DEL BUCLE DE ESPERA DEJA CORRER LOS
+  ' EVENTOS DE LA INTERFAZ, ASÍ QUE DURANTE LA IMPORTACIÓN LOS CONTROLES SIGUEN
+  ' SIENDO PULSABLES (GV-17). SIN ESTO, DOS CLICS SEGUIDOS EN EL COMBO LANZAN
+  ' DOS CONVERSIONES SOBRE LA MISMA CARPETA TEMPORAL.
+  If $bImportando Then
+    UltimoError = "Hay una importación en curso. Esperá a que termine."
+    Return False
+  Endif
+
+  If sNombre = "" Then
+    UltimoError = "No se indicó ningún archivo."
+    Return False
+  Endif
+
+  sRutaOrigen = $sCarpeta &/ sNombre
+
+  If Not Exist(sRutaOrigen) Then
+    UltimoError = "No existe el archivo " & sRutaOrigen
+    Return False
+  Endif
+
+  ' --- 2. IMPORTACIÓN SI TODAVÍA NO ES ARCHIVO DE TRABAJO ---
+  If Lower(File.Ext(sNombre)) = "html" Then
+    sRutaTrabajo = sRutaOrigen
+  Else
+    ' LA BANDERA SE BAJA EN TODOS LOS CAMINOS DE SALIDA, EXPLÍCITAMENTE Y NO EN
+    ' UN Finally: Finally NO CORRE EN UN Return NORMAL (RC-GM-20).
+    $bImportando = True
+    sRutaTrabajo = ImportarOriginal(sRutaOrigen)
+    $bImportando = False
+
+    If sRutaTrabajo = "" Then Return False
+  Endif
+
+  ' --- 3. CARGA EN EL EDITOR ---
+  ' File.Load OPERA EN UTF-8 NATIVAMENTE: NO HAY QUE PASAR CODIFICACIÓN NI
+  ' RECODIFICAR NADA (SC-02).
+  Try sContenido = File.Load(sRutaTrabajo)
+  If Error Then
+    UltimoError = "No se pudo leer el archivo de trabajo: " & Error.Text
+    Return False
+  Endif
+
+  Try $hEditor.RichText = sContenido
+  If Error Then
+    UltimoError = "El editor no pudo cargar el contenido: " & Error.Text
+    Return False
+  Endif
+
+  ' --- 4. REPOSICIÓN DE LA TIPOGRAFÍA DE VISTA ---
+  ' ASIGNAR RichText REHACE EL DOCUMENTO Y LA VISTA VUELVE AL VALOR POR OMISIÓN
+  ' DEL CONTROL. POR ESO LA PREFERENCIA SE REAPLICA DESPUÉS DE CADA CARGA Y NO
+  ' UNA SOLA VEZ AL ABRIR EL PROYECTO.
+  If $sFuenteVista <> "" Then
+    AplicarFuenteVista($sFuenteVista, $iCuerpoVista)
+  Endif
+
+  ' --- 5. ESTADO ---
+  $sArchivoActual = sRutaTrabajo
+  $bModificado = False
+  LimpiarBusqueda()
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ImportarOriginal
+' Propósito : Convierte un .docx o .rtf a HTML de trabajo, una sola vez
+' Parámetros: sRutaOrigen As String — ruta del archivo original
+' Retorna   : String — ruta del .html generado, o cadena vacía si falló
+' ============================================
+
+Private Function ImportarOriginal(sRutaOrigen As String) As String
+
+  Dim sCarpetaTemp As String
+  Dim sRutaConvertida As String
+  Dim sRutaTrabajo As String
+  Dim sCrudo As String
+  Dim sLimpio As String
+
+  ' --- 1. CONVERSIÓN CON LIBREOFFICE ---
+  UltimoError = ""
+  sCarpetaTemp = Temp$("importacion")
+
+  Try Mkdir sCarpetaTemp
+  If Error Then
+    UltimoError = "No se pudo crear la carpeta temporal: " & Error.Text
+    Return ""
+  Endif
+
+  If Not ConvertirConLibreOffice(sRutaOrigen, sCarpetaTemp) Then
+    LimpiarCarpetaTemporal(sCarpetaTemp)
+    Return ""
+  Endif
+
+  ' --- 2. LOCALIZACIÓN DE LA SALIDA ---
+  sRutaConvertida = sCarpetaTemp &/ File.BaseName(sRutaOrigen) & ".html"
+
+  If Not Exist(sRutaConvertida) Then
+    LimpiarCarpetaTemporal(sCarpetaTemp)
+    UltimoError = "LibreOffice no generó el archivo convertido." & gb.NewLine & $sErrorProceso
+    Return ""
+  Endif
+
+  Try sCrudo = File.Load(sRutaConvertida)
+  If Error Then
+    LimpiarCarpetaTemporal(sCarpetaTemp)
+    UltimoError = "No se pudo leer el archivo convertido: " & Error.Text
+    Return ""
+  Endif
+
+  LimpiarCarpetaTemporal(sCarpetaTemp)
+
+  ' --- 3. NORMALIZACIÓN ---
+  sLimpio = NormalizarHtml(sCrudo)
+
+  If sLimpio = "" Then
+    UltimoError = "El archivo convertido quedó vacío tras la normalización."
+    Return ""
+  Endif
+
+  ' --- 4. ESCRITURA DEL ARCHIVO DE TRABAJO ---
+  sRutaTrabajo = File.Dir(sRutaOrigen) &/ File.BaseName(sRutaOrigen) & EXTENSION_TRABAJO
+
+  Try File.Save(sRutaTrabajo, sLimpio)
+  If Error Then
+    UltimoError = "No se pudo escribir el archivo de trabajo: " & Error.Text
+    Return ""
+  Endif
+
+  Return sRutaTrabajo
+
+End
+
+' ============================================
+' Función   : SofficeDisponible
+' Propósito : Verifica una sola vez por sesión que LibreOffice esté instalado
+' Parámetros: ninguno
+' Retorna   : Boolean — True si el ejecutable soffice está en el PATH
+' ============================================
+
+Public Function SofficeDisponible() As Boolean
+
+  Dim aComando As New String[]
+  Dim sSalida As String
+
+  ' --- 1. RESULTADO CACHEADO ---
+  ' NO RELANZAR UN PROCESO POR CADA IMPORTACIÓN NI POR CADA CONSULTA DEL PANEL
+  ' DE DIAGNÓSTICO DEL ENTORNO.
+  If $bSofficeVerificado Then
+    Return $bSofficePresente
+  Endif
+
+  ' --- 2. CONSULTA AL SISTEMA ---
+  ' command -v ES BUILTIN DE POSIX sh; which VIVE EN debianutils Y PUEDE FALTAR
+  ' (GV-07).
+  aComando.Add("sh")
+  aComando.Add("-c")
+  aComando.Add("command -v soffice")
+
+  Try Exec aComando To sSalida
+  If Error Then
+    $bSofficeVerificado = True
+    $bSofficePresente = False
+    Return False
+  Endif
+
+  ' --- 3. REGISTRO DEL RESULTADO ---
+  $bSofficeVerificado = True
+  $bSofficePresente = (Trim(sSalida) <> "")
+
+  Return $bSofficePresente
+
+End
+
+' ============================================
+' Función   : ConvertirConLibreOffice
+' Propósito : Lanza LibreOffice sin interfaz y espera a que termine
+' Parámetros: sRutaOrigen As String — archivo a convertir
+'             sCarpetaSalida As String — carpeta donde dejar el .html
+' Retorna   : Boolean — True si el proceso terminó dentro del plazo
+' ============================================
+
+Private Function ConvertirConLibreOffice(sRutaOrigen As String, sCarpetaSalida As String) As Boolean
+
+  Dim aComando As New String[]
+  Dim hProceso As Process
+  Dim fVencimiento As Float
+  Dim iDrenaje As Integer
+
+  ' --- 1. VERIFICACIÓN DEL CONVERSOR ---
+  ' ANTES DE LANZAR NADA. SIN ESTO, LA AUSENCIA DE LIBREOFFICE SE MANIFIESTA
+  ' RECIÉN AL VENCER EL PLAZO, NOVENTA SEGUNDOS DESPUÉS Y CON UN MENSAJE QUE NO
+  ' DICE QUÉ HACER: EL FALLO LEJOS DE SU CAUSA DE GV-23.
+  If Not SofficeDisponible() Then
+    UltimoError = "No se encontró LibreOffice, que es lo que convierte el archivo original." & gb.NewLine & gb.NewLine &
+      "Viene instalado por omisión en Linux Mint. Si se quitó, se repone con:" & gb.NewLine &
+      "    sudo apt install libreoffice-writer"
+    Return False
+  Endif
+
+  ' --- 2. ARMADO DEL COMANDO ---
+  ' Exec CON ARRAY Y NUNCA Shell: LA RUTA PUEDE TENER ESPACIOS, TILDES O
+  ' METACARACTERES Y NO DEBE PASAR POR sh -c (SC-05, GV-06).
+  ' EL PERFIL APARTE EVITA EL CHOQUE CON UNA VENTANA DE LIBREOFFICE ABIERTA:
+  ' SIN ÉL, soffice SE CONECTA A LA INSTANCIA EN CURSO Y NO CONVIERTE NADA.
+  aComando.Add("soffice")
+  aComando.Add("--headless")
+  aComando.Add("--norestore")
+  aComando.Add("-env:UserInstallation=file://" & Temp$("perfilconversor"))
+  aComando.Add("--convert-to")
+  aComando.Add("html:HTML (StarWriter)")
+  aComando.Add("--outdir")
+  aComando.Add(sCarpetaSalida)
+  aComando.Add(sRutaOrigen)
+
+  ' --- 3. LANZAMIENTO ---
+  $bProcesoTerminado = False
+  $sErrorProceso = ""
+
+  ' EL NOMBRE DEL OBSERVADOR VA COMO LITERAL: EL As DE Exec SE RESUELVE AL
+  ' COMPILAR Y NO ACEPTA UNA CONSTANTE. TIENE QUE COINCIDIR EXACTAMENTE CON EL
+  ' PREFIJO DE LOS TRES HANDLERS ProcConversor_* DE MÁS ABAJO. UN NOMBRE MAL
+  ' ESCRITO NO DA ERROR DE COMPILACIÓN: FALLA AL LANZAR (GV-18), Y POR ESO EL
+  ' Try CON If Error SOBRE EL PROPIO Exec.
+  Try hProceso = Exec aComando For Read As "ProcConversor"
+  If Error Then
+    ' UNA FIRMA DE HANDLER EQUIVOCADA COMPILA Y HACE FALLAR EL Exec EN TIEMPO
+    ' DE EJECUCIÓN (GV-18), ASÍ QUE ESTE ERROR SE INFORMA SIEMPRE Y NO SE
+    ' TRAGA CON UN Return MUDO (GV-23).
+    UltimoError = "No se pudo lanzar LibreOffice: " & Error.Text
+    Return False
+  Endif
+
+  ' --- 4. ESPERA CON VENCIMIENTO DE PLAZO ---
+  ' NUNCA hProceso.Wait(): BLOQUEA EL PROCEDIMIENTO, LOS EVENTOS Read Y Error
+  ' NO SE DISPARAN, NADIE DRENA LAS TUBERÍAS Y LA APLICACIÓN SE CUELGA SIN
+  ' MENSAJE (GV-17). LA SENTENCIA Wait SÍ ENTRA AL BUCLE DE EVENTOS.
+  Application.Busy = True
+  fVencimiento = Timer + SEGUNDOS_ESPERA_IMPORTACION
+
+  While Not $bProcesoTerminado
+
+    Wait 0.01
+
+    If Timer > fVencimiento Then
+      Try hProceso.Kill()
+      Application.Busy = False
+      UltimoError = "La conversión con LibreOffice superó el plazo de " &
+        CStr(CInt(SEGUNDOS_ESPERA_IMPORTACION)) & " segundos."
+      Return False
+    Endif
+
+  Wend
+
+  ' --- 5. DRENAJE FINAL ---
+  ' EL EVENTO Kill PUEDE LLEGAR ANTES QUE LOS ÚLTIMOS TROZOS DE SALIDA (GV-17)
+  For iDrenaje = 1 To 10
+    Wait 0.01
+  Next
+
+  Application.Busy = False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ProcConversor_Read
+' Propósito : Drena la salida estándar del conversor
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub ProcConversor_Read()
+
+  Dim sLinea As String
+
+  ' LA FIRMA DE Read NO LLEVA PARÁMETROS Y SE VALIDA AL LANZAR, NO AL COMPILAR
+  ' (GV-18). SI NADIE LEE, EL PROCESO HIJO SE BLOQUEA ESCRIBIENDO.
+  Try Line Input #Last, sLinea
+
+End
+
+' ============================================
+' Función   : ProcConversor_Error
+' Propósito : Acumula la salida de error del conversor
+' Parámetros: sDatos As String — trozo de salida de error
+' Retorna   : nada
+' ============================================
+
+Public Sub ProcConversor_Error(sDatos As String)
+
+  ' EL HANDLER SOLO ACUMULA. LOS DATOS LLEGAN EN TROZOS DE 256 BYTES QUE PARTEN
+  ' LÍNEAS AL MEDIO E INCLUSO CARACTERES MULTIBYTE: PARSEAR ACÁ ROMPERÍA LA
+  ' CODIFICACIÓN (GV-19). LA FIRMA DE Error SÍ LLEVA PARÁMETRO (GV-18).
+  $sErrorProceso &= sDatos
+
+End
+
+' ============================================
+' Función   : ProcConversor_Kill
+' Propósito : Levanta la señal de proceso terminado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub ProcConversor_Kill()
+
+  $bProcesoTerminado = True
+
+End
+
+' ============================================
+' Función   : LimpiarCarpetaTemporal
+' Propósito : Borra la carpeta temporal de conversión y su contenido
+' Parámetros: sCarpeta As String — carpeta a borrar
+' Retorna   : nada
+' ============================================
+
+Private Sub LimpiarCarpetaTemporal(sCarpeta As String)
+
+  ' LA LIBERACIÓN VA EXPLÍCITA EN CADA CAMINO DE SALIDA Y NO EN UN Finally:
+  ' Finally NO CORRE EN UN Return NORMAL (RC-GM-20).
+  Try Shell.RmDir(sCarpeta, True)
+
+End
+
+' ============================================
+' Función   : GuardarArchivo
+' Propósito : Guarda el documento con escritura atómica y respaldo
+' Parámetros: ninguno
+' Retorna   : Boolean — True si quedó guardado
+' ============================================
+
+Public Function GuardarArchivo() As Boolean
+
+  Dim sContenido As String
+  Dim sRutaTemp As String
+  Dim sRutaRespaldo As String
+
+  ' --- 1. VALIDACIÓN DE ESTADO ---
+  UltimoError = ""
+
+  If $sArchivoActual = "" Then
+    UltimoError = "No hay ningún archivo abierto."
+    Return False
+  Endif
+
+  Try sContenido = $hEditor.RichText
+  If Error Then
+    UltimoError = "No se pudo leer el contenido del editor: " & Error.Text
+    Return False
+  Endif
+
+  ' LA FAMILIA Y EL CUERPO NO SE GUARDAN: SON AJUSTE DE PANTALLA. SI VIAJARAN
+  ' EN EL ARCHIVO, AL REABRIRLO GANARÍAN SOBRE LA FUENTE DEL CONTROL Y EL BOTÓN
+  ' DE TIPOGRAFÍA DEJARÍA DE TENER EFECTO.
+  sContenido = QuitarTipografia(sContenido)
+
+  If sContenido = "" Then
+    UltimoError = "El editor está vacío: no se guarda para no perder el archivo."
+    Return False
+  Endif
+
+  ' --- 2. ESCRITURA A TEMPORAL EN LA MISMA CARPETA ---
+  ' EN LA MISMA CARPETA PARA QUE EL REEMPLAZO POSTERIOR NO CRUCE SISTEMAS DE
+  ' ARCHIVOS. EL ARCHIVO LLEVA DÍAS DE COTEJO ADENTRO: NUNCA SE ESCRIBE
+  ' DIRECTO SOBRE EL BUENO.
+  sRutaTemp = $sArchivoActual & ".tmp"
+  sRutaRespaldo = $sArchivoActual & ".bak"
+
+  Try File.Save(sRutaTemp, sContenido)
+  If Error Then
+    UltimoError = "No se pudo escribir el archivo temporal: " & Error.Text
+    Return False
+  Endif
+
+  ' --- 3. RESPALDO DE LA VERSIÓN ANTERIOR ---
+  If Exist($sArchivoActual) Then
+    Try Kill sRutaRespaldo
+    Try Copy $sArchivoActual To sRutaRespaldo
+    If Error Then
+      Try Kill sRutaTemp
+      UltimoError = "No se pudo crear el respaldo: " & Error.Text
+      Return False
+    Endif
+  Endif
+
+  ' --- 4. REEMPLAZO ---
+  ' Move NO PISA UN DESTINO EXISTENTE: FALLA CON «File already exists». HAY QUE
+  ' BORRARLO ANTES. LA VENTANA EN QUE EL ARCHIVO NO EXISTE LA CUBRE EL RESPALDO
+  ' DEL APARTADO 3, QUE YA ESTÁ ESCRITO EN DISCO.
+  Try Kill $sArchivoActual
+
+  Try Move sRutaTemp To $sArchivoActual
+  If Error Then
+    UltimoError = "No se pudo reemplazar el archivo: " & Error.Text & gb.NewLine &
+      "El contenido quedó en " & sRutaTemp & gb.NewLine &
+      "y la versión anterior en " & sRutaRespaldo
+    Return False
+  Endif
+
+  $bModificado = False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ContarMarcas
+' Propósito : Cuenta los tramos marcados, para verificar el avance del cotejo
+' Parámetros: sColor As String — COLOR_AMARILLO o COLOR_ROJO
+' Retorna   : Integer — cantidad de tramos con esa marca
+' ============================================
+
+Public Function ContarMarcas(sColor As String) As Integer
+
+  Dim aParrafos As String[]
+  Dim sContenido As String
+  Dim sParrafo As String
+  Dim iCuerpo As Integer
+  Dim iCuenta As Integer
+
+  ' --- 1. CUERPO DEL DOCUMENTO ---
+  ' SOBRE EL HTML Y NO RECORRIENDO CON Select + Format, QUE CUESTA 2,8 s POR
+  ' CADA 100.000 CARACTERES. ACÁ ES INSTANTÁNEO.
+  ' SE DESCARTA LA CABECERA: SU BLOQUE DE ESTILOS PUEDE NOMBRAR COLORES QUE NO
+  ' SON MARCAS DE NINGÚN PÁRRAFO.
+  Try sContenido = Lower($hEditor.RichText)
+  If Error Then Return 0
+
+  iCuerpo = InStr(sContenido, "<body")
+  If iCuerpo > 0 Then sContenido = Mid$(sContenido, iCuerpo)
+
+  ' --- 2. CUENTA POR PÁRRAFO, NO POR TRAMO ---
+  ' UNA REFERENCIA PINTADA PUEDE QUEDAR PARTIDA EN VARIOS TRAMOS —EL EDITOR
+  ' CORTA DONDE CAMBIA LA ITÁLICA— Y ADEMÁS FUSIONA TRAMOS CONTIGUOS IGUALES
+  ' AL REESCRIBIR. CONTAR TRAMOS DA UN NÚMERO QUE VARÍA SIN QUE CAMBIE EL
+  ' TRABAJO. LO QUE IMPORTA ES CUÁNTAS REFERENCIAS ESTÁN MARCADAS.
+  aParrafos = Split(sContenido, "<p", "", False)
+  iCuenta = 0
+
+  For Each sParrafo In aParrafos
+    If InStr(sParrafo, sColor) > 0 Then Inc iCuenta
+  Next
+
+  Return iCuenta
+
+End
+
+' ============================================
+' Función   : AplicarNegrita
+' Propósito : Alterna la negrita del texto seleccionado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub AplicarNegrita()
+
+  If Not HaySeleccion() Then Return
+
+  Try $hEditor.Format.Font.Bold = Not $hEditor.Format.Font.Bold
+  If Error Then Return
+
+  $bModificado = True
+
+End
+
+' ============================================
+' Función   : AplicarItalica
+' Propósito : Alterna la itálica del texto seleccionado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub AplicarItalica()
+
+  If Not HaySeleccion() Then Return
+
+  Try $hEditor.Format.Font.Italic = Not $hEditor.Format.Font.Italic
+  If Error Then Return
+
+  $bModificado = True
+
+End
+
+' ============================================
+' Función   : HaySeleccion
+' Propósito : Indica si hay texto seleccionado en el editor
+' Parámetros: ninguno
+' Retorna   : Boolean — True si hay selección
+' ============================================
+
+Private Function HaySeleccion() As Boolean
+
+  Dim bHay As Boolean
+
+  Try bHay = $hEditor.Selected
+  If Error Then Return False
+
+  Return bHay
+
+End
+
+' ============================================
+' Función   : PintarAmarillo
+' Propósito : Marca el párrafo del cursor como ya volcado en la base
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub PintarAmarillo()
+
+  If Not SeleccionarParrafoDelCursor() Then Return
+
+  Try $hEditor.Format.Background = Color.Yellow
+  If Error Then Return
+
+  $bModificado = True
+
+End
+
+' ============================================
+' Función   : PintarRojo
+' Propósito : Marca el párrafo del cursor como ausente del .md
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub PintarRojo()
+
+  If Not SeleccionarParrafoDelCursor() Then Return
+
+  Try $hEditor.Format.Color = Color.Red
+  If Error Then Return
+
+  $bModificado = True
+
+End
+
+' ============================================
+' Función   : LimpiarMarcas
+' Propósito : Quita fondo y color de letra del párrafo del cursor, dejando
+'             intactas la negrita y la itálica
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub LimpiarMarcas()
+
+  If Not SeleccionarParrafoDelCursor() Then Return
+
+  ' VERIFICADO 2026-09: Color.Default LIMPIA EL FONDO DE VERDAD Y NO TOCA LA
+  ' NEGRITA. LA LECTURA POSTERIOR DEVUELVE UN TRANSPARENTE Y NO EL MISMO VALOR
+  ' QUE SE ASIGNÓ, ASÍ QUE NUNCA HAY QUE PREGUNTAR «¿ES EL COLOR POR OMISIÓN?»
+  ' SINO «¿ES EXACTAMENTE LA MARCA QUE ESCRIBO?».
+  Try $hEditor.Format.Background = Color.Default
+  If Error Then Return
+
+  ' EL COLOR DE LETRA VA A NEGRO EXPLÍCITO Y NO A Color.Default. VERIFICADO
+  ' 2026-09: Color.Default SOBRE Format.Color DEJA EL TEXTO INVISIBLE —SE VE
+  ' SOLO AL SELECCIONARLO—, A DIFERENCIA DE Format.Background, DONDE SÍ LIMPIA.
+  Try $hEditor.Format.Color = Color.Black
+  If Error Then Return
+
+  $bModificado = True
+
+End
+
+' ============================================
+' Función   : SeleccionarParrafoDelCursor
+' Propósito : Selecciona el párrafo lógico donde está el cursor
+' Parámetros: ninguno
+' Retorna   : Boolean — True si quedó algo seleccionado
+' ============================================
+
+Private Function SeleccionarParrafoDelCursor() As Boolean
+
+  Dim sTexto As String
+  Dim iPos As Integer
+  Dim iInicio As Integer
+  Dim iFin As Integer
+  Dim iLargo As Integer
+
+  ' --- 1. TEXTO Y POSICIÓN ACTUAL ---
+  ' VERIFICADO 2026-09: Pos Y Select DEL TextEdit CUENTAN CARACTERES DEL TEXTO
+  ' PLANO Y SE CORRESPONDEN UNO A UNO CON String.Mid. LOS LÍMITES SE CALCULAN
+  ' ACÁ Y NO CON ToPos, QUE EN LA PRUEBA DEVOLVIÓ SEIS CARACTERES DE MÁS PARA
+  ' EL INICIO DEL PÁRRAFO Y QUEDA SIN USAR HASTA RELEVARLO.
+  Try sTexto = $hEditor.Text
+  If Error Then Return False
+
+  iLargo = String.Len(sTexto)
+  If iLargo = 0 Then Return False
+
+  Try iPos = $hEditor.Pos
+  If Error Then Return False
+
+  ' --- 2. INICIO DEL PÁRRAFO: SALTO DE LÍNEA ANTERIOR ---
+  ' String.RInStr Y NO RInStr: LAS FUNCIONES SIN PREFIJO OPERAN EN BYTES Y
+  ' DESFASARÍAN CONTRA Pos, QUE CUENTA CARACTERES (SC-02, RC-GM-12).
+  iInicio = 0
+
+  If iPos > 0 Then
+    iInicio = String.RInStr(String.Mid(sTexto, 1, iPos), gb.NewLine)
+  Endif
+
+  ' --- 3. FIN DEL PÁRRAFO: SALTO DE LÍNEA SIGUIENTE ---
+  iFin = String.InStr(sTexto, gb.NewLine, iPos + 1)
+
+  If iFin = 0 Then
+    iFin = iLargo
+  Else
+    Dec iFin
+  Endif
+
+  If iFin <= iInicio Then Return False
+
+  ' --- 4. SELECCIÓN ---
+  ' Select TOMA POSICIÓN Y LARGO, NO CUATRO COORDENADAS: LA FIRMA DE CUATRO
+  ' ARGUMENTOS DE RC-GM-06 ES DEL TextEditor, QUE ES OTRO CONTROL.
+  Try $hEditor.Select(iInicio, iFin - iInicio)
+  If Error Then Return False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AplicarFuenteVista
+' Propósito : Cambia la tipografía y el cuerpo con que se ve el editor
+' Parámetros: sFuente As String — nombre de la familia tipográfica
+'             iCuerpo As Integer — cuerpo en puntos
+' Retorna   : nada
+' ============================================
+
+Public Sub AplicarFuenteVista(sFuente As String, iCuerpo As Integer)
+
+  Dim sContenido As String
+  Dim iPosicion As Integer
+
+  ' --- 1. VALIDACIÓN Y REGISTRO ---
+  If sFuente = "" Then Return
+  If iCuerpo <= 0 Then Return
+
+  ' SE RECUERDA EN EL MÓDULO PARA PODER REAPLICARLA DESPUÉS DE CADA CARGA
+  $sFuenteVista = sFuente
+  $iCuerpoVista = iCuerpo
+
+  ' EL ARCHIVO DE CONFIGURACIÓN SE ESCRIBE ACÁ Y NO EN EL HANDLER: ASÍ LA
+  ' PREFERENCIA ES DEL MÓDULO Y NO DEPENDE DE QUE FMain SE ACUERDE.
+  Try Settings["EditorHTML/Fuente"] = sFuente
+  Try Settings["EditorHTML/Cuerpo"] = iCuerpo
+  Try Settings.Save()
+
+  ' --- 2. FUENTE DEL CONTROL ---
+  ' SE ESCRIBEN LAS PROPIEDADES DEL OBJETO Font DEL CONTROL Y NO SE CONSTRUYE
+  ' UNO NUEVO, QUE ES EL IDIOMA HABITUAL EN GAMBAS.
+  Try $hEditor.Font.Name = sFuente
+  If Error Then Return
+
+  Try $hEditor.Font.Size = iCuerpo
+  If Error Then Return
+
+  ' --- 3. REFLUJO DEL DOCUMENTO YA CARGADO ---
+  ' CAMBIAR LA FUENTE DEL CONTROL NO RETIPOGRAFÍA UN DOCUMENTO QUE YA ESTÁ
+  ' CARGADO: EL HTML DEL EDITOR LLEVA SU PROPIA DECLARACIÓN DE FAMILIA Y
+  ' CUERPO, Y ESA GANA. HAY QUE QUITARLA Y VOLVER A CARGAR, Y ENTONCES EL
+  ' DOCUMENTO CAE EN LA FUENTE DEL CONTROL.
+  Try sContenido = $hEditor.RichText
+  If Error Then Return
+
+  Try iPosicion = $hEditor.Pos
+
+  Try $hEditor.RichText = QuitarTipografia(sContenido)
+  If Error Then Return
+
+  ' EL CURSOR SE REPONE PORQUE REASIGNAR RichText LO MANDA AL PRINCIPIO.
+  ' NO SE TOCA $bModificado: ESTO ES AJUSTE DE PANTALLA, NO CONTENIDO.
+  Try $hEditor.Pos = iPosicion
+
+End
+
+' ============================================
+' Función   : QuitarTipografia
+' Propósito : Borra del HTML toda declaración de familia y de cuerpo
+' Parámetros: sHtml As String — HTML a limpiar
+' Retorna   : String — el mismo HTML sin font-family ni font-size
+' ============================================
+
+Private Function QuitarTipografia(sHtml As String) As String
+
+  Dim sResultado As String
+
+  ' LA TIPOGRAFÍA ES AJUSTE DE VISTA Y NO CONTENIDO, ASÍ QUE NO DEBE VIAJAR NI
+  ' EN EL DOCUMENTO CARGADO NI EN EL ARCHIVO GUARDADO. SI VIAJARA, EL ARCHIVO
+  ' QUEDARÍA ATADO A LA FUENTE QUE TENÍA EL EDITOR EL DÍA QUE SE GUARDÓ Y EL
+  ' BOTÓN DE TIPOGRAFÍA NO TENDRÍA EFECTO AL REABRIRLO.
+  sResultado = QuitarDeclaracion(sHtml, "font-family:")
+  sResultado = QuitarDeclaracion(sResultado, "font-size:")
+
+  Return sResultado
+
+End
+
+' ============================================
+' Función   : QuitarDeclaracion
+' Propósito : Borra todas las apariciones de una declaración CSS y su valor
+' Parámetros: sHtml As String — HTML a limpiar
+'             sPropiedad As String — nombre de la propiedad con sus dos puntos
+' Retorna   : String — el HTML sin esa declaración
+' ============================================
+
+Private Function QuitarDeclaracion(sHtml As String, sPropiedad As String) As String
+
+  Dim aPartes As New String[]
+  Dim iDesde As Integer
+  Dim iInicio As Integer
+  Dim iFin As Integer
+  Dim iCierre As Integer
+
+  ' LA DECLARACIÓN TERMINA EN EL PRIMER PUNTO Y COMA, O EN LA COMILLA QUE
+  ' CIERRA EL ATRIBUTO style SI ES LA ÚLTIMA DE LA LISTA.
+  iDesde = 1
+
+  Do
+
+    iInicio = String.InStr(sHtml, sPropiedad, iDesde)
+    If iInicio = 0 Then Break
+
+    aPartes.Add(String.Mid(sHtml, iDesde, iInicio - iDesde))
+
+    iFin = String.InStr(sHtml, ";", iInicio)
+    iCierre = String.InStr(sHtml, Chr(34), iInicio)
+
+    ' SE CORTA EN EL QUE VENGA PRIMERO. LAS COMPARACIONES VAN EN If SEPARADOS
+    ' PORQUE And NO CORTOCIRCUITA (RC-GM-17).
+    If iFin = 0 Then iFin = iCierre
+
+    If iCierre > 0 Then
+      If iCierre < iFin Then iFin = iCierre - 1
+    Endif
+
+    If iFin = 0 Then Break
+
+    iDesde = iFin + 1
+
+  Loop
+
+  ' EL RESTO DEL TEXTO, DESPUÉS DE LA ÚLTIMA DECLARACIÓN ENCONTRADA
+  aPartes.Add(String.Mid(sHtml, iDesde, String.Len(sHtml) - iDesde + 1))
+
+  Return aPartes.Join("")
+
+End
+
+' ============================================
+' Función   : Buscar
+' Propósito : Busca todas las apariciones de un texto y va a la primera
+' Parámetros: sBuscado As String — texto a buscar
+' Retorna   : Integer — cantidad de coincidencias
+' ============================================
+
+Public Function Buscar(sBuscado As String) As Integer
+
+  Dim sTexto As String
+  Dim sTextoPlegado As String
+  Dim sBuscadoPlegado As String
+  Dim iLargoTexto As Integer
+  Dim iLargoBuscado As Integer
+  Dim i As Integer
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  UltimoError = ""
+  LimpiarBusqueda()
+
+  sBuscado = Trim(sBuscado)
+  If sBuscado = "" Then Return 0
+
+  Try sTexto = $hEditor.Text
+  If Error Then Return 0
+
+  ' --- 2. PLEGADO DE AMBOS LADOS ---
+  ' LA BÚSQUEDA NO DISTINGUE MAYÚSCULAS. NO SE USA LCase NI Lower: NO PLIEGAN
+  ' ACENTOS DE FORMA REPRODUCIBLE Y DEPENDEN DEL LOCALE, ASÍ QUE FUNCIONAN EN
+  ' LA MÁQUINA DEL DESARROLLADOR Y FALLAN EN UNA INSTALACIÓN CON LOCALE MÍNIMO
+  ' (GV-03). LAS MÁQUINAS DE LAS UNIVERSIDADES NO SE CONTROLAN.
+  sTextoPlegado = PlegarTexto(sTexto)
+  sBuscadoPlegado = PlegarTexto(sBuscado)
+
+  iLargoTexto = String.Len(sTextoPlegado)
+  iLargoBuscado = String.Len(sBuscadoPlegado)
+
+  If iLargoBuscado = 0 Then Return 0
+  If iLargoBuscado > iLargoTexto Then Return 0
+
+  ' --- 3. RECORRIDO ---
+  ' EL PLEGADO CONSERVA LA CANTIDAD DE CARACTERES, ASÍ QUE LAS POSICIONES DEL
+  ' TEXTO PLEGADO VALEN TAL CUAL SOBRE EL TEXTO ORIGINAL.
+  For i = 1 To iLargoTexto - iLargoBuscado + 1
+    If String.Mid(sTextoPlegado, i, iLargoBuscado) = sBuscadoPlegado Then
+      ' Pos Y Select SON BASE 0; String.Mid ES BASE 1
+      $aResultados.Add(i - 1)
+    Endif
+  Next
+
+  $sUltimaBusqueda = sBuscado
+
+  ' --- 4. IR A LA PRIMERA COINCIDENCIA ---
+  If $aResultados.Count > 0 Then
+    $iResultado = 0
+    MostrarResultado()
+  Endif
+
+  Return $aResultados.Count
+
+End
+
+' ============================================
+' Función   : IrAResultado
+' Propósito : Avanza o retrocede entre las coincidencias de la búsqueda
+' Parámetros: iDelta As Integer — 1 para avanzar, -1 para retroceder
+' Retorna   : Integer — índice del resultado en curso, base 1, o 0 si no hay
+' ============================================
+
+Public Function IrAResultado(iDelta As Integer) As Integer
+
+  If $aResultados.Count = 0 Then Return 0
+
+  ' RECORRIDO CIRCULAR: DESPUÉS DEL ÚLTIMO VUELVE AL PRIMERO
+  $iResultado += iDelta
+
+  If $iResultado < 0 Then $iResultado = $aResultados.Max
+  If $iResultado > $aResultados.Max Then $iResultado = 0
+
+  MostrarResultado()
+
+  Return $iResultado + 1
+
+End
+
+' ============================================
+' Función   : CantidadResultados
+' Propósito : Devuelve cuántas coincidencias tiene la búsqueda en curso
+' Parámetros: ninguno
+' Retorna   : Integer — cantidad de coincidencias
+' ============================================
+
+Public Function CantidadResultados() As Integer
+
+  Return $aResultados.Count
+
+End
+
+' ============================================
+' Función   : ResultadoActual
+' Propósito : Devuelve el número de coincidencia en curso, base 1
+' Parámetros: ninguno
+' Retorna   : Integer — número de coincidencia, o 0 si no hay búsqueda activa
+' ============================================
+
+Public Function ResultadoActual() As Integer
+
+  If $aResultados.Count = 0 Then Return 0
+
+  Return $iResultado + 1
+
+End
+
+' ============================================
+' Función   : MostrarResultado
+' Propósito : Selecciona en el editor la coincidencia en curso
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Private Sub MostrarResultado()
+
+  Dim iPosicion As Integer
+
+  If $aResultados.Count = 0 Then Return
+  If $iResultado > $aResultados.Max Then Return
+
+  iPosicion = $aResultados[$iResultado]
+
+  Try $hEditor.Select(iPosicion, String.Len($sUltimaBusqueda))
+
+End
+
+' ============================================
+' Función   : LimpiarBusqueda
+' Propósito : Descarta los resultados de la búsqueda anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Private Sub LimpiarBusqueda()
+
+  $aResultados.Clear()
+  $iResultado = 0
+  $sUltimaBusqueda = ""
+
+End
+
+' ============================================
+' Función   : PlegarTexto
+' Propósito : Devuelve el texto en minúsculas de forma reproducible
+' Parámetros: sTexto As String — texto a plegar
+' Retorna   : String — texto plegado, con la misma cantidad de caracteres
+' ============================================
+
+Private Function PlegarTexto(sTexto As String) As String
+
+  Dim aPartes As New String[]
+  Dim iLargo As Integer
+  Dim i As Integer
+
+  ' PENDIENTE: SI m_FuncionesGenericas.PlegarAMinuscula RESULTA COMPATIBLE CON
+  ' UN CODEPOINT, ESTA FUNCIÓN DEBE DELEGAR EN ELLA EN LUGAR DE DUPLICAR LA
+  ' TABLA. SE ESCRIBIÓ LOCAL PORQUE LA FIRMA DE AQUELLA NO ESTÁ VERIFICADA.
+  iLargo = String.Len(sTexto)
+
+  For i = 1 To iLargo
+    aPartes.Add(String.Chr(PlegarCodigo(String.Code(String.Mid(sTexto, i, 1)))))
+  Next
+
+  Return aPartes.Join("")
+
+End
+
+' ============================================
+' Función   : PlegarCodigo
+' Propósito : Pliega un codepoint a minúscula sin depender del locale
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : Integer — codepoint plegado
+' ============================================
+
+Private Function PlegarCodigo(iCodigo As Integer) As Integer
+
+  ' --- 1. ASCII ---
+  If iCodigo >= 65 Then
+    If iCodigo <= 90 Then Return iCodigo + 32
+  Endif
+
+  ' --- 2. LATIN-1 SUPPLEMENT ---
+  ' EL RANGO 192-222 PLIEGA CON +32, SALTEANDO EL 215 QUE ES EL SIGNO DE
+  ' MULTIPLICACIÓN Y NO UNA LETRA (GV-03).
+  If iCodigo >= 192 Then
+    If iCodigo <= 222 Then
+      If iCodigo = 215 Then Return iCodigo
+      Return iCodigo + 32
+    Endif
+  Endif
+
+  ' --- 3. LATIN EXTENDED-A ---
+  ' EN ESTE BLOQUE LAS MAYÚSCULAS SON LOS CODEPOINTS PARES Y LAS MINÚSCULAS
+  ' LOS IMPARES, SALVO EXCEPCIONES QUE NO APARECEN EN BIBLIOGRAFÍA CORRIENTE.
+  If iCodigo >= 256 Then
+    If iCodigo <= 383 Then
+      If iCodigo Mod 2 = 0 Then Return iCodigo + 1
+    Endif
+  Endif
+
+  Return iCodigo
+
+End
+
+' ============================================
+' Función   : NormalizarHtml
+' Propósito : Reduce el HTML de LibreOffice a lo que el proyecto usa
+' Parámetros: sHtml As String — HTML crudo del conversor
+' Retorna   : String — HTML normalizado, listo para el editor
+' ============================================
+
+Private Function NormalizarHtml(sHtml As String) As String
+
+  Dim aSalida As New String[]
+  Dim aPilaFont As New Boolean[]
+  Dim aPilaSpan As New Boolean[]
+  Dim sCuerpo As String
+  Dim sEtiqueta As String
+  Dim sNombre As String
+  Dim sCaracter As String
+  Dim iLargo As Integer
+  Dim iCierre As Integer
+  Dim i As Integer
+  Dim bMarco As Boolean
+
+  ' --- 1. AISLAR EL CUERPO ---
+  sCuerpo = ExtraerCuerpo(sHtml)
+  If sCuerpo = "" Then Return ""
+
+  iLargo = String.Len(sCuerpo)
+  i = 1
+
+  ' --- 2. RECORRIDO POR ETIQUETAS ---
+  ' QUÉ SE CONSERVA: LA ESTRUCTURA DE PÁRRAFOS, LA NEGRITA, LA ITÁLICA Y LOS
+  ' DOS SEMÁFOROS. QUÉ SE DESCARTA: FAMILIA Y CUERPO TIPOGRÁFICO —PORQUE LA
+  ' TIPOGRAFÍA ES AJUSTE DE VISTA—, SUBRAYADOS, ENLACES Y TODO OTRO COLOR.
+  ' EL TEXTO DE UNA URL SE CONSERVA: UN DOI ES PARTE DE LA REFERENCIA.
+  While i <= iLargo
+
+    sCaracter = String.Mid(sCuerpo, i, 1)
+
+    If sCaracter <> "<" Then
+      aSalida.Add(sCaracter)
+      Inc i
+      Continue
+    Endif
+
+    ' --- ETIQUETA ---
+    iCierre = String.InStr(sCuerpo, ">", i)
+
+    If iCierre = 0 Then
+      ' UN "<" SUELTO AL FINAL NO DEBE COMERSE EL RESTO DEL DOCUMENTO
+      aSalida.Add(sCaracter)
+      Inc i
+      Continue
+    Endif
+
+    sEtiqueta = String.Mid(sCuerpo, i, iCierre - i + 1)
+    sNombre = NombreDeEtiqueta(sEtiqueta)
+    i = iCierre + 1
+
+    Select Case sNombre
+
+      Case "p"
+        aSalida.Add("<p>")
+
+      Case "/p"
+        aSalida.Add("</p>")
+
+      Case "br", "br/"
+        aSalida.Add("<br/>")
+
+      Case "b", "strong"
+        aSalida.Add("<b>")
+
+      Case "/b", "/strong"
+        aSalida.Add("</b>")
+
+      Case "i", "em"
+        aSalida.Add("<i>")
+
+      Case "/i", "/em"
+        aSalida.Add("</i>")
+
+      Case "font"
+        bMarco = EmitirMarca(aSalida, sEtiqueta)
+        aPilaFont.Add(bMarco)
+
+      Case "/font"
+        CerrarMarca(aSalida, aPilaFont)
+
+      Case "span"
+        bMarco = EmitirMarca(aSalida, sEtiqueta)
+        aPilaSpan.Add(bMarco)
+
+      Case "/span"
+        CerrarMarca(aSalida, aPilaSpan)
+
+      Case Else
+        ' ENLACES, SUBRAYADOS, DIVISIONES Y CUALQUIER OTRA ETIQUETA SE
+        ' DESCARTAN SIN TOCAR SU CONTENIDO DE TEXTO
+
+    End Select
+
+  Wend
+
+  Return aSalida.Join("")
+
+End
+
+' ============================================
+' Función   : ExtraerCuerpo
+' Propósito : Devuelve el contenido entre las etiquetas de cuerpo del documento
+' Parámetros: sHtml As String — HTML completo
+' Retorna   : String — contenido del cuerpo, o cadena vacía si no lo encuentra
+' ============================================
+
+Private Function ExtraerCuerpo(sHtml As String) As String
+
+  Dim iApertura As Integer
+  Dim iInicio As Integer
+  Dim iFin As Integer
+
+  ' EL BLOQUE DE ESTILOS DE LA CABECERA QUEDA AFUERA POR CONSTRUCCIÓN: TRAE
+  ' TIPOGRAFÍAS Y CUERPOS QUE NO DEBEN ENTRAR AL DOCUMENTO.
+  iApertura = String.InStr(Lower(sHtml), "<body")
+  If iApertura = 0 Then Return ""
+
+  iInicio = String.InStr(sHtml, ">", iApertura)
+  If iInicio = 0 Then Return ""
+
+  iFin = String.InStr(Lower(sHtml), "</body>")
+  If iFin = 0 Then iFin = String.Len(sHtml) + 1
+
+  If iFin <= iInicio + 1 Then Return ""
+
+  Return String.Mid(sHtml, iInicio + 1, iFin - iInicio - 1)
+
+End
+
+' ============================================
+' Función   : NombreDeEtiqueta
+' Propósito : Extrae el nombre de una etiqueta HTML, en minúsculas
+' Parámetros: sEtiqueta As String — etiqueta completa, con sus corchetes
+' Retorna   : String — nombre, con barra inicial si es de cierre
+' ============================================
+
+Private Function NombreDeEtiqueta(sEtiqueta As String) As String
+
+  Dim sInterior As String
+  Dim sNombre As String
+  Dim sCaracter As String
+  Dim iLargo As Integer
+  Dim i As Integer
+
+  ' SE QUITAN LOS CORCHETES Y SE CORTA EN EL PRIMER ESPACIO
+  iLargo = String.Len(sEtiqueta)
+  If iLargo < 3 Then Return ""
+
+  sInterior = String.Mid(sEtiqueta, 2, iLargo - 2)
+  sNombre = ""
+
+  For i = 1 To String.Len(sInterior)
+    sCaracter = String.Mid(sInterior, i, 1)
+    If sCaracter = " " Then Break
+    sNombre &= sCaracter
+  Next
+
+  Return Lower(sNombre)
+
+End
+
+' ============================================
+' Función   : EmitirMarca
+' Propósito : Si la etiqueta trae un semáforo, emite el span equivalente
+' Parámetros: aSalida As String[] — trozos de salida en construcción
+'             sEtiqueta As String — etiqueta completa
+' Retorna   : Boolean — True si se emitió un span que habrá que cerrar
+' ============================================
+
+Private Function EmitirMarca(aSalida As String[], sEtiqueta As String) As Boolean
+
+  Dim sEtiquetaBaja As String
+
+  sEtiquetaBaja = Lower(sEtiqueta)
+
+  ' --- 1. FONDO AMARILLO ---
+  ' UN ÚNICO VALOR POSIBLE, VERIFICADO SOBRE LOS ARCHIVOS REALES: #ffff00.
+  If String.InStr(sEtiquetaBaja, COLOR_AMARILLO) > 0 Then
+    If String.InStr(sEtiquetaBaja, "background") > 0 Then
+      aSalida.Add("<span style=" & Chr(34) & "background-color:" & COLOR_AMARILLO & ";" & Chr(34) & ">")
+      Return True
+    Endif
+  Endif
+
+  ' --- 2. LETRAS ROJAS ---
+  ' POR CRITERIO Y NO POR VALOR EXACTO: EL ARCHIVO DE TRABAJO TRAE EL ROJO DE
+  ' LA PALETA DE LIBREOFFICE (#c9211e) Y NO EL #ff0000 QUE ESCRIBE LA
+  ' APLICACIÓN. LOS NEGROS Y LOS AZULES DE ENLACE NO SON MARCA.
+  If EsColorRojo(sEtiquetaBaja) Then
+    aSalida.Add("<span style=" & Chr(34) & "color:" & COLOR_ROJO & ";" & Chr(34) & ">")
+    Return True
+  Endif
+
+  Return False
+
+End
+
+' ============================================
+' Función   : CerrarMarca
+' Propósito : Cierra el span emitido por la etiqueta de apertura correspondiente
+' Parámetros: aSalida As String[] — trozos de salida en construcción
+'             aPila As Boolean[] — pila de la etiqueta que se está cerrando
+' Retorna   : nada
+' ============================================
+
+Private Sub CerrarMarca(aSalida As String[], aPila As Boolean[])
+
+  If aPila.Count = 0 Then Return
+
+  If aPila[aPila.Max] Then
+    aSalida.Add("</span>")
+  Endif
+
+  aPila.Remove(aPila.Max)
+
+End
+
+' ============================================
+' Función   : EsColorRojo
+' Propósito : Decide si una etiqueta declara un color de letra rojo
+' Parámetros: sEtiquetaBaja As String — etiqueta en minúsculas
+' Retorna   : Boolean — True si el color declarado es un rojo
+' ============================================
+
+Private Function EsColorRojo(sEtiquetaBaja As String) As Boolean
+
+  Dim sHex As String
+  Dim iPos As Integer
+  Dim iRojo As Integer
+  Dim iVerde As Integer
+  Dim iAzul As Integer
+
+  ' --- 1. UBICAR EL VALOR ---
+  ' SE DESCARTA EL FONDO: UN background QUE NO SEA EL AMARILLO NO ES MARCA.
+  If String.InStr(sEtiquetaBaja, "background") > 0 Then Return False
+
+  iPos = String.InStr(sEtiquetaBaja, "#")
+  If iPos = 0 Then Return False
+
+  sHex = String.Mid(sEtiquetaBaja, iPos + 1, 6)
+  If String.Len(sHex) < 6 Then Return False
+
+  ' --- 2. COMPONENTES ---
+  ' CADA LECTURA DEVUELVE SU VALOR: UN PARÁMETRO NUNCA SE USA COMO CANAL DE
+  ' SALIDA PARA UN PRIMITIVO, PORQUE NO PROPAGA (GV-24). EL -1 SIGNIFICA
+  ' «NO ES HEXADECIMAL VÁLIDO».
+  iRojo = LeerHex(String.Mid(sHex, 1, 2))
+  If iRojo < 0 Then Return False
+
+  iVerde = LeerHex(String.Mid(sHex, 3, 2))
+  If iVerde < 0 Then Return False
+
+  iAzul = LeerHex(String.Mid(sHex, 5, 2))
+  If iAzul < 0 Then Return False
+
+  ' --- 3. CRITERIO ---
+  ' ROJO ALTO CON VERDE Y AZUL BAJOS. COMPRENDE EL #ff0000 QUE ESCRIBE LA
+  ' APLICACIÓN Y EL #c9211e DE LA PALETA DE LIBREOFFICE. DEJA AFUERA LOS
+  ' NEGROS (#000000, #000009) Y LOS AZULES DE ENLACE (#0000ff, #0000ee,
+  ' #467886), QUE SON LOS OTROS COLORES PRESENTES EN LOS ARCHIVOS REALES.
+  ' LAS COMPARACIONES VAN EN If ANIDADOS PORQUE And NO CORTOCIRCUITA
+  ' (RC-GM-17).
+  If iRojo >= 128 Then
+    If iVerde <= 110 Then
+      If iAzul <= 110 Then Return True
+    Endif
+  Endif
+
+  Return False
+
+End
+
+' ============================================
+' Función   : LeerHex
+' Propósito : Convierte dos dígitos hexadecimales en un entero
+' Parámetros: sPar As String — dos caracteres hexadecimales
+' Retorna   : Integer — valor 0 a 255, o -1 si no es hexadecimal válido
+' ============================================
+
+Private Function LeerHex(sPar As String) As Integer
+
+  Dim iValor As Integer
+
+  Try iValor = Val("&H" & sPar)
+  If Error Then Return -1
+
+  If iValor < 0 Then Return -1
+  If iValor > 255 Then Return -1
+
+  Return iValor
+
+End
