@@ -1,80 +1,117 @@
 ' Gambas class file
 
-' CLASE: FOrtografia
-' DESCRIPCIÓN: FORMULARIO MODAL PARA CORRECCIÓN ORTOGRÁFICA
-' AUTOR: GENERADO PARA GBPUBLISHER
-' FECHA: 2025
+' ============================================
+' Clase     : FOrtografia
+' Propósito : Formulario modal de corrección ortográfica sobre el editor de
+'             texto del proyecto (FMain.txtEditorProyecto).
+' Proyecto  : gbpublisher
+' ============================================
 '
-' COMPONENTES DEL FORMULARIO (YA DISEÑADOS VISUALMENTE):
-' - txtErrorEncontrado: TEXTBOX READONLY - MUESTRA LA PALABRA ERRÓNEA
-' - txtContexto: TEXTEDITOR (GB.FORM.EDITOR) - MUESTRA EL CONTEXTO
-' - lstSugerencias: LISTBOX - MUESTRA SUGERENCIAS DE REEMPLAZO
-' - txtReemplazar: TEXTBOX - PALABRA SUGERIDA ELEGIDA
-' - btnAplicar: BUTTONBOX - APLICA EL CAMBIO
-' - btnAplicaTodas: BUTTONBOX - APLICA EL CAMBIO A TODAS LAS COINCIDENCIAS
-' - btnIgnorar: BUTTONBOX - IGNORA ESTA PALABRA Y PASA A LA SIGUIENTE
-' - btnIgnorarTodas: BUTTONBOX - IGNORA TODAS LAS COINCIDENCIAS
-' - btnAgregarAlDiccionario: BUTTONBOX - AGREGA AL DICCIONARIO PERSONAL
-' - cmbDiccionarioIdioma: COMBOBOX - SELECTOR DE IDIOMA
-' - txtContadorErrores: TEXTBOX READONLY - MUESTRA "X DE Y"
-' - btnRefrescar: BUTTONBOX - REESCANEA EL DOCUMENTO
-' - btnCerrar: BUTTONBOX - CIERRA EL FORMULARIO
+' REESCRITURA 2026-09. QUÉ CAMBIÓ Y POR QUÉ:
+'
+' 1. ConvertirPosicionALineaColumna SALIÓ DEL FORMULARIO. ESTABA DECLARADA CON
+'    PARÁMETROS ByRef Y NUNCA PROPAGÓ NADA: EN GAMBAS LOS PRIMITIVOS SE PASAN
+'    SIEMPRE POR VALOR (GV-24). LÍNEA Y COLUMNA QUEDABAN EN CERO, ASÍ QUE EL
+'    EDITOR NUNCA SALTÓ AL ERROR. AHORA LA APORTA m_Hunspell Y DEVUELVE UN
+'    CPosicionTexto, QUE ES LA ALTERNATIVA 2 DE ESA MISMA REGLA.
+'
+' 2. LA LLAMADA A Select TENÍA LOS ARGUMENTOS INVERTIDOS. EL TextEditor USA
+'    (Column, Line) EN TODOS SUS MÉTODOS DE POSICIONAMIENTO (RC-GM-06). EL BUG
+'    ESTABA TAPADO POR EL ANTERIOR: CON CEROS NO SE NOTA.
+'
+' 3. $aErrores PASA DE Collection[] CON ARRAYS PARALELOS A CPalabraHallada[].
+'    COMO m_Hunspell.ExtraerPalabras YA DEVUELVE LAS PALABRAS EN ORDEN DE
+'    APARICIÓN, DESAPARECE TAMBIÉN EL ORDENAMIENTO BURBUJA.
+'
+' 4. LOS CORTES DEL REEMPLAZO VAN CON String.Mid Y String.Len. CON Left / Mid /
+'    Len EL CORTE ERA EN BYTES Y PODÍA PARTIR UN CARÁCTER MULTIBYTE POR LA
+'    MITAD, DEJANDO UN BYTE HUÉRFANO EN EL ARCHIVO (RC-GM-12, SC-02, GV-03).
+'
+' 5. «TODAS» REEMPLAZA POR POSICIÓN Y NO CON Replace DE SUBCADENAS. LA VERSIÓN
+'    ANTERIOR CONVERTÍA «casco» EN «casaco» AL REEMPLAZAR «cas» POR «casa».
+'
+' 6. SE CONSULTA m_Hunspell.UltimoError DESPUÉS DE CADA INVOCACIÓN. ANTES, SI
+'    FALTABA EL DICCIONARIO O EL BINARIO, EL RESULTADO VACÍO SE ANUNCIABA COMO
+'    «no se encontraron errores ortográficos» (GV-23).
+'
+' PENDIENTE ANOTADO: APLICAR UN REEMPLAZO REASIGNA txtEditorProyecto.Text
+' COMPLETO, LO QUE PIERDE LA PILA DE DESHACER Y LA POSICIÓN DEL CURSOR. LA VÍA
+' LIMPIA SERÍA Select MÁS Insert SOBRE EL PROPIO CONTROL, PERO NO ESTÁ
+' VERIFICADO QUE Insert REEMPLACE LA SELECCIÓN EN LUGAR DE AGREGARSE A ELLA.
+' SE DEJA LA REASIGNACIÓN, QUE ESTÁ PROBADA, HASTA HACER ESE MINI-TEST.
 
+' ============================================
 ' VARIABLES DE ESTADO DEL CORRECTOR
-Private $aErrores As New Collection[]      ' LISTA DE ERRORES ENCONTRADOS
-Private $iIndiceActual As Integer          ' ÍNDICE DEL ERROR ACTUAL
-Private $iTotalErrores As Integer          ' TOTAL DE ERRORES
-Private $sIdiomaActual As String           ' IDIOMA SELECCIONADO
-Private $aPalabrasIgnoradas As New String[] ' PALABRAS IGNORADAS EN ESTA SESIÓN
-Private $bHuboCambios As Boolean           ' INDICA SI SE APLICÓ ALGÚN CAMBIO
-Private $sTextoOriginal As String          ' TEXTO ORIGINAL AL ABRIR EL FORMULARIO
+' ============================================
 
-' EVENTO: Form_Open
-' DESCRIPCIÓN: SE EJECUTA AL ABRIR EL FORMULARIO
+Private $aErrores As New CPalabraHallada[]    ' ERRORES EN ORDEN DE APARICIÓN
+Private $iIndiceActual As Integer             ' ÍNDICE DEL ERROR EN PANTALLA
+Private $iTotalErrores As Integer             ' TOTAL VIGENTE DE ERRORES
+Private $sIdiomaActual As String              ' CÓDIGO DE IDIOMA SELECCIONADO
+Private $aPalabrasIgnoradas As New String[]   ' IGNORADAS DURANTE ESTA SESIÓN
+Private $bHuboCambios As Boolean              ' SE APLICÓ AL MENOS UN REEMPLAZO
+Private $bCierrePermitido As Boolean          ' HABILITA EL CIERRE DESDE EL BOTÓN
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Inicializa el estado y carga los diccionarios disponibles
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub Form_Open()
 
+  ' --- 1. DISPOSICIÓN ---
   SplitterOrtografia.Layout = [1, 1]
 
-  ' INICIALIZAR VARIABLES
+  ' --- 2. ESTADO INICIAL ---
   $bHuboCambios = False
+  $bCierrePermitido = False
   $iIndiceActual = 0
   $iTotalErrores = 0
+  $aErrores.Clear()
   $aPalabrasIgnoradas.Clear()
 
-  ' GUARDAR TEXTO ORIGINAL PARA DETECTAR CAMBIOS
-  $sTextoOriginal = FMain.txtEditorProyecto.Text
-
-  ' CARGAR DICCIONARIOS DISPONIBLES
+  ' --- 3. DICCIONARIOS ---
   CargarDiccionarios()
 
-  ' SELECCIONAR IDIOMA POR DEFECTO (PRIORIDAD: ES_ES, ES_AR, ES_*, PRIMERO DISPONIBLE)
   If cmbDiccionarioIdioma.Count > 0 Then
     SeleccionarIdiomaDefault()
     $sIdiomaActual = cmbDiccionarioIdioma.Text
     txtContadorErrores.Text = "Cargando..."
   Else
-    Message.Warning("No se encontraron diccionarios instalados en el sistema.\nInstale diccionarios de LibreOffice/Hunspell.")
+    m_Sonido.sonar("Error")
+    Message.Warning("No se encontraron diccionarios instalados en el sistema." & gb.NewLine &
+      "Instale los diccionarios de LibreOffice/Hunspell.")
     txtContadorErrores.Text = "Sin diccionario"
   Endif
 
 End
 
-' EVENTO: Form_Show
-' DESCRIPCIÓN: SE EJECUTA CUANDO EL FORMULARIO SE MUESTRA
-' AQUÍ INICIAMOS EL ESCANEO PARA QUE EL FORMULARIO SE VEA PRIMERO
+' ============================================
+' Función   : Form_Show
+' Propósito : Lanza el escaneo una vez que el formulario ya es visible
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub Form_Show()
 
-  ' ESCANEAR SOLO SI HAY DICCIONARIO SELECCIONADO
-  If cmbDiccionarioIdioma.Count > 0 And $sIdiomaActual <> "" Then
-    EscanearDocumento()
+  ' EL GUARD VA EN If ANIDADO: And NO CORTOCIRCUITA (RC-GM-17)
+  If cmbDiccionarioIdioma.Count > 0 Then
+    If $sIdiomaActual <> "" Then
+      EscanearDocumento()
+    Endif
   Endif
 
 End
 
-' PROCEDIMIENTO: CargarDiccionarios
-' DESCRIPCIÓN: CARGA LA LISTA DE DICCIONARIOS DISPONIBLES EN EL COMBOBOX
+' ============================================
+' Función   : CargarDiccionarios
+' Propósito : Llena el combo con los idiomas que tienen diccionario instalado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Private Sub CargarDiccionarios()
 
@@ -91,33 +128,35 @@ Private Sub CargarDiccionarios()
 
 End
 
-' PROCEDIMIENTO: SeleccionarIdiomaDefault
-' DESCRIPCIÓN: SELECCIONA EL IDIOMA POR DEFECTO (PRIORIDAD ESPAÑOL)
+' ============================================
+' Función   : SeleccionarIdiomaDefault
+' Propósito : Elige el idioma inicial con prioridad es_ES, es_AR, es_*, primero
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Private Sub SeleccionarIdiomaDefault()
 
-  Dim i As Integer
   Dim sIdioma As String
+  Dim i As Integer
 
-  ' PRIORIDAD 1: ES_ES (ESPAÑA)
+  ' --- 1. PRIORIDAD ES_ES ---
   For i = 0 To cmbDiccionarioIdioma.Count - 1
-    sIdioma = cmbDiccionarioIdioma[i].Text
-    If sIdioma = "es_ES" Then
+    If cmbDiccionarioIdioma[i].Text = "es_ES" Then
       cmbDiccionarioIdioma.Index = i
       Return
     Endif
   Next
 
-  ' PRIORIDAD 2: ES_AR (ARGENTINA)
+  ' --- 2. PRIORIDAD ES_AR ---
   For i = 0 To cmbDiccionarioIdioma.Count - 1
-    sIdioma = cmbDiccionarioIdioma[i].Text
-    If sIdioma = "es_AR" Then
+    If cmbDiccionarioIdioma[i].Text = "es_AR" Then
       cmbDiccionarioIdioma.Index = i
       Return
     Endif
   Next
 
-  ' PRIORIDAD 3: CUALQUIER ESPAÑOL (ES_*)
+  ' --- 3. CUALQUIER VARIANTE DE ESPAÑOL ---
   For i = 0 To cmbDiccionarioIdioma.Count - 1
     sIdioma = cmbDiccionarioIdioma[i].Text
     If Left(sIdioma, 3) = "es_" Then
@@ -126,230 +165,188 @@ Private Sub SeleccionarIdiomaDefault()
     Endif
   Next
 
-  ' SI NO HAY ESPAÑOL, SELECCIONAR EL PRIMERO
+  ' --- 4. SIN ESPAÑOL: EL PRIMERO DE LA LISTA ---
   cmbDiccionarioIdioma.Index = 0
 
 End
 
-' PROCEDIMIENTO: EscanearDocumento
-' DESCRIPCIÓN: ESCANEA EL DOCUMENTO EN BUSCA DE ERRORES ORTOGRÁFICOS
+' ============================================
+' Función   : EscanearDocumento
+' Propósito : Recorre el documento y arma la lista de errores ortográficos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub EscanearDocumento()
 
-  Dim sTexto As String
-  Dim cPalabras As Collection
-  Dim sPosicion As String
-  Dim sPalabra As String
-  Dim iPosicion As Integer
-  Dim cError As Collection
-  Dim aPalabrasUnicas As New String[]
+  Dim aHalladas As CPalabraHallada[]
+  Dim aUnicas As New String[]
   Dim aIncorrectas As String[]
-  Dim cPosicionesPorPalabra As New Collection
-  Dim aTemp As Integer[]
+  Dim cIncorrectas As New Collection
+  Dim oPalabra As CPalabraHallada
+  Dim sPalabra As String
+  Dim sTexto As String
 
-  ' MOSTRAR ESTADO
+  ' --- 1. ESTADO DE ESPERA ---
   txtContadorErrores.Text = "Analizando..."
   Me.Refresh()
 
-  ' LIMPIAR ERRORES ANTERIORES
   $aErrores.Clear()
   $iIndiceActual = 0
+  $iTotalErrores = 0
 
-  ' OBTENER TEXTO DEL EDITOR
+  ' --- 2. EXTRACCIÓN DE PALABRAS ---
+  ' bLimpiarShortcodes QUEDA EN True: EN UN .md HAY URLS, DOIS Y SHORTCODES
+  ' QUE NO DEBEN VERIFICARSE. EL EDITOR RTF LLAMARÁ CON False.
   sTexto = FMain.txtEditorProyecto.Text
+  aHalladas = m_Hunspell.ExtraerPalabras(sTexto, True)
 
-  ' EXTRAER PALABRAS
-  cPalabras = m_Hunspell.ExtraerPalabras(sTexto)
+  If aHalladas.Count = 0 Then
+    LimpiarInterfaz()
+    txtContadorErrores.Text = "0 de 0"
+    m_Sonido.sonar("info")
+    Message.Info("El documento no tiene palabras para verificar.")
+    Return
+  Endif
 
-  ' CONSTRUIR LISTA DE PALABRAS ÚNICAS Y MAPEAR POSICIONES
-  For Each sPalabra In cPalabras
-    sPosicion = cPalabras.Key
-    iPosicion = CInt(sPosicion)
+  ' --- 3. LISTA DE PALABRAS ÚNICAS, SALTEANDO LAS IGNORADAS ---
+  ' LAS CLAVES DE Collection SON SENSIBLES A MAYÚSCULAS (GV-04), QUE ES LO QUE
+  ' QUEREMOS: «Marx» Y «marx» SON PALABRAS DISTINTAS PARA EL CORRECTOR.
+  For Each oPalabra In aHalladas
 
-    ' SALTAR SI ESTÁ EN LA LISTA DE IGNORADAS
-    If $aPalabrasIgnoradas.Find(sPalabra) >= 0 Then
-      Continue
+    If $aPalabrasIgnoradas.Find(oPalabra.sPalabra) >= 0 Then Continue
+
+    If aUnicas.Find(oPalabra.sPalabra) < 0 Then
+      aUnicas.Add(oPalabra.sPalabra)
     Endif
 
-    ' AGREGAR A LISTA DE ÚNICAS SI NO EXISTE
-    If aPalabrasUnicas.Find(sPalabra) < 0 Then
-      aPalabrasUnicas.Add(sPalabra)
-      aTemp = New Integer[]
-      cPosicionesPorPalabra.Add(aTemp, sPalabra)
-    Endif
-
-    ' GUARDAR LA POSICIÓN
-    aTemp = cPosicionesPorPalabra[sPalabra]
-    aTemp.Add(iPosicion)
   Next
 
-  ' VERIFICAR TODAS LAS PALABRAS EN UNA SOLA LLAMADA A HUNSPELL
-  aIncorrectas = m_Hunspell.VerificarPalabrasLote(aPalabrasUnicas, $sIdiomaActual)
+  If aUnicas.Count = 0 Then
+    LimpiarInterfaz()
+    txtContadorErrores.Text = "0 de 0"
+    m_Sonido.sonar("info")
+    Message.Info("No quedan palabras por verificar.")
+    Return
+  Endif
 
-  ' CONSTRUIR LISTA DE ERRORES CON SUS POSICIONES
+  ' --- 4. VERIFICACIÓN EN UNA SOLA INVOCACIÓN ---
+  aIncorrectas = m_Hunspell.VerificarPalabrasLote(aUnicas, $sIdiomaActual)
+
+  ' UN ARRAY VACÍO PUEDE SER «NINGUNA INCORRECTA» O «FALLÓ LA VERIFICACIÓN»:
+  ' SIN ESTE CONTROL, UN DICCIONARIO AUSENTE SE ANUNCIABA COMO DOCUMENTO
+  ' IMPECABLE (GV-23).
+  If m_Hunspell.UltimoError <> "" Then
+    LimpiarInterfaz()
+    txtContadorErrores.Text = "Error"
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar la ortografía:" & gb.NewLine & m_Hunspell.UltimoError)
+    Return
+  Endif
+
+  ' --- 5. ARMADO DE LA LISTA DE ERRORES ---
+  ' SE INDEXAN LAS INCORRECTAS EN UNA Collection PARA NO HACER UNA BÚSQUEDA
+  ' LINEAL POR CADA PALABRA DEL DOCUMENTO.
   For Each sPalabra In aIncorrectas
-    If cPosicionesPorPalabra.Exist(sPalabra) Then
-      aTemp = cPosicionesPorPalabra[sPalabra]
-      For Each iPosicion In aTemp
-        cError = New Collection
-        cError.Add(sPalabra, "palabra")
-        cError.Add(iPosicion, "posicion")
-        cError.Add(Len(sPalabra), "longitud")
-        $aErrores.Add(cError)
-      Next
+    cIncorrectas[sPalabra] = True
+  Next
+
+  ' ExtraerPalabras DEVUELVE EN ORDEN DE APARICIÓN, ASÍ QUE EL FILTRADO
+  ' CONSERVA EL ORDEN Y NO HACE FALTA ORDENAR DESPUÉS.
+  For Each oPalabra In aHalladas
+    If cIncorrectas.Exist(oPalabra.sPalabra) Then
+      $aErrores.Add(oPalabra)
     Endif
   Next
 
-  ' ORDENAR ERRORES POR POSICIÓN
-  OrdenarErroresPorPosicion()
-
-  ' ACTUALIZAR TOTAL
   $iTotalErrores = $aErrores.Count
 
-  ' MOSTRAR PRIMER ERROR O INDICAR QUE NO HAY ERRORES
+  ' --- 6. PRIMER ERROR O AVISO DE DOCUMENTO LIMPIO ---
   If $iTotalErrores > 0 Then
     $iIndiceActual = 0
     MostrarErrorActual()
   Else
     LimpiarInterfaz()
     txtContadorErrores.Text = "0 de 0"
+    m_Sonido.sonar("info")
     Message.Info("No se encontraron errores ortográficos.")
   Endif
 
 End
 
-' PROCEDIMIENTO: OrdenarErroresPorPosicion
-' DESCRIPCIÓN: ORDENA LA LISTA DE ERRORES POR POSICIÓN EN EL DOCUMENTO
-
-Private Sub OrdenarErroresPorPosicion()
-
-  Dim i As Integer
-  Dim j As Integer
-  Dim cTemp As Collection
-  Dim iPosI As Integer
-  Dim iPosJ As Integer
-
-  ' ORDENAMIENTO BURBUJA (SIMPLE, SUFICIENTE PARA LISTAS PEQUEÑAS/MEDIANAS)
-  For i = 0 To $aErrores.Max - 1
-    For j = i + 1 To $aErrores.Max
-      iPosI = $aErrores[i]["posicion"]
-      iPosJ = $aErrores[j]["posicion"]
-      If iPosI > iPosJ Then
-        ' INTERCAMBIAR
-        cTemp = $aErrores[i]
-        $aErrores[i] = $aErrores[j]
-        $aErrores[j] = cTemp
-      Endif
-    Next
-  Next
-
-End
-
-' PROCEDIMIENTO: MostrarErrorActual
-' DESCRIPCIÓN: MUESTRA EL ERROR ACTUAL EN LA INTERFAZ
+' ============================================
+' Función   : MostrarErrorActual
+' Propósito : Vuelca el error en curso en la interfaz y lo ubica en el editor
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Private Sub MostrarErrorActual()
 
-  Dim cError As Collection
-  Dim sPalabra As String
-  Dim iPosicion As Integer
-  Dim iLongitud As Integer
-  Dim sTexto As String
-  Dim sContexto As String
+  Dim oError As CPalabraHallada
+  Dim oPosicion As CPosicionTexto
   Dim aSugerencias As String[]
   Dim sSugerencia As String
-  Dim iLinea As Integer
-  Dim iColumna As Integer
+  Dim sContexto As String
+  Dim sTexto As String
 
-  ' VALIDAR QUE HAY ERRORES
-  If $iTotalErrores = 0 Or $iIndiceActual >= $aErrores.Count Then
+  ' --- 1. VALIDACIÓN DEL ÍNDICE ---
+  If $iTotalErrores = 0 Or If $iIndiceActual >= $aErrores.Count Then
     LimpiarInterfaz()
     txtContadorErrores.Text = "0 de 0"
     Return
   Endif
 
-  ' OBTENER ERROR ACTUAL
-  cError = $aErrores[$iIndiceActual]
-  sPalabra = cError["palabra"]
-  iPosicion = cError["posicion"]
-  iLongitud = cError["longitud"]
+  oError = $aErrores[$iIndiceActual]
 
-  ' MOSTRAR PALABRA ERRÓNEA
-  txtErrorEncontrado.Text = sPalabra
+  ' --- 2. PALABRA Y CONTEXTO ---
+  txtErrorEncontrado.Text = oError.sPalabra
 
-  ' MOSTRAR CONTEXTO
   sTexto = FMain.txtEditorProyecto.Text
-  sContexto = m_Hunspell.ObtenerContexto(sTexto, iPosicion, iLongitud, 50)
+  sContexto = m_Hunspell.ObtenerContexto(sTexto, oError.iPosicion, oError.iLongitud, 50)
   txtContexto.Text = sContexto
+  txtContexto.HighlightString(oError.sPalabra, False, True)
 
-  ' RESALTAR LA PALABRA EN EL CONTEXTO
-  txtContexto.HighlightString(sPalabra, False, True)
-
-  ' CARGAR SUGERENCIAS
+  ' --- 3. SUGERENCIAS ---
   lstSugerencias.Clear()
-  aSugerencias = m_Hunspell.ObtenerSugerencias(sPalabra, $sIdiomaActual)
+  aSugerencias = m_Hunspell.ObtenerSugerencias(oError.sPalabra, $sIdiomaActual)
+
   For Each sSugerencia In aSugerencias
     lstSugerencias.Add(sSugerencia)
   Next
 
-  ' SELECCIONAR PRIMERA SUGERENCIA SI HAY
   If lstSugerencias.Count > 0 Then
     lstSugerencias.Index = 0
     txtReemplazar.Text = lstSugerencias[0].Text
   Else
-    txtReemplazar.Text = sPalabra
+    txtReemplazar.Text = oError.sPalabra
   Endif
 
-  ' ACTUALIZAR CONTADOR
+  ' --- 4. CONTADOR ---
   txtContadorErrores.Text = CStr($iIndiceActual + 1) & " de " & CStr($iTotalErrores)
 
-  ' POSICIONAR CURSOR EN EL EDITOR PRINCIPAL Y HACER SCROLL
-  ConvertirPosicionALineaColumna(sTexto, iPosicion, ByRef iLinea, ByRef iColumna)
-  FMain.txtEditorProyecto.GotoCenter(iColumna, iLinea)
-  FMain.txtEditorProyecto.Select(iLinea, iColumna, iLinea, iColumna + iLongitud)
+  ' --- 5. UBICACIÓN EN EL EDITOR ---
+  ' EL RESULTADO VIENE COMO OBJETO PORQUE UN PRIMITIVO NO PUEDE VOLVER POR
+  ' PARÁMETRO (GV-24). Y EL ORDEN DE LOS ARGUMENTOS ES (Column, Line) EN TODOS
+  ' LOS MÉTODOS DE POSICIONAMIENTO DEL TextEditor (RC-GM-06): LA CONVENCIÓN
+  ' SEMÁNTICA «LÍNEA PRIMERO» QUE SUGIEREN LAS PROPIEDADES DE LECTURA NO SE
+  ' APLICA ACÁ. NO INVERTIR.
+  oPosicion = m_Hunspell.ConvertirPosicionALineaColumna(sTexto, oError.iPosicion)
+
+  Try FMain.txtEditorProyecto.GotoCenter(oPosicion.iColumna, oPosicion.iLinea)
+  If Error Then Return
+
+  Try FMain.txtEditorProyecto.Select(oPosicion.iColumna, oPosicion.iLinea,
+    oPosicion.iColumna + oError.iLongitud, oPosicion.iLinea)
 
 End
 
-' PROCEDIMIENTO: ConvertirPosicionALineaColumna
-' DESCRIPCIÓN: CONVIERTE UNA POSICIÓN ABSOLUTA EN LÍNEA Y COLUMNA
-' PARÁMETRO sTexto: TEXTO COMPLETO
-' PARÁMETRO iPosicion: POSICIÓN ABSOLUTA (BASE 1)
-' PARÁMETRO iLinea: VARIABLE DE SALIDA PARA LA LÍNEA (BASE 0)
-' PARÁMETRO iColumna: VARIABLE DE SALIDA PARA LA COLUMNA (BASE 0)
-
-Private Sub ConvertirPosicionALineaColumna(sTexto As String, iPosicion As Integer, ByRef iLinea As Integer, ByRef iColumna As Integer)
-
-  Dim aLineas As String[]
-  Dim i As Integer
-  Dim iPosActual As Integer
-  Dim iLongitudLinea As Integer
-
-  aLineas = Split(sTexto, "\n")
-  iPosActual = 1
-  iLinea = 0
-  iColumna = 0
-
-  For i = 0 To aLineas.Max
-    iLongitudLinea = Len(aLineas[i]) + 1 ' +1 POR EL SALTO DE LÍNEA
-
-    If iPosActual + iLongitudLinea > iPosicion Then
-      ' LA POSICIÓN ESTÁ EN ESTA LÍNEA
-      iLinea = i
-      iColumna = iPosicion - iPosActual
-      Return
-    Endif
-
-    iPosActual += iLongitudLinea
-  Next
-
-  ' SI LLEGAMOS AQUÍ, ESTÁ EN LA ÚLTIMA LÍNEA
-  iLinea = aLineas.Max
-  iColumna = iPosicion - iPosActual + iLongitudLinea
-
-End
-
-' PROCEDIMIENTO: LimpiarInterfaz
-' DESCRIPCIÓN: LIMPIA TODOS LOS CAMPOS DE LA INTERFAZ
+' ============================================
+' Función   : LimpiarInterfaz
+' Propósito : Deja los campos del formulario vacíos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Private Sub LimpiarInterfaz()
 
@@ -360,17 +357,21 @@ Private Sub LimpiarInterfaz()
 
 End
 
-' PROCEDIMIENTO: IrAlSiguienteError
-' DESCRIPCIÓN: AVANZA AL SIGUIENTE ERROR EN LA LISTA
+' ============================================
+' Función   : IrAlSiguienteError
+' Propósito : Avanza al siguiente error de la lista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Private Sub IrAlSiguienteError()
 
-  $iIndiceActual += 1
+  Inc $iIndiceActual
 
   If $iIndiceActual >= $aErrores.Count Then
-    ' NO HAY MÁS ERRORES
     LimpiarInterfaz()
     txtContadorErrores.Text = CStr($iTotalErrores) & " de " & CStr($iTotalErrores)
+    m_Sonido.sonar("info")
     Message.Info("Se han revisado todos los errores.")
     Return
   Endif
@@ -379,8 +380,12 @@ Private Sub IrAlSiguienteError()
 
 End
 
-' EVENTO: lstSugerencias_Click
-' DESCRIPCIÓN: AL SELECCIONAR UNA SUGERENCIA, LA COPIA AL CAMPO DE REEMPLAZO
+' ============================================
+' Función   : lstSugerencias_Click
+' Propósito : Copia la sugerencia elegida al campo de reemplazo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub lstSugerencias_Click()
 
@@ -390,8 +395,12 @@ Public Sub lstSugerencias_Click()
 
 End
 
-' EVENTO: lstSugerencias_DblClick
-' DESCRIPCIÓN: DOBLE CLIC EN SUGERENCIA APLICA EL REEMPLAZO DIRECTAMENTE
+' ============================================
+' Función   : lstSugerencias_DblClick
+' Propósito : Aplica directamente la sugerencia con doble clic
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub lstSugerencias_DblClick()
 
@@ -402,147 +411,186 @@ Public Sub lstSugerencias_DblClick()
 
 End
 
-' EVENTO: btnAplicar_Click
-' DESCRIPCIÓN: APLICA EL REEMPLAZO DE LA PALABRA ACTUAL
+' ============================================
+' Función   : ReemplazarEnTexto
+' Propósito : Sustituye un tramo del texto por otro, cortando en caracteres
+' Parámetros: sTexto As String — texto completo
+'             iPosicion As Integer — inicio del tramo, en caracteres, base 1
+'             iLongitud As Integer — largo del tramo, en caracteres
+'             sNuevo As String — texto de reemplazo
+' Retorna   : String — el texto con la sustitución aplicada
+' ============================================
 
-Public Sub btnAplicar_Click()
+Private Function ReemplazarEnTexto(sTexto As String, iPosicion As Integer, iLongitud As Integer, sNuevo As String) As String
 
-  Dim cError As Collection
-  Dim sPalabraOriginal As String
-  Dim sPalabraReemplazo As String
-  Dim iPosicion As Integer
-  Dim iLongitud As Integer
-  Dim sTexto As String
-  Dim sTextoNuevo As String
-  Dim iDiferencia As Integer
-  Dim i As Integer
-  Dim cErrorTemp As Collection
+  Dim sIzquierda As String
+  Dim sDerecha As String
+  Dim iLargo As Integer
+  Dim iInicioDerecha As Integer
 
-  ' VALIDAR QUE HAY ERROR ACTUAL
-  If $iTotalErrores = 0 Or $iIndiceActual >= $aErrores.Count Then
-    Return
+  ' String.Mid Y NO Mid: EL CORTE EN BYTES PUEDE PARTIR UN CARÁCTER MULTIBYTE
+  ' POR LA MITAD Y DEJAR UN BYTE HUÉRFANO EN EL ARCHIVO (GV-03, SC-02).
+  iLargo = String.Len(sTexto)
+  sIzquierda = ""
+  sDerecha = ""
+
+  If iPosicion > 1 Then
+    sIzquierda = String.Mid(sTexto, 1, iPosicion - 1)
   Endif
 
-  ' OBTENER DATOS
-  cError = $aErrores[$iIndiceActual]
-  sPalabraOriginal = cError["palabra"]
-  iPosicion = cError["posicion"]
-  iLongitud = cError["longitud"]
-  sPalabraReemplazo = Trim(txtReemplazar.Text)
+  iInicioDerecha = iPosicion + iLongitud
 
-  ' VALIDAR REEMPLAZO
-  If sPalabraReemplazo = "" Then
-    Message.Warning("Debe ingresar una palabra de reemplazo.")
-    Return
+  If iInicioDerecha <= iLargo Then
+    sDerecha = String.Mid(sTexto, iInicioDerecha, iLargo - iInicioDerecha + 1)
   Endif
 
-  ' REALIZAR EL REEMPLAZO EN EL EDITOR
-  sTexto = FMain.txtEditorProyecto.Text
-  sTextoNuevo = Left(sTexto, iPosicion - 1) & sPalabraReemplazo & Mid(sTexto, iPosicion + iLongitud)
-  FMain.txtEditorProyecto.Text = sTextoNuevo
-
-  ' MARCAR QUE HUBO CAMBIOS
-  $bHuboCambios = True
-
-  ' AJUSTAR POSICIONES DE LOS ERRORES SIGUIENTES
-  iDiferencia = Len(sPalabraReemplazo) - iLongitud
-  If iDiferencia <> 0 Then
-    For i = $iIndiceActual + 1 To $aErrores.Max
-      cErrorTemp = $aErrores[i]
-      cErrorTemp["posicion"] = cErrorTemp["posicion"] + iDiferencia
-    Next
-  Endif
-
-  ' ELIMINAR EL ERROR ACTUAL DE LA LISTA
-  $aErrores.Remove($iIndiceActual)
-  $iTotalErrores = $aErrores.Count
-
-  ' MOSTRAR SIGUIENTE ERROR (SIN INCREMENTAR ÍNDICE YA QUE ELIMINAMOS UNO)
-  If $iIndiceActual < $aErrores.Count Then
-    MostrarErrorActual()
-  Else If $aErrores.Count > 0 Then
-    $iIndiceActual = $aErrores.Max
-    MostrarErrorActual()
-  Else
-    LimpiarInterfaz()
-    txtContadorErrores.Text = "0 de 0"
-    Message.Info("Se han corregido todos los errores.")
-  Endif
+  Return sIzquierda & sNuevo & sDerecha
 
 End
 
-' EVENTO: btnAplicaTodas_Click
-' DESCRIPCIÓN: APLICA EL REEMPLAZO A TODAS LAS COINCIDENCIAS DE LA PALABRA
+' ============================================
+' Función   : btnAplicar_Click
+' Propósito : Reemplaza la palabra del error en curso
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
-Public Sub btnAplicaTodas_Click()
+Public Sub btnAplicar_Click()
 
-  Dim cError As Collection
-  Dim sPalabraOriginal As String
-  Dim sPalabraReemplazo As String
+  Dim oError As CPalabraHallada
+  Dim oSiguiente As CPalabraHallada
+  Dim sReemplazo As String
   Dim sTexto As String
-  Dim iCambios As Integer
+  Dim iDiferencia As Integer
+  Dim i As Integer
 
-  ' VALIDAR QUE HAY ERROR ACTUAL
-  If $iTotalErrores = 0 Or $iIndiceActual >= $aErrores.Count Then
+  ' --- 1. VALIDACIÓN DE ESTADO ---
+  If $iTotalErrores = 0 Or If $iIndiceActual >= $aErrores.Count Then
     Return
   Endif
 
-  ' OBTENER DATOS
-  cError = $aErrores[$iIndiceActual]
-  sPalabraOriginal = cError["palabra"]
-  sPalabraReemplazo = Trim(txtReemplazar.Text)
+  oError = $aErrores[$iIndiceActual]
+  sReemplazo = Trim(txtReemplazar.Text)
 
-  ' VALIDAR REEMPLAZO
-  If sPalabraReemplazo = "" Then
+  If sReemplazo = "" Then
+    m_Sonido.sonar("Error")
     Message.Warning("Debe ingresar una palabra de reemplazo.")
     Return
   Endif
 
-  ' CONFIRMAR ACCIÓN
-  If Message.Question("¿Reemplazar todas las ocurrencias de \"" & sPalabraOriginal & "\" por \"" & sPalabraReemplazo & "\"?", "Sí", "No") <> 1 Then
+  ' --- 2. SUSTITUCIÓN EN EL EDITOR ---
+  sTexto = FMain.txtEditorProyecto.Text
+  FMain.txtEditorProyecto.Text = ReemplazarEnTexto(sTexto, oError.iPosicion, oError.iLongitud, sReemplazo)
+  $bHuboCambios = True
+
+  ' --- 3. CORRIMIENTO DE LOS ERRORES POSTERIORES ---
+  ' EL ARRAY GUARDA REFERENCIAS Y NO COPIAS (GV-14), ASÍ QUE MODIFICAR EL
+  ' OBJETO ACTUALIZA LA ENTRADA DE LA LISTA.
+  iDiferencia = String.Len(sReemplazo) - oError.iLongitud
+
+  If iDiferencia <> 0 Then
+    For i = $iIndiceActual + 1 To $aErrores.Max
+      oSiguiente = $aErrores[i]
+      oSiguiente.iPosicion += iDiferencia
+    Next
+  Endif
+
+  ' --- 4. BAJA DEL ERROR RESUELTO ---
+  ' Remove REINDEXA (GV-14): EL ÍNDICE ACTUAL YA APUNTA AL SIGUIENTE ERROR.
+  $aErrores.Remove($iIndiceActual)
+  $iTotalErrores = $aErrores.Count
+
+  ' --- 5. SIGUIENTE ERROR ---
+  If $aErrores.Count = 0 Then
+    LimpiarInterfaz()
+    txtContadorErrores.Text = "0 de 0"
+    m_Sonido.sonar("info")
+    Message.Info("Se han corregido todos los errores.")
     Return
   Endif
 
-  ' REALIZAR REEMPLAZO GLOBAL
-  sTexto = FMain.txtEditorProyecto.Text
-  iCambios = ContarOcurrencias(sTexto, sPalabraOriginal)
-  sTexto = Replace(sTexto, sPalabraOriginal, sPalabraReemplazo)
-  FMain.txtEditorProyecto.Text = sTexto
+  If $iIndiceActual >= $aErrores.Count Then
+    $iIndiceActual = $aErrores.Max
+  Endif
 
-  ' MARCAR QUE HUBO CAMBIOS
+  MostrarErrorActual()
+
+End
+
+' ============================================
+' Función   : btnAplicaTodas_Click
+' Propósito : Reemplaza todas las apariciones de la palabra del error en curso
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnAplicaTodas_Click()
+
+  Dim oError As CPalabraHallada
+  Dim sPalabraOriginal As String
+  Dim sReemplazo As String
+  Dim sTexto As String
+  Dim iCambios As Integer
+  Dim i As Integer
+
+  ' --- 1. VALIDACIÓN DE ESTADO ---
+  If $iTotalErrores = 0 Or If $iIndiceActual >= $aErrores.Count Then
+    Return
+  Endif
+
+  oError = $aErrores[$iIndiceActual]
+  sPalabraOriginal = oError.sPalabra
+  sReemplazo = Trim(txtReemplazar.Text)
+
+  If sReemplazo = "" Then
+    m_Sonido.sonar("Error")
+    Message.Warning("Debe ingresar una palabra de reemplazo.")
+    Return
+  Endif
+
+  ' --- 2. CONFIRMACIÓN ---
+  If Message.Question("¿Reemplazar todas las apariciones de " & Chr(34) & sPalabraOriginal & Chr(34) &
+      " por " & Chr(34) & sReemplazo & Chr(34) & "?", "Sí", "No") <> 1 Then
+    Return
+  Endif
+
+  ' --- 3. SUSTITUCIÓN POR POSICIÓN, DE ATRÁS HACIA ADELANTE ---
+  ' RECORRER EN REVERSA MANTIENE VÁLIDAS LAS POSICIONES ANTERIORES SIN TENER
+  ' QUE RECALCULARLAS. NO SE USA Replace SOBRE EL TEXTO: REEMPLAZA SUBCADENAS
+  ' Y CONVERTIRÍA «casco» EN «casaco» AL CAMBIAR «cas» POR «casa».
+  sTexto = FMain.txtEditorProyecto.Text
+  iCambios = 0
+
+  For i = $aErrores.Max To 0 Step -1
+
+    oError = $aErrores[i]
+
+    If oError.sPalabra = sPalabraOriginal Then
+      sTexto = ReemplazarEnTexto(sTexto, oError.iPosicion, oError.iLongitud, sReemplazo)
+      Inc iCambios
+    Endif
+
+  Next
+
+  FMain.txtEditorProyecto.Text = sTexto
   $bHuboCambios = True
 
-  Message.Info("Se reemplazaron " & CStr(iCambios) & " ocurrencias.")
+  m_Sonido.sonar("info")
+  Message.Info("Se reemplazaron " & CStr(iCambios) & " apariciones.")
 
-  ' REESCANEAR EL DOCUMENTO
+  ' --- 4. REESCANEO ---
+  ' LAS POSICIONES DE TODO EL DOCUMENTO SE CORRIERON: SE RECALCULA DESDE CERO
+  ' EN LUGAR DE ARRASTRAR AJUSTES ACUMULADOS.
   EscanearDocumento()
 
 End
 
-' FUNCIÓN: ContarOcurrencias
-' DESCRIPCIÓN: CUENTA LAS OCURRENCIAS DE UNA CADENA EN UN TEXTO
-
-Private Function ContarOcurrencias(sTexto As String, sBuscar As String) As Integer
-
-  Dim iContador As Integer
-  Dim iPosicion As Integer
-
-  iContador = 0
-  iPosicion = 1
-
-  While True
-    iPosicion = InStr(sTexto, sBuscar, iPosicion)
-    If iPosicion = 0 Then Break
-    iContador += 1
-    iPosicion += 1
-  Wend
-
-  Return iContador
-
-End
-
-' EVENTO: btnIgnorar_Click
-' DESCRIPCIÓN: IGNORA EL ERROR ACTUAL Y PASA AL SIGUIENTE
+' ============================================
+' Función   : btnIgnorar_Click
+' Propósito : Deja el error en curso como está y pasa al siguiente
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub btnIgnorar_Click()
 
@@ -550,95 +598,107 @@ Public Sub btnIgnorar_Click()
 
 End
 
-' EVENTO: btnIgnorarTodas_Click
-' DESCRIPCIÓN: IGNORA TODAS LAS COINCIDENCIAS DE LA PALABRA ACTUAL
+' ============================================
+' Función   : btnIgnorarTodas_Click
+' Propósito : Descarta todas las apariciones de la palabra del error en curso
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub btnIgnorarTodas_Click()
 
-  Dim cError As Collection
+  Dim oError As CPalabraHallada
   Dim sPalabra As String
   Dim i As Integer
-  Dim aIndicesAEliminar As New Integer[]
 
-  ' VALIDAR QUE HAY ERROR ACTUAL
-  If $iTotalErrores = 0 Or $iIndiceActual >= $aErrores.Count Then
+  ' --- 1. VALIDACIÓN DE ESTADO ---
+  If $iTotalErrores = 0 Or If $iIndiceActual >= $aErrores.Count Then
     Return
   Endif
 
-  ' OBTENER PALABRA
-  cError = $aErrores[$iIndiceActual]
-  sPalabra = cError["palabra"]
+  sPalabra = $aErrores[$iIndiceActual].sPalabra
 
-  ' AGREGAR A LA LISTA DE IGNORADAS (PARA FUTUROS ESCANEOS)
+  ' --- 2. ALTA EN LA LISTA DE IGNORADAS DE LA SESIÓN ---
   If $aPalabrasIgnoradas.Find(sPalabra) < 0 Then
     $aPalabrasIgnoradas.Add(sPalabra)
   Endif
 
-  ' ENCONTRAR TODOS LOS ÍNDICES A ELIMINAR (DE MAYOR A MENOR PARA NO AFECTAR ÍNDICES)
+  ' --- 3. BAJA DE LAS APARICIONES ---
+  ' EN REVERSA: Remove REINDEXA Y NUNCA HAY QUE BORRAR DENTRO DE UN RECORRIDO
+  ' ASCENDENTE SOBRE EL MISMO ARRAY (GV-14).
   For i = $aErrores.Max To 0 Step -1
-    cError = $aErrores[i]
-    If cError["palabra"] = sPalabra Then
-      aIndicesAEliminar.Add(i)
+    oError = $aErrores[i]
+    If oError.sPalabra = sPalabra Then
+      $aErrores.Remove(i)
     Endif
   Next
 
-  ' ELIMINAR ERRORES (YA ESTÁN EN ORDEN DESCENDENTE)
-  For Each i In aIndicesAEliminar
-    $aErrores.Remove(i)
-  Next
-
-  ' ACTUALIZAR TOTAL
   $iTotalErrores = $aErrores.Count
 
-  ' AJUSTAR ÍNDICE ACTUAL SI ES NECESARIO
+  ' --- 4. SIGUIENTE ERROR ---
+  If $aErrores.Count = 0 Then
+    LimpiarInterfaz()
+    txtContadorErrores.Text = "0 de 0"
+    m_Sonido.sonar("info")
+    Message.Info("Se han revisado todos los errores.")
+    Return
+  Endif
+
   If $iIndiceActual >= $aErrores.Count Then
     $iIndiceActual = $aErrores.Max
   Endif
 
-  ' MOSTRAR SIGUIENTE ERROR O INDICAR FIN
-  If $aErrores.Count > 0 Then
-    MostrarErrorActual()
-  Else
-    LimpiarInterfaz()
-    txtContadorErrores.Text = "0 de 0"
-    Message.Info("Se han revisado todos los errores.")
-  Endif
+  MostrarErrorActual()
 
 End
 
-' EVENTO: btnAgregarAlDiccionario_Click
-' DESCRIPCIÓN: AGREGA LA PALABRA AL DICCIONARIO PERSONAL
+' ============================================
+' Función   : btnAgregarAlDiccionario_Click
+' Propósito : Suma la palabra al diccionario personal del usuario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub btnAgregarAlDiccionario_Click()
 
   Dim sPalabra As String
 
-  ' OBTENER PALABRA DEL CAMPO DE REEMPLAZO
-  sPalabra = Trim(txtReemplazar.Text)
+  ' --- 1. PALABRA A AGREGAR ---
+  ' SE PRIORIZA LA PALABRA ERRÓNEA: AGREGAR AL DICCIONARIO SIGNIFICA «ESTA
+  ' ESTÁ BIEN ESCRITA», NO «GUARDAR LA SUGERENCIA».
+  sPalabra = Trim(txtErrorEncontrado.Text)
 
   If sPalabra = "" Then
-    ' SI ESTÁ VACÍO, USAR LA PALABRA ERRÓNEA
-    sPalabra = Trim(txtErrorEncontrado.Text)
+    sPalabra = Trim(txtReemplazar.Text)
   Endif
 
   If sPalabra = "" Then
+    m_Sonido.sonar("Error")
     Message.Warning("No hay palabra para agregar al diccionario.")
     Return
   Endif
 
-  ' AGREGAR AL DICCIONARIO
-  If m_Hunspell.AgregarAlDiccionarioPersonal(sPalabra, $sIdiomaActual) Then
-    Message.Info("La palabra \"" & sPalabra & "\" se agregó al diccionario personal.")
-    ' IGNORAR TODAS LAS COINCIDENCIAS DE ESTA PALABRA
-    btnIgnorarTodas_Click()
-  Else
-    Message.Error("Error al agregar la palabra al diccionario personal.")
+  ' --- 2. ALTA ---
+  If Not m_Hunspell.AgregarAlDiccionarioPersonal(sPalabra, $sIdiomaActual) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo agregar la palabra al diccionario personal:" & gb.NewLine & m_Hunspell.UltimoError)
+    Return
   Endif
+
+  m_Sonido.sonar("info")
+  Message.Info("La palabra " & Chr(34) & sPalabra & Chr(34) & " se agregó al diccionario personal.")
+
+  ' --- 3. SE DESCARTAN SUS APARICIONES EN ESTA SESIÓN ---
+  btnIgnorarTodas_Click()
 
 End
 
-' EVENTO: cmbDiccionarioIdioma_Click
-' DESCRIPCIÓN: AL CAMBIAR EL IDIOMA, PREGUNTAR SI GUARDAR Y REESCANEAR
+' ============================================
+' Función   : cmbDiccionarioIdioma_Click
+' Propósito : Cambia el idioma del corrector y vuelve a escanear
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub cmbDiccionarioIdioma_Click()
 
@@ -646,36 +706,42 @@ Public Sub cmbDiccionarioIdioma_Click()
 
   sNuevoIdioma = cmbDiccionarioIdioma.Text
 
-  ' SI ES EL MISMO IDIOMA, NO HACER NADA
-  If sNuevoIdioma = $sIdiomaActual Then
-    Return
-  Endif
+  If sNuevoIdioma = $sIdiomaActual Then Return
 
-  ' SI HUBO CAMBIOS, PREGUNTAR SI GUARDAR
+  ' --- 1. GUARD DE CAMBIOS SIN GUARDAR ---
   If $bHuboCambios Then
-    Select Case Message.Question("Hubo cambios en el documento. ¿Desea guardarlos antes de cambiar de idioma?", "Guardar", "No guardar", "Cancelar")
+
+    Select Case Message.Question("Hubo cambios en el documento. ¿Desea guardarlos antes de cambiar de idioma?",
+          "Guardar", "No guardar", "Cancelar")
       Case 1
-        ' GUARDAR
         FMain.btnGuardarCambiosEditor_Click()
         $bHuboCambios = False
       Case 2
-        ' NO GUARDAR, CONTINUAR
+        ' SE CONTINÚA SIN GUARDAR
       Case 3
-        ' CANCELAR, RESTAURAR IDIOMA ANTERIOR
+        ' SE RESTAURA EL IDIOMA ANTERIOR Y SE ABORTA
         cmbDiccionarioIdioma.Text = $sIdiomaActual
         Return
     End Select
+
   Endif
 
-  ' ACTUALIZAR IDIOMA Y REESCANEAR
+  ' --- 2. NUEVO IDIOMA Y REESCANEO ---
+  ' LAS IGNORADAS SE LIMPIAN: LO QUE ERA CORRECTO EN UN IDIOMA NO TIENE POR
+  ' QUÉ SERLO EN OTRO.
   $sIdiomaActual = sNuevoIdioma
-  $aPalabrasIgnoradas.Clear() ' LIMPIAR IGNORADAS AL CAMBIAR IDIOMA
+  $aPalabrasIgnoradas.Clear()
+
   EscanearDocumento()
 
 End
 
-' EVENTO: btnRefrescar_Click
-' DESCRIPCIÓN: REESCANEA EL DOCUMENTO COMPLETO
+' ============================================
+' Función   : btnRefrescar_Click
+' Propósito : Vuelve a escanear el documento completo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub btnRefrescar_Click()
 
@@ -683,34 +749,55 @@ Public Sub btnRefrescar_Click()
 
 End
 
-' FLAG PARA PERMITIR EL CIERRE DESDE EL BOTÓN
-Private bCierrePermitido As Boolean
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario avisando si quedaron cambios sin guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub btnCerrar_Click()
-  ' SI HUBO CAMBIOS, MOSTRAR MENSAJE
 
   If $bHuboCambios Then
-    Message.Info("Se realizaron cambios en el documento." & Chr(10) & "Recuerde guardar el archivo para conservarlos.")
+    m_Sonido.sonar("info")
+    Message.Info("Se realizaron cambios en el documento." & gb.NewLine &
+      "Recuerde guardar el archivo para conservarlos.")
   Endif
-  ' HABILITAR EL CIERRE Y CERRAR
-  bCierrePermitido = True
+
+  $bCierrePermitido = True
   Me.Close()
 
 End
 
-Public Sub Form_Close()
-  ' SI EL CIERRE VIENE DEL BOTÓN, LIMPIAR Y PERMITIRLO
+' ============================================
+' Función   : Form_Close
+' Propósito : Limpia el resaltado y bloquea el cierre por la X del sistema
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
-  If bCierrePermitido Then
-    FMain.txtEditorProyecto.HighlightString("")
+Public Sub Form_Close()
+
+  ' --- 1. CIERRE POR EL BOTÓN: SE LIMPIA Y SE PERMITE ---
+  If $bCierrePermitido Then
+    Try FMain.txtEditorProyecto.HighlightString("")
     Return
   Endif
-  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
+
+  ' --- 2. CIERRE POR LA X: SE BLOQUEA ---
   m_Sonido.sonar("info")
-  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+  Message.Info("Para cerrar el formulario correctamente," & gb.NewLine &
+    "use el botón <b>Cerrar</b>.")
   Stop Event
 
 End
+
+' ============================================
+' Función   : SplitterOrtografia_Resize
+' Propósito : Mantiene las dos mitades del divisor en proporción pareja
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 
 Public Sub SplitterOrtografia_Resize()
 

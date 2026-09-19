@@ -6940,6 +6940,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   Dim sRutaSeleccionada As String
   Dim sMotivoInvalido As String
   Dim sNombreProyectoNuevo As String
+  Dim sArchivoBiblio As String
 
   ' --- 1. CAPTURAR LA RUTA ELEGIDA EN EL DIÁLOGO ---
   sRutaSeleccionada = Dialog.Path
@@ -7299,7 +7300,19 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   InicializarTerminalProyecto(m_InicioCierre.RutaProyectoEnCurso)
   FMain.DirViewProyecto.Root = m_InicioCierre.RutaProyectoEnCurso
 
-  ' --- 22. RETORNO ---
+  ' --- 22. CARGAMOS EL EDITOR DE BIBLIOGRAFÍA ---
+  ' LA GLOBAL YA ESTÁ FIJADA EN EL APARTADO 9 (RC-GM-16). EL MÓDULO LE AGREGA
+  ' POR SU CUENTA LA SUBCARPETA /originales.
+  m_EditorHTML.Iniciar(txtEditorHTML, m_InicioCierre.RutaProyectoEnCurso)
+  m_EditorHTML.bCargandoLista = True
+  cmbArchivosHTML.Clear()
+
+  For Each sArchivoBiblio In m_EditorHTML.ListarArchivos()
+    cmbArchivosHTML.Add(sArchivoBiblio)
+  Next
+  m_EditorHTML.bCargandoLista = False
+
+  ' --- 23. RETORNO ---
   ' ÚNICA SALIDA CON True: SE LLEGA ACÁ SOLO SI EL PROYECTO QUEDÓ TOMADO EN BD,
   ' LAS GLOBALES FIJADAS Y EL ARCHIVO CARGADO EN EL EDITOR
   Return True
@@ -7668,3 +7681,307 @@ Public Sub menuGenerarPDFLibro_Click()
   m_GenerarSalidasLibro.GenerarPDFLibro()
 
 End
+'
+'
+'
+'
+' ============================================================
+' HANDLERS DEL PANEL DE BIBLIOGRAFÍA — VAN EN FMain
+'
+' TODOS SIGUEN EL MISMO PATRÓN: EL MÓDULO HACE EL TRABAJO Y DEVUELVE UN
+' BOOLEAN; EL HANDLER MUESTRA m_EditorHTML.UltimoError SI ALGO FALLÓ Y
+' RESTITUYE EL FOCO AL EDITOR (RC-GM-07).
+'
+' EL PUNTO CRÍTICO ES EL MENSAJE DE ERROR. UN Try SEGUIDO DE UN Return MUDO
+' ES UN CANAL MUDO: EL FALLO SE MANIFIESTA LEJOS DE SU CAUSA, COMO UN
+' RESULTADO VACÍO QUE PARECE UN DATO LEGÍTIMO (GV-23).
+' ============================================================
+
+' ============================================
+' Función   : cmbArchivosHTML_Click
+' Propósito : Abre la bibliografía elegida, importándola si es la primera vez
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub cmbArchivosHTML_Click()
+
+  Dim sNombre As String
+
+  ' --- 1. SUPRESIÓN DURANTE EL POBLADO POR CÓDIGO ---
+  ' ASIGNAR Index DISPARA ESTE MISMO EVENTO. LA BANDERA EVITA QUE EL GUARD
+  ' VUELVA A PREGUNTAR CUANDO LA ACCIÓN RAÍZ YA LO EVALUÓ (SC-06).
+  If m_EditorHTML.bCargandoLista Then Return
+
+  sNombre = cmbArchivosHTML.Text
+  If sNombre = "" Then Return
+
+  ' --- 2. GUARD DE CAMBIOS SIN GUARDAR ---
+  ' AL INICIO Y ANTES DE CUALQUIER CAMBIO VISIBLE EN LA INTERFAZ (SC-06)
+  If Not m_EditorHTML.ConfirmarDescartarCambios() Then Return
+
+  ' --- 3. APERTURA ---
+  ' LA PRIMERA VEZ SOBRE UN .docx O UN .rtf ESTO LANZA LIBREOFFICE Y PUEDE
+  ' TARDAR VARIOS SEGUNDOS. EL MÓDULO MUESTRA EL RELOJ DE ESPERA.
+  If Not m_EditorHTML.AbrirArchivo(sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la bibliografía:" & gb.NewLine & gb.NewLine &
+      m_EditorHTML.UltimoError)
+    Return
+  Endif
+
+  ' --- 4. REFRESCO DE LA LISTA Y DEL CONTADOR ---
+  ' TRAS IMPORTAR, EL ORIGINAL DEJA SU LUGAR AL .html DE TRABAJO EN EL COMBO
+  RecargarComboBibliografia()
+  ActualizarContadorMarcas()
+
+  txtEditorHTML.SetFocus()
+
+End
+
+' ============================================
+' Función   : RecargarComboBibliografia
+' Propósito : Vuelve a poblar el combo de archivos de bibliografía
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub RecargarComboBibliografia()
+
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+  Dim sSeleccionado As String
+
+  sSeleccionado = cmbArchivosHTML.Text
+
+  ' LA BANDERA SUPRIME EL GUARD INTERNO DEL HANDLER MIENTRAS SE POBLA (SC-06)
+  m_EditorHTML.bCargandoLista = True
+
+  cmbArchivosHTML.Clear()
+  aArchivos = m_EditorHTML.ListarArchivos()
+
+  For Each sArchivo In aArchivos
+    cmbArchivosHTML.Add(sArchivo)
+  Next
+
+  ' SE REPONE LA SELECCIÓN SI EL ARCHIVO SIGUE EN LA LISTA. TRAS UNA
+  ' IMPORTACIÓN NO ESTARÁ, PORQUE EL ORIGINAL FUE REEMPLAZADO POR SU .html
+  If sSeleccionado <> "" Then
+    Try cmbArchivosHTML.Text = sSeleccionado
+  Endif
+
+  m_EditorHTML.bCargandoLista = False
+
+End
+
+' ============================================
+' Función   : ActualizarContadorMarcas
+' Propósito : Muestra cuántos tramos llevan cada semáforo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub ActualizarContadorMarcas()
+
+  ' SIRVE DE VERIFICACIÓN: SI AL REABRIR AL DÍA SIGUIENTE EL NÚMERO BAJÓ,
+  ' ALGO PASÓ Y SE NOTA EN EL ACTO Y NO TRES ENTRADAS DESPUÉS
+  lblMarcasHTML.Text = "Amarillos: " & CStr(m_EditorHTML.ContarMarcas("#ffff00")) &
+    "   Rojos: " & CStr(m_EditorHTML.ContarMarcas("#ff0000"))
+
+End
+
+' ============================================
+' Función   : txtEditorHTML_Change
+' Propósito : Registra que el documento tiene cambios sin guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub txtEditorHTML_Change()
+
+  m_EditorHTML.MarcarModificado()
+
+End
+
+' ============================================
+' Función   : btnGuardarHTML_Click
+' Propósito : Guarda la bibliografía en curso
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnGuardarHTML_Click()
+
+  If Not m_EditorHTML.GuardarArchivo() Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar la bibliografía:" & gb.NewLine & gb.NewLine &
+      m_EditorHTML.UltimoError)
+    Return
+  Endif
+
+  m_Sonido.sonar("Info")
+  txtEditorHTML.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnNegritaHTML_Click
+' Propósito : Alterna la negrita del texto seleccionado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnNegritaHTML_Click()
+
+  m_EditorHTML.AplicarNegrita()
+  txtEditorHTML.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnItalicaHTML_Click
+' Propósito : Alterna la itálica del texto seleccionado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnItalicaHTML_Click()
+
+  m_EditorHTML.AplicarItalica()
+  txtEditorHTML.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnAmarilloHTML_Click
+' Propósito : Marca la referencia del cursor como ya volcada en la base
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnAmarilloHTML_Click()
+
+  m_EditorHTML.PintarAmarillo()
+  ActualizarContadorMarcas()
+  txtEditorHTML.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnRojoHTML_Click
+' Propósito : Marca la referencia del cursor como ausente del .md
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnRojoHTML_Click()
+
+  m_EditorHTML.PintarRojo()
+  ActualizarContadorMarcas()
+  txtEditorHTML.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnLimpiarHTML_Click
+' Propósito : Quita los semáforos de la referencia del cursor
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnLimpiarHTML_Click()
+
+  m_EditorHTML.LimpiarMarcas()
+  ActualizarContadorMarcas()
+  txtEditorHTML.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnBuscarHTML_Click
+' Propósito : Busca el texto del cuadro y va a la primera coincidencia
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnBuscarHTML_Click()
+
+  Dim iCantidad As Integer
+
+  iCantidad = m_EditorHTML.Buscar(txtBuscarHTML.Text)
+
+  If iCantidad = 0 Then
+    txtContadorHTML.Text = "0"
+    m_Sonido.sonar("Info")
+    Return
+  Endif
+
+  txtContadorHTML.Text = CStr(m_EditorHTML.ResultadoActual()) & " / " & CStr(iCantidad)
+
+End
+
+' ============================================
+' Función   : btnAnteriorHTML_Click
+' Propósito : Va a la coincidencia anterior de la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnAnteriorHTML_Click()
+
+  If m_EditorHTML.IrAResultado(-1) = 0 Then Return
+
+  txtContadorHTML.Text = CStr(m_EditorHTML.ResultadoActual()) & " / " &
+    CStr(m_EditorHTML.CantidadResultados())
+
+End
+
+' ============================================
+' Función   : btnSiguienteHTML_Click
+' Propósito : Va a la coincidencia siguiente de la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnSiguienteHTML_Click()
+
+  If m_EditorHTML.IrAResultado(1) = 0 Then Return
+
+  txtContadorHTML.Text = CStr(m_EditorHTML.ResultadoActual()) & " / " &
+    CStr(m_EditorHTML.CantidadResultados())
+
+End
+
+' ============================================
+' Función   : btnTipografiaHTML_Click
+' Propósito : Elige la tipografía y el cuerpo con que se ve la bibliografía
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+
+Public Sub btnTipografiaHTML_Click()
+
+  ' --- 1. DIÁLOGO ---
+  ' ATENCIÓN A LA CONVENCIÓN DE GAMBAS, AL REVÉS DE LO QUE SUGIERE EL INSTINTO:
+  ' LOS Dialog.Select* DEVUELVEN True CUANDO EL USUARIO CANCELÓ (GV-16).
+  Dialog.Title = "Tipografía del editor de bibliografía"
+  Dialog.Font = txtEditorHTML.Font
+
+  If Dialog.SelectFont() Then Return
+
+  ' --- 2. APLICACIÓN ---
+  ' SOLO FAMILIA Y CUERPO: LA NEGRITA Y LA ITÁLICA SON CONTENIDO DEL DOCUMENTO
+  ' Y NO AJUSTE DE VISTA, ASÍ QUE NO SE TOMAN DEL DIÁLOGO.
+  m_EditorHTML.AplicarFuenteVista(Dialog.Font.Name, Dialog.Font.Size)
+
+  ' LA PERSISTENCIA LA HACE EL MÓDULO: LA PREFERENCIA ES SUYA Y LA REAPLICA
+  ' DESPUÉS DE CADA CARGA DE DOCUMENTO. EL HANDLER NO ESCRIBE CONFIGURACIÓN.
+
+  txtEditorHTML.SetFocus()
+
+End
+
+' NOTA: RestaurarTipografiaHTML SE ELIMINÓ. LA REPOSICIÓN DE LA TIPOGRAFÍA LA
+' HACE AHORA m_EditorHTML POR SU CUENTA, EN Iniciar Y DESPUÉS DE CADA CARGA DE
+' ARCHIVO. NO HAY QUE INVOCAR NADA DESDE EL APARTADO 22 DE AbrirProyectoMD
+' SALVO m_EditorHTML.Iniciar.

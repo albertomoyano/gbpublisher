@@ -3,72 +3,180 @@
 '''
 ''' MÓDULO: m_Hunspell
 ''' DESCRIPCIÓN: INTERFAZ CON HUNSPELL PARA VERIFICACIÓN ORTOGRÁFICA
-''' AUTOR: GENERADO PARA GBPUBLISHER
-''' FECHA: 2025
+''' PROYECTO: gbpublisher
 '''
-''' ESTE MÓDULO PROPORCIONA FUNCIONES PARA:
-''' - DETECTAR DICCIONARIOS DISPONIBLES EN EL SISTEMA
-''' - VERIFICAR ORTOGRAFÍA DE PALABRAS INDIVIDUALES
-''' - OBTENER SUGERENCIAS DE CORRECCIÓN
-''' - GESTIONAR EL DICCIONARIO PERSONAL DEL USUARIO
+''' CONSUMIDORES: FOrtografia (editor de texto .md) y m_EditorRTF (editor RTF).
+''' EL MÓDULO DETECTA; CADA EDITOR DECIDE CÓMO MARCAR.
 '''
+''' REESCRITURA 2026-09. QUÉ CAMBIÓ Y POR QUÉ:
+'''
+''' 1. TODO EL RECORRIDO DE TEXTO PASA A String.Len / String.Mid / String.Code.
+'''    LA VERSIÓN ANTERIOR USABA Len / Mid / Asc, QUE OPERAN EN BYTES
+'''    (RC-GM-12, SC-02, GV-03). CONSECUENCIA MEDIDA: EsCaracterDePalabra
+'''    RECIBÍA UN BYTE SUELTO Y PARTÍA EN DOS TODO CARÁCTER MULTIBYTE. LAS
+'''    CATORCE LETRAS DEL CASTELLANO SOBREVIVÍAN POR UNA COINCIDENCIA —EL
+'''    InStr, TAMBIÉN BYTE-ORIENTADO, ENCONTRABA SUS BYTES DE CONTINUACIÓN
+'''    DENTRO DE LOS LITERALES "ÁÉÍÓÚÑÜ" Y "áéíóúñü"— PERO 34 CARACTERES MÁS
+'''    (à â ã ä ç è ê ë ì ï ò ô õ ö ø ù û Y SUS MAYÚSCULAS) SE PARTÍAN. UNA
+'''    PALABRA PARTIDA LLEGA A HUNSPELL COMO UTF-8 INVÁLIDO, VUELVE DISTINTA
+'''    DE COMO SE GUARDÓ, Y EL ERROR SE DESCARTA EN SILENCIO: FALSO NEGATIVO.
+'''    VERIFICADO CON "camàra", QUE NO SE DETECTABA COMO ERROR.
+'''
+''' 2. LAS POSICIONES QUE DEVUELVE ExtraerPalabras SON AHORA EN CARACTERES.
+'''    ES LA UNIDAD QUE YA USAN LA COLUMNA DEL TextEditor (VERIFICADO 2026-09)
+'''    Y LA PROPIEDAD Pos DEL TextEdit. NO HAY QUE CONVERTIR EN NINGÚN LADO.
+'''
+''' 3. SE ELIMINA gb.pcre. SC-05 FIJÓ QUE EL MOTOR DE EXPRESIONES REGULARES DEL
+'''    PROYECTO ES perl EXTERNO. ACÁ NO HACE FALTA NINGUNO: LOS PATRONES SON
+'''    FIJOS Y SE RESUELVEN CON UN SOLO RECORRIDO LINEAL DEL TEXTO.
+'''
+''' 4. Shell PASA A Exec CON ARRAY (SC-05). COMO HACE FALTA REDIRECCIÓN, SE USA
+'''    EL PATRÓN DE PARÁMETROS POSICIONALES DE GV-06: EL SCRIPT NO CONCATENA
+'''    NOMBRES, LOS RECIBE COMO "$1", "$2", "$3".
+'''
+''' 5. LOS FALLOS SE INFORMAN. ANTES, SI FALTABA HUNSPELL O EL DICCIONARIO, LA
+'''    SALIDA ERA CADENA VACÍA Y EL LLAMADOR LO LEÍA COMO "NO HAY ERRORES"
+'''    (GV-20, GV-23). AHORA TODA FUNCIÓN QUE HABLE CON HUNSPELL DEJA EL
+'''    DIAGNÓSTICO EN UltimoError, Y EL LLAMADOR DEBE CONSULTARLO.
+'''
+
+' ============================================
+' ESTADO PÚBLICO DEL MÓDULO
+' ============================================
+
+' CANAL DE DIAGNÓSTICO. CADENA VACÍA = LA ÚLTIMA OPERACIÓN SALIÓ BIEN.
+' ES LA ALTERNATIVA 4 DE GV-24: VARIABLE DE MÓDULO CUANDO EL DATO ES UN
+' SUBPRODUCTO Y NO EL RESULTADO. SE LIMPIA AL INICIO DE CADA OPERACIÓN.
+Public UltimoError As String
+
+' ============================================
+' CONSTANTES
+' ============================================
 
 ' RUTAS ESTÁNDAR DE DICCIONARIOS HUNSPELL EN LINUX
 Private Const RUTA_HUNSPELL As String = "/usr/share/hunspell/"
 Private Const RUTA_MYSPELL As String = "/usr/share/myspell/"
 
-' RUTA BASE PARA DICCIONARIOS PERSONALES
-Private Const RUTA_CONFIG As String = "~/.config/gbpublisher/"
+' CARPETA DE CONFIGURACIÓN DEL USUARIO PARA LOS DICCIONARIOS PERSONALES
+Private Const CARPETA_CONFIG As String = ".config/gbpublisher"
 
-'''
-''' FUNCIÓN: ObtenerDiccionariosDisponibles
-''' DESCRIPCIÓN: OBTIENE LA LISTA DE DICCIONARIOS INSTALADOS EN EL SISTEMA
-''' RETORNA: STRING[] CON LOS CÓDIGOS DE IDIOMA DISPONIBLES (EJ: "es_ES", "en_US")
-'''
+' CODEPOINTS DE LOS CARACTERES QUE SOLO VALEN DENTRO DE UNA PALABRA
+Private Const COD_GUION As Integer = 45           ' -
+Private Const COD_APOSTROFO_RECTO As Integer = 39 ' '
+Private Const COD_APOSTROFO_CURVO As Integer = 8217 ' ’ U+2019, EL QUE EMITE PANDOC
+
+' RANGO LATIN EXTENDED-A, PARA APELLIDOS DE EUROPA CENTRAL
+' (Žižek, Kołakowski, Szmukler). m_FuncionesGenericas.EsLetra CUBRE ASCII Y
+' LATIN-1 SUPPLEMENT (GV-03); ESTE RANGO SE SUMA ACÁ PARA NO TOCAR UNA FUNCIÓN
+' COMPARTIDA POR OTROS MÓDULOS.
+Private Const COD_EXT_A_INICIO As Integer = 256   ' U+0100
+Private Const COD_EXT_A_FIN As Integer = 383      ' U+017F
+
+' ============================================
+' ESTADO PRIVADO
+' ============================================
+
+Private $bBinarioVerificado As Boolean
+Private $bBinarioPresente As Boolean
+
+' ============================================
+' Función   : HunspellDisponible
+' Propósito : Verifica una sola vez por sesión que el ejecutable hunspell exista
+' Parámetros: ninguno
+' Retorna   : Boolean — True si el binario está en el PATH
+' ============================================
+
+Public Function HunspellDisponible() As Boolean
+
+  Dim aComando As New String[]
+  Dim sSalida As String
+
+  ' --- 1. RESULTADO CACHEADO: NO RELANZAR UN PROCESO POR CADA PALABRA ---
+  If $bBinarioVerificado Then
+    Return $bBinarioPresente
+  Endif
+
+  ' --- 2. CONSULTA AL SISTEMA ---
+  ' command -v ES BUILTIN DE POSIX sh; which VIVE EN debianutils Y PUEDE FALTAR (GV-07)
+  aComando.Add("sh")
+  aComando.Add("-c")
+  aComando.Add("command -v hunspell")
+
+  Try Exec aComando To sSalida
+  If Error Then
+    $bBinarioVerificado = True
+    $bBinarioPresente = False
+    Return False
+  Endif
+
+  ' --- 3. REGISTRO DEL RESULTADO ---
+  $bBinarioVerificado = True
+  $bBinarioPresente = (Trim(sSalida) <> "")
+
+  Return $bBinarioPresente
+
+End
+
+' ============================================
+' Función   : ObtenerDiccionariosDisponibles
+' Propósito : Lista los códigos de idioma con diccionario instalado
+' Parámetros: ninguno
+' Retorna   : String[] — códigos ordenados alfabéticamente (ej: "es_AR", "es_ES")
+' ============================================
+
 Public Function ObtenerDiccionariosDisponibles() As String[]
 
   Dim aDiccionarios As New String[]
-  Dim sArchivo As String
-  Dim sIdioma As String
   Dim aArchivos As String[]
   Dim sRuta As String
+  Dim sArchivo As String
+  Dim sIdioma As String
 
-  ' BUSCAR EN AMBAS RUTAS ESTÁNDAR
+  ' --- 1. RECORRIDO DE LAS DOS RUTAS ESTÁNDAR ---
   For Each sRuta In [RUTA_HUNSPELL, RUTA_MYSPELL]
+
+    ' Exist() DEVUELVE True TAMBIÉN PARA ARCHIVOS REGULARES, Y Dir() SOBRE UN
+    ' ARCHIVO LANZA EL ERROR 49 (GV-01). EL IsDir VA EN If ANIDADO PORQUE
+    ' And NO CORTOCIRCUITA (RC-GM-17).
     If Exist(sRuta) Then
-      aArchivos = Dir(sRuta, "*.dic")
-      For Each sArchivo In aArchivos
-        ' EXTRAER EL CÓDIGO DE IDIOMA DEL NOMBRE DEL ARCHIVO
-        sIdioma = File.BaseName(sArchivo)
-        ' EVITAR DUPLICADOS
-        If aDiccionarios.Find(sIdioma) < 0 Then
-          aDiccionarios.Add(sIdioma)
-        Endif
-      Next
+      If IsDir(sRuta) Then
+
+        Try aArchivos = Dir(sRuta, "*.dic")
+        If Error Then Continue
+
+        ' --- 2. EL NOMBRE DEL ARCHIVO ES EL CÓDIGO DE IDIOMA ---
+        For Each sArchivo In aArchivos
+          sIdioma = File.BaseName(sArchivo)
+          If aDiccionarios.Find(sIdioma) < 0 Then
+            aDiccionarios.Add(sIdioma)
+          Endif
+        Next
+
+      Endif
     Endif
+
   Next
 
-  ' ORDENAR ALFABÉTICAMENTE
+  ' --- 3. ORDEN ESTABLE PARA LA INTERFAZ ---
   aDiccionarios.Sort()
 
   Return aDiccionarios
 
 End
 
-'''
-''' FUNCIÓN: ObtenerRutaDiccionario
-''' DESCRIPCIÓN: OBTIENE LA RUTA COMPLETA DEL ARCHIVO .DIC PARA UN IDIOMA
-''' PARÁMETRO sIdioma: CÓDIGO DE IDIOMA (EJ: "es_ES")
-''' RETORNA: RUTA COMPLETA AL ARCHIVO O CADENA VACÍA SI NO EXISTE
-'''
+' ============================================
+' Función   : ObtenerRutaDiccionario
+' Propósito : Devuelve la ruta base del diccionario de un idioma, sin extensión
+' Parámetros: sIdioma As String — código de idioma (ej: "es_ES")
+' Retorna   : String — ruta sin extensión, o cadena vacía si no existe
+' ============================================
+
 Public Function ObtenerRutaDiccionario(sIdioma As String) As String
 
   Dim sRuta As String
-  Dim sArchivo As String
 
   For Each sRuta In [RUTA_HUNSPELL, RUTA_MYSPELL]
-    sArchivo = sRuta & sIdioma & ".dic"
-    If Exist(sArchivo) Then
+    If Exist(sRuta & sIdioma & ".dic") Then
       Return sRuta & sIdioma
     Endif
   Next
@@ -77,151 +185,227 @@ Public Function ObtenerRutaDiccionario(sIdioma As String) As String
 
 End
 
-'''
-''' FUNCIÓN: VerificarPalabra
-''' DESCRIPCIÓN: VERIFICA SI UNA PALABRA ES CORRECTA SEGÚN EL DICCIONARIO
-''' PARÁMETRO sPalabra: PALABRA A VERIFICAR
-''' PARÁMETRO sIdioma: CÓDIGO DE IDIOMA A USAR
-''' RETORNA: TRUE SI LA PALABRA ES CORRECTA, FALSE SI NO
-'''
-Public Function VerificarPalabra(sPalabra As String, sIdioma As String) As Boolean
+' ============================================
+' Función   : ObtenerRutaDiccionarioPersonal
+' Propósito : Devuelve la ruta del diccionario personal del usuario para un idioma
+' Parámetros: sIdioma As String — código de idioma
+' Retorna   : String — ruta completa al archivo (puede no existir todavía)
+' ============================================
 
-  Dim sComando As String
-  Dim sSalida As String
-  Dim sRutaDic As String
-  Dim sRutaPersonal As String
+Public Function ObtenerRutaDiccionarioPersonal(sIdioma As String) As String
 
-  ' OBTENER RUTA DEL DICCIONARIO
-  sRutaDic = ObtenerRutaDiccionario(sIdioma)
-  If sRutaDic = "" Then
-    Return True ' SI NO HAY DICCIONARIO, ASUMIR CORRECTA
-  Endif
-
-  ' CONSTRUIR COMANDO CON DICCIONARIO PERSONAL SI EXISTE
-  sRutaPersonal = ObtenerRutaDiccionarioPersonal(sIdioma)
-
-  If Exist(sRutaPersonal) Then
-    sComando = "echo " & Shell$(sPalabra) & " | hunspell -d " & Shell$(sRutaDic) & " -p " & Shell$(sRutaPersonal)
-  Else
-    sComando = "echo " & Shell$(sPalabra) & " | hunspell -d " & Shell$(sRutaDic)
-  Endif
-
-  ' EJECUTAR HUNSPELL
-  Shell sComando To sSalida
-
-  ' ANALIZAR SALIDA DE HUNSPELL
-  ' * = PALABRA CORRECTA
-  ' & = PALABRA INCORRECTA CON SUGERENCIAS
-  ' # = PALABRA INCORRECTA SIN SUGERENCIAS
-  ' + = PALABRA ENCONTRADA POR AFIJO
-  ' - = PALABRA COMPUESTA
-  If InStr(sSalida, "*") > 0 Or InStr(sSalida, "+") > 0 Or InStr(sSalida, "-") > 0 Then
-    Return True
-  Endif
-
-  Return False
+  Return User.Home &/ CARPETA_CONFIG &/ "diccionario_personal_" & sIdioma & ".txt"
 
 End
 
-'''
-''' FUNCIÓN: VerificarPalabrasLote
-''' DESCRIPCIÓN: VERIFICA MÚLTIPLES PALABRAS EN UNA SOLA LLAMADA A HUNSPELL (OPTIMIZADO)
-''' PARÁMETRO aPalabras: ARRAY DE PALABRAS A VERIFICAR
-''' PARÁMETRO sIdioma: CÓDIGO DE IDIOMA A USAR
-''' RETORNA: STRING[] CON LAS PALABRAS INCORRECTAS
-'''
+' ============================================
+' Función   : AsegurarDirectorioConfig
+' Propósito : Crea la carpeta de configuración del usuario si no existe
+' Parámetros: ninguno
+' Retorna   : Boolean — True si la carpeta existe o pudo crearse
+' ============================================
+
+Public Function AsegurarDirectorioConfig() As Boolean
+
+  Dim sRuta As String
+
+  UltimoError = ""
+  sRuta = User.Home &/ CARPETA_CONFIG
+
+  If Exist(sRuta) Then
+    If IsDir(sRuta) Then Return True
+    UltimoError = "La ruta de configuración existe pero no es una carpeta: " & sRuta
+    Return False
+  Endif
+
+  Try Mkdir sRuta
+  If Error Then
+    UltimoError = "No se pudo crear la carpeta de configuración: " & Error.Text
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EjecutarHunspell
+' Propósito : Núcleo de invocación. Manda un texto a hunspell en modo tubería
+'             y devuelve su salida cruda. Único punto del módulo que lanza
+'             el proceso externo.
+' Parámetros: sEntrada As String — una palabra por línea
+'             sIdioma As String — código de idioma
+' Retorna   : String — salida de hunspell, o cadena vacía con UltimoError cargado
+' ============================================
+
+Private Function EjecutarHunspell(sEntrada As String, sIdioma As String) As String
+
+  Dim aComando As New String[]
+  Dim sRutaDic As String
+  Dim sRutaPersonal As String
+  Dim sArchivoTemp As String
+  Dim sSalida As String
+  Dim sComilla As String
+
+  ' --- 1. VALIDACIÓN DE ENTORNO ---
+  UltimoError = ""
+
+  If sEntrada = "" Then
+    Return ""
+  Endif
+
+  If Not HunspellDisponible() Then
+    UltimoError = "No se encontró el ejecutable hunspell en el sistema."
+    Return ""
+  Endif
+
+  sRutaDic = ObtenerRutaDiccionario(sIdioma)
+  If sRutaDic = "" Then
+    UltimoError = "No hay diccionario instalado para el idioma " & sIdioma & "."
+    Return ""
+  Endif
+
+  ' --- 2. ARCHIVO TEMPORAL CON LA ENTRADA ---
+  ' Exec ... To NO EXPONE stdin (SC-05): EL TEXTO VA POR ARCHIVO TEMPORAL.
+  ' File.Save OPERA EN UTF-8 NATIVAMENTE Y NO HAY QUE RECODIFICAR (SC-02).
+  sArchivoTemp = Temp$("hunspell_entrada")
+
+  Try File.Save(sArchivoTemp, sEntrada)
+  If Error Then
+    UltimoError = "No se pudo escribir el archivo temporal: " & Error.Text
+    Return ""
+  Endif
+
+  ' --- 3. ARMADO DEL COMANDO ---
+  ' NUNCA Shell: EL SCRIPT RECIBE LAS RUTAS COMO PARÁMETROS POSICIONALES Y NO
+  ' LAS CONCATENA (SC-05, GV-06). LAS COMILLAS VAN CON Chr(34) Y NO CON
+  ' ESCAPES, POR LA REGLA DE ESTILO DE SC-01.
+  ' EL MODO -a ES EXPLÍCITO: ES EL QUE PRODUCE EL FORMATO &/#/* QUE SE PARSEA
+  ' MÁS ABAJO, Y NO CONVIENE DEPENDER DE QUE HUNSPELL LO DEDUZCA SOLO.
+  sComilla = Chr(34)
+  sRutaPersonal = ObtenerRutaDiccionarioPersonal(sIdioma)
+
+  aComando.Add("sh")
+  aComando.Add("-c")
+
+  If Exist(sRutaPersonal) Then
+    aComando.Add("hunspell -a -d " & sComilla & "$1" & sComilla &
+      " -p " & sComilla & "$2" & sComilla &
+      " < " & sComilla & "$3" & sComilla)
+    aComando.Add("sh")
+    aComando.Add(sRutaDic)
+    aComando.Add(sRutaPersonal)
+    aComando.Add(sArchivoTemp)
+  Else
+    aComando.Add("hunspell -a -d " & sComilla & "$1" & sComilla &
+      " < " & sComilla & "$2" & sComilla)
+    aComando.Add("sh")
+    aComando.Add(sRutaDic)
+    aComando.Add(sArchivoTemp)
+  Endif
+
+  ' --- 4. EJECUCIÓN ---
+  ' FORMA SÍNCRONA: EL RESULTADO VIENE POR STDOUT Y NO NECESITAMOS LEER STDERR,
+  ' ASÍ QUE NO CORRESPONDE EL APARATO ASÍNCRONO (GV-20).
+  Try Exec aComando To sSalida
+  If Error Then
+    Try Kill sArchivoTemp
+    UltimoError = "Falló la ejecución de hunspell: " & Error.Text
+    Return ""
+  Endif
+
+  ' --- 5. LIMPIEZA ---
+  ' LA LIBERACIÓN VA EXPLÍCITA Y NO EN UN Finally: Finally NO CORRE EN UN
+  ' Return NORMAL (RC-GM-20).
+  Try Kill sArchivoTemp
+
+  ' --- 6. VERIFICACIÓN DE LA SALIDA ---
+  ' Exec ... To NO CAPTURA STDERR (GV-20). SI HUNSPELL FALLÓ POR UN DICCIONARIO
+  ' ILEGIBLE, LA SALIDA LLEGA VACÍA Y SIN ESO EL LLAMADOR LA LEERÍA COMO
+  ' "NO HAY ERRORES" (GV-23). ACÁ SE DISTINGUE.
+  If sSalida = "" Then
+    UltimoError = "hunspell no devolvió salida. Verifique la instalación y el diccionario " & sIdioma & "."
+    Return ""
+  Endif
+
+  Return sSalida
+
+End
+
+' ============================================
+' Función   : VerificarPalabrasLote
+' Propósito : Verifica muchas palabras en una sola invocación de hunspell
+' Parámetros: aPalabras As String[] — palabras únicas a verificar
+'             sIdioma As String — código de idioma
+' Retorna   : String[] — las palabras incorrectas. Array vacío puede significar
+'             "ninguna incorrecta" o "falló": consultar UltimoError.
+' ============================================
+
 Public Function VerificarPalabrasLote(aPalabras As String[], sIdioma As String) As String[]
 
   Dim aIncorrectas As New String[]
-  Dim sRutaDic As String
-  Dim sRutaPersonal As String
-  Dim sComando As String
-  Dim sSalida As String
-  ' Dim sEntrada As String
   Dim aLineas As String[]
+  Dim sSalida As String
   Dim sLinea As String
   Dim sPalabra As String
-  Dim sArchivoTemp As String
-  Dim hArchivo As File
 
-  ' OBTENER RUTA DEL DICCIONARIO
-  sRutaDic = ObtenerRutaDiccionario(sIdioma)
-  If sRutaDic = "" Then
-    Return aIncorrectas ' ARRAY VACÍO SI NO HAY DICCIONARIO
-  Endif
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  UltimoError = ""
 
-  ' CREAR ARCHIVO TEMPORAL CON LAS PALABRAS (UNA POR LÍNEA)
-  sArchivoTemp = Temp$("hunspell_input")
+  If IsNull(aPalabras) Then Return aIncorrectas
+  If aPalabras.Count = 0 Then Return aIncorrectas
 
-  Try hArchivo = Open sArchivoTemp For Create
-  If Error Then
+  ' --- 2. INVOCACIÓN, UNA SOLA VEZ PARA TODO EL LOTE ---
+  ' NINGUNA PALABRA PUEDE EMPEZAR CON UN CARÁCTER DE CONTROL DE hunspell -a
+  ' (* & @ # + - ~ % ! ^): ConstruirPalabra RECORTA GUIONES Y APÓSTROFOS DE
+  ' LOS BORDES Y EXIGE AL MENOS UNA LETRA. POR ESO NO HACE FALTA PREFIJAR "^".
+  sSalida = EjecutarHunspell(aPalabras.Join(gb.NewLine), sIdioma)
+
+  If UltimoError <> "" Then
     Return aIncorrectas
   Endif
 
-  For Each sPalabra In aPalabras
-    Print #hArchivo, sPalabra
-  Next
-  Close #hArchivo
-
-  ' CONSTRUIR COMANDO
-  sRutaPersonal = ObtenerRutaDiccionarioPersonal(sIdioma)
-
-  If Exist(sRutaPersonal) Then
-    sComando = "hunspell -d " & Shell$(sRutaDic) & " -p " & Shell$(sRutaPersonal) & " < " & Shell$(sArchivoTemp)
-  Else
-    sComando = "hunspell -d " & Shell$(sRutaDic) & " < " & Shell$(sArchivoTemp)
-  Endif
-
-  ' EJECUTAR HUNSPELL
-  Shell sComando To sSalida
-
-  ' ELIMINAR ARCHIVO TEMPORAL
-  Try Kill sArchivoTemp
-
-  ' ANALIZAR SALIDA
-  ' FORMATO DE SALIDA:
-  ' * = CORRECTA
-  ' & palabra cuenta offset: sug1, sug2 = INCORRECTA CON SUGERENCIAS
-  ' # palabra offset = INCORRECTA SIN SUGERENCIAS
-
-  aLineas = Split(sSalida, "\n")
+  ' --- 3. PARSEO DE LA SALIDA ---
+  ' FORMATO DE hunspell -a:
+  '   *                            PALABRA CORRECTA
+  '   + raíz                       CORRECTA POR AFIJO
+  '   - compuesta                  CORRECTA POR COMPOSICIÓN
+  '   & palabra n desplaz: sugs    INCORRECTA CON SUGERENCIAS
+  '   # palabra desplaz            INCORRECTA SIN SUGERENCIAS
+  ' TODA OTRA LÍNEA —INCLUIDO EL RENGLÓN DE VERSIÓN Y LAS LÍNEAS EN BLANCO—
+  ' SE DESCARTA. EL PARSEO ES DELIBERADAMENTE TOLERANTE.
+  aLineas = Split(sSalida, gb.NewLine, "", False)
 
   For Each sLinea In aLineas
-    sLinea = Trim(sLinea)
-    If sLinea = "" Then Continue
 
-    ' PALABRA INCORRECTA CON SUGERENCIAS
-    If Left(sLinea, 2) = "& " Then
-      sPalabra = ExtractWordFromHunspellLine(sLinea)
-      If sPalabra <> "" And aIncorrectas.Find(sPalabra) < 0 Then
-        aIncorrectas.Add(sPalabra)
-      Endif
-      ' PALABRA INCORRECTA SIN SUGERENCIAS
-    Else If Left(sLinea, 2) = "# " Then
-      sPalabra = ExtractWordFromHunspellLine(sLinea)
-      If sPalabra <> "" And aIncorrectas.Find(sPalabra) < 0 Then
-        aIncorrectas.Add(sPalabra)
+    If Left(sLinea, 2) = "& " Or If Left(sLinea, 2) = "# " Then
+      sPalabra = ExtraerPalabraDeLinea(sLinea)
+      If sPalabra <> "" Then
+        If aIncorrectas.Find(sPalabra) < 0 Then
+          aIncorrectas.Add(sPalabra)
+        Endif
       Endif
     Endif
+
   Next
 
   Return aIncorrectas
 
 End
 
-'''
-''' FUNCIÓN: ExtractWordFromHunspellLine
-''' DESCRIPCIÓN: EXTRAE LA PALABRA DE UNA LÍNEA DE SALIDA DE HUNSPELL
-''' PARÁMETRO sLinea: LÍNEA DE HUNSPELL (EJ: "& palabra 5 0: sug1, sug2")
-''' RETORNA: LA PALABRA EXTRAÍDA
-'''
-Private Function ExtractWordFromHunspellLine(sLinea As String) As String
+' ============================================
+' Función   : ExtraerPalabraDeLinea
+' Propósito : Toma la palabra de una línea de resultado de hunspell
+' Parámetros: sLinea As String — línea con formato "& palabra n desp: sugs"
+' Retorna   : String — la palabra, o cadena vacía si la línea no tiene forma
+' ============================================
+
+Private Function ExtraerPalabraDeLinea(sLinea As String) As String
 
   Dim aPartes As String[]
 
-  ' FORMATO: "& palabra cuenta offset: sugerencias" O "# palabra offset"
-  ' SALTAMOS EL PRIMER CARACTER (& O #) Y EL ESPACIO
-  aPartes = Split(Mid(sLinea, 3), " ")
+  ' SE SALTEAN EL INDICADOR Y EL ESPACIO QUE LO SIGUE
+  aPartes = Split(Mid$(sLinea, 3), " ", "", True)
 
   If aPartes.Count > 0 Then
     Return aPartes[0]
@@ -231,466 +415,669 @@ Private Function ExtractWordFromHunspellLine(sLinea As String) As String
 
 End
 
-'''
-''' FUNCIÓN: ObtenerSugerencias
-''' DESCRIPCIÓN: OBTIENE SUGERENCIAS DE CORRECCIÓN PARA UNA PALABRA
-''' PARÁMETRO sPalabra: PALABRA INCORRECTA
-''' PARÁMETRO sIdioma: CÓDIGO DE IDIOMA A USAR
-''' RETORNA: STRING[] CON LAS SUGERENCIAS DE CORRECCIÓN
-'''
+' ============================================
+' Función   : VerificarPalabra
+' Propósito : Verifica una sola palabra
+' Parámetros: sPalabra As String — palabra a verificar
+'             sIdioma As String — código de idioma
+' Retorna   : Boolean — True si es correcta. Ante un fallo devuelve True y deja
+'             el motivo en UltimoError: el llamador debe consultarlo antes de
+'             tomar el resultado como bueno.
+' ============================================
+
+Public Function VerificarPalabra(sPalabra As String, sIdioma As String) As Boolean
+
+  Dim aLineas As String[]
+  Dim sSalida As String
+  Dim sLinea As String
+  Dim sIndicador As String
+
+  ' --- 1. INVOCACIÓN ---
+  UltimoError = ""
+  sSalida = EjecutarHunspell(sPalabra, sIdioma)
+
+  If UltimoError <> "" Then
+    Return True
+  Endif
+
+  ' --- 2. PARSEO ---
+  ' EL INDICADOR SE LEE DEL PRIMER CARÁCTER DE LA LÍNEA, NO BUSCANDO * O + O -
+  ' EN CUALQUIER PARTE DE LA SALIDA: LA LISTA DE SUGERENCIAS DE UNA PALABRA
+  ' INCORRECTA PUEDE TRAER UN GUION Y DARÍA LA PALABRA POR BUENA.
+  aLineas = Split(sSalida, gb.NewLine, "", False)
+
+  For Each sLinea In aLineas
+
+    sIndicador = Left(sLinea, 1)
+
+    If sIndicador = "*" Or If sIndicador = "+" Or If sIndicador = "-" Then
+      Return True
+    Endif
+
+    If sIndicador = "&" Or If sIndicador = "#" Then
+      Return False
+    Endif
+
+  Next
+
+  ' --- 3. SIN LÍNEA DE RESULTADO: NO SE PUDO DECIDIR ---
+  UltimoError = "hunspell no devolvió un resultado reconocible para " & sPalabra & "."
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ObtenerSugerencias
+' Propósito : Obtiene las sugerencias de corrección para una palabra
+' Parámetros: sPalabra As String — palabra incorrecta
+'             sIdioma As String — código de idioma
+' Retorna   : String[] — sugerencias en el orden que las da hunspell
+' ============================================
+
 Public Function ObtenerSugerencias(sPalabra As String, sIdioma As String) As String[]
 
   Dim aSugerencias As New String[]
-  Dim sComando As String
-  Dim sSalida As String
-  Dim sRutaDic As String
-  Dim sRutaPersonal As String
   Dim aLineas As String[]
+  Dim aTemporal As String[]
+  Dim sSalida As String
   Dim sLinea As String
-  Dim iPos As Integer
-  Dim sSugerenciasTexto As String
-  Dim aSugerenciasTemp As String[]
   Dim sSugerencia As String
+  Dim iPos As Integer
 
-  ' OBTENER RUTA DEL DICCIONARIO
-  sRutaDic = ObtenerRutaDiccionario(sIdioma)
-  If sRutaDic = "" Then
+  ' --- 1. INVOCACIÓN ---
+  UltimoError = ""
+  sSalida = EjecutarHunspell(sPalabra, sIdioma)
+
+  If UltimoError <> "" Then
     Return aSugerencias
   Endif
 
-  ' CONSTRUIR COMANDO CON DICCIONARIO PERSONAL SI EXISTE
-  sRutaPersonal = ObtenerRutaDiccionarioPersonal(sIdioma)
-
-  If Exist(sRutaPersonal) Then
-    sComando = "echo " & Shell$(sPalabra) & " | hunspell -d " & Shell$(sRutaDic) & " -p " & Shell$(sRutaPersonal)
-  Else
-    sComando = "echo " & Shell$(sPalabra) & " | hunspell -d " & Shell$(sRutaDic)
-  Endif
-
-  ' EJECUTAR HUNSPELL
-  Shell sComando To sSalida
-
-  ' ANALIZAR SALIDA
-  ' FORMATO: & palabra cuenta desplazamiento: sug1, sug2, sug3
-  aLineas = Split(sSalida, "\n")
+  ' --- 2. LAS SUGERENCIAS VIENEN DESPUÉS DE LOS DOS PUNTOS ---
+  aLineas = Split(sSalida, gb.NewLine, "", False)
 
   For Each sLinea In aLineas
-    sLinea = Trim(sLinea)
 
-    ' LÍNEA CON SUGERENCIAS (EMPIEZA CON &)
-    If Left(sLinea, 1) = "&" Then
-      iPos = InStr(sLinea, ":")
-      If iPos > 0 Then
-        sSugerenciasTexto = Trim(Mid(sLinea, iPos + 1))
-        aSugerenciasTemp = Split(sSugerenciasTexto, ", ")
-        For Each sSugerencia In aSugerenciasTemp
-          sSugerencia = Trim(sSugerencia)
-          If sSugerencia <> "" Then
-            aSugerencias.Add(sSugerencia)
-          Endif
-        Next
+    If Left(sLinea, 1) <> "&" Then Continue
+
+    iPos = InStr(sLinea, ":")
+    If iPos = 0 Then Continue
+
+    aTemporal = Split(Mid$(sLinea, iPos + 1), ",", "", True)
+
+    For Each sSugerencia In aTemporal
+      sSugerencia = Trim(sSugerencia)
+      If sSugerencia <> "" Then
+        aSugerencias.Add(sSugerencia)
       Endif
-    Endif
+    Next
+
   Next
 
   Return aSugerencias
 
 End
 
-'''
-''' FUNCIÓN: ObtenerRutaDiccionarioPersonal
-''' DESCRIPCIÓN: OBTIENE LA RUTA DEL DICCIONARIO PERSONAL PARA UN IDIOMA
-''' PARÁMETRO sIdioma: CÓDIGO DE IDIOMA (EJ: "es_ES")
-''' RETORNA: RUTA COMPLETA AL ARCHIVO DEL DICCIONARIO PERSONAL
-'''
-Public Function ObtenerRutaDiccionarioPersonal(sIdioma As String) As String
+' ============================================
+' Función   : EstaEnDiccionarioPersonal
+' Propósito : Indica si una palabra ya fue agregada al diccionario personal
+' Parámetros: sPalabra As String — palabra a buscar
+'             sIdioma As String — código de idioma
+' Retorna   : Boolean — True si está
+' ============================================
 
-  Dim sRutaExpandida As String
-
-  ' EXPANDIR ~ A LA RUTA DEL HOME
-  sRutaExpandida = Replace(RUTA_CONFIG, "~", User.Home)
-
-  Return sRutaExpandida & "diccionario_personal_" & sIdioma & ".txt"
-
-End
-
-'''
-''' FUNCIÓN: AsegurarDirectorioConfig
-''' DESCRIPCIÓN: CREA EL DIRECTORIO DE CONFIGURACIÓN SI NO EXISTE
-''' RETORNA: TRUE SI EL DIRECTORIO EXISTE O FUE CREADO, FALSE SI HUBO ERROR
-'''
-Public Function AsegurarDirectorioConfig() As Boolean
-
-  Dim sRutaExpandida As String
-
-  sRutaExpandida = Replace(RUTA_CONFIG, "~", User.Home)
-
-  If Not Exist(sRutaExpandida) Then
-    Try Mkdir sRutaExpandida
-    If Error Then
-      Return False
-    Endif
-  Endif
-
-  Return True
-
-End
-
-'''
-''' FUNCIÓN: AgregarAlDiccionarioPersonal
-''' DESCRIPCIÓN: AGREGA UNA PALABRA AL DICCIONARIO PERSONAL DEL USUARIO
-''' PARÁMETRO sPalabra: PALABRA A AGREGAR
-''' PARÁMETRO sIdioma: CÓDIGO DE IDIOMA
-''' RETORNA: TRUE SI SE AGREGÓ CORRECTAMENTE, FALSE SI HUBO ERROR
-'''
-Public Function AgregarAlDiccionarioPersonal(sPalabra As String, sIdioma As String) As Boolean
-
-  Dim sRutaArchivo As String
-  Dim hArchivo As File
-  Dim sContenido As String
-  Dim aLineas As String[]
-
-  ' VALIDAR PALABRA
-  sPalabra = Trim(sPalabra)
-  If sPalabra = "" Then
-    Return False
-  Endif
-
-  ' ASEGURAR QUE EXISTE EL DIRECTORIO
-  If Not AsegurarDirectorioConfig() Then
-    Return False
-  Endif
-
-  sRutaArchivo = ObtenerRutaDiccionarioPersonal(sIdioma)
-
-  ' VERIFICAR SI LA PALABRA YA EXISTE
-  If Exist(sRutaArchivo) Then
-    sContenido = File.Load(sRutaArchivo)
-    aLineas = Split(sContenido, "\n")
-    If aLineas.Find(sPalabra) >= 0 Then
-      ' LA PALABRA YA EXISTE
-      Return True
-    Endif
-  Endif
-
-  ' AGREGAR LA PALABRA AL ARCHIVO
-  Try hArchivo = Open sRutaArchivo For Append
-  If Error Then
-    Return False
-  Endif
-
-  Print #hArchivo, sPalabra
-  Close #hArchivo
-
-  Return True
-
-End
-
-'''
-''' FUNCIÓN: EstaEnDiccionarioPersonal
-''' DESCRIPCIÓN: VERIFICA SI UNA PALABRA ESTÁ EN EL DICCIONARIO PERSONAL
-''' PARÁMETRO sPalabra: PALABRA A VERIFICAR
-''' PARÁMETRO sIdioma: CÓDIGO DE IDIOMA
-''' RETORNA: TRUE SI LA PALABRA ESTÁ EN EL DICCIONARIO PERSONAL
-'''
 Public Function EstaEnDiccionarioPersonal(sPalabra As String, sIdioma As String) As Boolean
 
-  Dim sRutaArchivo As String
-  Dim sContenido As String
   Dim aLineas As String[]
+  Dim sRuta As String
+  Dim sContenido As String
 
-  sRutaArchivo = ObtenerRutaDiccionarioPersonal(sIdioma)
+  UltimoError = ""
+  sRuta = ObtenerRutaDiccionarioPersonal(sIdioma)
 
-  If Not Exist(sRutaArchivo) Then
+  If Not Exist(sRuta) Then Return False
+
+  Try sContenido = File.Load(sRuta)
+  If Error Then
+    UltimoError = "No se pudo leer el diccionario personal: " & Error.Text
     Return False
   Endif
 
-  sContenido = File.Load(sRutaArchivo)
-  aLineas = Split(sContenido, "\n")
+  aLineas = Split(sContenido, gb.NewLine, "", True)
 
   Return aLineas.Find(sPalabra) >= 0
 
 End
 
-'''
-''' FUNCIÓN: ExtraerPalabras
-''' DESCRIPCIÓN: EXTRAE PALABRAS DE UN TEXTO IGNORANDO URLS, EMAILS, DOIS Y SHORTCODES
-''' PARÁMETRO sTexto: TEXTO DEL CUAL EXTRAER PALABRAS
-''' RETORNA: COLLECTION CON POSICIÓN COMO CLAVE Y PALABRA COMO VALOR
-'''
-''' NOTA: RETORNA UNA COLECCIÓN DONDE:
-''' - CLAVE: POSICIÓN DE LA PALABRA EN EL TEXTO (INTEGER CONVERTIDO A STRING)
-''' - VALOR: LA PALABRA ENCONTRADA
-'''
-Public Function ExtraerPalabras(sTexto As String) As Collection
+' ============================================
+' Función   : AgregarAlDiccionarioPersonal
+' Propósito : Agrega una palabra al diccionario personal del usuario
+' Parámetros: sPalabra As String — palabra a agregar
+'             sIdioma As String — código de idioma
+' Retorna   : Boolean — True si quedó agregada (o ya estaba)
+' ============================================
 
-  Dim cPalabras As New Collection
-  Dim sTextoLimpio As String
-  Dim i As Integer
-  Dim iInicio As Integer
-  Dim sPalabra As String
-  Dim sCaracter As String
-  Dim bEnPalabra As Boolean
+Public Function AgregarAlDiccionarioPersonal(sPalabra As String, sIdioma As String) As Boolean
 
-  ' PRIMERO LIMPIAR EL TEXTO DE ELEMENTOS A IGNORAR
-  sTextoLimpio = LimpiarTextoParaAnalisis(sTexto)
+  Dim hArchivo As File
+  Dim sRuta As String
 
-  ' RECORRER EL TEXTO CARACTER POR CARACTER
-  bEnPalabra = False
-  iInicio = 0
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  UltimoError = ""
+  sPalabra = Trim(sPalabra)
 
-  For i = 1 To Len(sTextoLimpio)
-    sCaracter = Mid(sTextoLimpio, i, 1)
-
-    If EsCaracterDePalabra(sCaracter) Then
-      If Not bEnPalabra Then
-        ' INICIO DE NUEVA PALABRA
-        bEnPalabra = True
-        iInicio = i
-      Endif
-    Else
-      If bEnPalabra Then
-        ' FIN DE PALABRA
-        sPalabra = Mid(sTextoLimpio, iInicio, i - iInicio)
-        ' SOLO AGREGAR SI ES UNA PALABRA VÁLIDA (NO SOLO NÚMEROS)
-        If EsPalabraValida(sPalabra) Then
-          cPalabras.Add(sPalabra, CStr(iInicio))
-        Endif
-        bEnPalabra = False
-      Endif
-    Endif
-  Next
-
-  ' VERIFICAR SI QUEDÓ UNA PALABRA AL FINAL
-  If bEnPalabra Then
-    sPalabra = Mid(sTextoLimpio, iInicio)
-    If EsPalabraValida(sPalabra) Then
-      cPalabras.Add(sPalabra, CStr(iInicio))
-    Endif
-  Endif
-
-  Return cPalabras
-
-End
-
-'''
-''' FUNCIÓN: LimpiarTextoParaAnalisis
-''' DESCRIPCIÓN: REEMPLAZA URLS, EMAILS, DOIS Y SHORTCODES POR ESPACIOS
-''' PARÁMETRO sTexto: TEXTO ORIGINAL
-''' RETORNA: TEXTO CON LOS ELEMENTOS REEMPLAZADOS POR ESPACIOS (MANTIENE LONGITUD)
-'''
-Private Function LimpiarTextoParaAnalisis(sTexto As String) As String
-
-  Dim sResultado As String
-  Dim aPatrones As String[]
-  Dim sPatron As String
-  Dim hRegex As RegExp
-  Dim iInicio As Integer
-  Dim iLongitud As Integer
-  Dim sCoincidencia As String
-
-  sResultado = sTexto
-
-  ' PATRONES A IGNORAR
-  ' 1. URLS (HTTP, HTTPS, FTP)
-  ' 2. EMAILS
-  ' 3. DOIS (DOI: O HTTPS://DOI.ORG/)
-  ' 4. SHORTCODES: [ALGO ...], {{ALGO ...}}, @ALGO(...)
-
-  aPatrones = New String[]
-
-  ' URLS
-  aPatrones.Add("https?://[^\\s<>\"'\\]\\)]+")
-  aPatrones.Add("ftp://[^\\s<>\"'\\]\\)]+")
-
-  ' EMAILS
-  aPatrones.Add("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}")
-
-  ' DOIS
-  aPatrones.Add("doi:\\s*10\\.[^\\s]+")
-  aPatrones.Add("10\\.\\d{4,}/[^\\s]+")
-
-  ' SHORTCODES TIPO [...]
-  aPatrones.Add("\\[[^\\]]+\\]")
-
-  ' SHORTCODES TIPO {{...}}
-  aPatrones.Add("\\{\\{[^}]+\\}\\}")
-
-  ' SHORTCODES TIPO @NOMBRE(...)
-  aPatrones.Add("@[a-zA-Z_][a-zA-Z0-9_]*\\([^)]*\\)")
-
-  ' APLICAR CADA PATRÓN
-  For Each sPatron In aPatrones
-    ' CREAR REGEXP Y COMPILAR
-    hRegex = New RegExp
-    hRegex.Compile(sPatron, RegExp.Caseless)
-
-    ' BUSCAR TODAS LAS COINCIDENCIAS Y REEMPLAZAR POR ESPACIOS
-    While True
-      hRegex.Exec(sResultado)
-      ' SI NO HAY COINCIDENCIA, TEXT ESTÁ VACÍO
-      sCoincidencia = hRegex.Text
-      If sCoincidencia = "" Then Break
-
-      iInicio = hRegex.Offset + 1 ' GAMBAS USA BASE 1 PARA MID/LEFT
-      iLongitud = Len(sCoincidencia)
-      ' REEMPLAZAR POR ESPACIOS PARA MANTENER LAS POSICIONES
-      sResultado = Left(sResultado, iInicio - 1) & String$(iLongitud, " ") & Mid(sResultado, iInicio + iLongitud)
-    Wend
-  Next
-
-  Return sResultado
-
-End
-
-'''
-''' FUNCIÓN: EsCaracterDePalabra
-''' DESCRIPCIÓN: DETERMINA SI UN CARACTER PUEDE SER PARTE DE UNA PALABRA
-''' PARÁMETRO sCaracter: CARACTER A EVALUAR
-''' RETORNA: TRUE SI ES UN CARACTER VÁLIDO DE PALABRA
-'''
-Private Function EsCaracterDePalabra(sCaracter As String) As Boolean
-
-  Dim iCodigo As Integer
-
-  If Len(sCaracter) <> 1 Then
+  If sPalabra = "" Then
+    UltimoError = "No hay palabra para agregar."
     Return False
   Endif
 
-  iCodigo = Asc(sCaracter)
+  ' --- 2. CARPETA DE DESTINO ---
+  If Not AsegurarDirectorioConfig() Then
+    Return False
+  Endif
 
-  ' LETRAS MAYÚSCULAS A-Z
-  If iCodigo >= 65 And iCodigo <= 90 Then Return True
+  ' --- 3. NO DUPLICAR ---
+  If EstaEnDiccionarioPersonal(sPalabra, sIdioma) Then
+    Return True
+  Endif
 
-  ' LETRAS MINÚSCULAS A-Z
-  If iCodigo >= 97 And iCodigo <= 122 Then Return True
+  ' --- 4. ESCRITURA ---
+  sRuta = ObtenerRutaDiccionarioPersonal(sIdioma)
 
-  ' NÚMEROS 0-9
-  If iCodigo >= 48 And iCodigo <= 57 Then Return True
+  Try hArchivo = Open sRuta For Append
+  If Error Then
+    UltimoError = "No se pudo abrir el diccionario personal para escritura: " & Error.Text
+    Return False
+  Endif
 
-  ' APÓSTROFO (PARA CONTRACCIONES EN INGLÉS COMO "DON'T")
-  If sCaracter = "'" Then Return True
+  Try Print #hArchivo, sPalabra
+  If Error Then
+    Try Close #hArchivo
+    UltimoError = "No se pudo escribir en el diccionario personal: " & Error.Text
+    Return False
+  Endif
 
-  ' GUION (PARA PALABRAS COMPUESTAS)
-  If sCaracter = "-" Then Return True
+  Try Close #hArchivo
 
-  ' CARACTERES ACENTUADOS Y ESPECIALES DEL ESPAÑOL
-  ' Á, É, Í, Ó, Ú, Ñ, Ü (MAYÚSCULAS)
-  If InStr("ÁÉÍÓÚÑÜ", sCaracter) > 0 Then Return True
+  Return True
 
-  ' á, é, í, ó, ú, ñ, ü (MINÚSCULAS)
-  If InStr("áéíóúñü", sCaracter) > 0 Then Return True
+End
 
-  ' OTROS CARACTERES LATINOS EXTENDIDOS COMUNES
-  If iCodigo >= 192 And iCodigo <= 255 Then Return True
+' ============================================
+' Función   : ExtraerPalabras
+' Propósito : Recorre un texto y devuelve sus palabras con posición y longitud
+' Parámetros: sTexto As String — texto a analizar
+'             bLimpiarShortcodes As Boolean — si True, saltea URLs, DOIs,
+'               correos y shortcodes. True para los .md; False para el RTF de
+'               referencias, donde no hay shortcodes y saltear los corchetes
+'               borraría texto legítimo.
+' Retorna   : CPalabraHallada[] — en orden de aparición. Posiciones en
+'             CARACTERES, base 1.
+' ============================================
+
+Public Function ExtraerPalabras(sTexto As String, Optional bLimpiarShortcodes As Boolean = True) As CPalabraHallada[]
+
+  Dim aPalabras As New CPalabraHallada[]
+  Dim oPalabra As CPalabraHallada
+  Dim sCaracter As String
+  Dim sBruta As String
+  Dim iLargo As Integer
+  Dim iInicio As Integer
+  Dim iSalto As Integer
+  Dim iCodigo As Integer
+  Dim i As Integer
+  Dim bEnPalabra As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  iLargo = String.Len(sTexto)
+  bEnPalabra = False
+  iInicio = 0
+  i = 1
+
+  ' --- 2. RECORRIDO CODEPOINT A CODEPOINT ---
+  ' String.Mid Y String.Code, NUNCA Mid Y Asc: ESAS OPERAN EN BYTES Y PARTEN
+  ' LOS CARACTERES MULTIBYTE (RC-GM-12, SC-02). EL BUCLE ESCALA LINEALMENTE:
+  ' 40.000 CODEPOINTS EN 0,021 S (GV-03), ASÍ QUE NO HACE FALTA OPTIMIZARLO.
+  While i <= iLargo
+
+    ' ZONA IGNORADA: URL, DOI, CORREO O SHORTCODE. SE SALTEA ENTERA Y SE
+    ' DESCARTA LA PALABRA EN CURSO, QUE PODRÍA SER SU PREFIJO.
+    iSalto = 0
+    If bLimpiarShortcodes Then
+      iSalto = LargoZonaIgnorada(sTexto, i, iLargo)
+    Endif
+
+    If iSalto > 0 Then
+      bEnPalabra = False
+      i += iSalto
+      Continue
+    Endif
+
+    sCaracter = String.Mid(sTexto, i, 1)
+    iCodigo = String.Code(sCaracter)
+
+    If EsCaracterDePalabra(iCodigo) Then
+
+      ' INICIO DE PALABRA
+      If Not bEnPalabra Then
+        bEnPalabra = True
+        iInicio = i
+      Endif
+
+    Else
+
+      ' FIN DE PALABRA
+      If bEnPalabra Then
+        sBruta = String.Mid(sTexto, iInicio, i - iInicio)
+        oPalabra = ConstruirPalabra(sBruta, iInicio)
+        If Not IsNull(oPalabra) Then aPalabras.Add(oPalabra)
+        bEnPalabra = False
+      Endif
+
+    Endif
+
+    Inc i
+
+  Wend
+
+  ' --- 3. PALABRA PENDIENTE AL FINAL DEL TEXTO ---
+  If bEnPalabra Then
+    sBruta = String.Mid(sTexto, iInicio, iLargo - iInicio + 1)
+    oPalabra = ConstruirPalabra(sBruta, iInicio)
+    If Not IsNull(oPalabra) Then aPalabras.Add(oPalabra)
+  Endif
+
+  Return aPalabras
+
+End
+
+' ============================================
+' Función   : ConstruirPalabra
+' Propósito : Recorta guiones y apóstrofos de los bordes y valida la palabra
+' Parámetros: sBruta As String — palabra tal como la cortó el recorrido
+'             iPosicion As Integer — posición de inicio de sBruta, en caracteres
+' Retorna   : CPalabraHallada — o Null si no es una palabra verificable
+' ============================================
+
+Private Function ConstruirPalabra(sBruta As String, iPosicion As Integer) As CPalabraHallada
+
+  Dim oPalabra As CPalabraHallada
+  Dim sPalabra As String
+  Dim iDesplazamiento As Integer
+  Dim iCodigo As Integer
+
+  ' --- 1. RECORTE DEL BORDE IZQUIERDO ---
+  ' EL GUION Y EL APÓSTROFO VALEN DENTRO DE LA PALABRA (bien-estar, l’État)
+  ' PERO NO EN LOS BORDES. SIN ESTE RECORTE, UN "--particular" DEL TEXTO SE
+  ' MANDA A HUNSPELL TAL CUAL Y VUELVE COMO ERROR.
+  sPalabra = sBruta
+  iDesplazamiento = 0
+
+  While String.Len(sPalabra) > 0
+    iCodigo = String.Code(String.Mid(sPalabra, 1, 1))
+    If Not EsCaracterInterior(iCodigo) Then Break
+    sPalabra = String.Mid(sPalabra, 2, String.Len(sPalabra) - 1)
+    Inc iDesplazamiento
+  Wend
+
+  ' --- 2. RECORTE DEL BORDE DERECHO ---
+  While String.Len(sPalabra) > 0
+    iCodigo = String.Code(String.Mid(sPalabra, String.Len(sPalabra), 1))
+    If Not EsCaracterInterior(iCodigo) Then Break
+    sPalabra = String.Mid(sPalabra, 1, String.Len(sPalabra) - 1)
+  Wend
+
+  ' --- 3. VALIDACIÓN ---
+  If Not EsPalabraValida(sPalabra) Then
+    Return Null
+  Endif
+
+  ' --- 4. CONSTRUCCIÓN ---
+  ' EL New CON ARGUMENTOS VA A UNA VARIABLE Y NO ANIDADO EN LA LLAMADA (GV-32)
+  oPalabra = New CPalabraHallada(sPalabra, iPosicion + iDesplazamiento, String.Len(sPalabra))
+
+  Return oPalabra
+
+End
+
+' ============================================
+' Función   : EsCaracterDePalabra
+' Propósito : Decide si un codepoint puede formar parte de una palabra
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : Boolean — True si es letra, dígito, guion o apóstrofo
+' ============================================
+
+Private Function EsCaracterDePalabra(iCodigo As Integer) As Boolean
+
+  ' --- 1. LETRAS ---
+  ' EsLetra ES LOCALE-INDEPENDIENTE POR CONSTRUCCIÓN Y CUBRE ASCII Y LATIN-1
+  ' SUPPLEMENT (GV-03): CASTELLANO, PORTUGUÉS, FRANCÉS E ITALIANO.
+  If m_FuncionesGenericas.EsLetra(iCodigo) Then Return True
+
+  ' --- 2. LATIN EXTENDED-A ---
+  ' PARA APELLIDOS DE EUROPA CENTRAL (Žižek, Kołakowski, Szmukler). SE RESUELVE
+  ' ACÁ Y NO AMPLIANDO EsLetra, QUE ES COMPARTIDA POR OTROS MÓDULOS.
+  If iCodigo >= COD_EXT_A_INICIO Then
+    If iCodigo <= COD_EXT_A_FIN Then Return True
+  Endif
+
+  ' --- 3. DÍGITOS ---
+  If iCodigo >= 48 Then
+    If iCodigo <= 57 Then Return True
+  Endif
+
+  ' --- 4. CARACTERES INTERIORES ---
+  ' SE ACEPTAN ACÁ Y SE RECORTAN DESPUÉS EN ConstruirPalabra SI QUEDARON EN
+  ' UN BORDE. ES MÁS SIMPLE QUE MIRAR HACIA ADELANTE DURANTE EL RECORRIDO.
+  If EsCaracterInterior(iCodigo) Then Return True
 
   Return False
 
 End
 
-'''
-''' FUNCIÓN: EsPalabraValida
-''' DESCRIPCIÓN: DETERMINA SI UNA CADENA ES UNA PALABRA VÁLIDA PARA REVISAR
-''' PARÁMETRO sPalabra: CADENA A EVALUAR
-''' RETORNA: TRUE SI ES UNA PALABRA QUE DEBE SER VERIFICADA
-'''
+' ============================================
+' Función   : EsCaracterInterior
+' Propósito : Indica si un codepoint solo vale dentro de una palabra
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : Boolean — True para guion y apóstrofos
+' ============================================
+
+Private Function EsCaracterInterior(iCodigo As Integer) As Boolean
+
+  ' EL APÓSTROFO CURVO ES EL QUE EMITE PANDOC; EL RECTO SOBREVIVE EN TEXTO
+  ' TIPEADO A MANO Y EN CITAS DE CÓDIGO.
+  If iCodigo = COD_GUION Then Return True
+  If iCodigo = COD_APOSTROFO_RECTO Then Return True
+  If iCodigo = COD_APOSTROFO_CURVO Then Return True
+
+  Return False
+
+End
+
+' ============================================
+' Función   : EsPalabraValida
+' Propósito : Decide si una cadena merece ir al corrector
+' Parámetros: sPalabra As String — palabra ya recortada
+' Retorna   : Boolean — True si tiene al menos dos caracteres y una letra
+' ============================================
+
 Private Function EsPalabraValida(sPalabra As String) As Boolean
 
+  Dim iLargo As Integer
+  Dim iCodigo As Integer
   Dim i As Integer
-  Dim bTieneLetra As Boolean
+
+  ' --- 1. LARGO MÍNIMO, EN CARACTERES ---
+  iLargo = String.Len(sPalabra)
+  If iLargo < 2 Then Return False
+
+  ' --- 2. AL MENOS UNA LETRA: DESCARTA NÚMEROS Y CÓDIGOS SUELTOS ---
+  For i = 1 To iLargo
+
+    iCodigo = String.Code(String.Mid(sPalabra, i, 1))
+
+    If m_FuncionesGenericas.EsLetra(iCodigo) Then Return True
+
+    If iCodigo >= COD_EXT_A_INICIO Then
+      If iCodigo <= COD_EXT_A_FIN Then Return True
+    Endif
+
+  Next
+
+  Return False
+
+End
+
+' ============================================
+' Función   : LargoZonaIgnorada
+' Propósito : Si en una posición arranca una zona que no debe verificarse,
+'             devuelve cuántos caracteres hay que saltear
+' Parámetros: sTexto As String — texto completo
+'             iPos As Integer — posición a examinar, en caracteres, base 1
+'             iLargo As Integer — largo total del texto, en caracteres
+' Retorna   : Integer — caracteres a saltear, o 0 si acá no arranca ninguna zona
+' ============================================
+
+Private Function LargoZonaIgnorada(sTexto As String, iPos As Integer, iLargo As Integer) As Integer
+
   Dim sCaracter As String
 
-  ' DEBE TENER AL MENOS 2 CARACTERES
-  If Len(sPalabra) < 2 Then
-    Return False
+  sCaracter = String.Mid(sTexto, iPos, 1)
+
+  ' --- 1. DIRECCIONES WEB ---
+  If EmpiezaCon(sTexto, iPos, "https://") Then Return LargoHastaEspacio(sTexto, iPos, iLargo)
+  If EmpiezaCon(sTexto, iPos, "http://") Then Return LargoHastaEspacio(sTexto, iPos, iLargo)
+  If EmpiezaCon(sTexto, iPos, "ftp://") Then Return LargoHastaEspacio(sTexto, iPos, iLargo)
+
+  ' --- 2. IDENTIFICADORES DOI ---
+  If EmpiezaCon(sTexto, iPos, "doi:") Then Return LargoHastaEspacio(sTexto, iPos, iLargo)
+  If EmpiezaCon(sTexto, iPos, "10.") Then Return LargoHastaEspacio(sTexto, iPos, iLargo)
+
+  ' --- 3. CORREOS Y SHORTCODES CON ARROBA ---
+  ' LA ARROBA CUBRE LOS DOS CASOS: alguien@dominio.com Y @nombre(...). LA
+  ' PALABRA EN CURSO SE DESCARTA EN EL LLAMADOR, QUE ES LO QUE HACE FALTA
+  ' PARA QUE NO QUEDE EL PREFIJO DEL CORREO SUELTO.
+  If sCaracter = "@" Then Return LargoHastaEspacio(sTexto, iPos, iLargo)
+
+  ' --- 4. SHORTCODES ENTRE CORCHETES Y ENTRE LLAVES DOBLES ---
+  If sCaracter = "[" Then Return LargoHastaCierre(sTexto, iPos, iLargo, "]")
+  If EmpiezaCon(sTexto, iPos, "{{") Then Return LargoHastaCierre(sTexto, iPos, iLargo, "}")
+
+  Return 0
+
+End
+
+' ============================================
+' Función   : EmpiezaCon
+' Propósito : Compara un patrón ASCII en una posición, sin distinguir caja
+' Parámetros: sTexto As String — texto completo
+'             iPos As Integer — posición a examinar, en caracteres, base 1
+'             sPatron As String — patrón ASCII a comparar
+' Retorna   : Boolean — True si el texto en esa posición empieza con el patrón
+' ============================================
+
+Private Function EmpiezaCon(sTexto As String, iPos As Integer, sPatron As String) As Boolean
+
+  Dim iLargoPatron As Integer
+  Dim i As Integer
+  Dim iCodTexto As Integer
+  Dim iCodPatron As Integer
+
+  iLargoPatron = String.Len(sPatron)
+
+  If iPos + iLargoPatron - 1 > String.Len(sTexto) Then Return False
+
+  ' LOS PATRONES QUE USA ESTA FUNCIÓN SON ASCII PURO (https://, doi:, {{), ASÍ
+  ' QUE EL PLEGADO ASCII ALCANZA Y NO HACE FALTA LA TABLA DE
+  ' m_FuncionesGenericas. TAMPOCO LCase, QUE DEPENDE DEL LOCALE Y FUNCIONA EN
+  ' LA MÁQUINA DEL DESARROLLADOR PERO NO EN UNA INSTALACIÓN CLIENTE CON LOCALE
+  ' MÍNIMO (GV-03).
+  For i = 1 To iLargoPatron
+    iCodTexto = PlegarAsciiAMinuscula(String.Code(String.Mid(sTexto, iPos + i - 1, 1)))
+    iCodPatron = PlegarAsciiAMinuscula(String.Code(String.Mid(sPatron, i, 1)))
+    If iCodTexto <> iCodPatron Then Return False
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : PlegarAsciiAMinuscula
+' Propósito : Pliega a minúscula un codepoint ASCII, dejando el resto intacto
+' Parámetros: iCodigo As Integer — codepoint Unicode
+' Retorna   : Integer — el codepoint plegado
+' ============================================
+
+Private Function PlegarAsciiAMinuscula(iCodigo As Integer) As Integer
+
+  ' SOLO A-Z. NO TOCA NADA FUERA DE ASCII: ESTA FUNCIÓN COMPARA PATRONES
+  ' FIJOS DEL PROYECTO, NO TEXTO DEL USUARIO.
+  If iCodigo >= 65 Then
+    If iCodigo <= 90 Then Return iCodigo + 32
   Endif
 
-  ' DEBE CONTENER AL MENOS UNA LETRA (NO SOLO NÚMEROS O SÍMBOLOS)
-  bTieneLetra = False
-  For i = 1 To Len(sPalabra)
-    sCaracter = Mid(sPalabra, i, 1)
-    If (Asc(sCaracter) >= 65 And Asc(sCaracter) <= 90) Or (Asc(sCaracter) >= 97 And Asc(sCaracter) <= 122) Then
-      bTieneLetra = True
-      Break
-    Endif
-    ' TAMBIÉN VERIFICAR LETRAS ACENTUADAS
-    If InStr("ÁÉÍÓÚÑÜáéíóúñü", sCaracter) > 0 Then
-      bTieneLetra = True
+  Return iCodigo
+
+End
+
+' ============================================
+' Función   : LargoHastaEspacio
+' Propósito : Cuenta los caracteres desde una posición hasta el próximo espacio
+' Parámetros: sTexto As String — texto completo
+'             iPos As Integer — posición de inicio, en caracteres, base 1
+'             iLargo As Integer — largo total del texto, en caracteres
+' Retorna   : Integer — cantidad de caracteres a saltear, siempre 1 o más
+' ============================================
+
+Private Function LargoHastaEspacio(sTexto As String, iPos As Integer, iLargo As Integer) As Integer
+
+  Dim iCodigo As Integer
+  Dim i As Integer
+
+  For i = iPos To iLargo
+    iCodigo = String.Code(String.Mid(sTexto, i, 1))
+    ' ESPACIO, TABULADOR, SALTO DE LÍNEA Y RETORNO DE CARRO
+    If iCodigo = 32 Then Return i - iPos
+    If iCodigo = 9 Then Return i - iPos
+    If iCodigo = 10 Then Return i - iPos
+    If iCodigo = 13 Then Return i - iPos
+  Next
+
+  Return iLargo - iPos + 1
+
+End
+
+' ============================================
+' Función   : LargoHastaCierre
+' Propósito : Cuenta los caracteres desde una posición hasta un carácter de
+'             cierre, sin cruzar el fin de línea
+' Parámetros: sTexto As String — texto completo
+'             iPos As Integer — posición de inicio, en caracteres, base 1
+'             iLargo As Integer — largo total del texto, en caracteres
+'             sCierre As String — carácter de cierre
+' Retorna   : Integer — caracteres a saltear. Si no hay cierre en la línea,
+'             saltea solo el carácter de apertura y sigue analizando normal.
+' ============================================
+
+Private Function LargoHastaCierre(sTexto As String, iPos As Integer, iLargo As Integer, sCierre As String) As Integer
+
+  Dim sCaracter As String
+  Dim i As Integer
+
+  For i = iPos + 1 To iLargo
+
+    sCaracter = String.Mid(sTexto, i, 1)
+
+    ' UN CORCHETE SIN CERRAR NO DEBE COMERSE EL RESTO DEL DOCUMENTO
+    If String.Code(sCaracter) = 10 Then Break
+
+    If sCaracter = sCierre Then Return i - iPos + 1
+
+  Next
+
+  Return 1
+
+End
+
+' ============================================
+' Función   : ObtenerContexto
+' Propósito : Devuelve el texto alrededor de una posición, sin cruzar párrafos
+' Parámetros: sTexto As String — texto completo
+'             iPosicion As Integer — posición de la palabra, en caracteres, base 1
+'             iLongitudPalabra As Integer — largo de la palabra, en caracteres
+'             iCaracteres As Integer — caracteres de contexto a cada lado
+' Retorna   : String — el contexto, con puntos suspensivos si quedó truncado
+' ============================================
+
+Public Function ObtenerContexto(sTexto As String, iPosicion As Integer, iLongitudPalabra As Integer, Optional iCaracteres As Integer = 50) As String
+
+  Dim sContexto As String
+  Dim iLargo As Integer
+  Dim iInicio As Integer
+  Dim iFin As Integer
+  Dim i As Integer
+
+  ' --- 1. VENTANA INICIAL ---
+  ' TODO EN CARACTERES. CON Mid Y Len EL CORTE CAÍA EN MEDIO DE UN CARÁCTER
+  ' MULTIBYTE Y DEJABA UN BYTE HUÉRFANO, QUE LA INTERFAZ PINTABA COMO EL
+  ' CARÁCTER DE REEMPLAZO (GV-03). SE VIO SOBRE UNA COMILLA LATINA DE CIERRE.
+  iLargo = String.Len(sTexto)
+  iInicio = iPosicion - iCaracteres
+  iFin = iPosicion + iLongitudPalabra + iCaracteres
+
+  If iInicio < 1 Then iInicio = 1
+  If iFin > iLargo Then iFin = iLargo
+
+  ' --- 2. RECORTE HACIA ATRÁS EN EL SALTO DE LÍNEA MÁS CERCANO ---
+  For i = iPosicion To iInicio Step -1
+    If String.Code(String.Mid(sTexto, i, 1)) = 10 Then
+      iInicio = i + 1
       Break
     Endif
   Next
 
-  Return bTieneLetra
+  ' --- 3. RECORTE HACIA ADELANTE ---
+  For i = iPosicion + iLongitudPalabra To iFin
+    If String.Code(String.Mid(sTexto, i, 1)) = 10 Then
+      iFin = i - 1
+      Break
+    Endif
+  Next
 
-End
+  If iFin < iInicio Then Return ""
 
-'''
-''' FUNCIÓN: ObtenerContexto
-''' DESCRIPCIÓN: OBTIENE EL CONTEXTO ALREDEDOR DE UNA POSICIÓN EN EL TEXTO
-''' PARÁMETRO sTexto: TEXTO COMPLETO
-''' PARÁMETRO iPosicion: POSICIÓN DE LA PALABRA
-''' PARÁMETRO iLongitudPalabra: LONGITUD DE LA PALABRA
-''' PARÁMETRO iCaracteres: CANTIDAD DE CARACTERES DE CONTEXTO (DEFAULT 50)
-''' RETORNA: TEXTO DE CONTEXTO SIN CRUZAR LÍMITES DE PÁRRAFO
-'''
-Public Function ObtenerContexto(sTexto As String, iPosicion As Integer, iLongitudPalabra As Integer, Optional iCaracteres As Integer = 50) As String
+  ' --- 4. EXTRACCIÓN E INDICADORES DE TRUNCADO ---
+  sContexto = String.Mid(sTexto, iInicio, iFin - iInicio + 1)
 
-  Dim iInicio As Integer
-  Dim iFin As Integer
-  Dim sContexto As String
-  Dim iPosSaltoAntes As Integer
-  Dim iPosSaltoDespues As Integer
-
-  ' CALCULAR INICIO Y FIN INICIAL
-  iInicio = iPosicion - iCaracteres
-  iFin = iPosicion + iLongitudPalabra + iCaracteres
-
-  ' AJUSTAR LÍMITES
-  If iInicio < 1 Then iInicio = 1
-  If iFin > Len(sTexto) Then iFin = Len(sTexto)
-
-  ' BUSCAR SALTOS DE LÍNEA PARA NO CRUZAR PÁRRAFOS
-  ' BUSCAR HACIA ATRÁS DESDE LA POSICIÓN DE LA PALABRA
-  iPosSaltoAntes = RInStr(sTexto, "\n", iPosicion)
-  If iPosSaltoAntes > 0 And iPosSaltoAntes > iInicio Then
-    iInicio = iPosSaltoAntes + 1
-  Endif
-
-  ' BUSCAR HACIA ADELANTE DESDE EL FIN DE LA PALABRA
-  iPosSaltoDespues = InStr(sTexto, "\n", iPosicion + iLongitudPalabra)
-  If iPosSaltoDespues > 0 And iPosSaltoDespues < iFin Then
-    iFin = iPosSaltoDespues - 1
-  Endif
-
-  ' EXTRAER CONTEXTO
-  sContexto = Mid(sTexto, iInicio, iFin - iInicio + 1)
-
-  ' AGREGAR INDICADORES SI SE TRUNCÓ
-  If iInicio > 1 Then
-    sContexto = "..." & sContexto
-  Endif
-  If iFin < Len(sTexto) Then
-    sContexto = sContexto & "..."
-  Endif
+  If iInicio > 1 Then sContexto = "..." & sContexto
+  If iFin < iLargo Then sContexto = sContexto & "..."
 
   Return sContexto
 
 End
 
-'''
-''' FUNCIÓN: BuscarPosicionEnTextoOriginal
-''' DESCRIPCIÓN: CONVIERTE UNA POSICIÓN DEL TEXTO LIMPIO AL TEXTO ORIGINAL
-''' PARÁMETRO sTextoOriginal: TEXTO SIN MODIFICAR
-''' PARÁMETRO sTextoLimpio: TEXTO CON REEMPLAZOS
-''' PARÁMETRO iPosicionLimpio: POSICIÓN EN EL TEXTO LIMPIO
-''' RETORNA: POSICIÓN CORRESPONDIENTE EN EL TEXTO ORIGINAL
-'''
-''' NOTA: COMO LIMPIARTETOPARAANALISIS MANTIENE LA MISMA LONGITUD
-''' (REEMPLAZA POR ESPACIOS), LA POSICIÓN ES LA MISMA
-'''
-Public Function BuscarPosicionEnTextoOriginal(sTextoOriginal As String, sTextoLimpio As String, iPosicionLimpio As Integer) As Integer
+' ============================================
+' Función   : ConvertirPosicionALineaColumna
+' Propósito : Convierte una posición absoluta en línea y columna
+' Parámetros: sTexto As String — texto completo
+'             iPosicion As Integer — posición absoluta, en caracteres, base 1
+' Retorna   : CPosicionTexto — línea y columna, ambas base 0, columna en caracteres
+' ============================================
 
-  ' COMO MANTENEMOS LA LONGITUD, LA POSICIÓN ES LA MISMA
-  Return iPosicionLimpio
+Public Function ConvertirPosicionALineaColumna(sTexto As String, iPosicion As Integer) As CPosicionTexto
+
+  Dim oPosicion As CPosicionTexto
+  Dim iLargo As Integer
+  Dim iLinea As Integer
+  Dim iColumna As Integer
+  Dim i As Integer
+
+  ' --- 1. RECORRIDO HASTA LA POSICIÓN PEDIDA ---
+  ' EL RESULTADO VUELVE COMO OBJETO Y NO POR PARÁMETROS ByRef: EN GAMBAS LOS
+  ' PRIMITIVOS SE PASAN SIEMPRE POR VALOR Y LA VARIABLE DEL LLAMADOR QUEDA
+  ' COMO ESTABA, SIN NINGÚN AVISO (GV-24).
+  iLargo = String.Len(sTexto)
+  iLinea = 0
+  iColumna = 0
+
+  For i = 1 To iLargo
+
+    If i >= iPosicion Then Break
+
+    If String.Code(String.Mid(sTexto, i, 1)) = 10 Then
+      Inc iLinea
+      iColumna = 0
+    Else
+      Inc iColumna
+    Endif
+
+  Next
+
+  ' --- 2. CONSTRUCCIÓN DEL RESULTADO ---
+  ' EL New CON ARGUMENTOS VA A UNA VARIABLE (GV-32)
+  oPosicion = New CPosicionTexto(iLinea, iColumna)
+
+  Return oPosicion
 
 End
