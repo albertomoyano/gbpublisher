@@ -1,0 +1,338 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_Pares
+' Propósito : Emparejamiento por pila de pares asimétricos de delimitadores.
+'             Es la única implementación del algoritmo en el proyecto: la
+'             consumen el panel de análisis del archivo activo y la grilla
+'             modal que recorre todos los .md. Si alguna vez aparece una
+'             segunda copia, van a divergir en silencio y no habrá forma de
+'             saber cuál tiene razón.
+'
+'             POR QUÉ PILA Y NO CONTEO
+'             Contar verifica cantidad; el anidamiento es orden. «a» b» c «d
+'             da dos y dos, y está roto. Desde que el anidamiento del .md
+'             determina el nivel de comilla de la salida, un cierre adelantado
+'             no produce una comilla fea sino un árbol distinto, y el XSLT
+'             nivela mal todo lo que viene después.
+'
+'             EL CASO QUE LA PILA NO VE, Y LAS DOS SEÑALES QUE LO DELATAN
+'             Dos errores de signo contrario se cancelan: una apertura de más
+'             en un párrafo y un cierre de más en otro se emparejan ENTRE SÍ,
+'             el total cuadra y no hay desbalance que reportar. Contra eso hay
+'             dos indicadores, y son de naturaleza distinta.
+'             El primero es CLASE_CIERRE_OTRO_PARRAFO, que SÍ da posición
+'             exacta: en castellano académico una cita en línea no cruza
+'             párrafos, así que un par que abre en uno y cierra en otro es
+'             casi siempre ese caso compensado. Y filtra bien, porque el
+'             anidamiento legítimo —una cita dentro de otra— abre y cierra en
+'             el mismo párrafo y no dispara.
+'             El segundo es bProfundidadInusual, que NO da posición: solo
+'             avisa que el anidamiento alcanzado supera lo normal para ese
+'             par. Es un dato para el mensaje de estado, no para el grid.
+'
+'             SUPONE UN PÁRRAFO POR LÍNEA, SIN CORTE DURO A N COLUMNAS. Si
+'             alguna vez entra material con saltos duros, la regla del cruce
+'             dispara en cada cita que atraviese el corte y hay que apagarla.
+'
+'             ALCANCE DECLARADO — CÓDIGO NO DELIMITADO
+'             El recorrido trata el archivo entero como prosa: NO saltea
+'             bloques cercados con ``` ni spans de código con acento grave.
+'             Es deliberado. El corpus del proyecto son libros de ciencias
+'             sociales, donde no aparece código de lenguajes de programación,
+'             y el código defensivo que nadie ejercita se pudre sin avisar.
+'             SI ALGÚN DÍA ENTRA UN LIBRO CON CÓDIGO, el síntoma va a ser una
+'             discrepancia entre este módulo y el filtro Lua de conversión a
+'             DocBook, que sí ignora el código por construcción porque camina
+'             el AST de Pandoc y no el texto. Esa discrepancia ES la señal:
+'             cuando aparezca, hay que volver acá y saltear las cercas.
+'
+'             SELF-PAIRED
+'             Un par cuyos dos caracteres son iguales (la comilla recta) NO se
+'             analiza acá: la pila no aplica y lo único verificable es la
+'             paridad (SC-09). Se rechaza con motivo explícito y esos casos
+'             quedan para la grilla modal de conteo.
+' ============================================
+
+' CLASES DE FALLA QUE PUEDE DEVOLVER UN CHallazgoPar.
+' GV-11: UN Const NO PUEDE DECLARARSE DENTRO DE UNA FUNCIÓN; VA A NIVEL DE
+' MÓDULO. QUEDAN ACÁ Y NO EN m_Constantes PORQUE SON PARTE DEL CONTRATO DE
+' ESTE MÓDULO Y NO ETIQUETAS DE INTERFAZ
+Public Const CLASE_APERTURA_HUERFANA As Integer = 1
+Public Const CLASE_CIERRE_HUERFANO As Integer = 2
+Public Const CLASE_CIERRE_OTRO_PARRAFO As Integer = 3
+
+' ============================================
+' Función   : AnalizarPar
+' Propósito : Recorre el texto emparejando un par asimétrico de delimitadores
+'             y devuelve el agregado del análisis, dejando en aHallazgos los
+'             errores encontrados, ordenados por posición y cortados en
+'             m_Constantes.MAX_HALLAZGOS_PARES.
+'             NO carga archivos: recibe el texto ya en memoria, porque el
+'             panel analiza lo que está en pantalla —txtEditorProyecto.Text,
+'             no el disco— y la grilla modal analiza muchos archivos.
+' Parámetros: sTexto As String — contenido completo a analizar
+'             sIzquierdo As String — carácter de apertura, exactamente uno
+'             sDerecho As String — carácter de cierre, exactamente uno
+'             aHallazgos As CHallazgoPar[] — array YA INSTANCIADO por el
+'               llamador, que esta función vacía y vuelve a llenar. Es el
+'               canal de salida de los errores: funciona por ser objeto, que
+'               es la única vía que propaga en Gambas (GV-24)
+' Retorna   : CResumenPares — nunca Null; con bValido en False si el par
+'             recibido no era analizable
+' ============================================
+Public Function AnalizarPar(sTexto As String, sIzquierdo As String, sDerecho As String, aHallazgos As CHallazgoPar[]) As CResumenPares
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oResumen As New CResumenPares
+  Dim aParrafos As String[]
+  Dim aPila As New CHallazgoPar[]
+  Dim aTodos As New CHallazgoPar[]
+  Dim oHallazgo As CHallazgoPar
+  Dim sParrafo As String
+  Dim sCaracter As String
+  Dim iParrafo As Integer
+  Dim iPos As Integer
+  Dim iLargo As Integer
+  Dim iIndice As Integer
+  Dim iTope As Integer
+
+  oResumen.bValido = False
+  oResumen.sMotivo = ""
+  oResumen.iPares = 0
+  oResumen.iProfundidadMax = 0
+  oResumen.iProfundidadEsperada = 0
+  oResumen.bProfundidadInusual = False
+  oResumen.iTotalErrores = 0
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  ' EL ARRAY DE SALIDA LO INSTANCIA EL LLAMADOR; SIN ÉL NO HAY DÓNDE ESCRIBIR
+  If Not aHallazgos Then
+    oResumen.sMotivo = "No se recibió el array de hallazgos."
+    Return oResumen
+  Endif
+
+  aHallazgos.Clear()
+
+  ' String.Len Y NO Len: CON « LA CUENTA EN BYTES DA 2 Y RECHAZARÍA UN PAR
+  ' PERFECTAMENTE VÁLIDO (SC-02, RC-GM-12)
+  If String.Len(sIzquierdo) <> 1 Then
+    oResumen.sMotivo = "El carácter de apertura debe ser exactamente uno."
+    Return oResumen
+  Endif
+
+  If String.Len(sDerecho) <> 1 Then
+    oResumen.sMotivo = "El carácter de cierre debe ser exactamente uno."
+    Return oResumen
+  Endif
+
+  ' SELF-PAIRED: LA PILA NO APLICA, SOLO LA PARIDAD (SC-09)
+  If sIzquierdo = sDerecho Then
+    oResumen.sMotivo = "Apertura y cierre son el mismo carácter: este par solo admite verificación de paridad."
+    Return oResumen
+  Endif
+
+  oResumen.bValido = True
+  oResumen.iProfundidadEsperada = ProfundidadEsperada(sIzquierdo)
+
+  ' UN TEXTO VACÍO ES ANALIZABLE Y DA CERO EN TODO. NO ES UN ERROR
+  If String.Len(sTexto) = 0 Then Return oResumen
+
+  ' --- 3. RECORRIDO POR PÁRRAFOS CON LA PILA VIVA ENTRE ELLOS ---
+  ' SE RECORRE POR PÁRRAFOS Y NO POR POSICIÓN ABSOLUTA PORQUE ES LO QUE
+  ' CONSUME EL TextEditor: CADA HALLAZGO YA SABE EN QUÉ PÁRRAFO ESTÁ Y LA
+  ' POSICIÓN ES SU AVANCE DENTRO DE ÉL, SIN CONVERSIÓN POSTERIOR.
+  ' EL CORTE ES POR Chr(10): LOS .md LLEGAN DE PANDOC EN LINUX, SIN CR (SC-02).
+  ' UN CR RESIDUAL NO AFECTA EL EMPAREJAMIENTO PORQUE NO ES NINGUNO DE LOS DOS
+  ' CARACTERES BUSCADOS
+  aParrafos = Split(sTexto, Chr(10))
+
+  For iParrafo = 0 To aParrafos.Max
+    sParrafo = aParrafos[iParrafo]
+    iLargo = String.Len(sParrafo)
+
+    ' String.Mid Y NO Mid: EL RECORRIDO ES POR CODEPOINT. CON Mid, « SE PARTE
+    ' EN DOS BYTES Y NO MATCHEA NUNCA (RC-GM-12, GV-41)
+    For iPos = 1 To iLargo
+      sCaracter = String.Mid(sParrafo, iPos, 1)
+
+      If sCaracter = sIzquierdo Then
+        ' SE APILA COMO SI FUERA HUÉRFANA: SI APARECE SU CIERRE SE RECLASIFICA
+        ' O SE DESCARTA, Y SI NO APARECE YA ESTÁ CONSTRUIDA CON LA POSICIÓN
+        ' CORRECTA.
+        ' iPos - 1 CONVIERTE DE String.Mid (1-INDEXADO) A LA API (0-INDEXADA).
+        ' GV-32: UN New CON ARGUMENTOS VA A UNA VARIABLE, NUNCA ANIDADO DENTRO
+        ' DE Add(); QUITARLE EL New HACE QUE COMPILE Y FALLE EN EJECUCIÓN
+        oHallazgo = New CHallazgoPar(iParrafo, iPos - 1, sCaracter, CLASE_APERTURA_HUERFANA)
+        aPila.Add(oHallazgo)
+        oHallazgo.iProfundidad = aPila.Count
+
+        If aPila.Count > oResumen.iProfundidadMax Then oResumen.iProfundidadMax = aPila.Count
+        Continue
+      Endif
+
+      If sCaracter = sDerecho Then
+        If aPila.Count > 0 Then
+          ' SE DESAPILA LA APERTURA QUE ESTE CIERRE VIENE A CERRAR
+          oHallazgo = aPila[aPila.Max]
+          aPila.Remove(aPila.Max)
+          Inc oResumen.iPares
+
+          If oHallazgo.iParrafo = iParrafo Then
+            ' PAR COMPLETO DENTRO DE SU PÁRRAFO: NO SOBREVIVE COMO OBJETO,
+            ' PORQUE EL GRID SOLO MUESTRA ERRORES
+          Else
+            ' CRUZA PÁRRAFOS: SE REPORTA CON LA POSICIÓN DE LA APERTURA, QUE
+            ' ES DONDE HAY QUE IR A MIRAR
+            oHallazgo.iClase = CLASE_CIERRE_OTRO_PARRAFO
+            aTodos.Add(oHallazgo)
+          Endif
+        Else
+          ' CIERRE SIN NADA ABIERTO: SE DETECTA EXACTAMENTE DONDE OCURRE
+          oHallazgo = New CHallazgoPar(iParrafo, iPos - 1, sCaracter, CLASE_CIERRE_HUERFANO)
+          aTodos.Add(oHallazgo)
+        Endif
+      Endif
+    Next
+  Next
+
+  ' --- 4. APERTURAS QUE NUNCA SE CERRARON ---
+  ' A DIFERENCIA DEL CIERRE HUÉRFANO, ESTAS SOLO SE CONOCEN AL TERMINAR EL
+  ' RECORRIDO. LA POSICIÓN GUARDADA ES LA DE LA APERTURA, QUE ES LA CORRECTA
+  ' PARA SALTAR, AUNQUE EL ERROR REAL PUEDA ESTAR MUCHO DESPUÉS: EN EL CIERRE
+  ' QUE FALTA. CON VARIAS ABIERTAS, LA ÚLTIMA SUELE SER LA CULPABLE Y LA
+  ' PRIMERA SUELE SER LEGÍTIMA Y ARRASTRADA
+  For iIndice = 0 To aPila.Max
+    aTodos.Add(aPila[iIndice])
+  Next
+
+  ' --- 5. SEÑAL DE PROFUNDIDAD ---
+  ' NO PRODUCE HALLAZGOS: ES PARA EL MENSAJE DE ESTADO. CERO EN LA ESPERADA
+  ' SIGNIFICA QUE EL PAR NO ESTÁ EN LA TABLA Y NO SE JUZGA
+  If oResumen.iProfundidadEsperada > 0 Then
+    If oResumen.iProfundidadMax > oResumen.iProfundidadEsperada Then oResumen.bProfundidadInusual = True
+  Endif
+
+  ' --- 6. ORDENAR Y CORTAR ---
+  ' SE ORDENA ANTES DE CORTAR: SI SE CORTARA DURANTE EL RECORRIDO, LAS
+  ' APERTURAS HUÉRFANAS —QUE SE AGREGAN AL FINAL PERO PUEDEN ESTAR AL
+  ' PRINCIPIO DEL ARCHIVO— QUEDARÍAN AFUERA DE LA LISTA MOSTRADA
+  OrdenarHallazgos(aTodos)
+  oResumen.iTotalErrores = aTodos.Count
+
+  iTope = aTodos.Max
+  If iTope > m_Constantes.MAX_HALLAZGOS_PARES - 1 Then iTope = m_Constantes.MAX_HALLAZGOS_PARES - 1
+
+  For iIndice = 0 To iTope
+    aHallazgos.Add(aTodos[iIndice])
+  Next
+
+  Return oResumen
+
+End
+
+' ============================================
+' Función   : ProfundidadEsperada
+' Propósito : Máximo anidamiento que se considera normal para un par en prosa
+'             académica en castellano. El umbral NO es universal: las comillas
+'             y los signos de interrogación y exclamación no anidan en la
+'             práctica, pero los paréntesis sí lo hacen legítimamente.
+' Parámetros: sIzquierdo As String — carácter de apertura del par
+' Retorna   : Integer — umbral, o 0 si el par no está en la tabla y por lo
+'             tanto no se juzga
+' ============================================
+Public Function ProfundidadEsperada(sIzquierdo As String) As Integer
+
+  ' COMILLAS LATINAS: EL MODELO DEL PROYECTO MARCA TODOS LOS NIVELES CON « »,
+  ' ASÍ QUE EL ANIDAMIENTO REAL EXISTE, PERO ES RARO EN CIENCIAS SOCIALES.
+  ' PROFUNDIDAD 2 MERECE UNA MIRADA AUNQUE NO SEA UN ERROR
+  If sIzquierdo = "«" Then Return 1
+
+  ' COMILLAS CURVAS INGLESAS CON String.Chr$ PARA QUE EL MÓDULO NO DEPENDA DE
+  ' QUE LA CODIFICACIÓN SOBREVIVA A UN COPIAR Y PEGAR
+  If sIzquierdo = String.Chr$(8220) Then Return 1
+
+  If sIzquierdo = "¿" Then Return 1
+  If sIzquierdo = "¡" Then Return 1
+
+  ' LOS PARÉNTESIS SÍ ANIDAN EN PROSA NORMAL: (algo (otra cosa) más)
+  If sIzquierdo = "(" Then Return 2
+  If sIzquierdo = "[" Then Return 2
+  If sIzquierdo = "{" Then Return 2
+
+  Return 0
+
+End
+
+' ============================================
+' Función   : OrdenarHallazgos
+' Propósito : Ordena los hallazgos por posición en el archivo, para que el
+'             grid se recorra de arriba hacia abajo. Inserción directa: la
+'             lista es corta y el costo no importa.
+' Parámetros: aLista As CHallazgoPar[] — se ordena en el lugar; funciona por
+'               ser objeto (GV-24)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub OrdenarHallazgos(aLista As CHallazgoPar[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oActual As CHallazgoPar
+  Dim iIndice As Integer
+  Dim iComparado As Integer
+  Dim bPosterior As Boolean
+
+  ' --- 2. INSERCIÓN DIRECTA ---
+  For iIndice = 1 To aLista.Max
+    oActual = aLista[iIndice]
+    aLista.Remove(iIndice)
+    iComparado = iIndice - 1
+
+    ' RETROCEDER MIENTRAS EL ANTERIOR SEA POSTERIOR AL ACTUAL.
+    ' GV-02: And If NO COMPILA DENTRO DE UN While, Y UN And COMÚN EVALUARÍA
+    ' aLista[iComparado] CON ÍNDICE -1. SE ABRE EL BLOQUE Y SE SALE CON Break
+    Do
+      If iComparado < 0 Then Break
+      bPosterior = EsPosterior(aLista[iComparado], oActual)
+      If Not bPosterior Then Break
+      Dec iComparado
+    Loop
+
+    ' GV-13: Add(Valor, Índice) INSERTA UN ELEMENTO; Insert() EMPALMA OTRO ARRAY
+    aLista.Add(oActual, iComparado + 1)
+  Next
+
+End
+
+' ============================================
+' Función   : EsPosterior
+' Propósito : Responde si un hallazgo está más adelante en el archivo que otro.
+' Parámetros: oUno As CHallazgoPar — el hallazgo evaluado
+'             oOtro As CHallazgoPar — el hallazgo de referencia
+' Retorna   : Boolean — True si oUno va después de oOtro
+' ============================================
+Private Function EsPosterior(oUno As CHallazgoPar, oOtro As CHallazgoPar) As Boolean
+
+  If oUno.iParrafo > oOtro.iParrafo Then Return True
+  If oUno.iParrafo < oOtro.iParrafo Then Return False
+
+  Return oUno.iPos > oOtro.iPos
+
+End
+
+' ============================================
+' Función   : DescribirClase
+' Propósito : Traduce una constante CLASE_* al texto que va en la celda del
+'             grid. Los literales quedan acá y no en m_Constantes porque hoy
+'             tienen un solo consumidor; si aparece un segundo, mudarlos (SC-03).
+' Parámetros: iClase As Integer — constante CLASE_* de este módulo
+' Retorna   : String — descripción breve de la falla
+' ============================================
+Public Function DescribirClase(iClase As Integer) As String
+
+  If iClase = CLASE_APERTURA_HUERFANA Then Return "Apertura sin cierre"
+  If iClase = CLASE_CIERRE_HUERFANO Then Return "Cierre sin apertura"
+  If iClase = CLASE_CIERRE_OTRO_PARRAFO Then Return "Cierra en otro párrafo"
+
+  Return "Desconocida"
+
+End

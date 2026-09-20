@@ -26,6 +26,31 @@ Public bPoblandoComboImagen As Boolean = False   ' SUPRIME EL _Click DURANTE UN 
 ' PORQUE EL USUARIO PUEDE EDITARLO DESPUÉS DE BUSCAR
 Private $iBusqLargoTermino As Integer
 
+' COLUMNAS DEL GRID: PÁRRAFO, POSICIÓN, CARÁCTER, FALLA.
+' GV-11: UN Const NO PUEDE DECLARARSE DENTRO DE UNA FUNCIÓN
+Private Const COLUMNAS_PARES As Integer = 5
+
+' PARES PREDEFINIDOS DEL COMBO. EL ÍNDICE 0 ES LA ENTRADA NEUTRA Y NO TIENE
+' PAR ASOCIADO: EXISTE PARA QUE EL COMBO NO QUEDE MINTIENDO CUANDO EL ÚLTIMO
+' ANÁLISIS SE DISPARÓ DESDE LOS TEXTBOX
+Private $aParesIzquierdos As New String[]
+Private $aParesDerechos As New String[]
+
+' SUPRESIÓN DE REENTRADA: EL _Click DE UN ComboBox TAMBIÉN SE DISPARA AL
+' ASIGNAR Index POR CÓDIGO, ASÍ QUE POBLARLO O MOVERLO LANZARÍA UN ANÁLISIS
+' FANTASMA. ES EL PATRÓN DE SC-06
+Private $bPoblandoPares As Boolean = False
+
+' HALLAZGOS DEL ÚLTIMO ANÁLISIS. LOS CONSUME EL CLICK EN LA FILA PARA SABER
+' ADÓNDE SALTAR
+Private $aHallazgosPares As New CHallazgoPar[]
+
+' CELDAS YA FORMATEADAS, EN ÍNDICE PLANO: [fila * COLUMNAS_PARES + columna].
+' GV-15: EL GridView ES VIRTUAL Y NO CACHEA —VUELVE A PEDIR CADA CELDA EN CADA
+' REPINTADO, PARA SIEMPRE—, ASÍ QUE EL EVENTO Data ES RUTA CALIENTE Y SOLO
+' PUEDE INDEXAR UN ARRAY YA ARMADO: NADA DE CONCATENAR NI FORMATEAR AHÍ
+Private $aCeldasPares As New String[]
+
 Public Sub Form_Open()
 
   ' ============================================
@@ -2612,6 +2637,72 @@ Public Sub btnMostrarBuscar_Click()
 
 End
 
+' ============================================
+' Función   : txtEditorProyecto_KeyPress
+' Propósito : Intercepta atajos de teclado dentro del editor.
+'             Actualmente: Ctrl+S dispara el guardado del archivo abierto.
+' Parámetros: (Evento de teclado, sin parámetros)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtEditorProyecto_KeyPress()
+
+  Dim sSeleccion As String
+
+  ' --- 1. Ctrl + s → DISPARAR EL EVENTO DEL BOTÓN GUARDAR ---
+  ' Stop Event EVITA QUE EL EDITOR PROCESE Ctrl+S COMO CARÁCTER DE CONTROL
+  ' Y QUE INSERTE ALGO RARO EN EL TEXTO
+  If Key.Control And Key.Code = Key["s"] Then
+    Stop Event
+    btnGuardarCambiosEditor_Click()
+    Return
+  Endif
+
+  ' --- 2. Ctrl + f → ABRIR EL PANEL DE BÚSQUEDA PROPIO ---
+  ' Stop Event EVITA QUE EL TextEditor ABRA SU PROPIO PANEL DE BÚSQUEDA
+  ' (ShowFindPanel), QUE NO TIENE LA NAVEGACIÓN NI LA GRILLA DE RESULTADOS DEL
+  ' NUESTRO. NO HAY PROPIEDAD PARA DESACTIVAR LOS ATAJOS DEL CONTROL.
+  If Key.Control And Key.Code = Key["f"] Then
+    Stop Event
+
+    ' ES «QUIERO BUSCAR», NO «ALTERNAR EL PANEL»: SI YA ESTÁ ABIERTO NO SE
+    ' CIERRA. POR ESO NO SE INVOCA btnMostrarBuscar_Click, QUE ALTERNA Y
+    ' ADEMÁS LIMPIARÍA LA BÚSQUEDA EN CURSO
+    If Not btnMostrarBuscar.Value Then
+      btnMostrarBuscar.Value = True
+      HBoxBuscar.Visible = True
+    Endif
+
+    ' SI HAY TEXTO SELECCIONADO EN EL EDITOR, PASA AL CUADRO DE BÚSQUEDA:
+    ' SELECCIONAR Y APRETAR CTRL+F ES LA FORMA MÁS CORTA DE BUSCAR UNA
+    ' PALABRA QUE SE TIENE A LA VISTA
+    If txtEditorProyecto.Selected Then
+      sSeleccion = Trim(txtEditorProyecto.SelectedText)
+
+      ' UNA SELECCIÓN DE VARIAS LÍNEAS NO ES UN TÉRMINO DE BÚSQUEDA:
+      ' BuscarEnTexto TRABAJA LÍNEA POR LÍNEA Y NUNCA ENCONTRARÍA NADA
+      If String.InStr(sSeleccion, Chr(10)) = 0 Then
+        If sSeleccion <> "" Then txtBuscarPalabra.Text = sSeleccion
+      Endif
+    Endif
+
+    ' SI NO HUBO SELECCIÓN, QUEDA EL TÉRMINO ANTERIOR SELECCIONADO PARA
+    ' ESCRIBIR ENCIMA SIN TENER QUE BORRARLO
+    txtBuscarPalabra.SelectAll()
+    txtBuscarPalabra.SetFocus()
+
+    ' CON UNA SELECCIÓN DE UNA LÍNEA SE BUSCA SIN PEDIR ENTER: SELECCIONAR Y
+    ' APRETAR CTRL+F PASA A SER UNA SOLA OPERACIÓN. VA AL FINAL, DESPUÉS DE
+    ' HABER LEÍDO LA SELECCIÓN, PORQUE EjecutarBusqueda MUEVE EL CURSOR Y
+    ' CAMBIA LA SELECCIÓN DEL EDITOR
+    If sSeleccion <> "" Then
+      If String.InStr(sSeleccion, Chr(10)) = 0 Then EjecutarBusqueda()
+    Endif
+
+    Return
+  Endif
+
+End
+
 Public Sub menuTraducir_Click()
 
   m_Traduccion.MostrarFormulario(txtEditorProyecto.SelectedText)
@@ -3283,6 +3374,12 @@ Private Sub IrAResultadoBusqueda(iIndice As Integer)
   txtEditorProyecto.Goto(0, iLinea)
   iCursorY = txtEditorProyecto.CursorAt(txtEditorProyecto.Line, txtEditorProyecto.Column).Y
   txtEditorProyecto.ScrollY = txtEditorProyecto.ScrollY + iCursorY
+
+  ' EL SCROLL SE ASIGNA A MANO Y EL CONTROL NO REPINTA LA ZONA QUE QUEDÓ
+  ' ATRÁS: SIN ESTO, CADA BÚSQUEDA DEJA EL FANTASMA DE LA SELECCIÓN ANTERIOR Y
+  ' SE VAN ACUMULANDO. SE VE COMO UN RESALTADO DE OTRO COLOR —EL DE SELECCIÓN
+  ' INACTIVA— QUE DESAPARECE AL HACER SCROLL O AL ESCRIBIR
+  txtEditorProyecto.Refresh()
 
   ' --- 3. SELECCIÓN DE LA COINCIDENCIA ---
   ' ORDEN (Column, Line, Column, Line) EN TODOS LOS MÉTODOS DE POSICIONAMIENTO
@@ -5187,26 +5284,6 @@ Public Sub btnImportarJASON_Click()
 End
 
 ' ============================================
-' Función   : txtEditorProyecto_KeyPress
-' Propósito : Intercepta atajos de teclado dentro del editor.
-'             Actualmente: Ctrl+S dispara el guardado del archivo abierto.
-' Parámetros: (Evento de teclado, sin parámetros)
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub txtEditorProyecto_KeyPress()
-
-  ' --- 1. Ctrl + s → DISPARAR EL EVENTO DEL BOTÓN GUARDAR ---
-  ' Stop Event EVITA QUE EL EDITOR PROCESE Ctrl+S COMO CARÁCTER DE CONTROL
-  ' Y QUE INSERTE ALGO RARO EN EL TEXTO
-  If Key.Control And Key.Code = Key["s"] Then
-    Stop Event
-    btnGuardarCambiosEditor_Click()
-    Return
-  Endif
-
-End
-
-' ============================================
 ' Función   : ConfirmarDescartarCambios
 ' Propósito : Si hay cambios sin guardar en el archivo abierto en el editor,
 '             pregunta al usuario si guardar, descartar o cancelar. Encapsula
@@ -5465,85 +5542,13 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
   ' --- REFRESCAMOS EL COMBOBOX ---
   cmbArticulosRevista.Refresh
 
+  ' PANEL DE ANÁLISIS DE PARES
+  InicializarPanelPares()
+
   ' --- 8. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
   bAbriendoProyecto = False
 
 End
-
-' ' ============================================
-' ' Función   : AbrirProyecto
-' ' Propósito : Punto de entrada único para abrir un proyecto desde el menú.
-' '             Verifica cambios sin guardar del proyecto previo, configura el
-' '             diálogo según el tipo, y delega la carga al handler específico.
-' ' Parámetros: nTipoProyecto As Integer — uno de m_Constantes.TIPO_*
-' ' Retorna   : (Sub, sin retorno)
-' ' ============================================
-' Public Sub AbrirProyecto(nTipoProyecto As Integer)
-'
-'   ' --- 1. GUARD: CAMBIOS SIN GUARDAR EN EL PROYECTO PREVIO ---
-'   ' SE VERIFICA ANTES DE TODO LO DEMÁS PARA QUE LA PREGUNTA APAREZCA
-'   ' EN EL CONTEXTO CORRECTO (PROYECTO ANTERIOR, NO EL NUEVO)
-'   If Not ConfirmarDescartarCambios() Then Return
-'
-'   ' --- 2. CONFIGURAR EL DIÁLOGO SEGÚN EL TIPO DE PROYECTO ---
-'   Select Case nTipoProyecto
-'     Case m_Constantes.TIPO_REVISTA_MD
-'       Dialog.Title = "Abrir proyecto en Markdown"
-'       Dialog.Filter = ["r-*.md", "Markdown"]
-'     Case m_Constantes.TIPO_LIBRO_MD
-'       Dialog.Title = "Abrir libro (Markdown)"
-'       Dialog.Filter = ["l-*.md", "Libro en Markdown"]
-'     Case m_Constantes.TIPO_LIBRO_LATEX
-'       Dialog.Title = "Abrir proyecto en LaTeX"
-'       Dialog.Filter = ["l-*.tex", "LaTeX"]
-'   End Select
-'
-'   m_Sonido.sonar("Info")
-'   Dialog.AutoExt = False
-'   Dialog.Path = User.Home
-'
-'   ' --- 3. MOSTRAR EL DIÁLOGO Y MANEJAR CANCELACIÓN ---
-'   ' Dialog.OpenFile RETORNA True CUANDO EL USUARIO CANCELA
-'   If Dialog.OpenFile() Then Return
-'
-'   ' --- 4. GUARDAR EL TIPO ELEGIDO PARA QUE OTRAS RUTINAS LO USEN ---
-'   TipoProyectoActual = nTipoProyecto
-'
-'   ' --- 5. ACTIVAR LA BANDERA DE APERTURA EN CURSO ---
-'   ' EVITA QUE EL Click DE cmbArticulosRevista DISPARE OTRA VEZ EL GUARD
-'   ' CUANDO CargarListaArticulosMD ASIGNE EL Index DEL COMBOBOX
-'   bAbriendoProyecto = True
-'
-'   ' --- 6. DELEGAR LA CARGA AL HANDLER ESPECÍFICO DEL TIPO ---
-'   ' LLAMAMOS A LA FUNCIÓN CORRESPONDIENTE SEGÚN EL TIPO
-'   Select Case nTipoProyecto
-'     Case m_Constantes.TIPO_REVISTA_MD, m_Constantes.TIPO_LIBRO_MD
-'       ' SI LA APERTURA ABORTÓ, SE SALE SIN TOCAR NADA DE LA UI: EL USUARIO SIGUE
-'       ' EN SU PROYECTO ANTERIOR Y LOS PANELES DEBEN SEGUIR DESCRIBIÉNDOLO.
-'       ' bAbriendoProyecto SE APAGA ACÁ PORQUE ESTE Return SALTEA EL APARTADO 7:
-'       ' SI QUEDARA EN True, EL PRÓXIMO cmbArticulosRevista_Click SUPRIMIRÍA EL
-'       ' GUARD DE CAMBIOS SIN GUARDAR Y EL USUARIO PERDERÍA TRABAJO SIN AVISO
-'       If Not AbrirProyectoMD(nTipoProyecto) Then
-'         bAbriendoProyecto = False
-'         Return
-'       Endif
-'       m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, TextEditorPreview)
-'       m_RevisarPDF.PoblarComboPDF()
-'       m_GestionImagenes.PoblarComboImagenes()
-'       m_BuscarRegex.InicializarTabRegex()
-'       FMain.PanelRetocarImagenes.Visible = True
-'       FMain.PanelRevisarPDF.Visible = True
-'       FMain.PanelShortCodes.Visible = True
-'       FMain.svPCRE.Visible = True
-'       pAreaEditor.Layout = [1, 1]
-'   End Select
-'   ' --- REFRESCAMOS EL COMOBOBOX ---
-'   cmbArticulosRevista.Refresh
-'
-'   ' --- 7. DESACTIVAR LA BANDERA AL TERMINAR LA APERTURA ---
-'   bAbriendoProyecto = False
-'
-' End
 
 ' MANEJA LA SELECCIÓN DE ARCHIVOS MARKDOWN DEL COMBOBOX
 ' VERIFICA CAMBIOS SIN GUARDAR ANTES DE CAMBIAR DE ARCHIVO
@@ -8012,7 +8017,325 @@ Public Sub btnTipografiaHTML_Click()
 
 End
 
-' NOTA: RestaurarTipografiaHTML SE ELIMINÓ. LA REPOSICIÓN DE LA TIPOGRAFÍA LA
-' HACE AHORA m_EditorHTML POR SU CUENTA, EN Iniciar Y DESPUÉS DE CADA CARGA DE
-' ARCHIVO. NO HAY QUE INVOCAR NADA DESDE EL APARTADO 22 DE AbrirProyectoMD
-' SALVO m_EditorHTML.Iniciar.
+' ============================================
+' Función   : InicializarPanelPares
+' Propósito : Puebla el combo de pares y deja el panel en estado inicial.
+'             Se invoca UNA vez, desde Form_Open.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub InicializarPanelPares()
+
+  ' --- 1. INICIALIZACIÓN ---
+  ' LAS COMILLAS CURVAS INGLESAS CON String.Chr$ PARA QUE EL .class NO DEPENDA
+  ' DE QUE LA CODIFICACIÓN SOBREVIVA A UN COPIAR Y PEGAR
+  $aParesIzquierdos.Clear()
+  $aParesDerechos.Clear()
+
+  ' --- 2. ENTRADA NEUTRA, SIN PAR ASOCIADO ---
+  $aParesIzquierdos.Add("")
+  $aParesDerechos.Add("")
+
+  ' --- 3. PARES PREDEFINIDOS ---
+  $aParesIzquierdos.Add("«")
+  $aParesDerechos.Add("»")
+
+  $aParesIzquierdos.Add(String.Chr$(8220))
+  $aParesDerechos.Add(String.Chr$(8221))
+
+  $aParesIzquierdos.Add("¿")
+  $aParesDerechos.Add("?")
+
+  $aParesIzquierdos.Add("¡")
+  $aParesDerechos.Add("!")
+
+  $aParesIzquierdos.Add("(")
+  $aParesDerechos.Add(")")
+
+  $aParesIzquierdos.Add("[")
+  $aParesDerechos.Add("]")
+
+  $aParesIzquierdos.Add("{")
+  $aParesDerechos.Add("}")
+
+  ' --- 4. POBLAR EL COMBO SIN DISPARAR EL ANÁLISIS ---
+  $bPoblandoPares = True
+
+  cmbTipoDePar.Clear()
+  cmbTipoDePar.Add("(personalizado)")
+  cmbTipoDePar.Add("«  »   comillas latinas")
+  cmbTipoDePar.Add(String.Chr$(8220) & "  " & String.Chr$(8221) & "   comillas inglesas")
+  cmbTipoDePar.Add("¿  ?   interrogación")
+  cmbTipoDePar.Add("¡  !   exclamación")
+  cmbTipoDePar.Add("(  )   paréntesis")
+  cmbTipoDePar.Add("[  ]   corchetes")
+  cmbTipoDePar.Add("{  }   llaves")
+  cmbTipoDePar.Index = 0
+
+  $bPoblandoPares = False
+
+  ' --- 5. COLUMNAS DEL GRID ---
+  ' SIN ESTO, Columns.Count ES 0: ASIGNAR Rows.Count NO PRODUCE NINGUNA CELDA,
+  ' EL EVENTO Data NO SE DISPARA Y EL GRID QUEDA VACÍO AUNQUE EL ANÁLISIS HAYA
+  ' ENCONTRADO ERRORES
+  With gvTipoDePar
+    .Columns.Count = COLUMNAS_PARES
+    .Rows.Count = 0
+    .Header = GridView.Horizontal
+    .ScrollBar = Scroll.Both
+    .Resizable = True
+
+    .Columns[0].Title = "Párrafo"
+    .Columns[0].Width = 80
+    .Columns[0].Alignment = Align.Right
+
+    .Columns[1].Title = "Pos."
+    .Columns[1].Width = 60
+    .Columns[1].Alignment = Align.Center
+
+    .Columns[2].Title = "Car."
+    .Columns[2].Width = 60
+    .Columns[2].Alignment = Align.Center
+
+    .Columns[3].Title = "Prof."
+    .Columns[3].Width = 60
+    .Columns[3].Alignment = Align.Center
+
+    .Columns[4].Title = "Falla"
+    .Columns[4].Width = 260
+    .Columns[4].Alignment = Align.Left
+  End With
+
+  ' --- 6. ESTADO INICIAL ---
+  LimpiarPanelPares()
+  lblMensajesPares.Text = "Elija un par o escriba uno propio."
+
+End
+
+' ============================================
+' Función   : LimpiarPanelPares
+' Propósito : Vacía grid, hallazgos y mensaje. Se invoca AL INICIO de cada
+'             análisis, antes de producir nada nuevo: un mensaje que sobrevive
+'             a la acción siguiente miente.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub LimpiarPanelPares()
+
+  $aHallazgosPares.Clear()
+  $aCeldasPares.Clear()
+
+  gvTipoDePar.Rows.Count = 0
+  lblMensajesPares.Text = ""
+
+End
+
+' ============================================
+' Función   : cmbTipoDePar_Click
+' Propósito : Analiza el par elegido. El combo tiene precedencia sobre los
+'             textbox: al elegir, los vacía, para no dejar huella de un par
+'             ad hoc que ya no es el que se está analizando.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub cmbTipoDePar_Click()
+
+  ' --- 1. SUPRESIÓN DE REENTRADA (SC-06) ---
+  If $bPoblandoPares Then Return
+
+  ' --- 2. EL COMBO MANDA: SE BORRA EL PAR AD HOC ---
+  txtParIzquierdo.Text = ""
+  txtParDerecho.Text = ""
+
+  ' --- 3. LA ENTRADA NEUTRA NO ANALIZA NADA ---
+  If cmbTipoDePar.Index <= 0 Then
+    LimpiarPanelPares()
+    lblMensajesPares.Text = "Elija un par o escriba uno propio."
+    Return
+  Endif
+
+  ' --- 4. ANÁLISIS ---
+  AnalizarParesEnPanel($aParesIzquierdos[cmbTipoDePar.Index], $aParesDerechos[cmbTipoDePar.Index])
+
+End
+
+' ============================================
+' Función   : txtParDerecho_KeyPress
+' Propósito : Dispara el análisis del par ad hoc con Return o Enter. Es el
+'             segundo textbox el que dispara, porque es el último que se
+'             completa al tipear.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtParDerecho_KeyPress()
+
+  ' --- 1. SOLO RESPONDE A LAS DOS TECLAS DE CONFIRMACIÓN ---
+  ' Key.Return ES LA DEL BLOQUE PRINCIPAL Y Key.Enter LA DEL PAD NUMÉRICO:
+  ' SON CONSTANTES DISTINTAS Y HAY QUE CONTEMPLAR LAS DOS (RC-GM-10)
+  If Key.Code <> Key.Return Then
+    If Key.Code <> Key.Enter Then Return
+  Endif
+
+  Stop Event
+
+  ' --- 2. EL COMBO PASA A NEUTRO PARA NO MENTIR ---
+  ' EL ÚLTIMO ANÁLISIS YA NO ES EL DEL PAR QUE EL COMBO MUESTRA.
+  ' CON LA BANDERA LEVANTADA PARA QUE EL CAMBIO NO RELANCE EL ANÁLISIS
+  $bPoblandoPares = True
+  cmbTipoDePar.Index = 0
+  $bPoblandoPares = False
+
+  ' --- 3. ANÁLISIS ---
+  AnalizarParesEnPanel(txtParIzquierdo.Text, txtParDerecho.Text)
+
+End
+
+' ============================================
+' Función   : AnalizarParesEnPanel
+' Propósito : Corre el emparejamiento sobre el texto que está EN PANTALLA y
+'             vuelca el resultado al grid y al label. Es el único punto donde
+'             el panel habla con m_Pares.
+' Parámetros: sIzquierdo As String — carácter de apertura
+'             sDerecho As String — carácter de cierre
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub AnalizarParesEnPanel(sIzquierdo As String, sDerecho As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oResumen As CResumenPares
+  Dim oHallazgo As CHallazgoPar
+  Dim sTexto As String
+  Dim sMensaje As String
+  Dim iIndice As Integer
+
+  ' --- 2. LIMPIEZA PREVIA ---
+  ' ANTES DE CUALQUIER TRABAJO: SI SE LIMPIARA DESPUÉS, UN RETORNO TEMPRANO
+  ' DEJARÍA EN PANTALLA EL RESULTADO DEL ANÁLISIS ANTERIOR
+  LimpiarPanelPares()
+
+  ' --- 3. EL TEXTO ES EL DEL EDITOR, NO EL DEL DISCO ---
+  ' SI SE ANALIZARA EL ARCHIVO GUARDADO, CORREGIR UNA COMILLA Y REANALIZAR
+  ' SEGUIRÍA MOSTRANDO EL ERROR HASTA GUARDAR. INUTILIZABLE PARA CORREGIR
+  sTexto = txtEditorProyecto.Text
+
+  If String.Len(sTexto) = 0 Then
+    lblMensajesPares.Text = "No hay texto en el editor."
+    Return
+  Endif
+
+  ' --- 4. ANÁLISIS ---
+  oResumen = m_Pares.AnalizarPar(sTexto, sIzquierdo, sDerecho, $aHallazgosPares)
+
+  If Not oResumen.bValido Then
+    lblMensajesPares.Text = oResumen.sMotivo
+    Return
+  Endif
+
+  ' --- 5. FORMATEO DE LAS CELDAS ---
+  ' TODO EL FORMATEO OCURRE ACÁ, UNA VEZ. EL EVENTO Data SOLO INDEXA (GV-15).
+  ' EL +1 CONVIERTE DE LA NUMERACIÓN DE LA API (0-INDEXADA) A LA QUE LEE UNA
+  ' PERSONA. SI LA BARRA DE ESTADO DEL EDITOR MUESTRA EL VALOR CRUDO, EL
+  ' AJUSTE SE SACA ACÁ Y SOLO ACÁ: EL DATO GUARDADO NO SE TOCA NUNCA
+  For iIndice = 0 To $aHallazgosPares.Max
+    oHallazgo = $aHallazgosPares[iIndice]
+    $aCeldasPares.Add(CStr(oHallazgo.iParrafo + 1))
+    $aCeldasPares.Add(CStr(oHallazgo.iPos + 1))
+    $aCeldasPares.Add(oHallazgo.sCaracter)
+
+    ' PROFUNDIDAD EN BLANCO CUANDO NO APLICA —UN CIERRE SIN APERTURA NO TIENE
+    ' NIVEL—, PARA NO MOSTRAR UN CERO QUE SE LEERÍA COMO DATO
+    If oHallazgo.iProfundidad > 0 Then
+      $aCeldasPares.Add(CStr(oHallazgo.iProfundidad))
+    Else
+      $aCeldasPares.Add("")
+    Endif
+    $aCeldasPares.Add(m_Pares.DescribirClase(oHallazgo.iClase))
+  Next
+
+  gvTipoDePar.Rows.Count = $aHallazgosPares.Count
+
+  ' --- 6. MENSAJE DE ESTADO ---
+  ' EL LABEL HABLA SIEMPRE, TAMBIÉN CUANDO NO HAY ERRORES: UN GRID VACÍO NO
+  ' DISTINGUE «SIN ERRORES» DE «NO SE ANALIZÓ NADA» (GV-23).
+  ' EMPIEZA NOMBRANDO EL PAR PORQUE CON LOS TEXTBOX VACÍOS NO HAY OTRO MODO
+  ' DE CONFIRMAR QUÉ SE ESTÁ BUSCANDO
+  sMensaje = sIzquierdo & " " & sDerecho & "  ·  " & CStr(oResumen.iPares) & " pares"
+  sMensaje &= "  ·  profundidad " & CStr(oResumen.iProfundidadMax)
+
+  ' LA PROFUNDIDAD INUSUAL NO ES UN ERROR NI TIENE POSICIÓN: AVISA QUE ALGO
+  ' PASA AUNQUE LA PILA CIERRE, Y POR ESO VA EN EL MENSAJE Y NO EN EL GRID
+  If oResumen.bProfundidadInusual Then sMensaje &= " (inusual)"
+
+  If oResumen.iTotalErrores = 0 Then
+    sMensaje &= "  ·  sin errores"
+  Else
+    sMensaje &= "  ·  " & CStr(oResumen.iTotalErrores) & " errores"
+    ' EL CORTE SE AVISA: UNA LISTA TRUNCADA SIN AVISO ES OTRA FORMA DE MENTIR
+    If $aHallazgosPares.Count < oResumen.iTotalErrores Then
+      sMensaje &= " (se muestran " & CStr($aHallazgosPares.Count) & ")"
+    Endif
+  Endif
+
+  lblMensajesPares.Text = sMensaje
+
+End
+
+' ============================================
+' Función   : gvTipoDePar_Data
+' Propósito : Entrega el texto de una celda visible del grid.
+' Parámetros: iFila As Integer — fila que el control está pintando
+'             iColumna As Integer — columna que el control está pintando
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub gvTipoDePar_Data(iFila As Integer, iColumna As Integer)
+
+  ' RUTA CALIENTE: SOLO INDEXACIÓN (GV-15).
+  ' LA FIRMA LLEVA LOS DOS PARÁMETROS Y SE VALIDA AL LANZAR, NO AL COMPILAR:
+  ' DECLARARLA SIN ELLOS HACE FALLAR LA INSTANCIACIÓN DEL FORMULARIO CON UN
+  ' MENSAJE QUE APUNTA A OTRO ARCHIVO (GV-18)
+  gvTipoDePar.Data.Text = $aCeldasPares[iFila * COLUMNAS_PARES + iColumna]
+
+End
+
+' ============================================
+' Función   : gvTipoDePar_Click
+' Propósito : Lleva el cursor del editor al carácter huérfano de la fila
+'             elegida y lo deja seleccionado.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub gvTipoDePar_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oHallazgo As CHallazgoPar
+
+  If gvTipoDePar.Row < 0 Then Return
+  If gvTipoDePar.Row > $aHallazgosPares.Max Then Return
+
+  oHallazgo = $aHallazgosPares[gvTipoDePar.Row]
+
+  ' --- 2. POSICIONAR Y CENTRAR ---
+  ' RC-GM-06: EL ORDEN ES (Column, Line) EN TODOS LOS MÉTODOS DEL TextEditor.
+  ' ACÁ, PRIMERO LA POSICIÓN DENTRO DEL PÁRRAFO Y DESPUÉS EL PÁRRAFO.
+  ' INVERTIRLO NO FALLA RUIDOSAMENTE: EN ARCHIVOS CORTOS QUEDA SELECCIÓN VACÍA
+  ' POR CLAMP A Max, Y EN LOS LARGOS SELECCIONA VARIAS LÍNEAS
+  Try txtEditorProyecto.GotoCenter(oHallazgo.iPos, oHallazgo.iParrafo)
+  If Error Then
+    lblMensajesPares.Text = "No se pudo posicionar el cursor: " & Error.Text
+    Return
+  Endif
+
+  ' --- 3. SELECCIONAR EL CARÁCTER HUÉRFANO ---
+  Try txtEditorProyecto.Select(oHallazgo.iPos, oHallazgo.iParrafo, oHallazgo.iPos + 1, oHallazgo.iParrafo)
+  If Error Then
+    lblMensajesPares.Text = "No se pudo seleccionar: " & Error.Text
+    Return
+  Endif
+
+  ' --- 4. DEVOLVER EL FOCO AL EDITOR ---
+  ' EL CLICK EN EL GRID SE LLEVÓ EL FOCO Y EL FLUJO NATURAL ES SEGUIR
+  ' ESCRIBIENDO EN EL EDITOR (RC-GM-07). VA AL FINAL, Y SIN Try: SU FALLO NO
+  ' COMPROMETE NINGÚN DATO (RC-GM-08)
+  txtEditorProyecto.SetFocus()
+
+End
