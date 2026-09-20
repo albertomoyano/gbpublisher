@@ -3,22 +3,28 @@
 Public rutaApp As String = User.Home &/ ".gbpublisher"
 Public $Bash As Process
 Public TipoProyectoActual As Integer
-' Private ContenidoArt As Result
-' Private ContenidoAut As Result
 Private LastTextBox As TextBox
 Private sTB_Text As String
 Public ProyectoActualCompleto As String
 Public sRutaArchivoAbierto As String
+
 ' PARA COMPARAR SI HUBO CAMBIOS
 Public sContenidoOriginal As String
+
 ' --- BANDERA QUE INDICA QUE SE ESTÁ ABRIENDO UN PROYECTO NUEVO ---
 ' SUPRIME LA VERIFICACIÓN DE CAMBIOS SIN GUARDAR EN cmbArticulosRevista_Click
 ' MIENTRAS DURA LA APERTURA, PORQUE EL GUARD YA SE EVALUÓ AL INICIO DE AbrirProyecto
 Public bAbriendoProyecto As Boolean = False
+
 ' --- BANDERA Y MEMORIA PARA EL COMBO DE IMÁGENES DEL RETOCADOR ---
 Public bRevirtiendoComboImagen As Boolean = False   ' SUPRIME EL _Click DURANTE UNA REVERSIÓN
 Public iIndiceImagenCargada As Integer = -1         ' ÍNDICE DE LA IMAGEN EFECTIVAMENTE EN MEMORIA
 Public bPoblandoComboImagen As Boolean = False   ' SUPRIME EL _Click DURANTE UN REPOBLADO EN CALIENTE
+
+' LARGO DEL TÉRMINO BUSCADO, EN CARACTERES. HACE FALTA PARA SABER DÓNDE
+' TERMINA LA SELECCIÓN, Y SE GUARDA ACÁ Y NO SE LEE DE txtBuscarPalabra
+' PORQUE EL USUARIO PUEDE EDITARLO DESPUÉS DE BUSCAR
+Private $iBusqLargoTermino As Integer
 
 Public Sub Form_Open()
 
@@ -3240,31 +3246,49 @@ Private Sub LimpiarBusqueda()
   gvResultados.Rows.Count = 0
   vConteo.Value = 0
 
+  ' EL LARGO DEL TÉRMINO ES PARTE DEL ESTADO DE LA BÚSQUEDA Y SE RESETEA CON
+  ' EL RESTO: SIN ESTO, UN Select POSTERIOR USARÍA EL LARGO DE LA BÚSQUEDA
+  ' ANTERIOR
+  $iBusqLargoTermino = 0
+
 End
 
-' ============================================================================
-' IRALINEABUSQUEDA - POSICIONA UNA LÍNEA AL TOPE DE LA VENTANA DEL EDITOR
-' ============================================================================
-' PARÁMETROS:
-'   iLinea: NÚMERO DE LÍNEA (BASE 1)
-' MUEVE EL CURSOR Y AJUSTA EL SCROLL PARA QUE LA LÍNEA QUEDE AL TOPE
-' ============================================================================
-Private Sub IrALineaBusqueda(iLinea As Integer)
+' ============================================
+' Función   : IrAResultadoBusqueda
+' Propósito : Lleva el editor a una coincidencia, la deja seleccionada y
+'             posiciona su línea al tope de la ventana.
+' Parámetros: iIndice As Integer — índice en los arrays de resultados, base 0
+' Retorna   : nada
+' ============================================
+Private Sub IrAResultadoBusqueda(iIndice As Integer)
 
+  Dim iLinea As Integer
+  Dim iColumna As Integer
   Dim iCursorY As Integer
 
-  ' VERIFICAR QUE LA LÍNEA EXISTA
-  If iLinea < 1 Or iLinea > txtEditorProyecto.Count Then Return
+  ' --- 1. VALIDACIÓN DEL ÍNDICE Y DE LA LÍNEA ---
+  If iIndice < 0 Then Return
+  If iIndice > $aBusqNumeroLinea.Max Then Return
 
-  ' MOVER EL CURSOR A LA LÍNEA (COLUMNA 0, LÍNEA EN BASE 0)
-  txtEditorProyecto.Goto(0, iLinea - 1)
+  ' LOS ARRAYS DE BuscarEnTexto SON BASE 1; EL TextEditor ES BASE 0 (RF-02)
+  iLinea = $aBusqNumeroLinea[iIndice] - 1
+  iColumna = $aBusqPosicionEnLinea[iIndice] - 1
 
-  ' OBTENER LA POSICIÓN Y DEL CURSOR DESPUÉS DEL GOTO
-  ' CursorAt CONVIERTE LA POSICIÓN DEL CURSOR EN COORDENADAS DE PIXEL
+  If iLinea < 0 Then Return
+  If iLinea > txtEditorProyecto.Max Then Return
+
+  ' --- 2. CURSOR AL INICIO DE LA LÍNEA Y SCROLL AL TOPE ---
+  ' EL SCROLL SE CALCULA CON EL CURSOR EN LA COLUMNA 0, IGUAL QUE ANTES: ASÍ
+  ' NO DEPENDE DE LA COLUMNA DE LA COINCIDENCIA
+  txtEditorProyecto.Goto(0, iLinea)
   iCursorY = txtEditorProyecto.CursorAt(txtEditorProyecto.Line, txtEditorProyecto.Column).Y
-
-  ' AJUSTAR EL SCROLL SUMANDO LA POSICIÓN ACTUAL DEL SCROLL
   txtEditorProyecto.ScrollY = txtEditorProyecto.ScrollY + iCursorY
+
+  ' --- 3. SELECCIÓN DE LA COINCIDENCIA ---
+  ' ORDEN (Column, Line, Column, Line) EN TODOS LOS MÉTODOS DE POSICIONAMIENTO
+  ' DEL TextEditor (RC-GM-06). LA CONVENCIÓN «LÍNEA PRIMERO» QUE SUGIEREN LAS
+  ' PROPIEDADES DE LECTURA NO SE APLICA ACÁ. NO INVERTIR.
+  Try txtEditorProyecto.Select(iColumna, iLinea, iColumna + $iBusqLargoTermino, iLinea)
 
 End
 
@@ -3297,7 +3321,7 @@ Public Sub btnIrAsiguiente_Click()
     If iRespuesta = 1 Then
       ' VOLVER AL INICIO
       $iBusqIndiceActual = 0
-      IrALineaBusqueda($aBusqNumeroLinea[0])
+      IrAResultadoBusqueda(0)
     Else
       ' MANTENER EN LA ÚLTIMA POSICIÓN
       $iBusqIndiceActual = $aBusqNumeroLinea.Max
@@ -3306,7 +3330,7 @@ Public Sub btnIrAsiguiente_Click()
   Endif
 
   ' IR A LA SIGUIENTE COINCIDENCIA
-  IrALineaBusqueda($aBusqNumeroLinea[$iBusqIndiceActual])
+  IrAResultadoBusqueda($iBusqIndiceActual)
 
 End
 
@@ -3331,8 +3355,8 @@ Public Sub gvResultados_Click()
   ' ACTUALIZAR EL ÍNDICE ACTUAL
   $iBusqIndiceActual = iFilaSeleccionada
 
-  ' IR A LA LÍNEA SELECCIONADA
-  IrALineaBusqueda($aBusqNumeroLinea[iFilaSeleccionada])
+  ' IR A LA COINCIDENCIA SELECCIONADA
+  IrAResultadoBusqueda(iFilaSeleccionada)
 
 End
 
@@ -3402,6 +3426,17 @@ Public Sub menuSabores_Click()
 End
 
 ' ============================================================================
+' BTNBUSCAR_CLICK - EVENTO CLICK DEL BOTÓN BUSCAR
+' ============================================================================
+' LLAMA A LA FUNCIÓN EjecutarBusqueda()
+' ============================================================================
+Public Sub btnBuscar_Click()
+
+  EjecutarBusqueda()
+
+End
+
+' ============================================================================
 ' Función   : EjecutarBusqueda
 ' Propósito : Búsqueda de un término dentro de txtEditorProyecto. Valida
 '             entrada, delega la lógica de búsqueda en
@@ -3432,6 +3467,11 @@ Private Sub EjecutarBusqueda()
   ' LimpiarBusqueda DEBE DEJAR $aBusqNumeroLinea Y $aBusqPosicionEnLinea VACÍOS
   ' PORQUE BuscarEnTexto LOS LLENA CON Add (NO LOS LIMPIA INTERNAMENTE)
   LimpiarBusqueda()
+  ' EL LARGO VA DESPUÉS DE LA LIMPIEZA, NO ANTES: LimpiarBusqueda LO RESETEA
+  ' A CERO, Y UN Select CON LARGO CERO DEJA EL CURSOR EN EL LUGAR CORRECTO
+  ' PERO SIN NADA SELECCIONADO. EN CARACTERES Y NO EN BYTES, PORQUE LA COLUMNA
+  ' DEL TextEditor CUENTA CARACTERES (SC-02, RC-GM-12)
+  $iBusqLargoTermino = String.Len(sTermino)
 
   ' --- 3. OBTENCIÓN DEL CONTENIDO DEL EDITOR ---
   sContenido = txtEditorProyecto.Text
@@ -3470,6 +3510,8 @@ Private Sub EjecutarBusqueda()
   ' --- 7. ACTUALIZACIÓN DEL CONTEO ---
   vConteo.Value = iResultados
 
+  IrAResultadoBusqueda(0)
+
   ' --- 8. RUTAS DE UI SEGÚN CANTIDAD DE RESULTADOS ---
   Select Case iResultados
 
@@ -3483,29 +3525,18 @@ Private Sub EjecutarBusqueda()
     Case 1
       ' UNA SOLA COINCIDENCIA: IR DIRECTO Y OCULTAR EL PANEL
       $iBusqIndiceActual = 0
-      IrALineaBusqueda($aBusqNumeroLinea[0])
+      IrAResultadoBusqueda(0)
       btnResultados.Value = False
       TabPanelIzquierdaInferior[5].Visible = False
 
     Case Else
       ' VARIAS COINCIDENCIAS: IR A LA PRIMERA Y MOSTRAR EL PANEL CON LA LISTA
       $iBusqIndiceActual = 0
-      IrALineaBusqueda($aBusqNumeroLinea[0])
+      IrAResultadoBusqueda(0)
       btnResultados.Value = True
       TabPanelIzquierdaInferior[5].Visible = True
 
   End Select
-
-End
-
-' ============================================================================
-' BTNBUSCAR_CLICK - EVENTO CLICK DEL BOTÓN BUSCAR
-' ============================================================================
-' LLAMA A LA FUNCIÓN EjecutarBusqueda()
-' ============================================================================
-Public Sub btnBuscar_Click()
-
-  EjecutarBusqueda()
 
 End
 

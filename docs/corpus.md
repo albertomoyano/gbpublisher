@@ -72,6 +72,8 @@ Síntoma de inversión en archivos largos: la selección abarca múltiples líne
 
 Síntoma en archivos cortos: la selección queda vacía por clamp a `Max`, lo que enmascara el bug. Probar SIEMPRE en archivos largos.
 
+**Relaciones:** vinculo:RC-GM-21
+
 ### RC-GM-07 — Restaurar el foco después de los eventos de UI
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.form.editor
@@ -177,7 +179,7 @@ Patrón seguro y eficiente para buscar o contar ocurrencias de un carácter: `In
 
 Síntoma de este bug: la cuenta de caracteres ASCII funciona pero la de caracteres del español devuelve siempre 0. La consecuencia visual en validadores tipo ContarCaracteresPares es que la columna del carácter multibyte siempre aparece roja sin importar el contenido del archivo.
 
-**Relaciones:** apoya:GV-03, vinculo:SC-02
+**Relaciones:** apoya:GV-03, vinculo:SC-02, vinculo:GV-41
 
 ### RC-GM-13 — Variables de retorno entre formularios modales: módulos, no Public en el form
 
@@ -332,6 +334,27 @@ REGLA OPERATIVA
 **Relaciones:** apoya:RC-GM-02, vinculo:RC-GM-07, vinculo:SC-07
 
 **PENDIENTE:** Verificar empíricamente el comportamiento de Finally con Return en 3.22.1 antes de comprometer código que dependa de él.
+
+### RC-GM-21 — Firmas de posicionamiento de TextEdit: no son las de TextEditor
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+`TextEdit` (gb.qt5.ext) y `TextEditor` (gb.form.editor) son controles distintos y sus firmas de posicionamiento NO coinciden. Confundirlas es fácil porque los dos editan texto y los nombres de método se parecen.
+
+En `TextEdit`:
+
+    Pos                      posicion absoluta del cursor
+    Select(Posicion, Largo)  DOS argumentos, no cuatro
+
+`Pos` y `Select` cuentan CARACTERES del texto plano, y se corresponden uno a uno con `String.Mid` sobre `.Text`. Verificado: una linea de cinco letras acentuadas avanza la columna de 1 a 6, no a 11.
+
+Corolario operativo: las posiciones que se calculen para alimentar a `Select` deben salir de `String.Len` y `String.InStr`, nunca de `Len` e `InStr`, que operan en bytes y desfasan con el primer acento (RC-GM-12, SC-02).
+
+La firma de cuatro coordenadas `(Column1, Line1, Column2, Line2)` de RC-GM-06 es del `TextEditor` y NO aplica acá.
+
+**Relaciones:** vinculo:RC-GM-06, vinculo:RF-03, vinculo:SC-02
+
+**PENDIENTE:** ToPos(parrafo, 0) no devolvio el inicio del parrafo esperado: sobre un texto de tres parrafos dio seis caracteres de mas. Queda SIN USAR hasta relevarlo. Mientras tanto los limites de parrafo se calculan buscando el salto de linea con String.InStr y String.RInStr.
 
 ---
 
@@ -769,6 +792,80 @@ Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se h
 
 **PENDIENTE:** Los XSLT de salida se copian a local y hoy no declaran si fueron modificados. Bajo el criterio de la contrapartida deberían hacerlo, sobre todo si el auditor llega a auditar la producción propia. Pendiente de decisión.
 
+### SC-12 — Editor de bibliografia: el formato de trabajo es HTML, no RTF
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.qt5.ext / LibreOffice 24.2 · **Verificado:** 2026-09
+
+DECISION CERRADA. El panel de bibliografia de FMain trabaja sobre archivos `.html` y no sobre `.rtf`, aunque el original llegue en RTF.
+
+FLUJO
+
+    .docx de la bibliografia
+      -> LibreOffice, a mano, fuera de la aplicacion
+    .rtf en /originales
+      -> importacion de la aplicacion, una sola vez por libro
+    .html de trabajo, que la aplicacion posee de ahi en mas
+
+El combo lista `.rtf` y `.html`. Un `.rtf` que ya tiene su `.html` hermano no se lista: cada bibliografia aparece una sola vez. No se listan `.docx`: /originales guarda todos los originales del libro y el combo se llenaria de ruido.
+
+POR QUE HTML
+
+1. Es el formato nativo del control: la propiedad `RichText` del `TextEdit` es un subconjunto de HTML y no el formato RTF. Cargar y guardar son una linea cada uno.
+2. Serializar a RTF exigiria recorrer el documento leyendo `Format` en cada posicion, porque no hay forma de detectar uniformidad de formato (GV-35). Medido: 2,8 s por cada 100.000 caracteres, en CADA guardado.
+3. El archivo no se comparte con nadie, asi que nadie del otro lado espera RTF.
+
+QUE LLEVA EL ARCHIVO
+
+Estructura de parrafos, negrita, italica y dos semaforos de cotejo: fondo amarillo para la entrada ya volcada en la base, letras rojas para la entrada ausente del .md. No lleva familia ni cuerpo tipografico: la tipografia es ajuste de pantalla y se quita al guardar (GV-37).
+
+Los semaforos son el registro de avance de varios dias de trabajo, no decoracion. De ahi el guardado atomico con respaldo y el contador de marcas por parrafo.
+
+**Relaciones:** vinculo:GV-40, vinculo:GV-35, vinculo:GV-37, vinculo:RC-GM-21
+
+**PENDIENTE:** Falta la bandera de reentrada durante la importacion: la sentencia Wait deja correr los eventos y los botones siguen siendo pulsables (GV-17).
+
+### SC-13 — Trabajo pesado con herramientas externas: script propio y terminal embebido
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.form.terminal / bash / Linux Mint · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. Cuando una tarea depende de una herramienta externa que ya sabe hacer el trabajo, la lógica va en un script propio en `engine/`, invocado desde un `TerminalView`, y no se reimplementa en Gambas.
+
+El caso que fijó la regla: un importador de scripts SQL para gbCorpus. La versión en Gambas obligaba a inventar un formato de archivo —separador de bloques, cabecera obligatoria, detección de bloques vacíos— solo para no escribir un parser de SQL. `sqlite3` es un parser de SQL. Delegarle el trabajo no simplificó el código: eliminó el problema.
+
+CRITERIO DE DECISIÓN
+
+Lo determina LA FORMA DE LO QUE VUELVE, no la duración ni la cantidad de pasos.
+
+1. Si Gambas necesita de vuelta UNA DECISIÓN —si funcionó o no—: script más terminal embebido. El contrato es el código de salida y Gambas no parsea nada.
+
+2. Si Gambas necesita de vuelta DATOS ESTRUCTURADOS: el script sigue conviniendo, pero el parseo hay que pagarlo igual y el patrón es el de SC-05 —el proceso externo encuentra y calcula, Gambas escribe— con un canal legible por máquina.
+
+3. Si alcanza con una salida corta por stdout: `Exec ... To` en cinco líneas (GV-20). No hay script que valga.
+
+QUÉ SE GANA
+
+El aparato asíncrono de GV-17, GV-18 y GV-19 —bucle de espera, drenaje, vencimiento, firmas de handler, los trozos de 256 bytes— no se usa: el script escribe a un pty que el control pinta solo.
+
+El informe lo compone el script, que es quien tiene los datos, y se lee en la pestaña.
+
+Y la herramienta queda utilizable a mano. Eso no es comodidad: cuando la parte de Gambas se trabó, el script seguía funcionando desde una terminal y por eso se lo pudo diagnosticar.
+
+INTÉRPRETES ADMITIDOS
+
+`bash` y `perl-base`, que son Essential en Debian y Ubuntu. `python3` solo declarándolo como dependencia. `lua` NO: el paquete no existe con ese nombre y `lua5.4` no instala `/usr/bin/lua` (GV-08).
+
+LO QUE NO SE VA DEL PROBLEMA
+
+Mover la lógica fuera de Gambas no exime de RC-GM-02 ni de GV-23. En bash, un `&&` cuyo lado izquierdo es falso devuelve 1, y bajo `set -o pipefail`, si es el último comando de un grupo, contamina el estado de la tubería entera. En la sesión que originó esta regla, esa línea hizo que el informe declarara un rollback que no había ocurrido: la importación se había aplicado.
+
+De ahí la regla operativa: UN INFORME NO AFIRMA LO QUE NO VERIFICÓ. Si va a decir que la base quedó como estaba, que lo consulte antes de decirlo.
+
+BASE COMPARTIDA
+
+Si el proceso externo escribe en la misma base que la aplicación tiene abierta, la conexión se cierra antes de lanzarlo y se reabre después por un ÚNICO camino explícito, invocado tanto en el éxito como en el fallo. `Finally` no sirve para esto (RC-GM-20).
+
+**Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42
+
 ---
 
 ## RF — Referencia de API
@@ -1064,19 +1161,30 @@ El `While` con `And` común revienta con Out of bounds cuando el array se vacía
 
 ### GV-03 — UTF-8 y cadenas
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / contenedor Ubuntu noble y Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-08
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / contenedor Ubuntu noble y Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
 
 `Lower()`, `LCase()` y `String.Lower()` no pliegan acentos de forma reproducible. Bajo locale C/POSIX son ASCII-only; bajo `es_AR.UTF-8` sí pliegan. Esa dependencia del entorno es PEOR que un comportamiento uniformemente roto: uno roto se detecta en la primera prueba, uno dependiente del entorno funciona en la máquina del desarrollador y falla en una instalación cliente con locale mínimo. Las máquinas de las universidades no se controlan.
 
     Lower("SEÑOR ÁRBOL")  = seÑor Árbol     (bajo C/POSIX)
-    String.Comp("SEÑOR", "señor", gb.IgnoreCase) = 0 -> False
 
-REGLA: donde la salida deba ser reproducible entre máquinas, NO usar `Upper` / `Lower` nativos. Usar las tablas explícitas de `m_FuncionesGenericas`, locale-independientes por construcción:
+gb.IgnoreCase HACE LO MISMO
 
-- `EsLetra(iCodigo)` — criterio de letra para partir palabras
-- `PlegarAMayuscula(iCodigo)` / `PlegarAMinuscula(iCodigo)` — plegado por codepoint
+`String.Comp` y `String.InStr` con `gb.IgnoreCase` se comportan igual que `Lower`: bajo C/POSIX no pliegan acentos, bajo `es_AR.UTF-8` sí. Verificado en Mint 2026-09 sobre el buscador del editor de texto: con el toggle de mayúsculas apagado, `DÉCADA` encontraba `década`. La medición anterior en el contenedor, que había dado negativo, no era un falso negativo: era la otra mitad del mismo comportamiento.
 
-Cobertura: ASCII y Latin-1 Supplement, salteando `×` (215) y `÷` (247), y sin plegar `ß` (223) ni `ÿ` (255), cuyas mayúsculas no siguen la regla de ±32. Alcanza para castellano, portugués, francés e italiano.
+Es la trampa más peligrosa de las tres, porque la comparación parece una operación del lenguaje y no una función de locale.
+
+REGLA: donde la salida deba ser reproducible entre máquinas, NO usar `Upper` / `Lower` nativos NI `gb.IgnoreCase`. Usar las tablas explícitas de `m_FuncionesGenericas`, locale-independientes por construcción:
+
+    EsLetra(iCodigo As Integer) As Boolean
+    PlegarAMayuscula(iCodigo As Integer) As String
+    PlegarAMinuscula(iCodigo As Integer) As String
+    PlegarCadenaAMinuscula(sTexto As String) As String
+
+Las tres de plegado devuelven STRING, no Integer: reciben un codepoint y devuelven el carácter. Comparar su resultado contra un número no compila.
+
+`PlegarCadenaAMinuscula` pliega una cadena entera y CONSERVA LA CANTIDAD DE CARACTERES, porque cada codepoint devuelve exactamente uno. Esa conservación es lo que permite buscar sobre la cadena plegada y usar las posiciones encontradas sobre la cadena original, sin ninguna corrección.
+
+Cobertura: ASCII y Latin-1 Supplement, salteando `×` (215) y `÷` (247), y sin plegar `ß` (223) ni `ÿ` (255), cuyas mayúsculas no siguen la regla de ±32. Alcanza para castellano, portugués, francés e italiano. NO cubre Latin Extended-A, así que `ŽIŽEK` no matchea `Žižek`. Es una limitación conocida y acotada, no un fallo que cambie de máquina en máquina.
 
 `String.IsValid()` responde si una cadena es UTF-8 válido. Es la única forma de detectar un archivo mal codificado.
 
@@ -1087,8 +1195,6 @@ Cobertura: ASCII y Latin-1 Supplement, salteando `×` (215) y `÷` (247), y sin 
 `InStr` y `String.InStr` devuelven posiciones distintas sobre el mismo texto: bytes contra codepoints. Mezclarlas produce desfasajes silenciosos.
 
 El bucle `String.Mid` + `String.Code` por codepoint escala LINEALMENTE, no cuadráticamente: 5.000 codepoints en 0,003 s; 40.000 en 0,021 s. No hace falta optimizarlo.
-
-**PENDIENTE:** String.Comp con gb.IgnoreCase tampoco plegó acentos en el contenedor, pero esa medición arrastra sesgo de locale. Reverificar en Mint antes de confiar en ella.
 
 ### GV-04 — Las claves de Collection son case-sensitive
 
@@ -1148,11 +1254,22 @@ Los no encontrados van a STDERR, no a stdout, y la salida viene ordenada alfabé
 
 Para recuperar la versión de un ejecutable, `dpkg -S` acepta varias rutas en una llamada. Hay que resolver el symlink antes: `/usr/bin/java` es un enlace de alternatives y `dpkg -S` no lo encuentra, pero `readlink -f` llega a `openjdk-21-jre-headless`. Igual `lualatex`, que resuelve a `luahbtex` y de ahí a `texlive-binaries`.
 
+EL PAQUETE DEL BINARIO NO ES SIEMPRE EL PAQUETE DE LA CAPACIDAD
+
+Resolver el enlace dice quién DISTRIBUYE el ejecutable, no quién provee lo que se necesita. Con `java` y con `lualatex` coinciden; con LibreOffice no:
+
+    readlink -f $(command -v soffice)   ->  /usr/lib/libreoffice/program/soffice
+    dpkg -S ...                         ->  libreoffice-common
+
+`libreoffice-common` es datos y configuración compartida. El filtro «HTML (StarWriter)» que usa la importación de bibliografía (SC-12) vive en `libreoffice-writer`. Declarar la dependencia según lo que devuelve `dpkg -S` dejaría conforme a apt con una instalación que no convierte nada.
+
+REGLA: para la dependencia declarada y para el panel de diagnóstico, nombrar el paquete que provee la CAPACIDAD, verificado a mano una vez. `dpkg -S` sirve para reportar la versión instalada, no para decidir qué exigir.
+
 `java -version` escribe en stderr, no en stdout. Un `Exec ... To` devolvería cadena vacía.
 
-`command -v` es preferible a `which`: es builtin de POSIX sh, mientras que `which` vive en debianutils y puede no estar.
+`command -v` es preferible a `which`: es builtin de POSIX sh, mientras que `which` vive en debianutils y puede no estar. Es también la forma correcta de verificar en tiempo de ejecución que una herramienta externa está presente, antes de lanzarla: sin esa comprobación, la ausencia se manifiesta recién al vencer el plazo de espera y con un mensaje que no dice qué instalar (GV-23).
 
-**Relaciones:** vinculo:GV-20
+**Relaciones:** vinculo:GV-20, vinculo:SC-12, apoya:GV-23
 
 ### GV-08 — Empaquetado en Ubuntu y Mint
 
@@ -1648,3 +1765,193 @@ Importa porque hasta acá la única vía segura para escribir un NULL parecía s
 Aplicado en FRelacionarBib: de `related_type` y `related_string` se escribe uno y el otro va a NULL.
 
 **Relaciones:** vinculo:RC-GM-15
+
+### GV-35 — Leer Format en TextEdit: no distingue seleccion mixta, y cuanto cuesta recorrer
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+`Format.Font.Bold` sobre una seleccion que abarca texto con y sin negrita devuelve `True`, igual que sobre una seleccion integramente en negrita. NO hay valor indeterminado.
+
+    parrafo sin negrita      -> False
+    parrafo todo en negrita  -> True
+    mitad y mitad            -> True
+
+La propiedad informa el formato de UN punto de la seleccion, no el del conjunto. Consecuencia: no se puede resolver un parrafo uniforme con una sola lectura ni saltear tramos, porque un salto puede pasar por encima de una italica corta.
+
+COSTO DEL RECORRIDO FINO
+
+`Select(i, 1)` mas la lectura de `Font.Bold`, `Font.Italic`, `Color` y `Background`, por caracter:
+
+    10.000 iteraciones           0,283 s
+    proyectado a 100.000         2,8 s
+
+Medido sobre texto sin formato; con muchos tramos puede ser mas. Es tolerable como costo de guardado ocasional, con `Application.Busy`, pero recordar que mientras corre el procedimiento el interprete no entra al bucle de eventos y la interfaz queda congelada (GV-17).
+
+Por esto el editor de bibliografia no serializa a RTF (SC-12): el recorrido existiria solo para construir el archivo.
+
+**Relaciones:** vinculo:RC-GM-21, vinculo:GV-17, vinculo:SC-12
+
+### GV-36 — Color.Default limpia el fondo del TextEdit pero hace invisible la letra
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+Las dos propiedades de color de `Format` no se comportan igual ante `Color.Default`.
+
+    Format.Background = Color.Default   LIMPIA el fondo, correcto
+    Format.Color = Color.Default        deja el texto INVISIBLE
+
+El texto sigue ahi y se ve al seleccionarlo, pero no se lee. Para quitar un color de letra hay que asignar el color explicito que corresponda, tipicamente `Color.Black`.
+
+Y ninguna de las dos devuelve al leer el valor que se asigno: despues de limpiar un fondo amarillo, `Format.Background` devuelve `rgba(255,255,255,0.000)` y no el valor asignado.
+
+REGLA: nunca preguntar si un tramo tiene el color por omision. Preguntar si tiene exactamente la marca que la aplicacion escribe. Ademas de ser lo unico que funciona, es mas robusto: no depende de la semantica del canal alfa.
+
+**Relaciones:** vinculo:GV-35, vinculo:SC-12
+
+### GV-37 — La fuente del control y el documento cargado se pisan en las dos direcciones
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+Asignar `Font.Name` y `Font.Size` a un `TextEdit` no cambia como se ve un documento que ya esta cargado. El HTML del documento lleva su propia declaracion de familia y cuerpo, y esa le gana a la fuente del control.
+
+Sintoma: el dialogo de tipografia funciona, la eleccion se recuerda al reabrirlo, y en el editor no pasa nada.
+
+Para que el cambio tenga efecto hay que quitar del HTML toda declaracion de `font-family` y `font-size` y volver a cargarlo. Entonces el documento cae en la fuente del control. Reasignar `RichText` manda el cursor al principio: hay que reponer `Pos`.
+
+LA DIRECCION CONTRARIA
+
+Asignar `RichText` rehace el documento entero, y con eso la vista vuelve al valor por omision del control: se lleva puesta la tipografia que estuviera aplicada. Es la misma mecanica, al reves.
+
+Consecuencia operativa: una preferencia de vista no se repone una sola vez al abrir el proyecto. Hay que reponerla DESPUES DE CADA CARGA de documento, y por eso conviene que la preferencia viva en el modulo que carga —que la recuerda, la escribe en la configuracion y la reaplica— y no en el formulario, que no se entera de las recargas.
+
+COROLARIO PARA EL ARCHIVO GUARDADO
+
+Si la tipografia viaja dentro del archivo, queda atada a la fuente que tenia el editor el dia que se guardo, y al reabrirlo el boton de tipografia no tiene efecto. Donde la tipografia sea ajuste de pantalla y no contenido —el editor de bibliografia, SC-12— hay que quitarla TAMBIEN al guardar, no solo al aplicar.
+
+**Relaciones:** vinculo:SC-12, vinculo:GV-35
+
+### GV-38 — El As de Exec exige un literal: una constante da identificador desconocido
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
+
+El nombre del observador de eventos de un proceso se resuelve al compilar y no acepta una constante ni una variable.
+
+    Private Const NOMBRE As String = "ProcX"
+    Try hProceso = Exec aComando For Read As NOMBRE     -> NOMBRE es desconocido
+
+    Try hProceso = Exec aComando For Read As "ProcX"    -> correcto
+
+Es incomodo porque invita a dejar el nombre escrito en cuatro lugares: la invocacion y los tres handlers `_Read`, `_Error` y `_Kill`. No hay forma de centralizarlo en una constante.
+
+Y no hay red de contencion: un nombre mal escrito en el literal NO da error de compilacion, hace fallar el Exec en tiempo de ejecucion con un mensaje que habla de un handler incorrecto y no del nombre (GV-18). Por eso el `Try` con `If Error` sobre el propio `Exec` no es opcional.
+
+**Relaciones:** vinculo:GV-18, apoya:RC-GM-02
+
+### GV-39 — Move no pisa un destino existente
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
+
+La sentencia `Move` falla con `File already exists` si el destino ya existe. No sobrescribe.
+
+Importa en el patron de escritura atomica, que es justamente donde el destino SIEMPRE existe:
+
+    Try File.Save(sRutaTemp, sContenido)     ' 1. TEMPORAL EN LA MISMA CARPETA
+    Try Copy sRuta To sRutaRespaldo          ' 2. RESPALDO
+    Try Kill sRuta                           ' 3. BORRAR EL DESTINO
+    Try Move sRutaTemp To sRuta              ' 4. REEMPLAZO
+
+El paso 3 abre una ventana en la que el archivo no existe. La cubre el respaldo del paso 2, que ya esta escrito en disco. Si el paso 4 falla, el mensaje debe decir donde quedo cada cosa —el contenido en el temporal, la version anterior en el respaldo— y NO borrar el temporal: es el unico lugar donde esta el trabajo.
+
+El temporal va en la misma carpeta que el destino para que el reemplazo no cruce sistemas de archivos.
+
+**Relaciones:** vinculo:GV-01, vinculo:SC-12
+
+### GV-40 — Pandoc lee RTF pero descarta los colores; LibreOffice sin interfaz los conserva
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1 / LibreOffice 24.2 / Linux · **Verificado:** 2026-09
+
+Pandoc tiene lector de RTF desde la version 3.0, marcado como alpha. Lee bien texto, acentos, comillas curvas, italicas y negritas. Pero su modelo interno NO representa color de letra ni color de fondo, asi que los descarta sin aviso.
+
+Medido sobre un archivo real de 99 KB con 119 tramos de fondo amarillo y 7 de letra roja: la salida trajo 95 italicas y 11 negritas correctas, y CERO colores.
+
+LibreOffice en modo sin interfaz si los conserva, y convierte tanto `.docx` como `.rtf` con el mismo comando:
+
+    soffice --headless --norestore
+            -env:UserInstallation=file:///tmp/perfil
+            --convert-to "html:HTML (StarWriter)"
+            --outdir CARPETA ARCHIVO
+
+El perfil aparte no es opcional: sin el, soffice se conecta a la instancia de LibreOffice que el usuario pueda tener abierta y no convierte nada.
+
+DOS DETALLES DEL RTF DE WRITER, por si alguna vez hay que parsearlo a mano:
+
+El resaltado NO es `\highlight`: LibreOffice usa `\chcbpat`, fondo de patron de caracter. Un lector que busque `\highlight` no encuentra ni una marca.
+
+No hay un solo `\b0` ni `\i0`: el alcance de la negrita y la italica viene dado por los grupos `{ }`, no por marcas de apagado. Un parser que solo mire `\b` y `\b0` deja todo en negrita desde la primera.
+
+**Relaciones:** vinculo:SC-12
+
+### GV-41 — El rescate accidental: un escaner byte a byte que parece funcionar en castellano
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
+
+Caso real del corrector ortografico del proyecto, y vale como advertencia general sobre RC-GM-12.
+
+Un recorrido de palabras escrito con `Mid` y `Asc` recibe un BYTE por vuelta, no un caracter. En UTF-8 toda letra acentuada ocupa dos bytes: uno inicial en 194-223 y uno de continuacion en 128-191. Un criterio de letra que acepte el rango 192-255 acepta el byte inicial y RECHAZA el de continuacion, con lo que parte la palabra al medio.
+
+Pero el criterio tenia ademas dos lineas de rescate:
+
+    If InStr("ÁÉÍÓÚÑÜ", sCaracter) > 0 Then Return True
+    If InStr("áéíóúñü", sCaracter) > 0 Then Return True
+
+Como `InStr` tambien opera en bytes, no compara caracteres: pregunta si ese byte aparece en cualquier posicion de esas dos cadenas. Y los bytes de continuacion de esas catorce letras estan literalmente ahi adentro. El conjunto rescatado resulta ser:
+
+    0x81 0x89 0x8D 0x91 0x93 0x9A 0x9C 0xA1 0xA9 0xAD 0xB1 0xB3 0xBA 0xBC 0xC3
+
+que es exactamente lo que hace falta para que las catorce letras del castellano sobrevivan enteras. El error de `Mid` y el error de `InStr` se cancelan, y SOLO para ese subconjunto.
+
+QUE SI SE ROMPE
+
+Las otras 34 letras latinas con diacritico: à â ã ä ç è ê ë ì ï ò ô õ ö ø ù û y sus mayusculas. En una bibliografia academica no es hipotetico: Goncalves, Sao Paulo, Böhm, Fernao.
+
+Y dos caracteres tipograficos cuyo tercer byte coincide con el conjunto rescatado: la comilla curva izquierda (E2 80 9C, y 0x9C es la cola de Ü) y la semirraya (E2 80 93, y 0x93 es la cola de Ó). El escaner los pega a la palabra siguiente y produce fragmentos que no son UTF-8 valido.
+
+EL SINTOMA ES UN FALSO NEGATIVO, NO UN FALSO POSITIVO
+
+Una palabra partida llega a la herramienta externa como UTF-8 invalido, vuelve distinta de como se guardo, no coincide con la clave con que se indexo y se descarta EN SILENCIO. `camàra` mal escrita no aparecia como error. El corrector no avisaba de mas: avisaba de menos, y no habia forma de notarlo.
+
+MORALEJA
+
+Un recorrido byte a byte que funciona en las pruebas puede estar sostenido por una coincidencia de valores de bytes. Basta con que alguien agrega una letra a un literal, o que entre un apellido portugues, para que el comportamiento se corra sin aviso. `String.Len`, `String.Mid` y `String.Code` desde el principio.
+
+**Relaciones:** apoya:RC-GM-12, vinculo:GV-03, vinculo:GV-23
+
+### GV-42 — TerminalView: comportamiento y la trampa del árbol de contenedores
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.form.terminal / Qt5 / Linux Mint · **Verificado:** 2026-09
+
+El componente es `gb.form.terminal`, no `gb.terminal`. Arrastra `gb.term` como dependencia.
+
+`TerminalView.Exec(aComando)` devuelve un `Process` con `State` y `Value` utilizables. El sondeo va con la SENTENCIA `Wait` y no con `Process.Wait()`, que bloquearía el bucle de eventos (GV-17).
+
+LA TRAMPA: UN TERMINAL APAGADO NO RECIBE TECLADO
+
+Si para bloquear la interfaz durante la espera se apaga un contenedor que está POR ENCIMA del control en el árbol, se apaga también el terminal. Un proceso interactivo queda entonces esperando una respuesta que no puede llegar, y la aplicación parece colgada aunque el bucle de espera esté funcionando perfectamente.
+
+Costó un cuelgue completo, con la aplicación imposible de cerrar porque el guard de cierre también estaba activo.
+
+REGLA: el bloqueo va contenedor por contenedor, nunca sobre un ancestro del terminal. Y el foco se repone explícitamente después del `Exec`, o el prompt no se puede contestar (RC-GM-07).
+
+PROCESOS INTERACTIVOS
+
+El plazo máximo no puede ser corto: la espera incluye al usuario leyendo y contestando. Quince minutos, no treinta segundos.
+
+Y la vía de escape tiene que existir. El cierre del formulario OFRECE interrumpir en lugar de negarse: matar el proceso deja al hijo morir con su transacción abierta, la base la deshace sola, y el bucle de espera sale por el camino normal.
+
+ASPECTO
+
+Fondo, letra y fuente se fijan explícitamente en el arranque; si se deja la fuente por omisión, Qt sintetiza el bold y se ve mal. Los colores ANSI que emita el script los pinta el emulador por su cuenta y no hay que hacer nada.
+
+**Relaciones:** vinculo:SC-13, vinculo:GV-17, vinculo:RC-GM-07
+
+**PENDIENTE:** Dos comportamientos provienen de fuentes secundarias (foros de Gambas) y no se verificaron en el proyecto: que el TerminalView no muere al cerrarse el formulario y deja un bash huérfano, y que devuelve «terminal already in use» si se lanza un segundo proceso sobre el mismo control. Confirmar antes de citarlos como hechos.

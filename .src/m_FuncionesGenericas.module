@@ -3187,8 +3187,9 @@ Public Function BuscarEnTexto(sContenido As String, sTermino As String, bDisting
   Dim iLinea As Integer
   Dim iPosicion As Integer
   Dim iLongTermino As Integer
-  Dim iModoBusqueda As Integer
   Dim iResultados As Integer
+  Dim sTerminoBusqueda As String
+  Dim sLineaBusqueda As String
 
   ' --- 2. VALIDACIÓN DE ENTRADA ---
   ' SE EVITA ENTRAR AL ALGORITMO CON DATOS QUE GARANTIZAN CERO MATCHES
@@ -3208,12 +3209,17 @@ Public Function BuscarEnTexto(sContenido As String, sTermino As String, bDisting
   aLineas = Split(sContenido, Chr(10))
 
   ' --- 5. PREPARACIÓN DE PARÁMETROS DE BÚSQUEDA ---
-  ' EL TOGGLE EN TRUE EXIGE CASE-SENSITIVE; EN FALSE SE USA gb.IgnoreCase
-  ' QUE SÍ MANEJA Ñ↔ñ, Á↔á, ETC. SOBRE UTF-8 (LCase ESTÁNDAR ES ASCII-ONLY)
+  ' NO SE USA gb.IgnoreCase. VERIFICADO 2026-09: PLIEGA Á↔á BAJO es_AR.UTF-8
+  ' PERO NO BAJO C/POSIX. ESA DEPENDENCIA DEL ENTORNO ES PEOR QUE UN
+  ' COMPORTAMIENTO UNIFORMEMENTE ROTO (GV-03): FUNCIONA EN LA MÁQUINA DEL
+  ' DESARROLLADOR Y FALLA EN UNA INSTALACIÓN CLIENTE CON LOCALE MÍNIMO, Y LAS
+  ' MÁQUINAS DE LAS UNIVERSIDADES NO SE CONTROLAN.
+  ' EL PLEGADO VA POR TABLA EXPLÍCITA, QUE ES LOCALE-INDEPENDIENTE, Y CONSERVA
+  ' LA CANTIDAD DE CARACTERES: LAS POSICIONES VALEN SOBRE LA LÍNEA ORIGINAL.
   If bDistingueMayusculas Then
-    iModoBusqueda = 0
+    sTerminoBusqueda = sTermino
   Else
-    iModoBusqueda = gb.IgnoreCase
+    sTerminoBusqueda = PlegarCadenaAMinuscula(sTermino)
   Endif
 
   iLongTermino = String.Len(sTermino)
@@ -3222,11 +3228,19 @@ Public Function BuscarEnTexto(sContenido As String, sTermino As String, bDisting
   For iLinea = 0 To aLineas.Max
     sLinea = aLineas[iLinea]
 
+    ' LA LÍNEA PLEGADA ES SOLO PARA BUSCAR. LOS ARRAYS DE SALIDA SE LLENAN
+    ' SIEMPRE DESDE sLinea, QUE CONSERVA LA CAJA ORIGINAL
+    If bDistingueMayusculas Then
+      sLineaBusqueda = sLinea
+    Else
+      sLineaBusqueda = PlegarCadenaAMinuscula(sLinea)
+    Endif
+
     ' --- 7. BÚSQUEDA DE TODAS LAS OCURRENCIAS EN LA LÍNEA ---
     ' String.InStr USA POSICIÓN BASE 1 EN CARACTERES UTF-8 (NO BYTES)
     iPosicion = 1
     Do
-      iPosicion = String.InStr(sLinea, sTermino, iPosicion, iModoBusqueda)
+      iPosicion = String.InStr(sLineaBusqueda, sTerminoBusqueda, iPosicion)
       ' SIN MÁS COINCIDENCIAS EN ESTA LÍNEA: SALIDA DEL BUCLE INTERNO
       If iPosicion = 0 Then Break
 
@@ -3514,6 +3528,36 @@ Public Function PlegarAMinuscula(iCodigo As Integer) As String
 
   ' --- 3. SIN PLEGADO CONOCIDO ---
   Return String.Chr(iCodigo)
+
+End
+
+' ============================================
+' Función   : PlegarCadenaAMinuscula
+' Propósito : Pliega una cadena entera a minúscula con la tabla explícita,
+'             conservando la cantidad de caracteres.
+' Parámetros: sTexto As String — cadena a plegar
+' Retorna   : String — la cadena plegada, del mismo largo en caracteres
+' ============================================
+Public Function PlegarCadenaAMinuscula(sTexto As String) As String
+
+  Dim aPartes As New String[]
+  Dim iLargo As Integer
+  Dim i As Integer
+
+  ' --- 1. RECORRIDO CODEPOINT A CODEPOINT ---
+  ' String.Mid Y String.Code, NUNCA Mid Y Asc: ESAS OPERAN EN BYTES Y PARTEN
+  ' LOS CARACTERES MULTIBYTE (RC-GM-12, SC-02). EL BUCLE ESCALA LINEALMENTE:
+  ' 40.000 CODEPOINTS EN 0,021 s (GV-03)
+  iLargo = String.Len(sTexto)
+
+  For i = 1 To iLargo
+    aPartes.Add(PlegarAMinuscula(String.Code(String.Mid(sTexto, i, 1))))
+  Next
+
+  ' --- 2. EL LARGO SE CONSERVA ---
+  ' CADA CODEPOINT DEVUELVE EXACTAMENTE UN CARÁCTER, ASÍ QUE LAS POSICIONES
+  ' CALCULADAS SOBRE LA CADENA PLEGADA VALEN TAL CUAL SOBRE LA ORIGINAL
+  Return aPartes.Join("")
 
 End
 
