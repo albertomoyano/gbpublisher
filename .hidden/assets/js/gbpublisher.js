@@ -17,7 +17,9 @@
  *     doi: "10.xxxx/yyy",
  *     anio: "2026",
  *     autores: [{apellido:"...", nombre:"..."}, ...],
- *     editores: [{apellido:"...", nombre:"..."}, ...]
+ *     editores: [{apellido:"...", nombre:"..."}, ...],
+ *     rolEditores: "compiler",   // editortype DE biblatex; "" SI ES EDITOR
+ *     abrevEditores: "comps"     // DESDE marca-editor.xsl, EN MINÚSCULA
  *   };
  *
  * Estructura de citaData para CAPÍTULOS (h-*.html):
@@ -27,7 +29,8 @@
  *     tituloLibro: "Título del libro",
  *     editorial: "...", ciudad: "...", isbn: "...",
  *     doi: "...", anio: "...", paginaI: "1", paginaF: "12",
- *     autores: [...], editores: [...]
+ *     autores: [...], editores: [...],
+ *     rolEditores: "...", abrevEditores: "..."   // DE LOS EDITORES DEL LIBRO
  *   };
  *
  * Estructura para ARTÍCULOS (compatibilidad con revistas):
@@ -94,6 +97,24 @@ function localizadorHtml(d) {
   if (d.doi) loc = 'https://doi.org/' + d.doi;
   else if (d.url) loc = d.url;
   return loc;
+}
+
+// ============================================
+// MARCA DE RESPONSABILIDAD EDITORIAL: (Ed.), (Comps.), (coord.)...
+// ============================================
+// LA ABREVIATURA LLEGA RESUELTA DESDE marca-editor.xsl EN
+// citaData.abrevEditores: LA TABLA DE ABREVIATURAS EXISTE UNA SOLA VEZ, Y
+// ESTE ARCHIVO NO TIENE LA SUYA. ACÁ SOLO SE DECIDE LA MAYÚSCULA, CON LA
+// REGLA DE biblatex: DESPUÉS DE UN PUNTO LA MARCA EMPIEZA ORACIÓN Y VA EN
+// MAYÚSCULA —«Clemenceau, L. (Comps.)»—; SI NO, EN MINÚSCULA.
+// SIN abrevEditores (PÁGINAS GENERADAS ANTES, O REVISTAS) SE USA ed/eds.
+function marcaEditor(d, textoPrevio) {
+  var abrev = d.abrevEditores ||
+    ((d.editores && d.editores.length > 1) ? 'eds' : 'ed');
+  if (/\.\s*$/.test(textoPrevio)) {
+    abrev = abrev.charAt(0).toUpperCase() + abrev.slice(1);
+  }
+  return ' (' + abrev + '.)';
 }
 
 // ============================================
@@ -188,12 +209,11 @@ function generarCitaArticulo(formato, d) {
 function generarCitaLibro(formato, d) {
   var p       = personasCita(d);
   var loc     = localizadorHtml(d);
-  var edMarca = p.esEditor ? (p.lista.length > 1 ? ' (Eds.)' : ' (Ed.)') : '';
 
   if (formato === 'apa') {
     var lista = p.lista.map(function(a) { return a.apellido + ', ' + iniciales(a.nombre); });
     var autStr = formatAutoresApa(lista);
-    if (p.esEditor) autStr += edMarca;
+    if (p.esEditor) autStr += marcaEditor(d, autStr);
     var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '.';
     if (d.editorial) cita += ' ' + d.editorial + '.';
     if (loc) cita += ' ' + loc;
@@ -226,6 +246,8 @@ function generarCitaLibro(formato, d) {
     var persStr = p.lista.map(function(a) { return a.apellido + ', ' + a.nombre; }).join(' and ');
     var cita = '@book{' + citekey + ',\n';
     cita += '  ' + campo + '    = {' + persStr + '},\n';
+    // EL TIPO DE EDITOR, PARA QUE biblatex ESCRIBA «comp.» Y NO «ed.»
+    if (p.esEditor && d.rolEditores) cita += '  editortype = {' + d.rolEditores + '},\n';
     cita += '  title     = {' + d.titulo + '},\n';
     if (d.editorial) cita += '  publisher = {' + d.editorial + '},\n';
     if (d.ciudad)    cita += '  address   = {' + d.ciudad + '},\n';
@@ -266,7 +288,7 @@ function generarCitaCapitulo(formato, d) {
     var cita = autStr + ' (' + d.anio + '). ' + d.titulo + '. En ';
     if (eds.length > 0) {
       var edStr = eds.map(function(e) { return iniciales(e.nombre) + ' ' + e.apellido; }).join(', ');
-      cita += edStr + (eds.length > 1 ? ' (Eds.), ' : ' (Ed.), ');
+      cita += edStr + marcaEditor(d, edStr) + ', ';
     }
     cita += d.tituloLibro + '.';
     if (d.editorial) cita += ' ' + d.editorial + '.';
@@ -304,6 +326,7 @@ function generarCitaCapitulo(formato, d) {
     if (eds.length > 0) {
       var edStr = eds.map(function(e) { return e.apellido + ', ' + e.nombre; }).join(' and ');
       cita += '  editor    = {' + edStr + '},\n';
+      if (d.rolEditores) cita += '  editortype = {' + d.rolEditores + '},\n';
     }
     if (d.editorial) cita += '  publisher = {' + d.editorial + '},\n';
     if (d.ciudad)    cita += '  address   = {' + d.ciudad + '},\n';

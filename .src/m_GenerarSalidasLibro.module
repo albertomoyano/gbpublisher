@@ -1,339 +1,587 @@
 ' Gambas module file
 
 ' ==========================================================
-' PROPÓSITO:
-'   Orquesta la generación del HTML del libro (Fase 1: solo index.html).
-'   Prepara la estructura docs/ con assets compartidos (CSS/JS/tapa),
-'   invoca Saxon con docbook-to-html.xsl una sola vez y valida output.
+' MÓDULO    : m_GenerarSalidasLibro
+' PROPÓSITO : Punto de entrada de las salidas del libro y del ensamblado de su
+'             canónico. La lógica pesada vive en scripts de engine/ (SC-13);
+'             acá queda lo que sale de la base y el lanzamiento.
 '
-' FASE 1: GENERA SOLO docs/index.html
-'   Fases futuras agregarán h-{nombre}.html por capítulo, drawer,
-'   metadatos por capítulo y widget "Citar este libro/capítulo".
+' CÓMO SE LANZA UN SCRIPT, Y POR QUÉ ASÍ
+' ----------------------------------------------------------
+'   TerminalView.Exec() queda descartado: el control ya tiene un bash
+'   interactivo corriendo y Exec responde «Terminal already in use»
+'   (verificado; confirma el pendiente de GV-42).
 '
-' PRE-REQUISITO:
-'   El canónico del libro (jats/c-libro-{nombre}.xml) debe estar
-'   generado y validado. Igual patrón que btnGenerarLibroCanonico:
-'   confía en el estado del disco, alerta previa y fail-fast.
+'   Así que se sigue tipeando con Input(), pero cambia lo que Gambas espera.
+'   Antes esperaba que APARECIERA EL PRODUCTO, y eso tenía tres fallas: el
+'   archivo aparece con el primer byte, no cuando termina de escribirse; no
+'   había código de salida; y lo que Gambas tipeaba mientras la terminal
+'   estaba ocupada se encolaba y se ejecutaba después, fuera de contexto —el
+'   «echo ERROR» del HTML apareció en medio de la compilación del PDF—.
+'
+'   Ahora Gambas tipea UNA sola línea: el script y, a continuación, la
+'   escritura de su código de salida en un archivo de estado, primero a un
+'   temporal y después con mv. mv dentro de la misma carpeta es atómico: el
+'   archivo de estado aparece de una vez, completo, y solo cuando el script
+'   terminó. Gambas espera ESE archivo y lee el código.
+'
+'   El archivo de estado lleva un nombre único por lanzamiento. Si alguien deja
+'   de esperar y lanza otra cosa, la segunda línea se encola detrás de la
+'   primera, y cada una espera su propio archivo: ninguna lee el código de la
+'   otra.
+'
+'   Mientras espera, Gambas NO tipea nada en la terminal. Si vence el plazo,
+'   pregunta si seguir esperando; nunca escribe un echo.
 ' ==========================================================
-Public Sub GenerarLibroHTML()
 
-  Dim sRutaProyecto As String
-  Dim sNombreArchivoMadre As String
-  Dim sNombreBase As String
-  Dim sFileCanonicoLibro As String
-  Dim sFileManifiesto As String
-  Dim sFileIndex As String
-  Dim sDirDocs As String
-  Dim sDirDocsAssets As String
-  Dim sXsl As String
-  Dim sSaxon As String
-  Dim sAssetsSrcCss As String
-  Dim sAssetsSrcJs As String
-  Dim sAssetsDestCss As String
-  Dim sAssetsDestJs As String
-  Dim iIdLibro As Integer
-  Dim hLibro As Result
-  Dim sImagenTapa As String
-  Dim sImagenTapaSrc As String
-  Dim sImagenTapaDest As String
-  Dim iEspera As Integer
+' DONDE VIVEN LOS SCRIPTS: INFRAESTRUCTURA, NO SE COPIA A ~/.gbpublisher (SC-11)
+Private Const DIR_ENGINE As String = "/usr/share/gbpublisher/engine"
+
+' PLAZOS EN SEGUNDOS. NO SON UN CORTE: AL VENCER SE PREGUNTA SI SEGUIR
+Private Const PLAZO_CANONICO As Float = 300.0
+Private Const PLAZO_HTML As Float = 600.0
+
+' CÓDIGOS DE SALIDA DE LOS SCRIPTS. DEBEN COINCIDIR CON engine/comun.sh
+Public Const SALIDA_OK As Integer = 0
+Public Const SALIDA_AVISOS As Integer = 3
+
+' RESULTADOS PROPIOS DE LA LANZADORA. NEGATIVOS PARA QUE NO SE CONFUNDAN CON
+' NINGÚN CÓDIGO DE SALIDA DE UN PROCESO
+Public Const RESULTADO_EN_CURSO As Integer = -1
+Public Const RESULTADO_NO_LANZADO As Integer = -2
+Public Const RESULTADO_ABANDONADO As Integer = -3
+Public Const RESULTADO_ILEGIBLE As Integer = -4
+
+' HAY UN SCRIPT CORRIENDO. LO CONSULTAN LOS GUARDS DE OTRAS PARTES DE LA
+' APLICACIÓN A TRAVÉS DE HayScriptEnCurso()
+Private $bScriptEnCurso As Boolean = False
+
+' CONTADOR DE LANZAMIENTOS DE LA SESIÓN, PARA EL NOMBRE ÚNICO DEL ESTADO
+Private $iLanzamiento As Integer = 0
+
+' ============================================
+' Función   : HayScriptEnCurso
+' Propósito : Informa si hay un script de engine/ corriendo. Para los guards de
+'             acciones que cambian el contexto —abrir otro proyecto, cerrar la
+'             aplicación— y que no pasan por los controles que se bloquean.
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True mientras la lanzadora espera un script
+' ============================================
+Public Function HayScriptEnCurso() As Boolean
+
+  Return $bScriptEnCurso
+
+End
+
+' ============================================
+' Función   : BloquearSalidas
+' Propósito : Habilita o deshabilita los controles que pueden escribir en la
+'             terminal: el menú de salidas y los dos botones de canónicos.
+'             Ninguno es ancestro del TerminalView: apagar un contenedor que lo
+'             contiene apagaría también el terminal (GV-42).
+' Parámetros: bBloquear As Boolean — True deshabilita, False habilita
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub BloquearSalidas(bBloquear As Boolean)
+
+  FMain.MenuButtonSalidas.Enabled = Not bBloquear
+  FMain.btnGenerarDocBookcanonico.Enabled = Not bBloquear
+  FMain.btnGenerarLibroCanonico.Enabled = Not bBloquear
+
+End
+
+' ============================================
+' Función   : EjecutarScriptSalida
+' Propósito : Lanza un script de engine/ en la terminal del proyecto, espera a
+'             que termine y devuelve su código de salida. Es el único camino
+'             por el que un script se lanza: bloqueo, espera y desbloqueo
+'             ocurren acá y en ningún otro lado.
+' Parámetros: sScript As String — nombre del script dentro de engine/
+'             aArgumentos As String[] — argumentos, en orden. Ninguno vacío:
+'               el que no aplica se pasa como «-»
+'             fPlazo As Float — segundos antes de preguntar si seguir esperando
+' Retorna   : Integer — el código de salida del script (0, 3, 1...) o uno de
+'             los RESULTADO_*, todos negativos
+' ============================================
+Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[], fPlazo As Float) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaScript As String
+  Dim sDirTmp As String
+  Dim sNombreEstado As String
+  Dim sEstado As String
+  Dim sEstadoTmp As String
+  Dim sLinea As String
+  Dim sArgumento As String
+  Dim sContenido As String
+  Dim fVence As Float
   Dim iRespuesta As Integer
-  ' ESTILO DE CITA: NOMBRE DEL .csl EN BD Y RUTA ABSOLUTA AL ARCHIVO.
-  Dim sEstiloArchivoCsl As String
-  Dim sRutaCsl As String
-  Dim sEstiloCita As String
-  Dim hEstilo As Result
+  Dim iResultado As Integer
 
-  ' --- 0. MOSTRAR CONSOLA ---
+  ' --- 2. REENTRADA ---
+  ' LOS CONTROLES YA ESTÁN BLOQUEADOS, PERO LA FUNCIÓN ES PÚBLICA Y NO DEBE
+  ' DEPENDER DE ESO
+  If $bScriptEnCurso Then Return RESULTADO_EN_CURSO
+
+  ' --- 3. VALIDACIÓN ---
+  sRutaScript = DIR_ENGINE &/ sScript
+  If Not Exist(sRutaScript) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el script:" & gb.NewLine & sRutaScript &
+      gb.NewLine & gb.NewLine & "Verificá la instalación de gbpublisher.")
+    Return RESULTADO_NO_LANZADO
+  Endif
+
+  sDirTmp = m_InicioCierre.RutaProyectoEnCurso &/ "tmp"
+  If Not Exist(sDirTmp) Then
+    Try Mkdir sDirTmp
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta tmp/ del proyecto:" & gb.NewLine & Error.Text)
+      Return RESULTADO_NO_LANZADO
+    Endif
+  Endif
+
+  ' --- 4. ARCHIVO DE ESTADO CON NOMBRE ÚNICO ---
+  ' ÚNICO POR LANZAMIENTO: SI UNA LÍNEA ANTERIOR SIGUE ENCOLADA EN LA TERMINAL,
+  ' SU ESTADO NO PUEDE CONFUNDIRSE CON EL DE ESTA
+  Inc $iLanzamiento
+  sNombreEstado = ".estado-" & Format(Now, "yyyymmdd-hhnnss") & "-" & CStr($iLanzamiento)
+  sEstado = sDirTmp &/ sNombreEstado
+  sEstadoTmp = sEstado & ".tmp"
+
+  ' --- 5. LÍNEA DE COMANDO ---
+  ' Shell$() Y NO Quote(): Quote() DEVUELVE COMILLAS DOBLES, DENTRO DE LAS
+  ' CUALES sh SIGUE EXPANDIENDO $(...) Y BACKTICKS (GV-06).
+  ' «;» Y NO «&&» DESPUÉS DEL SCRIPT: EL ESTADO SE ESCRIBE AUNQUE EL SCRIPT
+  ' FALLE, QUE ES JUSTAMENTE CUANDO MÁS HACE FALTA. $? ES LITERAL EN UN STRING
+  ' DE GAMBAS: LO EXPANDE EL SHELL DE LA TERMINAL.
+  sLinea = "bash " & Shell$(sRutaScript)
+  For Each sArgumento In aArgumentos
+    sLinea &= " " & Shell$(sArgumento)
+  Next
+  sLinea &= " ; echo $? > " & Shell$(sEstadoTmp) &
+    " && mv -f " & Shell$(sEstadoTmp) & " " & Shell$(sEstado)
+
+  ' --- 6. BLOQUEO Y LANZAMIENTO ---
+  ' A PARTIR DE ACÁ HAY UN SOLO CAMINO DE SALIDA, AL FINAL: EL DESBLOQUEO NO
+  ' PUEDE QUEDAR ATRÁS DE UN Return. Finally NO SIRVE PARA ESTO (RC-GM-20)
+  $bScriptEnCurso = True
+  BloquearSalidas(True)
+
   FMain.tbMostrarPanelInferior.Value = True
   FMain.TabPanelIzquierdaInferior.Index = 0
+  FMain.TerminalViewProyecto.Input(sLinea & gb.NewLine)
 
-  ' --- 1. ALERTA PREVIA ---
-  ' EL HTML CONSUME EL CANÓNICO DEL LIBRO ENSAMBLADO. SI ESE CANÓNICO
-  ' ESTÁ DESACTUALIZADO EL HTML SALDRÁ CON CONTENIDO VIEJO.
-  iRespuesta = Message.Question(
-    "GENERACIÓN HTML DEL LIBRO (Fase 1)" & Chr(10) & Chr(10) &
-    "Este proceso genera docs/index.html a partir del canónico" & Chr(10) &
-    "del libro ensamblado (jats/c-libro-*.xml)." & Chr(10) & Chr(10) &
-    "IMPORTANTE: El canónico del libro debe estar ACTUALIZADO." & Chr(10) &
-    "Si modificó capítulos, primero regenere los canónicos" & Chr(10) &
-    "individuales y luego el canónico del libro completo." & Chr(10) & Chr(10) &
-    "En esta fase solo se genera index.html. Las páginas de" & Chr(10) &
-    "cada capítulo se agregarán en fases posteriores." & Chr(10) & Chr(10) &
-    "¿Desea continuar?",
-    "Sí, continuar", "Cancelar")
+  ' --- 7. ESPERA ---
+  ' LA SENTENCIA Wait DEJA CORRER EL BUCLE DE EVENTOS: LA TERMINAL SE PINTA Y
+  ' LA INTERFAZ RESPONDE (GV-17). LO QUE PODRÍA ESCRIBIR EN LA TERMINAL ESTÁ
+  ' BLOQUEADO
+  iResultado = RESULTADO_ABANDONADO
+  fVence = Timer + fPlazo
 
-  If iRespuesta <> 1 Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'Generación HTML cancelada por el usuario.'" & Chr(10))
-    Return
-  Endif
+  Do
+    If Exist(sEstado) Then Break
 
-  ' --- 2. RESOLVER id_libro ---
-  iIdLibro = m_XML.ObtenerIdLibro(CInt(FMain.id_proyecto.Value))
-  If iIdLibro = 0 Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo resolver el id_libro para el proyecto activo." & Chr(10) &
-      "Verifique que existe una fila en libros_md para este proyecto.")
-    Return
-  Endif
-
-  ' --- 3. VERIFICAR BINARIOS Y RECURSOS ---
-  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
-  If Not Exist(sSaxon) Then
-    m_Sonido.sonar("Error")
-    Message.Error("Saxon-HE no encontrado en " & sSaxon)
-    Return
-  Endif
-
-  sXsl = User.Home & "/.gbpublisher/xslt/docbook-to-html.xsl"
-  If Not Exist(sXsl) Then
-    m_Sonido.sonar("Error")
-    Message.Error("XSLT docbook-to-html no encontrado en:" & Chr(10) & sXsl)
-    Return
-  Endif
-
-  sAssetsSrcCss = User.Home & "/.gbpublisher/assets/css/gbpublisher.css"
-  sAssetsSrcJs = User.Home & "/.gbpublisher/assets/js/gbpublisher.js"
-
-  If Not Exist(sAssetsSrcCss) Then
-    m_Sonido.sonar("Error")
-    Message.Error("CSS compartido no encontrado en:" & Chr(10) & sAssetsSrcCss)
-    Return
-  Endif
-
-  If Not Exist(sAssetsSrcJs) Then
-    m_Sonido.sonar("Error")
-    Message.Error("JS compartido no encontrado en:" & Chr(10) & sAssetsSrcJs)
-    Return
-  Endif
-
-  ' --- 4. CONSTRUIR PATHS DEL PROYECTO ---
-  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
-  sNombreArchivoMadre = File.BaseName(m_InicioCierre.NombreProyectoEnCurso)
-
-  ' STRIP DEL PREFIJO "l-" (CONVENCIÓN DE ARCHIVOS DE LIBRO)
-  If Left(sNombreArchivoMadre, 2) = "l-" Then
-    sNombreBase = Mid(sNombreArchivoMadre, 3)
-  Else
-    sNombreBase = sNombreArchivoMadre
-  Endif
-
-  sFileCanonicoLibro = sRutaProyecto & "/jats/c-libro-" & sNombreBase & ".xml"
-  sFileManifiesto = sRutaProyecto & "/tmp/manifiesto-libro-" & sNombreBase & ".xml"
-  sDirDocs = sRutaProyecto & "/docs"
-  sDirDocsAssets = sDirDocs & "/assets"
-  sFileIndex = sDirDocs & "/index.html"
-
-  sAssetsDestCss = sDirDocsAssets & "/css/gbpublisher.css"
-  sAssetsDestJs = sDirDocsAssets & "/js/gbpublisher.js"
-
-  ' --- 5. VERIFICAR QUE EL CANÓNICO Y MANIFIESTO EXISTAN ---
-  If Not Exist(sFileCanonicoLibro) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El canónico del libro no existe:" & Chr(10) &
-      sFileCanonicoLibro & Chr(10) & Chr(10) &
-      "Genérelo primero con el botón 'Generar canónico DocBook del libro'.")
-    Return
-  Endif
-
-  If Not Exist(sFileManifiesto) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El manifiesto del libro no existe:" & Chr(10) &
-      sFileManifiesto & Chr(10) & Chr(10) &
-      "Genérelo primero con el botón 'Generar canónico DocBook del libro'.")
-    Return
-  Endif
-
-  ' ====================================================
-  ' PASO 1: PREPARAR ESTRUCTURA docs/ Y COPIAR ASSETS
-  ' ====================================================
-  FMain.TerminalViewProyecto.Input(
-    "echo '--- PASO 1: PREPARANDO docs/ Y ASSETS ---'" & Chr(10))
-
-  ' CREAR ESTRUCTURA DE CARPETAS SI NO EXISTE
-  ' mkdir -p es idempotente
-  FMain.TerminalViewProyecto.Input(
-    "mkdir -p '" & sDirDocsAssets & "/css'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "mkdir -p '" & sDirDocsAssets & "/js'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "mkdir -p '" & sDirDocsAssets & "/media'" & Chr(10))
-
-  ' COPIAR CSS Y JS DESDE ~/.gbpublisher/assets/
-  ' OPCIÓN A CONSENSUADA: SIEMPRE SOBRESCRIBIR PARA PROPAGAR ACTUALIZACIONES
-  FMain.TerminalViewProyecto.Input(
-    "cp '" & sAssetsSrcCss & "' '" & sAssetsDestCss & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "cp '" & sAssetsSrcJs & "' '" & sAssetsDestJs & "'" & Chr(10))
-
-  ' --- 6. COPIAR IMAGEN DE TAPA (SI EXISTE) ---
-  ' EL nombre_archivo DE LA IMAGEN SE LEE DE libros_md.imagen_tapa,
-  ' Y VIVE EN /media DEL PROYECTO. AL COPIARLA A docs/assets/media
-  ' EL XSLT LA REFERENCIA COMO assets/media/{archivo}.
-  Try hLibro = m_ConexionBD.mConn.Exec(
-    "SELECT imagen_tapa FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
-
-  ' --- 6.a IMAGEN DE TAPA (desde la BD) ---
-  If Not IsNull(hLibro["imagen_tapa"]) Then
-    sImagenTapa = m_XML.TrimUTF8(hLibro["imagen_tapa"])
-    If Len(sImagenTapa) > 0 Then
-      sImagenTapaSrc = sRutaProyecto & "/media/" & sImagenTapa
-      sImagenTapaDest = sDirDocsAssets & "/media/" & sImagenTapa
-
-      If Exist(sImagenTapaSrc) Then
-        FMain.TerminalViewProyecto.Input(
-          "cp '" & sImagenTapaSrc & "' '" & sImagenTapaDest & "'" & Chr(10))
-        FMain.TerminalViewProyecto.Input(
-          "echo 'OK: tapa copiada'" & Chr(10))
-      Else
-        FMain.TerminalViewProyecto.Input(
-          "echo 'AVISO: imagen_tapa referida en BD pero no encontrada en /media: " &
-          sImagenTapa & "'" & Chr(10))
-      Endif
+    If Timer > fVence Then
+      ' AL VENCER NO SE ESCRIBE NADA EN LA TERMINAL: SE PREGUNTA
+      iRespuesta = Message.Question(
+        "La generación todavía no terminó." & gb.NewLine & gb.NewLine &
+        "Puede estar trabajando todavía: su avance se ve en la terminal." & gb.NewLine &
+        "Si dejás de esperar, sigue corriendo igual, pero la aplicación" & gb.NewLine &
+        "no va a poder informarte cómo terminó.",
+        "Seguir esperando", "Dejar de esperar")
+      If iRespuesta <> 1 Then Break
+      fVence = Timer + fPlazo
     Endif
+
+    Wait 0.1
+  Loop
+
+  ' --- 8. LECTURA DEL CÓDIGO ---
+  If Exist(sEstado) Then
+    Try sContenido = File.Load(sEstado)
+    If Error Then
+      iResultado = RESULTADO_ILEGIBLE
+    Else
+      Try iResultado = CInt(Trim(sContenido))
+      If Error Then iResultado = RESULTADO_ILEGIBLE
+    Endif
+    ' EL ESTADO YA SE LEYÓ: NO TIENE OTRO USO
+    Try Kill sEstado
   Endif
 
-  ' --- 6.b TODAS LAS IMÁGENES DE /media ---
-  Dim sRutaMedia As String = sRutaProyecto & "/media"
-  Dim sRutaDestinoMedia As String = sDirDocsAssets & "/media"
-  Dim sArchivo As String
+  ' --- 9. DESBLOQUEO ---
+  BloquearSalidas(False)
+  $bScriptEnCurso = False
 
-  If Exist(sRutaMedia) Then
-    For Each sArchivo In Dir(sRutaMedia)
+  Return iResultado
 
-      ' Saltear subdirectorios
-      If IsDir(sRutaMedia &/ sArchivo) Then Continue
+End
 
-      ' Evitar copiar la tapa dos veces (ya se copió arriba)
-      If sArchivo = sImagenTapa Then Continue
+' ============================================
+' Función   : InformarResultado
+' Propósito : Traduce el resultado de EjecutarScriptSalida a un mensaje. El
+'             detalle está en la terminal; el mensaje dice qué pasó y dónde
+'             mirar, y solo afirma lo que el script verificó.
+' Parámetros: iResultado As Integer — lo que devolvió EjecutarScriptSalida
+'             sQue As String — qué se generó, para el texto («El HTML del libro»)
+'             sArchivo As String — ruta del producto, para el mensaje de éxito
+' Retorna   : Boolean — True si el producto se generó (con o sin avisos)
+' ============================================
+Public Function InformarResultado(iResultado As Integer, sQue As String, sArchivo As String) As Boolean
 
-      ' Copiar cada imagen
-      FMain.TerminalViewProyecto.Input(
-        "cp '" & sRutaMedia &/ sArchivo & "' '" &
-        sRutaDestinoMedia &/ sArchivo & "'" & Chr(10))
-      FMain.TerminalViewProyecto.Input(
-        "echo 'OK: imagen copiada: " & sArchivo & "'" & Chr(10))
+  Select Case iResultado
 
-    Next
-  Endif
+    Case SALIDA_OK
+      m_Sonido.sonar("Info")
+      Message.Info(sQue & " se generó correctamente." & gb.NewLine & gb.NewLine &
+        "Archivo:" & gb.NewLine & sArchivo)
+      Return True
 
-  FMain.TerminalViewProyecto.Input(
-    "echo 'OK: docs/ preparado'" & Chr(10))
+    Case SALIDA_AVISOS
+      m_Sonido.sonar("Warning")
+      Message.Warning(sQue & " se generó, pero con avisos." & gb.NewLine & gb.NewLine &
+        "Revisá la terminal: los avisos están marcados con ⚠." & gb.NewLine & gb.NewLine &
+        "Archivo:" & gb.NewLine & sArchivo)
+      Return True
 
-  ' --- 7. RESOLVER EL ESTILO DE CITA DEL LIBRO ---
-  ' EL NOMBRE DEL .csl SE GUARDA EN libros_md.estilo_cita (EJ. 'apa.csl').
-  ' LOS ARCHIVOS .csl VIVEN EN ~/.gbpublisher/csl/. LeerTipoCSL() MAPEA
-  ' EL NOMBRE AL IDENTIFICADOR INTERNO ('apa' | 'ieee' | 'vancouver' | 'iso690').
-  ' SI NO HAY ESTILO O NO SE RECONOCE, SE USA 'apa' COMO FALLBACK SEGURO
-  ' (COINCIDE CON EL DEFAULT DEL PARÁMETRO estilo_cita EN EL XSLT).
-  sEstiloCita = "apa"
+    Case RESULTADO_EN_CURSO
+      m_Sonido.sonar("Warning")
+      Message.Warning("Ya hay una generación en curso. Esperá a que termine.")
 
+    Case RESULTADO_NO_LANZADO
+      ' LA LANZADORA YA MOSTRÓ POR QUÉ
+
+    Case RESULTADO_ABANDONADO
+      m_Sonido.sonar("Warning")
+      Message.Warning("Se dejó de esperar la generación." & gb.NewLine & gb.NewLine &
+        "Puede seguir corriendo en la terminal. Cómo termine se ve ahí.")
+
+    Case RESULTADO_ILEGIBLE
+      m_Sonido.sonar("Error")
+      Message.Error("La generación terminó, pero no se pudo leer su resultado." & gb.NewLine &
+        "Revisá la terminal.")
+
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error(sQue & " no se generó (código " & CStr(iResultado) & ")." & gb.NewLine & gb.NewLine &
+        "El motivo está al final de la salida en la terminal.")
+
+  End Select
+
+  Return False
+
+End
+
+' ============================================
+' Función   : ResolverEstiloCita
+' Propósito : El identificador de estilo de cita que esperan las hojas de
+'             salida —apa, iso690, vancouver, ieee—, a partir del .csl que
+'             guarda libros_md.estilo_cita. Una sola versión para el HTML y el
+'             EPUB: antes el EPUB le pasaba a LeerTipoCSL el nombre del archivo
+'             en vez de su ruta, y caía siempre en apa.
+' Parámetros: iIdLibro As Integer — libro
+' Retorna   : String — el identificador; apa si no hay estilo, no se puede
+'             leer o no se reconoce, que coincide con el default de las hojas
+' ============================================
+Public Function ResolverEstiloCita(iIdLibro As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hEstilo As Result
+  Dim sArchivoCsl As String
+  Dim sRutaCsl As String
+  Dim sEstilo As String
+
+  ' --- 2. CONSULTA ---
   Try hEstilo = m_ConexionBD.mConn.Exec(
     "SELECT estilo_cita FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
-  If Error Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'AVISO: no se pudo leer estilo_cita, se usa APA por defecto'" & Chr(10))
+  If Error Then Return "apa"
+  If Not hEstilo.Available Then Return "apa"
+  If IsNull(hEstilo["estilo_cita"]) Then Return "apa"
+
+  sArchivoCsl = m_XML.TrimUTF8(hEstilo["estilo_cita"])
+  If sArchivoCsl = "" Then Return "apa"
+
+  ' --- 3. LECTURA DEL .csl ---
+  ' LA RUTA COMPLETA: LeerTipoCSL LEE EL ARCHIVO
+  sRutaCsl = User.Home &/ ".gbpublisher/csl" &/ sArchivoCsl
+  If Not Exist(sRutaCsl) Then Return "apa"
+
+  sEstilo = m_InicioCierre.LeerTipoCSL(sRutaCsl)
+  If sEstilo = "" Then Return "apa"
+
+  Return sEstilo
+
+End
+
+' ============================================
+' Función   : PrepararInsumosLibro
+' Propósito : Escribe a disco todo lo que el ensamblado del libro necesita de la
+'             base —info del libro, manifiesto y, si corresponde, bibliografía
+'             consolidada— y devuelve los datos para invocar el script. Los
+'             scripts no tocan la base: todo lo que sale de ella llega como
+'             archivo.
+' Parámetros: (ninguno)
+' Retorna   : CInsumosLibro — nunca Null; con bListo en False si algo falló, y
+'             en ese caso el motivo ya se informó
+' ============================================
+Public Function PrepararInsumosLibro() As CInsumosLibro
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oInsumos As New CInsumosLibro
+  Dim hLugar As Result
+  Dim sNombreArchivoMadre As String
+
+  oInsumos.bListo = False
+  oInsumos.sLugarBibliografia = "por_capitulo"
+  oInsumos.sBiblioRel = ""
+
+  ' --- 2. PROYECTO Y LIBRO ---
+  oInsumos.sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  If oInsumos.sRutaProyecto = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return oInsumos
+  Endif
+
+  ' EL ID DEL PROYECTO SALE DE LA GLOBAL DE SESIÓN Y NO DEL ValueBox DE FMain,
+  ' QUE PUEDE RESETEARSE POR EVENTOS DE INTERFAZ (RC-GM-16)
+  oInsumos.iIdLibro = m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso)
+  If oInsumos.iIdLibro = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo resolver el libro del proyecto activo." & gb.NewLine &
+      "Verificá que exista una fila en libros_md para este proyecto.")
+    Return oInsumos
+  Endif
+
+  ' --- 3. NOMBRE BASE ---
+  ' EL PREFIJO «l-» ES LA CONVENCIÓN DE ARCHIVOS DE LIBRO. String.* POR
+  ' COHERENCIA CON SC-02, AUNQUE EL PREFIJO SEA ASCII
+  sNombreArchivoMadre = File.BaseName(m_InicioCierre.NombreProyectoEnCurso)
+  If String.Left(sNombreArchivoMadre, 2) = "l-" Then
+    oInsumos.sNombreBase = String.Mid(sNombreArchivoMadre, 3)
   Else
-    If hEstilo.Available Then
-      If Not IsNull(hEstilo["estilo_cita"]) Then
-        sEstiloArchivoCsl = m_XML.TrimUTF8(hEstilo["estilo_cita"])
-        If Len(sEstiloArchivoCsl) > 0 Then
-          sRutaCsl = User.Home & "/.gbpublisher/csl/" & sEstiloArchivoCsl
-          If Exist(sRutaCsl) Then
-            ' LeerTipoCSL DEVUELVE "" SI EL NOMBRE NO ES RECONOCIDO;
-            ' SOLO SOBRESCRIBIR EL FALLBACK SI DEVUELVE UN ESTILO VÁLIDO.
-            sEstiloCita = m_InicioCierre.LeerTipoCSL(sRutaCsl)
-            If Len(sEstiloCita) = 0 Then sEstiloCita = "apa"
-          Else
-            FMain.TerminalViewProyecto.Input(
-              "echo 'AVISO: .csl no encontrado en ~/.gbpublisher/csl/, se usa APA'" & Chr(10))
-          Endif
-        Endif
+    oInsumos.sNombreBase = sNombreArchivoMadre
+  Endif
+
+  ' --- 4. INFO DEL LIBRO Y MANIFIESTO ---
+  ' SI ESTAS FUNCIONES YA MUESTRAN SU PROPIO MENSAJE, ESTE ES REDUNDANTE; SI NO
+  ' LO MUESTRAN, ES EL ÚNICO. PREFERIBLE DOS MENSAJES A NINGUNO (GV-23)
+  If Not m_XML.GenerarInfoLibroXML(oInsumos.iIdLibro) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir la información del libro (tmp/info-libro).")
+    Return oInsumos
+  Endif
+
+  If Not m_XML.GenerarManifiestoLibro(oInsumos.iIdLibro) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el manifiesto del libro (tmp/manifiesto-libro).")
+    Return oInsumos
+  Endif
+
+  ' --- 5. MODELO DE BIBLIOGRAFÍA ---
+  ' SI NO SE PUEDE LEER, por_capitulo: ES EL DEFAULT DE LA COLUMNA
+  Try hLugar = m_ConexionBD.mConn.Exec(
+    "SELECT lugar_bibliografia FROM libros_md WHERE id_libro = &1 LIMIT 1", oInsumos.iIdLibro)
+  If Not Error Then
+    If hLugar.Available Then
+      If Not IsNull(hLugar["lugar_bibliografia"]) Then
+        oInsumos.sLugarBibliografia = m_XML.TrimUTF8(hLugar["lugar_bibliografia"])
       Endif
     Endif
   Endif
 
-  FMain.TerminalViewProyecto.Input(
-    "echo 'OK: estilo de cita = " & sEstiloCita & "'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 2: INVOCAR SAXON CON docbook-to-html.xsl
-  ' EL XSLT USA xsl:result-document CON PATH RELATIVO docs/index.html
-  ' PARA QUE EL RESULT SE ESCRIBA RELATIVO A LA URI BASE DE SAXON,
-  ' HAY QUE PASAR EL DIRECTORIO DEL PROYECTO COMO WORKING DIRECTORY.
-  ' PARA CONSEGUIRLO USAMOS cd EN EL SHELL EMBEBIDO ANTES DE Saxon.
-  ' ====================================================
-  FMain.TerminalViewProyecto.Input(
-    "echo '--- PASO 2: GENERANDO HTML CON SAXON ---'" & Chr(10))
-
-  ' ELIMINAR index.html ANTERIOR PARA VERIFICAR CON POLLING (RC-GM-02)
-  If Exist(sFileIndex) Then
-    Shell "rm '" & sFileIndex & "'" Wait
+  ' --- 6. BIBLIOGRAFÍA CONSOLIDADA ---
+  If oInsumos.sLugarBibliografia = "consolidada" Then
+    ' GenerarBiblioLibroXML MUESTRA SU PROPIO MENSAJE AL FALLAR
+    If Not m_XML.GenerarBiblioLibroXML(oInsumos.iIdLibro) Then Return oInsumos
+    ' LA ESCRIBE CON File.BaseName DEL PROYECTO, NO CON EL NOMBRE BASE
+    oInsumos.sBiblioRel = "tmp/biblio-libro-" &
+      File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".xml"
   Endif
 
-  ' EJECUTAR SAXON DESDE EL DIRECTORIO DEL PROYECTO PARA QUE
-  ' docs/index.html DE xsl:result-document APUNTE ADENTRO DEL PROYECTO.
-  FMain.TerminalViewProyecto.Input(
-    "cd '" & sRutaProyecto & "' && " &
-    "java -jar " & sSaxon & " " &
-    "-s:'" & sFileCanonicoLibro & "' " &
-    "-xsl:'" & sXsl & "' " &
-    "proyecto_dir='" & sRutaProyecto & "' " &
-    "manifiesto_libro='tmp/manifiesto-libro-" & sNombreBase & ".xml' " &
-    "estilo_cita='" & sEstiloCita & "'" & Chr(10))
+  oInsumos.bListo = True
+  Return oInsumos
 
-  ' --- ESPERAR HASTA QUE index.html EXISTA (MÁXIMO 60 S) ---
-  iEspera = 0
-  While Not Exist(sFileIndex) And iEspera < 600
-    Wait 0.1
-    Inc iEspera
-  Wend
+End
 
-  If Not Exist(sFileIndex) Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'ERROR: Saxon no generó docs/index.html'" & Chr(10))
-    m_Sonido.sonar("Error")
-    Message.Error("Saxon-HE no generó docs/index.html en el tiempo esperado." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-    Return
-  Endif
+' ============================================
+' Función   : ArgumentosEnsamblado
+' Propósito : Los cuatro argumentos que comparten ensamblar_libro.sh y los
+'             scripts que lo invocan, en el orden que esperan.
+' Parámetros: oInsumos As CInsumosLibro — insumos ya preparados
+' Retorna   : String[] — ruta, nombre base, modelo de bibliografía y ruta de
+'             la bibliografía consolidada o «-»
+' ============================================
+Private Function ArgumentosEnsamblado(oInsumos As CInsumosLibro) As String[]
 
-  FMain.TerminalViewProyecto.Input(
-    "echo 'OK: docs/index.html generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "echo 'Ruta: " & sFileIndex & "'" & Chr(10))
+  Dim aArgumentos As New String[]
 
-  ' ====================================================
-  ' PASO 3: VALIDACIÓN HTML5 REAL (vnu / Nu Html Checker)
-  ' ====================================================
-  ' vnu es el validador HTML5 oficial del W3C. A diferencia de xmllint
-  ' (parser HTML 4.01, que da falsos positivos con aside/details/etc.),
-  ' vnu reconoce todo HTML5 y reporta solo errores reales. Validación
-  ' INFORMATIVA: --exit-zero-always evita que aborte el pipeline.
-  ' Valida TODO el directorio docs/ (index + páginas de capítulo).
-  FMain.TerminalViewProyecto.Input(
-    "java -jar /opt/vnu/vnu.jar " &
-    "--format gnu --errors-only --exit-zero-always --skip-non-html " &
-    "'" & sDirDocs & "/' " &
-    "2>&1 && echo 'Validación HTML5 (vnu): completada'" & Chr(10))
+  aArgumentos.Add(oInsumos.sRutaProyecto)
+  aArgumentos.Add(oInsumos.sNombreBase)
+  aArgumentos.Add(oInsumos.sLugarBibliografia)
 
-  ' --- VERIFICACIÓN FINAL ---
-  Wait 2.0
-
-  If Exist(sFileIndex) Then
-    m_Sonido.sonar("Info")
-    Message.Info("HTML Fase 1 generado exitosamente." & Chr(10) & Chr(10) &
-      "Archivo: " & sFileIndex & Chr(10) & Chr(10) &
-      "Para revisar visualmente:" & Chr(10) &
-      "xdg-open " & sFileIndex)
+  ' «-» Y NO CADENA VACÍA: UN ARGUMENTO VACÍO ES FRÁGIL DE PASAR, Y SI SE
+  ' PERDIERA LOS SIGUIENTES SE CORRERÍAN DE POSICIÓN
+  If oInsumos.sBiblioRel = "" Then
+    aArgumentos.Add("-")
   Else
-    m_Sonido.sonar("Warning")
-    Message.Warning("El proceso terminó pero no se encontró index.html." & Chr(10) &
-      "Revise los mensajes en la terminal.")
+    aArgumentos.Add(oInsumos.sBiblioRel)
   Endif
 
-End Sub
+  Return aArgumentos
+
+End
+
+' ============================================
+' Función   : EscribirColofonDigital
+' Propósito : Escribe tmp/colofon-digital.xml, de donde docbook-to-html.xsl
+'             toma el pie de página. El texto sale de m_PiezasLibro, el mismo
+'             que usa la página de colofón del EPUB.
+'             El <p> va en el namespace de XHTML porque la hoja lo copia tal
+'             cual dentro de su salida, que está en ese namespace. La raíz no:
+'             es solo el contenedor.
+' Parámetros: sRutaProyecto As String — raíz del proyecto
+' Retorna   : Boolean — False si no se pudo escribir, con el motivo informado
+' ============================================
+Private Function EscribirColofonDigital(sRutaProyecto As String) As Boolean
+
+  Dim sRuta As String
+  Dim s As String
+
+  sRuta = sRutaProyecto &/ "tmp" &/ "colofon-digital.xml"
+
+  s = "<?xml version=" & Chr(34) & "1.0" & Chr(34) & " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+  s &= "<colofon>" & Chr(10)
+  s &= "<p xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) & ">" &
+    m_PiezasLibro.ColofonDigital() & "</p>" & Chr(10)
+  s &= "</colofon>" & Chr(10)
+
+  Try File.Save(sRuta, s)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el colofón del HTML:" & gb.NewLine & sRuta &
+      gb.NewLine & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : GenerarCanonicoLibro
+' Propósito : Ensambla el canónico DocBook del libro completo. La verificación
+'             de los capítulos, el ensamblado, la escritura atómica y la
+'             validación las hace engine/ensamblar_libro.sh.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarCanonicoLibro()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oInsumos As CInsumosLibro
+  Dim iRespuesta As Integer
+  Dim iResultado As Integer
+
+  ' --- 2. ALERTA PREVIA ---
+  ' EL SCRIPT VERIFICA QUE CADA CANÓNICO DE CAPÍTULO EXISTA Y ESTÉ BIEN FORMADO,
+  ' PERO NO PUEDE SABER SI ESTÁ AL DÍA CON SU .md
+  iRespuesta = Message.Question(
+    "ENSAMBLAR EL CANÓNICO DEL LIBRO" & gb.NewLine & gb.NewLine &
+    "Se arma el canónico del libro entero a partir de los canónicos" & gb.NewLine &
+    "de cada capítulo (jats/c-*.xml)." & gb.NewLine & gb.NewLine &
+    "Los canónicos de los capítulos tienen que estar regenerados:" & gb.NewLine &
+    "si un capítulo cambió y no se regeneró, el libro sale con la" & gb.NewLine &
+    "versión anterior de ese capítulo.",
+    "Ensamblar", "Cancelar")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 3. INSUMOS DESDE LA BASE ---
+  oInsumos = PrepararInsumosLibro()
+  If Not oInsumos.bListo Then Return
+
+  ' --- 4. ENSAMBLADO ---
+  iResultado = EjecutarScriptSalida("ensamblar_libro.sh", ArgumentosEnsamblado(oInsumos), PLAZO_CANONICO)
+
+  ' --- 5. INFORME ---
+  InformarResultado(iResultado, "El canónico del libro",
+    oInsumos.sRutaProyecto &/ "jats" &/ "c-libro-" & oInsumos.sNombreBase & ".xml")
+
+End
+
+' ============================================
+' Función   : GenerarLibroHTML
+' Propósito : Genera docs/index.html. engine/generar_html_libro.sh ensambla
+'             primero el canónico del libro y recién después transforma: el
+'             HTML es la única salida que lo lee, y la costura entre los dos
+'             pasos era donde se rompía.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarLibroHTML()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oInsumos As CInsumosLibro
+  Dim aArgumentos As String[]
+  Dim hTapa As Result
+  Dim sEstiloCita As String
+  Dim sImagenTapa As String
+  Dim iRespuesta As Integer
+  Dim iResultado As Integer
+
+  ' --- 2. ALERTA PREVIA ---
+  iRespuesta = Message.Question(
+    "GENERAR LA SALIDA HTML DEL LIBRO (Fase 1)" & gb.NewLine & gb.NewLine &
+    "Se ensambla el canónico del libro y se genera docs/index.html." & gb.NewLine & gb.NewLine &
+    "Los canónicos de los capítulos tienen que estar regenerados:" & gb.NewLine &
+    "el ensamblado los toma tal como están en el disco.",
+    "Generar", "Cancelar")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 3. INSUMOS DESDE LA BASE ---
+  oInsumos = PrepararInsumosLibro()
+  If Not oInsumos.bListo Then Return
+
+  ' --- 4. ESTILO DE CITA ---
+  sEstiloCita = ResolverEstiloCita(oInsumos.iIdLibro)
+
+  ' --- 5. TAPA ---
+  ' SOLO PARA QUE EL SCRIPT AVISE SI LA BASE DECLARA UNA TAPA QUE NO ESTÁ EN
+  ' media/: LA TAPA SE COPIA CON EL RESTO DE LAS IMÁGENES.
+  ' LA VERSIÓN ANTERIOR LEÍA hLibro SIN VERIFICAR EL ERROR NI Available
+  sImagenTapa = ""
+  Try hTapa = m_ConexionBD.mConn.Exec(
+    "SELECT imagen_tapa FROM libros_md WHERE id_libro = &1 LIMIT 1", oInsumos.iIdLibro)
+  If Not Error Then
+    If hTapa.Available Then
+      If Not IsNull(hTapa["imagen_tapa"]) Then
+        sImagenTapa = m_XML.TrimUTF8(hTapa["imagen_tapa"])
+      Endif
+    Endif
+  Endif
+
+  ' --- 6. COLOFÓN DEL PIE ---
+  ' EL SCRIPT VERIFICA QUE EXISTA ANTES DE TRANSFORMAR: SIN ÉL, LA HOJA
+  ' OMITIRÍA EL PIE EN SILENCIO
+  If Not EscribirColofonDigital(oInsumos.sRutaProyecto) Then Return
+
+  ' --- 7. ARGUMENTOS ---
+  ' LOS CUATRO DEL ENSAMBLADO, MÁS EL ESTILO Y, SI HAY, LA TAPA. LA TAPA VA
+  ' ÚLTIMA Y ES OPCIONAL: SI NO HAY, SIMPLEMENTE NO SE AGREGA
+  aArgumentos = ArgumentosEnsamblado(oInsumos)
+  aArgumentos.Add(sEstiloCita)
+  If sImagenTapa <> "" Then aArgumentos.Add(sImagenTapa)
+
+  ' --- 8. GENERACIÓN ---
+  iResultado = EjecutarScriptSalida("generar_html_libro.sh", aArgumentos, PLAZO_HTML)
+
+  ' --- 9. INFORME ---
+  InformarResultado(iResultado, "El HTML del libro",
+    oInsumos.sRutaProyecto &/ "docs" &/ "index.html")
+
+End
 
 ' ==========================================================
 ' PROPÓSITO:

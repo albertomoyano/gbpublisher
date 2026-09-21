@@ -6132,381 +6132,395 @@ Public Sub btnGenerarDocBookcanonico_Click()
 
 End Sub
 
-' ==========================================================
-' HANDLER: btnGenerarLibroCanonico_Click
-' ==========================================================
-' PROPÓSITO:
-'   Orquesta el ensamblado del canónico del libro completo:
-'     PASO 0   — Alerta previa al usuario
-'     PASO 1   — Verificación de existencia de canónicos individuales
-'     PASO 2   — Generación de info-libro-{nombre}.xml
-'     PASO 3   — Generación de manifiesto-libro-{nombre}.xml
-'     PASO 4   — Ensamblado con Saxon
-'     PASO 5   — Validación con jing contra docbook.rng-5.2
-'     PASO 6   — Validación de integridad referencial
-'
-' PRE-REQUISITO:
-'   Todos los canónicos individuales de capítulo deben estar
-'   generados y validados. El handler NO regenera automáticamente:
-'   confía en el estado actual del disco y falla explícito si algún
-'   canónico esperado no existe.
-'
-' OUTPUT: jats/c-libro-{nombre_base_del_l_md}.xml
-' ==========================================================
-' CORRECCIÓN APLICADA
-'   La consulta del PASO 1 listaba TODOS los capítulos y le exigía
-'   canónico a cada uno. Pero hay piezas SIN CUERPO —los tres
-'   índices, las dos listas, la bibliografía y el colofón— que no
-'   tienen .md ni canónico: las produce LaTeX en la compilación.
-'   Declarar una de ellas hacía abortar el ensamblado pidiendo un
-'   archivo que nunca va a existir.
-'
-'   Esas piezas tampoco deben entrar al canónico ensamblado: no
-'   tienen nada que aportar al XML. Se excluyen en la consulta.
-' ==========================================================
+' ============================================
+' Función   : btnGenerarLibroCanonico_Click
+' Propósito : Ensambla el canónico del libro. La lógica vive en
+'             m_GenerarSalidasLibro, junto a las salidas que lo consumen, y
+'             el trabajo pesado en engine/ensamblar_libro.sh (SC-13).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub btnGenerarLibroCanonico_Click()
 
-  Dim sRutaProyecto As String
-  Dim sNombreArchivoMadre As String
-  Dim sNombreBase As String
-  Dim sFileInfoLibro As String
-  Dim sFileManifiesto As String
-  Dim sFileCanonicoLibro As String
-  Dim sXsl As String
-  Dim sSaxon As String
-  Dim sRng As String
-  Dim sFaltantes As String
-  Dim sPathEsperado As String
-  Dim sLugarBibliografia As String
-  ' RUTA RELATIVA (RESPECTO A sRutaProyecto) DEL FRAGMENTO DE BIBLIO
-  ' CONSOLIDADA. VACÍA EN por_capitulo.
-  Dim sBiblioLibroRel As String
-  Dim hCapitulos As Result
-  Dim hLugarBiblio As Result
-  Dim iIdLibro As Integer
-  Dim iEspera As Integer
-  Dim iFaltantes As Integer
-  Dim iRespuesta As Integer
-
-  ' MOSTRAR CONSOLA
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  ' --- 0. ALERTA PREVIA AL USUARIO ---
-  ' EL ENSAMBLADO ASUME QUE LOS CANÓNICOS INDIVIDUALES ESTÁN AL DÍA.
-  ' SI EL EDITOR MODIFICÓ ALGÚN CAPÍTULO Y NO LO REGENERÓ, EL LIBRO
-  ' RESULTANTE TENDRÁ CONTENIDO DESACTUALIZADO SIN AVISO.
-  iRespuesta = Message.Question(
-    "GENERACIÓN DEL CANÓNICO DEL LIBRO COMPLETO" & Chr(10) & Chr(10) &
-    "Este proceso ensambla el canónico del libro entero a partir de los" & Chr(10) &
-    "canónicos individuales de cada capítulo (jats/c-*.xml)." & Chr(10) & Chr(10) &
-    "IMPORTANTE: Los canónicos individuales deben estar ACTUALIZADOS y" & Chr(10) &
-    "VALIDADOS. Si modificó algún capítulo y no regeneró su canónico," & Chr(10) &
-    "el libro resultante contendrá versiones desactualizadas." & Chr(10) & Chr(10) &
-    "¿Desea continuar con el ensamblado?",
-    "Sí, continuar", "Cancelar")
-
-  If iRespuesta <> 1 Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'Ensamblado del libro cancelado por el usuario.'" & Chr(10))
-    Return
-  Endif
-
-  ' --- 1. RESOLVER id_libro DESDE id_proyecto ---
-  ' LOS PROYECTOS DE LIBRO TIENEN UNA FILA EN libros_md CON UK EN
-  ' id_proyecto.
-  iIdLibro = m_XML.ObtenerIdLibro(CInt(id_proyecto.Value))
-
-  If iIdLibro = 0 Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo resolver el id_libro para el proyecto activo." & Chr(10) &
-      "Verifique que existe una fila en libros_md para este proyecto.")
-    Return
-  Endif
-
-  ' --- 2. VERIFICAR BINARIOS Y RECURSOS EXTERNOS ---
-  sSaxon = m_Constantes.RUTA_SAXON
-  If Not Exist(sSaxon) Then
-    m_Sonido.sonar("Error")
-    Message.Error("Saxon-HE no encontrado en " & sSaxon)
-    Return
-  Endif
-
-  sXsl = User.Home & "/.gbpublisher/xslt/ensamblar-libro-canonico.xsl"
-  If Not Exist(sXsl) Then
-    m_Sonido.sonar("Error")
-    Message.Error("XSLT de ensamblado del libro no encontrado en:" & Chr(10) & sXsl)
-    Return
-  Endif
-
-  sRng = User.Home & "/.gbpublisher/schemas/docbook/docbook.rng"
-
-  ' --- 3. CONSTRUIR PATHS ---
-  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
-  sNombreArchivoMadre = File.BaseName(m_InicioCierre.NombreProyectoEnCurso)
-
-  ' STRIP DEL PREFIJO "l-" (CONVENCIÓN DE ARCHIVOS DE LIBRO)
-  If Left(sNombreArchivoMadre, 2) = "l-" Then
-    sNombreBase = Mid(sNombreArchivoMadre, 3)
-  Else
-    sNombreBase = sNombreArchivoMadre
-  Endif
-
-  sFileInfoLibro = sRutaProyecto & "/tmp/info-libro-" & sNombreBase & ".xml"
-  sFileManifiesto = sRutaProyecto & "/tmp/manifiesto-libro-" & sNombreBase & ".xml"
-  sFileCanonicoLibro = sRutaProyecto & "/jats/c-libro-" & sNombreBase & ".xml"
-
-  ' ====================================================
-  ' PASO 1: VERIFICACIÓN DE EXISTENCIA DE CANÓNICOS INDIVIDUALES
-  ' ====================================================
-  ' RECORREMOS LOS CAPÍTULOS DE BD Y VERIFICAMOS QUE CADA
-  ' jats/c-{nombre_archivo}.xml EXISTA EN DISCO. SI FALTA ALGUNO,
-  ' ABORTAMOS CON LA LISTA COMPLETA (NO CON EL PRIMERO QUE FALLA:
-  ' EL EDITOR NECESITA VER TODO LO QUE HAY QUE REGENERAR).
-  '
-  ' SE EXCLUYEN LAS PIEZAS SIN CUERPO: LOS TRES ÍNDICES, LAS DOS
-  ' LISTAS, LA BIBLIOGRAFÍA Y EL COLOFÓN. NO TIENEN .md NI CANÓNICO
-  ' —LAS PRODUCE LaTeX EN LA COMPILACIÓN, Y m_GenerarPDFLibro LAS
-  ' EMITE COMO \printindex, \listoffigures, \printbibliography O EL
-  ' ENTORNO gbcolofon—. PEDIRLES CANÓNICO ES PEDIR UN ARCHIVO QUE
-  ' NUNCA VA A EXISTIR, Y TAMPOCO DEBEN ENTRAR AL XML ENSAMBLADO:
-  ' NO TIENEN NADA QUE APORTAR.
-  '
-  ' nombre_archivo IS NOT NULL: EL ABM PERMITE GUARDAR UNA PIEZA SIN
-  ' NOMBRE, Y SIN ESTA GUARDA SE BUSCARÍA UN "c-.xml".
-  FMain.TerminalViewProyecto.Input(
-    "echo '--- PASO 1: VERIFICANDO CANÓNICOS DE CAPÍTULOS ---'" & Chr(10))
-
-  Try hCapitulos = m_ConexionBD.mConn.Exec(
-    "SELECT nombre_archivo FROM capitulos " &
-    "WHERE id_libro = &1 " &
-    "AND nombre_archivo IS NOT NULL " &
-    "AND tipo_capitulo NOT IN ('lista_figuras','lista_tablas'," &
-    "  'indice_onomastico','indice_concepto','indice_autores'," &
-    "  'bibliografia','colofon') " &
-    "ORDER BY CASE " &
-    "  WHEN nombre_archivo LIKE 'fm-%' THEN 1 " &
-    "  WHEN nombre_archivo LIKE 'a-%' THEN 2 " &
-    "  WHEN nombre_archivo LIKE 'bm-%' THEN 3 " &
-    "  ELSE 9 " &
-    "END, nombre_archivo ASC", iIdLibro)
-
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al consultar capítulos del libro:" & Chr(10) & Error.Text)
-    Return
-  Endif
-
-  iFaltantes = 0
-  sFaltantes = ""
-
-  While hCapitulos.Available
-    sPathEsperado = sRutaProyecto & "/jats/c-" &
-      m_XML.TrimUTF8(hCapitulos["nombre_archivo"]) & ".xml"
-    If Not Exist(sPathEsperado) Then
-      Inc iFaltantes
-      sFaltantes &= "  - " & m_XML.TrimUTF8(hCapitulos["nombre_archivo"]) & Chr(10)
-      FMain.TerminalViewProyecto.Input(
-        "echo '  FALTA: " & sPathEsperado & "'" & Chr(10))
-    Else
-      FMain.TerminalViewProyecto.Input(
-        "echo '  OK: " & m_XML.TrimUTF8(hCapitulos["nombre_archivo"]) & "'" & Chr(10))
-    Endif
-    hCapitulos.MoveNext
-  Wend
-
-  If iFaltantes > 0 Then
-    m_Sonido.sonar("Error")
-    Message.Error("Faltan " & CStr(iFaltantes) &
-      " canónico(s) individual(es) de capítulo(s):" & Chr(10) &
-      Chr(10) & sFaltantes & Chr(10) &
-      "Genere cada uno con el botón 'Generar canónico DocBook' " &
-      "sobre cada capítulo antes de reintentar.")
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'OK: todos los canónicos individuales están presentes'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 2: GENERAR info-libro.xml
-  ' ====================================================
-  FMain.TerminalViewProyecto.Input(
-    "echo '--- PASO 2: GENERANDO info-libro ---'" & Chr(10))
-
-  If Not m_XML.GenerarInfoLibroXML(iIdLibro) Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'ERROR: falló info-libro.xml'" & Chr(10))
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'OK: info-libro generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "xmllint --noout '" & sFileInfoLibro &
-    "' && echo 'info-libro: bien formado' || echo 'info-libro: ERROR'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 3: GENERAR manifiesto-libro.xml
-  ' ====================================================
-  ' ATENCIÓN: m_XML.GenerarManifiestoLibro TAMBIÉN LISTA LOS CAPÍTULOS.
-  ' SI NO APLICA EL MISMO FILTRO DE PIEZAS SIN CUERPO, EL MANIFIESTO VA
-  ' A DECLARAR UNA PIEZA CON UN path QUE NO EXISTE Y EL ENSAMBLADOR VA
-  ' A FALLAR AL CARGARLA. VERIFICAR DESPUÉS DE ESTE CAMBIO.
-  FMain.TerminalViewProyecto.Input(
-    "echo '--- PASO 3: GENERANDO manifiesto-libro ---'" & Chr(10))
-
-  If Not m_XML.GenerarManifiestoLibro(iIdLibro) Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'ERROR: falló manifiesto-libro.xml'" & Chr(10))
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'OK: manifiesto-libro generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "xmllint --noout '" & sFileManifiesto &
-    "' && echo 'manifiesto: bien formado' || echo 'manifiesto: ERROR'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 4: ENSAMBLAR CANÓNICO DEL LIBRO CON SAXON-HE
-  ' EL XSLT NECESITA EL PARÁMETRO proyecto_dir PARA RESOLVER
-  ' LOS PATHS RELATIVOS DEL MANIFIESTO.
-  ' ELIMINAMOS EL CANÓNICO ANTERIOR PARA QUE EL POLLING POSTERIOR
-  ' DETECTE LA NUEVA GENERACIÓN (RC-GM-02).
-  ' ====================================================
-  FMain.TerminalViewProyecto.Input(
-    "echo '--- PASO 4: ENSAMBLANDO CANÓNICO DEL LIBRO ---'" & Chr(10))
-
-  If Exist(sFileCanonicoLibro) Then
-    Shell "rm '" & sFileCanonicoLibro & "'" Wait
-  Endif
-
-  ' LEER EL MODELO DE BIBLIOGRAFÍA DEL LIBRO. FALLBACK A 'por_capitulo'
-  ' (EL DEFAULT DE LA COLUMNA Y EL MÁS COMÚN) SI NO SE PUEDE LEER.
-  sLugarBibliografia = "por_capitulo"
-  Try hLugarBiblio = m_ConexionBD.mConn.Exec(
-    "SELECT lugar_bibliografia FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
-  If Not Error Then
-    If hLugarBiblio.Available Then
-      If Not IsNull(hLugarBiblio["lugar_bibliografia"]) Then
-        sLugarBibliografia = m_XML.TrimUTF8(hLugarBiblio["lugar_bibliografia"])
-      Endif
-    Endif
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'Modelo de bibliografía: " & sLugarBibliografia & "'" & Chr(10))
-
-  ' SI ES CONSOLIDADA: GENERAR LA BIBLIO ÚNICA DEL LIBRO (DEDUPLICADA,
-  ' DESDE EL .bib) Y CONSTRUIR SU RUTA RELATIVA PARA EL ENSAMBLADO.
-  ' EN por_capitulo sBiblioLibroRel QUEDA VACÍA Y EL XSLT NO LA USA.
-  sBiblioLibroRel = ""
-  If sLugarBibliografia = "consolidada" Then
-    If Not m_XML.GenerarBiblioLibroXML(iIdLibro) Then
-      ' EL Message.Error YA LO MOSTRÓ LA FUNCIÓN. ABORTAR.
-      Return
-    Endif
-    ' RUTA RELATIVA: tmp/biblio-libro-{nombre_proyecto}.xml
-    ' (GenerarBiblioLibroXML LA ESCRIBE CON File.BaseName DEL PROYECTO)
-    sBiblioLibroRel = "tmp/biblio-libro-" &
-      File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".xml"
-    FMain.TerminalViewProyecto.Input(
-      "echo 'Biblio consolidada generada: " & sBiblioLibroRel & "'" & Chr(10))
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "java -jar " & sSaxon & " " &
-    "-s:'" & sFileManifiesto & "' " &
-    "-xsl:'" & sXsl & "' " &
-    "-o:'" & sFileCanonicoLibro & "' " &
-    "proyecto_dir='" & sRutaProyecto & "' " &
-    "lugar_bibliografia='" & sLugarBibliografia & "' " &
-    "biblio_libro='" & sBiblioLibroRel & "'" & Chr(10))
-
-  ' ESPERAR HASTA QUE SAXON GENERE EL CANÓNICO (MÁXIMO 60 SEGUNDOS)
-  iEspera = 0
-  While Not Exist(sFileCanonicoLibro) And iEspera < 600
-    Wait 0.1
-    Inc iEspera
-  Wend
-
-  If Not Exist(sFileCanonicoLibro) Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'ERROR: Saxon no generó el canónico del libro'" & Chr(10))
-    Message.Error("Saxon-HE no generó el archivo canónico del libro " &
-      "en el tiempo esperado." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'OK: canónico del libro generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "echo 'Ruta: " & sFileCanonicoLibro & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input(
-    "xmllint --noout '" & sFileCanonicoLibro &
-    "' && echo 'canónico libro: bien formado' || echo 'canónico libro: ERROR'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 5: VALIDACIÓN RELAX NG CONTRA docbook.rng-5.2
-  ' ====================================================
-  If Not Exist(sRng) Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'AVISO: RNG local no encontrado, omitiendo validación'" & Chr(10))
-  Else
-    FMain.TerminalViewProyecto.Input(
-      "echo '--- PASO 5: VALIDANDO CANÓNICO DEL LIBRO CONTRA DocBook 5.2 RNG ---'" & Chr(10))
-    FMain.TerminalViewProyecto.Input(
-      "jing '" & sRng & "' '" & sFileCanonicoLibro & "' " &
-      "&& echo 'RNG válido: DocBook 5.2 OK' " &
-      "|| echo 'RNG INVÁLIDO: revisar errores arriba'" & Chr(10))
-  Endif
-
-  ' ====================================================
-  ' PASO 6: VALIDACIÓN DE INTEGRIDAD REFERENCIAL (FAIL-FAST)
-  ' ====================================================
-  ' A DIFERENCIA DEL PASO 5 (jing, QUE SOLO REPORTA EN CONSOLA), ESTA
-  ' VALIDACIÓN ABORTA EL PROCESO SI HAY CITAS SIN ENTRADA BIBLIOGRÁFICA.
-  ' NINGUNA SALIDA (HTML/EPUB/PDF) DEBE GENERARSE SOBRE UN CANÓNICO CON
-  ' REFERENCIAS ROTAS.
-  '
-  ' PENDIENTE: ValidarIntegridadReferencial ESTÁ COMENTADA. HASTA QUE SE
-  ' HABILITE, ESTE PASO SOLO IMPRIME QUE TODO ESTÁ BIEN SIN HABERLO
-  ' VERIFICADO, QUE ES PEOR QUE NO DECIR NADA. ES EL ÚNICO CONTROL QUE
-  ' ATRAPA UN linkend APUNTANDO A UN ID QUE YA NO EXISTE —EL CASO DE
-  ' BORRAR Y RECARGAR UNA REFERENCIA EN EL ABM—.
-  FMain.TerminalViewProyecto.Input(
-    "echo '--- PASO 6: VALIDANDO INTEGRIDAD REFERENCIAL DE CITAS ---'" & Chr(10))
-
-  Wait 0.5
-
-  ' If Not ValidarIntegridadReferencial(sFileCanonicoLibro, sLugarBibliografia) Then
-  '   ' EL Message.Error YA LO MOSTRÓ LA FUNCIÓN. DEJAR RASTRO EN CONSOLA.
-  '   FMain.TerminalViewProyecto.Input(
-  '     "echo 'ERROR: integridad referencial fallida. Corrija las citas huérfanas.'" & Chr(10))
-  '   Return
-  ' Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'AVISO: la validación de integridad referencial está deshabilitada'" & Chr(10))
-
-  ' ====================================================
-  ' VERIFICACIÓN FINAL Y MENSAJE AL USUARIO
-  ' ====================================================
-  Wait 2.0
-
-  If Exist(sFileCanonicoLibro) Then
-    m_Sonido.sonar("Info")
-    Message.Info("Canónico del libro completo generado y validado." & Chr(10) & Chr(10) &
-      "Archivo:" & Chr(10) & sFileCanonicoLibro)
-  Else
-    m_Sonido.sonar("Warning")
-    Message.Warning("El proceso terminó pero no se encontró el archivo canónico." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-  Endif
+  m_GenerarSalidasLibro.GenerarCanonicoLibro()
 
 End
+
+' ' ==========================================================
+' ' HANDLER: btnGenerarLibroCanonico_Click
+' ' ==========================================================
+' ' PROPÓSITO:
+' '   Orquesta el ensamblado del canónico del libro completo:
+' '     PASO 0   — Alerta previa al usuario
+' '     PASO 1   — Verificación de existencia de canónicos individuales
+' '     PASO 2   — Generación de info-libro-{nombre}.xml
+' '     PASO 3   — Generación de manifiesto-libro-{nombre}.xml
+' '     PASO 4   — Ensamblado con Saxon
+' '     PASO 5   — Validación con jing contra docbook.rng-5.2
+' '     PASO 6   — Validación de integridad referencial
+' '
+' ' PRE-REQUISITO:
+' '   Todos los canónicos individuales de capítulo deben estar
+' '   generados y validados. El handler NO regenera automáticamente:
+' '   confía en el estado actual del disco y falla explícito si algún
+' '   canónico esperado no existe.
+' '
+' ' OUTPUT: jats/c-libro-{nombre_base_del_l_md}.xml
+' ' ==========================================================
+' ' CORRECCIÓN APLICADA
+' '   La consulta del PASO 1 listaba TODOS los capítulos y le exigía
+' '   canónico a cada uno. Pero hay piezas SIN CUERPO —los tres
+' '   índices, las dos listas, la bibliografía y el colofón— que no
+' '   tienen .md ni canónico: las produce LaTeX en la compilación.
+' '   Declarar una de ellas hacía abortar el ensamblado pidiendo un
+' '   archivo que nunca va a existir.
+' '
+' '   Esas piezas tampoco deben entrar al canónico ensamblado: no
+' '   tienen nada que aportar al XML. Se excluyen en la consulta.
+' ' ==========================================================
+' Public Sub btnGenerarLibroCanonico_Click()
+'
+'   Dim sRutaProyecto As String
+'   Dim sNombreArchivoMadre As String
+'   Dim sNombreBase As String
+'   Dim sFileInfoLibro As String
+'   Dim sFileManifiesto As String
+'   Dim sFileCanonicoLibro As String
+'   Dim sXsl As String
+'   Dim sSaxon As String
+'   Dim sRng As String
+'   Dim sFaltantes As String
+'   Dim sPathEsperado As String
+'   Dim sLugarBibliografia As String
+'   ' RUTA RELATIVA (RESPECTO A sRutaProyecto) DEL FRAGMENTO DE BIBLIO
+'   ' CONSOLIDADA. VACÍA EN por_capitulo.
+'   Dim sBiblioLibroRel As String
+'   Dim hCapitulos As Result
+'   Dim hLugarBiblio As Result
+'   Dim iIdLibro As Integer
+'   Dim iEspera As Integer
+'   Dim iFaltantes As Integer
+'   Dim iRespuesta As Integer
+'
+'   ' MOSTRAR CONSOLA
+'   tbMostrarPanelInferior.Value = True
+'   TabPanelIzquierdaInferior.Index = 0
+'
+'   ' --- 0. ALERTA PREVIA AL USUARIO ---
+'   ' EL ENSAMBLADO ASUME QUE LOS CANÓNICOS INDIVIDUALES ESTÁN AL DÍA.
+'   ' SI EL EDITOR MODIFICÓ ALGÚN CAPÍTULO Y NO LO REGENERÓ, EL LIBRO
+'   ' RESULTANTE TENDRÁ CONTENIDO DESACTUALIZADO SIN AVISO.
+'   iRespuesta = Message.Question(
+'     "GENERACIÓN DEL CANÓNICO DEL LIBRO COMPLETO" & Chr(10) & Chr(10) &
+'     "Este proceso ensambla el canónico del libro entero a partir de los" & Chr(10) &
+'     "canónicos individuales de cada capítulo (jats/c-*.xml)." & Chr(10) & Chr(10) &
+'     "IMPORTANTE: Los canónicos individuales deben estar ACTUALIZADOS y" & Chr(10) &
+'     "VALIDADOS. Si modificó algún capítulo y no regeneró su canónico," & Chr(10) &
+'     "el libro resultante contendrá versiones desactualizadas." & Chr(10) & Chr(10) &
+'     "¿Desea continuar con el ensamblado?",
+'     "Sí, continuar", "Cancelar")
+'
+'   If iRespuesta <> 1 Then
+'     FMain.TerminalViewProyecto.Input(
+'       "echo 'Ensamblado del libro cancelado por el usuario.'" & Chr(10))
+'     Return
+'   Endif
+'
+'   ' --- 1. RESOLVER id_libro DESDE id_proyecto ---
+'   ' LOS PROYECTOS DE LIBRO TIENEN UNA FILA EN libros_md CON UK EN
+'   ' id_proyecto.
+'   iIdLibro = m_XML.ObtenerIdLibro(CInt(id_proyecto.Value))
+'
+'   If iIdLibro = 0 Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("No se pudo resolver el id_libro para el proyecto activo." & Chr(10) &
+'       "Verifique que existe una fila en libros_md para este proyecto.")
+'     Return
+'   Endif
+'
+'   ' --- 2. VERIFICAR BINARIOS Y RECURSOS EXTERNOS ---
+'   sSaxon = m_Constantes.RUTA_SAXON
+'   If Not Exist(sSaxon) Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("Saxon-HE no encontrado en " & sSaxon)
+'     Return
+'   Endif
+'
+'   sXsl = User.Home & "/.gbpublisher/xslt/ensamblar-libro-canonico.xsl"
+'   If Not Exist(sXsl) Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("XSLT de ensamblado del libro no encontrado en:" & Chr(10) & sXsl)
+'     Return
+'   Endif
+'
+'   sRng = User.Home & "/.gbpublisher/schemas/docbook/docbook.rng"
+'
+'   ' --- 3. CONSTRUIR PATHS ---
+'   sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+'   sNombreArchivoMadre = File.BaseName(m_InicioCierre.NombreProyectoEnCurso)
+'
+'   ' STRIP DEL PREFIJO "l-" (CONVENCIÓN DE ARCHIVOS DE LIBRO)
+'   If Left(sNombreArchivoMadre, 2) = "l-" Then
+'     sNombreBase = Mid(sNombreArchivoMadre, 3)
+'   Else
+'     sNombreBase = sNombreArchivoMadre
+'   Endif
+'
+'   sFileInfoLibro = sRutaProyecto & "/tmp/info-libro-" & sNombreBase & ".xml"
+'   sFileManifiesto = sRutaProyecto & "/tmp/manifiesto-libro-" & sNombreBase & ".xml"
+'   sFileCanonicoLibro = sRutaProyecto & "/jats/c-libro-" & sNombreBase & ".xml"
+'
+'   ' ====================================================
+'   ' PASO 1: VERIFICACIÓN DE EXISTENCIA DE CANÓNICOS INDIVIDUALES
+'   ' ====================================================
+'   ' RECORREMOS LOS CAPÍTULOS DE BD Y VERIFICAMOS QUE CADA
+'   ' jats/c-{nombre_archivo}.xml EXISTA EN DISCO. SI FALTA ALGUNO,
+'   ' ABORTAMOS CON LA LISTA COMPLETA (NO CON EL PRIMERO QUE FALLA:
+'   ' EL EDITOR NECESITA VER TODO LO QUE HAY QUE REGENERAR).
+'   '
+'   ' SE EXCLUYEN LAS PIEZAS SIN CUERPO: LOS TRES ÍNDICES, LAS DOS
+'   ' LISTAS, LA BIBLIOGRAFÍA Y EL COLOFÓN. NO TIENEN .md NI CANÓNICO
+'   ' —LAS PRODUCE LaTeX EN LA COMPILACIÓN, Y m_GenerarPDFLibro LAS
+'   ' EMITE COMO \printindex, \listoffigures, \printbibliography O EL
+'   ' ENTORNO gbcolofon—. PEDIRLES CANÓNICO ES PEDIR UN ARCHIVO QUE
+'   ' NUNCA VA A EXISTIR, Y TAMPOCO DEBEN ENTRAR AL XML ENSAMBLADO:
+'   ' NO TIENEN NADA QUE APORTAR.
+'   '
+'   ' nombre_archivo IS NOT NULL: EL ABM PERMITE GUARDAR UNA PIEZA SIN
+'   ' NOMBRE, Y SIN ESTA GUARDA SE BUSCARÍA UN "c-.xml".
+'   FMain.TerminalViewProyecto.Input(
+'     "echo '--- PASO 1: VERIFICANDO CANÓNICOS DE CAPÍTULOS ---'" & Chr(10))
+'
+'   Try hCapitulos = m_ConexionBD.mConn.Exec(
+'     "SELECT nombre_archivo FROM capitulos " &
+'     "WHERE id_libro = &1 " &
+'     "AND nombre_archivo IS NOT NULL " &
+'     "AND tipo_capitulo NOT IN ('lista_figuras','lista_tablas'," &
+'     "  'indice_onomastico','indice_concepto','indice_autores'," &
+'     "  'bibliografia','colofon') " &
+'     "ORDER BY CASE " &
+'     "  WHEN nombre_archivo LIKE 'fm-%' THEN 1 " &
+'     "  WHEN nombre_archivo LIKE 'a-%' THEN 2 " &
+'     "  WHEN nombre_archivo LIKE 'bm-%' THEN 3 " &
+'     "  ELSE 9 " &
+'     "END, nombre_archivo ASC", iIdLibro)
+'
+'   If Error Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("Error al consultar capítulos del libro:" & Chr(10) & Error.Text)
+'     Return
+'   Endif
+'
+'   iFaltantes = 0
+'   sFaltantes = ""
+'
+'   While hCapitulos.Available
+'     sPathEsperado = sRutaProyecto & "/jats/c-" &
+'       m_XML.TrimUTF8(hCapitulos["nombre_archivo"]) & ".xml"
+'     If Not Exist(sPathEsperado) Then
+'       Inc iFaltantes
+'       sFaltantes &= "  - " & m_XML.TrimUTF8(hCapitulos["nombre_archivo"]) & Chr(10)
+'       FMain.TerminalViewProyecto.Input(
+'         "echo '  FALTA: " & sPathEsperado & "'" & Chr(10))
+'     Else
+'       FMain.TerminalViewProyecto.Input(
+'         "echo '  OK: " & m_XML.TrimUTF8(hCapitulos["nombre_archivo"]) & "'" & Chr(10))
+'     Endif
+'     hCapitulos.MoveNext
+'   Wend
+'
+'   If iFaltantes > 0 Then
+'     m_Sonido.sonar("Error")
+'     Message.Error("Faltan " & CStr(iFaltantes) &
+'       " canónico(s) individual(es) de capítulo(s):" & Chr(10) &
+'       Chr(10) & sFaltantes & Chr(10) &
+'       "Genere cada uno con el botón 'Generar canónico DocBook' " &
+'       "sobre cada capítulo antes de reintentar.")
+'     Return
+'   Endif
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "echo 'OK: todos los canónicos individuales están presentes'" & Chr(10))
+'
+'   ' ====================================================
+'   ' PASO 2: GENERAR info-libro.xml
+'   ' ====================================================
+'   FMain.TerminalViewProyecto.Input(
+'     "echo '--- PASO 2: GENERANDO info-libro ---'" & Chr(10))
+'
+'   If Not m_XML.GenerarInfoLibroXML(iIdLibro) Then
+'     FMain.TerminalViewProyecto.Input(
+'       "echo 'ERROR: falló info-libro.xml'" & Chr(10))
+'     Return
+'   Endif
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "echo 'OK: info-libro generado'" & Chr(10))
+'   FMain.TerminalViewProyecto.Input(
+'     "xmllint --noout '" & sFileInfoLibro &
+'     "' && echo 'info-libro: bien formado' || echo 'info-libro: ERROR'" & Chr(10))
+'
+'   ' ====================================================
+'   ' PASO 3: GENERAR manifiesto-libro.xml
+'   ' ====================================================
+'   ' ATENCIÓN: m_XML.GenerarManifiestoLibro TAMBIÉN LISTA LOS CAPÍTULOS.
+'   ' SI NO APLICA EL MISMO FILTRO DE PIEZAS SIN CUERPO, EL MANIFIESTO VA
+'   ' A DECLARAR UNA PIEZA CON UN path QUE NO EXISTE Y EL ENSAMBLADOR VA
+'   ' A FALLAR AL CARGARLA. VERIFICAR DESPUÉS DE ESTE CAMBIO.
+'   FMain.TerminalViewProyecto.Input(
+'     "echo '--- PASO 3: GENERANDO manifiesto-libro ---'" & Chr(10))
+'
+'   If Not m_XML.GenerarManifiestoLibro(iIdLibro) Then
+'     FMain.TerminalViewProyecto.Input(
+'       "echo 'ERROR: falló manifiesto-libro.xml'" & Chr(10))
+'     Return
+'   Endif
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "echo 'OK: manifiesto-libro generado'" & Chr(10))
+'   FMain.TerminalViewProyecto.Input(
+'     "xmllint --noout '" & sFileManifiesto &
+'     "' && echo 'manifiesto: bien formado' || echo 'manifiesto: ERROR'" & Chr(10))
+'
+'   ' ====================================================
+'   ' PASO 4: ENSAMBLAR CANÓNICO DEL LIBRO CON SAXON-HE
+'   ' EL XSLT NECESITA EL PARÁMETRO proyecto_dir PARA RESOLVER
+'   ' LOS PATHS RELATIVOS DEL MANIFIESTO.
+'   ' ELIMINAMOS EL CANÓNICO ANTERIOR PARA QUE EL POLLING POSTERIOR
+'   ' DETECTE LA NUEVA GENERACIÓN (RC-GM-02).
+'   ' ====================================================
+'   FMain.TerminalViewProyecto.Input(
+'     "echo '--- PASO 4: ENSAMBLANDO CANÓNICO DEL LIBRO ---'" & Chr(10))
+'
+'   If Exist(sFileCanonicoLibro) Then
+'     Shell "rm '" & sFileCanonicoLibro & "'" Wait
+'   Endif
+'
+'   ' LEER EL MODELO DE BIBLIOGRAFÍA DEL LIBRO. FALLBACK A 'por_capitulo'
+'   ' (EL DEFAULT DE LA COLUMNA Y EL MÁS COMÚN) SI NO SE PUEDE LEER.
+'   sLugarBibliografia = "por_capitulo"
+'   Try hLugarBiblio = m_ConexionBD.mConn.Exec(
+'     "SELECT lugar_bibliografia FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
+'   If Not Error Then
+'     If hLugarBiblio.Available Then
+'       If Not IsNull(hLugarBiblio["lugar_bibliografia"]) Then
+'         sLugarBibliografia = m_XML.TrimUTF8(hLugarBiblio["lugar_bibliografia"])
+'       Endif
+'     Endif
+'   Endif
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "echo 'Modelo de bibliografía: " & sLugarBibliografia & "'" & Chr(10))
+'
+'   ' SI ES CONSOLIDADA: GENERAR LA BIBLIO ÚNICA DEL LIBRO (DEDUPLICADA,
+'   ' DESDE EL .bib) Y CONSTRUIR SU RUTA RELATIVA PARA EL ENSAMBLADO.
+'   ' EN por_capitulo sBiblioLibroRel QUEDA VACÍA Y EL XSLT NO LA USA.
+'   sBiblioLibroRel = ""
+'   If sLugarBibliografia = "consolidada" Then
+'     If Not m_XML.GenerarBiblioLibroXML(iIdLibro) Then
+'       ' EL Message.Error YA LO MOSTRÓ LA FUNCIÓN. ABORTAR.
+'       Return
+'     Endif
+'     ' RUTA RELATIVA: tmp/biblio-libro-{nombre_proyecto}.xml
+'     ' (GenerarBiblioLibroXML LA ESCRIBE CON File.BaseName DEL PROYECTO)
+'     sBiblioLibroRel = "tmp/biblio-libro-" &
+'       File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".xml"
+'     FMain.TerminalViewProyecto.Input(
+'       "echo 'Biblio consolidada generada: " & sBiblioLibroRel & "'" & Chr(10))
+'   Endif
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "java -jar " & sSaxon & " " &
+'     "-s:'" & sFileManifiesto & "' " &
+'     "-xsl:'" & sXsl & "' " &
+'     "-o:'" & sFileCanonicoLibro & "' " &
+'     "proyecto_dir='" & sRutaProyecto & "' " &
+'     "lugar_bibliografia='" & sLugarBibliografia & "' " &
+'     "biblio_libro='" & sBiblioLibroRel & "'" & Chr(10))
+'
+'   ' ESPERAR HASTA QUE SAXON GENERE EL CANÓNICO (MÁXIMO 60 SEGUNDOS)
+'   iEspera = 0
+'   While Not Exist(sFileCanonicoLibro) And iEspera < 600
+'     Wait 0.1
+'     Inc iEspera
+'   Wend
+'
+'   If Not Exist(sFileCanonicoLibro) Then
+'     FMain.TerminalViewProyecto.Input(
+'       "echo 'ERROR: Saxon no generó el canónico del libro'" & Chr(10))
+'     Message.Error("Saxon-HE no generó el archivo canónico del libro " &
+'       "en el tiempo esperado." & Chr(10) &
+'       "Revise los mensajes en la terminal.")
+'     Return
+'   Endif
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "echo 'OK: canónico del libro generado'" & Chr(10))
+'   FMain.TerminalViewProyecto.Input(
+'     "echo 'Ruta: " & sFileCanonicoLibro & "'" & Chr(10))
+'   FMain.TerminalViewProyecto.Input(
+'     "xmllint --noout '" & sFileCanonicoLibro &
+'     "' && echo 'canónico libro: bien formado' || echo 'canónico libro: ERROR'" & Chr(10))
+'
+'   ' ====================================================
+'   ' PASO 5: VALIDACIÓN RELAX NG CONTRA docbook.rng-5.2
+'   ' ====================================================
+'   If Not Exist(sRng) Then
+'     FMain.TerminalViewProyecto.Input(
+'       "echo 'AVISO: RNG local no encontrado, omitiendo validación'" & Chr(10))
+'   Else
+'     FMain.TerminalViewProyecto.Input(
+'       "echo '--- PASO 5: VALIDANDO CANÓNICO DEL LIBRO CONTRA DocBook 5.2 RNG ---'" & Chr(10))
+'     FMain.TerminalViewProyecto.Input(
+'       "jing '" & sRng & "' '" & sFileCanonicoLibro & "' " &
+'       "&& echo 'RNG válido: DocBook 5.2 OK' " &
+'       "|| echo 'RNG INVÁLIDO: revisar errores arriba'" & Chr(10))
+'   Endif
+'
+'   ' ====================================================
+'   ' PASO 6: VALIDACIÓN DE INTEGRIDAD REFERENCIAL (FAIL-FAST)
+'   ' ====================================================
+'   ' A DIFERENCIA DEL PASO 5 (jing, QUE SOLO REPORTA EN CONSOLA), ESTA
+'   ' VALIDACIÓN ABORTA EL PROCESO SI HAY CITAS SIN ENTRADA BIBLIOGRÁFICA.
+'   ' NINGUNA SALIDA (HTML/EPUB/PDF) DEBE GENERARSE SOBRE UN CANÓNICO CON
+'   ' REFERENCIAS ROTAS.
+'   '
+'   ' PENDIENTE: ValidarIntegridadReferencial ESTÁ COMENTADA. HASTA QUE SE
+'   ' HABILITE, ESTE PASO SOLO IMPRIME QUE TODO ESTÁ BIEN SIN HABERLO
+'   ' VERIFICADO, QUE ES PEOR QUE NO DECIR NADA. ES EL ÚNICO CONTROL QUE
+'   ' ATRAPA UN linkend APUNTANDO A UN ID QUE YA NO EXISTE —EL CASO DE
+'   ' BORRAR Y RECARGAR UNA REFERENCIA EN EL ABM—.
+'   FMain.TerminalViewProyecto.Input(
+'     "echo '--- PASO 6: VALIDANDO INTEGRIDAD REFERENCIAL DE CITAS ---'" & Chr(10))
+'
+'   Wait 0.5
+'
+'   ' If Not ValidarIntegridadReferencial(sFileCanonicoLibro, sLugarBibliografia) Then
+'   '   ' EL Message.Error YA LO MOSTRÓ LA FUNCIÓN. DEJAR RASTRO EN CONSOLA.
+'   '   FMain.TerminalViewProyecto.Input(
+'   '     "echo 'ERROR: integridad referencial fallida. Corrija las citas huérfanas.'" & Chr(10))
+'   '   Return
+'   ' Endif
+'
+'   FMain.TerminalViewProyecto.Input(
+'     "echo 'AVISO: la validación de integridad referencial está deshabilitada'" & Chr(10))
+'
+'   ' ====================================================
+'   ' VERIFICACIÓN FINAL Y MENSAJE AL USUARIO
+'   ' ====================================================
+'   Wait 2.0
+'
+'   If Exist(sFileCanonicoLibro) Then
+'     m_Sonido.sonar("Info")
+'     Message.Info("Canónico del libro completo generado y validado." & Chr(10) & Chr(10) &
+'       "Archivo:" & Chr(10) & sFileCanonicoLibro)
+'   Else
+'     m_Sonido.sonar("Warning")
+'     Message.Warning("El proceso terminó pero no se encontró el archivo canónico." & Chr(10) &
+'       "Revise los mensajes en la terminal.")
+'   Endif
+'
+' End
 
 Public Sub menuGenerarHTMLLibro_Click()
 
@@ -7717,10 +7731,7 @@ Public Sub menuGenerarPDFLibro_Click()
   m_GenerarSalidasLibro.GenerarPDFLibro()
 
 End
-'
-'
-'
-'
+
 ' ============================================================
 ' HANDLERS DEL PANEL DE BIBLIOGRAFÍA — VAN EN FMain
 '

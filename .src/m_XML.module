@@ -5488,42 +5488,138 @@ End
 ' ==========================================================
 Private Function MapearTipoEditorDocBook(sTipoBibLaTeX As String) As String
 
+  ' --- 1. INICIALIZACIÓN ---
   Dim cQ As String = Chr(34)
+  Dim sTipo As String
 
-  ' --- 1. NORMALIZAR ENTRADA ---
+  ' --- 2. SIN TIPO: EDITOR ---
   If sTipoBibLaTeX = "" Then Return "editor|"
+  sTipo = Lower(TrimUTF8(sTipoBibLaTeX))
 
-  ' --- 2. MAPEAR SEGÚN VALOR ---
-  Select Case Lower(TrimUTF8(sTipoBibLaTeX))
+  ' --- 3. MAPEO ---
+  ' SE SIGUE EL MODELO DE biblatex: UN COMPILADOR, UN COORDINADOR O UN
+  ' DIRECTOR SON EDITORES CON UN TIPO, Y COMO TALES OCUPAN EL LUGAR DEL AUTOR
+  ' CUANDO NO LO HAY. ANTES SE EMITÍAN COMO <othercredit>, QUE LAS HOJAS DE
+  ' HTML Y EPUB NO TOMAN COMO SUSTITUTO DEL AUTOR: LA REFERENCIA SALÍA SIN
+  ' NOMBRE, MIENTRAS EL PDF, QUE PASA POR biblatex, SALÍA BIEN.
+  ' EL TIPO VIAJA EN @role Y LO LEE marca-editor.xsl PARA LA ABREVIATURA.
+  ' Lower ES SEGURO ACÁ: LOS TIPOS DE biblatex SON ASCII (GV-03)
+  Select Case sTipo
 
     Case "editor"
       Return "editor|"
 
+      ' EL TRADUCTOR NO OCUPA NUNCA EL LUGAR DEL AUTOR: SIGUE COMO othercredit
     Case "translator"
       Return "othercredit|class=" & cQ & "translator" & cQ
 
-    Case "compiler"
-      Return "othercredit|class=" & cQ & "other" & cQ &
-        " otherclass=" & cQ & "compiler" & cQ
-
-    Case "director"
-      Return "othercredit|class=" & cQ & "other" & cQ &
-        " otherclass=" & cQ & "director" & cQ
-
-    Case "organizer"
-      Return "othercredit|class=" & cQ & "other" & cQ &
-        " otherclass=" & cQ & "organizer" & cQ
-
-    Case "coordinator"
-      Return "othercredit|class=" & cQ & "other" & cQ &
-        " otherclass=" & cQ & "coordinator" & cQ
-
+      ' compiler, coordinator, director, collaborator, organizer Y CUALQUIER
+      ' OTRO: EDITOR CON SU TIPO, COMO LO TRATA biblatex. UN TIPO NO PREVISTO
+      ' SALE CON LA MARCA DE EDITOR (marca-editor.xsl)
     Case Else
-      ' FALLBACK PARA VALORES NO PREVISTOS: PRESERVAR EL TIPO COMO otherclass
-      Return "othercredit|class=" & cQ & "other" & cQ &
-        " otherclass=" & cQ & EscaparXML(Lower(TrimUTF8(sTipoBibLaTeX))) & cQ
+      Return "editor|role=" & cQ & EscaparXML(sTipo) & cQ
 
   End Select
+
+End
+
+' ============================================
+' Función   : PosicionNivelCero
+' Propósito : Busca una cadena en un valor de BibTeX IGNORANDO LO QUE ESTÁ
+'             ENTRE LLAVES, que es como separa biber: las llaves agrupan, y
+'             lo agrupado no se parte. {Johnson and Johnson} es una sola
+'             persona; {Ministerio de Salud, Presidencia} no tiene nombre de
+'             pila.
+'             String.* Y NO Mid/Len: LAS POSICIONES SON DE CARACTERES Y LAS
+'             USA String.Mid (RC-GM-12, GV-41).
+' Parámetros: sTexto As String — el valor
+'             sBuscado As String — lo que se busca
+'             iDesde As Integer — posición inicial, en caracteres; 1 = inicio.
+'               DEBE SER UN PUNTO DE NIVEL CERO: EL CONTADOR ARRANCA EN CERO
+' Retorna   : Integer — posición en caracteres de la primera aparición fuera
+'             de llaves, o 0 si no aparece
+' ============================================
+Private Function PosicionNivelCero(sTexto As String, sBuscado As String, iDesde As Integer) As Integer
+
+  Dim sCaracter As String
+  Dim iPos As Integer
+  Dim iLargo As Integer
+  Dim iLargoBuscado As Integer
+  Dim iNivel As Integer
+
+  iLargo = String.Len(sTexto)
+  iLargoBuscado = String.Len(sBuscado)
+  iNivel = 0
+
+  For iPos = iDesde To iLargo
+    sCaracter = String.Mid(sTexto, iPos, 1)
+    If sCaracter = "{" Then
+      Inc iNivel
+    Else If sCaracter = "}" Then
+      ' UNA LLAVE DE CIERRE SUELTA NO LLEVA EL NIVEL A NEGATIVO
+      If iNivel > 0 Then Dec iNivel
+    Else If iNivel = 0 Then
+      If String.Mid(sTexto, iPos, iLargoBuscado) = sBuscado Then Return iPos
+    Endif
+  Next
+
+  Return 0
+
+End
+
+' ============================================
+' Función   : DividirNivelCero
+' Propósito : Split que respeta las llaves de BibTeX: corta solo en las
+'             apariciones del separador que están fuera de llaves.
+' Parámetros: sTexto As String — el valor
+'             sSeparador As String — el separador
+' Retorna   : String[] — las partes, sin recortar; al menos una
+' ============================================
+Private Function DividirNivelCero(sTexto As String, sSeparador As String) As String[]
+
+  Dim aPartes As New String[]
+  Dim iDesde As Integer
+  Dim iPos As Integer
+
+  iDesde = 1
+
+  ' CADA CORTE DEJA iDesde EN UN PUNTO DE NIVEL CERO, QUE ES LO QUE
+  ' PosicionNivelCero ESPERA
+  Do
+    iPos = PosicionNivelCero(sTexto, sSeparador, iDesde)
+    If iPos = 0 Then Break
+    aPartes.Add(String.Mid(sTexto, iDesde, iPos - iDesde))
+    iDesde = iPos + String.Len(sSeparador)
+  Loop
+
+  aPartes.Add(String.Mid(sTexto, iDesde))
+
+  Return aPartes
+
+End
+
+' ============================================
+' Función   : QuitarLlavesBib
+' Propósito : Quita las llaves de agrupación de un valor de BibTeX, una vez
+'             que ya cumplieron su función: agrupar un nombre ({de la Fuente},
+'             {Ministerio de Salud}) o proteger una mayúscula ({I}'ve). En el
+'             XML son dos caracteres más, y las hojas los imprimían.
+'             SOLO LLAVES: ES LO ÚNICO DE LA SINTAXIS DE BibTeX QUE LOS DATOS
+'             TRAEN (MEDIDO: NI \&, NI --, NI ~). LimpiarMarcasLatex HACE MÁS
+'             PERO NO SIRVE ACÁ: CONVIERTE \emph EN <italic>, QUE ES JATS.
+'             LIMITACIÓN: UNA LLAVE LITERAL ESCRITA \{ SE PERDERÍA. NO HAY
+'             NINGUNA EN LOS DATOS.
+' Parámetros: sTexto As String — el valor, sin escapar para XML
+' Retorna   : String — el valor sin llaves
+' ============================================
+Private Function QuitarLlavesBib(sTexto As String) As String
+
+  Dim sSalida As String
+
+  sSalida = Replace(sTexto, "{", "")
+  sSalida = Replace(sSalida, "}", "")
+
+  Return sSalida
 
 End
 
@@ -5573,10 +5669,10 @@ Private Function GenerarPersonGroupDocBook(sNombres As String, sTipo As String) 
   Wend
   sNombres = TrimUTF8(sNombres)
 
-  ' --- 3. SEPARAR AUTORES POR " and " ---
-  ' SE USA "|||" COMO SEPARADOR INTERMEDIO PORQUE EL TEXTO NO LO CONTIENE
-  sNombres = Replace(sNombres, " and ", "|||")
-  aNombres = Split(sNombres, "|||")
+  ' --- 3. SEPARAR PERSONAS POR " and ", FUERA DE LLAVES ---
+  ' ANTES SE PARTÍA SIN MIRAR LAS LLAVES: {Johnson and Johnson} SALÍA COMO
+  ' DOS PERSONAS
+  aNombres = DividirNivelCero(sNombres, " and ")
 
   ' --- 4. EMITIR UN ELEMENTO POR PERSONA ---
   For i = 0 To aNombres.Max
@@ -5592,16 +5688,21 @@ Private Function GenerarPersonGroupDocBook(sNombres As String, sTipo As String) 
       Continue
     Endif
 
-    ' FORMATO BIBLATEX: "Apellido, Nombre"
-    posComa = InStr(nombreCompleto, ",")
+    ' FORMATO BIBLATEX: "Apellido, Nombre". LA COMA SE BUSCA FUERA DE LLAVES:
+    ' {Ministerio de Salud, Presidencia} NO TIENE NOMBRE DE PILA
+    posComa = PosicionNivelCero(nombreCompleto, ",", 1)
     If posComa > 0 Then
-      apellido = TrimUTF8(Left(nombreCompleto, posComa - 1))
-      nombre = TrimUTF8(Mid(nombreCompleto, posComa + 1))
+      apellido = TrimUTF8(String.Left(nombreCompleto, posComa - 1))
+      nombre = TrimUTF8(String.Mid(nombreCompleto, posComa + 1))
     Else
       ' SIN COMA: CONSIDERAR TODO COMO APELLIDO (LO MÁS CONSERVADOR)
       apellido = nombreCompleto
       nombre = ""
     Endif
+
+    ' LAS LLAVES YA AGRUPARON: SE QUITAN RECIÉN AHORA, DESPUÉS DE PARTIR
+    apellido = TrimUTF8(QuitarLlavesBib(apellido))
+    nombre = TrimUTF8(QuitarLlavesBib(nombre))
 
     ' --- EMITIR EL ELEMENTO ---
     If sAtributos = "" Then
@@ -7064,8 +7165,11 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
   ' --- 5. INVOCAR PANDOC ---
   ' SE INVOCA DESDE LA TERMINAL EMBEBIDA (TerminalViewProyecto)
   ' IGUAL QUE EN REVISTAS. EL ORDEN DE LOS FILTROS ES IMPORTANTE:
-  '   1° cite-to-biblioref-db.lua  (PROCESA LAS CITAS PRIMERO)
-  '   2° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
+  '   1° guillemets-to-quoted-db.lua  (CONVIERTE « » EN Quoted. VA PRIMERO
+  '      PORQUE fenced-divs SERIALIZA LOS DIVS CON pandoc.write, RC-DB-07,
+  '      Y DESPUÉS DE ESO NO QUEDAN Str QUE PROCESAR)
+  '   2° cite-to-biblioref-db.lua  (PROCESA LAS CITAS BIBLIOGRÁFICAS)
+  '   3° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
   '      QUE PUEDEN CONTENER PÁRRAFOS CON CITAS YA TRANSFORMADAS)
   '
   ' EL WRAPPER <section xmlns="..." xmlns:mml="..." xmlns:xlink="...">
@@ -7078,6 +7182,7 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
     " xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">'; " &
     "pandoc '" & sRutaMD & "' " &
     "--from markdown --to docbook5 --mathml --no-highlight --wrap=none " &
+    "--lua-filter ~/.gbpublisher/filters/guillemets-to-quoted-db.lua " &
     "--lua-filter ~/.gbpublisher/filters/cite-to-biblioref-db.lua " &
     "--lua-filter ~/.gbpublisher/filters/fenced-divs-to-elements-db.lua " &
     "--output -; " &
@@ -7420,8 +7525,14 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
   ' MAPEO DE rol_libro A ELEMENTOS DOCBOOK 5.2:
   '   autor                → <author>
   '   editor               → <editor>
-  '   compilador           → <othercredit class="other" otherclass="compiler">
-  '   coordinador          → <othercredit class="other" otherclass="coordinator">
+  '   compilador           → <editor role="compiler">
+  '   coordinador          → <editor role="coordinator">
+  '   colaborador          → <editor role="collaborator">
+  ' LA RESPONSABILIDAD EDITORIAL ES UN EDITOR CON UN ROL, COMO EN biblatex Y
+  ' COMO EN LA BIBLIOGRAFÍA (MapearTipoEditorDocBook). ANTES COMPILADORES Y
+  ' COORDINADORES ERAN <othercredit>: EL «CÓMO CITAR» DEL HTML NO LOS VEÍA Y
+  ' UN LIBRO SIN AUTOR SE CITABA SIN NOMBRE. LOS DEMÁS ROLES SIGUEN COMO
+  ' <othercredit> PORQUE NINGUNO OCUPA EL LUGAR DEL AUTOR:
   '   prologuista_externo  → <othercredit class="other" otherclass="prologuista-externo">
   '   traductor            → <othercredit class="translator">
   '   ilustrador           → <othercredit class="graphicdesigner">
@@ -7447,13 +7558,14 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
         sElementoAutor = "othercredit"
         sAtributosAutor = " class=" & cQ & "graphicdesigner" & cQ
       Case "compilador"
-        sElementoAutor = "othercredit"
-        sAtributosAutor = " class=" & cQ & "other" & cQ &
-          " otherclass=" & cQ & "compiler" & cQ
+        sElementoAutor = "editor"
+        sAtributosAutor = " role=" & cQ & "compiler" & cQ
       Case "coordinador"
-        sElementoAutor = "othercredit"
-        sAtributosAutor = " class=" & cQ & "other" & cQ &
-          " otherclass=" & cQ & "coordinator" & cQ
+        sElementoAutor = "editor"
+        sAtributosAutor = " role=" & cQ & "coordinator" & cQ
+      Case "colaborador"
+        sElementoAutor = "editor"
+        sAtributosAutor = " role=" & cQ & "collaborator" & cQ
       Case "prologuista_externo"
         sElementoAutor = "othercredit"
         sAtributosAutor = " class=" & cQ & "other" & cQ &
@@ -8320,9 +8432,12 @@ Public Function GenerarManifiestoLibro(iIdLibro As Integer) As Boolean
   ' EL CASE WHEN GARANTIZA fm-* < a-* < bm-* AUNQUE ALFABÉTICAMENTE
   ' 'a' < 'b' < 'f'. DENTRO DE CADA GRUPO, ORDEN ALFABÉTICO POR
   ' nombre_archivo (LA NUMERACIÓN NN GARANTIZA EL ORDEN CORRECTO).
+  ' nombre_archivo IS NOT NULL: EL ABM PERMITE GUARDAR UNA PIEZA SIN NOMBRE, Y
+  ' SIN ESTA GUARDA EL MANIFIESTO DECLARARÍA UN «jats/c-.xml»
   Try hCapitulos = m_ConexionBD.mConn.Exec(
     "SELECT id_capitulo, nombre_archivo, tipo_capitulo " &
     "FROM capitulos WHERE id_libro = &1 " &
+    "AND nombre_archivo IS NOT NULL " &
     "ORDER BY CASE " &
     "  WHEN nombre_archivo LIKE 'fm-%' THEN 1 " &
     "  WHEN nombre_archivo LIKE 'a-%' THEN 2 " &
@@ -8360,18 +8475,30 @@ Public Function GenerarManifiestoLibro(iIdLibro As Integer) As Boolean
   sXML &= "  <capitulos>" & Chr(10)
 
   While hCapitulos.Available
-    ' CONSTRUIR EL PATH DEL CANÓNICO DEL CAPÍTULO (RELATIVO AL PROYECTO)
-    ' LA CONVENCIÓN ES jats/c-{nombre_archivo}.xml
-    sPathCanonico = "jats/c-" & TrimUTF8(hCapitulos["nombre_archivo"]) & ".xml"
-
-    ' EL tipo_capitulo VA COMO ATRIBUTO PARA QUE EL XSLT DEL ENSAMBLADOR
-    ' PUEDA DETECTAR CASOS ESPECIALES (BIBLIOGRAFÍA CONSOLIDADA, ETC.)
+    ' EL tipo_capitulo SE RESUELVE PRIMERO: DECIDE SI LA PIEZA ENTRA.
+    ' VA ADEMÁS COMO ATRIBUTO PARA QUE EL XSLT DEL ENSAMBLADOR PUEDA DETECTAR
+    ' CASOS ESPECIALES (BIBLIOGRAFÍA CONSOLIDADA, ETC.)
     sTipoCapitulo = "capitulo"
     If Not IsNull(hCapitulos["tipo_capitulo"]) Then
       If Len(TrimUTF8(hCapitulos["tipo_capitulo"])) > 0 Then
         sTipoCapitulo = TrimUTF8(hCapitulos["tipo_capitulo"])
       Endif
     Endif
+
+    ' LAS PIEZAS SIN CUERPO NO ENTRAN AL CANÓNICO: NO TIENEN .md NI CANÓNICO
+    ' PROPIO, Y CADA SALIDA LAS RESUELVE A SU MODO. LA DECISIÓN ES DE LA MATRIZ
+    ' EDITORIAL, NO DE UNA LISTA ESCRITA ACÁ. DECLARAR UNA HACÍA ABORTAR EL
+    ' ENSAMBLADO PIDIENDO UN CANÓNICO QUE NUNCA VA A EXISTIR, Y EL ABORTO
+    ' DEJABA EL CANÓNICO DEL LIBRO TRUNCADO.
+    ' MoveNext ANTES DE Continue: SIN ÉL EL BUCLE NO AVANZA Y NO TERMINA NUNCA
+    If Not m_PiezasLibro.TieneCuerpo(sTipoCapitulo) Then
+      hCapitulos.MoveNext
+      Continue
+    Endif
+
+    ' CONSTRUIR EL PATH DEL CANÓNICO DEL CAPÍTULO (RELATIVO AL PROYECTO)
+    ' LA CONVENCIÓN ES jats/c-{nombre_archivo}.xml
+    sPathCanonico = "jats/c-" & TrimUTF8(hCapitulos["nombre_archivo"]) & ".xml"
 
     sXML &= "    <capitulo" & Chr(10)
     sXML &= "      path=" & cQ & EscaparXML(sPathCanonico) & cQ & Chr(10)
@@ -8619,6 +8746,11 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
 
   ' --- 6. TÍTULOS ---
   ' COMPONER TÍTULOS COMPLETOS CON SUBTÍTULOS (PATRÓN BIBLATEX: title + ": " + subtitle).
+  ' LOS CAMPOS DE TEXTO PASAN POR QuitarLlavesBib ANTES DE EscaparXML: LAS
+  ' LLAVES DE BibTeX ({I}'ve) SE IMPRIMÍAN EN HTML Y EPUB. EN ESE ORDEN:
+  ' ESCAPAR PRIMERO NO CAMBIA NADA PARA LAS LLAVES, PERO ES EL ORDEN QUE SIRVE
+  ' SI MAÑANA HAY QUE LIMPIAR ALGO QUE EL ESCAPE ALTERA.
+  ' NO PASAN URL NI DOI: EN biblatex SON LITERALES
   sTituloCompleto = If(sSubtitle <> "", sTitle & ": " & sSubtitle, sTitle)
   sBookTitleCompleto = If(sBookSubtitle <> "", sBookTitle & ": " & sBookSubtitle, sBookTitle)
   sMaintitleCompleto = If(sMainsubtitle <> "", sMaintitle & ": " & sMainsubtitle, sMaintitle)
@@ -8628,24 +8760,24 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
   ' <citetitle pubwork="book"> PARA EL CONTENEDOR.
   If sBookTitleCompleto <> "" Then
     If sTituloCompleto <> "" Then
-      sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
+      sXML &= "      <title>" & EscaparXML(QuitarLlavesBib(sTituloCompleto)) & "</title>" & gb.NewLine
     Endif
     sXML &= "      <citetitle pubwork=" & cQ & "book" & cQ & ">" &
-      EscaparXML(sBookTitleCompleto) & "</citetitle>" & gb.NewLine
+      EscaparXML(QuitarLlavesBib(sBookTitleCompleto)) & "</citetitle>" & gb.NewLine
   Else
     ' SIN BOOKTITLE: EL title VA SEGÚN EL TIPO DE PUBLICACIÓN
     If sTituloCompleto <> "" Then
       Select Case sTipoEfectivo
         Case "article", "periodical"
           ' EL title DEL ARTÍCULO ES UN <title>; EL journal VA COMO <citetitle>
-          sXML &= "      <title>" & EscaparXML(sTituloCompleto) & "</title>" & gb.NewLine
+          sXML &= "      <title>" & EscaparXML(QuitarLlavesBib(sTituloCompleto)) & "</title>" & gb.NewLine
         Case Else
           ' LIBROS, REPORTES, TESIS, ETC.: title COMO <citetitle pubwork="X">
           sXML &= "      <citetitle"
           If sPubwork <> "" Then
             sXML &= " pubwork=" & cQ & sPubwork & cQ
           Endif
-          sXML &= ">" & EscaparXML(sTituloCompleto) & "</citetitle>" & gb.NewLine
+          sXML &= ">" & EscaparXML(QuitarLlavesBib(sTituloCompleto)) & "</citetitle>" & gb.NewLine
       End Select
     Endif
   Endif
@@ -8653,34 +8785,34 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
   ' MAINTITLE (TÍTULO DE OBRA MULTI-VOLUMEN, BIBLATEX-ESPECÍFICO)
   If sMaintitleCompleto <> "" Then
     sXML &= "      <citetitle pubwork=" & cQ & "set" & cQ & ">" &
-      EscaparXML(sMaintitleCompleto) & "</citetitle>" & gb.NewLine
+      EscaparXML(QuitarLlavesBib(sMaintitleCompleto)) & "</citetitle>" & gb.NewLine
   Endif
 
   ' JOURNAL: PARA article/periodical, EL journal_title VA COMO <citetitle pubwork="journal">
   If sJournal <> "" And (sTipoEfectivo = "article" Or sTipoEfectivo = "periodical") Then
     sXML &= "      <citetitle pubwork=" & cQ & "journal" & cQ & ">" &
-      EscaparXML(sJournal) & "</citetitle>" & gb.NewLine
+      EscaparXML(QuitarLlavesBib(sJournal)) & "</citetitle>" & gb.NewLine
   Endif
 
   ' SERIES (BIBLATEX series): SOLO APLICA A LIBROS Y COLECCIONES
   If sSeries <> "" And (sPubwork = "book" Or sPubwork = "chapter" Or
       InStr(Lower(sType), "collection") > 0) Then
     sXML &= "      <bibliomisc role=" & cQ & "series" & cQ & ">" &
-      EscaparXML(sSeries) & "</bibliomisc>" & gb.NewLine
+      EscaparXML(QuitarLlavesBib(sSeries)) & "</bibliomisc>" & gb.NewLine
   Endif
 
   ' --- 7. PUBLISHER Y UBICACIÓN ---
   If sPublisher <> "" Then
     sXML &= "      <publisher>" & gb.NewLine
-    sXML &= "        <publishername>" & EscaparXML(sPublisher) & "</publishername>" & gb.NewLine
+    sXML &= "        <publishername>" & EscaparXML(QuitarLlavesBib(sPublisher)) & "</publishername>" & gb.NewLine
     If sAddress <> "" Then
-      sXML &= "        <address><city>" & EscaparXML(sAddress) & "</city></address>" & gb.NewLine
+      sXML &= "        <address><city>" & EscaparXML(QuitarLlavesBib(sAddress)) & "</city></address>" & gb.NewLine
     Endif
     sXML &= "      </publisher>" & gb.NewLine
   Else If sAddress <> "" Then
     ' ADDRESS SIN PUBLISHER: EMITIR COMO bibliomisc PARA NO PERDER EL DATO
     sXML &= "      <bibliomisc role=" & cQ & "address" & cQ & ">" &
-      EscaparXML(sAddress) & "</bibliomisc>" & gb.NewLine
+      EscaparXML(QuitarLlavesBib(sAddress)) & "</bibliomisc>" & gb.NewLine
   Endif
 
   ' --- 8. FECHA, VOLUMEN, NÚMERO ---
@@ -8718,17 +8850,17 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
 
   ' --- 10. EDICIÓN, INSTITUCIÓN, NOTAS ---
   If sEdition <> "" Then
-    sXML &= "      <edition>" & EscaparXML(sEdition) & "</edition>" & gb.NewLine
+    sXML &= "      <edition>" & EscaparXML(QuitarLlavesBib(sEdition)) & "</edition>" & gb.NewLine
   Endif
 
   ' INSTITUTION/ORGANIZATION: PARA TESIS Y REPORTES
   If sTipoEfectivo = "thesis" Or sTipoEfectivo = "report" Then
     If sInstitution <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(sInstitution) & "</orgname>" & gb.NewLine
+      sXML &= "      <orgname>" & EscaparXML(QuitarLlavesBib(sInstitution)) & "</orgname>" & gb.NewLine
     Else If sSchool <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(sSchool) & "</orgname>" & gb.NewLine
+      sXML &= "      <orgname>" & EscaparXML(QuitarLlavesBib(sSchool)) & "</orgname>" & gb.NewLine
     Else If sOrganization <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(sOrganization) & "</orgname>" & gb.NewLine
+      sXML &= "      <orgname>" & EscaparXML(QuitarLlavesBib(sOrganization)) & "</orgname>" & gb.NewLine
     Endif
   Endif
 
@@ -8757,12 +8889,12 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
 
   If sNote <> "" Then
     sXML &= "      <bibliomisc role=" & cQ & "note" & cQ & ">" &
-      EscaparXML(sNote) & "</bibliomisc>" & gb.NewLine
+      EscaparXML(QuitarLlavesBib(sNote)) & "</bibliomisc>" & gb.NewLine
   Endif
 
   If sVersion <> "" Then
     sXML &= "      <bibliomisc role=" & cQ & "version" & cQ & ">" &
-      EscaparXML(sVersion) & "</bibliomisc>" & gb.NewLine
+      EscaparXML(QuitarLlavesBib(sVersion)) & "</bibliomisc>" & gb.NewLine
   Endif
 
   If sHolder <> "" And sTipoEfectivo = "patent" Then

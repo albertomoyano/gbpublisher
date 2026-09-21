@@ -1,372 +1,229 @@
 ' Gambas module file
 
-' gambas class file
+' ==========================================================
+' MÓDULO    : m_GenerarEpubLibro
+' PROPÓSITO : Prepara el EPUB 3 del libro desde la base y lo entrega a
+'             engine/generar_epub_libro.sh (SC-13).
+'
+' LA FRONTERA
+' ----------------------------------------------------------
+'   En Gambas queda solo lo que sale de la base: las páginas de portada,
+'   créditos y colofón, el nav.xhtml, el content.opf y la lista de piezas.
+'   Todo se escribe a disco, en tmp/epub-work/, ANTES de lanzar el script.
+'
+'   El script hace lo demás: copia recursos, transforma cada capítulo, escribe
+'   mimetype y container.xml, verifica que cada archivo que el OPF declara
+'   exista, empaqueta y valida. Si el OPF declara algo que no se generó, no
+'   empaqueta.
+'
+' QUÉ PIEZAS LLEVA EL EPUB
+' ----------------------------------------------------------
+'   Lo decide la matriz editorial, m_PiezasLibro. El EPUB toma de su canónico
+'   las piezas con cuerpo. De las sin cuerpo: los índices y las listas se
+'   omiten; el colofón es la página propia que se escribe acá; la
+'   bibliografía viaja dentro de cada capítulo.
+'   PENDIENTE: con lugar_bibliografia = consolidada, los canónicos de
+'   capítulo siguen trayendo su propia bibliografía y el EPUB no la
+'   consolida. Hoy no hay libros consolidados en EPUB.
+'
+' ANTES DE ESTA VERSIÓN
+' ----------------------------------------------------------
+'   Cada página leía los metadatos por su cuenta —cinco lecturas de la base
+'   por EPUB—, los datos se insertaban sin escapar —una editorial con «&»
+'   dejaba el OPF mal formado—, el estilo de cita se resolvía con el nombre
+'   del .csl en vez de su ruta, el id del proyecto salía de un control de
+'   FMain (RC-GM-16) y el OPF listaba todas las piezas de la base, incluidas
+'   las que nunca se generan.
+' ==========================================================
 
-' ====================================================
-' MÓDULO      : m_GenerarEpubLibro
-' PROPÓSITO   : GENERA EL EPUB 3 DEL LIBRO COMPLETO (NO POR
-'               CAPÍTULO). RECORRE EL MANIFIESTO DEL LIBRO,
-'               CONVIERTE CADA CAPÍTULO CANÓNICO (DocBook) A
-'               XHTML CON docbook-to-epub.xsl VÍA SAXON, GENERA
-'               LAS PÁGINAS AUTOMÁTICAS (PORTADA, TOC, NAV,
-'               COLOFÓN), COPIA RECURSOS Y EMPAQUETA EL .epub.
-' BASE        : ADAPTADO DE m_GenerarEpub (REVISTAS). DIFERENCIAS
-'               PRINCIPALES:
-'                 - RECORRE EL MANIFIESTO (NO artículos SUELTOS).
-'                 - VOCABULARIO DocBook (NO JATS).
-'                 - EL CSS ES UN ASSET (gbpublisher-epub-libro.css),
-'                   NO SE GENERA STRING POR STRING → SE COPIA.
-'                 - PÁGINAS: portada, créditos/legal, TOC, colofón
-'                   (SIN índice de autores, QUE NO APLICA A LIBROS).
-' UBICACIÓN   : ~/05_Proyectos/gbpublisher/.src/
-' ====================================================
+' PLAZO EN SEGUNDOS ANTES DE PREGUNTAR SI SEGUIR ESPERANDO
+Private Const PLAZO_EPUB As Float = 900.0
 
-' --- RUTAS Y ESTADO DE TRABAJO ---
-Private sRutaProyecto As String
-Private sRutaEpubWork As String
-Private sRutaOEBPS As String
-Private sSaxon As String
-Private sXslEpub As String
-Private sRutaFonts As String
-Private sRutaCssAsset As String
-Private sEstiloCita As String
-Private iIdLibro As Integer
-Private iIdProyecto As Integer
-Private sSQL As String
-Private rConsulta As Result
+' NOMBRES FIJOS DEL PAQUETE. DEBEN COINCIDIR CON engine/generar_epub_libro.sh:
+' SI DIVERGEN, LA VERIFICACIÓN DEL OPF DEL SCRIPT LO ATRAPA
+Private Const CSS_EPUB As String = "gbpublisher-epub-libro.css"
 
-' ====================================================
+' RUTAS Y LIBRO DE LA GENERACIÓN EN CURSO
+Private $sRutaProyecto As String
+Private $sRutaEpubWork As String
+Private $sRutaOEBPS As String
+Private $iIdLibro As Integer
+
+' ============================================
 ' Función   : GenerarEpubLibro
-' Propósito : Orquesta la generación completa del EPUB del
-'             libro en pasos discretos y verificables.
-' ====================================================
+' Propósito : Punto de entrada de la salida EPUB del libro.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub GenerarEpubLibro()
 
-  ' --- 1. VERIFICACIONES PREVIAS ---
-  If m_InicioCierre.ArchivoProyectoEnCurso = "" Then
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPiezas As String[]
+  Dim aArgumentos As New String[]
+  Dim cMeta As Collection
+  Dim sAutores As String
+  Dim sNombreEpub As String
+  Dim sEstiloCita As String
+  Dim iResultado As Integer
+
+  ' --- 2. PROYECTO Y LIBRO ---
+  $sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  If $sRutaProyecto = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay ningún proyecto abierto.")
     Return
   Endif
 
-  ' NOTA: EL LIBRO SE IDENTIFICA POR SU PROYECTO. iIdLibro SE DERIVA
-  ' DE libros_md POR id_proyecto EN InicializarVariables (NO DEPENDE
-  ' DE UNA GLOBAL DE "LIBRO EN CURSO", QUE NO EXISTE — LO QUE SE
-  ' CACHEA ES EL CAPÍTULO ACTIVO, IRRELEVANTE PARA EL EPUB COMPLETO).
+  $sRutaEpubWork = $sRutaProyecto &/ "tmp" &/ "epub-work"
+  $sRutaOEBPS = $sRutaEpubWork &/ "OEBPS"
 
-  InicializarVariables()
-
-  ' VERIFICAR QUE SE RESOLVIÓ EL LIBRO
-  If iIdLibro <= 0 Then
+  ' EL ID DEL PROYECTO SALE DE LA GLOBAL DE SESIÓN Y NO DEL ValueBox DE FMain
+  ' (RC-GM-16)
+  $iIdLibro = m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso)
+  If $iIdLibro = 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay libro asociado a este proyecto.")
     Return
   Endif
 
-  ' --- 2. VERIFICAR FUENTES REQUERIDAS ---
-  If Not VerificarFuentes() Then Return
+  ' --- 3. PIEZAS SEGÚN LA MATRIZ EDITORIAL ---
+  aPiezas = ListaPiezasEpub()
+  If Not aPiezas Then Return
+  If aPiezas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro no tiene piezas con cuerpo para el EPUB.")
+    Return
+  Endif
 
-  ' --- 3. CREAR ESTRUCTURA DE DIRECTORIOS ---
-  CrearEstructuraDirectorios()
+  ' --- 4. METADATOS: UNA SOLA LECTURA PARA TODO EL PAQUETE ---
+  cMeta = LeerMetadatosLibro()
+  If Not cMeta Then Return
+  sAutores = LeerAutoresLibro()
 
-  ' --- 0. MOSTRAR CONSOLA ---
-  FMain.tbMostrarPanelInferior.Value = True
-  FMain.TabPanelIzquierdaInferior.Index = 0
+  ' --- 5. ÁRBOL DE TRABAJO ---
+  If Not PrepararArbol() Then Return
 
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== INICIANDO GENERACIÓN EPUB 3 (LIBRO) ==='" & Chr(10))
+  ' --- 6. LO QUE SALE DE LA BASE, A DISCO ---
+  ' EL OPF VA ÚLTIMO SOLO POR LEGIBILIDAD: NO DEPENDE DE LOS DEMÁS. EL SCRIPT
+  ' VERIFICA DESPUÉS QUE TODO LO QUE DECLARA EXISTA
+  If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-portada.xhtml", ArmarPortada(cMeta, sAutores)) Then Return
+  If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-creditos.xhtml", ArmarCreditos(cMeta, sAutores)) Then Return
+  If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "bm-99-colofon.xhtml", ArmarColofon(cMeta)) Then Return
+  If Not EscribirArchivo($sRutaOEBPS &/ "nav.xhtml", ArmarNav(cMeta, aPiezas)) Then Return
+  If Not EscribirArchivo($sRutaOEBPS &/ "content.opf", ArmarOPF(cMeta, sAutores, aPiezas)) Then Return
 
-  ' --- 5. GENERAR XHTML DE CADA CAPÍTULO (VÍA SAXON) ---
-  If Not GenerarXhtmlCapitulos() Then Return
+  ' LA LISTA QUE EL SCRIPT TRANSFORMA: LAS MISMAS PIEZAS, EN EL MISMO ORDEN,
+  ' QUE EL OPF DECLARA
+  If Not EscribirArchivo($sRutaProyecto &/ "tmp" &/ "epub-capitulos.txt", aPiezas.Join(Chr(10)) & Chr(10)) Then Return
 
-  ' --- 6. GENERAR PÁGINAS AUTOMÁTICAS ---
-  GenerarPortada()
-  Wait 0.2
-  GenerarCreditos()
-  Wait 0.2
-  GenerarColofonGbpublisher()
-  Wait 0.2
+  ' --- 7. NOMBRE DEL ARCHIVO Y ESTILO DE CITA ---
+  sNombreEpub = NombreArchivoEpub(cMeta)
+  sEstiloCita = m_GenerarSalidasLibro.ResolverEstiloCita($iIdLibro)
 
-  ' --- 7. COPIAR RECURSOS (FUENTES, CSS, IMÁGENES) ---
-  CopiarFuentes()
-  Wait 0.2
-  CopiarCSS()
-  Wait 0.2
-  CopiarImagenes()
-  Wait 0.2
+  ' --- 8. GENERACIÓN ---
+  aArgumentos.Add($sRutaProyecto)
+  aArgumentos.Add(sNombreEpub)
+  aArgumentos.Add(sEstiloCita)
 
-  ' --- 8. ESCRIBIR content.opf Y nav.xhtml ---
-  GenerarContentOPF()
-  Wait 0.2
-  GenerarNavXhtml()
-  Wait 0.2
+  iResultado = m_GenerarSalidasLibro.EjecutarScriptSalida("generar_epub_libro.sh", aArgumentos, PLAZO_EPUB)
 
-  ' --- 9. ESCRIBIR mimetype Y container.xml ---
-  GenerarMimetype()
-  Wait 0.2
-  GenerarContainer()
-  Wait 0.2
-
-  ' --- 10. EMPAQUETAR EL .epub ---
-  EmpaquetarEpub()
+  ' --- 9. INFORME ---
+  m_GenerarSalidasLibro.InformarResultado(iResultado, "El EPUB del libro",
+    $sRutaProyecto &/ "salidas" &/ "epub" &/ sNombreEpub)
 
 End
 
-' ====================================================
-' Función   : InicializarVariables
-' Propósito : Configura rutas de trabajo a partir del
-'             libro/proyecto activo.
-' ====================================================
-Private Sub InicializarVariables()
+' ============================================
+' Función   : ListaPiezasEpub
+' Propósito : Las piezas que el EPUB toma de su canónico, en orden editorial
+'             fm → a → bm. Es la fuente única del spine, el manifest, el nav y
+'             la lista que transforma el script.
+' Parámetros: (ninguno)
+' Retorna   : String[] — nombre_archivo de cada pieza, o Null si falló la
+'             consulta; en ese caso el motivo ya se informó
+' ============================================
+Private Function ListaPiezasEpub() As String[]
 
-  ' --- 1. RUTAS BASE ---
-  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
-  sRutaEpubWork = sRutaProyecto &/ "tmp" &/ "epub-work"
-  sRutaOEBPS = sRutaEpubWork &/ "OEBPS"
-  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
-  sXslEpub = User.Home &/ ".gbpublisher" &/ "xslt" &/ "docbook-to-epub.xsl"
-  sRutaFonts = User.Home &/ ".gbpublisher" &/ "fonts"
-  sRutaCssAsset = User.Home &/ ".gbpublisher" &/ "assets" &/ "css" &/ "gbpublisher-epub-libro.css"
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPiezas As New String[]
+  Dim hPiezas As Result
+  Dim sTipo As String
 
-  ' --- 2. IDS DE SESIÓN ---
-  ' EL PROYECTO ES LA FUENTE DE VERDAD. EL id_libro SE DERIVA DE
-  ' libros_md POR id_proyecto (UN PROYECTO DE LIBRO ↔ UN LIBRO).
-  iIdProyecto = CInt(FMain.id_proyecto.Value)
-  iIdLibro = 0
-  Dim hLibro As Result
-  Try hLibro = m_ConexionBD.mConn.Exec(
-    "SELECT id_libro FROM libros_md WHERE id_proyecto = &1 LIMIT 1", iIdProyecto)
-  If Not Error Then
-    If hLibro.Available Then
-      iIdLibro = CInt(hLibro["id_libro"])
-    Endif
-  Endif
-
-  ' --- 4. ESTILO DE CITA PARA EL EPUB ---
-  Dim hEstilo As Result
-  Try hEstilo = m_ConexionBD.mConn.Exec(
-    "SELECT estilo_cita FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
-  If Not Error And hEstilo.Available Then
-    sEstiloCita = m_InicioCierre.LeerTipoCSL(m_Metadatos.NullToString(hEstilo["estilo_cita"]))
-  Endif
-  If sEstiloCita = "" Then sEstiloCita = "apa"
-
-End
-
-' ====================================================
-' Función   : VerificarFuentes
-' Propósito : Comprueba que los 4 archivos Noto Serif
-'             existen en ~/.gbpublisher/fonts/
-' Retorna   : Boolean — False si falta alguna.
-' ====================================================
-Private Function VerificarFuentes() As Boolean
-
-  ' --- 1. LISTA DE FUENTES REQUERIDAS ---
-  Dim aFuentes As String[] = [
-    "NotoSerif-Regular.ttf",
-    "NotoSerif-Bold.ttf",
-    "NotoSerif-Italic.ttf",
-    "NotoSerif-BoldItalic.ttf"]
-
-  ' --- 2. VERIFICAR EXISTENCIA DE CADA ARCHIVO ---
-  Dim sFuente As String
-  For Each sFuente In aFuentes
-    If Not Exist(sRutaFonts &/ sFuente) Then
-      m_Sonido.sonar("Error")
-      Message.Error("Falta la fuente requerida:" & Chr(10) &
-        sRutaFonts &/ sFuente & Chr(10) & Chr(10) &
-        "Copiá los archivos .ttf de Noto Serif a:" & Chr(10) &
-        sRutaFonts)
-      Return False
-    Endif
-  Next
-
-  Return True
-
-Catch
-  Return False
-
-End
-
-' ====================================================
-' Función   : CrearEstructuraDirectorios
-' Propósito : Crea el árbol EPUB 3 de trabajo. Un solo
-'             directorio chapters/ (el orden lo da el
-'             manifiesto). Limpia si ya existe.
-' ====================================================
-Private Sub CrearEstructuraDirectorios()
-
-  ' --- 1. LIMPIAR DIRECTORIO DE TRABAJO PREVIO ---
-  If Exist(sRutaEpubWork) Then
-    Shell "rm -rf '" & sRutaEpubWork & "'" Wait
-  Endif
-
-  ' --- 2. CREAR ÁRBOL EPUB 3 ---
-  Dim aDirs As String[] = [
-    sRutaEpubWork &/ "META-INF",
-    sRutaOEBPS &/ "css",
-    sRutaOEBPS &/ "fonts",
-    sRutaOEBPS &/ "images",
-    sRutaOEBPS &/ "chapters"]
-
-  Dim sDir As String
-  For Each sDir In aDirs
-    Shell "mkdir -p '" & sDir & "'" Wait
-  Next
-
-  ' --- 3. CREAR TAMBIÉN EL DIRECTORIO DE SALIDA FINAL ---
-  Dim sRutaSalida As String = sRutaProyecto &/ "salidas" &/ "epub"
-  If Not Exist(sRutaSalida) Then
-    Shell "mkdir -p '" & sRutaSalida & "'" Wait
-  Endif
-
-End
-
-' ====================================================
-' Función   : GenerarXhtmlCapitulos
-' Propósito : Recorre los capítulos del proyecto (por BD,
-'             en orden editorial fm→a→bm) y convierte cada
-'             canónico DocBook a XHTML con Saxon.
-' Retorna   : Boolean — False si algún capítulo falla.
-' ====================================================
-Private Function GenerarXhtmlCapitulos() As Boolean
-
-  ' --- 1. CONSULTAR LOS CAPÍTULOS EN ORDEN EDITORIAL ---
-  ' EL ORDEN fm- → a- → bm- (Y DENTRO, POR NOMBRE) REPRODUCE EL
-  ' DEL MANIFIESTO SIN LEER XML. SE HACE CON UN CASE EN EL ORDER BY.
-  sSQL = "SELECT nombre_archivo FROM capitulos " &
-    "WHERE id_proyecto = &1 " &
+  ' --- 2. CONSULTA ---
+  ' POR id_libro, COMO EL MANIFIESTO DEL CANÓNICO. EL ORDEN ES EL MISMO.
+  ' nombre_archivo IS NOT NULL: EL ABM PERMITE GUARDAR UNA PIEZA SIN NOMBRE
+  Try hPiezas = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, tipo_capitulo FROM capitulos " &
+    "WHERE id_libro = &1 " &
+    "AND nombre_archivo IS NOT NULL " &
     "ORDER BY CASE " &
-    "WHEN nombre_archivo LIKE 'fm-%' THEN 1 " &
-    "WHEN nombre_archivo LIKE 'bm-%' THEN 3 " &
-    "ELSE 2 END, nombre_archivo ASC"
-  Try rConsulta = m_ConexionBD.mConn.Exec(sSQL, iIdProyecto)
+    "  WHEN nombre_archivo LIKE 'fm-%' THEN 1 " &
+    "  WHEN nombre_archivo LIKE 'a-%' THEN 2 " &
+    "  WHEN nombre_archivo LIKE 'bm-%' THEN 3 " &
+    "  ELSE 9 " &
+    "END, nombre_archivo ASC", $iIdLibro)
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudieron leer los capítulos:" & Chr(10) & Error.Text)
-    Return False
-  Endif
-  If Not rConsulta.Available Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay capítulos en este proyecto.")
-    Return False
+    Message.Error("No se pudieron leer las piezas del libro:" & gb.NewLine & Error.Text)
+    Return Null
   Endif
 
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== CONVIRTIENDO CAPÍTULOS A XHTML ==='" & Chr(10))
-
-  ' --- 2. GENERAR EL XHTML DE CADA CAPÍTULO ---
-  While rConsulta.Available
-
-    Dim sNombreArchivo As String = m_Metadatos.NullToString(rConsulta["nombre_archivo"])
-
-    ' CONSTRUIR RUTAS (EL LIBRO CONSERVA EL nombre_archivo COMPLETO):
-    '   canónico = jats/c-<nombre_archivo>.xml
-    '   salida   = OEBPS/chapters/h-<nombre_archivo>.xhtml
-    Dim sCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreArchivo & ".xml"
-    Dim sNombreXhtml As String = "h-" & sNombreArchivo & ".xhtml"
-    Dim sFileXhtml As String = sRutaOEBPS &/ "chapters" &/ sNombreXhtml
-
-    ' VERIFICAR QUE EXISTE EL CANÓNICO
-    If Not Exist(sCanonico) Then
-      FMain.TerminalViewProyecto.Input(
-        "echo 'AVISO: canónico no encontrado: " & sNombreArchivo & "'" & Chr(10))
-      rConsulta.MoveNext
-      Continue
+  ' --- 3. FILTRO POR LA MATRIZ ---
+  ' SOLO LAS QUE EL EPUB TOMA DE SU CANÓNICO. LAS DERIVADAS SE RESUELVEN
+  ' APARTE Y LAS OMITIDAS NO VAN. LA DECISIÓN ES DE m_PiezasLibro, NO DE UNA
+  ' LISTA ESCRITA ACÁ
+  While hPiezas.Available
+    sTipo = "capitulo"
+    If Not IsNull(hPiezas["tipo_capitulo"]) Then
+      If m_XML.TrimUTF8(hPiezas["tipo_capitulo"]) <> "" Then sTipo = m_XML.TrimUTF8(hPiezas["tipo_capitulo"])
     Endif
 
-    ' EJECUTAR SAXON: canónico DocBook → XHTML EPUB
-    FMain.TerminalViewProyecto.Input(
-      "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
-      "-s:'" & sCanonico & "' " &
-      "-xsl:'" & sXslEpub & "' " &
-      "-o:'" & sFileXhtml & "' " &
-      "estilo_cita='" & sEstiloCita & "'" & Chr(10))
-
-    ' ESPERAR SALIDA (MÁXIMO 60s)
-    Dim iEspera As Integer = 0
-    While Not Exist(sFileXhtml) And iEspera < 600
-      Wait 0.1
-      Inc iEspera
-    Wend
-
-    If Not Exist(sFileXhtml) Then
-      FMain.TerminalViewProyecto.Input(
-        "echo 'ERROR: Saxon no generó " & sNombreXhtml & "'" & Chr(10))
-      m_Sonido.sonar("Error")
-      Message.Error("Saxon no generó el XHTML para:" & Chr(10) & sNombreArchivo)
-      Return False
+    If m_PiezasLibro.Tratamiento(sTipo, m_PiezasLibro.SALIDA_EPUB) = m_PiezasLibro.TRATAMIENTO_CUERPO Then
+      aPiezas.Add(m_XML.TrimUTF8(hPiezas["nombre_archivo"]))
     Endif
 
-    FMain.TerminalViewProyecto.Input(
-      "echo 'OK: " & sNombreXhtml & "'" & Chr(10))
-
-    rConsulta.MoveNext
+    hPiezas.MoveNext
   Wend
 
-  Return True
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al generar capítulos: " & Error.Text)
-  Return False
+  Return aPiezas
 
 End
 
-' ====================================================
-' Función   : ListaCapitulosOrdenada
-' Propósito : Devuelve los nombre_archivo de los capítulos
-'             del proyecto en orden editorial (fm→a→bm).
-'             Fuente única para spine, manifest y nav.
-' Retorna   : String[] — nombres de archivo ordenados.
-' ====================================================
-Private Function ListaCapitulosOrdenada() As String[]
-
-  Dim aLista As New String[]
-  Dim rCap As Result
-  Dim sQuery As String = "SELECT nombre_archivo FROM capitulos " &
-    "WHERE id_proyecto = &1 " &
-    "ORDER BY CASE " &
-    "WHEN nombre_archivo LIKE 'fm-%' THEN 1 " &
-    "WHEN nombre_archivo LIKE 'bm-%' THEN 3 " &
-    "ELSE 2 END, nombre_archivo ASC"
-
-  Try rCap = m_ConexionBD.mConn.Exec(sQuery, iIdProyecto)
-  If Not Error Then
-    While rCap.Available
-      aLista.Add(m_Metadatos.NullToString(rCap["nombre_archivo"]))
-      rCap.MoveNext
-    Wend
-  Endif
-
-  Return aLista
-
-Catch
-  Return aLista
-
-End
-
-' ====================================================
+' ============================================
 ' Función   : LeerMetadatosLibro
-' Propósito : Carga en un Collection los metadatos del libro
-'             desde libros_md (fuente de verdad, RC-XJ-02).
-' Retorna   : Collection — claves = nombres de campo.
-' ====================================================
+' Propósito : Carga los metadatos del libro desde libros_md, fuente de verdad
+'             (RC-XJ-02). Los valores quedan SIN escapar: se escapan al
+'             escribirlos en cada archivo.
+' Parámetros: (ninguno)
+' Retorna   : Collection — claves fijas, NULL convertido en cadena vacía; o
+'             Null si falló la consulta, con el motivo ya informado
+' ============================================
 Private Function LeerMetadatosLibro() As Collection
 
-  ' --- 1. CONSULTA A libros_md ---
+  ' --- 1. INICIALIZACIÓN ---
   Dim cMeta As New Collection
   Dim hLibro As Result
 
+  ' --- 2. CONSULTA ---
   Try hLibro = m_ConexionBD.mConn.Exec(
     "SELECT titulo_libro, subtitulo, titulo_abreviado, isbn_impreso, " &
     "isbn_electronico, doi_libro, editorial, ciudad_publicacion, " &
     "ano_publicacion, idioma_principal, url_licencia, licencia_defecto, " &
-    "descripcion_libro, resumen_libro, imagen_tapa " &
-    "FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
-  If Error Or If Not hLibro.Available Then Return cMeta
+    "descripcion_libro, imagen_tapa " &
+    "FROM libros_md WHERE id_libro = &1 LIMIT 1", $iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los datos del libro:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
 
-  ' --- 2. VOLCAR CAMPOS (NULL → CADENA VACÍA) ---
+  If Not hLibro.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontraron los datos del libro (id " & CStr($iIdLibro) & ").")
+    Return Null
+  Endif
+
+  ' --- 3. VOLCADO ---
   cMeta["titulo"] = m_Metadatos.NullToString(hLibro["titulo_libro"])
   cMeta["subtitulo"] = m_Metadatos.NullToString(hLibro["subtitulo"])
   cMeta["titulo_abreviado"] = m_Metadatos.NullToString(hLibro["titulo_abreviado"])
@@ -382,479 +239,534 @@ Private Function LeerMetadatosLibro() As Collection
   cMeta["descripcion"] = m_Metadatos.NullToString(hLibro["descripcion_libro"])
   cMeta["imagen_tapa"] = m_Metadatos.NullToString(hLibro["imagen_tapa"])
 
-  ' DEFAULTS RAZONABLES
   If cMeta["idioma"] = "" Then cMeta["idioma"] = "es"
 
   Return cMeta
 
-Catch
-  Return cMeta
-
 End
 
-' ====================================================
+' ============================================
 ' Función   : LeerAutoresLibro
-' Propósito : Devuelve los autores/editores del libro como
-'             string legible (para portada y metadatos OPF).
-' Retorna   : String — "Nombre Apellido, Nombre Apellido".
-' ====================================================
-' ====================================================
-' Función   : LeerAutoresLibro
-' Propósito : Devuelve la autoría del libro (a nivel libro:
-'             autor/compilador/editor/coordinador) como
-'             string legible, para la portada y el OPF.
-' Retorna   : String — "Nombre Apellidos, Nombre Apellidos".
-' ====================================================
+' Propósito : La autoría del libro —autor, compilador, editor, coordinador—
+'             como texto legible, para la portada, los créditos y el OPF.
+'             Los roles secundarios (traductor, ilustrador, prologuista
+'             externo, director de colección) no encabezan la obra.
+' Parámetros: (ninguno)
+' Retorna   : String — «Nombre Apellidos, Nombre Apellidos», sin escapar; vacío
+'             si no hay autoría o falló la consulta
+' ============================================
 Private Function LeerAutoresLibro() As String
 
-  ' --- 1. AUTORÍA A NIVEL LIBRO (libro_autor) ---
-  ' EL LIBRO SE FIRMA EN libro_autor (DISTINTO DE capitulo_autor,
-  ' QUE ES POR CAPÍTULO Y YA SALE EN CADA XHTML). SE INCLUYEN LOS
-  ' ROLES DE AUTORÍA PRINCIPAL PARA PORTADA (autor, compilador,
-  ' editor, coordinador), EXCLUYENDO ROLES SECUNDARIOS (traductor,
-  ' ilustrador, prologuista_externo, director_coleccion), QUE NO
-  ' ENCABEZAN LA OBRA. ORDEN POR orden_autoria.
-  Dim sAutores As String = ""
-  Dim hAut As Result
-  Dim sQuery As String
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hAutores As Result
+  Dim sAutores As String
 
-  sQuery = "SELECT a.nombre, a.apellidos " &
+  ' --- 2. CONSULTA ---
+  ' UN FALLO ACÁ NO IMPIDE EL EPUB: LAS PÁGINAS SALEN SIN LÍNEA DE AUTORÍA
+  Try hAutores = m_ConexionBD.mConn.Exec(
+    "SELECT a.nombre, a.apellidos " &
     "FROM libro_autor la " &
     "JOIN autores a ON a.id_autor = la.id_autor " &
     "WHERE la.id_libro = &1 " &
     "AND la.rol_libro IN ('autor','compilador','editor','coordinador') " &
-    "ORDER BY la.orden_autoria ASC"
-  Try hAut = m_ConexionBD.mConn.Exec(sQuery, iIdLibro)
-  If Not Error Then
-    While hAut.Available
-      If sAutores <> "" Then sAutores &= ", "
-      sAutores &= m_Metadatos.NullToString(hAut["nombre"]) & " " &
-        m_Metadatos.NullToString(hAut["apellidos"])
-      hAut.MoveNext
-    Wend
-  Endif
+    "ORDER BY la.orden_autoria ASC", $iIdLibro)
+  If Error Then Return ""
 
-  Return sAutores
+  ' --- 3. ARMADO ---
+  While hAutores.Available
+    If sAutores <> "" Then sAutores &= ", "
+    sAutores &= m_Metadatos.NullToString(hAutores["nombre"]) & " " &
+      m_Metadatos.NullToString(hAutores["apellidos"])
+    hAutores.MoveNext
+  Wend
 
-Catch
   Return sAutores
 
 End
 
-' ====================================================
-' Función   : GenerarPortada
-' Propósito : Crea front-portada.xhtml con tapa/título.
-' ====================================================
-Private Sub GenerarPortada()
+' ============================================
+' Función   : PrepararArbol
+' Propósito : Vacía y recrea el árbol de trabajo del EPUB. Todo lo que el
+'             paquete contiene se regenera en cada corrida.
+' Parámetros: (ninguno)
+' Retorna   : Boolean — False si no se pudo, con el motivo ya informado
+' ============================================
+Private Function PrepararArbol() As Boolean
 
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== GENERANDO PORTADA ==='" & Chr(10))
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aDirs As New String[]
+  Dim sDir As String
 
-  ' --- 1. METADATOS ---
-  Dim cMeta As Collection = LeerMetadatosLibro()
-  Dim sAutores As String = LeerAutoresLibro()
-  Dim sNombreTapa As String = ""
-  If cMeta["imagen_tapa"] <> "" Then sNombreTapa = File.Name(cMeta["imagen_tapa"])
+  ' --- 2. LIMPIEZA ---
+  ' Exec CON ARRAY Y NO Shell: LA RUTA NO PASA POR sh -c (SC-05)
+  If Exist($sRutaEpubWork) Then
+    Try Exec ["rm", "-rf", $sRutaEpubWork] Wait
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo limpiar el directorio de trabajo:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
 
-  ' --- 2. CONSTRUIR XHTML ---
+  ' --- 3. ÁRBOL EPUB 3 ---
+  aDirs.Add($sRutaEpubWork &/ "META-INF")
+  aDirs.Add($sRutaOEBPS &/ "css")
+  aDirs.Add($sRutaOEBPS &/ "fonts")
+  aDirs.Add($sRutaOEBPS &/ "images")
+  aDirs.Add($sRutaOEBPS &/ "chapters")
+
+  For Each sDir In aDirs
+    Try Exec ["mkdir", "-p", sDir] Wait
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear " & sDir & ":" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Next
+
+  ' --- 4. VERIFICACIÓN ---
+  ' Exec ... Wait NO INFORMA SI mkdir FALLÓ: SE COMPRUEBA EL RESULTADO
+  If Not Exist($sRutaOEBPS &/ "chapters") Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear el árbol de trabajo en:" & gb.NewLine & $sRutaEpubWork)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirArchivo
+' Propósito : Guarda un archivo y avisa si no pudo.
+' Parámetros: sRuta As String — destino
+'             sContenido As String — contenido
+' Retorna   : Boolean — False si falló, con el motivo ya informado
+' ============================================
+Private Function EscribirArchivo(sRuta As String, sContenido As String) As Boolean
+
+  Try File.Save(sRuta, sContenido)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir:" & gb.NewLine & sRuta & gb.NewLine & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscaparXml
+' Propósito : Escapa un texto para insertarlo en contenido o en un atributo
+'             XML. El & primero: si fuera después, escaparía los & de las
+'             entidades recién escritas.
+' Parámetros: sTexto As String — texto plano, tal como sale de la base
+' Retorna   : String — texto escapado
+' ============================================
+Private Function EscaparXml(sTexto As String) As String
+
+  Dim sSalida As String
+
+  sSalida = Replace(sTexto, "&", "&amp;")
+  sSalida = Replace(sSalida, "<", "&lt;")
+  sSalida = Replace(sSalida, ">", "&gt;")
+  sSalida = Replace(sSalida, Chr(34), "&quot;")
+
+  Return sSalida
+
+End
+
+' ============================================
+' Función   : Comillas
+' Propósito : Envuelve un valor de atributo entre comillas dobles (SC-01).
+' Parámetros: sValor As String — valor ya escapado
+' Retorna   : String — el valor entre comillas
+' ============================================
+Private Function Comillas(sValor As String) As String
+
+  Return Chr(34) & sValor & Chr(34)
+
+End
+
+' ============================================
+' Función   : CabeceraXhtml
+' Propósito : Declaración, html y head comunes a las páginas propias del EPUB.
+' Parámetros: sIdioma As String — idioma del libro
+'             sTitulo As String — título de la página, SIN escapar
+'             bConHojaDeEstilos As Boolean — si enlaza la hoja del EPUB
+' Retorna   : String — desde la declaración XML hasta <body> inclusive
+' ============================================
+Private Function CabeceraXhtml(sIdioma As String, sTitulo As String, bConHojaDeEstilos As Boolean) As String
+
   Dim s As String
-  s = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
-    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
+
+  s = "<?xml version=" & Comillas("1.0") & " encoding=" & Comillas("UTF-8") & "?>" & Chr(10)
   s &= "<!DOCTYPE html>" & Chr(10)
-  s &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
-    " xmlns:epub=" & Chr(34) & "http://www.idpf.org/2007/ops" & Chr(34) &
-    " xml:lang=" & Chr(34) & cMeta["idioma"] & Chr(34) & ">" & Chr(10)
+  s &= "<html xmlns=" & Comillas("http://www.w3.org/1999/xhtml") &
+    " xmlns:epub=" & Comillas("http://www.idpf.org/2007/ops") &
+    " xml:lang=" & Comillas(EscaparXml(sIdioma)) & ">" & Chr(10)
   s &= "<head>" & Chr(10)
-  s &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
-  s &= "<title>" & cMeta["titulo"] & "</title>" & Chr(10)
-  s &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
-    " type=" & Chr(34) & "text/css" & Chr(34) &
-    " href=" & Chr(34) & "../css/gbpublisher-epub-libro.css" & Chr(34) & "/>" & Chr(10)
+  s &= "<meta charset=" & Comillas("UTF-8") & "/>" & Chr(10)
+  s &= "<title>" & EscaparXml(sTitulo) & "</title>" & Chr(10)
+  If bConHojaDeEstilos Then
+    s &= "<link rel=" & Comillas("stylesheet") & " type=" & Comillas("text/css") &
+      " href=" & Comillas("../css/" & CSS_EPUB) & "/>" & Chr(10)
+  Endif
   s &= "</head>" & Chr(10)
   s &= "<body>" & Chr(10)
-  s &= "<section epub:type=" & Chr(34) & "cover" & Chr(34) &
-    " class=" & Chr(34) & "portada" & Chr(34) & ">" & Chr(10)
 
-  ' IMAGEN DE TAPA (SI HAY)
+  Return s
+
+End
+
+' ============================================
+' Función   : ArmarPortada
+' Propósito : La portada: la tapa si la hay; si no, una portada de texto.
+' Parámetros: cMeta As Collection — metadatos del libro
+'             sAutores As String — autoría, sin escapar
+' Retorna   : String — el XHTML completo
+' ============================================
+Private Function ArmarPortada(cMeta As Collection, sAutores As String) As String
+
+  Dim s As String
+  Dim sNombreTapa As String
+
+  If cMeta["imagen_tapa"] <> "" Then sNombreTapa = File.Name(cMeta["imagen_tapa"])
+
+  s = CabeceraXhtml(cMeta["idioma"], cMeta["titulo"], True)
+  s &= "<section epub:type=" & Comillas("cover") & " class=" & Comillas("portada") & ">" & Chr(10)
+
   If sNombreTapa <> "" Then
-    s &= "<img class=" & Chr(34) & "portada-img" & Chr(34) &
-      " src=" & Chr(34) & "../images/" & sNombreTapa & Chr(34) &
-      " alt=" & Chr(34) & "Cubierta" & Chr(34) & "/>" & Chr(10)
+    s &= "<img class=" & Comillas("portada-img") &
+      " src=" & Comillas("../images/" & EscaparXml(sNombreTapa)) &
+      " alt=" & Comillas("Cubierta") & "/>" & Chr(10)
   Else
-    ' PORTADA TEXTUAL (SIN TAPA)
-    s &= "<h1 class=" & Chr(34) & "portada-titulo" & Chr(34) & ">" &
-      cMeta["titulo"] & "</h1>" & Chr(10)
+    ' SIN TAPA: PORTADA DE TEXTO
+    s &= "<h1 class=" & Comillas("portada-titulo") & ">" & EscaparXml(cMeta["titulo"]) & "</h1>" & Chr(10)
     If cMeta["subtitulo"] <> "" Then
-      s &= "<p class=" & Chr(34) & "portada-subtitulo" & Chr(34) & ">" &
-        cMeta["subtitulo"] & "</p>" & Chr(10)
+      s &= "<p class=" & Comillas("portada-subtitulo") & ">" & EscaparXml(cMeta["subtitulo"]) & "</p>" & Chr(10)
     Endif
     If sAutores <> "" Then
-      s &= "<p class=" & Chr(34) & "portada-autor" & Chr(34) & ">" &
-        sAutores & "</p>" & Chr(10)
+      s &= "<p class=" & Comillas("portada-autor") & ">" & EscaparXml(sAutores) & "</p>" & Chr(10)
     Endif
     If cMeta["editorial"] <> "" Then
-      s &= "<p class=" & Chr(34) & "portada-editorial" & Chr(34) & ">" &
-        cMeta["editorial"] & "</p>" & Chr(10)
+      s &= "<p class=" & Comillas("portada-editorial") & ">" & EscaparXml(cMeta["editorial"]) & "</p>" & Chr(10)
     Endif
   Endif
 
   s &= "</section>" & Chr(10)
   s &= "</body>" & Chr(10) & "</html>" & Chr(10)
 
-  ' --- 3. GUARDAR ---
-  File.Save(sRutaOEBPS &/ "chapters" &/ "front-portada.xhtml", s)
+  Return s
 
 End
 
-' ====================================================
-' Función   : GenerarCreditos
-' Propósito : Crea front-creditos.xhtml (página legal:
-'             ISBN, editorial, año, licencia, DOI).
-' ====================================================
-Private Sub GenerarCreditos()
-
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== GENERANDO CRÉDITOS ==='" & Chr(10))
-
-  Dim cMeta As Collection = LeerMetadatosLibro()
-  Dim sAutores As String = LeerAutoresLibro()
+' ============================================
+' Función   : ArmarCreditos
+' Propósito : La página legal: título, autoría, editorial, año, ISBN, DOI y
+'             licencia.
+' Parámetros: cMeta As Collection — metadatos del libro
+'             sAutores As String — autoría, sin escapar
+' Retorna   : String — el XHTML completo
+' ============================================
+Private Function ArmarCreditos(cMeta As Collection, sAutores As String) As String
 
   Dim s As String
-  s = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
-    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
-  s &= "<!DOCTYPE html>" & Chr(10)
-  s &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
-    " xmlns:epub=" & Chr(34) & "http://www.idpf.org/2007/ops" & Chr(34) &
-    " xml:lang=" & Chr(34) & cMeta["idioma"] & Chr(34) & ">" & Chr(10)
-  s &= "<head>" & Chr(10)
-  s &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
-  s &= "<title>Créditos</title>" & Chr(10)
-  s &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
-    " type=" & Chr(34) & "text/css" & Chr(34) &
-    " href=" & Chr(34) & "../css/gbpublisher-epub-libro.css" & Chr(34) & "/>" & Chr(10)
-  s &= "</head>" & Chr(10)
-  s &= "<body>" & Chr(10)
-  s &= "<section class=" & Chr(34) & "creditos" & Chr(34) & ">" & Chr(10)
 
-  ' TÍTULO Y AUTORÍA
-  s &= "<h1 class=" & Chr(34) & "creditos-titulo" & Chr(34) & ">" &
-    cMeta["titulo"] & "</h1>" & Chr(10)
+  s = CabeceraXhtml(cMeta["idioma"], "Créditos", True)
+  s &= "<section class=" & Comillas("creditos") & ">" & Chr(10)
+
+  ' --- 1. TÍTULO Y AUTORÍA ---
+  s &= "<h1 class=" & Comillas("creditos-titulo") & ">" & EscaparXml(cMeta["titulo"]) & "</h1>" & Chr(10)
   If cMeta["subtitulo"] <> "" Then
-    s &= "<p class=" & Chr(34) & "creditos-subtitulo" & Chr(34) & ">" &
-      cMeta["subtitulo"] & "</p>" & Chr(10)
+    s &= "<p class=" & Comillas("creditos-subtitulo") & ">" & EscaparXml(cMeta["subtitulo"]) & "</p>" & Chr(10)
   Endif
   If sAutores <> "" Then
-    s &= "<p class=" & Chr(34) & "creditos-autor" & Chr(34) & ">" &
-      sAutores & "</p>" & Chr(10)
+    s &= "<p class=" & Comillas("creditos-autor") & ">" & EscaparXml(sAutores) & "</p>" & Chr(10)
   Endif
 
-  ' DATOS EDITORIALES
-  s &= "<div class=" & Chr(34) & "creditos-datos" & Chr(34) & ">" & Chr(10)
+  ' --- 2. DATOS EDITORIALES ---
+  s &= "<div class=" & Comillas("creditos-datos") & ">" & Chr(10)
   If cMeta["editorial"] <> "" Then
-    s &= "<p>" & cMeta["editorial"]
-    If cMeta["ciudad"] <> "" Then s &= ", " & cMeta["ciudad"]
+    s &= "<p>" & EscaparXml(cMeta["editorial"])
+    If cMeta["ciudad"] <> "" Then s &= ", " & EscaparXml(cMeta["ciudad"])
     s &= "</p>" & Chr(10)
   Endif
-  If cMeta["anio"] <> "" Then
-    s &= "<p>" & cMeta["anio"] & "</p>" & Chr(10)
-  Endif
+  If cMeta["anio"] <> "" Then s &= "<p>" & EscaparXml(cMeta["anio"]) & "</p>" & Chr(10)
   If cMeta["isbn_electronico"] <> "" Then
-    s &= "<p>ISBN (digital): " & cMeta["isbn_electronico"] & "</p>" & Chr(10)
+    s &= "<p>ISBN (digital): " & EscaparXml(cMeta["isbn_electronico"]) & "</p>" & Chr(10)
   Endif
   If cMeta["isbn_impreso"] <> "" Then
-    s &= "<p>ISBN (impreso): " & cMeta["isbn_impreso"] & "</p>" & Chr(10)
+    s &= "<p>ISBN (impreso): " & EscaparXml(cMeta["isbn_impreso"]) & "</p>" & Chr(10)
   Endif
-  If cMeta["doi"] <> "" Then
-    s &= "<p>DOI: " & cMeta["doi"] & "</p>" & Chr(10)
-  Endif
+  If cMeta["doi"] <> "" Then s &= "<p>DOI: " & EscaparXml(cMeta["doi"]) & "</p>" & Chr(10)
+
+  ' --- 3. LICENCIA ---
   If cMeta["url_licencia"] <> "" Then
-    s &= "<p class=" & Chr(34) & "creditos-licencia" & Chr(34) & ">" &
-      "<a href=" & Chr(34) & cMeta["url_licencia"] & Chr(34) & ">" &
-      cMeta["licencia"] & "</a></p>" & Chr(10)
+    s &= "<p class=" & Comillas("creditos-licencia") & "><a href=" &
+      Comillas(EscaparXml(cMeta["url_licencia"])) & ">" &
+      EscaparXml(cMeta["licencia"]) & "</a></p>" & Chr(10)
   Else If cMeta["licencia"] <> "" Then
-    s &= "<p class=" & Chr(34) & "creditos-licencia" & Chr(34) & ">" &
-      cMeta["licencia"] & "</p>" & Chr(10)
+    s &= "<p class=" & Comillas("creditos-licencia") & ">" & EscaparXml(cMeta["licencia"]) & "</p>" & Chr(10)
   Endif
   s &= "</div>" & Chr(10)
 
   s &= "</section>" & Chr(10)
   s &= "</body>" & Chr(10) & "</html>" & Chr(10)
 
-  File.Save(sRutaOEBPS &/ "chapters" &/ "front-creditos.xhtml", s)
+  Return s
 
 End
 
-' ====================================================
-' Función   : GenerarColofonGbpublisher
-' Propósito : Crea el colofón de gbpublisher (mismo que
-'             revistas). Va como bm-99-colofon, último.
-' ====================================================
-Private Sub GenerarColofonGbpublisher()
-
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== GENERANDO COLOFÓN ==='" & Chr(10))
-
-  Dim cMeta As Collection = LeerMetadatosLibro()
-  Dim sFecha As String = Format(Now(), "dd/mm/yyyy")
+' ============================================
+' Función   : ArmarColofon
+' Propósito : El colofón del EPUB, que la matriz resuelve como página propia.
+'             El texto es el digital, compartido con el pie del HTML
+'             (m_PiezasLibro.ColofonDigital): sin tipografías, porque el lector
+'             de EPUB deja cambiar la fuente.
+' Parámetros: cMeta As Collection — metadatos del libro
+' Retorna   : String — el XHTML completo
+' ============================================
+Private Function ArmarColofon(cMeta As Collection) As String
 
   Dim s As String
-  s = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
-    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
-  s &= "<!DOCTYPE html>" & Chr(10)
-  s &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
-    " xml:lang=" & Chr(34) & cMeta["idioma"] & Chr(34) & ">" & Chr(10)
-  s &= "<head>" & Chr(10)
-  s &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
-  s &= "<title>Colof&#xF3;n</title>" & Chr(10)
-  s &= "<link rel=" & Chr(34) & "stylesheet" & Chr(34) &
-    " type=" & Chr(34) & "text/css" & Chr(34) &
-    " href=" & Chr(34) & "../css/gbpublisher-epub-libro.css" & Chr(34) & "/>" & Chr(10)
-  s &= "</head>" & Chr(10)
-  s &= "<body>" & Chr(10)
-  s &= "<section class=" & Chr(34) & "colofon" & Chr(34) & ">" & Chr(10)
 
-  ' TEXTO DEL COLOFÓN (MISMO DE REVISTAS, ADAPTADO A LIBRO:
-  ' "libro" EN LUGAR DE "revista", DocBook 5.2 EN LUGAR DE XML-JATS).
-  s &= "<p>Este libro fue generado (" & sFecha & ") a partir de un flujo de trabajo reproducible utilizando " &
-    "<strong>gbpublisher</strong>, una plataforma cliente-servidor de c&#xF3;digo abierto dise&#xF1;ada para equipos editoriales acad&#xE9;micos de Am&#xE9;rica Latina.</p>" & Chr(10)
-
-  s &= "<p>Permite convertir manuscritos en publicaciones compatibles con los principales indexadores internacionales, " &
-    "siguiendo est&#xE1;ndares como DocBook 5.2 y manteniendo la filosof&#xED;a de transparencia en todo el proceso editorial.</p>" & Chr(10)
-
-  s &= "<p>Proyecto disponible en: " &
-    "<a href=" & Chr(34) & "https://github.com/albertomoyano/gbpublisher" & Chr(34) & ">https://github.com/albertomoyano/gbpublisher</a></p>" & Chr(10)
-
+  s = CabeceraXhtml(cMeta["idioma"], "Colofón", True)
+  s &= "<section class=" & Comillas("colofon") & ">" & Chr(10)
+  s &= "<p>" & m_PiezasLibro.ColofonDigital() & "</p>" & Chr(10)
   s &= "</section>" & Chr(10)
   s &= "</body>" & Chr(10) & "</html>" & Chr(10)
 
-  File.Save(sRutaOEBPS &/ "chapters" &/ "bm-99-colofon.xhtml", s)
+  Return s
 
 End
 
-' ====================================================
-' Función   : CopiarFuentes
-' Propósito : Copia las 4 Noto Serif a OEBPS/fonts/
-' ====================================================
-Private Sub CopiarFuentes()
+' ============================================
+' Función   : ArmarNav
+' Propósito : El nav.xhtml, tabla de contenidos de navegación de EPUB 3, con
+'             el título de cada pieza leído de su canónico.
+' Parámetros: cMeta As Collection — metadatos del libro
+'             aPiezas As String[] — piezas del EPUB, en orden
+' Retorna   : String — el XHTML completo
+' ============================================
+Private Function ArmarNav(cMeta As Collection, aPiezas As String[]) As String
 
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== COPIANDO FUENTES ==='" & Chr(10))
+  Dim s As String
+  Dim sPieza As String
+  Dim sTitulo As String
 
-  Dim aFuentes As String[] = [
-    "NotoSerif-Regular.ttf", "NotoSerif-Bold.ttf",
-    "NotoSerif-Italic.ttf", "NotoSerif-BoldItalic.ttf"]
+  s = CabeceraXhtml(cMeta["idioma"], "Tabla de contenidos", False)
+  s &= "<nav epub:type=" & Comillas("toc") & " id=" & Comillas("toc") & ">" & Chr(10)
+  s &= "<h1>Contenido</h1>" & Chr(10)
+  s &= "<ol>" & Chr(10)
 
-  Dim sFuente As String
-  For Each sFuente In aFuentes
-    If Exist(sRutaFonts &/ sFuente) Then
-      Shell "cp '" & sRutaFonts &/ sFuente & "' '" &
-        sRutaOEBPS &/ "fonts" &/ sFuente & "'" Wait
-    Endif
+  For Each sPieza In aPiezas
+    ' EL TÍTULO YA VIENE ESCAPADO: SE LEE DE UN XML. SI NO SE PUEDE LEER, EL
+    ' NOMBRE DEL ARCHIVO, QUE SÍ HAY QUE ESCAPAR
+    sTitulo = LeerTituloCanonico(sPieza)
+    If sTitulo = "" Then sTitulo = EscaparXml(sPieza)
+    s &= "<li><a href=" & Comillas("chapters/h-" & sPieza & ".xhtml") & ">" & sTitulo & "</a></li>" & Chr(10)
   Next
 
-End
+  s &= "</ol>" & Chr(10)
+  s &= "</nav>" & Chr(10)
+  s &= "</body>" & Chr(10) & "</html>" & Chr(10)
 
-' ====================================================
-' Función   : CopiarCSS
-' Propósito : Copia el CSS asset del libro a OEBPS/css/.
-'             (A DIFERENCIA DE REVISTAS, EL CSS DEL LIBRO NO
-'             SE GENERA STRING POR STRING: ES UN ASSET.)
-' ====================================================
-Private Sub CopiarCSS()
-
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== COPIANDO CSS ==='" & Chr(10))
-
-  If Exist(sRutaCssAsset) Then
-    Shell "cp '" & sRutaCssAsset & "' '" &
-      sRutaOEBPS &/ "css" &/ "gbpublisher-epub-libro.css" & "'" Wait
-  Else
-    FMain.TerminalViewProyecto.Input(
-      "echo 'AVISO: no se encontró el CSS asset: " & sRutaCssAsset & "'" & Chr(10))
-  Endif
+  Return s
 
 End
 
-' ====================================================
-' Función   : CopiarImagenes
-' Propósito : Copia media/ del proyecto a OEBPS/images/,
-'             incluida la tapa. Análogo a la copia del HTML.
-' ====================================================
-Private Sub CopiarImagenes()
+' ============================================
+' Función   : LeerTituloCanonico
+' Propósito : El texto del primer <title> del canónico de una pieza, sin las
+'             marcas internas —una cursiva dentro del título dejaría en el nav
+'             un <emphasis>, que no es XHTML—.
+' Parámetros: sPieza As String — nombre_archivo de la pieza
+' Retorna   : String — el título, todavía con sus entidades XML; vacío si no se
+'             pudo leer
+' ============================================
+Private Function LeerTituloCanonico(sPieza As String) As String
 
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== COPIANDO IMÁGENES ==='" & Chr(10))
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sCanonico As String
+  Dim sContenido As String
+  Dim sTitulo As String
+  Dim sLimpio As String
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim iAbre As Integer
+  Dim iCierra As Integer
 
-  ' --- 1. COPIAR TODO media/ DEL PROYECTO ---
-  Dim sRutaMedia As String = sRutaProyecto &/ "media"
-  If Exist(sRutaMedia) Then
-    Dim sArchivo As String
-    For Each sArchivo In Dir(sRutaMedia)
-      If IsDir(sRutaMedia &/ sArchivo) Then Continue
-      Shell "cp '" & sRutaMedia &/ sArchivo & "' '" &
-        sRutaOEBPS &/ "images" &/ sArchivo & "'" Wait
-    Next
-  Endif
+  ' --- 2. LECTURA ---
+  sCanonico = $sRutaProyecto &/ "jats" &/ "c-" & sPieza & ".xml"
+  If Not Exist(sCanonico) Then Return ""
+
+  ' EL CANÓNICO ES UTF-8 (SC-02). String.* Y NO InStr/Mid: LAS POSICIONES VAN
+  ' A String.Mid (RC-GM-12)
+  Try sContenido = File.Load(sCanonico)
+  If Error Then Return ""
+
+  iIni = String.InStr(sContenido, "<title>")
+  If iIni = 0 Then Return ""
+  iIni += String.Len("<title>")
+  iFin = String.InStr(sContenido, "</title>", iIni)
+  If iFin = 0 Then Return ""
+
+  sTitulo = String.Mid(sContenido, iIni, iFin - iIni)
+
+  ' --- 3. QUITAR LAS MARCAS INTERNAS ---
+  ' SE CONSERVA EL TEXTO ENTRE MARCAS. LAS ENTIDADES QUEDAN COMO ESTÁN: EL
+  ' RESULTADO VA A OTRO XML
+  Do
+    iAbre = String.InStr(sTitulo, "<")
+    If iAbre = 0 Then Break
+    iCierra = String.InStr(sTitulo, ">", iAbre)
+    If iCierra = 0 Then Break
+    sLimpio = String.Left(sTitulo, iAbre - 1) & String.Mid(sTitulo, iCierra + 1)
+    sTitulo = sLimpio
+  Loop
+
+  Return Trim(sTitulo)
 
 End
 
-' ====================================================
-' Función   : GenerarContentOPF
-' Propósito : Escribe content.opf (metadata + manifest +
-'             spine). El spine sigue el orden del manifiesto:
-'             portada, créditos, capítulos (fm/a/bm), colofón.
-' ====================================================
-Private Sub GenerarContentOPF()
+' ============================================
+' Función   : ArmarOPF
+' Propósito : El content.opf: metadatos, manifest y spine. Declara los archivos
+'             que el script va a producir o copiar; el script verifica que
+'             todos existan antes de empaquetar.
+' Parámetros: cMeta As Collection — metadatos del libro
+'             sAutores As String — autoría, sin escapar
+'             aPiezas As String[] — piezas del EPUB, en orden
+' Retorna   : String — el OPF completo
+' ============================================
+Private Function ArmarOPF(cMeta As Collection, sAutores As String, aPiezas As String[]) As String
 
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== GENERANDO content.opf ==='" & Chr(10))
-
-  Dim cMeta As Collection = LeerMetadatosLibro()
-  Dim sAutores As String = LeerAutoresLibro()
-  Dim sIsoDate As String = Format(Now(), "yyyy-mm-dd") & "T" & Format(Now(), "hh:nn:ss") & "Z"
-
-  ' IDENTIFICADOR ÚNICO: ISBN ELECTRÓNICO, O DOI, O UN URN
-  Dim sUniqueId As String
-  If cMeta["isbn_electronico"] <> "" Then
-    sUniqueId = "urn:isbn:" & cMeta["isbn_electronico"]
-  Else If cMeta["doi"] <> "" Then
-    sUniqueId = "urn:doi:" & cMeta["doi"]
-  Else
-    sUniqueId = "urn:uuid:gbpublisher-libro-" & CStr(iIdLibro)
-  Endif
-
-  ' --- 1. LISTA DE CAPÍTULOS (ORDEN EDITORIAL, DESDE BD) ---
-  Dim aCapitulos As String[] = ListaCapitulosOrdenada()
-
-  ' --- 2. CABECERA OPF + METADATA ---
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aFuentes As New String[]
   Dim s As String
-  s = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
-    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
-  s &= "<package xmlns=" & Chr(34) & "http://www.idpf.org/2007/opf" & Chr(34) &
-    " version=" & Chr(34) & "3.0" & Chr(34) &
-    " unique-identifier=" & Chr(34) & "pub-id" & Chr(34) &
-    " xml:lang=" & Chr(34) & cMeta["idioma"] & Chr(34) & ">" & Chr(10)
+  Dim sIdentificador As String
+  Dim sNombreTapa As String
+  Dim sRutaMedia As String
+  Dim sImagen As String
+  Dim sFuente As String
+  Dim sPieza As String
+  Dim sId As String
 
-  s &= "<metadata xmlns:dc=" & Chr(34) & "http://purl.org/dc/elements/1.1/" & Chr(34) & ">" & Chr(10)
-  s &= "<dc:identifier id=" & Chr(34) & "pub-id" & Chr(34) & ">" & sUniqueId & "</dc:identifier>" & Chr(10)
-  s &= "<dc:title>" & cMeta["titulo"] & "</dc:title>" & Chr(10)
-  s &= "<dc:language>" & cMeta["idioma"] & "</dc:language>" & Chr(10)
-  If sAutores <> "" Then
-    s &= "<dc:creator>" & sAutores & "</dc:creator>" & Chr(10)
+  aFuentes.Add("NotoSerif-Regular.ttf")
+  aFuentes.Add("NotoSerif-Bold.ttf")
+  aFuentes.Add("NotoSerif-Italic.ttf")
+  aFuentes.Add("NotoSerif-BoldItalic.ttf")
+
+  If cMeta["imagen_tapa"] <> "" Then sNombreTapa = File.Name(cMeta["imagen_tapa"])
+
+  ' --- 2. IDENTIFICADOR ---
+  ' ISBN DIGITAL, O DOI, O UN URN PROPIO. EL URN NO LLEVA «uuid:»: ANTES
+  ' DECÍA urn:uuid:gbpublisher-libro-N, QUE PROMETE UN UUID SIN SERLO, Y
+  ' epubcheck LO SEÑALABA (OPF-085)
+  If cMeta["isbn_electronico"] <> "" Then
+    sIdentificador = "urn:isbn:" & cMeta["isbn_electronico"]
+  Else If cMeta["doi"] <> "" Then
+    sIdentificador = "urn:doi:" & cMeta["doi"]
+  Else
+    sIdentificador = "urn:gbpublisher:libro-" & CStr($iIdLibro)
   Endif
-  If cMeta["editorial"] <> "" Then
-    s &= "<dc:publisher>" & cMeta["editorial"] & "</dc:publisher>" & Chr(10)
-  Endif
-  If cMeta["anio"] <> "" Then
-    s &= "<dc:date>" & cMeta["anio"] & "</dc:date>" & Chr(10)
-  Endif
-  If cMeta["descripcion"] <> "" Then
-    s &= "<dc:description>" & cMeta["descripcion"] & "</dc:description>" & Chr(10)
-  Endif
-  If cMeta["url_licencia"] <> "" Then
-    s &= "<dc:rights>" & cMeta["url_licencia"] & "</dc:rights>" & Chr(10)
-  Endif
-  s &= "<meta property=" & Chr(34) & "dcterms:modified" & Chr(34) & ">" &
-    sIsoDate & "</meta>" & Chr(10)
-  ' PORTADA (SI HAY TAPA)
-  Dim sNombreTapa As String = ""
-  If cMeta["imagen_tapa"] <> "" Then
-    sNombreTapa = File.Name(cMeta["imagen_tapa"])
-    s &= "<meta name=" & Chr(34) & "cover" & Chr(34) &
-      " content=" & Chr(34) & "cover-image" & Chr(34) & "/>" & Chr(10)
+
+  ' --- 3. CABECERA Y METADATOS ---
+  s = "<?xml version=" & Comillas("1.0") & " encoding=" & Comillas("UTF-8") & "?>" & Chr(10)
+  s &= "<package xmlns=" & Comillas("http://www.idpf.org/2007/opf") & " version=" & Comillas("3.0") &
+    " unique-identifier=" & Comillas("pub-id") & " xml:lang=" & Comillas(EscaparXml(cMeta["idioma"])) & ">" & Chr(10)
+  s &= "<metadata xmlns:dc=" & Comillas("http://purl.org/dc/elements/1.1/") & ">" & Chr(10)
+  s &= "<dc:identifier id=" & Comillas("pub-id") & ">" & EscaparXml(sIdentificador) & "</dc:identifier>" & Chr(10)
+  s &= "<dc:title>" & EscaparXml(cMeta["titulo"]) & "</dc:title>" & Chr(10)
+  s &= "<dc:language>" & EscaparXml(cMeta["idioma"]) & "</dc:language>" & Chr(10)
+  If sAutores <> "" Then s &= "<dc:creator>" & EscaparXml(sAutores) & "</dc:creator>" & Chr(10)
+  If cMeta["editorial"] <> "" Then s &= "<dc:publisher>" & EscaparXml(cMeta["editorial"]) & "</dc:publisher>" & Chr(10)
+  If cMeta["anio"] <> "" Then s &= "<dc:date>" & EscaparXml(cMeta["anio"]) & "</dc:date>" & Chr(10)
+  If cMeta["descripcion"] <> "" Then s &= "<dc:description>" & EscaparXml(cMeta["descripcion"]) & "</dc:description>" & Chr(10)
+  If cMeta["url_licencia"] <> "" Then s &= "<dc:rights>" & EscaparXml(cMeta["url_licencia"]) & "</dc:rights>" & Chr(10)
+  s &= "<meta property=" & Comillas("dcterms:modified") & ">" &
+    Format(Now, "yyyy-mm-dd") & "T" & Format(Now, "hh:nn:ss") & "Z</meta>" & Chr(10)
+  If sNombreTapa <> "" Then
+    s &= "<meta name=" & Comillas("cover") & " content=" & Comillas("cover-image") & "/>" & Chr(10)
   Endif
   s &= "</metadata>" & Chr(10)
 
-  ' --- 3. MANIFEST ---
+  ' --- 4. MANIFEST ---
   s &= "<manifest>" & Chr(10)
-  ' NAV
-  s &= "<item id=" & Chr(34) & "nav" & Chr(34) &
-    " href=" & Chr(34) & "nav.xhtml" & Chr(34) &
-    " media-type=" & Chr(34) & "application/xhtml+xml" & Chr(34) &
-    " properties=" & Chr(34) & "nav" & Chr(34) & "/>" & Chr(10)
-  ' CSS
-  s &= "<item id=" & Chr(34) & "css" & Chr(34) &
-    " href=" & Chr(34) & "css/gbpublisher-epub-libro.css" & Chr(34) &
-    " media-type=" & Chr(34) & "text/css" & Chr(34) & "/>" & Chr(10)
-  ' FUENTES
-  ' EL id SE DERIVA DEL NOMBRE DE ARCHIVO (ÚNICO) PARA EVITAR
-  ' COLISIONES: font-notoserif-regular, etc. (NO UN CONTADOR).
-  Dim aFuentes As String[] = [
-    "NotoSerif-Regular.ttf", "NotoSerif-Bold.ttf",
-    "NotoSerif-Italic.ttf", "NotoSerif-BoldItalic.ttf"]
-  Dim sFuente As String
+  s &= "<item id=" & Comillas("nav") & " href=" & Comillas("nav.xhtml") &
+    " media-type=" & Comillas("application/xhtml+xml") & " properties=" & Comillas("nav") & "/>" & Chr(10)
+  s &= "<item id=" & Comillas("css") & " href=" & Comillas("css/" & CSS_EPUB) &
+    " media-type=" & Comillas("text/css") & "/>" & Chr(10)
+
   For Each sFuente In aFuentes
-    Dim sIdFuente As String = "font-" & LCase(File.BaseName(sFuente))
-    s &= "<item id=" & Chr(34) & sIdFuente & Chr(34) &
-      " href=" & Chr(34) & "fonts/" & sFuente & Chr(34) &
-      " media-type=" & Chr(34) & "font/ttf" & Chr(34) & "/>" & Chr(10)
+    s &= "<item id=" & Comillas("font-" & LCase(File.BaseName(sFuente))) &
+      " href=" & Comillas("fonts/" & sFuente) & " media-type=" & Comillas("font/ttf") & "/>" & Chr(10)
   Next
-  ' IMÁGENES (todas las de OEBPS/images)
-  ' EL id SE DERIVA DEL NOMBRE (ÚNICO): img-<base>. LA TAPA USA
-  ' EL id RESERVADO cover-image (REFERENCIADO EN metadata).
-  Dim sImg As String
-  If Exist(sRutaOEBPS &/ "images") Then
-    For Each sImg In Dir(sRutaOEBPS &/ "images")
-      Dim sMediaType As String = MediaTypeDeImagen(sImg)
-      If sImg = sNombreTapa Then
-        s &= "<item id=" & Chr(34) & "cover-image" & Chr(34) &
-          " href=" & Chr(34) & "images/" & sImg & Chr(34) &
-          " media-type=" & Chr(34) & sMediaType & Chr(34) &
-          " properties=" & Chr(34) & "cover-image" & Chr(34) & "/>" & Chr(10)
-      Else
-        Dim sIdImg As String = "img-" & LCase(File.BaseName(sImg))
-        s &= "<item id=" & Chr(34) & sIdImg & Chr(34) &
-          " href=" & Chr(34) & "images/" & sImg & Chr(34) &
-          " media-type=" & Chr(34) & sMediaType & Chr(34) & "/>" & Chr(10)
-      Endif
-    Next
+
+  ' IMÁGENES: LAS DE media/, LAS MISMAS QUE COPIA EL SCRIPT. SE SALTEAN LOS
+  ' SUBDIRECTORIOS Y LOS OCULTOS, IGUAL QUE EL GLOB DEL SCRIPT. Dir() SOBRE
+  ' UNA RUTA QUE NO ES CARPETA FALLA (GV-01): SE COMPRUEBA ANTES
+  sRutaMedia = $sRutaProyecto &/ "media"
+  If Exist(sRutaMedia) Then
+    If IsDir(sRutaMedia) Then
+      For Each sImagen In Dir(sRutaMedia)
+        If IsDir(sRutaMedia &/ sImagen) Then Continue
+        If String.Left(sImagen, 1) = "." Then Continue
+        If sImagen = sNombreTapa Then
+          s &= "<item id=" & Comillas("cover-image") & " href=" & Comillas("images/" & EscaparXml(sImagen)) &
+            " media-type=" & Comillas(MediaTypeDeImagen(sImagen)) & " properties=" & Comillas("cover-image") & "/>" & Chr(10)
+        Else
+          ' EL id SALE DEL NOMBRE COMPLETO, CON EXTENSIÓN: foto.png Y foto.jpg
+          ' NO PUEDEN COMPARTIR UNO, Y UN id DUPLICADO INVALIDA EL OPF
+          sId = "img-" & LCase(Replace(Replace(sImagen, ".", "-"), " ", "-"))
+          s &= "<item id=" & Comillas(EscaparXml(sId)) & " href=" & Comillas("images/" & EscaparXml(sImagen)) &
+            " media-type=" & Comillas(MediaTypeDeImagen(sImagen)) & "/>" & Chr(10)
+        Endif
+      Next
+    Endif
   Endif
-  ' PÁGINAS FRONT
-  s &= "<item id=" & Chr(34) & "portada" & Chr(34) &
-    " href=" & Chr(34) & "chapters/front-portada.xhtml" & Chr(34) &
-    " media-type=" & Chr(34) & "application/xhtml+xml" & Chr(34) & "/>" & Chr(10)
-  s &= "<item id=" & Chr(34) & "creditos" & Chr(34) &
-    " href=" & Chr(34) & "chapters/front-creditos.xhtml" & Chr(34) &
-    " media-type=" & Chr(34) & "application/xhtml+xml" & Chr(34) & "/>" & Chr(10)
-  ' CAPÍTULOS (desde la lista ordenada)
-  ' EL id SE DERIVA DEL nombre_archivo (ÚNICO): cap-<nombre>.
-  Dim sNA As String
-  For Each sNA In aCapitulos
-    s &= "<item id=" & Chr(34) & "cap-" & sNA & Chr(34) &
-      " href=" & Chr(34) & "chapters/h-" & sNA & ".xhtml" & Chr(34) &
-      " media-type=" & Chr(34) & "application/xhtml+xml" & Chr(34) & "/>" & Chr(10)
+
+  s &= "<item id=" & Comillas("portada") & " href=" & Comillas("chapters/front-portada.xhtml") &
+    " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
+  s &= "<item id=" & Comillas("creditos") & " href=" & Comillas("chapters/front-creditos.xhtml") &
+    " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
+
+  For Each sPieza In aPiezas
+    s &= "<item id=" & Comillas("cap-" & sPieza) & " href=" & Comillas("chapters/h-" & sPieza & ".xhtml") &
+      " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
   Next
-  ' COLOFÓN
-  s &= "<item id=" & Chr(34) & "colofon" & Chr(34) &
-    " href=" & Chr(34) & "chapters/bm-99-colofon.xhtml" & Chr(34) &
-    " media-type=" & Chr(34) & "application/xhtml+xml" & Chr(34) & "/>" & Chr(10)
+
+  s &= "<item id=" & Comillas("colofon") & " href=" & Comillas("chapters/bm-99-colofon.xhtml") &
+    " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
   s &= "</manifest>" & Chr(10)
 
-  ' --- 4. SPINE (ORDEN DE LECTURA) ---
+  ' --- 5. SPINE: ORDEN DE LECTURA ---
   s &= "<spine>" & Chr(10)
-  s &= "<itemref idref=" & Chr(34) & "portada" & Chr(34) & "/>" & Chr(10)
-  s &= "<itemref idref=" & Chr(34) & "creditos" & Chr(34) & "/>" & Chr(10)
-  For Each sNA In aCapitulos
-    s &= "<itemref idref=" & Chr(34) & "cap-" & sNA & Chr(34) & "/>" & Chr(10)
+  s &= "<itemref idref=" & Comillas("portada") & "/>" & Chr(10)
+  s &= "<itemref idref=" & Comillas("creditos") & "/>" & Chr(10)
+  For Each sPieza In aPiezas
+    s &= "<itemref idref=" & Comillas("cap-" & sPieza) & "/>" & Chr(10)
   Next
-  s &= "<itemref idref=" & Chr(34) & "colofon" & Chr(34) & "/>" & Chr(10)
+  s &= "<itemref idref=" & Comillas("colofon") & "/>" & Chr(10)
   s &= "</spine>" & Chr(10)
 
   s &= "</package>" & Chr(10)
 
-  File.Save(sRutaOEBPS &/ "content.opf", s)
+  Return s
 
 End
 
-' ====================================================
+' ============================================
 ' Función   : MediaTypeDeImagen
-' Propósito : Devuelve el media-type según la extensión.
-' ====================================================
+' Propósito : El media-type de una imagen según su extensión.
+' Parámetros: sNombre As String — nombre del archivo
+' Retorna   : String — media-type; image/jpeg si la extensión no se reconoce
+' ============================================
 Private Function MediaTypeDeImagen(sNombre As String) As String
 
-  Dim sExt As String = LCase(File.Ext(sNombre))
-
-  Select Case sExt
+  Select Case LCase(File.Ext(sNombre))
     Case "jpg", "jpeg"
       Return "image/jpeg"
     Case "png"
@@ -865,200 +777,47 @@ Private Function MediaTypeDeImagen(sNombre As String) As String
       Return "image/svg+xml"
     Case "webp"
       Return "image/webp"
-    Case Else
-      Return "image/jpeg"
   End Select
 
-End
-
-' ====================================================
-' Función   : GenerarNavXhtml
-' Propósito : Escribe nav.xhtml (TOC de navegación EPUB 3).
-'             Recorre el manifiesto y usa el título de cada
-'             capítulo (leído del canónico).
-' ====================================================
-Private Sub GenerarNavXhtml()
-
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== GENERANDO nav.xhtml ==='" & Chr(10))
-
-  Dim cMeta As Collection = LeerMetadatosLibro()
-  Dim aCapitulos As String[] = ListaCapitulosOrdenada()
-
-  Dim s As String
-  s = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
-    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
-  s &= "<!DOCTYPE html>" & Chr(10)
-  s &= "<html xmlns=" & Chr(34) & "http://www.w3.org/1999/xhtml" & Chr(34) &
-    " xmlns:epub=" & Chr(34) & "http://www.idpf.org/2007/ops" & Chr(34) &
-    " xml:lang=" & Chr(34) & cMeta["idioma"] & Chr(34) & ">" & Chr(10)
-  s &= "<head>" & Chr(10)
-  s &= "<meta charset=" & Chr(34) & "UTF-8" & Chr(34) & "/>" & Chr(10)
-  s &= "<title>Tabla de contenidos</title>" & Chr(10)
-  s &= "</head>" & Chr(10)
-  s &= "<body>" & Chr(10)
-  s &= "<nav epub:type=" & Chr(34) & "toc" & Chr(34) &
-    " id=" & Chr(34) & "toc" & Chr(34) & ">" & Chr(10)
-  s &= "<h1>Contenido</h1>" & Chr(10)
-  s &= "<ol>" & Chr(10)
-
-  ' CAPÍTULOS (lista ordenada, con su título del canónico)
-  Dim sNA As String
-  For Each sNA In aCapitulos
-    Dim sTitCap As String = LeerTituloCanonico(sNA)
-    If sTitCap = "" Then sTitCap = sNA
-    s &= "<li><a href=" & Chr(34) & "chapters/h-" & sNA & ".xhtml" & Chr(34) & ">" &
-      sTitCap & "</a></li>" & Chr(10)
-  Next
-
-  s &= "</ol>" & Chr(10)
-  s &= "</nav>" & Chr(10)
-  s &= "</body>" & Chr(10) & "</html>" & Chr(10)
-
-  File.Save(sRutaOEBPS &/ "nav.xhtml", s)
+  Return "image/jpeg"
 
 End
 
-' ====================================================
-' Función   : LeerTituloCanonico
-' Propósito : Lee el primer <title> del canónico de un
-'             capítulo por extracción de texto (sin gb.xml).
-' Retorna   : String — título (o "" si no se puede leer).
-' ====================================================
-Private Function LeerTituloCanonico(sNombreArchivo As String) As String
+' ============================================
+' Función   : NombreArchivoEpub
+' Propósito : El nombre del .epub, desde el título abreviado o el título:
+'             minúsculas, espacios como guiones, solo [a-z0-9-_].
+' Parámetros: cMeta As Collection — metadatos del libro
+' Retorna   : String — nombre con extensión .epub
+' ============================================
+Private Function NombreArchivoEpub(cMeta As Collection) As String
 
-  Dim sCanonico As String = sRutaProyecto &/ "jats" &/ "c-" & sNombreArchivo & ".xml"
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sBase As String
+  Dim sLimpio As String
+  Dim sCaracter As String
+  Dim iPos As Integer
 
-  If Not Exist(sCanonico) Then Return ""
-
-  ' LEER EL ARCHIVO Y EXTRAER EL PRIMER <title>...</title>.
-  ' EL CANÓNICO ES UTF-8 (SC-02): File.Load OPERA EN UTF-8 NATIVO.
-  Dim sContenido As String = File.Load(sCanonico)
-
-  Dim iIni As Integer = String.InStr(sContenido, "<title>")
-  If iIni = 0 Then Return ""
-  iIni += String.Len("<title>")
-  Dim iFin As Integer = String.InStr(sContenido, "</title>", iIni)
-  If iFin = 0 Then Return ""
-
-  Dim sTitulo As String = String.Mid(sContenido, iIni, iFin - iIni)
-  Return Trim(sTitulo)
-
-Catch
-  Return ""
-
-End
-
-' ====================================================
-' Función   : GenerarMimetype
-' Propósito : Escribe el archivo mimetype (sin salto final).
-' ====================================================
-Private Sub GenerarMimetype()
-
-  File.Save(sRutaEpubWork &/ "mimetype", "application/epub+zip")
-
-End
-
-' ====================================================
-' Función   : GenerarContainer
-' Propósito : Escribe META-INF/container.xml.
-' ====================================================
-Private Sub GenerarContainer()
-
-  Dim s As String
-
-  s = "<?xml version=" & Chr(34) & "1.0" & Chr(34) &
-    " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>" & Chr(10)
-  s &= "<container version=" & Chr(34) & "1.0" & Chr(34) &
-    " xmlns=" & Chr(34) & "urn:oasis:names:tc:opendocument:xmlns:container" & Chr(34) & ">" & Chr(10)
-  s &= "<rootfiles>" & Chr(10)
-  s &= "<rootfile full-path=" & Chr(34) & "OEBPS/content.opf" & Chr(34) &
-    " media-type=" & Chr(34) & "application/oebps-package+xml" & Chr(34) & "/>" & Chr(10)
-  s &= "</rootfiles>" & Chr(10)
-  s &= "</container>" & Chr(10)
-
-  File.Save(sRutaEpubWork &/ "META-INF" &/ "container.xml", s)
-
-End
-
-' ====================================================
-' Función   : EmpaquetarEpub
-' Propósito : Empaqueta el .epub (mimetype sin comprimir
-'             primero, resto comprimido) y valida con
-'             epubcheck si está disponible.
-' ====================================================
-Private Sub EmpaquetarEpub()
-
-  FMain.TerminalViewProyecto.Input(
-    "echo '=== EMPAQUETANDO EPUB ==='" & Chr(10))
-
-  Dim cMeta As Collection = LeerMetadatosLibro()
-
-  ' --- 1. NOMBRE DEL ARCHIVO FINAL ---
-  Dim sBase As String = cMeta["titulo_abreviado"]
+  sBase = cMeta["titulo_abreviado"]
   If sBase = "" Then sBase = cMeta["titulo"]
   If sBase = "" Then sBase = "libro"
   sBase = LCase(sBase)
-  ' LIMPIAR ESPACIOS Y CARACTERES PROBLEMÁTICOS
-  Dim i As Integer
-  Dim sLimpio As String = ""
-  For i = 1 To String.Len(sBase)
-    Dim sC As String = String.Mid(sBase, i, 1)
-    If sC = " " Then
+
+  ' --- 2. LIMPIEZA ---
+  ' String.Mid ENTREGA UN CARÁCTER. UN CARÁCTER MULTIBYTE NUNCA COINCIDE CON
+  ' EL CONJUNTO, QUE ES ASCII, Y SE DESCARTA: «canción» DA «cancin». ES EL
+  ' COMPORTAMIENTO QUE YA TENÍA; SI MOLESTA, PLEGAR ANTES LOS ACENTOS
+  For iPos = 1 To String.Len(sBase)
+    sCaracter = String.Mid(sBase, iPos, 1)
+    If sCaracter = " " Then
       sLimpio &= "-"
-    Else If InStr("abcdefghijklmnopqrstuvwxyz0123456789-_", sC) > 0 Then
-      sLimpio &= sC
+    Else If InStr("abcdefghijklmnopqrstuvwxyz0123456789-_", sCaracter) > 0 Then
+      sLimpio &= sCaracter
     Endif
   Next
-  Dim sNombreEpub As String = sLimpio & ".epub"
-  Dim sRutaSalida As String = sRutaProyecto &/ "salidas" &/ "epub" &/ sNombreEpub
 
-  ' --- 2. ELIMINAR EPUB ANTERIOR ---
-  If Exist(sRutaSalida) Then
-    Shell "rm '" & sRutaSalida & "'" Wait
-  Endif
+  If sLimpio = "" Then sLimpio = "libro"
 
-  ' --- 3. mimetype SIN COMPRESIÓN (OBLIGATORIO EPUB) ---
-  Shell "cd '" & sRutaEpubWork & "' && zip -0 -X '" & sRutaSalida & "' mimetype" Wait
-
-  ' --- 4. RESTO CON COMPRESIÓN ---
-  Shell "cd '" & sRutaEpubWork & "' && zip -9 -r '" & sRutaSalida & "' META-INF OEBPS" Wait
-
-  ' --- 5. VERIFICAR Y VALIDAR ---
-  If Exist(sRutaSalida) Then
-    FMain.TerminalViewProyecto.Input(
-      "echo '=== EPUB GENERADO — VALIDANDO CON EPUBCHECK ==='" & Chr(10))
-    FMain.TerminalViewProyecto.Input(
-      "echo 'Ruta: " & sRutaSalida & "'" & Chr(10))
-
-    ' BUSCAR EPUBCHECK
-    Dim sEpubCheck As String = ""
-    If Exist("/usr/bin/epubcheck") Then
-      sEpubCheck = "epubcheck"
-    Else If Exist("/usr/local/bin/epubcheck") Then
-      sEpubCheck = "epubcheck"
-    Else If Exist("/opt/epubcheck/epubcheck.jar") Then
-      sEpubCheck = "java -jar /opt/epubcheck/epubcheck.jar"
-    Else If Exist(User.Home &/ ".local/bin/epubcheck") Then
-      sEpubCheck = User.Home &/ ".local/bin/epubcheck"
-    Endif
-
-    If sEpubCheck <> "" Then
-      FMain.TerminalViewProyecto.Input(
-        sEpubCheck & " '" & sRutaSalida & "'" & Chr(10))
-      Wait 2
-      m_Sonido.sonar("Info")
-      Message.Info("EPUB generado." & Chr(10) &
-        "Revisá la terminal para el resultado de EPUBCheck." & Chr(10) & Chr(10) &
-        "Ruta: " & sRutaSalida)
-    Else
-      m_Sonido.sonar("Info")
-      Message.Info("EPUB generado (epubcheck no encontrado para validar)." & Chr(10) & Chr(10) &
-        "Ruta: " & sRutaSalida)
-    Endif
-  Else
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo generar el EPUB.")
-  Endif
+  Return sLimpio & ".epub"
 
 End

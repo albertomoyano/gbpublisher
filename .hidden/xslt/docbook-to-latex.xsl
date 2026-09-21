@@ -85,6 +85,12 @@
 
   <xsl:import href="tex-comun.xsl"/>
 
+  <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. VA DESPUÉS DEL import PORQUE
+       TODO xsl:import TIENE QUE PRECEDER A CUALQUIER OTRA DECLARACIÓN.
+       ES include Y NO import: CON import, EL CATCH-ALL match="*" DE ESTA
+       HOJA TENDRÍA MAYOR PRECEDENCIA Y ABORTARÍA EN CADA <quote> -->
+  <xsl:include href="quote.xsl"/>
+
   <xsl:output method="text" encoding="UTF-8"/>
 
   <!-- ============================================================ -->
@@ -439,13 +445,10 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <!-- \enquote RESUELVE LAS COMILLAS SEGÚN EL IDIOMA ACTIVO: EN    -->
-  <!-- ESPAÑOL DA « ». NO EMITIR COMILLAS LITERALES ACÁ.            -->
-  <xsl:template match="quote">
-    <xsl:text>\enquote{</xsl:text>
-    <xsl:apply-templates/>
-    <xsl:text>}</xsl:text>
-  </xsl:template>
+  <!-- quote NO SE DEFINE ACÁ: LO RESUELVE quote.xsl, INCLUIDO ARRIBA,  -->
+  <!-- CON CARACTERES Y NO CON \enquote, PARA QUE LAS TRES SALIDAS      -->
+  <!-- NIVELEN CON LA MISMA REGLA. UNA SEGUNDA PLANTILLA ACÁ PRODUCE    -->
+  <!-- UNA COINCIDENCIA AMBIGUA Y SAXON ELIGE UNA DE LAS DOS.           -->
 
   <xsl:template match="subscript">
     <xsl:text>\textsubscript{</xsl:text>
@@ -517,16 +520,13 @@
   <!-- ============================================================ -->
   <xsl:template match="biblioref">
     <xsl:variable name="modo" select="f:modo-de(.)"/>
-    <xsl:variable name="clave"
-      select="replace(normalize-space(@linkend), '^(cap-\d+-)?bib-', '')"/>
-    <xsl:variable name="pre"
-      select="preceding-sibling::*[1][self::phrase][@role='cite-prefix']"/>
-    <xsl:variable name="post"
-      select="following-sibling::*[1][self::phrase][@role='cite-suffix']"/>
 
     <!-- ESTE biblioref YA FUE ABSORBIDO POR EL GRUPO DEL ANTERIOR: -->
     <!-- NO EMITE NADA. VER LA NOTA SOBRE AGRUPAMIENTO ABAJO.       -->
     <xsl:if test="not(f:es-continuacion(.))">
+
+    <xsl:variable name="grupo"   select="f:grupo-desde(.)"/>
+    <xsl:variable name="comando" select="f:comando-cita($modo, $estilo)"/>
 
     <!-- \protect ES OBLIGATORIO: LOS COMANDOS DE CITA DE biblatex
          NO SON ROBUSTOS Y LOS ARGUMENTOS DE \caption, \chapter Y
@@ -538,7 +538,62 @@
          FUERA DE UN ARGUMENTO MÓVIL \protect NO HACE NADA, ASÍ
          QUE SE EMITE SIEMPRE EN VEZ DE DETECTAR EL CONTEXTO. -->
     <xsl:text>\protect</xsl:text>
-    <xsl:value-of select="f:comando-cita($modo, $estilo)"/>
+
+    <xsl:choose>
+
+      <!-- NINGUNA CITA DEL GRUPO LLEVA AFIJOS: UN SOLO COMANDO CON  -->
+      <!-- TODAS LAS CLAVES, \parencite{a,b}. ES LO QUE PERMITE AL   -->
+      <!-- ESTILO ORDENARLAS Y COMPRIMIR RANGOS.                     -->
+      <xsl:when test="every $b in $grupo satisfies f:sin-afijos($b)">
+        <xsl:value-of select="$comando"/>
+        <xsl:text>{</xsl:text>
+        <xsl:value-of select="string-join(for $b in $grupo return f:clave($b), ',')"/>
+        <xsl:text>}</xsl:text>
+      </xsl:when>
+
+      <!-- UNA SOLA CITA CON AFIJOS -->
+      <xsl:when test="count($grupo) = 1">
+        <xsl:value-of select="$comando"/>
+        <xsl:call-template name="afijos-y-clave">
+          <xsl:with-param name="b" select="."/>
+        </xsl:call-template>
+      </xsl:when>
+
+      <!-- VARIAS CITAS Y ALGUNA CON AFIJOS: EL COMANDO MÚLTIPLE,    -->
+      <!-- CON LOS AFIJOS DE CADA UNA:                               -->
+      <!--   \parencites[17]{hodges}[en][199]{macchiarola}           -->
+      <!-- ANTES CADA CITA SALÍA COMO UN COMANDO APARTE, CON LA COMA -->
+      <!-- DEL CANÓNICO ENTRE LOS DOS: «(…, p. 17), (en …)». EL      -->
+      <!-- DELIMITADOR LO PONE AHORA EL ESTILO: EN biblatex-apa ES   -->
+      <!-- PUNTO Y COMA, TAMBIÉN EN LAS FUENTES SECUNDARIAS (APA     -->
+      <!-- 8.6 EN LA DOCUMENTACIÓN DEL PAQUETE).                     -->
+      <xsl:otherwise>
+        <xsl:value-of select="f:comando-multicita($comando)"/>
+        <xsl:for-each select="$grupo">
+          <xsl:call-template name="afijos-y-clave">
+            <xsl:with-param name="b" select="."/>
+          </xsl:call-template>
+        </xsl:for-each>
+      </xsl:otherwise>
+
+    </xsl:choose>
+
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- PLANTILLA: afijos-y-clave                                    -->
+  <!-- PROPÓSITO: LOS ARGUMENTOS OPCIONALES Y LA CLAVE DE UNA CITA. -->
+  <!--            SIRVE IGUAL PARA UN COMANDO SIMPLE Y PARA CADA    -->
+  <!--            CITA DE UNO MÚLTIPLE: LA REGLA ES LA MISMA.       -->
+  <!-- PARÁMETROS: b As node() — el biblioref                       -->
+  <!-- RETORNA  : [pre][post]{clave}, [pre][]{clave}, [post]{clave} -->
+  <!--            o {clave}                                          -->
+  <!-- ============================================================ -->
+  <xsl:template name="afijos-y-clave">
+    <xsl:param name="b" as="node()"/>
+    <xsl:variable name="pre"  select="f:prefijo-de($b)"/>
+    <xsl:variable name="post" select="f:sufijo-de($b)"/>
 
     <!-- biblatex CON UN SOLO [] LO INTERPRETA COMO POSTNOTA.       -->
     <!-- CON PREFIJO Y SIN SUFIJO HAY QUE EMITIR [pre][] PARA       -->
@@ -564,26 +619,58 @@
     </xsl:choose>
 
     <xsl:text>{</xsl:text>
-    <xsl:value-of select="$clave"/>
-    <xsl:call-template name="acumular-claves">
-      <xsl:with-param name="desde" select="following-sibling::node()"/>
-      <xsl:with-param name="modo"  select="$modo"/>
-    </xsl:call-template>
+    <xsl:value-of select="f:clave($b)"/>
     <xsl:text>}</xsl:text>
-
-    </xsl:if>
   </xsl:template>
 
   <!-- ============================================================ -->
   <!-- AGRUPAMIENTO DE CITAS CONSECUTIVAS                           -->
   <!-- [@a; @b; @c] LLEGA AL CANÓNICO COMO TRES <biblioref>         -->
-  <!-- SEPARADOS POR NODOS DE TEXTO ', '. EN biblatex ESO ES UN     -->
-  <!-- SOLO COMANDO CON LAS CLAVES SEPARADAS POR COMA, QUE ES LO    -->
-  <!-- QUE PERMITE AL ESTILO ORDENARLAS Y COMPRIMIR RANGOS.         -->
-  <!-- SE AGRUPA SOLO CUANDO EL MODO COINCIDE Y NINGUNA DE LAS DOS  -->
-  <!-- LLEVA PREFIJO NI SUFIJO: LOS AFIJOS SON POR CLAVE Y NO       -->
-  <!-- SOBREVIVEN AL AGRUPAMIENTO.                                  -->
+  <!-- SEPARADOS POR NODOS DE TEXTO ', '. CADA UNO PUEDE LLEVAR     -->
+  <!-- SU PREFIJO Y SU SUFIJO COMO <phrase> HERMANOS, ASÍ QUE ENTRE -->
+  <!-- DOS CITAS DEL MISMO GRUPO PUEDE HABER:                       -->
+  <!--   biblioref  [sufijo]  separador  [prefijo]  biblioref       -->
+  <!-- Y ADEMÁS ESPACIOS DE INDENTACIÓN DEL CANÓNICO, QUE SE        -->
+  <!-- SALTEAN. DOS CITAS SE AGRUPAN SI TIENEN EL MISMO MODO Y EL   -->
+  <!-- COMANDO ADMITE FORMA MÚLTIPLE; SI NO LA ADMITE, SOLO CUANDO  -->
+  <!-- NINGUNA DE LAS DOS LLEVA AFIJOS.                             -->
+  <!-- ANTES SOLO SE AGRUPABAN CITAS SIN AFIJOS, Y MIRANDO LOS      -->
+  <!-- NODOS INMEDIATOS SIN SALTEAR ESPACIOS.                       -->
   <!-- ============================================================ -->
+
+  <!-- VECINO SIGUIENTE / ANTERIOR, SALTEANDO LOS NODOS DE TEXTO     -->
+  <!-- QUE SON SOLO ESPACIO                                         -->
+  <xsl:function name="f:vecino-sig" as="node()?">
+    <xsl:param name="n" as="node()?"/>
+    <xsl:sequence select="$n/following-sibling::node()
+                          [not(self::text() and not(normalize-space()))][1]"/>
+  </xsl:function>
+
+  <xsl:function name="f:vecino-ant" as="node()?">
+    <xsl:param name="n" as="node()?"/>
+    <xsl:sequence select="$n/preceding-sibling::node()
+                          [not(self::text() and not(normalize-space()))][1]"/>
+  </xsl:function>
+
+  <!-- ¿ES EL NODO UN phrase DE PREFIJO O DE SUFIJO DE CITA?          -->
+  <xsl:function name="f:es-afijo" as="xs:boolean">
+    <xsl:param name="n"   as="node()?"/>
+    <xsl:param name="rol" as="xs:string"/>
+    <xsl:sequence select="exists($n[self::phrase][@role = $rol])"/>
+  </xsl:function>
+
+  <!-- EL PREFIJO / SUFIJO DE UNA CITA, O VACÍO                      -->
+  <xsl:function name="f:prefijo-de" as="node()?">
+    <xsl:param name="b" as="node()"/>
+    <xsl:variable name="v" select="f:vecino-ant($b)"/>
+    <xsl:sequence select="$v[f:es-afijo(., 'cite-prefix')]"/>
+  </xsl:function>
+
+  <xsl:function name="f:sufijo-de" as="node()?">
+    <xsl:param name="b" as="node()"/>
+    <xsl:variable name="v" select="f:vecino-sig($b)"/>
+    <xsl:sequence select="$v[f:es-afijo(., 'cite-suffix')]"/>
+  </xsl:function>
 
   <!-- ============================================================ -->
   <!-- FUNCIÓN : f:sin-afijos                                       -->
@@ -593,9 +680,7 @@
   <!-- ============================================================ -->
   <xsl:function name="f:sin-afijos" as="xs:boolean">
     <xsl:param name="n" as="node()"/>
-    <xsl:sequence select="
-      empty($n/preceding-sibling::*[1][self::phrase][@role='cite-prefix'])
-      and empty($n/following-sibling::*[1][self::phrase][@role='cite-suffix'])"/>
+    <xsl:sequence select="empty(f:prefijo-de($n)) and empty(f:sufijo-de($n))"/>
   </xsl:function>
 
   <!-- ============================================================ -->
@@ -611,6 +696,63 @@
       and matches(string($n), '^\s*[,;\p{Pd}]\s*$')"/>
   </xsl:function>
 
+  <!-- LA CLAVE DEL .bib: EL linkend SIN SU PREFIJO                  -->
+  <xsl:function name="f:clave" as="xs:string">
+    <xsl:param name="b" as="node()"/>
+    <xsl:sequence select="replace(normalize-space($b/@linkend), '^(cap-\d+-)?bib-', '')"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:comando-multicita                                -->
+  <!-- PROPÓSITO: LA FORMA MÚLTIPLE DE UN COMANDO DE CITA.          -->
+  <!--            biblatex LA NOMBRA AGREGANDO «s»: \parencites,     -->
+  <!--            \textcites, \autocites, \cites, \footcites. LOS    -->
+  <!--            COMANDOS CON ASTERISCO NO TIENEN FORMA MÚLTIPLE.   -->
+  <!-- PARÁMETROS: comando As xs:string — el que da f:comando-cita  -->
+  <!-- RETORNA  : xs:string — el múltiple, o vacío si no existe     -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:comando-multicita" as="xs:string">
+    <xsl:param name="comando" as="xs:string"/>
+    <xsl:sequence select="if (ends-with($comando, '*')) then '' else concat($comando, 's')"/>
+  </xsl:function>
+
+  <!-- ¿SE PUEDEN AGRUPAR ESTAS DOS CITAS CONSECUTIVAS?              -->
+  <xsl:function name="f:agrupables" as="xs:boolean">
+    <xsl:param name="b" as="node()"/>
+    <xsl:param name="c" as="node()"/>
+    <xsl:variable name="modo" select="f:modo-de($b)"/>
+    <xsl:sequence select="$modo = f:modo-de($c)
+      and (f:comando-multicita(f:comando-cita($modo, $estilo)) != ''
+           or (f:sin-afijos($b) and f:sin-afijos($c)))"/>
+  </xsl:function>
+
+  <!-- LA CITA QUE SIGUE A ESTA EN EL MISMO GRUPO, O VACÍO:          -->
+  <!-- biblioref  [sufijo]  separador  [prefijo]  biblioref          -->
+  <xsl:function name="f:siguiente-en-grupo" as="node()?">
+    <xsl:param name="b" as="node()"/>
+    <xsl:variable name="v1"  select="f:vecino-sig($b)"/>
+    <xsl:variable name="sep" select="if (f:es-afijo($v1, 'cite-suffix'))
+                                     then f:vecino-sig($v1) else $v1"/>
+    <xsl:variable name="v3"  select="if (f:es-separador($sep))
+                                     then f:vecino-sig($sep) else ()"/>
+    <xsl:variable name="c"   select="if (f:es-afijo($v3, 'cite-prefix'))
+                                     then f:vecino-sig($v3) else $v3"/>
+    <xsl:sequence select="$c[self::biblioref][f:agrupables($b, .)]"/>
+  </xsl:function>
+
+  <!-- LA CITA QUE PRECEDE A ESTA EN EL MISMO GRUPO, O VACÍO         -->
+  <xsl:function name="f:anterior-en-grupo" as="node()?">
+    <xsl:param name="c" as="node()"/>
+    <xsl:variable name="v1"  select="f:vecino-ant($c)"/>
+    <xsl:variable name="sep" select="if (f:es-afijo($v1, 'cite-prefix'))
+                                     then f:vecino-ant($v1) else $v1"/>
+    <xsl:variable name="v3"  select="if (f:es-separador($sep))
+                                     then f:vecino-ant($sep) else ()"/>
+    <xsl:variable name="b"   select="if (f:es-afijo($v3, 'cite-suffix'))
+                                     then f:vecino-ant($v3) else $v3"/>
+    <xsl:sequence select="$b[self::biblioref][f:agrupables(., $c)]"/>
+  </xsl:function>
+
   <!-- ============================================================ -->
   <!-- FUNCIÓN : f:es-continuacion                                  -->
   <!-- PROPÓSITO: DICE SI ESTE biblioref YA FUE ABSORBIDO POR EL    -->
@@ -620,49 +762,29 @@
   <!-- ============================================================ -->
   <xsl:function name="f:es-continuacion" as="xs:boolean">
     <xsl:param name="n" as="node()"/>
-    <xsl:variable name="p1" select="$n/preceding-sibling::node()[1]"/>
-    <xsl:variable name="p2" select="$n/preceding-sibling::node()[2]"/>
-    <xsl:sequence select="
-      f:es-separador($p1)
-      and exists($p2[self::biblioref])
-      and f:modo-de($p2) = f:modo-de($n)
-      and f:sin-afijos($n) and f:sin-afijos($p2)"/>
+    <xsl:sequence select="exists(f:anterior-en-grupo($n))"/>
   </xsl:function>
 
-  <!-- ============================================================ -->
-  <!-- PLANTILLA: acumular-claves                                   -->
-  <!-- PROPÓSITO: AGREGA AL COMANDO EN CURSO LAS CLAVES DE LOS      -->
-  <!--            biblioref CONSECUTIVOS DEL MISMO MODO.            -->
-  <!-- PARÁMETROS: desde As node()* — hermanos siguientes           -->
-  <!--             modo  As xs:string — modo del grupo              -->
-  <!-- RETORNA  : texto ',clave' repetido, o nada                   -->
-  <!-- ============================================================ -->
-  <xsl:template name="acumular-claves">
-    <xsl:param name="desde" as="node()*"/>
-    <xsl:param name="modo"  as="xs:string"/>
-    <xsl:if test="count($desde) &gt;= 2">
-      <xsl:variable name="sep"  select="$desde[1]"/>
-      <xsl:variable name="sig"  select="$desde[2]"/>
-      <xsl:if test="f:es-separador($sep)
-                    and exists($sig[self::biblioref])
-                    and f:modo-de($sig) = $modo
-                    and f:sin-afijos($sig)">
-        <xsl:text>,</xsl:text>
-        <xsl:value-of select="replace(normalize-space($sig/@linkend),
-                                      '^(cap-\d+-)?bib-', '')"/>
-        <xsl:call-template name="acumular-claves">
-          <xsl:with-param name="desde" select="$desde[position() &gt; 2]"/>
-          <xsl:with-param name="modo"  select="$modo"/>
-        </xsl:call-template>
-      </xsl:if>
-    </xsl:if>
-  </xsl:template>
+  <!-- LAS CITAS DEL GRUPO QUE EMPIEZA EN b, EN ORDEN                -->
+  <xsl:function name="f:grupo-desde" as="node()*">
+    <xsl:param name="b" as="node()"/>
+    <xsl:variable name="c" select="f:siguiente-en-grupo($b)"/>
+    <xsl:sequence select="$b, if (exists($c)) then f:grupo-desde($c) else ()"/>
+  </xsl:function>
 
   <!-- SEPARADOR ENTRE DOS CITAS QUE SE AGRUPARON: SE SUPRIME,      -->
-  <!-- PORQUE LA COMA YA VA DENTRO DEL ARGUMENTO DEL COMANDO.       -->
+  <!-- PORQUE EL DELIMITADOR LO PONE biblatex.                      -->
   <xsl:template match="text()[f:es-separador(.)]
-      [following-sibling::node()[1][self::biblioref]
-        [f:es-continuacion(.)]]" priority="6"/>
+      [exists(f:biblioref-tras-separador(.)[f:es-continuacion(.)])]" priority="6"/>
+
+  <!-- EL biblioref QUE SIGUE A UN SEPARADOR, SALTEANDO SU PREFIJO   -->
+  <xsl:function name="f:biblioref-tras-separador" as="node()?">
+    <xsl:param name="t" as="node()"/>
+    <xsl:variable name="v" select="f:vecino-sig($t)"/>
+    <xsl:variable name="c" select="if (f:es-afijo($v, 'cite-prefix'))
+                                   then f:vecino-sig($v) else $v"/>
+    <xsl:sequence select="$c[self::biblioref]"/>
+  </xsl:function>
 
   <!-- ESPACIO DE INDENTACIÓN ENTRE LAS PARTES DE UNA CITA.         -->
   <!-- SE ABSORBE PARA QUE NO SALGA '(ver  García 2020)'. NO SE     -->

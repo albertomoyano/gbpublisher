@@ -50,6 +50,15 @@ RC APLICADAS:
                 xmlns:xs="http://www.w3.org/2001/XMLSchema"
                 exclude-result-prefixes="db xs xlink">
 
+  <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
+       NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
+       CAE EN EL CATCH-ALL match="*" Y LAS COMILLAS DESAPARECEN -->
+  <xsl:include href="quote.xsl"/>
+
+  <!-- MARCA DE LOS EDITORES QUE OCUPAN EL LUGAR DEL AUTOR: (Ed.), (Comp.)...
+       ES LA ÚNICA REGLA DE LAS SALIDAS DIGITALES; NO DUPLICARLA ACÁ -->
+  <xsl:include href="marca-editor.xsl"/>
+
   <!-- Output principal: no se usa en Fase 1 (todo va por xsl:result-document) -->
   <xsl:output method="xml"
               encoding="UTF-8"
@@ -81,6 +90,18 @@ RC APLICADAS:
        ========================================================== -->
   <xsl:variable name="manifiesto"
                 select="doc(concat($proyecto_dir, '/', $manifiesto_libro))"/>
+
+  <!-- COLOFÓN DIGITAL PARA EL PIE DE PÁGINA. LO ESCRIBE GAMBAS EN
+       tmp/colofon-digital.xml ANTES DE LANZAR LA TRANSFORMACIÓN, CON EL
+       MISMO TEXTO QUE LA PÁGINA DE COLOFÓN DEL EPUB (m_PiezasLibro).
+       EL SCRIPT VERIFICA QUE EXISTA: SI FALTARA, ESTA HOJA OMITIRÍA EL PIE
+       SIN DECIR NADA. EL <p> YA VIENE EN EL NAMESPACE DE XHTML. -->
+  <xsl:variable name="colofon_ruta"
+                select="concat($proyecto_dir, '/tmp/colofon-digital.xml')"/>
+  <xsl:variable name="colofon_digital"
+                select="if (doc-available($colofon_ruta))
+                        then doc($colofon_ruta)/colofon/*
+                        else ()"/>
 
   <!-- Genera un mapeo directo: al buscar la key con el xml_id de un capítulo
        ('cap-7'), retorna el nodo <capitulo> del manifiesto que tiene
@@ -331,6 +352,8 @@ RC APLICADAS:
             <xsl:call-template name="emitir-col-center-index"/>
 
           </div>
+
+          <xsl:call-template name="emitir-pie-colofon"/>
 
           <!-- ==========================================
                INYECCIÓN DE citaData (Fase 5) + JS EXTERNO
@@ -624,6 +647,20 @@ RC APLICADAS:
   </xsl:template>
 
   <!-- ==========================================================
+       PIE DE PÁGINA: COLOFÓN DIGITAL
+       ==========================================================
+       EN HTML EL COLOFÓN NO ES UNA PIEZA DE LA SECUENCIA SINO PARTE DE
+       LA PLANTILLA (m_PiezasLibro: TRATAMIENTO_PIE). VA EN TODAS LAS
+       PÁGINAS. -->
+  <xsl:template name="emitir-pie-colofon">
+    <xsl:if test="$colofon_digital">
+      <footer class="pie-colofon">
+        <xsl:copy-of select="$colofon_digital" copy-namespaces="no"/>
+      </footer>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
        COL-CENTER PARA index.html
        ==========================================================
        Estructura:
@@ -662,13 +699,21 @@ RC APLICADAS:
                     and ($info/db:editor | $info/editor)">
             <xsl:text> · </xsl:text>
           </xsl:if>
+          <!-- UNA SOLA MARCA DESPUÉS DE TODOS LOS EDITORES, SEGÚN SU ROL:
+               «(comps.)», Y NO UNA MARCA DESPUÉS DE CADA NOMBRE. LOS NOMBRES VAN
+               «Nombre Apellido», SIN PUNTO FINAL: LA MARCA VA EN MINÚSCULA -->
           <xsl:for-each select="$info/db:editor | $info/editor">
             <xsl:if test="position() &gt; 1">, </xsl:if>
             <xsl:call-template name="emitir-nombre-autor">
               <xsl:with-param name="persona" select="."/>
             </xsl:call-template>
-            <xsl:text> (ed.)</xsl:text>
           </xsl:for-each>
+          <xsl:if test="$info/db:editor | $info/editor">
+            <xsl:call-template name="marca-editor-db">
+              <xsl:with-param name="estilo" select="$estilo_cita"/>
+              <xsl:with-param name="editores" select="$info/db:editor | $info/editor"/>
+            </xsl:call-template>
+          </xsl:if>
         </div>
       </xsl:if>
 
@@ -720,7 +765,7 @@ RC APLICADAS:
                         select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'fm-')]"/>
           <xsl:if test="$caps_fm">
             <div class="parte-estructural">
-              <h3 class="parte-titulo">Preliminares</h3>
+              <h2 class="parte-titulo">Preliminares</h2>
               <ul class="lista-capitulos">
                 <xsl:for-each select="$caps_fm">
                   <xsl:call-template name="emitir-item-parte">
@@ -737,7 +782,7 @@ RC APLICADAS:
                         select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'a-')]"/>
           <xsl:if test="$caps_a">
             <div class="parte-estructural">
-              <h3 class="parte-titulo">Cuerpo principal</h3>
+              <h2 class="parte-titulo">Cuerpo principal</h2>
               <ol class="lista-capitulos lista-numerada">
                 <xsl:for-each select="$caps_a">
                   <xsl:call-template name="emitir-item-parte">
@@ -754,7 +799,7 @@ RC APLICADAS:
                         select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'bm-')]"/>
           <xsl:if test="$caps_bm">
             <div class="parte-estructural">
-              <h3 class="parte-titulo">Material complementario</h3>
+              <h2 class="parte-titulo">Material complementario</h2>
               <ul class="lista-capitulos">
                 <xsl:for-each select="$caps_bm">
                   <xsl:call-template name="emitir-item-parte">
@@ -1012,6 +1057,8 @@ RC APLICADAS:
                   <xsl:with-param name="capitulo" select="$capitulo"/>
                 </xsl:call-template>
               </div>
+
+              <xsl:call-template name="emitir-pie-colofon"/>
 
               <!-- INYECCIÓN DE citaData (Fase 5) ANTES DEL JS EXTERNO -->
               <xsl:call-template name="emitir-citadata-capitulo">
@@ -1705,13 +1752,13 @@ RC APLICADAS:
     </xsl:variable>
     <xsl:value-of select="string($render)"/>
   </xsl:template>
-  <!-- LOS phrase de prefijo/sufijo SÍ deben aportar su texto en la nota -->
+  <!-- LOS phrase DE PREFIJO Y SUFIJO NO SE IMPRIMEN EN LA NOTA: LA CITA,
+       QUE EN ESTE MODO SE DIBUJA EN MODO DEFAULT, YA LOS ABSORBE DENTRO DEL
+       PARÉNTESIS. ANTES ESTA PLANTILLA LOS IMPRIMÍA OTRA VEZ, Y EL SUFIJO
+       SALÍA DOBLE: «(Hodges et al., 2020, p. 17 p. 17 …» -->
   <xsl:template match="db:phrase[@role='cite-prefix'] | phrase[@role='cite-prefix']
                      | db:phrase[@role='cite-suffix'] | phrase[@role='cite-suffix']"
-                mode="texto-plano">
-    <xsl:value-of select="."/>
-    <xsl:text> </xsl:text>
-  </xsl:template>
+                mode="texto-plano"/>
 
   <!-- ==========================================================
        ========= MARCAS DE CITA EN EL TEXTO (biblioref) =========
@@ -1759,22 +1806,28 @@ RC APLICADAS:
        CASO 1: whitespace ENTRE biblioref Y SU phrase-suffix. -->
   <xsl:template match="text()[normalize-space(.) = '']
     [preceding-sibling::node()[1][self::db:biblioref or self::biblioref]]
-    [following-sibling::node()[1][self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]"/>
+    [following-sibling::node()[1][self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]"
+    mode="#default texto-plano"/>
   <!-- CASO 2: whitespace ENTRE un phrase-prefix Y SU biblioref. -->
   <xsl:template match="text()[normalize-space(.) = '']
     [preceding-sibling::node()[1][self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]
-    [following-sibling::node()[1][self::db:biblioref or self::biblioref]]"/>
+    [following-sibling::node()[1][self::db:biblioref or self::biblioref]]"
+    mode="#default texto-plano"/>
 
   <!-- SUPRIMIR EL TEXTO SEPARADOR ', ' / '; ' ENTRE DOS biblioref
        DE UN MISMO GRUPO (LA AGRUPACIÓN LO EMITE EL PRIMERO).
-       SE COMPARA CONTRA EL VECINO NO-WHITESPACE. -->
+       SE COMPARA CONTRA EL VECINO NO-WHITESPACE.
+       ESTOS TRES SUPRESORES VALEN TAMBIÉN EN MODO texto-plano, EL DE LAS
+       NOTAS: SIN ESO, EN UNA NOTA EL SEPARADOR Y LOS ESPACIOS SE ESCAPABAN
+       ALREDEDOR DE LA CITA. -->
   <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
     [preceding-sibling::node()[not(self::text() and normalize-space(.)='')][1]
        [self::db:biblioref or self::biblioref
         or self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]
     [following-sibling::node()[not(self::text() and normalize-space(.)='')][1]
        [self::db:biblioref or self::biblioref
-        or self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]"/>
+        or self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]"
+    mode="#default texto-plano"/>
 
   <!-- ==========================================================
        AUXILIAR: prefijo/sufijo hermanos de un biblioref
@@ -1942,7 +1995,12 @@ RC APLICADAS:
           <xsl:text>(</xsl:text>
           <xsl:call-template name="phrase-prefijo-de"/>
         </xsl:if>
-        <xsl:if test="$esPrimera = false()"><xsl:text>; </xsl:text></xsl:if>
+        <!-- UNA CITA QUE NO ES LA PRIMERA DEL GRUPO TAMBIÉN PUEDE LLEVAR
+             PREFIJO: [@a; en @b]. ANTES SE PERDÍA SIN AVISO -->
+        <xsl:if test="$esPrimera = false()">
+          <xsl:text>; </xsl:text>
+          <xsl:call-template name="phrase-prefijo-de"/>
+        </xsl:if>
         <a class="xref-bibr cita-ref" data-ref-id="{$rid}"
            onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
           <xsl:value-of select="$anio"/>
@@ -1957,7 +2015,12 @@ RC APLICADAS:
           <xsl:text>(</xsl:text>
           <xsl:call-template name="phrase-prefijo-de"/>
         </xsl:if>
-        <xsl:if test="$esPrimera = false()"><xsl:text>; </xsl:text></xsl:if>
+        <!-- UNA CITA QUE NO ES LA PRIMERA DEL GRUPO TAMBIÉN PUEDE LLEVAR
+             PREFIJO: [@a; en @b]. ANTES SE PERDÍA SIN AVISO -->
+        <xsl:if test="$esPrimera = false()">
+          <xsl:text>; </xsl:text>
+          <xsl:call-template name="phrase-prefijo-de"/>
+        </xsl:if>
         <a class="xref-bibr cita-ref" data-ref-id="{$rid}"
            onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
           <xsl:value-of select="$autor"/>
@@ -2431,30 +2494,26 @@ RC APLICADAS:
         </xsl:when>
         <!-- FALLBACK: EDITORES CON MARCA (Ed.)/(Eds.) -->
         <xsl:when test="db:editor | editor">
-          <xsl:for-each select="db:editor | editor">
-            <xsl:call-template name="ref-una-persona-db">
-              <xsl:with-param name="estilo" select="$estilo"/>
-              <xsl:with-param name="total" select="last()"/>
-            </xsl:call-template>
-          </xsl:for-each>
-          <!-- MARCA DE EDITOR SEGÚN ESTILO -->
-          <xsl:choose>
-            <xsl:when test="$estilo = 'apa'">
-              <xsl:text> (Ed</xsl:text>
-              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
-              <xsl:text>.)</xsl:text>
-            </xsl:when>
-            <xsl:when test="$estilo = 'vancouver'">
-              <xsl:text> (ed</xsl:text>
-              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
-              <xsl:text>.)</xsl:text>
-            </xsl:when>
-            <xsl:otherwise>
-              <xsl:text> (Ed</xsl:text>
-              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
-              <xsl:text>.)</xsl:text>
-            </xsl:otherwise>
-          </xsl:choose>
+          <!-- LOS NOMBRES VAN A UNA VARIABLE ANTES DE ESCRIBIRSE: LA MARCA
+               NECESITA SABER SI TERMINAN EN PUNTO PARA DECIDIR LA MAYÚSCULA,
+               COMO HACE biblatex -->
+          <xsl:variable name="nombres">
+            <xsl:for-each select="db:editor | editor">
+              <xsl:call-template name="ref-una-persona-db">
+                <xsl:with-param name="estilo" select="$estilo"/>
+                <xsl:with-param name="total" select="last()"/>
+              </xsl:call-template>
+            </xsl:for-each>
+          </xsl:variable>
+          <xsl:copy-of select="$nombres"/>
+          <!-- MARCA SEGÚN EL ROL DEL EDITOR: (Ed.), (Comp.), (Coord.)...
+               LA REGLA VIVE EN marca-editor.xsl -->
+          <xsl:call-template name="marca-editor-db">
+            <xsl:with-param name="estilo" select="$estilo"/>
+            <xsl:with-param name="editores" select="db:editor | editor"/>
+            <xsl:with-param name="tras_punto"
+                            select="ends-with(normalize-space(string($nombres)), '.')"/>
+          </xsl:call-template>
         </xsl:when>
       </xsl:choose>
     </span>
@@ -3085,7 +3144,17 @@ RC APLICADAS:
         <xsl:if test="position() &gt; 1"><xsl:text>,</xsl:text></xsl:if>
         <xsl:call-template name="persona-json"><xsl:with-param name="persona" select="."/></xsl:call-template>
       </xsl:for-each>
-      <xsl:text>]</xsl:text>
+      <!-- ROL Y ABREVIATURA DE LOS EDITORES. LA ABREVIATURA SALE DE
+           marca-editor.xsl: gbpublisher.js NO TIENE TABLA PROPIA -->
+      <xsl:text>],"rolEditores":"</xsl:text>
+      <xsl:call-template name="escapar-json">
+        <xsl:with-param name="txt" select="string((($info/db:editor | $info/editor)/@role)[1])"/>
+      </xsl:call-template>
+      <xsl:text>","abrevEditores":"</xsl:text>
+      <xsl:call-template name="abreviatura-editor-db">
+        <xsl:with-param name="editores" select="$info/db:editor | $info/editor"/>
+      </xsl:call-template>
+      <xsl:text>"</xsl:text>
 
       <xsl:text>};</xsl:text>
     </script>
@@ -3130,7 +3199,17 @@ RC APLICADAS:
         <xsl:if test="position() &gt; 1"><xsl:text>,</xsl:text></xsl:if>
         <xsl:call-template name="persona-json"><xsl:with-param name="persona" select="."/></xsl:call-template>
       </xsl:for-each>
-      <xsl:text>]</xsl:text>
+      <!-- ROL Y ABREVIATURA DE LOS EDITORES. LA ABREVIATURA SALE DE
+           marca-editor.xsl: gbpublisher.js NO TIENE TABLA PROPIA -->
+      <xsl:text>],"rolEditores":"</xsl:text>
+      <xsl:call-template name="escapar-json">
+        <xsl:with-param name="txt" select="string((($info/db:editor | $info/editor)/@role)[1])"/>
+      </xsl:call-template>
+      <xsl:text>","abrevEditores":"</xsl:text>
+      <xsl:call-template name="abreviatura-editor-db">
+        <xsl:with-param name="editores" select="$info/db:editor | $info/editor"/>
+      </xsl:call-template>
+      <xsl:text>"</xsl:text>
 
       <xsl:text>};</xsl:text>
     </script>

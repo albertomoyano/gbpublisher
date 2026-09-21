@@ -29,6 +29,15 @@
     xmlns:epub="http://www.idpf.org/2007/ops"
     exclude-result-prefixes="xsl xs db xlink">
 
+  <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
+       NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
+       CAE EN EL CATCH-ALL match="*" Y LAS COMILLAS DESAPARECEN -->
+  <xsl:include href="quote.xsl"/>
+
+  <!-- MARCA DE LOS EDITORES QUE OCUPAN EL LUGAR DEL AUTOR: (Ed.), (Comp.)...
+       ES LA ÚNICA REGLA DE LAS SALIDAS DIGITALES; NO DUPLICARLA ACÁ -->
+  <xsl:include href="marca-editor.xsl"/>
+
   <!-- ================================================
        PARÁMETROS DE ENTRADA
        ================================================ -->
@@ -356,6 +365,33 @@
   <xsl:template match="db:phrase[@role='cite-prefix'] | phrase[@role='cite-prefix']"/>
   <xsl:template match="db:phrase[@role='cite-suffix'] | phrase[@role='cite-suffix']"/>
 
+  <!-- SUPRESORES DE ESPACIOS Y SEPARADORES ALREDEDOR DE LAS CITAS. LA
+       HOJA NO TENÍA NINGUNO: [@a; @b] SALÍA CON LA COMA DEL CANÓNICO
+       COLGADA ENTRE LAS DOS CITAS, Y LOS SALTOS DE LÍNEA DEL CANÓNICO SE
+       VOLVÍAN ESPACIOS DENTRO DEL PARÉNTESIS. SON LOS MISMOS QUE LOS DE
+       docbook-to-html.xsl, Y VALEN TAMBIÉN EN MODO text-only, EL DE LAS
+       NOTAS. -->
+  <!-- ESPACIO ENTRE UN biblioref Y SU SUFIJO -->
+  <xsl:template match="text()[normalize-space(.) = '']
+    [preceding-sibling::node()[1][self::db:biblioref or self::biblioref]]
+    [following-sibling::node()[1][self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]"
+    mode="#default text-only"/>
+  <!-- ESPACIO ENTRE UN PREFIJO Y SU biblioref -->
+  <xsl:template match="text()[normalize-space(.) = '']
+    [preceding-sibling::node()[1][self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]
+    [following-sibling::node()[1][self::db:biblioref or self::biblioref]]"
+    mode="#default text-only"/>
+  <!-- SEPARADOR ', ' / '; ' ENTRE DOS CITAS DEL MISMO GRUPO: LO EMITE LA
+       SEGUNDA CITA COMO '; ' -->
+  <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
+    [preceding-sibling::node()[not(self::text() and normalize-space(.)='')][1]
+       [self::db:biblioref or self::biblioref
+        or self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]
+    [following-sibling::node()[not(self::text() and normalize-space(.)='')][1]
+       [self::db:biblioref or self::biblioref
+        or self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]"
+    mode="#default text-only"/>
+
   <!-- AUXILIAR: prefijo de una cita (phrase cite-prefix hermano) -->
   <xsl:template name="phrase-prefijo-de-epub">
     <xsl:variable name="prev"
@@ -486,7 +522,12 @@
           <xsl:text>(</xsl:text>
           <xsl:call-template name="phrase-prefijo-de-epub"/>
         </xsl:if>
-        <xsl:if test="$esPrimera = false()"><xsl:text>; </xsl:text></xsl:if>
+        <!-- UNA CITA QUE NO ES LA PRIMERA DEL GRUPO TAMBIÉN PUEDE LLEVAR
+             PREFIJO: [@a; en @b]. ANTES SE PERDÍA SIN AVISO -->
+        <xsl:if test="$esPrimera = false()">
+          <xsl:text>; </xsl:text>
+          <xsl:call-template name="phrase-prefijo-de-epub"/>
+        </xsl:if>
         <a class="xref-bibr" href="#{$rid}">
           <xsl:value-of select="$anio"/>
           <xsl:call-template name="phrase-sufijo-de-epub"/>
@@ -499,7 +540,12 @@
           <xsl:text>(</xsl:text>
           <xsl:call-template name="phrase-prefijo-de-epub"/>
         </xsl:if>
-        <xsl:if test="$esPrimera = false()"><xsl:text>; </xsl:text></xsl:if>
+        <!-- UNA CITA QUE NO ES LA PRIMERA DEL GRUPO TAMBIÉN PUEDE LLEVAR
+             PREFIJO: [@a; en @b]. ANTES SE PERDÍA SIN AVISO -->
+        <xsl:if test="$esPrimera = false()">
+          <xsl:text>; </xsl:text>
+          <xsl:call-template name="phrase-prefijo-de-epub"/>
+        </xsl:if>
         <a class="xref-bibr" href="#{$rid}">
           <xsl:value-of select="$autor"/>
           <xsl:if test="$anio != ''">
@@ -534,12 +580,12 @@
     </xsl:variable>
     <xsl:value-of select="string($render)"/>
   </xsl:template>
+  <!-- LOS AFIJOS NO SE IMPRIMEN EN LA NOTA: LA CITA, QUE EN ESTE MODO SE
+       DIBUJA EN MODO DEFAULT, YA LOS ABSORBE DENTRO DEL PARÉNTESIS. ANTES
+       ESTA PLANTILLA LOS IMPRIMÍA OTRA VEZ Y EL SUFIJO SALÍA DOBLE -->
   <xsl:template match="db:phrase[@role='cite-prefix'] | phrase[@role='cite-prefix']
                      | db:phrase[@role='cite-suffix'] | phrase[@role='cite-suffix']"
-                mode="text-only">
-    <xsl:value-of select="."/>
-    <xsl:text> </xsl:text>
-  </xsl:template>
+                mode="text-only"/>
 
   <!-- ================================================
        FIGURA → inline con caption (sin panel)
@@ -964,30 +1010,26 @@
         </xsl:when>
         <!-- FALLBACK: EDITORES CON MARCA (Ed.)/(Eds.) -->
         <xsl:when test="db:editor | editor">
-          <xsl:for-each select="db:editor | editor">
-            <xsl:call-template name="ref-una-persona-db">
-              <xsl:with-param name="estilo" select="$estilo"/>
-              <xsl:with-param name="total" select="last()"/>
-            </xsl:call-template>
-          </xsl:for-each>
-          <!-- MARCA DE EDITOR SEGÚN ESTILO -->
-          <xsl:choose>
-            <xsl:when test="$estilo = 'apa'">
-              <xsl:text> (Ed</xsl:text>
-              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
-              <xsl:text>.)</xsl:text>
-            </xsl:when>
-            <xsl:when test="$estilo = 'vancouver'">
-              <xsl:text> (ed</xsl:text>
-              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
-              <xsl:text>.)</xsl:text>
-            </xsl:when>
-            <xsl:otherwise>
-              <xsl:text> (Ed</xsl:text>
-              <xsl:if test="count(db:editor | editor) &gt; 1"><xsl:text>s</xsl:text></xsl:if>
-              <xsl:text>.)</xsl:text>
-            </xsl:otherwise>
-          </xsl:choose>
+          <!-- LOS NOMBRES VAN A UNA VARIABLE ANTES DE ESCRIBIRSE: LA MARCA
+               NECESITA SABER SI TERMINAN EN PUNTO PARA DECIDIR LA MAYÚSCULA,
+               COMO HACE biblatex -->
+          <xsl:variable name="nombres">
+            <xsl:for-each select="db:editor | editor">
+              <xsl:call-template name="ref-una-persona-db">
+                <xsl:with-param name="estilo" select="$estilo"/>
+                <xsl:with-param name="total" select="last()"/>
+              </xsl:call-template>
+            </xsl:for-each>
+          </xsl:variable>
+          <xsl:copy-of select="$nombres"/>
+          <!-- MARCA SEGÚN EL ROL DEL EDITOR: (Ed.), (Comp.), (Coord.)...
+               LA REGLA VIVE EN marca-editor.xsl -->
+          <xsl:call-template name="marca-editor-db">
+            <xsl:with-param name="estilo" select="$estilo"/>
+            <xsl:with-param name="editores" select="db:editor | editor"/>
+            <xsl:with-param name="tras_punto"
+                            select="ends-with(normalize-space(string($nombres)), '.')"/>
+          </xsl:call-template>
         </xsl:when>
       </xsl:choose>
     </span>
