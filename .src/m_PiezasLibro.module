@@ -1,0 +1,175 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_PiezasLibro
+' PROPÓSITO : La matriz editorial de las piezas del libro: qué lleva cada
+'             salida y cómo se resuelve cada pieza en cada una. Es el ÚNICO
+'             lugar donde está escrita. La consultan el manifiesto del
+'             canónico, el EPUB y el PDF; ninguno debe tener su propia lista
+'             de tipos escrita a mano.
+'
+' POR QUÉ UNA MATRIZ Y NO UN «VA / NO VA»
+' ----------------------------------------------------------
+'   Cada salida es una edición, no una copia del PDF en otro formato. Una
+'   misma pieza puede existir en las tres y resolverse de tres maneras: el
+'   colofón es una página en el EPUB, un entorno de LaTeX en el PDF y parte
+'   de la plantilla en el HTML, donde no ocupa lugar en la secuencia.
+'
+' PIEZAS CON CUERPO Y SIN CUERPO
+' ----------------------------------------------------------
+'   Una pieza con cuerpo tiene .md y canónico, y va en todas las salidas desde
+'   su canónico. Las piezas sin cuerpo —índices, listas, bibliografía,
+'   colofón— no tienen .md ni canónico: las produce cada salida a su modo, o
+'   no las produce. Sin cuerpo no significa sin contenido: significa derivada.
+'
+' LA CONDICIÓN DE LOS ÍNDICES
+' ----------------------------------------------------------
+'   En EPUB y HTML los índices se omiten PORQUE NO TIENEN ENLACES. Un índice
+'   de páginas en un formato refluible es un artefacto falso, y la búsqueda
+'   del lector o del navegador lo reemplaza con ventaja. No es «no aplica»:
+'   es «no se hace todavía». Si algún día se construyen índices con enlaces,
+'   esta es la fila que cambia.
+'
+' UN TIPO NUEVO
+' ----------------------------------------------------------
+'   Un tipo que no está en esta matriz se trata como pieza con cuerpo, que es
+'   el caso común —capítulo, prólogo, introducción—. Si en realidad no tiene
+'   cuerpo, el ensamblado lo va a pedir como canónico y va a fallar diciendo
+'   qué archivo falta. Es un fallo ruidoso a propósito: el remedio es agregar
+'   la fila acá.
+' ==========================================================
+
+' SALIDAS
+Public Const SALIDA_PDF As String = "pdf"
+Public Const SALIDA_EPUB As String = "epub"
+Public Const SALIDA_HTML As String = "html"
+
+' TRATAMIENTOS DE UNA PIEZA EN UNA SALIDA
+' LA PIEZA TIENE .md Y CANÓNICO: LA SALIDA LA TOMA DE SU CANÓNICO
+Public Const TRATAMIENTO_CUERPO As Integer = 1
+' LA COMPONE LA HERRAMIENTA DE LA SALIDA: LaTeX, biblatex. LA SALIDA SOLO
+' EMITE EL COMANDO
+Public Const TRATAMIENTO_COMPUESTA As Integer = 2
+' LA SALIDA LA CONSTRUYE A PARTIR DEL CANÓNICO O DE LA BASE
+Public Const TRATAMIENTO_DERIVADA As Integer = 3
+' SE RESUELVE CON UN SHORTCODE, COMO LAS PÁGINAS PREVISTAS DE PORTADA
+Public Const TRATAMIENTO_SHORTCODE As Integer = 4
+' SE INTEGRA EN LA PLANTILLA COMO PIE DE PÁGINA: NO OCUPA LUGAR EN LA
+' SECUENCIA DE PIEZAS
+Public Const TRATAMIENTO_PIE As Integer = 5
+' NO VA EN ESA SALIDA
+Public Const TRATAMIENTO_OMITIDA As Integer = 6
+
+' ============================================
+' Función   : TieneCuerpo
+' Propósito : Responde si una pieza tiene .md y canónico propio. Es lo que
+'             decide si entra en el manifiesto del canónico del libro.
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+' Retorna   : Boolean — False para las piezas sin cuerpo de la matriz; True
+'             para cualquier otro tipo, incluido uno desconocido
+' ============================================
+Public Function TieneCuerpo(sTipo As String) As Boolean
+
+  Select Case sTipo
+    Case "indice_onomastico", "indice_concepto", "indice_autores"
+      Return False
+    Case "lista_figuras", "lista_tablas"
+      Return False
+    Case "bibliografia", "colofon"
+      Return False
+  End Select
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Tratamiento
+' Propósito : Cómo se resuelve una pieza en una salida. Es la matriz editorial.
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+'             sSalida As String — una de las constantes SALIDA_*
+' Retorna   : Integer — una de las constantes TRATAMIENTO_*
+' ============================================
+Public Function Tratamiento(sTipo As String, sSalida As String) As Integer
+
+  ' --- 1. SALIDA VÁLIDA ---
+  ' UNA SALIDA DESCONOCIDA ES UN ERROR DE PROGRAMACIÓN, NO UN DATO: SE LEVANTA
+  ' PARA QUE SE VEA DONDE SE PRODUJO Y NO LEJOS DE AHÍ (GV-23)
+  If sSalida <> SALIDA_PDF And sSalida <> SALIDA_EPUB And sSalida <> SALIDA_HTML Then
+    Error.Raise("m_PiezasLibro.Tratamiento: salida desconocida «" & sSalida & "»")
+  Endif
+
+  ' --- 2. PIEZAS CON CUERPO: IGUAL EN TODAS LAS SALIDAS ---
+  If TieneCuerpo(sTipo) Then Return TRATAMIENTO_CUERPO
+
+  ' --- 3. PIEZAS SIN CUERPO: LA MATRIZ ---
+  Select Case sTipo
+
+    ' ÍNDICES: SIN ENLACES NO VAN EN LAS SALIDAS DIGITALES. VER LA CONDICIÓN
+    ' EN EL ENCABEZADO DEL MÓDULO
+    Case "indice_onomastico", "indice_concepto", "indice_autores"
+      If sSalida = SALIDA_PDF Then Return TRATAMIENTO_COMPUESTA
+      Return TRATAMIENTO_OMITIDA
+
+    ' LISTAS DE FIGURAS Y TABLAS: SOLO EN EL IMPRESO
+    Case "lista_figuras", "lista_tablas"
+      If sSalida = SALIDA_PDF Then Return TRATAMIENTO_COMPUESTA
+      Return TRATAMIENTO_OMITIDA
+
+    ' BIBLIOGRAFÍA: biblatex EN EL PDF; EN LAS DIGITALES SALE DEL CANÓNICO,
+    ' QUE LA TRAE POR CAPÍTULO O CONSOLIDADA SEGÚN lugar_bibliografia
+    Case "bibliografia"
+      If sSalida = SALIDA_PDF Then Return TRATAMIENTO_COMPUESTA
+      Return TRATAMIENTO_DERIVADA
+
+    ' COLOFÓN: ENTORNO gbcolofon CON DATOS DE LA BASE EN EL PDF, PÁGINA PROPIA
+    ' EN EL EPUB, PIE DE PÁGINA EN EL HTML
+    Case "colofon"
+      If sSalida = SALIDA_HTML Then Return TRATAMIENTO_PIE
+      Return TRATAMIENTO_DERIVADA
+
+  End Select
+
+  ' PENDIENTE: PORTADA Y PORTADILLA, CUANDO EXISTAN COMO TIPOS EN LA BASE.
+  ' SHORTCODE EN PDF Y EPUB; OMITIDA EN HTML, DONDE LA PÁGINA DE ENTRADA
+  ' CUMPLE ESA FUNCIÓN. VAN SIN CUERPO: HAY QUE AGREGARLAS TAMBIÉN A
+  ' TieneCuerpo
+
+  ' NO SE LLEGA ACÁ: TODO TIPO SIN CUERPO TIENE SU CASO ARRIBA. SI SE AGREGA
+  ' UNO A TieneCuerpo Y NO A ESTA MATRIZ, SE LEVANTA EL ERROR
+  Error.Raise("m_PiezasLibro.Tratamiento: el tipo «" & sTipo & "» no tiene cuerpo y no está en la matriz")
+
+End
+
+' ============================================
+' Función   : ColofonDigital
+' Propósito : El texto del colofón de las salidas digitales —EPUB y HTML—, que
+'             es el mismo en las dos. Es la ÚNICA copia de ese texto: el EPUB lo
+'             usa para su página y el HTML para el pie, que lee de un archivo
+'             que escribe m_GenerarSalidasLibro.
+'
+'             El colofón del PDF NO sale de acá: vive en la plantilla LaTeX, que
+'             es donde se eligen las familias tipográficas que nombra, y toma la
+'             versión de \gbversion. Las digitales no nombran tipografías: en un
+'             formato refluible el lector la cambia. Si se cambia la redacción
+'             de uno, revisar el otro.
+'
+'             Sin fecha de generación, igual que el PDF: dos generaciones sin
+'             cambios en los datos tienen que dar el mismo resultado.
+' Parámetros: (ninguno)
+' Retorna   : String — el CONTENIDO del párrafo, en XHTML y ya escapado, sin
+'             la etiqueta <p>: cada salida pone su propio envoltorio
+' ============================================
+Public Function ColofonDigital() As String
+
+  Dim sUrl As String
+
+  sUrl = "https://github.com/albertomoyano/gbpublisher"
+
+  Return "La composición de este libro se realizó con gbpublisher versión " &
+    Application.Version & ", bajo un modelo de fuente única que garantiza la " &
+    "trazabilidad entre el original y cada una de sus salidas (HTML, ePub y PDF). " &
+    "El proyecto se encuentra disponible en <a href=" & Chr(34) & sUrl & Chr(34) & ">" &
+    sUrl & "</a>."
+
+End
