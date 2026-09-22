@@ -866,6 +866,34 @@ Si el proceso externo escribe en la misma base que la aplicación tiene abierta,
 
 **Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42
 
+### SC-14 — Bibliografía en HTML y EPUB: se replica el estilo biblatex del libro
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** biblatex / biber · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. La bibliografía correcta es la que genera biblatex con el estilo que usa el libro. HTML y EPUB no diseñan un modelo propio: replican el modelo y la lógica de ESE estilo.
+
+No se discrimina por tipo de salida. El PDF lo produce biblatex directamente y es la referencia; HTML y EPUB se verifican contra él.
+
+CADA ESTILO TIENE SU PROPIO MODELO
+
+APA, IEEE, Vancouver o ISO 690 no comparten lógica. Lo que se implemente para un estilo no se generaliza a otro sin verificarlo en el fuente del segundo.
+
+CONSULTA OBLIGATORIA
+
+Ante cualquier duda sobre cómo se forma una referencia o una cita —orden de elementos, puntuación, tratamiento de un campo, un tipo de entrada, una relación—, se consulta el FUENTE del estilo antes de proponer código. No se responde de memoria ni por la salida observada: una salida describe un caso, no el mecanismo.
+
+Cada estilo en uso tiene su entrada RF con el repositorio, los archivos a consultar, la versión anclada y el banco de pruebas. Un estilo sin RF no se implementa: primero se releva.
+
+VERSIÓN
+
+Los estilos cambian. Toda afirmación derivada del fuente se ancla a la versión consultada. Si el repositorio avanzó, se vuelve a consultar antes de citar.
+
+ALCANCE
+
+Libros.
+
+**Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12
+
 ---
 
 ## RF — Referencia de API
@@ -1109,6 +1137,37 @@ REGLA DE TRABAJO
 Antes de pedir cambios sobre el corpus, exportar y compartir el `corpus.md` vigente, para que el trabajo se haga contra el estado real y no contra una copia vieja.
 
 **Relaciones:** vinculo:RF-07, vinculo:GV-29
+
+### RF-09 — Fuente de biblatex-apa
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex-apa 9.20 (2025/08/27) / commit efb4437 · **Verificado:** 2026-09
+
+Repositorio: https://github.com/plk/biblatex-apa
+
+ACCESO
+
+La lectura web de GitHub está bloqueada para acceso automatizado. Se accede con `git clone --depth 1`, que funciona.
+
+ORDEN DE CONSULTA
+
+1. `tex/latex/biblatex-apa/bbx/apa.bbx` — referencias. Fuente de verdad del comportamiento.
+2. `tex/latex/biblatex-apa/cbx/apa.cbx` — citas.
+3. `tex/latex/biblatex-apa/dbx/apa.dbx` — campos y tipos que el estilo agrega al modelo de datos.
+4. `tex/latex/biblatex-apa/lbx/` — cadenas localizadas por idioma.
+5. `tex/latex/biblatex-apa/lua/apa.lua` — procesamiento auxiliar.
+6. `doc/biblatex-apa.tex` — documentación. Informa la intención; si contradice al código, gana el código.
+
+BANCO DE PRUEBAS
+
+`bibtex/bib/biblatex-apa-test-references.bib`, `biblatex-apa-test-citations.bib` y `biblatex-apa-test-misc.bib`. Cada entrada compilada en LaTeX es la salida esperada contra la que se verifican HTML y EPUB.
+
+RELACIONES EN APA
+
+`apa.bbx` implementa `related` con macros propias para `reviewof`, `commenton` y `reprintfrom`, y un toggle `bbx:related` que gobierna la expansión genérica de biblatex.
+
+**Relaciones:** vinculo:SC-14, vinculo:RC-BL-02
+
+**PENDIENTE:** RC-BL-02 afirma que apa ignora related; el fuente lo contradice en general. Relevar tipo por tipo qué relaciones imprime apa y reformular RC-BL-02.
 
 ---
 
@@ -1955,3 +2014,38 @@ Fondo, letra y fuente se fijan explícitamente en el arranque; si se deja la fue
 **Relaciones:** vinculo:SC-13, vinculo:GV-17, vinculo:RC-GM-07
 
 **PENDIENTE:** Dos comportamientos provienen de fuentes secundarias (foros de Gambas) y no se verificaron en el proyecto: que el TerminalView no muere al cerrarse el formulario y deja un bash huérfano, y que devuelve «terminal already in use» si se lanza un segundo proceso sobre el mismo control. Confirmar antes de citarlos como hechos.
+
+### GV-43 — Desktop.Open: sin espera no informa fallos, con espera congela la interfaz
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.desktop / código fuente del componente / Linux Mint · **Verificado:** 2026-09
+
+Verificado en el fuente del componente, etiqueta 3.22.1 (`comp/src/gb.desktop/.src/Desktop.class` y `Main.module`), y en uso en Linux Mint.
+
+Firma:
+
+    Desktop.Open(Url As String, Optional Wait As Boolean)
+
+QUÉ HACE
+
+Pasa la ruta por `File.RealPath` y lanza `xdg-open` con `Exec` sobre un array: no hay `sh -c`, así que una ruta con espacios o metacaracteres no se interpreta (GV-06).
+
+No depende del paquete `xdg-utils` del sistema: el componente trae su propia copia del script y la instala en un temporal en el primer uso.
+
+Si el portal de escritorio está habilitado (`DesktopPortal.Enabled`), lo intenta primero y recién si falla cae en xdg-open.
+
+LOS DOS MODOS NO INFORMAN LO MISMO
+
+    Wait = False (omisión)   hProcess.Ignore = True; vuelve al instante
+    Wait = True              hProcess.Wait; códigos 1 a 5 -> Error.Raise
+
+Sin espera, un fallo de xdg-open —archivo inexistente, ningún visor asociado— NO llega nunca al llamador. El `Try` sobre `Desktop.Open` solo atrapa errores de lanzamiento. Es un canal mudo por construcción (GV-23).
+
+Con espera, los fallos se traducen a errores atrapables (1 sintaxis, 2 archivo inexistente, 3 falta una herramienta, 4 la acción falló, 5 acceso prohibido), pero la espera es `Process.Wait` y la interfaz queda congelada mientras xdg-open no termine (GV-17). Si xdg-open cae en su modo genérico y lanza el visor directamente, no termina hasta que el usuario cierra el visor.
+
+REGLA: usar sin espera, y hacer en Gambas, ANTES de la llamada, las verificaciones que se quieran informar. Como mínimo `Exist` sobre la ruta: es el único fallo que el usuario puede provocar entre que un archivo se lista y se lo abre.
+
+Aplicado en `m_RevisarPDF.AbrirPDFEnVisorExterno`, que abre en el visor del sistema el PDF elegido en `cmbVerPDF`. Motivo: el `PictureBox` muestra páginas rasterizadas, y los hipervínculos del PDF solo se pueden usar y probar en un visor real. Verificado en Mint: abre el visor predeterminado sin bloquear la interfaz.
+
+**Relaciones:** vinculo:GV-17, apoya:GV-23, vinculo:GV-06
+
+**PENDIENTE:** Falta medir si xdg-open en Cinnamon vuelve de inmediato (delegando en gio open) o espera a que se cierre el visor. Mini-test: en una terminal, xdg-open archivo.pdf; echo $? — si el echo aparece recién al cerrar el visor, Wait = True queda descartado definitivamente. Hasta medirlo, no usar Wait = True.

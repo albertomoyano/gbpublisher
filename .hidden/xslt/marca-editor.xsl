@@ -20,7 +20,9 @@
   CORRESPONDENCIA CON EL PDF
               LAS ABREVIATURAS SON LAS DE cita-apa-config.tex
               (\DefineBibliographyStrings{spanish}), TODAS EN MINÚSCULA. SI SE
-              CAMBIAN ALLÁ, CAMBIARLAS ACÁ.
+              CAMBIAN ALLÁ, CAMBIARLAS ACÁ. LO MISMO CON LOS NOMBRES DE LOS
+              TIPOS: UN ROL QUE ESTE MÓDULO NO RECONOCE SALE COMO «Ed.» SIN
+              AVISO. PASÓ CON direction, QUE ACÁ FIGURABA COMO director.
 
   MAYÚSCULA   LA DECIDE EL CONTEXTO, COMO EN biblatex: UNA CADENA QUE VA
               DESPUÉS DE UN PUNTO EMPIEZA ORACIÓN Y SE CAPITALIZA. CON UN NOMBRE
@@ -57,7 +59,9 @@
       <xsl:choose>
         <xsl:when test="$rol = 'compiler'">comp</xsl:when>
         <xsl:when test="$rol = 'coordinator'">coord</xsl:when>
-        <xsl:when test="$rol = 'director'">dir</xsl:when>
+        <!-- direction ES EL TIPO QUE USA cita-apa-config.tex (typedirection).
+             director SE CONSERVA POR SI APARECE EN DATOS VIEJOS -->
+        <xsl:when test="$rol = ('direction', 'director')">dir</xsl:when>
         <xsl:when test="$rol = 'collaborator'">col</xsl:when>
         <xsl:when test="$rol = 'organizer'">org</xsl:when>
         <!-- editor, SIN ROL O CON UN ROL NO PREVISTO -->
