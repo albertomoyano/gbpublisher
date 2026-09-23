@@ -13,7 +13,7 @@
 -- ============================================================================
 
 -- VERSIÓN DEL FILTRO: VA AL INFORME. CAMBIARLA CON CADA CAMBIO DE COMPORTAMIENTO
-local VERSION_FILTRO = "1.0"
+local VERSION_FILTRO = "1.1"
 
 -- LAS MEDICIONES QUE SOSTIENEN ESTE FILTRO SE HICIERON CON 3.1.3.
 -- EN UNA VERSIÓN MENOR, must_be_at_least ABORTA CON ERROR (PANDOC SALE CON 83)
@@ -21,6 +21,37 @@ PANDOC_VERSION:must_be_at_least("3.1.3")
 
 local NBSP = "\u{00A0}"
 local SHY  = "\u{00AD}"
+
+-- COMILLAS: EL MODELO DEL PROYECTO ES « » EN TODOS LOS NIVELES. EL NIVEL
+-- TIPOGRÁFICO LO RESUELVE LA SALIDA (quote.xsl), A PARTIR DEL ANIDAMIENTO,
+-- ASÍ QUE LO QUE TIENE QUE LLEGAR AL .md ES SIEMPRE LA ANGULAR.
+-- EL LECTOR DE .docx NO PRODUCE NODOS DE CITA: EN WORD LAS COMILLAS SON
+-- CARACTERES SUELTOS, LOS QUE HAYA TECLEADO O AUTOCORREGIDO CADA AUTOR, Y
+-- CON --to=markdown-smart (smart DESACTIVADO) SE ESCRIBEN TAL CUAL.
+local ANGULAR_ABRE  = "\u{00AB}"
+local ANGULAR_CIERRA = "\u{00BB}"
+
+-- ASIMÉTRICAS: CADA UNA DICE POR SÍ SOLA SI ABRE O CIERRA
+local ALTA_INGLESA = "\u{201C}"
+local BAJA_ALEMANA = "\u{201E}"
+
+local ABREN = {
+  [BAJA_ALEMANA] = true,  -- BAJA (ALEMANA), DE APERTURA
+  ["\u{201F}"]   = true,  -- INGLESA ALTA INVERTIDA
+  ["\u{2039}"]   = true,  -- ANGULAR SIMPLE DE APERTURA
+}
+local CIERRAN = {
+  ["\u{201D}"] = true,  -- INGLESA DE CIERRE
+  ["\u{203A}"] = true,  -- ANGULAR SIMPLE DE CIERRE
+}
+
+-- SIMPLES CURVAS: NO SE TOCAN. ' ES TAMBIÉN EL APÓSTROFO TIPOGRÁFICO
+-- —d'Annunzio, l'État— Y NO HAY FORMA SEGURA DE DISTINGUIRLO DE UNA COMILLA
+-- DE TERCER NIVEL. SE CUENTAN PARA QUE EL INFORME LAS MUESTRE
+local SIMPLES = {
+  ["\u{2018}"] = true,
+  ["\u{2019}"] = true,
+}
 
 -- ESTILOS DE WORD QUE EL LECTOR DOCX MANDA A METADATOS CUANDO ENCABEZAN EL
 -- DOCUMENTO (Readers/Docx.hs, metaStyles). SIN -s EL TEXTO DESAPARECERÍA DEL
@@ -209,7 +240,96 @@ local pasada_limpieza = {
   end,
 }
 
--- --- 4. CUARTA PASADA: SALTOS DE LÍNEA DONDE UN PÁRRAFO NUEVO CAMBIARÍA LA ESTRUCTURA ---
+-- ============================================
+-- Función   : normalizar_comillas
+-- Propósito : Lleva todas las comillas dobles de un bloque a « »
+-- Parámetros: bloque As Block
+-- Retorna   : Block
+-- Nota      : LA RECTA (") ES SELF-PAIRED: NO DICE SI ABRE O CIERRA, ASÍ QUE
+--             SE ALTERNA EN ORDEN DE APARICIÓN. EL RECORRIDO ES POR BLOQUE Y
+--             EN ORDEN DE DOCUMENTO, DE MODO QUE UNA CITA QUE ABARCA UNA
+--             CURSIVA —"un *texto* citado"— ALTERNA BIEN AUNQUE LA APERTURA Y
+--             EL CIERRE ESTÉN EN NODOS DISTINTOS.
+--             EL CÓDIGO ENTRE ACENTOS GRAVES NO SE TOCA: ES Code, NO Str.
+-- ============================================
+local function normalizar_comillas(bloque)
+  local abierta = false
+  local baja_abierta = false
+
+  return bloque:walk({
+    Str = function(el)
+      -- PREFILTRO POR BYTES: " (34), O EL PRIMER BYTE DE LAS CURVAS Y LAS
+      -- ANGULARES (194 Y 226). EVITA RECORRER CODEPOINTS EN LA MAYORÍA DE
+      -- LOS Str, QUE NO TIENEN NINGUNA COMILLA
+      if not el.text:find('["\194\226]') then return nil end
+
+      local salida = {}
+      local cambio = false
+
+      for _, punto in utf8.codes(el.text) do
+        local c = utf8.char(punto)
+
+        if c == '"' then
+          sumar("comillas_rectas")
+          if abierta then
+            salida[#salida + 1] = ANGULAR_CIERRA
+            abierta = false
+          else
+            salida[#salida + 1] = ANGULAR_ABRE
+            abierta = true
+          end
+          cambio = true
+
+        elseif c == ALTA_INGLESA then
+          -- LA ALTA INGLESA ABRE EN INGLÉS Y CIERRA EN ALEMÁN, DONDE LA
+          -- APERTURA ES LA BAJA. SE DECIDE POR CONTEXTO: SI HAY UNA BAJA
+          -- ABIERTA, ESTA LA CIERRA
+          sumar("comillas_convertidas")
+          if baja_abierta then
+            salida[#salida + 1] = ANGULAR_CIERRA
+            baja_abierta = false
+          else
+            salida[#salida + 1] = ANGULAR_ABRE
+          end
+          cambio = true
+
+        elseif ABREN[c] then
+          sumar("comillas_convertidas")
+          if c == BAJA_ALEMANA then baja_abierta = true end
+          salida[#salida + 1] = ANGULAR_ABRE
+          cambio = true
+
+        elseif CIERRAN[c] then
+          sumar("comillas_convertidas")
+          salida[#salida + 1] = ANGULAR_CIERRA
+          cambio = true
+
+        else
+          if c == ANGULAR_ABRE or c == ANGULAR_CIERRA then
+            sumar("comillas_ya_angulares")
+          elseif SIMPLES[c] then
+            sumar("comillas_simples_sin_tocar")
+          end
+          salida[#salida + 1] = c
+        end
+      end
+
+      if not cambio then return nil end
+      return pandoc.Str(table.concat(salida))
+    end,
+  })
+end
+
+-- --- 4. CUARTA PASADA: TODAS LAS COMILLAS DOBLES A « » ---
+-- VA ANTES DE PARTIR LOS PÁRRAFOS POR SALTO DE LÍNEA: ASÍ LA ALTERNANCIA DE
+-- LAS RECTAS SE DECIDE SOBRE EL PÁRRAFO COMPLETO DE WORD
+local pasada_comillas = {
+  Para   = normalizar_comillas,
+  Plain  = normalizar_comillas,
+  Header = normalizar_comillas,
+}
+
+-- --- 5. QUINTA PASADA: SALTOS DE LÍNEA DONDE UN PÁRRAFO NUEVO CAMBIARÍA LA ESTRUCTURA ---
 -- EN TÍTULOS, CELDAS DE TABLA E ÍTEMS DE LISTA EL SALTO PASA A ESPACIO.
 -- Header, Table Y LAS LISTAS SE PROCESAN ACÁ, ANTES DE PARTIR PÁRRAFOS
 local function salto_a_espacio(bloque)
@@ -229,7 +349,7 @@ local pasada_saltos_estructura = {
   OrderedList = function(el) return salto_a_espacio(el), false end,
 }
 
--- --- 5. QUINTA PASADA: EN PÁRRAFOS, EL SALTO DE LÍNEA ABRE UN PÁRRAFO NUEVO ---
+-- --- 6. SEXTA PASADA: EN PÁRRAFOS, EL SALTO DE LÍNEA ABRE UN PÁRRAFO NUEVO ---
 local pasada_saltos_parrafo = {
   Para = function(el)
     local hay_salto = false
@@ -257,7 +377,7 @@ local pasada_saltos_parrafo = {
   end,
 }
 
--- --- 6. SEXTA PASADA: COMPACTAR ESPACIOS Y ESCRIBIR EL CONTEO ---
+-- --- 7. SÉPTIMA PASADA: COMPACTAR ESPACIOS Y ESCRIBIR EL CONTEO ---
 local pasada_final = {
   Para   = function(el) el.content = compactar(el.content); return el end,
   Plain  = function(el) el.content = compactar(el.content); return el end,
@@ -282,6 +402,7 @@ return {
   pasada_parametros,
   pasada_metadatos,
   pasada_limpieza,
+  pasada_comillas,
   pasada_saltos_estructura,
   pasada_saltos_parrafo,
   pasada_final,

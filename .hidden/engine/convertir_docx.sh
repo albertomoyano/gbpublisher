@@ -328,6 +328,8 @@ valor() {
   printf 'cambios_borrados\t%s\n' "$(valor cambios_borrados xml)"
   printf 'comentarios\t%s\n' "$(valor comentarios xml)"
   for CLAVE in subrayado resaltado versalitas guion_blando espacio_duro \
+               comillas_rectas comillas_convertidas comillas_ya_angulares \
+               comillas_simples_sin_tocar \
                salto_linea_a_parrafo salto_linea_a_espacio imagenes imagen_no_embebida; do
     printf '%s\t%s\n' "$CLAVE" "$(valor "$CLAVE")"
   done
