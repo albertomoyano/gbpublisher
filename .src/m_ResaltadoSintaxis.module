@@ -1,0 +1,589 @@
+' Gambas module file
+
+' RESALTADO DE SINTAXIS DE LOS VISORES TextEdit (gb.qt5.ext).
+'
+' EL COLOR NO SE APLICA CON Format (ENTRA EN LA PILA DE DESHACER Y DISPARA Change
+' POR CADA TRAMO): CADA VISOR ARMA UN HTML DESDE TextHighlighter.Run Y LO ASIGNA
+' CON RichText. ESTE MÓDULO TIENE LO COMPARTIDO ENTRE VISORES:
+'   - EL REGISTRO DE LAS GRAMÁTICAS .highlight
+'   - LOS TEMAS (ARCHIVOS .theme EN ~/.gbpublisher/themes, MODELO SC-11)
+'   - EL TEMA ELEGIDO Y LA TIPOGRAFÍA, PERSISTIDOS EN gbpublisher.conf
+'   - EL MENÚ DE TEMAS Y LA LISTA DE VISORES A REPINTAR CUANDO CAMBIA EL TEMA
+' EL ESTADO DE CADA ARCHIVO ABIERTO VIVE EN SU CVisorResaltado.
+
+' CLAVES DE gbpublisher.conf. [Editor] YA LA USA FMain PARA LA TIPOGRAFÍA DE LOS EDITORES
+Private Const CLAVE_TEMA As String = "Resaltado/Tema"
+Private Const CLAVE_FUENTE As String = "Editor/FontName"
+Private Const CLAVE_CUERPO As String = "Editor/FontSize"
+
+Private Const TEMA_POR_DEFECTO As String = "clasico-claro"
+Private Const FUENTE_POR_DEFECTO As String = "IBM Plex Mono"
+Private Const CUERPO_POR_DEFECTO As Float = 13
+
+Private $bIniciado As Boolean
+Private $aIdsTemas As New String[]
+Private $cNombresTemas As New Collection
+Private $sTemaActual As String
+Private $hTema As Settings
+
+' CLAVE DE ESTILO DE CADA ÍNDICE DE ESTADO QUE DEVUELVE Run (Styles[0] ES Normal)
+Private $aClavesEstilo As String[]
+' CSS POR ÍNDICE DE ESTADO, UNO POR GRAMÁTICA; SE VACÍA AL CAMBIAR DE TEMA
+Private $cCss As New Collection
+
+Private $sFuente As String
+Private $fCuerpo As Float
+
+Private $aVisores As New CVisorResaltado[]
+Private $hMenuTemas As Menu
+
+' ============================================
+' Función   : Iniciar
+' Propósito : Leer la preferencia de tema y tipografía, y la lista de temas disponibles
+' Parámetros: ninguno
+' Retorna   : Boolean — True si hay al menos un tema utilizable
+' ============================================
+Public Function Iniciar() As Boolean
+
+  Dim hConf As Settings
+  Dim sTema As String
+
+  ' --- 1. UNA SOLA VEZ POR SESIÓN ---
+  If $bIniciado Then Return True
+
+  ' --- 2. PREFERENCIAS GUARDADAS ---
+  $sFuente = FUENTE_POR_DEFECTO
+  $fCuerpo = CUERPO_POR_DEFECTO
+  sTema = TEMA_POR_DEFECTO
+  Try hConf = New Settings(RutaConfiguracion())
+  If Not Error Then
+    Try $sFuente = hConf[CLAVE_FUENTE, FUENTE_POR_DEFECTO]
+    Try $fCuerpo = hConf[CLAVE_CUERPO, CUERPO_POR_DEFECTO]
+    Try sTema = hConf[CLAVE_TEMA, TEMA_POR_DEFECTO]
+  Endif
+  If $sFuente = "" Then $sFuente = FUENTE_POR_DEFECTO
+  If $fCuerpo <= 0 Then $fCuerpo = CUERPO_POR_DEFECTO
+
+  ' --- 3. TEMAS DISPONIBLES ---
+  If Not ListarTemas() Then Return False
+
+  ' --- 4. TEMA ELEGIDO; SI YA NO EXISTE, EL PRIMERO DE LA LISTA ---
+  If Not $cNombresTemas.Exist(sTema) Then sTema = $aIdsTemas[0]
+  If Not CargarTema(sTema) Then Return False
+
+  $bIniciado = True
+  Return True
+
+End
+
+' ============================================
+' Función   : CrearVisor
+' Propósito : Crear el visor coloreado de un TextEdit y registrarlo para los cambios de tema
+' Parámetros: hControl As TextEdit — control de solo lectura a colorear
+'             sGramatica As String — "xml" o "markdown"
+' Retorna   : CVisorResaltado — el visor, o Null si no se pudo preparar (ya informado)
+' ============================================
+Public Function CrearVisor(hControl As TextEdit, sGramatica As String) As CVisorResaltado
+
+  Dim hVisor As CVisorResaltado
+
+  ' --- 1. PRECONDICIONES ---
+  If Not Iniciar() Then Return Null
+  If Not AsegurarGramatica(sGramatica) Then Return Null
+
+  ' --- 2. CREACIÓN: New CON ARGUMENTOS VA A UNA VARIABLE (GV-32) ---
+  hVisor = New CVisorResaltado(hControl, sGramatica)
+  $aVisores.Add(hVisor)
+  hVisor.AplicarAspecto()
+
+  Return hVisor
+
+End
+
+' ============================================
+' Función   : Resaltador
+' Propósito : Dar la instancia de TextHighlighter de una gramática ya registrada
+' Parámetros: sGramatica As String — "xml" o "markdown"
+' Retorna   : TextHighlighter — instancia, o Null si falló (ya informado)
+' ============================================
+Public Function Resaltador(sGramatica As String) As TextHighlighter
+
+  Dim hResaltador As TextHighlighter
+
+  Try hResaltador = TextHighlighter[NombreInterno(sGramatica)]
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo obtener el resaltador «" & sGramatica & "»:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  ' SIN REESCRITURA: LOS LARGOS DE Run DEBEN CORRESPONDER AL TEXTO ORIGINAL
+  hResaltador.CanRewrite = False
+
+  Return hResaltador
+
+End
+
+' ============================================
+' Función   : CssDeGramatica
+' Propósito : Dar el CSS de cada índice de estado para una gramática y el tema actual
+' Parámetros: sGramatica As String — "xml" o "markdown"
+' Retorna   : String[] — CSS por índice de estado; cadena vacía = sin estilo propio
+' ============================================
+Public Function CssDeGramatica(sGramatica As String) As String[]
+
+  Dim aCss As New String[]
+  Dim sClave As String
+  Dim sSeccion As String
+
+  ' --- 1. YA CALCULADO PARA ESTE TEMA ---
+  If $cCss.Exist(sGramatica) Then Return $cCss[sGramatica]
+
+  ' --- 2. UNA ENTRADA POR CLAVE DE ESTILO, EN EL ORDEN DE LOS ÍNDICES DE Run ---
+  sSeccion = SeccionDeGramatica(sGramatica)
+  For Each sClave In ClavesDeEstilo()
+    aCss.Add(CssDeValor($hTema[sSeccion &/ sClave, ""], sSeccion &/ sClave))
+  Next
+  ' Normal NUNCA LLEVA SPAN: SU COLOR ES EL DEL PÁRRAFO
+  If aCss.Count > 0 Then aCss[0] = ""
+
+  $cCss[sGramatica] = aCss
+  Return aCss
+
+End
+
+' ============================================
+' Función   : ColorTexto
+' Propósito : Color de la letra normal del tema actual, para el estilo de cada párrafo
+' Parámetros: ninguno
+' Retorna   : String — color como "#RRGGBB"
+' ============================================
+Public Function ColorTexto() As String
+
+  Dim sColor As String
+
+  sColor = $hTema["Tema/Texto", "#000000"]
+  If IsNull(ColorDeHex(sColor)) Then Return "#000000"
+  Return sColor
+
+End
+
+' ============================================
+' Función   : ColorFondo
+' Propósito : Color de fondo del tema actual, para la propiedad Background del control
+' Parámetros: ninguno
+' Retorna   : Integer — color de Gambas
+' ============================================
+Public Function ColorFondo() As Integer
+
+  Dim vColor As Variant
+
+  vColor = ColorDeHex($hTema["Tema/Fondo", "#FFFFFF"])
+  If IsNull(vColor) Then Return Color.White
+  Return vColor
+
+End
+
+' ============================================
+' Función   : FuenteActual
+' Propósito : Dar la tipografía elegida para los visores
+' Parámetros: ninguno
+' Retorna   : Font — la fuente a asignar al control
+' ============================================
+Public Function FuenteActual() As Font
+
+  Return Font[$sFuente & "," & CStr($fCuerpo)]
+
+End
+
+' ============================================
+' Función   : AplicarFuente
+' Propósito : Cambiar la tipografía de los visores, guardarla y reaplicarla
+' Parámetros: sFuente As String — familia tipográfica
+'             fCuerpo As Float — cuerpo en puntos
+' Retorna   : nada
+' ============================================
+Public Sub AplicarFuente(sFuente As String, fCuerpo As Float)
+
+  Dim hVisor As CVisorResaltado
+
+  ' --- 1. VALIDACIÓN: DOS If PORQUE And NO CORTOCIRCUITA (RC-GM-17) ---
+  If sFuente = "" Then Return
+  If fCuerpo <= 0 Then Return
+
+  ' --- 2. SE GUARDA ACÁ Y NO EN EL HANDLER: LA PREFERENCIA ES DEL MÓDULO ---
+  $sFuente = sFuente
+  $fCuerpo = fCuerpo
+  GuardarPreferencia(CLAVE_FUENTE, sFuente)
+  GuardarPreferencia(CLAVE_CUERPO, fCuerpo)
+
+  ' --- 3. REAPLICAR EN TODOS LOS VISORES ---
+  For Each hVisor In $aVisores
+    hVisor.AplicarAspecto()
+  Next
+
+End
+
+' ============================================
+' Función   : LlenarMenu
+' Propósito : Poner en un menú una entrada por tema, con el actual marcado
+' Parámetros: hMenu As Menu — menú contenedor (el Menu del MenuButton)
+' Retorna   : nada
+' ============================================
+Public Sub LlenarMenu(hMenu As Menu)
+
+  Dim hEntrada As Menu
+  Dim sId As String
+
+  ' --- 1. PRECONDICIÓN ---
+  If Not Iniciar() Then Return
+
+  ' --- 2. SE DESCARTAN LAS ENTRADAS QUE TUVIERA (INCLUIDAS LAS DEL DISEÑADOR) ---
+  $hMenuTemas = hMenu
+  hMenu.Children.Clear()
+
+  ' --- 3. UNA ENTRADA POR TEMA; EL ID VIAJA EN Tag, NO EN EL TEXTO VISIBLE ---
+  For Each sId In $aIdsTemas
+    hEntrada = New Menu(hMenu) As "mnuTema"
+    hEntrada.Text = $cNombresTemas[sId]
+    hEntrada.Tag = sId
+    hEntrada.Radio = True
+    hEntrada.Checked = sId = $sTemaActual
+  Next
+
+End
+
+' ============================================
+' Función   : mnuTema_Click
+' Propósito : Aplicar el tema elegido en el menú
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuTema_Click()
+
+  ElegirTema(Last.Tag)
+
+End
+
+' ============================================
+' Función   : ElegirTema
+' Propósito : Cambiar el tema actual, guardarlo y repintar los visores
+' Parámetros: sId As String — identificador del tema (nombre del archivo sin extensión)
+' Retorna   : Boolean — True si el tema quedó aplicado
+' ============================================
+Public Function ElegirTema(sId As String) As Boolean
+
+  Dim hVisor As CVisorResaltado
+  Dim hEntrada As Menu
+
+  ' --- 1. CARGA DEL TEMA ---
+  If Not CargarTema(sId) Then Return False
+  GuardarPreferencia(CLAVE_TEMA, sId)
+
+  ' --- 2. REPINTAR: CADA VISOR REARMA SU HTML DESDE SU CACHÉ, SIN VOLVER A CORRER Run ---
+  For Each hVisor In $aVisores
+    hVisor.Repintar()
+  Next
+
+  ' --- 3. MARCA EN EL MENÚ ---
+  If $hMenuTemas Then
+    For Each hEntrada In $hMenuTemas.Children
+      hEntrada.Checked = hEntrada.Tag = sId
+    Next
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AsegurarGramatica
+' Propósito : Registrar una gramática .highlight si todavía no lo está
+' Parámetros: sGramatica As String — "xml" o "markdown"
+' Retorna   : Boolean — True si la gramática quedó registrada
+' ============================================
+Private Function AsegurarGramatica(sGramatica As String) As Boolean
+
+  Dim bRegistrada As Boolean
+  Dim sRuta As String
+
+  ' --- 1. YA REGISTRADA ---
+  ' LA PRIMERA CONSULTA A List INICIALIZA gb.highlight Y PUEDE FALLAR (FALTA DE gb.pcre)
+  Try bRegistrada = TextHighlighter.List.Exist(NombreInterno(sGramatica))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo inicializar el resaltado de sintaxis:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If bRegistrada Then Return True
+
+  ' --- 2. ARCHIVO DE LA GRAMÁTICA ---
+  sRuta = RutaTemas() &/ SeccionDeGramatica(sGramatica) & ".highlight"
+  If Not Exist(sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encuentra la gramática de resaltado:" & gb.NewLine & sRuta)
+    Return False
+  Endif
+
+  ' --- 3. REGISTRO: COMPILA LA GRAMÁTICA CON gbc3 EN TIEMPO DE EJECUCIÓN ---
+  Try TextHighlighter.Register(NombreInterno(sGramatica), SeccionDeGramatica(sGramatica), sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo registrar la gramática «" & sGramatica & "»:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 4. LA LISTA DE ESTADOS CAMBIÓ: LO CALCULADO CON LA ANTERIOR YA NO SIRVE ---
+  $aClavesEstilo = Null
+  $cCss.Clear()
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ListarTemas
+' Propósito : Leer los .theme de la carpeta local y ordenarlos por su campo Orden
+' Parámetros: ninguno
+' Retorna   : Boolean — True si hay al menos un tema
+' ============================================
+Private Function ListarTemas() As Boolean
+
+  Dim aArchivos As String[]
+  Dim aOrdenados As New String[]
+  Dim sArchivo As String
+  Dim sId As String
+  Dim sEntrada As String
+  Dim hArchivo As Settings
+  Dim iOrden As Integer
+
+  ' --- 1. CARPETA LOCAL (SC-11); Exist NO DISTINGUE CARPETA DE ARCHIVO (GV-01) ---
+  If Not IsDir(RutaTemas()) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encuentra la carpeta de temas:" & gb.NewLine & RutaTemas())
+    Return False
+  Endif
+  Try aArchivos = Dir(RutaTemas(), "*.theme", gb.File)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la carpeta de temas:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. ORDEN Y NOMBRE DE CADA TEMA; UN ARCHIVO ILEGIBLE SE INFORMA Y SE SALTEA ---
+  $aIdsTemas.Clear()
+  $cNombresTemas.Clear()
+  For Each sArchivo In aArchivos
+    sId = File.BaseName(sArchivo)
+    Try hArchivo = New Settings(RutaTemas() &/ sArchivo)
+    If Error Then
+      Message.Warning("El tema «" & sArchivo & "» no se pudo leer y no se ofrece:" & gb.NewLine & Error.Text)
+      Continue
+    Endif
+    iOrden = 999
+    Try iOrden = hArchivo["Tema/Orden", 999]
+    $cNombresTemas[sId] = hArchivo["Tema/Nombre", sId]
+    ' CLAVE DE ORDEN CON CEROS A LA IZQUIERDA PARA QUE Sort ORDENE COMO NÚMERO
+    aOrdenados.Add(Format$(iOrden, "000") & "|" & sId)
+  Next
+
+  If aOrdenados.Count = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No hay temas de resaltado en:" & gb.NewLine & RutaTemas())
+    Return False
+  Endif
+
+  ' --- 3. IDENTIFICADORES EN EL ORDEN DECLARADO ---
+  aOrdenados.Sort()
+  For Each sEntrada In aOrdenados
+    $aIdsTemas.Add(Mid$(sEntrada, InStr(sEntrada, "|") + 1))
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : CargarTema
+' Propósito : Abrir el archivo de un tema y dejarlo como actual
+' Parámetros: sId As String — identificador del tema
+' Retorna   : Boolean — True si quedó cargado
+' ============================================
+Private Function CargarTema(sId As String) As Boolean
+
+  Dim hTema As Settings
+  Dim sRuta As String
+
+  ' --- 1. ARCHIVO ---
+  sRuta = RutaTemas() &/ sId & ".theme"
+  If Not Exist(sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encuentra el tema:" & gb.NewLine & sRuta)
+    Return False
+  Endif
+  Try hTema = New Settings(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el tema:" & gb.NewLine & sRuta & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. QUEDA COMO ACTUAL; EL CSS CALCULADO CON EL ANTERIOR SE DESCARTA ---
+  $hTema = hTema
+  $sTemaActual = sId
+  $cCss.Clear()
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ClavesDeEstilo
+' Propósito : Dar la clave de estilo de cada índice de estado que devuelve Run
+' Parámetros: ninguno
+' Retorna   : String[] — claves en orden de índice ("Normal", "Keyword"…)
+' ============================================
+Private Function ClavesDeEstilo() As String[]
+
+  Dim hTemaBase As TextHighlighterTheme
+  Dim hEstilo As TextHighlighterStyle
+
+  ' --- 1. SE RECALCULA SOLO SI SE REGISTRÓ UNA GRAMÁTICA NUEVA ---
+  If $aClavesEstilo Then Return $aClavesEstilo
+
+  ' --- 2. EL TEMA BASE SE CREA DESPUÉS DE LOS REGISTROS PARA QUE INCLUYA SUS ESTADOS ---
+  $aClavesEstilo = New String[]
+  hTemaBase = New TextHighlighterTheme
+  For Each hEstilo In hTemaBase.Styles
+    $aClavesEstilo.Add(hEstilo.Key)
+  Next
+
+  Return $aClavesEstilo
+
+End
+
+' ============================================
+' Función   : CssDeValor
+' Propósito : Traducir un valor de tema ("#RRGGBB;bold;italic") a CSS en línea
+' Parámetros: sValor As String — valor leído del .theme; vacío si la clave no está
+'             sOrigen As String — sección/clave, para el aviso si el valor es inválido
+' Retorna   : String — declaraciones CSS; vacío si no hay estilo propio
+' ============================================
+Private Function CssDeValor(sValor As String, sOrigen As String) As String
+
+  Dim aPartes As String[]
+  Dim sParte As String
+  Dim sCss As String
+
+  ' --- 1. CLAVE AUSENTE: EL ESTILO QUEDA EN EL COLOR DE TEXTO ---
+  If sValor = "" Then Return ""
+
+  ' --- 2. COLOR ---
+  aPartes = Split(sValor, ";")
+  If IsNull(ColorDeHex(aPartes[0])) Then
+    ' UN VALOR MAL ESCRITO NO SE DESCARTA EN SILENCIO (GV-23)
+    Message.Warning("Valor de color inválido en el tema «" & $sTemaActual & "», " & sOrigen & ": " & sValor)
+    Return ""
+  Endif
+  sCss = "color:" & aPartes[0]
+
+  ' --- 3. MODIFICADORES ---
+  For Each sParte In aPartes
+    If Trim(sParte) = "bold" Then sCss &= "; font-weight:bold"
+    If Trim(sParte) = "italic" Then sCss &= "; font-style:italic"
+  Next
+
+  Return sCss
+
+End
+
+' ============================================
+' Función   : ColorDeHex
+' Propósito : Convertir "#RRGGBB" en un color de Gambas
+' Parámetros: sHex As String — color en formato "#RRGGBB"
+' Retorna   : Variant — Integer con el color, o Null si el formato no es válido
+' ============================================
+Private Function ColorDeHex(sHex As String) As Variant
+
+  If Len(sHex) <> 7 Then Return Null
+  If Left$(sHex) <> "#" Then Return Null
+  ' Val DEVUELVE Null ANTE DÍGITOS HEXADECIMALES INVÁLIDOS
+  Return Val("&H" & Mid$(sHex, 2))
+
+End
+
+' ============================================
+' Función   : SeccionDeGramatica
+' Propósito : Traducir el nombre de gramática a la sección del .theme y al nombre del .highlight
+' Parámetros: sGramatica As String — "xml" o "markdown"
+' Retorna   : String — "XML" o "Markdown"
+' ============================================
+Private Function SeccionDeGramatica(sGramatica As String) As String
+
+  If sGramatica = "xml" Then Return "XML"
+  If sGramatica = "markdown" Then Return "Markdown"
+  Return sGramatica
+
+End
+
+' ============================================
+' Función   : NombreInterno
+' Propósito : Nombre con que se registra una gramática propia en gb.highlight
+' Parámetros: sGramatica As String — "xml" o "markdown"
+' Retorna   : String — nombre con prefijo, p. ej. "gbp_xml"
+' ============================================
+Private Function NombreInterno(sGramatica As String) As String
+
+  ' gb.highlight TRAE RESALTADORES INCORPORADOS (EN VERSIONES RECIENTES, UNO LLAMADO "xml").
+  ' CON EL MISMO NOMBRE, List.Exist DA True, EL REGISTRO PROPIO NO OCURRE Y Run USA LA
+  ' GRAMÁTICA INCORPORADA, CUYOS ESTILOS (Markup, Attribute, Value…) NO ESTÁN EN LOS TEMAS.
+  ' EL PREFIJO IMPIDE EL CHOQUE CON CUALQUIER INCORPORADO PRESENTE O FUTURO.
+  Return "gbp_" & sGramatica
+
+End
+
+' ============================================
+' Función   : GuardarPreferencia
+' Propósito : Escribir una clave en gbpublisher.conf, el único archivo de configuración
+' Parámetros: sClave As String — "Sección/clave"
+'             vValor As Variant — valor a guardar
+' Retorna   : nada
+' ============================================
+Private Sub GuardarPreferencia(sClave As String, vValor As Variant)
+
+  Dim hConf As Settings
+
+  Try hConf = New Settings(RutaConfiguracion())
+  If Not Error Then
+    hConf[sClave] = vValor
+    ' Save EXPLÍCITO: NO SE DEPENDE DE QUE LA INSTANCIA SE GUARDE SOLA AL LIBERARSE
+    Try hConf.Save()
+  Endif
+  If Error Then
+    Message.Warning("No se pudo guardar la preferencia " & sClave & ":" & gb.NewLine & Error.Text)
+  Endif
+
+End
+
+' ============================================
+' Función   : RutaTemas
+' Propósito : Carpeta local de temas y gramáticas (copia de trabajo, SC-11)
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta
+' ============================================
+Private Function RutaTemas() As String
+
+  Return User.Home &/ ".gbpublisher" &/ "themes"
+
+End
+
+' ============================================
+' Función   : RutaConfiguracion
+' Propósito : Ruta de gbpublisher.conf
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta
+' ============================================
+Private Function RutaConfiguracion() As String
+
+  Return User.Home &/ ".gbpublisher" &/ "gbpublisher.conf"
+
+End

@@ -1,0 +1,246 @@
+' Gambas class file
+
+' VISOR DE SOLO LECTURA CON RESALTADO DE SINTAXIS SOBRE UN TextEdit.
+'
+' AL MOSTRAR UN TEXTO SE CORRE TextHighlighter.Run UNA VEZ POR PÁRRAFO Y EL
+' RESULTADO QUEDA EN CACHÉ. CON ESO SE ARMA UN HTML COLOREADO QUE SE ASIGNA CON
+' RichText. CAMBIAR DE TEMA SOLO REARMA EL HTML DESDE LA CACHÉ: LOS ESTADOS DE
+' Run NO DEPENDEN DE LOS COLORES.
+'
+' SE CREA DESDE m_ResaltadoSintaxis.CrearVisor, QUE LO REGISTRA PARA LOS CAMBIOS
+' DE TEMA Y DE TIPOGRAFÍA.
+
+Private $hControl As TextEdit
+Private $sGramatica As String
+
+' PÁRRAFOS DEL TEXTO MOSTRADO Y RESULTADO DE Run DE CADA UNO, EN PARALELO
+Private $aParrafos As New String[]
+Private $aResaltados As New Byte[][]
+
+' ============================================
+' Función   : _new
+' Propósito : Asociar el visor a su control y a su gramática
+' Parámetros: hControl As TextEdit — control a colorear
+'             sGramatica As String — "xml" o "markdown", ya registrada
+' Retorna   : nada
+' ============================================
+Public Sub _new(hControl As TextEdit, sGramatica As String)
+
+  $hControl = hControl
+  $sGramatica = sGramatica
+
+End
+
+' ============================================
+' Función   : Mostrar
+' Propósito : Analizar un texto completo, guardar el análisis y mostrarlo coloreado
+' Parámetros: sTexto As String — contenido a mostrar
+' Retorna   : Boolean — True si se mostró coloreado; False si falló (ya informado)
+' ============================================
+Public Function Mostrar(sTexto As String) As Boolean
+
+  Dim hResaltador As TextHighlighter
+  Dim aEstado As New Short[]
+  Dim aResaltado As Byte[]
+  Dim sParrafo As String
+  Dim bResultado As Boolean
+
+  ' --- 1. RESALTADOR DE LA GRAMÁTICA ---
+  hResaltador = m_ResaltadoSintaxis.Resaltador($sGramatica)
+  If Not hResaltador Then Return False
+
+  ' --- 2. ANÁLISIS PÁRRAFO POR PÁRRAFO; EL ESTADO SE ARRASTRA (COMENTARIOS, ETIQUETAS MULTILÍNEA) ---
+  ' UN XML GRANDE TARDA MÁS DE UN SEGUNDO: CURSOR DE ESPERA, LIBERADO EN CADA SALIDA (RC-GM-20)
+  Inc Application.Busy
+  $aParrafos = Split(sTexto, Chr(10))
+  $aResaltados.Clear()
+  For Each sParrafo In $aParrafos
+    ' Run ESPERA LA LÍNEA COMPLETA CON SU SALTO FINAL
+    Try aResaltado = hResaltador.Run(sParrafo & Chr(10), aEstado)
+    If Error Then
+      Dec Application.Busy
+      m_Sonido.sonar("Error")
+      Message.Error("Falló el análisis del resaltado:" & gb.NewLine & Error.Text)
+      $aParrafos.Clear()
+      $aResaltados.Clear()
+      Return False
+    Endif
+    $aResaltados.Add(aResaltado)
+  Next
+
+  ' --- 3. PINTADO DESDE EL PRINCIPIO DEL DOCUMENTO ---
+  bResultado = Pintar()
+  Dec Application.Busy
+
+  Return bResultado
+
+End
+
+' ============================================
+' Función   : Repintar
+' Propósito : Volver a pintar con el tema actual sin analizar de nuevo, conservando la vista
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se repintó
+' ============================================
+Public Function Repintar() As Boolean
+
+  Dim iPos As Integer
+  Dim iScrollY As Integer
+  Dim bResultado As Boolean
+
+  ' --- 1. NADA MOSTRADO: SOLO EL ASPECTO DEL CONTROL ---
+  If $aParrafos.Count = 0 Then
+    AplicarAspecto()
+    Return True
+  Endif
+
+  ' --- 2. VISTA ACTUAL: RichText MANDA EL CURSOR AL PRINCIPIO ---
+  iPos = $hControl.Pos
+  iScrollY = $hControl.ScrollY
+
+  ' --- 3. PINTADO ---
+  Inc Application.Busy
+  bResultado = Pintar()
+  Dec Application.Busy
+  If Not bResultado Then Return False
+
+  ' --- 4. RESTITUCIÓN DE LA VISTA ---
+  ' NO SE ESCRIBE TextEdit.Pos: COMPARA CONTRA UNA LONGITUD EN CACHÉ QUE NUNCA SE
+  ' INVALIDA (CTextEdit.cpp) Y MANDA EL CURSOR AL FINAL. Select USA setPosition DIRECTO.
+  $hControl.Select(iPos, 0)
+  $hControl.ScrollY = iScrollY
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Limpiar
+' Propósito : Vaciar el control y descartar el análisis guardado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Limpiar()
+
+  $aParrafos.Clear()
+  $aResaltados.Clear()
+  $hControl.Clear()
+
+End
+
+' ============================================
+' Función   : AplicarAspecto
+' Propósito : Poner en el control el fondo del tema y la tipografía elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub AplicarAspecto()
+
+  $hControl.Background = m_ResaltadoSintaxis.ColorFondo()
+  ' SE REAPLICA DESPUÉS DE CADA CARGA DE RichText (GV-37)
+  $hControl.Font = m_ResaltadoSintaxis.FuenteActual()
+
+End
+
+' ============================================
+' Función   : Pintar
+' Propósito : Armar el HTML desde la caché con el tema actual y asignarlo al control
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se asignó
+' ============================================
+Private Function Pintar() As Boolean
+
+  Dim aHtml As New String[]
+  Dim aCss As String[]
+  Dim sEstiloParrafo As String
+  Dim iParrafo As Integer
+
+  ' --- 1. ESTILOS DEL TEMA ACTUAL PARA ESTA GRAMÁTICA ---
+  aCss = m_ResaltadoSintaxis.CssDeGramatica($sGramatica)
+  ' pre-wrap CONSERVA ESPACIOS MÚLTIPLES Y TABULADORES; EL COLOR DEL PÁRRAFO ES EL DE Normal
+  sEstiloParrafo = "margin:0; white-space:pre-wrap; color:" & m_ResaltadoSintaxis.ColorTexto()
+
+  ' --- 2. ARMADO: UN <p> POR PÁRRAFO ---
+  For iParrafo = 0 To $aParrafos.Max
+    aHtml.Add(HtmlDeParrafo($aParrafos[iParrafo], $aResaltados[iParrafo], aCss, sEstiloParrafo))
+  Next
+
+  ' --- 3. ASIGNACIÓN; EL HTML NO DECLARA FAMILIA NI CUERPO: MANDA LA FUENTE DEL CONTROL ---
+  Try $hControl.RichText = aHtml.Join("")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo mostrar el texto coloreado:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  AplicarAspecto()
+  Return True
+
+End
+
+' ============================================
+' Función   : HtmlDeParrafo
+' Propósito : Convertir un párrafo y su resultado de Run en un párrafo HTML coloreado
+' Parámetros: sParrafo As String — texto del párrafo, sin salto final
+'             aResaltado As Byte[] — pares (estado, largo) de Run
+'             aCss As String[] — CSS por índice de estado
+'             sEstiloParrafo As String — estilo del <p>
+' Retorna   : String — el párrafo como <p> con sus tramos en <span>
+' ============================================
+Private Function HtmlDeParrafo(sParrafo As String, aResaltado As Byte[], aCss As String[], sEstiloParrafo As String) As String
+
+  Dim aPartes As New String[]
+  Dim sTramo As String
+  Dim iLargoParrafo As Integer
+  Dim iPar As Integer
+  Dim iEstado As Integer
+  Dim iLargo As Integer
+  Dim iOffset As Integer
+
+  ' --- 1. PÁRRAFO VACÍO: LA FORMA QUE EMITE EL PROPIO toHtml DE Qt ---
+  ' UN <p></p> VACÍO PUEDE NO GENERAR BLOQUE Y SE PERDERÍA UN SALTO DE LÍNEA
+  iLargoParrafo = String.Len(sParrafo)
+  If iLargoParrafo = 0 Then Return "<p style='-qt-paragraph-type:empty; margin:0'><br /></p>"
+
+  aPartes.Add("<p style='" & sEstiloParrafo & "'>")
+
+  ' --- 2. TRAMOS: LOS LARGOS DE Run SON EN CARACTERES ---
+  For iPar = 0 To aResaltado.Max Step 2
+    iEstado = aResaltado[iPar]
+    iLargo = aResaltado[iPar + 1]
+    ' LARGO 0: MARCA DE FONDO, NO OCUPA TEXTO
+    If iLargo = 0 Then Continue
+    ' LO QUE EXCEDE EL PÁRRAFO ES EL SALTO DE LÍNEA AGREGADO PARA Run
+    If iOffset >= iLargoParrafo Then Break
+    If iOffset + iLargo > iLargoParrafo Then iLargo = iLargoParrafo - iOffset
+    sTramo = Html$(String.Mid(sParrafo, iOffset + 1, iLargo))
+    If EstiloDeEstado(aCss, iEstado) = "" Then
+      aPartes.Add(sTramo)
+    Else
+      aPartes.Add("<span style='" & aCss[iEstado] & "'>" & sTramo & "</span>")
+    Endif
+    iOffset += iLargo
+  Next
+
+  ' --- 3. RESTO NO CUBIERTO POR Run: SE EMITE SIN ESTILO, NUNCA SE DESCARTA ---
+  If iOffset < iLargoParrafo Then aPartes.Add(Html$(String.Mid(sParrafo, iOffset + 1)))
+
+  aPartes.Add("</p>")
+  Return aPartes.Join("")
+
+End
+
+' ============================================
+' Función   : EstiloDeEstado
+' Propósito : Dar el CSS de un estado, tolerando índices fuera de la tabla
+' Parámetros: aCss As String[] — CSS por índice de estado
+'             iEstado As Integer — índice devuelto por Run
+' Retorna   : String — CSS, o vacío si el estado no tiene estilo propio
+' ============================================
+Private Function EstiloDeEstado(aCss As String[], iEstado As Integer) As String
+
+  ' MISMA SALVAGUARDA QUE HighlightToken: FUERA DE RANGO VA COMO Normal
+  If iEstado > aCss.Max Then Return ""
+  Return aCss[iEstado]
+
+End

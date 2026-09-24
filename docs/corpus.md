@@ -57,6 +57,8 @@ Gambas no recompila automáticamente al guardar.
 
 Después de cualquier cambio: Proyecto → Limpiar, y luego Proyecto → Compilar, antes de probar.
 
+Si se agregaron o reemplazaron archivos desde fuera del IDE (por ejemplo, desde el gestor de archivos), primero hay que RECARGAR el proyecto: el IDE no los ve hasta entonces, y Limpiar + Compilar no alcanza. El orden completo es Recargar, Limpiar, Compilar.
+
 ### RC-GM-06 — Firmas de Goto y Select en TextEditor
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.form.editor
@@ -352,9 +354,11 @@ Corolario operativo: las posiciones que se calculen para alimentar a `Select` de
 
 La firma de cuatro coordenadas `(Column1, Line1, Column2, Line2)` de RC-GM-06 es del `TextEditor` y NO aplica acá.
 
-**Relaciones:** vinculo:RC-GM-06, vinculo:RF-03, vinculo:SC-02
+RESUELTO EL PENDIENTE ANTERIOR: `ToPos` cuenta desde el bloque del cursor y suma un carácter de más por párrafo (GV-45). Sigue sin usarse.
 
-**PENDIENTE:** ToPos(parrafo, 0) no devolvio el inicio del parrafo esperado: sobre un texto de tres parrafos dio seis caracteres de mas. Queda SIN USAR hasta relevarlo. Mientras tanto los limites de parrafo se calculan buscando el salto de linea con String.InStr y String.RInStr.
+Y ESCRIBIR `Pos` falla en silencio cuando el documento creció (GV-44): el cursor se mueve con `Select(Posicion, 0)`. Leer `Pos` sí es confiable.
+
+**Relaciones:** vinculo:RC-GM-06, vinculo:RF-03, vinculo:SC-02, vinculo:GV-44, vinculo:GV-45
 
 ---
 
@@ -894,6 +898,80 @@ Libros.
 
 **Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12
 
+### SC-15 — Resaltado de sintaxis en controles TextEdit: HTML desde Run, temas como datos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / gb.highlight / Linux Mint · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. Aplicada en el visor XML (`txtEditorXML`, solo lectura).
+
+MECANISMO
+
+El color no se aplica con `Format` (GV-46). `CVisorResaltado` corre `TextHighlighter.Run` una vez por párrafo (RF-10), guarda el resultado en un `Byte[][]` y arma un HTML: un `<p>` por párrafo con `white-space:pre-wrap` y un `<span>` con estilo por tramo. Lo asigna con `RichText`. Cambiar de tema rearma el HTML desde la caché sin volver a correr `Run`.
+
+La ida y vuelta es exacta: un capítulo de 392.713 caracteres volvió idéntico por `.Text`, con la salvedad de GV-47.
+
+REPARTO
+
+- `m_ResaltadoSintaxis`: registro de las gramáticas (con prefijo, GV-48), temas, tema elegido, tipografía, menú de temas y lista de visores.
+- `CVisorResaltado`: un objeto por control, con su gramática y su caché.
+
+TEMAS
+
+Cinco archivos `.theme` en `themes/`, junto a los `.highlight`. Se copian a `~/.gbpublisher/themes` (SC-11) y se leen desde ahí.
+
+Formato `Settings`: una sección `[Tema]` (Nombre, Orden, Fondo, Texto) y una sección por gramática (`[XML]`, `[Markdown]`), porque la misma clave significa cosas distintas en cada una: `Comment` es comentario en XML e itálica en Markdown. Cada valor es `"#RRGGBB"`, con `;bold` y `;italic` opcionales.
+
+Un tema se identifica por el nombre de su archivo, no por el texto del menú. Por defecto: `gruvbox`.
+
+PREFERENCIAS
+
+En `gbpublisher.conf` (SC-17): `[Resaltado] Tema`, y la tipografía en `[Editor] FontName / FontSize`. La tipografía se reaplica después de cada carga (GV-37).
+
+CURSOR
+
+Después de cargar un archivo, `Select(0, 0)` y `ScrollY = 0`: asignar `RichText` deja el cursor al final (GV-37). Nunca se escribe `Pos` (GV-44).
+
+COSTOS MEDIDOS (JATS de 392.465 caracteres)
+
+Abrir y colorear: 1,3 s, con `Application.Busy`. Cambiar de tema: 0,35 s.
+
+**Relaciones:** vinculo:SC-11, vinculo:GV-46, vinculo:GV-48, vinculo:RF-10, vinculo:SC-17, vinculo:GV-44
+
+**PENDIENTE:** El editor de proyecto (txtEditorProyecto) sigue en gb.form.editor. Antes de pasarlo a este modelo falta medir si reasignar RichText vacía el historial de deshacer (GV-46): eso decide con qué frecuencia se puede refrescar el color mientras se edita.
+
+### SC-16 — El .md es autosuficiente
+
+**Estado:** vigente · **Evidencia:** inferida · **Verificado:** 2026-09
+
+Todo lo que la aplicación necesita para editar un .md se deriva del archivo al abrirlo, y nada de eso se persiste fuera de él.
+
+Razón: el .md viaja solo. Se lo puede llevar a otra máquina, corregir con cualquier editor de texto y reponer, sin que la aplicación note ni pierda nada.
+
+CONSECUENCIAS
+
+- Las cachés de trabajo (estados del resaltador, análisis, índices) viven en memoria y se recalculan al abrir. No se guardan junto al .md ni en la base.
+- Guardar desde la aplicación no altera ningún carácter que el usuario no editó (ver GV-47).
+
+CONTRASTE DELIBERADO
+
+El HTML de trabajo del editor de bibliografías (SC-12) es un artefacto de la aplicación, no una fuente. Por eso sí lleva datos de trabajo: los semáforos de cotejo.
+
+**Relaciones:** vinculo:SC-12, vinculo:GV-47, vinculo:SC-02
+
+### SC-17 — gbpublisher.conf es el único archivo de configuración
+
+**Estado:** vigente · **Evidencia:** inferida · **Verificado:** 2026-09
+
+Toda preferencia de la aplicación se guarda en `~/.gbpublisher/gbpublisher.conf`, abierto con `New Settings(ruta)` y con `Save()` explícito.
+
+No se usa el objeto global `Settings`: escribe en otro archivo.
+
+Secciones en uso: `[Editor]` (FontName, FontSize), `[Interface]` (FontSize) y `[Resaltado]` (Tema).
+
+**Relaciones:** vinculo:SC-11, vinculo:SC-15
+
+**PENDIENTE:** m_EditorHTML guarda su tipografía con el Settings global (EditorHTML/Fuente, EditorHTML/Cuerpo): falta migrarla. Y la ruta de gbpublisher.conf está escrita literal en varios lugares: conviene una función única.
+
 ---
 
 ## RF — Referencia de API
@@ -1168,6 +1246,30 @@ RELACIONES EN APA
 **Relaciones:** vinculo:SC-14, vinculo:RC-BL-02
 
 **PENDIENTE:** RC-BL-02 afirma que apa ignora related; el fuente lo contradice en general. Relevar tipo por tipo qué relaciones imprime apa y reformular RC-BL-02.
+
+### RF-10 — TextHighlighter.Run: resaltar texto fuera de un editor
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 y 3.22.1 / gb.highlight; código fuente de TextHighlighter.class (rama principal) · **Verificado:** 2026-09
+
+    TextHighlighter[Nombre].Run(Texto As String, Estado As Short[]) As Byte[]
+
+Público. Resalta un texto sin ningún editor de por medio. Se llama una vez por línea, con la línea completa y su salto final, pasando el mismo `Short[]` de una llamada a la siguiente: lleva el estado de las construcciones multilínea.
+
+RESULTADO: pares de bytes (estado, largo).
+
+- `largo` va en CARACTERES, coherente con `String.Mid` y con `TextEdit.Select`.
+- `largo` 0 es una marca de cambio de fondo y no ocupa texto.
+- Un tramo de más de 255 caracteres se parte en varios pares con el mismo estado.
+- La suma de los largos incluye el salto final agregado.
+- `estado` indexa `TextHighlighterTheme.Styles`, que es global a todas las gramáticas registradas; el índice 0 es siempre `Normal`. El tema se crea DESPUÉS de registrar las gramáticas, para que incluya sus estados.
+
+`CanRewrite = False` en la instancia: si no, los largos pueden no corresponder al texto original.
+
+`ToRichText` también existe, pero une las líneas con `<br>`, que en Qt es un solo bloque, y convierte los espacios en `&nbsp;`: no sirve para un documento editable.
+
+Costo medido: 1,7 s para 392.713 caracteres de Markdown real, unos 1,5 ms por línea en promedio.
+
+**Relaciones:** vinculo:SC-15, vinculo:GV-48
 
 ---
 
@@ -1875,7 +1977,7 @@ Asignar `Font.Name` y `Font.Size` a un `TextEdit` no cambia como se ve un docume
 
 Sintoma: el dialogo de tipografia funciona, la eleccion se recuerda al reabrirlo, y en el editor no pasa nada.
 
-Para que el cambio tenga efecto hay que quitar del HTML toda declaracion de `font-family` y `font-size` y volver a cargarlo. Entonces el documento cae en la fuente del control. Reasignar `RichText` manda el cursor al principio: hay que reponer `Pos`.
+Para que el cambio tenga efecto hay que quitar del HTML toda declaracion de `font-family` y `font-size` y volver a cargarlo. Entonces el documento cae en la fuente del control. Reasignar `RichText` (y también `Text`) deja el cursor AL FINAL del documento. Medido en 3.22.1 y en 3.19; una versión anterior de esta entrada decía «al principio». Para llevarlo al principio, `Select(0, 0)`: nunca se escribe `Pos` (GV-44).
 
 LA DIRECCION CONTRARIA
 
@@ -1887,7 +1989,7 @@ COROLARIO PARA EL ARCHIVO GUARDADO
 
 Si la tipografia viaja dentro del archivo, queda atada a la fuente que tenia el editor el dia que se guardo, y al reabrirlo el boton de tipografia no tiene efecto. Donde la tipografia sea ajuste de pantalla y no contenido —el editor de bibliografia, SC-12— hay que quitarla TAMBIEN al guardar, no solo al aplicar.
 
-**Relaciones:** vinculo:SC-12, vinculo:GV-35
+**Relaciones:** vinculo:SC-12, vinculo:GV-35, vinculo:GV-44
 
 ### GV-38 — El As de Exec exige un literal: una constante da identificador desconocido
 
@@ -2049,3 +2151,114 @@ Aplicado en `m_RevisarPDF.AbrirPDFEnVisorExterno`, que abre en el visor del sist
 **Relaciones:** vinculo:GV-17, apoya:GV-23, vinculo:GV-06
 
 **PENDIENTE:** Falta medir si xdg-open en Cinnamon vuelve de inmediato (delegando en gio open) o espera a que se cierre el visor. Mini-test: en una terminal, xdg-open archivo.pdf; echo $? — si el echo aparece recién al cerrar el visor, Wait = True queda descartado definitivamente. Hasta medirlo, no usar Wait = True.
+
+### GV-44 — TextEdit.Pos: escribirlo manda el cursor al final
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint; código fuente de CTextEdit.cpp (rama principal) · **Verificado:** 2026-09
+
+Escribir `Pos` en un `TextEdit` (gb.qt5.ext) falla en silencio cuando el documento creció desde la primera vez que se usó la propiedad.
+
+La escritura compara la posición pedida contra una longitud en caché (`THIS->length`). La caché se calcula en el primer uso y NO SE INVALIDA NUNCA: la única asignación a -1 está en el constructor, y la que había en la propiedad `Text` está comentada (`CTextEdit.cpp`). Si la posición pedida es mayor o igual que esa longitud vieja, el cursor va al final del documento.
+
+Síntomas en el proyecto: el editor de bibliografías reponía el cursor con `Pos` y lo dejaba al final; en el banco de pruebas, la posición 900 de un documento de 190.000 caracteres cayó en el último párrafo.
+
+`TextArea` (gb.qt5) NO tiene el problema: invalida la caché en cada cambio (`CTextArea::changed`).
+
+REGLA: en `TextEdit` nunca se escribe `Pos`. Para mover el cursor sin seleccionar:
+
+    hControl.Select(iPosicion, 0)
+
+`Select` usa `setPosition` directamente y no pasa por la caché. LEER `Pos` sí es confiable.
+
+**Relaciones:** vinculo:RC-GM-21, vinculo:GV-45, apoya:GV-23
+
+### GV-45 — TextEdit.ToPos cuenta mal
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.qt5.ext, CTextEdit.cpp (rama principal) · **Verificado:** 2026-09
+
+`ToPos(Párrafo, Columna)` de `TextEdit` tiene dos errores en el fuente (`CTextEdit.cpp`, función `to_pos`, rama Qt5):
+
+1. Empieza a contar desde el bloque donde está el cursor, no desde el principio del documento.
+2. Suma `block.length() + 1` por cada párrafo recorrido, cuando `block.length()` ya incluye el separador: cuenta un carácter de más por párrafo.
+
+Explica el síntoma que había quedado pendiente en RC-GM-21: seis caracteres de más sobre un texto de tres párrafos.
+
+REGLA: no se usa `ToPos`. La posición absoluta del comienzo de un párrafo se calcula sobre `.Text`: la suma de `String.Len` de cada párrafo previo, más 1 por cada salto.
+
+**Relaciones:** vinculo:RC-GM-21, vinculo:GV-44
+
+### GV-46 — TextEdit: Format entra en la pila de deshacer; la carga por RichText no
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint y Gambas 3.19 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+Cambiar el color de una selección con `Format.Color` ES un paso de deshacer. Verificado: después de escribir una palabra y colorear otra, el primer Ctrl+Z quita el color y recién el segundo deshace la palabra.
+
+Cada asignación a `Format` dispara además `Change`, y el `Select` previo dispara `Cursor`. Colorear un documento entero emitió 7.347 eventos `Change`: un recoloreo colgado de `Change` se realimenta, y una marca de «modificado» se enciende solo por colorear.
+
+Cargar el documento con `RichText` NO deja rastro en la pila: tras cargar un HTML coloreado y editar, el primer Ctrl+Z quita la edición y conserva el color, y el segundo no hace nada. Asignar `Text` usa `setPlainText`, que según la documentación de Qt vacía la pila.
+
+CONSECUENCIA: en un control editable, el resaltado de sintaxis no se aplica con `Format`. Se arma un HTML y se asigna con `RichText` (SC-15).
+
+Costo medido de `Select` + `Format.Color`: alrededor de 0,6 ms por tramo.
+
+**Relaciones:** vinculo:GV-35, vinculo:SC-15
+
+**PENDIENTE:** Falta medir si reasignar RichText sobre un documento ya editado vacía el historial de deshacer anterior. Decide si el modelo de SC-15 sirve para el editor de proyecto y con qué frecuencia se puede refrescar el color.
+
+### GV-47 — TextEdit y TextArea: .Text no devuelve el texto exacto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5 y gb.qt5.ext / Linux Mint y Gambas 3.19 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+`TextEdit.Text`, `TextArea.Text` y `TextEdit.Selection.Text` pasan por `QTextDocument::toPlainText` de Qt, que al LEER transforma:
+
+    U+00A0 espacio duro     -> espacio común
+    U+2028 / U+2029         -> salto de línea
+    CR suelto               -> salto de línea
+    CRLF                    -> LF (un solo salto, sin duplicar)
+
+Conserva todo lo demás que se probó: guion blando U+00AD, espacios de ancho cero, U+202F, BOM, word joiner y caracteres de uso privado (U+E000). Qt tiene `toRawText` para conservar el espacio duro, pero Gambas no lo expone. `TextEditor` (gb.form.editor) devuelve el texto exacto.
+
+Pandoc escribe el `&nbsp;` como U+00A0 literal en el .md y lo pasa a `~` en LaTeX: guardar desde un `TextEdit` lo convertiría en un punto donde LaTeX puede cortar la línea.
+
+EN gbpublisher NO AFECTA, por política: los .md no llevan espacios duros. El contrato de ingreso los elimina (`engine/limpiar_docx.lua`) y el escáner UTF-8 detecta los que entren después (U+00A0, U+2028, U+2029). La normalización de CRLF a LF coincide con SC-02.
+
+Si la política cambiara, la salida verificada es sustituir 1:1 el U+00A0 por U+E000 al cargar y restituirlo al leer: las posiciones no se corren. Quedarían por cubrir el tipeo (AltGr+Espacio), el pegado y el copiado.
+
+**Relaciones:** vinculo:SC-02, vinculo:GV-03, vinculo:SC-16
+
+### GV-48 — gb.highlight trae resaltadores incorporados: una gramática propia se registra con prefijo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / contenedor Ubuntu noble, Gambas 3.22.1 / Linux Mint y código fuente de gb.highlight (rama principal) · **Verificado:** 2026-09
+
+`gb.highlight` registra al inicializarse los .highlight que trae el propio componente, y la lista cambia entre versiones. En 3.19: c, cplusplus, css, diff, gambas, highlight, html, javascript, sh, sql, webpage. La rama principal agrega, entre otros, `xml`, `json`, `csv` y `settings`.
+
+Si una gramática propia se registra con el nombre de un incorporado, `TextHighlighter.List.Exist` da True, el registro propio no ocurre y `Run` usa la gramática incorporada, con otros nombres de estilo (`Markup`, `Attribute`, `Value`…). Síntoma en el proyecto: el visor XML mostraba solo el fondo y el color de letra. Y el viejo registro de `XML.highlight` en FMain tampoco se estaba usando en 3.22.
+
+REGLA: las gramáticas propias se registran con prefijo, `gbp_xml` y `gbp_markdown`, aunque hoy no haya choque.
+
+Otros datos verificados del componente:
+- `Register` compila la gramática en tiempo de ejecución con `gbc3` (por `Shell`): necesita las herramientas de desarrollo de Gambas, y `gb.pcre` para las reglas `match /…/`.
+- La primera consulta a `TextHighlighter.List` inicializa el componente y puede fallar: va con `Try`.
+- `TextHighlighterStyle.Oblique` existe en 3.22 y no en 3.19.
+
+**Relaciones:** vinculo:RF-10, vinculo:SC-15, apoya:GV-23
+
+### GV-49 — gb.form.editor con Wrap: el click al comienzo de una fila visual va al comienzo del párrafo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.form.editor / Linux Mint; código fuente de TextEditor.class (rama principal) · **Verificado:** 2026-09
+
+En `TextEditor` con `Wrap`, un párrafo largo es UNA línea real partida en filas visuales. Hacer click al comienzo de la tercera fila, que puede ser la columna 250 de la línea real, lleva el cursor a la columna 0: el comienzo del párrafo.
+
+Causa, en `TextEditor.class`, función `PosToColumn`: el atajo `If PX < $MW Then Return 0` devuelve la columna 0 de la línea real sin mirar la fila visual, y la rama del margen hace lo mismo con `Goto(0, Y)`. Un poco más a la derecha, el redondeo hacia arriba da la columna siguiente: la correcta solo se alcanza con precisión de un píxel.
+
+Otros rasgos de «dureza» leídos en el fuente:
+- El click redondea al borde más cercano (resta medio ancho de espacio) y el arrastre no.
+- No hay umbral de arrastre: un píxel de movimiento extiende la selección.
+- El doble y el triple click no cambian la granularidad del arrastre.
+- La rueda la maneja el `ScrollArea` de `gb.gui.base`, con un paso fijo de `30 × Desktop.Scale` píxeles por muesca.
+
+Verificado a mano: el mismo texto partido en líneas cortas se mueve mucho mejor, así que el costo crece con el largo de la línea real. Contraste medido: `TextEdit` (gb.qt5.ext) cargó 392.713 caracteres, con párrafos de hasta 3.737, en 9 ms, con scroll y selección fluidos.
+
+Alivio sin cambiar de control: la tecla Inicio sí respeta las filas visuales.
+
+**Relaciones:** vinculo:RF-02, vinculo:SC-15

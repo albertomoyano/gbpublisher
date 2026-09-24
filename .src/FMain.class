@@ -26,6 +26,9 @@ Public bPoblandoComboImagen As Boolean = False   ' SUPRIME EL _Click DURANTE UN 
 ' PORQUE EL USUARIO PUEDE EDITARLO DESPUÉS DE BUSCAR
 Private $iBusqLargoTermino As Integer
 
+' VISOR XML CON RESALTADO DE SINTAXIS (m_ResaltadoSintaxis / CVisorResaltado)
+Private $hVisorXML As CVisorResaltado
+
 ' COLUMNAS DEL GRID: PÁRRAFO, POSICIÓN, CARÁCTER, FALLA.
 ' GV-11: UN Const NO PUEDE DECLARARSE DENTRO DE UNA FUNCIÓN
 Private Const COLUMNAS_PARES As Integer = 5
@@ -112,12 +115,9 @@ Public Sub Form_Open()
   ' EL Try ES INTENCIONAL: SI EL TEMA DEL SISTEMA NO EXPONE Color.Background, NO ES CRÍTICO
   Try txtEditorProyecto.Background = Color.Background
 
-  ' txtEditorXML.Theme["Normal"].Color = Color.Black
-  txtEditorXML.Font = Font["IBM Plex Mono,13"]
-
   If Not TextHighlighter.List.Exist("markdown") Then
     TextHighlighter.Register("markdown", "Markdown",
-      m_InicioCierre.RutaRecursos() &/ "Themes/Markdown.highlight")
+      m_InicioCierre.RutaRecursos() &/ "themes/Markdown.highlight")
   Endif
 
   If TextHighlighter.List.Exist("markdown") Then
@@ -167,62 +167,12 @@ Public Sub Form_Open()
 
   txtEditorProyecto.Refresh()
 
-  ' ' --- 5. Configuración del editor XML ---
-  ' ' PENDIENTE: LA LÓGICA DE TEMAS SE MOVERÁ A UN MÓDULO EXTERNO CON SELECCIÓN POR COMBOBOX
-  ' txtEditorXML.ShowLineNumber = True
-  ' txtEditorXML.ShowModified = True
-  ' txtEditorXML.ShowLimit = False
-  ' txtEditorXML.ShowSpaces = True
-  ' txtEditorXML.Wrap = True
-  ' txtEditorXML.Font = Font["IBM Plex Mono,13"]
-  ' txtEditorXML.ShowCurrent = True
-  ' txtEditorXML.ShowCursor = True
-  '
-  ' ' IMPORTANTE: BACKGROUND DEBE ESTABLECERSE ANTES DE APLICAR EL HIGHLIGHT
-  ' txtEditorXML.Background = Color.Background
-  ' txtEditorXML.Theme["Normal"].Color = Color.Royal
-  '
-  ' If Not TextHighlighter.List.Exist("xml") Then
-  '   TextHighlighter.Register("xml", "XML",
-  '     m_InicioCierre.RutaRecursos() &/ "Themes/XML.highlight")
-  ' Endif
-  '
-  ' If TextHighlighter.List.Exist("xml") Then
-  '   txtEditorXML.Highlight = "xml"
-  '   ' DECLARACIÓN XML Y PROCESSING INSTRUCTIONS
-  '   txtEditorXML.Theme["Preprocessor"].Color = Color.Orange
-  '   txtEditorXML.Theme["Preprocessor"].Bold = False
-  '   ' DOCTYPE
-  '   txtEditorXML.Theme["Documentation"].Color = Color.Orange
-  '   txtEditorXML.Theme["Documentation"].Bold = False
-  '   ' COMENTARIOS XML
-  '   txtEditorXML.Theme["Comment"].Color = Color.DarkGreen
-  '   txtEditorXML.Theme["Comment"].Bold = False
-  '   txtEditorXML.Theme["Comment"].Oblique = False
-  '   ' SECCIONES CDATA
-  '   txtEditorXML.Theme["Function"].Color = Color.Purple
-  '   txtEditorXML.Theme["Function"].Bold = False
-  '   ' ENTIDADES XML (&amp; &lt; etc.)
-  '   txtEditorXML.Theme["Symbol"].Color = Color.Red
-  '   txtEditorXML.Theme["Symbol"].Bold = False
-  '   ' NOMBRES DE ATRIBUTOS
-  '   txtEditorXML.Theme["Datatype"].Color = Color.Cyan
-  '   txtEditorXML.Theme["Datatype"].Bold = False
-  '   ' VALORES DE ATRIBUTOS
-  '   txtEditorXML.Theme["String"].Color = Color.Yellow
-  '   txtEditorXML.Theme["String"].Bold = False
-  '   ' NAMESPACES (xmlns:)
-  '   txtEditorXML.Theme["Operator"].Color = Color.Green
-  '   txtEditorXML.Theme["Operator"].Bold = False
-  '   ' ERRORES DETECTADOS POR EL HIGHLIGHTER
-  '   txtEditorXML.Theme["Error"].Color = Color.Red
-  '   txtEditorXML.Theme["Error"].Bold = False
-  '   ' ETIQUETAS XML DE APERTURA Y CIERRE
-  '   txtEditorXML.Theme["Keyword"].Color = Color.Pink
-  '   txtEditorXML.Theme["Keyword"].Bold = False
-  ' Endif
-  '
-  ' txtEditorXML.Refresh()
+  ' --- 5. VISOR XML CON RESALTADO DE SINTAXIS ---
+  ' EL COLOR VA POR HTML (RichText) Y NO POR Format, QUE ENTRA EN LA PILA DE DESHACER.
+  ' SI NO SE PUEDE CREAR (FALTA LA CARPETA DE TEMAS), EL VISOR MUESTRA TEXTO PLANO.
+  $hVisorXML = m_ResaltadoSintaxis.CrearVisor(txtEditorXML, "xml")
+  ' REEMPLAZA LAS ENTRADAS DEL DISEÑADOR POR UNA POR TEMA DISPONIBLE
+  m_ResaltadoSintaxis.LlenarMenu(menuTheme)
 
   ' --- 6. Configuración del grid de comentarios ---
   m_GestorComentarios.ConfigurarGridComentarios(gvComentarios)
@@ -3176,7 +3126,12 @@ Public Sub cmbArchivosXML_Click()
   sContenido = File.Load(sRutaCompleta)
 
   If sContenido Then
-    txtEditorXML.Text = sContenido
+    ' SIN VISOR, O SI EL COLOREO FALLA (YA INFORMADO), SE MUESTRA COMO TEXTO PLANO
+    If Not $hVisorXML Then
+      txtEditorXML.Text = sContenido
+    Else If Not $hVisorXML.Mostrar(sContenido) Then
+      txtEditorXML.Text = sContenido
+    Endif
   Else
     m_Sonido.sonar("Error")
     Message.Error("No se pudo cargar el contenido del archivo XML")
@@ -7274,7 +7229,12 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
     txtEditorXML.ReadOnly = True
     txtEditorXML.Enabled = True
   Else
-    txtEditorXML.Clear()
+    ' EL VISOR DESCARTA TAMBIÉN EL ANÁLISIS GUARDADO DEL ARCHIVO ANTERIOR
+    If $hVisorXML Then
+      $hVisorXML.Limpiar()
+    Else
+      txtEditorXML.Clear()
+    Endif
     txtEditorXML.ReadOnly = True
     txtEditorXML.Enabled = False
   Endif
@@ -8363,5 +8323,26 @@ End
 Public Sub btnVerPDFenVisor_Click()
 
   m_RevisarPDF.AbrirPDFEnVisorExterno()
+
+End
+
+Public Sub btnTipografiaMDyXML_Click()
+
+  ' CONFIGURAR LA FUENTE ACTUAL
+  Dialog.Font = FMain.txtEditorProyecto.Font
+
+  ' MOSTRAR EL DIÁLOGO
+  If Dialog.SelectFont() Then Return  ' EL USUARIO CANCELÓ
+
+  ' APLICAR LA FUENTE A AMBOS EDITORES
+  FMain.txtEditorProyecto.Font = Dialog.Font
+  ' EL MÓDULO LA APLICA, LA GUARDA EN gbpublisher.conf Y LA REPONE DESPUÉS DE CADA CARGA (GV-37)
+  m_ResaltadoSintaxis.AplicarFuente(Dialog.Font.Name, Dialog.Font.Size)
+
+  ' GUARDAR LA CONFIGURACIÓN AUTOMÁTICAMENTE
+  SaveFontSettings()
+
+  ' DEVOLVER EL FOCO AL EDITOR
+  FMain.txtEditorProyecto.SetFocus()
 
 End
