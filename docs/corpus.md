@@ -935,9 +935,9 @@ COSTOS MEDIDOS (JATS de 392.465 caracteres)
 
 Abrir y colorear: 1,3 s, con `Application.Busy`. Cambiar de tema: 0,35 s.
 
-**Relaciones:** vinculo:SC-11, vinculo:GV-46, vinculo:GV-48, vinculo:RF-10, vinculo:SC-17, vinculo:GV-44
+El editor principal adopta este mismo modelo, con refresco en puntos fijos (SC-18).
 
-**PENDIENTE:** El editor de proyecto (txtEditorProyecto) sigue en gb.form.editor. Antes de pasarlo a este modelo falta medir si reasignar RichText vacía el historial de deshacer (GV-46): eso decide con qué frecuencia se puede refrescar el color mientras se edita.
+**Relaciones:** vinculo:SC-11, vinculo:GV-46, vinculo:GV-48, vinculo:RF-10, vinculo:SC-17, vinculo:GV-44, vinculo:SC-18
 
 ### SC-16 — El .md es autosuficiente
 
@@ -966,11 +966,81 @@ Toda preferencia de la aplicación se guarda en `~/.gbpublisher/gbpublisher.conf
 
 No se usa el objeto global `Settings`: escribe en otro archivo.
 
-Secciones en uso: `[Editor]` (FontName, FontSize), `[Interface]` (FontSize) y `[Resaltado]` (Tema).
+Secciones en uso: `[Editor]` (FontName, FontSize), `[EditorHTML]` (FontName, FontSize), `[Interface]` (FontSize) y `[Resaltado]` (Tema).
+
+La ruta se obtiene siempre de `m_InicioCierre.RutaConfiguracion()`; no se escribe literal.
 
 **Relaciones:** vinculo:SC-11, vinculo:SC-15
 
-**PENDIENTE:** m_EditorHTML guarda su tipografía con el Settings global (EditorHTML/Fuente, EditorHTML/Cuerpo): falta migrarla. Y la ruta de gbpublisher.conf está escrita literal en varios lugares: conviene una función única.
+**PENDIENTE:** m_Traduccion guarda con el Settings global las claves de DeepL y Azure, la región y el motor predeterminado. Son credenciales: antes de migrarlas, decidir si van en gbpublisher.conf o en un archivo propio fuera de lo que se distribuye a las estaciones (SC-11).
+
+### SC-18 — Editor principal de Markdown: TextEdit con refresco determinista
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. El editor principal de Markdown (`txtEditorProyecto`) pasa de `gb.form.editor` a `TextEdit` (gb.qt5.ext), con el resaltado de SC-15.
+
+POR QUÉ
+
+Con párrafos largos, `gb.form.editor` es duro de usar: el click al comienzo de una fila visual va al comienzo del párrafo (GV-49), y el scroll es brusco. Sin resaltado el scroll sigue igual de brusco, así que la causa está en el manejo del wrap y no tiene un arreglo acotado. `TextEdit` resuelve las dos cosas con el comportamiento nativo de Qt. Además la negrita y la itálica son reales: el texto se lee como prosa de libro o revista, no como código.
+
+REFRESCO DETERMINISTA
+
+El color se recalcula reasignando el HTML, y eso vacía el historial de deshacer (GV-46). Por eso el refresco ocurre solo en tres momentos, siempre los mismos:
+
+- al abrir un archivo;
+- al cambiar de archivo en el combobox;
+- en cada guardado, y solo si la escritura se completó: si falla, el historial es lo único que queda del trabajo.
+
+No hay refresco manual. Es una norma de trabajo: el guardado es el punto de control, y Ctrl+Z no cruza un guardado. Entre refrescos, lo que se escribe hereda el color del carácter vecino; el marcado nuevo se colorea al guardar.
+
+Costo medido del refresco: alrededor de 0,1 s en 190.000 caracteres, reanalizando solo desde el primer párrafo cambiado hasta que el estado del resaltador coincide con el guardado. No se nota a la vista.
+
+LO QUE REEMPLAZA A LO QUE NO TIENE TextEdit
+
+- Plegado por títulos: un árbol de estructura a la izquierda del editor, construido desde el texto. Raíz: el título del capítulo o artículo, tomado de la base. Cuando esté completo reemplaza a `VerificarEstructuraMD`.
+- Numeración al margen: número de párrafo del cursor en la barra de estado. Ir a la línea N (`tbGoTo`) se conserva calculando la posición sobre `.Text`.
+
+REGLAS DEL CONTROL QUE APLICAN
+
+Nunca escribir `Pos`; mover el cursor con `Select(Posicion, 0)` (GV-44). No usar `ToPos` (GV-45). `.Text` normaliza el espacio duro, y la política del proyecto es que los .md no lo lleven (GV-47).
+
+**Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16
+
+**PENDIENTE:** Implementación. Falta diseñar la migración de txtEditorProyecto: inventario de usos en los nueve archivos que lo tocan, traducción de línea/columna a posición absoluta, marcado del corrector ortográfico, inserciones de la barra de herramientas y la marca de «modificado» (Format y RichText disparan Change, GV-46). Llevar una coincidencia al tope de la vista no tiene equivalente: TextEdit no expone la posición en píxeles.
+
+### SC-19 — Scripts de actualización del corpus: contrato con el importador
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbCorpus / engine/importar_corpus.sh / SQLite · **Verificado:** 2026-09
+
+Los cambios al corpus se aplican con Importar SQL de gbCorpus, que ejecuta `engine/importar_corpus.sh`. Correr el .sql a mano con `sqlite3` se saltea el respaldo y todas las verificaciones: no se hace.
+
+LO QUE EL IMPORTADOR YA GARANTIZA (el script no lo repite)
+
+- Antes de escribir: `sqlite3` presente, base legible e íntegra (`integrity_check`) y `esquema_version` igual al que maneja el importador.
+- Respaldo con `VACUUM INTO` en `~/.gbcorpus/respaldos`, con rotación de 20.
+- Antepone `PRAGMA foreign_keys = ON`, `.bail on` y `.changes on`: el primer error detiene todo y SQLite deshace la transacción abierta.
+- Después: integridad, `foreign_key_check`, vínculos de `relaciones` a códigos inexistentes y listado de las entradas escritas en esa corrida.
+- Código de salida: 0 aplicado, 1 no aplicado. Tras un fallo comprueba contando si la base quedó como estaba; no lo afirma sin mirar (SC-13).
+
+LO QUE EL SCRIPT DEBE TRAER
+
+- Una cabecera de comentarios que diga qué hace, qué da de alta y qué modifica. El importador la muestra antes de pedir confirmación. Sin instrucciones para correrlo por línea de comando.
+- La línea `-- Esquema: 1` en esa cabecera. Si falta, el importador avisa; si no coincide con la base, aborta.
+- Su propia transacción: `BEGIN TRANSACTION;` … `COMMIT;`. Si no la trae el importador envuelve una, pero se escribe igual para que las verificaciones propias queden dentro.
+- Verificaciones de lo que el importador no puede saber: que los códigos nuevos estén libres, que un texto a reemplazar exista exactamente una vez, que un `UPDATE` se haya aplicado. Patrón: tabla temporal con `CHECK (ok = 1)`; un `INSERT` que da 0 hace fallar la sentencia, `.bail` la detiene y la transacción se deshace.
+- `fecha_alta` y `fecha_modificacion` con `datetime('now','localtime')`. El importador aísla lo escrito en la corrida comparando contra un sello de ese mismo reloj; con `date('now')` no puede.
+- Las convenciones de RF-08: `orden = numero * 10`; `cuerpo` y `relaciones` nunca NULL, sino cadena vacía; relaciones como pares `tipo:CODIGO` separados por coma.
+- Literales con las comillas simples duplicadas. Conviene generarlos con un programa y no a mano: un apóstrofe sin duplicar corta la sentencia.
+
+Se admite un `SELECT` final de resumen: su salida aparece en el informe.
+
+LO QUE EL SCRIPT NO DEBE TRAER
+
+- `PRAGMA foreign_keys`: el importador ya lo emite, y dentro de una transacción no tiene efecto.
+- Una comprobación de `esquema_version`: la hace el importador contra la línea `-- Esquema` de la cabecera.
+
+**Relaciones:** vinculo:RF-08, vinculo:SC-13
 
 ---
 
@@ -2201,9 +2271,11 @@ CONSECUENCIA: en un control editable, el resaltado de sintaxis no se aplica con 
 
 Costo medido de `Select` + `Format.Color`: alrededor de 0,6 ms por tramo.
 
-**Relaciones:** vinculo:GV-35, vinculo:SC-15
+REASIGNAR `RichText` VACÍA EL HISTORIAL DE DESHACER. Verificado en 3.22.1 (Mint) y en 3.19 (banco `gbPruebaEditor`, «Deshacer tras refresco»): con una edición antes de reasignar y otra después, el primer Ctrl+Z quita la posterior y el segundo no hace nada; la anterior ya no se puede deshacer.
 
-**PENDIENTE:** Falta medir si reasignar RichText sobre un documento ya editado vacía el historial de deshacer anterior. Decide si el modelo de SC-15 sirve para el editor de proyecto y con qué frecuencia se puede refrescar el color.
+Consecuencia: un modelo que recolorea reasignando el HTML corta el deshacer en cada refresco. Cuándo refrescar es una decisión de uso, no técnica (SC-18).
+
+**Relaciones:** vinculo:GV-35, vinculo:SC-15, vinculo:SC-18
 
 ### GV-47 — TextEdit y TextArea: .Text no devuelve el texto exacto
 
