@@ -694,6 +694,8 @@ Si la acción dispara un evento `_Click` de combobox como efecto colateral de as
 
 Razón: si el guard se evalúa después de cambios en UI o variables globales, la pregunta aparece fuera de contexto y "Cancelar" no cancela realmente: solo aborta el handler local, no la acción raíz que disparó el cambio.
 
+**Relaciones:** vinculo:GV-53
+
 ### SC-07 — Liberación atómica de recursos compartidos en la base
 
 **Estado:** vigente · **Evidencia:** inferida
@@ -998,16 +1000,19 @@ Costo medido del refresco: alrededor de 0,1 s en 190.000 caracteres, reanalizand
 
 LO QUE REEMPLAZA A LO QUE NO TIENE TextEdit
 
-- Plegado por títulos: un árbol de estructura a la izquierda del editor, construido desde el texto. Raíz: el título del capítulo o artículo, tomado de la base. Cuando esté completo reemplaza a `VerificarEstructuraMD`.
+- Plegado por títulos: un árbol de estructura (`TreeView`, GV-51) en una pestaña del panel derecho, que abarca todos los .md del proyecto. Primer nivel: cada capítulo o artículo, con su título tomado de la base (los .md no llevan `#`); debajo, los `##`, `###`… de cada archivo. Los capítulos arrancan plegados salvo el abierto, y el árbol sigue al editor.
+  Un click en un título pasa por el aviso de SC-06, cambia de archivo en el combobox si hace falta (GV-53), lleva el cursor al comienzo del título, lo deja en la primera línea de la vista (GV-52) y devuelve el foco al editor. Solo mouse, como TeXstudio: el árbol no se recorre con el teclado.
+  Filtros por `Visible`, sin reconstruir el árbol: profundidad (capítulo, `##`, `###`, todo) y, a prueba, alcance por prefijo (`fm-`, `a-`, `bm-`).
+  Cuando esté completo reemplaza a `VerificarEstructuraMD`.
 - Numeración al margen: número de párrafo del cursor en la barra de estado. Ir a la línea N (`tbGoTo`) se conserva calculando la posición sobre `.Text`.
 
 REGLAS DEL CONTROL QUE APLICAN
 
 Nunca escribir `Pos`; mover el cursor con `Select(Posicion, 0)` (GV-44). No usar `ToPos` (GV-45). `.Text` normaliza el espacio duro, y la política del proyecto es que los .md no lo lleven (GV-47).
 
-**Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16
+**Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16, vinculo:GV-51, vinculo:GV-52, vinculo:GV-53
 
-**PENDIENTE:** Implementación. Falta diseñar la migración de txtEditorProyecto: inventario de usos en los nueve archivos que lo tocan, traducción de línea/columna a posición absoluta, marcado del corrector ortográfico, inserciones de la barra de herramientas y la marca de «modificado» (Format y RichText disparan Change, GV-46). Llevar una coincidencia al tope de la vista no tiene equivalente: TextEdit no expone la posición en píxeles.
+**PENDIENTE:** Implementación. Falta diseñar la migración de txtEditorProyecto: inventario de usos en los nueve archivos que lo tocan, traducción de línea/columna a posición absoluta, marcado del corrector ortográfico, inserciones de la barra de herramientas y la marca de «modificado» (Format y RichText disparan Change, GV-46). Llevar una coincidencia al tope de la vista: resuelto pasando antes por el final del documento (GV-52). Árbol: falta decidir de dónde salen las posiciones del archivo abierto con cambios sin guardar (el editor o el disco) y en qué momentos se reconstruye.
 
 ### SC-19 — Scripts de actualización del corpus: contrato con el importador
 
@@ -1041,6 +1046,42 @@ LO QUE EL SCRIPT NO DEBE TRAER
 - Una comprobación de `esquema_version`: la hace el importador contra la línea `-- Esquema` de la cabecera.
 
 **Relaciones:** vinculo:RF-08, vinculo:SC-13
+
+### SC-20 — Botones del marco de ventana: m_Ventana.FijarBotones desde Form_Show
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5 / gb.desktop.x11 / Linux Mint Cinnamon X11 · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. Los formularios que no deben minimizarse, maximizarse ni cerrarse desde el marco llaman, en `Form_Show`, a:
+
+    m_Ventana.FijarBotones(Me)          ' SIN LOS TRES BOTONES
+    m_Ventana.FijarBotones(Me, True)    ' CONSERVA CERRAR
+
+El mecanismo y su razón están en GV-50.
+
+POR QUÉ UN MÓDULO
+
+La lógica y la dependencia de gb.desktop.x11 quedan en un solo archivo. Si cambia el servidor gráfico (ver el PENDIENTE de GV-50), se toca ese archivo y ningún formulario.
+
+POR QUÉ UNA LÍNEA POR FORMULARIO
+
+No hay un evento global de «se mostró una ventana». Las alternativas no ahorran esa línea: un `Observer` también hay que registrarlo formulario por formulario, y además hay que retener su referencia; heredar de una clase base no se lleva bien con los formularios que tienen archivo `.form`.
+
+POR QUÉ Form_Show Y NO Form_Open
+
+`Open` se dispara una vez; `Show`, en cada muestra. Qt reescribe los hints cuando recrea la ventana (GV-50), y `Show` los repone.
+
+QUÉ HACE LA FUNCIÓN
+
+- Sale sin hacer nada si el formulario está embebido (`TopLevel = False`): no tiene marco propio.
+- Las constantes Motif van a nivel de módulo, porque Gambas no admite `Const` local (GV-11).
+
+CONTRAPARTIDA OBLIGATORIA
+
+Un formulario sin botón de cerrar necesita una salida propia en la interfaz: un botón, la tecla Escape, o las dos.
+
+**Relaciones:** vinculo:GV-50, vinculo:GV-11
+
+**PENDIENTE:** WAYLAND: sin verificar, ver GV-50. Tampoco está verificada la variante FijarBotones(Me, True), que conserva el botón de cerrar.
 
 ---
 
@@ -2334,3 +2375,107 @@ Verificado a mano: el mismo texto partido en líneas cortas se mueve mucho mejor
 Alivio sin cambiar de control: la tecla Inicio sí respeta las filas visuales.
 
 **Relaciones:** vinculo:RF-02, vinculo:SC-15
+
+### GV-50 — Botones del marco de ventana: se quitan con _MOTIF_WM_HINTS, no con Border
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5 / gb.desktop.x11 / Muffin / Linux Mint Cinnamon X11; código fuente de gb.qt4, gb.desktop.x11, Muffin y Qt 5.15 · **Verificado:** 2026-09
+
+Gambas no tiene una propiedad que quite minimizar, maximizar o cerrar conservando el marco. `Border = False` (la opción del IDE) le pide al gestor de ventanas que no decore: se van la barra de título, el título y el arrastre. Solo toca la parte de decoración de `_MOTIF_WM_HINTS` (`X11_set_window_decorated`, `gb.qt4/src/x11.c`, compartido por gb.qt5).
+
+LO QUE FUNCIONA
+
+Escribir `_MOTIF_WM_HINTS` declarando solo las FUNCIONES permitidas, sin tocar la decoración, con `X11.SetWindowProperty` de gb.desktop.x11:
+
+    ' [FLAGS, FUNCTIONS, DECORATIONS, INPUT_MODE, STATUS]
+    X11.SetWindowProperty(Me.Handle, "_MOTIF_WM_HINTS", "_MOTIF_WM_HINTS", [1, 6, 0, 0, 0])
+
+- FLAGS = 1 (`MWM_HINTS_FUNCTIONS`), sin el bit de decoraciones (2): el marco queda por omisión, con título.
+- FUNCTIONS sin `MWM_FUNC_ALL` (1) habilita SOLO lo listado: MOVE (4) + RESIZE (2). MINIMIZE es 8, MAXIMIZE 16, CLOSE 32. Con el bit 1 encendido la lógica se invierte: los bits listados son los que se quitan.
+
+Verificado en Mint: desaparecen los tres botones, el título se conserva y la ventana se arrastra. `Me.Handle` (Long) se pasa directo, sin conversión.
+
+Muffin lee los hints en `reload_mwm_hints` (`src/x11/window-props.c`). `SetWindowProperty` convierte un `Integer[]` a `long` en 64 bits (`gb.desktop.x11/src/c_x11.c`), que es el formato 32 que espera la propiedad.
+
+QT LOS PISA AL RECREAR LA VENTANA
+
+Qt reescribe `_MOTIF_WM_HINTS` en `QXcbWindow::setWindowFlags` (Qt 5.15). Gambas llama a `setParent` con flags nuevos al cambiar `Utility`, `Resizable` o el contenedor padre (`doReparent`, `CWindow.cpp`). Después de cualquiera de esos cambios hay que volver a escribir los hints. Por eso van en `Form_Show` y no en `Form_Open`.
+
+OTRAS VÍAS, SEGÚN EL FUENTE DE MUFFIN (`meta_window_recalc_features`, `src/core/window.c`)
+
+    Utility = True        tipo DIALOG: sin minimizar ni maximizar; cerrar queda
+    Resizable = False     mínimo = máximo: sin maximizar
+    SkipTaskbar = True    sin minimizar, y fuera de la barra de tareas
+
+Leídas en el fuente, no medidas. Ninguna quita el botón de cerrar.
+
+Aplicado en SC-20.
+
+**Relaciones:** vinculo:SC-20, vinculo:GV-11
+
+**PENDIENTE:** WAYLAND: sin verificar, y hoy no se sabe qué pasará. Lo único leído en el fuente de Muffin, no medido: los hints Motif solo se aplican a ventanas de clientes X11; una ventana Wayland nativa se decora del lado del cliente. Así que el resultado dependería de si la aplicación corre por XWayland o como cliente Wayland nativo, y gb.desktop.x11 necesita un display X. Mientras el proyecto apunte exclusivamente a X11 no afecta; si eso cambia, esta entrada deja de valer hasta medirla. Tampoco está verificado si Alt+F4 sigue cerrando la ventana.
+
+### GV-51 — TreeView: el click del mouse dispara Select y Click; asignar Key, solo Select
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.gui.base / Linux Mint y Gambas 3.19 / contenedor Ubuntu noble; código fuente de _TreeView.class (etiqueta 3.22.1) · **Verificado:** 2026-09
+
+`TreeView` y `ListView` son la misma clase interna, `_TreeView`, escrita en Gambas en `gb.gui.base`. Difieren en `Add`: el de `ListView` no tiene parámetro `Parent`, así que no anida. `ListBox` es una lista de cadenas sin clave por ítem.
+
+    TreeView.Add(Key, Text, [Picture], [Parent], [After]) As _TreeView_Item
+
+Cada ítem tiene `Tag` (Variant), `Depth` (0 en el primer nivel), `Expanded`, `Visible` y `EnsureVisible()`.
+
+EVENTOS, MEDIDOS
+
+    click con el mouse            Select, después Click
+    asignar Key desde el código   solo Select
+
+REGLA: la navegación cuelga de `Click`. Así, marcar desde el código el nodo que corresponde a la posición del editor no navega, y no hay realimentación.
+
+KEY SOBRE UN NODO DE PADRE PLEGADO
+
+No lo marca, y `Key` se lee vacío: el nodo no tiene fila (`_ItemToRow` devuelve -1). Primero `Item.EnsureVisible()`, que despliega los ancestros; después `Key`.
+
+FILTRAR SIN RECONSTRUIR
+
+`Item.Visible = False` oculta el nodo sin tocar la estructura: sirve para filtrar por profundidad. Detalle estético: un padre desplegado cuyos hijos se ocultaron conserva la flecha abierta.
+
+**Relaciones:** vinculo:SC-18, vinculo:GV-52
+
+**PENDIENTE:** El evento Filter(Key) y el método Filter() existen en el fuente y no se probaron.
+
+### GV-52 — TextEdit: llevar un párrafo a la primera línea de la vista
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint y Gambas 3.19 / contenedor Ubuntu noble; código fuente de CTextEdit.cpp (etiqueta 3.22.1) · **Verificado:** 2026-09
+
+`Select(Posicion, 0)` pasa por `setTextCursor` de Qt, y `EnsureVisible()` llama a `ensureCursorVisible` (`CTextEdit.cpp`). Qt desplaza lo mínimo para que el cursor se vea: si el destino está más abajo de la vista, queda al PIE; si está más arriba, en la PRIMERA LÍNEA.
+
+Para dejarlo siempre arriba se pasa antes por el final del documento:
+
+    hEditor.Select(String.Len(hEditor.Text), 0)
+    hEditor.EnsureVisible()
+    hEditor.Select(iPos, 0)
+    hEditor.EnsureVisible()
+
+Medido con y sin `Wrap` sobre 2.000 párrafos: sin el paso previo, el título quedó al pie; con él, en la primera línea. La diferencia de `ScrollY` entre los dos casos es la altura de la vista.
+
+`ScrollY` se puede escribir, pero va en píxeles, y `TextEdit` no expone la posición en píxeles de un carácter: no sirve para esto.
+
+Nunca se escribe `Pos` (GV-44).
+
+**Relaciones:** vinculo:GV-44, vinculo:RC-GM-21, vinculo:SC-18, vinculo:GV-51
+
+**PENDIENTE:** Costo no medido en un documento real grande: String.Len(.Text) arma el texto plano entero en cada salto. Si pesa, alternativa a medir: guardar el largo al cargar.
+
+### GV-53 — ComboBox: asignar Index dispara Click aunque el índice no cambie
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1) · **Verificado:** 2026-09
+
+En `gb.qt5` el `ComboBox` es el de `gb.gui.base`, escrito en Gambas: el componente no trae uno propio en C++. `Index_Write` termina en `Raise Click` sin comparar con el valor anterior, así que asignar el índice que ya está elegido también dispara `Click`.
+
+Es el efecto colateral que SC-06 neutraliza con `bAbriendoProyecto`, pero la bandera solo suprime el aviso de cambios sin guardar. Si el handler carga el archivo, reasignar el mismo `Index` lo recarga, y en un `TextEdit` eso reasigna `RichText` y vacía el historial de deshacer (GV-46).
+
+REGLA: antes de asignar `Index` desde el código, compararlo con el actual. Si es el mismo, no se asigna.
+
+**Relaciones:** vinculo:SC-06, vinculo:GV-46, vinculo:SC-18
+
+**PENDIENTE:** Leído en el fuente, no medido en ejecución.
