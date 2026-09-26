@@ -8,8 +8,8 @@ Private sTB_Text As String
 Public ProyectoActualCompleto As String
 Public sRutaArchivoAbierto As String
 
-' PARA COMPARAR SI HUBO CAMBIOS
-Public sContenidoOriginal As String
+' EL SNAPSHOT PARA DETECTAR CAMBIOS SIN GUARDAR VIVE EN m_EditorPrincipal
+' (HayCambios / MarcarGuardado), JUNTO AL RESTO DEL ESTADO DEL EDITOR (SC-18)
 
 ' --- BANDERA QUE INDICA QUE SE ESTÁ ABRIENDO UN PROYECTO NUEVO ---
 ' SUPRIME LA VERIFICACIÓN DE CAMBIOS SIN GUARDAR EN cmbArticulosRevista_Click
@@ -113,71 +113,12 @@ Public Sub Form_Open()
   TabPanelIzquierdaInferior.Visible = False
   hbGoTo.Visible = False
 
-  ' --- 4. Configuración del editor Markdown ---
-  ' PENDIENTE: LA LÓGICA DE TEMAS SE MOVERÁ A UN MÓDULO EXTERNO CON SELECCIÓN POR COMBOBOX
-  txtEditorProyecto.ShowLineNumber = True
-  txtEditorProyecto.ShowModified = True
-  txtEditorProyecto.ShowLimit = False
-  txtEditorProyecto.ShowSpaces = True
+  ' --- 4. EDITOR MARKDOWN: TextEdit CON RESALTADO POR HTML (SC-15, SC-18) ---
+  ' EL COLOR, EL TEMA Y LA TIPOGRAFÍA LOS PONE m_ResaltadoSintaxis A TRAVÉS DEL
+  ' VISOR QUE CREA m_EditorPrincipal. SI FALLA, YA INFORMÓ Y EL EDITOR SIGUE
+  ' SIRVIENDO SIN COLOR: NO SE ABORTA EL ARRANQUE
   txtEditorProyecto.Wrap = True
-  txtEditorProyecto.Font = Font["IBM Plex Mono,13"]
-  txtEditorProyecto.ShowCurrent = True
-  txtEditorProyecto.ShowCursor = True
-
-  ' EL Try ES INTENCIONAL: SI EL TEMA DEL SISTEMA NO EXPONE Color.Background, NO ES CRÍTICO
-  Try txtEditorProyecto.Background = Color.Background
-
-  If Not TextHighlighter.List.Exist("markdown") Then
-    TextHighlighter.Register("markdown", "Markdown",
-      m_InicioCierre.RutaRecursos() &/ "themes/Markdown.highlight")
-  Endif
-
-  If TextHighlighter.List.Exist("markdown") Then
-    txtEditorProyecto.Highlight = "markdown"
-    ' SHORTCODES (enquote, rdm)
-    txtEditorProyecto.Theme["Function"].Color = Color.DarkMagenta
-    txtEditorProyecto.Theme["Function"].Bold = True
-    ' IMÁGENES
-    txtEditorProyecto.Theme["Expansion"].Color = Color.DarkOrange
-    txtEditorProyecto.Theme["Expansion"].Bold = False
-    ' CITAS
-    txtEditorProyecto.Theme["Documentation"].Color = Color.DarkCyan
-    txtEditorProyecto.Theme["Documentation"].Bold = False
-    ' NÚMEROS
-    txtEditorProyecto.Theme["Number"].Color = Color.Magenta
-    txtEditorProyecto.Theme["Number"].Bold = False
-    txtEditorProyecto.Theme["Operator"].Color = Color.Magenta
-    txtEditorProyecto.Theme["Operator"].Bold = False
-    ' TABLAS
-    txtEditorProyecto.Theme["Symbol"].Color = Color.DarkCyan
-    txtEditorProyecto.Theme["Symbol"].Bold = False
-    ' URL
-    txtEditorProyecto.Theme["Datatype"].Color = Color.Green
-    txtEditorProyecto.Theme["Datatype"].Bold = False
-    ' CABECERAS
-    txtEditorProyecto.Theme["Header"].Color = Color.Blue
-    txtEditorProyecto.Theme["Header"].Bold = True
-    ' TEXTO EN CÓDIGO
-    txtEditorProyecto.Theme["String"].Color = &H005CC5&
-    txtEditorProyecto.Theme["String"].Bold = False
-    ' NEGRITA
-    txtEditorProyecto.Theme["Keyword"].Color = Color.Black
-    txtEditorProyecto.Theme["Keyword"].Bold = True
-    ' BASTARDILLAS
-    txtEditorProyecto.Theme["Comment"].Color = Color.Orange
-    txtEditorProyecto.Theme["Comment"].Oblique = True
-    ' REFERENCIAS
-    txtEditorProyecto.Theme["Added"].Color = Color.Purple
-    txtEditorProyecto.Theme["Added"].Bold = False
-    ' NOTAS AL PIE
-    txtEditorProyecto.Theme["Preprocessor"].Color = Color.DarkGreen
-    txtEditorProyecto.Theme["Preprocessor"].Bold = True
-    ' ERROR
-    txtEditorProyecto.Theme["Error"].Color = Color.Red
-    txtEditorProyecto.Theme["Error"].Bold = False
-  Endif
-
-  txtEditorProyecto.Refresh()
+  m_EditorPrincipal.Iniciar(txtEditorProyecto)
 
   ' --- 5. VISOR XML CON RESALTADO DE SINTAXIS ---
   ' EL COLOR VA POR HTML (RichText) Y NO POR Format, QUE ENTRA EN LA PILA DE DESHACER.
@@ -860,17 +801,21 @@ Public Sub btnGuardarCambiosEditor_Click()
   ' --- 2. GUARDAR EN DISCO ---
   ' SE CAPTURA EL CONTENIDO UNA SOLA VEZ PARA EVITAR LECTURAS REDUNDANTES
   ' DEL EDITOR EN LOS PASOS POSTERIORES
-  sContenidoActual = txtEditorProyecto.Text
+  sContenidoActual = m_EditorPrincipal.Texto()
   Try File.Save(sRutaArchivoAbierto, sContenidoActual)
   If Error Then
+    ' SIN REFRESCO: SI LA ESCRITURA FALLÓ, EL HISTORIAL DE DESHACER ES LO ÚNICO
+    ' QUE QUEDA DEL TRABAJO (SC-18)
     m_Sonido.sonar("Error")
     Message.Error("Error al guardar el archivo: " & Error.Text)
     Return
   Endif
 
-  ' --- 3. ACTUALIZAR SNAPSHOT DE CONTENIDO ORIGINAL ---
-  ' ESTE SNAPSHOT SE USA PARA DETECTAR CAMBIOS NO GUARDADOS EN COMPARACIONES POSTERIORES
-  sContenidoOriginal = sContenidoActual
+  ' --- 3. PUNTO DE REFRESCO 3 DE SC-18 Y PUNTO DE CONTROL ---
+  ' EL MARCADO NUEVO SE COLOREA ACÁ. SI EL REFRESCO FALLA, EL ARCHIVO YA ESTÁ
+  ' EN DISCO Y EL TEXTO SIGUE EN EL EDITOR: SOLO QUEDA SIN RECOLOREAR (YA INFORMADO)
+  m_EditorPrincipal.Refrescar()
+  m_EditorPrincipal.MarcarGuardado()
 
   ' --- 4. EXTRAER REFERENCIAS Y REFRESCAR GRID DE COMENTARIOS ---
   ' SON PROCESOS DE VALOR AGREGADO: SI FALLAN, EL ARCHIVO YA ESTÁ EN DISCO,
@@ -2335,7 +2280,7 @@ Private Sub AplicarMarcadorMarkdown(sMarcador As String, sNombreFormato As Strin
   sDobleCRLF = Chr(13) & Chr(10) & Chr(13) & Chr(10)
 
   ' --- 2. VALIDACIÓN DE ENTRADA: HAY TEXTO SELECCIONADO ---
-  sTextoSeleccionado = txtEditorProyecto.SelectedText
+  sTextoSeleccionado = m_EditorPrincipal.TextoSeleccionado()
   If String.Len(sTextoSeleccionado) = 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("Debe seleccionar texto para aplicar formato " & sNombreFormato & ".")
@@ -2353,10 +2298,9 @@ Private Sub AplicarMarcadorMarkdown(sMarcador As String, sNombreFormato As Strin
 
   ' --- 4. APLICACIÓN DEL MARCADOR E INSERCIÓN ---
   sNuevoTexto = sMarcador & sTextoSeleccionado & sMarcador
-  Try txtEditorProyecto.Insert(sNuevoTexto)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo aplicar el formato " & sNombreFormato & "." & gb.NewLine & Error.Text)
+  ' CAMBIO PUNTUAL: CONSERVA EL DESHACER; SI FALLA, EL MÓDULO YA INFORMÓ
+  If Not m_EditorPrincipal.Insertar(sNuevoTexto) Then
+    txtEditorProyecto.SetFocus()
     Return
   Endif
 
@@ -2401,17 +2345,12 @@ Public Sub btnFootnote_Click()
   Dim iNumeroFootnote As Integer
   Dim sMarcaFootnote As String
   Dim sPrefijoDef As String
-  Dim iLineaFinal As Integer
-  Dim iColumnaFinal As Integer
-  Dim iLineaInicio As Integer
-  Dim iColumnaInicio As Integer
-  Dim iLineaFin As Integer
-  Dim iColumnaFin As Integer
+  Dim iInicioPlaceholder As Integer
 
   ' --- 1. CALCULAR EL SIGUIENTE NÚMERO DE FOOTNOTE ---
   ' SE BUSCA EL MÁXIMO NÚMERO YA USADO Y SE SUMA 1, PARA EVITAR
-  ' COLISIONES SI EL USUARIO BORRA UNA NOTA INTERMEDIA
-  iNumeroFootnote = ObtenerSiguienteNumeroFootnote(txtEditorProyecto.Text)
+  ' COLISIONES SI EL USUARIO BORRA UNA NOTA INTERMEDIA (RC-GM-09)
+  iNumeroFootnote = ObtenerSiguienteNumeroFootnote(m_EditorPrincipal.Texto())
 
   ' --- 2. CONSTRUIR MARCA Y PREFIJO DE LA DEFINICIÓN ---
   ' SC-01: SEPARADORES Y COMILLAS COMO Chr(...), NUNCA COMO ESCAPES "\n"
@@ -2419,60 +2358,32 @@ Public Sub btnFootnote_Click()
   sPrefijoDef = sMarcaFootnote & ": "
 
   ' --- 3. INSERTAR LA MARCA EN LA POSICIÓN ACTUAL DEL CURSOR ---
-  ' Insert AVANZA EL CURSOR JUSTO DESPUÉS DEL TEXTO INSERTADO
-  Try txtEditorProyecto.Insert(sMarcaFootnote)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo insertar la marca del footnote." & gb.NewLine & Error.Text)
+  ' CAMBIO PUNTUAL: CONSERVA EL DESHACER. SI FALLA, EL MÓDULO YA INFORMÓ
+  If Not m_EditorPrincipal.Insertar(sMarcaFootnote) Then
+    txtEditorProyecto.SetFocus()
     Return
   Endif
 
-  ' --- 4. POSICIONAR EL CURSOR AL FINAL DEL ARCHIVO ---
-  ' SE USA Goto EN LUGAR DE REASIGNAR .Text PARA EVITAR EL RESET A (0,0)
-  ' String.Len GARANTIZA CONTEO CORRECTO ANTE CARACTERES UTF-8 MULTIBYTE
-  iLineaFinal = txtEditorProyecto.Max
-  iColumnaFinal = String.Len(txtEditorProyecto[iLineaFinal].Text)
-  Try txtEditorProyecto.Goto(iColumnaFinal, iLineaFinal)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo posicionar el cursor al final del archivo." & gb.NewLine & Error.Text)
+  ' --- 4. AL FINAL DEL ARCHIVO: SEPARADOR Y PREFIJO DE LA DEFINICIÓN ---
+  m_EditorPrincipal.IrAlFinal()
+  If Not m_EditorPrincipal.Insertar(Chr(10) & Chr(10) & sPrefijoDef) Then
+    txtEditorProyecto.SetFocus()
     Return
   Endif
 
-  ' --- 5. INSERTAR SEPARADOR Y PREFIJO DE LA DEFINICIÓN ---
-  ' SE INSERTA EN DOS PASOS PARA PODER CAPTURAR LA POSICIÓN EXACTA
-  ' DEL INICIO DEL PLACEHOLDER DESDE EL PROPIO EDITOR
-  Try txtEditorProyecto.Insert(Chr(10) & Chr(10) & sPrefijoDef)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo insertar el prefijo de la definición." & gb.NewLine & Error.Text)
+  ' --- 5. PLACEHOLDER: SU INICIO ES LA POSICIÓN DEL CURSOR TRAS EL PREFIJO ---
+  ' LEER Pos ES CONFIABLE (GV-44); LO QUE NO SE HACE ES ESCRIBIRLO
+  iInicioPlaceholder = m_EditorPrincipal.Posicion()
+  If Not m_EditorPrincipal.Insertar(m_Constantes.FOOTNOTE_PLACEHOLDER) Then
+    txtEditorProyecto.SetFocus()
     Return
   Endif
 
-  ' --- 6. CAPTURAR POSICIÓN DE INICIO DEL PLACEHOLDER ---
-  ' DESPUÉS DE INSERTAR EL PREFIJO, EL CURSOR ESTÁ DONDE EMPEZARÁ EL PLACEHOLDER
-  iLineaInicio = txtEditorProyecto.Line
-  iColumnaInicio = txtEditorProyecto.Column
+  ' --- 6. SELECCIONAR EL PLACEHOLDER PARA EDICIÓN INMEDIATA ---
+  ' EL LARGO EN CARACTERES, NO EN BYTES (RC-GM-21)
+  m_EditorPrincipal.Seleccionar(iInicioPlaceholder, String.Len(m_Constantes.FOOTNOTE_PLACEHOLDER))
 
-  ' --- 7. INSERTAR EL PLACEHOLDER Y CAPTURAR POSICIÓN FINAL ---
-  Try txtEditorProyecto.Insert(m_Constantes.FOOTNOTE_PLACEHOLDER)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo insertar el placeholder del footnote." & gb.NewLine & Error.Text)
-    Return
-  Endif
-  iLineaFin = txtEditorProyecto.Line
-  iColumnaFin = txtEditorProyecto.Column
-
-  ' --- 8. SELECCIONAR EL PLACEHOLDER PARA EDICIÓN INMEDIATA ---
-  ' FIRMA CONFIRMADA EN gb.form.editor:
-  '   Select(Column1, Line1, Column2, Line2)
-  ' MISMO ORDEN QUE Goto(Column, Line) — NO (Line, Column, ...)
-  Try txtEditorProyecto.Select(iColumnaInicio, iLineaInicio, iColumnaFin, iLineaFin)
-
-  ' --- 9. RESTAURAR FOCO EN EL EDITOR ---
-  ' EL CLICK EN EL BOTÓN TRANSFIRIÓ EL FOCO; LO DEVOLVEMOS AL EDITOR
-  ' PARA QUE LA SELECCIÓN SEA VISIBLE Y EDITABLE INMEDIATAMENTE
+  ' --- 7. RESTAURAR FOCO EN EL EDITOR (RC-GM-07) ---
   txtEditorProyecto.SetFocus()
 
 End
@@ -2539,7 +2450,7 @@ Public Sub btnCrearCuadro_Click()
   Dim sTabla As String
 
   ' VALIDAR POSICIÓN DEL CURSOR ANTES DE ABRIR EL FORMULARIO
-  If Not m_FuncionesGenericas.ValidarCursorInicioLineaVacia() Then
+  If Not m_EditorPrincipal.CursorEnLineaVaciaAlInicio() Then
     Message.Warning("El cursor debe estar al inicio de una línea vacía para insertar la tabla.")
     Return
   Endif
@@ -2547,8 +2458,10 @@ Public Sub btnCrearCuadro_Click()
   ' SI LA VALIDACIÓN PASA, ABRIR EL FORMULARIO
   sTabla = f_Tabla.MarkDownTable
   If sTabla <> "" Then
-    txtEditorProyecto.Insert(sTabla)
+    ' SI FALLA, EL MÓDULO YA INFORMÓ
+    m_EditorPrincipal.Insertar(sTabla)
   Endif
+  txtEditorProyecto.SetFocus()
 
 End
 
@@ -2621,9 +2534,8 @@ Public Sub txtEditorProyecto_KeyPress()
   Endif
 
   ' --- 2. Ctrl + f → ABRIR EL PANEL DE BÚSQUEDA PROPIO ---
-  ' Stop Event EVITA QUE EL TextEditor ABRA SU PROPIO PANEL DE BÚSQUEDA
-  ' (ShowFindPanel), QUE NO TIENE LA NAVEGACIÓN NI LA GRILLA DE RESULTADOS DEL
-  ' NUESTRO. NO HAY PROPIEDAD PARA DESACTIVAR LOS ATAJOS DEL CONTROL.
+  ' TextEdit NO TIENE PANEL DE BÚSQUEDA PROPIO (EL TextEditor SÍ LO TENÍA). EL
+  ' Stop Event QUEDA IGUAL: EL ATAJO ES NUESTRO Y NO DEBE LLEGAR AL CONTROL
   If Key.Control And Key.Code = Key["f"] Then
     Stop Event
 
@@ -2638,8 +2550,8 @@ Public Sub txtEditorProyecto_KeyPress()
     ' SI HAY TEXTO SELECCIONADO EN EL EDITOR, PASA AL CUADRO DE BÚSQUEDA:
     ' SELECCIONAR Y APRETAR CTRL+F ES LA FORMA MÁS CORTA DE BUSCAR UNA
     ' PALABRA QUE SE TIENE A LA VISTA
-    If txtEditorProyecto.Selected Then
-      sSeleccion = Trim(txtEditorProyecto.SelectedText)
+    If m_EditorPrincipal.HaySeleccion() Then
+      sSeleccion = Trim(m_EditorPrincipal.TextoSeleccionado())
 
       ' UNA SELECCIÓN DE VARIAS LÍNEAS NO ES UN TÉRMINO DE BÚSQUEDA:
       ' BuscarEnTexto TRABAJA LÍNEA POR LÍNEA Y NUNCA ENCONTRARÍA NADA
@@ -2668,7 +2580,7 @@ End
 
 Public Sub menuTraducir_Click()
 
-  m_Traduccion.MostrarFormulario(txtEditorProyecto.SelectedText)
+  m_Traduccion.MostrarFormulario(m_EditorPrincipal.TextoSeleccionado())
 
 End
 
@@ -2682,8 +2594,8 @@ Public Sub menuDiccionario_Click()
 
   Dim sPalabraSeleccionada As String
 
-  ' Obtener el texto seleccionado del TextEditor
-  sPalabraSeleccionada = Trim(txtEditorProyecto.SelectedText)
+  ' OBTENER EL TEXTO SELECCIONADO DEL EDITOR
+  sPalabraSeleccionada = Trim(m_EditorPrincipal.TextoSeleccionado())
 
   ' Si no hay selección, mostrar error y salir
   If sPalabraSeleccionada = "" Then
@@ -2730,9 +2642,8 @@ End
 
 ' ============================================
 ' Función   : AplicarTransformacionCase
-' Propósito : Convierte la selección del editor a mayúsculas o minúsculas
-'             usando los métodos nativos UpperCase/LowerCase del TextEditor.
-'             Conserva la selección y respeta UTF-8 (tildes, eñes).
+' Propósito : Convierte la selección del editor a mayúsculas o minúsculas,
+'             conservando la selección para encadenar acciones.
 ' Parámetros: bAMayusculas As Boolean — True para mayúsculas, False para minúsculas
 '             sNombreFormato As String — etiqueta legible ("mayúsculas" / "minúsculas")
 ' Retorna   : nada
@@ -2741,30 +2652,19 @@ Private Sub AplicarTransformacionCase(bAMayusculas As Boolean, sNombreFormato As
 
   ' --- 1. VALIDACIÓN DE ENTRADA: HAY TEXTO SELECCIONADO ---
   ' EVITAR LA TRANSFORMACIÓN SOBRE UNA SELECCIÓN VACÍA, QUE NO TIENE EFECTO ÚTIL
-  If String.Len(txtEditorProyecto.SelectedText) = 0 Then
+  If m_EditorPrincipal.LargoSeleccion() = 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("Debe seleccionar texto para convertir a " & sNombreFormato & ".")
+    txtEditorProyecto.SetFocus()
     Return
   Endif
 
-  ' --- 2. APLICAR LA TRANSFORMACIÓN NATIVA ---
-  ' UpperCase/LowerCase OPERAN IN-PLACE SOBRE LA SELECCIÓN ACTUAL,
-  ' SON UTF-8 SAFE Y MANTIENEN LA SELECCIÓN PARA ENCADENAR ACCIONES
-  ' (POR EJEMPLO, APLICAR BOLD INMEDIATAMENTE DESPUÉS)
-  If bAMayusculas Then
-    Try txtEditorProyecto.UpperCase
-  Else
-    Try txtEditorProyecto.LowerCase
-  Endif
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo convertir el texto a " & sNombreFormato & "." & gb.NewLine & Error.Text)
-    Return
-  Endif
+  ' --- 2. TRANSFORMACIÓN ---
+  ' TextEdit NO TIENE UpperCase / LowerCase. CambiarCaja USA LAS TABLAS DE GV-03,
+  ' NO UCase / LCase, QUE DEPENDEN DEL LOCALE. SI FALLA, EL MÓDULO YA INFORMÓ
+  m_EditorPrincipal.CambiarCaja(bAMayusculas)
 
-  ' --- 3. RESTAURAR FOCO EN EL EDITOR ---
-  ' EL CLICK EN EL BOTÓN TRANSFIRIÓ EL FOCO; SE DEVUELVE AL EDITOR PARA QUE
-  ' EL USUARIO PUEDA SEGUIR TIPEANDO O ENCADENAR OTRAS TRANSFORMACIONES
+  ' --- 3. RESTAURAR FOCO EN EL EDITOR (RC-GM-07) ---
   txtEditorProyecto.SetFocus()
 
 End
@@ -2828,7 +2728,7 @@ Public Sub btnAgregarImagen_Click()
   ' --- 2. Validación de posición del cursor ---
   ' EL BLOQUE DE FIGURA DEBE INSERTARSE EN UNA LÍNEA PROPIA Y VACÍA,
   ' PARA NO ROMPER PÁRRAFOS NI ESTRUCTURAS MARKDOWN ADYACENTES.
-  If Not ValidarPosicionCursorImagen() Then
+  If Not m_EditorPrincipal.CursorEnLineaVaciaAlInicio() Then
     m_Sonido.sonar("Error")
     Message.Title = "Error de posición."
     Message.Error("No se puede insertar una imagen dentro de una línea o párrafo." & Chr(10) & "El cursor debe estar al inicio de una línea vacía.")
@@ -2888,42 +2788,6 @@ End
 ' RETORNA TRUE SI EL CURSOR ESTÁ AL INICIO DE UNA LÍNEA VACÍA
 ' ============================================================================
 
-Private Function ValidarPosicionCursorImagen() As Boolean
-
-  Dim iLinea As Integer
-  Dim iColumna As Integer
-  Dim sLineaActual As String
-  Dim oEditor As TextEditor
-
-  ' OBTENER REFERENCIA AL EDITOR
-  oEditor = FMain.txtEditorProyecto
-
-  ' OBTENER LA POSICIÓN ACTUAL DEL CURSOR
-  iLinea = oEditor.Line
-  iColumna = oEditor.Column
-
-  ' SI EL EDITOR ESTÁ VACÍO, ES VÁLIDO
-  If oEditor.Count = 0 Then Return True
-
-  ' VERIFICAR QUE LA COLUMNA SEA 0 (INICIO DE LÍNEA)
-  If iColumna <> 0 Then Return False
-
-  ' OBTENER EL CONTENIDO DE LA LÍNEA ACTUAL
-  sLineaActual = oEditor[iLinea].Text
-
-  ' VERIFICAR QUE LA LÍNEA ESTÉ VACÍA (SIN CONTENIDO O SOLO ESPACIOS)
-  If Trim(sLineaActual) <> "" Then Return False
-
-  Return True
-
-Catch
-  ' SI HAY ERROR AL ACCEDER AL EDITOR, RETORNAR FALSE
-  m_Sonido.sonar("Error")
-  Message.Error("Error al validar posición del cursor: " & Error.Text)
-  Return False
-
-End
-
 ' ============================================================================
 ' FUNCIÓN AUXILIAR PARA INSERTAR EL CÓDIGO DE IMAGEN
 ' ============================================================================
@@ -2931,79 +2795,70 @@ End
 ' ASEGURANDO LÍNEAS VACÍAS ANTES Y DESPUÉS SI ES NECESARIO
 ' ============================================================================
 
+' ============================================
+' Función   : InsertarCodigoImagen
+' Propósito : Inserta el bloque de una figura en el cursor, agregando las
+'             líneas en blanco que falten antes y después
+' Parámetros: sCodigo As String — bloque Markdown de la figura
+' Retorna   : nada
+' ============================================
 Private Sub InsertarCodigoImagen(sCodigo As String)
 
   Dim iLinea As Integer
-  Dim sTextoLineaAnterior As String
-  Dim sTextoLineaSiguiente As String
   Dim sInsercion As String
-  Dim oEditor As TextEditor
 
-  oEditor = FMain.txtEditorProyecto
-  iLinea = oEditor.Line
-
+  ' --- 1. LÍNEA DEL CURSOR: Paragraph ES EL EQUIVALENTE DE TextEditor.Line (SC-18) ---
+  iLinea = m_EditorPrincipal.ParrafoActual()
   sInsercion = ""
 
-  ' VERIFICAR LÍNEA ANTERIOR (SI EXISTE Y NO ESTÁ VACÍA)
+  ' --- 2. LÍNEA ANTERIOR CON TEXTO: HACE FALTA UNA LÍNEA VACÍA ANTES ---
   If iLinea > 0 Then
-    sTextoLineaAnterior = Trim(oEditor[iLinea - 1].Text)
-    If sTextoLineaAnterior <> "" Then
-      ' AGREGAR LÍNEA VACÍA ANTES
-      sInsercion = gb.NewLine
-    Endif
+    If Trim(m_EditorPrincipal.TextoParrafo(iLinea - 1)) <> "" Then sInsercion = gb.NewLine
   Endif
 
-  ' AGREGAR EL CÓDIGO
   sInsercion &= sCodigo
 
-  ' VERIFICAR LÍNEA SIGUIENTE (SI EXISTE Y NO ESTÁ VACÍA)
-  If iLinea < oEditor.Count - 1 Then
-    sTextoLineaSiguiente = Trim(oEditor[iLinea + 1].Text)
-    If sTextoLineaSiguiente <> "" Then
-      ' AGREGAR LÍNEA VACÍA DESPUÉS
+  ' --- 3. LÍNEA SIGUIENTE: UNA LÍNEA VACÍA DESPUÉS SI TIENE TEXTO ---
+  If iLinea < m_EditorPrincipal.CantidadParrafos() - 1 Then
+    If Trim(m_EditorPrincipal.TextoParrafo(iLinea + 1)) <> "" Then
       sInsercion &= gb.NewLine & gb.NewLine
     Else
       sInsercion &= gb.NewLine
     Endif
   Else
-    ' ESTAMOS EN LA ÚLTIMA LÍNEA
+    ' ÚLTIMA LÍNEA
     sInsercion &= gb.NewLine
   Endif
 
-  oEditor.Insert(sInsercion)
+  ' --- 4. INSERCIÓN PUNTUAL: CONSERVA EL DESHACER; SI FALLA, EL MÓDULO YA INFORMÓ ---
+  m_EditorPrincipal.Insertar(sInsercion)
 
 End
 
-' ==============================================================================
-' FUNCIÓN: vLinea_KeyPress
-' DESCRIPCIÓN: POSICIONA EL EDITOR EN LA LÍNEA ESPECIFICADA POR EL USUARIO.
-'              SE EJECUTA AL PRESIONAR ENTER EN EL VALUEBOX.
-'              LA LÍNEA SOLICITADA QUEDA CENTRADA EN EL ÁREA VISIBLE.
-' PARÁMETROS: NINGUNO (USA EL VALOR DE vLinea.Value)
-' NOTAS:
-'   - EL USUARIO INGRESA LÍNEAS EN BASE 1 (NATURAL PARA EDICIÓN)
-'   - INTERNAMENTE TEXTEDITOR USA BASE 0
-'   - GotoCenter(X, Y): PRIMER PARÁMETRO ES COLUMNA, SEGUNDO ES LÍNEA
-' ==============================================================================
+' ============================================
+' Función   : vLinea_KeyPress
+' Propósito : Lleva el editor a la línea que el usuario escribió en vLinea,
+'             con la línea en la primera fila de la vista (GV-52)
+' Parámetros: ninguno (usa vLinea.Value, en base 1)
+' Retorna   : nada
+' ============================================
 Public Sub vLinea_KeyPress()
 
   Dim iLinea As Integer
 
-  ' SOLO PROCESAR SI SE PRESIONA ENTER O RETURN
+  ' --- 1. SOLO CON ENTER O RETURN ---
   If Key.Code <> Key.Enter And Key.Code <> Key.Return Then Return
 
-  ' OBTENER LA LÍNEA SOLICITADA (EL USUARIO INGRESA EN BASE 1)
+  ' --- 2. VALIDACIÓN: EL USUARIO ESCRIBE EN BASE 1 ---
   iLinea = CInt(vLinea.Value)
-
-  ' VERIFICAR QUE LA LÍNEA EXISTA EN EL DOCUMENTO
-  If iLinea < 1 Or iLinea > txtEditorProyecto.Count Then
+  If iLinea < 1 Or iLinea > m_EditorPrincipal.CantidadParrafos() Then
     Message.Info("Línea no disponible")
     Return
   Endif
 
-  ' MOVER EL CURSOR Y CENTRAR LA VISTA EN LA LÍNEA
-  ' GotoCenter(Columna, Línea) - COLUMNA 0, LÍNEA EN BASE 0
-  txtEditorProyecto.GotoCenter(0, iLinea - 1)
+  ' --- 3. SALTO: REEMPLAZA A GotoCenter, QUE TextEdit NO TIENE ---
+  m_EditorPrincipal.IrA(m_EditorPrincipal.PosicionDe(iLinea - 1, 0))
+  txtEditorProyecto.SetFocus()
 
 End
 
@@ -3013,7 +2868,7 @@ End
 ' ==============================================================================
 Public Sub ActualizarContadorLineas()
 
-  txtLineas.Text = txtEditorProyecto.Count & " líneas"
+  txtLineas.Text = CStr(m_EditorPrincipal.CantidadParrafos()) & " líneas"
 
 End
 
@@ -3080,31 +2935,45 @@ Private Sub SaveFontSettings()
 
 End Sub
 
-' CONFIGURA LA TIPOGRAFÍA PARA AMBOS EDITORES (PROYECTO Y XML)
-' GUARDA LA CONFIGURACIÓN EN SETTINGS
+' ============================================
+' Función   : menuTypo_Click
+' Propósito : Elegir la tipografía de los editores coloreados (Markdown y XML)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub menuTypo_Click()
 
-  ' CONFIGURAR LA FUENTE ACTUAL
-  Dialog.Font = FMain.txtEditorProyecto.Font
+  Dim hFuente As Font
 
-  ' MOSTRAR EL DIÁLOGO
+  ' --- 1. DIÁLOGO CON LA FUENTE ACTUAL ---
+  Dialog.Font = m_ResaltadoSintaxis.FuenteActual()
   If Dialog.SelectFont() Then Return  ' EL USUARIO CANCELÓ
 
-  ' APLICAR LA FUENTE A AMBOS EDITORES
-  FMain.txtEditorProyecto.Font = Dialog.Font
-  FMain.txtEditorXML.Font = Dialog.Font
+  ' --- 2. EL MÓDULO LA APLICA A TODOS LOS VISORES, LA GUARDA EN gbpublisher.conf ---
+  ' Y LA REPONE DESPUÉS DE CADA CARGA (GV-37, SC-15)
+  hFuente = Dialog.Font
+  m_ResaltadoSintaxis.AplicarFuente(hFuente.Name, hFuente.Size)
 
-  ' GUARDAR LA CONFIGURACIÓN AUTOMÁTICAMENTE
-  SaveFontSettings()
-
-  ' DEVOLVER EL FOCO AL EDITOR
-  FMain.txtEditorProyecto.SetFocus()
+  ' --- 3. FOCO AL EDITOR (RC-GM-07) ---
+  txtEditorProyecto.SetFocus()
 
 End
 
 Public Sub menuEliminarFootnote_Click()
 
   m_FuncionesGenericas.EliminarFootnote()
+
+End
+
+' ============================================
+' Función   : menuIrAParFootnote_Click
+' Propósito : Saltar entre la marca de una nota y su definición
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub menuIrAParFootnote_Click()
+
+  m_FuncionesGenericas.IrAParFootnote()
 
 End
 
@@ -3315,7 +3184,7 @@ End
 ' ============================================
 ' Función   : IrAResultadoBusqueda
 ' Propósito : Lleva el editor a una coincidencia, la deja seleccionada y
-'             posiciona su línea al tope de la ventana.
+'             pone su párrafo en la primera fila de la vista (GV-52).
 ' Parámetros: iIndice As Integer — índice en los arrays de resultados, base 0
 ' Retorna   : nada
 ' ============================================
@@ -3323,37 +3192,22 @@ Private Sub IrAResultadoBusqueda(iIndice As Integer)
 
   Dim iLinea As Integer
   Dim iColumna As Integer
-  Dim iCursorY As Integer
 
   ' --- 1. VALIDACIÓN DEL ÍNDICE Y DE LA LÍNEA ---
   If iIndice < 0 Then Return
   If iIndice > $aBusqNumeroLinea.Max Then Return
 
-  ' LOS ARRAYS DE BuscarEnTexto SON BASE 1; EL TextEditor ES BASE 0 (RF-02)
+  ' LOS ARRAYS DE BuscarEnTexto SON BASE 1; LAS POSICIONES DEL EDITOR, BASE 0
   iLinea = $aBusqNumeroLinea[iIndice] - 1
   iColumna = $aBusqPosicionEnLinea[iIndice] - 1
 
   If iLinea < 0 Then Return
-  If iLinea > txtEditorProyecto.Max Then Return
+  If iLinea > m_EditorPrincipal.CantidadParrafos() - 1 Then Return
 
-  ' --- 2. CURSOR AL INICIO DE LA LÍNEA Y SCROLL AL TOPE ---
-  ' EL SCROLL SE CALCULA CON EL CURSOR EN LA COLUMNA 0, IGUAL QUE ANTES: ASÍ
-  ' NO DEPENDE DE LA COLUMNA DE LA COINCIDENCIA
-  txtEditorProyecto.Goto(0, iLinea)
-  iCursorY = txtEditorProyecto.CursorAt(txtEditorProyecto.Line, txtEditorProyecto.Column).Y
-  txtEditorProyecto.ScrollY = txtEditorProyecto.ScrollY + iCursorY
-
-  ' EL SCROLL SE ASIGNA A MANO Y EL CONTROL NO REPINTA LA ZONA QUE QUEDÓ
-  ' ATRÁS: SIN ESTO, CADA BÚSQUEDA DEJA EL FANTASMA DE LA SELECCIÓN ANTERIOR Y
-  ' SE VAN ACUMULANDO. SE VE COMO UN RESALTADO DE OTRO COLOR —EL DE SELECCIÓN
-  ' INACTIVA— QUE DESAPARECE AL HACER SCROLL O AL ESCRIBIR
-  txtEditorProyecto.Refresh()
-
-  ' --- 3. SELECCIÓN DE LA COINCIDENCIA ---
-  ' ORDEN (Column, Line, Column, Line) EN TODOS LOS MÉTODOS DE POSICIONAMIENTO
-  ' DEL TextEditor (RC-GM-06). LA CONVENCIÓN «LÍNEA PRIMERO» QUE SUGIEREN LAS
-  ' PROPIEDADES DE LECTURA NO SE APLICA ACÁ. NO INVERTIR.
-  Try txtEditorProyecto.Select(iColumna, iLinea, iColumna + $iBusqLargoTermino, iLinea)
+  ' --- 2. SALTO Y SELECCIÓN ---
+  ' REEMPLAZA AL CÁLCULO CON CursorAt + ScrollY, QUE TextEdit NO TIENE. EL LARGO
+  ' VA EN CARACTERES (RC-GM-21)
+  m_EditorPrincipal.IrA(m_EditorPrincipal.PosicionDe(iLinea, iColumna), $iBusqLargoTermino)
 
 End
 
@@ -3534,12 +3388,12 @@ Private Sub EjecutarBusqueda()
   LimpiarBusqueda()
   ' EL LARGO VA DESPUÉS DE LA LIMPIEZA, NO ANTES: LimpiarBusqueda LO RESETEA
   ' A CERO, Y UN Select CON LARGO CERO DEJA EL CURSOR EN EL LUGAR CORRECTO
-  ' PERO SIN NADA SELECCIONADO. EN CARACTERES Y NO EN BYTES, PORQUE LA COLUMNA
-  ' DEL TextEditor CUENTA CARACTERES (SC-02, RC-GM-12)
+  ' PERO SIN NADA SELECCIONADO. EN CARACTERES Y NO EN BYTES, PORQUE LAS
+  ' POSICIONES DEL EDITOR CUENTAN CARACTERES (SC-02, RC-GM-21)
   $iBusqLargoTermino = String.Len(sTermino)
 
   ' --- 3. OBTENCIÓN DEL CONTENIDO DEL EDITOR ---
-  sContenido = txtEditorProyecto.Text
+  sContenido = m_EditorPrincipal.Texto()
   If sContenido = "" Then
     m_Sonido.sonar("Info")
     Message.Info("El editor está vacío.")
@@ -5268,7 +5122,7 @@ Public Function ConfirmarDescartarCambios() As Boolean
   If sRutaArchivoAbierto = "" Then Return True
 
   ' --- 2. SIN CAMBIOS: NO HAY NADA QUE PREGUNTAR ---
-  If txtEditorProyecto.Text = sContenidoOriginal Then Return True
+  If Not m_EditorPrincipal.HayCambios() Then Return True
 
   ' --- 3. HAY CAMBIOS: PREGUNTAR AL USUARIO ---
   m_Sonido.sonar("Warning")
@@ -5288,7 +5142,7 @@ Public Function ConfirmarDescartarCambios() As Boolean
     Case 2
       ' DESCARTAR: SINCRONIZAR EL SNAPSHOT PARA QUE FUTUROS CHEQUEOS
       ' NO VUELVAN A DETECTAR DIFERENCIAS HASTA UNA NUEVA EDICIÓN
-      sContenidoOriginal = txtEditorProyecto.Text
+      m_EditorPrincipal.MarcarGuardado()
       Return True
 
     Case Else
@@ -5567,17 +5421,17 @@ Public Sub cmbArticulosRevista_Click()
   Endif
 
   If sContenido Then
-    txtEditorProyecto.Text = sContenido
-    ' ACTUALIZAR LA RUTA DEL ARCHIVO ABIERTO Y EL CONTENIDO ORIGINAL
+    ' PUNTO DE REFRESCO 2 DE SC-18; Cargar TOMA TAMBIÉN EL PUNTO DE CONTROL.
+    ' SI FALLA, YA INFORMÓ Y SE CONSERVA EL ARCHIVO ANTERIOR COMO ABIERTO
+    If Not m_EditorPrincipal.Cargar(sContenido) Then Return
     sRutaArchivoAbierto = sRutaCompleta
-    sContenidoOriginal = sContenido
   Else
     m_Sonido.sonar("Error")
     Message.Error("No se encontraron artículos/capítulos en la base de datos.")
   Endif
 
   ' LLENAR EL GRID CON LAS MARCAS EXISTENTES
-  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
+  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, m_EditorPrincipal.Texto())
 
   ' ACTUALIZAMOS EL CONTEO DE LINEAS
   ActualizarContadorLineas()
@@ -5833,7 +5687,7 @@ Public Sub lbDefiniciones_Activate()
   If IsNull(cShortcode) Then Return
 
   ' --- 4. DELEGAR LA INSERCIÓN AL MÓDULO ---
-  m_Shortcodes.InsertarShortcode(cShortcode, txtEditorProyecto)
+  m_Shortcodes.InsertarShortcode(cShortcode)
 
 End
 
@@ -7270,14 +7124,14 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
     Return False
   Endif
 
-  txtEditorProyecto.Text = sContenidoArchivo
+  ' PUNTO DE REFRESCO 1 DE SC-18; Cargar TOMA TAMBIÉN EL PUNTO DE CONTROL
+  If Not m_EditorPrincipal.Cargar(sContenidoArchivo) Then Return False
   txtEditorProyecto.ReadOnly = False
   txtEditorProyecto.Enabled = True
   sRutaArchivoAbierto = sRutaSeleccionada
-  sContenidoOriginal = sContenidoArchivo
 
   ' --- 18. ACTUALIZAR GRID DE COMENTARIOS Y CONTADOR DE LÍNEAS ---
-  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, txtEditorProyecto.Text)
+  m_GestorComentarios.ActualizarGridComentarios(gvComentarios, m_EditorPrincipal.Texto())
   TabPanelIzquierdaInferior.Visible = False
   HBoxBuscar.Visible = False
   ActualizarContadorLineas()
@@ -7604,17 +7458,11 @@ Private Sub AplicarCapitalizacion()
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sOriginal As String
   Dim sTransformado As String
-  Dim iLineaA As Integer
-  Dim iColA As Integer
-  Dim iLineaB As Integer
-  Dim iColB As Integer
-  Dim iLineaIni As Integer
-  Dim iColIni As Integer
-  Dim iLineaFin As Integer
-  Dim iColFin As Integer
+  Dim iInicio As Integer
+  Dim iLargo As Integer
 
   ' --- 2. VALIDACIÓN DE ENTRADA: HAY TEXTO SELECCIONADO ---
-  If Not txtEditorProyecto.Selected Then
+  If Not m_EditorPrincipal.HaySeleccion() Then
     m_Sonido.sonar("Warning")
     Message.Warning("Debe seleccionar texto para capitalizar.")
     ' RC-GM-07: EL Message REFUERZA LA PÉRDIDA DE FOCO, HAY QUE DEVOLVERLO
@@ -7622,54 +7470,22 @@ Private Sub AplicarCapitalizacion()
     Return
   Endif
 
-  sOriginal = txtEditorProyecto.SelectedText
+  ' --- 3. TRAMO SELECCIONADO ---
+  ' Selection.Start ES SIEMPRE EL EXTREMO MENOR, HAYA SIDO HECHA LA SELECCIÓN
+  ' HACIA ADELANTE O HACIA ATRÁS: YA NO HACE FALTA COMPARAR LOS DOS EXTREMOS
+  sOriginal = m_EditorPrincipal.TextoSeleccionado()
+  iInicio = m_EditorPrincipal.InicioSeleccion()
+  iLargo = m_EditorPrincipal.LargoSeleccion()
 
-  ' --- 3. CAPTURAR EL INICIO REAL DE LA SELECCIÓN ---
-  ' SE LEEN LOS DOS EXTREMOS Y SE TOMA EL MENOR, PORQUE EL PAR
-  ' Line/Column PUEDE SER EL PRINCIPIO O EL FINAL SEGÚN LA DIRECCIÓN
-  ' EN QUE EL USUARIO HIZO LA SELECCIÓN
-  iLineaA = txtEditorProyecto.Line
-  iColA = txtEditorProyecto.Column
-  iLineaB = txtEditorProyecto.SelectionLine
-  iColB = txtEditorProyecto.SelectionColumn
-
-  If iLineaB < iLineaA Then
-    iLineaIni = iLineaB
-    iColIni = iColB
-  Else If iLineaB > iLineaA Then
-    iLineaIni = iLineaA
-    iColIni = iColA
-  Else
-    iLineaIni = iLineaA
-    If iColB < iColA Then
-      iColIni = iColB
-    Else
-      iColIni = iColA
-    Endif
-  Endif
-
-  ' --- 4. TRANSFORMAR Y REEMPLAZAR LA SELECCIÓN ---
+  ' --- 4. TRANSFORMAR Y REEMPLAZAR: CAMBIO PUNTUAL, CONSERVA EL DESHACER ---
   sTransformado = m_FuncionesGenericas.CapitalizarTexto(sOriginal)
-
-  ' Insert SOBRE UNA SELECCIÓN ACTIVA LA REEMPLAZA (VERIFICADO EN EL IDE)
-  Try txtEditorProyecto.Insert(sTransformado)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo capitalizar el texto." & gb.NewLine & Error.Text)
+  If Not m_EditorPrincipal.ReemplazarTramo(iInicio, iLargo, sTransformado) Then
     txtEditorProyecto.SetFocus()
     Return
   Endif
 
-  ' --- 5. RESELECCIONAR EL TEXTO NUEVO (SC-04: POSICIONES CAPTURADAS) ---
-  iLineaFin = txtEditorProyecto.Line
-  iColFin = txtEditorProyecto.Column
-
-  ' RC-GM-06: EL ORDEN ES (Col, Line, Col, Line)
-  Try txtEditorProyecto.Select(iColIni, iLineaIni, iColFin, iLineaFin)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("El texto se capitalizó pero no se pudo restaurar la selección." & gb.NewLine & Error.Text)
-  Endif
+  ' --- 5. RESELECCIONAR EL TEXTO NUEVO; EL LARGO EN CARACTERES (RC-GM-21) ---
+  m_EditorPrincipal.Seleccionar(iInicio, String.Len(sTransformado))
 
   ' --- 6. RESTAURAR FOCO EN EL EDITOR ---
   txtEditorProyecto.SetFocus()
@@ -8203,7 +8019,7 @@ Public Sub AnalizarParesEnPanel(sIzquierdo As String, sDerecho As String)
   ' --- 3. EL TEXTO ES EL DEL EDITOR, NO EL DEL DISCO ---
   ' SI SE ANALIZARA EL ARCHIVO GUARDADO, CORREGIR UNA COMILLA Y REANALIZAR
   ' SEGUIRÍA MOSTRANDO EL ERROR HASTA GUARDAR. INUTILIZABLE PARA CORREGIR
-  sTexto = txtEditorProyecto.Text
+  sTexto = m_EditorPrincipal.Texto()
 
   If String.Len(sTexto) = 0 Then
     lblMensajesPares.Text = "No hay texto en el editor."
@@ -8301,25 +8117,12 @@ Public Sub gvTipoDePar_Click()
 
   oHallazgo = $aHallazgosPares[gvTipoDePar.Row]
 
-  ' --- 2. POSICIONAR Y CENTRAR ---
-  ' RC-GM-06: EL ORDEN ES (Column, Line) EN TODOS LOS MÉTODOS DEL TextEditor.
-  ' ACÁ, PRIMERO LA POSICIÓN DENTRO DEL PÁRRAFO Y DESPUÉS EL PÁRRAFO.
-  ' INVERTIRLO NO FALLA RUIDOSAMENTE: EN ARCHIVOS CORTOS QUEDA SELECCIÓN VACÍA
-  ' POR CLAMP A Max, Y EN LOS LARGOS SELECCIONA VARIAS LÍNEAS
-  Try txtEditorProyecto.GotoCenter(oHallazgo.iPos, oHallazgo.iParrafo)
-  If Error Then
-    lblMensajesPares.Text = "No se pudo posicionar el cursor: " & Error.Text
-    Return
-  Endif
+  ' --- 2. POSICIONAR Y SELECCIONAR EL CARÁCTER HUÉRFANO ---
+  ' PÁRRAFO Y POSICIÓN SON BASE 0 (CHallazgoPar). IrA DEJA EL PÁRRAFO EN LA
+  ' PRIMERA FILA DE LA VISTA (GV-52) Y REEMPLAZA A GotoCenter + Select
+  m_EditorPrincipal.IrA(m_EditorPrincipal.PosicionDe(oHallazgo.iParrafo, oHallazgo.iPos), 1)
 
-  ' --- 3. SELECCIONAR EL CARÁCTER HUÉRFANO ---
-  Try txtEditorProyecto.Select(oHallazgo.iPos, oHallazgo.iParrafo, oHallazgo.iPos + 1, oHallazgo.iParrafo)
-  If Error Then
-    lblMensajesPares.Text = "No se pudo seleccionar: " & Error.Text
-    Return
-  Endif
-
-  ' --- 4. DEVOLVER EL FOCO AL EDITOR ---
+  ' --- 3. DEVOLVER EL FOCO AL EDITOR ---
   ' EL CLICK EN EL GRID SE LLEVÓ EL FOCO Y EL FLUJO NATURAL ES SEGUIR
   ' ESCRIBIENDO EN EL EDITOR (RC-GM-07). VA AL FINAL, Y SIN Try: SU FALLO NO
   ' COMPROMETE NINGÚN DATO (RC-GM-08)
@@ -8340,23 +8143,14 @@ Public Sub btnVerPDFenVisor_Click()
 
 End
 
+' ============================================
+' Función   : btnTipografiaMDyXML_Click
+' Propósito : Elegir la tipografía de los editores coloreados; mismo camino que menuTypo_Click
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub btnTipografiaMDyXML_Click()
 
-  ' CONFIGURAR LA FUENTE ACTUAL
-  Dialog.Font = FMain.txtEditorProyecto.Font
-
-  ' MOSTRAR EL DIÁLOGO
-  If Dialog.SelectFont() Then Return  ' EL USUARIO CANCELÓ
-
-  ' APLICAR LA FUENTE A AMBOS EDITORES
-  FMain.txtEditorProyecto.Font = Dialog.Font
-  ' EL MÓDULO LA APLICA, LA GUARDA EN gbpublisher.conf Y LA REPONE DESPUÉS DE CADA CARGA (GV-37)
-  m_ResaltadoSintaxis.AplicarFuente(Dialog.Font.Name, Dialog.Font.Size)
-
-  ' GUARDAR LA CONFIGURACIÓN AUTOMÁTICAMENTE
-  SaveFontSettings()
-
-  ' DEVOLVER EL FOCO AL EDITOR
-  FMain.txtEditorProyecto.SetFocus()
+  menuTypo_Click()
 
 End

@@ -34,11 +34,15 @@
 '    FALTABA EL DICCIONARIO O EL BINARIO, EL RESULTADO VACÍO SE ANUNCIABA COMO
 '    «no se encontraron errores ortográficos» (GV-23).
 '
-' PENDIENTE ANOTADO: APLICAR UN REEMPLAZO REASIGNA txtEditorProyecto.Text
-' COMPLETO, LO QUE PIERDE LA PILA DE DESHACER Y LA POSICIÓN DEL CURSOR. LA VÍA
-' LIMPIA SERÍA Select MÁS Insert SOBRE EL PROPIO CONTROL, PERO NO ESTÁ
-' VERIFICADO QUE Insert REEMPLACE LA SELECCIÓN EN LUGAR DE AGREGARSE A ELLA.
-' SE DEJA LA REASIGNACIÓN, QUE ESTÁ PROBADA, HASTA HACER ESE MINI-TEST.
+' MIGRACIÓN A TextEdit (SC-18): EL EDITOR SE USA A TRAVÉS DE m_EditorPrincipal.
+' - «APLICAR» ES UN CAMBIO PUNTUAL: ReemplazarTramo (Select + Insert) CONSERVA
+'   EL DESHACER. RESUELVE EL PENDIENTE ANTERIOR: EN TextEdit Insert REEMPLAZA LA
+'   SELECCIÓN, VERIFICADO EN BANCO.
+' - «TODAS» ES UN CAMBIO GLOBAL: ReemplazarTodo, QUE CORTA EL DESHACER.
+' - LA PALABRA SE MUESTRA CON IrA, QUE DEJA SU PÁRRAFO EN LA PRIMERA FILA DE LA
+'   VISTA (GV-52), Y QUEDA SELECCIONADA SIN COLOR: HighlightString NO EXISTE EN
+'   TextEdit.
+' - LAS POSICIONES DE CPalabraHallada SON BASE 1; LAS DEL EDITOR, BASE 0.
 
 ' ============================================
 ' VARIABLES DE ESTADO DEL CORRECTOR
@@ -198,7 +202,7 @@ Public Sub EscanearDocumento()
   ' --- 2. EXTRACCIÓN DE PALABRAS ---
   ' bLimpiarShortcodes QUEDA EN True: EN UN .md HAY URLS, DOIS Y SHORTCODES
   ' QUE NO DEBEN VERIFICARSE. EL EDITOR RTF LLAMARÁ CON False.
-  sTexto = FMain.txtEditorProyecto.Text
+  sTexto = m_EditorPrincipal.Texto()
   aHalladas = m_Hunspell.ExtraerPalabras(sTexto, True)
 
   If aHalladas.Count = 0 Then
@@ -302,7 +306,7 @@ Private Sub MostrarErrorActual()
   ' --- 2. PALABRA Y CONTEXTO ---
   txtErrorEncontrado.Text = oError.sPalabra
 
-  sTexto = FMain.txtEditorProyecto.Text
+  sTexto = m_EditorPrincipal.Texto()
   sContexto = m_Hunspell.ObtenerContexto(sTexto, oError.iPosicion, oError.iLongitud, 50)
   txtContexto.Text = sContexto
   txtContexto.HighlightString(oError.sPalabra, False, True)
@@ -326,18 +330,10 @@ Private Sub MostrarErrorActual()
   txtContadorErrores.Text = CStr($iIndiceActual + 1) & " de " & CStr($iTotalErrores)
 
   ' --- 5. UBICACIÓN EN EL EDITOR ---
-  ' EL RESULTADO VIENE COMO OBJETO PORQUE UN PRIMITIVO NO PUEDE VOLVER POR
-  ' PARÁMETRO (GV-24). Y EL ORDEN DE LOS ARGUMENTOS ES (Column, Line) EN TODOS
-  ' LOS MÉTODOS DE POSICIONAMIENTO DEL TextEditor (RC-GM-06): LA CONVENCIÓN
-  ' SEMÁNTICA «LÍNEA PRIMERO» QUE SUGIEREN LAS PROPIEDADES DE LECTURA NO SE
-  ' APLICA ACÁ. NO INVERTIR.
-  oPosicion = m_Hunspell.ConvertirPosicionALineaColumna(sTexto, oError.iPosicion)
-
-  Try FMain.txtEditorProyecto.GotoCenter(oPosicion.iColumna, oPosicion.iLinea)
-  If Error Then Return
-
-  Try FMain.txtEditorProyecto.Select(oPosicion.iColumna, oPosicion.iLinea,
-    oPosicion.iColumna + oError.iLongitud, oPosicion.iLinea)
+  ' iPosicion ES BASE 1 Y EN CARACTERES (CPalabraHallada); EL EDITOR ES BASE 0.
+  ' LA PALABRA QUEDA SELECCIONADA Y SU PÁRRAFO ARRIBA DE LA VISTA (GV-52).
+  ' EL FOCO QUEDA EN ESTE FORMULARIO: IrA NO LO MUEVE
+  m_EditorPrincipal.IrA(oError.iPosicion - 1, oError.iLongitud)
 
 End
 
@@ -478,9 +474,9 @@ Public Sub btnAplicar_Click()
     Return
   Endif
 
-  ' --- 2. SUSTITUCIÓN EN EL EDITOR ---
-  sTexto = FMain.txtEditorProyecto.Text
-  FMain.txtEditorProyecto.Text = ReemplazarEnTexto(sTexto, oError.iPosicion, oError.iLongitud, sReemplazo)
+  ' --- 2. SUSTITUCIÓN EN EL EDITOR: CAMBIO PUNTUAL, CONSERVA EL DESHACER ---
+  ' iPosicion ES BASE 1; EL EDITOR, BASE 0. SI FALLA, EL MÓDULO YA INFORMÓ
+  If Not m_EditorPrincipal.ReemplazarTramo(oError.iPosicion - 1, oError.iLongitud, sReemplazo) Then Return
   $bHuboCambios = True
 
   ' --- 3. CORRIMIENTO DE LOS ERRORES POSTERIORES ---
@@ -558,7 +554,7 @@ Public Sub btnAplicaTodas_Click()
   ' RECORRER EN REVERSA MANTIENE VÁLIDAS LAS POSICIONES ANTERIORES SIN TENER
   ' QUE RECALCULARLAS. NO SE USA Replace SOBRE EL TEXTO: REEMPLAZA SUBCADENAS
   ' Y CONVERTIRÍA «casco» EN «casaco» AL CAMBIAR «cas» POR «casa».
-  sTexto = FMain.txtEditorProyecto.Text
+  sTexto = m_EditorPrincipal.Texto()
   iCambios = 0
 
   For i = $aErrores.Max To 0 Step -1
@@ -572,7 +568,8 @@ Public Sub btnAplicaTodas_Click()
 
   Next
 
-  FMain.txtEditorProyecto.Text = sTexto
+  ' CAMBIO GLOBAL: UNA SOLA REASIGNACIÓN, QUE CORTA EL DESHACER (SC-18)
+  If Not m_EditorPrincipal.ReemplazarTodo(sTexto) Then Return
   $bHuboCambios = True
 
   m_Sonido.sonar("info")
@@ -779,10 +776,8 @@ End
 Public Sub Form_Close()
 
   ' --- 1. CIERRE POR EL BOTÓN: SE LIMPIA Y SE PERMITE ---
-  If $bCierrePermitido Then
-    Try FMain.txtEditorProyecto.HighlightString("")
-    Return
-  Endif
+  ' TextEdit NO TIENE HighlightString: LA PALABRA QUEDÓ SOLO SELECCIONADA Y NO HAY NADA QUE LIMPIAR
+  If $bCierrePermitido Then Return
 
   ' --- 2. CIERRE POR LA X: SE BLOQUEA ---
   m_Sonido.sonar("info")

@@ -853,49 +853,13 @@ Public Sub EjecutarScript(cmbScripts As ComboBox)
 End
 
 ' ============================================
-' Función   : ValidarCursorInicioLineaVacia
-' Propósito : Verifica que el cursor del editor esté en la columna 0 de una
-'             línea vacía o compuesta solo por espacios.
-' Parámetros: (ninguno)
-' Retorna   : Boolean — True si se cumplen ambas condiciones
-' Dependencias: FMain.txtEditorProyecto (TextEditor de gb.form.editor)
-' ============================================
-Public Function ValidarCursorInicioLineaVacia() As Boolean
-
-  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
-  Dim oEditor As TextEditor
-
-  oEditor = FMain.txtEditorProyecto
-
-  ' --- 2. EDITOR VACÍO: ES VÁLIDO ---
-  If oEditor.Count = 0 Then Return True
-
-  ' --- 3. EL CURSOR DEBE ESTAR EN COLUMNA 0 ---
-  ' If ANIDADO Y NO "Column = 0 And Trim(...)": And NO ES SHORT-CIRCUIT
-  ' (RC-GM-17), ASÍ QUE EL ACCESO A oEditor[oEditor.Line] SE EVALUABA SIEMPRE
-  ' Y UN Line FUERA DE RANGO CAÍA EN EL Catch MOSTRANDO UN ERROR AL USUARIO
-  ' EN LUGAR DE DEVOLVER False LIMPIAMENTE
-  If oEditor.Column <> 0 Then Return False
-
-  ' --- 4. LA LÍNEA ACTUAL DEBE ESTAR VACÍA ---
-  Return Trim(oEditor[oEditor.Line].Text) = ""
-
-Catch
-
-  m_Sonido.sonar("Error")
-  Message.Error("Error al validar posición del cursor: " & Error.Text)
-  Return False
-
-End
-
-' ============================================
 ' Función   : InsertarFechaHoraComentario
 ' Propósito : Inserta en el editor una marca de comentario Markdown invisible
 '             en la salida, con fecha, hora y usuario en curso. Exige que el
 '             cursor esté al inicio de una línea vacía.
 ' Parámetros: tipoComentario As String — INFO, FIXME o ERROR. Por defecto "INFO"
 ' Retorna   : (Sub, sin retorno)
-' Dependencias: FMain.txtEditorProyecto, m_InicioCierre.UsuarioEnCurso
+' Dependencias: m_EditorPrincipal, m_InicioCierre.UsuarioEnCurso
 ' ============================================
 Public Sub InsertarFechaHoraComentario(Optional tipoComentario As String = "INFO")
 
@@ -905,7 +869,7 @@ Public Sub InsertarFechaHoraComentario(Optional tipoComentario As String = "INFO
   Dim sUsuario As String
 
   ' --- 2. VALIDAR POSICIÓN DEL CURSOR ---
-  If Not ValidarCursorInicioLineaVacia() Then
+  If Not m_EditorPrincipal.CursorEnLineaVaciaAlInicio() Then
     m_Sonido.sonar("Warning")
     Message.Warning("El cursor debe estar al inicio de una línea vacía para insertar el comentario.")
     FMain.txtEditorProyecto.SetFocus()
@@ -927,12 +891,8 @@ Public Sub InsertarFechaHoraComentario(Optional tipoComentario As String = "INFO
   ' PATRÓN Y PARA NO DUPLICARLO SI OTRO EVENTO INSERTA LO MISMO
   sNuevaLinea = "[" & sFechaHora & " " & sUsuario & "]: # (" & tipoComentario & ": esto no será visible)"
 
-  ' --- 5. INSERTAR EN EL EDITOR ---
-  ' RC-GM-08: Insert PUEDE FALLAR EN SILENCIO POR ESTADO INTERNO INVÁLIDO
-  Try FMain.txtEditorProyecto.Insert(gb.NewLine & gb.NewLine & sNuevaLinea & gb.NewLine)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo insertar el comentario:" & Chr(10) & Error.Text)
+  ' --- 5. INSERTAR EN EL EDITOR: CAMBIO PUNTUAL; SI FALLA, EL MÓDULO YA INFORMÓ ---
+  If Not m_EditorPrincipal.Insertar(gb.NewLine & gb.NewLine & sNuevaLinea & gb.NewLine) Then
     FMain.txtEditorProyecto.SetFocus()
     Return
   Endif
@@ -1099,16 +1059,15 @@ Private Function ProcesarArchivoFootnote(sRutaArchivo As String) As String[]
     Endif
 
     ' SI EL ARCHIVO REESCRITO ES EL QUE ESTÁ EN EL EDITOR, REFRESCARLO Y
-    ' ACTUALIZAR EL SNAPSHOT: SIN ESTO EL GUARD DE SC-06 CREERÍA QUE HAY
-    ' CAMBIOS SIN GUARDAR APENAS SE CAMBIE DE ARCHIVO
+    ' TOMARLO COMO PUNTO DE CONTROL: SIN ESTO EL GUARD DE SC-06 CREERÍA QUE HAY
+    ' CAMBIOS SIN GUARDAR APENAS SE CAMBIE DE ARCHIVO. CAMBIO GLOBAL: CONSERVA
+    ' LA VISTA Y CORTA EL DESHACER (SC-18)
     If sRutaArchivo = FMain.sRutaArchivoAbierto Then
-      ' RC-GM-08: ASIGNAR .Text PUEDE FALLAR POR ESTADO INTERNO DEL EDITOR
-      Try FMain.txtEditorProyecto.Text = sNuevoContenido
-      If Error Then
+      If Not m_EditorPrincipal.ReemplazarTodo(sNuevoContenido) Then
         aResultado[0] = "Error escritura"
         Return aResultado
       Endif
-      FMain.sContenidoOriginal = sNuevoContenido
+      m_EditorPrincipal.MarcarGuardado()
     Endif
   Endif
 
@@ -1366,18 +1325,19 @@ End
 ' Función   : EliminarFootnote
 ' Propósito : Elimina el footnote reference seleccionado en el editor (ej. [^5])
 '             junto con su definition y los párrafos sangrados que la continúan.
-' Parámetros: (ninguno) — opera sobre FMain.txtEditorProyecto.SelectedText
+' Parámetros: (ninguno) — opera sobre la selección del editor (m_EditorPrincipal)
 ' Retorna   : (Sub, sin retorno)
 ' Notas     : No renumera las notas restantes, y no hace falta: el siguiente
 '             número lo calcula ObtenerSiguienteNumeroFootnote por máximo y no
 '             por conteo (RC-GM-09), así que un hueco no produce colisión.
 '
-' CORRECCIÓN: LA RECONSTRUCCIÓN DEL TEXTO CONCATENABA CON
-'   If Len(sResultado) > 0 Then sResultado &= "\n"
-' QUE SE COME LAS LÍNEAS EN BLANCO DEL PRINCIPIO DEL ARCHIVO: MIENTRAS
-' sResultado ESTÁ VACÍO NO AGREGA SEPARADOR, ASÍ QUE UN .md QUE EMPIEZA CON
-' UNA O MÁS LÍNEAS VACÍAS LAS PERDÍA SILENCIOSAMENTE. AHORA SE ACUMULA EN UN
-' String[] Y SE UNE CON Join, QUE PRESERVA LOS VACÍOS.
+' MIGRACIÓN A TextEdit (SC-18): EN LUGAR DE RECONSTRUIR EL TEXTO Y REASIGNARLO
+' ENTERO, SE BORRAN DOS TRAMOS PUNTUALES —LA DEFINICIÓN Y LA REFERENCIA— CON
+' ReemplazarTramo. ASÍ LA ELIMINACIÓN SE PUEDE DESHACER. SE BORRA PRIMERO EL
+' TRAMO QUE ESTÁ MÁS ADELANTE, PARA QUE EL OTRO CONSERVE SU POSICIÓN.
+' LA REFERENCIA SE UBICA BUSCÁNDOLA EN EL TEXTO Y NO POR LA SELECCIÓN: SI EL
+' USUARIO SELECCIONÓ LA MARCA DE LA PROPIA DEFINICIÓN, SE BORRA IGUAL LA
+' REFERENCIA REAL, COMO HACÍA EL Replace ANTERIOR.
 ' ============================================
 Public Sub EliminarFootnote()
 
@@ -1388,19 +1348,20 @@ Public Sub EliminarFootnote()
   Dim sPatronRef As String
   Dim sPatronDef As String
   Dim sLinea As String
-  Dim sResultado As String
   Dim aLineas As String[]
-  Dim aConservadas As New String[]
   Dim iContador As Integer
   Dim iPos As Integer
+  Dim iPosRef As Integer
   Dim iInicioDef As Integer
   Dim iFinDef As Integer
+  Dim iPosIniDef As Integer
+  Dim iPosFinDef As Integer
   Dim iRespuesta As Integer
   Dim i As Integer
   Dim bEnDefinicion As Boolean
 
   ' --- 2. VALIDAR LA SELECCIÓN ---
-  sSeleccion = FMain.txtEditorProyecto.SelectedText
+  sSeleccion = m_EditorPrincipal.TextoSeleccionado()
 
   If Left(sSeleccion, 2) <> "[^" Or Right(sSeleccion, 1) <> "]" Then
     m_Sonido.sonar("Error")
@@ -1419,18 +1380,24 @@ Public Sub EliminarFootnote()
     Return
   Endif
 
-  ' --- 3. CONTAR CUÁNTAS REFERENCIAS HAY (SIN CONTAR LA DEFINICIÓN) ---
-  sTexto = FMain.txtEditorProyecto.Text
+  ' --- 3. CONTAR LAS REFERENCIAS (SIN LA DEFINICIÓN) Y UBICAR LA ÚNICA ---
+  ' String.InStr Y NO InStr: LA POSICIÓN SE USA CONTRA EL EDITOR, QUE CUENTA
+  ' CARACTERES (RC-GM-21). iPosRef QUEDA EN BASE 0
+  sTexto = m_EditorPrincipal.Texto()
   sPatronRef = "[^" & sNumero & "]"
   sPatronDef = "[^" & sNumero & "]:"
   iContador = 0
+  iPosRef = -1
   iPos = 1
 
   Do
-    iPos = InStr(sTexto, sPatronRef, iPos)
+    iPos = String.InStr(sTexto, sPatronRef, iPos)
     If iPos = 0 Then Break
     ' SI DESPUÉS DEL ] VIENE UN :, ES LA DEFINICIÓN Y NO CUENTA COMO REFERENCIA
-    If Mid$(sTexto, iPos + Len(sPatronRef), 1) <> ":" Then Inc iContador
+    If String.Mid(sTexto, iPos + String.Len(sPatronRef), 1) <> ":" Then
+      Inc iContador
+      iPosRef = iPos - 1
+    Endif
     iPos += 1
   Loop
 
@@ -1444,7 +1411,7 @@ Public Sub EliminarFootnote()
     Return
   Endif
 
-  ' --- 4. LOCALIZAR LA DEFINICIÓN Y SU EXTENSIÓN ---
+  ' --- 4. LOCALIZAR LA DEFINICIÓN Y SU EXTENSIÓN, EN LÍNEAS ---
   aLineas = Split(sTexto, Chr(10))
   iInicioDef = -1
   iFinDef = -1
@@ -1487,8 +1454,7 @@ Public Sub EliminarFootnote()
     iRespuesta = Message.Question("El footnote " & sPatronRef & " no tiene definition." & Chr(10) &
       "¿Eliminar la referencia de todas formas?", "Sí", "No")
     If iRespuesta = 1 Then
-      sTexto = Replace(sTexto, sSeleccion, "")
-      AplicarTextoAlEditor(sTexto)
+      If iPosRef >= 0 Then m_EditorPrincipal.ReemplazarTramo(iPosRef, String.Len(sPatronRef), "")
     Endif
     FMain.txtEditorProyecto.SetFocus()
     Return
@@ -1502,17 +1468,29 @@ Public Sub EliminarFootnote()
     Return
   Endif
 
-  ' --- 7. RECONSTRUIR EL TEXTO SIN LAS LÍNEAS DE LA DEFINICIÓN ---
-  ' Join Y NO CONCATENACIÓN CONDICIONAL: PRESERVA LAS LÍNEAS VACÍAS INICIALES
-  For i = 0 To aLineas.Max
-    If i < iInicioDef Or i > iFinDef Then aConservadas.Add(aLineas[i])
-  Next
+  ' --- 7. TRAMO DE LA DEFINICIÓN, EN CARACTERES ---
+  ' EQUIVALE A QUITAR LAS LÍNEAS iInicioDef..iFinDef Y VOLVER A UNIR CON Join:
+  ' SE BORRA CADA LÍNEA CON SU SALTO. SI LA DEFINICIÓN LLEGA AL FINAL, SE BORRA
+  ' EN CAMBIO EL SALTO QUE LA PRECEDE
+  iPosIniDef = m_EditorPrincipal.PosicionDe(iInicioDef, 0)
+  If iFinDef < aLineas.Max Then
+    iPosFinDef = m_EditorPrincipal.PosicionDe(iFinDef + 1, 0)
+  Else
+    iPosFinDef = m_EditorPrincipal.LargoTexto()
+    If iInicioDef > 0 Then Dec iPosIniDef
+  Endif
 
-  sResultado = aConservadas.Join(Chr(10))
-
-  ' --- 8. ELIMINAR LA REFERENCIA Y VOLCAR AL EDITOR ---
-  sResultado = Replace(sResultado, sSeleccion, "")
-  AplicarTextoAlEditor(sResultado)
+  ' --- 8. BORRADO: PRIMERO EL TRAMO DE MÁS ADELANTE ---
+  ' CADA BORRADO ES UN PASO DE DESHACER. SI FALLA, EL MÓDULO YA INFORMÓ
+  If iPosRef > iPosIniDef Then
+    If m_EditorPrincipal.ReemplazarTramo(iPosRef, String.Len(sPatronRef), "") Then
+      m_EditorPrincipal.ReemplazarTramo(iPosIniDef, iPosFinDef - iPosIniDef, "")
+    Endif
+  Else
+    If m_EditorPrincipal.ReemplazarTramo(iPosIniDef, iPosFinDef - iPosIniDef, "") Then
+      If iPosRef >= 0 Then m_EditorPrincipal.ReemplazarTramo(iPosRef, String.Len(sPatronRef), "")
+    Endif
+  Endif
 
   ' --- 9. RESTAURAR FOCO (RC-GM-07) ---
   FMain.txtEditorProyecto.SetFocus()
@@ -1520,27 +1498,124 @@ Public Sub EliminarFootnote()
 End
 
 ' ============================================
-' Función   : AplicarTextoAlEditor
-' Propósito : Vuelca un texto completo en el editor de proyecto informando el
-'             fallo si la asignación no prospera. Centraliza el patrón que
-'             EliminarFootnote repetía en dos ramas sin protección.
-' Parámetros: sTexto As String — contenido nuevo del editor
-' Retorna   : Boolean — True si se pudo asignar
-' Notas     : NO actualiza FMain.sContenidoOriginal a propósito. El texto queda
-'             modificado y sin guardar, que es justo lo que el guard de SC-06
-'             tiene que detectar cuando el usuario cambie de archivo.
+' Función   : IrAParFootnote
+' Propósito : Saltar entre la marca de una nota en el texto y su definición al
+'             final del capítulo. Desde la marca va a la definición; desde la
+'             definición, a la marca. Repetirlo vuelve al punto de partida.
+' Parámetros: (ninguno) — opera sobre la marca que está bajo el cursor
+' Retorna   : (Sub, sin retorno)
+' Notas     : Alcanza con que el cursor esté sobre la marca, en cualquier punto
+'             entre "[" y justo después de "]"; también funciona con la marca
+'             seleccionada. Si la nota tiene varias marcas en el texto, desde la
+'             definición se va a la primera y se avisa, como en EliminarFootnote.
+'             El salto deja el párrafo de destino arriba de la vista (GV-52) y
+'             la marca de destino seleccionada.
 ' ============================================
-Private Function AplicarTextoAlEditor(sTexto As String) As Boolean
+Public Sub IrAParFootnote()
 
-  ' --- 1. ASIGNAR CON PROTECCIÓN (RC-GM-08) ---
-  Try FMain.txtEditorProyecto.Text = sTexto
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo actualizar el editor:" & Chr(10) & Error.Text)
-    Return False
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTexto As String
+  Dim sLinea As String
+  Dim sPrevio As String
+  Dim sEtiqueta As String
+  Dim sMarca As String
+  Dim aLineas As String[]
+  Dim iColumna As Integer
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim iPos As Integer
+  Dim iPrimera As Integer
+  Dim iCuenta As Integer
+  Dim i As Integer
+  Dim bEsDefinicion As Boolean
+
+  ' --- 2. MARCA BAJO EL CURSOR, SOBRE LA LÍNEA ACTUAL ---
+  ' TODO EN CARACTERES CON String.* (RC-GM-12). CON LA MARCA SELECCIONADA HACIA
+  ' ADELANTE, EL CURSOR QUEDA JUSTO DESPUÉS DE "]": ESE PUNTO TAMBIÉN CUENTA
+  sLinea = m_EditorPrincipal.TextoParrafo(m_EditorPrincipal.ParrafoActual())
+  iColumna = m_EditorPrincipal.ColumnaActual()
+
+  ' EL "[^" MÁS CERCANO QUE EMPIECE EN EL CURSOR O ANTES (iIni EN BASE 1)
+  sPrevio = String.Left(sLinea, iColumna + 2)
+  iIni = String.RInStr(sPrevio, "[^")
+  If iIni > 0 Then iFin = String.InStr(sLinea, "]", iIni + 2)
+
+  ' EL CURSOR TIENE QUE ESTAR ENTRE "[" Y JUSTO DESPUÉS DE "]" (iFin EN BASE 1
+  ' ES, EN BASE 0, LA POSICIÓN QUE SIGUE A "]"). If SEPARADOS: RC-GM-17
+  If iIni > 0 Then
+    If iFin > 0 Then
+      If iColumna <= iFin Then sEtiqueta = String.Mid(sLinea, iIni + 2, iFin - iIni - 2)
+    Endif
   Endif
 
-  Return True
+  ' UNA ETIQUETA VACÍA O CON ESPACIOS NO ES UNA MARCA DE NOTA
+  If sEtiqueta = "" Or If String.InStr(sEtiqueta, " ") > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El cursor no está sobre una marca de nota [^N].")
+    FMain.txtEditorProyecto.SetFocus()
+    Return
+  Endif
+
+  sMarca = "[^" & sEtiqueta & "]"
+
+  ' ES LA DEFINICIÓN SI LA MARCA ABRE LA LÍNEA Y LA SIGUEN DOS PUNTOS
+  bEsDefinicion = False
+  If iIni = 1 Then
+    If String.Mid(sLinea, iFin + 1, 1) = ":" Then bEsDefinicion = True
+  Endif
+
+  sTexto = m_EditorPrincipal.Texto()
+
+  ' --- 3. DESDE LA MARCA: IR A LA DEFINICIÓN ---
+  If Not bEsDefinicion Then
+    aLineas = Split(sTexto, Chr(10))
+    For i = 0 To aLineas.Max
+      If String.Left(aLineas[i], String.Len(sMarca) + 1) = sMarca & ":" Then
+        m_EditorPrincipal.IrA(m_EditorPrincipal.PosicionDe(i, 0), String.Len(sMarca))
+        FMain.txtEditorProyecto.SetFocus()
+        Return
+      Endif
+    Next
+    m_Sonido.sonar("Warning")
+    Message.Warning("La nota " & sMarca & " no tiene definición.")
+    FMain.txtEditorProyecto.SetFocus()
+    Return
+  Endif
+
+  ' --- 4. DESDE LA DEFINICIÓN: IR A LA PRIMERA MARCA EN EL TEXTO ---
+  ' SE CUENTAN LAS APARICIONES QUE NO SON DEFINICIÓN (NO LAS SIGUE ":").
+  ' iPrimera QUEDA EN BASE 0, LA BASE DEL EDITOR
+  iPrimera = -1
+  iCuenta = 0
+  iPos = 1
+  Do
+    iPos = String.InStr(sTexto, sMarca, iPos)
+    If iPos = 0 Then Break
+    If String.Mid(sTexto, iPos + String.Len(sMarca), 1) <> ":" Then
+      Inc iCuenta
+      If iPrimera < 0 Then iPrimera = iPos - 1
+    Endif
+    iPos += 1
+  Loop
+
+  If iPrimera < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La nota " & sMarca & " no tiene marca en el texto.")
+    FMain.txtEditorProyecto.SetFocus()
+    Return
+  Endif
+
+  m_EditorPrincipal.IrA(iPrimera, String.Len(sMarca))
+
+  ' VARIAS MARCAS: SE AVISA DESPUÉS DEL SALTO, CON LA PRIMERA YA A LA VISTA
+  If iCuenta > 1 Then
+    m_Sonido.sonar("Info")
+    Message.Info("La nota " & sMarca & " aparece " & CStr(iCuenta) & " veces en el texto." & Chr(10) &
+      "Se muestra la primera.")
+  Endif
+
+  ' --- 5. RESTAURAR FOCO (RC-GM-07) ---
+  FMain.txtEditorProyecto.SetFocus()
 
 End
 

@@ -8,7 +8,7 @@
 '               - m_InicioCierre.RutaProyectoEnCurso           (String, ruta del proyecto)
 '               - m_InicioCierre.ArchivoProyectoEnCurso         (String, ruta archivo principal)
 '               - FMain.sRutaArchivoAbierto      (String, archivo abierto en editor)
-'               - FMain.txtEditorProyecto.Text   (String, contenido del editor)
+'               - m_EditorPrincipal                 (contenido del editor, SC-18)
 ' Componentes formulario:
 '               - btnMayusculaMinuscula  ToggleButton  distingue may/min
 '               - btnExacta              ToggleButton  palabra completa
@@ -36,6 +36,12 @@ Private $aPosicionEnLinea As New Integer[]
 ' --- BLOQUEO DE CIERRE POR LA X DEL SISTEMA ---
 ' SOLO btnCerrar_Click PUEDE PONERLO EN TRUE
 Private bCierrePermitido As Boolean
+
+' LOTE DE «APLICAR TODO» SOBRE EL ARCHIVO ABIERTO EN EL EDITOR: LAS COINCIDENCIAS
+' SE APLICAN SOBRE ESTA COPIA Y SE VUELCAN UNA SOLA VEZ (SC-18)
+Private $bLoteEditor As Boolean
+Private $bLoteModificado As Boolean
+Private $sLoteEditor As String
 
 ' ============================================
 ' Función   : Form_Show
@@ -316,13 +322,27 @@ Public Sub btnAplicarTodo_Click()
     Return
   Endif
 
-  ' --- 3. APLICACIÓN EN ORDEN INVERSO ---
+  ' --- 3. LOTE SOBRE EL ARCHIVO DEL EDITOR ---
+  ' ES UN CAMBIO GLOBAL (SC-18): LAS COINCIDENCIAS DEL ARCHIVO ABIERTO SE
+  ' ACUMULAN SOBRE UNA COPIA DEL TEXTO Y SE VUELCAN AL FINAL EN UNA SOLA
+  ' REASIGNACIÓN. UNA REASIGNACIÓN POR COINCIDENCIA RECOLOREARÍA EL
+  ' DOCUMENTO ENTERO CADA VEZ
+  $bLoteEditor = True
+  $bLoteModificado = False
+  $sLoteEditor = m_EditorPrincipal.Texto()
+
+  ' --- 4. APLICACIÓN EN ORDEN INVERSO ---
   ' DE ABAJO HACIA ARRIBA PARA PRESERVAR POSICIONES VÁLIDAS EN CADA LÍNEA
   For i = $aRutaArchivo.Max To 0 Step -1
     AplicarReemplazoEnArchivo(i, txtBuscarPalabra.Text, sReemplazo)
   Next
 
-  ' --- 4. LIMPIEZA TOTAL DEL GRID Y LOS ARRAYS ---
+  ' --- 5. VOLCADO DEL LOTE: UNA SOLA VEZ; CORTA EL DESHACER ---
+  $bLoteEditor = False
+  If $bLoteModificado Then m_EditorPrincipal.ReemplazarTodo($sLoteEditor)
+  $sLoteEditor = ""
+
+  ' --- 6. LIMPIEZA TOTAL DEL GRID Y LOS ARRAYS ---
   gvBuscarReemplazar.Rows.Count = 0
   LimpiarArrays()
 
@@ -388,9 +408,8 @@ End
 
 ' ============================================================================
 ' Función   : ModificarEnEditor
-' Propósito : Aplicar el reemplazo sobre el contenido del TextEditor de
-'             FMain cuando el archivo objetivo es el que el usuario está
-'             editando en ese momento.
+' Propósito : Aplicar el reemplazo sobre el archivo que el usuario tiene
+'             abierto en el editor de FMain, sin tocar el disco.
 ' Parámetros: iIndiceLinea As Integer — índice de la línea (base 0)
 '             iPosicion    As Integer — posición en CARACTERES (base 1)
 '             sTermino     As String  — término a reemplazar
@@ -398,28 +417,31 @@ End
 ' ============================================================================
 Private Sub ModificarEnEditor(iIndiceLinea As Integer, iPosicion As Integer, sTermino As String, sReemplazo As String)
 
-  Dim sContenido As String
   Dim aLineas As String[]
   Dim sLinea As String
-  Dim sNuevaLinea As String
 
-  ' --- 1. LECTURA DEL CONTENIDO ACTUAL DEL EDITOR ---
-  sContenido = FMain.txtEditorProyecto.Text
-
-  ' --- 2. NORMALIZACIÓN Y SPLIT POR LF ---
-  sContenido = Replace(sContenido, Chr(13) & Chr(10), Chr(10))
-  sContenido = Replace(sContenido, Chr(13), Chr(10))
-  aLineas = Split(sContenido, Chr(10))
-
-  ' --- 3. REEMPLAZO EN LA LÍNEA OBJETIVO ---
-  If iIndiceLinea >= 0 And iIndiceLinea <= aLineas.Max Then
-    sLinea = aLineas[iIndiceLinea]
-    sNuevaLinea = ReemplazarEnPosicion(sLinea, sTermino, sReemplazo, iPosicion)
-    aLineas[iIndiceLinea] = sNuevaLinea
-
-    ' --- 4. VOLCADO DE VUELTA AL EDITOR ---
-    FMain.txtEditorProyecto.Text = aLineas.Join(Chr(10))
+  ' --- 1. DENTRO DE «APLICAR TODO»: SE TRABAJA SOBRE LA COPIA DEL LOTE ---
+  If $bLoteEditor Then
+    aLineas = Split($sLoteEditor, Chr(10))
+    If iIndiceLinea < 0 Then Return
+    If iIndiceLinea > aLineas.Max Then Return
+    aLineas[iIndiceLinea] = ReemplazarEnPosicion(aLineas[iIndiceLinea], sTermino, sReemplazo, iPosicion)
+    $sLoteEditor = aLineas.Join(Chr(10))
+    $bLoteModificado = True
+    Return
   Endif
+
+  ' --- 2. REEMPLAZO SUELTO: CAMBIO PUNTUAL, CONSERVA EL DESHACER (SC-18) ---
+  ' MISMA VALIDACIÓN QUE ReemplazarEnPosicion: FUERA DE LA LÍNEA NO SE TOCA NADA.
+  ' If SEPARADOS: Or NO CORTOCIRCUITA (RC-GM-17)
+  If iIndiceLinea < 0 Then Return
+  If iIndiceLinea > m_EditorPrincipal.CantidadParrafos() - 1 Then Return
+  sLinea = m_EditorPrincipal.TextoParrafo(iIndiceLinea)
+  If iPosicion < 1 Then Return
+  If iPosicion > String.Len(sLinea) Then Return
+
+  ' iPosicion ES BASE 1; PosicionDe TOMA LA COLUMNA EN BASE 0. SI FALLA, EL MÓDULO YA INFORMÓ
+  m_EditorPrincipal.ReemplazarTramo(m_EditorPrincipal.PosicionDe(iIndiceLinea, iPosicion - 1), String.Len(sTermino), sReemplazo)
 
 End
 
