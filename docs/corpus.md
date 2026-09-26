@@ -1106,7 +1106,7 @@ Un formulario sin botón de cerrar necesita una salida propia en la interfaz: un
 
 ### SC-21 — Snippets del editor: un archivo por snippet en ~/.gbpublisher/snippets/
 
-**Estado:** vigente · **Evidencia:** inferida · **Entorno:** Gambas 3.22.1 / gb.qt5 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
 
 DECISIÓN CERRADA. El editor principal (`txtEditorProyecto`) expande abreviaturas de tres caracteres en fragmentos de texto definidos por cada usuario. La lógica vive en `m_Snippets`; el acceso al editor pasa por `m_EditorPrincipal` (SC-18).
 
@@ -1170,9 +1170,24 @@ FORMULARIO
 - Botones Nuevo, Guardar y Borrar. Guardar escribe por abreviatura; si se cambió el nombre de un snippet existente, pregunta si se renombra o se duplica. Borrar pide confirmación. No se guarda un cuerpo vacío.
 - Escape cierra (contrapartida de SC-20).
 
+VERIFICADO EN USO (Gambas 3.22.1 / Linux Mint, 2026-09)
+
+- Ctrl+Tab llega al `KeyPress` del `TextEdit`: `Key.Control` en True y `Key.Code = Key.Tab` (16777217, el código de Tab en Qt). Apretar Ctrl solo ya dispara un `KeyPress` propio, con código 16777249: el handler tiene que filtrar por las dos condiciones.
+- `Stop Event` alcanza: el Tab no se inserta en el texto ni mueve el foco. El handler lo aplica siempre, se expanda o no, y devuelve el foco al editor al final (RC-GM-07).
+- Un snippet de bloque escrito a mitad de línea no se expande y muestra el mensaje; escrito solo en su línea, se expande con sus saltos de línea.
+
+DOS PROTECCIONES DE Expandir
+
+- Antes de escribir, comprueba que el texto en la posición calculada (`Pos` menos 3) sea la abreviatura. La columna sale de `Index` y la posición de `Pos`: si alguna vez no coincidieran, se reemplazaría otro tramo.
+- Si `ReemplazarTramo` rechaza el tramo, devuelve False sin avisar; `Expandir` avisa por su cuenta, para que no sea un canal mudo (GV-23).
+
+LÍMITE ACEPTADO
+
+`m_FuncionesGenericas.EsLetra` reconoce ASCII, Latin-1, Latin Extended A y B y los diacríticos combinantes (GV-03). Una letra griega o cirílica pegada delante de la abreviatura no la frena.
+
 **Relaciones:** vinculo:SC-17, vinculo:SC-11, vinculo:SC-18, vinculo:SC-02, vinculo:RC-GM-07, vinculo:RC-GM-12, vinculo:SC-20, vinculo:GV-39
 
-**PENDIENTE:** Mini-test en banco, con un TextEdit dentro de un TabStrip y un tema oscuro, antes de escribir el módulo: (1) que Ctrl+Tab llegue a KeyPress, y cómo leerlo (Key.Code / Key.Control); (2) que Stop Event impida que Qt use la tecla para mover el foco o cambiar de pestaña; si falla, elegir otra combinación y corregir esta entrada; (3) cuántos Ctrl+Z deshacen una expansión (Select + Insert); (4) que un Insert con saltos de línea cree párrafos y que .Text vuelva idéntico; (5) si las líneas vacías del cuerpo salen con el color por omisión hasta el guardado (GV-54); (6) qué función de Gambas distingue de forma fiable una letra Unicode multibyte de un signo (candidata: m_FuncionesGenericas.EsLetra, GV-03, que cubre ASCII y Latin-1).
+**PENDIENTE:** Queda por medir con un snippet de bloque: (1) cuántos Ctrl+Z deshacen una expansión (Select + Insert); (2) que el texto vuelva idéntico por .Text después de expandir (la separación en líneas se vio bien a simple vista); (3) si las líneas vacías del cuerpo salen con el color por omisión hasta el guardado en un tema oscuro (GV-54).
 
 ---
 
@@ -2614,3 +2629,23 @@ Medido en banco:
 CONSECUENCIA: dos grupos de opciones independientes necesitan un contenedor cada uno. Aplicado en la pestaña «Estructura»: `hbProfundidad` y `hbAlcance`, uno debajo del otro (SC-18).
 
 **Relaciones:** vinculo:SC-18
+
+### GV-56 — Una referencia a un miembro inexistente de otro módulo compila: la falla queda para la ejecución
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-09
+
+Caso de la sesión que implementó los snippets (SC-21). `m_Snippets.Expandir` usaba `m_Constantes.SNIPPET_MARCADOR` antes de que la constante existiera en `m_Constantes`. Limpiar y Compilar no dio ningún error; la aplicación arrancó y el formulario de snippets funcionó.
+
+La falla en ejecución no se llegó a observar: la constante se agregó antes de que esa línea corriera.
+
+POR QUÉ IMPORTA
+
+Que el proyecto compile no prueba que existan los miembros que un módulo usa de otro. El error aparece recién cuando la línea se ejecuta, que puede ser mucho después y lejos de donde está la causa. Es la misma familia que GV-32 y GV-23.
+
+REGLA
+
+Un parche que agrega una referencia a un miembro de otro módulo —constante, variable, función— entra en el MISMO lote que el alta de ese miembro, y el lote se aplica entero antes de recompilar. Ante la duda, buscar el nombre en `.src` antes de dar el parche por aplicado: no alcanza con que compile.
+
+**Relaciones:** vinculo:GV-32, apoya:GV-23, vinculo:SC-03, vinculo:SC-21
+
+**PENDIENTE:** Falta provocar la falla a propósito, ejecutando la línea sin el miembro, para registrar el mensaje exacto de ejecución.
