@@ -1005,8 +1005,8 @@ LO QUE REEMPLAZA A LO QUE NO TIENE TextEdit
   Cada nodo guarda archivo y línea (`CTituloMD`). Se reconstruye completo al abrir el proyecto y cuando cambia la lista de archivos; al guardar se rehacen solo los títulos del archivo guardado; al cambiar de archivo no se reconstruye, se despliega ese capítulo y se pliegan los demás. Medido en banco: 32 archivos y 3,7 MB, 800 títulos, en 0,02 s.
   Un click pasa por el aviso de SC-06, cambia de archivo por el combobox si hace falta (GV-53), lleva el cursor al título, lo deja en la primera línea de la vista (GV-52) y devuelve el foco al editor. Solo mouse, como TeXstudio. Si el archivo abierto tiene cambios sin guardar, el título se reubica por su texto, buscando desde la línea guardada hacia afuera.
   El árbol sigue al cursor: marca el título de la sección donde está, 300 ms después del último movimiento. La sección se calcula sobre el texto del editor y el nodo se busca por texto y nivel.
-  Filtros por `Visible`, sin reconstruir el árbol: profundidad (capítulo, `##`, `###`, todo) y, a prueba, alcance por prefijo (`fm-`, `a-`, `bm-`). Dos grupos de RadioButton, cada uno en su HBox dentro de `hbRadioButtons` (GV-55).
-  Cuando esté completo reemplaza a `VerificarEstructuraMD`.
+  Filtros por `Visible`, sin reconstruir el árbol: profundidad (capítulo, `##`, `###`, todo) y, a prueba, alcance por prefijo (`fm-`, `a-`, `bm-`). Dos grupos de RadioButton, cada uno en su HBox (`hbProfundidad` y `hbAlcance`), uno debajo del otro: en fila, en la pantalla de una notebook se perdían los dos últimos (GV-55).
+  No reemplaza a `VerificarEstructuraMD`, que sigue vigente: se usa apenas termina la conversión de Word a Markdown, cuando lo que llega de Word trae títulos sueltos y saltos de nivel. El árbol muestra la estructura; no la valida.
 - Numeración al margen: número de párrafo del cursor en la barra de estado. Ir a la línea N (`tbGoTo`) se conserva calculando la posición sobre `.Text`.
 
 REGLAS DEL CONTROL QUE APLICAN
@@ -1029,7 +1029,7 @@ Todo acceso al editor que no sea trivial (foco, fuente, visibilidad) pasa por `m
 
 **Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16, vinculo:GV-51, vinculo:GV-52, vinculo:GV-53, vinculo:GV-54, vinculo:GV-55
 
-**PENDIENTE:** Migración integrada y probada en 3.22.1: carga y cambio de archivo, guardado, búsqueda, notas, barra de herramientas, ortografía y cambio de tema. Árbol (m_Estructura): escrito y probado en banco 3.19; falta probarlo en 3.22.1. Refresco incremental no implementado: Refrescar recolorea todo, 1,2 s sobre 2.000 párrafos en el banco.
+**PENDIENTE:** Migración integrada y probada en 3.22.1: carga y cambio de archivo, guardado, búsqueda, notas, barra de herramientas, ortografía y cambio de tema. Árbol (m_Estructura): probado en 3.22.1 con un libro real. Refresco incremental no implementado: Refrescar recolorea todo, 1,2 s sobre 2.000 párrafos en el banco.
 
 ### SC-19 — Scripts de actualización del corpus: contrato con el importador
 
@@ -1061,6 +1061,10 @@ LO QUE EL SCRIPT NO DEBE TRAER
 
 - `PRAGMA foreign_keys`: el importador ya lo emite, y dentro de una transacción no tiene efecto.
 - Una comprobación de `esquema_version`: la hace el importador contra la línea `-- Esquema` de la cabecera.
+
+COTEJO PREVIO A REDACTAR UN SCRIPT
+
+El `corpus.md` adjunto al proyecto de trabajo con Claude se coteja con `docs/corpus.md` del repositorio de gbpublisher, clonado con `git clone --depth 1`: mismas entradas, mismos estados y pasajes testigo idénticos. Si difieren, se trabaja contra el más reciente y se avisa antes de escribir nada. Es lo que garantiza que un código nuevo esté libre y que un texto a reemplazar exista tal como se lo cita.
 
 **Relaciones:** vinculo:RF-08, vinculo:SC-13
 
@@ -1099,6 +1103,76 @@ Un formulario sin botón de cerrar necesita una salida propia en la interfaz: un
 **Relaciones:** vinculo:GV-50, vinculo:GV-11
 
 **PENDIENTE:** WAYLAND: sin verificar, ver GV-50. Tampoco está verificada la variante FijarBotones(Me, True), que conserva el botón de cerrar.
+
+### SC-21 — Snippets del editor: un archivo por snippet en ~/.gbpublisher/snippets/
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** Gambas 3.22.1 / gb.qt5 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. El editor principal (`txtEditorProyecto`) expande abreviaturas de tres caracteres en fragmentos de texto definidos por cada usuario. La lógica vive en `m_Snippets`; el acceso al editor pasa por `m_EditorPrincipal` (SC-18).
+
+CONTENIDO, NO PREFERENCIA
+
+Un snippet es contenido del usuario, como un `.csl`. Por eso no va en `gbpublisher.conf`, y esto no contradice SC-17, que rige solo las preferencias.
+
+Son personales: cada usuario tiene sus propias lógicas de trabajo, y no hay juego de la casa. No se guarda nada en la base.
+
+ALMACENAMIENTO
+
+- Carpeta `~/.gbpublisher/snippets/`. La crea vacía `m_InicioCierre.DirectorioOcultoApp()` si no existe. NO entra en la lista de copia de SC-11, porque no hay nada que copiar desde el sistema. Si algún día existiera un juego base, recién entonces se agrega a la lista.
+- Un archivo por snippet: `<abreviatura>.txt`. El nombre del archivo es la abreviatura y el contenido es el cuerpo, literal, en UTF-8 (`File.Load` / `File.Save`, SC-02). Sin metadatos, sin índice y sin formato propio.
+- Guardar es `File.Save`, borrar es `Kill` y renombrar es `Move`. `Move` no pisa un destino existente (GV-39): renombrar hacia una abreviatura que ya existe se rechaza antes, con mensaje.
+- Al leer se quita UN salto de línea final, si lo hay: los editores externos lo agregan al guardar.
+- Se carga en memoria al arrancar y se recarga después de cada alta, cambio o baja desde el formulario. La expansión nunca lee el disco.
+- Al cargar se ignora todo archivo cuyo nombre no cumpla el patrón, como los respaldos del tipo `sc1.txt~` o los archivos ajenos.
+
+NOMBRE
+
+Exactamente tres caracteres, cada uno en `0-9` o `a-z` ASCII. Se excluye todo lo demás, MAYÚSCULAS incluidas: Linux distingue mayúsculas de minúsculas, y `Sc1` y `sc1` serían dos snippets que en pantalla se confunden. El formulario RECHAZA el nombre inválido con un mensaje; no lo convierte en silencio.
+
+Tres caracteres fijos, a propósito: permiten variantes numeradas (`sc1`, `sc2`) y hacen exacta la regla de recorte.
+
+DISPARO: Ctrl+Tab
+
+Se expande si se cumplen las dos condiciones:
+
+1. Los tres caracteres inmediatamente anteriores al cursor forman una abreviatura existente.
+2. El carácter anterior a esos tres NO es una letra ni un dígito, en cualquier alfabeto, o bien la abreviatura empieza en la columna 0. La comprobación usa `String.*` (RC-GM-12): con una comprobación que solo mire ASCII, en `Ésc1` se expandiría `sc1`.
+
+Lo que protege contra las coincidencias casuales es esta regla, no que la tecla sea rara. La tecla necesita un modificador porque Tab solo sangra listas y bloques de código en Markdown.
+
+BLOQUE O LÍNEA: LO DECIDE EL CUERPO
+
+- Cuerpo de una sola línea: snippet EN LÍNEA. Se expande en cualquier punto donde se cumpla el disparo.
+- Cuerpo con saltos de línea: snippet DE BLOQUE. Además, la línea tiene que contener SOLO la abreviatura, desde la columna 0 y sin nada después. Es la misma condición que ya usa la inserción de figuras y tablas.
+
+No hay campo «tipo». Un bloque nunca parte un párrafo: un `:::` a mitad de línea es un error que Pandoc interpreta mal y que cuesta encontrar.
+
+INSERCIÓN
+
+La abreviatura se reemplaza con `m_EditorPrincipal.ReemplazarTramo`, que conserva el deshacer (SC-18). El texto nuevo hereda el color del vecino hasta el próximo guardado.
+
+Marcador de posición: `•` (U+2022). Si el cuerpo lo tiene, al expandir queda seleccionado el primero; si no, el cursor queda al final de lo insertado.
+
+FALLO
+
+`m_Sonido.sonar("Error")` y `Message.Error` con el motivo exacto, no un aviso en la barra de estado: el usuario puede no advertir que escribió mal la abreviatura, o que la borró o la cambió y no lo recuerda.
+
+    sc4: no existe ese snippet.
+    sc1: es de bloque; tiene que estar sola en su línea.
+
+Después del mensaje, el handler devuelve el foco al editor (RC-GM-07).
+
+FORMULARIO
+
+- `btnSnippets`, en el editor, abre el formulario.
+- El nombre va en un campo de texto y el cuerpo en un `TextArea` (gb.qt5): texto plano, con tipografía monoespaciada. `TextEdit` no, porque traería formato al pegar.
+- La lista es un `GridView` con la abreviatura, si es de bloque o en línea (calculado al cargar) y la primera línea del cuerpo como vista previa.
+- Botones Nuevo, Guardar y Borrar. Guardar escribe por abreviatura; si se cambió el nombre de un snippet existente, pregunta si se renombra o se duplica. Borrar pide confirmación. No se guarda un cuerpo vacío.
+- Escape cierra (contrapartida de SC-20).
+
+**Relaciones:** vinculo:SC-17, vinculo:SC-11, vinculo:SC-18, vinculo:SC-02, vinculo:RC-GM-07, vinculo:RC-GM-12, vinculo:SC-20, vinculo:GV-39
+
+**PENDIENTE:** Mini-test en banco, con un TextEdit dentro de un TabStrip y un tema oscuro, antes de escribir el módulo: (1) que Ctrl+Tab llegue a KeyPress, y cómo leerlo (Key.Code / Key.Control); (2) que Stop Event impida que Qt use la tecla para mover el foco o cambiar de pestaña; si falla, elegir otra combinación y corregir esta entrada; (3) cuántos Ctrl+Z deshacen una expansión (Select + Insert); (4) que un Insert con saltos de línea cree párrafos y que .Text vuelva idéntico; (5) si las líneas vacías del cuerpo salen con el color por omisión hasta el guardado (GV-54); (6) qué función de Gambas distingue de forma fiable una letra Unicode multibyte de un signo (candidata: m_FuncionesGenericas.EsLetra, GV-03, que cubre ASCII y Latin-1).
 
 ---
 
@@ -2527,7 +2601,7 @@ Verificado en 3.19 y en 3.22.1. La ida y vuelta por `.Text` sigue siendo exacta.
 
 ### GV-55 — RadioButton: la exclusión mutua es por contenedor directo
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble y Gambas 3.22.1 / gb.qt5 / Linux Mint · **Verificado:** 2026-09
 
 Los `RadioButton` se excluyen entre sí solo con sus hermanos del mismo contenedor. Uno que esté en otro contenedor, aunque sea hijo del mismo padre, no se desmarca.
 
@@ -2537,8 +2611,6 @@ Medido en banco:
     en dos HBox hijos del mismo HBox           los dos quedan marcados
     dos en el mismo HBox hijo                  se excluyen
 
-CONSECUENCIA: dos grupos de opciones independientes necesitan un contenedor cada uno. Aplicado en la pestaña «Estructura»: `hbProfundidad` y `hbAlcance` dentro de `hbRadioButtons` (SC-18).
+CONSECUENCIA: dos grupos de opciones independientes necesitan un contenedor cada uno. Aplicado en la pestaña «Estructura»: `hbProfundidad` y `hbAlcance`, uno debajo del otro (SC-18).
 
 **Relaciones:** vinculo:SC-18
-
-**PENDIENTE:** Medido en 3.19; no verificado en 3.22.1.
