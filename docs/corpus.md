@@ -908,7 +908,7 @@ DECISIÓN CERRADA. Aplicada en el visor XML (`txtEditorXML`, solo lectura).
 
 MECANISMO
 
-El color no se aplica con `Format` (GV-46). `CVisorResaltado` corre `TextHighlighter.Run` una vez por párrafo (RF-10), guarda el resultado en un `Byte[][]` y arma un HTML: un `<p>` por párrafo con `white-space:pre-wrap` y un `<span>` con estilo por tramo. Lo asigna con `RichText`. Cambiar de tema rearma el HTML desde la caché sin volver a correr `Run`.
+El color no se aplica con `Format` (GV-46). `CVisorResaltado` corre `TextHighlighter.Run` una vez por párrafo (RF-10), guarda el resultado en un `Byte[][]` y arma un HTML: un `<p>` por párrafo con `white-space:pre-wrap` y un `<span>` con estilo por tramo. Lo asigna con `RichText`. Cambiar de tema rearma el HTML desde la caché sin volver a correr `Run`, salvo que el texto del control ya no coincida con la caché: en un control editable (SC-18) se analiza de nuevo antes de pintar. Sin esa comprobación, un cambio de tema devolvía el editor al texto del último análisis y se perdía lo escrito; verificado en banco.
 
 La ida y vuelta es exacta: un capítulo de 392.713 caracteres volvió idéntico por `.Text`, con la salvedad de GV-47.
 
@@ -1008,11 +1008,24 @@ LO QUE REEMPLAZA A LO QUE NO TIENE TextEdit
 
 REGLAS DEL CONTROL QUE APLICAN
 
-Nunca escribir `Pos`; mover el cursor con `Select(Posicion, 0)` (GV-44). No usar `ToPos` (GV-45). `.Text` normaliza el espacio duro, y la política del proyecto es que los .md no lo lleven (GV-47).
+Nunca escribir `Pos`; mover el cursor con `Select(Posicion, 0)` (GV-44). No usar `ToPos` (GV-45) ni `ToParagraph` / `ToIndex` (GV-44). `.Text` normaliza el espacio duro, y la política del proyecto es que los .md no lo lleven (GV-47).
+
+MÓDULO m_EditorPrincipal
+
+Todo acceso al editor que no sea trivial (foco, fuente, visibilidad) pasa por `m_EditorPrincipal`, y los formularios lo llaman desde sus handlers. Ahí viven las reglas del control; ningún formulario tiene que conocerlas.
+
+- Carga y refresco: `Cargar` (puntos 1 y 2) y `Refrescar` (punto 3), sobre un `CVisorResaltado` con la gramática `markdown`.
+- Escrituras, modelo mixto. El cambio global —reemplazar todo, aplicar todas las correcciones, reprocesar footnotes— usa `ReemplazarTodo`, que reasigna el HTML y corta el deshacer. El cambio puntual —una corrección, una footnote, una inserción— usa `ReemplazarTramo` o `Insertar` (`Select` + `Insert`), que conservan el deshacer; el texto nuevo hereda el color del vecino hasta el próximo guardado.
+- Cambios sin guardar: `HayCambios` compara `.Text` con el del último punto de control (`MarcarGuardado`). No se usa el evento `Change`, que se dispara también al colorear (GV-46).
+- Posiciones: `ParrafoActual` y `ColumnaActual` leen `Paragraph` e `Index`, equivalentes de `Line` y `Column` porque cada línea del .md es un párrafo (SC-15). `PosicionDe(línea, columna)` calcula sobre `.Text`.
+- Saltos: `IrA` deja la primera línea del PÁRRAFO arriba de la vista (GV-52) y después selecciona: una palabra en la tercera fila visual queda a la vista sin nuevo desplazamiento. Excepción aceptada: un párrafo más alto que la vista. Reemplaza a `GotoCenter`.
+- Ortografía: la palabra queda seleccionada, sin color. `HighlightString` no tiene equivalente, y colorear con `Format` entra en el deshacer (GV-46).
+- Mayúsculas y minúsculas: `CambiarCaja`, con las tablas de GV-03 y no con `UCase` / `LCase`.
+- Las funciones no devuelven el foco: lo hace el handler al final del evento (RC-GM-07). Así sirven también desde los diálogos de búsqueda y ortografía.
 
 **Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16, vinculo:GV-51, vinculo:GV-52, vinculo:GV-53
 
-**PENDIENTE:** Implementación. Falta diseñar la migración de txtEditorProyecto: inventario de usos en los nueve archivos que lo tocan, traducción de línea/columna a posición absoluta, marcado del corrector ortográfico, inserciones de la barra de herramientas y la marca de «modificado» (Format y RichText disparan Change, GV-46). Llevar una coincidencia al tope de la vista: resuelto pasando antes por el final del documento (GV-52). Árbol: falta decidir de dónde salen las posiciones del archivo abierto con cambios sin guardar (el editor o el disco) y en qué momentos se reconstruye.
+**PENDIENTE:** Implementación: m_EditorPrincipal y el parche de CVisorResaltado están escritos y pasaron el banco en 3.19; falta integrarlos en los nueve archivos que tocan txtEditorProyecto y probar en 3.22.1. Refresco incremental no implementado: Refrescar recolorea todo, 1,2 s sobre 2.000 párrafos en el banco. Llevar una coincidencia al tope de la vista: resuelto pasando antes por el final del documento (GV-52). Árbol: falta decidir de dónde salen las posiciones del archivo abierto con cambios sin guardar (el editor o el disco) y en qué momentos se reconstruye.
 
 ### SC-19 — Scripts de actualización del corpus: contrato con el importador
 
@@ -2281,7 +2294,15 @@ REGLA: en `TextEdit` nunca se escribe `Pos`. Para mover el cursor sin selecciona
 
 `Select` usa `setPosition` directamente y no pasa por la caché. LEER `Pos` sí es confiable.
 
+LA MISMA CACHÉ EN OTRAS DOS FUNCIONES
+
+`ToParagraph(Pos)` y `ToIndex(Pos)` pasan por `from_pos`, que compara contra la misma longitud en caché: si la posición pedida la supera, devuelven el final del documento. No se usan.
+
+`Paragraph` e `Index` en LECTURA no tienen el problema: leen `blockNumber()` y la posición del cursor menos la del bloque, en el momento. Verificados en banco como equivalentes de `Line` y `Column` de `TextEditor`.
+
 **Relaciones:** vinculo:RC-GM-21, vinculo:GV-45, apoya:GV-23
+
+**PENDIENTE:** ToParagraph y ToIndex: leído en el fuente de CTextEdit.cpp, no medido en ejecución.
 
 ### GV-45 — TextEdit.ToPos cuenta mal
 

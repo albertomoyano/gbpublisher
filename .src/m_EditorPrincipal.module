@@ -1,0 +1,551 @@
+' Gambas module file
+
+' EDITOR PRINCIPAL DE MARKDOWN (txtEditorProyecto) SOBRE TextEdit DE gb.qt5.ext (SC-18).
+'
+' TODO ACCESO AL EDITOR QUE NO SEA TRIVIAL (FOCO, FUENTE, VISIBILIDAD) PASA POR
+' ESTE MÓDULO. ACÁ VIVEN LAS REGLAS DEL CONTROL, PARA QUE NINGÚN FORMULARIO
+' TENGA QUE CONOCERLAS:
+'   - NUNCA SE ESCRIBE Pos (GV-44); EL CURSOR SE MUEVE CON Select(Posicion, 0)
+'   - NO SE USAN ToPos, ToParagraph NI ToIndex: CUENTAN MAL O LEEN LA CACHÉ DE
+'     GV-44 (GV-45). LAS POSICIONES SE CALCULAN SOBRE .Text
+'   - LAS POSICIONES SON EN CARACTERES: String.*, NUNCA Len NI InStr PARA
+'     CALCULARLAS (RC-GM-21, RC-GM-12)
+'   - EL COLOR SE APLICA REASIGNANDO EL HTML (SC-15), SOLO EN LOS PUNTOS FIJOS
+'     DE SC-18: ABRIR, CAMBIAR DE ARCHIVO, GUARDAR. REASIGNAR VACÍA EL DESHACER (GV-46)
+'   - ESCRITURAS: MIXTO. EL REEMPLAZO GLOBAL REASIGNA EL HTML COMPLETO; EL CAMBIO
+'     PUNTUAL VA POR Select + Insert Y CONSERVA EL DESHACER. EL TEXTO NUEVO HEREDA
+'     EL COLOR DEL VECINO HASTA EL PRÓXIMO GUARDADO
+'   - IR A UNA POSICIÓN DEJA LA PRIMERA LÍNEA DEL PÁRRAFO ARRIBA DE LA VISTA (GV-52)
+'
+' LAS FUNCIONES NO DEVUELVEN EL FOCO AL EDITOR: LO HACE EL HANDLER QUE LAS LLAMA,
+' AL FINAL DEL EVENTO (RC-GM-07). ASÍ SIRVEN TAMBIÉN DESDE DIÁLOGOS (ORTOGRAFÍA,
+' BÚSQUEDA) QUE DEBEN CONSERVAR SU PROPIO FOCO.
+
+Private $hEditor As TextEdit
+Private $hVisor As CVisorResaltado
+
+' TEXTO TAL COMO QUEDÓ EN EL ÚLTIMO PUNTO DE CONTROL (CARGA O GUARDADO).
+' SE TOMA DE .Text Y NO DEL ARCHIVO, PARA COMPARAR SIEMPRE LO MISMO CON LO MISMO (GV-47)
+Private $sContenidoGuardado As String
+
+' ============================================
+' Función   : Iniciar
+' Propósito : Asociar el módulo al control y crear su visor coloreado
+' Parámetros: hEditor As TextEdit — el editor principal (FMain.txtEditorProyecto)
+' Retorna   : Boolean — True si el editor quedó listo; False si falló (ya informado)
+' ============================================
+Public Function Iniciar(hEditor As TextEdit) As Boolean
+
+  ' --- 1. CONTROL ---
+  $hEditor = hEditor
+  $sContenidoGuardado = ""
+
+  ' --- 2. VISOR: REGISTRA LA GRAMÁTICA, APLICA TEMA Y TIPOGRAFÍA (SC-15) ---
+  ' SI FALLA, m_ResaltadoSintaxis YA INFORMÓ; EL EDITOR QUEDA SIN COLOR Y SIN VISOR
+  $hVisor = m_ResaltadoSintaxis.CrearVisor($hEditor, "markdown")
+  If Not $hVisor Then Return False
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Cargar
+' Propósito : Mostrar un archivo nuevo coloreado y tomarlo como punto de control
+' Parámetros: sContenido As String — contenido del .md recién leído
+' Retorna   : Boolean — True si se cargó
+' ============================================
+Public Function Cargar(sContenido As String) As Boolean
+
+  ' --- 1. PUNTOS DE REFRESCO 1 Y 2 DE SC-18: ABRIR Y CAMBIAR DE ARCHIVO ---
+  ' Mostrar DEJA EL CURSOR Y LA VISTA AL PRINCIPIO
+  If Not MostrarTexto(sContenido) Then Return False
+
+  ' --- 2. PUNTO DE CONTROL ---
+  MarcarGuardado()
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Refrescar
+' Propósito : Volver a colorear el texto actual después de un guardado exitoso
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se refrescó
+' ============================================
+Public Function Refrescar() As Boolean
+
+  ' PUNTO DE REFRESCO 3 DE SC-18. EL LLAMADOR SOLO LO INVOCA SI LA ESCRITURA SE
+  ' COMPLETÓ: SI FALLÓ, EL HISTORIAL DE DESHACER ES LO ÚNICO QUE QUEDA DEL TRABAJO
+  Return ReemplazarConservandoVista($hEditor.Text)
+
+End
+
+' ============================================
+' Función   : Texto
+' Propósito : Dar el contenido actual del editor
+' Parámetros: ninguno
+' Retorna   : String — el texto plano (normalizado por Qt, GV-47)
+' ============================================
+Public Function Texto() As String
+
+  Return $hEditor.Text
+
+End
+
+' ============================================
+' Función   : LargoTexto
+' Propósito : Dar el largo del contenido en caracteres
+' Parámetros: ninguno
+' Retorna   : Integer — cantidad de caracteres
+' ============================================
+Public Function LargoTexto() As Integer
+
+  ' String.Len, NO Len: Len CUENTA BYTES (RC-GM-12)
+  Return String.Len($hEditor.Text)
+
+End
+
+' ============================================
+' Función   : ReemplazarTodo
+' Propósito : Reemplazar el contenido completo (cambio global) conservando la vista
+' Parámetros: sContenido As String — contenido nuevo
+' Retorna   : Boolean — True si se reemplazó
+' ============================================
+Public Function ReemplazarTodo(sContenido As String) As Boolean
+
+  ' CAMINO GLOBAL DEL MODELO MIXTO: REEMPLAZAR TODO, APLICAR TODAS LAS CORRECCIONES,
+  ' REPROCESAR FOOTNOTES. EL HTML COMPLETO CORTA EL DESHACER (GV-46): ES EL COSTO
+  ' ACEPTADO, IGUAL QUE EN UN GUARDADO. NO TOCA EL PUNTO DE CONTROL: EL CAMBIO
+  ' QUEDA PENDIENTE DE GUARDAR
+  Return ReemplazarConservandoVista(sContenido)
+
+End
+
+' ============================================
+' Función   : ReemplazarTramo
+' Propósito : Reemplazar un tramo puntual conservando el historial de deshacer
+' Parámetros: iPos As Integer — comienzo del tramo, en caracteres, base 0
+'             iLargo As Integer — largo del tramo a reemplazar (0 = solo insertar)
+'             sNuevo As String — texto que ocupa su lugar
+' Retorna   : Boolean — True si se reemplazó
+' ============================================
+Public Function ReemplazarTramo(iPos As Integer, iLargo As Integer, sNuevo As String) As Boolean
+
+  Dim iLargoTexto As Integer
+
+  ' --- 1. VALIDACIÓN: EL TRAMO DEBE CAER DENTRO DEL TEXTO ---
+  ' If SEPARADOS: Or NO CORTOCIRCUITA (RC-GM-17)
+  iLargoTexto = LargoTexto()
+  If iPos < 0 Then Return False
+  If iLargo < 0 Then Return False
+  If iPos + iLargo > iLargoTexto Then Return False
+
+  ' --- 2. REEMPLAZO: Insert ESCRIBE SOBRE LA SELECCIÓN Y ENTRA EN LA PILA DE DESHACER ---
+  ' EL TEXTO NUEVO HEREDA EL FORMATO DEL CARÁCTER VECINO; SE RECOLOREA AL GUARDAR (SC-18)
+  $hEditor.Select(iPos, iLargo)
+  Try $hEditor.Insert(sNuevo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo modificar el texto del editor:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. CURSOR AL FINAL DEL TEXTO NUEVO, CALCULADO Y NO LEÍDO ---
+  ' LA POSICIÓN SE CALCULA: NO SE DEPENDE DE CÓMO AJUSTA QT EL CURSOR TRAS LA INSERCIÓN
+  $hEditor.Select(iPos + String.Len(sNuevo), 0)
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Insertar
+' Propósito : Insertar texto en el cursor, reemplazando la selección si la hay
+' Parámetros: sTexto As String — texto a insertar
+' Retorna   : Boolean — True si se insertó
+' ============================================
+Public Function Insertar(sTexto As String) As Boolean
+
+  ' MISMO CAMINO QUE UN CAMBIO PUNTUAL: CONSERVA EL DESHACER
+  Return ReemplazarTramo($hEditor.Selection.Start, $hEditor.Selection.Length, sTexto)
+
+End
+
+' ============================================
+' Función   : MarcarGuardado
+' Propósito : Tomar el contenido actual como punto de control
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub MarcarGuardado()
+
+  ' SE LLAMA AL CARGAR, TRAS UN GUARDADO EXITOSO Y AL DESCARTAR CAMBIOS
+  $sContenidoGuardado = $hEditor.Text
+
+End
+
+' ============================================
+' Función   : HayCambios
+' Propósito : Decir si el contenido difiere del último punto de control
+' Parámetros: ninguno
+' Retorna   : Boolean — True si hay cambios sin guardar
+' ============================================
+Public Function HayCambios() As Boolean
+
+  ' COMPARACIÓN DE TEXTO Y NO EVENTO Change: Change SE DISPARA TAMBIÉN AL
+  ' ASIGNAR RichText, Y ENCENDERÍA LA MARCA SOLO POR COLOREAR (GV-46)
+  Return $hEditor.Text <> $sContenidoGuardado
+
+End
+
+' ============================================
+' Función   : Posicion
+' Propósito : Dar la posición del cursor
+' Parámetros: ninguno
+' Retorna   : Integer — posición en caracteres, base 0
+' ============================================
+Public Function Posicion() As Integer
+
+  ' LEER Pos ES CONFIABLE; LO QUE FALLA ES ESCRIBIRLO (GV-44)
+  Return $hEditor.Pos
+
+End
+
+' ============================================
+' Función   : ParrafoActual
+' Propósito : Dar el párrafo (línea del .md) donde está el cursor
+' Parámetros: ninguno
+' Retorna   : Integer — número de párrafo, base 0; equivale a TextEditor.Line
+' ============================================
+Public Function ParrafoActual() As Integer
+
+  ' Paragraph LEE blockNumber() DEL CURSOR, SIN CACHÉ (CTextEdit.cpp). CON UN <p>
+  ' POR LÍNEA (SC-15), UN PÁRRAFO DE QT ES UNA LÍNEA DEL .md
+  Return $hEditor.Paragraph
+
+End
+
+' ============================================
+' Función   : ColumnaActual
+' Propósito : Dar la columna del cursor dentro de su párrafo
+' Parámetros: ninguno
+' Retorna   : Integer — columna en caracteres, base 0; equivale a TextEditor.Column
+' ============================================
+Public Function ColumnaActual() As Integer
+
+  ' Index LEE posición del cursor MENOS posición del bloque, SIN CACHÉ (CTextEdit.cpp)
+  Return $hEditor.Index
+
+End
+
+' ============================================
+' Función   : HaySeleccion
+' Propósito : Decir si hay texto seleccionado
+' Parámetros: ninguno
+' Retorna   : Boolean — True si la selección no está vacía
+' ============================================
+Public Function HaySeleccion() As Boolean
+
+  Return $hEditor.Selected
+
+End
+
+' ============================================
+' Función   : TextoSeleccionado
+' Propósito : Dar el texto seleccionado
+' Parámetros: ninguno
+' Retorna   : String — la selección como texto plano (saltos como Chr(10))
+' ============================================
+Public Function TextoSeleccionado() As String
+
+  ' EQUIVALE A TextEditor.SelectedText
+  Return $hEditor.Selection.Text
+
+End
+
+' ============================================
+' Función   : InicioSeleccion
+' Propósito : Dar dónde empieza la selección, sin importar hacia qué lado se hizo
+' Parámetros: ninguno
+' Retorna   : Integer — posición en caracteres, base 0
+' ============================================
+Public Function InicioSeleccion() As Integer
+
+  ' Selection.Start ES selectionStart() DE QT: SIEMPRE EL EXTREMO MENOR
+  Return $hEditor.Selection.Start
+
+End
+
+' ============================================
+' Función   : LargoSeleccion
+' Propósito : Dar el largo de la selección
+' Parámetros: ninguno
+' Retorna   : Integer — largo en caracteres; 0 si no hay selección
+' ============================================
+Public Function LargoSeleccion() As Integer
+
+  Return $hEditor.Selection.Length
+
+End
+
+' ============================================
+' Función   : Seleccionar
+' Propósito : Seleccionar un tramo, o solo mover el cursor, sin desplazamiento especial
+' Parámetros: iPos As Integer — comienzo, en caracteres, base 0
+'             iLargo As Integer — largo de la selección (0 = solo mover el cursor)
+' Retorna   : nada
+' ============================================
+Public Sub Seleccionar(iPos As Integer, iLargo As Integer)
+
+  ' Select Y NUNCA Pos (GV-44). QT DESPLAZA LO MÍNIMO PARA QUE EL CURSOR SE VEA
+  $hEditor.Select(iPos, iLargo)
+
+End
+
+' ============================================
+' Función   : IrA
+' Propósito : Llevar el cursor a una posición dejando su párrafo arriba de la vista
+' Parámetros: iPos As Integer — posición destino, en caracteres, base 0
+'             iLargo As Integer — largo a dejar seleccionado desde iPos (opcional)
+' Retorna   : nada
+' ============================================
+Public Sub IrA(iPos As Integer, Optional iLargo As Integer = 0)
+
+  Dim sTexto As String
+  Dim iLargoTexto As Integer
+  Dim iInicioParrafo As Integer
+
+  ' --- 1. INICIALIZACIÓN Y VALIDACIÓN: LA POSICIÓN SE ACOTA AL TEXTO ---
+  sTexto = $hEditor.Text
+  iLargoTexto = String.Len(sTexto)
+  If iPos < 0 Then iPos = 0
+  If iPos > iLargoTexto Then iPos = iLargoTexto
+  If iPos + iLargo > iLargoTexto Then iLargo = iLargoTexto - iPos
+
+  ' --- 2. COMIENZO DEL PÁRRAFO: EL ÚLTIMO SALTO ANTES DE iPos ---
+  ' String.RInStr DEVUELVE LA POSICIÓN BASE 1 DEL SALTO, QUE ES LA BASE 0 DEL
+  ' CARÁCTER SIGUIENTE; 0 SI NO HAY SALTO (PRIMER PÁRRAFO)
+  iInicioParrafo = String.RInStr(String.Left(sTexto, iPos), Chr(10))
+
+  ' --- 3. PÁRRAFO ARRIBA: SE PASA ANTES POR EL FINAL DEL DOCUMENTO (GV-52) ---
+  ' DESDE ABAJO, ensureCursorVisible DEJA EL DESTINO EN LA PRIMERA LÍNEA DE LA VISTA
+  $hEditor.Select(iLargoTexto, 0)
+  $hEditor.EnsureVisible()
+  $hEditor.Select(iInicioParrafo, 0)
+  $hEditor.EnsureVisible()
+
+  ' --- 4. DESTINO: YA ESTÁ A LA VISTA, ASÍ QUE Select NO VUELVE A DESPLAZAR ---
+  ' EXCEPCIÓN ACEPTADA: UN PÁRRAFO MÁS ALTO QUE LA VISTA, DONDE EL DESTINO PUEDE QUEDAR ABAJO
+  $hEditor.Select(iPos, iLargo)
+
+End
+
+' ============================================
+' Función   : IrAlFinal
+' Propósito : Llevar el cursor al final del documento
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub IrAlFinal()
+
+  $hEditor.Select(LargoTexto(), 0)
+  $hEditor.EnsureVisible()
+
+End
+
+' ============================================
+' Función   : PosicionDe
+' Propósito : Convertir línea y columna del .md en posición absoluta
+' Parámetros: iLinea As Integer — línea (párrafo), base 0
+'             iColumna As Integer — columna en caracteres, base 0
+' Retorna   : Integer — posición en caracteres, acotada al texto
+' ============================================
+Public Function PosicionDe(iLinea As Integer, iColumna As Integer) As Integer
+
+  Dim aLineas As String[]
+  Dim iPos As Integer
+  Dim i As Integer
+
+  ' --- 1. INICIALIZACIÓN: SIN TEXTO, TODO ES LA POSICIÓN 0 ---
+  If $hEditor.Text = "" Then Return 0
+  aLineas = Split($hEditor.Text, Chr(10))
+  If iLinea < 0 Then iLinea = 0
+  If iLinea > aLineas.Max Then iLinea = aLineas.Max
+
+  ' --- 2. SUMA DE LOS PÁRRAFOS PREVIOS MÁS SU SALTO (GV-45: NO ToPos) ---
+  For i = 0 To iLinea - 1
+    iPos += String.Len(aLineas[i]) + 1
+  Next
+
+  ' --- 3. COLUMNA, ACOTADA AL PÁRRAFO ---
+  If iColumna < 0 Then iColumna = 0
+  If iColumna > String.Len(aLineas[iLinea]) Then iColumna = String.Len(aLineas[iLinea])
+
+  Return iPos + iColumna
+
+End
+
+' ============================================
+' Función   : CantidadParrafos
+' Propósito : Dar la cantidad de líneas del .md
+' Parámetros: ninguno
+' Retorna   : Integer — cantidad de párrafos; equivale a TextEditor.Count
+' ============================================
+Public Function CantidadParrafos() As Integer
+
+  Dim sTexto As String
+  Dim iPos As Integer
+  Dim iCuenta As Integer
+
+  ' --- 1. UN TEXTO VACÍO TIENE UN PÁRRAFO VACÍO, COMO EL DOCUMENTO DE QT ---
+  sTexto = $hEditor.Text
+  iCuenta = 1
+
+  ' --- 2. CONTEO DE SALTOS: InStr CON OFFSET ES SEGURO PARA CONTAR (RC-GM-12) ---
+  Do
+    iPos = InStr(sTexto, Chr(10), iPos + 1)
+    If iPos = 0 Then Break
+    Inc iCuenta
+  Loop
+
+  Return iCuenta
+
+End
+
+' ============================================
+' Función   : TextoParrafo
+' Propósito : Dar el texto de una línea del .md
+' Parámetros: iLinea As Integer — línea (párrafo), base 0
+' Retorna   : String — el texto de la línea; vacío si está fuera de rango
+' ============================================
+Public Function TextoParrafo(iLinea As Integer) As String
+
+  Dim aLineas As String[]
+
+  ' --- 1. FUERA DE RANGO: VACÍO, SIN ERROR ---
+  If iLinea < 0 Then Return ""
+  If $hEditor.Text = "" Then Return ""
+  aLineas = Split($hEditor.Text, Chr(10))
+  If iLinea > aLineas.Max Then Return ""
+
+  Return aLineas[iLinea]
+
+End
+
+' ============================================
+' Función   : CursorEnLineaVaciaAlInicio
+' Propósito : Verificar que el cursor esté en la columna 0 de una línea vacía o de solo espacios
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se cumplen las dos condiciones, o si el editor está vacío
+' ============================================
+Public Function CursorEnLineaVaciaAlInicio() As Boolean
+
+  ' REEMPLAZA A TRES COPIAS DE LA MISMA VALIDACIÓN: m_FuncionesGenericas.ValidarCursorInicioLineaVacia,
+  ' FTabla.ValidarPosicionCursor Y FMain.ValidarPosicionCursorImagen
+
+  ' --- 1. EDITOR VACÍO: ES VÁLIDO ---
+  If $hEditor.Text = "" Then Return True
+
+  ' --- 2. COLUMNA 0; If SEPARADO PORQUE And NO CORTOCIRCUITA (RC-GM-17) ---
+  If ColumnaActual() <> 0 Then Return False
+
+  ' --- 3. LÍNEA VACÍA O DE SOLO ESPACIOS ---
+  Return Trim(TextoParrafo(ParrafoActual())) = ""
+
+End
+
+' ============================================
+' Función   : CambiarCaja
+' Propósito : Pasar la selección a mayúsculas o minúsculas, conservando la selección
+' Parámetros: bMayusculas As Boolean — True para mayúsculas, False para minúsculas
+' Retorna   : Boolean — True si se aplicó; False si no había selección o falló
+' ============================================
+Public Function CambiarCaja(bMayusculas As Boolean) As Boolean
+
+  Dim aPartes As New String[]
+  Dim sSeleccion As String
+  Dim iInicio As Integer
+  Dim iLargo As Integer
+  Dim i As Integer
+
+  ' --- 1. VALIDACIÓN: HACE FALTA UNA SELECCIÓN ---
+  iInicio = $hEditor.Selection.Start
+  iLargo = $hEditor.Selection.Length
+  If iLargo = 0 Then Return False
+  sSeleccion = $hEditor.Selection.Text
+
+  ' --- 2. PLEGADO CON LAS TABLAS DE GV-03, NO CON UCase NI LCase ---
+  ' LAS NATIVAS DEPENDEN DEL LOCALE: SIN es_AR.UTF-8 NO PLIEGAN LOS ACENTOS.
+  ' CADA CODEPOINT DEVUELVE UN CARÁCTER: EL LARGO SE CONSERVA
+  For i = 1 To String.Len(sSeleccion)
+    If bMayusculas Then
+      aPartes.Add(m_FuncionesGenericas.PlegarAMayuscula(String.Code(String.Mid(sSeleccion, i, 1))))
+    Else
+      aPartes.Add(m_FuncionesGenericas.PlegarAMinuscula(String.Code(String.Mid(sSeleccion, i, 1))))
+    Endif
+  Next
+
+  ' --- 3. REEMPLAZO PUNTUAL: CONSERVA EL DESHACER ---
+  If Not ReemplazarTramo(iInicio, iLargo, aPartes.Join("")) Then Return False
+
+  ' --- 4. SE CONSERVA LA SELECCIÓN PARA ENCADENAR ACCIONES ---
+  $hEditor.Select(iInicio, iLargo)
+
+  Return True
+
+End
+
+' ============================================
+' Función   : MostrarTexto
+' Propósito : Mostrar un texto coloreado; sin visor, como texto plano
+' Parámetros: sContenido As String — texto a mostrar
+' Retorna   : Boolean — True si se mostró
+' ============================================
+Private Function MostrarTexto(sContenido As String) As Boolean
+
+  ' --- 1. CON VISOR: HTML COLOREADO (SC-15); Mostrar YA INFORMA SUS FALLAS ---
+  If $hVisor Then Return $hVisor.Mostrar(sContenido)
+
+  ' --- 2. SIN VISOR (FALLÓ EL RESALTADO AL INICIAR): EL EDITOR SIGUE SIRVIENDO SIN COLOR ---
+  Try $hEditor.Text = sContenido
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo mostrar el texto en el editor:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  ' ASIGNAR Text DEJA EL CURSOR AL FINAL (GV-37)
+  $hEditor.Select(0, 0)
+  $hEditor.ScrollY = 0
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ReemplazarConservandoVista
+' Propósito : Reasignar el contenido completo devolviendo el cursor y la vista a donde estaban
+' Parámetros: sContenido As String — contenido a mostrar
+' Retorna   : Boolean — True si se reasignó
+' ============================================
+Private Function ReemplazarConservandoVista(sContenido As String) As Boolean
+
+  Dim iPos As Integer
+  Dim iScrollY As Integer
+
+  ' --- 1. VISTA ACTUAL: REASIGNAR DEJA EL CURSOR AL FINAL Y MostrarTexto LO LLEVA AL PRINCIPIO ---
+  iPos = $hEditor.Pos
+  iScrollY = $hEditor.ScrollY
+
+  ' --- 2. REASIGNACIÓN ---
+  If Not MostrarTexto(sContenido) Then Return False
+
+  ' --- 3. RESTITUCIÓN, CON EL CURSOR ACOTADO AL TEXTO NUEVO ---
+  If iPos > String.Len(sContenido) Then iPos = String.Len(sContenido)
+  $hEditor.Select(iPos, 0)
+  $hEditor.ScrollY = iScrollY
+
+  Return True
+
+End

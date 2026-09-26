@@ -9,6 +9,11 @@
 '
 ' SE CREA DESDE m_ResaltadoSintaxis.CrearVisor, QUE LO REGISTRA PARA LOS CAMBIOS
 ' DE TEMA Y DE TIPOGRAFÍA.
+'
+' SIRVE TAMBIÉN PARA EL EDITOR PRINCIPAL, QUE ES EDITABLE (SC-18, m_EditorPrincipal).
+' AHÍ LA CACHÉ PUEDE QUEDAR VIEJA ENTRE REFRESCOS: Repintar LO DETECTA Y VUELVE A
+' ANALIZAR EL TEXTO ACTUAL ANTES DE PINTAR, PARA NO DEVOLVER EL CONTROL AL TEXTO
+' DEL ÚLTIMO ANÁLISIS.
 
 Private $hControl As TextEdit
 Private $sGramatica As String
@@ -39,41 +44,22 @@ End
 ' ============================================
 Public Function Mostrar(sTexto As String) As Boolean
 
-  Dim hResaltador As TextHighlighter
-  Dim aEstado As New Short[]
-  Dim aResaltado As Byte[]
-  Dim sParrafo As String
   Dim bResultado As Boolean
 
-  ' --- 1. RESALTADOR DE LA GRAMÁTICA ---
-  hResaltador = m_ResaltadoSintaxis.Resaltador($sGramatica)
-  If Not hResaltador Then Return False
-
-  ' --- 2. ANÁLISIS PÁRRAFO POR PÁRRAFO; EL ESTADO SE ARRASTRA (COMENTARIOS, ETIQUETAS MULTILÍNEA) ---
-  ' UN XML GRANDE TARDA MÁS DE UN SEGUNDO: CURSOR DE ESPERA, LIBERADO EN CADA SALIDA (RC-GM-20)
+  ' --- 1. ANÁLISIS; UN XML GRANDE TARDA MÁS DE UN SEGUNDO: CURSOR DE ESPERA ---
+  ' SE LIBERA EN CADA SALIDA, NO EN Finally (RC-GM-20)
   Inc Application.Busy
-  $aParrafos = Split(sTexto, Chr(10))
-  $aResaltados.Clear()
-  For Each sParrafo In $aParrafos
-    ' Run ESPERA LA LÍNEA COMPLETA CON SU SALTO FINAL
-    Try aResaltado = hResaltador.Run(sParrafo & Chr(10), aEstado)
-    If Error Then
-      Dec Application.Busy
-      m_Sonido.sonar("Error")
-      Message.Error("Falló el análisis del resaltado:" & gb.NewLine & Error.Text)
-      $aParrafos.Clear()
-      $aResaltados.Clear()
-      Return False
-    Endif
-    $aResaltados.Add(aResaltado)
-  Next
+  If Not Analizar(sTexto) Then
+    Dec Application.Busy
+    Return False
+  Endif
 
-  ' --- 3. PINTADO ---
+  ' --- 2. PINTADO ---
   bResultado = Pintar()
   Dec Application.Busy
   If Not bResultado Then Return False
 
-  ' --- 4. ARCHIVO NUEVO: CURSOR Y VISTA AL PRINCIPIO ---
+  ' --- 3. ARCHIVO NUEVO: CURSOR Y VISTA AL PRINCIPIO ---
   ' ASIGNAR RichText DEJA EL CURSOR AL FINAL DEL DOCUMENTO (GV-37).
   ' Select Y NO Pos: LA ESCRITURA DE TextEdit.Pos USA UNA LONGITUD EN CACHÉ QUE NUNCA SE INVALIDA
   $hControl.Select(0, 0)
@@ -93,6 +79,7 @@ Public Function Repintar() As Boolean
 
   Dim iPos As Integer
   Dim iScrollY As Integer
+  Dim sActual As String
   Dim bResultado As Boolean
 
   ' --- 1. NADA MOSTRADO: SOLO EL ASPECTO DEL CONTROL ---
@@ -104,14 +91,26 @@ Public Function Repintar() As Boolean
   ' --- 2. VISTA ACTUAL: ASIGNAR RichText DEJA EL CURSOR AL FINAL ---
   iPos = $hControl.Pos
   iScrollY = $hControl.ScrollY
+  sActual = $hControl.Text
 
-  ' --- 3. PINTADO ---
+  ' --- 3. CONTROL EDITABLE CON CAMBIOS DESDE EL ÚLTIMO ANÁLISIS: SE VUELVE A ANALIZAR ---
+  ' SIN ESTO, PINTAR DESDE LA CACHÉ DEVOLVERÍA EL CONTROL AL TEXTO VIEJO Y SE PERDERÍA
+  ' LO ESCRITO. EN LOS VISORES DE SOLO LECTURA EL TEXTO NUNCA DIFIERE Y NO SE ANALIZA.
+  ' REASIGNAR RichText CORTA IGUAL EL DESHACER (GV-46)
   Inc Application.Busy
+  If sActual <> $aParrafos.Join(Chr(10)) Then
+    If Not Analizar(sActual) Then
+      Dec Application.Busy
+      Return False
+    Endif
+  Endif
+
+  ' --- 4. PINTADO ---
   bResultado = Pintar()
   Dec Application.Busy
   If Not bResultado Then Return False
 
-  ' --- 4. RESTITUCIÓN DE LA VISTA ---
+  ' --- 5. RESTITUCIÓN DE LA VISTA ---
   ' NO SE ESCRIBE TextEdit.Pos: COMPARA CONTRA UNA LONGITUD EN CACHÉ QUE NUNCA SE
   ' INVALIDA (CTextEdit.cpp) Y MANDA EL CURSOR AL FINAL. Select USA setPosition DIRECTO.
   $hControl.Select(iPos, 0)
@@ -146,6 +145,43 @@ Public Sub AplicarAspecto()
   $hControl.Background = m_ResaltadoSintaxis.ColorFondo()
   ' SE REAPLICA DESPUÉS DE CADA CARGA DE RichText (GV-37)
   $hControl.Font = m_ResaltadoSintaxis.FuenteActual()
+
+End
+
+' ============================================
+' Función   : Analizar
+' Propósito : Correr el resaltador sobre un texto y guardar el resultado en la caché
+' Parámetros: sTexto As String — texto a analizar
+' Retorna   : Boolean — True si se analizó; False si falló (ya informado, caché vacía)
+' ============================================
+Private Function Analizar(sTexto As String) As Boolean
+
+  Dim hResaltador As TextHighlighter
+  Dim aEstado As New Short[]
+  Dim aResaltado As Byte[]
+  Dim sParrafo As String
+
+  ' --- 1. RESALTADOR DE LA GRAMÁTICA ---
+  hResaltador = m_ResaltadoSintaxis.Resaltador($sGramatica)
+  If Not hResaltador Then Return False
+
+  ' --- 2. ANÁLISIS PÁRRAFO POR PÁRRAFO; EL ESTADO SE ARRASTRA (COMENTARIOS, ETIQUETAS MULTILÍNEA) ---
+  $aParrafos = Split(sTexto, Chr(10))
+  $aResaltados.Clear()
+  For Each sParrafo In $aParrafos
+    ' Run ESPERA LA LÍNEA COMPLETA CON SU SALTO FINAL
+    Try aResaltado = hResaltador.Run(sParrafo & Chr(10), aEstado)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Falló el análisis del resaltado:" & gb.NewLine & Error.Text)
+      $aParrafos.Clear()
+      $aResaltados.Clear()
+      Return False
+    Endif
+    $aResaltados.Add(aResaltado)
+  Next
+
+  Return True
 
 End
 
