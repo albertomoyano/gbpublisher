@@ -1,0 +1,487 @@
+' Gambas module file
+
+' SNIPPETS PERSONALES DEL EDITOR (SC-21).
+'
+' UN SNIPPET ES UN ARCHIVO EN ~/.gbpublisher/snippets/: EL NOMBRE DEL ARCHIVO
+' ES LA ABREVIATURA Y EL CONTENIDO ES EL CUERPO, LITERAL, EN UTF-8. SIN
+' METADATOS, SIN ÍNDICE Y SIN FORMATO PROPIO: GUARDAR ES File.Save, BORRAR ES
+' Kill Y RENOMBRAR ES Move.
+'
+' EL MÓDULO MANEJA LOS DATOS (CARGA, CONSULTA, ALTA, CAMBIO Y BAJA) Y LA
+' REGLA DE EXPANSIÓN CON Ctrl+Tab. EL EDITOR NO SE TOCA DESDE ACÁ: TODA
+' LECTURA Y ESCRITURA PASA POR m_EditorPrincipal (SC-18).
+'
+' SE CARGA AL ARRANCAR (FAvisoLegal) Y SE RECARGA DESDE FSnippets DESPUÉS DE
+' CADA ALTA, CAMBIO O BAJA. LA EXPANSIÓN NUNCA LEE EL DISCO.
+'
+' LA CARPETA LA CREA m_InicioCierre.DirectorioOcultoApp(). NO ENTRA EN LA
+' LISTA DE COPIA DE SC-11: NO HAY NADA QUE COPIAR DESDE EL SISTEMA.
+
+' EXTENSIÓN DE LOS ARCHIVOS DE SNIPPET
+Private Const EXTENSION As String = "txt"
+
+' VISTA DE LA GRILLA, YA FORMATEADA: EL EVENTO Data SOLO INDEXA (GV-15)
+Private $aNombres As New String[]
+Private $aTipos As New String[]
+Private $aVistas As New String[]
+
+' CUERPOS POR ABREVIATURA. LA CLAVE ES SENSIBLE A MAYÚSCULAS (GV-04), Y LOS
+' NOMBRES VÁLIDOS SON SIEMPRE MINÚSCULAS
+Private $cCuerpos As New Collection
+
+' ============================================
+' Función   : RutaCarpeta
+' Propósito : Ruta de la carpeta de snippets del usuario
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta de ~/.gbpublisher/snippets
+' ============================================
+Public Function RutaCarpeta() As String
+
+  Return User.Home &/ ".gbpublisher" &/ "snippets"
+
+End
+
+' ============================================
+' Función   : RutaArchivo
+' Propósito : Ruta del archivo de un snippet a partir de su abreviatura
+' Parámetros: sNombre As String — abreviatura del snippet
+' Retorna   : String — ruta absoluta de <abreviatura>.txt
+' ============================================
+Private Function RutaArchivo(sNombre As String) As String
+
+  Return RutaCarpeta() &/ sNombre & "." & EXTENSION
+
+End
+
+' ============================================
+' Función   : NombreValido
+' Propósito : Verifica que una abreviatura tenga exactamente tres caracteres,
+'             cada uno en 0-9 o a-z ASCII. Excluye todo lo demás, mayúsculas
+'             incluidas (SC-21)
+' Parámetros: sNombre As String — abreviatura a verificar
+' Retorna   : Boolean — True si la abreviatura es válida
+' ============================================
+Public Function NombreValido(sNombre As String) As Boolean
+
+  Dim iPos As Integer
+  Dim iCodigo As Integer
+
+  ' --- 1. LARGO EXACTO, CONTADO EN CARACTERES Y NO EN BYTES (RC-GM-12) ---
+  If String.Len(sNombre) <> 3 Then Return False
+
+  ' --- 2. CADA CARÁCTER EN 0-9 O a-z ---
+  ' IF ANIDADOS Y NO And: NO SE ENCADENAN OPERADORES LÓGICOS CON COMPARACIONES (GV-12)
+  For iPos = 1 To 3
+    iCodigo = String.Code(String.Mid(sNombre, iPos, 1))
+
+    ' DÍGITOS: 48 A 57
+    If iCodigo >= 48 Then
+      If iCodigo <= 57 Then Continue
+    Endif
+
+    ' MINÚSCULAS ASCII: 97 A 122
+    If iCodigo >= 97 Then
+      If iCodigo <= 122 Then Continue
+    Endif
+
+    Return False
+  Next
+
+  ' --- 3. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Cargar
+' Propósito : Lee todos los snippets de la carpeta y arma en memoria los
+'             cuerpos y la vista de la grilla. Se llama al abrir el formulario
+'             y después de cada alta, cambio o baja
+' Parámetros: ninguno
+' Retorna   : Boolean — True si la carpeta se pudo leer
+' ============================================
+Public Function Cargar() As Boolean
+
+  Dim sCarpeta As String
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+  Dim sNombre As String
+  Dim sCuerpo As String
+
+  ' --- 1. INICIALIZACIÓN: SE DESCARTA LO CARGADO ANTES ---
+  $aNombres.Clear()
+  $aTipos.Clear()
+  $aVistas.Clear()
+  $cCuerpos.Clear()
+  sCarpeta = RutaCarpeta()
+
+  ' --- 2. LA CARPETA TIENE QUE EXISTIR ---
+  ' IsDir Y NO Exist: Exist TAMBIÉN DA True PARA UN ARCHIVO (GV-01)
+  If Not IsDir(sCarpeta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No existe la carpeta de snippets:" & Chr(10) & sCarpeta & Chr(10) & Chr(10) &
+      "Se crea al iniciar la aplicación. Cierre gbpublisher y vuelva a abrirlo.")
+    Return False
+  Endif
+
+  ' --- 3. LISTAR LOS ARCHIVOS ---
+  Try aArchivos = Dir(sCarpeta, "*." & EXTENSION, gb.File)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la carpeta de snippets:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' ORDEN ALFABÉTICO: SC1 ANTES QUE SC2 EN LA GRILLA
+  aArchivos.Sort()
+
+  ' --- 4. LEER CADA SNIPPET ---
+  For Each sArchivo In aArchivos
+
+    ' SE IGNORA TODO ARCHIVO QUE NO CUMPLA EL PATRÓN (SC-21): RESPALDOS,
+    ' ARCHIVOS AJENOS, NOMBRES CON MAYÚSCULAS O DE OTRO LARGO
+    If File.Ext(sArchivo) <> EXTENSION Then Continue
+    sNombre = File.BaseName(sArchivo)
+    If Not NombreValido(sNombre) Then Continue
+
+    Try sCuerpo = File.Load(sCarpeta &/ sArchivo)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer el snippet «" & sNombre & "»:" & Chr(10) & Error.Text)
+      Continue
+    Endif
+
+    ' SE QUITA UN SALTO FINAL: Guardar LO AGREGA, Y LOS EDITORES EXTERNOS
+    ' TAMBIÉN. OPERAR EN BYTES ES CORRECTO ACÁ: EL LF OCUPA UN BYTE (RC-GM-12)
+    If Right(sCuerpo, 1) = Chr(10) Then sCuerpo = Left(sCuerpo, Len(sCuerpo) - 1)
+
+    $aNombres.Add(sNombre)
+    $aTipos.Add(IIf(EsBloque(sCuerpo), "bloque", "línea"))
+    $aVistas.Add(PrimeraLinea(sCuerpo))
+    $cCuerpos[sNombre] = sCuerpo
+
+  Next
+
+  ' --- 5. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : EsBloque
+' Propósito : Un snippet es de bloque si su cuerpo tiene saltos de línea; si
+'             no, es en línea. No hay campo «tipo»: lo decide el cuerpo (SC-21)
+' Parámetros: sCuerpo As String — cuerpo del snippet
+' Retorna   : Boolean — True si es de bloque
+' ============================================
+Public Function EsBloque(sCuerpo As String) As Boolean
+
+  ' InStr EN BYTES ES CORRECTO PARA BUSCAR UN CARÁCTER EN UTF-8 VÁLIDO (RC-GM-12)
+  Return InStr(sCuerpo, Chr(10)) > 0
+
+End
+
+' ============================================
+' Función   : PrimeraLinea
+' Propósito : Primera línea del cuerpo, para la vista previa de la grilla
+' Parámetros: sCuerpo As String — cuerpo del snippet
+' Retorna   : String — el cuerpo hasta el primer salto, sin incluirlo
+' ============================================
+Private Function PrimeraLinea(sCuerpo As String) As String
+
+  Dim iPos As Integer
+
+  ' InStr Y Left CUENTAN LOS DOS EN BYTES: LA POSICIÓN ES COHERENTE (RC-GM-12)
+  iPos = InStr(sCuerpo, Chr(10))
+  If iPos = 0 Then Return sCuerpo
+  Return Left(sCuerpo, iPos - 1)
+
+End
+
+' ============================================
+' Función   : Cantidad
+' Propósito : Cantidad de snippets cargados
+' Parámetros: ninguno
+' Retorna   : Integer — cantidad de filas de la grilla
+' ============================================
+Public Function Cantidad() As Integer
+
+  Return $aNombres.Count
+
+End
+
+' ============================================
+' Función   : NombreEnFila
+' Propósito : Abreviatura del snippet que ocupa una fila de la grilla
+' Parámetros: iFila As Integer — fila de la grilla
+' Retorna   : String — abreviatura, o cadena vacía si la fila no existe
+' ============================================
+Public Function NombreEnFila(iFila As Integer) As String
+
+  ' GUARDAS SEPARADAS: NO SE ENCADENAN OPERADORES (GV-12)
+  If iFila < 0 Then Return ""
+  If iFila >= $aNombres.Count Then Return ""
+  Return $aNombres[iFila]
+
+End
+
+' ============================================
+' Función   : Celda
+' Propósito : Texto de una celda de la grilla. Es ruta caliente: solo indexa
+'             arrays ya formateados en Cargar (GV-15)
+' Parámetros: iFila As Integer — fila de la grilla
+'             iColumna As Integer — 0 abreviatura, 1 tipo, 2 primera línea
+' Retorna   : String — texto de la celda
+' ============================================
+Public Function Celda(iFila As Integer, iColumna As Integer) As String
+
+  ' --- 1. VALIDACIÓN DE LA FILA ---
+  If iFila < 0 Then Return ""
+  If iFila >= $aNombres.Count Then Return ""
+
+  ' --- 2. INDEXAR SEGÚN LA COLUMNA ---
+  Select Case iColumna
+    Case 0
+      Return $aNombres[iFila]
+    Case 1
+      Return $aTipos[iFila]
+    Case 2
+      Return $aVistas[iFila]
+  End Select
+
+  ' --- 3. COLUMNA INEXISTENTE ---
+  Return ""
+
+End
+
+' ============================================
+' Función   : FilaDe
+' Propósito : Fila de la grilla que ocupa un snippet
+' Parámetros: sNombre As String — abreviatura del snippet
+' Retorna   : Integer — fila, o -1 si no está cargado
+' ============================================
+Public Function FilaDe(sNombre As String) As Integer
+
+  Return $aNombres.Find(sNombre)
+
+End
+
+' ============================================
+' Función   : Existe
+' Propósito : Indica si hay un snippet cargado con esa abreviatura
+' Parámetros: sNombre As String — abreviatura del snippet
+' Retorna   : Boolean — True si existe
+' ============================================
+Public Function Existe(sNombre As String) As Boolean
+
+  Return $cCuerpos.Exist(sNombre)
+
+End
+
+' ============================================
+' Función   : Cuerpo
+' Propósito : Cuerpo de un snippet cargado
+' Parámetros: sNombre As String — abreviatura del snippet
+' Retorna   : String — cuerpo, o cadena vacía si no existe
+' ============================================
+Public Function Cuerpo(sNombre As String) As String
+
+  If Not $cCuerpos.Exist(sNombre) Then Return ""
+  Return $cCuerpos[sNombre]
+
+End
+
+' ============================================
+' Función   : Guardar
+' Propósito : Escribe el archivo de un snippet. Si existe, lo reemplaza
+' Parámetros: sNombre As String — abreviatura del snippet
+'             sCuerpo As String — cuerpo del snippet
+' Retorna   : Boolean — True si se escribió
+' ============================================
+Public Function Guardar(sNombre As String, sCuerpo As String) As Boolean
+
+  ' --- 1. VALIDACIÓN DEFENSIVA: EL FORMULARIO YA VALIDÓ, PERO ESTE ES EL
+  '        ÚNICO PUNTO QUE ESCRIBE EN LA CARPETA ---
+  If Not NombreValido(sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Abreviatura inválida: «" & sNombre & "».")
+    Return False
+  Endif
+
+  ' --- 2. ESCRITURA ---
+  ' SE AGREGA UN SALTO FINAL, QUE Cargar QUITA: ASÍ UN CUERPO QUE TERMINA EN
+  ' SALTO CONSERVA EL SUYO AL VOLVER A LEERLO
+  Try File.Save(RutaArchivo(sNombre), sCuerpo & Chr(10))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el snippet «" & sNombre & "»:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Renombrar
+' Propósito : Cambia la abreviatura de un snippet renombrando su archivo
+' Parámetros: sViejo As String — abreviatura actual
+'             sNuevo As String — abreviatura nueva
+' Retorna   : Boolean — True si se renombró
+' ============================================
+Public Function Renombrar(sViejo As String, sNuevo As String) As Boolean
+
+  ' --- 1. VALIDACIÓN DE LA ABREVIATURA NUEVA ---
+  If Not NombreValido(sNuevo) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Abreviatura inválida: «" & sNuevo & "».")
+    Return False
+  Endif
+
+  ' --- 2. EL DESTINO NO PUEDE EXISTIR: Move NO LO PISA (GV-39) ---
+  If Exist(RutaArchivo(sNuevo)) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Ya existe un snippet «" & sNuevo & "».")
+    Return False
+  Endif
+
+  ' --- 3. RENOMBRAR EL ARCHIVO ---
+  Try Move RutaArchivo(sViejo) To RutaArchivo(sNuevo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo renombrar «" & sViejo & "» a «" & sNuevo & "»:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 4. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Borrar
+' Propósito : Borra un snippet: borra su archivo (SC-21)
+' Parámetros: sNombre As String — abreviatura del snippet
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function Borrar(sNombre As String) As Boolean
+
+  ' --- 1. BORRAR EL ARCHIVO ---
+  Try Kill RutaArchivo(sNombre)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el snippet «" & sNombre & "»:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Expandir
+' Propósito : Reemplaza la abreviatura escrita antes del cursor por el cuerpo
+'             de su snippet, según la regla de disparo de SC-21. Si no se
+'             expande, informa el motivo exacto con Message.Error. No devuelve
+'             el foco: lo hace el handler al final del evento (RC-GM-07)
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se expandió
+' ============================================
+Public Function Expandir() As Boolean
+
+  Dim iColumna As Integer
+  Dim sLinea As String
+  Dim sAbrev As String
+  Dim iCodigoPrevio As Integer
+  Dim sCuerpo As String
+  Dim iPosAbrev As Integer
+  Dim iMarca As Integer
+
+  ' --- 1. CON TEXTO SELECCIONADO NO HAY «ANTES DEL CURSOR» INEQUÍVOCO ---
+  If m_EditorPrincipal.HaySeleccion() Then
+    MensajeFallo("Hay texto seleccionado." & Chr(10) & "Ctrl+Tab expande la abreviatura escrita justo antes del cursor.")
+    Return False
+  Endif
+
+  ' --- 2. LOS TRES CARACTERES ANTERIORES AL CURSOR ---
+  ' COLUMNA Y LÍNEA SE LEEN DEL EDITOR, EN CARACTERES (RC-GM-21); String.Mid ES
+  ' BASE 1, ASÍ QUE LAS COLUMNAS BASE 0 iColumna-3 A iColumna-1 EMPIEZAN EN iColumna-2
+  iColumna = m_EditorPrincipal.ColumnaActual()
+  sLinea = m_EditorPrincipal.TextoParrafo(m_EditorPrincipal.ParrafoActual())
+  If iColumna < 3 Then
+    MensajeFallo("No hay una abreviatura de tres caracteres antes del cursor.")
+    Return False
+  Endif
+  sAbrev = String.Mid(sLinea, iColumna - 2, 3)
+
+  ' --- 3. ¿SON UNA ABREVIATURA POSIBLE? ---
+  If Not NombreValido(sAbrev) Then
+    MensajeFallo("«" & sAbrev & "» no es una abreviatura: son tres caracteres, solo a-z y 0-9.")
+    Return False
+  Endif
+
+  ' --- 4. EL CARÁCTER ANTERIOR NO PUEDE SER LETRA NI DÍGITO (SC-21) ---
+  ' EsLetra RECONOCE ACENTUADAS Y LATIN EXTENDED (GV-03): CON UNA COMPROBACIÓN
+  ' SOLO ASCII, EN «Ésc1» SE EXPANDIRÍA «sc1». EN LA COLUMNA 3 NO HAY CARÁCTER PREVIO
+  If iColumna > 3 Then
+    iCodigoPrevio = String.Code(String.Mid(sLinea, iColumna - 3, 1))
+    If m_FuncionesGenericas.EsLetra(iCodigoPrevio) Then
+      MensajeFallo("«" & sAbrev & "» está pegada a una palabra: no se expande." & Chr(10) & "Sepárela con un espacio o un signo.")
+      Return False
+    Endif
+    ' DÍGITOS 48 A 57; IF ANIDADOS (GV-12)
+    If iCodigoPrevio >= 48 Then
+      If iCodigoPrevio <= 57 Then
+        MensajeFallo("«" & sAbrev & "» está pegada a un número: no se expande.")
+        Return False
+      Endif
+    Endif
+  Endif
+
+  ' --- 5. EL SNIPPET TIENE QUE EXISTIR ---
+  If Not $cCuerpos.Exist(sAbrev) Then
+    MensajeFallo(sAbrev & ": no existe ese snippet.")
+    Return False
+  Endif
+  sCuerpo = $cCuerpos[sAbrev]
+
+  ' --- 6. UN SNIPPET DE BLOQUE VA SOLO EN SU LÍNEA (SC-21) ---
+  ' LA LÍNEA ENTERA TIENE QUE SER LA ABREVIATURA: DESDE LA COLUMNA 0 Y SIN NADA DESPUÉS
+  If EsBloque(sCuerpo) Then
+    If sLinea <> sAbrev Then
+      MensajeFallo(sAbrev & ": es de bloque; tiene que estar sola en su línea.")
+      Return False
+    Endif
+  Endif
+
+  ' --- 7. REEMPLAZO: CONSERVA EL DESHACER (SC-18) ---
+  ' ReemplazarTramo DEJA EL CURSOR AL FINAL DE LO INSERTADO
+  iPosAbrev = m_EditorPrincipal.Posicion() - 3
+  If Not m_EditorPrincipal.ReemplazarTramo(iPosAbrev, 3, sCuerpo) Then Return False
+
+  ' --- 8. MARCADOR DE POSICIÓN: SE SELECCIONA EL PRIMERO, SI LO HAY ---
+  ' String.InStr ES BASE 1 Y CUENTA CARACTERES, COHERENTE CON Seleccionar (RC-GM-21)
+  iMarca = String.InStr(sCuerpo, m_Constantes.SNIPPET_MARCADOR)
+  If iMarca > 0 Then m_EditorPrincipal.Seleccionar(iPosAbrev + iMarca - 1, 1)
+
+  ' --- 9. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : MensajeFallo
+' Propósito : Informa por qué no se expandió un snippet. Message y no la barra
+'             de estado: el usuario puede no advertir que escribió mal la
+'             abreviatura, o que la borró o la cambió (SC-21)
+' Parámetros: sMotivo As String — motivo exacto del fallo
+' Retorna   : nada
+' ============================================
+Private Sub MensajeFallo(sMotivo As String)
+
+  m_Sonido.sonar("Error")
+  Message.Error(sMotivo)
+
+End

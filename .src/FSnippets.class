@@ -1,0 +1,398 @@
+' Gambas class file
+
+' ==============================================================================
+' Formulario: FSnippets
+' Propósito : Alta, cambio y baja de los snippets personales del editor (SC-21).
+'             Cada snippet es un archivo en ~/.gbpublisher/snippets/; el
+'             formulario no toca el disco: todo pasa por m_Snippets.
+'             La lista se relee al abrir, así que un snippet corregido con un
+'             editor externo aparece actualizado.
+' Dependencias: m_Snippets, m_Sonido, m_Ventana.
+' ==============================================================================
+
+' --- FLAG QUE PERMITE EL CIERRE DESDE EL BOTÓN O ESCAPE Y BLOQUEA LA X ---
+' PATRÓN DE FBlockNotas; LA SALIDA PROPIA ES LA CONTRAPARTIDA DE SC-20
+Private $bCierrePermitido As Boolean
+
+' --- SNIPPET EN EDICIÓN: LO CARGADO, PARA DETECTAR CAMBIOS SIN GUARDAR ---
+' NOMBRE VACÍO = SNIPPET NUEVO, TODAVÍA SIN ARCHIVO
+Private $sNombreCargado As String
+Private $sCuerpoCargado As String
+Private $iFilaCargada As Integer = -1
+
+' --- EVITA QUE REPONER LA FILA DESDE EL CÓDIGO VUELVA A CARGAR EL SNIPPET ---
+' NO ESTÁ VERIFICADO SI ASIGNAR Row DISPARA Click; CON LA BANDERA DA IGUAL
+Private $bReponiendoFila As Boolean
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Configura la grilla, carga los snippets y deja el formulario
+'             listo para escribir uno nuevo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. TÍTULO ---
+  Me.Title = "Snippets personales"
+
+  ' --- 2. CONFIGURACIÓN DE LA GRILLA ---
+  gvSnippets.Columns.Count = 3
+  gvSnippets.Columns[0].Text = "Abrev."
+  gvSnippets.Columns[1].Text = "Tipo"
+  gvSnippets.Columns[2].Text = "Primera línea"
+  gvSnippets.Columns[0].Width = 60
+  gvSnippets.Columns[1].Width = 64
+  gvSnippets.Columns[2].Width = 400
+
+  ' --- 3. CARGA ---
+  ' SI FALLA, m_Snippets YA AVISÓ; LA GRILLA QUEDA VACÍA
+  m_Snippets.Cargar()
+  RefrescarGrilla()
+
+  ' --- 4. ESTADO INICIAL: SNIPPET NUEVO ---
+  ModoNuevo()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Permite el cierre desde el botón o Escape; lo bloquea desde la X
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. CIERRE PEDIDO DESDE LA INTERFAZ ---
+  If $bCierrePermitido Then Return
+
+  ' --- 2. CIERRE DESDE LA X DEL SISTEMA: BLOQUEAR Y AVISAR ---
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario use el botón <b>Cerrar</b> o la tecla Escape.")
+  Stop Event
+
+End
+
+' ============================================
+' Función   : Form_KeyPress
+' Propósito : Escape cierra el formulario (contrapartida de SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_KeyPress()
+
+  If Key.Code = Key.Esc Then Cerrar()
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : Cerrar
+' Propósito : Cierra el formulario, preguntando antes si hay cambios sin guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Cerrar()
+
+  ' --- 1. CAMBIOS SIN GUARDAR ---
+  If Not ConfirmarDescartar() Then Return
+
+  ' --- 2. CIERRE ---
+  $bCierrePermitido = True
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : HayCambios
+' Propósito : Compara los campos con lo cargado
+' Parámetros: ninguno
+' Retorna   : Boolean — True si hay cambios sin guardar
+' ============================================
+Private Function HayCambios() As Boolean
+
+  If txtNombre.Text <> $sNombreCargado Then Return True
+  If txaCuerpo.Text <> $sCuerpoCargado Then Return True
+  Return False
+
+End
+
+' ============================================
+' Función   : ConfirmarDescartar
+' Propósito : Si hay cambios sin guardar, pregunta si se descartan
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se puede seguir
+' ============================================
+Private Function ConfirmarDescartar() As Boolean
+
+  ' --- 1. SIN CAMBIOS: SE SIGUE ---
+  If Not HayCambios() Then Return True
+
+  ' --- 2. CON CAMBIOS: PREGUNTAR ---
+  m_Sonido.sonar("Question")
+  Return Message.Question("Hay cambios sin guardar en el snippet." & Chr(10) & "¿Descartarlos?", "Descartar", "Cancelar") = 1
+
+End
+
+' ============================================
+' Función   : ModoNuevo
+' Propósito : Vacía los campos para escribir un snippet nuevo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ModoNuevo()
+
+  ' --- 1. NADA CARGADO ---
+  $sNombreCargado = ""
+  $sCuerpoCargado = ""
+  $iFilaCargada = -1
+
+  ' --- 2. CAMPOS Y BOTONES ---
+  txtNombre.Text = ""
+  txaCuerpo.Text = ""
+  btnBorrar.Visible = False
+
+  ' --- 3. FOCO EN LA ABREVIATURA ---
+  txtNombre.SetFocus()
+
+End
+
+' ============================================
+' Función   : CargarEnCampos
+' Propósito : Muestra un snippet en los campos y lo registra como cargado
+' Parámetros: sNombre As String — abreviatura del snippet
+'             iFila As Integer — fila de la grilla que ocupa
+' Retorna   : nada
+' ============================================
+Private Sub CargarEnCampos(sNombre As String, iFila As Integer)
+
+  ' --- 1. CAMPOS ---
+  txtNombre.Text = sNombre
+  txaCuerpo.Text = m_Snippets.Cuerpo(sNombre)
+
+  ' --- 2. LO CARGADO SE LEE DEL CONTROL Y NO DEL MÓDULO ---
+  ' .Text NORMALIZA AL LEER (GV-47): COMPARAR CONTRA EL CUERPO CRUDO MARCARÍA
+  ' CAMBIOS QUE EL USUARIO NO HIZO
+  $sNombreCargado = txtNombre.Text
+  $sCuerpoCargado = txaCuerpo.Text
+  $iFilaCargada = iFila
+
+  ' --- 3. BOTONES ---
+  btnBorrar.Visible = True
+
+End
+
+' ============================================
+' Función   : RefrescarGrilla
+' Propósito : Ajusta la grilla a los snippets cargados en m_Snippets
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub RefrescarGrilla()
+
+  gvSnippets.Rows.Count = m_Snippets.Cantidad()
+  gvSnippets.Refresh()
+
+End
+
+' ============================================
+' Función   : MarcarFila
+' Propósito : Selecciona una fila desde el código sin volver a cargar el snippet
+' Parámetros: iFila As Integer — fila a seleccionar
+' Retorna   : nada
+' ============================================
+Private Sub MarcarFila(iFila As Integer)
+
+  If iFila < 0 Then Return
+  $bReponiendoFila = True
+  gvSnippets.Row = iFila
+  $bReponiendoFila = False
+
+End
+
+' ============================================
+' Función   : gvSnippets_Data
+' Propósito : Provee una celda de la grilla. Ruta caliente: solo indexa (GV-15)
+' Parámetros: Row As Integer — fila; Column As Integer — columna
+' Retorna   : nada
+' ============================================
+Public Sub gvSnippets_Data(Row As Integer, Column As Integer)
+
+  gvSnippets.Data.Text = m_Snippets.Celda(Row, Column)
+
+End
+
+' ============================================
+' Función   : gvSnippets_Click
+' Propósito : Carga en los campos el snippet elegido en la grilla
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvSnippets_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  If $bReponiendoFila Then Return
+  iFila = gvSnippets.Row
+  If iFila < 0 Then Return
+  If iFila = $iFilaCargada Then Return
+
+  ' --- 2. CAMBIOS SIN GUARDAR: SI SE CANCELA, VUELVE LA FILA ANTERIOR ---
+  If Not ConfirmarDescartar() Then
+    MarcarFila($iFilaCargada)
+    Return
+  Endif
+
+  ' --- 3. CARGAR EL SNIPPET ---
+  CargarEnCampos(m_Snippets.NombreEnFila(iFila), iFila)
+
+End
+
+' ============================================
+' Función   : btnNuevo_Click
+' Propósito : Vacía los campos para escribir un snippet nuevo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevo_Click()
+
+  If Not ConfirmarDescartar() Then Return
+  ModoNuevo()
+
+End
+
+' ============================================
+' Función   : btnGuardar_Click
+' Propósito : Guarda el snippet de los campos. Si se cambió la abreviatura de
+'             uno existente, pregunta si se renombra o se duplica (SC-21)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardar_Click()
+
+  Dim sNombre As String
+  Dim sCuerpo As String
+  Dim iRespuesta As Integer
+
+  ' --- 1. LECTURA DE LOS CAMPOS ---
+  sNombre = txtNombre.Text
+  sCuerpo = txaCuerpo.Text
+
+  ' --- 2. VALIDACIÓN DE LA ABREVIATURA ---
+  ' SE RECHAZA, NO SE CONVIERTE: UNA MAYÚSCULA NO SE PASA A MINÚSCULA EN SILENCIO
+  If Not m_Snippets.NombreValido(sNombre) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La abreviatura tiene que tener exactamente tres caracteres:" & Chr(10) &
+      "letras minúsculas de la a a la z (sin ñ ni acentos) y dígitos.")
+    txtNombre.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. VALIDACIÓN DEL CUERPO ---
+  If sCuerpo = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El snippet no tiene cuerpo.")
+    txaCuerpo.SetFocus()
+    Return
+  Endif
+
+  ' --- 4. ESCRITURA SEGÚN EL CASO ---
+  If $sNombreCargado = "" Then
+    ' SNIPPET NUEVO: SI LA ABREVIATURA YA EXISTE, PREGUNTAR ANTES DE PISARLA
+    If m_Snippets.Existe(sNombre) Then
+      m_Sonido.sonar("Question")
+      If Message.Question("Ya existe un snippet «" & sNombre & "»." & Chr(10) & "¿Reemplazarlo?", "Reemplazar", "Cancelar") <> 1 Then Return
+    Endif
+    If Not m_Snippets.Guardar(sNombre, sCuerpo) Then Return
+
+  Else If sNombre = $sNombreCargado Then
+    ' MISMO SNIPPET: SE REEMPLAZA EL ARCHIVO
+    If Not m_Snippets.Guardar(sNombre, sCuerpo) Then Return
+
+  Else
+    ' CAMBIÓ LA ABREVIATURA: NO SE PISA OTRO SNIPPET POR ESTA VÍA
+    If m_Snippets.Existe(sNombre) Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Ya existe un snippet «" & sNombre & "»." & Chr(10) &
+        "Elija otra abreviatura, o borre primero el existente.")
+      txtNombre.SetFocus()
+      Return
+    Endif
+
+    m_Sonido.sonar("Question")
+    iRespuesta = Message.Question("La abreviatura cambió de «" & $sNombreCargado & "» a «" & sNombre & "»." & Chr(10) &
+      "¿Renombrar el snippet o crear uno nuevo con la abreviatura nueva?", "Renombrar", "Duplicar", "Cancelar")
+
+    Select Case iRespuesta
+      Case 1
+        ' RENOMBRAR: SE MUEVE EL ARCHIVO Y DESPUÉS SE ESCRIBE EL CUERPO
+        If Not m_Snippets.Renombrar($sNombreCargado, sNombre) Then Return
+        If Not m_Snippets.Guardar(sNombre, sCuerpo) Then Return
+      Case 2
+        ' DUPLICAR: EL SNIPPET ORIGINAL QUEDA COMO ESTABA
+        If Not m_Snippets.Guardar(sNombre, sCuerpo) Then Return
+      Case Else
+        Return
+    End Select
+  Endif
+
+  ' --- 5. RECARGA Y SELECCIÓN DEL SNIPPET GUARDADO ---
+  m_Snippets.Cargar()
+  RefrescarGrilla()
+  CargarEnCampos(sNombre, m_Snippets.FilaDe(sNombre))
+  MarcarFila($iFilaCargada)
+
+  ' --- 6. FOCO: SE SIGUE EDITANDO EL CUERPO ---
+  txaCuerpo.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnBorrar_Click
+' Propósito : Borra el snippet cargado, previa confirmación
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrar_Click()
+
+  ' --- 1. VALIDACIÓN: TIENE QUE HABER UN SNIPPET CARGADO ---
+  If $sNombreCargado = "" Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar el snippet «" & $sNombreCargado & "»?" & Chr(10) &
+      "Se elimina el archivo " & $sNombreCargado & ".txt; no se puede deshacer.", "Borrar", "Cancelar") <> 1 Then Return
+
+    ' --- 3. BORRADO ---
+    If Not m_Snippets.Borrar($sNombreCargado) Then Return
+
+    ' --- 4. RECARGA Y CAMPOS VACÍOS ---
+    m_Snippets.Cargar()
+    RefrescarGrilla()
+    ModoNuevo()
+
+End
