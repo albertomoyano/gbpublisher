@@ -120,6 +120,11 @@ Public Sub Form_Open()
   txtEditorProyecto.Wrap = True
   m_EditorPrincipal.Iniciar(txtEditorProyecto)
 
+  ' ÁRBOL DE ESTRUCTURA (SC-18): SE ARMA AL ABRIR EL PROYECTO; ACÁ SOLO SE
+  ' ASOCIA EL CONTROL Y SE TOMAN LOS FILTROS QUE TRAEN LOS RadioButton
+  m_Estructura.Iniciar(tvEstructura)
+  AplicarFiltroEstructura()
+
   ' --- 5. VISOR XML CON RESALTADO DE SINTAXIS ---
   ' EL COLOR VA POR HTML (RichText) Y NO POR Format, QUE ENTRA EN LA PILA DE DESHACER.
   ' SI NO SE PUEDE CREAR (FALTA LA CARPETA DE TEMAS), EL VISOR MUESTRA TEXTO PLANO.
@@ -816,6 +821,9 @@ Public Sub btnGuardarCambiosEditor_Click()
   ' EN DISCO Y EL TEXTO SIGUE EN EL EDITOR: SOLO QUEDA SIN RECOLOREAR (YA INFORMADO)
   m_EditorPrincipal.Refrescar()
   m_EditorPrincipal.MarcarGuardado()
+
+  ' LOS TÍTULOS DE ESTE ARCHIVO SE REHACEN DESDE LO GUARDADO; EL RESTO DEL ÁRBOL NO SE TOCA
+  m_Estructura.ActualizarArchivo(sRutaArchivoAbierto, sContenidoActual)
 
   ' --- 4. EXTRAER REFERENCIAS Y REFRESCAR GRID DE COMENTARIOS ---
   ' SON PROCESOS DE VALOR AGREGADO: SI FALLAN, EL ARCHIVO YA ESTÁ EN DISCO,
@@ -3093,6 +3101,8 @@ Public Sub hTimerRefrescarProyecto_Timer()
   ' SOLO RECARGAR SI LA CANTIDAD DE ARCHIVOS CAMBIÓ
   If iCantidadNueva <> iCantidadActual Then
     CargarListaArticulosMD(True)  ' PRESERVAR LA SELECCIÓN ACTUAL
+    ' CAMBIÓ LA LISTA DE ARCHIVOS: EL ÁRBOL SE ARMA DE NUEVO
+    m_Estructura.Construir()
   Endif
 
 End
@@ -5388,13 +5398,6 @@ Public Sub cmbArticulosRevista_Click()
   sArchivoSeleccionado = cmbArticulosRevista.Text
   If sArchivoSeleccionado = "" Then Return
 
-  ' --- VERIFICAR CAMBIOS SIN GUARDAR (SALVO QUE SE ESTÉ ABRIENDO UN PROYECTO) ---
-  ' DURANTE LA APERTURA, EL GUARD YA SE EVALUÓ EN AbrirProyecto Y NO DEBE
-  ' VOLVER A PREGUNTAR CUANDO CargarListaArticulosMD ASIGNE EL Index INICIAL
-  If Not bAbriendoProyecto Then
-    If Not ConfirmarDescartarCambios() Then Return
-  Endif
-
   ' DETERMINAR LA RUTA COMPLETA SEGÚN LA SELECCIÓN
   If cmbArticulosRevista.Index = 0 Then
     ' ES EL ARCHIVO PRINCIPAL DEL PROYECTO
@@ -5403,6 +5406,20 @@ Public Sub cmbArticulosRevista_Click()
     ' ES UN ARCHIVO DE ALGUNA DE LAS SUBCARPETAS
     ' EL TEXTO YA INCLUYE LA RUTA RELATIVA (front-matter/, articulos/, back-matter/)
     sRutaCompleta = m_InicioCierre.RutaProyectoEnCurso &/ sArchivoSeleccionado
+  Endif
+
+  ' --- EL ARCHIVO YA ESTÁ ABIERTO: NO SE RECARGA (GV-53) ---
+  ' ASIGNAR Index DISPARA Click AUNQUE EL ÍNDICE NO CAMBIE. CUANDO EL TEMPORIZADOR
+  ' DE ARCHIVOS RECARGA LA LISTA Y REPONE LA SELECCIÓN, ESTO RECARGABA EL MISMO
+  ' ARCHIVO: PREGUNTABA POR CAMBIOS SIN GUARDAR Y VACIABA EL DESHACER (GV-46)
+  If sRutaCompleta = sRutaArchivoAbierto Then Return
+
+  ' --- VERIFICAR CAMBIOS SIN GUARDAR (SALVO QUE SE ESTÉ ABRIENDO UN PROYECTO) ---
+  ' DURANTE LA APERTURA, EL GUARD YA SE EVALUÓ EN AbrirProyecto Y NO DEBE
+  ' VOLVER A PREGUNTAR CUANDO CargarListaArticulosMD ASIGNE EL Index INICIAL.
+  ' VA DESPUÉS DE LA RUTA: CALCULARLA NO TOCA NADA (SC-06)
+  If Not bAbriendoProyecto Then
+    If Not ConfirmarDescartarCambios() Then Return
   Endif
 
   ' VERIFICAR QUE EL ARCHIVO EXISTE
@@ -5512,6 +5529,9 @@ Public Sub cmbArticulosRevista_Click()
   ' EL ÁMBITO "ARCHIVO EN CURSO" SOLO TIENE SENTIDO SI EL ARCHIVO CARGADO ES
   ' CONTENIDO (fm-/a-/bm-). AL CAMBIAR DE ARCHIVO SE REEVALÚA.
   m_BuscarRegex.ActualizarDisponibilidadEnCurso()
+
+  ' --- EL ÁRBOL DESPLIEGA ESTE CAPÍTULO Y MARCA LA POSICIÓN DEL CURSOR ---
+  m_Estructura.SeguirEditor(True)
 
   ' --- REFRESCAMOS EL COMOBOBOX ---
   cmbArticulosRevista.Refresh
@@ -7130,6 +7150,9 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   txtEditorProyecto.Enabled = True
   sRutaArchivoAbierto = sRutaSeleccionada
 
+  ' ÁRBOL DE ESTRUCTURA DEL PROYECTO NUEVO, DESDE LOS ARCHIVOS EN DISCO
+  m_Estructura.Construir()
+
   ' --- 18. ACTUALIZAR GRID DE COMENTARIOS Y CONTADOR DE LÍNEAS ---
   m_GestorComentarios.ActualizarGridComentarios(gvComentarios, m_EditorPrincipal.Texto())
   TabPanelIzquierdaInferior.Visible = False
@@ -8152,5 +8175,154 @@ End
 Public Sub btnTipografiaMDyXML_Click()
 
   menuTypo_Click()
+
+End
+
+' ============================================
+' Función   : txtEditorProyecto_Cursor
+' Propósito : Avisar al árbol de estructura que el cursor se movió
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtEditorProyecto_Cursor()
+
+  ' EL ÁRBOL SE ACTUALIZA CUANDO EL CURSOR QUEDA QUIETO, NO EN CADA TECLA
+  m_Estructura.CursorMovido()
+
+End
+
+' ============================================
+' Función   : tvEstructura_Click
+' Propósito : Llevar el editor al título elegido en el árbol
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub tvEstructura_Click()
+
+  ' Click Y NO Select: MARCAR EL NODO DESDE EL CÓDIGO DISPARA SOLO Select (GV-51)
+  m_Estructura.Navegar()
+
+End
+
+' ============================================
+' Función   : AplicarFiltroEstructura
+' Propósito : Pasar al árbol los filtros elegidos en los RadioButton
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub AplicarFiltroEstructura()
+
+  Dim iNivelMax As Integer
+  Dim sPrefijo As String
+
+  ' --- 1. PROFUNDIDAD: 1 SOLO CAPÍTULOS, 2 HASTA ##, 3 HASTA ###, 6 TODO ---
+  iNivelMax = 6
+  If rbCapitulo.Value Then iNivelMax = 1
+  If rbH2.Value Then iNivelMax = 2
+  If rbH3.Value Then iNivelMax = 3
+
+  ' --- 2. ALCANCE: PREFIJO DEL NOMBRE DE ARCHIVO; VACÍO ES TODOS ---
+  sPrefijo = ""
+  If rbAlcFM.Value Then sPrefijo = "fm-"
+  If rbAlcA.Value Then sPrefijo = "a-"
+  If rbAlcBM.Value Then sPrefijo = "bm-"
+
+  m_Estructura.Filtrar(iNivelMax, sPrefijo)
+
+End
+
+' ============================================
+' Función   : rbCapitulo_Click
+' Propósito : Filtro del árbol: solo los capítulos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbCapitulo_Click()
+
+  AplicarFiltroEstructura()
+
+End
+
+' ============================================
+' Función   : rbH2_Click
+' Propósito : Filtro del árbol: títulos hasta ##
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbH2_Click()
+
+  AplicarFiltroEstructura()
+
+End
+
+' ============================================
+' Función   : rbH3_Click
+' Propósito : Filtro del árbol: títulos hasta ###
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbH3_Click()
+
+  AplicarFiltroEstructura()
+
+End
+
+' ============================================
+' Función   : rbTodo_Click
+' Propósito : Filtro del árbol: todos los títulos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbTodo_Click()
+
+  AplicarFiltroEstructura()
+
+End
+
+' ============================================
+' Función   : rbAlcTodo_Click
+' Propósito : Filtro del árbol: todos los archivos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbAlcTodo_Click()
+
+  AplicarFiltroEstructura()
+
+End
+
+' ============================================
+' Función   : rbAlcFM_Click
+' Propósito : Filtro del árbol: solo front-matter (fm-)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbAlcFM_Click()
+
+  AplicarFiltroEstructura()
+
+End
+
+' ============================================
+' Función   : rbAlcA_Click
+' Propósito : Filtro del árbol: solo artículos o capítulos (a-)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbAlcA_Click()
+
+  AplicarFiltroEstructura()
+
+End
+
+' ============================================
+' Función   : rbAlcBM_Click
+' Propósito : Filtro del árbol: solo back-matter (bm-)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rbAlcBM_Click()
+
+  AplicarFiltroEstructura()
 
 End

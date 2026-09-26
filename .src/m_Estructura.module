@@ -1,0 +1,688 @@
+' Gambas module file
+
+' ÁRBOL DE ESTRUCTURA DEL PROYECTO (tvEstructura, PESTAÑA «Estructura», SC-18).
+'
+' REEMPLAZA AL PLEGADO POR TÍTULOS QUE TextEdit NO TIENE. COMO TeXstudio:
+'   - PRIMER NIVEL: UN NODO POR .md DE front-matter, articulos Y back-matter, EN
+'     EL ORDEN DEL COMBOBOX, CON SU TÍTULO TOMADO DE LA BASE. EL ARCHIVO
+'     PRINCIPAL DEL PROYECTO NO VA: MISMA LÓGICA QUE CANÓNICOS Y COMPILACIÓN
+'   - DEBAJO, LOS TÍTULOS ##, ###… DEL ARCHIVO, ANIDADOS POR NIVEL
+'   - UN CLICK LLEVA EL EDITOR AL TÍTULO; SOLO MOUSE (GV-51: LA NAVEGACIÓN
+'     CUELGA DE Click, NO DE Select)
+'   - EL ÁRBOL SIGUE AL EDITOR: DESPLIEGA EL ARCHIVO ABIERTO Y MARCA EL TÍTULO
+'     DE LA SECCIÓN DONDE ESTÁ EL CURSOR
+'   - FILTROS POR Visible, SIN RECONSTRUIR (GV-51): PROFUNDIDAD Y ALCANCE
+'
+' QUÉ GUARDA CADA NODO: ARCHIVO Y LÍNEA, NO LA POSICIÓN EN CARACTERES. LAS
+' LÍNEAS SALEN DEL DISCO (O DEL EDITOR AL GUARDAR); SI EL ARCHIVO ABIERTO TIENE
+' CAMBIOS SIN GUARDAR, AL NAVEGAR EL TÍTULO SE REUBICA POR SU TEXTO.
+'
+' CUÁNDO SE RECONSTRUYE:
+'   - COMPLETO: AL ABRIR EL PROYECTO Y CUANDO CAMBIA LA LISTA DE ARCHIVOS
+'   - SOLO EL ARCHIVO GUARDADO: EN CADA GUARDADO, DESDE EL TEXTO GUARDADO
+'   - AL CAMBIAR DE ARCHIVO NO SE RECONSTRUYE: SE DESPLIEGA ESE CAPÍTULO
+
+Private $hVista As TreeView
+
+' TÍTULOS DE CADA ARCHIVO, POR RUTA RELATIVA; CADA VALOR ES UN CTituloMD[]
+Private $cTitulos As New Collection
+
+' FILTROS VIGENTES: NIVEL MÁXIMO VISIBLE (1 = SOLO CAPÍTULOS, 6 = TODO) Y
+' PREFIJO DE ARCHIVO ("" = TODOS, "fm-", "a-", "bm-")
+Private $iNivelMax As Integer = 6
+Private $sPrefijo As String = ""
+
+' SEGUIMIENTO DEL CURSOR: SE RECALCULA RECIÉN CUANDO EL CURSOR QUEDA QUIETO,
+' NO EN CADA TECLA
+Private $hEspera As Timer
+Private Const ESPERA_MS As Integer = 300
+
+' ============================================
+' Función   : Iniciar
+' Propósito : Asociar el módulo al TreeView de la pestaña y preparar la espera del cursor
+' Parámetros: hVista As TreeView — FMain.tvEstructura
+' Retorna   : nada
+' ============================================
+Public Sub Iniciar(hVista As TreeView)
+
+  ' --- 1. CONTROL ---
+  $hVista = hVista
+
+  ' --- 2. TEMPORIZADOR DE UNA SOLA VUELTA PARA SEGUIR AL CURSOR ---
+  ' New CON As VA A UNA VARIABLE (GV-32); EL EVENTO LLEGA A ESTE MÓDULO
+  $hEspera = New Timer As "tmrSeguir"
+  $hEspera.Delay = ESPERA_MS
+
+End
+
+' ============================================
+' Función   : Construir
+' Propósito : Armar el árbol completo desde los .md del proyecto en disco
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se armó; False si no hay proyecto abierto
+' ============================================
+Public Function Construir() As Boolean
+
+  Dim aRutas As New String[]
+  Dim aEtiquetas As New String[]
+  Dim cNombres As Collection
+  Dim sContenido As String
+  Dim i As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  If Not $hVista Then Return False
+  $hVista.Clear()
+  $cTitulos.Clear()
+
+  ' --- 2. ARCHIVOS EN EL ORDEN DEL COMBOBOX ---
+  If Not m_FuncionesGenericas.ObtenerArchivosMD(aRutas, aEtiquetas) Then Return False
+
+  ' --- 3. TÍTULOS DE LA BASE, UNA SOLA CONSULTA POR TABLA ---
+  cNombres = TitulosDeLaBase()
+
+  ' --- 4. UN NODO POR ARCHIVO, CON SUS TÍTULOS ---
+  Inc Application.Busy
+  For i = 0 To aRutas.Max
+    ' EL ARCHIVO PRINCIPAL ESTÁ EN LA RAÍZ Y SU ETIQUETA NO LLEVA CARPETA: NO VA
+    If String.InStr(aEtiquetas[i], "/") = 0 Then Continue
+    sContenido = ""
+    Try sContenido = File.Load(aRutas[i])
+    ' UN ARCHIVO ILEGIBLE QUEDA EN EL ÁRBOL SIN TÍTULOS: SE VE Y SE PUEDE ABRIR
+    AgregarArchivo(aEtiquetas[i], NombreDeArchivo(aEtiquetas[i], cNombres), sContenido)
+  Next
+  Dec Application.Busy
+
+  ' --- 5. FILTROS VIGENTES Y POSICIÓN DEL EDITOR ---
+  AplicarFiltros()
+  SeguirEditor(True)
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ActualizarArchivo
+' Propósito : Rehacer los títulos de un archivo desde su texto, sin tocar el resto del árbol
+' Parámetros: sRutaAbsoluta As String — ruta del archivo guardado
+'             sContenido As String — su texto, tal como se guardó
+' Retorna   : nada
+' ============================================
+Public Sub ActualizarArchivo(sRutaAbsoluta As String, sContenido As String)
+
+  Dim sRel As String
+  Dim hNodo As _TreeView_Item
+
+  ' --- 1. SOLO ARCHIVOS QUE ESTÁN EN EL ÁRBOL ---
+  If Not $hVista Then Return
+  sRel = RutaRelativa(sRutaAbsoluta)
+  If sRel = "" Then Return
+  If Not $hVista.Exist(ClaveArchivo(sRel)) Then Return
+
+  ' --- 2. SE BORRAN LOS HIJOS Y SE VUELVEN A AGREGAR ---
+  ' EL NODO DEL ARCHIVO SE CONSERVA: MANTIENE SU LUGAR Y SU ESTADO DESPLEGADO
+  hNodo = $hVista[ClaveArchivo(sRel)]
+  hNodo.Clear()
+  AgregarTitulos(sRel, sContenido)
+
+  ' --- 3. FILTROS Y MARCA DEL CURSOR ---
+  AplicarFiltros()
+  SeguirEditor(False)
+
+End
+
+' ============================================
+' Función   : Filtrar
+' Propósito : Cambiar los filtros de profundidad y alcance
+' Parámetros: iNivelMax As Integer — 1 solo capítulos, 2 hasta ##, 3 hasta ###, 6 todo
+'             sPrefijo As String — "" todos, o "fm-", "a-", "bm-"
+' Retorna   : nada
+' ============================================
+Public Sub Filtrar(iNivelMax As Integer, sPrefijo As String)
+
+  $iNivelMax = iNivelMax
+  $sPrefijo = sPrefijo
+  AplicarFiltros()
+  SeguirEditor(False)
+
+End
+
+' ============================================
+' Función   : CursorMovido
+' Propósito : Reiniciar la espera: el árbol se actualiza cuando el cursor queda quieto
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub CursorMovido()
+
+  ' Cursor SE DISPARA CON CADA TECLA Y CON CADA Select INTERNO (GV-46): SE
+  ' POSTERGA EN LUGAR DE RECALCULAR CADA VEZ
+  If Not $hEspera Then Return
+  $hEspera.Stop()
+  $hEspera.Start()
+
+End
+
+' ============================================
+' Función   : tmrSeguir_Timer
+' Propósito : Actualizar la marca del árbol cuando terminó la espera del cursor
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub tmrSeguir_Timer()
+
+  $hEspera.Stop()
+  SeguirEditor(False)
+
+End
+
+' ============================================
+' Función   : SeguirEditor
+' Propósito : Marcar en el árbol el título de la sección donde está el cursor
+' Parámetros: bCambioDeArchivo As Boolean — True si se acaba de abrir otro archivo:
+'             se despliega ese capítulo y se pliegan los demás
+' Retorna   : nada
+' ============================================
+Public Sub SeguirEditor(bCambioDeArchivo As Boolean)
+
+  Dim sRel As String
+  Dim sClave As String
+  Dim hNodo As _TreeView_Item
+  Dim aEnEditor As CTituloMD[]
+  Dim oActual As CTituloMD
+  Dim iLineaCursor As Integer
+  Dim iOrdinal As Integer
+  Dim i As Integer
+
+  ' --- 1. ARCHIVO ABIERTO: TIENE QUE ESTAR EN EL ÁRBOL ---
+  If Not $hVista Then Return
+  sRel = RutaRelativa(FMain.sRutaArchivoAbierto)
+  If sRel = "" Then Return
+  If Not $hVista.Exist(ClaveArchivo(sRel)) Then Return
+
+  ' --- 2. AL CAMBIAR DE ARCHIVO: SOLO ESE CAPÍTULO DESPLEGADO ---
+  If bCambioDeArchivo Then
+    For Each hNodo In $hVista._Items
+      If hNodo.Depth = 0 Then hNodo.Expanded = hNodo.Key = ClaveArchivo(sRel)
+    Next
+  Endif
+
+  ' --- 3. SECCIÓN DEL CURSOR, CALCULADA SOBRE EL TEXTO DEL EDITOR ---
+  ' SE ANALIZA EL TEXTO ACTUAL Y NO LAS LÍNEAS GUARDADAS: CON CAMBIOS SIN
+  ' GUARDAR, LOS TÍTULOS PUEDEN HABERSE CORRIDO
+  aEnEditor = AnalizarTitulos(m_EditorPrincipal.Texto(), sRel)
+  iLineaCursor = m_EditorPrincipal.ParrafoActual()
+  iOrdinal = -1
+  For i = 0 To aEnEditor.Max
+    If aEnEditor[i].iLinea > iLineaCursor Then Break
+    oActual = aEnEditor[i]
+    iOrdinal = i
+  Next
+
+  ' --- 4. NODO QUE LE CORRESPONDE; SI NO HAY, EL DEL ARCHIVO ---
+  sClave = ClaveArchivo(sRel)
+  If oActual Then
+    hNodo = NodoEquivalente(sRel, oActual, iOrdinal)
+    If hNodo Then
+      ' SI EL FILTRO LO OCULTA, SE SUBE HASTA UN ANCESTRO VISIBLE
+      While Not hNodo.Visible
+        If hNodo.ParentKey = "" Then Break
+        hNodo = $hVista[hNodo.ParentKey]
+      Wend
+      sClave = hNodo.Key
+    Endif
+  Endif
+
+  ' --- 5. MARCA: EnsureVisible ANTES DE Key, O NO MARCA UN NODO PLEGADO (GV-51) ---
+  ' ASIGNAR Key DISPARA SOLO Select, NO Click: NO NAVEGA NI SE REALIMENTA
+  If $hVista.Key = sClave Then Return
+  $hVista[sClave].EnsureVisible()
+  $hVista.Key = sClave
+
+End
+
+' ============================================
+' Función   : Navegar
+' Propósito : Llevar el editor al título del nodo en el que se hizo click
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Navegar()
+
+  Dim hNodo As _TreeView_Item
+  Dim oTitulo As CTituloMD
+  Dim sRel As String
+  Dim iLinea As Integer
+  Dim sCruda As String
+
+  ' --- 1. DATOS DEL NODO, COPIADOS ANTES DE CUALQUIER CAMBIO DE ARCHIVO ---
+  ' EL AVISO DE CAMBIOS SIN GUARDAR PUEDE GUARDAR, Y GUARDAR REHACE LOS NODOS
+  ' DE ESE ARCHIVO: LA REFERENCIA AL NODO PUEDE DEJAR DE SER VÁLIDA
+  hNodo = $hVista.Current
+  If Not hNodo Then Return
+  If hNodo.Depth = 0 Then
+    sRel = hNodo.Tag
+    iLinea = 0
+    sCruda = ""
+  Else
+    oTitulo = hNodo.Tag
+    sRel = oTitulo.sArchivo
+    iLinea = oTitulo.iLinea
+    sCruda = oTitulo.sCruda
+  Endif
+
+  ' --- 2. OTRO ARCHIVO: SE ABRE POR EL COMBOBOX; SI SE CANCELA, NO SE NAVEGA ---
+  If sRel <> RutaRelativa(FMain.sRutaArchivoAbierto) Then
+    If Not AbrirArchivo(sRel) Then
+      SeguirEditor(False)
+      Return
+    Endif
+  Endif
+
+  ' --- 3. REUBICACIÓN POR TEXTO Y SALTO (GV-52) ---
+  If sCruda <> "" Then iLinea = ReubicarLinea(sCruda, iLinea)
+  m_EditorPrincipal.IrA(m_EditorPrincipal.PosicionDe(iLinea, 0))
+
+  ' --- 4. MARCA Y FOCO AL EDITOR (RC-GM-07) ---
+  SeguirEditor(False)
+  FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ============================================
+' Función   : AnalizarTitulos
+' Propósito : Encontrar los títulos ATX de un .md, salteando código y YAML
+' Parámetros: sTexto As String — contenido del .md
+'             sRel As String — ruta relativa del archivo, se copia en cada título
+' Retorna   : CTituloMD[] — títulos en orden de aparición
+' ============================================
+Public Function AnalizarTitulos(sTexto As String, sRel As String) As CTituloMD[]
+
+  Dim aTitulos As New CTituloMD[]
+  Dim oTitulo As CTituloMD
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sCerco As String
+  Dim sResto As String
+  Dim iNivel As Integer
+  Dim i As Integer
+  Dim bEnYaml As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  If sTexto = "" Then Return aTitulos
+  aLineas = Split(sTexto, Chr(10))
+
+  ' --- 2. ENCABEZADO YAML: SOLO SI EL ARCHIVO EMPIEZA CON --- ---
+  bEnYaml = (aLineas[0] = "---")
+
+  For i = 0 To aLineas.Max
+    sLinea = aLineas[i]
+
+    ' --- 3. YAML: TERMINA EN --- O ... ---
+    If bEnYaml Then
+      If i > 0 Then
+        If sLinea = "---" Or If sLinea = "..." Then bEnYaml = False
+      Endif
+      Continue
+    Endif
+
+    ' --- 4. BLOQUES DE CÓDIGO CERCADOS: ``` O ~~~, SE CIERRAN CON EL MISMO CARÁCTER ---
+    If sCerco <> "" Then
+      If String.Left(LTrim(sLinea), 3) = sCerco Then sCerco = ""
+      Continue
+    Endif
+    If String.Left(LTrim(sLinea), 3) = "```" Then
+      sCerco = "```"
+      Continue
+    Endif
+    If String.Left(LTrim(sLinea), 3) = "~~~" Then
+      sCerco = "~~~"
+      Continue
+    Endif
+
+    ' --- 5. TÍTULO ATX: # EN LA COLUMNA 0, DE 1 A 6, SEGUIDOS DE UN ESPACIO ---
+    ' SIN EL ESPACIO NO ES TÍTULO PARA PANDOC (#hashtag)
+    If String.Left(sLinea, 1) <> "#" Then Continue
+    iNivel = 0
+    While iNivel < String.Len(sLinea)
+      If String.Mid(sLinea, iNivel + 1, 1) <> "#" Then Break
+      Inc iNivel
+    Wend
+    If iNivel > 6 Then Continue
+    If String.Mid(sLinea, iNivel + 1, 1) <> " " Then Continue
+    sResto = LimpiarTitulo(String.Mid(sLinea, iNivel + 2))
+    If sResto = "" Then Continue
+
+    ' --- 6. ALTA ---
+    oTitulo = New CTituloMD
+    oTitulo.sArchivo = sRel
+    oTitulo.iLinea = i
+    oTitulo.iNivel = iNivel
+    oTitulo.sTexto = sResto
+    oTitulo.sCruda = sLinea
+    aTitulos.Add(oTitulo)
+  Next
+
+  Return aTitulos
+
+End
+
+' ============================================
+' Función   : AgregarArchivo
+' Propósito : Agregar el nodo de un archivo y sus títulos
+' Parámetros: sRel As String — ruta relativa
+'             sNombre As String — texto del nodo
+'             sContenido As String — contenido del archivo
+' Retorna   : nada
+' ============================================
+Private Sub AgregarArchivo(sRel As String, sNombre As String, sContenido As String)
+
+  Dim hNodo As _TreeView_Item
+
+  hNodo = $hVista.Add(ClaveArchivo(sRel), sNombre)
+  hNodo.Tag = sRel
+  AgregarTitulos(sRel, sContenido)
+
+End
+
+' ============================================
+' Función   : AgregarTitulos
+' Propósito : Colgar los títulos de un archivo de su nodo, anidados por nivel
+' Parámetros: sRel As String — ruta relativa
+'             sContenido As String — contenido del archivo
+' Retorna   : nada
+' ============================================
+Private Sub AgregarTitulos(sRel As String, sContenido As String)
+
+  Dim aTitulos As CTituloMD[]
+  Dim oTitulo As CTituloMD
+  Dim hNodo As _TreeView_Item
+  Dim aPila As New CTituloMD[]
+  Dim sPadre As String
+
+  ' --- 1. ANÁLISIS Y REGISTRO POR ARCHIVO ---
+  aTitulos = AnalizarTitulos(sContenido, sRel)
+  $cTitulos[sRel] = aTitulos
+
+  ' --- 2. PADRE: EL ÚLTIMO TÍTULO DE NIVEL MENOR; SI NO HAY, EL ARCHIVO ---
+  ' UNA PILA POR NIVELES TOLERA SALTOS (## SEGUIDO DE ####)
+  For Each oTitulo In aTitulos
+    Do
+      If aPila.Count = 0 Then Break
+      If aPila[aPila.Max].iNivel < oTitulo.iNivel Then Break
+      aPila.Remove(aPila.Max)
+    Loop
+    If aPila.Count = 0 Then
+      sPadre = ClaveArchivo(sRel)
+    Else
+      sPadre = ClaveTitulo(aPila[aPila.Max])
+    Endif
+    hNodo = $hVista.Add(ClaveTitulo(oTitulo), oTitulo.sTexto, Null, sPadre)
+    hNodo.Tag = oTitulo
+    aPila.Add(oTitulo)
+  Next
+
+End
+
+' ============================================
+' Función   : AplicarFiltros
+' Propósito : Mostrar u ocultar nodos según profundidad y alcance, sin reconstruir (GV-51)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub AplicarFiltros()
+
+  Dim hNodo As _TreeView_Item
+  Dim oTitulo As CTituloMD
+  Dim sNombre As String
+
+  For Each hNodo In $hVista._Items
+    If hNodo.Depth = 0 Then
+      ' ALCANCE: POR EL PREFIJO DEL NOMBRE DEL ARCHIVO
+      sNombre = File.Name(hNodo.Tag)
+      hNodo.Visible = ($sPrefijo = "" Or String.Left(sNombre, String.Len($sPrefijo)) = $sPrefijo)
+    Else
+      ' PROFUNDIDAD: UN # SUELTO (ERROR DE ESTRUCTURA) CUENTA COMO ##
+      oTitulo = hNodo.Tag
+      hNodo.Visible = (Max(oTitulo.iNivel, 2) <= $iNivelMax)
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : NodoEquivalente
+' Propósito : Encontrar en el árbol el nodo de un título hallado en el editor
+' Parámetros: sRel As String — archivo
+'             oBuscado As CTituloMD — título en el texto actual del editor
+'             iOrdinal As Integer — su orden entre los títulos del editor
+' Retorna   : _TreeView_Item — el nodo, o Null si el título no está en el árbol
+' ============================================
+Private Function NodoEquivalente(sRel As String, oBuscado As CTituloMD, iOrdinal As Integer) As _TreeView_Item
+
+  Dim aGuardados As CTituloMD[]
+  Dim iMejor As Integer
+  Dim iDistancia As Integer
+  Dim i As Integer
+
+  ' --- 1. TÍTULOS DEL ÁRBOL PARA ESE ARCHIVO ---
+  If Not $cTitulos.Exist(sRel) Then Return Null
+  aGuardados = $cTitulos[sRel]
+
+  ' --- 2. MISMO TEXTO Y NIVEL; ENTRE VARIOS IGUALES, EL DE ORDEN MÁS CERCANO ---
+  ' CON CAMBIOS SIN GUARDAR LAS LÍNEAS NO COINCIDEN, PERO EL TEXTO SÍ
+  iMejor = -1
+  For i = 0 To aGuardados.Max
+    If aGuardados[i].sTexto <> oBuscado.sTexto Then Continue
+    If aGuardados[i].iNivel <> oBuscado.iNivel Then Continue
+    If iMejor < 0 Then
+      iMejor = i
+      iDistancia = Abs(i - iOrdinal)
+    Else If Abs(i - iOrdinal) < iDistancia Then
+      iMejor = i
+      iDistancia = Abs(i - iOrdinal)
+    Endif
+  Next
+
+  If iMejor < 0 Then Return Null
+  Return $hVista[ClaveTitulo(aGuardados[iMejor])]
+
+End
+
+' ============================================
+' Función   : ReubicarLinea
+' Propósito : Encontrar en el editor la línea de un título que pudo haberse corrido
+' Parámetros: sCruda As String — la línea del título tal como se leyó
+'             iLinea As Integer — la línea donde estaba
+' Retorna   : Integer — la línea más cercana con ese mismo texto, o iLinea si no hay
+' ============================================
+Private Function ReubicarLinea(sCruda As String, iLinea As Integer) As Integer
+
+  Dim aLineas As String[]
+  Dim iDesvio As Integer
+
+  ' --- 1. TEXTO ACTUAL DEL EDITOR ---
+  If m_EditorPrincipal.Texto() = "" Then Return 0
+  aLineas = Split(m_EditorPrincipal.Texto(), Chr(10))
+
+  ' --- 2. BÚSQUEDA HACIA AFUERA DESDE LA LÍNEA GUARDADA ---
+  ' PRIMERO LA MISMA LÍNEA, DESPUÉS ±1, ±2…: GANA LA MÁS CERCANA
+  For iDesvio = 0 To aLineas.Count
+    If iLinea + iDesvio <= aLineas.Max Then
+      If aLineas[iLinea + iDesvio] = sCruda Then Return iLinea + iDesvio
+    Endif
+    If iLinea - iDesvio >= 0 Then
+      If iLinea - iDesvio <= aLineas.Max Then
+        If aLineas[iLinea - iDesvio] = sCruda Then Return iLinea - iDesvio
+      Endif
+    Endif
+  Next
+
+  ' --- 3. NO ESTÁ (SE BORRÓ O SE CAMBIÓ): LA LÍNEA GUARDADA, ACOTADA ---
+  Return Min(iLinea, aLineas.Max)
+
+End
+
+' ============================================
+' Función   : AbrirArchivo
+' Propósito : Abrir otro archivo del proyecto a través del combobox
+' Parámetros: sRel As String — ruta relativa, igual al texto del combobox
+' Retorna   : Boolean — True si quedó abierto; False si se canceló o no está
+' ============================================
+Private Function AbrirArchivo(sRel As String) As Boolean
+
+  Dim i As Integer
+  Dim iIndice As Integer
+
+  ' --- 1. ÍNDICE DEL ARCHIVO EN EL COMBOBOX ---
+  iIndice = -1
+  For i = 0 To FMain.cmbArticulosRevista.Count - 1
+    If FMain.cmbArticulosRevista[i].Text = sRel Then
+      iIndice = i
+      Break
+    Endif
+  Next
+  If iIndice < 0 Then Return False
+
+  ' --- 2. AVISO DE CAMBIOS SIN GUARDAR ANTES DE TOCAR NADA (SC-06) ---
+  If Not FMain.ConfirmarDescartarCambios() Then Return False
+
+  ' --- 3. CAMBIO POR EL COMBOBOX: SU Click CARGA EL ARCHIVO ---
+  ' LA BANDERA SUPRIME EL SEGUNDO AVISO DENTRO DEL Click, QUE YA SE EVALUÓ ACÁ (SC-06).
+  ' EL ÍNDICE ES DISTINTO DEL ACTUAL: NO SE DA EL Click INÚTIL DE GV-53
+  FMain.bAbriendoProyecto = True
+  FMain.cmbArticulosRevista.Index = iIndice
+  FMain.bAbriendoProyecto = False
+
+  ' --- 4. CONFIRMACIÓN: EL Click PUDO FALLAR AL LEER EL ARCHIVO (YA INFORMADO) ---
+  Return RutaRelativa(FMain.sRutaArchivoAbierto) = sRel
+
+End
+
+' ============================================
+' Función   : TitulosDeLaBase
+' Propósito : Leer los títulos de capítulos y artículos del proyecto, por nombre de archivo
+' Parámetros: ninguno
+' Retorna   : Collection — nombre_archivo (sin .md) → título
+' ============================================
+Private Function TitulosDeLaBase() As Collection
+
+  Dim cNombres As New Collection
+  Dim rDatos As Result
+
+  ' --- 1. LIBROS: capitulos.titulo_capitulo ---
+  ' SI LA CONSULTA FALLA, LOS NODOS MUESTRAN EL NOMBRE DEL ARCHIVO: LA FALLA
+  ' QUEDA A LA VISTA EN EL ÁRBOL, NO ES UN CANAL MUDO (GV-23)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT nombre_archivo, titulo_capitulo FROM capitulos WHERE id_proyecto = &1", m_InicioCierre.IdProyectoEnCurso)
+  If Not Error Then
+    While rDatos.Available
+      If Not IsNull(rDatos["nombre_archivo"]) Then cNombres[rDatos["nombre_archivo"]] = rDatos["titulo_capitulo"]
+      rDatos.MoveNext()
+    Wend
+  Endif
+
+  ' --- 2. REVISTAS: articulos.titulo_articulo ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT nombre_archivo, titulo_articulo FROM articulos WHERE id_proyecto = &1", m_InicioCierre.IdProyectoEnCurso)
+  If Not Error Then
+    While rDatos.Available
+      If Not IsNull(rDatos["nombre_archivo"]) Then cNombres[rDatos["nombre_archivo"]] = rDatos["titulo_articulo"]
+      rDatos.MoveNext()
+    Wend
+  Endif
+
+  Return cNombres
+
+End
+
+' ============================================
+' Función   : NombreDeArchivo
+' Propósito : Texto del nodo de un archivo: su título en la base, o su nombre
+' Parámetros: sRel As String — ruta relativa
+'             cNombres As Collection — títulos por nombre_archivo
+' Retorna   : String — el texto a mostrar
+' ============================================
+Private Function NombreDeArchivo(sRel As String, cNombres As Collection) As String
+
+  Dim sBase As String
+
+  ' nombre_archivo SE GUARDA SIN EXTENSIÓN, COMO LO COMPARA cmbArticulosRevista_Click
+  sBase = File.BaseName(sRel)
+  If cNombres.Exist(sBase) Then
+    If cNombres[sBase] <> "" Then Return cNombres[sBase]
+  Endif
+  Return File.Name(sRel)
+
+End
+
+' ============================================
+' Función   : LimpiarTitulo
+' Propósito : Quitar del título el cierre de # y el bloque de atributos {…}
+' Parámetros: sResto As String — lo que sigue a los # y al espacio
+' Retorna   : String — el título a mostrar
+' ============================================
+Private Function LimpiarTitulo(sResto As String) As String
+
+  Dim sTitulo As String
+  Dim iPos As Integer
+
+  sTitulo = Trim(sResto)
+
+  ' --- 1. ATRIBUTOS DE PANDOC AL FINAL: {#id .clase} ---
+  If String.Right(sTitulo, 1) = "}" Then
+    iPos = String.RInStr(sTitulo, "{")
+    If iPos > 0 Then sTitulo = Trim(String.Left(sTitulo, iPos - 1))
+  Endif
+
+  ' --- 2. CIERRE OPCIONAL DE #: «## Título ##» ---
+  While String.Right(sTitulo, 1) = "#"
+    sTitulo = String.Left(sTitulo, String.Len(sTitulo) - 1)
+  Wend
+
+  Return Trim(sTitulo)
+
+End
+
+' ============================================
+' Función   : RutaRelativa
+' Propósito : Convertir la ruta de un archivo en su ruta relativa al proyecto
+' Parámetros: sRutaAbsoluta As String — ruta del archivo
+' Retorna   : String — "carpeta/archivo.md", o "" si no está en una subcarpeta del proyecto
+' ============================================
+Private Function RutaRelativa(sRutaAbsoluta As String) As String
+
+  Dim sRaiz As String
+  Dim sRel As String
+
+  sRaiz = m_InicioCierre.RutaProyectoEnCurso
+  If sRaiz = "" Then Return ""
+  If String.Left(sRutaAbsoluta, String.Len(sRaiz) + 1) <> sRaiz & "/" Then Return ""
+  sRel = String.Mid(sRutaAbsoluta, String.Len(sRaiz) + 2)
+
+  ' EL ARCHIVO PRINCIPAL ESTÁ EN LA RAÍZ: NO TIENE NODO
+  If String.InStr(sRel, "/") = 0 Then Return ""
+  Return sRel
+
+End
+
+' ============================================
+' Función   : ClaveArchivo
+' Propósito : Clave del nodo de un archivo
+' Parámetros: sRel As String — ruta relativa
+' Retorna   : String — la clave
+' ============================================
+Private Function ClaveArchivo(sRel As String) As String
+
+  Return "F|" & sRel
+
+End
+
+' ============================================
+' Función   : ClaveTitulo
+' Propósito : Clave del nodo de un título: archivo y línea la hacen única
+' Parámetros: oTitulo As CTituloMD — el título
+' Retorna   : String — la clave
+' ============================================
+Private Function ClaveTitulo(oTitulo As CTituloMD) As String
+
+  Return "T|" & oTitulo.sArchivo & "|" & CStr(oTitulo.iLinea)
+
+End
