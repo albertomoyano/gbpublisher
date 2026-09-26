@@ -908,7 +908,7 @@ DECISIÓN CERRADA. Aplicada en el visor XML (`txtEditorXML`, solo lectura).
 
 MECANISMO
 
-El color no se aplica con `Format` (GV-46). `CVisorResaltado` corre `TextHighlighter.Run` una vez por párrafo (RF-10), guarda el resultado en un `Byte[][]` y arma un HTML: un `<p>` por párrafo con `white-space:pre-wrap` y un `<span>` con estilo por tramo. Lo asigna con `RichText`. Cambiar de tema rearma el HTML desde la caché sin volver a correr `Run`, salvo que el texto del control ya no coincida con la caché: en un control editable (SC-18) se analiza de nuevo antes de pintar. Sin esa comprobación, un cambio de tema devolvía el editor al texto del último análisis y se perdía lo escrito; verificado en banco.
+El color no se aplica con `Format` (GV-46). `CVisorResaltado` corre `TextHighlighter.Run` una vez por párrafo (RF-10), guarda el resultado en un `Byte[][]` y arma un HTML: un `<p>` por párrafo con `white-space:pre-wrap` y un `<span>` con estilo por tramo. El párrafo vacío lleva el mismo estilo que los demás, con su color (GV-54). Lo asigna con `RichText`. Cambiar de tema rearma el HTML desde la caché sin volver a correr `Run`, salvo que el texto del control ya no coincida con la caché: en un control editable (SC-18) se analiza de nuevo antes de pintar. Sin esa comprobación, un cambio de tema devolvía el editor al texto del último análisis y se perdía lo escrito; verificado en banco.
 
 La ida y vuelta es exacta: un capítulo de 392.713 caracteres volvió idéntico por `.Text`, con la salvedad de GV-47.
 
@@ -919,7 +919,7 @@ REPARTO
 
 TEMAS
 
-Cinco archivos `.theme` en `themes/`, junto a los `.highlight`. Se copian a `~/.gbpublisher/themes` (SC-11) y se leen desde ahí.
+Nueve archivos `.theme` en `themes/`, junto a los `.highlight`. Entre ellos, `gbpflexoki`: derivado de Flexoki para el trabajo editorial (fondo `#FAFAF9`, itálica en púrpura, referencias y marcas de nota en negrita); `flexoki` conserva la paleta original. Se copian a `~/.gbpublisher/themes` (SC-11) y se leen desde ahí.
 
 Formato `Settings`: una sección `[Tema]` (Nombre, Orden, Fondo, Texto) y una sección por gramática (`[XML]`, `[Markdown]`), porque la misma clave significa cosas distintas en cada una: `Comment` es comentario en XML e itálica en Markdown. Cada valor es `"#RRGGBB"`, con `;bold` y `;italic` opcionales.
 
@@ -939,7 +939,7 @@ Abrir y colorear: 1,3 s, con `Application.Busy`. Cambiar de tema: 0,35 s.
 
 El editor principal adopta este mismo modelo, con refresco en puntos fijos (SC-18).
 
-**Relaciones:** vinculo:SC-11, vinculo:GV-46, vinculo:GV-48, vinculo:RF-10, vinculo:SC-17, vinculo:GV-44, vinculo:SC-18
+**Relaciones:** vinculo:SC-11, vinculo:GV-46, vinculo:GV-48, vinculo:RF-10, vinculo:SC-17, vinculo:GV-44, vinculo:SC-18, vinculo:GV-54
 
 ### SC-16 — El .md es autosuficiente
 
@@ -1000,9 +1000,12 @@ Costo medido del refresco: alrededor de 0,1 s en 190.000 caracteres, reanalizand
 
 LO QUE REEMPLAZA A LO QUE NO TIENE TextEdit
 
-- Plegado por títulos: un árbol de estructura (`TreeView`, GV-51) en una pestaña del panel derecho, que abarca todos los .md del proyecto. Primer nivel: cada capítulo o artículo, con su título tomado de la base (los .md no llevan `#`); debajo, los `##`, `###`… de cada archivo. Los capítulos arrancan plegados salvo el abierto, y el árbol sigue al editor.
-  Un click en un título pasa por el aviso de SC-06, cambia de archivo en el combobox si hace falta (GV-53), lleva el cursor al comienzo del título, lo deja en la primera línea de la vista (GV-52) y devuelve el foco al editor. Solo mouse, como TeXstudio: el árbol no se recorre con el teclado.
-  Filtros por `Visible`, sin reconstruir el árbol: profundidad (capítulo, `##`, `###`, todo) y, a prueba, alcance por prefijo (`fm-`, `a-`, `bm-`).
+- Plegado por títulos: un árbol de estructura (`TreeView`, GV-51) en la pestaña «Estructura» del panel derecho (`tvEstructura`), a cargo de `m_Estructura`. Primer nivel: un nodo por .md de front-matter, articulos y back-matter, en el orden del combobox, con su título tomado de la base: `capitulos.titulo_capitulo` en libros, `articulos.titulo_articulo` en revistas, por `nombre_archivo` e `id_proyecto`; sin fila, el nombre del archivo. El archivo principal del proyecto no va, igual que en canónicos y compilación. Debajo, los títulos de cada archivo anidados por nivel.
+  Títulos: solo ATX (`#` en la columna 0, de uno a seis, seguidos de un espacio), que es lo único que usan revistas y libros. Se saltean los bloques de código cercados (``` y ~~~) y el encabezado YAML inicial; un `#` sin espacio no es título. Se muestran sin el cierre de `#` ni el bloque de atributos `{…}`.
+  Cada nodo guarda archivo y línea (`CTituloMD`). Se reconstruye completo al abrir el proyecto y cuando cambia la lista de archivos; al guardar se rehacen solo los títulos del archivo guardado; al cambiar de archivo no se reconstruye, se despliega ese capítulo y se pliegan los demás. Medido en banco: 32 archivos y 3,7 MB, 800 títulos, en 0,02 s.
+  Un click pasa por el aviso de SC-06, cambia de archivo por el combobox si hace falta (GV-53), lleva el cursor al título, lo deja en la primera línea de la vista (GV-52) y devuelve el foco al editor. Solo mouse, como TeXstudio. Si el archivo abierto tiene cambios sin guardar, el título se reubica por su texto, buscando desde la línea guardada hacia afuera.
+  El árbol sigue al cursor: marca el título de la sección donde está, 300 ms después del último movimiento. La sección se calcula sobre el texto del editor y el nodo se busca por texto y nivel.
+  Filtros por `Visible`, sin reconstruir el árbol: profundidad (capítulo, `##`, `###`, todo) y, a prueba, alcance por prefijo (`fm-`, `a-`, `bm-`). Dos grupos de RadioButton, cada uno en su HBox dentro de `hbRadioButtons` (GV-55).
   Cuando esté completo reemplaza a `VerificarEstructuraMD`.
 - Numeración al margen: número de párrafo del cursor en la barra de estado. Ir a la línea N (`tbGoTo`) se conserva calculando la posición sobre `.Text`.
 
@@ -1021,11 +1024,12 @@ Todo acceso al editor que no sea trivial (foco, fuente, visibilidad) pasa por `m
 - Saltos: `IrA` deja la primera línea del PÁRRAFO arriba de la vista (GV-52) y después selecciona: una palabra en la tercera fila visual queda a la vista sin nuevo desplazamiento. Excepción aceptada: un párrafo más alto que la vista. Reemplaza a `GotoCenter`.
 - Ortografía: la palabra queda seleccionada, sin color. `HighlightString` no tiene equivalente, y colorear con `Format` entra en el deshacer (GV-46).
 - Mayúsculas y minúsculas: `CambiarCaja`, con las tablas de GV-03 y no con `UCase` / `LCase`.
+- Notas: «Ir a la otra marca de la nota» (`menuPopUp`, `m_FuncionesGenericas.IrAParFootnote`) salta entre la marca en el texto y su definición al final del capítulo. Alcanza con que el cursor esté sobre la marca; si la nota tiene varias marcas, desde la definición va a la primera y avisa.
 - Las funciones no devuelven el foco: lo hace el handler al final del evento (RC-GM-07). Así sirven también desde los diálogos de búsqueda y ortografía.
 
-**Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16, vinculo:GV-51, vinculo:GV-52, vinculo:GV-53
+**Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16, vinculo:GV-51, vinculo:GV-52, vinculo:GV-53, vinculo:GV-54, vinculo:GV-55
 
-**PENDIENTE:** Implementación: m_EditorPrincipal y el parche de CVisorResaltado están escritos y pasaron el banco en 3.19; falta integrarlos en los nueve archivos que tocan txtEditorProyecto y probar en 3.22.1. Refresco incremental no implementado: Refrescar recolorea todo, 1,2 s sobre 2.000 párrafos en el banco. Llevar una coincidencia al tope de la vista: resuelto pasando antes por el final del documento (GV-52). Árbol: falta decidir de dónde salen las posiciones del archivo abierto con cambios sin guardar (el editor o el disco) y en qué momentos se reconstruye.
+**PENDIENTE:** Migración integrada y probada en 3.22.1: carga y cambio de archivo, guardado, búsqueda, notas, barra de herramientas, ortografía y cambio de tema. Árbol (m_Estructura): escrito y probado en banco 3.19; falta probarlo en 3.22.1. Refresco incremental no implementado: Refrescar recolorea todo, 1,2 s sobre 2.000 párrafos en el banco.
 
 ### SC-19 — Scripts de actualización del corpus: contrato con el importador
 
@@ -2497,6 +2501,44 @@ Es el efecto colateral que SC-06 neutraliza con `bAbriendoProyecto`, pero la ban
 
 REGLA: antes de asignar `Index` desde el código, compararlo con el actual. Si es el mismo, no se asigna.
 
+CASO EN EL PROYECTO: el temporizador de archivos llama a `CargarListaArticulosMD(True)`, que vacía el combobox y repone la selección asignando `Index`. Eso recargaba el archivo abierto: preguntaba por cambios sin guardar y vaciaba el deshacer. Como ahí la asignación no se puede evitar, `cmbArticulosRevista_Click` sale sin hacer nada si la ruta elegida es la del archivo ya abierto, antes del aviso de SC-06.
+
 **Relaciones:** vinculo:SC-06, vinculo:GV-46, vinculo:SC-18
 
 **PENDIENTE:** Leído en el fuente, no medido en ejecución.
+
+### GV-54 — TextEdit: lo que se escribe en un párrafo vacío sin color sale con el color por omisión
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint y Gambas 3.19 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+Cuando el documento se carga como HTML (SC-15), lo que se escribe hereda el formato del carácter vecino. En un párrafo vacío no hay vecino: si su `<p>` no declara color, lo tipeado sale con el color por omisión de Qt, que es negro. En un tema oscuro no se lee.
+
+Síntoma en el proyecto: con Dracula, escribir en una línea vacía daba letra negra, que tomaba el color del tema recién al guardar.
+
+LO QUE NO LO ARREGLA: asignar `Foreground` al control. Probado en banco: el texto siguió saliendo negro.
+
+LO QUE LO ARREGLA: que el párrafo vacío lleve el mismo estilo que los demás, con el color del tema:
+
+    <p style='-qt-paragraph-type:empty; margin:0; white-space:pre-wrap; color:#…'><br /></p>
+
+Verificado en 3.19 y en 3.22.1. La ida y vuelta por `.Text` sigue siendo exacta.
+
+**Relaciones:** vinculo:SC-15, vinculo:SC-18
+
+### GV-55 — RadioButton: la exclusión mutua es por contenedor directo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+Los `RadioButton` se excluyen entre sí solo con sus hermanos del mismo contenedor. Uno que esté en otro contenedor, aunque sea hijo del mismo padre, no se desmarca.
+
+Medido en banco:
+
+    dos RadioButton en el mismo HBox           marcar el segundo desmarca el primero
+    en dos HBox hijos del mismo HBox           los dos quedan marcados
+    dos en el mismo HBox hijo                  se excluyen
+
+CONSECUENCIA: dos grupos de opciones independientes necesitan un contenedor cada uno. Aplicado en la pestaña «Estructura»: `hbProfundidad` y `hbAlcance` dentro de `hbRadioButtons` (SC-18).
+
+**Relaciones:** vinculo:SC-18
+
+**PENDIENTE:** Medido en 3.19; no verificado en 3.22.1.
