@@ -1,0 +1,548 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_BuscarBib
+' Propósito : Busca la referencia pegada en txtTMPbiblio entre las entradas ya
+'             cargadas en la tabla bibtex, en TODOS los proyectos, antes de
+'             consultar al LLM. Orden: 1) DOI exacto; 2) FULLTEXT para juntar
+'             candidatos, verificados con apellido y título. Sin candidatos
+'             verificados, el llamador sigue con el LLM.
+'             También copia una entrada de otro proyecto a los controles
+'             («Usar esta»): se DUPLICA, no se comparte la fila (cada proyecto
+'             es dueño de sus datos; el mismo libro en otra reimpresión es
+'             otra entrada). La fila de origen queda en id_origen al guardar.
+' Requiere  : esquema 1.1.0 (índice ft_bibtex_busqueda, columna id_origen).
+' Dependencias: m_ConexionBD, m_InicioCierre, m_Bibtex, m_AplicarBib, m_Sonido.
+' ==============================================================================
+
+' --- CRITERIO DE COINCIDENCIA ---
+' FULLTEXT SOLO JUNTA CANDIDATOS (LOS 20 MEJORES); LA DECISIÓN LA TOMA UNA
+' VERIFICACIÓN DETERMINISTA SOBRE CADA UNO: EL APELLIDO DEL PRIMER AUTOR (O
+' EDITOR) TIENE QUE ESTAR EN LA REFERENCIA, Y AL MENOS EL 80 % DE LAS PALABRAS
+' DEL TÍTULO TAMBIÉN. LA PROPORCIÓN ENTRE PUNTAJES QUE SE CALIBRÓ PRIMERO NO
+' ALCANZA: EN BANCO, CON LAS REFERENCIAS REALES DE l-DUEK, UN TÍTULO CON
+' PALABRAS FRECUENTES («vida cotidiana», «Buenos Aires») DEJÓ A LA ENTRADA
+' CORRECTA APENAS 1,4 VECES POR ENCIMA DE OTRAS SIN RELACIÓN
+Private Const COBERTURA_TITULO As Float = 0.8
+Private Const LIMITE_CANDIDATOS As Integer = 20
+
+' --- COLUMNAS QUE EL ÍNDICE FULLTEXT CUBRE: DEBEN COINCIDIR EXACTAMENTE ---
+Private Const COLUMNAS_FT As String = "title, author, book_title, journal_title"
+
+' --- MOTIVO DE LA ÚLTIMA BÚSQUEDA, PARA EL FORMULARIO DE CANDIDATOS ---
+Public Const MOTIVO_DOI As String = "doi"
+Public Const MOTIVO_TEXTO As String = "texto"
+
+' --- ESTADO ---
+' CANALES DE SALIDA COMO VARIABLE DE MÓDULO CON ACCESOR (GV-24, ALTERNATIVA 4)
+Private $sUltimoMotivo As String
+Private $sUltimoError As String
+' FILA DE LA QUE SE COPIÓ LA ENTRADA EN CURSO; 0 = NINGUNA
+Private $iIdOrigenPendiente As Integer
+
+' ============================================
+' Función   : UltimoMotivo
+' Propósito : Cómo se encontraron los candidatos de la última búsqueda
+' Parámetros: (ninguno)
+' Retorna   : String — MOTIVO_DOI, MOTIVO_TEXTO o vacío si no hubo candidatos
+' ============================================
+Public Function UltimoMotivo() As String
+
+  Return $sUltimoMotivo
+
+End
+
+' ============================================
+' Función   : UltimoError
+' Propósito : Motivo del último fallo de Buscar o UsarEntrada
+' Parámetros: (ninguno)
+' Retorna   : String — descripción, vacío si no hubo
+' ============================================
+Public Function UltimoError() As String
+
+  Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : IdOrigenPendiente
+' Propósito : Fila de otro proyecto de la que se copió la entrada en curso;
+'             la lee GuardarBibtexPrimeraVez para escribir id_origen
+' Parámetros: (ninguno)
+' Retorna   : Integer — id de la fila de origen, 0 si no hubo copia
+' ============================================
+Public Function IdOrigenPendiente() As Integer
+
+  Return $iIdOrigenPendiente
+
+End
+
+' ============================================
+' Función   : OlvidarOrigen
+' Propósito : Descarta el origen pendiente: después de guardar, al limpiar el
+'             formulario o al analizar otra referencia
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub OlvidarOrigen()
+
+  $iIdOrigenPendiente = 0
+
+End
+
+' ============================================
+' Función   : ExtraerDOI
+' Propósito : Encuentra un DOI en el texto de una referencia y lo devuelve
+'             desnudo (10.xxxx/…), que es como se guarda en la base. Patrón
+'             recomendado por Crossref (cubre el 99,3 % de sus DOI):
+'             /^10.\d{4,9}/[-._;()/:A-Z0-9]+$/i
+'             Se recorre con String.* y no con un motor de expresiones: es un
+'             escaneo simple y así la búsqueda no lanza un proceso (SC-05)
+' Parámetros: sTexto As String — texto de la referencia
+' Retorna   : String — el DOI, vacío si no hay
+' ============================================
+Public Function ExtraerDOI(sTexto As String) As String
+
+  Dim sCar As String
+  Dim sDOI As String
+  Dim iLargo As Integer
+  Dim iDesde As Integer
+  Dim iInicio As Integer
+  Dim iPos As Integer
+  Dim iDigitos As Integer
+  Dim iAbiertos As Integer
+  Dim i As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  iLargo = String.Len(sTexto)
+  iDesde = 1
+
+  ' --- 2. CADA «10.» CANDIDATO ---
+  Do
+    iInicio = String.InStr(sTexto, "10.", iDesde)
+    If iInicio = 0 Then Return ""
+    iDesde = iInicio + 1
+
+    ' UN «10.» PEGADO A OTRO DÍGITO O LETRA NO ES UN COMIENZO («2010.» NO)
+    If iInicio > 1 Then
+      sCar = String.Mid(sTexto, iInicio - 1, 1)
+      If IsDigit(sCar) Or If IsLetter(sCar) Then Continue
+    Endif
+
+    ' PREFIJO: 4 A 9 DÍGITOS Y UNA BARRA
+    iPos = iInicio + 3
+    iDigitos = 0
+    While iPos <= iLargo
+      If Not IsDigit(String.Mid(sTexto, iPos, 1)) Then Break
+      Inc iDigitos
+      Inc iPos
+    Wend
+    If iDigitos < 4 Or iDigitos > 9 Then Continue
+    If String.Mid(sTexto, iPos, 1) <> "/" Then Continue
+    Inc iPos
+
+    ' SUFIJO: CARACTERES DEL CONJUNTO [-._;()/:A-Z0-9], SIN DISTINGUIR MAYÚSCULAS
+    While iPos <= iLargo
+      sCar = String.Mid(sTexto, iPos, 1)
+      If Not EsDeSufijo(sCar) Then Break
+      Inc iPos
+    Wend
+    sDOI = String.Mid(sTexto, iInicio, iPos - iInicio)
+    Break
+  Loop
+
+  ' --- 3. PUNTUACIÓN FINAL QUE ARRASTRA LA REFERENCIA ---
+  ' «…58471.» O «…58471,»: EL PUNTO FINAL ES DE LA ORACIÓN, NO DEL DOI
+  Do
+    sCar = String.Right(sDOI, 1)
+    If sCar = "." Or sCar = "," Or sCar = ";" Or sCar = ":" Then
+      sDOI = String.Left(sDOI, String.Len(sDOI) - 1)
+      Continue
+    Endif
+    ' UN «)» FINAL SE QUITA SOLO SI NO TIENE PAREJA DENTRO DEL DOI: LOS
+    ' PARÉNTESIS SON LEGÍTIMOS EN EL SUFIJO («…(99)00001-2»)
+    If sCar = ")" Then
+      iAbiertos = 0
+      For i = 1 To String.Len(sDOI)
+        If String.Mid(sDOI, i, 1) = "(" Then Inc iAbiertos
+        If String.Mid(sDOI, i, 1) = ")" Then Dec iAbiertos
+      Next
+      If iAbiertos < 0 Then
+        sDOI = String.Left(sDOI, String.Len(sDOI) - 1)
+        Continue
+      Endif
+    Endif
+    Break
+  Loop
+
+  ' --- 4. DEBE QUEDAR ALGO DESPUÉS DE LA BARRA ---
+  If String.Right(sDOI, 1) = "/" Then Return ""
+
+  Return sDOI
+
+End
+
+' ============================================
+' Función   : EsDeSufijo
+' Propósito : Indica si un carácter pertenece al sufijo de un DOI según el
+'             patrón de Crossref
+' Parámetros: sCar As String — un carácter
+' Retorna   : Boolean — True si es letra ASCII, dígito o uno de -._;()/:
+' ============================================
+Private Function EsDeSufijo(sCar As String) As Boolean
+
+  ' IsLetter Y IsDigit MIRAN ASCII: UNA LETRA ACENTUADA NO ENTRA, COMO EN EL PATRÓN
+  If IsLetter(sCar) Or If IsDigit(sCar) Then Return True
+
+  Return InStr("-._;()/:", sCar) > 0
+
+End
+
+' ============================================
+' Función   : AnioDeReferencia
+' Propósito : Primer año plausible del texto (cuatro dígitos sueltos, de 1500
+'             al año en curso). Sirve para ordenar primero la reimpresión del
+'             año citado
+' Parámetros: sTexto As String — texto de la referencia
+' Retorna   : String — el año, vacío si no hay
+' ============================================
+Public Function AnioDeReferencia(sTexto As String) As String
+
+  Dim sNumero As String
+  Dim sCar As String
+  Dim iLargo As Integer
+  Dim i As Integer
+
+  ' --- 1. RECORRIDO POR TRAMOS DE DÍGITOS ---
+  iLargo = String.Len(sTexto)
+  For i = 1 To iLargo + 1
+    If i <= iLargo Then
+      sCar = String.Mid(sTexto, i, 1)
+    Else
+      sCar = ""
+    Endif
+    If sCar <> "" And If IsDigit(sCar) Then
+      sNumero &= sCar
+    Else
+      ' FIN DE UN TRAMO: SOLO CUATRO DÍGITOS EN RANGO SON UN AÑO (NO «23328584211058471»)
+      If Len(sNumero) = 4 Then
+        If CInt(sNumero) >= 1500 And If CInt(sNumero) <= Year(Now) Then Return sNumero
+      Endif
+      sNumero = ""
+    Endif
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : Buscar
+' Propósito : Candidatos de la base para una referencia: por DOI exacto o, si
+'             no hay, por FULLTEXT verificado con apellido y título
+' Parámetros: sReferencia As String — texto de txtTMPbiblio
+' Retorna   : Integer[] — ids de bibtex en orden de presentación; vacío si
+'             ningún candidato pasa la verificación o si falló (ver UltimoError)
+' ============================================
+Public Function Buscar(sReferencia As String) As Integer[]
+
+  Dim aIds As New Integer[]
+  Dim aOrden As New String[]
+  Dim rDatos As Result
+  Dim sDOI As String
+  Dim sAnio As String
+  Dim sRefNorm As String
+  Dim i As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoMotivo = ""
+  $sUltimoError = ""
+
+  ' --- 2. DOI EXACTO: IDENTIFICA UNA SOLA OBRA, NO NECESITA UMBRAL ---
+  ' EN LA BASE EL DOI SE GUARDA DESNUDO; LA COLACIÓN _ci RESUELVE MAYÚSCULAS
+  sDOI = ExtraerDOI(sReferencia)
+  If sDOI <> "" Then
+    Try rDatos = m_ConexionBD.mConn.Exec("SELECT id FROM bibtex WHERE doi = &1 ORDER BY id DESC", sDOI)
+    If Error Then
+      $sUltimoError = "No se pudo buscar por DOI: " & Error.Text
+      Return aIds
+    Endif
+    While rDatos.Available
+      aIds.Add(rDatos["id"])
+      rDatos.MoveNext
+    Wend
+    If aIds.Count > 0 Then
+      $sUltimoMotivo = MOTIVO_DOI
+      Return aIds
+    Endif
+  Endif
+
+  ' --- 3. FULLTEXT SOBRE TODOS LOS PROYECTOS: JUNTA CANDIDATOS ---
+  ' EL AÑO NO ES TEXTO INDEXADO: SE TRAE APARTE PARA ORDENAR. EN LA BASE
+  ' CONVIVEN FILAS CON year Y FILAS CON date
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id, author, editor, title, COALESCE(LEFT(date, 4), year) AS anio, MATCH(" & COLUMNAS_FT & ") AGAINST (&1) AS puntaje FROM bibtex WHERE MATCH(" & COLUMNAS_FT & ") AGAINST (&1) ORDER BY puntaje DESC LIMIT " & LIMITE_CANDIDATOS, sReferencia)
+  If Error Then
+    $sUltimoError = "No se pudo buscar en la base (¿falta la actualización de esquema 1.1.0?): " & Error.Text
+    Return aIds
+  Endif
+
+  ' --- 4. VERIFICACIÓN DE CADA CANDIDATO: APELLIDO Y TÍTULO EN LA REFERENCIA ---
+  ' ORDEN: 0 SI COINCIDE EL AÑO CITADO, 1 SI NO; LUEGO LA POSICIÓN DEL
+  ' FULLTEXT (QUE YA VIENE POR PUNTAJE DESCENDENTE)
+  sRefNorm = " " & Normalizar(sReferencia) & " "
+  sAnio = AnioDeReferencia(sReferencia)
+  i = 0
+  While rDatos.Available
+    If Coincide(sRefNorm, Texto(rDatos["author"]), Texto(rDatos["editor"]), Texto(rDatos["title"])) Then
+      If sAnio <> "" And If Texto(rDatos["anio"]) = sAnio Then
+        aOrden.Add("0|" & Format$(i, "000") & "|" & rDatos["id"])
+      Else
+        aOrden.Add("1|" & Format$(i, "000") & "|" & rDatos["id"])
+      Endif
+    Endif
+    Inc i
+    rDatos.MoveNext
+  Wend
+  If aOrden.Count = 0 Then Return aIds
+
+  ' --- 5. RESULTADO EN ORDEN ---
+  aOrden.Sort()
+  For i = 0 To aOrden.Max
+    aIds.Add(CInt(Split(aOrden[i], "|")[2]))
+  Next
+
+  $sUltimoMotivo = MOTIVO_TEXTO
+  Return aIds
+
+End
+
+' ============================================
+' Función   : Coincide
+' Propósito : Verificación determinista de un candidato del FULLTEXT: el
+'             apellido del primer autor (o del primer editor, en una obra sin
+'             autor) aparece en la referencia, y además aparecen al menos
+'             COBERTURA_TITULO de las palabras del título, o TODAS las del
+'             título principal (lo anterior al primer «:» o «.»: muchas
+'             referencias citan sin el subtítulo). Así «Introducción» sola no
+'             encuentra nada, y un título de palabras frecuentes no arrastra
+'             entradas de otros autores
+' Parámetros: sRefNorm As String — referencia normalizada, entre espacios
+'             sAutor As String — columna author
+'             sEditor As String — columna editor
+'             sTitulo As String — columna title
+' Retorna   : Boolean — True si el candidato es la misma obra (o una
+'             reimpresión: el año no se mira acá)
+' ============================================
+Private Function Coincide(sRefNorm As String, sAutor As String, sEditor As String, sTitulo As String) As Boolean
+
+  Dim sApellido As String
+  Dim sPrincipal As String
+  Dim iCorte As Integer
+
+  ' --- 1. APELLIDO DEL PRIMER AUTOR, O DEL PRIMER EDITOR ---
+  If sAutor <> "" Then
+    sApellido = Apellido(sAutor)
+  Else
+    sApellido = Apellido(sEditor)
+  Endif
+  If sApellido = "" Then Return False
+  ' COMO PALABRAS ENTERAS: «dalle» NO DEBE ENCONTRARSE DENTRO DE «dallera»
+  If String.InStr(sRefNorm, " " & sApellido & " ") = 0 Then Return False
+
+  ' --- 2. TÍTULO COMPLETO: COBERTURA MÍNIMA ---
+  If Cobertura(sRefNorm, sTitulo) >= COBERTURA_TITULO Then Return True
+
+  ' --- 3. TÍTULO PRINCIPAL, SIN SUBTÍTULO: COMPLETO ---
+  ' EL CORTE ES EL PRIMER «:» O «. » DEL TÍTULO GUARDADO
+  iCorte = String.InStr(sTitulo, ":")
+  If iCorte = 0 Or If (String.InStr(sTitulo, ". ") > 0 And String.InStr(sTitulo, ". ") < iCorte) Then iCorte = String.InStr(sTitulo, ". ")
+  If iCorte = 0 Then Return False
+  sPrincipal = String.Left(sTitulo, iCorte - 1)
+
+  Return Cobertura(sRefNorm, sPrincipal) >= 1
+
+End
+
+' ============================================
+' Función   : Cobertura
+' Propósito : Proporción de las palabras de un título (de tres letras o más)
+'             que aparecen, como palabras enteras, en la referencia
+' Parámetros: sRefNorm As String — referencia normalizada, entre espacios
+'             sTitulo As String — título, sin normalizar
+' Retorna   : Float — de 0 a 1; 0 si el título no tiene palabras que contar
+' ============================================
+Private Function Cobertura(sRefNorm As String, sTitulo As String) As Float
+
+  Dim aPalabras As String[]
+  Dim sPalabra As String
+  Dim iTotal As Integer
+  Dim iPresentes As Integer
+
+  aPalabras = Split(Normalizar(sTitulo), " ", "", True)
+  For Each sPalabra In aPalabras
+    If String.Len(sPalabra) < 3 Then Continue
+    Inc iTotal
+    If String.InStr(sRefNorm, " " & sPalabra & " ") > 0 Then Inc iPresentes
+  Next
+  If iTotal = 0 Then Return 0
+
+  Return iPresentes / iTotal
+
+End
+
+' ============================================
+' Función   : Apellido
+' Propósito : Apellido normalizado de la primera persona de una lista biblatex
+'             («Clemenceau, Lautaro and …» → «clemenceau»; «{de la Fuente},
+'             José» → «de la fuente»; «CEPAL» → «cepal»)
+' Parámetros: sNombres As String — valor de author o editor
+' Retorna   : String — apellido normalizado, vacío si no hay
+' ============================================
+Private Function Apellido(sNombres As String) As String
+
+  Dim sPrimero As String
+  Dim iPos As Integer
+
+  ' --- 1. PRIMERA PERSONA ---
+  sPrimero = sNombres
+  iPos = String.InStr(sPrimero, " and ")
+  If iPos > 0 Then sPrimero = String.Left(sPrimero, iPos - 1)
+
+  ' --- 2. LO QUE ESTÁ ANTES DE LA COMA; SIN COMA (ENTIDAD), TODO ---
+  iPos = String.InStr(sPrimero, ",")
+  If iPos > 0 Then sPrimero = String.Left(sPrimero, iPos - 1)
+
+  Return Normalizar(sPrimero)
+
+End
+
+' ============================================
+' Función   : Normalizar
+' Propósito : Texto comparable: minúsculas, sin diacríticos, sin llaves ni
+'             puntuación, con un solo espacio entre palabras. Los diacríticos
+'             se quitan con una tabla explícita y no con transliteración a
+'             ASCII, que depende del locale (en C devuelve «?», verificado)
+' Parámetros: sTexto As String — texto original
+' Retorna   : String — texto normalizado
+' ============================================
+Public Function Normalizar(sTexto As String) As String
+
+  Dim sSalida As String
+  Dim sCar As String
+  Dim sCon As String
+  Dim sSin As String
+  Dim iPos As Integer
+  Dim bEspacio As Boolean
+  Dim i As Integer
+
+  ' --- 1. TABLA DE DIACRÍTICOS (CASTELLANO, PORTUGUÉS, FRANCÉS, CATALÁN, ALEMÁN) ---
+  sCon = "áàâãäåéèêëíìîïóòôõöúùûüñçý"
+  sSin = "aaaaaaeeeeiiiiooooouuuuncy"
+
+  ' --- 2. RECORRIDO POR CODEPOINTS (RC-GM-12) ---
+  For i = 1 To String.Len(sTexto)
+    sCar = String.LCase(String.Mid(sTexto, i, 1))
+    iPos = String.InStr(sCon, sCar)
+    If iPos > 0 Then sCar = String.Mid(sSin, iPos, 1)
+    If IsLetter(sCar) Or If IsDigit(sCar) Then
+      If bEspacio And If sSalida <> "" Then sSalida &= " "
+      bEspacio = False
+      sSalida &= sCar
+    Else
+      ' TODO LO DEMÁS (PUNTUACIÓN, LLAVES, ESPACIOS, LETRAS FUERA DE LA TABLA) SEPARA PALABRAS
+      bEspacio = True
+    Endif
+  Next
+
+  Return sSalida
+
+End
+
+' ============================================
+' Función   : Texto
+' Propósito : Valor de un campo como texto, con NULL como cadena vacía
+' Parámetros: vValor As Variant — valor del campo
+' Retorna   : String — el valor, o vacío
+' ============================================
+Private Function Texto(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return CStr(vValor)
+
+End
+
+' ============================================
+' Función   : UsarEntrada
+' Propósito : Copia una entrada de OTRO proyecto a los controles de FMain,
+'             como entrada nueva, SIN GUARDAR. No copia las columnas de
+'             control, las de trazabilidad, las que apuntan a claves (las
+'             claves son de cada proyecto y quedarían colgadas) ni las notas
+'             propias del proyecto de origen. Deja pendiente id_origen
+' Parámetros: iId As Integer — id de la fila de origen
+' Retorna   : Boolean — True si se volcó
+' ============================================
+Public Function UsarEntrada(iId As Integer) As Boolean
+
+  Dim rFila As Result
+  Dim oCampo As ResultField
+  Dim aCampos As New String[]
+  Dim aControles As New String[]
+  Dim aValores As New String[]
+  Dim aInforme As New String[]
+  Dim aExcluidas As String[] = ["id", "id_proyecto", "id_articulo", "clave_bibtex",
+    "id_origen", "fecha_modificacion",
+    "cross_ref", "xref", "xdata", "ids", "entry_set", "related", "related_type", "related_string",
+    "note", "addendum", "annotation"]
+
+  Dim sColumna As String
+  Dim sControl As String
+  Dim sValor As String
+
+  ' --- 1. LECTURA DE LA FILA ---
+  $sUltimoError = ""
+  Try rFila = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id = &1", iId)
+  If Error Then
+    $sUltimoError = "No se pudo leer la entrada de origen: " & Error.Text
+    Return False
+  Endif
+  If Not rFila.Available Then
+    $sUltimoError = "La entrada de origen ya no existe (id " & iId & ")."
+    Return False
+  Endif
+
+  ' --- 2. EL TIPO DE ENTRADA VA PRIMERO: SU Click DECIDE SI SE VE EL TIPO DE TESIS ---
+  If Not IsNull(rFila["tipo_de_entrada"]) Then
+    aCampos.Add("tipo_de_entrada")
+    aControles.Add(m_Bibtex.ControlDeColumna("tipo_de_entrada"))
+    aValores.Add(CStr(rFila["tipo_de_entrada"]))
+  Endif
+
+  ' --- 3. RESTO DE LAS COLUMNAS, POR NOMBRE Y NO POR POSICIÓN ---
+  For Each oCampo In rFila.Fields
+    sColumna = oCampo.Name
+    If sColumna = "tipo_de_entrada" Then Continue
+    If aExcluidas.Exist(sColumna) Then Continue
+    ' RC-GM-17: And NO CORTOCIRCUITA; EL NULL SE MIRA ANTES DEL Trim
+    If IsNull(rFila[sColumna]) Then Continue
+    sValor = Trim(CStr(rFila[sColumna]))
+    If sValor = "" Then Continue
+
+    sControl = m_Bibtex.ControlDeColumna(sColumna)
+    If sControl = "" Then
+      aInforme.Add(sColumna & ": no tiene control en el formulario")
+      Continue
+    Endif
+
+    aCampos.Add(sColumna)
+    aControles.Add(sControl)
+    aValores.Add(sValor)
+  Next
+
+  ' --- 4. VOLCADO CON LAS MISMAS REGLAS QUE «Aplicar» ---
+  If Not m_AplicarBib.Volcar(aCampos, aControles, aValores, aInforme) Then Return False
+
+  ' --- 5. TRAZABILIDAD: SE ESCRIBE AL GUARDAR (GuardarBibtexPrimeraVez) ---
+  $iIdOrigenPendiente = iId
+  Return True
+
+End

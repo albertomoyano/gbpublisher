@@ -1,0 +1,317 @@
+' Gambas class file
+
+' ==============================================================================
+' Formulario: FCandidatosBib
+' Propósito : Muestra las entradas de la base que coinciden con la referencia
+'             pegada, antes de consultar al LLM, y devuelve la decisión:
+'             usar una (copiarla o, si es de este proyecto, verla), consultar
+'             al LLM igual, o cancelar. El año va en la primera columna: una
+'             reimpresión de otro año es un punto de partida, no la entrada
+'             correcta. Las filas del proyecto en curso van marcadas: son
+'             duplicados, no reutilizaciones.
+' Uso       : hForm = New FCandidatosBib
+'             hForm.Iniciar(aIds, sMotivo)
+'             hForm.ShowModal()
+'             ' LEER Accion, IdElegido, ProyectoElegido, ClaveElegida
+'             PATRÓN DE bAplicado EN FAplicarCrossRef
+' Dependencias: m_ConexionBD, m_InicioCierre, m_BuscarBib, m_Sonido, m_Ventana.
+' ==============================================================================
+
+' --- DECISIÓN DEL USUARIO ---
+Public Const ACCION_CANCELAR As Integer = 0
+Public Const ACCION_USAR As Integer = 1
+Public Const ACCION_LLM As Integer = 2
+
+Public Accion As Integer
+Public IdElegido As Integer
+Public ProyectoElegido As Integer
+Public ClaveElegida As String
+
+' --- FLAG QUE PERMITE EL CIERRE DESDE LOS BOTONES O ESCAPE Y BLOQUEA LA X ---
+Private $bCierrePermitido As Boolean
+
+' --- DATOS RECIBIDOS Y DATOS POR FILA DE LA GRILLA ---
+Private $aIds As Integer[]
+Private $sMotivo As String
+Private $aIdsEnGrilla As New Integer[]
+Private $aProyectos As New Integer[]
+Private $aClaves As New String[]
+
+' --- COLUMNAS DE LA GRILLA ---
+Private Const COL_ANIO As Integer = 0
+Private Const COL_PROYECTO As Integer = 1
+Private Const COL_AUTOR As Integer = 2
+Private Const COL_TITULO As Integer = 3
+Private Const COL_CONTENEDOR As Integer = 4
+Private Const COL_TIPO As Integer = 5
+
+' ============================================
+' Función   : Iniciar
+' Propósito : Recibe los candidatos antes de mostrar el formulario
+' Parámetros: aIds As Integer[] — ids de bibtex, en orden de presentación
+'             sMotivo As String — m_BuscarBib.MOTIVO_DOI o MOTIVO_TEXTO
+' Retorna   : nada
+' ============================================
+Public Sub Iniciar(aIds As Integer[], sMotivo As String)
+
+  $aIds = aIds
+  $sMotivo = sMotivo
+
+End
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Configura la grilla y la llena con los candidatos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. ESTADO INICIAL: CERRAR SIN ELEGIR ES CANCELAR ---
+  Accion = ACCION_CANCELAR
+  IdElegido = 0
+  Me.Title = "Referencias ya cargadas en la base"
+
+  ' --- 2. ENCABEZADO SEGÚN CÓMO SE ENCONTRARON ---
+  If $sMotivo = m_BuscarBib.MOTIVO_DOI Then
+    lblMotivo.Text = "Coincidencia exacta por DOI"
+  Else
+    lblMotivo.Text = "Posibles coincidencias en la base"
+  Endif
+  lblAyuda.Text = "Revise el año: otra reimpresión es otra entrada. En color, las del proyecto en curso."
+
+  ' --- 3. GRILLA ---
+  gvCandidatos.Columns.Count = 6
+  gvCandidatos.Columns[COL_ANIO].Text = "Año"
+  gvCandidatos.Columns[COL_PROYECTO].Text = "Proyecto"
+  gvCandidatos.Columns[COL_AUTOR].Text = "Autor"
+  gvCandidatos.Columns[COL_TITULO].Text = "Título"
+  gvCandidatos.Columns[COL_CONTENEDOR].Text = "Contenedor"
+  gvCandidatos.Columns[COL_TIPO].Text = "Tipo"
+  gvCandidatos.Columns[COL_ANIO].Width = 56
+  gvCandidatos.Columns[COL_PROYECTO].Width = 120
+  gvCandidatos.Columns[COL_AUTOR].Width = 200
+  gvCandidatos.Columns[COL_TITULO].Width = 300
+  gvCandidatos.Columns[COL_CONTENEDOR].Width = 180
+  gvCandidatos.Columns[COL_TIPO].Width = 90
+
+  Llenar()
+
+End
+
+' ============================================
+' Función   : Llenar
+' Propósito : Una fila por candidato, en el orden recibido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Llenar()
+
+  Dim rFila As Result
+  Dim iFila As Integer
+  Dim iCol As Integer
+  Dim i As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  gvCandidatos.Rows.Count = 0
+  $aIdsEnGrilla.Clear()
+  $aProyectos.Clear()
+  $aClaves.Clear()
+
+  ' --- 2. UNA CONSULTA POR ID: SE RESPETA EL ORDEN DE m_BuscarBib (AÑO CITADO PRIMERO) ---
+  For i = 0 To $aIds.Max
+    Try rFila = m_ConexionBD.mConn.Exec("SELECT b.id_proyecto, b.clave_bibtex, COALESCE(LEFT(b.date, 4), b.year) AS anio, p.nombre AS proyecto, b.author, b.editor, b.title, COALESCE(b.journal_title, b.book_title) AS contenedor, b.tipo_de_entrada FROM bibtex b LEFT JOIN proyectos p ON p.id = b.id_proyecto WHERE b.id = &1", $aIds[i])
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer un candidato:" & gb.NewLine & Error.Text)
+      Continue
+    Endif
+    If Not rFila.Available Then Continue
+
+    iFila = gvCandidatos.Rows.Count
+    gvCandidatos.Rows.Count = iFila + 1
+    $aIdsEnGrilla.Add($aIds[i])
+    $aProyectos.Add(rFila["id_proyecto"])
+    $aClaves.Add(Texto(rFila["clave_bibtex"]))
+
+    gvCandidatos[iFila, COL_ANIO].Text = Texto(rFila["anio"])
+    gvCandidatos[iFila, COL_PROYECTO].Text = Texto(rFila["proyecto"])
+    ' SIN AUTOR (OBRA COLECTIVA), EL EDITOR
+    If Texto(rFila["author"]) <> "" Then
+      gvCandidatos[iFila, COL_AUTOR].Text = Texto(rFila["author"])
+    Else
+      gvCandidatos[iFila, COL_AUTOR].Text = Texto(rFila["editor"])
+    Endif
+    gvCandidatos[iFila, COL_TITULO].Text = Texto(rFila["title"])
+    gvCandidatos[iFila, COL_CONTENEDOR].Text = Texto(rFila["contenedor"])
+    gvCandidatos[iFila, COL_TIPO].Text = Texto(rFila["tipo_de_entrada"])
+
+    ' EL PROYECTO EN CURSO SE MARCA: ELEGIR ESA FILA ES UN DUPLICADO
+    ' ID DESDE LA GLOBAL DE SESIÓN, NO DESDE UN CONTROL (RC-GM-16)
+    If rFila["id_proyecto"] = m_InicioCierre.IdProyectoEnCurso Then
+      For iCol = 0 To gvCandidatos.Columns.Count - 1
+        gvCandidatos[iFila, iCol].Background = Color.LightBackground
+      Next
+    Endif
+  Next
+
+  ' --- 3. PRIMERA FILA ELEGIDA: «Usar esta» FUNCIONA SIN HACER CLIC ---
+  If gvCandidatos.Rows.Count > 0 Then gvCandidatos.Row = 0
+  btnUsar.Enabled = gvCandidatos.Rows.Count > 0
+
+End
+
+' ============================================
+' Función   : Texto
+' Propósito : Valor de un campo como texto, con NULL como cadena vacía
+' Parámetros: vValor As Variant — valor del campo
+' Retorna   : String — el valor, o vacío
+' ============================================
+Private Function Texto(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return CStr(vValor)
+
+End
+
+' ============================================
+' Función   : btnUsar_Click
+' Propósito : Elige la fila marcada
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnUsar_Click()
+
+  Elegir()
+
+End
+
+' ============================================
+' Función   : gvCandidatos_Activate
+' Propósito : Doble clic o Enter sobre una fila: igual que «Usar esta»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvCandidatos_Activate()
+
+  Elegir()
+
+End
+
+' ============================================
+' Función   : Elegir
+' Propósito : Registra la fila elegida y cierra
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Elegir()
+
+  Dim iFila As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  iFila = gvCandidatos.Row
+  If iFila < 0 Or iFila >= $aProyectos.Count Then Return
+
+  ' --- 2. RESULTADO PARA EL LLAMADOR ---
+  ' Llenar PUEDE SALTEAR UN ID ILEGIBLE: EL ÍNDICE DE FILA SE TRADUCE CON LOS
+  ' ARRAYS DE LA GRILLA, NO CON $aIds
+  Accion = ACCION_USAR
+  IdElegido = IdDeFila(iFila)
+  ProyectoElegido = $aProyectos[iFila]
+  ClaveElegida = $aClaves[iFila]
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : IdDeFila
+' Propósito : id de bibtex de una fila de la grilla
+' Parámetros: iFila As Integer — fila de la grilla
+' Retorna   : Integer — id de bibtex
+' ============================================
+Private Function IdDeFila(iFila As Integer) As Integer
+
+  Return $aIdsEnGrilla[iFila]
+
+End
+
+' ============================================
+' Función   : btnConsultarLLM_Click
+' Propósito : Ninguno de los candidatos es la obra: se sigue con el LLM
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnConsultarLLM_Click()
+
+  Accion = ACCION_LLM
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : btnCancelar_Click
+' Propósito : No se hace nada
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCancelar_Click()
+
+  Accion = ACCION_CANCELAR
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Permite el cierre desde los botones o Escape; lo bloquea desde la X
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. CIERRE PEDIDO DESDE LA INTERFAZ ---
+  If $bCierrePermitido Then Return
+
+  ' --- 2. CIERRE DESDE LA X DEL SISTEMA: BLOQUEAR Y AVISAR ---
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario use <b>Cancelar</b> o la tecla Escape.")
+  Stop Event
+
+End
+
+' ============================================
+' Función   : Form_KeyPress
+' Propósito : Escape cancela (contrapartida de SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_KeyPress()
+
+  If Key.Code = Key.Esc Then btnCancelar_Click()
+
+End
+
+' ============================================
+' Función   : Cerrar
+' Propósito : Cierra el formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Cerrar()
+
+  $bCierrePermitido = True
+  Me.Close()
+
+End

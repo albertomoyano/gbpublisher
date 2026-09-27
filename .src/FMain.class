@@ -556,8 +556,17 @@ Public Sub BtnNuevoBib_Click()
   txtTMPbiblio.SetFocus
   TabPanelBibliografia.Index = 0
 
+  ' MODO LLM: CONSULTAR SOLO SI ESTÁ IMPLEMENTADO; SE REPONE EL DE LA SESIÓN ANTERIOR
+  ' ASIGNAR Value DISPARA Click SOLO SI CAMBIA (VERIFICADO EN BANCO, 3.19): EL LLENADO DEL COMBO VA APARTE
+  rdbConsultar.Enabled = m_LLM.ConsultarDisponible()
+  If m_LLM.ModoGuardado() = m_LLM.MODO_CONSULTAR Then
+    rdbConsultar.Value = True
+  Else
+    rdbFormatear.Value = True
+  Endif
+
   ' PROVEEDORES LLM: SE RELEEN CADA VEZ, ASÍ UN .conf O UNA CREDENCIAL NUEVA APARECEN SIN REINICIAR
-  m_LLM.LlenarCombo(cmbLLM)
+  m_LLM.LlenarCombo(cmbLLM, ModoLLM())
 
 End
 
@@ -8366,32 +8375,38 @@ End
 ' ============================================
 Public Sub cmbLLM_Click()
 
-  m_LLM.RecordarEleccion(m_LLM.IdSeleccionado(cmbLLM.Index))
+  m_LLM.RecordarEleccion(m_LLM.IdSeleccionado(cmbLLM.Index), ModoLLM())
 
 End
 
 ' ============================================
 ' Función   : btnPrompt_Click
-' Propósito : Abre el editor del prompt del análisis de referencias
+' Propósito : Abre el editor del prompt del modo elegido
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
 Public Sub btnPrompt_Click()
 
-  FPromptLLM.ShowModal()
+  Dim hForm As FPromptLLM
+
+  hForm = New FPromptLLM
+  hForm.Iniciar(ModoLLM())
+  hForm.ShowModal()
 
 End
 
-' ============================================
 ' Función   : btnAnalizar_Click
-' Propósito : Envía la referencia de txtTMPbiblio al modelo elegido y
-'             muestra la respuesta en FRespuestaLLM
+' Propósito : Analiza la referencia de txtTMPbiblio: primero la busca entre
+'             las entradas ya cargadas (todos los proyectos); si no está, o
+'             si el usuario lo pide, consulta al modelo elegido
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
 Public Sub btnAnalizar_Click()
 
   Dim hForm As FRespuestaLLM
+  Dim hCandidatos As FCandidatosBib
+  Dim aIds As Integer[]
   Dim sReferencia As String
   Dim sId As String
 
@@ -8404,7 +8419,47 @@ Public Sub btnAnalizar_Click()
     Return
   Endif
 
-  ' --- 2. VALIDACIÓN: PROVEEDOR ---
+  ' --- 2. BÚSQUEDA EN LA PROPIA BASE, ANTES DEL LLM ---
+  ' NO DEPENDE DE QUE HAYA UN PROVEEDOR CONFIGURADO. UNA REFERENCIA NUEVA
+  ' EMPIEZA SIN ORIGEN: SE DESCARTA EL DE UNA COPIA ANTERIOR NO GUARDADA
+  m_BuscarBib.OlvidarOrigen()
+  aIds = m_BuscarBib.Buscar(sReferencia)
+  If m_BuscarBib.UltimoError() <> "" Then
+    ' LA BÚSQUEDA FALLÓ: SE AVISA Y SE SIGUE CON EL LLM (GV-23)
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo buscar en la base; se sigue con el LLM." & gb.NewLine & m_BuscarBib.UltimoError())
+  Endif
+
+  If aIds.Count > 0 Then
+    hCandidatos = New FCandidatosBib
+    hCandidatos.Iniciar(aIds, m_BuscarBib.UltimoMotivo())
+    hCandidatos.ShowModal()
+
+    Select Case hCandidatos.Accion
+      Case FCandidatosBib.ACCION_CANCELAR
+        Return
+
+      Case FCandidatosBib.ACCION_USAR
+        If hCandidatos.ProyectoElegido = m_InicioCierre.IdProyectoEnCurso Then
+          ' MISMO PROYECTO: ES UN DUPLICADO. SE CITA LA CLAVE EXISTENTE
+          m_Sonido.sonar("Info")
+          Message.Info("La referencia ya está cargada en este proyecto como «" & hCandidatos.ClaveElegida & "»." & gb.NewLine & "Se muestra en la grilla de referencias en curso.")
+          m_Bibtex.MostrarEntradaEnGrilla(hCandidatos.IdElegido)
+        Else
+          ' OTRO PROYECTO: SE COPIA COMO ENTRADA NUEVA, SIN GUARDAR
+          If Not m_BuscarBib.UsarEntrada(hCandidatos.IdElegido) Then
+            If m_BuscarBib.UltimoError() <> "" Then
+              m_Sonido.sonar("Error")
+              Message.Error(m_BuscarBib.UltimoError())
+            Endif
+          Endif
+        Endif
+        Return
+    End Select
+    ' ACCION_LLM: NINGÚN CANDIDATO ES LA OBRA, SE SIGUE
+  Endif
+
+  ' --- 3. VALIDACIÓN: PROVEEDOR ---
   sId = m_LLM.IdSeleccionado(cmbLLM.Index)
   If sId = "" Then
     m_Sonido.sonar("Info")
@@ -8412,9 +8467,62 @@ Public Sub btnAnalizar_Click()
     Return
   Endif
 
-  ' --- 3. CONSULTA Y RESPUESTA ---
+  ' --- 4. CONSULTA Y RESPUESTA ---
   hForm = New FRespuestaLLM
-  hForm.Iniciar(sId, sReferencia)
+  hForm.Iniciar(sId, sReferencia, ModoLLM())
   hForm.ShowModal()
+
+End
+
+' ============================================
+' Función   : ModoLLM
+' Propósito : Modo elegido en los radio buttons
+' Parámetros: ninguno
+' Retorna   : String — m_LLM.MODO_FORMATEAR o m_LLM.MODO_CONSULTAR
+' ============================================
+Private Function ModoLLM() As String
+
+  If rdbConsultar.Value Then Return m_LLM.MODO_CONSULTAR
+
+  Return m_LLM.MODO_FORMATEAR
+
+End
+
+' ============================================
+' Función   : rdbFormatear_Click
+' Propósito : Cambio al modo Formatear
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rdbFormatear_Click()
+
+  CambiarModoLLM(m_LLM.MODO_FORMATEAR)
+
+End
+
+' ============================================
+' Función   : rdbConsultar_Click
+' Propósito : Cambio al modo Consultar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub rdbConsultar_Click()
+
+  CambiarModoLLM(m_LLM.MODO_CONSULTAR)
+
+End
+
+' ============================================
+' Función   : CambiarModoLLM
+' Propósito : Recuerda el modo y vuelve a llenar el combo: en Consultar solo
+'             aparecen los proveedores con búsqueda
+' Parámetros: sModo As String — modo recién elegido
+' Retorna   : nada
+' ============================================
+Private Sub CambiarModoLLM(sModo As String)
+
+  ' Click SE DISPARA SOLO EN EL RADIO QUE QUEDA MARCADO (VERIFICADO EN BANCO, 3.19)
+  m_LLM.RecordarModo(sModo)
+  m_LLM.LlenarCombo(cmbLLM, sModo)
 
 End

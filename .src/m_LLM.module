@@ -7,9 +7,12 @@
 '             RESPUESTA; LA CARGA EN EL FORMULARIO ES LA FASE 2.
 '             CATÁLOGO : UN .conf POR PROVEEDOR EN ~/.gbpublisher/llm/proveedores/
 '                        (MODELO DE SC-11, MISMO PATRÓN QUE LOS .theme).
-'             PROMPT   : ~/.gbpublisher/llm/prompt-biblatex.txt, CON MARCADORES
-'                        {{cmb:TIPO}} QUE SE REEMPLAZAN AL ENVIAR POR LOS CÓDIGOS
-'                        ACTIVOS DE cmb_biblatex.
+'             MODOS    : FORMATEAR estructura la referencia sin completar nada;
+'                        CONSULTAR completa datos faltantes, solo con fuente
+'                        citada (necesita búsqueda web por API nativa).
+'             PROMPT   : UNO POR MODO, ~/.gbpublisher/llm/prompt-{modo}.txt, CON
+'                        MARCADORES {{cmb:TIPO}} QUE SE REEMPLAZAN AL ENVIAR POR
+'                        LOS CÓDIGOS ACTIVOS DE cmb_biblatex.
 '             PROTOCOLO: CHAT COMPLETIONS COMPATIBLE CON OpenAI.
 '             EL MÓDULO NO HACE LA CONSULTA HTTP: LA HACE FRespuestaLLM, PARA
 '             QUE LOS EVENTOS DEL HttpClient LLEGUEN A UN FORMULARIO (PATRÓN DE
@@ -17,10 +20,19 @@
 ' Dependencias: m_InicioCierre, m_ConexionBD, m_ApiCredenciales, m_Sonido.
 ' ==============================================================================
 
-Private Const ARCHIVO_PROMPT As String = "prompt-biblatex.txt"
 Private Const MARCA_APERTURA As String = "{{cmb:"
 Private Const MARCA_CIERRE As String = "}}"
-Private Const CLAVE_ULTIMO As String = "LLM/Ultimo"
+Private Const CLAVE_ULTIMO As String = "LLM/Ultimo/"
+Private Const CLAVE_MODO As String = "LLM/Modo"
+
+' --- MODOS DE CONSULTA: EL VALOR ES TAMBIÉN EL SUFIJO DEL ARCHIVO DE PROMPT ---
+Public Const MODO_FORMATEAR As String = "formatear"
+Public Const MODO_CONSULTAR As String = "consultar"
+
+' --- CONSULTAR COMPLETA DATOS: SIN BÚSQUEDA WEB CON CITAS COMPLETARÍA DESDE LA
+' MEMORIA DEL MODELO, QUE ES LO QUE SE QUIERE EVITAR. HASTA QUE LA API NATIVA
+' CON BÚSQUEDA ESTÉ IMPLEMENTADA, EL MODO NO SE OFRECE ---
+Private Const CONSULTAR_IMPLEMENTADO As Boolean = False
 
 ' --- ÚLTIMO ERROR: CANAL DE SALIDA DE LAS FUNCIONES QUE DEVUELVEN VACÍO AL FALLAR ---
 ' VARIABLE DE MÓDULO CON ACCESOR, NO UN PARÁMETRO (GV-24, ALTERNATIVA 4)
@@ -56,25 +68,25 @@ End
 
 ' ============================================
 ' Función   : RutaPrompt
-' Propósito : Prompt de trabajo, el que se edita y se envía
-' Parámetros: (ninguno)
+' Propósito : Prompt de trabajo de un modo, el que se edita y se envía
+' Parámetros: sModo As String — MODO_FORMATEAR o MODO_CONSULTAR
 ' Retorna   : String — ruta del prompt en la copia local
 ' ============================================
-Public Function RutaPrompt() As String
+Public Function RutaPrompt(sModo As String) As String
 
-  Return RutaLLM() &/ ARCHIVO_PROMPT
+  Return RutaLLM() &/ "prompt-" & sModo & ".txt"
 
 End
 
 ' ============================================
 ' Función   : RutaPromptOriginal
-' Propósito : Prompt distribuido con la aplicación, inmutable (SC-11)
-' Parámetros: (ninguno)
+' Propósito : Prompt de un modo distribuido con la aplicación, inmutable (SC-11)
+' Parámetros: sModo As String — MODO_FORMATEAR o MODO_CONSULTAR
 ' Retorna   : String — ruta del prompt original
 ' ============================================
-Public Function RutaPromptOriginal() As String
+Public Function RutaPromptOriginal(sModo As String) As String
 
-  Return m_InicioCierre.RutaRecursos() &/ "llm" &/ ARCHIVO_PROMPT
+  Return m_InicioCierre.RutaRecursos() &/ "llm" &/ "prompt-" & sModo & ".txt"
 
 End
 
@@ -101,11 +113,13 @@ End
 ' ============================================
 ' Función   : ProveedorUtilizable
 ' Propósito : Decide si un proveedor se ofrece en el combo: necesita URL y
-'             modelo, y una credencial activa si la declara
+'             modelo, una credencial activa si la declara y, en el modo
+'             CONSULTAR, búsqueda web
 ' Parámetros: hProveedor As Settings — proveedor ya abierto
+'             sModo As String — MODO_FORMATEAR o MODO_CONSULTAR
 ' Retorna   : Boolean — True si se puede consultar
 ' ============================================
-Private Function ProveedorUtilizable(hProveedor As Settings) As Boolean
+Private Function ProveedorUtilizable(hProveedor As Settings, sModo As String) As Boolean
 
   Dim sCredencial As String
 
@@ -113,7 +127,11 @@ Private Function ProveedorUtilizable(hProveedor As Settings) As Boolean
   If Trim(hProveedor["Proveedor/Url", ""]) = "" Then Return False
   If Trim(hProveedor["Proveedor/Modelo", ""]) = "" Then Return False
 
-  ' --- 2. CREDENCIAL: VACÍA = NO LLEVA CLAVE (OLLAMA LOCAL) ---
+  ' --- 2. CONSULTAR SOLO CON PROVEEDORES QUE DECLARAN BÚSQUEDA ---
+  ' UN MODELO SIN BÚSQUEDA COMPLETARÍA DESDE SU MEMORIA
+  If sModo = MODO_CONSULTAR And If Not TieneBusqueda(hProveedor) Then Return False
+
+  ' --- 3. CREDENCIAL: VACÍA = NO LLEVA CLAVE (OLLAMA LOCAL) ---
   sCredencial = Trim(hProveedor["Proveedor/Credencial", ""])
   If sCredencial = "" Then Return True
 
@@ -122,13 +140,74 @@ Private Function ProveedorUtilizable(hProveedor As Settings) As Boolean
 End
 
 ' ============================================
-' Función   : LlenarCombo
-' Propósito : Carga en el combo los proveedores utilizables, en el orden
-'             declarado en cada archivo, y repone la última elección
-' Parámetros: cmb As ComboBox — combo a llenar (FMain.cmbLLM)
+' Función   : TieneBusqueda
+' Propósito : Lee la marca Busqueda del proveedor
+' Parámetros: hProveedor As Settings — proveedor ya abierto
+' Retorna   : Boolean — True si el proveedor declara búsqueda web
+' ============================================
+Private Function TieneBusqueda(hProveedor As Settings) As Boolean
+
+  Dim vValor As Variant
+
+  vValor = hProveedor["Proveedor/Busqueda", False]
+
+  ' Settings LEE True Y False SIN COMILLAS COMO Boolean (VERIFICADO EN BANCO, 3.19)
+  If TypeOf(vValor) = gb.Boolean Then Return vValor
+
+  ' ESCRITO A MANO ENTRE COMILLAS LLEGA COMO TEXTO: SE COMPARA COMO TEXTO, NO CON
+  ' CBool, QUE DA True PARA CUALQUIER CADENA NO VACÍA, INCLUIDA «False»
+  Return UCase(Trim(CStr(vValor))) = "TRUE"
+
+End
+
+' ============================================
+' Función   : ConsultarDisponible
+' Propósito : Indica si el modo CONSULTAR se puede ofrecer
+' Parámetros: (ninguno)
+' Retorna   : Boolean — False hasta implementar la búsqueda por API nativa
+' ============================================
+Public Function ConsultarDisponible() As Boolean
+
+  Return CONSULTAR_IMPLEMENTADO
+
+End
+
+' ============================================
+' Función   : ModoGuardado
+' Propósito : Modo elegido en la sesión anterior, si sigue disponible
+' Parámetros: (ninguno)
+' Retorna   : String — MODO_FORMATEAR o MODO_CONSULTAR
+' ============================================
+Public Function ModoGuardado() As String
+
+  If Settings[CLAVE_MODO, MODO_FORMATEAR] = MODO_CONSULTAR And If ConsultarDisponible() Then Return MODO_CONSULTAR
+
+  Return MODO_FORMATEAR
+
+End
+
+' ============================================
+' Función   : RecordarModo
+' Propósito : Guarda el modo elegido para la próxima vez
+' Parámetros: sModo As String — MODO_FORMATEAR o MODO_CONSULTAR
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
-Public Sub LlenarCombo(cmb As ComboBox)
+Public Sub RecordarModo(sModo As String)
+
+  Settings[CLAVE_MODO] = sModo
+
+End
+
+' ============================================
+' Función   : LlenarCombo
+' Propósito : Carga en el combo los proveedores utilizables en el modo
+'             elegido, en el orden declarado en cada archivo, y repone la
+'             última elección de ese modo
+' Parámetros: cmb As ComboBox — combo a llenar (FMain.cmbLLM)
+'             sModo As String — MODO_FORMATEAR o MODO_CONSULTAR
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub LlenarCombo(cmb As ComboBox, sModo As String)
 
   Dim aArchivos As String[]
   Dim aOrdenados As New String[]
@@ -161,7 +240,7 @@ Public Sub LlenarCombo(cmb As ComboBox)
       Message.Warning($sUltimoError)
       Continue
     Endif
-    If Not ProveedorUtilizable(hProveedor) Then Continue
+    If Not ProveedorUtilizable(hProveedor, sModo) Then Continue
     iOrden = 999
     Try iOrden = hProveedor["Proveedor/Orden", 999]
     cNombres[sId] = hProveedor["Proveedor/Nombre", sId]
@@ -177,9 +256,9 @@ Public Sub LlenarCombo(cmb As ComboBox)
     cmb.Add(cNombres[sId])
   Next
 
-  ' --- 5. ÚLTIMA ELECCIÓN ---
+  ' --- 5. ÚLTIMA ELECCIÓN DE ESTE MODO ---
   ' ASIGNAR Index DISPARA Click AUNQUE NO CAMBIE (GV-53): SE COMPARA ANTES
-  sUltimo = Settings[CLAVE_ULTIMO, ""]
+  sUltimo = Settings[CLAVE_ULTIMO & sModo, ""]
   iIndice = $aIdsEnCombo.Find(sUltimo)
   If iIndice < 0 And If $aIdsEnCombo.Count > 0 Then iIndice = 0
   If iIndice >= 0 And If cmb.Index <> iIndice Then cmb.Index = iIndice
@@ -202,25 +281,27 @@ End
 
 ' ============================================
 ' Función   : RecordarEleccion
-' Propósito : Guarda el proveedor elegido para la próxima vez
+' Propósito : Guarda el proveedor elegido en un modo para la próxima vez
 ' Parámetros: sId As String — identificador del proveedor
+'             sModo As String — MODO_FORMATEAR o MODO_CONSULTAR
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
-Public Sub RecordarEleccion(sId As String)
+Public Sub RecordarEleccion(sId As String, sModo As String)
 
   If sId = "" Then Return
-  Settings[CLAVE_ULTIMO] = sId
+  Settings[CLAVE_ULTIMO & sModo] = sId
 
 End
 
 ' ============================================
 ' Función   : ArmarPrompt
-' Propósito : Lee el prompt de trabajo y reemplaza cada marcador {{cmb:TIPO}}
-'             por la lista de códigos activos de ese tipo en cmb_biblatex
-' Parámetros: (ninguno)
+' Propósito : Lee el prompt de trabajo de un modo y reemplaza cada marcador
+'             {{cmb:TIPO}} por la lista de códigos activos de ese tipo en
+'             cmb_biblatex
+' Parámetros: sModo As String — MODO_FORMATEAR o MODO_CONSULTAR
 ' Retorna   : String — prompt listo para enviar, vacío si falló (ver UltimoError)
 ' ============================================
-Public Function ArmarPrompt() As String
+Public Function ArmarPrompt(sModo As String) As String
 
   Dim sPrompt As String
   Dim sResultado As String
@@ -232,15 +313,15 @@ Public Function ArmarPrompt() As String
 
   ' --- 1. LECTURA ---
   $sUltimoError = ""
-  Try sPrompt = File.Load(RutaPrompt())
+  Try sPrompt = File.Load(RutaPrompt(sModo))
   If Error Then
-    $sUltimoError = "No se pudo leer el prompt:" & gb.NewLine & RutaPrompt() & gb.NewLine & Error.Text
+    $sUltimoError = "No se pudo leer el prompt:" & gb.NewLine & RutaPrompt(sModo) & gb.NewLine & Error.Text
     Return ""
   Endif
 
   ' File.Load NO VALIDA LA CODIFICACIÓN (GV-03): UN PROMPT EDITADO AFUERA PUEDE NO SER UTF-8
   If Not String.IsValid(sPrompt) Then
-    $sUltimoError = "El prompt no es UTF-8 válido:" & gb.NewLine & RutaPrompt()
+    $sUltimoError = "El prompt no es UTF-8 válido:" & gb.NewLine & RutaPrompt(sModo)
     Return ""
   Endif
 

@@ -575,6 +575,10 @@ Public Sub LimpiarTextboxBibtex()
   FMain.txtEprintType.Text = ""
   FMain.txtTipoDeEntrada.Text = ""
 
+  ' FORMULARIO LIMPIO = NINGUNA ENTRADA COPIADA EN CURSO: EL ORIGEN PENDIENTE
+  ' NO DEBE PASAR A LA PRÓXIMA ALTA (IniciarBibtex LLAMA ACÁ DESPUÉS DE GUARDAR)
+  m_BuscarBib.OlvidarOrigen()
+
 End
 
 ' ============================================
@@ -808,6 +812,10 @@ Public Sub GuardarBibtexPrimeraVez()
 
   ContenidoBib = m_ConexionBD.mConn.Create("bibtex")
   GuardarCamposBib()
+  ' TRAZABILIDAD (1.1.0): ENTRADA COPIADA DE OTRO PROYECTO CON «Usar esta».
+  ' VA ACÁ Y NO EN GuardarCamposBib, QUE TAMBIÉN USA LA EDICIÓN: SOLO EN EL
+  ' ALTA. UN 0 NO SE ESCRIBE: VIOLARÍA fk_bibtex_origen
+  If m_BuscarBib.IdOrigenPendiente() > 0 Then ContenidoBib!id_origen = m_BuscarBib.IdOrigenPendiente()
   ContenidoBib.Update()
   m_ConexionBD.mConn.Commit()
   IniciarBibtex()   ' ERA RefrescarTableViewBibtexEnCurso()
@@ -1897,9 +1905,9 @@ Public Function ExportarBibTeX() As Boolean
 
   ' COLUMNAS DE CONTROL: NO SON CAMPOS BIBLIOGRÁFICOS Y NO VAN AL .bib.
   ' SE SALTEAN POR NOMBRE Y NO POR POSICIÓN: UNA COLUMNA NUEVA INSERTADA EN EL
-  ' MEDIO CORRÍA TODO Y EL .bib SALÍA CON LA CLAVE EQUIVOCADA, SIN ERROR.
+  ' MEDIO CORRÍA TODO Y EL .bib SALÍA CON LA CLAVE EQUIVOCADA, SIN ERROR. NO BIBLIOGRAFÍA
   Dim aControl As String[] = ["id", "id_proyecto", "id_articulo",
-    "tipo_de_entrada", "clave_bibtex"]
+    "tipo_de_entrada", "clave_bibtex", "id_origen", "fecha_modificacion"]
 
   ' --- 1. CONSULTA ---
   ' EL ORDER BY NO ES COSMÉTICO: SIN ÉL MySQL NO GARANTIZA EL ORDEN DE LAS
@@ -2370,5 +2378,36 @@ Public Function ControlDeColumna(sColumna As String) As String
   If $cControlDeColumna.Exist(sColumna) Then Return $cControlDeColumna[sColumna]
 
   Return ""
+
+End
+
+' ============================================
+' Función   : MostrarEntradaEnGrilla
+' Propósito : Muestra en la grilla de referencias en curso una entrada que ya
+'             existe en el proyecto (duplicado detectado al analizar), para
+'             verla y seleccionarla. Mismo mecanismo que mostrarIguales: la
+'             grilla queda filtrada y BtnNuevoBib (IniciarBibtex) la restaura
+' Parámetros: iId As Integer — id de la entrada existente
+' Retorna   : nada
+' ============================================
+Public Sub MostrarEntradaEnGrilla(iId As Integer)
+
+  ' --- 1. FILTRO: SOLO ESA ENTRADA DEL PROYECTO EN CURSO ---
+  ' ID DEL PROYECTO DESDE LA GLOBAL DE SESIÓN (RC-GM-16)
+  Try ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id = &1 AND id_proyecto = &2", iId, m_InicioCierre.IdProyectoEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo mostrar la entrada existente:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+  CargarDatosResultados(FMain.gvReferenciasEnCurso, ContenidoBib)
+
+  ' --- 2. INTERFAZ: EL ESTADO DEL DUPLICADO AL GUARDAR, SIN «GUARDAR IGUAL» ---
+  ' ACÁ NO HAY NADA QUE GUARDAR: LA REFERENCIA SE CITA CON LA CLAVE EXISTENTE
+  FMain.gvReferenciasEnCurso.ScrollY = 0
+  FMain.BtnNuevoBib.Visible = True
+  FMain.btnGuardarBib.Visible = False
+  FMain.btnGuardarIGUAL.Visible = False
+  FMain.TabPanel5.Index = 0
 
 End
