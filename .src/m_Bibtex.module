@@ -732,21 +732,6 @@ Public Sub GuardarCamposBib()
 
 End
 
-Public Sub mostrarIguales()
-
-  If FMain.txtTitle.Text = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Debe introducir contenido a buscar.")
-    Return
-  Else
-    Dim sConsulta As String = "SELECT * FROM bibtex WHERE title LIKE &1 AND id_proyecto = &2"
-    ' ID DESDE LA GLOBAL (RC-GM-16)
-    ContenidoBib = m_ConexionBD.mConn.Exec(sConsulta, "%" & Trim(FMain.txtTitle.Text) & "%", m_InicioCierre.IdProyectoEnCurso)
-    CargarDatosResultados(FMain.gvReferenciasEnCurso, ContenidoBib)
-  Endif
-
-End
-
 Public Sub EliminarBibtex()
 
   ' --- 1. VALIDAR QUE HAYA UNA ENTRADA SELECCIONADA ---
@@ -2061,7 +2046,7 @@ End
 ' ============================================
 Public Sub GuardarBibtex()
 
-  Dim rDuplicado As Result
+  Dim aDuplicados As Integer[]
   Dim aInvisibles As String[]
 
   ' --- 1. LIMPIEZA DE TEXTO PEGADO ---
@@ -2091,33 +2076,29 @@ Public Sub GuardarBibtex()
   If VerificacionBase() Then Return
   If VerificarCaracteresInvalidos() Then Return
 
-  ' --- 4. CHEQUEO DE TÍTULO DUPLICADO EN EL PROYECTO ---
-  ' Result LOCAL PARA NO PISAR ContenidoBib, QUE ES LA FUENTE DE DATOS DEL
-  ' GRID. EL ID DEL PROYECTO SALE DE LA GLOBAL (RC-GM-16): SI SE LEYERA DE UN
-  ' CONTROL QUE UN EVENTO DE UI RESETEÓ, EL CHEQUEO CORRERÍA CONTRA
-  ' id_proyecto = 0 Y TRAERÍA UN CONJUNTO EQUIVOCADO.
-  Try rDuplicado = m_ConexionBD.mConn.Exec(
-    "SELECT id FROM bibtex WHERE title = &1 AND id_proyecto = &2",
-    Trim(FMain.txtTitle.Text), m_InicioCierre.IdProyectoEnCurso)
+  ' --- 4. CHEQUEO DE DUPLICADO EN EL PROYECTO ---
+  ' MISMA OBRA = TÍTULO NORMALIZADO + AÑO + APELLIDO DEL PRIMER AUTOR O EDITOR,
+  ' CON LA NORMALIZACIÓN DE LA BÚSQUEDA ANTES DEL LLM. UN AÑO DISTINTO ES OTRA
+  ' EDICIÓN O REIMPRESIÓN: NO ES DUPLICADO. LA CONSULTA USA UN Result PROPIO,
+  ' NO ContenidoBib, Y EL PROYECTO SALE DE LA GLOBAL (RC-GM-16)
+  aDuplicados = m_BuscarBib.DuplicadosEnProyecto(FMain.txtTitle.Text,
+    FMain.txtAuthor.Text, FMain.txtEditor.Text,
+    m_BuscarBib.AnioDeCampos(FMain.txtYear.Text, FMain.txtDate.Text))
 
-  If Error Then
+  If m_BuscarBib.UltimoError() <> "" Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudo verificar si el título ya existe:" & gb.NewLine &
-      Error.Text)
+    Message.Error(m_BuscarBib.UltimoError())
     Return
   Endif
 
-  If rDuplicado.Count > 0 Then
+  If aDuplicados.Count > 0 Then
     m_Sonido.sonar("Error")
-    Message.Error("El título que desea agregar ya existe en este libro/revista.")
+    Message.Error("La obra ya está cargada en este libro/revista como «" &
+      m_BuscarBib.ClavesDuplicadas().Join("», «") & "»." & gb.NewLine &
+      "Si es una entrada distinta, use «Forzar».")
 
-    ' MOSTRAR LAS COINCIDENCIAS Y OFRECER GUARDAR IGUAL
-    mostrarIguales()
-    FMain.gvReferenciasEnCurso.ScrollY = 0
-    FMain.BtnNuevoBib.Visible = True
-    FMain.btnGuardarBib.Visible = False
-    FMain.btnGuardarIGUAL.Visible = True
-    FMain.TabPanel5.Index = 0
+    ' MOSTRAR EXACTAMENTE LOS DUPLICADOS Y OFRECER GUARDAR IGUAL
+    MostrarEntradasEnGrilla(aDuplicados, True)
     Return
   Endif
 
@@ -2382,19 +2363,35 @@ Public Function ControlDeColumna(sColumna As String) As String
 End
 
 ' ============================================
-' Función   : MostrarEntradaEnGrilla
-' Propósito : Muestra en la grilla de referencias en curso una entrada que ya
-'             existe en el proyecto (duplicado detectado al analizar), para
-'             verla y seleccionarla. Mismo mecanismo que mostrarIguales: la
-'             grilla queda filtrada y BtnNuevoBib (IniciarBibtex) la restaura
-' Parámetros: iId As Integer — id de la entrada existente
+' Función   : MostrarEntradasEnGrilla
+' Propósito : Muestra en la grilla de referencias en curso solo las entradas
+'             indicadas del proyecto: el duplicado detectado al analizar o los
+'             detectados al guardar. La grilla queda filtrada; BtnNuevoBib
+'             (IniciarBibtex) la restaura
+' Parámetros: aIds As Integer[] — ids de las entradas a mostrar
+'             bOfrecerForzar As Boolean — True al guardar (muestra
+'             btnGuardarIGUAL); False al analizar (no hay nada que guardar:
+'             se cita la clave existente)
 ' Retorna   : nada
 ' ============================================
-Public Sub MostrarEntradaEnGrilla(iId As Integer)
+Public Sub MostrarEntradasEnGrilla(aIds As Integer[], bOfrecerForzar As Boolean)
 
-  ' --- 1. FILTRO: SOLO ESA ENTRADA DEL PROYECTO EN CURSO ---
+  Dim aTextos As New String[]
+  Dim iId As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  If aIds.Count = 0 Then Return
+
+  ' --- 2. LISTA DE IDS PARA EL IN ---
+  ' Integer[] NO TIENE Join (VERIFICADO EN BANCO); SON ENTEROS, NO HAY
+  ' RIESGO DE INYECCIÓN AL ARMAR LA LISTA
+  For Each iId In aIds
+    aTextos.Add(CStr(iId))
+  Next
+
+  ' --- 3. FILTRO: ESAS ENTRADAS, SOLO DEL PROYECTO EN CURSO ---
   ' ID DEL PROYECTO DESDE LA GLOBAL DE SESIÓN (RC-GM-16)
-  Try ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id = &1 AND id_proyecto = &2", iId, m_InicioCierre.IdProyectoEnCurso)
+  Try ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id_proyecto = &1 AND id IN (" & aTextos.Join(",") & ") ORDER BY id DESC", m_InicioCierre.IdProyectoEnCurso)
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("No se pudo mostrar la entrada existente:" & gb.NewLine & Error.Text)
@@ -2402,12 +2399,11 @@ Public Sub MostrarEntradaEnGrilla(iId As Integer)
   Endif
   CargarDatosResultados(FMain.gvReferenciasEnCurso, ContenidoBib)
 
-  ' --- 2. INTERFAZ: EL ESTADO DEL DUPLICADO AL GUARDAR, SIN «GUARDAR IGUAL» ---
-  ' ACÁ NO HAY NADA QUE GUARDAR: LA REFERENCIA SE CITA CON LA CLAVE EXISTENTE
+  ' --- 4. INTERFAZ ---
   FMain.gvReferenciasEnCurso.ScrollY = 0
   FMain.BtnNuevoBib.Visible = True
   FMain.btnGuardarBib.Visible = False
-  FMain.btnGuardarIGUAL.Visible = False
+  FMain.btnGuardarIGUAL.Visible = bOfrecerForzar
   FMain.TabPanel5.Index = 0
 
 End

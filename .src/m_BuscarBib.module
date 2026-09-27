@@ -11,6 +11,9 @@
 '             («Usar esta»): se DUPLICA, no se comparte la fila (cada proyecto
 '             es dueño de sus datos; el mismo libro en otra reimpresión es
 '             otra entrada). La fila de origen queda en id_origen al guardar.
+'             Y resuelve el control de duplicados al guardar, dentro del
+'             proyecto en curso, con la misma normalización (título + año +
+'             apellido del primer autor o editor).
 ' Requiere  : esquema 1.1.0 (índice ft_bibtex_busqueda, columna id_origen).
 ' Dependencias: m_ConexionBD, m_InicioCierre, m_Bibtex, m_AplicarBib, m_Sonido.
 ' ==============================================================================
@@ -29,6 +32,14 @@ Private Const LIMITE_CANDIDATOS As Integer = 20
 ' --- COLUMNAS QUE EL ÍNDICE FULLTEXT CUBRE: DEBEN COINCIDIR EXACTAMENTE ---
 Private Const COLUMNAS_FT As String = "title, author, book_title, journal_title"
 
+' --- DECISIÓN TOMADA EN FCandidatosBib: ES EL VALOR QUE DEVUELVE ShowModal ---
+' EL FORMULARIO LA DEVUELVE CON Me.Close(valor) Y DEJA LA FILA ELEGIDA EN ESTE
+' MÓDULO: DESPUÉS DE CERRARSE, EL FORMULARIO YA NO ES UN OBJETO VÁLIDO Y LEER
+' SUS VARIABLES DA «Invalid object» (VERIFICADO EN BANCO, 3.19)
+Public Const ACCION_CANCELAR As Integer = 0
+Public Const ACCION_USAR As Integer = 1
+Public Const ACCION_LLM As Integer = 2
+
 ' --- MOTIVO DE LA ÚLTIMA BÚSQUEDA, PARA EL FORMULARIO DE CANDIDATOS ---
 Public Const MOTIVO_DOI As String = "doi"
 Public Const MOTIVO_TEXTO As String = "texto"
@@ -39,6 +50,12 @@ Private $sUltimoMotivo As String
 Private $sUltimoError As String
 ' FILA DE LA QUE SE COPIÓ LA ENTRADA EN CURSO; 0 = NINGUNA
 Private $iIdOrigenPendiente As Integer
+' CLAVES DE LOS DUPLICADOS ENCONTRADOS POR DuplicadosEnProyecto
+Private $aClavesDuplicadas As New String[]
+' FILA ELEGIDA EN FCandidatosBib
+Private $iElegidoId As Integer
+Private $iElegidoProyecto As Integer
+Private $sElegidoClave As String
 
 ' ============================================
 ' Función   : UltimoMotivo
@@ -61,6 +78,58 @@ End
 Public Function UltimoError() As String
 
   Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : RegistrarEleccion
+' Propósito : FCandidatosBib deja acá la fila elegida antes de cerrarse
+' Parámetros: iId As Integer — id de bibtex (0 = ninguna)
+'             iProyecto As Integer — proyecto de esa fila
+'             sClave As String — su clave
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub RegistrarEleccion(iId As Integer, iProyecto As Integer, sClave As String)
+
+  $iElegidoId = iId
+  $iElegidoProyecto = iProyecto
+  $sElegidoClave = sClave
+
+End
+
+' ============================================
+' Función   : ElegidoId
+' Propósito : id de bibtex de la fila elegida en FCandidatosBib
+' Parámetros: (ninguno)
+' Retorna   : Integer — id, 0 si no se eligió ninguna
+' ============================================
+Public Function ElegidoId() As Integer
+
+  Return $iElegidoId
+
+End
+
+' ============================================
+' Función   : ElegidoProyecto
+' Propósito : Proyecto de la fila elegida en FCandidatosBib
+' Parámetros: (ninguno)
+' Retorna   : Integer — id del proyecto
+' ============================================
+Public Function ElegidoProyecto() As Integer
+
+  Return $iElegidoProyecto
+
+End
+
+' ============================================
+' Función   : ElegidoClave
+' Propósito : Clave de la fila elegida en FCandidatosBib
+' Parámetros: (ninguno)
+' Retorna   : String — clave biblatex
+' ============================================
+Public Function ElegidoClave() As String
+
+  Return $sElegidoClave
 
 End
 
@@ -279,8 +348,10 @@ Public Function Buscar(sReferencia As String) As Integer[]
 
   ' --- 3. FULLTEXT SOBRE TODOS LOS PROYECTOS: JUNTA CANDIDATOS ---
   ' EL AÑO NO ES TEXTO INDEXADO: SE TRAE APARTE PARA ORDENAR. EN LA BASE
-  ' CONVIVEN FILAS CON year Y FILAS CON date
-  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id, author, editor, title, COALESCE(LEFT(date, 4), year) AS anio, MATCH(" & COLUMNAS_FT & ") AGAINST (&1) AS puntaje FROM bibtex WHERE MATCH(" & COLUMNAS_FT & ") AGAINST (&1) ORDER BY puntaje DESC LIMIT " & LIMITE_CANDIDATOS, sReferencia)
+  ' CONVIVEN year (VANCOUVER, BibTeX PURO) Y date (biblatex); SE RESUELVE CON
+  ' AnioDeCampos Y NO CON COALESCE: SI UN date VACÍO QUEDÓ GUARDADO COMO ''
+  ' (Y NO COMO NULL), COALESCE LO ELIGE IGUAL Y TAPA EL year
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id, author, editor, title, year, date, MATCH(" & COLUMNAS_FT & ") AGAINST (&1) AS puntaje FROM bibtex WHERE MATCH(" & COLUMNAS_FT & ") AGAINST (&1) ORDER BY puntaje DESC LIMIT " & LIMITE_CANDIDATOS, sReferencia)
   If Error Then
     $sUltimoError = "No se pudo buscar en la base (¿falta la actualización de esquema 1.1.0?): " & Error.Text
     Return aIds
@@ -294,7 +365,7 @@ Public Function Buscar(sReferencia As String) As Integer[]
   i = 0
   While rDatos.Available
     If Coincide(sRefNorm, Texto(rDatos["author"]), Texto(rDatos["editor"]), Texto(rDatos["title"])) Then
-      If sAnio <> "" And If Texto(rDatos["anio"]) = sAnio Then
+      If sAnio <> "" And If AnioDeCampos(Texto(rDatos["year"]), Texto(rDatos["date"])) = sAnio Then
         aOrden.Add("0|" & Format$(i, "000") & "|" & rDatos["id"])
       Else
         aOrden.Add("1|" & Format$(i, "000") & "|" & rDatos["id"])
@@ -340,11 +411,7 @@ Private Function Coincide(sRefNorm As String, sAutor As String, sEditor As Strin
   Dim iCorte As Integer
 
   ' --- 1. APELLIDO DEL PRIMER AUTOR, O DEL PRIMER EDITOR ---
-  If sAutor <> "" Then
-    sApellido = Apellido(sAutor)
-  Else
-    sApellido = Apellido(sEditor)
-  Endif
+  sApellido = PrimerApellido(sAutor, sEditor)
   If sApellido = "" Then Return False
   ' COMO PALABRAS ENTERAS: «dalle» NO DEBE ENCONTRARSE DENTRO DE «dallera»
   If String.InStr(sRefNorm, " " & sApellido & " ") = 0 Then Return False
@@ -413,6 +480,129 @@ Private Function Apellido(sNombres As String) As String
   If iPos > 0 Then sPrimero = String.Left(sPrimero, iPos - 1)
 
   Return Normalizar(sPrimero)
+
+End
+
+' ============================================
+' Función   : PrimerApellido
+' Propósito : Apellido normalizado del primer autor o, en una obra sin autor,
+'             del primer editor. Criterio único para la búsqueda antes del
+'             LLM y para el control de duplicados al guardar
+' Parámetros: sAutor As String — valor de author
+'             sEditor As String — valor de editor
+' Retorna   : String — apellido normalizado, vacío si no hay ninguno
+' ============================================
+Public Function PrimerApellido(sAutor As String, sEditor As String) As String
+
+  ' SIN AUTOR, EL EDITOR (OBRAS COLECTIVAS, COMPILACIONES)
+  If Trim(sAutor) <> "" Then Return Apellido(sAutor)
+  Return Apellido(sEditor)
+
+End
+
+' ============================================
+' Función   : AnioDeCampos
+' Propósito : Año de una entrada a partir de year y date. year va primero:
+'             es el campo de BibTeX puro que usa Vancouver; date es el de
+'             biblatex. Los dos conviven en la base
+' Parámetros: sYear As String — valor de year
+'             sDate As String — valor de date
+' Retorna   : String — cuatro dígitos, o vacío si no hay un año legible
+'             («s. f.», fecha vacía)
+' ============================================
+Public Function AnioDeCampos(sYear As String, sDate As String) As String
+
+  Dim sAnio As String
+  Dim i As Integer
+
+  ' --- 1. year PRIMERO; SI ESTÁ VACÍO, date ---
+  sAnio = Trim(sYear)
+  If sAnio = "" Then sAnio = Trim(sDate)
+  If String.Len(sAnio) < 4 Then Return ""
+  sAnio = String.Left(sAnio, 4)
+
+  ' --- 2. SOLO CUATRO DÍGITOS CUENTAN COMO AÑO ---
+  For i = 1 To 4
+    If Not IsDigit(Mid$(sAnio, i, 1)) Then Return ""
+  Next
+
+  Return sAnio
+
+End
+
+' ============================================
+' Función   : DuplicadosEnProyecto
+' Propósito : Entradas del proyecto en curso que son la misma obra que la que
+'             se va a guardar: mismo título normalizado y, si los dos lados
+'             los tienen, mismo año y mismo apellido del primer autor (o
+'             editor). Un año o un apellido faltante NO descarta: una falsa
+'             alarma cuesta un clic en «Guardar igual»; un duplicado que pasa
+'             termina en la bibliografía impresa (decisión de Alberto).
+'             Un año distinto sí descarta: es otra edición o reimpresión
+' Parámetros: sTitulo As String — título de la entrada nueva
+'             sAutor As String — author de la entrada nueva
+'             sEditor As String — editor de la entrada nueva
+'             sAnio As String — año de la entrada nueva (AnioDeCampos)
+' Retorna   : Integer[] — ids de los duplicados, del más nuevo al más viejo;
+'             vacío si no hay. Si la consulta falla, vacío y UltimoError()
+'             con el motivo. Las claves quedan en ClavesDuplicadas()
+' ============================================
+Public Function DuplicadosEnProyecto(sTitulo As String, sAutor As String, sEditor As String, sAnio As String) As Integer[]
+
+  Dim aIds As New Integer[]
+  Dim rDatos As Result
+  Dim sTituloNorm As String
+  Dim sApellido As String
+  Dim sAnioFila As String
+  Dim sApellidoFila As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  $aClavesDuplicadas = New String[]
+  sTituloNorm = Normalizar(sTitulo)
+  ' SIN TÍTULO NO HAY CON QUÉ COMPARAR (VerificacionBase YA LO EXIGE)
+  If sTituloNorm = "" Then Return aIds
+  sApellido = PrimerApellido(sAutor, sEditor)
+
+  ' --- 2. FILAS DEL PROYECTO EN CURSO ---
+  ' LA COMPARACIÓN SE HACE EN GAMBAS Y NO CON title = &1: LA COLACIÓN IGNORA
+  ' MAYÚSCULAS Y ACENTOS PERO NO LA PUNTUACIÓN («: tomo 1» / «. Tomo 1»).
+  ' UN PROYECTO TIENE CIENTOS DE FILAS, NO MILES. ID DESDE LA GLOBAL (RC-GM-16)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id, clave_bibtex, author, editor, title, year, date FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC", m_InicioCierre.IdProyectoEnCurso)
+  If Error Then
+    $sUltimoError = "No se pudo verificar si la entrada ya existe: " & Error.Text
+    Return aIds
+  Endif
+
+  ' --- 3. COMPARACIÓN FILA POR FILA ---
+  While rDatos.Available
+    ' TÍTULO: CONDICIÓN NECESARIA
+    If Normalizar(Texto(rDatos["title"])) = sTituloNorm Then
+      sAnioFila = AnioDeCampos(Texto(rDatos["year"]), Texto(rDatos["date"]))
+      sApellidoFila = PrimerApellido(Texto(rDatos["author"]), Texto(rDatos["editor"]))
+      ' AÑO Y APELLIDO SOLO DESCARTAN SI ESTÁN EN LOS DOS LADOS Y DIFIEREN
+      If (sAnio = "" Or sAnioFila = "" Or sAnio = sAnioFila) And (sApellido = "" Or sApellidoFila = "" Or sApellido = sApellidoFila) Then
+        aIds.Add(rDatos["id"])
+        $aClavesDuplicadas.Add(Texto(rDatos["clave_bibtex"]))
+      Endif
+    Endif
+    rDatos.MoveNext
+  Wend
+
+  Return aIds
+
+End
+
+' ============================================
+' Función   : ClavesDuplicadas
+' Propósito : Claves de los duplicados que encontró la última llamada a
+'             DuplicadosEnProyecto, en el mismo orden que sus ids
+' Parámetros: ninguno
+' Retorna   : String[] — claves (copia)
+' ============================================
+Public Function ClavesDuplicadas() As String[]
+
+  Return $aClavesDuplicadas.Copy()
 
 End
 
@@ -493,7 +683,6 @@ Public Function UsarEntrada(iId As Integer) As Boolean
     "id_origen", "fecha_modificacion",
     "cross_ref", "xref", "xdata", "ids", "entry_set", "related", "related_type", "related_string",
     "note", "addendum", "annotation"]
-
   Dim sColumna As String
   Dim sControl As String
   Dim sValor As String
