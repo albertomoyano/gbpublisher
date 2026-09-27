@@ -8411,6 +8411,9 @@ Public Sub btnAnalizar_Click()
   Dim iAccion As Integer
   Dim sReferencia As String
   Dim sId As String
+  Dim sAnioCitado As String
+  Dim sAnioElegido As String
+  Dim bOtraEdicion As Boolean
 
   ' --- 1. VALIDACIÓN: REFERENCIA ---
   ' txtTMPbiblio SOLO ESTÁ HABILITADO DURANTE LA CARGA DE UNA REFERENCIA NUEVA
@@ -8444,18 +8447,44 @@ Public Sub btnAnalizar_Click()
         Return
 
       Case m_BuscarBib.ACCION_USAR
-        If m_BuscarBib.ElegidoProyecto() = m_InicioCierre.IdProyectoEnCurso Then
-          ' MISMO PROYECTO: ES UN DUPLICADO. SE CITA LA CLAVE EXISTENTE
+        ' OTRA EDICIÓN O REIMPRESIÓN: EL AÑO CITADO Y EL DE LA ENTRADA ELEGIDA
+        ' EXISTEN Y DIFIEREN. UN AÑO FALTANTE NO DESCARTA, MISMO CRITERIO QUE EL
+        ' CONTROL DE DUPLICADOS AL GUARDAR (m_BuscarBib.DuplicadosEnProyecto)
+        sAnioCitado = m_BuscarBib.AnioDeReferencia(sReferencia)
+        sAnioElegido = m_BuscarBib.AnioDeEntrada(m_BuscarBib.ElegidoId())
+        bOtraEdicion = sAnioCitado <> "" And sAnioElegido <> "" And sAnioCitado <> sAnioElegido
+
+        If m_BuscarBib.ElegidoProyecto() = m_InicioCierre.IdProyectoEnCurso And Not bOtraEdicion Then
+          ' MISMO PROYECTO Y MISMA EDICIÓN: ES UN DUPLICADO. SE CITA LA CLAVE EXISTENTE
           m_Sonido.sonar("Info")
           Message.Info("La referencia ya está cargada en este proyecto como «" & m_BuscarBib.ElegidoClave() & "»." & gb.NewLine & "Se muestra en la grilla de referencias en curso.")
           m_Bibtex.MostrarEntradasEnGrilla([m_BuscarBib.ElegidoId()], False)
         Else
-          ' OTRO PROYECTO: SE COPIA COMO ENTRADA NUEVA, SIN GUARDAR
+          ' OTRO PROYECTO, U OTRA EDICIÓN DEL MISMO: SE COPIA COMO ENTRADA NUEVA,
+          ' SIN GUARDAR. id_origen APUNTA A LA ENTRADA ELEGIDA
           If Not m_BuscarBib.UsarEntrada(m_BuscarBib.ElegidoId()) Then
             If m_BuscarBib.UltimoError() <> "" Then
               m_Sonido.sonar("Error")
               Message.Error(m_BuscarBib.UltimoError())
             Endif
+            Return
+          Endif
+          ' EL AÑO NO SE CORRIGE SOLO (DECISIÓN DE ALBERTO): OTRA EDICIÓN PUEDE
+          ' TRAER MÁS DIFERENCIAS QUE EL AÑO, Y LA ENTRADA SE REVISA ENTERA
+          If bOtraEdicion Then
+            ' TEXTO ENRIQUECIDO: LOS SALTOS VAN COMO <br>, PORQUE CON ETIQUETAS
+            ' EL MENSAJE SE INTERPRETA COMO HTML Y gb.NewLine NO CORTA LÍNEA
+            m_Sonido.sonar("Warning")
+            Message.Warning("<b>ESTA ES OTRA EDICIÓN O REIMPRESIÓN</b><br><br>" &
+              "El año citado (<b>" & sAnioCitado & "</b>) difiere del de la entrada copiada (<b>" & sAnioElegido & "</b>). " &
+              "Los campos muestran todavía los datos de la edición de " & sAnioElegido & ".<br><br>" &
+              "<b>Antes de guardar, revise y corrija en los campos todo lo que cambie en esta edición:</b><br>" &
+              "• año o fecha<br>" &
+              "• editorial y lugar<br>" &
+              "• número de edición<br>" &
+              "• paginación<br>" &
+              "• prólogo, introducción, traducción, notas, corpus o anexos nuevos<br><br>" &
+              "<b>Lo que no se corrija quedará guardado con los datos de la edición de " & sAnioElegido & ".</b>")
           Endif
         Endif
         Return
