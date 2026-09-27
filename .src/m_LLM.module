@@ -1,0 +1,560 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_LLM
+' Propósito : Consulta a un modelo de lenguaje para analizar una referencia
+'             bibliográfica pegada en txtTMPbiblio. FASE 1: HASTA OBTENER LA
+'             RESPUESTA; LA CARGA EN EL FORMULARIO ES LA FASE 2.
+'             CATÁLOGO : UN .conf POR PROVEEDOR EN ~/.gbpublisher/llm/proveedores/
+'                        (MODELO DE SC-11, MISMO PATRÓN QUE LOS .theme).
+'             PROMPT   : ~/.gbpublisher/llm/prompt-biblatex.txt, CON MARCADORES
+'                        {{cmb:TIPO}} QUE SE REEMPLAZAN AL ENVIAR POR LOS CÓDIGOS
+'                        ACTIVOS DE cmb_biblatex.
+'             PROTOCOLO: CHAT COMPLETIONS COMPATIBLE CON OpenAI.
+'             EL MÓDULO NO HACE LA CONSULTA HTTP: LA HACE FRespuestaLLM, PARA
+'             QUE LOS EVENTOS DEL HttpClient LLEGUEN A UN FORMULARIO (PATRÓN DE
+'             FTraducir) Y CERRARLO CANCELE LA CONSULTA.
+' Dependencias: m_InicioCierre, m_ConexionBD, m_ApiCredenciales, m_Sonido.
+' ==============================================================================
+
+Private Const ARCHIVO_PROMPT As String = "prompt-biblatex.txt"
+Private Const MARCA_APERTURA As String = "{{cmb:"
+Private Const MARCA_CIERRE As String = "}}"
+Private Const CLAVE_ULTIMO As String = "LLM/Ultimo"
+
+' --- ÚLTIMO ERROR: CANAL DE SALIDA DE LAS FUNCIONES QUE DEVUELVEN VACÍO AL FALLAR ---
+' VARIABLE DE MÓDULO CON ACCESOR, NO UN PARÁMETRO (GV-24, ALTERNATIVA 4)
+Private $sUltimoError As String
+
+' --- IDENTIFICADORES DE LOS PROVEEDORES EN EL ORDEN EN QUE ESTÁN EN EL COMBO ---
+Private $aIdsEnCombo As New String[]
+
+' ============================================
+' Función   : UltimoError
+' Propósito : Devuelve el motivo del último fallo de ArmarPrompt,
+'             ExtraerContenido o SepararEntrada
+' Parámetros: (ninguno)
+' Retorna   : String — descripción del error, vacío si no hubo
+' ============================================
+Public Function UltimoError() As String
+
+  Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : RutaLLM
+' Propósito : Carpeta de trabajo de la función LLM en el directorio del usuario
+' Parámetros: (ninguno)
+' Retorna   : String — ~/.gbpublisher/llm
+' ============================================
+Public Function RutaLLM() As String
+
+  Return User.Home &/ ".gbpublisher" &/ "llm"
+
+End
+
+' ============================================
+' Función   : RutaPrompt
+' Propósito : Prompt de trabajo, el que se edita y se envía
+' Parámetros: (ninguno)
+' Retorna   : String — ruta del prompt en la copia local
+' ============================================
+Public Function RutaPrompt() As String
+
+  Return RutaLLM() &/ ARCHIVO_PROMPT
+
+End
+
+' ============================================
+' Función   : RutaPromptOriginal
+' Propósito : Prompt distribuido con la aplicación, inmutable (SC-11)
+' Parámetros: (ninguno)
+' Retorna   : String — ruta del prompt original
+' ============================================
+Public Function RutaPromptOriginal() As String
+
+  Return m_InicioCierre.RutaRecursos() &/ "llm" &/ ARCHIVO_PROMPT
+
+End
+
+' ============================================
+' Función   : ObtenerProveedor
+' Propósito : Abre el archivo de un proveedor del catálogo
+' Parámetros: sId As String — nombre del archivo sin extensión
+' Retorna   : Settings — el proveedor, o Null si no se pudo leer
+' ============================================
+Public Function ObtenerProveedor(sId As String) As Settings
+
+  Dim hProveedor As Settings
+
+  Try hProveedor = New Settings(RutaLLM() &/ "proveedores" &/ sId & ".conf")
+  If Error Then
+    $sUltimoError = "No se pudo leer el proveedor «" & sId & "»: " & Error.Text
+    Return Null
+  Endif
+
+  Return hProveedor
+
+End
+
+' ============================================
+' Función   : ProveedorUtilizable
+' Propósito : Decide si un proveedor se ofrece en el combo: necesita URL y
+'             modelo, y una credencial activa si la declara
+' Parámetros: hProveedor As Settings — proveedor ya abierto
+' Retorna   : Boolean — True si se puede consultar
+' ============================================
+Private Function ProveedorUtilizable(hProveedor As Settings) As Boolean
+
+  Dim sCredencial As String
+
+  ' --- 1. DATOS MÍNIMOS ---
+  If Trim(hProveedor["Proveedor/Url", ""]) = "" Then Return False
+  If Trim(hProveedor["Proveedor/Modelo", ""]) = "" Then Return False
+
+  ' --- 2. CREDENCIAL: VACÍA = NO LLEVA CLAVE (OLLAMA LOCAL) ---
+  sCredencial = Trim(hProveedor["Proveedor/Credencial", ""])
+  If sCredencial = "" Then Return True
+
+  Return m_ApiCredenciales.ObtenerApiKey(sCredencial) <> ""
+
+End
+
+' ============================================
+' Función   : LlenarCombo
+' Propósito : Carga en el combo los proveedores utilizables, en el orden
+'             declarado en cada archivo, y repone la última elección
+' Parámetros: cmb As ComboBox — combo a llenar (FMain.cmbLLM)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub LlenarCombo(cmb As ComboBox)
+
+  Dim aArchivos As String[]
+  Dim aOrdenados As New String[]
+  Dim cNombres As New Collection
+  Dim hProveedor As Settings
+  Dim sArchivo As String
+  Dim sId As String
+  Dim sEntrada As String
+  Dim sUltimo As String
+  Dim iOrden As Integer
+  Dim iIndice As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  cmb.Clear()
+  $aIdsEnCombo.Clear()
+
+  ' --- 2. ARCHIVOS DEL CATÁLOGO ---
+  Try aArchivos = Dir(RutaLLM() &/ "proveedores", "*.conf", gb.File)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el catálogo de proveedores LLM:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. ORDEN Y NOMBRE; UN ARCHIVO ILEGIBLE O SIN CREDENCIAL NO SE OFRECE ---
+  For Each sArchivo In aArchivos
+    sId = File.BaseName(sArchivo)
+    hProveedor = ObtenerProveedor(sId)
+    If Not hProveedor Then
+      Message.Warning($sUltimoError)
+      Continue
+    Endif
+    If Not ProveedorUtilizable(hProveedor) Then Continue
+    iOrden = 999
+    Try iOrden = hProveedor["Proveedor/Orden", 999]
+    cNombres[sId] = hProveedor["Proveedor/Nombre", sId]
+    ' CLAVE DE ORDEN CON CEROS A LA IZQUIERDA PARA QUE Sort ORDENE COMO NÚMERO
+    aOrdenados.Add(Format$(iOrden, "000") & "|" & sId)
+  Next
+
+  ' --- 4. COMBO EN EL ORDEN DECLARADO ---
+  aOrdenados.Sort()
+  For Each sEntrada In aOrdenados
+    sId = Mid$(sEntrada, InStr(sEntrada, "|") + 1)
+    $aIdsEnCombo.Add(sId)
+    cmb.Add(cNombres[sId])
+  Next
+
+  ' --- 5. ÚLTIMA ELECCIÓN ---
+  ' ASIGNAR Index DISPARA Click AUNQUE NO CAMBIE (GV-53): SE COMPARA ANTES
+  sUltimo = Settings[CLAVE_ULTIMO, ""]
+  iIndice = $aIdsEnCombo.Find(sUltimo)
+  If iIndice < 0 And If $aIdsEnCombo.Count > 0 Then iIndice = 0
+  If iIndice >= 0 And If cmb.Index <> iIndice Then cmb.Index = iIndice
+
+End
+
+' ============================================
+' Función   : IdSeleccionado
+' Propósito : Traduce el índice del combo al identificador del proveedor
+' Parámetros: iIndice As Integer — índice elegido en el combo
+' Retorna   : String — identificador, vacío si el índice no es válido
+' ============================================
+Public Function IdSeleccionado(iIndice As Integer) As String
+
+  If iIndice < 0 Or If iIndice >= $aIdsEnCombo.Count Then Return ""
+
+  Return $aIdsEnCombo[iIndice]
+
+End
+
+' ============================================
+' Función   : RecordarEleccion
+' Propósito : Guarda el proveedor elegido para la próxima vez
+' Parámetros: sId As String — identificador del proveedor
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub RecordarEleccion(sId As String)
+
+  If sId = "" Then Return
+  Settings[CLAVE_ULTIMO] = sId
+
+End
+
+' ============================================
+' Función   : ArmarPrompt
+' Propósito : Lee el prompt de trabajo y reemplaza cada marcador {{cmb:TIPO}}
+'             por la lista de códigos activos de ese tipo en cmb_biblatex
+' Parámetros: (ninguno)
+' Retorna   : String — prompt listo para enviar, vacío si falló (ver UltimoError)
+' ============================================
+Public Function ArmarPrompt() As String
+
+  Dim sPrompt As String
+  Dim sResultado As String
+  Dim sTipo As String
+  Dim sLista As String
+  Dim iDesde As Integer
+  Dim iApertura As Integer
+  Dim iCierre As Integer
+
+  ' --- 1. LECTURA ---
+  $sUltimoError = ""
+  Try sPrompt = File.Load(RutaPrompt())
+  If Error Then
+    $sUltimoError = "No se pudo leer el prompt:" & gb.NewLine & RutaPrompt() & gb.NewLine & Error.Text
+    Return ""
+  Endif
+
+  ' File.Load NO VALIDA LA CODIFICACIÓN (GV-03): UN PROMPT EDITADO AFUERA PUEDE NO SER UTF-8
+  If Not String.IsValid(sPrompt) Then
+    $sUltimoError = "El prompt no es UTF-8 válido:" & gb.NewLine & RutaPrompt()
+    Return ""
+  Endif
+
+  ' --- 2. REEMPLAZO DE MARCADORES ---
+  ' POSICIONES EN CODEPOINTS CON String.* EN TODO EL RECORRIDO (RC-GM-12)
+  iDesde = 1
+  Do
+    iApertura = String.InStr(sPrompt, MARCA_APERTURA, iDesde)
+    If iApertura = 0 Then Break
+
+    iCierre = String.InStr(sPrompt, MARCA_CIERRE, iApertura + String.Len(MARCA_APERTURA))
+    If iCierre = 0 Then
+      $sUltimoError = "El prompt tiene un marcador sin cerrar en la posición " & iApertura & "."
+      Return ""
+    Endif
+
+    sTipo = Trim(String.Mid(sPrompt, iApertura + String.Len(MARCA_APERTURA), iCierre - iApertura - String.Len(MARCA_APERTURA)))
+    sLista = ListaVocabulario(sTipo)
+    If sLista = "" Then Return ""   ' ListaVocabulario YA DEJÓ EL MOTIVO
+
+    sResultado &= String.Mid(sPrompt, iDesde, iApertura - iDesde) & sLista
+    iDesde = iCierre + String.Len(MARCA_CIERRE)
+  Loop
+
+  ' --- 3. RESTO DEL TEXTO DESPUÉS DEL ÚLTIMO MARCADOR ---
+  sResultado &= String.Mid(sPrompt, iDesde)
+
+  Return sResultado
+
+End
+
+' ============================================
+' Función   : ListaVocabulario
+' Propósito : Arma la lista de códigos activos de un tipo de cmb_biblatex,
+'             uno por línea, con su nombre como explicación para el modelo
+' Parámetros: sTipo As String — valor de la columna tipo
+' Retorna   : String — lista, vacío si falló o no hay códigos (ver UltimoError)
+' ============================================
+Private Function ListaVocabulario(sTipo As String) As String
+
+  Dim rDatos As Result
+  Dim sLista As String
+  Dim sCodigo As String
+
+  ' --- 1. CONSULTA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT codigo, nombre FROM cmb_biblatex WHERE tipo = &1 AND activo = TRUE ORDER BY codigo", sTipo)
+  If Error Then
+    $sUltimoError = "No se pudo leer el vocabulario «" & sTipo & "»:" & gb.NewLine & Error.Text
+    Return ""
+  Endif
+
+  ' --- 2. UNA LÍNEA POR CÓDIGO; EL CÓDIGO VACÍO (OPCIÓN «SIN VALOR» DEL COMBO) NO SE OFRECE ---
+  While rDatos.Available
+    If Not IsNull(rDatos["codigo"]) Then
+      sCodigo = Trim(rDatos["codigo"])
+      If sCodigo <> "" Then
+        sLista &= "- " & sCodigo
+        If Not IsNull(rDatos["nombre"]) Then sLista &= ": " & Trim(rDatos["nombre"])
+        sLista &= gb.NewLine
+      Endif
+    Endif
+    rDatos.MoveNext
+  Wend
+
+  ' --- 3. UN MARCADOR SIN CÓDIGOS ES UN ERROR DEL PROMPT, NO UNA LISTA VACÍA ---
+  If sLista = "" Then
+    $sUltimoError = "El vocabulario «" & sTipo & "» no tiene códigos activos en cmb_biblatex." & gb.NewLine & "Revise el marcador en el prompt."
+    Return ""
+  Endif
+
+  ' SIN EL ÚLTIMO SALTO: EL PROMPT YA TRAE EL SUYO DESPUÉS DEL MARCADOR
+  Return String.Left(sLista, String.Len(sLista) - 1)
+
+End
+
+' ============================================
+' Función   : ArmarCuerpo
+' Propósito : Cuerpo JSON de la consulta de chat completions
+' Parámetros: hProveedor As Settings — proveedor (modelo y temperatura)
+'             sPrompt As String — instrucciones, van como mensaje system
+'             sReferencia As String — referencia a analizar, va como mensaje user
+' Retorna   : String — JSON listo para Post
+' ============================================
+Public Function ArmarCuerpo(hProveedor As Settings, sPrompt As String, sReferencia As String) As String
+
+  Dim cCuerpo As New Collection
+  Dim cSistema As New Collection
+  Dim cUsuario As New Collection
+  Dim aMensajes As New Variant[]
+  Dim fTemperatura As Float
+
+  ' --- 1. MENSAJES ---
+  cSistema["role"] = "system"
+  cSistema["content"] = sPrompt
+  cUsuario["role"] = "user"
+  cUsuario["content"] = sReferencia
+  aMensajes.Add(cSistema)
+  aMensajes.Add(cUsuario)
+
+  ' --- 2. PARÁMETROS ---
+  fTemperatura = 0
+  Try fTemperatura = CFloat(hProveedor["Proveedor/Temperatura", 0])
+  cCuerpo["model"] = Trim(hProveedor["Proveedor/Modelo", ""])
+  cCuerpo["temperature"] = fTemperatura
+  cCuerpo["messages"] = aMensajes
+
+  Return JSON.Encode(cCuerpo)
+
+End
+
+' ============================================
+' Función   : Encabezados
+' Propósito : Encabezados HTTP de la consulta; la clave viaja dentro del
+'             proceso por HttpClient, no por la línea de comandos
+' Parámetros: hProveedor As Settings — proveedor (nombre de la credencial)
+' Retorna   : String[] — encabezados para HttpClient.Post
+' ============================================
+Public Function Encabezados(hProveedor As Settings) As String[]
+
+  Dim aEncabezados As New String[]
+  Dim sCredencial As String
+  Dim sClave As String
+
+  ' --- 1. AUTENTICACIÓN SOLO SI EL PROVEEDOR DECLARA CREDENCIAL ---
+  sCredencial = Trim(hProveedor["Proveedor/Credencial", ""])
+  If sCredencial <> "" Then
+    sClave = m_ApiCredenciales.ObtenerApiKey(sCredencial)
+    aEncabezados.Add("Authorization: Bearer " & sClave)
+  Endif
+
+  Return aEncabezados
+
+End
+
+' ============================================
+' Función   : ExtraerContenido
+' Propósito : Saca el texto de la respuesta de chat completions
+'             (choices[0].message.content) o el mensaje de error del proveedor
+' Parámetros: sJson As String — cuerpo completo de la respuesta
+' Retorna   : String — texto del modelo, vacío si falló (ver UltimoError)
+' ============================================
+Public Function ExtraerContenido(sJson As String) As String
+
+  Dim vRaiz As Variant
+  Dim cRaiz As Collection
+  Dim cOpcion As Collection
+  Dim cMensaje As Collection
+  Dim sContenido As String
+  Dim cError As Collection
+  Dim aRaiz As Variant[]
+  Dim aOpciones As Variant[]
+
+  ' --- 1. DECODIFICACIÓN ---
+  $sUltimoError = ""
+  Try vRaiz = JSON.Decode(sJson)
+  If Error Then
+    $sUltimoError = "La respuesta no es JSON válido."
+    Return ""
+  Endif
+  ' GEMINI ENVUELVE LOS ERRORES EN UN ARRAY: [{"error": {…}}]. SE TOMA EL PRIMER ELEMENTO
+  If TypeOf(vRaiz) = gb.Object And If vRaiz Is Variant[] Then
+    aRaiz = vRaiz
+    If aRaiz.Count > 0 Then vRaiz = aRaiz[0]
+  Endif
+  Try cRaiz = vRaiz
+  If Error Or If Not cRaiz Then
+    $sUltimoError = "La respuesta no tiene la forma esperada."
+    Return ""
+  Endif
+
+  ' --- 2. ERROR INFORMADO POR EL PROVEEDOR ---
+  If cRaiz.Exist("error") Then
+    Try cError = cRaiz["error"]
+    If Not Error And If cError And If cError.Exist("message") Then
+      $sUltimoError = "El proveedor informó: " & cError["message"]
+    Else
+      $sUltimoError = "El proveedor informó un error: " & CStr(cRaiz["error"])
+    Endif
+    Return ""
+  Endif
+
+  ' --- 3. choices[0].message.content ---
+  If Not cRaiz.Exist("choices") Then
+    $sUltimoError = "La respuesta no trae «choices»."
+    Return ""
+  Endif
+  Try aOpciones = cRaiz["choices"]
+  If Error Or If Not aOpciones Or If aOpciones.Count = 0 Then
+    $sUltimoError = "La respuesta no trae ninguna opción."
+    Return ""
+  Endif
+  Try cOpcion = aOpciones[0]
+  If Not Error And If cOpcion Then
+    If cOpcion.Exist("message") Then
+      Try cMensaje = cOpcion["message"]
+    Endif
+  Endif
+  If Not cMensaje Then
+    $sUltimoError = "La respuesta no trae «message»."
+    Return ""
+  Endif
+  If Not cMensaje.Exist("content") Or If IsNull(cMensaje["content"]) Then
+    $sUltimoError = "El modelo respondió sin contenido."
+    Return ""
+  Endif
+
+  sContenido = cMensaje["content"]
+  Return sContenido
+
+End
+
+' ============================================
+' Función   : SepararEntrada
+' Propósito : Separa la entrada biblatex del resto de la respuesta. La
+'             entrada va desde «@tipo{» hasta la llave que la cierra,
+'             contando llaves; así se descartan solas las cercas de código
+'             y cualquier texto que el modelo agregue alrededor
+' Parámetros: sTexto As String — contenido devuelto por el modelo
+' Retorna   : String[] — [0] entrada (vacía si no se encontró, ver
+'             UltimoError), [1] resto: el diagnóstico
+' ============================================
+Public Function SepararEntrada(sTexto As String) As String[]
+
+  Dim sBarra As String
+  Dim sCar As String
+  Dim sEntrada As String
+  Dim sResto As String
+  Dim iLargo As Integer
+  Dim iDesde As Integer
+  Dim iArroba As Integer
+  Dim iPos As Integer
+  Dim iNivel As Integer
+  Dim iFin As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  ' LA BARRA INVERTIDA CON Chr$: EVITA EL LITERAL "\\" (VER LA NOTA DE SC-08)
+  $sUltimoError = ""
+  sBarra = Chr$(92)
+  iLargo = String.Len(sTexto)
+  iDesde = 1
+
+  ' --- 2. COMIENZO: UNA @ SEGUIDA DE LETRAS Y UNA LLAVE ---
+  ' UNA @ SUELTA EN EL DIAGNÓSTICO (UNA DIRECCIÓN DE CORREO) NO CUENTA
+  Do
+    iArroba = String.InStr(sTexto, "@", iDesde)
+    If iArroba = 0 Then
+      $sUltimoError = "La respuesta no contiene ninguna entrada biblatex."
+      Return [sEntrada, sTexto]
+    Endif
+    iPos = iArroba + 1
+    ' SIN And If EN LA CONDICIÓN DEL While: EL COMPILADOR LO RECHAZA (VERIFICADO CON gbc3 3.19)
+    While iPos <= iLargo
+      If Not IsLetter(String.Mid(sTexto, iPos, 1)) Then Break
+      Inc iPos
+    Wend
+    If iPos > iArroba + 1 And If iPos <= iLargo And If String.Mid(sTexto, iPos, 1) = "{" Then Break
+    iDesde = iArroba + 1
+  Loop
+
+  ' --- 3. FIN: LA LLAVE QUE CIERRA LA PRIMERA, CONTANDO NIVELES ---
+  ' UNA LLAVE PRECEDIDA DE BARRA INVERTIDA ES LITERAL Y NO CUENTA
+  iNivel = 0
+  iFin = 0
+  While iPos <= iLargo
+    sCar = String.Mid(sTexto, iPos, 1)
+    If sCar = sBarra Then
+      iPos += 2
+      Continue
+    Endif
+    If sCar = "{" Then
+      Inc iNivel
+    Else If sCar = "}" Then
+      Dec iNivel
+      If iNivel = 0 Then
+        iFin = iPos
+        Break
+      Endif
+    Endif
+    Inc iPos
+  Wend
+
+  If iFin = 0 Then
+    $sUltimoError = "La entrada biblatex está incompleta: falta la llave de cierre."
+    Return ["", sTexto]
+  Endif
+
+  ' --- 4. RESULTADO ---
+  sEntrada = String.Mid(sTexto, iArroba, iFin - iArroba + 1)
+  sResto = String.Left(sTexto, iArroba - 1) & String.Mid(sTexto, iFin + 1)
+
+  Return [sEntrada, QuitarCercas(sResto)]
+
+End
+
+' ============================================
+' Función   : QuitarCercas
+' Propósito : Elimina las líneas de cerca de código Markdown (```) que los
+'             modelos agregan alrededor de la entrada, y los bordes vacíos
+' Parámetros: sTexto As String — resto de la respuesta
+' Retorna   : String — texto sin cercas
+' ============================================
+Private Function QuitarCercas(sTexto As String) As String
+
+  Dim aLineas As String[]
+  Dim aSalida As New String[]
+  Dim sLinea As String
+
+  ' --- 1. FILTRADO LÍNEA POR LÍNEA ---
+  aLineas = Split(sTexto, "\n")
+  For Each sLinea In aLineas
+    If Left$(LTrim(sLinea), 3) = "```" Then Continue
+    aSalida.Add(sLinea)
+  Next
+
+  Return Trim(aSalida.Join("\n"))
+
+End

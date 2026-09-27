@@ -1,0 +1,499 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_AplicarBib
+' Propósito : Vuelca una entrada biblatex en los controles de
+'             TabPanelBibliografia de FMain, SIN GUARDAR. La revisión y
+'             cualquier corrección se hacen en los controles: un solo lugar
+'             donde modificar. Después se guarda con btnGuardarBib.
+'             CADENA DE TRADUCCIÓN: campo biblatex → columna de bibtex →
+'             control, con los mapas de m_Bibtex recorridos al revés. El
+'             módulo no conoce ninguna columna en particular: cuando cambie el
+'             esquema, cambian los mapas, no este código.
+' Dependencias: m_Bibtex, m_Sonido.
+' ==============================================================================
+
+' --- ESTADO DEL LECTOR: TEXTO, POSICIÓN Y LARGO EN CODEPOINTS (RC-GM-12) ---
+' VARIABLES DE MÓDULO Y NO PARÁMETROS: LA POSICIÓN AVANZA DENTRO DE LAS
+' FUNCIONES AUXILIARES Y UN Integer NO VUELVE POR PARÁMETRO (GV-24)
+Private $sTexto As String
+Private $iPos As Integer
+Private $iLargo As Integer
+
+' --- ÚLTIMO ERROR DEL LECTOR ---
+Private $sUltimoError As String
+
+' --- CLAVES RESERVADAS EN LA COLECCIÓN QUE DEVUELVE Parsear ---
+' LLEVAN @, QUE NO PUEDE APARECER EN UN NOMBRE DE CAMPO
+Private Const CLAVE_TIPO As String = "@tipo"
+Private Const CLAVE_CLAVE As String = "@clave"
+
+' ============================================
+' Función   : UltimoError
+' Propósito : Motivo del último fallo de Parsear
+' Parámetros: (ninguno)
+' Retorna   : String — descripción, vacío si no hubo
+' ============================================
+Public Function UltimoError() As String
+
+  Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : Aplicar
+' Propósito : Traduce la entrada, pregunta si hay datos cargados, vuelca los
+'             valores en FMain e informa lo que no se pudo cargar
+' Parámetros: sEntrada As String — entrada biblatex completa
+' Retorna   : Boolean — True si se aplicó (el llamador cierra su formulario)
+' ============================================
+Public Function Aplicar(sEntrada As String) As Boolean
+
+  Dim cCampos As Collection
+  Dim aControles As New String[]
+  Dim aValores As New String[]
+  Dim aCampos As New String[]
+  Dim aInforme As New String[]
+  Dim sValor As String
+  Dim sCampo As String
+  Dim sColumna As String
+  Dim sControl As String
+  Dim sMotivo As String
+  Dim bHayDatos As Boolean
+  Dim bSoloVacios As Boolean
+  Dim iRespuesta As Integer
+  Dim iCargados As Integer
+  Dim i As Integer
+
+  ' --- 1. LECTURA DE LA ENTRADA ---
+  cCampos = Parsear(sEntrada)
+  If Not cCampos Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la entrada biblatex:" & gb.NewLine & $sUltimoError)
+    Return False
+  Endif
+
+  ' --- 2. DESTINO DE CADA DATO ---
+  ' EL TIPO DE ENTRADA VA PRIMERO: SU Click DECIDE SI SE VE EL TIPO DE TESIS
+  aCampos.Add("@" & cCampos[CLAVE_TIPO])
+  aControles.Add(m_Bibtex.ControlDeColumna("tipo_de_entrada"))
+  aValores.Add(cCampos[CLAVE_TIPO])
+
+  For Each sValor In cCampos
+    sCampo = cCampos.Key
+    ' LAS CLAVES RESERVADAS NO SON CAMPOS; LA CLAVE LA GENERA btnGenerarClaveBib
+    If sCampo = CLAVE_TIPO Or sCampo = CLAVE_CLAVE Then Continue
+
+    sMotivo = MotivoAlias(sCampo)
+    If sMotivo <> "" Then
+      aInforme.Add(sCampo & ": " & sMotivo)
+      Continue
+    Endif
+
+    sColumna = m_Bibtex.ColumnaDeCampo(sCampo)
+    If sColumna = "" Then
+      aInforme.Add(sCampo & ": no tiene columna en la tabla bibtex")
+      Continue
+    Endif
+
+    sControl = m_Bibtex.ControlDeColumna(sColumna)
+    If sControl = "" Then
+      aInforme.Add(sCampo & ": la columna «" & sColumna & "» no tiene control en el formulario")
+      Continue
+    Endif
+
+    aCampos.Add(sCampo)
+    aControles.Add(sControl)
+    aValores.Add(sValor)
+  Next
+
+  ' --- 3. ¿HAY DATOS CARGADOS EN ALGÚN DESTINO? ---
+  For i = 0 To aControles.Max
+    If TextoDe(aControles[i]) <> "" Then
+      bHayDatos = True
+      Break
+    Endif
+  Next
+
+  If bHayDatos Then
+    m_Sonido.sonar("Question")
+    iRespuesta = Message.Question("El formulario ya tiene datos en algunos de los campos que trae la respuesta.", "Sobrescribir", "Solo vacíos", "Cancelar")
+    If iRespuesta = 3 Or iRespuesta = 0 Then Return False
+    bSoloVacios = (iRespuesta = 2)
+  Endif
+
+  ' --- 4. VOLCADO ---
+  For i = 0 To aControles.Max
+    If bSoloVacios And If TextoDe(aControles[i]) <> "" Then
+      aInforme.Add(aCampos[i] & ": no se cargó, el campo ya tenía un valor")
+      Continue
+    Endif
+    sMotivo = Asignar(aControles[i], aValores[i])
+    If sMotivo <> "" Then
+      aInforme.Add(aCampos[i] & ": " & sMotivo)
+    Else
+      Inc iCargados
+    Endif
+  Next
+
+  ' --- 5. INFORME ---
+  ' LO QUE NO SE CARGÓ SE NOMBRA SIEMPRE: UN CAMPO QUE DESAPARECE SIN AVISO PARECE UN DATO QUE NO VINO (GV-23)
+  If aInforme.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Se cargaron " & iCargados & " datos. Revíselos antes de guardar." & gb.NewLine & "La clave se genera con el botón de clave, como siempre.")
+  Else
+    m_Sonido.sonar("Info")
+    Message.Warning("Se cargaron " & iCargados & " datos. Revíselos antes de guardar." & gb.NewLine & gb.NewLine & "No se cargaron:" & gb.NewLine & "• " & aInforme.Join(gb.NewLine & "• "))
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : MotivoAlias
+' Propósito : Reconoce los nombres de BibTeX que biblatex reemplazó. No se
+'             traducen: el prompt los prohíbe, y si llegan se informan
+' Parámetros: sCampo As String — nombre del campo, en minúscula
+' Retorna   : String — motivo del rechazo, vacío si no es un alias
+' ============================================
+Private Function MotivoAlias(sCampo As String) As String
+
+  Select Case sCampo
+    Case "journal"
+      Return "nombre de BibTeX; en biblatex es journaltitle"
+    Case "address"
+      Return "nombre de BibTeX; en biblatex es location"
+    Case "school"
+      Return "nombre de BibTeX; en biblatex es institution"
+  End Select
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : TextoDe
+' Propósito : Valor visible de un control de FMain, por nombre
+' Parámetros: sControl As String — nombre del control
+' Retorna   : String — su Text sin espacios en los bordes
+' ============================================
+Private Function TextoDe(sControl As String) As String
+
+  Dim sTexto As String
+
+  ' FMain[nombre] DEVUELVE EL CONTROL AUNQUE NO SEA #Public (VERIFICADO EN BANCO, 3.19)
+  Try sTexto = Object.GetProperty(FMain[sControl], "Text")
+  If Error Then Return ""
+
+  Return Trim(sTexto)
+
+End
+
+' ============================================
+' Función   : Asignar
+' Propósito : Escribe un valor en un control de FMain. En un ComboBox de solo
+'             lectura, un valor fuera de la lista se perdería en silencio:
+'             se verifica antes con Find
+' Parámetros: sControl As String — nombre del control
+'             sValor As String — valor a escribir
+' Retorna   : String — vacío si se escribió, o el motivo si no
+' ============================================
+Private Function Asignar(sControl As String, sValor As String) As String
+
+  Dim oControl As Object
+  Dim cmb As ComboBox
+
+  ' --- 1. CONTROL ---
+  Try oControl = FMain[sControl]
+  If Error Or If Not oControl Then Return "no se encontró el control «" & sControl & "»"
+
+  ' --- 2. COMBO DE SOLO LECTURA: GUARDA CON Find ---
+  ' Text CON UN VALOR FUERA DE LA LISTA DEJA Index EN -1 Y NO AVISA; Find
+  ' DISTINGUE MAYÚSCULAS (VERIFICADO EN BANCO, 3.19)
+  If oControl Is ComboBox Then
+    cmb = oControl
+    If cmb.ReadOnly Then
+      If cmb.Find(sValor) < 0 Then Return "«" & sValor & "» no está en la lista de valores admitidos"
+      cmb.Text = sValor
+      Return ""
+    Endif
+  Endif
+
+  ' --- 3. RESTO DE LOS CONTROLES: TextBox Y ComboBox EDITABLE ---
+  Try Object.SetProperty(oControl, "Text", sValor)
+  If Error Then Return "no se pudo escribir: " & Error.Text
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : Parsear
+' Propósito : Lee una entrada biblatex: tipo, clave y campos. Los valores
+'             pueden venir entre llaves, entre comillas o sin delimitar; se
+'             quitan los delimitadores exteriores y se CONSERVAN las llaves
+'             interiores, que protegen mayúsculas y hacen el viaje de ida y
+'             vuelta con ExportarBibTeX
+' Parámetros: sEntrada As String — entrada completa, desde la @
+' Retorna   : Collection — "@tipo", "@clave" y un elemento por campo, con el
+'             nombre en minúscula; Null si falla (ver UltimoError)
+' ============================================
+Public Function Parsear(sEntrada As String) As Collection
+
+  Dim cCampos As New Collection
+  Dim sNombre As String
+  Dim sValor As String
+  Dim sCar As String
+  Dim iInicio As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  $sTexto = sEntrada
+  $iLargo = String.Len(sEntrada)
+  $iPos = String.InStr(sEntrada, "@")
+  If $iPos = 0 Then Return Fallo("no hay @ de comienzo")
+  Inc $iPos
+
+  ' --- 2. TIPO: LETRAS HASTA LA LLAVE ---
+  iInicio = $iPos
+  While $iPos <= $iLargo
+    If Not IsLetter(Car()) Then Break
+    Inc $iPos
+  Wend
+  If $iPos = iInicio Or If Car() <> "{" Then Return Fallo("falta el tipo de entrada o la llave que lo sigue")
+  cCampos[CLAVE_TIPO] = LCase(String.Mid($sTexto, iInicio, $iPos - iInicio))
+  Inc $iPos
+
+  ' --- 3. CLAVE: HASTA LA PRIMERA COMA ---
+  iInicio = $iPos
+  While $iPos <= $iLargo
+    If Car() = "," Then Break
+    Inc $iPos
+  Wend
+  If $iPos > $iLargo Then Return Fallo("falta la coma después de la clave")
+  cCampos[CLAVE_CLAVE] = Trim(String.Mid($sTexto, iInicio, $iPos - iInicio))
+  Inc $iPos
+
+  ' --- 4. CAMPOS ---
+  Do
+    ' SEPARADORES ENTRE CAMPOS
+    While $iPos <= $iLargo
+      sCar = Car()
+      If Not IsSpace(sCar) And If sCar <> "," Then Break
+      Inc $iPos
+    Wend
+    If $iPos > $iLargo Then Return Fallo("falta la llave de cierre de la entrada")
+    If Car() = "}" Then Break
+
+    ' NOMBRE DEL CAMPO
+    iInicio = $iPos
+    While $iPos <= $iLargo
+      sCar = Car()
+      If IsSpace(sCar) Or If sCar = "=" Or If sCar = "," Or If sCar = "}" Then Break
+      Inc $iPos
+    Wend
+    sNombre = LCase(String.Mid($sTexto, iInicio, $iPos - iInicio))
+    If sNombre = "" Then Return Fallo("hay un campo sin nombre en la posición " & iInicio)
+
+    ' SIGNO IGUAL
+    SaltarEspacios()
+    If Car() <> "=" Then Return Fallo("falta el signo = después de «" & sNombre & "»")
+    Inc $iPos
+    SaltarEspacios()
+
+    ' VALOR
+    sCar = Car()
+    If sCar = "{" Then
+      sValor = LeerLlaves()
+    Else If sCar = Chr$(34) Then
+      sValor = LeerComillas()
+    Else
+      sValor = LeerSuelto()
+    Endif
+    If $sUltimoError <> "" Then Return Null
+
+    ' UN CAMPO REPETIDO CONSERVA EL PRIMER VALOR, COMO biber
+    If Not cCampos.Exist(sNombre) Then cCampos[sNombre] = Normalizar(sValor)
+  Loop
+
+  Return cCampos
+
+End
+
+' ============================================
+' Función   : Car
+' Propósito : Carácter en la posición actual del lector
+' Parámetros: (ninguno)
+' Retorna   : String — un codepoint, vacío fuera del texto
+' ============================================
+Private Function Car() As String
+
+  If $iPos > $iLargo Then Return ""
+  Return String.Mid($sTexto, $iPos, 1)
+
+End
+
+' ============================================
+' Función   : SaltarEspacios
+' Propósito : Avanza el lector sobre espacios, tabulaciones y saltos
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub SaltarEspacios()
+
+  While $iPos <= $iLargo
+    If Not IsSpace(Car()) Then Break
+    Inc $iPos
+  Wend
+
+End
+
+' ============================================
+' Función   : LeerLlaves
+' Propósito : Lee un valor entre llaves, con llaves anidadas. Devuelve el
+'             contenido sin las llaves exteriores
+' Parámetros: (ninguno — el lector está sobre la llave de apertura)
+' Retorna   : String — contenido; si no cierra, deja UltimoError
+' ============================================
+Private Function LeerLlaves() As String
+
+  Dim sValor As String
+  Dim sCar As String
+  Dim iNivel As Integer
+
+  ' --- 1. RECORRIDO ---
+  ' LA BARRA INVERTIDA CON Chr$ Y NO COMO LITERAL (NOTA DE SC-08)
+  While $iPos <= $iLargo
+    sCar = Car()
+    If sCar = Chr$(92) Then
+      ' CARÁCTER ESCAPADO: PASA TAL CUAL Y NO CUENTA COMO LLAVE
+      sValor &= String.Mid($sTexto, $iPos, 2)
+      $iPos += 2
+      Continue
+    Endif
+    If sCar = "{" Then
+      Inc iNivel
+      If iNivel > 1 Then sValor &= sCar
+    Else If sCar = "}" Then
+      Dec iNivel
+      If iNivel = 0 Then
+        Inc $iPos
+        Return sValor
+      Endif
+      sValor &= sCar
+    Else
+      sValor &= sCar
+    Endif
+    Inc $iPos
+  Wend
+
+  ' --- 2. SIN CIERRE ---
+  $sUltimoError = "un valor entre llaves no se cierra"
+  Return ""
+
+End
+
+' ============================================
+' Función   : LeerComillas
+' Propósito : Lee un valor entre comillas dobles. Las llaves interiores se
+'             conservan; una comilla dentro de llaves no cierra el valor
+' Parámetros: (ninguno — el lector está sobre la comilla de apertura)
+' Retorna   : String — contenido; si no cierra, deja UltimoError
+' ============================================
+Private Function LeerComillas() As String
+
+  Dim sValor As String
+  Dim sCar As String
+  Dim iNivel As Integer
+
+  ' --- 1. RECORRIDO DESPUÉS DE LA COMILLA DE APERTURA ---
+  Inc $iPos
+  While $iPos <= $iLargo
+    sCar = Car()
+    If sCar = Chr$(92) Then
+      sValor &= String.Mid($sTexto, $iPos, 2)
+      $iPos += 2
+      Continue
+    Endif
+    If sCar = "{" Then
+      Inc iNivel
+    Else If sCar = "}" Then
+      Dec iNivel
+    Else If sCar = Chr$(34) And If iNivel = 0 Then
+      Inc $iPos
+      Return sValor
+    Endif
+    sValor &= sCar
+    Inc $iPos
+  Wend
+
+  ' --- 2. SIN CIERRE ---
+  $sUltimoError = "un valor entre comillas no se cierra"
+  Return ""
+
+End
+
+' ============================================
+' Función   : LeerSuelto
+' Propósito : Lee un valor sin delimitar (un año, un número, una macro)
+'             hasta la coma o la llave de cierre, sin consumir esta última
+' Parámetros: (ninguno)
+' Retorna   : String — valor sin espacios en los bordes
+' ============================================
+Private Function LeerSuelto() As String
+
+  Dim iInicio As Integer
+
+  iInicio = $iPos
+  While $iPos <= $iLargo
+    If Car() = "," Or If Car() = "}" Then Break
+    Inc $iPos
+  Wend
+
+  Return Trim(String.Mid($sTexto, iInicio, $iPos - iInicio))
+
+End
+
+' ============================================
+' Función   : Normalizar
+' Propósito : Reduce cada tramo de espacios, tabulaciones y saltos de línea
+'             a un espacio: un título partido en dos renglones es un solo
+'             título, como lo lee biber
+' Parámetros: sValor As String — valor leído
+' Retorna   : String — valor en una línea, sin espacios en los bordes
+' ============================================
+Private Function Normalizar(sValor As String) As String
+
+  Dim sSalida As String
+  Dim sCar As String
+  Dim bEspacio As Boolean
+  Dim i As Integer
+
+  For i = 1 To String.Len(sValor)
+    sCar = String.Mid(sValor, i, 1)
+    If IsSpace(sCar) Then
+      bEspacio = True
+    Else
+      If bEspacio And If sSalida <> "" Then sSalida &= " "
+      bEspacio = False
+      sSalida &= sCar
+    Endif
+  Next
+
+  Return sSalida
+
+End
+
+' ============================================
+' Función   : Fallo
+' Propósito : Deja el motivo de un error de lectura con la posición
+' Parámetros: sMotivo As String — descripción
+' Retorna   : Collection — siempre Null, para usar con Return
+' ============================================
+Private Function Fallo(sMotivo As String) As Collection
+
+  $sUltimoError = sMotivo & " (posición " & $iPos & ")"
+  Return Null
+
+End

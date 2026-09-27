@@ -1,0 +1,183 @@
+' Gambas class file
+
+' ==============================================================================
+' Formulario: FPromptLLM
+' Propósito : Ver y pulir el prompt que se envía al modelo junto con la
+'             referencia. Trabaja sobre la copia local (SC-11); «Restaurar
+'             original» trae el texto distribuido con la aplicación, que
+'             recién queda en disco al guardar.
+'             Los marcadores {{cmb:TIPO}} se muestran tal cual: se reemplazan
+'             al enviar (m_LLM.ArmarPrompt).
+' Dependencias: m_LLM, m_Sonido, m_Ventana.
+' ==============================================================================
+
+' --- FLAG QUE PERMITE EL CIERRE DESDE EL BOTÓN O ESCAPE Y BLOQUEA LA X ---
+' PATRÓN DE FSnippets; LA SALIDA PROPIA ES LA CONTRAPARTIDA DE SC-20
+Private $bCierrePermitido As Boolean
+
+' --- TEXTO TAL COMO ESTÁ EN DISCO, PARA DETECTAR CAMBIOS SIN GUARDAR ---
+Private $sTextoGuardado As String
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Carga el prompt de trabajo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim sTexto As String
+
+  ' --- 1. TÍTULO Y RUTA ---
+  Me.Title = "Prompt para el análisis de referencias"
+  lblRuta.Text = m_LLM.RutaPrompt()
+
+  ' --- 2. LECTURA ---
+  ' SI FALTA, SE AVISA Y QUEDA VACÍO: «Restaurar original» LO REPONE
+  Try sTexto = File.Load(m_LLM.RutaPrompt())
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el prompt:" & gb.NewLine & m_LLM.RutaPrompt() & gb.NewLine & Error.Text & gb.NewLine & gb.NewLine & "Use «Restaurar original» y guarde.")
+    sTexto = ""
+  Endif
+
+  ' --- 3. ESTADO INICIAL ---
+  txaPrompt.Text = sTexto
+  $sTextoGuardado = txaPrompt.Text
+  txaPrompt.SetFocus()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Permite el cierre desde el botón o Escape; lo bloquea desde la X
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. CIERRE PEDIDO DESDE LA INTERFAZ ---
+  If $bCierrePermitido Then Return
+
+  ' --- 2. CIERRE DESDE LA X DEL SISTEMA: BLOQUEAR Y AVISAR ---
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario use el botón <b>Cerrar</b> o la tecla Escape.")
+  Stop Event
+
+End
+
+' ============================================
+' Función   : Form_KeyPress
+' Propósito : Escape cierra el formulario (contrapartida de SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_KeyPress()
+
+  If Key.Code = Key.Esc Then Cerrar()
+
+End
+
+' ============================================
+' Función   : btnGuardar_Click
+' Propósito : Escribe el prompt en la copia local
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardar_Click()
+
+  ' --- 1. VALIDACIÓN: UN PROMPT VACÍO DEJARÍA LA FUNCIÓN SIN INSTRUCCIONES ---
+  If Trim(txaPrompt.Text) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El prompt está vacío. No se guarda.")
+    txaPrompt.SetFocus()
+    Return
+  Endif
+
+  ' --- 2. ESCRITURA ---
+  Try File.Save(m_LLM.RutaPrompt(), txaPrompt.Text)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el prompt:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. NUEVO ESTADO DE REFERENCIA ---
+  $sTextoGuardado = txaPrompt.Text
+  m_Sonido.sonar("Info")
+  Message.Info("El prompt se guardó.")
+  txaPrompt.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnRestaurar_Click
+' Propósito : Trae el prompt distribuido con la aplicación al editor, sin
+'             guardarlo: el usuario decide después si lo guarda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnRestaurar_Click()
+
+  Dim sOriginal As String
+
+  ' --- 1. CONFIRMACIÓN: SE PIERDE LO QUE HAYA EN EL EDITOR ---
+  m_Sonido.sonar("Question")
+  If Message.Question("Se reemplaza el texto del editor por el prompt original." & gb.NewLine & "No se guarda hasta que use «Guardar».", "Restaurar", "Cancelar") <> 1 Then Return
+
+  ' --- 2. LECTURA DEL ORIGINAL ---
+  Try sOriginal = File.Load(m_LLM.RutaPromptOriginal())
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el prompt original:" & gb.NewLine & m_LLM.RutaPromptOriginal() & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  txaPrompt.Text = sOriginal
+  txaPrompt.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : Cerrar
+' Propósito : Cierra el formulario, preguntando antes si hay cambios sin guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Cerrar()
+
+  ' --- 1. CAMBIOS SIN GUARDAR ---
+  If txaPrompt.Text <> $sTextoGuardado Then
+    m_Sonido.sonar("Question")
+    If Message.Question("Hay cambios sin guardar en el prompt." & gb.NewLine & "¿Descartarlos?", "Descartar", "Cancelar") <> 1 Then Return
+  Endif
+
+  ' --- 2. CIERRE ---
+  $bCierrePermitido = True
+  Me.Close()
+
+End

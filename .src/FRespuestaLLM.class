@@ -1,0 +1,307 @@
+' Gambas class file
+
+' ==============================================================================
+' Formulario: FRespuestaLLM
+' Propósito : Envía la referencia al modelo elegido y muestra la respuesta:
+'             arriba la entrada biblatex, para auditarla y copiarla; abajo el
+'             diagnóstico. Si la entrada no se pudo separar, abajo va la
+'             respuesta completa con el motivo.
+'             La consulta vive acá y no en m_LLM: los eventos del HttpClient
+'             llegan al formulario (patrón de FTraducir) y cerrarlo la cancela.
+'             «Aplicar» vuelca la entrada en los controles de FMain y cierra:
+'             la entrada no se edita acá, porque hay un solo lugar donde
+'             modificar, y ese lugar son los controles.
+' Uso       : hForm = New FRespuestaLLM
+'             hForm.Iniciar(sIdProveedor, sReferencia)
+'             hForm.ShowModal()
+' Dependencias: m_LLM, m_AplicarBib, m_Sonido, m_Ventana.
+' ==============================================================================
+
+' --- FLAG QUE PERMITE EL CIERRE DESDE EL BOTÓN O ESCAPE Y BLOQUEA LA X ---
+Private $bCierrePermitido As Boolean
+
+' --- DATOS DE LA CONSULTA, RECIBIDOS EN Iniciar ---
+Private $sIdProveedor As String
+Private $sReferencia As String
+
+' --- CONSULTA HTTP ---
+Private $hHttp As HttpClient
+Private $sRespuesta As String
+Private $bActiva As Boolean
+
+' ============================================
+' Función   : Iniciar
+' Propósito : Recibe los datos de la consulta antes de mostrar el formulario
+' Parámetros: sIdProveedor As String — identificador en el catálogo
+'             sReferencia As String — texto de txtTMPbiblio
+' Retorna   : nada
+' ============================================
+Public Sub Iniciar(sIdProveedor As String, sReferencia As String)
+
+  $sIdProveedor = sIdProveedor
+  $sReferencia = sReferencia
+
+End
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Deja el formulario en espera y lanza la consulta
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Me.Title = "Análisis de la referencia"
+  btnAplicar.Enabled = False
+  btnCopiar.Enabled = False
+  Lanzar()
+
+End
+
+' ============================================
+' Función   : Lanzar
+' Propósito : Arma prompt, cuerpo y encabezados, y envía la consulta
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Lanzar()
+
+  Dim hProveedor As Settings
+  Dim sPrompt As String
+  Dim sCuerpo As String
+  Dim fPlazo As Float
+
+  ' --- 1. PROVEEDOR ---
+  hProveedor = m_LLM.ObtenerProveedor($sIdProveedor)
+  If Not hProveedor Then
+    MostrarFallo(m_LLM.UltimoError(), "")
+    Return
+  Endif
+
+  ' --- 2. PROMPT CON LOS VOCABULARIOS DE LA BASE ---
+  sPrompt = m_LLM.ArmarPrompt()
+  If sPrompt = "" Then
+    MostrarFallo(m_LLM.UltimoError(), "")
+    Return
+  Endif
+
+  ' --- 3. CUERPO Y PLAZO ---
+  sCuerpo = m_LLM.ArmarCuerpo(hProveedor, sPrompt, $sReferencia)
+  fPlazo = 60
+  Try fPlazo = CFloat(hProveedor["Proveedor/Plazo", 60])
+
+  ' --- 4. ENVÍO ---
+  ' EL BUFFER SE VACÍA AL LANZAR, NO AL TERMINAR: UNA RESPUESTA ANTERIOR NO SE MEZCLA
+  $sRespuesta = ""
+  $hHttp = New HttpClient As "hHttp"
+  $hHttp.URL = hProveedor["Proveedor/Url", ""]
+  $hHttp.Async = True
+  $hHttp.Timeout = fPlazo
+
+  lblEstado.Text = "Consultando a " & hProveedor["Proveedor/Nombre", $sIdProveedor] & " (" & hProveedor["Proveedor/Modelo", ""] & ")…"
+  $bActiva = True
+  $hHttp.Post("application/json", sCuerpo, m_LLM.Encabezados(hProveedor))
+
+End
+
+' ============================================
+' Función   : hHttp_Read
+' Propósito : Acumula lo recibido. Se concatena todo antes de interpretarlo:
+'             un trozo puede cortar un carácter UTF-8 por la mitad
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub hHttp_Read()
+
+  Dim sTrozo As String
+
+  If Lof($hHttp) Then
+    sTrozo = Read #$hHttp, Lof($hHttp)
+    $sRespuesta &= sTrozo
+  Endif
+
+End
+
+' ============================================
+' Función   : hHttp_Error
+' Propósito : Falla de conexión o plazo vencido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub hHttp_Error()
+
+  $bActiva = False
+  MostrarFallo("Error de conexión: " & $hHttp.ErrorText, $sRespuesta)
+
+End
+
+' ============================================
+' Función   : hHttp_Finished
+' Propósito : Interpreta la respuesta y la muestra separada
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub hHttp_Finished()
+
+  Dim sContenido As String
+  Dim aPartes As String[]
+
+  ' --- 1. FIN DE LA CONSULTA ---
+  $bActiva = False
+
+  ' --- 2. ERROR HTTP: EL CUERPO SUELE TRAER EL MENSAJE DEL PROVEEDOR ---
+  If $hHttp.Code < 200 Or If $hHttp.Code >= 300 Then
+    sContenido = m_LLM.ExtraerContenido($sRespuesta)
+    MostrarFallo("Error HTTP " & $hHttp.Code & " " & $hHttp.Reason & gb.NewLine & m_LLM.UltimoError(), $sRespuesta)
+    Return
+  Endif
+
+  ' --- 3. TEXTO DEL MODELO ---
+  sContenido = m_LLM.ExtraerContenido($sRespuesta)
+  If sContenido = "" Then
+    MostrarFallo(m_LLM.UltimoError(), $sRespuesta)
+    Return
+  Endif
+
+  ' --- 4. SEPARACIÓN: ENTRADA ARRIBA, DIAGNÓSTICO ABAJO ---
+  aPartes = m_LLM.SepararEntrada(sContenido)
+  If aPartes[0] = "" Then
+    MostrarFallo(m_LLM.UltimoError(), sContenido)
+    Return
+  Endif
+
+  txaEntrada.Text = aPartes[0]
+  txaDiagnostico.Text = aPartes[1]
+  lblEstado.Text = "Respuesta recibida. «Aplicar» la vuelca en el formulario, sin guardar."
+  btnAplicar.Enabled = True
+  btnCopiar.Enabled = True
+  m_Sonido.sonar("Info")
+
+End
+
+' ============================================
+' Función   : MostrarFallo
+' Propósito : Informa un fallo en el formulario, sin callar el motivo (GV-23):
+'             el motivo en el estado y en el diagnóstico, y lo recibido debajo
+' Parámetros: sMotivo As String — descripción del fallo
+'             sRecibido As String — respuesta cruda o texto del modelo, puede ser vacío
+' Retorna   : nada
+' ============================================
+Private Sub MostrarFallo(sMotivo As String, sRecibido As String)
+
+  lblEstado.Text = "No se obtuvo una entrada. Vea el motivo abajo."
+  txaEntrada.Text = ""
+  txaDiagnostico.Text = sMotivo
+  If sRecibido <> "" Then txaDiagnostico.Text &= gb.NewLine & gb.NewLine & "— RESPUESTA RECIBIDA —" & gb.NewLine & sRecibido
+  btnAplicar.Enabled = False
+  btnCopiar.Enabled = False
+  m_Sonido.sonar("Error")
+
+End
+
+' ============================================
+' Función   : btnAplicar_Click
+' Propósito : Vuelca la entrada en los controles de FMain, sin guardar, y
+'             cierra: la revisión sigue en los controles
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnAplicar_Click()
+
+  ' --- 1. SIN ENTRADA NO HAY NADA QUE APLICAR ---
+  If txaEntrada.Text = "" Then Return
+
+  ' --- 2. VOLCADO; SI SE CANCELÓ O FALLÓ LA LECTURA, EL FORMULARIO QUEDA ABIERTO ---
+  If Not m_AplicarBib.Aplicar(txaEntrada.Text) Then Return
+
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : btnCopiar_Click
+' Propósito : Lleva la entrada al portapapeles
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCopiar_Click()
+
+  If txaEntrada.Text = "" Then Return
+  Clipboard.Copy(txaEntrada.Text)
+  lblEstado.Text = "Entrada copiada al portapapeles."
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Permite el cierre desde el botón o Escape; lo bloquea desde la X
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. CIERRE PEDIDO DESDE LA INTERFAZ ---
+  If $bCierrePermitido Then Return
+
+  ' --- 2. CIERRE DESDE LA X DEL SISTEMA: BLOQUEAR Y AVISAR ---
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario use el botón <b>Cerrar</b> o la tecla Escape.")
+  Stop Event
+
+End
+
+' ============================================
+' Función   : Form_KeyPress
+' Propósito : Escape cierra el formulario (contrapartida de SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_KeyPress()
+
+  If Key.Code = Key.Esc Then Cerrar()
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : Cerrar
+' Propósito : Cancela la consulta si sigue en curso y cierra
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Cerrar()
+
+  ' --- 1. CONSULTA EN CURSO: SE DETIENE (HttpClient.Stop, gb.net.curl) ---
+  If $bActiva Then
+    Try $hHttp.Stop()
+    $bActiva = False
+  Endif
+
+  ' --- 2. CIERRE ---
+  $bCierrePermitido = True
+  Me.Close()
+
+End
