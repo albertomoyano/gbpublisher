@@ -1,0 +1,116 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Licencias
+' Propósito : Catálogo de licencias (tabla licencias, actualización 1.2.0).
+'             Reemplaza las listas y los Select Case que estaban repetidos en
+'             FMetadatosArticulos, FMetadatosCapitulos y FMetadatosLibro.
+'             El catálogo ALIMENTA los formularios; cada artículo, capítulo,
+'             libro o revista sigue guardando su propio texto y su URL
+'             (decisión de Alberto, camino B): lo publicado queda como se
+'             publicó aunque el catálogo cambie después.
+' Requiere  : esquema 1.2.0 (tabla licencias).
+' Dependencias: m_ConexionBD, m_Sonido.
+' ==============================================================================
+
+' ============================================
+' Función   : LlenarCombo
+' Propósito : Carga en un ComboBox las licencias activas de un ámbito, en el
+'             orden del catálogo. Conserva el texto que el combo ya tenía
+' Parámetros: hCombo As ComboBox — combo a llenar
+'             bCodigo As Boolean — True: licencias de código
+'             (para_codigo); False: licencias de contenido (para_contenido)
+' Retorna   : nada
+' ============================================
+Public Sub LlenarCombo(hCombo As ComboBox, bCodigo As Boolean)
+
+  Dim rDatos As Result
+  Dim sTexto As String
+  Dim sColumna As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  ' EL TEXTO PREVIO SE RESTAURA AL FINAL: LLENAR NO DEBE BORRAR UN VALOR YA CARGADO
+  sTexto = hCombo.Text
+  ' NOMBRE DE COLUMNA ELEGIDO EN CÓDIGO, NO POR EL USUARIO: NO HAY INYECCIÓN
+  If bCodigo Then
+    sColumna = "para_codigo"
+  Else
+    sColumna = "para_contenido"
+  Endif
+
+  ' --- 2. CONSULTA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT etiqueta FROM licencias WHERE activo = 1 AND " & sColumna & " = 1 ORDER BY orden, etiqueta")
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo leer el catálogo de licencias (¿falta la actualización de esquema 1.2.0?):" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. LLENADO ---
+  ' EDITABLE SIEMPRE: UN ComboBox ReadOnly PIERDE EN SILENCIO UN VALOR FUERA DE
+  ' LA LISTA, Y LOS REGISTROS PUEDEN TENER LICENCIAS QUE NO ESTÁN EN EL CATÁLOGO
+  hCombo.ReadOnly = False
+  hCombo.Clear()
+  While rDatos.Available
+    hCombo.Add(rDatos["etiqueta"])
+    rDatos.MoveNext
+  Wend
+
+  ' --- 4. RESTAURAR EL TEXTO PREVIO ---
+  hCombo.Text = sTexto
+
+End
+
+' ============================================
+' Función   : CompletarUrl
+' Propósito : Al elegir una licencia del catálogo, escribe su URL en el campo
+'             correspondiente (vacía si la licencia no tiene, como «Todos los
+'             derechos reservados»). Si el texto no está en el catálogo (una
+'             licencia escrita a mano), no toca el campo
+' Parámetros: hCombo As ComboBox — combo de la licencia
+'             hUrl As TextBox — campo de la URL
+' Retorna   : nada
+' ============================================
+Public Sub CompletarUrl(hCombo As ComboBox, hUrl As TextBox)
+
+  Dim rDatos As Result
+
+  ' --- 1. BÚSQUEDA POR ETIQUETA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT url FROM licencias WHERE etiqueta = &1", Trim(hCombo.Text))
+  If Error Then Return
+  ' FUERA DEL CATÁLOGO: LA URL LA ESCRIBE EL USUARIO
+  If Not rDatos.Available Then Return
+
+  ' --- 2. URL DEL CATÁLOGO ---
+  If IsNull(rDatos["url"]) Then
+    hUrl.Text = ""
+  Else
+    hUrl.Text = rDatos["url"]
+  Endif
+
+End
+
+' ============================================
+' Función   : EsAbierta
+' Propósito : Indica si una licencia es abierta según el catálogo, buscándola
+'             por URL y no por nombre: los registros pueden guardar un nombre
+'             largo («Licencia Creative Commons Atribución-…») con la URL
+'             correcta. Una URL vacía o fuera del catálogo NO es abierta: no
+'             se declara acceso abierto sin saberlo
+' Parámetros: sUrl As String — URL de la licencia
+' Retorna   : Boolean — True solo si la URL está en el catálogo con abierta = 1
+' ============================================
+Public Function EsAbierta(sUrl As String) As Boolean
+
+  Dim rDatos As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Trim(sUrl) = "" Then Return False
+
+  ' --- 2. CONSULTA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM licencias WHERE url = &1 AND abierta = 1", Trim(sUrl))
+  If Error Then Return False
+
+  Return CInt(rDatos["n"]) > 0
+
+End
