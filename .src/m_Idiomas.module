@@ -1,0 +1,163 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Idiomas
+' Propósito : Catálogo de idiomas (tabla idiomas, actualización 1.3.0),
+'             generado desde los babel-*.ini de TeX Live. Reemplaza las listas
+'             fijas de los formularios y las tres conversiones que estaban
+'             repetidas (m_XML, m_GenerarEpub.MapearIdioma,
+'             m_GenerarPDFLibro.CodigoABabel), que aceptaban cosas distintas.
+'             En la base se guarda siempre el CÓDIGO (BCP 47: es, pt, pt-BR);
+'             el nombre de babel se obtiene del catálogo al componer.
+' Requiere  : esquema 1.3.0 (tabla idiomas).
+' Dependencias: m_ConexionBD, m_Sonido.
+' ==============================================================================
+
+' ============================================
+' Función   : LlenarCombo
+' Propósito : Carga en un ComboBox los códigos de los idiomas activos, en el
+'             orden del catálogo, y lo deja de solo lectura: no se puede
+'             escribir un idioma fuera de la lista. Conserva el valor previo
+'             si está en la lista
+' Parámetros: hCombo As ComboBox — combo a llenar
+' Retorna   : nada
+' ============================================
+Public Sub LlenarCombo(hCombo As ComboBox)
+
+  Dim rDatos As Result
+  Dim sTexto As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  sTexto = hCombo.Text
+
+  ' --- 2. CONSULTA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT codigo FROM idiomas WHERE activo = 1 ORDER BY orden, codigo")
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo leer el catálogo de idiomas (¿falta la actualización de esquema 1.3.0?):" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. LLENADO ---
+  ' ReadOnly: LA VALIDACIÓN LA DA EL CONTROL. UN VALOR FUERA DE LA LISTA SE
+  ' PIERDE EN SILENCIO AL ASIGNARLO: POR ESO EL INFORME DE LA MIGRACIÓN REVISA
+  ' LOS DATOS EXISTENTES, Y UN IDIOMA EN USO NO SE DESACTIVA
+  hCombo.Clear()
+  While rDatos.Available
+    hCombo.Add(rDatos["codigo"])
+    rDatos.MoveNext
+  Wend
+  hCombo.ReadOnly = True
+
+  ' --- 4. VALOR PREVIO ---
+  ' Find DISTINGUE MAYÚSCULAS, IGUAL QUE LA ASIGNACIÓN A UN COMBO ReadOnly
+  If hCombo.Find(sTexto) >= 0 Then
+    hCombo.Text = sTexto
+  Else
+    hCombo.Index = -1
+  Endif
+
+End
+
+' ============================================
+' Función   : Babel
+' Propósito : Nombre de babel de un idioma, para \usepackage[...]{babel}
+' Parámetros: sCodigo As String — código BCP 47 (es, pt-BR)
+' Retorna   : String — nombre de babel (spanish, brazilian); vacío si el
+'             código no está en el catálogo
+' ============================================
+Public Function Babel(sCodigo As String) As String
+
+  Dim rDatos As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Trim(sCodigo) = "" Then Return ""
+
+  ' --- 2. CONSULTA ---
+  ' COMPARACIÓN BINARIA: «ES» NO ES UN CÓDIGO VÁLIDO, «es» SÍ
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT babel FROM idiomas WHERE CAST(codigo AS BINARY) = CAST(&1 AS BINARY)", Trim(sCodigo))
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  Return rDatos["babel"]
+
+End
+
+' ============================================
+' Función   : Normalizar
+' Propósito : Convierte un valor heredado en código del catálogo: acepta el
+'             código (sin distinguir mayúsculas) o el nombre del idioma tal
+'             como lo trae babel (español, English, Spanish). NO inventa: si
+'             no lo reconoce devuelve vacío y el llamador decide qué hacer
+' Parámetros: sTexto As String — código o nombre
+' Retorna   : String — código BCP 47, o vacío si no está en el catálogo
+' ============================================
+Public Function Normalizar(sTexto As String) As String
+
+  Dim rDatos As Result
+  Dim sValor As String
+
+  ' --- 1. VALIDACIÓN ---
+  sValor = Trim(sTexto)
+  If sValor = "" Then Return ""
+
+  ' --- 2. BÚSQUEDA POR CÓDIGO O POR NOMBRE ---
+  ' LA COLACIÓN _ci DE LA TABLA RESUELVE MAYÚSCULAS Y ACENTOS («Español»).
+  ' EL CÓDIGO EXACTO VA PRIMERO: EVITA QUE UN NOMBRE COINCIDA ANTES
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT codigo FROM idiomas WHERE codigo = &1 OR nombre = &1 OR nombre_ingles = &1 ORDER BY (codigo = &1) DESC, activo DESC, orden LIMIT 1", sValor)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  Return rDatos["codigo"]
+
+End
+
+' ============================================
+' Función   : ListaValida
+' Propósito : Valida un campo de varios idiomas (códigos separados por coma,
+'             como idiomas_publicacion). Si hay códigos fuera del catálogo o
+'             se usó «;» como separador, avisa y devuelve False para que el
+'             llamador no guarde
+' Parámetros: sLista As String — contenido del campo
+'             sCampo As String — nombre del campo, para el aviso
+' Retorna   : Boolean — True si está vacío o todos los códigos existen
+' ============================================
+Public Function ListaValida(sLista As String, sCampo As String) As Boolean
+
+  Dim aMalos As New String[]
+  Dim sCodigo As String
+  Dim rDatos As Result
+
+  ' --- 1. VACÍO: NO HAY NADA QUE VALIDAR ---
+  If Trim(sLista) = "" Then Return True
+
+  ' --- 2. SEPARADOR ÚNICO: LA COMA ---
+  ' m_GenerarPDFLibro (babel) Y m_GenerarEpub PARTEN POR COMA; «es;en» LLEGABA
+  ' COMO UN SOLO VALOR
+  If InStr(sLista, ";") > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("En " & sCampo & " los códigos de idioma se separan con coma, no con punto y coma." & gb.NewLine & "Ejemplo: es, en, pt")
+    Return False
+  Endif
+
+  ' --- 3. CADA CÓDIGO TIENE QUE ESTAR EN EL CATÁLOGO ---
+  For Each sCodigo In Split(sLista, ",")
+    sCodigo = Trim(sCodigo)
+    If sCodigo <> "" Then
+      Try rDatos = m_ConexionBD.mConn.Exec("SELECT codigo FROM idiomas WHERE CAST(codigo AS BINARY) = CAST(&1 AS BINARY)", sCodigo)
+      If Error Then
+        aMalos.Add(sCodigo)
+      Else If Not rDatos.Available Then
+        aMalos.Add(sCodigo)
+      Endif
+    Endif
+  Next
+
+  If aMalos.Count = 0 Then Return True
+
+  ' --- 4. AVISO ---
+  m_Sonido.sonar("Warning")
+  Message.Warning("En " & sCampo & " hay códigos que no están en el catálogo de idiomas: " & aMalos.Join(", ") & gb.NewLine & gb.NewLine & "Use códigos como es, en, pt, separados por coma. No se guardó.")
+  Return False
+
+End
