@@ -1274,16 +1274,50 @@ QUÉ ES UNA AYUDA
 
 Describe un DATO, no un widget. Tiene siempre tres secciones, en este orden: qué es, para qué sirve y cómo se usa en las salidas. Sin imágenes y sin enlaces entre ayudas.
 
-PRODUCCIÓN: FUERA DE gbpublisher
+PRODUCCIÓN: gbAyudas, FUERA DE gbpublisher
 
-Las ayudas se escriben en un programa aparte, con base SQLite, al estilo de gbCorpus. Cada ayuda guarda su clave, un título legible y las tres secciones en campos separados. El HTML lo arma una plantilla única: títulos, colores y tamaños no los decide quien escribe, y el patrón no se puede alterar.
+Las ayudas se escriben en gbAyudas, un programa aparte con base SQLite, al estilo de gbCorpus. A diferencia de gbCorpus, da de alta y de baja: es el editor de las ayudas. Cada ayuda guarda su clave, un título legible en texto plano, las tres secciones en campos separados y su estado.
 
-La exportación:
+Las secciones se escriben en Markdown. Pueden escribirlas otras personas; se revisan y se pegan en gbAyudas.
 
-- escribe en `.hidden/ayudas/` del proyecto gbpublisher un archivo `<clave>.html` por ayuda, con el título legible en `<title>`;
-- por omisión exporta solo lo modificado desde la última exportación; hay además una exportación completa, obligatoria cuando cambia la plantilla;
-- no exporta una ayuda con alguna sección vacía;
-- deja la carpeta igual a la base: un HTML sin registro se borra o se informa, porque todo lo que está en `.hidden/ayudas/` entra al paquete.
+La clave admite solo minúsculas, dígitos, `_` y un único `.` (el de `tabla.columna`). gbAyudas rechaza cualquier otra. Así ningún nombre de clave choca con los archivos de servicio, que empiezan con `_`.
+
+CONVERSIÓN: PANDOC CON PLANTILLA Y FILTRO PROPIOS
+
+gbAyudas arma un Markdown por ayuda —los tres títulos de sección fijos y el texto de cada campo— y lo convierte en una sola llamada:
+
+    pandoc -s --template=plantilla.html --lua-filter=ayuda.lua ...
+
+- La plantilla es una plantilla de Pandoc: un HTML completo con el `<style>` de la ayuda y el título en `<title>`. Se usa una propia porque la de Pandoc agrega CSS de navegador que el `TextEdit` no necesita.
+- El filtro `ayuda.lua` detiene la conversión, con un mensaje, si encuentra un título, una imagen, una nota o HTML crudo. Quedan admitidos párrafos, negrita, cursiva, código y listas, que son lo verificado en GV-64. Las tablas quedan fuera del texto hasta probarlas.
+- La llamada es `Exec` sobre un array, sin shell (SC-05). La entrada va por archivo temporal y la salida se lee de stdout (GV-20).
+- Plantilla y filtro son archivos de la carpeta de gbAyudas, editables con cualquier editor, no filas de la base.
+
+ESTADO: BORRADOR O REVISADA
+
+Se exportan todas las ayudas, en cualquier estado. Cada página muestra el suyo en una franja de color con letras blancas, como el «Final» / «Beta» de la ayuda de componentes del IDE de Gambas. Las plantillas de Pandoc no comparan valores, así que el estado llega como dos variables:
+
+    -V estado=Borrador -V estado_clase=borrador
+
+La franja es una tabla de una celda a todo el ancho con la clase del estado; su color está en el `<style>`. De las variantes probadas es la que mejor proporciona la letra con la altura (GV-64).
+
+    <table width="100%" cellpadding="4" cellspacing="0">
+    <tr><td class="$estado_clase$">$estado$</td></tr>
+    </table>
+
+CONDICIÓN PARA EXPORTAR
+
+Las tres secciones tienen que tener texto. Puede ser provisorio —«En desarrollo» o lo que se decida—, pero ninguna vacía. El estado dice en qué punto está la ayuda; esta condición asegura que ninguna página se publique con un hueco.
+
+EXPORTACIÓN
+
+Escribe en `.hidden/ayudas/` del proyecto gbpublisher:
+
+- `<clave>.html`, una página por ayuda;
+- `_indice.tsv`, una línea por ayuda: clave, tabulador, título; ordenado por título. Se regenera completo en cada exportación, también en la parcial, así que no puede quedar desfasado de los HTML;
+- `_sin-ayuda.html`, la página genérica, hecha con la misma plantilla.
+
+Por omisión exporta solo lo modificado desde la última exportación. Hay además una exportación completa, obligatoria cuando la plantilla cambió después de la última completa. Deja la carpeta igual a la base: un HTML sin registro se borra o se informa, porque todo lo que está en `.hidden/ayudas/` entra al paquete.
 
 DISTRIBUCIÓN
 
@@ -1293,27 +1327,29 @@ La carpeta NO entra en la lista de `m_InicioCierre.DirectorioOcultoApp()`: la ap
 
 CLAVE: EL Tag DEL CONTROL
 
-El control que tiene ayuda lleva la clave en `Tag`: el nombre de la columna (`arxiv_id`) o, cuando la misma columna existe en varias tablas y sus salidas difieren, `tabla.columna` (`autores.clasificacion_oecd`). Se busca el archivo de la clave del `Tag`; si es `tabla.columna` y no existe, el de la columna sola. Un control sin `Tag` no tiene ayuda.
+El control que tiene ayuda lleva la clave en `Tag`: el nombre de la columna (`arxiv_id`) o, cuando la misma columna existe en varias tablas y sus salidas difieren, `tabla.columna` (`autores.clasificacion_oecd`). Se busca el archivo de la clave del `Tag`; si es `tabla.columna` y no existe, el de la columna sola.
 
 No se usa el nombre del control. Con los prefijos de widget de la convención de nomenclatura nunca coincide con la columna, y tampoco dice a qué tabla pertenece. Así era antes: `MostrarAyuda` buscaba `Application.ActiveControl.Name` tal cual, y solo encontraban ayuda los controles llamados igual que su columna; la de `clasificacion_oecd` era inalcanzable. Al tomar esta decisión, el `Tag` de los controles de datos no tenía otro uso.
 
 CONTROL DE COBERTURA
 
-El programa externo lee los `.form` del proyecto, donde el `Tag` está como texto (`Tag = "…"`), y lista los `Tag` sin HTML y los HTML que ningún `Tag` usa.
+gbAyudas lee los `.form` del proyecto, donde el `Tag` está como texto (`Tag = "…"`), y lista los `Tag` sin HTML y los HTML que ningún `Tag` usa.
 
 VISOR
 
-Un solo formulario, `FAyuda`, con el modelo de la ayuda del IDE de Gambas: a la izquierda la lista de todas las ayudas, a la derecha la elegida. Ctrl+F1 lo abre con la ayuda del control activo seleccionada; desde el menú, sin selección. Sin navegación dentro del texto.
+Un solo formulario, `FAyuda`, con el modelo de la ayuda del IDE de Gambas: a la izquierda la lista de todas las ayudas, leída de `_indice.tsv`; a la derecha la elegida. Ctrl+F1 lo abre con la ayuda del control activo seleccionada; desde el menú, sin selección. Sin navegación dentro del texto.
 
-La ayuda se muestra en un `TextEdit` con `ReadOnly` y `Wrap = True`, cargada por `RichText`. La plantilla puede llevar su hoja de estilo en un bloque `<style>` (GV-64).
+Si el control no tiene ayuda —no tiene `Tag`, o su `Tag` no tiene HTML—, Ctrl+F1 abre `FAyuda` igual y muestra `_sin-ayuda.html`, que dice que ese control todavía no tiene ayuda. La página lleva un marcador que `FAyuda` reemplaza por el `Tag` o, si no hay, por el nombre del control.
+
+La ayuda se muestra en un `TextEdit` con `ReadOnly` y `Wrap = True`, cargada por `RichText` (GV-64).
 
 LO QUE SE RETIRA
 
 `FAyudas`, `FAyudaABM`, `m_EstilosHTML` (solo lo usaban las ayudas), los seis idiomas con su detección, y la tabla `manual_ayudas`. La tabla se elimina con una actualización de esquema (SC-22), recién cuando la ayuda nueva funcione.
 
-**Relaciones:** vinculo:SC-11,vinculo:GV-64,vinculo:SC-22,vinculo:GV-56
+**Relaciones:** vinculo:SC-11,vinculo:GV-64,vinculo:SC-22,vinculo:GV-56,vinculo:SC-05,vinculo:GV-20
 
-**PENDIENTE:** Sin decidir: (1) de dónde saca FAyuda la lista, de un índice exportado por el generador (clave y título; propuesta) o del <title> de cada HTML; (2) Ctrl+F1 sobre un control sin ayuda: mensaje, o FAyuda sin selección con un aviso; (3) lista plana o árbol por tabla; (4) el filtro de la lista, solo por título o también por contenido; (5) prefijo de widget para TextEdit, que la convención no tiene; (6) nombre y esquema del programa externo. Aparte: pasar FAvisoLegal y FDiccionario a TextEdit y retirar HtmlView del proyecto (FDiccionario, probado antes con una respuesta real de la RAE); renombrar los cinco controles que hoy se llaman como su columna (arxiv_id, book_author, handle_system, sponsors, tipo_sujetos_investigacion), cotejando antes sus usos (GV-56).
+**PENDIENTE:** Sin decidir: (1) lista plana o árbol por tabla; (2) el filtro de la lista, solo por título o también por contenido; (3) prefijo de widget para TextEdit, que la convención no tiene; (4) esquema de la base de gbAyudas y su ubicación: irá en una RF, como RF-08 para gbCorpus. Aparte: pasar FAvisoLegal y FDiccionario a TextEdit y retirar HtmlView del proyecto (FDiccionario, probado antes con una respuesta real de la RAE); renombrar los cinco controles que hoy se llaman como su columna (arxiv_id, book_author, handle_system, sponsors, tipo_sujetos_investigacion), cotejando antes sus usos (GV-56).
 
 ---
 
@@ -2928,6 +2964,10 @@ LO QUE NO
 - El `<title>` no se muestra: el documento puede llevar su título sin que aparezca en el visor.
 - El `background-color` de un `code` en línea no se vio.
 
+FONDO DE BLOQUE: SÍ
+
+El `background-color` de un elemento de bloque sí se ve, a todo el ancho: en un `p`, por clase o en línea, y en la celda de una tabla con `width="100%"`, por `bgcolor` o por clase. Con letra blanca sirve de franja. La celda de tabla da mejor proporción entre la letra y la altura de la franja; es la que usa la ayuda (SC-24).
+
 HTML NORMALIZADO
 
 Leer `RichText` después de asignarlo devuelve el HTML reescrito por Qt, con los estilos resueltos en línea en cada `p` y `span` (por ejemplo `margin-left:10px; -qt-block-indent:0`). Sirve para ver qué conservó.
@@ -2944,4 +2984,4 @@ Un HTML hecho para mostrarse en `TextEdit` puede llevar una sola hoja de estilo 
 
 **Relaciones:** vinculo:GV-37,vinculo:GV-52,vinculo:SC-24
 
-**PENDIENTE:** No se miró en la consola si Qt conserva el background-color del code en línea. No se probaron enlaces.
+**PENDIENTE:** No se miró en la consola si Qt conserva el background-color del code en línea. No se probaron enlaces ni tablas con varias filas o columnas.
