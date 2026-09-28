@@ -796,6 +796,8 @@ QUÉ NO SE COPIA
 
 Lo que, modificado, invalidaría algo que la aplicación afirma. Hoy: `engine/`, el motor de expresiones regulares, y las reglas compiladas de Schematron. Un informe que dice "no cumple una recomendación de JATS4R" solo se sostiene si las reglas son las que vinieron en el paquete.
 
+La ayuda contextual (`ayudas/`, SC-24) tampoco se copia, por otra razón: en ella no hay nada que ajustar, y como la copia local no se sobrescribe, cada actualización dejaría al usuario con la ayuda vieja.
+
 CONTRAPARTIDA OBLIGATORIA
 
 Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un archivo ajeno debe poder DECLARAR si fue modificado. La comparación es directa contra `/usr/share/`, que por definición del modelo conserva siempre el original: no hace falta guardar ni versionar sumas de verificación. Es lo que hace `m_AuditarJats.EstadoRecurso()` con el catálogo de mensajes y la hoja de estilo del informe de auditoría.
@@ -804,7 +806,7 @@ RAZÓN DEL MODELO
 
 Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se hacen sobre la copia local y se distribuyen a las estaciones; donde no lo hay, el usuario es a la vez administrador y necesita poder ajustar sin privilegios de root. En los dos casos el punto de intervención es el mismo, y la actualización del paquete nunca pisa lo ajustado.
 
-**Relaciones:** vinculo:SC-05
+**Relaciones:** vinculo:SC-05,vinculo:SC-24
 
 **PENDIENTE:** Los XSLT de salida se copian a local y hoy no declaran si fueron modificados. Bajo el criterio de la contrapartida deberían hacerlo, sobre todo si el auditor llega a auditar la producción propia. Pendiente de decisión.
 
@@ -1261,6 +1263,57 @@ REGLAS OPERATIVAS
 - Cada migración de vocabulario trae un informe de control de los datos existentes, que se corrige ANTES de abrir los formularios.
 
 **Relaciones:** vinculo:GV-59,vinculo:SC-22,vinculo:RC-XJ-01
+
+### SC-24 — Ayuda contextual: un HTML por ayuda en /usr/share/gbpublisher/ayudas/, producido fuera de la aplicación
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. La ayuda contextual deja la base de datos (`manual_ayudas`) y pasa a archivos HTML que se distribuyen con el paquete. Solo en español. Lo que excede la ayuda de un campo va al manual.
+
+QUÉ ES UNA AYUDA
+
+Describe un DATO, no un widget. Tiene siempre tres secciones, en este orden: qué es, para qué sirve y cómo se usa en las salidas. Sin imágenes y sin enlaces entre ayudas.
+
+PRODUCCIÓN: FUERA DE gbpublisher
+
+Las ayudas se escriben en un programa aparte, con base SQLite, al estilo de gbCorpus. Cada ayuda guarda su clave, un título legible y las tres secciones en campos separados. El HTML lo arma una plantilla única: títulos, colores y tamaños no los decide quien escribe, y el patrón no se puede alterar.
+
+La exportación:
+
+- escribe en `.hidden/ayudas/` del proyecto gbpublisher un archivo `<clave>.html` por ayuda, con el título legible en `<title>`;
+- por omisión exporta solo lo modificado desde la última exportación; hay además una exportación completa, obligatoria cuando cambia la plantilla;
+- no exporta una ayuda con alguna sección vacía;
+- deja la carpeta igual a la base: un HTML sin registro se borra o se informa, porque todo lo que está en `.hidden/ayudas/` entra al paquete.
+
+DISTRIBUCIÓN
+
+El paso 8 de la construcción del `.deb` incluye `.hidden/ayudas/`, que se instala en `/usr/share/gbpublisher/ayudas/`.
+
+La carpeta NO entra en la lista de `m_InicioCierre.DirectorioOcultoApp()`: la aplicación la lee directamente del sistema. Es una excepción a SC-11, con una razón distinta de la de `engine/`: en la ayuda no hay nada que ajustar, y como la copia local nunca se sobrescribe, cada actualización dejaría al usuario con la ayuda vieja. Que falte en esa lista es deliberado, no un olvido.
+
+CLAVE: EL Tag DEL CONTROL
+
+El control que tiene ayuda lleva la clave en `Tag`: el nombre de la columna (`arxiv_id`) o, cuando la misma columna existe en varias tablas y sus salidas difieren, `tabla.columna` (`autores.clasificacion_oecd`). Se busca el archivo de la clave del `Tag`; si es `tabla.columna` y no existe, el de la columna sola. Un control sin `Tag` no tiene ayuda.
+
+No se usa el nombre del control. Con los prefijos de widget de la convención de nomenclatura nunca coincide con la columna, y tampoco dice a qué tabla pertenece. Así era antes: `MostrarAyuda` buscaba `Application.ActiveControl.Name` tal cual, y solo encontraban ayuda los controles llamados igual que su columna; la de `clasificacion_oecd` era inalcanzable. Al tomar esta decisión, el `Tag` de los controles de datos no tenía otro uso.
+
+CONTROL DE COBERTURA
+
+El programa externo lee los `.form` del proyecto, donde el `Tag` está como texto (`Tag = "…"`), y lista los `Tag` sin HTML y los HTML que ningún `Tag` usa.
+
+VISOR
+
+Un solo formulario, `FAyuda`, con el modelo de la ayuda del IDE de Gambas: a la izquierda la lista de todas las ayudas, a la derecha la elegida. Ctrl+F1 lo abre con la ayuda del control activo seleccionada; desde el menú, sin selección. Sin navegación dentro del texto.
+
+La ayuda se muestra en un `TextEdit` con `ReadOnly` y `Wrap = True`, cargada por `RichText`. La plantilla puede llevar su hoja de estilo en un bloque `<style>` (GV-64).
+
+LO QUE SE RETIRA
+
+`FAyudas`, `FAyudaABM`, `m_EstilosHTML` (solo lo usaban las ayudas), los seis idiomas con su detección, y la tabla `manual_ayudas`. La tabla se elimina con una actualización de esquema (SC-22), recién cuando la ayuda nueva funcione.
+
+**Relaciones:** vinculo:SC-11,vinculo:GV-64,vinculo:SC-22,vinculo:GV-56
+
+**PENDIENTE:** Sin decidir: (1) de dónde saca FAyuda la lista, de un índice exportado por el generador (clave y título; propuesta) o del <title> de cada HTML; (2) Ctrl+F1 sobre un control sin ayuda: mensaje, o FAyuda sin selección con un aviso; (3) lista plana o árbol por tabla; (4) el filtro de la lista, solo por título o también por contenido; (5) prefijo de widget para TextEdit, que la convención no tiene; (6) nombre y esquema del programa externo. Aparte: pasar FAvisoLegal y FDiccionario a TextEdit y retirar HtmlView del proyecto (FDiccionario, probado antes con una respuesta real de la RAE); renombrar los cinco controles que hoy se llaman como su columna (arxiv_id, book_author, handle_system, sponsors, tipo_sujetos_investigacion), cotejando antes sus usos (GV-56).
 
 ---
 
@@ -2723,29 +2776,33 @@ Un parche que agrega una referencia a un miembro de otro módulo —constante, v
 
 **PENDIENTE:** Falta provocar la falla a propósito, ejecutando la línea sin el miembro, para registrar el mensaje exacto de ejecución.
 
-### GV-57 — Un control no público de un formulario, usado desde otro módulo, compila y falla al ejecutar
+### GV-57 — Visibilidad de los controles de un formulario: la decide la opción ControlPublic del proyecto
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble (gbc3 con y sin -f public-control); gbpublisher en Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-09
 
-Los controles de un `.form` son privados salvo que lleven `#Public = True` (en el archivo, además, un `!` delante del nombre). Usarlos desde otro módulo —`FMetadatosLibro.idioma_principal`, o `.idioma_principal` dentro de `With FMetadatosLibro`— compila sin ningún aviso y falla recién cuando se ejecuta la línea:
+Por omisión, los controles de un `.form` son privados salvo que lleven `#Public = True` (en el archivo, además, un `!` delante del nombre). Usarlos desde otro módulo compila y falla recién al ejecutar la línea:
 
     Unknown symbol 'privado' in class 'Container' (#11)
 
-Medido en banco con un formulario de dos ComboBox, uno público y otro no: el público se escribe, el privado da el error.
+Medido en banco en tres situaciones, las tres con el mismo error: formulario sin mostrar (instancia automática), formulario mostrado, y dentro de `With Formulario`.
 
-Contraste, también medido: `Window["nombre"]` sí devuelve un control no público.
+LA OPCIÓN DEL PROYECTO LO CAMBIA TODO
 
-CÓMO APARECE EN EL PROYECTO
+`ControlPublic=1` en el `.project` hace públicos TODOS los controles de todos los formularios, lleven o no `#Public`. El compilador la recibe como `-f public-control`. Medido en banco: con esa opción, las tres situaciones anteriores funcionan.
 
-Al rehacer un control desde el diseñador del IDE —por ejemplo, cambiar un TextBox por un ComboBox— el control nuevo nace privado. Caso de la sesión: `idioma_principal` e `idioma_resumen_traducido` de FMetadatosLibro quedaron sin `#Public`, y `m_Metadatos` los usa dentro de `With FMetadatosLibro`. El cotejo encontró además tres controles privados desde antes y usados desde `m_Metadatos`: `fecha_publicacion_completa` y `pais_publicacion` (libro) y `numero_especial` (revista).
+gbpublisher tiene `ControlPublic=1` (y también `ModulePublic=1`). Por eso `FMetadatosRevista.numero_especial`, que no tenía `#Public`, abría y guardaba bien desde `m_Metadatos` en 3.22.1 (verificado por Alberto). En este proyecto, el `#Public` de cada control no decide nada.
+
+CORRECCIÓN
+
+La primera versión de esta entrada decía que un control sin `#Public` fallaba al usarse desde otro módulo, y lo aplicaba a gbpublisher. Se había medido en un banco que no copiaba las opciones del `.project`. El error real de la sesión fue otro: un control BORRADO desde el diseñador (`idioma_titulo_traducido`, en FMetadatosCapitulos) que `m_Metadatos` seguía usando. Es el caso de GV-56.
 
 REGLA
 
-Todo control que se lea o escriba desde fuera de su formulario lleva `#Public = True`. Después de editar un formulario en el diseñador, cotejar los accesos externos antes de darlo por bueno: un script que cruce los controles de los `.form` con los `With Formulario` y los `Formulario.control` de `.src` lo resuelve en segundos. Que compile no prueba nada (GV-56).
+- Antes de razonar sobre la visibilidad de un control, mirar `ControlPublic` en el `.project`.
+- Un banco de pruebas reproduce el proyecto solo si copia sus opciones de compilación.
+- Después de editar un formulario en el diseñador, lo que se coteja es la EXISTENCIA: que los controles que usan otros módulos sigan estando, con el mismo nombre y del mismo tipo.
 
 **Relaciones:** vinculo:GV-56,apoya:GV-23
-
-**PENDIENTE:** Medido solo en 3.19. Confirmar en 3.22.1 el mensaje exacto: si ahí el acceso funcionara, la regla queda como convención.
 
 ### GV-58 — GridView: escribir una celda fuera de Columns.Count da «Bad column index» dentro de gb.gui.base
 
@@ -2853,3 +2910,38 @@ Consecuencias:
 - Una columna NOT NULL sin DEFAULT que no se asigne hace fallar el alta.
 
 **Relaciones:** vinculo:GV-34,vinculo:RC-GM-15
+
+### GV-64 — TextEdit.RichText: respeta un bloque <style> con selectores de etiqueta y de clase, y no muestra el <title>
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+Medido con un HTML completo, con `<title>` y `<style>` en la cabecera, asignado a `RichText`, al lado del mismo contenido con los estilos en línea. Los dos se ven iguales.
+
+LO QUE SE APLICA
+
+- Selectores de etiqueta (`h3`, `h4`, `p`, `li`, `code`) y de clase (`.nota`) de un bloque `<style>`.
+- `color`, `font-size`, `font-weight`, `font-style`, `font-family` (monoespaciada incluida), `margin-left` y `line-height`.
+- Listas, negrita y cursiva.
+
+LO QUE NO
+
+- El `<title>` no se muestra: el documento puede llevar su título sin que aparezca en el visor.
+- El `background-color` de un `code` en línea no se vio.
+
+HTML NORMALIZADO
+
+Leer `RichText` después de asignarlo devuelve el HTML reescrito por Qt, con los estilos resueltos en línea en cada `p` y `span` (por ejemplo `margin-left:10px; -qt-block-indent:0`). Sirve para ver qué conservó.
+
+AJUSTE DE LÍNEA
+
+`Wrap` vale False por omisión. Sin `Wrap = True` los párrafos no se parten y aparece la barra de desplazamiento horizontal.
+
+Una página completa generada por Jekyll, mucho más cargada, también se vio bien; una imagen que no se encuentra aparece como un icono roto.
+
+CONSECUENCIA
+
+Un HTML hecho para mostrarse en `TextEdit` puede llevar una sola hoja de estilo en la cabecera: no hace falta repetir los estilos en cada elemento.
+
+**Relaciones:** vinculo:GV-37,vinculo:GV-52,vinculo:SC-24
+
+**PENDIENTE:** No se miró en la consola si Qt conserva el background-color del code en línea. No se probaron enlaces.
