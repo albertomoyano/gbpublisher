@@ -2985,3 +2985,35 @@ Un HTML hecho para mostrarse en `TextEdit` puede llevar una sola hoja de estilo 
 **Relaciones:** vinculo:GV-37,vinculo:GV-52,vinculo:SC-24
 
 **PENDIENTE:** No se miró en la consola si Qt conserva el background-color del code en línea. No se probaron enlaces ni tablas con varias filas o columnas.
+
+### GV-65 — TextEdit.Selection: Start es el extremo menor y cuenta caracteres; String.Mid es lineal en los dos sentidos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+
+`Selection.Start` y `Selection.Length` de `TextEdit` existen y cuentan CARACTERES del texto plano, igual que `Select` y `Pos` (RC-GM-21). Verificado con «¿» y «»», de dos bytes cada uno: `Length` vale 1, y `String.Mid(.Text, Start + 1, Length)` coincide con `Selection.Text`.
+
+`Start` es siempre el extremo MENOR de la selección, se haya hecho hacia la derecha o hacia la izquierda. `Pos` es el extremo que se movió:
+
+    selección hacia la derecha     Start = 10   Pos = 11
+    selección hacia la izquierda   Start = 25   Pos = 25
+
+REGLA: para operar sobre una selección se leen `Start` y `Length`, nunca `Pos`.
+
+Hacer click en un botón no borra la selección del `TextEdit`: el handler del botón la lee intacta.
+
+RECORRIDO CON String.Mid EN LOS DOS SENTIDOS
+
+GV-03 midió el recorrido hacia adelante. Hacia atrás, desde el final, también es lineal. Capítulo real de 49.940 caracteres:
+
+    caracteres   hacia adelante   hacia atrás
+    10.000       0,006 s          0,006 s
+    20.000       0,013 s          0,009 s
+    40.000       0,025 s          0,016 s
+
+`String.InStr` recorre el capítulo entero en 1 ms y cuenta lo mismo que `InStr` por bytes: no hace falta bajar a bytes para buscar rápido, y no se toca RC-GM-12.
+
+Banco: `MBanco` (selección de pares). Aplicado en `m_ParesDelimitadores`.
+
+**Relaciones:** vinculo:RC-GM-21, vinculo:GV-03, vinculo:GV-44, vinculo:SC-18
+
+**PENDIENTE:** La selección de dos caracteres (espacio + raya) no se midió en el banco; queda cubierta al probar m_ParesDelimitadores.

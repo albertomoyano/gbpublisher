@@ -1,0 +1,350 @@
+' Gambas module file
+
+' CONTROL DE PARES TIPOGRÁFICOS EN EL EDITOR PRINCIPAL.
+'
+' CON UN SIGNO SELECCIONADO, BUSCA SU PAR Y SELECCIONA EL TRAMO ENTRE LOS DOS,
+' AMBOS INCLUIDOS. ES UNA HERRAMIENTA DE CONTROL DE ESCRITURA: UN TRAMO
+' INESPERADAMENTE LARGO, O QUE CRUZA PÁRRAFOS, ES LA SEÑAL DEL ERROR. POR ESO
+' LA BÚSQUEDA ABARCA TODO EL TEXTO Y NO EL PÁRRAFO: EL AVISO SOLO APARECE AL
+' LLEGAR AL PRINCIPIO O AL FINAL SIN ENCONTRAR EL PAR.
+'
+' PARES: « »  ¿ ?  ¡ !  Y LA RAYA DE INCISO (U+2014). LA RAYA ES SIMÉTRICA,
+' ASÍ QUE EL SENTIDO LO DA LA SELECCIÓN:
+'   - ESPACIO + RAYA: ABRE, Y SE BUSCA EL CIERRE HACIA ADELANTE
+'   - RAYA SIN ESPACIO ANTES: CIERRA, Y SE BUSCA LA APERTURA HACIA ATRÁS
+'   - RAYA AL PRINCIPIO DEL PÁRRAFO: ES DE DIÁLOGO, NO TIENE PAR Y SE IGNORA
+' LAS RAYAS NO SE ANIDAN: OTRA APERTURA ANTES DEL CIERRE, U OTRO CIERRE ANTES
+' DE LA APERTURA, ES UN INCISO MAL CERRADO.
+'
+' LOS PARES ASIMÉTRICOS SE CUENTAN CON PROFUNDIDAD, CADA TIPO POR SEPARADO.
+' SIN PROFUNDIDAD, EN «¿Dijo «¿vienes?» y se fue.» EL PRIMER ¿ SE EMPAREJARÍA
+' CON EL ? INTERIOR Y EL CONTROL NO AVISARÍA. CON UN CONTADOR POR TIPO,
+' ¡¿...?! TAMBIÉN SE RESUELVE: CADA TIPO IGNORA AL OTRO.
+'
+' SIGNOS DEL MARKDOWN QUE NO CUENTAN:
+'   - EL ! DE UNA IMAGEN, ![...]. EL ! SEGUIDO DE UNA NOTA, ![^3], SÍ CUENTA
+'   - EL ? SEGUIDO DE LETRA O DÍGITO: UN PARÁMETRO DE URL. EN ESPAÑOL EL ?
+'     DE CIERRE NUNCA VA PEGADO A UNA LETRA
+'
+' RECORRIDO CON String.Mid, LINEAL EN LOS DOS SENTIDOS (GV-03, GV-65).
+' POSICIONES EN CARACTERES Y EN BASE 0, COMO EL EDITOR; String.Mid ES BASE 1,
+' DE AHÍ LOS + 1 AL LEER UN CARÁCTER (RC-GM-12, RC-GM-21).
+'
+' EL EDITOR SE TOCA SOLO A TRAVÉS DE m_EditorPrincipal (SC-18). EL FOCO LO
+' DEVUELVE EL HANDLER QUE LLAMA, DESPUÉS DEL AVISO (RC-GM-07).
+
+' RAYA U+2014, NO SEMIRRAYA (U+2013) NI GUION
+Private Const RAYA As String = "—"
+
+' CLASES DE RAYA SEGÚN EL CARÁCTER QUE LA PRECEDE
+Private Const RAYA_DIALOGO As Integer = 0
+Private Const RAYA_APERTURA As Integer = 1
+Private Const RAYA_CIERRE As Integer = 2
+
+Private Const MOTIVO_SELECCION As String = "La selección tiene que ser un solo signo (« » ¿ ? ¡ ! o una raya de cierre), o un espacio seguido de una raya (apertura de inciso)."
+
+' MOTIVO DEL ÚLTIMO FALLO DE CalcularTramo. UN String NO VUELVE POR
+' PARÁMETRO (GV-24): SE DEJA ACÁ Y LO LEE SeleccionarPar
+Private $sMotivo As String
+
+' ============================================
+' Función   : SeleccionarPar
+' Propósito : Seleccionar el tramo entre el signo seleccionado y su par, o
+'             avisar que no lo tiene
+' Parámetros: ninguno — opera sobre la selección del editor principal
+' Retorna   : nada
+' ============================================
+Public Sub SeleccionarPar()
+
+  Dim sTexto As String
+  Dim iInicio As Integer
+  Dim iLargo As Integer
+  Dim aTramo As Integer[]
+
+  ' --- 1. SELECCIÓN ACTUAL ---
+  ' Start ES SIEMPRE EL EXTREMO MENOR, SEA CUAL SEA EL SENTIDO DE LA SELECCIÓN;
+  ' Pos ES EL EXTREMO QUE SE MOVIÓ Y NO SE USA (GV-65)
+  iInicio = m_EditorPrincipal.InicioSeleccion()
+  iLargo = m_EditorPrincipal.LargoSeleccion()
+  sTexto = m_EditorPrincipal.Texto()
+
+  ' --- 2. BÚSQUEDA DEL PAR ---
+  aTramo = CalcularTramo(sTexto, iInicio, iLargo)
+
+  ' --- 3. SIN PAR: AVISO, Y LA SELECCIÓN ORIGINAL QUEDA COMO ESTABA ---
+  If Not aTramo Then
+    m_EditorPrincipal.Seleccionar(iInicio, iLargo)
+    m_Sonido.sonar("Warning")
+    Message.Warning($sMotivo)
+    Return
+  Endif
+
+  ' --- 4. RESULTADO: QUE SE VEA EL SIGNO HALLADO ---
+  ' DESDE UN CIERRE, LO HALLADO ES LA APERTURA: IrA DEJA SU PÁRRAFO ARRIBA DE LA
+  ' VISTA (GV-52). DESDE UNA APERTURA, LO HALLADO ES EL CIERRE, DONDE QUEDA EL
+  ' CURSOR: Select DESPLAZA LO MÍNIMO PARA MOSTRARLO
+  If aTramo[0] < iInicio Then
+    m_EditorPrincipal.IrA(aTramo[0], aTramo[1])
+  Else
+    m_EditorPrincipal.Seleccionar(aTramo[0], aTramo[1])
+  Endif
+
+End
+
+' ============================================
+' Función   : CalcularTramo
+' Propósito : Clasificar la selección y buscar su par en el sentido que corresponde
+' Parámetros: sTexto As String — texto completo del editor
+'             iInicio As Integer — comienzo de la selección, base 0
+'             iLargo As Integer — largo de la selección
+' Retorna   : Integer[] — [comienzo, largo] del tramo a seleccionar; Null si no
+'             hay par o la selección no es válida (motivo en $sMotivo)
+' ============================================
+Private Function CalcularTramo(sTexto As String, iInicio As Integer, iLargo As Integer) As Integer[]
+
+  Dim sSeleccion As String
+
+  ' --- 1. VALIDACIÓN: UN SIGNO, O ESPACIO + RAYA ---
+  $sMotivo = MOTIVO_SELECCION
+  If iLargo < 1 Then Return Null
+  If iLargo > 2 Then Return Null
+  sSeleccion = String.Mid(sTexto, iInicio + 1, iLargo)
+
+  ' --- 2. DOS CARACTERES: SOLO VALE ESPACIO + RAYA, APERTURA DE INCISO ---
+  If iLargo = 2 Then
+    If sSeleccion = " " & RAYA Then Return BuscarCierreRaya(sTexto, iInicio)
+    Return Null
+  Endif
+
+  ' --- 3. RAYA SOLA: SE CLASIFICA POR EL CARÁCTER QUE LA PRECEDE ---
+  If sSeleccion = RAYA Then
+    Select Case TipoRaya(sTexto, iInicio)
+      Case RAYA_DIALOGO
+        $sMotivo = "Esa raya abre un diálogo: no tiene par."
+        Return Null
+      Case RAYA_APERTURA
+        $sMotivo = "Esa raya abre un inciso: hay que seleccionarla junto con el espacio que la precede."
+        Return Null
+    End Select
+    Return BuscarAperturaRaya(sTexto, iInicio)
+  Endif
+
+  ' --- 4. SIGNOS ASIMÉTRICOS: EL SIGNO MISMO DICE EL SENTIDO ---
+  Select Case sSeleccion
+    Case "«"
+      Return BuscarAdelante(sTexto, iInicio, "«", "»")
+    Case "¿"
+      Return BuscarAdelante(sTexto, iInicio, "¿", "?")
+    Case "¡"
+      Return BuscarAdelante(sTexto, iInicio, "¡", "!")
+    Case "»"
+      Return BuscarAtras(sTexto, iInicio, "«", "»")
+    Case "?"
+      Return BuscarAtras(sTexto, iInicio, "¿", "?")
+    Case "!"
+      Return BuscarAtras(sTexto, iInicio, "¡", "!")
+  End Select
+
+  ' CUALQUIER OTRO CARÁCTER
+  Return Null
+
+End
+
+' ============================================
+' Función   : BuscarAdelante
+' Propósito : Buscar hacia adelante el cierre de un signo de apertura, con profundidad
+' Parámetros: sTexto As String — texto completo
+'             iInicio As Integer — posición del signo de apertura, base 0
+'             sApertura As String — signo de apertura del par
+'             sCierre As String — signo de cierre del par
+' Retorna   : Integer[] — [comienzo, largo] desde la apertura hasta el cierre; Null si no hay
+' ============================================
+Private Function BuscarAdelante(sTexto As String, iInicio As Integer, sApertura As String, sCierre As String) As Integer[]
+
+  Dim sCaracter As String
+  Dim iTotal As Integer
+  Dim iProfundidad As Integer
+  Dim p As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  iTotal = String.Len(sTexto)
+  iProfundidad = 0
+
+  ' --- 2. RECORRIDO: CADA APERTURA INTERIOR EXIGE UN CIERRE MÁS ---
+  For p = iInicio + 1 To iTotal - 1
+    sCaracter = String.Mid(sTexto, p + 1, 1)
+    If sCaracter = sApertura Then
+      Inc iProfundidad
+    Else If sCaracter = sCierre Then
+      ' LOS SIGNOS DEL MARKDOWN (![imagen], ?parámetro) NO CUENTAN
+      If CuentaComoSigno(sTexto, p, sCaracter) Then
+        If iProfundidad = 0 Then Return [iInicio, p - iInicio + 1]
+        Dec iProfundidad
+      Endif
+    Endif
+  Next
+
+  ' --- 3. FINAL DEL TEXTO SIN CIERRE ---
+  $sMotivo = "No se encontró el signo de cierre (" & sCierre & ") antes del final del texto."
+  Return Null
+
+End
+
+' ============================================
+' Función   : BuscarAtras
+' Propósito : Buscar hacia atrás la apertura de un signo de cierre, con profundidad
+' Parámetros: sTexto As String — texto completo
+'             iInicio As Integer — posición del signo de cierre, base 0
+'             sApertura As String — signo de apertura del par
+'             sCierre As String — signo de cierre del par
+' Retorna   : Integer[] — [comienzo, largo] desde la apertura hasta el cierre; Null si no hay
+' ============================================
+Private Function BuscarAtras(sTexto As String, iInicio As Integer, sApertura As String, sCierre As String) As Integer[]
+
+  Dim sCaracter As String
+  Dim iProfundidad As Integer
+  Dim p As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  iProfundidad = 0
+
+  ' --- 2. RECORRIDO: CADA CIERRE INTERIOR EXIGE UNA APERTURA MÁS ---
+  For p = iInicio - 1 To 0 Step -1
+    sCaracter = String.Mid(sTexto, p + 1, 1)
+    If sCaracter = sCierre Then
+      ' LOS SIGNOS DEL MARKDOWN (![imagen], ?parámetro) NO CUENTAN
+      If CuentaComoSigno(sTexto, p, sCaracter) Then Inc iProfundidad
+    Else If sCaracter = sApertura Then
+      If iProfundidad = 0 Then Return [p, iInicio - p + 1]
+      Dec iProfundidad
+    Endif
+  Next
+
+  ' --- 3. PRINCIPIO DEL TEXTO SIN APERTURA ---
+  $sMotivo = "No se encontró el signo de apertura (" & sApertura & ") antes del principio del texto."
+  Return Null
+
+End
+
+' ============================================
+' Función   : BuscarCierreRaya
+' Propósito : Buscar hacia adelante la raya que cierra un inciso
+' Parámetros: sTexto As String — texto completo
+'             iInicio As Integer — posición del espacio que precede a la raya de apertura, base 0
+' Retorna   : Integer[] — [comienzo, largo] desde el espacio hasta la raya de cierre; Null si no hay
+' ============================================
+Private Function BuscarCierreRaya(sTexto As String, iInicio As Integer) As Integer[]
+
+  Dim iTotal As Integer
+  Dim p As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  iTotal = String.Len(sTexto)
+
+  ' --- 2. RECORRIDO DESDE DESPUÉS DE LA RAYA DE APERTURA ---
+  For p = iInicio + 2 To iTotal - 1
+    If String.Mid(sTexto, p + 1, 1) <> RAYA Then Continue
+    Select Case TipoRaya(sTexto, p)
+      Case RAYA_CIERRE
+        Return [iInicio, p - iInicio + 1]
+      Case RAYA_APERTURA
+        ' LAS RAYAS NO SE ANIDAN
+        $sMotivo = "El inciso no se cierra: antes de la raya de cierre aparece otra raya de apertura."
+        Return Null
+    End Select
+    ' RAYA DE DIÁLOGO: NO PARTICIPA DEL INCISO
+  Next
+
+  ' --- 3. FINAL DEL TEXTO SIN CIERRE ---
+  $sMotivo = "No se encontró la raya de cierre del inciso antes del final del texto."
+  Return Null
+
+End
+
+' ============================================
+' Función   : BuscarAperturaRaya
+' Propósito : Buscar hacia atrás la raya que abre un inciso
+' Parámetros: sTexto As String — texto completo
+'             iInicio As Integer — posición de la raya de cierre, base 0
+' Retorna   : Integer[] — [comienzo, largo] desde el espacio de la apertura hasta
+'             la raya de cierre; Null si no hay
+' ============================================
+Private Function BuscarAperturaRaya(sTexto As String, iInicio As Integer) As Integer[]
+
+  Dim p As Integer
+
+  ' --- 1. RECORRIDO DESDE ANTES DE LA RAYA DE CIERRE ---
+  For p = iInicio - 1 To 0 Step -1
+    If String.Mid(sTexto, p + 1, 1) <> RAYA Then Continue
+    Select Case TipoRaya(sTexto, p)
+      Case RAYA_APERTURA
+        ' EL TRAMO EMPIEZA EN EL ESPACIO QUE PRECEDE A LA RAYA (p - 1)
+        Return [p - 1, iInicio - p + 2]
+      Case RAYA_CIERRE
+        ' LAS RAYAS NO SE ANIDAN
+        $sMotivo = "La raya de cierre no tiene apertura: antes aparece otra raya de cierre."
+        Return Null
+    End Select
+    ' RAYA DE DIÁLOGO: NO PARTICIPA DEL INCISO
+  Next
+
+  ' --- 2. PRINCIPIO DEL TEXTO SIN APERTURA ---
+  $sMotivo = "No se encontró la raya de apertura del inciso antes del principio del texto."
+  Return Null
+
+End
+
+' ============================================
+' Función   : TipoRaya
+' Propósito : Clasificar una raya por el carácter que la precede
+' Parámetros: sTexto As String — texto completo
+'             iPos As Integer — posición de la raya, base 0
+' Retorna   : Integer — RAYA_DIALOGO, RAYA_APERTURA o RAYA_CIERRE
+' ============================================
+Private Function TipoRaya(sTexto As String, iPos As Integer) As Integer
+
+  Dim sPrevio As String
+
+  ' --- 1. PRINCIPIO DEL TEXTO: DIÁLOGO ---
+  If iPos = 0 Then Return RAYA_DIALOGO
+
+  ' --- 2. CARÁCTER ANTERIOR: EN BASE 1, iPos ES LA POSICIÓN iPos - 1 DE BASE 0 ---
+  sPrevio = String.Mid(sTexto, iPos, 1)
+  If sPrevio = Chr(10) Then Return RAYA_DIALOGO
+  If sPrevio = " " Then Return RAYA_APERTURA
+  Return RAYA_CIERRE
+
+End
+
+' ============================================
+' Función   : CuentaComoSigno
+' Propósito : Descartar los ! y ? que son sintaxis de Markdown y no puntuación
+' Parámetros: sTexto As String — texto completo
+'             iPos As Integer — posición del signo, base 0
+'             sSigno As String — el signo que está en iPos
+' Retorna   : Boolean — True si es puntuación y entra en el conteo
+' ============================================
+Private Function CuentaComoSigno(sTexto As String, iPos As Integer, sSigno As String) As Boolean
+
+  Dim sSiguiente As String
+
+  ' --- 1. CARÁCTER QUE SIGUE AL SIGNO; VACÍO AL FINAL DEL TEXTO ---
+  sSiguiente = String.Mid(sTexto, iPos + 2, 1)
+
+  ' --- 2. ![...] ES UNA IMAGEN; ![^N] ES UN CIERRE SEGUIDO DE NOTA Y CUENTA ---
+  If sSigno = "!" Then
+    If sSiguiente <> "[" Then Return True
+    Return String.Mid(sTexto, iPos + 3, 1) = "^"
+  Endif
+
+  ' --- 3. ? PEGADO A LETRA O DÍGITO: PARÁMETRO DE URL ---
+  ' If SEPARADOS: String.Code SOBRE VACÍO NO SE EVALÚA (RC-GM-17)
+  If sSigno = "?" Then
+    If sSiguiente = "" Then Return True
+    If m_FuncionesGenericas.EsLetra(String.Code(sSiguiente)) Then Return False
+    If sSiguiente >= "0" And sSiguiente <= "9" Then Return False
+  Endif
+
+  Return True
+
+End
