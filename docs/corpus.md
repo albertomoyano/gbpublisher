@@ -185,7 +185,7 @@ Síntoma de este bug: la cuenta de caracteres ASCII funciona pero la de caracter
 
 ### RC-GM-13 — Variables de retorno entre formularios modales: módulos, no Public en el form
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / Qt5 / Linux Mint · **Verificado:** 2026-09
 
 Las variables `Public` declaradas en un form NO sirven como canal de retorno si el form se cierra después de escribirlas. Al hacer `Me.Close()` la instancia se destruye y el valor se pierde. Cuando el llamador intenta leer la variable, Gambas instancia un form nuevo, con la variable en su valor inicial.
 
@@ -194,6 +194,16 @@ Para canal de retorno entre formularios usar siempre variables globales en un m�
 Patrón canónico ya en uso: `m_FuncionesGenericas.sCreditSeleccionado` (FCreditRoles) y `m_FuncionesGenericas.iAutorSeleccionadoEnFAutores` (FAutores).
 
 Síntoma del bug: el modal se cierra normalmente pero el llamador "no ve" el resultado.
+
+CASO CON INSTANCIA EXPLÍCITA (verificado en 3.22.1, FMain:8438, y medido en banco 3.19)
+
+Con `hForm = New FCandidatosBib` y `hForm.ShowModal()`, leer `hForm.Accion` después del cierre NO devuelve el valor inicial: da «Invalid object» (#29), porque la variable apunta a un objeto destruido (`Object.IsValid(hForm)` = False). Con la instancia automática (`FForm.Accion`) no hay error: se crea una instancia nueva, como describe esta regla.
+
+ALTERNATIVA PARA UNA DECISIÓN SIMPLE
+
+`ShowModal` devuelve el valor pasado a `Me.Close(valor)`, 0 si se cierra sin valor. La decisión vuelve así; los datos elegidos van a un módulo. Aplicado en FCandidatosBib: `iAccion = hCandidatos.ShowModal()` con las constantes `m_BuscarBib.ACCION_*`, y la fila elegida en `m_BuscarBib.RegistrarEleccion`.
+
+**PENDIENTE:** FEstructuraResultados lee FAplicarCrossRef.bAplicado después de ShowModal con la instancia automática: por esta regla, siempre lee el valor inicial. Revisar.
 
 ### RC-GM-14 — DateBox.ReadOnly no bloquea el botón del calendario
 
@@ -1188,6 +1198,69 @@ LÍMITE ACEPTADO
 **Relaciones:** vinculo:SC-17, vinculo:SC-11, vinculo:SC-18, vinculo:SC-02, vinculo:RC-GM-07, vinculo:RC-GM-12, vinculo:SC-20, vinculo:GV-39
 
 **PENDIENTE:** Queda por medir con un snippet de bloque: (1) cuántos Ctrl+Z deshacen una expansión (Select + Insert); (2) que el texto vuelva idéntico por .Text después de expandir (la separación en líneas se vio bien a simple vista); (3) si las líneas vacías del cuerpo salen con el color por omisión hasta el guardado en un tema oscuro (GV-54).
+
+### SC-22 — Cambio de esquema de la base de gbpublisher: un script por versión y el lote completo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas); 1.4.0 (refactor de bibtex) pendiente.
+
+QUÉ HACE CADA SCRIPT
+
+- Exige la versión anterior en `esquema_version`.
+- Decide por el estado REAL del esquema (information_schema), no por las filas de `esquema_version`: es idempotente, y una corrida interrumpida se retoma aplicando solo lo que falta.
+- Respaldo con `mysqldump` verificado antes de tocar nada: archivo no vacío, marca final y presencia de una tabla testigo.
+- Verificación posterior y registro en `esquema_version` solo si pasa.
+- Informe de control SOLO DE LECTURA al final: lista los datos existentes que no cumplen lo nuevo. No los corrige.
+- Usa la cuenta administrativa (`sudo mysql`): el usuario de la aplicación no puede modificar estructuras.
+
+EL LOTE COMPLETO: EN LA MISMA ENTREGA QUE EL SCRIPT
+
+1. El conteo de columnas de `hEsquema` en `m_ConexionBD`, y la tabla nueva si la hay. Sin eso la validación de arranque rechaza la base.
+2. Los `Columns.Count` fijos de las grillas que cargan esa tabla (GV-58).
+3. Las exportaciones e importaciones que recorren todas las columnas (en 1.1.0: `ExportarBibTeX`, `ExportarBibTeX2JSON`, `ImportarJSON`): una columna de control o de trazabilidad se excluye explícitamente.
+4. Las columnas nuevas van AL FINAL de la tabla: hay código que lee por posición.
+
+DETALLES VERIFICADOS
+
+- Un `ALTER TABLE … MODIFY` se arma desde information_schema con colación, NULL, DEFAULT y COMMENT de la columna: un MODIFY sin COMMENT lo borra.
+- Esas sentencias se leen con `mysql -N -B -r`: sin `-r`, el modo batch duplica las barras que `QUOTE()` pone en un comentario con apóstrofo y el ALTER sale mal formado.
+- En los informes con CTE, los `CAST(… AS CHAR)` llevan `COLLATE` explícito: sin él toman la colación de la conexión y el `UNION` falla por mezcla de colaciones.
+- Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
+
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04
+
+### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / babel 24.1 / Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. Los vocabularios que vivían repetidos en el código de los formularios de metadatos (artículos, capítulos, libros, revistas) pasan a tablas de la base. El catálogo ALIMENTA los formularios; cada registro sigue guardando su propio valor. Lo publicado queda como se publicó aunque el catálogo cambie después: es la reproducibilidad del proyecto.
+
+LICENCIAS (actualización 1.2.0)
+
+Tabla `licencias`: etiqueta, url, spdx, abierta, para_contenido, para_codigo, orden, activo. Dos booleanas de ámbito en lugar de una columna: MIT, GPL v3, Apache 2.0 y CC0 valen para contenido y para código. `spdx` en NULL para GPL, LGPL y AGPL: la etiqueta no dice si es «only» u «or-later». Sin fila «Otra»: los combos de licencia son editables.
+
+`m_Licencias`: `LlenarCombo`, `CompletarUrl` (una etiqueta fuera del catálogo no toca la URL) y `EsAbierta`, que busca POR URL y no por nombre. El `license-type="open-access"` de JATS depende de `EsAbierta`: una URL vacía o desconocida no se declara abierta.
+
+IDIOMAS (actualización 1.3.0)
+
+Tabla `idiomas`: codigo (BCP 47), nombre, nombre_ingles, babel, nivel, activo, orden. Se GENERA desde los `babel-*.ini` de la instalación de TeX Live con `generar-idiomas-babel.sh`: la tabla coincide con el babel que compone y ningún dato se escribe de memoria. Columnas de idioma a VARCHAR(20).
+
+`m_Idiomas` es el único punto de conversión: `Babel` (código a nombre de babel), `Normalizar` (código o nombre a código; si no lo reconoce devuelve vacío y NUNCA inventa «es»), `LlenarCombo`, `ListaValida` e `IdiomaAsignado`.
+
+REGLAS DE INTERFAZ
+
+- Vocabulario cerrado de un solo valor: ComboBox de solo lectura, con el código. Lo usan correctores que manejan códigos.
+- Varios valores (idiomas de publicación): códigos separados por coma, validados al guardar. `;` se rechaza.
+- Par texto + idioma (título traducido, resúmenes, palabras clave): si el texto está cargado, su idioma es obligatorio.
+- El idioma principal de libro y de artículo es obligatorio.
+
+REGLAS OPERATIVAS
+
+- No desactivar un valor en uso: el combo de solo lectura lo pierde al abrir el formulario (GV-59).
+- Cada migración de vocabulario trae un informe de control de los datos existentes, que se corrige ANTES de abrir los formularios.
+
+**Relaciones:** vinculo:GV-59,vinculo:SC-22,vinculo:RC-XJ-01
 
 ---
 
@@ -2649,3 +2722,134 @@ Un parche que agrega una referencia a un miembro de otro módulo —constante, v
 **Relaciones:** vinculo:GV-32, apoya:GV-23, vinculo:SC-03, vinculo:SC-21
 
 **PENDIENTE:** Falta provocar la falla a propósito, ejecutando la línea sin el miembro, para registrar el mensaje exacto de ejecución.
+
+### GV-57 — Un control no público de un formulario, usado desde otro módulo, compila y falla al ejecutar
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+Los controles de un `.form` son privados salvo que lleven `#Public = True` (en el archivo, además, un `!` delante del nombre). Usarlos desde otro módulo —`FMetadatosLibro.idioma_principal`, o `.idioma_principal` dentro de `With FMetadatosLibro`— compila sin ningún aviso y falla recién cuando se ejecuta la línea:
+
+    Unknown symbol 'privado' in class 'Container' (#11)
+
+Medido en banco con un formulario de dos ComboBox, uno público y otro no: el público se escribe, el privado da el error.
+
+Contraste, también medido: `Window["nombre"]` sí devuelve un control no público.
+
+CÓMO APARECE EN EL PROYECTO
+
+Al rehacer un control desde el diseñador del IDE —por ejemplo, cambiar un TextBox por un ComboBox— el control nuevo nace privado. Caso de la sesión: `idioma_principal` e `idioma_resumen_traducido` de FMetadatosLibro quedaron sin `#Public`, y `m_Metadatos` los usa dentro de `With FMetadatosLibro`. El cotejo encontró además tres controles privados desde antes y usados desde `m_Metadatos`: `fecha_publicacion_completa` y `pais_publicacion` (libro) y `numero_especial` (revista).
+
+REGLA
+
+Todo control que se lea o escriba desde fuera de su formulario lleva `#Public = True`. Después de editar un formulario en el diseñador, cotejar los accesos externos antes de darlo por bueno: un script que cruce los controles de los `.form` con los `With Formulario` y los `Formulario.control` de `.src` lo resuelve en segundos. Que compile no prueba nada (GV-56).
+
+**Relaciones:** vinculo:GV-56,apoya:GV-23
+
+**PENDIENTE:** Medido solo en 3.19. Confirmar en 3.22.1 el mensaje exacto: si ahí el acceso funcionara, la regla queda como convención.
+
+### GV-58 — GridView: escribir una celda fuera de Columns.Count da «Bad column index» dentro de gb.gui.base
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble; Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-09
+
+    ' GRILLA CON Columns.Count = 2
+    Try g[0, 2].Text = "x"
+    -> Bad column index | [gb.gui.base].GridView._CheckCell.1428
+
+Medido en banco. El error ocurre dentro del código Gambas del componente, no en el del proyecto.
+
+EL DIÁLOGO QUE CONFUNDE
+
+En 3.22.1 (Mint), ejecutando desde el IDE, el mismo error apareció como un diálogo «Localizar el proyecto para el componente: gb.gui.base», con un selector de carpetas. No es un pedido de instalar nada ni un conflicto con gb.qt5: el depurador quiere abrir el fuente del componente donde ocurrió el error para mostrar la línea. Cancelar el diálogo deja ver el error.
+
+CASO DEL PROYECTO
+
+`ConfigurarTableViewBibtexEnCurso` fija la grilla en 112 columnas. La actualización 1.1.0 llevó `bibtex` a 113, y `CargarDatosResultados` recorría `resultado.Fields.Count`: falló al mostrar un duplicado en la grilla, y también afectaba a las búsquedas que usan esa función. La grilla principal no fallaba porque ajusta `Columns.Count` a `Fields.Count`.
+
+REGLA
+
+Un volcado de un `Result` a una grilla de columnas fijas recorre `Min(resultado.Fields.Count, Grid.Columns.Count)`. Y todo cambio de esquema revisa los `Columns.Count` fijos de las grillas de esa tabla (SC-22).
+
+**Relaciones:** vinculo:GV-15,vinculo:SC-22
+
+### GV-59 — ComboBox: qué pasa al asignar Text, según sea de solo lectura o editable
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+Medido en banco:
+
+    ReadOnly, valor fuera de la lista   se pierde en silencio: Index -1, Text vacío, sin Click
+    ReadOnly, valor de la lista         se selecciona
+    editable, valor de la lista         se selecciona y DISPARA Click
+    editable, valor fuera de la lista   queda escrito; no dispara Click
+    asignar .List                       selecciona el primer ítem, sin Click
+    Find                                distingue mayúsculas
+
+CONSECUENCIAS
+
+Un combo de solo lectura valida por construcción, pero pierde sin aviso un dato heredado que no esté en su lista: al abrir el formulario el valor desaparece y al guardar se escribe vacío o NULL. Antes de pasar un campo a solo lectura, un informe de control revisa los datos existentes; y un valor en uso no se retira de la lista (SC-23).
+
+En un combo editable con un `Click` que completa otro campo —licencia que escribe su URL—, cargar un registro dispara el handler y reescribe el campo dependiente con el valor del catálogo. Es el mismo efecto colateral que GV-53 con `Index`.
+
+**Relaciones:** vinculo:GV-53,vinculo:SC-23
+
+### GV-60 — Integer[] no tiene Join, y el error aparece recién al ejecutar
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+`Join` es de `String[]`. Sobre un `Integer[]` compila y falla en ejecución:
+
+    Unknown symbol 'Join' in class 'Integer[]' (#11)
+
+Para armar una lista de ids, por ejemplo para un `IN (...)`, se pasa por un `String[]`:
+
+    For Each iId In aIds
+      aTextos.Add(CStr(iId))
+    Next
+    sLista = aTextos.Join(",")
+
+Verificado en la misma sesión: un arreglo en línea con una función que devuelve Integer, `[m_BuscarBib.ElegidoId()]`, es un `Integer[]` y se puede pasar a un parámetro de ese tipo. `Min(a, b)` existe como función.
+
+Otro caso de la familia de GV-56: compila, y la falla queda para la ejecución.
+
+**Relaciones:** vinculo:GV-56
+
+### GV-61 — gb.settings lee True y False sin comillas como Boolean; CBool("False") es True
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.settings / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+En un archivo leído con `Settings`, una clave `Busqueda=True` sin comillas se devuelve como Boolean, no como cadena: pasarla por `CStr` da `"T"` (GV-10), y un código que la trate como texto falla.
+
+Y el camino inverso tampoco sirve: `CBool("False")` devuelve True, porque toda cadena no vacía es verdadera.
+
+REGLA: para leer un booleano de un `.conf`, preguntar primero `TypeOf(vValor) = gb.Boolean` (GV-33) y recién después, si llegó como texto, compararlo con los literales esperados.
+
+Caso del proyecto: `m_LLM.TieneBusqueda` leía el campo `Busqueda` de los `.conf` de proveedores.
+
+**Relaciones:** vinculo:GV-10,vinculo:GV-33
+
+### GV-62 — RadioButton: Click solo en el que queda marcado, también al asignar Value
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu noble · **Verificado:** 2026-09
+
+`Click` se dispara únicamente en el RadioButton que QUEDA marcado, no en el que se desmarca. Pasa igual al asignar `Value = True` desde el código. Si el botón ya estaba marcado, no se dispara nada.
+
+Consecuencia: un grupo de modos se atiende con un handler por botón que actúe sobre el que quedó marcado; no hace falta atender el desmarcado. Y fijar el modo inicial por código dispara el handler una vez, lo que sirve para dejar la interfaz coherente sin llamarlo aparte.
+
+Caso del proyecto: `rdbFormatear` / `rdbConsultar` del análisis de referencias con LLM.
+
+**Relaciones:** vinculo:GV-55
+
+### GV-63 — Create + Update: el INSERT lleva solo los campos asignados
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.db / MySQL 8.0.46 / Linux Mint; código fuente de CResult.c · **Verificado:** 2026-09
+
+Con el patrón `Create` + asignaciones + `Update`, el `INSERT` que arma el driver incluye solo los campos a los que se asignó un valor. Los demás no van en la sentencia y toman el DEFAULT de la columna.
+
+Leído en el fuente de gb.db (`CResult.c`, `Result_Update`, etiqueta 3.22.1) y coherente con lo observado en MySQL: después de la actualización 1.1.0, las filas nuevas de `bibtex` recibieron sola la fecha de `fecha_modificacion DEFAULT CURRENT_TIMESTAMP`, y las previas quedaron en NULL.
+
+Consecuencias:
+- Un DEFAULT de la base funciona sin que el código lo conozca: no hace falta asignar la columna.
+- Asignar `Null` explícito SÍ va en la sentencia y escribe NULL, por encima del DEFAULT (GV-34).
+- Una columna NOT NULL sin DEFAULT que no se asigne hace fallar el alta.
+
+**Relaciones:** vinculo:GV-34,vinculo:RC-GM-15
