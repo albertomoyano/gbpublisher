@@ -1351,6 +1351,79 @@ LO QUE SE RETIRA
 
 **PENDIENTE:** Sin decidir: (1) lista plana o árbol por tabla; (2) el filtro de la lista, solo por título o también por contenido; (3) prefijo de widget para TextEdit, que la convención no tiene; (4) esquema de la base de gbAyudas y su ubicación: irá en una RF, como RF-08 para gbCorpus. Aparte: pasar FAvisoLegal y FDiccionario a TextEdit y retirar HtmlView del proyecto (FDiccionario, probado antes con una respuesta real de la RAE); renombrar los cinco controles que hoy se llaman como su columna (arxiv_id, book_author, handle_system, sponsors, tipo_sujetos_investigacion), cotejando antes sus usos (GV-56).
 
+### SC-25 — Primeras del libro: piezas sin cuerpo, datos de la base y textos en Markdown
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1 / LuaLaTeX / poppler 24.02 / EPUB 3.3 · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. Las primeras del libro —portadilla, portada y créditos— son PIEZAS SIN CUERPO, igual que el colofón: una fila en `capitulos` con su `nombre_archivo` en el espacio reservado `fm-00` a `fm-09`, sin .md ni canónico. El nombre da la posición; cada salida la resuelve según la matriz de `m_PiezasLibro`.
+
+POR QUÉ NO LaTeX EN EL .md
+
+Pandoc descarta el LaTeX crudo al escribir DocBook: un bloque crudo `{=latex}` no llega al canónico (verificado). Y aunque llegara, la página de créditos cambia con el formato —el EPUB tiene otro ISBN y otra ficha, y no lleva tirada ni imprenta—, y los datos que repite (título, autoría, ISBN) ya están en la base.
+
+POR QUÉ NO SHORTCODE
+
+Un shortcode vive dentro de un .md, y estas piezas no lo tienen: la fila en la base ya fija la posición. `TRATAMIENTO_SHORTCODE` queda reservado para otro uso (la autoría en la apertura de capítulo); su comentario deja de citar la portada.
+
+TIPOS
+
+`portadilla`, `portada` y `creditos` en `tipo_capitulo`. Orden estándar: cortesía (i–ii), portadilla (iii), blanca (iv), portada (v), créditos (vi).
+
+MATRIZ
+
+    pieza        PDF                          EPUB              HTML
+    portadilla   \gbPortadilla (impar)        omitida           omitida
+    portada      \gbPortada (impar)           titlepage         omitida
+    creditos     \gbCreditos (par)            copyright-page    omitida
+
+- Las blancas las ponen `\gbclearrecto` y `\gbclearverso`; nunca `\newpage\hbox{}` a mano.
+- Macros nuevas: el contrato sube a la versión 2. El aspecto va en la estética.
+- El sumario se emite DESPUÉS de la última primera. Hoy `AbrirZona(ZONA_FRONT)` lo escribe al abrir la zona, y una primera declarada quedaría detrás de él.
+- EPUB: `front-portada.xhtml`, que es la tapa (`cover`), pasa a llamarse `front-tapa.xhtml`. Si el libro no declara `creditos`, el EPUB conserva su página genérica (`ArmarCreditos`): el mismo criterio que el colofón no declarado.
+- `titlepage`, `copyright-page` y `halftitlepage` están definidos en EPUB 3 Structural Semantics Vocabulary.
+
+DATOS EN libros_md
+
+- `texto_catalogacion` y `texto_legal`: impreso.
+- `texto_catalogacion_digital` y `texto_legal_digital`: EPUB. Si están vacíos va el bloque genérico; NUNCA se recurre al texto impreso, que trae tirada e imprenta.
+- `logo_portada` y `logo_coleccion`: nombre normalizado en `media/` (`logo-portada.EXT`, `logo-coleccion.EXT`), con el mismo mecanismo que la tapa (`btnBuscarTapa_Click`). El nombre de la colección y el del director son parte de la imagen.
+- `numero_paginas`, ya existente: se carga a mano. No se usa `\ztotpages`.
+- `url_libro`, ya existente: va como texto. Sin QR.
+
+MARCADO DE LOS TEXTOS
+
+Markdown de línea, convertido con `pandoc -f markdown+hard_line_breaks` a `latex` para el PDF y a `html` para el EPUB. Verificado: `^a^` da `\textsuperscript{a}` y `<sup>`; `*x*`, `\emph` y `<em>`; cada salto de línea, `\\` y `<br />`. Nunca LaTeX en la base: el EPUB no lo puede usar. La llamada es `Exec` sobre un array (SC-05).
+
+MARCADORES
+
+Gambas los reemplaza ANTES de Pandoc: así Pandoc escapa los caracteres especiales de LaTeX que traiga el valor.
+
+    {autoria} {titulo} {subtitulo} {edicion} {ciudad} {anio} {editorial}
+    {coleccion} {director_coleccion} {isbn_impreso} {isbn_digital}
+    {url_libro} {paginas} {formato}
+
+- Un marcador desconocido detiene la generación y se lo nombra (GV-23).
+- Un valor vacío sale como `??`, igual que una referencia no resuelta. Es el caso de `{paginas}` en la primera compilación.
+- `{paginas}` y `{formato}` solo valen en los textos del impreso; en un texto digital detienen la generación.
+- No hay `{isbn}` a secas: ningún texto depende de adivinar en qué salida está.
+- `{url_libro}` se reemplaza como autoenlace `<url>`: Pandoc da `\url{}`, que corta la línea en las barras, y `<a href>` en el EPUB. Una URL desnuda sale como texto común y no se corta (verificado).
+
+CANTIDAD DE PÁGINAS
+
+Después de compilar, la aplicación lee las páginas del PDF con `pdfinfo` y AVISA si difieren de `numero_paginas`. No escribe: el número lo carga el editor. Cuenta páginas físicas, cortesía incluida.
+
+LOGOS
+
+Centrados y sin escala: el tamaño viene en el archivo (GV-66). El diálogo acepta PDF, PNG y JPG, y advierte si un PNG no declara su resolución. De un PDF genera en ese momento un SVG hermano con `pdftocairo -svg` para el EPUB, que no admite PDF; con PNG o JPG el mismo archivo sirve a las dos salidas. `pdfinfo` y `pdftocairo` (poppler-utils) entran en `integridad.sh`.
+
+ESQUEMA
+
+Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
+
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18
+
+**PENDIENTE:** Sin implementar. Número de la actualización de esquema: SC-22 reserva la 1.4.0 para el refactor de bibtex; se usa la que siga a la última aplicada. Sin medir: el SVG con unidades pt en epubcheck y en un lector (GV-66).
+
 ---
 
 ## RF — Referencia de API
@@ -3017,3 +3090,31 @@ Banco: `MBanco` (selección de pares). Aplicado en `m_ParesDelimitadores`.
 **Relaciones:** vinculo:RC-GM-21, vinculo:GV-03, vinculo:GV-44, vinculo:SC-18
 
 **PENDIENTE:** La selección de dos caracteres (espacio + raya) no se midió en el banco; queda cubierta al probar m_ParesDelimitadores.
+
+### GV-66 — Imágenes sin escala: el tamaño lo da el archivo, y un PNG sin resolución sale cuatro veces más grande
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 / poppler 24.02 / contenedor Ubuntu 24.04 · **Verificado:** 2026-09
+
+`\includegraphics` sin `width` ni `height` compone la imagen a su tamaño natural. Medido con un logo de 30 mm de ancho en tres formatos:
+
+    PDF de 30 mm                              85,36 pt  (30 mm exactos)
+    PNG de 355 px con resolución de 300 ppp   85,52 pt
+    el mismo PNG sin resolución declarada    356,33 pt
+
+Sin el bloque `pHYs`, que declara la resolución, LuaTeX supone 72 ppp: 355 px dan 125 mm. No hay aviso. `pdftocairo -png -r 300` escribe `pHYs`; un PNG exportado por otra herramienta puede no traerlo.
+
+REGLA: una imagen que se compone sin escala se acepta en PDF, o en PNG con resolución declarada. Un PNG sin `pHYs` se advierte al elegirlo.
+
+PDF A SVG
+
+`pdftocairo -svg` convierte el texto del PDF en trazos, así que el SVG no depende de fuentes, y conserva el tamaño. Pero escribe `width` y `height` SIN UNIDAD:
+
+    <svg ... width="85.039" height="34.016" viewBox="0 0 85.039 34.016">
+
+Un valor sin unidad son píxeles CSS, no puntos: en un navegador o en un lector de EPUB el logo sale al 75 %. Hay que agregarles `pt`.
+
+EPUB 3.3 admite como imagen gif, jpeg, png, svg+xml y webp. PDF no.
+
+**Relaciones:** vinculo:SC-25
+
+**PENDIENTE:** Medido en contenedor, no en Mint. Sin medir: un JPG sin densidad declarada, y el SVG corregido con pt en epubcheck y en un lector.
