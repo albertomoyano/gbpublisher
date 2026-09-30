@@ -1,0 +1,658 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_PrimerasLibro
+' PROPÓSITO : Los datos y los textos de las primeras del libro —portadilla,
+'             portada y créditos— que comparten el PDF y el EPUB (SC-25).
+'             Cada salida los compone a su modo: este módulo no escribe
+'             LaTeX ni XHTML de página, solo entrega valores y texto
+'             convertido.
+'
+' LOS TEXTOS
+' ----------------------------------------------------------
+'   texto_catalogacion y texto_legal (y sus variantes digitales) se escriben
+'   en Markdown de línea, con marcadores entre llaves. Se resuelven en dos
+'   pasos, en este orden:
+'     1. ResolverTexto reemplaza los marcadores por los valores de la base.
+'     2. ConvertirMarkdown pasa el resultado por Pandoc, a latex o a html.
+'   El orden importa: los valores entran al Markdown ESCAPADOS, y es Pandoc
+'   quien los escapa después para LaTeX o XHTML. Así un título con & o %
+'   no rompe nada, y un ISBN que empieza una línea no se lee como lista.
+'
+' LOS ERRORES
+' ----------------------------------------------------------
+'   Las funciones que pueden fallar devuelven su resultado y dejan el motivo
+'   en UltimoError(). Un primitivo no se puede devolver por parámetro
+'   (GV-24, alternativa 4). El llamador pregunta UltimoError() <> "" y decide.
+' ==========================================================
+
+' CARPETA DEL PROYECTO DONDE VIVEN LOS LOGOS, IGUAL QUE LA TAPA
+Public Const CARPETA_MEDIA As String = "media"
+
+' VALOR QUE OCUPA EL LUGAR DE UN DATO VACÍO, COMO UNA REFERENCIA SIN RESOLVER
+Private Const VALOR_VACIO As String = "??"
+
+' MOTIVO DEL ÚLTIMO FALLO; VACÍO SI LA ÚLTIMA LLAMADA FUNCIONÓ
+Private $sUltimoError As String = ""
+
+' ============================================
+' Función   : UltimoError
+' Propósito : Motivo del fallo de la última llamada a ResolverTexto,
+'             ConvertirMarkdown, LeerValores o TextoParaSalida.
+' Parámetros: (ninguno)
+' Retorna   : String — el motivo, o "" si la última llamada funcionó
+' ============================================
+Public Function UltimoError() As String
+
+  Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : EsPrimera
+' Propósito : Dice si un tipo de pieza es una de las primeras del libro.
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+' Retorna   : Boolean
+' ============================================
+Public Function EsPrimera(sTipo As String) As Boolean
+
+  Select Case LCase(Trim(sTipo))
+    Case "portadilla", "portada", "creditos"
+      Return True
+    Case Else
+      Return False
+  End Select
+
+End
+
+' ============================================
+' Función   : OrdenPrimera
+' Propósito : Lugar de cada primera en la secuencia estándar del libro.
+'             Sirve para verificar que las declaradas estén en ese orden.
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+' Retorna   : Integer — 1 portadilla, 2 portada, 3 créditos; 0 si no es una
+'             primera
+' ============================================
+Public Function OrdenPrimera(sTipo As String) As Integer
+
+  Select Case LCase(Trim(sTipo))
+    Case "portadilla"
+      Return 1
+    Case "portada"
+      Return 2
+    Case "creditos"
+      Return 3
+    Case Else
+      Return 0
+  End Select
+
+End
+
+' ============================================
+' Función   : LeerValores
+' Propósito : Lee de la base los valores que pueden ocupar un marcador.
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : Collection — clave: nombre del marcador; valor: texto CRUDO,
+'             salvo edicion, que ya viene como Markdown. Null si falló, con
+'             el motivo en UltimoError()
+' Nota      : UN VALOR VACÍO NO DEJA CLAVE: ASIGNAR "" A UNA Collection NO LA
+'             CREA, Y SI EXISTÍA LA BORRA, PORQUE "" ES NULL (VERIFICADO). POR
+'             ESO QUÉ MARCADORES EXISTEN LO DICE EsMarcadorConocido, NO
+'             Exist, Y EL VALOR SE LEE CON ValorDe.
+'             formato SE ESCRIBE COMO EN LA FICHA: ancho x alto, SIN CEROS DE
+'             MÁS Y CON PUNTO. CStr NO DEPENDE DEL LOCALE (VERIFICADO BAJO
+'             es_AR: CStr DA 15.5, Str$ DA 15,5).
+' ============================================
+Public Function LeerValores(iIdLibro As Integer) As Collection
+
+  Dim hLibro As Result
+  Dim cValores As New Collection
+  Dim sEdicion As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+
+  ' --- 2. CONSULTA ---
+  ' LOS DOS LEFT JOIN DEJAN NULL SI EL LIBRO NO TIENE FORMATO O COLECCIÓN:
+  ' ESOS MARCADORES QUEDAN VACÍOS Y SALEN COMO ??.
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT l.titulo_libro, l.subtitulo, l.tipo_libro, l.numero_edicion, " &
+    "       l.edicion, l.ciudad_publicacion, l.ano_publicacion, l.editorial, " &
+    "       l.isbn_impreso, l.isbn_electronico, l.url_libro, l.numero_paginas, " &
+    "       f.ancho, f.alto, " &
+    "       c.nombre AS coleccion, c.director_coleccion " &
+    "FROM libros_md l " &
+    "LEFT JOIN formatos_pdf f ON f.id_formato_pdf = l.id_formato_pdf " &
+    "LEFT JOIN colecciones c ON c.id_coleccion = l.id_coleccion " &
+    "WHERE l.id_libro = &1 LIMIT 1", iIdLibro)
+
+  If Error Then
+    $sUltimoError = "No se pudieron leer los datos del libro: " & Error.Text
+    Return Null
+  Endif
+
+  If Not hLibro.Available Then
+    $sUltimoError = "No existe el libro " & CStr(iIdLibro) & " en libros_md."
+    Return Null
+  Endif
+
+  ' --- 3. VALORES DIRECTOS ---
+  cValores["autoria"] = AutoriaDirecta(iIdLibro, NuloAVacio(hLibro["tipo_libro"]))
+  If $sUltimoError <> "" Then Return Null
+
+  cValores["titulo"] = NuloAVacio(hLibro["titulo_libro"])
+  cValores["subtitulo"] = NuloAVacio(hLibro["subtitulo"])
+  cValores["ciudad"] = NuloAVacio(hLibro["ciudad_publicacion"])
+  cValores["anio"] = NuloAVacio(hLibro["ano_publicacion"])
+  cValores["editorial"] = NuloAVacio(hLibro["editorial"])
+  cValores["coleccion"] = NuloAVacio(hLibro["coleccion"])
+  cValores["director_coleccion"] = NuloAVacio(hLibro["director_coleccion"])
+  cValores["isbn_impreso"] = NuloAVacio(hLibro["isbn_impreso"])
+  cValores["isbn_digital"] = NuloAVacio(hLibro["isbn_electronico"])
+  cValores["url_libro"] = NuloAVacio(hLibro["url_libro"])
+  cValores["paginas"] = NuloAVacio(hLibro["numero_paginas"])
+
+  ' --- 4. EDICIÓN, YA COMO MARKDOWN ---
+  ' EL NÚMERO VA CON EL ORDINAL VOLADO: 1.^a^ DA 1.ª EN LAS DOS SALIDAS. SI NO
+  ' HAY NÚMERO SE USA EL TEXTO LIBRE DE edicion, ESCAPADO COMO CUALQUIER DATO.
+  sEdicion = ""
+  If Not IsNull(hLibro["numero_edicion"]) Then
+    sEdicion = CStr(hLibro["numero_edicion"]) & ".^a^"
+  Else If NuloAVacio(hLibro["edicion"]) <> "" Then
+    sEdicion = EscaparMarkdown(NuloAVacio(hLibro["edicion"]))
+  Endif
+  cValores["edicion"] = sEdicion
+
+  ' --- 5. FORMATO DE PÁGINA ---
+  ' RC-GM-17: EL SEGUNDO NULL SE PREGUNTA EN UN If ANIDADO
+  cValores["formato"] = ""
+  If Not IsNull(hLibro["ancho"]) Then
+    If Not IsNull(hLibro["alto"]) Then
+      cValores["formato"] = CStr(hLibro["ancho"]) & "x" & CStr(hLibro["alto"]) & "cm"
+    Endif
+  Endif
+
+  Return cValores
+
+End
+
+' ============================================
+' Función   : ResolverTexto
+' Propósito : Reemplaza los marcadores {nombre} de un texto por sus valores.
+' Parámetros: sTexto As String — el texto de la base, en Markdown
+'             cValores As Collection — lo que devolvió LeerValores
+'             bDigital As Boolean — True si el texto es de una salida digital
+' Retorna   : String — el Markdown con los valores; "" si falló, con el
+'             motivo en UltimoError()
+' Nota      : UN MARCADOR ES UNA LLAVE, UNA O MÁS LETRAS a-z O _, Y OTRA
+'             LLAVE. CUALQUIER OTRA COSA ENTRE LLAVES QUEDA COMO ESTÁ.
+'             UN MARCADOR DESCONOCIDO DETIENE LA GENERACIÓN: SI SE DEJARA
+'             PASAR, UNA ERRATA EN {isbn_impreso} SALDRÍA IMPRESA (GV-23).
+'             {paginas} Y {formato} DESCRIBEN EL IMPRESO: EN UN TEXTO DIGITAL
+'             SON UN ERROR (SC-25).
+'             EL RECORRIDO USA String.* PORQUE EL TEXTO TRAE ACENTOS
+'             (RC-GM-12).
+' ============================================
+Public Function ResolverTexto(sTexto As String, cValores As Collection, bDigital As Boolean) As String
+
+  Dim sRes As String = ""
+  Dim sNombre As String
+  Dim sValor As String
+  Dim iPos As Integer = 1
+  Dim iIni As Integer
+  Dim iFin As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  If sTexto = "" Then Return ""
+
+  ' --- 2. RECORRIDO DE LAS LLAVES ---
+  Do
+    iIni = String.InStr(sTexto, "{", iPos)
+    If iIni = 0 Then Break
+
+    iFin = String.InStr(sTexto, "}", iIni + 1)
+    If iFin = 0 Then Break
+
+    ' LO QUE HAY ANTES DE LA LLAVE PASA TAL CUAL
+    sRes &= String.Mid(sTexto, iPos, iIni - iPos)
+    sNombre = String.Mid(sTexto, iIni + 1, iFin - iIni - 1)
+
+    ' NO ES UN MARCADOR: LA LLAVE QUEDA COMO TEXTO Y SE SIGUE DESPUÉS DE ELLA,
+    ' PORQUE PUEDE HABER UN MARCADOR ADENTRO: {a {titulo}
+    If Not EsNombreMarcador(sNombre) Then
+      sRes &= "{"
+      iPos = iIni + 1
+      Continue
+    Endif
+
+    ' --- 3. VALIDACIÓN DEL MARCADOR ---
+    If Not EsMarcadorConocido(sNombre) Then
+      $sUltimoError = "Marcador desconocido: {" & sNombre & "}"
+      Return ""
+    Endif
+
+    If bDigital Then
+      If sNombre = "paginas" Or If sNombre = "formato" Then
+        $sUltimoError = "El marcador {" & sNombre & "} describe el impreso y no " &
+          "puede ir en un texto digital."
+        Return ""
+      Endif
+    Endif
+
+    ' --- 4. VALOR ---
+    sValor = ValorDe(cValores, sNombre)
+
+    If sValor = "" Then
+      sRes &= VALOR_VACIO
+    Else If sNombre = "url_libro" Then
+      ' AUTOENLACE: PANDOC DA \url{} EN LATEX, QUE CORTA LA LÍNEA EN LAS
+      ' BARRAS, Y <a href> EN XHTML. UNA URL DESNUDA SALE COMO TEXTO Y NO SE
+      ' CORTA (VERIFICADO)
+      sRes &= "<" & sValor & ">"
+    Else If sNombre = "edicion" Then
+      ' YA VIENE COMO MARKDOWN DE LeerValores
+      sRes &= sValor
+    Else
+      sRes &= EscaparMarkdown(sValor)
+    Endif
+
+    iPos = iFin + 1
+  Loop
+
+  ' --- 5. RESTO DEL TEXTO ---
+  sRes &= String.Mid(sTexto, iPos)
+
+  Return sRes
+
+End
+
+' ============================================
+' Función   : ConvertirMarkdown
+' Propósito : Convierte Markdown de línea al formato de una salida con Pandoc.
+' Parámetros: sMarkdown As String — el texto ya resuelto
+'             sFormato As String — "latex" o "html"
+' Retorna   : String — el texto convertido, sin salto final; "" si falló,
+'             con el motivo en UltimoError()
+' Nota      : hard_line_breaks: CADA SALTO DE LÍNEA DEL TEXTO ES UN SALTO EN LA
+'             SALIDA, COMO EN LA FICHA DE CATALOGACIÓN. --wrap=none: UN PÁRRAFO
+'             POR LÍNEA, PARA QUE EL DERIVADO VERSIONADO TENGA DIFERENCIAS
+'             LIMPIAS.
+'             Exec SOBRE UN ARRAY, SIN SHELL (SC-05). LA ENTRADA VA POR
+'             ARCHIVO TEMPORAL Y LA SALIDA POR stdout (GV-20). stderr NO SE
+'             CAPTURA: SI PANDOC FALLA, LO ÚNICO QUE SE VE ES LA SALIDA VACÍA,
+'             Y POR ESO SE LA TRATA COMO ERROR.
+' ============================================
+Public Function ConvertirMarkdown(sMarkdown As String, sFormato As String) As String
+
+  Dim sTemp As String
+  Dim sSalida As String = ""
+  Dim aComando As New String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  If Trim(sMarkdown) = "" Then Return ""
+
+  ' --- 2. ARCHIVO DE ENTRADA ---
+  sTemp = Temp$() & ".md"
+  Try File.Save(sTemp, sMarkdown)
+  If Error Then
+    $sUltimoError = "No se pudo escribir el temporal para Pandoc: " & Error.Text
+    Return ""
+  Endif
+
+  ' --- 3. CONVERSIÓN ---
+  aComando.Add("pandoc")
+  aComando.Add("-f")
+  aComando.Add("markdown+hard_line_breaks")
+  aComando.Add("-t")
+  aComando.Add(sFormato)
+  aComando.Add("--wrap=none")
+  aComando.Add(sTemp)
+
+  Try Exec aComando To sSalida
+  If Error Then
+    $sUltimoError = "No se pudo ejecutar Pandoc: " & Error.Text
+    Try Kill sTemp
+    Return ""
+  Endif
+
+  ' EL TEMPORAL SE BORRA ANTES DE EVALUAR LA SALIDA, EN LOS DOS CAMINOS
+  Try Kill sTemp
+
+  ' --- 4. RESULTADO ---
+  If Trim(sSalida) = "" Then
+    $sUltimoError = "Pandoc no devolvió nada al convertir a " & sFormato & "."
+    Return ""
+  Endif
+
+  ' UN SOLO SALTO FINAL, EL QUE AGREGA PANDOC
+  If Right(sSalida, 1) = Chr(10) Then sSalida = Left(sSalida, Len(sSalida) - 1)
+
+  Return sSalida
+
+End
+
+' ============================================
+' Función   : TextoParaSalida
+' Propósito : Los dos pasos juntos: resolver los marcadores y convertir.
+' Parámetros: sTexto As String — el texto de la base
+'             cValores As Collection — lo que devolvió LeerValores
+'             sFormato As String — "latex" o "html"
+'             bDigital As Boolean — True si el texto es de una salida digital
+' Retorna   : String — el texto listo para la salida; "" si falló o si el
+'             texto era vacío. Se distingue por UltimoError()
+' ============================================
+Public Function TextoParaSalida(sTexto As String, cValores As Collection, sFormato As String, bDigital As Boolean) As String
+
+  Dim sMarkdown As String
+
+  ' --- 1. MARCADORES ---
+  sMarkdown = ResolverTexto(sTexto, cValores, bDigital)
+  If $sUltimoError <> "" Then Return ""
+
+  ' --- 2. CONVERSIÓN ---
+  Return ConvertirMarkdown(sMarkdown, sFormato)
+
+End
+
+' ============================================
+' Función   : GenerarSvgDeLogo
+' Propósito : Genera, junto a un logo en PDF, la versión SVG que usa el EPUB:
+'             EPUB 3.3 no admite PDF como imagen (GV-66).
+' Parámetros: sRutaPdf As String — ruta absoluta del logo en PDF
+' Retorna   : String — ruta del SVG generado; "" si falló, con el motivo en
+'             UltimoError()
+' Nota      : pdftocairo CONVIERTE EL TEXTO EN TRAZOS: EL SVG NO DEPENDE DE
+'             FUENTES. PERO ESCRIBE width Y height SIN UNIDAD, QUE UN LECTOR
+'             TOMA COMO PÍXELES Y NO COMO PUNTOS: EL LOGO SALDRÍA AL 75 %.
+'             AgregarUnidadSvg LES PONE pt (GV-66).
+'             Exec SOBRE UN ARRAY, SIN SHELL (SC-05).
+' ============================================
+Public Function GenerarSvgDeLogo(sRutaPdf As String) As String
+
+  Dim sRutaSvg As String
+  Dim sSalida As String
+  Dim sSvg As String
+  Dim aComando As New String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  sRutaSvg = File.Dir(sRutaPdf) &/ File.BaseName(sRutaPdf) & ".svg"
+
+  ' --- 2. CONVERSIÓN ---
+  aComando.Add("pdftocairo")
+  aComando.Add("-svg")
+  aComando.Add(sRutaPdf)
+  aComando.Add(sRutaSvg)
+
+  Try Exec aComando To sSalida
+  If Error Then
+    $sUltimoError = "No se pudo ejecutar pdftocairo: " & Error.Text
+    Return ""
+  Endif
+
+  ' Exec ... To NO DEVUELVE EL CÓDIGO DE SALIDA: LO QUE PRUEBA QUE FUNCIONÓ
+  ' ES QUE EL ARCHIVO EXISTA
+  If Not Exist(sRutaSvg) Then
+    $sUltimoError = "pdftocairo no generó el SVG a partir de " & File.Name(sRutaPdf) & "."
+    Return ""
+  Endif
+
+  ' --- 3. UNIDADES ---
+  Try sSvg = File.Load(sRutaSvg)
+  If Error Then
+    $sUltimoError = "No se pudo leer el SVG generado: " & Error.Text
+    Return ""
+  Endif
+
+  sSvg = AgregarUnidadSvg(sSvg, "width")
+  sSvg = AgregarUnidadSvg(sSvg, "height")
+
+  Try File.Save(sRutaSvg, sSvg)
+  If Error Then
+    $sUltimoError = "No se pudo escribir el SVG corregido: " & Error.Text
+    Return ""
+  Endif
+
+  Return sRutaSvg
+
+End
+
+' ============================================
+' Función   : PngDeclaraResolucion
+' Propósito : Dice si un PNG trae el bloque pHYs, que declara su resolución.
+' Parámetros: sRuta As String — ruta absoluta del PNG
+' Retorna   : Boolean — True si lo trae. False también si no se pudo leer
+' Nota      : SIN pHYs, LuaLaTeX SUPONE 72 ppp Y UN LOGO DE 300 ppp SALE
+'             CUATRO VECES MÁS GRANDE (GV-66). EL BLOQUE VA ANTES DE LOS
+'             DATOS DE IMAGEN (IDAT): SE BUSCA SOLO AHÍ, PARA QUE UNOS BYTES
+'             QUE CASUALMENTE DIGAN pHYs DENTRO DE LA IMAGEN NO CUENTEN.
+'             InStr Y NO String.InStr: EL ARCHIVO ES BINARIO Y SE CUENTAN
+'             BYTES (RC-GM-12 ES PARA TEXTO).
+' ============================================
+Public Function PngDeclaraResolucion(sRuta As String) As Boolean
+
+  Dim sDatos As String
+  Dim iPhys As Integer
+  Dim iIdat As Integer
+
+  Try sDatos = File.Load(sRuta)
+  If Error Then Return False
+
+  iPhys = InStr(sDatos, "pHYs")
+  iIdat = InStr(sDatos, "IDAT")
+
+  If iPhys = 0 Then Return False
+  If iIdat = 0 Then Return False
+
+  Return iPhys < iIdat
+
+End
+
+' ============================================
+' Función   : AgregarUnidadSvg
+' Propósito : Agrega pt a un atributo de tamaño de la etiqueta <svg> si no
+'             tiene unidad.
+' Parámetros: sSvg As String — el SVG completo
+'             sAtributo As String — "width" o "height"
+' Retorna   : String — el SVG, con el atributo corregido o como estaba
+' Nota      : SOLO TOCA LA ETIQUETA RAÍZ, NO LOS width DE ADENTRO. InStr Y Mid
+'             POR BYTES SOBRE UNA ZONA QUE ES ASCII; LAS POSICIONES SE USAN
+'             CON LAS MISMAS FUNCIONES, ASÍ QUE NO SE MEZCLAN BYTES CON
+'             CARACTERES (RC-GM-12).
+' ============================================
+Private Function AgregarUnidadSvg(sSvg As String, sAtributo As String) As String
+
+  Dim iSvg As Integer
+  Dim iFinEtiqueta As Integer
+  Dim iAtributo As Integer
+  Dim iCierre As Integer
+  Dim sUltimo As String
+
+  ' --- 1. LA ETIQUETA <svg ... > ---
+  iSvg = InStr(sSvg, "<svg")
+  If iSvg = 0 Then Return sSvg
+  iFinEtiqueta = InStr(sSvg, ">", iSvg)
+  If iFinEtiqueta = 0 Then Return sSvg
+
+  ' --- 2. EL ATRIBUTO, DENTRO DE LA ETIQUETA ---
+  ' EL ESPACIO DELANTE EVITA TOMAR stroke-width O viewBox
+  iAtributo = InStr(sSvg, " " & sAtributo & "=" & Chr(34), iSvg)
+  If iAtributo = 0 Then Return sSvg
+  If iAtributo > iFinEtiqueta Then Return sSvg
+
+  iCierre = InStr(sSvg, Chr(34), iAtributo + Len(sAtributo) + 3)
+  If iCierre = 0 Then Return sSvg
+
+  ' --- 3. SOLO SI TERMINA EN DÍGITO: YA TIENE UNIDAD SI NO ---
+  sUltimo = Mid(sSvg, iCierre - 1, 1)
+  If InStr("0123456789", sUltimo) = 0 Then Return sSvg
+
+  Return Left(sSvg, iCierre - 1) & "pt" & Mid(sSvg, iCierre)
+
+End
+
+' ============================================
+' Función   : EscaparMarkdown
+' Propósito : Escapa un valor de la base para que Markdown lo lea literal.
+' Parámetros: sValor As String — texto crudo
+' Retorna   : String — el texto con una barra delante de cada signo ASCII
+' Nota      : SE ESCAPA TODO SIGNO DE PUNTUACIÓN ASCII, SIN ELEGIR: PANDOC
+'             ADMITE LA BARRA DELANTE DE CUALQUIERA (all_symbols_escapable) Y
+'             LOS DEVUELVE LITERALES EN LATEX Y EN XHTML (VERIFICADO CON
+'             & % # _ * [ ] < > \ ^ Y EL RESTO). ASÍ UN TÍTULO CON UN
+'             ASTERISCO NO SE VUELVE CURSIVA NI UN «1.» SE VUELVE LISTA.
+'             RANGOS ASCII: 33-47, 58-64, 91-96 Y 123-126.
+' ============================================
+Private Function EscaparMarkdown(sValor As String) As String
+
+  Dim sRes As String = ""
+  Dim sCar As String
+  Dim iCodigo As Integer
+  Dim iPos As Integer
+
+  For iPos = 1 To String.Len(sValor)
+    sCar = String.Mid(sValor, iPos, 1)
+    iCodigo = String.Code(sCar)
+
+    If (iCodigo >= 33 And iCodigo <= 47) Or (iCodigo >= 58 And iCodigo <= 64) Or
+      (iCodigo >= 91 And iCodigo <= 96) Or (iCodigo >= 123 And iCodigo <= 126) Then
+      sRes &= "\\" & sCar
+    Else
+      sRes &= sCar
+    Endif
+  Next
+
+  Return sRes
+
+End
+
+' ============================================
+' Función   : EsMarcadorConocido
+' Propósito : La lista cerrada de marcadores (SC-25).
+' Parámetros: sNombre As String — el nombre entre llaves
+' Retorna   : Boolean
+' Nota      : LA LISTA ESTÁ ACÁ Y NO EN LAS CLAVES DE LA Collection: UN VALOR
+'             VACÍO NO DEJA CLAVE (VER LeerValores).
+' ============================================
+Private Function EsMarcadorConocido(sNombre As String) As Boolean
+
+  Select Case sNombre
+    Case "autoria", "titulo", "subtitulo", "edicion", "ciudad", "anio",
+      "editorial", "coleccion", "director_coleccion", "isbn_impreso",
+      "isbn_digital", "url_libro", "paginas", "formato"
+      Return True
+    Case Else
+      Return False
+  End Select
+
+End
+
+' ============================================
+' Función   : ValorDe
+' Propósito : El valor de un marcador, vacío si la Collection no tiene clave.
+' Parámetros: cValores As Collection — lo que devolvió LeerValores
+'             sNombre As String — el marcador
+' Retorna   : String
+' ============================================
+Public Function ValorDe(cValores As Collection, sNombre As String) As String
+
+  If cValores.Exist(sNombre) Then Return cValores[sNombre]
+  Return ""
+
+End
+
+' ============================================
+' Función   : EsNombreMarcador
+' Propósito : Dice si lo que hay entre dos llaves tiene forma de marcador.
+' Parámetros: sNombre As String — el contenido entre llaves
+' Retorna   : Boolean — True si es no vacío y solo tiene a-z o _
+' ============================================
+Private Function EsNombreMarcador(sNombre As String) As Boolean
+
+  Dim iPos As Integer
+  Dim iCodigo As Integer
+
+  If sNombre = "" Then Return False
+
+  For iPos = 1 To String.Len(sNombre)
+    iCodigo = String.Code(String.Mid(sNombre, iPos, 1))
+    ' 95 ES EL GUION BAJO; 97-122, a-z
+    If iCodigo <> 95 Then
+      If iCodigo < 97 Or iCodigo > 122 Then Return False
+    Endif
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AutoriaDirecta
+' Propósito : La autoría del libro en forma directa, para la portada y la
+'             ficha: «Andrés Carminati», «Ana Pérez y Juan Gómez (comps.)».
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+'             sTipoLibro As String — libros_md.tipo_libro
+' Retorna   : String — sin escapar; "" si no hay autoría. Si la consulta
+'             falla, deja el motivo en UltimoError()
+' Nota      : LOS ROLES QUE CUENTAN LOS DECIDE EL TIPO DE LIBRO, CON LA MISMA
+'             REGLA QUE LOS METADATOS DEL PDF (RolesDeAutoriaSegunTipo). LA
+'             ABREVIATURA DE ROL VA DESPUÉS DE CADA NOMBRE, COMO EN
+'             ObtenerAutoresLibro.
+' ============================================
+Private Function AutoriaDirecta(iIdLibro As Integer, sTipoLibro As String) As String
+
+  Dim hRes As Result
+  Dim sNombre As String
+  Dim sAbrev As String
+  Dim aNombres As New String[]
+  Dim sUltimo As String
+
+  ' --- 1. CONSULTA ---
+  ' EL IN SE INTERPOLA PORQUE LO ARMA EL CÓDIGO DESDE UN enum CERRADO
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT a.nombre, a.apellidos, la.rol_libro " &
+    "FROM libro_autor la " &
+    "JOIN autores a ON a.id_autor = la.id_autor " &
+    "WHERE la.id_libro = &1 " &
+    "AND la.rol_libro IN (" & m_GenerarPDFLibro.RolesDeAutoriaSegunTipo(sTipoLibro) & ") " &
+    "ORDER BY la.orden_autoria", iIdLibro)
+
+  If Error Then
+    $sUltimoError = "No se pudo leer la autoría del libro: " & Error.Text
+    Return ""
+  Endif
+
+  If Not hRes.Available Then Return ""
+
+  ' --- 2. NOMBRES ---
+  For Each hRes
+    sNombre = Trim(hRes["nombre"]) & " " & Trim(hRes["apellidos"])
+    sAbrev = m_GenerarPDFLibro.AbreviaturaDeRol(hRes["rol_libro"])
+    If sAbrev <> "" Then sNombre &= " (" & sAbrev & ")"
+    aNombres.Add(sNombre)
+  Next
+
+  ' --- 3. UNIÓN: «A», «A y B», «A, B y C» ---
+  If aNombres.Count = 1 Then Return aNombres[0]
+
+  sUltimo = aNombres[aNombres.Max]
+  aNombres.Remove(aNombres.Max)
+
+  Return aNombres.Join(", ") & " y " & sUltimo
+
+End
+
+' ============================================
+' Función   : NuloAVacio
+' Propósito : Convierte un NULL de la base en cadena vacía.
+' Parámetros: vValor As Variant — valor leído de un Result
+' Retorna   : String — el valor sin espacios en los bordes, o ""
+' ============================================
+Private Function NuloAVacio(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return Trim(CStr(vValor))
+
+End
