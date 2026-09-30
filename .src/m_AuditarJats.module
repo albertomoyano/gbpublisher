@@ -333,11 +333,11 @@ End
 '             cortar trozo por trozo lo rompería (SC-02, RC-GM-12).
 '
 ' Parámetros: aComando As String[] — comando y argumentos
-'             sStdErr As String — POR REFERENCIA: recibe stderr
-'             sStdOut As String — POR REFERENCIA: recibe stdout
-' Retorna   : Integer — código de salida, -1 si no arrancó, -2 si venció el plazo
+' Retorna   : Integer — código de salida, -1 si no arrancó, -2 si venció el plazo.
+'             La salida se lee después con UltimoStdErr() y UltimoStdOut():
+'             un String no puede volver por parámetro (GV-24).
 ' ============================================
-Public Function EjecutarHerramienta(aComando As String[], ByRef sStdErr As String, ByRef sStdOut As String) As Integer
+Public Function EjecutarHerramienta(aComando As String[]) As Integer
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim hProceso As Process
@@ -348,8 +348,6 @@ Public Function EjecutarHerramienta(aComando As String[], ByRef sStdErr As Strin
   $sBufferSalida = ""
   $iCodigoSalida = -1
   $bProcesoTerminado = False
-  sStdErr = ""
-  sStdOut = ""
 
   ' --- 2. LANZAMIENTO ---
   ' SC-05: SIEMPRE Exec CON ARRAY, NUNCA Shell. Las rutas de los
@@ -357,8 +355,9 @@ Public Function EjecutarHerramienta(aComando As String[], ByRef sStdErr As Strin
   Try hProceso = Exec aComando For Read As "ProcHerramienta"
   If Error Then
     ' EL FALLO AL LANZAR ES DE CONFIGURACIÓN, NO DEL ARCHIVO AUDITADO:
-    ' NO PUEDE QUEDAR ESCONDIDO EN UN CANAL QUE EL LLAMADOR DESCARTA
-    sStdErr = ("No se pudo ejecutar ") & aComando[0] & ": " & Error.Text
+    ' NO PUEDE QUEDAR ESCONDIDO EN UN CANAL QUE EL LLAMADOR DESCARTA.
+    ' VA AL BÚFER Y NO A UN PARÁMETRO: ES LO QUE LEE UltimoStdErr() (GV-24)
+    $sBufferError = ("No se pudo ejecutar ") & aComando[0] & ": " & Error.Text
     Return -1
   Endif
 
@@ -376,7 +375,6 @@ Public Function EjecutarHerramienta(aComando As String[], ByRef sStdErr As Strin
     ' mata el proceso y se devuelve un resultado honesto.
     If Timer > fVencimiento Then
       Try hProceso.Kill()
-      sStdErr = $sBufferError
       Return -2
     Endif
 
@@ -390,10 +388,8 @@ Public Function EjecutarHerramienta(aComando As String[], ByRef sStdErr As Strin
     Wait 0.01
   Next
 
-  ' --- 5. ENTREGA DE LOS BÚFERES YA COMPLETOS ---
-  sStdErr = $sBufferError
-  sStdOut = $sBufferSalida
-
+  ' --- 5. RETORNO ---
+  ' LOS BÚFERES YA ESTÁN COMPLETOS Y QUEDAN DISPONIBLES PARA LOS ACCESORES
   Return $iCodigoSalida
 
 End
@@ -685,7 +681,6 @@ Private Function VerificarBuenaFormacion(oArchivo As CArchivoAuditado, bDesfasaj
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim aComando As New String[]
   Dim sStdErr As String
-  Dim sStdOut As String
   Dim iCodigo As Integer
   Dim iLinea As Integer
 
@@ -699,12 +694,10 @@ Private Function VerificarBuenaFormacion(oArchivo As CArchivoAuditado, bDesfasaj
   aComando.Add("--nonet")
   aComando.Add(oArchivo.sRuta)
 
-  iCodigo = EjecutarHerramienta(aComando, sStdErr, sStdOut)
+  iCodigo = EjecutarHerramienta(aComando)
 
-  ' --- 3. LECTURA REAL DE LA SALIDA DE ERROR ---
-  ' Se lee del accesor y NO de la variable local: en Gambas los
-  ' primitivos se pasan siempre por valor, así que el parámetro ByRef
-  ' no propaga nada y sStdErr quedaría vacía
+  ' --- 3. LECTURA DE LA SALIDA DE ERROR ---
+  ' DEL ACCESOR: UN String NO VUELVE POR PARÁMETRO (GV-24)
   sStdErr = UltimoStdErr()
 
   ' --- 4. CÓDIGO DE SALIDA CERO: ESTÁ BIEN FORMADO ---
@@ -2770,7 +2763,6 @@ Private Sub VerificarConformidadJats4r(oArchivo As CArchivoAuditado)
   Dim aAserciones As CAsercionSVRL[]
   Dim oAsercion As CAsercionSVRL
   Dim sCodigo As String
-  Dim sError As String
 
   ' --- 2. SUBCONJUNTO VERIFICADO ---
   ' Lista explícita y no todo el directorio de compilados: ese
@@ -2783,14 +2775,15 @@ Private Sub VerificarConformidadJats4r(oArchivo As CArchivoAuditado)
   ' --- 3. UNA INVOCACIÓN POR GRUPO ---
   For Each sGrupo In aGrupos
 
-    aAserciones = m_ValidacionSchematron.ValidarConSchematron(oArchivo.sRuta, sGrupo, sError)
+    aAserciones = m_ValidacionSchematron.ValidarConSchematron(oArchivo.sRuta, sGrupo)
 
     ' 3.1 FALLO DE EJECUCIÓN
     ' RC-GM-02: no se traga. Que un grupo falle no invalida el
     ' análisis, pero tiene que quedar registrado para que no parezca
     ' que el archivo cumple lo que nunca se evaluó.
     If Not aAserciones Then
-      RegistrarGrupoNoEvaluado(sGrupo, sError)
+      ' EL MOTIVO SALE DEL ACCESOR (GV-24): ANTES LLEGABA SIEMPRE VACÍO
+      RegistrarGrupoNoEvaluado(sGrupo, m_ValidacionSchematron.UltimoErrorSchematron())
       Continue
     Endif
 
@@ -2883,8 +2876,9 @@ End
 ' Propósito : Devuelve el stderr de la última herramienta ejecutada.
 '             Existe porque en Gambas los tipos primitivos se pasan
 '             SIEMPRE por valor: un parámetro ByRef As String no
-'             propaga nada al llamador, compila sin aviso y deja la
-'             variable como estaba.
+'             propaga nada al llamador y deja la variable como estaba
+'             (GV-24).
+' Parámetros: ninguno
 ' Retorna   : String
 ' ============================================
 Public Function UltimoStdErr() As String
@@ -2893,6 +2887,13 @@ Public Function UltimoStdErr() As String
 
 End
 
+' ============================================
+' Función   : UltimoStdOut
+' Propósito : Devuelve el stdout de la última herramienta ejecutada.
+'             Mismo motivo que UltimoStdErr (GV-24).
+' Parámetros: ninguno
+' Retorna   : String
+' ============================================
 Public Function UltimoStdOut() As String
 
   Return $sBufferSalida
@@ -3314,8 +3315,6 @@ Private Function EjecutarValidacionDTD(sRuta As String) As String
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim aComando As New String[]
-  Dim sStdErr As String
-  Dim sStdOut As String
 
   ' --- 2. INVOCACIÓN ---
   ' --nonet sigue siendo obligatorio: el catálogo local es justamente
@@ -3332,9 +3331,7 @@ Private Function EjecutarValidacionDTD(sRuta As String) As String
   EjecutarHerramientaConEntorno(aComando,
     "XML_CATALOG_FILES=" & m_Constantes.GBA_RUTA_CATALOGO_DTD)
 
-  ' --- 3. LA SALIDA REAL VIVE EN EL ACCESOR ---
-  ' En Gambas los primitivos se pasan SIEMPRE por valor: un parámetro
-  ' ByRef no propaga nada y la variable local quedaría vacía.
+  ' --- 3. LA SALIDA VIVE EN EL ACCESOR (GV-24) ---
   Return UltimoStdErr()
 
 End

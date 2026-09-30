@@ -84,6 +84,25 @@ Private Const DIR_COMPILADOS As String = "/usr/share/gbpublisher/schematron/comp
 ' diagnosticar lentitud sin adivinar. Poner en False para producción.
 Public bTrazaTiempos As Boolean = False
 
+' --- MOTIVO DEL ÚLTIMO FALLO DE ValidarConSchematron ---
+' VARIABLE DE MÓDULO CON ACCESOR Y NO PARÁMETRO ByRef: EN GAMBAS UN
+' String SE PASA SIEMPRE POR VALOR Y EL LLAMADOR NUNCA LO RECIBÍA
+' (GV-24, ALTERNATIVA 4)
+Private $sUltimoError As String
+
+' ============================================
+' Función   : UltimoErrorSchematron
+' Propósito : Devuelve el motivo del último fallo de ValidarConSchematron.
+' Parámetros: ninguno
+' Retorna   : String — el motivo, o cadena vacía si la última
+'             invocación no falló
+' ============================================
+Public Function UltimoErrorSchematron() As String
+
+  Return $sUltimoError
+
+End
+
 ' ============================================
 ' 2. NÚCLEO: EJECUCIÓN Y PARSEO
 ' ============================================
@@ -98,10 +117,11 @@ Public bTrazaTiempos As Boolean = False
 '
 ' Parámetros: sArchivoXML As String — ruta absoluta del XML a validar
 '             sRegla As String — nombre del .xsl compilado, sin extensión
-'             sError As String — POR REFERENCIA: mensaje de fallo
-' Retorna   : CAsercionSVRL[] — aserciones incumplidas, o Null si falló
+' Retorna   : CAsercionSVRL[] — aserciones incumplidas, o Null si falló.
+'             Si falló, el motivo se lee con UltimoErrorSchematron():
+'             un String no puede volver por parámetro (GV-24).
 ' ============================================
-Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, ByRef sError As String) As CAsercionSVRL[]
+Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String) As CAsercionSVRL[]
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sRutaXsl As String
@@ -109,22 +129,22 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, By
   Dim sRutaTemp As String
   Dim fInicio As Float
 
-  sError = ""
+  $sUltimoError = ""
 
   ' --- 2. GUARDAS ---
   If Not Exist(sArchivoXML) Then
-    sError = ("No se encuentra el archivo XML: ") & sArchivoXML
+    $sUltimoError = ("No se encuentra el archivo XML: ") & sArchivoXML
     Return Null
   Endif
 
   If Not Exist(SAXON_JAR) Then
-    sError = ("No se encuentra Saxon-HE en ") & SAXON_JAR
+    $sUltimoError = ("No se encuentra Saxon-HE en ") & SAXON_JAR
     Return Null
   Endif
 
   sRutaXsl = DIR_COMPILADOS &/ sRegla & ".xsl"
   If Not Exist(sRutaXsl) Then
-    sError = ("No se encuentra la regla compilada: ") & sRutaXsl
+    $sUltimoError = ("No se encuentra la regla compilada: ") & sRutaXsl
     Return Null
   Endif
 
@@ -136,7 +156,7 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, By
   fInicio = Timer
   sRutaTemp = CopiaSinDoctype(sArchivoXML)
   If sRutaTemp = "" Then
-    sError = ("No se pudo preparar el archivo para validar.")
+    $sUltimoError = ("No se pudo preparar el archivo para validar.")
     Return Null
   Endif
 
@@ -151,7 +171,7 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, By
   Try Exec ["java", "-jar", SAXON_JAR, "-s:" & sRutaTemp, "-xsl:" & sRutaXsl] To sSvrl
   If Error Then
     Try Kill sRutaTemp
-    sError = ("Falló la ejecución de Saxon: ") & Error.Text
+    $sUltimoError = ("Falló la ejecución de Saxon: ") & Error.Text
     Return Null
   Endif
 
@@ -170,12 +190,12 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String, By
   ' XSLT compilado tiene raíz <xsl:transform> y no contiene
   ' schematron-output.
   If sSvrl = "" Then
-    sError = ("Saxon no produjo salida para ") & sRegla
+    $sUltimoError = ("Saxon no produjo salida para ") & sRegla
     Return Null
   Endif
 
   If InStr(sSvrl, "schematron-output") = 0 Then
-    sError = ("La salida de ") & sRegla & (" no es un informe SVRL.")
+    $sUltimoError = ("La salida de ") & sRegla & (" no es un informe SVRL.")
     Return Null
   Endif
 
@@ -517,23 +537,18 @@ End
 ' Propósito : Ejecuta todas las reglas compiladas contra un XML y
 '             devuelve True si no hay ninguna aserción incumplida.
 '
-'             El parámetro sDirectorioSalida se conserva por
-'             compatibilidad de firma pero YA NO SE USA: el SVRL se
-'             recibe por stdout y no se escribe a disco.
-'
 ' Parámetros: sArchivoXML As String — XML a validar
-'             sDirectorioSalida As String — ignorado
-'             aErrores As String[] — POR REFERENCIA: mensajes
+'             aErrores As String[] — mensajes; se llena en el lugar
+'             porque un array es objeto y sí se comparte (GV-24)
 ' Retorna   : Boolean — True si el documento no incumple ninguna regla
 ' ============================================
-Public Function ValidarSchematronJATS(sArchivoXML As String, sDirectorioSalida As String, aErrores As String[]) As Boolean
+Public Function ValidarSchematronJATS(sArchivoXML As String, aErrores As String[]) As Boolean
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim aReglas As String[]
   Dim sRegla As String
   Dim aAserciones As CAsercionSVRL[]
   Dim oAsercion As CAsercionSVRL
-  Dim sError As String
   Dim bValido As Boolean
 
   bValido = True
@@ -548,13 +563,13 @@ Public Function ValidarSchematronJATS(sArchivoXML As String, sDirectorioSalida A
   aReglas = ReglasDisponibles()
   For Each sRegla In aReglas
 
-    aAserciones = ValidarConSchematron(sArchivoXML, sRegla, sError)
+    aAserciones = ValidarConSchematron(sArchivoXML, sRegla)
 
     ' 3.1 FALLO DE EJECUCIÓN
     ' RC-GM-02: el error se informa, no se traga. Un fallo silencioso
     ' acá se manifestaría como 'el documento es válido'.
     If Not aAserciones Then
-      aErrores.Add("[" & sRegla & "] " & sError)
+      aErrores.Add("[" & sRegla & "] " & UltimoErrorSchematron())
       bValido = False
       Continue
     Endif
@@ -619,7 +634,7 @@ Public Function EjecutarValidacionCompleta(sArchivoXML As String) As Boolean
   Dim bValido As Boolean
 
   ' --- 2. VALIDACIÓN ---
-  bValido = ValidarSchematronJATS(sArchivoXML, "", aErrores)
+  bValido = ValidarSchematronJATS(sArchivoXML, aErrores)
 
   ' --- 3. INFORME AL USUARIO ---
   If bValido Then

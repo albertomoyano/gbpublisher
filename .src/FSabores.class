@@ -150,13 +150,21 @@ Private Function LocalizarSaxon() As String
 
 End
 
-' ====================================================================
-' FUNCIÓN: EXTRAER CONFIGURACIÓN DE OUTPUT DEL COMENTARIO XSLT
-' NOTA: EL COMENTARIO DEBE ESTAR EN LA SEGUNDA LÍNEA DEL ARCHIVO
-' FORMATO: <!-- Descripción | output:nombre_base | format:extensión -->
-' ====================================================================
-Private Function ExtraerConfiguracionOutput(rutaXSLT As String, ByRef outputName As String, ByRef formato As String) As Boolean
+' ============================================
+' Función   : ExtraerConfiguracionOutput
+' Propósito : Lee la configuración de salida del comentario de la
+'             segunda línea del XSLT, con el formato
+'             <!-- Descripción | output:nombre_base | format:extensión -->
+'             Devuelve un array y no dos parámetros ByRef: un String
+'             no vuelve por parámetro y la versión anterior entregaba
+'             siempre vacío (GV-24, alternativa 3).
+' Parámetros: rutaXSLT As String — ruta absoluta del XSLT
+' Retorna   : String[] — [0] nombre base, [1] extensión ("html" si el
+'             comentario no la da); Null si no hay comentario válido
+' ============================================
+Private Function ExtraerConfiguracionOutput(rutaXSLT As String) As String[]
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim hFile As File
   Dim linea As String
   Dim lineaComentario As String
@@ -165,66 +173,59 @@ Private Function ExtraerConfiguracionOutput(rutaXSLT As String, ByRef outputName
   Dim inicioComentario As Integer
   Dim finComentario As Integer
   Dim contenidoComentario As String
+  Dim sNombre As String
+  Dim sFormato As String
+  Dim iPos As Integer
 
-  ' VALORES POR DEFECTO
-  outputName = ""
-  formato = "html"
+  sNombre = ""
+  sFormato = "html"
 
+  ' --- 2. LECTURA DE LAS DOS PRIMERAS LÍNEAS ---
+  ' LA PRIMERA ES LA DECLARACIÓN XML; LA SEGUNDA, EL COMENTARIO
   Try hFile = Open rutaXSLT For Read
-  If Error Then Return False
+  If Error Then Return Null
 
-  ' LEER PRIMERA LÍNEA (DECLARACIÓN XML)
   Try Line Input #hFile, linea
-
-  ' LEER SEGUNDA LÍNEA (COMENTARIO CON CONFIGURACIÓN)
   Try Line Input #hFile, lineaComentario
   Try Close #hFile
 
-  If Not lineaComentario Or lineaComentario = "" Then Return False
+  If lineaComentario = "" Then Return Null
 
-  ' VERIFICAR QUE SEA UN COMENTARIO XML
-  If InStr(lineaComentario, "<!--") = 0 Or InStr(lineaComentario, "-->") = 0 Then
-    Return False
-  Endif
+  ' --- 3. VERIFICAR QUE SEA UN COMENTARIO XML ---
+  If InStr(lineaComentario, "<!--") = 0 Or InStr(lineaComentario, "-->") = 0 Then Return Null
 
-  ' EXTRAER EL CONTENIDO DEL COMENTARIO
   inicioComentario = InStr(lineaComentario, "<!--") + 4
   finComentario = InStr(lineaComentario, "-->")
-
-  If finComentario <= inicioComentario Then Return False
+  If finComentario <= inicioComentario Then Return Null
 
   contenidoComentario = Trim(Mid(lineaComentario, inicioComentario, finComentario - inicioComentario))
 
-  ' DIVIDIR POR PIPE |
+  ' --- 4. RECORRIDO DE LAS PARTES SEPARADAS POR | ---
+  ' LAS CLAVES output: Y format: SON ASCII, ASÍ QUE LCase NO DEPENDE
+  ' DEL LOCALE ACÁ (GV-03 AFECTA SOLO A LETRAS ACENTUADAS)
   partes = Split(contenidoComentario, "|")
 
   For Each parte In partes
     parte = Trim(parte)
 
-    If InStr(LCase(parte), "output:") > 0 Then
-      Dim posOutput As Integer = InStr(LCase(parte), "output:")
-      outputName = Trim(Mid(parte, posOutput + 7))
-
-      If InStr(outputName, " ") > 0 Then
-        outputName = Trim(Split(outputName, " ")[0])
-      Endif
+    ' 4.1 NOMBRE BASE: HASTA EL PRIMER ESPACIO
+    iPos = InStr(LCase(parte), "output:")
+    If iPos > 0 Then
+      sNombre = Trim(Mid(parte, iPos + 7))
+      If InStr(sNombre, " ") > 0 Then sNombre = Trim(Split(sNombre, " ")[0])
     Endif
 
-    If InStr(LCase(parte), "format:") > 0 Then
-      Dim posFormat As Integer = InStr(LCase(parte), "format:")
-      formato = Trim(Mid(parte, posFormat + 7))
-
-      If InStr(formato, " ") > 0 Then
-        formato = Trim(Split(formato, " ")[0])
-      Endif
+    ' 4.2 EXTENSIÓN: HASTA EL PRIMER ESPACIO
+    iPos = InStr(LCase(parte), "format:")
+    If iPos > 0 Then
+      sFormato = Trim(Mid(parte, iPos + 7))
+      If InStr(sFormato, " ") > 0 Then sFormato = Trim(Split(sFormato, " ")[0])
     Endif
   Next
 
-  If Not formato Or formato = "" Then
-    formato = "html"
-  Endif
-
-  Return True
+  ' --- 5. RETORNO ---
+  If sFormato = "" Then sFormato = "html"
+  Return [sNombre, sFormato]
 
 End
 
@@ -259,6 +260,7 @@ Public Sub btnAplicar_Click()
   Dim comando As String
   Dim outputConfig As String
   Dim formatoSalida As String
+  Dim aConfigSalida As String[]
   Dim resultado As String
   Dim codigoSalida As Integer
 
@@ -331,13 +333,19 @@ Public Sub btnAplicar_Click()
   ' ====================================================================
   ' EXTRAER CONFIGURACIÓN DE SALIDA DEL XSLT
   ' ====================================================================
-  ExtraerConfiguracionOutput(rutaXSLT, outputConfig, formatoSalida)
+  ' DEVUELVE ARRAY (GV-24): CON PARÁMETROS ByRef ESTOS DOS VALORES
+  ' LLEGABAN SIEMPRE VACÍOS Y SE USABAN LOS DE RESPALDO
+  aConfigSalida = ExtraerConfiguracionOutput(rutaXSLT)
+  If aConfigSalida Then
+    outputConfig = aConfigSalida[0]
+    formatoSalida = aConfigSalida[1]
+  Endif
 
-  If Not outputConfig Or outputConfig = "" Then
+  If outputConfig = "" Then
     outputConfig = File.BaseName(xmlSeleccionado)
   Endif
 
-  If Not formatoSalida Or formatoSalida = "" Then
+  If formatoSalida = "" Then
     formatoSalida = "html"
   Endif
 

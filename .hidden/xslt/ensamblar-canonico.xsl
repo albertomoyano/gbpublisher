@@ -30,7 +30,12 @@
 
   NOTAS:
     - article-type SE DERIVA DE <subject> EN <article-categories>
-    - xml:lang SE DERIVA DE <abstract xml:lang="..."> EN <article-meta>
+    - xml:lang ES EL IDIOMA PRINCIPAL DEL ARTÍCULO: SE TOMA DEL
+      custom-meta 'xml-lang' QUE ESCRIBE GenerarFrontXML DESDE
+      articulos.idioma_principal. EL IDIOMA DEL PRIMER <abstract> ES
+      SOLO RESPALDO. ANTES ERA AL REVÉS, Y UN ARTÍCULO EN CASTELLANO
+      CON EL PRIMER RESUMEN EN INGLÉS QUEDABA DECLARADO ENTERO COMO
+      INGLÉS: xml:lang SE HEREDA A TODOS LOS DESCENDIENTES
     - EL NAMESPACE xlink SE DECLARA UNA SOLA VEZ EN <article>
       Y SE ELIMINA DE LOS FRAGMENTOS PARA EVITAR DUPLICACIÓN
     - EL DOCTYPE SE EMITE VÍA <xsl:output> CON doctype-public/system
@@ -73,15 +78,15 @@
     <xsl:variable name="articleType"
       select="normalize-space(//article-categories/subj-group[@subj-group-type='heading']/subject)"/>
 
-<!-- DERIVAR xml:lang DESDE EL PRIMER <abstract xml:lang="...">
-         FALLBACK: custom-meta 'xml-lang' → 'es' como último recurso -->
+    <!-- DERIVAR xml:lang: IDIOMA PRINCIPAL (custom-meta 'xml-lang')
+         → IDIOMA DEL PRIMER <abstract> → 'es' COMO ÚLTIMO RECURSO -->
     <xsl:variable name="xmlLang">
       <xsl:choose>
-        <xsl:when test="normalize-space((//abstract/@xml:lang)[1]) != ''">
-          <xsl:value-of select="normalize-space((//abstract/@xml:lang)[1])"/>
-        </xsl:when>
         <xsl:when test="normalize-space(//custom-meta[meta-name='xml-lang']/meta-value) != ''">
           <xsl:value-of select="normalize-space(//custom-meta[meta-name='xml-lang']/meta-value)"/>
+        </xsl:when>
+        <xsl:when test="normalize-space((//abstract/@xml:lang)[1]) != ''">
+          <xsl:value-of select="normalize-space((//abstract/@xml:lang)[1])"/>
         </xsl:when>
         <xsl:otherwise>es</xsl:otherwise>
       </xsl:choose>
