@@ -27,7 +27,9 @@ Private Const CARPETA_CANONICOS As String = "jats"
 ' AL XSLT, SUBE ACÁ Y EN preambulo-contrato.tex, Y UN PREÁMBULO DE EDITORIAL
 ' VIEJO FRENA EN LA PRIMERA LÍNEA EN VEZ DE DAR UN "Undefined control
 ' sequence" EN LA PÁGINA 140.
-Public Const CONTRATO_VERSION As Integer = 1
+' VERSIÓN 2: LAS PRIMERAS DEL LIBRO —\gbPortadilla, \gbPortada, \gbCreditos—
+' (SC-25).
+Public Const CONTRATO_VERSION As Integer = 2
 
 ' --- ZONAS DEL LIBRO ---
 Private Const ZONA_FRONT As Integer = 1
@@ -164,8 +166,10 @@ End
 '             un solo autor.
 ' Parámetros: sTipoLibro As String — libros_md.tipo_libro
 ' Retorna   : String — lista de roles entre comillas, lista para un IN
+' Nota      : PÚBLICA PORQUE LA USA TAMBIÉN m_PrimerasLibro: LA AUTORÍA DE LA
+'             PORTADA Y DE LA FICHA SIGUE LA MISMA REGLA QUE LOS METADATOS.
 ' ============================================
-Private Function RolesDeAutoriaSegunTipo(sTipoLibro As String) As String
+Public Function RolesDeAutoriaSegunTipo(sTipoLibro As String) As String
 
   Select Case LCase(Trim(sTipoLibro))
     Case "obra_colectiva", "compilacion", "actas", "referencia"
@@ -183,8 +187,9 @@ End
 '             Vacía para el rol de autor.
 ' Parámetros: sRol As String — libro_autor.rol_libro
 ' Retorna   : String — "comp.", "ed.", "coord." o ""
+' Nota      : PÚBLICA POR LA MISMA RAZÓN QUE RolesDeAutoriaSegunTipo.
 ' ============================================
-Private Function AbreviaturaDeRol(sRol As String) As String
+Public Function AbreviaturaDeRol(sRol As String) As String
 
   Select Case LCase(Trim(sRol))
     Case "editor"
@@ -220,6 +225,10 @@ Private Function ZonaDeTipo(sTipo As String) As Integer
   Select Case LCase(Trim(sTipo))
 
       ' --- PRELIMINARES ---
+      ' LAS PRIMERAS VAN ANTES QUE TODO, Y ANTES DEL SUMARIO (SC-25)
+    Case "portadilla", "portada", "creditos"
+      Return ZONA_FRONT
+
     Case "prologo", "prefacio", "presentacion", "palabras_preliminares",
         "introduccion", "dedicatoria", "agradecimientos",
         "nota_traductor", "nota_editor",
@@ -335,6 +344,16 @@ Private Function ComandoGenerado(sTipo As String, sTitulo As String) As String
       Return "\\begin{gbcolofon}" & gb.NewLine & "\\gbTextoColofon" &
         gb.NewLine & "\\end{gbcolofon}"
 
+      ' LAS PRIMERAS (SC-25). CADA MACRO FIJA SU PÁGINA —IMPAR, IMPAR, PAR— Y
+      ' TOMA LOS DATOS DEL PREÁMBULO DEL PROYECTO. EL ASPECTO ESTÁ EN LA
+      ' ESTÉTICA.
+    Case "portadilla"
+      Return "\\gbPortadilla"
+    Case "portada"
+      Return "\\gbPortada"
+    Case "creditos"
+      Return "\\gbCreditos"
+
     Case Else
       Return ""
 
@@ -429,6 +448,9 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Dim aPrest As String[]
   Dim iIdLibro As Integer
   Dim iFormato As Integer
+  Dim cValores As Collection
+  Dim sTexto As String
+  Dim sLogo As String
 
   ' --- 1. VALIDACIÓN DE PROYECTO ABIERTO ---
   If m_InicioCierre.IdProyectoEnCurso = 0 Then
@@ -459,6 +481,8 @@ Public Function GenerarPreambuloProyecto() As Boolean
     "       l.editorial, l.ciudad_publicacion, l.ano_publicacion, " &
     "       l.licencia_defecto, l.url_licencia, l.palabras_clave_libro, " &
     "       l.id_formato_pdf, " &
+    "       l.logo_portada, l.logo_coleccion, " &
+    "       l.texto_catalogacion, l.texto_legal, " &
     "       f.nombre_formato, f.ancho, f.alto, " &
     "       f.margen_interior, f.margen_exterior, " &
     "       f.margen_superior, f.margen_inferior " &
@@ -654,6 +678,52 @@ Public Function GenerarPreambuloProyecto() As Boolean
   ' ES SEÑAL LEGÍTIMA EN EL DIFF, NO RUIDO.
   s &= "% --- VERSIÓN DE gbpublisher ---" & gb.NewLine
   s &= "\\def\\gbversion{" & Application.Version & "}" & gb.NewLine
+  s &= gb.NewLine
+
+  ' 8.7 PRIMERAS DEL LIBRO (SC-25)
+  ' SE ESCRIBEN SIEMPRE, ESTÉN O NO DECLARADAS LAS PIEZAS: ESTA CAPA SOLO
+  ' DEFINE VALORES. LO QUE FALTA PARA UNA PIEZA DECLARADA LO VERIFICA
+  ' GenerarMainTeX. PANDOC CORRE SOLO SI HAY TEXTO.
+  cValores = m_PrimerasLibro.LeerValores(iIdLibro)
+  If Not cValores Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_PrimerasLibro.UltimoError())
+    Return False
+  Endif
+
+  s &= "% --- PRIMERAS DEL LIBRO (SC-25) ---" & gb.NewLine
+  s &= "\\def\\gbautoriaportada{" & EscaparTeX(m_PrimerasLibro.ValorDe(cValores, "autoria")) & "}" & gb.NewLine
+
+  ' LOS LOGOS: VACÍO SI NO HAY, Y ABORTA SI EL CAMPO NOMBRA UN ARCHIVO QUE NO
+  ' ESTÁ EN media/. SIN ESTO LaTeX FALLA CON UN «File not found» EN LA PÁGINA
+  ' DE CRÉDITOS, LEJOS DE LA CAUSA.
+  sLogo = RutaLogo(hLibro["logo_portada"], "de portada")
+  If sLogo = "ABORTAR" Then Return False
+  s &= "\\def\\gblogoportada{" & sLogo & "}" & gb.NewLine
+
+  sLogo = RutaLogo(hLibro["logo_coleccion"], "de colección")
+  If sLogo = "ABORTAR" Then Return False
+  s &= "\\def\\gblogocoleccion{" & sLogo & "}" & gb.NewLine
+
+  ' LOS TEXTOS LLEGAN YA CONVERTIDOS A LaTeX POR PANDOC, CON LOS MARCADORES
+  ' RESUELTOS. SON TEXTOS DEL IMPRESO: bDigital EN False.
+  sTexto = m_PrimerasLibro.TextoParaSalida(NuloAVacio(hLibro["texto_catalogacion"]),
+    cValores, "latex", False)
+  If m_PrimerasLibro.UltimoError() <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Ficha de catalogación: " & m_PrimerasLibro.UltimoError())
+    Return False
+  Endif
+  s &= "\\def\\gbTextoCatalogacion{" & sTexto & "}" & gb.NewLine
+
+  sTexto = m_PrimerasLibro.TextoParaSalida(NuloAVacio(hLibro["texto_legal"]),
+    cValores, "latex", False)
+  If m_PrimerasLibro.UltimoError() <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Texto legal: " & m_PrimerasLibro.UltimoError())
+    Return False
+  Endif
+  s &= "\\def\\gbTextoLegal{" & sTexto & "}" & gb.NewLine
 
   ' --- 9. ESCRITURA ---
   ' File.Save OPERA EN UTF-8 NATIVAMENTE: NO PASAR PARÁMETROS DE CODIFICACIÓN
@@ -803,7 +873,8 @@ Private Function AbrirZona(iZona As Integer) As String
       ' SIN ESTO CONSERVARÍAN LAS DE LA ÚLTIMA PIEZA QUE SÍ LAS PUSO.
       s &= "\\gbMarcasPieza{}{}" & gb.NewLine
       s &= "\\gbHojasCortesia" & gb.NewLine
-      s &= "\\tableofcontents" & gb.NewLine
+      ' EL SUMARIO YA NO SE ABRE CON LA ZONA: VA DESPUÉS DE LA ÚLTIMA DE LAS
+      ' PRIMERAS, Y LO EMITE GenerarMainTeX (SC-25)
 
     Case ZONA_BODY
       s = gb.NewLine & "%%GB:BODY:INICIO" & gb.NewLine
@@ -863,6 +934,7 @@ End
 ' ORDEN, Y POR QUÉ
 '   1. Validar proyecto y libro
 '   2. Leer la lista de piezas declaradas en la base
+'   2b. Verificar las primeras, si las hay (SC-25)
 '   3. Generar los .tex de cada pieza con Saxon y borrar los huérfanos
 '   4. Generar preambulo-proyecto.tex y exportar el .bib
 '   5. Detectar las piezas que el generador no debe duplicar
@@ -901,6 +973,7 @@ Public Function GenerarMainTeX() As Boolean
   Dim bConsolidada As Boolean
   Dim bHayBibliografia As Boolean
   Dim bHayColofon As Boolean
+  Dim bSumario As Boolean
 
   ' LOS DATOS DE LAS PIEZAS SE VUELCAN A ARRAYS PARALELOS EN UNA SOLA PASADA.
   ' ASÍ SE RECORREN DOS VECES —UNA PARA GENERAR LOS .tex Y OTRA PARA ARMAR EL
@@ -989,6 +1062,11 @@ Public Function GenerarMainTeX() As Boolean
     aTituloFolio.Add(EscaparTeX(TituloFolio(hPiezas["id_capitulo"])))
     aAutoriaFolio.Add(AutoriaFolio(hPiezas["id_capitulo"], sAutoriaLibro))
   Next
+
+  ' --- 2b. LAS PRIMERAS, SI LAS HAY ---
+  ' SE VERIFICA ANTES DE ESCRIBIR NADA: UN ORDEN IMPOSIBLE O UNOS CRÉDITOS SIN
+  ' TEXTO SE DETECTAN ACÁ Y NO EN LA COMPILACIÓN (SC-25).
+  If Not VerificarPrimeras(aNombre, aTipo, iIdLibro) Then Return False
 
   ' --- 3. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
   ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX.
@@ -1095,9 +1173,30 @@ Public Function GenerarMainTeX() As Boolean
 
     ' 7.1 CAMBIO DE ZONA
     If iZona <> iZonaActual Then
+      ' SI LOS PRELIMINARES ERAN SOLO PRIMERAS, EL SUMARIO TODAVÍA NO SALIÓ:
+      ' VA AL CERRAR LA ZONA
+      If iZonaActual = ZONA_FRONT Then
+        If Not bSumario Then
+          s &= "\\tableofcontents" & gb.NewLine
+          bSumario = True
+        Endif
+      Endif
       s &= CerrarZona(iZonaActual)
       s &= AbrirZona(iZona)
       iZonaActual = iZona
+    Endif
+
+    ' 7.1b SUMARIO
+    ' VA DESPUÉS DE LA ÚLTIMA DE LAS PRIMERAS Y ANTES DE LA PRIMERA PIEZA DE
+    ' PRELIMINARES QUE NO LO SEA (SC-25). VerificarPrimeras YA GARANTIZÓ QUE
+    ' NINGUNA PRIMERA VIENE DESPUÉS DE OTRA PIEZA DE PRELIMINARES.
+    If iZona = ZONA_FRONT Then
+      If Not bSumario Then
+        If Not m_PrimerasLibro.EsPrimera(sTipo) Then
+          s &= "\\tableofcontents" & gb.NewLine
+          bSumario = True
+        Endif
+      Endif
     Endif
 
     ' 7.2 APERTURA DE PARTE
@@ -1148,6 +1247,13 @@ Public Function GenerarMainTeX() As Boolean
   ' ZONA ACÁ.
   If Not bHayColofon Or If (bConsolidada And Not bHayBibliografia) Then
     If iZonaActual <> ZONA_BACK Then
+      ' UN LIBRO QUE SOLO TIENE PRELIMINARES Y TODAS SON PRIMERAS
+      If iZonaActual = ZONA_FRONT Then
+        If Not bSumario Then
+          s &= "\\tableofcontents" & gb.NewLine
+          bSumario = True
+        Endif
+      Endif
       s &= CerrarZona(iZonaActual)
       s &= AbrirZona(ZONA_BACK)
       iZonaActual = ZONA_BACK
@@ -1184,6 +1290,140 @@ Public Function GenerarMainTeX() As Boolean
   Endif
 
   Return True
+
+End
+
+' ============================================
+' Función   : VerificarPrimeras
+' Propósito : Comprueba que las primeras declaradas se puedan componer: que
+'             estén en preliminares, en el orden estándar, una vez cada una,
+'             antes de cualquier otra pieza de preliminares, y que los
+'             créditos tengan texto (SC-25).
+' Parámetros: aNombre As String[] — nombre_archivo de cada pieza, en orden
+'             aTipo As String[] — tipo_capitulo de cada pieza
+'             iIdLibro As Integer — libros_md.id_libro
+' Retorna   : Boolean — True si se puede seguir; False con mensaje
+' Nota      : EL ORDEN LO FIJAN LAS MACROS: LA PORTADA VA EN IMPAR Y LOS
+'             CRÉDITOS EN SU VUELTA. UNOS CRÉDITOS ANTES DE LA PORTADA NO
+'             TIENEN PÁGINA POSIBLE, Y SE FRENA ACÁ EN VEZ DE COMPONER MAL.
+' ============================================
+Private Function VerificarPrimeras(aNombre As String[], aTipo As String[], iIdLibro As Integer) As Boolean
+
+  Dim i As Integer
+  Dim iOrden As Integer
+  Dim iUltimoOrden As Integer = 0
+  Dim sOtraPieza As String = ""
+  Dim bCreditos As Boolean = False
+  Dim hRes As Result
+
+  ' --- 1. RECORRIDO EN EL ORDEN DEL LIBRO ---
+  For i = 0 To aTipo.Max
+
+    If m_PrimerasLibro.EsPrimera(aTipo[i]) Then
+
+      ' 1.1 VAN EN PRELIMINARES. GV-12: NADA DE Not DELANTE DE Begins
+      If aNombre[i] Begins "fm-" Then
+        ' CORRECTO
+      Else
+        m_Sonido.sonar("Error")
+        Message.Error("La pieza «" & aNombre[i] & "» es una de las primeras y " &
+          "tiene que estar en preliminares: su nombre empieza con fm-.")
+        Return False
+      Endif
+
+      ' 1.2 NINGUNA OTRA PIEZA DE PRELIMINARES ANTES
+      If sOtraPieza <> "" Then
+        m_Sonido.sonar("Error")
+        Message.Error("La pieza «" & aNombre[i] & "» es una de las primeras y " &
+          "está después de «" & sOtraPieza & "»." & gb.NewLine &
+          "Las primeras van antes que cualquier otra pieza de preliminares " &
+          "(fm-00 a fm-09).")
+        Return False
+      Endif
+
+      ' 1.3 ORDEN ESTÁNDAR, UNA VEZ CADA UNA
+      iOrden = m_PrimerasLibro.OrdenPrimera(aTipo[i])
+      If iOrden <= iUltimoOrden Then
+        m_Sonido.sonar("Error")
+        Message.Error("La pieza «" & aNombre[i] & "» está fuera de orden o " &
+          "repetida." & gb.NewLine &
+          "Las primeras van en este orden, y cada una una sola vez: " &
+          "portadilla, portada, créditos.")
+        Return False
+      Endif
+      iUltimoOrden = iOrden
+
+      If aTipo[i] = "creditos" Then bCreditos = True
+
+    Else If ZonaDeTipo(aTipo[i]) = ZONA_FRONT Then
+      ' LA PRIMERA PIEZA DE PRELIMINARES QUE NO ES UNA PRIMERA
+      If sOtraPieza = "" Then sOtraPieza = aNombre[i]
+    Endif
+
+  Next
+
+  ' --- 2. LOS CRÉDITOS NECESITAN TEXTO ---
+  ' UNA PÁGINA DE CRÉDITOS VACÍA SALE BIEN COMPUESTA Y NADIE LA VE HASTA LA
+  ' IMPRENTA. ABORTAR ANTE EL DATO FALTANTE (ENCABEZADO DEL MÓDULO).
+  If Not bCreditos Then Return True
+
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT texto_catalogacion, texto_legal FROM libros_md " &
+    "WHERE id_libro = &1 LIMIT 1", iIdLibro)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los textos de créditos:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  If Not hRes.Available Then Return False
+
+  If NuloAVacio(hRes["texto_catalogacion"]) = "" Then
+    If NuloAVacio(hRes["texto_legal"]) = "" Then
+      m_Sonido.sonar("Error")
+      Message.Error("El libro declara la página de créditos, pero la ficha de " &
+        "catalogación y el texto legal están vacíos." & gb.NewLine &
+        "Cargalos en la ficha del libro antes de generar el PDF.")
+      Return False
+    Endif
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : RutaLogo
+' Propósito : Ruta de un logo para \includegraphics, relativa a la carpeta del
+'             proyecto, que es desde donde compila LuaLaTeX.
+' Parámetros: vNombre As Variant — libros_md.logo_portada o logo_coleccion
+'             sCual As String — «de portada» o «de colección», para el mensaje
+' Retorna   : String — "media/archivo", "" si no hay logo, o "ABORTAR" si el
+'             archivo no está en media/ (con mensaje)
+' Nota      : "ABORTAR" ES LA MISMA SEÑAL QUE ComandoGenerado: UNA CADENA NO
+'             PUEDE SER NULA, Y UN LOGO FALTANTE NO ES LO MISMO QUE NINGÚN LOGO.
+' ============================================
+Private Function RutaLogo(vNombre As Variant, sCual As String) As String
+
+  Dim sNombre As String
+  Dim sRuta As String
+
+  sNombre = NuloAVacio(vNombre)
+  If sNombre = "" Then Return ""
+
+  sRuta = m_PrimerasLibro.CARPETA_MEDIA &/ sNombre
+
+  ' Exist DA True TAMBIÉN PARA UNA CARPETA, PERO EL NOMBRE LO ESCRIBE LA
+  ' APLICACIÓN (logo-portada.EXT); ALCANZA CON SABER QUE ESTÁ (GV-01)
+  If Not Exist(m_InicioCierre.RutaProyectoEnCurso &/ sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El logo " & sCual & " no está en la carpeta media del proyecto:" &
+      gb.NewLine & sNombre)
+    Return "ABORTAR"
+  Endif
+
+  Return sRuta
 
 End
 
