@@ -29,6 +29,9 @@
 ' CARPETA DEL PROYECTO DONDE VIVEN LOS LOGOS, IGUAL QUE LA TAPA
 Public Const CARPETA_MEDIA As String = "media"
 
+' CARPETA DE LAS PLANTILLAS PROPIAS DE LA EDITORIAL, EN ~/.gbpublisher
+Private Const CARPETA_PLANTILLAS As String = "plantillas"
+
 ' VALOR QUE OCUPA EL LUGAR DE UN DATO VACÍO, COMO UNA REFERENCIA SIN RESOLVER
 Private Const VALOR_VACIO As String = "??"
 
@@ -89,6 +92,168 @@ Public Function OrdenPrimera(sTipo As String) As Integer
 End
 
 ' ============================================
+' Función   : PlantillaTexto
+' Propósito : La plantilla de un campo de créditos: la propia de la editorial
+'             si existe, la base de gbpublisher si no.
+' Parámetros: sCampo As String — texto_catalogacion, texto_legal,
+'             texto_catalogacion_digital o texto_legal_digital
+' Retorna   : String — el texto de la plantilla
+' Nota      : LAS PLANTILLAS PROPIAS SON CONTENIDO DEL USUARIO, COMO LOS
+'             SNIPPETS (SC-21): UN ARCHIVO POR CAMPO EN ~/.gbpublisher/plantillas/,
+'             FUERA DE LA COPIA DEL SISTEMA (SC-11). CADA SELLO GUARDA LA SUYA.
+'             SI EL ARCHIVO NO SE PUEDE LEER, SE DEVUELVE LA BASE: UNA
+'             PLANTILLA ES UNA AYUDA, NO UN DATO.
+' ============================================
+Public Function PlantillaTexto(sCampo As String) As String
+
+  Dim sTexto As String
+
+  If EsPlantillaPropia(sCampo) Then
+    Try sTexto = File.Load(RutaPlantilla(sCampo))
+    If Not Error Then
+      ' UN EDITOR EXTERNO AGREGA UN SALTO FINAL AL GUARDAR (SC-21)
+      If Right(sTexto, 1) = Chr(10) Then sTexto = Left(sTexto, Len(sTexto) - 1)
+      Return sTexto
+    Endif
+  Endif
+
+  Return PlantillaBase(sCampo)
+
+End
+
+' ============================================
+' Función   : EsPlantillaPropia
+' Propósito : Dice si la editorial guardó su propia plantilla para un campo.
+' Parámetros: sCampo As String — el campo de créditos
+' Retorna   : Boolean
+' ============================================
+Public Function EsPlantillaPropia(sCampo As String) As Boolean
+
+  ' Exist DA True TAMBIÉN PARA UNA CARPETA; EL NOMBRE LO ARMA EL CÓDIGO (GV-01)
+  Return Exist(RutaPlantilla(sCampo))
+
+End
+
+' ============================================
+' Función   : GuardarPlantilla
+' Propósito : Guarda la plantilla propia de la editorial para un campo.
+' Parámetros: sCampo As String — el campo de créditos
+'             sTexto As String — el texto de la plantilla
+' Retorna   : Boolean — True si se guardó; False con el motivo en
+'             UltimoError()
+' Nota      : LA CARPETA SE CREA ACÁ, EN EL PRIMER GUARDADO: NO HACE FALTA QUE
+'             EXISTA ANTES, PORQUE SIN ARCHIVO SE USA LA BASE.
+'             File.Save ESCRIBE EN UTF-8 SIN RECODIFICAR (SC-02).
+' ============================================
+Public Function GuardarPlantilla(sCampo As String, sTexto As String) As Boolean
+
+  Dim sCarpeta As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  sCarpeta = User.Home &/ ".gbpublisher" &/ CARPETA_PLANTILLAS
+
+  ' --- 2. CARPETA ---
+  ' IsDir Y NO Exist: Exist TAMBIÉN DA True PARA UN ARCHIVO (GV-01)
+  If Not IsDir(sCarpeta) Then
+    Try Mkdir sCarpeta
+    If Error Then
+      $sUltimoError = "No se pudo crear la carpeta de plantillas: " & Error.Text
+      Return False
+    Endif
+  Endif
+
+  ' --- 3. ESCRITURA ---
+  Try File.Save(RutaPlantilla(sCampo), sTexto)
+  If Error Then
+    $sUltimoError = "No se pudo guardar la plantilla: " & Error.Text
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : RutaPlantilla
+' Propósito : Ruta del archivo de la plantilla propia de un campo.
+' Parámetros: sCampo As String — el campo de créditos
+' Retorna   : String — ~/.gbpublisher/plantillas/<campo>.md
+' ============================================
+Private Function RutaPlantilla(sCampo As String) As String
+
+  Return User.Home &/ ".gbpublisher" &/ CARPETA_PLANTILLAS &/ sCampo & ".md"
+
+End
+
+' ============================================
+' Función   : PlantillaBase
+' Propósito : La plantilla que trae gbpublisher, para la editorial que todavía
+'             no guardó la suya.
+' Parámetros: sCampo As String — el campo de créditos
+' Retorna   : String — la plantilla, o "" si el campo no tiene
+' Nota      : LA ESTRUCTURA SIGUE LA FICHA DE CATALOGACIÓN ARGENTINA. LO QUE
+'             ESTÁ EN MAYÚSCULAS ENTRE CORCHETES ES PARA REEMPLAZAR A MANO; LO
+'             QUE ESTÁ ENTRE LLAVES LO COMPLETA LA BASE. LAS DIGITALES NO
+'             LLEVAN {paginas} NI {formato}, QUE AHÍ SON UN ERROR, NI IMPRENTA.
+'             NADA DE UN SELLO EN PARTICULAR: LOS DATOS DE CADA EDITORIAL VAN
+'             EN SU PLANTILLA PROPIA.
+' ============================================
+Public Function PlantillaBase(sCampo As String) As String
+
+  Dim a As New String[]
+
+  Select Case sCampo
+
+    Case "texto_catalogacion"
+      a.Add("{autoria}")
+      a.Add("{titulo}. {subtitulo}. {edicion} ed.")
+      a.Add("{ciudad}: {anio}.")
+      a.Add("{paginas} p.; {formato}. ISBN {isbn_impreso}")
+      a.Add("1. [MATERIA]. I. Título.")
+      a.Add("CDD [NÚMERO]")
+      a.Add("Fecha de catalogación: [DD/MM/AAAA]")
+      a.Add("© {anio}, {autoria}")
+      a.Add("© {anio}, {editorial}")
+      a.Add("Imagen de tapa: *[OBRA]* de [ARTISTA]")
+      a.Add("Hecho el depósito que marca la ley 11.723")
+
+    Case "texto_catalogacion_digital"
+      a.Add("{autoria}")
+      a.Add("{titulo}. {subtitulo}. {edicion} ed.")
+      a.Add("{ciudad}: {anio}.")
+      a.Add("Libro digital. ISBN {isbn_digital}")
+      a.Add("1. [MATERIA]. I. Título.")
+      a.Add("CDD [NÚMERO]")
+      a.Add("Fecha de catalogación: [DD/MM/AAAA]")
+      a.Add("© {anio}, {autoria}")
+      a.Add("© {anio}, {editorial}")
+
+    Case "texto_legal"
+      ' LA LÍNEA VACÍA SEPARA PÁRRAFOS: SIN ELLA, PANDOC UNE LA URL CON EL
+      ' TEXTO EN UN SOLO PÁRRAFO CON SALTO DE LÍNEA
+      a.Add("{url_libro}")
+      a.Add("")
+      a.Add("[TEXTO DE RESERVA DE DERECHOS O LICENCIA]")
+      a.Add("")
+      a.Add("Este libro se terminó de imprimir en [MES] de [AAAA] en [IMPRENTA], " &
+        "[DIRECCIÓN]. Tirada: [NÚMERO] ejemplares.")
+
+    Case "texto_legal_digital"
+      a.Add("{url_libro}")
+      a.Add("")
+      a.Add("[TEXTO DE RESERVA DE DERECHOS O LICENCIA]")
+
+    Case Else
+      Return ""
+
+  End Select
+
+  Return a.Join(Chr(10))
+
+End
+
+' ============================================
 ' Función   : LeerValores
 ' Propósito : Lee de la base los valores que pueden ocupar un marcador.
 ' Parámetros: iIdLibro As Integer — libros_md.id_libro
@@ -119,6 +284,7 @@ Public Function LeerValores(iIdLibro As Integer) As Collection
     "SELECT l.titulo_libro, l.subtitulo, l.tipo_libro, l.numero_edicion, " &
     "       l.edicion, l.ciudad_publicacion, l.ano_publicacion, l.editorial, " &
     "       l.isbn_impreso, l.isbn_electronico, l.url_libro, l.numero_paginas, " &
+    "       l.leyenda_autoria, " &
     "       f.ancho, f.alto, " &
     "       c.nombre AS coleccion, c.director_coleccion " &
     "FROM libros_md l " &
@@ -137,7 +303,7 @@ Public Function LeerValores(iIdLibro As Integer) As Collection
   Endif
 
   ' --- 3. VALORES DIRECTOS ---
-  cValores["autoria"] = AutoriaDirecta(iIdLibro, NuloAVacio(hLibro["tipo_libro"]))
+  LeerAutoria(iIdLibro, NuloAVacio(hLibro["tipo_libro"]), cValores)
   If $sUltimoError <> "" Then Return Null
 
   cValores["titulo"] = NuloAVacio(hLibro["titulo_libro"])
@@ -151,6 +317,9 @@ Public Function LeerValores(iIdLibro As Integer) As Collection
   cValores["isbn_digital"] = NuloAVacio(hLibro["isbn_electronico"])
   cValores["url_libro"] = NuloAVacio(hLibro["url_libro"])
   cValores["paginas"] = NuloAVacio(hLibro["numero_paginas"])
+  ' NO ES MARCADOR: ES LA LÍNEA DE LA PORTADA DEBAJO DE LOS NOMBRES. LA
+  ' ESCRIBE EL EDITOR PORQUE CONCUERDA EN GÉNERO Y NÚMERO (SC-25)
+  cValores["leyenda_autoria"] = NuloAVacio(hLibro["leyenda_autoria"])
 
   ' --- 4. EDICIÓN, YA COMO MARKDOWN ---
   ' EL NÚMERO VA CON EL ORDINAL VOLADO: 1.^a^ DA 1.ª EN LAS DOS SALIDAS. SI NO
@@ -589,25 +758,38 @@ Private Function EsNombreMarcador(sNombre As String) As Boolean
 End
 
 ' ============================================
-' Función   : AutoriaDirecta
-' Propósito : La autoría del libro en forma directa, para la portada y la
-'             ficha: «Andrés Carminati», «Ana Pérez y Juan Gómez (comps.)».
+' Función   : LeerAutoria
+' Propósito : Lee la autoría del libro y deja en cValores tres entradas:
+'               autoria          «Adrián Cammarota y Astrid Dahhur (coords.)»,
+'                                para el marcador {autoria} de la ficha
+'               nombres_autoria  String[] con los nombres, para la portada
+'               rol_autoria      «coords.», o vacío (lo usa la ficha; la
+'                                portada usa leyenda_autoria)
 ' Parámetros: iIdLibro As Integer — libros_md.id_libro
 '             sTipoLibro As String — libros_md.tipo_libro
-' Retorna   : String — sin escapar; "" si no hay autoría. Si la consulta
-'             falla, deja el motivo en UltimoError()
-' Nota      : LOS ROLES QUE CUENTAN LOS DECIDE EL TIPO DE LIBRO, CON LA MISMA
-'             REGLA QUE LOS METADATOS DEL PDF (RolesDeAutoriaSegunTipo). LA
-'             ABREVIATURA DE ROL VA DESPUÉS DE CADA NOMBRE, COMO EN
-'             ObtenerAutoresLibro.
+'             cValores As Collection — donde se dejan las entradas
+' Retorna   : (Sub, sin retorno). Si la consulta falla, deja el motivo en
+'             UltimoError()
+' Nota      : EL ROL VA ABREVIADO Y UNA SOLA VEZ PARA TODOS: LA ABREVIATURA NO
+'             TIENE GÉNERO, ASÍ QUE NO HAY QUE CONCORDAR (coords., NO
+'             «coordinadores» NI «coordinadoras»). EL NÚMERO SÍ: EL PLURAL DE
+'             UNA ABREVIATURA AGREGA s ANTES DEL PUNTO (coord. → coords.).
+'             SI LOS ROLES SON DISTINTOS ENTRE SÍ, CADA NOMBRE LLEVA EL SUYO Y
+'             NO HAY ROL COMÚN.
+'             LOS ROLES QUE CUENTAN LOS DECIDE EL TIPO DE LIBRO, CON LA MISMA
+'             REGLA QUE LOS METADATOS DEL PDF (RolesDeAutoriaSegunTipo).
+'             nombres_autoria ES UN OBJETO: NO SE PIERDE EN LA Collection AUNQUE
+'             ESTÉ VACÍO, A DIFERENCIA DE UNA CADENA VACÍA.
 ' ============================================
-Private Function AutoriaDirecta(iIdLibro As Integer, sTipoLibro As String) As String
+Private Sub LeerAutoria(iIdLibro As Integer, sTipoLibro As String, cValores As Collection)
 
   Dim hRes As Result
-  Dim sNombre As String
-  Dim sAbrev As String
   Dim aNombres As New String[]
-  Dim sUltimo As String
+  Dim aAbrev As New String[]
+  Dim sRol As String = ""
+  Dim bUniforme As Boolean = True
+  Dim sAutoria As String = ""
+  Dim i As Integer
 
   ' --- 1. CONSULTA ---
   ' EL IN SE INTERPOLA PORQUE LO ARMA EL CÓDIGO DESDE UN enum CERRADO
@@ -621,26 +803,60 @@ Private Function AutoriaDirecta(iIdLibro As Integer, sTipoLibro As String) As St
 
   If Error Then
     $sUltimoError = "No se pudo leer la autoría del libro: " & Error.Text
-    Return ""
+    Return
   Endif
 
-  If Not hRes.Available Then Return ""
+  ' --- 2. NOMBRES Y ABREVIATURAS ---
+  If hRes.Available Then
+    For Each hRes
+      aNombres.Add(Trim(hRes["nombre"]) & " " & Trim(hRes["apellidos"]))
+      aAbrev.Add(m_GenerarPDFLibro.AbreviaturaDeRol(hRes["rol_libro"]))
+    Next
+  Endif
 
-  ' --- 2. NOMBRES ---
-  For Each hRes
-    sNombre = Trim(hRes["nombre"]) & " " & Trim(hRes["apellidos"])
-    sAbrev = m_GenerarPDFLibro.AbreviaturaDeRol(hRes["rol_libro"])
-    If sAbrev <> "" Then sNombre &= " (" & sAbrev & ")"
-    aNombres.Add(sNombre)
+  ' --- 3. ¿UN SOLO ROL PARA TODOS? ---
+  For i = 1 To aAbrev.Max
+    If aAbrev[i] <> aAbrev[0] Then bUniforme = False
   Next
 
-  ' --- 3. UNIÓN: «A», «A y B», «A, B y C» ---
-  If aNombres.Count = 1 Then Return aNombres[0]
+  If aNombres.Count > 0 Then
+    If bUniforme Then
+      sRol = aAbrev[0]
+      ' PLURAL DE LA ABREVIATURA: coord. → coords.
+      If sRol <> "" And aNombres.Count > 1 Then sRol = Left(sRol, Len(sRol) - 1) & "s."
+    Else
+      ' ROLES MEZCLADOS: CADA NOMBRE CON EL SUYO
+      For i = 0 To aNombres.Max
+        If aAbrev[i] <> "" Then aNombres[i] &= " (" & aAbrev[i] & ")"
+      Next
+    Endif
+  Endif
 
-  sUltimo = aNombres[aNombres.Max]
-  aNombres.Remove(aNombres.Max)
+  ' --- 4. LA FORMA DE LA FICHA ---
+  For i = 0 To aNombres.Max
+    sAutoria &= SeparadorAutoria(i, aNombres.Count) & aNombres[i]
+  Next
+  If sRol <> "" Then sAutoria &= " (" & sRol & ")"
 
-  Return aNombres.Join(", ") & " y " & sUltimo
+  ' --- 5. ENTRADAS ---
+  cValores["autoria"] = sAutoria
+  cValores["nombres_autoria"] = aNombres
+  cValores["rol_autoria"] = sRol
+
+End
+
+' ============================================
+' Función   : SeparadorAutoria
+' Propósito : Lo que va antes del nombre i en una lista de n: nada, coma o «y».
+' Parámetros: i As Integer — posición del nombre, desde 0
+'             n As Integer — cantidad de nombres
+' Retorna   : String — "", ", " o " y ": «A», «A y B», «A, B y C»
+' ============================================
+Public Function SeparadorAutoria(i As Integer, n As Integer) As String
+
+  If i = 0 Then Return ""
+  If i = n - 1 Then Return " y "
+  Return ", "
 
 End
 

@@ -1,0 +1,220 @@
+' Gambas class file
+
+' ==============================================================================
+' Formulario: FPlantillaCreditos
+' Propósito : Muestra la plantilla de un campo de créditos del libro (SC-25) y
+'             la aplica al campo. La plantilla es de la editorial: se puede
+'             corregir y guardar, y queda para los libros siguientes.
+'             Aplicar solo copia el texto al campo; los reemplazos de cada
+'             libro se hacen después, con el editor ampliado del campo.
+' Uso       : quien lo abre asigna Campo y Destino antes de ShowModal.
+'             Son datos de ENTRADA: el formulario escribe en Destino, que es
+'             un objeto, y no devuelve nada por variables propias (RC-GM-13).
+' Dependencias: m_PrimerasLibro, m_Sonido, m_Ventana.
+' ==============================================================================
+
+' --- ENTRADA: EL CAMPO DE LA BASE Y EL TEXTBOX DEL FORMULARIO DEL LIBRO ---
+Public Campo As String
+Public Destino As TextBox
+
+' --- FLAG QUE PERMITE EL CIERRE DESDE EL BOTÓN O ESCAPE Y BLOQUEA LA X ---
+' PATRÓN DE FSnippets; LA SALIDA PROPIA ES LA CONTRAPARTIDA DE SC-20
+Private $bCierrePermitido As Boolean
+
+' --- TEXTO DE LA PLANTILLA TAL COMO SE CARGÓ O SE GUARDÓ ---
+' PARA SABER SI AL CERRAR HAY CAMBIOS SIN GUARDAR
+Private $sGuardado As String
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Carga la plantilla del campo: la de la editorial o la base
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. TÍTULO ---
+  Me.Title = "Plantilla: " & Replace(Campo, "_", " ")
+
+  ' --- 2. TEXTO ---
+  txaPlantilla.Text = m_PrimerasLibro.PlantillaTexto(Campo)
+  $sGuardado = txaPlantilla.Text
+
+  ' --- 3. DE DÓNDE VIENE ---
+  MostrarOrigen()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Permite el cierre desde el botón o Escape; lo bloquea desde la X
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. CIERRE PEDIDO DESDE LA INTERFAZ ---
+  If $bCierrePermitido Then Return
+
+  ' --- 2. CIERRE DESDE LA X DEL SISTEMA: BLOQUEAR Y AVISAR ---
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario use el botón <b>Cerrar</b> o la tecla Escape.")
+  Stop Event
+
+End
+
+' ============================================
+' Función   : Form_KeyPress
+' Propósito : Escape cierra el formulario (contrapartida de SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_KeyPress()
+
+  If Key.Code = Key.Esc Then Cerrar()
+
+End
+
+' ============================================
+' Función   : btnBase_Click
+' Propósito : Pone en el área la plantilla base de gbpublisher
+' Parámetros: ninguno
+' Retorna   : nada
+' Nota      : NO BORRA LA PLANTILLA PROPIA: SOLO CAMBIA EL TEXTO EN PANTALLA.
+'             QUEDA COMO PLANTILLA DE LA EDITORIAL RECIÉN SI SE GUARDA.
+' ============================================
+Public Sub btnBase_Click()
+
+  txaPlantilla.Text = m_PrimerasLibro.PlantillaBase(Campo)
+  txaPlantilla.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarPlantilla_Click
+' Propósito : Guarda el texto del área como plantilla de la editorial
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarPlantilla_Click()
+
+  ' --- 1. NO SE GUARDA UNA PLANTILLA VACÍA: SIN ARCHIVO YA SE USA LA BASE ---
+  If Trim(txaPlantilla.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La plantilla está vacía. No se guardó.")
+    txaPlantilla.SetFocus()
+    Return
+  Endif
+
+  ' --- 2. ESCRITURA ---
+  If Not m_PrimerasLibro.GuardarPlantilla(Campo, txaPlantilla.Text) Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_PrimerasLibro.UltimoError())
+    txaPlantilla.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. ESTADO ---
+  $sGuardado = txaPlantilla.Text
+  MostrarOrigen()
+  m_Sonido.sonar("Info")
+  Message.Info("Plantilla guardada. Se va a usar en los libros siguientes.")
+
+  ' EL FOCO VUELVE AL TEXTO DESPUÉS DEL MENSAJE (RC-GM-07)
+  txaPlantilla.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnAplicar_Click
+' Propósito : Copia el texto del área al campo del libro y cierra
+' Parámetros: ninguno
+' Retorna   : nada
+' Nota      : SE COPIA LO QUE ESTÁ EN PANTALLA, ESTÉ O NO GUARDADO COMO
+'             PLANTILLA: UN AJUSTE PARA UN SOLO LIBRO NO TIENE POR QUÉ
+'             CAMBIAR LA PLANTILLA. EL CAMPO SE GUARDA EN LA BASE CON EL
+'             BOTÓN DE GUARDAR DEL FORMULARIO DEL LIBRO, COMO LOS DEMÁS.
+' ============================================
+Public Sub btnAplicar_Click()
+
+  ' --- 1. EL CAMPO YA TIENE TEXTO: PREGUNTAR ANTES DE REEMPLAZARLO ---
+  If Trim(Destino.Text) <> "" Then
+    If Message.Question("El campo ya tiene texto." & gb.NewLine &
+        "¿Reemplazarlo por la plantilla?", "Sí", "No") <> 1 Then
+      txaPlantilla.SetFocus()
+      Return
+    Endif
+  Endif
+
+  ' --- 2. COPIA Y CIERRE ---
+  ' SI HAY CAMBIOS SIN GUARDAR EN LA PLANTILLA, NO SE PREGUNTA: SE APLICARON
+  ' AL LIBRO, QUE ES LO QUE SE PIDIÓ
+  Destino.Text = txaPlantilla.Text
+  $bCierrePermitido = True
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Cerrar()
+
+End
+
+' ============================================
+' Función   : Cerrar
+' Propósito : Cierra, preguntando antes si la plantilla tiene cambios sin
+'             guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Cerrar()
+
+  ' --- 1. CAMBIOS SIN GUARDAR ---
+  If txaPlantilla.Text <> $sGuardado Then
+    If Message.Question("La plantilla tiene cambios sin guardar." & gb.NewLine &
+        "¿Cerrar igual y descartarlos?", "Sí", "No") <> 1 Then
+      txaPlantilla.SetFocus()
+      Return
+    Endif
+  Endif
+
+  ' --- 2. CIERRE ---
+  $bCierrePermitido = True
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : MostrarOrigen
+' Propósito : Dice en la barra si la plantilla es la de la editorial o la base
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarOrigen()
+
+  If m_PrimerasLibro.EsPlantillaPropia(Campo) Then
+    lblOrigen.Text = "  Plantilla de la editorial"
+  Else
+    lblOrigen.Text = "  Plantilla base de gbpublisher (todavía no hay una propia)"
+  Endif
+
+End

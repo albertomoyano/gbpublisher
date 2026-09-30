@@ -1205,7 +1205,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25); 1.5.0 (refactor de bibtex) pendiente.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25); 1.6.0 (refactor de bibtex) pendiente.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1390,6 +1390,13 @@ DATOS EN libros_md
 - `logo_portada` y `logo_coleccion`: nombre normalizado en `media/` (`logo-portada.EXT`, `logo-coleccion.EXT`), con el mismo mecanismo que la tapa (`btnBuscarTapa_Click`). El nombre de la colección y el del director son parte de la imagen.
 - `numero_paginas`, ya existente: se carga a mano. No se usa `\ztotpages`.
 - `url_libro`, ya existente: va como texto. Sin QR.
+- `leyenda_autoria` (1.5.0): la línea debajo de los nombres en la portada, tal como debe salir («coordinadores», «compiladora»). La escribe el editor: el género y el número no se deducen de la base (`autores.genero` es texto libre y ningún código lo usa). Vacía, no hay línea.
+
+AUTORÍA
+
+En la portada, cada nombre va dentro de `\gbNombrePortada` —la estética decide versalitas o mayúsculas— y se unen con comas e «y» en letra normal; debajo, `\gbleyendaautoria`. `\gbNombrePortada` es vocabulario que emite el generador: contrato versión 3.
+
+En la ficha, `{autoria}` une los nombres igual y agrega el rol abreviado una sola vez: «Adrián Cammarota y Astrid Dahhur (coords.)». La abreviatura no tiene género; su plural agrega una s antes del punto. Si los roles difieren entre sí, cada nombre lleva el suyo.
 
 MARCADO DE LOS TEXTOS
 
@@ -1409,6 +1416,10 @@ Gambas los reemplaza ANTES de Pandoc: así Pandoc escapa los caracteres especial
 - No hay `{isbn}` a secas: ningún texto depende de adivinar en qué salida está.
 - `{url_libro}` se reemplaza como autoenlace `<url>`: Pandoc da `\url{}`, que corta la línea en las barras, y `<a href>` en el EPUB. Una URL desnuda sale como texto común y no se corta (verificado).
 
+PLANTILLAS
+
+Cada campo de texto tiene un botón que abre `FPlantillaCreditos` con la plantilla de la editorial: un archivo por campo en `~/.gbpublisher/plantillas/<campo>.md`, contenido del usuario como los snippets (SC-21) y fuera de la copia de SC-11. Si no hay, se muestra la base de gbpublisher, que no trae datos de ningún sello. Aplicar copia al campo y pregunta si ya tiene texto; los reemplazos de cada libro se hacen después, con el editor ampliado.
+
 CANTIDAD DE PÁGINAS
 
 Después de compilar, la aplicación lee las páginas del PDF con `pdfinfo` y AVISA si difieren de `numero_paginas`. No escribe: el número lo carga el editor. Cuenta páginas físicas, cortesía incluida.
@@ -1421,9 +1432,9 @@ ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68
 
-**PENDIENTE:** Código sin implementar. Esquema: actualizar-esquema-1.4.0.sh. Sin medir: el SVG con unidades pt en epubcheck y en un lector (GV-66).
+**PENDIENTE:** PDF implementado y probado con un libro real; falta el EPUB. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh. Sin medir: el SVG con unidades pt en epubcheck y en un lector (GV-66).
 
 ---
 
@@ -3148,3 +3159,31 @@ Los mensajes «Para volver atrás» de `actualizar-esquema-1.1.0.sh` a `1.3.0.sh
 **Relaciones:** vinculo:SC-22
 
 **PENDIENTE:** Corregir el mensaje de restauración en actualizar-esquema-1.1.0.sh a 1.3.0.sh. Sin verificar en MariaDB.
+
+### GV-68 — Asignar "" a una clave de Collection no la crea, y si existía la borra
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbs3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-09
+
+Asignar una cadena vacía a una clave de `Collection` no la crea, y si la clave ya existía, la borra:
+
+    c["a"] = ""        c.Exist("a")  ->  False
+    c["b"] = "x"       c.Exist("b")  ->  True
+    c["b"] = ""        c.Exist("b")  ->  False, c.Count baja
+
+La razón es que en Gambas la cadena vacía ES Null (`IsNull("")` da True), y asignar Null a un elemento de una `Collection` lo elimina.
+
+CONSECUENCIA
+
+`Exist` no sirve para saber si una clave «está definida con valor vacío». Un código que arma una `Collection` de valores leídos de la base, con claves que pueden venir vacías, pierde esas claves sin aviso; si después decide con `Exist` qué claves son válidas, trata un dato vacío como uno desconocido.
+
+REGLA
+
+La lista de claves válidas se escribe aparte —un `Select Case`, una constante—, no se deduce de la `Collection`. Para leer, una función que devuelva "" si la clave no está.
+
+Un OBJETO sí se conserva aunque esté vacío: un `String[]` sin elementos asignado a una clave la crea.
+
+Caso del proyecto: `m_PrimerasLibro`, marcadores de los textos de créditos (SC-25): `EsMarcadorConocido` y `ValorDe`.
+
+**Relaciones:** vinculo:SC-25,vinculo:GV-24
+
+**PENDIENTE:** Medido en 3.19, no en 3.22.1.
