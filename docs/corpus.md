@@ -1205,7 +1205,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas); 1.4.0 (refactor de bibtex) pendiente.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25); 1.5.0 (refactor de bibtex) pendiente.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1229,8 +1229,9 @@ DETALLES VERIFICADOS
 - Esas sentencias se leen con `mysql -N -B -r`: sin `-r`, el modo batch duplica las barras que `QUOTE()` pone en un comentario con apóstrofo y el ALTER sale mal formado.
 - En los informes con CTE, los `CAST(… AS CHAR)` llevan `COLLATE` explícito: sin él toman la colación de la conexión y el `UNION` falla por mezcla de colaciones.
 - Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
+- El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, la restauración borra `articulos` y falla al recrearla (GV-67).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -1422,7 +1423,7 @@ Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescri
 
 **Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18
 
-**PENDIENTE:** Sin implementar. Número de la actualización de esquema: SC-22 reserva la 1.4.0 para el refactor de bibtex; se usa la que siga a la última aplicada. Sin medir: el SVG con unidades pt en epubcheck y en un lector (GV-66).
+**PENDIENTE:** Código sin implementar. Esquema: actualizar-esquema-1.4.0.sh. Sin medir: el SVG con unidades pt en epubcheck y en un lector (GV-66).
 
 ---
 
@@ -3118,3 +3119,32 @@ EPUB 3.3 admite como imagen gif, jpeg, png, svg+xml y webp. PDF no.
 **Relaciones:** vinculo:SC-25
 
 **PENDIENTE:** Medido en contenedor, no en Mint. Sin medir: un JPG sin densidad declarada, y el SVG corregido con pt en epubcheck y en un lector.
+
+### GV-67 — Un respaldo de mysqldump de gbpublisher no se restaura con el comando directo: articulos supera el tamaño de fila
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-09
+
+Restaurar un respaldo con el comando directo falla en la tabla `articulos`:
+
+    sudo mysql gbpublisher < respaldo.sql
+    ERROR 1118 (42000) at line 194: Row size too large (> 8126).
+
+Y falla DESPUÉS de haberla borrado: el volcado trae un `DROP TABLE IF EXISTS` antes de cada `CREATE TABLE`, y el cliente se detiene en el primer error. La base queda sin `articulos`, con las tablas anteriores en orden alfabético ya restauradas y las siguientes sin tocar: una mezcla de dos momentos, peor que antes de intentarlo. Verificado: después del intento, `articulos` no existía.
+
+CAUSA
+
+Con `innodb_strict_mode` activo —el valor por omisión en MySQL 8—, InnoDB rechaza un `CREATE TABLE` cuyo peor caso teórico de tamaño de fila supera el límite, aunque ninguna fila real lo alcance. `articulos` tiene 220 columnas. El baseline desactiva el chequeo en su cabecera (`SET SESSION innodb_strict_mode=0`); `mysqldump` no escribe esa línea.
+
+RESTAURACIÓN CORRECTA
+
+    sudo mysql --init-command="SET SESSION innodb_strict_mode=0" gbpublisher < respaldo.sql
+
+Verificado: restaura la base completa, `esquema_version` incluida.
+
+ALCANCE
+
+Los mensajes «Para volver atrás» de `actualizar-esquema-1.1.0.sh` a `1.3.0.sh` dan el comando directo. Los respaldos que dejaron en `~/gbpublisher-respaldos` están bien; lo que cambia es cómo se restauran. `actualizar-esquema-1.4.0.sh` ya trae el comando correcto.
+
+**Relaciones:** vinculo:SC-22
+
+**PENDIENTE:** Corregir el mensaje de restauración en actualizar-esquema-1.1.0.sh a 1.3.0.sh. Sin verificar en MariaDB.
