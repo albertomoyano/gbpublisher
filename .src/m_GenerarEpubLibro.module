@@ -147,7 +147,7 @@ Public Sub GenerarEpubLibro()
   If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-creditos.xhtml", sPagina) Then Return
   If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "bm-99-colofon.xhtml", ArmarColofon(cMeta)) Then Return
   If Not EscribirArchivo($sRutaOEBPS &/ "nav.xhtml", ArmarNav(cMeta, aPiezas)) Then Return
-  If Not EscribirArchivo($sRutaOEBPS &/ "content.opf", ArmarOPF(cMeta, sAutores, aPiezas)) Then Return
+  If Not EscribirArchivo($sRutaOEBPS &/ "content.opf", ArmarOPF(cMeta, aPiezas)) Then Return
 
   ' LA LISTA QUE EL SCRIPT TRANSFORMA: LAS MISMAS PIEZAS, EN EL MISMO ORDEN,
   ' QUE EL OPF DECLARA
@@ -254,7 +254,7 @@ Private Function LeerMetadatosLibro() As Collection
     "isbn_electronico, doi_libro, editorial, ciudad_publicacion, " &
     "ano_publicacion, idioma_principal, url_licencia, licencia_defecto, " &
     "descripcion_libro, imagen_tapa, logo_portada, logo_coleccion, " &
-    "texto_catalogacion_digital, texto_legal_digital " &
+    "texto_catalogacion_digital, texto_legal_digital, tipo_libro " &
     "FROM libros_md WHERE id_libro = &1 LIMIT 1", $iIdLibro)
   If Error Then
     m_Sonido.sonar("Error")
@@ -287,6 +287,7 @@ Private Function LeerMetadatosLibro() As Collection
   cMeta["logo_coleccion"] = m_Metadatos.NullToString(hLibro["logo_coleccion"])
   cMeta["texto_catalogacion_digital"] = m_Metadatos.NullToString(hLibro["texto_catalogacion_digital"])
   cMeta["texto_legal_digital"] = m_Metadatos.NullToString(hLibro["texto_legal_digital"])
+  cMeta["tipo_libro"] = m_Metadatos.NullToString(hLibro["tipo_libro"])
 
   If cMeta["idioma"] = "" Then cMeta["idioma"] = "es"
 
@@ -297,7 +298,8 @@ End
 ' ============================================
 ' Función   : LeerAutoresLibro
 ' Propósito : La autoría del libro —autor, compilador, editor, coordinador—
-'             como texto legible, para la portada, los créditos y el OPF.
+'             como texto legible, para la tapa y los créditos genéricos. El
+'             OPF no la usa: arma una persona por elemento (PersonasOpf).
 '             Los roles secundarios (traductor, ilustrador, prologuista
 '             externo, director de colección) no encabezan la obra.
 ' Parámetros: (ninguno)
@@ -845,16 +847,124 @@ Private Function LeerTituloCanonico(sPieza As String) As String
 End
 
 ' ============================================
+' Función   : PersonasOpf
+' Propósito : Los dc:creator y dc:contributor del OPF: un elemento por
+'             persona, con su rol MARC y su forma de ordenamiento.
+' Parámetros: sTipoLibro As String — libros_md.tipo_libro
+' Retorna   : String — los elementos y sus meta refines, listos para el
+'             bloque metadata; vacío si no hay personas o falló la consulta
+' Nota      : EPUB 3.3 §5.5.3.2.3: UN dc:creator POR PERSONA; EL ORDEN DEL
+'             DOCUMENTO FIJA LA PRIORIDAD Y EL PRIMERO ES LA AUTORÍA
+'             PRINCIPAL. QUIÉN ES CREADOR LO DECIDE LA MISMA REGLA QUE LA
+'             PORTADA DEL PDF (m_GenerarPDFLibro.RolesDeAutoriaSegunTipo).
+'             LOS ROLES SECUNDARIOS VAN EN dc:contributor (§5.5.3.2.2). EL
+'             DIRECTOR DE COLECCIÓN NO: ES UN DATO DE LA COLECCIÓN.
+'             UN FALLO ACÁ NO IMPIDE EL EPUB: SALE SIN PERSONAS.
+' ============================================
+Private Function PersonasOpf(sTipoLibro As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hRes As Result
+  Dim s As String
+  Dim sId As String
+  Dim sElemento As String
+  Dim sRolesCreador As String
+  Dim sFileAs As String
+  Dim iCreador As Integer
+  Dim iContribuidor As Integer
+
+  sRolesCreador = m_GenerarPDFLibro.RolesDeAutoriaSegunTipo(sTipoLibro)
+
+  ' --- 2. CONSULTA ---
+  ' PRIMERO LOS CREADORES, DESPUÉS LOS CONTRIBUIDORES; DENTRO DE CADA
+  ' GRUPO, EL ORDEN DE AUTORÍA DE LA BASE
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT a.nombre, a.apellidos, a.apellidos_nombre, la.rol_libro, " &
+    "(la.rol_libro IN (" & sRolesCreador & ")) AS es_creador " &
+    "FROM libro_autor la " &
+    "JOIN autores a ON a.id_autor = la.id_autor " &
+    "WHERE la.id_libro = &1 " &
+    "AND (la.rol_libro IN (" & sRolesCreador & ") " &
+    "OR la.rol_libro IN ('traductor','ilustrador','prologuista_externo')) " &
+    "ORDER BY es_creador DESC, la.orden_autoria ASC", $iIdLibro)
+  If Error Then Return ""
+
+  ' --- 3. UN ELEMENTO POR PERSONA ---
+  While hRes.Available
+    ' CInt: EL DRIVER PUEDE DEVOLVER LA EXPRESIÓN COMO ENTERO O COMO BOOLEAN,
+    ' Y EN GAMBAS True VALE -1, NO 1
+    If CInt(hRes["es_creador"]) <> 0 Then
+      Inc iCreador
+      sId = "creador" & CStr(iCreador)
+      sElemento = "dc:creator"
+    Else
+      Inc iContribuidor
+      sId = "contribuidor" & CStr(iContribuidor)
+      sElemento = "dc:contributor"
+    Endif
+
+    s &= "<" & sElemento & " id=" & Comillas(sId) & ">" &
+      EscaparXml(Trim(m_Metadatos.NullToString(hRes["nombre"]) & " " &
+      m_Metadatos.NullToString(hRes["apellidos"]))) & "</" & sElemento & ">" & Chr(10)
+    s &= "<meta refines=" & Comillas("#" & sId) & " property=" & Comillas("role") &
+      " scheme=" & Comillas("marc:relators") & ">" &
+      RolMarc(m_Metadatos.NullToString(hRes["rol_libro"])) & "</meta>" & Chr(10)
+
+    ' FORMA DE ORDENAMIENTO: LA DE LA BASE, O ARMADA SI FALTA
+    sFileAs = Trim(m_Metadatos.NullToString(hRes["apellidos_nombre"]))
+    If sFileAs = "" Then
+      sFileAs = m_Metadatos.NullToString(hRes["apellidos"]) & ", " &
+        m_Metadatos.NullToString(hRes["nombre"])
+    Endif
+    s &= "<meta refines=" & Comillas("#" & sId) & " property=" & Comillas("file-as") & ">" &
+      EscaparXml(sFileAs) & "</meta>" & Chr(10)
+
+    hRes.MoveNext
+  Wend
+
+  Return s
+
+End
+
+' ============================================
+' Función   : RolMarc
+' Propósito : Código MARC del rol de una persona en el libro.
+' Parámetros: sRol As String — libro_autor.rol_libro
+' Retorna   : String — código de marc:relators
+' Nota      : CÓDIGOS Y DEFINICIONES DE loc.gov/marc/relators. EDITOR,
+'             COMPILADOR Y COORDINADOR SON edc («editor of compilation»: QUIEN
+'             SELECCIONA Y REÚNE OBRAS DE OTROS). edt Y com DESCRIBEN EN MARC
+'             OTRAS TAREAS Y «COORDINADOR» NO TIENE CÓDIGO. EL MATIZ EN
+'             CASTELLANO LO DA LA LEYENDA DE AUTORÍA, NO EL METADATO.
+'             EL PRÓLOGO EXTERNO ES wfw («writer of foreword»).
+' ============================================
+Private Function RolMarc(sRol As String) As String
+
+  Select Case LCase(Trim(sRol))
+    Case "editor", "compilador", "coordinador"
+      Return "edc"
+    Case "traductor"
+      Return "trl"
+    Case "ilustrador"
+      Return "ill"
+    Case "prologuista_externo"
+      Return "wfw"
+    Case Else
+      Return "aut"
+  End Select
+
+End
+
+' ============================================
 ' Función   : ArmarOPF
 ' Propósito : El content.opf: metadatos, manifest y spine. Declara los archivos
 '             que el script va a producir o copiar; el script verifica que
 '             todos existan antes de empaquetar.
 ' Parámetros: cMeta As Collection — metadatos del libro
-'             sAutores As String — autoría, sin escapar
 '             aPiezas As String[] — piezas del EPUB, en orden
 ' Retorna   : String — el OPF completo
 ' ============================================
-Private Function ArmarOPF(cMeta As Collection, sAutores As String, aPiezas As String[]) As String
+Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
 
   ' --- 1. INICIALIZACIÓN ---
   Dim aFuentes As New String[]
@@ -894,7 +1004,8 @@ Private Function ArmarOPF(cMeta As Collection, sAutores As String, aPiezas As St
   s &= "<dc:identifier id=" & Comillas("pub-id") & ">" & EscaparXml(sIdentificador) & "</dc:identifier>" & Chr(10)
   s &= "<dc:title>" & EscaparXml(cMeta["titulo"]) & "</dc:title>" & Chr(10)
   s &= "<dc:language>" & EscaparXml(cMeta["idioma"]) & "</dc:language>" & Chr(10)
-  If sAutores <> "" Then s &= "<dc:creator>" & EscaparXml(sAutores) & "</dc:creator>" & Chr(10)
+  ' UNA PERSONA POR ELEMENTO, CON SU ROL (EPUB 3.3 §5.5.3.2.3)
+  s &= PersonasOpf(cMeta["tipo_libro"])
   If cMeta["editorial"] <> "" Then s &= "<dc:publisher>" & EscaparXml(cMeta["editorial"]) & "</dc:publisher>" & Chr(10)
   If cMeta["anio"] <> "" Then s &= "<dc:date>" & EscaparXml(cMeta["anio"]) & "</dc:date>" & Chr(10)
   If cMeta["descripcion"] <> "" Then s &= "<dc:description>" & EscaparXml(cMeta["descripcion"]) & "</dc:description>" & Chr(10)
