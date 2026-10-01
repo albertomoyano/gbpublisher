@@ -1497,6 +1497,45 @@ LO QUE SE RETIRA
 
 **PENDIENTE:** Apertura, conjunción y sumario probados por Alberto con libros reales. Pieza de otra autoría en un libro de autor, tocdepth 0 y sangría de las piezas sin número: probados en el contenedor; falta probarlos con un libro real.
 
+### SC-27 — Refresco en caliente de un combo que lista archivos: sondeo por firma sin recargar lo abierto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5 / Linux Mint · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Un combo que lista los archivos de una carpeta del proyecto se mantiene al día con un `Timer` que sondea la carpeta. Aplicado en `cmbVerPDF` (`m_RevisarPDF`, `hTimerRefrescarPDF`) y en `cmbImagenes` (`m_GestionImagenes`, `hTimerRefrescarMedia`).
+
+POR QUÉ SONDEO
+
+Varias salidas se generan escribiendo comandos en `TerminalViewProyecto` (`m_GenerarPDF`, `m_XML`, `m_OrdenTaller`): Gambas no se entera de cuándo terminan, así que no hay evento del que colgar el refresco. Los archivos también cambian por fuera: el gestor de archivos, otros procesos. El costo es un `Dir` sobre una carpeta cada 3 s.
+
+PIEZAS
+
+- Una sola función lista la carpeta (`ListarPDFs`, `ListarFiguras`). La usan el poblado inicial y el refresco.
+- La firma son los nombres ordenados unidos con `Chr(10)`, en una variable del módulo. Se compara la lista completa y no la cantidad: detecta renombrados y una alta con una baja entre dos ticks.
+- La firma la escribe un solo lugar, la función que llena el combo, y se reinicia al abrir proyecto y al cerrar sesión (`ResetVisorPDF`, `ResetearEstado`). Si no, el primer tick compara contra la foto del proyecto anterior.
+- El `Timer` va en el formulario con `Delay = 3000` y `Enabled = True`. Un `Timer` recién agregado en el diseñador queda con `Enabled = False`. El handler es una llamada delegada al módulo, que sale sin hacer nada si no hay proyecto abierto.
+- Si `Dir` falla, el módulo devuelve `Null` y el tick se saltea sin aviso: corre cada 3 s. No es un canal mudo (GV-23): el `Null` impide que una lista vacía por error vacíe el combo y cierre lo abierto.
+
+VOLVER A LLENAR SIN RECARGAR LO ABIERTO
+
+- Se vacía el combo, se vuelve a llenar y se repone la selección POR NOMBRE: una entrada nueva puede quedar antes en el orden, y `Add` en posición no corre el índice (GV-69).
+- Se conserva lo que está ABIERTO —el archivo cargado en el visor o en memoria—, no el texto del combo.
+- Reponer el `Index` dispara `Click` (GV-53). Una bandera, activa solo alrededor de esa asignación, hace salir al handler antes de cargar. El handler TIENE QUE CONSULTARLA: en `m_GestionImagenes` la bandera se escribía y nadie la leía, y según el código cada refresco recargaba la figura en memoria, vaciaba su deshacer o preguntaba por cambios sin guardar.
+
+LO QUE NO DETECTA
+
+Un archivo regenerado con el mismo nombre no cambia la firma. Lo abierto queda con la versión vieja hasta que se lo vuelve a elegir en el combo, que lo recarga porque el `Click` se dispara aunque el índice no cambie. Agregar la fecha de modificación a la firma queda descartado mientras no se mida si LuaLaTeX escribe el PDF de a poco: el refresco podría abrir un archivo a medio escribir.
+
+SI LO ABIERTO DESAPARECE DEL DISCO
+
+- Visor de PDF: se limpia el visor. El combo queda en el primer ítem, sin cargarlo (GV-69).
+- Retocador de figuras: el combo queda sin selección (-1), para que no muestre una figura distinta de la que está en memoria; `BorrarImagenDisco` actúa sobre el texto del combo. Sin cambios sin guardar, se limpia el retocador. Con cambios, la figura se conserva y se avisa una sola vez; `Guardar` la vuelve a escribir en `/media` y el tick siguiente la repone.
+
+Probado por Alberto en 3.22.1: primer PDF de un proyecto nuevo, PDF nuevo con otro abierto, PDF borrado, PDF regenerado; figura agregada, renombrada y borrada.
+
+**Relaciones:** vinculo:GV-53, vinculo:GV-69, vinculo:GV-59, vinculo:SC-06, apoya:GV-23
+
+**PENDIENTE:** hTimerRefrescarProyecto (cmbArticulosRevista) sigue con su propio modelo: compara cantidades y no firma, y resuelve el Click de la selección repuesta dentro del handler (GV-53). Unificarlo con este patrón queda por decidir.
+
 ---
 
 ## RF — Referencia de API
@@ -2890,7 +2929,7 @@ Nunca se escribe `Pos` (GV-44).
 
 ### GV-53 — ComboBox: asignar Index dispara Click aunque el índice no cambie
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1) · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1); uso en Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-10
 
 En `gb.qt5` el `ComboBox` es el de `gb.gui.base`, escrito en Gambas: el componente no trae uno propio en C++. `Index_Write` termina en `Raise Click` sin comparar con el valor anterior, así que asignar el índice que ya está elegido también dispara `Click`.
 
@@ -2900,9 +2939,11 @@ REGLA: antes de asignar `Index` desde el código, compararlo con el actual. Si e
 
 CASO EN EL PROYECTO: el temporizador de archivos llama a `CargarListaArticulosMD(True)`, que vacía el combobox y repone la selección asignando `Index`. Eso recargaba el archivo abierto: preguntaba por cambios sin guardar y vaciaba el deshacer. Como ahí la asignación no se puede evitar, `cmbArticulosRevista_Click` sale sin hacer nada si la ruta elegida es la del archivo ya abierto, antes del aviso de SC-06.
 
-**Relaciones:** vinculo:SC-06, vinculo:GV-46, vinculo:SC-18
+MÁS CASOS: los refrescos en caliente de `cmbVerPDF` y `cmbImagenes` (SC-27) reponen el `Index` con una bandera que el handler consulta. Lo que hacen `Clear` y `Add` al volver a llenar un combo de solo lectura está en GV-69.
 
-**PENDIENTE:** Leído en el fuente, no medido en ejecución.
+**Relaciones:** vinculo:SC-06, vinculo:GV-46, vinculo:SC-18, vinculo:SC-27, vinculo:GV-69
+
+**PENDIENTE:** Leído en el fuente (etiqueta 3.22.1). En uso, en 3.22.1, se probaron las correcciones que dependen de este comportamiento (SC-27), no el disparo aislado. Mini-test: con un ítem elegido, asignar el mismo Index y contar los Click (esperado 1).
 
 ### GV-54 — TextEdit: lo que se escribe en un párrafo vacío sin color sale con el color por omisión
 
@@ -3248,3 +3289,28 @@ Caso del proyecto: `m_PrimerasLibro`, marcadores de los textos de créditos (SC-
 **Relaciones:** vinculo:SC-25,vinculo:GV-24
 
 **PENDIENTE:** Medido en 3.19, no en 3.22.1.
+
+### GV-69 — ComboBox de solo lectura: Clear y Add mueven el índice sin disparar Click
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1 y rama principal 41d9348) · **Verificado:** 2026-10
+
+Leído en el fuente de `gb.gui.base` (`ComboBox.class`), idéntico en la etiqueta 3.22.1 y en la rama principal (`41d9348`). Completa a GV-53 y GV-59 para el caso de volver a llenar un combo de solo lectura.
+
+    Clear                              Index -> -1, sin Click
+    Add sobre el combo vacío           Index -> 0, sin Click (ResetIndex)
+    Add con un ítem elegido            Index no cambia
+    Add(Item, Posición)                Index NO se corre
+    Index = -1 con un ítem elegido     Index -> -1, y SÍ dispara Click
+    Index = -1 con Index ya en -1      no hace nada, sin Click
+
+`ResetIndex` tiene el `Raise Click` comentado en el fuente.
+
+CONSECUENCIAS
+
+- Después de poblarlo, un combo de solo lectura muestra el primer ítem sin que su handler haya corrido: el combo dice una cosa y lo que depende del `Click` (un visor, una imagen) sigue vacío. Coincide con lo que GV-59 midió para `.List`.
+- Insertar en posición delante del ítem elegido deja el índice apuntando a otro ítem. Para conservar lo abierto no se inserta: se vacía, se vuelve a llenar y se repone la selección por nombre (SC-27).
+- Dejar el combo sin selección (`Index = -1`) también pasa por el `Click`: se suprime igual que al reponer la selección.
+
+**Relaciones:** vinculo:GV-53, vinculo:GV-59, vinculo:SC-27
+
+**PENDIENTE:** Leído en el fuente, no medido aislado. Mini-test: combo con ReadOnly = True; Clear, Add("a"), Print .Index (esperado 0) contando los Click (esperado 0); después Index = -1 (esperado 1 Click). Lo probado en uso en 3.22.1 son los dos refrescos de SC-27, que dependen de este comportamiento.
