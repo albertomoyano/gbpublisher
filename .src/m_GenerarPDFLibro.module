@@ -30,7 +30,7 @@ Private Const CARPETA_CANONICOS As String = "jats"
 ' VERSIÓN 2: LAS PRIMERAS DEL LIBRO —\gbPortadilla, \gbPortada, \gbCreditos—
 ' (SC-25). VERSIÓN 3: \gbNombrePortada, QUE EL PREÁMBULO USA EN LA AUTORÍA DE
 ' LA PORTADA.
-Public Const CONTRATO_VERSION As Integer = 3
+Public Const CONTRATO_VERSION As Integer = 4
 
 ' --- ZONAS DEL LIBRO ---
 Private Const ZONA_FRONT As Integer = 1
@@ -172,12 +172,31 @@ End
 ' ============================================
 Public Function RolesDeAutoriaSegunTipo(sTipoLibro As String) As String
 
+  If EsLibroColectivo(sTipoLibro) Then Return "'editor','compilador','coordinador'"
+
+  ' monografia, manual, traduccion
+  Return "'autor'"
+
+End
+
+' ============================================
+' Función   : EsLibroColectivo
+' Propósito : Dice si el libro es colectivo: cada pieza tiene sus autores y
+'             el libro lo firma quien lo edita.
+' Parámetros: sTipoLibro As String — libros_md.tipo_libro
+' Retorna   : Boolean — True para obra_colectiva, compilacion, actas y
+'             referencia
+' Nota      : LA ÚNICA LISTA DE TIPOS COLECTIVOS. DE ELLA DEPENDEN LA AUTORÍA
+'             DEL LIBRO (RolesDeAutoriaSegunTipo: PORTADA, FICHA, OPF) Y LA
+'             AUTORÍA EN LA APERTURA DE CADA PIEZA (AutoriaApertura).
+' ============================================
+Public Function EsLibroColectivo(sTipoLibro As String) As Boolean
+
   Select Case LCase(Trim(sTipoLibro))
     Case "obra_colectiva", "compilacion", "actas", "referencia"
-      Return "'editor','compilador','coordinador'"
+      Return True
     Case Else
-      ' monografia, manual, traduccion
-      Return "'autor'"
+      Return False
   End Select
 
 End
@@ -703,7 +722,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
   aNombresPortada = cValores["nombres_autoria"]
   sTexto = ""
   For i = 0 To aNombresPortada.Max
-    sTexto &= m_PrimerasLibro.SeparadorAutoria(i, aNombresPortada.Count) &
+    sTexto &= m_PrimerasLibro.SeparadorAutoria(i, aNombresPortada.Count, aNombresPortada[i]) &
       "\\gbNombrePortada{" & EscaparTeX(aNombresPortada[i]) & "}"
   Next
   s &= "\\def\\gbautoriaportada{" & sTexto & "}" & gb.NewLine
@@ -989,6 +1008,7 @@ Public Function GenerarMainTeX() As Boolean
   Dim bHayBibliografia As Boolean
   Dim bHayColofon As Boolean
   Dim bSumario As Boolean
+  Dim bColectivo As Boolean
 
   ' LOS DATOS DE LAS PIEZAS SE VUELCAN A ARRAYS PARALELOS EN UNA SOLA PASADA.
   ' ASÍ SE RECORREN DOS VECES —UNA PARA GENERAR LOS .tex Y OTRA PARA ARMAR EL
@@ -1001,6 +1021,7 @@ Public Function GenerarMainTeX() As Boolean
   Dim aSubtituloParte As New String[]
   Dim aTituloFolio As New String[]
   Dim aAutoriaFolio As New String[]
+  Dim aAutoriaApertura As New String[]
 
   ' --- 1. VALIDACIÓN DE PROYECTO Y LIBRO ---
   If m_InicioCierre.IdProyectoEnCurso = 0 Then
@@ -1013,7 +1034,7 @@ Public Function GenerarMainTeX() As Boolean
   sDirLatex = sRutaProyecto &/ CARPETA_LATEX
 
   Try hLibro = m_ConexionBD.mConn.Exec(
-    "SELECT id_libro, lugar_bibliografia FROM libros_md " &
+    "SELECT id_libro, lugar_bibliografia, tipo_libro FROM libros_md " &
     "WHERE id_proyecto = &1 LIMIT 1", m_InicioCierre.IdProyectoEnCurso)
 
   If Error Then
@@ -1030,6 +1051,7 @@ Public Function GenerarMainTeX() As Boolean
 
   iIdLibro = hLibro["id_libro"]
   bConsolidada = (LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada")
+  bColectivo = EsLibroColectivo(NuloAVacio(hLibro["tipo_libro"]))
 
   ' --- 2. LISTA DE PIEZAS DECLARADAS ---
   ' EL ORDEN SALE DEL NOMBRE DE ARCHIVO Y NO DE UN id: UN id REFLEJA CUÁNDO SE
@@ -1038,7 +1060,7 @@ Public Function GenerarMainTeX() As Boolean
   ' NUMÉRICO.
   Try hPiezas = m_ConexionBD.mConn.Exec(
     "SELECT c.id_capitulo, c.nombre_archivo, c.tipo_capitulo, " &
-    "       c.titulo_capitulo, c.id_parte, " &
+    "       c.titulo_capitulo, c.id_parte, c.autoria_apertura, " &
     "       p.titulo AS titulo_parte, p.subtitulo AS subtitulo_parte " &
     "FROM capitulos c " &
     "LEFT JOIN partes_libro p ON p.id_parte = c.id_parte " &
@@ -1076,6 +1098,13 @@ Public Function GenerarMainTeX() As Boolean
     aSubtituloParte.Add(NuloAVacio(hPiezas["subtitulo_parte"]))
     aTituloFolio.Add(EscaparTeX(TituloFolio(hPiezas["id_capitulo"])))
     aAutoriaFolio.Add(AutoriaFolio(hPiezas["id_capitulo"], sAutoriaLibro))
+    ' LA APERTURA LLEVA AUTORES SOLO EN UN LIBRO COLECTIVO: EN UNO DE AUTOR
+    ' YA ESTÁN EN EL FOLIO DE TODAS LAS PÁGINAS
+    If bColectivo Then
+      aAutoriaApertura.Add(AutoriaApertura(hPiezas["id_capitulo"], NuloAVacio(hPiezas["autoria_apertura"])))
+    Else
+      aAutoriaApertura.Add("")
+    Endif
   Next
 
   ' --- 2b. LAS PRIMERAS, SI LAS HAY ---
@@ -1251,6 +1280,10 @@ Public Function GenerarMainTeX() As Boolean
       ' DEFINIDAS CUANDO EMPIEZA EL CAPÍTULO.
       s &= "\\gbMarcasPieza{" & aTituloFolio[i] & "}{" &
         aAutoriaFolio[i] & "}" & gb.NewLine
+
+      ' LA AUTORÍA DE LA APERTURA SE EMITE SIEMPRE, AUNQUE VACÍA: EL
+      ' CONTRATO LA COMPONE UNA VEZ Y LA BORRA (CONTRATO 4)
+      s &= "\\gbAperturaPieza{" & aAutoriaApertura[i] & "}" & gb.NewLine
 
       s &= "\\include{c-" & sNombre & "}" & gb.NewLine
     Endif
@@ -1578,6 +1611,67 @@ Private Function TituloFolio(iIdCapitulo As Integer) As String
   If sCorto <> "" Then Return sCorto
 
   Return NuloAVacio(hRes["titulo_capitulo"])
+
+End
+
+' ============================================
+' Función   : AutoriaApertura
+' Propósito : La línea de autores debajo del título de una pieza de un libro
+'             colectivo, lista para \gbAperturaPieza.
+' Parámetros: iIdCapitulo As Integer — capitulos.id_capitulo
+'             sDeclarada As String — capitulos.autoria_apertura: la forma de
+'             cada nombre, separadas por punto y coma, o vacía
+' Retorna   : String — cada nombre en \gbNombreApertura{}, unidos por comas
+'             y «y» o «e» en letra normal; vacía si no hay autores
+'
+' FORMA
+'   Alberto Moyano y Juan Sotelo            (sin forma declarada)
+'   A. Moyano, J. Sotelo e I. Campanaro     («A. Moyano; J. Sotelo; I. Campanaro»)
+'
+' LA FORMA DECLARADA SALE TAL CUAL: LA ESCRIBE EL EDITOR CUANDO LOS NOMBRES
+' COMPLETOS NO ENTRAN. ES SOLO PRESENTACIÓN: EL FOLIO Y LOS METADATOS SIGUEN
+' SALIENDO DE autores. SIN FORMA DECLARADA, LOS NOMBRES COMPLETOS DE
+' capitulo_autor, SOLO EL ROL «autor», COMO EN EL FOLIO.
+' LA CONJUNCIÓN LA ELIGE m_PrimerasLibro.SeparadorAutoria, LA MISMA DE LA
+' PORTADA. CADA NOMBRE SE ESCAPA POR SEPARADO: LA LÍNEA YA LLEVA MARCADO.
+' ============================================
+Private Function AutoriaApertura(iIdCapitulo As Integer, sDeclarada As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hRes As Result
+  Dim aNombres As New String[]
+  Dim sParte As String
+  Dim sLinea As String
+  Dim i As Integer
+
+  ' --- 2. LOS NOMBRES: LA FORMA DECLARADA O LOS DE LA BASE ---
+  If Trim(sDeclarada) <> "" Then
+    ' UN PUNTO Y COMA SOBRANTE NO PRODUCE UN NOMBRE VACÍO
+    For Each sParte In Split(sDeclarada, ";")
+      If Trim(sParte) <> "" Then aNombres.Add(Trim(sParte))
+    Next
+  Else
+    Try hRes = m_ConexionBD.mConn.Exec(
+      "SELECT a.nombre, a.apellidos " &
+      "FROM capitulo_autor ca " &
+      "JOIN autores a ON a.id_autor = ca.id_autor " &
+      "WHERE ca.id_capitulo = &1 AND ca.rol_autor = 'autor' " &
+      "ORDER BY ca.orden_autoria", iIdCapitulo)
+    ' SIN AUTORES LEGIBLES, LA APERTURA SALE SIN LÍNEA: EL FOLIO YA AVISA
+    ' DE LA MISMA CONSULTA SI ALGO FALLA
+    If Error Then Return ""
+    For Each hRes
+      aNombres.Add(Trim(NuloAVacio(hRes["nombre"]) & " " & NuloAVacio(hRes["apellidos"])))
+    Next
+  Endif
+
+  ' --- 3. LA LÍNEA ---
+  For i = 0 To aNombres.Max
+    sLinea &= m_PrimerasLibro.SeparadorAutoria(i, aNombres.Count, aNombres[i]) &
+      "\\gbNombreApertura{" & EscaparTeX(aNombres[i]) & "}"
+  Next
+
+  Return sLinea
 
 End
 

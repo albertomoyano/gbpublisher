@@ -1205,7 +1205,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25); 1.6.0 (refactor de bibtex) pendiente.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26); 1.7.0 (refactor de bibtex) pendiente.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1231,7 +1231,7 @@ DETALLES VERIFICADOS
 - Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
 - El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, la restauración borra `articulos` y falla al recrearla (GV-67).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -1364,7 +1364,7 @@ Pandoc descarta el LaTeX crudo al escribir DocBook: un bloque crudo `{=latex}` n
 
 POR QUÉ NO SHORTCODE
 
-Un shortcode vive dentro de un .md, y estas piezas no lo tienen: la fila en la base ya fija la posición. `TRATAMIENTO_SHORTCODE` queda reservado para otro uso (la autoría en la apertura de capítulo); su comentario deja de citar la portada.
+Un shortcode vive dentro de un .md, y estas piezas no lo tienen: la fila en la base ya fija la posición. `TRATAMIENTO_SHORTCODE` se reservó para la autoría en la apertura de capítulo y después se retiró: esa autoría también sale de la base (SC-26).
 
 TIPOS
 
@@ -1395,7 +1395,7 @@ DATOS EN libros_md
 
 AUTORÍA
 
-En la portada, cada nombre va dentro de `\gbNombrePortada` —la estética decide versalitas o mayúsculas— y se unen con comas e «y» en letra normal; debajo, `\gbleyendaautoria`. `\gbNombrePortada` es vocabulario que emite el generador: contrato versión 3.
+En la portada, cada nombre va dentro de `\gbNombrePortada` —la estética decide versalitas o mayúsculas— y se unen con comas e «y» o «e» en letra normal (SC-26); debajo, `\gbleyendaautoria`. `\gbNombrePortada` es vocabulario que emite el generador: contrato versión 3.
 
 En la ficha, `{autoria}` une los nombres igual y agrega el rol abreviado una sola vez: «Adrián Cammarota y Astrid Dahhur (coords.)». La abreviatura no tiene género; su plural agrega una s antes del punto. Si los roles difieren entre sí, cada nombre lleva el suyo.
 
@@ -1435,9 +1435,55 @@ ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26
 
 **PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
+
+### SC-26 — Autoría en la apertura de la pieza: solo en libros colectivos, desde la base
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.19 (gbc3, gbs3) / LuaLaTeX / Saxon-HE 12.5 / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-09
+
+DECISIÓN CERRADA. En un libro colectivo, debajo del título de cada pieza van sus autores. En un libro de autor no va nada: la autoría ya está en el folio de todas las páginas.
+
+COLECTIVO O DE AUTOR
+
+Lo decide `libros_md.tipo_libro`, con una sola lista: `m_GenerarPDFLibro.EsLibroColectivo` (obra_colectiva, compilacion, actas, referencia). De la misma lista depende `RolesDeAutoriaSegunTipo`, que fija quién firma el libro en la portada, la ficha y el OPF.
+
+DE DÓNDE SALEN LOS NOMBRES
+
+De la base, como el folio, y no de un shortcode en el .md:
+
+- `capitulos.autoria_apertura` (actualización 1.6.0): la forma de cada nombre tal como debe salir, en orden y separadas por punto y coma: `A. Moyano; J. Sotelo` o `Moyano; Sotelo; Campanaro`. La escribe el editor cuando los nombres completos no entran, y elige la forma en cada capítulo.
+- Vacío: los nombres completos, «Nombre Apellido», de `capitulo_autor` con rol «autor», en `orden_autoria`.
+
+Es solo presentación. El folio, el EPUB, el HTML y los metadatos (DocBook, OPF, Crossref) siguen saliendo de `autores`, que es lo que controla la autoridad.
+
+El punto y coma no es estética: le dice al generador dónde termina cada nombre, para que ponga las comas y la conjunción y las deje FUERA de las versalitas. Por eso no se guarda la línea terminada.
+
+PDF (CONTRATO 4)
+
+- El generador emite `\gbAperturaPieza{LÍNEA}` antes de cada `\include`, aunque vacía. La línea ya trae cada nombre en `\gbNombreApertura{}` y las comas y la conjunción en letra normal.
+- `\gbComponerApertura` la compone con `\gbDisenoApertura` y la vacía. La estética lo llama en el after-code de `\titleformat{\chapter}`, que corre también con `\chapter*`: la Introducción de un libro colectivo lleva sus autores.
+- Se vacía al usarla porque la bibliografía de biblatex y los índices también abren con `\chapter*` sin pasar por el generador: sin eso repetirían los autores de la pieza anterior.
+- Estética: `\gbNombreApertura` es `{\scshape\MakeLowercase{#1}}`, como `\nombreautor` del legacy; `\gbDisenoApertura` deja 30 pt, centra la línea en cuerpo normal, y los 30 pt de `\titlespacing` quedan entre los nombres y el texto.
+
+EPUB Y HTML
+
+Nombres completos debajo del título, desde el canónico. No usan `autoria_apertura`: la pantalla no tiene el problema del ancho. Antes unían con comas y sin «y» («Duek, Moguillansky»); ahora con la plantilla `separador-autoria` de `docbook-to-epub.xsl` y `docbook-to-html.xsl`.
+
+«y» O «e»
+
+Regla de la RAE (DPD, «y»): «e» ante palabra que empieza por i- o hi- con sonido de vocal («Pérez e Ibáñez», «Ana e Hilda», «Ana e Íñigo»); «y» si esa i, sin tilde, forma diptongo con la vocal siguiente («Ana y Iolanda», «agua y hielo»). La palabra que decide es la que sigue a la conjunción: el nombre de pila o la forma declarada.
+
+Una sola regla en tres lugares: `m_PrimerasLibro.Conjuncion` (portada, ficha y apertura del PDF, portada del EPUB) y la plantilla `separador-autoria` de las dos hojas XSLT. `Conjuncion` compara mayúsculas y minúsculas por separado y no usa `String.LCase`, que bajo locale C/POSIX no pasa «Í» a «í» (GV-03).
+
+LO QUE SE RETIRA
+
+`TRATAMIENTO_SHORTCODE` (el 4 de `m_PiezasLibro`): estaba reservado para esta autoría. El número no se reusa.
+
+**Relaciones:** vinculo:SC-25,vinculo:SC-22,vinculo:GV-03
+
+**PENDIENTE:** Implementado y probado en el contenedor: compila; la apertura compone en LuaLaTeX y no se cuela en un \chapter* posterior; la regla «y»/«e» probada en Gambas y en las dos hojas XSLT con Saxon-HE 12.5. Falta probarlo con un libro real.
 
 ---
 
