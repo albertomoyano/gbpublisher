@@ -30,7 +30,7 @@ Private Const CARPETA_CANONICOS As String = "jats"
 ' VERSIÓN 2: LAS PRIMERAS DEL LIBRO —\gbPortadilla, \gbPortada, \gbCreditos—
 ' (SC-25). VERSIÓN 3: \gbNombrePortada, QUE EL PREÁMBULO USA EN LA AUTORÍA DE
 ' LA PORTADA.
-Public Const CONTRATO_VERSION As Integer = 4
+Public Const CONTRATO_VERSION As Integer = 5
 
 ' --- ZONAS DEL LIBRO ---
 Private Const ZONA_FRONT As Integer = 1
@@ -1009,6 +1009,8 @@ Public Function GenerarMainTeX() As Boolean
   Dim bHayColofon As Boolean
   Dim bSumario As Boolean
   Dim bColectivo As Boolean
+  Dim bAutoriaPropia As Boolean
+  Dim sIdsAutoresLibro As String
 
   ' LOS DATOS DE LAS PIEZAS SE VUELCAN A ARRAYS PARALELOS EN UNA SOLA PASADA.
   ' ASÍ SE RECORREN DOS VECES —UNA PARA GENERAR LOS .tex Y OTRA PARA ARMAR EL
@@ -1022,6 +1024,7 @@ Public Function GenerarMainTeX() As Boolean
   Dim aTituloFolio As New String[]
   Dim aAutoriaFolio As New String[]
   Dim aAutoriaApertura As New String[]
+  Dim aAutoriaIndice As New String[]
 
   ' --- 1. VALIDACIÓN DE PROYECTO Y LIBRO ---
   If m_InicioCierre.IdProyectoEnCurso = 0 Then
@@ -1052,6 +1055,9 @@ Public Function GenerarMainTeX() As Boolean
   iIdLibro = hLibro["id_libro"]
   bConsolidada = (LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada")
   bColectivo = EsLibroColectivo(NuloAVacio(hLibro["tipo_libro"]))
+  ' EN UN LIBRO DE AUTOR, LOS AUTORES DEL LIBRO SE LEEN UNA VEZ: CONTRA
+  ' ELLOS SE COMPARA CADA PIEZA
+  If Not bColectivo Then sIdsAutoresLibro = IdsAutoresLibro(iIdLibro)
 
   ' --- 2. LISTA DE PIEZAS DECLARADAS ---
   ' EL ORDEN SALE DEL NOMBRE DE ARCHIVO Y NO DE UN id: UN id REFLEJA CUÁNDO SE
@@ -1100,10 +1106,22 @@ Public Function GenerarMainTeX() As Boolean
     aAutoriaFolio.Add(AutoriaFolio(hPiezas["id_capitulo"], sAutoriaLibro))
     ' LA APERTURA LLEVA AUTORES SOLO EN UN LIBRO COLECTIVO: EN UNO DE AUTOR
     ' YA ESTÁN EN EL FOLIO DE TODAS LAS PÁGINAS
+    ' LA PIEZA MUESTRA SUS AUTORES EN LA APERTURA Y EN EL SUMARIO SI EL LIBRO
+    ' ES COLECTIVO, O SI EN UN LIBRO DE AUTOR LA FIRMA OTRA PERSONA —UN
+    ' PRÓLOGO AJENO—. LAS PIEZAS DEL AUTOR DEL LIBRO NO: ESTÁ EN EL FOLIO
+    ' (SC-26)
     If bColectivo Then
+      bAutoriaPropia = True
+    Else
+      bAutoriaPropia = EsDeOtraAutoria(hPiezas["id_capitulo"], sIdsAutoresLibro)
+    Endif
+
+    If bAutoriaPropia Then
       aAutoriaApertura.Add(AutoriaApertura(hPiezas["id_capitulo"], NuloAVacio(hPiezas["autoria_apertura"])))
+      aAutoriaIndice.Add(AutoriaIndice(hPiezas["id_capitulo"]))
     Else
       aAutoriaApertura.Add("")
+      aAutoriaIndice.Add("")
     Endif
   Next
 
@@ -1284,6 +1302,10 @@ Public Function GenerarMainTeX() As Boolean
       ' LA AUTORÍA DE LA APERTURA SE EMITE SIEMPRE, AUNQUE VACÍA: EL
       ' CONTRATO LA COMPONE UNA VEZ Y LA BORRA (CONTRATO 4)
       s &= "\\gbAperturaPieza{" & aAutoriaApertura[i] & "}" & gb.NewLine
+
+      ' LA AUTORÍA DEL SUMARIO, IGUAL: SIEMPRE, AUNQUE VACÍA. EL CONTRATO LA
+      ' ESCRIBE EN EL .toc ANTES DE LA ENTRADA DE LA PIEZA (CONTRATO 5)
+      s &= "\\gbIndicePieza{" & aAutoriaIndice[i] & "}" & gb.NewLine
 
       s &= "\\include{c-" & sNombre & "}" & gb.NewLine
     Endif
@@ -1638,7 +1660,6 @@ End
 Private Function AutoriaApertura(iIdCapitulo As Integer, sDeclarada As String) As String
 
   ' --- 1. INICIALIZACIÓN ---
-  Dim hRes As Result
   Dim aNombres As New String[]
   Dim sParte As String
   Dim sLinea As String
@@ -1651,18 +1672,7 @@ Private Function AutoriaApertura(iIdCapitulo As Integer, sDeclarada As String) A
       If Trim(sParte) <> "" Then aNombres.Add(Trim(sParte))
     Next
   Else
-    Try hRes = m_ConexionBD.mConn.Exec(
-      "SELECT a.nombre, a.apellidos " &
-      "FROM capitulo_autor ca " &
-      "JOIN autores a ON a.id_autor = ca.id_autor " &
-      "WHERE ca.id_capitulo = &1 AND ca.rol_autor = 'autor' " &
-      "ORDER BY ca.orden_autoria", iIdCapitulo)
-    ' SIN AUTORES LEGIBLES, LA APERTURA SALE SIN LÍNEA: EL FOLIO YA AVISA
-    ' DE LA MISMA CONSULTA SI ALGO FALLA
-    If Error Then Return ""
-    For Each hRes
-      aNombres.Add(Trim(NuloAVacio(hRes["nombre"]) & " " & NuloAVacio(hRes["apellidos"])))
-    Next
+    aNombres = NombresCompletosPieza(iIdCapitulo)
   Endif
 
   ' --- 3. LA LÍNEA ---
@@ -1672,6 +1682,161 @@ Private Function AutoriaApertura(iIdCapitulo As Integer, sDeclarada As String) A
   Next
 
   Return sLinea
+
+End
+
+' ============================================
+' Función   : AutoriaIndice
+' Propósito : La línea de autores de una pieza de un libro colectivo en el
+'             sumario, lista para \gbIndicePieza.
+' Parámetros: iIdCapitulo As Integer — capitulos.id_capitulo
+' Retorna   : String — «Nombre Apellido», unidos por comas y «y» o «e»,
+'             escapados para LaTeX; vacía si la pieza no tiene autores
+' Nota      : SIEMPRE LOS NOMBRES COMPLETOS, NUNCA LA FORMA DECLARADA EN
+'             capitulos.autoria_apertura: EL SUMARIO TIENE LUGAR PARA DOS
+'             LÍNEAS, COMO EN EL LEGACY (DECISIÓN DE ALBERTO, SC-26).
+'             TEXTO LLANO, SIN MARCADO: LA ESTÉTICA DECIDE CÓMO SE VE TODA LA
+'             LÍNEA. VA AL .toc POR \addtocontents, Y \& Y \_ SOBREVIVEN A
+'             LA ESCRITURA.
+' ============================================
+Private Function AutoriaIndice(iIdCapitulo As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aNombres As String[]
+  Dim sLinea As String
+  Dim i As Integer
+
+  aNombres = NombresCompletosPieza(iIdCapitulo)
+
+  ' --- 2. LA LÍNEA ---
+  For i = 0 To aNombres.Max
+    sLinea &= m_PrimerasLibro.SeparadorAutoria(i, aNombres.Count, aNombres[i]) &
+      EscaparTeX(aNombres[i])
+  Next
+
+  Return sLinea
+
+End
+
+' ============================================
+' Función   : EsDeOtraAutoria
+' Propósito : En un libro de autor, dice si una pieza la firma otra persona:
+'             un prólogo ajeno, por ejemplo.
+' Parámetros: iIdCapitulo As Integer — capitulos.id_capitulo
+'             sIdsAutoresLibro As String — ids de los autores del libro, como
+'             los da IdsAutoresLibro
+' Retorna   : Boolean — True si la pieza tiene autores y no son exactamente
+'             los del libro; False si no tiene autores propios
+' Nota      : SE COMPARAN LOS CONJUNTOS DE id, ORDENADOS: UNA PIEZA DEL
+'             AUTOR DEL LIBRO, AUNQUE TENGA SU FILA EN capitulo_autor, NO
+'             MUESTRA AUTORES. UNA PIEZA DE UNO SOLO DE DOS COAUTORES, SÍ.
+' ============================================
+Private Function EsDeOtraAutoria(iIdCapitulo As Integer, sIdsAutoresLibro As String) As Boolean
+
+  Dim sIdsPieza As String
+
+  sIdsPieza = IdsAutoresPieza(iIdCapitulo)
+
+  ' SIN AUTORES PROPIOS, LA PIEZA ES DEL AUTOR DEL LIBRO
+  If sIdsPieza = "" Then Return False
+
+  Return sIdsPieza <> sIdsAutoresLibro
+
+End
+
+' ============================================
+' Función   : IdsAutoresPieza
+' Propósito : Los id de los autores de una pieza (rol «autor»), ordenados.
+' Parámetros: iIdCapitulo As Integer — capitulos.id_capitulo
+' Retorna   : String — «12,40,57»; vacía si no tiene o falló la consulta
+' ============================================
+Private Function IdsAutoresPieza(iIdCapitulo As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hRes As Result
+  Dim aIds As New String[]
+
+  ' --- 2. CONSULTA ---
+  ' UN FALLO DEJA LA PIEZA SIN AUTORES PROPIOS: LA MISMA CONSULTA LA HACE
+  ' AutoriaFolio
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_autor FROM capitulo_autor " &
+    "WHERE id_capitulo = &1 AND rol_autor = 'autor' " &
+    "ORDER BY id_autor", iIdCapitulo)
+  If Error Then Return ""
+
+  ' --- 3. LISTA ---
+  ' String[] Y NO Integer[]: Integer[] NO TIENE Join (GV-60)
+  For Each hRes
+    aIds.Add(CStr(hRes["id_autor"]))
+  Next
+
+  Return aIds.Join(",")
+
+End
+
+' ============================================
+' Función   : IdsAutoresLibro
+' Propósito : Los id de los autores de un libro de autor, ordenados.
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : String — «12,40»; vacía si no tiene o falló la consulta
+' Nota      : SOLO EL ROL «autor»: ES LA REGLA DE RolesDeAutoriaSegunTipo
+'             PARA UN LIBRO QUE NO ES COLECTIVO.
+' ============================================
+Private Function IdsAutoresLibro(iIdLibro As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hRes As Result
+  Dim aIds As New String[]
+
+  ' --- 2. CONSULTA ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT id_autor FROM libro_autor " &
+    "WHERE id_libro = &1 AND rol_libro = 'autor' " &
+    "ORDER BY id_autor", iIdLibro)
+  If Error Then Return ""
+
+  ' --- 3. LISTA ---
+  For Each hRes
+    aIds.Add(CStr(hRes["id_autor"]))
+  Next
+
+  Return aIds.Join(",")
+
+End
+
+' ============================================
+' Función   : NombresCompletosPieza
+' Propósito : Los autores de una pieza, «Nombre Apellido», en su orden.
+' Parámetros: iIdCapitulo As Integer — capitulos.id_capitulo
+' Retorna   : String[] — los nombres sin escapar; vacío si no hay autores o
+'             falló la consulta
+' Nota      : SOLO EL ROL «autor», COMO EN EL FOLIO: UN TRADUCTOR NO FIRMA.
+'             LA USAN LA APERTURA (SIN FORMA DECLARADA) Y EL SUMARIO.
+'             UN FALLO DE LA CONSULTA DEJA LA PIEZA SIN LÍNEA DE AUTORES: LA
+'             MISMA CONSULTA YA LA HACE AutoriaFolio.
+' ============================================
+Private Function NombresCompletosPieza(iIdCapitulo As Integer) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hRes As Result
+  Dim aNombres As New String[]
+
+  ' --- 2. CONSULTA ---
+  Try hRes = m_ConexionBD.mConn.Exec(
+    "SELECT a.nombre, a.apellidos " &
+    "FROM capitulo_autor ca " &
+    "JOIN autores a ON a.id_autor = ca.id_autor " &
+    "WHERE ca.id_capitulo = &1 AND ca.rol_autor = 'autor' " &
+    "ORDER BY ca.orden_autoria", iIdCapitulo)
+  If Error Then Return aNombres
+
+  ' --- 3. NOMBRES ---
+  For Each hRes
+    aNombres.Add(Trim(NuloAVacio(hRes["nombre"]) & " " & NuloAVacio(hRes["apellidos"])))
+  Next
+
+  Return aNombres
 
 End
 

@@ -106,9 +106,13 @@
           <xsl:if test="$capInfo/db:author | $capInfo/author">
             <p class="cap-autoria">
               <xsl:for-each select="$capInfo/db:author | $capInfo/author">
-                <xsl:if test="position() &gt; 1">
-                  <xsl:text>, </xsl:text>
-                </xsl:if>
+                <!-- COMAS Y «y» O «e» ANTES DEL ÚLTIMO: «Duek y Moguillansky» -->
+                <xsl:call-template name="separador-autoria">
+                  <xsl:with-param name="pos" select="position()"/>
+                  <xsl:with-param name="total" select="last()"/>
+                  <xsl:with-param name="nombre"
+                                  select="(db:personname/db:firstname | personname/firstname)[1]"/>
+                </xsl:call-template>
                 <xsl:value-of select="normalize-space(
                   (db:personname/db:firstname | personname/firstname)[1])"/>
                 <xsl:text> </xsl:text>
@@ -1392,6 +1396,41 @@
   </xsl:template>
   <xsl:template match="db:emphasis[@role='speaker'] | emphasis[@role='speaker']">
     <span class="speech-speaker"><xsl:apply-templates/></span>
+  </xsl:template>
+
+
+  <!-- ==========================================================
+       SEPARADOR DE UNA LISTA DE AUTORES
+       ==========================================================
+       Lo que va antes del nombre en la posición $pos de $total:
+       nada, coma, o la conjunción antes del último: «A», «A y B»,
+       «A, B y C». $nombre es la palabra que sigue —el nombre de
+       pila— y decide entre «y» y «e».
+       REGLA DE LA RAE (DPD, «y»): «e» ANTE i- O hi- CON SONIDO DE
+       VOCAL («Pérez e Ibáñez», «Ana e Hilda»); «y» SI ESA i SIN
+       TILDE FORMA DIPTONGO CON LA VOCAL SIGUIENTE («Ana y
+       Iolanda», «agua y hielo»). LA MISMA REGLA QUE
+       m_PrimerasLibro.Conjuncion EN LA PORTADA Y EL PDF. -->
+  <xsl:template name="separador-autoria">
+    <xsl:param name="pos"/>
+    <xsl:param name="total"/>
+    <xsl:param name="nombre"/>
+    <xsl:variable name="sinH" select="replace(normalize-space($nombre), '^[hH]', '')"/>
+    <xsl:choose>
+      <xsl:when test="$pos = 1"/>
+      <xsl:when test="$pos &lt; $total">
+        <xsl:text>, </xsl:text>
+      </xsl:when>
+      <xsl:when test="matches($sinH, '^[iI][aeiouáéíóúüAEIOUÁÉÍÓÚÜ]')">
+        <xsl:text> y </xsl:text>
+      </xsl:when>
+      <xsl:when test="matches($sinH, '^[iIíÍ]')">
+        <xsl:text> e </xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text> y </xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
 </xsl:stylesheet>

@@ -1443,11 +1443,13 @@ Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescri
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.19 (gbc3, gbs3) / LuaLaTeX / Saxon-HE 12.5 / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. En un libro colectivo, debajo del título de cada pieza van sus autores. En un libro de autor no va nada: la autoría ya está en el folio de todas las páginas.
+DECISIÓN CERRADA. En un libro colectivo, debajo del título de cada pieza van sus autores, y también en el sumario. En un libro de autor no van, porque la autoría ya está en el folio de todas las páginas, salvo en la pieza que firma otra persona: un prólogo ajeno.
 
 COLECTIVO O DE AUTOR
 
 Lo decide `libros_md.tipo_libro`, con una sola lista: `m_GenerarPDFLibro.EsLibroColectivo` (obra_colectiva, compilacion, actas, referencia). De la misma lista depende `RolesDeAutoriaSegunTipo`, que fija quién firma el libro en la portada, la ficha y el OPF.
+
+En un libro de autor, una pieza muestra sus autores si los tiene en `capitulo_autor` y no son exactamente los del libro (`libro_autor`, rol «autor»): se comparan los conjuntos de id (`EsDeOtraAutoria`). Una pieza del autor del libro no los muestra aunque tenga su fila; una pieza de uno solo de dos coautores, sí.
 
 DE DÓNDE SALEN LOS NOMBRES
 
@@ -1467,6 +1469,16 @@ PDF (CONTRATO 4)
 - Se vacía al usarla porque la bibliografía de biblatex y los índices también abren con `\chapter*` sin pasar por el generador: sin eso repetirían los autores de la pieza anterior.
 - Estética: `\gbNombreApertura` es `{\scshape\MakeLowercase{#1}}`, como `\nombreautor` del legacy; `\gbDisenoApertura` deja 30 pt, centra la línea en cuerpo normal, y los 30 pt de `\titlespacing` quedan entre los nombres y el texto.
 
+SUMARIO (CONTRATO 5)
+
+La entrada de cada pieza que muestra autores (ver arriba) lleva arriba sus autores, en negrita, y debajo el título, como en el legacy. El sumario lleva partes y piezas, sin secciones: `tocdepth` en 0, en la estética.
+
+- Siempre los nombres completos de `capitulo_autor`, nunca la forma declarada en `autoria_apertura`: el sumario tiene lugar para dos líneas (decisión de Alberto). `m_GenerarPDFLibro.NombresCompletosPieza` los da a la apertura y al sumario.
+- El generador emite `\gbIndicePieza{LÍNEA}` antes de cada `\include`, aunque vacía.
+- El contrato envuelve `\addcontentsline` en `\AtBeginDocument`, para tomar la versión de hyperref: cuando la entrada es `toc/chapter`, escribe antes `\gbAutoresIndice{LÍNEA}` en el .toc y vacía la línea. Así el dato queda delante de la entrada, tanto con `\chapter` como con `\chapter*` más `\addcontentsline`, y la bibliografía y los índices no se quedan con autores ajenos.
+- La estética lo compone en `\titlecontents{chapter}` con `\gbComponerAutoresIndice` y `\gbDisenoAutoresIndice`. El número queda a la altura de los autores. Una pieza sin número no retrocede: va a 1.5pc, alineada con los títulos y los autores de las numeradas, tenga o no autores.
+- Los marcadores del PDF siguen llevando solo el título.
+
 EPUB Y HTML
 
 Nombres completos debajo del título, desde el canónico. No usan `autoria_apertura`: la pantalla no tiene el problema del ancho. Antes unían con comas y sin «y» («Duek, Moguillansky»); ahora con la plantilla `separador-autoria` de `docbook-to-epub.xsl` y `docbook-to-html.xsl`.
@@ -1483,7 +1495,7 @@ LO QUE SE RETIRA
 
 **Relaciones:** vinculo:SC-25,vinculo:SC-22,vinculo:GV-03
 
-**PENDIENTE:** Implementado y probado en el contenedor: compila; la apertura compone en LuaLaTeX y no se cuela en un \chapter* posterior; la regla «y»/«e» probada en Gambas y en las dos hojas XSLT con Saxon-HE 12.5. Falta probarlo con un libro real.
+**PENDIENTE:** Apertura, conjunción y sumario probados por Alberto con libros reales. Pieza de otra autoría en un libro de autor, tocdepth 0 y sangría de las piezas sin número: probados en el contenedor; falta probarlos con un libro real.
 
 ---
 
