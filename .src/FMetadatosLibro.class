@@ -772,22 +772,20 @@ End
 
 ' ============================================
 ' Función   : ElegirLogo
-' Propósito : Elige un logo del disco, lo copia a media/ con nombre
-'             normalizado y deja lista la versión que necesita el EPUB.
-'             Mismo mecanismo que la tapa (btnBuscarTapa_Click).
+' Propósito : Elige un logo del disco y lo copia a media/ con nombre
+'             normalizado. Mismo mecanismo que la tapa (btnBuscarTapa_Click).
 ' Parámetros: sBase As String — nombre sin extensión: logo-portada o
 '             logo-coleccion
 '             sTitulo As String — título del diálogo
-' Retorna   : String — el nombre copiado (logo-portada.pdf); "" si se canceló
+' Retorna   : String — el nombre copiado (logo-portada.png); "" si se canceló
 '             o falló, con mensaje
-' Nota      : SE ACEPTAN PDF, PNG Y JPG. DE UN PDF SE GENERA EN EL MOMENTO EL SVG
-'             HERMANO, PORQUE EL EPUB NO ADMITE PDF; UN PNG SIN RESOLUCIÓN
-'             DECLARADA SE ADVIERTE, PORQUE LuaLaTeX LO COMPONDRÍA CUATRO VECES
-'             MÁS GRANDE (GV-66).
+' Nota      : SOLO PNG Y JPG: EL MISMO ARCHIVO SIRVE AL PDF Y AL EPUB (SC-25).
+'             LA RESOLUCIÓN DEL ARCHIVO NO SE CONTROLA: EL PDF COMPONE LOS
+'             LOGOS A ANCHO FIJO (preambulo-estetica.tex) Y GV-66 NO LOS AFECTA.
 '             Dialog.Filter ES COSMÉTICO: LA EXTENSIÓN SE VALIDA ACÁ (RC-GM-19).
-'             LOS LOGOS ANTERIORES DEL MISMO NOMBRE, CON CUALQUIER EXTENSIÓN, SE
-'             BORRAN: SI NO, UN logo-portada.pdf VIEJO Y SU SVG QUEDARÍAN AL LADO
-'             DEL PNG NUEVO, Y EL EPUB PODRÍA TOMAR EL QUE NO ES.
+'             LOS LOGOS ANTERIORES DEL MISMO NOMBRE SE BORRAN CON CUALQUIER
+'             EXTENSIÓN, pdf Y svg INCLUIDOS: SON LOS QUE DEJARON LAS VERSIONES
+'             QUE ADMITÍAN PDF, Y SI QUEDARAN, EL EPUB LOS ENCONTRARÍA EN media/.
 ' ============================================
 Private Function ElegirLogo(sBase As String, sTitulo As String) As String
 
@@ -803,32 +801,27 @@ Private Function ElegirLogo(sBase As String, sTitulo As String) As String
   ' --- 1. DIÁLOGO ---
   ' OpenFile DEVUELVE True SI SE CANCELÓ, IGUAL QUE EN LA TAPA
   Dialog.Title = sTitulo
-  Dialog.Filter = ["*.pdf;*.png;*.jpg;*.jpeg", "Logos (PDF, PNG, JPG)"]
+  Dialog.Filter = ["*.png;*.jpg;*.jpeg", "Logos (PNG, JPG)"]
   If Dialog.OpenFile() Then Return ""
 
   sOrigen = Dialog.Path
   sDirMedia = m_InicioCierre.RutaProyectoEnCurso &/ m_PrimerasLibro.CARPETA_MEDIA
 
   ' --- 2. EXTENSIÓN: VALIDADA EN CÓDIGO Y NORMALIZADA ---
-  sExt = LCase(File.Ext(sOrigen))
-  If sExt = "jpeg" Then sExt = "jpg"
-
-  If sExt <> "pdf" And sExt <> "png" And sExt <> "jpg" Then
+  If Not m_PrimerasLibro.EsFormatoLogo(sOrigen) Then
     m_Sonido.sonar("Warning")
-    Message.Warning("El logo tiene que ser PDF, PNG o JPG.")
+    Message.Warning("El logo tiene que ser PNG o JPG.")
     Return ""
   Endif
+
+  sExt = LCase(File.Ext(sOrigen))
+  If sExt = "jpeg" Then sExt = "jpg"
 
   sNombreDestino = sBase & "." & sExt
   sDestino = sDirMedia &/ sNombreDestino
 
-  ' --- 3. EL ORIGEN YA ES EL DESTINO: SOLO FALTA, QUIZÁS, EL SVG ---
-  If sOrigen = sDestino Then
-    If sExt = "pdf" Then
-      If Not Exist(sDirMedia &/ sBase & ".svg") Then GenerarSvgDelLogo(sDestino)
-    Endif
-    Return sNombreDestino
-  Endif
+  ' --- 3. EL ORIGEN YA ES EL DESTINO: NO HAY NADA QUE COPIAR ---
+  If sOrigen = sDestino Then Return sNombreDestino
 
   ' --- 4. CARPETA media ---
   If Not Exist(sDirMedia) Then
@@ -841,7 +834,7 @@ Private Function ElegirLogo(sBase As String, sTitulo As String) As String
   Endif
 
   ' --- 5. LOGOS ANTERIORES CON ESTE NOMBRE ---
-  For Each sExtVieja In ["pdf", "png", "jpg", "svg"]
+  For Each sExtVieja In ["png", "jpg", "pdf", "svg"]
     sViejo = sDirMedia &/ sBase & "." & sExtVieja
     If Exist(sViejo) Then aViejos.Add(sViejo)
   Next
@@ -871,37 +864,7 @@ Private Function ElegirLogo(sBase As String, sTitulo As String) As String
     Return ""
   Endif
 
-  ' --- 7. LO QUE NECESITA CADA SALIDA ---
-  ' EL LOGO QUEDA ELEGIDO AUNQUE ESTO AVISE: EL PDF LO PUEDE USAR IGUAL
-  If sExt = "pdf" Then
-    GenerarSvgDelLogo(sDestino)
-  Else If sExt = "png" Then
-    If Not m_PrimerasLibro.PngDeclaraResolucion(sDestino) Then
-      m_Sonido.sonar("Warning")
-      Message.Warning("El PNG no declara su resolución." & gb.NewLine &
-        "LuaLaTeX lo va a componer a 72 ppp: un logo pensado para 300 ppp " &
-        "sale cuatro veces más grande (GV-66)." & gb.NewLine &
-        "Conviene exportarlo con la resolución grabada, o usar PDF.")
-    Endif
-  Endif
-
   Return sNombreDestino
-
-End
-
-' ============================================
-' Función   : GenerarSvgDelLogo
-' Propósito : Genera el SVG que usa el EPUB y avisa si no pudo.
-' Parámetros: sRutaPdf As String — el logo en PDF, ya en media/
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Private Sub GenerarSvgDelLogo(sRutaPdf As String)
-
-  If m_PrimerasLibro.GenerarSvgDeLogo(sRutaPdf) = "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("El logo quedó elegido, pero no se pudo generar la versión " &
-      "SVG que usa el EPUB:" & gb.NewLine & m_PrimerasLibro.UltimoError())
-  Endif
 
 End
 

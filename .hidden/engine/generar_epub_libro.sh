@@ -111,8 +111,11 @@ paso "verificando lo que escribió la aplicación"
 
 [[ -d "$DIR_OEBPS/chapters" ]] || morir "No existe el árbol de trabajo: $DIR_OEBPS"
 
+# LA PORTADA (front-portada.xhtml) NO ESTÁ EN ESTA LISTA: VA SOLO SI EL LIBRO
+# LA DECLARA (SC-25). SI EL OPF LA DECLARA, LA VERIFICACIÓN DEL PUNTO 8 EXIGE
+# QUE EXISTA
 for archivo in "$OPF" "$DIR_OEBPS/nav.xhtml" \
-               "$DIR_OEBPS/chapters/front-portada.xhtml" \
+               "$DIR_OEBPS/chapters/front-tapa.xhtml" \
                "$DIR_OEBPS/chapters/front-creditos.xhtml" \
                "$DIR_OEBPS/chapters/bm-99-colofon.xhtml"; do
     [[ -f "$archivo" ]]    || morir "No existe ${archivo#"$DIR_TRABAJO"/}"
@@ -134,20 +137,35 @@ for fuente in "${FUENTES[@]}"; do
 done
 ok "hoja de estilos y ${#FUENTES[@]} fuentes"
 
-# LAS IMÁGENES SE COPIAN TODAS DESDE media/, SALTEANDO SUBDIRECTORIOS. EL GLOB
-# NO INCLUYE ARCHIVOS OCULTOS, Y GAMBAS TAMPOCO LOS DECLARA EN EL OPF
+# LAS IMÁGENES SE COPIAN DESDE media/, SALTEANDO SUBDIRECTORIOS Y LO QUE NO ES
+# UNA IMAGEN QUE EL EPUB ADMITA: jpg, jpeg, png, gif, svg Y webp (EPUB 3.3).
+# LA MISMA LISTA ESTÁ EN m_GenerarEpubLibro.EsImagenEpub, QUE DECLARA EL OPF.
+# UN PDF EN media/ SE COPIABA Y SE DECLARABA COMO image/jpeg.
+# EL GLOB NO INCLUYE ARCHIVOS OCULTOS, Y GAMBAS TAMPOCO LOS DECLARA
 imagenes=0
+omitidos=0
 if [[ -d "$DIR_PROYECTO/media" ]]; then
     for archivo in "$DIR_PROYECTO/media"/*; do
         [[ -f "$archivo" ]] || continue
-        cp -f "$archivo" "$DIR_OEBPS/images/" || morir "No se pudo copiar $(basename "$archivo")"
-        imagenes=$((imagenes + 1))
+        extension="${archivo##*.}"
+        case "${extension,,}" in
+            jpg|jpeg|png|gif|svg|webp)
+                cp -f "$archivo" "$DIR_OEBPS/images/" || morir "No se pudo copiar $(basename "$archivo")"
+                imagenes=$((imagenes + 1))
+                ;;
+            *)
+                omitidos=$((omitidos + 1))
+                ;;
+        esac
     done
 fi
 if (( imagenes > 0 )); then
     ok "$imagenes imagen(es)"
 else
     tenue "el proyecto no tiene imágenes en media/"
+fi
+if (( omitidos > 0 )); then
+    tenue "$omitidos archivo(s) de media/ no son imágenes EPUB y no se copian"
 fi
 
 # --- 6. CAPÍTULOS ---

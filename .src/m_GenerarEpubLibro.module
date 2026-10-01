@@ -22,6 +22,15 @@
 '   las piezas con cuerpo. De las sin cuerpo: los índices y las listas se
 '   omiten; el colofón es la página propia que se escribe acá; la
 '   bibliografía viaja dentro de cada capítulo.
+'
+' LAS PRIMERAS (SC-25)
+' ----------------------------------------------------------
+'   La portadilla no va. La portada (titlepage) va solo si el libro la
+'   declara, igual que en el PDF. Los créditos (copyright-page) van siempre:
+'   con los textos digitales si el libro declara la pieza y los tiene; si no,
+'   el bloque genérico. La tapa (cover) va siempre, en front-tapa.xhtml.
+'   Los nombres de la portada van en mayúsculas y minúsculas, sin
+'   versalitas: los lectores de EPUB no las respetan de forma pareja.
 '   PENDIENTE: con lugar_bibliografia = consolidada, los canónicos de
 '   capítulo siguen trayendo su propia bibliografía y el EPUB no la
 '   consolida. Hoy no hay libros consolidados en EPUB.
@@ -49,6 +58,11 @@ Private $sRutaEpubWork As String
 Private $sRutaOEBPS As String
 Private $iIdLibro As Integer
 
+' PRIMERAS DECLARADAS EN EL LIBRO. LAS DEJA ListaPiezasEpub, QUE YA RECORRE
+' LAS PIEZAS
+Private $bHayPortada As Boolean
+Private $bHayCreditos As Boolean
+
 ' ============================================
 ' Función   : GenerarEpubLibro
 ' Propósito : Punto de entrada de la salida EPUB del libro.
@@ -61,7 +75,9 @@ Public Sub GenerarEpubLibro()
   Dim aPiezas As String[]
   Dim aArgumentos As New String[]
   Dim cMeta As Collection
+  Dim cValores As Collection
   Dim sAutores As String
+  Dim sPagina As String
   Dim sNombreEpub As String
   Dim sEstiloCita As String
   Dim iResultado As Integer
@@ -100,14 +116,35 @@ Public Sub GenerarEpubLibro()
   If Not cMeta Then Return
   sAutores = LeerAutoresLibro()
 
+  ' LOS VALORES DE LAS PRIMERAS: AUTORÍA, LEYENDA Y MARCADORES (SC-25)
+  cValores = m_PrimerasLibro.LeerValores($iIdLibro)
+  If Not cValores Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_PrimerasLibro.UltimoError())
+    Return
+  Endif
+
+  ' LOS LOGOS SE VERIFICAN ANTES DE ESCRIBIR NADA
+  If Not VerificarLogo(cMeta["logo_portada"], "de portada") Then Return
+  If Not VerificarLogo(cMeta["logo_coleccion"], "de colección") Then Return
+
   ' --- 5. ÁRBOL DE TRABAJO ---
   If Not PrepararArbol() Then Return
 
   ' --- 6. LO QUE SALE DE LA BASE, A DISCO ---
   ' EL OPF VA ÚLTIMO SOLO POR LEGIBILIDAD: NO DEPENDE DE LOS DEMÁS. EL SCRIPT
   ' VERIFICA DESPUÉS QUE TODO LO QUE DECLARA EXISTA
-  If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-portada.xhtml", ArmarPortada(cMeta, sAutores)) Then Return
-  If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-creditos.xhtml", ArmarCreditos(cMeta, sAutores)) Then Return
+  If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-tapa.xhtml", ArmarTapa(cMeta, sAutores)) Then Return
+
+  If $bHayPortada Then
+    If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-portada.xhtml", ArmarPortada(cMeta, cValores)) Then Return
+  Endif
+
+  ' LOS CRÉDITOS PUEDEN FALLAR AL CONVERTIR LOS TEXTOS: EN ESE CASO YA
+  ' AVISARON Y DEVUELVEN VACÍO
+  sPagina = ArmarCreditos(cMeta, sAutores, cValores)
+  If sPagina = "" Then Return
+  If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "front-creditos.xhtml", sPagina) Then Return
   If Not EscribirArchivo($sRutaOEBPS &/ "chapters" &/ "bm-99-colofon.xhtml", ArmarColofon(cMeta)) Then Return
   If Not EscribirArchivo($sRutaOEBPS &/ "nav.xhtml", ArmarNav(cMeta, aPiezas)) Then Return
   If Not EscribirArchivo($sRutaOEBPS &/ "content.opf", ArmarOPF(cMeta, sAutores, aPiezas)) Then Return
@@ -171,7 +208,11 @@ Private Function ListaPiezasEpub() As String[]
   ' --- 3. FILTRO POR LA MATRIZ ---
   ' SOLO LAS QUE EL EPUB TOMA DE SU CANÓNICO. LAS DERIVADAS SE RESUELVEN
   ' APARTE Y LAS OMITIDAS NO VAN. LA DECISIÓN ES DE m_PiezasLibro, NO DE UNA
-  ' LISTA ESCRITA ACÁ
+  ' LISTA ESCRITA ACÁ. DE PASO SE ANOTA SI EL LIBRO DECLARA PORTADA Y
+  ' CRÉDITOS, QUE EL EPUB RESUELVE COMO PÁGINAS PROPIAS (SC-25)
+  $bHayPortada = False
+  $bHayCreditos = False
+
   While hPiezas.Available
     sTipo = "capitulo"
     If Not IsNull(hPiezas["tipo_capitulo"]) Then
@@ -181,6 +222,9 @@ Private Function ListaPiezasEpub() As String[]
     If m_PiezasLibro.Tratamiento(sTipo, m_PiezasLibro.SALIDA_EPUB) = m_PiezasLibro.TRATAMIENTO_CUERPO Then
       aPiezas.Add(m_XML.TrimUTF8(hPiezas["nombre_archivo"]))
     Endif
+
+    If sTipo = "portada" Then $bHayPortada = True
+    If sTipo = "creditos" Then $bHayCreditos = True
 
     hPiezas.MoveNext
   Wend
@@ -209,7 +253,8 @@ Private Function LeerMetadatosLibro() As Collection
     "SELECT titulo_libro, subtitulo, titulo_abreviado, isbn_impreso, " &
     "isbn_electronico, doi_libro, editorial, ciudad_publicacion, " &
     "ano_publicacion, idioma_principal, url_licencia, licencia_defecto, " &
-    "descripcion_libro, imagen_tapa " &
+    "descripcion_libro, imagen_tapa, logo_portada, logo_coleccion, " &
+    "texto_catalogacion_digital, texto_legal_digital " &
     "FROM libros_md WHERE id_libro = &1 LIMIT 1", $iIdLibro)
   If Error Then
     m_Sonido.sonar("Error")
@@ -238,6 +283,10 @@ Private Function LeerMetadatosLibro() As Collection
   cMeta["licencia"] = m_Metadatos.NullToString(hLibro["licencia_defecto"])
   cMeta["descripcion"] = m_Metadatos.NullToString(hLibro["descripcion_libro"])
   cMeta["imagen_tapa"] = m_Metadatos.NullToString(hLibro["imagen_tapa"])
+  cMeta["logo_portada"] = m_Metadatos.NullToString(hLibro["logo_portada"])
+  cMeta["logo_coleccion"] = m_Metadatos.NullToString(hLibro["logo_coleccion"])
+  cMeta["texto_catalogacion_digital"] = m_Metadatos.NullToString(hLibro["texto_catalogacion_digital"])
+  cMeta["texto_legal_digital"] = m_Metadatos.NullToString(hLibro["texto_legal_digital"])
 
   If cMeta["idioma"] = "" Then cMeta["idioma"] = "es"
 
@@ -421,13 +470,15 @@ Private Function CabeceraXhtml(sIdioma As String, sTitulo As String, bConHojaDeE
 End
 
 ' ============================================
-' Función   : ArmarPortada
-' Propósito : La portada: la tapa si la hay; si no, una portada de texto.
+' Función   : ArmarTapa
+' Propósito : La tapa (cover): la imagen si la hay; si no, una tapa de texto.
+'             Hasta SC-25 este archivo se llamaba front-portada.xhtml: la
+'             portada es ahora otra página, la titlepage.
 ' Parámetros: cMeta As Collection — metadatos del libro
 '             sAutores As String — autoría, sin escapar
 ' Retorna   : String — el XHTML completo
 ' ============================================
-Private Function ArmarPortada(cMeta As Collection, sAutores As String) As String
+Private Function ArmarTapa(cMeta As Collection, sAutores As String) As String
 
   Dim s As String
   Dim sNombreTapa As String
@@ -435,23 +486,23 @@ Private Function ArmarPortada(cMeta As Collection, sAutores As String) As String
   If cMeta["imagen_tapa"] <> "" Then sNombreTapa = File.Name(cMeta["imagen_tapa"])
 
   s = CabeceraXhtml(cMeta["idioma"], cMeta["titulo"], True)
-  s &= "<section epub:type=" & Comillas("cover") & " class=" & Comillas("portada") & ">" & Chr(10)
+  s &= "<section epub:type=" & Comillas("cover") & " class=" & Comillas("tapa") & ">" & Chr(10)
 
   If sNombreTapa <> "" Then
-    s &= "<img class=" & Comillas("portada-img") &
+    s &= "<img class=" & Comillas("tapa-img") &
       " src=" & Comillas("../images/" & EscaparXml(sNombreTapa)) &
       " alt=" & Comillas("Cubierta") & "/>" & Chr(10)
   Else
-    ' SIN TAPA: PORTADA DE TEXTO
-    s &= "<h1 class=" & Comillas("portada-titulo") & ">" & EscaparXml(cMeta["titulo"]) & "</h1>" & Chr(10)
+    ' SIN IMAGEN: TAPA DE TEXTO
+    s &= "<h1 class=" & Comillas("tapa-titulo") & ">" & EscaparXml(cMeta["titulo"]) & "</h1>" & Chr(10)
     If cMeta["subtitulo"] <> "" Then
-      s &= "<p class=" & Comillas("portada-subtitulo") & ">" & EscaparXml(cMeta["subtitulo"]) & "</p>" & Chr(10)
+      s &= "<p class=" & Comillas("tapa-subtitulo") & ">" & EscaparXml(cMeta["subtitulo"]) & "</p>" & Chr(10)
     Endif
     If sAutores <> "" Then
-      s &= "<p class=" & Comillas("portada-autor") & ">" & EscaparXml(sAutores) & "</p>" & Chr(10)
+      s &= "<p class=" & Comillas("tapa-autor") & ">" & EscaparXml(sAutores) & "</p>" & Chr(10)
     Endif
     If cMeta["editorial"] <> "" Then
-      s &= "<p class=" & Comillas("portada-editorial") & ">" & EscaparXml(cMeta["editorial"]) & "</p>" & Chr(10)
+      s &= "<p class=" & Comillas("tapa-editorial") & ">" & EscaparXml(cMeta["editorial"]) & "</p>" & Chr(10)
     Endif
   Endif
 
@@ -463,19 +514,89 @@ Private Function ArmarPortada(cMeta As Collection, sAutores As String) As String
 End
 
 ' ============================================
+' Función   : ArmarPortada
+' Propósito : La portada del libro (titlepage), en el orden del PDF: autoría,
+'             leyenda, título, subtítulo y logo de portada al pie (SC-25).
+' Parámetros: cMeta As Collection — metadatos del libro
+'             cValores As Collection — lo que devolvió
+'             m_PrimerasLibro.LeerValores
+' Retorna   : String — el XHTML completo
+' Nota      : LOS NOMBRES EN MAYÚSCULAS Y MINÚSCULAS, COMO ESTÁN EN LA BASE:
+'             LAS VERSALITAS NO SE RESPETAN DE FORMA PAREJA EN LOS LECTORES.
+'             EL alt DEL LOGO ES EL NOMBRE DE LA EDITORIAL, O VACÍO SI NO
+'             HAY: UN alt VACÍO DECLARA LA IMAGEN COMO DECORATIVA.
+' ============================================
+Private Function ArmarPortada(cMeta As Collection, cValores As Collection) As String
+
+  Dim s As String
+  Dim aNombres As String[]
+  Dim sNombres As String = ""
+  Dim sLeyenda As String
+  Dim i As Integer
+
+  ' --- 1. AUTORÍA ---
+  aNombres = cValores["nombres_autoria"]
+  For i = 0 To aNombres.Max
+    sNombres &= m_PrimerasLibro.SeparadorAutoria(i, aNombres.Count) & aNombres[i]
+  Next
+  sLeyenda = m_PrimerasLibro.ValorDe(cValores, "leyenda_autoria")
+
+  ' --- 2. PÁGINA ---
+  s = CabeceraXhtml(cMeta["idioma"], cMeta["titulo"], True)
+  s &= "<section epub:type=" & Comillas("titlepage") & " class=" & Comillas("portada") & ">" & Chr(10)
+
+  If sNombres <> "" Then
+    s &= "<p class=" & Comillas("portada-autores") & ">" & EscaparXml(sNombres) & "</p>" & Chr(10)
+  Endif
+  If sLeyenda <> "" Then
+    s &= "<p class=" & Comillas("portada-leyenda") & ">" & EscaparXml(sLeyenda) & "</p>" & Chr(10)
+  Endif
+
+  s &= "<h1 class=" & Comillas("portada-titulo") & ">" & EscaparXml(cMeta["titulo"]) & "</h1>" & Chr(10)
+  If cMeta["subtitulo"] <> "" Then
+    s &= "<p class=" & Comillas("portada-subtitulo") & ">" & EscaparXml(cMeta["subtitulo"]) & "</p>" & Chr(10)
+  Endif
+
+  If cMeta["logo_portada"] <> "" Then
+    s &= "<p class=" & Comillas("portada-logo") & "><img src=" &
+      Comillas("../images/" & EscaparXml(cMeta["logo_portada"])) &
+      " alt=" & Comillas(EscaparXml(cMeta["editorial"])) & "/></p>" & Chr(10)
+  Endif
+
+  s &= "</section>" & Chr(10)
+  s &= "</body>" & Chr(10) & "</html>" & Chr(10)
+
+  Return s
+
+End
+
+' ============================================
 ' Función   : ArmarCreditos
-' Propósito : La página legal: título, autoría, editorial, año, ISBN, DOI y
-'             licencia.
+' Propósito : La página de créditos (copyright-page). Con los textos digitales
+'             si el libro declara la pieza y los tiene (SC-25); si no, el bloque
+'             genérico: título, autoría, editorial, año, ISBN, DOI y licencia.
 ' Parámetros: cMeta As Collection — metadatos del libro
 '             sAutores As String — autoría, sin escapar
-' Retorna   : String — el XHTML completo
+'             cValores As Collection — lo que devolvió
+'             m_PrimerasLibro.LeerValores
+' Retorna   : String — el XHTML completo; "" si falló la conversión de los
+'             textos, con el motivo ya informado
+' Nota      : LOS TEXTOS DIGITALES NUNCA SE REEMPLAZAN POR LOS DEL IMPRESO, QUE
+'             TRAEN TIRADA E IMPRENTA (SC-25). VACÍOS LOS DOS, VA EL GENÉRICO.
 ' ============================================
-Private Function ArmarCreditos(cMeta As Collection, sAutores As String) As String
+Private Function ArmarCreditos(cMeta As Collection, sAutores As String, cValores As Collection) As String
 
   Dim s As String
 
+  ' --- 0. CRÉDITOS CON LOS TEXTOS DEL LIBRO ---
+  If $bHayCreditos Then
+    If cMeta["texto_catalogacion_digital"] <> "" Or cMeta["texto_legal_digital"] <> "" Then
+      Return ArmarCreditosPropios(cMeta, cValores)
+    Endif
+  Endif
+
   s = CabeceraXhtml(cMeta["idioma"], "Créditos", True)
-  s &= "<section class=" & Comillas("creditos") & ">" & Chr(10)
+  s &= "<section epub:type=" & Comillas("copyright-page") & " class=" & Comillas("creditos") & ">" & Chr(10)
 
   ' --- 1. TÍTULO Y AUTORÍA ---
   s &= "<h1 class=" & Comillas("creditos-titulo") & ">" & EscaparXml(cMeta["titulo"]) & "</h1>" & Chr(10)
@@ -516,6 +637,98 @@ Private Function ArmarCreditos(cMeta As Collection, sAutores As String) As Strin
   s &= "</body>" & Chr(10) & "</html>" & Chr(10)
 
   Return s
+
+End
+
+' ============================================
+' Función   : ArmarCreditosPropios
+' Propósito : Los créditos con los textos digitales del libro: logo de la
+'             colección arriba, ficha de catalogación y texto legal (SC-25).
+' Parámetros: cMeta As Collection — metadatos del libro
+'             cValores As Collection — valores de los marcadores
+' Retorna   : String — el XHTML completo; "" si falló la conversión, con el
+'             motivo ya informado
+' Nota      : LOS TEXTOS PASAN POR m_PrimerasLibro.TextoParaSalida A html:
+'             PANDOC ESCAPA & Y <, Y ESCRIBE LOS CARACTERES COMO TALES, SIN
+'             ENTIDADES CON NOMBRE (VERIFICADO: EL RESULTADO ES XML BIEN
+'             FORMADO). EL SCRIPT LO VUELVE A COMPROBAR CON xmllint.
+'             bDigital EN True: {paginas} Y {formato} DETIENEN LA GENERACIÓN.
+' ============================================
+Private Function ArmarCreditosPropios(cMeta As Collection, cValores As Collection) As String
+
+  Dim s As String
+  Dim sFicha As String
+  Dim sLegal As String
+
+  ' --- 1. TEXTOS ---
+  sFicha = m_PrimerasLibro.TextoParaSalida(cMeta["texto_catalogacion_digital"], cValores, "html", True)
+  If m_PrimerasLibro.UltimoError() <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Ficha de catalogación del EPUB: " & m_PrimerasLibro.UltimoError())
+    Return ""
+  Endif
+
+  sLegal = m_PrimerasLibro.TextoParaSalida(cMeta["texto_legal_digital"], cValores, "html", True)
+  If m_PrimerasLibro.UltimoError() <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("Texto legal del EPUB: " & m_PrimerasLibro.UltimoError())
+    Return ""
+  Endif
+
+  ' --- 2. PÁGINA ---
+  s = CabeceraXhtml(cMeta["idioma"], "Créditos", True)
+  s &= "<section epub:type=" & Comillas("copyright-page") & " class=" & Comillas("creditos") & ">" & Chr(10)
+
+  If cMeta["logo_coleccion"] <> "" Then
+    ' EL NOMBRE DE LA COLECCIÓN ES PARTE DE LA IMAGEN: VA EN EL alt
+    s &= "<p class=" & Comillas("creditos-logo") & "><img src=" &
+      Comillas("../images/" & EscaparXml(cMeta["logo_coleccion"])) &
+      " alt=" & Comillas(EscaparXml(m_PrimerasLibro.ValorDe(cValores, "coleccion"))) & "/></p>" & Chr(10)
+  Endif
+
+  If sFicha <> "" Then
+    s &= "<div class=" & Comillas("creditos-ficha") & ">" & Chr(10) & sFicha & Chr(10) & "</div>" & Chr(10)
+  Endif
+  If sLegal <> "" Then
+    s &= "<div class=" & Comillas("creditos-legal") & ">" & Chr(10) & sLegal & Chr(10) & "</div>" & Chr(10)
+  Endif
+
+  s &= "</section>" & Chr(10)
+  s &= "</body>" & Chr(10) & "</html>" & Chr(10)
+
+  Return s
+
+End
+
+' ============================================
+' Función   : VerificarLogo
+' Propósito : Comprueba que un logo cargado sea PNG o JPG y esté en media/.
+' Parámetros: sNombre As String — libros_md.logo_portada o logo_coleccion
+'             sCual As String — «de portada» o «de colección», para el mensaje
+' Retorna   : Boolean — True si no hay logo o si está bien; False con mensaje
+' Nota      : MISMA REGLA QUE EL PDF (RutaLogo). SIN ESTO, UN LOGO FALTANTE
+'             SALE COMO IMAGEN ROTA Y EL SCRIPT LO DETECTA RECIÉN AL VERIFICAR
+'             EL PAQUETE, SIN DECIR DE QUÉ CAMPO VIENE.
+' ============================================
+Private Function VerificarLogo(sNombre As String, sCual As String) As Boolean
+
+  If sNombre = "" Then Return True
+
+  If Not m_PrimerasLibro.EsFormatoLogo(sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El logo " & sCual & " tiene que ser PNG o JPG:" & gb.NewLine &
+      sNombre & gb.NewLine & "Volvé a elegirlo en la ficha del libro.")
+    Return False
+  Endif
+
+  If Not Exist($sRutaProyecto &/ m_PrimerasLibro.CARPETA_MEDIA &/ sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El logo " & sCual & " no está en la carpeta media del proyecto:" &
+      gb.NewLine & sNombre)
+    Return False
+  Endif
+
+  Return True
 
 End
 
@@ -706,14 +919,17 @@ Private Function ArmarOPF(cMeta As Collection, sAutores As String, aPiezas As St
   Next
 
   ' IMÁGENES: LAS DE media/, LAS MISMAS QUE COPIA EL SCRIPT. SE SALTEAN LOS
-  ' SUBDIRECTORIOS Y LOS OCULTOS, IGUAL QUE EL GLOB DEL SCRIPT. Dir() SOBRE
-  ' UNA RUTA QUE NO ES CARPETA FALLA (GV-01): SE COMPRUEBA ANTES
+  ' SUBDIRECTORIOS, LOS OCULTOS Y LO QUE NO ES UNA IMAGEN QUE EL EPUB ADMITA,
+  ' CON LA MISMA LISTA QUE EL SCRIPT: UN PDF EN media/ SE DECLARABA COMO
+  ' image/jpeg Y DEJABA EL PAQUETE INVÁLIDO. Dir() SOBRE UNA RUTA QUE NO ES
+  ' CARPETA FALLA (GV-01): SE COMPRUEBA ANTES
   sRutaMedia = $sRutaProyecto &/ "media"
   If Exist(sRutaMedia) Then
     If IsDir(sRutaMedia) Then
       For Each sImagen In Dir(sRutaMedia)
         If IsDir(sRutaMedia &/ sImagen) Then Continue
         If String.Left(sImagen, 1) = "." Then Continue
+        If Not EsImagenEpub(sImagen) Then Continue
         If sImagen = sNombreTapa Then
           s &= "<item id=" & Comillas("cover-image") & " href=" & Comillas("images/" & EscaparXml(sImagen)) &
             " media-type=" & Comillas(MediaTypeDeImagen(sImagen)) & " properties=" & Comillas("cover-image") & "/>" & Chr(10)
@@ -728,8 +944,12 @@ Private Function ArmarOPF(cMeta As Collection, sAutores As String, aPiezas As St
     Endif
   Endif
 
-  s &= "<item id=" & Comillas("portada") & " href=" & Comillas("chapters/front-portada.xhtml") &
+  s &= "<item id=" & Comillas("tapa") & " href=" & Comillas("chapters/front-tapa.xhtml") &
     " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
+  If $bHayPortada Then
+    s &= "<item id=" & Comillas("portada") & " href=" & Comillas("chapters/front-portada.xhtml") &
+      " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
+  Endif
   s &= "<item id=" & Comillas("creditos") & " href=" & Comillas("chapters/front-creditos.xhtml") &
     " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
 
@@ -744,7 +964,8 @@ Private Function ArmarOPF(cMeta As Collection, sAutores As String, aPiezas As St
 
   ' --- 5. SPINE: ORDEN DE LECTURA ---
   s &= "<spine>" & Chr(10)
-  s &= "<itemref idref=" & Comillas("portada") & "/>" & Chr(10)
+  s &= "<itemref idref=" & Comillas("tapa") & "/>" & Chr(10)
+  If $bHayPortada Then s &= "<itemref idref=" & Comillas("portada") & "/>" & Chr(10)
   s &= "<itemref idref=" & Comillas("creditos") & "/>" & Chr(10)
   For Each sPieza In aPiezas
     s &= "<itemref idref=" & Comillas("cap-" & sPieza) & "/>" & Chr(10)
@@ -755,6 +976,27 @@ Private Function ArmarOPF(cMeta As Collection, sAutores As String, aPiezas As St
   s &= "</package>" & Chr(10)
 
   Return s
+
+End
+
+' ============================================
+' Función   : EsImagenEpub
+' Propósito : Dice si un archivo de media/ es una imagen que el EPUB admite.
+' Parámetros: sNombre As String — nombre del archivo
+' Retorna   : Boolean — True para jpg, jpeg, png, gif, svg y webp
+' Nota      : SON LOS TIPOS DE IMAGEN DE EPUB 3.3. LA MISMA LISTA ESTÁ EN
+'             engine/generar_epub_libro.sh: SI DIVERGEN, EL SCRIPT COPIA UN
+'             ARCHIVO QUE EL OPF NO DECLARA, O EL OPF DECLARA UNO QUE NO SE
+'             COPIÓ, Y LA VERIFICACIÓN DEL OPF LO ATRAPA.
+' ============================================
+Private Function EsImagenEpub(sNombre As String) As Boolean
+
+  Select Case LCase(File.Ext(sNombre))
+    Case "jpg", "jpeg", "png", "gif", "svg", "webp"
+      Return True
+    Case Else
+      Return False
+  End Select
 
 End
 

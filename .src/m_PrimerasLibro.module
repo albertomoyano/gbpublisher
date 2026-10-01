@@ -526,139 +526,22 @@ Public Function TextoParaSalida(sTexto As String, cValores As Collection, sForma
 End
 
 ' ============================================
-' Función   : GenerarSvgDeLogo
-' Propósito : Genera, junto a un logo en PDF, la versión SVG que usa el EPUB:
-'             EPUB 3.3 no admite PDF como imagen (GV-66).
-' Parámetros: sRutaPdf As String — ruta absoluta del logo en PDF
-' Retorna   : String — ruta del SVG generado; "" si falló, con el motivo en
-'             UltimoError()
-' Nota      : pdftocairo CONVIERTE EL TEXTO EN TRAZOS: EL SVG NO DEPENDE DE
-'             FUENTES. PERO ESCRIBE width Y height SIN UNIDAD, QUE UN LECTOR
-'             TOMA COMO PÍXELES Y NO COMO PUNTOS: EL LOGO SALDRÍA AL 75 %.
-'             AgregarUnidadSvg LES PONE pt (GV-66).
-'             Exec SOBRE UN ARRAY, SIN SHELL (SC-05).
+' Función   : EsFormatoLogo
+' Propósito : Dice si un archivo tiene un formato admitido para los logos.
+' Parámetros: sNombre As String — nombre o ruta del archivo
+' Retorna   : Boolean — True para PNG y JPG
+' Nota      : SOLO PNG Y JPG: SIRVEN IGUAL AL PDF Y AL EPUB, SIN CONVERSIÓN.
+'             UN LOGO EN PDF OBLIGABA A GENERAR UN SVG PARA EL EPUB, QUE NO
+'             ADMITE PDF COMO IMAGEN (SC-25).
 ' ============================================
-Public Function GenerarSvgDeLogo(sRutaPdf As String) As String
+Public Function EsFormatoLogo(sNombre As String) As Boolean
 
-  Dim sRutaSvg As String
-  Dim sSalida As String
-  Dim sSvg As String
-  Dim aComando As New String[]
-
-  ' --- 1. INICIALIZACIÓN ---
-  $sUltimoError = ""
-  sRutaSvg = File.Dir(sRutaPdf) &/ File.BaseName(sRutaPdf) & ".svg"
-
-  ' --- 2. CONVERSIÓN ---
-  aComando.Add("pdftocairo")
-  aComando.Add("-svg")
-  aComando.Add(sRutaPdf)
-  aComando.Add(sRutaSvg)
-
-  Try Exec aComando To sSalida
-  If Error Then
-    $sUltimoError = "No se pudo ejecutar pdftocairo: " & Error.Text
-    Return ""
-  Endif
-
-  ' Exec ... To NO DEVUELVE EL CÓDIGO DE SALIDA: LO QUE PRUEBA QUE FUNCIONÓ
-  ' ES QUE EL ARCHIVO EXISTA
-  If Not Exist(sRutaSvg) Then
-    $sUltimoError = "pdftocairo no generó el SVG a partir de " & File.Name(sRutaPdf) & "."
-    Return ""
-  Endif
-
-  ' --- 3. UNIDADES ---
-  Try sSvg = File.Load(sRutaSvg)
-  If Error Then
-    $sUltimoError = "No se pudo leer el SVG generado: " & Error.Text
-    Return ""
-  Endif
-
-  sSvg = AgregarUnidadSvg(sSvg, "width")
-  sSvg = AgregarUnidadSvg(sSvg, "height")
-
-  Try File.Save(sRutaSvg, sSvg)
-  If Error Then
-    $sUltimoError = "No se pudo escribir el SVG corregido: " & Error.Text
-    Return ""
-  Endif
-
-  Return sRutaSvg
-
-End
-
-' ============================================
-' Función   : PngDeclaraResolucion
-' Propósito : Dice si un PNG trae el bloque pHYs, que declara su resolución.
-' Parámetros: sRuta As String — ruta absoluta del PNG
-' Retorna   : Boolean — True si lo trae. False también si no se pudo leer
-' Nota      : SIN pHYs, LuaLaTeX SUPONE 72 ppp Y UN LOGO DE 300 ppp SALE
-'             CUATRO VECES MÁS GRANDE (GV-66). EL BLOQUE VA ANTES DE LOS
-'             DATOS DE IMAGEN (IDAT): SE BUSCA SOLO AHÍ, PARA QUE UNOS BYTES
-'             QUE CASUALMENTE DIGAN pHYs DENTRO DE LA IMAGEN NO CUENTEN.
-'             InStr Y NO String.InStr: EL ARCHIVO ES BINARIO Y SE CUENTAN
-'             BYTES (RC-GM-12 ES PARA TEXTO).
-' ============================================
-Public Function PngDeclaraResolucion(sRuta As String) As Boolean
-
-  Dim sDatos As String
-  Dim iPhys As Integer
-  Dim iIdat As Integer
-
-  Try sDatos = File.Load(sRuta)
-  If Error Then Return False
-
-  iPhys = InStr(sDatos, "pHYs")
-  iIdat = InStr(sDatos, "IDAT")
-
-  If iPhys = 0 Then Return False
-  If iIdat = 0 Then Return False
-
-  Return iPhys < iIdat
-
-End
-
-' ============================================
-' Función   : AgregarUnidadSvg
-' Propósito : Agrega pt a un atributo de tamaño de la etiqueta <svg> si no
-'             tiene unidad.
-' Parámetros: sSvg As String — el SVG completo
-'             sAtributo As String — "width" o "height"
-' Retorna   : String — el SVG, con el atributo corregido o como estaba
-' Nota      : SOLO TOCA LA ETIQUETA RAÍZ, NO LOS width DE ADENTRO. InStr Y Mid
-'             POR BYTES SOBRE UNA ZONA QUE ES ASCII; LAS POSICIONES SE USAN
-'             CON LAS MISMAS FUNCIONES, ASÍ QUE NO SE MEZCLAN BYTES CON
-'             CARACTERES (RC-GM-12).
-' ============================================
-Private Function AgregarUnidadSvg(sSvg As String, sAtributo As String) As String
-
-  Dim iSvg As Integer
-  Dim iFinEtiqueta As Integer
-  Dim iAtributo As Integer
-  Dim iCierre As Integer
-  Dim sUltimo As String
-
-  ' --- 1. LA ETIQUETA <svg ... > ---
-  iSvg = InStr(sSvg, "<svg")
-  If iSvg = 0 Then Return sSvg
-  iFinEtiqueta = InStr(sSvg, ">", iSvg)
-  If iFinEtiqueta = 0 Then Return sSvg
-
-  ' --- 2. EL ATRIBUTO, DENTRO DE LA ETIQUETA ---
-  ' EL ESPACIO DELANTE EVITA TOMAR stroke-width O viewBox
-  iAtributo = InStr(sSvg, " " & sAtributo & "=" & Chr(34), iSvg)
-  If iAtributo = 0 Then Return sSvg
-  If iAtributo > iFinEtiqueta Then Return sSvg
-
-  iCierre = InStr(sSvg, Chr(34), iAtributo + Len(sAtributo) + 3)
-  If iCierre = 0 Then Return sSvg
-
-  ' --- 3. SOLO SI TERMINA EN DÍGITO: YA TIENE UNIDAD SI NO ---
-  sUltimo = Mid(sSvg, iCierre - 1, 1)
-  If InStr("0123456789", sUltimo) = 0 Then Return sSvg
-
-  Return Left(sSvg, iCierre - 1) & "pt" & Mid(sSvg, iCierre)
+  Select Case LCase(File.Ext(sNombre))
+    Case "png", "jpg", "jpeg"
+      Return True
+    Case Else
+      Return False
+  End Select
 
 End
 

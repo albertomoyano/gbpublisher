@@ -1380,7 +1380,8 @@ MATRIZ
 - Las blancas las ponen `\gbclearrecto` y `\gbclearverso`; nunca `\newpage\hbox{}` a mano.
 - Macros nuevas: el contrato sube a la versión 2. El aspecto va en la estética.
 - El sumario se emite DESPUÉS de la última primera. Hoy `AbrirZona(ZONA_FRONT)` lo escribe al abrir la zona, y una primera declarada quedaría detrás de él.
-- EPUB: `front-portada.xhtml`, que es la tapa (`cover`), pasa a llamarse `front-tapa.xhtml`. Si el libro no declara `creditos`, el EPUB conserva su página genérica (`ArmarCreditos`): el mismo criterio que el colofón no declarado.
+- EPUB: la tapa (`cover`) va siempre, en `front-tapa.xhtml`; hasta SC-25 era `front-portada.xhtml`. La portada (`titlepage`, `front-portada.xhtml`) va solo si el libro la declara, con autoría, leyenda, título, subtítulo y logo de portada. Los créditos (`copyright-page`) van siempre: con logo de colección y textos digitales si el libro declara la pieza y tiene al menos uno de los dos textos; si no, el bloque genérico (`ArmarCreditos`), el mismo criterio que el colofón no declarado.
+- EPUB sin versalitas: los nombres van en mayúsculas y minúsculas, como están en la base. Noto Serif las tiene, pero los lectores de EPUB no las respetan de forma pareja.
 - `titlepage`, `copyright-page` y `halftitlepage` están definidos en EPUB 3 Structural Semantics Vocabulary.
 
 DATOS EN libros_md
@@ -1426,7 +1427,9 @@ Después de compilar, la aplicación lee las páginas del PDF con `pdfinfo` y AV
 
 LOGOS
 
-Centrados y sin escala: el tamaño viene en el archivo (GV-66). El diálogo acepta PDF, PNG y JPG, y advierte si un PNG no declara su resolución. De un PDF genera en ese momento un SVG hermano con `pdftocairo -svg` para el EPUB, que no admite PDF; con PNG o JPG el mismo archivo sirve a las dos salidas. `pdfinfo` y `pdftocairo` (poppler-utils) entran en `integridad.sh`.
+Solo PNG o JPG: el mismo archivo sirve al PDF y al EPUB, sin conversión. Un logo en PDF obligaba a generar un SVG para el EPUB, que no admite PDF como imagen; se descartó. Centrados a ancho fijo, definido en `preambulo-estetica.tex`: el de portada (logo de la editorial) a 20 mm (`\gbAnchoLogoPortada`) y el de colección a 110 mm (`\gbAnchoLogoColeccion`), nunca más anchos que la caja (`\gbLogo`). El logo de colección se diseña sobre un lienzo de 110 mm de ancho: el blanco a los costados iguala las colecciones cuyo nombre o dirección ocupan distinto ancho. La resolución del archivo no interviene, así que GV-66 no afecta a los logos y el diálogo no la controla; solo tiene que alcanzar en píxeles (a 300 ppp, unos 240 px para 20 mm y 1300 px para 110 mm). En el EPUB, la misma proporción sobre el ancho de pantalla: 18 % y 100 % (`gbpublisher-epub-libro.css`). El PDF y el EPUB frenan con un mensaje si el logo cargado no es PNG o JPG o no está en `media/`. `pdfinfo` (poppler-utils) entra en `integridad.sh`.
+
+Del resto de `media/`, el EPUB toma solo las imágenes que admite —jpg, jpeg, png, gif, svg y webp—, con la misma lista en `m_GenerarEpubLibro.EsImagenEpub` y en `engine/generar_epub_libro.sh`. Antes copiaba todo y declaraba lo desconocido como `image/jpeg`: un PDF en `media/` dejaba el paquete inválido.
 
 ESQUEMA
 
@@ -1434,7 +1437,7 @@ Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescri
 
 **Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68
 
-**PENDIENTE:** PDF implementado y probado con un libro real; falta el EPUB. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh. Sin medir: el SVG con unidades pt en epubcheck y en un lector (GV-66).
+**PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
 
 ---
 
@@ -3115,7 +3118,7 @@ Banco: `MBanco` (selección de pares). Aplicado en `m_ParesDelimitadores`.
 
 Sin el bloque `pHYs`, que declara la resolución, LuaTeX supone 72 ppp: 355 px dan 125 mm. No hay aviso. `pdftocairo -png -r 300` escribe `pHYs`; un PNG exportado por otra herramienta puede no traerlo.
 
-REGLA: una imagen que se compone sin escala se acepta en PDF, o en PNG con resolución declarada. Un PNG sin `pHYs` se advierte al elegirlo.
+REGLA: una imagen que se compone sin escala se acepta en PDF, o en PNG con resolución declarada. Los logos de las primeras no entran en esta regla: se componen a ancho fijo (SC-25), que ignora la resolución.
 
 PDF A SVG
 
