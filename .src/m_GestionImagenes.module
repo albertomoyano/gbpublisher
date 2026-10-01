@@ -35,6 +35,12 @@ Public Sub ResetearEstado()
   $sModo = ""
   $sArchivoActual = ""
 
+  ' --- 1.1 VACIAR ESTADO DEL REFRESCO EN CALIENTE ---
+  ' SIN ESTO, EL PRIMER TICK DESPUÉS DE ABRIR OTRO PROYECTO COMPARABA CONTRA LA
+  ' FOTO DEL PROYECTO ANTERIOR Y REPOBLABA SIN NECESIDAD
+  $sFirmaMedia = ""
+  FMain.bPoblandoComboImagen = False
+
   ' --- 2. LIMPIAR LA UI DERIVADA ---
   FMain.cmbImagenes.Clear()
   FMain.txtInfoImagen.Text = ""
@@ -754,8 +760,8 @@ Public Sub RefrescarComboSiCambio()
   ' --- 3. SIN CAMBIOS: SALIR SIN TOCAR LA UI ---
   If sFirma = $sFirmaMedia Then Return
 
-  ' --- 4. HAY CAMBIOS: ACTUALIZAR FIRMA Y REPOBLAR PRESERVANDO SELECCIÓN ---
-  $sFirmaMedia = sFirma
+  ' --- 4. HAY CAMBIOS: REPOBLAR PRESERVANDO SELECCIÓN ---
+  ' LA FIRMA LA ACTUALIZA PoblarComboImagenes, ÚNICO LUGAR QUE LLENA EL COMBO
   PoblarComboImagenes(True)
 
 End
@@ -793,9 +799,11 @@ End
 
 ' ============================================
 ' Función   : PoblarComboImagenes
-' Propósito : CARGAR EN cmbImagenes LOS fig-* DE /media DEL PROYECTO ABIERTO.
-' Parámetros: bPreservarSeleccion As Boolean — SI ES True, MANTIENE LA FIGURA ACTUAL
-'             Y SUPRIME EL _Click (REFRESCO EN CALIENTE: NO TOCA LA IMAGEN EN MEMORIA)
+' Propósito : CARGAR EN cmbImagenes LOS fig-* DE /media DEL PROYECTO ABIERTO Y
+'             ACTUALIZAR LA FIRMA DE /media (ÚNICO LUGAR QUE LLENA EL COMBO).
+' Parámetros: bPreservarSeleccion As Boolean — SI ES True (REFRESCO EN CALIENTE),
+'             MANTIENE LA FIGURA EN MEMORIA SIN RECARGARLA; SI ES False (POBLADO
+'             INICIAL O TRAS BORRAR), CARGA LA PRIMERA FIGURA
 ' Retorna   : (NADA)
 ' ============================================
 Public Sub PoblarComboImagenes(Optional bPreservarSeleccion As Boolean = False)
@@ -803,47 +811,97 @@ Public Sub PoblarComboImagenes(Optional bPreservarSeleccion As Boolean = False)
   ' --- 0. INICIALIZACIÓN DE VARIABLES ---
   Dim aArchivos As String[]
   Dim sArchivo As String
-  Dim sSeleccionAnterior As String
+  Dim sObjetivo As String
+  Dim iEncontrado As Integer
   Dim i As Integer
 
   ' --- 1. VALIDACIÓN DE ENTRADA: DEBE HABER PROYECTO ABIERTO ---
   If m_InicioCierre.RutaProyectoEnCurso = "" Then Return
 
-  ' --- 2. GUARDAR LA SELECCIÓN ACTUAL SI SE REQUIERE PRESERVARLA ---
+  ' --- 2. FIGURA A CONSERVAR EN UN REFRESCO EN CALIENTE ---
+  ' MANDA LA FIGURA EN MEMORIA ($sArchivoActual), NO EL TEXTO DEL COMBO: ES LA QUE
+  ' TIENE LOS CAMBIOS Y LA PILA DE DESHACER. SIN FIGURA EN MEMORIA (CARGA FALLIDA),
+  ' SE CONSERVA AL MENOS LO QUE EL COMBO MOSTRABA
   If bPreservarSeleccion Then
-    If FMain.cmbImagenes.Index >= 0 Then sSeleccionAnterior = FMain.cmbImagenes.Text
+    sObjetivo = $sArchivoActual
+    If sObjetivo = "" Then
+      If FMain.cmbImagenes.Index >= 0 Then sObjetivo = FMain.cmbImagenes.Text
+    Endif
   Endif
 
-  ' --- 3. SUPRIMIR EL _Click MIENTRAS REPOBLAMOS EN CALIENTE ---
-  ' SIN ESTO, Clear() Y LA REASIGNACIÓN DE Index DISPARARÍAN CargarImagen Y EL
-  ' GUARD DE DESCARTE APARECERÍA SOLO, PISANDO EL TRABAJO DEL MAQUETADOR
-  FMain.bPoblandoComboImagen = bPreservarSeleccion
-
-  ' --- 4. REPOBLAR DESDE DISCO ---
+  ' --- 3. REPOBLAR DESDE DISCO Y ACTUALIZAR LA FIRMA ---
+  ' Clear DEJA EL ÍNDICE EN -1 Y Add LO PONE EN 0, AMBOS SIN DISPARAR Click
+  ' (FUENTE DE gb.gui.base, ComboBox.class: SetIndex Y ResetIndex)
   FMain.cmbImagenes.Clear()
   aArchivos = ListarFiguras()
   For Each sArchivo In aArchivos
     FMain.cmbImagenes.Add(sArchivo)
   Next
+  $sFirmaMedia = aArchivos.Join(Chr(10))
 
-  ' --- 5. RESTAURAR SELECCIÓN O CARGAR LA PRIMERA ---
-  If bPreservarSeleccion And If sSeleccionAnterior <> "" Then
-    ' BUSCAR POR TEXTO: EL ÍNDICE PUDO CORRERSE SI ENTRÓ UNA FIGURA ANTES ALFABÉTICAMENTE
-    For i = 0 To FMain.cmbImagenes.Count - 1
-      If FMain.cmbImagenes[i].Text = sSeleccionAnterior Then
-        FMain.cmbImagenes.Index = i
-        ' RESINCRONIZAR EL ÍNDICE DE REVERSIÓN CON LA NUEVA POSICIÓN
-        FMain.iIndiceImagenCargada = i
-        Break
-      Endif
-    Next
-  Else
-    ' POBLADO INICIAL: EL _Click NO ESTÁ SUPRIMIDO Y CARGARÁ LA PRIMERA FIGURA
+  ' --- 4. POBLADO INICIAL, TRAS BORRAR O SIN NADA QUE CONSERVAR: CARGAR LA PRIMERA ---
+  ' sObjetivo SOLO SE LLENA CON bPreservarSeleccion, ASÍ QUE UNA SOLA COMPARACIÓN
+  ' CUBRE LOS TRES CASOS (GV-12: SIN ENCADENAR Not CON Or). SIN SUPRESIÓN: EL
+  ' Click DE ESTA ASIGNACIÓN ES EL QUE CARGA LA FIGURA, Y NO HAY CAMBIOS EN
+  ' MEMORIA QUE PERDER PORQUE NO HAY FIGURA CARGADA QUE CONSERVAR
+  If sObjetivo = "" Then
     If FMain.cmbImagenes.Count > 0 Then FMain.cmbImagenes.Index = 0
+    Return
   Endif
 
-  ' --- 6. LEVANTAR LA SUPRESIÓN ---
+  ' --- 5. BUSCAR LA FIGURA A CONSERVAR, POR NOMBRE ---
+  ' POR NOMBRE Y NO POR ÍNDICE: UNA FIGURA NUEVA PUEDE ENTRAR ANTES EN EL ORDEN
+  iEncontrado = -1
+  For i = 0 To FMain.cmbImagenes.Count - 1
+    If FMain.cmbImagenes[i].Text = sObjetivo Then
+      iEncontrado = i
+      Break
+    Endif
+  Next
+
+  ' --- 6. SIGUE EN DISCO: REPONER LA SELECCIÓN SIN RECARGAR ---
+  ' ASIGNAR Index DISPARA Click AUNQUE NO CAMBIE (GV-53). SIN LA BANDERA,
+  ' cmbImagenes_Click LLAMABA A CargarImagen: PREGUNTABA POR CAMBIOS SIN GUARDAR
+  ' O, SIN CAMBIOS, RECARGABA DESDE DISCO Y VACIABA LA PILA DE DESHACER
+  If iEncontrado >= 0 Then
+    FMain.bPoblandoComboImagen = True
+    FMain.cmbImagenes.Index = iEncontrado
+    FMain.bPoblandoComboImagen = False
+    ' RESINCRONIZAR EL ÍNDICE DE REVERSIÓN CON LA NUEVA POSICIÓN
+    FMain.iIndiceImagenCargada = iEncontrado
+    Return
+  Endif
+
+  ' --- 7. LA FIGURA SE BORRÓ DEL DISCO: COMBO SIN SELECCIÓN ---
+  ' -1 Y NO EL 0 QUE DEJA Add: EL COMBO NO DEBE MOSTRAR UNA FIGURA QUE NO ES LA
+  ' DEL VISOR (BorrarImagenDisco ACTÚA SOBRE EL TEXTO DEL COMBO)
+  FMain.bPoblandoComboImagen = True
+  FMain.cmbImagenes.Index = -1
   FMain.bPoblandoComboImagen = False
+  FMain.iIndiceImagenCargada = -1
+
+  ' --- 8. SIN FIGURA EN MEMORIA: NADA MÁS QUE HACER ---
+  If Not $hImage Then Return
+
+  ' --- 9. SIN CAMBIOS SIN GUARDAR: LIMPIAR EL VISOR ---
+  ' MISMO CRITERIO QUE EL VISOR DE PDF: LA IMAGEN EN MEMORIA YA NO TIENE ARCHIVO
+  If Not $bModify Then
+    $hImage = Null
+    $hUndoStack = New Image[]
+    $sModo = ""
+    $sArchivoActual = ""
+    RefrescarVisor()
+    Return
+  Endif
+
+  ' --- 10. CON CAMBIOS SIN GUARDAR: CONSERVAR EN MEMORIA Y AVISAR ---
+  ' GuardarCambios ESCRIBE EN /media CON $sArchivoActual Y VUELVE A CREAR EL ARCHIVO;
+  ' EL TICK SIGUIENTE LO ENCUENTRA Y REPONE LA SELECCIÓN. EL AVISO SALE UNA SOLA
+  ' VEZ: LA FIRMA YA SE ACTUALIZÓ EN EL APARTADO 3, ASÍ QUE LOS TICKS QUE CORRAN
+  ' CON EL MENSAJE ABIERTO NO VUELVEN A ENTRAR ACÁ
+  m_Sonido.sonar("Error")
+  Message.Warning(("La figura abierta se borró del disco:") & Chr(10) & $sArchivoActual & Chr(10) & Chr(10) &
+    ("Los cambios siguen en memoria. Guardar la vuelve a escribir en /media."))
 
 End
 

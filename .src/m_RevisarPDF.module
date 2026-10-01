@@ -7,6 +7,11 @@ Public fZoom As Float                 ' FACTOR DE ZOOM ACTUAL
 Public iRotacion As Integer           ' 0 / 90 / 180 / 270
 Public sDirPDFActual As String        ' <raiz>/salidas/pdf RESUELTO AL POBLAR
 
+' --- ESTADO DEL REFRESCO EN CALIENTE DEL COMBO (hTimerRefrescarPDF) ---
+Private $sFirmaPDF As String          ' FOTO DE LOS NOMBRES DE salidas/pdf PARA DETECTAR CAMBIOS
+Private $sArchivoCargado As String    ' NOMBRE DEL PDF EFECTIVAMENTE ABIERTO EN EL VISOR ("" SI NINGUNO)
+Private $bRepoblando As Boolean       ' SUPRIME SeleccionarPDF MIENTRAS SE REPUEBLA EL COMBO
+
 ' --- PARÁMETROS DE ZOOM Y LAYOUT ---
 Private Const PASO_ZOOM As Float = 1.10       ' MULTIPLICADOR POR PULSACIÓN
 Private Const ZOOM_MIN As Float = 0.25        ' TOPE INFERIOR
@@ -16,39 +21,153 @@ Private Const MARGEN_SCROLL As Integer = 34   ' HOLGURA PARA LA BARRA VERTICAL E
 ' ============================================
 ' Función   : PoblarComboPDF
 ' Propósito : Lista los .pdf de <raíz>/salidas/pdf en cmbVerPDF. Se invoca
-'             una sola vez desde el flujo de "abrir proyecto".
+'             una sola vez desde el flujo de "abrir proyecto"; los cambios
+'             posteriores de la carpeta los recoge RefrescarComboSiCambio.
 ' Parámetros: —
 ' Retorna   : —
 ' ============================================
 Public Sub PoblarComboPDF()
 
   ' --- 0. INICIALIZACIÓN DE VARIABLES ---
-  Dim sRaiz As String
   Dim sArch As String
   Dim aArchivos As String[]
 
   ' --- 1. LIMPIAR ESTADO PREVIO DEL VISOR ---
   ResetVisorPDF()
 
-  ' --- 2. RESOLVER EL DIRECTORIO <raíz>/salidas/pdf ---
-  ' LA RAÍZ SE OBTIENE DEL DIRECTORIO DEL ARCHIVO DE PROYECTO
-  sRaiz = m_InicioCierre.RutaProyectoEnCurso
-  sDirPDFActual = sRaiz &/ "salidas/pdf"
+  ' --- 2. GUARDA: DEBE HABER PROYECTO ABIERTO ---
+  ' SIN ESTA GUARDA LA RUTA QUEDARÍA RELATIVA ("salidas/pdf")
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then Return
 
-  ' --- 3. GUARDA: EL DIRECTORIO DEBE EXISTIR ---
-  If Not Exist(sDirPDFActual) Then Return
+  ' --- 3. RESOLVER EL DIRECTORIO <raíz>/salidas/pdf ---
+  ' SE FIJA AUNQUE LA CARPETA NO EXISTA: EL REFRESCO LA VUELVE A MIRAR EN CADA TICK
+  sDirPDFActual = m_InicioCierre.RutaProyectoEnCurso &/ "salidas/pdf"
 
-  ' --- 4. LISTAR Y ORDENAR LOS .pdf (SOLO ARCHIVOS) ---
-  aArchivos = New String[]
-  For Each sArch In Dir(sDirPDFActual, "*.pdf", gb.File)
-    aArchivos.Add(sArch)
-  Next
-  aArchivos.Sort()
+  ' --- 4. LISTAR LOS .pdf ---
+  ' Null ES UN FALLO DE Dir: SE PUEBLA VACÍO Y EL TIMER REINTENTA
+  aArchivos = ListarPDFs()
+  If aArchivos = Null Then aArchivos = New String[]
 
   ' --- 5. POBLAR EL COMBOBOX ---
+  ' EN UN COMBO DE SOLO LECTURA, Add DEJA EL ÍNDICE EN 0 SIN DISPARAR Click:
+  ' EL COMBO MUESTRA EL PRIMERO Y EL VISOR QUEDA VACÍO HASTA QUE SE ELIJA UNO
   For Each sArch In aArchivos
     FMain.cmbVerPDF.Add(sArch)
   Next
+
+  ' --- 6. FOTO INICIAL: EL PRIMER TICK DEL TIMER NO DEBE REPOBLAR ---
+  $sFirmaPDF = aArchivos.Join(Chr(10))
+
+End
+
+' ============================================
+' Función   : ListarPDFs
+' Propósito : Devuelve la lista ordenada de los .pdf de sDirPDFActual. Fuente
+'             única del listado: la usan el poblado inicial y el refresco.
+' Parámetros: —
+' Retorna   : String[] — nombres con extensión, ordenados; vacío si no hay
+'             carpeta; Null si Dir falló (el llamador decide qué hacer)
+' ============================================
+Private Function ListarPDFs() As String[]
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim aArchivos As New String[]
+  Dim aEncontrados As String[]
+
+  ' --- 1. SIN CARPETA RESUELTA O INEXISTENTE: LISTA VACÍA ---
+  ' IsDir Y NO Exist: Exist DA True TAMBIÉN PARA UN ARCHIVO (GV-01)
+  If sDirPDFActual = "" Then Return aArchivos
+  If Not IsDir(sDirPDFActual) Then Return aArchivos
+
+  ' --- 2. LISTAR SOLO ARCHIVOS .pdf (RC-GM-02) ---
+  ' NO SE AVISA CON Message: ESTA FUNCIÓN CORRE CADA 3 s DESDE EL TIMER Y UN
+  ' FALLO TRANSITORIO (CARPETA BORRADA ENTRE IsDir Y Dir) LLENARÍA LA PANTALLA
+  ' DE MENSAJES. NO ES UN CANAL MUDO (GV-23): EL Null LE DICE AL LLAMADOR QUE
+  ' LA LISTA NO ES CONFIABLE, Y EL LLAMADOR NO LA CONFUNDE CON UNA CARPETA VACÍA
+  Try aEncontrados = Dir(sDirPDFActual, "*.pdf", gb.File)
+  If Error Then Return Null
+
+  ' --- 3. COPIAR Y ORDENAR ---
+  If aEncontrados Then aArchivos.Insert(aEncontrados)
+  aArchivos.Sort()
+
+  Return aArchivos
+
+End
+
+' ============================================
+' Función   : RefrescarComboSiCambio
+' Propósito : Invocada por hTimerRefrescarPDF. Si la lista de .pdf de
+'             salidas/pdf cambió, repuebla cmbVerPDF conservando el PDF
+'             abierto en el visor (página, zoom y rotación). Si el PDF
+'             abierto desapareció del disco, limpia el visor.
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Public Sub RefrescarComboSiCambio()
+
+  ' --- 0. INICIALIZACIÓN DE VARIABLES ---
+  Dim aArchivos As String[]
+  Dim sFirma As String
+  Dim sSeleccionAnterior As String
+  Dim sArch As String
+  Dim bSigueEnDisco As Boolean
+  Dim i As Integer
+
+  ' --- 1. SIN PROYECTO ABIERTO O SIN CARPETA RESUELTA: NADA QUE HACER ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then Return
+  If sDirPDFActual = "" Then Return
+
+  ' --- 2. FOTO ACTUAL DE LA CARPETA ---
+  aArchivos = ListarPDFs()
+  ' FALLO TRANSITORIO DE Dir: SE SALTEA ESTE TICK SIN TOCAR NADA; EL PRÓXIMO REINTENTA
+  If aArchivos = Null Then Return
+  sFirma = aArchivos.Join(Chr(10))
+
+  ' --- 3. SIN CAMBIOS EN LA LISTA: SALIR SIN TOCAR LA UI ---
+  ' SOLO SE COMPARAN NOMBRES: UN PDF REGENERADO CON EL MISMO NOMBRE NO CUENTA
+  ' COMO CAMBIO. SE RECARGA VOLVIÉNDOLO A ELEGIR EN EL COMBO, PORQUE ASIGNAR
+  ' Index DISPARA Click AUNQUE EL ÍNDICE NO CAMBIE (GV-53)
+  If sFirma = $sFirmaPDF Then Return
+  $sFirmaPDF = sFirma
+
+  ' --- 4. RECORDAR LO QUE EL USUARIO TIENE ELEGIDO ---
+  If FMain.cmbVerPDF.Index >= 0 Then sSeleccionAnterior = FMain.cmbVerPDF.Text
+
+  ' --- 5. REPOBLAR CON SeleccionarPDF SUPRIMIDO ---
+  ' REPONER EL Index DISPARA Click (GV-53): SIN LA BANDERA SE RECARGARÍA EL
+  ' PDF ABIERTO Y SE PERDERÍAN PÁGINA, ZOOM Y ROTACIÓN
+  $bRepoblando = True
+  FMain.cmbVerPDF.Clear
+  For Each sArch In aArchivos
+    FMain.cmbVerPDF.Add(sArch)
+  Next
+
+  ' --- 6. RESTAURAR LA SELECCIÓN POR NOMBRE ---
+  ' POR NOMBRE Y NO POR ÍNDICE: UN PDF NUEVO PUEDE ENTRAR ANTES EN EL ORDEN.
+  ' SI NO SE ENCUENTRA, QUEDA EL ÍNDICE 0 QUE PONE Add, SIN Click: EL MISMO
+  ' ESTADO QUE AL ABRIR EL PROYECTO
+  If sSeleccionAnterior <> "" Then
+    For i = 0 To FMain.cmbVerPDF.Count - 1
+      If FMain.cmbVerPDF[i].Text = sSeleccionAnterior Then
+        FMain.cmbVerPDF.Index = i
+        Break
+      Endif
+    Next
+  Endif
+  $bRepoblando = False
+
+  ' --- 7. EL PDF ABIERTO DESAPARECIÓ DEL DISCO: LIMPIAR EL VISOR ---
+  ' EL DOCUMENTO EN MEMORIA YA NO CORRESPONDE A NINGÚN ARCHIVO
+  If $sArchivoCargado = "" Then Return
+  bSigueEnDisco = False
+  For Each sArch In aArchivos
+    If sArch = $sArchivoCargado Then
+      bSigueEnDisco = True
+      Break
+    Endif
+  Next
+  If Not bSigueEnDisco Then LimpiarVistaPDF()
 
 End
 
@@ -61,7 +180,10 @@ End
 ' ============================================
 Public Sub SeleccionarPDF()
 
-  ' --- 1. GUARDAS: DEBE HABER DIRECTORIO Y SELECCIÓN VÁLIDA ---
+  ' --- 1. GUARDAS: NO REPOBLANDO, DIRECTORIO Y SELECCIÓN VÁLIDA ---
+  ' DURANTE EL REPOBLADO EN CALIENTE EL Click VIENE DE REPONER EL Index (GV-53),
+  ' NO DEL USUARIO: EL PDF ABIERTO NO SE RECARGA
+  If $bRepoblando Then Return
   If sDirPDFActual = "" Then Return
   If FMain.cmbVerPDF.Index < 0 Then Return
 
@@ -107,6 +229,7 @@ Public Sub CargarPDF(sRutaCompleta As String)
   ' --- 4. FIJAR ESTADO INICIAL DEL VISOR ---
   ' EL ORDEN IMPORTA: CalcularZoomAjusteAncho LEE hDocActual/iPaginaActual/iRotacion
   hDocActual = hDoc
+  $sArchivoCargado = File.Name(sRutaCompleta)
   iPaginaActual = 0
   iRotacion = 0
   fZoom = CalcularZoomAjusteAncho()
@@ -319,26 +442,49 @@ End
 
 ' ============================================
 ' Función   : ResetVisorPDF
-' Propósito : Libera el documento y limpia estado y controles. Se llama al
-'             abrir proyecto (vía PoblarComboPDF) y al hacer logout.
+' Propósito : Libera el documento y limpia estado y controles, combo incluido.
+'             Se llama al abrir proyecto (vía PoblarComboPDF) y al hacer logout.
 ' Parámetros: —
 ' Retorna   : —
 ' ============================================
 Public Sub ResetVisorPDF()
 
-  ' --- 1. LIBERAR ESTADO ---
-  hDocActual = Null
-  iPaginaActual = 0
-  fZoom = 1.0
-  iRotacion = 0
-  sDirPDFActual = ""
+  ' --- 1. LIBERAR DOCUMENTO Y VISTA ---
+  LimpiarVistaPDF()
 
-  ' --- 2. DEFENSIVO: GARANTIZAR ARRANGEMENT NONE EN EL SCROLLVIEW ---
+  ' --- 2. LIBERAR ESTADO DE SESIÓN Y DEL REFRESCO ---
+  ' SIN CARPETA NI FOTO, EL TIMER NO HACE NADA HASTA EL PRÓXIMO PoblarComboPDF
+  sDirPDFActual = ""
+  $sFirmaPDF = ""
+  $bRepoblando = False
+
+  ' --- 3. DEFENSIVO: GARANTIZAR ARRANGEMENT NONE EN EL SCROLLVIEW ---
   ' (YA ESTÁ EN NONE EN EL DISEÑADOR; ESTO PROTEGE ANTE CAMBIOS FUTUROS)
   FMain.svViewPDF.Arrangement = Arrange.None
 
-  ' --- 3. LIMPIAR CONTROLES ---
+  ' --- 4. LIMPIAR EL COMBO ---
   FMain.cmbVerPDF.Clear
+
+End
+
+' ============================================
+' Función   : LimpiarVistaPDF
+' Propósito : Cierra el documento y limpia la vista del visor sin tocar el
+'             combo. La usan ResetVisorPDF y el refresco, cuando el PDF
+'             abierto desapareció del disco.
+' Parámetros: —
+' Retorna   : —
+' ============================================
+Private Sub LimpiarVistaPDF()
+
+  ' --- 1. LIBERAR ESTADO DEL DOCUMENTO ---
+  hDocActual = Null
+  $sArchivoCargado = ""
+  iPaginaActual = 0
+  fZoom = 1.0
+  iRotacion = 0
+
+  ' --- 2. LIMPIAR CONTROLES DE LA VISTA ---
   FMain.pbPDF.Picture = Null
   FMain.txtGotoPage.Text = ""
   FMain.lblInformacion.Text = ""
