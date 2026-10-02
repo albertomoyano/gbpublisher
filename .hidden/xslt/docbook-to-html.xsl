@@ -1732,19 +1732,77 @@ RC APLICADAS:
                         | colophon | glossary"
                   level="any"/>
     </xsl:variable>
-    <!-- EL TEXTO DE LA NOTA SE SERIALIZA A TEXTO PLANO PARA EL data-attribute.
-         SE NORMALIZAN ESPACIOS. EL JS LO INYECTA EN EL PANEL. -->
-    <xsl:variable name="notaTexto">
-      <xsl:apply-templates select="db:para | para" mode="texto-plano"/>
+    <!-- EL CONTENIDO DE LA NOTA VA AL data-fn-text COMO HTML
+         SERIALIZADO, Y EL JS LO INYECTA EN EL PANEL CON innerHTML.
+         ANTES IBA COMO TEXTO PLANO (MODO texto-plano): EL PANEL PERDÍA
+         LA BASTARDILLA, Y UN «<» DEL TEXTO SE LEÍA COMO MARCADO. EL
+         MODO nota-panel CONSERVA EL FORMATO EN LÍNEA Y DEJA LA CITA COMO
+         TEXTO RESUELTO, SIN EL ENLACE CON onclick: EL ÍTEM DEL PANEL YA
+         TIENE EL SUYO. -->
+    <xsl:variable name="notaHtml">
+      <xsl:apply-templates select="db:para | para" mode="nota-panel"/>
     </xsl:variable>
     <sup class="fn-ref nota-ref"
          data-fn-id="{$num}"
-         data-fn-text="{normalize-space($notaTexto)}"
+         data-fn-text="{normalize-space(serialize($notaHtml,
+                          map{'method':'html', 'html-version':5.0, 'indent':false()}))}"
          onclick="highlightPanel('notas','{$num}')"
          style="cursor:pointer">
       <xsl:value-of select="$num"/>
     </sup>
   </xsl:template>
+
+  <!-- ==========================================================
+       MODO nota-panel: EL CONTENIDO DE UNA NOTA PARA EL PANEL LATERAL
+       ==========================================================
+       CONSERVA LO QUE ES FORMATO DEL TEXTO —BASTARDILLA, NEGRITA,
+       SUPERÍNDICE, SUBÍNDICE, CÓDIGO, ENLACES— Y DESARMA LO DEMÁS.
+       LA CITA PASA POR EL MODO texto-plano, QUE LA DIBUJA RESUELTA
+       «(Autor, año)» SIN ENLACE. LAS COMILLAS LAS PONE quote.xsl, QUE
+       ATIENDE TODOS LOS MODOS. CADA PÁRRAFO DE LA NOTA ES UN <p>.
+       LOS ELEMENTOS VAN SIN ESPACIO DE NOMBRES (xmlns=""): SI NO, LA
+       SERIALIZACIÓN ESCRIBE xmlns="http://www.w3.org/1999/xhtml" EN CADA
+       UNO. normalize-space SOBRE LO SERIALIZADO QUITA LA SANGRÍA QUE
+       TRAE EL CANÓNICO; EN HTML EL ESPACIO SE COLAPSA IGUAL. -->
+  <xsl:template match="*" mode="nota-panel">
+    <xsl:apply-templates mode="nota-panel"/>
+  </xsl:template>
+  <xsl:template match="text()" mode="nota-panel">
+    <xsl:value-of select="."/>
+  </xsl:template>
+  <xsl:template match="db:para | para" mode="nota-panel">
+    <p xmlns=""><xsl:apply-templates mode="nota-panel"/></p>
+  </xsl:template>
+  <xsl:template match="db:emphasis | emphasis" mode="nota-panel">
+    <xsl:choose>
+      <xsl:when test="@role = 'bold' or @role = 'strong'">
+        <strong xmlns=""><xsl:apply-templates mode="nota-panel"/></strong>
+      </xsl:when>
+      <xsl:otherwise>
+        <em xmlns=""><xsl:apply-templates mode="nota-panel"/></em>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+  <xsl:template match="db:superscript | superscript" mode="nota-panel">
+    <sup xmlns=""><xsl:apply-templates mode="nota-panel"/></sup>
+  </xsl:template>
+  <xsl:template match="db:subscript | subscript" mode="nota-panel">
+    <sub xmlns=""><xsl:apply-templates mode="nota-panel"/></sub>
+  </xsl:template>
+  <xsl:template match="db:literal | literal | db:code | code" mode="nota-panel">
+    <code xmlns=""><xsl:apply-templates mode="nota-panel"/></code>
+  </xsl:template>
+  <xsl:template match="db:link | link" mode="nota-panel">
+    <a xmlns="" href="{@xlink:href}" target="_blank" rel="noopener noreferrer">
+      <xsl:apply-templates mode="nota-panel"/>
+    </a>
+  </xsl:template>
+  <xsl:template match="db:biblioref | biblioref" mode="nota-panel">
+    <xsl:apply-templates select="." mode="texto-plano"/>
+  </xsl:template>
+  <xsl:template match="db:phrase[@role='cite-prefix'] | phrase[@role='cite-prefix']
+                     | db:phrase[@role='cite-suffix'] | phrase[@role='cite-suffix']"
+                mode="nota-panel"/>
 
   <!-- MODO texto-plano: SERIALIZA EL CONTENIDO DE UNA NOTA A TEXTO
        SIN MARKUP, PARA EL data-fn-text. -->
@@ -1825,19 +1883,19 @@ RC APLICADAS:
   <xsl:template match="text()[normalize-space(.) = '']
     [preceding-sibling::node()[1][self::db:biblioref or self::biblioref]]
     [following-sibling::node()[1][self::db:phrase[@role='cite-suffix'] or self::phrase[@role='cite-suffix']]]"
-    mode="#default texto-plano"/>
+    mode="#default texto-plano nota-panel"/>
   <!-- CASO 2: whitespace ENTRE un phrase-prefix Y SU biblioref. -->
   <xsl:template match="text()[normalize-space(.) = '']
     [preceding-sibling::node()[1][self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]
     [following-sibling::node()[1][self::db:biblioref or self::biblioref]]"
-    mode="#default texto-plano"/>
+    mode="#default texto-plano nota-panel"/>
 
   <!-- SUPRIMIR EL TEXTO SEPARADOR ', ' / '; ' ENTRE DOS biblioref
        DE UN MISMO GRUPO (LA AGRUPACIÓN LO EMITE EL PRIMERO).
        SE COMPARA CONTRA EL VECINO NO-WHITESPACE.
-       ESTOS TRES SUPRESORES VALEN TAMBIÉN EN MODO texto-plano, EL DE LAS
-       NOTAS: SIN ESO, EN UNA NOTA EL SEPARADOR Y LOS ESPACIOS SE ESCAPABAN
-       ALREDEDOR DE LA CITA. -->
+       ESTOS TRES SUPRESORES VALEN TAMBIÉN EN LOS MODOS texto-plano Y
+       nota-panel, LOS DE LAS NOTAS: SIN ESO, EN UNA NOTA EL SEPARADOR Y
+       LOS ESPACIOS SE ESCAPABAN ALREDEDOR DE LA CITA. -->
   <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
     [preceding-sibling::node()[not(self::text() and normalize-space(.)='')][1]
        [self::db:biblioref or self::biblioref
@@ -1845,7 +1903,7 @@ RC APLICADAS:
     [following-sibling::node()[not(self::text() and normalize-space(.)='')][1]
        [self::db:biblioref or self::biblioref
         or self::db:phrase[@role='cite-prefix'] or self::phrase[@role='cite-prefix']]]"
-    mode="#default texto-plano"/>
+    mode="#default texto-plano nota-panel"/>
 
   <!-- ==========================================================
        AUXILIAR: prefijo/sufijo hermanos de un biblioref

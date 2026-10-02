@@ -1690,6 +1690,25 @@ NIVEL DE LOS ENCABEZADOS DE REVISTA
 
 Al relevar apareció que `jats-to-html` y `jats-to-epub` emitían todas las secciones como `<h2>`. Ahora el nivel sigue la profundidad (h2 a h6). No cuentan las secciones cuyo título se suprime —introducción, editorial, la que repite el título del artículo—: si contaran, sus hijas saltarían un nivel. El aspecto del HTML no cambia: lo da la clase `sec-title`.
 
+PANEL DE NOTAS DEL HTML
+
+El HTML de libro y el de revista muestran las notas en un panel lateral que arma el JS con lo que trae el atributo `data-fn-text` de cada marca, insertado con `innerHTML`. Ese atributo llevaba la nota como texto plano: el panel perdía la bastardilla, la negrita y los enlaces —en todas las notas, no solo en las de título—, y un «<» del texto se leía como marcado.
+
+Ahora lleva el HTML de la nota, serializado con `serialize()`. Lo arma el modo `nota-panel` de `docbook-to-html` y `jats-to-html`:
+
+- conserva bastardilla, negrita, superíndice, subíndice, código y enlaces;
+- cada párrafo de la nota va en su `<p>`;
+- la cita sale como texto resuelto, «(Autor, año)», sin el enlace con `onclick`: el ítem del panel ya tiene el suyo;
+- los supresores de separadores entre citas valen también en este modo.
+
+En `docbook-to-html` los elementos del modo van con `xmlns=""`: la hoja declara XHTML como espacio de nombres por omisión, y sin eso la serialización escribe `xmlns` en cada elemento. El JS no cambia.
+
+Verificado en Chromium: la bastardilla se ve en el panel, y «a < b» y «<algo>» salen como texto.
+
+ENLACES EN EL HTML Y EL EPUB DE REVISTA
+
+`jats-to-html` y `jats-to-epub` no tenían plantilla para `<ext-link>`: la regla incorporada dejaba solo el texto y el enlace se perdía, en el cuerpo y en las notas. Ahora es un `<a href>`, con `target="_blank"` en el HTML.
+
 **Relaciones:** vinculo:SC-28,apoya:GV-70
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint.

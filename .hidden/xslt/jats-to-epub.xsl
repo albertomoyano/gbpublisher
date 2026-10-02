@@ -1481,6 +1481,14 @@
     <em><xsl:apply-templates/></em>
   </xsl:template>
 
+  <!-- ENLACE EXTERNO. SIN ESTA PLANTILLA, LA REGLA INCORPORADA DEJABA
+       SOLO EL TEXTO Y EL ENLACE SE PERDÍA EN EL EPUB. PANDOC ESCRIBE
+       <ext-link ext-link-type="uri" xlink:href="…"> PARA [texto](url) Y
+       PARA <url>. -->
+  <xsl:template match="ext-link[@xlink:href] | uri[@xlink:href]">
+    <a href="{@xlink:href}"><xsl:apply-templates/></a>
+  </xsl:template>
+
   <xsl:template match="sup">
     <sup><xsl:apply-templates/></sup>
   </xsl:template>

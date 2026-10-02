@@ -1476,6 +1476,10 @@
             font-family: var(--font-sans);
           }
 
+          /* PÁRRAFOS DE UNA NOTA EN EL PANEL: LLEGAN COMO HTML (SC-29) */
+          .panel-item-text p { margin: 0; }
+          .panel-item-text p + p { margin-top: 0.4em; }
+
           /* REFERENCIAS EN PANEL */
           .ref-item {
             font-size: var(--text-sm);
@@ -3066,16 +3070,65 @@
       <xsl:number count="fn" level="any"/>
     </xsl:variable>
     <xsl:variable name="fn-id"   select="generate-id(.)"/>
-    <xsl:variable name="fn-text">
-      <xsl:apply-templates mode="text-only"/>
+    <!-- EL CONTENIDO DE LA NOTA VA AL data-fn-text COMO HTML
+         SERIALIZADO, Y EL JS LO INYECTA EN EL PANEL CON innerHTML.
+         ANTES IBA COMO TEXTO PLANO (MODO text-only): EL PANEL PERDÍA LA
+         BASTARDILLA, Y UN «<» DEL TEXTO SE LEÍA COMO MARCADO. EL MODO
+         nota-panel CONSERVA EL FORMATO EN LÍNEA Y DEJA LA CITA COMO
+         TEXTO RESUELTO, SIN ENLACE: EL ÍTEM DEL PANEL YA TIENE EL SUYO.
+         normalize-space QUITA LA SANGRÍA DE indent=yes; EN HTML EL
+         ESPACIO SE COLAPSA IGUAL. -->
+    <xsl:variable name="fn-html">
+      <xsl:apply-templates select="*[not(self::label)]" mode="nota-panel"/>
     </xsl:variable>
     <a class="fn-ref"
        data-fn-id="{$fn-id}"
-       data-fn-text="{$fn-text}"
+       data-fn-text="{normalize-space(serialize($fn-html,
+                     map{'method':'html', 'html-version':5.0, 'indent':false()}))}"
        onclick="highlightPanel('notas', '{$fn-id}')"
        href="#panel-fn-{$fn-id}">
       <xsl:value-of select="$fn-num"/>
     </a>
+  </xsl:template>
+
+  <!-- ================================================
+       MODO nota-panel: EL CONTENIDO DE UNA <fn> PARA EL PANEL
+       ================================================
+       CONSERVA LO QUE ES FORMATO DEL TEXTO —BASTARDILLA, NEGRITA,
+       SUPERÍNDICE, SUBÍNDICE, CÓDIGO, ENLACES— Y DESARMA LO DEMÁS. LA
+       CITA PASA POR EL MODO text-only, QUE LA DIBUJA RESUELTA. CADA
+       PÁRRAFO DE LA NOTA ES UN <p>. -->
+  <xsl:template match="*" mode="nota-panel">
+    <xsl:apply-templates mode="nota-panel"/>
+  </xsl:template>
+  <xsl:template match="text()" mode="nota-panel">
+    <xsl:value-of select="."/>
+  </xsl:template>
+  <xsl:template match="p" mode="nota-panel">
+    <p><xsl:apply-templates mode="nota-panel"/></p>
+  </xsl:template>
+  <xsl:template match="italic" mode="nota-panel">
+    <em><xsl:apply-templates mode="nota-panel"/></em>
+  </xsl:template>
+  <xsl:template match="bold" mode="nota-panel">
+    <strong><xsl:apply-templates mode="nota-panel"/></strong>
+  </xsl:template>
+  <xsl:template match="sup" mode="nota-panel">
+    <sup><xsl:apply-templates mode="nota-panel"/></sup>
+  </xsl:template>
+  <xsl:template match="sub" mode="nota-panel">
+    <sub><xsl:apply-templates mode="nota-panel"/></sub>
+  </xsl:template>
+  <xsl:template match="monospace" mode="nota-panel">
+    <code><xsl:apply-templates mode="nota-panel"/></code>
+  </xsl:template>
+  <xsl:template match="ext-link[@xlink:href] | uri[@xlink:href]" mode="nota-panel">
+    <a href="{@xlink:href}" target="_blank" rel="noopener noreferrer">
+      <xsl:apply-templates mode="nota-panel"/>
+    </a>
+  </xsl:template>
+  <xsl:template match="xref[@ref-type='bibr']" mode="nota-panel">
+    <xsl:apply-templates select="." mode="text-only"/>
   </xsl:template>
 
   <!-- MODO TEXT-ONLY PARA EXTRAER TEXTO DE fn SIN ETIQUETAS HTML.
@@ -3488,7 +3541,7 @@
   <xsl:template match="text()[matches(., '^\s*[,;]\s*$')]
     [preceding-sibling::node()[1][self::xref[@ref-type='bibr']]]
     [following-sibling::node()[1][self::xref[@ref-type='bibr']]]"
-    mode="text-only"/>
+    mode="text-only nota-panel"/>
 
 
   <!-- ================================================
@@ -4253,6 +4306,16 @@
 
   <xsl:template match="monospace">
     <code><xsl:apply-templates/></code>
+  </xsl:template>
+
+  <!-- ENLACE EXTERNO. SIN ESTA PLANTILLA, LA REGLA INCORPORADA DEJABA
+       SOLO EL TEXTO Y EL ENLACE SE PERDÍA EN EL HTML. PANDOC ESCRIBE
+       <ext-link ext-link-type="uri" xlink:href="…"> PARA [texto](url) Y
+       PARA <url>. -->
+  <xsl:template match="ext-link[@xlink:href] | uri[@xlink:href]">
+    <a href="{@xlink:href}" target="_blank" rel="noopener noreferrer">
+      <xsl:apply-templates/>
+    </a>
   </xsl:template>
 
   <!-- ================================================
