@@ -1713,6 +1713,55 @@ ENLACES EN EL HTML Y EL EPUB DE REVISTA
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint.
 
+### SC-30 — Comillas y formato en línea: el mismo resultado en las seis salidas
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / SaxonJ-HE 12.5 / Pandoc 3.1 / LuaLaTeX + ulem + hyperref / TeX Live 2023 / Chromium / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Lo que el editor marca en línea en el .md sale igual en el PDF, el EPUB y el HTML, de libro y de revista. Se armó una matriz de casos y se corrigió todo lo que no coincidía.
+
+1. SIN SANGRÍA EN LA SERIALIZACIÓN XML
+
+Las hojas que escriben XML lo hacen con `indent="no"`: los tres ensamblados del canónico (`ensamblar-capitulo-canonico`, `ensamblar-libro-canonico`, `ensamblar-canonico`), los dos EPUB (`docbook-to-epub`, `jats-to-epub`) y los cuatro indexadores (`jats-to-crossref`, `jats-to-doaj`, `jats-to-scielo`, `jats-to-redalyc`). Con `indent="yes"` metían un espacio donde un elemento quedaba pegado a otro (GV-71):
+
+    «esta es una prueba de «texto»»   →   …“texto” »
+    «*Cursiva* al inicio»             →   « Cursiva…
+    *cursiva con **negrita***.        →   …negrita .
+    *texto*[^1]                       →   texto ¹
+
+El canónico conserva la sangría que traen Pandoc y Gambas: las hojas copian esos nodos de espacio. Las salidas HTML siguen con `indent="yes"`: el método html de Saxon no sangra dentro del texto en línea (verificado).
+
+2. COMILLAS ANIDADAS EN REVISTAS
+
+En el .md toda cita va con « », y el nivel lo decide el anidamiento: « » → “ ” → ‘ ’, y vuelve a « » en el cuarto. En libros lo resuelve `quote.xsl` sobre el `<quote>` del DocBook. JATS 1.4 no tiene cita en línea: en revistas lo resuelve el filtro `quoted-a-nivel-jats.lua` en caracteres, después de `guillemets-to-quoted-db.lua`, con la misma regla. Una nota dentro de una cita sigue contando la profundidad, igual que en libros. También las comillas rectas, que Pandoc convierte en cita, toman el carácter de su nivel.
+
+3. FORMATO EN LÍNEA
+
+    .md                 DocBook                          JATS          PDF              HTML / EPUB
+    [x]{.smallcaps}     emphasis role="smallcaps"        <sc>          \textsc          <span class="versalitas">
+    ~~x~~               emphasis role="strikethrough"    <strike>      \gbTachado       <del>
+    [x]{.underline}     emphasis role="underline"        <underline>   \gbSubrayado     <u>
+    x^2^ / H~2~O        superscript / subscript          sup / sub     \textsuperscript  <sup> / <sub>
+
+Antes, en libros, versalitas, tachado y subrayado salían en bastardilla en las tres salidas, y superíndice y subíndice se perdían en HTML y EPUB. En revistas, HTML y EPUB perdían los tres primeros y el PDF perdía el tachado. Los elementos HTML son los que usa el escritor HTML de Pandoc. La clase `versalitas` está en las cuatro hojas de estilo (libro HTML y EPUB, revista HTML y EPUB). El panel de notas del HTML (SC-29) los conserva.
+
+Versalitas: `\textsc` y `font-variant: small-caps` sobre lo que escribió el editor. Para un siglo en versalitas se escribe en minúscula: `[xix]{.smallcaps}`.
+
+4. TACHADO Y SUBRAYADO EN EL PDF (CONTRATO 8)
+
+`\gbTachado` y `\gbSubrayado` sobre ulem (`\sout`, `\uline`), que cortan la línea; `\underline` arma una caja y no corta. ulem se carga con `[normalem]`: sin eso cambia `\emph` por subrayado en todo el documento. Son `\DeclareRobustCommand` porque pueden ir en un título de sección, y en los marcadores del PDF dejan el texto solo. El preámbulo de revista, que arma `m_XML`, los define igual. ulem es parte de TeX Live (colección plain-generic, incluida en texlive-full, que es lo que pide la verificación de dependencias).
+
+5. ESPACIO ENTRE DOS ELEMENTOS EN EL PDF DE REVISTA
+
+`jats-to-latex` tenía `strip-space elements="*"`: el espacio entre `*Una* **nota**` es un nodo de solo espacio y se perdía, y las palabras salían pegadas. Ahora `preserve-space` nombra los elementos con texto en línea (`p`, `title`, `td`, `italic`, `bold`, `xref`…), que ganan sobre el comodín. `docbook-to-latex` ya listaba solo los estructurales.
+
+FUERA DE ESTE LOTE
+
+Las fórmulas en libros (`inlineequation`): hoy abortan el PDF con «vocabulario no previsto» y el EPUB las aplana. Decisión de Alberto: lote aparte, con diseño propio.
+
+**Relaciones:** vinculo:SC-29,apoya:GV-71
+
+**PENDIENTE:** Probar con un libro y una revista reales en Mint.
+
 ---
 
 ## RF — Referencia de API
@@ -3509,3 +3558,26 @@ El manual de titlesec lo documenta (§2.9: «if you increase a counter globally,
 Vale para cualquier cosa que avance un contador o escriba en un archivo auxiliar desde un título: un `\index`, un `\label` propio, un contador del proyecto.
 
 **Relaciones:** vinculo:SC-29
+
+### GV-71 — Saxon con indent="yes" mete espacio en el contenido mixto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.5 / contenedor · **Verificado:** 2026-10
+
+Con `method="xml"` e `indent="yes"`, Saxon agrega un salto de línea con sangría entre dos etiquetas contiguas aunque estén dentro de un párrafo, cuando no hay texto entre ellas:
+
+    <quote>esta es una prueba de <quote>texto</quote></quote>
+
+sale como
+
+    <quote>esta es una prueba de <quote>texto</quote>
+             </quote>
+
+Ese salto es contenido: llega a la salida como un espacio. Pasa al abrir (`<quote><emphasis>`), al cerrar (`</emphasis></quote>`), entre una marca y su nota (`</emphasis><footnote>`) y dentro de enlaces y negritas.
+
+Medido con SaxonJ-HE 12.5 en los ensamblados del canónico y en los EPUB. Con el método html, Saxon no sangra dentro del texto en línea: el HTML salía limpio con el mismo canónico.
+
+Regla: una hoja que escribe XML con texto en línea usa `indent="no"`. Si hace falta legibilidad, la alternativa es `suppress-indentation` con la lista de elementos de contenido mixto, que hay que mantener.
+
+El parche de fechas de `jats-to-scielo` («PACKTOOLS RECHAZA SALTOS DE LÍNEA») venía de esta misma causa.
+
+**Relaciones:** vinculo:SC-30

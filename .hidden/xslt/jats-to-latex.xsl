@@ -55,7 +55,18 @@
   <xsl:output method="text" encoding="UTF-8"/>
   <xsl:strip-space elements="*"/>
   <!-- EN BLOQUES LITERALES EL ESPACIO ES CONTENIDO, NO FORMATO -->
-  <xsl:preserve-space elements="preformat code tex-math"/>
+  <!-- EN LOS ELEMENTOS CON TEXTO EN LÍNEA, UN NODO DE SOLO ESPACIO   -->
+  <!-- TAMBIÉN ES CONTENIDO: EL ESPACIO ENTRE «*Una* **nota**» ES UN  -->
+  <!-- NODO ASÍ, Y CON strip-space="*" SE PERDÍA Y LAS PALABRAS SALÍAN -->
+  <!-- PEGADAS (SC-30). preserve-space POR NOMBRE GANA SOBRE EL        -->
+  <!-- COMODÍN DE strip-space.                                        -->
+  <xsl:preserve-space elements="preformat code tex-math
+    p title article-title subtitle trans-title alt-title label
+    td th term kwd attrib
+    italic bold sc sup sub underline strike overline monospace
+    roman sans-serif named-content styled-content abbrev
+    ext-link uri xref
+    mixed-citation source"/>
 
   <!-- ============================================================ -->
   <!-- f:latex Y f:babel-lang SE MUDARON A tex-comun.xsl            -->
@@ -705,8 +716,18 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
+  <!-- SUBRAYADO Y TACHADO (SC-30): \gbSubrayado Y \gbTachado, QUE     -->
+  <!-- DEFINE EL PREÁMBULO DEL ARTÍCULO SOBRE ulem. \underline NO       -->
+  <!-- CORTABA LA LÍNEA, Y <strike> NO TENÍA PLANTILLA: EL TACHADO SE   -->
+  <!-- PERDÍA CON UN AVISO.                                             -->
   <xsl:template match="underline">
-    <xsl:text>\underline{</xsl:text>
+    <xsl:text>\gbSubrayado{</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="strike">
+    <xsl:text>\gbTachado{</xsl:text>
     <xsl:apply-templates/>
     <xsl:text>}</xsl:text>
   </xsl:template>

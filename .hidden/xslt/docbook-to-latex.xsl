@@ -38,6 +38,7 @@
       \gbCapitulo \gbCapituloSinNumero   {plano}{compuesto}{subtítulo}
       \gbCorteTitulo   corte del editor en el título (SC-28)
       \gbNotaTitulo    nota al pie en un título de sección (SC-29, CONTRATO 7)
+      \gbTachado \gbSubrayado   tachado y subrayado (SC-30, CONTRATO 8)
       (ESTAS TRES SON DEL CONTRATO 6 DE preambulo-contrato.tex)
 
     PÁGINAS ESPECIALES (fm/bm CON ORDEN 01–09)
@@ -478,7 +479,30 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <xsl:template match="emphasis[@role='strong']" priority="5">
+  <!-- LOS role DE emphasis QUE ESCRIBE PANDOC (SC-30): strong PARA   -->
+  <!-- **x**, smallcaps PARA [x]{.smallcaps}, strikethrough PARA ~~x~~ -->
+  <!-- Y underline PARA [x]{.underline}. SIN ESTAS PLANTILLAS LOS TRES -->
+  <!-- ÚLTIMOS SALÍAN EN BASTARDILLA. bold SE ACEPTA COMO SINÓNIMO DE  -->
+  <!-- strong, COMO EN LA HOJA HTML.                                   -->
+  <xsl:template match="emphasis[@role='smallcaps']" priority="5">
+    <xsl:text>\textsc{</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="emphasis[@role='strikethrough']" priority="5">
+    <xsl:text>\gbTachado{</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="emphasis[@role='underline']" priority="5">
+    <xsl:text>\gbSubrayado{</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="emphasis[@role = ('strong', 'bold')]" priority="5">
     <xsl:text>\textbf{</xsl:text>
     <xsl:apply-templates/>
     <xsl:text>}</xsl:text>

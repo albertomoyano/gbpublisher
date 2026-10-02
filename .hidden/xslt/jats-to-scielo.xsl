@@ -52,11 +52,17 @@
        SALIDA: XML CON DOCTYPE JATS PUBLISHING 1.0
        SPS REQUIERE ESTA DTD ESPECÍFICA
        ================================================ -->
+  <!-- indent="no" (SC-30): CON indent="yes" SAXON METE UN SALTO DE
+       LÍNEA CON SANGRÍA DONDE UN ELEMENTO QUEDA PEGADO A OTRO SIN TEXTO
+       EN MEDIO —</quote></quote>, «<emphasis>, </emphasis><footnote>—, Y
+       ESE SALTO SE VE COMO UN ESPACIO EN LA SALIDA (VERIFICADO, GV-71).
+       LA SANGRÍA QUE TRAEN LAS FUENTES SE CONSERVA: LA COPIA LLEVA SUS
+       NODOS DE ESPACIO. -->
   <xsl:output
     method="xml"
     version="1.0"
     encoding="UTF-8"
-    indent="yes"
+    indent="no"
     doctype-public="-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.0 20120330//EN"
     doctype-system="JATS-journalpublishing1.dtd"/>
 
@@ -224,7 +230,7 @@
        NORMALIZAR WHITESPACE EN ELEMENTOS DE FECHA
        PACKTOOLS VALIDA month, year, day CON PATRÓN
        NUMÉRICO ESTRICTO QUE RECHAZA SALTOS DE LÍNEA
-       DEL indent="yes" DEL CANÓNICO
+       DEL indent="yes" QUE TUVO EL CANÓNICO HASTA SC-30
        ================================================ -->
   <xsl:template match="year | month | day | season">
     <xsl:copy copy-namespaces="no">

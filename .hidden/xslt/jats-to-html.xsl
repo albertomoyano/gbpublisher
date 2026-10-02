@@ -1476,6 +1476,9 @@
             font-family: var(--font-sans);
           }
 
+          /* VERSALITAS: [x]{.smallcaps} DEL .md (SC-30) */
+          .versalitas { font-variant: small-caps; }
+
           /* PÁRRAFOS DE UNA NOTA EN EL PANEL: LLEGAN COMO HTML (SC-29) */
           .panel-item-text p { margin: 0; }
           .panel-item-text p + p { margin-top: 0.4em; }
@@ -3119,6 +3122,15 @@
   <xsl:template match="sub" mode="nota-panel">
     <sub><xsl:apply-templates mode="nota-panel"/></sub>
   </xsl:template>
+  <xsl:template match="sc" mode="nota-panel">
+    <span class="versalitas"><xsl:apply-templates mode="nota-panel"/></span>
+  </xsl:template>
+  <xsl:template match="strike" mode="nota-panel">
+    <del><xsl:apply-templates mode="nota-panel"/></del>
+  </xsl:template>
+  <xsl:template match="underline" mode="nota-panel">
+    <u><xsl:apply-templates mode="nota-panel"/></u>
+  </xsl:template>
   <xsl:template match="monospace" mode="nota-panel">
     <code><xsl:apply-templates mode="nota-panel"/></code>
   </xsl:template>
@@ -4291,6 +4303,22 @@
   <xsl:template match="bold">
     <strong><xsl:apply-templates/></strong>
   </xsl:template>
+
+  <!-- VERSALITAS, TACHADO Y SUBRAYADO (SC-30). SIN PLANTILLA, LA REGLA
+       INCORPORADA DEJABA SOLO EL TEXTO. LOS ELEMENTOS SON LOS DEL
+       ESCRITOR HTML DE PANDOC. -->
+  <xsl:template match="sc">
+    <span class="versalitas"><xsl:apply-templates/></span>
+  </xsl:template>
+
+  <xsl:template match="strike">
+    <del><xsl:apply-templates/></del>
+  </xsl:template>
+
+  <xsl:template match="underline">
+    <u><xsl:apply-templates/></u>
+  </xsl:template>
+
 
   <xsl:template match="italic">
     <em><xsl:apply-templates/></em>

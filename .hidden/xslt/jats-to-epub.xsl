@@ -48,10 +48,16 @@
   <!-- ================================================
        SALIDA: XHTML5
        ================================================ -->
+  <!-- indent="no" (SC-30): CON indent="yes" SAXON METE UN SALTO DE
+       LÍNEA CON SANGRÍA DONDE UN ELEMENTO QUEDA PEGADO A OTRO SIN TEXTO
+       EN MEDIO —</quote></quote>, «<emphasis>, </emphasis><footnote>—, Y
+       ESE SALTO SE VE COMO UN ESPACIO EN LA SALIDA (VERIFICADO, GV-71).
+       LA SANGRÍA QUE TRAEN LAS FUENTES SE CONSERVA: LA COPIA LLEVA SUS
+       NODOS DE ESPACIO. -->
   <xsl:output
     method="xml"
     encoding="UTF-8"
-    indent="yes"
+    indent="no"
     omit-xml-declaration="no"/>
 
   <!-- ================================================
@@ -1476,6 +1482,22 @@
   <xsl:template match="bold">
     <strong><xsl:apply-templates/></strong>
   </xsl:template>
+
+  <!-- VERSALITAS, TACHADO Y SUBRAYADO (SC-30). SIN PLANTILLA, LA REGLA
+       INCORPORADA DEJABA SOLO EL TEXTO. LOS ELEMENTOS SON LOS DEL
+       ESCRITOR HTML DE PANDOC. -->
+  <xsl:template match="sc">
+    <span class="versalitas"><xsl:apply-templates/></span>
+  </xsl:template>
+
+  <xsl:template match="strike">
+    <del><xsl:apply-templates/></del>
+  </xsl:template>
+
+  <xsl:template match="underline">
+    <u><xsl:apply-templates/></u>
+  </xsl:template>
+
 
   <xsl:template match="italic">
     <em><xsl:apply-templates/></em>

@@ -46,10 +46,16 @@
   <!-- ================================================
        SALIDA: XHTML5 (con doctype legacy-compat para EPUB)
        ================================================ -->
+  <!-- indent="no" (SC-30): CON indent="yes" SAXON METE UN SALTO DE
+       LÍNEA CON SANGRÍA DONDE UN ELEMENTO QUEDA PEGADO A OTRO SIN TEXTO
+       EN MEDIO —</quote></quote>, «<emphasis>, </emphasis><footnote>—, Y
+       ESE SALTO SE VE COMO UN ESPACIO EN LA SALIDA (VERIFICADO, GV-71).
+       LA SANGRÍA QUE TRAEN LAS FUENTES SE CONSERVA: LA COPIA LLEVA SUS
+       NODOS DE ESPACIO. -->
   <xsl:output
     method="xml"
     encoding="UTF-8"
-    indent="yes"
+    indent="no"
     omit-xml-declaration="no"
     doctype-system="about:legacy-compat"/>
 
@@ -210,15 +216,38 @@
 
   <!-- ÉNFASIS -->
   <xsl:template match="db:emphasis | emphasis">
+    <!-- LOS role DE PANDOC (SC-30): strong/bold, smallcaps, strikethrough
+         Y underline. SIN LOS TRES ÚLTIMOS SALÍAN EN BASTARDILLA. LOS
+         ELEMENTOS SON LOS QUE USA EL ESCRITOR HTML DE PANDOC: <del>, <u>
+         Y UNA CLASE PARA LAS VERSALITAS, QUE DEFINE LA HOJA DE ESTILOS. -->
     <xsl:choose>
       <xsl:when test="@role = 'bold' or @role = 'strong'">
         <strong><xsl:apply-templates/></strong>
+      </xsl:when>
+      <xsl:when test="@role = 'smallcaps'">
+        <span class="versalitas"><xsl:apply-templates/></span>
+      </xsl:when>
+      <xsl:when test="@role = 'strikethrough'">
+        <del><xsl:apply-templates/></del>
+      </xsl:when>
+      <xsl:when test="@role = 'underline'">
+        <u><xsl:apply-templates/></u>
       </xsl:when>
       <xsl:otherwise>
         <em><xsl:apply-templates/></em>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
+
+  <!-- SUPERÍNDICE Y SUBÍNDICE (SC-30). NO HABÍA PLANTILLA: LA REGLA
+       INCORPORADA DEJABA EL TEXTO, Y x^2^ SALÍA «x2». -->
+  <xsl:template match="db:superscript | superscript">
+    <sup><xsl:apply-templates/></sup>
+  </xsl:template>
+  <xsl:template match="db:subscript | subscript">
+    <sub><xsl:apply-templates/></sub>
+  </xsl:template>
+
 
   <!-- ENLACE -->
   <xsl:template match="db:link | link">

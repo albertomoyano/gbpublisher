@@ -47,9 +47,20 @@ DOCUMENTACIÓN DE REFERENCIA:
                 xmlns:xs="http://www.w3.org/2001/XMLSchema"
                 exclude-result-prefixes="xs db">
 
+  <!-- indent="no" (SC-30): CON indent="yes" SAXON METE UN SALTO DE
+
+       LÍNEA CON SANGRÍA DONDE UN ELEMENTO QUEDA PEGADO A OTRO SIN TEXTO
+
+       EN MEDIO —</quote></quote>, «<emphasis>, </emphasis><footnote>—, Y
+
+       ESE SALTO SE VE COMO UN ESPACIO EN LA SALIDA (VERIFICADO, GV-71).
+
+       LA SANGRÍA QUE TRAEN LAS FUENTES SE CONSERVA: LA COPIA LLEVA SUS
+
+       NODOS DE ESPACIO. -->
   <xsl:output method="xml"
               encoding="UTF-8"
-              indent="yes"
+              indent="no"
               omit-xml-declaration="no"/>
 
   <!-- ==========================================================

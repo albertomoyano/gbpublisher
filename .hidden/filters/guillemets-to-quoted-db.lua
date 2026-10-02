@@ -13,6 +13,10 @@
 --             (EXTENSIÓN smart). LOS GUILLEMETS PASAN COMO TEXTO LITERAL, Y
 --             SIN ESTE FILTRO EL CANÓNICO NO SABE QUE AHÍ HAY UNA CITA.
 --
+-- REVISTAS  : TAMBIÉN CORRE EN EL PANDOC A JATS (SC-30), SEGUIDO DE
+--             quoted-a-nivel-jats.lua: JATS NO TIENE CITA EN LÍNEA Y EL
+--             NIVEL SE RESUELVE AHÍ EN CARACTERES, CON LA REGLA DE quote.xsl.
+--
 -- ORDEN     : DEBE CORRER ANTES QUE fenced-divs-to-elements-db.lua, QUE
 --             SERIALIZA EL CONTENIDO DE LOS DIVS CON pandoc.write (RC-DB-07):
 --             DESPUÉS DE ESO NO QUEDAN Str QUE PROCESAR.

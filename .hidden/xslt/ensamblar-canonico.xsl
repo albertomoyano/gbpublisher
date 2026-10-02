@@ -61,10 +61,16 @@
   <!-- ================================================
        SALIDA: XML CON DOCTYPE JATS 1.4
        ================================================ -->
+  <!-- indent="no" (SC-30): CON indent="yes" SAXON METE UN SALTO DE
+       LÍNEA CON SANGRÍA DONDE UN ELEMENTO QUEDA PEGADO A OTRO SIN TEXTO
+       EN MEDIO —</quote></quote>, «<emphasis>, </emphasis><footnote>—, Y
+       ESE SALTO SE VE COMO UN ESPACIO EN LA SALIDA (VERIFICADO, GV-71).
+       LA SANGRÍA QUE TRAEN LAS FUENTES SE CONSERVA: LA COPIA LLEVA SUS
+       NODOS DE ESPACIO. -->
   <xsl:output
     method="xml"
     encoding="UTF-8"
-    indent="yes"
+    indent="no"
     doctype-public="-//NLM//DTD JATS (Z39.96) Article Archiving and Interchange DTD v1.4//EN"
     doctype-system="https://jats.nlm.nih.gov/archiving/1.4/JATS-archivearticle1-4.dtd"/>
 

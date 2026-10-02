@@ -1708,15 +1708,38 @@ RC APLICADAS:
 
   <!-- EMPHASIS → EM / STRONG SEGÚN role -->
   <xsl:template match="db:emphasis | emphasis">
+    <!-- LOS role DE PANDOC (SC-30): strong/bold, smallcaps, strikethrough
+         Y underline. SIN LOS TRES ÚLTIMOS SALÍAN EN BASTARDILLA. LOS
+         ELEMENTOS SON LOS QUE USA EL ESCRITOR HTML DE PANDOC: <del>, <u>
+         Y UNA CLASE PARA LAS VERSALITAS, QUE DEFINE LA HOJA DE ESTILOS. -->
     <xsl:choose>
       <xsl:when test="@role = 'bold' or @role = 'strong'">
         <strong><xsl:apply-templates/></strong>
+      </xsl:when>
+      <xsl:when test="@role = 'smallcaps'">
+        <span class="versalitas"><xsl:apply-templates/></span>
+      </xsl:when>
+      <xsl:when test="@role = 'strikethrough'">
+        <del><xsl:apply-templates/></del>
+      </xsl:when>
+      <xsl:when test="@role = 'underline'">
+        <u><xsl:apply-templates/></u>
       </xsl:when>
       <xsl:otherwise>
         <em><xsl:apply-templates/></em>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
+
+  <!-- SUPERÍNDICE Y SUBÍNDICE (SC-30). NO HABÍA PLANTILLA: LA REGLA
+       INCORPORADA DEJABA EL TEXTO, Y x^2^ SALÍA «x2». -->
+  <xsl:template match="db:superscript | superscript">
+    <sup><xsl:apply-templates/></sup>
+  </xsl:template>
+  <xsl:template match="db:subscript | subscript">
+    <sub><xsl:apply-templates/></sub>
+  </xsl:template>
+
 
   <!-- FOOTNOTE → MARCA <sup> NUMERADA POR CAPÍTULO.
        LLEVA data-fn-id Y data-fn-text PARA QUE EL JS CONSTRUYA
@@ -1777,6 +1800,15 @@ RC APLICADAS:
     <xsl:choose>
       <xsl:when test="@role = 'bold' or @role = 'strong'">
         <strong xmlns=""><xsl:apply-templates mode="nota-panel"/></strong>
+      </xsl:when>
+      <xsl:when test="@role = 'smallcaps'">
+        <span xmlns="" class="versalitas"><xsl:apply-templates mode="nota-panel"/></span>
+      </xsl:when>
+      <xsl:when test="@role = 'strikethrough'">
+        <del xmlns=""><xsl:apply-templates mode="nota-panel"/></del>
+      </xsl:when>
+      <xsl:when test="@role = 'underline'">
+        <u xmlns=""><xsl:apply-templates mode="nota-panel"/></u>
       </xsl:when>
       <xsl:otherwise>
         <em xmlns=""><xsl:apply-templates mode="nota-panel"/></em>
