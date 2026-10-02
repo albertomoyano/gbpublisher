@@ -173,6 +173,13 @@ fi
 # EDITOR NECESITA VER TODO LO QUE HAY QUE REGENERAR
 paso "transformando los capítulos"
 
+# LA HOJA NECESITA LA LISTA ENTERA Y NO SOLO SU PIEZA: EL NÚMERO DE UNA
+# FIGURA DEPENDE DE CUÁNTOS CAPÍTULOS NUMERADOS LA PRECEDEN, Y UNA REFERENCIA
+# PUEDE APUNTAR A OTRA PIEZA (numeracion-libro.xsl). VAN EN UN SOLO
+# PARÁMETRO, UNO POR LÍNEA: EL SALTO DE LÍNEA ES EL ÚNICO SEPARADOR QUE NO
+# PUEDE APARECER EN UN NOMBRE DE LA LISTA, QUE ES UN ARCHIVO DE LÍNEAS
+PIEZAS_LIBRO=$(printf '%s\n' "${PIEZAS[@]}")
+
 problemas=0
 for pieza in "${PIEZAS[@]}"; do
     canonico="$DIR_PROYECTO/jats/c-$pieza.xml"
@@ -193,7 +200,9 @@ for pieza in "${PIEZAS[@]}"; do
                 -s:"$canonico" \
                 -xsl:"$XSL" \
                 -o:"$xhtml" \
-                estilo_cita="$ESTILO_CITA" 2>&1)
+                estilo_cita="$ESTILO_CITA" \
+                piezas_libro="$PIEZAS_LIBRO" \
+                pieza_actual="$pieza" 2>&1)
     codigo=$?
 
     if (( codigo != 0 )); then

@@ -48,7 +48,8 @@ RC APLICADAS:
                 xmlns="http://www.w3.org/1999/xhtml"
                 xmlns:xlink="http://www.w3.org/1999/xlink"
                 xmlns:xs="http://www.w3.org/2001/XMLSchema"
-                exclude-result-prefixes="db xs xlink">
+                xmlns:nl="urn:gbpublisher:numeracion-libro"
+                exclude-result-prefixes="db xs xlink nl">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -58,6 +59,10 @@ RC APLICADAS:
   <!-- MARCA DE LOS EDITORES QUE OCUPAN EL LUGAR DEL AUTOR: (Ed.), (Comp.)...
        ES LA ÚNICA REGLA DE LAS SALIDAS DIGITALES; NO DUPLICARLA ACÁ -->
   <xsl:include href="marca-editor.xsl"/>
+
+  <!-- NÚMERO DE FIGURA Y REFERENCIAS CRUZADAS: LA MISMA REGLA QUE EL PDF
+       Y QUE EL EPUB (SC-31). NO DUPLICARLA ACÁ -->
+  <xsl:include href="numeracion-libro.xsl"/>
 
   <!-- Output principal: no se usa en Fase 1 (todo va por xsl:result-document) -->
   <xsl:output method="xml"
@@ -109,6 +114,10 @@ RC APLICADAS:
   <xsl:key name="cap-por-id"
            match="capitulo"
            use="concat('cap-', @id_capitulo)"/>
+
+  <!-- LAS PIEZAS DEL LIBRO EN ORDEN, PARA numeracion-libro.xsl -->
+  <xsl:variable name="piezasLibro" as="element()*"
+                select="/*/descendant::*[nl:es-pieza(.)]"/>
 
   <!-- ==========================================================
        VARIABLES GLOBALES DERIVADAS DEL <book>
@@ -1400,22 +1409,25 @@ RC APLICADAS:
        EL JS (buildFigsPanel) LEE ESTAS MARCAS PARA CONSTRUIR EL
        PANEL DE FIGURAS Y CABLEAR LA NAVEGACIÓN CRUZADA.
        LA NUMERACIÓN ES CORRELATIVA POR CAPÍTULO. -->
+  <!-- EL NÚMERO ES EL DEL PDF (numeracion-libro.xsl, SC-31): 2.3 EN UN
+       CAPÍTULO NUMERADO, A.1 EN UN APÉNDICE, 1 EN UNA PIEZA SIN NÚMERO.
+       EL FILTRO DE LIBRO SOLO EMITE <figure> CON xml:id; EL id DE
+       RESPALDO QUEDA PARA UN CANÓNICO VIEJO. -->
   <xsl:template match="db:figure | figure | db:informalfigure | informalfigure">
-    <xsl:variable name="num">
-      <xsl:number count="db:figure | figure | db:informalfigure | informalfigure"
-                  from="db:chapter | db:preface | db:appendix | db:dedication
-                        | db:colophon | db:glossary
-                        | chapter | preface | appendix | dedication
-                        | colophon | glossary"
-                  level="any"/>
-    </xsl:variable>
-    <xsl:variable name="figId" select="if (@xml:id) then @xml:id else concat('fig-', $num)"/>
+    <xsl:variable name="num" select="nl:numero-figura(., $piezasLibro)"/>
+    <xsl:variable name="figId" select="if (@xml:id) then @xml:id
+                                       else concat('fig-', translate($num, '.', '-'))"/>
     <xsl:variable name="imgdata"
                   select="(db:mediaobject/db:imageobject/db:imagedata
                           | mediaobject/imageobject/imagedata)[1]"/>
     <xsl:variable name="fileref" select="$imgdata/@fileref"/>
     <xsl:variable name="titulo"
                   select="normalize-space((db:title | title)[1])"/>
+    <!-- TEXTO ALTERNATIVO: EL DECLARADO EN EL .md, QUE EL FILTRO PONE EN
+         textobject; SI NO HAY, EL PIE -->
+    <xsl:variable name="alt"
+                  select="normalize-space(((db:mediaobject/db:textobject/db:phrase
+                          | mediaobject/textobject/phrase)[1], $titulo)[1])"/>
 
     <figure class="fig-wrapper"
             id="{$figId}"
@@ -1425,7 +1437,7 @@ RC APLICADAS:
       <xsl:if test="$fileref != ''">
         <!-- LA IMAGEN VIVE EN media/; EN docs/ VA A assets/media/ -->
         <img src="assets/media/{tokenize($fileref, '/')[last()]}"
-             alt="{$titulo}"/>
+             alt="{$alt}"/>
       </xsl:if>
       <figcaption class="fig-caption">
         <span class="fig-label">Figura <xsl:value-of select="$num"/></span>
@@ -1438,6 +1450,49 @@ RC APLICADAS:
         </xsl:if>
       </figcaption>
     </figure>
+  </xsl:template>
+
+  <!-- ==========================================================
+       REFERENCIA CRUZADA (@fig-… EN EL .md)
+       ==========================================================
+       SOLO EL NÚMERO, COMO \ref EN EL PDF: LA PALABRA LA ESCRIBE EL
+       EDITOR. SI LA FIGURA ESTÁ EN OTRA PIEZA, EL ENLACE VA A SU
+       PÁGINA. UN DESTINO INEXISTENTE SALE «??», COMO EN LaTeX, Y SE
+       AVISA. -->
+  <xsl:template match="db:xref | xref">
+    <xsl:variable name="destino" select="nl:destino(string(@linkend), $piezasLibro)"/>
+    <xsl:variable name="texto" select="nl:texto-referencia($destino, $piezasLibro)"/>
+    <xsl:choose>
+      <xsl:when test="empty($destino)">
+        <xsl:message>
+          <xsl:text>AVISO: referencia sin destino: </xsl:text>
+          <xsl:value-of select="@linkend"/>
+        </xsl:message>
+        <xsl:value-of select="$texto"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:if test="nl:cantidad-destinos(string(@linkend), $piezasLibro) > 1">
+          <xsl:message>
+            <xsl:text>AVISO: identificador repetido en el libro: </xsl:text>
+            <xsl:value-of select="@linkend"/>
+          </xsl:message>
+        </xsl:if>
+        <xsl:variable name="piezaDestino" select="nl:pieza-de($destino)"/>
+        <xsl:variable name="pagina"
+                      select="if ($piezaDestino is nl:pieza-de(.)) then ''
+                              else concat('h-', key('cap-por-id', $piezaDestino/@xml:id,
+                                                    $manifiesto)/@nombre_archivo, '.html')"/>
+        <a class="fig-ref" href="{$pagina}#{@linkend}">
+          <xsl:value-of select="$texto"/>
+        </a>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- EN EL PANEL DE NOTAS Y EN EL TEXTO PLANO, EL NÚMERO SOLO -->
+  <xsl:template match="db:xref | xref" mode="nota-panel texto-plano">
+    <xsl:value-of select="nl:texto-referencia(
+      nl:destino(string(@linkend), $piezasLibro), $piezasLibro)"/>
   </xsl:template>
 
   <!-- CITA DE FUENTE (blockquote role="source") → cita documental

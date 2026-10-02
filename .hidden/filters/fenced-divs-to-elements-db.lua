@@ -275,33 +275,91 @@ function Div(el)
   -- =====================================================
   -- 6.2. FIGURA (.fig)
   -- =====================================================
-  -- PROMUEVE EL identifier DEL Div AL Figure INTERNO Y ELIMINA
-  -- EL WRAPPER. ASÍ PANDOC EMITE <figure xml:id="X"> DIRECTAMENTE,
-  -- SIN EL <anchor> SEPARADO QUE GENERA POR DEFAULT.
-  -- MANEJA TAMBIÉN .fullwidth → atributo pgwide="1" (DOCBOOK 5.2 NATIVO).
+  -- ESTRUCTURA EN MD (LA ÚNICA ADMITIDA):
+  --   ::: {.fig #fig-mapa}
+  --   ![Pie de la figura, con *formato* y citas [@clave]](media/fig-mapa.png)
+  --   :::
+  -- CON TEXTO ALTERNATIVO PROPIO PARA EL EPUB ACCESIBLE:
+  --   ::: {.fig #fig-mapa alt="Mapa de la provincia con las rutas"}
+  --
+  -- EL <figure> SE ARMA ACÁ Y NO CON EL ESCRITOR DE PANDOC: EN PANDOC
+  -- 3.1 EL ESCRITOR DocBook DESCARTA EL identifier DE UN Figure, Y SIN
+  -- xml:id NO HAY \label NI REFERENCIA CRUZADA (VERIFICADO).
+  --
+  -- TRES FALLAS DETIENEN LA CONVERSIÓN CON UN MENSAJE, EN VEZ DE DEJAR
+  -- UNA FIGURA A MEDIAS QUE SE DESCUBRE EN LA SALIDA (GV-23):
+  --   - SIN #id: NO SE PUEDE NUMERAR NI REFERIR.
+  --   - SIN PIE: <figure> EXIGE <title> (RC-DB-03) Y SIN \caption
+  --     LaTeX NO LA NUMERA.
+  --   - CONTENIDO ADEMÁS DE LA IMAGEN: SE PERDERÍA EN SILENCIO, COMO
+  --     LE PASABA AL PÁRRAFO «Figura 1. …» DEL EJEMPLO VIEJO.
+  -- .fullwidth → pgwide="1" (DOCBOOK 5.2 NATIVO).
   if el.classes:includes('fig') then
+    local fig_id = el.identifier or ''
     local es_fullwidth = el.classes:includes('fullwidth')
-    -- BUSCAR EL Figure INTERNO Y PROMOVER ID
-    for i, block in ipairs(el.content) do
-      if block.t == 'Figure' then
-        if el.identifier ~= '' then
-          block.identifier = el.identifier
+    local imagen = nil
+    local pie = {}
+    local otros = 0
+
+    -- BUSCAR LA IMAGEN: Figure (IMAGEN CON PIE) O Para/Plain CON UNA
+    -- SOLA Image (IMAGEN SIN PIE, PARA DAR EL MENSAJE CORRECTO)
+    for _, block in ipairs(el.content) do
+      if block.t == 'Figure' and not imagen then
+        for _, interno in ipairs(block.content) do
+          if (interno.t == 'Plain' or interno.t == 'Para')
+             and #interno.content == 1 and interno.content[1].t == 'Image' then
+            imagen = interno.content[1]
+          end
         end
-        -- pgwide PARA FULLWIDTH: ATRIBUTO XML DIRECTO
-        -- PANDOC NO LO RESPETA EN EL AST DE Figure, SE EMITE
-        -- COMO RawBlock RECONSTRUYENDO EL <figure>
-        if es_fullwidth then
-          -- SERIALIZAR EL Figure A DOCBOOK, INYECTAR pgwide="1"
-          local fig_db = pandoc.write(
-            pandoc.Pandoc({block}), 'docbook5', PANDOC_WRITER_OPTIONS)
-          fig_db = fig_db:gsub('<figure', '<figure pgwide="1"', 1)
-          return pandoc.RawBlock('docbook', fig_db)
+        -- EL PIE ES EL CAPTION LARGO: UN SOLO BLOQUE DE INLINES
+        if block.caption.long[1] then
+          pie = block.caption.long[1].content
         end
-        return pandoc.Blocks({block})
+      elseif (block.t == 'Para' or block.t == 'Plain') and not imagen
+             and #block.content == 1 and block.content[1].t == 'Image' then
+        imagen = block.content[1]
+        pie = imagen.caption
+      else
+        otros = otros + 1
       end
     end
-    -- FALLBACK: SI NO HAY Figure INTERNO, DEJAR QUE PANDOC PROCESE
-    return nil
+
+    if fig_id == '' then
+      error('\n[figura] Una figura no tiene identificador. Se escribe ' ..
+            '::: {.fig #fig-nombre}' ..
+            (imagen and (' (imagen: ' .. imagen.src .. ')') or ''), 0)
+    end
+    if not imagen then
+      error('\n[figura #' .. fig_id .. '] No tiene imagen: dentro del bloque ' ..
+            'va una sola línea ![Pie](media/archivo.png)', 0)
+    end
+    if #pie == 0 then
+      error('\n[figura #' .. fig_id .. '] No tiene pie: va entre los corchetes ' ..
+            'de la imagen, ![Pie](' .. imagen.src .. ')', 0)
+    end
+    if otros > 0 then
+      error('\n[figura #' .. fig_id .. '] El bloque tiene contenido además de ' ..
+            'la imagen. El pie va entre los corchetes de la imagen.', 0)
+    end
+
+    -- TEXTO ALTERNATIVO: EL DECLARADO, O EL PIE SIN FORMATO
+    -- (UNA CITA DEL PIE YA ES MARCADO DocBook Y stringify LA DESCARTA:
+    -- EL ESPACIO QUE QUEDA ANTES SE RECORTA)
+    local alt = el.attributes['alt'] or
+                pandoc.utils.stringify(pie):gsub('^%s+', ''):gsub('%s+$', '')
+
+    local pgwide = ''
+    if es_fullwidth then pgwide = ' pgwide="1"' end
+
+    local raw =
+      '<figure xml:id="' .. escape_xml_attr(fig_id) .. '"' .. pgwide .. '>\n' ..
+      '  <title>' .. inlines_a_docbook(pie) .. '</title>\n' ..
+      '  <mediaobject>\n' ..
+      '    <imageobject><imagedata fileref="' .. escape_xml_attr(imagen.src) .. '"/></imageobject>\n' ..
+      '    <textobject><phrase>' .. escape_xml_text(alt) .. '</phrase></textobject>\n' ..
+      '  </mediaobject>\n' ..
+      '</figure>'
+    return pandoc.RawBlock('docbook', raw)
   end
 
   -- =====================================================

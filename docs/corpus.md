@@ -1762,6 +1762,58 @@ Las fórmulas en libros (`inlineequation`): hoy abortan el PDF con «vocabulario
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint.
 
+### SC-32 — Figuras de libro y revista: una sola forma en el .md, número del PDF y referencia cruzada
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 / SaxonJ-HE 12.5 / LuaLaTeX + hyperref + caption / TeX Live 2023 / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Una figura se escribe de una sola forma, en libros y en revistas:
+
+    ::: {.fig #fig-mapa}
+    ![Pie de la figura, con *formato* y citas [@clave]](media/fig-mapa.png)
+    :::
+
+Con texto alternativo propio para el EPUB accesible: `::: {.fig #fig-mapa alt="..."}`. En revistas, `.fullwidth` la lleva al ancho completo; en libros no se usa.
+
+LA CLASE ES .fig
+
+Es la que escribe el shortcode y la que usan las revistas en producción. El botón de la barra escribía `.figure`, que ningún filtro reconocía: en revistas salía `<boxed-text>` con la figura adentro. Ahora botón y shortcode van por un solo camino, `FMain.InsertarFigura`: diálogo de imagen, copia a `/media` e id tomado del nombre de la imagen (`fig-mapa.png` da `#fig-mapa`).
+
+EL FILTRO DE LIBRO ARMA EL <figure>
+
+El escritor DocBook de Pandoc 3.1 descarta el id de una figura (GV-72), así que `fenced-divs-to-elements-db.lua` emite el `<figure xml:id>` con el pie en `<title>` y el alternativo en `textobject`. Detiene la conversión con un mensaje si falta el id, si falta el pie (RC-DB-03) o si el bloque tiene algo más que la imagen: antes, el párrafo que seguía a la imagen se perdía sin aviso.
+
+Un filtro que detiene la conversión ya no deja un capítulo vacío: `GenerarBodyCapituloXML` escribe una marca de fallo en lugar del fragmento y lo informa (GV-23).
+
+En revistas, `cite-to-xref.lua` respeta el id del div; el contador queda para la figura que no lo trae.
+
+REFERENCIA CRUZADA: @fig-mapa
+
+Pandoc la lee como cita. Los filtros de citas la desvían a `<xref linkend>` por el prefijo: ninguna clave bibliográfica empieza con letra, porque empiezan con el id numérico del registro. Produce solo el número, como `\ref`; la palabra la escribe el editor. Un grupo que mezcla referencias y citas detiene la conversión.
+
+Los id `fig-*` no se prefijan con el del capítulo en `ensamblar-capitulo-canonico.xsl` (`db:es-id-global`, como `bib-*`): con el prefijo, la referencia a una figura de otro capítulo apuntaba al propio. Son únicos en el libro por convención. El canónico de una pieza que remite a otra no valida suelto (IDREF); el del libro, sí.
+
+NUMERACIÓN (SC-31: LA DEL PDF)
+
+    capítulo numerado     2.3
+    apéndice              A.1
+    pieza sin número      1, 2, 3 dentro de la pieza
+
+Contrato 9: `\gbCapituloSinNumero` reinicia notas, figuras, cuadros y ecuaciones (`\gbReiniciarPieza`) y enciende `\ifgbPiezaSinNumero`, que `\thefigure`, `\thetable` y `\theequation` consultan para omitir el prefijo; `\gbCapitulo` lo apaga. El ancla de hyperref lleva el contador de pieza: con book y hyperref solos, dos «Figura 1» compartían el ancla y el enlace iba a la primera. La estética actual carga caption, cuyas anclas ya son únicas; el ajuste garantiza lo mismo con otra estética.
+
+`docbook-to-latex.xsl`: un `<appendix>` con role (sobre_autores, cronologia) no se numera.
+
+EPUB y HTML calculan el mismo número con `numeracion-libro.xsl`, incluido por las dos hojas. El EPUB transforma pieza por pieza: el script le pasa la lista del libro y la pieza en curso. La referencia a otra pieza enlaza a su archivo. Un destino inexistente sale «??» y se avisa; un id repetido se avisa.
+
+`compilar_pdf_libro.sh` informa al final las referencias sin destino y los id repetidos que deja el registro de LaTeX.
+
+VERIFICADO EN EL CONTENEDOR
+
+Libro de prueba con Introducción, dos capítulos, Conclusiones y un apéndice, con referencias cruzadas entre todas las piezas, una en una nota y una cita en un pie. PDF, HTML y EPUB dan los mismos números: 1, 1.1, 1.2, 2.1, 1, A.1. El canónico del libro valida contra el RNG. Los casos de error del filtro detienen Pandoc con el mensaje.
+
+**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73
+
+**PENDIENTE:** Probar en Mint con el libro nuevo que tiene figuras y con una revista. Tablas y ecuaciones siguen el mismo camino en lotes propios: prefijos tbl- y eq- en cite-to-biblioref-db.lua y en db:es-id-global.
+
 ---
 
 ## RF — Referencia de API
@@ -3581,3 +3633,33 @@ Regla: una hoja que escribe XML con texto en línea usa `indent="no"`. Si hace f
 El parche de fechas de `jats-to-scielo` («PACKTOOLS RECHAZA SALTOS DE LÍNEA») venía de esta misma causa.
 
 **Relaciones:** vinculo:SC-30
+
+### GV-72 — Pandoc 3.1: el escritor DocBook descarta el id de una figura
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Con `--to docbook5`, un `Figure` sale como `<figure>` sin `xml:id`, cualquiera sea la forma del .md:
+
+    ![Pie](media/x.png){#fig-x}              <figure> sin id
+    ::: {#fig-x}  ![Pie](media/x.png)  :::   <anchor xml:id="fig-x"/> y después <figure> sin id
+    ::: {.fig #fig-x} ...                    <figure> sin id (el id del div se pierde)
+
+Un atributo `fig-alt` tampoco llega. Asignar el identifier al `Figure` desde un filtro Lua no cambia la salida. Con `--to jats` el id sí llega (`<fig id>`).
+
+Consecuencia: sin `xml:id` no hay `\label` ni referencia cruzada. El filtro de libro arma el `<figure>` como RawBlock (SC-32).
+
+Un `error(mensaje, 0)` en un filtro Lua detiene Pandoc con código 83 y escribe en stderr «Error running filter …» seguido del mensaje.
+
+**Relaciones:** vinculo:SC-32,apoya:GV-23
+
+### GV-73 — tocdepth en 0 vacía el índice de figuras y el de cuadros en book
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** book.cls / LuaLaTeX / TeX Live 2023 / contenedor · **Verificado:** 2026-10
+
+book.cls compone las entradas del índice de figuras con `\@dottedtocline{1}`, y `\@dottedtocline` descarta una entrada cuyo nivel supera `tocdepth`. Con `tocdepth` en 0 —el sumario de SC-26 lleva solo partes y piezas— el `.lof` tiene todas las entradas y la página del índice de figuras sale solo con el título. Lo mismo el de cuadros, que usa la misma definición (`\let\l@table\l@figure`).
+
+Corregido en `preambulo-estetica.tex`, junto al `tocdepth`: `\l@figure` pasa a nivel 0, con la sangría y el ancho de número de la clase, y `\l@table` lo copia. El sumario no cambia.
+
+Verificado: antes, página vacía; después, las seis figuras del libro de prueba con su número y su página.
+
+**Relaciones:** vinculo:SC-32,vinculo:SC-26

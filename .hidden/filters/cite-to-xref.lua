@@ -300,6 +300,13 @@ function Div(el)
   -- SE EVITA EL DOBLE <fig> QUE PANDOC GENERA AL CONVERTIR EL DIV
   if el.classes:includes('fig') then
     fig_counter = fig_counter + 1
+    -- EL id ES EL QUE ESCRIBIÓ EL EDITOR EN EL DIV (::: {.fig #fig-mapa}):
+    -- ES EL QUE PERMITE REFERIR LA FIGURA. EL CONTADOR QUEDA SOLO PARA
+    -- LA FIGURA QUE NO LO TRAE
+    local fig_id = el.identifier
+    if fig_id == nil or fig_id == '' then
+      fig_id = 'fig-' .. fig_counter
+    end
     for _, block in ipairs(el.content) do
       if block.t == 'Figure' then
         for _, inner in ipairs(block.content) do
@@ -310,7 +317,7 @@ function Div(el)
                 local alt  = pandoc.utils.stringify(inline.caption)
                 local ext  = href:match("%.(%w+)$") or "png"
                 -- ESCAPAR: href Y ext VAN A ATRIBUTO, alt VA A TEXTO DE ELEMENTO
-                local raw  = '<fig id="fig-' .. fig_counter .. '">\n' ..
+                local raw  = '<fig id="' .. escape_xml_attr(fig_id) .. '">\n' ..
                              '  <caption><p>' .. escape_xml_text(alt) .. '</p></caption>\n' ..
                              '  <graphic mimetype="image" mime-subtype="' .. escape_xml_attr(ext) .. '"' ..
                              ' xlink:href="' .. escape_xml_attr(href) .. '"/>\n' ..
@@ -323,7 +330,7 @@ function Div(el)
       end
     end
     -- FALLBACK: SI NO ENCUENTRA IMAGEN RETORNA EL DIV CON id ACTUALIZADO
-    el.identifier = 'fig-' .. fig_counter
+    el.identifier = fig_id
     return el
   end
 

@@ -421,6 +421,28 @@ while necesita_rerun && (( extra < PASADAS_EXTRA_MAX )); do
     correr_lualatex "ajuste de paginación $extra"
 done
 
+# --- 7b. REFERENCIAS CRUZADAS ---
+# LaTeX NO FRENA POR UNA REFERENCIA ROTA: ESCRIBE «??» EN EL PDF Y DEJA UN
+# AVISO EN EL REGISTRO. DOS CASOS LLEGAN DEL .md: UN @fig-… QUE NO
+# CORRESPONDE A NINGUNA FIGURA, Y DOS FIGURAS CON EL MISMO #id EN EL LIBRO
+# (EL ENLACE IRÍA A UNA SOLA). SE INFORMAN CON LA ETIQUETA PARA BUSCARLA.
+paso "verificando las referencias cruzadas"
+if [[ -f "$ARCHIVO_LOG" ]]; then
+    mapfile -t SIN_DESTINO < <(grep -oP "Reference \`\K[^']+(?=' on page)" "$ARCHIVO_LOG" | sort -u)
+    mapfile -t REPETIDAS < <(grep -oP "Label \`\K[^']+(?=' multiply defined)" "$ARCHIVO_LOG" | sort -u)
+    if (( ${#SIN_DESTINO[@]} == 0 && ${#REPETIDAS[@]} == 0 )); then
+        ok "todas resueltas"
+    fi
+    if (( ${#SIN_DESTINO[@]} > 0 )); then
+        aviso "${#SIN_DESTINO[@]} referencia(s) sin destino, salen como «??»:"
+        printf '      %s\n' "${SIN_DESTINO[@]}"
+    fi
+    if (( ${#REPETIDAS[@]} > 0 )); then
+        aviso "${#REPETIDAS[@]} identificador(es) repetido(s) en el libro:"
+        printf '      %s\n' "${REPETIDAS[@]}"
+    fi
+fi
+
 # --- 8. ENTREGA DEL PDF ---
 echo
 titulo "$REGLA"

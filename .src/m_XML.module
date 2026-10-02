@@ -7231,6 +7231,8 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
   Dim sRutaMD As String
   Dim sDirTmp As String
   Dim sFileBody As String
+  Dim sFileParcial As String
+  Dim sFileFallo As String
   Dim iEspera As Integer
   Dim sPrefijoTres As String
   Dim sPrefijoDos As String
@@ -7282,6 +7284,13 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
   sDirTmp = sRutaProyecto & "/tmp"
   sRutaMD = sRutaProyecto & "/" & sCarpetaMD & "/" & sNombreArchivo & ".md"
   sFileBody = sDirTmp & "/body-" & sNombreSinPrefijo & ".xml"
+  ' LA SALIDA DE PANDOC VA PRIMERO A UN PARCIAL. SI PANDOC FALLA —UN FILTRO
+  ' QUE DETIENE LA CONVERSIÓN, COMO LA FIGURA SIN #id— NO SE ESCRIBE EL
+  ' FRAGMENTO SINO LA MARCA DE FALLO. ANTES EL ENVOLTORIO <section> SE
+  ' ESCRIBÍA IGUAL, EL ARCHIVO NO QUEDABA VACÍO Y EL CAPÍTULO SALÍA SIN
+  ' CUERPO Y SIN AVISO (GV-23)
+  sFileParcial = sFileBody & ".parcial"
+  sFileFallo = sFileBody & ".fallo"
 
   If Not Exist(sRutaMD) Then
     m_Sonido.sonar("Error")
@@ -7289,10 +7298,9 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
     Return False
   Endif
 
-  ' --- 4. ELIMINAR FRAGMENTO ANTERIOR ---
-  If Exist(sFileBody) Then
-    Shell "rm '" & sFileBody & "'" Wait
-  Endif
+  ' --- 4. ELIMINAR FRAGMENTO, PARCIAL Y MARCA DE FALLO ANTERIORES ---
+  ' LOS TRES: UNA MARCA DE FALLO VIEJA HARÍA FRACASAR UNA CORRIDA BUENA
+  Shell "rm -f '" & sFileBody & "' '" & sFileParcial & "' '" & sFileFallo & "'" Wait
 
   ' --- 5. INVOCAR PANDOC ---
   ' SE INVOCA DESDE LA TERMINAL EMBEBIDA (TerminalViewProyecto)
@@ -7308,24 +7316,38 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
   ' ES OBLIGATORIO PARA QUE EL XSLT DE ENSAMBLADO PUEDA CARGAR EL
   ' FRAGMENTO CON document() SIN ERRORES DE NAMESPACE NO DECLARADO
   ' (VER RC-DB-06 EN LA DOCUMENTACIÓN DEL PROYECTO).
+  '
+  ' pandoc ... && { ENVOLTORIO } > body || : > fallo
+  ' SI PANDOC TERMINA CON ERROR NO SE ARMA EL FRAGMENTO: SE CREA LA MARCA
+  ' DE FALLO, Y EL MOTIVO QUEDA ESCRITO EN LA TERMINAL
   FMain.TerminalViewProyecto.Input(
-    "{ echo '<section xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &
-    " xmlns:mml=" & Chr(34) & "http://www.w3.org/1998/Math/MathML" & Chr(34) &
-    " xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">'; " &
     "pandoc '" & sRutaMD & "' " &
     "--from markdown --to docbook5 --mathml --no-highlight --wrap=none " &
     "--lua-filter ~/.gbpublisher/filters/guillemets-to-quoted-db.lua " &
     "--lua-filter ~/.gbpublisher/filters/cite-to-biblioref-db.lua " &
     "--lua-filter ~/.gbpublisher/filters/fenced-divs-to-elements-db.lua " &
-    "--output -; " &
-    "echo '</section>'; } > '" & sFileBody & "'" & Chr(10))
+    "--output '" & sFileParcial & "' && " &
+    "{ echo '<section xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &
+    " xmlns:mml=" & Chr(34) & "http://www.w3.org/1998/Math/MathML" & Chr(34) &
+    " xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">'; " &
+    "cat '" & sFileParcial & "'; " &
+    "echo '</section>'; } > '" & sFileBody & "' || : > '" & sFileFallo & "'; " &
+    "rm -f '" & sFileParcial & "'" & Chr(10))
 
-  ' --- 6. ESPERAR HASTA QUE EL ARCHIVO EXISTA (MÁXIMO 30 S) ---
+  ' --- 6. ESPERAR EL FRAGMENTO O LA MARCA DE FALLO (MÁXIMO 30 S) ---
   iEspera = 0
-  While Not Exist(sFileBody) And iEspera < 300
+  While Not Exist(sFileBody) And Not Exist(sFileFallo) And iEspera < 300
     Wait 0.1
     Inc iEspera
   Wend
+
+  ' PANDOC RECHAZÓ EL CAPÍTULO: EL MENSAJE DEL FILTRO ESTÁ EN LA TERMINAL
+  If Exist(sFileFallo) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Pandoc no pudo convertir el capítulo:" & Chr(10) & sRutaMD & Chr(10) & Chr(10) &
+      "El motivo está en la terminal del proyecto.")
+    Return False
+  Endif
 
   If Not Exist(sFileBody) Then
     m_Sonido.sonar("Error")

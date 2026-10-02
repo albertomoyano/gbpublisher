@@ -294,8 +294,16 @@
                <chapter role="introduccion">  → SIN NUMERAR
                <chapter role="conclusiones">  → SIN NUMERAR
                <chapter role="epilogo">       → SIN NUMERAR
-               <appendix>                     → NUMERADO, CON LETRA
+               <appendix> sin role            → apéndice, NUMERADO, CON LETRA
+               <appendix role="sobre-autores"> → SIN NUMERAR
+               <appendix role="cronologia">    → SIN NUMERAR
                todo lo demás                  → SIN NUMERAR
+
+             sobre_autores Y cronologia COMPARTEN EL ELEMENTO <appendix>
+             PERO VAN EN POSLIMINARES, DONDE \chapter NO NUMERA: SIN EL
+             role EN LA REGLA, LA PIEZA SE ABRÍA CON \gbCapitulo Y NO
+             REINICIABA SUS CONTADORES. LA MISMA REGLA LA APLICAN EL EPUB
+             Y EL HTML (numeracion-libro.xsl, SC-31).
 
              LO NO NUMERADO VA CON \chapter* MÁS \addcontentsline, QUE
              ENTRA AL SUMARIO SIN NÚMERO.
@@ -306,8 +314,8 @@
         <xsl:variable name="numerado" as="xs:boolean" select="
           if ($tipo != '')
           then $tipo = ('capitulo', 'apendice')
-          else ((self::chapter and normalize-space(@role) = '')
-                or self::appendix)"/>
+          else ((self::chapter or self::appendix)
+                and normalize-space(@role) = '')"/>
         <!-- ==========================================================
              TÍTULO Y SUBTÍTULO (SC-28, CONTRATO 6)
              ==========================================================

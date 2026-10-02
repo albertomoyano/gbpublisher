@@ -25,7 +25,9 @@
 --   Cite  → CONVIERTE CITAS PANDOC A SECUENCIA DE INLINES DOCBOOK
 --           CON role DEL MODO Y PREFIJO/SUFIJO COMO <phrase> HERMANOS
 --           (PRESERVA MARKUP INLINE EN PREFIJO Y SUFIJO).
---   Note  → CONVIERTE NOTAS AL PIE A <footnote> INLINE EN DOCBOOK,
+--           LAS CLAVES CON PREFIJO DE REFERENCIA (@fig-…) NO SON CITAS:
+--           SALEN COMO <xref linkend="fig-…"/>.
+--   Note  →CONVIERTE NOTAS AL PIE A <footnote> INLINE EN DOCBOOK,
 --           PERMITIENDO QUE LAS CITAS ANIDADAS SE PROCESEN.
 -- =====================================================
 
@@ -232,8 +234,64 @@ end
 --   <phrase role="cite-suffix">SUFIJO CON <emphasis>markup</emphasis></phrase>
 -- EL linkend USA LA FORMA SANITIZADA DEL CITEKEY, QUE TAMBIÉN
 -- APLICA m_XML.GenerarBiblioCapituloXML AL xml:id DEL <biblioentry>.
+-- =====================================================
+-- REFERENCIAS CRUZADAS: @fig-nombre → <xref linkend="fig-nombre"/>
+-- =====================================================
+-- PANDOC LEE @fig-mapa COMO UNA CITA. LO QUE LA DISTINGUE DE UNA CITA
+-- BIBLIOGRÁFICA ES EL PREFIJO DE LA CLAVE: LAS CLAVES DE LA BASE
+-- EMPIEZAN CON EL id NUMÉRICO DEL REGISTRO (4272-MANGIANTINI2024) Y EL
+-- CAMPO ES DE SOLO LECTURA, ASÍ QUE NINGUNA EMPIEZA CON UNA LETRA.
+-- POR PREFIJO Y NO POR «EL id EXISTE EN EL CAPÍTULO»: EL FILTRO CORRE
+-- CAPÍTULO POR CAPÍTULO, Y UNA REFERENCIA A UNA FIGURA DE OTRO
+-- CAPÍTULO TIENE QUE FUNCIONAR IGUAL.
+-- LA REFERENCIA PRODUCE SOLO EL NÚMERO; LA PALABRA («figura»,
+-- «Figura», «figuras») LA ESCRIBE EL EDITOR.
+-- AGREGAR ACÁ tbl- Y eq- CUANDO TABLAS Y FÓRMULAS TENGAN SU LOTE.
+local prefijos_referencia = { 'fig-' }
+
+local function es_referencia(clave)
+  for _, prefijo in ipairs(prefijos_referencia) do
+    if clave:sub(1, #prefijo) == prefijo then return true end
+  end
+  return false
+end
+
 function Cite(el)
   local result = {}
+  local referencias = 0
+
+  -- --- 1. GRUPO DE REFERENCIAS CRUZADAS ---
+  -- UN GRUPO QUE MEZCLA REFERENCIAS Y CITAS NO TIENE UNA LECTURA
+  -- SENSATA EN NINGUNA SALIDA: EL PDF RECONSTRUYE LA CITA DESDE LOS
+  -- HERMANOS DEL <biblioref>, Y UN <xref> EN MEDIO LA ROMPERÍA.
+  for _, citation in ipairs(el.citations) do
+    if es_referencia(citation.id) then referencias = referencias + 1 end
+  end
+  if referencias > 0 and referencias < #el.citations then
+    error('\n[referencia] Un mismo grupo mezcla referencias a figuras y citas ' ..
+          'bibliográficas: ' .. pandoc.utils.stringify(el.content) ..
+          '. Se escriben por separado.', 0)
+  end
+  if referencias > 0 then
+    for i, citation in ipairs(el.citations) do
+      local prefijo_db = inlines_a_docbook(citation.prefix)
+      local sufijo_db = inlines_a_docbook(citation.suffix)
+      if prefijo_db ~= '' then
+        table.insert(result, pandoc.RawInline('docbook', prefijo_db .. ' '))
+      end
+      table.insert(result, pandoc.RawInline('docbook',
+        '<xref linkend="' .. escape_xml_attr(citation.id) .. '"/>'))
+      if sufijo_db ~= '' then
+        table.insert(result, pandoc.RawInline('docbook', ' ' .. sufijo_db))
+      end
+      if i < #el.citations then
+        table.insert(result, pandoc.RawInline('docbook', ', '))
+      end
+    end
+    return result
+  end
+
+  -- --- 2. CITAS BIBLIOGRÁFICAS ---
   for i, citation in ipairs(el.citations) do
 
     -- DETERMINAR MODO DE CITA SEGÚN PANDOC AST

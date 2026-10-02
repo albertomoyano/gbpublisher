@@ -27,7 +27,8 @@
     xmlns:xlink="http://www.w3.org/1999/xlink"
     xmlns="http://www.w3.org/1999/xhtml"
     xmlns:epub="http://www.idpf.org/2007/ops"
-    exclude-result-prefixes="xsl xs db xlink">
+    xmlns:nl="urn:gbpublisher:numeracion-libro"
+    exclude-result-prefixes="xsl xs db xlink nl">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -38,10 +39,35 @@
        ES LA ÚNICA REGLA DE LAS SALIDAS DIGITALES; NO DUPLICARLA ACÁ -->
   <xsl:include href="marca-editor.xsl"/>
 
+  <!-- NÚMERO DE FIGURA Y REFERENCIAS CRUZADAS: LA MISMA REGLA QUE EL PDF
+       Y QUE EL HTML (SC-31). NO DUPLICARLA ACÁ -->
+  <xsl:include href="numeracion-libro.xsl"/>
+
   <!-- ================================================
        PARÁMETROS DE ENTRADA
        ================================================ -->
   <xsl:param name="estilo_cita" as="xs:string" select="'apa'"/>
+
+  <!-- ESTA HOJA TRANSFORMA UNA PIEZA POR VEZ, PERO EL NÚMERO DE UNA
+       FIGURA DEPENDE DEL LUGAR DE SU PIEZA EN EL LIBRO, Y UNA REFERENCIA
+       PUEDE APUNTAR A OTRA PIEZA. EL SCRIPT PASA LA LISTA DEL EPUB
+       (tmp/epub-capitulos.txt, EN ORDEN, UN NOMBRE POR LÍNEA) Y EL
+       NOMBRE DE LA PIEZA EN CURSO. LOS CANÓNICOS DE LAS DEMÁS SE LEEN
+       DE LA MISMA CARPETA QUE EL DE ESTA (jats/c-NOMBRE.xml).
+       OBLIGATORIOS: SIN ELLOS LA NUMERACIÓN NO COINCIDIRÍA CON EL PDF. -->
+  <xsl:param name="piezas_libro" as="xs:string" required="yes"/>
+  <xsl:param name="pieza_actual" as="xs:string" required="yes"/>
+
+  <!-- LAS PIEZAS DEL LIBRO EN ORDEN. LA EN CURSO ES LA RAÍZ DE ESTE
+       DOCUMENTO Y NO UNA SEGUNDA CARGA DEL MISMO ARCHIVO: numeracion-libro
+       LA BUSCA POR IDENTIDAD DE NODO. -->
+  <xsl:variable name="nombresPiezas" as="xs:string*"
+                select="tokenize($piezas_libro, '\n')[normalize-space() != '']"/>
+  <xsl:variable name="raizPieza" select="/*"/>
+  <xsl:variable name="piezasLibro" as="element()*"
+                select="for $n in $nombresPiezas
+                        return if ($n = $pieza_actual) then $raizPieza
+                        else doc(resolve-uri(concat('c-', $n, '.xml'), base-uri($raizPieza)))/*"/>
 
   <!-- ================================================
        SALIDA: XHTML5 (con doctype legacy-compat para EPUB)
@@ -634,17 +660,24 @@
   <!-- ================================================
        FIGURA → inline con caption (sin panel)
        ================================================ -->
+  <!-- EL NÚMERO ES EL DEL PDF (numeracion-libro.xsl, SC-31). EL id ES
+       EL DEL .md: ES EL DESTINO DE LAS REFERENCIAS CRUZADAS. -->
   <xsl:template match="db:figure | figure | db:informalfigure | informalfigure">
-    <xsl:variable name="num">
-      <xsl:number count="db:figure | figure | db:informalfigure | informalfigure"
-                  level="any"/>
-    </xsl:variable>
+    <xsl:variable name="num" select="nl:numero-figura(., $piezasLibro)"/>
     <xsl:variable name="fileref"
                   select="(db:mediaobject/db:imageobject/db:imagedata/@fileref
                           | mediaobject/imageobject/imagedata/@fileref)[1]"/>
+    <!-- TEXTO ALTERNATIVO: EL DECLARADO EN EL .md, QUE EL FILTRO PONE EN
+         textobject; SI NO HAY, EL PIE -->
+    <xsl:variable name="alt"
+                  select="normalize-space(((db:mediaobject/db:textobject/db:phrase
+                          | mediaobject/textobject/phrase)[1], (db:title | title)[1])[1])"/>
     <figure class="figura">
+      <xsl:if test="@xml:id">
+        <xsl:attribute name="id" select="@xml:id"/>
+      </xsl:if>
       <xsl:if test="$fileref != ''">
-        <img src="../images/{tokenize($fileref, '/')[last()]}" alt="{normalize-space((db:title|title)[1])}"/>
+        <img src="../images/{tokenize($fileref, '/')[last()]}" alt="{$alt}"/>
       </xsl:if>
       <figcaption class="figura-caption">
         <span class="figura-label">Figura <xsl:value-of select="$num"/></span>
@@ -1317,6 +1350,49 @@
   <xsl:template match="db:figure/db:title | figure/title
                      | db:table/db:title | table/title
                      | db:informaltable/db:title | informaltable/title"/>
+
+  <!-- ================================================
+       REFERENCIA CRUZADA (@fig-… EN EL .md)
+       ================================================
+       SOLO EL NÚMERO, COMO \ref EN EL PDF. SI LA FIGURA ESTÁ EN OTRA
+       PIEZA, EL ENLACE VA A SU ARCHIVO (chapters/h-NOMBRE.xhtml, EL
+       MISMO DIRECTORIO). UN DESTINO INEXISTENTE SALE «??» Y SE AVISA. -->
+  <xsl:template match="db:xref | xref">
+    <xsl:variable name="destino" select="nl:destino(string(@linkend), $piezasLibro)"/>
+    <xsl:variable name="texto" select="nl:texto-referencia($destino, $piezasLibro)"/>
+    <xsl:choose>
+      <xsl:when test="empty($destino)">
+        <xsl:message>
+          <xsl:text>AVISO: referencia sin destino: </xsl:text>
+          <xsl:value-of select="@linkend"/>
+        </xsl:message>
+        <xsl:value-of select="$texto"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:if test="nl:cantidad-destinos(string(@linkend), $piezasLibro) > 1">
+          <xsl:message>
+            <xsl:text>AVISO: identificador repetido en el libro: </xsl:text>
+            <xsl:value-of select="@linkend"/>
+          </xsl:message>
+        </xsl:if>
+        <xsl:variable name="i" as="xs:integer?"
+                      select="(for $k in 1 to count($piezasLibro)
+                               return if ($piezasLibro[$k] is nl:pieza-de($destino))
+                                      then $k else ())[1]"/>
+        <xsl:variable name="archivo"
+                      select="if ($nombresPiezas[$i] = $pieza_actual) then ''
+                              else concat('h-', $nombresPiezas[$i], '.xhtml')"/>
+        <a class="referencia" href="{$archivo}#{@linkend}">
+          <xsl:value-of select="$texto"/>
+        </a>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="db:xref | xref" mode="text-only">
+    <xsl:value-of select="nl:texto-referencia(
+      nl:destino(string(@linkend), $piezasLibro), $piezasLibro)"/>
+  </xsl:template>
 
   <!-- MODO text-only genérico (para notas): recursa y emite texto -->
   <xsl:template match="*" mode="text-only">

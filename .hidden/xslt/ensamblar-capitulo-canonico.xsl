@@ -143,6 +143,25 @@
   </xsl:function>
 
   <!-- ================================================
+       FUNCIÓN: db:es-id-global
+       LOS IDs QUE NO SE PREFIJAN CON EL DEL CAPÍTULO:
+         bib-*  ÚNICOS POR EL id DE LA BASE (biblioentry).
+         fig-*  LOS ESCRIBE EL EDITOR EN EL .md (::: {.fig #fig-mapa})
+                Y LOS REFIERE CON @fig-mapa DESDE CUALQUIER CAPÍTULO.
+                CON EL PREFIJO, UNA REFERENCIA A UNA FIGURA DE OTRO
+                CAPÍTULO QUEDABA APUNTANDO AL PROPIO: cap-3.fig-mapa
+                CONTRA cap-5.fig-mapa. SON ÚNICOS EN EL LIBRO POR
+                CONVENCIÓN; UN REPETIDO LO INFORMA LA COMPILACIÓN DEL
+                PDF Y LO AVISAN LAS SALIDAS DIGITALES.
+       LOS PREFIJOS DE REFERENCIA SON LOS MISMOS QUE LOS DE
+       cite-to-biblioref-db.lua: AGREGAR tbl- Y eq- EN LOS DOS.
+       ================================================ -->
+  <xsl:function name="db:es-id-global" as="xs:boolean">
+    <xsl:param name="id" as="xs:string"/>
+    <xsl:sequence select="starts-with($id, 'bib-') or starts-with($id, 'fig-')"/>
+  </xsl:function>
+
+  <!-- ================================================
        TEMPLATE RAÍZ
        PUNTO DE ENTRADA: PROCESA info-cap-NN.xml
        ================================================ -->
@@ -300,10 +319,10 @@
 
     <!-- PASO 2: PREFIJAR CON $xml_id_capitulo PARA EVITAR COLISIONES
          AL ENSAMBLAR EL LIBRO COMPLETO.
-         EXCEPCIONES: IDs bib-* (biblioentry) YA SON GLOBALMENTE ÚNICOS
-         POR id DE BIBTEX, NO SE PREFIJAN. -->
+         EXCEPCIONES: LOS IDs GLOBALES (db:es-id-global), bib-* Y fig-*,
+         NO SE PREFIJAN. -->
     <xsl:choose>
-      <xsl:when test="starts-with($idNormalizado, 'bib-')">
+      <xsl:when test="db:es-id-global($idNormalizado)">
         <xsl:attribute name="xml:id" select="$idNormalizado"/>
       </xsl:when>
       <xsl:when test="$xml_id_capitulo != ''">
@@ -341,7 +360,7 @@
 
     <!-- PASO 2: PREFIJAR CONSISTENTE CON EL TEMPLATE @xml:id -->
     <xsl:choose>
-      <xsl:when test="starts-with($targetIdNormalizado, 'bib-')">
+      <xsl:when test="db:es-id-global($targetIdNormalizado)">
         <xsl:attribute name="xlink:href"
                        select="concat('#', $targetIdNormalizado)"/>
       </xsl:when>
@@ -378,7 +397,7 @@
 
     <!-- PASO 2: PREFIJAR CONSISTENTE -->
     <xsl:choose>
-      <xsl:when test="starts-with($targetNormalizado, 'bib-')">
+      <xsl:when test="db:es-id-global($targetNormalizado)">
         <xsl:attribute name="linkend" select="$targetNormalizado"/>
       </xsl:when>
       <xsl:when test="$xml_id_capitulo != ''">
