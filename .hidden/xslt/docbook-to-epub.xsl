@@ -101,8 +101,19 @@
             <h1 class="cap-titulo"><xsl:value-of select="$titulo"/></h1>
           </xsl:if>
 
-          <!-- AUTORÍA DEL CAPÍTULO (si tiene) -->
           <xsl:variable name="capInfo" select="($cap/db:info | $cap/info)[1]"/>
+
+          <!-- SUBTÍTULO DEL CAPÍTULO (si tiene). normalize-space: EL CORTE
+               DEL EDITOR (<?gb-corte?>) NO VALE EN EL EPUB Y SU VALOR DE
+               TEXTO ES VACÍO, ASÍ QUE QUEDA UN ESPACIO (SC-28). EL HTML YA
+               LO MOSTRABA; EL EPUB NO -->
+          <xsl:variable name="subtitulo"
+            select="normalize-space(($capInfo/db:subtitle | $capInfo/subtitle)[1])"/>
+          <xsl:if test="$subtitulo != ''">
+            <p class="cap-subtitulo"><xsl:value-of select="$subtitulo"/></p>
+          </xsl:if>
+
+          <!-- AUTORÍA DEL CAPÍTULO (si tiene) -->
           <xsl:if test="$capInfo/db:author | $capInfo/author">
             <p class="cap-autoria">
               <xsl:for-each select="$capInfo/db:author | $capInfo/author">

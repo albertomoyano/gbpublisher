@@ -370,6 +370,25 @@ Y ESCRIBIR `Pos` falla en silencio cuando el documento creció (GV-44): el curso
 
 **Relaciones:** vinculo:RC-GM-06, vinculo:RF-03, vinculo:SC-02, vinculo:GV-44, vinculo:GV-45
 
+### RC-GM-22 — El marcado que arma Gambas escapa cada valor de la base
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** Gambas 3.22 / gbpublisher · **Verificado:** 2026-10
+
+Todo valor que viene de la base o de un formulario y entra a un XML, XHTML, HTML u OPF armado por concatenación en Gambas pasa por `m_XML.EscaparXML`. Sin eso, un «&» en el título de una revista o un «<» en un apellido dejan el archivo mal formado, y el fallo aparece lejos: en epubcheck, en el lector o en el navegador.
+
+    ' MAL
+    sXhtml &= "<p>" & sTituloRevista & "</p>"
+    ' BIEN
+    sXhtml &= "<p>" & m_XML.EscaparXML(sTituloRevista) & "</p>"
+
+Vale también para los atributos (`alt`, `href`) y para los nombres de archivo que se usan como texto.
+
+Si el valor lleva una marca que se traduce a marcado —el corte de título de SC-28—, el escape va sobre cada tramo y no sobre el texto entero: partir, escapar, unir.
+
+Corregido en `m_GenerarEpub` (portada, sumario, índice de autores, `content.opf`, `nav.xhtml`, cabecera de los XHTML de Pandoc) y en `m_GenerarHTML.GenerarIndiceHtml`. `m_GenerarEpubLibro` y `m_XML` ya escapaban.
+
+**Relaciones:** vinculo:SC-28
+
 ---
 
 ## RC-XJ — Reglas críticas XSLT + JATS
@@ -485,6 +504,25 @@ Sin eso, el math display se renderiza como markup inline y no como MathML.
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** Saxon-HE 12 / XSLT 2.0
 
 Cuando se hace `apply-templates` sobre nodos cargados con `document()`, el identity template debe usar `copy-namespaces="no"` para que los descendientes no redeclaren `xmlns` redundantes.
+
+### RC-DB-09 — info admite un solo title: los títulos alternativos van en bibliomisc con role
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** DocBook 5.2 / RNG del repositorio / xmllint · **Verificado:** 2026-10
+
+En DocBook 5.2, `<info>` admite un solo `<title>`. Un segundo `<title role="...">` invalida el canónico contra el RNG; xmllint lo informa como «Extra element title in interleave».
+
+DocBook 5.2 no tiene elemento propio para el título traducido de un capítulo ni para el título original de un libro traducido. Van en `<bibliomisc>` con `role` y su `xml:lang`:
+
+    <bibliomisc role="titulo-traducido" xml:lang="en">...</bibliomisc>
+    <bibliomisc role="titulo-original" xml:lang="en">...</bibliomisc>
+
+Es el patrón del canónico para todo dato sin elemento propio (`tipo-capitulo`, `mes-publicacion`, `url-libro`). El dato queda en el XML, que sigue siendo autónomo (RC-XJ-02), y una derivación futura como BITS lo encuentra ahí.
+
+Verificado contra `schemas/docbook/docbook.rng` del repositorio: con el segundo `<title>`, el capítulo y el libro no validan; con `<bibliomisc>`, validan. Ninguna hoja leía esos `<title role>`: las de HTML y EPUB ya filtraban `title[not(@role)]`.
+
+Hasta la corrección, `m_XML` emitía el segundo `<title>` con un comentario que afirmaba lo contrario («DOCBOOK 5.2 PERMITE MÚLTIPLES <title> EN <info>»).
+
+**Relaciones:** vinculo:RC-XJ-02,vinculo:SC-28
 
 ---
 
