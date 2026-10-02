@@ -148,6 +148,173 @@ Public Sub DirectorioOcultoApp()
 End
 
 ' ============================================
+' Función   : VerificarRecursosLocales
+' Propósito : Coteja la copia local de trabajo (~/.gbpublisher) con los
+'             recursos instalados y, si difieren, ofrece reemplazarla. Es la
+'             contrapartida de SC-11: la copia local no se sobrescribe sola, y
+'             después de instalar una versión nueva una hoja vieja puede correr
+'             con un script nuevo (o al revés) sin ningún error: la salida sale
+'             con la regla anterior, o Saxon frena por un parámetro que falta.
+'             Se llama al arrancar, después de DirectorioOcultoApp.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : SE COTEJAN LAS CARPETAS QUE INTERVIENEN EN LAS SALIDAS Y EN EL
+'             EDITOR. UN ARCHIVO QUE SOLO EXISTE EN LA COPIA LOCAL NO SE MIRA:
+'             PUEDE SER DEL USUARIO (UN .csl, UN TEMA PROPIO). DESDE EL IDE LOS
+'             RECURSOS SON LOS DE .hidden/, Y EL COTEJO AVISA IGUAL CUANDO EL
+'             REPOSITORIO AVANZÓ Y LA COPIA LOCAL QUEDÓ ATRÁS.
+' ============================================
+Public Sub VerificarRecursosLocales()
+
+  Dim aCarpetas As String[]
+  Dim aArchivos As String[]
+  Dim aDistintos As New String[]
+  Dim aIlegibles As New String[]
+  Dim sCarpeta As String
+  Dim sArchivo As String
+  Dim sDirSistema As String
+  Dim sDirLocal As String
+  Dim sContenidoSistema As String
+  Dim sContenidoLocal As String
+  Dim iRespuesta As Integer
+
+  ' --- 1. CARPETAS COTEJADAS ---
+  aCarpetas = ["xslt", "filters", "latex", "assets/css", "assets/js", "themes"]
+
+  ' --- 2. COTEJO ARCHIVO POR ARCHIVO ---
+  For Each sCarpeta In aCarpetas
+    sDirSistema = RutaRecursos() &/ sCarpeta
+    sDirLocal = User.Home &/ ".gbpublisher" &/ sCarpeta
+    If Not IsDir(sDirSistema) Then Continue
+
+    ' "*" CON gb.File Y NO "*.*", QUE OMITE LOS ARCHIVOS SIN EXTENSIÓN (GV-01)
+    Try aArchivos = Dir(sDirSistema, "*", gb.File)
+    If Error Then
+      aIlegibles.Add(sCarpeta)
+      Continue
+    Endif
+
+    For Each sArchivo In aArchivos
+      ' SI FALTA EN LA COPIA LOCAL, YA LO REPUSO DirectorioOcultoApp
+      If Not Exist(sDirLocal &/ sArchivo) Then Continue
+
+      Try sContenidoSistema = File.Load(sDirSistema &/ sArchivo)
+      If Error Then
+        aIlegibles.Add(sCarpeta &/ sArchivo)
+        Continue
+      Endif
+      Try sContenidoLocal = File.Load(sDirLocal &/ sArchivo)
+      If Error Then
+        aIlegibles.Add(sCarpeta &/ sArchivo)
+        Continue
+      Endif
+
+      If sContenidoSistema <> sContenidoLocal Then aDistintos.Add(sCarpeta &/ sArchivo)
+    Next
+  Next
+
+  ' --- 3. LO QUE NO SE PUDO LEER SE INFORMA: NO ES UN CANAL MUDO (GV-23) ---
+  If aIlegibles.Count > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudieron cotejar estos recursos con los instalados:" & Chr(10) & Chr(10) &
+      "  " & aIlegibles.Join(Chr(10) & "  "))
+  Endif
+
+  If aDistintos.Count = 0 Then Return
+
+  ' --- 4. AVISO Y DECISIÓN ---
+  m_Sonido.sonar("Warning")
+  iRespuesta = Message.Question("Estos recursos de ~/.gbpublisher difieren de los instalados en" & Chr(10) &
+    RutaRecursos() & ":" & Chr(10) & Chr(10) &
+    "  " & aDistintos.Join(Chr(10) & "  ") & Chr(10) & Chr(10) &
+    "Suele pasar después de instalar una versión nueva: la copia local no se" & Chr(10) &
+    "sobrescribe sola, y una hoja vieja con un script nuevo da salidas con la" & Chr(10) &
+    "regla anterior o falla." & Chr(10) & Chr(10) &
+    "Reemplazar guarda los actuales en ~/.gbpublisher/respaldo/ y copia los instalados.",
+    "Reemplazar", "Ahora no")
+  If iRespuesta <> 1 Then Return
+
+  ' --- 5. RESPALDO Y REEMPLAZO ---
+  ReemplazarRecursosLocales(aDistintos)
+
+End
+
+' ============================================
+' Función   : ReemplazarRecursosLocales
+' Propósito : Respalda los recursos locales indicados y los reemplaza por los
+'             instalados. Al terminar informa qué se reemplazó y dónde quedó
+'             el respaldo; si algo falla, dice dónde quedó cada cosa
+' Parámetros: aRutas As String[] — rutas relativas a ~/.gbpublisher
+'             («xslt/docbook-to-html.xsl»)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub ReemplazarRecursosLocales(aRutas As String[])
+
+  Dim sRuta As String
+  Dim sLocal As String
+  Dim sSistema As String
+  Dim sRespaldo As String
+  Dim sRespaldoArchivo As String
+  Dim aFallos As New String[]
+  Dim iReemplazados As Integer
+
+  ' --- 1. CARPETA DE RESPALDO DE ESTA CORRIDA ---
+  sRespaldo = User.Home &/ ".gbpublisher/respaldo" &/ "recursos-" & Format(Now, "yyyymmdd-hhnnss")
+
+  ' --- 2. ARCHIVO POR ARCHIVO: RESPALDO, BORRADO, COPIA ---
+  ' Copy SOBRE UN DESTINO EXISTENTE NO ESTÁ VERIFICADO: SE BORRA ANTES, COMO EN
+  ' EL PATRÓN DE ESCRITURA ATÓMICA (GV-39). SI LA COPIA FALLA DESPUÉS DEL
+  ' BORRADO, EL ARCHIVO ANTERIOR ESTÁ EN EL RESPALDO Y EL MENSAJE LO DICE
+  For Each sRuta In aRutas
+    sLocal = User.Home &/ ".gbpublisher" &/ sRuta
+    sSistema = RutaRecursos() &/ sRuta
+    sRespaldoArchivo = sRespaldo &/ sRuta
+
+    ' mkdir -p POR Exec SOBRE UN ARRAY, SIN SHELL (SC-05): CREA LOS NIVELES
+    ' INTERMEDIOS (respaldo/recursos-…/assets/css)
+    Try Exec ["mkdir", "-p", File.Dir(sRespaldoArchivo)] Wait
+    If Error Then
+      aFallos.Add(sRuta & " — no se pudo crear el respaldo")
+      Continue
+    Endif
+
+    Try Copy sLocal To sRespaldoArchivo
+    If Error Then
+      aFallos.Add(sRuta & " — no se pudo respaldar: no se tocó")
+      Continue
+    Endif
+
+    Try Kill sLocal
+    If Error Then
+      aFallos.Add(sRuta & " — no se pudo reemplazar: no se tocó")
+      Continue
+    Endif
+
+    Try Copy sSistema To sLocal
+    If Error Then
+      aFallos.Add(sRuta & " — se borró y no se pudo copiar el instalado: el anterior está en el respaldo")
+      Continue
+    Endif
+
+    Inc iReemplazados
+  Next
+
+  ' --- 3. INFORME ---
+  If aFallos.Count > 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error(CStr(iReemplazados) & " recurso(s) reemplazado(s). Fallaron:" & Chr(10) & Chr(10) &
+      "  " & aFallos.Join(Chr(10) & "  ") & Chr(10) & Chr(10) &
+      "Respaldo: " & sRespaldo)
+    Return
+  Endif
+
+  m_Sonido.sonar("Info")
+  Message.Info(CStr(iReemplazados) & " recurso(s) reemplazado(s) por los instalados." & Chr(10) & Chr(10) &
+    "Los anteriores quedaron en:" & Chr(10) & sRespaldo)
+
+End
+
+' ============================================
 ' Función   : CopiarIconosSVG
 ' Propósito : Copia los archivos .svg de la carpeta de recursos al directorio
 '             del usuario reemplazando el color "currentColor" por el azul

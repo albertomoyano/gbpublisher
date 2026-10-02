@@ -640,14 +640,23 @@ Public Function ExtraerPalabras(sTexto As String, Optional bLimpiarShortcodes As
   ' 40.000 CODEPOINTS EN 0,021 S (GV-03), ASÍ QUE NO HACE FALTA OPTIMIZARLO.
   While i <= iLargo
 
-    ' ZONA IGNORADA: URL, DOI, CORREO O SHORTCODE. SE SALTEA ENTERA Y SE
-    ' DESCARTA LA PALABRA EN CURSO, QUE PODRÍA SER SU PREFIJO.
+    ' ZONA IGNORADA: URL, DOI, CORREO O MARCADO DE MARKDOWN. SE SALTEA ENTERA.
+    ' LA PALABRA EN CURSO DEPENDE DE QUÉ ZONA EMPIEZA: ANTES DE UNA URL O UN
+    ' CORREO ES SU PREFIJO Y SE DESCARTA; ANTES DE UN CORCHETE O UNA LLAVE ES
+    ' UNA PALABRA DEL TEXTO («Marx[^3]», «[xix]{.smallcaps}») Y SE VERIFICA
     iSalto = 0
     If bLimpiarShortcodes Then
       iSalto = LargoZonaIgnorada(sTexto, i, iLargo)
     Endif
 
     If iSalto > 0 Then
+      If bEnPalabra Then
+        If InStr("[]{", String.Mid(sTexto, i, 1)) > 0 Then
+          sBruta = String.Mid(sTexto, iInicio, i - iInicio)
+          oPalabra = ConstruirPalabra(sBruta, iInicio)
+          If Not IsNull(oPalabra) Then aPalabras.Add(oPalabra)
+        Endif
+      Endif
       bEnPalabra = False
       i += iSalto
       Continue
@@ -859,11 +868,58 @@ Private Function LargoZonaIgnorada(sTexto As String, iPos As Integer, iLargo As 
   ' PARA QUE NO QUEDE EL PREFIJO DEL CORREO SUELTO.
   If sCaracter = "@" Then Return LargoHastaEspacio(sTexto, iPos, iLargo)
 
-  ' --- 4. SHORTCODES ENTRE CORCHETES Y ENTRE LLAVES DOBLES ---
-  If sCaracter = "[" Then Return LargoHastaCierre(sTexto, iPos, iLargo, "]")
-  If EmpiezaCon(sTexto, iPos, "{{") Then Return LargoHastaCierre(sTexto, iPos, iLargo, "}")
+  ' --- 4. CORCHETES: SE SALTEA SOLO LO QUE NO ES PROSA ---
+  ' ENTEROS: LA NOTA [^1], EL CIERRE NOMBRADO [/clase]: # () Y TODO CORCHETE
+  ' CON ARROBA, QUE ES UNA CITA ([@clave], [véase @clave, p. 3]).
+  ' EL TEXTO DE UN SPAN ([xix]{.smallcaps}), DE UN ENLACE O DEL PIE DE UNA
+  ' FIGURA (![Pie](media/x.png)) ES PROSA Y SE VERIFICA: SE SALTEA SOLO EL
+  ' CORCHETE. ANTES SE SALTEABA TODO, Y ESOS TEXTOS NUNCA SE CORREGÍAN.
+  If sCaracter = "[" Then
+    If EmpiezaCon(sTexto, iPos, "[^") Then Return LargoHastaCierre(sTexto, iPos, iLargo, "]")
+    If EmpiezaCon(sTexto, iPos, "[/") Then Return LargoHastaCierre(sTexto, iPos, iLargo, "]")
+    If CorcheteConArroba(sTexto, iPos, iLargo) Then Return LargoHastaCierre(sTexto, iPos, iLargo, "]")
+    ' UN CORCHETE COMÚN NO ES ZONA: CORTA LA PALABRA COMO CUALQUIER SIGNO
+    Return 0
+  Endif
+
+  ' --- 5. FINAL DE UN SPAN O DE UN ENLACE: ]{…} Y ](…) ---
+  If sCaracter = "]" Then
+    If EmpiezaCon(sTexto, iPos, "]{") Then Return LargoHastaCierre(sTexto, iPos, iLargo, "}")
+    If EmpiezaCon(sTexto, iPos, "](") Then Return LargoHastaCierre(sTexto, iPos, iLargo, ")")
+    Return 0
+  Endif
+
+  ' --- 6. ATRIBUTOS Y MARCADORES ENTRE LLAVES ---
+  ' {#id .clase} DE UN TÍTULO O DE UN BLOQUE (::: {.fig #fig-x}) Y {{texto}}
+  If sCaracter = "{" Then Return LargoHastaCierre(sTexto, iPos, iLargo, "}")
 
   Return 0
+
+End
+
+' ============================================
+' Función   : CorcheteConArroba
+' Propósito : Dice si el corchete que abre en iPos contiene una arroba antes
+'             de cerrar: es una cita de Pandoc ([@clave], [véase @clave])
+' Parámetros: sTexto As String — texto completo
+'             iPos As Integer — posición del corchete, en caracteres, base 1
+'             iLargo As Integer — largo total del texto, en caracteres
+' Retorna   : Boolean — True si hay una arroba antes del cierre en la línea
+' ============================================
+Private Function CorcheteConArroba(sTexto As String, iPos As Integer, iLargo As Integer) As Boolean
+
+  Dim sCaracter As String
+  Dim i As Integer
+
+  For i = iPos + 1 To iLargo
+    sCaracter = String.Mid(sTexto, i, 1)
+    ' EL CORCHETE NO CRUZA LÍNEAS: UNO SIN CERRAR NO DEBE MIRAR EL RESTO
+    If String.Code(sCaracter) = 10 Then Return False
+    If sCaracter = "]" Then Return False
+    If sCaracter = "@" Then Return True
+  Next
+
+  Return False
 
 End
 
