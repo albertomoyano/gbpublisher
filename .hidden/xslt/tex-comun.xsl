@@ -14,6 +14,9 @@
   CONTENIDO
     f:latex()         escape de texto para modo normal
     f:latex-url()     escape para el argumento de \href y \url
+    f:titulo-tramos()     un título partido en sus cortes (SC-28)
+    f:titulo-compuesto()  el título con \gbCorteTitulo (SC-28)
+    f:titulo-plano()      el título en una línea (SC-28)
     f:babel-lang()    ISO 639-1 → nombre de idioma babel
     f:ruta-imagen()   normalización de rutas de imagen
     f:comando-cita()  modo de cita → comando biblatex
@@ -98,6 +101,77 @@
   <xsl:function name="f:latex-url" as="xs:string">
     <xsl:param name="u" as="xs:string"/>
     <xsl:value-of select="replace(replace($u, '%', '\\%'), '#', '\\#')"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- CORTE DE LÍNEA EN TÍTULOS (SC-28)                            -->
+  <!--                                                              -->
+  <!-- EL CORTE LLEGA AL XML COMO SEPARADOR SIN TEXTO:              -->
+  <!--   DocBook   <?gb-corte?>   (DocBook 5.2 NO TIENE ELEMENTO)   -->
+  <!--   JATS      <break/>                                         -->
+  <!-- EL VALOR DE TEXTO DE LOS DOS ES VACÍO: POR ESO EL TÍTULO SE  -->
+  <!-- RECORRE POR NODOS Y NO COMO CADENA. normalize-space() SOBRE  -->
+  <!-- EL TÍTULO ENTERO DA LA VERSIÓN PLANA, PERO PIERDE DÓNDE      -->
+  <!-- ESTABA EL CORTE.                                             -->
+  <!--                                                              -->
+  <!-- *:break Y NO break: ESTE MÓDULO NO DECLARA                   -->
+  <!-- xpath-default-namespace, Y CADA HOJA QUE LO IMPORTA TIENE EL -->
+  <!-- SUYO. EL COMODÍN ALCANZA EL break DE JATS SIN ATARSE A ÉL.   -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:titulo-tramos                                    -->
+  <!-- PROPÓSITO: PARTE UN TÍTULO EN SUS CORTES                     -->
+  <!-- PARÁMETROS: titulo As node()? — el elemento del título       -->
+  <!-- RETORNA  : xs:string* — los tramos, sin espacios sobrantes   -->
+  <!--            NI TRAMOS VACÍOS. SIN CORTES, UN SOLO TRAMO.      -->
+  <!-- NOTA     : LOS TRAMOS VACÍOS SE DESCARTAN PARA QUE UN CORTE  -->
+  <!--            AL PRINCIPIO, AL FINAL O DOBLE NO PRODUZCA UNA    -->
+  <!--            LÍNEA VACÍA NI UN \\ SIN LÍNEA QUE TERMINAR.      -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:titulo-tramos" as="xs:string*">
+    <xsl:param name="titulo" as="node()?"/>
+    <xsl:for-each-group select="$titulo/node()"
+      group-starting-with="processing-instruction('gb-corte') | *:break">
+      <!-- SOLO TEXTO Y ELEMENTOS: EL VALOR DE UNA INSTRUCCIÓN O DE UN
+           COMENTARIO ES SU CONTENIDO, Y NO DEBE LLEGAR AL TÍTULO -->
+      <xsl:variable name="tramo" select="normalize-space(string-join(
+        current-group()[self::text() or self::*] ! string(.), ''))"/>
+      <xsl:if test="$tramo != ''">
+        <xsl:sequence select="$tramo"/>
+      </xsl:if>
+    </xsl:for-each-group>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:titulo-compuesto                                 -->
+  <!-- PROPÓSITO: EL TÍTULO PARA COMPONER: CADA TRAMO ESCAPADO Y    -->
+  <!--            UNIDOS CON \gbCorteTitulo (CONTRATO 6)            -->
+  <!-- PARÁMETROS: titulo As node()? — el elemento del título       -->
+  <!-- RETORNA  : xs:string — LaTeX listo para el argumento de la   -->
+  <!--            apertura; vacío si no hay título                  -->
+  <!-- NOTA     : SE ESCAPA CADA TRAMO Y DESPUÉS SE UNE: EL ORDEN   -->
+  <!--            PARTIR, ESCAPAR, UNIR ES EL DE SC-28. EL ESPACIO  -->
+  <!--            DESPUÉS DE LA MACRO LO CONSUME TeX AL LEER EL     -->
+  <!--            NOMBRE: «Uno\gbCorteTitulo dos» QUEDA «Uno dos»   -->
+  <!--            CUANDO LA MACRO VALE ESPACIO.                     -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:titulo-compuesto" as="xs:string">
+    <xsl:param name="titulo" as="node()?"/>
+    <xsl:sequence select="string-join(
+      f:titulo-tramos($titulo) ! f:latex(.), '\gbCorteTitulo ')"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:titulo-plano                                     -->
+  <!-- PROPÓSITO: EL TÍTULO EN UNA LÍNEA, ESCAPADO. ES EL QUE VA AL -->
+  <!--            SUMARIO, AL FOLIO Y A LOS MARCADORES (SC-28)      -->
+  <!-- PARÁMETROS: titulo As node()? — el elemento del título       -->
+  <!-- RETORNA  : xs:string — LaTeX sin \gbCorteTitulo              -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:titulo-plano" as="xs:string">
+    <xsl:param name="titulo" as="node()?"/>
+    <xsl:sequence select="f:latex(string-join(f:titulo-tramos($titulo), ' '))"/>
   </xsl:function>
 
   <!-- ============================================================ -->

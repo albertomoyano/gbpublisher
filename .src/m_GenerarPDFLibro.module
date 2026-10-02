@@ -30,7 +30,7 @@ Private Const CARPETA_CANONICOS As String = "jats"
 ' VERSIÓN 2: LAS PRIMERAS DEL LIBRO —\gbPortadilla, \gbPortada, \gbCreditos—
 ' (SC-25). VERSIÓN 3: \gbNombrePortada, QUE EL PREÁMBULO USA EN LA AUTORÍA DE
 ' LA PORTADA.
-Public Const CONTRATO_VERSION As Integer = 5
+Public Const CONTRATO_VERSION As Integer = 6
 
 ' --- ZONAS DEL LIBRO ---
 Private Const ZONA_FRONT As Integer = 1
@@ -101,6 +101,50 @@ Private Function EscaparTeX(sTexto As String) As String
   Next
 
   Return sRes
+
+End
+
+' ============================================
+' Función   : TituloCompuestoTeX
+' Propósito : Un título o subtítulo de la base listo para componer, con el
+'             corte que escribió el editor como \gbCorteTitulo (SC-28,
+'             contrato 6).
+' Parámetros: sTexto As String — el título tal como está en la base
+' Retorna   : String — LaTeX escapado; vacío si no tenía texto
+' Nota      : VA SOLO A LO QUE SE COMPONE COMO TÍTULO: APERTURA, PORTADA,
+'             PORTADILLA. NUNCA AL SUMARIO, AL FOLIO NI A LOS MARCADORES,
+'             QUE RECIBEN TituloPlanoTeX.
+'             EL ORDEN ES PARTIR, ESCAPAR, UNIR: EscaparTeX SOBRE EL TEXTO
+'             ENTERO CONVERTIRÍA LA MARCA EN \textbackslash{}.
+' ============================================
+Private Function TituloCompuestoTeX(sTexto As String) As String
+
+  Dim aTramos As String[]
+  Dim i As Integer
+
+  ' --- 1. PARTICIÓN ---
+  aTramos = m_CorteTitulo.Tramos(sTexto)
+
+  ' --- 2. ESCAPE DE CADA TRAMO ---
+  For i = 0 To aTramos.Max
+    aTramos[i] = EscaparTeX(aTramos[i])
+  Next
+
+  ' --- 3. UNIÓN CON LA MACRO DEL CONTRATO ---
+  Return aTramos.Join(m_CorteTitulo.SEPARADOR_TEX)
+
+End
+
+' ============================================
+' Función   : TituloPlanoTeX
+' Propósito : Un título de la base en una línea, escapado: la marca de corte
+'             pasa a ser un espacio (SC-28).
+' Parámetros: sTexto As String — el título tal como está en la base
+' Retorna   : String — LaTeX escapado, sin \gbCorteTitulo
+' ============================================
+Private Function TituloPlanoTeX(sTexto As String) As String
+
+  Return EscaparTeX(m_CorteTitulo.Plano(sTexto))
 
 End
 
@@ -341,20 +385,24 @@ Private Function ComandoGenerado(sTipo As String, sTitulo As String) As String
       ' PREÁMBULO. SIN EL ENCABEZADO, \printindex IMPRIME LA LISTA DE NOMBRES
       ' SIN DECIR QUÉ ES.
     Case "indice_onomastico"
-      Return "\\gbIndice{" & EscaparTeX(sTitulo) & "}{onomastico}"
+      Return "\\gbIndice{" & TituloPlanoTeX(sTitulo) & "}{" &
+        TituloCompuestoTeX(sTitulo) & "}{onomastico}"
 
     Case "indice_concepto"
-      Return "\\gbIndice{" & EscaparTeX(sTitulo) & "}{concepto}"
+      Return "\\gbIndice{" & TituloPlanoTeX(sTitulo) & "}{" &
+        TituloCompuestoTeX(sTitulo) & "}{concepto}"
 
     Case "indice_autores"
-      Return "\\gbIndice{" & EscaparTeX(sTitulo) & "}{names}"
+      Return "\\gbIndice{" & TituloPlanoTeX(sTitulo) & "}{" &
+        TituloCompuestoTeX(sTitulo) & "}{names}"
 
       ' LA BIBLIOGRAFÍA LA CONSTRUYE biblatex Y NO SALE DE UN .md. DECLARAR LA
       ' PIEZA ES LA FORMA DE ELEGIR DÓNDE VA Y CÓMO SE TITULA: CON heading=none
       ' EL TÍTULO SALE DE capitulos.titulo_capitulo, IGUAL QUE EN LOS ÍNDICES,
       ' Y NO DE LA CADENA LOCALIZADA DE biblatex.
     Case "bibliografia"
-      Return "\\gbEncabezadoPieza{" & EscaparTeX(sTitulo) & "}" & gb.NewLine &
+      Return "\\gbEncabezadoPieza{" & TituloPlanoTeX(sTitulo) & "}{" &
+        TituloCompuestoTeX(sTitulo) & "}" & gb.NewLine &
         "\\printbibliography[heading=none]"
 
       ' EL COLOFÓN LO EMITE EL GENERADOR Y NO SALE DE UN .md: CADA RAMA DE SALIDA
@@ -680,9 +728,12 @@ Public Function GenerarPreambuloProyecto() As Boolean
 
   ' 8.5 METADATOS DEL PDF
   s &= "% --- METADATOS DEL PDF ---" & gb.NewLine
-  s &= "\\def\\gbtitulo{" & EscaparTeX(hLibro["titulo_libro"]) & "}" & gb.NewLine
-  s &= "\\def\\gbsubtitulo{" & EscaparTeX(NuloAVacio(hLibro["subtitulo"])) & "}" & gb.NewLine
-  s &= "\\def\\gbtituloabreviado{" & EscaparTeX(NuloAVacio(hLibro["titulo_abreviado"])) & "}" & gb.NewLine
+  ' EL TÍTULO Y EL SUBTÍTULO VAN COMPUESTOS: LOS COMPONEN LA PORTADA Y LA
+  ' PORTADILLA. TAMBIÉN LLEGAN A pdftitle Y pdfsubject, DONDE EL CONTRATO
+  ' DESACTIVA EL CORTE. EL ABREVIADO ES DEL FOLIO: PLANO (SC-28)
+  s &= "\\def\\gbtitulo{" & TituloCompuestoTeX(hLibro["titulo_libro"]) & "}" & gb.NewLine
+  s &= "\\def\\gbsubtitulo{" & TituloCompuestoTeX(NuloAVacio(hLibro["subtitulo"])) & "}" & gb.NewLine
+  s &= "\\def\\gbtituloabreviado{" & TituloPlanoTeX(NuloAVacio(hLibro["titulo_abreviado"])) & "}" & gb.NewLine
   s &= "\\def\\gbautores{" & EscaparTeX(sAutores) & "}" & gb.NewLine
   s &= "\\def\\gbeditorial{" & EscaparTeX(NuloAVacio(hLibro["editorial"])) & "}" & gb.NewLine
   s &= "\\def\\gbciudad{" & EscaparTeX(NuloAVacio(hLibro["ciudad_publicacion"])) & "}" & gb.NewLine
@@ -1102,7 +1153,8 @@ Public Function GenerarMainTeX() As Boolean
     aIdParte.Add(NuloAVacio(hPiezas["id_parte"]))
     aTituloParte.Add(NuloAVacio(hPiezas["titulo_parte"]))
     aSubtituloParte.Add(NuloAVacio(hPiezas["subtitulo_parte"]))
-    aTituloFolio.Add(EscaparTeX(TituloFolio(hPiezas["id_capitulo"])))
+    ' EL FOLIO NO CORTA: PLANO (SC-28)
+    aTituloFolio.Add(TituloPlanoTeX(TituloFolio(hPiezas["id_capitulo"])))
     aAutoriaFolio.Add(AutoriaFolio(hPiezas["id_capitulo"], sAutoriaLibro))
     ' LA APERTURA LLEVA AUTORES SOLO EN UN LIBRO COLECTIVO: EN UNO DE AUTOR
     ' YA ESTÁN EN EL FOLIO DE TODAS LAS PÁGINAS
@@ -1268,8 +1320,11 @@ Public Function GenerarMainTeX() As Boolean
     If aIdParte[i] <> "" Then
       If CInt(aIdParte[i]) <> iParteActual Then
         iParteActual = CInt(aIdParte[i])
-        s &= gb.NewLine & "\\gbParte{" & EscaparTeX(aTituloParte[i]) & "}{" &
-          EscaparTeX(aSubtituloParte[i]) & "}" & gb.NewLine
+        ' EL TÍTULO VA DOS VECES: PLANO PARA EL SUMARIO Y LOS MARCADORES,
+        ' COMPUESTO PARA LA APERTURA DE LA PARTE (SC-28, CONTRATO 6)
+        s &= gb.NewLine & "\\gbParte{" & TituloPlanoTeX(aTituloParte[i]) & "}{" &
+          TituloCompuestoTeX(aTituloParte[i]) & "}{" &
+          TituloCompuestoTeX(aSubtituloParte[i]) & "}" & gb.NewLine
       Endif
     Endif
 

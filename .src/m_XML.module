@@ -74,6 +74,36 @@ Public Function EscaparXML(sTexto As String) As String
 End
 
 ' ============================================
+' Función   : TituloXML
+' Propósito : Un título o subtítulo de la base listo para el XML canónico,
+'             con el corte que escribió el editor traducido al separador del
+'             vocabulario (SC-28).
+' Parámetros: sTexto     As String — el título tal como está en la base
+'             sSeparador As String — m_CorteTitulo.SEPARADOR_JATS o
+'                                    m_CorteTitulo.SEPARADOR_DOCBOOK
+' Retorna   : String — el título escapado; vacío si no tenía texto
+' Nota      : EL ORDEN ES PARTIR, ESCAPAR, UNIR (SC-28). EL SEPARADOR ES
+'             MARCADO Y NO SE ESCAPA: POR ESO SE ESCAPA CADA TRAMO SOLO.
+' ============================================
+Public Function TituloXML(sTexto As String, sSeparador As String) As String
+
+  Dim aTramos As String[]
+  Dim i As Integer
+
+  ' --- 1. PARTICIÓN ---
+  aTramos = m_CorteTitulo.Tramos(sTexto)
+
+  ' --- 2. ESCAPE DE CADA TRAMO ---
+  For i = 0 To aTramos.Max
+    aTramos[i] = EscaparXML(aTramos[i])
+  Next
+
+  ' --- 3. UNIÓN CON EL SEPARADOR DEL VOCABULARIO ---
+  Return aTramos.Join(sSeparador)
+
+End
+
+' ============================================
 ' Función   : SanitizarCitekey
 ' Propósito : Convierte un citekey arbitrario a NMTOKEN válido para
 '             el atributo id de <ref> y rid de <xref> en JATS.
@@ -1563,12 +1593,15 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
   ' --------------------------------------------------
   ' PASO 5.4: TITLE-GROUP
   ' --------------------------------------------------
+  ' EL TÍTULO Y EL SUBTÍTULO LLEVAN EL CORTE DEL EDITOR COMO <break/>, QUE
+  ' JATS 1.4 ADMITE EN article-title Y subtitle (SC-28). EL TRADUCIDO NO
+  ' CORTA: VA PLANO
   sXML &= "    <title-group>\n"
-  sXML &= "      <article-title>" & EscaparXML(TrimUTF8(hArticulo["titulo_articulo"])) & "</article-title>\n"
+  sXML &= "      <article-title>" & TituloXML(hArticulo["titulo_articulo"], m_CorteTitulo.SEPARADOR_JATS) & "</article-title>\n"
 
   If Not IsNull(hArticulo["subtitulo"]) Then
     If Len(TrimUTF8(hArticulo["subtitulo"])) > 0 Then
-      sXML &= "      <subtitle>" & EscaparXML(TrimUTF8(hArticulo["subtitulo"])) & "</subtitle>\n"
+      sXML &= "      <subtitle>" & TituloXML(hArticulo["subtitulo"], m_CorteTitulo.SEPARADOR_JATS) & "</subtitle>\n"
     Endif
   Endif
 
@@ -1580,7 +1613,7 @@ Public Function GenerarFrontXML(iIdArticulo As Integer, iIdRevista As Integer) A
       Endif
       If sIdiomaTraducido <> "" Then
         sXML &= "      <trans-title-group xml:lang=\"" & sIdiomaTraducido & "\">\n"
-        sXML &= "        <trans-title>" & EscaparXML(TrimUTF8(hArticulo["titulo_traducido"])) & "</trans-title>\n"
+        sXML &= "        <trans-title>" & EscaparXML(m_CorteTitulo.Plano(hArticulo["titulo_traducido"])) & "</trans-title>\n"
         sXML &= "      </trans-title-group>\n"
       Endif
     Endif
@@ -3097,7 +3130,8 @@ Public Function GenerarJsonDoaj(sRutaCanonico As String, idArticulo As Integer) 
   ' --- 8. Construcción del JSON ---
   sJson = "{"
   sJson &= n & "  " & q & "bibjson" & q & ": {"
-  sJson &= n & "    " & q & "title" & q & ": " & q & EscaparJson(Trim(CStr(hRes["titulo_articulo"]))) & q & ","
+  ' DOAJ NO CORTA: EL TÍTULO VA PLANO (SC-28)
+  sJson &= n & "    " & q & "title" & q & ": " & q & EscaparJson(m_CorteTitulo.Plano(CStr(hRes["titulo_articulo"]))) & q & ","
 
   If Not IsNull(hRes["resumen_1"]) And Trim(CStr(hRes["resumen_1"])) <> "" Then
     sJson &= n & "    " & q & "abstract" & q & ": " & q & EscaparJson(Trim(CStr(hRes["resumen_1"]))) & q & ","
@@ -3957,6 +3991,13 @@ Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean, sEstilo As Strin
   s &= "\\usepackage{hyperref}" & Chr(10)
   s &= "\\hypersetup{colorlinks=True,linkcolor=azulrevista,citecolor=azulrevista,urlcolor=azulrevista,filecolor=azulrevista," & Chr(10)
   s &= "linktoc=all,breaklinks=True,bookmarksopen=True,bookmarksnumbered=True}" & Chr(10)
+  ' CORTE DE LÍNEA EN EL TÍTULO DEL ARTÍCULO (SC-28): CORTA AL COMPONER, Y EN
+  ' LO QUE hyperref PASA A CADENA PDF VALE UN ESPACIO, PORQUE EL QUE LO SIGUE
+  ' EN EL TÍTULO LO CONSUME TeX AL LEER EL NOMBRE. HOY NINGÚN METADATO DEL
+  ' PDF DEL ARTÍCULO LLEVA EL TÍTULO; LA DESACTIVACIÓN EVITA QUE EL DÍA QUE
+  ' LO LLEVE APAREZCA UN \\ EN LA CADENA
+  s &= "\\newcommand{\\gbCorteTitulo}{\\\\}" & Chr(10)
+  s &= "\\pdfstringdefDisableCommands{\\def\\gbCorteTitulo{ }}" & Chr(10)
   s &= "\\usepackage[bottom,stable,hang]{footmisc}" & Chr(10)
   s &= "\\usepackage{scrextend}" & Chr(10)
   s &= "\\usepackage{changepage}" & Chr(10)
@@ -6365,9 +6406,12 @@ Public Function GenerarInfoCapituloXML(iIdCapitulo As Integer) As Boolean
   ' EL <title> ES OBLIGATORIO EN DOCBOOK 5.2 PARA <chapter>/<preface>/etc.
   ' SI ESTÁ VACÍO, EMITIMOS UN PLACEHOLDER PARA QUE EL DOCUMENTO RESULTANTE
   ' AL MENOS VALIDE; EL EDITOR DEBE COMPLETARLO ANTES DE PUBLICAR.
+  ' EL CORTE DEL EDITOR VA COMO <?gb-corte?>: DocBook 5.2 NO TIENE ELEMENTO
+  ' DE CORTE EN title NI EN subtitle, Y LA INSTRUCCIÓN VALIDA (SC-28). EL
+  ' TÍTULO CORTO Y EL TRADUCIDO NO CORTAN: VAN PLANOS
   If Not IsNull(hCapitulo["titulo_capitulo"]) And
       Len(TrimUTF8(hCapitulo["titulo_capitulo"])) > 0 Then
-    sXML &= "  <title>" & EscaparXML(TrimUTF8(hCapitulo["titulo_capitulo"])) &
+    sXML &= "  <title>" & TituloXML(hCapitulo["titulo_capitulo"], m_CorteTitulo.SEPARADOR_DOCBOOK) &
       "</title>" & Chr(10)
   Else
     sXML &= "  <title>[SIN TÍTULO]</title>" & Chr(10)
@@ -6375,13 +6419,13 @@ Public Function GenerarInfoCapituloXML(iIdCapitulo As Integer) As Boolean
 
   If Not IsNull(hCapitulo["subtitulo"]) And
       Len(TrimUTF8(hCapitulo["subtitulo"])) > 0 Then
-    sXML &= "  <subtitle>" & EscaparXML(TrimUTF8(hCapitulo["subtitulo"])) &
+    sXML &= "  <subtitle>" & TituloXML(hCapitulo["subtitulo"], m_CorteTitulo.SEPARADOR_DOCBOOK) &
       "</subtitle>" & Chr(10)
   Endif
 
   If Not IsNull(hCapitulo["titulo_corto"]) And
       Len(TrimUTF8(hCapitulo["titulo_corto"])) > 0 Then
-    sXML &= "  <titleabbrev>" & EscaparXML(TrimUTF8(hCapitulo["titulo_corto"])) &
+    sXML &= "  <titleabbrev>" & EscaparXML(m_CorteTitulo.Plano(hCapitulo["titulo_corto"])) &
       "</titleabbrev>" & Chr(10)
   Endif
 
@@ -6397,7 +6441,7 @@ Public Function GenerarInfoCapituloXML(iIdCapitulo As Integer) As Boolean
     If sIdiomaTit <> "" Then
       sXML &= " xml:lang=" & cQ & EscaparXML(sIdiomaTit) & cQ
     Endif
-    sXML &= ">" & EscaparXML(TrimUTF8(hCapitulo["titulo_traducido"])) &
+    sXML &= ">" & EscaparXML(m_CorteTitulo.Plano(hCapitulo["titulo_traducido"])) &
       "</title>" & Chr(10)
   Endif
 
@@ -7473,9 +7517,11 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
   ' EL <title> ES OBLIGATORIO EN DOCBOOK 5.2 PARA <book>.
   ' SI FALTA (NO DEBERÍA POR NOT NULL EN BD, PERO POR DEFENSA),
   ' EMITIMOS PLACEHOLDER PARA QUE VALIDE.
+  ' EL CORTE DEL EDITOR VA COMO <?gb-corte?> EN EL TÍTULO Y EL SUBTÍTULO
+  ' (SC-28). EL ABREVIADO Y EL ORIGINAL NO CORTAN: VAN PLANOS
   If Not IsNull(hLibro["titulo_libro"]) Then
     If Len(TrimUTF8(hLibro["titulo_libro"])) > 0 Then
-      sXML &= "  <title>" & EscaparXML(TrimUTF8(hLibro["titulo_libro"])) &
+      sXML &= "  <title>" & TituloXML(hLibro["titulo_libro"], m_CorteTitulo.SEPARADOR_DOCBOOK) &
         "</title>" & Chr(10)
     Else
       sXML &= "  <title>[SIN TÍTULO]</title>" & Chr(10)
@@ -7486,14 +7532,14 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
 
   If Not IsNull(hLibro["subtitulo"]) Then
     If Len(TrimUTF8(hLibro["subtitulo"])) > 0 Then
-      sXML &= "  <subtitle>" & EscaparXML(TrimUTF8(hLibro["subtitulo"])) &
+      sXML &= "  <subtitle>" & TituloXML(hLibro["subtitulo"], m_CorteTitulo.SEPARADOR_DOCBOOK) &
         "</subtitle>" & Chr(10)
     Endif
   Endif
 
   If Not IsNull(hLibro["titulo_abreviado"]) Then
     If Len(TrimUTF8(hLibro["titulo_abreviado"])) > 0 Then
-      sXML &= "  <titleabbrev>" & EscaparXML(TrimUTF8(hLibro["titulo_abreviado"])) &
+      sXML &= "  <titleabbrev>" & EscaparXML(m_CorteTitulo.Plano(hLibro["titulo_abreviado"])) &
         "</titleabbrev>" & Chr(10)
     Endif
   Endif
@@ -7510,7 +7556,7 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
       If sIdiomaOrig <> "" Then
         sXML &= " xml:lang=" & cQ & EscaparXML(sIdiomaOrig) & cQ
       Endif
-      sXML &= ">" & EscaparXML(TrimUTF8(hLibro["titulo_original"])) &
+      sXML &= ">" & EscaparXML(m_CorteTitulo.Plano(hLibro["titulo_original"])) &
         "</title>" & Chr(10)
     Endif
   Endif
@@ -8355,7 +8401,8 @@ Public Function GenerarInfoLibroXML(iIdLibro As Integer) As Boolean
       sTituloTapa = "Libro"
       If Not IsNull(hLibro["titulo_libro"]) Then
         If Len(TrimUTF8(hLibro["titulo_libro"])) > 0 Then
-          sTituloTapa = TrimUTF8(hLibro["titulo_libro"])
+          ' TEXTO ALTERNATIVO DE LA TAPA: PLANO (SC-28)
+          sTituloTapa = m_CorteTitulo.Plano(hLibro["titulo_libro"])
         Endif
       Endif
       sXML &= "      <phrase>Cubierta de " & EscaparXML(sTituloTapa) &

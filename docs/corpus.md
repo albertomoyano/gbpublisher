@@ -1538,7 +1538,7 @@ Probado por Alberto en 3.22.1: primer PDF de un proyecto nuevo, PDF nuevo con ot
 
 ### SC-28 — Corte de línea en títulos: una marca en la base, traducida en cada destino
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / JATS 1.4 / DocBook 5.2 / SaxonC-HE 13.0 / LuaLaTeX + hyperref / xmllint / contenedor · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / JATS 1.4 / DocBook 5.2 / SaxonJ-HE 12.5 y SaxonC-HE 13.0 / LuaLaTeX + hyperref + titlesec / TeX Live 2023 / xmllint / contenedor · **Verificado:** 2026-10
 
 DECISIÓN CERRADA. El editor indica dónde cortar un título o un subtítulo escribiendo `\\` en el campo. El corte se cumple solo en el título compuesto del PDF; en cualquier otro destino la marca es un espacio.
 
@@ -1579,8 +1579,9 @@ EVIDENCIA
 - JATS 1.4: `<break/>` es hijo válido de `article-title`, `subtitle` y `trans-title`. En Publishing lo declara `%article-title-elements;` en `JATS-common1-4.ent`; en Archiving, el DTD que trae el proyecto, `JATS-archivecustom-models1-4.ent` lo redefine y conserva `%break.class;`. Validado con xmllint contra el DTD Publishing 1.4.
 - DocBook 5.2 no tiene elemento de corte en `title` ni en `subtitle`. La documentación lo dice: «DocBook does not offer any mechanism for indicating where a line break should occur in long titles». Una instrucción de procesamiento dentro del título valida contra `schemas/docbook/docbook.rng` del repositorio (xmllint).
 - El DocBook no se puede saltear: el título de capítulo del PDF sale de la base, pasa por el canónico y llega a `\chapter` por `docbook-to-latex.xsl`. Un espacio en el canónico perdería el corte justo donde hace falta.
-- XSLT: el valor de texto de `<break/>` y de una instrucción de procesamiento es vacío, y la regla incorporada para instrucciones no produce nada. Medido: `Uno <?gb-corte?> dos` da `Uno dos` con `normalize-space` y `Uno  dos` con `value-of` y con `apply-templates` por defecto; `Pegado<?gb-corte?>mal` da `Pegadomal`. Lo mismo `<break/>`.
-- Consecuencia: `jats-to-html`, `jats-to-epub`, `jats-to-crossref`, `jats-to-doaj`, `jats-to-scielo`, `jats-to-redalyc`, `docbook-to-html` y `docbook-to-epub` no se tocan.
+- XSLT: el valor de texto de `<break/>` y de una instrucción de procesamiento es vacío, y la regla incorporada para instrucciones no produce nada. Medido: `Uno <?gb-corte?> dos` da `Uno dos` con `normalize-space` y `Uno  dos` con `value-of` y con `apply-templates` por defecto; `Pegado<?gb-corte?>mal` da `Pegadomal`. Lo mismo `<break/>`. Medido con SaxonJ-HE 12.5, la versión del proyecto, y con SaxonC-HE 13.0.
+- Consecuencia: `jats-to-html`, `jats-to-epub`, `jats-to-crossref`, `jats-to-doaj`, `docbook-to-html` y `docbook-to-epub` no se tocan.
+- `jats-to-scielo` y `jats-to-redalyc` sí: parten de una plantilla identidad y copiaban el `<break/>` tal cual al paquete del indexador. Llevan una plantilla para `article-title` y `subtitle` de `title-group` con `<break/>`, que escribe el título con `normalize-space`. Por eso no hace falta pasar el `<break/>` por packtools: no llega a SciELO.
 - LuaLaTeX con hyperref: `\newcommand{\gbCorteTitulo}{\\}` y `\pdfstringdefDisableCommands{\def\gbCorteTitulo{ }}`. Cortan la apertura de capítulo, la de parte y el título compuesto con `\LARGE`; el sumario, el folio corrido y los marcadores salen en una línea porque toman el argumento opcional; `pdftitle` sale con un espacio y hyperref no avisa.
 
 EN LaTeX, DOS VERSIONES DEL TÍTULO
@@ -1588,7 +1589,12 @@ EN LaTeX, DOS VERSIONES DEL TÍTULO
 `\gbCorteTitulo` nunca va en lo que alimenta el sumario, el folio o los marcadores. El generador emite la versión plana en el argumento opcional: `\chapter[plano]{compuesto}`, y `\addcontentsline{toc}{chapter}{plano}` con `\chapter*`. Es el patrón `\chapter[sumario]{título}` que Alberto usa a mano, y es el lugar donde irá la composición de autor y título del sumario.
 
 - `docbook-to-latex.xsl` y `jats-to-latex.xsl` arman las dos versiones recorriendo los nodos del título: la compuesta traduce la instrucción o el `break` a `\gbCorteTitulo`; la plana, a un espacio.
-- Contrato versión 6: `\gbCorteTitulo` con su desactivación para hyperref; `\gbParte` y `\gbEncabezadoPieza` reciben la versión plana y la compuesta por separado; `\gbCapitulo` pasa a usarse para el subtítulo del capítulo.
+- Contrato versión 6:
+  - `\gbCorteTitulo`. hyperref se carga en la última capa, así que la desactivación se registra con `\AddToHook{package/hyperref/after}`: corre apenas termina la carga y antes del `\hypersetup{pdftitle=...}` de esa capa. En `\AtBeginDocument` sería tarde.
+  - `\gbCapitulo{plano}{compuesto}{subtítulo}` y `\gbCapituloSinNumero{plano}{compuesto}{subtítulo}`: los emite `docbook-to-latex.xsl`. La sin número es `\chapter*` más `\addcontentsline` con la plana.
+  - `\gbParte{plano}{compuesto}{subtítulo}`, `\gbEncabezadoPieza{plano}{compuesto}` y `\gbIndice{plano}{compuesto}{índice}`.
+  - `\gbDisenoSubtituloCapitulo`: el aspecto del subtítulo, con un valor por omisión que la estética puede redefinir.
+- La opción `newlinetospace` de titlesec, que usa la estética, cambia `\\` por espacio solo en las marcas y en el sumario; no toca la apertura. Leído en `titlesec.sty`.
 - `\gbtitulo` y `\gbsubtitulo` van compuestos: sirven a la portada y a `pdftitle`/`pdfsubject`, y la desactivación los deja planos en los metadatos. `\gbtituloabreviado` va plano.
 - Revistas: el preámbulo del artículo lo arma `m_XML`, no el contrato, y define también `\gbCorteTitulo`.
 
@@ -1596,9 +1602,13 @@ SUBTÍTULOS QUE NO LLEGABAN AL PDF
 
 Al relevar los destinos apareció que `docbook-to-latex.xsl` no emite el `<subtitle>` del capítulo (`\gbCapitulo` estaba definido y sin uso) y que `\articulosubtitulo` se define pero ninguna plantilla lo compone. Se resuelven en el mismo lote.
 
+PRUEBA DE PUNTA A PUNTA
+
+En el contenedor, con TeX Live 2023, las fuentes de la estética y las cuatro capas reales del preámbulo: un canónico armado por `ensamblar-capitulo-canonico.xsl` con la instrucción en el título y el subtítulo, pasado por `docbook-to-latex.xsl`, con portadilla, portada, una introducción sin número, una parte, un capítulo y un índice. Cortan la portadilla, la portada, las dos aperturas, la parte y el encabezado del índice; el sumario y los marcadores salen en una línea; `pdftitle` y `pdfsubject` con un espacio; ni errores ni avisos de hyperref. Un JATS con `<break/>` valida contra el DTD Archiving 1.4 del proyecto y pasa por las ocho hojas JATS: solo `jats-to-latex` conserva el corte.
+
 **Relaciones:** vinculo:SC-25,vinculo:SC-26
 
-**PENDIENTE:** Pasar por packtools un JATS con `<break/>` en `article-title`: el DTD lo admite, pero el stylechecker de SciELO puede tener reglas propias. Las pruebas de LaTeX se hicieron sin babel ni las fuentes del proyecto: falta un libro y una revista reales.
+**PENDIENTE:** Probar con un libro y una revista reales en Mint: la prueba fue en el contenedor, sin la base. Del PDF de revista se verificó el .tex que emite jats-to-latex, sin compilar el artículo entero.
 
 ---
 

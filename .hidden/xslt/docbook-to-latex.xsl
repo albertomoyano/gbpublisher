@@ -35,6 +35,9 @@
     ESTRUCTURA
       \chapter \chapter* \section \subsection \subsubsection
       \label \caption \footnote
+      \gbCapitulo \gbCapituloSinNumero   {plano}{compuesto}{subtítulo}
+      \gbCorteTitulo   corte del editor en el título (SC-28)
+      (ESTAS TRES SON DEL CONTRATO 6 DE preambulo-contrato.tex)
 
     PÁGINAS ESPECIALES (fm/bm CON ORDEN 01–09)
       gbpaginaespecial   entorno — recto, sin folio, vuelta en blanco
@@ -303,21 +306,29 @@
           then $tipo = ('capitulo', 'apendice')
           else ((self::chapter and normalize-space(@role) = '')
                 or self::appendix)"/>
-        <xsl:variable name="titulo"
-          select="normalize-space((info/title, title)[1])"/>
+        <!-- ==========================================================
+             TÍTULO Y SUBTÍTULO (SC-28, CONTRATO 6)
+             ==========================================================
+             DOS VERSIONES DEL TÍTULO: LA COMPUESTA, CON EL CORTE QUE
+             ESCRIBIÓ EL EDITOR, VA A LA APERTURA; LA PLANA VA AL
+             SUMARIO, AL FOLIO Y A LOS MARCADORES. LAS ARMA EL CONTRATO
+             CON \gbCapitulo Y \gbCapituloSinNumero, QUE TAMBIÉN
+             COMPONEN EL SUBTÍTULO: ESTA HOJA NO DECIDE SU ASPECTO.
+             EL SUBTÍTULO NO VA AL SUMARIO.
+             ========================================================== -->
+        <xsl:variable name="nodoTitulo" select="(info/title, title)[1]"/>
+        <xsl:variable name="nodoSubtitulo" select="(info/subtitle, subtitle)[1]"/>
 
-        <xsl:text>&#10;\chapter</xsl:text>
-        <xsl:if test="not($numerado)">
-          <xsl:text>*</xsl:text>
-        </xsl:if>
+        <xsl:text>&#10;</xsl:text>
+        <xsl:value-of select="if ($numerado) then '\gbCapitulo'
+                              else '\gbCapituloSinNumero'"/>
         <xsl:text>{</xsl:text>
-        <xsl:value-of select="f:latex($titulo)"/>
+        <xsl:value-of select="f:titulo-plano($nodoTitulo)"/>
+        <xsl:text>}{</xsl:text>
+        <xsl:value-of select="f:titulo-compuesto($nodoTitulo)"/>
+        <xsl:text>}{</xsl:text>
+        <xsl:value-of select="f:titulo-compuesto($nodoSubtitulo)"/>
         <xsl:text>}&#10;</xsl:text>
-        <xsl:if test="not($numerado)">
-          <xsl:text>\addcontentsline{toc}{chapter}{</xsl:text>
-          <xsl:value-of select="f:latex($titulo)"/>
-          <xsl:text>}&#10;</xsl:text>
-        </xsl:if>
         <xsl:if test="@xml:id">
           <xsl:text>\label{</xsl:text>
           <xsl:value-of select="@xml:id"/>

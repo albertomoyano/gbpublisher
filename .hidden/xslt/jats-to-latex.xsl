@@ -327,18 +327,21 @@
     <xsl:text>}&#10;</xsl:text>
 
     <!-- TÍTULO PRINCIPAL -->
+    <!-- COMPUESTO: EL <break/> DEL EDITOR PASA A \gbCorteTitulo, QUE -->
+    <!-- DEFINE EL PREÁMBULO DEL ARTÍCULO (SC-28). LAS DOS MACROS SE  -->
+    <!-- USAN SOLO EN LA CABECERA, QUE ES DONDE EL TÍTULO CORTA.      -->
     <xsl:if test="normalize-space($meta/title-group/article-title) != ''">
       <xsl:text>\renewcommand{\articulotitulo}{</xsl:text>
-      <xsl:value-of select="f:latex(
-        normalize-space($meta/title-group/article-title))"/>
+      <xsl:value-of select="f:titulo-compuesto(
+        $meta/title-group/article-title)"/>
       <xsl:text>}&#10;</xsl:text>
     </xsl:if>
 
     <!-- SUBTÍTULO (SOLO SI EXISTE) -->
     <xsl:if test="normalize-space($meta/title-group/subtitle) != ''">
       <xsl:text>\renewcommand{\articulosubtitulo}{</xsl:text>
-      <xsl:value-of select="f:latex(
-        normalize-space($meta/title-group/subtitle))"/>
+      <xsl:value-of select="f:titulo-compuesto(
+        $meta/title-group/subtitle)"/>
       <xsl:text>}&#10;</xsl:text>
     </xsl:if>
 
@@ -1507,6 +1510,16 @@
     <xsl:text>{\sffamily\bfseries\Large\articulotitulo\par}%&#10;</xsl:text>
     <xsl:text>\end{minipage}\par&#10;</xsl:text>
     <xsl:text>\vspace{3mm}%&#10;</xsl:text>
+
+    <!-- SUBTÍTULO: \articulosubtitulo SE DEFINÍA Y NINGUNA PLANTILLA -->
+    <!-- LO COMPONÍA, ASÍ QUE NO SALÍA EN EL PDF (SC-28). VA DEBAJO   -->
+    <!-- DEL TÍTULO, AL MISMO ANCHO, Y ANTES DEL TÍTULO TRADUCIDO.    -->
+    <xsl:if test="normalize-space(front/article-meta/title-group/subtitle) != ''">
+      <xsl:text>\noindent\begin{minipage}[t]{\dimexpr\textwidth+\marginparsep+\marginparwidth\relax}%&#10;</xsl:text>
+      <xsl:text>{\sffamily\large\articulosubtitulo\par}%&#10;</xsl:text>
+      <xsl:text>\end{minipage}\par&#10;</xsl:text>
+      <xsl:text>\vspace{3mm}%&#10;</xsl:text>
+    </xsl:if>
 
     <xsl:if test="normalize-space(front/article-meta/title-group/trans-title-group/trans-title) != ''">
       <xsl:text>\renewcommand{\articulotitulotrans}{</xsl:text>

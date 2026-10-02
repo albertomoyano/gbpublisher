@@ -1,0 +1,95 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_CorteTitulo
+' PROPÓSITO : La regla única de partición de los títulos en el corte que
+'             escribe el editor (SC-28).
+'
+' LA MARCA
+' ----------------------------------------------------------
+'   El editor escribe \\ en un título o un subtítulo donde quiere que la
+'   línea se corte. No es LaTeX: es vocabulario de gbpublisher, y se traduce
+'   al salir, en cada destino. Exactamente dos barras; una barra sola sigue
+'   siendo texto.
+'
+' QUÉ HACE Y QUÉ NO
+' ----------------------------------------------------------
+'   Este módulo solo parte. No escapa: cada destino tiene su escape
+'   (EscaparTeX, EscaparXML, EscaparXml) y lo aplica a cada tramo. El orden
+'   es obligatorio: partir, escapar, unir. Escapar primero rompe la marca,
+'   porque EscaparTeX la convierte en \textbackslash{}.
+'
+'   Los separadores llevan espacio a los dos lados en XML: el valor de texto
+'   de <break/> y de <?gb-corte?> es vacío, y las hojas que leen el título
+'   como cadena pegarían las palabras (medido: «Pegado<?gb-corte?>mal» da
+'   «Pegadomal»).
+'
+'   En LaTeX el separador va pegado al tramo anterior. El espacio que lo
+'   sigue lo consume TeX al leer el nombre de la macro, así que donde
+'   \gbCorteTitulo vale espacio queda un solo espacio.
+' ==========================================================
+
+' LA MARCA: DOS BARRAS INVERTIDAS. EN UN LITERAL DE GAMBAS LA BARRA SE
+' ESCRIBE \\ (SC-01); UNA Const NO ADMITE Chr()
+Private Const MARCA As String = "\\\\"
+
+' SEPARADORES DE CADA DESTINO (SC-28)
+Public Const SEPARADOR_JATS As String = " <break/> "
+Public Const SEPARADOR_DOCBOOK As String = " <?gb-corte?> "
+Public Const SEPARADOR_TEX As String = "\\gbCorteTitulo "
+Public Const SEPARADOR_PLANO As String = " "
+
+' ============================================
+' Función   : Tramos
+' Propósito : Parte un título en la marca de corte.
+' Parámetros: sTexto As String — el título tal como está en la base
+' Retorna   : String[] — los tramos recortados, sin tramos vacíos. Sin
+'             marca, un solo tramo; con texto vacío, ninguno.
+' Nota      : LOS TRAMOS VACÍOS SE DESCARTAN: UNA MARCA AL PRINCIPIO, AL
+'             FINAL O DOBLE NO PRODUCE UNA LÍNEA VACÍA. ES LA MISMA REGLA
+'             QUE f:titulo-tramos EN tex-comun.xsl.
+'             InStr Y Mid OPERAN EN BYTES, Y ES CORRECTO: LA MARCA ES ASCII
+'             Y SUS BYTES NO APARECEN DENTRO DE UN CARÁCTER MULTIBYTE
+'             (RC-GM-12). LOS CORTES CAEN SIEMPRE EN BORDES DE CARÁCTER.
+' ============================================
+Public Function Tramos(sTexto As String) As String[]
+
+  Dim aTramos As New String[]
+  Dim sTramo As String
+  Dim iDesde As Integer = 1
+  Dim iPos As Integer
+
+  ' --- 1. RECORRIDO POR LA MARCA ---
+  Do
+    iPos = InStr(sTexto, MARCA, iDesde)
+
+    ' EL ÚLTIMO TRAMO VA HASTA EL FINAL DEL TEXTO
+    If iPos = 0 Then
+      sTramo = Trim(Mid(sTexto, iDesde))
+    Else
+      sTramo = Trim(Mid(sTexto, iDesde, iPos - iDesde))
+    Endif
+
+    If sTramo <> "" Then aTramos.Add(sTramo)
+
+    If iPos = 0 Then Break
+    iDesde = iPos + Len(MARCA)
+  Loop
+
+  ' --- 2. RETORNO ---
+  Return aTramos
+
+End
+
+' ============================================
+' Función   : Plano
+' Propósito : El título en una línea: cada marca pasa a ser un espacio. Es
+'             la forma de todo destino que no corta (SC-28).
+' Parámetros: sTexto As String — el título tal como está en la base
+' Retorna   : String — el título sin marcas, SIN ESCAPAR
+' ============================================
+Public Function Plano(sTexto As String) As String
+
+  Return Tramos(sTexto).Join(SEPARADOR_PLANO)
+
+End

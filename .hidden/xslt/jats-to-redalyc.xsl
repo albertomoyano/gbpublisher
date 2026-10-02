@@ -63,6 +63,25 @@
   </xsl:template>
 
   <!-- ================================================
+       TÍTULO Y SUBTÍTULO SIN CORTE (SC-28)
+       EL CANÓNICO LLEVA EL CORTE DEL EDITOR COMO <break/>,
+       QUE JATS ADMITE; ESTA SALIDA ES DE UN INDEXADOR Y EL
+       TÍTULO VA PLANO. SIN ESTA PLANTILLA LA IDENTIDAD LO
+       COPIARÍA TAL CUAL.
+       normalize-space Y NO apply-templates: EL ESPACIO QUE
+       RODEA AL <break/> QUEDARÍA DOBLE. SOLO SE ACTIVA SI HAY
+       UN <break/>, Y ESOS TÍTULOS LOS ESCRIBE m_XML COMO
+       TEXTO SIN MARCADO: NO HAY CURSIVA QUE PERDER.
+       ================================================ -->
+  <xsl:template match="title-group/article-title[break] | title-group/subtitle[break]">
+    <xsl:copy copy-namespaces="no">
+      <xsl:apply-templates select="@*"/>
+      <xsl:value-of select="normalize-space(.)"/>
+    </xsl:copy>
+  </xsl:template>
+
+
+  <!-- ================================================
        ELEMENTO RAÍZ: <article>
        SE DECLARAN SOLO LOS NAMESPACES NECESARIOS.
        dtd-version="1.4" REQUERIDO EXPLÍCITAMENTE.
