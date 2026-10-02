@@ -568,30 +568,61 @@
               title-group/article-title)"/>
     <xsl:variable name="tituloSec" select="normalize-space(.)"/>
     <xsl:if test="$tituloSec != $tituloArticulo">
-      <xsl:variable name="profundidad" select="count(ancestor::sec) - 1"/>
-      <xsl:choose>
-        <xsl:when test="$profundidad = 0">\section{</xsl:when>
-        <xsl:when test="$profundidad = 1">\subsection{</xsl:when>
-        <xsl:when test="$profundidad = 2">\subsubsection{</xsl:when>
-        <xsl:otherwise>\paragraph{</xsl:otherwise>
-      </xsl:choose>
-      <xsl:value-of select="f:latex($tituloSec)"/>
-      <xsl:text>}&#10;</xsl:text>
+      <xsl:call-template name="emitir-titulo-sec"/>
     </xsl:if>
   </xsl:template>
 
-  <!-- SEC/TITLE: normalize-space() EVITA WHITESPACE DE indent=yes  -->
-  <!-- QUE ROMPE \section{} CON titlesec                           -->
   <xsl:template match="sec/title">
+    <xsl:call-template name="emitir-titulo-sec"/>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- NAMED TEMPLATE: emitir-titulo-sec (SC-29)                    -->
+  <!-- EL TÍTULO DE SECCIÓN SE ARMA DOS VECES RECORRIENDO SUS NODOS. -->
+  <!-- normalize-space() SOBRE EL TÍTULO PEGABA EL TEXTO DE UNA <fn> -->
+  <!-- AL TÍTULO Y BORRABA LA CURSIVA:                               -->
+  <!--   apertura  LO QUE SE COMPONE: CADA <fn> COMO \gbNotaTitulo   -->
+  <!--   sumario   EL ARGUMENTO OPCIONAL (MARCADORES): SIN NOTAS     -->
+  <!-- LO DECIDE EL PARÁMETRO DE TÚNEL notasTitulo, QUE LEE LA       -->
+  <!-- PLANTILLA DE fn. CON UNA CITA EN EL TÍTULO, EL MARCADOR       -->
+  <!-- RECIBE POR \texorpdfstring EL TEXTO SIN NOTAS NI CITAS:       -->
+  <!-- hyperref NO PUEDE PASAR UNA CITA A CADENA PDF Y DEJA LA CLAVE.-->
+  <!-- EL ESPACIO SE NORMALIZA SOBRE LO EMITIDO: indent=yes METE     -->
+  <!-- SALTOS QUE ROMPEN \section{} CON titlesec.                    -->
+  <!-- ============================================================ -->
+  <xsl:template name="emitir-titulo-sec">
     <xsl:variable name="profundidad" select="count(ancestor::sec) - 1"/>
-    <xsl:variable name="tituloSec"   select="normalize-space(.)"/>
+    <xsl:variable name="apertura">
+      <xsl:apply-templates>
+        <xsl:with-param name="notasTitulo" select="'apertura'" tunnel="yes"/>
+      </xsl:apply-templates>
+    </xsl:variable>
+    <xsl:variable name="sumario">
+      <xsl:apply-templates>
+        <xsl:with-param name="notasTitulo" select="'sumario'" tunnel="yes"/>
+      </xsl:apply-templates>
+    </xsl:variable>
     <xsl:choose>
-      <xsl:when test="$profundidad = 0">\section{</xsl:when>
-      <xsl:when test="$profundidad = 1">\subsection{</xsl:when>
-      <xsl:when test="$profundidad = 2">\subsubsection{</xsl:when>
-      <xsl:otherwise>\paragraph{</xsl:otherwise>
+      <xsl:when test="$profundidad = 0">\section[</xsl:when>
+      <xsl:when test="$profundidad = 1">\subsection[</xsl:when>
+      <xsl:when test="$profundidad = 2">\subsubsection[</xsl:when>
+      <xsl:otherwise>\paragraph[</xsl:otherwise>
     </xsl:choose>
-    <xsl:value-of select="f:latex($tituloSec)"/>
+    <xsl:choose>
+      <xsl:when test=".//xref[@ref-type = 'bibr']">
+        <xsl:text>\texorpdfstring{</xsl:text>
+        <xsl:value-of select="normalize-space(string($sumario))"/>
+        <xsl:text>}{</xsl:text>
+        <xsl:value-of select="f:latex(normalize-space(string-join(
+          .//text()[not(ancestor::fn or ancestor::xref)], '')))"/>
+        <xsl:text>}</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="normalize-space(string($sumario))"/>
+      </xsl:otherwise>
+    </xsl:choose>
+    <xsl:text>]{</xsl:text>
+    <xsl:value-of select="normalize-space(string($apertura))"/>
     <xsl:text>}&#10;</xsl:text>
   </xsl:template>
 
@@ -1085,10 +1116,28 @@
   <!-- PLANTILLAS: NOTAS AL PIE                                     -->
   <!-- ============================================================ -->
 
+  <!-- EN UN TÍTULO DE SECCIÓN (SC-29), SEGÚN EL PARÁMETRO DE TÚNEL   -->
+  <!-- notasTitulo: \gbNotaTitulo EN LA APERTURA, NADA EN EL SUMARIO.  -->
+  <!-- LOS PÁRRAFOS DE LA NOTA SE SEPARAN CON \par (fn/p), QUE EL      -->
+  <!-- ARGUMENTO DE UN TÍTULO NO ADMITE: AHÍ VA \endgraf.              -->
   <xsl:template match="fn[not(ancestor::ref-list)]">
-    <xsl:text>\footnote{</xsl:text>
-    <xsl:apply-templates select="*[not(self::label)]"/>
-    <xsl:text>}</xsl:text>
+    <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
+    <xsl:choose>
+      <xsl:when test="$notasTitulo = 'sumario'"/>
+      <xsl:when test="$notasTitulo = 'apertura'">
+        <xsl:variable name="c">
+          <xsl:apply-templates select="*[not(self::label)]"/>
+        </xsl:variable>
+        <xsl:text>\gbNotaTitulo{</xsl:text>
+        <xsl:value-of select="replace(string($c), '\\par ', '\\endgraf ')"/>
+        <xsl:text>}</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\footnote{</xsl:text>
+        <xsl:apply-templates select="*[not(self::label)]"/>
+        <xsl:text>}</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
   <xsl:template match="fn/label"/>

@@ -2833,8 +2833,19 @@
     </div>
   </xsl:template>
 
+  <!-- NIVEL DEL ENCABEZADO SEGÚN LA PROFUNDIDAD DE LA SECCIÓN: h2 EL
+       PRIMER NIVEL, h3 EL SEGUNDO, HASTA h6. ANTES TODAS ERAN h2 Y EL
+       ÍNDICE DE NAVEGACIÓN DEL LECTOR QUEDABA PLANO. NO CUENTAN LAS
+       SECCIONES CUYO TÍTULO SE SUPRIME (INTRODUCCIÓN, EDITORIAL, O EL
+       QUE REPITE EL TÍTULO DEL ARTÍCULO): SI CONTARAN, SUS HIJAS
+       SALTARÍAN UN NIVEL. -->
   <xsl:template match="sec/title">
-    <h2 class="sec-title"><xsl:apply-templates/></h2>
+    <xsl:element name="h{min((6, 1 + count(ancestor::sec[not(@sec-type = ('intro', 'editorial'))
+                     and normalize-space(title) != normalize-space(
+                       /article/front/article-meta/title-group/article-title)])))}">
+      <xsl:attribute name="class">sec-title</xsl:attribute>
+      <xsl:apply-templates/>
+    </xsl:element>
   </xsl:template>
 
   <!-- ================================================

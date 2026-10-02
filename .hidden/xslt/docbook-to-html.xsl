@@ -1343,11 +1343,14 @@ RC APLICADAS:
   <xsl:template match="db:section | section">
     <xsl:variable name="nivel" select="count(ancestor::db:section | ancestor::section) + 2"/>
     <section class="cap-section" id="{@xml:id}">
-      <xsl:variable name="tituloSec"
-                    select="normalize-space((db:title | title)[1])"/>
-      <xsl:if test="$tituloSec != ''">
+      <xsl:variable name="nodoTitulo" select="(db:title | title)[1]"/>
+      <!-- EL TÍTULO SE RECORRE POR NODOS, COMO EN EL EPUB (SC-29):
+           normalize-space() PEGABA EL TEXTO DE UNA NOTA AL TÍTULO Y
+           PERDÍA SU MARCA, Y BORRABA LA CURSIVA Y LAS CITAS. LA NOTA
+           TOMA LA PLANTILLA footnote: MARCA NUMERADA Y PANEL DE NOTAS -->
+      <xsl:if test="normalize-space($nodoTitulo) != ''">
         <xsl:element name="h{if ($nivel &gt; 6) then 6 else $nivel}">
-          <xsl:value-of select="$tituloSec"/>
+          <xsl:apply-templates select="$nodoTitulo/node()"/>
         </xsl:element>
       </xsl:if>
       <!-- CONTENIDO DE LA SECCIÓN, EXCEPTO SU PROPIO TÍTULO -->

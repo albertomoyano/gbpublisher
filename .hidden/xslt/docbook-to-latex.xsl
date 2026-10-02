@@ -37,6 +37,7 @@
       \label \caption \footnote
       \gbCapitulo \gbCapituloSinNumero   {plano}{compuesto}{subtítulo}
       \gbCorteTitulo   corte del editor en el título (SC-28)
+      \gbNotaTitulo    nota al pie en un título de sección (SC-29, CONTRATO 7)
       (ESTAS TRES SON DEL CONTRATO 6 DE preambulo-contrato.tex)
 
     PÁGINAS ESPECIALES (fm/bm CON ORDEN 01–09)
@@ -364,17 +365,56 @@
   <!-- PROFUNDIDAD = CANTIDAD DE ANCESTROS section                  -->
   <!-- ============================================================ -->
 
+  <!-- EL TÍTULO DE SECCIÓN SE ARMA DOS VECES, RECORRIENDO SUS NODOS  -->
+  <!-- (SC-29). normalize-space() SOBRE EL TÍTULO PEGABA EL TEXTO DE  -->
+  <!-- UNA NOTA AL TÍTULO Y BORRABA LA CURSIVA.                       -->
+  <!--   apertura  LO QUE SE COMPONE: CADA NOTA COMO \gbNotaTitulo    -->
+  <!--   sumario   EL ARGUMENTO OPCIONAL, QUE VA AL SUMARIO, AL FOLIO -->
+  <!--             Y A LOS MARCADORES: SIN NOTAS, CON EL FORMATO      -->
+  <!-- LO DECIDE EL PARÁMETRO DE TÚNEL notasTitulo, QUE LEE LA        -->
+  <!-- PLANTILLA footnote. LAS DEMÁS PLANTILLAS EN LÍNEA LO PASAN SIN -->
+  <!-- DECLARARLO.                                                    -->
   <xsl:template match="section">
     <xsl:variable name="prof" select="count(ancestor::section)"/>
-    <xsl:variable name="titulo" select="normalize-space((info/title, title)[1])"/>
+    <xsl:variable name="nodoTitulo" select="(info/title, title)[1]"/>
+    <xsl:variable name="apertura">
+      <xsl:apply-templates select="$nodoTitulo/node()">
+        <xsl:with-param name="notasTitulo" select="'apertura'" tunnel="yes"/>
+      </xsl:apply-templates>
+    </xsl:variable>
+    <xsl:variable name="sumario">
+      <xsl:apply-templates select="$nodoTitulo/node()">
+        <xsl:with-param name="notasTitulo" select="'sumario'" tunnel="yes"/>
+      </xsl:apply-templates>
+    </xsl:variable>
     <xsl:text>&#10;</xsl:text>
     <xsl:choose>
-      <xsl:when test="$prof = 0">\section{</xsl:when>
-      <xsl:when test="$prof = 1">\subsection{</xsl:when>
-      <xsl:when test="$prof = 2">\subsubsection{</xsl:when>
-      <xsl:otherwise>\paragraph{</xsl:otherwise>
+      <xsl:when test="$prof = 0">\section[</xsl:when>
+      <xsl:when test="$prof = 1">\subsection[</xsl:when>
+      <xsl:when test="$prof = 2">\subsubsection[</xsl:when>
+      <xsl:otherwise>\paragraph[</xsl:otherwise>
     </xsl:choose>
-    <xsl:value-of select="f:latex($titulo)"/>
+    <!-- normalize-space EN EL SUMARIO: NO TIENE NOTAS, Y UN SALTO DE -->
+    <!-- LÍNEA EN EL ARGUMENTO NO APORTA NADA.                        -->
+    <!-- UNA CITA EN EL TÍTULO NO TIENE FORMA DE CADENA PDF: hyperref -->
+    <!-- BORRA EL COMANDO Y DEJA LA CLAVE EN EL MARCADOR («Con cita a -->
+    <!-- en el título», VERIFICADO). EN ESE CASO EL MARCADOR RECIBE   -->
+    <!-- POR \texorpdfstring EL TEXTO DEL TÍTULO SIN NOTAS NI CITAS.  -->
+    <xsl:choose>
+      <xsl:when test="$nodoTitulo//biblioref">
+        <xsl:text>\texorpdfstring{</xsl:text>
+        <xsl:value-of select="normalize-space(string($sumario))"/>
+        <xsl:text>}{</xsl:text>
+        <xsl:value-of select="f:latex(normalize-space(string-join(
+          $nodoTitulo//text()[not(ancestor::footnote)], '')))"/>
+        <xsl:text>}</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="normalize-space(string($sumario))"/>
+      </xsl:otherwise>
+    </xsl:choose>
+    <xsl:text>]{</xsl:text>
+    <xsl:value-of select="f:recortar(string($apertura))"/>
     <xsl:text>}&#10;</xsl:text>
     <xsl:if test="@xml:id">
       <xsl:text>\label{</xsl:text>
@@ -496,11 +536,31 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
+  <!-- NOTA AL PIE. EN UN TÍTULO DE SECCIÓN (SC-29) DEPENDE DEL      -->
+  <!-- PARÁMETRO DE TÚNEL notasTitulo:                                -->
+  <!--   apertura  \gbNotaTitulo, QUE NO AVANZA EL CONTADOR CUANDO    -->
+  <!--             titlesec MIDE EL TÍTULO (CONTRATO 7, GV-70). EL    -->
+  <!--             ARGUMENTO DEL TÍTULO NO ADMITE \par: LOS PÁRRAFOS   -->
+  <!--             DE LA NOTA SE SEPARAN CON \endgraf                  -->
+  <!--   sumario   NADA: LA NOTA NO VA AL SUMARIO NI A LOS MARCADORES -->
+  <!-- FUERA DE UN TÍTULO, \footnote COMO SIEMPRE.                    -->
   <xsl:template match="footnote">
+    <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
     <xsl:variable name="c"><xsl:apply-templates/></xsl:variable>
-    <xsl:text>\footnote{</xsl:text>
-    <xsl:value-of select="f:recortar(string($c))"/>
-    <xsl:text>}</xsl:text>
+    <xsl:choose>
+      <xsl:when test="$notasTitulo = 'sumario'"/>
+      <xsl:when test="$notasTitulo = 'apertura'">
+        <xsl:text>\gbNotaTitulo{</xsl:text>
+        <xsl:value-of select="replace(f:recortar(string($c)),
+                                      '[ \t]*\n([ \t]*\n)+[ \t]*', '\\endgraf ')"/>
+        <xsl:text>}</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\footnote{</xsl:text>
+        <xsl:value-of select="f:recortar(string($c))"/>
+        <xsl:text>}</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
   <xsl:template match="xref[@linkend]">

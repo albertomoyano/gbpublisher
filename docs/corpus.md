@@ -1648,6 +1648,52 @@ En el contenedor, con TeX Live 2023, las fuentes de la estética y las cuatro ca
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint: la prueba fue en el contenedor, sin la base. Del PDF de revista se verificó el .tex que emite jats-to-latex, sin compilar el artículo entero.
 
+### SC-29 — Notas al pie en títulos de sección: marca numérica y dos versiones del título
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / DocBook 5.2 / JATS 1.4 / SaxonJ-HE 12.5 / LuaLaTeX + titlesec + hyperref + biblatex / TeX Live 2023 / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Un título de sección (`##` y siguientes) puede llevar una nota al pie. El título de la pieza, del libro o de la revista no: es una decisión editorial del modelo de trabajo.
+
+LA MARCA ES NUMÉRICA
+
+La nota del título se numera con las demás, en el orden del texto. Se renuncia a la marca con asterisco u otro signo que en LaTeX da `\Footnote{}{}` (consejo de la AMS: no poner números en títulos ni fórmulas). Markdown no tiene forma de expresarla, y la confusión que se buscaba evitar la compensan los corchetes del PDF y el hipervínculo de EPUB y HTML.
+
+EL CANÓNICO YA ESTABA BIEN
+
+Pandoc con los filtros del proyecto deja la nota dentro del título, y los dos vocabularios la admiten:
+
+    DocBook   <title>…<footnote><para>…</para></footnote></title>   valida contra el RNG
+    JATS      <title>…<fn><p>…</p></fn></title>                     valida contra el DTD Archiving 1.4
+
+La falla estaba en las hojas que leían el título de sección con `normalize-space(title)`: el texto de la nota quedaba pegado al título y se perdía la marca. Afectaba a `docbook-to-latex`, `docbook-to-html` y `jats-to-latex`. `docbook-to-epub`, `jats-to-epub` y `jats-to-html` ya recorrían los nodos del título. El mismo aplanado borraba la cursiva y las citas de cualquier título de sección.
+
+HTML Y EPUB
+
+El encabezado se arma recorriendo los nodos del título. La nota toma la plantilla de nota de cada hoja: marca numerada con vínculo, y en el HTML, el panel de notas.
+
+PDF: DOS VERSIONES DEL TÍTULO
+
+Como en SC-28, las hojas LaTeX arman el título de sección dos veces, con el parámetro de túnel `notasTitulo` que lee la plantilla de nota:
+
+    \subsection[SUMARIO]{APERTURA}
+
+- Apertura: el título con su formato y cada nota como `\gbNotaTitulo{…}`.
+- Sumario (argumento opcional; va al sumario, al folio y a los marcadores): el título con su formato y sin notas.
+- Si el título lleva una cita, el opcional va envuelto en `\texorpdfstring{SUMARIO}{TEXTO}`: hyperref no puede pasar una cita a cadena PDF, borra el comando y deja la clave en el marcador («Con cita a en el título», verificado). TEXTO es el título sin notas ni citas.
+- El argumento de un título no admite `\par`: los párrafos de una nota de título se separan con `\endgraf`.
+
+`\gbNotaTitulo` es vocabulario del contrato 7: vale `\footnote` al componer y nada cuando titlesec mide el título (GV-70). Si la estética no carga titlesec, el contrato provee `\iftitlemeasuring` y siempre compone. El preámbulo de revista, que arma `m_XML`, la define igual.
+
+Verificado en el contenedor con las capas reales del preámbulo de libro: las notas de título y de párrafo salen [1], [2], [3]; el sumario y los marcadores, sin nota; la cursiva, en el sumario; la cita, en la apertura y en el sumario, y fuera del marcador. En revista, con titlesec con y sin `calcwidth`.
+
+NIVEL DE LOS ENCABEZADOS DE REVISTA
+
+Al relevar apareció que `jats-to-html` y `jats-to-epub` emitían todas las secciones como `<h2>`. Ahora el nivel sigue la profundidad (h2 a h6). No cuentan las secciones cuyo título se suprime —introducción, editorial, la que repite el título del artículo—: si contaran, sus hijas saltarían un nivel. El aspecto del HTML no cambia: lo da la clase `sec-title`.
+
+**Relaciones:** vinculo:SC-28,apoya:GV-70
+
+**PENDIENTE:** Probar con un libro y una revista reales en Mint.
+
 ---
 
 ## RF — Referencia de API
@@ -3426,3 +3472,21 @@ CONSECUENCIAS
 **Relaciones:** vinculo:GV-53, vinculo:GV-59, vinculo:SC-27
 
 **PENDIENTE:** Leído en el fuente, no medido aislado. Mini-test: combo con ReadOnly = True; Clear, Add("a"), Print .Index (esperado 0) contando los Click (esperado 0); después Index = -1 (esperado 1 Click). Lo probado en uso en 3.22.1 son los dos refrescos de SC-27, que dependen de este comportamiento.
+
+### GV-70 — titlesec con calcwidth compone el título dos veces: un contador en el título avanza doble
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** titlesec (TeX Live 2023) / LuaLaTeX / contenedor; manual de titlesec §2.9 · **Verificado:** 2026-10
+
+Con la opción `calcwidth`, titlesec compone cada título dos veces: una para medir su ancho y otra para componerlo. Lo que el título haga con un contador ocurre dos veces.
+
+Medido con la estética de libros, que carga titlesec con `calcwidth`: `\section[…]{Título\footnote{…}}` numera las notas 2, 3, 5 en lugar de 1, 2, 3. Sin `calcwidth`, 1, 2, 3.
+
+El manual de titlesec lo documenta (§2.9: «if you increase a counter globally, you are increasing it twice») y da la salida:
+
+    \iftitlemeasuring{MIDIENDO}{COMPONIENDO}
+
+`\gbNotaTitulo` (contrato 7, SC-29) la usa: al medir no emite nada. La medición del ancho pierde la marca, que es despreciable.
+
+Vale para cualquier cosa que avance un contador o escriba en un archivo auxiliar desde un título: un `\index`, un `\label` propio, un contador del proyecto.
+
+**Relaciones:** vinculo:SC-29
