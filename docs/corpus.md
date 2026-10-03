@@ -820,7 +820,7 @@ La justificación de esta regla incluía además que "Gambas no interpreta secue
 
 ### SC-11 — Modelo de recursos: sistema inmutable, copia local de trabajo
 
-**Estado:** vigente · **Evidencia:** inferida
+**Estado:** vigente · **Evidencia:** inferida · **Verificado:** 2026-10
 
 Los recursos que la aplicación distribuye viven en dos lugares con roles distintos.
 
@@ -840,13 +840,21 @@ CONTRAPARTIDA OBLIGATORIA
 
 Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un archivo ajeno debe poder DECLARAR si fue modificado. La comparación es directa contra `/usr/share/`, que por definición del modelo conserva siempre el original: no hace falta guardar ni versionar sumas de verificación. Es lo que hace `m_AuditarJats.EstadoRecurso()` con el catálogo de mensajes y la hoja de estilo del informe de auditoría.
 
+COTEJO AL ARRANCAR
+
+`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js` y `themes` de la copia local con su par instalado. Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
+
+El caso que lo motivó: después de una actualización, una hoja nueva de la copia local corrió con un script viejo de `/usr/share/gbpublisher/engine/` y Saxon frenó por un parámetro que el script no pasaba. El caso inverso no da error: Saxon ignora un parámetro que la hoja vieja no declara, y la salida sale con la regla anterior.
+
+Desde el IDE los recursos son los de `.hidden/`, y el cotejo avisa igual cuando el repositorio avanzó y la copia local quedó atrás.
+
+Las personalizaciones de salida en uso se hacen con scripts que procesan lo que la aplicación entrega, no editando la copia local (decisión de Alberto): una copia local distinta de la instalada es, en la práctica, una copia vieja.
+
 RAZÓN DEL MODELO
 
 Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se hacen sobre la copia local y se distribuyen a las estaciones; donde no lo hay, el usuario es a la vez administrador y necesita poder ajustar sin privilegios de root. En los dos casos el punto de intervención es el mismo, y la actualización del paquete nunca pisa lo ajustado.
 
 **Relaciones:** vinculo:SC-05,vinculo:SC-24
-
-**PENDIENTE:** Los XSLT de salida se copian a local y hoy no declaran si fueron modificados. Bajo el criterio de la contrapartida deberían hacerlo, sobre todo si el auditor llega a auditar la producción propia. Pendiente de decisión.
 
 ### SC-12 — Editor de bibliografia: el formato de trabajo es HTML, no RTF
 
@@ -1762,6 +1770,35 @@ Las fórmulas en libros (`inlineequation`): hoy abortan el PDF con «vocabulario
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint.
 
+### SC-31 — Diseño de las salidas de lectura: manda el PDF
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** gbpublisher / salidas PDF, EPUB y HTML de libro y de revista · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto). En todo lo que es diseño —composición, numeración, orden de los elementos, aspecto de cada uno— la referencia es el PDF. El EPUB y el HTML replican lo que hace el PDF; no diseñan un modelo propio.
+
+ALCANCE
+
+Las salidas de lectura: PDF, EPUB y HTML, de libro y de revista. Quedan afuera los sabores XML —el canónico JATS o DocBook, Crossref, DOAJ, SciELO, Redalyc, el OPF—: responden a su esquema y a lo que pide su destino, no al diseño.
+
+EXCEPCIONES
+
+Solo dos, y se nombran al tomar la decisión:
+
+1. Lo crítico en el medio digital: la accesibilidad (el texto alternativo de una figura), que un enlace funcione, la validez ante epubcheck.
+2. Lo que no tiene sentido fuera de la página impresa: folio, páginas blancas, cortes de página, el corte de línea de un título (SC-28), las versalitas que los lectores de EPUB no respetan de forma pareja (SC-25).
+
+Cada excepción queda escrita en la entrada que la toma, con su razón. Una diferencia sin excepción escrita es un error de la salida digital.
+
+CONSECUENCIAS
+
+- Ante una divergencia entre salidas, se corrige el EPUB o el HTML, no el PDF.
+- Una decisión de diseño se toma mirando el PDF y después se lleva a las otras dos salidas. No al revés.
+- Lo que el PDF resuelve con LaTeX —numeración de figuras, tablas y ecuaciones, referencias cruzadas, orden de las piezas— el EPUB y el HTML lo reproducen con el mismo resultado visible, aunque el mecanismo sea otro.
+
+Es el principio que ya aplicaban SC-14 (la bibliografía replica el estilo biblatex del libro), SC-26 y SC-30 (el mismo resultado en las seis salidas). Esta entrada lo deja escrito como regla general.
+
+**Relaciones:** vinculo:SC-14,vinculo:SC-26,vinculo:SC-28,vinculo:SC-25,vinculo:SC-30
+
 ### SC-32 — Figuras de libro y revista: una sola forma en el .md, número del PDF y referencia cruzada
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 / SaxonJ-HE 12.5 / LuaLaTeX + hyperref + caption / TeX Live 2023 / contenedor · **Verificado:** 2026-10
@@ -2112,6 +2149,80 @@ RESULTADO: pares de bytes (estado, largo).
 Costo medido: 1,7 s para 392.713 caracteres de Markdown real, unos 1,5 ms por línea en promedio.
 
 **Relaciones:** vinculo:SC-15, vinculo:GV-48
+
+### RF-11 — Estructura de la base de gbShortcodes y contrato de exportación
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbShortcodes / SQLite 3.45 / Pandoc 3.1.3 / Gambas 3.19 (gb.db) en contenedor · **Verificado:** 2026-10
+
+Programa aparte, con el modelo de gbCorpus (RF-08), que mantiene el catálogo de shortcodes de gbpublisher. Reemplaza a la tabla `shortcodes` de MySQL, que se retira con una actualización de esquema (SC-22) cuando gbpublisher lea la exportación.
+
+ESTA ENTRADA DESCRIBE LA VERSIÓN 1 DEL ESQUEMA Y DEL CONTRATO DE EXPORTACIÓN.
+
+BASE
+
+`~/.gbshortcodes/shortcodes.sqlite`, con `esquema_version`. La aplicación la crea en el primer arranque con el DDL de `m_Base.SentenciasDDL`, igual al de `shortcodes_esquema.sql` (verificado comparando `.schema`).
+
+TABLA `shortcodes`
+
+    nombre          TEXT NOT NULL UNIQUE   minúsculas, dígitos y guion: nombre de archivo
+    etiqueta        TEXT NOT NULL          lo que se ve en la lista de gbpublisher
+    tipo            bloque | linea
+    grupo           comun | estructura | disciplinar
+    perfil          TEXT                   solo y siempre en disciplinar (CHECK)
+    orden           INTEGER NOT NULL       dentro de grupo y perfil, de 10 en 10
+    estado_libro    no_aplica | borrador | liberado
+    estado_revista  no_aplica | borrador | liberado
+    modo            envolver | plantilla | figura
+    apertura        TEXT NOT NULL          puede tener saltos (el bloque de código)
+    cierre          TEXT NOT NULL
+    que_es          TEXT                   Markdown; NULL si no hay texto
+    ejemplo         TEXT                   el ejemplo tal como se escribe en el .md
+    como_sale       TEXT                   Markdown; NULL si no hay texto
+    mapeo_docbook, mapeo_jats, notas, pendiente   internos: no se exportan
+    fecha_alta, fecha_modificacion          datetime('now','localtime')
+
+Restricciones: un shortcode no puede ser no_aplica en los dos; la figura es un bloque; lo liberado tiene `que_es`, `ejemplo` y `como_sale`.
+
+Los tres textos de la ayuda admiten NULL y no cadena vacía (`CHECK (x <> '')`): Edit + Update escribe la cadena vacía como NULL (GV-74), y con NOT NULL guardar una sección vacía fallaba.
+
+MODOS
+
+- envolver: rodea la selección con apertura y cierre.
+- plantilla: inserta apertura, marcador y cierre, sin selección (la sigla).
+- figura: el camino de `FMain.InsertarFigura` (SC-32).
+
+QUÉ HACE LA APLICACIÓN
+
+Lee, filtra, pule los textos (etiqueta, ayuda, mapeos, notas, pendiente) y exporta. NO da de alta ni elimina, y no cambia nombre, tipo, grupo, perfil, orden, estados, modo, apertura ni cierre: eso es comportamiento, se decide después de probarlo y se aplica por script SQL con Importar UPDATE SQL (`engine/importar_shortcodes.sh`, el contrato de SC-19 con `-- Esquema: 1`). El importador compara antes y después una huella del contenido, no solo la cantidad de filas, para no afirmar que la base quedó como estaba sin comprobarlo.
+
+EXPORTACIÓN AL PAQUETE (CONTRATO CON gbpublisher)
+
+A la carpeta `.hidden/shortcodes/` del proyecto gbpublisher. Van todos los shortcodes, en cualquier estado: gbpublisher filtra (instalado, solo lo liberado; desde el IDE, también los borradores).
+
+- `_catalogo.tsv`: una cabecera fija, que hace de versión del contrato,
+
+      nombre etiqueta tipo grupo perfil orden estado_libro estado_revista modo apertura cierre
+
+  separada por tabuladores, y una línea por shortcode en el orden del catálogo: grupo (comun, estructura, disciplinar), perfil, orden, nombre. Escapes: `\\` por barra, `\t` por tabulador, `\n` por salto.
+- `<nombre>.html`: fragmento, no documento. Tres secciones fijas, `<h3>Qué es</h3>`, `<h3>Cómo se escribe</h3>` y `<h3>Cómo sale</h3>`, y en la segunda la marca `<!--gb:ejemplo-->`, donde gbpublisher pone el ejemplo coloreado con su resaltador. El estilo lo pone quien lo muestra. Una sección vacía de un borrador sale «Sin completar.».
+- `<nombre>.md`: el ejemplo tal cual, con salto final.
+
+Las secciones se convierten con `pandoc -f markdown -t html --wrap=none` (Exec sobre un array, SC-05). La exportación se detiene, sin escribir nada, si una sección trae títulos, imágenes o tablas: el TextEdit de la ayuda solo tiene probados párrafos, listas, énfasis y código (GV-64). Antes de escribir exige una carpeta vacía o con `_catalogo.tsv`, y después ofrece borrar los .html y .md que no son del catálogo: todo lo que hay en la carpeta entra al .deb.
+
+Salida determinista: dos exportaciones del mismo contenido dan archivos idénticos (verificado con diff).
+
+OTRAS SALIDAS
+
+- Documento de prueba, de libros o de revistas: un `.md` con un título y el ejemplo de cada shortcode que aplica, liberado o en borrador. Es lo que se compone en PDF, EPUB y HTML antes de liberar.
+- Volcado SQL restaurable (verificado: restaura las 77 filas sobre una base vacía).
+
+CARGA INICIAL
+
+`shortcodes-carga-inicial.sql`: las 77 filas de `gbpublisher-baseline-1.0.0.sql`. Liberada solo la figura; los ejemplos que Pandoc no lee como se espera llevan pendiente.
+
+**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64
+
+**PENDIENTE:** Probado en contenedor con Gambas 3.19 y gb.db, no con gb.db2 en 3.22.1. Falta la lectura de la exportación en gbpublisher (paso siguiente) y el SC que fije la decisión del lado de gbpublisher.
 
 ---
 
@@ -3663,3 +3774,44 @@ Corregido en `preambulo-estetica.tex`, junto al `tocdepth`: `\l@figure` pasa a n
 Verificado: antes, página vacía; después, las seis figuras del libro de prueba con su número y su página.
 
 **Relaciones:** vinculo:SC-32,vinculo:SC-26
+
+### GV-74 — Edit + Update: asignar una cadena vacía escribe NULL
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.db.sqlite3 / SQLite 3.45.1 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Con el patrón Edit + Update (RC-GM-15), asignar una cadena vacía a un campo escribe NULL, no ''. Sobre una columna NOT NULL, el Update falla:
+
+    rE = hConn.Edit("shortcodes", "nombre = &1", "verse")
+    rE!como_sale = "x"      ->  Update ok
+    rE!como_sale = ""       ->  Cannot modify record: Abort due to constraint violation
+
+Es la misma raíz que GV-68: en Gambas la cadena vacía es Null, y GV-34 ya registró que asignar Null escribe NULL.
+
+CONSECUENCIA
+
+Una columna de texto que la interfaz puede dejar vacía no lleva NOT NULL: lleva `CHECK (columna <> '')`, y «sin texto» es NULL, nunca ''. Así está el esquema de gbShortcodes (RF-11).
+
+Al leer, el NULL vuelve como cadena vacía a una variable String, y al escribir un volcado SQL, un campo NOT NULL vacío llega como Null: el volcado tiene que emitir '' para esos campos y NULL solo para los nulables.
+
+CASO DE gbCorpus
+
+`entradas.cuerpo` y `entradas.relaciones` son NOT NULL con DEFAULT '', y `GuardarEntrada` los asigna tal cual. Por esta regla, guardar una entrada sin relaciones fallaría; y `ArmarVolcado` emite NULL para un `relaciones` vacío, con lo que el volcado no se restauraría. Ver el pendiente.
+
+**Relaciones:** vinculo:GV-34,vinculo:GV-68,vinculo:RC-GM-15,apoya:GV-23,vinculo:RF-11,vinculo:RF-08
+
+**PENDIENTE:** Sin verificar en 3.22.1 con gb.db2. Mini-test: en gbCorpus, abrir una entrada sin relaciones (RC-GM-03), cambiar una letra del título y Guardar. Si falla, corregir GuardarEntrada y ArmarVolcado de gbCorpus.
+
+### GV-75 — Prefijo de tipo más una letra: puede ser palabra clave
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbc3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El compilador no distingue mayúsculas en las palabras clave, así que un nombre de variable con el prefijo de tipo de la convención y una sola letra puede ser una palabra clave:
+
+    Dim iN As Integer      ->  Unexpected In
+    Dim oF As CShortcode   ->  Syntax error. Identifier expected (en For Each oF In ...)
+
+Verificado los dos al escribir el banco de pruebas de gbShortcodes. Otros que caen igual, por la misma regla: `iS`, `aS`, `iF`, `oR`, `tO`, `aNd`.
+
+REGLA: el nombre después del prefijo tiene al menos dos letras con sentido (`iCant`, `oElem`), que es además lo que pide la convención de nomenclatura.
+
+**Relaciones:** vinculo:GV-09
