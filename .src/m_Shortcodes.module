@@ -3,228 +3,178 @@
 ' ==============================================================================
 ' Módulo: m_Shortcodes
 ' ------------------------------------------------------------------------------
-' Concentra toda la lógica de manejo de shortcodes:
-'   - Carga de shortcodes según contexto (tipo de proyecto activo)
-'   - Filtrado por tipo de marcado (fenced/inline) y por perfil disciplinar
-'   - Renderizado del listbox con agrupamiento visual
-'   - Renderizado del textarea de información
-'   - Inserción en el editor con cierre nombrado (convención link reference)
-'   - Helpers para el highlighter (matching de aperturas/cierres)
+' El panel de shortcodes y la inserción en el editor:
+'   - Lista por tipo de marcado (bloques, marcas en línea), agrupada por
+'     grupo y perfil, con los shortcodes que el diccionario deja ver
+'   - Ayuda del shortcode elegido, con el ejemplo coloreado como en el editor
+'   - Inserción según el modo: envolver, plantilla o figura
+'   - Cierre nombrado de los bloques (SC-33)
 '
-' LA UI DEL TAB VIVE EN FMain. ESTE MÓDULO ES LÓGICA PURA, SIN CONTROLES.
-' LOS HANDLERS DE EVENTOS EN FMain DELEGAN EN FUNCIONES DE ESTE MÓDULO.
+' LOS DATOS SALEN DE m_CatalogoShortcodes, EL DICCIONARIO QUE LEE LO QUE
+' EXPORTA gbShortcodes (RF-11). ESTE MÓDULO NO TIENE NINGUNA LISTA PROPIA
+' DE SHORTCODES NI CONSULTA LA BASE.
 '
-' CONTROLES DEL TAB EN FMain:
-'   - cmbShortcodes      (ComboBox, ReadOnly): selector de tipo de marcado
-'   - lbDefiniciones     (ListBox): lista de shortcodes filtrados
-'   - TextEditorPreview  (TextEditor, ReadOnly): info del shortcode
-'
-' VARIABLE DE SESIÓN LEÍDA:
-'   - FMain.TipoProyectoActual As Integer (m_Constantes.TIPO_REVISTA_MD o TIPO_LIBRO_MD)
+' CONTROLES DEL PANEL EN FMain:
+'   - cmbShortcodes       (ComboBox, ReadOnly): tipo de marcado
+'   - txtDescripcion      (TextLabel): qué es un bloque y qué una marca en línea
+'   - lbDefiniciones      (ListView): shortcodes, con separadores de grupo
+'   - txtAyudaShortcode   (TextEdit, ReadOnly): ayuda del shortcode elegido
 ' ==============================================================================
 
-' --- 1. CONSTANTES PÚBLICAS DE OPCIONES DEL COMBOBOX ---
+' --- OPCIONES DEL COMBO ---
+Public Const OPCION_BLOQUES As String = "Bloques"
+Public Const OPCION_LINEA As String = "Marcas en línea"
 
-Public Const OPCION_BLOQUES As String = "Bloques (fenced)"
-Public Const OPCION_INLINE As String = "Marcas inline (inline)"
+' --- SEPARADORES DE LA LISTA: NO SE PUEDEN ELEGIR ---
+Private Const SEP_COMUNES As String = "Comunes"
+Private Const SEP_ESTRUCTURA As String = "Estructura del producto"
+Private Const SEP_DISCIPLINARES As String = "Disciplinares"
+Private Const SEP_VACIO As String = "Ninguno disponible todavía"
 
-' --- 2. CONSTANTES DE TIPOS DE MARCADO ---
+' SANGRÍA DE UN SHORTCODE BAJO SU SEPARADOR
+Private Const PREFIJO_ITEM As String = "      "
 
-Public Const TIPO_FENCED As String = "fenced"
-Public Const TIPO_INLINE As String = "inline"
+' MARCA DE UN BORRADOR EN LA LISTA (SOLO SE VEN DESDE EL IDE)
+Private Const MARCA_BORRADOR As String = " (borrador)"
 
-' --- 3. CONSTANTES VISUALES DEL LISTVIEW ---
-
-' SEPARADORES NO CLICKABLES PARA AGRUPAR VISUALMENTE.
-' SE DESTACAN MEDIANTE RichText + Background DEL ÍTEM, NO MEDIANTE
-' CARACTERES DECORATIVOS EN EL TEXTO.
-Public Const SEP_COMUNES As String = "Comunes"
-Public Const SEP_ESTRUCTURA As String = "Estructura del producto"
-Public Const SEP_DISCIPLINARES As String = "Disciplinares"
-
-' PREFIJOS DE INDENTACIÓN DENTRO DEL LISTVIEW
-Public Const PREFIJO_ITEM As String = "      "    ' SHORTCODE SELECCIONABLE (6 ESPACIOS)
-Public Const PREFIJO_SUBGRUPO As String = ""      ' SUBGRUPO DISCIPLINAR (SIN INDENT, BOLD+BG)
-
-' --- 4. CACHE DE DATOS POR KEY DEL LISTVIEW ---
-
-' COLLECTION INDEXADA POR LA KEY DEL ÍTEM. SOLO CONTIENE ENTRADAS PARA
-' SHORTCODES SELECCIONABLES (CLAVE "sc:nombre"). LOS SEPARADORES NO TIENEN
-' ENTRADA AQUÍ — SE DETECTAN POR EL PREFIJO "sep:" DE LA KEY.
+' --- SHORTCODES DE LA LISTA ACTUAL, POR LA KEY DEL ÍTEM ("sc:nombre") ---
+' LOS SEPARADORES ("sep:N") NO TIENEN ENTRADA
 Public cShortcodesActuales As Collection
+
+' --- LA AYUDA: CONTROL Y SHORTCODE QUE MUESTRA, PARA REPINTARLA ---
+' AL CAMBIAR DE TEMA O DE TIPOGRAFÍA (m_ResaltadoSintaxis)
+Private $hAyuda As TextEdit
+Private $sNombreEnAyuda As String
 
 ' ==============================================================================
 ' Función   : InicializarTabShortcodes
-' Propósito : Punto único de entrada al abrir un proyecto. Carga el ComboBox
-'             con las dos opciones (Bloques, Marcas inline), configura el
-'             TextEditor de preview, y dispara la carga inicial del listbox
-'             con la opción por defecto (Bloques).
-' Parámetros: cmb As ComboBox  — referencia a FMain.cmbShortcodes
-'             lst As ListBox   — referencia a FMain.lbDefiniciones
-'             txt As TextEditor — referencia a FMain.TextEditorPreview
-' Retorna   : (Sub, sin retorno)
+' Propósito : Punto único de entrada al abrir un proyecto. Llena el combo,
+'             deja la ayuda vacía y dispara la carga de la lista con la
+'             primera opción.
+' Parámetros: cmb As ComboBox — FMain.cmbShortcodes
+'             lst As ListView — FMain.lbDefiniciones
+'             txt As TextEdit — FMain.txtAyudaShortcode
+' Retorna   : nada
 ' ==============================================================================
-Public Sub InicializarTabShortcodes(cmb As ComboBox, lst As ListView, txt As TextEditor)
+Public Sub InicializarTabShortcodes(cmb As ComboBox, lst As ListView, txt As TextEdit)
 
-  ' --- 1. RESET DE COMPONENTES ---
-  cmb.Clear
-  lst.Clear
-  txt.Text = ""
-
-  ' --- 2. CONFIGURAR PREVIEW COMO SOLO LECTURA ---
-  txt.ReadOnly = True
-
-  ' --- 3. POBLAR EL COMBOBOX CON LAS DOS OPCIONES ---
-  cmb.Add(OPCION_BLOQUES)
-  cmb.Add(OPCION_INLINE)
-  cmb.ReadOnly = True
-
-  ' --- 4. INICIALIZAR LA COLLECTION DE SHORTCODES (INDEXADA POR KEY) ---
+  ' --- 1. ESTADO ---
+  $hAyuda = txt
+  $sNombreEnAyuda = ""
   cShortcodesActuales = New Collection
 
-  ' --- 5. SELECCIONAR LA PRIMERA OPCIÓN Y CARGAR EL LISTBOX ---
-  ' SETEAR Index DISPARA EL HANDLER cmbShortcodes_Click EN FMain,
-  ' QUE A SU VEZ INVOCA CargarShortcodesPorTipo. ASÍ EL FLUJO ES
-  ' UNIFORME (NO HAY DOS CAMINOS DE INICIALIZACIÓN).
+  ' --- 2. CONTROLES ---
+  lst.Clear
+  txt.ReadOnly = True
+  txt.Wrap = True
+  LimpiarAyuda()
+
+  cmb.Clear
+  cmb.Add(OPCION_BLOQUES)
+  cmb.Add(OPCION_LINEA)
+  cmb.ReadOnly = True
+
+  ' --- 3. PRIMERA OPCIÓN ---
+  ' ASIGNAR Index DISPARA cmbShortcodes_Click, QUE CARGA LA LISTA: UN SOLO
+  ' CAMINO DE CARGA (GV-53)
   cmb.Index = 0
 
 End
 
 ' ==============================================================================
-' Función   : CargarShortcodesPorTipo
-' Propósito : Consulta a BD los shortcodes aplicables al proyecto activo
-'             filtrados por tipo de marcado. Llena el listview con grupos
-'             visuales (Comunes, Estructura del producto, Disciplinares).
-'             Cada ítem del ListView lleva una Key única:
-'               - "sc:nombre" para shortcodes seleccionables
-'               - "sep:N" para separadores no clickables
-'             Los separadores se destacan con RichText en bold y Background
-'             en Color.Background; los items se muestran con Text normal.
-' Parámetros: sTipoMarcado As String  — TIPO_FENCED o TIPO_INLINE
-'             lst As ListView         — listview a poblar
-' Retorna   : Boolean — True si la carga fue exitosa
+' Función   : TipoDeOpcion
+' Propósito : Traduce la opción del combo al tipo del catálogo
+' Parámetros: sOpcion As String — texto elegido en el combo
+' Retorna   : String — TIPO_BLOQUE o TIPO_LINEA; vacío si no es una opción
 ' ==============================================================================
-Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListView) As Boolean
+Public Function TipoDeOpcion(sOpcion As String) As String
 
-  Dim hResultado As Result
-  Dim sSQL As String
-  Dim sCampoAplica As String
+  If sOpcion = OPCION_BLOQUES Then Return m_CatalogoShortcodes.TIPO_BLOQUE
+  If sOpcion = OPCION_LINEA Then Return m_CatalogoShortcodes.TIPO_LINEA
+  Return ""
+
+End
+
+' ==============================================================================
+' Función   : DescripcionDeTipo
+' Propósito : El texto del rótulo para un tipo de marcado
+' Parámetros: sTipo As String — TIPO_BLOQUE o TIPO_LINEA
+' Retorna   : String — el texto (SC-03: vive en m_Constantes)
+' ==============================================================================
+Public Function DescripcionDeTipo(sTipo As String) As String
+
+  If sTipo = m_CatalogoShortcodes.TIPO_LINEA Then Return m_Constantes.SHORTCODE_AYUDA_LINEA
+  Return m_Constantes.SHORTCODE_AYUDA_BLOQUES
+
+End
+
+' ==============================================================================
+' Función   : CargarShortcodesPorTipo
+' Propósito : Llena la lista con los shortcodes visibles del tipo de
+'             marcado y del tipo de proyecto, con un separador por grupo y,
+'             en los disciplinares, uno por perfil.
+' Parámetros: sTipo As String — TIPO_BLOQUE o TIPO_LINEA
+'             lst As ListView — FMain.lbDefiniciones
+' Retorna   : Boolean — True si se llenó (aunque haya quedado sin shortcodes)
+' ==============================================================================
+Public Function CargarShortcodesPorTipo(sTipo As String, lst As ListView) As Boolean
+
+  Dim aVisibles As CShortcodeCatalogo[]
+  Dim oFila As CShortcodeCatalogo
+  Dim bLibro As Boolean
+  Dim sGrupoAnterior As String
   Dim sPerfilAnterior As String
-  Dim sPerfilActual As String
-  Dim bAbrioSeccionDisciplinares As Boolean
-  Dim iContadorSep As Integer
-  Dim sKey As String
-  Dim sTextoSep As String
+  Dim sTexto As String
 
-  ' --- 1. RESET DEL LISTVIEW Y DE LA COLLECTION DE ESTADO ---
+  ' --- 1. RESET ---
   lst.Clear
   cShortcodesActuales = New Collection
-  iContadorSep = 0
+  LimpiarAyuda()
 
-  ' --- 2. DETERMINAR EL CAMPO DE FILTRO SEGÚN TIPO DE PROYECTO ACTIVO ---
-  ' LECTURA DE FMain.TipoProyectoActual: SI ES REVISTA → FILTRAR POR aplica_revista,
-  ' SI ES LIBRO → FILTRAR POR aplica_libro. LA VARIABLE DEBE SER Public EN FMain.
+  ' --- 2. TIPO DE PROYECTO: LIBRO O REVISTA ---
   Select Case FMain.TipoProyectoActual
     Case m_Constantes.TIPO_REVISTA_MD
-      sCampoAplica = "aplica_revista"
+      bLibro = False
     Case m_Constantes.TIPO_LIBRO_MD
-      sCampoAplica = "aplica_libro"
+      bLibro = True
     Default
-      ' NO HAY PROYECTO ABIERTO O ES UN TIPO NO MANEJADO (EJ. TIPO_LIBRO_LATEX)
+      ' SIN PROYECTO, O DE UN TIPO QUE NO USA SHORTCODES
       Return False
   End Select
 
-  ' --- 3. CONSTRUIR LA QUERY ---
-  ' ORDEN: PRIMERO LOS COMUNES (perfil_disciplinar IS NULL), DENTRO DE
-  ' COMUNES SEPARANDO ESTRUCTURALES DE NO ESTRUCTURALES POR NOMBRE LIKE
-  ' 'sec-%'. DESPUÉS LOS DISCIPLINARES ORDENADOS POR PERFIL Y NOMBRE.
-  '
-  ' EL CAMPO sCampoAplica SE INCRUSTA POR CONCATENACIÓN PORQUE NO ES UN
-  ' VALOR SINO UN NOMBRE DE COLUMNA — Connection.Exec NO PERMITE
-  ' PARAMETRIZAR NOMBRES DE COLUMNAS. ES SEGURO PORQUE EL VALOR SALE
-  ' DEL Select Case INTERNO, NO DE INPUT DEL USUARIO.
-  sSQL = "SELECT id, nombre, etiqueta, descripcion, ejemplo, "
-  sSQL &= "       sintaxis_apertura, sintaxis_cierre, tiene_contenido, "
-  sSQL &= "       tipo_marcado, perfil_disciplinar, mapeo_revista, mapeo_libro, "
-  sSQL &= "       atributos_requeridos "
-  sSQL &= "FROM   shortcodes "
-  sSQL &= "WHERE  activo = 1 "
-  sSQL &= "  AND  tipo_marcado = &1 "
-  sSQL &= "  AND  " & sCampoAplica & " = 1 "
-  sSQL &= "ORDER BY "
-  sSQL &= "  CASE "
-  sSQL &= "    WHEN perfil_disciplinar IS NULL AND nombre NOT LIKE 'sec-%' THEN 1 "
-  sSQL &= "    WHEN perfil_disciplinar IS NULL AND nombre LIKE 'sec-%' THEN 2 "
-  sSQL &= "    ELSE 3 "
-  sSQL &= "  END, "
-  sSQL &= "  perfil_disciplinar, "
-  sSQL &= "  nombre"
+  ' --- 3. LO QUE EL DICCIONARIO DEJA VER, EN EL ORDEN DEL CATÁLOGO ---
+  aVisibles = m_CatalogoShortcodes.Visibles(bLibro, sTipo)
 
-  Try hResultado = m_ConexionBD.mConn.Exec(sSQL, sTipoMarcado)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al cargar shortcodes:" & Chr(10) & Error.Text)
-    Return False
+  ' UNA LISTA VACÍA SE DICE, NO SE DEJA EN BLANCO (GV-23)
+  If aVisibles.Count = 0 Then
+    AgregarSeparador(lst, SEP_VACIO, False)
+    Return True
   Endif
 
-  If Not hResultado Then Return False
+  ' --- 4. SEPARADORES AL CAMBIAR DE GRUPO, Y DE PERFIL EN LOS DISCIPLINARES ---
+  sGrupoAnterior = "#"
+  sPerfilAnterior = "#"
+  For Each oFila In aVisibles
 
-  ' --- 4. POBLAR LISTVIEW CON SEPARADORES VISUALES Y SHORTCODES ---
-  ' SE LLEVA UN ESTADO (sPerfilAnterior) PARA DETECTAR CAMBIOS DE GRUPO
-  ' Y EMITIR LOS SEPARADORES EN LOS LUGARES CORRECTOS.
-  ' CADA Add USA UNA KEY ÚNICA: "sc:nombre" PARA SHORTCODES,
-  ' "sep:N" PARA SEPARADORES (CON N AUTOINCREMENTAL).
+    If oFila.sGrupo <> sGrupoAnterior Then
+      AgregarSeparador(lst, NombreDeGrupo(oFila.sGrupo), True)
+      sGrupoAnterior = oFila.sGrupo
+      sPerfilAnterior = "#"
+    Endif
 
-  sPerfilAnterior = "###INICIO###"   ' VALOR CENTINELA PARA FORZAR EMISIÓN DEL PRIMER SEPARADOR
-  bAbrioSeccionDisciplinares = False
-
-  For Each hResultado
-    sPerfilActual = IIf(IsNull(hResultado["perfil_disciplinar"]), "", hResultado["perfil_disciplinar"])
-
-    ' EMISIÓN DE SEPARADORES PRINCIPALES SEGÚN CAMBIO DE GRUPO
-    If sPerfilActual = "" And InStr(hResultado["nombre"], "sec-") = 0 Then
-      ' GRUPO 1: COMUNES (TRANSVERSALES NO ESTRUCTURALES)
-      If sPerfilAnterior = "###INICIO###" Then
-        iContadorSep += 1
-        sKey = "sep:" & iContadorSep
-        lst.Add(sKey, SEP_COMUNES)
-        EstilarSeparadorPrincipal(lst, sKey, SEP_COMUNES)
-        sPerfilAnterior = "COMUNES"
-      Endif
-    Else If sPerfilActual = "" And InStr(hResultado["nombre"], "sec-") = 1 Then
-      ' GRUPO 2: ESTRUCTURA DEL PRODUCTO
-      If sPerfilAnterior <> "ESTRUCTURA" Then
-        iContadorSep += 1
-        sKey = "sep:" & iContadorSep
-        lst.Add(sKey, SEP_ESTRUCTURA)
-        EstilarSeparadorPrincipal(lst, sKey, SEP_ESTRUCTURA)
-        sPerfilAnterior = "ESTRUCTURA"
-      Endif
-    Else
-      ' GRUPO 3: DISCIPLINARES (CON SUB-GRUPOS POR PERFIL)
-      If Not bAbrioSeccionDisciplinares Then
-        iContadorSep += 1
-        sKey = "sep:" & iContadorSep
-        lst.Add(sKey, SEP_DISCIPLINARES)
-        EstilarSeparadorPrincipal(lst, sKey, SEP_DISCIPLINARES)
-        bAbrioSeccionDisciplinares = True
-        sPerfilAnterior = ""
-      Endif
-      ' SUBGRUPO POR PERFIL DISCIPLINAR
-      If sPerfilActual <> sPerfilAnterior Then
-        iContadorSep += 1
-        sKey = "sep:" & iContadorSep
-        sTextoSep = FormatearNombrePerfil(sPerfilActual)
-        lst.Add(sKey, sTextoSep)
-        EstilarSeparadorSubgrupo(lst, sKey, sTextoSep)
-        sPerfilAnterior = sPerfilActual
+    If oFila.sPerfil <> "" Then
+      If oFila.sPerfil <> sPerfilAnterior Then
+        AgregarSeparador(lst, FormatearNombrePerfil(oFila.sPerfil), False)
+        sPerfilAnterior = oFila.sPerfil
       Endif
     Endif
 
-    ' EMISIÓN DEL ITEM DEL SHORTCODE
-    sKey = "sc:" & hResultado["nombre"]
-    lst.Add(sKey, PREFIJO_ITEM & hResultado["etiqueta"])
-    cShortcodesActuales[sKey] = CrearCollectionDesdeResult(hResultado)
+    ' EL ÍTEM; UN BORRADOR SOLO SE VE DESDE EL IDE Y SE MARCA
+    sTexto = PREFIJO_ITEM & oFila.sEtiqueta
+    If oFila.Estado(bLibro) <> m_CatalogoShortcodes.ESTADO_LIBERADO Then sTexto &= MARCA_BORRADOR
+    lst.Add("sc:" & oFila.sNombre, sTexto)
+    cShortcodesActuales["sc:" & oFila.sNombre] = oFila
+
   Next
 
   Return True
@@ -232,293 +182,335 @@ Public Function CargarShortcodesPorTipo(sTipoMarcado As String, lst As ListView)
 End
 
 ' ==============================================================================
-' Función   : EstilarSeparadorPrincipal
-' Propósito : Aplica estilo visual a un separador principal del ListView:
-'             texto en bold (vía RichText) y fondo en Color.Background.
-'             Los separadores principales son los grupos primarios
-'             (Comunes, Estructura del producto, Disciplinares).
-' Parámetros: lst As ListView  — control destino
-'             sKey As String   — key del ítem a estilar
-'             sTexto As String — texto plano (se envuelve en <b>...</b>)
+' Función   : AgregarSeparador
+' Propósito : Agrega un ítem que no se puede elegir: un grupo (con fondo)
+'             o un perfil
+' Parámetros: lst As ListView — lista
+'             sTexto As String — texto del separador
+'             bPrincipal As Boolean — True grupo, False perfil o aviso
+' Retorna   : nada
 ' ==============================================================================
-Private Sub EstilarSeparadorPrincipal(lst As ListView, sKey As String, sTexto As String)
+Private Sub AgregarSeparador(lst As ListView, sTexto As String, bPrincipal As Boolean)
 
-  ' SEPARADOR PRINCIPAL (Comunes, Estructura del producto, Disciplinares):
-  ' BOLD + FONDO AMARILLO ARENA SUAVE. SE DISTINGUE VISUALMENTE DEL
-  ' SUBGRUPO (QUE LLEVA BOLD + FONDO Color.Background), MARCANDO QUE
-  ' ESTÁ EN UN NIVEL JERÁRQUICO SUPERIOR.
-  lst[sKey].RichText = "<b>" & sTexto & "</b>"
-  lst[sKey].Background = &HF5EBC8&
+  Dim sKey As String
+
+  ' LA KEY ES ÚNICA POR LA POSICIÓN EN LA LISTA
+  sKey = "sep:" & CStr(lst.Count) & ":" & sTexto
+  lst.Add(sKey, sTexto)
+  lst[sKey].RichText = "<b>" & Html$(sTexto) & "</b>"
+  If bPrincipal Then
+    lst[sKey].Background = &HF5EBC8&
+  Else
+    lst[sKey].Background = Color.Background
+  Endif
 
 End
 
 ' ==============================================================================
-' Función   : EstilarSeparadorSubgrupo
-' Propósito : Aplica estilo visual a un separador de subgrupo del ListView:
-'             texto en bold (vía RichText) y fondo en Color.Background.
-'             Hoy coincide con el estilo del separador principal; se mantiene
-'             como función separada para futuros refinamientos visuales
-'             (ej. tamaño de fuente o color distinto).
-' Parámetros: lst As ListView  — control destino
-'             sKey As String   — key del ítem a estilar
-'             sTexto As String — texto plano (se envuelve en <b>...</b>)
+' Función   : NombreDeGrupo
+' Propósito : El texto del separador de un grupo del catálogo
+' Parámetros: sGrupo As String — comun, estructura o disciplinar
+' Retorna   : String — texto visible
 ' ==============================================================================
-Private Sub EstilarSeparadorSubgrupo(lst As ListView, sKey As String, sTexto As String)
+Private Function NombreDeGrupo(sGrupo As String) As String
 
-  lst[sKey].RichText = "<b>" & sTexto & "</b>"
-  lst[sKey].Background = Color.Background
+  Select Case sGrupo
+    Case "comun"
+      Return SEP_COMUNES
+    Case "estructura"
+      Return SEP_ESTRUCTURA
+    Case "disciplinar"
+      Return SEP_DISCIPLINARES
+  End Select
+  Return sGrupo
 
 End
 
 ' ==============================================================================
-' Función   : CrearCollectionDesdeResult
-' Propósito : Convierte una fila del Result en una Collection para guardar en
-'             aShortcodesActuales. Se usa para que el manejo posterior no
-'             dependa de Result (que se cierra cuando termina el For Each).
-' Parámetros: hRes As Result — fila actual del cursor
-' Retorna   : Collection con todos los campos del shortcode
+' Función   : FormatearNombrePerfil
+' Propósito : El perfil del catálogo como texto visible (ciencias_sociales
+'             → Ciencias sociales)
+' Parámetros: sPerfil As String — perfil del catálogo
+' Retorna   : String — texto visible
 ' ==============================================================================
-Private Function CrearCollectionDesdeResult(hRes As Result) As Collection
-
-  Dim c As New Collection
-
-  c["id"] = hRes["id"]
-  c["nombre"] = hRes["nombre"]
-  c["etiqueta"] = hRes["etiqueta"]
-  c["descripcion"] = hRes["descripcion"]
-  c["ejemplo"] = hRes["ejemplo"]
-  c["sintaxis_apertura"] = hRes["sintaxis_apertura"]
-  c["sintaxis_cierre"] = hRes["sintaxis_cierre"]
-  c["tiene_contenido"] = hRes["tiene_contenido"]
-  c["tipo_marcado"] = hRes["tipo_marcado"]
-  c["perfil_disciplinar"] = hRes["perfil_disciplinar"]
-  c["mapeo_revista"] = hRes["mapeo_revista"]
-  c["mapeo_libro"] = hRes["mapeo_libro"]
-  c["atributos_requeridos"] = hRes["atributos_requeridos"]
-
-  Return c
-
-End
-
 Private Function FormatearNombrePerfil(sPerfil As String) As String
 
-  Dim s As String
+  Dim sTexto As String
 
-  s = Replace(sPerfil, "_", " ")
-  s = String.UCase(String.Left(s, 1)) & String.Mid(s, 2)
-  Return s
+  sTexto = Replace(sPerfil, "_", " ")
+  Return String.UCase(String.Left(sTexto, 1)) & String.Mid(sTexto, 2)
 
 End
 
 ' ==============================================================================
-' Función   : ExtraerClaseDeApertura
-' Propósito : Extrae la primera clase Pandoc de una sintaxis de apertura
-'             fenced. Esta clase es lo que debe usarse en el cierre nombrado,
-'             NO el campo nombre del shortcode (que puede llevar prefijos
-'             identificatorios internos de BD como "sec-").
-'             Soporta las dos notaciones de Pandoc:
-'               - Con llaves: "::: {.editorial}" o "::: {.fig #id .fullwidth}"
-'               - Forma corta: "::: epigraph" o ":::epigraph"
-' Parámetros: sApertura As String — sintaxis de apertura tal como está en BD
-' Retorna   : String — clase Pandoc (ej. "editorial", "fig", "epigraph")
+' Función   : AnclaCierre
+' Propósito : Arma el ancla del cierre nombrado de un bloque (SC-33). Es el
+'             ÚNICO lugar con el formato: lo usan InsertarShortcode y
+'             FMain.InsertarFigura. Quien la escribe pone antes una línea
+'             en blanco; sin ella, Pandoc la lee como texto del párrafo.
+' Parámetros: sClase As String — clase de Pandoc del bloque (fig, epigraph)
+' Retorna   : String — "[/clase]: # ()", sin salto de línea
 ' ==============================================================================
-Private Function ExtraerClaseDeApertura(sApertura As String) As String
+Public Function AnclaCierre(sClase As String) As String
 
-  Dim iPosLlave As Integer
-  Dim iFinLlave As Integer
-  Dim iEspacio As Integer
-  Dim sResto As String
+  Return "[/" & sClase & "]: # ()"
 
-  ' --- 1. CASO LLAVES: "::: {.clase ...}" ---
-  ' BUSCAR LA PRIMERA APARICIÓN DE "{." Y EXTRAER HASTA EL PRIMER ESPACIO O "}"
-  iPosLlave = String.InStr(sApertura, "{.")
-  If iPosLlave > 0 Then
-    sResto = String.Mid(sApertura, iPosLlave + 2)
-    iEspacio = String.InStr(sResto, " ")
-    iFinLlave = String.InStr(sResto, "}")
-    ' EL FIN DE LA CLASE ES LO QUE OCURRA PRIMERO: ESPACIO O LLAVE
-    If iEspacio > 0 And If (iFinLlave = 0 Or iEspacio < iFinLlave) Then
-      Return String.Left(sResto, iEspacio - 1)
-    Else If iFinLlave > 0 Then
-      Return String.Left(sResto, iFinLlave - 1)
-    Endif
-  Endif
+End
 
-  ' --- 2. CASO FORMA CORTA: "::: nombre" (SIN LLAVES) ---
-  ' EXTRAER LO QUE VIENE DESPUÉS DE ":::" HASTA UN ESPACIO O FIN DE LÍNEA
-  sResto = Trim(String.Mid(sApertura, 4))
-  iEspacio = String.InStr(sResto, " ")
-  If iEspacio > 0 Then
-    Return String.Left(sResto, iEspacio - 1)
-  Endif
+' ==============================================================================
+' Función   : LimpiarAyuda
+' Propósito : Deja la ayuda vacía y sin shortcode
+' Parámetros: ninguno
+' Retorna   : nada
+' ==============================================================================
+Public Sub LimpiarAyuda()
 
-  Return sResto
+  $sNombreEnAyuda = ""
+  If IsNull($hAyuda) Then Return
+  $hAyuda.RichText = ""
 
 End
 
 ' ==============================================================================
 ' Función   : RenderizarInfoShortcode
-' Propósito : Formatea descripción + ejemplo + mapeo del shortcode en el
-'             TextEditor de preview. Tres bloques visualmente separados.
-' Parámetros: cShortcode As Collection  — datos del shortcode (o Null si separador)
-'             txt As TextEditor         — control TextEditorPreview
+' Propósito : Muestra la ayuda de un shortcode: el fragmento que exporta
+'             gbShortcodes, con el ejemplo coloreado en el lugar de la marca
+' Parámetros: oFila As CShortcodeCatalogo — shortcode; Null limpia la ayuda
+' Retorna   : nada
 ' ==============================================================================
-Public Sub RenderizarInfoShortcode(cShortcode As Collection, txt As TextEditor)
+Public Sub RenderizarInfoShortcode(oFila As CShortcodeCatalogo)
 
-  Dim sTexto As String
-  Dim sMapeo As String
-  Dim sLineaSep As String
-
-  ' --- 1. SI ES UN SEPARADOR (Null), LIMPIAR Y SALIR ---
-  If IsNull(cShortcode) Then
-    txt.Text = ""
+  ' --- 1. SIN SHORTCODE (UN SEPARADOR): AYUDA VACÍA ---
+  If IsNull(oFila) Then
+    LimpiarAyuda()
     Return
   Endif
 
-  ' --- 2. CONSTRUIR EL TEXTO DE INFO ---
-  sLineaSep = String$(60, "─")
+  ' --- 2. SE RECUERDA PARA REPINTARLA AL CAMBIAR DE TEMA ---
+  $sNombreEnAyuda = oFila.sNombre
+  PintarAyuda()
 
-  ' BLOQUE 1: ¿QUÉ ES?
-  sTexto = "¿QUÉ ES?" & Chr(10)
-  sTexto &= sLineaSep & Chr(10)
-  sTexto &= cShortcode["descripcion"] & Chr(10) & Chr(10)
+End
 
-  ' BLOQUE 2: ¿CÓMO SE ESCRIBE?
-  sTexto &= "¿CÓMO SE ESCRIBE?" & Chr(10)
-  sTexto &= sLineaSep & Chr(10)
-  sTexto &= IIf(IsNull(cShortcode["ejemplo"]), "(sin ejemplo)", cShortcode["ejemplo"]) & Chr(10) & Chr(10)
+' ==============================================================================
+' Función   : RefrescarAyuda
+' Propósito : Vuelve a pintar la ayuda con el tema y la tipografía
+'             actuales. La llama m_ResaltadoSintaxis al cambiarlos.
+' Parámetros: ninguno
+' Retorna   : nada
+' ==============================================================================
+Public Sub RefrescarAyuda()
 
-  ' BLOQUE 3: MAPEO CANÓNICO (SEGÚN TIPO DE PROYECTO ACTIVO)
-  sTexto &= "MAPEA A:" & Chr(10)
-  sTexto &= sLineaSep & Chr(10)
+  If $sNombreEnAyuda = "" Then Return
+  PintarAyuda()
 
-  Select Case FMain.TipoProyectoActual
-    Case m_Constantes.TIPO_REVISTA_MD
-      sMapeo = IIf(IsNull(cShortcode["mapeo_revista"]), "(sin mapeo definido)", "<" & cShortcode["mapeo_revista"] & "> (JATS)")
-    Case m_Constantes.TIPO_LIBRO_MD
-      sMapeo = IIf(IsNull(cShortcode["mapeo_libro"]), "(sin mapeo definido)", "<" & cShortcode["mapeo_libro"] & "> (DocBook)")
-    Default
-      sMapeo = "(tipo de proyecto desconocido)"
-  End Select
-  sTexto &= sMapeo
+End
 
-  ' BLOQUE 4 OPCIONAL: ATRIBUTOS REQUERIDOS
-  If Not IsNull(cShortcode["atributos_requeridos"]) Then
-    sTexto &= Chr(10) & Chr(10) & "ATRIBUTOS REQUERIDOS:" & Chr(10)
-    sTexto &= sLineaSep & Chr(10)
-    sTexto &= cShortcode["atributos_requeridos"]
+' ==============================================================================
+' Función   : PintarAyuda
+' Propósito : Arma el HTML de la ayuda del shortcode en curso y lo asigna
+' Parámetros: ninguno
+' Retorna   : nada
+' ==============================================================================
+Private Sub PintarAyuda()
+
+  Dim oFila As CShortcodeCatalogo
+  Dim sFragmento As String
+  Dim sEjemplo As String
+  Dim aHtml As New String[]
+
+  ' --- 1. EL SHORTCODE Y SU FRAGMENTO ---
+  If IsNull($hAyuda) Then Return
+  oFila = m_CatalogoShortcodes.PorNombre($sNombreEnAyuda)
+  If IsNull(oFila) Then
+    LimpiarAyuda()
+    Return
   Endif
 
-  ' --- 3. ASIGNAR AL TEXT EDITOR ---
-  txt.Text = sTexto
+  sFragmento = m_CatalogoShortcodes.AyudaHTML(oFila.sNombre)
+
+  ' --- 2. DOCUMENTO CON SU ESTILO EN LA CABECERA (GV-64) ---
+  aHtml.Add("<html><head><style>")
+  aHtml.Add("h3 { font-size: 12pt; margin-top: 10px; margin-bottom: 4px; }")
+  aHtml.Add("p { margin-top: 0px; margin-bottom: 6px; }")
+  aHtml.Add("code { font-family: monospace; }")
+  aHtml.Add("</style></head><body>")
+
+  ' UN BORRADOR SOLO SE VE DESDE EL IDE: SE DICE QUE LO ES
+  If oFila.Estado(FMain.TipoProyectoActual = m_Constantes.TIPO_LIBRO_MD) <> m_CatalogoShortcodes.ESTADO_LIBERADO Then
+    aHtml.Add("<p><i>Borrador: no se ve en la versión instalada.</i></p>")
+  Endif
+
+  ' --- 3. EL FRAGMENTO, O POR QUÉ NO ESTÁ (GV-23) ---
+  If sFragmento = "" Then
+    aHtml.Add("<p>No se encontró la ayuda de <b>" & Html$(oFila.sNombre) & "</b> en " &
+      Html$(m_CatalogoShortcodes.Carpeta()) & ".</p>")
+  Else
+    sEjemplo = m_CatalogoShortcodes.Ejemplo(oFila.sNombre)
+    aHtml.Add(Replace(sFragmento, m_CatalogoShortcodes.MARCA_EJEMPLO, BloqueEjemplo(sEjemplo)))
+  Endif
+
+  aHtml.Add("</body></html>")
+
+  ' --- 4. ASIGNACIÓN: DESDE EL PRINCIPIO (GV-37); NUNCA Pos (GV-44) ---
+  Try $hAyuda.RichText = aHtml.Join(gb.NewLine)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo mostrar la ayuda del shortcode:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+  $hAyuda.Select(0, 0)
+  $hAyuda.ScrollY = 0
+
+End
+
+' ==============================================================================
+' Función   : BloqueEjemplo
+' Propósito : El ejemplo coloreado con la gramática y el tema del editor,
+'             en una celda con el fondo del tema y la tipografía del editor
+' Parámetros: sEjemplo As String — el ejemplo tal como se escribe
+' Retorna   : String — tabla HTML de una celda
+' ==============================================================================
+Private Function BloqueEjemplo(sEjemplo As String) As String
+
+  Dim sParrafos As String
+
+  ' --- 1. SIN EJEMPLO EXPORTADO ---
+  If sEjemplo = "" Then Return "<p><i>Sin ejemplo.</i></p>"
+
+  ' --- 2. COLOREADO; SI EL RESALTADO FALLA (YA INFORMADO), TEXTO PLANO ---
+  sParrafos = m_ResaltadoSintaxis.HtmlResaltado(sEjemplo, "markdown", m_ResaltadoSintaxis.CssFuente())
+  If sParrafos = "" Then sParrafos = "<pre>" & Html$(sEjemplo) & "</pre>"
+
+  ' --- 3. CELDA A TODO EL ANCHO CON EL FONDO DEL TEMA (GV-64) ---
+  Return "<table width='100%' cellpadding='8' cellspacing='0'><tr><td bgcolor='" &
+    m_ResaltadoSintaxis.ColorFondoHex() & "'>" & sParrafos & "</td></tr></table>"
 
 End
 
 ' ==============================================================================
 ' Función   : InsertarShortcode
-' Propósito : Inserta el shortcode en el editor según su tipo:
-'             - fenced + tiene_contenido=1: envuelve selección con apertura,
-'               cierre nombrado link reference, y ::: final
-'             - fenced + tiene_contenido=0: inserta plantilla con placeholder,
-'               previa confirmación si hay selección a reemplazar
-'             - inline + tiene_contenido=1: envuelve selección en una línea
-'             - inline + tiene_contenido=0: caso no usado hoy, pero soportado
-'               por simetría
-' Parámetros: cShortcode As Collection
-' Notas     : Opera sobre el editor principal a través de m_EditorPrincipal (SC-18)
+' Propósito : Inserta un shortcode en el editor según su modo:
+'             - figura: el camino de FMain.InsertarFigura (SC-32)
+'             - envolver: rodea la selección, que es obligatoria
+'             - plantilla: inserta el marcador • en lugar del contenido y
+'               lo deja seleccionado (SC-21)
+'             Un bloque ocupa líneas propias y cierra con el ancla nombrada
+'             precedida de línea en blanco (SC-33); una marca en línea
+'             cierra en la misma línea.
+' Parámetros: oFila As CShortcodeCatalogo — shortcode
+' Retorna   : nada
 ' ==============================================================================
-Public Sub InsertarShortcode(cShortcode As Collection)
+Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
 
-  Dim sApertura As String
-  Dim sCierre As String
   Dim sSeleccion As String
-  Dim sCierreAncla As String
+  Dim sContenido As String
   Dim sInsertar As String
-  Dim iRespuesta As Integer
-  Dim bTieneContenido As Boolean
-  Dim bEsFenced As Boolean
+  Dim sTexto As String
+  Dim iInicio As Integer
+  Dim iLargo As Integer
+  Dim iMarca As Integer
 
-  ' --- 1. VALIDAR ENTRADA ---
-  If IsNull(cShortcode) Then Return
+  ' --- 1. VALIDACIÓN ---
+  If IsNull(oFila) Then Return
 
-  ' --- 2. EXTRAER DATOS DEL SHORTCODE ---
-  sApertura = cShortcode["sintaxis_apertura"]
-  sCierre = cShortcode["sintaxis_cierre"]
-  bTieneContenido = cShortcode["tiene_contenido"]
-  bEsFenced = (cShortcode["tipo_marcado"] = TIPO_FENCED)
-
-  ' --- 2b. FIGURA: EL MISMO CAMINO QUE EL BOTÓN DE LA BARRA ---
-  ' UNA FIGURA NO ENVUELVE TEXTO: NECESITA ELEGIR LA IMAGEN, COPIARLA A
-  ' /media Y DERIVAR EL id DE SU NOMBRE. FMain.InsertarFigura HACE TODO
-  ' ESO, VALIDA LA POSICIÓN DEL CURSOR Y DEVUELVE EL FOCO
-  If bEsFenced Then
-    If ExtraerClaseDeApertura(sApertura) = "fig" Then
-      FMain.InsertarFigura(InStr(sApertura, ".fullwidth") > 0)
-      Return
-    Endif
+  ' --- 2. FIGURA: ELIGE LA IMAGEN, LA COPIA A /media Y ARMA EL BLOQUE ---
+  If oFila.sModo = m_CatalogoShortcodes.MODO_FIGURA Then
+    FMain.InsertarFigura(InStr(oFila.sApertura, ".fullwidth") > 0)
+    Return
   Endif
 
-  ' --- 3. OBTENER TEXTO SELECCIONADO ---
+  ' --- 3. SELECCIÓN SEGÚN EL MODO ---
   sSeleccion = m_EditorPrincipal.TextoSeleccionado()
 
-  ' --- 4. VALIDACIONES Y CONFIRMACIONES ---
-  If bTieneContenido Then
-    ' REQUIERE SELECCIÓN PARA ENVOLVER
+  If oFila.sModo = m_CatalogoShortcodes.MODO_ENVOLVER Then
     If sSeleccion = "" Then
       m_Sonido.sonar("Warning")
-      Message.Warning("Debe seleccionar el texto al que desea aplicar el shortcode.")
+      Message.Warning("Seleccione el texto al que quiere aplicar «" & oFila.sEtiqueta & "».")
+      FMain.txtEditorProyecto.SetFocus()
       Return
     Endif
+    sContenido = sSeleccion
   Else
-    ' SHORTCODE SIN CONTENIDO: SI HAY SELECCIÓN, CONFIRMAR REEMPLAZO
+    ' PLANTILLA: NO ENVUELVE; SI HAY SELECCIÓN, SE CONFIRMA QUE SE REEMPLAZA
     If sSeleccion <> "" Then
       m_Sonido.sonar("Warning")
-      iRespuesta = Message.Question("Este shortcode no envuelve contenido." & Chr(10) & Chr(10) &
-        "El texto seleccionado será reemplazado por el shortcode." & Chr(10) & Chr(10) &
-        "¿Desea continuar?", "Sí", "No")
-      If iRespuesta <> 1 Then Return
+      If Message.Question("«" & oFila.sEtiqueta & "» no envuelve texto." & gb.NewLine & gb.NewLine &
+          "El texto seleccionado será reemplazado. ¿Continuar?", "Sí", "No") <> 1 Then
+        FMain.txtEditorProyecto.SetFocus()
+        Return
+      Endif
     Endif
+    sContenido = m_Constantes.SNIPPET_MARCADOR
   Endif
 
-  ' --- 5. CONSTRUIR EL TEXTO A INSERTAR SEGÚN TIPO DE MARCADO ---
-  If bEsFenced Then
-    ' FENCED DIV: BLOQUE CON LÍNEAS PROPIAS.
-    '
-    ' CONVENCIÓN DE CIERRE NOMBRADO (RC-MD-01):
-    ' EL CIERRE LLEVA UN LINK REFERENCE MARKDOWN "[/clase]: # ()" ANTES DEL
-    ' ":::" FINAL. PANDOC LO PROCESA COMO BLOQUE SUELTO Y LO DESCARTA EN EL
-    ' AST (NO LLEGA AL OUTPUT) SIEMPRE QUE TENGA LÍNEA EN BLANCO ANTES.
-    '
-    ' SI LA LÍNEA EN BLANCO SE PIERDE (POR EDICIÓN MANUAL POSTERIOR),
-    ' PANDOC INTERPRETA EL LINK REFERENCE COMO CONTINUACIÓN DEL PÁRRAFO
-    ' ANTERIOR Y APARECE COMO TEXTO VISIBLE EN EL OUTPUT.
-    ' POR ESO ESTE Insert() GENERA SIEMPRE LÍNEA EN BLANCO ANTES Y DESPUÉS
-    ' DEL CONTENIDO DEL BLOQUE.
-    '
-    ' LA CLASE PANDOC SE EXTRAE DE LA APERTURA (NO DEL CAMPO nombre, QUE
-    ' PUEDE LLEVAR PREFIJOS INTERNOS DE BD COMO "sec-"). ASÍ EL CIERRE
-    ' SIEMPRE MATCHEA LA APERTURA, INDEPENDIENTEMENTE DEL nombre EN BD.
-    sCierreAncla = "[/" & ExtraerClaseDeApertura(sApertura) & "]: # ()"
-    If bTieneContenido Then
-      sInsertar = sApertura & Chr(10) & Chr(10) & sSeleccion & Chr(10) & Chr(10) & sCierreAncla & Chr(10) & sCierre
-    Else
-      sInsertar = sApertura & Chr(10) & Chr(10) & "{{contenido}}" & Chr(10) & Chr(10) & sCierreAncla & Chr(10) & sCierre
-    Endif
+  ' --- 4. TEXTO A INSERTAR ---
+  ' EL TRAMO SE TOMA ANTES: ES LO QUE SE REEMPLAZA
+  iInicio = m_EditorPrincipal.InicioSeleccion()
+  iLargo = m_EditorPrincipal.LargoSeleccion()
+
+  If oFila.sTipo = m_CatalogoShortcodes.TIPO_BLOQUE Then
+    ' LÍNEA EN BLANCO ANTES DEL ANCLA: SIN ELLA PANDOC LA LEE COMO TEXTO (SC-33)
+    sInsertar = oFila.sApertura & Chr(10) & Chr(10) & sContenido & Chr(10) & Chr(10) &
+      AnclaCierre(oFila.sClase) & Chr(10) & oFila.sCierre
+    ' UN BLOQUE PEGADO A UN PÁRRAFO NO ES UN BLOQUE: PANDOC LO LEE COMO TEXTO
+    ' DEL PÁRRAFO, SIN AVISO (MEDIDO). SE AGREGAN LAS LÍNEAS EN BLANCO QUE FALTEN
+    sTexto = m_EditorPrincipal.Texto()
+    sInsertar = SeparacionAntes(String.Left(sTexto, iInicio)) & sInsertar &
+      SeparacionDespues(String.Mid(sTexto, iInicio + iLargo + 1))
   Else
-    ' INLINE SPAN: UNA SOLA LÍNEA, SIN CIERRE NOMBRADO (NO ES NECESARIO,
-    ' EL DELIMITADOR ]{.X} YA NOMBRA EL CIERRE EN LA MISMA LÍNEA)
-    If bTieneContenido Then
-      sInsertar = sApertura & sSeleccion & sCierre
-    Else
-      sInsertar = sApertura & "{{texto}}" & sCierre
-    Endif
+    sInsertar = oFila.sApertura & sContenido & oFila.sCierre
   Endif
 
-  ' --- 6. INSERTAR EN EL EDITOR: REEMPLAZA LA SELECCIÓN Y CONSERVA EL DESHACER ---
-  ' SI FALLA, EL MÓDULO YA INFORMÓ
+  ' --- 5. INSERCIÓN: REEMPLAZA LA SELECCIÓN Y CONSERVA EL DESHACER ---
   If Not m_EditorPrincipal.Insertar(sInsertar) Then Return
 
-  ' --- 7. RESTAURAR FOCO AL EDITOR (RC-GM-07) ---
+  ' --- 6. PLANTILLA: EL MARCADOR QUEDA SELECCIONADO (SC-21) ---
+  ' String.InStr CUENTA CARACTERES, COHERENTE CON Seleccionar (RC-GM-21)
+  If oFila.sModo = m_CatalogoShortcodes.MODO_PLANTILLA Then
+    iMarca = String.InStr(sInsertar, m_Constantes.SNIPPET_MARCADOR)
+    If iMarca > 0 Then m_EditorPrincipal.Seleccionar(iInicio + iMarca - 1, 1)
+  Endif
+
+  ' --- 7. FOCO AL EDITOR (RC-GM-07) ---
   FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ==============================================================================
+' Función   : SeparacionAntes
+' Propósito : Los saltos que faltan para que un bloque empiece después de
+'             una línea en blanco
+' Parámetros: sAntes As String — el texto anterior al punto de inserción
+' Retorna   : String — "", un salto o dos
+' ==============================================================================
+Private Function SeparacionAntes(sAntes As String) As String
+
+  ' --- 1. PRINCIPIO DEL DOCUMENTO O YA HAY LÍNEA EN BLANCO ---
+  If sAntes = "" Then Return ""
+  If String.Right(sAntes, 2) = Chr(10) & Chr(10) Then Return ""
+
+  ' --- 2. AL PRINCIPIO DE UNA LÍNEA FALTA UNO; A MITAD DE LÍNEA, DOS ---
+  If String.Right(sAntes, 1) = Chr(10) Then Return Chr(10)
+  Return Chr(10) & Chr(10)
+
+End
+
+' ==============================================================================
+' Función   : SeparacionDespues
+' Propósito : Los saltos que faltan para que después de un bloque haya una
+'             línea en blanco
+' Parámetros: sDespues As String — el texto posterior al tramo reemplazado
+' Retorna   : String — "", un salto o dos
+' ==============================================================================
+Private Function SeparacionDespues(sDespues As String) As String
+
+  ' --- 1. FIN DEL DOCUMENTO O YA HAY LÍNEA EN BLANCO ---
+  If sDespues = "" Then Return ""
+  If String.Left(sDespues, 2) = Chr(10) & Chr(10) Then Return ""
+
+  ' --- 2. SI SIGUE UN SALTO FALTA UNO; SI SIGUE TEXTO, DOS ---
+  If String.Left(sDespues, 1) = Chr(10) Then Return Chr(10)
+  Return Chr(10) & Chr(10)
 
 End

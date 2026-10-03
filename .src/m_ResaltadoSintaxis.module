@@ -9,6 +9,8 @@
 '   - LOS TEMAS (ARCHIVOS .theme EN ~/.gbpublisher/themes, MODELO SC-11)
 '   - EL TEMA ELEGIDO Y LA TIPOGRAFÍA, PERSISTIDOS EN gbpublisher.conf
 '   - EL MENÚ DE TEMAS Y LA LISTA DE VISORES A REPINTAR CUANDO CAMBIA EL TEMA
+'   - EL ARMADO DEL HTML DE UN PÁRRAFO, QUE USAN LOS VISORES Y LA AYUDA DE LOS
+'     SHORTCODES (HtmlDeParrafo, HtmlResaltado)
 ' EL ESTADO DE CADA ARCHIVO ABIERTO VIVE EN SU CVisorResaltado.
 
 ' CLAVES DE gbpublisher.conf. [Editor] YA LA USA FMain PARA LA TIPOGRAFÍA DE LOS EDITORES
@@ -221,6 +223,9 @@ Public Sub AplicarFuente(sFuente As String, fCuerpo As Float)
     hVisor.AplicarAspecto()
   Next
 
+  ' --- 4. LA AYUDA DE LOS SHORTCODES MUESTRA EL EJEMPLO CON ESTA TIPOGRAFÍA ---
+  m_Shortcodes.RefrescarAyuda()
+
 End
 
 ' ============================================
@@ -283,6 +288,9 @@ Public Function ElegirTema(sId As String) As Boolean
   For Each hVisor In $aVisores
     hVisor.Repintar()
   Next
+
+  ' LA AYUDA DE LOS SHORTCODES NO ES UN VISOR: SU EJEMPLO SE VUELVE A COLOREAR
+  m_Shortcodes.RefrescarAyuda()
 
   ' --- 3. MARCA EN EL MENÚ ---
   If $hMenuTemas Then
@@ -573,5 +581,152 @@ End
 Private Function RutaTemas() As String
 
   Return User.Home &/ ".gbpublisher" &/ "themes"
+
+End
+
+' ============================================
+' Función   : ColorFondoHex
+' Propósito : Color de fondo del tema actual como texto, para un HTML
+' Parámetros: ninguno
+' Retorna   : String — color como "#RRGGBB"
+' ============================================
+Public Function ColorFondoHex() As String
+
+  Dim sColor As String
+
+  sColor = $hTema["Tema/Fondo", "#FFFFFF"]
+  If IsNull(ColorDeHex(sColor)) Then Return "#FFFFFF"
+  Return sColor
+
+End
+
+' ============================================
+' Función   : CssFuente
+' Propósito : Familia y cuerpo de la tipografía elegida, para un HTML que
+'             no va en un visor (la ayuda de los shortcodes)
+' Parámetros: ninguno
+' Retorna   : String — declaraciones CSS de familia y cuerpo
+' ============================================
+Public Function CssFuente() As String
+
+  ' COMILLAS DOBLES: EL CSS VA DENTRO DE UN style='...' (HtmlDeParrafo)
+  Return "font-family:" & Chr(34) & $sFuente & Chr(34) & "; font-size:" & CStr($fCuerpo) & "pt"
+
+End
+
+' ============================================
+' Función   : HtmlResaltado
+' Propósito : Colorear un texto corto fuera de un visor: un párrafo HTML
+'             por línea, con los colores del tema actual. Lo usa la ayuda
+'             de los shortcodes para el ejemplo
+' Parámetros: sTexto As String — texto a colorear
+'             sGramatica As String — "xml" o "markdown"
+'             sEstiloExtra As String — CSS que se suma al de cada párrafo
+'               (la tipografía, cuando el HTML no va en un visor)
+' Retorna   : String — los párrafos; vacío si el resaltado no se pudo
+'             preparar (ya informado)
+' ============================================
+Public Function HtmlResaltado(sTexto As String, sGramatica As String, Optional sEstiloExtra As String = "") As String
+
+  Dim hResaltador As TextHighlighter
+  Dim aEstado As New Short[]
+  Dim aResaltado As Byte[]
+  Dim aHtml As New String[]
+  Dim aCss As String[]
+  Dim sEstiloParrafo As String
+  Dim sParrafo As String
+
+  ' --- 1. PRECONDICIONES: LA MISMA GRAMÁTICA Y EL MISMO TEMA QUE EL EDITOR ---
+  If Not Iniciar() Then Return ""
+  If Not AsegurarGramatica(sGramatica) Then Return ""
+  hResaltador = Resaltador(sGramatica)
+  If Not hResaltador Then Return ""
+
+  aCss = CssDeGramatica(sGramatica)
+  sEstiloParrafo = "margin:0; white-space:pre-wrap; color:" & ColorTexto()
+  If sEstiloExtra <> "" Then sEstiloParrafo &= "; " & sEstiloExtra
+
+  ' --- 2. UN PÁRRAFO POR LÍNEA; EL ESTADO SE ARRASTRA ENTRE LÍNEAS ---
+  For Each sParrafo In Split(sTexto, Chr(10))
+    ' Run ESPERA LA LÍNEA COMPLETA CON SU SALTO FINAL
+    Try aResaltado = hResaltador.Run(sParrafo & Chr(10), aEstado)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Falló el análisis del resaltado:" & gb.NewLine & Error.Text)
+      Return ""
+    Endif
+    aHtml.Add(HtmlDeParrafo(sParrafo, aResaltado, aCss, sEstiloParrafo))
+  Next
+
+  Return aHtml.Join("")
+
+End
+
+' ============================================
+' Función   : HtmlDeParrafo
+' Propósito : Convertir un párrafo y su resultado de Run en un párrafo HTML coloreado.
+'             Vivía en CVisorResaltado; pasó acá para que la ayuda de los
+'             shortcodes arme el ejemplo igual que el editor
+' Parámetros: sParrafo As String — texto del párrafo, sin salto final
+'             aResaltado As Byte[] — pares (estado, largo) de Run
+'             aCss As String[] — CSS por índice de estado
+'             sEstiloParrafo As String — estilo del <p>
+' Retorna   : String — el párrafo como <p> con sus tramos en <span>
+' ============================================
+Public Function HtmlDeParrafo(sParrafo As String, aResaltado As Byte[], aCss As String[], sEstiloParrafo As String) As String
+
+  Dim aPartes As New String[]
+  Dim sTramo As String
+  Dim iLargoParrafo As Integer
+  Dim iPar As Integer
+  Dim iEstado As Integer
+  Dim iLargo As Integer
+  Dim iOffset As Integer
+
+  ' --- 1. PÁRRAFO VACÍO: LA FORMA QUE EMITE EL PROPIO toHtml DE Qt ---
+  ' UN <p></p> VACÍO PUEDE NO GENERAR BLOQUE Y SE PERDERÍA UN SALTO DE LÍNEA
+  iLargoParrafo = String.Len(sParrafo)
+  If iLargoParrafo = 0 Then Return "<p style='-qt-paragraph-type:empty; " & sEstiloParrafo & "'><br /></p>"
+
+  aPartes.Add("<p style='" & sEstiloParrafo & "'>")
+
+  ' --- 2. TRAMOS: LOS LARGOS DE Run SON EN CARACTERES ---
+  For iPar = 0 To aResaltado.Max Step 2
+    iEstado = aResaltado[iPar]
+    iLargo = aResaltado[iPar + 1]
+    ' LARGO 0: MARCA DE FONDO, NO OCUPA TEXTO
+    If iLargo = 0 Then Continue
+    ' LO QUE EXCEDE EL PÁRRAFO ES EL SALTO DE LÍNEA AGREGADO PARA Run
+    If iOffset >= iLargoParrafo Then Break
+    If iOffset + iLargo > iLargoParrafo Then iLargo = iLargoParrafo - iOffset
+    sTramo = Html$(String.Mid(sParrafo, iOffset + 1, iLargo))
+    If EstiloDeEstado(aCss, iEstado) = "" Then
+      aPartes.Add(sTramo)
+    Else
+      aPartes.Add("<span style='" & aCss[iEstado] & "'>" & sTramo & "</span>")
+    Endif
+    iOffset += iLargo
+  Next
+
+  ' --- 3. RESTO NO CUBIERTO POR Run: SE EMITE SIN ESTILO, NUNCA SE DESCARTA ---
+  If iOffset < iLargoParrafo Then aPartes.Add(Html$(String.Mid(sParrafo, iOffset + 1)))
+
+  aPartes.Add("</p>")
+  Return aPartes.Join("")
+
+End
+
+' ============================================
+' Función   : EstiloDeEstado
+' Propósito : Dar el CSS de un estado, tolerando índices fuera de la tabla
+' Parámetros: aCss As String[] — CSS por índice de estado
+'             iEstado As Integer — índice devuelto por Run
+' Retorna   : String — CSS, o vacío si el estado no tiene estilo propio
+' ============================================
+Private Function EstiloDeEstado(aCss As String[], iEstado As Integer) As String
+
+  ' MISMA SALVAGUARDA QUE HighlightToken: FUERA DE RANGO VA COMO Normal
+  If iEstado > aCss.Max Then Return ""
+  Return aCss[iEstado]
 
 End

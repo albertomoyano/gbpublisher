@@ -1,0 +1,361 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_CatalogoShortcodes
+' Propósito : El diccionario de los shortcodes. Lee una sola vez el
+'             catálogo que exporta gbShortcodes (RF-11) y es la única
+'             fuente que consultan el panel, la inserción y lo que valide
+'             un .md. Ninguna lista de shortcodes se escribe en el código.
+'
+'             El catálogo está en la carpeta de recursos: .hidden/shortcodes
+'             desde el IDE, /usr/share/gbpublisher/shortcodes instalado. No
+'             se copia a ~/.gbpublisher: no hay nada que ajustar en él, y
+'             como la copia local no se sobrescribe, cada actualización
+'             dejaría al usuario con el catálogo viejo (el criterio de la
+'             ayuda contextual, SC-24).
+'
+'             Mostrar no es lo mismo que validar: el panel muestra lo
+'             liberado (y desde el IDE también los borradores); la
+'             validación usa el catálogo entero, en cualquier estado.
+' ============================================
+
+' --- CONTRATO CON gbShortcodes (RF-11): NO SE CAMBIA DE UN LADO SOLO ---
+Public Const CARPETA_CATALOGO As String = "shortcodes"
+Public Const ARCHIVO_CATALOGO As String = "_catalogo.tsv"
+Public Const CABECERA_CATALOGO As String = "nombre\tclase\tetiqueta\ttipo\tgrupo\tperfil\torden\testado_libro\testado_revista\tmodo\tapertura\tcierre"
+Public Const MARCA_EJEMPLO As String = "<!--gb:ejemplo-->"
+
+Public Const TIPO_BLOQUE As String = "bloque"
+Public Const TIPO_LINEA As String = "linea"
+
+Public Const MODO_ENVOLVER As String = "envolver"
+Public Const MODO_PLANTILLA As String = "plantilla"
+Public Const MODO_FIGURA As String = "figura"
+
+Public Const ESTADO_LIBERADO As String = "liberado"
+Public Const ESTADO_BORRADOR As String = "borrador"
+
+' CANTIDAD DE CAMPOS DE UNA LÍNEA DEL CATÁLOGO
+Private Const CAMPOS_CATALOGO As Integer = 12
+
+' --- EL CATÁLOGO EN MEMORIA ---
+Private $bCargado As Boolean
+Private $aTodos As New CShortcodeCatalogo[]
+Private $cPorNombre As New Collection
+' CADA CLAVE ES UNA CLASE Y CADA VALOR UN CShortcodeCatalogo[]: LAS VARIANTES
+' (figure Y fig-fullwidth) COMPARTEN CLASE. UN OBJETO SE CONSERVA EN LA
+' Collection AUNQUE ESTÉ VACÍO (GV-68)
+Private $cPorClase As New Collection
+
+' ============================================
+' Función   : Carpeta
+' Propósito : Carpeta del catálogo exportado
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta
+' ============================================
+Public Function Carpeta() As String
+
+  Return m_InicioCierre.RutaRecursos() &/ CARPETA_CATALOGO
+
+End
+
+' ============================================
+' Función   : EsDesarrollo
+' Propósito : Dice si la aplicación corre desde el IDE, donde el panel
+'             muestra también los borradores para probarlos
+' Parámetros: ninguno
+' Retorna   : Boolean — True desde el IDE
+' ============================================
+Public Function EsDesarrollo() As Boolean
+
+  ' RutaRecursos DEVUELVE .hidden DEL PROYECTO DESDE EL IDE
+  Return m_InicioCierre.RutaRecursos() <> "/usr/share/gbpublisher"
+
+End
+
+' ============================================
+' Función   : Cargar
+' Propósito : Lee el catálogo, una sola vez por sesión. Un catálogo
+'             ilegible o con otra cabecera se informa y no se carga a
+'             medias: es el contrato con gbShortcodes.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si el catálogo está en memoria
+' ============================================
+Public Function Cargar() As Boolean
+
+  Dim sRuta As String
+  Dim sContenido As String
+  Dim aLineas As String[]
+  Dim oFila As CShortcodeCatalogo
+  Dim iLinea As Integer
+  Dim aNuevos As New CShortcodeCatalogo[]
+
+  ' --- 1. YA CARGADO ---
+  If $bCargado Then Return True
+
+  ' --- 2. LECTURA (SC-02) ---
+  sRuta = Carpeta() &/ ARCHIVO_CATALOGO
+  If Not Exist(sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el catálogo de shortcodes:" & gb.NewLine & sRuta & gb.NewLine & gb.NewLine &
+      "Se genera desde gbShortcodes (Exportar al paquete de gbpublisher).")
+    Return False
+  Endif
+
+  Try sContenido = File.Load(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el catálogo de shortcodes:" & gb.NewLine & sRuta & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  aLineas = Split(sContenido, "\n")
+
+  ' --- 3. LA CABECERA ES LA VERSIÓN DEL CONTRATO ---
+  If aLineas.Count = 0 Then
+    MensajeCatalogo(sRuta, 1, "el archivo está vacío")
+    Return False
+  Endif
+  If aLineas[0] <> CABECERA_CATALOGO Then
+    MensajeCatalogo(sRuta, 1, "la cabecera no es la que esta versión de gbpublisher espera." & gb.NewLine &
+      "Probablemente el catálogo y la aplicación son de versiones distintas")
+    Return False
+  Endif
+
+  ' --- 4. UNA LÍNEA POR SHORTCODE; SE ARMA TODO ANTES DE PUBLICARLO ---
+  For iLinea = 1 To aLineas.Max
+    ' LA ÚLTIMA LÍNEA VACÍA ES EL SALTO FINAL DEL ARCHIVO
+    If aLineas[iLinea] = "" Then Continue
+    oFila = FilaDeLinea(aLineas[iLinea], sRuta, iLinea + 1)
+    If IsNull(oFila) Then Return False
+    aNuevos.Add(oFila)
+  Next
+
+  ' --- 5. PUBLICACIÓN: RECIÉN AHORA SE TOCAN LAS ESTRUCTURAS DEL MÓDULO ---
+  $aTodos = aNuevos
+  $cPorNombre = New Collection
+  $cPorClase = New Collection
+  For Each oFila In $aTodos
+    $cPorNombre[oFila.sNombre] = oFila
+    If Not $cPorClase.Exist(oFila.sClase) Then $cPorClase[oFila.sClase] = New CShortcodeCatalogo[]
+    $cPorClase[oFila.sClase].Add(oFila)
+  Next
+
+  $bCargado = True
+  Return True
+
+End
+
+' ============================================
+' Función   : FilaDeLinea
+' Propósito : Convierte una línea del catálogo en un CShortcodeCatalogo,
+'             verificando cantidad de campos y valores cerrados
+' Parámetros: sLinea As String — línea del archivo
+'             sRuta As String — archivo, para el mensaje
+'             iLinea As Integer — número de línea (base 1), para el mensaje
+' Retorna   : CShortcodeCatalogo — la fila, o Null si es inválida (ya informado)
+' ============================================
+Private Function FilaDeLinea(sLinea As String, sRuta As String, iLinea As Integer) As CShortcodeCatalogo
+
+  Dim aCampos As String[]
+  Dim oFila As New CShortcodeCatalogo
+
+  ' --- 1. CAMPOS: SIN CARÁCTER DE ESCAPE Y CONSERVANDO LOS VACÍOS ---
+  ' LAS COMILLAS DE LA APERTURA ({.source archivo=""}) SON TEXTO, NO ESCAPE
+  aCampos = Split(sLinea, "\t", "", False)
+  If aCampos.Count <> CAMPOS_CATALOGO Then
+    MensajeCatalogo(sRuta, iLinea, "tiene " & CStr(aCampos.Count) & " campos y deben ser " & CStr(CAMPOS_CATALOGO))
+    Return Null
+  Endif
+
+  ' --- 2. ASIGNACIÓN EN EL ORDEN DE LA CABECERA ---
+  oFila.sNombre = Desescapar(aCampos[0])
+  oFila.sClase = aCampos[1]
+  oFila.sEtiqueta = Desescapar(aCampos[2])
+  oFila.sTipo = aCampos[3]
+  oFila.sGrupo = aCampos[4]
+  oFila.sPerfil = Desescapar(aCampos[5])
+  oFila.iOrden = CInt(Val(aCampos[6]))
+  oFila.sEstadoLibro = aCampos[7]
+  oFila.sEstadoRevista = aCampos[8]
+  oFila.sModo = aCampos[9]
+  oFila.sApertura = Desescapar(aCampos[10])
+  oFila.sCierre = Desescapar(aCampos[11])
+
+  ' --- 3. VALORES CERRADOS: LO QUE NO SE CONOCE NO SE ADIVINA ---
+  If oFila.sTipo <> TIPO_BLOQUE And oFila.sTipo <> TIPO_LINEA Then
+    MensajeCatalogo(sRuta, iLinea, "tipo desconocido: " & oFila.sTipo)
+    Return Null
+  Endif
+  If oFila.sModo <> MODO_ENVOLVER And oFila.sModo <> MODO_PLANTILLA And oFila.sModo <> MODO_FIGURA Then
+    MensajeCatalogo(sRuta, iLinea, "modo desconocido: " & oFila.sModo)
+    Return Null
+  Endif
+  If oFila.sClase = "" Then
+    MensajeCatalogo(sRuta, iLinea, "no tiene clase")
+    Return Null
+  Endif
+
+  Return oFila
+
+End
+
+' ============================================
+' Función   : Desescapar
+' Propósito : Deshace los escapes del catálogo: \\ barra, \t tabulador,
+'             \n salto. Recorre por caracteres (RC-GM-12).
+' Parámetros: sCampo As String — campo tal como está en el archivo
+' Retorna   : String — el valor
+' ============================================
+Private Function Desescapar(sCampo As String) As String
+
+  Dim aSalida As New String[]
+  Dim iPos As Integer
+  Dim iLargo As Integer
+  Dim sCaracter As String
+  Dim sSiguiente As String
+
+  ' --- 1. SIN BARRAS NO HAY NADA QUE HACER ---
+  If InStr(sCampo, "\\") = 0 Then Return sCampo
+
+  ' --- 2. RECORRIDO: UNA BARRA SE COME EL CARÁCTER QUE LA SIGUE ---
+  iLargo = String.Len(sCampo)
+  iPos = 1
+  While iPos <= iLargo
+    sCaracter = String.Mid(sCampo, iPos, 1)
+    If sCaracter = "\\" And If iPos < iLargo Then
+      sSiguiente = String.Mid(sCampo, iPos + 1, 1)
+      Select Case sSiguiente
+        Case "n"
+          aSalida.Add(Chr(10))
+        Case "t"
+          aSalida.Add(Chr(9))
+        Default
+          ' \\ Y CUALQUIER OTRO: EL CARÁCTER LITERAL
+          aSalida.Add(sSiguiente)
+      End Select
+      iPos += 2
+    Else
+      aSalida.Add(sCaracter)
+      Inc iPos
+    Endif
+  Wend
+
+  Return aSalida.Join("")
+
+End
+
+' ============================================
+' Función   : MensajeCatalogo
+' Propósito : Informa un catálogo inválido con archivo y línea
+' Parámetros: sRuta As String — archivo
+'             iLinea As Integer — línea, base 1
+'             sMotivo As String — qué está mal
+' Retorna   : nada
+' ============================================
+Private Sub MensajeCatalogo(sRuta As String, iLinea As Integer, sMotivo As String)
+
+  m_Sonido.sonar("Error")
+  Message.Error("El catálogo de shortcodes no se cargó:" & gb.NewLine & sRuta & gb.NewLine &
+    "línea " & CStr(iLinea) & ": " & sMotivo & ".")
+
+End
+
+' ============================================
+' Función   : Visibles
+' Propósito : Los shortcodes que el panel muestra para un tipo de
+'             proyecto y de marcado, en el orden del catálogo. Lo
+'             liberado siempre; los borradores, solo desde el IDE.
+' Parámetros: bLibro As Boolean — True libro, False revista
+'             sTipo As String — TIPO_BLOQUE o TIPO_LINEA
+' Retorna   : CShortcodeCatalogo[] — puede estar vacío
+' ============================================
+Public Function Visibles(bLibro As Boolean, sTipo As String) As CShortcodeCatalogo[]
+
+  Dim aSalida As New CShortcodeCatalogo[]
+  Dim oFila As CShortcodeCatalogo
+  Dim bDesarrollo As Boolean
+  Dim sEstado As String
+
+  ' --- 1. SIN CATÁLOGO NO HAY NADA QUE MOSTRAR (Cargar YA INFORMÓ) ---
+  If Not Cargar() Then Return aSalida
+
+  ' --- 2. FILTRO POR TIPO Y POR ESTADO ---
+  bDesarrollo = EsDesarrollo()
+  For Each oFila In $aTodos
+    If oFila.sTipo <> sTipo Then Continue
+    sEstado = oFila.Estado(bLibro)
+    If sEstado = ESTADO_LIBERADO Then
+      aSalida.Add(oFila)
+    Else If sEstado = ESTADO_BORRADOR Then
+      If bDesarrollo Then aSalida.Add(oFila)
+    Endif
+  Next
+
+  Return aSalida
+
+End
+
+' ============================================
+' Función   : PorNombre
+' Propósito : Un shortcode por su nombre
+' Parámetros: sNombre As String — nombre del shortcode
+' Retorna   : CShortcodeCatalogo — el shortcode, o Null si no está
+' ============================================
+Public Function PorNombre(sNombre As String) As CShortcodeCatalogo
+
+  If Not Cargar() Then Return Null
+  If Not $cPorNombre.Exist(sNombre) Then Return Null
+  Return $cPorNombre[sNombre]
+
+End
+
+' ============================================
+' Función   : PorClase
+' Propósito : Los shortcodes que escriben una clase de Pandoc, en
+'             cualquier estado. Es la consulta de la validación (SC-33).
+' Parámetros: sClase As String — clase (fig, epigraph, intro)
+' Retorna   : CShortcodeCatalogo[] — vacío si la clase no es de ningún shortcode
+' ============================================
+Public Function PorClase(sClase As String) As CShortcodeCatalogo[]
+
+  If Not Cargar() Then Return New CShortcodeCatalogo[]
+  If Not $cPorClase.Exist(sClase) Then Return New CShortcodeCatalogo[]
+  Return $cPorClase[sClase]
+
+End
+
+' ============================================
+' Función   : AyudaHTML
+' Propósito : El fragmento de ayuda de un shortcode (<nombre>.html)
+' Parámetros: sNombre As String — nombre del shortcode
+' Retorna   : String — el fragmento; vacío si no se pudo leer
+' ============================================
+Public Function AyudaHTML(sNombre As String) As String
+
+  Dim sContenido As String
+
+  Try sContenido = File.Load(Carpeta() &/ sNombre & ".html")
+  If Error Then Return ""
+  Return sContenido
+
+End
+
+' ============================================
+' Función   : Ejemplo
+' Propósito : El ejemplo de un shortcode (<nombre>.md), sin el salto final
+' Parámetros: sNombre As String — nombre del shortcode
+' Retorna   : String — el ejemplo; vacío si no se pudo leer
+' ============================================
+Public Function Ejemplo(sNombre As String) As String
+
+  Dim sContenido As String
+
+  Try sContenido = File.Load(Carpeta() &/ sNombre & ".md")
+  If Error Then Return ""
+
+  ' EL ARCHIVO TERMINA EN UN SALTO: NO ES PARTE DEL EJEMPLO
+  If String.Right(sContenido, 1) = Chr(10) Then sContenido = String.Left(sContenido, String.Len(sContenido) - 1)
+  Return sContenido
+
+End
