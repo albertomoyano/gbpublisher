@@ -836,6 +836,8 @@ Lo que, modificado, invalidaría algo que la aplicación afirma. Hoy: `engine/`,
 
 La ayuda contextual (`ayudas/`, SC-24) tampoco se copia, por otra razón: en ella no hay nada que ajustar, y como la copia local no se sobrescribe, cada actualización dejaría al usuario con la ayuda vieja.
 
+El catálogo de shortcodes (`shortcodes/`, SC-34) tampoco se copia, por la misma razón.
+
 CONTRAPARTIDA OBLIGATORIA
 
 Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un archivo ajeno debe poder DECLARAR si fue modificado. La comparación es directa contra `/usr/share/`, que por definición del modelo conserva siempre el original: no hace falta guardar ni versionar sumas de verificación. Es lo que hace `m_AuditarJats.EstadoRecurso()` con el catálogo de mensajes y la hoja de estilo del informe de auditoría.
@@ -854,7 +856,7 @@ RAZÓN DEL MODELO
 
 Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se hacen sobre la copia local y se distribuyen a las estaciones; donde no lo hay, el usuario es a la vez administrador y necesita poder ajustar sin privilegios de root. En los dos casos el punto de intervención es el mismo, y la actualización del paquete nunca pisa lo ajustado.
 
-**Relaciones:** vinculo:SC-05,vinculo:SC-24
+**Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34
 
 ### SC-12 — Editor de bibliografia: el formato de trabajo es HTML, no RTF
 
@@ -1251,7 +1253,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26); 1.7.0 (refactor de bibtex) pendiente.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (refactor de bibtex) pendiente.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1268,6 +1270,7 @@ EL LOTE COMPLETO: EN LA MISMA ENTREGA QUE EL SCRIPT
 2. Los `Columns.Count` fijos de las grillas que cargan esa tabla (GV-58).
 3. Las exportaciones e importaciones que recorren todas las columnas (en 1.1.0: `ExportarBibTeX`, `ExportarBibTeX2JSON`, `ImportarJSON`): una columna de control o de trazabilidad se excluye explícitamente.
 4. Las columnas nuevas van AL FINAL de la tabla: hay código que lee por posición.
+5. Una tabla que se retira sale de `hEsquema` en la misma entrega, y el script se aplica DESPUÉS de instalar la aplicación nueva. `ValidarEsquemaBD` ignora una tabla que sobra y rechaza una esperada que falta: la versión anterior no arranca sin la tabla. El script lo advierte al empezar.
 
 DETALLES VERIFICADOS
 
@@ -1277,7 +1280,7 @@ DETALLES VERIFICADOS
 - Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
 - El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, la restauración borra `articulos` y falla al recrearla (GV-67).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -1851,6 +1854,101 @@ Libro de prueba con Introducción, dos capítulos, Conclusiones y un apéndice, 
 
 **PENDIENTE:** Probar en Mint con el libro nuevo que tiene figuras y con una revista. Tablas y ecuaciones siguen el mismo camino en lotes propios: prefijos tbl- y eq- en cite-to-biblioref-db.lua y en db:es-id-global.
 
+### SC-33 — Cierre nombrado de los bloques: [/clase]: # () antes del :::
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / filtros Lua del proyecto / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Todo bloque (fenced div) cierra con un ancla que lo nombra, antes del `:::` final y después de una línea en blanco:
+
+    ::: epigraph
+
+    El conocimiento es poder.
+
+    [/epigraph]: # ()
+    :::
+
+EL PROBLEMA
+
+En un capítulo largo con bloques anidados aparecen varios `:::` seguidos y no hay forma de saber qué cierra cada uno. El ancla lo dice, y es lo que va a permitir seleccionar el contenido entero de un shortcode, como ya se hace con las comillas y los signos de pregunta.
+
+POR QUÉ FUNCIONA
+
+`[/epigraph]: # ()` es una definición de referencia de enlace que nada usa. Pandoc la consume al leer y no llega al árbol: no la ven ni los filtros Lua ni las hojas XSLT. Medido con Pandoc 3.1.3:
+
+- un bloque con su ancla da el `Div` solo, sin rastro del ancla;
+- dos bloques iguales en un capítulo, cada uno con su ancla: sin aviso;
+- anidados, cada uno con su ancla: correcto;
+- una figura con ancla pasa por `fenced-divs-to-elements-db.lua` (libro) y por `cite-to-xref.lua` (revista) como sin ella.
+
+LA LÍNEA EN BLANCO ES OBLIGATORIA
+
+Sin línea en blanco antes, el ancla sale como texto del párrafo anterior, sin ningún aviso (medido). Quien inserta un bloque la escribe siempre; un ancla agregada a mano tiene que respetarla.
+
+ALTERNATIVAS DESCARTADAS (MEDIDAS)
+
+- Texto en la línea de cierre (`::: /epigraph`): no es un cierre; el bloque entero se vuelve párrafo.
+- Largo distinto de los dos puntos: no empareja. Un `::::` cierra el bloque más interno aunque se haya abierto con `:::`.
+- Comentario HTML (`<!-- /epigraph -->`): entra al árbol como bloque crudo. El filtro de figuras de libro lo rechaza como contenido de más, y todo filtro tendría que ignorarlo.
+
+QUIÉN LO ESCRIBE
+
+gbpublisher, desde la clase de Pandoc de la apertura: `m_Shortcodes.AnclaCierre(clase)` es el único lugar con el formato, y lo usan `InsertarShortcode` e `InsertarFigura`. El campo `cierre` del catálogo de shortcodes queda en `:::`: un error en una fila no puede romper el emparejamiento. Los ejemplos de bloque del catálogo muestran el ancla, porque la ayuda enseña lo que inserta el botón (RF-11).
+
+El nombre es la CLASE, no el nombre del shortcode: `sec-intro` escribe `{.intro}` y cierra con `[/intro]`. Es la columna `clase` del catálogo.
+
+Solo los bloques. Un shortcode en línea cierra en la misma línea (`[texto]{.clase}`).
+
+El corrector ortográfico saltea `[/…]` (m_Hunspell).
+
+Hasta esta entrada, el comentario de `m_Shortcodes` citaba la convención como RC-MD-01, una regla que no existía en el corpus.
+
+**Relaciones:** vinculo:SC-32,vinculo:RF-11,vinculo:SC-18,vinculo:SC-21
+
+**PENDIENTE:** Sin implementar: el verificador de cierres (empareja aperturas y anclas con una pila: ancla sin línea en blanco, ancla con otra clase, apertura sin ancla) y la selección del contenido de un shortcode, que usa el mismo emparejamiento. Los .md escritos antes, sin ancla, no se corrigen solos.
+
+### SC-34 — gbpublisher lee el catálogo exportado por gbShortcodes: sin tabla en MySQL
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbx3 con xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. El catálogo de shortcodes de gbpublisher es la exportación de gbShortcodes (RF-11): `shortcodes/_catalogo.tsv` más un `<nombre>.html` (ayuda) y un `<nombre>.md` (ejemplo) por shortcode. La tabla `shortcodes` de MySQL se retira en la actualización 1.7.0 (SC-22).
+
+DÓNDE SE LEE
+
+`m_InicioCierre.RutaRecursos() &/ "shortcodes"`: `.hidden/shortcodes` del proyecto desde el IDE, `/usr/share/gbpublisher/shortcodes` instalado. La carpeta va en Archivos extra del proyecto (`.project`, ExtraFiles); sin eso el paquete sale sin catálogo.
+
+No se copia a `~/.gbpublisher` (SC-11): no hay nada que ajustar, y una copia local vieja dejaría el panel con los shortcodes de otra versión.
+
+UN SOLO DICCIONARIO
+
+`m_CatalogoShortcodes` lee el catálogo una vez por sesión y lo indexa por nombre y por clase (`PorNombre`, `PorClase`; la clase no es única: `fig` tiene dos filas, `table` tres). Es la única fuente: lo que necesite saber qué shortcodes existen —el panel, la inserción, el futuro verificador de cierres (SC-33)— pregunta ahí.
+
+El catálogo no se carga a medias. Una cabecera distinta de la del contrato, o una fila sin los doce campos, se informa con el archivo y la línea, y el catálogo no se usa.
+
+QUÉ SE MUESTRA
+
+Para validar sirve el catálogo entero, en cualquier estado. Para mostrar, `Visibles`: instalado, solo lo `liberado` para el tipo de proyecto (libro o revista); desde el IDE, también los `borrador`, marcados como tales, para probarlos antes de liberarlos. `EsDesarrollo` lo decide por `RutaRecursos`.
+
+EL PANEL
+
+- El combo elige bloques o marcas en línea, y `txtDescripcion` explica qué es cada tipo.
+- La lista separa por grupo (comunes, estructura del producto, disciplinares) y, dentro de los disciplinares, por perfil.
+- La ayuda es un TextEdit en modo RichText (GV-64). Toma el fragmento `<nombre>.html` y pone el ejemplo en el lugar de `<!--gb:ejemplo-->`, coloreado con la gramática Markdown del editor y sobre el fondo del tema, en una tabla de una celda. Se repinta al cambiar el tema o la fuente.
+
+LA INSERCIÓN, SEGÚN EL MODO
+
+- `figura`: delega en `FMain.InsertarFigura` (SC-32).
+- `envolver`: exige una selección.
+- `plantilla`: inserta con el marcador de los snippets (SC-21) y lo deja seleccionado.
+- Un bloque queda separado por líneas en blanco de lo que tenga antes y después, porque Pandoc no lo reconoce sin ellas (medido), y cierra con el ancla nombrada (SC-33).
+
+RESALTADO
+
+`Markdown.highlight` reconoce la apertura, el ancla, el cierre y las marcas en línea con el estilo `Function`; cada tema define `Function` en su sección `[Markdown]`. Los patrones escriben el espacio como `\x20` o `\s` (GV-76).
+
+**Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24
+
+**PENDIENTE:** Probado en el contenedor (lista, ayuda coloreada, inserción de envolver, plantilla y en línea); falta en Mint con 3.22.1 y con el paquete instalado. En cinco temas el color de Function coincide con otro estilo de Markdown (gruvbox, monokai, pen-paper-coffee, solarizado-claro y solarizado-oscuro): a decidir. El verificador de cierres no está implementado.
+
 ---
 
 ## RF — Referencia de API
@@ -2156,7 +2254,7 @@ Costo medido: 1,7 s para 392.713 caracteres de Markdown real, unos 1,5 ms por l�
 
 Programa aparte, con el modelo de gbCorpus (RF-08), que mantiene el catálogo de shortcodes de gbpublisher. Reemplaza a la tabla `shortcodes` de MySQL, que se retira con una actualización de esquema (SC-22) cuando gbpublisher lea la exportación.
 
-ESTA ENTRADA DESCRIBE LA VERSIÓN 1 DEL ESQUEMA Y DEL CONTRATO DE EXPORTACIÓN.
+ESTA ENTRADA DESCRIBE LA VERSIÓN 2 DEL ESQUEMA Y DEL CONTRATO DE EXPORTACIÓN. La 2 agrega `clase`.
 
 BASE
 
@@ -2165,6 +2263,7 @@ BASE
 TABLA `shortcodes`
 
     nombre          TEXT NOT NULL UNIQUE   minúsculas, dígitos y guion: nombre de archivo
+    clase           TEXT NOT NULL          la clase de Pandoc del .md: {.fig}, ::: epigraph, ]{.gloss}
     etiqueta        TEXT NOT NULL          lo que se ve en la lista de gbpublisher
     tipo            bloque | linea
     grupo           comun | estructura | disciplinar
@@ -2181,6 +2280,8 @@ TABLA `shortcodes`
     mapeo_docbook, mapeo_jats, notas, pendiente   internos: no se exportan
     fecha_alta, fecha_modificacion          datetime('now','localtime')
 
+La clase es la clave con que gbpublisher valida un .md y empareja los cierres (SC-33). No es única: las variantes comparten clase (`figure` y `fig-fullwidth` son `fig`; las tres tablas, `table`). Para validar se usa el catálogo entero, en cualquier estado; para mostrar, solo lo liberado.
+
 Restricciones: un shortcode no puede ser no_aplica en los dos; la figura es un bloque; lo liberado tiene `que_es`, `ejemplo` y `como_sale`.
 
 Los tres textos de la ayuda admiten NULL y no cadena vacía (`CHECK (x <> '')`): Edit + Update escribe la cadena vacía como NULL (GV-74), y con NOT NULL guardar una sección vacía fallaba.
@@ -2193,7 +2294,7 @@ MODOS
 
 QUÉ HACE LA APLICACIÓN
 
-Lee, filtra, pule los textos (etiqueta, ayuda, mapeos, notas, pendiente) y exporta. NO da de alta ni elimina, y no cambia nombre, tipo, grupo, perfil, orden, estados, modo, apertura ni cierre: eso es comportamiento, se decide después de probarlo y se aplica por script SQL con Importar UPDATE SQL (`engine/importar_shortcodes.sh`, el contrato de SC-19 con `-- Esquema: 1`). El importador compara antes y después una huella del contenido, no solo la cantidad de filas, para no afirmar que la base quedó como estaba sin comprobarlo.
+Lee, filtra, pule los textos (etiqueta, ayuda, mapeos, notas, pendiente) y exporta. NO da de alta ni elimina, y no cambia nombre, tipo, grupo, perfil, orden, estados, modo, apertura ni cierre: eso es comportamiento, se decide después de probarlo y se aplica por script SQL con Importar UPDATE SQL (`engine/importar_shortcodes.sh`, el contrato de SC-19 con `-- Esquema: 2`). El importador compara antes y después una huella del contenido, no solo la cantidad de filas, para no afirmar que la base quedó como estaba sin comprobarlo.
 
 EXPORTACIÓN AL PAQUETE (CONTRATO CON gbpublisher)
 
@@ -2201,7 +2302,7 @@ A la carpeta `.hidden/shortcodes/` del proyecto gbpublisher. Van todos los short
 
 - `_catalogo.tsv`: una cabecera fija, que hace de versión del contrato,
 
-      nombre etiqueta tipo grupo perfil orden estado_libro estado_revista modo apertura cierre
+      nombre clase etiqueta tipo grupo perfil orden estado_libro estado_revista modo apertura cierre
 
   separada por tabuladores, y una línea por shortcode en el orden del catálogo: grupo (comun, estructura, disciplinar), perfil, orden, nombre. Escapes: `\\` por barra, `\t` por tabulador, `\n` por salto.
 - `<nombre>.html`: fragmento, no documento. Tres secciones fijas, `<h3>Qué es</h3>`, `<h3>Cómo se escribe</h3>` y `<h3>Cómo sale</h3>`, y en la segunda la marca `<!--gb:ejemplo-->`, donde gbpublisher pone el ejemplo coloreado con su resaltador. El estilo lo pone quien lo muestra. Una sección vacía de un borrador sale «Sin completar.».
@@ -2218,9 +2319,17 @@ OTRAS SALIDAS
 
 CARGA INICIAL
 
-`shortcodes-carga-inicial.sql`: las 77 filas de `gbpublisher-baseline-1.0.0.sql`. Liberada solo la figura; los ejemplos que Pandoc no lee como se espera llevan pendiente.
+`shortcodes-carga-inicial.sql`: las 77 filas de `gbpublisher-baseline-1.0.0.sql`. Liberada solo la figura; los ejemplos que Pandoc no lee como se espera llevan pendiente. Los ejemplos de bloque llevan el cierre nombrado (SC-33).
 
-**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64
+MIGRACIONES DE ESQUEMA
+
+La aplicación no abre una base de una versión anterior: dice qué script aplicar. La migración la corre el importador desde una terminal, y se reconoce por una línea de su cabecera:
+
+    -- Migración: 1 a 2
+
+El importador la acepta solo si la base está en la versión de partida y la de llegada es la que él maneja, y al terminar comprueba que la base quedó en la de llegada. `gbshortcodes-migrar-1-a-2.sql` rehace la tabla con la columna `clase` en su lugar (las columnas y restricciones quedan iguales a las de una base creada en v2, verificado) y pone el cierre nombrado en los ejemplos que siguen iguales a los de la carga inicial; uno editado se conserva y se lista.
+
+**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33
 
 **PENDIENTE:** Probado en contenedor con Gambas 3.19 y gb.db, no con gb.db2 en 3.22.1. Falta la lectura de la exportación en gbpublisher (paso siguiente) y el SC que fije la decisión del lado de gbpublisher.
 
@@ -3810,8 +3919,36 @@ El compilador no distingue mayúsculas en las palabras clave, así que un nombre
     Dim iN As Integer      ->  Unexpected In
     Dim oF As CShortcode   ->  Syntax error. Identifier expected (en For Each oF In ...)
 
-Verificado los dos al escribir el banco de pruebas de gbShortcodes. Otros que caen igual, por la misma regla: `iS`, `aS`, `iF`, `oR`, `tO`, `aNd`.
+Verificado los dos al escribir el banco de pruebas de gbShortcodes. Por la misma regla deberían caer `iS`, `aS`, `iF`, `oR`, `tO` y `aNd`; no están verificados.
 
 REGLA: el nombre después del prefijo tiene al menos dos letras con sentido (`iCant`, `oElem`), que es además lo que pide la convención de nomenclatura.
 
 **Relaciones:** vinculo:GV-09
+
+### GV-76 — gb.highlight: un espacio literal en un patrón match es error de sintaxis
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.highlight / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+En un archivo `.highlight` de gb.highlight, un patrón `match` con un espacio literal no carga. Tampoco dentro de una clase de caracteres:
+
+    match /^\[\/[a-z]+\]: # \(\)$/       error
+    match /^\[\/[a-z]+\]:[ ]#[ ]\(\)$/   error
+    match /^\[\/[a-z]+\]:\x20#\x20\(\)$/ carga y reconoce la línea
+
+El error no señala el espacio:
+
+    Cannot load highlighter '…': [gb.highlight].TextHighlighter.CreateCustomHighlighter.520: Syntax error at line 2
+
+La línea es la del patrón dentro del archivo.
+
+REGLA
+
+En los patrones, el espacio se escribe `\x20`, o `\s` cuando sirve cualquier blanco.
+
+Medido con un programa de prueba que registra la gramática con `TextHighlighter.Register` y corre `Run` línea por línea.
+
+Caso del proyecto: el ancla de cierre `[/clase]: # ()` (SC-33) en `Markdown.highlight`.
+
+**Relaciones:** vinculo:SC-34,vinculo:SC-33
+
+**PENDIENTE:** Medido en 3.19, no en 3.22.1.
