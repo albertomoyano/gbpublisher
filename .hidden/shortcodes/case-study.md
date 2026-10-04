@@ -1,0 +1,6 @@
+::: {.case id="Empresa-Alpha"}
+**Contexto**: Empresa mediana del sector manufacturero...
+**Problema**: Caída de productividad del 15%...
+
+[/case]: # ()
+:::

@@ -1,0 +1,5 @@
+::: {.editorial}
+Texto editorial.
+
+[/editorial]: # ()
+:::

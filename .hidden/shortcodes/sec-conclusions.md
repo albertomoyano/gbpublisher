@@ -1,0 +1,5 @@
+::: {.conclusions}
+Conclusión principal.
+
+[/conclusions]: # ()
+:::

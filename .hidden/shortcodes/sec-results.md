@@ -1,0 +1,5 @@
+::: {.results}
+Principal hallazgo.
+
+[/results]: # ()
+:::

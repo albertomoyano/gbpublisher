@@ -1,0 +1,6 @@
+::: reaction-mechanism
+Paso 1: Ataque nucleofílico...
+Paso 2: Eliminación...
+
+[/reaction-mechanism]: # ()
+:::

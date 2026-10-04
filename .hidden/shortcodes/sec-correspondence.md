@@ -1,0 +1,5 @@
+::: {.correspondence}
+Estimado editor...
+
+[/correspondence]: # ()
+:::
