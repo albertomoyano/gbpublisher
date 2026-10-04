@@ -2834,10 +2834,13 @@ Public Sub InsertarFigura(bAnchoCompleto As Boolean)
   ' PREFIJO fig- (m_GestionImagenes)—: fig-mapa.png DA #fig-mapa, QUE ES
   ' LO QUE SE ESCRIBE PARA REFERIRLA (@fig-mapa). EL PIE ES UN MARCADOR
   ' QUE EL EDITOR REEMPLAZA.
+  ' CIERRA CON EL ANCLA NOMBRADA, PRECEDIDA DE LÍNEA EN BLANCO (SC-33)
   sClases = ".fig"
   If bAnchoCompleto Then sClases &= " .fullwidth"
   sCodigoMarkdown = "::: {" & sClases & " #" & IdFiguraDesdeArchivo(sNombreArchivo) & "}" & Chr(10)
   sCodigoMarkdown &= "![" & m_Constantes.FIGURA_PIE_PLACEHOLDER & "](media/" & sNombreArchivo & ")" & Chr(10)
+  sCodigoMarkdown &= Chr(10)
+  sCodigoMarkdown &= m_Shortcodes.AnclaCierre("fig") & Chr(10)
   sCodigoMarkdown &= ":::"
 
   ' --- 6. Inserción y cierre ---
@@ -5425,7 +5428,7 @@ Public Sub AbrirProyecto(nTipoProyecto As Integer)
     Return
   Endif
 
-  m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, TextEditorPreview)
+  m_Shortcodes.InicializarTabShortcodes(cmbShortcodes, lbDefiniciones, txtAyudaShortcode)
   m_RevisarPDF.PoblarComboPDF()
   m_GestionImagenes.PoblarComboImagenes()
   m_BuscarRegex.InicializarTabRegex()
@@ -5688,107 +5691,80 @@ End
 
 ' ============================================
 ' Evento    : cmbShortcodes_Click
-' Propósito : Disparado al cambiar la opción del ComboBox de tipo de marcado.
-'             Determina qué tipo de marcado se eligió y le pide al módulo
-'             m_Shortcodes que recargue el listbox con los shortcodes que
-'             correspondan. Limpia el TextEditor de preview porque al cambiar
-'             el listbox se invalida cualquier selección previa.
-' Parámetros: (evento UI, sin parámetros)
-' Retorna   : (Sub, sin retorno)
+' Propósito : Al cambiar el tipo de marcado: explica en el rótulo qué es
+'             ese tipo y recarga la lista. La ayuda queda vacía porque la
+'             selección anterior ya no está en la lista.
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub cmbShortcodes_Click()
 
-  Dim sTipoMarcado As String
+  Dim sTipo As String
 
-  ' --- 1. VALIDAR SELECCIÓN ---
+  ' --- 1. TIPO DE MARCADO DE LA OPCIÓN ---
   If cmbShortcodes.Index < 0 Then Return
+  sTipo = m_Shortcodes.TipoDeOpcion(cmbShortcodes.Text)
+  If sTipo = "" Then Return
 
-  ' --- 2. DETERMINAR EL TIPO DE MARCADO SEGÚN LA OPCIÓN ELEGIDA ---
-  Select Case cmbShortcodes.Text
-    Case m_Shortcodes.OPCION_BLOQUES
-      sTipoMarcado = m_Shortcodes.TIPO_FENCED
-    Case m_Shortcodes.OPCION_INLINE
-      sTipoMarcado = m_Shortcodes.TIPO_INLINE
-    Default
-      Return
-  End Select
-
-  ' --- 3. LIMPIAR PREVIEW (LA SELECCIÓN ANTERIOR YA NO APLICA) ---
-  TextEditorPreview.Text = ""
-
-  ' --- 4. DELEGAR LA CARGA AL MÓDULO ---
-  m_Shortcodes.CargarShortcodesPorTipo(sTipoMarcado, lbDefiniciones)
+  ' --- 2. RÓTULO Y LISTA ---
+  txtDescripcion.Text = m_Shortcodes.DescripcionDeTipo(sTipo)
+  m_Shortcodes.CargarShortcodesPorTipo(sTipo, lbDefiniciones)
 
 End
 
 ' ============================================
 ' Evento    : lbDefiniciones_Click
-' Propósito : Disparado al hacer click simple en el listbox de definiciones.
-'             Si la fila clickeada corresponde a un shortcode (no a un
-'             separador visual), renderiza la información del shortcode
-'             en el TextEditor de preview.
-' Parámetros: (evento UI, sin parámetros)
-' Retorna   : (Sub, sin retorno)
+' Propósito : Muestra la ayuda del shortcode elegido; un separador la vacía
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub lbDefiniciones_Click()
 
-  Dim cShortcode As Collection
   Dim sKey As String
 
-  ' --- 1. VALIDAR KEY DEL ÍTEM ACTUAL ---
+  ' --- 1. KEY DEL ÍTEM ---
   sKey = lbDefiniciones.Key
   If sKey = "" Then Return
 
-  ' --- 2. SI LA KEY ES DE UN SEPARADOR, LIMPIAR PREVIEW Y SALIR ---
-  ' LOS SEPARADORES TIENEN KEYS QUE EMPIEZAN CON "sep:" — NO TIENEN
-  ' ENTRADA EN cShortcodesActuales NI ACCIONES ASOCIADAS.
-  If String.Left(sKey, 4) = "sep:" Then
-    TextEditorPreview.Text = ""
+  ' --- 2. UN SEPARADOR NO ES UN SHORTCODE ---
+  If Not m_Shortcodes.cShortcodesActuales.Exist(sKey) Then
+    m_Shortcodes.LimpiarAyuda()
     Return
   Endif
 
-  ' --- 3. RECUPERAR EL SHORTCODE DE LA COLLECTION DE ESTADO ---
-  cShortcode = m_Shortcodes.cShortcodesActuales[sKey]
-  If IsNull(cShortcode) Then Return
-
-  ' --- 4. DELEGAR EL RENDERIZADO AL MÓDULO ---
-  m_Shortcodes.RenderizarInfoShortcode(cShortcode, TextEditorPreview)
+  ' --- 3. AYUDA ---
+  m_Shortcodes.RenderizarInfoShortcode(m_Shortcodes.cShortcodesActuales[sKey])
 
 End
 
 ' ============================================
-' Evento    : lbDefiniciones_DblClick
-' Propósito : Disparado al hacer doble click en el listbox de definiciones.
-'             Si la fila clickeada corresponde a un shortcode (no a un
-'             separador visual), inserta el shortcode en el editor de
-'             proyecto envolviendo la selección actual (o avisando si
-'             falta selección, según corresponda al tipo de shortcode).
-' Parámetros: (evento UI, sin parámetros)
-' Retorna   : (Sub, sin retorno)
+' Evento    : lbDefiniciones_Activate
+' Propósito : Doble clic o Enter sobre un shortcode: lo inserta en el editor
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub lbDefiniciones_Activate()
 
-  Dim cShortcode As Collection
   Dim sKey As String
 
-  ' --- 1. VALIDAR KEY DEL ÍTEM ACTIVADO ---
-  ' EL EVENTO Activate DEL ListView SE DISPARA CON DOBLE CLICK O ENTER.
+  ' --- 1. KEY DEL ÍTEM ---
   sKey = lbDefiniciones.Key
   If sKey = "" Then Return
 
-  ' --- 2. SI LA KEY ES DE UN SEPARADOR, IGNORAR ---
-  ' ACTIVAR ACCIDENTALMENTE UN SEPARADOR NO DEBE GENERAR FEEDBACK NI ACCIÓN.
-  If String.Left(sKey, 4) = "sep:" Then Return
+  ' --- 2. ACTIVAR UN SEPARADOR NO HACE NADA ---
+  If Not m_Shortcodes.cShortcodesActuales.Exist(sKey) Then Return
 
-  ' --- 3. RECUPERAR EL SHORTCODE DE LA COLLECTION DE ESTADO ---
-  cShortcode = m_Shortcodes.cShortcodesActuales[sKey]
-  If IsNull(cShortcode) Then Return
-
-  ' --- 4. DELEGAR LA INSERCIÓN AL MÓDULO ---
-  m_Shortcodes.InsertarShortcode(cShortcode)
+  ' --- 3. INSERCIÓN ---
+  m_Shortcodes.InsertarShortcode(m_Shortcodes.cShortcodesActuales[sKey])
 
 End
 
+' ============================================
+' Evento    : SplitterShortcodes1_Resize
+' Propósito : Repone la proporción entre la lista y la ayuda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub SplitterShortcodes1_Resize()
 
   SplitterShortcodes1.Layout = [1, 2]

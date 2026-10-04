@@ -296,11 +296,11 @@ SELECT * FROM esquema_version ORDER BY aplicado_en;
 
 -- Estructura completa
 SELECT COUNT(*) FROM information_schema.tables
- WHERE table_schema='gbpublisher' AND table_type='BASE TABLE';   -- debe dar 30
+ WHERE table_schema='gbpublisher' AND table_type='BASE TABLE';   -- debe dar 30 (29 desde la 1.7.0)
 
 -- Datos semilla presentes
 SELECT
-  (SELECT COUNT(*) FROM shortcodes)    AS shortcodes,      -- 77
+  -- shortcodes: 77 en el baseline 1.0.0; la tabla se retira en la 1.7.0
   (SELECT COUNT(*) FROM manual_ayudas) AS ayudas,          -- 36
   (SELECT COUNT(*) FROM consultas)     AS consultas,       -- 82
   (SELECT COUNT(*) FROM cmb_biblatex)  AS biblatex,        -- 120

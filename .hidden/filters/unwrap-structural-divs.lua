@@ -10,13 +10,13 @@
 -- ============================================================
 
 -- LISTA DE CLASES PANDOC ESTRUCTURALES
--- DERIVADA DE shortcodes WHERE tipo_marcado='fenced' AND mapeo_revista='sec'.
--- ACTUALIZAR ESTA LISTA CUANDO SE AGREGUE/QUITE UN SHORTCODE FENCED QUE
--- MAPEE A <sec>. VERIFICAR CON:
---   SELECT nombre, sintaxis_apertura FROM shortcodes
---   WHERE tipo_marcado='fenced' AND mapeo_revista='sec' AND activo=1;
--- LA CLAVE DE LA TABLA ES LA CLASE PANDOC (lo que va en sintaxis_apertura),
--- NO EL nombre DEL SHORTCODE EN BD (que puede llevar prefijo "sec-").
+-- CLASES PANDOC DE LOS SHORTCODES DE BLOQUE QUE MAPEAN A <sec>: LAS DEL
+-- GRUPO estructura DEL CATÁLOGO DE gbShortcodes (shortcodes/_catalogo.tsv,
+-- RF-11) Y TRES DISCIPLINARES (apparatus-physics, experimental-procedure,
+-- surgical-procedure). EL CATÁLOGO NO TRAE EL MAPEO A JATS: ESTA LISTA SE
+-- MANTIENE A MANO. LA TABLA shortcodes DE MYSQL SE RETIRÓ EN LA 1.7.0.
+-- LA CLAVE ES LA CLASE PANDOC (COLUMNA clase), NO EL nombre DEL SHORTCODE
+-- (QUE PUEDE LLEVAR PREFIJO "sec-").
 local estructurales = {
   ["abstract"]             = true,
   ["acknowledgments"]      = true,
