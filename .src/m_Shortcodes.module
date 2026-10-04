@@ -393,6 +393,8 @@ End
 ' Propósito : Inserta un shortcode en el editor según su modo:
 '             - figura: el camino de FMain.InsertarFigura (SC-32)
 '             - envolver: rodea la selección, que es obligatoria
+'             - dos-partes: como envolver, si la selección tiene la forma
+'               {primera}{segunda} (SC-35); si no, avisa y no inserta
 '             - plantilla: inserta el marcador • en lugar del contenido y
 '               lo deja seleccionado (SC-21)
 '             Un bloque ocupa líneas propias y cierra con el ancla nombrada
@@ -410,6 +412,7 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
   Dim iInicio As Integer
   Dim iLargo As Integer
   Dim iMarca As Integer
+  Dim sMotivo As String
 
   ' --- 1. VALIDACIÓN ---
   If IsNull(oFila) Then Return
@@ -423,7 +426,7 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
   ' --- 3. SELECCIÓN SEGÚN EL MODO ---
   sSeleccion = m_EditorPrincipal.TextoSeleccionado()
 
-  If oFila.sModo = m_CatalogoShortcodes.MODO_ENVOLVER Then
+  If oFila.sModo = m_CatalogoShortcodes.MODO_ENVOLVER Or oFila.sModo = m_CatalogoShortcodes.MODO_DOS_PARTES Then
     If sSeleccion = "" Then
       m_Sonido.sonar("Warning")
       Message.Warning("Seleccione el texto al que quiere aplicar «" & oFila.sEtiqueta & "».")
@@ -431,6 +434,23 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
       Return
     Endif
     sContenido = sSeleccion
+
+    ' LAS LLAVES SON EL SEMÁFORO: LAS ESCRIBE QUIEN MARCA, ANTES (SC-35). EL
+    ' FILTRO dos-partes.lua REPITE EL CONTROL AL GENERAR
+    If oFila.sModo = m_CatalogoShortcodes.MODO_DOS_PARTES Then
+      sMotivo = ProblemaDosPartes(sSeleccion)
+      If sMotivo <> "" Then
+        m_Sonido.sonar("Warning")
+        Message.Warning("«" & oFila.sEtiqueta & "» necesita el texto en dos partes entre llaves:" & gb.NewLine & gb.NewLine &
+          "{primera parte}{segunda parte}" & gb.NewLine & gb.NewLine &
+          "La segunda puede quedar vacía: {texto}{}" & gb.NewLine & gb.NewLine &
+          "En la selección " & sMotivo & ".")
+        FMain.txtEditorProyecto.SetFocus()
+        Return
+      Endif
+      ' SIN BLANCOS EN LOS BORDES: UN SALTO SELECCIONADO DE MÁS NO ENTRA AL BLOQUE
+      sContenido = Trim(sSeleccion)
+    Endif
   Else
     ' PLANTILLA: NO ENVUELVE; SI HAY SELECCIÓN, SE CONFIRMA QUE SE REEMPLAZA
     If sSeleccion <> "" Then
@@ -474,6 +494,71 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
 
   ' --- 7. FOCO AL EDITOR (RC-GM-07) ---
   FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ==============================================================================
+' Función   : ProblemaDosPartes
+' Propósito : Controla que un texto tenga la forma {primera}{segunda}: las
+'             llaves de afuera delimitan, las de adentro (balanceadas) son
+'             texto. Es la misma regla que dos-partes.lua (SC-35)
+' Parámetros: sTexto As String — la selección
+' Retorna   : String — vacío si la forma es correcta; si no, qué falla,
+'             redactado para seguir a «En la selección »
+' ==============================================================================
+Private Function ProblemaDosPartes(sTexto As String) As String
+
+  Dim sLimpio As String
+  Dim sCar As String
+  Dim iPos As Integer
+  Dim iNivel As Integer
+  Dim iPartes As Integer
+  Dim iInicioParte As Integer
+  Dim aPartes As New String[]
+  Dim aLineas As String[]
+
+  ' --- 1. LOS BORDES ---
+  sLimpio = Trim(sTexto)
+  If Left(sLimpio, 1) <> "{" Then Return "falta la llave de apertura al principio"
+  If Right(sLimpio, 1) <> "}" Then Return "falta la llave de cierre al final"
+
+  ' --- 2. RECORRIDO CONTANDO LLAVES ---
+  ' POR BYTES: { Y } SON ASCII, Y NINGÚN BYTE DE UN CARÁCTER UTF-8 MULTIBYTE
+  ' COINCIDE CON ELLOS
+  For iPos = 1 To Len(sLimpio)
+    sCar = Mid(sLimpio, iPos, 1)
+    If sCar = "{" Then
+      Inc iNivel
+      If iNivel = 1 Then
+        If iPartes = 2 Then Return "hay más de dos partes"
+        Inc iPartes
+        iInicioParte = iPos + 1
+      Endif
+    Else If sCar = "}" Then
+      If iNivel = 0 Then Return "hay una llave de cierre sin su apertura"
+      Dec iNivel
+      If iNivel = 0 Then
+        aPartes.Add(Mid(sLimpio, iInicioParte, iPos - iInicioParte))
+      Endif
+    Else If iNivel = 0 Then
+      ' FUERA DE LAS LLAVES NO HAY NADA: ENTRE LAS DOS PARTES, NI UN ESPACIO
+      If iPartes = 1 Then Return "las dos partes no van pegadas: tiene que quedar }{"
+      Return "hay texto fuera de las llaves"
+    Endif
+  Next
+
+  ' --- 3. RESULTADO ---
+  If iNivel <> 0 Then Return "hay una llave de apertura sin cerrar"
+  If aPartes.Count <> 2 Then Return "no hay dos partes"
+  If Trim(aPartes[0]) = "" Then Return "la primera parte está vacía"
+  ' UNA LÍNEA EN BLANCO ADENTRO ABRE OTRO PÁRRAFO, Y LA SEGUNDA PARTE ES UNO
+  ' SOLO: <attribution> Y <attrib> SOLO ADMITEN TEXTO EN LÍNEA
+  aLineas = Split(aPartes[1], "\n")
+  For iPos = 1 To aLineas.Max - 1
+    If Trim(aLineas[iPos]) = "" Then Return "la segunda parte tiene más de un párrafo"
+  Next
+
+  Return ""
 
 End
 

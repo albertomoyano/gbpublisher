@@ -844,7 +844,7 @@ Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un
 
 COTEJO AL ARRANCAR
 
-`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js` y `themes` de la copia local con su par instalado. Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
+`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js`, `themes` y `ott` de la copia local con su par instalado. `ott` entra por el documento de referencia del ODT, que trae los estilos del epígrafe (SC-35); la comparación con `File.Load` sirve para un binario (GV-77). Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
 
 El caso que lo motivó: después de una actualización, una hoja nueva de la copia local corrió con un script viejo de `/usr/share/gbpublisher/engine/` y Saxon frenó por un parámetro que el script no pasaba. El caso inverso no da error: Saxon ignora un parámetro que la hoja vieja no declara, y la salida sale con la regla anterior.
 
@@ -856,7 +856,7 @@ RAZÓN DEL MODELO
 
 Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se hacen sobre la copia local y se distribuyen a las estaciones; donde no lo hay, el usuario es a la vez administrador y necesita poder ajustar sin privilegios de root. En los dos casos el punto de intervención es el mismo, y la actualización del paquete nunca pisa lo ajustado.
 
-**Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34
+**Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34,vinculo:SC-35,vinculo:GV-77
 
 ### SC-12 — Editor de bibliografia: el formato de trabajo es HTML, no RTF
 
@@ -1824,11 +1824,17 @@ El escritor DocBook de Pandoc 3.1 descarta el id de una figura (GV-72), así que
 
 Un filtro que detiene la conversión ya no deja un capítulo vacío: `GenerarBodyCapituloXML` escribe una marca de fallo en lugar del fragmento y lo informa (GV-23).
 
-En revistas, `cite-to-xref.lua` respeta el id del div; el contador queda para la figura que no lo trae.
+EN REVISTAS NO HAY REFERENCIA CRUZADA
 
-REFERENCIA CRUZADA: @fig-mapa
+Un artículo es autónomo: no remite a figuras ni tablas de otro artículo, ni siquiera dentro de un dossier, porque sus autores no están conectados. Dentro del propio artículo, la mención («figura 2») la escribe el autor como texto, con el número que usó; si se cambia, lo decide el editor o el corrector. Por eso en revistas no hay `@fig-`: `cite-to-xref.lua` detiene la conversión con un mensaje ante una clave `fig-`, `tbl-` o `eq-`, que antes salía como una cita bibliográfica a una referencia inexistente.
 
-Pandoc la lee como cita. Los filtros de citas la desvían a `<xref linkend>` por el prefijo: ninguna clave bibliográfica empieza con letra, porque empiezan con el id numérico del registro. Produce solo el número, como `\ref`; la palabra la escribe el editor. Un grupo que mezcla referencias y citas detiene la conversión.
+LA FIGURA DE REVISTA
+
+`cite-to-xref.lua` arma el `<fig>`, la normal y la de ancho completo (`.fullwidth` → `specific-use="fullwidth"`); `figure-to-end.lua`, que hacía la segunda por separado, se retiró. Con las mismas reglas que el libro: el pie conserva formato y citas, `alt="..."` va a `<alt-text>` dentro de `<graphic>`, y frena sin id, sin pie o con contenido además de la imagen. El id no sirve para referir: es el ancla estable de la figura, que el HTML pone en el contenedor y el EPUB conserva (antes la renumeraba). En las dos salidas el pie conserva formato y el texto alternativo es el declarado o, si falta, el pie. Antes el pie se aplanaba a texto: perdía la bastardilla y la cita entera. Verificado en el contenedor: el JATS valida contra la DTD 1.4 y las cinco formas incorrectas frenan.
+
+REFERENCIA CRUZADA: @fig-mapa (SOLO LIBROS)
+
+Pandoc la lee como cita. En libros, `cite-to-biblioref-db.lua` la desvía a `<xref linkend>` por el prefijo: ninguna clave bibliográfica empieza con letra, porque empiezan con el id numérico del registro. Produce solo el número, como `\ref`; la palabra la escribe el editor. Un grupo que mezcla referencias y citas detiene la conversión.
 
 Los id `fig-*` no se prefijan con el del capítulo en `ensamblar-capitulo-canonico.xsl` (`db:es-id-global`, como `bib-*`): con el prefijo, la referencia a una figura de otro capítulo apuntaba al propio. Son únicos en el libro por convención. El canónico de una pieza que remite a otra no valida suelto (IDREF); el del libro, sí.
 
@@ -1850,7 +1856,7 @@ VERIFICADO EN EL CONTENEDOR
 
 Libro de prueba con Introducción, dos capítulos, Conclusiones y un apéndice, con referencias cruzadas entre todas las piezas, una en una nota y una cita en un pie. PDF, HTML y EPUB dan los mismos números: 1, 1.1, 1.2, 2.1, 1, A.1. El canónico del libro valida contra el RNG. Los casos de error del filtro detienen Pandoc con el mensaje.
 
-**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73
+**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73,vinculo:SC-35
 
 **PENDIENTE:** Probar en Mint con el libro nuevo que tiene figuras y con una revista. Tablas y ecuaciones siguen el mismo camino en lotes propios: prefijos tbl- y eq- en cite-to-biblioref-db.lua y en db:es-id-global.
 
@@ -1939,15 +1945,66 @@ LA INSERCIÓN, SEGÚN EL MODO
 - `figura`: delega en `FMain.InsertarFigura` (SC-32).
 - `envolver`: exige una selección.
 - `plantilla`: inserta con el marcador de los snippets (SC-21) y lo deja seleccionado.
+- `dos-partes`: como `envolver`, si la selección tiene la forma `{primera}{segunda}`; si no, avisa qué falla y no inserta (SC-35).
 - Un bloque queda separado por líneas en blanco de lo que tenga antes y después, porque Pandoc no lo reconoce sin ellas (medido), y cierra con el ancla nombrada (SC-33).
+
+RESALTADO
+
+REGLA DE LIBERACIÓN
+
+Un shortcode se libera terminado: para libros y revistas, o para uno solo cuando es específico de ese producto. Nunca con pendientes a medias. El esquema 3 de gbShortcodes lo hace cumplir (RF-11): un shortcode liberado no tiene pendiente, y no puede estar liberado en un producto y en borrador en el otro (en el otro es liberado o `no_aplica`).
 
 RESALTADO
 
 `Markdown.highlight` reconoce la apertura, el ancla, el cierre y las marcas en línea con el estilo `Function`; cada tema define `Function` en su sección `[Markdown]`. Los patrones escriben el espacio como `\x20` o `\s` (GV-76).
 
-**Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24
+**Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24,vinculo:SC-35
 
-**PENDIENTE:** Verificado en Mint con 3.22.1 (2026-10): instalado, el panel muestra solo lo liberado (la figura); desde el IDE, también los borradores, marcados. La figura se inserta con la línea en blanco y el ancla, se guarda y se colorea. Falta probar en Mint la inserción de envolver, plantilla y en línea, que hoy solo tienen borradores. En cinco temas el color de Function coincide con otro estilo de Markdown (gruvbox, monokai, pen-paper-coffee, solarizado-claro y solarizado-oscuro): a decidir. El verificador de cierres no está implementado.
+**PENDIENTE:** Verificado en Mint con 3.22.1 (2026-10): instalado, el panel muestra solo lo liberado (la figura); desde el IDE, también los borradores, marcados. La figura se inserta con la línea en blanco y el ancla, se guarda y se colorea. Falta probar en Mint la inserción de dos-partes (el epígrafe), plantilla y en línea. En cinco temas el color de Function coincide con otro estilo de Markdown (gruvbox, monokai, pen-paper-coffee, solarizado-claro y solarizado-oscuro): a decidir. El verificador de cierres no está implementado.
+
+### SC-35 — Epígrafe: {texto}{atribución}, a la derecha, 60 % de la columna, con filete
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / LuaLaTeX / LibreOffice / Gambas 3.19 / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. El epígrafe se escribe en dos partes entre llaves, pegadas, dentro del bloque:
+
+    ::: epigraph
+
+    {El conocimiento es *poder*.}{Francis Bacon, *Meditationes sacrae*}
+
+    [/epigraph]: # ()
+    :::
+
+Replica `\epigraph{texto}{atribución}` de LaTeX. Las dobles llaves son el semáforo: el corte entre texto y atribución lo dan ellas, no una raya, así que las dos partes admiten rayas, además de bastardilla, negrita y citas. La atribución puede quedar vacía: `{texto}{}`. El texto admite varios párrafos (una línea en blanco dentro de las llaves); la atribución, uno solo, porque `<attribution>` (DocBook) y `<attrib>` (JATS) solo admiten texto en línea.
+
+QUIÉN ESCRIBE LAS LLAVES
+
+Quien marca. Selecciona `{…}{…}` y aplica el shortcode, que es de modo `dos-partes` (SC-34): antes de insertar controla la forma y, si falla, avisa qué falla y no inserta (`m_Shortcodes.ProblemaDosPartes`, probado con 13 casos).
+
+UNA SOLA REGLA PARA LAS TRES CADENAS
+
+`dos-partes.lua` corre en revista (antes de `cite-to-xref.lua`), libro (antes de `fenced-divs-to-elements-db.lua`) y ODT (antes de `epigrafe-odt.lua`). Cuenta las llaves del nivel del párrafo: Pandoc las deja como texto y las de adentro, balanceadas, son texto (medido con Pandoc 3.1.3). Deja el bloque con dos hijos, `.epigrafe-texto` y `.epigrafe-atrib`, y cada filtro solo serializa. Frena la conversión con un mensaje que cita el comienzo del bloque si falta una llave, si hay texto fuera, si las partes no van pegadas, si hay más de dos, si la primera está vacía o si la atribución tiene más de un párrafo.
+
+- Revista: `<disp-quote specific-use="epigraph">` con `<p>` y `<attrib>` (valida contra la DTD 1.4).
+- Libro: `<epigraph>` con `<attribution>` primero y los `<para>` (DocBook 5.2).
+
+Antes, el filtro de revista aplanaba el epígrafe a texto (perdía la bastardilla y pegaba los párrafos) y el de libro perdía la atribución en un párrafo propio y todo párrafo después del primero.
+
+DISEÑO (EL LEGADO LaTeX DE ALBERTO)
+
+Bloque a la derecha, del 60 % de la columna, en letra menor (`\small`) y sin corte de palabra. El texto, alineado a la izquierda; un filete de 0,6 pt; la atribución, alineada a la derecha. Sin atribución no hay filete. Igual en libros y revistas, y en el PDF, el EPUB y el HTML.
+
+- PDF: `\gbepigrafe{texto}{atribución}`, macro propia y no el paquete `epigraph`, que no permite omitir el filete. Está en `preambulo-contrato.tex` (libros) y en `m_XML.ObtenerPreambuloEmbebido` (revistas), gemelas: un cambio en una va en la otra. `jats-to-latex.xsl` reconoce el epígrafe por `@specific-use`, no por tener `<attrib>`.
+- HTML y EPUB: `div.epigrafe` con `p.epigrafe-texto` y `p.epigrafe-atrib`; el filete es el borde superior de la atribución. Mismas reglas en `gbpublisher.css`, `gbpublisher-epub-libro.css`, `jats-to-html.xsl` y `m_GenerarEpub`. La atribución conserva sus marcas y no lleva raya.
+- ODT: los estilos de párrafo `gbEpigrafe` y `gbEpigrafeAtrib` de `ott/reference.ott`, que Pandoc aplica por `custom-style`. Con margen izquierdo fijo de 6,6 cm (el 60 % de la caja del documento de referencia).
+
+UN FILTRO QUE FRENA SE VE
+
+En revistas, `GenerarBodyXML` sigue ahora el patrón de los capítulos: si Pandoc termina con error no se arma el `<body>`, se escribe una marca de fallo y el motivo queda en la terminal. Antes un epígrafe mal formado dejaba un `<body>` a medias sin aviso (GV-23).
+
+**Relaciones:** vinculo:SC-34,vinculo:SC-33,vinculo:SC-31,vinculo:SC-30,vinculo:RF-11,vinculo:SC-11,apoya:GV-23
+
+**PENDIENTE:** Probado en el contenedor: los filtros, las cinco hojas que se pueden correr sueltas (las de HTML y EPUB de libro, con la plantilla aislada), el PDF y el ODT. Falta en Mint, con un libro y una revista reales, y epubcheck sobre un EPUB completo.
 
 ---
 
@@ -2252,9 +2309,9 @@ Costo medido: 1,7 s para 392.713 caracteres de Markdown real, unos 1,5 ms por l�
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbShortcodes / SQLite 3.45 / Pandoc 3.1.3 / Gambas 3.19 (gb.db) en contenedor · **Verificado:** 2026-10
 
-Programa aparte, con el modelo de gbCorpus (RF-08), que mantiene el catálogo de shortcodes de gbpublisher. Reemplaza a la tabla `shortcodes` de MySQL, que se retira con una actualización de esquema (SC-22) cuando gbpublisher lea la exportación.
+Programa aparte, con el modelo de gbCorpus (RF-08), que mantiene el catálogo de shortcodes de gbpublisher. Reemplaza a la tabla `shortcodes` de MySQL, retirada en la actualización 1.7.0 de la base de gbpublisher (SC-22, SC-34).
 
-ESTA ENTRADA DESCRIBE LA VERSIÓN 2 DEL ESQUEMA Y DEL CONTRATO DE EXPORTACIÓN. La 2 agrega `clase`.
+ESTA ENTRADA DESCRIBE LA VERSIÓN 3 DEL ESQUEMA Y DEL CONTRATO DE EXPORTACIÓN. La 2 agrega `clase`; la 3, el modo `dos-partes` y la regla de liberación. El contrato de exportación no cambia con la 3.
 
 BASE
 
@@ -2271,7 +2328,7 @@ TABLA `shortcodes`
     orden           INTEGER NOT NULL       dentro de grupo y perfil, de 10 en 10
     estado_libro    no_aplica | borrador | liberado
     estado_revista  no_aplica | borrador | liberado
-    modo            envolver | plantilla | figura
+    modo            envolver | plantilla | figura | dos-partes
     apertura        TEXT NOT NULL          puede tener saltos (el bloque de código)
     cierre          TEXT NOT NULL
     que_es          TEXT                   Markdown; NULL si no hay texto
@@ -2282,7 +2339,7 @@ TABLA `shortcodes`
 
 La clase es la clave con que gbpublisher valida un .md y empareja los cierres (SC-33). No es única: las variantes comparten clase (`figure` y `fig-fullwidth` son `fig`; las tres tablas, `table`). Para validar se usa el catálogo entero, en cualquier estado; para mostrar, solo lo liberado.
 
-Restricciones: un shortcode no puede ser no_aplica en los dos; la figura es un bloque; lo liberado tiene `que_es`, `ejemplo` y `como_sale`.
+Restricciones: un shortcode no puede ser no_aplica en los dos; la figura es un bloque; lo liberado tiene `que_es`, `ejemplo` y `como_sale`, y no tiene `pendiente`; un shortcode no puede estar liberado en un producto y en borrador en el otro (la regla de liberación de SC-34).
 
 Los tres textos de la ayuda admiten NULL y no cadena vacía (`CHECK (x <> '')`): Edit + Update escribe la cadena vacía como NULL (GV-74), y con NOT NULL guardar una sección vacía fallaba.
 
@@ -2291,10 +2348,11 @@ MODOS
 - envolver: rodea la selección con apertura y cierre.
 - plantilla: inserta apertura, marcador y cierre, sin selección (la sigla).
 - figura: el camino de `FMain.InsertarFigura` (SC-32).
+- dos-partes: envolver, con el control de la forma `{primera}{segunda}` antes de insertar (SC-35).
 
 QUÉ HACE LA APLICACIÓN
 
-Lee, filtra, pule los textos (etiqueta, ayuda, mapeos, notas, pendiente) y exporta. NO da de alta ni elimina, y no cambia nombre, tipo, grupo, perfil, orden, estados, modo, apertura ni cierre: eso es comportamiento, se decide después de probarlo y se aplica por script SQL con Importar UPDATE SQL (`engine/importar_shortcodes.sh`, el contrato de SC-19 con `-- Esquema: 2`). El importador compara antes y después una huella del contenido, no solo la cantidad de filas, para no afirmar que la base quedó como estaba sin comprobarlo.
+Lee, filtra, pule los textos (etiqueta, ayuda, mapeos, notas, pendiente) y exporta. NO da de alta ni elimina, y no cambia nombre, tipo, grupo, perfil, orden, estados, modo, apertura ni cierre: eso es comportamiento, se decide después de probarlo y se aplica por script SQL con Importar UPDATE SQL (`engine/importar_shortcodes.sh`, el contrato de SC-19 con `-- Esquema: 3`). El importador compara antes y después una huella del contenido, no solo la cantidad de filas, para no afirmar que la base quedó como estaba sin comprobarlo.
 
 EXPORTACIÓN AL PAQUETE (CONTRATO CON gbpublisher)
 
@@ -2319,7 +2377,7 @@ OTRAS SALIDAS
 
 CARGA INICIAL
 
-`shortcodes-carga-inicial.sql`: las 77 filas de `gbpublisher-baseline-1.0.0.sql`. Liberada solo la figura; los ejemplos que Pandoc no lee como se espera llevan pendiente. Los ejemplos de bloque llevan el cierre nombrado (SC-33).
+`shortcodes-carga-inicial.sql`: las 77 filas de `gbpublisher-baseline-1.0.0.sql`. Liberada solo la figura, sin pendiente desde la versión 3; los ejemplos que Pandoc no lee como se espera llevan pendiente. Los scripts que cambian shortcodes después de la carga se numeran: `gbshortcodes-act-001.sql`, `-002`… (el primero libera el epígrafe, SC-35). Los ejemplos de bloque llevan el cierre nombrado (SC-33).
 
 MIGRACIONES DE ESQUEMA
 
@@ -2329,9 +2387,13 @@ La aplicación no abre una base de una versión anterior: dice qué script aplic
 
 El importador la acepta solo si la base está en la versión de partida y la de llegada es la que él maneja, y al terminar comprueba que la base quedó en la de llegada. `gbshortcodes-migrar-1-a-2.sql` rehace la tabla con la columna `clase` en su lugar (las columnas y restricciones quedan iguales a las de una base creada en v2, verificado) y pone el cierre nombrado en los ejemplos que siguen iguales a los de la carga inicial; uno editado se conserva y se lista.
 
-**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33
+`gbshortcodes-migrar-2-a-3.sql` rehace la tabla con las restricciones nuevas (SQLite no cambia un CHECK en su lugar) y copia las filas sin cambiarlas, salvo la figura: si sigue como en la carga, le quita el pendiente que pedía referencia cruzada en revistas, que no existe (SC-32). Antes de copiar comprueba la regla de liberación y frena si una fila la viola. Verificado: la base migrada tiene el mismo esquema que una creada en v3, y el DDL de la aplicación es igual al de `shortcodes_esquema.sql`.
 
-**PENDIENTE:** Probado en contenedor con Gambas 3.19 y gb.db, no con gb.db2 en 3.22.1. Falta la lectura de la exportación en gbpublisher (paso siguiente) y el SC que fije la decisión del lado de gbpublisher.
+Para correr un script de una versión, el importador tiene que ser el de esa versión: `importar_shortcodes.sh` de la 3 rechaza un script declarado `-- Esquema: 2` (medido). Por eso un cambio de datos que la migración necesita va dentro de la migración.
+
+**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35
+
+**PENDIENTE:** Versión 2 verificada en Mint con 3.22.1: exportación e importación, y la lectura en gbpublisher (SC-34). Versión 3 probada en el contenedor con Gambas 3.19 y gb.db; falta en Mint.
 
 ---
 
@@ -3950,5 +4012,24 @@ Medido con un programa de prueba que registra la gramática con `TextHighlighter
 Caso del proyecto: el ancla de cierre `[/clase]: # ()` (SC-33) en `Markdown.highlight`.
 
 **Relaciones:** vinculo:SC-34,vinculo:SC-33
+
+**PENDIENTE:** Medido en 3.19, no en 3.22.1.
+
+### GV-77 — File.Load y <> comparan bien un archivo binario, con bytes nulos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbx3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+`File.Load` devuelve el archivo entero aunque tenga bytes nulos, y `<>` compara las cadenas por su largo y su contenido, no hasta el primer nulo:
+
+    b1 = "ab\0cd"   b2 = "ab\0ce"   b3 = copia de b1
+    Len(File.Load(b1))                       ->  5
+    File.Load(b1) <> File.Load(b2)           ->  True
+    File.Load(b1) <> File.Load(b3)           ->  False
+
+CONSECUENCIA
+
+El cotejo de recursos de SC-11 sirve también para un binario, como el `.ott` del ODT, sin sumas de verificación.
+
+**Relaciones:** vinculo:SC-11
 
 **PENDIENTE:** Medido en 3.19, no en 3.22.1.

@@ -471,14 +471,15 @@
        EPÍGRAFE
        ================================================ -->
   <xsl:template match="disp-quote[@specific-use='epigraph']">
-    <blockquote class="epigraph">
-      <xsl:apply-templates select="p"/>
+    <div class="epigrafe">
+      <xsl:for-each select="p">
+        <p class="epigrafe-texto"><xsl:apply-templates/></p>
+      </xsl:for-each>
+      <!-- LA ATRIBUCIÓN VA ABAJO, SIN RAYA (SC-35), Y CONSERVA SUS MARCAS -->
       <xsl:if test="attrib">
-        <cite class="attrib">
-          <xsl:value-of select="attrib"/>
-        </cite>
+        <p class="epigrafe-atrib"><xsl:apply-templates select="attrib[1]/node()"/></p>
       </xsl:if>
-    </blockquote>
+    </div>
   </xsl:template>
 
   <!-- ================================================
@@ -495,7 +496,7 @@
        EPUB: <figure> Y <figcaption> SON INESTABLES EN
        LECTORES VIEJOS — SE USA <div> Y <p> EN SU LUGAR.
        RUTAS RELATIVAS A ../images/
-       ID PREDECIBLE BASADO EN POSICIÓN NUMÉRICA.
+       ID: EL DEL EDITOR (SC-32).
        ================================================ -->
   <xsl:template match="fig">
     <xsl:variable name="href"   select="graphic/@xlink:href"/>
@@ -503,16 +504,23 @@
     <xsl:variable name="fignum">
       <xsl:number count="fig" level="any"/>
     </xsl:variable>
-    <div class="fig-wrapper" id="fig-{$fignum}">
+    <!-- TEXTO ALTERNATIVO: EL DECLARADO (alt-text), O EL PIE SIN FORMATO -->
+    <xsl:variable name="alt" select="if (normalize-space(graphic/alt-text) != '')
+                                     then normalize-space(graphic/alt-text)
+                                     else normalize-space(caption/p)"/>
+    <!-- EL id DEL EDITOR ES EL ANCLA ESTABLE DE LA FIGURA (SC-32); EL
+         NÚMERO QUEDA PARA UNA FIGURA SIN id -->
+    <div class="fig-wrapper" id="{if (@id) then @id else concat('fig-', $fignum)}">
       <img src="../images/{$nombre}"
-           alt="{normalize-space(caption/p)}"
+           alt="{$alt}"
            class="fig-img"/>
       <p class="fig-caption">
         <xsl:text>Figura </xsl:text>
         <xsl:value-of select="$fignum"/>
         <xsl:if test="caption/p">
           <xsl:text>. </xsl:text>
-          <xsl:value-of select="caption/p"/>
+          <!-- EL PIE CONSERVA FORMATO Y CITAS -->
+          <xsl:apply-templates select="caption/p/node()"/>
         </xsl:if>
       </p>
     </div>

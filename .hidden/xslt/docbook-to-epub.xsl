@@ -1412,10 +1412,10 @@
       <xsl:for-each select="db:para | para">
         <p class="epigrafe-texto"><xsl:apply-templates/></p>
       </xsl:for-each>
+      <!-- LA ATRIBUCIÓN VA ABAJO, SIN RAYA (SC-35), Y CONSERVA SUS MARCAS -->
       <xsl:if test="db:attribution | attribution">
         <p class="epigrafe-atrib">
-          <xsl:text>— </xsl:text>
-          <xsl:value-of select="normalize-space((db:attribution | attribution)[1])"/>
+          <xsl:apply-templates select="(db:attribution | attribution)[1]/node()"/>
         </p>
       </xsl:if>
     </div>

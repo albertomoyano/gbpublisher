@@ -210,8 +210,28 @@ end
 --     KEY
 --     <named-content content-type="cite-suffix">SUFIJO CON <italic>markup</italic></named-content>
 --   </xref>
+-- PREFIJOS DE REFERENCIA CRUZADA DE LIBROS (cite-to-biblioref-db.lua). EN
+-- REVISTA NO HAY REFERENCIA CRUZADA (SC-32): CADA ARTÍCULO ES AUTÓNOMO, Y
+-- DENTRO DEL ARTÍCULO LA MENCIÓN «figura 2» ES TEXTO DEL AUTOR. UNA CLAVE
+-- CON ESTOS PREFIJOS SALDRÍA COMO CITA BIBLIOGRÁFICA FALSA: SE FRENA.
+-- NINGUNA CLAVE BIBLIOGRÁFICA EMPIEZA CON LETRA (EMPIEZAN CON EL id
+-- NUMÉRICO DEL REGISTRO).
+local prefijos_referencia = { 'fig-', 'tbl-', 'eq-' }
+
 function Cite(el)
   local result = {}
+
+  -- REFERENCIA CRUZADA EN UN ARTÍCULO: NO EXISTE EN REVISTAS
+  for _, citation in ipairs(el.citations) do
+    for _, prefijo in ipairs(prefijos_referencia) do
+      if citation.id:sub(1, #prefijo) == prefijo then
+        error('\n[referencia] @' .. citation.id .. ': en revistas no hay ' ..
+              'referencias cruzadas. La mención a una figura, una tabla o una ' ..
+              'ecuación se escribe como texto («figura 2»).', 0)
+      end
+    end
+  end
+
   for i, citation in ipairs(el.citations) do
 
     -- DETERMINAR MODO DE CITA SEGÚN PANDOC AST
@@ -270,20 +290,15 @@ function Cite(el)
   return result
 end
 
--- CONTADOR GLOBAL DE FIGURAS
--- SE REINICIA EN CADA EJECUCIÓN DE PANDOC
--- GARANTIZA IDS ÚNICOS Y SECUENCIALES: fig-1, fig-2, ...
-local fig_counter = 0
-
 -- CONTADOR GLOBAL DE TABLAS
 -- SE REINICIA EN CADA EJECUCIÓN DE PANDOC
 -- GARANTIZA IDS ÚNICOS Y SECUENCIALES: tbl-1, tbl-2, ...
 local table_counter = 0
 
 -- MANEJA NUEVE TIPOS DE DIVS:
---   :::{.fig #fig-cualquier-cosa}    → <fig id="fig-N">
+--   :::{.fig #fig-mapa}              → <fig id="fig-mapa"> (TAMBIÉN .fullwidth)
 --   :::{.table #tbl-cualquier-cosa}  → <table-wrap id="tbl-N">
---   ::: epigraph                     → <disp-quote specific-use="epigraph">
+--   ::: epigraph {…}{…}              → <disp-quote specific-use="epigraph"> (VÍA dos-partes.lua)
 --   ::: verse                        → <verse-group> con <verse-line>
 --   :::{.code language="python"}     → <code language="python">
 --   :::{.box type="warning"}         → <boxed-text content-type="warning">
@@ -296,42 +311,83 @@ local table_counter = 0
 --   Div.content → Figure → Plain → Image
 function Div(el)
 
-  -- FIGURAS: GENERAR <fig> JATS DIRECTAMENTE COMO RawBlock
-  -- SE EVITA EL DOBLE <fig> QUE PANDOC GENERA AL CONVERTIR EL DIV
+  -- FIGURAS: <fig> JATS ARMADO ACÁ, LA NORMAL Y LA DE ANCHO COMPLETO (SC-32)
+  -- ESTRUCTURA EN MD (LA ÚNICA ADMITIDA, LA MISMA QUE EN LIBROS):
+  --   ::: {.fig #fig-mapa}
+  --   ![Pie de la figura, con *formato* y citas [@clave]](media/fig-mapa.png)
+  --   :::
+  -- CON TEXTO ALTERNATIVO PROPIO PARA EL EPUB ACCESIBLE: alt="..." EN EL DIV.
+  -- .fullwidth → specific-use="fullwidth".
+  -- EL PIE CONSERVA FORMATO Y CITAS: LOS Cite YA SON <xref> PORQUE LOS
+  -- INLINES SE PROCESAN ANTES QUE LOS BLOQUES.
+  -- TRES FALLAS DETIENEN LA CONVERSIÓN, IGUAL QUE EN LIBROS (GV-23): SIN #id,
+  -- SIN PIE Y CON CONTENIDO ADEMÁS DE LA IMAGEN. EL id NO SIRVE PARA REFERIR
+  -- (EN REVISTA NO HAY REFERENCIA CRUZADA, SC-32): ES EL ANCLA ESTABLE DE LA
+  -- FIGURA EN EL HTML Y EL EPUB, Y LO ESCRIBE InsertarFigura.
   if el.classes:includes('fig') then
-    fig_counter = fig_counter + 1
-    -- EL id ES EL QUE ESCRIBIÓ EL EDITOR EN EL DIV (::: {.fig #fig-mapa}):
-    -- ES EL QUE PERMITE REFERIR LA FIGURA. EL CONTADOR QUEDA SOLO PARA
-    -- LA FIGURA QUE NO LO TRAE
-    local fig_id = el.identifier
-    if fig_id == nil or fig_id == '' then
-      fig_id = 'fig-' .. fig_counter
-    end
+    local fig_id = el.identifier or ''
+    local imagen = nil
+    local pie = {}
+    local otros = 0
+
+    -- BUSCAR LA IMAGEN: Figure (IMAGEN CON PIE) O Para/Plain CON UNA SOLA
+    -- Image (IMAGEN SIN PIE, PARA DAR EL MENSAJE CORRECTO)
     for _, block in ipairs(el.content) do
-      if block.t == 'Figure' then
-        for _, inner in ipairs(block.content) do
-          if inner.t == 'Plain' then
-            for _, inline in ipairs(inner.content) do
-              if inline.t == 'Image' then
-                local href = inline.src
-                local alt  = pandoc.utils.stringify(inline.caption)
-                local ext  = href:match("%.(%w+)$") or "png"
-                -- ESCAPAR: href Y ext VAN A ATRIBUTO, alt VA A TEXTO DE ELEMENTO
-                local raw  = '<fig id="' .. escape_xml_attr(fig_id) .. '">\n' ..
-                             '  <caption><p>' .. escape_xml_text(alt) .. '</p></caption>\n' ..
-                             '  <graphic mimetype="image" mime-subtype="' .. escape_xml_attr(ext) .. '"' ..
-                             ' xlink:href="' .. escape_xml_attr(href) .. '"/>\n' ..
-                             '</fig>'
-                return pandoc.RawBlock('jats', raw)
-              end
-            end
+      if block.t == 'Figure' and not imagen then
+        for _, interno in ipairs(block.content) do
+          if (interno.t == 'Plain' or interno.t == 'Para')
+             and #interno.content == 1 and interno.content[1].t == 'Image' then
+            imagen = interno.content[1]
           end
         end
+        -- EL PIE ES EL CAPTION LARGO: UN SOLO BLOQUE DE INLINES
+        if block.caption.long[1] then
+          pie = block.caption.long[1].content
+        end
+      elseif (block.t == 'Para' or block.t == 'Plain') and not imagen
+             and #block.content == 1 and block.content[1].t == 'Image' then
+        imagen = block.content[1]
+        pie = imagen.caption
+      else
+        otros = otros + 1
       end
     end
-    -- FALLBACK: SI NO ENCUENTRA IMAGEN RETORNA EL DIV CON id ACTUALIZADO
-    el.identifier = fig_id
-    return el
+
+    if fig_id == '' then
+      error('\n[figura] Una figura no tiene identificador. Se escribe ' ..
+            '::: {.fig #fig-nombre}' ..
+            (imagen and (' (imagen: ' .. imagen.src .. ')') or ''), 0)
+    end
+    if not imagen then
+      error('\n[figura #' .. fig_id .. '] No tiene imagen: dentro del bloque ' ..
+            'va una sola línea ![Pie](media/archivo.png)', 0)
+    end
+    if #pie == 0 then
+      error('\n[figura #' .. fig_id .. '] No tiene pie: va entre los corchetes ' ..
+            'de la imagen, ![Pie](' .. imagen.src .. ')', 0)
+    end
+    if otros > 0 then
+      error('\n[figura #' .. fig_id .. '] El bloque tiene contenido además de ' ..
+            'la imagen. El pie va entre los corchetes de la imagen.', 0)
+    end
+
+    local ext = imagen.src:match("%.(%w+)$") or "png"
+    local uso = ''
+    if el.classes:includes('fullwidth') then uso = ' specific-use="fullwidth"' end
+
+    -- TEXTO ALTERNATIVO SOLO SI SE DECLARÓ: SIN ÉL, LAS SALIDAS USAN EL PIE
+    local alt_text = ''
+    if el.attributes['alt'] and el.attributes['alt'] ~= '' then
+      alt_text = '<alt-text>' .. escape_xml_text(el.attributes['alt']) .. '</alt-text>'
+    end
+
+    -- ESCAPAR: id, href Y ext VAN A ATRIBUTO; EL PIE YA ES MARCADO JATS
+    local raw = '<fig id="' .. escape_xml_attr(fig_id) .. '"' .. uso .. '>\n' ..
+                '  <caption><p>' .. inlines_a_jats(pie) .. '</p></caption>\n' ..
+                '  <graphic mimetype="image" mime-subtype="' .. escape_xml_attr(ext) .. '"' ..
+                ' xlink:href="' .. escape_xml_attr(imagen.src) .. '">' .. alt_text .. '</graphic>\n' ..
+                '</fig>'
+    return pandoc.RawBlock('jats', raw)
   end
 
   -- TABLAS: SERIALIZAR A JATS E INYECTAR id SECUENCIAL
@@ -350,32 +406,30 @@ function Div(el)
     return el
   end
 
-  -- EPÍGRAFES: <disp-quote specific-use="epigraph"> CON ATRIBUCIÓN SEPARADA
-  -- SEPARA TEXTO DE ATRIBUCIÓN POR — (guión em) O -- (dos guiones)
-  -- ESTRUCTURA EN MD:
-  --   ::: epigraph
-  --   Texto de la cita.
-  --   -- Autor   (o — Autor)
-  --   :::
+  -- EPÍGRAFES: <disp-quote specific-use="epigraph"> CON <attrib>
+  -- dos-partes.lua YA PARTIÓ EL BLOQUE {texto}{atribución} EN DOS Div
+  -- HIJOS (.epigrafe-texto, .epigrafe-atrib) Y CONTROLÓ LA FORMA. ACÁ
+  -- SOLO SE SERIALIZA, CONSERVANDO BASTARDILLA, NEGRITA Y CITAS (LOS
+  -- Cite YA SON <xref>: LOS INLINES SE PROCESAN ANTES QUE LOS BLOQUES).
+  -- SIN SEGUNDA PARTE NO HAY <attrib>, Y LA SALIDA NO PONE FILETE.
   if el.classes:includes('epigraph') then
-    local plain = pandoc.utils.stringify(el)
-    local texto, attrib = plain:match('^(.-)%s*%—%s*(.+)$')
-    if not attrib then
-      texto, attrib = plain:match('^(.-)%s*%-%-%s*(.+)$')
+    local texto, atrib = nil, nil
+    for _, hijo in ipairs(el.content) do
+      if hijo.t == 'Div' and hijo.classes:includes('epigrafe-texto') then texto = hijo end
+      if hijo.t == 'Div' and hijo.classes:includes('epigrafe-atrib') then atrib = hijo end
     end
-    local raw
-    if attrib then
-      -- ESCAPAR: texto Y attrib VAN A TEXTO DE ELEMENTO
-      raw = '<disp-quote specific-use="epigraph">\n' ..
-            '  <p>' .. escape_xml_text(texto) .. '</p>\n' ..
-            '  <attrib>' .. escape_xml_text(attrib) .. '</attrib>\n' ..
-            '</disp-quote>'
-    else
-      -- ESCAPAR: plain VA A TEXTO DE ELEMENTO
-      raw = '<disp-quote specific-use="epigraph">\n' ..
-            '  <p>' .. escape_xml_text(plain) .. '</p>\n' ..
-            '</disp-quote>'
+    -- SIN LOS HIJOS, dos-partes.lua NO CORRIÓ ANTES: ES UN ERROR DE CADENA
+    if not texto then
+      error('\n[gbpublisher] epigraph sin partir: dos-partes.lua tiene que correr antes que cite-to-xref.lua\n', 0)
     end
+    local raw = '<disp-quote specific-use="epigraph">\n'
+    for _, parrafo in ipairs(texto.content) do
+      raw = raw .. '  <p>' .. inlines_a_jats(parrafo.content) .. '</p>\n'
+    end
+    if atrib then
+      raw = raw .. '  <attrib>' .. inlines_a_jats(atrib.content[1].content) .. '</attrib>\n'
+    end
+    raw = raw .. '</disp-quote>'
     return pandoc.RawBlock('jats', raw)
   end
 

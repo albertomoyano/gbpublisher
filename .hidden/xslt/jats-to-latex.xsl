@@ -1209,25 +1209,28 @@
   <!-- PLANTILLAS: BLOQUES ESPECIALES                               -->
   <!-- ============================================================ -->
 
-<!-- EPÍGRAFE: USA \epigraph{texto}{atribución} DEFINIDO EN EL PREÁMBULO -->
-  <!-- EN JATS: disp-quote CONTIENE EL TEXTO Y attrib LA ATRIBUCIÓN        -->
+<!-- EPÍGRAFE (SC-35): \gbepigrafe{texto}{atribución}, DEFINIDO EN EL     -->
+  <!-- PREÁMBULO (m_XML). SE RECONOCE POR @specific-use, NO POR TENER        -->
+  <!-- <attrib>: UN EPÍGRAFE SIN ATRIBUCIÓN SIGUE SIENDO EPÍGRAFE, Y SALE    -->
+  <!-- SIN FILETE PORQUE EL SEGUNDO ARGUMENTO LLEGA VACÍO.                   -->
+  <xsl:template match="disp-quote[@specific-use='epigraph']">
+    <xsl:text>&#10;\gbepigrafe{</xsl:text>
+    <xsl:apply-templates select="p"/>
+    <xsl:text>}{</xsl:text>
+    <xsl:apply-templates select="attrib[1]/node()"/>
+    <xsl:text>}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+  <!-- CITA EN BLOQUE: ENTORNO quote; LA ATRIBUCIÓN, SI LA HAY, A LA DERECHA -->
   <xsl:template match="disp-quote">
-    <xsl:choose>
-      <!-- CON attrib → EPÍGRAFE -->
-      <xsl:when test="attrib">
-        <xsl:text>&#10;\epigraph{</xsl:text>
-        <xsl:apply-templates select="*[not(self::attrib)]"/>
-        <xsl:text>}{</xsl:text>
-        <xsl:apply-templates select="attrib"/>
-        <xsl:text>}&#10;&#10;</xsl:text>
-      </xsl:when>
-      <!-- SIN attrib → CITA TEXTUAL CON ENTORNO quote -->
-      <xsl:otherwise>
-        <xsl:text>&#10;\begin{quote}&#10;</xsl:text>
-        <xsl:apply-templates/>
-        <xsl:text>\end{quote}&#10;&#10;</xsl:text>
-      </xsl:otherwise>
-    </xsl:choose>
+    <xsl:text>&#10;\begin{quote}&#10;</xsl:text>
+    <xsl:apply-templates select="*[not(self::attrib)]"/>
+    <xsl:if test="attrib">
+      <xsl:text>\par\hfill </xsl:text>
+      <xsl:apply-templates select="attrib[1]/node()"/>
+      <xsl:text>&#10;</xsl:text>
+    </xsl:if>
+    <xsl:text>\end{quote}&#10;&#10;</xsl:text>
   </xsl:template>
 
 <!-- ============================================================ -->
@@ -1244,7 +1247,7 @@
     <xsl:text>\end{tcolorbox}&#10;&#10;</xsl:text>
   </xsl:template>
 
-  <!-- ATTRIB: CONTENIDO PURO SIN PREFIJO — \epigraph LO POSICIONA -->
+  <!-- ATTRIB: CONTENIDO PURO SIN PREFIJO NI RAYA (SC-35) -->
   <xsl:template match="attrib">
     <xsl:apply-templates/>
   </xsl:template>

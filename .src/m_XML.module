@@ -2117,6 +2117,8 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   Dim sRutaMD As String
   Dim sDirTmp As String
   Dim sFileBody As String
+  Dim sFileParcial As String
+  Dim sFileFallo As String
   Dim iEspera As Integer
 
   ' --- 1. Obtener nombre_archivo ---
@@ -2149,6 +2151,9 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   sDirTmp = sRutaProyecto & "/tmp"
   sRutaMD = sRutaProyecto & "/articulos/" & sNombreArchivo & ".md"
   sFileBody = sDirTmp & "/" & sNombreBase & ".xml"
+  ' MISMO PATRÓN QUE GenerarBodyCapituloXML: SALIDA PARCIAL Y MARCA DE FALLO
+  sFileParcial = sFileBody & ".parcial"
+  sFileFallo = sFileBody & ".fallo"
 
   If Not Exist(sRutaMD) Then
     m_Sonido.sonar("Error")
@@ -2156,33 +2161,51 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
     Return False
   Endif
 
-  ' --- 3. Eliminar fragmento anterior ---
-  If Exist(sFileBody) Then
-    Shell "rm '" & sFileBody & "'" Wait
-  Endif
+  ' --- 3. Eliminar fragmento, parcial y marca de fallo anteriores ---
+  ' LOS TRES: UNA MARCA DE FALLO VIEJA HARÍA FRACASAR UNA CORRIDA BUENA
+  Shell "rm -f '" & sFileBody & "' '" & sFileParcial & "' '" & sFileFallo & "'" Wait
 
   ' --- 4. Invocar pandoc ---
   ' LAS COMILLAS VAN PRIMERO (SC-30): guillemets-to-quoted-db ARMA LAS CITAS
   ' ANIDADAS Y quoted-a-nivel-jats PONE LOS CARACTERES DE CADA NIVEL, LOS
   ' MISMOS QUE quote.xsl EN LIBROS. ANTES DE cite-to-xref, QUE SERIALIZA LAS
   ' NOTAS CON pandoc.write Y YA NO DEJA NADA QUE RESOLVER
+  ' dos-partes.lua PARTE LOS EPÍGRAFES {texto}{atribución} (SC-35) DESPUÉS DE
+  ' LAS COMILLAS Y ANTES DE cite-to-xref, QUE LOS SERIALIZA.
+  ' LAS FIGURAS, NORMALES Y DE ANCHO COMPLETO, LAS ARMA cite-to-xref (SC-32);
+  ' figure-to-end.lua, QUE HACÍA LAS DE ANCHO COMPLETO APARTE, SE RETIRÓ.
+  ' pandoc ... && { ENVOLTORIO } > body || : > fallo: SI UN FILTRO FRENA (UN
+  ' EPÍGRAFE O UNA FIGURA MAL FORMADOS, POR EJEMPLO) NO SE ARMA UN body A MEDIAS; SE CREA LA
+  ' MARCA DE FALLO Y EL MOTIVO QUEDA ESCRITO EN LA TERMINAL
   FMain.TerminalViewProyecto.Input(
-    "{ echo '<body xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">'; pandoc '" & sRutaMD & "' " &
+    "pandoc '" & sRutaMD & "' " &
     "--from markdown --to jats --no-highlight --wrap=none " &
     "--lua-filter ~/.gbpublisher/filters/guillemets-to-quoted-db.lua " &
     "--lua-filter ~/.gbpublisher/filters/quoted-a-nivel-jats.lua " &
+    "--lua-filter ~/.gbpublisher/filters/dos-partes.lua " &
     "--lua-filter ~/.gbpublisher/filters/unwrap-structural-divs.lua " &
-    "--lua-filter ~/.gbpublisher/filters/figure-to-end.lua " &
     "--lua-filter ~/.gbpublisher/filters/table-to-end.lua " &
-    "--lua-filter ~/.gbpublisher/filters/cite-to-xref.lua --output -; " &
-    "echo '</body>'; } > '" & sFileBody & "'" & Chr(10))
+    "--lua-filter ~/.gbpublisher/filters/cite-to-xref.lua " &
+    "--output '" & sFileParcial & "' && " &
+    "{ echo '<body xmlns:xlink=" & Chr(34) & "http://www.w3.org/1999/xlink" & Chr(34) & ">'; " &
+    "cat '" & sFileParcial & "'; " &
+    "echo '</body>'; } > '" & sFileBody & "' || : > '" & sFileFallo & "'; " &
+    "rm -f '" & sFileParcial & "'" & Chr(10))
 
-  ' --- 5. Esperar hasta que el archivo exista (máximo 30 s) ---
+  ' --- 5. Esperar el fragmento o la marca de fallo (máximo 30 s) ---
   iEspera = 0
-  While Not Exist(sFileBody) And iEspera < 300
+  While Not Exist(sFileBody) And Not Exist(sFileFallo) And iEspera < 300
     Wait 0.1
     Inc iEspera
   Wend
+
+  ' PANDOC RECHAZÓ EL ARTÍCULO: EL MENSAJE DEL FILTRO ESTÁ EN LA TERMINAL
+  If Exist(sFileFallo) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Pandoc no pudo convertir el artículo:" & Chr(10) & sRutaMD & Chr(10) & Chr(10) &
+      "El motivo está en la terminal del proyecto.")
+    Return False
+  Endif
 
   If Not Exist(sFileBody) Then
     m_Sonido.sonar("Error")
@@ -3982,18 +4005,21 @@ Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean, sEstilo As Strin
   s &= "\\usepackage[labelfont=bf,font=small,labelsep=period,format=plain]{caption}" & Chr(10)
   s &= Chr(10)
   s &= "% --- VARIOS ---" & Chr(10)
-  s &= "\\newcommand{\\epigraph}[2]{%" & Chr(10)
-  s &= "  \\par\\nobreak\\noindent\\par\\nobreak\\vspace{.5\\baselineskip}%" & Chr(10)
-  s &= "  \\hfill{%" & Chr(10)
-  s &= "    \\small" & Chr(10)
-  s &= "    \\begin{tabular}{@{}>{{\\raggedright\\arraybackslash}}m{.65\\textwidth}@{}}%" & Chr(10)
-  s &= "      #1 \\\\[1ex]%" & Chr(10)
-  s &= "      \\midrule%" & Chr(10)
-  s &= "      \\hfill #2%" & Chr(10)
-  s &= "    \\end{tabular}%" & Chr(10)
-  s &= "  }%" & Chr(10)
-  s &= "  \\vspace{.5\\baselineskip}%" & Chr(10)
-  s &= "}" & Chr(10)
+  ' EPÍGRAFE (SC-35): GEMELA DE \gbepigrafe EN preambulo-contrato.tex
+  ' (LIBROS). UN CAMBIO EN UNA VA EN LAS DOS
+  s &= "\\newcommand{\\gbepigrafe}[2]{%" & Chr(10)
+  s &= "  \\par\\vspace{.5\\baselineskip}%" & Chr(10)
+  s &= "  {\\noindent\\hfill" & Chr(10)
+  s &= "   \\begin{minipage}{.6\\linewidth}%" & Chr(10)
+  s &= "     \\small\\parindent=0pt\\parskip=.5em" & Chr(10)
+  s &= "     \\hyphenpenalty=10000\\exhyphenpenalty=10000" & Chr(10)
+  s &= "     \\raggedright #1\\par" & Chr(10)
+  s &= "     \\if\\relax\\detokenize{#2}\\relax\\else" & Chr(10)
+  s &= "       \\parskip=0pt\\vspace{1ex}\\hrule height 0.6pt\\vspace{1ex}%" & Chr(10)
+  s &= "       {\\raggedleft #2\\par}%" & Chr(10)
+  s &= "     \\fi" & Chr(10)
+  s &= "   \\end{minipage}\\par}%" & Chr(10)
+  s &= "  \\vspace{.5\\baselineskip}}" & Chr(10)
   s &= "\\usepackage{hyperref}" & Chr(10)
   s &= "\\hypersetup{colorlinks=True,linkcolor=azulrevista,citecolor=azulrevista,urlcolor=azulrevista,filecolor=azulrevista," & Chr(10)
   s &= "linktoc=all,breaklinks=True,bookmarksopen=True,bookmarksnumbered=True}" & Chr(10)
@@ -7309,7 +7335,9 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
   '      PORQUE fenced-divs SERIALIZA LOS DIVS CON pandoc.write, RC-DB-07,
   '      Y DESPUÉS DE ESO NO QUEDAN Str QUE PROCESAR)
   '   2° cite-to-biblioref-db.lua  (PROCESA LAS CITAS BIBLIOGRÁFICAS)
-  '   3° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
+  '   3° dos-partes.lua  (PARTE LOS EPÍGRAFES {texto}{atribución} Y FRENA
+  '      SI UNO ESTÁ MAL FORMADO, SC-35)
+  '   4° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
   '      QUE PUEDEN CONTENER PÁRRAFOS CON CITAS YA TRANSFORMADAS)
   '
   ' EL WRAPPER <section xmlns="..." xmlns:mml="..." xmlns:xlink="...">
@@ -7325,6 +7353,7 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
     "--from markdown --to docbook5 --mathml --no-highlight --wrap=none " &
     "--lua-filter ~/.gbpublisher/filters/guillemets-to-quoted-db.lua " &
     "--lua-filter ~/.gbpublisher/filters/cite-to-biblioref-db.lua " &
+    "--lua-filter ~/.gbpublisher/filters/dos-partes.lua " &
     "--lua-filter ~/.gbpublisher/filters/fenced-divs-to-elements-db.lua " &
     "--output '" & sFileParcial & "' && " &
     "{ echo '<section xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &

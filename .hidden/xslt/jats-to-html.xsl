@@ -1079,26 +1079,35 @@
             border-bottom: 1px solid var(--color-border);
           }
 
-          /* EPÍGRAFE */
-          .disp-quote-epigraph {
-            margin: 1.5rem 0 1.5rem 2rem;
-            padding: 0;
-            border: none;
+          /* EPÍGRAFE (SC-35): BLOQUE A LA DERECHA, 60 % DE LA COLUMNA, SIN CORTE
+             DE PALABRA. TEXTO A LA IZQUIERDA; FILETE DE 0,6 PT Y ATRIBUCIÓN A LA
+             DERECHA. SIN ATRIBUCIÓN NO HAY FILETE: EL FILETE ES EL BORDE DE ELLA.
+             LAS MISMAS REGLAS EN gbpublisher.css, gbpublisher-epub-libro.css,
+             jats-to-html.xsl Y m_GenerarEpub. */
+          .epigrafe {
+            width: 60%;
+            margin: 1.5em 0 1.5em auto;
+            font-size: 0.9em;
+            -webkit-hyphens: none;
+            hyphens: none;
           }
-
-          .disp-quote-epigraph p {
-            font-style: italic;
-            color: var(--color-text-muted);
-            margin-bottom: 0.25rem;
-          }
-
-          .disp-quote-epigraph .attrib {
-            font-size: var(--text-sm);
-            color: var(--color-text-muted);
+          .epigrafe-texto {
+            text-align: left;
+            text-indent: 0;
             font-style: normal;
+            margin: 0;
           }
-
-          .disp-quote-epigraph .attrib::before { content: "— "; }
+          .epigrafe-texto + .epigrafe-texto {
+            margin-top: 0.5em;
+          }
+          .epigrafe-atrib {
+            text-align: right;
+            text-indent: 0;
+            font-style: normal;
+            margin: 0.5em 0 0 0;
+            padding-top: 0.5em;
+            border-top: 0.6pt solid currentColor;
+          }
 
           /* CITA EN BLOQUE */
           .disp-quote {
@@ -2866,14 +2875,15 @@
        EPÍGRAFE
        ================================================ -->
   <xsl:template match="disp-quote[@specific-use='epigraph']">
-    <blockquote class="disp-quote-epigraph">
-      <xsl:apply-templates select="p"/>
+    <div class="epigrafe">
+      <xsl:for-each select="p">
+        <p class="epigrafe-texto"><xsl:apply-templates/></p>
+      </xsl:for-each>
+      <!-- LA ATRIBUCIÓN VA ABAJO, SIN RAYA (SC-35), Y CONSERVA SUS MARCAS -->
       <xsl:if test="attrib">
-        <cite class="attrib">
-          <xsl:value-of select="attrib"/>
-        </cite>
+        <p class="epigrafe-atrib"><xsl:apply-templates select="attrib[1]/node()"/></p>
       </xsl:if>
-    </blockquote>
+    </div>
   </xsl:template>
 
   <!-- ================================================
@@ -2951,6 +2961,10 @@
     -->
     <xsl:variable name="href"   select="graphic/@xlink:href"/>
     <xsl:variable name="nombre" select="tokenize($href, '/')[last()]"/>
+    <!-- TEXTO ALTERNATIVO: EL DECLARADO (alt-text), O EL PIE SIN FORMATO -->
+    <xsl:variable name="alt" select="if (normalize-space(graphic/alt-text) != '')
+                                     then normalize-space(graphic/alt-text)
+                                     else normalize-space(caption/p)"/>
 
     <!-- RUTA DE LA IMAGEN PNG -->
     <xsl:variable name="src">
@@ -2982,7 +2996,9 @@
       </xsl:choose>
     </xsl:variable>
 
+    <!-- EL id DEL EDITOR ES EL ANCLA ESTABLE DE LA FIGURA (SC-32) -->
     <div class="fig-wrapper"
+         id="{@id}"
          data-fig-id="{@id}"
          onclick="highlightPanel('figs', '{@id}')">
 
@@ -2995,14 +3011,14 @@
                   frameborder="0"
                   scrolling="no"
                   loading="lazy"
-                  title="{normalize-space(caption/p)}">
+                  title="{$alt}">
             <!-- FALLBACK PARA NAVEGADORES SIN SOPORTE DE IFRAME -->
-            <img src="{$src}" alt="{normalize-space(caption/p)}"/>
+            <img src="{$src}" alt="{$alt}"/>
           </iframe>
         </xsl:when>
         <!-- MODO PNG: TODAS LAS FIGURAS, O FIGURA DEL AUTOR EN MODO html -->
         <xsl:otherwise>
-          <img src="{$src}" alt="{normalize-space(caption/p)}"/>
+          <img src="{$src}" alt="{$alt}"/>
         </xsl:otherwise>
       </xsl:choose>
 
@@ -3011,8 +3027,9 @@
         <xsl:number count="fig" level="any"/>
       </div>
       <xsl:if test="caption/p">
+        <!-- EL PIE CONSERVA FORMATO Y CITAS -->
         <div class="fig-caption">
-          <xsl:value-of select="caption/p"/>
+          <xsl:apply-templates select="caption/p/node()"/>
         </div>
       </xsl:if>
     </div>

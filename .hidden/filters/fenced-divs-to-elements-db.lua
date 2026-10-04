@@ -3,9 +3,8 @@
 -- FILTRO LUA PARA PANDOC - FENCED DIVS A DOCBOOK 5.2
 -- =====================================================
 -- ANALOGÍA CON REVISTAS:
---   ESTE FILTRO REEMPLAZA TRES FILTROS DEL PIPELINE JATS:
+--   ESTE FILTRO REEMPLAZA DOS FILTROS DEL PIPELINE JATS:
 --     - unwrap-structural-divs.lua  (PARCIAL)
---     - figure-to-end.lua           (FUSIONA CASO fullwidth)
 --     - table-to-end.lua            (FUSIONA CASO fullwidth/rotate)
 --   PLUS LA LÓGICA DE Div() EMBEBIDA EN cite-to-xref.lua.
 --   CONSOLIDADO EN UN SOLO ARCHIVO PORQUE EN DOCBOOK LA
@@ -20,10 +19,9 @@
 --   1. ESTRUCTURALES (.intro, .methods, etc.) → <section role="X">
 --   2. FIG (.fig)                              → <figure xml:id="X">
 --   3. TABLE (.table)                          → <table xml:id="X">
---   4. EPIGRAPH (.epigraph)                    → <blockquote><attribution>
---                                                (DocBook 5.2 NO acepta
---                                                attribution en epigraph
---                                                directamente — VER NOTA EN 6.4)
+--   4. EPIGRAPH (.epigraph)                    → <epigraph><attribution>
+--                                                (PARTIDO ANTES POR
+--                                                dos-partes.lua — VER 6.4)
 --   5. VERSE (.verse)                          → <literallayout role="verse">
 --   6. CODE (.code language=)                  → <programlisting language="X">
 --   7. BOX (.box type=)                        → <warning>/<note>/etc.
@@ -154,74 +152,6 @@ local function extraer_title(blocks)
     return title_db, resto
   end
   return '', blocks
-end
-
--- DIVIDE UNA LISTA DE INLINES EN "LÍNEAS" SEPARADAS POR SoftBreak
--- O LineBreak. CADA LÍNEA ES UNA SUB-LISTA DE INLINES. USADO POR
--- VERSE Y EPIGRAPH.
-local function dividir_por_break(inlines)
-  local lineas = {}
-  local actual = {}
-  for _, inline in ipairs(inlines) do
-    if inline.t == 'SoftBreak' or inline.t == 'LineBreak' then
-      if #actual > 0 then
-        lineas[#lineas + 1] = actual
-        actual = {}
-      end
-    else
-      actual[#actual + 1] = inline
-    end
-  end
-  if #actual > 0 then lineas[#lineas + 1] = actual end
-  return lineas
-end
-
--- DETERMINA SI UNA LISTA DE INLINES REPRESENTA UNA LÍNEA DE
--- ATRIBUCIÓN EN UN EPIGRAPH. PATRÓN: EMPIEZA CON "—" (EM-DASH)
--- O "--" (DOBLE GUION INTERPRETADO COMO EN-DASH "–" POR PANDOC).
--- LA CHECK USA EL PRIMER Str DESPUÉS DE SALTAR Space INICIAL.
-local function es_linea_atribucion(inlines)
-  if not inlines or #inlines == 0 then return false end
-  local i = 1
-  while i <= #inlines and inlines[i].t == 'Space' do i = i + 1 end
-  if i > #inlines then return false end
-  local primer = inlines[i]
-  if primer.t ~= 'Str' then return false end
-  -- EM-DASH (—), EN-DASH (–), O DOBLE GUION LITERAL (--)
-  return primer.text:sub(1,1) == '\xE2'  -- INICIO DE EM/EN-DASH UTF-8
-         or primer.text:sub(1,2) == '--'
-         or primer.text == '\xE2\x80\x94'  -- EM DASH EXACTO
-         or primer.text == '\xE2\x80\x93'  -- EN DASH EXACTO
-end
-
--- REMUEVE EL PREFIJO DE GUIONES Y ESPACIOS DE UNA LÍNEA DE
--- ATRIBUCIÓN. CONVIERTE "— Autor" / "-- Autor" / "– Autor" → "Autor"
--- OPERANDO SOBRE EL PRIMER Str DE LA LISTA.
-local function limpiar_atribucion(inlines)
-  local lista = {}
-  for i, v in ipairs(inlines) do lista[i] = v end
-  -- SALTAR Space INICIAL
-  while #lista > 0 and lista[1].t == 'Space' do
-    table.remove(lista, 1)
-  end
-  if #lista == 0 then return lista end
-  if lista[1].t == 'Str' then
-    local texto = lista[1].text
-    -- REMOVER EM-DASH, EN-DASH O DOBLE GUION INICIAL
-    texto = texto:gsub('^\xE2\x80\x94', '')  -- EM DASH
-    texto = texto:gsub('^\xE2\x80\x93', '')  -- EN DASH
-    texto = texto:gsub('^%-%-', '')          -- DOBLE GUION
-    texto = texto:gsub('^%s+', '')           -- ESPACIOS RESTANTES
-    if texto == '' then
-      table.remove(lista, 1)
-      while #lista > 0 and lista[1].t == 'Space' do
-        table.remove(lista, 1)
-      end
-    else
-      lista[1] = pandoc.Str(texto)
-    end
-  end
-  return lista
 end
 
 -- =====================================================
@@ -395,51 +325,39 @@ function Div(el)
   -- =====================================================
   -- 6.4. EPÍGRAFE (.epigraph)
   -- =====================================================
-  -- ESTRUCTURA ESPERADA EN MD:
+  -- ESTRUCTURA EN MD:
   --   ::: epigraph
-  --   Texto de la cita.
-  --   -- Autor   (O — Autor / – Autor)
+  --
+  --   {texto}{atribución}
+  --
+  --   [/epigraph]: # ()
   --   :::
   --
-  -- NOTA SOBRE EL SCHEMA: EN DOCBOOK 5.2 BASE, <epigraph> ACEPTA
-  -- <attribution> COMO HIJO (content model: info?, attribution?,
-  -- paragraph_elements+). USAMOS <epigraph> DIRECTAMENTE.
+  -- dos-partes.lua YA PARTIÓ EL BLOQUE EN DOS Div HIJOS
+  -- (.epigrafe-texto, .epigrafe-atrib) Y CONTROLÓ LA FORMA. ACÁ SOLO SE
+  -- SERIALIZA. DOCBOOK 5.2: <epigraph> = info?, attribution?,
+  -- paragraph_elements+; LA ATRIBUCIÓN VA PRIMERO. SIN SEGUNDA PARTE NO
+  -- HAY <attribution>, Y LA SALIDA NO PONE FILETE.
   if el.classes:includes('epigraph') then
-    -- ASUMIMOS UN ÚNICO Para CON SoftBreaks COMO SEPARADORES.
-    -- (ES LO QUE PANDOC PRODUCE EN ESTE CASO; VERIFICADO EMPÍRICAMENTE.)
-    local para = el.content[1]
-    if not para or (para.t ~= 'Para' and para.t ~= 'Plain') then
-      return nil
+    local texto, atrib = nil, nil
+    for _, hijo in ipairs(el.content) do
+      if hijo.t == 'Div' and hijo.classes:includes('epigrafe-texto') then texto = hijo end
+      if hijo.t == 'Div' and hijo.classes:includes('epigrafe-atrib') then atrib = hijo end
     end
-
-    local lineas = dividir_por_break(para.content)
-    if #lineas == 0 then return nil end
-
-    -- DETECTAR LÍNEA DE ATRIBUCIÓN (ÚLTIMA QUE EMPIEZA CON --, — O –)
-    local attribution_inlines = nil
-    local texto_inlines = {}
-    for i, linea in ipairs(lineas) do
-      if i == #lineas and es_linea_atribucion(linea) then
-        attribution_inlines = limpiar_atribucion(linea)
-      else
-        -- AGREGAR A texto, CON ESPACIO ENTRE LÍNEAS
-        if #texto_inlines > 0 then
-          texto_inlines[#texto_inlines + 1] = pandoc.Space()
-        end
-        for _, inl in ipairs(linea) do
-          texto_inlines[#texto_inlines + 1] = inl
-        end
-      end
+    -- SIN LOS HIJOS, dos-partes.lua NO CORRIÓ ANTES: ES UN ERROR DE CADENA
+    if not texto then
+      error('\n[gbpublisher] epigraph sin partir: dos-partes.lua tiene que correr antes que fenced-divs-to-elements-db.lua\n', 0)
     end
-
-    local texto_db = inlines_a_docbook(texto_inlines)
     local raw = '<epigraph>\n'
-    if attribution_inlines then
+    if atrib then
       raw = raw .. '  <attribution>' ..
-            inlines_a_docbook(attribution_inlines) ..
+            inlines_a_docbook(atrib.content[1].content) ..
             '</attribution>\n'
     end
-    raw = raw .. '  <para>' .. texto_db .. '</para>\n</epigraph>'
+    for _, parrafo in ipairs(texto.content) do
+      raw = raw .. '  <para>' .. inlines_a_docbook(parrafo.content) .. '</para>\n'
+    end
+    raw = raw .. '</epigraph>'
     return pandoc.RawBlock('docbook', raw)
   end
 
