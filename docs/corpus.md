@@ -1908,7 +1908,7 @@ Hasta esta entrada, el comentario de `m_Shortcodes` citaba la convención como R
 
 ### SC-34 — gbpublisher lee el catálogo exportado por gbShortcodes: sin tabla en MySQL
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbx3 con xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / Linux Mint, instalado y desde el IDE; Gambas 3.19 / gbx3 con xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
 
 DECISIÓN CERRADA. El catálogo de shortcodes de gbpublisher es la exportación de gbShortcodes (RF-11): `shortcodes/_catalogo.tsv` más un `<nombre>.html` (ayuda) y un `<nombre>.md` (ejemplo) por shortcode. La tabla `shortcodes` de MySQL se retira en la actualización 1.7.0 (SC-22).
 
@@ -1947,7 +1947,7 @@ RESALTADO
 
 **Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24
 
-**PENDIENTE:** Probado en el contenedor (lista, ayuda coloreada, inserción de envolver, plantilla y en línea); falta en Mint con 3.22.1 y con el paquete instalado. En cinco temas el color de Function coincide con otro estilo de Markdown (gruvbox, monokai, pen-paper-coffee, solarizado-claro y solarizado-oscuro): a decidir. El verificador de cierres no está implementado.
+**PENDIENTE:** Verificado en Mint con 3.22.1 (2026-10): instalado, el panel muestra solo lo liberado (la figura); desde el IDE, también los borradores, marcados. La figura se inserta con la línea en blanco y el ancla, se guarda y se colorea. Falta probar en Mint la inserción de envolver, plantilla y en línea, que hoy solo tienen borradores. En cinco temas el color de Function coincide con otro estilo de Markdown (gruvbox, monokai, pen-paper-coffee, solarizado-claro y solarizado-oscuro): a decidir. El verificador de cierres no está implementado.
 
 ---
 
