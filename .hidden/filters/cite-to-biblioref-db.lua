@@ -249,6 +249,12 @@ end
 -- AGREGAR ACÁ tbl- Y eq- CUANDO TABLAS Y FÓRMULAS TENGAN SU LOTE.
 local prefijos_referencia = { 'fig-' }
 
+-- REFERENCIAS A TABLAS Y ECUACIONES: TODAVÍA NO EXISTEN. HASTA SU LOTE
+-- DETIENEN LA CONVERSIÓN: SIN ESTO SALDRÍAN COMO CITA BIBLIOGRÁFICA A UNA
+-- REFERENCIA INEXISTENTE. EN REVISTAS FRENAN SIEMPRE (cite-to-xref.lua):
+-- ALLÍ NO HAY REFERENCIA CRUZADA (SC-32).
+local prefijos_pendientes = { 'tbl-', 'eq-' }
+
 local function es_referencia(clave)
   for _, prefijo in ipairs(prefijos_referencia) do
     if clave:sub(1, #prefijo) == prefijo then return true end
@@ -259,6 +265,17 @@ end
 function Cite(el)
   local result = {}
   local referencias = 0
+
+  -- --- 0. REFERENCIAS TODAVÍA NO IMPLEMENTADAS ---
+  for _, citation in ipairs(el.citations) do
+    for _, prefijo in ipairs(prefijos_pendientes) do
+      if citation.id:sub(1, #prefijo) == prefijo then
+        error('\n[referencia] @' .. citation.id .. ': las referencias cruzadas ' ..
+              'a tablas y ecuaciones todavía no están implementadas. Por ahora ' ..
+              'la mención se escribe como texto («cuadro 2», «ecuación 3»).', 0)
+      end
+    end
+  end
 
   -- --- 1. GRUPO DE REFERENCIAS CRUZADAS ---
   -- UN GRUPO QUE MEZCLA REFERENCIAS Y CITAS NO TIENE UNA LECTURA
