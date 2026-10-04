@@ -1750,6 +1750,13 @@ RC APLICADAS:
        ==========================================================
        <para role="speech"> con <emphasis role="speaker"> al inicio.
        Se emite como .speech con el hablante destacado. -->
+  <!-- FROUFROU (SC-36): TRES ASTERISCOS A 1 cm, CENTRADOS. CADA UNO EN
+       SU span Y SIN ESPACIOS ENTRE ELLOS: LA DISTANCIA LA DA EL MARGEN,
+       NO LA FUENTE. role="separator" PARA LOS LECTORES DE PANTALLA. -->
+  <xsl:template match="db:para[@role='froufrou'] | para[@role='froufrou']" priority="5">
+    <div class="froufrou" role="separator"><span>*</span><span>*</span><span>*</span></div>
+  </xsl:template>
+
   <xsl:template match="db:para[@role='speech'] | para[@role='speech']">
     <p class="speech">
       <xsl:apply-templates/>

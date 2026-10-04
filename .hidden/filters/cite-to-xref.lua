@@ -406,6 +406,13 @@ function Div(el)
     return el
   end
 
+  -- FROUFROU: ES SOLO DE LIBROS (SC-36). EL PANEL NO LO OFRECE EN UNA
+  -- REVISTA; UNO ESCRITO A MANO DETIENE LA CONVERSIÓN
+  if el.classes:includes('froufrou') then
+    error('\n[froufrou] El froufrou es un separador de libros: no se usa en ' ..
+          'revistas. Quitar el bloque ::: froufrou del artículo.\n', 0)
+  end
+
   -- EPÍGRAFES: <disp-quote specific-use="epigraph"> CON <attrib>
   -- dos-partes.lua YA PARTIÓ EL BLOQUE {texto}{atribución} EN DOS Div
   -- HIJOS (.epigrafe-texto, .epigrafe-atrib) Y CONTROLÓ LA FORMA. ACÁ

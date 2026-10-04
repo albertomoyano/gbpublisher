@@ -1834,7 +1834,7 @@ LA FIGURA DE REVISTA
 
 REFERENCIA CRUZADA: @fig-mapa (SOLO LIBROS)
 
-Pandoc la lee como cita. En libros, `cite-to-biblioref-db.lua` la desvía a `<xref linkend>` por el prefijo: ninguna clave bibliográfica empieza con letra, porque empiezan con el id numérico del registro. Produce solo el número, como `\ref`; la palabra la escribe el editor. Un grupo que mezcla referencias y citas detiene la conversión.
+Pandoc la lee como cita. En libros, `cite-to-biblioref-db.lua` la desvía a `<xref linkend>` por el prefijo: ninguna clave bibliográfica empieza con letra, porque empiezan con el id numérico del registro. Produce solo el número, como `\ref`; la palabra la escribe el editor. Un grupo que mezcla referencias y citas detiene la conversión. `@tbl-` y `@eq-` también la detienen, hasta que tablas y ecuaciones tengan su lote: antes salían como cita a una referencia inexistente.
 
 Los id `fig-*` no se prefijan con el del capítulo en `ensamblar-capitulo-canonico.xsl` (`db:es-id-global`, como `bib-*`): con el prefijo, la referencia a una figura de otro capítulo apuntaba al propio. Son únicos en el libro por convención. El canónico de una pieza que remite a otra no valida suelto (IDREF); el del libro, sí.
 
@@ -1946,6 +1946,7 @@ LA INSERCIÓN, SEGÚN EL MODO
 - `envolver`: exige una selección.
 - `plantilla`: inserta con el marcador de los snippets (SC-21) y lo deja seleccionado.
 - `dos-partes`: como `envolver`, si la selección tiene la forma `{primera}{segunda}`; si no, avisa qué falla y no inserta (SC-35).
+- `separador`: inserta el bloque vacío con su ancla si no hay selección y el cursor está al principio de una línea vacía (`m_EditorPrincipal.CursorEnLineaVaciaAlInicio`); si no, avisa y no inserta (SC-36).
 - Un bloque queda separado por líneas en blanco de lo que tenga antes y después, porque Pandoc no lo reconoce sin ellas (medido), y cierra con el ancla nombrada (SC-33).
 
 RESALTADO
@@ -1958,7 +1959,7 @@ RESALTADO
 
 `Markdown.highlight` reconoce la apertura, el ancla, el cierre y las marcas en línea con el estilo `Function`; cada tema define `Function` en su sección `[Markdown]`. Los patrones escriben el espacio como `\x20` o `\s` (GV-76).
 
-**Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24,vinculo:SC-35
+**Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24,vinculo:SC-35,vinculo:SC-36
 
 **PENDIENTE:** Verificado en Mint con 3.22.1 (2026-10): instalado, el panel muestra solo lo liberado (la figura); desde el IDE, también los borradores, marcados. La figura se inserta con la línea en blanco y el ancla, se guarda y se colorea. Falta probar en Mint la inserción de dos-partes (el epígrafe), plantilla y en línea. En cinco temas el color de Function coincide con otro estilo de Markdown (gruvbox, monokai, pen-paper-coffee, solarizado-claro y solarizado-oscuro): a decidir. El verificador de cierres no está implementado.
 
@@ -2005,6 +2006,42 @@ En revistas, `GenerarBodyXML` sigue ahora el patrón de los capítulos: si Pando
 **Relaciones:** vinculo:SC-34,vinculo:SC-33,vinculo:SC-31,vinculo:SC-30,vinculo:RF-11,vinculo:SC-11,apoya:GV-23
 
 **PENDIENTE:** Probado en el contenedor: los filtros, las cinco hojas que se pueden correr sueltas (las de HTML y EPUB de libro, con la plantilla aislada), el PDF y el ODT. Falta en Mint, con un libro y una revista reales, y epubcheck sobre un EPUB completo.
+
+### SC-36 — Froufrou: separador ornamental de libros, modo separador
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / LuaLaTeX / Chromium / Gambas 3.19 / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Separador ornamental entre dos tramos de un texto, el `\froufrou` del legado LaTeX de Alberto. Es casi exclusivo de libros y obedece a una forma de escribir: en revistas no aplica.
+
+    ::: froufrou
+
+    [/froufrou]: # ()
+    :::
+
+El bloque es vacío; el ancla la consume Pandoc (SC-33), así que llega un `Div` sin contenido.
+
+FORMAS DESCARTADAS (MEDIDAS)
+
+- Una sola línea, `::: froufrou` sin cierre: Pandoc no la lee como bloque, sino como un párrafo con ese texto (Pandoc 3.1.3).
+- Llaves con contenido, `{froufrou}`: el bloque no tiene contenido, y las llaves quedaron como el semáforo de las dos partes (SC-35).
+- `* * *` en el .md: Pandoc lo lee como `HorizontalRule`, una regla temática genérica. El shortcode dice qué es y lo controla.
+
+SEMÁFOROS
+
+Modo `separador` del catálogo (SC-34), que desde la versión 4 de gbShortcodes es una fila de la tabla `modos` (RF-11): no admite una selección y exige el cursor al principio de una línea vacía, para no partir un párrafo. Las líneas en blanco que falten alrededor las agrega la inserción, como en todo bloque.
+
+Libro o revista lo decide el tipo de proyecto (`FMain.TipoProyectoActual`), no el prefijo del nombre: el panel de una revista no muestra lo que está en `no_aplica`. Un bloque escrito a mano en un artículo lo frena `cite-to-xref.lua`. Un froufrou con contenido lo frena `fenced-divs-to-elements-db.lua`: lo de adentro se perdería.
+
+SALIDAS
+
+- Canónico: `<para role="froufrou">* * *</para>`. DocBook no tiene elemento de separación; el texto hace que cualquier lector sin nuestras hojas muestre el corte. Valida contra el RNG de DocBook 5.2.
+- PDF: `\froufrou`, con `\usepackage{froufrou}` en `preambulo-contrato.tex` (carga `tikz` y `fourier-orns`; el ornamento queda incrustado). Compilado con LuaLaTeX.
+- HTML y EPUB: tres asteriscos centrados a 1 cm, sin depender de la fuente, en `div.froufrou` con `role="separator"` y un `span` por asterisco. En el HTML, `display: flex` con `column-gap: 1cm`: la salida está indentada y, con márgenes, el espacio entre los `span` se sumaba al centímetro (medido en Chromium: 41,8 px en lugar de 37,8). En el EPUB, sin indentar (GV-71), basta el margen izquierdo de 1 cm desde el segundo `span`.
+- ODT de libros: todavía no existe.
+
+**Relaciones:** vinculo:SC-34,vinculo:SC-33,vinculo:SC-35,vinculo:RF-11,vinculo:GV-71
+
+**PENDIENTE:** Probado en el contenedor: filtros, RNG, las tres hojas de libro (HTML y EPUB con la plantilla aislada), la macro y la medida del HTML. Falta en Mint con un libro real.
 
 ---
 
@@ -2311,7 +2348,7 @@ Costo medido: 1,7 s para 392.713 caracteres de Markdown real, unos 1,5 ms por l�
 
 Programa aparte, con el modelo de gbCorpus (RF-08), que mantiene el catálogo de shortcodes de gbpublisher. Reemplaza a la tabla `shortcodes` de MySQL, retirada en la actualización 1.7.0 de la base de gbpublisher (SC-22, SC-34).
 
-ESTA ENTRADA DESCRIBE LA VERSIÓN 3 DEL ESQUEMA Y DEL CONTRATO DE EXPORTACIÓN. La 2 agrega `clase`; la 3, el modo `dos-partes` y la regla de liberación. El contrato de exportación no cambia con la 3.
+ESTA ENTRADA DESCRIBE LA VERSIÓN 4 DEL ESQUEMA Y DEL CONTRATO DE EXPORTACIÓN. La 2 agrega `clase`; la 3, el modo `dos-partes` y la regla de liberación; la 4, la tabla `modos`. El contrato de exportación no cambia desde la 2.
 
 BASE
 
@@ -2328,7 +2365,7 @@ TABLA `shortcodes`
     orden           INTEGER NOT NULL       dentro de grupo y perfil, de 10 en 10
     estado_libro    no_aplica | borrador | liberado
     estado_revista  no_aplica | borrador | liberado
-    modo            envolver | plantilla | figura | dos-partes
+    modo            el par (modo, tipo) es clave foránea a `modos`
     apertura        TEXT NOT NULL          puede tener saltos (el bloque de código)
     cierre          TEXT NOT NULL
     que_es          TEXT                   Markdown; NULL si no hay texto
@@ -2339,20 +2376,23 @@ TABLA `shortcodes`
 
 La clase es la clave con que gbpublisher valida un .md y empareja los cierres (SC-33). No es única: las variantes comparten clase (`figure` y `fig-fullwidth` son `fig`; las tres tablas, `table`). Para validar se usa el catálogo entero, en cualquier estado; para mostrar, solo lo liberado.
 
-Restricciones: un shortcode no puede ser no_aplica en los dos; la figura es un bloque; lo liberado tiene `que_es`, `ejemplo` y `como_sale`, y no tiene `pendiente`; un shortcode no puede estar liberado en un producto y en borrador en el otro (la regla de liberación de SC-34).
+Restricciones: un shortcode no puede ser no_aplica en los dos; el par (modo, tipo) tiene que estar en `modos` (la figura, por ejemplo, solo existe como bloque); lo liberado tiene `que_es`, `ejemplo` y `como_sale`, y no tiene `pendiente`; un shortcode no puede estar liberado en un producto y en borrador en el otro (la regla de liberación de SC-34).
 
 Los tres textos de la ayuda admiten NULL y no cadena vacía (`CHECK (x <> '')`): Edit + Update escribe la cadena vacía como NULL (GV-74), y con NOT NULL guardar una sección vacía fallaba.
 
 MODOS
 
+Desde la versión 4 son filas de la tabla `modos` (modo, tipo, descripción), una por cada par permitido. Agregar un modo es un script de datos, no una migración; lo que hace cada modo al insertar lo decide gbpublisher (`m_Shortcodes.InsertarShortcode`). Las claves foráneas valen porque la aplicación y el importador abren la base con `PRAGMA foreign_keys = ON`; sin eso, SQLite no las controla (verificado).
+
 - envolver: rodea la selección con apertura y cierre.
 - plantilla: inserta apertura, marcador y cierre, sin selección (la sigla).
 - figura: el camino de `FMain.InsertarFigura` (SC-32).
 - dos-partes: envolver, con el control de la forma `{primera}{segunda}` antes de insertar (SC-35).
+- separador: un bloque vacío, sin selección y con el cursor al principio de una línea vacía (SC-36). Se agrega con `datos-v4-001`.
 
 QUÉ HACE LA APLICACIÓN
 
-Lee, filtra, pule los textos (etiqueta, ayuda, mapeos, notas, pendiente) y exporta. NO da de alta ni elimina, y no cambia nombre, tipo, grupo, perfil, orden, estados, modo, apertura ni cierre: eso es comportamiento, se decide después de probarlo y se aplica por script SQL con Importar UPDATE SQL (`engine/importar_shortcodes.sh`, el contrato de SC-19 con `-- Esquema: 3`). El importador compara antes y después una huella del contenido, no solo la cantidad de filas, para no afirmar que la base quedó como estaba sin comprobarlo.
+Lee, filtra, pule los textos (etiqueta, ayuda, mapeos, notas, pendiente) y exporta. NO da de alta ni elimina, y no cambia nombre, tipo, grupo, perfil, orden, estados, modo, apertura ni cierre: eso es comportamiento, se decide después de probarlo y se aplica por script SQL con Importar UPDATE SQL (`engine/importar_shortcodes.sh`, el contrato de SC-19 con `-- Esquema: 4`). El importador compara antes y después una huella del contenido, no solo la cantidad de filas, para no afirmar que la base quedó como estaba sin comprobarlo.
 
 EXPORTACIÓN AL PAQUETE (CONTRATO CON gbpublisher)
 
@@ -2389,11 +2429,25 @@ El importador la acepta solo si la base está en la versión de partida y la de 
 
 `gbshortcodes-migrar-2-a-3.sql` rehace la tabla con las restricciones nuevas (SQLite no cambia un CHECK en su lugar) y copia las filas sin cambiarlas, salvo la figura: si sigue como en la carga, le quita el pendiente que pedía referencia cruzada en revistas, que no existe (SC-32). Antes de copiar comprueba la regla de liberación y frena si una fila la viola. Verificado: la base migrada tiene el mismo esquema que una creada en v3, y el DDL de la aplicación es igual al de `shortcodes_esquema.sql`.
 
-Para correr un script de una versión, el importador tiene que ser el de esa versión: `importar_shortcodes.sh` de la 3 rechaza un script declarado `-- Esquema: 2` (medido). Por eso un cambio de datos que la migración necesita va dentro de la migración.
+Para correr un script de una versión, el importador tiene que ser el de esa versión: `importar_shortcodes.sh` de la 3 rechaza un script declarado `-- Esquema: 2` (medido). Por eso un cambio de datos que la migración necesita va dentro de la migración, y los scripts de datos de una versión se aplican antes de migrar a la siguiente.
 
-**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35
+NOMBRES Y LUGARES (DESDE LA VERSIÓN 4)
 
-**PENDIENTE:** Versión 2 verificada en Mint con 3.22.1: exportación e importación, y la lectura en gbpublisher (SC-34). Versión 3 probada en el contenedor con Gambas 3.19 y gb.db; falta en Mint.
+- `esquema-vN-a-vM.sql`: las migraciones, en `.hidden/esquema/`, que viaja en el paquete.
+- `carga-inicial.sql`: también en `.hidden/esquema/`. Es el catálogo completo en la versión del programa: al pasar a la 4 se regeneró desde la carga original más `datos-v3-001` y `datos-v3-002`, porque una base nueva no puede aplicar scripts de una versión anterior. Se regenera en cada versión de esquema. Verificado: una base nueva con esta carga tiene las mismas filas que la base migrada.
+- `datos-vN-NNN.sql`: los cambios de datos, en `datos/` del repositorio, numerados dentro de su versión. El nombre dice a qué versión van y en qué orden; `gbshortcodes-act-001` y `-002` pasaron a `datos-v3-001` y `datos-v3-002`.
+
+LA APLICACIÓN MIGRA Y CARGA SOLA
+
+Al abrir una base una versión atrás, la aplicación ofrece «Migrar» y corre su propio importador con su propio script de migración, en la pestaña Terminal (que pide la confirmación `s`). Al abrir una base sin shortcodes, ofrece la carga inicial. Los dos archivos salen de `RutaRecurso`: desde el IDE, de `.hidden/` del proyecto; instalada, de `/usr/share/gbshortcodes`. Así siempre son los de la versión que está corriendo, sin terminal externa ni ruta que elegir. Una migración que no se aplica deja la ventana abierta y bloqueada para leer el terminal. El título muestra la versión de esquema. Verificado con la aplicación bajo xvfb: una base v3 queda en v4 con sus 77 filas, y una base nueva se carga.
+
+`esquema-v3-a-v4.sql` crea `modos` con sus filas, comprueba que todos los shortcodes usen un par existente y rehace la tabla con la clave foránea. Verificado: la base migrada tiene el mismo esquema que una creada en v4, y el DDL de la aplicación es igual al de `shortcodes_esquema.sql`.
+
+`User.Home` no sigue la variable `HOME`: una prueba con otra `HOME` abre igual la base del usuario real (medido en 3.19).
+
+**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35,vinculo:SC-36
+
+**PENDIENTE:** Versión 2 verificada en Mint con 3.22.1: exportación e importación, y la lectura en gbpublisher (SC-34). Versión 3 verificada en Mint. Versión 4 probada en el contenedor con Gambas 3.19 y gb.db, incluida la migración y la carga desde la aplicación bajo xvfb; falta en Mint.
 
 ---
 

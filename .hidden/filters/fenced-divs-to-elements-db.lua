@@ -362,6 +362,27 @@ function Div(el)
   end
 
   -- =====================================================
+  -- 6.4.1. FROUFROU (.froufrou): SEPARADOR ORNAMENTAL (SC-36)
+  -- =====================================================
+  -- ESTRUCTURA EN MD (EL BLOQUE ES VACÍO; EL ANCLA LA CONSUME PANDOC):
+  --   ::: froufrou
+  --
+  --   [/froufrou]: # ()
+  --   :::
+  -- SALE <para role="froufrou">* * *</para>: DOCBOOK NO TIENE UN ELEMENTO
+  -- DE SEPARACIÓN, Y EL TEXTO HACE QUE UN LECTOR SIN NUESTRAS HOJAS IGUAL
+  -- MUESTRE EL CORTE. UN BLOQUE CON CONTENIDO DETIENE LA CONVERSIÓN: LO
+  -- QUE ESTÉ ADENTRO SE PERDERÍA.
+  if el.classes:includes('froufrou') then
+    if #el.content > 0 then
+      error('\n[froufrou] El separador no lleva contenido: entre ::: froufrou ' ..
+            'y el cierre solo va el ancla [/froufrou]: # (). Contenido: ' ..
+            pandoc.utils.stringify(el):sub(1, 60), 0)
+    end
+    return pandoc.RawBlock('docbook', '<para role="froufrou">* * *</para>')
+  end
+
+  -- =====================================================
   -- 6.5. VERSO (.verse)
   -- =====================================================
   -- ESTRUCTURA EN MD:

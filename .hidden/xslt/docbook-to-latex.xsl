@@ -450,6 +450,12 @@
   </xsl:template>
 
   <!-- PARLAMENTO: para role="speech" -->
+  <!-- FROUFROU (SC-36): EL SEPARADOR DEL PAQUETE froufrou, CARGADO EN   -->
+  <!-- preambulo-contrato.tex. EL TEXTO «* * *» DEL CANÓNICO NO SE USA.  -->
+  <xsl:template match="para[@role='froufrou']" priority="5">
+    <xsl:text>&#10;\froufrou&#10;&#10;</xsl:text>
+  </xsl:template>
+
   <xsl:template match="para[@role='speech']" priority="5">
     <xsl:text>\begin{gbparlamento}&#10;</xsl:text>
     <xsl:apply-templates/>
