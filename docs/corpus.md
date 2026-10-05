@@ -2043,6 +2043,55 @@ SALIDAS
 
 **PENDIENTE:** Probado en el contenedor: filtros, RNG, las tres hojas de libro (HTML y EPUB con la plantilla aislada), la macro y la medida del HTML. Falta en Mint con un libro real.
 
+### SC-37 — Búsqueda en el editor principal: buscar de nuevo en cada paso, foco al editor y F3 para avanzar
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint; código fuente de gb.gui.base y gb.qt5 (etiqueta 3.22.1) · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. La búsqueda del editor principal (`txtEditorProyecto`) sigue el modelo de TeXstudio: buscar, revisar cada coincidencia y escribir directamente sobre la que hay que cambiar, sin diálogo de reemplazo. Vive en FMain: `EjecutarBusqueda`, `IrAResultadoBusqueda`, `gvResultados_Click` y `ColumnaTrasEdicion`.
+
+CADA BÚSQUEDA BUSCA DE NUEVO
+
+No se conservan posiciones entre una búsqueda y la siguiente. Cada llamada vuelve a buscar sobre el texto actual del editor y salta a la primera coincidencia posterior a la referencia: el inicio de la selección, o el cursor si no la hay (`InicioSeleccion`, GV-65). Con selección se exige estrictamente mayor, porque la selección es la coincidencia actual; sin ella, cuenta una que empiece justo en el cursor. Si no hay ninguna más adelante, vuelve a la primera y lo avisa con sonido y mensaje; con una sola coincidencia no hay aviso.
+
+El caso que fijó la regla: un botón «siguiente» anterior guardaba las posiciones de la búsqueda. Al escribir MMMM sobre XX en la primera coincidencia, la segunda se seleccionaba corrida dos caracteres. Se descartó.
+
+Las posiciones absolutas se calculan con el inicio de cada línea en un solo recorrido sobre `.Text`, no con `PosicionDe` por coincidencia, que parte el texto entero en cada llamada. Todo en caracteres (RC-GM-21).
+
+EL FOCO TERMINA EN EL EDITOR
+
+`EjecutarBusqueda` decide el foco final; quien la llama no lo toca:
+
+    hubo salto                          editor, con la coincidencia seleccionada
+    sin coincidencias o sin término     cuadro de búsqueda, para corregirlo
+
+Con el foco en el editor, escribir o pegar reemplaza la coincidencia, y se deshace con Ctrl+Z. Va al final del evento y después de cualquier `Message` (RC-GM-07).
+
+Sin esta regla el foco quedaba donde se había hecho el click: en el botón o en la grilla, que no atienden ni el teclado de edición ni F3. Verificado por Alberto: Ctrl+V después de un click en el botón o en la grilla no pegaba en ningún lado.
+
+F3 ES LA ÚNICA TECLA PARA AVANZAR
+
+F3 en el editor o en el cuadro, Enter en el cuadro, el botón y Ctrl+F con una selección de una línea llaman todos a `EjecutarBusqueda`. Enter solo lanza la búsqueda: después el foco está en el editor, y un segundo Enter reemplazaría la coincidencia por un salto de línea. `Key.F3` existe en `gb.qt5/src/CKey.cpp` (etiqueta 3.22.1).
+
+LA GRILLA: VUELVE A BUSCAR SI EL TEXTO CAMBIÓ
+
+La grilla guarda las posiciones de la última búsqueda, y ahí volvería el defecto del botón descartado. Por eso la búsqueda guarda una foto del texto (`$sBusqTextoBase`), y `gvResultados_Click`:
+
+- si el texto no cambió, salta a la fila;
+- si cambió, traduce la posición de la fila al texto actual y llama a `EjecutarBusqueda` con esa posición como referencia, que rearma la grilla y la marca.
+
+La traducción (`ColumnaTrasEdicion`) compara la línea vieja con la nueva: prefijo y sufijo comunes delimitan la zona editada. Una columna antes de la zona no se mueve; después, se corre por la diferencia de largo; dentro, va al comienzo de la zona y se busca desde ahí. Es exacta para una edición dentro de la línea, que es el caso de escribir sobre una palabra.
+
+La fila se marca asignando `Row`, que no dispara `Click` (GV-78). El `Click` de la grilla llega diferido, después de que la grilla tomó el foco: el `SetFocus` al editor del handler gana.
+
+LÍMITES ACEPTADOS
+
+- Si cambió la cantidad de líneas desde la búsqueda, no hay correspondencia segura: se busca desde el comienzo de la línea con el mismo número.
+- Si se cambió el término en el cuadro sin buscar, un click en la grilla con el texto editado busca con el término nuevo.
+
+Probado por Alberto en 3.22.1: avance con F3, Enter, botón y grilla; escritura sobre una coincidencia y click en otra de la misma línea.
+
+**Relaciones:** vinculo:SC-18,vinculo:GV-78,vinculo:RC-GM-07,vinculo:RC-GM-21,vinculo:GV-65
+
 ---
 
 ## RF — Referencia de API

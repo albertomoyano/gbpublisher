@@ -2596,10 +2596,9 @@ Public Sub txtEditorProyecto_KeyPress()
   ' DESPUÉS DE EDITAR SIN QUE SE CORRAN LAS POSICIONES
   If Key.Code = Key.F3 Then
     Stop Event
+    ' EL FOCO FINAL LO DECIDE EjecutarBusqueda: EL EDITOR SI HUBO SALTO,
+    ' EL CUADRO SI FALTA EL TÉRMINO O NO HAY COINCIDENCIAS
     EjecutarBusqueda()
-    ' SIN TÉRMINO, EjecutarBusqueda YA DEJÓ EL FOCO EN EL CUADRO PARA
-    ' ESCRIBIRLO; CON TÉRMINO, EL FOCO VUELVE AL EDITOR (RC-GM-07)
-    If Trim(txtBuscarPalabra.Text) <> "" Then txtEditorProyecto.SetFocus()
     Return
   Endif
 
@@ -3235,8 +3234,12 @@ End
 Private $aBusqNumeroLinea As New Integer[]    ' NÚMERO DE LÍNEA (BASE 1)
 Private $aBusqPosicionEnLinea As New Integer[] ' POSICIÓN DENTRO DE LA LÍNEA
 
-' ÍNDICE DE LA COINCIDENCIA ACTUAL (PARA btnIrAsiguiente)
+' ÍNDICE DE LA COINCIDENCIA ACTUAL: LA FILA MARCADA EN LA GRILLA
 Private $iBusqIndiceActual As Integer
+
+' TEXTO SOBRE EL QUE SE HIZO LA ÚLTIMA BÚSQUEDA. SI EL EDITOR YA NO COINCIDE,
+' LAS POSICIONES DE LA GRILLA ESTÁN VIEJAS Y gvResultados_Click BUSCA DE NUEVO
+Private $sBusqTextoBase As String
 
 ' ============================================================================
 ' LIMPIARBUSQUEDA - LIMPIA LOS ARRAYS Y RESETEA EL ÍNDICE
@@ -3253,6 +3256,9 @@ Private Sub LimpiarBusqueda()
   ' EL RESTO: SIN ESTO, UN Select POSTERIOR USARÍA EL LARGO DE LA BÚSQUEDA
   ' ANTERIOR
   $iBusqLargoTermino = 0
+
+  ' LA FOTO DEL TEXTO ES PARTE DEL ESTADO DE LA BÚSQUEDA
+  $sBusqTextoBase = ""
 
 End
 
@@ -3286,28 +3292,114 @@ Private Sub IrAResultadoBusqueda(iIndice As Integer)
 
 End
 
-' ============================================================================
-' GVRESULTADOS_CLICK - AL HACER CLIC EN UNA FILA DEL GRIDVIEW
-' POSICIONA LA LÍNEA SELECCIONADA AL TOPE DEL EDITOR
-' PERMITE SALTAR A CUALQUIER COINCIDENCIA DIRECTAMENTE
-' ============================================================================
+' ============================================
+' Función   : gvResultados_Click
+' Propósito : Salta a la coincidencia de la fila elegida y deja el foco en el
+'             editor para escribir sobre ella. Si el texto se editó desde la
+'             búsqueda, traduce la posición de la fila al texto actual y busca
+'             de nuevo desde ahí, porque las posiciones de la grilla ya no valen.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub gvResultados_Click()
 
-  Dim iFilaSeleccionada As Integer
+  Dim iFila As Integer
+  Dim sTextoActual As String
+  Dim aViejas As String[]
+  Dim aNuevas As String[]
+  Dim iLinea As Integer
+  Dim iColumna As Integer
+  Dim iDesde As Integer
 
-  ' OBTENER FILA SELECCIONADA
-  iFilaSeleccionada = gvResultados.Row
+  ' --- 1. VALIDACIÓN DE LA FILA ---
+  iFila = gvResultados.Row
+  If iFila < 0 Then Return
+  If iFila > $aBusqNumeroLinea.Max Then Return
 
-  ' VERIFICAR QUE HAY UNA FILA VÁLIDA SELECCIONADA
-  If iFilaSeleccionada < 0 Or iFilaSeleccionada > $aBusqNumeroLinea.Max Then
+  ' --- 2. TEXTO SIN CAMBIOS: LAS POSICIONES DE LA GRILLA VALEN ---
+  sTextoActual = m_EditorPrincipal.Texto()
+  If sTextoActual = $sBusqTextoBase Then
+    $iBusqIndiceActual = iFila
+    IrAResultadoBusqueda(iFila)
+    ' EL Click LLEGA DIFERIDO (After Do), DESPUÉS DE QUE LA GRILLA TOMÓ EL FOCO
+    ' EN MouseDown: ESTE SetFocus GANA (GridView.class, gb.gui.base 3.22.1)
+    txtEditorProyecto.SetFocus()
     Return
   Endif
 
-  ' ACTUALIZAR EL ÍNDICE ACTUAL
-  $iBusqIndiceActual = iFilaSeleccionada
+  ' --- 3. TEXTO EDITADO: POSICIÓN DE LA FILA TRADUCIDA AL TEXTO ACTUAL ---
+  ' BuscarEnTexto DEVUELVE LÍNEA Y COLUMNA BASE 1; EL EDITOR CUENTA BASE 0
+  iLinea = $aBusqNumeroLinea[iFila] - 1
+  iColumna = $aBusqPosicionEnLinea[iFila] - 1
+  aViejas = Split($sBusqTextoBase, Chr(10))
+  aNuevas = Split(sTextoActual, Chr(10))
 
-  ' IR A LA COINCIDENCIA SELECCIONADA
-  IrAResultadoBusqueda(iFilaSeleccionada)
+  If aViejas.Count = aNuevas.Count Then
+    ' MISMA CANTIDAD DE LÍNEAS: LA LÍNEA ES LA MISMA Y SOLO LA COLUMNA PUEDE
+    ' HABERSE CORRIDO POR UNA EDICIÓN ANTERIOR EN ESA MISMA LÍNEA
+    iColumna = ColumnaTrasEdicion(aViejas[iLinea], aNuevas[iLinea], iColumna)
+  Else
+    ' CAMBIÓ LA CANTIDAD DE LÍNEAS: NO HAY CORRESPONDENCIA SEGURA. APROXIMACIÓN
+    ' ACEPTADA: DESDE EL COMIENZO DE LA LÍNEA CON EL MISMO NÚMERO
+    iColumna = 0
+  Endif
+
+  ' PosicionDe ACOTA LÍNEA Y COLUMNA AL TEXTO ACTUAL
+  iDesde = m_EditorPrincipal.PosicionDe(iLinea, iColumna)
+
+  ' --- 4. NUEVA BÚSQUEDA DESDE ESA POSICIÓN ---
+  ' REARMA LA GRILLA, MARCA LA FILA Y DEJA EL FOCO EN EL EDITOR
+  EjecutarBusqueda(iDesde)
+
+End
+
+' ============================================
+' Función   : ColumnaTrasEdicion
+' Propósito : Traduce una columna de la versión vieja de una línea a la nueva,
+'             suponiendo una sola zona editada: lo que está antes de la zona
+'             no se mueve, lo que está después se corre por la diferencia de
+'             largo, y lo que cae dentro va al comienzo de la zona.
+' Parámetros: sVieja As String — la línea en el texto de la búsqueda
+'             sNueva As String — la misma línea en el texto actual
+'             iColumna As Integer — columna en sVieja, base 0, en caracteres
+' Retorna   : Integer — columna equivalente en sNueva, base 0
+' ============================================
+Private Function ColumnaTrasEdicion(sVieja As String, sNueva As String, iColumna As Integer) As Integer
+
+  Dim iLargoVieja As Integer
+  Dim iLargoNueva As Integer
+  Dim iMinimo As Integer
+  Dim iPrefijo As Integer
+  Dim iSufijo As Integer
+  Dim i As Integer
+
+  ' --- 1. LÍNEA SIN CAMBIOS: LA EDICIÓN FUE EN OTRA LÍNEA ---
+  If sVieja = sNueva Then Return iColumna
+
+  ' --- 2. LARGOS EN CARACTERES (RC-GM-12) ---
+  iLargoVieja = String.Len(sVieja)
+  iLargoNueva = String.Len(sNueva)
+  iMinimo = Min(iLargoVieja, iLargoNueva)
+
+  ' --- 3. PREFIJO COMÚN: LO QUE NO CAMBIÓ AL PRINCIPIO ---
+  For i = 1 To iMinimo
+    If String.Mid(sVieja, i, 1) <> String.Mid(sNueva, i, 1) Then Break
+    iPrefijo = i
+  Next
+
+  ' --- 4. SUFIJO COMÚN: LO QUE NO CAMBIÓ AL FINAL, SIN PISAR EL PREFIJO ---
+  For i = 1 To iMinimo - iPrefijo
+    If String.Mid(sVieja, iLargoVieja - i + 1, 1) <> String.Mid(sNueva, iLargoNueva - i + 1, 1) Then Break
+    iSufijo = i
+  Next
+
+  ' --- 5. TRADUCCIÓN DE LA COLUMNA ---
+  ' ANTES DE LA ZONA EDITADA: NO SE MOVIÓ
+  If iColumna < iPrefijo Then Return iColumna
+  ' DESPUÉS DE LA ZONA EDITADA: SE CORRE POR LA DIFERENCIA DE LARGO
+  If iColumna >= iLargoVieja - iSufijo Then Return iColumna + iLargoNueva - iLargoVieja
+  ' DENTRO DE LA ZONA: LA COINCIDENCIA FUE TOCADA; SE BUSCA DESDE EL COMIENZO
+  Return iPrefijo
 
 End
 
@@ -3376,10 +3468,12 @@ Public Sub menuSabores_Click()
 
 End
 
-' ============================================================================
-' BTNBUSCAR_CLICK - EVENTO CLICK DEL BOTÓN BUSCAR
-' LLAMA A LA FUNCIÓN EjecutarBusqueda()
-' ============================================================================
+' ============================================
+' Función   : btnBuscar_Click
+' Propósito : Busca la siguiente coincidencia; el foco lo decide EjecutarBusqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub btnBuscar_Click()
 
   EjecutarBusqueda()
@@ -3389,17 +3483,19 @@ End
 ' ============================================
 ' Función   : EjecutarBusqueda
 ' Propósito : Busca el término en el editor y salta a la primera coincidencia
-'             posterior al cursor (o al inicio de la selección); si no hay
-'             ninguna más adelante, vuelve a la primera del documento y lo
-'             avisa. Marca en la grilla la fila de la coincidencia elegida.
-'             Cada llamada busca de nuevo sobre el texto actual, así que las
-'             posiciones siempre corresponden a lo que está en el editor,
-'             aunque se haya editado entre una búsqueda y la siguiente.
-'             La llaman btnBuscar_Click, txtBuscarPalabra_KeyPress y Ctrl+F.
-' Parámetros: ninguno
+'             posterior a la referencia; si no hay ninguna más adelante,
+'             vuelve a la primera del documento y lo avisa. Marca en la
+'             grilla la fila elegida. Cada llamada busca de nuevo sobre el
+'             texto actual. Decide el foco final: el editor si hubo salto,
+'             para escribir sobre la coincidencia; el cuadro si no lo hubo.
+'             La llaman btnBuscar_Click, txtBuscarPalabra_KeyPress, Ctrl+F,
+'             F3 en el editor y gvResultados_Click.
+' Parámetros: iDesde As Integer — posición desde la que buscar, base 0
+'             (opcional). Sin ella, la referencia es el cursor o el inicio
+'             de la selección del editor.
 ' Retorna   : nada
 ' ============================================
-Private Sub EjecutarBusqueda()
+Private Sub EjecutarBusqueda(Optional iDesde As Integer = -1)
 
   Dim sTermino As String
   Dim sContenido As String
@@ -3440,10 +3536,19 @@ Private Sub EjecutarBusqueda()
     Return
   Endif
 
-  ' LA REFERENCIA SE LEE ANTES DE CUALQUIER SALTO. SIN SELECCIÓN,
-  ' selectionStart() DE QT DEVUELVE LA POSICIÓN DEL CURSOR
-  bHaySeleccion = m_EditorPrincipal.HaySeleccion()
-  iReferencia = m_EditorPrincipal.InicioSeleccion()
+  ' FOTO DEL TEXTO: gvResultados_Click LA COMPARA PARA SABER SI LA GRILLA ESTÁ VIEJA
+  $sBusqTextoBase = sContenido
+
+  If iDesde >= 0 Then
+    ' REFERENCIA EXPLÍCITA (DESDE LA GRILLA): CUENTA UNA COINCIDENCIA QUE EMPIECE AHÍ
+    bHaySeleccion = False
+    iReferencia = iDesde
+  Else
+    ' LA REFERENCIA SE LEE ANTES DE CUALQUIER SALTO. SIN SELECCIÓN,
+    ' selectionStart() DE QT DEVUELVE LA POSICIÓN DEL CURSOR
+    bHaySeleccion = m_EditorPrincipal.HaySeleccion()
+    iReferencia = m_EditorPrincipal.InicioSeleccion()
+  Endif
 
   ' --- 4. CONFIGURACIÓN DEL GRIDVIEW ---
   With gvResultados
@@ -3490,8 +3595,8 @@ Private Sub EjecutarBusqueda()
     iPosCoincidencia = aInicioLinea[$aBusqNumeroLinea[i] - 1] + $aBusqPosicionEnLinea[i] - 1
 
     ' CON SELECCIÓN SE EXIGE ESTRICTAMENTE MAYOR: LA SELECCIÓN ES LA COINCIDENCIA
-    ' ACTUAL Y HAY QUE PASAR A LA SIGUIENTE. SIN SELECCIÓN, UNA COINCIDENCIA QUE
-    ' EMPIEZA JUSTO EN EL CURSOR CUENTA
+    ' ACTUAL Y HAY QUE PASAR A LA SIGUIENTE. SIN SELECCIÓN, O CON REFERENCIA
+    ' EXPLÍCITA, UNA COINCIDENCIA QUE EMPIEZA JUSTO AHÍ CUENTA
     If bHaySeleccion Then
       If iPosCoincidencia > iReferencia Then
         iIndice = i
@@ -3511,11 +3616,13 @@ Private Sub EjecutarBusqueda()
   Select Case iResultados
 
     Case 0
-      ' NO HAY COINCIDENCIAS: AVISAR Y OCULTAR EL PANEL DE RESULTADOS
+      ' NO HAY COINCIDENCIAS: AVISAR, OCULTAR EL PANEL Y DEJAR EL FOCO EN EL
+      ' CUADRO PARA CORREGIR EL TÉRMINO (RC-GM-07)
       m_Sonido.sonar("Info")
       Message.Info("No se encontraron coincidencias.")
       btnResultados.Value = False
       TabPanelIzquierdaInferior[5].Visible = False
+      txtBuscarPalabra.SetFocus()
 
     Case 1
       ' UNA SOLA COINCIDENCIA: IR DIRECTO Y OCULTAR EL PANEL. SIN AVISO DE
@@ -3524,6 +3631,8 @@ Private Sub EjecutarBusqueda()
       IrAResultadoBusqueda(0)
       btnResultados.Value = False
       TabPanelIzquierdaInferior[5].Visible = False
+      ' FOCO AL EDITOR: SE ESCRIBE DIRECTAMENTE SOBRE LA COINCIDENCIA (RC-GM-07)
+      txtEditorProyecto.SetFocus()
 
     Case Else
       ' VARIAS COINCIDENCIAS: IR A LA SIGUIENTE A LA REFERENCIA Y MOSTRAR LA LISTA
@@ -3533,7 +3642,7 @@ Private Sub EjecutarBusqueda()
       TabPanelIzquierdaInferior[5].Visible = True
 
       ' MARCA EN LA GRILLA LA COINCIDENCIA ACTUAL. ASIGNAR Row EMITE Change Y
-      ' Select, NUNCA Click (GridView.class, gb.gui.base 3.22.1): NO HAY SEGUNDO SALTO
+      ' Select, NUNCA Click (GV-78): NO HAY SEGUNDO SALTO
       gvResultados.Row = iIndice
 
       ' NO HABÍA NINGUNA MÁS ADELANTE: SE VOLVIÓ A LA PRIMERA. EL AVISO VA
@@ -3541,10 +3650,11 @@ Private Sub EjecutarBusqueda()
       If Not bEncontrada Then
         m_Sonido.sonar("Info")
         Message.Info("Se llegó al final del documento.\nLa búsqueda continúa desde la primera coincidencia.")
-        ' EL MODAL SE LLEVA EL FOCO; VUELVE AL CUADRO DE BÚSQUEDA PARA QUE EL
-        ' PRÓXIMO ENTER SIGA AVANZANDO (RC-GM-07)
-        txtBuscarPalabra.SetFocus()
       Endif
+
+      ' FOCO AL EDITOR, TAMBIÉN DESPUÉS DEL MODAL: SE ESCRIBE SOBRE LA
+      ' COINCIDENCIA Y F3 SIGUE AVANZANDO DESDE AHÍ (RC-GM-07)
+      txtEditorProyecto.SetFocus()
 
   End Select
 
@@ -3552,13 +3662,15 @@ End
 
 ' ============================================
 ' Función   : txtBuscarPalabra_KeyPress
-' Propósito : Enter o F3 en el cuadro de búsqueda equivalen al botón Buscar
+' Propósito : Enter o F3 en el cuadro lanzan la búsqueda. Si hay salto, el
+'             foco pasa al editor: desde ahí se avanza solo con F3
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
 Public Sub txtBuscarPalabra_KeyPress()
 
-  ' ENTER Y F3 HACEN LO MISMO: CADA PULSACIÓN AVANZA A LA SIGUIENTE COINCIDENCIA
+  ' DESPUÉS DE ESTO EL FOCO QUEDA EN EL EDITOR: UN SEGUNDO ENTER YA NO
+  ' LLEGA ACÁ, Y EN EL EDITOR REEMPLAZARÍA LA COINCIDENCIA SELECCIONADA
   If Key.Code = Key.Return Or Key.Code = Key.F3 Then
     Stop Event  ' LA TECLA NO DEBE LLEGAR AL CONTROL
     EjecutarBusqueda()
