@@ -4087,3 +4087,27 @@ El cotejo de recursos de SC-11 sirve también para un binario, como el `.ott` de
 **Relaciones:** vinculo:SC-11
 
 **PENDIENTE:** Medido en 3.19, no en 3.22.1.
+
+### GV-78 — GridView: asignar Row emite Change y Select, nunca Click
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, GridView.class (etiqueta 3.22.1); uso en Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-10
+
+`Row_Write` llama a `MoveTo`, que emite `Change` y, en modo `Select.Single`, `Select`. `Click` no sale de ahí: solo lo emite `ScrollArea_MouseDown`, diferido con `After Do RaiseClick`, y solo si el mouse cayó sobre una celda (`$bInCell`). Leído en `GridView.class` de `gb.gui.base`, etiqueta 3.22.1. `gb.qt5` no trae un `GridView` propio en C++: usa ese, como con el `ComboBox` (GV-53).
+
+    asignar Row (o Column)          Change; Select en Select.Single; nunca Click
+    click del mouse sobre celda     Click, diferido con After Do
+
+Dos detalles de `MoveTo`:
+
+- Si la fila y la columna pedidas son las actuales, sale sin emitir nada.
+- Una fila fuera de rango (`>= Rows.Count`) se ignora en silencio: ni error ni evento.
+
+`Change` se puede cancelar: si su handler hace `Stop Event`, la fila vuelve a la anterior.
+
+REGLA: la navegación cuelga de `Click`, como en `TreeView` (GV-51). Así, marcar desde el código la fila que corresponde a la posición del editor no navega y no hay realimentación. Si alguna vez un handler de `Select` o `Change` navega, asignar `Row` sí provoca el salto.
+
+CASO EN EL PROYECTO: `EjecutarBusqueda` marca con `gvResultados.Row` la coincidencia a la que saltó; el salto desde la grilla vive en `gvResultados_Click`.
+
+**Relaciones:** vinculo:GV-51,vinculo:GV-53,vinculo:GV-15,vinculo:GV-58,vinculo:GV-69
+
+**PENDIENTE:** Leído en el fuente; en uso en 3.22.1 se probó la búsqueda con la fila marcada, no el disparo aislado. Mini-test: Debug en gvResultados_Click, buscar con Enter o F3 con varias coincidencias; asignar Row desde el código no debe imprimir nada.
