@@ -2635,6 +2635,8 @@ End
 ' MOSTRAMOS EL PANEL INFERIOR IZQUIERDO
 Public Sub tbMostrarPanelInferior_Click()
 
+  TabStrip1.Index = 0
+
   If tbMostrarPanelInferior.Value Then
     TabPanelIzquierdaInferior.Visible = True
   Else
@@ -3364,7 +3366,6 @@ End
 
 ' ============================================================================
 ' BTNBUSCAR_CLICK - EVENTO CLICK DEL BOTÓN BUSCAR
-' ============================================================================
 ' LLAMA A LA FUNCIÓN EjecutarBusqueda()
 ' ============================================================================
 Public Sub btnBuscar_Click()
@@ -3373,22 +3374,34 @@ Public Sub btnBuscar_Click()
 
 End
 
-' ============================================================================
+' ============================================
 ' Función   : EjecutarBusqueda
-' Propósito : Búsqueda de un término dentro de txtEditorProyecto. Valida
-'             entrada, delega la lógica de búsqueda en
-'             m_FuncionesGenericas.BuscarEnTexto, llena el GridView de
-'             resultados y aplica la lógica de UI según la cantidad de
-'             coincidencias. Puede ser llamada desde btnBuscar_Click o
-'             desde txtBuscarPalabra_KeyPress.
-' ============================================================================
+' Propósito : Busca el término en el editor y salta a la primera coincidencia
+'             posterior al cursor (o al inicio de la selección); si no hay
+'             ninguna más adelante, vuelve a la primera del documento y lo
+'             avisa. Marca en la grilla la fila de la coincidencia elegida.
+'             Cada llamada busca de nuevo sobre el texto actual, así que las
+'             posiciones siempre corresponden a lo que está en el editor,
+'             aunque se haya editado entre una búsqueda y la siguiente.
+'             La llaman btnBuscar_Click, txtBuscarPalabra_KeyPress y Ctrl+F.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Private Sub EjecutarBusqueda()
 
   Dim sTermino As String
   Dim sContenido As String
   Dim aTextos As New String[]
+  Dim aLineas As String[]
+  Dim aInicioLinea As New Integer[]
   Dim iResultados As Integer
   Dim iFila As Integer
+  Dim iAcumulado As Integer
+  Dim iReferencia As Integer
+  Dim iPosCoincidencia As Integer
+  Dim iIndice As Integer
+  Dim bHaySeleccion As Boolean
+  Dim bEncontrada As Boolean
   Dim i As Integer
 
   ' --- 1. VALIDACIÓN DEL TÉRMINO DE BÚSQUEDA ---
@@ -3401,22 +3414,24 @@ Private Sub EjecutarBusqueda()
   Endif
 
   ' --- 2. LIMPIEZA DE RESULTADOS PREVIOS ---
-  ' LimpiarBusqueda DEBE DEJAR $aBusqNumeroLinea Y $aBusqPosicionEnLinea VACÍOS
-  ' PORQUE BuscarEnTexto LOS LLENA CON Add (NO LOS LIMPIA INTERNAMENTE)
+  ' NO SE CONSERVA NADA DE LA BÚSQUEDA ANTERIOR: SI EL TEXTO SE EDITÓ, SUS
+  ' POSICIONES YA NO VALEN (ESE FUE EL DEFECTO DEL BOTÓN «SIGUIENTE» DESCARTADO)
   LimpiarBusqueda()
-  ' EL LARGO VA DESPUÉS DE LA LIMPIEZA, NO ANTES: LimpiarBusqueda LO RESETEA
-  ' A CERO, Y UN Select CON LARGO CERO DEJA EL CURSOR EN EL LUGAR CORRECTO
-  ' PERO SIN NADA SELECCIONADO. EN CARACTERES Y NO EN BYTES, PORQUE LAS
-  ' POSICIONES DEL EDITOR CUENTAN CARACTERES (SC-02, RC-GM-21)
+  ' EL LARGO VA DESPUÉS DE LA LIMPIEZA, QUE LO RESETEA. EN CARACTERES (SC-02, RC-GM-21)
   $iBusqLargoTermino = String.Len(sTermino)
 
-  ' --- 3. OBTENCIÓN DEL CONTENIDO DEL EDITOR ---
+  ' --- 3. OBTENCIÓN DEL CONTENIDO Y DEL PUNTO DE REFERENCIA ---
   sContenido = m_EditorPrincipal.Texto()
   If sContenido = "" Then
     m_Sonido.sonar("Info")
     Message.Info("El editor está vacío.")
     Return
   Endif
+
+  ' LA REFERENCIA SE LEE ANTES DE CUALQUIER SALTO. SIN SELECCIÓN,
+  ' selectionStart() DE QT DEVUELVE LA POSICIÓN DEL CURSOR
+  bHaySeleccion = m_EditorPrincipal.HaySeleccion()
+  iReferencia = m_EditorPrincipal.InicioSeleccion()
 
   ' --- 4. CONFIGURACIÓN DEL GRIDVIEW ---
   With gvResultados
@@ -3432,8 +3447,7 @@ Private Sub EjecutarBusqueda()
   End With
 
   ' --- 5. INVOCACIÓN DE LA BÚSQUEDA GENÉRICA ---
-  ' LOS ARRAYS DEL FORM $aBusqNumeroLinea Y $aBusqPosicionEnLinea SE LLENAN
-  ' POR REFERENCIA. aTextos ES LOCAL PORQUE SOLO ALIMENTA EL GRIDVIEW.
+  ' LOS ARRAYS DEL FORM SE LLENAN POR REFERENCIA; aTextos SOLO ALIMENTA EL GRIDVIEW
   iResultados = m_FuncionesGenericas.BuscarEnTexto(sContenido, sTermino, btnMayMin.Value, btnExacta.Value, $aBusqNumeroLinea, $aBusqPosicionEnLinea, aTextos)
 
   ' --- 6. VOLCADO DE RESULTADOS AL GRIDVIEW ---
@@ -3447,9 +3461,41 @@ Private Sub EjecutarBusqueda()
   ' --- 7. ACTUALIZACIÓN DEL CONTEO ---
   vConteo.Value = iResultados
 
-  IrAResultadoBusqueda(0)
+  ' --- 8. ELECCIÓN DE LA COINCIDENCIA SIGUIENTE A LA REFERENCIA ---
+  ' INICIO ABSOLUTO DE CADA LÍNEA EN UN SOLO RECORRIDO: PosicionDe POR CADA
+  ' COINCIDENCIA VOLVERÍA A PARTIR EL TEXTO ENTERO EN CADA LLAMADA
+  aLineas = Split(sContenido, Chr(10))
+  For i = 0 To aLineas.Max
+    aInicioLinea.Add(iAcumulado)
+    iAcumulado += String.Len(aLineas[i]) + 1
+  Next
 
-  ' --- 8. RUTAS DE UI SEGÚN CANTIDAD DE RESULTADOS ---
+  ' SI NINGUNA ESTÁ MÁS ADELANTE, QUEDA 0 Y bEncontrada EN FALSE: RECORRIDO CIRCULAR
+  iIndice = 0
+  bEncontrada = False
+  For i = 0 To iResultados - 1
+    ' BuscarEnTexto DEVUELVE LÍNEA Y COLUMNA BASE 1; LAS POSICIONES DEL EDITOR SON BASE 0
+    iPosCoincidencia = aInicioLinea[$aBusqNumeroLinea[i] - 1] + $aBusqPosicionEnLinea[i] - 1
+
+    ' CON SELECCIÓN SE EXIGE ESTRICTAMENTE MAYOR: LA SELECCIÓN ES LA COINCIDENCIA
+    ' ACTUAL Y HAY QUE PASAR A LA SIGUIENTE. SIN SELECCIÓN, UNA COINCIDENCIA QUE
+    ' EMPIEZA JUSTO EN EL CURSOR CUENTA
+    If bHaySeleccion Then
+      If iPosCoincidencia > iReferencia Then
+        iIndice = i
+        bEncontrada = True
+        Break
+      Endif
+    Else
+      If iPosCoincidencia >= iReferencia Then
+        iIndice = i
+        bEncontrada = True
+        Break
+      Endif
+    Endif
+  Next
+
+  ' --- 9. RUTAS DE UI SEGÚN CANTIDAD DE RESULTADOS ---
   Select Case iResultados
 
     Case 0
@@ -3460,18 +3506,33 @@ Private Sub EjecutarBusqueda()
       TabPanelIzquierdaInferior[5].Visible = False
 
     Case 1
-      ' UNA SOLA COINCIDENCIA: IR DIRECTO Y OCULTAR EL PANEL
+      ' UNA SOLA COINCIDENCIA: IR DIRECTO Y OCULTAR EL PANEL. SIN AVISO DE
+      ' VUELTA: CON UNA SOLA, «VOLVER AL INICIO» NO SIGNIFICA NADA
       $iBusqIndiceActual = 0
       IrAResultadoBusqueda(0)
       btnResultados.Value = False
       TabPanelIzquierdaInferior[5].Visible = False
 
     Case Else
-      ' VARIAS COINCIDENCIAS: IR A LA PRIMERA Y MOSTRAR EL PANEL CON LA LISTA
-      $iBusqIndiceActual = 0
-      IrAResultadoBusqueda(0)
+      ' VARIAS COINCIDENCIAS: IR A LA SIGUIENTE A LA REFERENCIA Y MOSTRAR LA LISTA
+      $iBusqIndiceActual = iIndice
+      IrAResultadoBusqueda(iIndice)
       btnResultados.Value = True
       TabPanelIzquierdaInferior[5].Visible = True
+
+      ' MARCA EN LA GRILLA LA COINCIDENCIA ACTUAL. ASIGNAR Row EMITE Change Y
+      ' Select, NUNCA Click (GridView.class, gb.gui.base 3.22.1): NO HAY SEGUNDO SALTO
+      gvResultados.Row = iIndice
+
+      ' NO HABÍA NINGUNA MÁS ADELANTE: SE VOLVIÓ A LA PRIMERA. EL AVISO VA
+      ' DESPUÉS DEL SALTO PARA QUE LA SELECCIÓN YA ESTÉ A LA VISTA
+      If Not bEncontrada Then
+        m_Sonido.sonar("Info")
+        Message.Info("Se llegó al final del documento.\nLa búsqueda continúa desde la primera coincidencia.")
+        ' EL MODAL SE LLEVA EL FOCO; VUELVE AL CUADRO DE BÚSQUEDA PARA QUE EL
+        ' PRÓXIMO ENTER SIGA AVANZANDO (RC-GM-07)
+        txtBuscarPalabra.SetFocus()
+      Endif
 
   End Select
 
@@ -3479,7 +3540,6 @@ End
 
 ' ============================================================================
 ' TXTBUSCARPALABRA_KEYPRESS - EVENTO KEYPRESS DEL TEXTBOX DE BÚSQUEDA
-' ============================================================================
 ' SI SE PRESIONA ENTER, EJECUTA LA BÚSQUEDA
 ' ============================================================================
 Public Sub txtBuscarPalabra_KeyPress()
