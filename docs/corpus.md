@@ -1937,7 +1937,7 @@ Para validar sirve el catálogo entero, en cualquier estado. Para mostrar, `Visi
 EL PANEL
 
 - El combo elige bloques o marcas en línea, y `txtDescripcion` explica qué es cada tipo.
-- La lista separa por grupo (comunes, estructura del producto, disciplinares) y, dentro de los disciplinares, por perfil.
+- La lista separa por grupo (comunes, estructura del producto, disciplinares y composición) y, dentro de los disciplinares, por perfil. Composición, al final, son las instrucciones que solo afectan al PDF (SC-38).
 - La ayuda es un TextEdit en modo RichText (GV-64). Toma el fragmento `<nombre>.html` y pone el ejemplo en el lugar de `<!--gb:ejemplo-->`, coloreado con la gramática Markdown del editor y sobre el fondo del tema, en una tabla de una celda. Se repinta al cambiar el tema o la fuente.
 
 LA INSERCIÓN, SEGÚN EL MODO
@@ -1947,6 +1947,7 @@ LA INSERCIÓN, SEGÚN EL MODO
 - `plantilla`: inserta con el marcador de los snippets (SC-21) y lo deja seleccionado.
 - `dos-partes`: como `envolver`, si la selección tiene la forma `{primera}{segunda}`; si no, avisa qué falla y no inserta (SC-35).
 - `separador`: inserta el bloque vacío con su ancla si no hay selección y el cursor está al principio de una línea vacía (`m_EditorPrincipal.CursorEnLineaVaciaAlInicio`); si no, avisa y no inserta (SC-36).
+- `separador-valor`: los semáforos del separador, con una línea para el valor que lleva el marcador seleccionado; lo valida el filtro al generar (SC-39).
 - Un bloque queda separado por líneas en blanco de lo que tenga antes y después, porque Pandoc no lo reconoce sin ellas (medido), y cierra con el ancla nombrada (SC-33).
 
 RESALTADO
@@ -1959,7 +1960,7 @@ RESALTADO
 
 `Markdown.highlight` reconoce la apertura, el ancla, el cierre y las marcas en línea con el estilo `Function`; cada tema define `Function` en su sección `[Markdown]`. Los patrones escriben el espacio como `\x20` o `\s` (GV-76).
 
-**Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24,vinculo:SC-35,vinculo:SC-36
+**Relaciones:** vinculo:RF-11,vinculo:SC-11,vinculo:SC-22,vinculo:SC-33,vinculo:SC-32,vinculo:SC-21,vinculo:GV-64,vinculo:GV-76,vinculo:SC-24,vinculo:SC-35,vinculo:SC-36,vinculo:SC-38,vinculo:SC-39
 
 **PENDIENTE:** Verificado en Mint con 3.22.1 (2026-10): instalado, el panel muestra solo lo liberado (la figura); desde el IDE, también los borradores, marcados. La figura se inserta con la línea en blanco y el ancla, se guarda y se colorea. Falta probar en Mint la inserción de dos-partes (el epígrafe), plantilla y en línea. En cinco temas el color de Function coincide con otro estilo de Markdown (gruvbox, monokai, pen-paper-coffee, solarizado-claro y solarizado-oscuro): a decidir. El verificador de cierres no está implementado.
 
@@ -2091,6 +2092,84 @@ LÍMITES ACEPTADOS
 Probado por Alberto en 3.22.1: avance con F3, Enter, botón y grilla; escritura sobre una coincidencia y click en otra de la misma línea.
 
 **Relaciones:** vinculo:SC-18,vinculo:GV-78,vinculo:RC-GM-07,vinculo:RC-GM-21,vinculo:GV-65
+
+### SC-38 — Instrucciones de composición: solo PDF, instrucción de procesamiento gb- con ficha propia
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX / contenedor; W3C XML 1.0 (instrucciones de procesamiento) · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Una instrucción de composición dice cómo y dónde va algo en una página concreta del PDF, no qué es: un espacio, un salto de página, una línea más en la página. LaTeX es un lenguaje de composición tipográfica además de marcado, y llevar su uso al .md trae instrucciones que no tienen equivalente en las otras salidas. Esta entrada fija las reglas comunes, para que cada instrucción nueva no se decida desde cero.
+
+QUÉ LAS DISTINGUE
+
+- Solo afectan al PDF. En un EPUB que reacomoda el texto no hay página que agrandar: no es una omisión de la salida digital, es la segunda excepción de SC-31.
+- Pierden validez cuando cambia el texto. Una instrucción de estructura vale aunque se reescriba el párrafo; una de página deja de valer si se corre una línea arriba. Son de la última pasada.
+- Habrá instrucciones dentro de la línea (un corte de línea forzado, un corte de palabra, un párrafo que pierde una línea). El mecanismo de abajo sirve también para ellas.
+
+LAS REGLAS
+
+1. En el canónico van como INSTRUCCIÓN DE PROCESAMIENTO con prefijo `gb-`, nunca como elemento: `<?gb-corte?>` (SC-28, en DocBook) y `<?gb-espacio …?>` (SC-39). El estándar XML las define para eso: indicaciones para una aplicación, fuera del modelo del documento. El canónico sigue validando contra el RNG de DocBook 5.2 y la DTD de JATS 1.4 (verificado), y el PDF se puede regenerar idéntico porque la instrucción queda en él. Una instrucción de procesamiento también puede ir dentro de un párrafo.
+2. Lleva una FICHA propia, no LaTeX: `bigskip`, `vspace* 2baselineskip`. Solo las hojas LaTeX la traducen (en `tex-comun.xsl` cuando la ficha es igual en JATS y en DocBook), y frenan ante una ficha que no conocen.
+3. Las hojas de HTML y EPUB no hacen nada: la regla incorporada de XSLT para una instrucción de procesamiento no escribe nada (medido en SC-28 y en SC-39). Una hoja que copie con `xsl:copy-of` o con una identidad sobre `node()` sí las copiaría: hay que mirarlo en cada hoja nueva.
+4. Los indexadores las quitan todas de una vez. `jats-to-scielo.xsl` y `jats-to-redalyc.xsl` parten de una identidad sobre `@* | node()`, que incluye las instrucciones de procesamiento (verificado: copiaban `<?gb-espacio?>` al paquete). Una sola plantilla vacía, `processing-instruction()[starts-with(name(), 'gb-')]`, las quita: una instrucción nueva no se filtra por olvido.
+5. Diccionario cerrado, en un solo filtro Lua por instrucción, que corre en las tres cadenas (revista, libro, ODT) con el patrón de `dos-partes.lua` (SC-35). En el ODT la quita. Lo que no está en el diccionario frena la conversión con un mensaje que dice qué falla y qué se admite.
+6. En el catálogo de shortcodes, grupo propio: `composicion`, «Composición (solo PDF)», al final de la lista. El editor ve en el panel que son instrucciones de página y no de contenido. El grupo entró con el esquema 5 de gbShortcodes.
+7. En una hoja LaTeX, la instrucción solo se alcanza donde se la pide: `*` selecciona elementos, no instrucciones de procesamiento. `docbook-to-latex.xsl` la agrega en unión, `(* except info) | processing-instruction('gb-espacio')`, que conserva el orden del documento; `jats-to-latex.xsl` ya recorría todos los nodos de `body` y `sec`.
+
+Una salida digital que algún día necesite una de estas instrucciones la lee del canónico igual que el PDF: la ficha no depende de LaTeX.
+
+**Relaciones:** vinculo:SC-28,vinculo:SC-31,vinculo:SC-35,vinculo:SC-34,vinculo:SC-39
+
+### SC-39 — Espacio vertical: espaciov, diccionario cerrado de comandos del PDF
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / LuaLaTeX / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Primer caso de las instrucciones de composición (SC-38). Agrega o quita espacio vertical, o fuerza un salto de página, en un punto del texto. Solo PDF, de libros y de revistas.
+
+    ::: espaciov
+
+    \bigskip
+
+    [/espaciov]: # ()
+    :::
+
+EL VALOR VA DIRECTO, SIN CORCHETES NI LLAVES
+
+Medido con Pandoc 3.1.3: un comando de LaTeX solo en su línea llega como `RawBlock "tex"` con el texto exacto (`\bigskip`, `\vspace*{2\baselineskip}`). Entre corchetes llega como texto, y se confunde con el ancla de SC-33; entre llaves, el comando queda partido en tres, y las llaves son el semáforo de las dos partes (SC-35). Sin la barra es un párrafo común, y el filtro lo dice.
+
+DICCIONARIO (espacio-vertical.lua)
+
+    \smallskip  \medskip  \bigskip          ficha: smallskip, medskip, bigskip
+    \newpage  \clearpage                    ficha: newpage, clearpage
+    \cleardoublepage                       solo libros
+    \vspace{L}  \vspace*{L}                 ficha: vspace L, vspace* L
+    \enlargethispage{L}                    ficha: enlargethispage L
+
+L es un número con unidad (`pt`, `mm`, `cm`, `em`, `ex`) o `N\baselineskip` (ficha `Nbaselineskip`; sin número vale 1). Puede ser negativa. El decimal va con punto: TeX admite la coma, pero se fija una sola forma.
+
+`\vspace*` importa: un `\vspace` común desaparece al principio de una página. `\enlargethispage{\baselineskip}` gana una línea en la página, para salvar una viuda.
+
+FRENA LA CONVERSIÓN (CÓDIGO 83, CON MENSAJE)
+
+Un valor fuera del diccionario, una longitud mal formada, `\cleardoublepage` en una revista, un bloque vacío, con más de un bloque adentro, o sin la barra. Y un bloque que no esté en el primer nivel: dentro de otro bloque, una lista, una cita, una tabla o una nota. En revista el filtro corre después de `unwrap-structural-divs.lua`, así que dentro de una sección estructural (`::: intro`) vale. En el ODT no se controla el nivel, porque esa cadena no desenvuelve las secciones: la revista ya lo controla en la del XML.
+
+SALIDAS
+
+- Canónico: `<?gb-espacio bigskip?>` entre los párrafos, en JATS y en DocBook.
+- PDF: la plantilla de `tex-comun.xsl` escribe el comando. Compilado con LuaLaTeX.
+- HTML, EPUB, Crossref, DOAJ: nada. SciELO y Redalyc: la plantilla vacía de SC-38.
+- ODT: el bloque se quita.
+
+INSERCIÓN: MODO separador-valor
+
+Los semáforos del separador (SC-36): sin selección y con el cursor al principio de una línea vacía. Inserta el bloque con el marcador `•` (SC-21) seleccionado en la línea del valor. Al insertar el valor todavía no existe: lo valida el filtro, que es además el único que ve lo escrito a mano. El modo es una fila de la tabla `modos` de gbShortcodes (dato, no esquema).
+
+VERIFICADO EN EL CONTENEDOR
+
+Pandoc 3.1.3 con las cadenas reales de revista y de libro; SaxonJ-HE 12.5 con `ensamblar-capitulo-canonico.xsl`, `docbook-to-latex.xsl`, `jats-to-latex.xsl` y las seis hojas de revista; el capítulo ensamblado valida contra el RNG y el artículo contra la DTD Archiving 1.4; los comandos compilan con LuaLaTeX; gbpublisher y gbShortcodes compilan con gbc3 3.19; la migración de gbShortcodes y el alta pasaron por `importar_shortcodes.sh`.
+
+**Relaciones:** vinculo:SC-38,vinculo:SC-33,vinculo:SC-34,vinculo:SC-35,vinculo:SC-36,vinculo:SC-21
+
+**PENDIENTE:** Probar en Mint con un libro y una revista reales: inserción con el modo separador-valor, PDF compilado, y HTML y EPUB sin rastro. Las hojas de HTML y EPUB de libros no se corrieron sueltas (piden el manifiesto del libro): el resultado se apoya en la regla incorporada y en que no tienen identidad ni copy-of sobre el contenido.
 
 ---
 

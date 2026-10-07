@@ -29,6 +29,8 @@ Public Const OPCION_LINEA As String = "Marcas en línea"
 Private Const SEP_COMUNES As String = "Comunes"
 Private Const SEP_ESTRUCTURA As String = "Estructura del producto"
 Private Const SEP_DISCIPLINARES As String = "Disciplinares"
+' INSTRUCCIONES DE COMPOSICIÓN: SOLO PARA EL PDF (SC-38)
+Private Const SEP_COMPOSICION As String = "Composición (solo PDF)"
 Private Const SEP_VACIO As String = "Ninguno disponible todavía"
 
 ' SANGRÍA DE UN SHORTCODE BAJO SU SEPARADOR
@@ -209,7 +211,7 @@ End
 ' ==============================================================================
 ' Función   : NombreDeGrupo
 ' Propósito : El texto del separador de un grupo del catálogo
-' Parámetros: sGrupo As String — comun, estructura o disciplinar
+' Parámetros: sGrupo As String — comun, estructura, disciplinar o composicion
 ' Retorna   : String — texto visible
 ' ==============================================================================
 Private Function NombreDeGrupo(sGrupo As String) As String
@@ -221,6 +223,8 @@ Private Function NombreDeGrupo(sGrupo As String) As String
       Return SEP_ESTRUCTURA
     Case "disciplinar"
       Return SEP_DISCIPLINARES
+    Case "composicion"
+      Return SEP_COMPOSICION
   End Select
   Return sGrupo
 
@@ -397,6 +401,8 @@ End
 '               {primera}{segunda} (SC-35); si no, avisa y no inserta
 '             - separador: un bloque vacío; sin selección y con el cursor
 '               al principio de una línea vacía (SC-36)
+'             - separador-valor: como el separador, con el marcador • en la
+'               línea del valor, seleccionado (SC-39)
 '             - plantilla: inserta el marcador • en lugar del contenido y
 '               lo deja seleccionado (SC-21)
 '             Un bloque ocupa líneas propias y cierra con el ancla nombrada
@@ -430,8 +436,10 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
 
   ' SEPARADOR: NO ENVUELVE NI REEMPLAZA, Y VA EN UNA LÍNEA PROPIA: EN UNA
   ' LÍNEA VACÍA NO PARTE NINGÚN PÁRRAFO. SE INSERTA ACÁ PORQUE NO TIENE
-  ' CONTENIDO ENTRE LA APERTURA Y EL ANCLA
-  If oFila.sModo = m_CatalogoShortcodes.MODO_SEPARADOR Then
+  ' CONTENIDO ENTRE LA APERTURA Y EL ANCLA. EL SEPARADOR CON VALOR TIENE LOS
+  ' MISMOS SEMÁFOROS Y UNA LÍNEA CON EL MARCADOR PARA ESCRIBIR EL VALOR, QUE
+  ' VALIDA EL FILTRO AL GENERAR (SC-39): AL INSERTAR TODAVÍA NO EXISTE
+  If oFila.sModo = m_CatalogoShortcodes.MODO_SEPARADOR Or oFila.sModo = m_CatalogoShortcodes.MODO_SEPARADOR_VALOR Then
     If sSeleccion <> "" Then
       m_Sonido.sonar("Warning")
       Message.Warning("«" & oFila.sEtiqueta & "» no se aplica sobre texto." & gb.NewLine & gb.NewLine &
@@ -448,12 +456,25 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
     Endif
     iInicio = m_EditorPrincipal.InicioSeleccion()
     sTexto = m_EditorPrincipal.Texto()
-    ' EL BLOQUE: APERTURA, LÍNEA EN BLANCO, ANCLA (SC-33) Y CIERRE; LAS LÍNEAS
-    ' EN BLANCO QUE FALTEN ANTES Y DESPUÉS, COMO EN TODO BLOQUE
-    sInsertar = oFila.sApertura & Chr(10) & Chr(10) & AnclaCierre(oFila.sClase) & Chr(10) & oFila.sCierre
+    ' LA LÍNEA DEL VALOR, CON SU LÍNEA EN BLANCO: SIN ELLA EL ANCLA SE LEE
+    ' COMO TEXTO DEL VALOR (SC-33)
+    sContenido = ""
+    If oFila.sModo = m_CatalogoShortcodes.MODO_SEPARADOR_VALOR Then
+      sContenido = m_Constantes.SNIPPET_MARCADOR & Chr(10) & Chr(10)
+    Endif
+    ' EL BLOQUE: APERTURA, LÍNEA EN BLANCO, VALOR SI LO HAY, ANCLA (SC-33) Y
+    ' CIERRE; LAS LÍNEAS EN BLANCO QUE FALTEN ANTES Y DESPUÉS, COMO EN TODO BLOQUE
+    sInsertar = oFila.sApertura & Chr(10) & Chr(10) & sContenido & AnclaCierre(oFila.sClase) & Chr(10) & oFila.sCierre
     sInsertar = SeparacionAntes(String.Left(sTexto, iInicio)) & sInsertar &
       SeparacionDespues(String.Mid(sTexto, iInicio + 1))
-    If m_EditorPrincipal.Insertar(sInsertar) Then FMain.txtEditorProyecto.SetFocus()
+    If Not m_EditorPrincipal.Insertar(sInsertar) Then Return
+    ' EL MARCADOR QUEDA SELECCIONADO PARA ESCRIBIR EL VALOR ENCIMA (SC-21).
+    ' String.InStr CUENTA CARACTERES, COHERENTE CON Seleccionar (RC-GM-21)
+    If oFila.sModo = m_CatalogoShortcodes.MODO_SEPARADOR_VALOR Then
+      iMarca = String.InStr(sInsertar, m_Constantes.SNIPPET_MARCADOR)
+      If iMarca > 0 Then m_EditorPrincipal.Seleccionar(iInicio + iMarca - 1, 1)
+    Endif
+    FMain.txtEditorProyecto.SetFocus()
     Return
   Endif
 

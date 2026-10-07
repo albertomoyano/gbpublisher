@@ -266,7 +266,10 @@
         <xsl:text>&#10;\begin{</xsl:text>
         <xsl:value-of select="$entorno"/>
         <xsl:text>}&#10;</xsl:text>
-        <xsl:apply-templates select="* except info"/>
+        <!-- LA FICHA DE ESPACIO VERTICAL (SC-39) ES UNA INSTRUCCIÓN DE   -->
+        <!-- PROCESAMIENTO, NO UN ELEMENTO: * NO LA ALCANZA. VA EN LA UNIÓN, -->
+        <!-- QUE CONSERVA EL ORDEN DEL DOCUMENTO. LA TRADUCE tex-comun.xsl  -->
+        <xsl:apply-templates select="(* except info) | processing-instruction('gb-espacio')"/>
         <xsl:text>\end{</xsl:text>
         <xsl:value-of select="$entorno"/>
         <xsl:text>}&#10;&#10;</xsl:text>
@@ -346,7 +349,10 @@
         </xsl:if>
         <xsl:text>&#10;</xsl:text>
 
-        <xsl:apply-templates select="* except info"/>
+        <!-- LA FICHA DE ESPACIO VERTICAL (SC-39) ES UNA INSTRUCCIÓN DE   -->
+        <!-- PROCESAMIENTO, NO UN ELEMENTO: * NO LA ALCANZA. VA EN LA UNIÓN, -->
+        <!-- QUE CONSERVA EL ORDEN DEL DOCUMENTO. LA TRADUCE tex-comun.xsl  -->
+        <xsl:apply-templates select="(* except info) | processing-instruction('gb-espacio')"/>
 
         <xsl:if test="$conCitas">
           <!-- EL heading DE biblatex HACE \markboth CON «REFERENCIAS», Y ESA
@@ -430,7 +436,10 @@
       <xsl:value-of select="@xml:id"/>
       <xsl:text>}&#10;</xsl:text>
     </xsl:if>
-    <xsl:apply-templates select="* except (info | title)"/>
+    <!-- LA FICHA DE ESPACIO VERTICAL (SC-39) ES UNA INSTRUCCIÓN DE   -->
+    <!-- PROCESAMIENTO, NO UN ELEMENTO: * NO LA ALCANZA. VA EN LA UNIÓN, -->
+    <!-- QUE CONSERVA EL ORDEN DEL DOCUMENTO. LA TRADUCE tex-comun.xsl  -->
+    <xsl:apply-templates select="(* except (info | title)) | processing-instruction('gb-espacio')"/>
   </xsl:template>
 
   <!-- EL TÍTULO LO EMITE EL PADRE. ACÁ SE SUPRIME PARA QUE NO SE   -->

@@ -111,6 +111,18 @@
   </xsl:template>
 
   <!-- ================================================
+       INSTRUCCIONES DE COMPOSICIÓN DE gbpublisher (SC-38)
+       EL CANÓNICO LLEVA COMO INSTRUCCIÓN DE PROCESAMIENTO
+       CON PREFIJO gb- LO QUE SOLO SIRVE AL PDF; EN JATS, HOY,
+       <?gb-espacio …?> (SC-39). LA IDENTIDAD LAS
+       COPIARÍA AL PAQUETE DEL INDEXADOR, PORQUE node()
+       INCLUYE LAS INSTRUCCIONES DE PROCESAMIENTO. UNA SOLA
+       PLANTILLA LAS QUITA TODAS: UNA INSTRUCCIÓN NUEVA NO SE
+       FILTRA POR OLVIDO.
+       ================================================ -->
+  <xsl:template match="processing-instruction()[starts-with(name(), 'gb-')]"/>
+
+  <!-- ================================================
        TÍTULO Y SUBTÍTULO SIN CORTE (SC-28)
        EL CANÓNICO LLEVA EL CORTE DEL EDITOR COMO <break/>,
        QUE JATS ADMITE; ESTA SALIDA ES DE UN INDEXADOR Y EL

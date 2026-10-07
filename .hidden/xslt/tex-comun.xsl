@@ -22,6 +22,7 @@
     f:comando-cita()  modo de cita → comando biblatex
     abortar-elemento  plantilla de corte ante vocabulario
                       no previsto
+    gb-espacio        ficha de espacio vertical del PDF (SC-39)
   ============================================================
   NOTA SOBRE f:latex — CORRECCIÓN DE 2026-09
     LA VERSIÓN ANTERIOR ENCADENABA DIEZ replace() CON LA
@@ -299,6 +300,57 @@
       <xsl:text>&#10;&#10;  Agregar la plantilla correspondiente, o el entorno</xsl:text>
       <xsl:text>&#10;  equivalente en la capa de contrato del preámbulo.&#10;</xsl:text>
     </xsl:message>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- INSTRUCCIÓN DE COMPOSICIÓN: ESPACIO VERTICAL (SC-38, SC-39)  -->
+  <!-- ============================================================ -->
+  <!-- EL CANÓNICO NO LLEVA LaTeX: LLEVA UNA FICHA QUE ESCRIBE       -->
+  <!-- espacio-vertical.lua, Y ESTA ES LA ÚNICA PLANTILLA QUE LA     -->
+  <!-- TRADUCE. SIRVE A LAS DOS RAMAS PORQUE LA FICHA ES IGUAL EN    -->
+  <!-- JATS Y EN DOCBOOK. LAS HOJAS DE HTML Y EPUB NO LA TOCAN: LA   -->
+  <!-- REGLA INCORPORADA PARA UNA INSTRUCCIÓN DE PROCESAMIENTO NO    -->
+  <!-- ESCRIBE NADA.                                                 -->
+  <!--   bigskip                    ->  \bigskip                    -->
+  <!--   vspace* 2baselineskip      ->  \vspace*{2\baselineskip}    -->
+  <!--   enlargethispage 1baselineskip -> \enlargethispage{1\baselineskip} -->
+  <!-- UNA FICHA DESCONOCIDA CORTA LA TRANSFORMACIÓN: EL FILTRO YA   -->
+  <!-- VALIDA, Y ESTO CUBRE UN CANÓNICO ARMADO POR OTRO CAMINO.      -->
+  <!-- ============================================================ -->
+  <xsl:template match="processing-instruction('gb-espacio')">
+    <xsl:variable name="ficha" select="normalize-space(.)"/>
+    <xsl:choose>
+      <xsl:when test="$ficha = ('smallskip', 'medskip', 'bigskip',
+                                'newpage', 'clearpage', 'cleardoublepage')">
+        <xsl:text>&#10;\</xsl:text>
+        <xsl:value-of select="$ficha"/>
+        <xsl:text>&#10;&#10;</xsl:text>
+      </xsl:when>
+      <xsl:when test="matches($ficha,
+        '^(vspace\*?|enlargethispage) (-?([0-9]+\.?[0-9]*|\.[0-9]+))(pt|mm|cm|em|ex|baselineskip)$')">
+        <xsl:analyze-string select="$ficha"
+          regex="^(vspace\*?|enlargethispage) (-?([0-9]+\.?[0-9]*|\.[0-9]+))(pt|mm|cm|em|ex|baselineskip)$">
+          <xsl:matching-substring>
+            <xsl:text>&#10;\</xsl:text>
+            <xsl:value-of select="regex-group(1)"/>
+            <xsl:text>{</xsl:text>
+            <xsl:value-of select="regex-group(2)"/>
+            <!-- baselineskip ES UN REGISTRO DE LaTeX: VA CON SU BARRA -->
+            <xsl:if test="regex-group(4) = 'baselineskip'">\</xsl:if>
+            <xsl:value-of select="regex-group(4)"/>
+            <xsl:text>}&#10;&#10;</xsl:text>
+          </xsl:matching-substring>
+        </xsl:analyze-string>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:message terminate="yes">
+          <xsl:text>&#10;[gb-espacio] FICHA DE ESPACIO VERTICAL DESCONOCIDA: «</xsl:text>
+          <xsl:value-of select="$ficha"/>
+          <xsl:text>»&#10;  La escribe espacio-vertical.lua (SC-39). Si cambió el&#10;</xsl:text>
+          <xsl:text>  diccionario del filtro, esta plantilla va en el mismo lote.&#10;</xsl:text>
+        </xsl:message>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
 </xsl:stylesheet>
