@@ -58,6 +58,38 @@
   <xsl:param name="piezas_libro" as="xs:string" required="yes"/>
   <xsl:param name="pieza_actual" as="xs:string" required="yes"/>
 
+  <!-- BIBLIOGRAFÍA CONSOLIDADA (lugar_bibliografia = consolidada)
+       RUTA ABSOLUTA DE tmp/epub-bibliografia.xml: LA BIBLIOGRAFÍA DEL LIBRO
+       (LA DE GenerarBiblioLibroXML) CON EL TÍTULO DE LA PÁGINA YA PUESTO POR
+       GAMBAS. EL TÍTULO VIAJA EN EL ARCHIVO Y NO COMO PARÁMETRO: UN
+       PARÁMETRO DE LA LÍNEA DE COMANDOS LLEGA A JAVA SEGÚN EL LOCALE, Y BAJO
+       C/POSIX «Bibliografía» SE ROMPE (MEDIDO; LA MISMA FAMILIA QUE GV-03).
+       VACÍA = POR CAPÍTULO: CADA CAPÍTULO TRAE SU <bibliography> Y TODO
+       QUEDA COMO ANTES. CON ELLA, LAS CITAS SE RESUELVEN CONTRA ESA LISTA
+       (AUTOR, AÑO, NÚMERO) Y ENLAZAN A LA PÁGINA DE BIBLIOGRAFÍA. -->
+  <xsl:param name="biblio_libro" as="xs:string" select="''"/>
+
+  <!-- NOMBRE FIJO DE LA PÁGINA DE BIBLIOGRAFÍA EN chapters/. DEBE COINCIDIR
+       CON m_GenerarEpubLibro (OPF Y NAV) Y CON generar_epub_libro.sh: SI
+       DIVERGEN, LA VERIFICACIÓN DEL OPF DEL SCRIPT LO ATRAPA -->
+  <xsl:variable name="archivoBibliografia" as="xs:string" select="'bibliografia.xhtml'"/>
+
+  <!-- LA BIBLIOGRAFÍA CONSOLIDADA, SI LA HAY -->
+  <xsl:variable name="biblioLibro" as="element()?"
+                select="if ($biblio_libro != '') then doc($biblio_libro)/* else ()"/>
+
+  <!-- LAS ENTRADAS CONTRA LAS QUE SE RESUELVEN LAS CITAS: LAS DE LA
+       BIBLIOGRAFÍA CONSOLIDADA O LAS DE ESTE DOCUMENTO -->
+  <xsl:variable name="entradasBib" as="element()*"
+                select="if (exists($biblioLibro))
+                        then $biblioLibro//(db:biblioentry | biblioentry)
+                        else //(db:biblioentry | biblioentry)"/>
+
+  <!-- DESTINO DE LOS ENLACES DE CITA: LA PÁGINA DE BIBLIOGRAFÍA SI ES
+       CONSOLIDADA; EL MISMO ARCHIVO SI ES POR CAPÍTULO -->
+  <xsl:variable name="hrefBib" as="xs:string"
+                select="if (exists($biblioLibro)) then $archivoBibliografia else ''"/>
+
   <!-- LAS PIEZAS DEL LIBRO EN ORDEN. LA EN CURSO ES LA RAÍZ DE ESTE
        DOCUMENTO Y NO UNA SEGUNDA CARGA DEL MISMO ARCHIVO: numeracion-libro
        LA BUSCA POR IDENTIDAD DE NODO. -->
@@ -116,6 +148,36 @@
   <!-- ================================================
        TEMPLATE RAÍZ
        ================================================ -->
+  <!-- PÁGINA DE BIBLIOGRAFÍA CONSOLIDADA: LA FUENTE ES LA <bibliography>
+       QUE ESCRIBE GenerarBiblioLibroXML, NO UN CAPÍTULO. LAS ENTRADAS SALEN
+       CON LA MISMA PLANTILLA QUE LA BIBLIOGRAFÍA DE UN CAPÍTULO (ref-epub),
+       ASÍ QUE EL FORMATO ES EL MISMO EN LOS DOS MODELOS -->
+  <!-- document-node(element(…)) Y NO "/": LA TRANSFORMACIÓN EMPIEZA EN EL
+       NODO DOCUMENTO, Y ESTA REGLA GANA A LA DE "/" SOLO CUANDO LA RAÍZ ES
+       UNA BIBLIOGRAFÍA -->
+  <xsl:template match="document-node(element(db:bibliography)) | document-node(element(bibliography))" priority="5">
+    <xsl:variable name="tituloPagina" select="normalize-space((*/db:title | */title)[1])"/>
+    <html xmlns="http://www.w3.org/1999/xhtml"
+          xmlns:epub="http://www.idpf.org/2007/ops"
+          lang="{$lang}" xml:lang="{$lang}">
+      <head>
+        <meta charset="UTF-8"/>
+        <title><xsl:value-of select="$tituloPagina"/></title>
+        <link rel="stylesheet" type="text/css" href="../css/gbpublisher-epub-libro.css"/>
+      </head>
+      <body>
+        <section epub:type="bibliography" role="doc-bibliography" class="capitulo bibliografia">
+          <xsl:if test="$tituloPagina != ''">
+            <h1 class="cap-titulo"><xsl:value-of select="$tituloPagina"/></h1>
+          </xsl:if>
+          <xsl:for-each select="*/db:biblioentry | */biblioentry">
+            <xsl:apply-templates select="." mode="ref-epub"/>
+          </xsl:for-each>
+        </section>
+      </body>
+    </html>
+  </xsl:template>
+
   <xsl:template match="/">
     <html xmlns="http://www.w3.org/1999/xhtml"
           xmlns:epub="http://www.idpf.org/2007/ops"
@@ -486,7 +548,7 @@
   <xsl:template name="resolver-autor-cita-epub">
     <xsl:param name="rid"/>
     <xsl:variable name="entry"
-                  select="(//db:biblioentry | //biblioentry)[@xml:id = $rid][1]"/>
+                  select="$entradasBib[@xml:id = $rid][1]"/>
     <xsl:variable name="personas" select="$entry/db:author | $entry/author"/>
     <xsl:variable name="editores" select="$entry/db:editor | $entry/editor"/>
     <xsl:choose>
@@ -535,7 +597,7 @@
   <xsl:template name="resolver-anio-cita-epub">
     <xsl:param name="rid"/>
     <xsl:variable name="entry"
-                  select="(//db:biblioentry | //biblioentry)[@xml:id = $rid][1]"/>
+                  select="$entradasBib[@xml:id = $rid][1]"/>
     <xsl:value-of select="normalize-space(($entry/db:pubdate | $entry/pubdate)[1])"/>
   </xsl:template>
 
@@ -580,9 +642,9 @@
       <!-- AUTHOR-IN-TEXT: Autor (año) -->
       <xsl:when test="$modo = 'author-in-text'">
         <xsl:call-template name="phrase-prefijo-de-epub"/>
-        <a class="xref-bibr" href="#{$rid}"><xsl:value-of select="$autor"/></a>
+        <a class="xref-bibr" href="{$hrefBib}#{$rid}"><xsl:value-of select="$autor"/></a>
         <xsl:text> (</xsl:text>
-        <a class="xref-bibr" href="#{$rid}"><xsl:value-of select="$anio"/></a>
+        <a class="xref-bibr" href="{$hrefBib}#{$rid}"><xsl:value-of select="$anio"/></a>
         <xsl:call-template name="phrase-sufijo-de-epub"/>
         <xsl:text>)</xsl:text>
       </xsl:when>
@@ -598,7 +660,7 @@
           <xsl:text>; </xsl:text>
           <xsl:call-template name="phrase-prefijo-de-epub"/>
         </xsl:if>
-        <a class="xref-bibr" href="#{$rid}">
+        <a class="xref-bibr" href="{$hrefBib}#{$rid}">
           <xsl:value-of select="$anio"/>
           <xsl:call-template name="phrase-sufijo-de-epub"/>
         </a>
@@ -616,7 +678,7 @@
           <xsl:text>; </xsl:text>
           <xsl:call-template name="phrase-prefijo-de-epub"/>
         </xsl:if>
-        <a class="xref-bibr" href="#{$rid}">
+        <a class="xref-bibr" href="{$hrefBib}#{$rid}">
           <xsl:value-of select="$autor"/>
           <xsl:if test="$anio != ''">
             <xsl:text>, </xsl:text><xsl:value-of select="$anio"/>
@@ -631,12 +693,14 @@
   <!-- NUMÉRICO (Vancouver / IEEE): [N] -->
   <xsl:template name="xref-numerico-epub">
     <xsl:variable name="rid" select="@linkend"/>
-    <xsl:variable name="entry" select="key('ref-por-id', $rid)"/>
+    <!-- CONTRA LA BIBLIOGRAFÍA CONSOLIDADA SI LA HAY: EL NÚMERO ES LA
+         POSICIÓN EN ESA LISTA, LA MISMA DE LA PÁGINA DE BIBLIOGRAFÍA -->
+    <xsl:variable name="entry" select="$entradasBib[@xml:id = $rid][1]"/>
     <xsl:variable name="num"
       select="count($entry/preceding-sibling::db:biblioentry
                    | $entry/preceding-sibling::biblioentry) + 1"/>
     <xsl:call-template name="phrase-prefijo-de-epub"/>
-    <a class="xref-bibr" href="#{$rid}">
+    <a class="xref-bibr" href="{$hrefBib}#{$rid}">
       <xsl:text>[</xsl:text><xsl:value-of select="$num"/><xsl:text>]</xsl:text>
     </a>
     <xsl:call-template name="phrase-sufijo-de-epub"/>
@@ -709,7 +773,7 @@
   <xsl:template name="numero-referencia-db">
     <xsl:param name="rid"/>
     <xsl:variable name="entry"
-                  select="(//db:biblioentry | //biblioentry)[@xml:id = $rid][1]"/>
+                  select="$entradasBib[@xml:id = $rid][1]"/>
     <xsl:choose>
       <xsl:when test="$entry">
         <xsl:value-of select="count($entry[1]/preceding-sibling::db:biblioentry

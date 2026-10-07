@@ -20,8 +20,14 @@
 ' ----------------------------------------------------------
 '   Lo decide la matriz editorial, m_PiezasLibro. El EPUB toma de su canónico
 '   las piezas con cuerpo. De las sin cuerpo: los índices y las listas se
-'   omiten; el colofón es la página propia que se escribe acá; la
-'   bibliografía viaja dentro de cada capítulo.
+'   omiten; el colofón es la página propia que se escribe acá. La
+'   bibliografía depende de lugar_bibliografia: por capítulo, viaja dentro
+'   de cada capítulo; consolidada, es una página propia,
+'   chapters/bibliografia.xhtml, en el lugar de la pieza bibliografia si el
+'   libro la declara y con su título, o al final, antes del colofón, como en
+'   el PDF (SC-31). Gambas deja la bibliografía del libro con el título
+'   puesto en tmp/epub-bibliografia.xml; el script la transforma y los
+'   capítulos enlazan sus citas a esa página.
 '
 ' LAS PRIMERAS (SC-25)
 ' ----------------------------------------------------------
@@ -31,9 +37,6 @@
 '   el bloque genérico. La tapa (cover) va siempre, en front-tapa.xhtml.
 '   Los nombres de la portada van en mayúsculas y minúsculas, sin
 '   versalitas: los lectores de EPUB no las respetan de forma pareja.
-'   PENDIENTE: con lugar_bibliografia = consolidada, los canónicos de
-'   capítulo siguen trayendo su propia bibliografía y el EPUB no la
-'   consolida. Hoy no hay libros consolidados en EPUB.
 '
 ' ANTES DE ESTA VERSIÓN
 ' ----------------------------------------------------------
@@ -51,6 +54,15 @@ Private Const PLAZO_EPUB As Float = 900.0
 ' NOMBRES FIJOS DEL PAQUETE. DEBEN COINCIDIR CON engine/generar_epub_libro.sh:
 ' SI DIVERGEN, LA VERIFICACIÓN DEL OPF DEL SCRIPT LO ATRAPA
 Private Const CSS_EPUB As String = "gbpublisher-epub-libro.css"
+' PÁGINA DE LA BIBLIOGRAFÍA CONSOLIDADA: TAMBIÉN EN docbook-to-epub.xsl
+' ($archivoBibliografia) Y EN EL SCRIPT
+Private Const PAGINA_BIBLIOGRAFIA As String = "bibliografia.xhtml"
+' LA BIBLIOGRAFÍA DEL LIBRO CON EL TÍTULO DE LA PÁGINA, EN tmp/. SU PRESENCIA
+' LE DICE AL SCRIPT QUE LA BIBLIOGRAFÍA ES CONSOLIDADA
+Private Const ARCHIVO_BIBLIO_EPUB As String = "epub-bibliografia.xml"
+' TÍTULO DE LA PÁGINA SI EL LIBRO NO DECLARA LA PIEZA: EL DE LA BIBLIOGRAFÍA
+' QUE ESCRIBE GenerarBiblioLibroXML, EL MISMO QUE MUESTRA EL HTML
+Private Const TITULO_BIBLIOGRAFIA As String = "Referencias"
 
 ' RUTAS Y LIBRO DE LA GENERACIÓN EN CURSO
 Private $sRutaProyecto As String
@@ -62,6 +74,14 @@ Private $iIdLibro As Integer
 ' LAS PIEZAS
 Private $bHayPortada As Boolean
 Private $bHayCreditos As Boolean
+
+' BIBLIOGRAFÍA CONSOLIDADA. LA POSICIÓN Y EL TÍTULO LOS DEJA ListaPiezasEpub:
+' ÍNDICE EN LA LISTA DE PIEZAS ANTES DEL CUAL VA LA PÁGINA, O -1 SI EL LIBRO
+' NO DECLARA LA PIEZA (VA AL FINAL). $bPaginaBibliografia LO DECIDE
+' PrepararBibliografia: SOLO SI ES CONSOLIDADA Y TIENE ENTRADAS
+Private $iPosBibliografia As Integer
+Private $sTituloBibliografia As String
+Private $bPaginaBibliografia As Boolean
 
 ' ============================================
 ' Función   : GenerarEpubLibro
@@ -128,6 +148,9 @@ Public Sub GenerarEpubLibro()
   If Not VerificarLogo(cMeta["logo_portada"], "de portada") Then Return
   If Not VerificarLogo(cMeta["logo_coleccion"], "de colección") Then Return
 
+  ' BIBLIOGRAFÍA CONSOLIDADA: ANTES DEL NAV Y DEL OPF, QUE LA DECLARAN
+  If Not PrepararBibliografia(cMeta) Then Return
+
   ' --- 5. ÁRBOL DE TRABAJO ---
   If Not PrepararArbol() Then Return
 
@@ -190,7 +213,7 @@ Private Function ListaPiezasEpub() As String[]
   ' POR id_libro, COMO EL MANIFIESTO DEL CANÓNICO. EL ORDEN ES EL MISMO.
   ' nombre_archivo IS NOT NULL: EL ABM PERMITE GUARDAR UNA PIEZA SIN NOMBRE
   Try hPiezas = m_ConexionBD.mConn.Exec(
-    "SELECT nombre_archivo, tipo_capitulo FROM capitulos " &
+    "SELECT nombre_archivo, tipo_capitulo, titulo_capitulo FROM capitulos " &
     "WHERE id_libro = &1 " &
     "AND nombre_archivo IS NOT NULL " &
     "ORDER BY CASE " &
@@ -212,6 +235,8 @@ Private Function ListaPiezasEpub() As String[]
   ' CRÉDITOS, QUE EL EPUB RESUELVE COMO PÁGINAS PROPIAS (SC-25)
   $bHayPortada = False
   $bHayCreditos = False
+  $iPosBibliografia = -1
+  $sTituloBibliografia = ""
 
   While hPiezas.Available
     sTipo = "capitulo"
@@ -225,6 +250,16 @@ Private Function ListaPiezasEpub() As String[]
 
     If sTipo = "portada" Then $bHayPortada = True
     If sTipo = "creditos" Then $bHayCreditos = True
+
+    ' LA PIEZA bibliografia FIJA DÓNDE VA LA PÁGINA Y CÓMO SE TITULA, COMO EN
+    ' EL PDF: ANTES DE LA PRÓXIMA PIEZA CON CUERPO. SI HAY MÁS DE UNA, MANDA
+    ' LA PRIMERA
+    If sTipo = "bibliografia" And $iPosBibliografia = -1 Then
+      $iPosBibliografia = aPiezas.Count
+      If Not IsNull(hPiezas["titulo_capitulo"]) Then
+        $sTituloBibliografia = m_XML.TrimUTF8(hPiezas["titulo_capitulo"])
+      Endif
+    Endif
 
     hPiezas.MoveNext
   Wend
@@ -254,7 +289,8 @@ Private Function LeerMetadatosLibro() As Collection
     "isbn_electronico, doi_libro, editorial, ciudad_publicacion, " &
     "ano_publicacion, idioma_principal, url_licencia, licencia_defecto, " &
     "descripcion_libro, imagen_tapa, logo_portada, logo_coleccion, " &
-    "texto_catalogacion_digital, texto_legal_digital, tipo_libro " &
+    "texto_catalogacion_digital, texto_legal_digital, tipo_libro, " &
+    "lugar_bibliografia " &
     "FROM libros_md WHERE id_libro = &1 LIMIT 1", $iIdLibro)
   If Error Then
     m_Sonido.sonar("Error")
@@ -291,6 +327,7 @@ Private Function LeerMetadatosLibro() As Collection
   cMeta["texto_catalogacion_digital"] = m_Metadatos.NullToString(hLibro["texto_catalogacion_digital"])
   cMeta["texto_legal_digital"] = m_Metadatos.NullToString(hLibro["texto_legal_digital"])
   cMeta["tipo_libro"] = m_Metadatos.NullToString(hLibro["tipo_libro"])
+  cMeta["lugar_bibliografia"] = m_Metadatos.NullToString(hLibro["lugar_bibliografia"])
 
   If cMeta["idioma"] = "" Then cMeta["idioma"] = "es"
 
@@ -773,19 +810,29 @@ Private Function ArmarNav(cMeta As Collection, aPiezas As String[]) As String
   Dim s As String
   Dim sPieza As String
   Dim sTitulo As String
+  Dim i As Integer
 
   s = CabeceraXhtml(cMeta["idioma"], "Tabla de contenidos", False)
   s &= "<nav epub:type=" & Comillas("toc") & " id=" & Comillas("toc") & ">" & Chr(10)
   s &= "<h1>Contenido</h1>" & Chr(10)
   s &= "<ol>" & Chr(10)
 
-  For Each sPieza In aPiezas
+  For i = 0 To aPiezas.Max
+    ' LA BIBLIOGRAFÍA CONSOLIDADA, EN EL LUGAR DE SU PIEZA
+    If $bPaginaBibliografia And i = $iPosBibliografia Then s &= ItemNavBibliografia()
+
+    sPieza = aPiezas[i]
     ' EL TÍTULO YA VIENE ESCAPADO: SE LEE DE UN XML. SI NO SE PUEDE LEER, EL
     ' NOMBRE DEL ARCHIVO, QUE SÍ HAY QUE ESCAPAR
     sTitulo = LeerTituloCanonico(sPieza)
     If sTitulo = "" Then sTitulo = EscaparXml(sPieza)
     s &= "<li><a href=" & Comillas("chapters/h-" & sPieza & ".xhtml") & ">" & sTitulo & "</a></li>" & Chr(10)
   Next
+
+  ' SIN PIEZA DECLARADA, O DECLARADA DESPUÉS DE LA ÚLTIMA CON CUERPO: AL FINAL
+  If $bPaginaBibliografia And ($iPosBibliografia = -1 Or $iPosBibliografia > aPiezas.Max) Then
+    s &= ItemNavBibliografia()
+  Endif
 
   s &= "</ol>" & Chr(10)
   s &= "</nav>" & Chr(10)
@@ -979,6 +1026,7 @@ Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
   Dim sFuente As String
   Dim sPieza As String
   Dim sId As String
+  Dim i As Integer
 
   aFuentes.Add("NotoSerif-Regular.ttf")
   aFuentes.Add("NotoSerif-Bold.ttf")
@@ -1072,6 +1120,13 @@ Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
       " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
   Next
 
+  ' LA BIBLIOGRAFÍA CONSOLIDADA: LA ESCRIBE EL SCRIPT, Y SU VERIFICACIÓN DEL
+  ' OPF EXIGE QUE EXISTA
+  If $bPaginaBibliografia Then
+    s &= "<item id=" & Comillas("bibliografia") & " href=" & Comillas("chapters/" & PAGINA_BIBLIOGRAFIA) &
+      " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
+  Endif
+
   s &= "<item id=" & Comillas("colofon") & " href=" & Comillas("chapters/bm-99-colofon.xhtml") &
     " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
   s &= "</manifest>" & Chr(10)
@@ -1081,15 +1136,116 @@ Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
   s &= "<itemref idref=" & Comillas("tapa") & "/>" & Chr(10)
   If $bHayPortada Then s &= "<itemref idref=" & Comillas("portada") & "/>" & Chr(10)
   s &= "<itemref idref=" & Comillas("creditos") & "/>" & Chr(10)
-  For Each sPieza In aPiezas
-    s &= "<itemref idref=" & Comillas("cap-" & sPieza) & "/>" & Chr(10)
+  ' EL MISMO ORDEN QUE EL NAV: LA BIBLIOGRAFÍA EN EL LUGAR DE SU PIEZA, O AL
+  ' FINAL ANTES DEL COLOFÓN
+  For i = 0 To aPiezas.Max
+    If $bPaginaBibliografia And i = $iPosBibliografia Then
+      s &= "<itemref idref=" & Comillas("bibliografia") & "/>" & Chr(10)
+    Endif
+    s &= "<itemref idref=" & Comillas("cap-" & aPiezas[i]) & "/>" & Chr(10)
   Next
+  If $bPaginaBibliografia And ($iPosBibliografia = -1 Or $iPosBibliografia > aPiezas.Max) Then
+    s &= "<itemref idref=" & Comillas("bibliografia") & "/>" & Chr(10)
+  Endif
   s &= "<itemref idref=" & Comillas("colofon") & "/>" & Chr(10)
   s &= "</spine>" & Chr(10)
 
   s &= "</package>" & Chr(10)
 
   Return s
+
+End
+
+' ============================================
+' Función   : PrepararBibliografia
+' Propósito : Con bibliografía consolidada y entradas, deja en tmp/ la
+'             bibliografía del libro con el título de la página puesto, que es
+'             la señal para el script. Con bibliografía por capítulo, o sin
+'             entradas, borra ese archivo si quedó de una corrida anterior.
+' Parámetros: cMeta As Collection — metadatos del libro (lugar_bibliografia)
+' Retorna   : Boolean — False si algo falló, con el motivo ya informado
+' ============================================
+Private Function PrepararBibliografia(cMeta As Collection) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sDestino As String
+  Dim sOrigen As String
+  Dim sXml As String
+  Dim iIni As Integer
+  Dim iFin As Integer
+
+  $bPaginaBibliografia = False
+  sDestino = $sRutaProyecto &/ "tmp" &/ ARCHIVO_BIBLIO_EPUB
+
+  ' --- 2. UN ARCHIVO DE UNA CORRIDA ANTERIOR NO PUEDE QUEDAR ---
+  ' SU PRESENCIA ES LO QUE EL SCRIPT LEE COMO «CONSOLIDADA»
+  If Exist(sDestino) Then
+    Try Kill sDestino
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo borrar " & sDestino & ":" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
+
+  ' --- 3. POR CAPÍTULO: NADA MÁS QUE HACER ---
+  If cMeta["lugar_bibliografia"] <> "consolidada" Then Return True
+
+  ' --- 4. LA BIBLIOGRAFÍA DEL LIBRO, LA MISMA DEL HTML Y DEL CANÓNICO ---
+  ' GenerarBiblioLibroXML MUESTRA SU PROPIO MENSAJE AL FALLAR. EL NOMBRE ES EL
+  ' QUE USA m_GenerarSalidasLibro.PrepararInsumosLibro
+  If Not m_XML.GenerarBiblioLibroXML($iIdLibro) Then Return False
+  sOrigen = $sRutaProyecto &/ "tmp" &/ "biblio-libro-" &
+    File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".xml"
+
+  Try sXml = File.Load(sOrigen)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la bibliografía del libro:" & gb.NewLine & sOrigen & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 5. SIN ENTRADAS NO HAY PÁGINA ---
+  ' NO HAY CITAS QUE ENLACEN A ELLA, Y UNA PÁGINA SOLO CON EL TÍTULO NO DICE
+  ' NADA. EL CANÓNICO DEL LIBRO HACE LO MISMO
+  If String.InStr(sXml, "<biblioentry") = 0 Then Return True
+
+  ' --- 6. TÍTULO DE LA PÁGINA ---
+  ' EL DE LA PIEZA SI EL LIBRO LA DECLARA, COMO EL PDF; SI NO, EL QUE TRAE EL
+  ' ARCHIVO. SE REEMPLAZA EL PRIMER <title>, QUE ES EL DE LA BIBLIOGRAFÍA: VA
+  ' ANTES DE LA PRIMERA ENTRADA. String.* POR RC-GM-12
+  If $sTituloBibliografia <> "" Then
+    iIni = String.InStr(sXml, "<title>")
+    If iIni > 0 And iIni < String.InStr(sXml, "<biblioentry") Then
+      iIni += String.Len("<title>")
+      iFin = String.InStr(sXml, "</title>", iIni)
+      If iFin > 0 Then
+        sXml = String.Left(sXml, iIni - 1) & EscaparXml(m_CorteTitulo.Plano($sTituloBibliografia)) & String.Mid(sXml, iFin)
+      Endif
+    Endif
+  Endif
+
+  ' --- 7. ESCRITURA ---
+  If Not EscribirArchivo(sDestino, sXml) Then Return False
+  $bPaginaBibliografia = True
+  Return True
+
+End
+
+' ============================================
+' Función   : ItemNavBibliografia
+' Propósito : La entrada del índice de navegación para la página de
+'             bibliografía consolidada.
+' Parámetros: (ninguno)
+' Retorna   : String — el <li> listo
+' ============================================
+Private Function ItemNavBibliografia() As String
+
+  Dim sTitulo As String
+
+  sTitulo = TITULO_BIBLIOGRAFIA
+  If $sTituloBibliografia <> "" Then sTitulo = m_CorteTitulo.Plano($sTituloBibliografia)
+  Return "<li><a href=" & Comillas("chapters/" & PAGINA_BIBLIOGRAFIA) & ">" & EscaparXml(sTitulo) & "</a></li>" & Chr(10)
 
 End
 

@@ -18,6 +18,12 @@
 #   piezas que el EPUB toma de su canónico, ya filtrada por la matriz
 #   editorial (m_PiezasLibro), una por línea y en orden.
 #
+#   Si el libro tiene la bibliografía consolidada, Gambas deja además
+#   tmp/epub-bibliografia.xml: la bibliografía del libro con el título de la
+#   página ya puesto. Su presencia es la señal: los capítulos resuelven las
+#   citas contra ella y enlazan a chapters/bibliografia.xhtml, que se
+#   transforma desde ella. Sin el archivo, la bibliografía es por capítulo.
+#
 #   Este script hace todo lo demás: copia recursos, transforma cada capítulo,
 #   escribe mimetype y container.xml, VERIFICA QUE CADA ARCHIVO QUE EL OPF
 #   DECLARA EXISTA, empaqueta y valida. No toca la base.
@@ -74,6 +80,10 @@ DIR_TRABAJO="$DIR_PROYECTO/tmp/epub-work"
 DIR_OEBPS="$DIR_TRABAJO/OEBPS"
 OPF="$DIR_OEBPS/content.opf"
 LISTA="$DIR_PROYECTO/tmp/epub-capitulos.txt"
+# BIBLIOGRAFÍA CONSOLIDADA. EL NOMBRE DE LA PÁGINA DEBE COINCIDIR CON EL QUE
+# DECLARA GAMBAS EN EL OPF Y CON $archivoBibliografia DE docbook-to-epub.xsl
+BIBLIO_EPUB="$DIR_PROYECTO/tmp/epub-bibliografia.xml"
+PAGINA_BIBLIO="$DIR_OEBPS/chapters/bibliografia.xhtml"
 DIR_SALIDA="$DIR_PROYECTO/salidas/epub"
 EPUB="$DIR_SALIDA/$NOMBRE_EPUB"
 # EL TEMPORAL LLEVA EXTENSIÓN .tmp: zip AGREGA .zip A UN NOMBRE SIN EXTENSIÓN
@@ -127,6 +137,17 @@ ok "content.opf, nav y páginas de la base"
 mapfile -t PIEZAS < <(grep -v '^[[:space:]]*$' "$LISTA")
 (( ${#PIEZAS[@]} > 0 )) || morir "La lista de capítulos está vacía"
 ok "${#PIEZAS[@]} capítulos a transformar"
+
+# LOS CAPÍTULOS RECIBEN LA BIBLIOGRAFÍA CONSOLIDADA COMO PARÁMETRO, SI LA HAY.
+# UN ARREGLO VACÍO NO AGREGA NADA A LA LLAMADA
+PARAM_BIBLIO=()
+if [[ -f "$BIBLIO_EPUB" ]]; then
+    bien_formado "$BIBLIO_EPUB" || morir "Está mal formada: ${BIBLIO_EPUB#"$DIR_PROYECTO"/}"
+    PARAM_BIBLIO=(biblio_libro="$BIBLIO_EPUB")
+    ok "bibliografía consolidada"
+else
+    tenue "bibliografía por capítulo"
+fi
 
 # --- 5. RECURSOS ---
 paso "copiando recursos"
@@ -202,7 +223,8 @@ for pieza in "${PIEZAS[@]}"; do
                 -o:"$xhtml" \
                 estilo_cita="$ESTILO_CITA" \
                 piezas_libro="$PIEZAS_LIBRO" \
-                pieza_actual="$pieza" 2>&1)
+                pieza_actual="$pieza" \
+                "${PARAM_BIBLIO[@]}" 2>&1)
     codigo=$?
 
     if (( codigo != 0 )); then
@@ -216,6 +238,30 @@ for pieza in "${PIEZAS[@]}"; do
         ok "$pieza"
     fi
 done
+
+# LA PÁGINA DE BIBLIOGRAFÍA CONSOLIDADA: LA FUENTE ES LA PROPIA BIBLIOGRAFÍA.
+# NO NECESITA LA LISTA DE PIEZAS: NO TIENE FIGURAS NI REFERENCIAS CRUZADAS
+if [[ -f "$BIBLIO_EPUB" ]]; then
+    salida=$(timeout "$TIEMPO_SAXON" java -Djavax.xml.accessExternalDTD=all -jar "$RUTA_SAXON" \
+                -s:"$BIBLIO_EPUB" \
+                -xsl:"$XSL" \
+                -o:"$PAGINA_BIBLIO" \
+                estilo_cita="$ESTILO_CITA" \
+                piezas_libro="" \
+                pieza_actual="bibliografia" 2>&1)
+    codigo=$?
+
+    if (( codigo != 0 )); then
+        printf '  %s✗%s bibliografía: Saxon falló (código %d)\n' "$C_ERROR" "$C_RESET" "$codigo"
+        mostrar_cola "$salida" 8
+        problemas=$((problemas + 1))
+    elif ! bien_formado "$PAGINA_BIBLIO"; then
+        printf '  %s✗%s bibliografía: el XHTML salió mal formado\n' "$C_ERROR" "$C_RESET"
+        problemas=$((problemas + 1))
+    else
+        ok "bibliografía"
+    fi
+fi
 
 if (( problemas > 0 )); then
     morir "$problemas capítulo(s) con problemas: el EPUB no se genera"
