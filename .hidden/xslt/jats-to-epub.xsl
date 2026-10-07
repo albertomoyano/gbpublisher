@@ -579,6 +579,23 @@
   </xsl:template>
 
   <!-- ================================================
+       RECUADROS (SC-41): COMO EN jats-to-html, PERO LA BARRA VA EN
+       MAYÚSCULAS ESCRITA ASÍ, NO POR CSS: LOS LECTORES NO RESPETAN
+       PAREJO font-variant NI text-transform. SE PIERDEN LAS MARCAS
+       EN LÍNEA DE LA BARRA (BASTARDILLA, ETC.): ES EL COSTO ACORDADO
+       ================================================ -->
+  <xsl:template match="boxed-text[@content-type = ('recuadro', 'recuadro-barra')]" priority="6">
+    <div class="recuadro{if (@content-type = 'recuadro-barra') then ' recuadro-barra' else ''}">
+      <xsl:if test="@content-type = 'recuadro-barra'">
+        <p class="recuadro-titulo"><xsl:value-of select="upper-case(normalize-space(caption/title))"/></p>
+      </xsl:if>
+      <div class="recuadro-cuerpo">
+        <xsl:apply-templates select="* except caption"/>
+      </div>
+    </div>
+  </xsl:template>
+
+  <!-- ================================================
        RECUADRO
        <aside> ES INESTABLE EN LECTORES VIEJOS — SE USA
        <div> CON CLASE SEMÁNTICA EN SU LUGAR

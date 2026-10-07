@@ -490,12 +490,11 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
     ' LAS LLAVES SON EL SEMÁFORO: LAS ESCRIBE QUIEN MARCA, ANTES (SC-35). EL
     ' FILTRO dos-partes.lua REPITE EL CONTROL AL GENERAR
     If oFila.sModo = m_CatalogoShortcodes.MODO_DOS_PARTES Then
-      sMotivo = ProblemaDosPartes(sSeleccion)
+      sMotivo = ProblemaDosPartes(sSeleccion, oFila.sClase)
       If sMotivo <> "" Then
         m_Sonido.sonar("Warning")
         Message.Warning("«" & oFila.sEtiqueta & "» necesita el texto en dos partes entre llaves:" & gb.NewLine & gb.NewLine &
-          "{primera parte}{segunda parte}" & gb.NewLine & gb.NewLine &
-          "La segunda puede quedar vacía: {texto}{}" & gb.NewLine & gb.NewLine &
+          FormaDosPartes(oFila.sClase) & gb.NewLine & gb.NewLine &
           "En la selección " & sMotivo & ".")
         FMain.txtEditorProyecto.SetFocus()
         Return
@@ -550,15 +549,40 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
 End
 
 ' ==============================================================================
+' Función   : FormaDosPartes
+' Propósito : La forma esperada de un bloque de dos partes, para el aviso.
+'             Es el campo forma de la tabla CLASES de dos-partes.lua
+' Parámetros: sClase As String — la clase del bloque (epigraph, recuadrob)
+' Retorna   : String — la forma y, si corresponde, qué parte puede quedar vacía
+' ==============================================================================
+Private Function FormaDosPartes(sClase As String) As String
+
+  ' MISMA TABLA QUE CLASES EN dos-partes.lua (SC-35, SC-41): UN CAMBIO VA EN LOS DOS
+  Select Case sClase
+    Case "recuadrob"
+      Return "{texto de la barra}{texto del recuadro}" & gb.NewLine & gb.NewLine &
+        "La barra es una sola línea; el texto puede tener varios párrafos."
+    Case Else
+      ' epigraph, Y CUALQUIER CLASE NUEVA HASTA QUE TENGA SU FILA: LA REGLA
+      ' ORIGINAL DEL MODO dos-partes
+      Return "{texto}{atribución}" & gb.NewLine & gb.NewLine &
+        "La segunda puede quedar vacía: {texto}{}"
+  End Select
+
+End
+
+' ==============================================================================
 ' Función   : ProblemaDosPartes
 ' Propósito : Controla que un texto tenga la forma {primera}{segunda}: las
 '             llaves de afuera delimitan, las de adentro (balanceadas) son
-'             texto. Es la misma regla que dos-partes.lua (SC-35)
+'             texto. Qué admite cada parte depende de la clase. Es la misma
+'             regla que dos-partes.lua (SC-35, SC-41)
 ' Parámetros: sTexto As String — la selección
+'             sClase As String — la clase del bloque (epigraph, recuadrob)
 ' Retorna   : String — vacío si la forma es correcta; si no, qué falla,
 '             redactado para seguir a «En la selección »
 ' ==============================================================================
-Private Function ProblemaDosPartes(sTexto As String) As String
+Private Function ProblemaDosPartes(sTexto As String, sClase As String) As String
 
   Dim sLimpio As String
   Dim sCar As String
@@ -568,6 +592,25 @@ Private Function ProblemaDosPartes(sTexto As String) As String
   Dim iInicioParte As Integer
   Dim aPartes As New String[]
   Dim aLineas As String[]
+  Dim bVarios1 As Boolean
+  Dim bVarios2 As Boolean
+  Dim bVacia2 As Boolean
+
+  ' --- 0. QUÉ ADMITE CADA PARTE ---
+  ' MISMA TABLA QUE CLASES EN dos-partes.lua (varios1, varios2, vacia2):
+  ' UN CAMBIO VA EN LOS DOS
+  Select Case sClase
+    Case "recuadrob"
+      ' LA BARRA ES UNA LÍNEA; EL TEXTO, UNO O MÁS PÁRRAFOS (SC-41)
+      bVarios1 = False
+      bVarios2 = True
+      bVacia2 = False
+    Case Else
+      ' epigraph: <attribution> Y <attrib> SOLO ADMITEN TEXTO EN LÍNEA (SC-35)
+      bVarios1 = True
+      bVarios2 = False
+      bVacia2 = True
+  End Select
 
   ' --- 1. LOS BORDES ---
   sLimpio = Trim(sTexto)
@@ -603,12 +646,22 @@ Private Function ProblemaDosPartes(sTexto As String) As String
   If iNivel <> 0 Then Return "hay una llave de apertura sin cerrar"
   If aPartes.Count <> 2 Then Return "no hay dos partes"
   If Trim(aPartes[0]) = "" Then Return "la primera parte está vacía"
-  ' UNA LÍNEA EN BLANCO ADENTRO ABRE OTRO PÁRRAFO, Y LA SEGUNDA PARTE ES UNO
-  ' SOLO: <attribution> Y <attrib> SOLO ADMITEN TEXTO EN LÍNEA
-  aLineas = Split(aPartes[1], "\n")
-  For iPos = 1 To aLineas.Max - 1
-    If Trim(aLineas[iPos]) = "" Then Return "la segunda parte tiene más de un párrafo"
-  Next
+  If Not bVacia2 And If Trim(aPartes[1]) = "" Then Return "la segunda parte está vacía"
+  ' UNA LÍNEA EN BLANCO ADENTRO ABRE OTRO PÁRRAFO: SE CONTROLA EN LA PARTE
+  ' QUE ADMITE UNO SOLO. LAS LÍNEAS DE LOS BORDES NO CUENTAN: SON LOS SALTOS
+  ' PEGADOS A LAS LLAVES
+  If Not bVarios1 Then
+    aLineas = Split(aPartes[0], "\n")
+    For iPos = 1 To aLineas.Max - 1
+      If Trim(aLineas[iPos]) = "" Then Return "la primera parte tiene más de un párrafo"
+    Next
+  Endif
+  If Not bVarios2 Then
+    aLineas = Split(aPartes[1], "\n")
+    For iPos = 1 To aLineas.Max - 1
+      If Trim(aLineas[iPos]) = "" Then Return "la segunda parte tiene más de un párrafo"
+    Next
+  Endif
 
   Return ""
 

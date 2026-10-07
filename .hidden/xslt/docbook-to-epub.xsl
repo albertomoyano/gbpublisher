@@ -1532,6 +1532,20 @@
     </div>
   </xsl:template>
 
+  <!-- RECUADROS (SC-41): COMO EN docbook-to-html, CON LA BARRA EN
+       MAYÚSCULAS ESCRITA ASÍ (VER jats-to-epub). PRIORIDAD 5 -->
+  <xsl:template match="db:sidebar[@role = ('recuadro', 'recuadro-barra')] |
+                       sidebar[@role = ('recuadro', 'recuadro-barra')]" priority="5">
+    <div class="recuadro{if (@role = 'recuadro-barra') then ' recuadro-barra' else ''}">
+      <xsl:if test="@role = 'recuadro-barra'">
+        <p class="recuadro-titulo"><xsl:value-of select="upper-case(normalize-space((db:title | title)[1]))"/></p>
+      </xsl:if>
+      <div class="recuadro-cuerpo">
+        <xsl:apply-templates select="* except (db:title | title | db:info | info)"/>
+      </div>
+    </div>
+  </xsl:template>
+
   <!-- SIDEBAR genérico (info, etc.) -->
   <xsl:template match="db:sidebar | sidebar">
     <xsl:call-template name="emitir-alerta-epub">

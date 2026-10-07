@@ -993,6 +993,23 @@
     <xsl:apply-templates/>
   </xsl:template>
 
+  <!-- RECUADROS (SC-41): LOS ARMA fenced-divs-to-elements-db.lua.     -->
+  <!-- ENTORNOS gbRecuadro Y gbRecuadroBarra DE preambulo-contrato.tex  -->
+  <!-- (v10). PRIORIDAD 5: POR ENCIMA DEL sidebar GENÉRICO              -->
+  <xsl:template match="sidebar[@role = 'recuadro']" priority="5">
+    <xsl:text>&#10;\begin{gbRecuadro}&#10;</xsl:text>
+    <xsl:apply-templates select="* except (info | title)"/>
+    <xsl:text>\end{gbRecuadro}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="sidebar[@role = 'recuadro-barra']" priority="5">
+    <xsl:text>&#10;\begin{gbRecuadroBarra}{</xsl:text>
+    <xsl:apply-templates select="(title)[1]/node()"/>
+    <xsl:text>}&#10;</xsl:text>
+    <xsl:apply-templates select="* except (info | title)"/>
+    <xsl:text>\end{gbRecuadroBarra}&#10;&#10;</xsl:text>
+  </xsl:template>
+
   <xsl:template match="sidebar">
     <xsl:text>&#10;\begin{gbsidebar}{</xsl:text>
     <xsl:value-of select="if (normalize-space(@role) != '')

@@ -1111,6 +1111,51 @@
             border-top: 0.6pt solid currentColor;
           }
 
+          /* RECUADROS (SC-41): FONDO GRIS 7 %. recuadro: FILETE DE 1 PT Y ESQUINAS
+             DE 5 PT. recuadro-barra: SIN FILETE, ESQUINAS RECTAS Y BARRA DE 1 PICA
+             CON TEXTO BLANCO CENTRADO EN ALTO, EN SANS NEGRITA Y MAYÚSCULAS: EL
+             RÓTULO DE .article-type-bar, SIN LAS ESQUINAS REDONDEADAS.
+             LAS MISMAS REGLAS EN gbpublisher.css, jats-to-html.xsl (AZUL),
+             gbpublisher-epub-libro.css Y m_GenerarEpub (NEGRO). */
+          .recuadro {
+            margin: 1.5em 0;
+            background: #ededed;
+            border: 1pt solid var(--color-accent);
+            border-radius: 5pt;
+          }
+          .recuadro.recuadro-barra {
+            border: none;
+            border-radius: 0;
+          }
+          .recuadro .recuadro-cuerpo {
+            padding: 8pt;
+          }
+          .recuadro .recuadro-cuerpo > p:first-child {
+            text-indent: 0;
+            margin-top: 0;
+          }
+          /* SIN EL MARGEN DEL ÚLTIMO PÁRRAFO: EL BLANCO DE ABAJO ES IGUAL AL DE ARRIBA */
+          .recuadro .recuadro-cuerpo > p:last-child {
+            margin-bottom: 0;
+          }
+          .recuadro p.recuadro-titulo {
+            margin: 0;
+            padding: 0 8pt;
+            /* LA PICA DEL PDF EN MEDIDAS RELATIVAS: LETRA AL 80 % E INTERLÍNEA
+               DE 1,5, UNA BARRA DE 1,2 EM DEL CUERPO. CON MEDIDAS FIJAS LA BARRA
+               NO ACOMPAÑA AL LECTOR QUE AGRANDA LA LETRA */
+            font-size: 0.8em;
+            line-height: 1.5;
+            text-indent: 0;
+            text-align: left;
+            background: var(--color-accent);
+            color: #ffffff;
+            font-family: var(--font-sans);
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+          }
+
           /* CITA EN BLOQUE */
           .disp-quote {
             margin: 1.5rem 0;
@@ -3065,6 +3110,25 @@
         </xsl:if>
         <xsl:value-of select="."/>
       </code></pre>
+    </div>
+  </xsl:template>
+
+  <!-- ================================================
+       RECUADROS (SC-41): content-type recuadro Y recuadro-barra.
+       LA BARRA ES UN <p class="recuadro-titulo">; EL TEXTO VA EN
+       .recuadro-cuerpo PARA QUE SU PRIMER PÁRRAFO SALGA SIN SANGRÍA,
+       COMO EL before upper=\noindent DEL PDF. fullwidth NO CAMBIA
+       NADA: EL HTML NO TIENE COLUMNA LATERAL.
+       PRIORIDAD 6: POR ENCIMA DE CUALQUIER boxed-text GENÉRICO
+       ================================================ -->
+  <xsl:template match="boxed-text[@content-type = ('recuadro', 'recuadro-barra')]" priority="6">
+    <div class="recuadro{if (@content-type = 'recuadro-barra') then ' recuadro-barra' else ''}">
+      <xsl:if test="@content-type = 'recuadro-barra'">
+        <p class="recuadro-titulo"><xsl:apply-templates select="caption/title/node()"/></p>
+      </xsl:if>
+      <div class="recuadro-cuerpo">
+        <xsl:apply-templates select="* except caption"/>
+      </div>
     </div>
   </xsl:template>
 

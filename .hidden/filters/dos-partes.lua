@@ -1,18 +1,22 @@
 -- ============================================================
 -- FILTRO      : dos-partes.lua
--- PROPÓSITO   : PARTE LOS BLOQUES DE DOS PARTES —HOY SOLO EL
---               EPÍGRAFE— EN SUS DOS MITADES, CON UNA SOLA REGLA
---               PARA LIBRO, REVISTA Y ODT.
+-- PROPÓSITO   : PARTE LOS BLOQUES DE DOS PARTES —EL EPÍGRAFE (SC-35)
+--               Y EL RECUADRO CON BARRA (SC-41)— EN SUS DOS MITADES,
+--               CON UNA SOLA REGLA PARA LIBRO, REVISTA Y ODT. QUÉ
+--               ADMITE CADA PARTE LO DICE LA CONFIGURACIÓN DE LA CLASE.
 -- ENTRADA     : ::: epigraph
 --
 --               {texto}{atribución}
 --
 --               [/epigraph]: # ()
 --               :::
--- SALIDA      : EL MISMO Div epigraph CON DOS Div HIJOS:
---                 Div .epigrafe-texto  (UNO O MÁS Para)
---                 Div .epigrafe-atrib  (UN Para; FALTA SI LA
---                                       SEGUNDA PARTE ESTÁ VACÍA)
+-- SALIDA      : EL MISMO Div CON DOS Div HIJOS, CON LAS CLASES DE SU
+--               CONFIGURACIÓN:
+--                 epigraph   .epigrafe-texto (UNO O MÁS Para)
+--                            .epigrafe-atrib (UN Para; FALTA SI LA
+--                                            SEGUNDA PARTE ESTÁ VACÍA)
+--                 recuadrob  .recuadro-barra (UN Para)
+--                            .recuadro-texto (UNO O MÁS Para)
 --               LOS FILTROS DE CADA SALIDA LEEN ESA FORMA.
 -- UBICACIÓN   : ~/.gbpublisher/filters/
 -- DEBE CORRER : DESPUÉS DE LOS FILTROS DE COMILLAS Y ANTES DE
@@ -23,8 +27,23 @@
 --               MENSAJE: NUNCA SE DEGRADA EN SILENCIO.
 -- ============================================================
 
--- CLASES DE MODO dos-partes DEL CATÁLOGO DE gbShortcodes (RF-11)
-local CLASES = { epigraph = true }
+-- CLASES DE MODO dos-partes DEL CATÁLOGO DE gbShortcodes (RF-11), CON LO
+-- QUE ADMITE CADA PARTE. m_Shortcodes.ProblemaDosPartes TIENE LA MISMA
+-- TABLA PARA CONTROLAR LA SELECCIÓN AL INSERTAR: UN CAMBIO VA EN LAS DOS
+local CLASES = {
+  -- <attribution> (DOCBOOK) Y <attrib> (JATS) SOLO ADMITEN TEXTO EN LÍNEA
+  epigraph = {
+    nombre = 'Epígrafe', forma = '{texto}{atribución}',
+    clase1 = 'epigrafe-texto', clase2 = 'epigrafe-atrib',
+    varios1 = true, varios2 = false, vacia2 = true,
+  },
+  -- LA BARRA ES UNA LÍNEA; EL TEXTO, UNO O MÁS PÁRRAFOS (SC-41)
+  recuadrob = {
+    nombre = 'Recuadro con barra', forma = '{texto de la barra}{texto del recuadro}',
+    clase1 = 'recuadro-barra', clase2 = 'recuadro-texto',
+    varios1 = false, varios2 = true, vacia2 = false,
+  },
+}
 
 -- MARCAS INTERNAS DEL RECORRIDO: NO SON INLINES DE PANDOC
 local ABRE = { marca = 'abre' }
@@ -34,13 +53,14 @@ local PARRAFO = { marca = 'parrafo' }
 -- ============================================
 -- Función   : fallar
 -- Propósito : Detiene la conversión con un mensaje que ubica el bloque
--- Parámetros: el As Div — el bloque; motivo As String — qué está mal
+-- Parámetros: el As Div — el bloque; motivo As String — qué está mal;
+--             cfg As table — la configuración de la clase
 -- Retorna   : no retorna: error() corta pandoc con código distinto de 0
 -- ============================================
-local function fallar(el, motivo)
+local function fallar(el, motivo, cfg)
   local inicio = pandoc.utils.stringify(el):sub(1, 60)
-  error('\n[gbpublisher] Epígrafe mal formado: ' .. motivo ..
-        '\n  Forma esperada: {texto}{atribución}' ..
+  error('\n[gbpublisher] ' .. cfg.nombre .. ' mal formado: ' .. motivo ..
+        '\n  Forma esperada: ' .. cfg.forma ..
         '\n  Comienzo del bloque: ' .. inicio .. '\n', 0)
 end
 
@@ -51,12 +71,12 @@ end
 -- Parámetros: el As Div — el bloque
 -- Retorna   : table — inlines, marcas ABRE/CIERRA y PARRAFO entre párrafos
 -- ============================================
-local function tokenizar(el)
+local function tokenizar(el, cfg)
   local tokens = {}
   for i, bloque in ipairs(el.content) do
     -- SOLO PÁRRAFOS: UNA LISTA O UNA TABLA NO ENTRA EN UN EPÍGRAFE
     if bloque.t ~= 'Para' and bloque.t ~= 'Plain' then
-      fallar(el, 'solo admite párrafos (hay un ' .. bloque.t .. ')')
+      fallar(el, 'solo admite párrafos (hay un ' .. bloque.t .. ')', cfg)
     end
     if i > 1 then tokens[#tokens + 1] = PARRAFO end
     for _, inl in ipairs(bloque.content) do
@@ -119,8 +139,8 @@ end
 -- Parámetros: el As Div — el bloque
 -- Retorna   : table, table — los tokens de la primera y de la segunda parte
 -- ============================================
-local function partir(el)
-  local tokens = tokenizar(el)
+local function partir(el, cfg)
+  local tokens = tokenizar(el, cfg)
   local partes = {}
   local actual = nil
   local nivel = 0
@@ -130,14 +150,14 @@ local function partir(el)
       nivel = nivel + 1
       if nivel == 1 then
         -- UNA PARTE NUEVA: LA ANTERIOR TIENE QUE HABER TERMINADO PEGADA
-        if #partes == 2 then fallar(el, 'hay más de dos partes entre llaves') end
+        if #partes == 2 then fallar(el, 'hay más de dos partes entre llaves', cfg) end
         actual = {}
         partes[#partes + 1] = actual
       else
         actual[#actual + 1] = pandoc.Str('{')
       end
     elseif t == CIERRA then
-      if nivel == 0 then fallar(el, 'hay una llave de cierre sin su apertura') end
+      if nivel == 0 then fallar(el, 'hay una llave de cierre sin su apertura', cfg) end
       nivel = nivel - 1
       if nivel == 0 then
         actual = nil
@@ -149,12 +169,12 @@ local function partir(el)
     elseif not (es_blanco(t) or t == PARRAFO) or #partes == 1 then
       -- FUERA DE LAS LLAVES SOLO HAY BLANCOS ANTES Y DESPUÉS DEL TODO;
       -- ENTRE LAS DOS PARTES, NADA: }{ VAN PEGADAS
-      fallar(el, 'hay texto fuera de las llaves, o las dos partes no van pegadas (}{)')
+      fallar(el, 'hay texto fuera de las llaves, o las dos partes no van pegadas (}{)', cfg)
     end
   end
 
-  if nivel ~= 0 then fallar(el, 'hay una llave de apertura sin cerrar') end
-  if #partes ~= 2 then fallar(el, 'tiene que tener dos partes entre llaves') end
+  if nivel ~= 0 then fallar(el, 'hay una llave de apertura sin cerrar', cfg) end
+  if #partes ~= 2 then fallar(el, 'tiene que tener dos partes entre llaves', cfg) end
   return partes[1], partes[2]
 end
 
@@ -165,28 +185,35 @@ end
 -- Retorna   : Div — el bloque partido; nil si no es de dos partes
 -- ============================================
 function Div(el)
-  local clase = nil
+  local cfg = nil
   for _, c in ipairs(el.classes) do
-    if CLASES[c] then clase = c end
+    if CLASES[c] then cfg = CLASES[c] end
   end
-  if not clase then return nil end
+  if not cfg then return nil end
 
-  local t1, t2 = partir(el)
-  local texto = a_parrafos(t1)
-  local atrib = a_parrafos(t2)
+  local t1, t2 = partir(el, cfg)
+  local parte1 = a_parrafos(t1)
+  local parte2 = a_parrafos(t2)
 
-  -- LA PRIMERA PARTE ES OBLIGATORIA; LA SEGUNDA PUEDE ESTAR VACÍA Y
-  -- ENTONCES NO HAY FILETE
-  if #texto == 0 then fallar(el, 'la primera parte está vacía') end
-  -- <attribution> (DOCBOOK) Y <attrib> (JATS) SOLO ADMITEN TEXTO EN LÍNEA
-  if #atrib > 1 then fallar(el, 'la segunda parte tiene que ser un solo párrafo') end
+  -- LA PRIMERA PARTE ES SIEMPRE OBLIGATORIA. LA SEGUNDA, SEGÚN LA CLASE:
+  -- EN EL EPÍGRAFE PUEDE ESTAR VACÍA, Y ENTONCES NO HAY FILETE
+  if #parte1 == 0 then fallar(el, 'la primera parte está vacía', cfg) end
+  if #parte1 > 1 and not cfg.varios1 then
+    fallar(el, 'la primera parte tiene que ser un solo párrafo', cfg)
+  end
+  if #parte2 == 0 and not cfg.vacia2 then fallar(el, 'la segunda parte está vacía', cfg) end
+  if #parte2 > 1 and not cfg.varios2 then
+    fallar(el, 'la segunda parte tiene que ser un solo párrafo', cfg)
+  end
 
-  local bloques_texto = {}
-  for _, inl in ipairs(texto) do bloques_texto[#bloques_texto + 1] = pandoc.Para(inl) end
+  local bloques1 = {}
+  for _, inl in ipairs(parte1) do bloques1[#bloques1 + 1] = pandoc.Para(inl) end
+  local hijos = { pandoc.Div(bloques1, pandoc.Attr('', {cfg.clase1})) }
 
-  local hijos = { pandoc.Div(bloques_texto, pandoc.Attr('', {'epigrafe-texto'})) }
-  if #atrib == 1 then
-    hijos[#hijos + 1] = pandoc.Div({ pandoc.Para(atrib[1]) }, pandoc.Attr('', {'epigrafe-atrib'}))
+  if #parte2 > 0 then
+    local bloques2 = {}
+    for _, inl in ipairs(parte2) do bloques2[#bloques2 + 1] = pandoc.Para(inl) end
+    hijos[#hijos + 1] = pandoc.Div(bloques2, pandoc.Attr('', {cfg.clase2}))
   end
 
   return pandoc.Div(hijos, el.attr)

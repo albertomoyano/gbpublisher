@@ -24,7 +24,7 @@
 --                                                dos-partes.lua — VER 6.4)
 --   5. VERSE (.verse)                          → <literallayout role="verse">
 --   6. CODE (.code language=)                  → <programlisting language="X">
---   7. BOX (.box type=)                        → <warning>/<note>/etc.
+--   7. RECUADROS (recuadro, recuadrob, SC-41)  → <sidebar role="recuadro" | "recuadro-barra">
 --   8. FORMULA (.formula)                      → <equation xml:id="X">
 --   9. SPEECH (.speech speaker=)               → <para role="speech">
 --  10. FORMAL (.theorem/.definition/.proof)    → <example role="X">
@@ -121,19 +121,12 @@ local estructurales = {
 }
 
 -- =====================================================
--- 4. CONFIGURACIÓN: TIPOS DE ADMONICIÓN
+-- 4. (RETIRADO) TIPOS DE ADMONICIÓN
 -- =====================================================
--- MAPEO DEL ATRIBUTO type DEL DIV .box A LOS SEIS ELEMENTOS
--- DE ADMONICIÓN NATIVOS DE DOCBOOK 5.2. CUALQUIER OTRO VALOR
--- DE type CAE AL FALLBACK <sidebar role="{type}">.
-local admoniciones = {
-  ["warning"]   = "warning",
-  ["caution"]   = "caution",
-  ["note"]      = "note",
-  ["important"] = "important",
-  ["tip"]       = "tip",
-  ["danger"]    = "danger",  -- NUEVO EN DOCBOOK 5.2
-}
+-- LA TABLA QUE LLEVABA EL type DEL VIEJO ::: {.box} A LAS ADMONICIONES DE
+-- DOCBOOK (note, warning…) SE RETIRÓ CON ESE RECUADRO (SC-41). LAS
+-- PLANTILLAS DE ADMONICIÓN DE LAS HOJAS QUEDAN: LAS VAN A USAR LOS
+-- CALLOUTS.
 
 -- =====================================================
 -- 5. HELPERS DE PROCESAMIENTO
@@ -455,36 +448,38 @@ function Div(el)
   end
 
   -- =====================================================
-  -- 6.7. RECUADRO (.box type=)
+  -- 6.7. RECUADROS (SC-41)
   -- =====================================================
   -- ESTRUCTURA EN MD:
-  --   ::: {.box type="warning"}
-  --   **Advertencia**: Texto del recuadro.
-  --   :::
+  --   ::: recuadro                  ::: recuadrob
+  --   Párrafos.                     {Barra}{Párrafos.}
+  --   :::                           :::
   --
-  -- MAPEO DE type A ADMONICIÓN DOCBOOK NATIVA. SI type NO ESTÁ EN
-  -- LA TABLA DE admoniciones, FALLBACK A <sidebar role="{type}">.
-  if el.classes:includes('box') then
-    local box_type = el.attributes['type'] or ''
-    local contenido_db = blocks_a_docbook(el.content)
+  -- recuadros.lua YA CONTROLÓ LA FORMA: SOLO PÁRRAFOS, SIN NOTAS Y SIN
+  -- .fullwidth (EN LIBROS NO HAY COLUMNA LATERAL). LAS CITAS YA LLEGAN
+  -- RESUELTAS POR cite-to-biblioref-db.lua. EL recuadrob LLEGA PARTIDO
+  -- POR dos-partes.lua: LA BARRA VA AL <title> DEL sidebar, QUE ADMITE
+  -- MARCAS EN LÍNEA (VALIDADO CONTRA EL RNG).
+  -- EL VIEJO ::: {.box} SE RETIRÓ: LO FRENA recuadros.lua.
+  if el.classes:includes('recuadro') then
+    return pandoc.RawBlock('docbook', '<sidebar role="recuadro">\n' ..
+                                      blocks_a_docbook(el.content) .. '\n</sidebar>')
+  end
 
-    local elemento = admoniciones[box_type]
-    if elemento then
-      local raw = '<' .. elemento .. '>\n' ..
-                  contenido_db .. '\n' ..
-                  '</' .. elemento .. '>'
-      return pandoc.RawBlock('docbook', raw)
-    else
-      -- FALLBACK: SIDEBAR CON ROLE PRESERVANDO EL VALOR ORIGINAL
-      local role_attr = ''
-      if box_type ~= '' then
-        role_attr = ' role="' .. escape_xml_attr(box_type) .. '"'
+  if el.classes:includes('recuadrob') then
+    local barra, texto = '', ''
+    for _, hijo in ipairs(el.content) do
+      if hijo.classes:includes('recuadro-barra') then
+        barra = inlines_a_docbook(hijo.content[1].content)
+      elseif hijo.classes:includes('recuadro-texto') then
+        texto = blocks_a_docbook(hijo.content)
       end
-      local raw = '<sidebar' .. role_attr .. '>\n' ..
-                  contenido_db .. '\n' ..
-                  '</sidebar>'
-      return pandoc.RawBlock('docbook', raw)
     end
+    if barra == '' then
+      error('\n[gbpublisher] recuadrob sin partir: dos-partes.lua tiene que correr antes que fenced-divs-to-elements-db.lua\n', 0)
+    end
+    return pandoc.RawBlock('docbook', '<sidebar role="recuadro-barra">\n<title>' .. barra ..
+                                      '</title>\n' .. texto .. '\n</sidebar>')
   end
 
   -- =====================================================

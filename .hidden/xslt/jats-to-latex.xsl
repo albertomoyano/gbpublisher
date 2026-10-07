@@ -1234,6 +1234,39 @@
   </xsl:template>
 
 <!-- ============================================================ -->
+<!-- RECUADROS (SC-41): content-type recuadro Y recuadro-barra     -->
+<!-- LOS ARMA cite-to-xref.lua. LOS ENTORNOS gbRecuadro Y          -->
+<!-- gbRecuadroBarra SON LOS DEL PREÁMBULO DE REVISTA (m_XML),     -->
+<!-- GEMELOS DE preambulo-contrato.tex. PRIORIDAD 6: POR ENCIMA    -->
+<!-- DEL CASO DE ESTUDIO (boxed-text[@id], 5)                      -->
+<!-- fullwidth: EL MISMO adjustwidth DE FIGURAS Y TABLAS (SC-32)   -->
+<!-- ============================================================ -->
+  <xsl:template match="boxed-text[@content-type = ('recuadro', 'recuadro-barra')]" priority="6">
+    <xsl:variable name="ancho" select="@specific-use = 'fullwidth'"/>
+    <xsl:if test="$ancho">
+      <xsl:text>&#10;\begin{adjustwidth}{0pt}{-\dimexpr\marginparsep+\marginparwidth\relax}%</xsl:text>
+    </xsl:if>
+    <xsl:choose>
+      <xsl:when test="@content-type = 'recuadro-barra'">
+        <xsl:text>&#10;\begin{gbRecuadroBarra}{</xsl:text>
+        <xsl:apply-templates select="caption/title/node()"/>
+        <xsl:text>}&#10;</xsl:text>
+        <xsl:apply-templates select="* except caption"/>
+        <xsl:text>\end{gbRecuadroBarra}&#10;</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>&#10;\begin{gbRecuadro}&#10;</xsl:text>
+        <xsl:apply-templates/>
+        <xsl:text>\end{gbRecuadro}&#10;</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+    <xsl:if test="$ancho">
+      <xsl:text>\end{adjustwidth}&#10;</xsl:text>
+    </xsl:if>
+    <xsl:text>&#10;</xsl:text>
+  </xsl:template>
+
+<!-- ============================================================ -->
 <!-- BOXED-TEXT — RECUADROS CON TIPO (warning, note, tip, etc.)  -->
 <!-- USA EL MISMO tcolorbox DE LOS RESÚMENES: brown!8!white      -->
 <!-- ============================================================ -->

@@ -301,7 +301,10 @@ local table_counter = 0
 --   ::: epigraph {…}{…}              → <disp-quote specific-use="epigraph"> (VÍA dos-partes.lua)
 --   ::: verse                        → <verse-group> con <verse-line>
 --   :::{.code language="python"}     → <code language="python">
---   :::{.box type="warning"}         → <boxed-text content-type="warning">
+--   ::: recuadro                     → <boxed-text content-type="recuadro"> (SC-41)
+--   ::: recuadrob {…}{…}             → <boxed-text content-type="recuadro-barra">
+--                                      CON LA BARRA EN <caption><title> (VÍA dos-partes.lua)
+--                                      LOS DOS, CON .fullwidth → specific-use="fullwidth"
 --   :::{.formula #eq-id}             → <disp-formula id="eq-id">
 --   :::{.speech speaker="Nombre"}    → <speech><speaker>Nombre</speaker>
 --   :::{.intro}                      → <sec sec-type="intro">
@@ -516,26 +519,44 @@ function Div(el)
     return pandoc.RawBlock('jats', raw)
   end
 
-  -- RECUADROS: <boxed-text content-type="...">
-  -- EL ATRIBUTO type LO PROVEE EL SHORTCODE
-  -- PANDOC SERIALIZA EL CONTENIDO CORRECTAMENTE (TEXTO, BOLD, ETC.)
+  -- RECUADROS (SC-41): <boxed-text content-type="recuadro" | "recuadro-barra">
+  -- recuadros.lua YA CONTROLÓ LA FORMA: SOLO PÁRRAFOS, SIN NOTAS. LAS CITAS
+  -- YA SON <xref>: Cite CORRE ANTES QUE Div EN ESTE FILTRO. EL ANCHO
+  -- COMPLETO VA COMO EN LAS FIGURAS: specific-use="fullwidth".
+  -- EL RECUADRO VIEJO ::: {.box} SE RETIRÓ: LO FRENA recuadros.lua.
   -- ESTRUCTURA EN MD:
-  --   ::: {.box type="warning"}
-  --   **Advertencia**: Texto del recuadro.
-  --   :::
-  if el.classes:includes('box') then
-    local box_type = el.attributes['type'] or ''
-    local content_jats = pandoc.write(pandoc.Pandoc(el.content), 'jats')
-    content_jats = content_jats:gsub("^%s+", ""):gsub("%s+$", "")
-    local type_attr = ''
-    if box_type ~= '' then
-      -- ESCAPAR: box_type va a atributo
-      type_attr = ' content-type="' .. escape_xml_attr(box_type) .. '"'
+  --   ::: recuadro                  ::: recuadrob
+  --   Párrafos.                     {Barra}{Párrafos.}
+  --   :::                           :::
+  if el.classes:includes('recuadro') or el.classes:includes('recuadrob') then
+    local uso = ''
+    if el.classes:includes('fullwidth') then uso = ' specific-use="fullwidth"' end
+
+    if el.classes:includes('recuadro') then
+      local cuerpo = pandoc.write(pandoc.Pandoc(el.content), 'jats')
+      cuerpo = cuerpo:gsub("^%s+", ""):gsub("%s+$", "")
+      return pandoc.RawBlock('jats', '<boxed-text content-type="recuadro"' .. uso .. '>\n' ..
+                                     cuerpo .. '\n</boxed-text>')
     end
-    local raw = '<boxed-text' .. type_attr .. '>\n' ..
-                content_jats .. '\n' ..
-                '</boxed-text>'
-    return pandoc.RawBlock('jats', raw)
+
+    -- recuadrob: dos-partes.lua LO DEJÓ EN DOS Div, LA BARRA (UN PÁRRAFO) Y
+    -- EL TEXTO. LA BARRA VA AL TÍTULO DEL caption, QUE ADMITE MARCAS EN
+    -- LÍNEA (VALIDADO CONTRA LA DTD ARCHIVING 1.4)
+    local barra, texto = '', ''
+    for _, hijo in ipairs(el.content) do
+      if hijo.classes:includes('recuadro-barra') then
+        barra = inlines_a_jats(hijo.content[1].content)
+      elseif hijo.classes:includes('recuadro-texto') then
+        texto = pandoc.write(pandoc.Pandoc(hijo.content), 'jats')
+        texto = texto:gsub("^%s+", ""):gsub("%s+$", "")
+      end
+    end
+    if barra == '' then
+      error('\n[gbpublisher] recuadrob sin partir: dos-partes.lua tiene que correr antes que cite-to-xref.lua\n', 0)
+    end
+    return pandoc.RawBlock('jats', '<boxed-text content-type="recuadro-barra"' .. uso .. '>\n' ..
+                                   '<caption><title>' .. barra .. '</title></caption>\n' ..
+                                   texto .. '\n</boxed-text>')
   end
 
   -- FÓRMULAS EN BLOQUE: <disp-formula id="..."><tex-math>

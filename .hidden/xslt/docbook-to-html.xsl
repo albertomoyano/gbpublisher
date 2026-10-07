@@ -1649,7 +1649,9 @@ RC APLICADAS:
   <!-- ==========================================================
        ALERTAS / RECUADROS (admonitions + sidebar)
        ==========================================================
-       El shortcode ::: {.box type="X"} mapea (vía filtro Lua) a:
+       EL VIEJO ::: {.box type="X"} SE RETIRÓ (SC-41): recuadros.lua LO
+       FRENA. ESTAS PLANTILLAS QUEDAN PARA LOS CALLOUTS QUE VIENEN.
+       Lo que el filtro Lua producía:
          - type="info"      → <sidebar role="info">
          - type="warning"   → <warning>
          - type="note"      → <note>
@@ -1699,6 +1701,21 @@ RC APLICADAS:
       <div class="suplementario-etiqueta">Material suplementario</div>
       <div class="suplementario-cuerpo">
         <xsl:apply-templates/>
+      </div>
+    </div>
+  </xsl:template>
+
+  <!-- RECUADROS (SC-41): sidebar role recuadro Y recuadro-barra, DE
+       fenced-divs-to-elements-db.lua. MISMA SALIDA QUE jats-to-html.
+       PRIORIDAD 5: POR ENCIMA DEL sidebar GENÉRICO -->
+  <xsl:template match="db:sidebar[@role = ('recuadro', 'recuadro-barra')] |
+                       sidebar[@role = ('recuadro', 'recuadro-barra')]" priority="5">
+    <div class="recuadro{if (@role = 'recuadro-barra') then ' recuadro-barra' else ''}">
+      <xsl:if test="@role = 'recuadro-barra'">
+        <p class="recuadro-titulo"><xsl:apply-templates select="(db:title | title)[1]/node()"/></p>
+      </xsl:if>
+      <div class="recuadro-cuerpo">
+        <xsl:apply-templates select="* except (db:title | title | db:info | info)"/>
       </div>
     </div>
   </xsl:template>
