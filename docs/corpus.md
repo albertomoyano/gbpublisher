@@ -1832,7 +1832,7 @@ Un filtro que detiene la conversión ya no deja un capítulo vacío: `GenerarBod
 
 EN REVISTAS NO HAY REFERENCIA CRUZADA
 
-Un artículo es autónomo: no remite a figuras ni tablas de otro artículo, ni siquiera dentro de un dossier, porque sus autores no están conectados. Dentro del propio artículo, la mención («figura 2») la escribe el autor como texto, con el número que usó; si se cambia, lo decide el editor o el corrector. Por eso en revistas no hay `@fig-`: `cite-to-xref.lua` detiene la conversión con un mensaje ante una clave `fig-`, `tbl-` o `eq-`, que antes salía como una cita bibliográfica a una referencia inexistente.
+Un artículo es autónomo: no remite a figuras ni tablas de otro artículo, ni siquiera dentro de un dossier, porque sus autores no están conectados. Dentro del propio artículo, la mención («figura 2») la escribe el autor como texto, con el número que usó; si se cambia, lo decide el editor o el corrector. Por eso en revistas no hay `@fig-`: `cite-to-xref.lua` detiene la conversión con un mensaje ante una clave `fig-`, `tbl-`, `eq-` o `lst-` (SC-42), que antes salía como una cita bibliográfica a una referencia inexistente.
 
 LA FIGURA DE REVISTA
 
@@ -1862,7 +1862,7 @@ VERIFICADO EN EL CONTENEDOR
 
 Libro de prueba con Introducción, dos capítulos, Conclusiones y un apéndice, con referencias cruzadas entre todas las piezas, una en una nota y una cita en un pie. PDF, HTML y EPUB dan los mismos números: 1, 1.1, 1.2, 2.1, 1, A.1. El canónico del libro valida contra el RNG. Los casos de error del filtro detienen Pandoc con el mensaje.
 
-**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73,vinculo:SC-35
+**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73,vinculo:SC-35,vinculo:SC-42
 
 **PENDIENTE:** Probar en Mint con el libro nuevo que tiene figuras y con una revista. Tablas y ecuaciones siguen el mismo camino en lotes propios: prefijos tbl- y eq- en cite-to-biblioref-db.lua y en db:es-id-global.
 
@@ -2220,6 +2220,69 @@ Las cuatro conversiones también tienen su clave en el informe: `elipsis_a_tres_
 
 **PENDIENTE:** Probado en el contenedor con un .docx armado a mano, no con uno real en Mint. El contrato rige el ingreso desde Word: un carácter Unicode tecleado después en el editor no se detecta. Decidir si el escáner UTF-8 lo informa.
 
+### SC-42 — Código: bloque cercado, listado y código en línea; el color lo pone cada salida
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 (skylighting) / SaxonJ-HE 12.5 / LuaLaTeX TeX Live 2023 / Chromium / Gambas 3.19 / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisiones de Alberto). Libros y revistas.
+
+EN EL .md
+
+    ~~~ python
+    for i in range(3):
+        print(i)
+    ~~~
+
+Un bloque cercado con su lenguaje, de una lista cerrada: python, r, sql, bash, javascript, json, yaml, markdown, latex, html, xml, xslt, css, lua, docbook y jats (los dos últimos se colorean como xml) y texto, sin color. Con pie numerado, dentro de un listado:
+
+    ::: {.listado #lst-factorial}
+
+    ~~~ python
+    …
+    ~~~
+
+    Pie del listado, con *formato* y citas.
+
+    [/listado]: # ()
+    :::
+
+El código en línea es el de Pandoc, `así`. El viejo `::: {.code language=""}` se retiró.
+
+CORTE MANUAL
+
+Una línea que termina en ↩ (U+21A9) sigue en la siguiente, que sale sin número. IBM Plex Mono tiene ↩ y ↪, y no ↵ ni ⏎ (medido). El corte no es automático.
+
+EN EL CANÓNICO
+
+`codigo.lua` (las tres cadenas) controla y escribe: JATS `<code language>`, DocBook `<programlisting language>`; texto sin `language`. El listado: `<fig fig-type="listado">` con `<caption>` y `<code>` (cite-to-xref.lua), y `<example role="listado">` con `<title>` y `<programlisting>` (fenced-divs-to-elements-db.lua), que validan contra la DTD Archiving 1.4 y el RNG de DocBook 5.2. `<example>` y no `<figure>`: el patrón de los formales, y sin mezclarse con la cuenta de las figuras. Frena con un mensaje: bloque sin lenguaje, con más de uno o fuera de la lista; bloque suelto con #id; listado sin #lst-, sin bloque y pie, con algo más, o con el marcador • en el pie; el viejo `.code`. La referencia `@lst-` frena en libros y en revistas (SC-32), hasta su lote.
+
+EL COLOR NO VA AL CANÓNICO
+
+Lo pone cada salida, con el resaltador de Pandoc (skylighting), en un paso previo: `engine/colorear_codigo.sh` corre `extraer-codigo.xsl` (un `codigo-N.txt` por bloque, N la posición en el documento) y `pandoc lua colorear_codigo.lua`, que escribe `codigo-N.html` o `codigo-N.tex` con las líneas numeradas. La hoja los lee con el parámetro `codigo_dir`; si falta un archivo, se corta: no se degrada en silencio. Las seis hojas comparten las reglas en `codigo-comun.xsl` (número, texto, lenguaje, rótulo, partido en líneas y el bloque HTML) y las de LaTeX además `f:codigo-latex` en `tex-comun.xsl`. Ni listings ni minted: listings no conoce JavaScript, JSON, YAML ni Lua, y `language=JavaScript` cortaba la compilación (medido); minted exige `--shell-escape`. highlight.js, que se cargaba de un CDN en el HTML de revistas, se retiró.
+
+POR SALIDA
+
+- PDF de pantalla y HTML: caja oscura con la paleta Gruvbox del tema de la aplicación, rótulo del lenguaje arriba, números de línea y ↩ en gris. En el HTML el número y el ↩ los dibuja el CSS y no se copian con el código.
+- PDF de libro en estado «Imprenta» (valor `publicado`; el combo decía «Publicado»): fondo blanco, texto negro, sin color; la negrita y la bastardilla de los tokens quedan. Es la quinta prestación de `PrestacionesDeSalida`, `codigocolor`. Las revistas no van a imprenta: su PDF va siempre en color.
+- EPUB: fondo negro, texto blanco, sin color, número y ↩ como texto (los lectores no siempre dibujan contenido generado).
+- ODT (revistas): el bloque con el resaltado claro de Pandoc; el listado, bloque y pie sin número.
+
+EL PIE
+
+«Código N», debajo como en las figuras. Libros: por capítulo como las figuras (contador `gbcodigo` del contrato 11, `nl:numero-listado`); revistas: 1, 2, 3. Las figuras de revista dejaron de contar los listados en HTML y EPUB.
+
+GEMELOS
+
+La paleta está en la sección 8 de `preambulo-contrato.tex`, su gemela en `m_XML.ObtenerPreambuloEmbebido`, el CSS de `jats-to-html.xsl` y `gbpublisher.css`; el EPUB en `gbpublisher-epub-libro.css` y `m_GenerarEpub`. La lista de lenguajes en `codigo.lua`, `codigo-comun.xsl` y `FCodigo`. La regla del ↩ en `colorear_codigo.lua` y `codigo-comun.xsl`.
+
+INSERCIÓN
+
+Modo `codigo` (gbShortcodes `datos-v5-005`): con selección; en bloque, `FCodigo` pide el lenguaje y, en el listado, el nombre, y la cerca lleva una tilde más que la racha más larga de adentro; el listado deja el marcador • del pie seleccionado (SC-21) y avisa si el nombre ya existe. En línea, comillas inversas, una más que las de adentro.
+
+**Relaciones:** vinculo:SC-32,vinculo:SC-33,vinculo:SC-21,vinculo:SC-31,vinculo:SC-30,vinculo:SC-34,vinculo:RF-11,vinculo:GV-80,vinculo:RC-GM-13
+
+**PENDIENTE:** Probar en Mint: libro (PDF en producción y en imprenta, HTML, EPUB) y revista (PDF, HTML, EPUB, ODT); inserción desde el panel; packtools sobre la salida SciELO con un listado.
+
 ---
 
 ## RF — Referencia de API
@@ -2566,6 +2629,7 @@ Desde la versión 4 son filas de la tabla `modos` (modo, tipo, descripción), un
 - figura: el camino de `FMain.InsertarFigura` (SC-32).
 - dos-partes: envolver, con el control de la forma `{primera}{segunda}` antes de insertar (SC-35).
 - separador: un bloque vacío, sin selección y con el cursor al principio de una línea vacía (SC-36). Se agrega con `datos-v4-001`.
+- codigo: en bloque, pide el lenguaje (y en el listado, el nombre) y cerca la selección con `~~~ lenguaje`; en línea, la envuelve en comillas inversas (SC-42). Se agrega con `datos-v5-005`, para bloque y para línea.
 
 QUÉ HACE LA APLICACIÓN
 
@@ -2612,7 +2676,7 @@ NOMBRES Y LUGARES (DESDE LA VERSIÓN 4)
 
 - `esquema-vN-a-vM.sql`: las migraciones, en `.hidden/esquema/`, que viaja en el paquete.
 - `carga-inicial.sql`: también en `.hidden/esquema/`. Es el catálogo completo en la versión del programa: al pasar a la 4 se regeneró desde la carga original más `datos-v3-001` y `datos-v3-002`, porque una base nueva no puede aplicar scripts de una versión anterior. Se regenera en cada versión de esquema. Verificado: una base nueva con esta carga tiene las mismas filas que la base migrada.
-- `datos-vN-NNN.sql`: los cambios de datos, en `datos/` del repositorio, numerados dentro de su versión. El nombre dice a qué versión van y en qué orden; `gbshortcodes-act-001` y `-002` pasaron a `datos-v3-001` y `datos-v3-002`.
+- `datos-vN-NNN.sql`: los cambios de datos, en `datos/` del repositorio, numerados dentro de su versión. El nombre dice a qué versión van y en qué orden; `gbshortcodes-act-001` y `-002` pasaron a `datos-v3-001` y `datos-v3-002`. `datos/` no viaja en el paquete y la aplicación no lo lee: un script de datos se importa a mano, con «Importar script SQL». Lo que la aplicación lee está en `.hidden/esquema/`: la migración desde la versión anterior y la carga inicial.
 
 LA APLICACIÓN MIGRA Y CARGA SOLA
 
@@ -2622,7 +2686,7 @@ Al abrir una base una versión atrás, la aplicación ofrece «Migrar» y corre 
 
 `User.Home` no sigue la variable `HOME`: una prueba con otra `HOME` abre igual la base del usuario real (medido en 3.19).
 
-**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35,vinculo:SC-36
+**Relaciones:** vinculo:RF-08,vinculo:SC-19,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35,vinculo:SC-36,vinculo:SC-42
 
 **PENDIENTE:** Versión 2 verificada en Mint con 3.22.1: exportación e importación, y la lectura en gbpublisher (SC-34). Versión 3 verificada en Mint. Versión 4 probada en el contenedor con Gambas 3.19 y gb.db, incluida la migración y la carga desde la aplicación bajo xvfb; falta en Mint.
 
@@ -4315,3 +4379,20 @@ DE PUNTA A PUNTA
 Un .docx con U+2026, U+2013, U+2014, un guion aislado y un espacio duro delante de una semirraya, pasado por `convertir_docx.sh` con el filtro 1.2: sale `...`, `--` y `---`, y el guion aislado da `--`. El código en línea y la URL de un enlace conservan el carácter Unicode: no son `Str`.
 
 **Relaciones:** vinculo:SC-40
+
+### GV-80 — Pandoc: un carácter como • en el identificador de un Div deshace el bloque sin aviso
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor · **Verificado:** 2026-10
+
+Un Div cuyo identificador lleva un carácter que Pandoc no admite en un id deja de ser un Div: la apertura y el cierre quedan como párrafos de texto, y el contenido suelto. Pandoc no avisa.
+
+    ::: {.listado #lst-•}      →  Para [ ":::" "{.listado" "#lst-•}" ], el bloque suelto, Para [ ":::" ]
+    ::: {.listado #lst-x}      →  Div ("lst-x", ["listado"])
+
+REGLA
+
+El marcador de los snippets (•, SC-21) no va en un identificador ni en una clase: un filtro ya no ve el bloque, y no puede frenar. Por eso el listado de código pide el nombre en un diálogo y deja el marcador en el pie (SC-42).
+
+Medido con Pandoc 3.1.3 (`-t native`).
+
+**Relaciones:** apoya:SC-42,vinculo:SC-21

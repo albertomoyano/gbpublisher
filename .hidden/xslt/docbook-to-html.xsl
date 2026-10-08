@@ -1593,6 +1593,11 @@ RC APLICADAS:
        (codigo-comun.xsl), COMÚN CON LAS OTRAS SALIDAS DIGITALES, CON LAS
        LÍNEAS COLOREADAS POR colorear_codigo.sh -->
   <xsl:template match="db:programlisting | programlisting">
+    <!-- SIN codigo_dir EL BLOQUE SALE SIN COLOR: SE AVISA, COMO EN EL PDF.
+         LOS GENERADORES LA PASAN SIEMPRE -->
+    <xsl:if test="normalize-space($codigo_dir) = ''">
+      <xsl:message>[código] codigo_dir vacío: el bloque sale sin color</xsl:message>
+    </xsl:if>
     <xsl:call-template name="gbc:bloque-html">
       <xsl:with-param name="el" select="."/>
       <xsl:with-param name="ns" select="'http://www.w3.org/1999/xhtml'"/>
