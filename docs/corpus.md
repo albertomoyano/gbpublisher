@@ -2222,7 +2222,7 @@ Las cuatro conversiones también tienen su clave en el informe: `elipsis_a_tres_
 
 ### SC-42 — Código: bloque cercado, listado y código en línea; el color lo pone cada salida
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 (skylighting) / SaxonJ-HE 12.5 / LuaLaTeX TeX Live 2023 / Chromium / Gambas 3.19 / contenedor · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 (skylighting) / SaxonJ-HE 12.5 / LuaLaTeX TeX Live 2023 / Chromium / Gambas 3.19 / contenedor / Mint con Gambas 3.22.2 · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisiones de Alberto). Libros y revistas.
 
@@ -2279,9 +2279,17 @@ INSERCIÓN
 
 Modo `codigo` (gbShortcodes `datos-v5-005`): con selección; en bloque, `FCodigo` pide el lenguaje y, en el listado, el nombre, y la cerca lleva una tilde más que la racha más larga de adentro; el listado deja el marcador • del pie seleccionado (SC-21) y avisa si el nombre ya existe. En línea, comillas inversas, una más que las de adentro.
 
+LOS SCRIPTS DE LIBRO SALEN DE RutaRecursos
+
+`m_GenerarSalidasLibro` tenía fija la carpeta `/usr/share/gbpublisher/engine`: desde el IDE corría el `generar_html_libro.sh` y el `compilar_pdf_libro.sh` del paquete instalado, de otra versión. Así el HTML de libro salió sin color en la primera prueba (la hoja no recibió `codigo_dir`). Ahora la carpeta sale de `m_InicioCierre.RutaRecursos()`, como en el resto de la aplicación, y las hojas de HTML avisan si corren sin `codigo_dir`.
+
+PROBADO EN MINT (2026-10)
+
+PDF de pantalla y de imprenta, HTML, EPUB y ODT, en libros y en revistas; inserción desde el panel; los casos que frenan. Los tres shortcodes se liberan con `datos-v5-006` de gbShortcodes.
+
 **Relaciones:** vinculo:SC-32,vinculo:SC-33,vinculo:SC-21,vinculo:SC-31,vinculo:SC-30,vinculo:SC-34,vinculo:RF-11,vinculo:GV-80,vinculo:RC-GM-13
 
-**PENDIENTE:** Probar en Mint: libro (PDF en producción y en imprenta, HTML, EPUB) y revista (PDF, HTML, EPUB, ODT); inserción desde el panel; packtools sobre la salida SciELO con un listado.
+**PENDIENTE:** Sabores JATS de revista, en la fase de revistas: SciELO (el listado como <fig> con <preformat>; validado contra el DTD Publishing 1.0 en el contenedor, falta packtools) y Redalyc (el <code> pasa tal cual; DTD sin verificar).
 
 ---
 
