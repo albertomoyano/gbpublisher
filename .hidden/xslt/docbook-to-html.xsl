@@ -327,7 +327,11 @@ RC APLICADAS:
       <xsl:variable name="capIdEsperado" select="concat('cap-', @id_capitulo)"/>
       <xsl:variable name="capNodo"
                     select="$book/*[@xml:id = $capIdEsperado]"/>
-      <xsl:if test="$capNodo">
+      <!-- LA DEDICATORIA NO TIENE PÁGINA PROPIA: VA EN LA DE ENTRADA, ANTES
+           DEL ÍNDICE, COMO EN EL PDF VA ANTES DEL SUMARIO (SC-31). UNA
+           PÁGINA SUYA QUEDARÍA SIN ENLACE: EL HTML SE RECORRE DESDE EL ÍNDICE,
+           Y LA DEDICATORIA NO ENTRA EN ÉL. -->
+      <xsl:if test="$capNodo[not(self::db:dedication or self::dedication)]">
         <xsl:call-template name="emitir-capitulo-html">
           <xsl:with-param name="capitulo" select="$capNodo"/>
         </xsl:call-template>
@@ -790,11 +794,46 @@ RC APLICADAS:
                bm-  → Material complementario
              El manifiesto ya trae las entradas en orden de lectura.
              Cada parte se muestra solo si tiene capítulos. -->
+        <!-- ==========================================================
+             DEDICATORIA
+             ==========================================================
+             REPLICA EL PDF (SC-31): SIN TÍTULO VISIBLE Y CON EL BLOQUE
+             DEL EPÍGRAFE SIN ATRIBUCIÓN, QUE NO LLEVA FILETE (SC-35). VA
+             ANTES DEL ÍNDICE, COMO EN EL PDF ANTES DEL SUMARIO, Y NO
+             ENTRA EN ÉL. SIN LA BAJADA DEL PDF: EN UNA PÁGINA QUE SE
+             DESPLAZA NO HAY TOPE DE CAJA (EXCEPCIÓN 2 DE SC-31).
+             EL TÍTULO DEL CANÓNICO QUEDA COMO NOMBRE ACCESIBLE.
+             role="doc-dedication": DPUB-ARIA 1.1, SUPERCLASE section. -->
+        <xsl:for-each select="$book/db:dedication | $book/dedication">
+          <xsl:variable name="dedTitulo"
+                        select="normalize-space((db:info/db:title | info/title)[1])"/>
+          <section class="dedicatoria" role="doc-dedication">
+            <xsl:if test="$dedTitulo != ''">
+              <xsl:attribute name="aria-label" select="$dedTitulo"/>
+            </xsl:if>
+            <div class="epigrafe">
+              <xsl:for-each select="*[not(self::db:info or self::info)]">
+                <xsl:choose>
+                  <xsl:when test="self::db:para or self::para">
+                    <p class="epigrafe-texto"><xsl:apply-templates/></p>
+                  </xsl:when>
+                  <xsl:otherwise>
+                    <xsl:apply-templates select="."/>
+                  </xsl:otherwise>
+                </xsl:choose>
+              </xsl:for-each>
+            </div>
+          </section>
+        </xsl:for-each>
+
         <section class="indice-capitulos">
 
-          <!-- PRELIMINARES (fm-) -->
+          <!-- PRELIMINARES (fm-). SIN LA DEDICATORIA: VA ARRIBA, FUERA DEL
+               ÍNDICE, COMO EN EL PDF (m_PiezasLibro.VaEnIndice ES LA MISMA
+               REGLA PARA EL nav DEL EPUB) -->
           <xsl:variable name="caps_fm"
-                        select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'fm-')]"/>
+                        select="$manifiesto//capitulo[starts-with(@nombre_archivo, 'fm-')]
+                                                     [not(@tipo_capitulo = 'dedicatoria')]"/>
           <xsl:if test="$caps_fm">
             <div class="parte-estructural">
               <h2 class="parte-titulo">Preliminares</h2>

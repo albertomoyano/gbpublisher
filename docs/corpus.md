@@ -1430,7 +1430,7 @@ MATRIZ
 
 - Las blancas las ponen `\gbclearrecto` y `\gbclearverso`; nunca `\newpage\hbox{}` a mano.
 - Macros nuevas: el contrato sube a la versión 2. El aspecto va en la estética.
-- El sumario se emite DESPUÉS de la última primera. Hoy `AbrirZona(ZONA_FRONT)` lo escribe al abrir la zona, y una primera declarada quedaría detrás de él.
+- El sumario se emite DESPUÉS de la última pieza del espacio reservado `fm-00` a `fm-09`: las primeras y las piezas sueltas, como la dedicatoria (SC-45). Antes de esta regla `AbrirZona(ZONA_FRONT)` lo escribía al abrir la zona, y una primera declarada quedaba detrás de él.
 - EPUB: la tapa (`cover`) va siempre, en `front-tapa.xhtml`; hasta SC-25 era `front-portada.xhtml`. La portada (`titlepage`, `front-portada.xhtml`) va solo si el libro la declara, con autoría, leyenda, título, subtítulo y logo de portada. Los créditos (`copyright-page`) van siempre: con logo de colección y textos digitales si el libro declara la pieza y tiene al menos uno de los dos textos; si no, el bloque genérico (`ArmarCreditos`), el mismo criterio que el colofón no declarado.
 - EPUB sin versalitas: los nombres van en mayúsculas y minúsculas, como están en la base. Noto Serif las tiene, pero los lectores de EPUB no las respetan de forma pareja.
 - `titlepage`, `copyright-page` y `halftitlepage` están definidos en EPUB 3 Structural Semantics Vocabulary.
@@ -1486,7 +1486,7 @@ ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45
 
 **PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
 
@@ -1808,7 +1808,7 @@ Vale también para la entrada: el .md se teclea con las convenciones de LaTeX pa
 
 Es el principio que ya aplicaban SC-14 (la bibliografía replica el estilo biblatex del libro), SC-26 y SC-30 (el mismo resultado en las seis salidas). Esta entrada lo deja escrito como regla general.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-26,vinculo:SC-28,vinculo:SC-25,vinculo:SC-30,vinculo:SC-40
+**Relaciones:** vinculo:SC-14,vinculo:SC-26,vinculo:SC-28,vinculo:SC-25,vinculo:SC-30,vinculo:SC-40,vinculo:SC-45
 
 ### SC-32 — Figuras de libro y revista: una sola forma en el .md, número del PDF y referencia cruzada
 
@@ -2008,11 +2008,13 @@ Bloque a la derecha, del 60 % de la columna, en letra menor (`\small`) y sin cor
 - HTML y EPUB: `div.epigrafe` con `p.epigrafe-texto` y `p.epigrafe-atrib`; el filete es el borde superior de la atribución. Mismas reglas en `gbpublisher.css`, `gbpublisher-epub-libro.css`, `jats-to-html.xsl` y `m_GenerarEpub`. La atribución conserva sus marcas y no lleva raya.
 - ODT: los estilos de párrafo `gbEpigrafe` y `gbEpigrafeAtrib` de `ott/reference.ott`, que Pandoc aplica por `custom-style`. Con margen izquierdo fijo de 6,6 cm (el 60 % de la caja del documento de referencia).
 
+- Dedicatoria (SC-45): el mismo bloque sin atribución, sin filete. En el PDF, el entorno `gbdedicatoria` del contrato es gemelo de `\gbepigrafe`: un cambio de diseño del epígrafe va en los dos.
+
 UN FILTRO QUE FRENA SE VE
 
 En revistas, `GenerarBodyXML` sigue ahora el patrón de los capítulos: si Pandoc termina con error no se arma el `<body>`, se escribe una marca de fallo y el motivo queda en la terminal. Antes un epígrafe mal formado dejaba un `<body>` a medias sin aviso (GV-23).
 
-**Relaciones:** vinculo:SC-34,vinculo:SC-33,vinculo:SC-31,vinculo:SC-30,vinculo:RF-11,vinculo:SC-11,apoya:GV-23
+**Relaciones:** vinculo:SC-34,vinculo:SC-33,vinculo:SC-31,vinculo:SC-30,vinculo:RF-11,vinculo:SC-11,apoya:GV-23,vinculo:SC-45
 
 **PENDIENTE:** Probado en el contenedor: los filtros, las cinco hojas que se pueden correr sueltas (las de HTML y EPUB de libro, con la plantilla aislada), el PDF y el ODT. Falta en Mint, con un libro y una revista reales, y epubcheck sobre un EPUB completo.
 
@@ -2425,7 +2427,7 @@ DECISIÓN CERRADA. Libros y revistas. Las piezas se ordenan por su nombre de arc
 
 LA CONVENCIÓN
 
-El nombre da la posición: `prefijo-NN-resto` (`fm-10-prologo`, `a-03-…`, `bm-99-colofon`). El prefijo fija la familia —preliminares, cuerpo, finales— y NN el lugar dentro de ella. Con dos dígitos, el orden alfabético dentro de cada familia equivale al numérico. El espacio `fm-00` a `fm-09` está reservado para las primeras (SC-25).
+El nombre da la posición: `prefijo-NN-resto` (`fm-10-prologo`, `a-03-…`, `bm-99-colofon`). El prefijo fija la familia —preliminares, cuerpo, finales— y NN el lugar dentro de ella. Con dos dígitos, el orden alfabético dentro de cada familia equivale al numérico. El espacio `fm-00` a `fm-09` está reservado para las primeras (SC-25) y las piezas sueltas, como la dedicatoria (SC-45): es todo lo que va antes del sumario. `bm-00` a `bm-09`, para las piezas sueltas de finales. La regla, en Gambas, es `m_OrdenPiezas.EnEspacioReservado(sNombre)`: solo la forma de dos dígitos.
 
 POR QUÉ NO EL ORDEN ALFABÉTICO SOLO, NI EL id
 
@@ -2450,9 +2452,71 @@ GRILLAS DE METADATOS
 
 Verificado: el orden y la extracción del código, en MariaDB 10.11 con nombres reales, un NULL y uno sin prefijo; las dos grillas, por Alberto en gbpublisher.
 
-**Relaciones:** vinculo:SC-25
+**Relaciones:** vinculo:SC-25,vinculo:SC-45
 
 **PENDIENTE:** `m_GenerarEpub` y `m_GenerarHTML` (revistas) ordenan solo por `nombre_archivo ASC`: si un número tiene un `fm-`, queda después de los `a-`. Revisar si esos módulos ven solo artículos o si tienen que pasar a `m_OrdenPiezas`. La copia del CASE en `FMain` está comentada y no se tocó.
+
+### SC-45 — Dedicatoria: pieza suelta de fm-00 a fm-09, antes del sumario, con el bloque del epígrafe sin filete
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / LuaLaTeX (TeX Live 2023) / SaxonJ-HE 12.5 / epubcheck 4.2.6 / Gambas 3.19 (gbc3, gbs3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto). La dedicatoria es una pieza suelta: va en el espacio reservado de preliminares, `fm-00` a `fm-09`, después de las primeras (SC-25) y ANTES del sumario. No lleva título visible ni entra al sumario.
+
+ANTES O DESPUÉS DEL SUMARIO
+
+Antes. Las dos tradiciones de referencia coinciden. El orden de The Chicago Manual of Style (§1.4), tomado de guías que declaran seguirlo (Pressbooks), es portadilla, portada, créditos, dedicatoria, epígrafe y recién después el sumario. En la tradición hispana (Mariana Eguaras, «Las partes de un libro»), la dedicatoria va en la pág. 7, detrás de la página legal, y el lema en la 9. La fuente que la pone después del sumario (OQLF, «pages liminaires») trata de informes y tesis, no de libros. Dedicatoria y epígrafe son el umbral personal del autor; el sumario, el comienzo del aparato del libro.
+
+LA POSICIÓN LA DA EL NÚMERO
+
+El espacio `fm-00` a `fm-09` es todo lo que va antes del sumario: las primeras y las piezas sueltas (dedicatoria, foto a página entera, recordatorio). `m_GenerarPDFLibro.GenerarMainTeX` (7.1b) emite `\tableofcontents` antes de la primera pieza de preliminares que no es una primera ni está en el espacio reservado. La regla del espacio, en Gambas, es `m_OrdenPiezas.EnEspacioReservado` (SC-44); en `docbook-to-latex.xsl`, `$especial`, que lee el NN del canónico.
+
+EL CONTROL
+
+Una dedicatoria fuera de `fm-00` a `fm-09` sale como `\chapter*`, con título, después del sumario y con entrada en él. Nada lo avisaba. Ahora `m_PiezasLibro.ProblemaPosicion(nombre, tipo)` es la regla, y la aplican dos lugares con el mismo mensaje:
+
+- `m_Metadatos.GuardarMetadatosDeCapitulo` (apartado 2b): no guarda.
+- `m_GenerarPDFLibro.VerificarPosiciones`, después de `VerificarPrimeras`: no genera.
+
+Solo se acepta la forma de dos dígitos de la convención: `fm-4-dedicatoria` frena.
+
+PDF (CONTRATO 13)
+
+El tipo elige el diseño dentro del espacio reservado. La señal es el elemento `<dedication>` del canónico, que `ensamblar-capitulo-canonico.xsl` escribe para `tipo_capitulo = dedicatoria`: `docbook-to-latex.xsl` emite el entorno `gbdedicatoria` en lugar de `gbpaginaespecial`.
+
+- Página: la de `gbpaginaespecial`. Recto, sin folio ni encabezado, vuelta en blanco; sin título y fuera del sumario.
+- Bloque: el de `\gbepigrafe` sin atribución, que es el que no lleva filete (SC-35): 60 % de la columna, a la derecha, `\small`, en bandera, sin corte de palabra. `gbdedicatoria` es gemela de `\gbepigrafe`: un cambio de diseño del epígrafe va en las dos.
+- Bajada: `\gbBajadaDedicatoria`, de la estética (30 mm), con el mismo recurso que la portadilla (`\hbox{}\vspace`). Medida: la primera línea queda 34,8 mm por debajo de la primera línea de una página corriente, es decir 30 mm más una línea; idéntico a `\vspace*{30mm}`.
+- La minipage va con `[t]`: la bajada se mide igual con una línea que con cinco.
+
+LA UBICACIÓN VA EN EL CANÓNICO DE LA PIEZA
+
+`docbook-to-latex.xsl` decide la página suelta con `seccion-libro` y `orden-seccion` del `<info>`. El PDF transforma el canónico de CADA PIEZA (`jats/c-….xml`), y esos datos solo los escribía `ensamblar-libro-canonico.xsl` en el canónico del LIBRO: la rama de página suelta no se activaba nunca, para ninguna pieza de fm-0N o bm-0N. La primera prueba no lo mostró porque usó un canónico armado a mano.
+
+Ahora `m_XML.GenerarInfoCapituloXML` (bloque 2b) escribe en el `<info>` de cada pieza `seccion-libro` y `orden-seccion`, derivados del nombre con la misma regla que el ensamblador del libro (`prefijo-NN-resto`), y `tipo-capitulo` si no es NULL ni vacío (RC-XJ-02). `ensamblar-libro-canonico.xsl` los descarta al copiar el `<info>` y los vuelve a escribir desde el manifiesto: sin ese filtro quedan dos de cada uno y `normalize-space()` sobre dos nodos frena las hojas de salida.
+
+`tipo-capitulo` en el canónico de la pieza no cambia la numeración: `docbook-to-latex.xsl` y `numeracion-libro.xsl` lo prefieren al elemento, y `ensamblar-capitulo-canonico.xsl` deriva el elemento y su role del mismo `tipo_capitulo`.
+
+Al instalar hay que regenerar los canónicos de las piezas: los viejos no traen la ubicación.
+
+EPUB
+
+- `docbook-to-epub.xsl`: plantilla propia para la raíz `<dedication>`, como la bibliografía. `section` con `epub:type="dedication"` (EPUB SSV 1.1) y `role="doc-dedication"` (DPUB-ARIA 1.1, superclase section, nombre del autor permitido). Sin `<h1>`: el título del canónico queda en `aria-label` y en el `<title>`. Adentro, `div.epigrafe` con `p.epigrafe-texto`.
+- `gbpublisher-epub-libro.css`: `.dedicatoria { padding-top: 8.5em }`. Son los 30 mm del PDF sobre un cuerpo de 10 pt. En em y no en mm ni vh: la pantalla no tiene tope de caja y los lectores paginados no respetan vh de forma pareja. Va en la sección y no en `.epigrafe`, donde el em sería el de la letra menor.
+- Sigue en el spine, después de los créditos, pero no en el nav: `m_GenerarEpubLibro.ArmarNav` la salta con `m_PiezasLibro.VaEnIndice`.
+
+HTML
+
+- La dedicatoria no tiene página propia: el HTML se recorre desde el índice de la página de entrada, y una página fuera del índice quedaría sin enlace. Va en `index.html`, antes del índice, como en el PDF va antes del sumario: `section.dedicatoria` con `role="doc-dedication"` y `aria-label`, y el mismo `div.epigrafe`.
+- El índice de preliminares la excluye por `@tipo_capitulo` del manifiesto: la misma regla que `m_PiezasLibro.VaEnIndice`.
+- Sin la bajada: en una página que se desplaza no hay tope de caja (excepción 2 de SC-31).
+
+FUERA DE ESTA DECISIÓN
+
+Las otras piezas sueltas (foto, recordatorio) siguen saliendo con título en EPUB y HTML (decisión de Alberto).
+
+**Relaciones:** vinculo:SC-25,vinculo:SC-44,vinculo:SC-35,vinculo:SC-31
+
+**PENDIENTE:** Probado en el contenedor con la cadena real: GenerarInfoCapituloXML contra MariaDB 10.11, Pandoc 3.1.3 con los filtros del proyecto, ensamblar-capitulo-canonico.xsl y docbook-to-latex.xsl; el PDF compilado con los preámbulos reales (dedicatoria en vii sin título ni entrada en el sumario, vuelta en blanco, sumario después). El canónico de la pieza y el del libro validan contra el RNG de DocBook 5.2 (jing). El EPUB mínimo pasa epubcheck 4.2.6; el index.html de un libro de prueba; gbc3 compila el proyecto. Falta en Mint con un libro real.
 
 ---
 

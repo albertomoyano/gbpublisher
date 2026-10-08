@@ -41,9 +41,11 @@
       \gbTachado \gbSubrayado   tachado y subrayado (SC-30, CONTRATO 8)
       (ESTAS TRES SON DEL CONTRATO 6 DE preambulo-contrato.tex)
 
-    PÁGINAS ESPECIALES (fm/bm CON ORDEN 01–09)
+    PÁGINAS ESPECIALES (fm/bm CON ORDEN 00–09)
       gbpaginaespecial   entorno — recto, sin folio, vuelta en blanco
       gbpaginaimagen     entorno — ídem, rompiendo la caja
+      gbdedicatoria      entorno — ídem, con el bloque del epígrafe
+                         sin filete y bajado (CONTRATO 13)
 
     BLOQUES
       gbcita         entorno — cita en bloque
@@ -74,8 +76,10 @@
       bibliomisc[@role='csl-style']      estilo de cita
       bibliomisc[@role='seccion-libro']  fm | a | bm
       bibliomisc[@role='orden-seccion']  NN con dos dígitos
-    LOS DOS ÚLTIMOS LOS ESCRIBE EL ENSAMBLADOR EN EL <info> DE
-    CADA PIEZA. VERIFICADO CONTRA EL RELAX NG DE DocBook 5.2:
+    LOS DOS ÚLTIMOS, Y bibliomisc[@role='tipo-capitulo'], LOS
+    ESCRIBE m_XML.GenerarInfoCapituloXML (BLOQUE 2b) EN EL <info>
+    DEL CANÓNICO DE CADA PIEZA, QUE ES EL QUE ESTA HOJA RECIBE.
+    ensamblar-libro-canonico.xsl LOS REESCRIBE EN EL DEL LIBRO. VERIFICADO CONTRA EL RELAX NG DE DocBook 5.2:
     bibliomisc ES VÁLIDO EN chapter/info, preface/info,
     acknowledgements/info, appendix/info, colophon/info Y
     dedication/info.
@@ -228,7 +232,7 @@
       select="normalize-space(info/bibliomisc[@role='tipo-capitulo'])"/>
     <xsl:variable name="orden"
       select="normalize-space(info/bibliomisc[@role='orden-seccion'])"/>
-    <!-- EN fm Y bm LOS NÚMEROS 01 A 09 ESTÁN RESERVADOS PARA PIEZAS -->
+    <!-- EN fm Y bm LOS NÚMEROS 00 A 09 ESTÁN RESERVADOS PARA PIEZAS -->
     <!-- SUELTAS: UNA FOTO A PÁGINA ENTERA, UN RECORDATORIO, UNA    -->
     <!-- DEDICATORIA. NO SON CAPÍTULOS Y NO ENTRAN AL ÍNDICE.       -->
     <xsl:variable name="especial" as="xs:boolean" select="
@@ -266,8 +270,15 @@
       <!-- EL TÍTULO EXISTE PARA HTML Y PARA EL nav DEL EPUB; ACÁ   -->
       <!-- SE DESCARTA A PROPÓSITO.                                 -->
       <xsl:when test="$especial">
+        <!-- LA DEDICATORIA TIENE DISEÑO PROPIO (CONTRATO 13). LA SEÑAL ES -->
+        <!-- EL ELEMENTO: ensamblar-capitulo-canonico.xsl ESCRIBE          -->
+        <!-- <dedication> PARA tipo_capitulo = dedicatoria. EL NÚMERO      -->
+        <!-- DA LA PÁGINA ESPECIAL; EL ELEMENTO, CUÁL. UNA DEDICATORIA     -->
+        <!-- FUERA DE fm-00 A fm-09 NO LLEGA ACÁ: LA FRENAN EL ABM Y EL    -->
+        <!-- GENERADOR (m_PiezasLibro.ProblemaPosicion).                   -->
         <xsl:variable name="entorno" select="
-          if (exists(.//mediaobject) and not(.//para[normalize-space()]))
+          if (self::dedication) then 'gbdedicatoria'
+          else if (exists(.//mediaobject) and not(.//para[normalize-space()]))
           then 'gbpaginaimagen' else 'gbpaginaespecial'"/>
         <xsl:text>&#10;\begin{</xsl:text>
         <xsl:value-of select="$entorno"/>
@@ -317,8 +328,10 @@
              LO NO NUMERADO VA CON \chapter* MÁS \addcontentsline, QUE
              ENTRA AL SUMARIO SIN NÚMERO.
 
-             bibliomisc[@role='tipo-capitulo'] SE RESPETA SI ESTÁ, PARA
-             EL CANÓNICO ENSAMBLADO DEL LIBRO, QUE SÍ LO TRAE.
+             bibliomisc[@role='tipo-capitulo'] SE RESPETA SI ESTÁ: LO
+             TRAEN EL CANÓNICO DE CADA PIEZA Y EL DEL LIBRO. DA LO MISMO
+             QUE EL ELEMENTO Y SU role, PORQUE ensamblar-capitulo-canonico
+             DERIVA EL ELEMENTO DEL MISMO tipo_capitulo.
              ========================================================== -->
         <xsl:variable name="numerado" as="xs:boolean" select="
           if ($tipo != '')

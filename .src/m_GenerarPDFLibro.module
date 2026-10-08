@@ -33,8 +33,9 @@ Private Const CARPETA_CANONICOS As String = "jats"
 ' (\gbCapituloSinNumero REINICIA LOS CONTADORES). VERSIÓN 10: RECUADROS
 ' (gbRecuadro Y gbRecuadroBarra, SC-41). VERSIÓN 11: CÓDIGO (gbCodigo, LAS
 ' MACROS DE TOKEN, \gbPieCodigo Y EL CONTADOR gbcodigo, SC-42). VERSIÓN 12:
-' CONVERSACIÓN (gbconversacion Y \gbetiqueta, SC-43).
-Public Const CONTRATO_VERSION As Integer = 12
+' CONVERSACIÓN (gbconversacion Y \gbetiqueta, SC-43). VERSIÓN 13: DEDICATORIA
+' (gbdedicatoria Y \gbBajadaDedicatoria).
+Public Const CONTRATO_VERSION As Integer = 13
 
 ' --- ZONAS DEL LIBRO ---
 Private Const ZONA_FRONT As Integer = 1
@@ -1220,6 +1221,9 @@ Public Function GenerarMainTeX() As Boolean
   ' SE VERIFICA ANTES DE ESCRIBIR NADA: UN ORDEN IMPOSIBLE O UNOS CRÉDITOS SIN
   ' TEXTO SE DETECTAN ACÁ Y NO EN LA COMPILACIÓN (SC-25).
   If Not VerificarPrimeras(aNombre, aTipo, iIdLibro) Then Return False
+  ' LA MISMA REGLA DE POSICIÓN QUE EL ABM APLICA AL GUARDAR: UNA PIEZA CARGADA
+  ' ANTES DE ESTE CONTROL, O CON EL ARCHIVO RENOMBRADO A MANO, SE FRENA ACÁ
+  If Not VerificarPosiciones(aNombre, aTipo) Then Return False
 
   ' --- 3. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
   ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX.
@@ -1340,14 +1344,19 @@ Public Function GenerarMainTeX() As Boolean
     Endif
 
     ' 7.1b SUMARIO
-    ' VA DESPUÉS DE LA ÚLTIMA DE LAS PRIMERAS Y ANTES DE LA PRIMERA PIEZA DE
-    ' PRELIMINARES QUE NO LO SEA (SC-25). VerificarPrimeras YA GARANTIZÓ QUE
-    ' NINGUNA PRIMERA VIENE DESPUÉS DE OTRA PIEZA DE PRELIMINARES.
+    ' VA DESPUÉS DE LA ÚLTIMA PIEZA DEL ESPACIO RESERVADO —LAS PRIMERAS Y LAS
+    ' PIEZAS SUELTAS DE fm-00 A fm-09, COMO LA DEDICATORIA— Y ANTES DE LA
+    ' PRIMERA PIEZA DE PRELIMINARES QUE NO SEA NINGUNA DE LAS DOS (SC-25).
+    ' EL ORDEN POR NOMBRE (SC-44) PONE TODO fm-0N ANTES DE fm-10.
+    ' UNA PRIMERA FUERA DEL ESPACIO TAMBIÉN DEJA PASAR: VerificarPrimeras SOLO
+    ' EXIGE QUE NINGUNA VENGA DESPUÉS DE OTRA PIEZA DE PRELIMINARES.
     If iZona = ZONA_FRONT Then
       If Not bSumario Then
         If Not m_PrimerasLibro.EsPrimera(sTipo) Then
-          s &= "\\tableofcontents" & gb.NewLine
-          bSumario = True
+          If Not m_OrdenPiezas.EnEspacioReservado(sNombre) Then
+            s &= "\\tableofcontents" & gb.NewLine
+            bSumario = True
+          Endif
         Endif
       Endif
     Endif
@@ -1554,6 +1563,37 @@ Private Function VerificarPrimeras(aNombre As String[], aTipo As String[], iIdLi
       Return False
     Endif
   Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : VerificarPosiciones
+' Propósito : Comprueba que cada pieza esté numerada donde su tipo lo exige
+'             (m_PiezasLibro.ProblemaPosicion). Hoy: la dedicatoria, en fm-00
+'             a fm-09.
+' Parámetros: aNombre As String[] — nombre_archivo de cada pieza, en orden
+'             aTipo As String[] — tipo_capitulo de cada pieza
+' Retorna   : Boolean — True si se puede seguir; False con mensaje
+' Nota      : SIN ESTE CONTROL UNA DEDICATORIA EN fm-12 SALE COMO \chapter*,
+'             CON TÍTULO, DESPUÉS DEL SUMARIO Y CON ENTRADA EN ÉL.
+' ============================================
+Private Function VerificarPosiciones(aNombre As String[], aTipo As String[]) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim i As Integer
+  Dim sProblema As String
+
+  ' --- 2. RECORRIDO: LA PRIMERA PIEZA MAL UBICADA FRENA ---
+  For i = 0 To aNombre.Max
+    sProblema = m_PiezasLibro.ProblemaPosicion(aNombre[i], aTipo[i])
+    If sProblema <> "" Then
+      m_Sonido.sonar("Error")
+      Message.Error(sProblema)
+      Return False
+    Endif
+  Next
 
   Return True
 

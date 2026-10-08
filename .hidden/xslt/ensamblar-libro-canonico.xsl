@@ -317,8 +317,15 @@ DOCUMENTACIÓN DE REFERENCIA:
     <xsl:copy copy-namespaces="no">
       <xsl:apply-templates select="@* except @version" mode="#current"/>
 
+      <!-- LOS TRES MARCADORES DE UBICACIÓN YA VIENEN EN EL <info> DE LA PIEZA
+           (m_XML.GenerarInfoCapituloXML, BLOQUE 2b): SE DESCARTAN AL COPIAR Y
+           SE VUELVEN A ESCRIBIR ABAJO DESDE EL MANIFIESTO. SIN ESTE FILTRO
+           QUEDAN DOS DE CADA UNO, Y normalize-space() SOBRE DOS NODOS FRENA
+           LAS HOJAS DE SALIDA -->
       <info>
-        <xsl:apply-templates select="db:info/@* | db:info/node()" mode="#current"/>
+        <xsl:apply-templates select="db:info/@*
+          | db:info/node()[not(self::db:bibliomisc[@role = ('seccion-libro', 'orden-seccion', 'tipo-capitulo')])]"
+          mode="#current"/>
         <xsl:if test="$seccion != ''">
           <bibliomisc role="seccion-libro">
             <xsl:value-of select="$seccion"/>

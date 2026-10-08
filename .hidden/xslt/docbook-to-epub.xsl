@@ -186,6 +186,46 @@
     </html>
   </xsl:template>
 
+  <!-- DEDICATORIA: REPLICA EL PDF (SC-31, gbdedicatoria). SIN TÍTULO VISIBLE
+       Y CON EL BLOQUE DEL EPÍGRAFE SIN ATRIBUCIÓN, QUE ES EL QUE NO LLEVA
+       FILETE (SC-35). EL TÍTULO DEL CANÓNICO QUEDA COMO NOMBRE ACCESIBLE
+       (aria-label) Y EN EL <title> DEL DOCUMENTO.
+       epub:type="dedication" (EPUB SSV 1.1) Y role="doc-dedication"
+       (DPUB-ARIA 1.1, SUPERCLASE section, NOMBRE DEL AUTOR PERMITIDO) EN
+       LUGAR DE chapter. NO VA AL nav: LA SACA m_GenerarEpubLibro.ArmarNav.
+       document-node(element(…)) CON PRIORIDAD, COMO LA BIBLIOGRAFÍA: GANA A
+       "/" SOLO CUANDO LA RAÍZ ES UNA DEDICATORIA -->
+  <xsl:template match="document-node(element(db:dedication)) | document-node(element(dedication))" priority="5">
+    <html xmlns="http://www.w3.org/1999/xhtml"
+          xmlns:epub="http://www.idpf.org/2007/ops"
+          lang="{$lang}" xml:lang="{$lang}">
+      <head>
+        <meta charset="UTF-8"/>
+        <title><xsl:value-of select="$titulo"/></title>
+        <link rel="stylesheet" type="text/css" href="../css/gbpublisher-epub-libro.css"/>
+      </head>
+      <body>
+        <section epub:type="dedication" role="doc-dedication" class="dedicatoria">
+          <xsl:if test="$titulo != ''">
+            <xsl:attribute name="aria-label" select="$titulo"/>
+          </xsl:if>
+          <div class="epigrafe">
+            <xsl:for-each select="$cap/*[not(self::db:info or self::info)]">
+              <xsl:choose>
+                <xsl:when test="self::db:para or self::para">
+                  <p class="epigrafe-texto"><xsl:apply-templates/></p>
+                </xsl:when>
+                <xsl:otherwise>
+                  <xsl:apply-templates select="."/>
+                </xsl:otherwise>
+              </xsl:choose>
+            </xsl:for-each>
+          </div>
+        </section>
+      </body>
+    </html>
+  </xsl:template>
+
   <xsl:template match="/">
     <html xmlns="http://www.w3.org/1999/xhtml"
           xmlns:epub="http://www.idpf.org/2007/ops"
