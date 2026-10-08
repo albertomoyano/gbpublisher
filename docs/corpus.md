@@ -2369,15 +2369,28 @@ SE RETIRA .speech
 
 Filtros (cite-to-xref.lua, fenced-divs-to-elements-db.lua), las seis plantillas de `speech` y `para role="speech"`, el CSS (`.speech`, `.speech-item`, `.speech-speaker`), `gbparlamento` y `\gblocutor` de `preambulo-contrato.tex`, la plantilla muerta `disp-quote[@content-type='interview']` de jats-to-latex.xsl (ningún filtro la producía) y la fila del catálogo de gbShortcodes. RC-DB-04 deja de prescribir el parlamento.
 
+DISEÑO DE LAS SALIDAS (decisiones de Alberto)
+
+La etiqueta va siempre en MAYÚSCULAS, en las tres salidas: ANA PÉREZ, P., R. El .md y el canónico la guardan como la escribe el texto; la pasa a mayúsculas cada hoja. En línea: la etiqueta abre el turno y el texto sigue en el mismo renglón, sin sangría francesa.
+
+- PDF (libros y revistas): toda la conversación en sans, `\small`, sin sangría de primera línea. Etiqueta de peso normal. Un espacio chico entre turnos y entre los párrafos de un mismo turno: sin sangría, es lo único que los separa. `\medskip` al abrir la conversación y al cerrarla, que da la sensación de bloque; lo pone el entorno, no se escribe a mano. La pregunta no queda sola al pie de la página (lo que daba `\paragraph` en revistas).
+- HTML: la tipografía del texto. Etiqueta en negrita, la de quien pregunta y la de quien responde; la de quien pregunta, además, en el azul de las hojas (`--color-accent`, #2d5a8e). Sin espacio extra al abrir y al cerrar: la interlínea, la negrita y el color hacen el trabajo.
+- EPUB: como el HTML, todo en negro.
+
+IDIOMA DE LA ETIQUETA POR OMISIÓN
+
+- Revista: el filtro escribe la etiqueta en `<speaker>` y necesita el idioma, que está en la base (`idioma_principal`) y no llegaba a Pandoc. `m_XML` lo pasa con `-M lang=xx` y cite-to-xref.lua lo lee en una pasada previa: el filtro devuelve una lista de dos tablas, la primera con `Meta`, la segunda con los turnos. En una sola tabla `Meta` corre después de `Div` y el idioma no está leído (GV-84).
+- Libro: nada que pasar. Sin `quien` no hay `label`, y la hoja pone la etiqueta según `defaultlabel` y el idioma del libro.
+
 ALTERNATIVA DESCARTADA: LA CLASE Q-and-A
 
 Q-and-A (Jinwen Xu, CTAN, 2023/12/19) es una CLASE de documento, no un paquete: carga einfart (ProjLib) con LuaLaTeX y no entra en el `book` de libros ni en el `article` de revistas. Lee el cuerpo como texto y lo interpreta con expresiones regulares de LaTeX3 según su propio pseudo-markdown (`##`, `::`, `==`, `>>`, comillas inversas, `[` y `"` al comienzo de párrafo), que choca con el LaTeX que escriben las hojas; su documentación advierte que no admite `\verb` y que SyncTeX no funciona. El diseño es de chat (cada turno en un tcolorbox). Leído en el .cls y el README de CTAN. Se tomó su modelo: pregunta, respuesta y nota; hablante declarado; P. y R. en español.
 
 TAMPOCO BITS question-answer: es para evaluaciones, no para entrevistas.
 
-**Relaciones:** vinculo:RC-DB-04,apoya:GV-81,apoya:GV-82,apoya:GV-83,vinculo:SC-33,vinculo:SC-32,vinculo:SC-31,vinculo:RF-11
+**Relaciones:** vinculo:RC-DB-04,apoya:GV-81,apoya:GV-82,apoya:GV-83,vinculo:SC-33,vinculo:SC-32,vinculo:SC-31,vinculo:RF-11,apoya:GV-84
 
-**PENDIENTE:** Implementación entera (filtros, seis hojas, CSS, preámbulos, catálogo), con prueba en Mint. Diseño del PDF por decidir; requisito fijo: la pregunta no queda sola al pie de página, lo que daba \paragraph en revistas. Etiqueta por omisión según el idioma del texto: falta verificar de dónde la toma cite-to-xref.lua para escribir P./R. o Q./A. en <speaker>. packtools (Publishing, SciELO) en la máquina de Alberto.
+**PENDIENTE:** Implementación entera (filtros, -M lang en m_XML, seis hojas, CSS, preámbulos, catálogo), con prueba en Mint. Tabla de etiquetas por omisión según el idioma: es P./R. y en Q./A.; las demás, y qué pasa con un idioma fuera de la tabla, por decidir. packtools (Publishing, SciELO) en la máquina de Alberto.
 
 ---
 
@@ -4549,3 +4562,26 @@ Medido con Pandoc 3.1.3 (`-t native`).
 - `[Risas]{.acotacion}`: un `Span` cuyo texto es «Risas», sin corchetes.
 
 **Relaciones:** apoya:SC-43,vinculo:SC-33
+
+### GV-84 — Pandoc: en una sola tabla de filtro, Meta corre después de Div
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor · **Verificado:** 2026-10
+
+Un filtro Lua que define `Meta` y `Div` como funciones globales, en una sola tabla, recorre los bloques antes que los metadatos: dentro de `Div` el valor que guarda `Meta` todavía no existe.
+
+Si el filtro devuelve una LISTA de tablas, Pandoc las aplica en orden, y la primera puede leer los metadatos antes de que la segunda vea los bloques:
+
+    local idioma = nil
+    return {
+      { Meta = function (m) idioma = m.lang and pandoc.utils.stringify(m.lang) or nil end },
+      { Div  = function (el) … usa idioma … end }
+    }
+
+MEDIDO CON Pandoc 3.1.3 (`-t jats`, `-M lang=…`)
+
+- Lista de dos tablas: con `-M lang=en`, `Div` ve «en»; con `es`, «es»; sin `-M`, `nil`.
+- Una sola tabla, `Meta` y `Div` globales, con `-M lang=en`: `Div` ve el valor inicial de la variable, sin leer.
+
+Caso del proyecto: la etiqueta por omisión de la conversación en revistas (SC-43).
+
+**Relaciones:** apoya:SC-43
