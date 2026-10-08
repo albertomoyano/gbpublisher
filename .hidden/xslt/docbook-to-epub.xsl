@@ -28,7 +28,8 @@
     xmlns="http://www.w3.org/1999/xhtml"
     xmlns:epub="http://www.idpf.org/2007/ops"
     xmlns:nl="urn:gbpublisher:numeracion-libro"
-    exclude-result-prefixes="xsl xs db xlink nl">
+    xmlns:gbc="urn:gbpublisher:codigo"
+                exclude-result-prefixes="xsl xs db xlink nl gbc">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -42,6 +43,9 @@
   <!-- NÚMERO DE FIGURA Y REFERENCIAS CRUZADAS: LA MISMA REGLA QUE EL PDF
        Y QUE EL HTML (SC-31). NO DUPLICARLA ACÁ -->
   <xsl:include href="numeracion-libro.xsl"/>
+
+  <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
+  <xsl:include href="codigo-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS DE ENTRADA
@@ -455,8 +459,31 @@
   </xsl:template>
 
   <!-- CÓDIGO -->
+  <!-- CÓDIGO EN BLOQUE (SC-42): EL MISMO DE LAS DEMÁS SALIDAS DIGITALES
+       (gbc:bloque-html), SIN COLOR —FONDO NEGRO Y TEXTO BLANCO, POR EL
+       CSS— Y CON EL NÚMERO Y EL ↩ COMO TEXTO -->
   <xsl:template match="db:programlisting | programlisting">
-    <pre class="code-block"><code><xsl:value-of select="."/></code></pre>
+    <xsl:call-template name="gbc:bloque-html">
+      <xsl:with-param name="el" select="."/>
+      <xsl:with-param name="ns" select="'http://www.w3.org/1999/xhtml'"/>
+      <xsl:with-param name="texto" select="true()"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- LISTADO (SC-42): EL BLOQUE Y EL PIE «Código N.», NUMERADO COMO EN
+       EL PDF (nl:numero-listado) -->
+  <xsl:template match="db:example[@role = 'listado'] | example[@role = 'listado']" priority="5">
+    <div class="gb-listado" id="{@xml:id}">
+      <xsl:apply-templates select="db:programlisting | programlisting"/>
+      <p class="gb-codigo-pie">
+        <xsl:text>Código </xsl:text>
+        <xsl:value-of select="nl:numero-listado(., $piezasLibro)"/>
+        <xsl:if test="normalize-space((db:title | title)[1]) != ''">
+          <xsl:text>. </xsl:text>
+          <xsl:apply-templates select="(db:title | title)[1]/node()"/>
+        </xsl:if>
+      </p>
+    </div>
   </xsl:template>
   <xsl:template match="db:literal | literal">
     <code class="code-inline"><xsl:apply-templates/></code>

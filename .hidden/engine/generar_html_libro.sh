@@ -145,7 +145,20 @@ if [[ -n "$IMAGEN_TAPA" ]]; then
     fi
 fi
 
-# --- 6. TRANSFORMACIÓN ---
+# --- 6. CÓDIGO (SC-42) ---
+# LOS BLOQUES SE COLOREAN ANTES DE LA HOJA, SOBRE EL MISMO CANÓNICO; LA HOJA
+# LOS LEE CON codigo_dir. SI EL COLOREO FALLA, NO HAY HTML.
+paso "coloreando el código"
+DIR_CODIGO="$DIR_PROYECTO/tmp/codigo/html-libro-$NOMBRE_BASE"
+salida=$(GBP_ANIDADO=1 bash "$DIR_ENGINE/colorear_codigo.sh" "$CANONICO" "$DIR_CODIGO" html 2>&1)
+codigo=$?
+if (( codigo != 0 )); then
+    mostrar_cola "$salida"
+    morir "No se pudo colorear el código: la salida HTML no se genera"
+fi
+ok "$(printf '%s\n' "$salida" | tail -n 1) bloque(s) de código"
+
+# --- 7. TRANSFORMACIÓN ---
 # SE BORRA EL index.html ANTERIOR: SU EXISTENCIA ES PARTE DEL CRITERIO DE
 # ÉXITO, Y EL DE LA CORRIDA ANTERIOR DARÍA UN FALSO POSITIVO.
 # LA HOJA ESCRIBE docs/index.html CON xsl:result-document Y RUTA RELATIVA,
@@ -161,7 +174,8 @@ salida=$(cd "$DIR_PROYECTO" &&
             -xsl:"$XSL" \
             proyecto_dir="$DIR_PROYECTO" \
             manifiesto_libro="$MANIFIESTO_REL" \
-            estilo_cita="$ESTILO_CITA" 2>&1)
+            estilo_cita="$ESTILO_CITA" \
+            codigo_dir="$DIR_CODIGO" 2>&1)
 codigo=$?
 
 if (( codigo == 124 )); then
@@ -182,7 +196,7 @@ fi
 
 ok "docs/index.html"
 
-# --- 7. VALIDACIÓN HTML5 (Nu Html Checker) ---
+# --- 8. VALIDACIÓN HTML5 (Nu Html Checker) ---
 # vnu Y NO xmllint: xmllint ES UN PARSER HTML 4.01 Y DA FALSOS POSITIVOS CON
 # aside, details Y EL RESTO DE HTML5. SIN --exit-zero-always, vnu DEVUELVE
 # DISTINTO DE CERO CUANDO ENCUENTRA ERRORES, Y ESO ES LO QUE SE USA ACÁ.
@@ -209,7 +223,7 @@ else
     fi
 fi
 
-# --- 8. RESUMEN ---
+# --- 9. RESUMEN ---
 echo
 titulo "$REGLA"
 printf '%s✓ HTML generado%s\n' "$C_OK" "$C_RESET"

@@ -143,6 +143,22 @@
   </xsl:function>
 
   <!-- ==========================================================
+       nl:numero-listado: EL NÚMERO VISIBLE DE UN LISTADO DE CÓDIGO
+       (<example role="listado">, SC-42). LA MISMA REGLA QUE LA FIGURA,
+       CON SU PROPIA CUENTA: EN EL PDF ES EL CONTADOR gbcodigo, QUE
+       REINICIA CON LA PIEZA COMO figure (CONTRATO 11).
+       ========================================================== -->
+  <xsl:function name="nl:numero-listado" as="xs:string">
+    <xsl:param name="lst" as="element()"/>
+    <xsl:param name="piezas" as="element()*"/>
+    <xsl:variable name="p" select="nl:pieza-de($lst)"/>
+    <xsl:variable name="n" select="count($p//*:example[@role = 'listado'][. &lt;&lt; $lst]) + 1"/>
+    <xsl:variable name="etiqueta" select="nl:etiqueta-pieza($p, $piezas)"/>
+    <xsl:sequence select="if ($etiqueta = '') then string($n)
+                          else concat($etiqueta, '.', $n)"/>
+  </xsl:function>
+
+  <!-- ==========================================================
        nl:destino: EL ELEMENTO AL QUE APUNTA UN xref, BUSCADO EN TODAS
        LAS PIEZAS. VACÍO SI NO EXISTE: LA HOJA ESCRIBE «??», COMO LaTeX.
        ========================================================== -->

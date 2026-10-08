@@ -37,7 +37,11 @@
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:epub="http://www.idpf.org/2007/ops"
   xmlns="http://www.w3.org/1999/xhtml"
-  exclude-result-prefixes="xs xlink">
+  xmlns:gbc="urn:gbpublisher:codigo"
+  exclude-result-prefixes="xs xlink gbc">
+
+  <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
+  <xsl:include href="codigo-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS EXTERNOS
@@ -501,8 +505,9 @@
   <xsl:template match="fig">
     <xsl:variable name="href"   select="graphic/@xlink:href"/>
     <xsl:variable name="nombre" select="tokenize($href, '/')[last()]"/>
+    <!-- UN LISTADO DE CÓDIGO NO ES UNA FIGURA: TIENE SU CUENTA (SC-42) -->
     <xsl:variable name="fignum">
-      <xsl:number count="fig" level="any"/>
+      <xsl:number count="fig[not(@fig-type = 'listado')]" level="any"/>
     </xsl:variable>
     <!-- TEXTO ALTERNATIVO: EL DECLARADO (alt-text), O EL PIE SIN FORMATO -->
     <xsl:variable name="alt" select="if (normalize-space(graphic/alt-text) != '')
@@ -564,17 +569,29 @@
   <!-- ================================================
        CÓDIGO FUENTE
        ================================================ -->
+  <!-- <code> ES SIEMPRE UN BLOQUE (SC-42): EL MISMO DE LAS DEMÁS
+       SALIDAS DIGITALES (gbc:bloque-html), SIN COLOR —FONDO NEGRO Y
+       TEXTO BLANCO, POR EL CSS— Y CON EL NÚMERO Y EL ↩ COMO TEXTO -->
   <xsl:template match="code">
-    <div class="code-block">
-      <xsl:if test="@language">
-        <span class="code-lang"><xsl:value-of select="@language"/></span>
-      </xsl:if>
-      <pre><code>
-        <xsl:if test="@language">
-          <xsl:attribute name="class">language-<xsl:value-of select="@language"/></xsl:attribute>
+    <xsl:call-template name="gbc:bloque-html">
+      <xsl:with-param name="el" select="."/>
+      <xsl:with-param name="ns" select="'http://www.w3.org/1999/xhtml'"/>
+      <xsl:with-param name="texto" select="true()"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- LISTADO: EL BLOQUE Y EL PIE «Código N.», CON SU PROPIA CUENTA -->
+  <xsl:template match="fig[@fig-type = 'listado']" priority="5">
+    <div class="gb-listado" id="{@id}">
+      <xsl:apply-templates select="code"/>
+      <p class="gb-codigo-pie">
+        <xsl:text>Código </xsl:text>
+        <xsl:number count="fig[@fig-type = 'listado']" level="any"/>
+        <xsl:if test="caption/p">
+          <xsl:text>. </xsl:text>
+          <xsl:apply-templates select="caption/p/node()"/>
         </xsl:if>
-        <xsl:value-of select="."/>
-      </code></pre>
+      </p>
     </div>
   </xsl:template>
 

@@ -249,11 +249,11 @@ end
 -- AGREGAR ACÁ tbl- Y eq- CUANDO TABLAS Y FÓRMULAS TENGAN SU LOTE.
 local prefijos_referencia = { 'fig-' }
 
--- REFERENCIAS A TABLAS Y ECUACIONES: TODAVÍA NO EXISTEN. HASTA SU LOTE
--- DETIENEN LA CONVERSIÓN: SIN ESTO SALDRÍAN COMO CITA BIBLIOGRÁFICA A UNA
--- REFERENCIA INEXISTENTE. EN REVISTAS FRENAN SIEMPRE (cite-to-xref.lua):
--- ALLÍ NO HAY REFERENCIA CRUZADA (SC-32).
-local prefijos_pendientes = { 'tbl-', 'eq-' }
+-- REFERENCIAS A TABLAS, ECUACIONES Y LISTADOS DE CÓDIGO (SC-42): TODAVÍA
+-- NO EXISTEN. HASTA SU LOTE DETIENEN LA CONVERSIÓN: SIN ESTO SALDRÍAN
+-- COMO CITA BIBLIOGRÁFICA A UNA REFERENCIA INEXISTENTE. EN REVISTAS
+-- FRENAN SIEMPRE (cite-to-xref.lua): ALLÍ NO HAY REFERENCIA CRUZADA (SC-32).
+local prefijos_pendientes = { 'tbl-', 'eq-', 'lst-' }
 
 local function es_referencia(clave)
   for _, prefijo in ipairs(prefijos_referencia) do
@@ -271,8 +271,9 @@ function Cite(el)
     for _, prefijo in ipairs(prefijos_pendientes) do
       if citation.id:sub(1, #prefijo) == prefijo then
         error('\n[referencia] @' .. citation.id .. ': las referencias cruzadas ' ..
-              'a tablas y ecuaciones todavía no están implementadas. Por ahora ' ..
-              'la mención se escribe como texto («cuadro 2», «ecuación 3»).', 0)
+              'a tablas, ecuaciones y listados todavía no están implementadas. Por ' ..
+              'ahora la mención se escribe como texto («cuadro 2», «ecuación 3», ' ..
+              '«código 2.1»).', 0)
       end
     end
   end

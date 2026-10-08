@@ -31,8 +31,9 @@ Private Const CARPETA_CANONICOS As String = "jats"
 ' (SC-25). VERSIÓN 3: \gbNombrePortada, QUE EL PREÁMBULO USA EN LA AUTORÍA DE
 ' LA PORTADA. VERSIÓN 9: NUMERACIÓN DE FIGURAS, CUADROS Y ECUACIONES POR PIEZA
 ' (\gbCapituloSinNumero REINICIA LOS CONTADORES). VERSIÓN 10: RECUADROS
-' (gbRecuadro Y gbRecuadroBarra, SC-41).
-Public Const CONTRATO_VERSION As Integer = 10
+' (gbRecuadro Y gbRecuadroBarra, SC-41). VERSIÓN 11: CÓDIGO (gbCodigo, LAS
+' MACROS DE TOKEN, \gbPieCodigo Y EL CONTADOR gbcodigo, SC-42).
+Public Const CONTRATO_VERSION As Integer = 11
 
 ' --- ZONAS DEL LIBRO ---
 Private Const ZONA_FRONT As Integer = 1
@@ -688,6 +689,9 @@ Public Function GenerarPreambuloProyecto() As Boolean
   s &= "\\newif\\ifgbhomeoarchy   \\gbhomeoarchy" & aPrest[1] & gb.NewLine
   s &= "\\newif\\ifgbenlaces      \\gbenlaces" & aPrest[2] & gb.NewLine
   s &= "\\newif\\ifgbcruces       \\gbcruces" & aPrest[3] & gb.NewLine
+  ' EL CÓDIGO EN COLOR O EN BLANCO Y NEGRO (SC-42): LO LEE LA SECCIÓN 8 DEL
+  ' CONTRATO
+  s &= "\\newif\\ifgbcodigocolor  \\gbcodigocolor" & aPrest[4] & gb.NewLine
   s &= gb.NewLine
 
   ' 8.2 FORMATO DE PÁGINA
@@ -877,6 +881,10 @@ End
 '             Type mismatch (SC-05, GV-06).
 '             SI LA HOJA ABORTA POR VOCABULARIO NO PREVISTO, EL CÓDIGO DE
 '             SALIDA NO ES CERO Y EL Try LO ATRAPA.
+'             ANTES DE LA HOJA CORRE colorear_codigo.sh (SC-42), QUE DEJA
+'             LOS BLOQUES DE CÓDIGO COLOREADOS EN tmp/codigo/<pieza>; LA HOJA
+'             LOS LEE CON codigo_dir. EL VEREDICTO DEL COLOREO ES
+'             Process.LastValue, COMO EN m_GitHub.
 ' PENDIENTE : NO VERIFIQUÉ QUE "Exec ... Wait" SEA LA SINTAXIS CORRECTA EN
 '             GAMBAS 3.22. SI NO COMPILA, LA ALTERNATIVA DOCUMENTADA ES
 '             "Exec ... To sSalidaStd" (GV-20).
@@ -887,10 +895,16 @@ Private Function GenerarTexDePieza(sNombreArchivo As String, sRutaProyecto As St
   Dim sSalida As String
   Dim sHoja As String
   Dim aComando As New String[]
+  Dim aColor As New String[]
+  Dim sScriptColor As String
+  Dim sDirCodigo As String
+  Dim sSalidaColor As String
 
   sCanonico = sRutaProyecto &/ CARPETA_CANONICOS &/ "c-" & sNombreArchivo & ".xml"
   sSalida = sRutaProyecto &/ CARPETA_LATEX &/ "c-" & sNombreArchivo & ".tex"
   sHoja = User.Home &/ ".gbpublisher" &/ "xslt" &/ "docbook-to-latex.xsl"
+  sScriptColor = m_InicioCierre.RutaRecursos() &/ "engine" &/ "colorear_codigo.sh"
+  sDirCodigo = sRutaProyecto &/ "tmp" &/ "codigo" &/ "latex-" & sNombreArchivo
 
   ' --- 1. VALIDACIONES ---
   If Not Exist(sCanonico) Then
@@ -907,13 +921,39 @@ Private Function GenerarTexDePieza(sNombreArchivo As String, sRutaProyecto As St
     Return False
   Endif
 
-  ' --- 2. INVOCACIÓN ---
+  If Not Exist(sScriptColor) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el coloreador de código:" & gb.NewLine & sScriptColor)
+    Return False
+  Endif
+
+  ' --- 2. COLOREO DEL CÓDIGO (SC-42) ---
+  ' bash -c CON LOS ARGUMENTOS APARTE ($0 Y $@): NINGÚN NOMBRE PASA POR LA
+  ' INTERPRETACIÓN DEL SHELL (SC-05). 2>&1 PARA QUE EL MOTIVO DE UN FALLO,
+  ' QUE morir() ESCRIBE EN stderr, LLEGUE A sSalidaColor
+  aColor.Add("bash")
+  aColor.Add("-c")
+  aColor.Add("bash \"$0\" \"$@\" 2>&1")
+  aColor.Add(sScriptColor)
+  aColor.Add(sCanonico)
+  aColor.Add(sDirCodigo)
+  aColor.Add("latex")
+  Try Exec aColor To sSalidaColor
+  If Error Or If Process.LastValue <> 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo colorear el código de " & sNombreArchivo & ":" &
+      gb.NewLine & gb.NewLine & Trim(sSalidaColor))
+    Return False
+  Endif
+
+  ' --- 3. INVOCACIÓN DE LA HOJA ---
   aComando.Add("java")
   aComando.Add("-jar")
   aComando.Add(m_Constantes.RUTA_SAXON)
   aComando.Add("-s:" & sCanonico)
   aComando.Add("-xsl:" & sHoja)
   aComando.Add("-o:" & sSalida)
+  aComando.Add("codigo_dir=" & sDirCodigo)
 
   Try Exec aComando Wait
   If Error Then
@@ -1640,29 +1680,33 @@ End
 
 ' ============================================
 ' Función   : PrestacionesDeSalida
-' Propósito : Deriva las cuatro prestaciones del estado editorial del libro.
+' Propósito : Deriva las cinco prestaciones del estado editorial del libro.
 '             Se emiten PRESTACIONES y no un «modo»: así agregar un estado
 '             nuevo no obliga a tocar el preámbulo, y cada bandera dice qué
 '             hace en vez de qué nombre tiene.
 ' Parámetros: sEstado As String — libros_md.estado_libro
-' Retorna   : String[] — cuatro "true"/"false" en el orden
-'             showframe, homeoarchy, enlaces, cruces
+' Retorna   : String[] — cinco "true"/"false" en el orden
+'             showframe, homeoarchy, enlaces, cruces, codigocolor
+' Nota      : codigocolor ES EL CÓDIGO CON LA PALETA OSCURA (SC-42); EN
+'             «publicado» —LA IMPRENTA— VA EN BLANCO Y NEGRO.
+'             LA TABLA TIENE QUE COINCIDIR CON DescribirPrestaciones DE
+'             m_GenerarSalidasLibro.
 ' ============================================
 Private Function PrestacionesDeSalida(sEstado As String) As String[]
 
   Select Case LCase(Trim(sEstado))
     Case "borrador"
-      Return ["true", "true", "true", "false"]
+      Return ["true", "true", "true", "false", "true"]
     Case "en_correccion"
-      Return ["false", "true", "true", "false"]
+      Return ["false", "true", "true", "false", "true"]
     Case "en_produccion"
-      Return ["false", "false", "true", "false"]
+      Return ["false", "false", "true", "false", "true"]
     Case "publicado"
-      Return ["false", "false", "false", "true"]
+      Return ["false", "false", "false", "true", "false"]
     Case Else
       ' SIN ESTADO RECONOCIDO SE ASUME PRODUCCIÓN: SIN MARCAS DE TRABAJO
       ' Y SIN CRUCES DE CORTE, QUE ES LO MENOS DESTRUCTIVO.
-      Return ["false", "false", "true", "false"]
+      Return ["false", "false", "true", "false", "true"]
   End Select
 
 End

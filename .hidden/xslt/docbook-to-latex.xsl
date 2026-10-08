@@ -61,13 +61,15 @@
       \enquote        (csquotes)   comillas según idioma
       \href \url      (hyperref)
       \includegraphics (graphicx)
-      lstlisting      (listings)
+      gbCodigo \gbPieCodigo (contrato 11) — programlisting y el
+                      listado, coloreados por colorear_codigo.sh (SC-42)
       \parencite \parencite* \textcite \printbibliography (biblatex)
       refsection      entorno     (biblatex)
       \toprule \midrule \bottomrule (booktabs)
   ============================================================
   DATOS QUE LA HOJA LEE DEL PROPIO XML (RC-XJ-02)
-    NO HAY PARÁMETROS DE SAXON PARA DATOS DE LA BASE. EL XML
+    NO HAY PARÁMETROS DE SAXON PARA DATOS DE LA BASE (codigo_dir,
+    DECLARADO EN tex-comun.xsl, ES LA CARPETA DEL COLOREADO, NO UN DATO). EL XML
     CANÓNICO DEBE SER AUTÓNOMO Y REPRODUCIBLE POR SÍ SOLO.
       bibliomisc[@role='csl-style']      estilo de cita
       bibliomisc[@role='seccion-libro']  fm | a | bm
@@ -1042,16 +1044,22 @@
     <xsl:text>&#10;\end{verbatim}&#10;&#10;</xsl:text>
   </xsl:template>
 
+  <!-- CÓDIGO (SC-42): EL BLOQUE COLOREADO LO ARMA f:codigo-latex, EN -->
+  <!-- tex-comun.xsl, COMÚN CON LAS REVISTAS.                           -->
   <xsl:template match="programlisting">
-    <xsl:text>&#10;\begin{lstlisting}</xsl:text>
-    <xsl:if test="normalize-space(@language) != ''">
-      <xsl:text>[language=</xsl:text>
-      <xsl:value-of select="normalize-space(@language)"/>
-      <xsl:text>]</xsl:text>
-    </xsl:if>
-    <xsl:text>&#10;</xsl:text>
-    <xsl:value-of select="string(.)"/>
-    <xsl:text>&#10;\end{lstlisting}&#10;&#10;</xsl:text>
+    <xsl:value-of select="f:codigo-latex(.)"/>
+  </xsl:template>
+
+  <!-- LISTADO: EL BLOQUE Y, DEBAJO, EL PIE «Código N.» NUMERADO POR    -->
+  <!-- PIEZA COMO LAS FIGURAS (CONTADOR gbcodigo, CONTRATO 11). EL      -->
+  <!-- FILTRO GARANTIZA UN programlisting, UN title Y EL xml:id.        -->
+  <xsl:template match="example[@role='listado']" priority="5">
+    <xsl:value-of select="f:codigo-latex(programlisting)"/>
+    <xsl:text>\gbPieCodigo{</xsl:text>
+    <xsl:value-of select="@xml:id"/>
+    <xsl:text>}{</xsl:text>
+    <xsl:apply-templates select="(info/title, title)[1]/node()"/>
+    <xsl:text>}&#10;&#10;</xsl:text>
   </xsl:template>
 
   <!-- LLAMADAS DE ATENCIÓN -->

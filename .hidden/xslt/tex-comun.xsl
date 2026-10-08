@@ -23,6 +23,7 @@
     abortar-elemento  plantilla de corte ante vocabulario
                       no previsto
     gb-espacio        ficha de espacio vertical del PDF (SC-39)
+    f:codigo-latex()  bloque de código coloreado (SC-42)
   ============================================================
   NOTA SOBRE f:latex — CORRECCIÓN DE 2026-09
     LA VERSIÓN ANTERIOR ENCADENABA DIEZ replace() CON LA
@@ -48,7 +49,20 @@
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:f="urn:gbpublisher:functions"
-  exclude-result-prefixes="xs f">
+  xmlns:gbc="urn:gbpublisher:codigo"
+  exclude-result-prefixes="xs f gbc">
+
+  <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
+  <xsl:include href="codigo-comun.xsl"/>
+
+  <!-- ============================================================ -->
+  <!-- PARÁMETRO: codigo_dir                                        -->
+  <!-- LA CARPETA DONDE colorear_codigo.sh DEJÓ LOS BLOQUES         -->
+  <!-- COLOREADOS (SC-42), COMO RUTA ABSOLUTA. VACÍO: LOS BLOQUES   -->
+  <!-- SALEN SIN COLOR, CON UN AVISO. LOS GENERADORES LO PASAN      -->
+  <!-- SIEMPRE: EL VACÍO ES PARA CORRER LA HOJA A MANO.             -->
+  <!-- ============================================================ -->
+  <xsl:param name="codigo_dir" as="xs:string" select="''"/>
 
   <!-- ============================================================ -->
   <!-- TABLA DE ESCAPE PARA MODO TEXTO NORMAL                       -->
@@ -352,5 +366,60 @@
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:codigo-latex                                     -->
+  <!-- PROPÓSITO: EL BLOQUE DE CÓDIGO COMPLETO (SC-42): EL ENTORNO  -->
+  <!--            gbCodigo CON EL RÓTULO DEL LENGUAJE Y LAS LÍNEAS  -->
+  <!--            QUE ESCRIBIÓ colorear_codigo.lua. LAS MACROS LAS  -->
+  <!--            DEFINE EL PREÁMBULO (CONTRATO 11).                -->
+  <!-- PARÁMETROS: el As element() — <code> O <programlisting>      -->
+  <!-- RETORNA  : xs:string — EL BLOQUE, CON LÍNEAS EN BLANCO       -->
+  <!--            ALREDEDOR                                         -->
+  <!-- NOTA     : CON codigo_dir, FALTAR EL ARCHIVO DE UN BLOQUE ES -->
+  <!--            UN ERROR DE LA CADENA Y CORTA LA TRANSFORMACIÓN:  -->
+  <!--            NO SE DEGRADA EN SILENCIO. SIN codigo_dir, LAS    -->
+  <!--            LÍNEAS SALEN SIN COLOR, CON LA MISMA NUMERACIÓN.  -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:codigo-latex" as="xs:string">
+    <xsl:param name="el" as="element()"/>
+    <xsl:variable name="archivo" select="gbc:archivo($el, $codigo_dir, '.tex')"/>
+    <xsl:variable name="lineas" as="xs:string">
+      <xsl:choose>
+        <xsl:when test="$archivo != '' and unparsed-text-available($archivo)">
+          <xsl:sequence select="unparsed-text($archivo)"/>
+        </xsl:when>
+        <xsl:when test="$archivo != ''">
+          <xsl:message terminate="yes">
+            <xsl:text>[código] Falta el bloque coloreado </xsl:text>
+            <xsl:value-of select="$archivo"/>
+            <xsl:text>: colorear_codigo.sh no corrió sobre este XML.</xsl:text>
+          </xsl:message>
+        </xsl:when>
+        <xsl:otherwise>
+          <!-- SIN COLOR: LA MISMA FORMA QUE ESCRIBE colorear_codigo.lua,
+               CON \NormalTok Y SOLO LA BARRA Y LAS LLAVES ESCAPADAS
+               (EN UN Verbatim CON commandchars SON LAS ÚNICAS ACTIVAS).
+               U+E000 GUARDA EL LUGAR DE LAS LLAVES DE \textbackslash{}
+               PARA QUE EL PASO DE LAS LLAVES NO LAS ESCAPE -->
+          <xsl:message>[código] codigo_dir vacío: el bloque sale sin color</xsl:message>
+          <xsl:variable name="t" select="gbc:lineas($el)"/>
+          <xsl:variable name="r" select="gbc:con-retorno($el)"/>
+          <xsl:variable name="n" select="gbc:numeros($el)"/>
+          <xsl:sequence select="string-join(
+            for $i in 1 to count($t) return concat(
+              if ($n[$i] gt 0) then concat('\gbnl{', $n[$i], '}') else '\gbnc',
+              if ($t[$i] = '') then ''
+              else concat('\NormalTok{',
+                replace(replace(replace($t[$i], '\\', '\\textbackslash&#xE000;'),
+                  '([{}])', '\\$1'), '&#xE000;', '{}'), '}'),
+              if ($r[$i]) then '\gbret' else ''), '&#10;')"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:sequence select="concat('&#10;\begin{gbCodigo}{', gbc:rotulo($el), '}&#10;',
+                                 replace($lineas, '\n$', ''),
+                                 '&#10;\end{gbCodigo}&#10;&#10;')"/>
+  </xsl:function>
 
 </xsl:stylesheet>

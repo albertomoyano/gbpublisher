@@ -7,7 +7,8 @@
 '   - Lista por tipo de marcado (bloques, marcas en línea), agrupada por
 '     grupo y perfil, con los shortcodes que el diccionario deja ver
 '   - Ayuda del shortcode elegido, con el ejemplo coloreado como en el editor
-'   - Inserción según el modo: envolver, plantilla o figura
+'   - Inserción según el modo: envolver, plantilla, figura, dos-partes,
+'     separador, separador-valor o codigo
 '   - Cierre nombrado de los bloques (SC-33)
 '
 ' LOS DATOS SALEN DE m_CatalogoShortcodes, EL DICCIONARIO QUE LEE LO QUE
@@ -42,6 +43,12 @@ Private Const MARCA_BORRADOR As String = " (borrador)"
 ' --- SHORTCODES DE LA LISTA ACTUAL, POR LA KEY DEL ÍTEM ("sc:nombre") ---
 ' LOS SEPARADORES ("sep:N") NO TIENEN ENTRADA
 Public cShortcodesActuales As Collection
+
+' --- RESPUESTA DE FCodigo (SC-42): EL LENGUAJE Y EL NOMBRE DEL LISTADO ---
+' EN EL MÓDULO Y NO EN EL FORM: LAS VARIABLES Public DE UN FORM NO
+' SOBREVIVEN A SU CIERRE (RC-GM-13)
+Public sLenguajeCodigo As String
+Public sNombreListado As String
 
 ' --- LA AYUDA: CONTROL Y SHORTCODE QUE MUESTRA, PARA REPINTARLA ---
 ' AL CAMBIAR DE TEMA O DE TIPOGRAFÍA (m_ResaltadoSintaxis)
@@ -405,6 +412,7 @@ End
 '               línea del valor, seleccionado (SC-39)
 '             - plantilla: inserta el marcador • en lugar del contenido y
 '               lo deja seleccionado (SC-21)
+'             - codigo: el camino de InsertarCodigo (SC-42)
 '             Un bloque ocupa líneas propias y cierra con el ancla nombrada
 '             precedida de línea en blanco (SC-33); una marca en línea
 '             cierra en la misma línea.
@@ -428,6 +436,12 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
   ' --- 2. FIGURA: ELIGE LA IMAGEN, LA COPIA A /media Y ARMA EL BLOQUE ---
   If oFila.sModo = m_CatalogoShortcodes.MODO_FIGURA Then
     FMain.InsertarFigura(InStr(oFila.sApertura, ".fullwidth") > 0)
+    Return
+  Endif
+
+  ' CÓDIGO: PIDE EL LENGUAJE Y ARMA LA CERCA (SC-42)
+  If oFila.sModo = m_CatalogoShortcodes.MODO_CODIGO Then
+    InsertarCodigo(oFila)
     Return
   Endif
 
@@ -545,6 +559,146 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
 
   ' --- 7. FOCO AL EDITOR (RC-GM-07) ---
   FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ==============================================================================
+' Función   : InsertarCodigo
+' Propósito : Inserta código (SC-42) sobre la selección, que es obligatoria:
+'             - en línea: la envuelve en comillas inversas, más que las que
+'               tenga adentro;
+'             - bloque (code): pide el lenguaje y la cerca con ~~~ lenguaje;
+'             - listado: pide además el nombre y arma el bloque con el
+'               marcador • en el lugar del pie, seleccionado (SC-21), y el
+'               ancla nombrada (SC-33).
+'             EL FILTRO codigo.lua REPITE LOS CONTROLES AL GENERAR.
+' Parámetros: oFila As CShortcodeCatalogo — shortcode de modo codigo
+' Retorna   : nada
+' ==============================================================================
+Private Sub InsertarCodigo(oFila As CShortcodeCatalogo)
+
+  Dim sSeleccion As String
+  Dim sCerca As String
+  Dim sCuerpo As String
+  Dim sInsertar As String
+  Dim sTexto As String
+  Dim sApertura As String
+  Dim iInicio As Integer
+  Dim iLargo As Integer
+  Dim iMarca As Integer
+  Dim bListado As Boolean
+
+  ' --- 1. LA SELECCIÓN ES OBLIGATORIA ---
+  sSeleccion = m_EditorPrincipal.TextoSeleccionado()
+  If sSeleccion = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione el código al que quiere aplicar «" & oFila.sEtiqueta & "».")
+    FMain.txtEditorProyecto.SetFocus()
+    Return
+  Endif
+  iInicio = m_EditorPrincipal.InicioSeleccion()
+  iLargo = m_EditorPrincipal.LargoSeleccion()
+
+  ' --- 2. EN LÍNEA: COMILLAS INVERSAS ---
+  If oFila.sTipo = m_CatalogoShortcodes.TIPO_LINEA Then
+    If InStr(sSeleccion, Chr(10)) > 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El código en línea va en una sola línea." & gb.NewLine & gb.NewLine &
+        "Para varias líneas, use el bloque de código.")
+      FMain.txtEditorProyecto.SetFocus()
+      Return
+    Endif
+    ' UNA COMILLA MÁS QUE LA RACHA MÁS LARGA DE ADENTRO; SI EL CÓDIGO
+    ' EMPIEZA O TERMINA CON UNA, UN ESPACIO LA SEPARA DE LA CERCA (Pandoc
+    ' LO QUITA AL LEER)
+    sCerca = String$(RachaMasLarga(sSeleccion, "`") + 1, "`")
+    If Left(sSeleccion, 1) = "`" Or Right(sSeleccion, 1) = "`" Then
+      sInsertar = sCerca & " " & sSeleccion & " " & sCerca
+    Else
+      sInsertar = sCerca & sSeleccion & sCerca
+    Endif
+    If Not m_EditorPrincipal.Insertar(sInsertar) Then Return
+    FMain.txtEditorProyecto.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. BLOQUE: EL LENGUAJE (Y EL NOMBRE DEL LISTADO) ---
+  ' ShowModal DEVUELVE 1 SI SE ACEPTÓ; LOS DATOS VUELVEN EN ESTE MÓDULO
+  bListado = (oFila.sClase = "listado")
+  FCodigo.EsListado = bListado
+  If FCodigo.ShowModal() <> 1 Then
+    FMain.txtEditorProyecto.SetFocus()
+    Return
+  Endif
+
+  ' --- 4. LA CERCA: ~~~ Y UNA TILDE MÁS QUE LA RACHA MÁS LARGA DE ADENTRO ---
+  ' LAS COMILLAS INVERSAS DE ADENTRO NO LA CIERRAN: SON OTRA CERCA
+  sCerca = String$(Max(3, RachaMasLarga(sSeleccion, "~") + 1), "~")
+  ' SIN LOS SALTOS FINALES: QUEDARÍAN COMO LÍNEAS EN BLANCO DEL CÓDIGO
+  sCuerpo = sSeleccion
+  While Right(sCuerpo, 1) = Chr(10)
+    sCuerpo = Left(sCuerpo, Len(sCuerpo) - 1)
+  Wend
+  sInsertar = sCerca & " " & sLenguajeCodigo & Chr(10) & sCuerpo & Chr(10) & sCerca
+
+  ' --- 5. LISTADO: EL BLOQUE, EL PIE Y EL ANCLA ---
+  sTexto = m_EditorPrincipal.Texto()
+  If bListado Then
+    sApertura = "::: {." & oFila.sClase & " #lst-" & sNombreListado & "}"
+    ' UN id REPETIDO DA UN XML INVÁLIDO: SE AVISA ANTES DE INSERTAR
+    If InStr(sTexto, "#lst-" & sNombreListado & "}") > 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Ya hay un listado lst-" & sNombreListado & " en el archivo." & gb.NewLine & gb.NewLine &
+        "Cada listado necesita un nombre propio.")
+      FMain.txtEditorProyecto.SetFocus()
+      Return
+    Endif
+    ' LÍNEA EN BLANCO ANTES DEL ANCLA: SIN ELLA PANDOC LA LEE COMO TEXTO (SC-33)
+    sInsertar = sApertura & Chr(10) & Chr(10) & sInsertar & Chr(10) & Chr(10) &
+      m_Constantes.SNIPPET_MARCADOR & Chr(10) & Chr(10) &
+      AnclaCierre(oFila.sClase) & Chr(10) & oFila.sCierre
+  Endif
+
+  ' --- 6. INSERCIÓN, CON LAS LÍNEAS EN BLANCO QUE FALTEN ---
+  ' UN BLOQUE PEGADO A UN PÁRRAFO NO ES UN BLOQUE (MEDIDO)
+  sInsertar = SeparacionAntes(String.Left(sTexto, iInicio)) & sInsertar &
+    SeparacionDespues(String.Mid(sTexto, iInicio + iLargo + 1))
+  If Not m_EditorPrincipal.Insertar(sInsertar) Then Return
+
+  ' --- 7. LISTADO: EL MARCADOR DEL PIE QUEDA SELECCIONADO (SC-21) ---
+  ' String.InStr CUENTA CARACTERES, COHERENTE CON Seleccionar (RC-GM-21)
+  If bListado Then
+    iMarca = String.InStr(sInsertar, m_Constantes.SNIPPET_MARCADOR)
+    If iMarca > 0 Then m_EditorPrincipal.Seleccionar(iInicio + iMarca - 1, 1)
+  Endif
+
+  FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ==============================================================================
+' Función   : RachaMasLarga
+' Propósito : La racha más larga de un carácter repetido en un texto
+' Parámetros: sTexto As String — el texto
+'             sCar As String — el carácter
+' Retorna   : Integer — el largo de la racha; 0 si no aparece
+' ==============================================================================
+Private Function RachaMasLarga(sTexto As String, sCar As String) As Integer
+
+  Dim iPos As Integer
+  Dim iRacha As Integer
+  Dim iMaxima As Integer
+
+  ' POR CARACTERES, CON String.* (SC-02): EL TEXTO ES DEL USUARIO
+  For iPos = 1 To String.Len(sTexto)
+    If String.Mid(sTexto, iPos, 1) = sCar Then
+      Inc iRacha
+      If iRacha > iMaxima Then iMaxima = iRacha
+    Else
+      iRacha = 0
+    Endif
+  Next
+  Return iMaxima
 
 End
 

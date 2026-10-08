@@ -43,7 +43,8 @@
   <!-- ============================================================ -->
   <!-- MÓDULO COMÚN CON docbook-to-latex.xsl                        -->
   <!-- APORTA: f:latex, f:latex-url, f:babel-lang, f:ruta-imagen,   -->
-  <!--         f:comando-cita y la plantilla abortar-elemento.      -->
+  <!--         f:comando-cita, f:codigo-latex, el parámetro         -->
+  <!--         codigo_dir y la plantilla abortar-elemento.          -->
   <!-- xsl:import DEBE SER EL PRIMER HIJO DE xsl:stylesheet.        -->
   <!-- ============================================================ -->
   <xsl:import href="tex-comun.xsl"/>
@@ -732,7 +733,10 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
-  <xsl:template match="monospace | code">
+  <!-- CÓDIGO EN LÍNEA: <monospace>, LO QUE PANDOC ESCRIBE PARA `x`.  -->
+  <!-- <code> ES SIEMPRE UN BLOQUE (SC-42): LO TOMA LA PLANTILLA DE   -->
+  <!-- ABAJO.                                                         -->
+  <xsl:template match="monospace">
     <xsl:text>\texttt{</xsl:text>
     <xsl:apply-templates/>
     <xsl:text>}</xsl:text>
@@ -762,30 +766,28 @@
   </xsl:template>
 
 <!-- ============================================================ -->
-  <!-- BLOQUE DE CÓDIGO CON LENGUAJE — USA listings                -->
-  <!-- priority="5" TIENE PRECEDENCIA SOBRE EL TEMPLATE GENÉRICO   -->
-  <!-- code SIN @language SIGUE USANDO \texttt{} (INLINE)          -->
+  <!-- CÓDIGO (SC-42): <code> ES SIEMPRE UN BLOQUE. LO ARMA         -->
+  <!-- f:codigo-latex (tex-comun.xsl), COMÚN CON LOS LIBROS: LA     -->
+  <!-- CAJA gbCodigo CON LAS LÍNEAS COLOREADAS POR                  -->
+  <!-- colorear_codigo.sh. listings SE RETIRÓ: NO CONOCE            -->
+  <!-- JavaScript, JSON, YAML NI Lua, Y CON language=JavaScript LA  -->
+  <!-- COMPILACIÓN SE CORTABA (MEDIDO).                             -->
   <!-- ============================================================ -->
-  <xsl:template match="code[@language]" priority="5">
-    <xsl:variable name="lang">
-      <xsl:choose>
-        <xsl:when test="lower-case(@language) = 'python'">Python</xsl:when>
-        <xsl:when test="lower-case(@language) = 'r'">R</xsl:when>
-        <xsl:when test="lower-case(@language) = 'javascript'">JavaScript</xsl:when>
-        <xsl:when test="lower-case(@language) = 'sql'">SQL</xsl:when>
-        <xsl:when test="lower-case(@language) = 'bash'">bash</xsl:when>
-        <xsl:when test="lower-case(@language) = 'java'">Java</xsl:when>
-        <xsl:when test="lower-case(@language) = 'c'">C</xsl:when>
-        <xsl:otherwise>
-          <xsl:value-of select="@language"/>
-        </xsl:otherwise>
-      </xsl:choose>
-    </xsl:variable>
-    <xsl:text>&#10;\begin{lstlisting}[language=</xsl:text>
-    <xsl:value-of select="$lang"/>
-    <xsl:text>]&#10;</xsl:text>
-    <xsl:value-of select="."/>
-    <xsl:text>&#10;\end{lstlisting}&#10;&#10;</xsl:text>
+  <xsl:template match="code">
+    <xsl:value-of select="f:codigo-latex(.)"/>
+  </xsl:template>
+
+  <!-- LISTADO: <fig fig-type="listado"> CON EL <code> Y EL PIE.    -->
+  <!-- EL PIE VA DEBAJO, «Código N.», CON SU PROPIO CONTADOR: NO    -->
+  <!-- CUENTA COMO FIGURA. NO FLOTA: UN LISTADO LARGO CRUZA DE      -->
+  <!-- PÁGINA. priority="5": GANA SOBRE LA PLANTILLA DE fig.         -->
+  <xsl:template match="fig[@fig-type='listado']" priority="5">
+    <xsl:value-of select="f:codigo-latex(code)"/>
+    <xsl:text>\gbPieCodigo{</xsl:text>
+    <xsl:value-of select="@id"/>
+    <xsl:text>}{</xsl:text>
+    <xsl:apply-templates select="caption/p/node()"/>
+    <xsl:text>}&#10;&#10;</xsl:text>
   </xsl:template>
 
   <xsl:template match="sc">

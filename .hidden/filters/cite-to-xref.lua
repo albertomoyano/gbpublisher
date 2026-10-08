@@ -216,7 +216,7 @@ end
 -- CON ESTOS PREFIJOS SALDRÍA COMO CITA BIBLIOGRÁFICA FALSA: SE FRENA.
 -- NINGUNA CLAVE BIBLIOGRÁFICA EMPIEZA CON LETRA (EMPIEZAN CON EL id
 -- NUMÉRICO DEL REGISTRO).
-local prefijos_referencia = { 'fig-', 'tbl-', 'eq-' }
+local prefijos_referencia = { 'fig-', 'tbl-', 'eq-', 'lst-' }
 
 function Cite(el)
   local result = {}
@@ -226,8 +226,8 @@ function Cite(el)
     for _, prefijo in ipairs(prefijos_referencia) do
       if citation.id:sub(1, #prefijo) == prefijo then
         error('\n[referencia] @' .. citation.id .. ': en revistas no hay ' ..
-              'referencias cruzadas. La mención a una figura, una tabla o una ' ..
-              'ecuación se escribe como texto («figura 2»).', 0)
+              'referencias cruzadas. La mención a una figura, una tabla, una ' ..
+              'ecuación o un listado se escribe como texto («figura 2»).', 0)
       end
     end
   end
@@ -300,7 +300,9 @@ local table_counter = 0
 --   :::{.table #tbl-cualquier-cosa}  → <table-wrap id="tbl-N">
 --   ::: epigraph {…}{…}              → <disp-quote specific-use="epigraph"> (VÍA dos-partes.lua)
 --   ::: verse                        → <verse-group> con <verse-line>
---   :::{.code language="python"}     → <code language="python">
+--   ~~~ python … ~~~                 → <code language="python"> (codigo.lua, SC-42)
+--   :::{.listado #lst-id}            → <fig id="lst-id" fig-type="listado"> CON EL
+--                                      <code> Y EL PIE (VÍA codigo.lua)
 --   ::: recuadro                     → <boxed-text content-type="recuadro"> (SC-41)
 --   ::: recuadrob {…}{…}             → <boxed-text content-type="recuadro-barra">
 --                                      CON LA BARRA EN <caption><title> (VÍA dos-partes.lua)
@@ -487,35 +489,23 @@ function Div(el)
     return pandoc.RawBlock('jats', raw)
   end
 
-  -- CÓDIGO DE PROGRAMACIÓN: <code language="...">
-  -- EL ATRIBUTO language LO PROVEE EL SHORTCODE
-  -- EL CONTENIDO DEBE IR EN BLOQUE ~~~ DENTRO DEL DIV
-  -- PARA QUE PANDOC LO GENERE COMO CodeBlock
-  -- ESTRUCTURA EN MD:
-  --   ::: {.code language="python"}
-  --   ~~~
-  --   def factorial(n):
-  --       ...
-  --   ~~~
-  --   :::
-  -- ESCAPADO XML: & PRIMERO, LUEGO < Y > PARA EVITAR DOBLE ESCAPE
-  if el.classes:includes('code') then
-    local language = el.attributes['language'] or ''
-    local content = ''
-    for _, block in ipairs(el.content) do
-      if block.t == 'CodeBlock' then
-        content = block.text
-      end
+  -- LISTADO DE CÓDIGO (SC-42): <fig fig-type="listado"> CON EL <code> Y EL
+  -- PIE. codigo.lua YA CONTROLÓ LA FORMA Y ESCRIBIÓ EL BLOQUE: EL Div LLEGA
+  -- CON DOS HIJOS, EL RawBlock DEL <code> Y EL Para DEL PIE. EL PIE CONSERVA
+  -- FORMATO Y CITAS: LOS Cite YA SON <xref>. EL BLOQUE SUELTO (~~~ python)
+  -- LO ESCRIBE codigo.lua Y NO PASA POR ACÁ. EL VIEJO ::: {.code} LO FRENA
+  -- codigo.lua.
+  if el.classes:includes('listado') then
+    local bloque, pie = el.content[1], el.content[2]
+    if #el.content ~= 2 or bloque.t ~= 'RawBlock' or bloque.format ~= 'jats'
+       or (pie.t ~= 'Para' and pie.t ~= 'Plain') then
+      error('\n[código] listado #' .. el.identifier .. ' sin preparar: codigo.lua ' ..
+            'tiene que correr antes que cite-to-xref.lua\n', 0)
     end
-    content = content:gsub('&', '&amp;')
-    content = content:gsub('<', '&lt;')
-    content = content:gsub('>', '&gt;')
-    local lang_attr = ''
-    if language ~= '' then
-      -- ESCAPAR: language va a atributo
-      lang_attr = ' language="' .. escape_xml_attr(language) .. '"'
-    end
-    local raw = '<code' .. lang_attr .. '>' .. content .. '</code>'
+    local raw = '<fig id="' .. escape_xml_attr(el.identifier) .. '" fig-type="listado">\n' ..
+                '  <caption><p>' .. inlines_a_jats(pie.content) .. '</p></caption>\n' ..
+                '  ' .. bloque.text .. '\n' ..
+                '</fig>'
     return pandoc.RawBlock('jats', raw)
   end
 

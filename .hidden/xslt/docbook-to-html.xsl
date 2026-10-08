@@ -49,7 +49,8 @@ RC APLICADAS:
                 xmlns:xlink="http://www.w3.org/1999/xlink"
                 xmlns:xs="http://www.w3.org/2001/XMLSchema"
                 xmlns:nl="urn:gbpublisher:numeracion-libro"
-                exclude-result-prefixes="db xs xlink nl">
+                xmlns:gbc="urn:gbpublisher:codigo"
+                exclude-result-prefixes="db xs xlink nl gbc">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -63,6 +64,9 @@ RC APLICADAS:
   <!-- NÚMERO DE FIGURA Y REFERENCIAS CRUZADAS: LA MISMA REGLA QUE EL PDF
        Y QUE EL EPUB (SC-31). NO DUPLICARLA ACÁ -->
   <xsl:include href="numeracion-libro.xsl"/>
+
+  <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
+  <xsl:include href="codigo-comun.xsl"/>
 
   <!-- Output principal: no se usa en Fase 1 (todo va por xsl:result-document) -->
   <xsl:output method="xml"
@@ -89,6 +93,11 @@ RC APLICADAS:
        'apa' | 'vancouver' | 'iso690' | 'ieee' | 'autor-anio' (fallback).
        DEFAULT 'apa' SI NO SE PASA (LIBROS ACADÉMICOS SUELEN USAR APA). -->
   <xsl:param name="estilo_cita" as="xs:string" select="'apa'"/>
+
+  <!-- CARPETA DE LOS BLOQUES DE CÓDIGO COLOREADOS POR colorear_codigo.sh
+       (SC-42), COMO RUTA ABSOLUTA. VACÍA: EL CÓDIGO SALE SIN COLOR.
+       generar_html_libro.sh LA PASA SIEMPRE -->
+  <xsl:param name="codigo_dir" as="xs:string" select="''"/>
 
   <!-- ==========================================================
        CARGA DEL MANIFIESTO Y KEY PARA MAPEAR xml:id → nombre_archivo
@@ -344,7 +353,7 @@ RC APLICADAS:
           <link rel="preconnect" href="https://fonts.googleapis.com"/>
           <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"/>
           <link rel="stylesheet"
-                href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"/>
+                href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&amp;display=swap"/>
 
           <!-- CSS y JS externos, compartidos entre index y capítulos -->
           <link rel="stylesheet" href="assets/css/gbpublisher.css"/>
@@ -1043,7 +1052,7 @@ RC APLICADAS:
               <link rel="preconnect" href="https://fonts.googleapis.com"/>
               <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"/>
               <link rel="stylesheet"
-                    href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"/>
+                    href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&amp;display=swap"/>
               <link rel="stylesheet" href="assets/css/gbpublisher.css"/>
             </head>
 
@@ -1580,20 +1589,30 @@ RC APLICADAS:
     </div>
   </xsl:template>
 
-  <!-- CÓDIGO EN BLOQUE (programlisting) → <pre><code>.
-       El atributo language se traslada como clase (para un futuro
-       resaltador de sintaxis tipo highlight.js). -->
+  <!-- CÓDIGO EN BLOQUE (SC-42): EL BLOQUE DE gbc:bloque-html
+       (codigo-comun.xsl), COMÚN CON LAS OTRAS SALIDAS DIGITALES, CON LAS
+       LÍNEAS COLOREADAS POR colorear_codigo.sh -->
   <xsl:template match="db:programlisting | programlisting">
-    <pre class="code-block">
-      <code>
-        <xsl:if test="@language">
-          <xsl:attribute name="class">
-            <xsl:text>language-</xsl:text><xsl:value-of select="@language"/>
-          </xsl:attribute>
+    <xsl:call-template name="gbc:bloque-html">
+      <xsl:with-param name="el" select="."/>
+      <xsl:with-param name="ns" select="'http://www.w3.org/1999/xhtml'"/>
+      <xsl:with-param name="dir" select="$codigo_dir"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- LISTADO (SC-42): EL BLOQUE Y EL PIE «Código N», NUMERADO COMO EN
+       EL PDF (nl:numero-listado). NO ENTRA EN EL PANEL DE FIGURAS -->
+  <xsl:template match="db:example[@role = 'listado'] | example[@role = 'listado']" priority="5">
+    <div class="gb-listado" id="{@xml:id}">
+      <xsl:apply-templates select="db:programlisting | programlisting"/>
+      <div class="fig-caption">
+        <span class="fig-label">Código <xsl:value-of select="nl:numero-listado(., $piezasLibro)"/></span>
+        <xsl:if test="normalize-space((db:title | title)[1]) != ''">
+          <xsl:text>. </xsl:text>
+          <xsl:apply-templates select="(db:title | title)[1]/node()"/>
         </xsl:if>
-        <xsl:value-of select="."/>
-      </code>
-    </pre>
+      </div>
+    </div>
   </xsl:template>
 
   <!-- CÓDIGO INLINE (literal) → <code> -->

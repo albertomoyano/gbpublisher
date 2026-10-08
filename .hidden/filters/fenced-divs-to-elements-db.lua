@@ -23,7 +23,8 @@
 --                                                (PARTIDO ANTES POR
 --                                                dos-partes.lua — VER 6.4)
 --   5. VERSE (.verse)                          → <literallayout role="verse">
---   6. CODE (.code language=)                  → <programlisting language="X">
+--   6. LISTADO (.listado #lst-, SC-42)         → <example role="listado">
+--      (EL BLOQUE SUELTO ~~~ python LO ESCRIBE codigo.lua)
 --   7. RECUADROS (recuadro, recuadrob, SC-41)  → <sidebar role="recuadro" | "recuadro-barra">
 --   8. FORMULA (.formula)                      → <equation xml:id="X">
 --   9. SPEECH (.speech speaker=)               → <para role="speech">
@@ -412,38 +413,27 @@ function Div(el)
   end
 
   -- =====================================================
-  -- 6.6. CÓDIGO (.code language=)
+  -- 6.6. LISTADO DE CÓDIGO (.listado #lst-…, SC-42)
   -- =====================================================
-  -- ESTRUCTURA EN MD:
-  --   ::: {.code language="python"}
-  --   ~~~
-  --   def factorial(n):
-  --       ...
-  --   ~~~
-  --   :::
-  --
-  -- PANDOC POR DEFECTO EMITE <programlisting> SIN EL ATRIBUTO
-  -- language. ESTE FILTRO LO AGREGA. ATRIBUTO language ES NATIVO
-  -- DE DOCBOOK 5.2 EN <programlisting>.
-  if el.classes:includes('code') then
-    local language = el.attributes['language'] or ''
-    local contenido = ''
-    for _, block in ipairs(el.content) do
-      if block.t == 'CodeBlock' then
-        contenido = block.text
-      end
+  -- <example role="listado" xml:id="lst-…"><title>PIE</title>
+  -- <programlisting language="…">…</programlisting></example>.
+  -- codigo.lua YA CONTROLÓ LA FORMA Y ESCRIBIÓ EL BLOQUE: EL Div LLEGA
+  -- CON DOS HIJOS, EL RawBlock DEL programlisting Y EL Para DEL PIE.
+  -- <example> Y NO <figure>: SIGUE EL PATRÓN DE LOS FORMALES (6.10) Y NO
+  -- SE MEZCLA CON LA NUMERACIÓN DE LAS FIGURAS. VALIDA CONTRA EL RNG DE
+  -- DOCBOOK 5.2. EL BLOQUE SUELTO (~~~ python) LO ESCRIBE codigo.lua Y
+  -- NO PASA POR ACÁ; EL VIEJO ::: {.code} LO FRENA codigo.lua.
+  if el.classes:includes('listado') then
+    local bloque, pie = el.content[1], el.content[2]
+    if #el.content ~= 2 or bloque.t ~= 'RawBlock' or bloque.format ~= 'docbook'
+       or (pie.t ~= 'Para' and pie.t ~= 'Plain') then
+      error('\n[código] listado #' .. el.identifier .. ' sin preparar: codigo.lua ' ..
+            'tiene que correr antes que fenced-divs-to-elements-db.lua\n', 0)
     end
-    -- ESCAPAR XML EN EL CONTENIDO
-    contenido = contenido:gsub('&', '&amp;')
-    contenido = contenido:gsub('<', '&lt;')
-    contenido = contenido:gsub('>', '&gt;')
-
-    local lang_attr = ''
-    if language ~= '' then
-      lang_attr = ' language="' .. escape_xml_attr(language) .. '"'
-    end
-    local raw = '<programlisting' .. lang_attr .. '>' ..
-                contenido .. '</programlisting>'
+    local raw = '<example role="listado" xml:id="' .. escape_xml_attr(el.identifier) .. '">\n' ..
+                '  <title>' .. inlines_a_docbook(pie.content) .. '</title>\n' ..
+                bloque.text .. '\n' ..
+                '</example>'
     return pandoc.RawBlock('docbook', raw)
   end
 

@@ -42,7 +42,11 @@
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xlink="http://www.w3.org/1999/xlink"
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
-  exclude-result-prefixes="xs xlink">
+  xmlns:gbc="urn:gbpublisher:codigo"
+  exclude-result-prefixes="xs xlink gbc">
+
+  <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
+  <xsl:include href="codigo-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS EXTERNOS
@@ -82,6 +86,11 @@
                 SOLO APLICA A FIGURAS GENERADAS POR gbpublisher (fi*.png).
                 FIGURAS DEL AUTOR (NOMBRE LIBRE) CAEN AUTOMÁTICAMENTE A PNG. -->
   <xsl:param name="modo_figura" as="xs:string" select="'png'"/>
+
+  <!-- CARPETA DE LOS BLOQUES DE CÓDIGO COLOREADOS POR colorear_codigo.sh
+       (SC-42), COMO RUTA ABSOLUTA. VACÍA: EL CÓDIGO SALE SIN COLOR. LA
+       APLICACIÓN LA PASA SIEMPRE -->
+  <xsl:param name="codigo_dir" as="xs:string" select="''"/>
 
   <!-- ================================================
        SALIDA: HTML5
@@ -471,16 +480,13 @@
         <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
                 async="async"/>
 
-        <!-- HIGHLIGHT.JS — COLOREADO DE SINTAXIS -->
-        <link rel="stylesheet"
-              href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"/>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"/>
-        <script>hljs.highlightAll();</script>
+        <!-- EL CÓDIGO LLEGA COLOREADO DESDE LA GENERACIÓN (SC-42): SIN
+             highlight.js NI OTRO RESALTADOR EN EL NAVEGADOR -->
 
         <!-- FUENTES TIPOGRÁFICAS -->
         <link rel="preconnect" href="https://fonts.googleapis.com"/>
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"/>
-        <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"
+        <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400;1,600&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&amp;family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&amp;display=swap"
               rel="stylesheet"/>
 
         <style>
@@ -507,7 +513,7 @@
 
             --font-serif:  'Noto Serif', Georgia, serif;
             --font-sans:   'IBM Plex Sans', system-ui, sans-serif;
-            --font-mono:   'JetBrains Mono', 'Courier New', monospace;
+            --font-mono:   'IBM Plex Mono', 'Courier New', monospace;
 
             --text-xs:   0.75rem;    /* 13.5px — metadatos, labels */
             --text-sm:   0.875rem;   /* 15.75px — abstracts, panel */
@@ -1256,31 +1262,86 @@
             line-height: 1.6;
           }
 
-          /* CÓDIGO FUENTE */
-          .code-block {
+          /* CÓDIGO (SC-42). LA PALETA ES Gruvbox, LA DEL TEMA DE LA APLICACIÓN
+             (.hidden/themes/gruvbox.theme). LOS TOKENS SON LAS CLASES DE
+             skylighting QUE ESCRIBE colorear_codigo.lua. EL NÚMERO DE LÍNEA Y EL
+             ↩ LOS DIBUJA EL CSS: ASÍ NO SE COPIAN CON EL CÓDIGO.
+             GEMELOS: jats-to-html.xsl, gbpublisher.css, preambulo-contrato.tex Y
+             m_XML.ObtenerPreambuloEmbebido. UN CAMBIO DE COLOR VA EN LOS CUATRO. */
+          .gb-codigo {
             margin: 1.5rem 0;
-            background: var(--color-code-bg);
-            border: 1px solid var(--color-border);
-            border-radius: var(--radius-lg);
+            background: #282828;
+            color: #ebdbb2;
+            border-radius: 6px;
             overflow: hidden;
           }
-
-          .code-lang-label {
+          .gb-codigo-cab {
             font-family: var(--font-mono);
             font-size: var(--text-xs);
-            color: var(--color-text-muted);
-            background: var(--color-border);
-            padding: 0.3rem 0.75rem;
-            display: block;
+            color: #a89984;
+            background: #3c3836;
+            padding: 0.3rem 0.9rem;
           }
-
-          .code-block pre {
+          .gb-codigo-cuerpo {
+            margin: 0;
+            padding: 0.8rem 1rem 0.8rem 0;
+            overflow-x: auto;
+            background: none;
+            border: 0;
             font-family: var(--font-mono);
             font-size: var(--text-sm);
             line-height: 1.6;
-            padding: 1rem 1.25rem;
-            overflow-x: auto;
-            margin: 0;
+            color: inherit;
+          }
+          .gb-codigo-cuerpo code {
+            font-family: inherit;
+            font-size: inherit;
+            background: none;
+            border: 0;
+            padding: 0;
+            color: inherit;
+            white-space: pre;
+          }
+          .gb-l::before {
+            content: attr(data-n);
+            display: inline-block;
+            width: 2.5em;
+            padding-right: 1.2em;
+            text-align: right;
+            color: #7c6f64;
+            -webkit-user-select: none;
+            user-select: none;
+          }
+          .gb-ret::after {
+            content: "\21A9";
+            color: #7c6f64;
+            -webkit-user-select: none;
+            user-select: none;
+          }
+          .gb-codigo .kw, .gb-codigo .cf { color: #83a598; font-weight: bold; }
+          .gb-codigo .dt, .gb-codigo .at { color: #fabd2f; }
+          .gb-codigo .dv, .gb-codigo .bn, .gb-codigo .fl, .gb-codigo .cn { color: #d3869b; }
+          .gb-codigo .ch, .gb-codigo .st, .gb-codigo .vs, .gb-codigo .ss { color: #b8bb26; }
+          .gb-codigo .sc, .gb-codigo .im, .gb-codigo .pp { color: #fe8019; }
+          .gb-codigo .co, .gb-codigo .do, .gb-codigo .an, .gb-codigo .cv,
+          .gb-codigo .in { color: #928374; font-style: italic; }
+          .gb-codigo .re { color: #928374; }
+          .gb-codigo .ot, .gb-codigo .fu, .gb-codigo .op, .gb-codigo .bu,
+          .gb-codigo .ex { color: #8ec07c; }
+          .gb-codigo .wa { color: #fe8019; font-weight: bold; }
+          .gb-codigo .al { color: #fb4934; font-weight: bold; }
+          .gb-codigo .er { color: #fb4934; }
+          /* LISTADO: EL BLOQUE CON SU PIE «Código N», COMO UNA FIGURA */
+          .gb-listado { margin: 1.5rem 0; }
+          .gb-listado .gb-codigo { margin: 0; }
+          /* CÓDIGO EN LÍNEA: GRIS SUAVE */
+          .code-inline {
+            font-family: var(--font-mono);
+            font-size: 0.9em;
+            background: var(--color-code-bg);
+            padding: 0.1rem 0.35rem;
+            border-radius: 3px;
+            border: 1px solid var(--color-border);
           }
 
           /* RECUADRO */
@@ -3071,7 +3132,8 @@
 
       <div class="fig-label">
         <xsl:text>Figura </xsl:text>
-        <xsl:number count="fig" level="any"/>
+        <!-- UN LISTADO DE CÓDIGO NO ES UNA FIGURA: TIENE SU CUENTA (SC-42) -->
+        <xsl:number count="fig[not(@fig-type = 'listado')]" level="any"/>
       </div>
       <xsl:if test="caption/p">
         <!-- EL PIE CONSERVA FORMATO Y CITAS -->
@@ -3096,20 +3158,33 @@
   <!-- ================================================
        CÓDIGO FUENTE
        ================================================ -->
+  <!-- <code> ES SIEMPRE UN BLOQUE: EL CÓDIGO EN LÍNEA ES <monospace>.
+       EL BLOQUE LO ARMA gbc:bloque-html (codigo-comun.xsl), COMÚN CON
+       LAS OTRAS SALIDAS DIGITALES, CON LAS LÍNEAS COLOREADAS POR
+       colorear_codigo.sh -->
   <xsl:template match="code">
-    <div class="code-block">
-      <xsl:if test="@language">
-        <span class="code-lang-label">
-          <xsl:value-of select="@language"/>
-        </span>
+    <xsl:call-template name="gbc:bloque-html">
+      <xsl:with-param name="el" select="."/>
+      <xsl:with-param name="ns" select="''"/>
+      <xsl:with-param name="dir" select="$codigo_dir"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- LISTADO: EL BLOQUE Y EL PIE «Código N», CON LAS CLASES DEL PIE DE
+       LAS FIGURAS. TIENE SU PROPIA CUENTA: NO ES UNA FIGURA, Y NO ENTRA
+       EN EL PANEL DE FIGURAS (QUE BUSCA .fig-wrapper) -->
+  <xsl:template match="fig[@fig-type = 'listado']" priority="5">
+    <div class="gb-listado" id="{@id}">
+      <xsl:apply-templates select="code"/>
+      <div class="fig-label">
+        <xsl:text>Código </xsl:text>
+        <xsl:number count="fig[@fig-type = 'listado']" level="any"/>
+      </div>
+      <xsl:if test="caption/p">
+        <div class="fig-caption">
+          <xsl:apply-templates select="caption/p/node()"/>
+        </div>
       </xsl:if>
-      <!-- LA CLASE language-XXX ES RECONOCIDA POR HIGHLIGHT.JS -->
-      <pre><code>
-        <xsl:if test="@language">
-          <xsl:attribute name="class">language-<xsl:value-of select="@language"/></xsl:attribute>
-        </xsl:if>
-        <xsl:value-of select="."/>
-      </code></pre>
     </div>
   </xsl:template>
 
@@ -4416,7 +4491,7 @@
   </xsl:template>
 
   <xsl:template match="monospace">
-    <code><xsl:apply-templates/></code>
+    <code class="code-inline"><xsl:apply-templates/></code>
   </xsl:template>
 
   <!-- ENLACE EXTERNO. SIN ESTA PLANTILLA, LA REGLA INCORPORADA DEJABA
