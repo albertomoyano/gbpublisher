@@ -1,0 +1,199 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo: m_Enmarcar
+' ------------------------------------------------------------------------------
+' Enmarca el texto seleccionado en el editor principal con un par de signos:
+' paréntesis, comillas angulares, signos de pregunta y de admiración,
+' corchetes y rayas. Lo dispara btnEnmarcar de FMain; el par lo elige FEnmarcar.
+'
+' LAS REGLAS
+'   - SIN SELECCIÓN NO HAY NADA QUE ENMARCAR: AVISA Y NO ABRE EL DIÁLOGO.
+'   - LOS BLANCOS DE LOS BORDES QUEDAN AFUERA DEL PAR: UN DOBLE CLIC SE LLEVA EL
+'     ESPACIO SIGUIENTE, Y «palabra » SALE «(palabra) », NO «(palabra )».
+'   - UNA SELECCIÓN CON UNA LÍNEA EN BLANCO ABARCA DOS PÁRRAFOS: UN PAR QUE ABRE
+'     EN UNO Y CIERRA EN OTRO ESTÁ MAL SIEMPRE. UN SALTO SIMPLE SÍ SE ACEPTA.
+'   - EL CORCHETE VA ESCAPADO DE LOS DOS LADOS: SIN ESCAPE, [texto] ES UN ENLACE
+'     SI HAY UNA REFERENCIA CON ESE NOMBRE (shortcut_reference_links, ACTIVA EN
+'     -f markdown). \[ NO ABRE MATEMÁTICA: tex_math_single_backslash Y
+'     tex_math_double_backslash ESTÁN APAGADAS (MEDIDO CON PANDOC 3.1.3).
+'   - LAS RAYAS SON «--» (DECISIÓN DE ALBERTO). smart LAS LLEVA A U+2013 (SC-40).
+'   - UN SOLO PASO DE DESHACER: EL CAMBIO VA POR m_EditorPrincipal.ReemplazarTramo.
+'   - EL CURSOR QUEDA DESPUÉS DEL CIERRE, SIN SELECCIÓN, PARA SEGUIR ESCRIBIENDO.
+'
+' LAS POSICIONES SE CALCULAN SOBRE .Text, EN CARACTERES (RC-GM-21, RC-GM-12):
+' EL NÚCLEO SE TOMA DEL TEXTO COMPLETO Y NO DE Selection.Text, PARA QUE LAS
+' POSICIONES Y EL CONTENIDO SALGAN DE LA MISMA FUENTE.
+'
+' EL MÓDULO NO DEVUELVE EL FOCO AL EDITOR: LO HACE EL HANDLER (RC-GM-07).
+' ==============================================================================
+
+' --- RESPUESTA DE FEnmarcar: EL ÍNDICE DEL PAR ELEGIDO; -1 SI SE CANCELÓ ---
+' EN EL MÓDULO Y NO EN UNA VARIABLE Public DEL FORM: NO SOBREVIVE AL CIERRE (RC-GM-13)
+Public iParElegido As Integer
+
+' --- SESIÓN: EL ÚLTIMO PAR USADO, PARA QUE EL COMBO ARRANQUE EN ÉL (RC-GM-16) ---
+' Integer EMPIEZA EN 0: LA PRIMERA VEZ, EL PRIMER PAR
+Public iUltimoPar As Integer
+
+' CANTIDAD DE PARES DE LA TABLA (Par)
+Private Const CANTIDAD_PARES As Integer = 6
+
+' ==============================================================================
+' Función   : CantidadPares
+' Propósito : Dar cuántos pares tiene la tabla, para llenar el combo
+' Parámetros: ninguno
+' Retorna   : Integer — cantidad de pares
+' ==============================================================================
+Public Function CantidadPares() As Integer
+
+  Return CANTIDAD_PARES
+
+End
+
+' ==============================================================================
+' Función   : Par
+' Propósito : La tabla de pares, en el orden del combo. ES EL ÚNICO LUGAR DONDE
+'             ESTÁ ESCRITA: FEnmarcar LEE DE ACÁ LAS ETIQUETAS
+' Parámetros: iIndice As Integer — posición en la tabla, base 0
+' Retorna   : String[] — [etiqueta del combo, apertura, cierre]; Null si el
+'             índice no existe
+' ==============================================================================
+Public Function Par(iIndice As Integer) As String[]
+
+  Select Case iIndice
+    Case 0
+      Return ["( )   paréntesis", "(", ")"]
+    Case 1
+      Return ["« »   comillas angulares", "«", "»"]
+    Case 2
+      Return ["¿ ?   signos de pregunta", "¿", "?"]
+    Case 3
+      Return ["¡ !   signos de admiración", "¡", "!"]
+    Case 4
+      ' ESCAPADOS DE LOS DOS LADOS (ENCABEZADO DEL MÓDULO)
+      Return ["\\[ \\]   corchetes", "\\[", "\\]"]
+    Case 5
+      Return ["-- --   rayas", "--", "--"]
+  End Select
+
+  Return Null
+
+End
+
+' ==============================================================================
+' Función   : Enmarcar
+' Propósito : Enmarca la selección del editor principal con el par que se elija
+'             en FEnmarcar
+' Parámetros: ninguno
+' Retorna   : nada
+' ==============================================================================
+Public Sub Enmarcar()
+
+  Dim sTexto As String
+  Dim sSeleccion As String
+  Dim sNucleo As String
+  Dim sLinea As String
+  Dim iInicio As Integer
+  Dim iLargo As Integer
+  Dim iAntes As Integer
+  Dim iDespues As Integer
+  Dim aPar As String[]
+
+  ' --- 1. LA SELECCIÓN ES OBLIGATORIA ---
+  iLargo = m_EditorPrincipal.LargoSeleccion()
+  If iLargo = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione el texto que quiere enmarcar.")
+    Return
+  Endif
+
+  ' --- 2. EL NÚCLEO: LA SELECCIÓN SIN LOS BLANCOS DE LOS BORDES ---
+  ' DEL TEXTO COMPLETO, CON String.Mid: POSICIÓN BASE 0 → BASE 1
+  sTexto = m_EditorPrincipal.Texto()
+  iInicio = m_EditorPrincipal.InicioSeleccion()
+  sSeleccion = String.Mid(sTexto, iInicio + 1, iLargo)
+  iAntes = BlancosAntes(sSeleccion)
+  iDespues = BlancosDespues(sSeleccion)
+
+  ' UNA SELECCIÓN DE SOLO BLANCOS ES COMO NINGUNA
+  If iAntes = iLargo Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione el texto que quiere enmarcar.")
+    Return
+  Endif
+  sNucleo = String.Mid(sSeleccion, iAntes + 1, iLargo - iAntes - iDespues)
+
+  ' --- 3. UN SOLO PÁRRAFO: NINGUNA LÍNEA EN BLANCO ADENTRO ---
+  ' LOS BORDES YA NO TIENEN BLANCOS: UNA LÍNEA VACÍA SOLO PUEDE SER INTERIOR
+  For Each sLinea In Split(sNucleo, Chr(10))
+    If Trim(sLinea) = "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("La selección abarca más de un párrafo." & gb.NewLine & gb.NewLine &
+        "El par abre y cierra dentro del mismo párrafo.")
+      Return
+    Endif
+  Next
+
+  ' --- 4. EL PAR: ShowModal DEVUELVE 1 SI SE ACEPTÓ ---
+  If FEnmarcar.ShowModal() <> 1 Then Return
+  aPar = Par(iParElegido)
+  If Not aPar Then Return
+
+  ' --- 5. REEMPLAZO DEL NÚCLEO: LOS BLANCOS DE LOS BORDES NO SE TOCAN ---
+  ' ReemplazarTramo CONSERVA EL DESHACER Y DEJA EL CURSOR DESPUÉS DEL CIERRE, SIN
+  ' SELECCIÓN. SI FALLA, YA INFORMÓ
+  m_EditorPrincipal.ReemplazarTramo(iInicio + iAntes, String.Len(sNucleo),
+    aPar[1] & sNucleo & aPar[2])
+
+End
+
+' ==============================================================================
+' Función   : BlancosAntes
+' Propósito : Cuántos blancos hay al principio de un texto
+' Parámetros: sTexto As String — el texto
+' Retorna   : Integer — cantidad de blancos iniciales, en caracteres
+' ==============================================================================
+Public Function BlancosAntes(sTexto As String) As Integer
+
+  Dim iPos As Integer
+  Dim iCuenta As Integer
+  Dim sBlancos As String
+
+  ' BLANCOS QUE QUEDAN AFUERA DEL PAR: ESPACIO, TABULADOR Y SALTO DE LÍNEA (SC-01)
+  sBlancos = " " & Chr(9) & Chr(10)
+
+  ' POR CARACTERES, CON String.* (SC-02): EL TEXTO ES DEL USUARIO
+  For iPos = 1 To String.Len(sTexto)
+    If InStr(sBlancos, String.Mid(sTexto, iPos, 1)) = 0 Then Break
+    Inc iCuenta
+  Next
+
+  Return iCuenta
+
+End
+
+' ==============================================================================
+' Función   : BlancosDespues
+' Propósito : Cuántos blancos hay al final de un texto
+' Parámetros: sTexto As String — el texto
+' Retorna   : Integer — cantidad de blancos finales, en caracteres
+' ==============================================================================
+Public Function BlancosDespues(sTexto As String) As Integer
+
+  Dim iPos As Integer
+  Dim iCuenta As Integer
+  Dim sBlancos As String
+
+  ' BLANCOS QUE QUEDAN AFUERA DEL PAR: ESPACIO, TABULADOR Y SALTO DE LÍNEA (SC-01)
+  sBlancos = " " & Chr(9) & Chr(10)
+
+  ' DESDE EL FINAL HACIA ATRÁS; UN TEXTO DE SOLO BLANCOS DA SU LARGO ENTERO
+  For iPos = String.Len(sTexto) DownTo 1
+    If InStr(sBlancos, String.Mid(sTexto, iPos, 1)) = 0 Then Break
+    Inc iCuenta
+  Next
+
+  Return iCuenta
+
+End
