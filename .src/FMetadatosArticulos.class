@@ -287,42 +287,61 @@ Public Sub btnTitulo_Click()
 
 End
 
+' ============================================
+' Función   : ConfigurarGridView
+' Propósito : Establecer columnas, headers y modo de selección del grid
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Private Sub ConfigurarGridView()
 
   With gbArticulos
-    .Columns.Count = 6
+    .Columns.Count = 4
     .Header = GridView.Both
     .Mode = Select.Single
     .Scrollbar = Scroll.Vertical
+    ' COLUMNA 0: ID OCULTA (SIRVE SOLO COMO CACHE PARA gbArticulos_Click)
     .Columns[0].Title = "ID"
     .Columns[0].Width = 0
-    .Columns[1].Title = "Título"
-    .Columns[1].Width = 350
-    .Columns[2].Title = "Tipo"
-    .Columns[2].Width = 130
-    .Columns[3].Title = "Estado"
-    .Columns[3].Width = 100
-    .Columns[4].Title = "Fecha"
-    .Columns[4].Width = 110
-    .Columns[5].Title = ""
-    .Columns[5].Width = 5
+    ' COLUMNA 1: CÓDIGO DE POSICIÓN (fm-10, a-01, bm-99), PINTADO POR ESTADO
+    .Columns[1].Title = "Código"
+    .Columns[1].Width = 70
+    .Columns[2].Title = "Título"
+    .Columns[2].Width = 620
+    ' COLUMNA 3: MARGEN FINAL, COMO ESTABA ANTES DEL CAMBIO
+    .Columns[3].Title = ""
+    .Columns[3].Width = 5
   End With
 
 End
 
+' ============================================
+' Función   : CargarArticulos
+' Propósito : Leer los artículos del número abierto y poblar el GridView en
+'             orden editorial, con la celda del código pintada según el
+'             estado del artículo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Private Sub CargarArticulos()
 
-  Dim $result As Result
+  Dim rArticulos As Result
   Dim sQuery As String
   Dim iRow As Integer
+  Dim sTitulo As String
 
-  sQuery = "SELECT id_articulo, titulo_articulo, tipo_articulo, estado_articulo, " &
-    "fecha_creacion_registro " &
+  ' --- 1. CONSULTA EN ORDEN EDITORIAL ---
+  ' SE FILTRA POR NÚMERO (id_proyecto) Y NO POR REVISTA: CON EL ORDEN POR
+  ' PREFIJO, LOS a-01 DE CADA NÚMERO QUEDARÍAN MEZCLADOS. EL ORDEN Y EL
+  ' CÓDIGO SALEN DEL NOMBRE DE ARCHIVO (m_OrdenPiezas). EL ESTADO SE LEE
+  ' AUNQUE NO SE MUESTRE: DA EL COLOR.
+  sQuery = "SELECT id_articulo, titulo_articulo, estado_articulo, " &
+    m_OrdenPiezas.ExpresionCodigo("nombre_archivo") & " AS codigo " &
     "FROM articulos " &
-    "WHERE id_revista = &1 " &
-    "ORDER BY fecha_creacion_registro DESC"
+    "WHERE id_proyecto = &1 " &
+    "ORDER BY " & m_OrdenPiezas.ClausulaOrden("nombre_archivo")
 
-  Try $result = m_ConexionBD.mConn.Exec(sQuery, id_revista.Value)
+  Try rArticulos = m_ConexionBD.mConn.Exec(sQuery, id_proyecto.Value)
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("Error al cargar artículos:\n" & Error.Text)
@@ -331,60 +350,58 @@ Private Sub CargarArticulos()
 
   gbArticulos.Rows.Count = 0
 
-  If Not $result.Available Then Return
+  If Not rArticulos.Available Then Return
 
+  ' --- 2. POBLAR EL GRID ---
   iRow = 0
-  For Each $result
+  For Each rArticulos
     gbArticulos.Rows.Count = iRow + 1
 
-    gbArticulos[iRow, 0].Text = $result!id_articulo
-    gbArticulos[iRow, 0].Alignment = Align.Center
+    ' COLUMNA 0: ID OCULTA
+    gbArticulos[iRow, 0].Text = rArticulos!id_articulo
 
-    Dim sTitulo As String = $result!titulo_articulo
+    ' COLUMNA 1: CÓDIGO. VACÍO SI EL ARTÍCULO TODAVÍA NO TIENE ARCHIVO
+    gbArticulos[iRow, 1].Text = CStr(rArticulos!codigo)
+    gbArticulos[iRow, 1].Alignment = Align.Center
+    PintarEstado(iRow, CStr(rArticulos!estado_articulo))
+
+    ' COLUMNA 2: TÍTULO (TRUNCADO SI ES MUY LARGO)
+    sTitulo = CStr(rArticulos!titulo_articulo)
     If Len(sTitulo) > 60 Then
       sTitulo = Left(sTitulo, 57) & "..."
     Endif
-    gbArticulos[iRow, 1].Text = sTitulo
-    gbArticulos[iRow, 2].Text = $result!tipo_articulo
-    gbArticulos[iRow, 3].Text = $result!estado_articulo
-    gbArticulos[iRow, 3].Alignment = Align.Center
-
-    If $result!fecha_creacion_registro Then
-      gbArticulos[iRow, 4].Text = Format($result!fecha_creacion_registro, "dd/mm/yyyy")
-    Else
-      gbArticulos[iRow, 4].Text = ""
-    Endif
-    gbArticulos[iRow, 4].Alignment = Align.Center
+    gbArticulos[iRow, 2].Text = sTitulo
 
     Inc iRow
   Next
 
-  ColorearFilasPorEstado()
-
 End
 
-Private Sub ColorearFilasPorEstado()
+' ============================================
+' Función   : PintarEstado
+' Propósito : Aplicar a la celda del código el color del estado del
+'             artículo. La columna Estado no se muestra: el color la reemplaza
+' Parámetros: iRow As Integer — fila del grid
+'             sEstado As String — articulos.estado_articulo
+' Retorna   : nada
+' ============================================
+Private Sub PintarEstado(iRow As Integer, sEstado As String)
 
-  Dim iRow As Integer
-  Dim sEstado As String
-
-  For iRow = 0 To gbArticulos.Rows.Max
-    sEstado = gbArticulos[iRow, 3].Text
-    Select Case sEstado
-      Case "borrador"
-        gbArticulos[iRow, 3].Background = Color.LightGray
-      Case "en_revision"
-        gbArticulos[iRow, 3].Background = Color.RGB(255, 255, 200)
-      Case "aceptado"
-        gbArticulos[iRow, 3].Background = Color.RGB(200, 255, 200)
-      Case "publicado"
-        gbArticulos[iRow, 3].Background = Color.RGB(200, 230, 255)
-      Case "rechazado"
-        gbArticulos[iRow, 3].Background = Color.RGB(255, 200, 200)
-      Case "retractado"
-        gbArticulos[iRow, 3].Background = Color.RGB(255, 150, 150)
-    End Select
-  Next
+  ' UN ESTADO SIN COLOR ASIGNADO DEJA EL FONDO POR DEFECTO
+  Select Case sEstado
+    Case "borrador"
+      gbArticulos[iRow, 1].Background = Color.LightGray
+    Case "en_revision"
+      gbArticulos[iRow, 1].Background = Color.RGB(255, 255, 200)
+    Case "aceptado"
+      gbArticulos[iRow, 1].Background = Color.RGB(200, 255, 200)
+    Case "publicado"
+      gbArticulos[iRow, 1].Background = Color.RGB(200, 230, 255)
+    Case "rechazado"
+      gbArticulos[iRow, 1].Background = Color.RGB(255, 200, 200)
+    Case "retractado"
+      gbArticulos[iRow, 1].Background = Color.RGB(255, 150, 150)
+  End Select
 
 End
 
