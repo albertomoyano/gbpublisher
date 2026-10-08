@@ -1126,7 +1126,7 @@ LO QUE EL SCRIPT NO DEBE TRAER
 
 COTEJO PREVIO A REDACTAR UN SCRIPT
 
-El `corpus.md` adjunto al proyecto de trabajo con Claude se coteja con `docs/corpus.md` del repositorio de gbpublisher, clonado con `git clone --depth 1`: mismas entradas, mismos estados y pasajes testigo idénticos. Si difieren, se trabaja contra el más reciente y se avisa antes de escribir nada. Es lo que garantiza que un código nuevo esté libre y que un texto a reemplazar exista tal como se lo cita.
+El `corpus.md` adjunto al proyecto de trabajo con Claude se coteja con `docs/corpus.md` del repositorio de gbpublisher, clonado con `git clone --depth 1`: mismas entradas, mismos estados y pasajes testigo idénticos. Si difieren y el del repositorio es el más reciente, se adopta sin consultar: pasa a ser la copia de trabajo, y se dice en una línea que se actualizó. Si el más reciente es el adjunto al proyecto —caso raro, porque el repositorio recibe cada exportación—, se avisa antes de hacer nada y se espera la respuesta. Más reciente es el que tiene entradas, estados o textos que el otro no tiene; si cada uno tiene algo que el otro no, o no se puede decidir, también se avisa antes de hacer nada. Es lo que garantiza que un código nuevo esté libre y que un texto a reemplazar exista tal como se lo cita.
 
 **Relaciones:** vinculo:RF-08, vinculo:SC-13
 
@@ -2416,6 +2416,43 @@ TAMPOCO BITS question-answer: es para evaluaciones, no para entrevistas.
 **Relaciones:** vinculo:RC-DB-04,apoya:GV-81,apoya:GV-82,apoya:GV-83,vinculo:SC-33,vinculo:SC-32,vinculo:SC-31,vinculo:RF-11,apoya:GV-84,apoya:GV-85,apoya:GV-86
 
 **PENDIENTE:** Probar el ODT (revistas) y el XML JATS: validación del canónico, sabores (SciELO, Redalyc) y packtools. Los shortcodes ya están liberados (datos-v5-009).
+
+### SC-44 — Orden editorial de las piezas: por nombre de archivo, desde m_OrdenPiezas
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22.1 / MariaDB 10.11 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Libros y revistas. Las piezas se ordenan por su nombre de archivo, nunca por id ni por fecha de alta. El criterio está escrito en un solo lugar, `m_OrdenPiezas`, y toda consulta que liste piezas en orden editorial lo llama. Ninguna escribe su propio `CASE` por prefijo.
+
+LA CONVENCIÓN
+
+El nombre da la posición: `prefijo-NN-resto` (`fm-10-prologo`, `a-03-…`, `bm-99-colofon`). El prefijo fija la familia —preliminares, cuerpo, finales— y NN el lugar dentro de ella. Con dos dígitos, el orden alfabético dentro de cada familia equivale al numérico. El espacio `fm-00` a `fm-09` está reservado para las primeras (SC-25).
+
+POR QUÉ NO EL ORDEN ALFABÉTICO SOLO, NI EL id
+
+El alfabético da `a-` < `bm-` < `fm-`, exactamente el inverso del orden de lectura. El id refleja cuándo se cargó la pieza, no dónde va: las piezas no llegan juntas ni en orden.
+
+EL MÓDULO
+
+- `ClausulaOrden(sColumna)` devuelve el criterio sin la palabra ORDER BY: `CASE` por prefijo (`fm-` 1, `a-` 2, `bm-` 3, resto 9) y después la columna. Recibe la columna como se escribe en la consulta (`nombre_archivo`, `c.nombre_archivo`).
+- `ExpresionCodigo(sColumna)` devuelve `SUBSTRING_INDEX(col, '-', 2)`: el código de posición (`fm-10-prologo` → `fm-10`). Con la columna NULL da NULL.
+- Un nombre NULL o sin prefijo conocido cae en el 9: queda al final y sigue a la vista. Las consultas de salida lo excluyen con `nombre_archivo IS NOT NULL`; las grillas no, porque la pieza recién creada tiene que poder editarse.
+- No va en `m_PiezasLibro`: esa es la matriz de piezas del libro por salida, y este orden vale también para los números de revista.
+
+Lo usan `m_GenerarPDFLibro.GenerarMainTeX`, `m_GenerarEpubLibro.ListaPiezasEpub`, el manifiesto del canónico en `m_XML`, `m_GitHub.ObtenerManifiestoCapitulos` y las dos grillas de metadatos.
+
+GRILLAS DE METADATOS
+
+`gbCapitulos` (`FMetadatosCapitulos`) y `gbArticulos` (`FMetadatosArticulos`) siguen la misma forma:
+
+- Columnas: id oculto (ancho 0, lo usa el `Click`), Código y Título. Tipo, Estado y Fecha no se muestran.
+- El estado se lee en la consulta aunque no se muestre: `PintarEstado` colorea la celda del código con la paleta de estados que antes tenía la columna Estado.
+- `gbArticulos` filtra por `id_proyecto`, el número abierto, y no por `id_revista`: con el orden por prefijo, los `a-01` de cada número quedarían mezclados.
+
+Verificado: el orden y la extracción del código, en MariaDB 10.11 con nombres reales, un NULL y uno sin prefijo; las dos grillas, por Alberto en gbpublisher.
+
+**Relaciones:** vinculo:SC-25
+
+**PENDIENTE:** `m_GenerarEpub` y `m_GenerarHTML` (revistas) ordenan solo por `nombre_archivo ASC`: si un número tiene un `fm-`, queda después de los `a-`. Revisar si esos módulos ven solo artículos o si tienen que pasar a `m_OrdenPiezas`. La copia del CASE en `FMain` está comentada y no se tocó.
 
 ---
 
