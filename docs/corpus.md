@@ -1798,9 +1798,15 @@ CONSECUENCIAS
 - Una decisión de diseño se toma mirando el PDF y después se lleva a las otras dos salidas. No al revés.
 - Lo que el PDF resuelve con LaTeX —numeración de figuras, tablas y ecuaciones, referencias cruzadas, orden de las piezas— el EPUB y el HTML lo reproducen con el mismo resultado visible, aunque el mecanismo sea otro.
 
+LaTeX COMO BASE
+
+El PDF se compone con LaTeX, y por eso muchas decisiones de diseño de gbpublisher toman su base en LaTeX (decisión de Alberto): cómo numera, cómo arma el sumario, cómo resuelve una referencia cruzada, cómo compone la bibliografía con biblatex. Cuando un problema tiene una solución establecida en LaTeX, esa es la forma de partida, y apartarse de ella se escribe como cualquier excepción.
+
+Vale también para la entrada: el .md se teclea con las convenciones de LaTeX para los signos que LaTeX escribe en ASCII (SC-40).
+
 Es el principio que ya aplicaban SC-14 (la bibliografía replica el estilo biblatex del libro), SC-26 y SC-30 (el mismo resultado en las seis salidas). Esta entrada lo deja escrito como regla general.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-26,vinculo:SC-28,vinculo:SC-25,vinculo:SC-30
+**Relaciones:** vinculo:SC-14,vinculo:SC-26,vinculo:SC-28,vinculo:SC-25,vinculo:SC-30,vinculo:SC-40
 
 ### SC-32 — Figuras de libro y revista: una sola forma en el .md, número del PDF y referencia cruzada
 
@@ -2170,6 +2176,49 @@ Pandoc 3.1.3 con las cadenas reales de revista y de libro; SaxonJ-HE 12.5 con `e
 **Relaciones:** vinculo:SC-38,vinculo:SC-33,vinculo:SC-34,vinculo:SC-35,vinculo:SC-36,vinculo:SC-21
 
 **PENDIENTE:** Probar en Mint con un libro y una revista reales: inserción con el modo separador-valor, PDF compilado, y HTML y EPUB sin rastro. Las hojas de HTML y EPUB de libros no se corrieron sueltas (piden el manifiesto del libro): el resultado se apoya en la regla incorporada y en que no tienen identidad ni copy-of sobre el contenido.
+
+### SC-40 — Rayas y puntos suspensivos en el .md: la convención de LaTeX
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 / engine/limpiar_docx.lua 1.2 / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto). En el .md, la semirraya, la raya y los puntos suspensivos se escriben como en LaTeX:
+
+    --     semirraya (U+2013)
+    ---    raya (U+2014)
+    ...    puntos suspensivos (U+2026)
+
+Nunca el carácter Unicode. Los lectores `--from markdown` del proyecto (`m_XML`, `m_GenerarEpub`, `m_GenerarODT`) tienen `smart` activo por omisión y los vuelven a U+2013, U+2014 y U+2026 (GV-79): el canónico JATS o DocBook y todas las salidas reciben el carácter tipográfico.
+
+POR QUÉ
+
+Es la convención del PDF, que es la base del diseño (SC-31). Y una sola forma en el .md hace predecibles la búsqueda y el reemplazo: lo que entrega Word es impredecible, porque cada autor deja lo que tecleó o lo que el procesador autocorrigió.
+
+INGRESO DESDE WORD
+
+Lo normaliza `engine/limpiar_docx.lua`, desde la versión 1.2 del filtro, en una pasada sobre los `Str` del AST y no sobre el texto del .md: el código, las URL de los enlaces y la matemática no son `Str` y no se tocan. Un reemplazo sobre el .md ya escrito no tendría cómo distinguirlos.
+
+    U+2026           ->  ...
+    U+2013           ->  --
+    U+2014           ->  ---
+    guion aislado    ->  --     un Str que es solo «-»: entre espacios o al abrir el párrafo
+
+El guion aislado nunca es un guion de unión: es una semirraya mal tecleada.
+
+El escritor sigue siendo `--to=markdown-smart`. Con `+smart` el propio Pandoc haría la conversión, pero aplanaría el apóstrofo curvo, que el filtro deja a propósito, y escaparía los `--` y `...` tecleados (GV-79).
+
+LO QUE NO SE CONVIERTE: AVISOS
+
+El filtro cuenta, el informe de la conversión lo muestra y el texto queda como llegó:
+
+- `aviso_guion_entre_digitos`: «10-20» puede ser un rango, pero también una fecha, un ISBN o un teléfono. Cuenta casos, no palabras.
+- `aviso_guion_pegado`: un guion pegado a una palabra en posición de inciso, «-inciso-». Es una corrección mal hecha. Cuenta también el prefijo suspendido («pre- y posguerra»), que es correcto.
+- `aviso_enumeracion_punto_guion`: «4.-», «a.-». Es una corrección mal hecha: en la editorial se elimina.
+
+Las cuatro conversiones también tienen su clave en el informe: `elipsis_a_tres_puntos`, `semirraya_a_dos_guiones`, `raya_a_tres_guiones` y `guion_aislado_a_semirraya`.
+
+**Relaciones:** vinculo:SC-31,apoya:GV-79,vinculo:GV-47
+
+**PENDIENTE:** Probado en el contenedor con un .docx armado a mano, no con uno real en Mint. El contrato rige el ingreso desde Word: un carácter Unicode tecleado después en el editor no se detecta. Decidir si el escáner UTF-8 lo informa.
 
 ---
 
@@ -4239,3 +4288,30 @@ CASO EN EL PROYECTO: `EjecutarBusqueda` marca con `gvResultados.Row` la coincide
 **Relaciones:** vinculo:GV-51,vinculo:GV-53,vinculo:GV-15,vinculo:GV-58,vinculo:GV-69
 
 **PENDIENTE:** Leído en el fuente; en uso en 3.22.1 se probó la búsqueda con la fila marcada, no el disparo aislado. Mini-test: Debug en gvResultados_Click, buscar con Enter o F3 con varias coincidencias; asignar Row desde el código no debe imprimir nada.
+
+### GV-79 — Pandoc: smart en el escritor Markdown aplana y escapa; en el lector convierte
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor · **Verificado:** 2026-10
+
+Tres comportamientos de la extensión `smart`, medidos con Pandoc 3.1.3.
+
+EN EL ESCRITOR MARKDOWN, +smart APLANA Y ESCAPA
+
+    d’Annunzio              ->  d'Annunzio
+    —                       ->  ---
+    – y …                   ->  -- y ...
+    -- y ... tecleados      ->  \-- y \...
+
+EN EL ESCRITOR MARKDOWN, -smart NO ESCAPA
+
+Con `--to=markdown-smart`, el de `convertir_docx.sh`, cada carácter de un `Str` sale tal cual: un `--`, un `---` o un `...` que deja un filtro Lua no se escapa, tampoco al comienzo de un párrafo. Un `Str` que es solo «-» al comienzo de un párrafo sí sale escapado, `\-`, para que no se lea como lista.
+
+EN EL LECTOR MARKDOWN, smart CONVIERTE
+
+`--from markdown` tiene `smart` por omisión: `--` da U+2013, `---` U+2014 y `...` U+2026, también entre dígitos («10--20»).
+
+DE PUNTA A PUNTA
+
+Un .docx con U+2026, U+2013, U+2014, un guion aislado y un espacio duro delante de una semirraya, pasado por `convertir_docx.sh` con el filtro 1.2: sale `...`, `--` y `---`, y el guion aislado da `--`. El código en línea y la URL de un enlace conservan el carácter Unicode: no son `Str`.
+
+**Relaciones:** vinculo:SC-40

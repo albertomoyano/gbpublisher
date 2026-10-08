@@ -13,7 +13,7 @@
 -- ============================================================================
 
 -- VERSIÓN DEL FILTRO: VA AL INFORME. CAMBIARLA CON CADA CAMBIO DE COMPORTAMIENTO
-local VERSION_FILTRO = "1.1"
+local VERSION_FILTRO = "1.2"
 
 -- LAS MEDICIONES QUE SOSTIENEN ESTE FILTRO SE HICIERON CON 3.1.3.
 -- EN UNA VERSIÓN MENOR, must_be_at_least ABORTA CON ERROR (PANDOC SALE CON 83)
@@ -240,6 +240,81 @@ local pasada_limpieza = {
   end,
 }
 
+-- --- 4. CUARTA PASADA: RAYAS Y PUNTOS SUSPENSIVOS EN LA CONVENCIÓN DE LaTeX ---
+-- EL .md SE TECLEA COMO UN .tex (SC-40): -- SEMIRRAYA, --- RAYA, ... PUNTOS
+-- SUSPENSIVOS. WORD ENTREGA UNAS VECES EL CARÁCTER Y OTRAS LO TECLEADO, SEGÚN
+-- LA AUTOCORRECCIÓN DE CADA AUTOR. CON --to=markdown-smart EL ESCRITOR NO
+-- ESCAPA -- NI ... (GV-79), Y LOS LECTORES --from markdown DEL PROYECTO, CON
+-- smart POR OMISIÓN, LOS VUELVEN A U+2013, U+2014 Y U+2026 EN EL CANÓNICO.
+-- SOLO SE RECORREN Str: EL CÓDIGO, LAS URL DE LOS ENLACES Y LA MATEMÁTICA
+-- NO SON Str Y NO SE TOCAN
+
+local ELIPSIS   = "\u{2026}"
+local SEMIRRAYA = "\u{2013}"
+local RAYA      = "\u{2014}"
+
+-- LETRA: ASCII O CUALQUIER BYTE DE UN CARÁCTER MULTIBYTE (á, ñ, ç…). ALCANZA
+-- PARA UN AVISO: NO DECIDE NINGÚN CAMBIO
+local LETRA = "[%a\128-\255]"
+
+-- ============================================
+-- Función   : avisar_guiones
+-- Propósito : Cuenta los guiones que el filtro NO convierte porque su lectura
+--             depende de un criterio editorial. Solo cuenta: el texto queda
+--             como llegó y el informe dice cuántos hay que revisar a mano
+-- Parámetros: texto As string — el texto del Str, ya convertido
+-- Retorna   : nada
+-- ============================================
+local function avisar_guiones(texto)
+  local nucleo
+
+  -- --- 1. ENUMERACIÓN CON PUNTO Y GUION («4.-», «a.-»): CORRECCIÓN MAL HECHA ---
+  if texto:find("^%w+%.%-") then
+    sumar("aviso_enumeracion_punto_guion")
+  end
+
+  -- --- 2. GUION ENTRE DÍGITOS: RANGO, FECHA, ISBN, TELÉFONO… NO SE DISTINGUEN ---
+  local _, n_digitos = texto:gsub("%d%-%d", "")
+  if n_digitos > 0 then sumar("aviso_guion_entre_digitos", n_digitos) end
+
+  -- --- 3. GUION PEGADO A UNA PALABRA, EN POSICIÓN DE INCISO («-inciso-») ---
+  -- SE QUITAN ANTES LOS SIGNOS QUE PUEDEN RODEAR LA PALABRA
+  nucleo = texto:gsub("^[%(%[«“¿¡]+", ""):gsub("[%)%]»”%.,;:!%?]+$", "")
+  if nucleo:find("^%-" .. LETRA) or nucleo:find(LETRA .. "%-$") then
+    sumar("aviso_guion_pegado")
+  end
+end
+
+local pasada_tipografia = {
+  Str = function(el)
+    local texto = el.text
+    local n_elipsis, n_semirraya, n_raya
+
+    -- --- 1. GUION AISLADO: UN Str QUE ES SOLO "-" ESTÁ ENTRE ESPACIOS O ABRE ---
+    -- EL PÁRRAFO. NUNCA ES UN GUION DE UNIÓN: ES UNA SEMIRRAYA MAL TECLEADA
+    if texto == "-" then
+      sumar("guion_aislado_a_semirraya")
+      return pandoc.Str("--")
+    end
+
+    -- --- 2. CARACTERES TIPOGRÁFICOS A LA CONVENCIÓN DE LaTeX ---
+    -- LA RAYA VA ANTES QUE LA SEMIRRAYA SOLO POR CLARIDAD: SON CARACTERES
+    -- DISTINTOS Y EL ORDEN NO CAMBIA EL RESULTADO
+    texto, n_elipsis   = texto:gsub(ELIPSIS, "...")
+    texto, n_raya      = texto:gsub(RAYA, "---")
+    texto, n_semirraya = texto:gsub(SEMIRRAYA, "--")
+    if n_elipsis > 0 then sumar("elipsis_a_tres_puntos", n_elipsis) end
+    if n_raya > 0 then sumar("raya_a_tres_guiones", n_raya) end
+    if n_semirraya > 0 then sumar("semirraya_a_dos_guiones", n_semirraya) end
+
+    -- --- 3. AVISOS SOBRE LO QUE QUEDA ---
+    avisar_guiones(texto)
+
+    if n_elipsis + n_raya + n_semirraya == 0 then return nil end
+    return pandoc.Str(texto)
+  end,
+}
+
 -- ============================================
 -- Función   : normalizar_comillas
 -- Propósito : Lleva todas las comillas dobles de un bloque a « »
@@ -320,7 +395,7 @@ local function normalizar_comillas(bloque)
   })
 end
 
--- --- 4. CUARTA PASADA: TODAS LAS COMILLAS DOBLES A « » ---
+-- --- 5. QUINTA PASADA: TODAS LAS COMILLAS DOBLES A « » ---
 -- VA ANTES DE PARTIR LOS PÁRRAFOS POR SALTO DE LÍNEA: ASÍ LA ALTERNANCIA DE
 -- LAS RECTAS SE DECIDE SOBRE EL PÁRRAFO COMPLETO DE WORD
 local pasada_comillas = {
@@ -329,7 +404,7 @@ local pasada_comillas = {
   Header = normalizar_comillas,
 }
 
--- --- 5. QUINTA PASADA: SALTOS DE LÍNEA DONDE UN PÁRRAFO NUEVO CAMBIARÍA LA ESTRUCTURA ---
+-- --- 6. SEXTA PASADA: SALTOS DE LÍNEA DONDE UN PÁRRAFO NUEVO CAMBIARÍA LA ESTRUCTURA ---
 -- EN TÍTULOS, CELDAS DE TABLA E ÍTEMS DE LISTA EL SALTO PASA A ESPACIO.
 -- Header, Table Y LAS LISTAS SE PROCESAN ACÁ, ANTES DE PARTIR PÁRRAFOS
 local function salto_a_espacio(bloque)
@@ -349,7 +424,7 @@ local pasada_saltos_estructura = {
   OrderedList = function(el) return salto_a_espacio(el), false end,
 }
 
--- --- 6. SEXTA PASADA: EN PÁRRAFOS, EL SALTO DE LÍNEA ABRE UN PÁRRAFO NUEVO ---
+-- --- 7. SÉPTIMA PASADA: EN PÁRRAFOS, EL SALTO DE LÍNEA ABRE UN PÁRRAFO NUEVO ---
 local pasada_saltos_parrafo = {
   Para = function(el)
     local hay_salto = false
@@ -377,7 +452,7 @@ local pasada_saltos_parrafo = {
   end,
 }
 
--- --- 7. SÉPTIMA PASADA: COMPACTAR ESPACIOS Y ESCRIBIR EL CONTEO ---
+-- --- 8. OCTAVA PASADA: COMPACTAR ESPACIOS Y ESCRIBIR EL CONTEO ---
 local pasada_final = {
   Para   = function(el) el.content = compactar(el.content); return el end,
   Plain  = function(el) el.content = compactar(el.content); return el end,
@@ -402,6 +477,7 @@ return {
   pasada_parametros,
   pasada_metadatos,
   pasada_limpieza,
+  pasada_tipografia,
   pasada_comillas,
   pasada_saltos_estructura,
   pasada_saltos_parrafo,

@@ -238,7 +238,10 @@ fi
 #   -styles: CON styles LOS ESTILOS DE CARÁCTER Strong/Emphasis PIERDEN LA
 #   NEGRITA Y LA CURSIVA; SIN ÉL, LOS ESTILOS DE PÁRRAFO DESCONOCIDOS YA SALEN
 #   COMO PÁRRAFO NORMAL
-# ESCRITOR: -smart CONSERVA COMILLAS CURVAS, RAYAS Y PUNTOS SUSPENSIVOS REALES.
+# ESCRITOR: -smart ESCRIBE CADA CARÁCTER TAL COMO LO DEJA EL FILTRO. CON +smart
+#   EL ESCRITOR APLANARÍA EL APÓSTROFO CURVO Y ESCAPARÍA LOS -- Y ... TECLEADOS
+#   (GV-79). RAYAS Y PUNTOS SUSPENSIVOS LOS LLEVA EL FILTRO A LA CONVENCIÓN DE
+#   LaTeX (SC-40); LAS COMILLAS DOBLES, A « ».
 # --extract-media=media CON EL TEMPORAL COMO DIRECTORIO DE TRABAJO DEJA
 # REFERENCIAS RELATIVAS media/..., LA CONVENCIÓN DEL PROYECTO
 etapa 3 "Convirtiendo con pandoc"
@@ -330,6 +333,9 @@ valor() {
   for CLAVE in subrayado resaltado versalitas guion_blando espacio_duro \
                comillas_rectas comillas_convertidas comillas_ya_angulares \
                comillas_simples_sin_tocar \
+               elipsis_a_tres_puntos semirraya_a_dos_guiones raya_a_tres_guiones \
+               guion_aislado_a_semirraya \
+               aviso_guion_entre_digitos aviso_guion_pegado aviso_enumeracion_punto_guion \
                salto_linea_a_parrafo salto_linea_a_espacio imagenes imagen_no_embebida; do
     printf '%s\t%s\n' "$CLAVE" "$(valor "$CLAVE")"
   done
