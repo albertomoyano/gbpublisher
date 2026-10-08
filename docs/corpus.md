@@ -468,7 +468,9 @@ Sus variantes sin numeración formal (`<informalexample>`, `<informalfigure>`, e
 DocBook 5.2 base no tiene `dialogue`, `poetry` ni `drama`.
 
 Para verso: `<literallayout role="verse">`.
-Para parlamento: `<para role="speech">` con `<emphasis role="speaker">`.
+Para conversación (entrevista, historia oral): `<qandaset>`, que sí está en la base (SC-43, GV-82). El viejo `<para role="speech">` con `<emphasis role="speaker">` se retiró: tomaba solo el primer párrafo de cada intervención.
+
+**Relaciones:** vinculo:SC-43,vinculo:GV-82
 
 ### RC-DB-05 — XSLT 2.0 sigue regex de XSD, no PCRE
 
@@ -2290,6 +2292,92 @@ PDF de pantalla y de imprenta, HTML, EPUB y ODT, en libros y en revistas; inserc
 **Relaciones:** vinculo:SC-32,vinculo:SC-33,vinculo:SC-21,vinculo:SC-31,vinculo:SC-30,vinculo:SC-34,vinculo:RF-11,vinculo:GV-80,vinculo:RC-GM-13
 
 **PENDIENTE:** Sabores JATS de revista, en la fase de revistas: SciELO (el listado como <fig> con <preformat>; validado contra el DTD Publishing 1.0 en el contenedor, falta packtools) y Redalyc (el <code> pasa tal cual; DTD sin verificar).
+
+### SC-43 — Conversación: qandaset en libros, speech dentro de disp-quote en revistas
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** DocBook 5.2 / JATS Archiving 1.4 / Pandoc 3.1.3 / xmllint (libxml 2.9.14) / contenedor · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisiones de Alberto). Libros y revistas. Entrevistas, reportajes, historia oral: todo intercambio de preguntas y respuestas con hablante. No es para obras teatrales.
+
+EN EL .md
+
+    ::: conversacion
+
+    ::: {.pregunta quien="Ana Pérez"}
+
+    ¿Cuándo empezó?
+
+    [/pregunta]: # ()
+    :::
+
+    ::: {.respuesta quien="Juan Gómez"}
+
+    En 1990.
+
+    Segundo párrafo de la misma respuesta.
+
+    [/respuesta]: # ()
+    :::
+
+    ::: acotacion
+
+    [Se interrumpe la grabación]
+
+    [/acotacion]: # ()
+    :::
+
+    ::: pregunta
+
+    ¿Y después?
+
+    [/pregunta]: # ()
+    :::
+
+    [/conversacion]: # ()
+    :::
+
+Todos los bloques con `:::` y su ancla (SC-33), también los anidados. La acotación en línea, como [risas], es texto entre corchetes sin marca: Pandoc la deja tal cual (GV-83).
+
+LA ETIQUETA LA DECIDE EL TEXTO
+
+Los originales suelen dar el nombre la primera vez y seguir con P. y R. El modelo es literal: el turno lleva `quien=` cuando el texto da el nombre; sin `quien`, la etiqueta por omisión, P. o R. No se configura por obra ni por colección.
+
+EN EL CANÓNICO
+
+- Libro: `<qandaset defaultlabel="qanda" role="conversacion">`. Cada pregunta abre una `<qandaentry>`; las respuestas que siguen son `<answer>` de esa misma entrada (varias respuestas = varios `answer`, historia oral con más de dos voces). `quien` → `<label>` del turno; sin `quien`, no hay `label` y la etiqueta la pone la hoja según `defaultlabel`. Acotación: `<para role="acotacion">`, antes de la primera entrada o como último párrafo del turno anterior: el esquema no la admite entre entradas (GV-82). Un turno admite cualquier bloque.
+- Revista: `<disp-quote content-type="conversacion">`, SIEMPRE, también cuando todo el artículo es una entrevista. Cada turno, `<speech content-type="pregunta|respuesta">` con `<speaker>` = `quien` o la etiqueta por omisión: nunca vacío (GV-81). Acotación: `<p content-type="acotacion">` entre turnos. `<speaker>` en texto plano: el DTD Publishing no admite marcado de frase adentro.
+
+QUÉ SE PIERDE EN JATS
+
+- No hay contenedor de conversación: `disp-quote` es la aproximación.
+- La distinción pregunta/respuesta no es del estándar: vive en `content-type`. Las hojas la usan; los indexadores la ignoran.
+- La identidad del hablante de un turno sin nombre: `<speaker>` dice «P.», como el texto.
+- Un turno solo admite párrafos (GV-81).
+
+FRENA CON UN MENSAJE
+
+- Una respuesta sin pregunta antes (`qandaentry` exige `question`; xmllint daría un mensaje que no orienta, GV-82). En las dos cadenas: la forma del .md es una.
+- Revista: un turno con algo más que párrafos (lista, cita, figura).
+- Un turno o una acotación fuera de `.conversacion`; algo que no sea turno ni acotación dentro de ella.
+- El viejo `.speech`: se retiró; el mensaje indica pasar a `.conversacion`.
+
+LA CITA BREVE NO SE MARCA
+
+Dentro de un párrafo es tipografía: «bla bla, y Juan aseveró: «esto es lo que dijo Juan»». No hay shortcode para un turno suelto.
+
+SE RETIRA .speech
+
+Filtros (cite-to-xref.lua, fenced-divs-to-elements-db.lua), las seis plantillas de `speech` y `para role="speech"`, el CSS (`.speech`, `.speech-item`, `.speech-speaker`), `gbparlamento` y `\gblocutor` de `preambulo-contrato.tex`, la plantilla muerta `disp-quote[@content-type='interview']` de jats-to-latex.xsl (ningún filtro la producía) y la fila del catálogo de gbShortcodes. RC-DB-04 deja de prescribir el parlamento.
+
+ALTERNATIVA DESCARTADA: LA CLASE Q-and-A
+
+Q-and-A (Jinwen Xu, CTAN, 2023/12/19) es una CLASE de documento, no un paquete: carga einfart (ProjLib) con LuaLaTeX y no entra en el `book` de libros ni en el `article` de revistas. Lee el cuerpo como texto y lo interpreta con expresiones regulares de LaTeX3 según su propio pseudo-markdown (`##`, `::`, `==`, `>>`, comillas inversas, `[` y `"` al comienzo de párrafo), que choca con el LaTeX que escriben las hojas; su documentación advierte que no admite `\verb` y que SyncTeX no funciona. El diseño es de chat (cada turno en un tcolorbox). Leído en el .cls y el README de CTAN. Se tomó su modelo: pregunta, respuesta y nota; hablante declarado; P. y R. en español.
+
+TAMPOCO BITS question-answer: es para evaluaciones, no para entrevistas.
+
+**Relaciones:** vinculo:RC-DB-04,apoya:GV-81,apoya:GV-82,apoya:GV-83,vinculo:SC-33,vinculo:SC-32,vinculo:SC-31,vinculo:RF-11
+
+**PENDIENTE:** Implementación entera (filtros, seis hojas, CSS, preámbulos, catálogo), con prueba en Mint. Diseño del PDF por decidir; requisito fijo: la pregunta no queda sola al pie de página, lo que daba \paragraph en revistas. Etiqueta por omisión según el idioma del texto: falta verificar de dónde la toma cite-to-xref.lua para escribir P./R. o Q./A. en <speaker>. packtools (Publishing, SciELO) en la máquina de Alberto.
 
 ---
 
@@ -4404,3 +4492,60 @@ El marcador de los snippets (•, SC-21) no va en un identificador ni en una cla
 Medido con Pandoc 3.1.3 (`-t native`).
 
 **Relaciones:** apoya:SC-42,vinculo:SC-21
+
+### GV-81 — JATS 1.4: speech exige speaker y solo admite p; disp-quote admite speech
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** JATS Archiving 1.4 / xmllint (libxml 2.9.14) / contenedor · **Verificado:** 2026-10
+
+Modelo en `JATS-para1-4.ent`:
+
+    speech   ((object-id)*, speaker, p+)
+    speaker  (#PCDATA | person-name.class | simple-link.class)*
+
+En el DTD Archiving (`JATS-archivecustom-models1-4.ent`) `speaker` admite además todo el marcado de frase; en el módulo base, que es el de Publishing, no.
+
+`speech` está en `rest-of-para.class`, así que entra donde entra un párrafo, también dentro de `disp-quote`. `p` y `speech` tienen `content-type`.
+
+MEDIDO CON xmllint CONTRA EL DTD ARCHIVING 1.4 DEL REPO
+
+- `disp-quote content-type` con `p content-type`, varios `speech content-type` y un `speech` de dos párrafos: valida.
+- `speech` sin `speaker` (lo que escribía cite-to-xref.lua con `speaker=""`): «expecting (object-id* , speaker , p+), got (p)».
+- `speech` con una lista: «got (speaker list)».
+
+**Relaciones:** apoya:SC-43
+
+**PENDIENTE:** Falta el mismo caso contra Publishing con packtools.
+
+### GV-82 — DocBook 5.2: qandaset está en la base, empareja, y el error de xmllint no orienta
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** DocBook 5.2 RNG / xmllint (libxml 2.9.14) / contenedor · **Verificado:** 2026-10
+
+Modelo en `docbook.rng-5.2`:
+
+    qandaset    info?, (bloques)*, (qandadiv+ | qandaentry+)
+    qandaentry  info?, question, answer*
+    question    label?, (bloques)+
+    answer      label?, (bloques)+
+    defaultlabel  none | number | qanda
+
+MEDIDO CON xmllint --relaxng
+
+- `qandaset defaultlabel="qanda"` con un `para` antes de las entradas, `question` y `answer` con `label`, dos `answer` en la misma entrada, varios párrafos y una lista en un `answer`: valida, suelto en el capítulo y dentro de `blockquote`.
+- `qandaentry` sin `question` (una respuesta sin pregunta): no valida.
+- `para` entre dos `qandaentry`: no valida.
+
+En los dos casos xmllint informa «Expecting element formalgroup, got chapter», sobre el capítulo y no sobre el elemento culpable. Quien escribe el XML tiene que frenar antes, con su propio mensaje.
+
+**Relaciones:** apoya:SC-43,vinculo:RC-DB-04
+
+### GV-83 — Pandoc: conversación anidada con ::: y anclas; los corchetes sueltos quedan como texto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor · **Verificado:** 2026-10
+
+Medido con Pandoc 3.1.3 (`-t native`).
+
+- `::: conversacion` con turnos `::: {.pregunta quien="…"}`, `::: respuesta` y `::: acotacion` adentro, todos con `:::` y su ancla (SC-33): un `Div` contenedor con los turnos como `Div` hijos, cada uno con su clase y sus atributos; una respuesta de dos párrafos da dos `Para`.
+- `[risas]` en medio de un párrafo, sin referencia que lo defina: `Str "[risas],"`, con los corchetes.
+- `[Risas]{.acotacion}`: un `Span` cuyo texto es «Risas», sin corchetes.
+
+**Relaciones:** apoya:SC-43,vinculo:SC-33
