@@ -51,8 +51,8 @@
       \gbepigrafe    macro   — {texto}{atribución}
       gbsidebar      entorno — un argumento: info | supplementary
       gbverso        entorno — literallayout role="verse"
-      gbparlamento   entorno — para role="speech"
-      \gblocutor     macro   — emphasis role="speaker"
+      gbconversacion entorno — qandaset role="conversacion" (SC-43, CONTRATO 12)
+      \gbetiqueta    macro   — etiqueta del turno, en línea
 
     LLAMADAS DE ATENCIÓN
       gbnota gbconsejo gbadvertencia gbimportante gbprecaucion
@@ -87,8 +87,9 @@
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:xlink="http://www.w3.org/1999/xlink"
   xmlns:f="urn:gbpublisher:functions"
+  xmlns:gbv="urn:gbpublisher:conversacion"
   xpath-default-namespace="http://docbook.org/ns/docbook"
-  exclude-result-prefixes="xs xlink f">
+  exclude-result-prefixes="xs xlink f gbv">
 
   <xsl:import href="tex-comun.xsl"/>
 
@@ -97,6 +98,9 @@
        ES include Y NO import: CON import, EL CATCH-ALL match="*" DE ESTA
        HOJA TENDRÍA MAYOR PRECEDENCIA Y ABORTARÍA EN CADA <quote> -->
   <xsl:include href="quote.xsl"/>
+
+  <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="conversacion-comun.xsl"/>
 
   <xsl:output method="text" encoding="UTF-8"/>
 
@@ -460,17 +464,58 @@
     <xsl:text>&#10;&#10;</xsl:text>
   </xsl:template>
 
-  <!-- PARLAMENTO: para role="speech" -->
   <!-- FROUFROU (SC-36): EL SEPARADOR DEL PAQUETE froufrou, CARGADO EN   -->
   <!-- preambulo-contrato.tex. EL TEXTO «* * *» DEL CANÓNICO NO SE USA.  -->
   <xsl:template match="para[@role='froufrou']" priority="5">
     <xsl:text>&#10;\froufrou&#10;&#10;</xsl:text>
   </xsl:template>
 
-  <xsl:template match="para[@role='speech']" priority="5">
-    <xsl:text>\begin{gbparlamento}&#10;</xsl:text>
-    <xsl:apply-templates/>
-    <xsl:text>&#10;\end{gbparlamento}&#10;&#10;</xsl:text>
+  <!-- ============================================================ -->
+  <!-- CONVERSACIÓN (SC-43, CONTRATO 12)                            -->
+  <!-- ============================================================ -->
+  <!-- EL qandaset ES EL ENTORNO gbconversacion (SANS, \small, SIN  -->
+  <!-- SANGRÍA, \medskip AL ABRIR Y AL CERRAR). CADA TURNO ABRE SU  -->
+  <!-- PRIMER PÁRRAFO CON \gbetiqueta{ETIQUETA}, EN MAYÚSCULAS DE   -->
+  <!-- PESO NORMAL (gbv:etiqueta). DESPUÉS DE UNA PREGUNTA,          -->
+  <!-- \nopagebreak[4] EN MODO VERTICAL: LA PREGUNTA NO QUEDA SOLA  -->
+  <!-- AL PIE DE LA PÁGINA. LA ACOTACIÓN ES UN PÁRRAFO MÁS.          -->
+  <!-- UN qandaset SIN role="conversacion" NO TIENE PLANTILLA: CAE  -->
+  <!-- EN EL CATCH-ALL Y FRENA.                                     -->
+  <!-- ============================================================ -->
+  <xsl:template match="qandaset[@role = 'conversacion']" priority="5">
+    <xsl:text>\begin{gbconversacion}&#10;</xsl:text>
+    <xsl:apply-templates select="*"/>
+    <xsl:text>\end{gbconversacion}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="qandaentry">
+    <xsl:apply-templates select="question | answer"/>
+  </xsl:template>
+
+  <xsl:template match="question | answer">
+    <xsl:variable name="bloques" select="gbv:bloques(.)"/>
+    <xsl:variable name="etiqueta"
+      select="concat('\gbetiqueta{', f:latex(gbv:etiqueta(.)), '}')"/>
+    <xsl:choose>
+      <!-- LO HABITUAL: LA ETIQUETA ABRE EL PRIMER PÁRRAFO, EN LÍNEA -->
+      <xsl:when test="$bloques[1][self::para]">
+        <xsl:variable name="c"><xsl:apply-templates select="$bloques[1]/node()"/></xsl:variable>
+        <xsl:value-of select="$etiqueta"/>
+        <xsl:value-of select="f:recortar(string($c))"/>
+        <xsl:text>&#10;&#10;</xsl:text>
+        <xsl:apply-templates select="$bloques[position() gt 1]"/>
+      </xsl:when>
+      <!-- UN TURNO QUE EMPIEZA CON UNA LISTA U OTRO BLOQUE: LA ETIQUETA
+           VA SOLA EN SU PÁRRAFO -->
+      <xsl:otherwise>
+        <xsl:value-of select="$etiqueta"/>
+        <xsl:text>&#10;&#10;</xsl:text>
+        <xsl:apply-templates select="$bloques"/>
+      </xsl:otherwise>
+    </xsl:choose>
+    <xsl:if test="gbv:es-pregunta(.)">
+      <xsl:text>\nopagebreak[4]&#10;&#10;</xsl:text>
+    </xsl:if>
   </xsl:template>
 
   <!-- PÁRRAFO DENTRO DE UN ÍTEM O DE UNA NOTA: SIN DOBLE SALTO     -->
@@ -529,12 +574,6 @@
 
   <xsl:template match="emphasis[@role = ('strong', 'bold')]" priority="5">
     <xsl:text>\textbf{</xsl:text>
-    <xsl:apply-templates/>
-    <xsl:text>}</xsl:text>
-  </xsl:template>
-
-  <xsl:template match="emphasis[@role='speaker']" priority="5">
-    <xsl:text>\gblocutor{</xsl:text>
     <xsl:apply-templates/>
     <xsl:text>}</xsl:text>
   </xsl:template>

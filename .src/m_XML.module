@@ -1246,6 +1246,43 @@ Private Function IdiomaPrincipalEfectivo(hArticulo As Result) As String
 End
 
 ' ============================================
+' Función   : ArgumentoIdiomaPandoc
+' Propósito : El argumento -M gb-idioma=xx que lleva a Pandoc el idioma
+'             principal del artículo. Lo lee conversacion.lua para la
+'             etiqueta por omisión de los turnos (SC-43). Clave propia y
+'             no lang: en el ODT, lang cambiaría además el idioma de
+'             citeproc y del documento. El valor va a la línea de
+'             comandos: solo pasa si son letras ASCII y guiones; si no,
+'             va "es", que es también lo que el filtro hace con un
+'             idioma fuera de su tabla
+' Parámetros: hArticulo As Result — fila con la columna idioma_principal
+' Retorna   : String — " -M gb-idioma=xx", con el espacio inicial
+' ============================================
+Public Function ArgumentoIdiomaPandoc(hArticulo As Result) As String
+
+  Dim sIdioma As String
+  Dim sPermitidos As String = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-"
+  Dim iPos As Integer
+
+  ' --- 1. EL IDIOMA COMO LO DECLARA EL CANÓNICO ---
+  sIdioma = IdiomaPrincipalEfectivo(hArticulo)
+
+  ' --- 2. SOLO LETRAS ASCII Y GUIONES: VA SIN COMILLAS A LA TERMINAL ---
+  ' UN CARÁCTER DE VARIOS BYTES NO ESTÁ EN sPermitidos Y TAMBIÉN DESCARTA
+  If sIdioma = "" Then sIdioma = "es"
+  For iPos = 1 To Len(sIdioma)
+    If InStr(sPermitidos, Mid(sIdioma, iPos, 1)) = 0 Then
+      sIdioma = "es"
+      Break
+    Endif
+  Next
+
+  ' --- 3. RETORNO ---
+  Return " -M gb-idioma=" & sIdioma
+
+End
+
+' ============================================
 ' Función   : LicenciaEfectiva
 ' Propósito : Licencia que declara el canónico. La del artículo tiene
 '             prioridad; si el artículo no tiene licencia, rige la de
@@ -2121,9 +2158,11 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   Dim sFileFallo As String
   Dim iEspera As Integer
 
-  ' --- 1. Obtener nombre_archivo ---
+  ' --- 1. Obtener nombre_archivo e idioma ---
+  ' EL IDIOMA VA A PANDOC (-M gb-idioma): LA ETIQUETA POR OMISIÓN DE LA
+  ' CONVERSACIÓN DEPENDE DE ÉL (conversacion.lua, SC-43)
   Try hArticulo = m_ConexionBD.mConn.Exec(
-    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1", iIdArticulo)
+    "SELECT nombre_archivo, idioma_principal FROM articulos WHERE id_articulo = &1 LIMIT 1", iIdArticulo)
 
   If Error Then
     m_Sonido.sonar("Error")
@@ -2181,6 +2220,10 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   ' codigo.lua (SC-42) CONTROLA EL CÓDIGO —LENGUAJE DE LA LISTA, FORMA DEL
   ' LISTADO— Y ESCRIBE EL <code>. VA ANTES DE cite-to-xref, QUE ARMA EL
   ' <fig fig-type="listado"> CON EL PIE YA CON SUS CITAS.
+  ' conversacion.lua (SC-43) CONTROLA LA CONVERSACIÓN —TURNOS SOLO CON
+  ' PÁRRAFOS, PRIMERO UNA PREGUNTA, NADA SUELTO— Y ESCRIBE LA ETIQUETA DE
+  ' CADA TURNO SEGÚN -M gb-idioma. VA ANTES DE cite-to-xref, QUE ARMA EL
+  ' <disp-quote content-type="conversacion">, Y FRENA EL VIEJO .speech.
   ' LAS FIGURAS, NORMALES Y DE ANCHO COMPLETO, LAS ARMA cite-to-xref (SC-32);
   ' figure-to-end.lua, QUE HACÍA LAS DE ANCHO COMPLETO APARTE, SE RETIRÓ.
   ' pandoc ... && { ENVOLTORIO } > body || : > fallo: SI UN FILTRO FRENA (UN
@@ -2188,7 +2231,8 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   ' MARCA DE FALLO Y EL MOTIVO QUEDA ESCRITO EN LA TERMINAL
   FMain.TerminalViewProyecto.Input(
     "pandoc '" & sRutaMD & "' " &
-    "--from markdown --to jats --no-highlight --wrap=none " &
+    "--from markdown --to jats --no-highlight --wrap=none" &
+    ArgumentoIdiomaPandoc(hArticulo) & " " &
     "--lua-filter ~/.gbpublisher/filters/guillemets-to-quoted-db.lua " &
     "--lua-filter ~/.gbpublisher/filters/quoted-a-nivel-jats.lua " &
     "--lua-filter ~/.gbpublisher/filters/dos-partes.lua " &
@@ -2196,6 +2240,7 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
     "--lua-filter ~/.gbpublisher/filters/espacio-vertical.lua " &
     "--lua-filter ~/.gbpublisher/filters/recuadros.lua " &
     "--lua-filter ~/.gbpublisher/filters/codigo.lua " &
+    "--lua-filter ~/.gbpublisher/filters/conversacion.lua " &
     "--lua-filter ~/.gbpublisher/filters/table-to-end.lua " &
     "--lua-filter ~/.gbpublisher/filters/cite-to-xref.lua " &
     "--output '" & sFileParcial & "' && " &
@@ -4150,6 +4195,22 @@ Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean, sEstilo As Strin
   s &= "  {\\begin{tcolorbox}[gbrecuadrobarra," & Chr(10)
   s &= "     title={\\parbox[c][1pc][c]{\\linewidth}{\\sffamily\\bfseries\\MakeUppercase{#1}}}]}" & Chr(10)
   s &= "  {\\end{tcolorbox}}" & Chr(10)
+  s &= Chr(10)
+  ' CONVERSACIÓN (SC-43): GEMELOS DE gbconversacion Y \gbetiqueta DE
+  ' preambulo-contrato.tex (LIBROS, CONTRATO 12). UN CAMBIO EN UNOS VA EN LOS
+  ' OTROS. SANS, \small, EL BLOQUE CORRIDO 14 PT A LA IZQUIERDA COMO LA CITA
+  ' (quote, MÁS ABAJO), SIN SANGRÍA DE PRIMERA LÍNEA, ESPACIO CHICO ENTRE
+  ' TURNOS Y PÁRRAFOS,
+  ' \medskip AL ABRIR Y AL CERRAR. LA ETIQUETA LLEGA YA EN MAYÚSCULAS Y VA EN
+  ' PESO NORMAL; EL \nopagebreak DESPUÉS DE LA PREGUNTA LO ESCRIBE LA HOJA
+  s &= "\\newenvironment{gbconversacion}" & Chr(10)
+  s &= "  {\\par\\medskip" & Chr(10)
+  s &= "   \\begingroup\\sffamily\\small" & Chr(10)
+  s &= "   \\setlength{\\leftskip}{14pt}%" & Chr(10)
+  s &= "   \\setlength{\\parindent}{0pt}%" & Chr(10)
+  s &= "   \\setlength{\\parskip}{\\smallskipamount}}" & Chr(10)
+  s &= "  {\\par\\endgroup\\medskip}" & Chr(10)
+  s &= "\\newcommand{\\gbetiqueta}[1]{#1\\enspace}" & Chr(10)
   s &= Chr(10)
   ' CÓDIGO (SC-42): GEMELO DE LA SECCIÓN 8 DE preambulo-contrato.tex (LIBROS,
   ' CONTRATO 11). UN CAMBIO EN UNO VA EN EL OTRO, Y EN EL CSS DE jats-to-html.xsl
@@ -7471,7 +7532,11 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
   '   6° codigo.lua  (CONTROLA EL CÓDIGO Y LOS LISTADOS Y ESCRIBE EL
   '      <programlisting>, SC-42. ANTES DE fenced-divs, QUE ARMA EL
   '      <example role="listado"> CON EL PIE)
-  '   7° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
+  '   7° conversacion.lua  (CONTROLA LA CONVERSACIÓN Y FRENA EL VIEJO
+  '      .speech, SC-43. ANTES DE fenced-divs, QUE ARMA EL <qandaset>. EL
+  '      LIBRO NO PASA -M gb-idioma: SIN quien NO HAY <label> Y LA ETIQUETA LA
+  '      PONE LA HOJA SEGÚN EL xml:lang)
+  '   8° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
   '      QUE PUEDEN CONTENER PÁRRAFOS CON CITAS YA TRANSFORMADAS)
   '
   ' EL WRAPPER <section xmlns="..." xmlns:mml="..." xmlns:xlink="...">
@@ -7491,6 +7556,7 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
     "--lua-filter ~/.gbpublisher/filters/espacio-vertical.lua " &
     "--lua-filter ~/.gbpublisher/filters/recuadros.lua " &
     "--lua-filter ~/.gbpublisher/filters/codigo.lua " &
+    "--lua-filter ~/.gbpublisher/filters/conversacion.lua " &
     "--lua-filter ~/.gbpublisher/filters/fenced-divs-to-elements-db.lua " &
     "--output '" & sFileParcial & "' && " &
     "{ echo '<section xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &

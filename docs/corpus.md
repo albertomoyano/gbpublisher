@@ -2295,7 +2295,7 @@ PDF de pantalla y de imprenta, HTML, EPUB y ODT, en libros y en revistas; inserc
 
 ### SC-43 — Conversación: qandaset en libros, speech dentro de disp-quote en revistas
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** DocBook 5.2 / JATS Archiving 1.4 / Pandoc 3.1.3 / xmllint (libxml 2.9.14) / contenedor · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** DocBook 5.2 / JATS Archiving y Publishing 1.4 / Pandoc 3.1.3 / SaxonJ-HE 12.5 / pdfLaTeX TeX Live 2023 / xmllint (libxml 2.9.14) / contenedor · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisiones de Alberto). Libros y revistas. Entrevistas, reportajes, historia oral: todo intercambio de preguntas y respuestas con hablante. No es para obras teatrales.
 
@@ -2356,10 +2356,15 @@ QUÉ SE PIERDE EN JATS
 
 FRENA CON UN MENSAJE
 
-- Una respuesta sin pregunta antes (`qandaentry` exige `question`; xmllint daría un mensaje que no orienta, GV-82). En las dos cadenas: la forma del .md es una.
-- Revista: un turno con algo más que párrafos (lista, cita, figura).
-- Un turno o una acotación fuera de `.conversacion`; algo que no sea turno ni acotación dentro de ella.
+Lo controla `conversacion.lua`, con la misma regla en las tres cadenas:
+
 - El viejo `.speech`: se retiró; el mensaje indica pasar a `.conversacion`.
+- Una conversación vacía, sin ningún turno (solo acotaciones), dentro de otra, o con algo que no sea `::: pregunta`, `::: respuesta` o `::: acotacion` (el texto suelto va dentro de un turno).
+- Una respuesta sin pregunta antes (`qandaentry` exige `question`; xmllint daría un mensaje que no orienta, GV-82). En las dos cadenas: la forma del .md es una. Una acotación sí puede ir antes de la primera pregunta.
+- Un turno o una acotación vacíos, con otro turno, otra acotación u otra conversación adentro, o fuera de `::: conversacion`.
+- `quien=""` escrito pero vacío; `quien` en una acotación.
+- Una acotación con algo que no sea un párrafo.
+- Revista: un turno con algo más que párrafos (lista, cita, figura). En libro un turno admite cualquier bloque.
 
 LA CITA BREVE NO SE MARCA
 
@@ -2373,14 +2378,34 @@ DISEÑO DE LAS SALIDAS (decisiones de Alberto)
 
 La etiqueta va siempre en MAYÚSCULAS, en las tres salidas: ANA PÉREZ, P., R. El .md y el canónico la guardan como la escribe el texto; la pasa a mayúsculas cada hoja. En línea: la etiqueta abre el turno y el texto sigue en el mismo renglón, sin sangría francesa.
 
-- PDF (libros y revistas): toda la conversación en sans, `\small`, sin sangría de primera línea. Etiqueta de peso normal. Un espacio chico entre turnos y entre los párrafos de un mismo turno: sin sangría, es lo único que los separa. `\medskip` al abrir la conversación y al cerrarla, que da la sensación de bloque; lo pone el entorno, no se escribe a mano. La pregunta no queda sola al pie de la página (lo que daba `\paragraph` en revistas).
-- HTML: la tipografía del texto. Etiqueta en negrita, la de quien pregunta y la de quien responde; la de quien pregunta, además, en el azul de las hojas (`--color-accent`, #2d5a8e). Sin espacio extra al abrir y al cerrar: la interlínea, la negrita y el color hacen el trabajo.
+- PDF (libros y revistas): toda la conversación en sans, `\small`, corrida 14 pt a la izquierda, el mismo margen que la cita (`quote` del proyecto), sin margen a la derecha; sin sangría de primera línea. Etiqueta de peso normal. El margen es `\leftskip` y no una lista como la cita: dentro de una lista el espacio entre párrafos es `\parsep`, no `\parskip`; las notas no lo heredan (`\@parboxrestore` lo pone en cero, verificado en latex.ltx). Un espacio chico entre turnos y entre los párrafos de un mismo turno: sin sangría, es lo único que los separa. `\medskip` al abrir la conversación y al cerrarla, que da la sensación de bloque; lo pone el entorno, no se escribe a mano. La pregunta no queda sola al pie de la página (lo que daba `\paragraph` en revistas).
+- HTML: la tipografía del texto, sin sangría. Etiqueta en negrita y en el azul de las hojas (`--color-accent`, #2d5a8e), la de quien pregunta y la de quien responde. Sin espacio extra al abrir y al cerrar: la interlínea, la negrita y el color hacen el trabajo.
 - EPUB: como el HTML, todo en negro.
 
-IDIOMA DE LA ETIQUETA POR OMISIÓN
+IDIOMA DE LA ETIQUETA POR OMISIÓN (decisión de Alberto: español por omisión)
 
-- Revista: el filtro escribe la etiqueta en `<speaker>` y necesita el idioma, que está en la base (`idioma_principal`) y no llegaba a Pandoc. `m_XML` lo pasa con `-M lang=xx` y cite-to-xref.lua lo lee en una pasada previa: el filtro devuelve una lista de dos tablas, la primera con `Meta`, la segunda con los turnos. En una sola tabla `Meta` corre después de `Div` y el idioma no está leído (GV-84).
-- Libro: nada que pasar. Sin `quien` no hay `label`, y la hoja pone la etiqueta según `defaultlabel` y el idioma del libro.
+Tabla cerrada: español P. y R.; inglés Q. y A. Cualquier otro idioma, o ninguno, da español. Se compara el código principal, sin región (`es-AR` es `es`).
+
+- Revista y ODT: la etiqueta la escribe el filtro, y el idioma está en la base (`articulos.idioma_principal`). `m_XML.ArgumentoIdiomaPandoc` lo pasa como `-M gb-idioma=xx`: solo letras ASCII y guiones, si no `es`. Clave propia y no `lang`: en el ODT, `lang` cambiaría además el idioma de citeproc y del documento. `conversacion.lua` lo lee en su función `Pandoc`, con el documento entero: en una función `Div` de la misma tabla, `Meta` todavía no habría corrido (GV-84).
+- Libro: nada que pasar. Sin `quien` no hay `label`, y la hoja pone la etiqueta según `defaultlabel` y el `xml:lang` más cercano al turno.
+
+IMPLEMENTACIÓN
+
+- `conversacion.lua`, filtro nuevo, corre en las tres cadenas: revista, después de `codigo.lua` y antes de `cite-to-xref.lua`; libro, antes de `fenced-divs-to-elements-db.lua`; ODT, después de `codigo.lua`. Controla la forma (los frenos de arriba). Busca los turnos sueltos recorriendo el documento de arriba hacia abajo sin entrar en las conversaciones (GV-85). En revista y ODT escribe en cada turno el atributo `etiqueta` (`quien` o la de la tabla).
+- `cite-to-xref.lua` y `fenced-divs-to-elements-db.lua` solo serializan; frenan si `conversacion.lua` no corrió antes.
+- ODT: la conversación se resuelve en párrafos; la etiqueta en negrita y mayúsculas abre el primer párrafo de cada turno; la acotación queda tal cual.
+- Hojas: `conversacion-comun.xsl`, incluida por las seis, da la etiqueta (`gbv:etiqueta`, ya en mayúsculas), si el turno es pregunta y sus bloques. PDF: entorno `gbconversacion` y `\gbetiqueta` (contrato 12); después de cada pregunta, `\nopagebreak[4]` en modo vertical. HTML y EPUB: `div.conversacion`, `div.turno` con `turno-pregunta` o `turno-respuesta`, `span.turno-etiqueta` y `p.acotacion`. Un turno de libro que empieza con una lista lleva la etiqueta sola en su párrafo.
+- Medido en contenedor (pdfLaTeX, 60 pares de largo variable, con `\raggedbottom`, `\clubpenalty=10000` y `\widowpenalty=10000`, como los preámbulos del proyecto): ninguna página termina con una pregunta completa; una pregunta larga puede partirse entre páginas, con dos líneas al menos de cada lado, y la respuesta sigue a su final.
+
+GEMELOS
+
+- La tabla de etiquetas: `conversacion.lua` y `conversacion-comun.xsl`.
+- El entorno: `preambulo-contrato.tex` (contrato 12) y `m_XML.ObtenerPreambuloEmbebido`.
+- El CSS: `jats-to-html.xsl` y `gbpublisher.css` (etiqueta en negrita y azul, en los dos turnos); `gbpublisher-epub-libro.css` y `m_GenerarEpub` (negrita, negro).
+
+PROBADO EN MINT (2026-10)
+
+PDF, HTML y EPUB, en libros y en revistas. Dos ajustes salieron de esa prueba: en el HTML la etiqueta de quien responde también va en azul, y en el PDF el bloque va corrido 14 pt a la izquierda. Los cuatro shortcodes —conversacion, pregunta, respuesta y acotacion— se liberan para libros y revistas con datos-v5-009 de gbShortcodes, por decisión de Alberto, con el ODT y el XML JATS todavía sin probar (ver el pendiente).
 
 ALTERNATIVA DESCARTADA: LA CLASE Q-and-A
 
@@ -2388,9 +2413,9 @@ Q-and-A (Jinwen Xu, CTAN, 2023/12/19) es una CLASE de documento, no un paquete: 
 
 TAMPOCO BITS question-answer: es para evaluaciones, no para entrevistas.
 
-**Relaciones:** vinculo:RC-DB-04,apoya:GV-81,apoya:GV-82,apoya:GV-83,vinculo:SC-33,vinculo:SC-32,vinculo:SC-31,vinculo:RF-11,apoya:GV-84
+**Relaciones:** vinculo:RC-DB-04,apoya:GV-81,apoya:GV-82,apoya:GV-83,vinculo:SC-33,vinculo:SC-32,vinculo:SC-31,vinculo:RF-11,apoya:GV-84,apoya:GV-85,apoya:GV-86
 
-**PENDIENTE:** Implementación entera (filtros, -M lang en m_XML, seis hojas, CSS, preámbulos, catálogo), con prueba en Mint. Tabla de etiquetas por omisión según el idioma: es P./R. y en Q./A.; las demás, y qué pasa con un idioma fuera de la tabla, por decidir. packtools (Publishing, SciELO) en la máquina de Alberto.
+**PENDIENTE:** Probar el ODT (revistas) y el XML JATS: validación del canónico, sabores (SciELO, Redalyc) y packtools. Los shortcodes ya están liberados (datos-v5-009).
 
 ---
 
@@ -4508,7 +4533,7 @@ Medido con Pandoc 3.1.3 (`-t native`).
 
 ### GV-81 — JATS 1.4: speech exige speaker y solo admite p; disp-quote admite speech
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** JATS Archiving 1.4 / xmllint (libxml 2.9.14) / contenedor · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** JATS Archiving y Publishing 1.4 / xmllint (libxml 2.9.14) / contenedor · **Verificado:** 2026-10
 
 Modelo en `JATS-para1-4.ent`:
 
@@ -4525,9 +4550,14 @@ MEDIDO CON xmllint CONTRA EL DTD ARCHIVING 1.4 DEL REPO
 - `speech` sin `speaker` (lo que escribía cite-to-xref.lua con `speaker=""`): «expecting (object-id* , speaker , p+), got (p)».
 - `speech` con una lista: «got (speaker list)».
 
+MEDIDO CON xmllint CONTRA EL DTD PUBLISHING 1.4 OFICIAL (jats.nlm.nih.gov, octubre de 2024)
+
+- La salida de cite-to-xref.lua para una conversación (un `disp-quote content-type="conversacion"` con acotaciones, cuatro `speech`, uno de dos párrafos, una nota y bastardilla): el cuerpo valida.
+- `<speaker><italic>…</italic></speaker>`: «Element italic is not declared in speaker list of possible children». En Publishing, `speaker` va en texto plano.
+
 **Relaciones:** apoya:SC-43
 
-**PENDIENTE:** Falta el mismo caso contra Publishing con packtools.
+**PENDIENTE:** packtools (reglas de SciELO) en la máquina de Alberto.
 
 ### GV-82 — DocBook 5.2: qandaset está en la base, empareja, y el error de xmllint no orienta
 
@@ -4583,5 +4613,45 @@ MEDIDO CON Pandoc 3.1.3 (`-t jats`, `-M lang=…`)
 - Una sola tabla, `Meta` y `Div` globales, con `-M lang=en`: `Div` ve el valor inicial de la variable, sin leer.
 
 Caso del proyecto: la etiqueta por omisión de la conversación en revistas (SC-43).
+
+**Relaciones:** apoya:SC-43
+
+### GV-85 — Pandoc: walk de arriba hacia abajo; «return el, false» no entra en los hijos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor · **Verificado:** 2026-10
+
+Por omisión `doc:walk` recorre de abajo hacia arriba: una función `Div` ve los Div de adentro antes que el que los contiene, y no sabe dentro de qué está cada uno.
+
+Con `traverse = 'topdown'` en la tabla de filtro, el recorrido va de arriba hacia abajo, y una función que devuelve el elemento y `false` deja sin recorrer sus hijos:
+
+    doc:walk({ traverse = 'topdown', Div = function (el)
+      if el.classes:includes('conversacion') then return el, false end
+      …
+    end })
+
+MEDIDO CON Pandoc 3.1.3
+
+Un `::: conversacion` con un `::: pregunta` adentro, y un `::: respuesta` suelto después: la función ve «conversacion» y «respuesta». La pregunta de adentro no pasa.
+
+Caso del proyecto: `conversacion.lua` encuentra así los turnos sueltos, fuera de una conversación (SC-43).
+
+**Relaciones:** apoya:SC-43
+
+### GV-86 — Lua: una función que termina en gsub devuelve dos valores, y un constructor de tabla toma los dos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 (Lua 5.4) / contenedor · **Verificado:** 2026-10
+
+`string.gsub` devuelve la cadena y la cantidad de reemplazos. Una función que termina en `return s:gsub(…)` devuelve también los dos. En una asignación simple sobra el segundo y no se nota; como último elemento de un constructor de tabla o de una lista de argumentos, entran los dos.
+
+    local t = { blocks_a_docbook(bloques) }      -- { "<para>…</para>", 0 }
+    local t = { (blocks_a_docbook(bloques)) }    -- { "<para>…</para>" }
+
+Los paréntesis reducen el resultado a un solo valor.
+
+MEDIDO CON Pandoc 3.1.3
+
+En `fenced-divs-to-elements-db.lua`, `blocks_a_docbook` e `inlines_a_docbook` terminan en `gsub`. Usado sin paréntesis dentro de `{ }`, el `table.concat` de la conversación escribió un «0» suelto después de cada turno en el DocBook. Con paréntesis, nada.
+
+Caso del proyecto: la serialización de la conversación (SC-43).
 
 **Relaciones:** apoya:SC-43

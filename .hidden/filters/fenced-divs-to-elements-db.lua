@@ -27,7 +27,7 @@
 --      (EL BLOQUE SUELTO ~~~ python LO ESCRIBE codigo.lua)
 --   7. RECUADROS (recuadro, recuadrob, SC-41)  → <sidebar role="recuadro" | "recuadro-barra">
 --   8. FORMULA (.formula)                      → <equation xml:id="X">
---   9. SPEECH (.speech speaker=)               → <para role="speech">
+--   9. CONVERSACIÓN (.conversacion, SC-43)      → <qandaset role="conversacion">
 --  10. FORMAL (.theorem/.definition/.proof)    → <example role="X">
 -- =====================================================
 
@@ -527,40 +527,80 @@ function Div(el)
   end
 
   -- =====================================================
-  -- 6.9. SPEECH (.speech speaker=)
+  -- 6.9. CONVERSACIÓN (::: conversacion, SC-43)
   -- =====================================================
   -- ESTRUCTURA EN MD:
-  --   ::: {.speech speaker="Entrevistado A"}
-  --   Texto de la intervención.
-  --   :::
+  --   ::: conversacion
+  --   ::: {.pregunta quien="Ana Pérez"}   ::: respuesta   ::: acotacion
+  --   (CADA UNO CON SU ANCLA DE CIERRE, SC-33)
   --
-  -- DOCBOOK 5.2 BASE NO TIENE <dialogue>/<speech> (ESTÁN EN
-  -- DOCBOOK PUBLISHERS V1, OTRO SCHEMA). EMITIMOS UN <para>
-  -- CON role="speech" Y EL HABLANTE MARCADO TIPOGRÁFICAMENTE
-  -- COMO <emphasis role="speaker">. PRESERVA LA SEMÁNTICA
-  -- Y SE MANTIENE EN EL SCHEMA BASE.
-  if el.classes:includes('speech') then
-    local speaker = el.attributes['speaker'] or ''
-    -- TOMAR EL CONTENIDO DEL PRIMER Para
-    local contenido_db = ''
-    for _, block in ipairs(el.content) do
-      if block.t == 'Para' or block.t == 'Plain' then
-        contenido_db = inlines_a_docbook(block.content)
-        break
+  -- DOCBOOK 5.2 BASE NO TIENE <dialogue> (RC-DB-04), PERO SÍ <qandaset>
+  -- (GV-82). CADA PREGUNTA ABRE UNA <qandaentry>; LAS RESPUESTAS QUE LA
+  -- SIGUEN SON <answer> DE ESA MISMA ENTRADA. quien → <label> DEL TURNO;
+  -- SIN quien NO HAY <label>, Y LA HOJA PONE LA ETIQUETA SEGÚN
+  -- defaultlabel="qanda" Y EL IDIOMA DEL LIBRO. LA ACOTACIÓN ES UN
+  -- <para role="acotacion">: ANTES DE LA PRIMERA ENTRADA VA SUELTA EN EL
+  -- qandaset; DESPUÉS, AL FINAL DEL TURNO ANTERIOR, PORQUE EL ESQUEMA NO
+  -- LA ADMITE ENTRE ENTRADAS (GV-82).
+  -- conversacion.lua YA CONTROLÓ LA FORMA: EL PRIMER TURNO ES UNA PREGUNTA,
+  -- NADA VACÍO NI ANIDADO. EL VIEJO ::: {.speech} LO FRENA conversacion.lua.
+  if el.classes:includes('conversacion') then
+    local previas = {}
+    local turnos = {}
+
+    -- --- 1. RECORRER LOS HIJOS: TURNOS Y ACOTACIONES EN ORDEN ---
+    for _, hijo in ipairs(el.content) do
+      if hijo.classes:includes('acotacion') then
+        local acotacion = {}
+        for _, parrafo in ipairs(hijo.content) do
+          acotacion[#acotacion + 1] = '<para role="acotacion">' ..
+                                      inlines_a_docbook(parrafo.content) .. '</para>'
+        end
+        -- ANTES DEL PRIMER TURNO, SUELTA; DESPUÉS, DENTRO DEL TURNO ANTERIOR
+        if #turnos == 0 then
+          previas[#previas + 1] = table.concat(acotacion, '\n')
+        else
+          local t = turnos[#turnos]
+          t.cuerpo[#t.cuerpo + 1] = table.concat(acotacion, '\n')
+        end
+      else
+        turnos[#turnos + 1] = {
+          tipo   = hijo.classes:includes('pregunta') and 'question' or 'answer',
+          quien  = hijo.attributes['quien'],
+          -- ENTRE PARÉNTESIS: blocks_a_docbook DEVUELVE LO QUE DEVUELVE gsub,
+          -- LA CADENA Y LA CANTIDAD DE REEMPLAZOS; SIN ELLOS, LA CANTIDAD
+          -- ENTRARÍA A LA TABLA COMO UN SEGUNDO ELEMENTO
+          cuerpo = { (blocks_a_docbook(hijo.content)) },
+        }
       end
     end
 
-    local speaker_xml = ''
-    if speaker ~= '' then
-      speaker_xml = '<emphasis role="speaker">' ..
-                    escape_xml_text(speaker) ..
-                    ':</emphasis> '
+    -- SIN PREGUNTA PRIMERO NO HAY qandaentry VÁLIDA: conversacion.lua NO CORRIÓ
+    if #turnos == 0 or turnos[1].tipo ~= 'question' then
+      error('\n[gbpublisher] conversación sin controlar: conversacion.lua tiene que ' ..
+            'correr antes que fenced-divs-to-elements-db.lua\n', 0)
     end
-    local raw = '<para role="speech">' ..
-                speaker_xml ..
-                contenido_db ..
-                '</para>'
-    return pandoc.RawBlock('docbook', raw)
+
+    -- --- 2. ARMAR EL qandaset ---
+    local partes = { '<qandaset defaultlabel="qanda" role="conversacion">' }
+    for _, previa in ipairs(previas) do partes[#partes + 1] = previa end
+    for i, t in ipairs(turnos) do
+      -- UNA PREGUNTA CIERRA LA ENTRADA ANTERIOR Y ABRE OTRA
+      if t.tipo == 'question' then
+        if i > 1 then partes[#partes + 1] = '</qandaentry>' end
+        partes[#partes + 1] = '<qandaentry>'
+      end
+      local label = ''
+      if t.quien then
+        -- ESCAPAR: quien VA A TEXTO DE ELEMENTO
+        label = '<label>' .. escape_xml_text(t.quien) .. '</label>\n'
+      end
+      partes[#partes + 1] = '<' .. t.tipo .. '>\n' .. label ..
+                            table.concat(t.cuerpo, '\n') .. '\n</' .. t.tipo .. '>'
+    end
+    partes[#partes + 1] = '</qandaentry>'
+    partes[#partes + 1] = '</qandaset>'
+    return pandoc.RawBlock('docbook', table.concat(partes, '\n'))
   end
 
   -- =====================================================

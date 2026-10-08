@@ -29,7 +29,8 @@
     xmlns:epub="http://www.idpf.org/2007/ops"
     xmlns:nl="urn:gbpublisher:numeracion-libro"
     xmlns:gbc="urn:gbpublisher:codigo"
-                exclude-result-prefixes="xsl xs db xlink nl gbc">
+                xmlns:gbv="urn:gbpublisher:conversacion"
+                exclude-result-prefixes="xsl xs db xlink nl gbc gbv">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -46,6 +47,9 @@
 
   <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
   <xsl:include href="codigo-comun.xsl"/>
+
+  <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="conversacion-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS DE ENTRADA
@@ -1611,7 +1615,6 @@
     <pre class="literallayout"><xsl:value-of select="."/></pre>
   </xsl:template>
 
-  <!-- DISCURSO / DIÁLOGO (para role="speech") -->
   <!-- FROUFROU (SC-36): TRES ASTERISCOS A 1 cm, CENTRADOS. CADA UNO EN
        SU span Y SIN ESPACIOS ENTRE ELLOS: LA DISTANCIA LA DA EL MARGEN,
        NO LA FUENTE. role="separator" PARA LOS LECTORES DE PANTALLA. -->
@@ -1619,11 +1622,49 @@
     <div class="froufrou" role="separator"><span>*</span><span>*</span><span>*</span></div>
   </xsl:template>
 
-  <xsl:template match="db:para[@role='speech'] | para[@role='speech']">
-    <p class="speech"><xsl:apply-templates/></p>
+  <!-- ==========================================================
+       CONVERSACIÓN (SC-43): qandaset role="conversacion"
+       ==========================================================
+       UN div.conversacion; CADA TURNO, UN div.turno CON SU CLASE
+       (turno-pregunta | turno-respuesta). LA ETIQUETA, EN MAYÚSCULAS
+       (gbv:etiqueta), ABRE EL PRIMER PÁRRAFO EN UN span.turno-etiqueta:
+       NEGRITA Y, EN EL HTML, EL COLOR DE LA HOJA DE ESTILOS, EN LOS DOS
+       TURNOS. LA ACOTACIÓN ES UN p.acotacion. -->
+  <xsl:template match="db:qandaset[@role = 'conversacion'] | qandaset[@role = 'conversacion']">
+    <div class="conversacion">
+      <xsl:apply-templates select="*"/>
+    </div>
   </xsl:template>
-  <xsl:template match="db:emphasis[@role='speaker'] | emphasis[@role='speaker']">
-    <span class="speech-speaker"><xsl:apply-templates/></span>
+
+  <xsl:template match="db:qandaentry | qandaentry">
+    <xsl:apply-templates select="db:question | question | db:answer | answer"/>
+  </xsl:template>
+
+  <xsl:template match="db:question | question | db:answer | answer">
+    <xsl:variable name="bloques" select="gbv:bloques(.)"/>
+    <div class="turno {if (gbv:es-pregunta(.)) then 'turno-pregunta' else 'turno-respuesta'}">
+      <xsl:choose>
+        <!-- LO HABITUAL: LA ETIQUETA ABRE EL PRIMER PÁRRAFO, EN LÍNEA -->
+        <xsl:when test="$bloques[1][self::db:para or self::para]">
+          <p>
+            <span class="turno-etiqueta"><xsl:value-of select="gbv:etiqueta(.)"/></span>
+            <xsl:text> </xsl:text>
+            <xsl:apply-templates select="$bloques[1]/node()"/>
+          </p>
+          <xsl:apply-templates select="$bloques[position() gt 1]"/>
+        </xsl:when>
+        <!-- UN TURNO QUE EMPIEZA CON UNA LISTA U OTRO BLOQUE: LA ETIQUETA
+             VA SOLA EN SU PÁRRAFO -->
+        <xsl:otherwise>
+          <p><span class="turno-etiqueta"><xsl:value-of select="gbv:etiqueta(.)"/></span></p>
+          <xsl:apply-templates select="$bloques"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </div>
+  </xsl:template>
+
+  <xsl:template match="db:para[@role = 'acotacion'] | para[@role = 'acotacion']">
+    <p class="acotacion"><xsl:apply-templates/></p>
   </xsl:template>
 
 

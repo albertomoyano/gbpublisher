@@ -43,10 +43,14 @@
   xmlns:xlink="http://www.w3.org/1999/xlink"
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:gbc="urn:gbpublisher:codigo"
-  exclude-result-prefixes="xs xlink gbc">
+  xmlns:gbv="urn:gbpublisher:conversacion"
+  exclude-result-prefixes="xs xlink gbc gbv">
 
   <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
   <xsl:include href="codigo-comun.xsl"/>
+
+  <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="conversacion-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS EXTERNOS
@@ -1205,17 +1209,12 @@
           .list-bullet .list-bullet { list-style-type: circle; }
           .list-bullet .list-bullet .list-bullet { list-style-type: square; }
 
-          /* DIÁLOGO / ENTREVISTA */
-          .speech-item {
-            margin: 0.3rem 0;
-            line-height: var(--line-height-body);
-          }
-          .speech-speaker {
-            font-family: var(--font-serif);
-            font-size: var(--text-base);
-            font-weight: 600;
-            color: var(--color-accent);
-          }
+          /* CONVERSACIÓN (SC-43): LA TIPOGRAFÍA DEL TEXTO; LA ETIQUETA
+             (YA EN MAYÚSCULAS) EN NEGRITA Y AZUL, LA DE QUIEN PREGUNTA Y
+             LA DE QUIEN RESPONDE. SIN SANGRÍA NI ESPACIO EXTRA AL ABRIR
+             NI AL CERRAR. GEMELOS: gbpublisher.css (AZUL),
+             gbpublisher-epub-libro.css Y m_GenerarEpub (NEGRO). */
+          .turno-etiqueta { font-weight: 600; color: var(--color-accent); }
 
           /* FIGURAS */
           .fig-wrapper {
@@ -3033,26 +3032,35 @@
   </xsl:template>
 
   <!-- ================================================
-       DIÁLOGO / ENTREVISTA
-       <speech><speaker>Nombre</speaker><p>texto</p></speech>
-       RESULTADO: Nombre — texto (todo en línea, speaker en azul bold)
+       CONVERSACIÓN (SC-43)
+       disp-quote content-type="conversacion": UN div.conversacion,
+       NO UNA CITA EN BLOQUE (PRIORIDAD 5, POR ENCIMA DE LA GENÉRICA).
+       CADA speech, UN div.turno CON SU CLASE (turno-pregunta |
+       turno-respuesta). LA ETIQUETA, EN MAYÚSCULAS (gbv:etiqueta),
+       ABRE EL PRIMER PÁRRAFO EN UN span.turno-etiqueta: NEGRITA Y, EN
+       EL HTML, EL COLOR DE LA HOJA DE ESTILOS, EN LOS DOS TURNOS.
+       speech SOLO ADMITE p (GV-81). LA ACOTACIÓN ES UN p.acotacion.
        ================================================ -->
+  <xsl:template match="disp-quote[@content-type = 'conversacion']" priority="5">
+    <div class="conversacion">
+      <xsl:apply-templates select="*"/>
+    </div>
+  </xsl:template>
+
   <xsl:template match="speech">
-    <p class="speech-item">
-      <xsl:apply-templates/>
-    </p>
+    <xsl:variable name="bloques" select="gbv:bloques(.)"/>
+    <div class="turno {if (gbv:es-pregunta(.)) then 'turno-pregunta' else 'turno-respuesta'}">
+      <p>
+        <span class="turno-etiqueta"><xsl:value-of select="gbv:etiqueta(.)"/></span>
+        <xsl:text> </xsl:text>
+        <xsl:apply-templates select="$bloques[1]/node()"/>
+      </p>
+      <xsl:apply-templates select="$bloques[position() gt 1]"/>
+    </div>
   </xsl:template>
 
-  <xsl:template match="speech/speaker">
-    <span class="speech-speaker">
-      <xsl:apply-templates/>
-    </span>
-    <xsl:text> — </xsl:text>
-  </xsl:template>
-
-  <!-- P DENTRO DE SPEECH: SIN WRAPPER <p> PARA QUE TODO QUEDE EN LÍNEA -->
-  <xsl:template match="speech/p" priority="5">
-    <xsl:apply-templates/>
+  <xsl:template match="p[@content-type = 'acotacion']">
+    <p class="acotacion"><xsl:apply-templates/></p>
   </xsl:template>
 
   <!-- ================================================

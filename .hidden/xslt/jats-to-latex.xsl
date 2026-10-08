@@ -38,7 +38,8 @@
   xmlns:xlink="http://www.w3.org/1999/xlink"
   xmlns:mml="http://www.w3.org/1998/Math/MathML"
   xmlns:f="urn:gbpublisher:functions"
-  exclude-result-prefixes="xs xlink mml f">
+  xmlns:gbv="urn:gbpublisher:conversacion"
+  exclude-result-prefixes="xs xlink mml f gbv">
 
   <!-- ============================================================ -->
   <!-- MÓDULO COMÚN CON docbook-to-latex.xsl                        -->
@@ -48,6 +49,9 @@
   <!-- xsl:import DEBE SER EL PRIMER HIJO DE xsl:stylesheet.        -->
   <!-- ============================================================ -->
   <xsl:import href="tex-comun.xsl"/>
+
+  <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="conversacion-comun.xsl"/>
 
   <!-- ============================================================ -->
   <!-- SALIDA: TEXTO PLANO, UTF-8                                   -->
@@ -201,20 +205,36 @@
   </xsl:template>
 
 <!-- ============================================================ -->
-<!-- DIÁLOGO: speech CON speaker                                  -->
-<!-- USA \paragraph{speaker} PARA EVITAR VIUDAS Y HUÉRFANAS      -->
-<!-- EL TEXTO CONTINÚA INLINE DESPUÉS DEL TÍTULO                  -->
+<!-- CONVERSACIÓN (SC-43)                                         -->
+<!-- disp-quote content-type="conversacion" ES EL ENTORNO         -->
+<!-- gbconversacion DEL PREÁMBULO DE REVISTA (m_XML), GEMELO DEL  -->
+<!-- DE preambulo-contrato.tex: SANS, \small, SIN SANGRÍA,        -->
+<!-- \medskip AL ABRIR Y AL CERRAR. CADA speech ABRE SU PRIMER    -->
+<!-- PÁRRAFO CON \gbetiqueta{ETIQUETA}, EN MAYÚSCULAS DE PESO     -->
+<!-- NORMAL (gbv:etiqueta). DESPUÉS DE UNA PREGUNTA,              -->
+<!-- \nopagebreak[4] EN MODO VERTICAL: LA PREGUNTA NO QUEDA SOLA  -->
+<!-- AL PIE DE LA PÁGINA. LA ACOTACIÓN (p content-type=           -->
+<!-- "acotacion") ES UN PÁRRAFO MÁS: LA PLANTILLA DE p.           -->
+<!-- PRIORIDAD 5: POR ENCIMA DE LA CITA EN BLOQUE GENÉRICA.       -->
 <!-- ============================================================ -->
-  <xsl:template match="speech">
-    <xsl:text>&#10;\paragraph{</xsl:text>
-    <xsl:value-of select="f:latex(normalize-space(speaker))"/>
-    <xsl:text>} </xsl:text>
-    <xsl:apply-templates select="*[not(self::speaker)]"/>
+  <xsl:template match="disp-quote[@content-type = 'conversacion']" priority="5">
+    <xsl:text>&#10;\begin{gbconversacion}&#10;</xsl:text>
+    <xsl:apply-templates select="*"/>
+    <xsl:text>\end{gbconversacion}&#10;&#10;</xsl:text>
   </xsl:template>
 
-  <xsl:template match="speech/p">
-    <xsl:apply-templates/>
-    <xsl:text>&#10;</xsl:text>
+  <xsl:template match="speech">
+    <xsl:variable name="bloques" select="gbv:bloques(.)"/>
+    <!-- speech SOLO ADMITE p (GV-81): LA ETIQUETA ABRE EL PRIMERO -->
+    <xsl:text>\gbetiqueta{</xsl:text>
+    <xsl:value-of select="f:latex(gbv:etiqueta(.))"/>
+    <xsl:text>}</xsl:text>
+    <xsl:apply-templates select="$bloques[1]/node()"/>
+    <xsl:text>&#10;&#10;</xsl:text>
+    <xsl:apply-templates select="$bloques[position() gt 1]"/>
+    <xsl:if test="gbv:es-pregunta(.)">
+      <xsl:text>\nopagebreak[4]&#10;&#10;</xsl:text>
+    </xsl:if>
   </xsl:template>
 
 <!-- ============================================================ -->
@@ -230,24 +250,6 @@
     <xsl:apply-templates/>
     <xsl:text>}&#10;</xsl:text>
     <xsl:text>\end{tcolorbox}&#10;&#10;</xsl:text>
-  </xsl:template>
-
-<!-- ============================================================ -->
-<!-- ENTREVISTA CUALITATIVA: disp-quote content-type="interview" -->
-<!-- EL CÓDIGO DE INFORMANTE VA COMO TÍTULO DE \paragraph        -->
-<!-- ============================================================ -->
-  <xsl:template match="disp-quote[@content-type='interview']">
-    <xsl:variable name="codigo"
-    select="normalize-space(@specific-use)"/>
-    <xsl:text>&#10;\paragraph{</xsl:text>
-    <xsl:choose>
-      <xsl:when test="$codigo != ''">
-        <xsl:value-of select="f:latex($codigo)"/>
-      </xsl:when>
-      <xsl:otherwise>INF</xsl:otherwise>
-    </xsl:choose>
-    <xsl:text>} </xsl:text>
-    <xsl:apply-templates select="*[not(self::attrib)]"/>
   </xsl:template>
 
   <!-- ============================================================ -->

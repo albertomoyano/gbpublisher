@@ -7,7 +7,7 @@
 --           CON specific-use="modo" Y PREFIJO/SUFIJO COMO
 --           named-content HIJOS (PRESERVA MARKUP INLINE)
 --   Div   → MANEJA FIGURAS, TABLAS, EPÍGRAFES, VERSOS,
---           CÓDIGO, RECUADROS, FÓRMULAS, ENTREVISTAS
+--           CÓDIGO, RECUADROS, FÓRMULAS, CONVERSACIONES
 --           Y SECCIONES
 --   Note  → CONVIERTE NOTAS AL PIE A <fn> INLINE
 -- =====================================================
@@ -308,7 +308,9 @@ local table_counter = 0
 --                                      CON LA BARRA EN <caption><title> (VÍA dos-partes.lua)
 --                                      LOS DOS, CON .fullwidth → specific-use="fullwidth"
 --   :::{.formula #eq-id}             → <disp-formula id="eq-id">
---   :::{.speech speaker="Nombre"}    → <speech><speaker>Nombre</speaker>
+--   ::: conversacion                 → <disp-quote content-type="conversacion">
+--                                      CON <speech> Y <speaker> (SC-43,
+--                                      VÍA conversacion.lua)
 --   :::{.intro}                      → <sec sec-type="intro">
 --   :::{.methods}                    → <sec sec-type="methods">
 --   (etc.)
@@ -580,24 +582,45 @@ function Div(el)
     return pandoc.RawBlock('jats', raw)
   end
 
-  -- DISCURSO/ENTREVISTA: <speech><speaker>...</speaker><p>...</p></speech>
-  -- EL ATRIBUTO speaker LO PROVEE EL SHORTCODE
-  -- CADA INTERVENCIÓN SE MARCA POR SEPARADO
+  -- CONVERSACIÓN (SC-43): <disp-quote content-type="conversacion">, SIEMPRE,
+  -- CON UN <speech content-type="pregunta|respuesta"> POR TURNO Y UN
+  -- <p content-type="acotacion"> POR PÁRRAFO DE ACOTACIÓN, ENTRE TURNOS.
+  -- conversacion.lua YA CONTROLÓ LA FORMA (TURNOS SOLO CON PÁRRAFOS, GV-81)
+  -- Y ESCRIBIÓ EN CADA TURNO EL ATRIBUTO etiqueta: quien, O LA ETIQUETA POR
+  -- OMISIÓN SEGÚN EL IDIOMA. <speaker> ES OBLIGATORIO Y VA EN TEXTO PLANO.
+  -- LAS CITAS Y LAS NOTAS YA SON <xref> Y <fn>: LOS INLINES SE PROCESAN
+  -- ANTES QUE LOS BLOQUES. EL VIEJO ::: {.speech} LO FRENA conversacion.lua.
   -- ESTRUCTURA EN MD:
-  --   ::: {.speech speaker="Entrevistado A"}
-  --   Texto de la intervención.
-  --   :::
-  if el.classes:includes('speech') then
-    local speaker = el.attributes['speaker'] or ''
-    local content_jats = pandoc.write(pandoc.Pandoc(el.content), 'jats')
-    content_jats = content_jats:gsub("^%s+", ""):gsub("%s+$", "")
-    local raw = '<speech>\n'
-    if speaker ~= '' then
-      -- ESCAPAR: speaker va a texto de elemento <speaker>
-      raw = raw .. '  <speaker>' .. escape_xml_text(speaker) .. '</speaker>\n'
+  --   ::: conversacion
+  --   ::: {.pregunta quien="Ana Pérez"}   ::: respuesta   ::: acotacion
+  --   (CADA UNO CON SU ANCLA DE CIERRE, SC-33)
+  if el.classes:includes('conversacion') then
+    local partes = { '<disp-quote content-type="conversacion">' }
+    for _, hijo in ipairs(el.content) do
+      if hijo.classes:includes('acotacion') then
+        -- UN <p> POR PÁRRAFO: LA ACOTACIÓN NO ES UN TURNO, NO LLEVA speaker
+        for _, parrafo in ipairs(hijo.content) do
+          partes[#partes + 1] = '<p content-type="acotacion">' ..
+                                inlines_a_jats(parrafo.content) .. '</p>'
+        end
+      else
+        local tipo = hijo.classes:includes('pregunta') and 'pregunta' or 'respuesta'
+        local etiqueta = hijo.attributes['etiqueta']
+        -- SIN etiqueta, conversacion.lua NO CORRIÓ ANTES: ES UN ERROR DE CADENA
+        if not etiqueta then
+          error('\n[gbpublisher] conversación sin etiquetar: conversacion.lua tiene ' ..
+                'que correr antes que cite-to-xref.lua\n', 0)
+        end
+        local cuerpo = pandoc.write(pandoc.Pandoc(hijo.content), 'jats')
+        cuerpo = cuerpo:gsub("^%s+", ""):gsub("%s+$", "")
+        -- ESCAPAR: LA ETIQUETA VA A TEXTO DE ELEMENTO
+        partes[#partes + 1] = '<speech content-type="' .. tipo .. '">\n' ..
+                              '  <speaker>' .. escape_xml_text(etiqueta) .. '</speaker>\n' ..
+                              cuerpo .. '\n</speech>'
+      end
     end
-    raw = raw .. content_jats .. '\n</speech>'
-    return pandoc.RawBlock('jats', raw)
+    partes[#partes + 1] = '</disp-quote>'
+    return pandoc.RawBlock('jats', table.concat(partes, '\n'))
   end
 
 -- SECCIONES: MAPEAR CLASE CSS A ATRIBUTO sec-type DE JATS
