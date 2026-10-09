@@ -691,13 +691,13 @@ Razón: el editor tiene mejor información que cualquier conteo manual sobre sal
 
 ### SC-05 — Expresiones regulares: motor perl externo, no gb.pcre
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** perl-base / -CSD / Gambas 3.22
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** perl / -CSD / Gambas 3.22
 
 DECISIÓN CERRADA: gbpublisher NO usa `gb.pcre` para expresiones regulares. El motor es perl invocado como proceso externo. Razones verificadas empíricamente:
 
 - `gb.pcre` (PCRE2) tiene siete limitaciones duras para texto en castellano y para uso desde UI: offsets en BYTES y no en caracteres, sin constante UCP expuesta (`\w` `\b` `\d` rompen con acentos), `Exec` sin start-offset (obliga a truncar y rompe `\b` y lookbehind), match vacío que cuelga el proceso, sin timeout, sin grupos nombrados accesibles.
 - Un match in-process no se puede cancelar (Gambas es single-thread en el loop de eventos); un proceso externo sí (`Process.Kill`).
-- `perl-base` es Essential en Debian/Ubuntu: cero dependencias nuevas.
+- Hace falta el paquete `perl` completo, NO solo `perl-base`. `perl-base` es Essential, pero no trae `PerlIO` ni `Encode`, y el script abre los archivos con `:encoding(UTF-8)`, que los necesita (GV-90). En el `.deb`: `Depends: perl`, sin versión. `IntegridadSistema` verifica el paquete `perl`, no el binario, que también lo trae `perl-base`.
 - perl con `-CSD` da offsets en CARACTERES y `\w` `\b` `\d` correctos en UTF-8 sin verbos ni configuración.
 
 ARQUITECTURA DEL MOTOR
@@ -718,7 +718,7 @@ Para búsquedas triviales de substring sin metacaracteres, seguir prefiriendo `S
 
 ATENCIÓN AL DIALECTO: perl y PCRE2 NO son el mismo motor. perl rechaza `(*UCP)` y `(?U)`, que PCRE2 acepta; perl acepta lookbehind de longitud variable, que PCRE2 rechaza. Validar con un motor y ejecutar con otro produce falsos positivos y negativos. Un solo motor: perl.
 
-**Relaciones:** vinculo:GV-06, vinculo:GV-20
+**Relaciones:** vinculo:GV-06, vinculo:GV-20, vinculo:GV-90
 
 ### SC-06 — Guard de cambios sin guardar antes de un cambio de contexto
 
@@ -2559,7 +2559,77 @@ Dato empírico del editor, medido sobre muchos libros: 2200 caracteres con espac
 
 Verificado: compilado con gbc3 3.19 y ejecutado con el módulo, el catálogo y el filtro reales (archivo ilegible y cancelación incluidos); el editor generó el .deb, lo instaló y la prueba sobre un proyecto real funcionó en 3.22.
 
-**Relaciones:** vinculo:SC-05,vinculo:SC-11,vinculo:RF-11,vinculo:GV-85
+**Relaciones:** vinculo:SC-05,vinculo:SC-11,vinculo:RF-11,vinculo:GV-85,vinculo:SC-47
+
+### SC-47 — Análisis léxico: oraciones y variantes en perl, sobre el texto que separó el AST
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 / Pandoc 3.1.3 / Perl 5.38 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Segunda parte del análisis del proyecto (SC-46): ORACIONES del cuerpo y VARIANTES de una misma palabra en todo el proyecto.
+
+QUIÉN HACE QUÉ
+
+- `engine/analizar_proyecto.lua`, con `--metadata gb-texto=RUTA`, escribe además el texto de cada bloque en RUTA, una línea por bloque: `ctx TAB clase TAB parrafo TAB texto`. Perl NO vuelve a leer el Markdown: recibe el texto que el AST ya separó, sin citas, notas, fórmulas ni código.
+- `engine/analizar_lexico.pl` corre UNA SOLA VEZ sobre todos los archivos, al final: las variantes se comparan entre capítulos. Recibe `abreviaturas tildes clases_cuerpo` y luego pares `nombre texto`.
+- `m_AnalizarProyecto` arma la carpeta temporal, pasa como clases de cuerpo las presentes en el proyecto que `Destino()` clasifica como cuerpo (el mismo criterio de párrafo que la grilla), lee la salida y la borra.
+- Lua no sirve para esto: sus patrones no reconocen letras fuera de ASCII (GV-88).
+
+ORACIONES
+
+Una oración termina en . ? ! o … (con cierres « » ” ’ ) ] detrás) SOLO si la palabra que sigue empieza con mayúscula; admite antes ¿ ¡ « “ ( [ —. No cortan:
+
+- las abreviaturas de `engine/analizar_lexico_abreviaturas.txt` (tratamientos y remisiones que suelen ir seguidos de mayúscula: Dr., Sra., cf., ed., EE. UU.);
+- las iniciales de una letra (J. L. Borges);
+- un número o una minúscula detrás (p. 23, vol. 3, a. C.): no hace falta listarlas.
+
+La lista es PROPIA DEL PROYECTO: el apéndice de abreviaturas del DPD, que era la fuente prevista, ya no está en línea (la dirección redirige a la portada). «etc.» no se lista a propósito: al final de oración su punto también la cierra.
+
+Se miden solo las oraciones de los párrafos del cuerpo. La mediana va por dos (`mediana_x2`), siempre entera, para no depender del separador decimal regional.
+
+VARIANTES: TRES CLASES, CON FILTROS
+
+Quitar las tildes y agrupar NO sirve en castellano: medido sobre `docs/corpus.md`, dio 99 grupos de tilde y 773 de mayúscula, casi todos pares correctos (como/cómo, el/él, cambio/cambió) o mayúsculas de comienzo de oración.
+
+- Guion: on-line/online. Clave: la forma sin guiones.
+- Mayúscula dentro de la oración: Estado/estado. No cuentan la primera palabra de la oración, las palabras escritas todas en mayúsculas ni los títulos.
+- Tilde: SOLO la lista cerrada de `engine/analizar_lexico_tildes.txt`. Optativas (solo, demostrativos): se informan si aparecen las dos formas. Suprimidas (esto, eso, aquello; guion, truhan y los demás monosílabos de la Ortografía 2010): se informa toda aparición con tilde. Fuentes en la cabecera del archivo: RAE, Libro de estilo, «Acentuación», y Ortografía, «Palabras con diptongo».
+- La falta de tilde en general (boton/botón) NO es variante: la detecta el corrector ortográfico.
+- Las citas en bloque NO se analizan: respetan la grafía del original.
+
+No se usa `Unicode::Normalize`: con la lista cerrada no hace falta quitar tildes.
+
+SALIDA Y PRESENTACIÓN
+
+Registros por línea, campos por NUL: `O` por archivo, `OT` total, `V` por forma de cada grupo, `X` por oración de ejemplo (hasta 8 por forma). La grilla suma la sección LÉXICO; las variantes van a `FVariantes` (SC-48).
+
+DEPENDENCIA: el paquete `perl` completo (GV-90).
+
+Verificado: banco con el módulo, el formulario, el filtro y el script reales; el editor lo probó en 3.22 sobre un libro real.
+
+**Relaciones:** vinculo:SC-46,vinculo:SC-05,vinculo:GV-88,vinculo:GV-90,vinculo:SC-48
+
+### SC-48 — Ir de un resultado al editor: buscar en el texto actual, no guardar posiciones
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Para llevar al usuario desde un resultado al lugar en el editor, se BUSCA en el texto que el editor tiene en ese momento. No se guardan posiciones al analizar: mientras se corrige, quedarían viejas. Además, lo que sale del AST no tiene número de línea (GV-91).
+
+EL PATRÓN, como lo aplica `m_AnalizarProyecto.IrAEjemplo`:
+
+1. Abrir el archivo SOLO si no es el que está en el editor, con `m_Estructura.AbrirArchivo(sRel)`: pasa por el combo, con el aviso de cambios sin guardar (SC-06) y sin la recarga inútil de GV-53. Si ya está abierto no se la llama: preguntaría sin motivo. Es pública para esto: es la única forma de abrir un archivo del proyecto desde otro módulo.
+2. Buscar con `m_FuncionesGenericas.BuscarEnTexto` sobre `m_EditorPrincipal.Texto()`, distinguiendo mayúsculas y como palabra completa.
+3. Si hay varias apariciones, elegir la del párrafo que contiene el comienzo del contexto (las cuatro primeras palabras de la oración de ejemplo). Si ninguno lo contiene —una cursiva o una cita `[@clave]` en el medio cambian el texto del `.md`—, la primera.
+4. Saltar con `m_EditorPrincipal.IrA(PosicionDe(línea, columna), largo)`, dejar la forma en `txtBuscarPalabra` para seguir con F3, y poner el foco en el editor.
+
+LA VENTANA
+
+No modal y encima del principal: `Show` y `TopOnly = True`, como `FOrtografia`. Una sola: el módulo guarda la referencia y la suelta cuando la ventana avisa que se cerró. Muestra la hora del análisis y tiene «Actualizar». Se recarga al terminar un análisis nuevo y se cierra al cancelarlo o al cerrar o cambiar de proyecto. Cada análisis crea arrays NUEVOS en lugar de vaciar los viejos: una ventana abierta conserva los suyos hasta que se la recarga.
+
+El salto va en `Click` de la grilla de ejemplos, no en `Select`: asignar `Row` dispara `Select` pero nunca `Click` (GV-78), así que llenar la grilla no mueve el editor.
+
+Verificado en banco con las funciones reales (`AbrirArchivo`, `BuscarEnTexto`, `PosicionDe`): mismo archivo sin aviso, otro archivo con un aviso, elección de la segunda aparición por el contexto, cierre con `Detener`. El editor lo probó en 3.22.
+
+**Relaciones:** vinculo:SC-47,vinculo:GV-91,vinculo:SC-06,vinculo:GV-53,vinculo:GV-78
 
 ---
 
@@ -4869,3 +4939,47 @@ Cómo parte el texto el lector, medido:
 El documento se manda a `--output /dev/null`, así en stdout queda solo lo que escribe el filtro con `io.write`, NUL incluidos.
 
 **Relaciones:** vinculo:GV-85,apoya:SC-46
+
+### GV-90 — perl-base no trae PerlIO ni Encode: :encoding(UTF-8) necesita el paquete perl
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Perl 5.38 / Linux Mint (base Ubuntu 24.04) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+SC-05 afirmaba que alcanzaba con `perl-base`, que es Essential. No es así para los scripts del proyecto: abren los archivos con `:encoding(UTF-8)`, y ese layer necesita `PerlIO` y `Encode`, que `perl-base` NO trae.
+
+Medido limitando `@INC` a la carpeta de `perl-base`:
+
+    Can't locate PerlIO.pm in @INC (you may need to install the PerlIO module)
+
+Falla igual `buscar_regex.pl` (modo `probar`) que `analizar_lexico.pl`. Con `perl` completo, los dos andan.
+
+De qué paquete viene cada módulo, medido en la máquina del editor (Linux Mint, base Ubuntu 24.04, Perl 5.38):
+
+    PerlIO.pm            perl-modules-5.38
+    PerlIO/encoding.pm   libperl5.38t64
+    Encode.pm            libperl5.38t64 (y también libencode-perl, si está)
+
+El paquete `perl` depende de `perl-base`, `perl-modules-5.38` y `libperl5.38t64`.
+
+`libencode-perl` es una versión más nueva de Encode que se distribuye aparte y que instala como dependencia algún otro programa. Si está, perl la prefiere, porque su carpeta va antes en `@INC`; si no está, usa la de `libperl5.38t64`, que también trae `Encode.pm` (verificado con `dpkg -L`). No hace falta declararla.
+
+CONSECUENCIA: en el `.deb`, `Depends: perl`, SIN versión. Los paquetes de los módulos llevan la versión de Perl en el nombre y cambian de una versión de Mint a otra; `perl` es el nombre estable que trae los que correspondan. En `IntegridadSistema` se verifica el PAQUETE `perl` (`DEP_PAQUETE`), no el comando: el binario `perl` lo trae también `perl-base` y la verificación daría verde sin servir.
+
+**Relaciones:** vinculo:SC-05,apoya:SC-47
+
+### GV-91 — Pandoc: la extensión sourcepos no existe para el lector markdown
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+La extensión `sourcepos`, que anota en el AST la posición de cada elemento en el archivo fuente, NO está disponible para el lector `markdown` de Pandoc, que es el que usa gbpublisher. Medido:
+
+    pandoc -f markdown+sourcepos ...
+    The extension sourcepos is not supported for markdown
+
+    pandoc --list-extensions=markdown | grep sourcepos    -> -sourcepos  (no se puede activar)
+    pandoc --list-extensions=commonmark | grep sourcepos  -> -sourcepos  (existe, desactivada)
+
+Existe para la familia CommonMark, pero cambiar de lector para obtenerla cambiaría el parseo de todo el proyecto.
+
+CONSECUENCIA: lo que se calcula sobre el AST (SC-46, SC-47) no puede decir en qué línea del `.md` está. Para llevar al usuario al lugar, se busca en el texto (SC-48).
+
+**Relaciones:** apoya:SC-48
