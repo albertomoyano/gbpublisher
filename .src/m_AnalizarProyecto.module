@@ -1,0 +1,1391 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_AnalizarProyecto
+' Propósito : ANÁLISIS ESTRUCTURAL DEL PROYECTO para la solapa «Escanear» de
+'             FMain. Es dueño del estado de esa solapa; los handlers de FMain
+'             solo delegan acá (patrón módulo-dueño-del-estado, como
+'             m_BuscarRegex).
+'
+'             EL CONTEO SALE DEL AST DE PANDOC, NO DEL TEXTO: lo hace el filtro
+'             engine/analizar_proyecto.lua, que emite registros separados por
+'             NUL. Este módulo NO cuenta por su cuenta: lanza Pandoc archivo
+'             por archivo, agrega los registros, los cruza con el catálogo de
+'             shortcodes y con el .bib, y arma la grilla. Gambas orquesta, el
+'             proceso externo procesa (la división de SC-05).
+'
+'             PANDOC CORRE SIN LOS FILTROS DE PRODUCCIÓN: varios serializan el
+'             contenido a XML crudo con pandoc.write (cite-to-xref,
+'             cite-to-biblioref-db, fenced-divs-to-elements-db) y lo dejan
+'             sin palabras que contar; otros frenan ante un bloque mal formado
+'             (dos-partes, recuadros, codigo, conversacion), y el análisis se
+'             usa justamente sobre borradores. Que un bloque esté bien formado
+'             lo controla la producción, no el análisis.
+'
+'             CORRE SOLO CON EL BOTÓN, de forma asíncrona y cancelable: un
+'             proceso por archivo, esperado con la sentencia Wait, que entra
+'             al bucle de eventos (el patrón de m_AuditarJats.EjecutarHerramienta)
+'             y deja que btnCancelarAnalizar llegue mientras corre.
+'
+' Controles de FMain (solapa «Escanear»):
+'   btnAnalizarProyecto   — lanza el análisis
+'   btnCancelarAnalizar   — corta el proceso en curso
+'   gvAnalizarProyecto    — la grilla: Métrica | Total | un archivo por columna
+' ============================================
+
+' --- FILTRO DE CONTEO (INFRAESTRUCTURA: engine/, NO ~/.gbpublisher, SC-11) ---
+Private Const CARPETA_ENGINE As String = "engine"
+Private Const ARCHIVO_FILTRO As String = "analizar_proyecto.lua"
+
+' --- ESTIMACIÓN DE PÁGINAS: DATO EMPÍRICO DEL EDITOR ---
+' 2200 CARACTERES CON ESPACIOS POR PÁGINA DE LIBRO, PROMEDIO MEDIDO SOBRE
+' MUCHOS LIBROS. EN UN MISMO LIBRO HAY PÁGINAS DE 2400 Y DE 1900: ESOS DOS
+' EXTREMOS DAN EL RANGO. LA PÁGINA LLENA DA MENOS PÁGINAS, LA RALA MÁS.
+' SON UNA ESTIMACIÓN DE TEXTO SOLO: NO RESERVAN LUGAR PARA FIGURAS NI TABLAS
+Private Const CARACTERES_PAGINA As Integer = 2200
+Private Const CARACTERES_PAGINA_LLENA As Integer = 2400
+Private Const CARACTERES_PAGINA_RALA As Integer = 1900
+' PLIEGO DE 32 PÁGINAS: 16 POR CADA CARA
+Private Const PAGINAS_PLIEGO As Integer = 32
+
+' --- ÍNDICE DE PRICE: PROPORCIÓN DE REFERENCIAS DE LOS ÚLTIMOS N AÑOS ---
+' CINCO AÑOS CALENDARIO CONTANDO EL EN CURSO; EL RANGO SE MUESTRA EN LA FILA
+Private Const ANIOS_PRICE As Integer = 5
+
+' --- CLASES QUE DECIDEN EL DESTINO DE UN TEXTO (CATÁLOGO DE SHORTCODES) ---
+' EN .fig Y .table EL PÁRRAFO SUELTO ES EL PIE: SE CUENTA COMO LEYENDA
+Private Const CLASE_FIGURA As String = "fig"
+Private Const CLASE_TABLA As String = "table"
+' LAS SECCIONES DEL GRUPO estructura SON CUERPO (unwrap-structural-divs.lua
+' LAS DESENVUELVE EN PRODUCCIÓN); LAS DEL GRUPO composicion (espaciov) NO
+' SON TEXTO Y NO SE CUENTAN
+Private Const GRUPO_ESTRUCTURA As String = "estructura"
+Private Const GRUPO_COMPOSICION As String = "composicion"
+
+' --- DESTINOS DE UN BLOQUE DE TEXTO ---
+Private Const DEST_CUERPO As String = "cuerpo"
+Private Const DEST_LEYENDA As String = "leyenda"
+Private Const DEST_ESPECIAL As String = "especial"
+Private Const DEST_IGNORAR As String = "ignorar"
+
+' --- TEXTO DE CELDA PARA UN DATO QUE NO APLICA ---
+Private Const SIN_DATO As String = "—"
+
+' --- PROCESO EN CURSO Y SU ESTADO ---
+Private $hProc As Process
+Private $sBufferSalida As String
+Private $sBufferError As String
+Private $iCodigoSalida As Integer
+Private $bProcesoTerminado As Boolean
+Private $bCancelado As Boolean
+Private $bCorriendo As Boolean
+
+' --- CACHÉ CLASE -> DESTINO (UNA CONSULTA AL CATÁLOGO POR CLASE) ---
+' LOS VALORES NUNCA SON "": UNA Collection PIERDE ESA CLAVE (GV-68)
+Private $cDestino As New Collection
+
+' --- BIBLIOGRAFÍA DEL PROYECTO (PARALELOS: CLAVE Y AÑO) ---
+Private $bHayBib As Boolean
+Private $sErrorBib As String
+Private $aBibClaves As New String[]
+Private $aBibAnios As New String[]
+
+' --- AVISO DE CAMBIOS SIN GUARDAR AL MOMENTO DE ANALIZAR ---
+Private $bHabiaCambios As Boolean
+
+' --- FILAS DE LA GRILLA EN CONSTRUCCIÓN ---
+' CADA FILA ES UN String[]; LOS ÍNDICES DE $aFilasSeccion SON TÍTULOS
+Private $aFilas As New Object[]
+Private $aFilasSeccion As New Integer[]
+
+' ============================================
+' Función   : RutaFiltro
+' Propósito : RUTA ABSOLUTA DEL FILTRO DE CONTEO. VIVE EN LA INSTALACIÓN DEL
+'             SISTEMA, IGUAL QUE buscar_regex.pl: VIAJA EN EL MISMO .deb QUE
+'             ESTE MÓDULO Y NO PUEDE QUEDAR DESINCRONIZADO (SC-05, SC-11)
+' Parámetros: ninguno
+' Retorna   : String — ruta al filtro
+' ============================================
+Private Function RutaFiltro() As String
+
+  Return m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ ARCHIVO_FILTRO
+
+End
+
+' ============================================
+' Función   : RutaBib
+' Propósito : RUTA DEL .bib DEL PROYECTO, CON EL MISMO PATRÓN QUE m_XML Y
+'             m_GenerarODT: referencias/ref-<proyecto>.bib
+' Parámetros: sRaiz As String — raíz del proyecto
+' Retorna   : String — ruta absoluta
+' ============================================
+Private Function RutaBib(sRaiz As String) As String
+
+  Return sRaiz &/ "referencias" &/ "ref-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".bib"
+
+End
+
+' ============================================
+' Función   : InicializarTabAnalizar
+' Propósito : DEJA LA SOLAPA LIMPIA AL ABRIR UN PROYECTO. SE LLAMA DESDE
+'             FMain.AbrirProyecto JUNTO A LAS DEMÁS Inicializar*
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub InicializarTabAnalizar()
+
+  ' --- 1. UN ANÁLISIS DEL PROYECTO ANTERIOR NO PUEDE SEGUIR CORRIENDO ---
+  Detener()
+
+  ' --- 2. BOTONES: SIN ARCHIVOS EN DISCO (MODO PARCIAL) NO HAY QUÉ ANALIZAR ---
+  FMain.btnAnalizarProyecto.Enabled = (m_InicioCierre.RutaProyectoEnCurso <> "")
+  FMain.btnCancelarAnalizar.Enabled = False
+
+End
+
+' ============================================
+' Función   : Detener
+' Propósito : CORTA UN ANÁLISIS EN CURSO Y VACÍA LA GRILLA. LA LLAMAN EL
+'             CIERRE DE PROYECTO (m_InicioCierre.CerrarProyecto) Y LA
+'             APERTURA: UN RESULTADO DEL PROYECTO ANTERIOR ES PEOR QUE
+'             NINGUNO (EL CRITERIO DE RC-GM-16)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Detener()
+
+  ' --- 1. SI HAY PROCESO, PEDIR LA CANCELACIÓN ---
+  ' EL BUCLE DE Analizar VE LA BANDERA EN SU PRÓXIMA VUELTA Y SALE
+  If $bCorriendo Then Cancelar()
+
+  ' --- 2. GRILLA VACÍA ---
+  FMain.gvAnalizarProyecto.Rows.Count = 0
+  FMain.gvAnalizarProyecto.Columns.Count = 0
+
+End
+
+' ============================================
+' Función   : Cancelar
+' Propósito : ATIENDE btnCancelarAnalizar. LEVANTA LA BANDERA Y MATA EL
+'             PROCESO; Analizar DESCARTA LO QUE HAYA JUNTADO
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Cancelar()
+
+  ' --- 1. SIN ANÁLISIS EN CURSO NO HAY NADA QUE CORTAR ---
+  If Not $bCorriendo Then Return
+
+  ' --- 2. BANDERA Y Kill ---
+  ' LA BANDERA VA PRIMERO: EL EVENTO Kill DEL PROCESO SE DISPARA IGUAL QUE
+  ' EN UNA TERMINACIÓN NORMAL Y LA BANDERA ES LO QUE LAS DISTINGUE (MT-B)
+  $bCancelado = True
+  If Not IsNull($hProc) Then
+    If Object.IsValid($hProc) Then
+      If $hProc.State = Process.Running Then Try $hProc.Kill
+    Endif
+  Endif
+
+End
+
+' ============================================
+' Función   : Analizar
+' Propósito : ATIENDE btnAnalizarProyecto. ANALIZA CADA ARCHIVO DEL PROYECTO,
+'             LEE EL .bib Y LLENA LA GRILLA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Analizar()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRaiz As String
+  Dim aArchivos As String[]
+  Dim aResultados As New CAnalisisArchivo[]
+  Dim oArchivo As CAnalisisArchivo
+  Dim oTotal As CAnalisisArchivo
+  Dim sRuta As String
+  Dim iCodigo As Integer
+  Dim iNumero As Integer
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  ' UN SEGUNDO CLIC MIENTRAS CORRE NO LANZA OTRO ANÁLISIS
+  If $bCorriendo Then Return
+
+  sRaiz = m_FuncionesGenericas.RaizProyectoValida()
+  If sRaiz = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un proyecto abierto con archivos en disco.")
+    Return
+  Endif
+
+  ' LA LISTA DE ARCHIVOS ES LA DEFINICIÓN ÚNICA DEL PROYECTO: fm-, a- Y bm-
+  ' CON NOMENCLATURA -NN-, EN ORDEN EDITORIAL
+  aArchivos = m_BuscarRegex.ObtenerArchivosMD()
+  If aArchivos.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto no tiene archivos de contenido para analizar.")
+    Return
+  Endif
+
+  If Not Exist(RutaFiltro()) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el filtro de análisis:" & gb.NewLine & RutaFiltro() & gb.NewLine & gb.NewLine &
+      "Falta un archivo del paquete instalado. Reinstalar el .deb de gbpublisher.")
+    Return
+  Endif
+
+  ' --- 3. ESTADO INICIAL Y UI ---
+  $bCorriendo = True
+  $bCancelado = False
+  $cDestino.Clear
+  ' EL ANÁLISIS LEE EL DISCO: SI EL EDITOR TIENE CAMBIOS, SE AVISA EN LA
+  ' GRILLA. NO SE BLOQUEA: ANALIZAR NO ESCRIBE NADA
+  $bHabiaCambios = m_EditorPrincipal.HayCambios()
+  FMain.btnAnalizarProyecto.Enabled = False
+  FMain.btnCancelarAnalizar.Enabled = True
+
+  ' --- 4. UN PROCESO PANDOC POR ARCHIVO ---
+  ' UNO POR ARCHIVO Y NO TODOS JUNTOS: PANDOC CONCATENA LAS ENTRADAS EN UN
+  ' SOLO DOCUMENTO Y SE PERDERÍA EL CONTEO POR COLUMNA
+  For Each sRuta In aArchivos
+    Inc iNumero
+    MostrarProgreso("Analizando " & CStr(iNumero) & " de " & CStr(aArchivos.Count) & ": " & File.Name(sRuta))
+
+    oArchivo = New CAnalisisArchivo
+    oArchivo.sNombre = File.BaseName(sRuta)
+
+    iCodigo = EjecutarPandoc(ComandoArchivo(sRuta))
+    If $bCancelado Then Break
+
+    ' UN ARCHIVO QUE PANDOC NO PUDO LEER SE MARCA Y EL ANÁLISIS SIGUE
+    If iCodigo <> 0 Then
+      oArchivo.bError = True
+      oArchivo.sError = PrimeraLineaError(iCodigo)
+    Else
+      ProcesarSalida(oArchivo)
+    Endif
+    aResultados.Add(oArchivo)
+  Next
+
+  ' --- 5. BIBLIOGRAFÍA ---
+  If Not $bCancelado Then
+    MostrarProgreso("Leyendo la bibliografía…")
+    LeerBibliografia(sRaiz)
+  Endif
+
+  ' --- 6. CANCELADO: SE DESCARTA TODO ---
+  If $bCancelado Then
+    MostrarProgreso("Análisis cancelado.")
+    m_Sonido.sonar("Info")
+    Terminar()
+    Return
+  Endif
+
+  ' --- 7. TOTAL: SOLO LOS ARCHIVOS QUE SE PUDIERON LEER ---
+  oTotal = New CAnalisisArchivo
+  oTotal.sNombre = "Total"
+  For Each oArchivo In aResultados
+    If Not oArchivo.bError Then oTotal.Sumar(oArchivo)
+  Next
+
+  ' --- 8. GRILLA ---
+  LlenarGrilla(oTotal, aResultados)
+  m_Sonido.sonar("Info")
+  Terminar()
+
+End
+
+' ============================================
+' Función   : Terminar
+' Propósito : DEVUELVE LOS BOTONES Y EL ESTADO AL REPOSO
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Terminar()
+
+  $bCorriendo = False
+  $hProc = Null
+  FMain.btnAnalizarProyecto.Enabled = (m_InicioCierre.RutaProyectoEnCurso <> "")
+  FMain.btnCancelarAnalizar.Enabled = False
+
+End
+
+' ============================================
+' Función   : MostrarProgreso
+' Propósito : USA LA GRILLA COMO LÍNEA DE ESTADO MIENTRAS CORRE
+' Parámetros: sTexto As String — mensaje
+' Retorna   : nada
+' ============================================
+Private Sub MostrarProgreso(sTexto As String)
+
+  With FMain.gvAnalizarProyecto
+    .Columns.Count = 1
+    .Columns[0].Title = "Estado"
+    .Columns[0].Width = 500
+    .Rows.Count = 1
+    .[0, 0].Text = sTexto
+  End With
+
+End
+
+' ============================================
+' Función   : ComandoArchivo
+' Propósito : ARMA LA INVOCACIÓN DE PANDOC PARA UN .md. SIN FILTROS DE
+'             PRODUCCIÓN (VER CABECERA). EL DOCUMENTO VA A /dev/null: EN
+'             stdout QUEDA SOLO LO QUE ESCRIBE EL FILTRO
+' Parámetros: sRuta As String — ruta absoluta del .md
+' Retorna   : String[] — comando y argumentos
+' ============================================
+Private Function ComandoArchivo(sRuta As String) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  ' SE ARMA CON Add Y NO CON UN ARRAY LITERAL PARTIDO EN VARIAS LÍNEAS (SC-05)
+  Dim aComando As New String[]
+
+  ' --- 2. ARGUMENTOS ---
+  ' --from markdown ES EL MISMO LECTOR QUE USA LA PRODUCCIÓN (m_XML)
+  aComando.Add("pandoc")
+  aComando.Add(sRuta)
+  aComando.Add("--from")
+  aComando.Add("markdown")
+  aComando.Add("--to")
+  aComando.Add("plain")
+  aComando.Add("--lua-filter")
+  aComando.Add(RutaFiltro())
+  aComando.Add("--output")
+  aComando.Add("/dev/null")
+
+  Return aComando
+
+End
+
+' ============================================
+' Función   : EjecutarPandoc
+' Propósito : LANZA UN PROCESO Y LO ESPERA SIN CONGELAR LA INTERFAZ. ES EL
+'             PATRÓN DE m_AuditarJats.EjecutarHerramienta: LA SENTENCIA Wait
+'             ENTRA AL BUCLE DE EVENTOS (hProceso.Wait() NO, Y LOS EVENTOS
+'             Read Y Kill NO LLEGARÍAN). EN CADA VUELTA MIRA LA BANDERA DE
+'             CANCELACIÓN
+' Parámetros: aComando As String[] — comando y argumentos
+' Retorna   : Integer — código de salida; -1 si no arrancó. stdout y stderr
+'             QUEDAN EN $sBufferSalida Y $sBufferError
+' ============================================
+Private Function EjecutarPandoc(aComando As String[]) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iDrenaje As Integer
+
+  $sBufferSalida = ""
+  $sBufferError = ""
+  $iCodigoSalida = -1
+  $bProcesoTerminado = False
+
+  ' --- 2. LANZAMIENTO ---
+  ' SC-05: Exec CON ARRAY, NUNCA Shell. LAS RUTAS VIENEN DEL DISCO Y NO
+  ' DEBEN PASAR POR sh -c
+  Try $hProc = Exec aComando For Read As "ProcAnalizar"
+  If Error Then
+    $sBufferError = "No se pudo ejecutar " & aComando[0] & ": " & Error.Text
+    Return -1
+  Endif
+
+  ' --- 3. ESPERA QUE SÍ ENTRA AL BUCLE DE EVENTOS ---
+  While Not $bProcesoTerminado
+    Wait 0.01
+    ' EL USUARIO CANCELÓ MIENTRAS CORRÍA: SE MATA EL PROCESO Y SE SIGUE
+    ' ESPERANDO HASTA QUE LLEGUE SU EVENTO Kill
+    If $bCancelado Then
+      If Object.IsValid($hProc) Then
+        If $hProc.State = Process.Running Then Try $hProc.Kill
+      Endif
+    Endif
+  Wend
+
+  ' --- 4. DRENAJE FINAL ---
+  ' EL EVENTO Kill PUEDE LLEGAR ANTES QUE LOS ÚLTIMOS TROZOS DE LA TUBERÍA
+  For iDrenaje = 1 To 10
+    Wait 0.01
+  Next
+
+  Return $iCodigoSalida
+
+End
+
+' ============================================
+' Función   : ProcAnalizar_Read
+' Propósito : ACUMULA stdout CRUDO. LOS TROZOS PUEDEN PARTIR UN REGISTRO O
+'             UN CARÁCTER MULTIBYTE: SE CONCATENAN Y SE PARSEA AL FINAL
+'             (SC-02, RC-GM-12). Read #Last, -N ES LA FORMA DE MT-B
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ProcAnalizar_Read()
+
+  Dim sTrozo As String
+
+  Try sTrozo = Read #Last, -4096
+  If Not Error Then $sBufferSalida &= sTrozo
+
+End
+
+' ============================================
+' Función   : ProcAnalizar_Error
+' Propósito : ACUMULA stderr. LA FIRMA CON PARÁMETRO ES LA VERIFICADA EN
+'             m_AuditarJats: SIN ÉL EL LANZAMIENTO FALLA CON «Bad event handler»
+' Parámetros: sDatos As String — trozo de stderr
+' Retorna   : nada
+' ============================================
+Public Sub ProcAnalizar_Error(sDatos As String)
+
+  $sBufferError &= sDatos
+
+End
+
+' ============================================
+' Función   : ProcAnalizar_Kill
+' Propósito : GUARDA EL CÓDIGO DE SALIDA Y CORTA EL BUCLE DE ESPERA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ProcAnalizar_Kill()
+
+  $iCodigoSalida = Last.Value
+  $bProcesoTerminado = True
+
+End
+
+' ============================================
+' Función   : PrimeraLineaError
+' Propósito : RESUME EL FALLO DE UN PROCESO EN UNA LÍNEA PARA LA CELDA
+' Parámetros: iCodigo As Integer — código de salida
+' Retorna   : String — primera línea de stderr, o el código
+' ============================================
+Private Function PrimeraLineaError(iCodigo As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aLineas As String[]
+
+  ' --- 2. LA PRIMERA LÍNEA NO VACÍA DE stderr ---
+  aLineas = Split($sBufferError, gb.NewLine, "", True)
+  If aLineas.Count > 0 Then Return "error: " & aLineas[0]
+
+  Return "error: Pandoc terminó con código " & CStr(iCodigo)
+
+End
+
+' ============================================
+' Función   : Destino
+' Propósito : DECIDE A QUÉ CUENTA VA EL TEXTO DE UN BLOQUE SEGÚN LA CLASE DEL
+'             DIV QUE LO CONTIENE. LA DECISIÓN SALE DEL CATÁLOGO DE
+'             SHORTCODES (RF-11): NINGUNA LISTA DE CLASES SE ESCRIBE ACÁ,
+'             SALVO LAS DOS DE PIE (fig, table)
+' Parámetros: sClase As String — clase del div ("" si ninguno)
+' Retorna   : String — DEST_CUERPO, DEST_LEYENDA, DEST_ESPECIAL O DEST_IGNORAR
+' ============================================
+Private Function Destino(sClase As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aVariantes As CShortcodeCatalogo[]
+  Dim sDestino As String
+
+  ' --- 2. FUERA DE TODO DIV: CUERPO ---
+  If sClase = "" Then Return DEST_CUERPO
+  If $cDestino.Exist(sClase) Then Return $cDestino[sClase]
+
+  ' --- 3. CLASIFICAR ---
+  If sClase = CLASE_FIGURA Or sClase = CLASE_TABLA Then
+    sDestino = DEST_LEYENDA
+  Else
+    ' UNA CLASE FUERA DEL CATÁLOGO ES UN BLOQUE ESPECIAL: NO ES CUERPO
+    ' CORRIENTE Y NO HAY DE DÓNDE SABER QUÉ ES
+    sDestino = DEST_ESPECIAL
+    aVariantes = m_CatalogoShortcodes.PorClase(sClase)
+    ' If ANIDADO: And NO CORTA EN GAMBAS Y aVariantes[0] FALLARÍA CON 0
+    If aVariantes.Count > 0 Then
+      If aVariantes[0].sGrupo = GRUPO_ESTRUCTURA Then sDestino = DEST_CUERPO
+      If aVariantes[0].sGrupo = GRUPO_COMPOSICION Then sDestino = DEST_IGNORAR
+    Endif
+  Endif
+
+  ' --- 4. CACHÉ Y RETORNO ---
+  $cDestino[sClase] = sDestino
+  Return sDestino
+
+End
+
+' ============================================
+' Función   : ProcesarSalida
+' Propósito : CONVIERTE LOS REGISTROS DEL FILTRO EN LOS CONTEOS DE UN ARCHIVO.
+'             EL PROTOCOLO ESTÁ DESCRIPTO EN LA CABECERA DE
+'             engine/analizar_proyecto.lua Y NO SE CAMBIA DE UN LADO SOLO
+' Parámetros: oArchivo As CAnalisisArchivo — destino de los conteos
+' Retorna   : nada
+' ============================================
+Private Sub ProcesarSalida(oArchivo As CAnalisisArchivo)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim aCampos As String[]
+
+  ' --- 2. UN REGISTRO POR LÍNEA, CAMPOS POR NUL ---
+  ' NINGÚN CAMPO PUEDE TRAER NUL NI SALTO DE LÍNEA: SALEN DE Str DEL AST,
+  ' QUE NO LOS CONTIENEN. Split CON IgnoreVoid False CONSERVA LOS CAMPOS
+  ' VACÍOS (LA CLASE Y EL INICIO LO ESTÁN A MENUDO), COMO FRegexResultados
+  aLineas = Split($sBufferSalida, gb.NewLine, "", True)
+
+  For Each sLinea In aLineas
+    aCampos = Split(sLinea, Chr(0), "", False)
+
+    Select Case aCampos[0]
+
+      Case "B"
+        If aCampos.Count >= 8 Then ProcesarBloque(oArchivo, aCampos)
+
+      Case "H"
+        If aCampos.Count >= 5 Then ProcesarTitulo(oArchivo, aCampos)
+
+      Case "N"
+        oArchivo.iNotas = oArchivo.iNotas + 1
+
+      Case "G"
+        oArchivo.iCitas = oArchivo.iCitas + 1
+
+      Case "C"
+        If aCampos.Count >= 2 Then oArchivo.aClaves.Add(aCampos[1])
+
+      Case "D"
+        ' SHORTCODE DE BLOQUE, POR CLASE
+        If aCampos.Count >= 2 Then SumarShortcode(oArchivo, aCampos[1])
+
+      Case "S"
+        ' SHORTCODE DE LÍNEA, POR CLASE
+        If aCampos.Count >= 2 Then SumarShortcode(oArchivo, aCampos[1])
+
+      Case "M"
+        If aCampos.Count >= 2 Then
+          If aCampos[1] = "d" Then
+            oArchivo.iMathDestacada = oArchivo.iMathDestacada + 1
+          Else
+            oArchivo.iMathLinea = oArchivo.iMathLinea + 1
+          Endif
+        Endif
+
+      Case "F"
+        oArchivo.iFiguras = oArchivo.iFiguras + 1
+      Case "I"
+        oArchivo.iImagenes = oArchivo.iImagenes + 1
+      Case "T"
+        oArchivo.iTablas = oArchivo.iTablas + 1
+      Case "L"
+        oArchivo.iEnlaces = oArchivo.iEnlaces + 1
+      Case "Q"
+        oArchivo.iCitasBloque = oArchivo.iCitasBloque + 1
+      Case "LI"
+        oArchivo.iItems = oArchivo.iItems + 1
+      Case "CB"
+        oArchivo.iCodigo = oArchivo.iCodigo + 1
+
+    End Select
+  Next
+
+End
+
+' ============================================
+' Función   : SumarShortcode
+' Propósito : CUENTA UNA APARICIÓN DE UN SHORTCODE POR SU CLASE. espaciov NO
+'             SE LISTA: ES UNA INSTRUCCIÓN DE COMPOSICIÓN, NO UN ELEMENTO DEL
+'             TEXTO
+' Parámetros: oArchivo As CAnalisisArchivo — destino
+'             sClase As String — clase Pandoc del div o span
+' Retorna   : nada
+' ============================================
+Private Sub SumarShortcode(oArchivo As CAnalisisArchivo, sClase As String)
+
+  If Destino(sClase) = DEST_IGNORAR Then Return
+
+  ' LOS VALORES SON ENTEROS, NUNCA "": LA CLAVE NO SE PIERDE (GV-68)
+  If oArchivo.cShortcodes.Exist(sClase) Then
+    oArchivo.cShortcodes[sClase] = oArchivo.cShortcodes[sClase] + 1
+  Else
+    oArchivo.cShortcodes[sClase] = 1
+  Endif
+
+End
+
+' ============================================
+' Función   : ProcesarBloque
+' Propósito : SUMA UN REGISTRO B: B ctx clase parrafo palabras cc cs inicio
+' Parámetros: oArchivo As CAnalisisArchivo — destino
+'             aCampos As String[] — los ocho campos del registro
+' Retorna   : nada
+' ============================================
+Private Sub ProcesarBloque(oArchivo As CAnalisisArchivo, aCampos As String[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sCtx As String
+  Dim sDestino As String
+  Dim iPalabras As Integer
+
+  sCtx = aCampos[1]
+  sDestino = Destino(aCampos[2])
+  iPalabras = CInt(aCampos[4])
+
+  ' --- 2. LO QUE NO ES TEXTO (espaciov) NO SUMA NADA ---
+  If sDestino = DEST_IGNORAR Then Return
+
+  ' --- 3. CARACTERES: TODO EL TEXTO, PARA LA ESTIMACIÓN DE PÁGINAS ---
+  oArchivo.iCaracteresCon = oArchivo.iCaracteresCon + CInt(aCampos[5])
+  oArchivo.iCaracteresSin = oArchivo.iCaracteresSin + CInt(aCampos[6])
+
+  ' --- 4. PALABRAS SEGÚN CONTEXTO Y DESTINO ---
+  ' LAS LISTAS SON CUERPO: EL CONTEXTO lista SOLO EXISTE PARA QUE SUS
+  ' ÍTEMS NO SE CUENTEN COMO PÁRRAFOS
+  Select Case sCtx
+    Case "nota"
+      oArchivo.iPalNotas = oArchivo.iPalNotas + iPalabras
+    Case "cita"
+      oArchivo.iPalCitas = oArchivo.iPalCitas + iPalabras
+    Case "leyenda"
+      oArchivo.iPalLeyendas = oArchivo.iPalLeyendas + iPalabras
+    Case "tabla"
+      oArchivo.iPalTablas = oArchivo.iPalTablas + iPalabras
+    Case Else
+      If sDestino = DEST_CUERPO Then
+        oArchivo.iPalCuerpo = oArchivo.iPalCuerpo + iPalabras
+      Else If sDestino = DEST_LEYENDA Then
+        oArchivo.iPalLeyendas = oArchivo.iPalLeyendas + iPalabras
+      Else
+        oArchivo.iPalEspeciales = oArchivo.iPalEspeciales + iPalabras
+      Endif
+  End Select
+
+  ' --- 5. PÁRRAFO: Para DEL CUERPO, FUERA DE BLOQUES ESPECIALES Y PIES ---
+  If aCampos[3] <> "1" Then Return
+  If sCtx <> "cuerpo" Then Return
+  If sDestino <> DEST_CUERPO Then Return
+
+  oArchivo.aParrafos.Add(iPalabras)
+  If iPalabras > oArchivo.iParrafoMax Then
+    oArchivo.iParrafoMax = iPalabras
+    oArchivo.sInicioParrafoMax = aCampos[7]
+    ' EL FILTRO MANDA SOLO LAS PRIMERAS PALABRAS: LOS PUNTOS SUSPENSIVOS
+    ' VAN CUANDO EL PÁRRAFO SIGUE MÁS ALLÁ DE ELLAS
+    If iPalabras > Split(aCampos[7], " ", "", True).Count Then
+      oArchivo.sInicioParrafoMax &= "…"
+    Endif
+  Endif
+
+End
+
+' ============================================
+' Función   : ProcesarTitulo
+' Propósito : SUMA UN REGISTRO H: H nivel palabras cc cs. DETECTA SALTOS DE
+'             NIVEL (DE ## A ####) DENTRO DEL ARCHIVO; EL PRIMER TÍTULO NO
+'             SE EVALÚA PORQUE NO TIENE ANTERIOR
+' Parámetros: oArchivo As CAnalisisArchivo — destino
+'             aCampos As String[] — los cinco campos del registro
+' Retorna   : nada
+' ============================================
+Private Sub ProcesarTitulo(oArchivo As CAnalisisArchivo, aCampos As String[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iNivel As Integer
+
+  iNivel = CInt(aCampos[1])
+
+  ' --- 2. CONTEO POR NIVEL ---
+  If iNivel >= 1 And iNivel <= 6 Then
+    oArchivo.aTitulos[iNivel] = oArchivo.aTitulos[iNivel] + 1
+  Endif
+
+  ' --- 3. SALTO DE NIVEL ---
+  If oArchivo.iUltimoNivel > 0 And iNivel > oArchivo.iUltimoNivel + 1 Then
+    oArchivo.iSaltos = oArchivo.iSaltos + 1
+  Endif
+  oArchivo.iUltimoNivel = iNivel
+
+  ' --- 4. PALABRAS Y CARACTERES DEL TÍTULO ---
+  oArchivo.iPalTitulos = oArchivo.iPalTitulos + CInt(aCampos[2])
+  oArchivo.iCaracteresCon = oArchivo.iCaracteresCon + CInt(aCampos[3])
+  oArchivo.iCaracteresSin = oArchivo.iCaracteresSin + CInt(aCampos[4])
+
+End
+
+' ============================================
+' Función   : LeerBibliografia
+' Propósito : LEE CLAVE Y AÑO DE CADA ENTRADA DEL .bib CON EL MISMO FILTRO, EN
+'             MODO bib. LA ENTRADA ES UN YAML TEMPORAL CON nocite: '@*':
+'             SIN ÉL, pandoc.utils.references DEVUELVE SOLO LAS CITADAS, Y
+'             PASADO COMO -M LLEGA COMO TEXTO Y NO COMO CITA (VERIFICADO
+'             CON PANDOC 3.1.3)
+' Parámetros: sRaiz As String — raíz del proyecto
+' Retorna   : nada — llena $bHayBib, $sErrorBib, $aBibClaves, $aBibAnios
+' ============================================
+Private Sub LeerBibliografia(sRaiz As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaBib As String
+  Dim sRutaYaml As String
+  Dim aComando As New String[]
+  Dim iCodigo As Integer
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim aCampos As String[]
+
+  $bHayBib = False
+  $sErrorBib = ""
+  $aBibClaves.Clear
+  $aBibAnios.Clear
+
+  ' --- 2. SIN .bib NO HAY CRUCE ---
+  sRutaBib = RutaBib(sRaiz)
+  If Not Exist(sRutaBib) Then
+    $sErrorBib = "No hay " & File.Name(sRutaBib)
+    Return
+  Endif
+
+  ' --- 3. ENTRADA: YAML TEMPORAL CON nocite ---
+  ' Exec ... To NO EXPONE stdin: LA ENTRADA VA POR ARCHIVO TEMPORAL (SC-05)
+  sRutaYaml = Temp$() & ".md"
+  Try File.Save(sRutaYaml, "---" & gb.NewLine & "nocite: |" & gb.NewLine & "  @*" & gb.NewLine & "---" & gb.NewLine)
+  If Error Then
+    $sErrorBib = "No se pudo escribir el temporal: " & Error.Text
+    Return
+  Endif
+
+  ' --- 4. INVOCACIÓN EN MODO bib ---
+  aComando.Add("pandoc")
+  aComando.Add(sRutaYaml)
+  aComando.Add("--from")
+  aComando.Add("markdown")
+  aComando.Add("--to")
+  aComando.Add("plain")
+  aComando.Add("--bibliography")
+  aComando.Add(sRutaBib)
+  aComando.Add("--metadata")
+  aComando.Add("gb-analisis=bib")
+  aComando.Add("--lua-filter")
+  aComando.Add(RutaFiltro())
+  aComando.Add("--output")
+  aComando.Add("/dev/null")
+
+  iCodigo = EjecutarPandoc(aComando)
+  Try Kill sRutaYaml
+
+  ' --- 5. RESULTADO ---
+  If $bCancelado Then Return
+  If iCodigo <> 0 Then
+    ' UN .bib QUE PANDOC NO PUEDE LEER SE INFORMA; EL RESTO DEL ANÁLISIS VALE
+    $sErrorBib = PrimeraLineaError(iCodigo)
+    Return
+  Endif
+
+  aLineas = Split($sBufferSalida, gb.NewLine, "", True)
+  For Each sLinea In aLineas
+    aCampos = Split(sLinea, Chr(0), "", False)
+    If aCampos.Count >= 3 Then
+      If aCampos[0] = "R" Then
+        $aBibClaves.Add(aCampos[1])
+        $aBibAnios.Add(aCampos[2])
+      Endif
+    Endif
+  Next
+  $bHayBib = True
+
+End
+
+' ============================================
+' Función   : DivisionArriba
+' Propósito : DIVISIÓN ENTERA REDONDEADA HACIA ARRIBA: UNA PÁGINA EMPEZADA ES
+'             UNA PÁGINA, UN PLIEGO EMPEZADO ES UN PLIEGO
+' Parámetros: iDividendo As Integer — cantidad
+'             iDivisor As Integer — unidad
+' Retorna   : Integer — cociente redondeado hacia arriba
+' ============================================
+Private Function DivisionArriba(iDividendo As Integer, iDivisor As Integer) As Integer
+
+  If iDividendo <= 0 Then Return 0
+  Return (iDividendo + iDivisor - 1) \ iDivisor
+
+End
+
+' ============================================
+' Función   : Mediana
+' Propósito : MEDIANA DE LAS PALABRAS POR PÁRRAFO. ORDENA EL ARRAY EN SU
+'             LUGAR: EL ORDEN DE LOS PÁRRAFOS NO SE USA PARA NADA MÁS
+' Parámetros: aValores As Integer[] — palabras por párrafo
+' Retorna   : Float — la mediana; 0 sin párrafos
+' ============================================
+Private Function Mediana(aValores As Integer[]) As Float
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iMedio As Integer
+
+  ' --- 2. SIN VALORES ---
+  If aValores.Count = 0 Then Return 0
+
+  ' --- 3. ORDENAR Y TOMAR EL CENTRO ---
+  aValores.Sort()
+  iMedio = aValores.Count \ 2
+  If aValores.Count Mod 2 = 1 Then Return aValores[iMedio]
+  Return (aValores[iMedio - 1] + aValores[iMedio]) / 2
+
+End
+
+' ============================================
+' Función   : Promedio
+' Propósito : COCIENTE CON UN DECIMAL, O SIN_DATO SI EL DIVISOR ES CERO
+' Parámetros: iSuma As Integer — numerador
+'             iCantidad As Integer — denominador
+' Retorna   : String — texto de la celda
+' ============================================
+Private Function Promedio(iSuma As Integer, iCantidad As Integer) As String
+
+  If iCantidad = 0 Then Return SIN_DATO
+  Return Format(iSuma / iCantidad, "0.0")
+
+End
+
+' ============================================
+' Función   : ClavesFaltantes
+' Propósito : CLAVES CITADAS QUE NO ESTÁN EN EL .bib
+' Parámetros: oArchivo As CAnalisisArchivo — archivo o total
+' Retorna   : String[] — claves, ordenadas
+' ============================================
+Private Function ClavesFaltantes(oArchivo As CAnalisisArchivo) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aSalida As New String[]
+  Dim sClave As String
+
+  ' --- 2. LAS DISTINTAS QUE EL .bib NO TIENE ---
+  For Each sClave In oArchivo.ClavesDistintas()
+    If $aBibClaves.Find(sClave) < 0 Then aSalida.Add(sClave)
+  Next
+
+  Return aSalida
+
+End
+
+' ============================================
+' Función   : ClavesSinCitar
+' Propósito : ENTRADAS DEL .bib QUE NINGÚN ARCHIVO CITA
+' Parámetros: oTotal As CAnalisisArchivo — el total del proyecto
+' Retorna   : String[] — claves, ordenadas
+' ============================================
+Private Function ClavesSinCitar(oTotal As CAnalisisArchivo) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aSalida As New String[]
+  Dim aCitadas As String[]
+  Dim sClave As String
+
+  ' --- 2. LAS DEL .bib QUE NO APARECEN ENTRE LAS CITADAS ---
+  aCitadas = oTotal.ClavesDistintas()
+  For Each sClave In $aBibClaves
+    If aCitadas.Find(sClave) < 0 Then aSalida.Add(sClave)
+  Next
+
+  aSalida.Sort()
+  Return aSalida
+
+End
+
+' ============================================
+' Función   : IndicePrice
+' Propósito : PROPORCIÓN DE LAS ENTRADAS CITADAS (Y PRESENTES EN EL .bib,
+'             CON AÑO) PUBLICADAS EN LOS ÚLTIMOS ANIOS_PRICE AÑOS CALENDARIO
+' Parámetros: oArchivo As CAnalisisArchivo — archivo o total
+' Retorna   : String — «45 % (9 de 20)», o SIN_DATO
+' ============================================
+Private Function IndicePrice(oArchivo As CAnalisisArchivo) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sClave As String
+  Dim iPos As Integer
+  Dim iConAnio As Integer
+  Dim iRecientes As Integer
+  Dim iDesde As Integer
+
+  iDesde = Year(Now) - ANIOS_PRICE + 1
+
+  ' --- 2. RECORRER LAS CITADAS QUE ESTÁN EN EL .bib ---
+  For Each sClave In oArchivo.ClavesDistintas()
+    iPos = $aBibClaves.Find(sClave)
+    If iPos < 0 Then Continue
+    ' UNA ENTRADA SIN AÑO NO ENTRA AL ÍNDICE: SE INFORMA APARTE
+    If $aBibAnios[iPos] = "" Then Continue
+    Inc iConAnio
+    If CInt($aBibAnios[iPos]) >= iDesde Then Inc iRecientes
+  Next
+
+  ' --- 3. RESULTADO ---
+  If iConAnio = 0 Then Return SIN_DATO
+  Return Format(iRecientes * 100 / iConAnio, "0") & " % (" & CStr(iRecientes) & " de " & CStr(iConAnio) & ")"
+
+End
+
+' ============================================
+' Función   : Valor
+' Propósito : EL TEXTO DE UNA CELDA: LA MÉTRICA sMetrica DE UN ARCHIVO O DEL
+'             TOTAL. UNA SOLA FUNCIÓN PARA TODAS LAS COLUMNAS: ASÍ EL TOTAL Y
+'             LOS ARCHIVOS NO PUEDEN CALCULARSE DISTINTO
+' Parámetros: oArchivo As CAnalisisArchivo — archivo o total
+'             sMetrica As String — identificador de la fila
+'             bTotal As Boolean — True en la columna Total
+' Retorna   : String — texto de la celda
+' ============================================
+Private Function Valor(oArchivo As CAnalisisArchivo, sMetrica As String, bTotal As Boolean) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iPagMin As Integer
+  Dim iPagMax As Integer
+  Dim iPliegoMin As Integer
+  Dim iPliegoMax As Integer
+
+  ' --- 2. UN ARCHIVO QUE NO SE PUDO LEER NO TIENE DATOS ---
+  If oArchivo.bError Then
+    If sMetrica = "estado" Then Return oArchivo.sError
+    Return SIN_DATO
+  Endif
+
+  ' --- 3. REFERENCIAS: CRUCE CON EL .bib, EN SU PROPIA FUNCIÓN ---
+  If String.Left(sMetrica, 4) = "bib_" Then Return ValorBib(oArchivo, sMetrica, bTotal)
+
+  ' --- 4. MÉTRICAS POR ARCHIVO Y TOTAL ---
+  Select Case sMetrica
+
+    Case "estado"
+      Return "ok"
+
+      ' VOLUMEN
+    Case "car_con"
+      Return CStr(oArchivo.iCaracteresCon)
+    Case "car_sin"
+      Return CStr(oArchivo.iCaracteresSin)
+    Case "pal_total"
+      Return CStr(oArchivo.PalabrasTotal())
+    Case "pal_cuerpo"
+      Return CStr(oArchivo.iPalCuerpo)
+    Case "pal_notas"
+      Return CStr(oArchivo.iPalNotas)
+    Case "pal_citas"
+      Return CStr(oArchivo.iPalCitas)
+    Case "pal_leyendas"
+      Return CStr(oArchivo.iPalLeyendas)
+    Case "pal_tablas"
+      Return CStr(oArchivo.iPalTablas)
+    Case "pal_titulos"
+      Return CStr(oArchivo.iPalTitulos)
+    Case "pal_especiales"
+      Return CStr(oArchivo.iPalEspeciales)
+
+      ' PÁRRAFOS
+    Case "parrafos"
+      Return CStr(oArchivo.aParrafos.Count)
+    Case "par_promedio"
+      Return Promedio(oArchivo.PalabrasEnParrafos(), oArchivo.aParrafos.Count)
+    Case "par_mediana"
+      If oArchivo.aParrafos.Count = 0 Then Return SIN_DATO
+      Return Format(Mediana(oArchivo.aParrafos), "0.0")
+    Case "par_max"
+      Return CStr(oArchivo.iParrafoMax)
+    Case "par_max_inicio"
+      If oArchivo.iParrafoMax = 0 Then Return SIN_DATO
+      Return oArchivo.sInicioParrafoMax
+
+      ' TÍTULOS
+    Case "tit_1"
+      Return CStr(oArchivo.aTitulos[1])
+    Case "tit_2"
+      Return CStr(oArchivo.aTitulos[2])
+    Case "tit_3"
+      Return CStr(oArchivo.aTitulos[3])
+    Case "tit_4"
+      Return CStr(oArchivo.aTitulos[4])
+    Case "tit_5"
+      Return CStr(oArchivo.aTitulos[5])
+    Case "tit_6"
+      Return CStr(oArchivo.aTitulos[6])
+    Case "saltos"
+      Return CStr(oArchivo.iSaltos)
+
+      ' NOTAS Y CITAS
+    Case "notas"
+      Return CStr(oArchivo.iNotas)
+    Case "nota_promedio"
+      Return Promedio(oArchivo.iPalNotas, oArchivo.iNotas)
+    Case "citas"
+      Return CStr(oArchivo.iCitas)
+    Case "claves"
+      Return CStr(oArchivo.aClaves.Count)
+    Case "claves_distintas"
+      Return CStr(oArchivo.ClavesDistintas().Count)
+
+      ' ELEMENTOS
+    Case "figuras"
+      Return CStr(oArchivo.iFiguras)
+    Case "imagenes"
+      Return CStr(oArchivo.iImagenes)
+    Case "tablas"
+      Return CStr(oArchivo.iTablas)
+    Case "math_linea"
+      Return CStr(oArchivo.iMathLinea)
+    Case "math_destacada"
+      Return CStr(oArchivo.iMathDestacada)
+    Case "citas_bloque"
+      Return CStr(oArchivo.iCitasBloque)
+    Case "items"
+      Return CStr(oArchivo.iItems)
+    Case "codigo"
+      Return CStr(oArchivo.iCodigo)
+    Case "enlaces"
+      Return CStr(oArchivo.iEnlaces)
+
+      ' PRODUCCIÓN
+    Case "pag_estimadas"
+      Return CStr(DivisionArriba(oArchivo.iCaracteresCon, CARACTERES_PAGINA))
+    Case "pag_rango"
+      ' LA PÁGINA LLENA DA EL MÍNIMO; LA RALA, EL MÁXIMO
+      iPagMin = DivisionArriba(oArchivo.iCaracteresCon, CARACTERES_PAGINA_LLENA)
+      iPagMax = DivisionArriba(oArchivo.iCaracteresCon, CARACTERES_PAGINA_RALA)
+      Return CStr(iPagMin) & "–" & CStr(iPagMax)
+    Case "pliegos"
+      iPagMin = DivisionArriba(oArchivo.iCaracteresCon, CARACTERES_PAGINA_LLENA)
+      iPagMax = DivisionArriba(oArchivo.iCaracteresCon, CARACTERES_PAGINA_RALA)
+      iPliegoMin = DivisionArriba(iPagMin, PAGINAS_PLIEGO)
+      iPliegoMax = DivisionArriba(iPagMax, PAGINAS_PLIEGO)
+      If iPliegoMin = iPliegoMax Then Return CStr(iPliegoMin)
+      Return CStr(iPliegoMin) & "–" & CStr(iPliegoMax)
+
+  End Select
+
+  ' --- 5. SHORTCODES: LA MÉTRICA ES "sc:" + CLASE ---
+  If String.Left(sMetrica, 3) = "sc:" Then
+    If oArchivo.cShortcodes.Exist(String.Mid(sMetrica, 4)) Then
+      Return CStr(oArchivo.cShortcodes[String.Mid(sMetrica, 4)])
+    Endif
+    Return "0"
+  Endif
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : UnirClaves
+' Propósito : JUNTA UNA LISTA DE CLAVES EN UN TEXTO PARA LA CELDA
+' Parámetros: aClaves As String[] — claves
+' Retorna   : String — «a, b, c», o SIN_DATO si la lista está vacía
+' ============================================
+Private Function UnirClaves(aClaves As String[]) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sTexto As String
+  Dim sClave As String
+
+  ' --- 2. LISTA VACÍA ---
+  If aClaves.Count = 0 Then Return SIN_DATO
+
+  ' --- 3. CONCATENAR CON COMA ---
+  For Each sClave In aClaves
+    If sTexto <> "" Then sTexto &= ", "
+    sTexto &= sClave
+  Next
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : ValorBib
+' Propósito : LAS CELDAS DE LA SECCIÓN REFERENCIAS. SIN .bib LEÍDO NO HAY
+'             CRUCE: EL TOTAL MUESTRA EL MOTIVO Y LOS ARCHIVOS SIN_DATO. LAS
+'             MÉTRICAS QUE SOLO TIENEN SENTIDO PARA EL PROYECTO (ENTRADAS,
+'             SIN CITAR, SIN FECHA) QUEDAN VACÍAS EN LAS COLUMNAS DE ARCHIVO
+' Parámetros: oArchivo As CAnalisisArchivo — archivo o total
+'             sMetrica As String — identificador de la fila (bib_*)
+'             bTotal As Boolean — True en la columna Total
+' Retorna   : String — texto de la celda
+' ============================================
+Private Function ValorBib(oArchivo As CAnalisisArchivo, sMetrica As String, bTotal As Boolean) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iSinFecha As Integer
+  Dim sAnio As String
+
+  ' --- 2. SIN .bib ---
+  If Not $bHayBib Then
+    If bTotal Then Return $sErrorBib
+    Return SIN_DATO
+  Endif
+
+  ' --- 3. MÉTRICAS ---
+  Select Case sMetrica
+
+      ' POR ARCHIVO Y TOTAL
+    Case "bib_citadas"
+      Return CStr(oArchivo.ClavesDistintas().Count - ClavesFaltantes(oArchivo).Count)
+    Case "bib_faltan"
+      Return CStr(ClavesFaltantes(oArchivo).Count)
+    Case "bib_faltan_lista"
+      Return UnirClaves(ClavesFaltantes(oArchivo))
+    Case "bib_price"
+      Return IndicePrice(oArchivo)
+
+  End Select
+
+  ' SOLO TOTAL
+  If Not bTotal Then Return ""
+
+  Select Case sMetrica
+    Case "bib_entradas"
+      Return CStr($aBibClaves.Count)
+    Case "bib_sin_citar"
+      Return CStr(ClavesSinCitar(oArchivo).Count)
+    Case "bib_sin_citar_lista"
+      Return UnirClaves(ClavesSinCitar(oArchivo))
+    Case "bib_sin_fecha"
+      For Each sAnio In $aBibAnios
+        If sAnio = "" Then Inc iSinFecha
+      Next
+      Return CStr(iSinFecha)
+  End Select
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : EtiquetaShortcode
+' Propósito : NOMBRE LEGIBLE DE UNA CLASE, TOMADO DEL CATÁLOGO (RF-11). LAS
+'             VARIANTES COMPARTEN CLASE (figure Y fig-fullwidth): VALE LA
+'             ETIQUETA DE LA PRIMERA. LA CLASE VA ENTRE CORCHETES PARA QUE
+'             NO HAYA AMBIGÜEDAD
+' Parámetros: sClase As String — clase Pandoc
+' Retorna   : String — «Figura [fig]» o «[clase] (fuera del catálogo)»
+' ============================================
+Private Function EtiquetaShortcode(sClase As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aVariantes As CShortcodeCatalogo[]
+
+  ' --- 2. CONSULTA AL CATÁLOGO ---
+  aVariantes = m_CatalogoShortcodes.PorClase(sClase)
+  If aVariantes.Count > 0 Then Return aVariantes[0].sEtiqueta & " [" & sClase & "]"
+
+  Return "[" & sClase & "] (fuera del catálogo)"
+
+End
+
+' ============================================
+' Función   : AgregarSeccion
+' Propósito : AGREGA UNA FILA DE TÍTULO DE SECCIÓN
+' Parámetros: sTitulo As String — título
+'             iColumnas As Integer — columnas de la grilla
+' Retorna   : nada
+' ============================================
+Private Sub AgregarSeccion(sTitulo As String, iColumnas As Integer)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aFila As String[]
+
+  ' --- 2. FILA CON SOLO EL TÍTULO ---
+  aFila = New String[iColumnas]
+  aFila[0] = sTitulo
+  $aFilasSeccion.Add($aFilas.Count)
+  $aFilas.Add(aFila)
+
+End
+
+' ============================================
+' Función   : AgregarMetrica
+' Propósito : AGREGA UNA FILA DE MÉTRICA: ETIQUETA, TOTAL Y UN VALOR POR ARCHIVO
+' Parámetros: sEtiqueta As String — texto de la primera columna
+'             sMetrica As String — identificador para Valor
+'             oTotal As CAnalisisArchivo — el total
+'             aArchivos As CAnalisisArchivo[] — los archivos, en orden
+' Retorna   : nada
+' ============================================
+Private Sub AgregarMetrica(sEtiqueta As String, sMetrica As String, oTotal As CAnalisisArchivo, aArchivos As CAnalisisArchivo[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aFila As String[]
+  Dim i As Integer
+
+  ' --- 2. ETIQUETA, TOTAL Y ARCHIVOS ---
+  aFila = New String[aArchivos.Count + 2]
+  aFila[0] = sEtiqueta
+  aFila[1] = Valor(oTotal, sMetrica, True)
+  For i = 0 To aArchivos.Max
+    aFila[i + 2] = Valor(aArchivos[i], sMetrica, False)
+  Next
+
+  $aFilas.Add(aFila)
+
+End
+
+' ============================================
+' Función   : AgregarNota
+' Propósito : AGREGA UNA FILA DE ACLARACIÓN, CON EL TEXTO EN LA COLUMNA TOTAL
+' Parámetros: sEtiqueta As String — primera columna
+'             sTexto As String — aclaración
+'             iColumnas As Integer — columnas de la grilla
+' Retorna   : nada
+' ============================================
+Private Sub AgregarNota(sEtiqueta As String, sTexto As String, iColumnas As Integer)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aFila As String[]
+
+  ' --- 2. FILA ---
+  aFila = New String[iColumnas]
+  aFila[0] = sEtiqueta
+  aFila[1] = sTexto
+  $aFilas.Add(aFila)
+
+End
+
+' ============================================
+' Función   : LlenarGrilla
+' Propósito : ARMA TODAS LAS FILAS Y LAS VUELCA EN gvAnalizarProyecto
+' Parámetros: oTotal As CAnalisisArchivo — el total
+'             aArchivos As CAnalisisArchivo[] — los archivos, en orden
+' Retorna   : nada
+' ============================================
+Private Sub LlenarGrilla(oTotal As CAnalisisArchivo, aArchivos As CAnalisisArchivo[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iColumnas As Integer
+  Dim aEtiquetas As New String[]
+  Dim iCantidad As Integer
+  Dim i As Integer
+  Dim j As Integer
+  Dim aFila As String[]
+  Dim iDesde As Integer
+
+  iColumnas = aArchivos.Count + 2
+  $aFilas.Clear
+  $aFilasSeccion.Clear
+  iDesde = Year(Now) - ANIOS_PRICE + 1
+
+  ' --- 2. ESTADO Y AVISOS ---
+  AgregarSeccion("ESTADO", iColumnas)
+  AgregarMetrica("Lectura del archivo", "estado", oTotal, aArchivos)
+  AgregarNota("Fuente", "Archivos guardados en disco, leídos con el lector Markdown de Pandoc, sin los filtros de producción.", iColumnas)
+  If $bHabiaCambios Then
+    AgregarNota("Aviso", "El archivo abierto en el editor tiene cambios sin guardar: se analizó la versión en disco.", iColumnas)
+  Endif
+
+  ' --- 3. VOLUMEN ---
+  AgregarSeccion("VOLUMEN", iColumnas)
+  AgregarMetrica("Caracteres con espacios", "car_con", oTotal, aArchivos)
+  AgregarMetrica("Caracteres sin espacios", "car_sin", oTotal, aArchivos)
+  AgregarMetrica("Palabras, total", "pal_total", oTotal, aArchivos)
+  AgregarMetrica("Palabras del cuerpo (con listas)", "pal_cuerpo", oTotal, aArchivos)
+  AgregarMetrica("Palabras en notas", "pal_notas", oTotal, aArchivos)
+  AgregarMetrica("Palabras en citas en bloque", "pal_citas", oTotal, aArchivos)
+  AgregarMetrica("Palabras en pies de figura y tabla", "pal_leyendas", oTotal, aArchivos)
+  AgregarMetrica("Palabras en celdas de tabla", "pal_tablas", oTotal, aArchivos)
+  AgregarMetrica("Palabras en títulos", "pal_titulos", oTotal, aArchivos)
+  AgregarMetrica("Palabras en bloques especiales", "pal_especiales", oTotal, aArchivos)
+  AgregarNota("Criterio", "Palabra: lo que va entre espacios y tiene al menos una letra o dígito. No cuentan fórmulas, código ni el texto de las citas.", iColumnas)
+
+  ' --- 4. PÁRRAFOS ---
+  AgregarSeccion("PÁRRAFOS", iColumnas)
+  AgregarMetrica("Párrafos del cuerpo", "parrafos", oTotal, aArchivos)
+  AgregarMetrica("Palabras por párrafo, promedio", "par_promedio", oTotal, aArchivos)
+  AgregarMetrica("Palabras por párrafo, mediana", "par_mediana", oTotal, aArchivos)
+  AgregarMetrica("Párrafo más largo (palabras)", "par_max", oTotal, aArchivos)
+  AgregarMetrica("Párrafo más largo, comienzo", "par_max_inicio", oTotal, aArchivos)
+
+  ' --- 5. TÍTULOS ---
+  AgregarSeccion("TÍTULOS", iColumnas)
+  For i = 1 To 6
+    AgregarMetrica("Nivel " & CStr(i), "tit_" & CStr(i), oTotal, aArchivos)
+  Next
+  AgregarMetrica("Saltos de nivel", "saltos", oTotal, aArchivos)
+
+  ' --- 6. NOTAS Y CITAS ---
+  AgregarSeccion("NOTAS Y CITAS", iColumnas)
+  AgregarMetrica("Notas al pie", "notas", oTotal, aArchivos)
+  AgregarMetrica("Palabras por nota, promedio", "nota_promedio", oTotal, aArchivos)
+  AgregarMetrica("Citas (apariciones)", "citas", oTotal, aArchivos)
+  AgregarMetrica("Claves citadas", "claves", oTotal, aArchivos)
+  AgregarMetrica("Claves distintas", "claves_distintas", oTotal, aArchivos)
+
+  ' --- 7. REFERENCIAS ---
+  AgregarSeccion("REFERENCIAS", iColumnas)
+  AgregarMetrica("Entradas en el .bib", "bib_entradas", oTotal, aArchivos)
+  AgregarMetrica("Entradas citadas", "bib_citadas", oTotal, aArchivos)
+  AgregarMetrica("Entradas sin citar", "bib_sin_citar", oTotal, aArchivos)
+  AgregarMetrica("Entradas sin citar, claves", "bib_sin_citar_lista", oTotal, aArchivos)
+  AgregarMetrica("Claves citadas que faltan en el .bib", "bib_faltan", oTotal, aArchivos)
+  AgregarMetrica("Claves que faltan", "bib_faltan_lista", oTotal, aArchivos)
+  AgregarMetrica("Entradas sin fecha", "bib_sin_fecha", oTotal, aArchivos)
+  AgregarMetrica("Índice de Price (" & CStr(iDesde) & "–" & CStr(Year(Now)) & ")", "bib_price", oTotal, aArchivos)
+
+  ' --- 8. ELEMENTOS ---
+  AgregarSeccion("ELEMENTOS", iColumnas)
+  AgregarMetrica("Figuras (imagen con pie)", "figuras", oTotal, aArchivos)
+  AgregarMetrica("Imágenes", "imagenes", oTotal, aArchivos)
+  AgregarMetrica("Tablas", "tablas", oTotal, aArchivos)
+  AgregarMetrica("Fórmulas en línea", "math_linea", oTotal, aArchivos)
+  AgregarMetrica("Fórmulas destacadas", "math_destacada", oTotal, aArchivos)
+  AgregarMetrica("Citas en bloque", "citas_bloque", oTotal, aArchivos)
+  AgregarMetrica("Ítems de lista", "items", oTotal, aArchivos)
+  AgregarMetrica("Bloques de código", "codigo", oTotal, aArchivos)
+  AgregarMetrica("Enlaces", "enlaces", oTotal, aArchivos)
+
+  ' --- 9. SHORTCODES: UNA FILA POR CLASE PRESENTE, ORDEN ALFABÉTICO ---
+  ' SE ORDENA POR ETIQUETA ARMANDO «etiqueta|clase»: LA ETIQUETA ES LO QUE
+  ' SE LEE, LA CLASE ES LA CLAVE
+  For Each iCantidad In oTotal.cShortcodes
+    aEtiquetas.Add(EtiquetaShortcode(oTotal.cShortcodes.Key) & "|" & oTotal.cShortcodes.Key)
+  Next
+  aEtiquetas.Sort()
+  If aEtiquetas.Count > 0 Then
+    AgregarSeccion("SHORTCODES", iColumnas)
+    For i = 0 To aEtiquetas.Max
+      j = String.InStr(aEtiquetas[i], "|")
+      AgregarMetrica(String.Left(aEtiquetas[i], j - 1), "sc:" & String.Mid(aEtiquetas[i], j + 1), oTotal, aArchivos)
+    Next
+  Endif
+
+  ' --- 10. PRODUCCIÓN ---
+  AgregarSeccion("PRODUCCIÓN", iColumnas)
+  AgregarMetrica("Páginas estimadas (" & CStr(CARACTERES_PAGINA) & " car./pág.)", "pag_estimadas", oTotal, aArchivos)
+  AgregarMetrica("Páginas, rango (" & CStr(CARACTERES_PAGINA_LLENA) & "–" & CStr(CARACTERES_PAGINA_RALA) & " car./pág.)", "pag_rango", oTotal, aArchivos)
+  AgregarMetrica("Pliegos de " & CStr(PAGINAS_PLIEGO) & " páginas", "pliegos", oTotal, aArchivos)
+  AgregarNota("Base", "Estimación empírica: " & CStr(CARACTERES_PAGINA) & " caracteres con espacios por página de libro (rango observado " & CStr(CARACTERES_PAGINA_RALA) & "–" & CStr(CARACTERES_PAGINA_LLENA) & "). Solo texto: no reserva lugar para figuras ni tablas.", iColumnas)
+
+  ' --- 11. VOLCAR A LA GRILLA ---
+  With FMain.gvAnalizarProyecto
+    .Rows.Count = 0
+    .Columns.Count = iColumnas
+    .Columns[0].Title = "Métrica"
+    .Columns[0].Width = 300
+    .Columns[1].Title = "Total"
+    .Columns[1].Width = 140
+    For i = 0 To aArchivos.Max
+      .Columns[i + 2].Title = aArchivos[i].sNombre
+      .Columns[i + 2].Width = 120
+    Next
+
+    .Rows.Count = $aFilas.Count
+    For i = 0 To $aFilas.Max
+      aFila = $aFilas[i]
+      For j = 0 To iColumnas - 1
+        .[i, j].Text = aFila[j]
+      Next
+    Next
+
+    ' LOS TÍTULOS DE SECCIÓN SE DISTINGUEN POR COLOR (LA FORMA DE
+    ' m_GestorComentarios)
+    For Each i In $aFilasSeccion
+      .[i, 0].Foreground = Color.Blue
+    Next
+  End With
+
+End
