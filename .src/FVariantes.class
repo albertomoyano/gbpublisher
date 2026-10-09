@@ -1,0 +1,185 @@
+' Gambas class file
+
+' ============================================
+' Formulario: FVariantes
+' Propósito : Muestra las VARIANTES de una misma palabra en el proyecto, que
+'             calcula engine/analizar_lexico.pl desde m_AnalizarProyecto:
+'             guion (on-line/online), mayúscula dentro de la oración
+'             (Estado/estado) y tilde de la lista cerrada de la RAE
+'             (solo/sólo, guion/guión). SOLO MUESTRA: no corrige nada.
+'
+'             Abajo, las oraciones de ejemplo de la forma elegida. No hay
+'             número de línea: el análisis sale del AST de Pandoc, y el
+'             lector markdown no admite la extensión sourcepos (verificado
+'             con Pandoc 3.1.3). Para ir al lugar, se busca la oración en el
+'             editor.
+'
+' Controles del .form:
+'   lblEncabezado (Label)        — resumen
+'   gvVariantes (GridView)       — una fila por forma, agrupadas
+'   txtOraciones (TextArea)      — oraciones de ejemplo de la fila elegida
+'   btnCerrar (Button)
+' ============================================
+
+' --- DATOS RECIBIDOS DE m_AnalizarProyecto (por Configurar) ---
+' CADA VARIANTE ES UN String[]: id, tipo, forma, cantidad, archivos
+' CADA EJEMPLO ES UN String[]: id, forma, archivo, oración
+Private $aVariantes As Object[]
+Private $aEjemplos As Object[]
+
+' --- ÍNDICES DE CAMPO (EL ORDEN DEL REGISTRO V Y X DEL SCRIPT) ---
+Private Const V_ID As Integer = 0
+Private Const V_TIPO As Integer = 1
+Private Const V_FORMA As Integer = 2
+Private Const V_CANTIDAD As Integer = 3
+Private Const V_ARCHIVOS As Integer = 4
+Private Const X_ID As Integer = 0
+Private Const X_FORMA As Integer = 1
+Private Const X_ARCHIVO As Integer = 2
+Private Const X_ORACION As Integer = 3
+
+' ============================================
+' Función   : Form_Show
+' Propósito : APLICAR LA CONFIGURACIÓN DE BOTONES DEL MARCO
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Configurar
+' Propósito : RECIBE LOS DATOS ANTES DE ShowModal. EL FORMULARIO NO LEE
+'             NINGÚN CONTROL DE FMain
+' Parámetros: aVariantes As Object[] — registros V
+'             aEjemplos As Object[] — registros X
+' Retorna   : nada
+' ============================================
+Public Sub Configurar(aVariantes As Object[], aEjemplos As Object[])
+
+  $aVariantes = aVariantes
+  $aEjemplos = aEjemplos
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : ARMA LA GRILLA CON UNA FILA POR FORMA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim i As Integer
+  Dim aReg As String[]
+  Dim sIdAnterior As String
+  Dim iGrupos As Integer
+
+  Me.Title = "Variantes de una misma palabra en el proyecto"
+
+  ' --- 2. COLUMNAS ---
+  With gvVariantes
+    .Columns.Count = 4
+    .Columns[0].Title = "Tipo"
+    .Columns[0].Width = 260
+    .Columns[1].Title = "Forma"
+    .Columns[1].Width = 180
+    .Columns[2].Title = "Veces"
+    .Columns[2].Width = 70
+    .Columns[3].Title = "Archivos"
+    .Columns[3].Width = 400
+    .Mode = Select.Single
+    .Grid = True
+    .Header = GridView.Horizontal
+    .Rows.Count = $aVariantes.Count
+  End With
+
+  ' --- 3. FILAS: EL TIPO SE ESCRIBE SOLO EN LA PRIMERA FORMA DE CADA GRUPO ---
+  For i = 0 To $aVariantes.Max
+    aReg = $aVariantes[i]
+    If aReg[V_ID] <> sIdAnterior Then
+      gvVariantes[i, 0].Text = NombreTipo(aReg[V_TIPO])
+      gvVariantes[i, 0].Foreground = Color.Blue
+      Inc iGrupos
+    Endif
+    gvVariantes[i, 1].Text = aReg[V_FORMA]
+    gvVariantes[i, 2].Text = aReg[V_CANTIDAD]
+    gvVariantes[i, 3].Text = aReg[V_ARCHIVOS]
+    sIdAnterior = aReg[V_ID]
+  Next
+
+  ' --- 4. ENCABEZADO ---
+  lblEncabezado.Text = CStr(iGrupos) & " grupo(s) de variantes. No se analizan las citas en bloque: respetan la grafía del original."
+  txtOraciones.Text = ""
+
+End
+
+' ============================================
+' Función   : NombreTipo
+' Propósito : NOMBRE LEGIBLE DEL TIPO DE VARIANTE
+' Parámetros: sTipo As String — guion, mayuscula, tilde, tilde-rae
+' Retorna   : String — texto de la celda
+' ============================================
+Private Function NombreTipo(sTipo As String) As String
+
+  Select Case sTipo
+    Case "guion"
+      Return "Guion"
+    Case "mayuscula"
+      Return "Mayúscula dentro de la oración"
+    Case "tilde"
+      Return "Tilde optativa (no recomendada por la RAE)"
+    Case "tilde-rae"
+      Return "Tilde suprimida (Ortografía 2010)"
+  End Select
+
+  Return sTipo
+
+End
+
+' ============================================
+' Función   : gvVariantes_Select
+' Propósito : MUESTRA LAS ORACIONES DE EJEMPLO DE LA FORMA ELEGIDA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvVariantes_Select()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iFila As Integer
+  Dim aVar As String[]
+  Dim aEj As String[]
+  Dim sTexto As String
+
+  ' --- 2. FILA ELEGIDA ---
+  iFila = gvVariantes.Row
+  If iFila < 0 Or If iFila >= $aVariantes.Count Then Return
+  aVar = $aVariantes[iFila]
+
+  ' --- 3. LOS EJEMPLOS DE ESA FORMA EN ESE GRUPO ---
+  For Each aEj In $aEjemplos
+    If aEj[X_ID] = aVar[V_ID] And aEj[X_FORMA] = aVar[V_FORMA] Then
+      sTexto &= aEj[X_ARCHIVO] & ": " & aEj[X_ORACION] & gb.NewLine & gb.NewLine
+    Endif
+  Next
+
+  If sTexto = "" Then sTexto = "Sin oraciones de ejemplo."
+  txtOraciones.Text = sTexto
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : CIERRA EL FORMULARIO
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End

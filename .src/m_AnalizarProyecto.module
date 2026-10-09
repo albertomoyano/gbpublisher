@@ -27,15 +27,27 @@
 '             al bucle de eventos (el patrón de m_AuditarJats.EjecutarHerramienta)
 '             y deja que btnCancelarAnalizar llegue mientras corre.
 '
+'             LO LÉXICO (ORACIONES Y VARIANTES) ES DE PERL: el filtro escribe
+'             el texto de cada bloque en una carpeta temporal y, al final, UN
+'             SOLO proceso de engine/analizar_lexico.pl lee todo el proyecto.
+'             Uno solo porque las variantes se comparan entre capítulos. Lua no
+'             sirve para esto: sus patrones no reconocen letras fuera de ASCII
+'             (GV-88).
+'
 ' Controles de FMain (solapa «Escanear»):
 '   btnAnalizarProyecto   — lanza el análisis
 '   btnCancelarAnalizar   — corta el proceso en curso
+'   btnVerVariantes       — abre FVariantes con las variantes del último análisis
 '   gvAnalizarProyecto    — la grilla: Métrica | Total | un archivo por columna
 ' ============================================
 
 ' --- FILTRO DE CONTEO (INFRAESTRUCTURA: engine/, NO ~/.gbpublisher, SC-11) ---
 Private Const CARPETA_ENGINE As String = "engine"
 Private Const ARCHIVO_FILTRO As String = "analizar_proyecto.lua"
+' --- ANÁLISIS LÉXICO: EL SCRIPT Y SUS DOS ARCHIVOS DE DATOS ---
+Private Const ARCHIVO_LEXICO As String = "analizar_lexico.pl"
+Private Const ARCHIVO_ABREVIATURAS As String = "analizar_lexico_abreviaturas.txt"
+Private Const ARCHIVO_TILDES As String = "analizar_lexico_tildes.txt"
 
 ' --- ESTIMACIÓN DE PÁGINAS: DATO EMPÍRICO DEL EDITOR ---
 ' 2200 CARACTERES CON ESPACIOS POR PÁGINA DE LIBRO, PROMEDIO MEDIDO SOBRE
@@ -98,6 +110,18 @@ Private $bHabiaCambios As Boolean
 Private $aFilas As New Object[]
 Private $aFilasSeccion As New Integer[]
 
+' --- ANÁLISIS LÉXICO ---
+' CARPETA TEMPORAL CON EL TEXTO DE CADA ARCHIVO, UNO POR .md
+Private $sDirTexto As String
+Private $bHayLexico As Boolean
+Private $sErrorLexico As String
+' EL TOTAL DEL PROYECTO LO MANDA EL SCRIPT (REGISTRO OT): LA MEDIANA NO SE SUMA
+Private $oLexicoTotal As CAnalisisArchivo
+' REGISTROS V (id, tipo, forma, cantidad, archivos) Y X (id, forma, archivo,
+' oración) DEL ÚLTIMO ANÁLISIS: LOS MUESTRA FVariantes
+Private $aVariantes As New Object[]
+Private $aEjemplos As New Object[]
+
 ' ============================================
 ' Función   : RutaFiltro
 ' Propósito : RUTA ABSOLUTA DEL FILTRO DE CONTEO. VIVE EN LA INSTALACIÓN DEL
@@ -109,6 +133,19 @@ Private $aFilasSeccion As New Integer[]
 Private Function RutaFiltro() As String
 
   Return m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ ARCHIVO_FILTRO
+
+End
+
+' ============================================
+' Función   : RutaEngine
+' Propósito : RUTA DE UN ARCHIVO DEL MOTOR (engine/), EN LA INSTALACIÓN DEL
+'             SISTEMA COMO EL FILTRO (SC-11)
+' Parámetros: sArchivo As String — nombre del archivo
+' Retorna   : String — ruta absoluta
+' ============================================
+Private Function RutaEngine(sArchivo As String) As String
+
+  Return m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ sArchivo
 
 End
 
@@ -140,6 +177,7 @@ Public Sub InicializarTabAnalizar()
   ' --- 2. BOTONES: SIN ARCHIVOS EN DISCO (MODO PARCIAL) NO HAY QUÉ ANALIZAR ---
   FMain.btnAnalizarProyecto.Enabled = (m_InicioCierre.RutaProyectoEnCurso <> "")
   FMain.btnCancelarAnalizar.Enabled = False
+  FMain.btnVerVariantes.Enabled = False
 
 End
 
@@ -158,9 +196,12 @@ Public Sub Detener()
   ' EL BUCLE DE Analizar VE LA BANDERA EN SU PRÓXIMA VUELTA Y SALE
   If $bCorriendo Then Cancelar()
 
-  ' --- 2. GRILLA VACÍA ---
+  ' --- 2. GRILLA Y VARIANTES VACÍAS ---
   FMain.gvAnalizarProyecto.Rows.Count = 0
   FMain.gvAnalizarProyecto.Columns.Count = 0
+  $aVariantes.Clear
+  $aEjemplos.Clear
+  FMain.btnVerVariantes.Enabled = False
 
 End
 
@@ -206,6 +247,9 @@ Public Sub Analizar()
   Dim sRuta As String
   Dim iCodigo As Integer
   Dim iNumero As Integer
+  ' RUTA DEL TEXTO PARA PERL DE CADA ARCHIVO, PARALELA A aResultados
+  Dim aRutasTexto As New String[]
+  Dim sRutaTexto As String
 
   ' --- 2. VALIDACIÓN DE ENTRADA ---
   ' UN SEGUNDO CLIC MIENTRAS CORRE NO LANZA OTRO ANÁLISIS
@@ -243,6 +287,20 @@ Public Sub Analizar()
   $bHabiaCambios = m_EditorPrincipal.HayCambios()
   FMain.btnAnalizarProyecto.Enabled = False
   FMain.btnCancelarAnalizar.Enabled = True
+  FMain.btnVerVariantes.Enabled = False
+  $aVariantes.Clear
+  $aEjemplos.Clear
+
+  ' CARPETA TEMPORAL PARA EL TEXTO QUE LEE PERL. Temp$ DA UNA RUTA ÚNICA EN
+  ' LA CARPETA TEMPORAL DE LA APLICACIÓN; SI NO SE PUEDE CREAR, EL ANÁLISIS
+  ' ESTRUCTURAL SIGUE Y LA SECCIÓN LÉXICA INFORMA EL MOTIVO
+  $sErrorLexico = ""
+  $sDirTexto = Temp$()
+  Try Mkdir $sDirTexto
+  If Error Then
+    $sErrorLexico = "No se pudo crear la carpeta temporal: " & Error.Text
+    $sDirTexto = ""
+  Endif
 
   ' --- 4. UN PROCESO PANDOC POR ARCHIVO ---
   ' UNO POR ARCHIVO Y NO TODOS JUNTOS: PANDOC CONCATENA LAS ENTRADAS EN UN
@@ -254,7 +312,10 @@ Public Sub Analizar()
     oArchivo = New CAnalisisArchivo
     oArchivo.sNombre = File.BaseName(sRuta)
 
-    iCodigo = EjecutarPandoc(ComandoArchivo(sRuta))
+    sRutaTexto = ""
+    If $sDirTexto <> "" Then sRutaTexto = $sDirTexto &/ CStr(iNumero) & ".txt"
+
+    iCodigo = EjecutarProceso(ComandoArchivo(sRuta, sRutaTexto))
     If $bCancelado Then Break
 
     ' UN ARCHIVO QUE PANDOC NO PUDO LEER SE MARCA Y EL ANÁLISIS SIGUE
@@ -265,6 +326,7 @@ Public Sub Analizar()
       ProcesarSalida(oArchivo)
     Endif
     aResultados.Add(oArchivo)
+    aRutasTexto.Add(sRutaTexto)
   Next
 
   ' --- 5. BIBLIOGRAFÍA ---
@@ -273,8 +335,17 @@ Public Sub Analizar()
     LeerBibliografia(sRaiz)
   Endif
 
+  ' --- 5.B. LÉXICO: UN SOLO PROCESO PERL PARA TODO EL PROYECTO ---
+  If Not $bCancelado Then
+    MostrarProgreso("Analizando oraciones y variantes…")
+    LeerLexico(aResultados, aRutasTexto)
+  Endif
+  BorrarDirTexto()
+
   ' --- 6. CANCELADO: SE DESCARTA TODO ---
   If $bCancelado Then
+    $aVariantes.Clear
+    $aEjemplos.Clear
     MostrarProgreso("Análisis cancelado.")
     m_Sonido.sonar("Info")
     Terminar()
@@ -287,11 +358,14 @@ Public Sub Analizar()
   For Each oArchivo In aResultados
     If Not oArchivo.bError Then oTotal.Sumar(oArchivo)
   Next
+  ' EL LÉXICO DEL TOTAL NO SE SUMA: VIENE CALCULADO DEL SCRIPT
+  If $bHayLexico Then CopiarLexico($oLexicoTotal, oTotal)
 
   ' --- 8. GRILLA ---
   LlenarGrilla(oTotal, aResultados)
   m_Sonido.sonar("Info")
   Terminar()
+  FMain.btnVerVariantes.Enabled = ($aVariantes.Count > 0)
 
 End
 
@@ -334,9 +408,11 @@ End
 '             PRODUCCIÓN (VER CABECERA). EL DOCUMENTO VA A /dev/null: EN
 '             stdout QUEDA SOLO LO QUE ESCRIBE EL FILTRO
 ' Parámetros: sRuta As String — ruta absoluta del .md
+'             sRutaTexto As String — dónde escribe el filtro el texto para
+'             perl ("" si no hay carpeta temporal: entonces no lo escribe)
 ' Retorna   : String[] — comando y argumentos
 ' ============================================
-Private Function ComandoArchivo(sRuta As String) As String[]
+Private Function ComandoArchivo(sRuta As String, sRutaTexto As String) As String[]
 
   ' --- 1. INICIALIZACIÓN ---
   ' SE ARMA CON Add Y NO CON UN ARRAY LITERAL PARTIDO EN VARIAS LÍNEAS (SC-05)
@@ -354,15 +430,21 @@ Private Function ComandoArchivo(sRuta As String) As String[]
   aComando.Add(RutaFiltro())
   aComando.Add("--output")
   aComando.Add("/dev/null")
+  ' -M LLEGA AL FILTRO COMO TEXTO: ES UNA RUTA, NO HACE FALTA MÁS (A
+  ' DIFERENCIA DE nocite, GV-87)
+  If sRutaTexto <> "" Then
+    aComando.Add("--metadata")
+    aComando.Add("gb-texto=" & sRutaTexto)
+  Endif
 
   Return aComando
 
 End
 
 ' ============================================
-' Función   : EjecutarPandoc
-' Propósito : LANZA UN PROCESO Y LO ESPERA SIN CONGELAR LA INTERFAZ. ES EL
-'             PATRÓN DE m_AuditarJats.EjecutarHerramienta: LA SENTENCIA Wait
+' Función   : EjecutarProceso
+' Propósito : LANZA UN PROCESO (PANDOC O PERL) Y LO ESPERA SIN CONGELAR LA
+'             INTERFAZ. ES EL PATRÓN DE m_AuditarJats.EjecutarHerramienta: LA SENTENCIA Wait
 '             ENTRA AL BUCLE DE EVENTOS (hProceso.Wait() NO, Y LOS EVENTOS
 '             Read Y Kill NO LLEGARÍAN). EN CADA VUELTA MIRA LA BANDERA DE
 '             CANCELACIÓN
@@ -370,7 +452,7 @@ End
 ' Retorna   : Integer — código de salida; -1 si no arrancó. stdout y stderr
 '             QUEDAN EN $sBufferSalida Y $sBufferError
 ' ============================================
-Private Function EjecutarPandoc(aComando As String[]) As Integer
+Private Function EjecutarProceso(aComando As String[]) As Integer
 
   ' --- 1. INICIALIZACIÓN ---
   Dim iDrenaje As Integer
@@ -470,6 +552,258 @@ Private Function PrimeraLineaError(iCodigo As Integer) As String
   If aLineas.Count > 0 Then Return "error: " & aLineas[0]
 
   Return "error: Pandoc terminó con código " & CStr(iCodigo)
+
+End
+
+' ============================================
+' Función   : ClasesCuerpo
+' Propósito : LAS CLASES DE DIV QUE CUENTAN COMO CUERPO, PARA PERL: LAS QUE
+'             APARECIERON EN EL PROYECTO Y QUE Destino() CLASIFICA COMO CUERPO
+'             (GRUPO estructura DEL CATÁLOGO). ASÍ PERL USA EL MISMO CRITERIO
+'             DE PÁRRAFO QUE LA GRILLA SIN LEER EL CATÁLOGO POR SU CUENTA
+' Parámetros: aResultados As CAnalisisArchivo[] — los archivos analizados
+' Retorna   : String — clases separadas por coma; "" si ninguna
+' ============================================
+Private Function ClasesCuerpo(aResultados As CAnalisisArchivo[]) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim oArchivo As CAnalisisArchivo
+  Dim iCantidad As Integer
+  Dim aClases As New String[]
+  Dim sTexto As String
+  Dim sClase As String
+
+  ' --- 2. LAS CLASES PRESENTES QUE SON CUERPO, SIN REPETIR ---
+  For Each oArchivo In aResultados
+    For Each iCantidad In oArchivo.cShortcodes
+      sClase = oArchivo.cShortcodes.Key
+      If Destino(sClase) = DEST_CUERPO Then
+        If aClases.Find(sClase) < 0 Then aClases.Add(sClase)
+      Endif
+    Next
+  Next
+
+  ' --- 3. UNIDAS POR COMA ---
+  For Each sClase In aClases
+    If sTexto <> "" Then sTexto &= ","
+    sTexto &= sClase
+  Next
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : LeerLexico
+' Propósito : LANZA engine/analizar_lexico.pl SOBRE EL TEXTO DE TODOS LOS
+'             ARCHIVOS QUE PANDOC PUDO LEER, Y GUARDA SU SALIDA: ORACIONES EN
+'             CADA CAnalisisArchivo, EL TOTAL EN $oLexicoTotal, LAS VARIANTES
+'             EN $aVariantes Y $aEjemplos
+' Parámetros: aResultados As CAnalisisArchivo[] — los archivos analizados
+'             aRutasTexto As String[] — el texto de cada uno, en paralelo
+' Retorna   : nada — llena $bHayLexico o $sErrorLexico
+' ============================================
+Private Sub LeerLexico(aResultados As CAnalisisArchivo[], aRutasTexto As String[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aComando As New String[]
+  Dim i As Integer
+  Dim iArchivos As Integer
+  Dim iCodigo As Integer
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim aCampos As String[]
+  Dim oArchivo As CAnalisisArchivo
+
+  $bHayLexico = False
+  $oLexicoTotal = New CAnalisisArchivo
+
+  ' --- 2. VALIDACIÓN: CARPETA Y ARCHIVOS DEL MOTOR ---
+  ' SI LA CARPETA NO SE PUDO CREAR, EL MOTIVO YA ESTÁ EN $sErrorLexico
+  If $sDirTexto = "" Then Return
+  If Not Exist(RutaEngine(ARCHIVO_LEXICO)) Or Not Exist(RutaEngine(ARCHIVO_ABREVIATURAS)) Or Not Exist(RutaEngine(ARCHIVO_TILDES)) Then
+    $sErrorLexico = "Faltan archivos del motor léxico en " & RutaEngine("") & ". Reinstalar el .deb de gbpublisher."
+    Return
+  Endif
+
+  ' --- 3. COMANDO: perl -CSDA script abreviaturas tildes clases nombre texto ... ---
+  ' SE ARMA CON Add (SC-05). -CSDA: STDIO, ARCHIVOS Y ARGUMENTOS EN UTF-8
+  aComando.Add("perl")
+  aComando.Add("-CSDA")
+  aComando.Add(RutaEngine(ARCHIVO_LEXICO))
+  aComando.Add(RutaEngine(ARCHIVO_ABREVIATURAS))
+  aComando.Add(RutaEngine(ARCHIVO_TILDES))
+  aComando.Add(ClasesCuerpo(aResultados))
+  ' SOLO LOS ARCHIVOS QUE PANDOC LEYÓ: EL TEXTO DE UNO QUE FALLÓ PUEDE ESTAR
+  ' A MEDIAS O NO EXISTIR
+  For i = 0 To aResultados.Max
+    If Not aResultados[i].bError And If Exist(aRutasTexto[i]) Then
+      aComando.Add(aResultados[i].sNombre)
+      aComando.Add(aRutasTexto[i])
+      Inc iArchivos
+    Endif
+  Next
+  If iArchivos = 0 Then
+    $sErrorLexico = "Ningún archivo produjo texto para analizar."
+    Return
+  Endif
+
+  ' --- 4. EJECUCIÓN ---
+  iCodigo = EjecutarProceso(aComando)
+  If $bCancelado Then Return
+  If iCodigo <> 0 Then
+    $sErrorLexico = PrimeraLineaError(iCodigo)
+    Return
+  Endif
+
+  ' --- 5. REGISTROS ---
+  ' NINGÚN CAMPO TRAE NUL NI SALTO: EL SCRIPT LOS REEMPLAZA AL EMITIR
+  aLineas = Split($sBufferSalida, gb.NewLine, "", True)
+  For Each sLinea In aLineas
+    aCampos = Split(sLinea, Chr(0), "", False)
+
+    Select Case aCampos[0]
+
+      Case "O"
+        ' UNA LÍNEA POR ARCHIVO; SE BUSCA POR NOMBRE, QUE ES ÚNICO EN EL
+        ' PROYECTO (EL PREFIJO fm-/a-/bm- Y EL NÚMERO LO GARANTIZAN)
+        If aCampos.Count >= 9 Then
+          For Each oArchivo In aResultados
+            If oArchivo.sNombre = aCampos[1] Then LlenarLexico(oArchivo, aCampos)
+          Next
+        Endif
+
+      Case "OT"
+        If aCampos.Count >= 9 Then LlenarLexico($oLexicoTotal, aCampos)
+
+      Case "V"
+        If aCampos.Count >= 6 Then $aVariantes.Add(CamposDesde(aCampos, 1))
+
+      Case "X"
+        If aCampos.Count >= 5 Then $aEjemplos.Add(CamposDesde(aCampos, 1))
+
+    End Select
+  Next
+
+  $bHayLexico = True
+
+End
+
+' ============================================
+' Función   : CamposDesde
+' Propósito : LOS CAMPOS DE UN REGISTRO A PARTIR DE UNO DADO, COMO String[].
+'             SE ARMA CON Add Y NO CON UN ARRAY LITERAL [a, b]: FVariantes LOS
+'             LEE COMO String[] Y EL TIPO DEL LITERAL NO SE DECLARA
+' Parámetros: aCampos As String[] — el registro completo
+'             iDesde As Integer — primer campo a copiar (0 es el tipo)
+' Retorna   : String[] — los campos copiados
+' ============================================
+Private Function CamposDesde(aCampos As String[], iDesde As Integer) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aSalida As New String[]
+  Dim i As Integer
+
+  ' --- 2. COPIA ---
+  For i = iDesde To aCampos.Max
+    aSalida.Add(aCampos[i])
+  Next
+
+  Return aSalida
+
+End
+
+' ============================================
+' Función   : LlenarLexico
+' Propósito : PASA UN REGISTRO O / OT A LOS CAMPOS DE UN CAnalisisArchivo:
+'             O nombre oraciones palabras mediana_x2 max inicio parrafos una
+' Parámetros: oArchivo As CAnalisisArchivo — destino
+'             aCampos As String[] — los nueve campos del registro
+' Retorna   : nada
+' ============================================
+Private Sub LlenarLexico(oArchivo As CAnalisisArchivo, aCampos As String[])
+
+  oArchivo.bLexico = True
+  oArchivo.iOraciones = CInt(aCampos[2])
+  oArchivo.iPalOraciones = CInt(aCampos[3])
+  oArchivo.iMedianaX2 = CInt(aCampos[4])
+  oArchivo.iOracionMax = CInt(aCampos[5])
+  oArchivo.sInicioOracionMax = aCampos[6]
+  oArchivo.iParrafosLexico = CInt(aCampos[7])
+  oArchivo.iParrafosUnaOracion = CInt(aCampos[8])
+
+End
+
+' ============================================
+' Función   : CopiarLexico
+' Propósito : COPIA LOS CAMPOS LÉXICOS DE UN OBJETO A OTRO (DEL TOTAL QUE
+'             MANDA EL SCRIPT AL TOTAL DE LA GRILLA)
+' Parámetros: oOrigen As CAnalisisArchivo — de dónde
+'             oDestino As CAnalisisArchivo — adónde
+' Retorna   : nada
+' ============================================
+Private Sub CopiarLexico(oOrigen As CAnalisisArchivo, oDestino As CAnalisisArchivo)
+
+  oDestino.bLexico = oOrigen.bLexico
+  oDestino.iOraciones = oOrigen.iOraciones
+  oDestino.iPalOraciones = oOrigen.iPalOraciones
+  oDestino.iMedianaX2 = oOrigen.iMedianaX2
+  oDestino.iOracionMax = oOrigen.iOracionMax
+  oDestino.sInicioOracionMax = oOrigen.sInicioOracionMax
+  oDestino.iParrafosLexico = oOrigen.iParrafosLexico
+  oDestino.iParrafosUnaOracion = oOrigen.iParrafosUnaOracion
+
+End
+
+' ============================================
+' Función   : BorrarDirTexto
+' Propósito : BORRA LA CARPETA TEMPORAL DEL TEXTO. SE LLAMA SIEMPRE, HAYA
+'             TERMINADO BIEN, MAL O CANCELADO. UN FALLO AL BORRAR NO ES DEL
+'             ANÁLISIS: LA CARPETA ESTÁ DENTRO DE LA TEMPORAL DE LA APLICACIÓN
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub BorrarDirTexto()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sArchivo As String
+
+  ' --- 2. SIN CARPETA NO HAY NADA QUE BORRAR ---
+  If $sDirTexto = "" Then Return
+  If Not Exist($sDirTexto) Then Return
+
+  ' --- 3. ARCHIVOS Y CARPETA ---
+  For Each sArchivo In Dir($sDirTexto)
+    Try Kill $sDirTexto &/ sArchivo
+  Next
+  Try Rmdir $sDirTexto
+  $sDirTexto = ""
+
+End
+
+' ============================================
+' Función   : VerVariantes
+' Propósito : ATIENDE btnVerVariantes: ABRE FVariantes CON LAS VARIANTES DEL
+'             ÚLTIMO ANÁLISIS
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub VerVariantes()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hForm As FVariantes
+
+  ' --- 2. SIN VARIANTES NO HAY QUÉ MOSTRAR ---
+  If $aVariantes.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("El último análisis no encontró variantes.")
+    Return
+  Endif
+
+  ' --- 3. FORMULARIO MODAL, CON LOS DATOS HECHOS ---
+  hForm = New FVariantes
+  hForm.Configurar($aVariantes, $aEjemplos)
+  hForm.ShowModal()
 
 End
 
@@ -770,7 +1104,7 @@ Private Sub LeerBibliografia(sRaiz As String)
   aComando.Add("--output")
   aComando.Add("/dev/null")
 
-  iCodigo = EjecutarPandoc(aComando)
+  iCodigo = EjecutarProceso(aComando)
   Try Kill sRutaYaml
 
   ' --- 5. RESULTADO ---
@@ -950,8 +1284,9 @@ Private Function Valor(oArchivo As CAnalisisArchivo, sMetrica As String, bTotal 
     Return SIN_DATO
   Endif
 
-  ' --- 3. REFERENCIAS: CRUCE CON EL .bib, EN SU PROPIA FUNCIÓN ---
+  ' --- 3. REFERENCIAS Y LÉXICO: CADA UNO EN SU PROPIA FUNCIÓN ---
   If String.Left(sMetrica, 4) = "bib_" Then Return ValorBib(oArchivo, sMetrica, bTotal)
+  If String.Left(sMetrica, 4) = "lex_" Then Return ValorLexico(oArchivo, sMetrica, bTotal)
 
   ' --- 4. MÉTRICAS POR ARCHIVO Y TOTAL ---
   Select Case sMetrica
@@ -1158,6 +1493,74 @@ Private Function ValorBib(oArchivo As CAnalisisArchivo, sMetrica As String, bTot
 End
 
 ' ============================================
+' Función   : ValorLexico
+' Propósito : LAS CELDAS DE LA SECCIÓN LÉXICO. SIN ANÁLISIS LÉXICO, EL TOTAL
+'             MUESTRA EL MOTIVO Y LOS ARCHIVOS SIN_DATO
+' Parámetros: oArchivo As CAnalisisArchivo — archivo o total
+'             sMetrica As String — identificador de la fila (lex_*)
+'             bTotal As Boolean — True en la columna Total
+' Retorna   : String — texto de la celda
+' ============================================
+Private Function ValorLexico(oArchivo As CAnalisisArchivo, sMetrica As String, bTotal As Boolean) As String
+
+  ' --- 1. SIN ANÁLISIS LÉXICO ---
+  If Not $bHayLexico Then
+    If bTotal And If sMetrica = "lex_oraciones" Then Return $sErrorLexico
+    Return SIN_DATO
+  Endif
+  If Not oArchivo.bLexico Then Return SIN_DATO
+
+  ' --- 2. MÉTRICAS ---
+  Select Case sMetrica
+    Case "lex_oraciones"
+      Return CStr(oArchivo.iOraciones)
+    Case "lex_promedio"
+      Return Promedio(oArchivo.iPalOraciones, oArchivo.iOraciones)
+    Case "lex_mediana"
+      If oArchivo.iOraciones = 0 Then Return SIN_DATO
+      Return Format(oArchivo.iMedianaX2 / 2, "0.0")
+    Case "lex_max"
+      Return CStr(oArchivo.iOracionMax)
+    Case "lex_max_inicio"
+      If oArchivo.iOracionMax = 0 Then Return SIN_DATO
+      Return oArchivo.sInicioOracionMax
+    Case "lex_una"
+      Return CStr(oArchivo.iParrafosUnaOracion)
+    Case "lex_variantes"
+      ' LAS VARIANTES SON DEL PROYECTO, NO DE UN ARCHIVO: SE COMPARAN ENTRE
+      ' CAPÍTULOS
+      If Not bTotal Then Return ""
+      Return CStr(GruposVariantes())
+  End Select
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : GruposVariantes
+' Propósito : CANTIDAD DE GRUPOS DE VARIANTES: UN id POR GRUPO EN $aVariantes
+' Parámetros: ninguno
+' Retorna   : Integer — grupos
+' ============================================
+Private Function GruposVariantes() As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aReg As String[]
+  Dim sAnterior As String
+  Dim iGrupos As Integer
+
+  ' --- 2. LOS REGISTROS DE UN GRUPO VIENEN SEGUIDOS ---
+  For Each aReg In $aVariantes
+    If aReg[0] <> sAnterior Then Inc iGrupos
+    sAnterior = aReg[0]
+  Next
+
+  Return iGrupos
+
+End
+
+' ============================================
 ' Función   : EtiquetaShortcode
 ' Propósito : NOMBRE LEGIBLE DE UNA CLASE, TOMADO DEL CATÁLOGO (RF-11). LAS
 '             VARIANTES COMPARTEN CLASE (figure Y fig-fullwidth): VALE LA
@@ -1299,6 +1702,17 @@ Private Sub LlenarGrilla(oTotal As CAnalisisArchivo, aArchivos As CAnalisisArchi
   AgregarMetrica("Palabras por párrafo, mediana", "par_mediana", oTotal, aArchivos)
   AgregarMetrica("Párrafo más largo (palabras)", "par_max", oTotal, aArchivos)
   AgregarMetrica("Párrafo más largo, comienzo", "par_max_inicio", oTotal, aArchivos)
+
+  ' --- 4.B. LÉXICO (engine/analizar_lexico.pl) ---
+  AgregarSeccion("LÉXICO", iColumnas)
+  AgregarMetrica("Oraciones del cuerpo", "lex_oraciones", oTotal, aArchivos)
+  AgregarMetrica("Palabras por oración, promedio", "lex_promedio", oTotal, aArchivos)
+  AgregarMetrica("Palabras por oración, mediana", "lex_mediana", oTotal, aArchivos)
+  AgregarMetrica("Oración más larga (palabras)", "lex_max", oTotal, aArchivos)
+  AgregarMetrica("Oración más larga, comienzo", "lex_max_inicio", oTotal, aArchivos)
+  AgregarMetrica("Párrafos de una sola oración", "lex_una", oTotal, aArchivos)
+  AgregarMetrica("Grupos de variantes (botón «Variantes»)", "lex_variantes", oTotal, aArchivos)
+  AgregarNota("Criterio", "Una oración termina en . ? ! o … cuando lo que sigue empieza con mayúscula; no cortan las abreviaturas de engine/analizar_lexico_abreviaturas.txt ni las iniciales.", iColumnas)
 
   ' --- 5. TÍTULOS ---
   AgregarSeccion("TÍTULOS", iColumnas)
