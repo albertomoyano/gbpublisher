@@ -2743,11 +2743,20 @@ El título y la atribución en Markdown pedirían el formato de dos partes (un a
 
 FUERA DE ESTA DECISIÓN
 
-La dedicatoria en verso (SC-45): un verso corto se escribe como texto con saltos de línea manuales (decisión de Alberto).
+La dedicatoria en verso (SC-45). Es un caso casi atípico en libros y revistas científicos: si aparece, se resuelve en ese momento con una solución puntual, sin redefinir el modelo (decisión de Alberto).
+
+Los saltos de línea manuales en prosa (barra invertida o dos espacios al final de la línea) NO sirven hoy para eso. Medido con Pandoc 3.1.3:
+
+    libro (DocBook)     el párrafo entero sale como <literallayout> sin role:
+                        el PDF lo compone en verbatim y el HTML en <pre>
+    revista (JATS)      el salto se pierde: queda un espacio
+    epígrafe            el salto se pierde en los dos productos
+
+Queda registrado para no usar ese camino creyendo que funciona.
 
 **Relaciones:** vinculo:RC-DB-04,vinculo:SC-35,vinculo:SC-33,vinculo:SC-34,vinculo:SC-43,vinculo:SC-45,vinculo:SC-25,vinculo:RF-11,vinculo:GV-92,vinculo:GV-93,vinculo:GV-94,vinculo:GV-95,vinculo:GV-85,vinculo:GV-86
 
-**PENDIENTE:** Probar en Mint: libro y revista (PDF, HTML, EPUB, ODT), con el verso suelto y en un epígrafe; la inserción desde el panel; los casos que frenan; epubcheck sobre un EPUB completo; los sabores JATS de revista (SciELO, Redalyc) y packtools con un verse-group. En el contenedor se probaron los filtros, las seis hojas (las de HTML y EPUB de libro con la plantilla aislada), el PDF con el contrato real y el ODT.
+**PENDIENTE:** Probado en Mint (2026-10) con prueba-verso.md: PDF, HTML y EPUB en libros y revistas, correctos; el shortcode se liberó (gbShortcodes datos-v5-011). Falta: el ODT; la inserción desde el panel; los casos que frenan (prueba/frena); epubcheck sobre un EPUB completo. El XML JATS, sus sabores (SciELO, Redalyc) y packtools con un verse-group se prueban en la fase de JATS, cuando estén todos los shortcodes desarrollados (decisión de Alberto).
 
 ---
 
