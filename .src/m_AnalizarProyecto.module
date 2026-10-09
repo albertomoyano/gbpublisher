@@ -38,6 +38,8 @@
 '   btnAnalizarProyecto   — lanza el análisis
 '   btnCancelarAnalizar   — corta el proceso en curso
 '   btnVerVariantes       — abre FVariantes con las variantes del último análisis
+'                           (NO MODAL: queda encima mientras se corrige, y un
+'                           clic en un ejemplo lleva al lugar en el editor)
 '   gvAnalizarProyecto    — la grilla: Métrica | Total | un archivo por columna
 ' ============================================
 
@@ -80,6 +82,10 @@ Private Const DEST_LEYENDA As String = "leyenda"
 Private Const DEST_ESPECIAL As String = "especial"
 Private Const DEST_IGNORAR As String = "ignorar"
 
+' --- PALABRAS DEL COMIENZO DE UNA ORACIÓN QUE SE BUSCAN EN EL .md PARA
+'     RECONOCER SU PÁRRAFO (IrAEjemplo) ---
+Private Const PALABRAS_CLAVE_ORACION As Integer = 4
+
 ' --- TEXTO DE CELDA PARA UN DATO QUE NO APLICA ---
 Private Const SIN_DATO As String = "—"
 
@@ -119,8 +125,15 @@ Private $sErrorLexico As String
 Private $oLexicoTotal As CAnalisisArchivo
 ' REGISTROS V (id, tipo, forma, cantidad, archivos) Y X (id, forma, archivo,
 ' oración) DEL ÚLTIMO ANÁLISIS: LOS MUESTRA FVariantes
+' CADA ANÁLISIS CREA ARRAYS NUEVOS EN LUGAR DE VACIAR LOS VIEJOS: UNA VENTANA
+' ABIERTA CONSERVA LOS SUYOS INTACTOS HASTA QUE SE LA RECARGA
 Private $aVariantes As New Object[]
 Private $aEjemplos As New Object[]
+' HORA DEL ANÁLISIS QUE PRODUJO LAS VARIANTES: LA VENTANA LA MUESTRA, PORQUE
+' MIENTRAS SE CORRIGE SUS DATOS ENVEJECEN
+Private $sHoraAnalisis As String
+' LA VENTANA DE VARIANTES, SI ESTÁ ABIERTA (UNA SOLA)
+Private $hVentanaVariantes As FVariantes
 
 ' ============================================
 ' Función   : RutaFiltro
@@ -199,9 +212,12 @@ Public Sub Detener()
   ' --- 2. GRILLA Y VARIANTES VACÍAS ---
   FMain.gvAnalizarProyecto.Rows.Count = 0
   FMain.gvAnalizarProyecto.Columns.Count = 0
-  $aVariantes.Clear
-  $aEjemplos.Clear
+  $aVariantes = New Object[]
+  $aEjemplos = New Object[]
   FMain.btnVerVariantes.Enabled = False
+
+  ' --- 3. LA VENTANA DE VARIANTES DE OTRO PROYECTO NO PUEDE QUEDAR ABIERTA ---
+  CerrarVentanaVariantes()
 
 End
 
@@ -288,8 +304,8 @@ Public Sub Analizar()
   FMain.btnAnalizarProyecto.Enabled = False
   FMain.btnCancelarAnalizar.Enabled = True
   FMain.btnVerVariantes.Enabled = False
-  $aVariantes.Clear
-  $aEjemplos.Clear
+  $aVariantes = New Object[]
+  $aEjemplos = New Object[]
 
   ' CARPETA TEMPORAL PARA EL TEXTO QUE LEE PERL. Temp$ DA UNA RUTA ÚNICA EN
   ' LA CARPETA TEMPORAL DE LA APLICACIÓN; SI NO SE PUEDE CREAR, EL ANÁLISIS
@@ -344,8 +360,10 @@ Public Sub Analizar()
 
   ' --- 6. CANCELADO: SE DESCARTA TODO ---
   If $bCancelado Then
-    $aVariantes.Clear
-    $aEjemplos.Clear
+    $aVariantes = New Object[]
+    $aEjemplos = New Object[]
+    ' LA VENTANA ABIERTA MOSTRARÍA UN ANÁLISIS QUE SE ACABA DE DESCARTAR
+    CerrarVentanaVariantes()
     MostrarProgreso("Análisis cancelado.")
     m_Sonido.sonar("Info")
     Terminar()
@@ -366,6 +384,13 @@ Public Sub Analizar()
   m_Sonido.sonar("Info")
   Terminar()
   FMain.btnVerVariantes.Enabled = ($aVariantes.Count > 0)
+
+  ' --- 9. LA VENTANA DE VARIANTES, SI ESTÁ ABIERTA, PASA A LOS DATOS NUEVOS ---
+  $sHoraAnalisis = Format(Now, "hh:nn")
+  If VentanaAbierta() Then
+    $hVentanaVariantes.Configurar($aVariantes, $aEjemplos, $sHoraAnalisis)
+    $hVentanaVariantes.Recargar()
+  Endif
 
 End
 
@@ -800,10 +825,195 @@ Public Sub VerVariantes()
     Return
   Endif
 
-  ' --- 3. FORMULARIO MODAL, CON LOS DATOS HECHOS ---
+  ' --- 3. YA ABIERTA: SE LA TRAE AL FRENTE, NO SE ABRE OTRA ---
+  If VentanaAbierta() Then
+    $hVentanaVariantes.Show()
+    Return
+  Endif
+
+  ' --- 4. NO MODAL Y ENCIMA DEL PRINCIPAL, COMO FOrtografia ---
+  ' (btnOrtografia_Click: Show Y TopOnly). ASÍ SE CORRIGE EN EL EDITOR CON LA
+  ' LISTA A LA VISTA
   hForm = New FVariantes
-  hForm.Configurar($aVariantes, $aEjemplos)
-  hForm.ShowModal()
+  hForm.Configurar($aVariantes, $aEjemplos, $sHoraAnalisis)
+  hForm.Show()
+  hForm.TopOnly = True
+  $hVentanaVariantes = hForm
+
+End
+
+' ============================================
+' Función   : VentanaAbierta
+' Propósito : DICE SI LA VENTANA DE VARIANTES SIGUE ABIERTA. SE MIRAN LAS DOS
+'             COSAS: LA REFERENCIA (LA BORRA VentanaVariantesCerrada) Y LA
+'             VALIDEZ DEL OBJETO
+' Parámetros: ninguno
+' Retorna   : Boolean — True si está abierta
+' ============================================
+Private Function VentanaAbierta() As Boolean
+
+  ' If ANIDADO: And NO CORTA EN GAMBAS (RC-GM-17)
+  If IsNull($hVentanaVariantes) Then Return False
+  If Not Object.IsValid($hVentanaVariantes) Then Return False
+  Return True
+
+End
+
+' ============================================
+' Función   : CerrarVentanaVariantes
+' Propósito : CIERRA LA VENTANA DE VARIANTES SI ESTÁ ABIERTA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CerrarVentanaVariantes()
+
+  If VentanaAbierta() Then $hVentanaVariantes.Close()
+  $hVentanaVariantes = Null
+
+End
+
+' ============================================
+' Función   : VentanaVariantesCerrada
+' Propósito : AVISO DE FVariantes AL CERRARSE: SE SUELTA LA REFERENCIA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub VentanaVariantesCerrada()
+
+  $hVentanaVariantes = Null
+
+End
+
+' ============================================
+' Función   : RelativaDe
+' Propósito : RUTA RELATIVA DE UN ARCHIVO DEL PROYECTO (front-matter/…,
+'             articulos/…, back-matter/…) A PARTIR DE SU NOMBRE BASE, TAL COMO
+'             FIGURA EN cmbArticulosRevista. ES LA FORMA QUE PIDE
+'             m_Estructura.AbrirArchivo
+' Parámetros: sNombre As String — nombre base (a-01-CAP01)
+' Retorna   : String — ruta relativa, o "" si el combo no lo tiene
+' ============================================
+Private Function RelativaDe(sNombre As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim i As Integer
+  Dim sItem As String
+
+  ' --- 2. EL ÍNDICE 0 ES EL .md PRINCIPAL, QUE NO SE ANALIZA ---
+  For i = 1 To FMain.cmbArticulosRevista.Count - 1
+    sItem = FMain.cmbArticulosRevista[i].Text
+    If File.BaseName(sItem) = sNombre Then Return sItem
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : ComienzoOracion
+' Propósito : LAS PRIMERAS PALABRAS DE UNA ORACIÓN DE EJEMPLO, PARA RECONOCER
+'             SU PÁRRAFO EN EL .md
+' Parámetros: sOracion As String — la oración, tal como la dio el análisis
+' Retorna   : String — hasta PALABRAS_CLAVE_ORACION palabras unidas por espacio
+' ============================================
+Private Function ComienzoOracion(sOracion As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPalabras As String[]
+  Dim sClave As String
+  Dim i As Integer
+
+  ' --- 2. LAS PRIMERAS PALABRAS ---
+  aPalabras = Split(sOracion, " ", "", True)
+  For i = 0 To Min(PALABRAS_CLAVE_ORACION, aPalabras.Count) - 1
+    If sClave <> "" Then sClave &= " "
+    sClave &= aPalabras[i]
+  Next
+
+  Return sClave
+
+End
+
+' ============================================
+' Función   : IrAEjemplo
+' Propósito : LLEVA EL EDITOR AL LUGAR DE UN EJEMPLO DE FVariantes. ABRE EL
+'             ARCHIVO SI NO ES EL ABIERTO (m_Estructura.AbrirArchivo, CON EL
+'             AVISO DE CAMBIOS SIN GUARDAR, SC-06), BUSCA LA FORMA EN EL TEXTO
+'             ACTUAL DEL EDITOR —NO EN EL DEL ANÁLISIS: LA POSICIÓN NUNCA QUEDA
+'             VIEJA AUNQUE SE HAYA CORREGIDO— Y ELIGE LA APARICIÓN CUYO PÁRRAFO
+'             CONTIENE EL COMIENZO DE LA ORACIÓN. SI NINGUNO LO CONTIENE (UNA
+'             CURSIVA O UNA CITA EN EL MEDIO CAMBIAN EL TEXTO DEL .md), VA A LA
+'             PRIMERA. DEJA LA FORMA EN txtBuscarPalabra PARA SEGUIR CON F3
+' Parámetros: sArchivo As String — nombre base del archivo
+'             sForma As String — la forma a buscar, exacta
+'             sOracion As String — la oración de ejemplo
+' Retorna   : nada
+' ============================================
+Public Sub IrAEjemplo(sArchivo As String, sForma As String, sOracion As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRel As String
+  Dim sTexto As String
+  Dim aLineas As New Integer[]
+  Dim aPosiciones As New Integer[]
+  Dim aTextos As New String[]
+  Dim iCantidad As Integer
+  Dim aParrafos As String[]
+  Dim sClave As String
+  Dim iElegida As Integer
+  Dim iParrafo As Integer
+  Dim i As Integer
+
+  ' --- 2. EL ARCHIVO, POR SU RUTA RELATIVA ---
+  sRel = RelativaDe(sArchivo)
+  If sRel = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El archivo " & sArchivo & " ya no está en la lista del proyecto.")
+    Return
+  Endif
+
+  ' --- 3. ABRIRLO SI NO ES EL QUE ESTÁ EN EL EDITOR ---
+  ' SI YA ESTÁ ABIERTO NO SE LLAMA A AbrirArchivo: PREGUNTARÍA POR CAMBIOS
+  ' SIN GUARDAR SIN MOTIVO. False ES CANCELADO O FALLA YA INFORMADA
+  If FMain.sRutaArchivoAbierto <> m_InicioCierre.RutaProyectoEnCurso &/ sRel Then
+    If Not m_Estructura.AbrirArchivo(sRel) Then Return
+  Endif
+
+  ' --- 4. LA FORMA EN EL TEXTO ACTUAL: MAYÚSCULAS Y PALABRA COMPLETA ---
+  ' DISTINGUE MAYÚSCULAS: «Estado» NO ES «estado», Y EN GUION Y TILDE SE VA
+  ' EXACTAMENTE A LA FORMA ELEGIDA
+  sTexto = m_EditorPrincipal.Texto()
+  iCantidad = m_FuncionesGenericas.BuscarEnTexto(sTexto, sForma, True, True, aLineas, aPosiciones, aTextos)
+  If iCantidad = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("«" & sForma & "» ya no aparece en " & sArchivo & ": puede que ya se haya corregido.")
+    Return
+  Endif
+
+  ' --- 5. LA APARICIÓN CUYO PÁRRAFO CONTIENE EL COMIENZO DE LA ORACIÓN ---
+  ' BuscarEnTexto DA LÍNEAS BASE 1 SOBRE EL TEXTO CON SALTOS LF, LOS MISMOS
+  ' QUE USA m_EditorPrincipal
+  aParrafos = Split(sTexto, Chr(10))
+  sClave = ComienzoOracion(sOracion)
+  iElegida = 0
+  If sClave <> "" Then
+    For i = 0 To iCantidad - 1
+      iParrafo = aLineas[i] - 1
+      If iParrafo >= 0 And iParrafo <= aParrafos.Max Then
+        If String.InStr(aParrafos[iParrafo], sClave) > 0 Then
+          iElegida = i
+          Break
+        Endif
+      Endif
+    Next
+  Endif
+
+  ' --- 6. SALTO, SELECCIÓN Y F3 ---
+  ' LÍNEA Y COLUMNA BASE 1 A BASE 0; EL LARGO EN CARACTERES (RC-GM-21)
+  m_EditorPrincipal.IrA(m_EditorPrincipal.PosicionDe(aLineas[iElegida] - 1, aPosiciones[iElegida] - 1), String.Len(sForma))
+  FMain.txtBuscarPalabra.Text = sForma
+  ' FOCO AL EDITOR: SE CORRIGE SOBRE LA SELECCIÓN (RC-GM-07)
+  FMain.txtEditorProyecto.SetFocus()
 
 End
 

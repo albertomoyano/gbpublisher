@@ -6,18 +6,25 @@
 '             calcula engine/analizar_lexico.pl desde m_AnalizarProyecto:
 '             guion (on-line/online), mayúscula dentro de la oración
 '             (Estado/estado) y tilde de la lista cerrada de la RAE
-'             (solo/sólo, guion/guión). SOLO MUESTRA: no corrige nada.
+'             (solo/sólo, guion/guión).
 '
-'             Abajo, las oraciones de ejemplo de la forma elegida. No hay
-'             número de línea: el análisis sale del AST de Pandoc, y el
-'             lector markdown no admite la extensión sourcepos (verificado
-'             con Pandoc 3.1.3). Para ir al lugar, se busca la oración en el
-'             editor.
+'             NO MODAL Y ENCIMA DEL PRINCIPAL (m_AnalizarProyecto.VerVariantes:
+'             Show y TopOnly, como FOrtografia): se corrige en el editor con la
+'             lista a la vista. Un clic en un ejemplo lleva al lugar en el
+'             editor (m_AnalizarProyecto.IrAEjemplo). Mientras se corrige, los
+'             datos envejecen: el encabezado dice la hora del análisis y
+'             «Actualizar» vuelve a analizar.
+'
+'             No hay número de línea: el análisis sale del AST de Pandoc y el
+'             lector markdown no admite sourcepos. Por eso el salto busca la
+'             forma en el texto actual del editor.
 '
 ' Controles del .form:
-'   lblEncabezado (Label)        — resumen
+'   lblEncabezado (Label)        — resumen y hora del análisis
 '   gvVariantes (GridView)       — una fila por forma, agrupadas
-'   txtOraciones (TextArea)      — oraciones de ejemplo de la fila elegida
+'   lblEjemplos (Label)          — indicación sobre la grilla de abajo
+'   gvEjemplos (GridView)        — oraciones de ejemplo de la forma elegida
+'   btnActualizar (Button)       — vuelve a analizar el proyecto
 '   btnCerrar (Button)
 ' ============================================
 
@@ -26,6 +33,10 @@
 ' CADA EJEMPLO ES UN String[]: id, forma, archivo, oración
 Private $aVariantes As Object[]
 Private $aEjemplos As Object[]
+Private $sHora As String
+
+' --- EJEMPLOS A LA VISTA: ÍNDICE EN $aEjemplos DE CADA FILA DE gvEjemplos ---
+Private $aFilasEjemplo As New Integer[]
 
 ' --- ÍNDICES DE CAMPO (EL ORDEN DEL REGISTRO V Y X DEL SCRIPT) ---
 Private Const V_ID As Integer = 0
@@ -52,36 +63,34 @@ End
 
 ' ============================================
 ' Función   : Configurar
-' Propósito : RECIBE LOS DATOS ANTES DE ShowModal. EL FORMULARIO NO LEE
-'             NINGÚN CONTROL DE FMain
+' Propósito : RECIBE LOS DATOS DE UN ANÁLISIS. SE LLAMA ANTES DE Show Y, CON
+'             LA VENTANA ABIERTA, CADA VEZ QUE TERMINA UN ANÁLISIS NUEVO
+'             (SEGUIDA DE Recargar). EL FORMULARIO NO LEE CONTROLES DE FMain
 ' Parámetros: aVariantes As Object[] — registros V
 '             aEjemplos As Object[] — registros X
+'             sHora As String — hora del análisis
 ' Retorna   : nada
 ' ============================================
-Public Sub Configurar(aVariantes As Object[], aEjemplos As Object[])
+Public Sub Configurar(aVariantes As Object[], aEjemplos As Object[], sHora As String)
 
   $aVariantes = aVariantes
   $aEjemplos = aEjemplos
+  $sHora = sHora
 
 End
 
 ' ============================================
 ' Función   : Form_Open
-' Propósito : ARMA LA GRILLA CON UNA FILA POR FORMA
+' Propósito : ARMA LAS DOS GRILLAS Y LAS LLENA
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
 Public Sub Form_Open()
 
-  ' --- 1. INICIALIZACIÓN ---
-  Dim i As Integer
-  Dim aReg As String[]
-  Dim sIdAnterior As String
-  Dim iGrupos As Integer
-
+  ' --- 1. TÍTULO ---
   Me.Title = "Variantes de una misma palabra en el proyecto"
 
-  ' --- 2. COLUMNAS ---
+  ' --- 2. COLUMNAS DE LAS VARIANTES ---
   With gvVariantes
     .Columns.Count = 4
     .Columns[0].Title = "Tipo"
@@ -95,10 +104,44 @@ Public Sub Form_Open()
     .Mode = Select.Single
     .Grid = True
     .Header = GridView.Horizontal
-    .Rows.Count = $aVariantes.Count
   End With
 
-  ' --- 3. FILAS: EL TIPO SE ESCRIBE SOLO EN LA PRIMERA FORMA DE CADA GRUPO ---
+  ' --- 3. COLUMNAS DE LOS EJEMPLOS ---
+  With gvEjemplos
+    .Columns.Count = 2
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 160
+    .Columns[1].Title = "Oración"
+    .Columns[1].Width = 760
+    .Mode = Select.Single
+    .Grid = True
+    .Header = GridView.Horizontal
+  End With
+
+  ' --- 4. DATOS ---
+  Recargar()
+
+End
+
+' ============================================
+' Función   : Recargar
+' Propósito : VUELCA LOS DATOS RECIBIDOS EN LA GRILLA DE VARIANTES Y VACÍA LA
+'             DE EJEMPLOS. EL TIPO SE ESCRIBE SOLO EN LA PRIMERA FORMA DE CADA
+'             GRUPO
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Recargar()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim i As Integer
+  Dim aReg As String[]
+  Dim sIdAnterior As String
+  Dim iGrupos As Integer
+
+  ' --- 2. FILAS DE VARIANTES ---
+  gvVariantes.Rows.Count = 0
+  gvVariantes.Rows.Count = $aVariantes.Count
   For i = 0 To $aVariantes.Max
     aReg = $aVariantes[i]
     If aReg[V_ID] <> sIdAnterior Then
@@ -112,9 +155,13 @@ Public Sub Form_Open()
     sIdAnterior = aReg[V_ID]
   Next
 
-  ' --- 4. ENCABEZADO ---
-  lblEncabezado.Text = CStr(iGrupos) & " grupo(s) de variantes. No se analizan las citas en bloque: respetan la grafía del original."
-  txtOraciones.Text = ""
+  ' --- 3. EJEMPLOS VACÍOS HASTA ELEGIR UNA FORMA ---
+  gvEjemplos.Rows.Count = 0
+  $aFilasEjemplo.Clear
+
+  ' --- 4. ENCABEZADO E INDICACIÓN ---
+  lblEncabezado.Text = CStr(iGrupos) & " grupo(s) de variantes, según el análisis de las " & $sHora & ". Las citas en bloque no se analizan: respetan la grafía del original."
+  lblEjemplos.Text = "Elegí una forma. Clic en un ejemplo: va al lugar en el editor. Desde ahí, F3 sigue a la siguiente aparición."
 
 End
 
@@ -143,7 +190,8 @@ End
 
 ' ============================================
 ' Función   : gvVariantes_Select
-' Propósito : MUESTRA LAS ORACIONES DE EJEMPLO DE LA FORMA ELEGIDA
+' Propósito : LLENA LA GRILLA DE EJEMPLOS CON LOS DE LA FORMA ELEGIDA. VA EN
+'             Select: ELEGIR UNA FORMA NO MUEVE EL EDITOR
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -153,7 +201,8 @@ Public Sub gvVariantes_Select()
   Dim iFila As Integer
   Dim aVar As String[]
   Dim aEj As String[]
-  Dim sTexto As String
+  Dim i As Integer
+  Dim iDestino As Integer
 
   ' --- 2. FILA ELEGIDA ---
   iFila = gvVariantes.Row
@@ -161,14 +210,55 @@ Public Sub gvVariantes_Select()
   aVar = $aVariantes[iFila]
 
   ' --- 3. LOS EJEMPLOS DE ESA FORMA EN ESE GRUPO ---
-  For Each aEj In $aEjemplos
+  gvEjemplos.Rows.Count = 0
+  $aFilasEjemplo.Clear
+  For i = 0 To $aEjemplos.Max
+    aEj = $aEjemplos[i]
     If aEj[X_ID] = aVar[V_ID] And aEj[X_FORMA] = aVar[V_FORMA] Then
-      sTexto &= aEj[X_ARCHIVO] & ": " & aEj[X_ORACION] & gb.NewLine & gb.NewLine
+      iDestino = gvEjemplos.Rows.Count
+      gvEjemplos.Rows.Count = iDestino + 1
+      gvEjemplos[iDestino, 0].Text = aEj[X_ARCHIVO]
+      gvEjemplos[iDestino, 1].Text = aEj[X_ORACION]
+      $aFilasEjemplo.Add(i)
     Endif
   Next
 
-  If sTexto = "" Then sTexto = "Sin oraciones de ejemplo."
-  txtOraciones.Text = sTexto
+End
+
+' ============================================
+' Función   : gvEjemplos_Click
+' Propósito : LLEVA EL EDITOR AL LUGAR DEL EJEMPLO. VA EN Click Y NO EN
+'             Select: ASIGNAR Row DISPARA Select PERO NUNCA Click (GV-78), ASÍ
+'             QUE LLENAR LA GRILLA NO PROVOCA SALTOS
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvEjemplos_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iFila As Integer
+  Dim aEj As String[]
+
+  ' --- 2. EL EJEMPLO DE LA FILA ---
+  iFila = gvEjemplos.Row
+  If iFila < 0 Or If iFila > $aFilasEjemplo.Max Then Return
+  aEj = $aEjemplos[$aFilasEjemplo[iFila]]
+
+  ' --- 3. SALTO: LO RESUELVE EL MÓDULO DUEÑO DEL ANÁLISIS ---
+  m_AnalizarProyecto.IrAEjemplo(aEj[X_ARCHIVO], aEj[X_FORMA], aEj[X_ORACION])
+
+End
+
+' ============================================
+' Función   : btnActualizar_Click
+' Propósito : VUELVE A ANALIZAR EL PROYECTO. AL TERMINAR, EL MÓDULO RECARGA
+'             ESTA VENTANA CON LOS DATOS NUEVOS
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnActualizar_Click()
+
+  m_AnalizarProyecto.Analizar()
 
 End
 
@@ -181,5 +271,18 @@ End
 Public Sub btnCerrar_Click()
 
   Me.Close()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : AVISA AL MÓDULO QUE LA VENTANA SE CERRÓ, PARA QUE SUELTE LA
+'             REFERENCIA Y LA PRÓXIMA VEZ ABRA UNA NUEVA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  m_AnalizarProyecto.VentanaVariantesCerrada()
 
 End
