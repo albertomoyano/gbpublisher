@@ -39,13 +39,17 @@
   xmlns="http://www.w3.org/1999/xhtml"
   xmlns:gbc="urn:gbpublisher:codigo"
   xmlns:gbv="urn:gbpublisher:conversacion"
-  exclude-result-prefixes="xs xlink gbc gbv">
+  xmlns:gbvr="urn:gbpublisher:verso"
+  exclude-result-prefixes="xs xlink gbc gbv gbvr">
 
   <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
   <xsl:include href="codigo-comun.xsl"/>
 
   <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="conversacion-comun.xsl"/>
+
+  <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="verso-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS EXTERNOS
@@ -483,6 +487,13 @@
       <xsl:for-each select="p">
         <p class="epigrafe-texto"><xsl:apply-templates/></p>
       </xsl:for-each>
+      <!-- EL TEXTO PUEDE SER UN VERSO (SC-49) -->
+      <xsl:for-each select="verse-group">
+        <xsl:call-template name="verso-html">
+          <xsl:with-param name="poema" select="."/>
+          <xsl:with-param name="clase" select="'verso-epigrafe'"/>
+        </xsl:call-template>
+      </xsl:for-each>
       <!-- LA ATRIBUCIÓN VA ABAJO, SIN RAYA (SC-35), Y CONSERVA SUS MARCAS -->
       <xsl:if test="attrib">
         <p class="epigrafe-atrib"><xsl:apply-templates select="attrib[1]/node()"/></p>
@@ -536,12 +547,39 @@
   </xsl:template>
 
   <!-- ================================================
-       VERSOS
+       VERSO (SC-49): EL <verse-group> DE AFUERA ES EL POEMA; CADA
+       UNO DE ADENTRO, UNA ESTROFA (verso-comun.xsl). SALE div.verso
+       CON UN div.estrofa POR ESTROFA Y UN span.verso-linea POR
+       VERSO; LA SANGRÍA ES LA CLASE nivel-N (indent-level), QUE EL
+       CSS RESUELVE CON text-indent (1,5 em POR NIVEL, EL \vgap DEL
+       PDF). LAS MISMAS CLASES QUE EN LIBROS. LOS VERSOS CONSERVAN
+       SUS MARCAS, CITAS Y NOTAS.
        ================================================ -->
-<xsl:template match="verse-group">
-    <div class="verse-group">
-      <xsl:for-each select="verse-line">
-        <span class="verse-line"><xsl:value-of select="."/></span>
+  <xsl:template match="verse-group">
+    <xsl:call-template name="verso-html">
+      <xsl:with-param name="poema" select="."/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- ============================================
+       PLANTILLA : verso-html
+       PROPÓSITO : ESCRIBE UN POEMA
+       PARÁMETROS: poema — el verse-group de afuera;
+                   clase — clase de más (verso-epigrafe EN UN EPÍGRAFE)
+       ============================================ -->
+  <xsl:template name="verso-html">
+    <xsl:param name="poema" as="element()"/>
+    <xsl:param name="clase" as="xs:string" select="''"/>
+    <div class="{normalize-space(concat('verso ', $clase))}">
+      <xsl:for-each select="gbvr:estrofas($poema)">
+        <div class="estrofa">
+          <xsl:for-each select="gbvr:versos(.)">
+            <xsl:variable name="nivel" select="gbvr:nivel(.)"/>
+            <span class="verso-linea{if ($nivel gt 0) then concat(' nivel-', $nivel) else ''}">
+              <xsl:apply-templates/>
+            </span>
+          </xsl:for-each>
+        </div>
       </xsl:for-each>
     </div>
   </xsl:template>

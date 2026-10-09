@@ -2224,6 +2224,10 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   ' PÁRRAFOS, PRIMERO UNA PREGUNTA, NADA SUELTO— Y ESCRIBE LA ETIQUETA DE
   ' CADA TURNO SEGÚN -M gb-idioma. VA ANTES DE cite-to-xref, QUE ARMA EL
   ' <disp-quote content-type="conversacion">, Y FRENA EL VIEJO .speech.
+  ' verso.lua (SC-49) CONTROLA EL VERSO —SOLO ESTROFAS, PATRÓN BIEN FORMADO—
+  ' Y LO DEJA CON SUS ESTROFAS, VERSOS Y SANGRÍAS. VA DESPUÉS DE dos-partes,
+  ' QUE MARCA EL VERSO DE UN EPÍGRAFE, Y ANTES DE cite-to-xref, QUE ARMA EL
+  ' <verse-group>.
   ' LAS FIGURAS, NORMALES Y DE ANCHO COMPLETO, LAS ARMA cite-to-xref (SC-32);
   ' figure-to-end.lua, QUE HACÍA LAS DE ANCHO COMPLETO APARTE, SE RETIRÓ.
   ' pandoc ... && { ENVOLTORIO } > body || : > fallo: SI UN FILTRO FRENA (UN
@@ -2241,6 +2245,7 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
     "--lua-filter ~/.gbpublisher/filters/recuadros.lua " &
     "--lua-filter ~/.gbpublisher/filters/codigo.lua " &
     "--lua-filter ~/.gbpublisher/filters/conversacion.lua " &
+    "--lua-filter ~/.gbpublisher/filters/verso.lua " &
     "--lua-filter ~/.gbpublisher/filters/table-to-end.lua " &
     "--lua-filter ~/.gbpublisher/filters/cite-to-xref.lua " &
     "--output '" & sFileParcial & "' && " &
@@ -3886,31 +3891,31 @@ Private Sub CotejarRedalycConBase(xDoc As XmlDocument, iIdArticulo As Integer, g
 
   aEnXml = [sTipoXml, sLangXml, sAnioXml, sDoiXml, sLicenciaXml,
     If(ObtenerNodoXml(xDoc, "article-title") <> "", "presente", "ausente"),
-    If(xDoc.GetElementsByTagName("abstract").Count > 0, "presente", "ausente"),
-    If(xDoc.GetElementsByTagName("kwd-group").Count > 0, "presente", "ausente")]
+      If(xDoc.GetElementsByTagName("abstract").Count > 0, "presente", "ausente"),
+        If(xDoc.GetElementsByTagName("kwd-group").Count > 0, "presente", "ausente")]
 
-  aEnBase = [CampoTexto(hArticulo, "tipo_articulo"), IdiomaPrincipalEfectivo(hArticulo), aFecha[1],
-    CampoTexto(hArticulo, "doi"), aLicencia[1],
-    If(CampoTexto(hArticulo, "titulo_articulo") <> "", "presente", "ausente"),
-    If(CampoTexto(hArticulo, "resumen_1") <> "" And CampoTexto(hArticulo, "idioma_resumen_1") <> "", "presente", "ausente"),
-    If(bKwdBase, "presente", "ausente")]
+        aEnBase = [CampoTexto(hArticulo, "tipo_articulo"), IdiomaPrincipalEfectivo(hArticulo), aFecha[1],
+          CampoTexto(hArticulo, "doi"), aLicencia[1],
+          If(CampoTexto(hArticulo, "titulo_articulo") <> "", "presente", "ausente"),
+            If(CampoTexto(hArticulo, "resumen_1") <> "" And CampoTexto(hArticulo, "idioma_resumen_1") <> "", "presente", "ausente"),
+              If(bKwdBase, "presente", "ausente")]
 
-  ' --- 7. UNA FILA POR DISCREPANCIA ---
-  ' COMPARACIÓN BINARIA Y SENSIBLE A MAYÚSCULAS A PROPÓSITO: SE PREGUNTA
-  ' SI EL ARCHIVO SE GENERÓ CON LOS DATOS ACTUALES, NO SI EQUIVALEN
-  For i = 0 To aCampos.Count - 1
-    If aEnXml[i] <> aEnBase[i] Then
-      Inc iDiscrepancias
-      AgregarFilaGv(gv, "ERROR", "cotejo: " & aCampos[i],
-        "XML: " & If(aEnXml[i] = "", "(vacío)", aEnXml[i]) & " · base: " & If(aEnBase[i] = "", "(vacío)", aEnBase[i]),
-        sAccion)
-    Endif
-  Next
+              ' --- 7. UNA FILA POR DISCREPANCIA ---
+              ' COMPARACIÓN BINARIA Y SENSIBLE A MAYÚSCULAS A PROPÓSITO: SE PREGUNTA
+              ' SI EL ARCHIVO SE GENERÓ CON LOS DATOS ACTUALES, NO SI EQUIVALEN
+              For i = 0 To aCampos.Count - 1
+                If aEnXml[i] <> aEnBase[i] Then
+                  Inc iDiscrepancias
+                  AgregarFilaGv(gv, "ERROR", "cotejo: " & aCampos[i],
+                    "XML: " & If(aEnXml[i] = "", "(vacío)", aEnXml[i]) & " · base: " & If(aEnBase[i] = "", "(vacío)", aEnBase[i]),
+                    sAccion)
+                Endif
+              Next
 
-  ' --- 8. SIN DISCREPANCIAS: UNA SOLA FILA QUE LO CONFIRME ---
-  If iDiscrepancias = 0 Then
-    AgregarFilaGv(gv, "OK", "cotejo con la base", CStr(aCampos.Count) & " campos coinciden", "")
-  Endif
+              ' --- 8. SIN DISCREPANCIAS: UNA SOLA FILA QUE LO CONFIRME ---
+              If iDiscrepancias = 0 Then
+                AgregarFilaGv(gv, "OK", "cotejo con la base", CStr(aCampos.Count) & " campos coinciden", "")
+              Endif
 
 End
 
@@ -4311,11 +4316,22 @@ Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean, sEstilo As Strin
   Endif
   s &= Chr(10)
 
-  ' --- 8. ENTORNO verse — bastardilla con sangría 14pt ---
-  s &= "\\renewenvironment{verse}" & Chr(10)
-  s &= "  {\\normalsize\\list{}{\\leftmargin=14pt\\rightmargin=0pt\\parsep=0pt}" & Chr(10)
-  s &= "   \\item\\relax\\itshape}" & Chr(10)
-  s &= "  {\\endlist}" & Chr(10)
+  ' --- 8. VERSO (SC-49): EL PAQUETE verse, gbverso Y gbversoepigrafe ---
+  ' GEMELOS DE preambulo-contrato.tex (LIBROS, CONTRATO 14): UN CAMBIO EN
+  ' UNOS VA EN LOS OTROS. EL verse DEL PAQUETE REEMPLAZA AL QUE SE
+  ' REDEFINÍA ACÁ. gbverso: EN BASTARDILLA Y A 14 PT DEL MARGEN, COMO LA
+  ' CITA. gbversoepigrafe: EL VERSO DE UN EPÍGRAFE, SIN MARGEN NI \topsep
+  ' (GV-94). CADA VERSO EMPIEZA CON \relax (GV-93, LO ESCRIBE LA HOJA)
+  s &= "\\usepackage{verse}" & Chr(10)
+  s &= "\\newenvironment{gbverso}" & Chr(10)
+  s &= "  {\\setlength{\\leftmargini}{14pt}\\begin{verse}\\normalsize\\itshape}" & Chr(10)
+  s &= "  {\\end{verse}}" & Chr(10)
+  s &= "\\makeatletter" & Chr(10)
+  s &= "\\newenvironment{gbversoepigrafe}" & Chr(10)
+  s &= "  {\\def\\@listi{\\leftmargin\\z@\\topsep\\z@\\partopsep\\z@\\itemsep\\z@\\parsep\\z@}%" & Chr(10)
+  s &= "   \\begin{verse}}" & Chr(10)
+  s &= "  {\\end{verse}}" & Chr(10)
+  s &= "\\makeatother" & Chr(10)
 
   ' --- 9. Macro articulotipo (sobreescrita por XSLT) ---
   s &= "\\newcommand{\\articulotipo}{}" & Chr(10)
@@ -7565,7 +7581,10 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
   '      .speech, SC-43. ANTES DE fenced-divs, QUE ARMA EL <qandaset>. EL
   '      LIBRO NO PASA -M gb-idioma: SIN quien NO HAY <label> Y LA ETIQUETA LA
   '      PONE LA HOJA SEGÚN EL xml:lang)
-  '   8° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
+  '   8° verso.lua  (CONTROLA EL VERSO Y LO DEJA CON SUS ESTROFAS, VERSOS Y
+  '      SANGRÍAS, SC-49. DESPUÉS DE dos-partes, QUE MARCA EL VERSO DE UN
+  '      EPÍGRAFE; ANTES DE fenced-divs, QUE ARMA EL <blockquote role="verso">)
+  '   9° fenced-divs-to-elements-db.lua  (PROCESA LOS DIVS DESPUÉS,
   '      QUE PUEDEN CONTENER PÁRRAFOS CON CITAS YA TRANSFORMADAS)
   '
   ' EL WRAPPER <section xmlns="..." xmlns:mml="..." xmlns:xlink="...">
@@ -7586,6 +7605,7 @@ Public Function GenerarBodyCapituloXML(iIdCapitulo As Integer) As Boolean
     "--lua-filter ~/.gbpublisher/filters/recuadros.lua " &
     "--lua-filter ~/.gbpublisher/filters/codigo.lua " &
     "--lua-filter ~/.gbpublisher/filters/conversacion.lua " &
+    "--lua-filter ~/.gbpublisher/filters/verso.lua " &
     "--lua-filter ~/.gbpublisher/filters/fenced-divs-to-elements-db.lua " &
     "--output '" & sFileParcial & "' && " &
     "{ echo '<section xmlns=" & Chr(34) & "http://docbook.org/ns/docbook" & Chr(34) &

@@ -22,7 +22,10 @@
 --   4. EPIGRAPH (.epigraph)                    → <epigraph><attribution>
 --                                                (PARTIDO ANTES POR
 --                                                dos-partes.lua — VER 6.4)
---   5. VERSE (.verse)                          → <literallayout role="verse">
+--   5. VERSE (.verse, SC-49)                   → <blockquote role="verso"> CON UN
+--                                                <literallayout role="verse"> POR
+--                                                ESTROFA (EN UN EPÍGRAFE, SIN EL
+--                                                <blockquote>; VÍA verso.lua)
 --   6. LISTADO (.listado #lst-, SC-42)         → <example role="listado">
 --      (EL BLOQUE SUELTO ~~~ python LO ESCRIBE codigo.lua)
 --   7. RECUADROS (recuadro, recuadrob, SC-41)  → <sidebar role="recuadro" | "recuadro-barra">
@@ -349,7 +352,13 @@ function Div(el)
             '</attribution>\n'
     end
     for _, parrafo in ipairs(texto.content) do
-      raw = raw .. '  <para>' .. inlines_a_docbook(parrafo.content) .. '</para>\n'
+      if parrafo.t == 'RawBlock' then
+        -- UN VERSO (SC-49): YA SERIALIZADO COMO <literallayout>, SIN EL
+        -- <blockquote> (6.5). dos-partes.lua CONTROLÓ QUE VAYA SOLO
+        raw = raw .. parrafo.text .. '\n'
+      else
+        raw = raw .. '  <para>' .. inlines_a_docbook(parrafo.content) .. '</para>\n'
+      end
     end
     raw = raw .. '</epigraph>'
     return pandoc.RawBlock('docbook', raw)
@@ -377,38 +386,46 @@ function Div(el)
   end
 
   -- =====================================================
-  -- 6.5. VERSO (.verse)
+  -- 6.5. VERSO (.verse, SC-49)
   -- =====================================================
-  -- ESTRUCTURA EN MD:
-  --   ::: verse
-  --   Línea uno
-  --   Línea dos
-  --   :::
+  -- verso.lua YA CONTROLÓ EL BLOQUE Y LO DEJÓ NORMALIZADO: UN Div
+  -- .estrofa POR ESTROFA Y, ADENTRO, UN Div .linea POR VERSO, CON EL
+  -- NIVEL DE SANGRÍA EN EL ATRIBUTO nivel. ACÁ SOLO SE SERIALIZA.
   --
-  -- EMITE <literallayout role="verse"> CON LINE BREAKS LITERALES.
-  -- ITERA SOBRE LOS INLINES PARA PRESERVAR SOFTBREAKS QUE
-  -- pandoc.utils.stringify() COLAPSARÍA EN UNA SOLA LÍNEA.
+  -- DOCBOOK 5.2 BASE NO TIENE <poetry> NI <line> (RC-DB-04):
+  --   <blockquote role="verso">
+  --     <literallayout role="verse"><phrase role="linea">…</phrase>
+  --   <phrase role="linea">…</phrase></literallayout>
+  --   </blockquote>
+  -- UN <literallayout> POR ESTROFA; CADA VERSO EN UN <phrase role="linea">
+  -- PARA QUE LAS HOJAS LO TOMEN CON SUS MARCAS. LA SANGRÍA VA COMO DOS
+  -- ESPACIOS POR NIVEL DELANTE DEL <phrase>: <literallayout> REPRODUCE
+  -- LOS ESPACIOS TAL CUAL, Y ASÍ UN PROCESADOR DOCBOOK CUALQUIERA LA
+  -- MUESTRA. EN UN EPÍGRAFE (CLASE en-epigrafe, DE dos-partes.lua) VAN
+  -- SOLO LOS <literallayout>: <epigraph> NO ADMITE <blockquote>.
+  -- EL FIN DE VERSO SE ESCRIBE &#10; Y NO COMO SALTO: EL ESCRITOR DOCBOOK
+  -- DE PANDOC SANGRA CADA LÍNEA DE UN RawBlock SEGÚN LA PROFUNDIDAD DE LA
+  -- SECCIÓN, Y ESA SANGRÍA SE SUMARÍA A LA DEL VERSO (GV-95). CON LA
+  -- REFERENCIA, EL <literallayout> ES UNA SOLA LÍNEA DEL ARCHIVO Y SUS
+  -- ESPACIOS NO SE TOCAN; EL PARSER XML LA CONVIERTE EN EL SALTO.
   if el.classes:includes('verse') then
-    local tokens = {}
-    for _, block in ipairs(el.content) do
-      if block.t == 'Para' or block.t == 'Plain' then
-        for _, inline in ipairs(block.content) do
-          if inline.t == 'Str' then
-            tokens[#tokens + 1] = escape_xml_text(inline.text)
-          elseif inline.t == 'SoftBreak' or inline.t == 'LineBreak' then
-            tokens[#tokens + 1] = '\n'
-          elseif inline.t == 'Space' then
-            tokens[#tokens + 1] = ' '
-          else
-            -- MARKUP INLINE (Emph, Strong, Code, etc.): SERIALIZAR
-            tokens[#tokens + 1] = inlines_a_docbook({inline})
-          end
-        end
+    local estrofas = {}
+    for _, estrofa in ipairs(el.content) do
+      local lineas = {}
+      for _, linea in ipairs(estrofa.content) do
+        local nivel = tonumber(linea.attributes['nivel']) or 0
+        lineas[#lineas + 1] = string.rep('  ', nivel) ..
+          '<phrase role="linea">' ..
+          (inlines_a_docbook(linea.content[1].content)) ..
+          '</phrase>'
       end
+      estrofas[#estrofas + 1] = '<literallayout role="verse">' ..
+        table.concat(lineas, '&#10;') .. '</literallayout>'
     end
-    local raw = '<literallayout role="verse">' ..
-                table.concat(tokens) ..
-                '</literallayout>'
+    local raw = table.concat(estrofas, '\n')
+    if not el.classes:includes('en-epigrafe') then
+      raw = '<blockquote role="verso">\n' .. raw .. '\n</blockquote>'
+    end
     return pandoc.RawBlock('docbook', raw)
   end
 

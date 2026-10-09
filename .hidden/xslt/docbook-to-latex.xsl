@@ -52,7 +52,11 @@
       \gbatribucion  macro   — atribución de la cita
       \gbepigrafe    macro   — {texto}{atribución}
       gbsidebar      entorno — un argumento: info | supplementary
-      gbverso        entorno — literallayout role="verse"
+      gbverso        entorno — blockquote role="verso" (SC-49, CONTRATO 14):
+                     EL verse DEL PAQUETE verse, EN BASTARDILLA
+      gbversoepigrafe entorno — el verso de un epigraph, dentro de
+                     \gbepigrafe (SC-49, CONTRATO 14)
+      \vin           macro   — una sangría de verso (paquete verse)
       gbconversacion entorno — qandaset role="conversacion" (SC-43, CONTRATO 12)
       \gbetiqueta    macro   — etiqueta del turno, en línea
 
@@ -92,8 +96,9 @@
   xmlns:xlink="http://www.w3.org/1999/xlink"
   xmlns:f="urn:gbpublisher:functions"
   xmlns:gbv="urn:gbpublisher:conversacion"
+  xmlns:gbvr="urn:gbpublisher:verso"
   xpath-default-namespace="http://docbook.org/ns/docbook"
-  exclude-result-prefixes="xs xlink f gbv">
+  exclude-result-prefixes="xs xlink f gbv gbvr">
 
   <xsl:import href="tex-comun.xsl"/>
 
@@ -105,6 +110,9 @@
 
   <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="conversacion-comun.xsl"/>
+
+  <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="verso-comun.xsl"/>
 
   <xsl:output method="text" encoding="UTF-8"/>
 
@@ -546,8 +554,10 @@
     <xsl:value-of select="f:latex(.)"/>
   </xsl:template>
 
-  <!-- CONTENIDO LITERAL: PASA CRUDO, SIN ESCAPAR. -->
-  <xsl:template match="programlisting//text() | literallayout//text()">
+  <!-- CONTENIDO LITERAL: PASA CRUDO, SIN ESCAPAR. EL VERSO NO ES      -->
+  <!-- LITERAL: SU TEXTO SE ESCAPA COMO EL DE UN PÁRRAFO (SC-49).       -->
+  <xsl:template match="programlisting//text()
+                       | literallayout[not(@role = 'verse')]//text()">
     <xsl:value-of select="."/>
   </xsl:template>
 
@@ -1035,9 +1045,21 @@
     <xsl:text>\end{gbcita}&#10;&#10;</xsl:text>
   </xsl:template>
 
+  <!-- EL TEXTO DEL EPÍGRAFE PUEDE SER UN VERSO (SC-49): SUS ESTROFAS   -->
+  <!-- VAN EN gbversoepigrafe, DENTRO DEL PRIMER ARGUMENTO.             -->
   <xsl:template match="epigraph">
     <xsl:text>&#10;\gbepigrafe{</xsl:text>
-    <xsl:apply-templates select="* except attribution"/>
+    <xsl:choose>
+      <xsl:when test="literallayout[@role = 'verse']">
+        <xsl:call-template name="verso-latex">
+          <xsl:with-param name="poema" select="."/>
+          <xsl:with-param name="entorno" select="'gbversoepigrafe'"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:apply-templates select="* except attribution"/>
+      </xsl:otherwise>
+    </xsl:choose>
     <xsl:text>}{</xsl:text>
     <xsl:apply-templates select="attribution/node()"/>
     <xsl:text>}&#10;&#10;</xsl:text>
@@ -1073,21 +1095,75 @@
     <xsl:text>\end{gbsidebar}&#10;&#10;</xsl:text>
   </xsl:template>
 
-  <!-- VERSO: LOS SALTOS DE LÍNEA SON EL CONTENIDO. SE PARTE EL     -->
-  <!-- TEXTO POR LÍNEA Y SE EMITE \\ ENTRE ELLAS, MENOS LA ÚLTIMA.  -->
-  <xsl:template match="literallayout[@role='verse']" priority="5">
-    <xsl:variable name="lineas" select="tokenize(string(.), '\n')"/>
-    <xsl:variable name="utiles" select="
-      for $l in $lineas return if (normalize-space($l) = '') then () else $l"/>
-    <xsl:text>&#10;\begin{gbverso}&#10;</xsl:text>
-    <xsl:for-each select="$utiles">
-      <xsl:value-of select="f:latex(normalize-space(.))"/>
-      <xsl:if test="position() != last()">
-        <xsl:text>\\</xsl:text>
-      </xsl:if>
-      <xsl:text>&#10;</xsl:text>
+  <!-- ============================================================ -->
+  <!-- VERSO (SC-49): EL ENTORNO verse DEL PAQUETE verse (CONTRATO 14). -->
+  <!-- CADA VERSO TERMINA EN \\, Y EL ÚLTIMO DE CADA ESTROFA EN \\!,     -->
+  <!-- QUE DEJA EL \stanzaskip; EL ÚLTIMO DEL POEMA, EN NADA. LA       -->
+  <!-- SANGRÍA ES \vin UNA VEZ POR NIVEL, DELANTE DEL VERSO: NO SE USA  -->
+  <!-- patverse, QUE IGNORA EL PRIMER DÍGITO DEL PATRÓN. CADA VERSO     -->
+  <!-- EMPIEZA CON \relax: \\ MIRA EL CARÁCTER QUE SIGUE, Y UN VERSO    -->
+  <!-- QUE EMPIEZA CON [, * O ! SE LEERÍA COMO ARGUMENTO DE \\ (GV-93). -->
+  <!-- ============================================================ -->
+  <xsl:template match="blockquote[@role = 'verso']" priority="5">
+    <xsl:call-template name="verso-latex">
+      <xsl:with-param name="poema" select="."/>
+      <xsl:with-param name="entorno" select="'gbverso'"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- UN <literallayout role="verse"> SUELTO SOLO PUEDE SER DE UN      -->
+  <!-- CANÓNICO VIEJO: SE FRENA (gbvr:frenar-si-viejo). SI NO LO FUERA, -->
+  <!-- SALE COMO UN POEMA DE UNA ESTROFA.                               -->
+  <xsl:template match="literallayout[@role = 'verse']" priority="5">
+    <xsl:call-template name="verso-latex">
+      <xsl:with-param name="poema" select="."/>
+      <xsl:with-param name="entorno" select="'gbverso'"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- ============================================ -->
+  <!-- PLANTILLA : verso-latex                      -->
+  <!-- PROPÓSITO : ESCRIBE UN POEMA EN SU ENTORNO   -->
+  <!-- PARÁMETROS: poema — blockquote, epigraph O   -->
+  <!--             literallayout; entorno — nombre  -->
+  <!--             del entorno LaTeX                -->
+  <!-- ============================================ -->
+  <xsl:template name="verso-latex">
+    <xsl:param name="poema" as="element()"/>
+    <xsl:param name="entorno" as="xs:string"/>
+    <xsl:variable name="estrofas" select="if (local-name($poema) = 'literallayout')
+                                          then $poema else gbvr:estrofas($poema)"/>
+    <xsl:call-template name="gbvr:frenar-si-viejo">
+      <xsl:with-param name="estrofas" select="$estrofas"/>
+    </xsl:call-template>
+    <xsl:text>&#10;\begin{</xsl:text>
+    <xsl:value-of select="$entorno"/>
+    <xsl:text>}&#10;</xsl:text>
+    <xsl:for-each select="$estrofas">
+      <xsl:variable name="ultima-estrofa" select="position() = last()"/>
+      <xsl:variable name="versos" select="gbvr:versos(.)"/>
+      <xsl:for-each select="$versos">
+        <xsl:text>\relax</xsl:text>
+        <xsl:for-each select="1 to gbvr:nivel(.)">
+          <xsl:text>\vin</xsl:text>
+        </xsl:for-each>
+        <xsl:text> </xsl:text>
+        <xsl:apply-templates/>
+        <!-- FIN DE VERSO, DE ESTROFA O DEL POEMA -->
+        <xsl:choose>
+          <xsl:when test="position() != last()">
+            <xsl:text>\\</xsl:text>
+          </xsl:when>
+          <xsl:when test="not($ultima-estrofa)">
+            <xsl:text>\\!</xsl:text>
+          </xsl:when>
+        </xsl:choose>
+        <xsl:text>&#10;</xsl:text>
+      </xsl:for-each>
     </xsl:for-each>
-    <xsl:text>\end{gbverso}&#10;&#10;</xsl:text>
+    <xsl:text>\end{</xsl:text>
+    <xsl:value-of select="$entorno"/>
+    <xsl:text>}&#10;&#10;</xsl:text>
   </xsl:template>
 
   <xsl:template match="literallayout">

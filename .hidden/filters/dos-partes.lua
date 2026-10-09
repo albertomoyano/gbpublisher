@@ -12,7 +12,8 @@
 --               :::
 -- SALIDA      : EL MISMO Div CON DOS Div HIJOS, CON LAS CLASES DE SU
 --               CONFIGURACIÓN:
---                 epigraph   .epigrafe-texto (UNO O MÁS Para)
+--                 epigraph   .epigrafe-texto (UNO O MÁS Para, O UN
+--                                            SOLO Div verse, SC-49)
 --                            .epigrafe-atrib (UN Para; FALTA SI LA
 --                                            SEGUNDA PARTE ESTÁ VACÍA)
 --                 recuadrob  .recuadro-barra (UN Para)
@@ -25,27 +26,56 @@
 -- REGLA       : LAS LLAVES SON EL SEMÁFORO DEL EPÍGRAFE. UN BLOQUE QUE
 --               NO TIENE LA FORMA {…}{…} FRENA LA CONVERSIÓN CON UN
 --               MENSAJE: NUNCA SE DEGRADA EN SILENCIO.
+-- VERSO       : LA PRIMERA PARTE DEL EPÍGRAFE PUEDE SER UN VERSO
+--               (SC-49), SOLO, SIN PROSA AL LADO. LA LLAVE DE APERTURA Y
+--               LA DE CIERRE VAN EN SU PROPIO PÁRRAFO, CON LÍNEAS EN
+--               BLANCO ALREDEDOR DEL VERSO (SIN ELLAS PANDOC NO LO LEE
+--               COMO BLOQUE, GV-92):
+--
+--               {
+--
+--               ::: {.verse patron="01"}
+--
+--               Versos…
+--
+--               [/verse]: # ()
+--               :::
+--
+--               }{Atribución}
+--
+--               EL VERSO SALE CON LA CLASE en-epigrafe: CON ELLA EL
+--               SERIALIZADOR DE DOCBOOK NO LE PONE EL <blockquote>, QUE
+--               <epigraph> NO ADMITE. LO CONTROLA verso.lua, QUE CORRE
+--               DESPUÉS.
 -- ============================================================
 
 -- CLASES DE MODO dos-partes DEL CATÁLOGO DE gbShortcodes (RF-11), CON LO
 -- QUE ADMITE CADA PARTE. m_Shortcodes.ProblemaDosPartes TIENE LA MISMA
--- TABLA PARA CONTROLAR LA SELECCIÓN AL INSERTAR: UN CAMBIO VA EN LAS DOS
+-- TABLA PARA CONTROLAR LA SELECCIÓN AL INSERTAR: UN CAMBIO VA EN LAS DOS.
+-- verso1 (SC-49) NO TIENE GEMELO ALLÁ: EL PANEL CONTROLA LAS LLAVES, NO
+-- QUÉ BLOQUES HAY ENTRE ELLAS
 local CLASES = {
-  -- <attribution> (DOCBOOK) Y <attrib> (JATS) SOLO ADMITEN TEXTO EN LÍNEA
+  -- <attribution> (DOCBOOK) Y <attrib> (JATS) SOLO ADMITEN TEXTO EN LÍNEA.
+  -- EL TEXTO PUEDE SER UN VERSO (SC-49)
   epigraph = {
     nombre = 'Epígrafe', forma = '{texto}{atribución}',
     clase1 = 'epigrafe-texto', clase2 = 'epigrafe-atrib',
-    varios1 = true, varios2 = false, vacia2 = true,
+    varios1 = true, varios2 = false, vacia2 = true, verso1 = true,
   },
   -- LA BARRA ES UNA LÍNEA; EL TEXTO, UNO O MÁS PÁRRAFOS (SC-41)
   recuadrob = {
     nombre = 'Recuadro con barra', forma = '{texto de la barra}{texto del recuadro}',
     clase1 = 'recuadro-barra', clase2 = 'recuadro-texto',
-    varios1 = false, varios2 = true, vacia2 = false,
+    varios1 = false, varios2 = true, vacia2 = false, verso1 = false,
   },
 }
 
--- MARCAS INTERNAS DEL RECORRIDO: NO SON INLINES DE PANDOC
+-- EL VERSO (SC-49) Y LA MARCA QUE LLEVA CUANDO ES EL TEXTO DE UN EPÍGRAFE
+local CLASE_VERSO = 'verse'
+local CLASE_EN_EPIGRAFE = 'en-epigrafe'
+
+-- MARCAS INTERNAS DEL RECORRIDO: NO SON INLINES DE PANDOC. EL VERSO VA
+-- COMO UNA MARCA PROPIA QUE LLEVA SU Div
 local ABRE = { marca = 'abre' }
 local CIERRA = { marca = 'cierra' }
 local PARRAFO = { marca = 'parrafo' }
@@ -69,16 +99,22 @@ end
 -- Propósito : Aplana los párrafos del bloque en una sola secuencia,
 --             separando las llaves del nivel del párrafo de sus Str
 -- Parámetros: el As Div — el bloque
--- Retorna   : table — inlines, marcas ABRE/CIERRA y PARRAFO entre párrafos
+-- Retorna   : table — inlines, marcas ABRE/CIERRA y PARRAFO entre párrafos,
+--             y una marca { marca = 'verso', div = … } por cada verso
 -- ============================================
 local function tokenizar(el, cfg)
   local tokens = {}
   for i, bloque in ipairs(el.content) do
+    if i > 1 then tokens[#tokens + 1] = PARRAFO end
+    if cfg.verso1 and bloque.t == 'Div' and bloque.classes:includes(CLASE_VERSO) then
+      -- UN VERSO (SC-49): DÓNDE QUEDÓ LO DECIDE Div, CON LAS LLAVES YA CONTADAS
+      tokens[#tokens + 1] = { marca = 'verso', div = bloque }
+      goto siguiente
+    end
     -- SOLO PÁRRAFOS: UNA LISTA O UNA TABLA NO ENTRA EN UN EPÍGRAFE
     if bloque.t ~= 'Para' and bloque.t ~= 'Plain' then
       fallar(el, 'solo admite párrafos (hay un ' .. bloque.t .. ')', cfg)
     end
-    if i > 1 then tokens[#tokens + 1] = PARRAFO end
     for _, inl in ipairs(bloque.content) do
       if inl.t == 'Str' then
         -- UNA LLAVE PUEDE VENIR PEGADA AL TEXTO: «.}{Francis» ES UN Str
@@ -97,9 +133,11 @@ local function tokenizar(el, cfg)
         tokens[#tokens + 1] = inl
       end
     end
+    ::siguiente::
   end
   return tokens
 end
+
 
 -- ============================================
 -- Función   : es_blanco
@@ -109,6 +147,42 @@ end
 -- ============================================
 local function es_blanco(t)
   return t.t == 'Space' or t.t == 'SoftBreak' or t.t == 'LineBreak'
+end
+
+-- ============================================
+-- Función   : es_verso
+-- Propósito : Dice si un token es la marca de un verso
+-- Parámetros: t As token
+-- Retorna   : boolean
+-- ============================================
+local function es_verso(t)
+  return type(t) == 'table' and t.marca == 'verso'
+end
+
+-- ============================================
+-- Función   : verso_de
+-- Propósito : El verso de una parte, si lo tiene, controlando que vaya solo
+-- Parámetros: el As Div; tokens As table — los de la parte; cfg As table
+-- Retorna   : Div — el verso; nil si la parte no tiene verso
+-- ============================================
+local function verso_de(el, tokens, cfg)
+  local verso = nil
+  local otra_cosa = false
+
+  for _, t in ipairs(tokens) do
+    if es_verso(t) then
+      if verso then fallar(el, 'la primera parte tiene más de un verso', cfg) end
+      verso = t.div
+    elseif not (t == PARRAFO or (t.t and es_blanco(t))) then
+      otra_cosa = true
+    end
+  end
+
+  -- EL VERSO VA SOLO: UN EPÍGRAFE ES PROSA O VERSO, NO LAS DOS COSAS
+  if verso and otra_cosa then
+    fallar(el, 'la primera parte tiene el verso y además texto: el verso va solo', cfg)
+  end
+  return verso
 end
 
 -- ============================================
@@ -166,6 +240,11 @@ local function partir(el, cfg)
       end
     elseif actual then
       actual[#actual + 1] = t
+    elseif es_verso(t) then
+      -- EL VERSO FUERA DE LAS LLAVES: LAS LLAVES VAN EN SU PROPIO PÁRRAFO
+      fallar(el, 'el verso quedó fuera de las llaves: la llave de apertura y ' ..
+                 'la de cierre van en su propio párrafo, con una línea en ' ..
+                 'blanco antes y después del verso', cfg)
     elseif not (es_blanco(t) or t == PARRAFO) or #partes == 1 then
       -- FUERA DE LAS LLAVES SOLO HAY BLANCOS ANTES Y DESPUÉS DEL TODO;
       -- ENTRE LAS DOS PARTES, NADA: }{ VAN PEGADAS
@@ -192,8 +271,21 @@ function Div(el)
   if not cfg then return nil end
 
   local t1, t2 = partir(el, cfg)
-  local parte1 = a_parrafos(t1)
-  local parte2 = a_parrafos(t2)
+  local verso = verso_de(el, t1, cfg)
+  local parte1, parte2
+
+  -- EL VERSO SOLO PUEDE SER LA PRIMERA PARTE: LA ATRIBUCIÓN ES TEXTO EN LÍNEA
+  for _, t in ipairs(t2) do
+    if es_verso(t) then fallar(el, 'la segunda parte no admite un verso', cfg) end
+  end
+
+  -- LA PRIMERA PARTE ES EL VERSO SOLO (YA CONTROLADO) O PÁRRAFOS
+  if verso then
+    parte1 = { verso }
+  else
+    parte1 = a_parrafos(t1)
+  end
+  parte2 = a_parrafos(t2)
 
   -- LA PRIMERA PARTE ES SIEMPRE OBLIGATORIA. LA SEGUNDA, SEGÚN LA CLASE:
   -- EN EL EPÍGRAFE PUEDE ESTAR VACÍA, Y ENTONCES NO HAY FILETE
@@ -207,7 +299,13 @@ function Div(el)
   end
 
   local bloques1 = {}
-  for _, inl in ipairs(parte1) do bloques1[#bloques1 + 1] = pandoc.Para(inl) end
+  if verso then
+    -- EL VERSO SE MARCA PARA QUE SU SERIALIZADOR SEPA QUE ESTÁ EN UN EPÍGRAFE
+    verso.classes:insert(CLASE_EN_EPIGRAFE)
+    bloques1[1] = verso
+  else
+    for _, inl in ipairs(parte1) do bloques1[#bloques1 + 1] = pandoc.Para(inl) end
+  end
   local hijos = { pandoc.Div(bloques1, pandoc.Attr('', {cfg.clase1})) }
 
   if #parte2 > 0 then

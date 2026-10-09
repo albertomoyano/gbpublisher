@@ -299,7 +299,9 @@ local table_counter = 0
 --   :::{.fig #fig-mapa}              → <fig id="fig-mapa"> (TAMBIÉN .fullwidth)
 --   :::{.table #tbl-cualquier-cosa}  → <table-wrap id="tbl-N">
 --   ::: epigraph {…}{…}              → <disp-quote specific-use="epigraph"> (VÍA dos-partes.lua)
---   ::: verse                        → <verse-group> con <verse-line>
+--   ::: verse                        → <verse-group> CON UN <verse-group> POR
+--                                      ESTROFA Y <verse-line indent-level>
+--                                      (SC-49, VÍA verso.lua)
 --   ~~~ python … ~~~                 → <code language="python"> (codigo.lua, SC-42)
 --   :::{.listado #lst-id}            → <fig id="lst-id" fig-type="listado"> CON EL
 --                                      <code> Y EL PIE (VÍA codigo.lua)
@@ -438,7 +440,13 @@ function Div(el)
     end
     local raw = '<disp-quote specific-use="epigraph">\n'
     for _, parrafo in ipairs(texto.content) do
-      raw = raw .. '  <p>' .. inlines_a_jats(parrafo.content) .. '</p>\n'
+      if parrafo.t == 'RawBlock' then
+        -- UN VERSO (SC-49): YA SERIALIZADO COMO <verse-group>, QUE
+        -- <disp-quote> ADMITE. dos-partes.lua CONTROLÓ QUE VAYA SOLO
+        raw = raw .. parrafo.text .. '\n'
+      else
+        raw = raw .. '  <p>' .. inlines_a_jats(parrafo.content) .. '</p>\n'
+      end
     end
     if atrib then
       raw = raw .. '  <attrib>' .. inlines_a_jats(atrib.content[1].content) .. '</attrib>\n'
@@ -447,47 +455,35 @@ function Div(el)
     return pandoc.RawBlock('jats', raw)
   end
 
-  -- VERSOS: <verse-group> CON CADA LÍNEA EN <verse-line>
-  -- ITERA SOBRE LOS INLINES PARA PRESERVAR SALTOS DE LÍNEA
-  -- QUE pandoc.utils.stringify() COLAPSA EN UNA SOLA LÍNEA
-  -- ESTRUCTURA EN MD:
-  --   ::: verse
-  --   Línea uno
-  --   Línea dos
-  --   :::
+  -- VERSO (SC-49): verso.lua YA CONTROLÓ EL BLOQUE Y LO DEJÓ NORMALIZADO:
+  -- UN Div .estrofa POR ESTROFA Y, ADENTRO, UN Div .linea POR VERSO, CON
+  -- EL NIVEL DE SANGRÍA EN EL ATRIBUTO nivel. ACÁ SOLO SE SERIALIZA:
+  --   <verse-group>
+  --     <verse-group>
+  --       <verse-line>…</verse-line>
+  --       <verse-line indent-level="1">…</verse-line>
+  --     </verse-group>
+  --   </verse-group>
+  -- EL DE AFUERA ES EL POEMA; CADA UNO DE ADENTRO, UNA ESTROFA, AUNQUE
+  -- HAYA UNA SOLA: UNA FORMA ÚNICA PARA LAS HOJAS. indent-level SOLO
+  -- CUANDO HAY SANGRÍA. LOS VERSOS CONSERVAN SUS MARCAS, CITAS Y NOTAS
+  -- (LOS Cite Y LAS Note YA SON <xref> Y <fn>). EN UN EPÍGRAFE ES IGUAL:
+  -- <disp-quote> ADMITE <verse-group>.
   if el.classes:includes('verse') then
-    local tokens = {}
-    for _, block in ipairs(el.content) do
-      if block.t == 'Para' or block.t == 'Plain' then
-        for _, inline in ipairs(block.content) do
-          if inline.t == 'Str' then
-            -- ESCAPAR: el texto va dentro de <verse-line>, contexto de texto de elemento
-            table.insert(tokens, escape_xml_text(inline.text))
-          elseif inline.t == 'SoftBreak' or inline.t == 'LineBreak' then
-            table.insert(tokens, '\n')
-          elseif inline.t == 'Space' then
-            table.insert(tokens, ' ')
-          end
-        end
+    local estrofas = {}
+    for _, estrofa in ipairs(el.content) do
+      local lineas = {}
+      for _, linea in ipairs(estrofa.content) do
+        local nivel = tonumber(linea.attributes['nivel']) or 0
+        local atributo = ''
+        if nivel > 0 then atributo = ' indent-level="' .. nivel .. '"' end
+        lineas[#lineas + 1] = '    <verse-line' .. atributo .. '>' ..
+          (inlines_a_jats(linea.content[1].content)) .. '</verse-line>'
       end
+      estrofas[#estrofas + 1] = '  <verse-group>\n' ..
+        table.concat(lineas, '\n') .. '\n  </verse-group>'
     end
-    local verse_lines = {}
-    local current = {}
-    for _, token in ipairs(tokens) do
-      if token == '\n' then
-        if #current > 0 then
-          table.insert(verse_lines, '  <verse-line>' .. table.concat(current) .. '</verse-line>')
-          current = {}
-        end
-      else
-        table.insert(current, token)
-      end
-    end
-    -- ÚLTIMA LÍNEA SIN SALTO FINAL
-    if #current > 0 then
-      table.insert(verse_lines, '  <verse-line>' .. table.concat(current) .. '</verse-line>')
-    end
-    local raw = '<verse-group>\n' .. table.concat(verse_lines, '\n') .. '\n</verse-group>'
+    local raw = '<verse-group>\n' .. table.concat(estrofas, '\n') .. '\n</verse-group>'
     return pandoc.RawBlock('jats', raw)
   end
 

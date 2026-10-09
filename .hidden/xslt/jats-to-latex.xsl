@@ -39,7 +39,8 @@
   xmlns:mml="http://www.w3.org/1998/Math/MathML"
   xmlns:f="urn:gbpublisher:functions"
   xmlns:gbv="urn:gbpublisher:conversacion"
-  exclude-result-prefixes="xs xlink mml f gbv">
+  xmlns:gbvr="urn:gbpublisher:verso"
+  exclude-result-prefixes="xs xlink mml f gbv gbvr">
 
   <!-- ============================================================ -->
   <!-- MÓDULO COMÚN CON docbook-to-latex.xsl                        -->
@@ -52,6 +53,9 @@
 
   <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="conversacion-comun.xsl"/>
+
+  <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="verso-comun.xsl"/>
 
   <!-- ============================================================ -->
   <!-- SALIDA: TEXTO PLANO, UTF-8                                   -->
@@ -67,7 +71,7 @@
   <!-- COMODÍN DE strip-space.                                        -->
   <xsl:preserve-space elements="preformat code tex-math
     p title article-title subtitle trans-title alt-title label
-    td th term kwd attrib
+    td th term kwd attrib verse-line
     italic bold sc sup sub underline strike overline monospace
     roman sans-serif named-content styled-content abbrev
     ext-link uri xref
@@ -745,26 +749,60 @@
   </xsl:template>
 
 <!-- ============================================================ -->
-<!-- VERSO: verse-group CON verse-line                           -->
-<!-- DISEÑO: bastardilla, sangría 14pt, líneas con \\            -->
-<!-- LA ÚLTIMA LÍNEA NO LLEVA \\ — se detecta con position()     -->
+<!-- VERSO (SC-49): EL ENTORNO verse DEL PAQUETE verse, EN EL       -->
+<!-- PREÁMBULO DE m_XML (GEMELO DEL CONTRATO 14 DE LIBROS). EL       -->
+<!-- <verse-group> DE AFUERA ES EL POEMA; CADA UNO DE ADENTRO, UNA   -->
+<!-- ESTROFA (verso-comun.xsl). CADA VERSO TERMINA EN \\, Y EL      -->
+<!-- ÚLTIMO DE CADA ESTROFA EN \\!, QUE DEJA EL \stanzaskip; EL      -->
+<!-- ÚLTIMO DEL POEMA, EN NADA. LA SANGRÍA ES \vin UNA VEZ POR       -->
+<!-- NIVEL (indent-level). CADA VERSO EMPIEZA CON \relax: \\ MIRA   -->
+<!-- EL CARÁCTER QUE SIGUE, Y UN VERSO QUE EMPIEZA CON [, * O ! SE   -->
+<!-- LEERÍA COMO ARGUMENTO DE \\ (GV-93).                            -->
 <!-- ============================================================ -->
   <xsl:template match="verse-group">
-    <xsl:text>&#10;\begin{verse}&#10;</xsl:text>
-    <xsl:apply-templates select="verse-line"/>
-    <xsl:text>\end{verse}&#10;&#10;</xsl:text>
+    <xsl:call-template name="verso-latex">
+      <xsl:with-param name="poema" select="."/>
+      <xsl:with-param name="entorno" select="'gbverso'"/>
+    </xsl:call-template>
   </xsl:template>
 
-  <xsl:template match="verse-line">
-    <xsl:text>\textit{</xsl:text>
-    <xsl:apply-templates/>
-    <xsl:text>}</xsl:text>
-    <xsl:if test="position() != last()">
-      <xsl:text>\\&#10;</xsl:text>
-    </xsl:if>
-    <xsl:if test="position() = last()">
-      <xsl:text>&#10;</xsl:text>
-    </xsl:if>
+  <!-- ============================================ -->
+  <!-- PLANTILLA : verso-latex                      -->
+  <!-- PROPÓSITO : ESCRIBE UN POEMA EN SU ENTORNO   -->
+  <!-- PARÁMETROS: poema — el verse-group de afuera;-->
+  <!--             entorno — nombre del entorno     -->
+  <!-- ============================================ -->
+  <xsl:template name="verso-latex">
+    <xsl:param name="poema" as="element()"/>
+    <xsl:param name="entorno" as="xs:string"/>
+    <xsl:variable name="estrofas" select="gbvr:estrofas($poema)"/>
+    <xsl:text>&#10;\begin{</xsl:text>
+    <xsl:value-of select="$entorno"/>
+    <xsl:text>}&#10;</xsl:text>
+    <xsl:for-each select="$estrofas">
+      <xsl:variable name="ultima-estrofa" select="position() = last()"/>
+      <xsl:for-each select="gbvr:versos(.)">
+        <xsl:text>\relax</xsl:text>
+        <xsl:for-each select="1 to gbvr:nivel(.)">
+          <xsl:text>\vin</xsl:text>
+        </xsl:for-each>
+        <xsl:text> </xsl:text>
+        <xsl:apply-templates/>
+        <!-- FIN DE VERSO, DE ESTROFA O DEL POEMA -->
+        <xsl:choose>
+          <xsl:when test="position() != last()">
+            <xsl:text>\\</xsl:text>
+          </xsl:when>
+          <xsl:when test="not($ultima-estrofa)">
+            <xsl:text>\\!</xsl:text>
+          </xsl:when>
+        </xsl:choose>
+        <xsl:text>&#10;</xsl:text>
+      </xsl:for-each>
+    </xsl:for-each>
+    <xsl:text>\end{</xsl:text>
+    <xsl:value-of select="$entorno"/>
+    <xsl:text>}&#10;&#10;</xsl:text>
   </xsl:template>
 
 <!-- ============================================================ -->
@@ -1217,9 +1255,17 @@
   <!-- PREÁMBULO (m_XML). SE RECONOCE POR @specific-use, NO POR TENER        -->
   <!-- <attrib>: UN EPÍGRAFE SIN ATRIBUCIÓN SIGUE SIENDO EPÍGRAFE, Y SALE    -->
   <!-- SIN FILETE PORQUE EL SEGUNDO ARGUMENTO LLEGA VACÍO.                   -->
+  <!-- EL TEXTO PUEDE SER UN VERSO (SC-49): VA EN gbversoepigrafe,        -->
+  <!-- DENTRO DEL PRIMER ARGUMENTO.                                      -->
   <xsl:template match="disp-quote[@specific-use='epigraph']">
     <xsl:text>&#10;\gbepigrafe{</xsl:text>
     <xsl:apply-templates select="p"/>
+    <xsl:for-each select="verse-group">
+      <xsl:call-template name="verso-latex">
+        <xsl:with-param name="poema" select="."/>
+        <xsl:with-param name="entorno" select="'gbversoepigrafe'"/>
+      </xsl:call-template>
+    </xsl:for-each>
     <xsl:text>}{</xsl:text>
     <xsl:apply-templates select="attrib[1]/node()"/>
     <xsl:text>}&#10;&#10;</xsl:text>

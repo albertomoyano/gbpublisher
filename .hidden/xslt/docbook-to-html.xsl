@@ -51,7 +51,8 @@ RC APLICADAS:
                 xmlns:nl="urn:gbpublisher:numeracion-libro"
                 xmlns:gbc="urn:gbpublisher:codigo"
                 xmlns:gbv="urn:gbpublisher:conversacion"
-                exclude-result-prefixes="db xs xlink nl gbc gbv">
+                xmlns:gbvr="urn:gbpublisher:verso"
+                exclude-result-prefixes="db xs xlink nl gbc gbv gbvr">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -71,6 +72,9 @@ RC APLICADAS:
 
   <!-- CONVERSACIÓN (SC-43): LA ETIQUETA DE CADA TURNO, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="conversacion-comun.xsl"/>
+
+  <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
+  <xsl:include href="verso-comun.xsl"/>
 
   <!-- Output principal: no se usa en Fase 1 (todo va por xsl:result-document) -->
   <xsl:output method="xml"
@@ -1704,6 +1708,14 @@ RC APLICADAS:
       <xsl:for-each select="db:para | para">
         <p class="epigrafe-texto"><xsl:apply-templates/></p>
       </xsl:for-each>
+      <!-- EL TEXTO PUEDE SER UN VERSO (SC-49): SUS ESTROFAS SON LOS
+           <literallayout> DEL EPÍGRAFE -->
+      <xsl:if test="db:literallayout[@role='verse'] | literallayout[@role='verse']">
+        <xsl:call-template name="verso-html">
+          <xsl:with-param name="poema" select="."/>
+          <xsl:with-param name="clase" select="'verso-epigrafe'"/>
+        </xsl:call-template>
+      </xsl:if>
       <!-- LA ATRIBUCIÓN VA ABAJO, SIN RAYA (SC-35), Y CONSERVA SUS MARCAS -->
       <xsl:if test="db:attribution | attribution">
         <p class="epigrafe-atrib">
@@ -1809,17 +1821,53 @@ RC APLICADAS:
   </xsl:template>
 
   <!-- ==========================================================
-       VERSO (literallayout role="verse") → estrofa
-       ==========================================================
-       Preserva los saltos de línea del original. Cada línea del
-       texto se convierte en una línea de verso. -->
-  <xsl:template match="db:literallayout[@role='verse'] | literallayout[@role='verse']">
-    <div class="verso">
-      <xsl:for-each select="tokenize(., '&#10;')">
-        <xsl:if test="normalize-space(.) != '' or position() &gt; 1">
-          <span class="verso-linea"><xsl:value-of select="normalize-space(.)"/></span>
-          <xsl:text>&#10;</xsl:text>
-        </xsl:if>
+       VERSO (SC-49): <blockquote role="verso">, UN <literallayout>
+       POR ESTROFA Y UN <phrase role="linea"> POR VERSO
+       (verso-comun.xsl). SALE div.verso CON UN div.estrofa POR
+       ESTROFA Y UN span.verso-linea POR VERSO; LA SANGRÍA ES LA
+       CLASE nivel-N, QUE EL CSS RESUELVE CON text-indent (1,5 em
+       POR NIVEL, EL \vgap DEL PDF). LOS VERSOS CONSERVAN SUS MARCAS,
+       CITAS Y NOTAS.
+       ========================================================== -->
+  <xsl:template match="db:blockquote[@role='verso'] | blockquote[@role='verso']" priority="5">
+    <xsl:call-template name="verso-html">
+      <xsl:with-param name="poema" select="."/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- UN <literallayout role="verse"> SUELTO SOLO PUEDE SER DE UN
+       CANÓNICO VIEJO: SE FRENA (gbvr:frenar-si-viejo). SI NO LO FUERA,
+       SALE COMO UN POEMA DE UNA ESTROFA. -->
+  <xsl:template match="db:literallayout[@role='verse'] | literallayout[@role='verse']" priority="5">
+    <xsl:call-template name="verso-html">
+      <xsl:with-param name="poema" select="."/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- ============================================
+       PLANTILLA : verso-html
+       PROPÓSITO : ESCRIBE UN POEMA
+       PARÁMETROS: poema — blockquote, epigraph O literallayout;
+                   clase — clase de más (verso-epigrafe EN UN EPÍGRAFE)
+       ============================================ -->
+  <xsl:template name="verso-html">
+    <xsl:param name="poema" as="element()"/>
+    <xsl:param name="clase" as="xs:string" select="''"/>
+    <xsl:variable name="estrofas" select="if (local-name($poema) = 'literallayout')
+                                          then $poema else gbvr:estrofas($poema)"/>
+    <xsl:call-template name="gbvr:frenar-si-viejo">
+      <xsl:with-param name="estrofas" select="$estrofas"/>
+    </xsl:call-template>
+    <div class="{normalize-space(concat('verso ', $clase))}">
+      <xsl:for-each select="$estrofas">
+        <div class="estrofa">
+          <xsl:for-each select="gbvr:versos(.)">
+            <xsl:variable name="nivel" select="gbvr:nivel(.)"/>
+            <span class="verso-linea{if ($nivel gt 0) then concat(' nivel-', $nivel) else ''}">
+              <xsl:apply-templates/>
+            </span>
+          </xsl:for-each>
+        </div>
       </xsl:for-each>
     </div>
   </xsl:template>
