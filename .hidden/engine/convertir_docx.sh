@@ -241,7 +241,7 @@ fi
 # ESCRITOR: -smart ESCRIBE CADA CARÁCTER TAL COMO LO DEJA EL FILTRO. CON +smart
 #   EL ESCRITOR APLANARÍA EL APÓSTROFO CURVO Y ESCAPARÍA LOS -- Y ... TECLEADOS
 #   (GV-79). RAYAS Y PUNTOS SUSPENSIVOS LOS LLEVA EL FILTRO A LA CONVENCIÓN DE
-#   LaTeX (SC-40); LAS COMILLAS DOBLES, A « ».
+#   LaTeX (SC-40); LAS COMILLAS DOBLES, A « »; LA ELISIÓN [...], A (...).
 # --extract-media=media CON EL TEMPORAL COMO DIRECTORIO DE TRABAJO DEJA
 # REFERENCIAS RELATIVAS media/..., LA CONVENCIÓN DEL PROYECTO
 etapa 3 "Convirtiendo con pandoc"
@@ -334,8 +334,9 @@ valor() {
                comillas_rectas comillas_convertidas comillas_ya_angulares \
                comillas_simples_sin_tocar \
                elipsis_a_tres_puntos semirraya_a_dos_guiones raya_a_tres_guiones \
-               guion_aislado_a_semirraya \
+               guion_aislado_a_semirraya elision_corchetes_a_parentesis \
                aviso_guion_entre_digitos aviso_guion_pegado aviso_enumeracion_punto_guion \
+               aviso_corchetes_con_puntos \
                salto_linea_a_parrafo salto_linea_a_espacio imagenes imagen_no_embebida; do
     printf '%s\t%s\n' "$CLAVE" "$(valor "$CLAVE")"
   done

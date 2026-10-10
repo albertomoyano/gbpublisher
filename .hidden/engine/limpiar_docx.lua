@@ -13,7 +13,7 @@
 -- ============================================================================
 
 -- VERSIÓN DEL FILTRO: VA AL INFORME. CAMBIARLA CON CADA CAMBIO DE COMPORTAMIENTO
-local VERSION_FILTRO = "1.2"
+local VERSION_FILTRO = "1.3"
 
 -- LAS MEDICIONES QUE SOSTIENEN ESTE FILTRO SE HICIERON CON 3.1.3.
 -- EN UNA VERSIÓN MENOR, must_be_at_least ABORTA CON ERROR (PANDOC SALE CON 83)
@@ -315,6 +315,102 @@ local pasada_tipografia = {
   end,
 }
 
+-- --- 5. QUINTA PASADA: LA ELISIÓN VA ENTRE PARÉNTESIS, (...) ---
+-- NORMA DE LA EDITORIAL (SC-40): LA SUPRESIÓN DENTRO DE UNA CITA ES (...); LOS
+-- CORCHETES QUEDAN PARA LAS EXPRESIONES DEL EDITOR, [sic] O [risas], QUE NO SE
+-- TOCAN. VA DESPUÉS DE LA PASADA ANTERIOR: AHÍ U+2026 YA SE VOLVIÓ "...", ASÍ
+-- QUE «[…]» Y «[...]» LLEGAN IGUALES
+
+local ELISION_CORCHETES = "%[%.%.%.%]"
+local ELISION_PARENTESIS = "(...)"
+
+-- ============================================
+-- Función   : unir_elision_espaciada
+-- Propósito : Detecta la elisión escrita con espacios, «[ ... ]», que el
+--             lector parte en varios Str y Space, y la devuelve en un solo Str
+-- Parámetros: inlines As List of Inline — la lista donde buscar
+--             i As number — posición del Str que trae el corchete de apertura
+-- Retorna   : Inline, number — el Str unido y la última posición que abarca,
+--             o nil si a partir de i no hay una elisión espaciada
+-- ============================================
+local function unir_elision_espaciada(inlines, i)
+  local partes = {}
+  local hay_espacio = false
+  local unido, antes, despues
+
+  -- --- 1. SOLO SE MIRA SI EL Str TERMINA CON EL CORCHETE O CON «[...» ---
+  if not (inlines[i].text:find("%[$") or inlines[i].text:find("%[%.%.%.$")) then
+    return nil
+  end
+
+  -- --- 2. HASTA CUATRO INLINES MÁS, SOLO Str Y Space: «[», « », «...», « », «]» ---
+  partes[1] = inlines[i].text
+  for j = i + 1, math.min(i + 4, #inlines) do
+    local el = inlines[j]
+    if el.t == "Space" then
+      hay_espacio = true
+      partes[#partes + 1] = " "
+    elseif el.t == "Str" then
+      partes[#partes + 1] = el.text
+      unido = table.concat(partes)
+      -- EL CORCHETE DE APERTURA TIENE QUE ESTAR EN EL PRIMER Str: SE ANCLA AL
+      -- LARGO DE ESE PRIMER TRAMO PARA NO CAPTURAR UN «[» POSTERIOR
+      antes, despues = unido:match("^(.-)%[%s*%.%.%.%s*%](.*)$")
+      if antes and hay_espacio and #antes < #partes[1] then
+        return pandoc.Str(antes .. ELISION_PARENTESIS .. despues), j
+      end
+    else
+      return nil
+    end
+  end
+  return nil
+end
+
+local pasada_elision = {
+  Inlines = function(inlines)
+    local salida = pandoc.List()
+    local i = 1
+    local cambio = false
+    local el, n, unido, ultimo
+
+    while i <= #inlines do
+      el = inlines[i]
+
+      if el.t == "Str" then
+        -- --- 1. ELISIÓN DENTRO DE UN SOLO Str: «[...]», «palabra[...]», «[...].» ---
+        local texto = el.text
+        texto, n = texto:gsub(ELISION_CORCHETES, ELISION_PARENTESIS)
+        if n > 0 then
+          sumar("elision_corchetes_a_parentesis", n)
+          el = pandoc.Str(texto)
+          cambio = true
+        end
+
+        -- --- 2. ELISIÓN CON ESPACIOS ADENTRO: «[ ... ]» ---
+        unido, ultimo = unir_elision_espaciada(inlines, i)
+        if unido then
+          sumar("elision_corchetes_a_parentesis")
+          el = unido
+          i = ultimo
+          cambio = true
+        end
+
+        -- --- 3. AVISO: CORCHETES CON OTRA CANTIDAD DE PUNTOS, «[..]» O «[....]» ---
+        -- NO SE CONVIERTE: PUEDE SER UN ERROR DE TIPEO O UNA MARCA PROPIA DEL AUTOR
+        if el.text:find("%[%.%.?%]") or el.text:find("%[%.%.%.%.+%]") then
+          sumar("aviso_corchetes_con_puntos")
+        end
+      end
+
+      salida:insert(el)
+      i = i + 1
+    end
+
+    if not cambio then return nil end
+    return salida
+  end,
+}
+
 -- ============================================
 -- Función   : normalizar_comillas
 -- Propósito : Lleva todas las comillas dobles de un bloque a « »
@@ -395,7 +491,7 @@ local function normalizar_comillas(bloque)
   })
 end
 
--- --- 5. QUINTA PASADA: TODAS LAS COMILLAS DOBLES A « » ---
+-- --- 6. SEXTA PASADA: TODAS LAS COMILLAS DOBLES A « » ---
 -- VA ANTES DE PARTIR LOS PÁRRAFOS POR SALTO DE LÍNEA: ASÍ LA ALTERNANCIA DE
 -- LAS RECTAS SE DECIDE SOBRE EL PÁRRAFO COMPLETO DE WORD
 local pasada_comillas = {
@@ -404,7 +500,7 @@ local pasada_comillas = {
   Header = normalizar_comillas,
 }
 
--- --- 6. SEXTA PASADA: SALTOS DE LÍNEA DONDE UN PÁRRAFO NUEVO CAMBIARÍA LA ESTRUCTURA ---
+-- --- 7. SÉPTIMA PASADA: SALTOS DE LÍNEA DONDE UN PÁRRAFO NUEVO CAMBIARÍA LA ESTRUCTURA ---
 -- EN TÍTULOS, CELDAS DE TABLA E ÍTEMS DE LISTA EL SALTO PASA A ESPACIO.
 -- Header, Table Y LAS LISTAS SE PROCESAN ACÁ, ANTES DE PARTIR PÁRRAFOS
 local function salto_a_espacio(bloque)
@@ -424,7 +520,7 @@ local pasada_saltos_estructura = {
   OrderedList = function(el) return salto_a_espacio(el), false end,
 }
 
--- --- 7. SÉPTIMA PASADA: EN PÁRRAFOS, EL SALTO DE LÍNEA ABRE UN PÁRRAFO NUEVO ---
+-- --- 8. OCTAVA PASADA: EN PÁRRAFOS, EL SALTO DE LÍNEA ABRE UN PÁRRAFO NUEVO ---
 local pasada_saltos_parrafo = {
   Para = function(el)
     local hay_salto = false
@@ -452,7 +548,7 @@ local pasada_saltos_parrafo = {
   end,
 }
 
--- --- 8. OCTAVA PASADA: COMPACTAR ESPACIOS Y ESCRIBIR EL CONTEO ---
+-- --- 9. NOVENA PASADA: COMPACTAR ESPACIOS Y ESCRIBIR EL CONTEO ---
 local pasada_final = {
   Para   = function(el) el.content = compactar(el.content); return el end,
   Plain  = function(el) el.content = compactar(el.content); return el end,
@@ -478,6 +574,7 @@ return {
   pasada_metadatos,
   pasada_limpieza,
   pasada_tipografia,
+  pasada_elision,
   pasada_comillas,
   pasada_saltos_estructura,
   pasada_saltos_parrafo,

@@ -2185,9 +2185,9 @@ Pandoc 3.1.3 con las cadenas reales de revista y de libro; SaxonJ-HE 12.5 con `e
 
 **PENDIENTE:** Probar en Mint con un libro y una revista reales: inserción con el modo separador-valor, PDF compilado, y HTML y EPUB sin rastro. Las hojas de HTML y EPUB de libros no se corrieron sueltas (piden el manifiesto del libro): el resultado se apoya en la regla incorporada y en que no tienen identidad ni copy-of sobre el contenido.
 
-### SC-40 — Rayas y puntos suspensivos en el .md: la convención de LaTeX
+### SC-40 — Rayas, puntos suspensivos y elisión en el .md
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 / engine/limpiar_docx.lua 1.2 / contenedor · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 / engine/limpiar_docx.lua 1.3 / contenedor · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisión de Alberto). En el .md, la semirraya, la raya y los puntos suspensivos se escriben como en LaTeX:
 
@@ -2214,6 +2214,12 @@ El guion aislado nunca es un guion de unión: es una semirraya mal tecleada.
 
 El escritor sigue siendo `--to=markdown-smart`. Con `+smart` el propio Pandoc haría la conversión, pero aplanaría el apóstrofo curvo, que el filtro deja a propósito, y escaparía los `--` y `...` tecleados (GV-79).
 
+ELISIÓN: (...), NUNCA [...]
+
+Norma de la editorial (decisión de Alberto): la supresión dentro de una cita se marca con puntos suspensivos entre paréntesis, `(...)`. Los corchetes quedan para las expresiones del editor, como `[sic]` o `[risas]`, que el filtro no toca.
+
+Desde la versión 1.3, el filtro convierte la elisión entre corchetes en todas sus formas: «[...]», «[…]» (después de pasar U+2026 a `...`), pegada a la palabra o a la puntuación («palabra[…].») y con espacios adentro («[ … ]»), que el lector parte en varios `Str` y se une en uno. Vale también dentro de una cursiva o de una nota; el código en línea no se toca.
+
 LO QUE NO SE CONVIERTE: AVISOS
 
 El filtro cuenta, el informe de la conversión lo muestra y el texto queda como llegó:
@@ -2221,8 +2227,9 @@ El filtro cuenta, el informe de la conversión lo muestra y el texto queda como 
 - `aviso_guion_entre_digitos`: «10-20» puede ser un rango, pero también una fecha, un ISBN o un teléfono. Cuenta casos, no palabras.
 - `aviso_guion_pegado`: un guion pegado a una palabra en posición de inciso, «-inciso-». Es una corrección mal hecha. Cuenta también el prefijo suspendido («pre- y posguerra»), que es correcto.
 - `aviso_enumeracion_punto_guion`: «4.-», «a.-». Es una corrección mal hecha: en la editorial se elimina.
+- `aviso_corchetes_con_puntos`: corchetes con dos puntos o con cuatro o más, «[..]», «[....]». Puede ser un error de tipeo o una marca propia del autor.
 
-Las cuatro conversiones también tienen su clave en el informe: `elipsis_a_tres_puntos`, `semirraya_a_dos_guiones`, `raya_a_tres_guiones` y `guion_aislado_a_semirraya`.
+Las conversiones también tienen su clave en el informe: `elipsis_a_tres_puntos`, `semirraya_a_dos_guiones`, `raya_a_tres_guiones`, `guion_aislado_a_semirraya` y `elision_corchetes_a_parentesis`.
 
 **Relaciones:** vinculo:SC-31,apoya:GV-79,vinculo:GV-47
 
