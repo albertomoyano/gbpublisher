@@ -9,9 +9,10 @@
 '             adelante y log.
 '
 '             ES MODAL (m_BuscarRegex.BuscarRegex): nadie escribe a mano en el
-'             editor mientras está abierto. Por eso, al elegir una fila, el
-'             editor muestra la coincidencia, en cualquier archivo, sin riesgo
-'             de posiciones viejas (m_BuscarRegex.MostrarCoincidencia). Después
+'             editor mientras está abierto. Por eso, al hacer click en una fila
+'             (Click, no Select: GV-78), el editor muestra la coincidencia, en
+'             cualquier archivo, sin riesgo de posiciones viejas
+'             (m_BuscarRegex.MostrarCoincidencia). Después
 '             de reemplazar, lo escrito se recarga en el acto
 '             (m_BuscarRegex.TrasReemplazo) y se vuelve a buscar (SC-51).
 '
@@ -51,9 +52,9 @@ Private $bCancelado As Boolean        ' EL Kill FUE PEDIDO POR EL USUARIO (MT-B)
 Private $bBuscando As Boolean
 
 ' --- LA GRILLA SE VUELVE A LLENAR DESDE EL CÓDIGO ---
-' CAMBIAR Rows.Count PUEDE MOVER LA FILA ACTUAL Y EMITIR Select (GV-78). ESO NO
-' ES UNA ELECCIÓN DEL USUARIO: NO DEBE MOVER EL EDITOR, QUE DESPUÉS DE UN
-' REEMPLAZO QUEDA EN EL ÚLTIMO ARCHIVO CAMBIADO (SC-51)
+' CAMBIAR Rows.Count PUEDE MOVER LA FILA ACTUAL Y EMITIR Change (GV-78). EL
+' PREVIEW NO SE ACTUALIZA ENTONCES. EL EDITOR NO CORRE RIESGO: SE MUEVE DESDE
+' Click, QUE EL CÓDIGO NUNCA DISPARA
 Private $bRepoblando As Boolean
 
 ' --- MODELO DE RESULTADOS ---
@@ -367,19 +368,69 @@ Public Sub gvResultados_Data(Row As Integer, Column As Integer)
 
 End
 
-' EVENTO Select DE LA GRILLA: MOSTRAR EL PREVIEW DE LA COINCIDENCIA ACTIVA
-Public Sub gvResultados_Select()
-
-  Dim aReg As String[]
-  Dim iFila As Integer
-  Dim sLineaOriginal As String
-  Dim sLineaResultante As String
-  Dim sTexto As String
+' ============================================
+' Función   : gvResultados_Change
+' Propósito : MUESTRA EN txtContexto EL PREVIEW DE LA FILA ACTUAL. VA EN Change:
+'             LO EMITE MoveTo CADA VEZ QUE CAMBIA LA FILA, CON EL MOUSE O CON LAS
+'             FLECHAS, EN CUALQUIER MODO DE SELECCIÓN (GV-78). NO MUEVE EL EDITOR
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvResultados_Change()
 
   ' UNA FILA MOVIDA POR EL CÓDIGO AL VOLVER A LLENAR LA GRILLA NO SE MUESTRA
   If $bRepoblando Then Return
 
+  MostrarPreview(gvResultados.Row)
+
+End
+
+' ============================================
+' Función   : gvResultados_Click
+' Propósito : LLEVA EL EDITOR A LA COINCIDENCIA DE LA FILA CLICKEADA (SC-51). VA
+'             EN Click Y NO EN Select, COMO TODA NAVEGACIÓN DESDE UNA GRILLA DEL
+'             PROYECTO (GV-78; FMain.gvResultados_Click, FVariantes.gvEjemplos_Click).
+'             EN Select.Multiple, Select AVISA QUE CAMBIÓ LA SELECCIÓN, NO QUE SE
+'             ELIGIÓ UNA FILA: UN CLICK SOBRE UNA FILA YA SELECCIONADA NO LO
+'             EMITE, Y MoveTo SOLO LO EMITE EN Select.Single. Click SALE ÚNICAMENTE
+'             DEL MOUSE SOBRE UNA CELDA, DIFERIDO, CON Row YA ACTUALIZADO; LLENAR
+'             LA GRILLA DESDE EL CÓDIGO NUNCA LO DISPARA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvResultados_Click()
+
+  Dim iFila As Integer
+  Dim aReg As String[]
+
+  ' --- 1. LA FILA CLICKEADA ---
   iFila = gvResultados.Row
+  If iFila < 0 Or If iFila >= $aResultados.Count Then Return
+  aReg = $aResultados[iFila]
+
+  ' --- 2. EL PREVIEW TAMBIÉN, POR SI Change NO CORRIÓ (CLICK SOBRE LA FILA ACTUAL) ---
+  MostrarPreview(iFila)
+
+  ' --- 3. EL EDITOR: ARCHIVO, PÁRRAFO ARRIBA Y SELECCIÓN ---
+  ' LÍNEA Y COLUMNA BASE 0, TAL COMO LAS DA EL SCRIPT
+  m_BuscarRegex.MostrarCoincidencia(aReg[C_ARCHIVO], CInt(aReg[C_LINEA]), CInt(aReg[C_COLUMNA]), CInt(aReg[C_LARGO]))
+
+End
+
+' ============================================
+' Función   : MostrarPreview
+' Propósito : ESCRIBE EN txtContexto EL ARCHIVO, LA POSICIÓN Y LA LÍNEA ANTES Y
+'             DESPUÉS DEL REEMPLAZO DE UNA COINCIDENCIA
+' Parámetros: iFila As Integer — fila de la grilla (índice en $aResultados)
+' Retorna   : nada
+' ============================================
+Private Sub MostrarPreview(iFila As Integer)
+
+  Dim aReg As String[]
+  Dim sLineaOriginal As String
+  Dim sLineaResultante As String
+  Dim sTexto As String
+
   If iFila < 0 Or If iFila >= $aResultados.Count Then Return
   aReg = $aResultados[iFila]
 
@@ -403,10 +454,6 @@ Public Sub gvResultados_Select()
   Endif
 
   txtContexto.Text = sTexto
-
-  ' --- 4. EL EDITOR MUESTRA LA COINCIDENCIA: ARCHIVO, PÁRRAFO ARRIBA Y SELECCIÓN ---
-  ' LÍNEA Y COLUMNA BASE 0, TAL COMO LAS DA EL SCRIPT
-  m_BuscarRegex.MostrarCoincidencia(aReg[C_ARCHIVO], CInt(aReg[C_LINEA]), CInt(aReg[C_COLUMNA]), CInt(aReg[C_LARGO]))
 
 End
 
