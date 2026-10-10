@@ -1,0 +1,745 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_PatronesRegex
+' Propósito : BIBLIOTECA PERSONAL DE PATRONES DEL BUSCADOR POR EXPRESIONES
+'             REGULARES (SC-51). Maneja los datos: carga, consulta, alta,
+'             baja, exportación e importación. La pestaña RegExp de FMain la
+'             gobierna m_BuscarRegex; este módulo no toca sus controles.
+'
+'             UN PATRÓN ES UN ARCHIVO EN ~/.gbpublisher/regex/: <nombre>.json,
+'             CON UN SOLO PATRÓN DENTRO. EL MISMO FORMATO SIRVE PARA GUARDAR,
+'             PARA COMPARTIR Y PARA IMPORTAR (EN ESTE ÚLTIMO CASO PUEDE TRAER
+'             VARIOS). NO HAY JUEGO DE LA CASA NI NADA EN LA BASE.
+'
+'             LA CARPETA LA CREA m_InicioCierre.DirectorioOcultoApp(). NO ENTRA
+'             EN LA LISTA DE COPIA DE SC-11: NO HAY NADA QUE COPIAR DESDE EL
+'             SISTEMA (MISMO CRITERIO QUE LOS SNIPPETS, SC-21).
+'
+'             UN PATRÓN AJENO NO ES UN RIESGO: EL REEMPLAZO LO EXPANDE PERL A
+'             MANO, SIN /e (RC-PL-01), Y PERL RECHAZA (?{...}) EN UN PATRÓN QUE
+'             VIENE DE VARIABLE. AL IMPORTAR, CADA PATRÓN PASA POR EL MODO
+'             validar DEL MOTOR ANTES DE ESCRIBIRSE.
+'
+' Formato   : JSON (gb.util.web), sobre con formato y versión:
+'               { "formato": "gbpublisher-regex", "version": 1,
+'                 "patrones": [ { "nombre", "descripcion", "patron",
+'                                 "reemplazo", "flags", "texto_prueba" } ] }
+'             Obligatorios: nombre y patron. Los demás, si faltan, valen "".
+'             LA LECTURA NO SE APOYA EN Exist PARA LOS CAMPOS OPCIONALES:
+'             UNA CLAVE CON "" NO EXISTE EN UNA Collection (GV-68). SE LEEN CON
+'             Campo(), QUE DEVUELVE "" SI LA CLAVE NO ESTÁ.
+' ============================================
+
+' --- IDENTIFICACIÓN DEL FORMATO ---
+Private Const FORMATO As String = "gbpublisher-regex"
+Private Const VERSION_FORMATO As Integer = 1
+
+' --- EXTENSIÓN DE LOS ARCHIVOS DE PATRÓN ---
+Private Const EXTENSION As String = "json"
+
+' --- LARGO MÁXIMO DEL NOMBRE (EN CARACTERES) ---
+Public Const LARGO_MAX_NOMBRE As Integer = 60
+
+' --- FLAGS ADMITIDOS, EN EL ORDEN CANÓNICO EN QUE SE GUARDAN ---
+Private Const FLAGS_ADMITIDOS As String = "imsx"
+
+' --- RESPUESTA DE FGuardarPatron (ShowModal DEVUELVE EL VALOR DE Me.Close) ---
+Public Const ACCION_CANCELAR As Integer = 0
+Public Const ACCION_GUARDAR As Integer = 1
+
+' --- DATOS ELEGIDOS EN FGuardarPatron: LA DECISIÓN VUELVE POR ShowModal Y
+'     LOS DATOS VAN AL MÓDULO (PATRÓN DE m_BuscarBib.RegistrarEleccion) ---
+Public sEleccionNombre As String
+Public sEleccionDescripcion As String
+Public sEleccionTextoPrueba As String
+
+' --- PATRONES CARGADOS: NOMBRES ORDENADOS Y PATRONES POR NOMBRE ---
+' LA CLAVE DE LA Collection ES SENSIBLE A MAYÚSCULAS (GV-04); LOS NOMBRES
+' VÁLIDOS SON SIEMPRE MINÚSCULAS
+Private $aNombres As New String[]
+Private $cPatrones As New Collection
+
+' ============================================
+' Función   : RutaCarpeta
+' Propósito : Ruta de la carpeta de patrones del usuario
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta de ~/.gbpublisher/regex
+' ============================================
+Public Function RutaCarpeta() As String
+
+  Return User.Home &/ ".gbpublisher" &/ "regex"
+
+End
+
+' ============================================
+' Función   : RutaArchivo
+' Propósito : Ruta del archivo de un patrón a partir de su nombre
+' Parámetros: sNombre As String — nombre del patrón
+' Retorna   : String — ruta absoluta de <nombre>.json
+' ============================================
+Private Function RutaArchivo(sNombre As String) As String
+
+  Return RutaCarpeta() &/ sNombre & "." & EXTENSION
+
+End
+
+' ============================================
+' Función   : NombreValido
+' Propósito : Verifica que un nombre tenga entre 1 y LARGO_MAX_NOMBRE
+'             caracteres, cada uno en a-z, 0-9 o guion. El nombre es el nombre
+'             del archivo: se excluyen las mayúsculas (Linux distingue y en
+'             pantalla se confunden) y todo lo que no sea ASCII. Lo legible va
+'             en la descripción (SC-51)
+' Parámetros: sNombre As String — nombre a verificar
+' Retorna   : Boolean — True si el nombre es válido
+' ============================================
+Public Function NombreValido(sNombre As String) As Boolean
+
+  Dim iLargo As Integer
+  Dim iPos As Integer
+  Dim iCodigo As Integer
+
+  ' --- 1. LARGO, CONTADO EN CARACTERES Y NO EN BYTES (RC-GM-12) ---
+  iLargo = String.Len(sNombre)
+  If iLargo = 0 Then Return False
+  If iLargo > LARGO_MAX_NOMBRE Then Return False
+
+  ' --- 2. CADA CARÁCTER EN a-z, 0-9 O GUION ---
+  ' IF ANIDADOS Y NO And (RC-GM-17, GV-12)
+  For iPos = 1 To iLargo
+    iCodigo = String.Code(String.Mid(sNombre, iPos, 1))
+
+    ' GUION: 45
+    If iCodigo = 45 Then Continue
+
+    ' DÍGITOS: 48 A 57
+    If iCodigo >= 48 Then
+      If iCodigo <= 57 Then Continue
+    Endif
+
+    ' MINÚSCULAS ASCII: 97 A 122
+    If iCodigo >= 97 Then
+      If iCodigo <= 122 Then Continue
+    Endif
+
+    Return False
+  Next
+
+  ' --- 3. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : NormalizarFlags
+' Propósito : Devuelve los flags en el orden canónico imsx y sin repetir, para
+'             comparar y guardar siempre igual. No valida: un carácter que no
+'             es un flag admitido simplemente no aparece en la salida
+' Parámetros: sFlags As String — flags en cualquier orden
+' Retorna   : String — subconjunto de "imsx" en ese orden; "" si no hay
+' ============================================
+Public Function NormalizarFlags(sFlags As String) As String
+
+  Dim sSalida As String
+  Dim iPos As Integer
+  Dim sFlag As String
+
+  ' RECORRER LOS ADMITIDOS EN SU ORDEN Y CONSERVAR LOS PRESENTES
+  For iPos = 1 To Len(FLAGS_ADMITIDOS)
+    sFlag = Mid(FLAGS_ADMITIDOS, iPos, 1)
+    If InStr(sFlags, sFlag) > 0 Then sSalida &= sFlag
+  Next
+
+  Return sSalida
+
+End
+
+' ============================================
+' Función   : FlagsValidos
+' Propósito : Verifica que una cadena de flags contenga solo i, m, s o x
+' Parámetros: sFlags As String — flags a verificar
+' Retorna   : Boolean — True si todos los caracteres son flags admitidos
+' ============================================
+Private Function FlagsValidos(sFlags As String) As Boolean
+
+  Dim iPos As Integer
+
+  ' SE RECORRE EN CARACTERES (RC-GM-12): UN CARÁCTER NO ASCII NO ESTÁ EN LA
+  ' LISTA Y HACE FALLAR LA VERIFICACIÓN, EN VEZ DE PARTIRSE EN BYTES
+  For iPos = 1 To String.Len(sFlags)
+    If InStr(FLAGS_ADMITIDOS, String.Mid(sFlags, iPos, 1)) = 0 Then Return False
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Campo
+' Propósito : Lee un campo de un patrón; "" si la clave no está. Es la única
+'             forma de lectura: una clave con "" no existe en una Collection
+'             (GV-68), así que Exist no distingue «vacío» de «ausente»
+' Parámetros: cPatron As Collection — el patrón
+'             sClave As String — nombre del campo
+' Retorna   : String — valor del campo; "" si no está o no es texto
+' ============================================
+Public Function Campo(cPatron As Collection, sClave As String) As String
+
+  ' IF SEPARADOS: SOBRE UN Null, Exist DARÍA ERROR (RC-GM-17)
+  If IsNull(cPatron) Then Return ""
+  If Not cPatron.Exist(sClave) Then Return ""
+
+  ' UN VALOR QUE NO ES TEXTO (UN NÚMERO, UN OBJETO, EN UN JSON AJENO) SE TRATA
+  ' COMO AUSENTE: CONVERTIR UN OBJETO A String DARÍA Type mismatch
+  If TypeOf(cPatron[sClave]) <> gb.String Then Return ""
+  Return cPatron[sClave]
+
+End
+
+' ============================================
+' Función   : Cargar
+' Propósito : Lee todos los patrones de la carpeta. Los archivos con otro
+'             nombre (respaldos con ~, ajenos) se ignoran en silencio; los que
+'             tienen nombre de patrón pero no se pueden usar se informan en un
+'             solo aviso, para que no desaparezcan sin explicación (GV-23)
+' Parámetros: ninguno
+' Retorna   : Boolean — True si la carpeta se pudo leer
+' ============================================
+Public Function Cargar() As Boolean
+
+  Dim sCarpeta As String
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+  Dim sNombre As String
+  Dim sTexto As String
+  Dim sProblema As String
+  Dim aPatrones As New Collection[]
+  Dim aDescartados As New String[]
+  Dim aProblemas As New String[]
+
+  ' --- 1. INICIALIZACIÓN: SE DESCARTA LO CARGADO ANTES ---
+  $aNombres.Clear()
+  $cPatrones.Clear()
+  sCarpeta = RutaCarpeta()
+
+  ' --- 2. LA CARPETA TIENE QUE EXISTIR ---
+  ' IsDir Y NO Exist: Exist TAMBIÉN DA True PARA UN ARCHIVO (GV-01)
+  If Not IsDir(sCarpeta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No existe la carpeta de patrones:" & Chr(10) & sCarpeta & Chr(10) & Chr(10) &
+      "Se crea al iniciar la aplicación. Cierre gbpublisher y vuelva a abrirlo.")
+    Return False
+  Endif
+
+  ' --- 3. LISTAR LOS ARCHIVOS ---
+  Try aArchivos = Dir(sCarpeta, "*." & EXTENSION, gb.File)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la carpeta de patrones:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+  aArchivos.Sort()
+
+  ' --- 4. LEER CADA PATRÓN ---
+  For Each sArchivo In aArchivos
+
+    ' SE IGNORA TODO ARCHIVO CUYO NOMBRE NO SEA UN NOMBRE DE PATRÓN
+    If File.Ext(sArchivo) <> EXTENSION Then Continue
+    sNombre = File.BaseName(sArchivo)
+    If Not NombreValido(sNombre) Then Continue
+
+    Try sTexto = File.Load(sCarpeta &/ sArchivo)
+    If Error Then
+      aDescartados.Add(sArchivo & ": " & Error.Text)
+      Continue
+    Endif
+
+    ' EL SOBRE TIENE QUE SER VÁLIDO Y TRAER EXACTAMENTE UN PATRÓN
+    aPatrones.Clear()
+    aProblemas.Clear()
+    sProblema = Decodificar(sTexto, aPatrones, aProblemas)
+    If sProblema <> "" Then
+      aDescartados.Add(sArchivo & ": " & sProblema)
+      Continue
+    Endif
+    If aProblemas.Count > 0 Then
+      aDescartados.Add(sArchivo & ": " & aProblemas[0])
+      Continue
+    Endif
+    If aPatrones.Count <> 1 Then
+      aDescartados.Add(sArchivo & ": tiene " & aPatrones.Count & " patrones; en la carpeta va uno por archivo")
+      Continue
+    Endif
+
+    ' EL NOMBRE INTERNO TIENE QUE COINCIDIR CON EL DEL ARCHIVO: ES LA CLAVE
+    If Campo(aPatrones[0], "nombre") <> sNombre Then
+      aDescartados.Add(sArchivo & ": el nombre interno es «" & Campo(aPatrones[0], "nombre") & "»")
+      Continue
+    Endif
+
+    $aNombres.Add(sNombre)
+    $cPatrones[sNombre] = aPatrones[0]
+
+  Next
+
+  ' --- 5. INFORMAR LO QUE NO SE PUDO USAR ---
+  If aDescartados.Count > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Estos archivos de la carpeta de patrones no se pudieron usar y quedan fuera de la lista:" & Chr(10) & Chr(10) &
+      aDescartados.Join(Chr(10)) & Chr(10) & Chr(10) & "Carpeta: " & sCarpeta)
+  Endif
+
+  ' --- 6. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Nombres
+' Propósito : Nombres de los patrones cargados, en orden alfabético
+' Parámetros: ninguno
+' Retorna   : String[] — copia de la lista (el llamador no altera la interna)
+' ============================================
+Public Function Nombres() As String[]
+
+  Return $aNombres.Copy()
+
+End
+
+' ============================================
+' Función   : Existe
+' Propósito : Indica si hay un patrón cargado con ese nombre
+' Parámetros: sNombre As String — nombre del patrón
+' Retorna   : Boolean
+' ============================================
+Public Function Existe(sNombre As String) As Boolean
+
+  Return $cPatrones.Exist(sNombre)
+
+End
+
+' ============================================
+' Función   : Patron
+' Propósito : Devuelve el patrón cargado con ese nombre
+' Parámetros: sNombre As String — nombre del patrón
+' Retorna   : Collection — el patrón, o Null si no existe
+' ============================================
+Public Function Patron(sNombre As String) As Collection
+
+  If Not $cPatrones.Exist(sNombre) Then Return Null
+  Return $cPatrones[sNombre]
+
+End
+
+' ============================================
+' Función   : NuevoPatron
+' Propósito : Arma un patrón con los seis campos, ya normalizados los flags.
+'             Es la única forma de construir uno desde la interfaz
+' Parámetros: sNombre, sDescripcion, sPatron, sReemplazo, sFlags,
+'             sTextoPrueba As String — los campos
+' Retorna   : Collection — el patrón
+' ============================================
+Public Function NuevoPatron(sNombre As String, sDescripcion As String, sPatron As String, sReemplazo As String, sFlags As String, sTextoPrueba As String) As Collection
+
+  Dim cPatron As New Collection
+
+  ' UNA ASIGNACIÓN DE "" NO CREA LA CLAVE (GV-68): SE LEE SIEMPRE CON Campo()
+  cPatron["nombre"] = sNombre
+  cPatron["descripcion"] = sDescripcion
+  cPatron["patron"] = sPatron
+  cPatron["reemplazo"] = sReemplazo
+  cPatron["flags"] = NormalizarFlags(sFlags)
+  cPatron["texto_prueba"] = sTextoPrueba
+
+  Return cPatron
+
+End
+
+' ============================================
+' Función   : Iguales
+' Propósito : Compara dos patrones campo por campo (los seis)
+' Parámetros: cA As Collection, cB As Collection — patrones a comparar
+' Retorna   : Boolean — True si todos los campos coinciden
+' ============================================
+Public Function Iguales(cA As Collection, cB As Collection) As Boolean
+
+  Dim sClave As String
+
+  ' = DISTINGUE MAYÚSCULAS EN GAMBAS; == NO, Y ACÁ NO SIRVE
+  For Each sClave In ["nombre", "descripcion", "patron", "reemplazo", "flags", "texto_prueba"]
+    If Campo(cA, sClave) <> Campo(cB, sClave) Then Return False
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Codificar
+' Propósito : Escribe el texto JSON de un archivo de patrón, con UN patrón.
+'             Se arma a mano, con sangría, para que el archivo se pueda leer y
+'             corregir en un editor de texto; cada valor pasa por JSON.Encode,
+'             que se encarga del escape. Siempre van los seis campos
+' Parámetros: cPatron As Collection — el patrón
+' Retorna   : String — el contenido del archivo, con salto final
+' ============================================
+Private Function Codificar(cPatron As Collection) As String
+
+  Dim aLineas As New String[]
+
+  aLineas.Add("{")
+  aLineas.Add("  " & JSON.Encode("formato") & ": " & JSON.Encode(FORMATO) & ",")
+  aLineas.Add("  " & JSON.Encode("version") & ": " & CStr(VERSION_FORMATO) & ",")
+  aLineas.Add("  " & JSON.Encode("patrones") & ": [")
+  aLineas.Add("    {")
+  aLineas.Add("      " & JSON.Encode("nombre") & ": " & JSON.Encode(Campo(cPatron, "nombre")) & ",")
+  aLineas.Add("      " & JSON.Encode("descripcion") & ": " & JSON.Encode(Campo(cPatron, "descripcion")) & ",")
+  aLineas.Add("      " & JSON.Encode("patron") & ": " & JSON.Encode(Campo(cPatron, "patron")) & ",")
+  aLineas.Add("      " & JSON.Encode("reemplazo") & ": " & JSON.Encode(Campo(cPatron, "reemplazo")) & ",")
+  aLineas.Add("      " & JSON.Encode("flags") & ": " & JSON.Encode(Campo(cPatron, "flags")) & ",")
+  aLineas.Add("      " & JSON.Encode("texto_prueba") & ": " & JSON.Encode(Campo(cPatron, "texto_prueba")))
+  aLineas.Add("    }")
+  aLineas.Add("  ]")
+  aLineas.Add("}")
+
+  Return aLineas.Join(Chr(10)) & Chr(10)
+
+End
+
+' ============================================
+' Función   : Decodificar
+' Propósito : Lee un texto JSON de patrones. Controla el sobre (formato,
+'             versión, lista) y cada elemento por separado: un elemento malo
+'             no invalida a los demás, se informa en aProblemas
+' Parámetros: sTexto As String — contenido del archivo
+'             aDestino As Collection[] — recibe los patrones válidos, ya
+'                                        normalizados (se modifica)
+'             aProblemas As String[] — recibe un renglón por elemento
+'                                      descartado (se modifica)
+' Retorna   : String — "" si el sobre es válido; si no, el motivo
+' ============================================
+Private Function Decodificar(sTexto As String, aDestino As Collection[], aProblemas As String[]) As String
+
+  Dim cRaiz As Collection
+  Dim vLista As Variant
+  Dim aLista As Variant[]
+  Dim vElemento As Variant
+  Dim cLimpio As Collection
+  Dim sProblema As String
+  Dim iNumero As Integer
+
+  ' --- 1. JSON BIEN FORMADO Y CON UN OBJETO EN LA RAÍZ ---
+  ' UNA RAÍZ QUE NO ES OBJETO (UNA LISTA, UN TEXTO) FALLA EN LA ASIGNACIÓN A
+  ' Collection CON Type mismatch, Y CAE EN EL MISMO If Error (GV-98)
+  Try cRaiz = JSON.Decode(sTexto)
+  If Error Then Return "no es un JSON válido (" & Error.Text & ")"
+  If IsNull(cRaiz) Then Return "está vacío"
+
+  ' --- 2. FORMATO ---
+  If Campo(cRaiz, "formato") <> FORMATO Then Return "no es un archivo de patrones de gbpublisher"
+
+  ' --- 3. VERSIÓN: ENTERA, Y NO MÁS NUEVA QUE LA QUE ESTA INSTALACIÓN ENTIENDE ---
+  If Not cRaiz.Exist("version") Then Return "no declara la versión del formato"
+  If TypeOf(cRaiz["version"]) <> gb.Integer Then Return "la versión del formato no es un número entero"
+  If cRaiz["version"] > VERSION_FORMATO Then
+    Return "usa la versión " & cRaiz["version"] & " del formato, más nueva que la que entiende esta instalación (" & VERSION_FORMATO & ")"
+  Endif
+  If cRaiz["version"] < 1 Then Return "la versión del formato no es válida"
+
+  ' --- 4. LISTA DE PATRONES ---
+  ' JSON.Decode DEVUELVE LAS LISTAS COMO Variant[] (GV-98). IF ANIDADOS:
+  ' Object.Type SOBRE ALGO QUE NO ES OBJETO DA ERROR (RC-GM-17)
+  If Not cRaiz.Exist("patrones") Then Return "no tiene la lista de patrones"
+  vLista = cRaiz["patrones"]
+  If TypeOf(vLista) <> gb.Object Then Return "la lista de patrones no es una lista"
+  If Object.Type(vLista) <> "Variant[]" Then Return "la lista de patrones no es una lista"
+  aLista = vLista
+
+  ' --- 5. CADA ELEMENTO: SE CONSERVA EL VÁLIDO, SE INFORMA EL MALO ---
+  For Each vElemento In aLista
+    Inc iNumero
+    cLimpio = New Collection
+    sProblema = ProblemaDeElemento(vElemento, cLimpio)
+    If sProblema <> "" Then
+      aProblemas.Add("elemento " & iNumero & ": " & sProblema)
+    Else
+      aDestino.Add(cLimpio)
+    Endif
+  Next
+
+  ' --- 6. RETORNO ---
+  Return ""
+
+End
+
+' ============================================
+' Función   : ProblemaDeElemento
+' Propósito : Controla un elemento de la lista de patrones y, si está bien,
+'             copia sus seis campos a cLimpio. Las claves desconocidas se
+'             ignoran. No corre el motor: eso lo hace Importar
+' Parámetros: vElemento As Variant — el elemento tal como vino del JSON
+'             cLimpio As Collection — recibe el patrón normalizado (se modifica)
+' Retorna   : String — "" si está bien; si no, el motivo
+' ============================================
+Private Function ProblemaDeElemento(vElemento As Variant, cLimpio As Collection) As String
+
+  Dim cElemento As Collection
+  Dim sClave As String
+
+  ' --- 1. TIENE QUE SER UN OBJETO JSON ---
+  If TypeOf(vElemento) <> gb.Object Then Return "no es un patrón"
+  If Object.Type(vElemento) <> "Collection" Then Return "no es un patrón"
+  cElemento = vElemento
+
+  ' --- 2. LOS CAMPOS PRESENTES TIENEN QUE SER TEXTO ---
+  ' UN null DE JSON NO CREA LA CLAVE (GV-98): CUENTA COMO AUSENTE
+  For Each sClave In ["nombre", "descripcion", "patron", "reemplazo", "flags", "texto_prueba"]
+    If cElemento.Exist(sClave) Then
+      If TypeOf(cElemento[sClave]) <> gb.String Then Return "el campo «" & sClave & "» no es texto"
+      cLimpio[sClave] = cElemento[sClave]
+    Endif
+  Next
+
+  ' --- 3. NOMBRE ---
+  If Not NombreValido(Campo(cLimpio, "nombre")) Then
+    Return "el nombre «" & Campo(cLimpio, "nombre") & "» no es válido (a-z, 0-9 y guion, hasta " & LARGO_MAX_NOMBRE & " caracteres)"
+  Endif
+
+  ' --- 4. PATRÓN ---
+  If Campo(cLimpio, "patron") = "" Then Return "«" & Campo(cLimpio, "nombre") & "» no tiene patrón"
+
+  ' --- 5. FLAGS: SOLO imsx, Y SE GUARDAN EN ORDEN CANÓNICO ---
+  If Not FlagsValidos(Campo(cLimpio, "flags")) Then
+    Return "«" & Campo(cLimpio, "nombre") & "» tiene flags no admitidos: «" & Campo(cLimpio, "flags") & "» (solo i, m, s, x)"
+  Endif
+  cLimpio["flags"] = NormalizarFlags(Campo(cLimpio, "flags"))
+
+  ' --- 6. RETORNO ---
+  Return ""
+
+End
+
+' ============================================
+' Función   : Guardar
+' Propósito : Escribe el archivo de un patrón. Si existe, lo reemplaza: la
+'             confirmación la pide quien llama
+' Parámetros: cPatron As Collection — el patrón (de NuevoPatron)
+' Retorna   : Boolean — True si se escribió
+' ============================================
+Public Function Guardar(cPatron As Collection) As Boolean
+
+  Dim sNombre As String
+
+  ' --- 1. VALIDACIÓN DEFENSIVA: ESTE ES EL ÚNICO PUNTO QUE ESCRIBE EN LA CARPETA ---
+  sNombre = Campo(cPatron, "nombre")
+  If Not NombreValido(sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Nombre de patrón inválido: «" & sNombre & "».")
+    Return False
+  Endif
+  If Campo(cPatron, "patron") = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El patrón «" & sNombre & "» está vacío.")
+    Return False
+  Endif
+
+  ' --- 2. ESCRITURA (File.Save ES UTF-8 NATIVO, SC-02) ---
+  Try File.Save(RutaArchivo(sNombre), Codificar(cPatron))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el patrón «" & sNombre & "»:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. LA LISTA EN MEMORIA SIGUE AL DISCO ---
+  ' SIN ESTO, UNA IMPORTACIÓN QUE ESCRIBE DOS VECES EL MISMO NOMBRE, O DOS
+  ' IMPORTACIONES SEGUIDAS, COMPARARÍAN CONTRA LO QUE HABÍA ANTES DE ESCRIBIR
+  If Not $cPatrones.Exist(sNombre) Then
+    $aNombres.Add(sNombre)
+    $aNombres.Sort()
+  Endif
+  $cPatrones[sNombre] = cPatron
+
+  ' --- 4. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Borrar
+' Propósito : Borra un patrón: borra su archivo
+' Parámetros: sNombre As String — nombre del patrón
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function Borrar(sNombre As String) As Boolean
+
+  Dim iPos As Integer
+
+  ' --- 1. BORRAR EL ARCHIVO ---
+  Try Kill RutaArchivo(sNombre)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el patrón «" & sNombre & "»:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. LA LISTA EN MEMORIA SIGUE AL DISCO ---
+  iPos = $aNombres.Find(sNombre)
+  If iPos >= 0 Then $aNombres.Remove(iPos)
+  If $cPatrones.Exist(sNombre) Then $cPatrones.Remove(sNombre)
+
+  ' --- 3. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Exportar
+' Propósito : Escribe un patrón guardado en otra ruta, para compartirlo. Se
+'             vuelve a codificar desde lo cargado: sale normalizado aunque el
+'             archivo de la carpeta se haya corregido a mano
+' Parámetros: sNombre As String — nombre del patrón
+'             sRuta As String — ruta de destino (ya confirmada por quien llama)
+' Retorna   : Boolean — True si se escribió
+' ============================================
+Public Function Exportar(sNombre As String, sRuta As String) As Boolean
+
+  ' --- 1. EL PATRÓN TIENE QUE ESTAR CARGADO ---
+  If Not $cPatrones.Exist(sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No hay un patrón guardado con el nombre «" & sNombre & "».")
+    Return False
+  Endif
+
+  ' --- 2. ESCRITURA ---
+  Try File.Save(sRuta, Codificar($cPatrones[sNombre]))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el archivo:" & Chr(10) & sRuta & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. RETORNO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : Importar
+' Propósito : Incorpora a la carpeta los patrones de un archivo (uno o varios).
+'             Cada patrón pasa por el motor (modo validar) antes de escribirse.
+'             Si el nombre ya existe con el mismo contenido, cuenta como «ya
+'             estaba»; con otro contenido, pregunta si sobrescribir. Al final
+'             informa qué pasó con cada uno. Guardar mantiene al día la lista
+'             en memoria; quien llama relee el disco y repone el combo
+' Parámetros: sRuta As String — archivo a importar
+' Retorna   : Boolean — True si se escribió al menos un patrón
+' ============================================
+Public Function Importar(sRuta As String) As Boolean
+
+  Dim sTexto As String
+  Dim sProblema As String
+  Dim aPatrones As New Collection[]
+  Dim aProblemas As New String[]
+  Dim cPatron As Collection
+  Dim sNombre As String
+  Dim cVistos As New Collection
+  Dim iImportados As Integer
+  Dim iSobrescritos As Integer
+  Dim iYaEstaban As Integer
+  Dim iOmitidos As Integer
+  Dim sInforme As String
+
+  ' --- 1. LEER Y CONTROLAR EL SOBRE ---
+  Try sTexto = File.Load(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el archivo:" & Chr(10) & sRuta & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  sProblema = Decodificar(sTexto, aPatrones, aProblemas)
+  If sProblema <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se puede importar " & File.Name(sRuta) & ":" & Chr(10) & sProblema & ".")
+    Return False
+  Endif
+
+  ' --- 2. CADA PATRÓN: MOTOR, DUPLICADOS Y COLISIONES ---
+  For Each cPatron In aPatrones
+    sNombre = Campo(cPatron, "nombre")
+
+    ' UN NOMBRE REPETIDO DENTRO DEL MISMO ARCHIVO: VALE EL PRIMERO
+    If cVistos.Exist(sNombre) Then
+      aProblemas.Add("«" & sNombre & "»: repetido en el archivo; se tomó el primero")
+      Continue
+    Endif
+    cVistos[sNombre] = "1"
+
+    ' EL MOTOR TIENE LA ÚLTIMA PALABRA SOBRE LA SINTAXIS (SC-05: UN SOLO MOTOR)
+    sProblema = m_BuscarRegex.ProblemaDelPatron(Campo(cPatron, "patron"), Campo(cPatron, "reemplazo"), Campo(cPatron, "flags"))
+    If sProblema <> "" Then
+      aProblemas.Add("«" & sNombre & "»: " & sProblema)
+      Continue
+    Endif
+
+    ' NOMBRE NUEVO: SE ESCRIBE
+    If Not $cPatrones.Exist(sNombre) Then
+      If Guardar(cPatron) Then Inc iImportados
+      Continue
+    Endif
+
+    ' NOMBRE EXISTENTE CON EL MISMO CONTENIDO: NADA QUE HACER
+    If Iguales(cPatron, $cPatrones[sNombre]) Then
+      Inc iYaEstaban
+      Continue
+    Endif
+
+    ' NOMBRE EXISTENTE CON OTRO CONTENIDO: DECIDE EL USUARIO
+    m_Sonido.sonar("Warning")
+    If Message.Warning("Ya existe un patrón «" & sNombre & "» con otro contenido." & Chr(10) & Chr(10) &
+      "Guardado:  " & Campo($cPatrones[sNombre], "patron") & Chr(10) &
+      "Importado: " & Campo(cPatron, "patron") & Chr(10) & Chr(10) &
+      "¿Reemplazar el guardado por el importado?", "Reemplazar", "Omitir") = 1 Then
+      If Guardar(cPatron) Then Inc iSobrescritos
+    Else
+      Inc iOmitidos
+    Endif
+  Next
+
+  ' --- 3. INFORME ---
+  sInforme = "Importación de " & File.Name(sRuta) & ":" & Chr(10) & Chr(10) &
+    "  nuevos: " & iImportados & Chr(10) &
+    "  reemplazados: " & iSobrescritos & Chr(10) &
+    "  ya estaban: " & iYaEstaban & Chr(10) &
+    "  omitidos: " & iOmitidos & Chr(10) &
+    "  descartados: " & aProblemas.Count
+  If aProblemas.Count > 0 Then
+    sInforme &= Chr(10) & Chr(10) & "Descartados:" & Chr(10) & aProblemas.Join(Chr(10))
+    m_Sonido.sonar("Warning")
+    Message.Warning(sInforme)
+  Else
+    m_Sonido.sonar("Info")
+    Message.Info(sInforme)
+  Endif
+
+  ' --- 4. RETORNO ---
+  Return iImportados + iSobrescritos > 0
+
+End
+
+' ============================================
+' Función   : RegistrarEleccion
+' Propósito : FGuardarPatron deja acá lo que eligió el usuario antes de
+'             cerrarse con ACCION_GUARDAR
+' Parámetros: sNombre, sDescripcion, sTextoPrueba As String — los datos
+' Retorna   : nada
+' ============================================
+Public Sub RegistrarEleccion(sNombre As String, sDescripcion As String, sTextoPrueba As String)
+
+  sEleccionNombre = sNombre
+  sEleccionDescripcion = sDescripcion
+  sEleccionTextoPrueba = sTextoPrueba
+
+End

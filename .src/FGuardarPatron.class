@@ -1,0 +1,179 @@
+' Gambas class file
+
+' ==============================================================================
+' Formulario: FGuardarPatron
+' Propósito : Pide nombre, descripción y texto de prueba para guardar en la
+'             biblioteca el patrón que está en la pestaña RegExp (SC-51).
+'             Valida el nombre y, si ya existe, confirma el reemplazo. No
+'             escribe nada: la decisión vuelve por ShowModal
+'             (m_PatronesRegex.ACCION_*) y los datos quedan en
+'             m_PatronesRegex.RegistrarEleccion. Escribe m_BuscarRegex.
+' Dependencias: m_PatronesRegex, m_Sonido, m_Ventana.
+' ==============================================================================
+
+' --- FLAG QUE PERMITE EL CIERRE DESDE LOS BOTONES O ESCAPE Y BLOQUEA LA X ---
+' MISMO PATRÓN QUE FSnippets; LA SALIDA PROPIA ES LA CONTRAPARTIDA DE SC-20
+Private $bCierrePermitido As Boolean
+
+' --- DATOS RECIBIDOS DE m_BuscarRegex (POR Configurar, ANTES DE ShowModal) ---
+' NOMBRE VACÍO = SE GUARDA UN PATRÓN LIBRE, TODAVÍA SIN NOMBRE
+Private $sNombreCargado As String
+Private $sDescripcion As String
+Private $sTextoPrueba As String
+
+' ============================================
+' Función   : Configurar
+' Propósito : Recibe los valores propuestos. Se vuelcan en Form_Open, como en
+'             FRegexResultados.Configurar
+' Parámetros: sNombreCargado As String — nombre del patrón cargado; "" si es
+'                                        un patrón libre
+'             sDescripcion As String — descripción propuesta
+'             sTextoPrueba As String — texto de prueba propuesto (areaEditor)
+' Retorna   : nada
+' ============================================
+Public Sub Configurar(sNombreCargado As String, sDescripcion As String, sTextoPrueba As String)
+
+  $sNombreCargado = sNombreCargado
+  $sDescripcion = sDescripcion
+  $sTextoPrueba = sTextoPrueba
+
+End
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Título, valores propuestos y foco en el nombre
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. TÍTULO ---
+  Me.Title = "Guardar patrón"
+
+  ' --- 2. VALORES PROPUESTOS ---
+  txtNombre.Text = $sNombreCargado
+  txtDescripcion.Text = $sDescripcion
+  txaTextoPrueba.Text = $sTextoPrueba
+
+  ' --- 3. FOCO: EL NOMBRE, SALVO QUE YA VENGA (ENTONCES LA DESCRIPCIÓN) ---
+  If $sNombreCargado = "" Then
+    txtNombre.SetFocus()
+  Else
+    txtDescripcion.SetFocus()
+  Endif
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Permite el cierre desde los botones o Escape; lo bloquea desde la X
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. CIERRE PEDIDO DESDE LA INTERFAZ ---
+  If $bCierrePermitido Then Return
+
+  ' --- 2. CIERRE DESDE LA X DEL SISTEMA: BLOQUEAR Y AVISAR ---
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario use el botón <b>Cancelar</b> o la tecla Escape.")
+  Stop Event
+
+End
+
+' ============================================
+' Función   : Form_KeyPress
+' Propósito : Escape cancela (contrapartida de SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_KeyPress()
+
+  If Key.Code = Key.Esc Then Cancelar()
+
+End
+
+' ============================================
+' Función   : btnCancelar_Click
+' Propósito : Cierra sin guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCancelar_Click()
+
+  Cancelar()
+
+End
+
+' ============================================
+' Función   : Cancelar
+' Propósito : Cierra devolviendo ACCION_CANCELAR
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Cancelar()
+
+  $bCierrePermitido = True
+  Me.Close(m_PatronesRegex.ACCION_CANCELAR)
+
+End
+
+' ============================================
+' Función   : btnGuardar_Click
+' Propósito : Valida el nombre, confirma si ya existe y cierra devolviendo
+'             ACCION_GUARDAR con los datos registrados en m_PatronesRegex. Si
+'             algo falla, el formulario queda abierto para corregir
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardar_Click()
+
+  Dim sNombre As String
+  Dim sPregunta As String
+
+  ' --- 1. NOMBRE: SE RECHAZA, NO SE CONVIERTE EN SILENCIO (SC-51, COMO SC-21) ---
+  sNombre = Trim(txtNombre.Text)
+  If Not m_PatronesRegex.NombreValido(sNombre) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El nombre «" & sNombre & "» no es válido." & Chr(10) & Chr(10) &
+      "Solo letras minúsculas sin acento (a-z), dígitos y guion, hasta " & m_PatronesRegex.LARGO_MAX_NOMBRE & " caracteres." & Chr(10) &
+      "Lo legible va en la descripción.")
+    txtNombre.SetFocus()
+    Return
+  Endif
+
+  ' --- 2. NOMBRE EXISTENTE: CONFIRMAR EL REEMPLAZO ---
+  ' EL MISMO NOMBRE QUE EL CARGADO ES ACTUALIZARLO; OTRO NOMBRE EXISTENTE ES
+  ' PISAR UN PATRÓN DISTINTO, Y SE DICE ASÍ
+  If m_PatronesRegex.Existe(sNombre) Then
+    If sNombre = $sNombreCargado Then
+      sPregunta = "¿Reemplazar el patrón «" & sNombre & "» guardado por el que está en la pestaña?"
+    Else
+      sPregunta = "Ya existe otro patrón llamado «" & sNombre & "»." & Chr(10) & Chr(10) & "¿Reemplazarlo por el que está en la pestaña?"
+    Endif
+    m_Sonido.sonar("Warning")
+    If Message.Warning(sPregunta, "Reemplazar", "Cambiar el nombre") <> 1 Then
+      txtNombre.SetFocus()
+      Return
+    Endif
+  Endif
+
+  ' --- 3. REGISTRAR Y CERRAR ---
+  m_PatronesRegex.RegistrarEleccion(sNombre, Trim(txtDescripcion.Text), txaTextoPrueba.Text)
+  $bCierrePermitido = True
+  Me.Close(m_PatronesRegex.ACCION_GUARDAR)
+
+End

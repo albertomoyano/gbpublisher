@@ -12,19 +12,24 @@
 '             salida y gobierna la UI. La división es la misma que con Saxon o
 '             Pandoc: Gambas orquesta, el proceso externo procesa.
 '
-'             RESPONSABILIDADES DE ESTA ENTREGA:
+'             RESPONSABILIDADES:
 '               - Resolver la ruta del script (instalación del sistema, no
 '                 ~/.gbpublisher: el motor no se personaliza).
 '               - Armar la whitelist de archivos del proyecto (ObtenerArchivosMD).
 '               - Validación continua del patrón con debounce.
 '               - btnProbar: banco de pruebas en seco sobre areaEditor.
 '               - Gobernar el ámbito (los tres radiobutton + txtFiltrar).
-'             btnBuscarRegex queda como stub hasta construir FRegexResultados.
+'               - btnBuscarRegex: abrir FRegexResultados, que busca y reemplaza.
+'               - La biblioteca de patrones en la interfaz (SC-51): combo,
+'                 guardar, borrar, compartir e importar. Los datos y el formato
+'                 viven en m_PatronesRegex; acá solo se gobierna la pestaña.
 '
 ' Convención de nombres de controles en la pestaña (FMain):
 '   rbProyecto rbEnCurso rbFiltrar   — ámbito (radiobutton)
 '   txtFiltrar                       — filtro de archivos (solo con rbFiltrar)
-'   cmbPatronesBBDD                  — biblioteca de modelos (pendiente)
+'   cmbPatrones                      — biblioteca personal de patrones (SC-51)
+'   btnGuardarPatron btnBorrarPatron btnCompartirPatron btnImportarPatrones
+'   lblDescripcionPatron             — descripción y marca de modificado
 '   txtBuscar txtReemplazo           — patrón y reemplazo
 '   ckbCaseless ckbMultiline ckbDotAll ckbExtended — flags /i /m /s /x
 '   btnProbar btnBuscarRegex         — acciones
@@ -53,8 +58,21 @@ Private Const DEMORA_VALIDACION As Integer = 300
 Private $hTimerValidar As Timer
 
 ' --- ESTADO DE LA ÚLTIMA VALIDACIÓN ---
-' Lo consume btnBuscarRegex: solo se busca si el patrón compiló.
+' Lo consumen btnBuscarRegex, btnProbar y btnGuardarPatron: solo con un patrón
+' que compiló.
 Private $bPatronValido As Boolean
+
+' --- BIBLIOTECA DE PATRONES EN LA PESTAÑA (SC-51) ---
+' Primer ítem del combo: trabajar sin patrón guardado. Los nombres válidos no
+' llevan paréntesis ni espacios, así que no puede chocar con uno guardado.
+Private Const TEXTO_PATRON_LIBRE As String = "(patrón libre)"
+' Nombre del patrón cargado en los campos; "" = patrón libre.
+Private $sPatronCargado As String
+' Índice elegido en el combo, para reponerlo si el usuario cancela un cambio.
+Private $iIndiceCombo As Integer
+' Reponer el combo desde el código dispara Click al asignar Index (GV-53); la
+' bandera hace que el handler no vuelva a cargar el patrón.
+Private $bReponiendoCombo As Boolean
 
 ' ============================================
 ' Función   : RutaScript
@@ -88,27 +106,40 @@ Public Sub InicializarTabRegex()
   Endif
   $hTimerValidar.Stop
 
-  ' --- 2. ÁMBITO POR DEFECTO: TODO EL PROYECTO ---
+  ' --- 2. SIN PATRÓN CARGADO ---
+  ' VA ANTES DE LIMPIAR LOS CAMPOS: CADA ASIGNACIÓN DISPARA _Change Y
+  ' SolicitarValidacion CONSULTA ESTE ESTADO PARA LA MARCA DE MODIFICADO
+  $sPatronCargado = ""
+
+  ' --- 3. ÁMBITO POR DEFECTO: TODO EL PROYECTO ---
   FMain.rbProyecto.Value = True
   FMain.txtFiltrar.Text = ""
   FMain.txtFiltrar.Enabled = False
 
-  ' --- 3. LIMPIAR ENTRADAS Y RESULTADO DEL BANCO DE PRUEBAS ---
+  ' --- 4. LIMPIAR ENTRADAS Y RESULTADO DEL BANCO DE PRUEBAS ---
   FMain.txtBuscar.Text = ""
   FMain.txtReemplazo.Text = ""
   FMain.areaEditor.Text = ""
   FMain.areaEditorMostrarResultado.Text = ""
 
-  ' --- 4. FLAGS EN FALSO ---
+  ' --- 5. FLAGS EN FALSO ---
   FMain.ckbCaseless.Value = False
   FMain.ckbMultiline.Value = False
   FMain.ckbDotAll.Value = False
   FMain.ckbExtended.Value = False
 
-  ' --- 5. ESTADO INICIAL: SIN PATRÓN NO HAY NADA HABILITADO ---
+  ' --- 6. BIBLIOTECA: SE RELEE DEL DISCO EN CADA APERTURA (SC-51) ---
+  ' ASÍ APARECE UN PATRÓN CORREGIDO CON UN EDITOR EXTERNO. SI LA LECTURA
+  ' FALLA, m_PatronesRegex YA AVISÓ Y EL COMBO QUEDA SOLO CON EL PATRÓN LIBRE
+  m_PatronesRegex.Cargar()
+  PoblarComboPatrones("")
+
+  ' --- 7. ESTADO INICIAL: SIN PATRÓN NO HAY NADA HABILITADO ---
   $bPatronValido = False
   FMain.btnProbar.Enabled = False
   FMain.btnBuscarRegex.Enabled = False
+  FMain.btnGuardarPatron.Enabled = False
+  ActualizarEstadoPatron()
 
 End
 
@@ -301,13 +332,15 @@ Public Function ResolverAmbito() As String[]
   Return aResultado
 
 End
-' Propósito : Traduce los cuatro checkbox al string de flags que espera el
-'             script (letras concatenadas, o "-" si no hay ninguno). El orden es
-'             indiferente para el .pl, pero se mantiene imsx por prolijidad.
-' Retorna   : String — p. ej. "im", "x", o "-"
-' ============================================
 
-Private Function ArmarFlags() As String
+' ============================================
+' Función   : FlagsActuales
+' Propósito : Traduce los cuatro checkbox a las letras de los flags, en el
+'             orden imsx. Es la forma en que se guardan en un patrón (SC-51)
+' Parámetros: (ninguno)
+' Retorna   : String — p. ej. "im", "x", o "" si no hay ninguno
+' ============================================
+Private Function FlagsActuales() As String
 
   Dim sFlags As String
 
@@ -315,6 +348,34 @@ Private Function ArmarFlags() As String
   If FMain.ckbMultiline.Value Then sFlags &= "m"
   If FMain.ckbDotAll.Value Then sFlags &= "s"
   If FMain.ckbExtended.Value Then sFlags &= "x"
+
+  Return sFlags
+
+End
+
+' ============================================
+' Función   : ArmarFlags
+' Propósito : Traduce los cuatro checkbox al string de flags que espera el
+'             script: letras concatenadas, o "-" si no hay ninguno (el script
+'             no recibe un argumento vacío para los flags). El orden es
+'             indiferente para el .pl; se mantiene imsx por prolijidad.
+' Parámetros: (ninguno)
+' Retorna   : String — p. ej. "im", "x", o "-"
+' ============================================
+Private Function ArmarFlags() As String
+
+  Return FlagsParaMotor(FlagsActuales())
+
+End
+
+' ============================================
+' Función   : FlagsParaMotor
+' Propósito : Convierte unas letras de flags al argumento del script: "-" si
+'             están vacías
+' Parámetros: sFlags As String — letras de flags, posiblemente vacías
+' Retorna   : String — las mismas letras, o "-"
+' ============================================
+Private Function FlagsParaMotor(sFlags As String) As String
 
   If sFlags = "" Then Return "-"
   Return sFlags
@@ -337,6 +398,10 @@ Public Sub SolicitarValidacion()
   $bPatronValido = False
   FMain.btnProbar.Enabled = False
   FMain.btnBuscarRegex.Enabled = False
+  FMain.btnGuardarPatron.Enabled = False
+
+  ' LA MARCA DE MODIFICADO SE RECALCULA CON CADA CAMBIO (SC-51)
+  ActualizarEstadoPatron()
 
   ' PATRÓN VACÍO: NO HAY QUÉ VALIDAR, NO SE LANZA PROCESO
   If Trim(FMain.txtBuscar.Text) = "" Then
@@ -359,81 +424,132 @@ Public Sub TimerValidarRegex_Timer()
 End
 
 ' ============================================
-' Función   : ValidarPatronAhora
+' Función   : InvocarValidador
 ' Propósito : Corre el modo 'validar' del script de forma síncrona (es 5 ms) y
-'             refleja el resultado en la UI: habilita o no las acciones y
-'             muestra el mensaje de error o los avisos. No toca ningún archivo
-'             del proyecto.
-' Parámetros: (ninguno)
-' Retorna   : (Sub, sin retorno)
+'             devuelve el resultado ya separado. NO TOCA LA INTERFAZ: lo usan
+'             la validación continua de la pestaña y la importación de
+'             patrones (SC-51), que no pasa por los controles.
+' Parámetros: sPatron As String — patrón
+'             sReemplazo As String — reemplazo (se audita solo si no está vacío)
+'             sFlags As String — letras de flags, posiblemente vacías
+' Retorna   : String[] — dos elementos: [0] veredicto, [1] detalle.
+'               "OK"     → detalle = avisos separados por SEP_LISTA (o "")
+'               "ERROR"  → detalle = mensaje de perl sobre el patrón
+'               "FALLO"  → detalle = el proceso no corrió o respondió mal
+'                          (problema de entorno, no del patrón)
 ' ============================================
-Private Sub ValidarPatronAhora()
+Private Function InvocarValidador(sPatron As String, sReemplazo As String, sFlags As String) As String[]
 
   Dim sSalida As String
   Dim sVeredicto As String
   Dim sResto As String
   Dim iPrimerNul As Integer
   Dim iSegundoNul As Integer
-  Dim sPatron As String
-  Dim sReemplazo As String
-  Dim sFlags As String
+  Dim iTercerNul As Integer
   Dim sAplicar As String
 
   ' --- 1. ARMAR ARGUMENTOS ---
-  sPatron = FMain.txtBuscar.Text
-  sReemplazo = FMain.txtReemplazo.Text
-  sFlags = ArmarFlags()
   ' EL REEMPLAZO SOLO SE AUDITA SI EL USUARIO ESCRIBIÓ ALGO EN ÉL
   sAplicar = If(Trim(sReemplazo) <> "", "1", "0")
 
-  ' --- 2. INVOCAR EL VALIDADOR (SÍNCRONO, SIN SHELL) ---
+  ' --- 2. INVOCAR EL VALIDADOR (SÍNCRONO, SIN SHELL: SC-05) ---
   ' -CSA: STDIN/STDOUT/STDERR y @ARGV en UTF-8. El patrón puede tener acentos,
   ' comillas tipográficas o NBSP y debe llegar intacto.
-  Try Exec ["perl", "-CSA", RutaScript(), "validar", sPatron, sReemplazo, sFlags, sAplicar] To sSalida
-  If Error Then
-    ' FALLO DEL PROCESO EN SÍ (perl ausente, script ilegible): NO ES UN PATRÓN
-    ' INVÁLIDO SINO UN PROBLEMA DE ENTORNO. SE INFORMA Y SE DEJA TODO INHIBIDO.
-    $bPatronValido = False
-    FMain.areaEditorMostrarResultado.Text = "No se pudo ejecutar el validador:" & Chr(10) & Error.Text
-    Return
-  Endif
+  Try Exec ["perl", "-CSA", RutaScript(), "validar", sPatron, sReemplazo, FlagsParaMotor(sFlags), sAplicar] To sSalida
+  If Error Then Return ["FALLO", "No se pudo ejecutar el validador:" & Chr(10) & Error.Text]
 
   ' --- 3. SEPARAR VEREDICTO / RESTO POR EL PRIMER NUL ---
   ' Split completo fragmentaría el mensaje si tuviera separadores; se corta a
-  ' mano por los dos primeros Chr(0).
+  ' mano por los primeros Chr(0) (SC-05).
   iPrimerNul = InStr(sSalida, Chr(0))
-  If iPrimerNul = 0 Then
-    $bPatronValido = False
-    FMain.areaEditorMostrarResultado.Text = "Respuesta inesperada del validador."
-    Return
-  Endif
+  If iPrimerNul = 0 Then Return ["FALLO", "Respuesta inesperada del validador."]
   sVeredicto = Left(sSalida, iPrimerNul - 1)
   sResto = Mid(sSalida, iPrimerNul + 1)
 
-  ' --- 4. ACTUAR SEGÚN EL VEREDICTO ---
+  ' --- 4. ERROR: EL SEGUNDO CAMPO (HASTA EL SIGUIENTE NUL) ES EL MENSAJE ---
   If sVeredicto = "ERROR" Then
-    ' EL SEGUNDO CAMPO (HASTA EL SIGUIENTE NUL) ES EL MENSAJE DE PERL CON <-- HERE
     iSegundoNul = InStr(sResto, Chr(0))
     If iSegundoNul > 0 Then sResto = Left(sResto, iSegundoNul - 1)
+    Return ["ERROR", sResto]
+  Endif
+
+  ' --- 5. OK: sResto = <n_grupos> NUL <avisos> NUL ---
+  ' EL SCRIPT CIERRA EL ÚLTIMO CAMPO CON NUL: SE CORTA AHÍ, PARA QUE EL NUL
+  ' FINAL NO LLEGUE AL TextArea
+  If sVeredicto <> "OK" Then Return ["FALLO", "Respuesta inesperada del validador."]
+  iSegundoNul = InStr(sResto, Chr(0))
+  If iSegundoNul = 0 Then Return ["OK", ""]
+  sResto = Mid(sResto, iSegundoNul + 1)
+  iTercerNul = InStr(sResto, Chr(0))
+  If iTercerNul > 0 Then sResto = Left(sResto, iTercerNul - 1)
+
+  Return ["OK", sResto]
+
+End
+
+' ============================================
+' Función   : ProblemaDelPatron
+' Propósito : Dice si el motor acepta un patrón. Lo usa m_PatronesRegex al
+'             importar: un patrón que el motor rechaza no se escribe en la
+'             carpeta (SC-51). Los avisos no cuentan como problema.
+' Parámetros: sPatron As String — patrón
+'             sReemplazo As String — reemplazo
+'             sFlags As String — letras de flags, posiblemente vacías
+' Retorna   : String — "" si el motor lo acepta; si no, el motivo
+' ============================================
+Public Function ProblemaDelPatron(sPatron As String, sReemplazo As String, sFlags As String) As String
+
+  Dim aRespuesta As String[]
+
+  aRespuesta = InvocarValidador(sPatron, sReemplazo, sFlags)
+  If aRespuesta[0] = "OK" Then Return ""
+  If aRespuesta[0] = "ERROR" Then Return "patrón inválido: " & aRespuesta[1]
+  Return aRespuesta[1]
+
+End
+
+' ============================================
+' Función   : ValidarPatronAhora
+' Propósito : Valida los campos de la pestaña con el motor y refleja el
+'             resultado en la UI: habilita o no las acciones y muestra el
+'             mensaje de error o los avisos. No toca ningún archivo del
+'             proyecto.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub ValidarPatronAhora()
+
+  Dim aRespuesta As String[]
+
+  ' --- 1. INVOCAR EL MOTOR CON LO QUE HAY EN LOS CAMPOS ---
+  aRespuesta = InvocarValidador(FMain.txtBuscar.Text, FMain.txtReemplazo.Text, FlagsActuales())
+
+  ' --- 2. FALLO DEL PROCESO EN SÍ (perl ausente, script ilegible) ---
+  ' NO ES UN PATRÓN INVÁLIDO SINO UN PROBLEMA DE ENTORNO: SE INFORMA Y SE DEJA
+  ' TODO INHIBIDO.
+  If aRespuesta[0] = "FALLO" Then
     $bPatronValido = False
-    FMain.areaEditorMostrarResultado.Text = "Patrón inválido:" & Chr(10) & sResto
+    FMain.areaEditorMostrarResultado.Text = aRespuesta[1]
     Return
   Endif
 
-  ' OK: sResto = <n_grupos> Chr(0) <avisos>. Extraemos los avisos (pueden estar
-  ' vacíos). Los avisos internamente están separados por SEP_LISTA.
-  iSegundoNul = InStr(sResto, Chr(0))
-  Dim sAvisos As String
-  If iSegundoNul > 0 Then sAvisos = Mid(sResto, iSegundoNul + 1)
+  ' --- 3. PATRÓN INVÁLIDO: EL MENSAJE DE PERL CON <-- HERE ---
+  If aRespuesta[0] = "ERROR" Then
+    $bPatronValido = False
+    FMain.areaEditorMostrarResultado.Text = "Patrón inválido:" & Chr(10) & aRespuesta[1]
+    Return
+  Endif
 
+  ' --- 4. PATRÓN VÁLIDO: SE HABILITAN LAS ACCIONES ---
   $bPatronValido = True
   FMain.btnProbar.Enabled = True
   FMain.btnBuscarRegex.Enabled = True
+  FMain.btnGuardarPatron.Enabled = True
 
-  ' MOSTRAR AVISOS (NBSP LITERAL, $N INEXISTENTE, MATCH VACÍO) SIN QUE SEAN
-  ' BLOQUEANTES: EL PATRÓN ES VÁLIDO, PERO CONVIENE VERLOS.
-  If Trim(sAvisos) <> "" Then
-    FMain.areaEditorMostrarResultado.Text = "Avisos:" & Chr(10) & Replace(sAvisos, SEP_LISTA, Chr(10))
+  ' --- 5. AVISOS (NBSP LITERAL, $N INEXISTENTE, MATCH VACÍO) ---
+  ' NO SON BLOQUEANTES: EL PATRÓN ES VÁLIDO, PERO CONVIENE VERLOS.
+  If Trim(aRespuesta[1]) <> "" Then
+    FMain.areaEditorMostrarResultado.Text = "Avisos:" & Chr(10) & Replace(aRespuesta[1], SEP_LISTA, Chr(10))
   Else
     FMain.areaEditorMostrarResultado.Text = ""
   Endif
@@ -606,6 +722,7 @@ Public Sub BuscarRegex()
 
   Dim aArchivos As String[]
   Dim sAplicar As String
+  Dim hForm As FRegexResultados
 
   ' --- 1. GUARDA: SOLO CON PATRÓN VÁLIDO ---
   If Not $bPatronValido Then
@@ -625,16 +742,15 @@ Public Sub BuscarRegex()
 
   ' --- 3. DELEGAR AL FORMULARIO DE RESULTADOS ---
   ' Se le pasa todo hecho: archivos, patrón, reemplazo, flags. El aplicar se
-  ' deriva de si hay reemplazo escrito (en la Capa 1 el formulario solo busca;
-  ' el reemplazo llega en la Capa 2).
+  ' deriva de si hay reemplazo escrito: sin reemplazo, el formulario solo
+  ' busca.
   sAplicar = If(Trim(FMain.txtReemplazo.Text) <> "", "1", "0")
 
-  Dim hForm As FRegexResultados
   hForm = New FRegexResultados
   hForm.Configurar(aArchivos, FMain.txtBuscar.Text, FMain.txtReemplazo.Text, ArmarFlags(), sAplicar, RutaScript())
   hForm.ShowModal()
 
-  ' SI EL REEMPLAZO TOCÓ ARCHIVOS Y UNO ERA EL DEL EDITOR, RECARGARLO.
+  ' --- 4. SI EL REEMPLAZO TOCÓ ARCHIVOS Y UNO ERA EL DEL EDITOR, RECARGARLO ---
   ' NO HAY FUNCIÓN DEDICADA: EL _Click DEL COMBO ES EL ÚNICO PUNTO QUE CARGA UN
   ' ARCHIVO EN EL EDITOR. RE-DISPARARLO SOBRE EL ARCHIVO YA SELECCIONADO RECARGA
   ' DESDE DISCO LA VERSIÓN YA REEMPLAZADA.
@@ -642,5 +758,377 @@ Public Sub BuscarRegex()
     m_FuncionesGenericas.bRegexHuboEscritura = False
     FMain.cmbArticulosRevista_Click()
   Endif
+
+End
+
+' ============================================
+' BIBLIOTECA PERSONAL DE PATRONES (SC-51)
+' Los datos y el formato viven en m_PatronesRegex. Desde acá se gobierna el
+' combo, la marca de modificado y los cuatro botones.
+' ============================================
+
+' ============================================
+' Función   : PoblarComboPatrones
+' Propósito : Vuelve a llenar cmbPatrones con el patrón libre y los guardados,
+'             y deja elegido el que se pide. No carga nada en los campos: la
+'             reposición del índice dispara Click (GV-53) y la bandera
+'             $bReponiendoCombo lo neutraliza.
+' Parámetros: sSeleccion As String — nombre a dejar elegido; "" o un nombre
+'             que ya no existe deja el patrón libre
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub PoblarComboPatrones(sSeleccion As String)
+
+  Dim sNombre As String
+  Dim iIndice As Integer
+
+  ' --- 1. INICIO DE LA REPOSICIÓN ---
+  $bReponiendoCombo = True
+
+  ' --- 2. LLENAR: Clear Y Add NO DISPARAN Click; EL COMBO QUEDA EN 0 (GV-69) ---
+  FMain.cmbPatrones.Clear()
+  FMain.cmbPatrones.Add(TEXTO_PATRON_LIBRE)
+  For Each sNombre In m_PatronesRegex.Nombres()
+    FMain.cmbPatrones.Add(sNombre)
+  Next
+
+  ' --- 3. ÍNDICE PEDIDO; SI NO ESTÁ, EL PATRÓN LIBRE ---
+  ' Find DISTINGUE MAYÚSCULAS (GV-59); LOS NOMBRES SON SIEMPRE MINÚSCULAS
+  iIndice = 0
+  If sSeleccion <> "" Then iIndice = FMain.cmbPatrones.Find(sSeleccion)
+  If iIndice < 0 Then iIndice = 0
+
+  ' SOLO SE ASIGNA SI CAMBIA: ASIGNAR EL MISMO ÍNDICE TAMBIÉN DISPARA Click (GV-53)
+  If FMain.cmbPatrones.Index <> iIndice Then FMain.cmbPatrones.Index = iIndice
+  $iIndiceCombo = iIndice
+
+  ' --- 4. SI EL PATRÓN CARGADO YA NO EXISTE, LOS CAMPOS QUEDAN COMO PATRÓN LIBRE ---
+  If iIndice = 0 Then $sPatronCargado = ""
+
+  ' --- 5. FIN DE LA REPOSICIÓN ---
+  $bReponiendoCombo = False
+
+End
+
+' ============================================
+' Función   : ElegirPatron
+' Propósito : Responde a la elección en cmbPatrones. El patrón libre conserva
+'             lo que hay en los campos; un patrón guardado los completa, y su
+'             texto de prueba entra en areaEditor solo si el área está vacía
+'             (así no se pierde un fragmento real pegado para probar varios
+'             patrones). Si lo que hay en los campos se perdería, pregunta.
+'             La llama FMain.cmbPatrones_Click.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ElegirPatron()
+
+  Dim iNuevo As Integer
+  Dim sNombre As String
+  Dim cPatron As Collection
+  Dim sFlags As String
+
+  ' --- 1. REPOSICIÓN DESDE EL CÓDIGO: NO ES UNA ELECCIÓN DEL USUARIO (GV-53) ---
+  If $bReponiendoCombo Then Return
+  iNuevo = FMain.cmbPatrones.Index
+
+  ' --- 2. PATRÓN LIBRE: LOS CAMPOS SE CONSERVAN, NO HAY NADA QUE PERDER ---
+  If iNuevo <= 0 Then
+    $sPatronCargado = ""
+    $iIndiceCombo = 0
+    ActualizarEstadoPatron()
+    Return
+  Endif
+
+  ' --- 3. GUARD: LO QUE HAY EN LOS CAMPOS SE VA A REEMPLAZAR ---
+  ' ELEGIR DE NUEVO EL MISMO PATRÓN SIRVE PARA VOLVER A LA VERSIÓN GUARDADA:
+  ' TAMBIÉN PASA POR ACÁ Y PREGUNTA SI HAY CAMBIOS
+  If Not ConfirmarDescartarPatron() Then
+    $bReponiendoCombo = True
+    If FMain.cmbPatrones.Index <> $iIndiceCombo Then FMain.cmbPatrones.Index = $iIndiceCombo
+    $bReponiendoCombo = False
+    Return
+  Endif
+
+  ' --- 4. EL PATRÓN ELEGIDO ---
+  sNombre = FMain.cmbPatrones.Text
+  cPatron = m_PatronesRegex.Patron(sNombre)
+  If IsNull(cPatron) Then
+    ' NO DEBERÍA PASAR: EL COMBO SE LLENA CON LOS CARGADOS
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el patrón «" & sNombre & "».")
+    Return
+  Endif
+
+  ' --- 5. COMPLETAR LOS CAMPOS ---
+  ' $sPatronCargado QUEDA VACÍO MIENTRAS SE ASIGNA: CADA ASIGNACIÓN DISPARA
+  ' _Change Y LA MARCA DE MODIFICADO SE CALCULARÍA CON LOS CAMPOS A MEDIAS. LA
+  ' VALIDACIÓN LA DISPARAN ESOS MISMOS _Change, CON SU DEBOUNCE.
+  $sPatronCargado = ""
+  sFlags = m_PatronesRegex.Campo(cPatron, "flags")
+  FMain.txtBuscar.Text = m_PatronesRegex.Campo(cPatron, "patron")
+  FMain.txtReemplazo.Text = m_PatronesRegex.Campo(cPatron, "reemplazo")
+  FMain.ckbCaseless.Value = InStr(sFlags, "i") > 0
+  FMain.ckbMultiline.Value = InStr(sFlags, "m") > 0
+  FMain.ckbDotAll.Value = InStr(sFlags, "s") > 0
+  FMain.ckbExtended.Value = InStr(sFlags, "x") > 0
+  If FMain.areaEditor.Text = "" Then FMain.areaEditor.Text = m_PatronesRegex.Campo(cPatron, "texto_prueba")
+
+  ' --- 6. QUEDA CARGADO ---
+  $sPatronCargado = sNombre
+  $iIndiceCombo = iNuevo
+  ActualizarEstadoPatron()
+
+End
+
+' ============================================
+' Función   : PatronModificado
+' Propósito : Indica si los campos difieren del patrón cargado. Compara patrón,
+'             reemplazo y flags; la descripción no está en los campos y el
+'             texto de prueba cambia todo el tiempo al probar, así que no
+'             cuentan. Se compara contra lo guardado, no se siguen eventos: no
+'             importa qué asignación dispara qué (SC-51).
+' Parámetros: (ninguno)
+' Retorna   : Boolean — False también si no hay patrón cargado
+' ============================================
+Private Function PatronModificado() As Boolean
+
+  Dim cPatron As Collection
+
+  ' --- 1. SIN PATRÓN CARGADO NO HAY CONTRA QUÉ COMPARAR ---
+  If $sPatronCargado = "" Then Return False
+  cPatron = m_PatronesRegex.Patron($sPatronCargado)
+  If IsNull(cPatron) Then Return False
+
+  ' --- 2. COMPARACIÓN CAMPO POR CAMPO (= DISTINGUE MAYÚSCULAS; == NO) ---
+  If FMain.txtBuscar.Text <> m_PatronesRegex.Campo(cPatron, "patron") Then Return True
+  If FMain.txtReemplazo.Text <> m_PatronesRegex.Campo(cPatron, "reemplazo") Then Return True
+  If FlagsActuales() <> m_PatronesRegex.Campo(cPatron, "flags") Then Return True
+
+  Return False
+
+End
+
+' ============================================
+' Función   : ConfirmarDescartarPatron
+' Propósito : Antes de reemplazar los campos con otro patrón, pregunta si hay
+'             algo que se perdería: un patrón libre escrito, o un patrón
+'             cargado con cambios sin guardar. Es SC-06 aplicado a la pestaña.
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si se puede seguir
+' ============================================
+Private Function ConfirmarDescartarPatron() As Boolean
+
+  Dim sMotivo As String
+
+  ' --- 1. ¿HAY ALGO QUE SE PERDERÍA? ---
+  If $sPatronCargado = "" Then
+    If Trim(FMain.txtBuscar.Text) = "" Then Return True
+    sMotivo = "Hay un patrón escrito que no está guardado."
+  Else
+    If Not PatronModificado() Then Return True
+    sMotivo = "El patrón «" & $sPatronCargado & "» tiene cambios sin guardar."
+  Endif
+
+  ' --- 2. PREGUNTAR ---
+  m_Sonido.sonar("Warning")
+  Return Message.Warning(sMotivo & Chr(10) & Chr(10) & "¿Descartarlo y cargar el patrón elegido?", "Descartar", "Cancelar") = 1
+
+End
+
+' ============================================
+' Función   : ActualizarEstadoPatron
+' Propósito : Refleja en la pestaña el estado de la biblioteca: la descripción
+'             del patrón cargado con la marca de modificado, y qué botones
+'             tienen sentido. Guardar depende de la validación y lo maneja
+'             ella (ValidarPatronAhora y SolicitarValidacion).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ActualizarEstadoPatron()
+
+  Dim cPatron As Collection
+  Dim sTexto As String
+
+  ' --- 1. BORRAR Y COMPARTIR: SOLO CON UN PATRÓN GUARDADO CARGADO ---
+  FMain.btnBorrarPatron.Enabled = $sPatronCargado <> ""
+  FMain.btnCompartirPatron.Enabled = $sPatronCargado <> ""
+
+  ' --- 2. PATRÓN LIBRE: SIN DESCRIPCIÓN ---
+  If $sPatronCargado = "" Then
+    FMain.lblDescripcionPatron.Text = ""
+    Return
+  Endif
+
+  ' --- 3. DESCRIPCIÓN Y MARCA ---
+  cPatron = m_PatronesRegex.Patron($sPatronCargado)
+  sTexto = m_PatronesRegex.Campo(cPatron, "descripcion")
+  If sTexto = "" Then sTexto = "(sin descripción)"
+  If PatronModificado() Then sTexto &= "   — modificado, sin guardar"
+  FMain.lblDescripcionPatron.Text = sTexto
+
+End
+
+' ============================================
+' Función   : GuardarPatron
+' Propósito : Guarda lo que hay en los campos como patrón de la biblioteca.
+'             FGuardarPatron pide nombre, descripción y texto de prueba (este
+'             último, precargado con areaEditor para recortarlo), y confirma
+'             si el nombre ya existe. Guardar con otro nombre es «guardar
+'             como»: el patrón anterior queda. La llama
+'             FMain.btnGuardarPatron_Click.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GuardarPatron()
+
+  Dim hForm As FGuardarPatron
+  Dim sDescripcion As String
+  Dim cPatron As Collection
+
+  ' --- 1. GUARDA: SOLO UN PATRÓN QUE EL MOTOR ACEPTÓ ---
+  If Not $bPatronValido Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El patrón no es válido todavía.")
+    Return
+  Endif
+
+  ' --- 2. DATOS PROPUESTOS: LOS DEL PATRÓN CARGADO, SI LO HAY ---
+  If $sPatronCargado <> "" Then sDescripcion = m_PatronesRegex.Campo(m_PatronesRegex.Patron($sPatronCargado), "descripcion")
+
+  ' --- 3. PEDIR NOMBRE, DESCRIPCIÓN Y TEXTO DE PRUEBA ---
+  ' LA DECISIÓN VUELVE POR ShowModal; LOS DATOS, POR m_PatronesRegex
+  hForm = New FGuardarPatron
+  hForm.Configurar($sPatronCargado, sDescripcion, FMain.areaEditor.Text)
+  If hForm.ShowModal() <> m_PatronesRegex.ACCION_GUARDAR Then Return
+
+  ' --- 4. ESCRIBIR ---
+  cPatron = m_PatronesRegex.NuevoPatron(m_PatronesRegex.sEleccionNombre, m_PatronesRegex.sEleccionDescripcion, FMain.txtBuscar.Text, FMain.txtReemplazo.Text, FlagsActuales(), m_PatronesRegex.sEleccionTextoPrueba)
+  If Not m_PatronesRegex.Guardar(cPatron) Then Return
+
+  ' --- 5. RELEER, REPONER EL COMBO Y DEJAR CARGADO EL GUARDADO ---
+  m_PatronesRegex.Cargar()
+  $sPatronCargado = m_PatronesRegex.sEleccionNombre
+  PoblarComboPatrones($sPatronCargado)
+  ActualizarEstadoPatron()
+
+  m_Sonido.sonar("Info")
+
+End
+
+' ============================================
+' Función   : BorrarPatron
+' Propósito : Borra de la biblioteca el patrón cargado. Los campos quedan como
+'             patrón libre: se puede volver a guardar. La llama
+'             FMain.btnBorrarPatron_Click.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub BorrarPatron()
+
+  ' --- 1. GUARDA: TIENE QUE HABER UN PATRÓN GUARDADO CARGADO ---
+  If $sPatronCargado = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí en la lista el patrón que querés borrar.")
+    Return
+  Endif
+
+  ' --- 2. CONFIRMAR ---
+  m_Sonido.sonar("Warning")
+  If Message.Warning("¿Borrar el patrón «" & $sPatronCargado & "» de la biblioteca?" & Chr(10) & Chr(10) &
+    "Los campos conservan su contenido como patrón libre.", "Borrar", "Cancelar") <> 1 Then Return
+
+  ' --- 3. BORRAR, RELEER Y REPONER ---
+  If Not m_PatronesRegex.Borrar($sPatronCargado) Then Return
+  m_PatronesRegex.Cargar()
+  $sPatronCargado = ""
+  PoblarComboPatrones("")
+  ActualizarEstadoPatron()
+
+End
+
+' ============================================
+' Función   : CompartirPatron
+' Propósito : Escribe el patrón cargado en un archivo elegido por el usuario,
+'             en el formato de la biblioteca (SC-51). Se comparte lo guardado:
+'             con cambios sin guardar, se pide guardar antes. La llama
+'             FMain.btnCompartirPatron_Click.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub CompartirPatron()
+
+  Dim sRuta As String
+
+  ' --- 1. GUARDAS ---
+  If $sPatronCargado = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí en la lista el patrón que querés compartir.")
+    Return
+  Endif
+  If PatronModificado() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El patrón «" & $sPatronCargado & "» tiene cambios sin guardar." & Chr(10) &
+      "Guardalo antes de compartirlo: se comparte el patrón guardado.")
+    Return
+  Endif
+
+  ' --- 2. ELEGIR EL DESTINO ---
+  ' SaveFile DEVUELVE True AL CANCELAR (GV-16, MISMA CONVENCIÓN)
+  Dialog.Title = "Compartir el patrón «" & $sPatronCargado & "»"
+  Dialog.Filter = ["*.json", "Patrones de gbpublisher"]
+  Dialog.Path = User.Home &/ $sPatronCargado & ".json"
+  If Dialog.SaveFile() Then Return
+  sRuta = Dialog.Path
+
+  ' --- 3. EXTENSIÓN, VERIFICADA EN CÓDIGO (RC-GM-19) ---
+  ' EL DIÁLOGO YA PREGUNTÓ SI Dialog.Path EXISTÍA (GV-97): NO SE REPITE. SOLO SE
+  ' PREGUNTA ACÁ SI EL CÓDIGO CAMBIA LA RUTA, PORQUE ESA RUTA EL DIÁLOGO NO LA VIO
+  If LCase(File.Ext(sRuta)) <> "json" Then
+    sRuta &= ".json"
+    If IsDir(sRuta) Then
+      m_Sonido.sonar("Error")
+      Message.Error("El destino es una carpeta:" & Chr(10) & sRuta)
+      Return
+    Endif
+    If Exist(sRuta) Then
+      m_Sonido.sonar("Warning")
+      If Message.Warning("Ya existe el archivo:" & Chr(10) & sRuta & Chr(10) & Chr(10) & "¿Reemplazarlo?", "Reemplazar", "Cancelar") <> 1 Then Return
+    Endif
+  Endif
+
+  ' --- 4. ESCRIBIR ---
+  If Not m_PatronesRegex.Exportar($sPatronCargado, sRuta) Then Return
+  m_Sonido.sonar("Info")
+  Message.Info("Patrón «" & $sPatronCargado & "» guardado en:" & Chr(10) & sRuta)
+
+End
+
+' ============================================
+' Función   : ImportarPatrones
+' Propósito : Incorpora a la biblioteca los patrones de un archivo (SC-51). La
+'             lógica, los controles y el informe están en
+'             m_PatronesRegex.Importar; acá se elige el archivo y se repone la
+'             pestaña. Los campos no se tocan: si se reemplazó el patrón
+'             cargado, la marca de modificado lo muestra. La llama
+'             FMain.btnImportarPatrones_Click.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ImportarPatrones()
+
+  ' --- 1. ELEGIR EL ARCHIVO (OpenFile DEVUELVE True AL CANCELAR) ---
+  Dialog.Title = "Importar patrones"
+  Dialog.Filter = ["*.json", "Patrones de gbpublisher"]
+  Dialog.Path = User.Home & "/"
+  If Dialog.OpenFile() Then Return
+
+  ' --- 2. IMPORTAR; SI NO SE ESCRIBIÓ NADA, NO HAY QUÉ REPONER ---
+  If Not m_PatronesRegex.Importar(Dialog.Path) Then Return
+
+  ' --- 3. RELEER Y REPONER EL COMBO CONSERVANDO EL PATRÓN CARGADO ---
+  m_PatronesRegex.Cargar()
+  PoblarComboPatrones($sPatronCargado)
+  ActualizarEstadoPatron()
 
 End
