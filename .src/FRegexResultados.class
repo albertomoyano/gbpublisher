@@ -50,6 +50,12 @@ Private $sBuffer As String            ' ACUMULA LA SALIDA CRUDA DEL PROCESO
 Private $bCancelado As Boolean        ' EL Kill FUE PEDIDO POR EL USUARIO (MT-B)
 Private $bBuscando As Boolean
 
+' --- LA GRILLA SE VUELVE A LLENAR DESDE EL CÓDIGO ---
+' CAMBIAR Rows.Count PUEDE MOVER LA FILA ACTUAL Y EMITIR Select (GV-78). ESO NO
+' ES UNA ELECCIÓN DEL USUARIO: NO DEBE MOVER EL EDITOR, QUE DESPUÉS DE UN
+' REEMPLAZO QUEDA EN EL ÚLTIMO ARCHIVO CAMBIADO (SC-51)
+Private $bRepoblando As Boolean
+
 ' --- MODELO DE RESULTADOS ---
 ' Cada coincidencia es un String[] de 8 campos, en el orden del protocolo del
 ' script: archivo, offset, linea, columna, largo, antes, despues, linea_texto.
@@ -171,7 +177,9 @@ Private Sub IniciarBusqueda()
   $sBuffer = ""
   $bCancelado = False
   $bBuscando = True
+  $bRepoblando = True
   gvResultados.Rows.Count = 0
+  $bRepoblando = False
   lblContador.Text = "Buscando…"
 
   ' --- 2. ARMAR EL COMANDO: perl -CSA script buscar patron reemplazo flags aplicar <archivos...> ---
@@ -223,7 +231,9 @@ Public Sub Proceso_Kill()
   ' --- 1. SI FUE CANCELADO, DESCARTAR TODO ---
   If $bCancelado Then
     $aResultados.Clear
+    $bRepoblando = True
     gvResultados.Rows.Count = 0
+    $bRepoblando = False
     lblContador.Text = "Búsqueda cancelada."
     m_Sonido.sonar("Info")
     Return
@@ -240,8 +250,10 @@ Public Sub Proceso_Kill()
   CapturarSnapshot()
 
   ' --- 4. VOLCAR A LA GRILLA Y CONTAR ---
+  $bRepoblando = True
   gvResultados.Rows.Count = $aResultados.Count
   gvResultados.Refresh
+  $bRepoblando = False
   ActualizarContador()
 
   If $aResultados.Count = 0 Then
@@ -363,6 +375,9 @@ Public Sub gvResultados_Select()
   Dim sLineaOriginal As String
   Dim sLineaResultante As String
   Dim sTexto As String
+
+  ' UNA FILA MOVIDA POR EL CÓDIGO AL VOLVER A LLENAR LA GRILLA NO SE MUESTRA
+  If $bRepoblando Then Return
 
   iFila = gvResultados.Row
   If iFila < 0 Or If iFila >= $aResultados.Count Then Return
@@ -494,8 +509,9 @@ End
 '               3. pre-chequeo de mtime de TODOS los afectados (todo o nada)
 '               4. escribir cada archivo (coincidencias de atrás para adelante)
 '               5. recargar lo escrito: editor, árbol y referencias (SC-51)
-'               6. log en log/ del proyecto
-'               7. re-correr la búsqueda para confirmar convergencia
+'               6. el editor queda en el último archivo cambiado
+'               7. log en log/ del proyecto
+'               8. re-correr la búsqueda para confirmar convergencia
 ' ============================================
 Public Sub btnReemplazar_Click()
 
@@ -563,10 +579,13 @@ Public Sub btnReemplazar_Click()
   ' ARCHIVO YA ESTÁ ABIERTO (GV-53): EL EDITOR QUEDABA CON EL TEXTO VIEJO
   m_BuscarRegex.TrasReemplazo(aEscritos)
 
-  ' --- 8. LOG ---
+  ' --- 8. EL EDITOR QUEDA EN EL ÚLTIMO ARCHIVO CAMBIADO, EN SU PRIMER CAMBIO ---
+  MostrarUltimoReemplazo(aEscritos, cPorArchivo)
+
+  ' --- 9. LOG ---
   EscribirLog(aArchivosAfectados, cPorArchivo, sHead, iTotalReemplazos)
 
-  ' --- 9. AVISO Y RE-CORRIDA ---
+  ' --- 10. AVISO Y RE-CORRIDA ---
   m_Sonido.sonar("Info")
   Message.Info(CStr(iTotalReemplazos) & " reemplazo(s) en " & CStr(aArchivosAfectados.Count) & " archivo(s)." & Chr(10) &
     "Se relanza la búsqueda para confirmar el resultado.")
@@ -574,6 +593,44 @@ Public Sub btnReemplazar_Click()
   ' RE-CORRER: confirma convergencia y detecta patrones que no convergen (si el
   ' reemplazo vuelve a matchear, el contador no baja).
   IniciarBusqueda()
+
+End
+
+' ============================================
+' Función   : MostrarUltimoReemplazo
+' Propósito : Deja el editor en el ÚLTIMO archivo escrito (orden de la grilla,
+'             que es el editorial), con el PRIMER cambio de ese archivo
+'             seleccionado y su párrafo arriba (decisión de Alberto, SC-51). El
+'             primer cambio no se corrió: los reemplazos van de atrás para
+'             adelante y ninguno queda antes que él, así que su línea y su
+'             columna siguen valiendo; el largo es el del texto nuevo.
+' Parámetros: aEscritos As String[] — rutas escritas, en orden
+'             cPorArchivo As Collection — ruta → Integer[] de índices en
+'                                         $aResultados (las filas reemplazadas)
+' Retorna   : nada
+' ============================================
+Private Sub MostrarUltimoReemplazo(aEscritos As String[], cPorArchivo As Collection)
+
+  Dim sUltimo As String
+  Dim aIdx As Integer[]
+  Dim iIdx As Integer
+  Dim iPrimero As Integer
+  Dim aReg As String[]
+
+  ' --- 1. SIN ARCHIVOS ESCRITOS NO HAY NADA QUE MOSTRAR ---
+  If aEscritos.Count = 0 Then Return
+  sUltimo = aEscritos[aEscritos.Max]
+  aIdx = cPorArchivo[sUltimo]
+
+  ' --- 2. LA COINCIDENCIA DE MENOR OFFSET DE ESE ARCHIVO ---
+  iPrimero = aIdx[0]
+  For Each iIdx In aIdx
+    If CInt($aResultados[iIdx][C_OFFSET]) < CInt($aResultados[iPrimero][C_OFFSET]) Then iPrimero = iIdx
+  Next
+  aReg = $aResultados[iPrimero]
+
+  ' --- 3. ABRIR (SI HACE FALTA) Y SELECCIONAR EL TEXTO NUEVO ---
+  m_BuscarRegex.MostrarCoincidencia(aReg[C_ARCHIVO], CInt(aReg[C_LINEA]), CInt(aReg[C_COLUMNA]), String.Len(aReg[C_DESPUES]))
 
 End
 

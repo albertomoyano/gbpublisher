@@ -2953,13 +2953,15 @@ EL EDITOR MUESTRA LAS COINCIDENCIAS Y SE RECARGA AL REEMPLAZAR (decisión de Alb
 - Elegir una fila de la grilla lleva el editor a la coincidencia (`m_BuscarRegex.MostrarCoincidencia`): abre su archivo si no es el abierto (`m_Estructura.AbrirArchivo`, por el combo, GV-53) y la deja seleccionada con su párrafo arriba de la vista (`m_EditorPrincipal.IrA`, GV-52), por línea y columna base 0, como las da el script. «Resaltar» es seleccionar: colorear con `Format` entraría en el deshacer (GV-46). Medido en banco: la selección se ve con el modal encima. No hace falta desplazar el editor a mano: el párrafo queda arriba.
 - Después de escribir, `FRegexResultados` llama en el acto a `m_BuscarRegex.TrasReemplazo` con los archivos efectivamente escritos, también si la escritura se cortó a mitad. Para cada uno: árbol de estructura y referencias citadas en la base (`m_Bibtex.ExtraerYGuardarReferenciasDelEditor`), lo mismo que hace un guardado. Si uno es el abierto: `FMain.RecargarArchivoAbierto` (editor, árbol, comentarios y contador). Después se vuelve a buscar, así que las posiciones de la grilla vuelven a valer.
 - Recargar es el punto de refresco 2 de SC-18: corta el deshacer. No se pierde nada: lo escrito por el reemplazo se deshace con git, que el guard del formulario exige o advierte.
-- Al cerrar, el editor queda en la última coincidencia vista, con el foco.
+- Después de reemplazar, el editor queda en el ÚLTIMO archivo cambiado (orden de la grilla, que es el editorial), con su PRIMER cambio seleccionado y el párrafo arriba (decisión de Alberto). Ese cambio no se corrió: los reemplazos van de atrás para adelante. Al volver a llenar la grilla, un `Select` emitido por el código (GV-78) no mueve el editor: lo frena la bandera `$bRepoblando`.
+- Al cerrar, el editor queda donde estaba —la última coincidencia vista o el último cambio—, con el foco.
+- `MostrarCoincidencia` no tiene salidas mudas (GV-23): si no puede mover el editor, lo dice.
 
 NO SE RECARGA POR EL COMBO
 
 La primera versión recargaba al cerrar el formulario disparando `cmbArticulosRevista_Click`. Ese handler sale sin hacer nada si la ruta es la del archivo abierto (GV-53), así que el reemplazo quedaba en disco y el editor con el texto viejo: un Ctrl+S lo pisaba. Releer un archivo abierto desde el disco se hace con `FMain.RecargarArchivoAbierto`, nunca con el Click del combo.
 
-**Relaciones:** vinculo:SC-05,vinculo:RC-PL-01,vinculo:SC-21,vinculo:SC-11,vinculo:SC-06,vinculo:SC-40,vinculo:GV-53,vinculo:GV-69,vinculo:GV-68,vinculo:GV-97,vinculo:GV-98,vinculo:RC-GM-19,vinculo:GV-23,vinculo:SC-18,vinculo:GV-46,vinculo:GV-52
+**Relaciones:** vinculo:SC-05,vinculo:RC-PL-01,vinculo:SC-21,vinculo:SC-11,vinculo:SC-06,vinculo:SC-40,vinculo:GV-53,vinculo:GV-69,vinculo:GV-68,vinculo:GV-97,vinculo:GV-98,vinculo:RC-GM-19,vinculo:GV-23,vinculo:SC-18,vinculo:GV-46,vinculo:GV-52,vinculo:GV-78
 
 **PENDIENTE:** Verificar en Linux Mint con Gambas 3.22.1 el flujo completo en la aplicación (guardar, elegir, marca de modificado, compartir, importar); el mini-test de JSON ya pasó (GV-98). Después, quitar este pendiente y poner el entorno de Mint.
 
