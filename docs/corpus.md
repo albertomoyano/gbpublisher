@@ -2945,7 +2945,21 @@ PRIMEROS PATRONES (DE ALBERTO, ERRORES QUE LLEGAN DE WORD A LAS REFERENCIAS)
 
 El lookbehind exige que delante de la `p` no haya letra ni dígito, en cualquier alfabeto: quedan fuera `Exp.2` y `ap.3`, y entra `(p.135)`. El primero deja los rangos para el segundo, así que el orden no importa. El segundo no toca un `pp. 20--24` ya correcto, y lleva el rango a `--` (SC-40): delante de `pp.` el contexto confirma el rango que `limpiar_docx.lua` solo puede avisar (`aviso_guion_entre_digitos`). Probados con `engine/buscar_regex.pl`, modo `probar`.
 
-**Relaciones:** vinculo:SC-05,vinculo:RC-PL-01,vinculo:SC-21,vinculo:SC-11,vinculo:SC-06,vinculo:SC-40,vinculo:GV-53,vinculo:GV-69,vinculo:GV-68,vinculo:GV-97,vinculo:GV-98,vinculo:RC-GM-19,vinculo:GV-23
+EL EDITOR MUESTRA LAS COINCIDENCIAS Y SE RECARGA AL REEMPLAZAR (decisión de Alberto)
+
+`FRegexResultados` es MODAL a propósito: mientras está abierto nadie escribe a mano en el editor. Con eso, el editor puede mostrar cualquier coincidencia sin riesgo de posiciones viejas.
+
+- Antes de abrir el formulario, el editor tiene que ser igual al disco. El aviso de SC-06 ya pidió guardar o descartar, pero «Descartar» solo mueve el punto de control (`MarcarGuardado`): el texto descartado sigue en el editor. Si difiere del disco, `m_BuscarRegex.BuscarRegex` lo relee con `FMain.RecargarArchivoAbierto`.
+- Elegir una fila de la grilla lleva el editor a la coincidencia (`m_BuscarRegex.MostrarCoincidencia`): abre su archivo si no es el abierto (`m_Estructura.AbrirArchivo`, por el combo, GV-53) y la deja seleccionada con su párrafo arriba de la vista (`m_EditorPrincipal.IrA`, GV-52), por línea y columna base 0, como las da el script. «Resaltar» es seleccionar: colorear con `Format` entraría en el deshacer (GV-46). Medido en banco: la selección se ve con el modal encima. No hace falta desplazar el editor a mano: el párrafo queda arriba.
+- Después de escribir, `FRegexResultados` llama en el acto a `m_BuscarRegex.TrasReemplazo` con los archivos efectivamente escritos, también si la escritura se cortó a mitad. Para cada uno: árbol de estructura y referencias citadas en la base (`m_Bibtex.ExtraerYGuardarReferenciasDelEditor`), lo mismo que hace un guardado. Si uno es el abierto: `FMain.RecargarArchivoAbierto` (editor, árbol, comentarios y contador). Después se vuelve a buscar, así que las posiciones de la grilla vuelven a valer.
+- Recargar es el punto de refresco 2 de SC-18: corta el deshacer. No se pierde nada: lo escrito por el reemplazo se deshace con git, que el guard del formulario exige o advierte.
+- Al cerrar, el editor queda en la última coincidencia vista, con el foco.
+
+NO SE RECARGA POR EL COMBO
+
+La primera versión recargaba al cerrar el formulario disparando `cmbArticulosRevista_Click`. Ese handler sale sin hacer nada si la ruta es la del archivo abierto (GV-53), así que el reemplazo quedaba en disco y el editor con el texto viejo: un Ctrl+S lo pisaba. Releer un archivo abierto desde el disco se hace con `FMain.RecargarArchivoAbierto`, nunca con el Click del combo.
+
+**Relaciones:** vinculo:SC-05,vinculo:RC-PL-01,vinculo:SC-21,vinculo:SC-11,vinculo:SC-06,vinculo:SC-40,vinculo:GV-53,vinculo:GV-69,vinculo:GV-68,vinculo:GV-97,vinculo:GV-98,vinculo:RC-GM-19,vinculo:GV-23,vinculo:SC-18,vinculo:GV-46,vinculo:GV-52
 
 **PENDIENTE:** Verificar en Linux Mint con Gambas 3.22.1 el flujo completo en la aplicación (guardar, elegir, marca de modificado, compartir, importar); el mini-test de JSON ya pasó (GV-98). Después, quitar este pendiente y poner el entorno de Mint.
 

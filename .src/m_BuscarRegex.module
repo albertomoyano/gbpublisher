@@ -713,8 +713,11 @@ End
 ' Propósito : Abre FRegexResultados con el estado actual ya resuelto: la lista de
 '             archivos (según el ámbito), el patrón, el reemplazo y los flags.
 '             El formulario es autónomo: recibe todo por parámetro y no lee los
-'             controles de FMain.
-'             La llama FMain.btnBuscarRegex_Click.
+'             controles de FMain. Es MODAL a propósito: mientras está abierto
+'             nadie escribe a mano en el editor, así que el editor puede
+'             mostrar cualquier coincidencia sin riesgo (MostrarCoincidencia).
+'             La llama FMain.btnBuscarRegex_Click, después del aviso de
+'             cambios sin guardar (SC-06).
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
@@ -723,6 +726,7 @@ Public Sub BuscarRegex()
   Dim aArchivos As String[]
   Dim sAplicar As String
   Dim hForm As FRegexResultados
+  Dim sDisco As String
 
   ' --- 1. GUARDA: SOLO CON PATRÓN VÁLIDO ---
   If Not $bPatronValido Then
@@ -740,24 +744,126 @@ Public Sub BuscarRegex()
     Return
   Endif
 
-  ' --- 3. DELEGAR AL FORMULARIO DE RESULTADOS ---
+  ' --- 3. EL EDITOR TIENE QUE SER IGUAL AL DISCO ---
+  ' perl BUSCA EN DISCO Y LAS POSICIONES SE APLICAN AL EDITOR. «DESCARTAR» EN EL
+  ' AVISO DE CAMBIOS SOLO MUEVE EL PUNTO DE CONTROL (MarcarGuardado): EL TEXTO
+  ' DESCARTADO SIGUE EN EL EDITOR. SI DIFIERE DEL DISCO, SE RELEE. UN ESPACIO
+  ' DURO EN EL ARCHIVO TAMBIÉN DA DIFERENCIA (.Text LO NORMALIZA, GV-47): SE
+  ' RELEE SIN NECESIDAD, PERO LAS POSICIONES NO CAMBIAN (UN CARÁCTER POR OTRO)
+  If FMain.sRutaArchivoAbierto <> "" Then
+    Try sDisco = File.Load(FMain.sRutaArchivoAbierto)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer el archivo abierto:" & Chr(10) & Error.Text)
+      Return
+    Endif
+    If m_EditorPrincipal.Texto() <> sDisco Then
+      If Not FMain.RecargarArchivoAbierto() Then Return
+    Endif
+  Endif
+
+  ' --- 4. DELEGAR AL FORMULARIO DE RESULTADOS ---
   ' Se le pasa todo hecho: archivos, patrón, reemplazo, flags. El aplicar se
   ' deriva de si hay reemplazo escrito: sin reemplazo, el formulario solo
-  ' busca.
+  ' busca. LA RECARGA DE LO REEMPLAZADO LA HACE EL FORMULARIO APENAS ESCRIBE
+  ' (TrasReemplazo): DESPUÉS DE REEMPLAZAR SE SIGUE NAVEGANDO SOBRE EL TEXTO
+  ' NUEVO SIN CERRARLO.
   sAplicar = If(Trim(FMain.txtReemplazo.Text) <> "", "1", "0")
 
   hForm = New FRegexResultados
   hForm.Configurar(aArchivos, FMain.txtBuscar.Text, FMain.txtReemplazo.Text, ArmarFlags(), sAplicar, RutaScript())
   hForm.ShowModal()
 
-  ' --- 4. SI EL REEMPLAZO TOCÓ ARCHIVOS Y UNO ERA EL DEL EDITOR, RECARGARLO ---
-  ' NO HAY FUNCIÓN DEDICADA: EL _Click DEL COMBO ES EL ÚNICO PUNTO QUE CARGA UN
-  ' ARCHIVO EN EL EDITOR. RE-DISPARARLO SOBRE EL ARCHIVO YA SELECCIONADO RECARGA
-  ' DESDE DISCO LA VERSIÓN YA REEMPLAZADA.
-  If m_FuncionesGenericas.bRegexHuboEscritura Then
-    m_FuncionesGenericas.bRegexHuboEscritura = False
-    FMain.cmbArticulosRevista_Click()
+  ' --- 5. FOCO AL EDITOR: LA ÚLTIMA COINCIDENCIA VISTA QUEDA SELECCIONADA (RC-GM-07) ---
+  FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ============================================
+' Función   : MostrarCoincidencia
+' Propósito : Lleva el editor a una coincidencia de FRegexResultados: abre su
+'             archivo si no es el abierto (m_Estructura.AbrirArchivo, por el
+'             combo, GV-53) y la deja seleccionada con su párrafo arriba de la
+'             vista (m_EditorPrincipal.IrA). No hay riesgo de posiciones viejas:
+'             el formulario es modal, el editor quedó igual al disco al abrirlo
+'             (BuscarRegex, apartado 3) y después de cada reemplazo se recarga y
+'             se vuelve a buscar. «Resaltar» es seleccionar: colorear con Format
+'             entraría en el deshacer (GV-46). La llama
+'             FRegexResultados.gvResultados_Select.
+' Parámetros: sRuta As String — ruta absoluta del archivo de la coincidencia
+'             iLinea As Integer — línea, base 0 (como la da el script)
+'             iColumna As Integer — columna en caracteres, base 0
+'             iLargo As Integer — largo de la coincidencia en caracteres
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub MostrarCoincidencia(sRuta As String, iLinea As Integer, iColumna As Integer, iLargo As Integer)
+
+  Dim sRaiz As String
+  Dim sRel As String
+
+  ' --- 1. ABRIR EL ARCHIVO SI NO ES EL DEL EDITOR ---
+  ' SI YA ESTÁ ABIERTO NO SE LLAMA A AbrirArchivo (PRECEDENTE:
+  ' m_AnalizarProyecto.IrAEjemplo). LA RUTA RELATIVA ES EL TEXTO DEL COMBO
+  If sRuta <> FMain.sRutaArchivoAbierto Then
+    sRaiz = m_InicioCierre.RutaProyectoEnCurso & "/"
+    If String.Left(sRuta, String.Len(sRaiz)) <> sRaiz Then Return
+    sRel = String.Mid(sRuta, String.Len(sRaiz) + 1)
+    ' False: NO ESTÁ EN EL COMBO O FALLÓ LA LECTURA (YA INFORMADA)
+    If Not m_Estructura.AbrirArchivo(sRel) Then Return
   Endif
+
+  ' --- 2. SELECCIONAR LA COINCIDENCIA CON SU PÁRRAFO ARRIBA ---
+  ' LÍNEA Y COLUMNA BASE 0, COMO LAS DA EL SCRIPT; PosicionDe CALCULA SOBRE EL
+  ' TEXTO DEL EDITOR (MISMO CAMINO QUE m_AnalizarProyecto.IrAEjemplo)
+  m_EditorPrincipal.IrA(m_EditorPrincipal.PosicionDe(iLinea, iColumna), iLargo)
+
+End
+
+' ============================================
+' Función   : TrasReemplazo
+' Propósito : Pone al día todo lo que depende de los archivos que el reemplazo
+'             acaba de escribir en disco, como lo haría un guardado: su árbol de
+'             estructura y sus referencias citadas en la base, y, si uno es el
+'             abierto, el editor (FMain.RecargarArchivoAbierto). Se llama apenas
+'             termina la escritura, también si se cortó a mitad: lo escrito,
+'             escrito está. La llama FRegexResultados.btnReemplazar_Click.
+' Parámetros: aArchivos As String[] — rutas absolutas efectivamente escritas
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub TrasReemplazo(aArchivos As String[])
+
+  Dim sRuta As String
+  Dim sContenido As String
+  Dim bAbiertoTocado As Boolean
+
+  ' --- 1. CADA ARCHIVO ESCRITO: ÁRBOL Y REFERENCIAS DESDE EL DISCO ---
+  For Each sRuta In aArchivos
+    Try sContenido = File.Load(sRuta)
+    If Error Then
+      ' NO ES UN CANAL MUDO (GV-23): EL ARCHIVO SE ESCRIBIÓ PERO NO SE PUEDE RELEER
+      m_Sonido.sonar("Warning")
+      Message.Warning("No se pudo releer " & File.Name(sRuta) & " después del reemplazo:" & Chr(10) & Error.Text)
+      Continue
+    Endif
+
+    ' EL ABIERTO LO RECARGA FMain, QUE TAMBIÉN REHACE SU ÁRBOL
+    If sRuta = FMain.sRutaArchivoAbierto Then
+      bAbiertoTocado = True
+    Else
+      m_Estructura.ActualizarArchivo(sRuta, sContenido)
+    Endif
+
+    ' LAS CLAVES CITADAS PUDIERON CAMBIAR: LO MISMO QUE EL GUARDADO. LA FUNCIÓN
+    ' INFORMA SUS PROPIOS ERRORES Y DEVUELVE False
+    Try m_Bibtex.ExtraerYGuardarReferenciasDelEditor(sContenido, sRuta)
+    If Error Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Falló la extracción de referencias de " & File.Name(sRuta) & ":" & Chr(10) & Error.Text)
+    Endif
+  Next
+
+  ' --- 2. EL ARCHIVO ABIERTO: EDITOR, ÁRBOL, COMENTARIOS Y CONTADOR ---
+  If bAbiertoTocado Then FMain.RecargarArchivoAbierto()
 
 End
 

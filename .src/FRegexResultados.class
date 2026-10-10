@@ -8,6 +8,13 @@
 '             guard de git, control de mtime, escritura de atrás para
 '             adelante y log.
 '
+'             ES MODAL (m_BuscarRegex.BuscarRegex): nadie escribe a mano en el
+'             editor mientras está abierto. Por eso, al elegir una fila, el
+'             editor muestra la coincidencia, en cualquier archivo, sin riesgo
+'             de posiciones viejas (m_BuscarRegex.MostrarCoincidencia). Después
+'             de reemplazar, lo escrito se recarga en el acto
+'             (m_BuscarRegex.TrasReemplazo) y se vuelve a buscar (SC-51).
+'
 '             La búsqueda corre como PROCESO ASÍNCRONO (perl): la grilla se
 '             puebla incremental por el evento Read y el usuario puede Cancelar
 '             en cualquier momento (Process.Kill). La UI no se congela ni con el
@@ -382,6 +389,10 @@ Public Sub gvResultados_Select()
 
   txtContexto.Text = sTexto
 
+  ' --- 4. EL EDITOR MUESTRA LA COINCIDENCIA: ARCHIVO, PÁRRAFO ARRIBA Y SELECCIÓN ---
+  ' LÍNEA Y COLUMNA BASE 0, TAL COMO LAS DA EL SCRIPT
+  m_BuscarRegex.MostrarCoincidencia(aReg[C_ARCHIVO], CInt(aReg[C_LINEA]), CInt(aReg[C_COLUMNA]), CInt(aReg[C_LARGO]))
+
 End
 
 ' ============================================
@@ -482,8 +493,9 @@ End
 '               2. guard de git ACOTADO a los archivos afectados
 '               3. pre-chequeo de mtime de TODOS los afectados (todo o nada)
 '               4. escribir cada archivo (coincidencias de atrás para adelante)
-'               5. log en log/ del proyecto
-'               6. re-correr la búsqueda para confirmar convergencia
+'               5. recargar lo escrito: editor, árbol y referencias (SC-51)
+'               6. log en log/ del proyecto
+'               7. re-correr la búsqueda para confirmar convergencia
 ' ============================================
 Public Sub btnReemplazar_Click()
 
@@ -493,6 +505,7 @@ Public Sub btnReemplazar_Click()
   Dim aArchivosAfectados As String[]
   Dim sArchivoTocado As String
   Dim iTotalReemplazos As Integer
+  Dim aEscritos As New String[]
 
   ' --- 1. VALIDACIONES DE ENTRADA ---
   If $sAplicar <> "1" Then
@@ -531,6 +544,8 @@ Public Sub btnReemplazar_Click()
     If Not EscribirArchivo(sArchivoTocado, cPorArchivo[sArchivoTocado]) Then
       ' UN FALLO A MITAD ES EL PEOR CASO: SE INFORMA Y SE FRENA. LOS ARCHIVOS YA
       ' ESCRITOS QUEDAN ESCRITOS; git ES EL DESHACER. NO SE SIGUE ESCRIBIENDO.
+      ' LO YA ESCRITO SE RECARGA IGUAL: EL EDITOR NO PUEDE QUEDAR CON LO VIEJO
+      m_BuscarRegex.TrasReemplazo(aEscritos)
       m_Sonido.sonar("Error")
       Message.Error("Error al escribir " & File.Name(sArchivoTocado) & "." & Chr(10) &
         "Se detuvo el reemplazo. Revisá el estado con git." & Chr(10) &
@@ -538,20 +553,23 @@ Public Sub btnReemplazar_Click()
         "git checkout " & sHead & " -- .")
       Return
     Endif
+    aEscritos.Add(sArchivoTocado)
     iTotalReemplazos += cPorArchivo[sArchivoTocado].Count
   Next
 
-  ' --- 7. LOG ---
+  ' --- 7. RECARGAR LO ESCRITO: EDITOR, ÁRBOL Y REFERENCIAS (SC-51) ---
+  ' EN EL ACTO Y NO AL CERRAR: SE SIGUE NAVEGANDO SOBRE EL TEXTO NUEVO. ANTES
+  ' SE RECARGABA AL CERRAR POR EL Click DEL COMBO, QUE SALE SIN HACER NADA SI EL
+  ' ARCHIVO YA ESTÁ ABIERTO (GV-53): EL EDITOR QUEDABA CON EL TEXTO VIEJO
+  m_BuscarRegex.TrasReemplazo(aEscritos)
+
+  ' --- 8. LOG ---
   EscribirLog(aArchivosAfectados, cPorArchivo, sHead, iTotalReemplazos)
 
-  ' --- 8. AVISO Y RE-CORRIDA ---
+  ' --- 9. AVISO Y RE-CORRIDA ---
   m_Sonido.sonar("Info")
   Message.Info(CStr(iTotalReemplazos) & " reemplazo(s) en " & CStr(aArchivosAfectados.Count) & " archivo(s)." & Chr(10) &
     "Se relanza la búsqueda para confirmar el resultado.")
-
-  ' MARCAR QUE HUBO ESCRITURA, PARA QUE FMain RECARGUE EL EDITOR SI EL ARCHIVO
-  ' EN CURSO FUE TOCADO (RC-GM-13: canal de retorno por módulo, no Public del form)
-  m_FuncionesGenericas.bRegexHuboEscritura = True
 
   ' RE-CORRER: confirma convergencia y detecta patrones que no convergen (si el
   ' reemplazo vuelve a matchear, el contador no baja).
