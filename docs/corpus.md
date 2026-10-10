@@ -2216,6 +2216,12 @@ El guion aislado nunca es un guion de unión: es una semirraya mal tecleada.
 
 El escritor sigue siendo `--to=markdown-smart`. Con `+smart` el propio Pandoc haría la conversión, pero aplanaría el apóstrofo curvo, que el filtro deja a propósito, y escaparía los `--` y `...` tecleados (GV-79).
 
+RANGOS NUMÉRICOS: GUION SIMPLE, NUNCA SEMIRRAYA
+
+Norma de la editorial (decisión de Alberto): los rangos de páginas y de años se escriben con un solo guion, `pp. 23-55`, `1990-2000`. No es la semirraya de arriba: un guion simple no lo convierte el `smart` de Pandoc, y todas las salidas imprimen un guion.
+
+El filtro no lo resuelve: pasa U+2013 a `--` en cualquier lugar, también entre cifras, y un guion entre cifras lo cuenta como aviso (`aviso_guion_entre_digitos`), porque sin contexto no distingue un rango de una fecha, un ISBN o un teléfono. Los rangos se llevan al guion simple con los patrones `rango-paginas` y `rango-anios` de la búsqueda con expresiones regulares (SC-51), revisando la grilla antes de reemplazar.
+
 ELISIÓN: (...), NUNCA [...]
 
 Norma de la editorial (decisión de Alberto): la supresión dentro de una cita se marca con puntos suspensivos entre paréntesis, `(...)`. Los corchetes quedan para las expresiones del editor, como `[sic]` o `[risas]`, que el filtro no toca.
@@ -2233,7 +2239,7 @@ El filtro cuenta, el informe de la conversión lo muestra y el texto queda como 
 
 Las conversiones también tienen su clave en el informe: `elipsis_a_tres_puntos`, `semirraya_a_dos_guiones`, `raya_a_tres_guiones`, `guion_aislado_a_semirraya` y `elision_corchetes_a_parentesis`.
 
-**Relaciones:** vinculo:SC-31,apoya:GV-79,vinculo:GV-47
+**Relaciones:** vinculo:SC-31,apoya:GV-79,vinculo:GV-47,vinculo:SC-51
 
 **PENDIENTE:** Probado en el contenedor con un .docx armado a mano, no con uno real en Mint. El contrato rige el ingreso desde Word: un carácter Unicode tecleado después en el editor no se detecta. Decidir si el escáner UTF-8 lo informa.
 
@@ -2940,20 +2946,21 @@ LA PESTAÑA
 
 PRIMEROS PATRONES (DE ALBERTO, ERRORES QUE LLEGAN DE WORD A LAS REFERENCIAS)
 
-    pagina-sin-espacio   (?<![\p{L}\p{N}])p\.(\d+)(?!\d|\s*(?:--|-|–)\s*\d)     ->  p. $1
-    rango-paginas        (?<![\p{L}\p{N}])(?!pp\. \d+--\d)pp?\.\s*(\d+)\s*(?:--|-|–)\s*(\d+)   ->  pp. $1--$2
+    pagina-sin-espacio   (?<![\p{L}\p{N}])p\.(\d+)(?!\d|\s*(?:---|--|-|–|—)\s*\d)     ->  p. $1
+    rango-paginas        (?<![\p{L}\p{N}])(?!pp\. \d+-\d)pp?\.\s*(\d+)\s*(?:---|--|-|–|—)\s*(\d+)   ->  pp. $1-$2
+    rango-anios          (?<![\p{L}\p{N}])(\d{4})(?:\s*(?:---|--|–|—)\s*|\s+-\s*|-\s+)(\d{4})(?![\p{L}\p{N}])   ->  $1-$2
 
-El lookbehind exige que delante de la `p` no haya letra ni dígito, en cualquier alfabeto: quedan fuera `Exp.2` y `ap.3`, y entra `(p.135)`. El primero deja los rangos para el segundo, así que el orden no importa. El segundo no toca un `pp. 20--24` ya correcto, y lleva el rango a `--` (SC-40): delante de `pp.` el contexto confirma el rango que `limpiar_docx.lua` solo puede avisar (`aviso_guion_entre_digitos`). Probados con `engine/buscar_regex.pl`, modo `probar`.
+El lookbehind exige que delante de la `p` no haya letra ni dígito, en cualquier alfabeto: quedan fuera `Exp.2` y `ap.3`, y entra `(p.135)`. El primero deja los rangos para el segundo, así que el orden no importa. Los dos de rango llevan el rango a un GUION SIMPLE, la norma de la editorial (SC-40), desde cualquier forma en que llegue de Word: dos o tres guiones, semirraya o raya Unicode, con o sin espacios. Ninguno toca la forma ya correcta (`pp. 20-24`, `1990-2000`). El de años exige cuatro cifras de cada lado y nada pegado: deja afuera `12345--67890`, `199--200` y un ISBN, pero un número de cuatro cifras separado por un guion entre espacios (un teléfono, por ejemplo) coincide igual; la grilla está para revisarlo antes de reemplazar. Delante de `pp.` o entre dos años, el contexto confirma el rango que `limpiar_docx.lua` solo puede avisar (`aviso_guion_entre_digitos`). Probados con `engine/buscar_regex.pl`, modo `probar`, y cargados con `m_PatronesRegex`.
 
 EL EDITOR MUESTRA LAS COINCIDENCIAS Y SE RECARGA AL REEMPLAZAR (decisión de Alberto)
 
 `FRegexResultados` es MODAL a propósito: mientras está abierto nadie escribe a mano en el editor. Con eso, el editor puede mostrar cualquier coincidencia sin riesgo de posiciones viejas.
 
 - Antes de abrir el formulario, el editor tiene que ser igual al disco. El aviso de SC-06 ya pidió guardar o descartar, pero «Descartar» solo mueve el punto de control (`MarcarGuardado`): el texto descartado sigue en el editor. Si difiere del disco, `m_BuscarRegex.BuscarRegex` lo relee con `FMain.RecargarArchivoAbierto`.
-- Elegir una fila de la grilla lleva el editor a la coincidencia (`m_BuscarRegex.MostrarCoincidencia`): abre su archivo si no es el abierto (`m_Estructura.AbrirArchivo`, por el combo, GV-53) y la deja seleccionada con su párrafo arriba de la vista (`m_EditorPrincipal.IrA`, GV-52), por línea y columna base 0, como las da el script. «Resaltar» es seleccionar: colorear con `Format` entraría en el deshacer (GV-46). Medido en banco: la selección se ve con el modal encima. No hace falta desplazar el editor a mano: el párrafo queda arriba.
+- Un click en una fila de la grilla lleva el editor a la coincidencia (`m_BuscarRegex.MostrarCoincidencia`). Va en `Click`, no en `Select` (GV-78): la primera versión navegaba desde `Select` y el editor no cambiaba de archivo en Mint. El preview de `txtContexto` va en `Change`, que también sigue a las flechas: abre su archivo si no es el abierto (`m_Estructura.AbrirArchivo`, por el combo, GV-53) y la deja seleccionada con su párrafo arriba de la vista (`m_EditorPrincipal.IrA`, GV-52), por línea y columna base 0, como las da el script. «Resaltar» es seleccionar: colorear con `Format` entraría en el deshacer (GV-46). Medido en banco: la selección se ve con el modal encima. No hace falta desplazar el editor a mano: el párrafo queda arriba.
 - Después de escribir, `FRegexResultados` llama en el acto a `m_BuscarRegex.TrasReemplazo` con los archivos efectivamente escritos, también si la escritura se cortó a mitad. Para cada uno: árbol de estructura y referencias citadas en la base (`m_Bibtex.ExtraerYGuardarReferenciasDelEditor`), lo mismo que hace un guardado. Si uno es el abierto: `FMain.RecargarArchivoAbierto` (editor, árbol, comentarios y contador). Después se vuelve a buscar, así que las posiciones de la grilla vuelven a valer.
 - Recargar es el punto de refresco 2 de SC-18: corta el deshacer. No se pierde nada: lo escrito por el reemplazo se deshace con git, que el guard del formulario exige o advierte.
-- Después de reemplazar, el editor queda en el ÚLTIMO archivo cambiado (orden de la grilla, que es el editorial), con su PRIMER cambio seleccionado y el párrafo arriba (decisión de Alberto). Ese cambio no se corrió: los reemplazos van de atrás para adelante. Al volver a llenar la grilla, un `Select` emitido por el código (GV-78) no mueve el editor: lo frena la bandera `$bRepoblando`.
+- Después de reemplazar, el editor queda en el ÚLTIMO archivo cambiado (orden de la grilla, que es el editorial), con su PRIMER cambio seleccionado y el párrafo arriba (decisión de Alberto). Ese cambio no se corrió: los reemplazos van de atrás para adelante. Al volver a llenar la grilla, el editor no se mueve: la navegación cuelga de `Click`, que el código nunca dispara (GV-78). La bandera `$bRepoblando` solo evita que el preview se actualice con una fila movida por el código.
 - Al cerrar, el editor queda donde estaba —la última coincidencia vista o el último cambio—, con el foco.
 - `MostrarCoincidencia` no tiene salidas mudas (GV-23): si no puede mover el editor, lo dice.
 
@@ -5017,7 +5024,13 @@ REGLA: la navegación cuelga de `Click`, como en `TreeView` (GV-51). Así, marca
 
 CASO EN EL PROYECTO: `EjecutarBusqueda` marca con `gvResultados.Row` la coincidencia a la que saltó; el salto desde la grilla vive en `gvResultados_Click`.
 
-**Relaciones:** vinculo:GV-51,vinculo:GV-53,vinculo:GV-15,vinculo:GV-58,vinculo:GV-69
+EN Select.Multiple, Select NO ES «SE ELIGIÓ UNA FILA»
+
+En modo `Select.Multiple`, `MoveTo` emite `Change` pero no `Select`. `Select` sale de `_RaiseSelect`, cuando cambia el CONJUNTO de filas seleccionadas, y se suprime o se difiere al soltar el botón mientras el mouse arrastra una selección (`$bDoNotRaiseSelect`, `$bMoveRaiseSelect`). Un click sobre una fila que ya está seleccionada —por ejemplo después de Ctrl+A, o al volver a la fila marcada— no cambia la selección y no emite `Select`. Leído en `GridView.class` de `gb.gui.base`, etiqueta 3.22.1 (`ScrollArea_MouseDown`, `AfterMouseUp`). En 3.19, en el banco, un click sobre una fila NO seleccionada sí emitió `Select`: el fallo depende del estado de la selección, y por eso no siempre aparece.
+
+CASO EN EL PROYECTO (2): `FRegexResultados`, que es `Select.Multiple` para elegir qué reemplazar, navegaba desde `gvResultados_Select` y en Mint el editor no cambiaba de archivo. Pasó a `gvResultados_Click`, con el preview en `gvResultados_Change` (SC-51).
+
+**Relaciones:** vinculo:GV-51,vinculo:GV-53,vinculo:GV-15,vinculo:GV-58,vinculo:GV-69,vinculo:SC-51
 
 **PENDIENTE:** Leído en el fuente; en uso en 3.22.1 se probó la búsqueda con la fila marcada, no el disparo aislado. Mini-test: Debug en gvResultados_Click, buscar con Enter o F3 con varias coincidencias; asignar Row desde el código no debe imprimir nada.
 
