@@ -1,0 +1,169 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_CSV
+' Propósito : ESCRITURA DE ARCHIVOS CSV PARA TODA LA APLICACIÓN. ARMA EL
+'             TEXTO Y ELIGE EL DESTINO; NO SABE DE DÓNDE VIENEN LOS DATOS.
+'             CADA LLAMADOR ENTREGA SUS ENCABEZADOS Y SUS FILAS COMO ARRAYS,
+'             TOMADOS DE SU PROPIA FUENTE DE VERDAD (UN MODELO EN MEMORIA, UN
+'             RESULT, UNA GRILLA).
+'
+'             LO USAN:
+'               m_AnalizarProyecto.ExportarCSV  — solapa «Escanear» de FMain
+'               FEstadisticas.ButtonExportarCSV_Click — resultados de consultas
+'
+' Formato   : PENSADO PARA ABRIRSE CON LIBREOFFICE CALC, NO CON EXCEL.
+'               - Separador: punto y coma. Los números que formatea Format()
+'                 llevan coma decimal en locale es_AR: con coma como
+'                 separador se partirían.
+'               - Comillas: solo en los campos que las necesitan (contienen
+'                 separador, comilla o salto de línea); la comilla interna se
+'                 duplica (RFC 4180). Los números quedan sin comillas.
+'               - Fin de línea: LF (Chr(10)).
+'               - Codificación: UTF-8 SIN BOM (SC-02: File.Save sin
+'                 recodificar). Excel sin BOM muestra mal tildes y «»; por
+'                 eso el formato documentado es LibreOffice.
+' ============================================
+
+' --- FORMATO DEL ARCHIVO ---
+Private Const SEPARADOR As String = ";"
+Private Const EXTENSION As String = "csv"
+
+' ============================================
+' Función   : Campo
+' Propósito : PREPARA UN VALOR PARA IR COMO CAMPO CSV. SI CONTIENE EL
+'             SEPARADOR, UNA COMILLA O UN SALTO DE LÍNEA, LO ENCIERRA ENTRE
+'             COMILLAS Y DUPLICA LAS INTERNAS (RFC 4180); SI NO, LO DEJA IGUAL
+' Parámetros: sValor As String — el valor de la celda (Null se toma como "")
+' Retorna   : String — el campo listo para escribir
+' ============================================
+Public Function Campo(sValor As String) As String
+
+  ' --- 1. VALIDACIÓN: SIN CARACTERES ESPECIALES VA TAL CUAL ---
+  ' InStr ES SEGURO EN UTF-8 PARA BUSCAR UN CARÁCTER ASCII (RC-GM-12): SUS
+  ' BYTES NUNCA APARECEN DENTRO DE UN CARÁCTER MULTIBYTE
+  If InStr(sValor, SEPARADOR) = 0 And If InStr(sValor, Chr(34)) = 0 And If InStr(sValor, Chr(10)) = 0 And If InStr(sValor, Chr(13)) = 0 Then
+    Return sValor
+  Endif
+
+  ' --- 2. ENTRE COMILLAS, CON LAS INTERNAS DUPLICADAS ---
+  Return Chr(34) & Replace(sValor, Chr(34), Chr(34) & Chr(34)) & Chr(34)
+
+End
+
+' ============================================
+' Función   : Armar
+' Propósito : ARMA EL TEXTO COMPLETO DEL CSV: UNA LÍNEA DE ENCABEZADOS Y UNA
+'             POR FILA. CADA LÍNEA TERMINA EN LF, INCLUIDA LA ÚLTIMA
+' Parámetros: aEncabezados As String[] — títulos de las columnas
+'             aFilas As Object[] — cada elemento es un String[] con las celdas
+'             de una fila, en el orden de los encabezados
+' Retorna   : String — el contenido del archivo
+' ============================================
+Public Function Armar(aEncabezados As String[], aFilas As Object[]) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sTexto As String
+  Dim aFila As String[]
+  Dim i As Integer
+
+  ' --- 2. ENCABEZADOS ---
+  sTexto = Linea(aEncabezados)
+
+  ' --- 3. FILAS ---
+  ' POR ÍNDICE Y CON ASIGNACIÓN, COMO EN m_AnalizarProyecto.LlenarGrilla:
+  ' CADA ELEMENTO DE aFilas ES UN String[] GUARDADO COMO Object
+  For i = 0 To aFilas.Max
+    aFila = aFilas[i]
+    sTexto &= Linea(aFila)
+  Next
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : Linea
+' Propósito : UNE LAS CELDAS DE UNA FILA CON EL SEPARADOR Y AGREGA EL FIN DE
+'             LÍNEA
+' Parámetros: aCeldas As String[] — las celdas
+' Retorna   : String — la línea con su LF
+' ============================================
+Private Function Linea(aCeldas As String[]) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sLinea As String
+  Dim i As Integer
+
+  ' --- 2. CELDAS ---
+  ' EL SEPARADOR VA ANTES DE CADA CELDA SALVO LA PRIMERA: ASÍ NO HAY QUE
+  ' RECORTAR UN SEPARADOR SOBRANTE AL FINAL
+  For i = 0 To aCeldas.Max
+    If i > 0 Then sLinea &= SEPARADOR
+    sLinea &= Campo(aCeldas[i])
+  Next
+
+  Return sLinea & Chr(10)
+
+End
+
+' ============================================
+' Función   : Guardar
+' Propósito : PIDE EL DESTINO, ASEGURA LA EXTENSIÓN .csv Y ESCRIBE EL
+'             ARCHIVO. INFORMA EL RESULTADO AL USUARIO (MENSAJE Y SONIDO)
+' Parámetros: sContenido As String — el texto armado con Armar
+'             sRutaSugerida As String — ruta completa propuesta en el diálogo
+'             sTitulo As String — título del diálogo
+' Retorna   : Boolean — True si el archivo quedó escrito; False si se canceló
+'             o falló
+' ============================================
+Public Function Guardar(sContenido As String, sRutaSugerida As String, sTitulo As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+
+  ' --- 2. ELEGIR EL DESTINO ---
+  ' Dialog ES ESTÁTICO Y OTROS FORMULARIOS DEJAN AutoExt EN True: SE FIJA EN
+  ' False PARA QUE LA EXTENSIÓN LA DECIDA SOLO EL CÓDIGO DEL APARTADO 3
+  ' (RC-GM-19: EL FILTRO ES COSMÉTICO). SaveFile DEVUELVE True AL CANCELAR
+  ' (GV-16)
+  Dialog.Title = sTitulo
+  Dialog.Filter = ["*.csv", "Archivos CSV (LibreOffice Calc)"]
+  Dialog.AutoExt = False
+  Dialog.Path = sRutaSugerida
+  If Dialog.SaveFile() Then Return False
+  sRuta = Dialog.Path
+
+  ' --- 3. EXTENSIÓN, VERIFICADA EN CÓDIGO (RC-GM-19) ---
+  ' EL DIÁLOGO YA PREGUNTÓ SI Dialog.Path EXISTÍA (GV-97): NO SE REPITE. SOLO
+  ' SE PREGUNTA ACÁ SI EL CÓDIGO CAMBIA LA RUTA, PORQUE ESA RUTA EL DIÁLOGO NO
+  ' LA VIO (EL MISMO CRITERIO QUE m_BuscarRegex.CompartirPatron)
+  If LCase(File.Ext(sRuta)) <> EXTENSION Then
+    sRuta &= "." & EXTENSION
+    If IsDir(sRuta) Then
+      m_Sonido.sonar("Error")
+      Message.Error("El destino es una carpeta:" & Chr(10) & sRuta)
+      Return False
+    Endif
+    If Exist(sRuta) Then
+      m_Sonido.sonar("Warning")
+      If Message.Warning("Ya existe el archivo:" & Chr(10) & sRuta & Chr(10) & Chr(10) & "¿Reemplazarlo?", "Reemplazar", "Cancelar") <> 1 Then Return False
+    Endif
+  Endif
+
+  ' --- 4. ESCRIBIR ---
+  ' File.Save ESCRIBE UTF-8 TAL CUAL, SIN BOM (SC-02)
+  Try File.Save(sRuta, sContenido)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el archivo CSV:" & Chr(10) & sRuta & Chr(10) & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 5. INFORMAR, CON LA INDICACIÓN DE CÓMO ABRIRLO ---
+  m_Sonido.sonar("Info")
+  Message.Info("Archivo CSV guardado en:" & Chr(10) & sRuta & Chr(10) & Chr(10) &
+    "Abrirlo con LibreOffice Calc: separador punto y coma, codificación UTF-8.")
+  Return True
+
+End

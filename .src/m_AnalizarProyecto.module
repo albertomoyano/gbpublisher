@@ -40,6 +40,8 @@
 '   btnVerVariantes       — abre FVariantes con las variantes del último análisis
 '                           (NO MODAL: queda encima mientras se corrige, y un
 '                           clic en un ejemplo lleva al lugar en el editor)
+'   btnExportarAnalisis   — guarda el último análisis como CSV (m_CSV). Se
+'                           habilita solo con un análisis completo a la vista
 '   gvAnalizarProyecto    — la grilla: Métrica | Total | un archivo por columna
 ' ============================================
 
@@ -115,6 +117,12 @@ Private $bHabiaCambios As Boolean
 ' CADA FILA ES UN String[]; LOS ÍNDICES DE $aFilasSeccion SON TÍTULOS
 Private $aFilas As New Object[]
 Private $aFilasSeccion As New Integer[]
+' TÍTULOS DE LAS COLUMNAS DEL ÚLTIMO LlenarGrilla: LOS USA ExportarCSV
+Private $aEncabezados As New String[]
+' HAY UN ANÁLISIS COMPLETO EN $aFilas Y A LA VISTA EN LA GRILLA. UN ANÁLISIS
+' CANCELADO DEJA EN $aFilas EL ANTERIOR, PERO LA GRILLA YA NO LO MUESTRA:
+' EXPORTARLO SERÍA EXPORTAR ALGO QUE EL USUARIO NO ESTÁ VIENDO
+Private $bHayResultado As Boolean
 
 ' --- ANÁLISIS LÉXICO ---
 ' CARPETA TEMPORAL CON EL TEXTO DE CADA ARCHIVO, UNO POR .md
@@ -191,6 +199,7 @@ Public Sub InicializarTabAnalizar()
   FMain.btnAnalizarProyecto.Enabled = (m_InicioCierre.RutaProyectoEnCurso <> "")
   FMain.btnCancelarAnalizar.Enabled = False
   FMain.btnVerVariantes.Enabled = False
+  FMain.btnExportarAnalisis.Enabled = False
 
 End
 
@@ -215,6 +224,8 @@ Public Sub Detener()
   $aVariantes = New Object[]
   $aEjemplos = New Object[]
   FMain.btnVerVariantes.Enabled = False
+  $bHayResultado = False
+  FMain.btnExportarAnalisis.Enabled = False
 
   ' --- 3. LA VENTANA DE VARIANTES DE OTRO PROYECTO NO PUEDE QUEDAR ABIERTA ---
   CerrarVentanaVariantes()
@@ -304,6 +315,10 @@ Public Sub Analizar()
   FMain.btnAnalizarProyecto.Enabled = False
   FMain.btnCancelarAnalizar.Enabled = True
   FMain.btnVerVariantes.Enabled = False
+  ' EL RESULTADO ANTERIOR DEJA DE ESTAR A LA VISTA EN CUANTO LA GRILLA PASA A
+  ' MOSTRAR EL PROGRESO
+  $bHayResultado = False
+  FMain.btnExportarAnalisis.Enabled = False
   $aVariantes = New Object[]
   $aEjemplos = New Object[]
 
@@ -384,6 +399,8 @@ Public Sub Analizar()
   m_Sonido.sonar("Info")
   Terminar()
   FMain.btnVerVariantes.Enabled = ($aVariantes.Count > 0)
+  $bHayResultado = True
+  FMain.btnExportarAnalisis.Enabled = True
 
   ' --- 9. LA VENTANA DE VARIANTES, SI ESTÁ ABIERTA, PASA A LOS DATOS NUEVOS ---
   $sHoraAnalisis = Format(Now, "hh:nn")
@@ -839,6 +856,41 @@ Public Sub VerVariantes()
   hForm.Show()
   hForm.TopOnly = True
   $hVentanaVariantes = hForm
+
+End
+
+' ============================================
+' Función   : ExportarCSV
+' Propósito : ATIENDE btnExportarAnalisis. GUARDA EL ÚLTIMO ANÁLISIS COMO CSV.
+'             LA FUENTE ES $aFilas, NO LA GRILLA: LA GRILLA TAMBIÉN SIRVE DE
+'             LÍNEA DE ESTADO (MostrarProgreso). LOS TÍTULOS DE SECCIÓN, QUE EN
+'             LA GRILLA SE DISTINGUEN POR COLOR, EN EL CSV QUEDAN COMO UNA FILA
+'             CON SOLO LA PRIMERA CELDA, EN MAYÚSCULAS
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ExportarCSV()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sCarpeta As String
+  Dim sNombre As String
+
+  ' --- 2. VALIDACIÓN: SOLO UN ANÁLISIS COMPLETO Y A LA VISTA ---
+  ' EL BOTÓN YA ESTÁ DESHABILITADO EN ESOS CASOS; LA GUARDA CUBRE EL ESTADO
+  ' INICIAL DEL FORMULARIO, ANTES DEL PRIMER InicializarTabAnalizar
+  If $bCorriendo Or Not $bHayResultado Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un análisis para exportar. Correr «Analizar» primero.")
+    Return
+  Endif
+
+  ' --- 3. DESTINO SUGERIDO: LA RAÍZ DEL PROYECTO, CON NOMBRE Y FECHA ---
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso
+  If sCarpeta = "" Then sCarpeta = User.Home
+  sNombre = "analisis-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & "-" & Format(Now, "yyyy-mm-dd") & ".csv"
+
+  ' --- 4. ARMAR Y GUARDAR (m_CSV INFORMA EL RESULTADO) ---
+  m_CSV.Guardar(m_CSV.Armar($aEncabezados, $aFilas), sCarpeta &/ sNombre, "Exportar el análisis del proyecto")
 
 End
 
@@ -1984,16 +2036,24 @@ Private Sub LlenarGrilla(oTotal As CAnalisisArchivo, aArchivos As CAnalisisArchi
   AgregarMetrica("Pliegos de " & CStr(PAGINAS_PLIEGO) & " páginas", "pliegos", oTotal, aArchivos)
   AgregarNota("Base", "Estimación empírica: " & CStr(CARACTERES_PAGINA) & " caracteres con espacios por página de libro (rango observado " & CStr(CARACTERES_PAGINA_RALA) & "–" & CStr(CARACTERES_PAGINA_LLENA) & "). Solo texto: no reserva lugar para figuras ni tablas.", iColumnas)
 
-  ' --- 11. VOLCAR A LA GRILLA ---
+  ' --- 11. ENCABEZADOS: UNA SOLA DEFINICIÓN PARA LA GRILLA Y PARA EL CSV ---
+  $aEncabezados = New String[]
+  $aEncabezados.Add("Métrica")
+  $aEncabezados.Add("Total")
+  For i = 0 To aArchivos.Max
+    $aEncabezados.Add(aArchivos[i].sNombre)
+  Next
+
+  ' --- 12. VOLCAR A LA GRILLA ---
   With FMain.gvAnalizarProyecto
     .Rows.Count = 0
     .Columns.Count = iColumnas
-    .Columns[0].Title = "Métrica"
+    For i = 0 To $aEncabezados.Max
+      .Columns[i].Title = $aEncabezados[i]
+    Next
     .Columns[0].Width = 300
-    .Columns[1].Title = "Total"
     .Columns[1].Width = 140
     For i = 0 To aArchivos.Max
-      .Columns[i + 2].Title = aArchivos[i].sNombre
       .Columns[i + 2].Width = 120
     Next
 
