@@ -2222,6 +2222,19 @@ Norma de la editorial (decisión de Alberto): los rangos de páginas y de años 
 
 El filtro no lo resuelve: pasa U+2013 a `--` en cualquier lugar, también entre cifras, y un guion entre cifras lo cuenta como aviso (`aviso_guion_entre_digitos`), porque sin contexto no distingue un rango de una fecha, un ISBN o un teléfono. Los rangos se llevan al guion simple con los patrones `rango-paginas` y `rango-anios` de la búsqueda con expresiones regulares (SC-51), revisando la grilla antes de reemplazar.
 
+LLAMADA DE NOTA: DESPUÉS DEL SIGNO DE CIERRE
+
+Norma de la editorial (decisión de Alberto), que se aparta de la RAE: la llamada de nota va después de cualquier signo de cierre, `texto.[^a]`, `«cita».[^b]`. Detrás de una llamada solo puede haber un espacio o un fin de línea.
+
+Lo corrige el patrón `nota-despues-del-signo` de la búsqueda con expresiones regulares (SC-51), con el flag `m`:
+
+    (?<!^)((?:\[\^[^\]\s]+\])+)((?:[.,;:!?»)\]’”*_]|-{2,3})+)   ->  $2$1
+
+- Mueve juntos todos los signos de cierre que siguen (`[^a]».` → `».[^a]`) y todas las llamadas seguidas (`[^a][^b].` → `.[^a][^b]`). Una segunda pasada no encuentra nada.
+- Signos de cierre: `. , ; : ! ? » ) ] ’ ”`, los cierres de énfasis `*` y `_`, y la raya de cierre `--` o `---`.
+- No toca la definición (`[^a]:` al comienzo de línea) ni una llamada pegada a una letra o a un signo de apertura (`[^a]palabra`, `[^a](véase)`): ahí falta un espacio, y mover el carácter rompería la palabra.
+- No cubre las notas en línea de Pandoc, `^[texto]`.
+
 ELISIÓN: (...), NUNCA [...]
 
 Norma de la editorial (decisión de Alberto): la supresión dentro de una cita se marca con puntos suspensivos entre paréntesis, `(...)`. Los corchetes quedan para las expresiones del editor, como `[sic]` o `[risas]`, que el filtro no toca.
