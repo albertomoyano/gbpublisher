@@ -2886,11 +2886,11 @@ La carpeta de destino dentro de gbpublisher entra entera al `.deb`. Por eso la e
 
 COTEJO ANTES DE ESCRIBIR UN SCRIPT
 
-El estado vigente se lee de los repositorios de GitHub.
+El estado vigente se lee de dos lugares, según la aplicación:
 
-- Corpus: `docs/corpus.md` del repositorio de gbpublisher, clonado con `git clone --depth 1`, se coteja con el `corpus.md` adjunto al proyecto de trabajo con Claude: mismas entradas, mismos estados y pasajes testigo idénticos. Si el del repositorio es el más reciente, se adopta sin consultar y se dice en una línea. Si el más reciente es el adjunto —caso raro, porque el repositorio recibe cada exportación—, o si cada uno tiene algo que el otro no tiene, se avisa y se espera la respuesta antes de hacer nada.
-- Catálogo de shortcodes: el `_catalogo.tsv` exportado a `.hidden/shortcodes/` de gbpublisher, y los scripts de `datos/` del repositorio de gbShortcodes.
-- El número del script nuevo sale del último que está en el repositorio de cada aplicación.
+- gbpublisher: el repositorio de GitHub, clonado con `git clone --depth 1`. Antes de leerlo, Claude pregunta si está al día; un sí lo habilita como copia de trabajo, sin más cotejo, y un no obliga a esperar el push. De ahí salen el corpus (`docs/corpus.md`) y el catálogo de shortcodes (`_catalogo.tsv` en `.hidden/shortcodes/`). El `corpus.md` adjunto al proyecto de trabajo con Claude no se coteja ni se usa.
+- gbCorpus y gbShortcodes: la carpeta local de cada una en la máquina de Alberto, a la que Claude tiene acceso. No se consulta GitHub: los scripts se aplican en local y pueden no estar subidos. De ahí salen los scripts aplicados (`gbcorpus-act-NN.sql` en la raíz de gbCorpus, `datos/` de gbShortcodes).
+- El número del script nuevo sale del más alto en la carpeta local de la aplicación.
 
 Es lo que garantiza que un código nuevo esté libre y que un texto a reemplazar exista tal como se lo cita.
 
@@ -2904,7 +2904,7 @@ CADA APLICACIÓN
 - gbShortcodes: la base, el contrato de exportación y cada migración en RF-11. gbpublisher lee el catálogo según SC-34.
 - gbAyudas: el diseño de las ayudas, la conversión, los estados, la exportación y el visor en SC-24. La entrada de referencia de su base se escribe cuando se construya.
 
-**Relaciones:** vinculo:SC-19,vinculo:RF-08,vinculo:RF-11,vinculo:SC-24,vinculo:SC-34,vinculo:SC-13,vinculo:SC-11,vinculo:GV-30
+**Relaciones:** vinculo:SC-19,vinculo:RF-08,vinculo:RF-11,vinculo:SC-24,vinculo:SC-34,vinculo:SC-13,vinculo:SC-11,vinculo:GV-30,vinculo:SC-52
 
 **PENDIENTE:** Dos correcciones de código derivadas de esta entrada, entregadas con gbcorpus-act-17: (1) gbCorpus busca el importador primero en el sistema y después en «engine/» del proyecto (FMain.RutaImportador), al revés de lo que fija «Recursos que viajan con el programa»; (2) el .project de gbShortcodes declara en ExtraFiles solo «engine», y la aplicación instalada busca en /usr/share/gbshortcodes también esquema/carga-inicial.sql y las migraciones. Verificar las dos en Mint y quitar este pendiente.
 
@@ -2984,6 +2984,53 @@ La primera versión recargaba al cerrar el formulario disparando `cmbArticulosRe
 **Relaciones:** vinculo:SC-05,vinculo:RC-PL-01,vinculo:SC-21,vinculo:SC-11,vinculo:SC-06,vinculo:SC-40,vinculo:GV-53,vinculo:GV-69,vinculo:GV-68,vinculo:GV-97,vinculo:GV-98,vinculo:RC-GM-19,vinculo:GV-23,vinculo:SC-18,vinculo:GV-46,vinculo:GV-52,vinculo:GV-78
 
 **PENDIENTE:** Verificar en Linux Mint con Gambas 3.22.1 el flujo completo en la aplicación (guardar, elegir, marca de modificado, compartir, importar); el mini-test de JSON ya pasó (GV-98). Después, quitar este pendiente y poner el entorno de Mint.
+
+### SC-52 — Verificación en XML, JATS y DocBook: lo que no pasa el validador no está verificado
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** JATS Archiving 1.4 / DocBook 5.2 / SaxonJ-HE 12.5
+
+DECISIÓN CERRADA (decisión de Alberto). Cómo se trabaja cuando Claude propone XML, XPath o XSLT para JATS o DocBook.
+
+POR QUÉ
+
+El riesgo no es la ignorancia sino el error verosímil: un atributo, un valor o un orden de hijos que suena correcto y que el esquema no admite, dicho con la misma seguridad que lo verificado. La estructura general suele estar bien; el error está en el detalle de qué va dentro de qué y en qué orden.
+
+1. LO QUE NO PASA EL VALIDADOR NO ESTÁ VERIFICADO
+
+Todo fragmento JATS o DocBook propuesto viene con una instancia mínima de prueba y el comando que la valida contra el esquema del repositorio. Una estructura se da por buena cuando el validador la acepta, no cuando parece correcta.
+
+2. EL ESQUEMA ESTÁ EN EL REPOSITORIO, NO EN LA MEMORIA
+
+Ante una duda de modelo de contenido —qué hijos admite un elemento, en qué orden, qué valores toma un atributo— la respuesta sale del esquema:
+
+    JATS 1.4 Archiving   .hidden/dtd/JATS-archivearticle1-4.dtd y sus módulos
+    DocBook 5.2          .hidden/schemas/docbook/docbook.rng
+
+Si en la sesión no hay acceso al esquema, se dice y se pide el fragmento.
+
+3. ORIGEN DECLARADO DE CADA AFIRMACIÓN
+
+Las afirmaciones técnicas que no son triviales llevan su origen:
+
+    [esquema]   verificado contra la DTD, el RNG o el Schematron
+    [doc]       documentación oficial: Tag Library, especificación W3C, manual de Saxon
+    [memoria]   conocimiento sin verificar; se verifica antes de usarlo
+
+4. CAPAS DE VALIDEZ SEPARADAS
+
+Válido para el esquema JATS no quiere decir que pase SciELO PS (packtools), PMC o el esquema de depósito de Crossref. Válido para el RNG de DocBook no quiere decir que lo procese bien una hoja del proyecto. Cada regla dice a qué capa pertenece.
+
+5. LO QUE DEPENDE DE LA VERSIÓN SE PRUEBA CON EL PROCESADOR ANCLADO
+
+El comportamiento de XSLT, XPath y los validadores se prueba con la versión anclada del proyecto, no se deduce. Caso abierto en el pendiente de esta entrada.
+
+6. LO VERIFICADO SE ACUMULA EN GV-XML
+
+Todo comportamiento comprobado de XML, XPath, XSLT, Saxon, xmllint, jing, Schematron, packtools y los esquemas JATS y DocBook entra como GV-XML-NN, con entorno y fecha. Las entradas anteriores sobre esos temas (GV-21, GV-22, GV-25, GV-26, GV-28, GV-71, GV-81, GV-82) quedan en GV con su código: están citadas en el código y en otras entradas, y renumerarlas rompería esas citas.
+
+**Relaciones:** vinculo:GV-21,vinculo:GV-22,vinculo:GV-25,vinculo:GV-26,vinculo:GV-28,vinculo:GV-71,vinculo:GV-81,vinculo:GV-82,vinculo:SC-50
+
+**PENDIENTE:** Mini-test: si SaxonJ-HE 12.5 acepta construcciones de XSLT 3.0 en una hoja declarada version="2.0". El resultado entra como GV-XML-01 y se quita este pendiente.
 
 ---
 
@@ -3382,7 +3429,7 @@ El mecanismo es el de SC-50. Lo propio de cada una:
 
 ## GV — Comportamientos verificados
 
-Evidencia empírica de gambas-verificado.md
+Evidencia empírica de Gambas, Pandoc y el resto del pipeline. Desde la actualización 24, lo de XML, XSLT y sus validadores va a GV-XML; las entradas anteriores quedan acá con su código
 
 ### GV-01 — Rutas y directorios
 
@@ -5517,3 +5564,9 @@ Lo mismo que GV-68 para una clave con cadena vacía: al armar una `Collection` p
 Caso del proyecto: `m_PatronesRegex` (SC-51).
 
 **Relaciones:** vinculo:GV-68,vinculo:RC-GM-17,vinculo:SC-51
+
+---
+
+## GV-XML — Comportamientos verificados XML
+
+Evidencia empírica sobre XML, XPath, XSLT, Saxon, los validadores y los esquemas JATS y DocBook
