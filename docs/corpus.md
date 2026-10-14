@@ -2500,7 +2500,7 @@ GRILLAS DE METADATOS
 
 Verificado: el orden y la extracción del código, en MariaDB 10.11 con nombres reales, un NULL y uno sin prefijo; las dos grillas, por Alberto en gbpublisher.
 
-**Relaciones:** vinculo:SC-25,vinculo:SC-45
+**Relaciones:** vinculo:SC-25,vinculo:SC-45,vinculo:SC-55
 
 **PENDIENTE:** `m_GenerarEpub` y `m_GenerarHTML` (revistas) ordenan solo por `nombre_archivo ASC`: si un número tiene un `fm-`, queda después de los `a-`. Revisar si esos módulos ven solo artículos o si tienen que pasar a `m_OrdenPiezas`. La copia del CASE en `FMain` está comentada y no se tocó.
 
@@ -3184,6 +3184,43 @@ El filtro de producción sigue escribiendo su mensaje por stderr porque revistas
 **Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32
 
 **PENDIENTE:** (1) Revistas: usar el mismo filtro cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
+
+### SC-55 — Orden de los finales: la bibliografía antes de los índices, el colofón último; aviso en el ABM, freno en el PDF
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.19 (gbc3, gbs3) / contenedor Ubuntu · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto). Libros, salida PDF. El orden de las piezas sale del nombre de archivo (SC-44), y hay errores de orden en los finales que compilan sin fallar y dan un libro equivocado. Esos se controlan; el resto del orden de los finales no.
+
+EL CASO QUE LO ORIGINÓ
+
+Un libro de autor con bibliografía consolidada sacó el índice de autores antes de la bibliografía. Con bibliografía por capítulo no se ve: cada pieza trae la suya y el índice después del último capítulo es lo correcto. Dos caminos llevan al error:
+- La bibliografía consolidada sin pieza declarada: `ArmarInsumosLaTeX` (apartado 8) emite `\printbibliography[heading=bibintoc]` al final, después de TODAS las piezas declaradas, índices incluidos.
+- La pieza declarada pero numerada después del índice (`bm-20-indice-autores`, `bm-21-referencias`).
+
+LAS REGLAS
+
+La función es `m_PiezasLibro.ProblemaOrdenFinales(aNombre, aTipo, bConsolidada)`: recibe las piezas en el orden del libro y devuelve vacío o el mensaje del PRIMER problema, con qué está mal y cómo corregirlo.
+- R1. Ningún `indice_*` (onomastico, concepto, autores) antes de la pieza `bibliografia`. Si hay más de una, manda la primera, como en el EPUB.
+- R2. Bibliografía consolidada, sin pieza `bibliografia` y con algún índice declarado: hay que declararla. Sin índices no se exige: el respaldo del apartado 8 da el orden correcto y los libros anteriores siguen compilando.
+- R3. Si hay pieza `colofon`, es la última.
+
+No se controlan `glosario`, `sobre_autores` ni `cronologia`: su lugar es tradición editorial, no error, y una regla rígida frenaría libros bien compuestos.
+
+POR QUÉ UN SEMÁFORO
+
+Es una regla del LIBRO, no de una pieza, y por eso no va en `ProblemaPosicion` (la de la dedicatoria, que con el nombre de la pieza alcanza). Al renumerar dos piezas hay un estado intermedio inválido que no se puede evitar; un freno al guardar obligaría a pasar por un nombre provisorio.
+- Amarillo: `m_Metadatos.GuardarMetadatosDeCapitulo` (apartado 7), DESPUÉS de guardar, lee todas las piezas con nombre del libro abierto en el orden de `m_OrdenPiezas.ClausulaOrden` (`ProblemaOrdenLibroAbierto`) y muestra `Message.Warning`. Un fallo de lectura no se informa: el aviso es ayuda.
+- Rojo: `m_GenerarPDFLibro.ArmarInsumosLaTeX` (apartado 2b, después de `VerificarPosiciones`) frena con `Message.Error` antes de escribir nada.
+
+La regla está escrita una sola vez, en `m_PiezasLibro`; los dos lugares la llaman.
+
+FUERA DEL ALCANCE
+
+EPUB y HTML: los índices no se generan (`m_PiezasLibro.Tratamiento`), así que el orden respecto de la bibliografía no cambia nada. El EPUB ubica su colofón solo.
+
+**Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17
+
+**PENDIENTE:** Probado en el contenedor: gbc3 compila el proyecto (con gb.db en lugar de gb.db2, que 3.19 no trae) y ProblemaOrdenFinales, con gbs3, da lo esperado en siete casos (el error que lo originó, el corregido, R2 con y sin índices, por capítulo, R3 con y sin error). Falta en Mint con gbpublisher: el aviso del ABM al renumerar y el freno del PDF con un libro real. Hecho eso, quitar este pendiente.
 
 ---
 

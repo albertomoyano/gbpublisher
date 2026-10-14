@@ -198,6 +198,92 @@ Public Function ProblemaPosicion(sNombre As String, sTipo As String) As String
 End
 
 ' ============================================
+' Función   : ProblemaOrdenFinales
+' Propósito : Comprueba el orden relativo de las piezas de finales que, mal
+'             ubicadas, dan un libro equivocado sin que nada falle (SC-55):
+'             R1  ningún índice antes de la pieza bibliografia
+'             R2  bibliografía consolidada con índices: la pieza bibliografia
+'                 tiene que estar declarada
+'             R3  el colofón declarado es la última pieza
+'             Es una regla del LIBRO, no de una pieza: por eso no está en
+'             ProblemaPosicion. El generador del PDF frena con ella; el ABM
+'             solo avisa, porque al renumerar hay estados intermedios
+'             inválidos que no se pueden evitar.
+' Parámetros: aNombre As String[] — nombre_archivo de las piezas, en el orden
+'             del libro (m_OrdenPiezas.ClausulaOrden)
+'             aTipo As String[] — tipo_capitulo, paralelo a aNombre
+'             bConsolidada As Boolean — lugar_bibliografia = 'consolidada'
+' Retorna   : String — vacío si el orden es válido; si no, el mensaje del
+'             PRIMER problema, con qué está mal y cómo corregirlo
+' Nota      : NO CONTROLA glosario, sobre_autores NI cronologia: SU LUGAR ES
+'             CUESTIÓN DE TRADICIÓN EDITORIAL, NO UN ERROR (SC-55).
+' ============================================
+Public Function ProblemaOrdenFinales(aNombre As String[], aTipo As String[], bConsolidada As Boolean) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim i As Integer
+  Dim iBibliografia As Integer = -1
+  Dim iPrimerIndice As Integer = -1
+  Dim iColofon As Integer = -1
+
+  ' --- 2. RECORRIDO: LA PRIMERA APARICIÓN DE CADA TIPO ---
+  ' SI HAY MÁS DE UNA BIBLIOGRAFÍA MANDA LA PRIMERA, COMO EN EL EPUB
+  ' (m_GenerarEpubLibro, $iPosBibliografia)
+  For i = 0 To aTipo.Max
+    Select Case LCase(Trim(aTipo[i]))
+      Case "bibliografia"
+        If iBibliografia = -1 Then iBibliografia = i
+      Case "indice_onomastico", "indice_concepto", "indice_autores"
+        If iPrimerIndice = -1 Then iPrimerIndice = i
+      Case "colofon"
+        If iColofon = -1 Then iColofon = i
+    End Select
+  Next
+
+  ' --- 3. R1: LA BIBLIOGRAFÍA ANTES QUE LOS ÍNDICES ---
+  ' IFS ANIDADOS: And NO CORTOCIRCUITA (RC-GM-17)
+  If iBibliografia >= 0 Then
+    If iPrimerIndice >= 0 Then
+      If iPrimerIndice < iBibliografia Then
+        Return "El índice «" & aNombre[iPrimerIndice] & "» está antes que la " &
+          "bibliografía «" & aNombre[iBibliografia] & "»." & gb.NewLine &
+          "Los índices van después de la bibliografía. Renumerá los archivos: " &
+          "por ejemplo, bm-20-referencias y bm-21-indice-autores."
+      Endif
+    Endif
+  Endif
+
+  ' --- 4. R2: CONSOLIDADA CON ÍNDICES, LA PIEZA TIENE QUE ESTAR DECLARADA ---
+  ' SIN PIEZA, EL GENERADOR PONE LA BIBLIOGRAFÍA AL FINAL, DESPUÉS DE TODAS LAS
+  ' PIEZAS DECLARADAS: LOS ÍNDICES QUEDARÍAN ANTES. SIN ÍNDICES, ESE RESPALDO
+  ' DA EL ORDEN CORRECTO Y NO SE EXIGE NADA
+  If bConsolidada Then
+    If iBibliografia = -1 Then
+      If iPrimerIndice >= 0 Then
+        Return "El libro tiene bibliografía consolidada e índices, pero no " &
+          "tiene declarada la pieza de bibliografía." & gb.NewLine &
+          "Sin ella, la bibliografía saldría después del índice «" &
+          aNombre[iPrimerIndice] & "». Declará una pieza de tipo bibliografia " &
+          "numerada antes de los índices."
+      Endif
+    Endif
+  Endif
+
+  ' --- 5. R3: EL COLOFÓN ES LA ÚLTIMA PIEZA ---
+  If iColofon >= 0 Then
+    If iColofon < aTipo.Max Then
+      Return "El colofón «" & aNombre[iColofon] & "» no es la última pieza: " &
+        "después viene «" & aNombre[iColofon + 1] & "»." & gb.NewLine &
+        "El colofón cierra el libro. Numeralo después de todas las demás, " &
+        "por ejemplo bm-99-colofon."
+    Endif
+  Endif
+
+  Return ""
+
+End
+
+' ============================================
 ' Función   : VaEnIndice
 ' Propósito : Dice si una pieza tiene entrada en el índice de la salida
 '             digital: el nav del EPUB y el índice de la página de entrada del

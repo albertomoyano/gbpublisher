@@ -1311,7 +1311,68 @@ Public Sub GuardarMetadatosDeCapitulo()
     Return
   Endif
 
+  ' --- 7. ORDEN DE LOS FINALES: AVISO, NO FRENO ---
+  ' SE CONTROLA DESPUÉS DE GUARDAR Y SOBRE TODAS LAS PIEZAS DEL LIBRO: AL
+  ' RENUMERAR HAY ESTADOS INTERMEDIOS INVÁLIDOS QUE NO SE PUEDEN EVITAR. EL
+  ' FRENO LO PONE EL GENERADOR DEL PDF (SC-55)
+  sProblema = ProblemaOrdenLibroAbierto()
+  If sProblema <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La pieza se guardó, pero el orden del libro no sirve " &
+      "para el PDF:" & gb.NewLine & gb.NewLine & sProblema)
+    Return
+  Endif
+
   m_Sonido.sonar("ok")
+
+End
+
+' ============================================
+' Función   : ProblemaOrdenLibroAbierto
+' Propósito : Lee las piezas del libro del proyecto abierto, en orden
+'             editorial, y les aplica m_PiezasLibro.ProblemaOrdenFinales.
+'             Es la mitad «aviso» del control de orden de los finales (SC-55).
+' Parámetros: ninguno
+' Retorna   : String — el mensaje del problema, o vacío si el orden es
+'             válido o no se pudo leer la base
+' Nota      : UN FALLO DE LECTURA NO SE INFORMA: EL AVISO ES UNA AYUDA Y EL
+'             CONTROL QUE CUENTA ES EL DEL GENERADOR, QUE LEE LO MISMO.
+' ============================================
+Private Function ProblemaOrdenLibroAbierto() As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hLibro As Result
+  Dim hPiezas As Result
+  Dim aNombre As New String[]
+  Dim aTipo As New String[]
+  Dim bConsolidada As Boolean
+
+  ' --- 2. EL LIBRO DEL PROYECTO ABIERTO ---
+  ' LA MISMA CONSULTA QUE m_GenerarPDFLibro.ArmarInsumosLaTeX
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT id_libro, lugar_bibliografia FROM libros_md " &
+    "WHERE id_proyecto = &1 LIMIT 1", m_InicioCierre.IdProyectoEnCurso)
+  If Error Then Return ""
+  If Not hLibro.Available Then Return ""
+
+  bConsolidada = (LCase(Trim(NullToString(hLibro["lugar_bibliografia"]))) = "consolidada")
+
+  ' --- 3. LAS PIEZAS, EN EL ORDEN DEL LIBRO ---
+  ' MISMO FILTRO Y MISMO ORDEN QUE EL GENERADOR: SIN NOMBRE DE ARCHIVO LA
+  ' PIEZA NO ENTRA EN NINGUNA SALIDA (SC-44)
+  Try hPiezas = m_ConexionBD.mConn.Exec(
+    "SELECT c.nombre_archivo, c.tipo_capitulo FROM capitulos c " &
+    "WHERE c.id_libro = &1 AND c.nombre_archivo IS NOT NULL " &
+    "ORDER BY " & m_OrdenPiezas.ClausulaOrden("c.nombre_archivo"), hLibro["id_libro"])
+  If Error Then Return ""
+
+  For Each hPiezas
+    aNombre.Add(Trim(hPiezas["nombre_archivo"]))
+    aTipo.Add(Trim(NullToString(hPiezas["tipo_capitulo"])))
+  Next
+
+  ' --- 4. LA REGLA, ESCRITA EN UN SOLO LUGAR ---
+  Return m_PiezasLibro.ProblemaOrdenFinales(aNombre, aTipo, bConsolidada)
 
 End
 
