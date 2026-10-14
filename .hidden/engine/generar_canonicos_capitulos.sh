@@ -29,7 +29,8 @@
 #   2. Saxon con ensamblar-capitulo-canonico.xsl → jats/c-{nombre}.xml,
 #      escrito en un temporal y renombrado con mv: nunca queda en disco un
 #      canónico a medio escribir (el mismo motivo que en ensamblar_libro.sh)
-#   3. jing contra DocBook 5.2: informativo, como en el libro
+#   3. jing contra DocBook 5.2: informativo, como en el libro. Los IDREF sin
+#      ID no cuentan como aviso: ver «VALIDACIÓN DEL CAPÍTULO SUELTO»
 # ============================================================================
 # QUÉ PASA CUANDO UN CAPÍTULO FALLA
 #
@@ -43,6 +44,21 @@
 #   sin aviso. Borrado, el ensamblado se niega («falta jats/c-…») hasta que el
 #   capítulo se arregle. El canónico se reconstruye siempre desde el .md: no
 #   se pierde nada que no se pueda regenerar.
+#
+# VALIDACIÓN DEL CAPÍTULO SUELTO
+#
+#   Un capítulo validado solo no puede resolver lo que remite afuera de él: las
+#   citas a la bibliografía consolidada (sus bib-* viven en otro archivo, que
+#   entra recién al ensamblar) y las remisiones a figuras o secciones de otra
+#   pieza. jing las informa como «IDREF "…" without matching ID» aunque el
+#   libro esté bien (SC-32). Contarlas como aviso daría código 3 en todo libro
+#   con bibliografía consolidada, y un aviso que sale siempre tapa a los que
+#   importan.
+#
+#   Así que el capítulo se valida en dos capas: los IDREF sin ID se informan en
+#   tenue, como remisiones que se verifican al ensamblar; todo otro error de
+#   jing sigue siendo aviso. No se pierde nada: un IDREF colgado de verdad lo
+#   marca la validación del libro en ensamblar_libro.sh, que sí avisa.
 #
 # CÓDIGOS DE SALIDA (comun.sh)
 #   0  todos los capítulos generados y válidos
@@ -62,6 +78,10 @@ fi
 TIEMPO_PANDOC=120
 TIEMPO_SAXON=120
 LINEAS_ERROR_RNG=15
+
+# EL MENSAJE DE jing PARA UN IDREF SIN SU ID. TOMADO DE LA SALIDA REAL DE jing
+# EN LINUX MINT: «69:1130: error: IDREF "bib-4308-TOCHO2020" without matching ID»
+PATRON_IDREF='IDREF "[^"]*" without matching ID'
 
 XSL="$DIR_GBP_LOCAL/xslt/ensamblar-capitulo-canonico.xsl"
 RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
@@ -119,7 +139,7 @@ fallo() {
 procesar_capitulo() {
     local nombre="$1" xml_id="$2" tipo="$3" idioma="$4"
     local base carpeta md info body biblio parcial canonico temporal
-    local salida codigo filtro errores
+    local salida codigo filtro errores remisiones propios
     local args_pandoc=()
 
     # --- A. RUTAS ---
@@ -250,13 +270,31 @@ procesar_capitulo() {
         if (( codigo == 0 )); then
             ok "válido contra DocBook 5.2"
         else
-            errores=$(printf '%s\n' "$salida" | grep -c .)
-            aviso "$errores error(es) de validación contra el esquema:"
-            # SE QUITA LA RUTA, QUE SE REPITE EN CADA LÍNEA
-            printf '%s\n' "$salida" | sed "s|^$canonico:||" |
-                head -"$LINEAS_ERROR_RNG" | sed 's/^/     /'
-            if (( errores > LINEAS_ERROR_RNG )); then
-                tenue "(+$((errores - LINEAS_ERROR_RNG)) más)"
+            # SE QUITA LA RUTA, QUE SE REPITE EN CADA LÍNEA. QUEDA
+            # LÍNEA:COLUMNA Y EL MENSAJE
+            salida=$(printf '%s\n' "$salida" | sed "s|^$canonico:||")
+            remisiones=$(printf '%s\n' "$salida" | grep -c -- "$PATRON_IDREF")
+            propios=$(printf '%s\n' "$salida" | grep -v -- "$PATRON_IDREF" | grep .)
+
+            # LOS ERRORES PROPIOS DEL CAPÍTULO: AVISO, COMO SIEMPRE
+            if [[ -n "$propios" ]]; then
+                errores=$(printf '%s\n' "$propios" | grep -c .)
+                aviso "$errores error(es) de validación contra el esquema:"
+                printf '%s\n' "$propios" | head -"$LINEAS_ERROR_RNG" | sed 's/^/     /'
+                if (( errores > LINEAS_ERROR_RNG )); then
+                    tenue "(+$((errores - LINEAS_ERROR_RNG)) más)"
+                fi
+            elif (( remisiones == 0 )); then
+                # jing FALLÓ SIN ERRORES QUE MOSTRAR: NO SE PUEDE DAR POR VÁLIDO
+                aviso "jing terminó con código $codigo sin informar errores: el canónico no se validó"
+            else
+                # NO SE DICE «VÁLIDO»: LAS REMISIONES TODAVÍA NO SE VERIFICARON
+                ok "sin errores de esquema propios del capítulo"
+            fi
+
+            # LAS REMISIONES: INFORMACIÓN, NO AVISO (VER LA CABECERA)
+            if (( remisiones > 0 )); then
+                tenue "$remisiones remisión(es) a IDs fuera del capítulo (bibliografía consolidada u otra pieza): se verifican al ensamblar el libro"
             fi
         fi
     fi

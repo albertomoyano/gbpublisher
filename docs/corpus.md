@@ -1864,7 +1864,7 @@ REFERENCIA CRUZADA: @fig-mapa (SOLO LIBROS)
 
 Pandoc la lee como cita. En libros, `cite-to-biblioref-db.lua` la desvía a `<xref linkend>` por el prefijo: ninguna clave bibliográfica empieza con letra, porque empiezan con el id numérico del registro. Produce solo el número, como `\ref`; la palabra la escribe el editor. Un grupo que mezcla referencias y citas detiene la conversión. `@tbl-` y `@eq-` también la detienen, hasta que tablas y ecuaciones tengan su lote: antes salían como cita a una referencia inexistente.
 
-Los id `fig-*` no se prefijan con el del capítulo en `ensamblar-capitulo-canonico.xsl` (`db:es-id-global`, como `bib-*`): con el prefijo, la referencia a una figura de otro capítulo apuntaba al propio. Son únicos en el libro por convención. El canónico de una pieza que remite a otra no valida suelto (IDREF); el del libro, sí.
+Los id `fig-*` no se prefijan con el del capítulo en `ensamblar-capitulo-canonico.xsl` (`db:es-id-global`, como `bib-*`): con el prefijo, la referencia a una figura de otro capítulo apuntaba al propio. Son únicos en el libro por convención. El canónico de una pieza que remite a otra no valida suelto (IDREF); el del libro, sí. Por eso `generar_canonicos_capitulos.sh` no cuenta esos errores como aviso (SC-53).
 
 NUMERACIÓN (SC-31: LA DEL PDF)
 
@@ -1884,7 +1884,7 @@ VERIFICADO EN EL CONTENEDOR
 
 Libro de prueba con Introducción, dos capítulos, Conclusiones y un apéndice, con referencias cruzadas entre todas las piezas, una en una nota y una cita en un pie. PDF, HTML y EPUB dan los mismos números: 1, 1.1, 1.2, 2.1, 1, A.1. El canónico del libro valida contra el RNG. Los casos de error del filtro detienen Pandoc con el mensaje.
 
-**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73,vinculo:SC-35,vinculo:SC-42
+**Relaciones:** vinculo:SC-31,vinculo:SC-28,vinculo:SC-25,vinculo:RC-DB-03,apoya:GV-23,vinculo:GV-72,vinculo:GV-73,vinculo:SC-35,vinculo:SC-42,vinculo:SC-53
 
 **PENDIENTE:** Probar en Mint con el libro nuevo que tiene figuras y con una revista. Tablas y ecuaciones siguen el mismo camino en lotes propios: prefijos tbl- y eq- en cite-to-biblioref-db.lua y en db:es-id-global.
 
@@ -3094,13 +3094,21 @@ LOTES
 
 Varias unidades del mismo trabajo van en UN lanzamiento con una lista, no en un bucle de lanzamientos desde Gambas: un solo bloqueo, una sola espera, un solo código. El script sigue con las unidades que quedan cuando una falla y al final lista todas las que fallaron, porque el editor necesita ver todo lo que hay que corregir, no solo lo primero que falló. Caso: `generar_canonicos_capitulos.sh`, que recibe `tmp/lote-canonicos.tsv`.
 
+VALIDACIÓN DE UNA PIEZA SUELTA
+
+Un script que valida una parte del libro por separado —hoy, el canónico de cada capítulo— no cuenta como aviso los errores `IDREF "…" without matching ID` de jing. Son remisiones a algo que está fuera de la pieza: las citas a la bibliografía consolidada, cuyos `bib-*` entran recién al ensamblar, y las remisiones a figuras o secciones de otra pieza (SC-32). Contadas como aviso, daban código 3 en todo libro con bibliografía consolidada, y un aviso que sale siempre tapa a los que importan.
+
+Se informan en tenue, con su cantidad, como remisiones que se verifican al ensamblar. Cualquier otro error de jing sigue siendo aviso. Si solo hubo remisiones, el informe no dice «válido»: dice que no hay errores de esquema propios de la pieza. Un IDREF colgado de verdad lo marca la validación del libro en `ensamblar_libro.sh`, que lo cuenta como aviso. Es la separación de capas de SC-52: válido como pieza no es válido como libro.
+
+El patrón sale de la salida real de jing en Linux Mint: `69:1130: error: IDREF "bib-4308-TOCHO2020" without matching ID`.
+
 LOS USOS
 
 `ensamblar_libro.sh`, `generar_html_libro.sh` y `generar_canonicos_capitulos.sh`.
 
-**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23
+**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52
 
-**PENDIENTE:** Probar en Mint, con un libro real, los tres ítems de menuDocBook: «Canónico archivo en curso», «Todos los canónicos» y un lote en el que un capítulo falla (su canónico anterior se borra y «Ensamblar» se niega hasta regenerarlo). Hecho eso, quitar este pendiente.
+**PENDIENTE:** Probado en Mint con un libro real: «Canónico archivo en curso», «Todos los canónicos» y «Ensamblar». Falta un lote en el que un capítulo falla (su canónico anterior se borra y «Ensamblar» se niega hasta regenerarlo), y volver a correr «Todos los canónicos» en un libro con bibliografía consolidada para ver las remisiones en tenue y el código 0. Hecho eso, quitar este pendiente.
 
 ---
 
