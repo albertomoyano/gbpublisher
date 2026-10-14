@@ -1180,9 +1180,9 @@ QUÉ HACE LA FUNCIÓN
 
 CONTRAPARTIDA OBLIGATORIA
 
-Un formulario sin botón de cerrar necesita una salida propia en la interfaz: un botón, la tecla Escape, o las dos.
+Un formulario sin botón de cerrar necesita una salida propia en la interfaz: un botón, la tecla Escape, o las dos. Excepción consciente: `FMetadatosCapitulos` deshabilita su botón mientras el orden del libro esté roto (SC-55).
 
-**Relaciones:** vinculo:GV-50, vinculo:GV-11
+**Relaciones:** vinculo:GV-50, vinculo:GV-11,vinculo:SC-55
 
 **PENDIENTE:** WAYLAND: sin verificar, ver GV-50. Tampoco está verificada la variante FijarBotones(Me, True), que conserva el botón de cerrar.
 
@@ -3220,17 +3220,20 @@ Dos piezas con el mismo código de posición (`bm-20-indice-autores` y `bm-20-re
 
 - La función es `m_PiezasLibro.ProblemaCodigoRepetido(iIdLibro)`. Agrupa por `m_OrdenPiezas.ExpresionCodigo`, la misma definición del código que usan las grillas: no se reescribe en Gambas. `GROUP BY` sobre el alias lo admite MySQL (manual 8.0, B.3.4.4). Lista TODOS los códigos repetidos con sus piezas: renumerar uno puede chocar con otro. Un fallo de lectura devuelve vacío: los generadores leen la misma tabla y fallan con su propio mensaje.
 - Va ANTES que `ProblemaOrdenFinales`: con un código repetido, el control de los finales podría dar bien por casualidad.
-- Amarillo al guardar: `ProblemaOrdenLibroAbierto` lo consulta primero.
-- Rojo al cerrar `FMetadatosCapitulos`: `btnCerrar_Click` no habilita el cierre mientras haya repetidos. Es el único camino de cierre, porque `Form_Close` bloquea la X con `Stop Event`. Al guardar no se frena: al renumerar hay estados intermedios con códigos repetidos; al cerrar ya no.
+- Amarillo al guardar: `m_Metadatos.ProblemaOrdenLibroAbierto` (pública) es el control completo del libro abierto: primero los repetidos, después R1 a R3. El aviso anuncia que el formulario no se va a poder cerrar.
+- Rojo al cerrar `FMetadatosCapitulos`, para TODAS las reglas —repetidos y R1 a R3—: `ActualizarCierre` deja `btnCerrar.Enabled` en False, con el motivo en el `Tooltip`, mientras `ProblemaOrdenLibroAbierto` devuelva un problema. Se llama al principio de `RefrescarGbCapitulos`, por donde pasan la apertura, el alta, la baja y el guardado: un solo punto. Es el único camino de cierre, porque `Form_Close` bloquea la X con `Stop Event`; la ventana no tiene X (SC-20), así que `Form_Close` es solo defensa y conserva su aviso original. Si el libro ya llega con el orden roto, `Form_Open` (apartado 9) muestra el motivo apenas se abre el formulario: sin eso el botón aparecería apagado sin explicación hasta pasar el puntero. `btnCerrar_Click` repite el control como defensa. Al guardar no se frena: al renumerar hay estados intermedios inválidos; al cerrar ya no. Un fallo de lectura de la base deja el botón habilitado: un problema de la base no encierra en un formulario modal.
 - Rojo en las salidas: `m_GenerarPDFLibro.ArmarInsumosLaTeX` (2b), `m_GenerarSalidasLibro.PrepararInsumosLibro` (canónico del libro y HTML) y `m_GenerarEpubLibro.GenerarEpubLibro` (2).
+- Por qué siguen los frenos de las salidas, si el formulario ya no deja salir con el orden roto: son la última barrera, no la principal. Cubren lo que no pasa por el formulario: los libros cargados antes de este control y nunca reabiertos, los cambios en `capitulos` hechos fuera de él (SQL directo, scripts de actualización, otra herramienta) y el fallo de lectura al cerrar, que a propósito deja el botón habilitado. Cuestan una consulta por salida.
+
+EXCEPCIÓN A LA CONTRAPARTIDA DE SC-20
+
+SC-20 exige que un formulario sin X tenga una salida propia. Deshabilitar `btnCerrar` la quita a propósito, y se acepta por dos razones: la salida vuelve sola al corregir el orden, y un fallo de lectura de la base deja el botón habilitado, así que nunca se queda encerrado por un problema que no se puede resolver desde el formulario. Decisión de Alberto.
 
 FUERA DEL ALCANCE
 
 EPUB y HTML: los índices no se generan (`m_PiezasLibro.Tratamiento`), así que el orden respecto de la bibliografía no cambia nada. El EPUB ubica su colofón solo.
 
-**Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17
-
-**PENDIENTE:** Probado en el contenedor: gbc3 compila el proyecto (con gb.db en lugar de gb.db2, que 3.19 no trae); ProblemaOrdenFinales, con gbs3, da lo esperado en siete casos; la consulta de códigos repetidos, en MySQL 8.0.46 con ONLY_FULL_GROUP_BY, desde gbs3 con gb.db (el GROUP_CONCAT llega como String). Alberto confirmó en Mint los avisos de R1 con el orden inverso y con el mismo número. Falta en Mint: el freno al cerrar el formulario de capítulos y el de las tres salidas con un código repetido. Hecho eso, quitar este pendiente.
+**Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17,vinculo:SC-20
 
 ---
 
