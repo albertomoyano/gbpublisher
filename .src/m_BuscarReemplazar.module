@@ -1,0 +1,614 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_BuscarReemplazar
+' Propósito : BUSCAR Y REEMPLAZAR TEXTO LITERAL EN LOS ARCHIVOS DE CONTENIDO
+'             DEL PROYECTO. Es dueño del estado de la pestaña «Reemplazar»
+'             (TabPanelIzquierdaInferior, índice 3); los handlers de FMain
+'             solo delegan acá (patrón módulo-dueño-del-estado, como
+'             m_BuscarRegex). Reemplaza al formulario FBuscarReemplazar.
+'
+'             MODELO, EL MISMO DEL BUSCADOR REGEX (SC-51):
+'               - Archivos: la whitelist de m_BuscarRegex.ObtenerArchivosMD.
+'                 Sin el .md principal y sin .tex.
+'               - Se busca en disco con el editor igual al disco
+'                 (m_BuscarRegex.AlinearEditorConDisco).
+'               - Se escribe en disco y se recarga lo escrito
+'                 (m_BuscarRegex.TrasReemplazo). git es el deshacer
+'                 (m_BuscarRegex.PasarGuardGit).
+'               - Después de cada reemplazo se vuelve a buscar.
+'
+'             LO PROPIO DE ESTE MÓDULO: LA PESTAÑA NO ES MODAL. Entre la
+'             búsqueda y el clic (o el reemplazo) el usuario puede editar, y
+'             las posiciones guardadas quedarían viejas (el caso de SC-37). Por
+'             eso, antes de saltar y antes de escribir, se confirma que la
+'             coincidencia sigue en su lugar (ClavesVigentes); si no, se
+'             vuelve a buscar en lugar de actuar sobre una posición vieja.
+'
+' Controles de la pestaña (FMain):
+'   btnRemMayMin btnRemExacta     — toggles; FMain pasa su valor por parámetro
+'   txtRemBuscar txtRemReemplazo  — término y reemplazo (públicos)
+'   btnRemBuscar                  — buscar
+'   gvReemplazar                  — resultados (público)
+'   btnRemAplicar btnRemAplicarTodo — reemplazar la fila elegida / todas
+' ============================================
+
+' --- ARRAYS PARALELOS DE COINCIDENCIAS ---
+' CADA ÍNDICE ES UNA FILA DE gvReemplazar. LÍNEA Y POSICIÓN SON BASE 1 Y EN
+' CARACTERES, COMO LAS DEVUELVE m_FuncionesGenericas.BuscarEnTexto
+Private $aRutaArchivo As New String[]
+Private $aNumeroLinea As New Integer[]
+Private $aPosicionEnLinea As New Integer[]
+
+' --- PARÁMETROS DE LA ÚLTIMA BÚSQUEDA ---
+' EL REEMPLAZO USA EL TÉRMINO BUSCADO, NO EL QUE HAYA EN EL CUADRO AL APLICAR:
+' SI EL USUARIO LO EDITÓ DESPUÉS DE BUSCAR, EL LARGO NO COINCIDIRÍA
+Private $sTermino As String
+Private $bMayMin As Boolean
+Private $bExacta As Boolean
+
+' --- ARCHIVOS QUE YA PASARON EL GUARD DE GIT EN ESTA BÚSQUEDA ---
+' SIN ESTO, CADA «APLICAR» SOBRE UN ARCHIVO YA ESCRITO VOLVERÍA A PREGUNTAR
+' POR CAMBIOS SIN COMMITEAR QUE PUSO EL PROPIO REEMPLAZO
+Private $cGitConfirmados As New Collection
+
+' ============================================
+' Función   : InicializarTab
+' Propósito : Deja la pestaña en blanco: grilla configurada y vacía, campos
+'             vacíos y sin estado de búsqueda. La llaman FMain al abrir un
+'             proyecto (junto a InicializarTabRegex) y m_InicioCierre al
+'             cerrarlo: las rutas de otro proyecto no pueden quedar en la
+'             grilla (RC-GM-16).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub InicializarTab()
+
+  ' --- 1. CONFIGURACIÓN DE LA GRILLA ---
+  With FMain.gvReemplazar
+    .Columns.Count = 3
+    .Rows.Count = 0
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Mode = Select.Single
+
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 200
+    .Columns[1].Title = "Línea"
+    .Columns[1].Width = 100
+    .Columns[2].Title = "Coincidencia"
+    .Columns[2].Width = 400
+  End With
+
+  ' --- 2. CAMPOS DE ENTRADA ---
+  FMain.txtRemBuscar.Text = ""
+  FMain.txtRemReemplazo.Text = ""
+
+  ' --- 3. ESTADO DE LA BÚSQUEDA ---
+  LimpiarResultados()
+  $sTermino = ""
+  $cGitConfirmados.Clear()
+
+End
+
+' ============================================
+' Función   : LimpiarResultados
+' Propósito : Vacía la grilla y los tres arrays paralelos.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarResultados()
+
+  FMain.gvReemplazar.Rows.Count = 0
+  $aRutaArchivo.Clear()
+  $aNumeroLinea.Clear()
+  $aPosicionEnLinea.Clear()
+
+End
+
+' ============================================
+' Función   : Buscar
+' Propósito : Punto de entrada de btnRemBuscar. Fija el término y los flags
+'             de la búsqueda y la ejecuta. Una búsqueda nueva reinicia el
+'             guard de git.
+' Parámetros: sTermino As String — texto del cuadro de búsqueda
+'             bMayMin As Boolean — True = distingue mayúsculas
+'             bExacta As Boolean — True = palabra completa
+' Retorna   : Integer — cantidad de coincidencias; -1 si no se buscó
+' ============================================
+Public Function Buscar(sTermino As String, bMayMin As Boolean, bExacta As Boolean) As Integer
+
+  ' --- 1. VALIDACIÓN DEL TÉRMINO ---
+  If Trim(sTermino) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar un término de búsqueda.")
+    Return -1
+  Endif
+
+  ' --- 2. PARÁMETROS DE ESTA BÚSQUEDA ---
+  ' SE GUARDA RECORTADO: EL VIEJO FORMULARIO BUSCABA CON Trim Y REEMPLAZABA
+  ' SIN Trim, Y UN ESPACIO FINAL CORRÍA EL LARGO DEL REEMPLAZO
+  $sTermino = Trim(sTermino)
+  $bMayMin = bMayMin
+  $bExacta = bExacta
+  $cGitConfirmados.Clear()
+
+  ' --- 3. BÚSQUEDA CON AVISO SI NO HAY NADA ---
+  Return Rebuscar(False)
+
+End
+
+' ============================================
+' Función   : Rebuscar
+' Propósito : Busca $sTermino en los archivos de contenido, con el editor
+'             igual al disco, y llena la grilla. La usan Buscar, los
+'             reemplazos (para seguir sobre el texto nuevo) y la detección de
+'             posiciones viejas.
+' Parámetros: bSilencioso As Boolean — True = sin aviso cuando no hay
+'             coincidencias (después de un reemplazo, cero es lo esperable)
+' Retorna   : Integer — cantidad de coincidencias; -1 si no se buscó
+' ============================================
+Private Function Rebuscar(bSilencioso As Boolean) As Integer
+
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  ' --- 1. SIN TÉRMINO NO HAY BÚSQUEDA QUE REPETIR ---
+  If $sTermino = "" Then Return -1
+
+  ' --- 2. EL EDITOR TIENE QUE SER IGUAL AL DISCO (SC-06) ---
+  ' SE BUSCA EN DISCO Y LAS POSICIONES SE MUESTRAN EN EL EDITOR
+  If Not FMain.ConfirmarDescartarCambios() Then Return -1
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return -1
+
+  ' --- 3. LISTA DE ARCHIVOS: LA WHITELIST DEL BUSCADOR REGEX ---
+  LimpiarResultados()
+  aArchivos = m_BuscarRegex.ObtenerArchivosMD()
+  If aArchivos.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay archivos de contenido en el proyecto.")
+    Return -1
+  Endif
+
+  ' --- 4. RECORRIDO EN ORDEN EDITORIAL ---
+  For Each sArchivo In aArchivos
+    BuscarEnArchivo(sArchivo)
+  Next
+
+  ' --- 5. AVISO SI NO HUBO COINCIDENCIAS ---
+  If $aRutaArchivo.Count = 0 Then
+    If Not bSilencioso Then
+      m_Sonido.sonar("Info")
+      Message.Info("No se encontraron coincidencias.")
+    Endif
+  Endif
+
+  Return $aRutaArchivo.Count
+
+End
+
+' ============================================
+' Función   : BuscarEnArchivo
+' Propósito : Agrega a la grilla y a los arrays las coincidencias de un
+'             archivo. La búsqueda la hace m_FuncionesGenericas.BuscarEnTexto.
+' Parámetros: sRutaArchivo As String — ruta absoluta del archivo
+' Retorna   : nada
+' ============================================
+Private Sub BuscarEnArchivo(sRutaArchivo As String)
+
+  Dim sContenido As String
+  Dim sNombreArchivo As String
+  Dim aNumerosLinea As New Integer[]
+  Dim aPosiciones As New Integer[]
+  Dim aTextos As New String[]
+  Dim iResultados As Integer
+  Dim iFila As Integer
+  Dim i As Integer
+
+  ' --- 1. LECTURA ---
+  ' UN ARCHIVO ILEGIBLE NO CORTA LA BÚSQUEDA, PERO NO SE CALLA (GV-23)
+  Try sContenido = File.Load(sRutaArchivo)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo leer " & File.Name(sRutaArchivo) & ":" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 2. BÚSQUEDA ---
+  iResultados = m_FuncionesGenericas.BuscarEnTexto(sContenido, $sTermino, $bMayMin, $bExacta, aNumerosLinea, aPosiciones, aTextos)
+
+  ' --- 3. VOLCADO A LOS ARRAYS Y A LA GRILLA ---
+  sNombreArchivo = File.Name(sRutaArchivo)
+  For i = 0 To iResultados - 1
+    $aRutaArchivo.Add(sRutaArchivo)
+    $aNumeroLinea.Add(aNumerosLinea[i])
+    $aPosicionEnLinea.Add(aPosiciones[i])
+
+    iFila = FMain.gvReemplazar.Rows.Count
+    FMain.gvReemplazar.Rows.Count = iFila + 1
+    FMain.gvReemplazar[iFila, 0].Text = sNombreArchivo
+    FMain.gvReemplazar[iFila, 1].Text = Str(aNumerosLinea[i])
+    FMain.gvReemplazar[iFila, 2].Text = aTextos[i]
+  Next
+
+End
+
+' ============================================
+' Función   : IrACoincidencia
+' Propósito : Lleva el editor a la coincidencia de la fila elegida, como el
+'             clic en FRegexResultados: abre el archivo si hace falta y deja
+'             la coincidencia seleccionada con su párrafo arriba
+'             (m_BuscarRegex.MostrarCoincidencia). Si la posición ya no tiene
+'             el término, no salta: vuelve a buscar. La llama
+'             FMain.gvReemplazar_Click (Click y no Select, GV-78).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub IrACoincidencia()
+
+  Dim iFila As Integer
+  Dim sRuta As String
+  Dim sContenido As String
+
+  ' --- 1. VALIDACIÓN DE LA FILA ---
+  ' If SEPARADOS: Or NO CORTOCIRCUITA (RC-GM-17)
+  iFila = FMain.gvReemplazar.Row
+  If iFila < 0 Then Return
+  If iFila > $aRutaArchivo.Max Then Return
+  sRuta = $aRutaArchivo[iFila]
+
+  ' --- 2. TEXTO DONDE SE VA A MOSTRAR ---
+  ' EL ABIERTO PUDO EDITARSE DESDE LA BÚSQUEDA: SE MIRA EL EDITOR, NO EL DISCO.
+  ' UNO NO ABIERTO SE VA A CARGAR DESDE EL DISCO
+  If sRuta = FMain.sRutaArchivoAbierto Then
+    sContenido = m_EditorPrincipal.Texto()
+  Else
+    Try sContenido = File.Load(sRuta)
+    If Error Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("No se pudo leer " & File.Name(sRuta) & ":" & Chr(10) & Error.Text)
+      Return
+    Endif
+  Endif
+
+  ' --- 3. POSICIÓN VIEJA: NO SE SALTA A CIEGAS (SC-37) ---
+  If Not ClavesVigentes(sContenido).Exist(Clave($aNumeroLinea[iFila], $aPosicionEnLinea[iFila])) Then
+    m_Sonido.sonar("Info")
+    Message.Info("El texto cambió desde la búsqueda." & Chr(10) & "Se vuelve a buscar.")
+    Rebuscar(False)
+    Return
+  Endif
+
+  ' --- 4. SALTO ---
+  ' MostrarCoincidencia TOMA LÍNEA Y COLUMNA BASE 0; LOS ARRAYS SON BASE 1
+  m_BuscarRegex.MostrarCoincidencia(sRuta, $aNumeroLinea[iFila] - 1, $aPosicionEnLinea[iFila] - 1, String.Len($sTermino))
+
+End
+
+' ============================================
+' Función   : Aplicar
+' Propósito : Reemplaza en disco la coincidencia de la fila elegida, recarga
+'             lo escrito, vuelve a buscar y muestra el texto nuevo en el
+'             editor. La grilla queda en la fila siguiente.
+' Parámetros: sReemplazo As String — texto que sustituye al término
+' Retorna   : nada
+' ============================================
+Public Sub Aplicar(sReemplazo As String)
+
+  Dim iFila As Integer
+  Dim sRuta As String
+  Dim sContenido As String
+  Dim iLinea As Integer
+  Dim iPosicion As Integer
+  Dim aIndices As New Integer[]
+  Dim aEscritos As New String[]
+  Dim iRestantes As Integer
+
+  ' --- 1. VALIDACIONES DE ENTRADA ---
+  If sReemplazo = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar el texto de reemplazo.")
+    Return
+  Endif
+  iFila = FMain.gvReemplazar.Row
+  If iFila < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar una fila del listado.")
+    Return
+  Endif
+  If iFila > $aRutaArchivo.Max Then Return
+
+  sRuta = $aRutaArchivo[iFila]
+  iLinea = $aNumeroLinea[iFila]
+  iPosicion = $aPosicionEnLinea[iFila]
+
+  ' --- 2. EL EDITOR IGUAL AL DISCO ANTES DE ESCRIBIR (SC-06) ---
+  ' CON CAMBIOS SIN GUARDAR, EL PRÓXIMO GUARDADO PISARÍA EL REEMPLAZO
+  If Not FMain.ConfirmarDescartarCambios() Then Return
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return
+
+  ' --- 3. LA COINCIDENCIA SIGUE EN SU LUGAR EN EL DISCO ---
+  Try sContenido = File.Load(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer " & File.Name(sRuta) & ":" & Chr(10) & Error.Text)
+    Return
+  Endif
+  If Not ClavesVigentes(sContenido).Exist(Clave(iLinea, iPosicion)) Then
+    m_Sonido.sonar("Info")
+    Message.Info("El texto cambió desde la búsqueda." & Chr(10) & "Se vuelve a buscar.")
+    Rebuscar(False)
+    Return
+  Endif
+
+  ' --- 4. GUARD DE GIT ---
+  aEscritos.Add(sRuta)
+  If Not GuardGit(aEscritos) Then Return
+
+  ' --- 5. ESCRITURA ---
+  aIndices.Add(iFila)
+  If Not EscribirArchivo(sRuta, sContenido, aIndices, sReemplazo) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el archivo:" & Chr(10) & sRuta)
+    Return
+  Endif
+
+  ' --- 6. RECARGA DE LO ESCRITO: EDITOR, ÁRBOL Y REFERENCIAS ---
+  m_BuscarRegex.TrasReemplazo(aEscritos)
+
+  ' --- 7. NUEVA BÚSQUEDA: LAS POSICIONES DE LA MISMA LÍNEA SE CORRIERON ---
+  ' LA FILA QUE OCUPABA LA REEMPLAZADA ES AHORA LA SIGUIENTE. ASIGNAR Row NO
+  ' DISPARA Click (GV-78): NO HAY SALTO EXTRA
+  iRestantes = Rebuscar(True)
+  If iRestantes > 0 Then FMain.gvReemplazar.Row = Min(iFila, iRestantes - 1)
+
+  ' --- 8. EL EDITOR MUESTRA EL TEXTO NUEVO ---
+  ' LÍNEA Y COLUMNA DEL REEMPLAZO NO SE CORRIERON: NADA CAMBIÓ ANTES DE ÉL
+  m_BuscarRegex.MostrarCoincidencia(sRuta, iLinea - 1, iPosicion - 1, String.Len(sReemplazo))
+
+End
+
+' ============================================
+' Función   : AplicarTodo
+' Propósito : Reemplaza en disco todas las coincidencias de la grilla. Todo o
+'             nada: si alguna ya no está en su lugar, no se escribe ningún
+'             archivo y se vuelve a buscar.
+' Parámetros: sReemplazo As String — texto que sustituye al término
+' Retorna   : nada
+' ============================================
+Public Sub AplicarTodo(sReemplazo As String)
+
+  Dim aArchivos As New String[]
+  Dim cIndices As New Collection
+  Dim cContenidos As New Collection
+  Dim cVigentes As Collection
+  Dim aIndices As Integer[]
+  Dim aEscritos As New String[]
+  Dim sRuta As String
+  Dim sContenido As String
+  Dim iTotal As Integer
+  Dim iRestantes As Integer
+  Dim i As Integer
+
+  ' --- 1. VALIDACIONES DE ENTRADA ---
+  If sReemplazo = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar el texto de reemplazo.")
+    Return
+  Endif
+  If $aRutaArchivo.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay coincidencias para reemplazar.")
+    Return
+  Endif
+
+  ' --- 2. EL EDITOR IGUAL AL DISCO ANTES DE ESCRIBIR (SC-06) ---
+  If Not FMain.ConfirmarDescartarCambios() Then Return
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return
+
+  ' --- 3. AGRUPAR POR ARCHIVO ---
+  ' aArchivos CONSERVA EL ORDEN EDITORIAL; LOS ÍNDICES DE CADA ARCHIVO QUEDAN
+  ' EN ORDEN DE LÍNEA Y POSICIÓN, QUE ES EL ORDEN DE LA GRILLA
+  For i = 0 To $aRutaArchivo.Max
+    sRuta = $aRutaArchivo[i]
+    If Not cIndices.Exist(sRuta) Then
+      aIndices = New Integer[]
+      cIndices[sRuta] = aIndices
+      aArchivos.Add(sRuta)
+    Endif
+    aIndices = cIndices[sRuta]
+    aIndices.Add(i)
+  Next
+
+  ' --- 4. VERIFICAR TODO ANTES DE ESCRIBIR NADA ---
+  For Each sRuta In aArchivos
+    Try sContenido = File.Load(sRuta)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer " & File.Name(sRuta) & ":" & Chr(10) & Error.Text & Chr(10) & "No se modificó ningún archivo.")
+      Return
+    Endif
+    cContenidos[sRuta] = sContenido
+
+    cVigentes = ClavesVigentes(sContenido)
+    aIndices = cIndices[sRuta]
+    For Each i In aIndices
+      If Not cVigentes.Exist(Clave($aNumeroLinea[i], $aPosicionEnLinea[i])) Then
+        m_Sonido.sonar("Info")
+        Message.Info("El texto de " & File.Name(sRuta) & " cambió desde la búsqueda." & Chr(10) & "No se modificó ningún archivo. Se vuelve a buscar.")
+        Rebuscar(False)
+        Return
+      Endif
+    Next
+  Next
+
+  ' --- 5. CONFIRMACIÓN: SE ESCRIBE EN DISCO, SIN Ctrl+Z ---
+  If Message.Question("Se van a reemplazar " & CStr($aRutaArchivo.Count) & " coincidencia(s) en " & CStr(aArchivos.Count) & " archivo(s)." & Chr(10) & Chr(10) & "¿Continuar?", "Reemplazar", "Cancelar") <> 1 Then Return
+
+  ' --- 6. GUARD DE GIT ---
+  If Not GuardGit(aArchivos) Then Return
+
+  ' --- 7. ESCRITURA, ARCHIVO POR ARCHIVO ---
+  iTotal = $aRutaArchivo.Count
+  For Each sRuta In aArchivos
+    If Not EscribirArchivo(sRuta, cContenidos[sRuta], cIndices[sRuta], sReemplazo) Then
+      ' UN FALLO A MITAD: LO ESCRITO, ESCRITO ESTÁ. SE RECARGA Y SE FRENA
+      m_BuscarRegex.TrasReemplazo(aEscritos)
+      m_Sonido.sonar("Error")
+      Message.Error("Error al escribir " & File.Name(sRuta) & "." & Chr(10) & "Se detuvo el reemplazo. Revise el estado con git.")
+      Rebuscar(True)
+      Return
+    Endif
+    aEscritos.Add(sRuta)
+  Next
+
+  ' --- 8. RECARGA DE LO ESCRITO Y NUEVA BÚSQUEDA ---
+  m_BuscarRegex.TrasReemplazo(aEscritos)
+  iRestantes = Rebuscar(True)
+
+  ' --- 9. AVISO ---
+  ' SI QUEDAN COINCIDENCIAS, EL REEMPLAZO CONTIENE EL TÉRMINO: SE DICE
+  m_Sonido.sonar("Info")
+  If iRestantes > 0 Then
+    Message.Info(CStr(iTotal) & " reemplazo(s) en " & CStr(aEscritos.Count) & " archivo(s)." & Chr(10) & "La nueva búsqueda encontró " & CStr(iRestantes) & " coincidencia(s): el reemplazo contiene el término.")
+  Else
+    Message.Info(CStr(iTotal) & " reemplazo(s) en " & CStr(aEscritos.Count) & " archivo(s).")
+  Endif
+
+End
+
+' ============================================
+' Función   : ClavesVigentes
+' Propósito : Busca $sTermino en un texto con los flags de la búsqueda y
+'             devuelve las posiciones halladas como claves. Sirve para saber
+'             si una fila sigue valiendo con la MISMA lógica que la encontró
+'             (plegado de mayúsculas y palabra completa), sin duplicarla.
+' Parámetros: sContenido As String — texto actual del archivo o del editor
+' Retorna   : Collection — claves «línea:posición» (base 1)
+' ============================================
+Private Function ClavesVigentes(sContenido As String) As Collection
+
+  Dim cClaves As New Collection
+  Dim aNumerosLinea As New Integer[]
+  Dim aPosiciones As New Integer[]
+  Dim aTextos As New String[]
+  Dim iResultados As Integer
+  Dim i As Integer
+
+  iResultados = m_FuncionesGenericas.BuscarEnTexto(sContenido, $sTermino, $bMayMin, $bExacta, aNumerosLinea, aPosiciones, aTextos)
+  For i = 0 To iResultados - 1
+    cClaves[Clave(aNumerosLinea[i], aPosiciones[i])] = True
+  Next
+
+  Return cClaves
+
+End
+
+' ============================================
+' Función   : Clave
+' Propósito : Arma la clave de una coincidencia para ClavesVigentes.
+' Parámetros: iLinea As Integer — línea, base 1
+'             iPosicion As Integer — posición en caracteres, base 1
+' Retorna   : String — «línea:posición»
+' ============================================
+Private Function Clave(iLinea As Integer, iPosicion As Integer) As String
+
+  Return CStr(iLinea) & ":" & CStr(iPosicion)
+
+End
+
+' ============================================
+' Función   : GuardGit
+' Propósito : Pasa por el guard de git (m_BuscarRegex.PasarGuardGit) solo los
+'             archivos que todavía no lo pasaron en esta búsqueda.
+' Parámetros: aArchivos As String[] — rutas absolutas que se van a escribir
+' Retorna   : Boolean — True si se puede escribir
+' ============================================
+Private Function GuardGit(aArchivos As String[]) As Boolean
+
+  Dim aPendientes As New String[]
+  Dim sRuta As String
+
+  ' --- 1. LOS QUE YA PASARON NO SE VUELVEN A PREGUNTAR ---
+  For Each sRuta In aArchivos
+    If Not $cGitConfirmados.Exist(sRuta) Then aPendientes.Add(sRuta)
+  Next
+  If aPendientes.Count = 0 Then Return True
+
+  ' --- 2. GUARD SOBRE LOS PENDIENTES ---
+  If Not m_BuscarRegex.PasarGuardGit(aPendientes) Then Return False
+
+  ' --- 3. REGISTRO ---
+  For Each sRuta In aPendientes
+    $cGitConfirmados[sRuta] = True
+  Next
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirArchivo
+' Propósito : Aplica al contenido las coincidencias indicadas, de atrás para
+'             adelante para que las posiciones anteriores no se corran, y
+'             guarda el archivo. Un solo File.Save por archivo.
+' Parámetros: sRuta As String — ruta absoluta del archivo
+'             sContenido As String — contenido ya leído y verificado
+'             aIndices As Integer[] — filas de este archivo, en orden de
+'                                     línea y posición
+'             sReemplazo As String — texto sustituto
+' Retorna   : Boolean — True si se guardó
+' ============================================
+Private Function EscribirArchivo(sRuta As String, sContenido As String, aIndices As Integer[], sReemplazo As String) As Boolean
+
+  Dim aLineas As String[]
+  Dim iIndice As Integer
+  Dim iLinea As Integer
+  Dim i As Integer
+
+  ' --- 1. NORMALIZACIÓN Y PARTICIÓN POR LF ---
+  ' MISMO ESQUEMA QUE BuscarEnTexto: LAS LÍNEAS COINCIDEN CON LAS DE LA GRILLA
+  sContenido = Replace(sContenido, Chr(13) & Chr(10), Chr(10))
+  sContenido = Replace(sContenido, Chr(13), Chr(10))
+  aLineas = Split(sContenido, Chr(10))
+
+  ' --- 2. REEMPLAZOS DE ATRÁS PARA ADELANTE ---
+  For i = aIndices.Max To 0 Step -1
+    iIndice = aIndices[i]
+    iLinea = $aNumeroLinea[iIndice] - 1
+    If iLinea < 0 Then Continue
+    If iLinea > aLineas.Max Then Continue
+    aLineas[iLinea] = ReemplazarEnPosicion(aLineas[iLinea], sReemplazo, $aPosicionEnLinea[iIndice])
+  Next
+
+  ' --- 3. ESCRITURA ---
+  Try File.Save(sRuta, aLineas.Join(Chr(10)))
+  If Error Then Return False
+  Return True
+
+End
+
+' ============================================
+' Función   : ReemplazarEnPosicion
+' Propósito : Reconstruye una línea con el reemplazo en lugar del término, en
+'             una posición en caracteres (String.*, SC-02).
+' Parámetros: sLinea As String — línea original
+'             sReemplazo As String — texto sustituto
+'             iPosicion As Integer — posición en caracteres, base 1
+' Retorna   : String — línea con el reemplazo aplicado
+' ============================================
+Private Function ReemplazarEnPosicion(sLinea As String, sReemplazo As String, iPosicion As Integer) As String
+
+  Dim sAntes As String
+  Dim sDespues As String
+
+  ' --- 1. VALIDACIÓN DE POSICIÓN ---
+  ' If SEPARADOS (RC-GM-17)
+  If iPosicion < 1 Then Return sLinea
+  If iPosicion > String.Len(sLinea) Then Return sLinea
+
+  ' --- 2. PARTICIÓN Y RECONSTRUCCIÓN ---
+  sAntes = String.Left(sLinea, iPosicion - 1)
+  sDespues = String.Mid(sLinea, iPosicion + String.Len($sTermino))
+  Return sAntes & sReemplazo & sDespues
+
+End
