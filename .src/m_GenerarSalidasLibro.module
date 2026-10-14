@@ -997,9 +997,11 @@ End
 '
 ' POR QUÉ DOS OPCIONES Y NO TRES
 ' ----------------------------------------------------------
-'   GenerarMainTeX no solo escribe el maestro: copia los recursos,
-'   transforma los canónicos con Saxon, borra los .tex huérfanos,
-'   escribe el preámbulo derivado y exporta el .bib. Es todo el
+'   Generar no es solo escribir el maestro: m_GenerarPDFLibro.
+'   ArmarInsumosLaTeX escribe lo que sale de la base (preámbulo
+'   derivado, .bib, lista de piezas, main.tex propuesto) y
+'   engine/preparar_latex_libro.sh transforma los canónicos, borra
+'   los .tex huérfanos y pone el main.tex en su lugar. Es todo el
 '   trabajo salvo llamar a LuaLaTeX.
 '
 '   Así que «solo main.tex» y «salida PDF» no son dos operaciones
@@ -1071,30 +1073,25 @@ Public Sub GenerarPDFLibro()
 
   If iRespuesta = 3 Then Return
 
-  ' --- 4. GENERACIÓN DE LOS ARCHIVOS LaTeX ---
-  ' MOSTRAR LA CONSOLA ANTES DE EMPEZAR: ES LA VENTANA DE ESTADO DEL PROCESO.
-  FMain.tbMostrarPanelInferior.Value = True
-  FMain.TabPanelIzquierdaInferior.Index = 0
+  ' --- 4. LO QUE SALE DE LA BASE ---
+  ' SOLO CONSULTAS Y ARMADO DE TEXTO: LA PARTE LENTA —EL COLOREO Y SAXON POR
+  ' PIEZA— LA HACE EL SCRIPT, DENTRO DE LA LANZADORA. ArmarInsumosLaTeX AVISA
+  ' CON SU PROPIO MENSAJE CUANDO ABORTA
+  If Not m_GenerarPDFLibro.ArmarInsumosLaTeX() Then Return
 
-  FMain.TerminalViewProyecto.Input(
-    "echo 'Generando los archivos LaTeX del libro...'" & gb.NewLine)
-
-  ' GenerarMainTeX YA AVISA CON SU PROPIO MENSAJE CUANDO ABORTA.
-  If Not m_GenerarPDFLibro.GenerarMainTeX() Then
-    FMain.TerminalViewProyecto.Input(
-      "echo 'La generación se interrumpió. No se escribió el main.tex.'" & gb.NewLine)
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "echo 'Archivos LaTeX generados en latex/'" & gb.NewLine)
-
-  ' --- 5. SOLO GENERAR: TERMINAR ACÁ ---
+  ' --- 5. SOLO GENERAR: PREPARAR Y TERMINAR ---
   If iRespuesta = 2 Then
-    m_Sonido.sonar("Info")
-    Message.Info("Archivos LaTeX generados." & gb.NewLine & gb.NewLine &
-      "El main.tex está en latex/ y se puede revisar o personalizar" & gb.NewLine &
-      "antes de compilar.")
+    aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+    aArgumentos.Add(m_GenerarPDFLibro.LISTA_PIEZAS_LATEX)
+    aArgumentos.Add(m_GenerarPDFLibro.MAIN_PROPUESTO)
+
+    iResultado = EjecutarScriptSalida("preparar_latex_libro.sh", aArgumentos, PLAZO_PDF,
+      "Preparando los archivos LaTeX del libro")
+
+    ' EL main.tex QUEDA EN latex/ PARA REVISARLO O PERSONALIZARLO ANTES DE
+    ' COMPILAR
+    InformarResultado(iResultado, "El main.tex",
+      m_InicioCierre.RutaProyectoEnCurso &/ "latex" &/ "main.tex")
     Return
   Endif
 
@@ -1102,7 +1099,8 @@ Public Sub GenerarPDFLibro()
   ' POR LA LANZADORA (SC-53), COMO LAS DEMÁS SALIDAS: ANTES SE TIPEABA EN LA
   ' TERMINAL Y GAMBAS NO SE ENTERABA DE CUÁNDO TERMINABA, ASÍ QUE NO PODÍA
   ' MOSTRAR QUE ESTABA TRABAJANDO NI INFORMAR CÓMO TERMINÓ. LA EXISTENCIA DEL
-  ' SCRIPT LA VERIFICA LA LANZADORA.
+  ' SCRIPT LA VERIFICA LA LANZADORA. EL COMPILADOR LLAMA PRIMERO A
+  ' preparar_latex_libro.sh: TODO EN UN SOLO LANZAMIENTO.
 
   ' EL NOMBRE DEL PDF ES EL DEL PROYECTO, NO «main». EL MAESTRO SE LLAMA
   ' main.tex POR CONVENIENCIA INTERNA; EL ARCHIVO QUE RECIBE EL EDITOR TIENE
@@ -1112,6 +1110,8 @@ Public Sub GenerarPDFLibro()
   aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
   aArgumentos.Add(m_Bibtex.NombreArchivoBib())
   aArgumentos.Add(sNombreSalida)
+  aArgumentos.Add(m_GenerarPDFLibro.LISTA_PIEZAS_LATEX)
+  aArgumentos.Add(m_GenerarPDFLibro.MAIN_PROPUESTO)
 
   iResultado = EjecutarScriptSalida("compilar_pdf_libro.sh", aArgumentos, PLAZO_PDF,
     "Componiendo el PDF del libro")

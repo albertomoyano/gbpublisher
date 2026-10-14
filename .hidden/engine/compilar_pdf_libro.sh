@@ -16,7 +16,8 @@
 #   1  no se generó el PDF
 #
 # USO
-#   compilar-pdf-libro.sh <ruta_proyecto> <nombre_bib> <nombre_salida>
+#   compilar_pdf_libro.sh <ruta_proyecto> <nombre_bib> <nombre_salida>
+#                         <lista_rel> <main_rel>
 #
 #   ruta_proyecto   raíz del proyecto
 #   nombre_bib      nombre del .bib dentro de referencias/, con extensión.
@@ -25,9 +26,12 @@
 #                   del nombre del .tex y fallaba en cuanto los dos nombres
 #                   no coincidían.
 #   nombre_salida   nombre del PDF final, sin extensión
+#   lista_rel       los dos de preparar_latex_libro.sh, que este script
+#   main_rel        llama primero: la lista de piezas con cuerpo y el main.tex
+#                   propuesto. Si la preparación falla, no se compila.
 #
-# EL MAESTRO SE LLAMA SIEMPRE main.tex: lo escribe GenerarMainTeX con ese
-# nombre fijo. Por eso no es un parámetro.
+# EL MAESTRO SE LLAMA SIEMPRE main.tex: lo pone en su lugar
+# preparar_latex_libro.sh con ese nombre fijo. Por eso no es un parámetro.
 # ============================================================================
 # SECUENCIA, Y POR QUÉ CADA PASO ESTÁ DONDE ESTÁ
 #
@@ -302,13 +306,15 @@ procesar_indices() {
 encabezado "GENERACIÓN DE LA SALIDA PDF"
 
 # --- 4. ARGUMENTOS ---
-if (( $# < 3 )); then
-    morir "Uso: $(basename "$0") <ruta_proyecto> <nombre_bib> <nombre_salida>"
+if (( $# < 5 )); then
+    morir "Uso: $(basename "$0") <ruta_proyecto> <nombre_bib> <nombre_salida> <lista_rel> <main_rel>"
 fi
 
 DIR_PROYECTO="${1%/}"
 NOMBRE_BIB="$2"
 NOMBRE_SALIDA="$3"
+LISTA_REL="$4"
+MAIN_REL="$5"
 
 DIR_LATEX="$DIR_PROYECTO/latex"
 ARCHIVO_TEX="$DIR_LATEX/$BASE.tex"
@@ -317,6 +323,22 @@ ARCHIVO_PDF="$DIR_LATEX/$BASE.pdf"
 ARCHIVO_BIB="$DIR_PROYECTO/referencias/$NOMBRE_BIB"
 DIR_SALIDA="$DIR_PROYECTO/salidas/pdf"
 PDF_FINAL="$DIR_SALIDA/$NOMBRE_SALIDA.pdf"
+
+# --- 4b. PREPARACIÓN DE LOS ARCHIVOS LaTeX ---
+# PRIMERO, Y EN EL MISMO LANZAMIENTO: EL COLOREO Y LA TRANSFORMACIÓN DE CADA
+# PIEZA SON LO QUE MÁS TARDA ANTES DE COMPILAR, Y ASÍ CORREN A LA VISTA.
+# CÓDIGO 3: LOS ARCHIVOS ESTÁN, CON AVISOS; SE COMPILA Y EL AVISO SE HEREDA.
+# CUALQUIER OTRO DISTINTO DE 0: EL main.tex NO SE REEMPLAZÓ Y NO SE COMPILA
+# SOBRE EL VIEJO.
+GBP_ANIDADO=1 bash "$DIR_ENGINE/preparar_latex_libro.sh" \
+    "$DIR_PROYECTO" "$LISTA_REL" "$MAIN_REL"
+codigo=$?
+
+if (( codigo == SALIDA_AVISOS )); then
+    aviso "la preparación de los archivos LaTeX tiene avisos: se compila igual"
+elif (( codigo != SALIDA_OK )); then
+    morir "No se prepararon los archivos LaTeX: el PDF no se compila"
+fi
 
 # --- 5. VERIFICACIONES ---
 paso "verificando el entorno"

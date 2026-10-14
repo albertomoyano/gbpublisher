@@ -2,10 +2,14 @@
 
 ' ==============================================================================
 ' Módulo    : m_GenerarPDFLibro
-' Propósito : Generación de la salida PDF de LIBROS. Escribe los archivos
-'             derivados que consume LuaLaTeX:
+' Propósito : Generación de la salida PDF de LIBROS. Escribe lo que sale de
+'             la base y consume LuaLaTeX:
 '               preambulo-proyecto.tex — valores que salen de la base
-'               main.tex               — declarativo de piezas y zonas
+'               main.tex propuesto     — declarativo de piezas y zonas, en
+'                                        latex/.main.tex.tmp
+'               lista de piezas        — tmp/latex-piezas.txt
+'             Los .tex de cada pieza y el main.tex en su lugar los hace
+'             engine/preparar_latex_libro.sh (SC-13): ver ArmarInsumosLaTeX.
 '             Los preámbulos de contrato y estética, y los cita-*-config.tex,
 '             son recursos de la app: los copia
 '             m_InicioCierre.CopiarRecursosLatex sin modificarlos.
@@ -22,6 +26,12 @@ Private Const NOMBRE_PREAMBULO_PROYECTO As String = "preambulo-proyecto.tex"
 Private Const CARPETA_LATEX As String = "latex"
 Private Const CARPETA_REFERENCIAS As String = "referencias"
 Private Const CARPETA_CANONICOS As String = "jats"
+
+' INSUMOS DE engine/preparar_latex_libro.sh, RELATIVOS AL PROYECTO. EL main.tex
+' PROPUESTO VA EN latex/ Y NO EN tmp/: EL SCRIPT LO PONE EN SU LUGAR CON mv,
+' QUE SOLO ES UN RENOMBRE ATÓMICO DENTRO DEL MISMO SISTEMA DE ARCHIVOS
+Public Const LISTA_PIEZAS_LATEX As String = "tmp/latex-piezas.txt"
+Public Const MAIN_PROPUESTO As String = "latex/.main.tex.tmp"
 
 ' VERSIÓN DEL CONTRATO QUE ESTE GENERADOR REQUIERE. SI SE AGREGA VOCABULARIO
 ' AL XSLT, SUBE ACÁ Y EN preambulo-contrato.tex, Y UN PREÁMBULO DE EDITORIAL
@@ -765,7 +775,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
   ' 8.7 PRIMERAS DEL LIBRO (SC-25)
   ' SE ESCRIBEN SIEMPRE, ESTÉN O NO DECLARADAS LAS PIEZAS: ESTA CAPA SOLO
   ' DEFINE VALORES. LO QUE FALTA PARA UNA PIEZA DECLARADA LO VERIFICA
-  ' GenerarMainTeX. PANDOC CORRE SOLO SI HAY TEXTO.
+  ' ArmarInsumosLaTeX. PANDOC CORRE SOLO SI HAY TEXTO.
   cValores = m_PrimerasLibro.LeerValores(iIdLibro)
   If Not cValores Then
     m_Sonido.sonar("Error")
@@ -837,149 +847,6 @@ Public Function GenerarPreambuloProyecto() As Boolean
 End
 
 ' ============================================
-' Función   : BorrarTexHuerfanos
-' Propósito : Elimina de {proyecto}/latex los c-*.tex que no corresponden a
-'             ninguna pieza declarada en la base.
-' Parámetros: sDirLatex   As String     — {proyecto}/latex
-'             cDeclarados As Collection — claves = nombres de archivo esperados
-' Retorna   : (Sub, sin retorno)
-' Nota      : SI NO SE BORRAN, LA CARPETA MIENTE SOBRE QUÉ ES EL LIBRO. Y HAY
-'             UN CASO PEOR QUE EL RUIDO: SI SE BORRA UNA PIEZA DE LA BASE, SU
-'             .tex VIEJO QUEDA, ALGUIEN LO AGREGA AL main.tex A MANO Y COMPILA
-'             CONTENIDO QUE YA NO ES PARTE DEL PROYECTO.
-' ============================================
-Private Sub BorrarTexHuerfanos(sDirLatex As String, cDeclarados As Collection)
-
-  Dim aArchivos As String[]
-  Dim sArchivo As String
-
-  Try aArchivos = Dir(sDirLatex, "c-*.tex", gb.File)
-  If Error Then Return
-
-  For Each sArchivo In aArchivos
-    If Not cDeclarados.Exist(sArchivo) Then
-      Try Kill sDirLatex &/ sArchivo
-      If Error Then
-        ' NO SE ABORTA POR ESTO: UN HUÉRFANO QUE NO SE PUDO BORRAR NO IMPIDE
-        ' COMPILAR. PERO SE INFORMA, PORQUE UN Try MUDO ES UN CANAL MUDO
-        ' (GV-23).
-        Message.Warning("No se pudo borrar el archivo huérfano " & sArchivo &
-          ":" & gb.NewLine & Error.Text)
-      Endif
-    Endif
-  Next
-
-End
-
-' ============================================
-' Función   : GenerarTexDePieza
-' Propósito : Corre docbook-to-latex.xsl sobre el canónico de una pieza.
-' Parámetros: sNombreArchivo As String — capitulos.nombre_archivo
-'             sRutaProyecto  As String — raíz del proyecto
-' Retorna   : Boolean — True si generó
-' Nota      : Exec CON ARRAY Y NUNCA Shell: LOS NOMBRES DE ARCHIVO PUEDEN
-'             TENER CARACTERES QUE sh -c INTERPRETARÍA (SC-05).
-'             EL ARRAY SE ARMA CON .Add Y NO COMO LITERAL MULTILÍNEA: UN
-'             LITERAL PARTIDO CON COMA FINAL SE LEE COMO String Y DA
-'             Type mismatch (SC-05, GV-06).
-'             SI LA HOJA ABORTA POR VOCABULARIO NO PREVISTO, EL CÓDIGO DE
-'             SALIDA NO ES CERO Y EL Try LO ATRAPA.
-'             ANTES DE LA HOJA CORRE colorear_codigo.sh (SC-42), QUE DEJA
-'             LOS BLOQUES DE CÓDIGO COLOREADOS EN tmp/codigo/<pieza>; LA HOJA
-'             LOS LEE CON codigo_dir. EL VEREDICTO DEL COLOREO ES
-'             Process.LastValue, COMO EN m_GitHub.
-' PENDIENTE : NO VERIFIQUÉ QUE "Exec ... Wait" SEA LA SINTAXIS CORRECTA EN
-'             GAMBAS 3.22. SI NO COMPILA, LA ALTERNATIVA DOCUMENTADA ES
-'             "Exec ... To sSalidaStd" (GV-20).
-' ============================================
-Private Function GenerarTexDePieza(sNombreArchivo As String, sRutaProyecto As String) As Boolean
-
-  Dim sCanonico As String
-  Dim sSalida As String
-  Dim sHoja As String
-  Dim aComando As New String[]
-  Dim aColor As New String[]
-  Dim sScriptColor As String
-  Dim sDirCodigo As String
-  Dim sSalidaColor As String
-
-  sCanonico = sRutaProyecto &/ CARPETA_CANONICOS &/ "c-" & sNombreArchivo & ".xml"
-  sSalida = sRutaProyecto &/ CARPETA_LATEX &/ "c-" & sNombreArchivo & ".tex"
-  sHoja = User.Home &/ ".gbpublisher" &/ "xslt" &/ "docbook-to-latex.xsl"
-  sScriptColor = m_InicioCierre.RutaRecursos() &/ "engine" &/ "colorear_codigo.sh"
-  sDirCodigo = sRutaProyecto &/ "tmp" &/ "codigo" &/ "latex-" & sNombreArchivo
-
-  ' --- 1. VALIDACIONES ---
-  If Not Exist(sCanonico) Then
-    m_Sonido.sonar("Error")
-    Message.Error("No existe el canónico de la pieza:" & gb.NewLine & sCanonico &
-      gb.NewLine & gb.NewLine &
-      "Generá primero el DocBook canónico de " & sNombreArchivo & ".")
-    Return False
-  Endif
-
-  If Not Exist(sHoja) Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontró la hoja de transformación:" & gb.NewLine & sHoja)
-    Return False
-  Endif
-
-  If Not Exist(sScriptColor) Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontró el coloreador de código:" & gb.NewLine & sScriptColor)
-    Return False
-  Endif
-
-  ' --- 2. COLOREO DEL CÓDIGO (SC-42) ---
-  ' bash -c CON LOS ARGUMENTOS APARTE ($0 Y $@): NINGÚN NOMBRE PASA POR LA
-  ' INTERPRETACIÓN DEL SHELL (SC-05). 2>&1 PARA QUE EL MOTIVO DE UN FALLO,
-  ' QUE morir() ESCRIBE EN stderr, LLEGUE A sSalidaColor
-  aColor.Add("bash")
-  aColor.Add("-c")
-  aColor.Add("bash \"$0\" \"$@\" 2>&1")
-  aColor.Add(sScriptColor)
-  aColor.Add(sCanonico)
-  aColor.Add(sDirCodigo)
-  aColor.Add("latex")
-  Try Exec aColor To sSalidaColor
-  If Error Or If Process.LastValue <> 0 Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo colorear el código de " & sNombreArchivo & ":" &
-      gb.NewLine & gb.NewLine & Trim(sSalidaColor))
-    Return False
-  Endif
-
-  ' --- 3. INVOCACIÓN DE LA HOJA ---
-  aComando.Add("java")
-  aComando.Add("-jar")
-  aComando.Add(m_Constantes.RUTA_SAXON)
-  aComando.Add("-s:" & sCanonico)
-  aComando.Add("-xsl:" & sHoja)
-  aComando.Add("-o:" & sSalida)
-  aComando.Add("codigo_dir=" & sDirCodigo)
-
-  Try Exec aComando Wait
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Falló la transformación de " & sNombreArchivo & ":" &
-      gb.NewLine & Error.Text & gb.NewLine & gb.NewLine &
-      "Si el mensaje habla de vocabulario no previsto, hay un elemento del " &
-      "canónico que la hoja todavía no contempla.")
-    Return False
-  Endif
-
-  If Not Exist(sSalida) Then
-    m_Sonido.sonar("Error")
-    Message.Error("La transformación de " & sNombreArchivo &
-      " no produjo salida.")
-    Return False
-  Endif
-
-  Return True
-
-End
-
-' ============================================
 ' Función   : AbrirZona
 ' Propósito : Texto que abre una zona del libro en el main.tex.
 ' Parámetros: iZona As Integer — una de las constantes ZONA_*
@@ -1004,7 +871,7 @@ Private Function AbrirZona(iZona As Integer) As String
       s &= "\\gbMarcasPieza{}{}" & gb.NewLine
       s &= "\\gbHojasCortesia" & gb.NewLine
       ' EL SUMARIO YA NO SE ABRE CON LA ZONA: VA DESPUÉS DE LA ÚLTIMA DE LAS
-      ' PRIMERAS, Y LO EMITE GenerarMainTeX (SC-25)
+      ' PRIMERAS, Y LO EMITE ArmarInsumosLaTeX (SC-25)
 
     Case ZONA_BODY
       s = gb.NewLine & "%%GB:BODY:INICIO" & gb.NewLine
@@ -1057,40 +924,50 @@ Private Function CerrarZona(iZona As Integer) As String
 
 End
 ' ============================================
-' Función   : GenerarMainTeX
-' Propósito : Orquesta la generación completa de los archivos LaTeX del libro
-'             y escribe el main.tex declarativo.
+' Función   : ArmarInsumosLaTeX
+' Propósito : Escribe todo lo que la salida PDF necesita de la base y deja el
+'             resto a engine/preparar_latex_libro.sh, que lanza Gambas con la
+'             lanzadora (SC-53).
 '
 ' ORDEN, Y POR QUÉ
 '   1. Validar proyecto y libro
 '   2. Leer la lista de piezas declaradas en la base
 '   2b. Verificar las primeras, si las hay (SC-25)
-'   3. Generar los .tex de cada pieza con Saxon y borrar los huérfanos
+'   3. Lista de piezas con cuerpo → tmp/latex-piezas.txt
 '   4. Generar preambulo-proyecto.tex y exportar el .bib
 '   5. Detectar las piezas que el generador no debe duplicar
 '   6. Escribir la cabecera del main.tex
 '   7. Recorrer las piezas por zona
 '   8. Cerrar el documento
-'   9. Escribir el main.tex — ÚLTIMO
+'   9. Escribir el main.tex PROPUESTO, en latex/.main.tex.tmp
 '
-' El main.tex va último porque es lo que DECLARA la existencia de todo lo
-' demás, y es el testigo de fecha de la guarda de desactualización. Si algo
-' falla antes, se aborta sin escribirlo: el proyecto queda con piezas nuevas y
-' sin declarativo —estado detectable— en vez de con un declarativo que promete
-' \include de archivos que no existen. Es el criterio de SC-07.
+' QUÉ HACE EL SCRIPT, Y POR QUÉ NO ESTÁ ACÁ
+'   El coloreo y la transformación de cada pieza (colorear_codigo.sh y
+'   docbook-to-latex.xsl), el borrado de los .tex huérfanos y poner el
+'   main.tex en su lugar. Antes se hacían acá con Exec síncronos: varios
+'   segundos por pieza con la interfaz sin repintarse (GV-17) y sin ninguna
+'   señal de vida. Son herramientas externas: van a engine/ (SC-13).
+'
+' EL main.tex VA ÚLTIMO
+'   Es lo que DECLARA la existencia de todo lo demás. Si algo falla antes no
+'   se pone, y el anterior queda intacto en vez de prometer \include de
+'   archivos que no existen (criterio de SC-07). Como acá se arma antes de que
+'   existan los .tex, se escribe en un temporal, y el script lo pone en su
+'   lugar con mv solo si todas las piezas salieron bien.
 '
 ' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
-' Retorna   : Boolean — True si se escribió el main.tex
+' Retorna   : Boolean — True si se escribieron la lista y el main.tex
+'             propuesto; False con el motivo ya informado
 ' ============================================
 
-Public Function GenerarMainTeX() As Boolean
+Public Function ArmarInsumosLaTeX() As Boolean
 
   Dim hLibro As Result
   Dim hPiezas As Result
-  Dim cDeclarados As New Collection
   Dim s As String
+  Dim sLista As String
+  Dim sDirTmp As String
   Dim sRutaProyecto As String
-  Dim sDirLatex As String
   Dim sNombre As String
   Dim sTipo As String
   Dim sComando As String
@@ -1130,7 +1007,6 @@ Public Function GenerarMainTeX() As Boolean
   Endif
 
   sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
-  sDirLatex = sRutaProyecto &/ CARPETA_LATEX
 
   Try hLibro = m_ConexionBD.mConn.Exec(
     "SELECT id_libro, lugar_bibliografia, tipo_libro FROM libros_md " &
@@ -1226,18 +1102,15 @@ Public Function GenerarMainTeX() As Boolean
   ' ANTES DE ESTE CONTROL, O CON EL ARCHIVO RENOMBRADO A MANO, SE FRENA ACÁ
   If Not VerificarPosiciones(aNombre, aTipo) Then Return False
 
-  ' --- 3. GENERACIÓN DE LOS .tex DE CADA PIEZA ---
-  ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX.
+  ' --- 3. LISTA DE PIEZAS CON CUERPO ---
+  ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX. LAS
+  ' DEMÁS VAN A LA LISTA, EN EL ORDEN DEL LIBRO: DE ELLA SALEN LOS .tex QUE EL
+  ' SCRIPT GENERA Y LOS QUE BORRA POR HUÉRFANOS
   For i = 0 To aNombre.Max
     sComando = ComandoGenerado(aTipo[i], aTitulo[i])
     If sComando = "ABORTAR" Then Return False
-    If sComando = "" Then
-      If Not GenerarTexDePieza(aNombre[i], sRutaProyecto) Then Return False
-      cDeclarados["c-" & aNombre[i] & ".tex"] = True
-    Endif
+    If sComando = "" Then sLista &= aNombre[i] & gb.NewLine
   Next
-
-  BorrarTexHuerfanos(sDirLatex, cDeclarados)
 
   ' --- 4. PREÁMBULO DERIVADO Y BIBLIOGRAFÍA ---
   If Not GenerarPreambuloProyecto() Then Return False
@@ -1456,12 +1329,31 @@ Public Function GenerarMainTeX() As Boolean
   s &= gb.NewLine & "\\end{document}" & gb.NewLine
 
   ' --- 9. ESCRITURA ---
-  ' EL main.tex SE ESCRIBE ÚLTIMO: ES LO QUE DECLARA LA EXISTENCIA DE TODO LO
-  ' DEMÁS Y EL TESTIGO DE FECHA DE LA GUARDA DE DESACTUALIZACIÓN.
-  Try File.Save(sDirLatex &/ "main.tex", s)
+  ' LA LISTA Y EL main.tex PROPUESTO. EL main.tex DEFINITIVO LO PONE EL SCRIPT,
+  ' ÚLTIMO, SI TODAS LAS PIEZAS SALIERON BIEN (VER EL ENCABEZADO)
+  sDirTmp = sRutaProyecto &/ "tmp"
+  If Not Exist(sDirTmp) Then
+    Try Mkdir sDirTmp
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta tmp/ del proyecto:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
+
+  Try File.Save(sRutaProyecto &/ LISTA_PIEZAS_LATEX, sLista)
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudo escribir el main.tex:" & gb.NewLine & Error.Text)
+    Message.Error("No se pudo escribir la lista de piezas:" & gb.NewLine &
+      LISTA_PIEZAS_LATEX & gb.NewLine & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Try File.Save(sRutaProyecto &/ MAIN_PROPUESTO, s)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el main.tex propuesto:" & gb.NewLine &
+      MAIN_PROPUESTO & gb.NewLine & gb.NewLine & Error.Text)
     Return False
   Endif
 

@@ -930,7 +930,7 @@ Queda en Gambas:
 
 Una función de Gambas que tipea en la terminal con `Input()` fuera de la lanzadora (SC-53) es deuda de migración: si la terminal está ocupada el comando se encola y corre fuera de contexto, Gambas no recibe código de salida, y la espera por la aparición de un archivo da por terminado lo que recién empezó a escribirse.
 
-El primer caso migrado con este criterio: los canónicos de capítulo. `engine/generar_canonicos_capitulos.sh` reemplazó a `FMain.btnGenerarDocBookcanonico_Click` y a `m_XML.GenerarBodyCapituloXML`.
+El primer caso migrado con este criterio: los canónicos de capítulo. `engine/generar_canonicos_capitulos.sh` reemplazó a `FMain.btnGenerarDocBookcanonico_Click` y a `m_XML.GenerarBodyCapituloXML`. El segundo, la salida PDF de libros: `compilar_pdf_libro.sh` pasó a la lanzadora y la preparación de los archivos LaTeX salió de Gambas a `preparar_latex_libro.sh` (SC-53).
 
 INTÉRPRETES ADMITIDOS
 
@@ -948,7 +948,7 @@ Si el proceso externo escribe en la misma base que la aplicación tiene abierta,
 
 **Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53
 
-**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, las salidas de revista (m_GenerarEpub, m_GenerarSCIELO, m_GenerarDOAJ, m_GenerarHTML, m_GenerarODT, m_GenerarCROSSREF, m_GenerarPDF), m_XML, m_GitHub, m_OrdenTaller, m_FuncionesGenericas, m_InicioCierre y los echo de GenerarPDFLibro antes de lanzar el compilador (el compilador ya pasa por la lanzadora).
+**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, las salidas de revista (m_GenerarEpub, m_GenerarSCIELO, m_GenerarDOAJ, m_GenerarHTML, m_GenerarODT, m_GenerarCROSSREF, m_GenerarPDF), m_XML, m_GitHub, m_OrdenTaller, m_FuncionesGenericas, m_InicioCierre. La salida PDF de libros ya no tiene nada fuera de la lanzadora.
 
 ### SC-14 — Bibliografía en HTML y EPUB: se replica el estilo biblatex del libro
 
@@ -2488,7 +2488,7 @@ EL MÓDULO
 - Un nombre NULL o sin prefijo conocido cae en el 9: queda al final y sigue a la vista. Las consultas de salida lo excluyen con `nombre_archivo IS NOT NULL`; las grillas no, porque la pieza recién creada tiene que poder editarse.
 - No va en `m_PiezasLibro`: esa es la matriz de piezas del libro por salida, y este orden vale también para los números de revista.
 
-Lo usan `m_GenerarPDFLibro.GenerarMainTeX`, `m_GenerarEpubLibro.ListaPiezasEpub`, el manifiesto del canónico en `m_XML`, `m_GitHub.ObtenerManifiestoCapitulos` y las dos grillas de metadatos.
+Lo usan `m_GenerarPDFLibro.ArmarInsumosLaTeX`, `m_GenerarEpubLibro.ListaPiezasEpub`, el manifiesto del canónico en `m_XML`, `m_GitHub.ObtenerManifiestoCapitulos` y las dos grillas de metadatos.
 
 GRILLAS DE METADATOS
 
@@ -2516,7 +2516,7 @@ Antes. Las dos tradiciones de referencia coinciden. El orden de The Chicago Manu
 
 LA POSICIÓN LA DA EL NÚMERO
 
-El espacio `fm-00` a `fm-09` es todo lo que va antes del sumario: las primeras y las piezas sueltas (dedicatoria, foto a página entera, recordatorio). `m_GenerarPDFLibro.GenerarMainTeX` (7.1b) emite `\tableofcontents` antes de la primera pieza de preliminares que no es una primera ni está en el espacio reservado. La regla del espacio, en Gambas, es `m_OrdenPiezas.EnEspacioReservado` (SC-44); en `docbook-to-latex.xsl`, `$especial`, que lee el NN del canónico.
+El espacio `fm-00` a `fm-09` es todo lo que va antes del sumario: las primeras y las piezas sueltas (dedicatoria, foto a página entera, recordatorio). `m_GenerarPDFLibro.ArmarInsumosLaTeX` (7.1b) emite `\tableofcontents` antes de la primera pieza de preliminares que no es una primera ni está en el espacio reservado. La regla del espacio, en Gambas, es `m_OrdenPiezas.EnEspacioReservado` (SC-44); en `docbook-to-latex.xsl`, `$especial`, que lee el NN del canónico.
 
 EL CONTROL
 
@@ -3113,9 +3113,13 @@ El patrón sale de la salida real de jing en Linux Mint: `69:1130: error: IDREF 
 
 LOS USOS
 
-`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh` y `compilar_pdf_libro.sh`. Este último fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
+`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh` y `compilar_pdf_libro.sh`. Este último fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
 
-**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100
+`preparar_latex_libro.sh` hace lo que antes hacía `m_GenerarPDFLibro.GenerarMainTeX` con `Exec` síncronos: colorear y transformar cada pieza (`colorear_codigo.sh` y `docbook-to-latex.xsl`), borrar los `c-*.tex` huérfanos y poner el `main.tex` en su lugar. Mientras eso corría en Gambas, la interfaz no se repintaba (GV-17) y no había señal de vida antes de que empezara la compilación. Gambas conserva lo que sale de la base, en `m_GenerarPDFLibro.ArmarInsumosLaTeX`: preámbulo derivado, `.bib`, la lista de piezas con cuerpo (`tmp/latex-piezas.txt`) y el `main.tex` propuesto (`latex/.main.tex.tmp`). «Solo generar» lanza `preparar_latex_libro.sh`; «Generar y compilar» lanza `compilar_pdf_libro.sh`, que lo llama anidado primero y no compila si falla.
+
+El `main.tex` sigue yendo último (criterio de SC-07): el script lo pone con `mv` solo si todas las piezas salieron bien, y si alguna falla el anterior queda intacto. Como `mv` conserva la fecha del temporal, anterior a las piezas, un `touch` lo deja como el archivo más nuevo. Una pieza que falla no corta el resto: se listan todas y no se pone el `main.tex`. El preámbulo derivado y el `.bib` los sigue escribiendo Gambas antes del script: si una pieza falla quedan nuevos junto al `main.tex` anterior, lo que se aceptó porque no son declarativos y la próxima corrida los reescribe. Decisión de Alberto.
+
+**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07
 
 **PENDIENTE:** Probado en Mint con un libro real: «Canónico archivo en curso», «Todos los canónicos» y «Ensamblar». Falta un lote en el que un capítulo falla (su canónico anterior se borra y «Ensamblar» se niega hasta regenerarlo), y volver a correr «Todos los canónicos» en un libro con bibliografía consolidada para ver las remisiones en tenue y el código 0. Hecho eso, quitar este pendiente.
 
