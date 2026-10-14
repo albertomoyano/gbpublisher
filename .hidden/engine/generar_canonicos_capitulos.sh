@@ -25,6 +25,9 @@
 # bm-: a-02-metodologia → 02-metodologia).
 #
 # POR CADA CAPÍTULO
+#   0. controles_md.lua sobre el .md: lo que el Markdown deja pasar y llega
+#      mal al impreso. Un hallazgo «error» frena el capítulo; un «aviso», no.
+#      Ver «CONTROLES DEL .md»
 #   1. pandoc con los filtros de libro → tmp/body-{base}.xml (con su envoltorio)
 #   2. Saxon con ensamblar-capitulo-canonico.xsl → jats/c-{nombre}.xml,
 #      escrito en un temporal y renombrado con mv: nunca queda en disco un
@@ -44,6 +47,19 @@
 #   sin aviso. Borrado, el ensamblado se niega («falta jats/c-…») hasta que el
 #   capítulo se arregle. El canónico se reconstruye siempre desde el .md: no
 #   se pierde nada que no se pueda regenerar.
+#
+# CONTROLES DEL .md
+#
+#   Corren en una pasada de pandoc propia, antes de la conversión y sin los
+#   filtros de producción (criterio de SC-46). Los controles y su nivel están
+#   en engine/controles_md.lua, que es donde se suman los nuevos; este script
+#   solo lee el informe y no conoce ningún control por su nombre.
+#
+#   Los [WARNING] que Pandoc emite al LEER el .md (una nota definida y nunca
+#   llamada, por ejemplo) son también aviso: salen en esta pasada, y en la de
+#   conversión se omiten para no informarlos dos veces.
+#   Lo mismo con el aviso de comillas de guillemets-to-quoted-db.lua: lo da
+#   el control comillas_desbalanceadas y en la conversión se omite.
 #
 # VALIDACIÓN DEL CAPÍTULO SUELTO
 #
@@ -140,6 +156,7 @@ procesar_capitulo() {
     local nombre="$1" xml_id="$2" tipo="$3" idioma="$4"
     local base carpeta md info body biblio parcial canonico temporal
     local salida codigo filtro errores remisiones propios
+    local informe nivel control mensaje errores_control lectura linea
     local args_pandoc=()
 
     # --- A. RUTAS ---
@@ -168,7 +185,57 @@ procesar_capitulo() {
     [[ -f "$biblio" ]] || { fallo "no existe tmp/biblio-$base.xml"; return 1; }
     bien_formado "$biblio" || { fallo "tmp/biblio-$base.xml está mal formado"; return 1; }
 
-    # --- C. PANDOC ---
+    # --- C. CONTROLES DEL .md ---
+    # EL INFORME VA A UN ARCHIVO Y NO A stderr: ASÍ NO SE MEZCLA CON LOS
+    # MENSAJES DE PANDOC. SE BORRA ANTES: UNO VIEJO NO PUEDE PASAR POR ESTE
+    informe="$DIR_PROYECTO/tmp/controles-$base.tsv"
+    rm -f "$informe"
+
+    lectura=$(timeout "$TIEMPO_PANDOC" pandoc "$md" \
+                --from markdown --to plain \
+                --lua-filter "$DIR_ENGINE/controles_md.lua" \
+                --metadata gb-controles="$informe" \
+                --metadata gb-proyecto="$DIR_PROYECTO" \
+                --output /dev/null 2>&1)
+    codigo=$?
+
+    if (( codigo != 0 )); then
+        mostrar_cola "$lectura"
+        fallo "los controles del .md no pudieron correr"
+        return 1
+    fi
+    # EL FILTRO ESCRIBE EL INFORME SIEMPRE, VACÍO SI NO HAY HALLAZGOS: SI NO
+    # ESTÁ, EL CONTROL NO CORRIÓ, Y NO SE PUEDE DAR EL .md POR REVISADO
+    if [[ ! -f "$informe" ]]; then
+        fallo "los controles del .md no escribieron su informe"
+        return 1
+    fi
+
+    errores_control=0
+    while IFS=$'\t' read -r nivel control mensaje || [[ -n "$nivel" ]]; do
+        [[ -z "$nivel" ]] && continue
+        case "$nivel" in
+            error) fallo "$mensaje"; errores_control=$((errores_control + 1)) ;;
+            aviso) aviso "$mensaje" ;;
+            # UN NIVEL QUE ESTE SCRIPT NO CONOCE ES UN ERROR DEL FILTRO: NO SE
+            # DEJA PASAR COMO SI NADA
+            *)     fallo "nivel «$nivel» desconocido en el control $control: $mensaje"
+                   errores_control=$((errores_control + 1)) ;;
+        esac
+    done < "$informe"
+
+    # LOS [WARNING] DEL LECTOR DE PANDOC: AVISO (VER LA CABECERA)
+    while IFS= read -r linea; do
+        [[ "$linea" == "[WARNING]"* ]] && aviso "pandoc: ${linea#\[WARNING\] }"
+    done <<< "$lectura"
+
+    if (( errores_control > 0 )); then
+        fallo "el .md tiene $errores_control error(es) de corrección: el capítulo no se genera"
+        return 1
+    fi
+    ok "controles del .md"
+
+    # --- D. PANDOC ---
     # SE BORRA EL body ANTERIOR: SI ESTA CORRIDA FALLA, NO PUEDE QUEDAR EL
     # VIEJO PARA QUE ALGO LO TOME POR BUENO
     rm -f "$body" "$parcial" "$body.fallo"
@@ -209,14 +276,25 @@ procesar_capitulo() {
         return 1
     fi
 
-    # LOS AVISOS DE PANDOC QUE NO FRENAN SE MUESTRAN PARA QUE NO SE PIERDAN
+    # LOS AVISOS DE PANDOC QUE NO FRENAN SE MUESTRAN PARA QUE NO SE PIERDAN,
+    # SALVO LOS QUE YA SE INFORMARON COMO AVISO EN LOS CONTROLES: EL LECTOR ES
+    # EL MISMO Y LOS REPITE IGUALES
+    if [[ -n "$salida" && -n "$lectura" ]]; then
+        salida=$(printf '%s\n' "$salida" | grep -vxF -f <(printf '%s\n' "$lectura" | grep '^\[WARNING\]'))
+    fi
+    # EL AVISO DE COMILLAS DE guillemets-to-quoted-db.lua TAMBIÉN: LO INFORMÓ
+    # EL CONTROL comillas_desbalanceadas. EL FILTRO LO SIGUE ESCRIBIENDO PORQUE
+    # REVISTAS, QUE TODAVÍA NO PASA POR LOS CONTROLES, DEPENDE DE ÉL (SC-54)
+    if [[ -n "$salida" ]]; then
+        salida=$(printf '%s\n' "$salida" | grep -v '^guillemets-to-quoted: comillas sin cerrar en: ')
+    fi
     if [[ -n "$salida" ]]; then
         tenue "mensajes de pandoc:"
         mostrar_cola "$salida" 10
     fi
     ok "cuerpo"
 
-    # --- D. SAXON ---
+    # --- E. SAXON ---
     rm -f "$temporal"
 
     salida=$(timeout "$TIEMPO_SAXON" java -jar "$RUTA_SAXON" \
@@ -260,7 +338,7 @@ procesar_capitulo() {
     mv -f "$temporal" "$canonico" || { fallo "no se pudo reemplazar jats/c-$nombre.xml"; return 1; }
     ok "canónico bien formado"
 
-    # --- E. VALIDACIÓN CONTRA DocBook 5.2 ---
+    # --- F. VALIDACIÓN CONTRA DocBook 5.2 ---
     # INFORMATIVA, COMO EN EL LIBRO: UN CANÓNICO BIEN FORMADO QUE NO VALIDA SE
     # CONSERVA, PERO EL AVISO LLEGA A GAMBAS COMO CÓDIGO 3. LA AUSENCIA DE jing
     # O DEL ESQUEMA SE AVISA UNA SOLA VEZ, ANTES DEL LOTE
@@ -336,7 +414,9 @@ if (( ${#faltan[@]} > 0 )); then
     morir "Faltan filtros en $DIR_FILTROS: ${faltan[*]}"
 fi
 
-ok "herramientas, hoja y filtros"
+[[ -f "$DIR_ENGINE/controles_md.lua" ]] || morir "No se encontró el filtro de controles: $DIR_ENGINE/controles_md.lua"
+
+ok "herramientas, hoja, filtros y controles"
 
 # LA FALTA DE VALIDADOR SE AVISA UNA VEZ, NO UNA POR CAPÍTULO. SIGUE SIENDO
 # AVISO: EL INFORME NO PUEDE DAR POR VÁLIDO LO QUE NO VALIDÓ
@@ -406,7 +486,7 @@ else
     printf '    %s\n' "${FALLIDOS[@]}"
 fi
 if (( ${#CON_AVISOS[@]} > 0 )); then
-    printf '  %s⚠ Con avisos de validación:%s\n' "$C_AVISO" "$C_RESET"
+    printf '  %s⚠ Con avisos (de los controles, de pandoc o del esquema):%s\n' "$C_AVISO" "$C_RESET"
     printf '    %s\n' "${CON_AVISOS[@]}"
 fi
 if [[ "$VALIDAR" == "no" ]]; then
