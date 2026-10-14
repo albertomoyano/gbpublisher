@@ -4,8 +4,16 @@
 # Vive en /usr/share/gbpublisher/engine/ y viaja en el .deb. Es
 # infraestructura: no se personaliza y no se copia a ~/.gbpublisher (SC-11).
 #
-# Lo invoca Gambas desde el terminal del proyecto, así que la salida está
-# pensada para leerse ahí en tiempo real, como ventana de estado.
+# Lo lanza Gambas con m_GenerarSalidasLibro.EjecutarScriptSalida (SC-53), en
+# el terminal del proyecto, así que la salida está pensada para leerse ahí en
+# tiempo real, como ventana de estado.
+#
+# CÓDIGOS DE SALIDA (comun.sh)
+#   0  PDF generado sin avisos
+#   3  PDF generado con avisos: citas sin entrada en el .bib, entradas de
+#      índice descartadas, referencias cruzadas sin destino o repetidas, falta
+#      el .bib
+#   1  no se generó el PDF
 #
 # USO
 #   compilar-pdf-libro.sh <ruta_proyecto> <nombre_bib> <nombre_salida>
@@ -43,19 +51,16 @@
 
 set -uo pipefail
 
-# --- 1. COLORES (SOLO SI LA SALIDA ES UNA TERMINAL) ---
-if [[ -t 1 ]]; then
-    C_TITULO=$'\033[1;38;2;125;211;252m'
-    C_OK=$'\033[38;2;134;239;172m'
-    C_AVISO=$'\033[38;2;250;204;21m'
-    C_ERROR=$'\033[1;38;2;248;113;113m'
-    C_TENUE=$'\033[38;2;148;163;184m'
-    C_RESET=$'\033[0m'
-else
-    C_TITULO="" ; C_OK="" ; C_AVISO="" ; C_ERROR="" ; C_TENUE="" ; C_RESET=""
+# --- 1. FUNCIONES COMPARTIDAS ---
+# LOS COLORES, LA REGLA, titulo, paso, ok, aviso, tenue, morir, encabezado Y
+# terminar SALEN DE comun.sh, COMO EN LOS DEMÁS SCRIPTS. ESTE SCRIPT TENÍA SU
+# COPIA PROPIA, Y SU aviso NO CONTABA: LOS AVISOS QUEDABAN EN LA TERMINAL Y
+# GAMBAS NO SE ENTERABA. AHORA LLEGAN COMO CÓDIGO 3 (SC-53).
+DIR_ENGINE="$(dirname "$(readlink -f "$0")")"
+if ! source "$DIR_ENGINE/comun.sh"; then
+    echo "No se pudo cargar $DIR_ENGINE/comun.sh" >&2
+    exit 1
 fi
-
-REGLA="════════════════════════════════════════════════════════════════════"
 
 # --- 2. CONFIGURACIÓN ---
 BASE="main"
@@ -76,18 +81,6 @@ PATRONES_RERUN=("Temporary extra page added"
                 "Please rerun LaTeX"
                 "Package rerunfilecheck Warning")
 PASADAS_EXTRA_MAX=2
-
-# --- 3. FUNCIONES DE SALIDA ---
-titulo() { printf '%s%s%s\n' "$C_TITULO" "$1" "$C_RESET"; }
-paso()   { printf '\n%s→ %s%s\n' "$C_TITULO" "$1" "$C_RESET"; }
-ok()     { printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$1"; }
-aviso()  { printf '  %s⚠%s %s\n' "$C_AVISO" "$C_RESET" "$1"; }
-tenue()  { printf '  %s%s%s\n' "$C_TENUE" "$1" "$C_RESET"; }
-
-morir() {
-    printf '\n%s✗ %s%s\n' "$C_ERROR" "$1" "$C_RESET" >&2
-    exit 1
-}
 
 # ============================================================================
 # Función   : informar_log
@@ -306,10 +299,7 @@ procesar_indices() {
 # ORQUESTACIÓN
 # ============================================================================
 
-echo
-titulo "$REGLA"
-titulo "  GENERACIÓN DE LA SALIDA PDF"
-titulo "$REGLA"
+encabezado "GENERACIÓN DE LA SALIDA PDF"
 
 # --- 4. ARGUMENTOS ---
 if (( $# < 3 )); then
@@ -470,5 +460,11 @@ for f in "$DIR_LATEX"/*.ind; do
     tenue "índice compuesto: $(basename "${f%.ind}")"
 done
 
+# LOS AVISOS SE REPITEN EN EL RESUMEN: EN UNA COMPILACIÓN LARGA QUEDAN MUY
+# ARRIBA EN LA TERMINAL
+if (( AVISOS > 0 )); then
+    printf '  %s⚠ con %d aviso(s): revisar arriba%s\n' "$C_AVISO" "$AVISOS" "$C_RESET"
+fi
+
 echo
-exit 0
+terminar

@@ -32,6 +32,12 @@
 '
 '   Mientras espera, Gambas NO tipea nada en la terminal. Si vence el plazo,
 '   pregunta si seguir esperando; nunca escribe un echo.
+'
+'   Y muestra que está trabajando: el puntero ocupado (Application.Busy) y,
+'   sobre la terminal, lblMensajes con qué se está generando y el tiempo
+'   transcurrido. Sin eso, una composición LaTeX de varios minutos parecía
+'   una máquina colgada. El tiempo no es un porcentaje inventado: solo
+'   muestra que el proceso sigue vivo.
 ' ==========================================================
 
 ' DONDE VIVEN LOS SCRIPTS: INFRAESTRUCTURA, NO SE COPIA A ~/.gbpublisher (SC-11).
@@ -45,6 +51,8 @@ Private Const PLAZO_CANONICO As Float = 300.0
 ' EL LOTE DE CANÓNICOS DE CAPÍTULO: UNA JVM Y UN PANDOC POR CAPÍTULO
 Private Const PLAZO_CANONICOS_CAPITULO As Float = 600.0
 Private Const PLAZO_HTML As Float = 600.0
+' EL PDF HACE CINCO O MÁS PASADAS DE LuaLaTeX, MÁS biber Y xindy
+Private Const PLAZO_PDF As Float = 1200.0
 
 ' CÓDIGOS DE SALIDA DE LOS SCRIPTS. DEBEN COINCIDIR CON engine/comun.sh
 Public Const SALIDA_OK As Integer = 0
@@ -109,10 +117,13 @@ End
 '             aArgumentos As String[] — argumentos, en orden. Ninguno vacío:
 '               el que no aplica se pasa como «-»
 '             fPlazo As Float — segundos antes de preguntar si seguir esperando
+'             sQue As String — qué se está generando, para lblMensajes
+'               («Componiendo el PDF del libro»). Opcional: si falta, se
+'               muestra el nombre del script
 ' Retorna   : Integer — el código de salida del script (0, 3, 1...) o uno de
 '             los RESULTADO_*, todos negativos
 ' ============================================
-Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[], fPlazo As Float) As Integer
+Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[], fPlazo As Float, Optional sQue As String = "") As Integer
 
   ' --- 1. INICIALIZACIÓN ---
   Dim sRutaScript As String
@@ -124,6 +135,10 @@ Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[],
   Dim sArgumento As String
   Dim sContenido As String
   Dim fVence As Float
+  Dim fInicio As Float
+  Dim sEtiqueta As String
+  Dim iSegundos As Integer
+  Dim iSegundosMostrados As Integer
   Dim iRespuesta As Integer
   Dim iResultado As Integer
 
@@ -178,6 +193,19 @@ Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[],
   $bScriptEnCurso = True
   BloquearSalidas(True)
 
+  ' PUNTERO OCUPADO EN TODA LA APLICACIÓN. Inc Y NO = 1: SI ALGO MÁS YA LO
+  ' TENÍA EN USO, AL TERMINAR VUELVE A ESE VALOR Y NO A CERO. LOS DIÁLOGOS
+  ' DE Message LO GUARDAN, LO PONEN EN CERO Y LO RESTAURAN SOLOS
+  ' (gb.gui.base, FMessage.class, 3.22.1): LA PREGUNTA DEL PLAZO NO
+  ' NECESITA NADA ESPECIAL
+  Inc Application.Busy
+
+  sEtiqueta = sQue
+  If sEtiqueta = "" Then sEtiqueta = sScript
+  fInicio = Timer
+  iSegundosMostrados = -1
+  FMain.lblMensajes.Text = sEtiqueta & "…"
+
   FMain.tbMostrarPanelInferior.Value = True
   FMain.TabPanelIzquierdaInferior.Index = 0
   FMain.TerminalViewProyecto.Input(sLinea & gb.NewLine)
@@ -191,6 +219,13 @@ Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[],
 
   Do
     If Exist(sEstado) Then Break
+
+    ' EL TIEMPO TRANSCURRIDO, UNA VEZ POR SEGUNDO Y NO EN CADA VUELTA
+    iSegundos = Int(Timer - fInicio)
+    If iSegundos <> iSegundosMostrados Then
+      iSegundosMostrados = iSegundos
+      FMain.lblMensajes.Text = sEtiqueta & "…  " & MinutosSegundos(iSegundos)
+    Endif
 
     If Timer > fVence Then
       ' AL VENCER NO SE ESCRIBE NADA EN LA TERMINAL: SE PREGUNTA
@@ -221,10 +256,39 @@ Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[],
   Endif
 
   ' --- 9. DESBLOQUEO ---
+  ' EN EL MISMO ÚNICO CAMINO QUE EL BLOQUEO: TAMBIÉN AL DEJAR DE ESPERAR. EN
+  ' ESE CASO EL SCRIPT SIGUE CORRIENDO, PERO LA APLICACIÓN YA NO LO SIGUE Y
+  ' NO PUEDE SEGUIR DICIENDO QUE ESTÁ TRABAJANDO
+  FMain.lblMensajes.Text = ""
+  Dec Application.Busy
   BloquearSalidas(False)
   $bScriptEnCurso = False
 
   Return iResultado
+
+End
+
+' ============================================
+' Función   : MinutosSegundos
+' Propósito : Un tiempo en segundos como mm:ss (h:mm:ss pasada la hora).
+'             Right("0" & …) Y NO UNA MÁSCARA DE Format: NO DEPENDE DE CÓMO
+'             TRATE Format UN ENTERO.
+' Parámetros: iSegundos As Integer — segundos transcurridos
+' Retorna   : String — el tiempo formateado
+' ============================================
+Private Function MinutosSegundos(iSegundos As Integer) As String
+
+  Dim iHoras As Integer
+  Dim iMinutos As Integer
+  Dim sTexto As String
+
+  iHoras = iSegundos \ 3600
+  iMinutos = (iSegundos Mod 3600) \ 60
+
+  sTexto = Right("0" & CStr(iMinutos), 2) & ":" & Right("0" & CStr(iSegundos Mod 60), 2)
+  If iHoras > 0 Then sTexto = CStr(iHoras) & ":" & sTexto
+
+  Return sTexto
 
 End
 
@@ -512,7 +576,8 @@ Public Sub GenerarCanonicoLibro()
   If Not oInsumos.bListo Then Return
 
   ' --- 4. ENSAMBLADO ---
-  iResultado = EjecutarScriptSalida("ensamblar_libro.sh", ArgumentosEnsamblado(oInsumos), PLAZO_CANONICO)
+  iResultado = EjecutarScriptSalida("ensamblar_libro.sh", ArgumentosEnsamblado(oInsumos), PLAZO_CANONICO,
+    "Ensamblando el canónico del libro")
 
   ' --- 5. INFORME ---
   InformarResultado(iResultado, "El canónico del libro",
@@ -750,7 +815,8 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
   aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
   aArgumentos.Add(LISTA_CANONICOS)
 
-  Return EjecutarScriptSalida("generar_canonicos_capitulos.sh", aArgumentos, PLAZO_CANONICOS_CAPITULO)
+  Return EjecutarScriptSalida("generar_canonicos_capitulos.sh", aArgumentos, PLAZO_CANONICOS_CAPITULO,
+    "Generando los canónicos de capítulo")
 
 End
 
@@ -914,7 +980,8 @@ Public Sub GenerarLibroHTML()
   If sImagenTapa <> "" Then aArgumentos.Add(sImagenTapa)
 
   ' --- 8. GENERACIÓN ---
-  iResultado = EjecutarScriptSalida("generar_html_libro.sh", aArgumentos, PLAZO_HTML)
+  iResultado = EjecutarScriptSalida("generar_html_libro.sh", aArgumentos, PLAZO_HTML,
+    "Generando el HTML del libro")
 
   ' --- 9. INFORME ---
   InformarResultado(iResultado, "El HTML del libro",
@@ -956,9 +1023,9 @@ Public Sub GenerarPDFLibro()
   Dim sEstado As String
   Dim sPrestaciones As String
   Dim sNombreSalida As String
-  Dim sComando As String
-  Dim sScript As String
+  Dim aArgumentos As New String[]
   Dim iRespuesta As Integer
+  Dim iResultado As Integer
 
   ' --- 0. MOSTRAR CONSOLA ---
   FMain.tbMostrarPanelInferior.Value = True
@@ -1032,30 +1099,26 @@ Public Sub GenerarPDFLibro()
   Endif
 
   ' --- 6. COMPILACIÓN ---
-  sScript = m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ "compilar_pdf_libro.sh"
-
-  If Not Exist(sScript) Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontró el compilador de PDF:" & gb.NewLine & sScript &
-      gb.NewLine & gb.NewLine & "Verificá la instalación de gbpublisher.")
-    Return
-  Endif
+  ' POR LA LANZADORA (SC-53), COMO LAS DEMÁS SALIDAS: ANTES SE TIPEABA EN LA
+  ' TERMINAL Y GAMBAS NO SE ENTERABA DE CUÁNDO TERMINABA, ASÍ QUE NO PODÍA
+  ' MOSTRAR QUE ESTABA TRABAJANDO NI INFORMAR CÓMO TERMINÓ. LA EXISTENCIA DEL
+  ' SCRIPT LA VERIFICA LA LANZADORA.
 
   ' EL NOMBRE DEL PDF ES EL DEL PROYECTO, NO «main». EL MAESTRO SE LLAMA
   ' main.tex POR CONVENIENCIA INTERNA; EL ARCHIVO QUE RECIBE EL EDITOR TIENE
   ' QUE DECIR DE QUÉ LIBRO ES.
   sNombreSalida = File.BaseName(m_InicioCierre.NombreProyectoEnCurso)
 
-  ' Shell$() Y NO Quote(): Quote() DEVUELVE EL TEXTO ENTRE COMILLAS DOBLES, Y
-  ' DENTRO DE COMILLAS DOBLES sh SIGUE EXPANDIENDO $(...) Y LOS BACKTICKS.
-  ' LA RUTA DEL PROYECTO LA ELIGE EL USUARIO CON UN DIÁLOGO, ASÍ QUE PUEDE
-  ' CONTENER CUALQUIER COSA (GV-06).
-  sComando = "bash " & Shell$(sScript) & " " &
-    Shell$(m_InicioCierre.RutaProyectoEnCurso) & " " &
-    Shell$(m_Bibtex.NombreArchivoBib()) & " " &
-    Shell$(sNombreSalida)
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(m_Bibtex.NombreArchivoBib())
+  aArgumentos.Add(sNombreSalida)
 
-  FMain.TerminalViewProyecto.Input(sComando & gb.NewLine)
+  iResultado = EjecutarScriptSalida("compilar_pdf_libro.sh", aArgumentos, PLAZO_PDF,
+    "Componiendo el PDF del libro")
+
+  ' --- 7. INFORME ---
+  InformarResultado(iResultado, "El PDF del libro",
+    m_InicioCierre.RutaProyectoEnCurso &/ "salidas" &/ "pdf" &/ sNombreSalida & ".pdf")
 
 Catch
   ' RED DE ÚLTIMO RECURSO (RC-GM-20). LOS FALLOS PREVISIBLES SE ATRAPAN CON
