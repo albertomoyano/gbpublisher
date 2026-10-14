@@ -3187,7 +3187,7 @@ El filtro de producción sigue escribiendo su mensaje por stderr porque revistas
 
 ### SC-55 — Orden de los finales: la bibliografía antes de los índices, el colofón último; aviso en el ABM, freno en el PDF
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.19 (gbc3, gbs3) / contenedor Ubuntu · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.19 (gbc3, gbs3) / contenedor Ubuntu / MySQL 8.0.46 · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisión de Alberto). Libros, salida PDF. El orden de las piezas sale del nombre de archivo (SC-44), y hay errores de orden en los finales que compilan sin fallar y dan un libro equivocado. Esos se controlan; el resto del orden de los finales no.
 
@@ -3214,13 +3214,23 @@ Es una regla del LIBRO, no de una pieza, y por eso no va en `ProblemaPosicion` (
 
 La regla está escrita una sola vez, en `m_PiezasLibro`; los dos lugares la llaman.
 
+CÓDIGOS REPETIDOS
+
+Dos piezas con el mismo código de posición (`bm-20-indice-autores` y `bm-20-referencias`) quedan ordenadas por el resto del nombre, alfabéticamente, y no por el número: el orden puede salir bien por casualidad. Vale para TODO el libro —preliminares, cuerpo y finales— y para todas las salidas, porque todas ordenan por nombre (SC-44).
+
+- La función es `m_PiezasLibro.ProblemaCodigoRepetido(iIdLibro)`. Agrupa por `m_OrdenPiezas.ExpresionCodigo`, la misma definición del código que usan las grillas: no se reescribe en Gambas. `GROUP BY` sobre el alias lo admite MySQL (manual 8.0, B.3.4.4). Lista TODOS los códigos repetidos con sus piezas: renumerar uno puede chocar con otro. Un fallo de lectura devuelve vacío: los generadores leen la misma tabla y fallan con su propio mensaje.
+- Va ANTES que `ProblemaOrdenFinales`: con un código repetido, el control de los finales podría dar bien por casualidad.
+- Amarillo al guardar: `ProblemaOrdenLibroAbierto` lo consulta primero.
+- Rojo al cerrar `FMetadatosCapitulos`: `btnCerrar_Click` no habilita el cierre mientras haya repetidos. Es el único camino de cierre, porque `Form_Close` bloquea la X con `Stop Event`. Al guardar no se frena: al renumerar hay estados intermedios con códigos repetidos; al cerrar ya no.
+- Rojo en las salidas: `m_GenerarPDFLibro.ArmarInsumosLaTeX` (2b), `m_GenerarSalidasLibro.PrepararInsumosLibro` (canónico del libro y HTML) y `m_GenerarEpubLibro.GenerarEpubLibro` (2).
+
 FUERA DEL ALCANCE
 
 EPUB y HTML: los índices no se generan (`m_PiezasLibro.Tratamiento`), así que el orden respecto de la bibliografía no cambia nada. El EPUB ubica su colofón solo.
 
 **Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17
 
-**PENDIENTE:** Probado en el contenedor: gbc3 compila el proyecto (con gb.db en lugar de gb.db2, que 3.19 no trae) y ProblemaOrdenFinales, con gbs3, da lo esperado en siete casos (el error que lo originó, el corregido, R2 con y sin índices, por capítulo, R3 con y sin error). Falta en Mint con gbpublisher: el aviso del ABM al renumerar y el freno del PDF con un libro real. Hecho eso, quitar este pendiente.
+**PENDIENTE:** Probado en el contenedor: gbc3 compila el proyecto (con gb.db en lugar de gb.db2, que 3.19 no trae); ProblemaOrdenFinales, con gbs3, da lo esperado en siete casos; la consulta de códigos repetidos, en MySQL 8.0.46 con ONLY_FULL_GROUP_BY, desde gbs3 con gb.db (el GROUP_CONCAT llega como String). Alberto confirmó en Mint los avisos de R1 con el orden inverso y con el mismo número. Falta en Mint: el freno al cerrar el formulario de capítulos y el de las tres salidas con un código repetido. Hecho eso, quitar este pendiente.
 
 ---
 

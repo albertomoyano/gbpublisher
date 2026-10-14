@@ -78,7 +78,7 @@ Public Function TieneCuerpo(sTipo As String) As Boolean
       Return False
     Case "bibliografia", "colofon"
       Return False
-    ' LAS PRIMERAS SALEN DE LA BASE (SC-25)
+      ' LAS PRIMERAS SALEN DE LA BASE (SC-25)
     Case "portadilla", "portada", "creditos"
       Return False
   End Select
@@ -109,33 +109,33 @@ Public Function Tratamiento(sTipo As String, sSalida As String) As Integer
   ' --- 3. PIEZAS SIN CUERPO: LA MATRIZ ---
   Select Case sTipo
 
-    ' ÍNDICES: SIN ENLACES NO VAN EN LAS SALIDAS DIGITALES. VER LA CONDICIÓN
-    ' EN EL ENCABEZADO DEL MÓDULO
+      ' ÍNDICES: SIN ENLACES NO VAN EN LAS SALIDAS DIGITALES. VER LA CONDICIÓN
+      ' EN EL ENCABEZADO DEL MÓDULO
     Case "indice_onomastico", "indice_concepto", "indice_autores"
       If sSalida = SALIDA_PDF Then Return TRATAMIENTO_COMPUESTA
       Return TRATAMIENTO_OMITIDA
 
-    ' LISTAS DE FIGURAS Y TABLAS: SOLO EN EL IMPRESO
+      ' LISTAS DE FIGURAS Y TABLAS: SOLO EN EL IMPRESO
     Case "lista_figuras", "lista_tablas"
       If sSalida = SALIDA_PDF Then Return TRATAMIENTO_COMPUESTA
       Return TRATAMIENTO_OMITIDA
 
-    ' BIBLIOGRAFÍA: biblatex EN EL PDF; EN LAS DIGITALES SALE DEL CANÓNICO,
-    ' QUE LA TRAE POR CAPÍTULO O CONSOLIDADA SEGÚN lugar_bibliografia
+      ' BIBLIOGRAFÍA: biblatex EN EL PDF; EN LAS DIGITALES SALE DEL CANÓNICO,
+      ' QUE LA TRAE POR CAPÍTULO O CONSOLIDADA SEGÚN lugar_bibliografia
     Case "bibliografia"
       If sSalida = SALIDA_PDF Then Return TRATAMIENTO_COMPUESTA
       Return TRATAMIENTO_DERIVADA
 
-    ' COLOFÓN: ENTORNO gbcolofon CON DATOS DE LA BASE EN EL PDF, PÁGINA PROPIA
-    ' EN EL EPUB, PIE DE PÁGINA EN EL HTML
+      ' COLOFÓN: ENTORNO gbcolofon CON DATOS DE LA BASE EN EL PDF, PÁGINA PROPIA
+      ' EN EL EPUB, PIE DE PÁGINA EN EL HTML
     Case "colofon"
       If sSalida = SALIDA_HTML Then Return TRATAMIENTO_PIE
       Return TRATAMIENTO_DERIVADA
 
-    ' PRIMERAS (SC-25). EN EL PDF, MACROS CON DATOS DE LA BASE. EN EL EPUB,
-    ' LA PORTADILLA NO VA —EN UN FORMATO REFLUIBLE REPITE LA PORTADA— Y LA
-    ' PORTADA Y LOS CRÉDITOS SON PÁGINAS PROPIAS. EN EL HTML LAS REEMPLAZA
-    ' LA PÁGINA DE ENTRADA.
+      ' PRIMERAS (SC-25). EN EL PDF, MACROS CON DATOS DE LA BASE. EN EL EPUB,
+      ' LA PORTADILLA NO VA —EN UN FORMATO REFLUIBLE REPITE LA PORTADA— Y LA
+      ' PORTADA Y LOS CRÉDITOS SON PÁGINAS PROPIAS. EN EL HTML LAS REEMPLAZA
+      ' LA PÁGINA DE ENTRADA.
     Case "portadilla"
       If sSalida = SALIDA_PDF Then Return TRATAMIENTO_DERIVADA
       Return TRATAMIENTO_OMITIDA
@@ -194,6 +194,57 @@ Public Function ProblemaPosicion(sNombre As String, sTipo As String) As String
   Endif
 
   Return ""
+
+End
+
+' ============================================
+' Función   : ProblemaCodigoRepetido
+' Propósito : Busca piezas del libro con el mismo código de posición
+'             («bm-20-indice-autores» y «bm-20-referencias» comparten bm-20).
+'             Con el código repetido el orden lo decide el resto del nombre,
+'             alfabéticamente, y no el número: puede salir bien por
+'             casualidad (SC-55, CÓDIGOS REPETIDOS).
+'             Vale para todo el libro: preliminares, cuerpo y finales.
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : String — vacío si no hay repetidos o si la consulta falla; si
+'             no, el mensaje con TODOS los códigos repetidos y sus piezas
+' Nota      : EL CÓDIGO SALE DE m_OrdenPiezas.ExpresionCodigo, LA MISMA
+'             DEFINICIÓN QUE USAN LAS GRILLAS: NO SE REESCRIBE EN GAMBAS.
+'             UN FALLO DE LECTURA DEVUELVE VACÍO: LOS GENERADORES LEEN LA
+'             MISMA TABLA Y FALLAN CON SU PROPIO MENSAJE.
+' ============================================
+Public Function ProblemaCodigoRepetido(iIdLibro As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hRepetidos As Result
+  Dim sLista As String
+
+  ' --- 2. LOS CÓDIGOS CON MÁS DE UNA PIEZA ---
+  ' EL ALIAS EN GROUP BY LO ADMITE MySQL (MANUAL 8.0, B.3.4.4, «PROBLEMS WITH
+  ' COLUMN ALIASES»). PROBADO EN MySQL 8.0.46 CON ONLY_FULL_GROUP_BY
+  Try hRepetidos = m_ConexionBD.mConn.Exec(
+    "SELECT " & m_OrdenPiezas.ExpresionCodigo("nombre_archivo") & " AS codigo, " &
+    "GROUP_CONCAT(nombre_archivo ORDER BY nombre_archivo SEPARATOR ', ') AS piezas " &
+    "FROM capitulos " &
+    "WHERE id_libro = &1 AND nombre_archivo IS NOT NULL " &
+    "GROUP BY codigo HAVING COUNT(*) > 1 " &
+    "ORDER BY codigo", iIdLibro)
+  If Error Then Return ""
+
+  ' --- 3. UNA LÍNEA POR CÓDIGO REPETIDO ---
+  ' SE LISTAN TODOS Y NO SOLO EL PRIMERO: RENUMERAR UNO PUEDE CHOCAR CON OTRO
+  For Each hRepetidos
+    sLista &= "    " & hRepetidos["codigo"] & ":  " & hRepetidos["piezas"] & gb.NewLine
+  Next
+
+  If sLista = "" Then Return ""
+
+  ' --- 4. EL MENSAJE ---
+  Return "Hay piezas con el mismo código de posición:" & gb.NewLine & gb.NewLine &
+    sLista & gb.NewLine &
+    "Con el código repetido, el orden lo decide el resto del nombre y no el " &
+    "número. Renombrá los archivos para que cada código sea único y volvé a " &
+    "elegirlos en la ficha de cada pieza."
 
 End
 
