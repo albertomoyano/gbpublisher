@@ -42,11 +42,18 @@ Private Const CARPETA_ENGINE As String = "engine"
 
 ' PLAZOS EN SEGUNDOS. NO SON UN CORTE: AL VENCER SE PREGUNTA SI SEGUIR
 Private Const PLAZO_CANONICO As Float = 300.0
+' EL LOTE DE CANÓNICOS DE CAPÍTULO: UNA JVM Y UN PANDOC POR CAPÍTULO
+Private Const PLAZO_CANONICOS_CAPITULO As Float = 600.0
 Private Const PLAZO_HTML As Float = 600.0
 
 ' CÓDIGOS DE SALIDA DE LOS SCRIPTS. DEBEN COINCIDIR CON engine/comun.sh
 Public Const SALIDA_OK As Integer = 0
 Public Const SALIDA_AVISOS As Integer = 3
+Public Const SALIDA_FALLO As Integer = 1
+
+' LISTA DE CAPÍTULOS QUE GAMBAS ESCRIBE PARA generar_canonicos_capitulos.sh,
+' RELATIVA AL PROYECTO. UNA SOLA: NO PUEDE HABER DOS LOTES A LA VEZ
+Private Const LISTA_CANONICOS As String = "tmp/lote-canonicos.tsv"
 
 ' RESULTADOS PROPIOS DE LA LANZADORA. NEGATIVOS PARA QUE NO SE CONFUNDAN CON
 ' NINGÚN CÓDIGO DE SALIDA DE UN PROCESO
@@ -79,7 +86,7 @@ End
 ' ============================================
 ' Función   : BloquearSalidas
 ' Propósito : Habilita o deshabilita los controles que pueden escribir en la
-'             terminal: el menú de salidas y los dos botones de canónicos.
+'             terminal: el menú de salidas y el de canónicos DocBook.
 '             Ninguno es ancestro del TerminalView: apagar un contenedor que lo
 '             contiene apagaría también el terminal (GV-42).
 ' Parámetros: bBloquear As Boolean — True deshabilita, False habilita
@@ -88,8 +95,7 @@ End
 Private Sub BloquearSalidas(bBloquear As Boolean)
 
   FMain.MenuButtonSalidas.Enabled = Not bBloquear
-  FMain.btnGenerarDocBookcanonico.Enabled = Not bBloquear
-  FMain.btnGenerarLibroCanonico.Enabled = Not bBloquear
+  FMain.mDocBook.Enabled = Not bBloquear
 
 End
 
@@ -511,6 +517,336 @@ Public Sub GenerarCanonicoLibro()
   ' --- 5. INFORME ---
   InformarResultado(iResultado, "El canónico del libro",
     oInsumos.sRutaProyecto &/ "jats" &/ "c-libro-" & oInsumos.sNombreBase & ".xml")
+
+End
+
+' ============================================
+' Función   : GenerarCanonicoEnCurso
+' Propósito : Genera el canónico DocBook del capítulo abierto en el editor
+'             («Canónico archivo en curso» de menuDocBook). Es un lote de un
+'             solo capítulo: el mismo camino que «Todos los canónicos».
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarCanonicoEnCurso()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdCapitulo As Integer
+  Dim hCapitulo As Result
+  Dim sNombre As String
+  Dim iResultado As Integer
+
+  ' --- 2. CAPÍTULO EN CURSO ---
+  ' DE LA GLOBAL DE SESIÓN Y NO DE UN CONTROL (RC-GM-16)
+  iIdCapitulo = m_InicioCierre.IdCapituloEnCurso
+  If iIdCapitulo = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún capítulo seleccionado." & gb.NewLine &
+      "Seleccioná un archivo de front-matter/, articulos/ o back-matter/.")
+    Return
+  Endif
+
+  ' --- 3. DATOS DEL CAPÍTULO ---
+  ' LAS MISMAS COLUMNAS QUE LA CONSULTA DE GenerarCanonicosTodos: LanzarCanonicos
+  ' LEE LAS DOS
+  Try hCapitulo = m_ConexionBD.mConn.Exec(
+    "SELECT id_capitulo, nombre_archivo, tipo_capitulo, idioma_capitulo " &
+    "FROM capitulos WHERE id_capitulo = &1 AND nombre_archivo IS NOT NULL LIMIT 1",
+    iIdCapitulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el capítulo:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+  If Not hCapitulo.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el capítulo id=" & CStr(iIdCapitulo) &
+      " o no tiene nombre de archivo registrado.")
+    Return
+  Endif
+
+  sNombre = m_XML.TrimUTF8(hCapitulo["nombre_archivo"])
+
+  ' --- 4. PIEZA SIN CUERPO ---
+  ' EL CRITERIO DEL MANIFIESTO (m_XML.GenerarManifiestoLibro): UNA PIEZA QUE NO
+  ' ENTRA AL LIBRO COMO CANÓNICO NO TIENE CANÓNICO PROPIO. ANTES SE EXCEPTUABA
+  ' SOLO bm-99-colofon, POR NOMBRE
+  If Not m_PiezasLibro.TieneCuerpo(TipoDeCapitulo(hCapitulo)) Then
+    m_Sonido.sonar("Info")
+    Message.Info("«" & sNombre & "» no tiene canónico propio." & gb.NewLine & gb.NewLine &
+      "Es una pieza sin cuerpo: cada salida del libro la arma" & gb.NewLine &
+      "a su modo a partir de la base.")
+    Return
+  Endif
+
+  ' --- 5. LANZAMIENTO E INFORME ---
+  iResultado = LanzarCanonicos(hCapitulo)
+  InformarCanonicos(iResultado, sNombre)
+
+End
+
+' ============================================
+' Función   : GenerarCanonicosTodos
+' Propósito : Genera los canónicos DocBook de todos los capítulos del libro
+'             que tienen cuerpo («Todos los canónicos» de menuDocBook). El caso
+'             es el de las correcciones repartidas en varios archivos: se
+'             aplican con buscar/reemplazar y se regenera todo de una vez.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarCanonicosTodos()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdLibro As Integer
+  Dim hCapitulos As Result
+  Dim iResultado As Integer
+
+  ' --- 2. PROYECTO Y LIBRO ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  ' EL ID DEL PROYECTO SALE DE LA GLOBAL DE SESIÓN (RC-GM-16)
+  iIdLibro = m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso)
+  If iIdLibro = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo resolver el libro del proyecto activo." & gb.NewLine &
+      "Verificá que exista una fila en libros_md para este proyecto.")
+    Return
+  Endif
+
+  ' --- 3. CAPÍTULOS ---
+  ' LA MISMA CONDICIÓN Y EL MISMO ORDEN QUE m_XML.GenerarManifiestoLibro: «TODOS»
+  ' TIENE QUE SER LO QUE EL ENSAMBLADO VA A PEDIR, NI MÁS NI MENOS. LAS PIEZAS
+  ' SIN CUERPO LAS SALTEA LanzarCanonicos CON EL MISMO CRITERIO QUE EL MANIFIESTO
+  Try hCapitulos = m_ConexionBD.mConn.Exec(
+    "SELECT id_capitulo, nombre_archivo, tipo_capitulo, idioma_capitulo " &
+    "FROM capitulos WHERE id_libro = &1 " &
+    "AND nombre_archivo IS NOT NULL " &
+    "ORDER BY " & m_OrdenPiezas.ClausulaOrden("nombre_archivo"), iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los capítulos del libro:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+  If Not hCapitulos.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro no tiene capítulos con archivo registrado.")
+    Return
+  Endif
+
+  ' --- 4. LANZAMIENTO E INFORME ---
+  iResultado = LanzarCanonicos(hCapitulos)
+  InformarCanonicos(iResultado, "")
+
+End
+
+' ============================================
+' Función   : LanzarCanonicos
+' Propósito : Escribe los insumos que salen de la base para cada capítulo del
+'             resultado y lanza engine/generar_canonicos_capitulos.sh, que hace
+'             pandoc, Saxon y la validación (SC-13). Es el camino común de
+'             «en curso» y «todos».
+' Parámetros: hCapitulos As Result — capítulos a generar, sin recorrer, con las
+'               columnas id_capitulo, nombre_archivo, tipo_capitulo e
+'               idioma_capitulo
+' Retorna   : Integer — lo que devuelve EjecutarScriptSalida, o
+'             RESULTADO_EN_CURSO / RESULTADO_NO_LANZADO si no se lanzó; en el
+'             segundo caso el motivo ya se informó o el usuario canceló
+' ============================================
+Private Function LanzarCanonicos(hCapitulos As Result) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdCapitulo As Integer
+  Dim sNombre As String
+  Dim sTipo As String
+  Dim sIdioma As String
+  Dim sCampos As String
+  Dim sLista As String
+  Dim iCantidad As Integer
+  Dim aArgumentos As New String[]
+
+  ' --- 2. REENTRADA ---
+  ' ANTES DE ESCRIBIR NADA: UN SCRIPT EN CURSO PUEDE ESTAR LEYENDO LOS MISMOS
+  ' ARCHIVOS DE tmp/ QUE ESTA FUNCIÓN REESCRIBE. EjecutarScriptSalida LO
+  ' VERIFICA TAMBIÉN, PERO DESPUÉS DE LA ESCRITURA SERÍA TARDE
+  If $bScriptEnCurso Then Return RESULTADO_EN_CURSO
+
+  ' --- 3. EL EDITOR IGUAL AL DISCO (SC-06) ---
+  ' EL SCRIPT LEE LOS .md DEL DISCO. LO QUE ESTÁ SIN GUARDAR EN EL EDITOR SE
+  ' GUARDA O SE DESCARTA ACÁ, Y DESPUÉS SE ALINEA: «DESCARTAR» DEJA EL TEXTO
+  ' DESCARTADO EN EL EDITOR (m_BuscarRegex.AlinearEditorConDisco)
+  If Not FMain.ConfirmarDescartarCambios() Then Return RESULTADO_NO_LANZADO
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return RESULTADO_NO_LANZADO
+
+  ' --- 4. REFERENCIAS DEL PROYECTO, UNA VEZ POR LANZAMIENTO ---
+  ' EL .bib LO LEE GenerarBiblioCapituloXML; EL ref-*.xml, LAS SALIDAS. ANTES SE
+  ' EXPORTABAN UNA VEZ POR CAPÍTULO Y SIN MIRAR EL RESULTADO. LAS DOS
+  ' FUNCIONES INFORMAN SUS FALLOS
+  If Not m_Bibtex.ExportarBibTeX() Then Return RESULTADO_NO_LANZADO
+  If Not m_XML.ExportarDocBookdesdeBIB() Then Return RESULTADO_NO_LANZADO
+
+  ' --- 5. INSUMOS DE CADA CAPÍTULO Y LISTA ---
+  ' UN INSUMO QUE NO SE PUEDE ESCRIBIR FRENA TODO ANTES DE LANZAR: ES UN
+  ' PROBLEMA DE LA BASE, NO DEL .md, Y NO SE ARREGLA CAPÍTULO POR CAPÍTULO
+  While hCapitulos.Available
+
+    sTipo = TipoDeCapitulo(hCapitulos)
+
+    ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO PROPIO: EL CRITERIO DEL MANIFIESTO.
+    ' MoveNext ANTES DE Continue: SIN ÉL EL BUCLE NO AVANZA
+    If Not m_PiezasLibro.TieneCuerpo(sTipo) Then
+      hCapitulos.MoveNext
+      Continue
+    Endif
+
+    iIdCapitulo = hCapitulos["id_capitulo"]
+    sNombre = m_XML.TrimUTF8(hCapitulos["nombre_archivo"])
+    sIdioma = IdiomaDeCapitulo(hCapitulos)
+
+    ' UN TAB O UN SALTO DE LÍNEA EN UN CAMPO CORRERÍA LAS COLUMNAS DE LA LISTA
+    sCampos = sNombre & sTipo & sIdioma
+    If InStr(sCampos, Chr(9)) > 0 Or InStr(sCampos, Chr(10)) > 0 Or InStr(sCampos, Chr(13)) > 0 Then
+      m_Sonido.sonar("Error")
+      Message.Error("El capítulo id=" & CStr(iIdCapitulo) & " tiene un tabulador o un salto" & gb.NewLine &
+        "de línea en el nombre de archivo, el tipo o el idioma." & gb.NewLine &
+        "Corregilo en la base antes de generar.")
+      Return RESULTADO_NO_LANZADO
+    Endif
+
+    ' LAS DOS FUNCIONES INFORMAN SUS FALLOS
+    If Not m_XML.GenerarInfoCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
+    If Not m_XML.GenerarBiblioCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
+
+    ' nombre_archivo, xml:id, tipo E idioma: EL ORDEN QUE ESPERA EL SCRIPT
+    sLista &= sNombre & Chr(9) & "cap-" & CStr(iIdCapitulo) & Chr(9) &
+      sTipo & Chr(9) & sIdioma & Chr(10)
+    Inc iCantidad
+
+    hCapitulos.MoveNext
+  Wend
+
+  If iCantidad = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ninguna pieza del libro tiene cuerpo propio: no hay canónicos que generar.")
+    Return RESULTADO_NO_LANZADO
+  Endif
+
+  Try File.Save(m_InicioCierre.RutaProyectoEnCurso &/ LISTA_CANONICOS, sLista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir la lista de capítulos:" & gb.NewLine &
+      LISTA_CANONICOS & gb.NewLine & gb.NewLine & Error.Text)
+    Return RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 6. LANZAMIENTO ---
+  ' LA PESTAÑA DEL PROYECTO, COMO LOS BOTONES QUE ESTO REEMPLAZA. EL PANEL
+  ' INFERIOR Y LA TERMINAL LOS MUESTRA EjecutarScriptSalida
+  FMain.TabStrip1.Index = 0
+
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(LISTA_CANONICOS)
+
+  Return EjecutarScriptSalida("generar_canonicos_capitulos.sh", aArgumentos, PLAZO_CANONICOS_CAPITULO)
+
+End
+
+' ============================================
+' Función   : InformarCanonicos
+' Propósito : Traduce el resultado del lote de canónicos a un mensaje. El
+'             fallo se informa distinto que en InformarResultado: en un lote
+'             puede haber canónicos generados y otros no, y los que no se
+'             generaron se borraron (ver la cabecera del script).
+' Parámetros: iResultado As Integer — lo que devolvió LanzarCanonicos
+'             sNombreUnico As String — nombre_archivo si fue un solo capítulo;
+'               vacío si fue el lote de todos
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub InformarCanonicos(iResultado As Integer, sNombreUnico As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sCarpeta As String
+
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ "jats"
+
+  ' --- 2. UN SOLO CAPÍTULO ---
+  ' LOS MENSAJES GENERALES SIRVEN; SOLO EL FALLO AGREGA LO DEL CANÓNICO BORRADO
+  If sNombreUnico <> "" Then
+    If iResultado = SALIDA_FALLO Then
+      m_Sonido.sonar("Error")
+      Message.Error("El canónico de «" & sNombreUnico & "» no se generó." & gb.NewLine & gb.NewLine &
+        "El motivo está en la terminal. Si había un canónico anterior," & gb.NewLine &
+        "se borró: ya no correspondía al .md.")
+    Else
+      InformarResultado(iResultado, "El canónico de «" & sNombreUnico & "»",
+        sCarpeta &/ "c-" & sNombreUnico & ".xml")
+    Endif
+    Return
+  Endif
+
+  ' --- 3. LOTE DE TODOS ---
+  Select Case iResultado
+
+    Case SALIDA_OK
+      m_Sonido.sonar("Info")
+      Message.Info("Se generaron los canónicos de todos los capítulos." & gb.NewLine & gb.NewLine &
+        "Carpeta:" & gb.NewLine & sCarpeta)
+
+    Case SALIDA_AVISOS
+      m_Sonido.sonar("Warning")
+      Message.Warning("Se generaron los canónicos de todos los capítulos," & gb.NewLine &
+        "pero con avisos." & gb.NewLine & gb.NewLine &
+        "Revisá la terminal: al final están los capítulos con avisos," & gb.NewLine &
+        "y cada aviso está marcado con ⚠ en su capítulo.")
+
+    Case SALIDA_FALLO
+      ' NO SE AFIRMA QUE EL LOTE HAYA CORRIDO: EL CÓDIGO 1 TAMBIÉN LO DA UN
+      ' FALLO DEL ENTORNO, ANTES DEL PRIMER CAPÍTULO
+      m_Sonido.sonar("Error")
+      Message.Error("No se generaron todos los canónicos." & gb.NewLine & gb.NewLine &
+        "El detalle está en la terminal. Si el lote llegó a correr," & gb.NewLine &
+        "al final está la lista de los capítulos que fallaron; sus" & gb.NewLine &
+        "canónicos anteriores se borraron, así que el libro no se" & gb.NewLine &
+        "puede ensamblar hasta corregirlos y regenerarlos.")
+
+    Case Else
+      ' EN CURSO, NO LANZADO, ABANDONADO, ILEGIBLE U OTRO CÓDIGO
+      InformarResultado(iResultado, "El lote de canónicos", sCarpeta)
+
+  End Select
+
+End
+
+' ============================================
+' Función   : TipoDeCapitulo
+' Propósito : tipo_capitulo de la fila actual, con el default del XSLT de
+'             ensamblado y del manifiesto: «capitulo» si es NULL o vacío.
+' Parámetros: hCapitulo As Result — posicionado en la fila
+' Retorna   : String — el tipo
+' ============================================
+Private Function TipoDeCapitulo(hCapitulo As Result) As String
+
+  If IsNull(hCapitulo["tipo_capitulo"]) Then Return "capitulo"
+  If Len(m_XML.TrimUTF8(hCapitulo["tipo_capitulo"])) = 0 Then Return "capitulo"
+  Return m_XML.TrimUTF8(hCapitulo["tipo_capitulo"])
+
+End
+
+' ============================================
+' Función   : IdiomaDeCapitulo
+' Propósito : idioma_capitulo de la fila actual, con el default del XSLT de
+'             ensamblado: «es» si es NULL o vacío.
+' Parámetros: hCapitulo As Result — posicionado en la fila
+' Retorna   : String — el código de idioma
+' ============================================
+Private Function IdiomaDeCapitulo(hCapitulo As Result) As String
+
+  If IsNull(hCapitulo["idioma_capitulo"]) Then Return "es"
+  If Len(m_XML.TrimUTF8(hCapitulo["idioma_capitulo"])) = 0 Then Return "es"
+  Return m_XML.TrimUTF8(hCapitulo["idioma_capitulo"])
 
 End
 

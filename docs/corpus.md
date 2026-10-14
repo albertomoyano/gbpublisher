@@ -918,6 +918,20 @@ El informe lo compone el script, que es quien tiene los datos, y se lee en la pe
 
 Y la herramienta queda utilizable a mano. Eso no es comodidad: cuando la parte de Gambas se trabó, el script seguía funcionando desde una terminal y por eso se lo pudo diagnosticar.
 
+ES LA DIRECCIÓN DEL CÓDIGO, NO SOLO UN CRITERIO PARA CADA CASO
+
+Decisión de Alberto (2026-10). Lo que pueda ir a `engine/` va a `engine/`, preferentemente en bash; en Gambas queda solo lo que la relación entre costo, complejidad y seguridad justifique. Una función nueva no se escribe en Gambas si podría ser un script.
+
+Queda en Gambas:
+
+- Lo que lee o escribe la base. Los scripts no la tocan: antes del lanzamiento, Gambas escribe como archivo todo lo que el script necesita de ella (el info y la bibliografía de cada capítulo, el manifiesto del libro, la lista de un lote).
+- Lo que toca la interfaz: el editor, las grillas, los diálogos y el guard de cambios sin guardar (SC-06).
+- Lo que como script costaría más de lo que ahorra, o sería menos seguro. El encabezado de la función dice por qué se quedó.
+
+Una función de Gambas que tipea en la terminal con `Input()` fuera de la lanzadora (SC-53) es deuda de migración: si la terminal está ocupada el comando se encola y corre fuera de contexto, Gambas no recibe código de salida, y la espera por la aparición de un archivo da por terminado lo que recién empezó a escribirse.
+
+El primer caso migrado con este criterio: los canónicos de capítulo. `engine/generar_canonicos_capitulos.sh` reemplazó a `FMain.btnGenerarDocBookcanonico_Click` y a `m_XML.GenerarBodyCapituloXML`.
+
 INTÉRPRETES ADMITIDOS
 
 `bash` y `perl-base`, que son Essential en Debian y Ubuntu. `python3` solo declarándolo como dependencia. `lua` NO: el paquete no existe con ese nombre y `lua5.4` no instala `/usr/bin/lua` (GV-08).
@@ -932,7 +946,9 @@ BASE COMPARTIDA
 
 Si el proceso externo escribe en la misma base que la aplicación tiene abierta, la conexión se cierra antes de lanzarlo y se reabre después por un ÚNICO camino explícito, invocado tanto en el éxito como en el fallo. `Finally` no sirve para esto (RC-GM-20).
 
-**Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42
+**Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53
+
+**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, las salidas de revista (m_GenerarEpub, m_GenerarSCIELO, m_GenerarDOAJ, m_GenerarHTML, m_GenerarODT, m_GenerarCROSSREF, m_GenerarPDF), m_XML, m_GitHub, m_OrdenTaller, m_FuncionesGenericas, m_InicioCierre y GenerarPDFLibro en m_GenerarSalidasLibro.
 
 ### SC-14 — Bibliografía en HTML y EPUB: se replica el estilo biblatex del libro
 
@@ -1834,7 +1850,7 @@ EL FILTRO DE LIBRO ARMA EL <figure>
 
 El escritor DocBook de Pandoc 3.1 descarta el id de una figura (GV-72), así que `fenced-divs-to-elements-db.lua` emite el `<figure xml:id>` con el pie en `<title>` y el alternativo en `textobject`. Detiene la conversión con un mensaje si falta el id, si falta el pie (RC-DB-03) o si el bloque tiene algo más que la imagen: antes, el párrafo que seguía a la imagen se perdía sin aviso.
 
-Un filtro que detiene la conversión ya no deja un capítulo vacío: `GenerarBodyCapituloXML` escribe una marca de fallo en lugar del fragmento y lo informa (GV-23).
+Un filtro que detiene la conversión ya no deja un capítulo vacío (GV-23). En libros, `engine/generar_canonicos_capitulos.sh` no arma el fragmento, muestra el motivo del filtro y borra el canónico anterior del capítulo, para que el ensamblado no tome uno que ya no corresponde al .md. En revistas, `m_XML.GenerarBodyXML` escribe una marca de fallo en lugar del fragmento y lo informa.
 
 EN REVISTAS NO HAY REFERENCIA CRUZADA
 
@@ -3031,6 +3047,60 @@ Todo comportamiento comprobado de XML, XPath, XSLT, Saxon, xmllint, jing, Schema
 **Relaciones:** vinculo:GV-21,vinculo:GV-22,vinculo:GV-25,vinculo:GV-26,vinculo:GV-28,vinculo:GV-71,vinculo:GV-81,vinculo:GV-82,vinculo:SC-50
 
 **PENDIENTE:** Mini-test: si SaxonJ-HE 12.5 acepta construcciones de XSLT 3.0 en una hoja declarada version="2.0". El resultado entra como GV-XML-01 y se quita este pendiente.
+
+### SC-53 — Lanzadora de scripts de engine/: un solo camino, código de salida por archivo de estado
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 / gb.form.terminal / bash / Linux Mint; generar_canonicos_capitulos.sh probado en contenedor Ubuntu 24.04 con Pandoc 3.1.3, SaxonJ-HE 12.5 y jing, y el proyecto compilado con gbc3 3.19 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA. Todo script de `engine/` que Gambas lanza en la terminal del proyecto pasa por `m_GenerarSalidasLibro.EjecutarScriptSalida`. Es el contrato del criterio 1 de SC-13: Gambas recibe una decisión, el código de salida, y no parsea nada.
+
+POR QUÉ NO Exec
+
+`TerminalView.Exec()` responde «Terminal already in use»: el control ya tiene un bash interactivo corriendo (GV-42). Así que se sigue tipeando con `Input()`, pero cambia lo que Gambas espera.
+
+QUÉ TIPEA
+
+Una sola línea: el script con sus argumentos y, a continuación, la escritura de su código de salida en un archivo de estado.
+
+    bash <script> <args…> ; echo $? > tmp/.estado-…tmp && mv -f tmp/.estado-…tmp tmp/.estado-…
+
+- `;` y no `&&` después del script: el estado se escribe aunque el script falle, que es cuando más hace falta.
+- `mv` dentro de la misma carpeta es atómico: el archivo de estado aparece completo y solo cuando el script terminó. Gambas espera ESE archivo, no el producto, que aparece con el primer byte.
+- El nombre es único por lanzamiento. Si una línea anterior sigue encolada, cada una espera su propio estado y ninguna lee el código de la otra.
+- Los argumentos van con `Shell$()`, no con `Quote()`: dentro de las comillas dobles de `Quote()` el shell sigue expandiendo `$(…)` y los backticks (GV-06). Ninguno va vacío: el que no aplica se pasa como «-», porque un argumento vacío que se pierde corre de posición a los siguientes.
+
+MIENTRAS ESPERA
+
+Gambas no tipea nada en la terminal. Los controles que podrían hacerlo se deshabilitan (`BloquearSalidas`), y nunca un contenedor ancestro del TerminalView, que lo apagaría con ellos (GV-42). `HayScriptEnCurso()` sirve a los guards que no pasan por esos controles: abrir otro proyecto, cerrar la aplicación. Si vence el plazo, se pregunta si seguir esperando; nunca se escribe un echo. Bloqueo, espera y desbloqueo están en la lanzadora y en ningún otro lado, con un solo camino de salida (RC-GM-20).
+
+CÓDIGOS
+
+Los fija `engine/comun.sh` y los replica `m_GenerarSalidasLibro`:
+
+    0  SALIDA_OK       el producto se generó y lo verificado dio bien
+    3  SALIDA_AVISOS   se generó, pero algo merece revisión
+    1  SALIDA_FALLO    no se generó
+
+Los resultados propios de la lanzadora son negativos, para no confundirse con ningún código de proceso: en curso, no lanzado, abandonado, ilegible. `InformarResultado` los traduce a un mensaje que solo afirma lo que el script verificó.
+
+LO QUE TODO SCRIPT TRAE
+
+- `source comun.sh`: los colores, `paso`, `ok`, `aviso`, `tenue`, `morir`. `aviso()` cuenta, y `terminar()` es la única salida normal: elige 0 o 3 según haya habido avisos, así ningún script puede olvidarse de informarlos.
+- No toca la base. Lo que necesita de ella llega como archivo (SC-13).
+- Escribe cada producto en un temporal de la misma carpeta, verifica que esté bien formado y recién entonces lo renombra con `mv -f`. En disco hay siempre una versión completa, nunca una a medio escribir. Es `mv` de bash y no la sentencia `Move` de Gambas, que no pisa el destino (GV-39).
+- Un script que llama a otro exporta `GBP_ANIDADO=1`, y el llamado se presenta como un paso más del llamador.
+
+LOTES
+
+Varias unidades del mismo trabajo van en UN lanzamiento con una lista, no en un bucle de lanzamientos desde Gambas: un solo bloqueo, una sola espera, un solo código. El script sigue con las unidades que quedan cuando una falla y al final lista todas las que fallaron, porque el editor necesita ver todo lo que hay que corregir, no solo lo primero que falló. Caso: `generar_canonicos_capitulos.sh`, que recibe `tmp/lote-canonicos.tsv`.
+
+LOS USOS
+
+`ensamblar_libro.sh`, `generar_html_libro.sh` y `generar_canonicos_capitulos.sh`.
+
+**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23
+
+**PENDIENTE:** Probar en Mint, con un libro real, los tres ítems de menuDocBook: «Canónico archivo en curso», «Todos los canónicos» y un lote en el que un capítulo falla (su canónico anterior se borra y «Ensamblar» se niega hasta regenerarlo). Hecho eso, quitar este pendiente.
 
 ---
 
