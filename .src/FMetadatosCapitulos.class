@@ -290,6 +290,12 @@ Private Sub RefrescarGbCapitulos()
   Dim iRow As Integer
   Dim sTitulo As String
 
+  ' --- 0. ESTADO DEL BOTÓN CERRAR ---
+  ' TODO CAMBIO EN LAS PIEZAS —ALTA, BAJA, GUARDADO— Y LA APERTURA PASAN POR
+  ' ACÁ: ES EL ÚNICO LUGAR DONDE HAY QUE RECALCULARLO. VA PRIMERO PORQUE LOS
+  ' Return DE ABAJO LO SALTEARÍAN CON EL LIBRO VACÍO (SC-55)
+  ActualizarCierre()
+
   ' --- 1. CONSULTA EN ORDEN EDITORIAL ---
   ' EL ORDEN Y EL CÓDIGO SALEN DEL NOMBRE DE ARCHIVO, NO DEL id
   ' (m_OrdenPiezas). EL ESTADO SE LEE AUNQUE NO SE MUESTRE: DA EL COLOR.
@@ -330,6 +336,34 @@ Private Sub RefrescarGbCapitulos()
 
     Inc iRow
   Next
+
+End
+
+' ============================================
+' Función   : ActualizarCierre
+' Propósito : Habilita o deshabilita btnCerrar según el orden del libro.
+'             Con códigos repetidos o los finales fuera de orden, el
+'             formulario no se puede cerrar hasta corregirlo (SC-55).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ActualizarCierre()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sProblema As String
+
+  ' --- 2. EL MISMO CONTROL QUE EL AVISO AL GUARDAR ---
+  sProblema = m_Metadatos.ProblemaOrdenLibroAbierto()
+
+  ' --- 3. EL BOTÓN Y SU EXPLICACIÓN ---
+  ' EL Tooltip DICE POR QUÉ ESTÁ DESHABILITADO; Form_Close LO REUSA SI SE
+  ' INTENTA CERRAR CON LA X
+  btnCerrar.Enabled = (sProblema = "")
+  If sProblema = "" Then
+    btnCerrar.Tooltip = ""
+  Else
+    btnCerrar.Tooltip = "No se puede cerrar: " & sProblema
+  Endif
 
 End
 
@@ -1176,8 +1210,9 @@ End
 
 ' ============================================
 ' Función   : btnCerrar_Click
-' Propósito : Cierra el formulario, salvo que el libro tenga códigos de
-'             posición repetidos (SC-55)
+' Propósito : Cierra el formulario, salvo que el orden del libro tenga un
+'             problema (SC-55). El botón ya está deshabilitado en ese caso;
+'             este control es la defensa si se lo llegara a invocar igual.
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -1186,11 +1221,11 @@ Public Sub btnCerrar_Click()
   ' --- 1. INICIALIZACIÓN ---
   Dim sProblema As String
 
-  ' --- 2. FRENO: CÓDIGOS REPETIDOS ---
+  ' --- 2. FRENO: EL ORDEN DEL LIBRO ---
   ' ES EL ÚNICO CAMINO DE CIERRE: LA X LA BLOQUEA Form_Close. AL GUARDAR SOLO
-  ' SE AVISA, PORQUE AL RENUMERAR HAY ESTADOS INTERMEDIOS CON CÓDIGOS
-  ' REPETIDOS; ACÁ YA NO HAY INTERMEDIO (SC-55)
-  sProblema = m_PiezasLibro.ProblemaCodigoRepetido(iLibroActual)
+  ' SE AVISA, PORQUE AL RENUMERAR HAY ESTADOS INTERMEDIOS INVÁLIDOS; ACÁ YA
+  ' NO HAY INTERMEDIO (SC-55)
+  sProblema = m_Metadatos.ProblemaOrdenLibroAbierto()
   If sProblema <> "" Then
     m_Sonido.sonar("Error")
     Message.Error(sProblema & gb.NewLine & gb.NewLine &
@@ -1204,13 +1239,28 @@ Public Sub btnCerrar_Click()
 
 End
 
+' ============================================
+' Función   : Form_Close
+' Propósito : Bloquea el cierre desde la X del sistema: el único camino de
+'             salida es btnCerrar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub Form_Close()
-  ' SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO
 
+  ' --- 1. SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO ---
   If bCierrePermitido Then Return
-  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
-  m_Sonido.sonar("info")
-  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+
+  ' --- 2. BLOQUEAR LA X ---
+  ' CON EL BOTÓN DESHABILITADO, «USE CERRAR» NO SIRVE: SE DICE POR QUÉ NO SE
+  ' PUEDE CERRAR (SC-55)
+  If btnCerrar.Enabled Then
+    m_Sonido.sonar("info")
+    Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+  Else
+    m_Sonido.sonar("Warning")
+    Message.Warning(btnCerrar.Tooltip)
+  Endif
   Stop Event
 
 End
