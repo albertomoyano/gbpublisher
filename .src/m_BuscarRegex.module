@@ -19,7 +19,8 @@
 '               - Validación continua del patrón con debounce.
 '               - btnProbar: banco de pruebas en seco sobre areaEditor.
 '               - Gobernar el ámbito (los tres radiobutton + txtFiltrar).
-'               - btnBuscarRegex: abrir FRegexResultados, que busca y reemplaza.
+'               - btnBuscarRegex: lanzar la búsqueda en la pestaña «Resultados»
+'                 (tsRegExp, índice 1), que gobierna m_RegexResultados.
 '               - La biblioteca de patrones en la interfaz (SC-51): combo,
 '                 guardar, borrar, compartir e importar. Los datos y el formato
 '                 viven en m_PatronesRegex; acá solo se gobierna la pestaña.
@@ -285,7 +286,7 @@ End
 ' Función   : ResolverAmbito
 ' Propósito : Arma la lista de archivos sobre la que se va a buscar, según el
 '             radiobutton de ámbito activo. Es el ÚNICO lugar donde el ámbito se
-'             traduce a archivos concretos: FRegexResultados recibe la lista ya
+'             traduce a archivos concretos: m_RegexResultados recibe la lista ya
 '             hecha y no sabe de radios ni de filtros.
 '               rbProyecto → toda la whitelist
 '               rbFiltrar  → la whitelist filtrada por substring (sensible) sobre
@@ -710,14 +711,15 @@ End
 
 ' ============================================
 ' Función   : BuscarRegex
-' Propósito : Abre FRegexResultados con el estado actual ya resuelto: la lista de
-'             archivos (según el ámbito), el patrón, el reemplazo y los flags.
-'             El formulario es autónomo: recibe todo por parámetro y no lee los
-'             controles de FMain. Es MODAL a propósito: mientras está abierto
-'             nadie escribe a mano en el editor, así que el editor puede
-'             mostrar cualquier coincidencia sin riesgo (MostrarCoincidencia).
-'             La llama FMain.btnBuscarRegex_Click, después del aviso de
-'             cambios sin guardar (SC-06).
+' Propósito : Lanza la búsqueda en la pestaña «Resultados» (tsRegExp, índice 1)
+'             con el estado actual ya resuelto: la lista de archivos (según el
+'             ámbito), el patrón, el reemplazo y los flags. m_RegexResultados
+'             recibe todo por parámetro y no lee los controles de entrada. La
+'             pestaña NO es modal: las posiciones de la grilla las protege la
+'             regla de vigencia de m_RegexResultados (SC-51), que parte de lo
+'             que este procedimiento deja hecho: el editor igual al disco. La
+'             llama FMain.btnBuscarRegex_Click, después del aviso de cambios
+'             sin guardar (SC-06).
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
@@ -725,7 +727,6 @@ Public Sub BuscarRegex()
 
   Dim aArchivos As String[]
   Dim sAplicar As String
-  Dim hForm As FRegexResultados
 
   ' --- 1. GUARDA: SOLO CON PATRÓN VÁLIDO ---
   If Not $bPatronValido Then
@@ -744,37 +745,36 @@ Public Sub BuscarRegex()
   Endif
 
   ' --- 3. EL EDITOR TIENE QUE SER IGUAL AL DISCO ---
-  ' perl BUSCA EN DISCO Y LAS POSICIONES SE APLICAN AL EDITOR
+  ' perl BUSCA EN DISCO Y LAS POSICIONES SE APLICAN AL EDITOR. ES LA CONDICIÓN
+  ' DE PARTIDA DE LA REGLA DE VIGENCIA (SC-51)
   If Not AlinearEditorConDisco() Then Return
 
-  ' --- 4. DELEGAR AL FORMULARIO DE RESULTADOS ---
-  ' Se le pasa todo hecho: archivos, patrón, reemplazo, flags. El aplicar se
-  ' deriva de si hay reemplazo escrito: sin reemplazo, el formulario solo
-  ' busca. LA RECARGA DE LO REEMPLAZADO LA HACE EL FORMULARIO APENAS ESCRIBE
-  ' (TrasReemplazo): DESPUÉS DE REEMPLAZAR SE SIGUE NAVEGANDO SOBRE EL TEXTO
-  ' NUEVO SIN CERRARLO.
+  ' --- 4. DELEGAR A LA PESTAÑA DE RESULTADOS ---
+  ' El aplicar se deriva de si hay reemplazo escrito: sin reemplazo, solo se
+  ' busca. LA RECARGA DE LO REEMPLAZADO LA HACE m_RegexResultados APENAS
+  ' ESCRIBE (TrasReemplazo)
   sAplicar = If(Trim(FMain.txtReemplazo.Text) <> "", "1", "0")
+  If Not m_RegexResultados.Buscar(aArchivos, FMain.txtBuscar.Text, FMain.txtReemplazo.Text, ArmarFlags(), sAplicar, RutaScript()) Then Return
 
-  hForm = New FRegexResultados
-  hForm.Configurar(aArchivos, FMain.txtBuscar.Text, FMain.txtReemplazo.Text, ArmarFlags(), sAplicar, RutaScript())
-  hForm.ShowModal()
-
-  ' --- 5. FOCO AL EDITOR: LA ÚLTIMA COINCIDENCIA VISTA QUEDA SELECCIONADA (RC-GM-07) ---
-  FMain.txtEditorProyecto.SetFocus()
+  ' --- 5. MOSTRAR LA PESTAÑA Y FOCO A LA GRILLA (RC-GM-07) ---
+  ' EL USUARIO VA A RECORRER RESULTADOS, NO A ESCRIBIR: EL FOCO VA A LA GRILLA
+  FMain.tsRegExp.Index = 1
+  FMain.gvRegexResultados.SetFocus()
 
 End
 
 ' ============================================
 ' Función   : MostrarCoincidencia
-' Propósito : Lleva el editor a una coincidencia de FRegexResultados: abre su
+' Propósito : Lleva el editor a una coincidencia de la grilla de resultados
+'             (m_RegexResultados) o de la pestaña «Reemplazar»: abre su
 '             archivo si no es el abierto (m_Estructura.AbrirArchivo, por el
 '             combo, GV-53) y la deja seleccionada con su párrafo arriba de la
-'             vista (m_EditorPrincipal.IrA). No hay riesgo de posiciones viejas:
-'             el formulario es modal, el editor quedó igual al disco al abrirlo
-'             (BuscarRegex, apartado 3) y después de cada reemplazo se recarga y
-'             se vuelve a buscar. «Resaltar» es seleccionar: colorear con Format
-'             entraría en el deshacer (GV-46). La llama
-'             FRegexResultados.gvResultados_Select.
+'             vista (m_EditorPrincipal.IrA). NO VERIFICA LA POSICIÓN: lo hace
+'             quien llama, antes (regla de vigencia de m_RegexResultados,
+'             ClavesVigentes de m_BuscarReemplazar). «Resaltar» es seleccionar:
+'             colorear con Format entraría en el deshacer (GV-46). La llaman
+'             m_RegexResultados.IrACoincidencia y .MostrarUltimoReemplazo, y
+'             m_BuscarReemplazar.IrACoincidencia.
 ' Parámetros: sRuta As String — ruta absoluta del archivo de la coincidencia
 '             iLinea As Integer — línea, base 0 (como la da el script)
 '             iColumna As Integer — columna en caracteres, base 0
@@ -866,8 +866,8 @@ End
 ' Parámetros: aArchivos As String[] — rutas absolutas afectadas
 ' Retorna   : Boolean — True si se puede proceder con el reemplazo
 ' Origen    : Vivía en FRegexResultados; se movió acá para compartirlo con
-'             m_BuscarReemplazar. Lo llaman FRegexResultados.btnReemplazar_Click
-'             y m_BuscarReemplazar.GuardGit.
+'             m_BuscarReemplazar. Lo llaman m_RegexResultados.Reemplazar y
+'             m_BuscarReemplazar.GuardGit.
 ' ============================================
 Public Function PasarGuardGit(aArchivos As String[]) As Boolean
 
@@ -918,7 +918,8 @@ End
 '             estructura y sus referencias citadas en la base, y, si uno es el
 '             abierto, el editor (FMain.RecargarArchivoAbierto). Se llama apenas
 '             termina la escritura, también si se cortó a mitad: lo escrito,
-'             escrito está. La llama FRegexResultados.btnReemplazar_Click.
+'             escrito está. La llaman m_RegexResultados.Reemplazar y
+'             m_BuscarReemplazar.
 ' Parámetros: aArchivos As String[] — rutas absolutas efectivamente escritas
 ' Retorna   : (Sub, sin retorno)
 ' ============================================

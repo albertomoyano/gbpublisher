@@ -1,26 +1,33 @@
-' Gambas class file
+' Gambas module file
 
 ' ============================================
-' Formulario: FRegexResultados
-' Propósito : Muestra las coincidencias de una búsqueda por expresiones
-'             regulares sobre una lista de archivos ya resuelta y, si hay
-'             reemplazo, lo aplica a las filas seleccionadas (btnReemplazar):
-'             guard de git, control de mtime, escritura de atrás para
-'             adelante y log.
+' Módulo    : m_RegexResultados
+' Propósito : PESTAÑA «RESULTADOS» DEL BUSCADOR REGEX (tsRegExp, ÍNDICE 1,
+'             DENTRO DE LA PESTAÑA RegExp DE FMain). Muestra las coincidencias
+'             de una búsqueda sobre una lista de archivos ya resuelta y, si hay
+'             reemplazo, lo aplica a las filas seleccionadas: guard de git,
+'             regla de vigencia, escritura de atrás para adelante y log. Es
+'             dueño del estado de la pestaña; los handlers de FMain solo
+'             delegan acá (patrón módulo-dueño-del-estado, como
+'             m_BuscarReemplazar y m_AnalizarProyecto). Reemplaza al formulario
+'             modal FRegexResultados.
 '
-'             ES MODAL (m_BuscarRegex.BuscarRegex): nadie escribe a mano en el
-'             editor mientras está abierto. Por eso, al hacer click en una fila
-'             (Click, no Select: GV-78), el editor muestra la coincidencia, en
-'             cualquier archivo, sin riesgo de posiciones viejas
-'             (m_BuscarRegex.MostrarCoincidencia). Después
-'             de reemplazar, lo escrito se recarga en el acto
-'             (m_BuscarRegex.TrasReemplazo) y se vuelve a buscar (SC-51).
+'             LA PESTAÑA NO ES MODAL (SC-51). Entre la búsqueda y el click (o
+'             el reemplazo) el usuario puede editar y guardar, y las posiciones
+'             de la grilla quedarían viejas. REGLA DE VIGENCIA: las
+'             coincidencias de un archivo siguen valiendo si su firma
+'             mtime|size es la capturada al lanzar la búsqueda y, si es el
+'             archivo abierto, el editor no tiene cambios sin guardar
+'             (m_EditorPrincipal.HayCambios). Si no valen, no se salta ni se
+'             escribe: se vuelve a buscar (Rebuscar). No se compara el texto
+'             en el offset contra el campo «antes»: .Text normaliza el espacio
+'             duro (GV-47) y la comparación fallaría siempre.
 '
-'             La búsqueda corre como PROCESO ASÍNCRONO (perl): la grilla se
-'             puebla incremental por el evento Read y el usuario puede Cancelar
-'             en cualquier momento (Process.Kill). La UI no se congela ni con el
-'             peor patrón, porque el trabajo pesado vive en otro proceso — es la
-'             razón por la que se eligió perl externo sobre gb.pcre.
+'             La búsqueda corre como PROCESO ASÍNCRONO (perl): la salida se
+'             acumula por el evento Read y el usuario puede cancelar en
+'             cualquier momento (Process.Kill). La UI no se congela ni con el
+'             peor patrón, porque el trabajo pesado vive en otro proceso — es
+'             la razón por la que se eligió perl externo sobre gb.pcre.
 '
 '             La grilla es VIRTUAL (evento Data): el array de coincidencias que
 '             devuelve perl ES el modelo, la grilla solo lo pinta bajo demanda.
@@ -28,16 +35,18 @@
 '             que usa el reemplazo: las filas seleccionadas son índices
 '             directos en la lista de coincidencias.
 '
-' Controles del .form:
-'   gvResultados (GridView)          — la grilla de coincidencias
-'   lblContador (Label)              — "N coincidencias en M archivos"
-'   lblEncabezado (Label)            — patrón / ámbito, solo lectura
-'   btnCancelar (Button)             — corta la búsqueda en curso
-'   btnCerrar (Button)               — cierra el formulario
-'   txtContexto (TextArea, ReadOnly) — contexto de la coincidencia seleccionada
+' Controles de la pestaña (FMain):
+'   lblRegexEncabezado   — patrón y cantidad de archivos de la búsqueda
+'   lblRegexContador     — "N coincidencias en M archivos" / estado
+'   gvRegexResultados    — la grilla de coincidencias (Select.Multiple)
+'   txaRegexContexto     — preview de la coincidencia actual (solo lectura)
+'   btnRegexReemplazar   — aplica el reemplazo a las filas seleccionadas
+'   btnRegexCancelar     — corta la búsqueda en curso
 ' ============================================
 
-' --- CONFIGURACIÓN RECIBIDA DE m_BuscarRegex (por Configurar) ---
+' --- PARÁMETROS DE LA ÚLTIMA BÚSQUEDA (los recibe Buscar) ---
+' EL REEMPLAZO Y EL LOG USAN ESTOS, NO LO QUE HAYA EN LOS CAMPOS DE LA PESTAÑA:
+' SI EL USUARIO LOS EDITÓ DESPUÉS DE BUSCAR, LAS POSICIONES NO LES CORRESPONDEN
 Private $aArchivos As String[]
 Private $sPatron As String
 Private $sReemplazo As String
@@ -48,7 +57,7 @@ Private $sRutaScript As String
 ' --- PROCESO DE BÚSQUEDA Y SU ESTADO ---
 Private $hProc As Process
 Private $sBuffer As String            ' ACUMULA LA SALIDA CRUDA DEL PROCESO
-Private $bCancelado As Boolean        ' EL Kill FUE PEDIDO POR EL USUARIO (MT-B)
+Private $bCancelado As Boolean        ' EL Kill FUE PEDIDO (MT-B)
 Private $bBuscando As Boolean
 
 ' --- LA GRILLA SE VUELVE A LLENAR DESDE EL CÓDIGO ---
@@ -62,13 +71,11 @@ Private $bRepoblando As Boolean
 ' script: archivo, offset, linea, columna, largo, antes, despues, linea_texto.
 Private $aResultados As New Object[]
 
-' --- SNAPSHOT DE ESTADO DE CADA ARCHIVO AL MOMENTO DE LA BÚSQUEDA ---
-' Clave: ruta absoluta. Valor: "mtime|size" capturado con Stat al buscar. Antes
-' de escribir un archivo en el reemplazo se recalcula y se compara: si cambió,
-' se aborta TODO el reemplazo. Es defensa en profundidad barata (dos números por
-' archivo) que no depende del guard de cambios sin guardar ni de que ShowModal
-' congele la UI: si por lo que sea el archivo cambió entre buscar y reemplazar,
-' no se escribe encima.
+' --- SNAPSHOT DE CADA ARCHIVO AL LANZAR LA BÚSQUEDA ---
+' Clave: ruta absoluta. Valor: "mtime|size" capturado con Stat. Se captura
+' ANTES de lanzar perl y para todos los archivos buscados: un guardado durante
+' la búsqueda deja una firma distinta y las coincidencias de ese archivo no
+' valen. Es la mitad de disco de la regla de vigencia.
 Private $cSnapshot As New Collection
 
 ' --- ÍNDICES DE CAMPO EN CADA REGISTRO (deben coincidir con el .pl) ---
@@ -81,53 +88,27 @@ Private Const C_ANTES As Integer = 5
 Private Const C_DESPUES As Integer = 6
 Private Const C_LINEA_TEXTO As Integer = 7
 
-' --- BANDERA DE CIERRE CONTROLADO (patrón canónico del proyecto) ---
-Private bCierrePermitido As Boolean
-
 ' ============================================
-' Función   : Form_Show
-' Propósito : APLICAR LA CONFIGURACIÓN DE BOTONES DEL MARCO
+' Función   : InicializarTab
+' Propósito : Deja la pestaña en blanco: corta la búsqueda en curso si la hay,
+'             configura la grilla y vacía modelo, snapshot y etiquetas. La
+'             llaman FMain.AbrirProyecto (junto a InicializarTabRegex) y
+'             m_InicioCierre al cerrar el proyecto: las rutas de otro proyecto
+'             no pueden quedar en la grilla ni un perl corriendo sobre ellas
+'             (RC-GM-16).
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub Form_Show()
+Public Sub InicializarTab()
 
-  m_Ventana.FijarBotones(Me)
+  ' --- 1. CORTAR LA BÚSQUEDA EN CURSO ---
+  ' EL Kill LLEGA DESPUÉS COMO EVENTO Y, CON $bCancelado, SOLO VACÍA
+  Cancelar()
 
-End
-
-' ============================================
-' Función   : Configurar
-' Propósito : Recibe de m_BuscarRegex todo el estado necesario para buscar. El
-'             formulario es autónomo: no lee ningún control de FMain. Se llama
-'             ANTES de ShowModal.
-' Parámetros: aArchivos As String[] — rutas absolutas a buscar (ya resueltas
-'               según el ámbito; puede ser una, varias o toda la whitelist)
-'             sPatron, sReemplazo, sFlags, sAplicar As String — parámetros del
-'               script (sFlags "-" si ninguno; sAplicar "1"/"0")
-'             sRutaScript As String — ruta del motor perl
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub Configurar(aArchivos As String[], sPatron As String, sReemplazo As String, sFlags As String, sAplicar As String, sRutaScript As String)
-
-  $aArchivos = aArchivos
-  $sPatron = sPatron
-  $sReemplazo = sReemplazo
-  $sFlags = sFlags
-  $sAplicar = sAplicar
-  $sRutaScript = sRutaScript
-
-End
-
-' ============================================
-' Función   : Form_Open
-' Propósito : Configura la grilla y lanza la búsqueda.
-' ============================================
-Public Sub Form_Open()
-
-  ' --- 1. CONFIGURAR LA GRILLA VIRTUAL ---
-  With gvResultados
-    .Clear
+  ' --- 2. CONFIGURAR LA GRILLA VIRTUAL ---
+  $bRepoblando = True
+  With FMain.gvRegexResultados
+    .Rows.Count = 0
     .Columns.Count = 5
     .Columns[0].Title = "Archivo"
     .Columns[0].Width = 200
@@ -138,38 +119,92 @@ Public Sub Form_Open()
     .Columns[3].Title = "Coincidencia"
     .Columns[3].Width = 240
     .Columns[4].Title = "Reemplazo"
-    ' EL ANCHO DE ESTA COLUMNA SE DECIDE ABAJO SEGÚN HAYA REEMPLAZO O NO
+    ' EL ANCHO DE «REEMPLAZO» SE DECIDE EN CADA BÚSQUEDA (Buscar)
+    .Columns[4].Width = 0
     .Mode = Select.Multiple
     .Header = True
-    .Rows.Count = 0
   End With
+  $bRepoblando = False
 
-  ' EN LA CAPA 1 LA COLUMNA "REEMPLAZO" SOLO TIENE SENTIDO SI HAY REEMPLAZO.
-  ' GridView.Columns NO TIENE Visible: SE OCULTA CON ANCHO 0 (IGUAL QUE EN
-  ' FProyectosParcial). SI HAY REEMPLAZO SE LE DA ANCHO; SI NO, 0.
-  If $sAplicar = "1" Then
-    gvResultados.Columns[4].Width = 240
-  Else
-    gvResultados.Columns[4].Width = 0
+  ' --- 3. MODELO Y PARÁMETROS VACÍOS ---
+  $aResultados.Clear
+  $cSnapshot.Clear
+  $sBuffer = ""
+  $aArchivos = New String[]
+  $sPatron = ""
+  $sReemplazo = ""
+  $sFlags = ""
+  $sAplicar = "0"
+
+  ' --- 4. ETIQUETAS, PREVIEW Y BOTONES ---
+  FMain.lblRegexEncabezado.Text = ""
+  FMain.lblRegexContador.Text = ""
+  FMain.txaRegexContexto.Text = ""
+  ActualizarBotones()
+
+End
+
+' ============================================
+' Función   : Buscar
+' Propósito : Recibe de m_BuscarRegex.BuscarRegex todo lo necesario para buscar
+'             y lanza la búsqueda. No lee ningún control de la pestaña de
+'             entrada: el ámbito, el patrón y los flags ya vienen resueltos. Se
+'             llama con el editor igual al disco (SC-06 y
+'             m_BuscarRegex.AlinearEditorConDisco), condición de la regla de
+'             vigencia.
+' Parámetros: aArchivos As String[] — rutas absolutas a buscar (ya resueltas
+'               según el ámbito)
+'             sPatron, sReemplazo, sFlags, sAplicar As String — parámetros del
+'               script (sFlags "-" si ninguno; sAplicar "1"/"0")
+'             sRutaScript As String — ruta del motor perl
+' Retorna   : Boolean — True si la búsqueda quedó lanzada
+' ============================================
+Public Function Buscar(aArchivos As String[], sPatron As String, sReemplazo As String, sFlags As String, sAplicar As String, sRutaScript As String) As Boolean
+
+  ' --- 1. UNA BÚSQUEDA POR VEZ ---
+  ' NO SE CANCELA Y RELANZA EN EL ACTO: EL Kill DEL PROCESO VIEJO LLEGA COMO
+  ' EVENTO MÁS TARDE Y SE TOMARÍA COMO FIN DEL NUEVO
+  If $bBuscando Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Hay una búsqueda en curso." & Chr(10) & "Esperá a que termine o cancelala antes de buscar de nuevo.")
+    Return False
   Endif
 
-  ' --- 2. ENCABEZADO INFORMATIVO ---
-  lblEncabezado.Text = "Patrón: " & $sPatron & "   ·   Archivos: " & $aArchivos.Count
-  txtContexto.Text = ""
+  ' --- 2. GUARDAR LOS PARÁMETROS ---
+  $aArchivos = aArchivos
+  $sPatron = sPatron
+  $sReemplazo = sReemplazo
+  $sFlags = sFlags
+  $sAplicar = sAplicar
+  $sRutaScript = sRutaScript
 
-  ' --- 3. LANZAR LA BÚSQUEDA ---
-  IniciarBusqueda()
+  ' --- 3. COLUMNA «REEMPLAZO» SOLO SI HAY REEMPLAZO ---
+  ' GridView.Columns NO TIENE Visible: SE OCULTA CON ANCHO 0 (IGUAL QUE EN
+  ' FProyectosParcial)
+  If $sAplicar = "1" Then
+    FMain.gvRegexResultados.Columns[4].Width = 240
+  Else
+    FMain.gvRegexResultados.Columns[4].Width = 0
+  Endif
+
+  ' --- 4. ENCABEZADO INFORMATIVO ---
+  FMain.lblRegexEncabezado.Text = "Patrón: " & $sPatron & "   ·   Archivos: " & $aArchivos.Count
+
+  ' --- 5. LANZAR ---
+  Return IniciarBusqueda()
 
 End
 
 ' ============================================
 ' Función   : IniciarBusqueda
-' Propósito : Lanza el proceso perl en modo 'buscar' de forma asíncrona. La
-'             lista de archivos va como argumentos después de los parámetros
-'             fijos. La salida llega por el evento Proceso_Read y se procesa al
-'             terminar, en Proceso_Kill.
+' Propósito : Captura el snapshot y lanza el proceso perl en modo 'buscar' de
+'             forma asíncrona. La lista de archivos va como argumentos después
+'             de los parámetros fijos. La salida llega por ProcRegex_Read y se
+'             procesa al terminar, en ProcRegex_Kill.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si el proceso quedó lanzado
 ' ============================================
-Private Sub IniciarBusqueda()
+Private Function IniciarBusqueda() As Boolean
 
   Dim aComando As New String[]
 
@@ -177,13 +212,16 @@ Private Sub IniciarBusqueda()
   $aResultados.Clear
   $sBuffer = ""
   $bCancelado = False
-  $bBuscando = True
   $bRepoblando = True
-  gvResultados.Rows.Count = 0
+  FMain.gvRegexResultados.Rows.Count = 0
   $bRepoblando = False
-  lblContador.Text = "Buscando…"
+  FMain.txaRegexContexto.Text = ""
+  FMain.lblRegexContador.Text = "Buscando…"
 
-  ' --- 2. ARMAR EL COMANDO: perl -CSA script buscar patron reemplazo flags aplicar <archivos...> ---
+  ' --- 2. SNAPSHOT ANTES DE QUE perl LEA ---
+  CapturarSnapshot()
+
+  ' --- 3. ARMAR EL COMANDO: perl -CSA script buscar patron reemplazo flags aplicar <archivos...> ---
   ' Se arma como String[] y se agregan los archivos uno a uno: así la lista no
   ' tiene límite y ningún nombre con espacios necesita comillas (no hay shell).
   aComando.Add("perl")
@@ -196,25 +234,32 @@ Private Sub IniciarBusqueda()
   aComando.Add($sAplicar)
   aComando.Insert($aArchivos)   ' AGREGA TODAS LAS RUTAS AL FINAL
 
-  ' --- 3. LANZAR ASÍNCRONO CON LECTURA ---
-  Try $hProc = Exec aComando For Read As "Proceso"
+  ' --- 4. LANZAR ASÍNCRONO CON LECTURA ---
+  ' EL OBSERVADOR ES ESTE MÓDULO (PRECEDENTE: m_AnalizarProyecto, ProcAnalizar)
+  Try $hProc = Exec aComando For Read As "ProcRegex"
   If Error Then
-    $bBuscando = False
-    lblContador.Text = "Error al lanzar la búsqueda: " & Error.Text
+    FMain.lblRegexContador.Text = "Error al lanzar la búsqueda: " & Error.Text
     m_Sonido.sonar("Error")
+    ActualizarBotones()
+    Return False
   Endif
+
+  $bBuscando = True
+  ActualizarBotones()
+  Return True
 
 End
 
-' EVENTO Read: LLEGA SALIDA DEL PROCESO. SE ACUMULA CRUDA Y SE PROCESA AL FINAL.
-' Se acumula en lugar de parsear incremental porque una coincidencia puede
-' quedar partida entre dos lecturas; el parseo por registros completos se hace
-' una vez que el proceso terminó, con todo el buffer.
-' La forma Read #Last, -N es la verificada en el mini-test MT-B: lee hasta N
-' bytes de lo disponible sin bloquear. El evento Read se dispara repetidamente
-' mientras haya datos, así que el buffer se completa a lo largo de varias
-' llamadas hasta el EOF que precede a Kill.
-Public Sub Proceso_Read()
+' ============================================
+' Función   : ProcRegex_Read
+' Propósito : LLEGA SALIDA DEL PROCESO. SE ACUMULA CRUDA Y SE PARSEA AL FINAL:
+'             UNA COINCIDENCIA (O UN CARÁCTER MULTIBYTE) PUEDE QUEDAR PARTIDA
+'             ENTRE DOS LECTURAS. Read #Last, -N ES LA FORMA DE MT-B: LEE HASTA
+'             N BYTES DE LO DISPONIBLE SIN BLOQUEAR
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ProcRegex_Read()
 
   Dim sTrozo As String
 
@@ -223,39 +268,42 @@ Public Sub Proceso_Read()
 
 End
 
-' EVENTO Kill: EL PROCESO TERMINÓ (SOLO O POR Cancelar). Proceso_Kill se dispara
-' en ambos casos; $bCancelado distingue cuál fue (patrón de MT-B).
-Public Sub Proceso_Kill()
+' ============================================
+' Función   : ProcRegex_Kill
+' Propósito : EL PROCESO TERMINÓ, SOLO O POR Cancelar; $bCancelado DISTINGUE
+'             CUÁL FUE (PATRÓN DE MT-B). SIN CANCELACIÓN, PARSEA EL BUFFER,
+'             PUEBLA LA GRILLA Y CUENTA
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ProcRegex_Kill()
 
+  ' --- 1. FIN DE LA BÚSQUEDA ---
   $bBuscando = False
 
-  ' --- 1. SI FUE CANCELADO, DESCARTAR TODO ---
+  ' --- 2. SI FUE CANCELADA, DESCARTAR TODO ---
   If $bCancelado Then
     $aResultados.Clear
     $bRepoblando = True
-    gvResultados.Rows.Count = 0
+    FMain.gvRegexResultados.Rows.Count = 0
     $bRepoblando = False
-    lblContador.Text = "Búsqueda cancelada."
+    FMain.lblRegexContador.Text = "Búsqueda cancelada."
+    ActualizarBotones()
     m_Sonido.sonar("Info")
     Return
   Endif
 
-  ' --- 2. PARSEAR EL BUFFER COMPLETO A REGISTROS ---
-  ' Para cuando Kill se dispara, el evento Read ya entregó todo hasta EOF: el
-  ' buffer está completo. No hace falta un drenaje extra.
+  ' --- 3. PARSEAR EL BUFFER COMPLETO A REGISTROS ---
+  ' CUANDO Kill SE DISPARA, Read YA ENTREGÓ TODO HASTA EOF
   ParsearResultados()
-
-  ' --- 3. CAPTURAR EL ESTADO DE LOS ARCHIVOS CON COINCIDENCIAS ---
-  ' Se guarda mtime|size de cada archivo que aparece en los resultados, para
-  ' verificar antes de escribir que no cambió entre buscar y reemplazar.
-  CapturarSnapshot()
 
   ' --- 4. VOLCAR A LA GRILLA Y CONTAR ---
   $bRepoblando = True
-  gvResultados.Rows.Count = $aResultados.Count
-  gvResultados.Refresh
+  FMain.gvRegexResultados.Rows.Count = $aResultados.Count
+  FMain.gvRegexResultados.Refresh
   $bRepoblando = False
   ActualizarContador()
+  ActualizarBotones()
 
   If $aResultados.Count = 0 Then
     m_Sonido.sonar("Warning")
@@ -266,24 +314,47 @@ Public Sub Proceso_Kill()
 End
 
 ' ============================================
+' Función   : Cancelar
+' Propósito : ATIENDE btnRegexCancelar Y EL CIERRE DEL PROYECTO. LEVANTA LA
+'             BANDERA Y MATA EL PROCESO; ProcRegex_Kill DESCARTA LO JUNTADO
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Cancelar()
+
+  ' --- 1. SIN BÚSQUEDA EN CURSO NO HAY NADA QUE CORTAR ---
+  If Not $bBuscando Then Return
+
+  ' --- 2. BANDERA Y Kill ---
+  ' LA BANDERA VA PRIMERO: Kill EMITE EL MISMO EVENTO QUE UNA TERMINACIÓN
+  ' NORMAL Y LA BANDERA ES LO QUE LAS DISTINGUE (MT-B)
+  $bCancelado = True
+  ' If ANIDADOS: And NO CORTOCIRCUITA (RC-GM-17)
+  If Not IsNull($hProc) Then
+    If Object.IsValid($hProc) Then
+      If $hProc.State = Process.Running Then Try $hProc.Kill
+    Endif
+  Endif
+
+End
+
+' ============================================
 ' Función   : CapturarSnapshot
-' Propósito : Guarda mtime|size de cada archivo distinto que tiene coincidencias.
-'             Es el estado contra el que se compara antes de escribir en el
-'             reemplazo: si un archivo cambió, el reemplazo se aborta entero.
+' Propósito : Guarda "mtime|size" de cada archivo que se va a buscar. Es el
+'             estado contra el que la regla de vigencia compara antes de saltar
+'             o de escribir.
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Private Sub CapturarSnapshot()
 
-  Dim aReg As String[]
   Dim sRuta As String
 
   $cSnapshot.Clear
 
-  For Each aReg In $aResultados
-    sRuta = aReg[C_ARCHIVO]
-    ' UN ARCHIVO PUEDE TENER VARIAS COINCIDENCIAS: SE CAPTURA UNA SOLA VEZ
-    If Not $cSnapshot.Exist(sRuta) Then
-      $cSnapshot[sRuta] = FirmaArchivo(sRuta)
-    Endif
+  ' UNA RUTA REPETIDA EN LA LISTA SE CAPTURA UNA SOLA VEZ
+  For Each sRuta In $aArchivos
+    If Not $cSnapshot.Exist(sRuta) Then $cSnapshot[sRuta] = FirmaArchivo(sRuta)
   Next
 
 End
@@ -294,7 +365,7 @@ End
 '             Stat().Time es el mtime (verificado en el fuente: info.mtime);
 '             Stat().Size el tamaño en bytes. Juntos detectan tanto ediciones
 '             que cambian el tamaño como las que solo tocan el mtime.
-' Parámetros: sRuta As String
+' Parámetros: sRuta As String — ruta absoluta
 ' Retorna   : String — "mtime|size" o "" si Stat falla
 ' ============================================
 Private Function FirmaArchivo(sRuta As String) As String
@@ -308,11 +379,65 @@ Private Function FirmaArchivo(sRuta As String) As String
 End
 
 ' ============================================
+' Función   : ArchivoVigente
+' Propósito : REGLA DE VIGENCIA (SC-51). Las coincidencias de un archivo valen
+'             si su firma es la del snapshot y, si es el abierto, el editor no
+'             tiene cambios sin guardar. Con eso el disco es el que leyó perl y
+'             el editor es igual al disco (lo dejó así la búsqueda).
+' Parámetros: sRuta As String — ruta absoluta del archivo
+' Retorna   : Boolean — True si sus posiciones siguen valiendo
+' ============================================
+Private Function ArchivoVigente(sRuta As String) As Boolean
+
+  Dim sAhora As String
+
+  ' --- 1. DISCO: LA FIRMA DE AHORA CONTRA LA DEL SNAPSHOT ---
+  ' FIRMA VACÍA (Stat FALLÓ) O AUSENTE DEL SNAPSHOT: NO SE PUEDE AFIRMAR NADA
+  If Not $cSnapshot.Exist(sRuta) Then Return False
+  sAhora = FirmaArchivo(sRuta)
+  If sAhora = "" Then Return False
+  If sAhora <> $cSnapshot[sRuta] Then Return False
+
+  ' --- 2. EDITOR: EL ABIERTO NO PUEDE TENER CAMBIOS SIN GUARDAR ---
+  If sRuta = FMain.sRutaArchivoAbierto Then
+    If m_EditorPrincipal.HayCambios() Then Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Rebuscar
+' Propósito : Vuelve a buscar con los mismos parámetros cuando la regla de
+'             vigencia falló. Pasa por las mismas condiciones que la primera
+'             búsqueda: aviso de cambios sin guardar (SC-06) y editor igual al
+'             disco; sin ellas, perl volvería a leer un disco distinto del
+'             editor.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Rebuscar()
+
+  ' --- 1. AVISO Y CONDICIONES DE LA BÚSQUEDA ---
+  m_Sonido.sonar("Info")
+  Message.Info("El texto cambió desde la búsqueda." & Chr(10) & "Se vuelve a buscar.")
+  If Not FMain.ConfirmarDescartarCambios() Then Return
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return
+
+  ' --- 2. RELANZAR ---
+  IniciarBusqueda()
+
+End
+
+' ============================================
 ' Función   : ParsearResultados
 ' Propósito : Convierte el buffer crudo (campos separados por NUL, 8 por
 '             registro) en $aResultados: una lista de String[] de 8 campos.
 '             El script termina cada campo con NUL, incluido el último de cada
 '             registro, así que el total de campos es múltiplo de 8.
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Private Sub ParsearResultados()
 
@@ -342,76 +467,93 @@ Private Sub ParsearResultados()
 
 End
 
-' EVENTO Data DE LA GRILLA VIRTUAL: PINTA LA CELDA (Row, Column) BAJO DEMANDA
-' LEYENDO DEL MODELO $aResultados. No hay estado duplicado.
-Public Sub gvResultados_Data(Row As Integer, Column As Integer)
+' ============================================
+' Función   : TextoCelda
+' Propósito : TEXTO DE LA CELDA (Row, Column) DE LA GRILLA VIRTUAL, LEÍDO DEL
+'             MODELO. LO ASIGNA FMain.gvRegexResultados_Data: EL OBJETO .Data
+'             SOLO SE TOCA DENTRO DEL HANDLER DEL EVENTO
+' Parámetros: Row As Integer — fila (índice en $aResultados)
+'             Column As Integer — columna
+' Retorna   : String — el texto; "" fuera de rango
+' ============================================
+Public Function TextoCelda(Row As Integer, Column As Integer) As String
 
   Dim aReg As String[]
 
-  If Row < 0 Or If Row >= $aResultados.Count Then Return
+  ' If SEPARADOS: Or NO CORTOCIRCUITA (RC-GM-17)
+  If Row < 0 Then Return ""
+  If Row >= $aResultados.Count Then Return ""
   aReg = $aResultados[Row]
 
   Select Case Column
     Case 0
       ' SOLO EL NOMBRE, NO LA RUTA ENTERA (LA COLUMNA ES ANGOSTA)
-      gvResultados.Data.Text = File.Name(aReg[C_ARCHIVO])
+      Return File.Name(aReg[C_ARCHIVO])
     Case 1
       ' LÍNEA EN BASE 1 PARA EL USUARIO (EL SCRIPT LA DA EN BASE 0)
-      gvResultados.Data.Text = CStr(CInt(aReg[C_LINEA]) + 1)
+      Return CStr(CInt(aReg[C_LINEA]) + 1)
     Case 2
-      gvResultados.Data.Text = CStr(CInt(aReg[C_COLUMNA]) + 1)
+      Return CStr(CInt(aReg[C_COLUMNA]) + 1)
     Case 3
-      gvResultados.Data.Text = aReg[C_ANTES]
+      Return aReg[C_ANTES]
     Case 4
-      gvResultados.Data.Text = aReg[C_DESPUES]
+      Return aReg[C_DESPUES]
   End Select
+
+  Return ""
 
 End
 
 ' ============================================
-' Función   : gvResultados_Change
-' Propósito : MUESTRA EN txtContexto EL PREVIEW DE LA FILA ACTUAL. VA EN Change:
-'             LO EMITE MoveTo CADA VEZ QUE CAMBIA LA FILA, CON EL MOUSE O CON LAS
-'             FLECHAS, EN CUALQUIER MODO DE SELECCIÓN (GV-78). NO MUEVE EL EDITOR
+' Función   : CambioDeFila
+' Propósito : MUESTRA EN txaRegexContexto EL PREVIEW DE LA FILA ACTUAL. LA LLAMA
+'             FMain.gvRegexResultados_Change: MoveTo LO EMITE CADA VEZ QUE CAMBIA
+'             LA FILA, CON EL MOUSE O CON LAS FLECHAS, EN CUALQUIER MODO DE
+'             SELECCIÓN (GV-78). NO MUEVE EL EDITOR
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub gvResultados_Change()
+Public Sub CambioDeFila()
 
   ' UNA FILA MOVIDA POR EL CÓDIGO AL VOLVER A LLENAR LA GRILLA NO SE MUESTRA
   If $bRepoblando Then Return
 
-  MostrarPreview(gvResultados.Row)
+  MostrarPreview(FMain.gvRegexResultados.Row)
 
 End
 
 ' ============================================
-' Función   : gvResultados_Click
-' Propósito : LLEVA EL EDITOR A LA COINCIDENCIA DE LA FILA CLICKEADA (SC-51). VA
-'             EN Click Y NO EN Select, COMO TODA NAVEGACIÓN DESDE UNA GRILLA DEL
-'             PROYECTO (GV-78; FMain.gvResultados_Click, FVariantes.gvEjemplos_Click).
-'             EN Select.Multiple, Select AVISA QUE CAMBIÓ LA SELECCIÓN, NO QUE SE
-'             ELIGIÓ UNA FILA: UN CLICK SOBRE UNA FILA YA SELECCIONADA NO LO
-'             EMITE, Y MoveTo SOLO LO EMITE EN Select.Single. Click SALE ÚNICAMENTE
-'             DEL MOUSE SOBRE UNA CELDA, DIFERIDO, CON Row YA ACTUALIZADO; LLENAR
-'             LA GRILLA DESDE EL CÓDIGO NUNCA LO DISPARA
+' Función   : IrACoincidencia
+' Propósito : LLEVA EL EDITOR A LA COINCIDENCIA DE LA FILA CLICKEADA (SC-51), SI
+'             SU ARCHIVO PASA LA REGLA DE VIGENCIA; SI NO, VUELVE A BUSCAR. LA
+'             LLAMA FMain.gvRegexResultados_Click: Click Y NO Select (GV-78). EN
+'             Select.Multiple, Select AVISA QUE CAMBIÓ LA SELECCIÓN, NO QUE SE
+'             ELIGIÓ UNA FILA; Click SALE ÚNICAMENTE DEL MOUSE SOBRE UNA CELDA,
+'             DIFERIDO, Y LLENAR LA GRILLA DESDE EL CÓDIGO NUNCA LO DISPARA
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub gvResultados_Click()
+Public Sub IrACoincidencia()
 
   Dim iFila As Integer
   Dim aReg As String[]
 
   ' --- 1. LA FILA CLICKEADA ---
-  iFila = gvResultados.Row
-  If iFila < 0 Or If iFila >= $aResultados.Count Then Return
+  iFila = FMain.gvRegexResultados.Row
+  If iFila < 0 Then Return
+  If iFila >= $aResultados.Count Then Return
   aReg = $aResultados[iFila]
 
   ' --- 2. EL PREVIEW TAMBIÉN, POR SI Change NO CORRIÓ (CLICK SOBRE LA FILA ACTUAL) ---
   MostrarPreview(iFila)
 
-  ' --- 3. EL EDITOR: ARCHIVO, PÁRRAFO ARRIBA Y SELECCIÓN ---
+  ' --- 3. POSICIÓN VIEJA: NO SE SALTA A CIEGAS (REGLA DE VIGENCIA, SC-51) ---
+  If Not ArchivoVigente(aReg[C_ARCHIVO]) Then
+    Rebuscar()
+    Return
+  Endif
+
+  ' --- 4. EL EDITOR: ARCHIVO, PÁRRAFO ARRIBA Y SELECCIÓN ---
   ' LÍNEA Y COLUMNA BASE 0, TAL COMO LAS DA EL SCRIPT
   m_BuscarRegex.MostrarCoincidencia(aReg[C_ARCHIVO], CInt(aReg[C_LINEA]), CInt(aReg[C_COLUMNA]), CInt(aReg[C_LARGO]))
 
@@ -419,8 +561,8 @@ End
 
 ' ============================================
 ' Función   : MostrarPreview
-' Propósito : ESCRIBE EN txtContexto EL ARCHIVO, LA POSICIÓN Y LA LÍNEA ANTES Y
-'             DESPUÉS DEL REEMPLAZO DE UNA COINCIDENCIA
+' Propósito : ESCRIBE EN txaRegexContexto EL ARCHIVO, LA POSICIÓN Y LA LÍNEA
+'             ANTES Y DESPUÉS DEL REEMPLAZO DE UNA COINCIDENCIA
 ' Parámetros: iFila As Integer — fila de la grilla (índice en $aResultados)
 ' Retorna   : nada
 ' ============================================
@@ -431,7 +573,8 @@ Private Sub MostrarPreview(iFila As Integer)
   Dim sLineaResultante As String
   Dim sTexto As String
 
-  If iFila < 0 Or If iFila >= $aResultados.Count Then Return
+  If iFila < 0 Then Return
+  If iFila >= $aResultados.Count Then Return
   aReg = $aResultados[iFila]
 
   ' --- 1. ENCABEZADO: ARCHIVO Y POSICIÓN ---
@@ -445,15 +588,14 @@ Private Sub MostrarPreview(iFila As Integer)
   ' --- 3. LÍNEA RESULTANTE (SOLO SI HAY REEMPLAZO) ---
   ' Se reconstruye la línea aplicando el reemplazo SOLO a esta coincidencia,
   ' usando la columna dentro de la línea. Es un preview de una coincidencia, no
-  ' del archivo entero: muestra cómo quedaría ESTA línea si se aplicara ESTE
-  ' reemplazo. TextArea es texto plano, sin resaltado; el contraste ANTES/DESPUÉS
-  ' lo da la comparación visual línea a línea.
+  ' del archivo entero. TextArea es texto plano, sin resaltado; el contraste
+  ' ANTES/DESPUÉS lo da la comparación visual línea a línea.
   If $sAplicar = "1" Then
     sLineaResultante = ReemplazarEnLinea(sLineaOriginal, CInt(aReg[C_COLUMNA]), CInt(aReg[C_LARGO]), aReg[C_DESPUES])
     sTexto &= "DESPUÉS:" & Chr(10) & sLineaResultante
   Endif
 
-  txtContexto.Text = sTexto
+  FMain.txaRegexContexto.Text = sTexto
 
 End
 
@@ -462,7 +604,8 @@ End
 ' Propósito : Devuelve la línea con el reemplazo aplicado en una posición. Es
 '             solo para el preview de UNA coincidencia: corta la línea en la
 '             columna, inserta el texto nuevo y pega el resto. Usa String.Mid
-'             (por caracteres, UTF-8) coherente con los offsets del script.
+'             (por caracteres, UTF-8, SC-02) coherente con los offsets del
+'             script.
 ' Parámetros: sLinea As String — la línea completa original
 '             iColumna As Integer — columna 0-based donde empieza la coincidencia
 '             iLargo As Integer — largo en caracteres de la coincidencia
@@ -485,82 +628,55 @@ End
 ' Función   : ActualizarContador
 ' Propósito : "N coincidencias en M archivos". M es la cantidad de archivos
 '             DISTINTOS que aparecen en los resultados, no la cantidad buscada.
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Private Sub ActualizarContador()
 
   Dim aReg As String[]
   Dim cArchivos As New Collection
-  Dim iCoincidencias As Integer
 
-  iCoincidencias = $aResultados.Count
   For Each aReg In $aResultados
     ' LA CLAVE DE LA COLECCIÓN HACE DE CONJUNTO: ARCHIVOS DISTINTOS
     cArchivos[aReg[C_ARCHIVO]] = True
   Next
 
-  lblContador.Text = CStr(iCoincidencias) & " coincidencia(s) en " & CStr(cArchivos.Count) & " archivo(s)"
+  FMain.lblRegexContador.Text = CStr($aResultados.Count) & " coincidencia(s) en " & CStr(cArchivos.Count) & " archivo(s)"
 
 End
 
 ' ============================================
-' Función   : btnCerrar_Click
-' Propósito : Cierra el formulario. Si hay una búsqueda en curso, mata el
-'             proceso primero para no dejarlo huérfano. $bCancelado se levanta
-'             para que Proceso_Kill sepa que la terminación fue provocada y no
-'             procese resultados a medio drenar (patrón de MT-B).
+' Función   : ActualizarBotones
+' Propósito : Habilita los botones según el estado: Cancelar solo mientras
+'             busca; Reemplazar solo con reemplazo escrito, sin búsqueda en
+'             curso y con coincidencias.
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
-Public Sub btnCerrar_Click()
+Private Sub ActualizarBotones()
 
-  If $bBuscando Then
-    $bCancelado = True
-    If Not IsNull($hProc) Then
-      If Object.IsValid($hProc) Then
-        If $hProc.State = Process.Running Then Try $hProc.Kill
-      Endif
-    Endif
-  Endif
-
-  bCierrePermitido = True
-  Me.Close()
+  FMain.btnRegexCancelar.Enabled = $bBuscando
+  FMain.btnRegexReemplazar.Enabled = ($sAplicar = "1") And (Not $bBuscando) And ($aResultados.Count > 0)
 
 End
 
 ' ============================================
-' Función   : Form_Close
-' Propósito : Bloquea el cierre por la X del sistema mientras busca, para no
-'             dejar el proceso corriendo. Con búsqueda terminada, permite cerrar.
-' ============================================
-Public Sub Form_Close()
-
-  ' SI SE PERMITIÓ EXPLÍCITAMENTE (btnCerrar), DEJAR CERRAR
-  If bCierrePermitido Then Return
-
-  ' SI HAY BÚSQUEDA EN CURSO, CANCELARLA ANTES DE CERRAR
-  If $bBuscando Then
-    $bCancelado = True
-    If Not IsNull($hProc) Then
-      If Object.IsValid($hProc) Then
-        If $hProc.State = Process.Running Then Try $hProc.Kill
-      Endif
-    Endif
-  Endif
-
-End
-
-' ============================================
-' Función   : btnReemplazar_Click
+' Función   : Reemplazar
 ' Propósito : Aplica el reemplazo a las coincidencias SELECCIONADAS en la grilla.
-'             Es la única acción destructiva del formulario. Flujo:
+'             Es la única acción destructiva de la pestaña. La llama
+'             FMain.btnRegexReemplazar_Click. Flujo:
 '               1. validar que haya reemplazo y selección
 '               2. guard de git ACOTADO a los archivos afectados
-'               3. pre-chequeo de mtime de TODOS los afectados (todo o nada)
+'               3. regla de vigencia de TODOS los afectados (todo o nada)
 '               4. escribir cada archivo (coincidencias de atrás para adelante)
 '               5. recargar lo escrito: editor, árbol y referencias (SC-51)
 '               6. el editor queda en el último archivo cambiado
 '               7. log en log/ del proyecto
 '               8. re-correr la búsqueda para confirmar convergencia
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
-Public Sub btnReemplazar_Click()
+Public Sub Reemplazar()
 
   Dim aSel As Integer[]
   Dim cPorArchivo As Collection
@@ -571,6 +687,9 @@ Public Sub btnReemplazar_Click()
   Dim aEscritos As New String[]
 
   ' --- 1. VALIDACIONES DE ENTRADA ---
+  ' EL BOTÓN YA ESTÁ DESHABILITADO EN ESTOS CASOS (ActualizarBotones); LA
+  ' VALIDACIÓN QUEDA COMO DEFENSA
+  If $bBuscando Then Return
   If $sAplicar <> "1" Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay texto de reemplazo: esta fue una búsqueda pura.")
@@ -592,11 +711,16 @@ Public Sub btnReemplazar_Click()
   ' --- 3. GUARD DE GIT ACOTADO A LOS ARCHIVOS AFECTADOS ---
   If Not m_BuscarRegex.PasarGuardGit(aArchivosAfectados) Then Return
 
-  ' --- 4. PRE-CHEQUEO DE mtime: TODO O NADA ---
-  ' Se verifica el estado de TODOS los archivos afectados ANTES de escribir uno
-  ' solo. Si alguno cambió desde la búsqueda, se aborta la operación entera y no
-  ' se toca ningún archivo.
-  If Not PreChequearMtime(aArchivosAfectados) Then Return
+  ' --- 4. REGLA DE VIGENCIA: TODO O NADA (SC-51) ---
+  ' VA DESPUÉS DEL GUARD, LO MÁS CERCA POSIBLE DE LA ESCRITURA. SI UN ARCHIVO
+  ' AFECTADO CAMBIÓ EN DISCO O EL ABIERTO TIENE CAMBIOS SIN GUARDAR, NO SE
+  ' ESCRIBE NINGUNO: LA RECARGA POSTERIOR (TrasReemplazo) PISARÍA ESOS CAMBIOS
+  For Each sArchivoTocado In aArchivosAfectados
+    If Not ArchivoVigente(sArchivoTocado) Then
+      Rebuscar()
+      Return
+    Endif
+  Next
 
   ' --- 5. CAPTURAR EL HEAD PARA EL LOG (ANTES DE ESCRIBIR) ---
   sHead = m_Git.ObtenerHead(m_InicioCierre.RutaProyectoEnCurso)
@@ -614,6 +738,8 @@ Public Sub btnReemplazar_Click()
         "Se detuvo el reemplazo. Revisá el estado con git." & Chr(10) &
         "Los archivos ya modificados se pueden revertir con:" & Chr(10) &
         "git checkout " & sHead & " -- .")
+      ' LAS POSICIONES DE LO ESCRITO YA NO VALEN: SE VUELVE A BUSCAR
+      IniciarBusqueda()
       Return
     Endif
     aEscritos.Add(sArchivoTocado)
@@ -621,9 +747,8 @@ Public Sub btnReemplazar_Click()
   Next
 
   ' --- 7. RECARGAR LO ESCRITO: EDITOR, ÁRBOL Y REFERENCIAS (SC-51) ---
-  ' EN EL ACTO Y NO AL CERRAR: SE SIGUE NAVEGANDO SOBRE EL TEXTO NUEVO. ANTES
-  ' SE RECARGABA AL CERRAR POR EL Click DEL COMBO, QUE SALE SIN HACER NADA SI EL
-  ' ARCHIVO YA ESTÁ ABIERTO (GV-53): EL EDITOR QUEDABA CON EL TEXTO VIEJO
+  ' EN EL ACTO: SE SIGUE NAVEGANDO SOBRE EL TEXTO NUEVO. NO POR EL Click DEL
+  ' COMBO, QUE SALE SIN HACER NADA SI EL ARCHIVO YA ESTÁ ABIERTO (GV-53)
   m_BuscarRegex.TrasReemplazo(aEscritos)
 
   ' --- 8. EL EDITOR QUEDA EN EL ÚLTIMO ARCHIVO CAMBIADO, EN SU PRIMER CAMBIO ---
@@ -638,7 +763,8 @@ Public Sub btnReemplazar_Click()
     "Se relanza la búsqueda para confirmar el resultado.")
 
   ' RE-CORRER: confirma convergencia y detecta patrones que no convergen (si el
-  ' reemplazo vuelve a matchear, el contador no baja).
+  ' reemplazo vuelve a matchear, el contador no baja). EL EDITOR QUEDÓ IGUAL AL
+  ' DISCO POR LA RECARGA: NO HACE FALTA EL AVISO DE Rebuscar
   IniciarBusqueda()
 
 End
@@ -684,6 +810,7 @@ End
 ' ============================================
 ' Función   : FilasSeleccionadas
 ' Propósito : Devuelve los índices de las filas seleccionadas en la grilla.
+' Parámetros: ninguno
 ' Retorna   : Integer[] — índices en $aResultados
 ' ============================================
 Private Function FilasSeleccionadas() As Integer[]
@@ -692,7 +819,7 @@ Private Function FilasSeleccionadas() As Integer[]
   Dim i As Integer
 
   For i = 0 To $aResultados.Count - 1
-    If gvResultados.Rows[i].Selected Then aSel.Add(i)
+    If FMain.gvRegexResultados.Rows[i].Selected Then aSel.Add(i)
   Next
 
   Return aSel
@@ -751,40 +878,6 @@ Private Function ClavesColeccion(c As Collection) As String[]
 End
 
 ' ============================================
-' Función   : PreChequearMtime
-' Propósito : Verifica que NINGÚN archivo afectado haya cambiado desde la
-'             búsqueda, comparando su firma actual contra $cSnapshot. Todo o
-'             nada: si uno cambió, se aborta sin escribir ninguno.
-' Parámetros: aArchivos As String[] — rutas absolutas afectadas
-' Retorna   : Boolean — True si todos coinciden con su snapshot
-' ============================================
-Private Function PreChequearMtime(aArchivos As String[]) As Boolean
-
-  Dim sArchivo As String
-  Dim sAhora As String
-  Dim sSnapshot As String
-
-  For Each sArchivo In aArchivos
-    sAhora = FirmaArchivo(sArchivo)
-    sSnapshot = ""
-    If $cSnapshot.Exist(sArchivo) Then sSnapshot = $cSnapshot[sArchivo]
-
-    ' FIRMA VACÍA (STAT FALLÓ) O DISTINTA A LA CAPTURADA: EL ARCHIVO NO ES EL
-    ' QUE BUSCAMOS. SE ABORTA TODO.
-    If sAhora = "" Or If sAhora <> sSnapshot Then
-      m_Sonido.sonar("Error")
-      Message.Error("El archivo " & File.Name(sArchivo) & " cambió desde la búsqueda." & Chr(10) &
-        "El reemplazo se cancela por completo para no escribir sobre datos desactualizados." & Chr(10) & Chr(10) &
-        "Volvé a buscar y reintentá.")
-      Return False
-    Endif
-  Next
-
-  Return True
-
-End
-
-' ============================================
 ' Función   : EscribirArchivo
 ' Propósito : Aplica al archivo todas sus coincidencias seleccionadas, de atrás
 '             para adelante (offset descendente), para que los offsets anteriores
@@ -815,8 +908,8 @@ Private Function EscribirArchivo(sRuta As String, aIndices As Integer[]) As Bool
   aOrdenados = OrdenarPorOffsetDesc(aIndices)
 
   ' --- 3. APLICAR CADA COINCIDENCIA ---
-  ' String.Mid es 1-based y por caracteres (UTF-8), coherente con los offsets
-  ' del script, que están en caracteres (no bytes).
+  ' String.Mid es 1-based y por caracteres (UTF-8, SC-02), coherente con los
+  ' offsets del script, que están en caracteres (no bytes).
   For Each iIdx In aOrdenados
     aReg = $aResultados[iIdx]
     iOffset = CInt(aReg[C_OFFSET])
@@ -875,8 +968,11 @@ End
 '             log es la hoja de ruta LOCAL: qué se cambió y con qué hash volver
 '             atrás. Formato texto plano legible, acumulativo (se agrega al
 '             final del mismo archivo).
-' Parámetros: aArchivos As String[], cPorArchivo As Collection, sHead As String,
-'             iTotal As Integer
+' Parámetros: aArchivos As String[] — rutas afectadas
+'             cPorArchivo As Collection — ruta → Integer[] de índices
+'             sHead As String — commit previo al reemplazo; "" sin repo
+'             iTotal As Integer — total de reemplazos
+' Retorna   : nada
 ' ============================================
 Private Sub EscribirLog(aArchivos As String[], cPorArchivo As Collection, sHead As String, iTotal As Integer)
 
@@ -888,7 +984,7 @@ Private Sub EscribirLog(aArchivos As String[], cPorArchivo As Collection, sHead 
 
   sRutaLog = m_InicioCierre.RutaProyectoEnCurso &/ "log" &/ "reemplazos-regex.log"
 
-  ' --- CONSTRUIR EL BLOQUE ---
+  ' --- 1. CONSTRUIR EL BLOQUE ---
   sLog = "════════════════════════════════════════" & Chr(10)
   sLog &= "Operación de reemplazo regex" & Chr(10)
   sLog &= "Fecha:     " & Format(Now(), "yyyy-mm-dd hh:nn:ss") & Chr(10)
@@ -907,7 +1003,7 @@ Private Sub EscribirLog(aArchivos As String[], cPorArchivo As Collection, sHead 
   If sHead <> "" Then sLog &= "Para deshacer: git checkout " & sHead & " -- ." & Chr(10)
   sLog &= "════════════════════════════════════════" & Chr(10) & Chr(10)
 
-  ' --- APENDER AL ARCHIVO (CREAR SI NO EXISTE) ---
+  ' --- 2. APENDER AL ARCHIVO (CREAR SI NO EXISTE) ---
   ' Un fallo de log NO debe abortar nada: el reemplazo ya se hizo. Se avisa
   ' suave y se sigue. Try por línea (patrón del proyecto), no Try de bloque.
   If Exist(sRutaLog) Then
