@@ -5813,6 +5813,38 @@ En el proyecto ya se usaba alrededor de bloques que no ceden el control (FEstadi
 
 **PENDIENTE:** Confirmar en Mint, con la lanzadora, que el puntero queda ocupado durante toda la espera y vuelve al terminar, y que la pregunta del plazo aparece con el puntero normal. Hecho eso, pasar la evidencia a empirica y quitar este pendiente.
 
+### GV-101 — hyperxmp 5.12: corta pdfauthor en las comas, quita Author y Keywords de Info, keeppdfinfo es clave de \hypersetup
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaLaTeX / TeX Live 2023 (Debian) / hyperxmp 5.12 / exiftool 12.76 / poppler 24.02 / Linux Mint · **Verificado:** 2026-10
+
+Medido con exiftool sobre l-CALIFA.pdf y leído en hyperxmp.sty v5.12 (2023/09/10) y en el manual v5.13.
+
+1. LA COMA SEPARA AUTORES. El manual: «hyperxmp splits the pdfauthor and pdfkeywords lists at commas». Cada elemento es un `dc:creator`. Con la forma invertida «Califa, Juan Sebastián; Millán, Mariano», el XMP salió:
+
+    ["Califa", "Juan Sebastián; Millán", "Mariano"]
+
+Con la forma directa separada por comas, «Juan Sebastián Califa, Mariano Millán», salió `["Juan Sebastián Califa","Mariano Millán"]`. Para una coma literal el manual da `\xmpquote{…\xmpcomma…}`; en gbpublisher no sirve porque `EscaparTeX` escapa la cadena entera, y `ObtenerAutoresLibro` quita la coma del dato.
+
+2. Author Y Keywords NO VAN A Info. Desde la v5.0 hyperxmp los quita del diccionario Info y los deja solo en el XMP. Medido: `pdfinfo` no mostraba Author. Los vuelve a poner `keeppdfinfo`.
+
+3. keeppdfinfo ES CLAVE DE \hypersetup, NO OPCIÓN DEL PAQUETE. El .sty la define con `\define@key{Hyp}{keeppdfinfo}[true]`. Como opción de `\usepackage` la compilación frena:
+
+    ! LaTeX Error: Unknown option `keeppdfinfo' for package `hyperxmp'.
+
+La supresión corre en `\AtEndPreamble` (línea 427), así que `\hypersetup{keeppdfinfo}` en cualquier lugar del preámbulo, después de cargar el paquete, alcanza.
+
+4. dc:source ES \jobname.tex. Por eso decía `main.tex`. Con `pdfsource={}` no se emite: el .sty lo salta con `\ifx\@pdfsource\@empty`. Medido: ausente.
+
+5. pdfcreator LLEGA A LOS DOS LUGARES. El manual no lo enumera entre las claves que lee, pero medido: `pdfcreator={gbpublisher \gbversion}` da el mismo valor en Info Creator y en `xmp:CreatorTool`. Producer queda en el motor (LuaHBTeX y TeX Live).
+
+6. prism:byteCount ES FALSO CON LuaLaTeX. Medido: 2421 en un archivo de 690 755 bytes. El manual lo advierte: con LuaLaTeX toma el tamaño de la compilación anterior, y lo corrige un script aparte (`hyperxmp-add-bytecount`).
+
+CÓMO VERIFICARLO: exiftool sin `-j` une los elementos de una lista con «, », y una lista de dos autores se ve igual que un autor con una coma. Para contar elementos: `exiftool -j -XMP-dc:Creator`.
+
+Aplicado en la sección 2 de `preambulo-hyperref.tex` y en `ObtenerAutoresLibro` (m_GenerarPDFLibro).
+
+**PENDIENTE:** Medir pdfisbn (prism:isbn) y pdfdoi (prism:doi) cuando un libro tenga ISBN electrónico y DOI cargados, incluido un DOI con guion bajo: \gbdoi pasa por EscaparTeX. Decidir qué hacer con prism:byteCount (avisar en el validador o no emitirlo). Hecho eso, quitar este pendiente.
+
 ---
 
 ## GV-XML — Comportamientos verificados XML
