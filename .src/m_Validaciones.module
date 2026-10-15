@@ -1,0 +1,954 @@
+' Gambas module file
+
+' ============================================
+' Módulo    : m_Validaciones
+' Propósito : SOLAPA «VALIDACIONES» DE FMain (TabStrip1, índice 7). Es dueño
+'             del estado de la solapa; los handlers de FMain solo delegan acá
+'             (patrón módulo-dueño-del-estado, como m_AnalizarProyecto).
+'
+'             UN SOLO DISEÑO PARA TODAS LAS VALIDACIONES: el radio elige el
+'             TIPO, y el tipo sabe en qué carpeta del proyecto están sus
+'             archivos y con qué patrón (una carpeta por sabor en salidas/).
+'             El combo ofrece «(todos)» y cada archivo. Un script de engine/
+'             valida y devuelve registros con un contrato común; este módulo
+'             los vuelca en una grilla pivote (comprobaciones en filas,
+'             archivos en columnas) y los exporta a CSV en formato largo.
+'
+'             CONTRATO DE SALIDA DEL SCRIPT (stdout, un registro por línea,
+'             campos separados por NUL, como engine/analizar_proyecto.lua):
+'               objeto  grupo  comprobacion  estado  encontrado  esperado  detalle
+'             estado: OK, AVISO, ERROR, INFO.
+'
+'             LOS VALORES ESPERADOS SALEN DE LA BASE Y LOS ESCRIBE ESTE
+'             MÓDULO EN tmp/: EL SCRIPT NO TOCA LA BASE (SC-05).
+'
+'             TIPOS IMPLEMENTADOS: pdf (engine/validar_pdf.pl). Los demás
+'             radios (JATS4R, DOAJ, Crossref, Redalyc, SciELO, PubMed) quedan
+'             deshabilitados hasta el rediseño de revistas.
+'             En un proyecto de revista, rbPDF corre igual: el archivo de
+'             esperados va vacío y el grupo metadatos sale como INFO.
+'
+'             EL EJECUTOR DE PROCESOS ES PROPIO: es gemelo de
+'             m_AuditarJats.EjecutarHerramienta (Exec con array, Wait que entra
+'             al bucle de eventos, búferes completos antes de interpretar),
+'             más el aviso de progreso en txaValidaciones. Se unifican cuando
+'             el rediseño de revistas toque el auditor.
+'
+' Controles de FMain (solapa «Validaciones»):
+'   rbPDF, rbJATS4R, rbDOAJ, rbCrossref, rbRedalyc, rbSciELO, rbPubMed
+'   cmbValidaciones       — «(todos)» y los archivos del tipo elegido
+'   btnValidar            — corre la validación
+'   btnExportarValidacion — guarda el último resultado como CSV (m_CSV)
+'   txaValidaciones       — progreso, resumen y detalle de la celda elegida
+'   gvValidaciones        — la grilla: Grupo | Comprobación | un archivo por columna
+' ============================================
+
+' --- TIPOS Y DÓNDE ESTÁN SUS ARCHIVOS ---
+Private Const TIPO_PDF As String = "pdf"
+Private Const CARPETA_PDF As String = "salidas/pdf"
+Private Const PATRON_PDF As String = "*.pdf"
+Private Const SCRIPT_PDF As String = "validar_pdf.pl"
+
+' --- INFRAESTRUCTURA (engine/, NO ~/.gbpublisher, SC-11) ---
+Private Const CARPETA_ENGINE As String = "engine"
+Private Const ARCHIVO_ESPERADO As String = "tmp/validar-esperado.txt"
+
+' --- INTERFAZ ---
+Private Const OPCION_TODOS As String = "(todos)"
+' veraPDF SOBRE UN LIBRO DE CIENTOS DE PÁGINAS TARDA; EL PLAZO ES PARA UN
+' PROCESO COLGADO, NO PARA UNO LENTO
+Private Const PLAZO_SEGUNDOS As Integer = 900
+Private Const CAMPOS_REGISTRO As Integer = 7
+
+' --- ESTADO DE LA SOLAPA ---
+Private $sTipo As String
+Private $bCorriendo As Boolean
+Private $bHayResultado As Boolean
+' LOS REGISTROS DEL ÚLTIMO RESULTADO, CADA UNO UN String[7]: SON LA FUENTE
+' DEL CSV Y DEL DETALLE DE CELDA
+Private $aRegistros As New Object[]
+' CELDA DE LA GRILLA → ÍNDICE EN $aRegistros. CLAVE «fila:columna»
+Private $cCeldas As New Collection
+
+' --- PROCESO EN CURSO ---
+Private $hProceso As Process
+Private $sBufferSalida As String
+Private $sBufferError As String
+Private $iCodigoSalida As Integer
+Private $bProcesoTerminado As Boolean
+' LA CORTÓ Detener (CIERRE O APERTURA DE PROYECTO): EL RESULTADO NO SE MUESTRA
+Private $bCancelado As Boolean
+
+' ============================================
+' 1. CICLO DE VIDA DE LA SOLAPA
+' ============================================
+
+' ============================================
+' Función   : InicializarTab
+' Propósito : Deja la solapa limpia para el proyecto que se abre. La llama
+'             FMain.AbrirProyecto, junto a las demás solapas.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub InicializarTab()
+
+  ' --- 1. NADA DEL PROYECTO ANTERIOR ---
+  Detener()
+
+  ' --- 2. RADIOS: SOLO LOS TIPOS IMPLEMENTADOS ---
+  ' LOS DE REVISTAS LLEGAN CON EL REDISEÑO: DESHABILITADOS Y NO OCULTOS, PARA
+  ' QUE SE VEA QUÉ VIENE
+  FMain.rbPDF.Enabled = (m_InicioCierre.RutaProyectoEnCurso <> "")
+  FMain.rbPDF.Value = False
+  FMain.rbJATS4R.Enabled = False
+  FMain.rbDOAJ.Enabled = False
+  FMain.rbCrossref.Enabled = False
+  FMain.rbRedalyc.Enabled = False
+  FMain.rbSciELO.Enabled = False
+  FMain.rbPubMed.Enabled = False
+
+  ' --- 3. SIN TIPO ELEGIDO NO HAY ARCHIVOS ---
+  $sTipo = ""
+  FMain.cmbValidaciones.Clear
+  FMain.btnValidar.Enabled = False
+  FMain.txaValidaciones.Text = ""
+
+End
+
+' ============================================
+' Función   : Detener
+' Propósito : Corta una validación en curso y vacía la grilla. La llaman el
+'             cierre de proyecto (m_InicioCierre.CerrarProyecto) y la
+'             apertura: un resultado del proyecto anterior es peor que
+'             ninguno (el criterio de RC-GM-16).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Detener()
+
+  ' --- 1. EL PROCESO, SI CORRE ---
+  ' EL BUCLE DE EjecutarScript VE $bProcesoTerminado POR EL EVENTO Kill, Y
+  ' Validar VE $bCancelado: UN RESULTADO CORTADO NO SE MUESTRA NI SE AVISA
+  If $bCorriendo Then
+    $bCancelado = True
+    Try $hProceso.Kill()
+  Endif
+
+  ' --- 2. RESULTADO Y GRILLA ---
+  LimpiarResultado()
+
+End
+
+' ============================================
+' Función   : LimpiarResultado
+' Propósito : Vacía la grilla, los registros y el mapa de celdas.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarResultado()
+
+  FMain.gvValidaciones.Rows.Count = 0
+  FMain.gvValidaciones.Columns.Count = 0
+  $aRegistros = New Object[]
+  $cCeldas = New Collection
+  $bHayResultado = False
+  FMain.btnExportarValidacion.Enabled = False
+
+End
+
+' ============================================
+' 2. SELECCIÓN
+' ============================================
+
+' ============================================
+' Función   : SeleccionarPDF
+' Propósito : Atiende rbPDF_Click: fija el tipo y llena el combo.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub SeleccionarPDF()
+
+  SeleccionarTipo(TIPO_PDF)
+
+End
+
+' ============================================
+' Función   : SeleccionarTipo
+' Propósito : Fija el tipo de validación, vacía el resultado anterior y
+'             llena el combo con los archivos del tipo.
+' Parámetros: sTipo As String — una de las constantes TIPO_*
+' Retorna   : nada
+' ============================================
+Private Sub SeleccionarTipo(sTipo As String)
+
+  ' --- 1. UN RESULTADO DE OTRO TIPO NO SIRVE ---
+  If $bCorriendo Then Return
+  $sTipo = sTipo
+  LimpiarResultado()
+
+  ' --- 2. ARCHIVOS ---
+  PoblarCombo()
+
+End
+
+' ============================================
+' Función   : PoblarCombo
+' Propósito : Llena cmbValidaciones con «(todos)» y los archivos del tipo,
+'             ordenados. Sin archivos, lo dice en el label.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub PoblarCombo()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+
+  FMain.cmbValidaciones.Clear
+  FMain.btnValidar.Enabled = False
+  If $sTipo = "" Then Return
+
+  ' --- 2. LISTA ---
+  aArchivos = ArchivosDelTipo()
+  If Not aArchivos Then
+    FMain.txaValidaciones.Text = "No se pudo leer la carpeta " & CarpetaDelTipo() & "/"
+    Return
+  Endif
+
+  If aArchivos.Count = 0 Then
+    FMain.txaValidaciones.Text = "No hay archivos en " & CarpetaDelTipo() & "/"
+    Return
+  Endif
+
+  ' --- 3. COMBO ---
+  ' «(todos)» PRIMERO: VER EL ESTADO DE TODA LA CARPETA DE UN VISTAZO ES EL
+  ' USO HABITUAL
+  FMain.cmbValidaciones.Add(OPCION_TODOS)
+  For Each sArchivo In aArchivos
+    FMain.cmbValidaciones.Add(sArchivo)
+  Next
+  FMain.cmbValidaciones.Index = 0
+
+  FMain.btnValidar.Enabled = True
+  FMain.txaValidaciones.Text = CStr(aArchivos.Count) & " archivo(s) en " & CarpetaDelTipo() & "/"
+
+End
+
+' ============================================
+' Función   : CarpetaDelTipo
+' Propósito : Carpeta del tipo, relativa a la raíz del proyecto.
+' Parámetros: ninguno (usa $sTipo)
+' Retorna   : String — "" si el tipo no está implementado
+' ============================================
+Private Function CarpetaDelTipo() As String
+
+  Select Case $sTipo
+    Case TIPO_PDF
+      Return CARPETA_PDF
+  End Select
+  Return ""
+
+End
+
+' ============================================
+' Función   : ArchivosDelTipo
+' Propósito : Nombres de los archivos del tipo en su carpeta, ordenados.
+' Parámetros: ninguno (usa $sTipo)
+' Retorna   : String[] — vacío si no hay; Null si la carpeta no se pudo leer
+' Nota      : Dir() CON PATRÓN Y gb.File, COMO m_RevisarPDF.ListarPDF (GV-01).
+'             EL Null DISTINGUE «NO SE PUDO LEER» DE «NO HAY» (GV-23).
+' ============================================
+Private Function ArchivosDelTipo() As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sCarpeta As String
+  Dim sPatron As String
+  Dim aEncontrados As String[]
+  Dim aArchivos As New String[]
+
+  Select Case $sTipo
+    Case TIPO_PDF
+      sPatron = PATRON_PDF
+    Case Else
+      Return aArchivos
+  End Select
+
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ CarpetaDelTipo()
+
+  ' --- 2. UNA CARPETA QUE NO EXISTE ES UNA CARPETA SIN ARCHIVOS ---
+  If Not IsDir(sCarpeta) Then Return aArchivos
+
+  ' --- 3. LISTA (RC-GM-02) ---
+  Try aEncontrados = Dir(sCarpeta, sPatron, gb.File)
+  If Error Then Return Null
+
+  If aEncontrados Then aArchivos.Insert(aEncontrados)
+  aArchivos.Sort()
+
+  Return aArchivos
+
+End
+
+' ============================================
+' 3. VALIDACIÓN
+' ============================================
+
+' ============================================
+' Función   : Validar
+' Propósito : Atiende btnValidar: escribe los esperados, corre el script del
+'             tipo sobre el archivo elegido o sobre todos, e interpreta.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Validar()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aArchivos As New String[]
+  Dim aComando As New String[]
+  Dim sCarpeta As String
+  Dim sArchivo As String
+  Dim sQue As String
+  Dim iResultado As Integer
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  If $bCorriendo Then Return
+  If $sTipo <> TIPO_PDF Then Return
+  If FMain.cmbValidaciones.Text = "" Then Return
+
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ CarpetaDelTipo()
+
+  ' --- 3. QUÉ ARCHIVOS ---
+  ' LA LISTA SE RELEE: ENTRE EL LLENADO DEL COMBO Y EL CLICK PUDO CAMBIAR
+  If FMain.cmbValidaciones.Text = OPCION_TODOS Then
+    aArchivos = ArchivosDelTipo()
+    If Not aArchivos Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer la carpeta:" & gb.NewLine & sCarpeta)
+      Return
+    Endif
+    sQue = "todos los archivos de " & CarpetaDelTipo() & "/"
+  Else
+    aArchivos.Add(FMain.cmbValidaciones.Text)
+    sQue = FMain.cmbValidaciones.Text
+  Endif
+
+  If aArchivos.Count = 0 Then
+    FMain.txaValidaciones.Text = "No hay archivos en " & CarpetaDelTipo() & "/"
+    Return
+  Endif
+
+  ' --- 4. VALORES ESPERADOS ---
+  ' EscribirEsperadoPDF AVISA CON SU PROPIO MENSAJE CUANDO FALLA
+  LimpiarResultado()
+  If Not EscribirEsperadoPDF() Then Return
+
+  ' --- 5. COMANDO ---
+  ' perl -CSDA, COMO analizar_lexico.pl: ENTRADA, SALIDA Y ARGUMENTOS EN
+  ' UTF-8 (GV-90: HACE FALTA EL PAQUETE perl COMPLETO)
+  aComando.Add("perl")
+  aComando.Add("-CSDA")
+  aComando.Add(m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ SCRIPT_PDF)
+  aComando.Add(m_InicioCierre.RutaProyectoEnCurso &/ ARCHIVO_ESPERADO)
+  For Each sArchivo In aArchivos
+    aComando.Add(sCarpeta &/ sArchivo)
+  Next
+
+  ' --- 6. EJECUCIÓN ---
+  iResultado = EjecutarScript(aComando, sQue)
+
+  ' --- 7. RESULTADO DEL PROCESO ---
+  ' CORTADA POR Detener: EL PROYECTO SE ESTÁ CERRANDO O CAMBIANDO
+  If iResultado = -3 Then Return
+
+  ' EL CÓDIGO DEL SCRIPT SOLO DICE SI PUDO CORRER: LOS HALLAZGOS VAN EN LOS
+  ' REGISTROS. DISTINTO DE 0 ES UN PROBLEMA DE INSTALACIÓN, Y TIENE QUE
+  ' LLEGAR CON SU MENSAJE (GV-23)
+  If iResultado = -2 Then
+    m_Sonido.sonar("Error")
+    Message.Error("La validación superó el plazo de " & CStr(PLAZO_SEGUNDOS \ 60) & " minutos y se cortó.")
+    FMain.txaValidaciones.Text = ""
+    Return
+  Endif
+
+  If iResultado <> 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo validar:" & gb.NewLine & gb.NewLine & Trim($sBufferError))
+    FMain.txaValidaciones.Text = ""
+    Return
+  Endif
+
+  ' --- 8. INTERPRETACIÓN Y GRILLA ---
+  InterpretarSalida()
+  LlenarGrilla(aArchivos)
+  FMain.txaValidaciones.Text = Resumen(aArchivos)
+
+  $bHayResultado = ($aRegistros.Count > 0)
+  FMain.btnExportarValidacion.Enabled = $bHayResultado
+
+End
+
+' ============================================
+' Función   : EscribirEsperadoPDF
+' Propósito : Escribe tmp/validar-esperado.txt con los valores de la base
+'             contra los que se comparan los metadatos del PDF.
+'             En un libro, todos los PDF de salidas/pdf/ son el mismo libro:
+'             el objeto es «*». En una revista el archivo va vacío hasta el
+'             rediseño (la relación archivo-artículo depende de los nombres
+'             que todavía no se definieron), y el script lo informa.
+' Parámetros: ninguno
+' Retorna   : Boolean — True si escribió; False si abortó con mensaje
+' Nota      : LOS VALORES SON LOS MISMOS QUE LLEGAN AL PREÁMBULO: EL TÍTULO
+'             Y EL SUBTÍTULO EN FORMA PLANA (m_CorteTitulo.Plano, QUE ES LO
+'             QUE QUEDA EN pdftitle CON EL CORTE DESACTIVADO, SC-28), LA
+'             AUTORÍA CON LA MISMA FUNCIÓN QUE pdfauthor
+'             (m_GenerarPDFLibro.ObtenerAutoresLibro) Y EL ISBN ELECTRÓNICO.
+'             UNA SOLA FUENTE: SI CAMBIA EL GENERADOR, CAMBIA LO ESPERADO.
+' ============================================
+Private Function EscribirEsperadoPDF() As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hLibro As Result
+  Dim sTexto As String
+  Dim sAutores As String
+  Dim sAutor As String
+  Dim sRutaTmp As String
+  Dim fMontaje As Float
+
+  sRutaTmp = m_InicioCierre.RutaProyectoEnCurso &/ "tmp"
+  If Not Exist(sRutaTmp) Then
+    Try Mkdir sRutaTmp
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta tmp/ del proyecto:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
+
+  ' --- 2. SOLO LIBROS POR AHORA ---
+  If FMain.TipoProyectoActual = m_Constantes.TIPO_LIBRO_MD Then
+
+    ' --- 3. LECTURA DEL LIBRO Y SU FORMATO ---
+    ' LEFT JOIN: SIN FORMATO, LAS MEDIDAS VAN VACÍAS Y EL SCRIPT LO INFORMA
+    Try hLibro = m_ConexionBD.mConn.Exec(
+      "SELECT l.id_libro, l.tipo_libro, l.titulo_libro, l.subtitulo, " &
+      "       l.idioma_principal, l.editorial, l.ano_publicacion, " &
+      "       l.licencia_defecto, l.url_licencia, l.palabras_clave_libro, " &
+      "       l.isbn_electronico, l.doi_libro, f.ancho, f.alto " &
+      "FROM libros_md l " &
+      "LEFT JOIN formatos_pdf f ON f.id_formato_pdf = l.id_formato_pdf " &
+      "WHERE l.id_proyecto = &1 LIMIT 1",
+      m_InicioCierre.IdProyectoEnCurso)
+
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer el libro del proyecto:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+
+    ' RC-GM-17: And NO CORTOCIRCUITA; EL Available VA APARTE
+    If Not hLibro.Available Then
+      m_Sonido.sonar("Error")
+      Message.Error("El proyecto abierto no tiene un libro asociado en la base.")
+      Return False
+    Endif
+
+    ' --- 4. VALORES ---
+    sTexto = LineaEsperado("titulo", m_CorteTitulo.Plano(Texto(hLibro["titulo_libro"])))
+    sTexto &= LineaEsperado("subtitulo", m_CorteTitulo.Plano(Texto(hLibro["subtitulo"])))
+
+    ' LA AUTORÍA SE PARTE EN LAS COMAS: ObtenerAutoresLibro LAS QUITA DE CADA
+    ' NOMBRE Y LAS USA SOLO COMO SEPARADOR (GV-101)
+    sAutores = m_GenerarPDFLibro.ObtenerAutoresLibro(hLibro["id_libro"], hLibro["tipo_libro"])
+    For Each sAutor In Split(sAutores, ",", "", True)
+      sTexto &= LineaEsperado("autor", Trim(sAutor))
+    Next
+
+    sTexto &= LineaEsperado("idioma", Texto(hLibro["idioma_principal"]))
+    sTexto &= LineaEsperado("editorial", Texto(hLibro["editorial"]))
+    sTexto &= LineaEsperado("anio", Texto(hLibro["ano_publicacion"]))
+    sTexto &= LineaEsperado("licencia", Texto(hLibro["licencia_defecto"]))
+    sTexto &= LineaEsperado("url_licencia", Texto(hLibro["url_licencia"]))
+    sTexto &= LineaEsperado("palabras_clave", Texto(hLibro["palabras_clave_libro"]))
+    ' EL ISBN DEL PDF ES EL ELECTRÓNICO (preambulo-hyperref.tex, SECCIÓN 2)
+    sTexto &= LineaEsperado("isbn", Texto(hLibro["isbn_electronico"]))
+    sTexto &= LineaEsperado("doi", Texto(hLibro["doi_libro"]))
+
+    ' MEDIDAS EN mm. LA BASE GUARDA cm. CStr Y NO Str: NO DEPENDE DEL
+    ' LOCALE, SIEMPRE PUNTO (GV-96)
+    If Not IsNull(hLibro["ancho"]) Then
+      sTexto &= LineaEsperado("ancho_mm", CStr(CFloat(hLibro["ancho"]) * 10))
+      sTexto &= LineaEsperado("alto_mm", CStr(CFloat(hLibro["alto"]) * 10))
+      ' LA HOJA DE MONTAJE: EL FORMATO MÁS EL MARGEN DE CRUCES POR LADO, LA
+      ' MISMA CUENTA QUE EL DERIVADO (\gbanchomontaje)
+      fMontaje = 2 * m_GenerarPDFLibro.MARGEN_MONTAJE
+      sTexto &= LineaEsperado("ancho_montaje_mm", CStr((CFloat(hLibro["ancho"]) + fMontaje) * 10))
+      sTexto &= LineaEsperado("alto_montaje_mm", CStr((CFloat(hLibro["alto"]) + fMontaje) * 10))
+    Endif
+
+  Endif
+
+  ' --- 5. ESCRITURA ---
+  ' File.Save ESCRIBE UTF-8 TAL CUAL (SC-02). EN UNA REVISTA QUEDA VACÍO
+  Try File.Save(m_InicioCierre.RutaProyectoEnCurso &/ ARCHIVO_ESPERADO, sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el archivo de valores esperados:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : LineaEsperado
+' Propósito : Una línea del archivo de esperados para todos los archivos.
+' Parámetros: sClave As String — clave del contrato
+'             sValor As String — valor
+' Retorna   : String — «*» NUL clave NUL valor LF
+' Nota      : UN SALTO DE LÍNEA O UN NUL EN EL VALOR PARTIRÍAN EL REGISTRO
+' ============================================
+Private Function LineaEsperado(sClave As String, sValor As String) As String
+
+  sValor = Replace(sValor, Chr(0), " ")
+  sValor = Replace(sValor, Chr(13), " ")
+  sValor = Replace(sValor, Chr(10), " ")
+  Return "*" & Chr(0) & sClave & Chr(0) & sValor & Chr(10)
+
+End
+
+' ============================================
+' Función   : Texto
+' Propósito : Un campo de la base como texto, Null como vacío.
+' Parámetros: vValor As Variant — el campo
+' Retorna   : String
+' ============================================
+Private Function Texto(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return CStr(vValor)
+
+End
+
+' ============================================
+' 4. EJECUTOR
+' ============================================
+
+' ============================================
+' Función   : EjecutarScript
+' Propósito : Corre el script y espera, mostrando que trabaja.
+'             Gemelo de m_AuditarJats.EjecutarHerramienta (ver la cabecera).
+' Parámetros: aComando As String[] — comando y argumentos
+'             sQue As String — qué se valida, para el label
+' Retorna   : Integer — código de salida; -1 si no arrancó; -2 si venció el
+'             plazo; -3 si la cortó Detener. La salida queda en
+'             $sBufferSalida y $sBufferError (GV-24: un String no vuelve por
+'             parámetro).
+' Nota      : UN SOLO CAMINO DE SALIDA DESPUÉS DEL BLOQUEO: EL DESBLOQUEO Y EL
+'             Dec DE Application.Busy NO PUEDEN QUEDAR ATRÁS DE UN Return
+'             (RC-GM-20).
+' ============================================
+Private Function EjecutarScript(aComando As String[], sQue As String) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim fInicio As Float
+  Dim fVence As Float
+  Dim iSegundos As Integer
+  Dim iMostrados As Integer = -1
+  Dim iDrenaje As Integer
+  Dim iResultado As Integer
+
+  $sBufferSalida = ""
+  $sBufferError = ""
+  $iCodigoSalida = -1
+  $bProcesoTerminado = False
+  $bCancelado = False
+
+  ' --- 2. LANZAMIENTO ---
+  ' SC-05: Exec CON ARRAY, NUNCA Shell: LAS RUTAS NO PASAN POR sh
+  Try $hProceso = Exec aComando For Read As "ProcValidar"
+  If Error Then
+    $sBufferError = "No se pudo ejecutar " & aComando[0] & ": " & Error.Text
+    Return -1
+  Endif
+
+  ' --- 3. BLOQUEO ---
+  $bCorriendo = True
+  BloquearControles(True)
+  ' Inc Y NO = 1: SI OTRA COSA YA LO TENÍA EN USO, VUELVE A ESE VALOR (GV-100)
+  Inc Application.Busy
+
+  ' --- 4. ESPERA QUE ENTRA AL BUCLE DE EVENTOS ---
+  ' CADA Wait DEJA LLEGAR LOS EVENTOS Read, Error Y Kill. SIN ESTO NO LLEGA NADA
+  fInicio = Timer
+  fVence = fInicio + PLAZO_SEGUNDOS
+  iResultado = 0
+
+  While Not $bProcesoTerminado
+    Wait 0.01
+
+    ' 4.1 SEÑAL DE VIDA: UNA VEZ POR SEGUNDO, TIEMPO Y NO PORCENTAJE
+    iSegundos = Int(Timer - fInicio)
+    If iSegundos <> iMostrados Then
+      iMostrados = iSegundos
+      FMain.txaValidaciones.Text = "Validando " & sQue & "…  " &
+        Right("0" & CStr(iSegundos \ 60), 2) & ":" & Right("0" & CStr(iSegundos Mod 60), 2)
+    Endif
+
+    ' 4.2 PLAZO: UN PROCESO COLGADO NO PUEDE DEJAR LA SOLAPA BLOQUEADA
+    If Timer > fVence Then
+      Try $hProceso.Kill()
+      iResultado = -2
+      Break
+    Endif
+  Wend
+
+  ' --- 5. DRENAJE ---
+  ' EL Kill PUEDE LLEGAR ANTES QUE LOS ÚLTIMOS TROZOS DE LAS TUBERÍAS
+  For iDrenaje = 1 To 10
+    Wait 0.01
+  Next
+
+  If iResultado = 0 Then iResultado = $iCodigoSalida
+  If $bCancelado Then iResultado = -3
+
+  ' --- 6. DESBLOQUEO: EL ÚNICO CAMINO DE SALIDA ---
+  Dec Application.Busy
+  BloquearControles(False)
+  $bCorriendo = False
+
+  Return iResultado
+
+End
+
+' ============================================
+' Función   : BloquearControles
+' Propósito : Mientras corre, nada de la solapa puede lanzar otra cosa.
+' Parámetros: bBloquear As Boolean — True bloquea, False restaura
+' Retorna   : nada
+' ============================================
+Private Sub BloquearControles(bBloquear As Boolean)
+
+  FMain.btnValidar.Enabled = Not bBloquear
+  FMain.cmbValidaciones.Enabled = Not bBloquear
+  ' SIN PROYECTO NO SE REHABILITA: Detener PUEDE HABER CORTADO EL PROCESO
+  ' DURANTE EL CIERRE, Y ESTE DESBLOQUEO LLEGA DESPUÉS
+  FMain.rbPDF.Enabled = (Not bBloquear) And (m_InicioCierre.RutaProyectoEnCurso <> "")
+  ' EXPORTAR SOLO CON UN RESULTADO A LA VISTA
+  FMain.btnExportarValidacion.Enabled = (Not bBloquear) And $bHayResultado
+
+End
+
+' ============================================
+' Función   : ProcValidar_Read
+' Propósito : Acumula stdout CRUDO. Llega en trozos que pueden partir una
+'             línea o un carácter multibyte: se interpreta recién al final
+'             (SC-02, RC-GM-12).
+' ============================================
+Public Sub ProcValidar_Read()
+
+  Dim sDatos As String
+
+  Try sDatos = Read #Last, Lof(Last)
+  If Error Then Return
+
+  $sBufferSalida &= sDatos
+
+End
+
+' ============================================
+' Función   : ProcValidar_Error
+' Propósito : Acumula stderr. La firma CON parámetro es la verificada en
+'             m_AuditarJats: sin él, el lanzamiento falla con «Bad event
+'             handler ... Not enough arguments».
+' ============================================
+Public Sub ProcValidar_Error(sDatos As String)
+
+  $sBufferError &= sDatos
+
+End
+
+' ============================================
+' Función   : ProcValidar_Kill
+' Propósito : Guarda el código de salida y corta el bucle de espera.
+' ============================================
+Public Sub ProcValidar_Kill()
+
+  $iCodigoSalida = Last.Value
+  $bProcesoTerminado = True
+
+End
+
+' ============================================
+' 5. INTERPRETACIÓN Y GRILLA
+' ============================================
+
+' ============================================
+' Función   : InterpretarSalida
+' Propósito : Pasa los registros del contrato de $sBufferSalida a
+'             $aRegistros. Un registro con otra cantidad de campos se
+'             descarta: es un script roto, y la grilla no puede adivinar.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub InterpretarSalida()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim aCampos As String[]
+
+  $aRegistros = New Object[]
+
+  ' --- 2. UN REGISTRO POR LÍNEA, CAMPOS POR NUL ---
+  ' Split CON IgnoreVoid EN False EN LOS CAMPOS: UN CAMPO VACÍO ES UN DATO
+  ' (EL MISMO CRITERIO DE m_AnalizarProyecto)
+  aLineas = Split($sBufferSalida, gb.NewLine, "", True)
+  For Each sLinea In aLineas
+    aCampos = Split(sLinea, Chr(0), "", False)
+    If aCampos.Count = CAMPOS_REGISTRO Then $aRegistros.Add(aCampos)
+  Next
+
+End
+
+' ============================================
+' Función   : LlenarGrilla
+' Propósito : Arma el pivote: una fila por comprobación, en el orden en que
+'             aparecen; una columna por archivo. La celda lleva el estado y
+'             lo encontrado, con el fondo según el estado.
+' Parámetros: aArchivos As String[] — los archivos validados, en orden
+' Retorna   : nada
+' ============================================
+Private Sub LlenarGrilla(aArchivos As String[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aClaves As New String[]
+  Dim aGrupos As New String[]
+  Dim aComprobaciones As New String[]
+  Dim aRegistro As String[]
+  Dim sClave As String
+  Dim iFila As Integer
+  Dim iColumna As Integer
+  Dim i As Integer
+
+  $cCeldas = New Collection
+
+  ' --- 2. FILAS: COMPROBACIONES EN ORDEN DE APARICIÓN ---
+  For i = 0 To $aRegistros.Max
+    aRegistro = $aRegistros[i]
+    sClave = aRegistro[1] & Chr(1) & aRegistro[2]
+    If aClaves.Find(sClave) < 0 Then
+      aClaves.Add(sClave)
+      aGrupos.Add(NombreGrupo(aRegistro[1]))
+      aComprobaciones.Add(aRegistro[2])
+    Endif
+  Next
+
+  ' --- 3. ESTRUCTURA ---
+  With FMain.gvValidaciones
+    .Rows.Count = 0
+    .Columns.Count = 2 + aArchivos.Count
+    .Columns[0].Title = "Grupo"
+    .Columns[0].Width = 110
+    .Columns[1].Title = "Comprobación"
+    .Columns[1].Width = 220
+    For i = 0 To aArchivos.Max
+      .Columns[i + 2].Title = aArchivos[i]
+      .Columns[i + 2].Width = 500
+    Next
+    .Rows.Count = aClaves.Count
+
+    For iFila = 0 To aClaves.Max
+      .[iFila, 0].Text = aGrupos[iFila]
+      .[iFila, 1].Text = aComprobaciones[iFila]
+    Next
+
+    ' --- 4. CELDAS ---
+    ' UN ARCHIVO QUE NO TIENE UNA COMPROBACIÓN DEJA LA CELDA VACÍA: NO ES UN
+    ' ERROR, ES QUE NO CORRESPONDE (UN PDF SIN DECLARACIÓN NO TIENE FILA PDF/X)
+    For i = 0 To $aRegistros.Max
+      aRegistro = $aRegistros[i]
+      iFila = aClaves.Find(aRegistro[1] & Chr(1) & aRegistro[2])
+      iColumna = aArchivos.Find(aRegistro[0])
+      If iFila < 0 Or iColumna < 0 Then Continue
+      iColumna += 2
+
+      .[iFila, iColumna].Text = TextoCelda(aRegistro)
+      .[iFila, iColumna].Background = ColorEstado(aRegistro[3])
+      $cCeldas[CStr(iFila) & ":" & CStr(iColumna)] = i
+    Next
+  End With
+
+End
+
+' ============================================
+' Función   : TextoCelda
+' Propósito : Lo que se ve en la celda: el estado y, si hay, lo encontrado.
+' Parámetros: aRegistro As String[] — el registro
+' Retorna   : String
+' ============================================
+Private Function TextoCelda(aRegistro As String[]) As String
+
+  If aRegistro[4] = "" Then Return aRegistro[3]
+  Return aRegistro[3] & " · " & aRegistro[4]
+
+End
+
+' ============================================
+' Función   : ColorEstado
+' Propósito : Fondo de la celda según el estado. INFO va sin color: es dato,
+'             no juicio.
+' Parámetros: sEstado As String — OK, AVISO, ERROR o INFO
+' Retorna   : Integer — color
+' ============================================
+Private Function ColorEstado(sEstado As String) As Integer
+
+  Select Case sEstado
+    Case "OK"
+      Return Color.RGB(220, 245, 220)
+    Case "AVISO"
+      Return Color.RGB(255, 243, 205)
+    Case "ERROR"
+      Return Color.RGB(248, 215, 218)
+  End Select
+  Return Color.Default
+
+End
+
+' ============================================
+' Función   : NombreGrupo
+' Propósito : El nombre visible de un grupo del contrato.
+' Parámetros: sGrupo As String — metadatos, tecnico, conformidad
+' Retorna   : String
+' ============================================
+Private Function NombreGrupo(sGrupo As String) As String
+
+  Select Case sGrupo
+    Case "metadatos"
+      Return "Metadatos"
+    Case "tecnico"
+      Return "Técnico"
+    Case "conformidad"
+      Return "Conformidad"
+  End Select
+  Return sGrupo
+
+End
+
+' ============================================
+' Función   : Resumen
+' Propósito : La línea del label al terminar: cuántos de cada estado.
+' Parámetros: aArchivos As String[] — los archivos validados
+' Retorna   : String
+' ============================================
+Private Function Resumen(aArchivos As String[]) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aRegistro As String[]
+  Dim iOK As Integer
+  Dim iAvisos As Integer
+  Dim iErrores As Integer
+  Dim sQue As String
+  Dim i As Integer
+
+  ' --- 2. CUENTA ---
+  For i = 0 To $aRegistros.Max
+    aRegistro = $aRegistros[i]
+    Select Case aRegistro[3]
+      Case "OK"
+        Inc iOK
+      Case "AVISO"
+        Inc iAvisos
+      Case "ERROR"
+        Inc iErrores
+    End Select
+  Next
+
+  ' --- 3. TEXTO ---
+  If aArchivos.Count = 1 Then
+    sQue = aArchivos[0]
+  Else
+    sQue = CStr(aArchivos.Count) & " archivos"
+  Endif
+
+  Return sQue & ": " & CStr(iOK) & " OK · " & CStr(iAvisos) & " aviso(s) · " &
+    CStr(iErrores) & " error(es) — " & Format(Now, "hh:nn")
+
+End
+
+' ============================================
+' Función   : MostrarDetalle
+' Propósito : Atiende gvValidaciones_Click: en el pivote la celda solo tiene
+'             lugar para el estado y lo encontrado; el esperado y el detalle
+'             van al label.
+' Parámetros: iFila As Integer, iColumna As Integer — la celda elegida
+' Retorna   : nada
+' ============================================
+Public Sub MostrarDetalle(iFila As Integer, iColumna As Integer)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sClave As String
+  Dim aRegistro As String[]
+  Dim sTexto As String
+
+  ' --- 2. ¿ES UNA CELDA CON REGISTRO? ---
+  sClave = CStr(iFila) & ":" & CStr(iColumna)
+  If Not $cCeldas.Exist(sClave) Then Return
+  aRegistro = $aRegistros[$cCeldas[sClave]]
+
+  ' --- 3. TEXTO ---
+  sTexto = aRegistro[0] & " — " & aRegistro[2] & ": " & aRegistro[3]
+  If aRegistro[4] <> "" Then sTexto &= " · encontrado: " & aRegistro[4]
+  If aRegistro[5] <> "" Then sTexto &= " · esperado: " & aRegistro[5]
+  If aRegistro[6] <> "" Then sTexto &= " · " & aRegistro[6]
+
+  FMain.txaValidaciones.Text = sTexto
+
+End
+
+' ============================================
+' 6. EXPORTACIÓN
+' ============================================
+
+' ============================================
+' Función   : ExportarCSV
+' Propósito : Atiende btnExportarValidacion: guarda el último resultado en
+'             FORMATO LARGO, una fila por archivo y comprobación. El pivote
+'             sirve para mirar; como dato, el largo se filtra y se cruza.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ExportarCSV()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aEncabezados As String[]
+  Dim aFilas As New Object[]
+  Dim aRegistro As String[]
+  Dim sCarpeta As String
+  Dim sNombre As String
+  Dim i As Integer
+
+  ' --- 2. VALIDACIÓN ---
+  If $bCorriendo Or Not $bHayResultado Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay una validación para exportar. Correr «Validar» primero.")
+    Return
+  Endif
+
+  ' --- 3. FILAS: LOS REGISTROS TAL CUAL, CON EL GRUPO LEGIBLE ---
+  aEncabezados = ["Archivo", "Grupo", "Comprobación", "Estado", "Encontrado", "Esperado", "Detalle"]
+  For i = 0 To $aRegistros.Max
+    aRegistro = $aRegistros[i]
+    aFilas.Add([aRegistro[0], NombreGrupo(aRegistro[1]), aRegistro[2], aRegistro[3],
+      aRegistro[4], aRegistro[5], aRegistro[6]])
+  Next
+
+  ' --- 4. DESTINO SUGERIDO Y GUARDADO (m_CSV INFORMA EL RESULTADO) ---
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso
+  If sCarpeta = "" Then sCarpeta = User.Home
+  sNombre = "validacion-" & $sTipo & "-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) &
+    "-" & Format(Now, "yyyy-mm-dd") & ".csv"
+
+  m_CSV.Guardar(m_CSV.Armar(aEncabezados, aFilas), sCarpeta &/ sNombre, "Exportar la validación")
+
+End
