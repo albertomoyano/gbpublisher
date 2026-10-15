@@ -54,6 +54,13 @@ Private Const PLAZO_HTML As Float = 600.0
 ' EL PDF HACE CINCO O MÁS PASADAS DE LuaLaTeX, MÁS biber Y xindy
 Private Const PLAZO_PDF As Float = 1200.0
 
+' --- PDF/A DE LIBROS ---
+' latex/pdfa/: LOS AUXILIARES DEL PDF/A NO PISAN LOS DEL PDF ESTÁNDAR (LOS
+' .idx TIENEN NOMBRE FIJO). EL SUFIJO DISTINGUE EL ARCHIVO EN salidas/pdf/
+Private Const CARPETA_PDFA As String = "pdfa"
+Private Const SUFIJO_PDFA2U As String = "_pdfa2u"
+Private Const NIVEL_PDFA2U As String = "2u"
+
 ' CÓDIGOS DE SALIDA DE LOS SCRIPTS. DEBEN COINCIDIR CON engine/comun.sh
 Public Const SALIDA_OK As Integer = 0
 Public Const SALIDA_AVISOS As Integer = 3
@@ -1160,8 +1167,173 @@ Private Function DescribirPrestaciones(sEstado As String) As String
       Return "  enlaces en color, sin marcas de trabajo"
     Case "publicado"
       Return "  cruces de corte, enlaces sin color, código en blanco y negro, hoja de montaje"
+    Case m_GenerarPDFLibro.PERFIL_PRESERVACION
+      Return "  preservación: formato final, enlaces y código en color, sin marcas ni cruces"
     Case Else
       Return "  estado no reconocido: se compone como en producción"
   End Select
+
+End
+
+' ============================================
+' Función   : GenerarPDFA2uLibro
+' Propósito : Salida PDF/A-2u del libro, para preservación. Es directa: no
+'             pregunta y NO REGENERA NADA. Compila lo que ya está en latex/
+'             —el main.tex y las piezas del PDF publicado— con un maestro
+'             envolvente que declara la norma y el perfil de preservación:
+'               \DocumentMetadata{pdfstandard=A-2u, lang=…}
+'               \def\gbPerfilPreservacion{}
+'               \input{main}
+'             El PDF/A se hace cuando el libro ya está en la web y quizá en
+'             imprenta: tiene que ser ESE libro, no uno recompuesto desde
+'             canónicos que pudieron cambiar después.
+'             engine/compilar_pdfa_libro.sh compila en latex/pdfa/, valida con
+'             veraPDF y solo si es conforme lo pasa a salidas/pdf/ como
+'             {proyecto}_pdfa2u.pdf.
+' Parámetros: ninguno (trabaja sobre el proyecto en curso)
+' Retorna   : nada
+' Nota      : SIN GUARD DE CAMBIOS SIN GUARDAR: NO LEE LOS CANÓNICOS NI EL
+'             EDITOR, SOLO latex/. EL PERFIL DE PRESERVACIÓN LO APLICA EL
+'             PREÁMBULO DERIVADO, QUE TIENE QUE SER DE ESTA VERSIÓN: SE
+'             VERIFICA EN EL APARTADO 2.
+' ============================================
+Public Sub GenerarPDFA2uLibro()
+
+  Dim hLibro As Result
+  Dim sRutaLatex As String
+  Dim sPreambulo As String
+  Dim sIdioma As String
+  Dim sNombreSalida As String
+  Dim sDirPdfa As String
+  Dim sMaestroRel As String
+  Dim sTexto As String
+  Dim aArgumentos As New String[]
+  Dim iResultado As Integer
+
+  ' --- 0. MOSTRAR CONSOLA ---
+  FMain.tbMostrarPanelInferior.Value = True
+  FMain.TabPanelIzquierdaInferior.Index = 0
+
+  ' --- 1. PROYECTO ABIERTO ---
+  If m_InicioCierre.IdProyectoEnCurso = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Abrí un proyecto antes de generar la salida PDF/A.")
+    Return
+  Endif
+
+  ' --- 2. LO QUE SE REUSA TIENE QUE ESTAR, Y SER DE ESTA VERSIÓN ---
+  sRutaLatex = m_InicioCierre.RutaProyectoEnCurso &/ "latex"
+
+  If Not Exist(sRutaLatex &/ "main.tex") Then
+    m_Sonido.sonar("Error")
+    Message.Error("No existe latex/main.tex." & gb.NewLine & gb.NewLine &
+      "El PDF/A compila lo que ya está en latex/, sin regenerar nada:" & gb.NewLine &
+      "generá primero el PDF estándar.")
+    Return
+  Endif
+
+  Try sPreambulo = File.Load(sRutaLatex &/ "preambulo-proyecto.tex")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer latex/preambulo-proyecto.tex:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' UN DERIVADO ANTERIOR NO CONOCE EL PERFIL: EL PDF/A SALDRÍA CON LAS
+  ' PRESTACIONES DEL ÚLTIMO ESTADO (CON CRUCES, SI FUE IMPRENTA) SIN AVISO
+  If InStr(sPreambulo, "\\gbPerfilPreservacion") = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("El preambulo-proyecto.tex de latex/ es de una versión anterior" & gb.NewLine &
+      "y no conoce el perfil de preservación." & gb.NewLine & gb.NewLine &
+      "Generá una vez el PDF estándar con esta versión de gbpublisher.")
+    Return
+  Endif
+
+  ' --- 3. IDIOMA DEL DOCUMENTO ---
+  ' \DocumentMetadata PIDE EL CÓDIGO BCP 47, QUE ES LO QUE GUARDA LA BASE
+  ' (m_Idiomas). SE VERIFICA CONTRA EL CATÁLOGO: UN CÓDIGO QUE NO ESTÁ AHÍ
+  ' TAMPOCO LO RECONOCE babel
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT idioma_principal FROM libros_md WHERE id_proyecto = &1 LIMIT 1",
+    m_InicioCierre.IdProyectoEnCurso)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el libro del proyecto:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  If Not hLibro.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El proyecto abierto no tiene un libro asociado en la base.")
+    Return
+  Endif
+
+  If IsNull(hLibro["idioma_principal"]) Then
+    sIdioma = ""
+  Else
+    sIdioma = Trim(hLibro["idioma_principal"])
+  Endif
+
+  If m_Idiomas.Babel(sIdioma) = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El idioma principal del libro no está en el catálogo de idiomas: «" & sIdioma & "».")
+    Return
+  Endif
+
+  ' --- 4. MAESTRO ENVOLVENTE ---
+  ' SE LLAMA COMO EL PDF FINAL: CON \DocumentMetadata, dc:source ES EL NOMBRE
+  ' DEL TRABAJO, Y ASÍ DICE DE QUÉ LIBRO ES (pdfsource SE IGNORA, GV-101)
+  sNombreSalida = File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & SUFIJO_PDFA2U
+  sDirPdfa = sRutaLatex &/ CARPETA_PDFA
+  sMaestroRel = "latex" &/ CARPETA_PDFA &/ sNombreSalida & ".tex"
+
+  If Not Exist(sDirPdfa) Then
+    Try Mkdir sDirPdfa
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear latex/" & CARPETA_PDFA & "/:" & gb.NewLine & Error.Text)
+      Return
+    Endif
+  Endif
+
+  sTexto = "% " & sNombreSalida & ".tex — MAESTRO DEL PDF/A-2u" & gb.NewLine
+  sTexto &= "% ARCHIVO DERIVADO: LO ESCRIBE gbpublisher EN CADA GENERACIÓN." & gb.NewLine
+  sTexto &= "% \\DocumentMetadata VA ANTES DE \\documentclass, QUE ESTÁ EN main.tex." & gb.NewLine
+  sTexto &= "% \\gbPerfilPreservacion IMPONE EL PERFIL DE PRESERVACIÓN AL PREÁMBULO" & gb.NewLine
+  sTexto &= "% DERIVADO: SIN MARCAS DE TRABAJO NI CRUCES DE CORTE." & gb.NewLine
+  sTexto &= "\\DocumentMetadata{pdfstandard=A-2u, lang=" & sIdioma & "}" & gb.NewLine
+  sTexto &= "\\def\\gbPerfilPreservacion{}" & gb.NewLine
+  sTexto &= "\\input{main}" & gb.NewLine
+
+  ' File.Save ESCRIBE UTF-8 TAL CUAL (SC-02)
+  Try File.Save(m_InicioCierre.RutaProyectoEnCurso &/ sMaestroRel, sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el maestro del PDF/A:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 5. COMPILACIÓN Y VALIDACIÓN ---
+  ' POR LA LANZADORA (SC-53). EL SCRIPT VALIDA CON veraPDF Y SOLO ENTREGA UN
+  ' PDF CONFORME: UNO QUE NO LO ES QUEDA EN latex/pdfa/ Y SALE CON CÓDIGO 1
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(m_Bibtex.NombreArchivoBib())
+  aArgumentos.Add(sNombreSalida)
+  aArgumentos.Add(sMaestroRel)
+  aArgumentos.Add(NIVEL_PDFA2U)
+
+  iResultado = EjecutarScriptSalida("compilar_pdfa_libro.sh", aArgumentos, PLAZO_PDF,
+    "Componiendo el PDF/A-2u del libro")
+
+  ' --- 6. INFORME ---
+  InformarResultado(iResultado, "El PDF/A-2u del libro",
+    m_InicioCierre.RutaProyectoEnCurso &/ "salidas" &/ "pdf" &/ sNombreSalida & ".pdf")
+
+Catch
+  ' RED DE ÚLTIMO RECURSO (RC-GM-20). LOS FALLOS PREVISIBLES SE ATRAPAN CON
+  ' Try + If Error EN SU PUNTO.
+  m_Sonido.sonar("Error")
+  Message.Error("Error al preparar la salida PDF/A: " & Error.Text)
 
 End

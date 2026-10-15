@@ -157,7 +157,14 @@ sub GrupoMetadatos {
   # CARGA Y LAS CLAVES QUEDAN SOLO EN dc:subject (MEDIDO, TeX Live 2023)
   my $claves    = Uno($meta, 'XMP-pdf:Keywords')
                   // (Lista($meta, 'XMP-dc:Subject') ? join(', ', Lista($meta, 'XMP-dc:Subject')) : undef);
+  # prism:isbn LO ESCRIBE hyperxmp. CON \DocumentMetadata (EL PDF/A) hyperxmp
+  # NO SE CARGA, pdfisbn SE IGNORA Y EL ISBN LLEGA SOLO POR pdfidentifier, A
+  # dc:identifier COMO urn:isbn: (MEDIDO, TeX Live 2023)
   my $isbn      = Uno($meta, 'XMP-prism:ISBN');
+  if (!defined $isbn || $isbn eq '') {
+    my ($id) = grep { /^urn:isbn:/i } Lista($meta, 'XMP-dc:Identifier');
+    ($isbn = $id) =~ s/^urn:isbn://i if defined $id;
+  }
   my $doi       = Uno($meta, 'XMP-prism:DOI');
 
   # --- 2. CONTRA LA BASE ---
@@ -246,22 +253,21 @@ sub GrupoTecnico {
     Registro($objeto, 'tecnico', 'Fuentes embebidas',
       @sin_emb ? 'ERROR' : 'OK', ($total - @sin_emb) . " de $total", "$total de $total",
       @sin_emb ? 'sin embeber: ' . join(', ', @sin_emb) : '');
-    # SIN TABLA UNICODE ES ERROR SOLO SI EL ARCHIVO DECLARA UN NIVEL QUE LA
-    # EXIGE (PDF/A u O a). EN LOS DEMÁS ES AVISO: PUEDE SER UNA FUENTE QUE NO
-    # ES TEXTO. MEDIDO: LAS CRUCES DE crop (OPCIÓN cam) DIBUJAN SUS CÍRCULOS
-    # CON \circle, QUE USA LCIRCLE10, Type 1 SIN TABLA (l-CALIFA DE IMPRENTA)
-    my $nivel = lc(Uno($meta, 'XMP-pdfaid:Conformance') // '');
-    my $exige = ($nivel eq 'u' || $nivel eq 'a');
+    # SIN TABLA ToUnicode ES AVISO, NUNCA ERROR. LA COLUMNA uni DE pdffonts
+    # SOLO DICE SI LA FUENTE TRAE LA TABLA, Y UNA Type 1 CON NOMBRES DE GLIFO
+    # ESTÁNDAR SE MAPEA A UNICODE SIN ELLA: MEDIDO, UN PDF/A-2u CON LCIRCLE10
+    # (uni no) PASA veraPDF 1.30. LA CONFORMIDAD LA DECIDE veraPDF, EN SU
+    # GRUPO. LCIRCLE10 SON LOS CÍRCULOS DE LAS CRUCES DE crop (OPCIÓN cam),
+    # DIBUJADOS CON \circle (l-CALIFA DE IMPRENTA)
     my $detalle = '';
     if (@sin_uni) {
-      $detalle = 'sin tabla Unicode: ' . join(', ', @sin_uni);
+      $detalle = 'sin tabla ToUnicode: ' . join(', ', @sin_uni);
       $detalle .= '. LCIRCLE son los círculos de las cruces de corte (crop, cam): no es texto'
         if grep { /LCIRCLE/i } @sin_uni;
-      $detalle .= $exige ? '. El nivel declarado exige tabla Unicode en todas las fuentes'
-                         : '. Si es una fuente de texto, el texto no se copia bien';
+      $detalle .= '. Si es una fuente de texto, revisar que el texto se copie bien';
     }
     Registro($objeto, 'tecnico', 'Fuentes con Unicode',
-      @sin_uni ? ($exige ? 'ERROR' : 'AVISO') : 'OK',
+      @sin_uni ? 'AVISO' : 'OK',
       ($total - @sin_uni) . " de $total", "$total de $total", $detalle);
   }
 

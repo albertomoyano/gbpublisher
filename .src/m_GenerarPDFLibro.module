@@ -48,6 +48,11 @@ Public Const MAIN_PROPUESTO As String = "latex/.main.tex.tmp"
 ' gbverso Y gbversoepigrafe, SC-49).
 Public Const CONTRATO_VERSION As Integer = 14
 
+' PERFIL DE PRESTACIONES DEL PDF/A. NO ES UN VALOR DE libros_md.estado_libro:
+' LO ELIGE EL MAESTRO DEL PDF/A CON \gbPerfilPreservacion (APARTADO 8.1 DE
+' GenerarPreambuloProyecto)
+Public Const PERFIL_PRESERVACION As String = "preservacion"
+
 ' --- ZONAS DEL LIBRO ---
 Private Const ZONA_FRONT As Integer = 1
 Private Const ZONA_BODY As Integer = 2
@@ -536,6 +541,7 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Dim aCodigos As String[]
   Dim aIdiomas As New String[]
   Dim aPrest As String[]
+  Dim aPreservacion As String[]
   Dim iIdLibro As Integer
   Dim iFormato As Integer
   Dim cValores As Collection
@@ -701,16 +707,30 @@ Public Function GenerarPreambuloProyecto() As Boolean
 
   ' 8.1 PRESTACIONES DE SALIDA
   ' aPrest YA VIENE CARGADO DEL APARTADO 4. NO SE VUELVE A LLAMAR A
-  ' PrestacionesDeSalida: DOS LLAMADAS SON DOS LUGARES QUE ALGUIEN PUEDE
-  ' CAMBIAR POR SEPARADO, Y EL DERIVADO SALDRÍA CON BANDERAS INCONSISTENTES.
+  ' PrestacionesDeSalida CON EL ESTADO: DOS LLAMADAS SON DOS LUGARES QUE
+  ' ALGUIEN PUEDE CAMBIAR POR SEPARADO, Y EL DERIVADO SALDRÍA CON BANDERAS
+  ' INCONSISTENTES.
+  ' DOS JUEGOS DE VALORES: EL DEL ESTADO Y EL DE PRESERVACIÓN. EL SEGUNDO LO
+  ' ELIGE EL MAESTRO DEL PDF/A DEFINIENDO \gbPerfilPreservacion
+  ' (m_GenerarSalidasLibro.GenerarPDFA2uLibro), SIN REGENERAR NADA.
+  ' LOS \newif VAN AFUERA DEL CONDICIONAL Y SOLO LOS VALORES ADENTRO:
+  ' \newif ES \outer, Y DENTRO DE UN \ifdefined LA COMPILACIÓN ABORTA CON
+  ' «Incomplete \ifdefined» (MEDIDO, TeX Live 2023)
+  aPreservacion = PrestacionesDeSalida(PERFIL_PRESERVACION)
   s &= "% --- PRESTACIONES DE SALIDA (derivadas de estado_libro) ---" & gb.NewLine
-  s &= "\\newif\\ifgbshowframe    \\gbshowframe" & aPrest[0] & gb.NewLine
-  s &= "\\newif\\ifgbhomeoarchy   \\gbhomeoarchy" & aPrest[1] & gb.NewLine
-  s &= "\\newif\\ifgbenlaces      \\gbenlaces" & aPrest[2] & gb.NewLine
-  s &= "\\newif\\ifgbcruces       \\gbcruces" & aPrest[3] & gb.NewLine
+  s &= "\\newif\\ifgbshowframe" & gb.NewLine
+  s &= "\\newif\\ifgbhomeoarchy" & gb.NewLine
+  s &= "\\newif\\ifgbenlaces" & gb.NewLine
+  s &= "\\newif\\ifgbcruces" & gb.NewLine
   ' EL CÓDIGO EN COLOR O EN BLANCO Y NEGRO (SC-42): LO LEE LA SECCIÓN 8 DEL
   ' CONTRATO
-  s &= "\\newif\\ifgbcodigocolor  \\gbcodigocolor" & aPrest[4] & gb.NewLine
+  s &= "\\newif\\ifgbcodigocolor" & gb.NewLine
+  s &= "% EL MAESTRO DEL PDF/A DEFINE \\gbPerfilPreservacion" & gb.NewLine
+  s &= "\\ifdefined\\gbPerfilPreservacion" & gb.NewLine
+  s &= AsignarPrestaciones(aPreservacion)
+  s &= "\\else" & gb.NewLine
+  s &= AsignarPrestaciones(aPrest)
+  s &= "\\fi" & gb.NewLine
   s &= gb.NewLine
 
   ' 8.2 FORMATO DE PÁGINA
@@ -1636,6 +1656,27 @@ Private Function NumeroLatex(vValor As Variant) As String
 End
 
 ' ============================================
+' Función   : AsignarPrestaciones
+' Propósito : Las cinco asignaciones de un juego de prestaciones, para el
+'             condicional del apartado 8.1 de GenerarPreambuloProyecto.
+' Parámetros: aPrest As String[] — cinco "true"/"false" en el orden de
+'             PrestacionesDeSalida
+' Retorna   : String — cinco líneas \gb…true / \gb…false, sangradas
+' ============================================
+Private Function AsignarPrestaciones(aPrest As String[]) As String
+
+  Dim s As String
+
+  s = "  \\gbshowframe" & aPrest[0] & gb.NewLine
+  s &= "  \\gbhomeoarchy" & aPrest[1] & gb.NewLine
+  s &= "  \\gbenlaces" & aPrest[2] & gb.NewLine
+  s &= "  \\gbcruces" & aPrest[3] & gb.NewLine
+  s &= "  \\gbcodigocolor" & aPrest[4] & gb.NewLine
+  Return s
+
+End
+
+' ============================================
 ' Función   : PrestacionesDeSalida
 ' Propósito : Deriva las cinco prestaciones del estado editorial del libro.
 '             Se emiten PRESTACIONES y no un «modo»: así agregar un estado
@@ -1660,6 +1701,11 @@ Private Function PrestacionesDeSalida(sEstado As String) As String[]
       Return ["false", "false", "true", "false", "true"]
     Case "publicado"
       Return ["false", "false", "false", "true", "false"]
+    Case PERFIL_PRESERVACION
+      ' NO ES UN ESTADO EDITORIAL: LO PIDE EL PDF/A. EL LIBRO DE PANTALLA, SIN
+      ' MARCAS DE TRABAJO NI CRUCES: LA COPIA DE PRESERVACIÓN ES EL FORMATO
+      ' FINAL, NO LA HOJA DE MONTAJE
+      Return ["false", "false", "true", "false", "true"]
     Case Else
       ' SIN ESTADO RECONOCIDO SE ASUME PRODUCCIÓN: SIN MARCAS DE TRABAJO
       ' Y SIN CRUCES DE CORTE, QUE ES LO MENOS DESTRUCTIVO.
