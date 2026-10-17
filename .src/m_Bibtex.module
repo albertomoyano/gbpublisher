@@ -84,68 +84,126 @@ End
 ' ============================================
 ' Función   : ProblemaOrdenesLatex
 ' Propósito : Dice si un valor de una referencia cumple la regla de las órdenes
-'             de LaTeX: solo \enquote{…}, \sptext{…} y \emph{…}, y las llaves
+'             de LaTeX (SC-58): solo \enquote{…}, \sptext{…} y \emph{…}, con
+'             \enquote hasta el nivel que admite el campo, y las llaves
 '             balanceadas. Es la regla que usan el formulario al guardar, la
 '             exportación del .bib y el canónico (m_XML.TextoBibDocBook).
 ' Parámetros: sValor As String — el valor de un campo
+'             iMaxEnquote As Integer — niveles de \enquote admitidos: 2 por
+'                                      omisión, 1 en un título que el estilo
+'                                      pone entre comillas (NivelesEnquote)
 ' Retorna   : String — "" si cumple; si no, qué falla
 ' Nota      : SE RECORRE POR BYTES (Mid, Len): LAS MARCAS SON ASCII Y UN BYTE
 '             DE UN CARÁCTER UTF-8 NUNCA ES «\», «{» NI «}».
 '             LAS LLAVES SUELTAS SON LEGÍTIMAS: AGRUPAN UN NOMBRE
 '             ({de la Fuente}) O PROTEGEN UNA MAYÚSCULA ({I}'ve).
+'             LOS NIVELES: csquotes ADMITE DOS (maxlevel=2, MANUAL §2.1) Y EL
+'             TERCERO CORTA EL PDF (MEDIDO). SI EL ESTILO YA PUSO COMILLAS AL
+'             TÍTULO, EN EL DATO QUEDA UNO SOLO (DECISIÓN DE ALBERTO, SC-58).
 ' ============================================
-Public Function ProblemaOrdenesLatex(sValor As String) As String
+Public Function ProblemaOrdenesLatex(sValor As String, Optional iMaxEnquote As Integer = 2) As String
 
   Dim i As Integer
-  Dim iNivel As Integer
+  Dim j As Integer
   Dim sCaracter As String
   Dim sOrden As String
-  Dim j As Integer
+  Dim aGrupos As New String[]
+  Dim sGrupo As String
+  Dim iAbiertos As Integer
 
   ' --- 1. RECORRIDO ---
+  ' aGrupos ES LA PILA DE LO QUE ESTÁ ABIERTO: «q» UN \enquote, «o» OTRA
+  ' ORDEN, «g» UNA LLAVE SUELTA. CADA «}» CIERRA EL ÚLTIMO
   i = 1
   While i <= Len(sValor)
     sCaracter = Mid(sValor, i, 1)
 
     If sCaracter = "\\" Then
-      ' LAS TRES ÓRDENES ADMITIDAS (DECISIÓN DE ALBERTO). SE AVANZA HASTA
-      ' EL CARÁCTER ANTERIOR A SU LLAVE: CON EL Inc DEL FINAL, LA VUELTA
-      ' SIGUIENTE CAE EN LA LLAVE Y LA CUENTA COMO CUALQUIER OTRA
+      ' LAS TRES ÓRDENES ADMITIDAS (DECISIÓN DE ALBERTO), CON SU LLAVE
       If Mid(sValor, i, 9) = "\\enquote{" Then
-        i += 7
-      Else If Mid(sValor, i, 8) = "\\sptext{" Then
-        i += 6
-      Else If Mid(sValor, i, 6) = "\\emph{" Then
-        i += 4
-      Else
-        ' EL NOMBRE DE LA ORDEN, PARA EL MENSAJE: LAS LETRAS QUE SIGUEN
-        j = i + 1
-        While j <= Len(sValor)
-          If Not (Mid(sValor, j, 1) Like "[A-Za-z]") Then Break
-          Inc j
-        Wend
-        sOrden = Mid(sValor, i, j - i)
-        If sOrden = "\\" Then sOrden = "\\" & Mid(sValor, i + 1, 1)
-        ' UNA DE LAS TRES SIN SU LLAVE PEGADA NO ES UNA ORDEN DE OTRA FAMILIA
-        If ["\\enquote", "\\sptext", "\\emph"].Exist(sOrden) Then
-          Return "«" & sOrden & "» sin su llave «{» pegada"
+        ' LOS \enquote YA ABIERTOS: ESTE SERÍA EL SIGUIENTE NIVEL
+        iAbiertos = 0
+        For Each sGrupo In aGrupos
+          If sGrupo = "q" Then Inc iAbiertos
+        Next
+        If iAbiertos >= iMaxEnquote Then
+          If iMaxEnquote = 1 Then Return "un \\enquote dentro de otro \\enquote en un título que el estilo pone entre comillas (un solo nivel)"
+          Return "tres niveles de \\enquote (csquotes admite dos)"
         Endif
-        Return "orden no admitida «" & sOrden & "» (solo \\enquote, \\sptext y \\emph)"
+        aGrupos.Push("q")
+        i += 9
+        Continue
+      Else If Mid(sValor, i, 8) = "\\sptext{" Then
+        aGrupos.Push("o")
+        i += 8
+        Continue
+      Else If Mid(sValor, i, 6) = "\\emph{" Then
+        aGrupos.Push("o")
+        i += 6
+        Continue
       Endif
-    Else If sCaracter = "{" Then
-      Inc iNivel
+
+      ' EL NOMBRE DE LA ORDEN, PARA EL MENSAJE: LAS LETRAS QUE SIGUEN
+      j = i + 1
+      While j <= Len(sValor)
+        If Not (Mid(sValor, j, 1) Like "[A-Za-z]") Then Break
+        Inc j
+      Wend
+      sOrden = Mid(sValor, i, j - i)
+      If sOrden = "\\" Then sOrden = "\\" & Mid(sValor, i + 1, 1)
+      ' UNA DE LAS TRES SIN SU LLAVE PEGADA NO ES UNA ORDEN DE OTRA FAMILIA
+      If ["\\enquote", "\\sptext", "\\emph"].Exist(sOrden) Then
+        Return "«" & sOrden & "» sin su llave «{» pegada"
+      Endif
+      Return "orden no admitida «" & sOrden & "» (solo \\enquote, \\sptext y \\emph)"
+    Endif
+
+    If sCaracter = "{" Then
+      aGrupos.Push("g")
     Else If sCaracter = "}" Then
-      Dec iNivel
-      If iNivel < 0 Then Return "una llave «}» que no abrió ninguna «{»"
+      If aGrupos.Count = 0 Then Return "una llave «}» que no abrió ninguna «{»"
+      aGrupos.Pop()
     Endif
 
     Inc i
   Wend
 
   ' --- 2. CIERRE ---
-  If iNivel > 0 Then Return "falta cerrar " & CStr(iNivel) & " llave(s) «{»"
+  If aGrupos.Count > 0 Then Return "falta cerrar " & CStr(aGrupos.Count) & " llave(s) «{»"
 
   Return ""
+
+End
+
+' ============================================
+' Función   : NivelesEnquote
+' Propósito : Cuántos niveles de \enquote admite un campo de una referencia:
+'             uno en el título y el subtítulo de los tipos cuyo título algún
+'             estilo pone entre comillas; dos en todo lo demás (SC-58).
+' Parámetros: sColumna As String — la columna de la tabla bibtex
+'             sTipo    As String — tipo_de_entrada
+' Retorna   : Integer — 1 o 2
+' Nota      : LA LISTA ES LA UNIÓN DE LOS ESTILOS DE LA APLICACIÓN, NO LA DEL
+'             ESTILO DEL LIBRO: EL ESTILO SE PUEDE CAMBIAR DESPUÉS (MISMO
+'             CRITERIO QUE RC-BL-02; DECISIÓN DE ALBERTO). SALE DEL FUENTE:
+'               biblatex.def (3.19)   article inbook incollection inproceedings
+'                                     patent thesis unpublished
+'               philosophy-standard   article inreference (thesis EN CURSIVA)
+'               ieee.bbx              online report
+'               apa.bbx, iso.bbx      NINGUNO
+'             conference ES EL ALIAS DE inproceedings EN biber.
+'             EL SUBTÍTULO VA DENTRO DE LAS MISMAS COMILLAS QUE EL TÍTULO
+'             (MEDIDO CON VERONA).
+' ============================================
+Public Function NivelesEnquote(sColumna As String, sTipo As String) As Integer
+
+  Dim aTipos As String[] = ["article", "conference", "inbook", "incollection",
+    "inproceedings", "inreference", "online", "patent", "report", "thesis",
+    "unpublished"]
+
+  If sColumna <> "title" And sColumna <> "sub_title" Then Return 2
+  If aTipos.Exist(LCase(Trim(sTipo))) Then Return 1
+  Return 2
 
 End
 ' ============================================
@@ -231,10 +289,12 @@ Private Function OrdenesLatexEnControles(hContenedor As Container) As String[]
     ' (RC-GM-17)
     If hCtrl Is TextBox Then
       If hCtrl.Name <> "txtClaveBibtex" Then
-        sProblema = ProblemaOrdenesLatex(TextBox(hCtrl).Text)
+        ' EL CAMPO SE NOMBRA POR SU COLUMNA: LA NECESITA NivelesEnquote
+        sCampo = hCtrl.Name
+        If $MapaCampos.Exist(hCtrl.Name) Then sCampo = $MapaCampos[hCtrl.Name]
+        sProblema = ProblemaOrdenesLatex(TextBox(hCtrl).Text,
+          NivelesEnquote(sCampo, FMain.cmbTipoDeEntrada.Text))
         If sProblema <> "" Then
-          sCampo = hCtrl.Name
-          If $MapaCampos.Exist(hCtrl.Name) Then sCampo = $MapaCampos[hCtrl.Name]
           aTotal.Add(sCampo & ": " & sProblema)
         Endif
       Endif
@@ -2123,7 +2183,8 @@ Public Function ExportarBibTeX() As Boolean
 
           ' LAS ÓRDENES DE LaTeX (SC-57): LO QUE YA ESTÁ EN LA BASE O LLEGÓ
           ' SIN PASAR POR EL FORMULARIO TAMBIÉN SE CONTROLA ACÁ
-          sProblema = ProblemaOrdenesLatex(sValor)
+          sProblema = ProblemaOrdenesLatex(sValor,
+            NivelesEnquote(sColumna, hRes["tipo_de_entrada"]))
           If sProblema <> "" Then
             aProblemas.Add(hRes["clave_bibtex"] & " — " & sCampo & ": " & sProblema)
           Endif

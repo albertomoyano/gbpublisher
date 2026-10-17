@@ -3367,11 +3367,32 @@ Verona y APA. Los demás estilos siguen con sus hojas hasta que se releven (SC-1
 
 DECISIÓN CERRADA (decisión de Alberto). En los campos de una referencia se admiten tres órdenes de LaTeX y ninguna otra:
 
-    \enquote{…}   cita entre comillas; el nivel lo decide el anidamiento
+    \enquote{…}   cita entre comillas; el nivel lo decide el anidamiento (ver NIVELES)
     \sptext{…}    ordinal de babel-spanish: n\sptext{o} es «n.º»
     \emph{…}      énfasis; dentro de un título en cursiva da redonda (el «enroque»)
 
-Los puntos suspensivos se escriben `...`, como en el Markdown: Markdown no es LaTeX. Las llaves de BibTeX siguen siendo legítimas: agrupan un nombre (`{de la Fuente}`) o protegen una mayúscula (`{I}'ve`).
+Los puntos suspensivos se escriben `...`, como en el Markdown: Markdown no es LaTeX.
+
+NIVELES DE \enquote
+
+csquotes admite dos niveles de comillas (`maxlevel`, por omisión 2; manual §2.1); el tercero corta el PDF. Algunos estilos ponen entre comillas el título de ciertos tipos de entrada, y ese es ya el primer nivel. La regla (decisión de Alberto; `m_Bibtex.NivelesEnquote`):
+
+- EN EL TÍTULO Y EL SUBTÍTULO de article, conference, inbook, incollection, inproceedings, inreference, online, patent, report, thesis y unpublished: un solo nivel de `\enquote`. El subtítulo va dentro de las mismas comillas que el título (medido con Verona).
+- EN CUALQUIER OTRO CAMPO O TIPO (el título de un libro, en cursiva; el nombre de la revista): hasta dos niveles. `\enquote{huelga \enquote{general}}` en el título de un libro es correcto.
+- TRES NIVELES: nunca.
+
+La lista es la unión de los estilos de la aplicación y no la del estilo del libro: el estilo se puede cambiar después (el criterio de RC-BL-02). Con APA o ISO 690, un artículo no puede llevar dos niveles en el título aunque esos estilos no le pongan comillas; son casos muy raros y aislados. Sale del fuente:
+
+    biblatex.def (3.19, línea 580)   article inbook incollection inproceedings patent thesis unpublished
+    philosophy-standard.bbx (290)    article inreference (287: thesis en cursiva)
+    ieee.bbx (51)                    online report
+    apa.bbx (482), iso.bbx (182)     ninguno
+
+`conference` es el alias de `inproceedings` en biber.
+
+MEDIDO: con Verona, `\enquote{huelga \enquote{general}}` en el título de un artículo corta el PDF («Package csquotes Error: Unbalanced groups or invalid nesting») y el HTML de tex4ht sale con «huelga __general__». Sin biblatex, `\enquote{a \enquote{b \enquote{c}}}` da el mismo error. Con un solo nivel, Verona compone «El 1.º de mayo y la “huelga general”».
+
+Se descartaron dos caminos. `maxlevel=3` es documentado y compila, pero el tercer nivel reusa los signos exteriores («a “b «c»”», medido) y no da las ‘ ’ de SC-30: el manual no tiene un comando para un tercer par de signos (`\DeclareQuoteStyle`, §8.1, recibe un par exterior y uno interior). Las ‘ ’ en el tercer nivel solo se lograrían con macros internas de csquotes, sin documentar. Las llaves de BibTeX siguen siendo legítimas: agrupan un nombre (`{de la Fuente}`) o protegen una mayúscula (`{I}'ve`).
 
 POR QUÉ HACE FALTA UNA REGLA
 
@@ -3412,7 +3433,7 @@ Libros. Revistas arman su `element-citation` de JATS desde el mismo `.bib` sin t
 
 **Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23
 
-**PENDIENTE:** En las hojas de HTML y EPUB, las plantillas por estilo (las de los estilos que todavía no van por tex4ht: ISO 690, IEEE) leen el título con normalize-space y pierden las comillas de un <quote>: se resuelve cuando esos estilos pasen por tex4ht. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Sin probar en Mint.
+**PENDIENTE:** En las hojas de HTML y EPUB, las plantillas por estilo (las de los estilos que todavía no van por tex4ht: ISO 690, IEEE) leen el título con normalize-space y pierden las comillas de un <quote>: se resuelve cuando esos estilos pasen por tex4ht. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
 
 ---
 
