@@ -976,7 +976,7 @@ ALCANCE
 
 Libros.
 
-**Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12
+**Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12,vinculo:SC-56,vinculo:RF-12
 
 ### SC-15 — Resaltado de sintaxis en controles TextEdit: HTML desde Run, temas como datos
 
@@ -1452,7 +1452,7 @@ MATRIZ
 - Macros nuevas: el contrato sube a la versión 2. El aspecto va en la estética.
 - El sumario se emite DESPUÉS de la última pieza del espacio reservado `fm-00` a `fm-09`: las primeras y las piezas sueltas, como la dedicatoria (SC-45). Antes de esta regla `AbrirZona(ZONA_FRONT)` lo escribía al abrir la zona, y una primera declarada quedaba detrás de él.
 - EPUB: la tapa (`cover`) va siempre, en `front-tapa.xhtml`; hasta SC-25 era `front-portada.xhtml`. La portada (`titlepage`, `front-portada.xhtml`) va solo si el libro la declara, con autoría, leyenda, título, subtítulo y logo de portada. Los créditos (`copyright-page`) van siempre: con logo de colección y textos digitales si el libro declara la pieza y tiene al menos uno de los dos textos; si no, el bloque genérico (`ArmarCreditos`), el mismo criterio que el colofón no declarado.
-- EPUB sin versalitas: los nombres van en mayúsculas y minúsculas, como están en la base. Noto Serif las tiene, pero los lectores de EPUB no las respetan de forma pareja.
+- EPUB sin versalitas: los nombres van en mayúsculas y minúsculas, como están en la base. Noto Serif las tiene, pero los lectores de EPUB no las respetan de forma pareja. Excepción: la bibliografía con Verona lleva versalitas por CSS sobre el texto con su caja original, que degrada a mayúsculas y minúsculas si el lector no las respeta (SC-56).
 - `titlepage`, `copyright-page` y `halftitlepage` están definidos en EPUB 3 Structural Semantics Vocabulary.
 
 DATOS EN libros_md
@@ -1506,7 +1506,7 @@ ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56
 
 **PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
 
@@ -1828,7 +1828,7 @@ Vale también para la entrada: el .md se teclea con las convenciones de LaTeX pa
 
 Es el principio que ya aplicaban SC-14 (la bibliografía replica el estilo biblatex del libro), SC-26 y SC-30 (el mismo resultado en las seis salidas). Esta entrada lo deja escrito como regla general.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-26,vinculo:SC-28,vinculo:SC-25,vinculo:SC-30,vinculo:SC-40,vinculo:SC-45
+**Relaciones:** vinculo:SC-14,vinculo:SC-26,vinculo:SC-28,vinculo:SC-25,vinculo:SC-30,vinculo:SC-40,vinculo:SC-45,vinculo:SC-56
 
 ### SC-32 — Figuras de libro y revista: una sola forma en el .md, número del PDF y referencia cruzada
 
@@ -3235,6 +3235,48 @@ EPUB y HTML: los índices no se generan (`m_PiezasLibro.Tratamiento`), así que 
 
 **Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17,vinculo:SC-20
 
+### SC-56 — Bibliografía con Verona en HTML y EPUB: nombre en cada entrada, versalitas por CSS, tipografía con smcp y c2sc
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex-philosophy v1.9.8g / biber 2.19 / TeX Live 2023 / make4ht v0.3m / contenedor Ubuntu 24.04; Noto Serif de gbpublisher en Mint · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto). Libros con el estilo Verona: philosophy-modern con `biblatex-veronaM-config.tex`. Vale para HTML y EPUB; el PDF no cambia.
+
+Es una excepción a SC-31 y la explica esta entrada. SC-14 se sigue cumpliendo: el texto de cada referencia lo arma el estilo, y cambia solo cómo se dispone el bloque del nombre y el año.
+
+1. EL NOMBRE EN CADA ENTRADA (EXCEPCIÓN 2 DE SC-31)
+
+philosophy-modern escribe el nombre una sola vez y apila debajo los años de sus obras, en una columna de ancho fijo (`\bibhang`). Es un recurso para leer en papel. En pantalla el ancho cambia y el lector elige el cuerpo de letra: la columna le quita ancho al texto y no ayuda a leer.
+
+En HTML y EPUB va la disposición classic del mismo estilo: `\printbibliography[restoreclassic]` con `dashed=false`. Cada entrada lleva su nombre y el año entre paréntesis:
+
+    Abós, Álvaro (1984), Las organizaciones sindicales y el poder militar (1976-1983), Buenos Aires: Centro Editor de América Latina.
+    Abós, Álvaro (1986), El posperonismo, Buenos Aires: Editorial Legasa.
+
+MEDIDO con `ref-l-MOLINARO.bib` (222 entradas): en todas, lo que sigue a «Nombre (año), » es el mismo texto que el PDF. Las letras del año se conservan (1988a y 1988b, 2023a y 2023b).
+
+`\bibnamedash` no interviene. En modern el autor repetido no lleva guion: la macro `author` de `philosophy-modern.bbx` no imprime nada en `bbx:dashcheck`. El guion es de classic y verbose, y con `dashed=false` tampoco aparece. La redefinición de `\bibnamedash` en `biblatex-veronaM-config.tex` no actúa con modern.
+
+2. VERSALITAS POR CSS, SOBRE EL TEXTO CON SU CAJA
+
+En el PDF, `scauthorsbib` y `lowscauthors` dan `\textsc{\MakeLowercase{...}}`: el texto queda en minúscula y la fuente lo pone en versalitas. Llevado tal cual a HTML, un lector que no respete las versalitas mostraría «abdala, omar».
+
+En HTML y EPUB va `lowscauthors=false`: el texto conserva sus mayúsculas, «Abdala, Omar», y las versalitas las pone el CSS con `font-variant-caps: all-small-caps` (CSS Fonts Module Level 3). Se ve como en el PDF. Si el lector ignora el CSS, el nombre degrada a mayúsculas y minúsculas, como está en la base. Es la razón de SC-25 y por eso la bibliografía de Verona puede llevar versalitas.
+
+3. TIPOGRAFÍA: smcp Y c2sc
+
+`all-small-caps` usa dos rasgos OpenType: `c2sc` para las mayúsculas y `smcp` para las minúsculas. Si la fuente no los trae, el navegador fabrica versalitas falsas achicando mayúsculas.
+
+REGLA: para usar Verona en HTML y EPUB, la tipografía tiene que traer `smcp` y `c2sc`. La que entrega la aplicación los trae. Verificado por Alberto en Mint con `otfinfo -f /usr/share/gbpublisher/fonts/NotoSerif-Regular.ttf`, que lista `c2sc` y `smcp`. Quien cambie la tipografía lo comprueba con el mismo comando (`otfinfo`, paquete lcdf-typetools).
+
+FUERA DE ESTA DECISIÓN
+
+- Cómo se genera el texto de la bibliografía para HTML y EPUB (pasada de tex4ht/make4ht con el mismo estilo): en diseño.
+- Los otros estilos (APA, ISO 690, IEEE, Vancouver).
+
+**Relaciones:** vinculo:SC-14,vinculo:SC-25,vinculo:SC-31,vinculo:RF-12
+
+**PENDIENTE:** Medido en el contenedor sobre el HTML que da make4ht: la disposición classic con dashed=false, el texto de las 222 entradas contra el PDF y el marcado de las versalitas con lowscauthors=false. Sin probar: cómo responden los lectores de EPUB a all-small-caps, y si degradan a mayúsculas y minúsculas como se espera. Sin implementar en la aplicación: depende del diseño de la pasada de tex4ht.
+
 ---
 
 ## RF — Referencia de API
@@ -3627,6 +3669,47 @@ El mecanismo es el de SC-50. Lo propio de cada una:
 **Relaciones:** vinculo:RF-08,vinculo:SC-50,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35,vinculo:SC-36,vinculo:SC-42,vinculo:SC-38,vinculo:SC-39
 
 **PENDIENTE:** Versiones 2 y 3 verificadas en Mint con 3.22.1. La 4 se probó en el contenedor (Gambas 3.19, gb.db, aplicación bajo xvfb). La 5 está en uso en Mint: los datos-v5-* se aplicaron y probaron ahí (datos-v5-011).
+
+### RF-12 — Fuente de biblatex-philosophy (Verona)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex-philosophy v1.9.8g (2022/09/16) / biber 2.19 / TeX Live 2023 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Paquete en CTAN: `macros/latex/contrib/biblatex-contrib/biblatex-philosophy`. Autor: Ivan Valbusa.
+
+VERSIÓN ANCLADA
+
+v1.9.8g (2022/09/16). Es la de CTAN y la de TeX Live 2023 (`texlive-bibtex-extra`), que es lo que trae la base de Mint 22. Biber 2.19 en la máquina de Alberto y en el contenedor.
+
+ACCESO
+
+`https://mirrors.ctan.org/macros/latex/contrib/biblatex-contrib/biblatex-philosophy.zip` descarga con `curl -L`. Algún espejo puede responder con un certificado vencido: se reintenta y la redirección lleva a otro. Con TeX Live instalado, los archivos ya están en `texmf-dist/tex/latex/biblatex-philosophy/`.
+
+ORDEN DE CONSULTA
+
+1. `philosophy-modern.bbx` — referencias de la disposición modern. Carga `philosophy-classic.bbx`.
+2. `philosophy-classic.bbx` — la disposición classic, la de HTML y EPUB (SC-56). Carga `philosophy-standard.bbx`.
+3. `philosophy-standard.bbx` — opciones del estilo, formatos de campo, relaciones (`related`), campos `orig*`.
+4. `philosophy-modern.cbx` — citas.
+5. `spanish-philosophy.lbx` — cadenas en español.
+6. `biblatex-philosophy.dtx` — fuente documentado del que salen los anteriores. Informa la intención; si contradice al código instalado, gana el código.
+
+La configuración de la aplicación: `.hidden/biblatex/biblatex-veronaM-config.tex`.
+
+DATOS DEL FUENTE QUE USA EL PROYECTO
+
+- `\printbibliography[restoreclassic]` (definida en `philosophy-modern.bbx`) vuelve a la disposición classic: `\bibhang` igual a `\parindent`, año entre paréntesis después del nombre, guion de autor repetido según `dashed`.
+- En modern el autor repetido no lleva guion: `bbx:dashcheck` no imprime nada. `\bibnamedash` solo actúa en classic y verbose.
+- `lowscauthors` hace que `\mkbibsc` sea `\textsc{\MakeLowercase{#1}}`.
+- `scauthorsbib` está declarada por compatibilidad: la forma vigente es `scauthors=bib`.
+- Los campos `orig*` y la opción `origfields` también son compatibilidad: el mecanismo vigente es `related`. La macro `transorigstring` que redefine la configuración pertenece al mecanismo viejo.
+
+BANCO DE PRUEBAS
+
+`ref-l-MOLINARO.bib` (222 entradas: 81 book, 73 article, 58 incollection, 8 thesis, 2 misc), más casos de choque: mismo autor y año, dos autores con el mismo apellido, listas que coinciden en el primer autor. Compilado con la configuración de la aplicación, es la salida esperada contra la que se verifican HTML y EPUB.
+
+**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:RC-BL-02
+
+**PENDIENTE:** Falta fijar dónde se guarda el banco de pruebas: el .bib de Molinaro y el de los casos de choque.
 
 ---
 
