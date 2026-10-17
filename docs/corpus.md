@@ -417,6 +417,8 @@ Cuando un dato necesario para el XSLT proviene de la base y no del manuscrito, s
 
 NO usar parámetros de Saxon para esto: el XML canónico debe ser autónomo y reproducible por sí solo, sin depender de la línea de comandos que lo transformó.
 
+**Relaciones:** ,vinculo:SC-57
+
 ### RC-XJ-03 — El I/O error de Saxon puede ser la DTD remota
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.9 / Java 21
@@ -3341,7 +3343,16 @@ LÍMITE CONOCIDO
 
 Con tex4ht, biblatex no detecta las notas al pie («Patching footnotes failed»). En Verona no importa: philosophy solo lo usa en `scauthors=citefn` y `bibcitefn`, y la configuración usa `scauthors=bib`. La cita dentro de una nota salió igual que en el PDF. Un estilo que se comporte distinto en las notas, como los verbose, no entra por este camino sin medirlo antes.
 
-El agrupamiento depende del estilo solo en un caso: `suppress` con afijos en un estilo numérico. Hoy el PDF y la pasada de citas toman el estilo del canónico de pieza, que no trae `csl-style`, y las hojas de HTML y EPUB el de la base. Para los autor-año da lo mismo; para IEEE no, y se resuelve en el lote del estilo en el canónico.
+EL ESTILO EN EL CANÓNICO DE CADA PIEZA
+
+El agrupamiento depende del estilo en un caso: `suppress` con afijos en un estilo numérico. El PDF y la pasada de citas transforman el canónico de cada pieza, que no traía `csl-style`: `docbook-to-latex.xsl` agrupaba siempre como `apa`. Desde este lote (decisión de Alberto, cuatro puntos):
+
+1. `m_XML.GenerarInfoCapituloXML`, BLOQUE 2c, escribe `<bibliomisc role="csl-style">` en el `<info>` de cada pieza, con el `estilo_cita` de su libro: el mismo valor que el bloque 15 del canónico del libro (RC-XJ-02: el dato de la base va en el canónico, no por parámetro).
+2. `ensamblar-libro-canonico.xsl` lo descarta al copiar la pieza, como los tres marcadores de ubicación: el libro lo trae una vez en su propio `<info>` (medido: uno solo en el canónico ensamblado).
+3. `preparar_latex_libro.sh` y `preparar_citas_libro.sh` cotejan el `csl-style` de cada canónico con el `\estandar` del preámbulo o de las definiciones (`estilo_canonico`, en `comun.sh`). Si falta o no coincide, la pieza falla con «el canónico declara el estilo «…» y el libro usa «…»: regenerá el canónico». Así un cambio de estilo sin regenerar no compone con un estilo y agrupa con otro. HTML y EPUB por las plantillas de la hoja agrupan con el estilo que pasa Gambas, que es el de la base; por tex4ht, la pasada de citas ya cotejó.
+4. Los canónicos anteriores a este lote no traen el dato: la primera generación de cada libro corta hasta regenerarlos (GV-23: mejor cortar que tomar `apa` en silencio).
+
+MEDIDO con Duek: con los canónicos viejos, las nueve piezas fallan con el mensaje; con el dato, los `.tex` del PDF salen idénticos byte a byte a los anteriores (para un autor-año el agrupamiento no cambia); con el estilo del libro distinto del canónico, la pasada de citas corta.
 
 APA
 

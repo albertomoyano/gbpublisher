@@ -94,6 +94,7 @@ preparar_pieza() {
     local nombre="$1"
     local canonico="$DIR_PROYECTO/jats/c-$nombre.xml"
     local tex="$CARPETA/c-$nombre.tex"
+    local estilo_pieza
     local salida codigo
 
     # --- A. CANÓNICO ---
@@ -104,6 +105,15 @@ preparar_pieza() {
     fi
     if ! bien_formado "$canonico"; then
         fallo "jats/c-$nombre.xml está mal formado: regenerá su canónico"
+        return 1
+    fi
+
+    # EL ESTILO DEL CANÓNICO TIENE QUE SER EL DE LAS DEFINICIONES: CON OTRO,
+    # LAS CITAS SE AGRUPARÍAN DISTINTO QUE EN EL PDF Y LOS id NO
+    # COINCIDIRÍAN (SC-57). FALTA EN LOS CANÓNICOS ANTERIORES A ESTA REGLA
+    estilo_pieza="$(estilo_canonico "$canonico")"
+    if [[ "$estilo_pieza" != "$ESTILO" ]]; then
+        fallo "el canónico declara el estilo «${estilo_pieza:-ninguno}» y el libro usa «$ESTILO»: regenerá el canónico"
         return 1
     fi
 

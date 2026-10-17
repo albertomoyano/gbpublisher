@@ -91,6 +91,7 @@ preparar_pieza() {
     # EN LA MISMA CARPETA: mv TIENE QUE SER UN RENOMBRE. EL PUNTO INICIAL LO
     # DEJA FUERA DEL PATRÓN c-*.tex DE LOS HUÉRFANOS
     local temporal="$DIR_LATEX/.c-$nombre.tex.tmp"
+    local estilo_pieza
     local dir_codigo="$DIR_PROYECTO/tmp/codigo/latex-$nombre"
     local salida codigo
 
@@ -102,6 +103,15 @@ preparar_pieza() {
     fi
     if ! bien_formado "$canonico"; then
         fallo "jats/c-$nombre.xml está mal formado: regenerá su canónico"
+        return 1
+    fi
+
+    # EL ESTILO DEL CANÓNICO TIENE QUE SER EL DEL PREÁMBULO: SI NO, EL PDF
+    # SE COMPONE CON UN ESTILO Y AGRUPA LAS CITAS CON OTRO, SIN AVISO
+    # (SC-57). FALTA EN LOS CANÓNICOS ANTERIORES A ESTA REGLA
+    estilo_pieza="$(estilo_canonico "$canonico")"
+    if [[ "$estilo_pieza" != "$ESTILO" ]]; then
+        fallo "el canónico declara el estilo «${estilo_pieza:-ninguno}» y el libro usa «$ESTILO»: regenerá el canónico"
         return 1
     fi
 
@@ -170,6 +180,7 @@ LISTA="$DIR_PROYECTO/$2"
 MAIN_PROPUESTO="$DIR_PROYECTO/$3"
 DIR_LATEX="$DIR_PROYECTO/latex"
 MAIN="$DIR_LATEX/main.tex"
+PREAMBULO="$DIR_LATEX/preambulo-proyecto.tex"
 
 # --- 3. ENTORNO E INSUMOS ---
 paso "verificando el entorno"
@@ -190,6 +201,12 @@ requerir_comandos java xmllint timeout
 [[ "$(dirname "$(readlink -f "$MAIN_PROPUESTO")")" == "$(readlink -f "$DIR_LATEX")" ]] ||
     morir "El main.tex propuesto tiene que estar en latex/: $MAIN_PROPUESTO"
 [[ -f "$LISTA" ]] || morir "No existe la lista de piezas: $LISTA"
+
+# EL ESTILO DEL LIBRO, TAL COMO LO DECLARA EL PREÁMBULO QUE ESCRIBIÓ GAMBAS:
+# CONTRA ÉL SE COTEJA EL DE CADA CANÓNICO (SC-57)
+[[ -f "$PREAMBULO" ]] || morir "No existe latex/preambulo-proyecto.tex: lo escribe Gambas antes de esta preparación"
+ESTILO=$(sed -n 's/^\\def\\estandar{\([^}]*\)}.*$/\1/p' "$PREAMBULO" | head -n 1)
+[[ -n "$ESTILO" ]] || morir "latex/preambulo-proyecto.tex no declara \\estandar"
 
 ok "herramientas, hoja, coloreador e insumos"
 

@@ -321,10 +321,12 @@ DOCUMENTACIÓN DE REFERENCIA:
            (m_XML.GenerarInfoCapituloXML, BLOQUE 2b): SE DESCARTAN AL COPIAR Y
            SE VUELVEN A ESCRIBIR ABAJO DESDE EL MANIFIESTO. SIN ESTE FILTRO
            QUEDAN DOS DE CADA UNO, Y normalize-space() SOBRE DOS NODOS FRENA
-           LAS HOJAS DE SALIDA -->
+           LAS HOJAS DE SALIDA.
+           EL ESTILO DE CITA (csl-style, BLOQUE 2c) TAMBIÉN SE DESCARTA: ES DEL
+           LIBRO, Y EL LIBRO YA LO TRAE UNA VEZ EN SU PROPIO <info> (SC-57) -->
       <info>
         <xsl:apply-templates select="db:info/@*
-          | db:info/node()[not(self::db:bibliomisc[@role = ('seccion-libro', 'orden-seccion', 'tipo-capitulo')])]"
+          | db:info/node()[not(self::db:bibliomisc[@role = ('seccion-libro', 'orden-seccion', 'tipo-capitulo', 'csl-style')])]"
           mode="#current"/>
         <xsl:if test="$seccion != ''">
           <bibliomisc role="seccion-libro">

@@ -111,6 +111,21 @@ bien_formado() {
 }
 
 # ============================================================================
+# Función   : estilo_canonico
+# Propósito : El estilo de cita que declara el canónico de una pieza: el
+#             <bibliomisc role="csl-style"> de su <info> (SC-57). Lo escribe
+#             m_XML.GenerarInfoCapituloXML.
+# Parámetros: $1 ruta del canónico
+# Retorna   : imprime el valor; nada si el canónico no lo declara
+# Nota      : SOLO EL <info> DE LA RAÍZ: UNA SECCIÓN TAMBIÉN PUEDE TENER
+#             <info>. local-name() PORQUE EL CANÓNICO ESTÁ EN EL ESPACIO DE
+#             NOMBRES DE DocBook
+# ============================================================================
+estilo_canonico() {
+    xmllint --xpath 'string(/*/*[local-name()="info"]/*[local-name()="bibliomisc"][@role="csl-style"][1])' "$1" 2>/dev/null
+}
+
+# ============================================================================
 # Función   : mostrar_cola
 # Propósito : Imprime las últimas líneas de una salida capturada, sangradas.
 # Parámetros: $1 texto; $2 cantidad de líneas (15 si se omite)
