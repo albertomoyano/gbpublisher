@@ -5,19 +5,25 @@
 # infraestructura: no se personaliza y no se copia a ~/.gbpublisher (SC-11).
 #
 # USO
-#   preparar_citas_libro.sh <ruta_proyecto> <lista_rel> <carpeta_rel>
+#   preparar_citas_libro.sh <ruta_proyecto> <lista_rel> <insumos_rel> <carpeta_rel>
 #
 #   ruta_proyecto   raíz del proyecto
 #   lista_rel       ruta relativa al proyecto de la lista de piezas con
 #                   cuerpo, una por línea, en el orden del libro: la MISMA
 #                   que usa el PDF (tmp/latex-piezas.txt)
+#   insumos_rel     ruta relativa al proyecto de las definiciones de idioma
+#                   y de bibliografía (tmp/citas-proyecto.tex): \gbidiomas,
+#                   \estandar, \gbarchivobib, \ifgbbibporcapitulo
 #   carpeta_rel     ruta relativa al proyecto de la carpeta de salida:
 #                   tmp/bib/html-libro-<nombre> o tmp/bib/epub-libro-<nombre>.
 #                   SE VACÍA Y SE REESCRIBE ENTERA
 #
-# LOS INSUMOS LOS ESCRIBE GAMBAS ANTES DE LANZAR ESTE SCRIPT: la lista,
-# latex/preambulo-proyecto.tex y el .bib de referencias/, igual que para el
-# PDF. Los cita-<estilo>-config.tex y cita-<estilo>-html.tex los copia al
+# LOS INSUMOS LOS ESCRIBE GAMBAS ANTES DE LANZAR ESTE SCRIPT
+# (m_GenerarPDFLibro.EscribirInsumosCitas): la lista, las definiciones y el
+# .bib de referencias/. La lista y las definiciones salen de las MISMAS
+# funciones que usa el PDF (LeerPiezasLibro, ListaPiezasConCuerpo,
+# DefinicionesCita): HTML y EPUB citan con los mismos datos, sin heredar los
+# requisitos de imprenta del PDF. Los cita-<estilo>-config.tex y cita-<estilo>-html.tex los copia al
 # proyecto m_InicioCierre.CopiarRecursosLatex. Este script no toca la base.
 # ============================================================================
 # QUÉ HACE (SC-57)
@@ -25,7 +31,7 @@
 #   1. Por cada pieza de la lista, docbook-to-latex-citas.xsl escribe en la
 #      carpeta c-{nombre}.tex: solo sus citas, cada grupo como
 #      \gbcita{id}{comando}, con los mismos refsection que el PDF.
-#   2. Arma el documento mínimo citas.tex: el preámbulo del proyecto, babel,
+#   2. Arma el documento mínimo citas.tex: las definiciones, babel,
 #      csquotes, el estilo, su archivo de pantalla y las piezas en orden.
 #   3. make4ht lo compila con cita-tex4ht.cfg (lualatex, biber, lualatex
 #      dos veces). El producto es citas.html.
@@ -141,7 +147,7 @@ preparar_pieza() {
 # Propósito : Escribe citas.tex, el documento mínimo de la pasada (SC-57).
 # Nota      : NO CARGA EL CONTRATO NI LA ESTÉTICA: SOLO LO QUE DECIDE EL
 #             TEXTO DE UNA CITA. EL IDIOMA, EL ESTILO Y EL .bib SALEN DE
-#             preambulo-proyecto.tex, EL MISMO DEL PDF.
+#             citas-proyecto.tex, CON LAS DEFINICIONES DEL PREÁMBULO DEL PDF.
 # ============================================================================
 escribir_documento() {
     local nombre
@@ -151,7 +157,7 @@ escribir_documento() {
         echo "% LO ESCRIBE preparar_citas_libro.sh: NO SE EDITA A MANO"
         echo "% ============================================================"
         echo "\\documentclass{book}"
-        echo "\\input{preambulo-proyecto}"
+        echo "\\input{citas-proyecto}"
         echo "\\usepackage{fontspec}"
         echo "% EL MISMO IDIOMA Y LAS MISMAS COMILLAS QUE EL PDF"
         echo "% (preambulo-contrato.tex, SECCIÓN IDIOMA)"
@@ -184,15 +190,17 @@ escribir_documento() {
 encabezado "CITAS Y REFERENCIAS PARA HTML Y EPUB"
 
 # --- 2. ARGUMENTOS ---
-if (( $# < 3 )); then
-    morir "Uso: $(basename "$0") <ruta_proyecto> <lista_rel> <carpeta_rel>"
+if (( $# < 4 )); then
+    morir "Uso: $(basename "$0") <ruta_proyecto> <lista_rel> <insumos_rel> <carpeta_rel>"
 fi
 
 DIR_PROYECTO="${1%/}"
 LISTA="$DIR_PROYECTO/$2"
-CARPETA="$DIR_PROYECTO/${3%/}"
+INSUMOS_REL="$3"
+INSUMOS="$DIR_PROYECTO/$INSUMOS_REL"
+CARPETA_REL="${4%/}"
+CARPETA="$DIR_PROYECTO/$CARPETA_REL"
 DIR_LATEX="$DIR_PROYECTO/latex"
-PREAMBULO="$DIR_LATEX/preambulo-proyecto.tex"
 
 # --- 3. ENTORNO E INSUMOS ---
 paso "verificando el entorno"
@@ -200,11 +208,11 @@ paso "verificando el entorno"
 [[ -d "$DIR_PROYECTO" ]]      || morir "No existe el proyecto: $DIR_PROYECTO"
 [[ -d "$DIR_PROYECTO/jats" ]] || morir "El proyecto no tiene carpeta jats/"
 # LA CARPETA DE SALIDA SE BORRA ENTERA: TIENE QUE QUEDAR DENTRO DE tmp/
-case "$3" in
+case "$CARPETA_REL" in
     tmp/?*) ;;
-    *) morir "La carpeta de salida tiene que estar dentro de tmp/: $3" ;;
+    *) morir "La carpeta de salida tiene que estar dentro de tmp/: $CARPETA_REL" ;;
 esac
-[[ "$3" == *..* ]] && morir "La carpeta de salida no puede tener «..»: $3"
+[[ "$CARPETA_REL" == *..* ]] && morir "La carpeta de salida no puede tener «..»: $CARPETA_REL"
 
 requerir_comandos java xmllint timeout make4ht lualatex biber
 
@@ -212,13 +220,13 @@ requerir_comandos java xmllint timeout make4ht lualatex biber
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de citas: $XSL"
 [[ -f "$CFG" ]]        || morir "No se encontró la configuración de tex4ht: $CFG"
 [[ -f "$LISTA" ]]      || morir "No existe la lista de piezas: $LISTA"
-[[ -f "$PREAMBULO" ]]  || morir "No existe latex/preambulo-proyecto.tex: lo escribe Gambas antes de esta pasada"
+[[ -f "$INSUMOS" ]]    || morir "No existe $INSUMOS_REL: lo escribe Gambas antes de esta pasada"
 
-# EL ESTILO Y EL .bib, TAL COMO LOS DECLARA EL PREÁMBULO DEL PROYECTO
-ESTILO=$(sed -n 's/^\\def\\estandar{\([^}]*\)}.*$/\1/p' "$PREAMBULO" | head -n 1)
-[[ -n "$ESTILO" ]] || morir "latex/preambulo-proyecto.tex no declara \\estandar"
-BIB_REL=$(sed -n 's/^\\def\\gbarchivobib{\.\/\([^}]*\)}.*$/\1/p' "$PREAMBULO" | head -n 1)
-[[ -n "$BIB_REL" ]] || morir "latex/preambulo-proyecto.tex no declara \\gbarchivobib"
+# EL ESTILO Y EL .bib, TAL COMO LOS DECLARAN LAS DEFINICIONES DEL PROYECTO
+ESTILO=$(sed -n 's/^\\def\\estandar{\([^}]*\)}.*$/\1/p' "$INSUMOS" | head -n 1)
+[[ -n "$ESTILO" ]] || morir "$INSUMOS_REL no declara \\estandar"
+BIB_REL=$(sed -n 's/^\\def\\gbarchivobib{\.\/\([^}]*\)}.*$/\1/p' "$INSUMOS" | head -n 1)
+[[ -n "$BIB_REL" ]] || morir "$INSUMOS_REL no declara \\gbarchivobib"
 BIB="$DIR_PROYECTO/$BIB_REL"
 BIB_NOMBRE="$(basename "$BIB")"
 [[ -f "$BIB" ]] || morir "No existe el .bib del proyecto: $BIB_REL"
@@ -246,7 +254,7 @@ tenue "${#PIEZAS[@]} pieza(s) con cuerpo"
 
 # --- 5. CARPETA LIMPIA: UN ARCHIVO DE UNA CORRIDA ANTERIOR NO SE MEZCLA ---
 rm -rf "$CARPETA"
-mkdir -p "$CARPETA" || morir "No se pudo crear $3"
+mkdir -p "$CARPETA" || morir "No se pudo crear $CARPETA_REL"
 
 # --- 6. PIEZAS ---
 FALLIDAS=()
@@ -264,9 +272,12 @@ fi
 
 # --- 7. DOCUMENTO MÍNIMO E INSUMOS EN LA CARPETA ---
 paso "documento mínimo"
-cp -f "$PREAMBULO" "$CONFIG_ESTILO" "$PANTALLA_ESTILO" "$CFG" "$CARPETA/" ||
-    morir "No se pudieron copiar los insumos a $3"
-cp -f "$BIB" "$CARPETA/$BIB_NOMBRE" || morir "No se pudo copiar el .bib a $3"
+# LAS DEFINICIONES VAN CON NOMBRE FIJO: citas.tex LAS CARGA COMO citas-proyecto
+cp -f "$INSUMOS" "$CARPETA/citas-proyecto.tex" ||
+    morir "No se pudieron copiar las definiciones a $CARPETA_REL"
+cp -f "$CONFIG_ESTILO" "$PANTALLA_ESTILO" "$CFG" "$CARPETA/" ||
+    morir "No se pudieron copiar los insumos a $CARPETA_REL"
+cp -f "$BIB" "$CARPETA/$BIB_NOMBRE" || morir "No se pudo copiar el .bib a $CARPETA_REL"
 escribir_documento
 # EL ARCHIVO DE COMPILACIÓN DE make4ht: biber ENTRE LA PRIMERA PASADA Y LAS
 # OTRAS DOS, COMO EN EL PDF
@@ -291,7 +302,7 @@ fi
 # make4ht SALE CON 0 AUNQUE biber FALLE: EL PRODUCTO SE VERIFICA ABAJO
 if (( codigo != 0 )) || grep -q '\[ERROR\]' <<< "$salida"; then
     mostrar_cola "$(grep -A4 '\[ERROR\]' <<< "$salida")" 20
-    morir "make4ht no pudo compilar citas.tex (registro: $3/citas.log)"
+    morir "make4ht no pudo compilar citas.tex (registro: $CARPETA_REL/citas.log)"
 fi
 
 # --- 9. VERIFICACIÓN DEL PRODUCTO ---
@@ -303,7 +314,7 @@ bien_formado "$HTML" || morir "citas.html está mal formado: HTML y EPUB no lo p
 # biber: UN ERROR DEJA LA BIBLIOGRAFÍA VACÍA SIN QUE make4ht LO DIGA
 if [[ -f "$CARPETA/citas.blg" ]] && grep -q '^ERROR' "$CARPETA/citas.blg"; then
     mostrar_cola "$(grep '^ERROR' "$CARPETA/citas.blg")"
-    morir "biber terminó con errores (registro: $3/citas.blg)"
+    morir "biber terminó con errores (registro: $CARPETA_REL/citas.blg)"
 fi
 
 # CADA \gbcita DE LAS PIEZAS TIENE QUE LLEGAR COMO UNA MARCA: SI FALTA UNA,

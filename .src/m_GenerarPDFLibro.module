@@ -33,6 +33,11 @@ Private Const CARPETA_CANONICOS As String = "jats"
 Public Const LISTA_PIEZAS_LATEX As String = "tmp/latex-piezas.txt"
 Public Const MAIN_PROPUESTO As String = "latex/.main.tex.tmp"
 
+' INSUMO DE engine/preparar_citas_libro.sh (SC-57): LAS DEFINICIONES DE IDIOMA
+' Y DE BIBLIOGRAFÍA DEL PREÁMBULO, SOLAS. LAS ESCRIBE DefinicionesCita, LA
+' MISMA FUNCIÓN QUE LAS PONE EN preambulo-proyecto.tex
+Public Const INSUMOS_CITAS As String = "tmp/citas-proyecto.tex"
+
 ' VERSIÓN DEL CONTRATO QUE ESTE GENERADOR REQUIERE. SI SE AGREGA VOCABULARIO
 ' AL XSLT, SUBE ACÁ Y EN preambulo-contrato.tex, Y UN PREÁMBULO DE EDITORIAL
 ' VIEJO FRENA EN LA PRIMERA LÍNEA EN VEZ DE DAR UN "Undefined control
@@ -533,13 +538,8 @@ Public Function GenerarPreambuloProyecto() As Boolean
   Dim s As String
   Dim sRutaLatex As String
   Dim sRutaArchivo As String
-  Dim sEstilo As String
+  Dim sDefinicionesCita As String
   Dim sAutores As String
-  Dim sIdiomaPrincipal As String
-  Dim sIdiomasBabel As String
-  Dim sCodigo As String
-  Dim aCodigos As String[]
-  Dim aIdiomas As New String[]
   Dim aPrest As String[]
   Dim aPreservacion As String[]
   Dim iIdLibro As Integer
@@ -631,52 +631,15 @@ Public Function GenerarPreambuloProyecto() As Boolean
   aPrest = PrestacionesDeSalida(hLibro["estado_libro"])
 
   ' --- 5. ESTILO DE CITA ---
-  ' EL CANÓNICO TAMBIÉN LO TRAE, PERO LA FUENTE ES LA BASE: EL XML ES COPIA.
-  If IsNull(hLibro["estilo_cita"]) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El libro no tiene estilo de cita asignado.")
-    Return False
-  Endif
-
-  sEstilo = m_InicioCierre.LeerTipoCSL(hLibro["estilo_cita"])
-  If sEstilo = "" Then Return False   ' LeerTipoCSL YA AVISÓ
-
-  ' vancouver VA POR bibtex Y LA RAMA NO ESTÁ IMPLEMENTADA. EL XSLT TAMBIÉN
-  ' CORTA, PERO CONVIENE FRENAR ACÁ Y NO DESPUÉS DE HABER ESCRITO ARCHIVOS.
-  If sEstilo = "vancouver" Then
-    m_Sonido.sonar("Error")
-    Message.Error("El estilo vancouver usa bibtex y todavía no está " &
-      "implementado para libros." & gb.NewLine &
-      "Los estilos disponibles son apa, iso690 e ieee.")
-    Return False
-  Endif
+  ' LO VALIDA Y LO ESCRIBE DefinicionesCita, JUNTO CON LOS IDIOMAS: ES LA MISMA
+  ' FUNCIÓN QUE ARMA EL INSUMO DE LA PASADA DE CITAS DE HTML Y EPUB (SC-57),
+  ' PARA QUE LAS DOS SALIDAS CITEN CON LOS MISMOS DATOS. LAS VALIDACIONES SON
+  ' LAS QUE ANTES ESTABAN ACÁ, EN EL MISMO ORDEN
+  sDefinicionesCita = DefinicionesCita(hLibro)
+  If sDefinicionesCita = "ABORTAR" Then Return False
 
   ' --- 6. IDIOMAS ---
-  sIdiomaPrincipal = CodigoABabel(hLibro["idioma_principal"])
-
-  If sIdiomaPrincipal = "" Then
-    m_Sonido.sonar("Error")
-    Message.Error("El idioma principal del libro no está entre los " &
-      "reconocidos por babel: " & hLibro["idioma_principal"])
-    Return False
-  Endif
-
-  ' LOS SECUNDARIOS SON OPCIONALES. SE CARGA babel SOLO CON LOS DEL LIBRO Y NO
-  ' CON SIETE SIEMPRE. EL PRINCIPAL VA CON main= PARA QUE NO DEPENDA DEL ORDEN.
-  If Not IsNull(hLibro["idiomas_publicacion"]) Then
-    aCodigos = Split(hLibro["idiomas_publicacion"], ",")
-    For Each sCodigo In aCodigos
-      sCodigo = CodigoABabel(sCodigo)
-      If sCodigo <> "" Then
-        If sCodigo <> sIdiomaPrincipal Then
-          If Not aIdiomas.Exist(sCodigo) Then aIdiomas.Add(sCodigo)
-        Endif
-      Endif
-    Next
-  Endif
-
-  aIdiomas.Add("main=" & sIdiomaPrincipal)
-  sIdiomasBabel = aIdiomas.Join(",")
+  ' EN DefinicionesCita (APARTADO 5)
 
   ' --- 7. AUTORÍA ---
   sAutores = ObtenerAutoresLibro(iIdLibro, hLibro["tipo_libro"])
@@ -755,21 +718,9 @@ Public Function GenerarPreambuloProyecto() As Boolean
   s &= gb.NewLine
 
   ' 8.3 IDIOMA
-  s &= "% --- IDIOMA ---" & gb.NewLine
-  s &= "\\def\\gbidiomas{" & sIdiomasBabel & "}" & gb.NewLine
-  s &= "\\def\\gbidiomaprincipal{" & sIdiomaPrincipal & "}" & gb.NewLine
-  s &= "\\newif\\ifgbcjk   \\gbcjkfalse" & gb.NewLine
-  s &= gb.NewLine
-
   ' 8.4 BIBLIOGRAFÍA
-  s &= "% --- BIBLIOGRAFÍA ---" & gb.NewLine
-  s &= "\\def\\estandar{" & sEstilo & "}" & gb.NewLine
-  s &= "\\newif\\ifgbbibporcapitulo   \\gbbibporcapitulo" &
-    IIf(LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada",
-    "false", "true") & gb.NewLine
-  s &= "\\def\\gbarchivobib{./" & CARPETA_REFERENCIAS & "/" &
-    m_Bibtex.NombreArchivoBib() & "}" & gb.NewLine
-  s &= gb.NewLine
+  ' LOS DOS BLOQUES LOS ARMÓ DefinicionesCita EN EL APARTADO 5
+  s &= sDefinicionesCita
 
   ' 8.5 METADATOS DEL PDF
   s &= "% --- METADATOS DEL PDF ---" & gb.NewLine
@@ -954,6 +905,300 @@ Private Function CerrarZona(iZona As Integer) As String
 
 End
 ' ============================================
+' Función   : DefinicionesCita
+' Propósito : Las definiciones de idioma y de bibliografía del preámbulo:
+'             \gbidiomas, \gbidiomaprincipal, \ifgbcjk, \estandar,
+'             \ifgbbibporcapitulo y \gbarchivobib. Las escriben el preámbulo
+'             del PDF (GenerarPreambuloProyecto, apartados 8.3 y 8.4) y el
+'             insumo de la pasada de citas de HTML y EPUB (EscribirInsumosCitas,
+'             SC-57): una sola función, para que las dos salidas citen con el
+'             mismo estilo, los mismos idiomas y el mismo .bib.
+' Parámetros: hLibro As Result — fila de libros_md con estilo_cita,
+'             idioma_principal, idiomas_publicacion y lugar_bibliografia
+' Retorna   : String — el texto de los dos bloques, o "ABORTAR" con el motivo
+'             ya informado (la señal de ComandoGenerado y RutaLogo)
+' Nota      : EL TEXTO ES EL QUE ANTES ESCRIBÍA GenerarPreambuloProyecto,
+'             CARÁCTER POR CARÁCTER: preambulo-proyecto.tex NO CAMBIA.
+' ============================================
+Private Function DefinicionesCita(hLibro As Result) As String
+
+  Dim s As String
+  Dim sEstilo As String
+  Dim sIdiomaPrincipal As String
+  Dim sIdiomasBabel As String
+  Dim sCodigo As String
+  Dim aCodigos As String[]
+  Dim aIdiomas As New String[]
+
+  ' --- 1. ESTILO DE CITA ---
+  ' EL CANÓNICO TAMBIÉN LO TRAE, PERO LA FUENTE ES LA BASE: EL XML ES COPIA.
+  If IsNull(hLibro["estilo_cita"]) Then
+    m_Sonido.sonar("Error")
+    Message.Error("El libro no tiene estilo de cita asignado.")
+    Return "ABORTAR"
+  Endif
+
+  sEstilo = m_InicioCierre.LeerTipoCSL(hLibro["estilo_cita"])
+  If sEstilo = "" Then Return "ABORTAR"   ' LeerTipoCSL YA AVISÓ
+
+  ' vancouver VA POR bibtex Y LA RAMA NO ESTÁ IMPLEMENTADA. EL XSLT TAMBIÉN
+  ' CORTA, PERO CONVIENE FRENAR ACÁ Y NO DESPUÉS DE HABER ESCRITO ARCHIVOS.
+  If sEstilo = "vancouver" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El estilo vancouver usa bibtex y todavía no está " &
+      "implementado para libros." & gb.NewLine &
+      "Los estilos disponibles son apa, iso690 e ieee.")
+    Return "ABORTAR"
+  Endif
+
+  ' --- 2. IDIOMAS ---
+  sIdiomaPrincipal = CodigoABabel(hLibro["idioma_principal"])
+
+  If sIdiomaPrincipal = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("El idioma principal del libro no está entre los " &
+      "reconocidos por babel: " & hLibro["idioma_principal"])
+    Return "ABORTAR"
+  Endif
+
+  ' LOS SECUNDARIOS SON OPCIONALES. SE CARGA babel SOLO CON LOS DEL LIBRO Y NO
+  ' CON SIETE SIEMPRE. EL PRINCIPAL VA CON main= PARA QUE NO DEPENDA DEL ORDEN.
+  If Not IsNull(hLibro["idiomas_publicacion"]) Then
+    aCodigos = Split(hLibro["idiomas_publicacion"], ",")
+    For Each sCodigo In aCodigos
+      sCodigo = CodigoABabel(sCodigo)
+      If sCodigo <> "" Then
+        If sCodigo <> sIdiomaPrincipal Then
+          If Not aIdiomas.Exist(sCodigo) Then aIdiomas.Add(sCodigo)
+        Endif
+      Endif
+    Next
+  Endif
+
+  aIdiomas.Add("main=" & sIdiomaPrincipal)
+  sIdiomasBabel = aIdiomas.Join(",")
+
+  ' --- 3. TEXTO ---
+  ' IDIOMA
+  s = "% --- IDIOMA ---" & gb.NewLine
+  s &= "\\def\\gbidiomas{" & sIdiomasBabel & "}" & gb.NewLine
+  s &= "\\def\\gbidiomaprincipal{" & sIdiomaPrincipal & "}" & gb.NewLine
+  s &= "\\newif\\ifgbcjk   \\gbcjkfalse" & gb.NewLine
+  s &= gb.NewLine
+
+  ' BIBLIOGRAFÍA
+  s &= "% --- BIBLIOGRAFÍA ---" & gb.NewLine
+  s &= "\\def\\estandar{" & sEstilo & "}" & gb.NewLine
+  s &= "\\newif\\ifgbbibporcapitulo   \\gbbibporcapitulo" &
+    IIf(LCase(Trim(hLibro["lugar_bibliografia"])) = "consolidada",
+    "false", "true") & gb.NewLine
+  s &= "\\def\\gbarchivobib{./" & CARPETA_REFERENCIAS & "/" &
+    m_Bibtex.NombreArchivoBib() & "}" & gb.NewLine
+  s &= gb.NewLine
+
+  Return s
+
+End
+
+' ============================================
+' Función   : LeerPiezasLibro
+' Propósito : Las piezas declaradas del libro, en el orden del libro. Es la
+'             consulta del PDF (ArmarInsumosLaTeX, apartado 2) y de la pasada
+'             de citas de HTML y EPUB (EscribirInsumosCitas, SC-57).
+' Parámetros: iIdLibro As Integer — libros_md.id_libro
+' Retorna   : Result — las piezas; Null si no se pudo leer o no hay ninguna,
+'             con el motivo ya informado
+' Nota      : EL ORDEN SALE DEL NOMBRE DE ARCHIVO Y NO DE UN id: UN id REFLEJA
+'             CUÁNDO SE CARGÓ LA PIEZA, NO DÓNDE VA. LOS CAPÍTULOS NO LLEGAN
+'             JUNTOS NI EN ORDEN. LA NUMERACIÓN DE DOS DÍGITOS HACE QUE EL
+'             ORDEN ALFABÉTICO EQUIVALGA AL NUMÉRICO.
+' ============================================
+Private Function LeerPiezasLibro(iIdLibro As Integer) As Result
+
+  Dim hPiezas As Result
+
+  ' --- 1. CONSULTA ---
+  Try hPiezas = m_ConexionBD.mConn.Exec(
+    "SELECT c.id_capitulo, c.nombre_archivo, c.tipo_capitulo, " &
+    "       c.titulo_capitulo, c.id_parte, c.autoria_apertura, " &
+    "       p.titulo AS titulo_parte, p.subtitulo AS subtitulo_parte " &
+    "FROM capitulos c " &
+    "LEFT JOIN partes_libro p ON p.id_parte = c.id_parte " &
+    "WHERE c.id_libro = &1 AND c.nombre_archivo IS NOT NULL " &
+    "ORDER BY " & m_OrdenPiezas.ClausulaOrden("c.nombre_archivo"), iIdLibro)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la lista de piezas del libro:" & gb.NewLine &
+      Error.Text)
+    Return Null
+  Endif
+
+  ' --- 2. VALIDACIÓN: UN LIBRO SIN PIEZAS NO TIENE SALIDA ---
+  ' RC-GM-17: EL CHEQUEO DE Available VA APARTE DEL DE Error
+  If Not hPiezas.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El libro no tiene piezas declaradas.")
+    Return Null
+  Endif
+
+  Return hPiezas
+
+End
+
+' ============================================
+' Función   : ListaPiezasConCuerpo
+' Propósito : La lista de piezas con cuerpo, una por línea, en el orden del
+'             libro. Es la regla del PDF (ArmarInsumosLaTeX, apartado 3) y de
+'             la pasada de citas de HTML y EPUB (EscribirInsumosCitas, SC-57).
+' Parámetros: aNombre As String[] — nombre_archivo de cada pieza, en orden
+'             aTipo As String[] — tipo_capitulo de cada pieza
+'             aTitulo As String[] — titulo_capitulo de cada pieza
+' Retorna   : String — la lista (vacía si ninguna tiene cuerpo), o "ABORTAR"
+'             con el motivo ya informado
+' Nota      : LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE
+'             LaTeX. LAS DEMÁS VAN A LA LISTA: DE ELLA SALEN LOS .tex QUE EL
+'             SCRIPT GENERA Y LOS QUE BORRA POR HUÉRFANOS.
+' ============================================
+Private Function ListaPiezasConCuerpo(aNombre As String[], aTipo As String[], aTitulo As String[]) As String
+
+  Dim sLista As String
+  Dim sComando As String
+  Dim i As Integer
+
+  ' UNA PIEZA TIENE CUERPO SI EL GENERADOR NO LA PRODUCE CON UN COMANDO
+  For i = 0 To aNombre.Max
+    sComando = ComandoGenerado(aTipo[i], aTitulo[i])
+    If sComando = "ABORTAR" Then Return "ABORTAR"
+    If sComando = "" Then sLista &= aNombre[i] & gb.NewLine
+  Next
+
+  Return sLista
+
+End
+
+' ============================================
+' Función   : EscribirInsumosCitas
+' Propósito : Escribe lo que engine/preparar_citas_libro.sh necesita de la
+'             base para la pasada de citas de HTML y EPUB (SC-57): la lista de
+'             piezas con cuerpo (LISTA_PIEZAS_LATEX, la misma del PDF), las
+'             definiciones de idioma y de bibliografía (INSUMOS_CITAS) y el
+'             .bib.
+' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
+' Retorna   : Boolean — True si se escribió todo; False con el motivo ya
+'             informado
+' Nota      : NO PASA POR ArmarInsumosLaTeX: HTML Y EPUB NO NECESITAN EL
+'             FORMATO DE PÁGINA, LA AUTORÍA DE PORTADA NI LAS PRIMERAS, Y UN
+'             LIBRO SIN ESOS DATOS TIENE QUE PODER GENERARLOS. LO COMÚN —LA
+'             CONSULTA, LA REGLA DE LA LISTA Y LAS DEFINICIONES— SON LAS MISMAS
+'             FUNCIONES QUE USA EL PDF.
+' ============================================
+Public Function EscribirInsumosCitas() As Boolean
+
+  Dim hLibro As Result
+  Dim hPiezas As Result
+  Dim sRutaProyecto As String
+  Dim sDirTmp As String
+  Dim sLista As String
+  Dim sDefiniciones As String
+  Dim s As String
+  Dim aNombre As New String[]
+  Dim aTipo As New String[]
+  Dim aTitulo As New String[]
+
+  ' --- 1. VALIDACIÓN DE PROYECTO ABIERTO ---
+  If m_InicioCierre.IdProyectoEnCurso = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Abrí un proyecto antes de generar la salida.")
+    Return False
+  Endif
+
+  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+
+  ' --- 2. LECTURA DEL LIBRO ---
+  ' SOLO LAS COLUMNAS QUE PIDE DefinicionesCita
+  Try hLibro = m_ConexionBD.mConn.Exec(
+    "SELECT id_libro, estilo_cita, idioma_principal, idiomas_publicacion, " &
+    "       lugar_bibliografia " &
+    "FROM libros_md WHERE id_proyecto = &1 LIMIT 1", m_InicioCierre.IdProyectoEnCurso)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el libro del proyecto:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' RC-GM-17: EL CHEQUEO DE Available VA APARTE DEL DE Error
+  If Not hLibro.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El proyecto abierto no tiene un libro asociado en la base.")
+    Return False
+  Endif
+
+  ' --- 3. PIEZAS CON CUERPO: LA CONSULTA Y LA REGLA DEL PDF ---
+  hPiezas = LeerPiezasLibro(hLibro["id_libro"])
+  If IsNull(hPiezas) Then Return False
+
+  For Each hPiezas
+    aNombre.Add(Trim(hPiezas["nombre_archivo"]))
+    aTipo.Add(Trim(hPiezas["tipo_capitulo"]))
+    aTitulo.Add(NuloAVacio(hPiezas["titulo_capitulo"]))
+  Next
+
+  sLista = ListaPiezasConCuerpo(aNombre, aTipo, aTitulo)
+  If sLista = "ABORTAR" Then Return False
+
+  ' --- 4. DEFINICIONES DE IDIOMA Y DE BIBLIOGRAFÍA ---
+  sDefiniciones = DefinicionesCita(hLibro)
+  If sDefiniciones = "ABORTAR" Then Return False
+
+  s = "% ============================================================" & gb.NewLine
+  s &= "% citas-proyecto.tex — INSUMO DE LA PASADA DE CITAS (SC-57)" & gb.NewLine
+  s &= "% ------------------------------------------------------------" & gb.NewLine
+  s &= "% ARCHIVO DERIVADO — LO ESCRIBE gbpublisher ANTES DE HTML Y EPUB." & gb.NewLine
+  s &= "% SON LAS MISMAS DEFINICIONES DE latex/preambulo-proyecto.tex, DE" & gb.NewLine
+  s &= "% LA MISMA FUNCIÓN. NO EDITAR A MANO: LOS CAMBIOS SE HACEN EN LA BASE." & gb.NewLine
+  s &= "% ============================================================" & gb.NewLine
+  s &= gb.NewLine
+  s &= sDefiniciones
+
+  ' --- 5. EL .bib DEL MOMENTO, COMO EL PDF ---
+  ' ExportarBibTeX AVISA CON SU PROPIO MENSAJE
+  If Not m_Bibtex.ExportarBibTeX() Then Return False
+
+  ' --- 6. ESCRITURA ---
+  sDirTmp = sRutaProyecto &/ "tmp"
+  If Not Exist(sDirTmp) Then
+    Try Mkdir sDirTmp
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta tmp/ del proyecto:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
+
+  Try File.Save(sRutaProyecto &/ LISTA_PIEZAS_LATEX, sLista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir la lista de piezas:" & gb.NewLine &
+      LISTA_PIEZAS_LATEX & gb.NewLine & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' File.Save OPERA EN UTF-8 NATIVAMENTE (SC-02)
+  Try File.Save(sRutaProyecto &/ INSUMOS_CITAS, s)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron escribir los insumos de las citas:" & gb.NewLine &
+      INSUMOS_CITAS & gb.NewLine & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
 ' Función   : ArmarInsumosLaTeX
 ' Propósito : Escribe todo lo que la salida PDF necesita de la base y deja el
 '             resto a engine/preparar_latex_libro.sh, que lanza Gambas con la
@@ -1063,31 +1308,10 @@ Public Function ArmarInsumosLaTeX() As Boolean
   If Not bColectivo Then sIdsAutoresLibro = IdsAutoresLibro(iIdLibro)
 
   ' --- 2. LISTA DE PIEZAS DECLARADAS ---
-  ' EL ORDEN SALE DEL NOMBRE DE ARCHIVO Y NO DE UN id: UN id REFLEJA CUÁNDO SE
-  ' CARGÓ LA PIEZA, NO DÓNDE VA. LOS CAPÍTULOS NO LLEGAN JUNTOS NI EN ORDEN.
-  ' LA NUMERACIÓN DE DOS DÍGITOS HACE QUE EL ORDEN ALFABÉTICO EQUIVALGA AL
-  ' NUMÉRICO.
-  Try hPiezas = m_ConexionBD.mConn.Exec(
-    "SELECT c.id_capitulo, c.nombre_archivo, c.tipo_capitulo, " &
-    "       c.titulo_capitulo, c.id_parte, c.autoria_apertura, " &
-    "       p.titulo AS titulo_parte, p.subtitulo AS subtitulo_parte " &
-    "FROM capitulos c " &
-    "LEFT JOIN partes_libro p ON p.id_parte = c.id_parte " &
-    "WHERE c.id_libro = &1 AND c.nombre_archivo IS NOT NULL " &
-    "ORDER BY " & m_OrdenPiezas.ClausulaOrden("c.nombre_archivo"), iIdLibro)
-
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo leer la lista de piezas del libro:" & gb.NewLine &
-      Error.Text)
-    Return False
-  Endif
-
-  If Not hPiezas.Available Then
-    m_Sonido.sonar("Error")
-    Message.Error("El libro no tiene piezas declaradas.")
-    Return False
-  Endif
+  ' LA CONSULTA ES LA DE LeerPiezasLibro, QUE USA TAMBIÉN LA PASADA DE CITAS
+  ' DE HTML Y EPUB (SC-57). AVISA CON SU PROPIO MENSAJE
+  hPiezas = LeerPiezasLibro(iIdLibro)
+  If IsNull(hPiezas) Then Return False
 
   ' LA AUTORÍA DEL LIBRO SE LEE UNA SOLA VEZ Y SE USA COMO RESPALDO PARA TODA
   ' PIEZA SIN AUTORES PROPIOS. EN UNA MONOGRAFÍA NINGUNA PIEZA TIENE AUTORÍA
@@ -1150,14 +1374,10 @@ Public Function ArmarInsumosLaTeX() As Boolean
   Endif
 
   ' --- 3. LISTA DE PIEZAS CON CUERPO ---
-  ' LAS PIEZAS SIN CUERPO NO TIENEN CANÓNICO NI .tex: LAS PRODUCE LaTeX. LAS
-  ' DEMÁS VAN A LA LISTA, EN EL ORDEN DEL LIBRO: DE ELLA SALEN LOS .tex QUE EL
-  ' SCRIPT GENERA Y LOS QUE BORRA POR HUÉRFANOS
-  For i = 0 To aNombre.Max
-    sComando = ComandoGenerado(aTipo[i], aTitulo[i])
-    If sComando = "ABORTAR" Then Return False
-    If sComando = "" Then sLista &= aNombre[i] & gb.NewLine
-  Next
+  ' LA REGLA ES LA DE ListaPiezasConCuerpo, QUE USA TAMBIÉN LA PASADA DE CITAS
+  ' DE HTML Y EPUB (SC-57)
+  sLista = ListaPiezasConCuerpo(aNombre, aTipo, aTitulo)
+  If sLista = "ABORTAR" Then Return False
 
   ' --- 4. PREÁMBULO DERIVADO Y BIBLIOGRAFÍA ---
   If Not GenerarPreambuloProyecto() Then Return False
