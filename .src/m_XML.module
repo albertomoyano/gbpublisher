@@ -1,5 +1,10 @@
 ' Gambas module file
 
+' POSICIÓN Y TEXTO DE TextoBibDocBook: LA TRADUCCIÓN ES RECURSIVA Y UN
+' PRIMITIVO NO VUELVE MODIFICADO POR PARÁMETRO (GV-24)
+Private $sBibTexto As String
+Private $iBibPos As Integer
+
 ' =====================================================
 ' MÓDULO: m_XML
 ' =====================================================
@@ -5943,6 +5948,107 @@ Private Function DividirNivelCero(sTexto As String, sSeparador As String) As Str
 End
 
 ' ============================================
+' Función   : TextoBibDocBook
+' Propósito : Un valor de una referencia, del .bib al XML canónico: las tres
+'             órdenes de LaTeX admitidas pasan a su elemento DocBook, las
+'             llaves de agrupación se quitan y el texto se escapa.
+'               \enquote{x}  →  <quote>x</quote>   (los niveles: quote.xsl)
+'               \emph{x}     →  <emphasis>x</emphasis>
+'               \sptext{x}   →  .<superscript>x</superscript>
+'             EL PUNTO DE \sptext ES EL QUE PONE babel-spanish (\es@orddot):
+'             n\sptext{o} SE COMPONE «n.º» EN EL PDF (MEDIDO).
+' Parámetros: sValor As String — el valor tal como está en el .bib
+' Retorna   : String — el contenido del elemento, ya escapado
+' Nota      : REEMPLAZÓ A EscaparXML(QuitarLlavesBib(...)) EN LOS CAMPOS DE
+'             TEXTO. LOS TRES ELEMENTOS SON VÁLIDOS EN TODOS ELLOS (title,
+'             citetitle, bibliomisc, publishername, city, edition, orgname;
+'             MEDIDO CON jing CONTRA EL RELAX NG DE DocBook 5.2).
+'             UN VALOR QUE NO CUMPLE LA REGLA CORTA CON Error.Raise: LO
+'             ATRAPA EL Catch DE QUIEN GENERA LA BIBLIOGRAFÍA (GV-23).
+' ============================================
+Private Function TextoBibDocBook(sValor As String) As String
+
+  Dim sProblema As String
+
+  ' --- 1. VALIDACIÓN: LA MISMA REGLA QUE EL FORMULARIO Y EL .bib ---
+  sProblema = m_Bibtex.ProblemaOrdenesLatex(sValor)
+  If sProblema <> "" Then
+    Error.Raise("Referencia con LaTeX no admitido: " & sProblema & " en «" & sValor & "»")
+  Endif
+
+  ' --- 2. TRADUCCIÓN ---
+  $sBibTexto = sValor
+  $iBibPos = 1
+  Return TextoBibGrupo()
+
+End
+
+' ============================================
+' Función   : TextoBibGrupo
+' Propósito : Traduce desde $iBibPos hasta la llave que cierra el grupo en
+'             curso, o hasta el final del valor. Auxiliar de TextoBibDocBook.
+' Parámetros: (ninguno — trabaja sobre $sBibTexto y $iBibPos)
+' Retorna   : String — el fragmento traducido y escapado
+' Nota      : RECURSIVA: UNA ORDEN O UNA LLAVE ABREN UN GRUPO NUEVO. LA
+'             POSICIÓN VA EN UNA VARIABLE DE MÓDULO Y NO EN UN PARÁMETRO:
+'             EN GAMBAS UN PRIMITIVO NO VUELVE MODIFICADO (GV-24).
+'             LAS LLAVES YA ESTÁN BALANCEADAS (ProblemaOrdenesLatex).
+' ============================================
+Private Function TextoBibGrupo() As String
+
+  Dim sSalida As String
+  Dim sTramo As String
+  Dim sCaracter As String
+  Dim sInterior As String
+
+  ' --- 1. RECORRIDO HASTA EL CIERRE DEL GRUPO ---
+  While $iBibPos <= Len($sBibTexto)
+    sCaracter = Mid($sBibTexto, $iBibPos, 1)
+
+    ' CIERRE DEL GRUPO: VUELVE AL QUE LO ABRIÓ
+    If sCaracter = "}" Then
+      Inc $iBibPos
+      Break
+    Endif
+
+    If sCaracter = "\\" Or sCaracter = "{" Then
+      ' EL TEXTO ACUMULADO SE ESCAPA ANTES DE ABRIR UN ELEMENTO
+      sSalida &= EscaparXML(sTramo)
+      sTramo = ""
+
+      If sCaracter = "{" Then
+        ' LLAVE DE AGRUPACIÓN: SE QUITA Y SU CONTENIDO QUEDA
+        Inc $iBibPos
+        sSalida &= TextoBibGrupo()
+      Else If Mid($sBibTexto, $iBibPos, 9) = "\\enquote{" Then
+        $iBibPos += 9
+        sInterior = TextoBibGrupo()
+        sSalida &= "<quote>" & sInterior & "</quote>"
+      Else If Mid($sBibTexto, $iBibPos, 8) = "\\sptext{" Then
+        $iBibPos += 8
+        sInterior = TextoBibGrupo()
+        sSalida &= ".<superscript>" & sInterior & "</superscript>"
+      Else
+        ' \emph{: LA ÚNICA QUE QUEDA (ProblemaOrdenesLatex YA VALIDÓ)
+        $iBibPos += 6
+        sInterior = TextoBibGrupo()
+        sSalida &= "<emphasis>" & sInterior & "</emphasis>"
+      Endif
+      Continue
+    Endif
+
+    sTramo &= sCaracter
+    Inc $iBibPos
+  Wend
+
+  ' --- 2. EL TEXTO QUE QUEDA ---
+  sSalida &= EscaparXML(sTramo)
+
+  Return sSalida
+
+End
+
+' ============================================
 ' Función   : QuitarLlavesBib
 ' Propósito : Quita las llaves de agrupación de un valor de BibTeX, una vez
 '             que ya cumplieron su función: agrupar un nombre ({de la Fuente},
@@ -8995,10 +9101,9 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
 
   ' --- 6. TÍTULOS ---
   ' COMPONER TÍTULOS COMPLETOS CON SUBTÍTULOS (PATRÓN BIBLATEX: title + ": " + subtitle).
-  ' LOS CAMPOS DE TEXTO PASAN POR QuitarLlavesBib ANTES DE EscaparXML: LAS
-  ' LLAVES DE BibTeX ({I}'ve) SE IMPRIMÍAN EN HTML Y EPUB. EN ESE ORDEN:
-  ' ESCAPAR PRIMERO NO CAMBIA NADA PARA LAS LLAVES, PERO ES EL ORDEN QUE SIRVE
-  ' SI MAÑANA HAY QUE LIMPIAR ALGO QUE EL ESCAPE ALTERA.
+  ' LOS CAMPOS DE TEXTO PASAN POR TextoBibDocBook: QUITA LAS LLAVES DE BibTeX
+  ' ({I}'ve, QUE SE IMPRIMÍAN EN HTML Y EPUB), TRADUCE \enquote, \sptext Y
+  ' \emph A SU ELEMENTO (SC-57) Y ESCAPA EL TEXTO.
   ' NO PASAN URL NI DOI: EN biblatex SON LITERALES
   sTituloCompleto = If(sSubtitle <> "", sTitle & ": " & sSubtitle, sTitle)
   sBookTitleCompleto = If(sBookSubtitle <> "", sBookTitle & ": " & sBookSubtitle, sBookTitle)
@@ -9009,24 +9114,24 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
   ' <citetitle pubwork="book"> PARA EL CONTENEDOR.
   If sBookTitleCompleto <> "" Then
     If sTituloCompleto <> "" Then
-      sXML &= "      <title>" & EscaparXML(QuitarLlavesBib(sTituloCompleto)) & "</title>" & gb.NewLine
+      sXML &= "      <title>" & TextoBibDocBook(sTituloCompleto) & "</title>" & gb.NewLine
     Endif
     sXML &= "      <citetitle pubwork=" & cQ & "book" & cQ & ">" &
-      EscaparXML(QuitarLlavesBib(sBookTitleCompleto)) & "</citetitle>" & gb.NewLine
+      TextoBibDocBook(sBookTitleCompleto) & "</citetitle>" & gb.NewLine
   Else
     ' SIN BOOKTITLE: EL title VA SEGÚN EL TIPO DE PUBLICACIÓN
     If sTituloCompleto <> "" Then
       Select Case sTipoEfectivo
         Case "article", "periodical"
           ' EL title DEL ARTÍCULO ES UN <title>; EL journal VA COMO <citetitle>
-          sXML &= "      <title>" & EscaparXML(QuitarLlavesBib(sTituloCompleto)) & "</title>" & gb.NewLine
+          sXML &= "      <title>" & TextoBibDocBook(sTituloCompleto) & "</title>" & gb.NewLine
         Case Else
           ' LIBROS, REPORTES, TESIS, ETC.: title COMO <citetitle pubwork="X">
           sXML &= "      <citetitle"
           If sPubwork <> "" Then
             sXML &= " pubwork=" & cQ & sPubwork & cQ
           Endif
-          sXML &= ">" & EscaparXML(QuitarLlavesBib(sTituloCompleto)) & "</citetitle>" & gb.NewLine
+          sXML &= ">" & TextoBibDocBook(sTituloCompleto) & "</citetitle>" & gb.NewLine
       End Select
     Endif
   Endif
@@ -9034,34 +9139,34 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
   ' MAINTITLE (TÍTULO DE OBRA MULTI-VOLUMEN, BIBLATEX-ESPECÍFICO)
   If sMaintitleCompleto <> "" Then
     sXML &= "      <citetitle pubwork=" & cQ & "set" & cQ & ">" &
-      EscaparXML(QuitarLlavesBib(sMaintitleCompleto)) & "</citetitle>" & gb.NewLine
+      TextoBibDocBook(sMaintitleCompleto) & "</citetitle>" & gb.NewLine
   Endif
 
   ' JOURNAL: PARA article/periodical, EL journal_title VA COMO <citetitle pubwork="journal">
   If sJournal <> "" And (sTipoEfectivo = "article" Or sTipoEfectivo = "periodical") Then
     sXML &= "      <citetitle pubwork=" & cQ & "journal" & cQ & ">" &
-      EscaparXML(QuitarLlavesBib(sJournal)) & "</citetitle>" & gb.NewLine
+      TextoBibDocBook(sJournal) & "</citetitle>" & gb.NewLine
   Endif
 
   ' SERIES (BIBLATEX series): SOLO APLICA A LIBROS Y COLECCIONES
   If sSeries <> "" And (sPubwork = "book" Or sPubwork = "chapter" Or
       InStr(Lower(sType), "collection") > 0) Then
     sXML &= "      <bibliomisc role=" & cQ & "series" & cQ & ">" &
-      EscaparXML(QuitarLlavesBib(sSeries)) & "</bibliomisc>" & gb.NewLine
+      TextoBibDocBook(sSeries) & "</bibliomisc>" & gb.NewLine
   Endif
 
   ' --- 7. PUBLISHER Y UBICACIÓN ---
   If sPublisher <> "" Then
     sXML &= "      <publisher>" & gb.NewLine
-    sXML &= "        <publishername>" & EscaparXML(QuitarLlavesBib(sPublisher)) & "</publishername>" & gb.NewLine
+    sXML &= "        <publishername>" & TextoBibDocBook(sPublisher) & "</publishername>" & gb.NewLine
     If sAddress <> "" Then
-      sXML &= "        <address><city>" & EscaparXML(QuitarLlavesBib(sAddress)) & "</city></address>" & gb.NewLine
+      sXML &= "        <address><city>" & TextoBibDocBook(sAddress) & "</city></address>" & gb.NewLine
     Endif
     sXML &= "      </publisher>" & gb.NewLine
   Else If sAddress <> "" Then
     ' ADDRESS SIN PUBLISHER: EMITIR COMO bibliomisc PARA NO PERDER EL DATO
     sXML &= "      <bibliomisc role=" & cQ & "address" & cQ & ">" &
-      EscaparXML(QuitarLlavesBib(sAddress)) & "</bibliomisc>" & gb.NewLine
+      TextoBibDocBook(sAddress) & "</bibliomisc>" & gb.NewLine
   Endif
 
   ' --- 8. FECHA, VOLUMEN, NÚMERO ---
@@ -9099,17 +9204,17 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
 
   ' --- 10. EDICIÓN, INSTITUCIÓN, NOTAS ---
   If sEdition <> "" Then
-    sXML &= "      <edition>" & EscaparXML(QuitarLlavesBib(sEdition)) & "</edition>" & gb.NewLine
+    sXML &= "      <edition>" & TextoBibDocBook(sEdition) & "</edition>" & gb.NewLine
   Endif
 
   ' INSTITUTION/ORGANIZATION: PARA TESIS Y REPORTES
   If sTipoEfectivo = "thesis" Or sTipoEfectivo = "report" Then
     If sInstitution <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(QuitarLlavesBib(sInstitution)) & "</orgname>" & gb.NewLine
+      sXML &= "      <orgname>" & TextoBibDocBook(sInstitution) & "</orgname>" & gb.NewLine
     Else If sSchool <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(QuitarLlavesBib(sSchool)) & "</orgname>" & gb.NewLine
+      sXML &= "      <orgname>" & TextoBibDocBook(sSchool) & "</orgname>" & gb.NewLine
     Else If sOrganization <> "" Then
-      sXML &= "      <orgname>" & EscaparXML(QuitarLlavesBib(sOrganization)) & "</orgname>" & gb.NewLine
+      sXML &= "      <orgname>" & TextoBibDocBook(sOrganization) & "</orgname>" & gb.NewLine
     Endif
   Endif
 
@@ -9138,12 +9243,12 @@ Private Function GenerarBiblioentryDesdeBib(sEntry As String, sType As String, s
 
   If sNote <> "" Then
     sXML &= "      <bibliomisc role=" & cQ & "note" & cQ & ">" &
-      EscaparXML(QuitarLlavesBib(sNote)) & "</bibliomisc>" & gb.NewLine
+      TextoBibDocBook(sNote) & "</bibliomisc>" & gb.NewLine
   Endif
 
   If sVersion <> "" Then
     sXML &= "      <bibliomisc role=" & cQ & "version" & cQ & ">" &
-      EscaparXML(QuitarLlavesBib(sVersion)) & "</bibliomisc>" & gb.NewLine
+      TextoBibDocBook(sVersion) & "</bibliomisc>" & gb.NewLine
   Endif
 
   If sHolder <> "" And sTipoEfectivo = "patent" Then

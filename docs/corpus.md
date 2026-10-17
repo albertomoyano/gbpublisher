@@ -3357,9 +3357,62 @@ ALCANCE
 
 Verona y APA. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104
+**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104,vinculo:SC-58,vinculo:GV-105
 
 **PENDIENTE:** Implementado y medido en el contenedor con el libro de Duek (132 citas, 113 referencias): el texto de cada cita del HTML y del EPUB es el de citas.html, y las referencias de cada pieza son las mismas y en el mismo orden; los enlaces de cita del EPUB no tienen destinos rotos; vnu sin errores en el HTML; epubcheck 4.2.6 sin errores en el EPUB; bibliografía consolidada simulada (103 referencias) en HTML y EPUB; los cortes de la hoja con un citas.html incompleto. Falta: la prueba en Mint con un libro real; cómo responden los lectores de EPUB a all-small-caps; la fuente del panel de referencias del HTML (GV-104).
+
+### SC-58 — Órdenes de LaTeX en las referencias: solo \enquote, \sptext y \emph
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** TeX Live 2023 / biblatex 3.19 / biblatex-apa v9.17 / make4ht v0.3m / Gambas 3.19 / jing, DocBook 5.2 / Chromium / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto). En los campos de una referencia se admiten tres órdenes de LaTeX y ninguna otra:
+
+    \enquote{…}   cita entre comillas; el nivel lo decide el anidamiento
+    \sptext{…}    ordinal de babel-spanish: n\sptext{o} es «n.º»
+    \emph{…}      énfasis; dentro de un título en cursiva da redonda (el «enroque»)
+
+Los puntos suspensivos se escriben `...`, como en el Markdown: Markdown no es LaTeX. Las llaves de BibTeX siguen siendo legítimas: agrupan un nombre (`{de la Fuente}`) o protegen una mayúscula (`{I}'ve`).
+
+POR QUÉ HACE FALTA UNA REGLA
+
+Los mismos campos van al `.bib`, que interpreta biblatex, y al `<bibliography>` del canónico, que no es LaTeX. Antes, el canónico quitaba las llaves y nada más: `\enquote{cuestión militar}` llegaba como «\enquotecuestión militar».
+
+LA REGLA ES UNA SOLA: `m_Bibtex.ProblemaOrdenesLatex`
+
+Solo las tres órdenes, cada una con su llave pegada, y las llaves balanceadas. La usan tres controles:
+
+1. EL FORMULARIO, al guardar una referencia nueva, al guardar cambios y al guardar un título repetido (`VerificarOrdenesLatex`). Si un campo no cumple, avisa con un mensaje y la referencia no se guarda.
+2. LA EXPORTACIÓN DEL `.bib` (`ExportarBibTeX`): lo que ya estaba en la base o llegó sin pasar por el formulario. Con una sola entrada que no cumple, el `.bib` no se escribe y el mensaje lista todas, con su clave y su campo.
+3. EL CANÓNICO (`m_XML.TextoBibDocBook`): si un `.bib` viejo trae una orden no admitida, corta con `Error.Raise`.
+
+EL CANÓNICO DE LIBROS
+
+`m_XML.TextoBibDocBook` reemplaza a `EscaparXML(QuitarLlavesBib(...))` en los campos de texto de `<biblioentry>`:
+
+    \enquote{x}   ->  <quote>x</quote>          (los niveles: quote.xsl)
+    \emph{x}      ->  <emphasis>x</emphasis>
+    \sptext{x}    ->  .<superscript>x</superscript>
+
+El punto de `\sptext` es el que pone babel-spanish (`\es@orddot`): así el canónico dice lo mismo que el PDF. Los nombres siguen con `QuitarLlavesBib`.
+
+MEDIDO: los tres elementos son válidos en `title`, `citetitle`, `bibliomisc`, `publishername`, `city`, `edition` y `orgname` (jing con el Relax NG de DocBook 5.2, con un control negativo). Con las 16 referencias de Molinaro que usan `\enquote` o `\emph`, el resultado valida; las 2 con `\dots` se rechazan, como corresponde.
+
+EN LAS SALIDAS (medido)
+
+    .bib                                   PDF                    HTML y EPUB (tex4ht)
+    \enquote{huelga \enquote{general}}     «huelga “general”»     «huelga “general”»
+    El 1\sptext{o} de mayo                 1.º                    1.<sup>o</sup>
+    Revista \emph{Nueva} (en cursiva)      Nueva en redonda       <em>Revista <em>Nueva</em></em>
+
+Para el enroque en pantalla, `em em { font-style: normal; }` en `gbpublisher.css` y `gbpublisher-epub-libro.css`: es lo que hace `\emph` en LaTeX. Verificado en Chromium.
+
+ALCANCE
+
+Libros. Revistas arman su `element-citation` de JATS desde el mismo `.bib` sin traducir ni escapar; se resuelve cuando se encare revistas entero, después de libros (decisión de Alberto). Molinaro, que trae `\dots`, sale por legacy y no se corrige.
+
+**Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23
+
+**PENDIENTE:** En las hojas de HTML y EPUB, las plantillas por estilo (las de los estilos que todavía no van por tex4ht: ISO 690, IEEE) leen el título con normalize-space y pierden las comillas de un <quote>: se resuelve cuando esos estilos pasen por tex4ht. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Sin probar en Mint.
 
 ---
 
@@ -6075,6 +6128,25 @@ CONSECUENCIA PARA EL HTML: el panel de referencias (`.ref-item`) se compone con 
 DECISIÓN DE ALBERTO: las referencias del HTML van en Noto Serif, la tipografía del texto (`.ref-item.ref-biblatex` con `--font-serif`). Vale lo mismo que para el texto: la fuente no se embebe y la toma del sistema del lector.
 
 **Relaciones:** vinculo:SC-56,vinculo:SC-57
+
+### GV-105 — biblatex-iso690 con autolang=other: \sptext indefinido en una entrada que no es del idioma del libro
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biblatex-iso690 (TeX Live 2023) / babel-spanish 5.0q / LuaLaTeX / contenedor Ubuntu 24.04; PDF de Duek en Mint · **Verificado:** 2026-10
+
+`iso.bbx` trae `autolang=other`: cada entrada se compone en el idioma de su `langid`. En un libro en español con babel cargado solo con el español (`\gbidiomas`), una entrada `english` con número de revista corta el PDF:
+
+    ! Undefined control sequence.
+    \abx@sstr@number ->n\sptext {o}
+
+Al entrar en la entrada, babel apaga los extras del español, y con ellos `\sptext`. La cadena que imprime biblatex para «número» sigue siendo la española, `n\sptext{o}`.
+
+MEDIDO con `ref-l-DUEK.bib`, compilando entrada por entrada: fallan las dos en inglés que llevan `number` (4203-SMITH2007, 4205-HEID2021); la portuguesa, que no lo lleva, no falla. APA y Verona no fallan porque no activan `autolang`.
+
+Cargar `english` en babel tampoco sirve: la entrada sale mezclada, con «no. 1» en inglés y «págs.» y «Disp. desde» en español.
+
+DECISIÓN DE ALBERTO: `autolang=hyphen` en `cita-iso690-config.tex`, como opción de carga (le gana al valor del estilo; medido). Las cadenas van en el idioma del libro y solo el corte de palabras sigue al de la entrada, como en APA y Verona. El PDF de Duek compiló sin errores ni avisos de biblatex.
+
+**Relaciones:** vinculo:SC-57,vinculo:SC-58,apoya:GV-23
 
 ---
 

@@ -81,6 +81,171 @@ Public Function VerificarCaracteresInvalidos() As Boolean
 
 End
 
+' ============================================
+' Función   : ProblemaOrdenesLatex
+' Propósito : Dice si un valor de una referencia cumple la regla de las órdenes
+'             de LaTeX: solo \enquote{…}, \sptext{…} y \emph{…}, y las llaves
+'             balanceadas. Es la regla que usan el formulario al guardar, la
+'             exportación del .bib y el canónico (m_XML.TextoBibDocBook).
+' Parámetros: sValor As String — el valor de un campo
+' Retorna   : String — "" si cumple; si no, qué falla
+' Nota      : SE RECORRE POR BYTES (Mid, Len): LAS MARCAS SON ASCII Y UN BYTE
+'             DE UN CARÁCTER UTF-8 NUNCA ES «\», «{» NI «}».
+'             LAS LLAVES SUELTAS SON LEGÍTIMAS: AGRUPAN UN NOMBRE
+'             ({de la Fuente}) O PROTEGEN UNA MAYÚSCULA ({I}'ve).
+' ============================================
+Public Function ProblemaOrdenesLatex(sValor As String) As String
+
+  Dim i As Integer
+  Dim iNivel As Integer
+  Dim sCaracter As String
+  Dim sOrden As String
+  Dim j As Integer
+
+  ' --- 1. RECORRIDO ---
+  i = 1
+  While i <= Len(sValor)
+    sCaracter = Mid(sValor, i, 1)
+
+    If sCaracter = "\\" Then
+      ' LAS TRES ÓRDENES ADMITIDAS (DECISIÓN DE ALBERTO). SE AVANZA HASTA
+      ' EL CARÁCTER ANTERIOR A SU LLAVE: CON EL Inc DEL FINAL, LA VUELTA
+      ' SIGUIENTE CAE EN LA LLAVE Y LA CUENTA COMO CUALQUIER OTRA
+      If Mid(sValor, i, 9) = "\\enquote{" Then
+        i += 7
+      Else If Mid(sValor, i, 8) = "\\sptext{" Then
+        i += 6
+      Else If Mid(sValor, i, 6) = "\\emph{" Then
+        i += 4
+      Else
+        ' EL NOMBRE DE LA ORDEN, PARA EL MENSAJE: LAS LETRAS QUE SIGUEN
+        j = i + 1
+        While j <= Len(sValor)
+          If Not (Mid(sValor, j, 1) Like "[A-Za-z]") Then Break
+          Inc j
+        Wend
+        sOrden = Mid(sValor, i, j - i)
+        If sOrden = "\\" Then sOrden = "\\" & Mid(sValor, i + 1, 1)
+        ' UNA DE LAS TRES SIN SU LLAVE PEGADA NO ES UNA ORDEN DE OTRA FAMILIA
+        If ["\\enquote", "\\sptext", "\\emph"].Exist(sOrden) Then
+          Return "«" & sOrden & "» sin su llave «{» pegada"
+        Endif
+        Return "orden no admitida «" & sOrden & "» (solo \\enquote, \\sptext y \\emph)"
+      Endif
+    Else If sCaracter = "{" Then
+      Inc iNivel
+    Else If sCaracter = "}" Then
+      Dec iNivel
+      If iNivel < 0 Then Return "una llave «}» que no abrió ninguna «{»"
+    Endif
+
+    Inc i
+  Wend
+
+  ' --- 2. CIERRE ---
+  If iNivel > 0 Then Return "falta cerrar " & CStr(iNivel) & " llave(s) «{»"
+
+  Return ""
+
+End
+' ============================================
+' Función   : VerificarOrdenesLatex
+' Propósito : Antes de guardar una referencia, controla que los campos de texto
+'             cumplan la regla de las órdenes de LaTeX (ProblemaOrdenesLatex).
+'             Si alguno no la cumple, lo informa y la referencia no se guarda.
+' Parámetros: (ninguno — trabaja sobre los controles de FMain)
+' Retorna   : Boolean — True SI HAY UN ERROR (LA CONVENCIÓN DE
+'             VerificarCaracteresInvalidos Y VerificacionBase)
+' Nota      : RECORRE LAS SOLAPAS DE TabPanelBibliografia COMO LimpiarTabStrip.
+'             LA CLAVE NO SE MIRA: LA SANEA SanitizarClaveBibtex.
+' ============================================
+Public Function VerificarOrdenesLatex() As Boolean
+
+  Dim aTotal As New String[]
+  Dim aParcial As String[]
+  Dim sDesc As String
+  Dim i As Integer
+  Dim iIndiceOriginal As Integer
+
+  ' --- 1. RECORRIDO DE TODAS LAS SOLAPAS ---
+  ' SE OCULTA EL CONTROL DURANTE EL RECORRIDO, COMO EN LimpiarTabStrip
+  iIndiceOriginal = FMain.TabPanelBibliografia.Index
+  FMain.TabPanelBibliografia.Visible = False
+
+  For i = 0 To FMain.TabPanelBibliografia.Count - 1
+    FMain.TabPanelBibliografia.Index = i
+    aParcial = OrdenesLatexEnControles(FMain.TabPanelBibliografia)
+    For Each sDesc In aParcial
+      If Not aTotal.Exist(sDesc) Then aTotal.Add(sDesc)
+    Next
+  Next
+
+  FMain.TabPanelBibliografia.Index = iIndiceOriginal
+  FMain.TabPanelBibliografia.Visible = True
+
+  ' --- 2. INFORME ---
+  If aTotal.Count = 0 Then Return False
+
+  m_Sonido.sonar("Error")
+  Message.Error("En las referencias solo se admiten tres órdenes de LaTeX:" & gb.NewLine &
+    "\\enquote{…}, \\sptext{…} y \\emph{…}." & gb.NewLine & gb.NewLine &
+    "  " & aTotal.Join(gb.NewLine & "  ") & gb.NewLine & gb.NewLine &
+    "La referencia no se guardó.")
+  Return True
+
+End
+
+' ============================================
+' Función   : OrdenesLatexEnControles
+' Propósito : Recorre los controles de texto de un contenedor y devuelve los
+'             que no cumplen la regla de las órdenes de LaTeX.
+' Parámetros: hContenedor As Container — contenedor a recorrer
+' Retorna   : String[] — «campo: problema», uno por control
+' Nota      : RECURSIVA, COMO LimpiarControlesPegados: LOS CAMPOS ESTÁN EN
+'             CONTENEDORES ANIDADOS. EL CAMPO SE NOMBRA POR SU COLUMNA
+'             ($MapaCampos) Y, SI NO LA TIENE, POR EL NOMBRE DEL CONTROL.
+' ============================================
+Private Function OrdenesLatexEnControles(hContenedor As Container) As String[]
+
+  Dim hCtrl As Control
+  Dim aTotal As New String[]
+  Dim aParcial As String[]
+  Dim sDesc As String
+  Dim sProblema As String
+  Dim sCampo As String
+
+  ' --- 1. RECORRIDO DE LOS HIJOS ---
+  For Each hCtrl In hContenedor.Children
+
+    ' --- 2. CONTENEDOR: BAJAR UN NIVEL ---
+    If hCtrl Is Container Then
+      aParcial = OrdenesLatexEnControles(hCtrl)
+      For Each sDesc In aParcial
+        If Not aTotal.Exist(sDesc) Then aTotal.Add(sDesc)
+      Next
+      Continue
+    Endif
+
+    ' --- 3. CONTROL DE TEXTO ---
+    ' LOS If VAN ANIDADOS Y NO ENCADENADOS CON And, QUE NO CORTOCIRCUITA
+    ' (RC-GM-17)
+    If hCtrl Is TextBox Then
+      If hCtrl.Name <> "txtClaveBibtex" Then
+        sProblema = ProblemaOrdenesLatex(TextBox(hCtrl).Text)
+        If sProblema <> "" Then
+          sCampo = hCtrl.Name
+          If $MapaCampos.Exist(hCtrl.Name) Then sCampo = $MapaCampos[hCtrl.Name]
+          aTotal.Add(sCampo & ": " & sProblema)
+        Endif
+      Endif
+    Endif
+
+  Next
+
+  Return aTotal
+
+End
+
 Public Function VerificacionBase() As Boolean
 
   If FMain.cmbTipoDeEntrada.Text = "" Then
@@ -1900,6 +2065,8 @@ Public Function ExportarBibTeX() As Boolean
   Dim sRelleno As String
   Dim sArchivo As String
   Dim iAncho As Integer
+  Dim sProblema As String
+  Dim aProblemas As New String[]
 
   ' COLUMNAS DE CONTROL: NO SON CAMPOS BIBLIOGRÁFICOS Y NO VAN AL .bib.
   ' SE SALTEAN POR NOMBRE Y NO POR POSICIÓN: UNA COLUMNA NUEVA INSERTADA EN EL
@@ -1954,6 +2121,13 @@ Public Function ExportarBibTeX() As Boolean
 
           sCampo = CampoBiblatex(sColumna)
 
+          ' LAS ÓRDENES DE LaTeX (SC-57): LO QUE YA ESTÁ EN LA BASE O LLEGÓ
+          ' SIN PASAR POR EL FORMULARIO TAMBIÉN SE CONTROLA ACÁ
+          sProblema = ProblemaOrdenesLatex(sValor)
+          If sProblema <> "" Then
+            aProblemas.Add(hRes["clave_bibtex"] & " — " & sCampo & ": " & sProblema)
+          Endif
+
           If Not cEmitidos.Exist(sCampo) Then
             cEmitidos[sCampo] = True
             sRelleno = String$(iAncho - Len(sCampo), " ")
@@ -1970,13 +2144,25 @@ Public Function ExportarBibTeX() As Boolean
 
   Wend
 
-  ' --- 4. FIRMA ---
+  ' --- 4. ÓRDENES DE LaTeX NO ADMITIDAS ---
+  ' CON UNA SOLA, EL .bib NO SE ESCRIBE: EL PDF LA COMPONDRÍA Y EL CANÓNICO
+  ' LA CORTARÍA, O AL REVÉS. SE CORTA ACÁ, CON LA LISTA COMPLETA (GV-23)
+  If aProblemas.Count > 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("Hay referencias con órdenes de LaTeX no admitidas." & gb.NewLine &
+      "Solo se admiten \\enquote{…}, \\sptext{…} y \\emph{…}." & gb.NewLine & gb.NewLine &
+      "  " & aProblemas.Join(gb.NewLine & "  ") & gb.NewLine & gb.NewLine &
+      "No se escribió el archivo de referencias: corregí las entradas y volvé a generar.")
+    Return False
+  Endif
+
+  ' --- 5. FIRMA ---
   ' SIN FECHA NI VERSIÓN: CUALQUIER DATO QUE CAMBIE ENTRE DOS GENERACIONES
   ' IGUALES ENSUCIA EL DIFF Y ROMPE LA GUARDA DE DESACTUALIZACIÓN. EL
   ' REPOSITORIO YA FECHA EL COMMIT, QUE ES EL EVENTO REAL.
   s &= "\n\n@Comment{generado con gbpublisher}"
 
-  ' --- 5. ESCRITURA ---
+  ' --- 6. ESCRITURA ---
   ' File.Save OPERA EN UTF-8 NATIVAMENTE (SC-02).
   sArchivo = m_InicioCierre.RutaProyectoEnCurso &/ "referencias" &/ NombreArchivoBib()
 
@@ -2088,6 +2274,8 @@ Public Sub GuardarBibtex()
   ' --- 3. VALIDACIONES DE CONTENIDO ---
   If VerificacionBase() Then Return
   If VerificarCaracteresInvalidos() Then Return
+  ' LAS ÓRDENES DE LaTeX: SOLO \enquote, \sptext Y \emph (SC-57)
+  If VerificarOrdenesLatex() Then Return
 
   ' --- 4. CHEQUEO DE DUPLICADO EN EL PROYECTO ---
   ' MISMA OBRA = TÍTULO NORMALIZADO + AÑO + APELLIDO DEL PRIMER AUTOR O EDITOR,
@@ -2166,6 +2354,8 @@ Public Sub GuardarCambiosBibtex()
 
   ' --- 2. VALIDACIÓN DE CONTENIDO ---
   If VerificacionBase() Then Return
+  ' LAS ÓRDENES DE LaTeX: SOLO \enquote, \sptext Y \emph (SC-57)
+  If VerificarOrdenesLatex() Then Return
 
   ' --- 3. VALIDACIÓN DEL IDENTIFICADOR ---
   ' PENDIENTE (RC-GM-16): ESTE ID DEBERÍA SALIR DE UNA VARIABLE Public DE
