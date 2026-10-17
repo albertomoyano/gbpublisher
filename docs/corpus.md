@@ -976,7 +976,7 @@ ALCANCE
 
 Libros.
 
-**Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12,vinculo:SC-56,vinculo:RF-12,vinculo:SC-57
+**Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12,vinculo:SC-56,vinculo:RF-12,vinculo:SC-57,vinculo:RF-13
 
 ### SC-15 — Resaltado de sintaxis en controles TextEdit: HTML desde Run, temas como datos
 
@@ -3277,7 +3277,7 @@ FUERA DE ESTA DECISIÓN
 
 **PENDIENTE:** Medido en el contenedor sobre el HTML que da make4ht: la disposición classic con dashed=false, el texto de las 222 entradas contra el PDF y el marcado de las versalitas con lowscauthors=false. Sin probar: cómo responden los lectores de EPUB a all-small-caps, y si degradan a mayúsculas y minúsculas como se espera. Sin implementar en la aplicación: va con SC-57.
 
-### SC-57 — Bibliografía de libro en HTML y EPUB: la arma biblatex con tex4ht, con el mismo estilo que el PDF (Verona, APA)
+### SC-57 — Bibliografía de libro en HTML y EPUB: la arma biblatex con tex4ht, con el mismo estilo que el PDF (Verona, APA, ISO 690)
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / biblatex-philosophy v1.9.8g / make4ht v0.3m / TeX Live 2023 / Saxon-HE 12.9 / epubcheck 4.2.6 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
 
@@ -3353,15 +3353,21 @@ En las notas no hay límite: `\iffootnote`, que tex4ht no puede responder, en `a
 
 Lo que reemplaza: las plantillas de APA de las hojas ordenaban las referencias como el canónico y no como el estilo, repetían el título de la obra en las partes de libro («La juventud es más que una palabra. La juventud es más que una palabra, 13-30») y unían dos autores con «y» donde biblatex-apa pone «&».
 
+ISO 690
+
+`cita-iso690-html.tex` cambia solo los nombres: en el PDF van `\textsc{\MakeLowercase{...}}`; en pantalla, `\textsc{...}` con la caja de la base, y las versalitas las pone el CSS. Es la decisión de Verona (SC-56). Las nuevas definiciones se agregan después de las del PDF (`\familynameformat` y un `\AtBeginBibliography`) y las pisan. Define `\gbImprimirBibliografia` como `\printbibliography[heading=none]`. RF-13.
+
+MEDIDO con el libro de Duek, contra el PDF que Alberto compuso en Mint con ISO 690: las 132 citas y las 113 referencias de `citas.html` tienen el mismo texto que el PDF, sin distinguir caja, que es lo único que cambia a propósito (las dos diferencias de la comparación son cortes de página del PDF). HTML: vnu sin errores. EPUB: epubcheck 4.2.6 sin errores.
+
 ALCANCE
 
-Verona y APA. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
+Verona, APA e ISO 690. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104,vinculo:SC-58,vinculo:GV-105
+**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104,vinculo:SC-58,vinculo:GV-105,vinculo:RF-13
 
 **PENDIENTE:** Implementado y medido en el contenedor con el libro de Duek (132 citas, 113 referencias): el texto de cada cita del HTML y del EPUB es el de citas.html, y las referencias de cada pieza son las mismas y en el mismo orden; los enlaces de cita del EPUB no tienen destinos rotos; vnu sin errores en el HTML; epubcheck 4.2.6 sin errores en el EPUB; bibliografía consolidada simulada (103 referencias) en HTML y EPUB; los cortes de la hoja con un citas.html incompleto. Falta: la prueba en Mint con un libro real; cómo responden los lectores de EPUB a all-small-caps; la fuente del panel de referencias del HTML (GV-104).
 
-### SC-58 — Órdenes de LaTeX en las referencias: solo \enquote, \sptext y \emph
+### SC-58 — Órdenes de LaTeX en las referencias: solo \enquote, \sptext, \emph y el signo \&
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** TeX Live 2023 / biblatex 3.19 / biblatex-apa v9.17 / make4ht v0.3m / Gambas 3.19 / jing, DocBook 5.2 / Chromium / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
 
@@ -3372,6 +3378,14 @@ DECISIÓN CERRADA (decisión de Alberto). En los campos de una referencia se adm
     \emph{…}      énfasis; dentro de un título en cursiva da redonda (el «enroque»)
 
 Los puntos suspensivos se escriben `...`, como en el Markdown: Markdown no es LaTeX.
+
+EL SIGNO &
+
+Va escapado, `\&`: aparece en algunos nombres de revista («Población \& Sociedad», en el `.bib` de Duek). Sin la barra, LaTeX lo toma como separador de columnas y el PDF corta («Misplaced alignment tab character &», medido); por eso un `&` sin barra se rechaza con su mensaje. `\&` da «&» en el PDF y `&amp;` en tex4ht (medido); en el canónico es el carácter, escapado (`&amp;`).
+
+LOS CAMPOS LITERALES
+
+`doi`, `eprint`, `file` y `url` no pasan por la regla (`m_Bibtex.EsCampoLiteral`): biblatex los toma sin interpretar LaTeX (tipos `verbatim` y `uri` de `blx-dm.def`, 3.19), y una URL puede llevar `&` sin escapar.
 
 NIVELES DE \enquote
 
@@ -3433,7 +3447,7 @@ Libros. Revistas arman su `element-citation` de JATS desde el mismo `.bib` sin t
 
 **Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23
 
-**PENDIENTE:** En las hojas de HTML y EPUB, las plantillas por estilo (las de los estilos que todavía no van por tex4ht: ISO 690, IEEE) leen el título con normalize-space y pierden las comillas de un <quote>: se resuelve cuando esos estilos pasen por tex4ht. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
+**PENDIENTE:** En las hojas de HTML y EPUB, las plantillas por estilo (hoy solo las de IEEE, que todavía no va por tex4ht) leen el título con normalize-space y pierden las comillas de un <quote>: se resuelve cuando IEEE pase por tex4ht. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
 
 ---
 
@@ -3869,6 +3883,44 @@ BANCO DE PRUEBAS
 **Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:RC-BL-02,vinculo:GV-102,vinculo:SC-57
 
 **PENDIENTE:** Falta fijar dónde se guarda el banco de pruebas: el .bib de Molinaro y el de los casos de choque.
+
+### RF-13 — Fuente de biblatex-iso690 (ISO 690)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex-iso690 v0.4.1 (2022/03/20) / repositorio, commit 7231d7a / biblatex 3.19 / TeX Live 2023 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Repositorio: https://github.com/michal-h21/biblatex-iso690. Paquete en CTAN: `macros/latex/contrib/biblatex-contrib/biblatex-iso690`. Autor: Michal Hoftich.
+
+VERSIÓN ANCLADA
+
+v0.4.1 (2022/03/20). Es la de TeX Live 2023, la que compone en Mint 22 y en el contenedor. El repositorio (commit 7231d7a, 2025-09-28) trae los mismos archivos: `iso.bbx`, `iso-authoryear.bbx`, `iso-authoryear.cbx` y `spanish-iso.lbx` son idénticos byte a byte a los instalados (medido con diff). La aplicación usa la variante autor-año: `style=iso-authoryear`.
+
+ACCESO
+
+`git clone --depth 1 https://github.com/michal-h21/biblatex-iso690.git` funciona. Con TeX Live instalado, los archivos ya están en `texmf-dist/tex/latex/biblatex-iso690/`.
+
+ORDEN DE CONSULTA
+
+1. `iso.bbx` — opciones del estilo, formatos de campo, formato de los nombres. Fuente de verdad del comportamiento.
+2. `iso-authoryear.bbx` — la variante autor-año de las referencias: orden `nyt`, `nameyeardelim`, fechas.
+3. `iso-authoryear.cbx` — citas: `maxcitenames=1`, sobre `authoryear.cbx` de biblatex y `iso-fullcite.cbx`.
+4. `spanish-iso.lbx` — cadenas en español; hereda las de `spanish.lbx` de biblatex.
+5. `biblatex-iso690.tex` y su PDF — documentación. Informa la intención; si contradice al código, gana el código.
+
+La configuración de la aplicación: `.hidden/latex/cita-iso690-config.tex`; la de pantalla, `cita-iso690-html.tex`.
+
+BANCO DE PRUEBAS
+
+`biblatex-iso690-examples.bib` (42 entradas) e `iso-example.tex`.
+
+DATOS DEL FUENTE QUE USA EL PROYECTO
+
+- `iso.bbx` fija `autolang=other`: cada entrada en el idioma de su `langid`. La aplicación lo cambia por `autolang=hyphen` (GV-105). El estilo trae también `currentlang` (las cadenas en el idioma del documento), que no se usa: con `autolang=other`, babel igual apaga los extras del español en una entrada en otro idioma.
+- Los apellidos: `\familynameformat` va en mayúsculas (`\MakeUppercase`) o, con `familynamesc`, en `\textsc`. Se aplica con `\AtBeginBibliography`, solo en la bibliografía. La configuración de la aplicación lo reemplaza por versalitas parejas, `\textsc{\MakeLowercase{...}}`, en los cuatro componentes del nombre.
+- `\mkbibacro` (DOI, ISBN, ISSN): `\textsc{\MakeLowercase{...}}` solo con `bibacrosc`, que el estilo trae desactivada.
+- Títulos: `\DeclareFieldFormat*{title}{#1}`. ISO 690 no pone comillas a ningún título (SC-58).
+- Citas: `\iffootnote` solo aparece en `\smartcite` (de `authoryear.cbx`), que la aplicación no emite. La detección de notas que tex4ht no responde no afecta a ISO 690 (SC-57).
+
+**Relaciones:** vinculo:SC-14,vinculo:SC-57,vinculo:SC-58,vinculo:GV-105
 
 ---
 

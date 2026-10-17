@@ -84,7 +84,8 @@ End
 ' ============================================
 ' Función   : ProblemaOrdenesLatex
 ' Propósito : Dice si un valor de una referencia cumple la regla de las órdenes
-'             de LaTeX (SC-58): solo \enquote{…}, \sptext{…} y \emph{…}, con
+'             de LaTeX (SC-58): solo \enquote{…}, \sptext{…}, \emph{…} y el
+'             signo escapado \&, con
 '             \enquote hasta el nivel que admite el campo, y las llaves
 '             balanceadas. Es la regla que usan el formulario al guardar, la
 '             exportación del .bib y el canónico (m_XML.TextoBibDocBook).
@@ -93,7 +94,9 @@ End
 '                                      omisión, 1 en un título que el estilo
 '                                      pone entre comillas (NivelesEnquote)
 ' Retorna   : String — "" si cumple; si no, qué falla
-' Nota      : SE RECORRE POR BYTES (Mid, Len): LAS MARCAS SON ASCII Y UN BYTE
+' Nota      : NO SE APLICA A LOS CAMPOS LITERALES (EsCampoLiteral): ES EL
+'             LLAMADOR EL QUE LOS SALTEA.
+'             SE RECORRE POR BYTES (Mid, Len): LAS MARCAS SON ASCII Y UN BYTE
 '             DE UN CARÁCTER UTF-8 NUNCA ES «\», «{» NI «}».
 '             LAS LLAVES SUELTAS SON LEGÍTIMAS: AGRUPAN UN NOMBRE
 '             ({de la Fuente}) O PROTEGEN UNA MAYÚSCULA ({I}'ve).
@@ -119,6 +122,13 @@ Public Function ProblemaOrdenesLatex(sValor As String, Optional iMaxEnquote As I
     sCaracter = Mid(sValor, i, 1)
 
     If sCaracter = "\\" Then
+      ' EL & ESCAPADO: PARTE DEL TEXTO (UN journaltitle CON «&»). SIN LA
+      ' BARRA, LaTeX LO TOMA COMO SEPARADOR DE COLUMNAS (DECISIÓN DE ALBERTO)
+      If Mid(sValor, i, 2) = "\\&" Then
+        i += 2
+        Continue
+      Endif
+
       ' LAS TRES ÓRDENES ADMITIDAS (DECISIÓN DE ALBERTO), CON SU LLAVE
       If Mid(sValor, i, 9) = "\\enquote{" Then
         ' LOS \enquote YA ABIERTOS: ESTE SERÍA EL SIGUIENTE NIVEL
@@ -155,8 +165,12 @@ Public Function ProblemaOrdenesLatex(sValor As String, Optional iMaxEnquote As I
       If ["\\enquote", "\\sptext", "\\emph"].Exist(sOrden) Then
         Return "«" & sOrden & "» sin su llave «{» pegada"
       Endif
-      Return "orden no admitida «" & sOrden & "» (solo \\enquote, \\sptext y \\emph)"
+      Return "orden no admitida «" & sOrden & "» (solo \\enquote, \\sptext, \\emph y \\&)"
     Endif
+
+    ' UN & SIN LA BARRA: EN LaTeX ES EL SEPARADOR DE COLUMNAS Y CORTA EL PDF
+    ' («Misplaced alignment tab character &», MEDIDO)
+    If sCaracter = "&" Then Return "«&» sin escapar: en las referencias se escribe \\&"
 
     If sCaracter = "{" Then
       aGrupos.Push("g")
@@ -206,6 +220,22 @@ Public Function NivelesEnquote(sColumna As String, sTipo As String) As Integer
   Return 2
 
 End
+
+' ============================================
+' Función   : EsCampoLiteral
+' Propósito : Dice si una columna es un campo que biblatex toma literal, sin
+'             interpretar LaTeX: ahí no corre la regla de SC-58.
+' Parámetros: sColumna As String — la columna de la tabla bibtex
+' Retorna   : Boolean
+' Nota      : LOS DE TIPO verbatim Y uri DEL MODELO DE DATOS DE biblatex
+'             (blx-dm.def, 3.19): doi, eprint, file Y url. UNA URL PUEDE
+'             LLEVAR «&» SIN ESCAPAR, Y ESTÁ BIEN.
+' ============================================
+Public Function EsCampoLiteral(sColumna As String) As Boolean
+
+  Return ["doi", "eprint", "file", "url"].Exist(sColumna)
+
+End
 ' ============================================
 ' Función   : VerificarOrdenesLatex
 ' Propósito : Antes de guardar una referencia, controla que los campos de texto
@@ -246,7 +276,7 @@ Public Function VerificarOrdenesLatex() As Boolean
 
   m_Sonido.sonar("Error")
   Message.Error("En las referencias solo se admiten tres órdenes de LaTeX:" & gb.NewLine &
-    "\\enquote{…}, \\sptext{…} y \\emph{…}." & gb.NewLine & gb.NewLine &
+    "\\enquote{…}, \\sptext{…} y \\emph{…}, más el signo \\&." & gb.NewLine & gb.NewLine &
     "  " & aTotal.Join(gb.NewLine & "  ") & gb.NewLine & gb.NewLine &
     "La referencia no se guardó.")
   Return True
@@ -292,8 +322,12 @@ Private Function OrdenesLatexEnControles(hContenedor As Container) As String[]
         ' EL CAMPO SE NOMBRA POR SU COLUMNA: LA NECESITA NivelesEnquote
         sCampo = hCtrl.Name
         If $MapaCampos.Exist(hCtrl.Name) Then sCampo = $MapaCampos[hCtrl.Name]
-        sProblema = ProblemaOrdenesLatex(TextBox(hCtrl).Text,
-          NivelesEnquote(sCampo, FMain.cmbTipoDeEntrada.Text))
+        ' LOS CAMPOS LITERALES (url, doi…) NO PASAN POR LA REGLA
+        sProblema = ""
+        If Not EsCampoLiteral(sCampo) Then
+          sProblema = ProblemaOrdenesLatex(TextBox(hCtrl).Text,
+            NivelesEnquote(sCampo, FMain.cmbTipoDeEntrada.Text))
+        Endif
         If sProblema <> "" Then
           aTotal.Add(sCampo & ": " & sProblema)
         Endif
@@ -2183,8 +2217,12 @@ Public Function ExportarBibTeX() As Boolean
 
           ' LAS ÓRDENES DE LaTeX (SC-57): LO QUE YA ESTÁ EN LA BASE O LLEGÓ
           ' SIN PASAR POR EL FORMULARIO TAMBIÉN SE CONTROLA ACÁ
-          sProblema = ProblemaOrdenesLatex(sValor,
-            NivelesEnquote(sColumna, hRes["tipo_de_entrada"]))
+          ' LOS CAMPOS LITERALES (url, doi…) NO PASAN POR LA REGLA
+          sProblema = ""
+          If Not EsCampoLiteral(sColumna) Then
+            sProblema = ProblemaOrdenesLatex(sValor,
+              NivelesEnquote(sColumna, hRes["tipo_de_entrada"]))
+          Endif
           If sProblema <> "" Then
             aProblemas.Add(hRes["clave_bibtex"] & " — " & sCampo & ": " & sProblema)
           Endif
@@ -2211,7 +2249,7 @@ Public Function ExportarBibTeX() As Boolean
   If aProblemas.Count > 0 Then
     m_Sonido.sonar("Error")
     Message.Error("Hay referencias con órdenes de LaTeX no admitidas." & gb.NewLine &
-      "Solo se admiten \\enquote{…}, \\sptext{…} y \\emph{…}." & gb.NewLine & gb.NewLine &
+      "Solo se admiten \\enquote{…}, \\sptext{…} y \\emph{…}, más el signo \\&." & gb.NewLine & gb.NewLine &
       "  " & aProblemas.Join(gb.NewLine & "  ") & gb.NewLine & gb.NewLine &
       "No se escribió el archivo de referencias: corregí las entradas y volvé a generar.")
     Return False
