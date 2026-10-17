@@ -174,6 +174,8 @@ escribir_documento() {
         echo "\\usepackage[\\gbidiomas]{babel}"
         echo "\\usepackage[autostyle=true]{csquotes}"
         echo "\\input{cita-\\estandar-config.tex}"
+        echo "% LAS CADENAS COMUNES, COMO EN preambulo-contrato.tex"
+        echo "\\input{cita-cadenas-es.tex}"
         echo "\\input{cita-\\estandar-html.tex}"
         echo "% EL .bib SE COPIA A LA CARPETA: \\gbarchivobib ES RELATIVO A LA"
         echo "% RAÍZ DEL PROYECTO, Y ESTE DOCUMENTO SE COMPILA EN OTRO LUGAR"
@@ -246,7 +248,11 @@ BIB_NOMBRE="$(basename "$BIB")"
 
 CONFIG_ESTILO="$DIR_LATEX/cita-$ESTILO-config.tex"
 PANTALLA_ESTILO="$DIR_LATEX/cita-$ESTILO-html.tex"
+# LAS CADENAS COMUNES A TODOS LOS ESTILOS: LAS COPIA CopiarRecursosLatex
+# COMO A LOS DEMÁS .tex DE ~/.gbpublisher/latex/
+CADENAS="$DIR_LATEX/cita-cadenas-es.tex"
 [[ -f "$CONFIG_ESTILO" ]] || morir "No existe latex/cita-$ESTILO-config.tex"
+[[ -f "$CADENAS" ]] || morir "No existe latex/cita-cadenas-es.tex: reabrí el proyecto para que la aplicación copie los recursos de LaTeX"
 # UN ESTILO SIN ARCHIVO DE PANTALLA NO ENTRA POR ESTE CAMINO (SC-57: CADA
 # ESTILO SE RELEVA ANTES; HOY, SOLO VERONA)
 [[ -f "$PANTALLA_ESTILO" ]] ||
@@ -288,7 +294,7 @@ paso "documento mínimo"
 # LAS DEFINICIONES VAN CON NOMBRE FIJO: citas.tex LAS CARGA COMO citas-proyecto
 cp -f "$INSUMOS" "$CARPETA/citas-proyecto.tex" ||
     morir "No se pudieron copiar las definiciones a $CARPETA_REL"
-cp -f "$CONFIG_ESTILO" "$PANTALLA_ESTILO" "$CFG" "$CARPETA/" ||
+cp -f "$CONFIG_ESTILO" "$CADENAS" "$PANTALLA_ESTILO" "$CFG" "$CARPETA/" ||
     morir "No se pudieron copiar los insumos a $CARPETA_REL"
 cp -f "$BIB" "$CARPETA/$BIB_NOMBRE" || morir "No se pudo copiar el .bib a $CARPETA_REL"
 escribir_documento

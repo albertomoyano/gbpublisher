@@ -641,7 +641,11 @@
   <xsl:template name="refs-tex4ht">
     <xsl:param name="marca" as="xs:string"/>
     <xsl:param name="fuente" as="element()"/>
-    <xsl:for-each select="gbct:entradas-bib($marca, true())">
+    <xsl:variable name="entradas"
+                  select="gbct:entradas-bib($marca, true(), gbct:estilo-numerico($estilo_cita))"/>
+    <!-- EN UN ESTILO NUMÉRICO, LA SANGRÍA DE LA ETIQUETA MÁS ANCHA -->
+    <xsl:variable name="clase-num" select="gbct:clase-etiquetas($entradas)"/>
+    <xsl:for-each select="$entradas">
       <xsl:variable name="clave" select="gbct:clave-entrada(.)"/>
       <xsl:variable name="entrada"
                     select="($fuente//db:biblioentry)[gbct:clave(@xml:id) = $clave][1]"/>
@@ -654,7 +658,10 @@
           <xsl:text>).</xsl:text>
         </xsl:message>
       </xsl:if>
-      <div class="ref-item" id="{$entrada/@xml:id}">
+      <div class="ref-item{$clase-num}" id="{$entrada/@xml:id}">
+        <xsl:call-template name="gbct:etiqueta">
+          <xsl:with-param name="dd" select="."/>
+        </xsl:call-template>
         <xsl:apply-templates select="." mode="gbct:fragmento"/>
       </div>
     </xsl:for-each>

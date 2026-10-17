@@ -978,7 +978,7 @@ ALCANCE
 
 Libros.
 
-**Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12,vinculo:SC-56,vinculo:RF-12,vinculo:SC-57,vinculo:RF-13
+**Relaciones:** vinculo:RF-09, vinculo:RC-BL-01, vinculo:RC-BL-02, vinculo:SC-12,vinculo:SC-56,vinculo:RF-12,vinculo:SC-57,vinculo:RF-13,vinculo:RF-14
 
 ### SC-15 — Resaltado de sintaxis en controles TextEdit: HTML desde Run, temas como datos
 
@@ -3279,7 +3279,7 @@ FUERA DE ESTA DECISIÓN
 
 **PENDIENTE:** Medido en el contenedor sobre el HTML que da make4ht: la disposición classic con dashed=false, el texto de las 222 entradas contra el PDF y el marcado de las versalitas con lowscauthors=false. Sin probar: cómo responden los lectores de EPUB a all-small-caps, y si degradan a mayúsculas y minúsculas como se espera. Sin implementar en la aplicación: va con SC-57.
 
-### SC-57 — Bibliografía de libro en HTML y EPUB: la arma biblatex con tex4ht, con el mismo estilo que el PDF (Verona, APA, ISO 690)
+### SC-57 — Bibliografía de libro en HTML y EPUB: la arma biblatex con tex4ht, con el mismo estilo que el PDF (Verona, APA, ISO 690, IEEE)
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / biblatex-philosophy v1.9.8g / make4ht v0.3m / TeX Live 2023 / Saxon-HE 12.9 / epubcheck 4.2.6 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
 
@@ -3337,7 +3337,7 @@ LA CONFIGURACIÓN DE tex4ht (medido)
 
 QUÉ PASA DE citas.html A LA SALIDA
 
-Una lista cerrada: `em`, `strong`, `sup`, `del`, `u`, `span.versalitas-todas`, los enlaces externos y los enlaces de cita, que se vuelven el enlace de la hoja. Las anclas de tex4ht se descartan. Cualquier otro elemento corta la hoja con su nombre (GV-23): es un cambio de tex4ht o del estilo que hay que mirar. También cortan: `citas.html` ausente, un id de cita o una marca de bibliografía que no está, una referencia sin `biblioentry` en el canónico y una bibliografía con etiquetas en el `<dt>` (estilo numérico o alfabético, no medido por este camino).
+Una lista cerrada: `em`, `strong`, `sup`, `del`, `u`, `span.versalitas-todas`, los enlaces externos y los enlaces de cita, que se vuelven el enlace de la hoja. Las anclas de tex4ht se descartan. Cualquier otro elemento corta la hoja con su nombre (GV-23): es un cambio de tex4ht o del estilo que hay que mirar. También cortan: `citas.html` ausente, un id de cita o una marca de bibliografía que no está, una referencia sin `biblioentry` en el canónico y una bibliografía cuyas etiquetas no son las del estilo: `[n]` en cada `<dt>` en un estilo numérico (`gbct:estilo-numerico`, hoy solo IEEE), ninguna en un autor-año.
 
 LÍMITE CONOCIDO
 
@@ -3370,11 +3370,21 @@ ISO 690
 
 MEDIDO con el libro de Duek, contra el PDF que Alberto compuso en Mint con ISO 690: las 132 citas y las 113 referencias de `citas.html` tienen el mismo texto que el PDF, sin distinguir caja, que es lo único que cambia a propósito (las dos diferencias de la comparación son cortes de página del PDF). HTML: vnu sin errores. EPUB: epubcheck 4.2.6 sin errores.
 
+IEEE
+
+`cita-ieee-html.tex` no cambia nada: solo define `\gbImprimirBibliografia` como `\printbibliography[heading=none]`. RF-14.
+
+La etiqueta `[n]` de cada entrada llega en el `<dt>` de `citas.html` y sale como `span.ref-numero`, la marca del camino por plantillas. Sangría (decisión de Alberto, opción b): la etiqueta ocupa una columna del ancho de la más ancha de su lista (`ref-etiqueta-1`, `-2` o `-3`, por las cifras) y todas las líneas del texto arrancan después, como en `thebibliography` del PDF. Columnas de 1,8, 2,4 y 3 em: anchos medidos en Chromium, con IBM Plex Sans Bold en el panel del HTML y Noto Serif Bold en el EPUB. La hoja descarta el salto de línea con que tex4ht abre cada `<dd>`: detrás de la etiqueta se veía como un espacio y corría la primera línea.
+
+MEDIDO con el libro de Duek, contra el PDF que Alberto compuso en Mint con IEEE: las 132 citas de `citas.html` tienen el texto del PDF; de las 113 referencias, 102 son iguales, diez difieren solo por la extracción del PDF (guiones de URL al cortar la línea, una URL partida por el cambio de página) y una por la cadena `presentedat` sin traducir del PDF (GV-106, SC-59). Alineación medida en Chromium: en todas las entradas de varias líneas, la segunda arranca donde arranca el texto de la primera. HTML: vnu sin errores. EPUB: epubcheck 4.2.6 sin errores. ISO 690 por el mismo camino: la salida no cambia salvo espacios en blanco.
+
+El camino viejo por plantillas numeraba IEEE de corrido en todo el libro («[20, p. 47]» donde el PDF dice «[1, p. 47]»): por tex4ht la numeración vuelve a 1 en cada pieza, como en el PDF.
+
 ALCANCE
 
-Verona, APA e ISO 690. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
+Verona, APA, ISO 690 e IEEE. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104,vinculo:SC-58,vinculo:GV-105,vinculo:RF-13
+**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104,vinculo:SC-58,vinculo:GV-105,vinculo:RF-13,vinculo:RF-14,vinculo:SC-59
 
 **PENDIENTE:** Implementado y medido en el contenedor con el libro de Duek (132 citas, 113 referencias): el texto de cada cita del HTML y del EPUB es el de citas.html, y las referencias de cada pieza son las mismas y en el mismo orden; los enlaces de cita del EPUB no tienen destinos rotos; vnu sin errores en el HTML; epubcheck 4.2.6 sin errores en el EPUB; bibliografía consolidada simulada (103 referencias) en HTML y EPUB; los cortes de la hoja con un citas.html incompleto. Falta: la prueba en Mint con un libro real; cómo responden los lectores de EPUB a all-small-caps; la fuente del panel de referencias del HTML (GV-104).
 
@@ -3458,7 +3468,47 @@ Libros. Revistas arman su `element-citation` de JATS desde el mismo `.bib` sin t
 
 **Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23
 
-**PENDIENTE:** En las hojas de HTML y EPUB, las plantillas por estilo (hoy solo las de IEEE, que todavía no va por tex4ht) leen el título con normalize-space y pierden las comillas de un <quote>: se resuelve cuando IEEE pase por tex4ht. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
+**PENDIENTE:** Resuelto en act-46: IEEE va por tex4ht y las comillas salen de biblatex. Las plantillas por estilo de las hojas (las que leen el título con normalize-space y pierden las comillas de un <quote>) solo quedan para un libro sin la pasada de citas. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
+
+### SC-59 — Cadenas en castellano comunes a todos los estilos de biblatex: cita-cadenas-es.tex
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biblatex-philosophy / biblatex-apa / biblatex-iso690 v0.4.1 / biblatex-ieee v1.3f / LuaLaTeX / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Las cadenas de biblatex se reparten en dos clases (decisión de Alberto, 17/10):
+
+A. LAS QUE NI biblatex (`spanish.lbx`) NI EL ESTILO TRAEN. Son la traducción de los códigos del catálogo de la aplicación (tabla `cmb_biblatex`: `editor_type`, `thesis_type`, `pubstate`) y los agregados de la editorial (cine, `\sq`, `\sqq`, `documentjob`, `origpubbare`). Van en `.hidden/latex/cita-cadenas-es.tex`, uno solo para todos los estilos. Una cadena así solo aparece si una entrada la usa: en un estilo que no la necesita no cambia nada.
+
+B. LAS QUE `spanish.lbx` YA TRAE Y UN ESTILO REDEFINE (meses, `url`, `urlseen`, `phdthesis`, `compiler`, `nodate`…). Son decisiones de cada estilo y quedan en su `cita-<estilo>-config.tex`. MEDIDO: las de Verona aplicadas a IEEE cambian «comp.» por «compilador», «dirección:» por «recuperado de:» y «oct.» por «octubre».
+
+Las cadenas propias de un estilo (`presentedat` y `patentjp` de IEEE, RF-14) van en su config.
+
+QUIÉN LO CARGA
+
+El que carga el estilo, inmediatamente después de `cita-<estilo>-config.tex` (`\NewBibliographyString` exige biblatex cargado): `preambulo-contrato.tex` (PDF de libros) y el documento mínimo de `preparar_citas_libro.sh` (pasada de tex4ht), por nombre; `m_XML.ObtenerPreambuloEmbebido` (revistas), con ruta absoluta. No lo carga el config: `\input` resuelve contra la carpeta de la compilación, no contra la del archivo que lo pide, y en revistas el config se carga por ruta absoluta desde otra carpeta. Sin biblatex (vancouver, que va por bibtex) el archivo termina sin definir nada.
+
+Llega al proyecto con `CopiarRecursosLatex`, que copia todos los `.tex` de `~/.gbpublisher/latex/`; `preparar_citas_libro.sh` lo copia a la carpeta de la pasada y corta si falta.
+
+LOS CÓDIGOS DEL CATÁLOGO SON EL CONTRATO
+
+Antes de este lote cada config tenía su lista, y se habían separado: ISO 690 usaba claves propias (`licenciaturathesis`, `tifthesis`, `organizator`…) que el catálogo no ofrece, y no tenía catorce de las que sí ofrece. El código `self-published` del catálogo no tenía cadena en ningún estilo (la configuración traía `edauthor`). Las claves heredadas de ISO 690 quedan como alias, para un `.bib` escrito a mano.
+
+ERRATAS CORREGIDAS EN EL MISMO LOTE
+
+- Verona: `phdthesis` dice «Tesis de Doctorado», como ISO 690 (decisión de Alberto).
+- ISO 690: «con introdución de» → «con introducción de»; `prepublished` estaba dos veces; `bytranslatorfo` va en su propio bloque con `\makeatletter`, como en Verona: dentro del bloque general `\lbx@lfromlang` se leía `\lbx` seguido de texto.
+
+MEDIDO en el contenedor con el `.bib` de Duek y un banco de 50 entradas (todos los códigos del catálogo, una traducción con prólogo e introducción, un congreso, una obra sin fecha, `\sq` y `\sqq`), antes y después, en los cuatro estilos de libro:
+- Verona: un solo cambio, «Tesis Doctoral» → «Tesis de Doctorado».
+- ISO 690: los catorce tipos de tesis que salían como código salen traducidos.
+- APA: los tipos de tesis salen traducidos; `\sq` y `\sqq`, que no estaban definidos, funcionan.
+- IEEE: «coord.», «coords.», «dir.», «dirs.», los tipos de tesis, «mimeo», «fotocopia», «impresión digital», «presentado en», `\sq` y `\sqq`.
+- Ningún error ni cadena sin traducir en el `.log` de los cuatro.
+
+Con `\sq` la postnota deja de ser un número y biblatex no le antepone «p.» ni «pág.» («25 y sig.»): es el comportamiento de biblatex, el mismo que ya tenía Verona.
+
+**Relaciones:** vinculo:SC-14,vinculo:SC-57,vinculo:RF-09,vinculo:RF-12,vinculo:RF-13,vinculo:RF-14,vinculo:GV-106
+
+**PENDIENTE:** Falta la prueba en Mint: el PDF de un libro con cada estilo y una revista. La diferencia de `nodate` entre Verona («s/f») e ISO 690 («sin fecha») queda como decisión de cada estilo, sin revisar.
 
 ---
 
@@ -3932,6 +3982,52 @@ DATOS DEL FUENTE QUE USA EL PROYECTO
 - Citas: `\iffootnote` solo aparece en `\smartcite` (de `authoryear.cbx`), que la aplicación no emite. La detección de notas que tex4ht no responde no afecta a ISO 690 (SC-57).
 
 **Relaciones:** vinculo:SC-14,vinculo:SC-57,vinculo:SC-58,vinculo:GV-105
+
+### RF-14 — Fuente de biblatex-ieee (IEEE)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex-ieee v1.3f (2021/12/06) / repositorio, commit ea2ebc7 (v1.4f) / biblatex 3.19 / TeX Live 2023 / contenedor Ubuntu 24.04; PDF de Duek en Mint · **Verificado:** 2026-10
+
+Repositorio: https://github.com/josephwright/biblatex-ieee. Paquete en CTAN: `macros/latex/contrib/biblatex-contrib/biblatex-ieee`. Autor: Joseph Wright.
+
+VERSIÓN ANCLADA
+
+v1.3f (2021/12/06). Es la de TeX Live 2023, la que compone en Mint 22 y en el contenedor. La aplicación usa `style=ieee`.
+
+EL REPOSITORIO YA ES OTRO
+
+El repositorio (commit ea2ebc7, 2026-01-21) trae v1.4f (2025-08-01), y cambia lo que se ve:
+
+- `ieee.cbx` pasa de `numeric-comp` a `numeric-verb`; la compresión queda en un archivo nuevo, `ieee-comp.cbx`.
+- `ieee.cbx` pasa de `maxcitenames=3, minnames=3` a `maxcitenames=2, minnames=1`, y agrega `sortcites`. En v1.3f el `minnames=3` del cbx pisa el `minnames=1` del bbx, porque se ejecuta después: por eso el PDF de Duek pone tres nombres antes de «et al.» («G. Krichesky, P. Pogré, K. Benchimol et al.»). Con v1.4f sería uno.
+- `ieee.bbx`: 115 líneas de diferencia.
+
+Una actualización de TeX Live cambia las citas y las referencias de un libro ya compuesto: hay que medir antes de actualizar.
+
+ACCESO
+
+`git clone --depth 1 https://github.com/josephwright/biblatex-ieee.git` funciona. Con TeX Live instalado, los archivos ya están en `texmf-dist/tex/latex/biblatex-ieee/`.
+
+ORDEN DE CONSULTA
+
+1. `ieee.bbx` — formatos de campo, cadenas propias, opciones. Requiere `numeric-comp`. Fuente de verdad del comportamiento.
+2. `ieee.cbx` — citas. En v1.3f, sobre `numeric-comp.cbx` de biblatex, con `sorting=none`: las referencias se numeran en el orden de cita.
+3. `biblatex-ieee.tex` y su PDF — documentación. Informa la intención; si contradice al código, gana el código.
+
+La configuración de la aplicación: `.hidden/latex/cita-ieee-config.tex`; la de pantalla, `cita-ieee-html.tex`.
+
+BANCO DE PRUEBAS
+
+`biblatex-ieee.bib`, en el repositorio.
+
+DATOS DEL FUENTE QUE USA EL PROYECTO
+
+- Cadenas propias: `ieee.bbx` declara `presentedat` y `patentjp` y las define solo en inglés. En castellano salen en negrita (GV-106); `cita-ieee-config.tex` las define (SC-59).
+- Puntuación: `ieee.bbx` llama a `\uspunctuation` sin distinguir idioma (línea 34), la convención norteamericana que mete la coma y el punto dentro de las comillas: «título,». En castellano van después: «título»,. `cita-ieee-config.tex` agrega `\DefineBibliographyExtras{spanish}{\stdpunctuation}`: `\stdpunctuation` (`biblatex.def`) deshace lo de `\uspunctuation`, y como extra del español solo actúa en un libro en español; uno en inglés conserva la convención de IEEE. Ningún otro estilo de la aplicación llama a `\uspunctuation` (philosophy, apa, iso690: medido con grep). MEDIDO con el `.bib` de Duek: 87 comas y 5 puntos pasan detrás de la comilla, sin ningún otro cambio en el texto; la pasada de tex4ht hereda la corrección (69 «»,» en `citas.html`, ninguna «,»»); vnu y epubcheck sin errores. Hallazgo de Alberto en las tres salidas de Duek.
+- La numeración vuelve a 1 en cada `refsection`: en un libro, en cada pieza con bibliografía, como en el PDF.
+- Citas: `\iffootnote` solo aparece en `\smartcite` (de `numeric-comp.cbx`), que la aplicación no emite. La detección de notas que tex4ht no responde no afecta a IEEE (SC-57).
+- Una cita con varias claves sale con un corchete por clave («[1], [2]») y un rango con tres o más seguidas («[22]-[24]»).
+
+**Relaciones:** vinculo:SC-14,vinculo:SC-57,vinculo:SC-59,vinculo:GV-106
 
 ---
 
@@ -6231,6 +6327,22 @@ Cargar `english` en babel tampoco sirve: la entrada sale mezclada, con «no. 1»
 DECISIÓN DE ALBERTO: `autolang=hyphen` en `cita-iso690-config.tex`, como opción de carga (le gana al valor del estilo; medido). Las cadenas van en el idioma del libro y solo el corte de palabras sigue al de la entrada, como en APA y Verona. El PDF de Duek compiló sin errores ni avisos de biblatex.
 
 **Relaciones:** vinculo:SC-57,vinculo:SC-58,apoya:GV-23
+
+### GV-106 — biblatex: una cadena sin traducción sale en negrita; un editortype, un type o un pubstate sin cadena, tal cual
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biblatex-ieee v1.3f / biblatex-iso690 v0.4.1 / biblatex-philosophy / LuaLaTeX / contenedor Ubuntu 24.04; PDF de Duek en Mint · **Verificado:** 2026-10
+
+Dos comportamientos distintos de biblatex ante una cadena que falta en el idioma del libro:
+
+1. Una cadena DECLARADA (`\NewBibliographyString`) y sin definir en ese idioma: biblatex imprime la clave en negrita y avisa en el `.log` («Package biblatex Warning: Bibliography string 'presentedat' untranslated»). MEDIDO en el PDF de Duek con IEEE: «presentedatX Congreso…». Bajo tex4ht la negrita llega como `<span class="ec-lmbx-10">`, que no está en la lista cerrada de `cita-fragmentos.xsl`: la hoja corta (SC-57, GV-23).
+
+2. El valor de `editortype`, `type` o `pubstate` que no es una cadena DECLARADA: biblatex imprime el código tal cual y no avisa. MEDIDO con IEEE: «J. Marcus, coordinator», «C. Kaplan, direction», «Tesis…» como «gradothesis»; con ISO 690, los catorce tipos de tesis del catálogo que su configuración no tenía; con Verona e IEEE, «self-published».
+
+El segundo es el peligroso: no hay aviso, y el PDF sale. Por eso los códigos del catálogo de la aplicación tienen su cadena en un archivo común a todos los estilos (SC-59).
+
+`\NewBibliographyString` con una cadena que ya existe no hace nada; una clave con guion (`self-published`) es válida (medido).
+
+**Relaciones:** vinculo:SC-59,vinculo:SC-57,vinculo:RF-14,apoya:GV-23
 
 ---
 

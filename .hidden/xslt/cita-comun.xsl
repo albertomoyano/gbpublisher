@@ -57,12 +57,26 @@
   <xsl:function name="gbct:comando-cita" as="xs:string">
     <xsl:param name="modo"   as="xs:string"/>
     <xsl:param name="estilo" as="xs:string"/>
-    <xsl:variable name="numerico" select="$estilo = 'ieee'"/>
+    <xsl:variable name="numerico" select="gbct:estilo-numerico($estilo)"/>
     <xsl:choose>
       <xsl:when test="$modo = 'author-in-text'">\textcite</xsl:when>
       <xsl:when test="$modo = 'suppress' and not($numerico)">\parencite*</xsl:when>
       <xsl:otherwise>\parencite</xsl:otherwise>
     </xsl:choose>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : gbct:estilo-numerico                               -->
+  <!-- PROPÓSITO: ¿EL ESTILO DE biblatex ES NUMÉRICO? DECIDE EL     -->
+  <!--            AGRUPAMIENTO DE suppress (comando-cita) Y LA      -->
+  <!--            ETIQUETA [n] DE LAS ENTRADAS POR tex4ht           -->
+  <!--            (cita-fragmentos.xsl). UNA SOLA LISTA PARA LOS DOS -->
+  <!-- PARÁMETROS: estilo As xs:string — familia de estilo activa   -->
+  <!-- RETORNA  : xs:boolean — true() PARA ieee                     -->
+  <!-- ============================================================ -->
+  <xsl:function name="gbct:estilo-numerico" as="xs:boolean">
+    <xsl:param name="estilo" as="xs:string"/>
+    <xsl:sequence select="$estilo = 'ieee'"/>
   </xsl:function>
 
   <!-- ============================================================ -->

@@ -2204,7 +2204,10 @@ RC APLICADAS:
                           else $capitulo//db:bibliography"/>
     <!-- LA MARCA SE EXIGE CUANDO HAY UNA BIBLIOGRAFÍA QUE LA PIDA: SIN
          ELLA, citas.html ES DE OTRO CANÓNICO -->
-    <xsl:variable name="entradas" select="gbct:entradas-bib($marca, exists($fuente))"/>
+    <xsl:variable name="entradas"
+                  select="gbct:entradas-bib($marca, exists($fuente), gbct:estilo-numerico($estilo_cita))"/>
+    <!-- EN UN ESTILO NUMÉRICO, LA SANGRÍA DE LA ETIQUETA MÁS ANCHA -->
+    <xsl:variable name="clase-num" select="gbct:clase-etiquetas($entradas)"/>
     <xsl:choose>
       <xsl:when test="exists($entradas)">
         <xsl:for-each select="$entradas">
@@ -2222,10 +2225,13 @@ RC APLICADAS:
           </xsl:if>
           <!-- ref-biblatex: LA SANGRÍA FRANCESA DE gbpublisher.css, SOLO PARA
                ESTAS ENTRADAS: LA HOJA ES COMÚN CON REVISTAS -->
-          <div class="panel-item ref-item ref-biblatex"
+          <div class="panel-item ref-item ref-biblatex{$clase-num}"
                data-ref-id="{$entrada/@xml:id}"
                onclick="irAlTexto('{$entrada/@xml:id}')"
                style="cursor:pointer">
+            <xsl:call-template name="gbct:etiqueta">
+              <xsl:with-param name="dd" select="."/>
+            </xsl:call-template>
             <xsl:apply-templates select="." mode="gbct:fragmento"/>
           </div>
         </xsl:for-each>

@@ -27,6 +27,9 @@
               gbct:enlace-cita. LAS ANCLAS DE tex4ht (x1-…, cite.N@…)
               SE DESCARTAN. CUALQUIER OTRA COSA CORTA LA HOJA (GV-23):
               ES UN CAMBIO DE tex4ht O DEL ESTILO QUE HAY QUE MIRAR.
+  ETIQUETAS : EN UN ESTILO NUMÉRICO (IEEE) CADA <dt> TRAE «[n]»: SALE
+              COMO span.ref-numero, CON LA SANGRÍA DE LA ETIQUETA MÁS
+              ANCHA DE SU LISTA (gbct:clase-etiquetas).
   ============================================================
 -->
 <xsl:stylesheet version="3.0"
@@ -101,14 +104,17 @@
   <!--            LISTA QUE SIGUE A SU MARCA, SI NO HAY OTRA MARCA  -->
   <!--            EN MEDIO (UNA refsection SIN CITAS NO IMPRIME     -->
   <!--            LISTA).                                           -->
-  <!-- PARÁMETROS: marca   As xs:string  — sección-orden o libro    -->
-  <!--             exigida As xs:boolean — true(): SIN LA MARCA,    -->
-  <!--                                     CORTA                    -->
+  <!-- PARÁMETROS: marca    As xs:string  — sección-orden o libro   -->
+  <!--             exigida  As xs:boolean — true(): SIN LA MARCA,   -->
+  <!--                                      CORTA                   -->
+  <!--             numerico As xs:boolean — gbct:estilo-numerico    -->
+  <!--                                      DEL ESTILO DEL LIBRO    -->
   <!-- RETORNA  : element()* — los dd; vacío si no hay lista        -->
   <!-- ============================================================ -->
   <xsl:function name="gbct:entradas-bib" as="element()*">
-    <xsl:param name="marca"   as="xs:string"/>
-    <xsl:param name="exigida" as="xs:boolean"/>
+    <xsl:param name="marca"    as="xs:string"/>
+    <xsl:param name="exigida"  as="xs:boolean"/>
+    <xsl:param name="numerico" as="xs:boolean"/>
     <xsl:variable name="m" select="key('gbct:por-id', concat('gbbib-', $marca), $gbct:citas)"/>
     <xsl:variable name="dl" select="$m/following::dl[1]
                                     [preceding::span[starts-with(@id, 'gbbib-')][1] is $m]"/>
@@ -117,14 +123,74 @@
         concat('[citas] citas.html no tiene la bibliografía gbbib-', $marca,
                ': el canónico cambió después de la pasada de citas.'))"/>
     </xsl:if>
-    <!-- UNA ETIQUETA EN EL <dt> ES UN ESTILO NUMÉRICO O ALFABÉTICO: NO SE
-         MIDIÓ POR ESTE CAMINO (SC-57, LÍMITE CONOCIDO) -->
-    <xsl:if test="$dl/dt[normalize-space() != '']">
+    <!-- LA ETIQUETA DEL <dt> TIENE QUE SER LA DEL ESTILO: [n] EN UNO
+         NUMÉRICO, NINGUNA EN UN AUTOR-AÑO. OTRA COSA (UN ESTILO ALFABÉTICO,
+         UN citas.html DE OTRO ESTILO) NO SE MIDIÓ Y CORTA (GV-23, SC-57) -->
+    <xsl:variable name="ajenas" select="if ($numerico)
+                                        then $dl/dt[not(matches(normalize-space(), '^\[[0-9]+\]$'))]
+                                        else $dl/dt[normalize-space() != '']"/>
+    <xsl:if test="exists($ajenas)">
       <xsl:sequence select="error(QName('urn:gbpublisher:citas', 'etiqueta'),
-        '[citas] La bibliografía de citas.html trae etiquetas: el estilo no es autor-año y su camino por tex4ht no está medido.')"/>
+        concat('[citas] La bibliografía gbbib-', $marca, ' de citas.html trae ',
+               if (normalize-space($ajenas[1]) = '') then 'una entrada sin etiqueta'
+               else concat('la etiqueta «', normalize-space($ajenas[1]), '»'),
+               ' y el estilo del libro ',
+               if ($numerico) then 'es numérico: espera [n].' else 'es autor-año: no lleva etiqueta.'))"/>
     </xsl:if>
     <xsl:sequence select="$dl/dd"/>
   </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : gbct:etiqueta-entrada                              -->
+  <!-- PROPÓSITO: LA ETIQUETA DE UNA ENTRADA DE citas.html, DEL     -->
+  <!--            <dt> QUE LA PRECEDE: «[1]» EN UN ESTILO NUMÉRICO  -->
+  <!-- PARÁMETROS: dd As element() — la entrada                     -->
+  <!-- RETORNA  : xs:string — la etiqueta; vacía en un autor-año    -->
+  <!-- ============================================================ -->
+  <xsl:function name="gbct:etiqueta-entrada" as="xs:string">
+    <xsl:param name="dd" as="element()"/>
+    <xsl:sequence select="normalize-space($dd/preceding-sibling::*[1][self::dt])"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : gbct:clase-etiquetas                               -->
+  <!-- PROPÓSITO: LAS CLASES DE LA SANGRÍA DE UNA LISTA NUMÉRICA    -->
+  <!--            (DECISIÓN DE ALBERTO, OPCIÓN B): EL TEXTO DE TODAS -->
+  <!--            LAS LÍNEAS ARRANCA DESPUÉS DE LA ETIQUETA MÁS      -->
+  <!--            ANCHA DE LA LISTA, COMO EN thebibliography DEL PDF -->
+  <!-- PARÁMETROS: entradas As element()* — los dd de entradas-bib  -->
+  <!-- RETORNA  : xs:string — « ref-biblatex-num ref-etiqueta-N»,   -->
+  <!--            N = CIFRAS DE LA MÁS ANCHA (TOPE 3); VACÍA SI LA  -->
+  <!--            LISTA NO TIENE ETIQUETAS                          -->
+  <!-- ============================================================ -->
+  <xsl:function name="gbct:clase-etiquetas" as="xs:string">
+    <xsl:param name="entradas" as="element()*"/>
+    <xsl:variable name="cifras" as="xs:integer*"
+                  select="for $d in $entradas
+                          return string-length(translate(gbct:etiqueta-entrada($d), '[]', ''))"/>
+    <!-- EL TOPE: 999 ENTRADAS EN UNA LISTA. MÁS ALLÁ, LA ETIQUETA SOLO
+         EMPUJA EL TEXTO DE LA PRIMERA LÍNEA -->
+    <xsl:sequence select="if (empty($cifras) or max($cifras) = 0) then ''
+                          else concat(' ref-biblatex-num ref-etiqueta-', min((max($cifras), 3)))"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- PLANTILLA: gbct:etiqueta                                     -->
+  <!-- PROPÓSITO: LA ETIQUETA DE UNA ENTRADA A LA SALIDA, CON LA    -->
+  <!--            MARCA DEL CAMINO POR PLANTILLAS (span.ref-numero) -->
+  <!--            Y SU ESPACIO: UN LECTOR SIN CSS LEE «[1] P. Dalle» -->
+  <!-- PARÁMETROS: dd As element() — la entrada                     -->
+  <!-- RETORNA  : el span, o nada en un autor-año                   -->
+  <!-- ============================================================ -->
+  <xsl:template name="gbct:etiqueta">
+    <xsl:param name="dd" as="element()"/>
+    <xsl:variable name="etiqueta" select="gbct:etiqueta-entrada($dd)"/>
+    <xsl:if test="$etiqueta != ''">
+      <span xmlns="http://www.w3.org/1999/xhtml" class="ref-numero">
+        <xsl:value-of select="concat($etiqueta, ' ')"/>
+      </span>
+    </xsl:if>
+  </xsl:template>
 
   <!-- ============================================================ -->
   <!-- FUNCIÓN : gbct:clave-entrada                                 -->
@@ -157,6 +223,14 @@
   <xsl:template match="text()" mode="gbct:fragmento">
     <xsl:value-of select="."/>
   </xsl:template>
+
+  <!-- EL SALTO DE LÍNEA CON QUE tex4ht ABRE CADA <dd>, ANTES DE SU <p>, NO
+       PASA: DETRÁS DE LA ETIQUETA [n] (UN inline-block) SE VERÍA COMO UN
+       ESPACIO Y CORRERÍA LA PRIMERA LÍNEA RESPECTO DE LAS DEMÁS. EN UN
+       AUTOR-AÑO NO CAMBIA NADA: A PRINCIPIO DE LÍNEA EL NAVEGADOR YA LO
+       DESCARTABA -->
+  <xsl:template match="dd/text()[not(normalize-space())][empty(preceding-sibling::*)]"
+                mode="gbct:fragmento"/>
 
   <!-- EL COMENTARIO DE LÍNEA DE tex4ht (<!- - l. 22 - ->) NO PASA -->
   <xsl:template match="comment()" mode="gbct:fragmento"/>
