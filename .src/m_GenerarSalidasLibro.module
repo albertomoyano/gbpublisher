@@ -355,22 +355,124 @@ Public Function InformarResultado(iResultado As Integer, sQue As String, sArchiv
 End
 
 ' ============================================
+' Función   : RutaConfigEstilo
+' Propósito : La configuración instalada de un estilo de cita de libro:
+'             ~/.gbpublisher/latex/cita-<estilo>-config.tex. Es la que copia
+'             CopiarRecursosLatex a cada proyecto.
+' Parámetros: sEstilo As String — identificador (apa, verona-modern…)
+' Retorna   : String — la ruta, exista o no
+' ============================================
+Public Function RutaConfigEstilo(sEstilo As String) As String
+
+  Return User.Home &/ ".gbpublisher" &/ "latex" &/ "cita-" & sEstilo & "-config.tex"
+
+End
+
+' ============================================
+' Función   : EstiloLibroExiste
+' Propósito : Dice si un identificador es un estilo de cita de libro: que
+'             tenga la forma de un nombre de archivo seguro y que su
+'             configuración esté instalada.
+' Parámetros: sEstilo As String — identificador
+' Retorna   : Boolean
+' Nota      : LA FORMA SE CONTROLA ANTES DE ARMAR LA RUTA: UN VALOR CON «/» O
+'             CON «..» SALDRÍA DE LA CARPETA. SOLO MINÚSCULAS ASCII, DÍGITOS Y
+'             GUION, QUE ES LO QUE USAN LOS ARCHIVOS cita-*-config.tex.
+' ============================================
+Public Function EstiloLibroExiste(sEstilo As String) As Boolean
+
+  ' --- 1. FORMA ---
+  If sEstilo = "" Then Return False
+  If Not (sEstilo Like "[a-z0-9]*") Then Return False
+  If Not (sEstilo Like "*[a-z0-9]") Then Return False
+  ' EN Like LA NEGACIÓN ES [^…]; [!…] NO NIEGA (MEDIDO CON gbs3 3.19)
+  If sEstilo Like "*[^a-z0-9-]*" Then Return False
+
+  ' --- 2. CONFIGURACIÓN INSTALADA ---
+  Return Exist(RutaConfigEstilo(sEstilo))
+
+End
+
+' ============================================
+' Función   : EstilosLibro
+' Propósito : Los estilos de cita de libro instalados: uno por cada
+'             cita-<estilo>-config.tex de ~/.gbpublisher/latex/, en orden
+'             alfabético. Es la lista del combo de FMetadatosLibro.
+' Parámetros: (ninguno)
+' Retorna   : String[] — los identificadores; vacío si no hay ninguno o no se
+'             puede leer la carpeta
+' ============================================
+Public Function EstilosLibro() As String[]
+
+  Dim aEstilos As New String[]
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+  Dim sEstilo As String
+  Dim sCarpeta As String
+
+  ' --- 1. LECTURA DE LA CARPETA ---
+  sCarpeta = User.Home &/ ".gbpublisher" &/ "latex"
+  If Not Exist(sCarpeta) Then Return aEstilos
+
+  Try aArchivos = Dir(sCarpeta, "cita-*-config.tex", gb.File)
+  If Error Then Return aEstilos
+
+  ' --- 2. IDENTIFICADORES ---
+  ' cita-<estilo>-config.tex: LO QUE QUEDA ENTRE «cita-» (5) Y «-config.tex» (11)
+  For Each sArchivo In aArchivos
+    sEstilo = Mid(sArchivo, 6, Len(sArchivo) - 16)
+    If EstiloLibroExiste(sEstilo) Then aEstilos.Add(sEstilo)
+  Next
+
+  aEstilos.Sort()
+  Return aEstilos
+
+End
+
+' ============================================
+' Función   : LeyendaEstilo
+' Propósito : La etiqueta legible de un estilo: la primera línea de su
+'             configuración, si es «% ESTILO: <etiqueta>».
+' Parámetros: sEstilo As String — identificador
+' Retorna   : String — la etiqueta, o "" si el archivo no la declara o no se
+'             puede leer (el combo muestra entonces el identificador)
+' ============================================
+Public Function LeyendaEstilo(sEstilo As String) As String
+
+  Dim hArchivo As File
+  Dim sLinea As String
+
+  ' --- 1. PRIMERA LÍNEA ---
+  hArchivo = Open RutaConfigEstilo(sEstilo) For Input
+  If Not Eof(hArchivo) Then Line Input #hArchivo, sLinea
+  Close #hArchivo
+
+  ' --- 2. LA MARCA ---
+  ' EL PREFIJO ES ASCII: Mid POR BYTES NO CORTA UN CARÁCTER DE LA ETIQUETA
+  sLinea = m_XML.TrimUTF8(sLinea)
+  If sLinea Begins "% ESTILO:" Then Return m_XML.TrimUTF8(Mid(sLinea, 10))
+
+  Return ""
+
+Catch
+  ' SI FALLA LA LECTURA SE MUESTRA EL IDENTIFICADOR
+  Return ""
+
+End
+
+' ============================================
 ' Función   : ResolverEstiloCita
-' Propósito : El identificador de estilo de cita que esperan las hojas de
-'             salida —apa, iso690, vancouver, ieee—, a partir del .csl que
-'             guarda libros_md.estilo_cita. Una sola versión para el HTML y el
-'             EPUB: antes el EPUB le pasaba a LeerTipoCSL el nombre del archivo
-'             en vez de su ruta, y caía siempre en apa.
+' Propósito : El identificador de estilo de cita del libro —apa, iso690,
+'             ieee, vancouver, verona-modern—, tal como lo guarda
+'             libros_md.estilo_cita. Una sola versión para el HTML y el EPUB.
 ' Parámetros: iIdLibro As Integer — libro
 ' Retorna   : String — el identificador; apa si no hay estilo, no se puede
-'             leer o no se reconoce, que coincide con el default de las hojas
+'             leer o no está instalado, que coincide con el default de las hojas
 ' ============================================
 Public Function ResolverEstiloCita(iIdLibro As Integer) As String
 
   ' --- 1. INICIALIZACIÓN ---
   Dim hEstilo As Result
-  Dim sArchivoCsl As String
-  Dim sRutaCsl As String
   Dim sEstilo As String
 
   ' --- 2. CONSULTA ---
@@ -380,16 +482,9 @@ Public Function ResolverEstiloCita(iIdLibro As Integer) As String
   If Not hEstilo.Available Then Return "apa"
   If IsNull(hEstilo["estilo_cita"]) Then Return "apa"
 
-  sArchivoCsl = m_XML.TrimUTF8(hEstilo["estilo_cita"])
-  If sArchivoCsl = "" Then Return "apa"
-
-  ' --- 3. LECTURA DEL .csl ---
-  ' LA RUTA COMPLETA: LeerTipoCSL LEE EL ARCHIVO
-  sRutaCsl = User.Home &/ ".gbpublisher/csl" &/ sArchivoCsl
-  If Not Exist(sRutaCsl) Then Return "apa"
-
-  sEstilo = m_InicioCierre.LeerTipoCSL(sRutaCsl)
-  If sEstilo = "" Then Return "apa"
+  ' --- 3. VALIDACIÓN: EL ESTILO TIENE QUE ESTAR INSTALADO ---
+  sEstilo = m_XML.TrimUTF8(hEstilo["estilo_cita"])
+  If Not EstiloLibroExiste(sEstilo) Then Return "apa"
 
   Return sEstilo
 
