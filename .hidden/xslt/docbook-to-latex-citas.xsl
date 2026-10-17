@@ -34,40 +34,28 @@
     {sección}-{orden}-{n}: sección y orden salen del <info> de la
     pieza; n es la posición, dentro de la pieza, del PRIMER
     biblioref DEL GRUPO, CONTANDO LOS DE LAS NOTAS. LAS HOJAS DE
-    HTML Y EPUB CUENTAN IGUAL. GEMELO: f:id-cita.
+    HTML Y EPUB CUENTAN IGUAL: LA FUNCIÓN ES UNA SOLA, gbct:id-cita
+    (cita-comun.xsl, QUE LLEGA CON LA HOJA DEL PDF).
+
+  LA MARCA DE CADA BIBLIOGRAFÍA
+    ANTES DE \gbImprimirBibliografia VA \gbbibliografia{sección-orden}:
+    tex4ht LA ESCRIBE COMO <span id="gbbib-…">, Y ASÍ LAS HOJAS DE
+    HTML Y EPUB SABEN QUÉ LISTA ES DE QUÉ PIEZA SIN CONTAR LAS
+    refsection. LA CONSOLIDADA LLEVA {libro}; LA ESCRIBE
+    preparar_citas_libro.sh.
   ============================================================
 -->
 <xsl:stylesheet version="3.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:f="urn:gbpublisher:functions"
+  xmlns:gbct="urn:gbpublisher:citas"
   xpath-default-namespace="http://docbook.org/ns/docbook"
-  exclude-result-prefixes="xs f">
+  exclude-result-prefixes="xs f gbct">
 
   <xsl:import href="docbook-to-latex.xsl"/>
 
   <xsl:output method="text" encoding="UTF-8"/>
-
-  <!-- ============================================================ -->
-  <!-- FUNCIÓN : f:id-cita                                          -->
-  <!-- PROPÓSITO: EL id DE UN GRUPO DE CITAS: {sección}-{orden}-{n} -->
-  <!-- PARÁMETROS: b     As element() — el primer biblioref del     -->
-  <!--                                  grupo                        -->
-  <!--             pieza As element() — la pieza que lo contiene    -->
-  <!-- RETORNA  : xs:string — p. ej. a-03-17                        -->
-  <!-- NOTA     : SE CUENTA DENTRO DE LA PIEZA Y NO EN EL DOCUMENTO: -->
-  <!--            ASÍ EL NÚMERO ES EL MISMO EN EL CANÓNICO DE LA     -->
-  <!--            PIEZA Y EN EL DEL LIBRO ENSAMBLADO.                -->
-  <!-- ============================================================ -->
-  <xsl:function name="f:id-cita" as="xs:string">
-    <xsl:param name="b"     as="element()"/>
-    <xsl:param name="pieza" as="element()"/>
-    <xsl:variable name="n" select="count($b/preceding::biblioref intersect $pieza//biblioref) + 1"/>
-    <xsl:sequence select="concat(
-      normalize-space($pieza/info/bibliomisc[@role='seccion-libro']), '-',
-      normalize-space($pieza/info/bibliomisc[@role='orden-seccion']), '-',
-      $n)"/>
-  </xsl:function>
 
   <!-- LIBRO COMPLETO: CADA PIEZA, COMO EN LA HOJA DEL PDF (SOLO PRUEBA) -->
   <xsl:template match="book">
@@ -94,7 +82,7 @@
     <!-- BIBLIOGRAFÍA POR CAPÍTULO: LA SEÑAL ES <bibliography> (GV-102) -->
     <xsl:variable name="conCitas" as="xs:boolean" select="exists(.//bibliography)"/>
     <!-- LOS GRUPOS: UN biblioref QUE NO FUE ABSORBIDO POR EL ANTERIOR -->
-    <xsl:variable name="grupos" select=".//biblioref[not(f:es-continuacion(.))]"/>
+    <xsl:variable name="grupos" select=".//biblioref[not(gbct:es-continuacion(., $estilo))]"/>
 
     <!-- 2. VALIDACIÓN: SIN SECCIÓN U ORDEN NO HAY id ESTABLE -->
     <xsl:if test="exists($grupos) and ($seccion = '' or $orden = '')">
@@ -123,7 +111,7 @@
     <xsl:for-each select="$grupos">
       <xsl:variable name="cita">
         <xsl:text>\gbcita{</xsl:text>
-        <xsl:value-of select="f:id-cita(., $pieza)"/>
+        <xsl:value-of select="gbct:id-cita(., $pieza)"/>
         <xsl:text>}{</xsl:text>
         <xsl:apply-templates select="."/>
         <xsl:text>}</xsl:text>
@@ -142,8 +130,11 @@
       <xsl:text>&#10;</xsl:text>
     </xsl:for-each>
 
-    <!-- 5. CIERRE: LA BIBLIOGRAFÍA DE LA PIEZA -->
+    <!-- 5. CIERRE: LA BIBLIOGRAFÍA DE LA PIEZA, CON SU MARCA -->
     <xsl:if test="$conCitas">
+      <xsl:text>\gbbibliografia{</xsl:text>
+      <xsl:value-of select="gbct:seccion-orden($pieza)"/>
+      <xsl:text>}&#10;</xsl:text>
       <xsl:text>\gbImprimirBibliografia&#10;</xsl:text>
       <xsl:text>\end{refsection}&#10;</xsl:text>
     </xsl:if>

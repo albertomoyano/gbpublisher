@@ -35,8 +35,8 @@
 #      csquotes, el estilo, su archivo de pantalla y las piezas en orden.
 #   3. make4ht lo compila con cita-tex4ht.cfg (lualatex, biber, lualatex
 #      dos veces). El producto es citas.html.
-#   4. Verifica el producto: XML bien formado y una marca gbcita-* por cada
-#      \gbcita de las piezas.
+#   4. Verifica el producto: XML bien formado, una marca gbcita-* por cada
+#      \gbcita de las piezas y una gbbib-* por cada bibliografía.
 #
 # EL TEXTO LO ESCRIBE biblatex
 #
@@ -172,13 +172,16 @@ escribir_documento() {
         echo "% EN UNA COMPILACIÓN COMÚN SOLO ENVUELVE; cita-tex4ht.cfg LA"
         echo "% REDEFINE COMO <span id=\"gbcita-...\">"
         echo "\\newcommand*{\\gbcita}[2]{#2}"
+        echo "% LA MARCA DE CADA BIBLIOGRAFÍA: EN UNA COMPILACIÓN COMÚN NO"
+        echo "% ESCRIBE NADA; cita-tex4ht.cfg LA REDEFINE COMO <span id=\"gbbib-...\">"
+        echo "\\newcommand*{\\gbbibliografia}[1]{}"
         echo "\\begin{document}"
         for nombre in "${PIEZAS[@]}"; do
             echo "\\input{c-$nombre}"
         done
         echo "% BIBLIOGRAFÍA CONSOLIDADA: UNA SOLA, AL FINAL, COMO EN EL PDF."
         echo "% POR CAPÍTULO LA CIERRA CADA PIEZA EN SU refsection (GV-102)"
-        echo "\\ifgbbibporcapitulo\\else\\gbImprimirBibliografia\\fi"
+        echo "\\ifgbbibporcapitulo\\else\\gbbibliografia{libro}\\gbImprimirBibliografia\\fi"
         echo "\\end{document}"
     } > "$CARPETA/citas.tex"
 }
@@ -288,7 +291,13 @@ printf '%s\n' \
     'Make:htlatex {}' \
     'Make:htlatex {}' > "$CARPETA/citas.mk4"
 ESPERADAS=$(cat "$CARPETA"/c-*.tex 2>/dev/null | grep -o '\\gbcita{' | wc -l)
-ok "citas.tex: ${#PIEZAS[@]} pieza(s), $ESPERADAS cita(s)"
+# LAS BIBLIOGRAFÍAS: UNA POR PIEZA CON <bibliography>, O LA CONSOLIDADA.
+# LA SEÑAL ES LA MISMA QUE LEE citas.tex: \gbbibporcapitulotrue|false
+BIBS_ESPERADAS=$(cat "$CARPETA"/c-*.tex 2>/dev/null | grep -o '\\gbbibliografia{' | wc -l)
+if grep -q '\\gbbibporcapitulofalse' "$INSUMOS"; then
+    BIBS_ESPERADAS=$((BIBS_ESPERADAS + 1))
+fi
+ok "citas.tex: ${#PIEZAS[@]} pieza(s), $ESPERADAS cita(s), $BIBS_ESPERADAS bibliografía(s)"
 
 # --- 8. COMPILACIÓN ---
 paso "compilando con make4ht"
@@ -323,7 +332,13 @@ OBTENIDAS=$(grep -o 'id=.gbcita-' "$HTML" | wc -l)
 if (( OBTENIDAS != ESPERADAS )); then
     morir "citas.html trae $OBTENIDAS marca(s) de cita y las piezas tienen $ESPERADAS"
 fi
-ok "$OBTENIDAS cita(s), XML bien formado"
+# LO MISMO CON LAS MARCAS DE BIBLIOGRAFÍA: SIN LA MARCA, LA HOJA NO SABE DE
+# QUÉ PIEZA ES UNA LISTA
+BIBS_OBTENIDAS=$(grep -o 'id=.gbbib-' "$HTML" | wc -l)
+if (( BIBS_OBTENIDAS != BIBS_ESPERADAS )); then
+    morir "citas.html trae $BIBS_OBTENIDAS marca(s) de bibliografía y se esperaban $BIBS_ESPERADAS"
+fi
+ok "$OBTENIDAS cita(s), $BIBS_OBTENIDAS bibliografía(s), XML bien formado"
 
 # UNA CLAVE QUE NO ESTÁ EN EL .bib: EL PDF LA COMPONE COMO CLAVE EN NEGRITA
 # Y AVISA; ACÁ SE AVISA IGUAL Y LA SALIDA SIGUE

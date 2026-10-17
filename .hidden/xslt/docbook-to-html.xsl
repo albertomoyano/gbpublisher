@@ -52,7 +52,8 @@ RC APLICADAS:
                 xmlns:gbc="urn:gbpublisher:codigo"
                 xmlns:gbv="urn:gbpublisher:conversacion"
                 xmlns:gbvr="urn:gbpublisher:verso"
-                exclude-result-prefixes="db xs xlink nl gbc gbv gbvr">
+                xmlns:gbct="urn:gbpublisher:citas"
+                exclude-result-prefixes="db xs xlink nl gbc gbv gbvr gbct">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -76,6 +77,11 @@ RC APLICADAS:
   <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="verso-comun.xsl"/>
 
+  <!-- CITAS (SC-57): EL AGRUPAMIENTO Y EL id DE CADA GRUPO, LOS MISMOS QUE
+       EL PDF, Y LA LECTURA DE citas.html (PARÁMETRO bib_dir) -->
+  <xsl:include href="cita-comun.xsl"/>
+  <xsl:include href="cita-fragmentos.xsl"/>
+
   <!-- Output principal: no se usa en Fase 1 (todo va por xsl:result-document) -->
   <xsl:output method="xml"
               encoding="UTF-8"
@@ -96,10 +102,13 @@ RC APLICADAS:
   <xsl:param name="proyecto_dir" as="xs:string" required="yes"/>
   <xsl:param name="manifiesto_libro" as="xs:string" required="yes"/>
 
-  <!-- ESTILO DE CITA: LO RESUELVE GAMBAS CON LeerTipoCSL() Y LO PASA COMO
-       PARÁMETRO SAXON, IGUAL QUE EN REVISTAS. VALORES POSIBLES:
-       'apa' | 'vancouver' | 'iso690' | 'ieee' | 'autor-anio' (fallback).
-       DEFAULT 'apa' SI NO SE PASA (LIBROS ACADÉMICOS SUELEN USAR APA). -->
+  <!-- ESTILO DE CITA: EL IDENTIFICADOR DE libros_md.estilo_cita, QUE
+       RESUELVE m_GenerarSalidasLibro.ResolverEstiloCita. DEFAULT 'apa'.
+       CON bib_dir (cita-fragmentos.xsl) LAS CITAS Y LAS REFERENCIAS SALEN
+       DE citas.html Y EL ESTILO SOLO DECIDE EL AGRUPAMIENTO (cita-comun.xsl).
+       SIN bib_dir LAS ARMAN LAS PLANTILLAS DE ESTA HOJA, QUE SOLO EXISTEN
+       PARA 'apa' | 'vancouver' | 'iso690' | 'ieee': CON OTRO ESTILO LA HOJA
+       SE CORTA (PLANTILLA RAÍZ). -->
   <xsl:param name="estilo_cita" as="xs:string" select="'apa'"/>
 
   <!-- CARPETA DE LOS BLOQUES DE CÓDIGO COLOREADOS POR colorear_codigo.sh
@@ -312,6 +321,18 @@ RC APLICADAS:
        En fases futuras acá también se disparan xsl:result-document
        para cada capítulo. -->
   <xsl:template match="/">
+    <!-- 0. ESTILO SIN CAMINO: NI citas.html NI PLANTILLAS PROPIAS. ANTES
+         CAÍA EN UN AUTOR-AÑO GENÉRICO QUE NO ES EL DEL PDF (SC-14) -->
+    <xsl:if test="not($gbct:tex4ht) and not($estilo_cita = ('apa', 'iso690', 'vancouver', 'ieee'))">
+      <xsl:message terminate="yes">
+        <xsl:text>&#10;[docbook-to-html] ESTILO DE CITA SIN SALIDA HTML: </xsl:text>
+        <xsl:value-of select="$estilo_cita"/>
+        <xsl:text>&#10;  No tiene archivo de pantalla (cita-</xsl:text>
+        <xsl:value-of select="$estilo_cita"/>
+        <xsl:text>-html.tex) ni plantillas en esta hoja.&#10;</xsl:text>
+      </xsl:message>
+    </xsl:if>
+
     <!-- 1. PORTADA DEL LIBRO -->
     <xsl:call-template name="emitir-index-html"/>
 
@@ -1380,6 +1401,12 @@ RC APLICADAS:
                                 then $biblioCap
                                 else ($book/db:bibliography | $book/bibliography)"/>
           <xsl:choose>
+            <!-- CON citas.html: LAS ENTRADAS DE biblatex, EN SU ORDEN (SC-57) -->
+            <xsl:when test="$gbct:tex4ht">
+              <xsl:call-template name="panel-refs-tex4ht">
+                <xsl:with-param name="capitulo" select="$capitulo"/>
+              </xsl:call-template>
+            </xsl:when>
             <xsl:when test="$biblio/db:biblioentry | $biblio/biblioentry">
               <xsl:apply-templates select="$biblio/db:biblioentry | $biblio/biblioentry"
                                     mode="panel-ref"/>
@@ -2112,11 +2139,99 @@ RC APLICADAS:
   <!-- DESPACHADOR: author-date o numérico según estilo -->
   <xsl:template match="db:biblioref | biblioref">
     <xsl:choose>
+      <!-- CON citas.html: EL TEXTO DE biblatex (SC-57) -->
+      <xsl:when test="$gbct:tex4ht">
+        <xsl:call-template name="cita-tex4ht"/>
+      </xsl:when>
       <xsl:when test="$estilo_cita = 'vancouver' or $estilo_cita = 'ieee'">
         <xsl:call-template name="xref-numerico-db"/>
       </xsl:when>
       <xsl:otherwise>
         <xsl:call-template name="xref-autor-anio-db"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- ==========================================================
+       CITAS DESDE citas.html (SC-57)
+       ==========================================================
+       EL GRUPO LO DIBUJA SU PRIMER biblioref CON EL TEXTO QUE ESCRIBIÓ
+       biblatex; LOS DEMÁS NO EMITEN NADA. EL AGRUPAMIENTO ES EL DEL PDF
+       (cita-comun.xsl): ASÍ EL id ES EL MISMO QUE PUSO LA PASADA. -->
+  <xsl:template name="cita-tex4ht">
+    <xsl:if test="not(gbct:es-continuacion(., $estilo_cita))">
+      <xsl:apply-templates select="gbct:fragmento-cita(., nl:pieza-de(.))" mode="gbct:fragmento">
+        <xsl:with-param name="grupo" select="gbct:grupo-desde(., $estilo_cita)" tunnel="yes"/>
+      </xsl:apply-templates>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- EL ENLACE DE UNA CITA A SU REFERENCIA (CONTRATO DE
+       cita-fragmentos.xsl): EL MISMO QUE ARMAN LAS PLANTILLAS POR ESTILO -->
+  <xsl:template name="gbct:enlace-cita">
+    <xsl:param name="rid" as="xs:string"/>
+    <xsl:param name="contenido"/>
+    <a class="xref-bibr cita-ref" data-ref-id="{$rid}"
+       onclick="highlightPanel('refs','{$rid}')" style="cursor:pointer">
+      <xsl:copy-of select="$contenido"/>
+    </a>
+  </xsl:template>
+
+  <!-- EL SEPARADOR ENTRE DOS CITAS, CON citas.html: SE SUPRIME SOLO SI LA
+       CITA QUE SIGUE QUEDÓ EN EL GRUPO DE LA ANTERIOR (EL DELIMITADOR LO
+       PUSO biblatex); SI NO, ES TEXTO. LA MISMA REGLA QUE EL PDF. GANA AL
+       SUPRESOR DE ABAJO, QUE SUPRIME TODO SEPARADOR ENTRE DOS CITAS -->
+  <xsl:template match="text()[$gbct:tex4ht][gbct:es-separador(.)]
+                             [exists(gbct:biblioref-tras-separador(.))]"
+                mode="#default texto-plano nota-panel" priority="10">
+    <xsl:if test="not(gbct:es-continuacion(gbct:biblioref-tras-separador(.), $estilo_cita))">
+      <xsl:value-of select="."/>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ==========================================================
+       PANEL DE REFERENCIAS DESDE citas.html (SC-57)
+       ==========================================================
+       LAS ENTRADAS QUE IMPRIMIÓ biblatex, EN SU ORDEN: LAS MISMAS QUE
+       EL PDF. CADA UNA SE UNE CON SU biblioentry POR LA CLAVE, PARA EL
+       data-ref-id QUE USAN EL PANEL Y LAS CITAS. LA BIBLIOGRAFÍA ES LA
+       DEL CAPÍTULO SI TRAE <bibliography>; SI NO, LA CONSOLIDADA. -->
+  <xsl:template name="panel-refs-tex4ht">
+    <xsl:param name="capitulo"/>
+    <xsl:variable name="marca" select="gbct:marca-bib($capitulo)"/>
+    <xsl:variable name="fuente"
+                  select="if ($marca = 'libro') then ($book/db:bibliography | $book/bibliography)
+                          else $capitulo//db:bibliography"/>
+    <!-- LA MARCA SE EXIGE CUANDO HAY UNA BIBLIOGRAFÍA QUE LA PIDA: SIN
+         ELLA, citas.html ES DE OTRO CANÓNICO -->
+    <xsl:variable name="entradas" select="gbct:entradas-bib($marca, exists($fuente))"/>
+    <xsl:choose>
+      <xsl:when test="exists($entradas)">
+        <xsl:for-each select="$entradas">
+          <xsl:variable name="clave" select="gbct:clave-entrada(.)"/>
+          <xsl:variable name="entrada"
+                        select="($fuente//db:biblioentry)[gbct:clave(@xml:id) = $clave][1]"/>
+          <xsl:if test="empty($entrada)">
+            <xsl:message terminate="yes">
+              <xsl:text>[docbook-to-html] biblatex imprimió </xsl:text>
+              <xsl:value-of select="$clave"/>
+              <xsl:text> y la bibliografía del canónico no la tiene (</xsl:text>
+              <xsl:value-of select="$marca"/>
+              <xsl:text>).</xsl:text>
+            </xsl:message>
+          </xsl:if>
+          <!-- ref-biblatex: LA SANGRÍA FRANCESA DE gbpublisher.css, SOLO PARA
+               ESTAS ENTRADAS: LA HOJA ES COMÚN CON REVISTAS -->
+          <div class="panel-item ref-item ref-biblatex"
+               data-ref-id="{$entrada/@xml:id}"
+               onclick="irAlTexto('{$entrada/@xml:id}')"
+               style="cursor:pointer">
+            <xsl:apply-templates select="." mode="gbct:fragmento"/>
+          </div>
+        </xsl:for-each>
+      </xsl:when>
+      <xsl:otherwise>
+        <p class="drawer-vacio">Sin referencias.</p>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>

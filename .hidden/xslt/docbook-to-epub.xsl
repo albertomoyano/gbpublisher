@@ -18,7 +18,13 @@
        - Figuras: inline con caption, sin panel.
        - Todo lineal, sin JS, sin arquitectura de 3 columnas.
      PARÁMETROS      :
-       - estilo_cita : apa | iso690 | vancouver | ieee
+       - estilo_cita : el identificador de libros_md.estilo_cita.
+                       SIN bib_dir SOLO HAY PLANTILLAS PARA apa |
+                       iso690 | vancouver | ieee; CON OTRO, LA HOJA
+                       SE CORTA (guarda-estilo)
+       - bib_dir     : (cita-fragmentos.xsl) LA CARPETA DE LA PASADA
+                       DE CITAS: CITAS Y REFERENCIAS SALEN DE
+                       citas.html, CON EL TEXTO DE biblatex (SC-57)
      ============================================================ -->
 <xsl:stylesheet version="2.0"
     xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
@@ -31,7 +37,8 @@
     xmlns:gbc="urn:gbpublisher:codigo"
                 xmlns:gbv="urn:gbpublisher:conversacion"
                 xmlns:gbvr="urn:gbpublisher:verso"
-                exclude-result-prefixes="xsl xs db xlink nl gbc gbv gbvr">
+                xmlns:gbct="urn:gbpublisher:citas"
+                exclude-result-prefixes="xsl xs db xlink nl gbc gbv gbvr gbct">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -54,6 +61,11 @@
 
   <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="verso-comun.xsl"/>
+
+  <!-- CITAS (SC-57): EL AGRUPAMIENTO Y EL id DE CADA GRUPO, LOS MISMOS QUE
+       EL PDF, Y LA LECTURA DE citas.html (PARÁMETRO bib_dir) -->
+  <xsl:include href="cita-comun.xsl"/>
+  <xsl:include href="cita-fragmentos.xsl"/>
 
   <!-- ================================================
        PARÁMETROS DE ENTRADA
@@ -168,6 +180,7 @@
        NODO DOCUMENTO, Y ESTA REGLA GANA A LA DE "/" SOLO CUANDO LA RAÍZ ES
        UNA BIBLIOGRAFÍA -->
   <xsl:template match="document-node(element(db:bibliography)) | document-node(element(bibliography))" priority="5">
+    <xsl:call-template name="guarda-estilo"/>
     <xsl:variable name="tituloPagina" select="normalize-space((*/db:title | */title)[1])"/>
     <html xmlns="http://www.w3.org/1999/xhtml"
           xmlns:epub="http://www.idpf.org/2007/ops"
@@ -182,9 +195,20 @@
           <xsl:if test="$tituloPagina != ''">
             <h1 class="cap-titulo"><xsl:value-of select="$tituloPagina"/></h1>
           </xsl:if>
-          <xsl:for-each select="*/db:biblioentry | */biblioentry">
-            <xsl:apply-templates select="." mode="ref-epub"/>
-          </xsl:for-each>
+          <xsl:choose>
+            <!-- CON citas.html: LA CONSOLIDADA DE biblatex (SC-57) -->
+            <xsl:when test="$gbct:tex4ht">
+              <xsl:call-template name="refs-tex4ht">
+                <xsl:with-param name="marca" select="'libro'"/>
+                <xsl:with-param name="fuente" select="*"/>
+              </xsl:call-template>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:for-each select="*/db:biblioentry | */biblioentry">
+                <xsl:apply-templates select="." mode="ref-epub"/>
+              </xsl:for-each>
+            </xsl:otherwise>
+          </xsl:choose>
         </section>
       </body>
     </html>
@@ -231,6 +255,7 @@
   </xsl:template>
 
   <xsl:template match="/">
+    <xsl:call-template name="guarda-estilo"/>
     <html xmlns="http://www.w3.org/1999/xhtml"
           xmlns:epub="http://www.idpf.org/2007/ops"
           lang="{$lang}" xml:lang="{$lang}">
@@ -558,6 +583,10 @@
        de citas múltiples, y prefijos/sufijos. -->
   <xsl:template match="db:biblioref | biblioref">
     <xsl:choose>
+      <!-- CON citas.html: EL TEXTO DE biblatex (SC-57) -->
+      <xsl:when test="$gbct:tex4ht">
+        <xsl:call-template name="cita-tex4ht"/>
+      </xsl:when>
       <xsl:when test="$estilo_cita = 'vancouver' or $estilo_cita = 'ieee'">
         <xsl:call-template name="xref-numerico-epub"/>
       </xsl:when>
@@ -565,6 +594,87 @@
         <xsl:call-template name="xref-autor-anio-epub"/>
       </xsl:otherwise>
     </xsl:choose>
+  </xsl:template>
+
+  <!-- ================================================
+       CITAS DESDE citas.html (SC-57)
+       ================================================
+       EL GRUPO LO DIBUJA SU PRIMER biblioref CON EL TEXTO QUE ESCRIBIÓ
+       biblatex; LOS DEMÁS NO EMITEN NADA. EL AGRUPAMIENTO ES EL DEL PDF
+       (cita-comun.xsl): ASÍ EL id ES EL MISMO QUE PUSO LA PASADA. -->
+  <xsl:template name="cita-tex4ht">
+    <xsl:if test="not(gbct:es-continuacion(., $estilo_cita))">
+      <xsl:apply-templates select="gbct:fragmento-cita(., nl:pieza-de(.))" mode="gbct:fragmento">
+        <xsl:with-param name="grupo" select="gbct:grupo-desde(., $estilo_cita)" tunnel="yes"/>
+      </xsl:apply-templates>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- EL ENLACE DE UNA CITA A SU REFERENCIA (CONTRATO DE
+       cita-fragmentos.xsl): EL MISMO QUE ARMAN LAS PLANTILLAS POR ESTILO -->
+  <xsl:template name="gbct:enlace-cita">
+    <xsl:param name="rid" as="xs:string"/>
+    <xsl:param name="contenido"/>
+    <a class="xref-bibr" href="{$hrefBib}#{$rid}"><xsl:copy-of select="$contenido"/></a>
+  </xsl:template>
+
+  <!-- EL SEPARADOR ENTRE DOS CITAS, CON citas.html: SE SUPRIME SOLO SI LA
+       CITA QUE SIGUE QUEDÓ EN EL GRUPO DE LA ANTERIOR (EL DELIMITADOR LO
+       PUSO biblatex); SI NO, ES TEXTO. LA MISMA REGLA QUE EL PDF. GANA AL
+       SUPRESOR DE ABAJO, QUE SUPRIME TODO SEPARADOR ENTRE DOS CITAS -->
+  <xsl:template match="text()[$gbct:tex4ht][gbct:es-separador(.)]
+                             [exists(gbct:biblioref-tras-separador(.))]"
+                mode="#default text-only" priority="10">
+    <xsl:if test="not(gbct:es-continuacion(gbct:biblioref-tras-separador(.), $estilo_cita))">
+      <xsl:value-of select="."/>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ================================================
+       REFERENCIAS DESDE citas.html (SC-57)
+       ================================================
+       LAS ENTRADAS QUE IMPRIMIÓ biblatex, EN SU ORDEN: LAS MISMAS QUE
+       EL PDF. CADA UNA SE UNE CON SU biblioentry POR LA CLAVE: SU xml:id
+       ES EL DESTINO DE LOS ENLACES DE CITA.
+       PARÁMETROS: marca  — sección-orden de la pieza, o libro
+                   fuente — el <bibliography> del canónico -->
+  <xsl:template name="refs-tex4ht">
+    <xsl:param name="marca" as="xs:string"/>
+    <xsl:param name="fuente" as="element()"/>
+    <xsl:for-each select="gbct:entradas-bib($marca, true())">
+      <xsl:variable name="clave" select="gbct:clave-entrada(.)"/>
+      <xsl:variable name="entrada"
+                    select="($fuente//db:biblioentry)[gbct:clave(@xml:id) = $clave][1]"/>
+      <xsl:if test="empty($entrada)">
+        <xsl:message terminate="yes">
+          <xsl:text>[docbook-to-epub] biblatex imprimió </xsl:text>
+          <xsl:value-of select="$clave"/>
+          <xsl:text> y la bibliografía del canónico no la tiene (</xsl:text>
+          <xsl:value-of select="$marca"/>
+          <xsl:text>).</xsl:text>
+        </xsl:message>
+      </xsl:if>
+      <div class="ref-item" id="{$entrada/@xml:id}">
+        <xsl:apply-templates select="." mode="gbct:fragmento"/>
+      </div>
+    </xsl:for-each>
+  </xsl:template>
+
+  <!-- ================================================
+       GUARDA DE ESTILO
+       ================================================
+       SIN citas.html, UN ESTILO QUE NO TIENE PLANTILLAS EN ESTA HOJA
+       CAÍA EN UN AUTOR-AÑO GENÉRICO QUE NO ES EL DEL PDF (SC-14). -->
+  <xsl:template name="guarda-estilo">
+    <xsl:if test="not($gbct:tex4ht) and not($estilo_cita = ('apa', 'iso690', 'vancouver', 'ieee'))">
+      <xsl:message terminate="yes">
+        <xsl:text>&#10;[docbook-to-epub] ESTILO DE CITA SIN SALIDA EPUB: </xsl:text>
+        <xsl:value-of select="$estilo_cita"/>
+        <xsl:text>&#10;  No tiene archivo de pantalla (cita-</xsl:text>
+        <xsl:value-of select="$estilo_cita"/>
+        <xsl:text>-html.tex) ni plantillas en esta hoja.&#10;</xsl:text>
+      </xsl:message>
+    </xsl:if>
   </xsl:template>
 
   <!-- LOS phrase de prefijo/sufijo se ABSORBEN en el template del
@@ -836,9 +946,20 @@
       <h2 class="seccion-titulo">
         <xsl:value-of select="normalize-space((db:title | title)[1])"/>
       </h2>
-      <xsl:for-each select="db:biblioentry | biblioentry">
-        <xsl:apply-templates select="." mode="ref-epub"/>
-      </xsl:for-each>
+      <xsl:choose>
+        <!-- CON citas.html: LA DE LA refsection DE ESTA PIEZA (SC-57) -->
+        <xsl:when test="$gbct:tex4ht">
+          <xsl:call-template name="refs-tex4ht">
+            <xsl:with-param name="marca" select="gbct:marca-bib(nl:pieza-de(.))"/>
+            <xsl:with-param name="fuente" select="."/>
+          </xsl:call-template>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:for-each select="db:biblioentry | biblioentry">
+            <xsl:apply-templates select="." mode="ref-epub"/>
+          </xsl:for-each>
+        </xsl:otherwise>
+      </xsl:choose>
     </section>
   </xsl:template>
 

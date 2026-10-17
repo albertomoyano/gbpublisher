@@ -491,6 +491,36 @@ Public Function ResolverEstiloCita(iIdLibro As Integer) As String
 End
 
 ' ============================================
+' Función   : PrepararCitasPantalla
+' Propósito : Decide, en un solo lugar, cómo arman HTML y EPUB las citas y las
+'             referencias (SC-57). Si el estilo tiene archivo de pantalla
+'             (~/.gbpublisher/latex/cita-<estilo>-html.tex), las escribe
+'             biblatex con tex4ht y esta función deja los insumos de esa pasada;
+'             si no, las arman las plantillas de las hojas.
+' Parámetros: sEstilo As String — el identificador que dio ResolverEstiloCita
+' Retorna   : String — "tex4ht" | "xslt"; "" si no se pudieron escribir los
+'             insumos (EscribirInsumosCitas ya informó el motivo)
+' Nota      : EL SCRIPT RECIBE EL MODO Y NO LO VUELVE A DECIDIR. LA HOJA CORTA
+'             SI UN ESTILO NO TIENE NI ARCHIVO DE PANTALLA NI PLANTILLAS.
+' ============================================
+Public Function PrepararCitasPantalla(sEstilo As String) As String
+
+  Dim sPantalla As String
+
+  ' --- 1. ARCHIVO DE PANTALLA DEL ESTILO ---
+  ' LA MISMA CARPETA DE LA QUE SALEN LOS ESTILOS DEL SELECTOR (EstilosLibro)
+  sPantalla = User.Home &/ ".gbpublisher" &/ "latex" &/ "cita-" & sEstilo & "-html.tex"
+  If Not Exist(sPantalla) Then Return "xslt"
+
+  ' --- 2. INSUMOS DE LA PASADA ---
+  ' LA LISTA DE PIEZAS, LAS DEFINICIONES Y EL .bib: LOS MISMOS DEL PDF
+  If Not m_GenerarPDFLibro.EscribirInsumosCitas() Then Return ""
+
+  Return "tex4ht"
+
+End
+
+' ============================================
 ' Función   : PrepararInsumosLibro
 ' Propósito : Escribe a disco todo lo que el ensamblado del libro necesita de la
 '             base —info del libro, manifiesto y, si corresponde, bibliografía
@@ -1044,6 +1074,7 @@ Public Sub GenerarLibroHTML()
   Dim aArgumentos As String[]
   Dim hTapa As Result
   Dim sEstiloCita As String
+  Dim sModoCitas As String
   Dim sImagenTapa As String
   Dim iRespuesta As Integer
   Dim iResultado As Integer
@@ -1061,8 +1092,10 @@ Public Sub GenerarLibroHTML()
   oInsumos = PrepararInsumosLibro()
   If Not oInsumos.bListo Then Return
 
-  ' --- 4. ESTILO DE CITA ---
+  ' --- 4. ESTILO DE CITA Y MODO DE LAS CITAS (SC-57) ---
   sEstiloCita = ResolverEstiloCita(oInsumos.iIdLibro)
+  sModoCitas = PrepararCitasPantalla(sEstiloCita)
+  If sModoCitas = "" Then Return
 
   ' --- 5. TAPA ---
   ' SOLO PARA QUE EL SCRIPT AVISE SI LA BASE DECLARA UNA TAPA QUE NO ESTÁ EN
@@ -1085,10 +1118,11 @@ Public Sub GenerarLibroHTML()
   If Not EscribirColofonDigital(oInsumos.sRutaProyecto) Then Return
 
   ' --- 7. ARGUMENTOS ---
-  ' LOS CUATRO DEL ENSAMBLADO, MÁS EL ESTILO Y, SI HAY, LA TAPA. LA TAPA VA
-  ' ÚLTIMA Y ES OPCIONAL: SI NO HAY, SIMPLEMENTE NO SE AGREGA
+  ' LOS CUATRO DEL ENSAMBLADO, MÁS EL ESTILO, EL MODO DE LAS CITAS Y, SI HAY,
+  ' LA TAPA. LA TAPA VA ÚLTIMA Y ES OPCIONAL: SI NO HAY, NO SE AGREGA
   aArgumentos = ArgumentosEnsamblado(oInsumos)
   aArgumentos.Add(sEstiloCita)
+  aArgumentos.Add(sModoCitas)
   If sImagenTapa <> "" Then aArgumentos.Add(sImagenTapa)
 
   ' --- 8. GENERACIÓN ---

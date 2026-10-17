@@ -19,7 +19,6 @@
     f:titulo-plano()      el título en una línea (SC-28)
     f:babel-lang()    ISO 639-1 → nombre de idioma babel
     f:ruta-imagen()   normalización de rutas de imagen
-    f:comando-cita()  modo de cita → comando biblatex
     abortar-elemento  plantilla de corte ante vocabulario
                       no previsto
     gb-espacio        ficha de espacio vertical del PDF (SC-39)
@@ -248,38 +247,6 @@
   <xsl:function name="f:motor-cita" as="xs:string">
     <xsl:param name="estilo" as="xs:string"/>
     <xsl:value-of select="if ($estilo = 'vancouver') then 'bibtex' else 'biblatex'"/>
-  </xsl:function>
-
-  <!-- ============================================================ -->
-  <!-- FUNCIÓN : f:comando-cita                                     -->
-  <!-- PROPÓSITO: TRADUCE EL MODO DE CITA DEL CANÓNICO AL COMANDO   -->
-  <!--            DE biblatex QUE CORRESPONDE.                      -->
-  <!-- PARÁMETROS: modo   As xs:string — normal|author-in-text|     -->
-  <!--                                   suppress                  -->
-  <!--             estilo As xs:string — familia de estilo activa   -->
-  <!-- RETORNA  : xs:string — nombre del comando, con la barra      -->
-  <!-- ALCANCE  : SOLO biblatex. LLAMARLA CON UN ESTILO DE bibtex   -->
-  <!--            ES UN ERROR DEL LLAMADOR: LA HOJA DEBE HABER      -->
-  <!--            CORTADO ANTES CON f:motor-cita.                   -->
-  <!-- NOTA SOBRE suppress EN ESTILOS NUMÉRICOS:                    -->
-  <!--   \parencite* SUPRIME EL AUTOR EN ESTILOS AUTOR-FECHA. EN UN -->
-  <!--   ESTILO NUMÉRICO NO HAY AUTOR QUE SUPRIMIR, ASÍ QUE CAE A   -->
-  <!--   LA FORMA NORMAL. ESTO DEBE COINCIDIR CON LO QUE HAGA LA    -->
-  <!--   RAMA HTML: SI ALLÁ SE RESUELVE DE OTRA FORMA, SE CORRIGE   -->
-  <!--   ACÁ Y QUEDA CORREGIDO EN LAS DOS RAMAS.                    -->
-  <!-- PENDIENTE: ISO690 TIENE VARIANTE AUTOR-FECHA Y VARIANTE      -->
-  <!--   NUMÉRICA. ACÁ SE LO TRATA COMO AUTOR-FECHA. SI EL PROYECTO -->
-  <!--   USA LA NUMÉRICA, AGREGARLO A LA CONDICIÓN $numerico.       -->
-  <!-- ============================================================ -->
-  <xsl:function name="f:comando-cita" as="xs:string">
-    <xsl:param name="modo"   as="xs:string"/>
-    <xsl:param name="estilo" as="xs:string"/>
-    <xsl:variable name="numerico" select="$estilo = 'ieee'"/>
-    <xsl:choose>
-      <xsl:when test="$modo = 'author-in-text'">\textcite</xsl:when>
-      <xsl:when test="$modo = 'suppress' and not($numerico)">\parencite*</xsl:when>
-      <xsl:otherwise>\parencite</xsl:otherwise>
-    </xsl:choose>
   </xsl:function>
 
   <!-- ============================================================ -->

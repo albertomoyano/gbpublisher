@@ -5,11 +5,17 @@
 # infraestructura: no se personaliza y no se copia a ~/.gbpublisher (SC-11).
 #
 # USO
-#   generar_epub_libro.sh <ruta_proyecto> <nombre_epub> <estilo_cita>
+#   generar_epub_libro.sh <ruta_proyecto> <nombre_epub> <estilo_cita> <modo_citas>
 #
 #   nombre_epub    nombre del archivo final, con extensión: lo arma Gambas
 #                  desde el título abreviado del libro
-#   estilo_cita    apa | iso690 | vancouver | ieee
+#   estilo_cita    el identificador del estilo — lo resuelve Gambas
+#                  (ResolverEstiloCita)
+#   modo_citas     tex4ht | xslt — lo decide Gambas (PrepararCitasPantalla,
+#                  SC-57): tex4ht si el estilo tiene archivo de pantalla
+#                  (cita-<estilo>-html.tex). Con tex4ht, este script corre
+#                  antes la pasada de citas (preparar_citas_libro.sh) y la
+#                  hoja toma el texto de citas.html
 #
 # LA FRONTERA CON GAMBAS
 #   Gambas escribe ANTES de lanzar este script todo lo que sale de la base,
@@ -68,13 +74,20 @@ CSS_EPUB="gbpublisher-epub-libro.css"
 encabezado "GENERACIÓN DE LA SALIDA EPUB"
 
 # --- 2. ARGUMENTOS ---
-if (( $# < 3 )); then
-    morir "Uso: $(basename "$0") <ruta_proyecto> <nombre_epub> <estilo_cita>"
+if (( $# < 4 )); then
+    morir "Uso: $(basename "$0") <ruta_proyecto> <nombre_epub> <estilo_cita> <modo_citas>"
 fi
 
 DIR_PROYECTO="${1%/}"
 NOMBRE_EPUB="$2"
 ESTILO_CITA="$3"
+MODO_CITAS="$4"
+
+# EL MODO LO DECIDE GAMBAS; ACÁ SOLO SE CONTROLA QUE SEA UNO CONOCIDO
+case "$MODO_CITAS" in
+    tex4ht|xslt) ;;
+    *) morir "Modo de citas no reconocido: «$MODO_CITAS» (tex4ht | xslt)" ;;
+esac
 
 DIR_TRABAJO="$DIR_PROYECTO/tmp/epub-work"
 DIR_OEBPS="$DIR_TRABAJO/OEBPS"
@@ -91,6 +104,13 @@ TEMPORAL="$DIR_SALIDA/.$NOMBRE_EPUB.tmp"
 XSL="$DIR_GBP_LOCAL/xslt/docbook-to-epub.xsl"
 DIR_FUENTES="$DIR_GBP_LOCAL/fonts"
 CSS="$DIR_GBP_LOCAL/assets/css/$CSS_EPUB"
+# LA PASADA DE CITAS (SC-57): LOS INSUMOS LOS ESCRIBE GAMBAS
+# (m_GenerarPDFLibro.EscribirInsumosCitas) CON LOS NOMBRES DE SUS CONSTANTES
+# LISTA_PIEZAS_LATEX E INSUMOS_CITAS. UNA CARPETA FIJA: EL PROYECTO TIENE UN
+# SOLO EPUB, Y SU NOMBRE DE ARCHIVO PUEDE LLEVAR ESPACIOS Y ACENTOS
+LISTA_CITAS_REL="tmp/latex-piezas.txt"
+INSUMOS_CITAS_REL="tmp/citas-proyecto.tex"
+DIR_CITAS_REL="tmp/bib/epub-libro"
 
 # --- 3. ENTORNO ---
 paso "verificando el entorno"
@@ -113,7 +133,7 @@ fi
 
 ok "herramientas, hoja de estilos y fuentes"
 printf '\n  %-14s %s\n' "Proyecto:" "$DIR_PROYECTO"
-printf '  %-14s %s\n'   "Citas:"    "$ESTILO_CITA"
+printf '  %-14s %s (%s)\n' "Citas:"  "$ESTILO_CITA" "$MODO_CITAS"
 printf '  %-14s %s\n'   "Salida:"   "$NOMBRE_EPUB"
 
 # --- 4. INSUMOS QUE ESCRIBIÓ GAMBAS ---
@@ -122,7 +142,7 @@ paso "verificando lo que escribió la aplicación"
 [[ -d "$DIR_OEBPS/chapters" ]] || morir "No existe el árbol de trabajo: $DIR_OEBPS"
 
 # LA PORTADA (front-portada.xhtml) NO ESTÁ EN ESTA LISTA: VA SOLO SI EL LIBRO
-# LA DECLARA (SC-25). SI EL OPF LA DECLARA, LA VERIFICACIÓN DEL PUNTO 8 EXIGE
+# LA DECLARA (SC-25). SI EL OPF LA DECLARA, LA VERIFICACIÓN DEL PUNTO 9 EXIGE
 # QUE EXISTA
 for archivo in "$OPF" "$DIR_OEBPS/nav.xhtml" \
                "$DIR_OEBPS/chapters/front-tapa.xhtml" \
@@ -189,7 +209,31 @@ if (( omitidos > 0 )); then
     tenue "$omitidos archivo(s) de media/ no son imágenes EPUB y no se copian"
 fi
 
-# --- 6. CAPÍTULOS ---
+# --- 6. CITAS (SC-57) ---
+# CON tex4ht, EL TEXTO DE LAS CITAS Y DE LAS REFERENCIAS LO ESCRIBE biblatex
+# EN citas.html, Y LA HOJA LO TOMA DE AHÍ (bib_dir). SIN citas.html NO HAY
+# EPUB: VOLVER A LAS PLANTILLAS DE LA HOJA SERÍA OTRO TEXTO QUE EL DEL PDF.
+# CÓDIGO 3: CITAS SIN ENTRADA EN EL .bib; SE SIGUE Y EL AVISO SE HEREDA
+PARAM_CITAS=()
+if [[ "$MODO_CITAS" == "tex4ht" ]]; then
+    paso "preparando las citas con biblatex"
+    salida=$(GBP_ANIDADO=1 bash "$DIR_ENGINE/preparar_citas_libro.sh" \
+                "$DIR_PROYECTO" "$LISTA_CITAS_REL" "$INSUMOS_CITAS_REL" "$DIR_CITAS_REL" 2>&1)
+    codigo=$?
+    if (( codigo == SALIDA_AVISOS )); then
+        mostrar_cola "$(grep '⚠' <<< "$salida")"
+        aviso "la pasada de citas tiene avisos: el EPUB se genera igual"
+    elif (( codigo != SALIDA_OK )); then
+        mostrar_cola "$salida"
+        morir "No se pudieron preparar las citas: el EPUB no se genera"
+    fi
+    ok "$(printf '%s\n' "$salida" | tail -n 1) cita(s) de biblatex"
+    PARAM_CITAS=(bib_dir="$DIR_PROYECTO/$DIR_CITAS_REL")
+else
+    tenue "citas con las plantillas de la hoja"
+fi
+
+# --- 7. CAPÍTULOS ---
 # SE JUNTAN TODOS LOS PROBLEMAS ANTES DE ABORTAR, COMO EN EL ENSAMBLADO: EL
 # EDITOR NECESITA VER TODO LO QUE HAY QUE REGENERAR
 paso "transformando los capítulos"
@@ -224,7 +268,8 @@ for pieza in "${PIEZAS[@]}"; do
                 estilo_cita="$ESTILO_CITA" \
                 piezas_libro="$PIEZAS_LIBRO" \
                 pieza_actual="$pieza" \
-                "${PARAM_BIBLIO[@]}" 2>&1)
+                "${PARAM_BIBLIO[@]}" \
+                "${PARAM_CITAS[@]}" 2>&1)
     codigo=$?
 
     if (( codigo != 0 )); then
@@ -248,7 +293,8 @@ if [[ -f "$BIBLIO_EPUB" ]]; then
                 -o:"$PAGINA_BIBLIO" \
                 estilo_cita="$ESTILO_CITA" \
                 piezas_libro="" \
-                pieza_actual="bibliografia" 2>&1)
+                pieza_actual="bibliografia" \
+                "${PARAM_CITAS[@]}" 2>&1)
     codigo=$?
 
     if (( codigo != 0 )); then
@@ -267,7 +313,7 @@ if (( problemas > 0 )); then
     morir "$problemas capítulo(s) con problemas: el EPUB no se genera"
 fi
 
-# --- 7. mimetype Y container.xml ---
+# --- 8. mimetype Y container.xml ---
 # NO SALEN DE LA BASE: SON FIJOS DEL FORMATO. mimetype SIN SALTO FINAL
 printf 'application/epub+zip' > "$DIR_TRABAJO/mimetype" ||
     morir "No se pudo escribir mimetype"
@@ -282,7 +328,7 @@ cat > "$DIR_TRABAJO/META-INF/container.xml" <<'CONTENEDOR' ||
 CONTENEDOR
     morir "No se pudo escribir META-INF/container.xml"
 
-# --- 8. VERIFICACIÓN DEL OPF ---
+# --- 9. VERIFICACIÓN DEL OPF ---
 # CADA href DEL MANIFIESTO TIENE QUE EXISTIR. local-name() Y NO EL PREFIJO:
 # xmllint --xpath NO CONOCE LOS NAMESPACES DEL DOCUMENTO (GV-22), Y EL OPF
 # TIENE UN NAMESPACE POR OMISIÓN
@@ -309,7 +355,7 @@ fi
 
 ok "${#DECLARADOS[@]} archivos declarados, todos presentes"
 
-# --- 9. EMPAQUETADO ---
+# --- 10. EMPAQUETADO ---
 # mimetype PRIMERO Y SIN COMPRIMIR: LO EXIGE EL FORMATO. SE EMPAQUETA EN UN
 # TEMPORAL Y SE RENOMBRA AL FINAL, COMO EL CANÓNICO: SI ALGO FALLA, EL EPUB
 # ANTERIOR SIGUE INTACTO
@@ -336,7 +382,7 @@ fi
 mv -f "$TEMPORAL" "$EPUB" || morir "No se pudo escribir $EPUB"
 ok "$NOMBRE_EPUB"
 
-# --- 10. VALIDACIÓN CON epubcheck ---
+# --- 11. VALIDACIÓN CON epubcheck ---
 paso "validando con epubcheck"
 
 EPUBCHECK=()
@@ -377,7 +423,7 @@ else
     fi
 fi
 
-# --- 11. RESUMEN ---
+# --- 12. RESUMEN ---
 echo
 titulo "$REGLA"
 printf '%s✓ EPUB generado%s\n' "$C_OK" "$C_RESET"

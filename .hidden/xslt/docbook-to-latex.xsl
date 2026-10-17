@@ -97,8 +97,9 @@
   xmlns:f="urn:gbpublisher:functions"
   xmlns:gbv="urn:gbpublisher:conversacion"
   xmlns:gbvr="urn:gbpublisher:verso"
+  xmlns:gbct="urn:gbpublisher:citas"
   xpath-default-namespace="http://docbook.org/ns/docbook"
-  exclude-result-prefixes="xs xlink f gbv gbvr">
+  exclude-result-prefixes="xs xlink f gbv gbvr gbct">
 
   <xsl:import href="tex-comun.xsl"/>
 
@@ -113,6 +114,10 @@
 
   <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="verso-comun.xsl"/>
+
+  <!-- CITAS (SC-57): EL COMANDO DE CADA MODO, EL AGRUPAMIENTO Y EL id DE
+       CADA GRUPO, COMUNES CON LA PASADA DE CITAS Y CON HTML Y EPUB -->
+  <xsl:include href="cita-comun.xsl"/>
 
   <xsl:output method="text" encoding="UTF-8"/>
 
@@ -169,20 +174,6 @@
     <xsl:param name="s" as="xs:string"/>
     <xsl:value-of select="replace(replace($s, '^[ \t\r\n]+', ''),
                                             '[ \t\r\n]+$', '')"/>
-  </xsl:function>
-
-  <!-- ============================================================ -->
-  <!-- FUNCIÓN : f:modo-de                                          -->
-  <!-- PROPÓSITO: MODO EFECTIVO DE UN <biblioref>. SIN @role EL     -->
-  <!--            MODO ES 'normal'.                                 -->
-  <!-- PARÁMETROS: n As node()? — el biblioref, o vacío             -->
-  <!-- RETORNA  : xs:string — normal | author-in-text | suppress    -->
-  <!-- ============================================================ -->
-  <xsl:function name="f:modo-de" as="xs:string">
-    <xsl:param name="n" as="node()?"/>
-    <xsl:variable name="r" select="normalize-space($n/@role)"/>
-    <xsl:value-of select="if (empty($n)) then ''
-                          else if ($r = '') then 'normal' else $r"/>
   </xsl:function>
 
   <!-- ============================================================ -->
@@ -701,14 +692,14 @@
   <!-- LO QUE QUEDA ES LA CLAVE DEL .bib QUE GENERA LA APP.         -->
   <!-- ============================================================ -->
   <xsl:template match="biblioref">
-    <xsl:variable name="modo" select="f:modo-de(.)"/>
+    <xsl:variable name="modo" select="gbct:modo-de(.)"/>
 
     <!-- ESTE biblioref YA FUE ABSORBIDO POR EL GRUPO DEL ANTERIOR: -->
     <!-- NO EMITE NADA. VER LA NOTA SOBRE AGRUPAMIENTO ABAJO.       -->
-    <xsl:if test="not(f:es-continuacion(.))">
+    <xsl:if test="not(gbct:es-continuacion(., $estilo))">
 
-    <xsl:variable name="grupo"   select="f:grupo-desde(.)"/>
-    <xsl:variable name="comando" select="f:comando-cita($modo, $estilo)"/>
+    <xsl:variable name="grupo"   select="gbct:grupo-desde(., $estilo)"/>
+    <xsl:variable name="comando" select="gbct:comando-cita($modo, $estilo)"/>
 
     <!-- \protect ES OBLIGATORIO: LOS COMANDOS DE CITA DE biblatex
          NO SON ROBUSTOS Y LOS ARGUMENTOS DE \caption, \chapter Y
@@ -726,10 +717,10 @@
       <!-- NINGUNA CITA DEL GRUPO LLEVA AFIJOS: UN SOLO COMANDO CON  -->
       <!-- TODAS LAS CLAVES, \parencite{a,b}. ES LO QUE PERMITE AL   -->
       <!-- ESTILO ORDENARLAS Y COMPRIMIR RANGOS.                     -->
-      <xsl:when test="every $b in $grupo satisfies f:sin-afijos($b)">
+      <xsl:when test="every $b in $grupo satisfies gbct:sin-afijos($b)">
         <xsl:value-of select="$comando"/>
         <xsl:text>{</xsl:text>
-        <xsl:value-of select="string-join(for $b in $grupo return f:clave($b), ',')"/>
+        <xsl:value-of select="string-join(for $b in $grupo return gbct:clave($b/@linkend), ',')"/>
         <xsl:text>}</xsl:text>
       </xsl:when>
 
@@ -750,7 +741,7 @@
       <!-- PUNTO Y COMA, TAMBIÉN EN LAS FUENTES SECUNDARIAS (APA     -->
       <!-- 8.6 EN LA DOCUMENTACIÓN DEL PAQUETE).                     -->
       <xsl:otherwise>
-        <xsl:value-of select="f:comando-multicita($comando)"/>
+        <xsl:value-of select="gbct:comando-multicita($comando)"/>
         <xsl:for-each select="$grupo">
           <xsl:call-template name="afijos-y-clave">
             <xsl:with-param name="b" select="."/>
@@ -774,8 +765,8 @@
   <!-- ============================================================ -->
   <xsl:template name="afijos-y-clave">
     <xsl:param name="b" as="node()"/>
-    <xsl:variable name="pre"  select="f:prefijo-de($b)"/>
-    <xsl:variable name="post" select="f:sufijo-de($b)"/>
+    <xsl:variable name="pre"  select="gbct:prefijo-de($b)"/>
+    <xsl:variable name="post" select="gbct:sufijo-de($b)"/>
 
     <!-- biblatex CON UN SOLO [] LO INTERPRETA COMO POSTNOTA.       -->
     <!-- CON PREFIJO Y SIN SUFIJO HAY QUE EMITIR [pre][] PARA       -->
@@ -801,172 +792,23 @@
     </xsl:choose>
 
     <xsl:text>{</xsl:text>
-    <xsl:value-of select="f:clave($b)"/>
+    <xsl:value-of select="gbct:clave($b/@linkend)"/>
     <xsl:text>}</xsl:text>
   </xsl:template>
 
   <!-- ============================================================ -->
   <!-- AGRUPAMIENTO DE CITAS CONSECUTIVAS                           -->
-  <!-- [@a; @b; @c] LLEGA AL CANÓNICO COMO TRES <biblioref>         -->
-  <!-- SEPARADOS POR NODOS DE TEXTO ', '. CADA UNO PUEDE LLEVAR     -->
-  <!-- SU PREFIJO Y SU SUFIJO COMO <phrase> HERMANOS, ASÍ QUE ENTRE -->
-  <!-- DOS CITAS DEL MISMO GRUPO PUEDE HABER:                       -->
-  <!--   biblioref  [sufijo]  separador  [prefijo]  biblioref       -->
-  <!-- Y ADEMÁS ESPACIOS DE INDENTACIÓN DEL CANÓNICO, QUE SE        -->
-  <!-- SALTEAN. DOS CITAS SE AGRUPAN SI TIENEN EL MISMO MODO Y EL   -->
-  <!-- COMANDO ADMITE FORMA MÚLTIPLE; SI NO LA ADMITE, SOLO CUANDO  -->
-  <!-- NINGUNA DE LAS DOS LLEVA AFIJOS.                             -->
-  <!-- ANTES SOLO SE AGRUPABAN CITAS SIN AFIJOS, Y MIRANDO LOS      -->
-  <!-- NODOS INMEDIATOS SIN SALTEAR ESPACIOS.                       -->
+  <!-- LA REGLA ESTÁ EN cita-comun.xsl (gbct:grupo-desde Y SUS      -->
+  <!-- AUXILIARES): LA MISMA PARA EL PDF, LA PASADA DE CITAS Y LAS  -->
+  <!-- HOJAS DE HTML Y EPUB, QUE BUSCAN CADA GRUPO POR SU id.       -->
+  <!-- ACÁ QUEDAN LAS DOS PLANTILLAS QUE LIMPIAN EL TEXTO ENTRE LAS -->
+  <!-- PARTES DE UN GRUPO.                                          -->
   <!-- ============================================================ -->
-
-  <!-- VECINO SIGUIENTE / ANTERIOR, SALTEANDO LOS NODOS DE TEXTO     -->
-  <!-- QUE SON SOLO ESPACIO                                         -->
-  <xsl:function name="f:vecino-sig" as="node()?">
-    <xsl:param name="n" as="node()?"/>
-    <xsl:sequence select="$n/following-sibling::node()
-                          [not(self::text() and not(normalize-space()))][1]"/>
-  </xsl:function>
-
-  <xsl:function name="f:vecino-ant" as="node()?">
-    <xsl:param name="n" as="node()?"/>
-    <xsl:sequence select="$n/preceding-sibling::node()
-                          [not(self::text() and not(normalize-space()))][1]"/>
-  </xsl:function>
-
-  <!-- ¿ES EL NODO UN phrase DE PREFIJO O DE SUFIJO DE CITA?          -->
-  <xsl:function name="f:es-afijo" as="xs:boolean">
-    <xsl:param name="n"   as="node()?"/>
-    <xsl:param name="rol" as="xs:string"/>
-    <xsl:sequence select="exists($n[self::phrase][@role = $rol])"/>
-  </xsl:function>
-
-  <!-- EL PREFIJO / SUFIJO DE UNA CITA, O VACÍO                      -->
-  <xsl:function name="f:prefijo-de" as="node()?">
-    <xsl:param name="b" as="node()"/>
-    <xsl:variable name="v" select="f:vecino-ant($b)"/>
-    <xsl:sequence select="$v[f:es-afijo(., 'cite-prefix')]"/>
-  </xsl:function>
-
-  <xsl:function name="f:sufijo-de" as="node()?">
-    <xsl:param name="b" as="node()"/>
-    <xsl:variable name="v" select="f:vecino-sig($b)"/>
-    <xsl:sequence select="$v[f:es-afijo(., 'cite-suffix')]"/>
-  </xsl:function>
-
-  <!-- ============================================================ -->
-  <!-- FUNCIÓN : f:sin-afijos                                       -->
-  <!-- PROPÓSITO: DICE SI UN biblioref NO TIENE PREFIJO NI SUFIJO   -->
-  <!-- PARÁMETROS: n As node() — el biblioref                       -->
-  <!-- RETORNA  : xs:boolean                                        -->
-  <!-- ============================================================ -->
-  <xsl:function name="f:sin-afijos" as="xs:boolean">
-    <xsl:param name="n" as="node()"/>
-    <xsl:sequence select="empty(f:prefijo-de($n)) and empty(f:sufijo-de($n))"/>
-  </xsl:function>
-
-  <!-- ============================================================ -->
-  <!-- FUNCIÓN : f:es-separador                                     -->
-  <!-- PROPÓSITO: DICE SI UN NODO ES EL TEXTO QUE SEPARA DOS CITAS  -->
-  <!--            AGRUPABLES (COMA, PUNTO Y COMA O GUION SUELTO).   -->
-  <!-- PARÁMETROS: n As node()? — nodo a evaluar                    -->
-  <!-- RETORNA  : xs:boolean                                        -->
-  <!-- ============================================================ -->
-  <xsl:function name="f:es-separador" as="xs:boolean">
-    <xsl:param name="n" as="node()?"/>
-    <xsl:sequence select="exists($n[self::text()])
-      and matches(string($n), '^\s*[,;\p{Pd}]\s*$')"/>
-  </xsl:function>
-
-  <!-- LA CLAVE DEL .bib: EL linkend SIN SU PREFIJO                  -->
-  <xsl:function name="f:clave" as="xs:string">
-    <xsl:param name="b" as="node()"/>
-    <xsl:sequence select="replace(normalize-space($b/@linkend), '^(cap-\d+-)?bib-', '')"/>
-  </xsl:function>
-
-  <!-- ============================================================ -->
-  <!-- FUNCIÓN : f:comando-multicita                                -->
-  <!-- PROPÓSITO: LA FORMA MÚLTIPLE DE UN COMANDO DE CITA.          -->
-  <!--            biblatex LA NOMBRA AGREGANDO «s»: \parencites,     -->
-  <!--            \textcites, \autocites, \cites, \footcites. LOS    -->
-  <!--            COMANDOS CON ASTERISCO NO TIENEN FORMA MÚLTIPLE.   -->
-  <!-- PARÁMETROS: comando As xs:string — el que da f:comando-cita  -->
-  <!-- RETORNA  : xs:string — el múltiple, o vacío si no existe     -->
-  <!-- ============================================================ -->
-  <xsl:function name="f:comando-multicita" as="xs:string">
-    <xsl:param name="comando" as="xs:string"/>
-    <xsl:sequence select="if (ends-with($comando, '*')) then '' else concat($comando, 's')"/>
-  </xsl:function>
-
-  <!-- ¿SE PUEDEN AGRUPAR ESTAS DOS CITAS CONSECUTIVAS?              -->
-  <xsl:function name="f:agrupables" as="xs:boolean">
-    <xsl:param name="b" as="node()"/>
-    <xsl:param name="c" as="node()"/>
-    <xsl:variable name="modo" select="f:modo-de($b)"/>
-    <xsl:sequence select="$modo = f:modo-de($c)
-      and (f:comando-multicita(f:comando-cita($modo, $estilo)) != ''
-           or (f:sin-afijos($b) and f:sin-afijos($c)))"/>
-  </xsl:function>
-
-  <!-- LA CITA QUE SIGUE A ESTA EN EL MISMO GRUPO, O VACÍO:          -->
-  <!-- biblioref  [sufijo]  separador  [prefijo]  biblioref          -->
-  <xsl:function name="f:siguiente-en-grupo" as="node()?">
-    <xsl:param name="b" as="node()"/>
-    <xsl:variable name="v1"  select="f:vecino-sig($b)"/>
-    <xsl:variable name="sep" select="if (f:es-afijo($v1, 'cite-suffix'))
-                                     then f:vecino-sig($v1) else $v1"/>
-    <xsl:variable name="v3"  select="if (f:es-separador($sep))
-                                     then f:vecino-sig($sep) else ()"/>
-    <xsl:variable name="c"   select="if (f:es-afijo($v3, 'cite-prefix'))
-                                     then f:vecino-sig($v3) else $v3"/>
-    <xsl:sequence select="$c[self::biblioref][f:agrupables($b, .)]"/>
-  </xsl:function>
-
-  <!-- LA CITA QUE PRECEDE A ESTA EN EL MISMO GRUPO, O VACÍO         -->
-  <xsl:function name="f:anterior-en-grupo" as="node()?">
-    <xsl:param name="c" as="node()"/>
-    <xsl:variable name="v1"  select="f:vecino-ant($c)"/>
-    <xsl:variable name="sep" select="if (f:es-afijo($v1, 'cite-prefix'))
-                                     then f:vecino-ant($v1) else $v1"/>
-    <xsl:variable name="v3"  select="if (f:es-separador($sep))
-                                     then f:vecino-ant($sep) else ()"/>
-    <xsl:variable name="b"   select="if (f:es-afijo($v3, 'cite-suffix'))
-                                     then f:vecino-ant($v3) else $v3"/>
-    <xsl:sequence select="$b[self::biblioref][f:agrupables(., $c)]"/>
-  </xsl:function>
-
-  <!-- ============================================================ -->
-  <!-- FUNCIÓN : f:es-continuacion                                  -->
-  <!-- PROPÓSITO: DICE SI ESTE biblioref YA FUE ABSORBIDO POR EL    -->
-  <!--            GRUPO DEL biblioref ANTERIOR.                     -->
-  <!-- PARÁMETROS: n As node() — el biblioref                       -->
-  <!-- RETORNA  : xs:boolean                                        -->
-  <!-- ============================================================ -->
-  <xsl:function name="f:es-continuacion" as="xs:boolean">
-    <xsl:param name="n" as="node()"/>
-    <xsl:sequence select="exists(f:anterior-en-grupo($n))"/>
-  </xsl:function>
-
-  <!-- LAS CITAS DEL GRUPO QUE EMPIEZA EN b, EN ORDEN                -->
-  <xsl:function name="f:grupo-desde" as="node()*">
-    <xsl:param name="b" as="node()"/>
-    <xsl:variable name="c" select="f:siguiente-en-grupo($b)"/>
-    <xsl:sequence select="$b, if (exists($c)) then f:grupo-desde($c) else ()"/>
-  </xsl:function>
 
   <!-- SEPARADOR ENTRE DOS CITAS QUE SE AGRUPARON: SE SUPRIME,      -->
   <!-- PORQUE EL DELIMITADOR LO PONE biblatex.                      -->
-  <xsl:template match="text()[f:es-separador(.)]
-      [exists(f:biblioref-tras-separador(.)[f:es-continuacion(.)])]" priority="6"/>
-
-  <!-- EL biblioref QUE SIGUE A UN SEPARADOR, SALTEANDO SU PREFIJO   -->
-  <xsl:function name="f:biblioref-tras-separador" as="node()?">
-    <xsl:param name="t" as="node()"/>
-    <xsl:variable name="v" select="f:vecino-sig($t)"/>
-    <xsl:variable name="c" select="if (f:es-afijo($v, 'cite-prefix'))
-                                   then f:vecino-sig($v) else $v"/>
-    <xsl:sequence select="$c[self::biblioref]"/>
-  </xsl:function>
+  <xsl:template match="text()[gbct:es-separador(.)]
+      [exists(gbct:biblioref-tras-separador(.)[gbct:es-continuacion(., $estilo)])]" priority="6"/>
 
   <!-- ESPACIO DE INDENTACIÓN ENTRE LAS PARTES DE UNA CITA.         -->
   <!-- SE ABSORBE PARA QUE NO SALGA '(ver  García 2020)'. NO SE     -->

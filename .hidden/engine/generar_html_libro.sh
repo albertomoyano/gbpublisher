@@ -6,10 +6,16 @@
 #
 # USO
 #   generar_html_libro.sh <ruta_proyecto> <nombre_base> <lugar_bibliografia>
-#                         <biblio_rel> <estilo_cita> [imagen_tapa]
+#                         <biblio_rel> <estilo_cita> <modo_citas> [imagen_tapa]
 #
 #   Los cuatro primeros son los de ensamblar_libro.sh, que este script invoca.
-#   estilo_cita    apa | iso690 | vancouver | ieee — lo resuelve Gambas
+#   estilo_cita    el identificador del estilo — lo resuelve Gambas
+#                  (ResolverEstiloCita)
+#   modo_citas     tex4ht | xslt — lo decide Gambas (PrepararCitasPantalla,
+#                  SC-57): tex4ht si el estilo tiene archivo de pantalla
+#                  (cita-<estilo>-html.tex). Con tex4ht, este script corre
+#                  antes la pasada de citas (preparar_citas_libro.sh) y la
+#                  hoja toma el texto de citas.html
 #   imagen_tapa    nombre del archivo de tapa según la base. Opcional, y solo
 #                  para avisar si falta: la tapa se copia con el resto de media/
 # ============================================================================
@@ -47,8 +53,8 @@ LINEAS_ERROR_VNU=15
 encabezado "GENERACIÓN DE LA SALIDA HTML"
 
 # --- 2. ARGUMENTOS ---
-if (( $# < 5 )); then
-    morir "Uso: $(basename "$0") <ruta_proyecto> <nombre_base> <lugar_bibliografia> <biblio_rel|-> <estilo_cita> [imagen_tapa]"
+if (( $# < 6 )); then
+    morir "Uso: $(basename "$0") <ruta_proyecto> <nombre_base> <lugar_bibliografia> <biblio_rel|-> <estilo_cita> <modo_citas> [imagen_tapa]"
 fi
 
 DIR_PROYECTO="${1%/}"
@@ -56,7 +62,14 @@ NOMBRE_BASE="$2"
 LUGAR_BIB="$3"
 BIBLIO_ARG="$4"
 ESTILO_CITA="$5"
-IMAGEN_TAPA="${6:-}"
+MODO_CITAS="$6"
+IMAGEN_TAPA="${7:-}"
+
+# EL MODO LO DECIDE GAMBAS; ACÁ SOLO SE CONTROLA QUE SEA UNO CONOCIDO
+case "$MODO_CITAS" in
+    tex4ht|xslt) ;;
+    *) morir "Modo de citas no reconocido: «$MODO_CITAS» (tex4ht | xslt)" ;;
+esac
 
 CANONICO="$DIR_PROYECTO/jats/c-libro-$NOMBRE_BASE.xml"
 MANIFIESTO_REL="tmp/manifiesto-libro-$NOMBRE_BASE.xml"
@@ -67,6 +80,12 @@ XSL="$DIR_GBP_LOCAL/xslt/docbook-to-html.xsl"
 COLOFON="$DIR_PROYECTO/tmp/colofon-digital.xml"
 CSS="$DIR_GBP_LOCAL/assets/css/gbpublisher.css"
 JS="$DIR_GBP_LOCAL/assets/js/gbpublisher.js"
+# LA PASADA DE CITAS (SC-57): LOS INSUMOS LOS ESCRIBE GAMBAS
+# (m_GenerarPDFLibro.EscribirInsumosCitas) CON LOS NOMBRES DE SUS CONSTANTES
+# LISTA_PIEZAS_LATEX E INSUMOS_CITAS. LA CARPETA ES DE ESTA SALIDA
+LISTA_CITAS_REL="tmp/latex-piezas.txt"
+INSUMOS_CITAS_REL="tmp/citas-proyecto.tex"
+DIR_CITAS_REL="tmp/bib/html-libro-$NOMBRE_BASE"
 
 # --- 3. ENTORNO ---
 paso "verificando el entorno"
@@ -89,7 +108,7 @@ bien_formado "$COLOFON" || morir "El colofón del pie está mal formado: $COLOFO
 ok "colofón del pie"
 
 printf '\n  %-14s %s\n' "Proyecto:" "$DIR_PROYECTO"
-printf '  %-14s %s\n'   "Citas:"    "$ESTILO_CITA"
+printf '  %-14s %s (%s)\n' "Citas:"  "$ESTILO_CITA" "$MODO_CITAS"
 
 # --- 4. CANÓNICO DEL LIBRO ---
 # CÓDIGO 3 DEL ENSAMBLADOR: EL CANÓNICO EXISTE Y ESTÁ BIEN FORMADO, PERO
@@ -158,7 +177,31 @@ if (( codigo != 0 )); then
 fi
 ok "$(printf '%s\n' "$salida" | tail -n 1) bloque(s) de código"
 
-# --- 7. TRANSFORMACIÓN ---
+# --- 7. CITAS (SC-57) ---
+# CON tex4ht, EL TEXTO DE LAS CITAS Y DE LAS REFERENCIAS LO ESCRIBE biblatex
+# EN citas.html, Y LA HOJA LO TOMA DE AHÍ (bib_dir). SIN citas.html NO HAY
+# HTML: VOLVER A LAS PLANTILLAS DE LA HOJA SERÍA OTRO TEXTO QUE EL DEL PDF.
+# CÓDIGO 3: CITAS SIN ENTRADA EN EL .bib; SE SIGUE Y EL AVISO SE HEREDA
+PARAM_CITAS=()
+if [[ "$MODO_CITAS" == "tex4ht" ]]; then
+    paso "preparando las citas con biblatex"
+    salida=$(GBP_ANIDADO=1 bash "$DIR_ENGINE/preparar_citas_libro.sh" \
+                "$DIR_PROYECTO" "$LISTA_CITAS_REL" "$INSUMOS_CITAS_REL" "$DIR_CITAS_REL" 2>&1)
+    codigo=$?
+    if (( codigo == SALIDA_AVISOS )); then
+        mostrar_cola "$(grep '⚠' <<< "$salida")"
+        aviso "la pasada de citas tiene avisos: el HTML se genera igual"
+    elif (( codigo != SALIDA_OK )); then
+        mostrar_cola "$salida"
+        morir "No se pudieron preparar las citas: la salida HTML no se genera"
+    fi
+    ok "$(printf '%s\n' "$salida" | tail -n 1) cita(s) de biblatex"
+    PARAM_CITAS=(bib_dir="$DIR_PROYECTO/$DIR_CITAS_REL")
+else
+    tenue "citas con las plantillas de la hoja"
+fi
+
+# --- 8. TRANSFORMACIÓN ---
 # SE BORRA EL index.html ANTERIOR: SU EXISTENCIA ES PARTE DEL CRITERIO DE
 # ÉXITO, Y EL DE LA CORRIDA ANTERIOR DARÍA UN FALSO POSITIVO.
 # LA HOJA ESCRIBE docs/index.html CON xsl:result-document Y RUTA RELATIVA,
@@ -175,7 +218,8 @@ salida=$(cd "$DIR_PROYECTO" &&
             proyecto_dir="$DIR_PROYECTO" \
             manifiesto_libro="$MANIFIESTO_REL" \
             estilo_cita="$ESTILO_CITA" \
-            codigo_dir="$DIR_CODIGO" 2>&1)
+            codigo_dir="$DIR_CODIGO" \
+            "${PARAM_CITAS[@]}" 2>&1)
 codigo=$?
 
 if (( codigo == 124 )); then
@@ -196,7 +240,7 @@ fi
 
 ok "docs/index.html"
 
-# --- 8. VALIDACIÓN HTML5 (Nu Html Checker) ---
+# --- 9. VALIDACIÓN HTML5 (Nu Html Checker) ---
 # vnu Y NO xmllint: xmllint ES UN PARSER HTML 4.01 Y DA FALSOS POSITIVOS CON
 # aside, details Y EL RESTO DE HTML5. SIN --exit-zero-always, vnu DEVUELVE
 # DISTINTO DE CERO CUANDO ENCUENTRA ERRORES, Y ESO ES LO QUE SE USA ACÁ.
@@ -223,7 +267,7 @@ else
     fi
 fi
 
-# --- 9. RESUMEN ---
+# --- 10. RESUMEN ---
 echo
 titulo "$REGLA"
 printf '%s✓ HTML generado%s\n' "$C_OK" "$C_RESET"

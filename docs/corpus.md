@@ -3239,7 +3239,7 @@ EPUB y HTML: los índices no se generan (`m_PiezasLibro.Tratamiento`), así que 
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex-philosophy v1.9.8g / biber 2.19 / TeX Live 2023 / make4ht v0.3m / contenedor Ubuntu 24.04; Noto Serif de gbpublisher en Mint · **Verificado:** 2026-10
 
-DECISIÓN CERRADA (decisión de Alberto). Libros con el estilo Verona: philosophy-modern con `cita-veronaM-config.tex`. Vale para HTML y EPUB; el PDF no cambia.
+DECISIÓN CERRADA (decisión de Alberto). Libros con el estilo Verona: philosophy-modern con `cita-verona-modern-config.tex`. Vale para HTML y EPUB; el PDF no cambia.
 
 Es una excepción a SC-31 y la explica esta entrada. SC-14 se sigue cumpliendo: el texto de cada referencia lo arma el estilo, y cambia solo cómo se dispone el bloque del nombre y el año.
 
@@ -3254,7 +3254,7 @@ En HTML y EPUB va la disposición classic del mismo estilo: `\printbibliography[
 
 MEDIDO con `ref-l-MOLINARO.bib` (222 entradas): en todas, lo que sigue a «Nombre (año), » es el mismo texto que el PDF. Las letras del año se conservan (1988a y 1988b, 2023a y 2023b).
 
-`\bibnamedash` no interviene. En modern el autor repetido no lleva guion: la macro `author` de `philosophy-modern.bbx` no imprime nada en `bbx:dashcheck`. El guion es de classic y verbose, y con `dashed=false` tampoco aparece. Por eso `cita-veronaM-config.tex` no redefine `\bibnamedash`.
+`\bibnamedash` no interviene. En modern el autor repetido no lleva guion: la macro `author` de `philosophy-modern.bbx` no imprime nada en `bbx:dashcheck`. El guion es de classic y verbose, y con `dashed=false` tampoco aparece. Por eso `cita-verona-modern-config.tex` no redefine `\bibnamedash`.
 
 2. VERSALITAS POR CSS, SOBRE EL TEXTO CON SU CAJA
 
@@ -3273,64 +3273,93 @@ FUERA DE ESTA DECISIÓN
 - Cómo se genera el texto de la bibliografía para HTML y EPUB: lo arma biblatex con tex4ht (SC-57).
 - Los otros estilos (APA, ISO 690, IEEE, Vancouver).
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-25,vinculo:SC-31,vinculo:RF-12,vinculo:SC-57
+**Relaciones:** vinculo:SC-14,vinculo:SC-25,vinculo:SC-31,vinculo:RF-12,vinculo:SC-57,vinculo:GV-104
 
 **PENDIENTE:** Medido en el contenedor sobre el HTML que da make4ht: la disposición classic con dashed=false, el texto de las 222 entradas contra el PDF y el marcado de las versalitas con lowscauthors=false. Sin probar: cómo responden los lectores de EPUB a all-small-caps, y si degradan a mayúsculas y minúsculas como se espera. Sin implementar en la aplicación: va con SC-57.
 
-### SC-57 — Bibliografía de libro en HTML y EPUB: la arma biblatex con tex4ht, con el mismo estilo que el PDF (Verona)
+### SC-57 — Bibliografía de libro en HTML y EPUB: la arma biblatex con tex4ht, con el mismo estilo que el PDF (Verona, APA)
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / biblatex-philosophy v1.9.8g / make4ht v0.3m / TeX Live 2023 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / biblatex-philosophy v1.9.8g / make4ht v0.3m / TeX Live 2023 / Saxon-HE 12.9 / epubcheck 4.2.6 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisión de Alberto). Libros con Verona. El texto de las citas y de las referencias que van a HTML y EPUB no lo escribe una hoja XSLT: lo escribe biblatex, con el mismo estilo y la misma configuración que el PDF, a través de tex4ht (make4ht). Es la forma más directa de cumplir SC-14: el estilo no se replica, se usa.
 
 POR QUÉ
 
-Lo difícil de un estilo autor-año no es la puntuación, es lo que calcula biber: el orden, la letra del año (2020a, 2020b), la unicidad de nombres y de listas (`uniquelist=minyear`). Las hojas actuales no lo hacen en ningún estilo: el «iso690» de `docbook-to-html.xsl` ni siquiera sigue a `iso-authoryear`. La CSL nunca formó una referencia: es la etiqueta del selector.
+Lo difícil de un estilo autor-año no es la puntuación, es lo que calcula biber: el orden, la letra del año (2020a, 2020b), la unicidad de nombres y de listas (`uniquelist=minyear`). Las hojas actuales no lo hacen en ningún estilo: el «iso690» de `docbook-to-html.xsl` ni siquiera sigue a `iso-authoryear`. La CSL nunca formó una referencia: era la etiqueta del selector.
 
 Se descartó bblxml de biber: trae el cálculo pero no el formato, y está declarado obsoleto desde biber 2.15 («será quitado en la versión 4»; sigue en 2.23).
 
-MEDIDO con `ref-l-MOLINARO.bib` (222 entradas): las 222 referencias del HTML tienen el mismo texto que el PDF, y las citas del cuerpo y de las notas también; cada referencia tiene una cita que enlaza a ella; el HTML es XML bien formado.
+MEDIDO con `ref-l-MOLINARO.bib` (222 entradas): las 222 referencias del HTML tienen el mismo texto que el PDF, y las citas del cuerpo y de las notas también.
+
+QUIÉN DECIDE EL CAMINO
+
+Gambas, en un solo lugar: `m_GenerarSalidasLibro.PrepararCitasPantalla`. Si el estilo tiene archivo de pantalla, `~/.gbpublisher/latex/cita-<estilo>-html.tex`, el modo es `tex4ht`: escribe los insumos de la pasada (`m_GenerarPDFLibro.EscribirInsumosCitas`: la lista de piezas, `tmp/citas-proyecto.tex` y el `.bib`, con las mismas funciones que el PDF) y pasa el modo a `generar_html_libro.sh` y a `generar_epub_libro.sh`. Si no lo tiene, el modo es `xslt` y siguen las plantillas por estilo de las hojas. Los scripts reciben el modo y no lo vuelven a decidir.
+
+Un estilo sin archivo de pantalla y sin plantillas en la hoja (hoy, cualquiera fuera de apa, iso690, ieee y vancouver) corta el HTML y el EPUB. Antes caía en un autor-año genérico que no es el del PDF.
 
 LAS PIEZAS
 
-1. `docbook-to-latex.xsl`, MODO NUEVO. Escribe un documento mínimo con el mismo preámbulo de estilo, los mismos `refsection` que el PDF y cada `biblioref` como `\gbcita{n}{\parencite...}`, con n su posición en el libro. Así las citas son las del PDF por construcción, sin una segunda lógica.
-2. UN SCRIPT EN `engine/`. Corre make4ht sobre ese documento. Entrada: el mismo `.bib` del PDF, `referencias/ref-<proyecto>.bib`. Salida: `tmp/bib/html-libro-<nombre>` y `tmp/bib/epub-libro-<nombre>`, el mismo patrón que el código (SC-42). `referencias/` queda para los datos canónicos: make4ht deja además una docena de archivos auxiliares por corrida, y lo que se regenera en cada salida no se mezcla con la fuente.
-3. `docbook-to-html.xsl` Y `docbook-to-epub.xsl`. Reciben el parámetro `bib_dir`. Cuentan los `biblioref` igual que el modo del punto 1 y toman cada cita por `gbcita-n` y cada referencia por sección y clave. Si falta un fragmento, cortan con un mensaje: no vuelven al XSLT viejo (GV-23).
-4. EL CSS de las cuatro hojas: sangría francesa y `font-variant-caps: all-small-caps` para las versalitas (SC-56).
-5. EL SELECTOR DE ESTILOS lista estilos biblatex, no archivos `.csl`.
-6. LA CONFIGURACIÓN DE tex4ht viaja en `.hidden/latex/`, con las de estilo.
+1. `docbook-to-latex-citas.xsl`. Importa la hoja del PDF y sobrescribe solo la plantilla de pieza: escribe los mismos `refsection` que el PDF y cada grupo de citas como `\gbcita{id}{comando}`, con el comando que arma la plantilla de `biblioref` del PDF. Así las citas son las del PDF por construcción. Una cita de una nota va dentro de `\footnote`. Antes de `\gbImprimirBibliografia`, la marca `\gbbibliografia{sección-orden}`.
+2. `cita-comun.xsl`. La regla del agrupamiento de citas (`gbct:grupo-desde`, `gbct:es-continuacion` y sus auxiliares), `gbct:comando-cita` (era `f:comando-cita` de `tex-comun.xsl`) y el id de cada grupo (`gbct:id-cita`). La incluyen el PDF, la pasada de citas y las hojas de HTML y EPUB: una sola regla. El estilo llega como parámetro explícito y no como variable global. Medido: los `.tex` del PDF de Duek salen idénticos byte a byte después de la mudanza.
+3. `engine/preparar_citas_libro.sh`. Corre la hoja de citas por pieza, arma el documento mínimo `citas.tex` y lo compila con make4ht. Verifica el producto: XML bien formado, sin errores de biber, una marca `gbcita-` por cada `\gbcita` y una `gbbib-` por cada bibliografía. Salida: `tmp/bib/html-libro-<nombre>` y `tmp/bib/epub-libro` (carpeta fija: el proyecto tiene un solo EPUB, y el nombre de su archivo puede llevar espacios). `referencias/` queda para los datos canónicos.
+4. `cita-fragmentos.xsl`. La lectura de `citas.html` para las hojas de HTML y EPUB: declara el parámetro `bib_dir`, busca cada grupo por su id y cada bibliografía por su marca, y copia el marcado a la salida en el espacio de nombres de XHTML. Cada hoja define la plantilla `gbct:enlace-cita`, porque el enlace de una cita no es igual en HTML (panel) y en EPUB (href).
+5. `docbook-to-html.xsl` Y `docbook-to-epub.xsl`. Con `bib_dir`, el primer `biblioref` de cada grupo dibuja el texto de biblatex y los demás no emiten nada; el separador entre dos citas se suprime solo si la segunda quedó en el grupo de la primera (la regla del PDF). Las referencias son las que imprimió biblatex, en su orden, y cada una se une con su `biblioentry` por la clave: el `xml:id` es el destino de los enlaces. Sin `bib_dir`, la salida es la misma que antes (medido: idéntica byte a byte en las dos hojas).
+6. EL CSS. `font-variant-caps: all-small-caps` para `.versalitas-todas` en `gbpublisher.css` y `gbpublisher-epub-libro.css` (SC-56). Sangría francesa: el EPUB ya la tenía en `.ref-item`; en el HTML va en `.ref-item.ref-biblatex`, solo para estas entradas, porque la hoja es común con revistas. Esas entradas van además en `--font-serif` (Noto Serif), la tipografía del texto, que trae `smcp` y `c2sc` (GV-104; decisión de Alberto).
+7. EL SELECTOR DE ESTILOS lista los `cita-*-config.tex` de `~/.gbpublisher/latex/`, con la etiqueta de su primera línea (`% ESTILO: …`). `libros_md.estilo_cita` guarda el identificador (`apa`, `verona-modern`); la conversión de los `.csl` viejos la hace `actualizar-esquema-1.9.0.sh`.
+8. LA CONFIGURACIÓN DE tex4ht, `cita-tex4ht.cfg`, viaja en `.hidden/latex/`, con las de estilo.
+
+EL id DE CADA CITA
+
+`gbcita-{sección}-{orden}-{n}`: sección y orden salen del `<info>` de la pieza; n es la posición, dentro de la pieza, del primer `biblioref` del grupo, contando los de las notas. Se cuenta dentro de la pieza y no en el libro: así es el mismo en el canónico de la pieza (PDF, pasada de citas, EPUB) y en el del libro ensamblado (HTML). Medido en Duek.
+
+LA BIBLIOGRAFÍA DE CADA PIEZA
+
+tex4ht numera las `refsection` (`cite.1@clave`, `cite.2@clave`). Para no repetir ese conteo, cada bibliografía lleva antes su marca: `<span id="gbbib-a-01">`, y `gbbib-libro` la consolidada. La lista de una pieza es la primera que sigue a su marca, si no hay otra marca en medio: una `refsection` sin citas no imprime lista. La unión cita-referencia es por pieza y clave, nunca solo por clave.
 
 LA PASADA HTML USA LA MISMA CONFIGURACIÓN
 
-Se carga `cita-veronaM-config.tex` y después un archivo propio del estilo, `cita-veronaM-html.tex`, con lo que cambia en pantalla:
+Se carga `cita-verona-modern-config.tex` y después un archivo propio del estilo, `cita-verona-modern-html.tex`, con lo que cambia en pantalla:
 
     \ExecuteBibliographyOptions{backref=false,lowscauthors=false,dashed=false}
     \newcommand*{\gbImprimirBibliografia}{\printbibliography[heading=none,restoreclassic]}
 
-Las tres opciones se aplican después de cargar biblatex (medido). `restoreclassic` no se puede fijar con `\DeclarePrintbibliographyDefaults` («keyval Error: restoreclassic undefined», medido). Por eso va en una macro que define cada estilo, y el modo nuevo emite siempre `\gbImprimirBibliografia`. Lo que es del estilo queda en el archivo del estilo, no en la hoja.
+Las tres opciones se aplican después de cargar biblatex (medido). `restoreclassic` no se puede fijar con `\DeclarePrintbibliographyDefaults` («keyval Error: restoreclassic undefined», medido). Por eso va en una macro que define cada estilo, y la hoja de citas emite siempre `\gbImprimirBibliografia`. Lo que es del estilo queda en el archivo del estilo, no en la hoja.
 
 LA CONFIGURACIÓN DE tex4ht (medido)
 
-- La cursiva de biblatex (`\emph`) sale como `<em>`; `\textsc`, como `<span class="versalitas-todas">`; el ordinal de babel-spanish (`n.º`), como punto y `<sup>`. `\bibfont` se vacía: sin eso, cada tamaño de letra da un `<span>` con el nombre de la fuente (`ec-lmr-9`).
-- `\gbcita{n}{...}` sale como `<span id="gbcita-n">`. En el PDF no se usa.
+- La cursiva de biblatex (`\emph`) sale como `<em>`; `\textsc`, como `<span class="versalitas-todas">`; el ordinal de babel-spanish (`n.º`), como punto y `<sup>`. `\bibfont` y `\footnotesize` se vacían: sin eso, cada tamaño de letra da un `<span>` con el nombre de la fuente (`ec-lmr-9`).
+- `\gbcita{id}{...}` sale como `<span id="gbcita-id">` y `\gbbibliografia{x}` como `<span id="gbbib-x">`. En una compilación común no escriben nada.
 - En babel-spanish `<` y `>` son activos: el marcado que inserta la configuración va con `\string<` y `\string>`. Sin eso: «Argument of \language@active@arg has an extra }».
 - Las notas, en la misma página (`fn-in`): si no, cada nota sale en un archivo aparte.
+- Un ancho de 500 cm: sin cortes de renglón no aparecen espacios espurios antes de una URL.
 
-LOS ID
+QUÉ PASA DE citas.html A LA SALIDA
 
-tex4ht numera los `refsection` desde 1: `cite.1@clave`, `cite.2@clave`. Una obra citada en dos capítulos tiene dos destinos, uno por sección, como en el PDF. Con la consolidada hay una sola sección. La unión cita-referencia es por sección y clave, nunca solo por clave.
+Una lista cerrada: `em`, `strong`, `sup`, `del`, `u`, `span.versalitas-todas`, los enlaces externos y los enlaces de cita, que se vuelven el enlace de la hoja. Las anclas de tex4ht se descartan. Cualquier otro elemento corta la hoja con su nombre (GV-23): es un cambio de tex4ht o del estilo que hay que mirar. También cortan: `citas.html` ausente, un id de cita o una marca de bibliografía que no está, una referencia sin `biblioentry` en el canónico y una bibliografía con etiquetas en el `<dt>` (estilo numérico o alfabético, no medido por este camino).
 
 LÍMITE CONOCIDO
 
 Con tex4ht, biblatex no detecta las notas al pie («Patching footnotes failed»). En Verona no importa: philosophy solo lo usa en `scauthors=citefn` y `bibcitefn`, y la configuración usa `scauthors=bib`. La cita dentro de una nota salió igual que en el PDF. Un estilo que se comporte distinto en las notas, como los verbose, no entra por este camino sin medirlo antes.
 
+El agrupamiento depende del estilo solo en un caso: `suppress` con afijos en un estilo numérico. Hoy el PDF y la pasada de citas toman el estilo del canónico de pieza, que no trae `csl-style`, y las hojas de HTML y EPUB el de la base. Para los autor-año da lo mismo; para IEEE no, y se resuelve en el lote del estilo en el canónico.
+
+APA
+
+`cita-apa-html.tex` no cambia ninguna opción: `cita-apa-config.tex` ya carga `backref=false`, y biblatex-apa repite el nombre en cada entrada y no usa versalitas. Solo define `\gbImprimirBibliografia` como `\printbibliography[heading=none]`.
+
+MEDIDO con el libro de Duek, contra el PDF que Alberto compuso en Mint con APA: las 132 citas y las 113 referencias de `citas.html` tienen el mismo texto que el PDF (las únicas diferencias de la comparación son cortes de página del PDF). HTML: vnu sin errores. EPUB: epubcheck 4.2.6 sin errores.
+
+En las notas no hay límite: `\iffootnote`, que tex4ht no puede responder, en `apa.cbx` solo lo usa `\smartcite`, y la aplicación no lo emite.
+
+Lo que reemplaza: las plantillas de APA de las hojas ordenaban las referencias como el canónico y no como el estilo, repetían el título de la obra en las partes de libro («La juventud es más que una palabra. La juventud es más que una palabra, 13-30») y unían dos autores con «y» donde biblatex-apa pone «&».
+
 ALCANCE
 
-Verona. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
+Verona y APA. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23
+**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104
 
-**PENDIENTE:** Sin implementar. Medido en el contenedor por partes: el texto contra el PDF, las opciones después de cargar, \gbImprimirBibliografia, \gbcita en el cuerpo y en una nota, los id por sección. Falta: el modo de docbook-to-latex.xsl, el script de engine/, las hojas de HTML y EPUB, el CSS, el selector; epubcheck 4.2.6 sobre un EPUB real; la prueba en Mint con un libro real.
+**PENDIENTE:** Implementado y medido en el contenedor con el libro de Duek (132 citas, 113 referencias): el texto de cada cita del HTML y del EPUB es el de citas.html, y las referencias de cada pieza son las mismas y en el mismo orden; los enlaces de cita del EPUB no tienen destinos rotos; vnu sin errores en el HTML; epubcheck 4.2.6 sin errores en el EPUB; bibliografía consolidada simulada (103 referencias) en HTML y EPUB; los cortes de la hoja con un citas.html incompleto. Falta: la prueba en Mint con un libro real; cómo responden los lectores de EPUB a all-small-caps; la fuente del panel de referencias del HTML (GV-104).
 
 ---
 
@@ -3601,7 +3630,7 @@ RELACIONES EN APA
 
 **Relaciones:** vinculo:SC-14, vinculo:RC-BL-02
 
-**PENDIENTE:** RC-BL-02 afirma que apa ignora related; el fuente lo contradice en general. Relevar tipo por tipo qué relaciones imprime apa y reformular RC-BL-02.
+**PENDIENTE:** RC-BL-02 afirma que apa ignora related; el fuente lo contradice en general. Relevar tipo por tipo qué relaciones imprime apa y reformular RC-BL-02. La versión anclada es la del repositorio (9.20); la que compone en Mint y en el contenedor es la de TeX Live 2023, biblatex-apa v9.17 (2023/03/20). Una afirmación tomada del fuente de 9.20 se verifica contra 9.17 antes de aplicarla.
 
 ### RF-10 — TextHighlighter.Run: resaltar texto fuera de un editor
 
@@ -3748,7 +3777,7 @@ ORDEN DE CONSULTA
 5. `spanish-philosophy.lbx` — cadenas en español.
 6. `biblatex-philosophy.dtx` — fuente documentado del que salen los anteriores. Informa la intención; si contradice al código instalado, gana el código.
 
-La configuración de la aplicación: `.hidden/latex/cita-veronaM-config.tex`.
+La configuración de la aplicación: `.hidden/latex/cita-verona-modern-config.tex`.
 
 DATOS DEL FUENTE QUE USA EL PROYECTO
 
@@ -5990,7 +6019,7 @@ Aplicado en la sección 2 de `preambulo-hyperref.tex` y en `ObtenerAutoresLibro`
 
 La opción de carga `refsection=chapter` abre una sección bibliográfica nueva en cada `\chapter`. Un `\printbibliography` al final del libro imprime solo la sección en curso, que es la del último capítulo.
 
-Medido con `cita-veronaM-config.tex` y dos capítulos, una cita en cada uno (Falco en el 1, Amelang en el 2):
+Medido con `cita-verona-modern-config.tex` y dos capítulos, una cita en cada uno (Falco en el 1, Amelang en el 2):
 
     modo                                       sin la opción          con refsection=chapter
     por capítulo, como lo arma la aplicación   Falco / Amelang        igual
@@ -6005,6 +6034,47 @@ CONSECUENCIA: la bibliografía por capítulo la arma el generador, nunca una opc
 Para tex4ht (SC-56): el documento mínimo que genere `docbook-to-latex.xsl` tiene los mismos `refsection` que el PDF. Los id de tex4ht llevan el número de sección: `cite.0@clave`, `cite.1@clave`.
 
 **Relaciones:** vinculo:SC-55,vinculo:RF-12,apoya:GV-23,vinculo:SC-57
+
+### GV-103 — Gambas Like: la clase negada es [^…]; [!…] no niega
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbs3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+En un patrón de `Like`, la clase de caracteres negada se escribe con circunflejo: `[^a-z]`. La forma con signo de exclamación, `[!a-z]`, que es la del glob de bash y la de Visual Basic, NO niega: Gambas la lee como una clase que contiene el propio `!` y el rango.
+
+MEDIDO con `gbs3`:
+
+    "abc"  Like "*[!a-z]*"    True     (cualquier letra entra en la clase)
+    "abc"  Like "*[^a-z]*"    False
+    "a/b"  Like "*[^a-z]*"    True
+
+El error no da aviso: el patrón compila y responde, con el resultado contrario al esperado. Un control de forma escrito con `[!…]` deja pasar todo. Así pasaba en el primer borrador de `m_GenerarSalidasLibro.EstiloLibroExiste`, que tiene que rechazar un identificador con `/` o `..` antes de armar una ruta: con `[!a-z0-9-]` aceptaba `a/b` y `../x`.
+
+REGLA: en `Like`, la negación va con `[^…]`. Si la línea existe por esta entrada, citarla.
+
+Es otra de las diferencias con Visual Basic que rompen código (CONTEXTO, punto 4).
+
+**Relaciones:** vinculo:SC-57,apoya:GV-23
+
+**PENDIENTE:** Medido en Gambas 3.19. Repetir en Mint con la versión instalada, con este script de gbs3: Print "abc" Like "*[!a-z]*", "abc" Like "*[^a-z]*" — tiene que dar True y False.
+
+### GV-104 — IBM Plex Sans no trae smcp ni c2sc; Noto Serif sí
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** fontTools 4.65 / fuentes de gbpublisher (.hidden/fonts) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Las versalitas de la bibliografía de Verona en HTML y EPUB las pone el CSS con `font-variant-caps: all-small-caps`, que usa los rasgos OpenType `smcp` y `c2sc` (SC-56). Sin ellos el navegador fabrica versalitas falsas achicando mayúsculas.
+
+MEDIDO con fontTools sobre las fuentes de `.hidden/fonts/` (tabla GSUB):
+
+    IBMPlexSans-Regular.otf    sin smcp, sin c2sc
+    NotoSerif-Regular.ttf      smcp y c2sc
+
+CONSECUENCIA PARA EL EPUB: el libro embebe Noto Serif (`@font-face` de `gbpublisher-epub-libro.css`). Cumple la regla de SC-56.
+
+CONSECUENCIA PARA EL HTML: el panel de referencias (`.ref-item`) se compone con `--font-sans`, que es IBM Plex Sans, y `gbpublisher.css` no embebe fuentes: usa las que tenga instaladas el lector. Con Plex, las versalitas del panel son falsas. Con la serif tampoco hay garantía, porque Noto Serif no se embebe y el respaldo es Georgia.
+
+DECISIÓN DE ALBERTO: las referencias del HTML van en Noto Serif, la tipografía del texto (`.ref-item.ref-biblatex` con `--font-serif`). Vale lo mismo que para el texto: la fuente no se embebe y la toma del sistema del lector.
+
+**Relaciones:** vinculo:SC-56,vinculo:SC-57
 
 ---
 

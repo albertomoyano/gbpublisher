@@ -45,7 +45,7 @@
   <!-- ============================================================ -->
   <!-- MÓDULO COMÚN CON docbook-to-latex.xsl                        -->
   <!-- APORTA: f:latex, f:latex-url, f:babel-lang, f:ruta-imagen,   -->
-  <!--         f:comando-cita, f:codigo-latex, el parámetro         -->
+  <!--         f:codigo-latex, el parámetro                         -->
   <!--         codigo_dir y la plantilla abortar-elemento.          -->
   <!-- xsl:import DEBE SER EL PRIMER HIJO DE xsl:stylesheet.        -->
   <!-- ============================================================ -->
