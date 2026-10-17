@@ -355,6 +355,112 @@ Public Function InformarResultado(iResultado As Integer, sQue As String, sArchiv
 End
 
 ' ============================================
+' Función   : RutaSalidaLibro
+' Propósito : La ruta de una salida del libro, con el mismo nombre que le da
+'             su generación: el PDF, salidas/pdf/<proyecto>.pdf
+'             (GenerarPDFLibro, 6); el HTML, docs/index.html
+'             (GenerarLibroHTML, 9); el EPUB, salidas/epub/ con el nombre
+'             que sale del título (m_GenerarEpubLibro.NombreEpubLibro).
+' Parámetros: sSalida As String — pdf | html | epub
+'             iIdLibro As Integer — id del libro (solo lo usa el EPUB)
+' Retorna   : String — ruta absoluta; vacía si no se pudo resolver, con el
+'             motivo ya informado
+' ============================================
+Public Function RutaSalidaLibro(sSalida As String, iIdLibro As Integer) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sNombreEpub As String
+
+  ' --- 2. RUTA SEGÚN LA SALIDA ---
+  Select Case sSalida
+    Case "pdf"
+      Return m_InicioCierre.RutaProyectoEnCurso &/ "salidas" &/ "pdf" &/
+        File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".pdf"
+    Case "html"
+      Return m_InicioCierre.RutaProyectoEnCurso &/ "docs" &/ "index.html"
+    Case "epub"
+      ' EL NOMBRE SALE DE LA BASE: SI LA CONSULTA FALLA, YA SE INFORMÓ
+      sNombreEpub = m_GenerarEpubLibro.NombreEpubLibro(iIdLibro)
+      If sNombreEpub = "" Then Return ""
+      Return m_InicioCierre.RutaProyectoEnCurso &/ "salidas" &/ "epub" &/ sNombreEpub
+  End Select
+
+  ' UNA SALIDA DESCONOCIDA ES UN ERROR DEL LLAMADOR (GV-23)
+  m_Sonido.sonar("Error")
+  Message.Error("Salida desconocida para el visor: «" & sSalida & "».")
+  Return ""
+
+End
+
+' ============================================
+' Función   : AbrirSalidaEnVisor
+' Propósito : Abre una salida del libro con la aplicación predeterminada del
+'             sistema (xdg-open vía gb.desktop): el PDF en su visor, el HTML
+'             en el navegador, el EPUB en el lector. Si el archivo no existe,
+'             lo dice con un mensaje. La llaman btnPDFenVisorExterno_Click,
+'             btnHTMLenVisorExterno_Click y btnEPUBenVisorExterno_Click.
+' Parámetros: sSalida As String — pdf | html | epub
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub AbrirSalidaEnVisor(sSalida As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdLibro As Integer
+  Dim sRuta As String
+
+  ' --- 2. PROYECTO ABIERTO Y CON LIBRO ---
+  If m_InicioCierre.IdProyectoEnCurso = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("Abrí un proyecto antes de ver sus salidas.")
+    Return
+  Endif
+
+  ' LAS SALIDAS DE REVISTAS SON POR ARTÍCULO Y POR NÚMERO, CON OTROS NOMBRES:
+  ' ESTOS BOTONES ABREN LAS DEL LIBRO
+  iIdLibro = m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso)
+  If iIdLibro = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay libro asociado a este proyecto.")
+    Return
+  Endif
+
+  ' --- 3. NINGUNA GENERACIÓN EN CURSO ---
+  ' MIENTRAS UN SCRIPT CORRE, EL ARCHIVO PUEDE ESTAR A MEDIO ESCRIBIR
+  If HayScriptEnCurso() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Hay una generación en curso. Esperá a que termine para abrir la salida.")
+    Return
+  Endif
+
+  ' --- 4. RUTA ---
+  sRuta = RutaSalidaLibro(sSalida, iIdLibro)
+  If sRuta = "" Then Return
+
+  ' --- 5. EL ARCHIVO TIENE QUE EXISTIR ---
+  ' ES LA ÚNICA FORMA DE INFORMAR ESTE FALLO: Desktop.Open SIN ESPERA NO LO
+  ' REPORTA (GV-23)
+  If Not Exist(sRuta) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Todavía no hay " & UCase(sSalida) & " del libro: generalo primero." & gb.NewLine & gb.NewLine &
+      "Se buscó:" & gb.NewLine & sRuta)
+    Return
+  Endif
+
+  ' --- 6. ABRIR CON LA APLICACIÓN DEL SISTEMA (RC-GM-02) ---
+  ' SIN Wait: Wait = True USA Process.Wait Y CONGELA LA INTERFAZ (GV-17).
+  ' ESTE Try SOLO ATRAPA FALLOS DE LANZAMIENTO, NO LA FALTA DE UNA APLICACIÓN
+  ' ASOCIADA
+  Try Desktop.Open(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el archivo con la aplicación del sistema:" & gb.NewLine &
+      sRuta & gb.NewLine & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+End
+
+' ============================================
 ' Función   : RutaConfigEstilo
 ' Propósito : La configuración instalada de un estilo de cita de libro:
 '             ~/.gbpublisher/latex/cita-<estilo>-config.tex. Es la que copia
