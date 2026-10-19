@@ -23,6 +23,7 @@
 Public mConn As Connection        ' OBJETO DE CONEXIÓN REUTILIZADO GLOBALMENTE
 Public usuarioActual As String    ' USUARIO LOGUEADO ACTUALMENTE
 Public ipServidorActual As String   ' IP CON LA QUE SE ABRIÓ mConn — PARA SONDEO DEL SEMÁFORO
+Public ErrorConexionSondeo As String   ' ÚLTIMO FALLO DE AbrirConexionSondeo (LO MUESTRA m_Notas)
 
 ' ==============================================================================
 ' Función: ConexionAbierta(ip, usuario, claveEncriptada) As Integer
@@ -286,6 +287,12 @@ Private Function ObtenerEsquemaEsperado() As Collection
   hEsquema["libros_md"] = 79
   hEsquema["licencias"] = 9
   hEsquema["manual_ayudas"] = 9
+  ' NOTAS INTERNAS: 1.10.0. postits SIGUE HASTA SU RETIRO EN UNA VERSIÓN POSTERIOR
+  hEsquema["notas"] = 11
+  hEsquema["notas_grupos"] = 4
+  hEsquema["notas_miembros"] = 8
+  hEsquema["notas_respuestas"] = 5
+  hEsquema["notas_vistas"] = 3
   hEsquema["orden_taller"] = 19
   hEsquema["partes_libro"] = 11
   hEsquema["postits"] = 11
@@ -402,5 +409,62 @@ Public Function SondearEstadoConexion() As Boolean
 
   ' --- 5. RETORNO ---
   Return bViva
+
+End
+
+' ============================================
+' Función   : AbrirConexionSondeo
+' Propósito : ABRIR UNA CONEXIÓN APARTE PARA UN SONDEO PERIÓDICO (m_Notas),
+'             CON PLAZO DE APERTURA Y DE LECTURA. Connection.Timeout SOLO
+'             ACOTA Open(); EL PLAZO DE CADA CONSULTA VA POR
+'             Options["READ_TIMEOUT"], QUE EL DRIVER DE gb.db2.mysql PASA A
+'             MYSQL_OPT_READ_TIMEOUT (options.h). LEÍDO EN EL FUENTE; MEDIDO
+'             EN 3.19 CON gb.db: SELECT SLEEP(5) FALLA A LOS 2,00 s CON
+'             «Lost connection», Y LA CONEXIÓN QUEDA MUERTA. UNA CLAVE MAL
+'             ESCRITA EN Options SE IGNORA SIN AVISO.
+'             PENDIENTE: CUANDO app_user/PASSWORD PASEN AL ARCHIVO CONF,
+'             ACTUALIZAR ESTE BLOQUE JUNTO CON ConexionAbierta Y
+'             SondearEstadoConexion (HOY TRIPLICADOS).
+' Parámetros: iPlazoLectura As Integer — SEGUNDOS DE ESPERA POR CONSULTA
+' Retorna   : Connection — ABIERTA; NULL SI NO SE PUDO (EL MOTIVO QUEDA EN
+'             ErrorConexionSondeo)
+' ============================================
+Public Function AbrirConexionSondeo(iPlazoLectura As Integer) As Connection
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim hConn As Connection
+
+  ErrorConexionSondeo = ""
+
+  ' --- 1. VALIDACIÓN: DEBE HABER IP CACHEADA ---
+  If ipServidorActual = "" Then
+    ErrorConexionSondeo = "sin servidor"
+    Return Null
+  Endif
+
+  ' --- 2. CONFIGURAR (MISMAS CREDENCIALES QUE mConn) ---
+  hConn = New Connection
+  hConn.Type = "mysql"
+  hConn.Host = ipServidorActual
+  hConn.Port = 3306
+  hConn.Name = "gbpublisher"
+  hConn.User = "app_user"
+  hConn.Password = "AppUser2024!"
+  hConn.Timeout = 3
+  ' LAS OPCIONES SE LEEN AL ABRIR: VAN ANTES DE Open
+  hConn.Options["READ_TIMEOUT"] = iPlazoLectura
+
+  ' --- 3. ABRIR (RC-GM-02) ---
+  Try hConn.Open
+  If Error Then
+    ErrorConexionSondeo = Error.Text
+    Return Null
+  Endif
+  If Not hConn.Opened Then
+    ErrorConexionSondeo = "la conexión no quedó abierta"
+    Return Null
+  Endif
+
+  Return hConn
 
 End

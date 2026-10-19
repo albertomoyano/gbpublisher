@@ -1,0 +1,2011 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo: m_Notas
+' ------------------------------------------------------------------------------
+' NOTAS INTERNAS (ESQUEMA 1.10.0). DUEÑO DE LA PESTAÑA «Notas» DE FMain
+' (TabStrip1, ÍNDICE 8, CON SU TabStrip INTERNO tsNotas) Y DEL INDICADOR DE
+' HBox3 (pbNotas + lblNotas). LOS HANDLERS DE FMain SOLO DELEGAN ACÁ (PATRÓN
+' MÓDULO-DUEÑO, COMO m_Validaciones). TODO EL ACCESO A LA BASE DE LAS NOTAS
+' PASA POR ESTE MÓDULO, SALVO LO QUE HACE EL ADMINISTRADOR DESDE FSysAdmin.
+'
+' MODELO (claude/notas-rediseno.md):
+'   - NOTA 1 A 1: id_destinatario. NOTA DE PROYECTO: id_grupo. NUNCA LOS DOS
+'     (CHECK chk_notas_destino).
+'   - LAS RESPUESTAS VAN DENTRO DE LA NOTA (notas_respuestas).
+'   - CERRAR = ARCHIVAR, Y LO HACE SOLO EL AUTOR.
+'   - UNA NOVEDAD ES UNA NOTA CUYA ÚLTIMA ACTIVIDAD (O SU HORA DE DESPACHO, SI
+'     ES POSTERIOR) ES MÁS NUEVA QUE LA ÚLTIMA VEZ QUE EL USUARIO LA ABRIÓ.
+'
+' ALCANCE: LA PESTAÑA Y EL INDICADOR SOLO EXISTEN CON SESIÓN Y PROYECTO
+' ABIERTO, Y MUESTRAN LO MISMO: LAS NOTAS 1 A 1 DEL USUARIO MÁS LAS DEL GRUPO
+' DEL PROYECTO ABIERTO. LAS DE GRUPOS DE OTROS PROYECTOS NO SE VEN NI CUENTAN
+' HASTA QUE SE ABRE ESE PROYECTO (CondicionAlcance).
+'
+' DOS CONEXIONES:
+'   - LAS OPERACIONES QUE PIDE EL USUARIO (LISTAR, ENVIAR, RESPONDER, CERRAR)
+'     VAN POR m_ConexionBD.mConn, COMO EL RESTO DE LA APLICACIÓN.
+'   - EL SONDEO PERIÓDICO VA POR UNA CONEXIÓN PROPIA CON PLAZO DE LECTURA
+'     (READ_TIMEOUT): Connection.Exec ES SINCRÓNICO Y CONGELA LA INTERFAZ
+'     MIENTRAS DURA, Y Connection.Timeout SOLO ACOTA LA APERTURA. CON UN
+'     USUARIO REMOTO Y LA RED COLGADA, SIN PLAZO EL TICK BLOQUEARÍA SIN LÍMITE.
+'
+' HORAS: TODA FECHA SE CALCULA CON NOW() DEL SERVIDOR. PARA MOSTRARLA, LA BASE
+' DEVUELVE CUÁNTOS SEGUNDOS PASARON Y ESTE MÓDULO LA RESTA DEL RELOJ LOCAL
+' (FechaLocal): UN USUARIO EN OTRO HUSO HORARIO VE SU HORA, NO LA DEL SERVIDOR.
+'
+' CONTROLES DE FMain:
+'   HBox3          — pbNotas (ícono), lblNotas (leyenda)
+'   tsNotas[0]     — cmbNotasVista, lblNotasGrupo, gvNotas, txtNotasHilo,
+'                    lblNotasVerde/Ambar/Rojo, cmbNotasDestino,
+'                    chkNotasProgramar, dtbNotasDesde, txaNotasTexto,
+'                    btnNotasEnviar, btnNotasResponder, btnNotasCerrar
+'   tsNotas[1]     — lblGrupoEstado, btnGrupoCrear, lstGrupoMiembros,
+'                    lstGrupoDisponibles, btnGrupoSumar, btnGrupoBaja,
+'                    txaGrupoHistorial
+' ==============================================================================
+
+' --- UMBRALES DEL ÍNDICE DE DÍAS SIN ACTIVIDAD (DÍAS CORRIDOS) ---
+' 0 A 3: VERDE · 4 A 6: ÁMBAR · 7 O MÁS: ROJO
+Public Const UMBRAL_AMBAR As Integer = 4
+Public Const UMBRAL_ROJO As Integer = 7
+
+' --- TIPOS DE DESTINO DE UNA NOTA NUEVA ---
+Private Const DESTINO_USUARIO As Integer = 1
+Private Const DESTINO_GRUPO As Integer = 2
+
+' --- PLAZO DE LECTURA DE LA CONEXIÓN DE SONDEO, EN SEGUNDOS ---
+Private Const PLAZO_LECTURA_SONDEO As Integer = 5
+
+' --- LÍMITE DE FILAS AL LISTAR ARCHIVADAS ---
+Private Const LIMITE_ARCHIVADAS As Integer = 500
+
+' --- ÍCONOS DEL INDICADOR Y DE LA PESTAÑA ---
+Private Const ICONO_SIN_PENDIENTES As String = "iconos/notita-grey.png"
+Private Const ICONO_NOVEDADES As String = "iconos/notitas-verde.png"
+Private Const ICONO_VENCIDAS As String = "iconos/notitas-red.png"
+
+' --- COLUMNAS DE LA GRILLA (GV-58: EL CONTEO ES FIJO) ---
+Private Const COL_DIAS As Integer = 0
+Private Const COL_ESTADO As Integer = 1
+Private Const COL_DE As Integer = 2
+Private Const COL_PARA As Integer = 3
+Private Const COL_FECHA As Integer = 4
+Private Const COL_TEXTO As Integer = 5
+Private Const COLUMNAS As Integer = 6
+
+' --- VISTAS DEL COMBO (EL ÍNDICE ES LA VISTA) ---
+Private Const VISTA_ACTIVAS As Integer = 0
+Private Const VISTA_ARCHIVADAS As Integer = 1
+
+' --- ESTADO DE LA RED: LO ESCRIBE FMain.TimerRed_Timer ---
+' CON EL SEMÁFORO EN ROJO EL SONDEO NO CONSULTA: CADA INTENTO CONGELARÍA LA
+' INTERFAZ HASTA QUE VENZA EL PLAZO
+Public bRedViva As Boolean = True
+
+' --- ESTADO DEL SONDEO ---
+Private $hSondeo As Connection
+Private $sFirma As String
+Private $iNovedades As Integer
+Private $iVencidas As Integer
+Private $sUltimoError As String
+
+' --- UNA ENTRADA POR FILA DE LA GRILLA, EN EL MISMO ORDEN ---
+Private $aIds As New Integer[]
+Private $aAutores As New Integer[]
+Private $aCerradas As New Boolean[]
+Private $aNovedades As New Boolean[]
+
+' --- UNA ENTRADA POR ÍTEM DEL COMBO DE DESTINO, EN EL MISMO ORDEN ---
+Private $aDestinoTipo As New Integer[]
+Private $aDestinoId As New Integer[]
+
+' --- NOTA ELEGIDA Y GRUPO DEL PROYECTO ABIERTO ---
+Private $iNotaActual As Integer
+Private $iGrupo As Integer
+Private $bSoyCreador As Boolean
+
+' --- SUPRESIÓN DE Click AL POBLAR UN COMBO DESDE EL CÓDIGO (GV-53, SC-06) ---
+Private $bPoblando As Boolean
+
+' ==============================================================================
+' CICLO DE VIDA: LO LLAMAN FMain, FLogin, FProyectosParcial Y m_InicioCierre
+' ==============================================================================
+
+' ============================================
+' Función   : InicializarTab
+' Propósito : PREPARAR LA PESTAÑA UNA SOLA VEZ, EN FMain.Form_Open: COLUMNAS
+'             DE LA GRILLA, VISTAS, COLORES DE LA LEYENDA Y ESTADO VACÍO. EL
+'             INDICADOR QUEDA OCULTO HASTA QUE HAYA SESIÓN Y PROYECTO.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub InicializarTab()
+
+  ' --- 1. GRILLA ---
+  DisenarGrid()
+
+  ' --- 2. VISTA: ACTIVAS O ARCHIVADAS ---
+  $bPoblando = True
+  FMain.cmbNotasVista.Clear()
+  FMain.cmbNotasVista.Add("Activas")
+  FMain.cmbNotasVista.Add("Archivadas")
+  FMain.cmbNotasVista.Index = VISTA_ACTIVAS
+  $bPoblando = False
+
+  ' --- 3. LEYENDA DEL ÍNDICE: LOS MISMOS COLORES QUE LA COLUMNA DE DÍAS ---
+  FMain.lblNotasVerde.Background = ColorDias(0)
+  FMain.lblNotasAmbar.Background = ColorDias(UMBRAL_AMBAR)
+  FMain.lblNotasRojo.Background = ColorDias(UMBRAL_ROJO)
+
+  ' --- 4. PROGRAMACIÓN APAGADA ---
+  FMain.chkNotasProgramar.Value = CheckBox.False
+  FMain.dtbNotasDesde.Value = Now
+  FMain.dtbNotasDesde.Enabled = False
+
+  ' --- 5. SIN SESIÓN: PESTAÑA VACÍA E INDICADOR OCULTO ---
+  Vaciar()
+  PintarIndicador()
+
+End
+
+' ============================================
+' Función   : IniciarSesion
+' Propósito : PONER EN MARCHA LAS NOTAS DESPUÉS DEL LOGIN. SI YA HAY UN
+'             PROYECTO ABIERTO, CARGA Y SONDEA COMO EN UN CAMBIO DE PROYECTO.
+'             LA LLAMA FLogin.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub IniciarSesion()
+
+  ' --- 1. ESTADO LIMPIO ---
+  $sUltimoError = ""
+  bRedViva = True
+
+  ' --- 2. MISMO CAMINO QUE ABRIR UN PROYECTO ---
+  CambioDeProyecto()
+
+End
+
+' ============================================
+' Función   : TerminarSesion
+' Propósito : CERRAR LA CONEXIÓN DE SONDEO, VACIAR LA PESTAÑA Y OCULTAR EL
+'             INDICADOR AL DESCONECTARSE. LA LLAMA FLogin, YA CON
+'             IdUsuarioEnCurso EN 0.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub TerminarSesion()
+
+  ' --- 1. CONEXIÓN DE SONDEO ---
+  DescartarConexionSondeo()
+
+  ' --- 2. ESTADO ---
+  $sFirma = ""
+  $iNovedades = 0
+  $iVencidas = 0
+  $sUltimoError = ""
+
+  ' --- 3. PESTAÑA VACÍA E INDICADOR OCULTO ---
+  Vaciar()
+  PintarIndicador()
+
+End
+
+' ============================================
+' Función   : CambioDeProyecto
+' Propósito : RECARGAR LA PESTAÑA Y EL INDICADOR PARA EL PROYECTO QUE SE
+'             ACABA DE ABRIR, O VACIARLOS SI SE CERRÓ. LA LLAMAN LOS TRES
+'             PUNTOS QUE CAMBIAN SplitterPrincipal.Visible (APERTURA COMPLETA,
+'             APERTURA PARCIAL Y CIERRE), DESPUÉS DE FIJAR IdProyectoEnCurso.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub CambioDeProyecto()
+
+  ' --- 1. LO DEL PROYECTO ANTERIOR NO SIRVE: NI LA FIRMA NI LA NOTA ELEGIDA.
+  '        EL HILO SE BORRA ACÁ: Refrescar SOLO LO REPONE SI HAY NOTA ELEGIDA ---
+  $sFirma = ""
+  $iNotaActual = 0
+  $iNovedades = 0
+  $iVencidas = 0
+  FMain.txtNotasHilo.Clear()
+
+  ' --- 2. SIN SESIÓN O SIN PROYECTO: PESTAÑA VACÍA E INDICADOR OCULTO ---
+  If Not HayAlcance() Then
+    Vaciar()
+    PintarIndicador()
+    Return
+  Endif
+
+  ' --- 3. CARGA COMPLETA Y PRIMER SONDEO, SIN ESPERAR EL LATIDO DE 30 s ---
+  ' EL SONDEO NO VUELVE A CARGAR LA PESTAÑA: YA ESTÁ AL DÍA
+  Refrescar()
+  Sondear(True)
+  PintarIndicador()
+
+End
+
+' ============================================
+' Función   : HayAlcance
+' Propósito : DECIR SI HAY SESIÓN Y PROYECTO ABIERTO: SIN LAS DOS COSAS NO HAY
+'             PESTAÑA, NI INDICADOR, NI SONDEO.
+' Parámetros: ninguno
+' Retorna   : Boolean — TRUE SI HAY USUARIO Y PROYECTO
+' ============================================
+Private Function HayAlcance() As Boolean
+
+  If m_InicioCierre.IdUsuarioEnCurso = 0 Then Return False
+  If m_InicioCierre.IdProyectoEnCurso = 0 Then Return False
+  Return True
+
+End
+
+' ==============================================================================
+' SONDEO E INDICADOR
+' ==============================================================================
+
+' ============================================
+' Función   : Sondear
+' Propósito : CONSULTAR, CON LA CONEXIÓN PROPIA, CUÁNTAS NOVEDADES Y CUÁNTAS
+'             NOTAS VENCIDAS HAY EN EL ALCANCE, PINTAR EL INDICADOR Y, SI ALGO
+'             CAMBIÓ DESDE EL TICK ANTERIOR, RECARGAR LA PESTAÑA.
+'             LA LLAMA FMain.TimerRed_Timer DESPUÉS DE UN SONDEO DE RED
+'             EXITOSO, Y ESTE MÓDULO DESPUÉS DE CADA OPERACIÓN.
+' Parámetros: bYaRefrescado As Boolean — TRUE SI LA PESTAÑA YA SE RECARGÓ Y
+'             SOLO HACE FALTA ANOTAR LA FIRMA NUEVA (OPCIONAL)
+' Retorna   : nada
+' ============================================
+Public Sub Sondear(Optional bYaRefrescado As Boolean = False)
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rSondeo As Result
+  Dim sFirma As String
+
+  ' --- 1. SIN ALCANCE O SIN RED NO SE CONSULTA ---
+  If Not HayAlcance() Then Return
+  If Not bRedViva Then Return
+
+  ' --- 2. CONEXIÓN PROPIA, CON PLAZO DE LECTURA ---
+  If Not ConexionSondeoLista() Then
+    PintarIndicador()
+    Return
+  Endif
+
+  ' --- 3. UNA SOLA CONSULTA POR TICK ---
+  ' LA FIRMA REÚNE TODO LO QUE OBLIGA A RECARGAR: CANTIDAD DE NOTAS VISIBLES
+  ' (ALTAS, CIERRES), NOVEDADES, VENCIDAS, ÚLTIMA ACTIVIDAD (RESPUESTAS) Y EL
+  ' ESTADO DEL GRUPO DEL PROYECTO (CREACIÓN, CREADOR, ALTAS Y BAJAS), QUE
+  ' CAMBIA DESTINOS Y PERMISOS AUNQUE NO CAMBIE NINGUNA NOTA
+  Try rSondeo = $hSondeo.Exec("SELECT COUNT(*) AS total, " &
+    "CAST(IFNULL(SUM(" & CondicionNovedad() & "), 0) AS SIGNED) AS novedades, " &
+    "CAST(IFNULL(SUM(n.desde <= NOW() AND DATEDIFF(NOW(), GREATEST(n.ultima_actividad, n.desde)) >= &3), 0) AS SIGNED) AS vencidas, " &
+    "IFNULL(DATE_FORMAT(MAX(GREATEST(n.ultima_actividad, n.desde)), '%Y%m%d%H%i%s%f'), '') AS ultima, " &
+    "IFNULL((SELECT CONCAT(g.id, '.', g.id_creador, '.', COUNT(m.id), '.', SUM(m.fecha_baja IS NULL)) " &
+    "FROM notas_grupos g LEFT JOIN notas_miembros m ON m.id_grupo = g.id " &
+    "WHERE g.id_proyecto = &2 GROUP BY g.id, g.id_creador), '') AS grupo " &
+    "FROM notas n " &
+    "LEFT JOIN notas_vistas v ON v.id_nota = n.id AND v.id_usuario = &1 " &
+    "WHERE " & CondicionActiva(),
+    m_InicioCierre.IdUsuarioEnCurso, m_InicioCierre.IdProyectoEnCurso, UMBRAL_ROJO)
+  If Error Then
+    ' TICK PERDIDO. NO ES UN CANAL MUDO (GV-23): EL ERROR QUEDA EN EL TOOLTIP
+    ' DEL INDICADOR. TRAS UN PLAZO VENCIDO LA CONEXIÓN QUEDA MUERTA («Lost
+    ' connection» TAMBIÉN EN LA CONSULTA SIGUIENTE): SE DESCARTA Y EL PRÓXIMO
+    ' TICK ABRE OTRA
+    $sUltimoError = Format(Now, "hh:nn") & " · " & Error.Text
+    DescartarConexionSondeo()
+    PintarIndicador()
+    Return
+  Endif
+
+  ' --- 4. PROCESAR EL RESULTADO ---
+  $sUltimoError = ""
+  $iNovedades = CInt(rSondeo["novedades"])
+  $iVencidas = CInt(rSondeo["vencidas"])
+  sFirma = CStr(rSondeo["total"]) & "|" & CStr($iNovedades) & "|" & CStr($iVencidas) & "|" & rSondeo["ultima"] & "|" & rSondeo["grupo"]
+  PintarIndicador()
+
+  ' --- 5. RECARGAR SOLO SI ALGO CAMBIÓ Y NADIE LO HIZO YA ---
+  If sFirma <> $sFirma Then
+    $sFirma = sFirma
+    If Not bYaRefrescado Then Refrescar()
+  Endif
+
+End
+
+' ============================================
+' Función   : ConexionSondeoLista
+' Propósito : ASEGURAR QUE LA CONEXIÓN DE SONDEO ESTÉ ABIERTA, ABRIÉNDOLA SI
+'             HACE FALTA.
+' Parámetros: ninguno
+' Retorna   : Boolean — TRUE SI SE PUEDE CONSULTAR
+' ============================================
+Private Function ConexionSondeoLista() As Boolean
+
+  ' --- 1. YA ABIERTA (NULL Y Opened POR SEPARADO: RC-GM-17) ---
+  If $hSondeo Then
+    If $hSondeo.Opened Then Return True
+  Endif
+
+  ' --- 2. ABRIR UNA NUEVA ---
+  $hSondeo = m_ConexionBD.AbrirConexionSondeo(PLAZO_LECTURA_SONDEO)
+  If Not $hSondeo Then
+    $sUltimoError = Format(Now, "hh:nn") & " · " & m_ConexionBD.ErrorConexionSondeo
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : DescartarConexionSondeo
+' Propósito : CERRAR Y OLVIDAR LA CONEXIÓN DE SONDEO.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub DescartarConexionSondeo()
+
+  ' --- 1. CERRAR SI ESTÁ ABIERTA; UN FALLO AL CERRAR NO IMPORTA ---
+  If $hSondeo Then
+    If $hSondeo.Opened Then Try $hSondeo.Close
+  Endif
+  $hSondeo = Null
+
+End
+
+' ============================================
+' Función   : PintarIndicador
+' Propósito : MOSTRAR U OCULTAR EL INDICADOR DE HBox3 Y PONERLE ÍCONO Y
+'             LEYENDA; EL MISMO ÍCONO VA EN LA PESTAÑA «Notas». ROJO GANA SOBRE
+'             VERDE: UNA NOTA CON 7 DÍAS O MÁS ES LO MÁS URGENTE.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub PintarIndicador()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim bVisible As Boolean
+  Dim sRuta As String
+  Dim aLeyenda As New String[]
+  Dim sDetalle As String
+  Dim hIcono As Picture
+  Dim iPestana As Integer
+
+  ' --- 1. SOLO CON SESIÓN Y PROYECTO ABIERTO. OCULTO, SIN RESTOS DEL
+  '        ESTADO ANTERIOR: AL VOLVER A MOSTRARSE NO PARPADEA UN DATO VIEJO ---
+  bVisible = HayAlcance()
+  FMain.pbNotas.Visible = bVisible
+  FMain.lblNotas.Visible = bVisible
+  If Not bVisible Then
+    FMain.pbNotas.Picture = Null
+    FMain.lblNotas.Text = ""
+    Return
+  Endif
+
+  ' --- 2. ÍCONO Y LEYENDA ---
+  If $iVencidas > 0 Then
+    sRuta = ICONO_VENCIDAS
+  Else If $iNovedades > 0 Then
+    sRuta = ICONO_NOVEDADES
+  Else
+    sRuta = ICONO_SIN_PENDIENTES
+  Endif
+  If $iNovedades > 0 Then aLeyenda.Add(CStr($iNovedades) & " sin ver")
+  If $iVencidas > 0 Then aLeyenda.Add(CStr($iVencidas) & " con " & CStr(UMBRAL_ROJO) & "+ días")
+
+  sDetalle = "Notas del proyecto abierto y notas personales: " & CStr($iNovedades) & " sin ver · " &
+    CStr($iVencidas) & " con " & CStr(UMBRAL_ROJO) & " días o más sin actividad"
+  If $sUltimoError <> "" Then
+    ' EL FALLO SE VE EN LA LEYENDA, NO SOLO EN EL TOOLTIP
+    aLeyenda.Add("sin sondeo")
+    sDetalle &= Chr(10) & "Último sondeo fallido: " & $sUltimoError
+  Endif
+
+  ' --- 3. CARGAR EL ÍCONO. SI EL PNG FALTA, QUEDA SIN ÍCONO PERO CON LA
+  '        LEYENDA: EL FALLO SE VE ---
+  Try hIcono = Picture[sRuta]
+  If Error Then hIcono = Null
+
+  ' --- 4. INDICADOR ---
+  FMain.pbNotas.Picture = hIcono
+  FMain.pbNotas.Tooltip = sDetalle
+  FMain.lblNotas.Text = aLeyenda.Join(" · ")
+  FMain.lblNotas.Tooltip = sDetalle
+
+  ' --- 5. PESTAÑA «Notas» DEL PANEL DERECHO ---
+  Try iPestana = FMain.TabStrip1.FindIndex(FMain.tsNotas)
+  If Error Then Return
+  If iPestana < 0 Then Return
+  FMain.TabStrip1[iPestana].Picture = hIcono
+
+End
+
+' ==============================================================================
+' PESTAÑA «Notas»: CARGA
+' ==============================================================================
+
+' ============================================
+' Función   : DisenarGrid
+' Propósito : COLUMNAS FIJAS DE LA GRILLA. LA CARGA NO VUELVE A TOCAR
+'             Columns.Count (GV-58).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub DisenarGrid()
+
+  ' --- 1. COLUMNAS, TÍTULOS Y ANCHOS ---
+  With FMain.gvNotas
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Columns.Count = COLUMNAS
+    .Columns[COL_DIAS].Title = "Días"
+    .Columns[COL_DIAS].Width = 50
+    .Columns[COL_ESTADO].Title = "Estado"
+    .Columns[COL_ESTADO].Width = 90
+    .Columns[COL_DE].Title = "De"
+    .Columns[COL_DE].Width = 90
+    .Columns[COL_PARA].Title = "Para"
+    .Columns[COL_PARA].Width = 160
+    .Columns[COL_FECHA].Title = "Fecha"
+    .Columns[COL_FECHA].Width = 120
+    .Columns[COL_TEXTO].Title = "Nota"
+    .Columns[COL_TEXTO].Width = 400
+  End With
+
+End
+
+' ============================================
+' Función   : Refrescar
+' Propósito : VOLVER A CARGAR LAS DOS PESTAÑAS: DESTINOS, GRUPO, GRILLA Y, SI
+'             SIGUE EN LA LISTA, EL HILO DE LA NOTA ELEGIDA. NO MARCA NADA
+'             COMO VISTO: ESO SOLO LO HACE UN CLICK DEL USUARIO. EL TEXTO A
+'             MEDIO ESCRIBIR NO SE TOCA.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Refrescar()
+
+  ' --- 1. SIN ALCANCE, LA PESTAÑA QUEDA VACÍA ---
+  If Not HayAlcance() Then
+    Vaciar()
+    Return
+  Endif
+
+  ' --- 2. GRUPO PRIMERO: DESTINOS Y PERMISOS DEPENDEN DE ÉL ---
+  CargarGrupo()
+  CargarDestinos()
+  CargarLista()
+
+  ' --- 3. LA NOTA ELEGIDA: SE VUELVE A MOSTRAR SI SIGUE EN LA LISTA ---
+  ' UNA NOTA CERRADA SALE DE «ACTIVAS» Y DEJA DE ESTAR ELEGIDA
+  If $iNotaActual <> 0 Then
+    If $aIds.Find($iNotaActual) >= 0 Then
+      MostrarHilo($iNotaActual)
+    Else
+      $iNotaActual = 0
+      FMain.txtNotasHilo.Clear()
+    Endif
+  Endif
+
+  ActualizarBotones()
+
+End
+
+' ============================================
+' Función   : Vaciar
+' Propósito : DEJAR LAS DOS PESTAÑAS SIN DATOS (SIN SESIÓN O SIN PROYECTO).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Vaciar()
+
+  ' --- 1. GRILLA Y SUS LISTAS PARALELAS ---
+  FMain.gvNotas.Rows.Count = 0
+  $aIds.Clear()
+  $aAutores.Clear()
+  $aCerradas.Clear()
+  $aNovedades.Clear()
+
+  ' --- 2. HILO, DESTINOS Y ESTADO ---
+  FMain.txtNotasHilo.Clear()
+  $bPoblando = True
+  FMain.cmbNotasDestino.Clear()
+  $bPoblando = False
+  $aDestinoTipo.Clear()
+  $aDestinoId.Clear()
+  $iNotaActual = 0
+  $iGrupo = 0
+  $bSoyCreador = False
+  FMain.lblNotasGrupo.Text = ""
+
+  ' --- 3. PESTAÑA «Grupo» ---
+  FMain.lblGrupoEstado.Text = ""
+  FMain.btnGrupoCrear.Visible = False
+  FMain.lstGrupoMiembros.Clear()
+  FMain.lstGrupoDisponibles.Clear()
+  FMain.txaGrupoHistorial.Text = ""
+  FMain.btnGrupoSumar.Enabled = False
+  FMain.btnGrupoBaja.Enabled = False
+
+  ActualizarBotones()
+
+End
+
+' ============================================
+' Función   : CargarGrupo
+' Propósito : ESTADO DEL GRUPO DE NOTAS DEL PROYECTO ABIERTO, EN LAS DOS
+'             PESTAÑAS: LA LÍNEA DE ESTADO DE «Notas» Y TODA LA PESTAÑA
+'             «Grupo». SUMAR Y DAR DE BAJA SOLO PARA EL CREADOR; LA LISTA DE
+'             MIEMBROS Y EL REGISTRO LOS VEN TODOS.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarGrupo()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rGrupo As Result
+  Dim sTexto As String
+
+  $iGrupo = 0
+  $bSoyCreador = False
+  FMain.lstGrupoMiembros.Clear()
+  FMain.lstGrupoDisponibles.Clear()
+  FMain.txaGrupoHistorial.Text = ""
+
+  ' --- 1. CONSULTA ---
+  rGrupo = GrupoDelProyecto(m_InicioCierre.IdProyectoEnCurso)
+  If rGrupo = Null Then Return
+
+  ' --- 2. EL PROYECTO TODAVÍA NO TIENE GRUPO: SE OFRECE CREARLO ---
+  If Not rGrupo.Available Then
+    FMain.lblNotasGrupo.Text = "El proyecto no tiene grupo de notas"
+    FMain.lblGrupoEstado.Text = "El proyecto abierto no tiene grupo de notas."
+    FMain.btnGrupoCrear.Visible = True
+    FMain.btnGrupoSumar.Enabled = False
+    FMain.btnGrupoBaja.Enabled = False
+    Return
+  Endif
+
+  ' --- 3. HAY GRUPO ---
+  $iGrupo = CInt(rGrupo["id"])
+  $bSoyCreador = (CInt(rGrupo["id_creador"]) = m_InicioCierre.IdUsuarioEnCurso)
+  sTexto = "Grupo de «" & rGrupo["proyecto"] & "» · creado por " & rGrupo["creador"]
+  If rGrupo["soy_miembro"] = 0 Then sTexto &= " · no sos miembro"
+  FMain.lblNotasGrupo.Text = sTexto
+  If $bSoyCreador Then
+    FMain.lblGrupoEstado.Text = sTexto & " · podés sumar y dar de baja miembros"
+  Else
+    FMain.lblGrupoEstado.Text = sTexto & " · solo el creador suma y da de baja miembros"
+  Endif
+  FMain.btnGrupoCrear.Visible = False
+  FMain.btnGrupoSumar.Enabled = $bSoyCreador
+  FMain.btnGrupoBaja.Enabled = $bSoyCreador
+
+  ' --- 4. LISTAS Y REGISTRO ---
+  CargarMiembros()
+
+End
+
+' ============================================
+' Función   : CargarMiembros
+' Propósito : LLENAR LAS LISTAS DE LA PESTAÑA «Grupo» Y EL REGISTRO DE ALTAS
+'             Y BAJAS. LA CLAVE DE CADA ÍTEM ES EL id DEL USUARIO
+'             (ListView.Add(Key, Text), GV-51). LOS DISPONIBLES SOLO SE
+'             CARGAN PARA EL CREADOR, QUE ES QUIEN LOS PUEDE SUMAR.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarMiembros()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rMiembros As Result
+  Dim rDisponibles As Result
+  Dim rHistorial As Result
+  Dim aLineas As New String[]
+
+  ' --- 1. MIEMBROS ACTIVOS ---
+  FMain.lstGrupoMiembros.Clear()
+  rMiembros = Miembros($iGrupo)
+  If rMiembros <> Null Then
+    For Each rMiembros
+      FMain.lstGrupoMiembros.Add(CStr(rMiembros["id_usuario"]), rMiembros["usuario"] & "  · desde " & FechaLocal(rMiembros["hace_alta"]))
+    Next
+  Endif
+
+  ' --- 2. USUARIOS ACTIVOS QUE NO SON MIEMBROS (SOLO PARA EL CREADOR) ---
+  FMain.lstGrupoDisponibles.Clear()
+  If $bSoyCreador Then
+    rDisponibles = Disponibles($iGrupo)
+    If rDisponibles <> Null Then
+      For Each rDisponibles
+        FMain.lstGrupoDisponibles.Add(CStr(rDisponibles["id"]), rDisponibles["usuario"])
+      Next
+    Endif
+  Endif
+
+  ' --- 3. REGISTRO: UNA LÍNEA POR ALTA Y OTRA POR BAJA ---
+  rHistorial = Historial($iGrupo)
+  If rHistorial <> Null Then
+    For Each rHistorial
+      aLineas.Add(FechaLocal(rHistorial["hace_alta"]) & " · alta de " & rHistorial["usuario"] & " por " & rHistorial["alta_por"])
+      If rHistorial["de_baja"] = 1 Then
+        aLineas.Add(FechaLocal(rHistorial["hace_baja"]) & " · baja de " & rHistorial["usuario"] & " por " & rHistorial["baja_por"])
+      Endif
+    Next
+  Endif
+  FMain.txaGrupoHistorial.Text = aLineas.Join(Chr(10))
+
+End
+
+' ============================================
+' Función   : CargarDestinos
+' Propósito : LLENAR EL COMBO DE DESTINO: «PARA MÍ», EL GRUPO DEL PROYECTO
+'             ABIERTO SI EL USUARIO ES MIEMBRO Y LOS DEMÁS USUARIOS ACTIVOS.
+'             REPONE LA ELECCIÓN ANTERIOR POR TIPO E id, NO POR ÍNDICE.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarDestinos()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rDestinos As Result
+  Dim iTipoAnterior As Integer
+  Dim iIdAnterior As Integer
+  Dim iFila As Integer
+  Dim iElegida As Integer
+
+  ' --- 1. RECORDAR LA ELECCIÓN ACTUAL ---
+  If FMain.cmbNotasDestino.Index >= 0 And FMain.cmbNotasDestino.Index < $aDestinoTipo.Count Then
+    iTipoAnterior = $aDestinoTipo[FMain.cmbNotasDestino.Index]
+    iIdAnterior = $aDestinoId[FMain.cmbNotasDestino.Index]
+  Endif
+
+  ' --- 2. CONSULTA ---
+  rDestinos = Destinos()
+  If rDestinos = Null Then Return
+
+  ' --- 3. LLENAR, CON LA SUPRESIÓN PUESTA ---
+  $bPoblando = True
+  FMain.cmbNotasDestino.Clear()
+  $aDestinoTipo.Clear()
+  $aDestinoId.Clear()
+
+  ' «PARA MÍ» VA PRIMERO: ES UNA NOTA 1 A 1 CON EL PROPIO USUARIO
+  FMain.cmbNotasDestino.Add("Para mí")
+  $aDestinoTipo.Add(DESTINO_USUARIO)
+  $aDestinoId.Add(m_InicioCierre.IdUsuarioEnCurso)
+
+  For Each rDestinos
+    If rDestinos["tipo"] = DESTINO_GRUPO Then
+      FMain.cmbNotasDestino.Add("Proyecto: " & rDestinos["nombre"])
+    Else
+      FMain.cmbNotasDestino.Add("Para: " & rDestinos["nombre"])
+    Endif
+    $aDestinoTipo.Add(CInt(rDestinos["tipo"]))
+    $aDestinoId.Add(CInt(rDestinos["id"]))
+  Next
+
+  ' --- 4. REPONER LA ELECCIÓN; SI YA NO EXISTE, LA PRIMERA ---
+  iElegida = 0
+  For iFila = 0 To $aDestinoTipo.Count - 1
+    If $aDestinoTipo[iFila] = iTipoAnterior Then
+      If $aDestinoId[iFila] = iIdAnterior Then
+        iElegida = iFila
+        Break
+      Endif
+    Endif
+  Next
+  FMain.cmbNotasDestino.Index = iElegida
+  $bPoblando = False
+
+End
+
+' ============================================
+' Función   : CargarLista
+' Propósito : LLENAR LA GRILLA CON LAS NOTAS DE LA VISTA ELEGIDA Y REPONER LA
+'             FILA DE LA NOTA ELEGIDA. REPONER CON Row NO DISPARA Click
+'             (GV-78), ASÍ QUE NO NAVEGA NI MARCA COMO VISTA.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarLista()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rNotas As Result
+  Dim iFila As Integer
+  Dim sPara As String
+  Dim sTexto As String
+  Dim bCerrada As Boolean
+  Dim bProgramada As Boolean
+  Dim bNovedad As Boolean
+  Dim iDias As Integer
+
+  ' --- 1. CONSULTA ---
+  rNotas = Listar(FMain.cmbNotasVista.Index = VISTA_ARCHIVADAS)
+  If rNotas = Null Then Return
+
+  ' --- 2. VACIAR FILAS Y LISTAS PARALELAS (LAS COLUMNAS NO SE TOCAN) ---
+  FMain.gvNotas.Rows.Count = 0
+  $aIds.Clear()
+  $aAutores.Clear()
+  $aCerradas.Clear()
+  $aNovedades.Clear()
+  If rNotas.Count = 0 Then Return
+  FMain.gvNotas.Rows.Count = rNotas.Count
+
+  ' --- 3. UNA FILA POR NOTA ---
+  iFila = 0
+  For Each rNotas
+    bCerrada = (rNotas["cerrada"] = 1)
+    bProgramada = (rNotas["programada"] = 1)
+    bNovedad = (rNotas["novedad"] = 1)
+    iDias = CInt(rNotas["dias"])
+
+    $aIds.Add(CInt(rNotas["id"]))
+    $aAutores.Add(CInt(rNotas["id_autor"]))
+    $aCerradas.Add(bCerrada)
+    $aNovedades.Add(bNovedad)
+
+    ' DÍAS: SOLO LAS ABIERTAS Y YA DESPACHADAS LLEVAN ÍNDICE. LAS DEMÁS
+    ' LIMPIAN EL FONDO A MANO: VOLVER Rows.Count A 0 NO BORRA EL FORMATO DE
+    ' LA CELDA, Y EL COLOR DE LA CARGA ANTERIOR REAPARECE (VISTO EN EL ARNÉS)
+    If bCerrada Then
+      FMain.gvNotas[iFila, COL_DIAS].Text = ""
+      FMain.gvNotas[iFila, COL_DIAS].Background = Color.Default
+    Else If bProgramada Then
+      FMain.gvNotas[iFila, COL_DIAS].Text = "—"
+      FMain.gvNotas[iFila, COL_DIAS].Background = Color.Default
+    Else
+      FMain.gvNotas[iFila, COL_DIAS].Text = CStr(iDias)
+      FMain.gvNotas[iFila, COL_DIAS].Background = ColorDias(iDias)
+    Endif
+    FMain.gvNotas[iFila, COL_DIAS].Alignment = Align.Center
+
+    ' ESTADO
+    If bCerrada Then
+      FMain.gvNotas[iFila, COL_ESTADO].Text = "Cerrada"
+    Else If bProgramada Then
+      FMain.gvNotas[iFila, COL_ESTADO].Text = "Programada"
+    Else If bNovedad Then
+      FMain.gvNotas[iFila, COL_ESTADO].Text = "● Sin ver"
+    Else
+      FMain.gvNotas[iFila, COL_ESTADO].Text = "Abierta"
+    Endif
+
+    ' DE Y PARA. id_grupo E id_destinatario PUEDEN SER NULL: SE PREGUNTA
+    ' ANTES DE USARLOS (RC-GM-17)
+    FMain.gvNotas[iFila, COL_DE].Text = rNotas["autor"]
+    If Not IsNull(rNotas["id_grupo"]) Then
+      sPara = "Proyecto: " & rNotas["proyecto"]
+    Else If rNotas["destinatario"] = rNotas["autor"] Then
+      sPara = "(para sí)"
+    Else
+      sPara = rNotas["destinatario"]
+    Endif
+    FMain.gvNotas[iFila, COL_PARA].Text = sPara
+
+    ' FECHA EN HORA LOCAL Y COMIENZO DEL TEXTO, CON LA CANTIDAD DE RESPUESTAS
+    FMain.gvNotas[iFila, COL_FECHA].Text = FechaLocal(rNotas["hace_creacion"])
+    sTexto = rNotas["extracto"]
+    If rNotas["respuestas"] > 0 Then sTexto &= "  [" & CStr(rNotas["respuestas"]) & " resp.]"
+    FMain.gvNotas[iFila, COL_TEXTO].Text = sTexto
+
+    Inc iFila
+  Next
+
+  ' --- 4. REPONER LA FILA ELEGIDA ---
+  If $iNotaActual <> 0 Then
+    iFila = $aIds.Find($iNotaActual)
+    If iFila >= 0 Then FMain.gvNotas.Row = iFila
+  Endif
+
+End
+
+' ============================================
+' Función   : MostrarHilo
+' Propósito : CARGAR EN EL TextEdit EL HILO DE UNA NOTA. REASIGNAR RichText
+'             DEJA EL CURSOR AL FINAL (GV-37): EnsureVisible MUESTRA LO MÁS
+'             RECIENTE, QUE ES LO QUE SE QUIERE LEER.
+' Parámetros: iNota As Integer — id DE LA NOTA
+' Retorna   : nada
+' ============================================
+Private Sub MostrarHilo(iNota As Integer)
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim sHtml As String
+
+  ' --- 1. EL HTML ---
+  sHtml = HiloHTML(iNota)
+  If sHtml = "" Then
+    FMain.txtNotasHilo.Clear()
+    Return
+  Endif
+
+  ' --- 2. CARGA Y VISTA AL FINAL ---
+  FMain.txtNotasHilo.RichText = sHtml
+  FMain.txtNotasHilo.EnsureVisible()
+
+End
+
+' ============================================
+' Función   : FilaActual
+' Propósito : LA FILA DE LA GRILLA QUE CORRESPONDE A LA NOTA ELEGIDA.
+' Parámetros: ninguno
+' Retorna   : Integer — LA FILA, O -1 SI NO HAY NOTA ELEGIDA EN LA LISTA
+' ============================================
+Private Function FilaActual() As Integer
+
+  ' --- 1. SIN NOTA ELEGIDA ---
+  If $iNotaActual = 0 Then Return -1
+
+  Return $aIds.Find($iNotaActual)
+
+End
+
+' ============================================
+' Función   : ActualizarBotones
+' Propósito : HABILITAR LO QUE CORRESPONDE EN LA PESTAÑA «Notas»: ESCRIBIR,
+'             CON ALCANCE; RESPONDER, SI HAY UNA NOTA ABIERTA ELEGIDA; CERRAR,
+'             SI ADEMÁS ES DEL USUARIO.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ActualizarBotones()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim bAlcance As Boolean
+  Dim iFila As Integer
+  Dim bAbierta As Boolean
+  Dim bPropia As Boolean
+
+  ' --- 1. ESTADO ---
+  bAlcance = HayAlcance()
+  iFila = FilaActual()
+  If iFila >= 0 Then
+    bAbierta = Not $aCerradas[iFila]
+    bPropia = ($aAutores[iFila] = m_InicioCierre.IdUsuarioEnCurso)
+  Endif
+
+  ' --- 2. BOTONES Y CAJA ---
+  FMain.btnNotasEnviar.Enabled = bAlcance
+  FMain.btnNotasResponder.Enabled = bAlcance And bAbierta
+  FMain.btnNotasCerrar.Enabled = bAlcance And bAbierta And bPropia
+  FMain.txaNotasTexto.Enabled = bAlcance
+  FMain.cmbNotasDestino.Enabled = bAlcance
+  FMain.chkNotasProgramar.Enabled = bAlcance
+
+End
+
+' ==============================================================================
+' PESTAÑA «Notas»: ACCIONES (LAS LLAMAN LOS HANDLERS DE FMain)
+' ==============================================================================
+
+' ============================================
+' Función   : ElegirNota
+' Propósito : gvNotas_Click. MOSTRAR EL HILO DE LA NOTA ELEGIDA Y REGISTRAR
+'             QUE EL USUARIO LA VIO. SOLO EL CLICK DEL MOUSE LLEGA ACÁ (GV-78).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ElegirNota()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim iFila As Integer
+
+  ' --- 1. VALIDACIÓN DE LA FILA ---
+  iFila = FMain.gvNotas.Row
+  If iFila < 0 Then Return
+  If iFila >= $aIds.Count Then Return
+
+  ' --- 2. MOSTRAR ---
+  $iNotaActual = $aIds[iFila]
+  MostrarHilo($iNotaActual)
+
+  ' --- 3. VISTA. SI ERA NOVEDAD, LA FILA CAMBIA Y EL INDICADOR SE RECALCULA
+  '        (LA PESTAÑA YA ESTÁ AL DÍA: EL SONDEO NO LA VUELVE A CARGAR) ---
+  If MarcarVista($iNotaActual) Then
+    If $aNovedades[iFila] Then
+      $aNovedades[iFila] = False
+      FMain.gvNotas[iFila, COL_ESTADO].Text = "Abierta"
+      Sondear(True)
+    Endif
+  Endif
+
+  ActualizarBotones()
+
+End
+
+' ============================================
+' Función   : CambiarVista
+' Propósito : cmbNotasVista_Click. CAMBIAR ENTRE ACTIVAS Y ARCHIVADAS.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub CambiarVista()
+
+  ' --- 1. SUPRESIÓN AL POBLAR (GV-53) ---
+  If $bPoblando Then Return
+  If Not HayAlcance() Then Return
+
+  ' --- 2. LA NOTA ELEGIDA NO SOBREVIVE AL CAMBIO DE VISTA ---
+  $iNotaActual = 0
+  FMain.txtNotasHilo.Clear()
+  CargarLista()
+  ActualizarBotones()
+
+End
+
+' ============================================
+' Función   : CambiarProgramacion
+' Propósito : chkNotasProgramar_Click. HABILITAR LA HORA DE DESPACHO. AL
+'             ENCENDERLA, SI LA HORA QUE TIENE YA PASÓ, PROPONE DENTRO DE UNA
+'             HORA.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub CambiarProgramacion()
+
+  ' --- 1. HABILITAR ---
+  FMain.dtbNotasDesde.Enabled = (FMain.chkNotasProgramar.Value = CheckBox.True)
+
+  ' --- 2. HORA PROPUESTA ---
+  If FMain.dtbNotasDesde.Enabled Then
+    If FMain.dtbNotasDesde.Value <= Now Then FMain.dtbNotasDesde.Value = DateAdd(Now, gb.Hour, 1)
+  Endif
+
+End
+
+' ============================================
+' Función   : Enviar
+' Propósito : btnNotasEnviar_Click. ENVIAR EL TEXTO COMO NOTA NUEVA AL DESTINO
+'             ELEGIDO. LA HORA DE DESPACHO VIAJA COMO SEGUNDOS DESDE AHORA
+'             (VER Crear).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Enviar()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim sTexto As String
+  Dim iIndice As Integer
+  Dim iSegundos As Integer
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If Not HayAlcance() Then Return
+  sTexto = Trim(FMain.txaNotasTexto.Text)
+  If sTexto = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La nota está vacía.")
+    FMain.txaNotasTexto.SetFocus()
+    Return
+  Endif
+
+  iIndice = FMain.cmbNotasDestino.Index
+  If iIndice < 0 Or iIndice >= $aDestinoTipo.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí un destino para la nota.")
+    Return
+  Endif
+
+  ' --- 2. HORA DE DESPACHO ---
+  If FMain.chkNotasProgramar.Value = CheckBox.True Then
+    iSegundos = DateDiff(Now, FMain.dtbNotasDesde.Value, gb.Second)
+    If iSegundos <= 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("La hora de despacho ya pasó.")
+      Return
+    Endif
+  Endif
+
+  ' --- 3. ALTA ---
+  If Not Crear($aDestinoTipo[iIndice], $aDestinoId[iIndice], sTexto, iSegundos) Then Return
+
+  ' --- 4. LIMPIAR, RECARGAR Y ANOTAR LA FIRMA NUEVA ---
+  FMain.txaNotasTexto.Text = ""
+  FMain.chkNotasProgramar.Value = CheckBox.False
+  FMain.dtbNotasDesde.Enabled = False
+  Refrescar()
+  Sondear(True)
+
+  ' EL USUARIO SIGUE ESCRIBIENDO (RC-GM-07)
+  FMain.txaNotasTexto.SetFocus()
+
+End
+
+' ============================================
+' Función   : ResponderElegida
+' Propósito : btnNotasResponder_Click. AGREGAR EL TEXTO COMO RESPUESTA A LA
+'             NOTA ELEGIDA.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub ResponderElegida()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim sTexto As String
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If FilaActual() < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí en la lista la nota a la que querés responder.")
+    Return
+  Endif
+  sTexto = Trim(FMain.txaNotasTexto.Text)
+  If sTexto = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La respuesta está vacía.")
+    FMain.txaNotasTexto.SetFocus()
+    Return
+  Endif
+
+  ' --- 2. GUARDAR ---
+  If Not Responder($iNotaActual, sTexto) Then Return
+
+  ' --- 3. LIMPIAR, RECARGAR Y ANOTAR LA FIRMA NUEVA ---
+  FMain.txaNotasTexto.Text = ""
+  Refrescar()
+  Sondear(True)
+
+  ' EL USUARIO SIGUE ESCRIBIENDO (RC-GM-07)
+  FMain.txaNotasTexto.SetFocus()
+
+End
+
+' ============================================
+' Función   : CerrarElegida
+' Propósito : btnNotasCerrar_Click. CERRAR Y ARCHIVAR LA NOTA ELEGIDA, PREVIA
+'             CONFIRMACIÓN. EL PERMISO LO VUELVE A CONTROLAR Cerrar EN LA
+'             SENTENCIA.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub CerrarElegida()
+
+  ' --- 1. VALIDACIÓN ---
+  If FilaActual() < 0 Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Cerrar y archivar la nota?" & Chr(10) & "Después ya no se puede responder.", "Cerrar", "Cancelar") <> 1 Then Return
+
+  ' --- 3. CERRAR, RECARGAR Y ANOTAR LA FIRMA NUEVA ---
+  If Not Cerrar($iNotaActual) Then Return
+  Refrescar()
+  Sondear(True)
+
+End
+
+' ==============================================================================
+' PESTAÑA «Grupo»: ACCIONES (LAS LLAMAN LOS HANDLERS DE FMain)
+' ==============================================================================
+
+' ============================================
+' Función   : CrearGrupoAbierto
+' Propósito : btnGrupoCrear_Click. CREAR EL GRUPO DE NOTAS DEL PROYECTO
+'             ABIERTO, CON EL USUARIO COMO CREADOR Y PRIMER MIEMBRO.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub CrearGrupoAbierto()
+
+  ' --- 1. VALIDACIÓN ---
+  If Not HayAlcance() Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Crear el grupo de notas del proyecto abierto?" & Chr(10) &
+    "Vas a ser quien suma y da de baja a sus miembros.", "Crear", "Cancelar") <> 1 Then Return
+
+  ' --- 3. CREAR, RECARGAR Y ANOTAR LA FIRMA NUEVA ---
+  If Not CrearGrupo(m_InicioCierre.IdProyectoEnCurso) Then Return
+  Refrescar()
+  Sondear(True)
+
+End
+
+' ============================================
+' Función   : SumarElegido
+' Propósito : btnGrupoSumar_Click. SUMAR AL GRUPO EL USUARIO ELEGIDO EN LA
+'             LISTA DE DISPONIBLES. EL MIEMBRO NUEVO VE TODO LO ACTIVO DEL
+'             GRUPO.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub SumarElegido()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim sClave As String
+
+  ' --- 1. VALIDACIÓN ---
+  If $iGrupo = 0 Then Return
+  sClave = FMain.lstGrupoDisponibles.Key
+  If sClave = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí en la lista de la derecha el usuario a sumar.")
+    Return
+  Endif
+
+  ' --- 2. ALTA, RECARGA Y FIRMA NUEVA ---
+  If Not SumarMiembro($iGrupo, CInt(sClave)) Then Return
+  Refrescar()
+  Sondear(True)
+
+End
+
+' ============================================
+' Función   : BajaElegido
+' Propósito : btnGrupoBaja_Click. DAR DE BAJA EL MIEMBRO ELEGIDO, PREVIA
+'             CONFIRMACIÓN.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub BajaElegido()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim sClave As String
+
+  ' --- 1. VALIDACIÓN ---
+  If $iGrupo = 0 Then Return
+  sClave = FMain.lstGrupoMiembros.Key
+  If sClave = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí en la lista de la izquierda el miembro a dar de baja.")
+    Return
+  Endif
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Dar de baja a " & FMain.lstGrupoMiembros.Current.Text & "?" & Chr(10) &
+    "Deja de ver las notas nuevas del grupo; lo que ya vio y respondió queda registrado.", "Dar de baja", "Cancelar") <> 1 Then Return
+
+  ' --- 3. BAJA, RECARGA Y FIRMA NUEVA ---
+  If Not QuitarMiembro($iGrupo, CInt(sClave)) Then Return
+  Refrescar()
+  Sondear(True)
+
+End
+
+' ==============================================================================
+' ACCESO A LA BASE
+' ==============================================================================
+
+' ============================================
+' Función   : CondicionAlcance
+' Propósito : FRAGMENTO SQL «NOTA 1 A 1, O DEL GRUPO DEL PROYECTO &2». SIN
+'             GRUPO, LA SUBCONSULTA DA NULL Y SOLO QUEDAN LAS 1 A 1 (LA CLAVE
+'             ÚNICA SOBRE id_proyecto GARANTIZA UNA FILA COMO MÁXIMO).
+'             ALIAS: n = notas.
+' Parámetros: ninguno
+' Retorna   : String — CONDICIÓN PARA UN WHERE, CON EL PROYECTO EN &2
+' ============================================
+Private Function CondicionAlcance() As String
+
+  Return "(n.id_grupo IS NULL OR n.id_grupo = (SELECT g0.id FROM notas_grupos g0 WHERE g0.id_proyecto = &2))"
+
+End
+
+' ============================================
+' Función   : CondicionActiva
+' Propósito : FRAGMENTO SQL «NOTA ABIERTA, EN EL ALCANCE, QUE EL USUARIO &1
+'             PUEDE VER». EL AUTOR VE SU NOTA SIEMPRE; LOS DESTINATARIOS,
+'             DESDE LA HORA DE DESPACHO. ALIAS: n = notas.
+' Parámetros: ninguno
+' Retorna   : String — CONDICIÓN PARA UN WHERE: USUARIO EN &1, PROYECTO EN &2
+' ============================================
+Private Function CondicionActiva() As String
+
+  Return "n.fecha_cierre IS NULL AND " & CondicionAlcance() & " AND (n.id_autor = &1 OR (n.desde <= NOW() AND (n.id_destinatario = &1 " &
+    "OR n.id_grupo IN (SELECT m.id_grupo FROM notas_miembros m WHERE m.id_usuario = &1 AND m.fecha_baja IS NULL))))"
+
+End
+
+' ============================================
+' Función   : CondicionArchivada
+' Propósito : FRAGMENTO SQL «NOTA CERRADA, EN EL ALCANCE, EN LA QUE EL
+'             USUARIO &1 PARTICIPÓ»: AUTOR, DESTINATARIO, ESCRIBIÓ UNA
+'             RESPUESTA O LA VIO. UN MIEMBRO QUE ENTRÓ AL GRUPO DESPUÉS NO VE
+'             LO ARCHIVADO ANTES. ALIAS: n = notas.
+' Parámetros: ninguno
+' Retorna   : String — CONDICIÓN PARA UN WHERE: USUARIO EN &1, PROYECTO EN &2
+' ============================================
+Private Function CondicionArchivada() As String
+
+  Return "n.fecha_cierre IS NOT NULL AND " & CondicionAlcance() & " AND (n.id_autor = &1 OR n.id_destinatario = &1 " &
+    "OR EXISTS (SELECT 1 FROM notas_respuestas r2 WHERE r2.id_nota = n.id AND r2.id_autor = &1) " &
+    "OR EXISTS (SELECT 1 FROM notas_vistas v2 WHERE v2.id_nota = n.id AND v2.id_usuario = &1))"
+
+End
+
+' ============================================
+' Función   : CondicionNovedad
+' Propósito : FRAGMENTO SQL «EL USUARIO NO VIO LA ÚLTIMA ACTIVIDAD». UNA NOTA
+'             PROGRAMADA ES NOVEDAD AL LLEGAR SU HORA. ALIAS: n = notas,
+'             v = notas_vistas DEL USUARIO (LEFT JOIN).
+' Parámetros: ninguno
+' Retorna   : String — EXPRESIÓN BOOLEANA SQL
+' ============================================
+Private Function CondicionNovedad() As String
+
+  Return "(n.desde <= NOW() AND (v.fecha_vista IS NULL OR GREATEST(n.ultima_actividad, n.desde) > v.fecha_vista))"
+
+End
+
+' ============================================
+' Función   : Listar
+' Propósito : LAS NOTAS DEL ALCANCE PARA LA GRILLA: ABIERTAS QUE EL USUARIO
+'             PUEDE VER, O CERRADAS EN LAS QUE PARTICIPÓ. LAS FECHAS VUELVEN
+'             COMO SEGUNDOS TRANSCURRIDOS (VER FechaLocal).
+' Parámetros: bArchivadas As Boolean — TRUE PARA LAS CERRADAS
+' Retorna   : Result — UNA FILA POR NOTA; NULL SI FALLÓ (YA INFORMADO)
+' ============================================
+Private Function Listar(bArchivadas As Boolean) As Result
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rNotas As Result
+  Dim sCondicion As String
+  Dim sOrden As String
+
+  ' --- 1. QUÉ NOTAS Y EN QUÉ ORDEN ---
+  If bArchivadas Then
+    sCondicion = CondicionArchivada()
+    sOrden = "n.fecha_cierre DESC LIMIT " & CStr(LIMITE_ARCHIVADAS)
+  Else
+    sCondicion = CondicionActiva()
+    sOrden = "GREATEST(n.ultima_actividad, n.desde) DESC"
+  Endif
+
+  ' --- 2. CONSULTA ---
+  Try rNotas = m_ConexionBD.mConn.Exec("SELECT n.id, n.id_autor, ua.usuario AS autor, " &
+    "n.id_destinatario, IFNULL(ud.usuario, '') AS destinatario, n.id_grupo, IFNULL(p.nombre, '') AS proyecto, " &
+    "CAST(DATEDIFF(NOW(), GREATEST(n.ultima_actividad, n.desde)) AS SIGNED) AS dias, " &
+    "CAST(n.desde > NOW() AS SIGNED) AS programada, " &
+    "CAST(" & CondicionNovedad() & " AS SIGNED) AS novedad, " &
+    "CAST(n.fecha_cierre IS NOT NULL AS SIGNED) AS cerrada, " &
+    "CAST(TIMESTAMPDIFF(SECOND, n.fecha_creacion, NOW()) AS SIGNED) AS hace_creacion, " &
+    "(SELECT COUNT(*) FROM notas_respuestas r WHERE r.id_nota = n.id) AS respuestas, " &
+    "SUBSTRING_INDEX(n.texto, CHAR(10), 1) AS extracto " &
+    "FROM notas n " &
+    "JOIN usuarios ua ON ua.id = n.id_autor " &
+    "LEFT JOIN usuarios ud ON ud.id = n.id_destinatario " &
+    "LEFT JOIN notas_grupos g ON g.id = n.id_grupo " &
+    "LEFT JOIN proyectos p ON p.id = g.id_proyecto " &
+    "LEFT JOIN notas_vistas v ON v.id_nota = n.id AND v.id_usuario = &1 " &
+    "WHERE " & sCondicion & " ORDER BY " & sOrden,
+    m_InicioCierre.IdUsuarioEnCurso, m_InicioCierre.IdProyectoEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar las notas:" & Chr(10) & Error.Text)
+    Return Null
+  Endif
+
+  Return rNotas
+
+End
+
+' ============================================
+' Función   : HiloHTML
+' Propósito : ARMAR EL DOCUMENTO QUE MUESTRA UNA NOTA COMPLETA: CABECERA,
+'             TEXTO, RESPUESTAS Y, SI ESTÁ CERRADA, LA FRANJA DE CIERRE. SOLO
+'             SI EL USUARIO PUEDE VERLA EN EL ALCANCE ACTUAL. VA A UN TextEdit
+'             POR RichText (GV-64: <style> CON SELECTORES DE ETIQUETA Y DE
+'             CLASE; FONDO DE BLOQUE EN UNA CELDA DE TABLA A TODO EL ANCHO).
+' Parámetros: iNota As Integer — id DE LA NOTA
+' Retorna   : String — HTML COMPLETO; VACÍO SI NO SE PUDO O NO CORRESPONDE
+' ============================================
+Private Function HiloHTML(iNota As Integer) As String
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rNota As Result
+  Dim rRespuestas As Result
+  Dim sHtml As String
+  Dim sDestino As String
+  Dim sCerro As String
+  Dim sTabla As String
+
+  ' --- 1. LA NOTA, CON LA MISMA REGLA DE VISIBILIDAD QUE LA GRILLA ---
+  Try rNota = m_ConexionBD.mConn.Exec("SELECT n.texto, ua.usuario AS autor, n.id_autor, " &
+    "IFNULL(ud.usuario, '') AS destinatario, n.id_grupo, IFNULL(p.nombre, '') AS proyecto, " &
+    "CAST(TIMESTAMPDIFF(SECOND, n.fecha_creacion, NOW()) AS SIGNED) AS hace_creacion, " &
+    "CAST(TIMESTAMPDIFF(SECOND, n.desde, NOW()) AS SIGNED) AS hace_desde, " &
+    "CAST(n.fecha_cierre IS NOT NULL AS SIGNED) AS cerrada, " &
+    "CAST(IFNULL(TIMESTAMPDIFF(SECOND, n.fecha_cierre, NOW()), 0) AS SIGNED) AS hace_cierre, " &
+    "IFNULL(uc.usuario, IFNULL(n.cierre_sistema, '')) AS cerro, " &
+    "CAST(n.cierre_sistema IS NOT NULL AS SIGNED) AS cierre_sistema " &
+    "FROM notas n " &
+    "JOIN usuarios ua ON ua.id = n.id_autor " &
+    "LEFT JOIN usuarios ud ON ud.id = n.id_destinatario " &
+    "LEFT JOIN usuarios uc ON uc.id = n.id_cierre_por " &
+    "LEFT JOIN notas_grupos g ON g.id = n.id_grupo " &
+    "LEFT JOIN proyectos p ON p.id = g.id_proyecto " &
+    "WHERE n.id = &3 AND ((" & CondicionActiva() & ") OR (" & CondicionArchivada() & "))",
+    m_InicioCierre.IdUsuarioEnCurso, m_InicioCierre.IdProyectoEnCurso, iNota)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la nota:" & Chr(10) & Error.Text)
+    Return ""
+  Endif
+  If Not rNota.Available Then Return ""
+
+  ' --- 2. LAS RESPUESTAS, EN ORDEN ---
+  Try rRespuestas = m_ConexionBD.mConn.Exec("SELECT r.texto, u.usuario, " &
+    "CAST(TIMESTAMPDIFF(SECOND, r.fecha, NOW()) AS SIGNED) AS hace " &
+    "FROM notas_respuestas r JOIN usuarios u ON u.id = r.id_autor " &
+    "WHERE r.id_nota = &1 ORDER BY r.id", iNota)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar las respuestas de la nota:" & Chr(10) & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 3. CABECERA: QUIÉN, A QUIÉN, CUÁNDO ---
+  ' TODO VALOR DE LA BASE PASA POR EscaparXML (RC-GM-22). LAS COMILLAS DE LOS
+  ' ATRIBUTOS VAN CON Chr(34) (SC-01)
+  If Not IsNull(rNota["id_grupo"]) Then
+    sDestino = "proyecto «" & m_XML.EscaparXML(rNota["proyecto"]) & "»"
+  Else If rNota["destinatario"] = rNota["autor"] Then
+    sDestino = "sí mismo"
+  Else
+    sDestino = m_XML.EscaparXML(rNota["destinatario"])
+  Endif
+
+  sTabla = "<table width=" & Chr(34) & "100%" & Chr(34) & " cellpadding=" & Chr(34) & "4" & Chr(34) & " cellspacing=" & Chr(34) & "0" & Chr(34) & ">"
+
+  sHtml = "<html><head><title>Nota</title><style>" &
+    "p { margin-top: 2px; margin-bottom: 6px; }" &
+    ".autor { font-weight: bold; color: #1F5F99; }" &
+    ".dato { color: #666666; }" &
+    ".cierre { font-weight: bold; color: #FFFFFF; }" &
+    "</style></head><body>"
+
+  sHtml &= sTabla & "<tr><td bgcolor=" & Chr(34) & "#E8EEF4" & Chr(34) & "><span class=" & Chr(34) & "autor" & Chr(34) & ">" & m_XML.EscaparXML(rNota["autor"]) & "</span>" &
+    " para " & sDestino & " <span class=" & Chr(34) & "dato" & Chr(34) & ">· " & FechaLocal(rNota["hace_creacion"])
+
+  ' UNA NOTA PROGRAMADA MUESTRA SU HORA DE DESPACHO
+  If rNota["hace_desde"] < 0 Then
+    sHtml &= " · programada para " & FechaLocal(rNota["hace_desde"])
+  Endif
+  sHtml &= "</span></td></tr></table>"
+
+  ' --- 4. EL TEXTO DE LA NOTA ---
+  sHtml &= "<p>" & TextoHTML(rNota["texto"]) & "</p>"
+
+  ' --- 5. CADA RESPUESTA ---
+  For Each rRespuestas
+    sHtml &= "<p><span class=" & Chr(34) & "autor" & Chr(34) & ">" & m_XML.EscaparXML(rRespuestas["usuario"]) & "</span>" &
+      " <span class=" & Chr(34) & "dato" & Chr(34) & ">· " & FechaLocal(rRespuestas["hace"]) & "</span><br>" &
+      TextoHTML(rRespuestas["texto"]) & "</p>"
+  Next
+
+  ' --- 6. FRANJA DE CIERRE ---
+  If rNota["cerrada"] = 1 Then
+    sCerro = m_XML.EscaparXML(rNota["cerro"])
+    If rNota["cierre_sistema"] = 1 Then sCerro &= " (administración)"
+    sHtml &= sTabla & "<tr><td bgcolor=" & Chr(34) & "#6B7B8C" & Chr(34) & "><span class=" & Chr(34) & "cierre" & Chr(34) & ">Cerrada por " & sCerro &
+      " · " & FechaLocal(rNota["hace_cierre"]) & "</span></td></tr></table>"
+  Endif
+
+  sHtml &= "</body></html>"
+  Return sHtml
+
+End
+
+' ============================================
+' Función   : TextoHTML
+' Propósito : TEXTO DE UNA NOTA O RESPUESTA LISTO PARA EL HILO: ESCAPADO
+'             (RC-GM-22) Y CON LOS SALTOS DE LÍNEA COMO <br>.
+' Parámetros: sTexto As String — TEXTO TAL COMO ESTÁ EN LA BASE
+' Retorna   : String — FRAGMENTO HTML
+' ============================================
+Private Function TextoHTML(sTexto As String) As String
+
+  Return Replace(m_XML.EscaparXML(sTexto), Chr(10), "<br>")
+
+End
+
+' ============================================
+' Función   : FechaLocal
+' Propósito : CONVERTIR «HACE N SEGUNDOS SEGÚN EL SERVIDOR» EN UNA FECHA DEL
+'             RELOJ LOCAL. UN VALOR NEGATIVO ES UNA FECHA FUTURA (DESPACHO).
+'             VERIFICADO EN gbs3 QUE DateAdd ACEPTA UNA CANTIDAD NEGATIVA.
+'             PÚBLICA: LA USA TAMBIÉN LA ADMINISTRACIÓN DE NOTAS DE FSysAdmin.
+' Parámetros: iHace As Long — SEGUNDOS TRANSCURRIDOS, SEGÚN NOW() DEL SERVIDOR
+' Retorna   : String — dd/mm/aaaa hh:nn
+' ============================================
+Public Function FechaLocal(iHace As Long) As String
+
+  Return Format(DateAdd(Now, gb.Second, -iHace), "dd/mm/yyyy hh:nn")
+
+End
+
+' ============================================
+' Función   : ColorDias
+' Propósito : COLOR DE FONDO DE LA CELDA DEL ÍNDICE DE DÍAS. LA MISMA GAMA
+'             PASTEL QUE FMetadatosCapitulos.PintarEstado. PÚBLICA: LA USA
+'             TAMBIÉN LA ADMINISTRACIÓN DE NOTAS DE FSysAdmin.
+' Parámetros: iDias As Integer — DÍAS CORRIDOS SIN ACTIVIDAD
+' Retorna   : Integer — COLOR
+' ============================================
+Public Function ColorDias(iDias As Integer) As Integer
+
+  ' --- 1. TRES TRAMOS, DEL MÁS ALTO AL MÁS BAJO ---
+  If iDias >= UMBRAL_ROJO Then Return Color.RGB(255, 200, 200)
+  If iDias >= UMBRAL_AMBAR Then Return Color.RGB(255, 220, 180)
+  Return Color.RGB(200, 255, 200)
+
+End
+
+' ============================================
+' Función   : MarcarVista
+' Propósito : REGISTRAR QUE EL USUARIO ABRIÓ LA NOTA AHORA. ES LO QUE APAGA LA
+'             NOVEDAD Y LO QUE CUENTA COMO PARTICIPACIÓN PARA LAS ARCHIVADAS.
+'             SOLO SE LLAMA DESDE UN CLICK DEL USUARIO (GV-78: ASIGNAR Row NO
+'             EMITE Click, ASÍ QUE UN REFRESCO NO MARCA NADA).
+' Parámetros: iNota As Integer — id DE LA NOTA
+' Retorna   : Boolean — TRUE SI SE REGISTRÓ
+' ============================================
+Private Function MarcarVista(iNota As Integer) As Boolean
+
+  ' --- 1. ALTA O ACTUALIZACIÓN EN UNA SOLA SENTENCIA ---
+  Try m_ConexionBD.mConn.Exec("INSERT INTO notas_vistas (id_nota, id_usuario, fecha_vista) VALUES (&1, &2, NOW(6)) " &
+    "ON DUPLICATE KEY UPDATE fecha_vista = NOW(6)", iNota, m_InicioCierre.IdUsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo registrar que viste la nota:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Crear
+' Propósito : DAR DE ALTA UNA NOTA NUEVA, 1 A 1 O DE PROYECTO, EN UNA SOLA
+'             TRANSACCIÓN: VALIDACIÓN DEL DESTINO, ALTA Y VISTA DEL AUTOR (QUE
+'             NO DEBE VERLA COMO NOVEDAD). LA HORA DE DESPACHO SE MANDA COMO
+'             DESPLAZAMIENTO EN SEGUNDOS SOBRE NOW() DEL SERVIDOR: ASÍ NO
+'             IMPORTA EL HUSO HORARIO DE QUIEN ESCRIBE.
+' Parámetros: iTipo As Integer — DESTINO_USUARIO O DESTINO_GRUPO
+'             iDestino As Integer — id DEL USUARIO O DEL GRUPO
+'             sTexto As String — TEXTO DE LA NOTA (YA SIN ESPACIOS EN LOS BORDES)
+'             iSegundos As Integer — DIFERIMIENTO DEL DESPACHO; 0 = AHORA
+' Retorna   : Boolean — TRUE SI SE CREÓ
+' ============================================
+Private Function Crear(iTipo As Integer, iDestino As Integer, sTexto As String, iSegundos As Integer) As Boolean
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim hConn As Connection
+  Dim rControl As Result
+  Dim vDestinatario As Variant
+  Dim vGrupo As Variant
+  Dim iUsuario As Integer
+  Dim iNota As Integer
+
+  hConn = m_ConexionBD.mConn
+  iUsuario = m_InicioCierre.IdUsuarioEnCurso
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If sTexto = "" Then Return False
+  If iSegundos < 0 Then iSegundos = 0
+
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. EL DESTINO TIENE QUE SER VÁLIDO AHORA, NO CUANDO SE ARMÓ EL COMBO ---
+  If iTipo = DESTINO_GRUPO Then
+    ' SOLO UN MIEMBRO ACTIVO ESCRIBE EN EL GRUPO
+    Try rControl = hConn.Exec("SELECT 1 FROM notas_miembros WHERE id_grupo = &1 AND id_usuario = &2 AND fecha_baja IS NULL", iDestino, iUsuario)
+    If Error Then Goto FALLA_SQL
+    If Not rControl.Available Then
+      Try hConn.Rollback()
+      m_Sonido.sonar("Warning")
+      Message.Warning("Ya no sos miembro de ese grupo de notas.")
+      Return False
+    Endif
+    vGrupo = iDestino
+  Else
+    ' EL DESTINATARIO TIENE QUE ESTAR ACTIVO (activo ES TINYINT(1): RC-GM-01)
+    Try rControl = hConn.Exec("SELECT activo FROM usuarios WHERE id = &1", iDestino)
+    If Error Then Goto FALLA_SQL
+    If Not rControl.Available Then
+      Try hConn.Rollback()
+      m_Sonido.sonar("Warning")
+      Message.Warning("El destinatario no existe.")
+      Return False
+    Endif
+    If rControl["activo"] <> True Then
+      Try hConn.Rollback()
+      m_Sonido.sonar("Warning")
+      Message.Warning("El destinatario está inactivo.")
+      Return False
+    Endif
+    vDestinatario = iDestino
+  Endif
+
+  ' --- 3. ALTA. UNA DE LAS DOS VARIABLES QUEDA EN NULL: Exec LO PASA COMO NULL ---
+  Try hConn.Exec("INSERT INTO notas (id_autor, id_destinatario, id_grupo, texto, desde) " &
+    "VALUES (&1, &2, &3, &4, NOW() + INTERVAL &5 SECOND)", iUsuario, vDestinatario, vGrupo, sTexto, iSegundos)
+  If Error Then Goto FALLA_SQL
+
+  Try rControl = hConn.Exec("SELECT LAST_INSERT_ID() AS id")
+  If Error Then Goto FALLA_SQL
+  iNota = CInt(rControl["id"])
+
+  ' --- 4. EL AUTOR VIO SU PROPIA NOTA ---
+  Try hConn.Exec("INSERT INTO notas_vistas (id_nota, id_usuario, fecha_vista) VALUES (&1, &2, NOW(6))", iNota, iUsuario)
+  If Error Then Goto FALLA_SQL
+
+  ' --- 5. CONFIRMAR ---
+  Try hConn.Commit()
+  If Error Then Goto FALLA_SQL
+  Return True
+
+FALLA_SQL:
+  ' UN SOLO PUNTO DE SALIDA PARA LOS ERRORES DE SQL: SE GUARDA EL TEXTO ANTES
+  ' DEL Rollback, QUE PODRÍA PISARLO
+  FallaTransaccion(hConn, "No se pudo enviar la nota:")
+  Return False
+
+End
+
+' ============================================
+' Función   : Responder
+' Propósito : AGREGAR UNA RESPUESTA AL HILO DE UNA NOTA ABIERTA, EN UNA
+'             TRANSACCIÓN: LA NOTA SE BLOQUEA (FOR UPDATE) PARA QUE NO SE
+'             CIERRE EN EL MEDIO, SE INSERTA LA RESPUESTA, SE ACTUALIZA LA
+'             ÚLTIMA ACTIVIDAD Y SE REGISTRA LA VISTA DE QUIEN RESPONDE.
+' Parámetros: iNota As Integer — id DE LA NOTA
+'             sTexto As String — TEXTO DE LA RESPUESTA
+' Retorna   : Boolean — TRUE SI SE GUARDÓ
+' ============================================
+Private Function Responder(iNota As Integer, sTexto As String) As Boolean
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim hConn As Connection
+  Dim rControl As Result
+  Dim iUsuario As Integer
+
+  hConn = m_ConexionBD.mConn
+  iUsuario = m_InicioCierre.IdUsuarioEnCurso
+
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
+  If sTexto = "" Then Return False
+
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. LA NOTA SIGUE ABIERTA Y EL USUARIO LA PUEDE VER ---
+  Try rControl = hConn.Exec("SELECT n.id FROM notas n WHERE n.id = &3 AND " & CondicionActiva() & " FOR UPDATE",
+    iUsuario, m_InicioCierre.IdProyectoEnCurso, iNota)
+  If Error Then Goto FALLA_SQL
+  If Not rControl.Available Then
+    Try hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("La nota ya no está abierta, o ya no tenés acceso a ella.")
+    Return False
+  Endif
+
+  ' --- 3. RESPUESTA, ACTIVIDAD Y VISTA, EN ESE ORDEN: LA VISTA QUEDA
+  '        POSTERIOR A LA ACTIVIDAD Y NO SE VE COMO NOVEDAD PROPIA ---
+  Try hConn.Exec("INSERT INTO notas_respuestas (id_nota, id_autor, texto) VALUES (&1, &2, &3)", iNota, iUsuario, sTexto)
+  If Error Then Goto FALLA_SQL
+  Try hConn.Exec("UPDATE notas SET ultima_actividad = NOW(6) WHERE id = &1", iNota)
+  If Error Then Goto FALLA_SQL
+  Try hConn.Exec("INSERT INTO notas_vistas (id_nota, id_usuario, fecha_vista) VALUES (&1, &2, NOW(6)) " &
+    "ON DUPLICATE KEY UPDATE fecha_vista = NOW(6)", iNota, iUsuario)
+  If Error Then Goto FALLA_SQL
+
+  ' --- 4. CONFIRMAR ---
+  Try hConn.Commit()
+  If Error Then Goto FALLA_SQL
+  Return True
+
+FALLA_SQL:
+  FallaTransaccion(hConn, "No se pudo guardar la respuesta:")
+  Return False
+
+End
+
+' ============================================
+' Función   : Cerrar
+' Propósito : CERRAR (= ARCHIVAR) UNA NOTA. SOLO EL AUTOR, Y SOLO SI SIGUE
+'             ABIERTA: EL FILTRO VA EN LA SENTENCIA (SC-07), NO EN LA UI.
+'             EL CIERRE CUENTA COMO ACTIVIDAD: LOS DEMÁS LO VEN COMO NOVEDAD.
+' Parámetros: iNota As Integer — id DE LA NOTA
+' Retorna   : Boolean — TRUE SI SE CERRÓ
+' ============================================
+Private Function Cerrar(iNota As Integer) As Boolean
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim hConn As Connection
+  Dim rControl As Result
+  Dim iUsuario As Integer
+
+  hConn = m_ConexionBD.mConn
+  iUsuario = m_InicioCierre.IdUsuarioEnCurso
+
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 1. LA NOTA ES DEL USUARIO Y SIGUE ABIERTA ---
+  Try rControl = hConn.Exec("SELECT id FROM notas WHERE id = &1 AND id_autor = &2 AND fecha_cierre IS NULL FOR UPDATE", iNota, iUsuario)
+  If Error Then Goto FALLA_SQL
+  If Not rControl.Available Then
+    Try hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("Solo el autor puede cerrar la nota, y tiene que estar abierta.")
+    Return False
+  Endif
+
+  ' --- 2. CIERRE Y VISTA DEL AUTOR ---
+  Try hConn.Exec("UPDATE notas SET fecha_cierre = NOW(), id_cierre_por = &2, ultima_actividad = NOW(6) WHERE id = &1", iNota, iUsuario)
+  If Error Then Goto FALLA_SQL
+  Try hConn.Exec("INSERT INTO notas_vistas (id_nota, id_usuario, fecha_vista) VALUES (&1, &2, NOW(6)) " &
+    "ON DUPLICATE KEY UPDATE fecha_vista = NOW(6)", iNota, iUsuario)
+  If Error Then Goto FALLA_SQL
+
+  ' --- 3. CONFIRMAR ---
+  Try hConn.Commit()
+  If Error Then Goto FALLA_SQL
+  Return True
+
+FALLA_SQL:
+  FallaTransaccion(hConn, "No se pudo cerrar la nota:")
+  Return False
+
+End
+
+' ============================================
+' Función   : FallaTransaccion
+' Propósito : DESHACER LA TRANSACCIÓN EN CURSO E INFORMAR. GUARDA EL TEXTO DEL
+'             ERROR ANTES DEL Rollback, QUE PODRÍA PISARLO.
+' Parámetros: hConn As Connection — CONEXIÓN CON LA TRANSACCIÓN ABIERTA
+'             sMensaje As String — PRIMERA LÍNEA DEL AVISO
+' Retorna   : nada
+' ============================================
+Private Sub FallaTransaccion(hConn As Connection, sMensaje As String)
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim sError As String
+
+  ' --- 1. TEXTO, ROLLBACK Y AVISO ---
+  sError = Error.Text
+  Try hConn.Rollback()
+  m_Sonido.sonar("Error")
+  Message.Error(sMensaje & Chr(10) & sError)
+
+End
+
+' ============================================
+' Función   : Destinos
+' Propósito : LOS DESTINOS POSIBLES DE UNA NOTA NUEVA: EL GRUPO DEL PROYECTO
+'             ABIERTO, SI EL USUARIO ES MIEMBRO ACTIVO, Y LOS USUARIOS ACTIVOS
+'             (SIN EL PROPIO, QUE VA APARTE COMO «PARA MÍ»).
+' Parámetros: ninguno
+' Retorna   : Result — tipo, id, nombre; NULL SI FALLÓ (YA INFORMADO)
+' ============================================
+Private Function Destinos() As Result
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rDestinos As Result
+
+  ' --- 1. GRUPO Y USUARIOS EN UNA SOLA CONSULTA; EL GRUPO PRIMERO ---
+  Try rDestinos = m_ConexionBD.mConn.Exec("SELECT * FROM (" &
+    "SELECT &3 AS tipo, g.id AS id, p.nombre AS nombre FROM notas_grupos g " &
+    "JOIN proyectos p ON p.id = g.id_proyecto " &
+    "JOIN notas_miembros m ON m.id_grupo = g.id AND m.id_usuario = &1 AND m.fecha_baja IS NULL " &
+    "WHERE g.id_proyecto = &2 " &
+    "UNION ALL " &
+    "SELECT &4 AS tipo, u.id AS id, u.usuario AS nombre FROM usuarios u WHERE u.activo = 1 AND u.id <> &1" &
+    ") d ORDER BY d.tipo DESC, d.nombre",
+    m_InicioCierre.IdUsuarioEnCurso, m_InicioCierre.IdProyectoEnCurso, DESTINO_GRUPO, DESTINO_USUARIO)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los destinatarios:" & Chr(10) & Error.Text)
+    Return Null
+  Endif
+
+  Return rDestinos
+
+End
+
+' ============================================
+' Función   : GrupoDelProyecto
+' Propósito : EL GRUPO DE NOTAS DE UN PROYECTO, SI EXISTE: id, CREADOR, NOMBRE
+'             DEL PROYECTO Y SI EL USUARIO EN CURSO ES MIEMBRO ACTIVO.
+' Parámetros: iProyecto As Integer — proyectos.id
+' Retorna   : Result — UNA FILA O NINGUNA; NULL SI FALLÓ (YA INFORMADO)
+' ============================================
+Private Function GrupoDelProyecto(iProyecto As Integer) As Result
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rGrupo As Result
+
+  ' --- 1. CONSULTA ---
+  Try rGrupo = m_ConexionBD.mConn.Exec("SELECT g.id, g.id_creador, uc.usuario AS creador, p.nombre AS proyecto, " &
+    "CAST(EXISTS (SELECT 1 FROM notas_miembros m WHERE m.id_grupo = g.id AND m.id_usuario = &2 AND m.fecha_baja IS NULL) AS SIGNED) AS soy_miembro " &
+    "FROM notas_grupos g JOIN usuarios uc ON uc.id = g.id_creador JOIN proyectos p ON p.id = g.id_proyecto " &
+    "WHERE g.id_proyecto = &1", iProyecto, m_InicioCierre.IdUsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo consultar el grupo de notas del proyecto:" & Chr(10) & Error.Text)
+    Return Null
+  Endif
+
+  Return rGrupo
+
+End
+
+' ============================================
+' Función   : CrearGrupo
+' Propósito : CREAR EL GRUPO DE NOTAS DEL PROYECTO ABIERTO, CON EL USUARIO EN
+'             CURSO COMO CREADOR Y PRIMER MIEMBRO. LA CLAVE ÚNICA SOBRE
+'             id_proyecto IMPIDE UN SEGUNDO GRUPO.
+' Parámetros: iProyecto As Integer — proyectos.id DEL PROYECTO ABIERTO
+' Retorna   : Boolean — TRUE SI SE CREÓ
+' ============================================
+Private Function CrearGrupo(iProyecto As Integer) As Boolean
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim hConn As Connection
+  Dim rControl As Result
+  Dim iUsuario As Integer
+  Dim iGrupo As Integer
+
+  hConn = m_ConexionBD.mConn
+  iUsuario = m_InicioCierre.IdUsuarioEnCurso
+
+  ' --- 1. VALIDACIÓN: HACE FALTA EL PROYECTO ABIERTO ---
+  If iProyecto = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Para crear el grupo de notas hay que tener abierto el proyecto.")
+    Return False
+  Endif
+
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. GRUPO Y PRIMER MIEMBRO ---
+  Try hConn.Exec("INSERT INTO notas_grupos (id_proyecto, id_creador) VALUES (&1, &2)", iProyecto, iUsuario)
+  If Error Then Goto FALLA_SQL
+  Try rControl = hConn.Exec("SELECT LAST_INSERT_ID() AS id")
+  If Error Then Goto FALLA_SQL
+  iGrupo = CInt(rControl["id"])
+  Try hConn.Exec("INSERT INTO notas_miembros (id_grupo, id_usuario, id_alta_por) VALUES (&1, &2, &2)", iGrupo, iUsuario)
+  If Error Then Goto FALLA_SQL
+
+  ' --- 3. CONFIRMAR ---
+  Try hConn.Commit()
+  If Error Then Goto FALLA_SQL
+  Return True
+
+FALLA_SQL:
+  ' UN Duplicate entry SOBRE uq_notas_grupos_proyecto ES OTRO GRUPO CREADO
+  ' EN EL MISMO MOMENTO: EL TEXTO DEL ERROR LO DICE
+  FallaTransaccion(hConn, "No se pudo crear el grupo de notas:")
+  Return False
+
+End
+
+' ============================================
+' Función   : EsCreador
+' Propósito : DECIR SI EL USUARIO EN CURSO ES EL CREADOR DEL GRUPO. LA
+'             CONSULTAN LAS OPERACIONES SOBRE MIEMBROS DENTRO DE SU PROPIA
+'             TRANSACCIÓN: LA UI PUEDE ESTAR VIEJA (TRANSFERENCIA DESDE
+'             FSysAdmin).
+' Parámetros: hConn As Connection — CONEXIÓN A USAR
+'             iGrupo As Integer — notas_grupos.id
+' Retorna   : Boolean — TRUE SI ES EL CREADOR; FALSE TAMBIÉN SI FALLÓ
+' ============================================
+Private Function EsCreador(hConn As Connection, iGrupo As Integer) As Boolean
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rControl As Result
+
+  ' --- 1. CONSULTA ---
+  Try rControl = hConn.Exec("SELECT 1 FROM notas_grupos WHERE id = &1 AND id_creador = &2", iGrupo, m_InicioCierre.IdUsuarioEnCurso)
+  If Error Then Return False
+
+  Return rControl.Available
+
+End
+
+' ============================================
+' Función   : Miembros
+' Propósito : LOS MIEMBROS ACTIVOS DE UN GRUPO, CON SU FECHA DE ALTA.
+' Parámetros: iGrupo As Integer — notas_grupos.id
+' Retorna   : Result — id_usuario, usuario, hace_alta; NULL SI FALLÓ
+' ============================================
+Private Function Miembros(iGrupo As Integer) As Result
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rMiembros As Result
+
+  ' --- 1. CONSULTA ---
+  Try rMiembros = m_ConexionBD.mConn.Exec("SELECT m.id_usuario, u.usuario, " &
+    "CAST(TIMESTAMPDIFF(SECOND, m.fecha_alta, NOW()) AS SIGNED) AS hace_alta " &
+    "FROM notas_miembros m JOIN usuarios u ON u.id = m.id_usuario " &
+    "WHERE m.id_grupo = &1 AND m.fecha_baja IS NULL ORDER BY u.usuario", iGrupo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los miembros del grupo:" & Chr(10) & Error.Text)
+    Return Null
+  Endif
+
+  Return rMiembros
+
+End
+
+' ============================================
+' Función   : Disponibles
+' Propósito : LOS USUARIOS ACTIVOS QUE NO SON MIEMBROS ACTIVOS DEL GRUPO.
+' Parámetros: iGrupo As Integer — notas_grupos.id
+' Retorna   : Result — id, usuario; NULL SI FALLÓ
+' ============================================
+Private Function Disponibles(iGrupo As Integer) As Result
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rDisponibles As Result
+
+  ' --- 1. CONSULTA ---
+  Try rDisponibles = m_ConexionBD.mConn.Exec("SELECT u.id, u.usuario FROM usuarios u WHERE u.activo = 1 " &
+    "AND NOT EXISTS (SELECT 1 FROM notas_miembros m WHERE m.id_grupo = &1 AND m.id_usuario = u.id AND m.fecha_baja IS NULL) " &
+    "ORDER BY u.usuario", iGrupo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los usuarios disponibles:" & Chr(10) & Error.Text)
+    Return Null
+  Endif
+
+  Return rDisponibles
+
+End
+
+' ============================================
+' Función   : Historial
+' Propósito : EL REGISTRO COMPLETO DE ALTAS Y BAJAS DEL GRUPO, EN ORDEN.
+' Parámetros: iGrupo As Integer — notas_grupos.id
+' Retorna   : Result — UNA FILA POR ALTA; NULL SI FALLÓ
+' ============================================
+Private Function Historial(iGrupo As Integer) As Result
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rHistorial As Result
+
+  ' --- 1. CONSULTA ---
+  Try rHistorial = m_ConexionBD.mConn.Exec("SELECT u.usuario, ua.usuario AS alta_por, " &
+    "CAST(TIMESTAMPDIFF(SECOND, m.fecha_alta, NOW()) AS SIGNED) AS hace_alta, " &
+    "IFNULL(ub.usuario, '') AS baja_por, " &
+    "CAST(IFNULL(TIMESTAMPDIFF(SECOND, m.fecha_baja, NOW()), 0) AS SIGNED) AS hace_baja, " &
+    "CAST(m.fecha_baja IS NOT NULL AS SIGNED) AS de_baja " &
+    "FROM notas_miembros m JOIN usuarios u ON u.id = m.id_usuario JOIN usuarios ua ON ua.id = m.id_alta_por " &
+    "LEFT JOIN usuarios ub ON ub.id = m.id_baja_por " &
+    "WHERE m.id_grupo = &1 ORDER BY m.id", iGrupo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el historial del grupo:" & Chr(10) & Error.Text)
+    Return Null
+  Endif
+
+  Return rHistorial
+
+End
+
+' ============================================
+' Función   : SumarMiembro
+' Propósito : DAR DE ALTA UN MIEMBRO. SOLO EL CREADOR DEL GRUPO; LA CLAVE
+'             ÚNICA SOBRE LA ALTA VIGENTE IMPIDE DUPLICARLO.
+' Parámetros: iGrupo As Integer — notas_grupos.id
+'             iUsuario As Integer — usuarios.id A SUMAR
+' Retorna   : Boolean — TRUE SI SE SUMÓ
+' ============================================
+Private Function SumarMiembro(iGrupo As Integer, iUsuario As Integer) As Boolean
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim hConn As Connection
+
+  hConn = m_ConexionBD.mConn
+
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 1. SOLO EL CREADOR ---
+  If Not EsCreador(hConn, iGrupo) Then
+    Try hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("Solo el creador del grupo puede sumar miembros.")
+    Return False
+  Endif
+
+  ' --- 2. ALTA ---
+  Try hConn.Exec("INSERT INTO notas_miembros (id_grupo, id_usuario, id_alta_por) VALUES (&1, &2, &3)",
+    iGrupo, iUsuario, m_InicioCierre.IdUsuarioEnCurso)
+  If Error Then Goto FALLA_SQL
+
+  ' --- 3. CONFIRMAR ---
+  Try hConn.Commit()
+  If Error Then Goto FALLA_SQL
+  Return True
+
+FALLA_SQL:
+  FallaTransaccion(hConn, "No se pudo sumar el miembro:")
+  Return False
+
+End
+
+' ============================================
+' Función   : QuitarMiembro
+' Propósito : DAR DE BAJA UN MIEMBRO (BAJA LÓGICA). SOLO EL CREADOR, Y NO A
+'             SÍ MISMO: EL GRUPO NO PUEDE QUEDAR SIN QUIEN LO ADMINISTRA.
+' Parámetros: iGrupo As Integer — notas_grupos.id
+'             iUsuario As Integer — usuarios.id A DAR DE BAJA
+' Retorna   : Boolean — TRUE SI SE DIO DE BAJA
+' ============================================
+Private Function QuitarMiembro(iGrupo As Integer, iUsuario As Integer) As Boolean
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim hConn As Connection
+
+  hConn = m_ConexionBD.mConn
+
+  ' --- 1. EL CREADOR NO SE DA DE BAJA ---
+  If iUsuario = m_InicioCierre.IdUsuarioEnCurso Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El creador del grupo no puede darse de baja.")
+    Return False
+  Endif
+
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. SOLO EL CREADOR ---
+  If Not EsCreador(hConn, iGrupo) Then
+    Try hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("Solo el creador del grupo puede dar de baja miembros.")
+    Return False
+  Endif
+
+  ' --- 3. BAJA LÓGICA DE LA ALTA VIGENTE ---
+  Try hConn.Exec("UPDATE notas_miembros SET fecha_baja = NOW(), id_baja_por = &3 " &
+    "WHERE id_grupo = &1 AND id_usuario = &2 AND fecha_baja IS NULL",
+    iGrupo, iUsuario, m_InicioCierre.IdUsuarioEnCurso)
+  If Error Then Goto FALLA_SQL
+
+  ' --- 4. CONFIRMAR ---
+  Try hConn.Commit()
+  If Error Then Goto FALLA_SQL
+  Return True
+
+FALLA_SQL:
+  FallaTransaccion(hConn, "No se pudo dar de baja el miembro:")
+  Return False
+
+End

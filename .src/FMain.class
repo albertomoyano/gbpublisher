@@ -77,10 +77,8 @@ Public Sub Form_Open()
   ' ============================================
 
   ' --- 1. Configuración de relojes ---
-  TimerTemp.Delay = 2000
   TimerTemp.Enabled = True
-  TimerNotitas.Delay = 5000
-  TimerNotitas.Start
+  ' LAS NOTAS YA NO TIENEN RELOJ PROPIO: LAS SONDEA TimerRed (m_Notas)
   TimerHOY.Delay = 1000
   ' EL RELOJ DE HORA SE INICIA DETENIDO; ARRANCA CUANDO EL USUARIO ABRE UN PROYECTO
   TimerHOY.Stop
@@ -101,8 +99,10 @@ Public Sub Form_Open()
   SplitterLaTeX.Layout = [2, 5]
   ' ACTUALIZAR TÍTULO
   FMain.Text = Application.Name & "  -  v" & Application.Version
-  ' EVALÚA LA CONEXIÓN REAL; SIN CONEXIÓN AÚN, QUEDA OCULTO.
-  ActualizarEstadoBotonNotitas()
+
+  ' PESTAÑA «Notas»: GRILLA, VISTAS Y LEYENDA. SIN SESIÓN NI PROYECTO QUEDA
+  ' VACÍA Y EL INDICADOR DE HBox3 OCULTO (m_Notas)
+  m_Notas.InicializarTab()
 
   ' LA IMAGEN SE LIMPIA PARA EVITAR RESIDUOS DE SESIONES ANTERIORES
   PictureBoxProyecto.Picture = Null
@@ -1871,29 +1871,6 @@ End
 Public Sub ButtonCerrarApp_Click()
 
   m_ConexionBD.CerrarTodo()
-
-End
-
-Public Sub TimerNotitas_Timer()
-
-  Dim sUsuario As String = m_InicioCierre.UsuarioEnCurso
-  Dim hRs As Result
-  Dim sSQL As String
-
-  ' Verificar conexión
-  If Not m_ConexionBD.mConn Then Return
-  If Not m_ConexionBD.mConn.Opened Then Return
-
-  ' BUSCAR NOTAS DESTINADAS AL USUARIO ACTUAL
-  sSQL = "SELECT * FROM postits WHERE para = '" & sUsuario & "' AND oculto = 0 AND leido = 0 ORDER BY fecha DESC"
-  hRs = m_ConexionBD.mConn.Exec(sSQL)
-
-  ' SI HAY NOTAS DISPONIBLES, MOSTRAR FORMULARIO DE NOTAS
-  If hRs.Available Then
-    FNotasRecibidas.CargarNota(hRs)
-    m_Sonido.sonar("Info")
-    FNotasRecibidas.Show
-  Endif
 
 End
 
@@ -6720,6 +6697,9 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   HBoxBotones.Visible = True
   PanelXML.Visible = True
   SplitterPrincipal.Visible = True
+  ' NOTAS: PESTAÑA E INDICADOR DEL PROYECTO RECIÉN ABIERTO (IdProyectoEnCurso
+  ' YA FIJADO ARRIBA)
+  m_Notas.CambioDeProyecto()
   ' LA IMAGEN SE LIMPIA PARA EVITAR RESIDUOS DE SESIONES ANTERIORES
   PictureBoxProyecto.Picture = Null
 
@@ -7275,46 +7255,115 @@ Public Sub ckbExtended_Click()
 
 End
 
-Public Sub btnNotitas_Click()
+' ============================================
+' Función   : gvNotas_Click
+' Propósito : Solapa «Notas»: muestra el hilo de la nota elegida y registra
+'             que el usuario la vio (m_Notas)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvNotas_Click()
 
-  ' VOLVER A HABILITAR EL TIMER SI ESTÁ DETENIDO
-  If Not TimerNotitas.Enabled Then
-    TimerNotitas.Start()
-  Endif
-
-  m_Sonido.sonar("Info")
-  FNotaNueva.Show
+  m_Notas.ElegirNota()
 
 End
 
 ' ============================================
-' Función   : ActualizarEstadoBotonNotitas
-' Propósito : Habilita btnNotitas solo si existe una conexión de
-'             usuario efectivamente abierta. Fuente de verdad:
-'             m_ConexionBD.mConn.Opened, MISMO PREDICADO QUE USA
-'             EL LOGIN. NO los TextBox de la UI (son estado de
-'             pantalla, no de conexión).
+' Función   : cmbNotasVista_Click
+' Propósito : Solapa «Notas»: cambia entre activas y archivadas
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub ActualizarEstadoBotonNotitas()
+Public Sub cmbNotasVista_Click()
 
-  ' --- 1. VALIDACIÓN: ¿EXISTE EL MÓDULO Y EL OBJETO CONEXIÓN? ---
-  ' RC-GM-17: VALIDACIÓN Y ACCESO A PROPIEDAD EN If ANIDADOS,
-  ' NUNCA EN UN SOLO And (GAMBAS NO ES SHORT-CIRCUIT).
-  ' MISMO ORDEN QUE EL GUARD DEL LOGIN EN FLogin.
-  If Not Object.IsValid(m_ConexionBD) Then
-    btnNotitas.Visible = False
-    Return
-  Endif
+  m_Notas.CambiarVista()
 
-  If Not Object.IsValid(m_ConexionBD.mConn) Then
-    btnNotitas.Visible = False
-    Return
-  Endif
+End
 
-  ' --- 2. FUENTE DE VERDAD: ESTADO REAL DE LA CONEXIÓN DE USUARIO ---
-  btnNotitas.Visible = m_ConexionBD.mConn.Opened
+' ============================================
+' Función   : chkNotasProgramar_Click
+' Propósito : Solapa «Notas»: habilita la hora de despacho
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub chkNotasProgramar_Click()
+
+  m_Notas.CambiarProgramacion()
+
+End
+
+' ============================================
+' Función   : btnNotasEnviar_Click
+' Propósito : Solapa «Notas»: envía el texto como nota nueva
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasEnviar_Click()
+
+  m_Notas.Enviar()
+
+End
+
+' ============================================
+' Función   : btnNotasResponder_Click
+' Propósito : Solapa «Notas»: agrega el texto como respuesta a la nota elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasResponder_Click()
+
+  m_Notas.ResponderElegida()
+
+End
+
+' ============================================
+' Función   : btnNotasCerrar_Click
+' Propósito : Solapa «Notas»: cierra y archiva la nota elegida (solo el autor)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasCerrar_Click()
+
+  m_Notas.CerrarElegida()
+
+End
+
+' ============================================
+' Función   : btnGrupoCrear_Click
+' Propósito : Solapa «Notas», pestaña «Grupo»: crea el grupo de notas del
+'             proyecto abierto
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGrupoCrear_Click()
+
+  m_Notas.CrearGrupoAbierto()
+
+End
+
+' ============================================
+' Función   : btnGrupoSumar_Click
+' Propósito : Solapa «Notas», pestaña «Grupo»: suma al grupo el usuario
+'             elegido (solo el creador)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGrupoSumar_Click()
+
+  m_Notas.SumarElegido()
+
+End
+
+' ============================================
+' Función   : btnGrupoBaja_Click
+' Propósito : Solapa «Notas», pestaña «Grupo»: da de baja el miembro elegido
+'             (solo el creador)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGrupoBaja_Click()
+
+  m_Notas.BajaElegido()
 
 End
 
@@ -7336,11 +7385,14 @@ Public Sub TimerRed_Timer()
   ' --- 2. SONDEAR (PUEDE BLOQUEAR HASTA EL TIMEOUT DE LA SONDA, 3s) ---
   ' RC-GM-02: SondearEstadoConexion YA MANEJA SU PROPIO If Error INTERNO.
   If m_ConexionBD.SondearEstadoConexion() Then
-    ' --- 3a. CONEXIÓN VIVA: VERDE ---
+    ' --- 3a. CONEXIÓN VIVA: VERDE, Y SONDEO DE LAS NOTAS ---
     PintarSemaforoConexion(2)
+    m_Notas.bRedViva = True
+    m_Notas.Sondear()
   Else
-    ' --- 3b. CONEXIÓN CAÍDA: ROJO ---
+    ' --- 3b. CONEXIÓN CAÍDA: ROJO. LAS NOTAS NO CONSULTAN HASTA QUE VUELVA ---
     PintarSemaforoConexion(0)
+    m_Notas.bRedViva = False
   Endif
 
 End

@@ -831,48 +831,82 @@ End
 
 ' ============================================
 ' Función   : btnGuardarCambiosProyecto_Click
-' Propósito : Actualiza el estado de un proyecto, incluyendo
-'             el campo ocupado para liberar proyectos bloqueados
-'             por cortes de energía o cuelgues de la app
+' Propósito : ACTUALIZAR EL ESTADO DE UN PROYECTO, INCLUIDO ocupado PARA
+'             LIBERAR PROYECTOS BLOQUEADOS POR CORTES O CUELGUES. ARCHIVAR UN
+'             PROYECTO CIERRA LAS NOTAS ABIERTAS DE SU GRUPO EN LA MISMA
+'             TRANSACCIÓN, FIRMADAS CON EL NOMBRE DEL ADMINISTRADOR. REACTIVARLO
+'             NO LAS REABRE.
+' Parámetros: ninguno
+' Retorna   : nada
 ' ============================================
 Public Sub btnGuardarCambiosProyecto_Click()
 
-  ' --- 1. Verificar selección y conexión ---
-  Dim iRow As Integer = TableViewProyectos.Row
+  ' --- 0. INICIALIZACIÓN ---
+  Dim iRow As Integer
+  Dim iProyectoID As Integer
+  Dim sNombreProyecto As String
+  Dim bNuevoEstado As Boolean
+  Dim sError As String
 
+  ' --- 1. VERIFICAR SELECCIÓN Y CONEXIÓN ---
+  iRow = TableViewProyectos.Row
   If iRow < 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("Debe seleccionar un proyecto de la tabla para modificar.")
     Return
   Endif
 
-  If Not hConnServidor Or Not hConnServidor.Opened Then
+  ' NULL Y Opened EN If SEPARADOS: Or NO ES SHORT-CIRCUIT (RC-GM-17)
+  If Not hConnServidor Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+  If Not hConnServidor.Opened Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay conexión al servidor.")
     Return
   Endif
 
-  ' --- 2. Obtener datos del proyecto ---
-  Dim iProyectoID As Integer = Val(TableViewProyectos[iRow, 0].Text)
-  Dim sNombreProyecto As String = TableViewProyectos[iRow, 1].Text
-  Dim bNuevoEstado As Boolean = RadioButtonEnCurso.Value
+  ' --- 2. DATOS DEL PROYECTO ---
+  iProyectoID = Val(TableViewProyectos[iRow, 0].Text)
+  sNombreProyecto = TableViewProyectos[iRow, 1].Text
+  bNuevoEstado = RadioButtonEnCurso.Value
 
-  ' --- 3. Actualizar activo y ocupado en la BD ---
-  ' OCUPADO SE INCLUYE SIEMPRE PARA PERMITIR LIBERAR PROYECTOS BLOQUEADOS
-  hConnServidor.Exec("UPDATE proyectos SET activo = " &
-    If(bNuevoEstado, "TRUE", "FALSE") &
-      ", ocupado = " & If(chkOcupado.Value, "1", "0") &
-      ", fecha_modificacion = NOW() " &
-      "WHERE id = " & iProyectoID & ";")
+  ' --- 3. ESTADO DEL PROYECTO Y, SI SE ARCHIVA, CIERRE DE SUS NOTAS ---
+  ' UNA SOLA TRANSACCIÓN (SC-07): SI EL CIERRE FALLA, EL PROYECTO NO QUEDA
+  ' ARCHIVADO CON NOTAS ABIERTAS. OCUPADO SE INCLUYE SIEMPRE PARA PERMITIR
+  ' LIBERAR PROYECTOS BLOQUEADOS
+  Try hConnServidor.Begin()
+  If Error Then Goto FALLA_SQL
 
-    m_Sonido.sonar("Info")
-    Message.Info("Estado del proyecto <b>'" & sNombreProyecto & "'</b> actualizado correctamente.")
+  Try hConnServidor.Exec("UPDATE proyectos SET activo = &2, ocupado = &3, fecha_modificacion = NOW() WHERE id = &1",
+    iProyectoID, If(bNuevoEstado, 1, 0), If(chkOcupado.Value, 1, 0))
+  If Error Then Goto FALLA_SQL
 
-    CargarProyectosDelServidor()
+  If Not bNuevoEstado Then
+    ' EL CIERRE ES ACTIVIDAD: LOS MIEMBROS LO VEN COMO NOVEDAD
+    Try hConnServidor.Exec("UPDATE notas n JOIN notas_grupos g ON g.id = n.id_grupo " &
+      "SET n.fecha_cierre = NOW(), n.cierre_sistema = &2, n.ultima_actividad = NOW(6) " &
+      "WHERE g.id_proyecto = &1 AND n.fecha_cierre IS NULL", iProyectoID, sUsuarioActual)
+    If Error Then Goto FALLA_SQL
+  Endif
 
-  Catch
-    m_Sonido.sonar("Error")
-    Message.Error("Error guardando cambios: " & Error.Text)
+  Try hConnServidor.Commit()
+  If Error Then Goto FALLA_SQL
+
+  ' --- 4. RESULTADO ---
+  m_Sonido.sonar("Info")
+  Message.Info("Estado del proyecto <b>'" & sNombreProyecto & "'</b> actualizado correctamente.")
+  CargarProyectosDelServidor()
+  Return
+
+FALLA_SQL:
+  ' EL TEXTO SE GUARDA ANTES DEL Rollback, QUE PODRÍA PISARLO
+  sError = Error.Text
+  Try hConnServidor.Rollback()
+  m_Sonido.sonar("Error")
+  Message.Error("Error guardando cambios: " & sError)
 
 End
 
