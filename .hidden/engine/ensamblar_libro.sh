@@ -158,6 +158,12 @@ for ruta in "${RUTAS[@]}"; do
     elif ! bien_formado "$archivo"; then
         printf '  %s✗%s mal formado %s\n' "$C_ERROR" "$C_RESET" "$ruta"
         problemas=$((problemas + 1))
+    else
+        # EL .md POSTERIOR AL CANÓNICO: HTML Y EPUB SALDRÍAN SIN LOS ÚLTIMOS
+        # CAMBIOS. AVISO Y NO PROBLEMA: EL ENSAMBLADO SIGUE. EL NOMBRE SALE
+        # DE LA RUTA DEL MANIFIESTO, jats/c-{nombre}.xml (m_XML)
+        nombre_pieza="$(basename "$ruta" .xml)"
+        avisar_md_posterior "${nombre_pieza#c-}" "$archivo"
     fi
 done
 

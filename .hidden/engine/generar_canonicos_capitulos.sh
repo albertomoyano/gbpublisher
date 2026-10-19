@@ -162,12 +162,11 @@ procesar_capitulo() {
     # --- A. RUTAS ---
     # EL NOMBRE SIN PREFIJO, COMO Mid(…, InStr(…, "-") + 1) EN GAMBAS
     base="${nombre#*-}"
-    case "$nombre" in
-        fm-*) carpeta="front-matter" ;;
-        a-*)  carpeta="articulos" ;;
-        bm-*) carpeta="back-matter" ;;
-        *)    fallo "prefijo no reconocido (se espera fm-, a- o bm-)"; return 1 ;;
-    esac
+    # LA REGLA PREFIJO → CARPETA VIVE EN comun.sh (carpeta_de_pieza)
+    if ! carpeta="$(carpeta_de_pieza "$nombre")"; then
+        fallo "prefijo no reconocido (se espera fm-, a- o bm-)"
+        return 1
+    fi
 
     md="$DIR_PROYECTO/$carpeta/$nombre.md"
     info="$DIR_PROYECTO/tmp/info-$base.xml"

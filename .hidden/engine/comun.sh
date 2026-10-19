@@ -126,6 +126,52 @@ estilo_canonico() {
 }
 
 # ============================================================================
+# Función   : carpeta_de_pieza
+# Propósito : La carpeta del .md de una pieza, según el prefijo de su
+#             nombre_archivo: fm- front-matter, a- articulos, bm- back-matter.
+# Parámetros: $1 nombre_archivo (a-02-metodologia)
+# Retorna   : imprime la carpeta y devuelve 0; con un prefijo no reconocido
+#             no imprime nada y devuelve 1
+# Nota      : ÚNICO LUGAR DE ESTA REGLA EN engine/. LA USAN
+#             generar_canonicos_capitulos.sh Y, POR avisar_md_posterior,
+#             preparar_latex_libro.sh Y ensamblar_libro.sh: SI CAMBIA UNA
+#             CARPETA, CAMBIA ACÁ
+# ============================================================================
+carpeta_de_pieza() {
+    case "$1" in
+        fm-*) printf '%s\n' "front-matter" ;;
+        a-*)  printf '%s\n' "articulos" ;;
+        bm-*) printf '%s\n' "back-matter" ;;
+        *)    return 1 ;;
+    esac
+}
+
+# ============================================================================
+# Función   : avisar_md_posterior
+# Propósito : Avisa si el .md de una pieza es posterior a su canónico: el
+#             canónico no tiene los últimos cambios y la salida los pierde
+#             sin ningún error.
+# Parámetros: $1 nombre_archivo  $2 ruta del canónico
+# Retorna   : siempre 0; el aviso lo cuenta aviso()
+# Nota      : USA DIR_PROYECTO, QUE DEFINE CADA SCRIPT.
+#             POR FECHA DE MODIFICACIÓN: UN GUARDADO SIN CAMBIOS REALES
+#             TAMBIÉN AVISA. SOLO MIRA EL .md: UN CAMBIO EN LA BASE QUE
+#             LLEGA AL CANÓNICO POR tmp/info-*.xml O tmp/biblio-*.xml NO SE
+#             DETECTA. SIN .md O CON PREFIJO NO RECONOCIDO NO AVISA: ESO LO
+#             INFORMA LA GENERACIÓN DEL CANÓNICO
+# ============================================================================
+avisar_md_posterior() {
+    local carpeta md
+    carpeta="$(carpeta_de_pieza "$1")" || return 0
+    md="$DIR_PROYECTO/$carpeta/$1.md"
+    # EL -f PRIMERO: SIN .md NO HAY NADA QUE COMPARAR
+    if [[ -f "$md" && "$md" -nt "$2" ]]; then
+        aviso "$carpeta/$1.md es posterior a su canónico: regenerá el canónico"
+    fi
+    return 0
+}
+
+# ============================================================================
 # Función   : mostrar_cola
 # Propósito : Imprime las últimas líneas de una salida capturada, sangradas.
 # Parámetros: $1 texto; $2 cantidad de líneas (15 si se omite)

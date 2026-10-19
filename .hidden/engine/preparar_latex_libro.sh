@@ -115,6 +115,10 @@ preparar_pieza() {
         return 1
     fi
 
+    # EL .md POSTERIOR AL CANÓNICO: EL PDF SALDRÍA SIN LOS ÚLTIMOS CAMBIOS Y
+    # SIN ERROR. AVISO Y NO FALLO: LA PIEZA SE PREPARA IGUAL
+    avisar_md_posterior "$nombre" "$canonico"
+
     # --- B. COLOREO DEL CÓDIGO (SC-42) ---
     # LA HOJA LEE LOS BLOQUES DE dir_codigo Y FRENA SI FALTA UNO: SIN ESTE
     # PASO LA PIEZA NO SE TRANSFORMA
