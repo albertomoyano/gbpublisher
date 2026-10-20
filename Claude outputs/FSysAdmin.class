@@ -1,0 +1,3230 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FSysAdmin
+' Propósito  : Panel de administración del sistema para el
+'              editor de la editorial. Permite gestionar
+'              usuarios MySQL, proyectos, credenciales de API
+'              y respaldos de base de datos.
+'              Autenticación en dos capas:
+'              1) SQLite local (.superuser.sqlite)
+'              2) MySQL con credenciales de aplicación
+' ============================================
+
+Public $claveSeleccionada As String
+' CONEXIÓN SQLITE LOCAL PARA ADMIN
+Public hConn As Connection
+' CONEXIÓN AL SERVIDOR MYSQL
+Public hConnServidor As Connection
+Public sUsuarioActual As String
+Public sRolActual As String
+Public sServidorActual As String
+Private $aColumnas As String[]
+Private $aRegistros As String[][]
+' CONTROLA SI ESTAMOS EN MODO EDICIÓN O NUEVO
+Private $bModoEdicion As Boolean
+' --- VARIABLES PARA ABM DE COLECCIONES / SERIES (TabStrip 4) ---
+Private $iColeccionActual As Integer = 0
+Private $iSerieActual As Integer = 0
+Private $aIdsColecciones As New Integer[]
+Private $aColeccionesActivas As New Boolean[]
+Private $aIdsSeries As New Integer[]
+Private $bActivaColeccionOriginal As Boolean = False
+' --- VARIABLES PARA ABM DE FORMATOS PDF ---
+Private $iFormatoActual As Integer = 0
+Private $bFormatoEsCustom As Boolean = False
+' --- PESTAÑA «Notas» (tsFSysAdmin, ÍNDICE 6): ADMINISTRACIÓN DE NOTAS ---
+Private Const PESTANA_NOTAS As Integer = 6
+' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_NOTAS_GRUPOS As Integer = 5
+Private Const COLUMNAS_NOTAS_AUTORES As Integer = 2
+' UNA ENTRADA POR FILA O ÍTEM, EN EL MISMO ORDEN
+Private $aNotasGrupos As New Integer[]
+Private $aNotasCreadorActivo As New Boolean[]
+Private $aNotasAutores As New Integer[]
+Private $aNotasCandidatos As New Integer[]
+
+' ============================================
+' Función   : Form_Show
+' Propósito : APLICAR LA CONFIGURACIÓN DE BOTONES DEL MARCO
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Inicializa el formulario, conecta a la base
+'             SQLite local y carga los datos iniciales
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. Verificar y conectar base SQLite local ---
+  Dim sRuta As String = User.Home &/ ".gbpublisher/.superuser.sqlite"
+
+  If Not Exist(sRuta) Then
+    CreateDataBase()
+  Endif
+
+  If Not Conectar(sRuta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo conectar a la base local.")
+    Me.Close()
+    Return
+  Endif
+
+  ' --- 2. Cargar IPs disponibles ---
+  m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
+
+  ' --- 3. Mostrar paneles de validación inicial ---
+  HBox1a.Visible = True
+  TableViewUsuarios.Visible = True
+  HBox2a.Visible = True
+  HBox3a.Visible = True
+  HBox4a.Visible = True
+  SplitterPDF.Layout = [1, 3]
+
+  txtAdministrador.SetFocus()
+
+  ' --- 4. Cargar lista de respaldos disponibles ---
+  CargarListaRespaldos()
+
+End
+
+' ============================================
+' Función   : CreateDataBase
+' Propósito : Crea la base de datos SQLite local para el
+'             administrador si no existe, con usuario por
+'             defecto admin/admin123
+' ============================================
+Public Sub CreateDataBase()
+
+  ' --- 1. Inicialización de variables ---
+  Dim sHost As String = User.Home &/ ".gbpublisher"
+  Dim sDbName As String = ".superuser.sqlite"
+  Dim sTablas As String
+
+  ' --- 2. Verificar que el directorio base existe ---
+  If Not Exist(sHost) Then Mkdir sHost
+
+  ' --- 3. Evitar recrear si ya existe ---
+  If Exist(sHost &/ sDbName) Then Return
+
+  ' --- 4. Crear y conectar la base ---
+  hConn = New Connection
+  hConn.Type = "sqlite3"
+  hConn.Host = sHost
+  hConn.Open()
+
+  hConn.Databases.Add(sDbName)
+  Wait 0.5
+
+  hConn.Close()
+
+  ' --- 5. Reconectar con la base creada ---
+  hConn.Name = sDbName
+  hConn.Open()
+
+  ' --- 6. Crear estructura y datos iniciales ---
+  sTablas = "CREATE TABLE superuser (" &
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, " &
+    "usuario TEXT NOT NULL UNIQUE, " &
+    "clave TEXT NOT NULL, " &
+    "email TEXT);"
+  hConn.Exec(sTablas)
+
+  hConn.Exec("INSERT INTO superuser (usuario, clave, email) VALUES " &
+    "('admin', '" & Hash.SHA256("admin123") & "', NULL);")
+
+  hConn.Close()
+
+  m_Sonido.sonar("Info")
+  Message.Info("Base de datos local creada." & Chr(10) & Chr(10) &
+    "Usuario inicial:" & Chr(10) &
+    "Usuario: admin" & Chr(10) &
+    "Contraseña: admin123" & Chr(10) & Chr(10) &
+    "¡Cámbiela inmediatamente!")
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error creando la base: " & Error.Text & " (" & Error.Where & ")")
+
+End
+
+' ============================================
+' Función   : Conectar
+' Propósito : Abre la conexión a la base SQLite local
+' Parámetros: sRuta As String — ruta absoluta al archivo .sqlite
+' Retorna   : Boolean — True si la conexión fue exitosa
+' ============================================
+Public Function Conectar(sRuta As String) As Boolean
+
+  ' --- 1. Configurar y abrir conexión ---
+  hConn = New Connection
+  hConn.Type = "sqlite3"
+  hConn.Host = File.Dir(sRuta)
+  hConn.Name = File.Name(sRuta)
+
+  Try hConn.Open()
+  If Not hConn.Opened Then Return False
+
+  ' --- 2. Activar integridad referencial ---
+  hConn.Exec("PRAGMA foreign_keys = ON;")
+  Return True
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error conectando a la base: " & Error.Text & " (" & Error.Where & ")")
+  Return False
+
+End
+
+' ============================================
+' Función   : btnValidarSuperuser_Click
+' Propósito : Valida al administrador en dos pasos:
+'             1) SQLite local, 2) MySQL con credenciales de app
+' ============================================
+Public Sub btnValidarSuperuser_Click()
+
+  ' --- 1. Obtener valores del formulario ---
+  Dim sUsuario As String = Trim(txtAdministrador.Text)
+  Dim sClave As String = Trim(txtClaveAdministrador.Text)
+  Dim sIP As String = Trim(ComboBoxIP.Text)
+
+  ' --- 2. Validaciones básicas ---
+  If Not sUsuario Or Not sClave Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar usuario y contraseña.")
+    Return
+  Endif
+
+  If Not sIP Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar una IP de servidor.")
+    Return
+  Endif
+
+  ' --- 3. Validar contra SQLite local ---
+  If Not ValidarAdminLocal(sUsuario, sClave) Then
+    txtAdministrador.Text = ""
+    txtClaveAdministrador.Text = ""
+    Return
+  Endif
+
+  ' --- 4. Conectar a MySQL ---
+  If Not ConectarMySQL(sIP) Then
+    m_Sonido.sonar("Error")
+    Message.Error("Admin válido, pero no se pudo conectar al servidor MySQL.")
+    Return
+  Endif
+
+  ' --- 5. Habilitar panel de gestión ---
+  sUsuarioActual = sUsuario
+  sServidorActual = sIP
+  sRolActual = "superadmin"
+
+  m_Sonido.sonar("Info")
+  Message.Info("Acceso concedido como SUPERADMINISTRADOR.")
+
+  HabilitarABMUsuarios()
+  PanelAdmin.Visible = False
+
+  ' --- INICIALIZAR TABSTRIP 4: COLECCIONES / SERIES ---
+  ' (AQUÍ YA hConnServidor ESTÁ ABIERTO POR ConectarMySQL)
+  ConfigurarGridViewColecciones()
+  ConfigurarGridViewSeries()
+  CargarColecciones()
+
+  ' --- 6. Limpiar campos de acceso ---
+  txtAdministrador.Text = ""
+  txtClaveAdministrador.Text = ""
+  txtEmailAdministrador.Text = ""
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error: " & Error.Text & " (" & Error.Where & ")")
+
+End
+
+' ============================================
+' Función   : ValidarAdminLocal
+' Propósito : Verifica las credenciales del administrador
+'             contra la base SQLite local
+' Parámetros: sUsuario As String — nombre de usuario
+'             sClave   As String — contraseña en texto plano
+' Retorna   : Boolean — True si las credenciales son válidas
+' ============================================
+Private Function ValidarAdminLocal(sUsuario As String, sClave As String) As Boolean
+
+  ' --- 1. Generar hash de la clave ---
+  Dim r As Result
+  Dim sHash As String = Hash.SHA256(sClave)
+
+  ' --- 2. Consultar en SQLite ---
+  r = hConn.Exec("SELECT id FROM superuser " &
+    "WHERE usuario = '" & sUsuario & "' " &
+    "AND clave = '" & sHash & "';")
+
+  If Not r.Available Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Usuario o contraseña de administrador incorrectos.")
+    Return False
+  Endif
+
+  Return True
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error validando administrador local: " & Error.Text)
+  Return False
+
+End
+
+' ============================================
+' Función   : ConectarMySQL
+' Propósito : Abre la conexión al servidor MySQL usando
+'             las credenciales fijas de la aplicación
+' Parámetros: sIP As String — dirección IP del servidor MySQL
+' Retorna   : Boolean — True si la conexión fue exitosa
+' ============================================
+Private Function ConectarMySQL(sIP As String) As Boolean
+
+  ' --- 1. Configurar y abrir conexión ---
+  hConnServidor = New Connection
+  hConnServidor.Type = "mysql"
+  hConnServidor.Host = sIP
+  hConnServidor.Port = 3306
+  hConnServidor.Name = "gbpublisher"
+  hConnServidor.User = "app_user"
+  hConnServidor.Password = "AppUser2024!"
+
+  Try hConnServidor.Open()
+
+  If Not hConnServidor.Opened Then Return False
+
+  Return True
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error conectando a MySQL: " & Error.Text)
+  Return False
+
+End
+
+' ============================================
+' Función   : HabilitarABMUsuarios
+' Propósito : Muestra el panel de gestión tras autenticación
+'             exitosa y carga los datos del servidor
+' ============================================
+Private Sub HabilitarABMUsuarios()
+
+  ' --- 1. Mostrar panel y configurar botones ---
+  PanelAdminUsuarios.Visible = True
+  btnCrearUsuario.Visible = True
+  btnGuardarUsuario.Visible = False
+  btnGuardarCambiosUsuario.Visible = False
+
+  LabelSesion.Text = "Conectado como administrador: " & sUsuarioActual & " @ " & sServidorActual
+
+  ' --- 2. Cargar datos del servidor ---
+  CargarUsuariosDelServidor()
+  CargarProyectosDelServidor()
+
+  ' --- 3. Inicializar módulo de APIs ---
+  m_ApiCredenciales.EstablecerConexion(hConnServidor)
+  ConfigurarGridView()
+  txtApiKey.Password = True
+  CargarCredenciales()
+  LimpiarFormulario()
+
+  ' --- 4. Inicializar ABM de formatos PDF ---
+  m_FormatosPDF.EstablecerConexion(hConnServidor)
+  m_FormatosPDF.ConfigurarColumnView(cvFormatos)
+  m_FormatosPDF.CargarClasificaciones(lbClasificacion)
+  ' CORRIGE Password=True HEREDADO DEL DISEÑADOR EN EL COMENTARIO
+  txtComentarioFormatoPDF.Password = False
+  LimpiarDetalleFormato()
+
+  ' --- 5. INICIALIZAR LA PESTAÑA «Notas» ---
+  ConfigurarGridsNotas()
+  CargarNotasAdmin()
+
+End
+
+' ============================================
+' Función   : CargarUsuariosDelServidor
+' Propósito : Consulta y muestra todos los usuarios MySQL
+'             en el TableView de usuarios
+' ============================================
+Private Sub CargarUsuariosDelServidor()
+
+  ' --- 1. Limpiar y configurar TableView ---
+  Dim rUsuarios As Result
+  Dim iRow As Integer
+
+  TableViewUsuarios.Clear()
+  TableViewUsuarios.Rows.Count = 0
+  TableViewUsuarios.Columns.Count = 6
+
+  TableViewUsuarios.Columns[0].Title = "ID"
+  TableViewUsuarios.Columns[0].Width = 50
+  TableViewUsuarios.Columns[1].Title = "Usuario"
+  TableViewUsuarios.Columns[1].Width = 150
+  TableViewUsuarios.Columns[2].Title = "Email"
+  TableViewUsuarios.Columns[2].Width = 400
+  TableViewUsuarios.Columns[3].Title = "Activo"
+  TableViewUsuarios.Columns[3].Width = 70
+  TableViewUsuarios.Columns[4].Title = "Fecha Creación"
+  TableViewUsuarios.Columns[4].Width = 200
+  TableViewUsuarios.Columns[5].Title = "En Línea"
+  TableViewUsuarios.Columns[5].Width = 70
+
+  ' --- 2. Consultar y llenar datos ---
+  rUsuarios = hConnServidor.Exec("SELECT id, usuario, email, activo, fecha_creacion, en_linea " &
+    "FROM usuarios ORDER BY usuario;")
+
+  While rUsuarios.Available
+    TableViewUsuarios.Rows.Count += 1
+    iRow = TableViewUsuarios.Rows.Count - 1
+
+    TableViewUsuarios[iRow, 0].Text = rUsuarios["id"]
+    TableViewUsuarios[iRow, 1].Text = rUsuarios["usuario"]
+    TableViewUsuarios[iRow, 2].Text = If(rUsuarios["email"], rUsuarios["email"], "")
+    TableViewUsuarios[iRow, 3].Text = If(rUsuarios["activo"], "Sí", "No")
+    TableViewUsuarios[iRow, 4].Text = Format(rUsuarios["fecha_creacion"], "dd/mm/yyyy hh:nn")
+    TableViewUsuarios[iRow, 5].Text = If(rUsuarios["en_linea"], "Sí", "No")
+
+    rUsuarios.MoveNext()
+  Wend
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error al cargar usuarios: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : btnCrearAdmin_Click
+' Propósito : Crea o modifica las credenciales del
+'             administrador local en SQLite
+' ============================================
+Public Sub btnCrearAdmin_Click()
+
+  ' --- 1. Obtener y validar datos del formulario ---
+  Dim sUsuario As String = Trim(txtAdministrador.Text)
+  Dim sClave As String = Trim(txtClaveAdministrador.Text)
+  Dim sEmail As String = Trim(txtEmailAdministrador.Text)
+  Dim sClaveHash As String
+  Dim sSQL As String
+  Dim rCheck As Result
+
+  If Not sUsuario Or Not sClave Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Usuario y contraseña son obligatorios.")
+    Return
+  Endif
+
+  If Len(sClave) < 8 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La contraseña debe tener al menos 8 caracteres.")
+    Return
+  Endif
+
+  ' --- 2. Verificar si el admin ya existe ---
+  sClaveHash = Hash.SHA256(sClave)
+  rCheck = hConn.Exec("SELECT id FROM superuser WHERE usuario = '" & sUsuario & "';")
+
+  If rCheck.Available Then
+    ' ACTUALIZAR ADMIN EXISTENTE
+    sSQL = "UPDATE superuser SET clave = '" & sClaveHash & "'"
+    If sEmail And sEmail <> "@." Then
+      sSQL &= ", email = '" & sEmail & "'"
+    Endif
+    sSQL &= " WHERE usuario = '" & sUsuario & "';"
+    hConn.Exec(sSQL)
+    m_Sonido.sonar("Info")
+    Message.Info("Contraseña del administrador '" & sUsuario & "' actualizada.")
+  Else
+    ' CREAR NUEVO ADMIN
+    If Not sEmail Or sEmail = "@." Then
+      sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
+        sUsuario & "', '" & sClaveHash & "', NULL);"
+    Else
+      sSQL = "INSERT INTO superuser (usuario, clave, email) VALUES ('" &
+        sUsuario & "', '" & sClaveHash & "', '" & sEmail & "');"
+    Endif
+    hConn.Exec(sSQL)
+    m_Sonido.sonar("Info")
+    Message.Info("Administrador local '" & sUsuario & "' creado exitosamente.")
+  Endif
+
+  ' --- 3. Limpiar campos ---
+  txtAdministrador.Text = ""
+  txtClaveAdministrador.Text = ""
+  txtEmailAdministrador.Text = ""
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error: " & Error.Text & " (" & Error.Where & ")")
+
+End
+
+' ============================================
+' Función   : TableViewUsuarios_Click
+' Propósito : Carga en los controles del formulario los datos
+'             del usuario seleccionado, incluyendo el estado
+'             en_linea leído directamente desde la BD
+' ============================================
+Public Sub TableViewUsuarios_Click()
+
+  ' --- 1. Obtener fila seleccionada ---
+  Dim iRow As Integer = TableViewUsuarios.Row
+  Dim sFechaCreacion As String
+
+  btnCrearUsuario.Visible = False
+  btnGuardarUsuario.Visible = False
+  btnGuardarCambiosUsuario.Visible = True
+
+  If iRow < 0 Then Return
+
+  ' --- 2. Cargar datos básicos del usuario ---
+  txtUsuario.Text = TableViewUsuarios[iRow, 1].Text
+  txtEmailUsuario.Text = TableViewUsuarios[iRow, 2].Text
+  txtClaveUsuario.Text = ""  ' NO SE MUESTRA LA CONTRASEÑA POR SEGURIDAD
+
+  If TableViewUsuarios[iRow, 3].Text = "Sí" Then
+    RadioButtonSi.Value = True
+  Else
+    RadioButtonNo.Value = True
+  Endif
+
+  sFechaCreacion = TableViewUsuarios[iRow, 4].Text
+  If sFechaCreacion Then
+    Try DateBoxCreacion.Value = CDate(sFechaCreacion)
+  Endif
+
+  ' --- 3. Cargar estado en_linea desde BD (estado real) ---
+  ' SE LEE DESDE BD Y NO DEL GRID PARA REFLEJAR EL ESTADO REAL
+  ' ESPECIALMENTE ÚTIL TRAS CORTES DE ENERGÍA O CUELGUES DE LA APP
+  Dim rEnLinea As Result
+  rEnLinea = hConnServidor.Exec("SELECT en_linea FROM usuarios WHERE id = &1",
+    Val(TableViewUsuarios[iRow, 0].Text))
+  If rEnLinea.Available Then
+    chkEnLinea.Value = rEnLinea["en_linea"] = True
+  Endif
+
+  ' --- 4. Cargar fecha de último acceso ---
+  CargarUltimoAcceso(Val(TableViewUsuarios[iRow, 0].Text))
+
+Catch
+
+End
+
+' ============================================
+' Función   : CargarUltimoAcceso
+' Propósito : Lee la fecha de último acceso desde la BD
+'             y la muestra en el DateBox correspondiente
+' Parámetros: iUsuarioID As Integer — ID del usuario a consultar
+' ============================================
+Private Sub CargarUltimoAcceso(iUsuarioID As Integer)
+
+  Dim r As Result
+
+  r = hConnServidor.Exec("SELECT ultimo_acceso FROM usuarios WHERE id = " & iUsuarioID & ";")
+
+  If r.Available And r["ultimo_acceso"] Then
+    Try DateBoxUltimoAcceso.Value = r["ultimo_acceso"]
+  Else
+    DateBoxUltimoAcceso.Value = Null
+  Endif
+
+Catch
+
+End
+
+' ============================================
+' Función   : LimpiarControlesUsuario
+' Propósito : Limpia todos los controles del formulario
+'             de usuario y los deja en estado inicial
+' ============================================
+Private Sub LimpiarControlesUsuario()
+
+  txtUsuario.Text = ""
+  txtClaveUsuario.Text = ""
+  txtEmailUsuario.Text = ""
+  RadioButtonSi.Value = True
+  chkEnLinea.Value = False   ' ESTADO INICIAL: NO EN LÍNEA
+  DateBoxCreacion.Value = Now()
+  DateBoxUltimoAcceso.Value = Null
+  TableViewUsuarios.Row = -1
+
+End
+
+' ============================================
+' Función   : btnNuevoUsuario_Click
+' Propósito : Prepara el formulario para crear un usuario nuevo
+' ============================================
+Public Sub btnNuevoUsuario_Click()
+
+  LimpiarControlesUsuario()
+  txtUsuario.SetFocus()
+
+End
+
+' ============================================
+' Función   : ToggleButtonMostrar_Click
+' Propósito : Alterna la visibilidad de la contraseña
+'             del administrador local
+' ============================================
+Public Sub ToggleButtonMostrar_Click()
+
+  txtClaveAdministrador.Password = Not ToggleButtonMostrar.Value
+  txtClaveAdministrador.Refresh()
+  txtClaveAdministrador.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnNuevaIP_Click
+' Propósito : Abre el formulario de edición de IPs y
+'             recarga el combo al volver
+' ============================================
+Public Sub btnNuevaIP_Click()
+
+  FEditarIPs.ShowModal()
+  m_FuncionesGenericas.CargarComboBoxIP(ComboBoxIP)
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra las conexiones abiertas y el formulario
+' ============================================
+Public Sub btnCerrar_Click()
+
+  m_FormatosPDF.LiberarConexion()
+  m_ApiCredenciales.LiberarConexion()
+
+  If hConnServidor And hConnServidor.Opened Then hConnServidor.Close()
+  If hConn And hConn.Opened Then hConn.Close()
+
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : btnCrearUsuario_Click
+' Propósito : Prepara el formulario para ingresar un usuario nuevo
+' ============================================
+Public Sub btnCrearUsuario_Click()
+
+  btnCrearUsuario.Visible = False
+  btnGuardarUsuario.Visible = True
+  btnGuardarCambiosUsuario.Visible = False
+
+  txtUsuario.Text = ""
+  txtClaveUsuario.Text = ""
+  DateBoxCreacion.Value = Now
+
+End
+
+' ============================================
+' Función   : btnProyectosTodos_Click
+' Propósito : Recarga todos los proyectos en el TableView
+' ============================================
+Public Sub btnProyectosTodos_Click()
+
+  CargarProyectosDelServidor()
+
+End
+
+' ============================================
+' Función   : btnProyectosEnCurso_Click
+' Propósito : Filtra y muestra solo los proyectos activos
+' ============================================
+Public Sub btnProyectosEnCurso_Click()
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ConfigurarTableViewProyectos()
+
+  Dim rs As Result = hConnServidor.Exec("SELECT * FROM proyectos " &
+    "WHERE activo = 1 ORDER BY fecha_creacion DESC;")
+
+  LlenarTableViewProyectos(rs)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error cargando proyectos en curso: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : btnProyectosArchivados_Click
+' Propósito : Filtra y muestra solo los proyectos archivados
+' ============================================
+Public Sub btnProyectosArchivados_Click()
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ConfigurarTableViewProyectos()
+
+  Dim rs As Result = hConnServidor.Exec("SELECT * FROM proyectos " &
+    "WHERE activo = 0 ORDER BY fecha_creacion DESC;")
+
+  LlenarTableViewProyectos(rs)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error cargando proyectos archivados: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : ConfigurarTableViewProyectos
+' Propósito : Establece la estructura de columnas del
+'             TableView de proyectos
+' ============================================
+Private Sub ConfigurarTableViewProyectos()
+
+  With TableViewProyectos
+    .Clear
+    .Rows.Count = 0
+    .Columns.Count = 7
+
+    .Columns[0].Title = "ID"
+    .Columns[0].Width = 0
+    .Columns[1].Title = "Proyecto"
+    .Columns[1].Width = 250
+    .Columns[2].Title = "Activo"
+    .Columns[2].Width = 0
+    .Columns[3].Title = "Ocupado"
+    .Columns[3].Width = 80
+    .Columns[4].Title = "Tipo"
+    .Columns[4].Width = 200
+    .Columns[5].Title = "Fecha Creación"
+    .Columns[5].Width = 150
+    .Columns[6].Title = "Última Modificación"
+    .Columns[6].Width = 150
+
+    .Mode = Select.Single
+    .Header = True
+  End With
+
+End
+
+' ============================================
+' Función   : LlenarTableViewProyectos
+' Propósito : Llena el TableView de proyectos con los
+'             datos del Result recibido
+' Parámetros: rs As Result — resultado de la consulta
+' ============================================
+Private Sub LlenarTableViewProyectos(rs As Result)
+
+  Dim i As Integer
+
+  If Not rs.Available Then
+    TableViewProyectos.Rows.Count = 0
+    Return
+  Endif
+
+  TableViewProyectos.Rows.Count = rs.Count
+  i = 0
+
+  While rs.Available
+    TableViewProyectos[i, 0].Text = rs["id"]
+    TableViewProyectos[i, 1].Text = rs["nombre"]
+    TableViewProyectos[i, 2].Text = rs["activo"]
+
+    Select Case rs["tipo_producto"]
+      Case 1
+        TableViewProyectos[i, 4].Text = "Revista en markdown"
+      Case 2
+        TableViewProyectos[i, 4].Text = "Libro en markdown"
+      Case 3
+        TableViewProyectos[i, 4].Text = "Libro en LaTeX"
+      Default
+        TableViewProyectos[i, 4].Text = "Desconocido"
+    End Select
+
+    ' COLUMNA OCUPADO CON INDICADOR VISUAL DE COLOR
+    If rs["ocupado"] = True Or rs["ocupado"] = 1 Then
+      TableViewProyectos[i, 3].Text = "SÍ"
+      TableViewProyectos[i, 3].Background = Color.RGB(255, 200, 200)
+    Else
+      TableViewProyectos[i, 3].Text = "NO"
+      TableViewProyectos[i, 3].Background = Color.RGB(200, 255, 200)
+    Endif
+
+    If rs["fecha_creacion"] Then
+      Try TableViewProyectos[i, 5].Text = Format(rs["fecha_creacion"], "dd/mm/yyyy hh:nn")
+    Endif
+
+    If rs["fecha_modificacion"] Then
+      Try TableViewProyectos[i, 6].Text = Format(rs["fecha_modificacion"], "dd/mm/yyyy hh:nn")
+    Endif
+
+    i += 1
+    rs.MoveNext()
+  Wend
+
+End
+
+' ============================================
+' Función   : CargarProyectosDelServidor
+' Propósito : Consulta todos los proyectos del servidor
+'             y los muestra en el TableView
+' ============================================
+Private Sub CargarProyectosDelServidor()
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ConfigurarTableViewProyectos()
+
+  Dim rs As Result = hConnServidor.Exec(
+    "SELECT * FROM proyectos ORDER BY fecha_creacion DESC;")
+
+  LlenarTableViewProyectos(rs)
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error cargando proyectos: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : TableViewProyectos_Click
+' Propósito : Carga el estado del proyecto seleccionado,
+'             incluyendo el estado ocupado leído desde la BD
+'             para reflejar el estado real tras accidentes
+' ============================================
+Public Sub TableViewProyectos_Click()
+
+  ' --- 1. Obtener fila seleccionada ---
+  Dim iRow As Integer = TableViewProyectos.Row
+
+  If iRow < 0 Then Return
+  If Not hConnServidor Or Not hConnServidor.Opened Then Return
+
+  ' --- 2. Consultar estado real desde BD ---
+  ' SE LEEN ACTIVO Y OCUPADO EN UNA SOLA CONSULTA
+  ' OCUPADO SE LEE DESDE BD Y NO DEL GRID PARA REFLEJAR EL ESTADO REAL
+  ' ESPECIALMENTE ÚTIL TRAS CORTES DE ENERGÍA O CUELGUES DE LA APP
+  Dim iProyectoID As Integer = Val(TableViewProyectos[iRow, 0].Text)
+  Dim rs As Result
+
+  rs = hConnServidor.Exec("SELECT activo, ocupado FROM proyectos WHERE id = " & iProyectoID & ";")
+
+  If rs.Available Then
+    Dim bActivo As Boolean = rs["activo"]
+    RadioButtonEnCurso.Value = bActivo
+    RadioButtonArchivar.Value = Not bActivo
+    ' CARGAR ESTADO OCUPADO EN EL CHECKBOX
+    chkOcupado.Value = rs["ocupado"] = True
+  Endif
+
+Catch
+
+End
+
+' ============================================
+' Función   : btnGuardarCambiosProyecto_Click
+' Propósito : ACTUALIZAR EL ESTADO DE UN PROYECTO, INCLUIDO ocupado PARA
+'             LIBERAR PROYECTOS BLOQUEADOS POR CORTES O CUELGUES. ARCHIVAR UN
+'             PROYECTO CIERRA LAS NOTAS ABIERTAS DE SU GRUPO EN LA MISMA
+'             TRANSACCIÓN, FIRMADAS CON EL NOMBRE DEL ADMINISTRADOR. REACTIVARLO
+'             NO LAS REABRE.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarCambiosProyecto_Click()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim iRow As Integer
+  Dim iProyectoID As Integer
+  Dim sNombreProyecto As String
+  Dim bNuevoEstado As Boolean
+  Dim sError As String
+
+  ' --- 1. VERIFICAR SELECCIÓN Y CONEXIÓN ---
+  iRow = TableViewProyectos.Row
+  If iRow < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un proyecto de la tabla para modificar.")
+    Return
+  Endif
+
+  ' NULL Y Opened EN If SEPARADOS: Or NO ES SHORT-CIRCUIT (RC-GM-17)
+  If Not hConnServidor Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+  If Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ' --- 2. DATOS DEL PROYECTO ---
+  iProyectoID = Val(TableViewProyectos[iRow, 0].Text)
+  sNombreProyecto = TableViewProyectos[iRow, 1].Text
+  bNuevoEstado = RadioButtonEnCurso.Value
+
+  ' --- 3. ESTADO DEL PROYECTO Y, SI SE ARCHIVA, CIERRE DE SUS NOTAS ---
+  ' UNA SOLA TRANSACCIÓN (SC-07): SI EL CIERRE FALLA, EL PROYECTO NO QUEDA
+  ' ARCHIVADO CON NOTAS ABIERTAS. OCUPADO SE INCLUYE SIEMPRE PARA PERMITIR
+  ' LIBERAR PROYECTOS BLOQUEADOS
+  Try hConnServidor.Begin()
+  If Error Then Goto FALLA_SQL
+
+  Try hConnServidor.Exec("UPDATE proyectos SET activo = &2, ocupado = &3, fecha_modificacion = NOW() WHERE id = &1",
+    iProyectoID, If(bNuevoEstado, 1, 0), If(chkOcupado.Value, 1, 0))
+  If Error Then Goto FALLA_SQL
+
+  If Not bNuevoEstado Then
+    ' EL CIERRE ES ACTIVIDAD: LOS MIEMBROS LO VEN COMO NOVEDAD
+    Try hConnServidor.Exec("UPDATE notas n JOIN notas_grupos g ON g.id = n.id_grupo " &
+      "SET n.fecha_cierre = NOW(), n.cierre_sistema = &2, n.ultima_actividad = NOW(6) " &
+      "WHERE g.id_proyecto = &1 AND n.fecha_cierre IS NULL", iProyectoID, sUsuarioActual)
+    If Error Then Goto FALLA_SQL
+  Endif
+
+  Try hConnServidor.Commit()
+  If Error Then Goto FALLA_SQL
+
+  ' --- 4. RESULTADO ---
+  m_Sonido.sonar("Info")
+  Message.Info("Estado del proyecto <b>'" & sNombreProyecto & "'</b> actualizado correctamente.")
+  CargarProyectosDelServidor()
+  ' ARCHIVAR CAMBIA LAS NOTAS ABIERTAS DE LA PESTAÑA «Notas»
+  CargarNotasAdmin()
+  Return
+
+FALLA_SQL:
+  ' EL TEXTO SE GUARDA ANTES DEL Rollback, QUE PODRÍA PISARLO
+  sError = Error.Text
+  Try hConnServidor.Rollback()
+  m_Sonido.sonar("Error")
+  Message.Error("Error guardando cambios: " & sError)
+
+End
+
+' ============================================
+' Función   : CargarListaRespaldos
+' Propósito : Lista los archivos .sql del directorio de
+'             respaldo en el ListBox correspondiente
+' ============================================
+Private Sub CargarListaRespaldos()
+
+  ' --- 1. Obtener archivos SQL del directorio de respaldo ---
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim aArchivos As String[] = RDir(sRutaRespaldo, "*.sql")
+
+  If aArchivos.Count = 0 Then Return
+
+  ' --- 2. Ordenar y mostrar los más recientes primero ---
+  aArchivos.Sort(gb.Descent)
+
+  ListarBases.Clear()
+  Dim sArchivo As String
+  For Each sArchivo In aArchivos
+    ListarBases.Add(sArchivo, sArchivo)
+  Next
+
+End
+
+' ============================================
+' Función   : ListarBases_Select
+' Propósito : Al seleccionar un archivo de respaldo, extrae
+'             y muestra las tablas que contiene
+' ============================================
+Public Sub ListarBases_Select()
+
+  ' --- 1. Verificar selección ---
+  If Not ListarBases.Current Then Return
+
+  ' --- 2. Leer y parsear el archivo SQL ---
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim sArchivoSQL As String = sRutaRespaldo &/ ListarBases.Current.Key
+  Dim sContenido As String = File.Load(sArchivoSQL)
+  Dim aLineas As String[] = Split(sContenido, "\n")
+
+  ListarTablas.Clear()
+
+  ' --- 3. Buscar y extraer nombres de tablas ---
+  Dim sLinea As String
+  Dim sNombreTabla As String
+  Dim iPos As Integer
+
+  For Each sLinea In aLineas
+    sLinea = Trim(sLinea)
+    If InStr(UCase(sLinea), "CREATE TABLE") > 0 Then
+      sLinea = Replace(sLinea, "`", "")
+      iPos = InStr(UCase(sLinea), "CREATE TABLE ")
+      If iPos > 0 Then
+        sNombreTabla = Trim(Mid(sLinea, iPos + 13))
+        iPos = InStr(sNombreTabla, " ")
+        If iPos > 0 Then sNombreTabla = Left(sNombreTabla, iPos - 1)
+        iPos = InStr(sNombreTabla, "(")
+        If iPos > 0 Then sNombreTabla = Left(sNombreTabla, iPos - 1)
+        If Trim(sNombreTabla) <> "" Then ListarTablas.Add(Trim(sNombreTabla))
+      Endif
+    Endif
+  Next
+
+  ' --- 4. Limpiar el TableView de contenido ---
+  ListarContenido.Rows.Count = 0
+  ListarContenido.Columns.Count = 0
+
+End
+
+' ============================================
+' Función   : ListarTablas_Select
+' Propósito : Al seleccionar una tabla, muestra su contenido
+' ============================================
+Public Sub ListarTablas_Select()
+
+  LlenaGrid()
+
+End
+
+' ============================================
+' Función   : LlenaGrid
+' Propósito : Extrae la estructura y datos de la tabla
+'             seleccionada y los muestra en el TableView
+' ============================================
+Private Sub LlenaGrid()
+
+  If ListarTablas.Index < 0 Then Return
+  If Not ListarBases.Current Then Return
+
+  Dim sTablaSeleccionada As String = ListarTablas[ListarTablas.Index].Text
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim sArchivoSQL As String = sRutaRespaldo &/ ListarBases.Current.Key
+  Dim sContenido As String = File.Load(sArchivoSQL)
+
+  ExtraerEstructuraYDatos(sContenido, sTablaSeleccionada)
+
+  ListarContenido.Clear()
+
+  If $aColumnas.Count = 0 Then Return
+
+  ' --- CONFIGURAR COLUMNAS ---
+  ListarContenido.Columns.Count = $aColumnas.Count
+  Dim i As Integer
+  For i = 0 To $aColumnas.Max
+    ListarContenido.Columns[i].Title = $aColumnas[i]
+    ListarContenido.Columns[i].Width = -1
+  Next
+
+  ' --- LLENAR FILAS ---
+  If $aRegistros.Count > 0 Then
+    ListarContenido.Rows.Count = $aRegistros.Count
+    Dim j As Integer
+    For i = 0 To $aRegistros.Max
+      For j = 0 To Min($aRegistros[i].Max, $aColumnas.Max)
+        ListarContenido[i, j].Text = $aRegistros[i][j]
+      Next
+    Next
+  Endif
+
+End
+
+' ============================================
+' Función   : ExtraerEstructuraYDatos
+' Propósito : Parsea el SQL del respaldo extrayendo columnas
+'             e INSERTs de la tabla indicada
+' Parámetros: sContenido As String — contenido del archivo SQL
+'             sTabla     As String — nombre de la tabla a extraer
+' ============================================
+Private Sub ExtraerEstructuraYDatos(sContenido As String, sTabla As String)
+
+  Dim aLineas As String[] = Split(sContenido, "\n")
+  Dim sLinea As String
+  Dim bDentroCreate As Boolean = False
+  Dim iPosInicio As Integer
+  Dim iPosFin As Integer
+  Dim sCampo As String
+
+  $aColumnas = New String[]
+  $aRegistros = New String[][]
+
+  For Each sLinea In aLineas
+    sLinea = Trim(sLinea)
+
+    ' DETECTAR INICIO DE CREATE TABLE
+    If InStr(UCase(sLinea), "CREATE TABLE") > 0 And InStr(sLinea, "`" & sTabla & "`") > 0 Then
+      bDentroCreate = True
+      Continue
+    Endif
+
+    If bDentroCreate Then
+      ' EXTRAER DEFINICIONES DE COLUMNAS
+      If Left(Trim(sLinea), 1) = "`" Then
+        If Not InStr(UCase(sLinea), "PRIMARY KEY") And
+            Not InStr(UCase(sLinea), "UNIQUE KEY") And
+            Not InStr(UCase(sLinea), "CONSTRAINT") And
+            Not InStr(UCase(sLinea), "FOREIGN KEY") And
+            Not InStr(UCase(sLinea), "KEY `") Then
+          iPosInicio = InStr(sLinea, "`")
+          If iPosInicio > 0 Then
+            iPosFin = InStr(sLinea, "`", iPosInicio + 1)
+            If iPosFin > iPosInicio Then
+              sCampo = Mid(sLinea, iPosInicio + 1, iPosFin - iPosInicio - 1)
+              $aColumnas.Add(sCampo)
+            Endif
+          Endif
+        Endif
+      Endif
+      ' DETECTAR FIN DE CREATE TABLE
+      If InStr(sLinea, ") ENGINE=") > 0 Then bDentroCreate = False
+    Endif
+
+    ' EXTRAER DATOS DE INSERT INTO
+    If InStr(UCase(sLinea), "INSERT INTO") > 0 Then
+      If InStr(sLinea, "`" & sTabla & "`") > 0 Then
+        If InStr(UCase(sLinea), "VALUES") > 0 Then
+          ExtraerDatosInsert(sLinea)
+        Endif
+      Endif
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : ExtraerDatosInsert
+' Propósito : Extrae los grupos de valores de un INSERT INTO
+' Parámetros: sLinea As String — línea completa del INSERT
+' ============================================
+Private Sub ExtraerDatosInsert(sLinea As String)
+
+  Dim iPosValues As Integer = InStr(UCase(sLinea), "VALUES")
+
+  If iPosValues = 0 Then Return
+
+  Dim sValores As String = Trim(Mid(sLinea, iPosValues + 6))
+  Dim aGrupos As String[] = DividirRegistros(sValores)
+
+  Dim sGrupo As String
+  For Each sGrupo In aGrupos
+    $aRegistros.Add(ParsearValores(sGrupo))
+  Next
+
+End
+
+' ============================================
+' Función   : DividirRegistros
+' Propósito : Separa los grupos de valores de un INSERT
+'             respetando comillas y paréntesis anidados
+' Parámetros: sValores As String — parte VALUES del INSERT
+' Retorna   : String[] — array con un elemento por registro
+' ============================================
+Private Function DividirRegistros(sValores As String) As String[]
+
+  Dim aResultado As New String[]
+  Dim sRegistro As String = ""
+  Dim bDentroComilla As Boolean = False
+  Dim iParentesis As Integer = 0
+  Dim cAnterior As String = ""
+  Dim i As Integer
+  Dim c As String
+
+  sValores = Trim(sValores)
+  If Right(sValores, 1) = ";" Then sValores = Left(sValores, Len(sValores) - 1)
+
+  For i = 1 To Len(sValores)
+    c = Mid(sValores, i, 1)
+
+    If c = "'" And cAnterior <> "\\" Then
+      bDentroComilla = Not bDentroComilla
+      sRegistro &= c
+    Else If c = "(" And Not bDentroComilla Then
+      Inc iParentesis
+      If iParentesis > 1 Then sRegistro &= c
+    Else If c = ")" And Not bDentroComilla Then
+      Dec iParentesis
+      If iParentesis > 0 Then
+        sRegistro &= c
+      Else
+        If Trim(sRegistro) <> "" Then
+          aResultado.Add(sRegistro)
+          sRegistro = ""
+        Endif
+      Endif
+    Else If c = "," And Not bDentroComilla And iParentesis = 0 Then
+      Continue
+    Else
+      sRegistro &= c
+    Endif
+
+    cAnterior = c
+  Next
+
+  If Trim(sRegistro) <> "" Then aResultado.Add(sRegistro)
+
+  Return aResultado
+
+End
+
+' ============================================
+' Función   : ParsearValores
+' Propósito : Separa los valores individuales de un registro
+'             respetando comillas simples
+' Parámetros: sRegistro As String — un grupo de valores
+' Retorna   : String[] — array con un elemento por valor
+' ============================================
+Private Function ParsearValores(sRegistro As String) As String[]
+
+  Dim aResultado As New String[]
+  Dim sValor As String = ""
+  Dim bDentroComilla As Boolean = False
+  Dim cAnterior As String = ""
+  Dim i As Integer
+  Dim c As String
+
+  For i = 1 To Len(sRegistro)
+    c = Mid(sRegistro, i, 1)
+    If c = "'" And cAnterior <> "\\" Then
+      bDentroComilla = Not bDentroComilla
+    Else If c = "," And Not bDentroComilla Then
+      aResultado.Add(LimpiarValor(sValor))
+      sValor = ""
+    Else
+      sValor &= c
+    Endif
+    cAnterior = c
+  Next
+
+  aResultado.Add(LimpiarValor(sValor))
+  Return aResultado
+
+End
+
+' ============================================
+' Función   : LimpiarValor
+' Propósito : Elimina comillas y decodifica caracteres
+'             escapados de un valor SQL
+' Parámetros: sValor As String — valor crudo del SQL
+' Retorna   : String — valor limpio y legible
+' ============================================
+Private Function LimpiarValor(sValor As String) As String
+
+  sValor = Trim(sValor)
+
+  If UCase(sValor) = "NULL" Then Return ""
+
+  If Left(sValor, 1) = "'" And Right(sValor, 1) = "'" Then
+    sValor = Mid(sValor, 2, Len(sValor) - 2)
+  Endif
+
+  sValor = Replace(sValor, "\\'", "'")
+  sValor = Replace(sValor, "\\n", "\n")
+  sValor = Replace(sValor, "\\t", "\t")
+  sValor = Replace(sValor, "\\\\", "\\")
+
+  Return sValor
+
+End
+
+' ============================================
+' Función   : btnEliminarBase_Click
+' Propósito : Elimina el archivo de respaldo seleccionado
+'             tras confirmación del usuario
+' ============================================
+Public Sub btnEliminarBase_Click()
+
+  ' --- 1. Verificar selección ---
+  If Not ListarBases.Current Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un archivo de respaldo para eliminar.")
+    Return
+  Endif
+
+  ' --- 2. Confirmar eliminación ---
+  m_Sonido.sonar("Question")
+  Dim iRespuesta As Integer = Message.Question(
+    "¿Está seguro de que desea eliminar el archivo de respaldo?" & Chr(10) & Chr(10) &
+    ListarBases.Current.Key & Chr(10) & Chr(10) &
+    "Esta acción no se puede deshacer.",
+    "Sí", "No")
+
+  If iRespuesta <> 1 Then Return
+
+  ' --- 3. Eliminar y actualizar vista ---
+  Dim sRutaRespaldo As String = User.Home &/ ".gbpublisher/respaldo"
+  Dim sArchivoSQL As String = sRutaRespaldo &/ ListarBases.Current.Key
+
+  Try Kill sArchivoSQL
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al eliminar el archivo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  CargarListaRespaldos()
+  ListarTablas.Clear()
+  ListarContenido.Rows.Count = 0
+  ListarContenido.Columns.Count = 0
+
+  m_Sonido.sonar("Info")
+  Message.Info("Archivo de respaldo eliminado correctamente.")
+
+End
+
+' ============================================
+' SECCIÓN: GESTIÓN DE CREDENCIALES DE API
+' Las siguientes funciones gestionan el ABM de API Keys
+' en la tabla api_credenciales de MySQL
+' ============================================
+
+' ============================================
+' Función   : ConfigurarGridView
+' Propósito : Establece la estructura del GridView de APIs
+' ============================================
+Private Sub ConfigurarGridView()
+
+  With gvAPIkeys
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Mode = Select.Single
+    .Columns.Count = 6
+
+    .Columns[0].Title = "ID"
+    .Columns[0].Width = 40
+    .Columns[0].Alignment = Align.Center
+    .Columns[1].Title = "Proveedor"
+    .Columns[1].Width = 150
+    .Columns[2].Title = "Identificador"
+    .Columns[2].Width = 150
+    .Columns[3].Title = "Región"
+    .Columns[3].Width = 150
+    .Columns[4].Title = "Activo"
+    .Columns[4].Width = 50
+    .Columns[4].Alignment = Align.Center
+    .Columns[5].Title = "Última modificación"
+    .Columns[5].Width = 150
+
+    .Rows.Count = 0
+  End With
+
+End
+
+' ============================================
+' Función   : CargarCredenciales
+' Propósito : Carga todas las credenciales de API en el GridView
+' ============================================
+Private Sub CargarCredenciales()
+
+  Dim hResult As Result = m_ApiCredenciales.ListarCredenciales(False)
+
+  If hResult = Null Then
+    gvAPIkeys.Rows.Count = 0
+    Return
+  Endif
+
+  gvAPIkeys.Rows.Count = hResult.Count
+  If hResult.Count = 0 Then Return
+
+  Dim iRow As Integer = 0
+  For Each hResult
+    gvAPIkeys[iRow, 0].Text = Str$(hResult!id)
+    gvAPIkeys[iRow, 1].Text = hResult!proveedor
+    gvAPIkeys[iRow, 2].Text = If(hResult!identificador, hResult!identificador, "")
+    gvAPIkeys[iRow, 3].Text = If(hResult!region, hResult!region, "")
+    gvAPIkeys[iRow, 4].Text = If(hResult!activo, "Sí", "No")
+    gvAPIkeys[iRow, 5].Text = Format$(hResult!date_modif, "dd/mm/yyyy hh:nn")
+
+    ' FILAS INACTIVAS CON FONDO GRIS
+    If Not hResult!activo Then
+      Dim k As Integer
+      For k = 0 To 5
+        gvAPIkeys[iRow, k].Background = Color.LightGray
+      Next
+    Endif
+
+    Inc iRow
+  Next
+
+End
+
+' ============================================
+' Función   : LimpiarFormulario
+' Propósito : Limpia el formulario de API Keys y lo prepara
+'             para una nueva entrada
+' ============================================
+Private Sub LimpiarFormulario()
+
+  $bModoEdicion = False
+  ID_apis.Value = 0
+  txtProveedor.Text = ""
+  txtApiKey.Text = ""
+  txtIdentificador.Text = ""
+  txtRegion.Text = ""
+  txtComentarios.Text = ""
+  ckbActivo.Value = True
+  btnGuardarAPI.Enabled = True
+  btnGuardarCambiosAPI.Enabled = False
+  txtProveedor.SetFocus()
+
+End
+
+' ============================================
+' Función   : CargarCredencialEnFormulario
+' Propósito : Carga los datos de una credencial existente
+'             en el formulario para su edición
+' Parámetros: iId As Integer — ID de la credencial a cargar
+' ============================================
+Private Sub CargarCredencialEnFormulario(iId As Integer)
+
+  Dim hResult As Result = m_ApiCredenciales.ObtenerCredencialPorId(iId)
+
+  If hResult = Null Or Not hResult.Available Then
+    Message.Error("No se pudo cargar la credencial seleccionada.")
+    Return
+  Endif
+
+  $bModoEdicion = True
+  ID_apis.Value = hResult!id
+  txtProveedor.Text = hResult!proveedor
+  txtApiKey.Text = ""  ' NO SE MUESTRA LA API KEY POR SEGURIDAD
+  txtIdentificador.Text = If(hResult!identificador, hResult!identificador, "")
+  txtRegion.Text = If(hResult!region, hResult!region, "")
+  txtComentarios.Text = If(hResult!comentarios, hResult!comentarios, "")
+  ckbActivo.Value = hResult!activo
+  btnGuardarAPI.Enabled = False
+  btnGuardarCambiosAPI.Enabled = True
+
+End
+
+' ============================================
+' Función   : ValidarFormulario
+' Propósito : Verifica que los campos obligatorios del
+'             formulario de API estén completos
+' Retorna   : Boolean — True si la validación es correcta
+' ============================================
+Private Function ValidarFormulario() As Boolean
+
+  If Not Trim$(txtProveedor.Text) Then
+    Message.Warning("El nombre del proveedor es obligatorio.")
+    txtProveedor.SetFocus()
+    Return False
+  Endif
+
+  If Not $bModoEdicion And Not Trim$(txtApiKey.Text) Then
+    Message.Warning("La API Key es obligatoria para nuevas credenciales.")
+    txtApiKey.SetFocus()
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : btnNuevaAPI_Click
+' Propósito : Prepara el formulario para una nueva credencial
+' ============================================
+Public Sub btnNuevaAPI_Click()
+
+  LimpiarFormulario()
+
+End
+
+' ============================================
+' Función   : btnGuardarAPI_Click
+' Propósito : Guarda una nueva credencial de API en la BD
+' ============================================
+Public Sub btnGuardarAPI_Click()
+
+  If Not ValidarFormulario() Then Return
+
+  If m_ApiCredenciales.ExisteProveedor(Trim$(txtProveedor.Text)) Then
+    Message.Warning("Ya existe una credencial para el proveedor: " & txtProveedor.Text)
+    txtProveedor.SetFocus()
+    Return
+  Endif
+
+  Dim iId As Integer = m_ApiCredenciales.GuardarNuevaAPI(
+    Trim$(txtProveedor.Text), Trim$(txtApiKey.Text),
+    Trim$(txtIdentificador.Text), Trim$(txtRegion.Text),
+    Trim$(txtComentarios.Text))
+
+  If iId > 0 Then
+    Message.Info("Credencial guardada correctamente con ID: " & Str$(iId))
+    CargarCredenciales()
+    LimpiarFormulario()
+  Else
+    Message.Error("Error al guardar la credencial.")
+  Endif
+
+End
+
+' ============================================
+' Función   : btnGuardarCambiosAPI_Click
+' Propósito : Actualiza una credencial de API existente
+' ============================================
+Public Sub btnGuardarCambiosAPI_Click()
+
+  If Not ValidarFormulario() Then Return
+
+  Dim iId As Integer = ID_apis.Value
+
+  If iId <= 0 Then
+    Message.Error("No hay una credencial seleccionada para actualizar.")
+    Return
+  Endif
+
+  If m_ApiCredenciales.ExisteProveedor(Trim$(txtProveedor.Text), iId) Then
+    Message.Warning("Ya existe otra credencial con el proveedor: " & txtProveedor.Text)
+    txtProveedor.SetFocus()
+    Return
+  Endif
+
+  If Not ckbActivo.Value Then
+    If Message.Question("¿Está seguro de desactivar esta credencial?" & Chr(10) & Chr(10) &
+        "Los servicios que la utilicen dejarán de funcionar.", "Sí", "No") = 2 Then
+      Return
+    Endif
+  Endif
+
+  If m_ApiCredenciales.ActualizarAPI(iId, Trim$(txtProveedor.Text), Trim$(txtApiKey.Text),
+      Trim$(txtIdentificador.Text), Trim$(txtRegion.Text),
+      Trim$(txtComentarios.Text), ckbActivo.Value) Then
+    Message.Info("Credencial actualizada correctamente.")
+    CargarCredenciales()
+    LimpiarFormulario()
+  Else
+    Message.Error("Error al actualizar la credencial.")
+  Endif
+
+End
+
+' ============================================
+' Función   : gvAPIkeys_Click
+' Propósito : Carga la credencial seleccionada en el formulario
+' ============================================
+Public Sub gvAPIkeys_Click()
+
+  Dim iRow As Integer = gvAPIkeys.Row
+
+  If iRow < 0 Or iRow >= gvAPIkeys.Rows.Count Then Return
+
+  Dim iId As Integer = Val(gvAPIkeys[iRow, 0].Text)
+  If iId > 0 Then CargarCredencialEnFormulario(iId)
+
+End
+
+' ============================================
+' Función   : gvAPIkeys_DblClick
+' Propósito : Doble clic carga la credencial (igual que clic)
+' ============================================
+Public Sub gvAPIkeys_DblClick()
+
+  gvAPIkeys_Click()
+
+End
+
+' ============================================
+' Función   : txtApiKey_Enter
+' Propósito : Muestra tooltip contextual al entrar en el
+'             campo de API Key según el modo activo
+' ============================================
+Public Sub txtApiKey_Enter()
+
+  If $bModoEdicion Then
+    txtApiKey.ToolTip = "Dejar vacío para mantener la API Key actual."
+  Else
+    txtApiKey.ToolTip = "Ingrese la API Key del proveedor."
+  Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ConfigurarGridViewColecciones
+' Propósito : Define columnas y propiedades del GridView de colecciones.
+'             Solo nombre + indicador de estado (el id queda implícito en
+'             $aIdsColecciones, no es información útil al editor).
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ConfigurarGridViewColecciones()
+
+  With gvColecciones
+    .Header = GridView.Horizontal
+    .Columns.Count = 2
+    .Columns[0].Title = "Nombre"
+    .Columns[0].Width = 380
+    .Columns[1].Title = "Estado"
+    .Columns[1].Width = 50
+    .Rows.Count = 0
+  End With
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarColecciones
+' Propósito : Lee todas las colecciones de BD (activas e inactivas), pinta
+'             el GridView con color gris en las inactivas, resetea editores
+'             y listbox de series, y deshabilita botones contextuales.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarColecciones()
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iRow As Integer
+  Dim bActiva As Boolean
+
+  ' --- 0. GUARD: CONEXIÓN MYSQL DEBE ESTAR ABIERTA ---
+  If Not hConnServidor Or Not hConnServidor.Opened Then Return
+
+  ' --- 1. RESET ARRAYS PARALELOS ---
+  $aIdsColecciones.Clear()
+  $aColeccionesActivas.Clear()
+
+  ' --- 2. QUERY ORDENADO POR NOMBRE ---
+  sQuery = "SELECT id_coleccion, nombre, activa FROM colecciones ORDER BY nombre"
+
+  Try $result = hConnServidor.Exec(sQuery)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar colecciones:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. PRE-DIMENSIONAR EL GRIDVIEW ---
+  If $result.Available Then
+    gvColecciones.Rows.Count = $result.Count
+  Else
+    gvColecciones.Rows.Count = 0
+  Endif
+
+  ' --- 4. POBLAR ARRAYS PARALELOS Y CELDAS ---
+  iRow = 0
+  If $result.Available Then
+    For Each $result
+      $aIdsColecciones.Add($result!id_coleccion)
+      ' RC-GM-01: TINYINT(1) DEVUELVE Boolean DIRECTAMENTE
+      bActiva = $result!activa
+      $aColeccionesActivas.Add(bActiva)
+
+      gvColecciones[iRow, 0].Text = $result!nombre
+      gvColecciones[iRow, 1].Text = If(bActiva, "Activa", "Inactiva")
+
+      ' --- COLOR SEGÚN ESTADO: GRIS SI INACTIVA, DEFAULT SI ACTIVA ---
+      ' EL RESET EXPLÍCITO A Color.Default ES OBLIGATORIO: EL GRIDVIEW NO
+      ' LIMPIA EL FOREGROUND AL REDIMENSIONAR FILAS. SIN LA RAMA ELSE, UNA
+      ' FILA QUE ESTUVO GRIS SE QUEDA GRIS AL REACTIVARSE.
+      If bActiva Then
+        gvColecciones[iRow, 0].Background = Color.Default
+        gvColecciones[iRow, 1].Background = Color.Default
+      Else
+        gvColecciones[iRow, 0].Background = Color.Background
+        gvColecciones[iRow, 1].Background = Color.Background
+      Endif
+
+      Inc iRow
+    Next
+  Endif
+
+  ' --- 5. LIMPIAR ESTADO DE EDITORES Y SERIE ---
+  LimpiarEditorColeccion()
+  LimpiarEditorSerie()
+  gvSeries.Rows.Count = 0
+  $aIdsSeries.Clear()
+  $iColeccionActual = 0
+  $iSerieActual = 0
+  HabilitarBotonesColeccion(False)
+  HabilitarBotonesSerie(False, False)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarSeriesDeColeccion
+' Propósito : Lee las series de la colección indicada y las muestra en
+'             gvSeries. Si la colección está inactiva, todas las series se
+'             muestran en gris (heredan estado por cascada).
+' Parámetros: iIdColeccion As Integer — id de la colección madre
+'             bColeccionActiva As Boolean — estado de la colección madre
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarSeriesDeColeccion(iIdColeccion As Integer, bColeccionActiva As Boolean)
+
+  Dim $result As Result
+  Dim sQuery As String
+  Dim iRow As Integer
+
+  ' --- 1. RESET GRIDVIEW Y ARRAY PARALELO ---
+  ' PONER LAS FILAS EN 0 GARANTIZA CELDAS NUEVAS SIN FORMATO HEREDADO
+  gvSeries.Rows.Count = 0
+  $aIdsSeries.Clear()
+
+  ' --- 2. QUERY ORDENADA POR NOMBRE ---
+  sQuery = "SELECT id_serie, nombre FROM series WHERE id_coleccion = &1 ORDER BY nombre"
+
+  Try $result = hConnServidor.Exec(sQuery, iIdColeccion)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al cargar series:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  If Not $result.Available Then Return
+
+  ' --- 3. PRE-DIMENSIONAR EL GRIDVIEW ---
+  gvSeries.Rows.Count = $result.Count
+
+  ' --- 4. POBLAR CELDAS Y COLOREAR SI LA COLECCIÓN ESTÁ INACTIVA ---
+  iRow = 0
+  For Each $result
+    gvSeries[iRow, 0].Text = $result!nombre
+    $aIdsSeries.Add($result!id_serie)
+
+    ' COLOR POR CASCADA: GRIS SI LA COLECCIÓN MADRE ESTÁ INACTIVA, DEFAULT SI
+    ' ACTIVA. EL ELSE ES OBLIGATORIO POR LA MISMA RAZÓN QUE EN COLECCIONES:
+    ' EL GRIDVIEW NO RESETEA EL FOREGROUND AL REDIMENSIONAR FILAS.
+    If bColeccionActiva Then
+      gvSeries[iRow, 0].Background = Color.Default
+    Else
+      gvSeries[iRow, 0].Background = Color.Background
+    Endif
+
+    Inc iRow
+  Next
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarColeccionEnEditor
+' Propósito : Lee el registro completo de una colección y vuelca todos
+'             los campos al editor del tabstrip 4.
+' Parámetros: iIdColeccion As Integer — id de la colección a cargar
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarColeccionEnEditor(iIdColeccion As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  ' --- 1. QUERY COMPLETA ---
+  sQuery = "SELECT * FROM colecciones WHERE id_coleccion = &1"
+
+  Try $result = hConnServidor.Exec(sQuery, iIdColeccion)
+  If Error Or If Not $result.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la colección.")
+    Return
+  Endif
+
+  ' --- 2. VOLCAR CAMPOS AL EDITOR ---
+  idColeccion.Value = $result!id_coleccion
+  nombreColeccion.Text = If(IsNull($result!nombre), "", $result!nombre)
+  nombreAbreviadoColeccion.Text = If(IsNull($result!nombre_abreviado), "", $result!nombre_abreviado)
+  issnColeccion.Text = If(IsNull($result!issn), "", $result!issn)
+  doiPrefixColeccion.Text = If(IsNull($result!doi_prefix), "", $result!doi_prefix)
+  editorialColeccion.Text = If(IsNull($result!editorial), "", $result!editorial)
+  directorColeccion.Text = If(IsNull($result!director_coleccion), "", $result!director_coleccion)
+  emailContactoColeccion.Text = If(IsNull($result!email_contacto), "", $result!email_contacto)
+  descripcionColeccion.Text = If(IsNull($result!descripcion), "", $result!descripcion)
+  areaConocimientoColeccion.Text = If(IsNull($result!area_conocimiento), "", $result!area_conocimiento)
+  disciplinaColeccion.Text = If(IsNull($result!disciplina), "", $result!disciplina)
+  anoInicioColeccion.Text = If(IsNull($result!ano_inicio), "", CStr($result!ano_inicio))
+  anoFinColeccion.Text = If(IsNull($result!ano_fin), "", CStr($result!ano_fin))
+
+  ' RC-GM-01: TINYINT(1) ES Boolean
+  activaColeccion.Value = $result!activa
+  $bActivaColeccionOriginal = $result!activa
+
+  urlColeccion.Text = If(IsNull($result!url_coleccion), "", $result!url_coleccion)
+  urlLogoColeccion.Text = If(IsNull($result!url_logo), "", $result!url_logo)
+  notasInternasColeccion.Text = If(IsNull($result!notas_internas), "", $result!notas_internas)
+
+  ' --- 3. CAMPOS DE AUDITORÍA (READONLY) ---
+  If $result!fecha_creacion Then fechaCreacionColeccion.Value = $result!fecha_creacion Else fechaCreacionColeccion.Value = Null
+  If $result!fecha_actualizacion Then fechaActualizacionColeccion.Value = $result!fecha_actualizacion Else fechaActualizacionColeccion.Value = Null
+  usuarioCreacionColeccion.Text = If(IsNull($result!usuario_creacion), "", $result!usuario_creacion)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : CargarSerieEnEditor
+' Propósito : Lee el registro completo de una serie y vuelca los campos
+'             al editor.
+' Parámetros: iIdSerie As Integer — id de la serie a cargar
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub CargarSerieEnEditor(iIdSerie As Integer)
+
+  Dim $result As Result
+  Dim sQuery As String
+
+  sQuery = "SELECT * FROM series WHERE id_serie = &1"
+
+  Try $result = hConnServidor.Exec(sQuery, iIdSerie)
+  If Error Or If Not $result.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la serie.")
+    Return
+  Endif
+
+  idSerie.Value = $result!id_serie
+  nombreSerie.Text = If(IsNull($result!nombre), "", $result!nombre)
+  nombreAbreviadoSerie.Text = If(IsNull($result!nombre_abreviado), "", $result!nombre_abreviado)
+  issnSerie.Text = If(IsNull($result!issn), "", $result!issn)
+  coordinadorSerie.Text = If(IsNull($result!coordinador_serie), "", $result!coordinador_serie)
+  descripcionSerie.Text = If(IsNull($result!descripcion), "", $result!descripcion)
+  anoInicioSerie.Text = If(IsNull($result!ano_inicio), "", CStr($result!ano_inicio))
+  anoFinSerie.Text = If(IsNull($result!ano_fin), "", CStr($result!ano_fin))
+  notasInternasSerie.Text = If(IsNull($result!notas_internas), "", $result!notas_internas)
+
+  ' --- AUDITORÍA ---
+  If $result!fecha_creacion Then fechaCreacionSerie.Value = $result!fecha_creacion Else fechaCreacionSerie.Value = Null
+  If $result!fecha_actualizacion Then fechaActualizacionSerie.Value = $result!fecha_actualizacion Else fechaActualizacionSerie.Value = Null
+  usuarioCreacionSerie.Text = If(IsNull($result!usuario_creacion), "", $result!usuario_creacion)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : LimpiarEditorColeccion
+' Propósito : Limpia todos los campos del editor de colección.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub LimpiarEditorColeccion()
+
+  idColeccion.Value = 0
+  nombreColeccion.Text = ""
+  nombreAbreviadoColeccion.Text = ""
+  issnColeccion.Text = ""
+  doiPrefixColeccion.Text = ""
+  editorialColeccion.Text = ""
+  directorColeccion.Text = ""
+  emailContactoColeccion.Text = ""
+  descripcionColeccion.Text = ""
+  areaConocimientoColeccion.Text = ""
+  disciplinaColeccion.Text = ""
+  anoInicioColeccion.Text = ""
+  anoFinColeccion.Text = ""
+  activaColeccion.Value = False
+  $bActivaColeccionOriginal = False
+  urlColeccion.Text = ""
+  urlLogoColeccion.Text = ""
+  notasInternasColeccion.Text = ""
+  fechaCreacionColeccion.Value = Null
+  fechaActualizacionColeccion.Value = Null
+  usuarioCreacionColeccion.Text = ""
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : LimpiarEditorSerie
+' Propósito : Limpia todos los campos del editor de serie.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub LimpiarEditorSerie()
+
+  idSerie.Value = 0
+  nombreSerie.Text = ""
+  nombreAbreviadoSerie.Text = ""
+  issnSerie.Text = ""
+  coordinadorSerie.Text = ""
+  descripcionSerie.Text = ""
+  anoInicioSerie.Text = ""
+  anoFinSerie.Text = ""
+  notasInternasSerie.Text = ""
+  fechaCreacionSerie.Value = Null
+  fechaActualizacionSerie.Value = Null
+  usuarioCreacionSerie.Text = ""
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : HabilitarBotonesColeccion
+' Propósito : Habilita o deshabilita el botón Guardar Cambios de colección.
+'             También gestiona los botones del bloque de serie en cascada.
+' Parámetros: bHabilitar As Boolean — True = colección seleccionada
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub HabilitarBotonesColeccion(bHabilitar As Boolean)
+
+  btnGuardarCambiosColeccion.Visible = bHabilitar
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : HabilitarBotonesSerie
+' Propósito : Habilita o deshabilita los botones de serie según haya
+'             colección activa y/o serie seleccionada.
+' Parámetros: bNueva As Boolean    — True habilita btnNuevaSerie
+'             bGuardar As Boolean  — True habilita btnGuardarCambiosSerie
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub HabilitarBotonesSerie(bNueva As Boolean, bGuardar As Boolean)
+
+  btnNuevaSerie.Enabled = bNueva
+  btnGuardarCambiosSerie.Visible = bGuardar
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : gvColecciones_Click
+' Propósito : Al seleccionar una colección, carga su editor y muestra sus
+'             series en lbSeries. Habilita btnNuevaSerie SOLO si la
+'             colección está activa.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub gvColecciones_Click()
+
+  Dim iRow As Integer
+  Dim iIdColeccion As Integer
+  Dim bColActiva As Boolean
+
+  ' --- 1. VALIDAR FILA ---
+  iRow = gvColecciones.Row
+  If iRow < 0 Or If iRow >= $aIdsColecciones.Count Then Return
+
+  ' --- 2. OBTENER ID Y ESTADO DE LA COLECCIÓN ---
+  iIdColeccion = $aIdsColecciones[iRow]
+  bColActiva = $aColeccionesActivas[iRow]
+  $iColeccionActual = iIdColeccion
+
+  ' --- 3. CARGAR EDITOR DE COLECCIÓN ---
+  CargarColeccionEnEditor(iIdColeccion)
+
+  ' --- 4. CARGAR SERIES EN LBSERIES (CON COLOR HEREDADO) ---
+  CargarSeriesDeColeccion(iIdColeccion, bColActiva)
+  $iSerieActual = 0
+  LimpiarEditorSerie()
+
+  ' --- 5. ESTADO DE BOTONES ---
+  HabilitarBotonesColeccion(True)
+  ' btnNuevaSerie SOLO SI LA COLECCIÓN ESTÁ ACTIVA
+  ' btnGuardarCambiosSerie DESHABILITADO HASTA QUE SE ELIJA UNA SERIE
+  HabilitarBotonesSerie(bColActiva, False)
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : gvSeries_Click
+' Propósito : Al seleccionar una serie del grid, carga su editor.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub gvSeries_Click()
+
+  Dim iRow As Integer
+  Dim iIdSerie As Integer
+
+  ' --- 1. VALIDAR FILA ---
+  iRow = gvSeries.Row
+  If iRow < 0 Or If iRow >= $aIdsSeries.Count Then Return
+
+  ' --- 2. OBTENER ID Y CARGAR EDITOR ---
+  iIdSerie = $aIdsSeries[iRow]
+  $iSerieActual = iIdSerie
+  CargarSerieEnEditor(iIdSerie)
+
+  ' --- 3. HABILITAR BOTÓN GUARDAR DE SERIE ---
+  ' (btnNuevaSerie SIGUE SIENDO CONDICIONAL AL ESTADO DE LA COLECCIÓN)
+  btnGuardarCambiosSerie.Visible = True
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnNuevaColeccion_Click
+' Propósito : INSERT mínimo de colección nueva con valores por defecto.
+'             Refresca el grid y autoselecciona el nuevo registro.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnNuevaColeccion_Click()
+
+  Dim iNuevoId As Integer
+  Dim iRow As Integer
+
+  ' --- 1. INSERT MÍNIMO ---
+  Try hConnServidor.Exec(
+    "INSERT INTO colecciones (nombre, activa, usuario_creacion) " &
+    "VALUES (&1, 1, &2)",
+    "(Nueva colección)", sUsuarioActual)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al crear colección:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  iNuevoId = hConnServidor.LastInsertId
+
+  ' --- 2. REFRESH ---
+  CargarColecciones()
+
+  ' --- 3. AUTOSELECT DEL NUEVO REGISTRO ---
+  For iRow = 0 To $aIdsColecciones.Count - 1
+    If $aIdsColecciones[iRow] = iNuevoId Then
+      gvColecciones.Row = iRow
+      gvColecciones_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("Info")
+  nombreColeccion.SetFocus()
+  nombreColeccion.SelectAll()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnNuevaSerie_Click
+' Propósito : INSERT mínimo de serie nueva en la colección actualmente
+'             seleccionada. La colección debe estar activa (validado por
+'             el botón deshabilitado, pero doble check por seguridad).
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnNuevaSerie_Click()
+
+  Dim iNuevoId As Integer
+  Dim iIndex As Integer
+  Dim iRow As Integer
+
+  ' --- 1. VALIDAR COLECCIÓN ACTIVA ---
+  If $iColeccionActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione primero una colección.")
+    Return
+  Endif
+
+  iRow = gvColecciones.Row
+  If iRow < 0 Or If Not $aColeccionesActivas[iRow] Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pueden crear series en una colección inactiva.")
+    Return
+  Endif
+
+  ' --- 2. INSERT MÍNIMO ---
+  Try hConnServidor.Exec(
+    "INSERT INTO series (id_coleccion, nombre, activa, usuario_creacion) " &
+    "VALUES (&1, &2, 1, &3)",
+    $iColeccionActual, "(Nueva serie)", sUsuarioActual)
+
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al crear serie:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  iNuevoId = hConnServidor.LastInsertId
+
+  ' --- 3. REFRESH SERIES (COLECCIÓN ACTIVA) ---
+  CargarSeriesDeColeccion($iColeccionActual, True)
+
+  ' --- 4. AUTOSELECT ---
+  For iIndex = 0 To $aIdsSeries.Count - 1
+    If $aIdsSeries[iIndex] = iNuevoId Then
+      gvSeries.Row = iIndex
+      gvSeries_Click()
+      Break
+    Endif
+  Next
+
+  m_Sonido.sonar("Info")
+  nombreSerie.SetFocus()
+  nombreSerie.SelectAll()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnGuardarCambiosColeccion_Click
+' Propósito : UPDATE de la colección usando patrón Edit+Update. Si `activa`
+'             cambió respecto del estado original, aplica cascada a `series`
+'             dentro de una transacción atómica.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardarCambiosColeccion_Click()
+
+  Dim rColec As Result
+  Dim bActivaNueva As Boolean
+  Dim bCambioCascada As Boolean
+  Dim iRowGuardado As Integer
+
+  ' --- 1. VALIDAR COLECCIÓN ACTIVA ---
+  If $iColeccionActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay colección seleccionada.")
+    Return
+  Endif
+
+  ' --- 2. VALIDACIONES DE CAMPO ---
+  If Trim(nombreColeccion.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de la colección no puede quedar vacío.")
+    nombreColeccion.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. DETERMINAR SI HAY CAMBIO DE ESTADO (PARA CASCADA) ---
+  bActivaNueva = activaColeccion.Value
+  bCambioCascada = (bActivaNueva <> $bActivaColeccionOriginal)
+
+  iRowGuardado = gvColecciones.Row
+
+  ' --- 4. EJECUTAR TRANSACCIÓN ---
+  Try hConnServidor.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al iniciar transacción:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4.1 EDIT + UPDATE COLECCIÓN ---
+  Try rColec = hConnServidor.Edit("colecciones", "id_coleccion = &1", $iColeccionActual)
+  If Error Then
+    hConnServidor.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("Error al abrir la colección para edición:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  With rColec
+    !nombre = Trim(nombreColeccion.Text)
+    !nombre_abreviado = If(Trim(nombreAbreviadoColeccion.Text) = "", Null, Trim(nombreAbreviadoColeccion.Text))
+    !issn = If(Trim(issnColeccion.Text) = "", Null, Trim(issnColeccion.Text))
+    !doi_prefix = If(Trim(doiPrefixColeccion.Text) = "", Null, Trim(doiPrefixColeccion.Text))
+    !editorial = If(Trim(editorialColeccion.Text) = "", Null, Trim(editorialColeccion.Text))
+    !director_coleccion = If(Trim(directorColeccion.Text) = "", Null, Trim(directorColeccion.Text))
+    !email_contacto = If(Trim(emailContactoColeccion.Text) = "", Null, Trim(emailContactoColeccion.Text))
+    !descripcion = If(Trim(descripcionColeccion.Text) = "", Null, descripcionColeccion.Text)
+    !area_conocimiento = If(Trim(areaConocimientoColeccion.Text) = "", Null, Trim(areaConocimientoColeccion.Text))
+    !disciplina = If(Trim(disciplinaColeccion.Text) = "", Null, Trim(disciplinaColeccion.Text))
+
+    ' AÑOS (YEAR EN BD): NULL SI VACÍO
+    If Trim(anoInicioColeccion.Text) = "" Then
+      !ano_inicio = Null
+    Else
+      !ano_inicio = Val(Trim(anoInicioColeccion.Text))
+    Endif
+
+    If Trim(anoFinColeccion.Text) = "" Then
+      !ano_fin = Null
+    Else
+      !ano_fin = Val(Trim(anoFinColeccion.Text))
+    Endif
+
+    !activa = If(bActivaNueva, 1, 0)
+    !url_coleccion = If(Trim(urlColeccion.Text) = "", Null, Trim(urlColeccion.Text))
+    !url_logo = If(Trim(urlLogoColeccion.Text) = "", Null, Trim(urlLogoColeccion.Text))
+    !notas_internas = If(Trim(notasInternasColeccion.Text) = "", Null, notasInternasColeccion.Text)
+
+    Try .Update()
+    If Error Then
+      hConnServidor.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar colección:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  End With
+
+  ' --- 4.2 CASCADA A SERIES SI EL ESTADO CAMBIÓ ---
+  If bCambioCascada Then
+    Try hConnServidor.Exec(
+      "UPDATE series SET activa = &1 WHERE id_coleccion = &2",
+      If(bActivaNueva, 1, 0), $iColeccionActual)
+
+      If Error Then
+        hConnServidor.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("Error al actualizar series en cascada:" & Chr(10) & Error.Text)
+        Return
+      Endif
+    Endif
+
+    ' --- 4.3 COMMIT ---
+    Try hConnServidor.Commit()
+    If Error Then
+      hConnServidor.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("Error al confirmar cambios:" & Chr(10) & Error.Text)
+      Return
+    Endif
+
+    ' --- 5. REFRESH MANTENIENDO SELECCIÓN ---
+    m_Sonido.sonar("Info")
+    CargarColecciones()
+
+    If iRowGuardado >= 0 And If iRowGuardado < $aIdsColecciones.Count Then
+      gvColecciones.Row = iRowGuardado
+      gvColecciones_Click()
+    Endif
+
+    ' --- 6. MENSAJE FINAL CON CONTEXTO ---
+    If bCambioCascada Then
+      If bActivaNueva Then
+        Message.Info("Colección guardada y reactivada (con sus series).")
+      Else
+        Message.Info("Colección guardada y desactivada (con sus series).")
+      Endif
+    Endif
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : btnGuardarCambiosSerie_Click
+' Propósito : UPDATE de la serie usando patrón Edit+Update. Sin cascadas.
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub btnGuardarCambiosSerie_Click()
+
+  Dim rSerie As Result
+  Dim iIndexGuardado As Integer
+  Dim iRow As Integer
+  Dim bColActiva As Boolean
+
+  ' --- 1. VALIDAR SERIE ACTIVA ---
+  If $iSerieActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay serie seleccionada.")
+    Return
+  Endif
+
+  ' --- 2. VALIDACIONES DE CAMPO ---
+  If Trim(nombreSerie.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de la serie no puede quedar vacío.")
+    nombreSerie.SetFocus()
+    Return
+  Endif
+
+  iIndexGuardado = gvSeries.Row
+
+  ' --- 3. EDIT + UPDATE ---
+  Try rSerie = hConnServidor.Edit("series", "id_serie = &1", $iSerieActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al abrir la serie para edición:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  With rSerie
+    !nombre = Trim(nombreSerie.Text)
+    !nombre_abreviado = If(Trim(nombreAbreviadoSerie.Text) = "", Null, Trim(nombreAbreviadoSerie.Text))
+    !issn = If(Trim(issnSerie.Text) = "", Null, Trim(issnSerie.Text))
+    !coordinador_serie = If(Trim(coordinadorSerie.Text) = "", Null, Trim(coordinadorSerie.Text))
+    !descripcion = If(Trim(descripcionSerie.Text) = "", Null, descripcionSerie.Text)
+
+    If Trim(anoInicioSerie.Text) = "" Then
+      !ano_inicio = Null
+    Else
+      !ano_inicio = Val(Trim(anoInicioSerie.Text))
+    Endif
+
+    If Trim(anoFinSerie.Text) = "" Then
+      !ano_fin = Null
+    Else
+      !ano_fin = Val(Trim(anoFinSerie.Text))
+    Endif
+
+    !notas_internas = If(Trim(notasInternasSerie.Text) = "", Null, notasInternasSerie.Text)
+
+    Try .Update()
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar serie:" & Chr(10) & Error.Text)
+      Return
+    Endif
+  End With
+
+  ' --- 4. REFRESH MANTENIENDO SELECCIÓN ---
+  m_Sonido.sonar("Info")
+
+  iRow = gvColecciones.Row
+  If iRow >= 0 And If iRow < $aColeccionesActivas.Count Then
+    bColActiva = $aColeccionesActivas[iRow]
+  Else
+    bColActiva = True
+  Endif
+
+  CargarSeriesDeColeccion($iColeccionActual, bColActiva)
+
+  If iIndexGuardado >= 0 And If iIndexGuardado < gvSeries.Rows.Count Then
+    gvSeries.Row = iIndexGuardado
+    gvSeries_Click()
+  Endif
+
+End
+
+' ============================================
+' Función   : btnGuardarUsuario_Click
+' Propósito : Inserta un nuevo usuario en la tabla MySQL
+'             con los datos ingresados en el formulario
+' ============================================
+Public Sub btnGuardarUsuario_Click()
+
+  ' --- 1. Verificar conexión activa ---
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe validarse primero como administrador.")
+    Return
+  Endif
+
+  ' --- 2. Obtener y validar datos ---
+  Dim sUsuario As String = Trim(txtUsuario.Text)
+  Dim sClave As String = Trim(txtClaveUsuario.Text)
+  Dim sEmail As String = Trim(txtEmailUsuario.Text)
+  Dim bActivo As Boolean = RadioButtonSi.Value
+  Dim sHash As String
+
+  If Not sUsuario Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe ingresar un nombre de usuario.")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  ' VALIDACIÓN ESTRICTA DEL PATRÓN abcd1234 ANTES DE TOCAR LA BD
+  If Not ValidarPatronUsuario(sUsuario) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de usuario debe ser 4 letras minúsculas seguidas de 4 números, sin mezclar (ej.: abcd1234).")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  If Not sClave Or Len(sClave) < 8 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La contraseña debe tener al menos 8 caracteres, una mayúscula y un número.")
+    txtClaveUsuario.SetFocus()
+    Return
+  Endif
+
+  If Not sEmail Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El email es obligatorio.")
+    txtEmailUsuario.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. Insertar usuario ---
+  sHash = Hash.SHA256(sClave)
+  hConnServidor.Exec("INSERT INTO usuarios (usuario, clave, email, activo, metodo, fecha_creacion) " &
+    "VALUES ('" & sUsuario & "', '" & sHash & "', '" & sEmail & "', " &
+    If(bActivo, "TRUE", "FALSE") & ", 'local', NOW());")
+
+    m_Sonido.sonar("Info")
+    Message.Info("Usuario <b>'" & sUsuario & "'</b> creado exitosamente.")
+
+    ' --- 4. Restaurar estado del formulario ---
+    LimpiarControlesUsuario()
+    btnCrearUsuario.Visible = True
+    btnGuardarUsuario.Visible = False
+    btnGuardarCambiosUsuario.Visible = False
+    CargarUsuariosDelServidor()
+
+  Catch
+    m_Sonido.sonar("Error")
+    Message.Error("Error creando usuario: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : btnGuardarCambiosUsuario_Click
+' Propósito : Actualiza los datos de un usuario MySQL
+'             existente, incluyendo el estado en_linea
+'             para resolver bloqueos por corte de energía
+'             o cuelgue de la aplicación
+' ============================================
+Public Sub btnGuardarCambiosUsuario_Click()
+
+  ' --- 1. Verificar selección y conexión ---
+  If TableViewUsuarios.Row < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Debe seleccionar un usuario de la tabla para modificar.")
+    Return
+  Endif
+
+  If Not hConnServidor Or Not hConnServidor.Opened Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ' --- 2. Obtener datos del formulario ---
+  Dim iID As Integer = Val(TableViewUsuarios[TableViewUsuarios.Row, 0].Text)
+  Dim sNuevoUsuario As String = Trim(txtUsuario.Text)
+  Dim sNuevaClave As String = Trim(txtClaveUsuario.Text)
+  Dim sNuevoEmail As String = Trim(txtEmailUsuario.Text)
+  Dim bActivo As Boolean = RadioButtonSi.Value
+  Dim sHash As String
+
+  ' --- 3. Validaciones ---
+  If Not sNuevoUsuario Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de usuario no puede estar vacío.")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  ' VALIDACIÓN ESTRICTA DEL PATRÓN abcd1234 ANTES DE TOCAR LA BD
+  If Not ValidarPatronUsuario(sNuevoUsuario) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de usuario debe ser 4 letras minúsculas seguidas de 4 números, sin mezclar (ej.: abcd1234).")
+    txtUsuario.SetFocus()
+    Return
+  Endif
+
+  If Not sNuevoEmail Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El email es obligatorio.")
+    txtEmailUsuario.SetFocus()
+    Return
+  Endif
+
+  ' --- 4. Actualizar con o sin cambio de contraseña ---
+  ' EN_LINEA SE INCLUYE SIEMPRE PARA PERMITIR LIBERAR USUARIOS BLOQUEADOS
+  If sNuevaClave And Len(sNuevaClave) > 0 Then
+    If Len(sNuevaClave) < 8 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("La contraseña debe tener al menos 8 caracteres.")
+      txtClaveUsuario.SetFocus()
+      Return
+    Endif
+    sHash = Hash.SHA256(sNuevaClave)
+    hConnServidor.Exec("UPDATE usuarios SET usuario = '" & sNuevoUsuario &
+      "', clave = '" & sHash &
+      "', email = '" & sNuevoEmail &
+      "', activo = " & If(bActivo, "TRUE", "FALSE") &
+      ", en_linea = " & If(chkEnLinea.Value, "1", "0") &
+      " WHERE id = " & iID & ";")
+  Else
+    hConnServidor.Exec("UPDATE usuarios SET usuario = '" & sNuevoUsuario &
+      "', email = '" & sNuevoEmail &
+      "', activo = " & If(bActivo, "TRUE", "FALSE") &
+      ", en_linea = " & If(chkEnLinea.Value, "1", "0") &
+      " WHERE id = " & iID & ";")
+  Endif
+
+  m_Sonido.sonar("Info")
+  Message.Info("Cambios guardados correctamente.")
+
+  ' --- 5. Restaurar estado del formulario ---
+  btnCrearUsuario.Visible = True
+  btnGuardarUsuario.Visible = False
+  btnGuardarCambiosUsuario.Visible = False
+  LimpiarControlesUsuario()
+  CargarUsuariosDelServidor()
+
+Catch
+  m_Sonido.sonar("Error")
+  Message.Error("Error guardando cambios: " & Error.Text)
+
+End
+
+' ============================================
+' Función   : txtUsuario_KeyPress
+' Propósito : Filtra caracteres permitidos y fuerza el nombre
+'             al patrón posicional abcd1234
+' ============================================
+Public Sub txtUsuario_KeyPress()
+
+  Dim iPos As Integer
+
+  ' --- 1. PERMITIR TECLAS DE CONTROL ---
+  If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or
+      Key.Code = Key.Left Or Key.Code = Key.Right Or
+      Key.Code = Key.Tab Or Key.Code = Key.Enter Or
+      Key.Code = Key.Home Or Key.Code = Key.End Then
+    Return
+  Endif
+
+  ' --- 2. VALIDAR LONGITUD MÁXIMA (8 CARACTERES: 4 LETRAS + 4 DÍGITOS) ---
+  If String.Len(txtUsuario.Text) = 8 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El nombre de usuario debe tener exactamente 8 caracteres: 4 letras minúsculas seguidas de 4 números.")
+    Stop Event
+    Return
+  Endif
+  ' --- 3. POSICIONES 0 A 3: SOLO LETRAS MINÚSCULAS ---
+  ' Pos ES 0-INDEXED: 0,1,2,3 SON EL BLOQUE DE LETRAS
+  iPos = txtUsuario.Pos
+  If iPos >= 0 And iPos <= 3 Then
+    If Key.Text < "a" Or Key.Text > "z" Then
+      m_Sonido.sonar("Warning")
+      Stop Event
+      Return
+    Endif
+    Return
+  Endif
+  ' --- 4. POSICIONES 4 A 7: SOLO DÍGITOS ---
+  If iPos >= 4 And iPos <= 7 Then
+    If Key.Text < "0" Or Key.Text > "9" Then
+      m_Sonido.sonar("Warning")
+      Stop Event
+      Return
+    Endif
+    Return
+  Endif
+
+  ' --- 5. BLOQUEAR CUALQUIER OTRO CARÁCTER ---
+  Stop Event
+
+End
+
+' ============================================
+' Función   : txtUsuario_KeyRelease
+' Propósito : Fuerza mayúsculas, valida longitud y actualiza el preview
+'             del nombre final con el prefijo de tipo seleccionado.
+' ============================================
+Public Sub txtUsuario_KeyRelease()
+
+  Dim sTexto As String
+  Dim iPosicionCursor As Integer
+
+  ' --- 1. GUARDAR POSICIÓN DEL CURSOR ---
+  iPosicionCursor = txtUsuario.Pos
+
+  ' --- 2. CONVERTIR A MINÚSCULAS ---
+  sTexto = LCase(txtUsuario.Text)
+
+  ' --- 3. TRUNCAR SILENCIOSAMENTE SI EXCEDE (NO MOLESTAR EN EL CASO VÁLIDO) ---
+  If String.Len(sTexto) > 8 Then
+    sTexto = String.Left(sTexto, 8)
+    iPosicionCursor = 8
+  Endif
+
+  ' --- 4. ACTUALIZAR TEXTO Y RESTAURAR CURSOR ---
+  txtUsuario.Text = sTexto
+  txtUsuario.Pos = iPosicionCursor
+
+End
+
+' ============================================
+' Función   : ValidarPatronUsuario
+' Propósito : Verifica que el texto cumpla EXACTAMENTE el patrón
+'             abcd1234 — 4 letras minúsculas SEGUIDAS de 4 dígitos.
+'             No admite mezcla, ni otros caracteres, ni longitud distinta.
+' Parámetros: sUsuario As String — texto a validar
+' Retorna   : Boolean — True si cumple el patrón estricto, False si no
+' ============================================
+Public Function ValidarPatronUsuario(sUsuario As String) As Boolean
+
+  Dim iIndice As Integer
+  Dim sCaracter As String
+  ' --- 1. VALIDAR LONGITUD EXACTA (NI MÁS NI MENOS QUE 8) ---
+  If String.Len(sUsuario) <> 8 Then Return False
+  ' --- 2. PRIMERAS 4 POSICIONES: SOLO LETRAS MINÚSCULAS ---
+  ' String.Mid ES 1-INDEXED: 1 A 4 ES EL BLOQUE DE LETRAS
+  For iIndice = 1 To 4
+    sCaracter = String.Mid(sUsuario, iIndice, 1)
+    If sCaracter < "a" Or sCaracter > "z" Then Return False
+  Next
+  ' --- 3. ÚLTIMAS 4 POSICIONES: SOLO DÍGITOS ---
+  For iIndice = 5 To 8
+    sCaracter = String.Mid(sUsuario, iIndice, 1)
+    If sCaracter < "0" Or sCaracter > "9" Then Return False
+  Next
+  ' --- 4. CUMPLE EL PATRÓN COMPLETO ---
+  Return True
+
+End
+
+' ============================================
+' Función   : lbClasificacion_Click
+' Propósito : Al elegir una clasificación, cargar sus formatos
+'             en el ColumnView y resetear el detalle.
+' ============================================
+Public Sub lbClasificacion_Click()
+
+  ' --- 1. GUARD: DEBE HABER CLASIFICACIÓN SELECCIONADA ---
+  If lbClasificacion.Index < 0 Then Return
+
+  ' --- 2. CARGAR FORMATOS DE ESA CLASIFICACIÓN ---
+  m_FormatosPDF.CargarFormatosDe(cvFormatos, lbClasificacion.Text)
+
+  ' --- 3. RESET DEL DETALLE (AÚN NO HAY FORMATO SELECCIONADO) ---
+  LimpiarDetalleFormato()
+
+End
+
+' ============================================
+' Función   : cvFormatos_Click
+' Propósito : Al seleccionar un formato, poblar los controles de
+'             detalle y fijar editabilidad según el origen.
+' ============================================
+Public Sub cvFormatos_Click()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rs As Result
+
+  ' --- 2. GUARD: DEBE HABER FILA SELECCIONADA ---
+  If Not cvFormatos.Current Then Return
+
+  ' --- 3. ID DESDE LA CLAVE DE LA FILA (RC-GM-16: id en variable) ---
+  $iFormatoActual = CInt(cvFormatos.Current.Key)
+
+  ' --- 4. LEER REGISTRO COMPLETO ---
+  rs = m_FormatosPDF.LeerFormato($iFormatoActual)
+  If IsNull(rs) Then Return
+  If Not rs.Available Then Return
+
+  ' --- 5. POBLAR CAMPOS (Str => PUNTO DECIMAL, ROUND-TRIP SEGURO) ---
+  ancho_formato_pdf.Text = Str(rs["ancho"])
+  alto_formato_pdf.Text = Str(rs["alto"])
+  margen_interior.Text = Str(rs["margen_interior"])
+  margen_exterior.Text = Str(rs["margen_exterior"])
+  margen_superior.Text = Str(rs["margen_superior"])
+  margen_inferior.Text = Str(rs["margen_inferior"])
+  txtComentarioFormatoPDF.Text = If(rs["comentario"], rs["comentario"], "")
+  ' RC-GM-01: activo es TINYINT(1) => Boolean.
+  chbActivoFormatoPDF.Value = (rs["activo"] = True)
+
+  ' --- 6. EDITABILIDAD SEGÚN ORIGEN ---
+  ' SISTEMA => campos readonly (solo 'activo' editable).
+  ' CUSTOM  => todo editable.
+  $bFormatoEsCustom = (rs["origen"] = "custom")
+  EstablecerEdicionCampos($bFormatoEsCustom)
+
+  ' --- 7. BOTONES: MODO EDICIÓN ---
+  btnNuevoFormatoPDF.Visible = True
+  btnGuardarFormatoPDF.Visible = False
+  btnGuardarCambiosFormatoPDF.Visible = True
+
+End
+
+' ============================================
+' Función   : btnNuevoFormatoPDF_Click
+' Propósito : Entrar en modo ALTA de un formato CUSTOM: limpia
+'             campos, habilita edición y ajusta botones.
+' ============================================
+Public Sub btnNuevoFormatoPDF_Click()
+
+  ' --- 1. MODO ALTA: UN ALTA SIEMPRE ES CUSTOM ---
+  $iFormatoActual = 0
+  $bFormatoEsCustom = True
+
+  ' --- 2. LIMPIAR CAMPOS Y HABILITAR EDICIÓN ---
+  ancho_formato_pdf.Text = ""
+  alto_formato_pdf.Text = ""
+  margen_interior.Text = ""
+  margen_exterior.Text = ""
+  margen_superior.Text = ""
+  margen_inferior.Text = ""
+  txtComentarioFormatoPDF.Text = ""
+  chbActivoFormatoPDF.Value = True
+  EstablecerEdicionCampos(True)
+
+  ' --- 3. BOTONES: MODO ALTA (OCULTAR NUEVO PARA NO ABANDONAR A MEDIAS) ---
+  btnNuevoFormatoPDF.Visible = False
+  btnGuardarFormatoPDF.Visible = True
+  btnGuardarCambiosFormatoPDF.Visible = False
+
+  ' --- 4. FOCO EN EL PRIMER CAMPO ---
+  ancho_formato_pdf.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarFormatoPDF_Click
+' Propósito : Persistir un formato CUSTOM nuevo (modo ALTA).
+'             El nombre CUSTOMxx lo genera el módulo.
+' ============================================
+Public Sub btnGuardarFormatoPDF_Click()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rAncho As Float
+  Dim rAlto As Float
+  Dim rMargInt As Float
+  Dim rMargExt As Float
+  Dim rMargSup As Float
+  Dim rMargInf As Float
+  Dim iNuevoId As Integer
+
+  ' --- 2. LEER Y NORMALIZAR NÚMEROS (COMA O PUNTO -> PUNTO) ---
+  rAncho = LeerNumero(ancho_formato_pdf.Text)
+  rAlto = LeerNumero(alto_formato_pdf.Text)
+  rMargInt = LeerNumero(margen_interior.Text)
+  rMargExt = LeerNumero(margen_exterior.Text)
+  rMargSup = LeerNumero(margen_superior.Text)
+  rMargInf = LeerNumero(margen_inferior.Text)
+
+  ' --- 3. VALIDACIÓN ---
+  If rAncho <= 0 Or rAlto <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ancho y alto deben ser mayores que cero.")
+    Return
+  Endif
+  If rMargInt < 0 Or rMargExt < 0 Or rMargSup < 0 Or rMargInf < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Los márgenes no pueden ser negativos.")
+    Return
+  Endif
+
+  ' --- 4. ALTA VÍA MÓDULO ---
+  iNuevoId = m_FormatosPDF.CrearFormatoCustom(rAncho, rAlto, rMargInt, rMargExt, rMargSup, rMargInf, Trim(txtComentarioFormatoPDF.Text), chbActivoFormatoPDF.Value)
+  ' -1 => FALLÓ EL ALTA (EL MÓDULO YA MOSTRÓ EL ERROR).
+  If iNuevoId = -1 Then Return
+
+  ' --- 5. REFRESCO: 'Custom' PUEDE SER CLASIFICACIÓN NUEVA ---
+  m_FormatosPDF.CargarClasificaciones(lbClasificacion)
+  SeleccionarClasificacion("Custom")
+  m_FormatosPDF.CargarFormatosDe(cvFormatos, "Custom")
+
+  ' --- 6. RESET DE ESTADO Y AVISO ---
+  LimpiarDetalleFormato()
+  m_Sonido.sonar("Info")
+  Message.Info("Formato personalizado creado.")
+
+End
+
+' ============================================
+' Función   : btnGuardarCambiosFormatoPDF_Click
+' Propósito : Guardar cambios del formato seleccionado. Si es
+'             CUSTOM actualiza todo; si es SISTEMA, solo 'activo'.
+' ============================================
+Public Sub btnGuardarCambiosFormatoPDF_Click()
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim rAncho As Float
+  Dim rAlto As Float
+  Dim rMargInt As Float
+  Dim rMargExt As Float
+  Dim rMargSup As Float
+  Dim rMargInf As Float
+  Dim bOk As Boolean
+
+  ' --- 2. GUARD: DEBE HABER FORMATO SELECCIONADO ---
+  If $iFormatoActual <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Seleccione un formato para modificar.")
+    Return
+  Endif
+
+  ' --- 3. RAMA SEGÚN ORIGEN ---
+  If $bFormatoEsCustom Then
+
+    ' CUSTOM: LEER, VALIDAR Y ACTUALIZAR TODOS LOS CAMPOS.
+    rAncho = LeerNumero(ancho_formato_pdf.Text)
+    rAlto = LeerNumero(alto_formato_pdf.Text)
+    rMargInt = LeerNumero(margen_interior.Text)
+    rMargExt = LeerNumero(margen_exterior.Text)
+    rMargSup = LeerNumero(margen_superior.Text)
+    rMargInf = LeerNumero(margen_inferior.Text)
+
+    If rAncho <= 0 Or rAlto <= 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Ancho y alto deben ser mayores que cero.")
+      Return
+    Endif
+    If rMargInt < 0 Or rMargExt < 0 Or rMargSup < 0 Or rMargInf < 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Los márgenes no pueden ser negativos.")
+      Return
+    Endif
+
+    bOk = m_FormatosPDF.ActualizarFormatoCustom($iFormatoActual, rAncho, rAlto, rMargInt, rMargExt, rMargSup, rMargInf, Trim(txtComentarioFormatoPDF.Text), chbActivoFormatoPDF.Value)
+
+  Else
+
+    ' SISTEMA: SOLO EL ESTADO ACTIVO ES MODIFICABLE.
+    bOk = m_FormatosPDF.ActualizarEstadoActivo($iFormatoActual, chbActivoFormatoPDF.Value)
+
+  Endif
+
+  ' EL MÓDULO YA MOSTRÓ EL ERROR SI bOk = False.
+  If Not bOk Then Return
+
+  ' --- 4. REFRESCO DE LA CLASIFICACIÓN ACTUAL ---
+  If lbClasificacion.Index >= 0 Then
+    m_FormatosPDF.CargarFormatosDe(cvFormatos, lbClasificacion.Text)
+  Endif
+
+  ' --- 5. RESET DE ESTADO Y AVISO ---
+  LimpiarDetalleFormato()
+  m_Sonido.sonar("Info")
+  Message.Info("Cambios guardados correctamente.")
+
+End
+
+' ============================================
+' Función   : EstablecerEdicionCampos
+' Propósito : Alternar readonly + fondo de los campos de detalle.
+'             chbActivoFormatoPDF queda SIEMPRE editable (activo
+'             es modificable en sistema y en custom).
+' Parámetros: bEditable As Boolean — True: editable; False: readonly
+' ============================================
+Private Sub EstablecerEdicionCampos(bEditable As Boolean)
+
+  ' --- 1. FONDO: BLANCO SI EDITABLE, GRIS (Color.Background) SI READONLY ---
+  Dim iBg As Integer
+
+  If bEditable Then
+    iBg = Color.TextBackground
+  Else
+    iBg = Color.Background
+  Endif
+
+  ' --- 2. APLICAR A LOS 6 NUMÉRICOS + COMENTARIO ---
+  ancho_formato_pdf.ReadOnly = Not bEditable
+  ancho_formato_pdf.Background = iBg
+  alto_formato_pdf.ReadOnly = Not bEditable
+  alto_formato_pdf.Background = iBg
+  margen_interior.ReadOnly = Not bEditable
+  margen_interior.Background = iBg
+  margen_exterior.ReadOnly = Not bEditable
+  margen_exterior.Background = iBg
+  margen_superior.ReadOnly = Not bEditable
+  margen_superior.Background = iBg
+  margen_inferior.ReadOnly = Not bEditable
+  margen_inferior.Background = iBg
+  txtComentarioFormatoPDF.ReadOnly = Not bEditable
+  txtComentarioFormatoPDF.Background = iBg
+
+End
+
+' ============================================
+' Función   : LimpiarDetalleFormato
+' Propósito : Dejar el panel de detalle en estado inicial:
+'             campos vacíos, readonly, sin selección y botones
+'             en su disposición base.
+' ============================================
+Private Sub LimpiarDetalleFormato()
+
+  ' --- 1. VACIAR CAMPOS ---
+  ancho_formato_pdf.Text = ""
+  alto_formato_pdf.Text = ""
+  margen_interior.Text = ""
+  margen_exterior.Text = ""
+  margen_superior.Text = ""
+  margen_inferior.Text = ""
+  txtComentarioFormatoPDF.Text = ""
+  chbActivoFormatoPDF.Value = True
+
+  ' --- 2. RESET DE ESTADO INTERNO ---
+  $iFormatoActual = 0
+  $bFormatoEsCustom = False
+
+  ' --- 3. CAMPOS READONLY ---
+  EstablecerEdicionCampos(False)
+
+  ' --- 4. BOTONES: DISPOSICIÓN BASE ---
+  btnNuevoFormatoPDF.Visible = True
+  btnGuardarFormatoPDF.Visible = False
+  btnGuardarCambiosFormatoPDF.Visible = False
+
+End
+
+' ============================================
+' Función   : SeleccionarClasificacion
+' Propósito : Posicionar el ListBox en la clasificación indicada
+'             (usada tras crear un CUSTOM para saltar a 'Custom').
+' Parámetros: sClasif As String — texto de la clasificación.
+' ============================================
+Private Sub SeleccionarClasificacion(sClasif As String)
+
+  Dim i As Integer
+
+  For i = 0 To lbClasificacion.List.Max
+    If lbClasificacion.List[i] = sClasif Then
+      lbClasificacion.Index = i
+      Break
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : LeerNumero
+' Propósito : Convertir texto a Float aceptando coma o punto
+'             como separador decimal. Normaliza a punto y
+'             convierte con CFloat, que es locale-independiente.
+' Parámetros: sTexto As String — texto del textbox.
+' Retorna   : Float — valor numérico (0 si vacío o inválido).
+' ============================================
+Private Function LeerNumero(sTexto As String) As Float
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sNormalizado As String
+  Dim rValor As Float
+
+  ' --- 2. NORMALIZAR: COMA O PUNTO -> PUNTO ---
+  sNormalizado = Replace(Trim(sTexto), ",", ".")
+  ' VACÍO: CFloat("") LANZA TYPE MISMATCH
+  If sNormalizado = "" Then Return 0
+
+  ' --- 3. CONVERSIÓN ---
+  ' NO Val: DEPENDE DEL LOCALE. CON es_AR "15.5" DA NULL Y "1.234" DA 1234
+  Try rValor = CFloat(sNormalizado)
+  If Error Then Return 0
+
+  ' --- 4. RETORNO ---
+  Return rValor
+
+End
+
+Public Sub SplitterPDF_Resize()
+
+  SplitterPDF.Layout = [1, 3]
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : ConfigurarGridViewSeries
+' Propósito : Define la única columna del GridView de series. El estado no
+'             se muestra como columna: las series heredan el estado de la
+'             colección madre por cascada y se reflejan con color de fila.
+' ════════════════════════════════════════════════════════════════════════════
+Private Sub ConfigurarGridViewSeries()
+
+  With gvSeries
+    .Header = GridView.Horizontal
+    .Columns.Count = 1
+    .Columns[0].Title = "Serie"
+    .Columns[0].Width = 380
+    .Rows.Count = 0
+  End With
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' PESTAÑA «Notas» (tsFSysAdmin, ÍNDICE 6): ADMINISTRACIÓN DE NOTAS INTERNAS
+' ----------------------------------------------------------------------------
+' LO QUE SOLO HACE EL ADMINISTRADOR SOBRE LAS NOTAS (claude/notas-rediseno.md):
+'   - TRANSFERIR EL ROL DE CREADOR DE UN GRUPO CUYO CREADOR QUEDÓ INACTIVO,
+'     A UN MIEMBRO ACTIVO DEL GRUPO;
+'   - CERRAR LAS NOTAS ABIERTAS DE UN USUARIO INACTIVO.
+' EL TERCER CASO, ARCHIVAR UN PROYECTO, LO HACE btnGuardarCambiosProyecto_Click.
+' USA hConnServidor: EL ADMINISTRADOR NO ES UN USUARIO DE gbpublisher. LO QUE
+' CIERRA QUEDA FIRMADO CON SU NOMBRE EN notas.cierre_sistema.
+' ════════════════════════════════════════════════════════════════════════════
+
+' ============================================
+' Función   : ConexionServidorLista
+' Propósito : GUARDA COMÚN DE LA PESTAÑA «Notas»: hConnServidor ABIERTA.
+'             NULL Y Opened EN If SEPARADOS (RC-GM-17).
+' Parámetros: ninguno
+' Retorna   : Boolean — TRUE SI SE PUEDE CONSULTAR
+' ============================================
+Private Function ConexionServidorLista() As Boolean
+
+  If Not hConnServidor Then Return False
+  Return hConnServidor.Opened
+
+End
+
+' ============================================
+' Función   : ConfigurarGridsNotas
+' Propósito : COLUMNAS FIJAS DE LAS DOS GRILLAS DE LA PESTAÑA «Notas». LA
+'             CARGA NO VUELVE A TOCAR Columns.Count (GV-58).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ConfigurarGridsNotas()
+
+  ' --- 1. GRUPOS: UNO POR PROYECTO QUE TENGA GRUPO ---
+  With gvNotasGrupos
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Columns.Count = COLUMNAS_NOTAS_GRUPOS
+    .Columns[0].Title = "Proyecto"
+    .Columns[0].Width = 300
+    .Columns[1].Title = "Creador"
+    .Columns[1].Width = 160
+    .Columns[2].Title = "Creador activo"
+    .Columns[2].Width = 110
+    .Columns[3].Title = "Miembros activos"
+    .Columns[3].Width = 130
+    .Columns[4].Title = "Notas abiertas"
+    .Columns[4].Width = 120
+    .Rows.Count = 0
+  End With
+
+  ' --- 2. USUARIOS INACTIVOS CON NOTAS ABIERTAS ---
+  With gvNotasAutores
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Columns.Count = COLUMNAS_NOTAS_AUTORES
+    .Columns[0].Title = "Usuario (inactivo)"
+    .Columns[0].Width = 200
+    .Columns[1].Title = "Notas abiertas"
+    .Columns[1].Width = 120
+    .Rows.Count = 0
+  End With
+
+End
+
+' ============================================
+' Función   : CargarNotasAdmin
+' Propósito : LLENAR LAS DOS GRILLAS DE LA PESTAÑA «Notas» Y VACIAR LOS
+'             CANDIDATOS A CREADOR. LOS GRUPOS CON CREADOR INACTIVO VAN
+'             PRIMERO Y CON FONDO DE AVISO: SON LOS QUE PIDEN TRANSFERENCIA.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarNotasAdmin()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rGrupos As Result
+  Dim rAutores As Result
+  Dim iFila As Integer
+  Dim iColumna As Integer
+  Dim bActivo As Boolean
+  Dim iFondo As Integer
+
+  ' --- 1. VALIDACIÓN: SIN CONEXIÓN NO HAY NADA QUE MOSTRAR ---
+  If Not ConexionServidorLista() Then Return
+
+  ' --- 2. GRUPOS (activo ES TINYINT(1): SE CONVIERTE EN SQL, RC-GM-01) ---
+  Try rGrupos = hConnServidor.Exec("SELECT g.id, p.nombre AS proyecto, u.usuario AS creador, " &
+    "CAST(u.activo AS SIGNED) AS creador_activo, " &
+    "(SELECT COUNT(*) FROM notas_miembros m WHERE m.id_grupo = g.id AND m.fecha_baja IS NULL) AS miembros, " &
+    "(SELECT COUNT(*) FROM notas n WHERE n.id_grupo = g.id AND n.fecha_cierre IS NULL) AS abiertas " &
+    "FROM notas_grupos g JOIN proyectos p ON p.id = g.id_proyecto JOIN usuarios u ON u.id = g.id_creador " &
+    "ORDER BY u.activo, p.nombre")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los grupos de notas:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  gvNotasGrupos.Rows.Count = 0
+  $aNotasGrupos.Clear()
+  $aNotasCreadorActivo.Clear()
+  gvNotasGrupos.Rows.Count = rGrupos.Count
+  iFila = 0
+  For Each rGrupos
+    bActivo = (rGrupos["creador_activo"] = 1)
+    $aNotasGrupos.Add(CInt(rGrupos["id"]))
+    $aNotasCreadorActivo.Add(bActivo)
+    gvNotasGrupos[iFila, 0].Text = rGrupos["proyecto"]
+    gvNotasGrupos[iFila, 1].Text = rGrupos["creador"]
+    gvNotasGrupos[iFila, 2].Text = If(bActivo, "Sí", "No")
+    gvNotasGrupos[iFila, 3].Text = CStr(rGrupos["miembros"])
+    gvNotasGrupos[iFila, 4].Text = CStr(rGrupos["abiertas"])
+    ' FONDO EXPLÍCITO EN TODAS LAS CELDAS: VOLVER Rows.Count A 0 NO BORRA EL
+    ' FORMATO, Y UN FONDO DE LA CARGA ANTERIOR REAPARECERÍA
+    If bActivo Then
+      iFondo = Color.Default
+    Else
+      iFondo = Color.RGB(255, 200, 200)
+    Endif
+    For iColumna = 0 To COLUMNAS_NOTAS_GRUPOS - 1
+      gvNotasGrupos[iFila, iColumna].Background = iFondo
+    Next
+    Inc iFila
+  Next
+
+  ' --- 3. USUARIOS INACTIVOS CON NOTAS ABIERTAS ---
+  Try rAutores = hConnServidor.Exec("SELECT u.id, u.usuario, COUNT(*) AS abiertas " &
+    "FROM notas n JOIN usuarios u ON u.id = n.id_autor " &
+    "WHERE u.activo = 0 AND n.fecha_cierre IS NULL GROUP BY u.id, u.usuario ORDER BY u.usuario")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los usuarios con notas abiertas:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  gvNotasAutores.Rows.Count = 0
+  $aNotasAutores.Clear()
+  gvNotasAutores.Rows.Count = rAutores.Count
+  iFila = 0
+  For Each rAutores
+    $aNotasAutores.Add(CInt(rAutores["id"]))
+    gvNotasAutores[iFila, 0].Text = rAutores["usuario"]
+    gvNotasAutores[iFila, 1].Text = CStr(rAutores["abiertas"])
+    Inc iFila
+  Next
+
+  ' --- 4. SIN GRUPO ELEGIDO NO HAY CANDIDATOS ---
+  cmbNotasCreador.Clear()
+  $aNotasCandidatos.Clear()
+  btnNotasTransferir.Enabled = False
+
+End
+
+' ============================================
+' Función   : tsFSysAdmin_Click
+' Propósito : AL ENTRAR A LA PESTAÑA «Notas», RELEER DEL SERVIDOR: UN USUARIO
+'             DADO DE BAJA EN LA PESTAÑA «Usuarios» CAMBIA LAS DOS GRILLAS.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub tsFSysAdmin_Click()
+
+  If tsFSysAdmin.Index = PESTANA_NOTAS Then CargarNotasAdmin()
+
+End
+
+' ============================================
+' Función   : btnNotasActualizar_Click
+' Propósito : RELEER GRUPOS Y USUARIOS DESDE EL SERVIDOR.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasActualizar_Click()
+
+  ' --- 1. VALIDACIÓN ---
+  If Not ConexionServidorLista() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ' --- 2. CARGA ---
+  CargarNotasAdmin()
+
+End
+
+' ============================================
+' Función   : gvNotasGrupos_Click
+' Propósito : AL ELEGIR UN GRUPO CON CREADOR INACTIVO, LISTAR COMO CANDIDATOS
+'             A SUS MIEMBROS ACTIVOS QUE SON USUARIOS ACTIVOS. CON EL CREADOR
+'             ACTIVO NO HAY TRANSFERENCIA: EL ROL LO CEDE QUIEN LO TIENE.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvNotasGrupos_Click()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rCandidatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. VALIDACIÓN DE LA FILA ---
+  cmbNotasCreador.Clear()
+  $aNotasCandidatos.Clear()
+  btnNotasTransferir.Enabled = False
+  iFila = gvNotasGrupos.Row
+  If iFila < 0 Then Return
+  If iFila >= $aNotasGrupos.Count Then Return
+  If Not ConexionServidorLista() Then Return
+
+  ' --- 2. CREADOR ACTIVO: NADA QUE TRANSFERIR ---
+  If $aNotasCreadorActivo[iFila] Then Return
+
+  ' --- 3. CANDIDATOS ---
+  Try rCandidatos = hConnServidor.Exec("SELECT u.id, u.usuario FROM notas_miembros m JOIN usuarios u ON u.id = m.id_usuario " &
+    "WHERE m.id_grupo = &1 AND m.fecha_baja IS NULL AND u.activo = 1 ORDER BY u.usuario", $aNotasGrupos[iFila])
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los miembros del grupo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  For Each rCandidatos
+    cmbNotasCreador.Add(rCandidatos["usuario"])
+    $aNotasCandidatos.Add(CInt(rCandidatos["id"]))
+  Next
+
+  ' --- 4. SIN MIEMBROS ACTIVOS NO HAY A QUIÉN TRANSFERIR ---
+  ' LAS NOTAS DEL GRUPO SE CIERRAN ARCHIVANDO EL PROYECTO O POR USUARIO
+  If $aNotasCandidatos.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El grupo no tiene miembros activos a quienes transferir el rol de creador.")
+    Return
+  Endif
+  cmbNotasCreador.Index = 0
+  btnNotasTransferir.Enabled = True
+
+End
+
+' ============================================
+' Función   : btnNotasTransferir_Click
+' Propósito : PASAR EL ROL DE CREADOR AL CANDIDATO ELEGIDO. LA SENTENCIA SOLO
+'             ACTÚA SI EL CREADOR SIGUE INACTIVO Y EL CANDIDATO SIGUE SIENDO
+'             MIEMBRO ACTIVO (SC-07: EL FILTRO VA EN LA SENTENCIA, NO EN LA
+'             PANTALLA).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasTransferir_Click()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim iFila As Integer
+  Dim iCandidato As Integer
+  Dim sCandidato As String
+
+  ' --- 1. VALIDACIÓN ---
+  iFila = gvNotasGrupos.Row
+  If iFila < 0 Or iFila >= $aNotasGrupos.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí un grupo.")
+    Return
+  Endif
+  iCandidato = cmbNotasCreador.Index
+  If iCandidato < 0 Or iCandidato >= $aNotasCandidatos.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí el nuevo creador.")
+    Return
+  Endif
+  If Not ConexionServidorLista() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+  sCandidato = cmbNotasCreador.Text
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Pasar el rol de creador del grupo de «" & gvNotasGrupos[iFila, 0].Text & "» a " & sCandidato & "?" & Chr(10) &
+    "Desde ahí es quien suma y da de baja a los miembros.", "Transferir", "Cancelar") <> 1 Then Return
+
+  ' --- 3. TRANSFERENCIA ---
+  Try hConnServidor.Exec("UPDATE notas_grupos SET id_creador = &2 WHERE id = &1 " &
+    "AND id_creador IN (SELECT u.id FROM usuarios u WHERE u.activo = 0) " &
+    "AND EXISTS (SELECT 1 FROM notas_miembros m WHERE m.id_grupo = &1 AND m.id_usuario = &2 AND m.fecha_baja IS NULL)",
+    $aNotasGrupos[iFila], $aNotasCandidatos[iCandidato])
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo transferir el rol de creador:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. RESULTADO Y RECARGA ---
+  m_Sonido.sonar("Info")
+  Message.Info("El rol de creador pasó a " & sCandidato & ".")
+  CargarNotasAdmin()
+
+End
+
+' ============================================
+' Función   : btnNotasCerrarAutor_Click
+' Propósito : CERRAR Y ARCHIVAR TODAS LAS NOTAS ABIERTAS DEL USUARIO INACTIVO
+'             ELEGIDO, FIRMADAS CON EL NOMBRE DEL ADMINISTRADOR. LA SENTENCIA
+'             SOLO ACTÚA SI EL USUARIO SIGUE INACTIVO (SC-07).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasCerrarAutor_Click()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim iFila As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  iFila = gvNotasAutores.Row
+  If iFila < 0 Or iFila >= $aNotasAutores.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí un usuario.")
+    Return
+  Endif
+  If Not ConexionServidorLista() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Cerrar y archivar las " & gvNotasAutores[iFila, 1].Text & " notas abiertas de " & gvNotasAutores[iFila, 0].Text & "?" & Chr(10) &
+    "Quedan firmadas como cerradas por la administración.", "Cerrar", "Cancelar") <> 1 Then Return
+
+  ' --- 3. CIERRE. ES ACTIVIDAD: LOS DESTINATARIOS LO VEN COMO NOVEDAD ---
+  Try hConnServidor.Exec("UPDATE notas SET fecha_cierre = NOW(), cierre_sistema = &2, ultima_actividad = NOW(6) " &
+    "WHERE id_autor = &1 AND fecha_cierre IS NULL AND id_autor IN (SELECT u.id FROM usuarios u WHERE u.activo = 0)",
+    $aNotasAutores[iFila], sUsuarioActual)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cerrar las notas:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. RESULTADO Y RECARGA ---
+  m_Sonido.sonar("Info")
+  Message.Info("Notas cerradas.")
+  CargarNotasAdmin()
+
+End

@@ -33,6 +33,16 @@ Private $bActivaColeccionOriginal As Boolean = False
 ' --- VARIABLES PARA ABM DE FORMATOS PDF ---
 Private $iFormatoActual As Integer = 0
 Private $bFormatoEsCustom As Boolean = False
+' --- PESTAÑA «Notas» (tsFSysAdmin, ÍNDICE 6): ADMINISTRACIÓN DE NOTAS ---
+Private Const PESTANA_NOTAS As Integer = 6
+' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_NOTAS_GRUPOS As Integer = 5
+Private Const COLUMNAS_NOTAS_AUTORES As Integer = 2
+' UNA ENTRADA POR FILA O ÍTEM, EN EL MISMO ORDEN
+Private $aNotasGrupos As New Integer[]
+Private $aNotasCreadorActivo As New Boolean[]
+Private $aNotasAutores As New Integer[]
+Private $aNotasCandidatos As New Integer[]
 
 ' ============================================
 ' Función   : Form_Show
@@ -338,6 +348,10 @@ Private Sub HabilitarABMUsuarios()
   ' CORRIGE Password=True HEREDADO DEL DISEÑADOR EN EL COMENTARIO
   txtComentarioFormatoPDF.Password = False
   LimpiarDetalleFormato()
+
+  ' --- 5. INICIALIZAR LA PESTAÑA «Notas» ---
+  ConfigurarGridsNotas()
+  CargarNotasAdmin()
 
 End
 
@@ -899,6 +913,8 @@ Public Sub btnGuardarCambiosProyecto_Click()
   m_Sonido.sonar("Info")
   Message.Info("Estado del proyecto <b>'" & sNombreProyecto & "'</b> actualizado correctamente.")
   CargarProyectosDelServidor()
+  ' ARCHIVAR CAMBIA LAS NOTAS ABIERTAS DE LA PESTAÑA «Notas»
+  CargarNotasAdmin()
   Return
 
 FALLA_SQL:
@@ -2862,5 +2878,353 @@ Private Sub ConfigurarGridViewSeries()
     .Columns[0].Width = 380
     .Rows.Count = 0
   End With
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' PESTAÑA «Notas» (tsFSysAdmin, ÍNDICE 6): ADMINISTRACIÓN DE NOTAS INTERNAS
+' ----------------------------------------------------------------------------
+' LO QUE SOLO HACE EL ADMINISTRADOR SOBRE LAS NOTAS (claude/notas-rediseno.md):
+'   - TRANSFERIR EL ROL DE CREADOR DE UN GRUPO CUYO CREADOR QUEDÓ INACTIVO,
+'     A UN MIEMBRO ACTIVO DEL GRUPO;
+'   - CERRAR LAS NOTAS ABIERTAS DE UN USUARIO INACTIVO.
+' EL TERCER CASO, ARCHIVAR UN PROYECTO, LO HACE btnGuardarCambiosProyecto_Click.
+' USA hConnServidor: EL ADMINISTRADOR NO ES UN USUARIO DE gbpublisher. LO QUE
+' CIERRA QUEDA FIRMADO CON SU NOMBRE EN notas.cierre_sistema.
+' ════════════════════════════════════════════════════════════════════════════
+
+' ============================================
+' Función   : ConexionServidorLista
+' Propósito : GUARDA COMÚN DE LA PESTAÑA «Notas»: hConnServidor ABIERTA.
+'             NULL Y Opened EN If SEPARADOS (RC-GM-17).
+' Parámetros: ninguno
+' Retorna   : Boolean — TRUE SI SE PUEDE CONSULTAR
+' ============================================
+Private Function ConexionServidorLista() As Boolean
+
+  If Not hConnServidor Then Return False
+  Return hConnServidor.Opened
+
+End
+
+' ============================================
+' Función   : ConfigurarGridsNotas
+' Propósito : COLUMNAS FIJAS DE LAS DOS GRILLAS DE LA PESTAÑA «Notas». LA
+'             CARGA NO VUELVE A TOCAR Columns.Count (GV-58).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ConfigurarGridsNotas()
+
+  ' --- 1. GRUPOS: UNO POR PROYECTO QUE TENGA GRUPO ---
+  With gvNotasGrupos
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Columns.Count = COLUMNAS_NOTAS_GRUPOS
+    .Columns[0].Title = "Proyecto"
+    .Columns[0].Width = 300
+    .Columns[1].Title = "Creador"
+    .Columns[1].Width = 150
+    .Columns[2].Title = "Creador activo"
+    .Columns[2].Width = 150
+    .Columns[3].Title = "Miembros activos"
+    .Columns[3].Width = 150
+    .Columns[4].Title = "Notas abiertas"
+    .Columns[4].Width = 150
+    .Rows.Count = 0
+  End With
+
+  ' --- 2. USUARIOS INACTIVOS CON NOTAS ABIERTAS ---
+  With gvNotasAutores
+    .Header = GridView.Horizontal
+    .Grid = True
+    .Columns.Count = COLUMNAS_NOTAS_AUTORES
+    .Columns[0].Title = "Usuario (inactivo)"
+    .Columns[0].Width = 200
+    .Columns[1].Title = "Notas abiertas"
+    .Columns[1].Width = 120
+    .Rows.Count = 0
+  End With
+
+End
+
+' ============================================
+' Función   : CargarNotasAdmin
+' Propósito : LLENAR LAS DOS GRILLAS DE LA PESTAÑA «Notas» Y VACIAR LOS
+'             CANDIDATOS A CREADOR. LOS GRUPOS CON CREADOR INACTIVO VAN
+'             PRIMERO Y CON FONDO DE AVISO: SON LOS QUE PIDEN TRANSFERENCIA.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarNotasAdmin()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rGrupos As Result
+  Dim rAutores As Result
+  Dim iFila As Integer
+  Dim iColumna As Integer
+  Dim bActivo As Boolean
+  Dim iFondo As Integer
+
+  ' --- 1. VALIDACIÓN: SIN CONEXIÓN NO HAY NADA QUE MOSTRAR ---
+  If Not ConexionServidorLista() Then Return
+
+  ' --- 2. GRUPOS (activo ES TINYINT(1): SE CONVIERTE EN SQL, RC-GM-01) ---
+  Try rGrupos = hConnServidor.Exec("SELECT g.id, p.nombre AS proyecto, u.usuario AS creador, " &
+    "CAST(u.activo AS SIGNED) AS creador_activo, " &
+    "(SELECT COUNT(*) FROM notas_miembros m WHERE m.id_grupo = g.id AND m.fecha_baja IS NULL) AS miembros, " &
+    "(SELECT COUNT(*) FROM notas n WHERE n.id_grupo = g.id AND n.fecha_cierre IS NULL) AS abiertas " &
+    "FROM notas_grupos g JOIN proyectos p ON p.id = g.id_proyecto JOIN usuarios u ON u.id = g.id_creador " &
+    "ORDER BY u.activo, p.nombre")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los grupos de notas:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  gvNotasGrupos.Rows.Count = 0
+  $aNotasGrupos.Clear()
+  $aNotasCreadorActivo.Clear()
+  gvNotasGrupos.Rows.Count = rGrupos.Count
+  iFila = 0
+  For Each rGrupos
+    bActivo = (rGrupos["creador_activo"] = 1)
+    $aNotasGrupos.Add(CInt(rGrupos["id"]))
+    $aNotasCreadorActivo.Add(bActivo)
+    gvNotasGrupos[iFila, 0].Text = rGrupos["proyecto"]
+    gvNotasGrupos[iFila, 1].Text = rGrupos["creador"]
+    gvNotasGrupos[iFila, 2].Text = If(bActivo, "Sí", "No")
+    gvNotasGrupos[iFila, 3].Text = CStr(rGrupos["miembros"])
+    gvNotasGrupos[iFila, 4].Text = CStr(rGrupos["abiertas"])
+    ' FONDO EXPLÍCITO EN TODAS LAS CELDAS: VOLVER Rows.Count A 0 NO BORRA EL
+    ' FORMATO, Y UN FONDO DE LA CARGA ANTERIOR REAPARECERÍA
+    If bActivo Then
+      iFondo = Color.Default
+    Else
+      iFondo = Color.RGB(255, 200, 200)
+    Endif
+    For iColumna = 0 To COLUMNAS_NOTAS_GRUPOS - 1
+      gvNotasGrupos[iFila, iColumna].Background = iFondo
+    Next
+    Inc iFila
+  Next
+
+  ' --- 3. USUARIOS INACTIVOS CON NOTAS ABIERTAS ---
+  Try rAutores = hConnServidor.Exec("SELECT u.id, u.usuario, COUNT(*) AS abiertas " &
+    "FROM notas n JOIN usuarios u ON u.id = n.id_autor " &
+    "WHERE u.activo = 0 AND n.fecha_cierre IS NULL GROUP BY u.id, u.usuario ORDER BY u.usuario")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los usuarios con notas abiertas:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  gvNotasAutores.Rows.Count = 0
+  $aNotasAutores.Clear()
+  gvNotasAutores.Rows.Count = rAutores.Count
+  iFila = 0
+  For Each rAutores
+    $aNotasAutores.Add(CInt(rAutores["id"]))
+    gvNotasAutores[iFila, 0].Text = rAutores["usuario"]
+    gvNotasAutores[iFila, 1].Text = CStr(rAutores["abiertas"])
+    Inc iFila
+  Next
+
+  ' --- 4. SIN GRUPO ELEGIDO NO HAY CANDIDATOS ---
+  cmbNotasCreador.Clear()
+  $aNotasCandidatos.Clear()
+  btnNotasTransferir.Enabled = False
+
+End
+
+' ============================================
+' Función   : tsFSysAdmin_Click
+' Propósito : AL ENTRAR A LA PESTAÑA «Notas», RELEER DEL SERVIDOR: UN USUARIO
+'             DADO DE BAJA EN LA PESTAÑA «Usuarios» CAMBIA LAS DOS GRILLAS.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub tsFSysAdmin_Click()
+
+  If tsFSysAdmin.Index = PESTANA_NOTAS Then CargarNotasAdmin()
+
+End
+
+' ============================================
+' Función   : btnNotasActualizar_Click
+' Propósito : RELEER GRUPOS Y USUARIOS DESDE EL SERVIDOR.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasActualizar_Click()
+
+  ' --- 1. VALIDACIÓN ---
+  If Not ConexionServidorLista() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ' --- 2. CARGA ---
+  CargarNotasAdmin()
+
+End
+
+' ============================================
+' Función   : gvNotasGrupos_Click
+' Propósito : AL ELEGIR UN GRUPO CON CREADOR INACTIVO, LISTAR COMO CANDIDATOS
+'             A SUS MIEMBROS ACTIVOS QUE SON USUARIOS ACTIVOS. CON EL CREADOR
+'             ACTIVO NO HAY TRANSFERENCIA: EL ROL LO CEDE QUIEN LO TIENE.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvNotasGrupos_Click()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim rCandidatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. VALIDACIÓN DE LA FILA ---
+  cmbNotasCreador.Clear()
+  $aNotasCandidatos.Clear()
+  btnNotasTransferir.Enabled = False
+  iFila = gvNotasGrupos.Row
+  If iFila < 0 Then Return
+  If iFila >= $aNotasGrupos.Count Then Return
+  If Not ConexionServidorLista() Then Return
+
+  ' --- 2. CREADOR ACTIVO: NADA QUE TRANSFERIR ---
+  If $aNotasCreadorActivo[iFila] Then Return
+
+  ' --- 3. CANDIDATOS ---
+  Try rCandidatos = hConnServidor.Exec("SELECT u.id, u.usuario FROM notas_miembros m JOIN usuarios u ON u.id = m.id_usuario " &
+    "WHERE m.id_grupo = &1 AND m.fecha_baja IS NULL AND u.activo = 1 ORDER BY u.usuario", $aNotasGrupos[iFila])
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron cargar los miembros del grupo:" & Chr(10) & Error.Text)
+    Return
+  Endif
+
+  For Each rCandidatos
+    cmbNotasCreador.Add(rCandidatos["usuario"])
+    $aNotasCandidatos.Add(CInt(rCandidatos["id"]))
+  Next
+
+  ' --- 4. SIN MIEMBROS ACTIVOS NO HAY A QUIÉN TRANSFERIR ---
+  ' LAS NOTAS DEL GRUPO SE CIERRAN ARCHIVANDO EL PROYECTO O POR USUARIO
+  If $aNotasCandidatos.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El grupo no tiene miembros activos a quienes transferir el rol de creador.")
+    Return
+  Endif
+  cmbNotasCreador.Index = 0
+  btnNotasTransferir.Enabled = True
+
+End
+
+' ============================================
+' Función   : btnNotasTransferir_Click
+' Propósito : PASAR EL ROL DE CREADOR AL CANDIDATO ELEGIDO. LA SENTENCIA SOLO
+'             ACTÚA SI EL CREADOR SIGUE INACTIVO Y EL CANDIDATO SIGUE SIENDO
+'             MIEMBRO ACTIVO (SC-07: EL FILTRO VA EN LA SENTENCIA, NO EN LA
+'             PANTALLA).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasTransferir_Click()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim iFila As Integer
+  Dim iCandidato As Integer
+  Dim sCandidato As String
+
+  ' --- 1. VALIDACIÓN ---
+  iFila = gvNotasGrupos.Row
+  If iFila < 0 Or iFila >= $aNotasGrupos.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí un grupo.")
+    Return
+  Endif
+  iCandidato = cmbNotasCreador.Index
+  If iCandidato < 0 Or iCandidato >= $aNotasCandidatos.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí el nuevo creador.")
+    Return
+  Endif
+  If Not ConexionServidorLista() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+  sCandidato = cmbNotasCreador.Text
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Pasar el rol de creador del grupo de «" & gvNotasGrupos[iFila, 0].Text & "» a " & sCandidato & "?" & Chr(10) &
+      "Desde ahí es quien suma y da de baja a los miembros.", "Transferir", "Cancelar") <> 1 Then Return
+
+    ' --- 3. TRANSFERENCIA ---
+    Try hConnServidor.Exec("UPDATE notas_grupos SET id_creador = &2 WHERE id = &1 " &
+      "AND id_creador IN (SELECT u.id FROM usuarios u WHERE u.activo = 0) " &
+      "AND EXISTS (SELECT 1 FROM notas_miembros m WHERE m.id_grupo = &1 AND m.id_usuario = &2 AND m.fecha_baja IS NULL)",
+      $aNotasGrupos[iFila], $aNotasCandidatos[iCandidato])
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo transferir el rol de creador:" & Chr(10) & Error.Text)
+      Return
+    Endif
+
+    ' --- 4. RESULTADO Y RECARGA ---
+    m_Sonido.sonar("Info")
+    Message.Info("El rol de creador pasó a " & sCandidato & ".")
+    CargarNotasAdmin()
+
+End
+
+' ============================================
+' Función   : btnNotasCerrarAutor_Click
+' Propósito : CERRAR Y ARCHIVAR TODAS LAS NOTAS ABIERTAS DEL USUARIO INACTIVO
+'             ELEGIDO, FIRMADAS CON EL NOMBRE DEL ADMINISTRADOR. LA SENTENCIA
+'             SOLO ACTÚA SI EL USUARIO SIGUE INACTIVO (SC-07).
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNotasCerrarAutor_Click()
+
+  ' --- 0. INICIALIZACIÓN ---
+  Dim iFila As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  iFila = gvNotasAutores.Row
+  If iFila < 0 Or iFila >= $aNotasAutores.Count Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí un usuario.")
+    Return
+  Endif
+  If Not ConexionServidorLista() Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay conexión al servidor.")
+    Return
+  Endif
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Cerrar y archivar las " & gvNotasAutores[iFila, 1].Text & " notas abiertas de " & gvNotasAutores[iFila, 0].Text & "?" & Chr(10) &
+      "Quedan firmadas como cerradas por la administración.", "Cerrar", "Cancelar") <> 1 Then Return
+
+    ' --- 3. CIERRE. ES ACTIVIDAD: LOS DESTINATARIOS LO VEN COMO NOVEDAD ---
+    Try hConnServidor.Exec("UPDATE notas SET fecha_cierre = NOW(), cierre_sistema = &2, ultima_actividad = NOW(6) " &
+      "WHERE id_autor = &1 AND fecha_cierre IS NULL AND id_autor IN (SELECT u.id FROM usuarios u WHERE u.activo = 0)",
+      $aNotasAutores[iFila], sUsuarioActual)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudieron cerrar las notas:" & Chr(10) & Error.Text)
+      Return
+    Endif
+
+    ' --- 4. RESULTADO Y RECARGA ---
+    m_Sonido.sonar("Info")
+    Message.Info("Notas cerradas.")
+    CargarNotasAdmin()
 
 End
