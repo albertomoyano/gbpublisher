@@ -48,6 +48,16 @@ local CONTROLES = {
   -- UNA IMAGEN QUE APUNTA FUERA DE media/: EL EPUB Y EL HTML SOLO COPIAN
   -- media/, ASÍ QUE AUNQUE EXISTA NO LLEGA A ESAS SALIDAS
   imagen_fuera_de_media = "error",
+  -- UNA ORDEN DE LaTeX EN EL TEXTO QUE NO ES \sptext{…}: PANDOC LA LEE COMO
+  -- LaTeX CRUDO Y LOS ESCRITORES DE XML LA DESCARTAN; SE PIERDE EN LAS TRES
+  -- SALIDAS, SIN AVISO (GV-116)
+  latex_en_linea = "error",
+  -- UNA ORDEN DE LaTeX SOLA ENTRE PÁRRAFOS, FUERA DE ::: espaciov: SE PIERDE
+  -- IGUAL. LA QUE ESTÁ DENTRO DE espaciov LA VALIDA espacio-vertical.lua
+  latex_suelto = "error",
+  -- HTML ESCRITO EN EL .md (<sup>, <br>, PEGADO DE UNA WEB): LOS ESCRITORES
+  -- DE XML LO DESCARTAN. LOS COMENTARIOS <!-- … --> NO CUENTAN: NO SON TEXTO
+  html_crudo = "error",
 }
 
 -- LARGO MÁXIMO DEL CONTEXTO QUE ACOMPAÑA A UN HALLAZGO, EN CARACTERES
@@ -55,6 +65,12 @@ local LARGO_CONTEXTO = 70
 
 -- UNA LLAMADA A NOTA: [^ETIQUETA], SIN ESPACIOS NI CORCHETE DE CIERRE ADENTRO
 local PATRON_LLAMADA = "%[%^[^%]%s]+%]"
+
+-- LA ÚNICA ORDEN DE LaTeX ADMITIDA EN EL TEXTO: LA TRADUCE volada.lua (SC-62)
+local PATRON_SPTEXT = "^\\sptext{.*}$"
+
+-- UN COMENTARIO HTML, QUE PANDOC TAMBIÉN LEE COMO HTML CRUDO
+local PATRON_COMENTARIO = "^%s*<!%-%-.*%-%->%s*$"
 
 local aHallazgos = {}
 
@@ -231,6 +247,110 @@ local function revisar_imagenes(doc, sRaiz)
 end
 
 -- ============================================================================
+-- Función   : es_comentario
+-- Propósito : Dice si un elemento crudo de HTML es un comentario <!-- … -->
+-- Parámetros: el — RawInline o RawBlock
+-- Retorna   : boolean
+-- ============================================================================
+local function es_comentario(el)
+  -- EL COMENTARIO PUEDE OCUPAR VARIAS LÍNEAS: SE COMPARA SIN LOS SALTOS
+  return (el.format == "html") and (el.text:gsub("\n", " "):match(PATRON_COMENTARIO) ~= nil)
+end
+
+-- ============================================================================
+-- Función   : contexto_crudo
+-- Propósito : Como contexto, pero con el texto crudo a la vista: stringify
+--             descarta el LaTeX y el HTML crudos, y el contexto quedaba con
+--             huecos («Mal: , y o y .»)
+-- Parámetros: bloque — el bloque del hallazgo
+-- Retorna   : string
+-- ============================================================================
+local function contexto_crudo(bloque)
+  return contexto(bloque:walk({
+    RawInline = function(r) return pandoc.Str(r.text) end,
+  }))
+end
+
+-- ============================================================================
+-- Función   : revisar_crudo_inlines
+-- Propósito : Busca LaTeX y HTML crudo en una lista de inlines, bajando a los
+--             contenedores como revisar_inlines y, como ella, SIN bajar al
+--             contenido de una nota: sus párrafos los recorre el walk de
+--             bloques, y bajar acá los informaría dos veces.
+-- Parámetros: aInlines — lista de inlines; bloque — el bloque que los
+--             contiene, para el contexto del mensaje
+-- ============================================================================
+local function revisar_crudo_inlines(aInlines, bloque)
+  for _, el in ipairs(aInlines) do
+    if el.t == "RawInline" then
+      -- --- 1. LaTeX: SOLO \sptext{…}, QUE TRADUCE volada.lua ---
+      if el.format == "tex" or el.format == "latex" then
+        if not el.text:match(PATRON_SPTEXT) then
+          registrar("latex_en_linea",
+            "la orden de LaTeX «" .. el.text .. "» se pierde en las tres salidas " ..
+            "(la única admitida en el texto es \\sptext{…}): «" .. contexto_crudo(bloque) .. "»")
+        end
+      -- --- 2. HTML: TODO, MENOS LOS COMENTARIOS ---
+      elseif el.format == "html" then
+        if not es_comentario(el) then
+          registrar("html_crudo",
+            "el HTML «" .. el.text .. "» se pierde en el XML: «" .. contexto_crudo(bloque) .. "»")
+        end
+      end
+    elseif el.t == "Note" then
+      -- SUS PÁRRAFOS LOS VISITA EL WALK DE BLOQUES
+    elseif el.t == "Image" then
+      revisar_crudo_inlines(el.caption, bloque)
+    elseif el.content then
+      revisar_crudo_inlines(el.content, bloque)
+    end
+  end
+end
+
+-- ============================================================================
+-- Función   : revisar_crudo
+-- Propósito : LaTeX y HTML crudo en todo el documento: en línea, dentro de
+--             cada bloque con texto, y suelto entre bloques. El contenido de
+--             ::: espaciov no se mira: ahí el LaTeX es el valor del
+--             shortcode, y lo valida espacio-vertical.lua (SC-39).
+-- Parámetros: doc — el documento
+-- ============================================================================
+local function revisar_crudo(doc)
+
+  -- --- 1. EN LÍNEA: LOS MISMOS BLOQUES QUE revisar_bloques ---
+  doc:walk({
+    Para = function(b) revisar_crudo_inlines(b.content, b) end,
+    Plain = function(b) revisar_crudo_inlines(b.content, b) end,
+    Header = function(b) revisar_crudo_inlines(b.content, b) end,
+    LineBlock = function(b)
+      for _, aLinea in ipairs(b.content) do revisar_crudo_inlines(aLinea, b) end
+    end,
+  })
+
+  -- --- 2. SUELTO: DE ARRIBA ABAJO, PARA SALTEAR EL CONTENIDO DE espaciov ---
+  -- CON traverse = "topdown", DEVOLVER false COMO SEGUNDO VALOR NO BAJA A LOS
+  -- HIJOS DEL ELEMENTO
+  doc:walk({
+    traverse = "topdown",
+    Div = function(d)
+      if d.classes:includes("espaciov") then return d, false end
+      return nil
+    end,
+    RawBlock = function(b)
+      if b.format == "tex" or b.format == "latex" then
+        registrar("latex_suelto",
+          "la orden de LaTeX «" .. contexto(b.text) .. "», sola entre párrafos, " ..
+          "se pierde en las tres salidas: si es un espacio o un salto de página, va dentro de ::: espaciov")
+      elseif b.format == "html" and not es_comentario(b) then
+        registrar("html_crudo",
+          "el HTML «" .. contexto(b.text) .. "» se pierde en el XML")
+      end
+      return nil
+    end,
+  })
+end
+
+-- ============================================================================
 -- Función   : revisar_definiciones
 -- Propósito : Busca definiciones de nota con la línea vacía. Se hace sobre el
 --             TEXTO FUENTE porque en el AST ya no están: la definición se
@@ -289,6 +409,7 @@ function Pandoc(doc)
   revisar_bloques(doc)
   revisar_comillas(doc)
   revisar_imagenes(doc, sRaiz)
+  revisar_crudo(doc)
 
   -- --- EL INFORME: SIEMPRE SE ESCRIBE, VACÍO SI NO HUBO HALLAZGOS ---
   local h = io.open(sRuta, "w")

@@ -26,6 +26,8 @@
     f:alinear-abre()  apertura del párrafo alineado (SC-61)
     f:alinear-cierra() cierre del párrafo alineado (SC-61)
     gb-alinear        corte ante una ficha fuera de lugar (SC-61)
+    f:volada-latex()  la letra volada como \sptext (SC-62)
+    f:sin-punto-final() el texto antes de una volada (SC-62)
     f:codigo-latex()  bloque de código coloreado (SC-42)
   ============================================================
   NOTA SOBRE f:latex — CORRECCIÓN DE 2026-09
@@ -439,6 +441,90 @@
       <xsl:text>  párrafo del primer nivel.&#10;</xsl:text>
     </xsl:message>
   </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- LETRA VOLADA (SC-62)                                         -->
+  <!-- ============================================================ -->
+  <!-- volada.lua ESCRIBE n\sptext{o} DEL .md COMO «n.» Y LA VOLADA -->
+  <!-- EN SUPERÍNDICE MARCADO: <superscript role="volada"> EN       -->
+  <!-- DocBook, <sup specific-use="volada"> EN JATS. EL PUNTO ES EL -->
+  <!-- QUE PONE \sptext (babel-spanish, \es@orddot), ASÍ QUE EN EL  -->
+  <!-- PDF SE VUELVE A \sptext{o} Y EL PUNTO DEL TEXTO SE QUITA.    -->
+  <!-- LAS DOS PLANTILLAS (EL SUPERÍNDICE Y EL TEXTO QUE LO         -->
+  <!-- PRECEDE) VAN EN CADA HOJA Y NO ACÁ: UNA PLANTILLA IMPORTADA  -->
+  <!-- PIERDE CONTRA text() Y sup/superscript DE LA HOJA QUE        -->
+  <!-- IMPORTA, SEA CUAL SEA SU PRIORIDAD (MEDIDO, GV-117: LA       -->
+  <!-- PRECEDENCIA DE IMPORTACIÓN SE MIRA ANTES QUE LA PRIORIDAD).  -->
+  <!-- ACÁ VAN LAS DOS FUNCIONES QUE LAS DOS USAN.                  -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:volada-latex                                     -->
+  <!-- PROPÓSITO: LA VOLADA COMO \sptext{…}, CON LOS DOS CONTROLES  -->
+  <!-- PARÁMETROS: v As element() — el superscript o el sup volada  -->
+  <!--            marcador As xs:boolean — true EN EL ARGUMENTO     -->
+  <!--            OPCIONAL DE UN TÍTULO, QUE VA A LOS MARCADORES    -->
+  <!-- RETORNA  : xs:string — \sptext{o}, O EN UN TÍTULO            -->
+  <!--            \texorpdfstring{\sptext{o}}{.º}                   -->
+  <!-- RAZÓN    : \sptext EXISTE SOLO CON EL ESPAÑOL ACTIVO (GV-105): -->
+  <!--            EN OTRO IDIOMA CORTA EL PDF CON «Undefined control -->
+  <!--            sequence». FRENA ACÁ, CON UN MENSAJE QUE LO DICE   -->
+  <!--            (DECISIÓN DE ALBERTO). EN EL LIBRO ES EL ÚNICO     -->
+  <!--            CONTROL DEL IDIOMA DEL CAPÍTULO: volada.lua NO LO  -->
+  <!--            CONOCE.                                           -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:volada-latex" as="xs:string">
+    <xsl:param name="v" as="element()"/>
+    <xsl:param name="marcador" as="xs:boolean"/>
+    <xsl:variable name="anterior" select="$v/preceding-sibling::node()[1]"/>
+    <xsl:variable name="orden" select="concat('\sptext{', f:latex(string($v)), '}')"/>
+    <xsl:choose>
+      <!-- 1. EL TEXTO EN ESPAÑOL: xml:lang ES es O UNA VARIANTE (es-AR) -->
+      <!-- fn:lang MIRA EL xml:lang MÁS CERCANO DE LOS ANCESTROS. SIN  -->
+      <!-- NINGUNO NO HAY CON QUÉ DECIDIR: SE DEJA PASAR                -->
+      <xsl:when test="exists($v/ancestor-or-self::*/@xml:lang) and not(lang('es', $v))">
+        <xsl:message terminate="yes">
+          <xsl:text>&#10;[sptext] LETRA VOLADA EN UN TEXTO QUE NO ESTÁ EN ESPAÑOL (xml:lang «</xsl:text>
+          <xsl:value-of select="$v/ancestor-or-self::*[@xml:lang][1]/@xml:lang"/>
+          <xsl:text>»): «</xsl:text>
+          <xsl:value-of select="$v"/>
+          <xsl:text>»&#10;  \sptext es de babel-spanish (SC-62): en otro idioma el PDF no compila.&#10;</xsl:text>
+        </xsl:message>
+      </xsl:when>
+      <!-- 2. EL PUNTO QUE ESCRIBIÓ volada.lua, PEGADO ANTES -->
+      <xsl:when test="not($anterior instance of text() and ends-with($anterior, '.'))">
+        <xsl:message terminate="yes">
+          <xsl:text>&#10;[sptext] LETRA VOLADA SIN EL PUNTO ANTES: «</xsl:text>
+          <xsl:value-of select="$v"/>
+          <xsl:text>»&#10;  volada.lua (SC-62) escribe «n.» y la volada; el canónico se armó por otro camino.&#10;</xsl:text>
+        </xsl:message>
+      </xsl:when>
+      <!-- 3. EN UN MARCADOR, LA CADENA PDF APARTE: hyperref NO PUEDE  -->
+      <!-- CONVERTIR \sptext Y ESCRIBÍA «n.8-1.5ex o 1» (MEDIDO,       -->
+      <!-- GV-118). LA o Y LA a VOLADAS TIENEN SU CARÁCTER: º Y ª       -->
+      <xsl:when test="$marcador">
+        <xsl:sequence select="concat('\texorpdfstring{', $orden, '}{.',
+          if (string($v) = 'o') then 'º'
+          else if (string($v) = 'a') then 'ª'
+          else f:latex(string($v)), '}')"/>
+      </xsl:when>
+      <!-- 4. LA ORDEN; EL CONTENIDO SON SOLO MINÚSCULAS (volada.lua) -->
+      <xsl:otherwise>
+        <xsl:sequence select="$orden"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:sin-punto-final                                  -->
+  <!-- PROPÓSITO: EL TEXTO QUE PRECEDE A UNA VOLADA, SIN SU PUNTO   -->
+  <!-- PARÁMETROS: s As xs:string — el nodo de texto                -->
+  <!-- RETORNA  : xs:string — sin el punto final; \sptext LO PONE   -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:sin-punto-final" as="xs:string">
+    <xsl:param name="s" as="xs:string"/>
+    <xsl:sequence select="replace($s, '\.$', '')"/>
+  </xsl:function>
 
   <!-- ============================================================ -->
   <!-- FUNCIÓN : f:codigo-latex                                     -->

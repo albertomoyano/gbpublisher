@@ -3179,6 +3179,12 @@ LOS CONTROLES
                                       borrada o renombrada
     imagen_fuera_de_media     error   una imagen que apunta fuera de media/
     comillas_desbalanceadas   aviso   « » que no cierran en su lista de inlines
+    latex_en_linea            error   una orden de LaTeX en el texto que no es
+                                      \sptext{…} (GV-116)
+    latex_suelto              error   una orden de LaTeX sola entre párrafos,
+                                      fuera de ::: espaciov
+    html_crudo                error   HTML escrito en el .md, menos los
+                                      comentarios <!-- … -->
     [WARNING] de pandoc       aviso   entre ellos, nota definida y nunca llamada
 
 `definicion_sin_texto` lee el archivo fuente (`PANDOC_STATE.input_files`) porque en el AST el caso ya no existe (GV-99), y saltea los bloques de código cercados con ``` o ~~~. Una definición de nota vacía al final del archivo la informan dos controles, `definicion_sin_texto` (con la línea) y `nota_vacia`: es el mismo error.
@@ -3193,9 +3199,20 @@ COMILLAS
 
 El filtro de producción sigue escribiendo su mensaje por stderr porque revistas, que todavía no pasa por los controles, depende de él. En libros, `generar_canonicos_capitulos.sh` lo omite en la conversión: ya lo informó el control.
 
-**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32
+LaTeX Y HTML CRUDOS
 
-**PENDIENTE:** (1) Revistas: usar el mismo filtro cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
+Lo que Pandoc lee como LaTeX o HTML crudo se pierde en las tres salidas: los escritores de XML lo descartan sin aviso (GV-116). Decisión de Alberto: los tres controles son `error`, y por ahora solo en libros, como los demás (pendiente 1).
+
+- En el texto, la única orden de LaTeX admitida es `\sptext{…}`, que traduce `volada.lua` (SC-62); su forma la valida ese filtro y no este control. El mensaje nombra la orden y muestra el contexto con el texto crudo a la vista: `stringify` lo descarta, y sin eso quedaban huecos.
+- Suelto entre párrafos, el LaTeX solo vale dentro de `::: espaciov`, que valida `espacio-vertical.lua` (SC-39). El recorrido es de arriba abajo (`traverse = "topdown"`) y no baja a un `espaciov`.
+- Los comentarios HTML `<!-- … -->`, en línea o en bloque, también de varias líneas, no son texto y no se informan. Un `<div>` no es HTML crudo: Pandoc lo lee como un `Div`.
+- Como `revisar_inlines`, el recorrido en línea no baja al contenido de una nota: sus párrafos los visita el walk de bloques, y así no se informan dos veces.
+
+MEDIDO: un título, un párrafo, una bastardilla, una nota y una celda con órdenes de LaTeX; `<sup>`, `</sup>` y `<br>`; `\newpage` suelto; un comentario de dos líneas y uno en línea; `\bigskip` dentro de `espaciov`. Salen los diez hallazgos esperados, los comentarios y el `espaciov` no; un .md limpio deja el informe vacío. Sobre los ejemplos del catálogo, el único hallazgo es `paleographic`: sus `<ue>`, `<iem>` y `<er>` hoy se pierden (una de las filas con pendiente).
+
+**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39
+
+**PENDIENTE:** (1) Revistas: usar el mismo filtro, con los controles de LaTeX y HTML crudos, cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
 
 ### SC-55 — Orden de los finales: la bibliografía antes de los índices, el colofón último; aviso en el ABM, freno en el PDF
 
@@ -3476,7 +3493,7 @@ ALCANCE
 
 Libros. Revistas arman su `element-citation` de JATS desde el mismo `.bib` sin traducir ni escapar; se resuelve cuando se encare revistas entero, después de libros (decisión de Alberto). Molinaro, que trae `\dots`, sale por legacy y no se corrige.
 
-**Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23
+**Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23,vinculo:SC-62
 
 **PENDIENTE:** Resuelto en act-46: IEEE va por tex4ht y las comillas salen de biblatex. Las plantillas por estilo de las hojas (las que leen el título con normalize-space y pierden las comillas de un <quote>) solo quedan para un libro sin la pasada de citas. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
 
@@ -3636,6 +3653,80 @@ Alberto, 21/10, con un libro y una revista reales: las tres alineaciones, con ne
 **Relaciones:** vinculo:SC-38,vinculo:SC-39,vinculo:SC-33,vinculo:SC-34,vinculo:SC-49,vinculo:GV-113,vinculo:GV-114,vinculo:GV-115
 
 **PENDIENTE:** ODT: se encara cuando estén terminadas las salidas PDF (decisión de Alberto, 21/10). Sin confirmar en Mint: la inserción desde el panel, el conteo de m_AnalizarProyecto y el mensaje de un caso que frena (probados solo en el contenedor, los casos que frenan). Las hojas de HTML y EPUB de libros no se corrieron sueltas en el contenedor; en Mint salieron bien.
+
+### SC-62 — Letra volada en el texto: n\sptext{o}
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / babel-spanish 5.0q / hyperref / qpdf / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto, 21/10). La letra volada de los ordinales y las abreviaturas (n.º, 1.ª, 3.er, C.ía, V.º B.º) se escribe en el .md como en LaTeX y como en las referencias (SC-58): `n\sptext{o}`. Una sola notación en todo el proyecto. Los Word de los autores la traen de todas las formas (nº, n°, Nº, n.º, superíndice de Word); esta es la que se fija.
+
+    El n\sptext{o} 3, la 1\sptext{a} edición, el 3\sptext{er} piso.
+
+No es un bloque `:::` ni un span: va pegada a su base, dentro del texto. Sin un filtro, Pandoc la descartaba en las tres salidas (GV-116).
+
+LA REGLA, ABIERTA (decisión de Alberto)
+
+- Adentro, una o más minúsculas, con o sin tilde, diéresis o virgulilla: `o`, `a`, `er`, `os`, `ía`.
+- Antes, pegada, una letra (también mayúscula o con tilde) o una cifra: `n`, `1`, `21`, `V`, `D`. Nunca un punto: el punto lo pone `\sptext` (babel-spanish, `\es@orddot`), y `n.\sptext{o}` saldría «n..º».
+- Solo en texto en español: `\sptext` es de babel-spanish y en otro idioma el PDF no compila (GV-105). Frena (decisión de Alberto): el editor o el corrector deben saber que es exclusiva del español.
+
+Vale en cualquier lugar del texto: párrafos, títulos de sección, notas, pies, celdas, recuadros, versos, epígrafes, conversaciones, bloques alineados.
+
+FRENA LA CONVERSIÓN (CON MENSAJE)
+
+`volada.lua`, en las tres cadenas: una volada vacía, con mayúsculas, cifras u otros signos adentro; sin base pegada (un espacio, un comienzo de párrafo, una bastardilla antes); con un punto antes; en un artículo cuyo `-M gb-idioma` no es español; dentro de un tramo marcado en otro idioma (`[…]{lang=en}`).
+
+Las hojas LaTeX repiten dos controles sobre el canónico: el idioma, con `fn:lang` sobre el `xml:lang` más cercano, y el punto antes. En el libro, el del idioma es el único: la cadena del libro no le pasa el idioma del capítulo a Pandoc, y no se puede usar `gb-idioma`, porque `conversacion.lua` lo usa para otra cosa. Un capítulo en otro idioma con una volada se genera en HTML y EPUB y frena en el PDF.
+
+CANÓNICO, COMO SC-58
+
+    JATS      n.<sup specific-use="volada">o</sup>
+    DocBook   n.<superscript role="volada">o</superscript>
+
+El punto queda en el texto: un indexador o un lector de pantalla lee «n.º». En JATS, `<sup>` admite `specific-use` y no `content-type` (DTD 1.4, `JATS-format1-4.ent`).
+
+PDF
+
+`f:volada-latex` (`tex-comun.xsl`) devuelve `\sptext{o}`. La plantilla del texto que precede a la volada le quita el punto final (`f:sin-punto-final`). Las dos plantillas, la de la volada y la del texto, van en `docbook-to-latex.xsl` y en `jats-to-latex.xsl`, no en `tex-comun.xsl`: una importada pierde contra `text()`, `superscript` y `sup` de la hoja (GV-117).
+
+En el argumento opcional de un título, que va a los marcadores (`notasTitulo = sumario`), sale `\texorpdfstring{\sptext{o}}{.º}` (GV-118).
+
+HTML Y EPUB
+
+`n.<sup>o</sup>`, con las plantillas de superíndice que ya existen. SciELO y Redalyc copian el `<sup specific-use="volada">`, que es JATS válido.
+
+ODT
+
+El punto y la volada en superíndice.
+
+CADENAS
+
+`volada.lua` corre antes de todo filtro que serialice con `pandoc.write`, que la descartaría (GV-116). Libro: segundo, después de `guillemets-to-quoted-db.lua` y antes de `cite-to-biblioref-db.lua`, que serializa las notas. Revista: después de `alinear.lua` y antes de `cite-to-xref.lua`. ODT: después de `alinear.lua`.
+
+CATÁLOGO
+
+Una fila de gbShortcodes: `sptext`, en línea, grupo `comun`, modo `plantilla`. El panel inserta `\sptext{•}` con el marcador seleccionado.
+
+RESALTADO
+
+`Markdown.highlight`: el estado `latex.sptext`, con el estilo `Function` de los shortcodes, que los nueve temas ya definen en `[Markdown]`. El patrón se escribe una vez con `$(sptext)` y se repite como hijo dentro de la bastardilla, la negrita y el tachado (GV-119). En un título la línea queda entera en `Header`.
+
+VERIFICADO EN EL CONTENEDOR
+
+Pandoc 3.1.3 con las cadenas reales de libro, revista y ODT, en todos los lugares de arriba, incluidos los casos que frenan; SaxonJ-HE 12.5 con `ensamblar-capitulo-canonico.xsl`, las dos hojas LaTeX, HTML, EPUB, SciELO y Redalyc; el capítulo valida contra el RNG de DocBook 5.2 y el artículo contra la DTD Archiving 1.4; el cuerpo del .tex compila con LuaLaTeX en la clase book, con hyperref y el sumario; los marcadores leídos con qpdf; el control del idioma frena con un capítulo y un artículo en inglés; gbpublisher compila con gbc3 3.19.
+
+FUERA DE ESTA DECISIÓN
+
+- DESCARTADO (decisión de Alberto, 21/10): la normalización al ingresar el Word (`limpiar_docx.lua`). Se resuelve sobre el .md. Lo que se había evaluado: «nº», «Nº», «n.º» y el superíndice de Word se podrían escribir como `n\sptext{o}`, pero «n°» y «1°» llegan con el signo de grado, que también es legítimo («20 °C»).
+- El control general de las órdenes de LaTeX en línea que se pierden (GV-116): hecho en SC-54, en libros.
+
+PROBADO EN MINT
+
+Alberto, 21/10, con un libro y una revista reales: PDF, HTML y EPUB bien.
+
+**Relaciones:** vinculo:SC-58,vinculo:GV-105,vinculo:GV-116,vinculo:GV-117,vinculo:GV-118,vinculo:SC-29,vinculo:SC-21,vinculo:GV-119,vinculo:SC-54
+
+**PENDIENTE:** Falta en Mint: la inserción desde el panel, un caso que frene y el resaltado (GV-119). El ODT, cuando se encare (decisión de Alberto, 21/10).
 
 ---
 
@@ -6641,6 +6732,100 @@ A diferencia de un `RawBlock` (GV-95), el escritor DocBook no toca el texto de u
 La instrucción pasa intacta por `cite-to-xref.lua` (revista) y por `ensamblar-capitulo-canonico.xsl` (libro). El capítulo valida contra el RNG de DocBook 5.2 con xmllint y el artículo contra la DTD Archiving 1.4: una instrucción de procesamiento dentro de un párrafo no cambia la validez.
 
 **Relaciones:** apoya:SC-61,vinculo:GV-95,vinculo:SC-38
+
+### GV-116 — Pandoc: una orden de LaTeX en línea se pierde sin aviso en JATS, DocBook y HTML
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El lector `markdown` de Pandoc tiene activa la extensión `raw_tex`: una orden de LaTeX dentro de un párrafo (`n\sptext{o}`) llega como `RawInline (Format "tex") "\\sptext{o}"`, pegada al `Str` anterior. Los escritores que no son LaTeX descartan un `RawInline` de otro formato, sin advertencia.
+
+MEDIDO:
+
+    .md         El n\sptext{o} 3 y la 1\sptext{a} edición
+    JATS        <p>El n 3 y la 1 edición</p>
+    DocBook     <para>El n 3 y la 1 edición</para>
+    HTML        <p>El n 3 y la 1 edición</p>
+
+Como el PDF del proyecto sale del canónico, la orden también se pierde en el PDF.
+
+Lo mismo vale para cualquier orden de LaTeX en línea que no traduzca un filtro. Para `\sptext` la traduce `volada.lua` (SC-62). Las demás las informan, en libros, los controles `latex_en_linea`, `latex_suelto` y `html_crudo` de `controles_md.lua` (SC-54).
+
+El orden de los filtros importa: un filtro que serializa con `pandoc.write` (las notas en `cite-to-biblioref-db.lua`, los bloques en `fenced-divs-to-elements-db.lua`) hace la misma pérdida dentro de lo que serializa. Medido: con `volada.lua` después de `cite-to-biblioref-db.lua`, la nota decía «la 2 edición».
+
+**Relaciones:** apoya:SC-62,vinculo:SC-58,vinculo:SC-46,vinculo:SC-54
+
+### GV-117 — XSLT: una plantilla importada pierde contra la de la hoja que importa, aunque tenga más prioridad
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.5 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Cuando dos plantillas coinciden con el mismo nodo, XSLT mira primero la precedencia de importación y después la prioridad. Una plantilla de una hoja importada con `xsl:import` tiene menos precedencia que cualquiera de la hoja que importa.
+
+MEDIDO con SaxonJ-HE 12.5:
+
+    imp-base.xsl (importada)   match="text()[ends-with(., '.')]" priority="10"
+    imp-main.xsl               match="text()"           (prioridad por omisión)
+    entrada <a>n.</a>          gana imp-main.xsl
+
+CONSECUENCIA EN EL PROYECTO: `tex-comun.xsl` se importa desde `docbook-to-latex.xsl` y `jats-to-latex.xsl`, que tienen su propia plantilla `text()`, `superscript` y `sup`. Una plantilla que tenga que ganarles va en cada hoja; `tex-comun.xsl` solo puede aportar funciones o plantillas para lo que las hojas no atrapan, como las instrucciones `gb-espacio` y `gb-alinear`. Así está la letra volada (SC-62).
+
+**Relaciones:** apoya:SC-62
+
+### GV-118 — hyperref: \sptext en un título rompe el marcador; \texorpdfstring lo resuelve
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 (Debian) / babel spanish / hyperref / qpdf / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El argumento opcional de `\section` va al sumario, al folio y a los marcadores del PDF. hyperref convierte el título en cadena PDF y no sabe convertir `\sptext`: avisa «Token not allowed in a PDF string (Unicode)» y deja restos de la definición de babel.
+
+MEDIDO (LuaLaTeX, babel spanish, hyperref), leyendo los marcadores con qpdf:
+
+    \section{Capítulo sobre el n\sptext{o} 1}
+        marcador: «Capítulo sobre el n.8-1.5ex o 1»
+    \section[Capítulo sobre el n\texorpdfstring{\sptext{o}}{.º} 1]{…}
+        marcador: «Capítulo sobre el n.º 1», sin avisos
+
+En el sumario y en el título compuesto, `\sptext` sale bien. La o y la a voladas tienen su carácter en Unicode (º U+00BA, ª U+00AA); para las otras, el marcador lleva el punto y las letras sin volar.
+
+**Relaciones:** apoya:SC-62,vinculo:SC-29
+
+**PENDIENTE:** Medido con la clase book: confirmar en Mint con el preámbulo del proyecto.
+
+### GV-119 — gb.highlight: $(nombre)=valor define una sustitución; un estado hijo de un from … to se busca dentro del tramo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gb.highlight 3.19 / gb.pcre / contenedor Ubuntu 24.04; fuente de gb.highlight 3.22.2 (gitlab.com/gambas/gambas) · **Verificado:** 2026-10
+
+Dos recursos de los archivos `.highlight`, leídos en el fuente de gb.highlight 3.22.2 (`TextHighlighter.CreateCustomHighlighter`, `CState.Subst`, `CCommandFrom.Compile`) y medidos con 3.19.
+
+SUSTITUCIÓN
+
+Una línea `$(nombre)=valor`, sin sangría, define una sustitución. `CState.AddCommand` la aplica a cada argumento de un comando, así que el patrón se escribe una vez y se usa en varios estados:
+
+    $(sptext)=/\\sptext\{[^}\n]*\}/
+    …
+      match $(sptext)
+
+ESTADOS HIJOS
+
+Un estado con más sangría que el anterior es su hijo. En un `from … to`, `CCommandFrom.Compile` prueba los hijos en cada posición del tramo, antes de buscar el cierre. Sin un hijo, todo lo que está entre `*` y `*` toma el color de la bastardilla, sin ninguna regla de adentro.
+
+    italic.star{Comment}:
+      from * to *
+      latex.sptext.dentro{Function}:
+        match $(sptext)
+
+Varios hijos con el mismo nombre, uno en cada estado, no chocan. Un `match` no busca hijos adentro: sus hijos se prueban después del tramo. Por eso un título (`header`, `match /^#{1,6}.*$/`) queda entero en `Header`.
+
+MEDIDO con un banco que registra la gramática con `TextHighlighter.Register` y corre `Run` línea por línea, como `m_ResaltadoSintaxis`:
+
+    El n\sptext{o} 3                [Function:\sptext{o}]
+    *con el 3\sptext{er} piso*      [Comment:*con el 3][Function:\sptext{er}][Comment: piso*]
+    **la C\sptext{ía}**             [Keyword:**la C][Function:\sptext{ía}][Keyword:**]
+    # Título del n\sptext{o} 1      [Header:# Título del n\sptext{o} 1]
+
+Recordar GV-76: un espacio literal en un patrón no carga, porque `AddCommand` separa los argumentos por espacio.
+
+**Relaciones:** apoya:SC-62,vinculo:GV-76,vinculo:SC-15,vinculo:GV-48
+
+**PENDIENTE:** Confirmar en Mint con 3.22: el resaltado de \sptext suelto y dentro de bastardilla, negrita y tachado, en el editor y en la ayuda del panel.
 
 ---
 

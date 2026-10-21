@@ -621,6 +621,23 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
+  <!-- LETRA VOLADA (SC-62): \sptext{o}, CON SUS CONTROLES EN        -->
+  <!-- f:volada-latex (tex-comun.xsl). EL TEXTO QUE LA PRECEDE PIERDE -->
+  <!-- SU PUNTO FINAL: LO PONE \sptext. LAS DOS PLANTILLAS VAN ACÁ Y  -->
+  <!-- NO EN tex-comun.xsl: UNA IMPORTADA PIERDE CONTRA text() Y      -->
+  <!-- superscript DE ESTA HOJA (GV-117).                            -->
+  <!-- EN EL ARGUMENTO OPCIONAL DE UN TÍTULO (notasTitulo = sumario, -->
+  <!-- EL QUE VA A LOS MARCADORES) SALE CON \texorpdfstring (GV-118). -->
+  <xsl:template match="superscript[@role = 'volada']" priority="2">
+    <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
+    <xsl:value-of select="f:volada-latex(., $notasTitulo = 'sumario')"/>
+  </xsl:template>
+
+  <xsl:template match="text()[following-sibling::node()[1][self::superscript[@role = 'volada']]]"
+                priority="4">
+    <xsl:value-of select="f:latex(f:sin-punto-final(.))"/>
+  </xsl:template>
+
   <!-- phrase SIN role: TRANSPARENTE. LOS role DE CITA SE ABSORBEN  -->
   <!-- EN LA PLANTILLA DE biblioref Y SE SUPRIMEN ACÁ.              -->
   <xsl:template match="phrase">

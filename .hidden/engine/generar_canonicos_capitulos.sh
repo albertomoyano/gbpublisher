@@ -104,26 +104,31 @@ RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
 DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 
 # EL ORDEN DE LOS FILTROS ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
-# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61):
+# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62):
 #   1° guillemets-to-quoted-db  « » A Quoted. PRIMERO: fenced-divs SERIALIZA
 #      LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
-#   2° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
-#   3° dos-partes               EPÍGRAFES {texto}{atribución}; FRENA SI UNO
+#   2° volada                   n\sptext{o} A «n.» Y <superscript
+#      role="volada"> (SC-62). ANTES DE cite-to-biblioref-db, QUE SERIALIZA
+#      LAS NOTAS CON pandoc.write: UNA \sptext QUE LLEGUE AHÍ SIN TRADUCIR
+#      LA DESCARTA EL ESCRITOR DocBook (MEDIDO: «la 2 edición»)
+#   3° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
+#   4° dos-partes               EPÍGRAFES {texto}{atribución}; FRENA SI UNO
 #      ESTÁ MAL FORMADO
-#   4° espacio-vertical         FICHA <?gb-espacio …?>; ANTES DE fenced-divs,
+#   5° espacio-vertical         FICHA <?gb-espacio …?>; ANTES DE fenced-divs,
 #      QUE NO CONOCE EL BLOQUE espaciov
-#   5° alinear                  FICHA <?gb-alinear …?> AL COMIENZO DE CADA
+#   6° alinear                  FICHA <?gb-alinear …?> AL COMIENZO DE CADA
 #      PÁRRAFO (SC-61); ANTES DE fenced-divs, QUE NO CONOCE LOS BLOQUES
 #      alinear-izq, alinear-centro Y alinear-der
-#   6° recuadros                DESPUÉS DE dos-partes, QUE PARTE EL recuadrob
-#   7° codigo                   <programlisting>; ANTES DE fenced-divs, QUE
+#   7° recuadros                DESPUÉS DE dos-partes, QUE PARTE EL recuadrob
+#   8° codigo                   <programlisting>; ANTES DE fenced-divs, QUE
 #      ARMA EL <example role="listado">
-#   8° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
+#   9° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
 #      SIN -M gb-idioma: LA ETIQUETA LA PONE LA HOJA SEGÚN xml:lang
-#   9° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
-#  10° fenced-divs-to-elements-db  AL FINAL
+#  10° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
+#  11° fenced-divs-to-elements-db  AL FINAL
 FILTROS=(
     guillemets-to-quoted-db.lua
+    volada.lua
     cite-to-biblioref-db.lua
     dos-partes.lua
     espacio-vertical.lua
