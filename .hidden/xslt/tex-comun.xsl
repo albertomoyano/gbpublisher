@@ -22,6 +22,10 @@
     abortar-elemento  plantilla de corte ante vocabulario
                       no previsto
     gb-espacio        ficha de espacio vertical del PDF (SC-39)
+    f:alinear-ficha() ficha de alineación de un párrafo (SC-61)
+    f:alinear-abre()  apertura del párrafo alineado (SC-61)
+    f:alinear-cierra() cierre del párrafo alineado (SC-61)
+    gb-alinear        corte ante una ficha fuera de lugar (SC-61)
     f:codigo-latex()  bloque de código coloreado (SC-42)
   ============================================================
   NOTA SOBRE f:latex — CORRECCIÓN DE 2026-09
@@ -332,6 +336,108 @@
         </xsl:message>
       </xsl:otherwise>
     </xsl:choose>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- INSTRUCCIÓN DE COMPOSICIÓN: ALINEACIÓN (SC-38, SC-61)        -->
+  <!-- ============================================================ -->
+  <!-- alinear.lua ESCRIBE LA FICHA <?gb-alinear izq|centro|der?>   -->
+  <!-- COMO PRIMER NODO DE CADA PÁRRAFO DEL BLOQUE. LA PLANTILLA DE -->
+  <!-- PÁRRAFO DE CADA HOJA (para EN docbook-to-latex.xsl, p EN     -->
+  <!-- jats-to-latex.xsl) LA TOMA CON f:alinear-ficha, NO LA PASA A -->
+  <!-- apply-templates Y ENVUELVE EL PÁRRAFO CON f:alinear-abre Y   -->
+  <!-- f:alinear-cierra:                                            -->
+  <!--   izq     ->  \begingroup\raggedright\noindent TEXTO\par\endgroup -->
+  <!--   centro  ->  \begingroup\centering\noindent TEXTO\par\endgroup   -->
+  <!--   der     ->  \begingroup\raggedleft\noindent TEXTO\par\endgroup  -->
+  <!-- EL \par VA DENTRO DEL GRUPO: TeX LEE \rightskip Y \leftskip -->
+  <!-- AL CERRAR EL PÁRRAFO. SIN CORTE DE PALABRA (DECISIÓN DE      -->
+  <!-- ALBERTO) Y SIN PENALIDADES: LAS TRES DECLARACIONES YA NO      -->
+  <!-- PARTEN (GV-113), Y \hyphenpenalty=10000 SE HEREDARÍA EN UNA   -->
+  <!-- NOTA AL PIE DEL PÁRRAFO, QUE PERDERÍA SU CORTE (GV-114). NO   -->
+  <!-- SE AGREGA ESPACIO: EL AIRE LO PONE espaciov (SC-39).          -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:alinear-ficha                                    -->
+  <!-- PROPÓSITO: LA FICHA DE ALINEACIÓN DE UN PÁRRAFO, SI LA TIENE -->
+  <!-- PARÁMETROS: p As element() — el <para> o el <p>              -->
+  <!-- RETORNA  : processing-instruction()? — LA FICHA CUANDO ES EL -->
+  <!--            PRIMER NODO CON CONTENIDO; VACÍO SI NO            -->
+  <!-- RAZÓN    : EL ESCRITOR DocBook DE PANDOC INDENTA EL CONTENIDO -->
+  <!--            DEL <para>: ANTES DE LA FICHA HAY UN NODO DE TEXTO -->
+  <!--            EN BLANCO, QUE NO CUENTA (MEDIDO, GV-115)          -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:alinear-ficha" as="processing-instruction()?">
+    <xsl:param name="p" as="element()"/>
+    <xsl:sequence select="$p/node()[not(self::text()[normalize-space() = ''])][1]
+                            [self::processing-instruction('gb-alinear')]"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:alinear-abre                                     -->
+  <!-- PROPÓSITO: LA APERTURA DEL PÁRRAFO ALINEADO                  -->
+  <!-- PARÁMETROS: ficha As processing-instruction()? — LO QUE      -->
+  <!--            DEVOLVIÓ f:alinear-ficha                          -->
+  <!-- RETORNA  : xs:string — VACÍO SI EL PÁRRAFO NO SE ALINEA      -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:alinear-abre" as="xs:string">
+    <xsl:param name="ficha" as="processing-instruction()?"/>
+    <xsl:variable name="valor" select="normalize-space($ficha)"/>
+    <xsl:choose>
+      <!-- 1. SIN FICHA: EL PÁRRAFO COMÚN NO CAMBIA -->
+      <xsl:when test="empty($ficha)">
+        <xsl:sequence select="''"/>
+      </xsl:when>
+      <!-- 2. LAS TRES FICHAS DEL DICCIONARIO -->
+      <!-- \noindent EN LAS TRES, TAMBIÉN EN izq (DECISIÓN DE ALBERTO) -->
+      <xsl:when test="$valor = ('izq', 'centro', 'der')">
+        <xsl:variable name="declaracion" select="
+          if ($valor = 'izq') then '\raggedright'
+          else if ($valor = 'centro') then '\centering'
+          else '\raggedleft'"/>
+        <xsl:sequence select="concat('\begingroup', $declaracion, '\noindent ')"/>
+      </xsl:when>
+      <!-- 3. UNA FICHA DESCONOCIDA CORTA LA TRANSFORMACIÓN -->
+      <!-- EL FILTRO YA VALIDA; ESTO CUBRE UN CANÓNICO ARMADO POR OTRO CAMINO -->
+      <xsl:otherwise>
+        <xsl:message terminate="yes">
+          <xsl:text>&#10;[gb-alinear] FICHA DE ALINEACIÓN DESCONOCIDA: «</xsl:text>
+          <xsl:value-of select="$valor"/>
+          <xsl:text>»&#10;  La escribe alinear.lua (SC-61). Si cambió el&#10;</xsl:text>
+          <xsl:text>  diccionario del filtro, esta función va en el mismo lote.&#10;</xsl:text>
+        </xsl:message>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:alinear-cierra                                   -->
+  <!-- PROPÓSITO: EL CIERRE DEL PÁRRAFO ALINEADO                    -->
+  <!-- PARÁMETROS: ficha As processing-instruction()?               -->
+  <!-- RETORNA  : xs:string — VACÍO SI EL PÁRRAFO NO SE ALINEA      -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:alinear-cierra" as="xs:string">
+    <xsl:param name="ficha" as="processing-instruction()?"/>
+    <xsl:sequence select="if (empty($ficha)) then '' else '\par\endgroup'"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- LA FICHA FUERA DE LUGAR CORTA LA TRANSFORMACIÓN              -->
+  <!-- ============================================================ -->
+  <!-- LA PLANTILLA DE PÁRRAFO NUNCA LE PASA LA FICHA A             -->
+  <!-- apply-templates: UNA gb-alinear QUE LLEGA ACÁ ESTÁ EN OTRO   -->
+  <!-- LUGAR (A MITAD DE UN PÁRRAFO, EN UNA NOTA, UN PIE, UN ÍTEM)  -->
+  <!-- Y SE PERDERÍA SIN AVISO.                                     -->
+  <!-- ============================================================ -->
+  <xsl:template match="processing-instruction('gb-alinear')">
+    <xsl:message terminate="yes">
+      <xsl:text>&#10;[gb-alinear] FICHA DE ALINEACIÓN FUERA DEL COMIENZO DE UN PÁRRAFO DEL CUERPO: </xsl:text>
+      <xsl:value-of select="string-join(
+        for $n in ancestor::* return name($n), '/')"/>
+      <xsl:text>&#10;  alinear.lua (SC-61) la escribe solo al comienzo de un&#10;</xsl:text>
+      <xsl:text>  párrafo del primer nivel.&#10;</xsl:text>
+    </xsl:message>
   </xsl:template>
 
   <!-- ============================================================ -->

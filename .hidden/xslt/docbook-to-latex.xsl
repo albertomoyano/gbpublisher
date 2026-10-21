@@ -470,9 +470,15 @@
   <!-- PÁRRAFOS Y TEXTO                                             -->
   <!-- ============================================================ -->
 
+  <!-- LA FICHA DE ALINEACIÓN (SC-61) NO PASA A apply-templates: LA   -->
+  <!-- TRADUCEN f:alinear-abre Y f:alinear-cierra (tex-comun.xsl)     -->
+  <!-- ALREDEDOR DEL PÁRRAFO. SIN FICHA, LAS DOS DEVUELVEN VACÍO.     -->
   <xsl:template match="para">
-    <xsl:variable name="c"><xsl:apply-templates/></xsl:variable>
+    <xsl:variable name="ficha" select="f:alinear-ficha(.)"/>
+    <xsl:variable name="c"><xsl:apply-templates select="node() except $ficha"/></xsl:variable>
+    <xsl:value-of select="f:alinear-abre($ficha)"/>
     <xsl:value-of select="f:recortar(string($c))"/>
+    <xsl:value-of select="f:alinear-cierra($ficha)"/>
     <xsl:text>&#10;&#10;</xsl:text>
   </xsl:template>
 

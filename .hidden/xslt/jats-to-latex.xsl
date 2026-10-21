@@ -648,8 +648,16 @@
   <!-- PLANTILLAS: PÁRRAFOS                                         -->
   <!-- ============================================================ -->
 
+  <!-- LA FICHA DE ALINEACIÓN (SC-61) NO PASA A apply-templates: LA   -->
+  <!-- TRADUCEN f:alinear-abre Y f:alinear-cierra (tex-comun.xsl)     -->
+  <!-- ALREDEDOR DEL PÁRRAFO. SIN FICHA, LAS DOS DEVUELVEN VACÍO.     -->
+  <!-- LAS VARIANTES DE ABAJO (abstract, caption, fn, list-item) NO   -->
+  <!-- LA TOMAN: ALLÍ LA FICHA CORTA LA TRANSFORMACIÓN.              -->
   <xsl:template match="p">
-    <xsl:apply-templates/>
+    <xsl:variable name="ficha" select="f:alinear-ficha(.)"/>
+    <xsl:value-of select="f:alinear-abre($ficha)"/>
+    <xsl:apply-templates select="node() except $ficha"/>
+    <xsl:value-of select="f:alinear-cierra($ficha)"/>
     <xsl:text>&#10;&#10;</xsl:text>
   </xsl:template>
 

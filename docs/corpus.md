@@ -2143,6 +2143,12 @@ QUÉ LAS DISTINGUE
 - Pierden validez cuando cambia el texto. Una instrucción de estructura vale aunque se reescriba el párrafo; una de página deja de valer si se corre una línea arriba. Son de la última pasada.
 - Habrá instrucciones dentro de la línea (un corte de línea forzado, un corte de palabra, un párrafo que pierde una línea). El mecanismo de abajo sirve también para ellas.
 
+DE UN PUNTO Y DE UN TRAMO
+
+- De un punto: van entre dos bloques y no tienen texto. `espaciov` (SC-39). Pierden validez cuando cambia el texto de arriba.
+- De un tramo: rodean párrafos del cuerpo y dicen cómo se componen. La alineación (SC-61). No pierden validez cuando se reescribe el texto: una fecha a la derecha sigue a la derecha. Tienen en común con las de un punto que solo afectan al PDF.
+- La ficha de un tramo va al comienzo de cada párrafo, no en un par apertura/cierre: el grupo de LaTeX nunca queda desbalanceado (SC-61).
+
 LAS REGLAS
 
 1. En el canónico van como INSTRUCCIÓN DE PROCESAMIENTO con prefijo `gb-`, nunca como elemento: `<?gb-corte?>` (SC-28, en DocBook) y `<?gb-espacio …?>` (SC-39). El estándar XML las define para eso: indicaciones para una aplicación, fuera del modelo del documento. El canónico sigue validando contra el RNG de DocBook 5.2 y la DTD de JATS 1.4 (verificado), y el PDF se puede regenerar idéntico porque la instrucción queda en él. Una instrucción de procesamiento también puede ir dentro de un párrafo.
@@ -2150,12 +2156,12 @@ LAS REGLAS
 3. Las hojas de HTML y EPUB no hacen nada: la regla incorporada de XSLT para una instrucción de procesamiento no escribe nada (medido en SC-28 y en SC-39). Una hoja que copie con `xsl:copy-of` o con una identidad sobre `node()` sí las copiaría: hay que mirarlo en cada hoja nueva.
 4. Los indexadores las quitan todas de una vez. `jats-to-scielo.xsl` y `jats-to-redalyc.xsl` parten de una identidad sobre `@* | node()`, que incluye las instrucciones de procesamiento (verificado: copiaban `<?gb-espacio?>` al paquete). Una sola plantilla vacía, `processing-instruction()[starts-with(name(), 'gb-')]`, las quita: una instrucción nueva no se filtra por olvido.
 5. Diccionario cerrado, en un solo filtro Lua por instrucción, que corre en las tres cadenas (revista, libro, ODT) con el patrón de `dos-partes.lua` (SC-35). En el ODT la quita. Lo que no está en el diccionario frena la conversión con un mensaje que dice qué falla y qué se admite.
-6. En el catálogo de shortcodes, grupo propio: `composicion`, «Composición (solo PDF)», al final de la lista. El editor ve en el panel que son instrucciones de página y no de contenido. El grupo entró con el esquema 5 de gbShortcodes.
+6. En el catálogo de shortcodes, grupo propio: `composicion`, «Composición (solo PDF)», al final de la lista. El editor ve en el panel que son instrucciones de página y no de contenido. El grupo entró con el esquema 5 de gbShortcodes. El modo dice qué es cada una: las de un punto se insertan como separador (`separador-valor`); las de un tramo, con `envolver`. `m_AnalizarProyecto` cuenta como cuerpo el texto de las de un tramo y no cuenta las de un punto.
 7. En una hoja LaTeX, la instrucción solo se alcanza donde se la pide: `*` selecciona elementos, no instrucciones de procesamiento. `docbook-to-latex.xsl` la agrega en unión, `(* except info) | processing-instruction('gb-espacio')`, que conserva el orden del documento; `jats-to-latex.xsl` ya recorría todos los nodos de `body` y `sec`.
 
 Una salida digital que algún día necesite una de estas instrucciones la lee del canónico igual que el PDF: la ficha no depende de LaTeX.
 
-**Relaciones:** vinculo:SC-28,vinculo:SC-31,vinculo:SC-35,vinculo:SC-34,vinculo:SC-39
+**Relaciones:** vinculo:SC-28,vinculo:SC-31,vinculo:SC-35,vinculo:SC-34,vinculo:SC-39,vinculo:SC-61
 
 ### SC-39 — Espacio vertical: espaciov, diccionario cerrado de comandos del PDF
 
@@ -3556,6 +3562,80 @@ ESQUEMA
 - La 1.12.0 retira `postits`.
 
 **Relaciones:** vinculo:SC-22,vinculo:GV-110,vinculo:GV-111,vinculo:GV-112,vinculo:GV-107,vinculo:GV-78,vinculo:GV-57
+
+### SC-61 — Alineación de párrafos en el PDF: alinear-izq, alinear-centro, alinear-der
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / gbc3 3.19 / contenedor Ubuntu 24.04; gbpublisher en Linux Mint (prueba de Alberto, 21/10) · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto, 21/10). Segundo caso de las instrucciones de composición (SC-38) y primero de un tramo: alinea uno o más párrafos a la izquierda, al centro o a la derecha. Solo PDF, de libros y de revistas. En el EPUB y el HTML el párrafo sale como cualquier otro: una fecha y un lugar se leen mejor a la izquierda en una pantalla, y a la derecha en la página impresa.
+
+    ::: alinear-der
+
+    19 de octubre de 2026, Ciudad de México
+
+    [/alinear-der]: # ()
+    :::
+
+TRES CLASES Y NO UNA CON ATRIBUTO
+
+`alinear-izq`, `alinear-centro` y `alinear-der`. Con el modo `envolver`, el panel inserta el bloque directo sobre la selección, sin escribir nada a mano. Un atributo hubiera pedido un modo nuevo o escribirlo en la apertura, como `patron` en el verso (SC-49), que además significa otra cosa.
+
+UNA FICHA POR PÁRRAFO
+
+`alinear.lua` desenvuelve el bloque y pone `<?gb-alinear izq|centro|der?>` como primer nodo de cada párrafo, en JATS y en DocBook (GV-115). No es un par apertura/cierre alrededor del tramo: el grupo de LaTeX abre y cierra dentro del mismo párrafo y nunca queda desbalanceado, aunque el canónico se edite. Un par de instrucciones hermanas se habría partido con cualquier cosa que se metiera entre ellas (en libro, un título, porque Pandoc arma las secciones al escribir).
+
+PDF
+
+La plantilla de párrafo de cada hoja (`para` en `docbook-to-latex.xsl`, `p` en `jats-to-latex.xsl`) toma la ficha con `f:alinear-ficha`, no se la pasa a `apply-templates` y envuelve el párrafo con `f:alinear-abre` y `f:alinear-cierra` (`tex-comun.xsl`):
+
+    izq      \begingroup\raggedright\noindent TEXTO\par\endgroup
+    centro   \begingroup\centering\noindent TEXTO\par\endgroup
+    der      \begingroup\raggedleft\noindent TEXTO\par\endgroup
+
+- El `\par` va dentro del grupo: TeX lee `\leftskip` y `\rightskip` al cerrar el párrafo.
+- Declaraciones y no los entornos `flushleft`, `center` y `flushright`. Los entornos son listas (`trivlist`) y agregan espacio arriba y abajo. El aire lo pone `espaciov` (SC-39): cada shortcode hace una sola cosa.
+- `\noindent` en las tres, también en `izq` (decisión de Alberto).
+- Sin corte de palabra en las tres (decisión de Alberto). Las declaraciones ya no parten (GV-113). No se agregan penalidades: una nota al pie del párrafo las heredaría y perdería su corte (GV-114). La alineación, en cambio, no le llega a la nota.
+
+Una ficha desconocida en `f:alinear-abre`, o una `gb-alinear` que llegue a la plantilla de la instrucción (a mitad de un párrafo, en una nota, un pie, un ítem, un resumen), corta la transformación con un mensaje. El filtro ya lo impide; esto cubre un canónico armado por otro camino.
+
+FRENA LA CONVERSIÓN (CON MENSAJE)
+
+Un bloque vacío; algo que no sea un párrafo (título, lista, figura, cita, otro bloque); un salto de línea manual en un párrafo (SC-49: hoy no sirve en prosa, y en libro volvería el párrafo un `<literallayout>`, donde la ficha quedaría fuera de un `<para>`); dos clases en la apertura; un identificador o un atributo; una alineación dentro de otra; un bloque que no esté en el primer nivel (dentro de otro bloque, una lista, una tabla o una nota). Como en `espaciov`, en revista el filtro corre después de `unwrap-structural-divs.lua`, así que dentro de una sección estructural vale.
+
+Cada renglón es su propio párrafo, separado por una línea en blanco. Por eso un lugar, una fecha o una firma en varios renglones no necesitan el salto manual.
+
+SALIDAS
+
+- Canónico: la ficha al comienzo de cada `<para>` o `<p>` del bloque.
+- PDF: el párrafo en su grupo, como arriba.
+- HTML y EPUB, de libros y de revistas: el párrafo común. La regla incorporada de XSLT no escribe nada para la instrucción (SC-38).
+- SciELO y Redalyc: la plantilla vacía de SC-38. Crossref y DOAJ no llevan el cuerpo.
+- ODT: los párrafos, sin el bloque ni la ficha.
+
+CADENAS
+
+`alinear.lua` corre justo después de `espacio-vertical.lua` en las tres: `generar_canonicos_capitulos.sh` (libro, antes de `fenced-divs-to-elements-db.lua`), `m_XML` (revista, después de `unwrap-structural-divs.lua` y antes de `cite-to-xref.lua`) y `m_GenerarODT`.
+
+ANÁLISIS DEL PROYECTO
+
+`m_AnalizarProyecto.Destino` dejaba fuera de los conteos todo el grupo `composicion`. El texto de un bloque de alineación es cuerpo. Ahora decide por el modo del catálogo: `envolver` es cuerpo, el resto (`separador-valor`, `espaciov`) no se cuenta (SC-38).
+
+CATÁLOGO
+
+Tres filas de gbShortcodes, grupo `composicion`, modo `envolver`, después de `espaciov`.
+
+VERIFICADO EN EL CONTENEDOR
+
+Pandoc 3.1.3 con las cadenas reales de libro y de revista, incluidos los casos que frenan; SaxonJ-HE 12.5 con `ensamblar-capitulo-canonico.xsl`, `docbook-to-latex.xsl`, `jats-to-latex.xsl`, `jats-to-html.xsl`, `jats-to-epub.xsl`, `jats-to-scielo.xsl` y `jats-to-redalyc.xsl`; el capítulo valida contra el RNG de DocBook 5.2 y el artículo contra la DTD Archiving 1.4; el cuerpo del .tex compila con LuaLaTeX en la clase book y se ve alineado (no con el preámbulo del proyecto); gbpublisher compila con gbc3 3.19.
+
+PROBADO EN MINT
+
+Alberto, 21/10, con un libro y una revista reales: las tres alineaciones, con negrita, bastardilla, una referencia y una nota al pie que lleva otra referencia, junto a `espaciov` y al froufrou. PDF: cada párrafo en su lugar, sin sangría; un párrafo centrado pasa bien de página; la nota sale justificada y con corte, como cualquier otra (GV-114). HTML y EPUB: el párrafo común, a la izquierda y con la separación de los párrafos.
+
+**Relaciones:** vinculo:SC-38,vinculo:SC-39,vinculo:SC-33,vinculo:SC-34,vinculo:SC-49,vinculo:GV-113,vinculo:GV-114,vinculo:GV-115
+
+**PENDIENTE:** ODT: se encara cuando estén terminadas las salidas PDF (decisión de Alberto, 21/10). Sin confirmar en Mint: la inserción desde el panel, el conteo de m_AnalizarProyecto y el mensaje de un caso que frena (probados solo en el contenedor, los casos que frenan). Las hojas de HTML y EPUB de libros no se corrieron sueltas en el contenedor; en Mint salieron bien.
 
 ---
 
@@ -6499,6 +6579,68 @@ REGLA: una carga que pinta celdas asigna el fondo en TODAS las celdas de la colu
 **Relaciones:** vinculo:GV-58,vinculo:SC-60
 
 **PENDIENTE:** No se miró si pasa lo mismo con Foreground, Font y Alignment, ni si Clear lo evita. Falta confirmarlo en 3.22.
+
+### GV-113 — LaTeX: \raggedright, \centering y \raggedleft no parten palabras
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 (Debian) / babel spanish / poppler pdftotext / contenedor Ubuntu 24.04; gbpublisher en Linux Mint (prueba de Alberto, 21/10) · **Verificado:** 2026-10
+
+Las tres declaraciones de LaTeX ponen pegamento infinito (`0pt plus 1fil`) en `\rightskip`, en `\leftskip` o en los dos. Con ese pegamento, cualquier corte de línea es aceptable en la primera pasada de TeX, que no intenta partir palabras. La segunda pasada, la que sí parte, no llega a correr.
+
+MEDIDO (LuaLaTeX, babel spanish, `book` 11 pt), un párrafo largo con palabras largas y una compuesta con guion (`socio-económicamente`), en cada declaración y justificado, a 4,5 cm, 6 cm y 9 cm de caja, contando los guiones a fin de línea con `pdftotext -raw`:
+
+    justificado                     4,5 cm: 42 guiones; 6 cm: 32; 9 cm: 17
+    \raggedright, \centering
+      o \raggedleft                  0 guiones y 0 líneas desbordadas en los tres anchos
+    las mismas con \hyphenpenalty=10000
+      y \exhyphenpenalty=10000        0 guiones (4,5 cm)
+
+El guion de una palabra compuesta tampoco se usa como corte.
+
+LÍMITES
+
+- Depende de que `\pretolerance` no sea negativo: con `-1`, TeX saltea la primera pasada. El proyecto no lo toca (ni `preambulo-*.tex` ni `m_XML`).
+- Una palabra más ancha que la línea no tiene corte posible en la primera pasada, y la segunda la partiría. Con la caja del proyecto no ocurre.
+
+Por esto SC-61 no agrega penalidades de corte: no hacen falta y tienen un costo (GV-114).
+
+Confirmado en Mint con el preámbulo del proyecto (Alberto, 21/10): en un libro y en una revista, los párrafos alineados no parten.
+
+**Relaciones:** apoya:SC-61,vinculo:GV-114
+
+### GV-114 — LaTeX: una nota al pie hereda las penalidades de corte del párrafo, no su alineación
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 (Debian) / babel spanish / poppler pdftotext / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El texto de `\footnote` se compone dentro de un `\insert`, con los parámetros vigentes en el lugar de la llamada. `\@parboxrestore`, que LaTeX ejecuta al abrir la nota, devuelve a su valor `\leftskip`, `\rightskip` y `\parfillskip`, pero no toca `\hyphenpenalty` ni `\exhyphenpenalty`.
+
+MEDIDO (LuaLaTeX, babel spanish, caja de 6 cm), una nota larga dentro de `\begingroup\centering … \par\endgroup`:
+
+    sin penalidades en el grupo              la nota sale justificada, 12 guiones
+    con \hyphenpenalty=10000
+      y \exhyphenpenalty=10000               la nota sale justificada, 0 guiones
+
+En el segundo caso la nota se justifica sin poder partir: líneas flojas.
+
+CONSECUENCIA: una declaración de alineación dentro de un grupo no le llega a una nota del párrafo, y la nota sale como cualquier otra. Una penalidad de corte, sí le llega. SC-61 no las usa (GV-113).
+
+**Relaciones:** apoya:SC-61,vinculo:GV-113
+
+### GV-115 — Pandoc: un RawInline al comienzo de un Para llega intacto a <para> y a <p>
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Un filtro que inserta `pandoc.RawInline('docbook', '<?gb-alinear der?>')` como primer elemento de un `Para` (o `'jats'` en la cadena de revista) obtiene, sin cambios en el texto crudo:
+
+    DocBook   <para>
+                <?gb-alinear der?>19 de octubre de 2026, Ciudad de México
+              </para>
+    JATS      <p><?gb-alinear der?>19 de octubre de 2026, Ciudad de México</p>
+
+A diferencia de un `RawBlock` (GV-95), el escritor DocBook no toca el texto de un `RawInline`. Sí indenta el contenido del `<para>`: antes de la instrucción queda un nodo de texto en blanco. Quien busque la instrucción como primer hijo tiene que saltear ese nodo (`node()[not(self::text()[normalize-space() = ''])][1]`).
+
+La instrucción pasa intacta por `cite-to-xref.lua` (revista) y por `ensamblar-capitulo-canonico.xsl` (libro). El capítulo valida contra el RNG de DocBook 5.2 con xmllint y el artículo contra la DTD Archiving 1.4: una instrucción de procesamiento dentro de un párrafo no cambia la validez.
+
+**Relaciones:** apoya:SC-61,vinculo:GV-95,vinculo:SC-38
 
 ---
 

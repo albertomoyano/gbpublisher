@@ -104,7 +104,7 @@ RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
 DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 
 # EL ORDEN DE LOS FILTROS ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
-# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49):
+# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61):
 #   1° guillemets-to-quoted-db  « » A Quoted. PRIMERO: fenced-divs SERIALIZA
 #      LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
 #   2° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
@@ -112,18 +112,22 @@ DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 #      ESTÁ MAL FORMADO
 #   4° espacio-vertical         FICHA <?gb-espacio …?>; ANTES DE fenced-divs,
 #      QUE NO CONOCE EL BLOQUE espaciov
-#   5° recuadros                DESPUÉS DE dos-partes, QUE PARTE EL recuadrob
-#   6° codigo                   <programlisting>; ANTES DE fenced-divs, QUE
+#   5° alinear                  FICHA <?gb-alinear …?> AL COMIENZO DE CADA
+#      PÁRRAFO (SC-61); ANTES DE fenced-divs, QUE NO CONOCE LOS BLOQUES
+#      alinear-izq, alinear-centro Y alinear-der
+#   6° recuadros                DESPUÉS DE dos-partes, QUE PARTE EL recuadrob
+#   7° codigo                   <programlisting>; ANTES DE fenced-divs, QUE
 #      ARMA EL <example role="listado">
-#   7° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
+#   8° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
 #      SIN -M gb-idioma: LA ETIQUETA LA PONE LA HOJA SEGÚN xml:lang
-#   8° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
-#   9° fenced-divs-to-elements-db  AL FINAL
+#   9° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
+#  10° fenced-divs-to-elements-db  AL FINAL
 FILTROS=(
     guillemets-to-quoted-db.lua
     cite-to-biblioref-db.lua
     dos-partes.lua
     espacio-vertical.lua
+    alinear.lua
     recuadros.lua
     codigo.lua
     conversacion.lua
