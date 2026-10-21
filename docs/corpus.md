@@ -1625,7 +1625,7 @@ LA MARCA NO ES LaTeX
 
 ALCANCE
 
-Título y subtítulo de artículo, de libro, de capítulo y de parte. El título traducido no: si trae la marca, sale un espacio.
+Título y subtítulo de artículo, de libro, de capítulo y de parte. El título traducido no: si trae la marca, sale un espacio. Los títulos de sección que se escriben en el .md siguen la misma regla, con su propio filtro y sus plantillas (SC-63).
 
 DÓNDE CORTA Y DÓNDE NO
 
@@ -1683,7 +1683,7 @@ PRUEBA DE PUNTA A PUNTA
 
 En el contenedor, con TeX Live 2023, las fuentes de la estética y las cuatro capas reales del preámbulo: un canónico armado por `ensamblar-capitulo-canonico.xsl` con la instrucción en el título y el subtítulo, pasado por `docbook-to-latex.xsl`, con portadilla, portada, una introducción sin número, una parte, un capítulo y un índice. Cortan la portadilla, la portada, las dos aperturas, la parte y el encabezado del índice; el sumario y los marcadores salen en una línea; `pdftitle` y `pdfsubject` con un espacio; ni errores ni avisos de hyperref. Un JATS con `<break/>` valida contra el DTD Archiving 1.4 del proyecto y pasa por las ocho hojas JATS: solo `jats-to-latex` conserva el corte.
 
-**Relaciones:** vinculo:SC-25,vinculo:SC-26
+**Relaciones:** vinculo:SC-25,vinculo:SC-26,vinculo:SC-63
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint: la prueba fue en el contenedor, sin la base. Del PDF de revista se verificó el .tex que emite jats-to-latex, sin compilar el artículo entero.
 
@@ -3185,6 +3185,8 @@ LOS CONTROLES
                                       fuera de ::: espaciov
     html_crudo                error   HTML escrito en el .md, menos los
                                       comentarios <!-- … -->
+    corte_fuera_de_titulo     error   \\ fuera de un título: sale como una
+                                      barra (SC-63); para un salto, espaciov
     [WARNING] de pandoc       aviso   entre ellos, nota definida y nunca llamada
 
 `definicion_sin_texto` lee el archivo fuente (`PANDOC_STATE.input_files`) porque en el AST el caso ya no existe (GV-99), y saltea los bloques de código cercados con ``` o ~~~. Una definición de nota vacía al final del archivo la informan dos controles, `definicion_sin_texto` (con la línea) y `nota_vacia`: es el mismo error.
@@ -3210,7 +3212,11 @@ Lo que Pandoc lee como LaTeX o HTML crudo se pierde en las tres salidas: los esc
 
 MEDIDO: un título, un párrafo, una bastardilla, una nota y una celda con órdenes de LaTeX; `<sup>`, `</sup>` y `<br>`; `\newpage` suelto; un comentario de dos líneas y uno en línea; `\bigskip` dentro de `espaciov`. Salen los diez hallazgos esperados, los comentarios y el `espaciov` no; un .md limpio deja el informe vacío. Sobre los ejemplos del catálogo, el único hallazgo es `paleographic`: sus `<ue>`, `<iem>` y `<er>` hoy se pierden (una de las filas con pendiente).
 
-**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39
+EL CORTE FUERA DE UN TÍTULO
+
+`corte_fuera_de_titulo` busca la barra que deja `\\` (GV-121) en los `Str` de los párrafos, las celdas, las líneas de un bloque de líneas y las notas, también las de un título. No mira los títulos, que traduce `corte-titulo.lua` (SC-63), ni el código ni la matemática, que no son `Str`. Medido: un párrafo, una nota y una celda con `\\` dan tres hallazgos; el título y el código, ninguno.
+
+**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63
 
 **PENDIENTE:** (1) Revistas: usar el mismo filtro, con los controles de LaTeX y HTML crudos, cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
 
@@ -3729,6 +3735,63 @@ Los casos que frenan, también en Mint (Alberto, 21/10): `n.\sptext{e}` (punto a
 **Relaciones:** vinculo:SC-58,vinculo:GV-105,vinculo:GV-116,vinculo:GV-117,vinculo:GV-118,vinculo:SC-29,vinculo:SC-21,vinculo:GV-119,vinculo:SC-54
 
 **PENDIENTE:** El ODT, cuando se encare (decisión de Alberto, 21/10).
+
+### SC-63 — Corte de línea en los títulos de sección del .md: \\, como en la base
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / titlesec / hyperref / qpdf / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto, 21/10). La regla de SC-28 vale también para los títulos de sección que se escriben en el .md (`##` y siguientes en libros; todos los niveles en revistas): el editor marca el corte con `\\` y el corte se cumple solo en la apertura del PDF.
+
+    ## Corte de\\ subtítulo
+
+En el sumario, el folio, los marcadores, el HTML, el EPUB, el ODT y los indexadores, el corte es un espacio. En libros el `#` del .md no llega al canónico: el título del capítulo sale de la base y ya tiene su regla (SC-28).
+
+LA REGLA
+
+- Varios cortes por título (decisión de Alberto): `Uno\\ dos\\ tres`.
+- Frena si un corte queda al principio o al final del título, si hay dos seguidos o si va dentro de una bastardilla, una negrita u otra marca. Un `<break/>` dentro de `<italic>` partiría la marca en el PDF.
+- El espacio después de `\\` es opcional: `Pegado\\sin` corta igual.
+- Fuera de un título no hay corte: el control `corte_fuera_de_titulo` (SC-54) lo informa. Para un salto fuera de un título está `espaciov` (SC-39).
+
+CANÓNICO, EL DE SC-28
+
+`corte-titulo.lua` (GV-121) escribe la marca de SC-28 con UN espacio, antes:
+
+    JATS      <title>Corte de <break/>subtítulo</title>
+    DocBook   <title>Corte de <?gb-corte?>subtítulo</title>
+
+SC-28 pone un espacio a cada lado porque sus títulos van planos a muchos destinos. Acá basta uno: el valor de texto de la marca es vacío, así que una salida que lee el título como cadena ve «Corte de subtítulo», y una plantilla vacía para la marca no deja dos espacios. El `<break/>` dentro del `<title>` de un `<sec>` valida contra la DTD Archiving 1.4 (medido). La instrucción de procesamiento, contra el RNG de DocBook 5.2.
+
+PDF
+
+Las plantillas de título de sección de las dos hojas arman el título dos veces (SC-29): la apertura y el argumento opcional que va al sumario, al folio y a los marcadores (`notasTitulo`).
+
+- `docbook-to-latex.xsl`: una plantilla para `processing-instruction('gb-corte')` escribe `\gbCorteTitulo` en la apertura y nada en el sumario. Los títulos que vienen de la base no pasan por ella: los arman `f:titulo-compuesto` y `f:titulo-plano`.
+- `jats-to-latex.xsl`: `sec/title/break` hace lo mismo. La plantilla general de `break` escribe `\\` sin mirar el contexto, y en un título habría ido también al sumario y a los marcadores.
+
+`\gbCorteTitulo` ya está en el contrato del libro (versión 6) y en el preámbulo de la revista (`m_XML`): no hay contrato nuevo.
+
+MEDIDO: el .tex compila con LuaLaTeX, titlesec (`newlinetospace`) y hyperref, sin errores ni avisos. La apertura corta en dos y en tres líneas; el sumario y los marcadores (leídos con qpdf) salen en una línea. Con una nota en el título (SC-29) y una volada (SC-62), también.
+
+HTML, EPUB E INDEXADORES
+
+`jats-to-html` y `jats-to-epub` no tienen plantilla para `break`, y la regla incorporada no escribe nada para una instrucción de procesamiento: sale «Corte de subtítulo». `jats-to-scielo` y `jats-to-redalyc` quitan `sec/title/break` con una plantilla vacía. No usan `normalize-space`, como en el `article-title` de SC-28, porque un título de sección puede llevar bastardilla.
+
+ODT
+
+Un espacio.
+
+CADENAS
+
+`corte-titulo.lua`, justo después de `volada.lua` en las tres: libro, tercero, antes de `cite-to-biblioref-db.lua`; revista, antes de `cite-to-xref.lua`; ODT.
+
+VERIFICADO EN EL CONTENEDOR
+
+Pandoc 3.1.3 con las cadenas reales de libro, revista y ODT, incluidos los casos que frenan; SaxonJ-HE 12.5 con `ensamblar-capitulo-canonico.xsl`, las dos hojas LaTeX, HTML, EPUB, SciELO y Redalyc; el capítulo valida contra el RNG de DocBook 5.2 y el artículo contra la DTD Archiving 1.4; gbpublisher compila con gbc3 3.19.
+
+**Relaciones:** vinculo:SC-28,vinculo:SC-29,vinculo:SC-39,vinculo:SC-54,vinculo:SC-62,vinculo:GV-121
+
+**PENDIENTE:** Probar en Mint con un libro y una revista reales: PDF (apertura, sumario y marcadores), HTML, EPUB, un caso que frene y el control corte_fuera_de_titulo. El ODT, cuando se encare (decisión de Alberto, 21/10).
 
 ---
 
@@ -6858,6 +6921,24 @@ Las combinaciones anidadas (`**_x_**`, `*__y__*`, `_**z**_`) ya funcionaban: el 
 Confirmado en Mint con 3.22 (Alberto, 21/10): ***texto*** se colorea entero y el texto que sigue queda normal.
 
 **Relaciones:** vinculo:GV-119,vinculo:GV-76,vinculo:SC-15
+
+### GV-121 — Pandoc: \\ en el .md es una barra literal en un Str
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+En el lector `markdown` de Pandoc, `\\` es una barra escapada: llega como una `\` dentro del `Str`, pegada al texto que la rodea. No es un salto de línea (el salto es la barra al final de la línea) ni LaTeX crudo.
+
+MEDIDO (Pandoc 3.1.3):
+
+    ## Corte de\\ subtítulo      Str "Corte", Space, Str "de\", Space, Str "subtítulo"
+    ## Pegado\\sin espacio       Str "Pegado\sin", Space, Str "espacio"
+    *bastardilla*\\ y            Emph […], Str "\", Space, Str "y"
+
+Los escritores la escriben como una barra: «Corte de\ subtítulo» en las tres salidas. En cambio, una barra sola delante de letras (`\sin`) es LaTeX crudo (GV-116), y delante de un espacio es un espacio duro.
+
+El identificador que Pandoc arma para un título no lleva la barra («corte-de-subtítulo», «pegadosin-espacio»).
+
+**Relaciones:** apoya:SC-63,vinculo:GV-116,vinculo:SC-28
 
 ---
 

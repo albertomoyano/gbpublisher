@@ -881,6 +881,19 @@
     <xsl:text>\\&#10;</xsl:text>
   </xsl:template>
 
+  <!-- CORTE DE LÍNEA EN UN TÍTULO DE SECCIÓN (SC-28, SC-63): EL <break/> -->
+  <!-- QUE ESCRIBE corte-titulo.lua DESDE EL \\ DEL .md. LA PLANTILLA DE  -->
+  <!-- ARRIBA ESCRIBIRÍA \\ TAMBIÉN EN EL SUMARIO Y LOS MARCADORES: ACÁ   -->
+  <!-- CORTA SOLO EN LA APERTURA, Y EN EL SUMARIO NO ESCRIBE NADA (EL     -->
+  <!-- ESPACIO YA ESTÁ ANTES). EL ESPACIO DESPUÉS DE \gbCorteTitulo LO    -->
+  <!-- DESCARTA TeX.                                                     -->
+  <xsl:template match="sec/title/break" priority="2">
+    <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
+    <xsl:if test="$notasTitulo = 'apertura'">
+      <xsl:text>\gbCorteTitulo </xsl:text>
+    </xsl:if>
+  </xsl:template>
+
   <!-- ============================================================ -->
   <!-- PLANTILLAS: REFERENCIAS CRUZADAS Y CITAS                     -->
   <!-- ============================================================ -->

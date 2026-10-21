@@ -58,6 +58,10 @@ local CONTROLES = {
   -- HTML ESCRITO EN EL .md (<sup>, <br>, PEGADO DE UNA WEB): LOS ESCRITORES
   -- DE XML LO DESCARTAN. LOS COMENTARIOS <!-- … --> NO CUENTAN: NO SON TEXTO
   html_crudo = "error",
+  -- UNA \\ FUERA DE UN TÍTULO: EL CORTE SOLO VALE EN LOS TÍTULOS (SC-63);
+  -- EN EL TEXTO SALE COMO UNA BARRA LITERAL EN LAS TRES SALIDAS. PARA UN
+  -- SALTO FUERA DE UN TÍTULO ESTÁ espaciov (SC-39)
+  corte_fuera_de_titulo = "error",
 }
 
 -- LARGO MÁXIMO DEL CONTEXTO QUE ACOMPAÑA A UN HALLAZGO, EN CARACTERES
@@ -351,6 +355,49 @@ local function revisar_crudo(doc)
 end
 
 -- ============================================================================
+-- Función   : revisar_cortes_inlines
+-- Propósito : Busca la barra que deja \\ en una lista de inlines del texto,
+--             bajando a los contenedores y, como revisar_inlines, sin bajar al
+--             contenido de una nota (sus párrafos los visita el walk). El
+--             código y la matemática no son Str: no se miran.
+-- Parámetros: aInlines — lista de inlines; bloque — el bloque que los
+--             contiene, para el contexto del mensaje
+-- ============================================================================
+local function revisar_cortes_inlines(aInlines, bloque)
+  for _, el in ipairs(aInlines) do
+    if el.t == "Str" then
+      if el.text:find("\\", 1, true) then
+        registrar("corte_fuera_de_titulo",
+          "el corte \\\\ solo vale en un título; en el texto sale como una barra " ..
+          "(para un salto, ::: espaciov): «" .. contexto(bloque) .. "»")
+      end
+    elseif el.t == "Note" then
+      -- SUS PÁRRAFOS LOS VISITA EL WALK DE BLOQUES
+    elseif el.t == "Image" then
+      revisar_cortes_inlines(el.caption, bloque)
+    elseif el.content then
+      revisar_cortes_inlines(el.content, bloque)
+    end
+  end
+end
+
+-- ============================================================================
+-- Función   : revisar_cortes
+-- Propósito : La barra de \\ en todo bloque con texto que no es un título.
+--             En un título la traduce corte-titulo.lua (SC-63).
+-- Parámetros: doc — el documento
+-- ============================================================================
+local function revisar_cortes(doc)
+  doc:walk({
+    Para = function(b) revisar_cortes_inlines(b.content, b) end,
+    Plain = function(b) revisar_cortes_inlines(b.content, b) end,
+    LineBlock = function(b)
+      for _, aLinea in ipairs(b.content) do revisar_cortes_inlines(aLinea, b) end
+    end,
+  })
+end
+
+-- ============================================================================
 -- Función   : revisar_definiciones
 -- Propósito : Busca definiciones de nota con la línea vacía. Se hace sobre el
 --             TEXTO FUENTE porque en el AST ya no están: la definición se
@@ -410,6 +457,7 @@ function Pandoc(doc)
   revisar_comillas(doc)
   revisar_imagenes(doc, sRaiz)
   revisar_crudo(doc)
+  revisar_cortes(doc)
 
   -- --- EL INFORME: SIEMPRE SE ESCRIBE, VACÍO SI NO HUBO HALLAZGOS ---
   local h = io.open(sRuta, "w")

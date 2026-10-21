@@ -460,6 +460,21 @@
     <xsl:apply-templates select="(* except (info | title)) | processing-instruction('gb-espacio')"/>
   </xsl:template>
 
+  <!-- CORTE DE LÍNEA EN UN TÍTULO DE SECCIÓN (SC-28, SC-63): EL      -->
+  <!-- <?gb-corte?> QUE ESCRIBE corte-titulo.lua DESDE EL \\ DEL .md. -->
+  <!-- CORTA SOLO EN LA APERTURA; EN EL SUMARIO, EL FOLIO Y LOS       -->
+  <!-- MARCADORES NO ESCRIBE NADA: EL ESPACIO YA ESTÁ ANTES. EL       -->
+  <!-- ESPACIO DESPUÉS DE \gbCorteTitulo SEPARA LA ORDEN DE LA        -->
+  <!-- PALABRA QUE SIGUE, Y TeX LO DESCARTA. LOS TÍTULOS QUE VIENEN    -->
+  <!-- DE LA BASE NO PASAN POR ACÁ: LOS ARMAN f:titulo-compuesto Y     -->
+  <!-- f:titulo-plano (tex-comun.xsl).                                 -->
+  <xsl:template match="processing-instruction('gb-corte')">
+    <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
+    <xsl:if test="$notasTitulo = 'apertura'">
+      <xsl:text>\gbCorteTitulo </xsl:text>
+    </xsl:if>
+  </xsl:template>
+
   <!-- EL TÍTULO LO EMITE EL PADRE. ACÁ SE SUPRIME PARA QUE NO SE   -->
   <!-- CUELE COMO TEXTO SUELTO.                                     -->
   <xsl:template match="chapter/title | preface/title | section/title |

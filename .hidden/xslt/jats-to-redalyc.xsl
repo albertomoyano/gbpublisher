@@ -98,6 +98,16 @@
     </xsl:copy>
   </xsl:template>
 
+  <!-- ================================================
+       TÍTULO DE SECCIÓN SIN CORTE (SC-63)
+       EL <break/> QUE corte-titulo.lua ESCRIBE DESDE EL \\
+       DEL .md NO LLEGA AL INDEXADOR. UNA PLANTILLA VACÍA Y NO
+       normalize-space: UN TÍTULO DE SECCIÓN PUEDE LLEVAR
+       BASTARDILLA, Y EL FILTRO DEJA UN SOLO ESPACIO, ANTES DEL
+       <break/>, ASÍ QUE NO QUEDA DOBLE.
+       ================================================ -->
+  <xsl:template match="sec/title/break"/>
+
 
   <!-- ================================================
        ELEMENTO RAÍZ: <article>
