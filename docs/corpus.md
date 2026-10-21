@@ -3724,9 +3724,11 @@ PROBADO EN MINT
 
 Alberto, 21/10, con un libro y una revista reales: PDF, HTML y EPUB bien.
 
+Los casos que frenan, también en Mint (Alberto, 21/10): `n.\sptext{e}` (punto antes) y `n\sptext{K}` (mayúscula) cortan la generación del canónico con su mensaje; `n\sptext{k}` genera. La inserción desde el panel deja `\sptext{•}` con el marcador para escribir encima. Liberada con gbShortcodes `datos-v5-015.sql`.
+
 **Relaciones:** vinculo:SC-58,vinculo:GV-105,vinculo:GV-116,vinculo:GV-117,vinculo:GV-118,vinculo:SC-29,vinculo:SC-21,vinculo:GV-119,vinculo:SC-54
 
-**PENDIENTE:** Falta en Mint: la inserción desde el panel, un caso que frene y el resaltado (GV-119). El ODT, cuando se encare (decisión de Alberto, 21/10).
+**PENDIENTE:** El ODT, cuando se encare (decisión de Alberto, 21/10).
 
 ---
 
@@ -6791,7 +6793,7 @@ En el sumario y en el título compuesto, `\sptext` sale bien. La o y la a volada
 
 ### GV-119 — gb.highlight: $(nombre)=valor define una sustitución; un estado hijo de un from … to se busca dentro del tramo
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gb.highlight 3.19 / gb.pcre / contenedor Ubuntu 24.04; fuente de gb.highlight 3.22.2 (gitlab.com/gambas/gambas) · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gb.highlight 3.19 / gb.pcre / contenedor Ubuntu 24.04; fuente de gb.highlight 3.22.2 (gitlab.com/gambas/gambas); gbpublisher en Linux Mint con Gambas 3.22 (Alberto, 21/10) · **Verificado:** 2026-10
 
 Dos recursos de los archivos `.highlight`, leídos en el fuente de gb.highlight 3.22.2 (`TextHighlighter.CreateCustomHighlighter`, `CState.Subst`, `CCommandFrom.Compile`) y medidos con 3.19.
 
@@ -6823,9 +6825,39 @@ MEDIDO con un banco que registra la gramática con `TextHighlighter.Register` y 
 
 Recordar GV-76: un espacio literal en un patrón no carga, porque `AddCommand` separa los argumentos por espacio.
 
-**Relaciones:** apoya:SC-62,vinculo:GV-76,vinculo:SC-15,vinculo:GV-48
+Confirmado en Mint con 3.22 (Alberto, 21/10): \sptext se colorea suelto y dentro de las marcas.
 
-**PENDIENTE:** Confirmar en Mint con 3.22: el resaltado de \sptext suelto y dentro de bastardilla, negrita y tachado, en el editor y en la ayuda del panel.
+**Relaciones:** apoya:SC-62,vinculo:GV-76,vinculo:SC-15,vinculo:GV-48,vinculo:GV-120
+
+### GV-120 — gb.highlight: el primer estado que coincide gana; un lookbehind no ve lo anterior a la posición
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gb.highlight 3.19 / gb.pcre / contenedor Ubuntu 24.04 (banco de GV-119); el síntoma, en gbpublisher con Gambas 3.22 / Linux Mint (Alberto, 21/10); confirmado por Alberto en Mint · **Verificado:** 2026-10
+
+En cada posición del texto, gb.highlight prueba los estados en el orden del archivo y se queda con el primero que coincide. Un `from … to` sin cerrar deja el estado abierto: en Mint con 3.22 el color sigue en las líneas siguientes (lo vio Alberto); en el banco con 3.19, hasta el fin de la línea.
+
+EL CASO: ***texto***
+
+    bold.double  from ** to **    abre en los dos primeros asteriscos y cierra en
+                                  los dos primeros del final; el tercero abre una
+                                  bastardilla que no cierra
+    MEDIDO (antes):  [Keyword:***negrita y bastardilla**][Comment:* después normal.]
+
+Remedio: `bold.italic.star` (`from *** to ***`) y `bold.italic.underscore` (`from ___ to ___`) ANTES de la negrita. Medido después: `[Keyword:***negrita y bastardilla***]`.
+
+LOOKBEHIND Y LOOKAHEAD
+
+Un patrón `/…/` se prueba sobre el texto desde la posición actual: un lookahead (`(?=\S)`) funciona, un lookbehind (`(?<=\S)`, `(?<![…])`) no ve lo anterior. Medido: con `to /(?<=\S)\*/` la bastardilla no cerraba. Las clases `\p{L}` y `\p{N}` sí reconocen letras con tilde y la ñ (`año_ñandú`).
+
+LOS OTROS DOS CASOS DEL MISMO TIPO (corregidos en el mismo lote)
+
+- Un `*` suelto abría bastardilla: `* ítem` (la lista, que va después en el archivo) y `5 * 3`. Ahora `italic.star` abre con `/\*(?=\S)/`. Medido: `* ítem` sale como lista (`Operator`) y `5 * 3` normal.
+- Un guion bajo dentro de una palabra abría bastardilla (`palabra_con_guiones`, `snake_case`). Pandoc no la lee como énfasis (extensión `intraword_underscores`). Como el lookbehind no sirve, un estado anterior, `palabra.guion.bajo{Normal}`, consume la palabra entera: `match /[\p{L}\p{N}]+(_[\p{L}\p{N}]+)+/`. Medido: sin color; `_otra_` y `(_entre_)` siguen en bastardilla.
+
+Las combinaciones anidadas (`**_x_**`, `*__y__*`, `_**z**_`) ya funcionaban: el tramo de afuera toma el color y el de adentro no se distingue.
+
+Confirmado en Mint con 3.22 (Alberto, 21/10): ***texto*** se colorea entero y el texto que sigue queda normal.
+
+**Relaciones:** vinculo:GV-119,vinculo:GV-76,vinculo:SC-15
 
 ---
 
