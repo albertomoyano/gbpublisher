@@ -1277,7 +1277,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (refactor de bibtex) pendiente.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60). El refactor de bibtex tomará el número que le corresponda.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1304,7 +1304,11 @@ DETALLES VERIFICADOS
 - Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
 - El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, la restauración borra `articulos` y falla al recrearla (GV-67).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34
+PUNTO DE RUPTURA: BASELINE 2.0.0 CON EL REFACTOR DE BIBTEX
+
+Decisión de Alberto (20/10). El baseline no se regenera con cada versión de la cadena. El 2.0.0 se genera junto con el refactor de bibtex y lo incorpora: las instalaciones nuevas parten de ahí. Las existentes siguen su cadena hasta ese mismo punto. Hasta entonces, una instalación nueva restaura `baseline-1.0.0` y corre la cadena completa (BBDD_LEEME.md §5, «Cuándo conviene rebasear»).
+
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -3509,6 +3513,49 @@ Con `\sq` la postnota deja de ser un número y biblatex no le antepone «p.» ni
 **Relaciones:** vinculo:SC-14,vinculo:SC-57,vinculo:RF-09,vinculo:RF-12,vinculo:RF-13,vinculo:RF-14,vinculo:GV-106
 
 **PENDIENTE:** Falta la prueba en Mint: el PDF de un libro con cada estilo y una revista. La diferencia de `nodate` entre Verona («s/f») e ISO 690 («sin fecha») queda como decisión de cada estilo, sin revisar.
+
+### SC-60 — Notas internas: temas con ciclo de vida, por proyecto o 1 a 1
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / Gambas 3.22 / Linux Mint (prueba de Alberto, 20/10) · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (Alberto, octubre de 2026). Reemplaza a `postits`, retirada en la 1.12.0. Se evaluó un chat al estilo Zulip y se descartó: el equipo necesita temas que se notifican, se siguen y se cierran, no conversación en caliente.
+
+MODELO
+
+- Una nota es 1 a 1 (a otro usuario o a uno mismo) o de proyecto (al grupo del proyecto). Tiene una cosa o la otra (`CHECK chk_notas_destino`).
+- El grupo de un proyecto es único (`notas_grupos`).
+  - Lo crea un usuario con el proyecto abierto, y queda como creador y miembro.
+  - Solo el creador suma y da de baja miembros. La baja es lógica, y cada alta y cada baja queda registrada.
+  - Un miembro nuevo ve todo lo activo del grupo, pero no lo archivado antes de su alta.
+- Las respuestas van dentro de la nota, como hilo. El texto de una nota no se edita.
+- Cerrar = archivar: lo hace solo el autor, y nada se borra. La hora de despacho opcional (`desde`) oculta la nota a los destinatarios hasta esa hora.
+- Archivadas: las ve quien participó, es decir, autor, destinatario, quien respondió o quien la abrió (`notas_vistas`). Leer cuenta como participar.
+- Sin roles en `usuarios`: el administrador actúa desde FSysAdmin (pestaña «Notas», `hConnServidor`).
+  - Transfiere el rol de creador de un grupo con creador inactivo.
+  - Cierra las notas de un usuario inactivo.
+  - Al archivar un proyecto, cierra las notas de su grupo en la misma transacción.
+  - Lo que cierra queda firmado en `cierre_sistema`.
+
+INTERFAZ
+
+- La pestaña «Notas» de FMain (`TabStrip1`, índice 8), con `m_Notas` como módulo dueño. Los handlers de FMain solo delegan.
+- El indicador: `pbNotas` más `lblNotas` en `HBox3`.
+- Alcance común: pestaña e indicador solo existen con sesión y proyecto abierto. Muestran las notas 1 a 1 del usuario más las del grupo del proyecto abierto.
+- Índice de días corridos sin actividad: 0–3 verde, 4–6 ámbar, 7 o más rojo. En el indicador, rojo gana sobre verde.
+
+SONDEO
+
+- Lo dispara el latido de `TimerRed` (30 s), y solo con la red en verde.
+- Usa una conexión propia, con plazo de lectura (GV-110).
+- Hace una consulta por tick. Su firma incluye las notas, las respuestas, los cierres y el estado del grupo; la pestaña se recarga solo si cambió.
+- Horas: las fechas viajan como segundos transcurridos según el servidor y se muestran con el reloj local. La hora de despacho viaja como segundos desde ahora, así que sirve con usuarios en otro huso horario (Argentina–Colombia).
+
+ESQUEMA
+
+- La 1.10.0 crea `notas`, `notas_grupos`, `notas_miembros`, `notas_respuestas` y `notas_vistas`, con claves `RESTRICT` (GV-111), y migra `postits` con el mismo id.
+- La 1.12.0 retira `postits`.
+
+**Relaciones:** vinculo:SC-22,vinculo:GV-110,vinculo:GV-111,vinculo:GV-112,vinculo:GV-107,vinculo:GV-78,vinculo:GV-57
 
 ---
 
@@ -6343,6 +6390,115 @@ El segundo es el peligroso: no hay aviso, y el PDF sale. Por eso los códigos de
 `\NewBibliographyString` con una cadena que ya existe no hace nada; una clave con guion (`self-published`) es válida (medido).
 
 **Relaciones:** vinculo:SC-59,vinculo:SC-57,vinculo:RF-14,apoya:GV-23
+
+### GV-107 — TextEdit.InsertRichText: fusiona el fragmento con el párrafo del cursor y no aplica el <style> del documento
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor Ubuntu 24.04 (Xvfb, Fusion), banco gbPruebaChat; el mismo banco corrido por Alberto en Gambas 3.22.2 / Linux Mint · **Verificado:** 2026-10
+
+`InsertRichText(Text)` (`CTextEdit.cpp`, 3.22.1) inserta un fragmento HTML en la posición del cursor. Antes se lleva el cursor al final con `Select(posición, 0)`, nunca con `Pos` (GV-44).
+
+Medido en banco, con tres formas de armar el fragmento:
+
+    <p> tal cual                     se pega al final del párrafo anterior: Qt fusiona
+                                     el primer párrafo del fragmento con el del cursor
+    salto de párrafo + <p>           queda separado, pero hereda el formato del anterior:
+                                     un fondo se corre a todo lo que se inserta después
+    <p> en una tabla de una celda    separado y sin herencia; el fondo va en la celda (GV-64)
+
+Ningún fragmento insertado aplica las clases del `<style>` del documento: los estilos van en línea. Con la tabla de una celda y estilos en línea, un mensaje cuesta alrededor de 1 ms con 300 en pantalla.
+
+En el proyecto, el hilo de una nota se carga entero por `RichText` (`m_Notas`, SC-60): un hilo es corto y se lee completo.
+
+**Relaciones:** vinculo:GV-64,vinculo:GV-44,vinculo:GV-37,vinculo:GV-52,vinculo:SC-60
+
+**PENDIENTE:** En Mint, el banco confirmó que TextEdit es rápido; las tres variantes se compararon solo en 3.19.
+
+### GV-108 — HtmlView: asignar Html no mueve la vista; solo Load con ancla desplaza
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.form.htmlview / contenedor (banco gbPruebaChat); fuente de HtmlView.class y c_htmldocument.cpp (3.22.1); banco corrido por Alberto en Gambas 3.22.2 / Linux Mint · **Verificado:** 2026-10
+
+- `Html`: `Html_Write` (`HtmlView.class`) reemplaza el documento y no toca el desplazamiento. MEDIDO: la vista se queda donde estaba. Con 300 mensajes, cada reasignación costó entre 45 y 120 ms.
+- `Load(archivo#ancla)`: es lo único que procesa un ancla. Busca el elemento por `id` o `name` (`find_anchor`, `c_htmldocument.cpp`) y desplaza hasta él; el documento tiene que pasar por un archivo temporal. LEÍDO en el fuente.
+- El control no expone su desplazamiento: no hay forma de «bajar solo si ya estaba al final».
+
+Por eso se descartó para el hilo de las notas (SC-60), y es una razón más para retirar HtmlView del proyecto (pendiente de SC-24).
+
+**Relaciones:** vinculo:SC-24,vinculo:GV-107,vinculo:SC-60
+
+**PENDIENTE:** Load con ancla no se midió en ejecución.
+
+### GV-109 — WebView: SetHtml es asíncrono y ExecJavascript deja correr los eventos mientras espera
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5.webview / contenedor (banco gbPruebaChat); fuente de c_webview.cpp (3.22.1); banco corrido por Alberto en Gambas 3.22.2 / Linux Mint · **Verificado:** 2026-10
+
+- `SetHtml` vuelve enseguida: la página queda lista recién en el evento `Finish`. En el banco, `Finish` llegó a los 74 ms.
+- `ExecJavascript` espera el resultado con `GB.Wait(-1)` (LEÍDO en `c_webview.cpp`): los eventos siguen corriendo durante la espera.
+  - Un `Timer` puede volver a entrar a mitad de la llamada.
+  - Una segunda llamada antes de que vuelva la primera da «Pending asynchronous method» (LEÍDO en el fuente).
+  - Quien lo use desde un timer necesita una guarda de reentrada.
+- Agregar un mensaje con `ExecJavascript` costó entre 2 y 12 ms, y la vista sigue al final.
+
+En Mint fue el que mejor se vio. No se adoptó para las notas (SC-60): el hilo es corto y TextEdit alcanza, sin otro componente ni otro motor.
+
+**Relaciones:** vinculo:GV-107,vinculo:GV-108,vinculo:SC-60
+
+**PENDIENTE:** La reentrada no se provocó: con un mensaje automático por segundo no apareció.
+
+### GV-110 — gb.db2 / MySQL: Exec congela la interfaz; Timeout solo acota la apertura; READ_TIMEOUT acota la lectura y deja la conexión muerta
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.2 / gb.db2.mysql / Linux Mint (banco gbPruebaChat, Alberto); Gambas 3.19 / gb.db.mysql / MySQL 8.0.46 / contenedor; fuente de gb.db2.mysql (options.h) · **Verificado:** 2026-10
+
+- `Connection.Exec` es sincrónico: la interfaz no se redibuja hasta que vuelve. MEDIDO en Mint: con `SELECT SLEEP(2)`, el reloj del banco se congeló y el tick siguiente se corrió un segundo.
+- `Connection.Timeout` acota solo `Open`. Una consulta lenta sobre una conexión abierta no tiene plazo.
+- `Options["READ_TIMEOUT"]` acota cada lectura. El driver la pasa a `MYSQL_OPT_READ_TIMEOUT` (`options.h`). Se asigna ANTES de `Open`: las opciones se leen al abrir.
+  - MEDIDO en 3.19 con `READ_TIMEOUT = 2`: `SELECT SLEEP(5)` falla a los 2,00 s con «Lost connection».
+  - La conexión queda muerta: la consulta siguiente también falla. Hay que descartarla y abrir otra.
+- Las claves de `Options` no distinguen mayúsculas, y una clave desconocida se ignora sin aviso (LEÍDO en el fuente del driver). Un `READ_TIMOUT` mal escrito deja la conexión sin plazo y nadie avisa.
+
+PATRÓN EN EL PROYECTO
+
+`m_ConexionBD.AbrirConexionSondeo` abre una conexión aparte, con plazo de lectura, para el sondeo periódico de las notas (`m_Notas`, SC-60).
+
+- La consulta del sondeo no pasa por `mConn`, que no tiene plazo.
+- Tras un fallo, `m_Notas` descarta esa conexión y el tick siguiente abre otra.
+- Con el semáforo de red en rojo, ni siquiera consulta.
+
+**Relaciones:** vinculo:GV-23,vinculo:SC-60
+
+**PENDIENTE:** El plazo se midió con gb.db en 3.19; en Mint, con gb.db2, el sondeo funciona pero el vencimiento no se provocó. Mini-test: abrir con AbrirConexionSondeo(2) y ejecutar SELECT SLEEP(5); debe fallar a los 2 s.
+
+### GV-111 — MySQL 8: una columna con CHECK no admite una acción referencial que la modifique (error 3823)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Una columna que aparece en un `CHECK` no puede llevar, en su clave foránea, una acción que cambie su valor. Medido:
+
+    ON UPDATE CASCADE      ERROR 3823
+    ON UPDATE SET NULL     ERROR 3823
+    ON DELETE SET NULL     ERROR 3823
+    ON DELETE SET DEFAULT  ERROR 3823
+    ON DELETE CASCADE      aceptada (borra la fila, no cambia la columna)
+    RESTRICT / NO ACTION   aceptadas
+
+    Column 'pid' cannot be used in a check constraint 'chk': needed in a foreign key constraint 'fk' referential action.
+
+Un `CHECK` sobre OTRA columna de la misma tabla no tiene restricción.
+
+CASO EN EL PROYECTO: la 1.10.0 (notas, SC-60) tiene `CHECK` sobre columnas con clave foránea (`chk_notas_destino` sobre `id_destinatario` e `id_grupo`). Por eso sus catorce claves son `ON DELETE RESTRICT ON UPDATE RESTRICT`. En el proyecto ningún id cambia, así que `ON UPDATE CASCADE` no aporta nada.
+
+**Relaciones:** vinculo:SC-22,vinculo:SC-60
+
+### GV-112 — GridView: volver Rows.Count a 0 no borra el formato de las celdas
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor (arnés de m_Notas) · **Verificado:** 2026-10
+
+Una grilla se vació con `Rows.Count = 0` y se volvió a llenar. Las celdas a las que no se les asignó `Background` en la carga nueva mostraron el fondo de la carga anterior: una nota cerrada heredaba el verde del índice de días.
+
+REGLA: una carga que pinta celdas asigna el fondo en TODAS las celdas de la columna, también `Color.Default` en las que no llevan color. Aplicado en `m_Notas.CargarLista` y en `FSysAdmin.CargarNotasAdmin`.
+
+**Relaciones:** vinculo:GV-58,vinculo:SC-60
+
+**PENDIENTE:** No se miró si pasa lo mismo con Foreground, Font y Alignment, ni si Clear lo evita. Falta confirmarlo en 3.22.
 
 ---
 
