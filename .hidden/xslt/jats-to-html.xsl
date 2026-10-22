@@ -1424,7 +1424,10 @@
             padding: 0.5rem;
           }
 
-          /* TABLAS */
+          /* TABLAS: EL MODELO DEL EPUB, COMO EN LOS LIBROS (decisión de
+             Alberto, 22/10): UN FILETE ENTRE TODAS LAS CELDAS Y EL
+             ENCABEZADO CON EL GRIS AZULADO DE LA CASA (#d9e1eb, EL
+             --color-tabla-header DE gbpublisher.css); SIN FILAS ALTERNAS */
           .table-wrap {
             margin: 2rem 0;
             overflow-x: auto;
@@ -1438,24 +1441,19 @@
           }
 
           .table-wrap th {
-            background: var(--color-accent);
-            color: #fff;
-            padding: 0.6rem 0.75rem;
+            background: #d9e1eb;
+            color: var(--color-text);
+            padding: 0.45rem 0.7rem;
             text-align: left;
             font-weight: 600;
-            font-size: var(--text-xs);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            border: 1px solid #cccccc;
           }
 
           .table-wrap td {
-            padding: 0.5rem 0.75rem;
-            border-bottom: 1px solid var(--color-border);
+            padding: 0.45rem 0.7rem;
+            border: 1px solid #cccccc;
             color: var(--color-text);
           }
-
-          .table-wrap tr:nth-child(even) td { background: var(--color-accent-soft); }
-          .table-wrap tr:hover td          { background: #f0f0ec; }
 
           /* CUADRO (SC-66): «Cuadro N» CON EL TÍTULO Y LA NOTA, DEBAJO */
           .table-caption {
@@ -3486,6 +3484,8 @@
       <!-- LA ALINEACIÓN DEL CUADRO (SC-66). LOS NAVEGADORES NO APLICAN
            align="char": LA COLUMNA DE CIFRAS VA A LA DERECHA, CON CIFRAS
            TABULARES, QUE ALINEAN LAS QUE TIENEN LOS MISMOS DECIMALES -->
+      <!-- LAS CELDAS UNIDAS DEL CUADRO (SC-66) -->
+      <xsl:copy-of select="@colspan | @rowspan"/>
       <xsl:choose>
         <xsl:when test="@align = 'char'">
           <xsl:attribute name="style">text-align: right; font-variant-numeric: tabular-nums</xsl:attribute>

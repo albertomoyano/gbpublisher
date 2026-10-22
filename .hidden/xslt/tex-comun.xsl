@@ -33,6 +33,13 @@
     f:cuadro-columna() la columna de un cuadro para tabular (SC-66)
     f:cuadro-formato() el table-format de una columna de cifras (SC-66)
     f:cuadro-pie()    el \caption de un cuadro (SC-66)
+    f:cuadro-span()   columnas y filas que une una celda (SC-66)
+    f:cuadro-grilla() cada celda en su columna (SC-66)
+    f:cuadro-abajo()  el texto unido del encabezado, abajo (SC-66)
+    f:cuadro-filete() el filete entre dos filas (SC-66)
+    f:cuadro-cantidad() la cifra sola de una celda (SC-66)
+    gb-cuadro-latex   el cuadro completo, con sus tramos (SC-66)
+    gb-cuadro-fila    una fila del cuadro (SC-66)
     f:codigo-latex()  bloque de código coloreado (SC-42)
   ============================================================
   NOTA SOBRE f:latex — CORRECCIÓN DE 2026-09
@@ -60,7 +67,9 @@
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:f="urn:gbpublisher:functions"
   xmlns:gbc="urn:gbpublisher:codigo"
-  exclude-result-prefixes="xs f gbc">
+  xmlns:array="http://www.w3.org/2005/xpath-functions/array"
+  xmlns:map="http://www.w3.org/2005/xpath-functions/map"
+  exclude-result-prefixes="xs f gbc array map">
 
   <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
   <xsl:include href="codigo-comun.xsl"/>
@@ -709,6 +718,315 @@
       else concat('\caption[{', $t, '}]{', $t,
                   if (matches($t, '[.?!]$')) then ' ' else '. ', $n, '}')"/>
   </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-span                                      -->
+  <!-- PROPÓSITO: LAS COLUMNAS Y LAS FILAS QUE UNE UNA CELDA, EN    -->
+  <!--            LOS DOS VOCABULARIOS: CALS (namest/nameend        -->
+  <!--            «cN», morerows) Y XHTML DE JATS (colspan, rowspan)-->
+  <!-- PARÁMETROS: c As element() — entry, th O td                 -->
+  <!-- RETORNA  : xs:integer+ — (COLUMNAS, FILAS)                   -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-span" as="xs:integer+">
+    <xsl:param name="c" as="element()"/>
+    <xsl:sequence select="(
+      if ($c/@colspan) then xs:integer($c/@colspan)
+      else if ($c/@namest) then xs:integer(substring-after($c/@nameend, 'c'))
+                                - xs:integer(substring-after($c/@namest, 'c')) + 1
+      else 1,
+      if ($c/@rowspan) then xs:integer($c/@rowspan)
+      else if ($c/@morerows) then xs:integer($c/@morerows) + 1
+      else 1)"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-grilla                                    -->
+  <!-- PROPÓSITO: UBICA CADA CELDA EN SU COLUMNA, CON LAS CELDAS    -->
+  <!--            UNIDAS QUE VIENEN DE FILAS ANTERIORES (LA MISMA   -->
+  <!--            CUENTA QUE mapear EN cuadro-leer.lua)             -->
+  <!-- PARÁMETROS: filas As element()* — row O tr; n As xs:integer  -->
+  <!-- RETORNA  : map(*)* — UNO POR FILA:                           -->
+  <!--   'items'  array: map{'col','cs','celda'} EN ORDEN DE COLUMNA;-->
+  <!--            'celda' VACÍA = LA OCUPA UNA CELDA DE ARRIBA, QUE   -->
+  <!--            EN LaTeX VA COMO CELDA VACÍA (LA PRÁCTICA DE LA     -->
+  <!--            CASA: EL VALOR SOLO EN LA PRIMERA FILA)            -->
+  <!--   'cruza'  LAS COLUMNAS QUE SIGUEN UNIDAS AL PASAR A LA FILA   -->
+  <!--            SIGUIENTE: AHÍ NO VA FILETE                       -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-grilla" as="map(*)*">
+    <xsl:param name="filas" as="element()*"/>
+    <xsl:param name="n" as="xs:integer"/>
+    <xsl:iterate select="$filas">
+      <!-- FILAS QUE QUEDAN OCUPADAS POR COLUMNA, Y EL ANCHO DE LA CELDA
+           UNIDA EN LA COLUMNA DONDE EMPIEZA (0 EN LAS DEMÁS) -->
+      <xsl:param name="resto" as="xs:integer*" select="for $i in 1 to $n return 0"/>
+      <xsl:param name="origen" as="xs:integer*" select="for $i in 1 to $n return 0"/>
+
+      <!-- 1. CADA CELDA EN LA PRIMERA COLUMNA LIBRE -->
+      <xsl:variable name="ubicadas" as="map(*)*">
+        <xsl:iterate select="*[local-name() = ('entry', 'th', 'td')]">
+          <xsl:param name="col" as="xs:integer" select="1"/>
+          <xsl:variable name="j" as="xs:integer?"
+            select="(for $k in $col to $n return if ($resto[$k] = 0) then $k else ())[1]"/>
+          <xsl:if test="empty($j)">
+            <xsl:message terminate="yes">[cuadro] UNA FILA TIENE MÁS CELDAS QUE COLUMNAS</xsl:message>
+          </xsl:if>
+          <xsl:variable name="s" select="f:cuadro-span(.)"/>
+          <xsl:sequence select="map{'col': $j, 'cs': $s[1], 'rs': $s[2], 'celda': .}"/>
+          <xsl:next-iteration>
+            <xsl:with-param name="col" select="$j + $s[1]"/>
+          </xsl:next-iteration>
+        </xsl:iterate>
+      </xsl:variable>
+
+      <!-- 2. LAS COLUMNAS OCUPADAS DESDE ARRIBA: UNA ENTRADA POR CELDA UNIDA -->
+      <xsl:variable name="cubiertas" as="map(*)*"
+        select="for $i in 1 to $n return
+                  if ($resto[$i] &gt; 0 and $origen[$i] &gt; 0)
+                  then map{'col': $i, 'cs': $origen[$i], 'rs': 1, 'celda': ()} else ()"/>
+
+      <!-- 3. LO QUE QUEDA OCUPADO DESPUÉS DE ESTA FILA -->
+      <xsl:variable name="nuevo-resto" as="xs:integer*"
+        select="for $i in 1 to $n return
+                  if ($resto[$i] &gt; 0) then $resto[$i] - 1
+                  else (for $u in $ubicadas
+                        return if ($u?col le $i and $i lt $u?col + $u?cs) then $u?rs - 1 else (),
+                        0)[1]"/>
+      <xsl:variable name="nuevo-origen" as="xs:integer*"
+        select="for $i in 1 to $n return
+                  if ($nuevo-resto[$i] = 0) then 0
+                  else if ($resto[$i] &gt; 0) then $origen[$i]
+                  else (for $u in $ubicadas return if ($u?col = $i) then $u?cs else (), 0)[1]"/>
+
+      <xsl:sequence select="map{
+        'items': array{ for $i in 1 to $n return ($ubicadas[?col = $i], $cubiertas[?col = $i]) },
+        'cruza': (for $i in 1 to $n return if ($nuevo-resto[$i] &gt; 0) then $i else ())}"/>
+      <xsl:next-iteration>
+        <xsl:with-param name="resto" select="$nuevo-resto"/>
+        <xsl:with-param name="origen" select="$nuevo-origen"/>
+      </xsl:next-iteration>
+    </xsl:iterate>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-abajo                                     -->
+  <!-- PROPÓSITO: PASA EL TEXTO DE CADA CELDA QUE UNE FILAS A LA    -->
+  <!--            ÚLTIMA DE ELLAS (PARA EL ENCABEZADO)              -->
+  <!-- PARÁMETROS: g As map(*)* — LO QUE DEVUELVE f:cuadro-grilla   -->
+  <!-- RETORNA  : map(*)* — LA MISMA GRILLA                          -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-abajo" as="map(*)*">
+    <xsl:param name="g" as="map(*)*"/>
+    <xsl:sequence select="
+      for $r in 1 to count($g) return map{
+        'cruza': $g[$r]?cruza,
+        'items': array{
+          for $m in array:flatten($g[$r]?items) return
+            if (exists($m?celda) and $m?rs gt 1) then map:put($m, 'celda', ())
+            else if (empty($m?celda)) then
+              (for $q in 1 to $r - 1, $o in array:flatten($g[$q]?items)
+               return if (exists($o?celda) and $o?col = $m?col and $q + $o?rs - 1 = $r)
+                      then map:put($m, 'celda', $o?celda) else (),
+               $m)[1]
+            else $m }}"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-filete                                    -->
+  <!-- PROPÓSITO: EL FILETE ENTRE DOS FILAS: \midrule SI NINGUNA     -->
+  <!--            CELDA SIGUE UNIDA; SI NO, UN \cmidrule POR CADA    -->
+  <!--            TRAMO DE COLUMNAS LIBRES (EL \cmidrule{2-n} DE LA   -->
+  <!--            CASA ENTRE LAS FILAS DE UN GRUPO). DOBLE EN UN     -->
+  <!--            BLOQUE (bloques:)                                  -->
+  <!-- PARÁMETROS: cruza As xs:integer*; n As xs:integer; doble As  -->
+  <!--            xs:boolean                                        -->
+  <!-- RETORNA  : xs:string — CON EL SALTO DE LÍNEA                 -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-filete" as="xs:string">
+    <xsl:param name="cruza" as="xs:integer*"/>
+    <xsl:param name="n" as="xs:integer"/>
+    <xsl:param name="doble" as="xs:boolean"/>
+    <xsl:variable name="tramos" as="xs:string*">
+      <xsl:for-each-group select="(1 to $n)[not(. = $cruza)]" group-adjacent=". - position()">
+        <xsl:sequence select="concat('\cmidrule{', current-group()[1], '-', current-group()[last()], '}')"/>
+      </xsl:for-each-group>
+    </xsl:variable>
+    <xsl:sequence select="
+      if (empty($cruza)) then (if ($doble) then '\midrule&#10;\midrule&#10;' else '\midrule&#10;')
+      else concat(string-join($tramos, ''), '&#10;')"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-cantidad                                  -->
+  <!-- PROPÓSITO: LA CIFRA DE ENTRADA SI LA CELDA ES SOLO UNA       -->
+  <!--            CANTIDAD «num X» (SC-65), EN LOS DOS VOCABULARIOS -->
+  <!-- PARÁMETROS: c As element()                                   -->
+  <!-- RETORNA  : xs:string? — VACÍO SI NO LO ES                    -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-cantidad" as="xs:string?">
+    <xsl:param name="c" as="element()"/>
+    <xsl:variable name="q" select="$c/*[@role = 'cantidad' or @content-type = 'cantidad']"/>
+    <xsl:variable name="ficha" select="string(($q/@remap, $q/@specific-use)[1])"/>
+    <xsl:sequence select="
+      if (count($c/*) = 1 and exists($q) and starts-with($ficha, 'num ')
+          and normalize-space($c) = normalize-space($q))
+      then substring-after($ficha, 'num ') else ()"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- PLANTILLA: gb-cuadro-latex                                   -->
+  <!-- PROPÓSITO: EL CUADRO COMPLETO, COMÚN A LIBROS Y REVISTAS: UN -->
+  <!--   FLOTANTE POR TRAMO (cortes:), CON EL ENCABEZADO REPETIDO Y  -->
+  <!--   LOS TEXTOS DE CONTINUACIÓN; EL PIE Y LA ETIQUETA EN EL      -->
+  <!--   ÚLTIMO; sidewaystable SI ROTA; gbcuadrototal SI USA EL      -->
+  <!--   ANCHO TOTAL DE LA REVISTA. ES UNA PLANTILLA CON NOMBRE: LA  -->
+  <!--   LLAMA LA PLANTILLA DE CADA HOJA (GV-117), Y EL CONTENIDO DE  -->
+  <!--   LAS CELDAS LO RESUELVEN LAS REGLAS DE ESA HOJA.             -->
+  <!-- PARÁMETROS: pi — LA INSTRUCCIÓN gb-cuadro; encabezado, cuerpo -->
+  <!--   — LAS FILAS; rotar As xs:boolean; pie As xs:string — EL     -->
+  <!--   \caption YA ARMADO; id As xs:string                         -->
+  <!-- ============================================================ -->
+  <xsl:template name="gb-cuadro-latex">
+    <xsl:param name="pi" as="processing-instruction()"/>
+    <xsl:param name="encabezado" as="element()*"/>
+    <xsl:param name="cuerpo" as="element()*"/>
+    <xsl:param name="rotar" as="xs:boolean"/>
+    <xsl:param name="pie" as="xs:string"/>
+    <xsl:param name="id" as="xs:string"/>
+    <xsl:variable name="fichas" select="tokenize(f:pi-valor($pi, 'columnas'), ' ')"/>
+    <xsl:variable name="n" select="count($fichas)"/>
+    <xsl:variable name="cortes" select="for $t in tokenize(f:pi-valor($pi, 'cortes'), ' ') return xs:integer($t)"/>
+    <xsl:variable name="bloques" select="for $t in tokenize(f:pi-valor($pi, 'bloques'), ' ') return xs:integer($t)"/>
+    <xsl:variable name="total" select="f:pi-valor($pi, 'ancho') = 'total'"/>
+    <!-- EN EL ENCABEZADO, LA CELDA QUE UNE FILAS LLEVA EL TEXTO EN LA
+         ÚLTIMA, JUNTO A LOS RÓTULOS DE LAS COLUMNAS («Período» EN EL
+         cuadroX2 DE LA CASA); EN EL CUERPO, EN LA PRIMERA (EL GRUPO) -->
+    <xsl:variable name="g-enc" select="f:cuadro-abajo(f:cuadro-grilla($encabezado, $n))"/>
+    <xsl:variable name="g-cue" select="f:cuadro-grilla($cuerpo, $n)"/>
+
+    <!-- 1. LAS COLUMNAS: LA DE CIFRAS CON SU table-format, DE SUS CIFRAS SOLAS -->
+    <xsl:variable name="columnas" as="xs:string*">
+      <xsl:for-each select="1 to $n">
+        <xsl:variable name="i" select="."/>
+        <xsl:sequence select="f:cuadro-columna($fichas[$i], f:cuadro-formato(
+          for $fila in $g-cue, $m in array:flatten($fila?items)
+          return if ($m?col = $i and $m?cs = 1 and exists($m?celda))
+                 then f:cuadro-cantidad($m?celda) else ()))"/>
+      </xsl:for-each>
+    </xsl:variable>
+
+    <!-- 2. LOS TRAMOS: LOS NÚMEROS DE FILA DONDE EMPIEZA CADA UNO -->
+    <xsl:variable name="inicios" select="(1, for $k in $cortes return $k + 1)"/>
+    <xsl:for-each select="$inicios">
+      <xsl:variable name="t" select="position()"/>
+      <xsl:variable name="desde" select="."/>
+      <xsl:variable name="hasta" select="if ($t = count($inicios)) then count($cuerpo) else $inicios[$t + 1] - 1"/>
+      <xsl:variable name="ultimo" select="$t = count($inicios)"/>
+
+      <!-- 2a. EL FLOTANTE Y LA LETRA: ALCANZAN TAMBIÉN AL PIE -->
+      <xsl:text>&#10;</xsl:text>
+      <xsl:value-of select="if ($rotar) then '\begin{sidewaystable}' else '\begin{table}[!ht]'"/>
+      <xsl:text>&#10;\gbCuadroLetra</xsl:text>
+      <xsl:value-of select="if (f:pi-valor($pi, 'cuerpo') = 'chico')
+                            then '\gbCuadroCuerpoChico' else '\gbCuadroCuerpoNormal'"/>
+      <xsl:text>\setlength\tabcolsep{</xsl:text>
+      <xsl:value-of select="if (f:pi-valor($pi, 'separacion') = 'estrecha')
+                            then '\gbCuadroSepEstrecha' else '\gbCuadroSepNormal'"/>
+      <xsl:text>}%&#10;</xsl:text>
+      <xsl:if test="$total"><xsl:text>\begin{gbcuadrototal}&#10;</xsl:text></xsl:if>
+      <xsl:text>\centering&#10;\begin{tabular}{</xsl:text>
+      <xsl:value-of select="string-join($columnas, ' | ')"/>
+      <xsl:text>}&#10;\toprule&#10;</xsl:text>
+
+      <!-- 2b. «VIENE DE LA PÁGINA ANTERIOR» EN LOS TRAMOS QUE SIGUEN -->
+      <xsl:if test="$t &gt; 1">
+        <xsl:value-of select="concat('\multicolumn{', $n, '}{l}{\emph{\gbCuadroViene}} \\&#10;\midrule&#10;')"/>
+      </xsl:if>
+
+      <!-- 2c. EL ENCABEZADO, EN CADA TRAMO -->
+      <xsl:for-each select="$g-enc">
+        <xsl:call-template name="gb-cuadro-fila">
+          <xsl:with-param name="items" select="?items"/>
+          <xsl:with-param name="fichas" select="$fichas"/>
+          <xsl:with-param name="encabezado" select="true()"/>
+        </xsl:call-template>
+        <xsl:value-of select="if (position() = last()) then '\midrule&#10;'
+                              else f:cuadro-filete(?cruza, $n, false())"/>
+      </xsl:for-each>
+
+      <!-- 2d. LAS FILAS DEL TRAMO, CON SU FILETE -->
+      <xsl:for-each select="$g-cue[position() ge $desde and position() le $hasta]">
+        <xsl:variable name="r" select="$desde + position() - 1"/>
+        <xsl:call-template name="gb-cuadro-fila">
+          <xsl:with-param name="items" select="?items"/>
+          <xsl:with-param name="fichas" select="$fichas"/>
+          <xsl:with-param name="encabezado" select="false()"/>
+        </xsl:call-template>
+        <xsl:if test="$r lt $hasta">
+          <xsl:value-of select="f:cuadro-filete(?cruza, $n, $r = $bloques)"/>
+        </xsl:if>
+      </xsl:for-each>
+
+      <!-- 2e. «CONTINÚA EN LA PÁGINA SIGUIENTE» EN LOS TRAMOS QUE NO SON EL ÚLTIMO -->
+      <xsl:if test="not($ultimo)">
+        <xsl:value-of select="concat('\midrule&#10;\multicolumn{', $n, '}{r}{\emph{\gbCuadroContinua}} \\&#10;')"/>
+      </xsl:if>
+      <xsl:text>\bottomrule&#10;\end{tabular}&#10;</xsl:text>
+
+      <!-- 2f. EL PIE Y LA ETIQUETA, SOLO EN EL ÚLTIMO: EL NÚMERO ES UNO -->
+      <xsl:if test="$ultimo">
+        <xsl:value-of select="$pie"/>
+        <xsl:value-of select="concat('\label{', $id, '}&#10;')"/>
+      </xsl:if>
+      <xsl:if test="$total"><xsl:text>\end{gbcuadrototal}&#10;</xsl:text></xsl:if>
+      <xsl:value-of select="if ($rotar) then '\end{sidewaystable}&#10;' else '\end{table}&#10;'"/>
+    </xsl:for-each>
+    <xsl:text>&#10;</xsl:text>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- PLANTILLA: gb-cuadro-fila                                    -->
+  <!-- PROPÓSITO: UNA FILA DEL CUADRO. LA CELDA QUE UNE COLUMNAS:    -->
+  <!--   \multicolumn{n}{c|}{…} (SIN EL FILETE SI LLEGA A LA ÚLTIMA). -->
+  <!--   LA OCUPADA DESDE ARRIBA: VACÍA. EN LA COLUMNA DE CIFRAS, LA  -->
+  <!--   CIFRA VA SOLA, COMO LA LEE LA COLUMNA S; LO QUE NO ES UNA    -->
+  <!--   CIFRA, ENTRE LLAVES. EL ENCABEZADO, EN NEGRITA.             -->
+  <!-- PARÁMETROS: items As array(*); fichas As xs:string*;         -->
+  <!--   encabezado As xs:boolean                                   -->
+  <!-- ============================================================ -->
+  <xsl:template name="gb-cuadro-fila">
+    <xsl:param name="items" as="array(*)"/>
+    <xsl:param name="fichas" as="xs:string*"/>
+    <xsl:param name="encabezado" as="xs:boolean"/>
+    <xsl:variable name="n" select="count($fichas)"/>
+    <xsl:for-each select="array:flatten($items)">
+      <xsl:variable name="m" select="."/>
+      <xsl:variable name="cifra" select="$fichas[$m?col] = 'cifra' and $m?cs = 1"/>
+      <xsl:variable name="valor" select="if (exists($m?celda) and $cifra and not($encabezado))
+                                         then f:cuadro-cantidad($m?celda) else ()"/>
+      <xsl:variable name="texto" as="xs:string">
+        <xsl:choose>
+          <xsl:when test="empty($m?celda)"><xsl:sequence select="''"/></xsl:when>
+          <xsl:when test="exists($valor)"><xsl:sequence select="$valor"/></xsl:when>
+          <xsl:otherwise>
+            <xsl:variable name="c"><xsl:apply-templates select="$m?celda/node()"/></xsl:variable>
+            <xsl:variable name="c2" select="normalize-space($c)"/>
+            <xsl:sequence select="
+              if ($c2 = '') then ''
+              else concat(if ($cifra) then '{' else '',
+                          if ($encabezado) then concat('\textbf{', $c2, '}') else $c2,
+                          if ($cifra) then '}' else '')"/>
+          </xsl:otherwise>
+        </xsl:choose>
+      </xsl:variable>
+      <xsl:if test="position() &gt; 1"><xsl:text> &amp; </xsl:text></xsl:if>
+      <xsl:value-of select="
+        if ($m?cs &gt; 1)
+        then concat('\multicolumn{', $m?cs, '}{c', if ($m?col + $m?cs - 1 lt $n) then '|' else '', '}{', $texto, '}')
+        else $texto"/>
+    </xsl:for-each>
+    <xsl:text> \\&#10;</xsl:text>
+  </xsl:template>
 
   <!-- ============================================================ -->
   <!-- FUNCIÓN : f:codigo-latex                                     -->

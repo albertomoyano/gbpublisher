@@ -833,6 +833,8 @@
       <!-- LA ALINEACIÓN DEL CUADRO (SC-66). LOS NAVEGADORES NO APLICAN
            align="char": LA COLUMNA DE CIFRAS VA A LA DERECHA, CON CIFRAS
            TABULARES, QUE ALINEAN LAS QUE TIENEN LOS MISMOS DECIMALES -->
+      <!-- LAS CELDAS UNIDAS DEL CUADRO (SC-66) -->
+      <xsl:copy-of select="@colspan | @rowspan"/>
       <xsl:choose>
         <xsl:when test="@align = 'char'">
           <xsl:attribute name="style">text-align: right; font-variant-numeric: tabular-nums</xsl:attribute>

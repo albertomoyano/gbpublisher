@@ -1618,8 +1618,7 @@ RC APLICADAS:
        TABULARES. LA INSTRUCCIÓN gb-cuadro ES DEL PDF: ACÁ NO SALE -->
   <xsl:template match="db:table[processing-instruction('gb-cuadro')]
                        | table[processing-instruction('gb-cuadro')]" priority="2">
-    <xsl:variable name="aligns"
-                  select="(db:tgroup | tgroup)[1]/(db:colspec | colspec)/string(@align)"/>
+    <xsl:variable name="specs" select="(db:tgroup | tgroup)[1]/(db:colspec | colspec)"/>
     <div class="tabla-wrapper cuadro" id="{@xml:id}">
       <table class="tabla-datos">
         <xsl:for-each select="(db:tgroup | tgroup)[1]/(db:thead | thead | db:tbody | tbody)">
@@ -1627,14 +1626,25 @@ RC APLICADAS:
             <xsl:for-each select="db:row | row">
               <tr>
                 <xsl:for-each select="db:entry | entry">
-                  <xsl:variable name="pos" select="position()"/>
+                  <!-- LA COLUMNA LA DICE colname (cuadro-armar.lua): CON CELDAS
+                       UNIDAS ARRIBA, LA POSICIÓN EN LA FILA NO. LA CELDA QUE
+                       UNE COLUMNAS VA CENTRADA, COMO EN EL PDF -->
+                  <xsl:variable name="al"
+                    select="if (@namest) then 'center' else string($specs[@colname = current()/@colname]/@align)"/>
                   <xsl:element name="{if (ancestor::db:thead or ancestor::thead) then 'th' else 'td'}"
                                namespace="http://www.w3.org/1999/xhtml">
+                    <xsl:if test="@namest">
+                      <xsl:attribute name="colspan"
+                        select="xs:integer(substring-after(@nameend, 'c')) - xs:integer(substring-after(@namest, 'c')) + 1"/>
+                    </xsl:if>
+                    <xsl:if test="@morerows">
+                      <xsl:attribute name="rowspan" select="xs:integer(@morerows) + 1"/>
+                    </xsl:if>
                     <xsl:choose>
-                      <xsl:when test="$aligns[$pos] = 'char'">
+                      <xsl:when test="$al = 'char'">
                         <xsl:attribute name="style">text-align: right; font-variant-numeric: tabular-nums</xsl:attribute>
                       </xsl:when>
-                      <xsl:when test="$aligns[$pos] = 'center'">
+                      <xsl:when test="$al = 'center'">
                         <xsl:attribute name="style">text-align: center</xsl:attribute>
                       </xsl:when>
                     </xsl:choose>

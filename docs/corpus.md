@@ -4013,22 +4013,43 @@ LAS SALIDAS
 
 - PDF: plantillas en `docbook-to-latex.xsl` y `jats-to-latex.xsl` (GV-117); funciones en `tex-comun.xsl`: `f:pi-valor`, `f:cuadro-columna`, `f:cuadro-formato` (el `table-format`: signo si hay una cifra negativa, los enteros y decimales más largos) y `f:cuadro-pie`. Una cifra sola va como la lee la columna `S`; el encabezado de una columna de cifras va entre llaves.
 - HTML y EPUB: la tabla completa y derecha; debajo, en un solo párrafo como en el PDF, «Cuadro N», el título y, a continuación, la nota, con punto seguido si el título no termina en . ? ! (decisión de Alberto, 22/10: el PDF es el modelo). El número es el del PDF (`nl:numero-cuadro`, misma regla que la figura). Los navegadores no aplican `align="char"`: la columna de cifras va a la derecha, con cifras tabulares.
-- Referencias cruzadas en libros: `cite-to-biblioref-db.lua` admite `tbl-`; el HTML y el EPUB muestran el número del cuadro. En revistas no hay referencias cruzadas (SC-32).
+- Referencias cruzadas en libros: `cite-to-biblioref-db.lua` admite `tbl-`, y `ensamblar-capitulo-canonico.xsl` no le pone el prefijo del capítulo a un id `tbl-` (`db:es-id-global`, como `fig-`): así una referencia a un cuadro de otro capítulo funciona (medido: en la prueba de Alberto salía «??»). El id es único en el proyecto porque es el nombre del archivo; el HTML y el EPUB muestran el número del cuadro. En revistas no hay referencias cruzadas (SC-32).
 - ODT: el título en negrita, la tabla y la nota.
 
 QUÉ FRENA
+
+TODA TABLA VA EN SU ARCHIVO (decisión de Alberto, 22/10: «rigidez estructural para evitar caos»). Una tabla escrita en el .md de un capítulo o de un artículo, suelta o dentro de otro bloque, frena en las tres cadenas: `cuadro-leer.lua` la busca antes de traer los cuadros y nombra su encabezado para encontrarla.
+
+EL HTML TOMA EL MODELO DEL EPUB (decisión de Alberto, 22/10, que reemplaza la de conservar el estilo web: con celdas unidas, las filas alternas no se entendían): un filete entre todas las celdas y el encabezado con fondo; el fondo es el gris azulado de la casa (`--color-tabla-header`), no el gris del EPUB; sin filas alternas. En libros (`gbpublisher.css`) y en revistas (`jats-to-html.xsl`). El modelo es el PDF, que Alberto viene desarrollando en sus libros.
 
 Un id sin `tbl-`; el bloque con contenido o con otros atributos; el archivo que no existe; una clave desconocida; `titulo` ausente; un valor fuera de la lista; `columnas` que no coincide con la tabla; un ancho con coma; ancho o alineación en una columna de cifras; algo más que una tabla debajo del encabezado; el pie de Pandoc (`: pie`); una nota al pie (decisión de Alberto: un flotante no la lleva); HTML; una orden de LaTeX que no es de las admitidas; una cifra con coma o con punto de miles en una columna de cifras.
 
 ENTREGA 1 (IMPLEMENTADA)
 
-El cuadro simple, en libros y revistas: el archivo, el canónico, las columnas de texto y de cifras, el PDF con el estilo de la casa, el HTML, el EPUB y el ODT. Frenan con un mensaje hasta la entrega 2: las celdas unidas, el encabezado de dos niveles, `agrupar`, `cortes`, `rotar` y el ancho total de la revista.
+El cuadro simple, en libros y revistas: el archivo, el canónico, las columnas de texto y de cifras, el PDF con el estilo de la casa, el HTML, el EPUB y el ODT. Probada en Mint por Alberto (22/10): el PDF, «perfecto».
 
 MEDIDO: un cuadro con cifras enteras, negativas y decimales, «—» en una columna de cifras, volada, comillas, `\SI` y una cita en la nota; un `\num` en el título. Libro: canónico válido (RNG), PDF compilado (`l | S[table-format=3.0] | S[table-format=5.0] | S[table-format=-2.2] | >{\centering\arraybackslash}m{3cm}`), «Cuadro 1.1» en el pie y en la referencia del HTML y del EPUB. Revista: JATS válido (DTD), PDF, HTML, EPUB, SciELO y Redalyc. ODT. Un cuadro dentro de un bloque `::: intro`. Los casos que frenan, uno por uno.
 
+ENTREGA 2 (IMPLEMENTADA)
+
+Dos claves más en el encabezado: `bloques: [11, 22]`, las filas del cuerpo tras las que va el filete doble (decisión de Alberto: «una división lógica dentro del cuadro», un caso raro); y, solo en revistas, `ancho: columna | total` (en el libro, `total` frena: hay un solo ancho).
+
+- CELDAS UNIDAS. Con grid table. `cuadro-leer.lua` ubica cada celda en su columna (atributo `gb-col`, porque con celdas unidas la posición en la fila no la dice); `cuadro-armar.lua` escribe `namest`/`nameend`/`morerows` en CALS (y `colname` en la celda simple, para que las salidas digitales sepan su columna) y `colspan`/`rowspan` en JATS. En el PDF: la celda que une columnas es `\multicolumn{n}{c|}{…}` (sin filete si llega a la última); la que une filas lleva el texto en la primera fila en el cuerpo y en la última en el encabezado, y las filas que ocupa quedan vacías, como en los cuadros de la casa. El filete entre dos filas es `\midrule` si ninguna celda sigue unida; si no, un `\cmidrule` por cada tramo de columnas libres (el `\cmidrule{2-n}` de la casa). En el HTML y el EPUB, `colspan` y `rowspan`; la celda que une columnas, centrada.
+- ENCABEZADO DE VARIAS FILAS. Con grid table (`===` debajo del encabezado). Se repite en cada tramo.
+- `agrupar: sí`. La celda vacía de la primera columna continúa el grupo: la primera celda del grupo pasa a unir esas filas. La primera columna no puede traer ya celdas unidas.
+- `cortes`. Un flotante por tramo, todos `[!ht]` (o `sidewaystable`): el encabezado repetido; al final de cada tramo menos el último, «Continúa en la página siguiente» a la derecha; al principio de cada tramo menos el primero, «Viene de la página anterior» a la izquierda, los dos en bastardilla; el pie y la etiqueta solo en el último, así el número es uno. Los textos son macros del contrato 17 y del preámbulo de la revista: `\gbCuadroContinua`, `\gbCuadroViene`. El HTML y el EPUB muestran la tabla completa.
+- `bloques`. `\midrule` doble entre esas filas. El HTML conserva su estilo y no lo marca.
+- `rotar: sí`. `sidewaystable`, uno por tramo (contrato 17: el paquete `rotating`). En el canónico, `orient="land"` / `orientation="landscape"`.
+- `ancho: total` (revistas). El entorno `gbcuadrototal` del preámbulo de la revista, el mismo `adjustwidth` que la figura de ancho completo. Con `rotar` frena: el cuadro apaisado ya ocupa la página.
+- La composición del cuadro es una plantilla con nombre en `tex-comun.xsl`, `gb-cuadro-latex`, común a libros y revistas; la plantilla de cada hoja solo junta las filas, el pie y la rotación (GV-117). Funciones: `f:cuadro-span`, `f:cuadro-grilla`, `f:cuadro-abajo`, `f:cuadro-filete`, `f:cuadro-cantidad`.
+
+FRENAN, ADEMÁS: un corte o un bloque que no es un número de fila, que deja la última sin filas después, repetido o fuera de orden, o que parte una celda unida o un grupo; la misma fila en cortes y en bloques; una fila con más celdas que columnas o con un hueco.
+
+MEDIDO: el cuadro de los tesistas (cuadro4-3 de la casa) con `agrupar` y un corte entre grupos; uno de dos niveles de encabezado con subtotales unidos, `bloques` y `rotar` (como el cuadroX2); el mismo con `ancho: total` en una revista. Libro: canónico válido (RNG), PDF compilado: los dos tramos con sus textos, el pie solo en el último, `\cmidrule{2-4}` entre las filas de un grupo, `\cmidrule{2-5}` bajo la fila de grupos del encabezado, «Período» en la fila de abajo, el filete doble. Revista: JATS válido (DTD), PDF compilado con `gbcuadrototal`, HTML, EPUB, SciELO y Redalyc. ODT con celdas unidas. Los casos que frenan, uno por uno.
+
 **Relaciones:** vinculo:SC-64,vinculo:SC-65,vinculo:SC-38,vinculo:SC-32,vinculo:SC-31,vinculo:SC-54,apoya:GV-126,apoya:GV-117,apoya:GV-116,apoya:GV-124
 
-**PENDIENTE:** Entrega 2: celdas unidas (grid table → \multicolumn, \cmidrule), encabezado de dos niveles, agrupar (\cmidrule{2-n} entre las filas de un grupo), cortes (un flotante por tramo, encabezado repetido, «Continúa en la página siguiente» / «Viene de la página anterior», el pie en el último), rotar (sidewaystable) y el ancho total de la revista. Los controles de avisos (SC-54) sobre el archivo del cuadro. Las filas viejas table-wrap, table-fullwidth y table-landscape de gbShortcodes, con el lote 3. Una tabla suelta en el .md, sin archivo: decidir. Probar en Mint la entrega 1.
+**PENDIENTE:** Probar en Mint la entrega 2. Los controles de avisos (SC-54) sobre el archivo del cuadro. Las filas viejas table-wrap, table-fullwidth y table-landscape de gbShortcodes, con el lote 3.
 
 ---
 

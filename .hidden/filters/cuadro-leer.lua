@@ -14,6 +14,8 @@
 --                 Div .cuadro-titulo   UN Plain CON EL TÍTULO
 --                 Div .cuadro-nota     LOS BLOQUES DE LA NOTA (SI HAY)
 --                 Table                LA TABLA, SIN SU id
+--               CADA CELDA LLEVA EN EL ATRIBUTO gb-col LA COLUMNA DONDE
+--               EMPIEZA (CON CELDAS UNIDAS, SU POSICIÓN EN LA FILA NO LO DICE).
 --               UNA CIFRA SOLA EN UNA CELDA DE UNA COLUMNA DE CIFRAS PASA A
 --               \num{…}, QUE TRADUCE DESPUÉS cifras.lua (SC-65).
 --               EL Div LO ESCRIBE EN XML cuadro-armar.lua.
@@ -22,15 +24,15 @@
 --               PASA POR TODOS LOS FILTROS (COMILLAS, VOLADA, CIFRAS, CITAS)
 --               COMO EL RESTO DEL TEXTO.
 -- REQUIERE    : -M gb-proyecto=RAÍZ DEL PROYECTO.
--- ENTREGA 1   : CUADRO SIMPLE. LAS CELDAS UNIDAS, VARIAS FILAS DE
---               ENCABEZADO, agrupar, cortes Y rotar FRENAN CON UN MENSAJE
---               HASTA LA ENTREGA 2.
+-- ENTREGA 2   : CELDAS UNIDAS (grid table), VARIAS FILAS DE ENCABEZADO,
+--               agrupar, cortes, bloques, rotar Y, EN REVISTAS, ancho: total.
 -- ============================================================
 
 -- LAS CLAVES DEL ENCABEZADO: UNA QUE NO ESTÁ ACÁ ES UN ERROR DE TIPEO
 local CLAVES = {
   titulo = true, nota = true, cuerpo = true, separacion = true,
   rotar = true, agrupar = true, cortes = true, columnas = true,
+  bloques = true, ancho = true,
 }
 
 -- LOS VALORES ADMITIDOS DE LAS CLAVES CON LISTA CERRADA
@@ -38,6 +40,7 @@ local CUERPOS = { normal = true, chico = true }
 local SEPARACIONES = { normal = true, estrecha = true }
 local TIPOS = { texto = true, cifra = true }
 local ALINEACIONES = { izq = true, centro = true }
+local ANCHOS = { columna = true, total = true }
 
 -- LAS ÓRDENES DE LaTeX ADMITIDAS EN EL TEXTO, LAS MISMAS QUE EN EL .md
 -- (controles_md.lua, SC-54): EL FILTRO QUE LAS TRADUCE VALIDA SU FORMA
@@ -195,8 +198,8 @@ end
 
 -- ============================================
 -- Función   : controlar_tabla
--- Propósito : Controla la forma de la tabla: una sola fila de encabezado,
---             sin celdas unidas, sin pie de Pandoc ni filas de pie
+-- Propósito : Controla la forma de la tabla: sin pie de Pandoc, un solo
+--             cuerpo, sin filas de pie
 -- Parámetros: id As String; t As Table
 -- Retorna   : nada
 -- ============================================
@@ -206,27 +209,133 @@ local function controlar_tabla(id, t)
     fallar(id, 'la tabla tiene un pie «: …»: el título va en titulo: y la nota en nota:.')
   end
 
-  -- --- 2. ENTREGA 1: UNA FILA DE ENCABEZADO, UN CUERPO, SIN PIE DE FILAS ---
-  if #t.head.rows ~= 1 then
-    fallar(id, 'la tabla tiene ' .. #t.head.rows .. ' filas de encabezado: ' ..
-      'por ahora, una (el encabezado de dos niveles llega en la entrega 2).')
+  -- --- 2. UN ENCABEZADO (UNA O MÁS FILAS), UN CUERPO, SIN PIE DE FILAS ---
+  if #t.head.rows == 0 then
+    fallar(id, 'la tabla no tiene fila de encabezado.')
   end
   if #t.bodies ~= 1 or #t.bodies[1].head > 0 or #t.foot.rows > 0 then
-    fallar(id, 'la tabla tiene una forma que todavía no se admite (cuerpos o pies de filas).')
+    fallar(id, 'la tabla tiene una forma que no se admite (varios cuerpos o filas de pie).')
   end
   if #t.bodies[1].body == 0 then fallar(id, 'la tabla no tiene filas.') end
+end
 
-  -- --- 3. ENTREGA 1: SIN CELDAS UNIDAS ---
-  local filas = {}
-  for _, f in ipairs(t.head.rows) do filas[#filas + 1] = f end
-  for _, f in ipairs(t.bodies[1].body) do filas[#filas + 1] = f end
-  for _, f in ipairs(filas) do
-    for _, c in ipairs(f.cells) do
-      if c.row_span ~= 1 or c.col_span ~= 1 then
-        fallar(id, 'la tabla tiene celdas unidas: llegan en la entrega 2.')
-      end
+-- ============================================
+-- Función   : celda_vacia
+-- Propósito : Dice si una celda no tiene contenido
+-- Parámetros: c As Cell
+-- Retorna   : Boolean
+-- ============================================
+local function celda_vacia(c)
+  return #c.contents == 0 or pandoc.utils.stringify(c.contents):match('^%s*$') ~= nil
+end
+
+-- ============================================
+-- Función   : agrupar_filas
+-- Propósito : agrupar: sí. La celda vacía de la primera columna continúa el
+--             grupo de la fila anterior: la primera celda del grupo pasa a
+--             ocupar sus filas (row_span) y la vacía se quita. Es la
+--             práctica de la casa: el valor solo en la primera fila del
+--             grupo, y \cmidrule{2-n} entre las filas del grupo
+-- Parámetros: id As String; t As Table
+-- Retorna   : nada (cambia la tabla)
+-- ============================================
+local function agrupar_filas(id, t)
+  local cabeza = nil
+  for nf, f in ipairs(t.bodies[1].body) do
+    local c = f.cells[1]
+    -- LA PRIMERA COLUMNA NO PUEDE TRAER YA CELDAS UNIDAS: SERÍAN DOS REGLAS
+    if c.row_span ~= 1 or c.col_span ~= 1 then
+      fallar(id, 'con agrupar: sí, la primera columna no lleva celdas unidas (fila ' .. nf .. ').')
+    end
+    if celda_vacia(c) and cabeza then
+      cabeza.row_span = cabeza.row_span + 1
+      f.cells:remove(1)
+    else
+      -- UNA FILA CON VALOR ABRE UN GRUPO; LA PRIMERA VACÍA QUEDA COMO CELDA VACÍA
+      cabeza = (not celda_vacia(c)) and c or nil
     end
   end
+end
+
+-- ============================================
+-- Función   : mapear
+-- Propósito : Ubica cada celda en su columna, con las celdas unidas que
+--             vienen de filas anteriores, y guarda la columna en gb-col.
+--             Dice además qué columnas siguen unidas al pasar de cada fila
+--             a la siguiente: ahí no va filete, ni se puede cortar
+-- Parámetros: id As String; filas As List — las filas (Row); n As Integer —
+--             las columnas; donde As String — para el mensaje
+-- Retorna   : Table — por fila, el conjunto de columnas que siguen unidas
+--             después de ella
+-- ============================================
+local function mapear(id, filas, n, donde)
+  local resto, cruza = {}, {}
+  for j = 1, n do resto[j] = 0 end
+
+  for nf, f in ipairs(filas) do
+    local ocupada, nuevo, col = {}, {}, 1
+    -- --- 1. LAS COLUMNAS QUE OCUPA UNA CELDA DE UNA FILA ANTERIOR ---
+    for j = 1, n do ocupada[j] = resto[j] > 0 end
+    -- --- 2. CADA CELDA, EN LA PRIMERA COLUMNA LIBRE ---
+    for _, c in ipairs(f.cells) do
+      while col <= n and ocupada[col] do col = col + 1 end
+      if col + c.col_span - 1 > n then
+        fallar(id, donde .. ', fila ' .. nf .. ': las celdas no entran en las ' .. n .. ' columnas.')
+      end
+      c.attr.attributes['gb-col'] = tostring(col)
+      for j = col, col + c.col_span - 1 do
+        ocupada[j] = true
+        nuevo[j] = c.row_span - 1
+      end
+      col = col + c.col_span
+    end
+    -- --- 3. LO QUE SIGUE UNIDO AL PASAR A LA FILA SIGUIENTE ---
+    cruza[nf] = {}
+    for j = 1, n do
+      if not ocupada[j] then
+        fallar(id, donde .. ', fila ' .. nf .. ': falta la celda de la columna ' .. j .. '.')
+      end
+      resto[j] = (resto[j] > 0) and (resto[j] - 1) or (nuevo[j] or 0)
+      if resto[j] > 0 then cruza[nf][j] = true end
+    end
+  end
+  return cruza
+end
+
+-- ============================================
+-- Función   : leer_filas_lista
+-- Propósito : Lee cortes: o bloques: — números de fila del cuerpo, tras las
+--             que corta el cuadro o va el filete doble — y los controla
+-- Parámetros: id As String; clave As String; v — el metadato; nfilas As
+--             Integer — las filas del cuerpo; cruza As Table — de mapear
+-- Retorna   : Table — los números, en orden
+-- ============================================
+local function leer_filas_lista(id, clave, v, nfilas, cruza)
+  local lista = {}
+  if v == nil then return lista end
+  if pandoc.utils.type(v) ~= 'List' then
+    fallar(id, clave .. ' es una lista de números de fila: ' .. clave .. ': [12].')
+  end
+  for _, x in ipairs(v) do
+    local s = texto_de(x)
+    local k = tonumber(s)
+    if not s:match('^%d+$') or not k then
+      fallar(id, clave .. ': «' .. s .. '» no es un número de fila.')
+    end
+    -- DESPUÉS DE LA ÚLTIMA FILA NO HAY NADA QUE CORTAR NI SEPARAR
+    if k < 1 or k >= nfilas then
+      fallar(id, clave .. ': la fila ' .. k .. ' no deja filas después (el cuerpo tiene ' .. nfilas .. ').')
+    end
+    if #lista > 0 and k <= lista[#lista] then
+      fallar(id, clave .. ': los números van en orden y sin repetir.')
+    end
+    -- UNA CELDA UNIDA QUE PASA DE ESA FILA A LA SIGUIENTE QUEDARÍA PARTIDA
+    if next(cruza[k]) then
+      fallar(id, clave .. ': después de la fila ' .. k .. ' sigue una celda unida (o un grupo).')
+    end
+    lista[#lista + 1] = k
+  end
+  return lista
 end
 
 -- ============================================
@@ -239,8 +348,11 @@ end
 -- ============================================
 local function convertir_cifras(id, t, tipos)
   for nf, f in ipairs(t.bodies[1].body) do
-    for i, c in ipairs(f.cells) do
-      if tipos[i] == 'cifra' and #c.contents == 1 and c.contents[1].t == 'Plain'
+    for _, c in ipairs(f.cells) do
+      -- LA COLUMNA LA DICE gb-col (mapear): CON CELDAS UNIDAS, LA POSICIÓN NO.
+      -- UNA CELDA QUE UNE VARIAS COLUMNAS NO ES DE LA COLUMNA S: QUEDA COMO TEXTO
+      local i = tonumber(c.attr.attributes['gb-col'])
+      if tipos[i] == 'cifra' and c.col_span == 1 and #c.contents == 1 and c.contents[1].t == 'Plain'
          and #c.contents[1].content == 1 and c.contents[1].content[1].t == 'Str' then
         local s = c.contents[1].content[1].text
         -- UNA CIFRA CON COMA O CON PUNTO DE MILES NO ES DE ENTRADA (SC-64)
@@ -310,10 +422,20 @@ local function leer_cuadro(div, raiz)
   if not SEPARACIONES[separacion] then
     fallar(id, 'separacion: «' .. separacion .. '»: normal o estrecha.')
   end
-  -- ENTREGA 1: LO QUE LLEGA EN LA 2 FRENA SI SE PIDE
-  if es_si(id, 'rotar', meta.rotar) then fallar(id, 'rotar llega en la entrega 2.') end
-  if es_si(id, 'agrupar', meta.agrupar) then fallar(id, 'agrupar llega en la entrega 2.') end
-  if meta.cortes ~= nil and #meta.cortes > 0 then fallar(id, 'cortes llega en la entrega 2.') end
+  local rotar = es_si(id, 'rotar', meta.rotar)
+  local agrupar = es_si(id, 'agrupar', meta.agrupar)
+  -- EL ANCHO TOTAL ES DE LA REVISTA (COLUMNA, CALLE Y COLUMNA DERECHA): EN EL
+  -- LIBRO HAY UN SOLO ANCHO, EL DE LA CAJA (decisión de Alberto)
+  local ancho = texto_de(meta.ancho)
+  if ancho == '' then ancho = 'columna' end
+  if not ANCHOS[ancho] then fallar(id, 'ancho: «' .. ancho .. '»: columna o total.') end
+  if ancho == 'total' and FORMAT == 'docbook5' then
+    fallar(id, 'ancho: total es de las revistas: en el libro hay un solo ancho, el de la caja.')
+  end
+  -- EL CUADRO APAISADO OCUPA LA PÁGINA: EL ANCHO TOTAL NO SUMA NADA
+  if ancho == 'total' and rotar then
+    fallar(id, 'rotar y ancho: total no van juntos: el cuadro apaisado ya ocupa la página.')
+  end
 
   -- --- 4. EL CUERPO: UNA TABLA Y NADA MÁS ---
   if #doc.blocks ~= 1 or doc.blocks[1].t ~= 'Table' then
@@ -322,6 +444,20 @@ local function leer_cuadro(div, raiz)
   t = doc.blocks[1]
   controlar_tabla(id, t)
   ficha_cols, tipos = leer_columnas(id, meta.columnas, #t.colspecs)
+
+  -- --- 4b. GRUPOS, COLUMNAS DE CADA CELDA, CORTES Y BLOQUES ---
+  if agrupar then agrupar_filas(id, t) end
+  mapear(id, t.head.rows, #t.colspecs, 'el encabezado')
+  local cruza = mapear(id, t.bodies[1].body, #t.colspecs, 'el cuerpo')
+  local nfilas = #t.bodies[1].body
+  local cortes = leer_filas_lista(id, 'cortes', meta.cortes, nfilas, cruza)
+  local bloques = leer_filas_lista(id, 'bloques', meta.bloques, nfilas, cruza)
+  -- EN UN CORTE EL TRAMO TERMINA: EL FILETE DOBLE NO TENDRÍA DÓNDE IR
+  for _, k in ipairs(bloques) do
+    for _, c in ipairs(cortes) do
+      if k == c then fallar(id, 'la fila ' .. k .. ' está en cortes y en bloques.') end
+    end
+  end
 
   -- --- 5. EL CONTENIDO: SIN NOTAS, HTML NI LaTeX PERDIDO ---
   controlar_contenido(id, 'la tabla', t)
@@ -352,7 +488,9 @@ local function leer_cuadro(div, raiz)
     hijos[#hijos + 1] = pandoc.Div(nota, pandoc.Attr('', { 'cuadro-nota' }))
   end
   hijos[#hijos + 1] = t
-  atributos = { cuerpo = cuerpo, separacion = separacion, columnas = ficha_cols }
+  atributos = { cuerpo = cuerpo, separacion = separacion, columnas = ficha_cols,
+                rotar = rotar and 'si' or 'no', ancho = ancho,
+                cortes = table.concat(cortes, ' '), bloques = table.concat(bloques, ' ') }
   return pandoc.Div(hijos, pandoc.Attr(id, { 'cuadro' }, atributos))
 end
 

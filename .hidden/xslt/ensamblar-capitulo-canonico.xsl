@@ -153,12 +153,16 @@
                 CONTRA cap-5.fig-mapa. SON ÚNICOS EN EL LIBRO POR
                 CONVENCIÓN; UN REPETIDO LO INFORMA LA COMPILACIÓN DEL
                 PDF Y LO AVISAN LAS SALIDAS DIGITALES.
+         tbl-*  LOS CUADROS (SC-66): EL id ES EL NOMBRE DE SU ARCHIVO EN
+                cuadros/, ASÍ QUE ES ÚNICO EN EL PROYECTO. SE REFIEREN CON
+                @tbl-nombre DESDE CUALQUIER CAPÍTULO, COMO LAS FIGURAS.
        LOS PREFIJOS DE REFERENCIA SON LOS MISMOS QUE LOS DE
-       cite-to-biblioref-db.lua: AGREGAR tbl- Y eq- EN LOS DOS.
+       cite-to-biblioref-db.lua: AGREGAR eq- EN LOS DOS.
        ================================================ -->
   <xsl:function name="db:es-id-global" as="xs:boolean">
     <xsl:param name="id" as="xs:string"/>
-    <xsl:sequence select="starts-with($id, 'bib-') or starts-with($id, 'fig-')"/>
+    <xsl:sequence select="starts-with($id, 'bib-') or starts-with($id, 'fig-')
+                          or starts-with($id, 'tbl-')"/>
   </xsl:function>
 
   <!-- ================================================

@@ -18,7 +18,10 @@
 --               ODT
 --                 EL TÍTULO EN NEGRITA, LA TABLA Y LA NOTA, SIN NÚMERO
 --               LA INSTRUCCIÓN gb-cuadro LLEVA LAS DECISIONES DE COMPOSICIÓN
---               SIN LaTeX (SC-38). LA COLUMNA DE CIFRAS VA ALINEADA POR EL
+--               SIN LaTeX (SC-38): cuerpo, separacion, columnas, cortes,
+--               bloques Y ancho. LA ROTACIÓN ES UN ATRIBUTO DEL VOCABULARIO
+--               (orient="land", orientation="landscape"). LAS CELDAS UNIDAS:
+--               namest/nameend/morerows (CALS), colspan/rowspan (JATS). LA COLUMNA DE CIFRAS VA ALINEADA POR EL
 --               PUNTO (align="char" char=".").
 -- UBICACIÓN   : ~/.gbpublisher/filters/
 -- DEBE CORRER : DESPUÉS DE LOS FILTROS QUE TRADUCEN EL CONTENIDO (cifras,
@@ -124,9 +127,27 @@ end
 -- Retorna   : String
 -- ============================================
 local function instruccion(div)
-  return '<?gb-cuadro cuerpo="' .. atributo(div.attributes.cuerpo) ..
-         '" separacion="' .. atributo(div.attributes.separacion) ..
-         '" columnas="' .. atributo(div.attributes.columnas) .. '"?>'
+  local a = div.attributes
+  -- cortes Y bloques: NÚMEROS DE FILA DEL CUERPO; ancho: columna|total
+  return '<?gb-cuadro cuerpo="' .. atributo(a.cuerpo) ..
+         '" separacion="' .. atributo(a.separacion) ..
+         '" columnas="' .. atributo(a.columnas) ..
+         '" cortes="' .. atributo(a.cortes or '') ..
+         '" bloques="' .. atributo(a.bloques or '') ..
+         '" ancho="' .. atributo(a.ancho or 'columna') .. '"?>'
+end
+
+-- ============================================
+-- Función   : columna
+-- Propósito : La columna donde empieza una celda (la dejó cuadro-leer.lua)
+-- Parámetros: c As Cell
+-- Retorna   : Integer
+-- ============================================
+local function columna(c)
+  local i = tonumber(c.attr.attributes['gb-col'])
+  -- SIN gb-col, cuadro-leer.lua NO MAPEÓ LA TABLA: ES UN ERROR DE CADENA
+  if not i then fallar('una celda sin columna: cuadro-leer.lua tiene que correr antes.') end
+  return i
 end
 
 -- ============================================
@@ -141,7 +162,9 @@ local function docbook(div)
   local x = {}
 
   -- --- 1. TABLA, TÍTULO E INSTRUCCIÓN ---
-  x[#x + 1] = '<table xml:id="' .. atributo(div.identifier) .. '">'
+  -- EL CUADRO APAISADO: orient="land" (CALS)
+  x[#x + 1] = '<table xml:id="' .. atributo(div.identifier) .. '"' ..
+    (div.attributes.rotar == 'si' and ' orient="land"' or '') .. '>'
   x[#x + 1] = '<title>' .. en_linea(titulo, 'docbook5') .. '</title>'
   x[#x + 1] = instruccion(div)
   x[#x + 1] = '<tgroup cols="' .. #al .. '">'
@@ -157,7 +180,18 @@ local function docbook(div)
     for _, f in ipairs(lista) do
       x[#x + 1] = '<row>'
       for _, c in ipairs(f.cells) do
-        x[#x + 1] = '<entry>' .. en_linea(c.contents, 'docbook5') .. '</entry>'
+        -- LA CELDA UNIDA: namest/nameend PARA LAS COLUMNAS, morerows PARA LAS FILAS
+        local i = columna(c)
+        local u = ''
+        -- colname EN LA CELDA SIMPLE: LAS SALIDAS DIGITALES SABEN ASÍ SU
+        -- COLUMNA (Y SU ALINEACIÓN) AUNQUE ARRIBA HAYA CELDAS UNIDAS
+        if c.col_span > 1 then
+          u = u .. ' namest="c' .. i .. '" nameend="c' .. (i + c.col_span - 1) .. '"'
+        else
+          u = u .. ' colname="c' .. i .. '"'
+        end
+        if c.row_span > 1 then u = u .. ' morerows="' .. (c.row_span - 1) .. '"' end
+        x[#x + 1] = '<entry' .. u .. '>' .. en_linea(c.contents, 'docbook5') .. '</entry>'
       end
       x[#x + 1] = '</row>'
     end
@@ -191,7 +225,9 @@ local function jats(div)
   local x = {}
 
   -- --- 1. ENVOLTORIO, TÍTULO E INSTRUCCIÓN ---
-  x[#x + 1] = '<table-wrap id="' .. atributo(div.identifier) .. '">'
+  -- EL CUADRO APAISADO: @orientation (JATS 1.4)
+  x[#x + 1] = '<table-wrap id="' .. atributo(div.identifier) .. '"' ..
+    (div.attributes.rotar == 'si' and ' orientation="landscape"' or '') .. '>'
   x[#x + 1] = '<caption><title>' .. en_linea(titulo, 'jats') .. '</title></caption>'
   x[#x + 1] = instruccion(div)
   x[#x + 1] = '<table>'
@@ -205,9 +241,16 @@ local function jats(div)
   local function filas(lista, celda)
     for _, f in ipairs(lista) do
       x[#x + 1] = '<tr>'
-      for i, c in ipairs(f.cells) do
-        x[#x + 1] = '<' .. celda .. ' align="' .. al[i] .. '"' ..
-          (al[i] == 'char' and ' char="."' or '') .. '>' ..
+      for _, c in ipairs(f.cells) do
+        -- LA ALINEACIÓN ES LA DE SU COLUMNA; LA CELDA QUE UNE COLUMNAS, CENTRADA
+        -- (COMO EL \multicolumn{n}{c} DE LA CASA)
+        local i = columna(c)
+        local a = (c.col_span > 1) and 'center' or al[i]
+        local u = ''
+        if c.col_span > 1 then u = u .. ' colspan="' .. c.col_span .. '"' end
+        if c.row_span > 1 then u = u .. ' rowspan="' .. c.row_span .. '"' end
+        x[#x + 1] = '<' .. celda .. u .. ' align="' .. a .. '"' ..
+          (a == 'char' and ' char="."' or '') .. '>' ..
           en_linea(c.contents, 'jats') .. '</' .. celda .. '>'
       end
       x[#x + 1] = '</tr>'
