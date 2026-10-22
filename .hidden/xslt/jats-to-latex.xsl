@@ -1557,6 +1557,117 @@
     </xsl:choose>
   </xsl:template>
 
+  <!-- ============================================================ -->
+  <!-- CUADRO (SC-66): EL QUE ESCRIBIÓ cuadro-armar.lua, CON SU      -->
+  <!-- INSTRUCCIÓN gb-cuadro. EL MISMO ESTILO QUE EL LIBRO: LETRA    -->
+  <!-- DEL CUADRO, FILETE ENTRE TODAS LAS FILAS Y ENTRE TODAS LAS    -->
+  <!-- COLUMNAS, ENCABEZADO EN NEGRITA, PIE DEBAJO CON EL TÍTULO Y   -->
+  <!-- LA NOTA. LAS MACROS \gbCuadro… LAS DEFINE EL PREÁMBULO DE LA  -->
+  <!-- REVISTA (m_XML). ENTREGA 1: AL ANCHO DE LA COLUMNA.          -->
+  <!-- ============================================================ -->
+  <xsl:template match="table-wrap[processing-instruction('gb-cuadro')]" priority="2">
+    <xsl:variable name="pi" select="processing-instruction('gb-cuadro')[1]"/>
+    <xsl:variable name="fichas" select="tokenize(f:pi-valor($pi, 'columnas'), ' ')"/>
+    <xsl:variable name="tabla" select="table"/>
+
+    <!-- 1. LAS COLUMNAS: LA DE CIFRAS CON SU table-format, CALCULADO DE SUS CIFRAS -->
+    <xsl:variable name="columnas" as="xs:string*">
+      <xsl:for-each select="$fichas">
+        <xsl:variable name="i" select="position()"/>
+        <xsl:sequence select="f:cuadro-columna(., f:cuadro-formato(
+          for $e in $tabla/tbody/tr/td[$i]
+                    [count(*) = 1 and named-content[@content-type = 'cantidad'][starts-with(@specific-use, 'num ')]
+                     and normalize-space(.) = normalize-space(named-content)]
+          return substring-after($e/named-content/@specific-use, 'num ')))"/>
+      </xsl:for-each>
+    </xsl:variable>
+    <xsl:if test="count($fichas) != count(table/col)">
+      <xsl:message terminate="yes">
+        <xsl:text>[cuadro] LA INSTRUCCIÓN Y LA TABLA NO TIENEN LAS MISMAS COLUMNAS: </xsl:text>
+        <xsl:value-of select="@id"/>
+      </xsl:message>
+    </xsl:if>
+
+    <!-- 2. EL FLOTANTE Y LA LETRA: ALCANZAN TAMBIÉN AL PIE -->
+    <xsl:text>&#10;\begin{table}[!ht]&#10;\gbCuadroLetra</xsl:text>
+    <xsl:value-of select="if (f:pi-valor($pi, 'cuerpo') = 'chico')
+                          then '\gbCuadroCuerpoChico' else '\gbCuadroCuerpoNormal'"/>
+    <xsl:text>\setlength\tabcolsep{</xsl:text>
+    <xsl:value-of select="if (f:pi-valor($pi, 'separacion') = 'estrecha')
+                          then '\gbCuadroSepEstrecha' else '\gbCuadroSepNormal'"/>
+    <xsl:text>}%&#10;\centering&#10;\begin{tabular}{</xsl:text>
+    <xsl:value-of select="string-join($columnas, ' | ')"/>
+    <xsl:text>}&#10;\toprule&#10;</xsl:text>
+
+    <!-- 3. ENCABEZADO, CUERPO: UN FILETE ENTRE CADA FILA -->
+    <xsl:for-each select="table/thead/tr">
+      <xsl:call-template name="cuadro-fila">
+        <xsl:with-param name="fichas" select="$fichas"/>
+      </xsl:call-template>
+      <xsl:text>\midrule&#10;</xsl:text>
+    </xsl:for-each>
+    <xsl:for-each select="table/tbody/tr">
+      <xsl:call-template name="cuadro-fila">
+        <xsl:with-param name="fichas" select="$fichas"/>
+      </xsl:call-template>
+      <xsl:if test="position() != last()">
+        <xsl:text>\midrule&#10;</xsl:text>
+      </xsl:if>
+    </xsl:for-each>
+    <xsl:text>\bottomrule&#10;\end{tabular}&#10;</xsl:text>
+
+    <!-- 4. EL PIE: TÍTULO Y NOTA; LA ETIQUETA -->
+    <xsl:variable name="titulo"><xsl:apply-templates select="caption/title/node()"/></xsl:variable>
+    <xsl:variable name="nota">
+      <xsl:for-each select="table-wrap-foot/p">
+        <xsl:if test="position() &gt; 1"><xsl:text> </xsl:text></xsl:if>
+        <xsl:apply-templates/>
+      </xsl:for-each>
+    </xsl:variable>
+    <xsl:value-of select="f:cuadro-pie(string($titulo), string($nota))"/>
+    <xsl:text>\label{</xsl:text>
+    <xsl:value-of select="@id"/>
+    <xsl:text>}&#10;\end{table}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- PLANTILLA: cuadro-fila                                       -->
+  <!-- PROPÓSITO: UNA FILA DEL CUADRO. EN LA COLUMNA DE CIFRAS, LA  -->
+  <!--            CIFRA VA SOLA, COMO LA LEE LA COLUMNA S; LO QUE NO -->
+  <!--            ES UNA CIFRA, ENTRE LLAVES. EL ENCABEZADO, EN      -->
+  <!--            NEGRITA. LA MISMA REGLA QUE docbook-to-latex.xsl.  -->
+  <!-- PARÁMETROS: fichas As xs:string* — LAS COLUMNAS              -->
+  <!-- ============================================================ -->
+  <xsl:template name="cuadro-fila">
+    <xsl:param name="fichas" as="xs:string*"/>
+    <xsl:variable name="encabezado" select="exists(parent::thead)"/>
+    <xsl:for-each select="th | td">
+      <xsl:variable name="i" select="position()"/>
+      <xsl:variable name="cifra" select="$fichas[$i] = 'cifra'"/>
+      <xsl:if test="$i &gt; 1"><xsl:text> &amp; </xsl:text></xsl:if>
+      <xsl:choose>
+        <!-- 1. UNA CIFRA SOLA EN LA COLUMNA DE CIFRAS: EL VALOR DE ENTRADA -->
+        <xsl:when test="$cifra and not($encabezado) and count(*) = 1
+                        and named-content[@content-type = 'cantidad'][starts-with(@specific-use, 'num ')]
+                        and normalize-space(.) = normalize-space(named-content)">
+          <xsl:value-of select="substring-after(named-content/@specific-use, 'num ')"/>
+        </xsl:when>
+        <!-- 2. CELDA VACÍA -->
+        <xsl:when test="not(*) and normalize-space(.) = ''"/>
+        <!-- 3. LO DEMÁS: EN NEGRITA SI ES ENCABEZADO; ENTRE LLAVES EN UNA COLUMNA S -->
+        <xsl:otherwise>
+          <xsl:if test="$cifra"><xsl:text>{</xsl:text></xsl:if>
+          <xsl:if test="$encabezado"><xsl:text>\textbf{</xsl:text></xsl:if>
+          <xsl:variable name="c"><xsl:apply-templates/></xsl:variable>
+          <xsl:value-of select="normalize-space($c)"/>
+          <xsl:if test="$encabezado"><xsl:text>}</xsl:text></xsl:if>
+          <xsl:if test="$cifra"><xsl:text>}</xsl:text></xsl:if>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:for-each>
+    <xsl:text> \\&#10;</xsl:text>
+  </xsl:template>
+
   <xsl:template match="table-wrap/caption"/>
   <xsl:template match="table-wrap/label"/>
 

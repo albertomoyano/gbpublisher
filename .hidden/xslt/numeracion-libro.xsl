@@ -143,6 +143,23 @@
   </xsl:function>
 
   <!-- ==========================================================
+       nl:numero-cuadro: EL NÚMERO VISIBLE DE UN CUADRO (SC-66): LA
+       TABLA CON SU INSTRUCCIÓN gb-cuadro. LA MISMA REGLA QUE LA FIGURA:
+       EN EL PDF, \thetable REINICIA CON LA PIEZA COMO \thefigure. UNA
+       TABLA SIN INSTRUCCIÓN NO TIENE \caption Y NO CUENTA.
+       ========================================================== -->
+  <xsl:function name="nl:numero-cuadro" as="xs:string">
+    <xsl:param name="tbl" as="element()"/>
+    <xsl:param name="piezas" as="element()*"/>
+    <xsl:variable name="p" select="nl:pieza-de($tbl)"/>
+    <xsl:variable name="n"
+      select="count($p//*:table[processing-instruction('gb-cuadro')][. &lt;&lt; $tbl]) + 1"/>
+    <xsl:variable name="etiqueta" select="nl:etiqueta-pieza($p, $piezas)"/>
+    <xsl:sequence select="if ($etiqueta = '') then string($n)
+                          else concat($etiqueta, '.', $n)"/>
+  </xsl:function>
+
+  <!-- ==========================================================
        nl:numero-listado: EL NÚMERO VISIBLE DE UN LISTADO DE CÓDIGO
        (<example role="listado">, SC-42). LA MISMA REGLA QUE LA FIGURA,
        CON SU PROPIA CUENTA: EN EL PDF ES EL CONTADOR gbcodigo, QUE
@@ -186,6 +203,8 @@
     <xsl:sequence select="if (empty($destino)) then '??'
                           else if (local-name($destino) = 'figure')
                           then nl:numero-figura($destino, $piezas)
+                          else if (local-name($destino) = 'table')
+                          then nl:numero-cuadro($destino, $piezas)
                           else '??'"/>
   </xsl:function>
 

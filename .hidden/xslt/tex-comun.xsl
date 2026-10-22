@@ -29,6 +29,10 @@
     f:volada-latex()  la letra volada como \sptext (SC-62)
     f:sin-punto-final() el texto antes de una volada (SC-62)
     f:cifra-latex()   la cantidad como orden de siunitx (SC-65)
+    f:pi-valor()      un valor de una instrucción gb- (SC-66)
+    f:cuadro-columna() la columna de un cuadro para tabular (SC-66)
+    f:cuadro-formato() el table-format de una columna de cifras (SC-66)
+    f:cuadro-pie()    el \caption de un cuadro (SC-66)
     f:codigo-latex()  bloque de código coloreado (SC-42)
   ============================================================
   NOTA SOBRE f:latex — CORRECCIÓN DE 2026-09
@@ -603,6 +607,107 @@
       if ($marcador)
       then concat('\texorpdfstring{', $orden, '}{', f:latex(normalize-space($c)), '}')
       else string($orden)"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- CUADROS (SC-66)                                              -->
+  <!-- ============================================================ -->
+  <!-- cuadro-armar.lua ESCRIBE EL CUADRO CON UNA INSTRUCCIÓN        -->
+  <!--   <?gb-cuadro cuerpo="normal" separacion="normal"             -->
+  <!--               columnas="texto cifra texto:2.4:centro"?>       -->
+  <!-- Y, EN LA COLUMNA DE CIFRAS, CADA CIFRA COMO CANTIDAD          -->
+  <!-- (SC-65) CON LA FICHA «num X». EL ESTILO DE LA CASA (LETRA,    -->
+  <!-- FILETES, TEXTOS DE CONTINUACIÓN) ESTÁ EN EL PREÁMBULO, COMO   -->
+  <!-- MACROS \gbCuadro…. LAS PLANTILLAS VAN EN CADA HOJA (GV-117);  -->
+  <!-- ACÁ, LAS FUNCIONES.                                          -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:pi-valor                                         -->
+  <!-- PROPÓSITO: EL VALOR DE UN SEUDOATRIBUTO DE UNA INSTRUCCIÓN   -->
+  <!-- PARÁMETROS: pi As processing-instruction(); clave As xs:string -->
+  <!-- RETORNA  : xs:string — VACÍO SI NO ESTÁ                      -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:pi-valor" as="xs:string">
+    <xsl:param name="pi" as="processing-instruction()"/>
+    <xsl:param name="clave" as="xs:string"/>
+    <xsl:variable name="re" select="concat('(^|\s)', $clave, '=&quot;([^&quot;]*)&quot;')"/>
+    <xsl:variable name="m" as="xs:string*">
+      <xsl:analyze-string select="string($pi)" regex="{$re}">
+        <xsl:matching-substring>
+          <xsl:sequence select="regex-group(2)"/>
+        </xsl:matching-substring>
+      </xsl:analyze-string>
+    </xsl:variable>
+    <xsl:sequence select="string(($m, '')[1])"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-formato                                   -->
+  <!-- PROPÓSITO: EL table-format DE UNA COLUMNA S, CALCULADO DE    -->
+  <!--            SUS CIFRAS: SIGNO SI HAY UNA NEGATIVA, LOS DÍGITOS -->
+  <!--            ENTEROS Y DECIMALES MÁS LARGOS (SC-64: «3.0»)      -->
+  <!-- PARÁMETROS: valores As xs:string* — LAS CIFRAS DE ENTRADA    -->
+  <!-- RETORNA  : xs:string — p. ej. «3.0», «-2.2»                  -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-formato" as="xs:string">
+    <xsl:param name="valores" as="xs:string*"/>
+    <xsl:variable name="sin-signo" select="for $v in $valores return replace($v, '^-', '')"/>
+    <xsl:variable name="enteros"
+      select="max((1, for $v in $sin-signo return string-length(substring-before(concat($v, '.'), '.'))))"/>
+    <xsl:variable name="decimales"
+      select="max((0, for $v in $sin-signo return string-length(substring-after($v, '.'))))"/>
+    <xsl:sequence select="concat(if (some $v in $valores satisfies starts-with($v, '-')) then '-' else '',
+                                 $enteros, '.', $decimales)"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-columna                                   -->
+  <!-- PROPÓSITO: LA COLUMNA DE tabular SEGÚN SU FICHA              -->
+  <!--   cifra              S[table-format=…]                       -->
+  <!--   texto              l                                       -->
+  <!--   texto::centro      c                                       -->
+  <!--   texto:2.4          >{\raggedright\arraybackslash}m{2.4cm}  -->
+  <!--   texto:2.4:centro   >{\centering\arraybackslash}m{2.4cm}    -->
+  <!-- PARÁMETROS: ficha As xs:string; formato As xs:string — EL     -->
+  <!--            table-format, SOLO PARA LA COLUMNA DE CIFRAS      -->
+  <!-- RETORNA  : xs:string                                         -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-columna" as="xs:string">
+    <xsl:param name="ficha" as="xs:string"/>
+    <xsl:param name="formato" as="xs:string"/>
+    <xsl:variable name="p" select="tokenize($ficha, ':')"/>
+    <xsl:variable name="ancho" select="string($p[2])"/>
+    <xsl:variable name="centro" select="$p[3] = 'centro'"/>
+    <xsl:sequence select="
+      if ($p[1] = 'cifra') then concat('S[table-format=', $formato, ']')
+      else if ($p[1] != 'texto') then error(QName('urn:gbpublisher:functions', 'cuadro'),
+             concat('[cuadro] COLUMNA DESCONOCIDA EN LA INSTRUCCIÓN: ', $ficha))
+      else if ($ancho = '') then (if ($centro) then 'c' else 'l')
+      else concat('&gt;{', if ($centro) then '\centering' else '\raggedright',
+                  '\arraybackslash}m{', $ancho, 'cm}')"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cuadro-pie                                       -->
+  <!-- PROPÓSITO: EL \caption DEL CUADRO: EL TÍTULO Y, SI HAY, LA   -->
+  <!--            NOTA A CONTINUACIÓN (decisión de Alberto: EN EL    -->
+  <!--            PDF, TODO EN EL PIE). A LA LISTA DE CUADROS VA     -->
+  <!--            SOLO EL TÍTULO                                    -->
+  <!-- PARÁMETROS: titulo As xs:string; nota As xs:string — YA EN   -->
+  <!--            LaTeX                                             -->
+  <!-- RETORNA  : xs:string                                         -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cuadro-pie" as="xs:string">
+    <xsl:param name="titulo" as="xs:string"/>
+    <xsl:param name="nota" as="xs:string"/>
+    <xsl:variable name="t" select="normalize-space($titulo)"/>
+    <xsl:variable name="n" select="normalize-space($nota)"/>
+    <xsl:sequence select="
+      if ($n = '') then concat('\caption{', $t, '}')
+      else if ($t = '') then concat('\caption{', $n, '}')
+      else concat('\caption[{', $t, '}]{', $t,
+                  if (matches($t, '[.?!]$')) then ' ' else '. ', $n, '}')"/>
   </xsl:function>
 
   <!-- ============================================================ -->

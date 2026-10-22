@@ -1457,6 +1457,16 @@
           .table-wrap tr:nth-child(even) td { background: var(--color-accent-soft); }
           .table-wrap tr:hover td          { background: #f0f0ec; }
 
+          /* CUADRO (SC-66): «Cuadro N» CON EL TÍTULO Y LA NOTA, DEBAJO */
+          .table-caption {
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            margin: 0.5rem 0 0;
+          }
+          .table-label { font-weight: 600; }
+          .table-foot  { font-family: var(--font-sans); font-size: var(--text-sm); }
+          .table-foot p { margin: 0.25rem 0 0; }
+
           /* CITAS BIBLIOGRÁFICAS EN TEXTO */
           .xref-bibr {
             color: var(--color-accent);
@@ -3426,6 +3436,35 @@
     </div>
   </xsl:template>
 
+  <!-- CUADRO (SC-66): EL QUE ESCRIBIÓ cuadro-armar.lua. LA TABLA
+       COMPLETA Y DERECHA; DEBAJO, COMO EN EL PDF, «Cuadro N» CON EL
+       TÍTULO Y, SI HAY, LA NOTA. EL NÚMERO CUENTA LOS CUADROS DEL
+       ARTÍCULO, COMO \caption EN EL PDF. LA INSTRUCCIÓN gb-cuadro ES
+       DEL PDF: ACÁ NO SALE -->
+  <xsl:template match="table-wrap[processing-instruction('gb-cuadro')]" priority="2">
+    <div class="table-wrap cuadro" id="{@id}">
+      <xsl:apply-templates select="table"/>
+      <p class="table-caption">
+        <span class="table-label">
+          <xsl:text>Cuadro </xsl:text>
+          <xsl:value-of select="count(preceding::table-wrap[processing-instruction('gb-cuadro')]) + 1"/>
+        </span>
+        <xsl:if test="normalize-space(caption/title) != ''">
+          <xsl:text>. </xsl:text>
+          <xsl:apply-templates select="caption/title/node()"/>
+        </xsl:if>
+      </p>
+      <xsl:if test="table-wrap-foot">
+        <div class="table-foot">
+          <xsl:apply-templates select="table-wrap-foot/node()"/>
+        </div>
+      </xsl:if>
+    </div>
+  </xsl:template>
+
+  <!-- LAS COLUMNAS DEL CUADRO: LA ALINEACIÓN VA EN CADA CELDA -->
+  <xsl:template match="table/col"/>
+
   <xsl:template match="table">
     <table><xsl:apply-templates/></table>
   </xsl:template>
@@ -3438,6 +3477,17 @@
 
   <xsl:template match="th | td">
     <xsl:element name="{local-name()}">
+      <!-- LA ALINEACIÓN DEL CUADRO (SC-66). LOS NAVEGADORES NO APLICAN
+           align="char": LA COLUMNA DE CIFRAS VA A LA DERECHA, CON CIFRAS
+           TABULARES, QUE ALINEAN LAS QUE TIENEN LOS MISMOS DECIMALES -->
+      <xsl:choose>
+        <xsl:when test="@align = 'char'">
+          <xsl:attribute name="style">text-align: right; font-variant-numeric: tabular-nums</xsl:attribute>
+        </xsl:when>
+        <xsl:when test="@align = 'center'">
+          <xsl:attribute name="style">text-align: center</xsl:attribute>
+        </xsl:when>
+      </xsl:choose>
       <xsl:apply-templates/>
     </xsl:element>
   </xsl:template>

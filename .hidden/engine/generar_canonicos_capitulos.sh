@@ -104,9 +104,12 @@ RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
 DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 
 # EL ORDEN DE LOS FILTROS ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
-# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65):
-#   1° guillemets-to-quoted-db  « » A Quoted. PRIMERO: fenced-divs SERIALIZA
-#      LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
+# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65, SC-66):
+#   0° cuadro-leer              TRAE EL ARCHIVO DE CADA CUADRO (SC-66) DE
+#      cuadros/ (-M gb-proyecto). PRIMERO: SU CONTENIDO PASA ASÍ POR TODOS
+#      LOS FILTROS. FRENA EL VIEJO ::: {.table}
+#   1° guillemets-to-quoted-db  « » A Quoted. ANTES QUE fenced-divs, QUE
+#      SERIALIZA LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
 #   2° volada                   n\sptext{o} A «n.» Y <superscript
 #      role="volada"> (SC-62). ANTES DE cite-to-biblioref-db, QUE SERIALIZA
 #      LAS NOTAS CON pandoc.write: UNA \sptext QUE LLEGUE AHÍ SIN TRADUCIR
@@ -131,8 +134,12 @@ DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 #  11° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
 #      SIN -M gb-idioma: LA ETIQUETA LA PONE LA HOJA SEGÚN xml:lang
 #  12° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
-#  13° fenced-divs-to-elements-db  AL FINAL
+#  13° cuadro-armar             ESCRIBE LA TABLA CALS DEL CUADRO (SC-66).
+#      DESPUÉS DE LAS CITAS Y LAS CIFRAS; ANTES DE fenced-divs, QUE
+#      SERIALIZA LOS BLOQUES QUE CONTIENEN A OTROS
+#  14° fenced-divs-to-elements-db  AL FINAL
 FILTROS=(
+    cuadro-leer.lua
     guillemets-to-quoted-db.lua
     volada.lua
     corte-titulo.lua
@@ -145,6 +152,7 @@ FILTROS=(
     codigo.lua
     conversacion.lua
     verso.lua
+    cuadro-armar.lua
     fenced-divs-to-elements-db.lua
 )
 
@@ -264,6 +272,7 @@ procesar_capitulo() {
                 --from markdown --to docbook5 --mathml --no-highlight --wrap=none \
                 "${args_pandoc[@]}" \
                 --metadata gb-idioma-pieza="$idioma" \
+                --metadata gb-proyecto="$DIR_PROYECTO" \
                 --output "$parcial" 2>&1)
     codigo=$?
 

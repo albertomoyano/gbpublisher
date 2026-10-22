@@ -483,6 +483,61 @@
     </div>
   </xsl:template>
 
+
+  <!-- CUADRO (SC-66): EL QUE ESCRIBIÓ cuadro-armar.lua. LA TABLA
+       COMPLETA Y DERECHA; DEBAJO, COMO EN EL PDF, «Cuadro N» CON EL
+       TÍTULO Y, SI HAY, LA NOTA (EL <caption> DE DocBook). EL NÚMERO ES
+       EL DEL PDF (numeracion-libro.xsl). LOS NAVEGADORES NO APLICAN
+       align="char": LA COLUMNA DE CIFRAS VA A LA DERECHA, CON CIFRAS
+       TABULARES. LA INSTRUCCIÓN gb-cuadro ES DEL PDF: ACÁ NO SALE -->
+  <xsl:template match="db:table[processing-instruction('gb-cuadro')]
+                       | table[processing-instruction('gb-cuadro')]" priority="2">
+    <xsl:variable name="aligns"
+                  select="(db:tgroup | tgroup)[1]/(db:colspec | colspec)/string(@align)"/>
+    <div class="tabla-wrap cuadro" id="{@xml:id}">
+      <table class="tabla-datos">
+        <xsl:for-each select="(db:tgroup | tgroup)[1]/(db:thead | thead | db:tbody | tbody)">
+          <xsl:element name="{local-name()}" namespace="http://www.w3.org/1999/xhtml">
+            <xsl:for-each select="db:row | row">
+              <tr>
+                <xsl:for-each select="db:entry | entry">
+                  <xsl:variable name="pos" select="position()"/>
+                  <xsl:element name="{if (ancestor::db:thead or ancestor::thead) then 'th' else 'td'}"
+                               namespace="http://www.w3.org/1999/xhtml">
+                    <xsl:choose>
+                      <xsl:when test="$aligns[$pos] = 'char'">
+                        <xsl:attribute name="style">text-align: right; font-variant-numeric: tabular-nums</xsl:attribute>
+                      </xsl:when>
+                      <xsl:when test="$aligns[$pos] = 'center'">
+                        <xsl:attribute name="style">text-align: center</xsl:attribute>
+                      </xsl:when>
+                    </xsl:choose>
+                    <xsl:apply-templates/>
+                  </xsl:element>
+                </xsl:for-each>
+              </tr>
+            </xsl:for-each>
+          </xsl:element>
+        </xsl:for-each>
+      </table>
+      <p class="cuadro-pie">
+        <span class="cuadro-label">
+          <xsl:text>Cuadro </xsl:text>
+          <xsl:value-of select="nl:numero-cuadro(., $piezasLibro)"/>
+        </span>
+        <xsl:if test="normalize-space((db:title | title)[1]) != ''">
+          <xsl:text>. </xsl:text>
+          <xsl:apply-templates select="(db:title | title)[1]/node()"/>
+        </xsl:if>
+      </p>
+      <xsl:if test="db:caption | caption">
+        <div class="cuadro-nota">
+          <xsl:apply-templates select="(db:caption | caption)/node()"/>
+        </div>
+      </xsl:if>
+    </div>
+  </xsl:template>
+
   <!-- TABLA (informaltable / table) -->
   <xsl:template match="db:table | table | db:informaltable | informaltable">
     <div class="tabla-wrap">
