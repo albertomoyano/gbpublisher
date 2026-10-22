@@ -28,6 +28,7 @@
     gb-alinear        corte ante una ficha fuera de lugar (SC-61)
     f:volada-latex()  la letra volada como \sptext (SC-62)
     f:sin-punto-final() el texto antes de una volada (SC-62)
+    f:cifra-latex()   la cantidad como orden de siunitx (SC-65)
     f:codigo-latex()  bloque de código coloreado (SC-42)
   ============================================================
   NOTA SOBRE f:latex — CORRECCIÓN DE 2026-09
@@ -524,6 +525,84 @@
   <xsl:function name="f:sin-punto-final" as="xs:string">
     <xsl:param name="s" as="xs:string"/>
     <xsl:sequence select="replace($s, '\.$', '')"/>
+  </xsl:function>
+
+  <!-- ============================================================ -->
+  <!-- CIFRAS Y CANTIDADES (SC-64, SC-65)                           -->
+  <!-- ============================================================ -->
+  <!-- cifras.lua ESCRIBE LA CANTIDAD CON EL TEXTO QUE SE VE Y UNA  -->
+  <!-- FICHA SIN LaTeX: <phrase role="cantidad" remap="…"> EN       -->
+  <!-- DocBook, <named-content content-type="cantidad"              -->
+  <!-- specific-use="…"> EN JATS. LA FICHA ES LA ORDEN Y SUS        -->
+  <!-- ARGUMENTOS SEPARADOS POR ESPACIO, CON LAS UNIDADES SIN BARRA: -->
+  <!--   num 1500                  ->  \num{1500}                   -->
+  <!--   SI 2.5 kilo metre per hour -> \SI{2.5}{\kilo\metre\per\hour} -->
+  <!--   SIrange 50 51 degree      ->  \SIrange{50}{51}{\degree}    -->
+  <!-- EL PDF LA VUELVE A ESCRIBIR Y COMPONE siunitx, CON EL        -->
+  <!-- \sisetup DEL CONTRATO O DEL PREÁMBULO DE LA REVISTA. LAS      -->
+  <!-- PLANTILLAS VAN EN CADA HOJA (GV-117); ACÁ, LA FUNCIÓN.        -->
+  <!-- ============================================================ -->
+
+  <!-- LAS PALABRAS DEL DICCIONARIO CERRADO (cifras.lua): UNIDADES, -->
+  <!-- PREFIJO, POTENCIAS Y \per                                    -->
+  <xsl:variable name="f:cifras-unidades" as="xs:string+"
+    select="('hour', 'metre', 'gram', 'tonne', 'euro', 'degree', 'percent',
+             'kilo', 'square', 'cubic', 'per')"/>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:cifra-latex                                      -->
+  <!-- PROPÓSITO: LA CANTIDAD COMO ORDEN DE siunitx                  -->
+  <!-- PARÁMETROS: c As element() — el phrase o el named-content    -->
+  <!--            ficha As xs:string — @remap o @specific-use       -->
+  <!--            marcador As xs:boolean — true EN EL ARGUMENTO     -->
+  <!--            OPCIONAL DE UN TÍTULO, QUE VA A LOS MARCADORES    -->
+  <!-- RETORNA  : xs:string — \num{…}, \SI{…}{…} O \SIrange{…}{…}{…}; -->
+  <!--            EN UN MARCADOR, CON \texorpdfstring Y EL TEXTO QUE  -->
+  <!--            SE VE (hyperref NO CONVIERTE LAS ÓRDENES, GV-118)   -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:cifra-latex" as="xs:string">
+    <xsl:param name="c" as="element()"/>
+    <xsl:param name="ficha" as="xs:string"/>
+    <xsl:param name="marcador" as="xs:boolean"/>
+    <xsl:variable name="t" select="tokenize(normalize-space($ficha), ' ')"/>
+    <xsl:variable name="cifra" select="'^-?[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?$'"/>
+    <xsl:variable name="n-cifras"
+      select="if ($t[1] = 'num') then 1 else if ($t[1] = 'SI') then 1
+              else if ($t[1] = 'SIrange') then 2 else 0"/>
+    <xsl:variable name="cifras" select="subsequence($t, 2, $n-cifras)"/>
+    <xsl:variable name="unidades" select="subsequence($t, 2 + $n-cifras)"/>
+    <xsl:variable name="orden">
+      <xsl:choose>
+        <!-- 1. LA FICHA BIEN FORMADA; SI NO, CORTA: LA ESCRIBE      -->
+        <!-- cifras.lua, Y ESTO CUBRE UN CANÓNICO ARMADO POR OTRO    -->
+        <!-- CAMINO                                                  -->
+        <xsl:when test="$n-cifras = 0
+                        or count($cifras) != $n-cifras
+                        or (some $x in $cifras satisfies not(matches($x, $cifra)))
+                        or ($t[1] = 'num' and exists($unidades))
+                        or ($t[1] != 'num' and empty($unidades))
+                        or (some $u in $unidades satisfies not($u = $f:cifras-unidades))">
+          <xsl:message terminate="yes">
+            <xsl:text>&#10;[cifras] FICHA DE CANTIDAD DESCONOCIDA: «</xsl:text>
+            <xsl:value-of select="$ficha"/>
+            <xsl:text>»&#10;  La escribe cifras.lua (SC-65). Si cambió el&#10;</xsl:text>
+            <xsl:text>  diccionario del filtro, esta función va en el mismo lote.&#10;</xsl:text>
+          </xsl:message>
+        </xsl:when>
+        <!-- 2. LA ORDEN; LAS CIFRAS SON SOLO DÍGITOS, PUNTO, e Y SIGNO -->
+        <xsl:otherwise>
+          <xsl:value-of select="concat('\', $t[1],
+            string-join($cifras ! concat('{', ., '}'), ''),
+            if (exists($unidades))
+            then concat('{', string-join($unidades ! concat('\', .), ''), '}')
+            else '')"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:sequence select="
+      if ($marcador)
+      then concat('\texorpdfstring{', $orden, '}{', f:latex(normalize-space($c)), '}')
+      else string($orden)"/>
   </xsl:function>
 
   <!-- ============================================================ -->

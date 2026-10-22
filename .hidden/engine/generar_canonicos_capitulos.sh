@@ -104,7 +104,7 @@ RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
 DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 
 # EL ORDEN DE LOS FILTROS ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
-# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63):
+# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65):
 #   1° guillemets-to-quoted-db  « » A Quoted. PRIMERO: fenced-divs SERIALIZA
 #      LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
 #   2° volada                   n\sptext{o} A «n.» Y <superscript
@@ -113,25 +113,30 @@ DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 #      LA DESCARTA EL ESCRITOR DocBook (MEDIDO: «la 2 edición»)
 #   3° corte-titulo             EL \\ DE UN TÍTULO A <?gb-corte?> (SC-63). CON
 #      volada, ANTES DE LOS FILTROS QUE SERIALIZAN
-#   4° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
-#   5° dos-partes               EPÍGRAFES {texto}{atribución}; FRENA SI UNO
+#   4° cifras                   \num, \SI Y \SIrange A <phrase role="cantidad">
+#      (SC-65). ANTES DE LOS FILTROS QUE SERIALIZAN, POR LA MISMA RAZÓN
+#      (GV-116). LA PALABRA DEL RANGO SALE DE -M gb-idioma-pieza, QUE ES
+#      EL IDIOMA DEL CAPÍTULO (NO gb-idioma: VER conversacion)
+#   5° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
+#   6° dos-partes               EPÍGRAFES {texto}{atribución}; FRENA SI UNO
 #      ESTÁ MAL FORMADO
-#   6° espacio-vertical         FICHA <?gb-espacio …?>; ANTES DE fenced-divs,
+#   7° espacio-vertical         FICHA <?gb-espacio …?>; ANTES DE fenced-divs,
 #      QUE NO CONOCE EL BLOQUE espaciov
-#   7° alinear                  FICHA <?gb-alinear …?> AL COMIENZO DE CADA
+#   8° alinear                  FICHA <?gb-alinear …?> AL COMIENZO DE CADA
 #      PÁRRAFO (SC-61); ANTES DE fenced-divs, QUE NO CONOCE LOS BLOQUES
 #      alinear-izq, alinear-centro Y alinear-der
-#   8° recuadros                DESPUÉS DE dos-partes, QUE PARTE EL recuadrob
-#   9° codigo                   <programlisting>; ANTES DE fenced-divs, QUE
+#   9° recuadros                DESPUÉS DE dos-partes, QUE PARTE EL recuadrob
+#  10° codigo                   <programlisting>; ANTES DE fenced-divs, QUE
 #      ARMA EL <example role="listado">
-#  10° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
+#  11° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
 #      SIN -M gb-idioma: LA ETIQUETA LA PONE LA HOJA SEGÚN xml:lang
-#  11° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
-#  12° fenced-divs-to-elements-db  AL FINAL
+#  12° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
+#  13° fenced-divs-to-elements-db  AL FINAL
 FILTROS=(
     guillemets-to-quoted-db.lua
     volada.lua
     corte-titulo.lua
+    cifras.lua
     cite-to-biblioref-db.lua
     dos-partes.lua
     espacio-vertical.lua
@@ -258,6 +263,7 @@ procesar_capitulo() {
     salida=$(timeout "$TIEMPO_PANDOC" pandoc "$md" \
                 --from markdown --to docbook5 --mathml --no-highlight --wrap=none \
                 "${args_pandoc[@]}" \
+                --metadata gb-idioma-pieza="$idioma" \
                 --output "$parcial" 2>&1)
     codigo=$?
 

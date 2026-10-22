@@ -662,6 +662,14 @@
   <xsl:template match="phrase[@role = ('cite-prefix', 'cite-suffix')]"
                 priority="5"/>
 
+  <!-- CANTIDAD (SC-65): LA ORDEN DE siunitx DESDE LA FICHA DE @remap, -->
+  <!-- CON f:cifra-latex (tex-comun.xsl). EL TEXTO DEL ELEMENTO ES EL  -->
+  <!-- DEL HTML: ACÁ NO SE USA, SALVO EN UN MARCADOR (GV-118).         -->
+  <xsl:template match="phrase[@role = 'cantidad']" priority="3">
+    <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
+    <xsl:value-of select="f:cifra-latex(., string(@remap), $notasTitulo = 'sumario')"/>
+  </xsl:template>
+
   <xsl:template match="link[@xlink:href]">
     <xsl:text>\href{</xsl:text>
     <xsl:value-of select="f:latex-url(@xlink:href)"/>

@@ -877,6 +877,14 @@
     <xsl:apply-templates/>
   </xsl:template>
 
+  <!-- CANTIDAD (SC-65): LA ORDEN DE siunitx DESDE LA FICHA DE          -->
+  <!-- @specific-use, CON f:cifra-latex (tex-comun.xsl). EL TEXTO DEL   -->
+  <!-- ELEMENTO ES EL DEL HTML: ACÁ NO SE USA, SALVO EN UN MARCADOR.     -->
+  <xsl:template match="named-content[@content-type = 'cantidad']" priority="3">
+    <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
+    <xsl:value-of select="f:cifra-latex(., string(@specific-use), $notasTitulo = 'sumario')"/>
+  </xsl:template>
+
   <xsl:template match="break">
     <xsl:text>\\&#10;</xsl:text>
   </xsl:template>

@@ -48,9 +48,9 @@ local CONTROLES = {
   -- UNA IMAGEN QUE APUNTA FUERA DE media/: EL EPUB Y EL HTML SOLO COPIAN
   -- media/, ASÍ QUE AUNQUE EXISTA NO LLEGA A ESAS SALIDAS
   imagen_fuera_de_media = "error",
-  -- UNA ORDEN DE LaTeX EN EL TEXTO QUE NO ES \sptext{…}: PANDOC LA LEE COMO
-  -- LaTeX CRUDO Y LOS ESCRITORES DE XML LA DESCARTAN; SE PIERDE EN LAS TRES
-  -- SALIDAS, SIN AVISO (GV-116)
+  -- UNA ORDEN DE LaTeX EN EL TEXTO QUE NO ES DE LAS ADMITIDAS (\sptext,
+  -- \num, \SI, \SIrange): PANDOC LA LEE COMO LaTeX CRUDO Y LOS ESCRITORES
+  -- DE XML LA DESCARTAN; SE PIERDE EN LAS TRES SALIDAS, SIN AVISO (GV-116)
   latex_en_linea = "error",
   -- UNA ORDEN DE LaTeX SOLA ENTRE PÁRRAFOS, FUERA DE ::: espaciov: SE PIERDE
   -- IGUAL. LA QUE ESTÁ DENTRO DE espaciov LA VALIDA espacio-vertical.lua
@@ -62,6 +62,14 @@ local CONTROLES = {
   -- EN EL TEXTO SALE COMO UNA BARRA LITERAL EN LAS TRES SALIDAS. PARA UN
   -- SALTO FUERA DE UN TÍTULO ESTÁ espaciov (SC-39)
   corte_fuera_de_titulo = "error",
+  -- UN PORCENTAJE ESCRITO SUELTO (88%, 88 %): SALE TAL CUAL, SIN EL ESPACIO
+  -- QUE FIJA LA RECOMENDACIÓN (SC-64). VA \SI{88}{\percent}; CON UNA SOLA
+  -- CIFRA, EN LETRAS («4 por ciento»). AVISO: INFORMA Y LA SALIDA SE GENERA
+  porcentaje_suelto = "aviso",
+  -- UNA CIFRA CON PUNTO O COMA DE MILES FUERA DE \num (1.500, 12,345): SALE
+  -- TAL CUAL, SIN EL AGRUPAMIENTO DE SC-64. LOS NÚMEROS DE IDENTIDAD (LEY
+  -- 34.555) SON CORRECTOS ASÍ: POR ESO ES AVISO Y NO ERROR
+  cifra_fuera_de_num = "aviso",
 }
 
 -- LARGO MÁXIMO DEL CONTEXTO QUE ACOMPAÑA A UN HALLAZGO, EN CARACTERES
@@ -70,8 +78,27 @@ local LARGO_CONTEXTO = 70
 -- UNA LLAMADA A NOTA: [^ETIQUETA], SIN ESPACIOS NI CORCHETE DE CIERRE ADENTRO
 local PATRON_LLAMADA = "%[%^[^%]%s]+%]"
 
--- LA ÚNICA ORDEN DE LaTeX ADMITIDA EN EL TEXTO: LA TRADUCE volada.lua (SC-62)
-local PATRON_SPTEXT = "^\\sptext{.*}$"
+-- LAS ÓRDENES DE LaTeX ADMITIDAS EN EL TEXTO. SOLO LA FORMA: EL CONTENIDO LO
+-- VALIDA EL FILTRO QUE LA TRADUCE, Y FRENA SI ESTÁ MAL
+--   \sptext{…}                     volada.lua (SC-62)
+--   \num{…} \SI{…}{…} \SIrange{…}  cifras.lua (SC-65)
+local PATRONES_LATEX = {
+  "^\\sptext{.*}$",
+  "^\\num{.*}$",
+  "^\\SI{.*}$",
+  "^\\SIrange{.*}$",
+}
+
+-- UNA CIFRA CON SEPARADOR DE MILES: DÍGITO, PUNTO O COMA, TRES DÍGITOS
+local PATRON_MILES = "%d[.,]%d%d%d"
+
+-- UN DÍGITO PEGADO AL %, O SEPARADO POR UN ESPACIO DURO (U+00A0) O FINO
+-- (U+202F): LOS DOS ÚLTIMOS QUEDAN DENTRO DEL MISMO Str
+local PATRONES_PORCENTAJE = {
+  "%d%%",
+  "%d\194\160%%",
+  "%d\226\128\175%%",
+}
 
 -- UN COMENTARIO HTML, QUE PANDOC TAMBIÉN LEE COMO HTML CRUDO
 local PATRON_COMENTARIO = "^%s*<!%-%-.*%-%->%s*$"
@@ -276,6 +303,19 @@ local function contexto_crudo(bloque)
 end
 
 -- ============================================================================
+-- Función   : latex_admitido
+-- Propósito : Dice si una orden de LaTeX en línea es de las admitidas
+-- Parámetros: sTexto — el texto de la orden
+-- Retorna   : boolean
+-- ============================================================================
+local function latex_admitido(sTexto)
+  for _, sPatron in ipairs(PATRONES_LATEX) do
+    if sTexto:match(sPatron) then return true end
+  end
+  return false
+end
+
+-- ============================================================================
 -- Función   : revisar_crudo_inlines
 -- Propósito : Busca LaTeX y HTML crudo en una lista de inlines, bajando a los
 --             contenedores como revisar_inlines y, como ella, SIN bajar al
@@ -287,18 +327,19 @@ end
 local function revisar_crudo_inlines(aInlines, bloque)
   for _, el in ipairs(aInlines) do
     if el.t == "RawInline" then
-      -- --- 1. LaTeX: SOLO \sptext{…}, QUE TRADUCE volada.lua ---
+      -- --- 1. LaTeX: SOLO LAS ADMITIDAS, QUE TRADUCEN volada.lua Y cifras.lua ---
       if el.format == "tex" or el.format == "latex" then
-        if not el.text:match(PATRON_SPTEXT) then
+        if not latex_admitido(el.text) then
           registrar("latex_en_linea",
-            "la orden de LaTeX «" .. el.text .. "» se pierde en las tres salidas " ..
-            "(la única admitida en el texto es \\sptext{…}): «" .. contexto_crudo(bloque) .. "»")
+            "la orden de LaTeX «" .. contexto(el.text) .. "» se pierde en las tres salidas " ..
+            "(las admitidas en el texto son \\sptext, \\num, \\SI y \\SIrange): «" ..
+            contexto_crudo(bloque) .. "»")
         end
       -- --- 2. HTML: TODO, MENOS LOS COMENTARIOS ---
       elseif el.format == "html" then
         if not es_comentario(el) then
           registrar("html_crudo",
-            "el HTML «" .. el.text .. "» se pierde en el XML: «" .. contexto_crudo(bloque) .. "»")
+            "el HTML «" .. contexto(el.text) .. "» se pierde en el XML: «" .. contexto_crudo(bloque) .. "»")
         end
       end
     elseif el.t == "Note" then
@@ -366,7 +407,13 @@ end
 local function revisar_cortes_inlines(aInlines, bloque)
   for _, el in ipairs(aInlines) do
     if el.t == "Str" then
-      if el.text:find("\\", 1, true) then
+      -- UNA BARRA SEGUIDA DE LETRAS ES UNA ORDEN QUE PANDOC NO LEYÓ COMO LaTeX
+      -- PORQUE LE FALTAN ARGUMENTOS (\SI{3}, MEDIDO): NO ES UN CORTE
+      if el.text:find("\\%a") then
+        registrar("latex_en_linea",
+          "la orden «" .. el.text .. "» está incompleta (le faltan argumentos o llaves) " ..
+          "y sale como texto literal: «" .. contexto(bloque) .. "»")
+      elseif el.text:find("\\", 1, true) then
         registrar("corte_fuera_de_titulo",
           "el corte \\\\ solo vale en un título; en el texto sale como una barra " ..
           "(para un salto, ::: espaciov): «" .. contexto(bloque) .. "»")
@@ -393,6 +440,72 @@ local function revisar_cortes(doc)
     Plain = function(b) revisar_cortes_inlines(b.content, b) end,
     LineBlock = function(b)
       for _, aLinea in ipairs(b.content) do revisar_cortes_inlines(aLinea, b) end
+    end,
+  })
+end
+
+-- ============================================================================
+-- Función   : revisar_cifras_inlines
+-- Propósito : Busca porcentajes y cifras con separador de miles escritos
+--             sueltos, fuera de las órdenes de siunitx (SC-64). Baja a los
+--             contenedores pero no a una nota (sus párrafos los visita el
+--             walk), ni a un enlace o una cita: un DOI (10.1016/…) o una URL
+--             no son cifras. El código y la matemática no son Str.
+-- Parámetros: aInlines — lista de inlines; bloque — el bloque que los
+--             contiene, para el contexto del mensaje
+-- ============================================================================
+local function revisar_cifras_inlines(aInlines, bloque)
+  local el, sig, sig2
+  for i = 1, #aInlines do
+    el = aInlines[i]
+    if el.t == "Str" then
+      -- --- 1. PORCENTAJE PEGADO, O CON ESPACIO DURO O FINO ---
+      for _, sPatron in ipairs(PATRONES_PORCENTAJE) do
+        if el.text:find(sPatron) then
+          registrar("porcentaje_suelto",
+            "el porcentaje «" .. el.text .. "» está escrito suelto: va \\SI{…}{\\percent} (con una sola cifra, " ..
+            "en letras: «4 por ciento»): «" .. contexto_crudo(bloque) .. "»")
+          break
+        end
+      end
+      -- --- 2. PORCENTAJE SEPARADO POR UN ESPACIO COMÚN: «88 %» ---
+      sig, sig2 = aInlines[i + 1], aInlines[i + 2]
+      if el.text:find("%d$") and sig and sig.t == "Space" and sig2 and sig2.t == "Str"
+         and sig2.text:find("^%%") then
+        registrar("porcentaje_suelto",
+          "el porcentaje «" .. el.text .. " " .. sig2.text .. "» está escrito suelto: va \\SI{…}{\\percent} (con una sola cifra, " ..
+          "en letras: «4 por ciento»): «" .. contexto_crudo(bloque) .. "»")
+      end
+      -- --- 3. SEPARADOR DE MILES; CON BARRA ES UN NÚMERO DE IDENTIDAD O UN DOI ---
+      if el.text:find(PATRON_MILES) and not el.text:find("/", 1, true) then
+        registrar("cifra_fuera_de_num",
+          "la cifra «" .. el.text .. "» no está en \\num{…} y sale sin el agrupamiento " ..
+          "de la norma (si es un número de ley o de decreto, queda así): «" ..
+          contexto_crudo(bloque) .. "»")
+      end
+    elseif el.t == "Note" or el.t == "Link" or el.t == "Cite" then
+      -- LA NOTA LA VISITA EL WALK; EL ENLACE Y LA CITA NO SON TEXTO CON CIFRAS
+    elseif el.t == "Image" then
+      revisar_cifras_inlines(el.caption, bloque)
+    elseif el.content then
+      revisar_cifras_inlines(el.content, bloque)
+    end
+  end
+end
+
+-- ============================================================================
+-- Función   : revisar_cifras
+-- Propósito : Porcentajes y cifras sueltos en todo bloque con texto,
+--             títulos incluidos (SC-64, SC-65)
+-- Parámetros: doc — el documento
+-- ============================================================================
+local function revisar_cifras(doc)
+  doc:walk({
+    Para = function(b) revisar_cifras_inlines(b.content, b) end,
+    Plain = function(b) revisar_cifras_inlines(b.content, b) end,
+    Header = function(b) revisar_cifras_inlines(b.content, b) end,
+    LineBlock = function(b)
+      for _, aLinea in ipairs(b.content) do revisar_cifras_inlines(aLinea, b) end
     end,
   })
 end
@@ -458,6 +571,7 @@ function Pandoc(doc)
   revisar_imagenes(doc, sRaiz)
   revisar_crudo(doc)
   revisar_cortes(doc)
+  revisar_cifras(doc)
 
   -- --- EL INFORME: SIEMPRE SE ESCRIBE, VACÍO SI NO HUBO HALLAZGOS ---
   local h = io.open(sRuta, "w")

@@ -174,11 +174,17 @@ avisar_md_posterior() {
 # ============================================================================
 # Función   : mostrar_cola
 # Propósito : Imprime las últimas líneas de una salida capturada, sangradas.
+#             SIN LA PILA DE LUA: CUANDO UN FILTRO FRENA, PANDOC AGREGA
+#             DESPUÉS DEL MENSAJE UNA O DOS «stack traceback:» QUE AL EDITOR
+#             NO LE DICEN NADA Y QUE, CON LA COLA, DEJABAN EL MOTIVO FUERA
+#             DE LA PANTALLA (MEDIDO CON pandoc 3.1.3, cifras.lua: 20 LÍNEAS,
+#             EL MOTIVO EN LA 3.ª). SE CORTA DESDE LA PRIMERA.
 # Parámetros: $1 texto; $2 cantidad de líneas (15 si se omite)
 # ============================================================================
 mostrar_cola() {
     [[ -n "$1" ]] || return 0
-    printf '%s\n' "$1" | tail -"${2:-15}" | sed 's/^/     /'
+    printf '%s\n' "$1" | sed '/^[[:space:]]*stack traceback:/,$d' \
+        | tail -"${2:-15}" | sed 's/^/     /'
 }
 
 # ============================================================================

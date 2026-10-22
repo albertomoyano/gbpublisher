@@ -3180,13 +3180,18 @@ LOS CONTROLES
     imagen_fuera_de_media     error   una imagen que apunta fuera de media/
     comillas_desbalanceadas   aviso   « » que no cierran en su lista de inlines
     latex_en_linea            error   una orden de LaTeX en el texto que no es
-                                      \sptext{…} (GV-116)
+                                      de las admitidas: \sptext, \num, \SI,
+                                      \SIrange (GV-116); o una de ellas
+                                      incompleta (GV-124)
     latex_suelto              error   una orden de LaTeX sola entre párrafos,
                                       fuera de ::: espaciov
     html_crudo                error   HTML escrito en el .md, menos los
                                       comentarios <!-- … -->
     corte_fuera_de_titulo     error   \\ fuera de un título: sale como una
                                       barra (SC-63); para un salto, espaciov
+    porcentaje_suelto         aviso   88% o 88 % escrito suelto (SC-64, SC-65)
+    cifra_fuera_de_num        aviso   una cifra con punto o coma de miles fuera
+                                      de \num (SC-64, SC-65)
     [WARNING] de pandoc       aviso   entre ellos, nota definida y nunca llamada
 
 `definicion_sin_texto` lee el archivo fuente (`PANDOC_STATE.input_files`) porque en el AST el caso ya no existe (GV-99), y saltea los bloques de código cercados con ``` o ~~~. Una definición de nota vacía al final del archivo la informan dos controles, `definicion_sin_texto` (con la línea) y `nota_vacia`: es el mismo error.
@@ -3205,7 +3210,7 @@ LaTeX Y HTML CRUDOS
 
 Lo que Pandoc lee como LaTeX o HTML crudo se pierde en las tres salidas: los escritores de XML lo descartan sin aviso (GV-116). Decisión de Alberto: los tres controles son `error`, y por ahora solo en libros, como los demás (pendiente 1).
 
-- En el texto, la única orden de LaTeX admitida es `\sptext{…}`, que traduce `volada.lua` (SC-62); su forma la valida ese filtro y no este control. El mensaje nombra la orden y muestra el contexto con el texto crudo a la vista: `stringify` lo descarta, y sin eso quedaban huecos.
+- En el texto, las órdenes de LaTeX admitidas son `\sptext{…}`, que traduce `volada.lua` (SC-62), y `\num`, `\SI` y `\SIrange`, que traduce `cifras.lua` (SC-65); su forma la valida cada filtro y no este control. El texto de la orden se escribe en el informe sin saltos de línea: puede traerlos (GV-124). El mensaje nombra la orden y muestra el contexto con el texto crudo a la vista: `stringify` lo descarta, y sin eso quedaban huecos.
 - Suelto entre párrafos, el LaTeX solo vale dentro de `::: espaciov`, que valida `espacio-vertical.lua` (SC-39). El recorrido es de arriba abajo (`traverse = "topdown"`) y no baja a un `espaciov`.
 - Los comentarios HTML `<!-- … -->`, en línea o en bloque, también de varias líneas, no son texto y no se informan. Un `<div>` no es HTML crudo: Pandoc lo lee como un `Div`.
 - Como `revisar_inlines`, el recorrido en línea no baja al contenido de una nota: sus párrafos los visita el walk de bloques, y así no se informan dos veces.
@@ -3214,9 +3219,20 @@ MEDIDO: un título, un párrafo, una bastardilla, una nota y una celda con órde
 
 EL CORTE FUERA DE UN TÍTULO
 
-`corte_fuera_de_titulo` busca la barra que deja `\\` (GV-121) en los `Str` de los párrafos, las celdas, las líneas de un bloque de líneas y las notas, también las de un título. No mira los títulos, que traduce `corte-titulo.lua` (SC-63), ni el código ni la matemática, que no son `Str`. Medido: un párrafo, una nota y una celda con `\\` dan tres hallazgos; el título y el código, ninguno.
+`corte_fuera_de_titulo` busca la barra que deja `\\` (GV-121) en los `Str` de los párrafos, las celdas, las líneas de un bloque de líneas y las notas, también las de un título. No mira los títulos, que traduce `corte-titulo.lua` (SC-63), ni el código ni la matemática, que no son `Str`. Medido: un párrafo, una nota y una celda con `\\` dan tres hallazgos; el título y el código, ninguno. Una barra seguida de letras no es un corte: es una orden que Pandoc dejó como texto porque le faltan argumentos (GV-124), y se informa como `latex_en_linea`.
 
-**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63
+LAS CIFRAS SUELTAS
+
+Dos controles de nivel `aviso` (decisión de Alberto: informan, y la salida se genera) buscan en los `Str` de los párrafos, las celdas, los títulos, las líneas de un bloque de líneas y las notas lo que la norma de SC-64 escribe con siunitx. No bajan a un enlace ni a una cita: un DOI no es una cifra.
+
+- `porcentaje_suelto`: un dígito seguido de `%`, pegado o con un espacio duro o fino en el mismo `Str`, o un `Str` que termina en dígito, un espacio y otro que empieza con `%`. El mensaje recuerda la forma `\SI{…}{\percent}` y que con una sola cifra va en letras.
+- `cifra_fuera_de_num`: un dígito, un punto o una coma y tres dígitos (`1.500`, `12,345`). Un `Str` con barra se saltea: «decreto 2.345/26». Los números de identidad sin barra («ley 34.555») se informan igual: por eso es aviso.
+
+Un decimal suelto (`2.5`, `3,14`) no se informa.
+
+MEDIDO: un .md con `\num{12000}` y «3.500» en un título, «88%», «88 %», «88» con espacio duro y «77» con espacio fino, «1.500», «12,345», «ley 34.555», «decreto 2.345/26», un DOI en un enlace, «2.5» y «3,14», y una nota con «4.000» y «5%»: diez avisos, los esperados; el decreto, el DOI y los decimales, ninguno.
+
+**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63,vinculo:SC-65,apoya:GV-124
 
 **PENDIENTE:** (1) Revistas: usar el mismo filtro, con los controles de LaTeX y HTML crudos, cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
 
@@ -3738,7 +3754,7 @@ Los casos que frenan, también en Mint (Alberto, 21/10): `n.\sptext{e}` (punto a
 
 ### SC-63 — Corte de línea en los títulos de sección del .md: \\, como en la base
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / titlesec / hyperref / qpdf / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / titlesec / hyperref / qpdf / gbc3 3.19 / contenedor Ubuntu 24.04; gbpublisher en Linux Mint (prueba de Alberto, 21/10) · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisión de Alberto, 21/10). La regla de SC-28 vale también para los títulos de sección que se escriben en el .md (`##` y siguientes en libros; todos los niveles en revistas): el editor marca el corte con `\\` y el corte se cumple solo en la apertura del PDF.
 
@@ -3789,9 +3805,144 @@ VERIFICADO EN EL CONTENEDOR
 
 Pandoc 3.1.3 con las cadenas reales de libro, revista y ODT, incluidos los casos que frenan; SaxonJ-HE 12.5 con `ensamblar-capitulo-canonico.xsl`, las dos hojas LaTeX, HTML, EPUB, SciELO y Redalyc; el capítulo valida contra el RNG de DocBook 5.2 y el artículo contra la DTD Archiving 1.4; gbpublisher compila con gbc3 3.19.
 
+PROBADO EN MINT
+
+Alberto, 21/10, con un libro y una revista reales: el PDF corta en la apertura del título de sección; el HTML y el EPUB, sin corte.
+
 **Relaciones:** vinculo:SC-28,vinculo:SC-29,vinculo:SC-39,vinculo:SC-54,vinculo:SC-62,vinculo:GV-121
 
-**PENDIENTE:** Probar en Mint con un libro y una revista reales: PDF (apertura, sumario y marcadores), HTML, EPUB, un caso que frene y el control corte_fuera_de_titulo. El ODT, cuando se encare (decisión de Alberto, 21/10).
+**PENDIENTE:** Falta en Mint: un caso que frene (corte al final, dos seguidos o dentro de una bastardilla) y el control corte_fuera_de_titulo. El ODT, cuando se encare (decisión de Alberto, 21/10).
+
+### SC-64 — Cifras y unidades: la norma internacional, escrita con siunitx
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 (Debian) / babel-spanish 5.0q / siunitx 3.3.10 / contenedor Ubuntu 24.04; SI Brochure 9.ª ed. (BIPM); Resolución 10 de la 22.ª CGPM · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto, 22/10). Las cifras y las unidades siguen la norma internacional. En dos puntos se aparta de la práctica que Alberto usaba en LaTeX: el porcentaje va separado de la cifra, y las cifras de cuatro dígitos no se agrupan.
+
+LA NORMA
+
+    tema                     norma                                   fuente
+    separador decimal        punto o coma, el habitual del contexto  CGPM 2003, Res. 10; SI Brochure §5.4.4
+                             (el proyecto: punto)
+    grupos de miles          de a tres, con un espacio; nunca con    SI Brochure §5.4.4; RAE (espacio fino)
+                             punto ni coma
+    cuatro dígitos           no se aísla un solo dígito: 1000        SI Brochure §5.4.4; DPD «2458 (no 2 458)»
+    porcentaje               separado de la cifra: 25 %              SI Brochure §5.4.7
+    unidad                   siempre separada de la cifra            SI Brochure §5.4.3
+    grado de ángulo          pegado: 30° 22′ 8″                      SI Brochure §5.4.3
+    grado Celsius            separado: 30.2 °C                       SI Brochure §5.4.3
+
+EL MODELO DE ESCRITURA (decisión de Alberto)
+
+La cifra se normaliza en el .md; el formato lo pone cada salida. Una cifra que es una cantidad se escribe con la entrada de siunitx: dígitos sin separador de miles, punto decimal, `e` para el exponente. En el texto: `\num{1000}`, `\SI{2.5}{\hour}`, `\SIrange{50}{51}{\degree}`; en una columna numérica de un cuadro, la cifra sola: `9000.00`. El Word no se respeta: el editor lo pasa a esta forma. El punto queda solo en los números que lo llevan por identidad, como texto común: «decreto 2.345/26», «ley 34.555».
+
+LA CONFIGURACIÓN DE siunitx
+
+    \sisetup{output-decimal-marker={.},
+      group-separator={\hspace{0.15em}},
+      group-minimum-digits=5,
+      table-text-alignment=center,
+      detect-all,
+      per-mode=symbol}
+    \DeclareSIUnit\euro{€}
+
+- `detect-all` sostiene el punto decimal frente a babel-spanish: sin ella, los decimales salen con coma (GV-123).
+- `group-minimum-digits=5`: «1000», «12 345» (la práctica anterior era 3).
+- `per-mode=symbol`: «48 km/h» en una línea; la fracción vertical agrandaba la línea (decisión de Alberto).
+- `\euro`: no hacía falta todavía, pero cuesta una línea (decisión de Alberto). La fuente tiene que tener el signo €.
+- El porcentaje: se separa, así que no se usa `\spanishplainpercent` (GV-122). `\SI{25}{\percent}` es la forma de escribirlo.
+
+EL DICCIONARIO CERRADO DEL TEXTO
+
+Órdenes: `\num`, `\SI`, `\SIrange`, con los nombres que Alberto usa (siguen funcionando en siunitx 3). Unidades: `\hour`, `\metre`, `\gram`, `\tonne`, `\degree`, `\percent`, `\euro`, con el prefijo `\kilo` y los modificadores `\square`, `\cubic` y `\per`. Lo que no está en el diccionario frena la conversión con un mensaje.
+
+EL HTML Y EL EPUB
+
+El PDF compone con siunitx, que es la base del diseño (SC-31). El HTML y el EPUB usan un formateador chico que aplica las mismas reglas: punto decimal, grupos de a tres desde cinco dígitos, «× 10ⁿ» con superíndice, los símbolos del diccionario y la palabra del rango según el idioma. El espacio de los grupos y el de la unidad es U+202F (espacio fino que no corta la línea): una cifra no se parte entre dos renglones (decisión de Alberto). Un mini-test compara las dos salidas sobre la misma lista de casos.
+
+LAS TABLAS: EL PLAN (decisión de Alberto)
+
+Tres lotes, cada uno probado en Mint antes del siguiente:
+
+1. Las cifras: el filtro de `\num`, `\SI` y `\SIrange`, el `\sisetup` en el contrato del libro y en el preámbulo de la revista, el formateador del HTML.
+2. La cadena del cuadro: el archivo del cuadro en su carpeta, con las decisiones de composición en el encabezado, incluido desde el .md; el canónico (la rotación como atributo, la columna numérica alineada por carácter, los cortes como instrucción `gb-`); el PDF, con un flotante `[!ht]` por tramo, la cabecera repetida y los textos de continuación, y `sidewaystable` si rota; el HTML y el EPUB, con la tabla completa y derecha. El corte y la rotación los decide siempre el maquetador: nunca el compilador.
+3. `FTabla` para el editor y no para el autor: la lista de los cuadros de la carpeta, la edición de las decisiones y una vista previa compilada con el mismo filtro, las mismas plantillas y el mismo preámbulo que el libro (sin la capa de hyperref), con `showframe` y el veredicto leído del log. La vista previa se abre con el visor de PDF del sistema: abrir, mirar y cerrar (decisión de Alberto).
+
+**Relaciones:** vinculo:SC-31,vinculo:SC-38,vinculo:SC-62,vinculo:GV-122,vinculo:GV-123,vinculo:SC-65
+
+**PENDIENTE:** Lote 1 (cifras) implementado y probado en Mint (SC-65). Lote 2 (cadena del cuadro) y lote 3 (FTabla y vista previa), cada uno con su SC y probado en Mint.
+
+### SC-65 — Cifras y cantidades: implementación (lote 1 de SC-64)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** pandoc 3.1.3 / Saxon-HE / xmllint / LuaHBTeX 1.17.0, TeX Live 2023, babel-spanish 5.0q, siunitx 3.3.10 / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+IMPLEMENTACIÓN del lote 1 de SC-64: las cifras y las cantidades en el texto, con `\num`, `\SI` y `\SIrange`, en el libro, la revista y el ODT. Las decisiones de diseño (a)–(g) son de Alberto (22/10).
+
+LA CADENA
+
+El filtro `cifras.lua` corre en las tres cadenas antes de todo filtro que serialice con `pandoc.write`: sin él, el escritor descarta la orden y la cifra se pierde (GV-116).
+
+    libro     4.° de la lista de generar_canonicos_capitulos.sh: después de
+              corte-titulo, antes de cite-to-biblioref-db
+    revista   m_XML.GenerarBodyXML: después de corte-titulo, antes de recuadros
+              y de cite-to-xref
+    ODT       m_GenerarODT.GenerarODTunaColumna: después de corte-titulo
+
+EL CANÓNICO (decisión a)
+
+El elemento lleva el texto ya formateado, y la entrada tal como se escribió va en un atributo, la ficha:
+
+    JATS     <named-content content-type="cantidad" specific-use="SI 2.5 kilo metre per hour">2.5 km/h</named-content>
+    DocBook  <phrase role="cantidad" remap="SI 2.5 kilo metre per hour">2.5 km/h</phrase>
+    ODT      el texto formateado, sin marca
+
+La ficha es la orden y sus argumentos separados por espacios, con las unidades sin barra: `num 1500`, `SI 88 percent`, `SIrange 50 51 degree`. Sin LaTeX en el canónico (SC-38). Validado: `named-content` en `p`, `title`, `td` y `caption` contra la DTD de JATS 1.4; `phrase` con `remap` contra el RNG de DocBook 5.2.
+
+EL PDF
+
+`f:cifra-latex` (`tex-comun.xsl`) rearma la orden desde la ficha, y frena si la ficha no es una de las conocidas. Las plantillas están en cada hoja, no en `tex-comun` (GV-117): `phrase[@role=''cantidad'']` en `docbook-to-latex.xsl` y `named-content[@content-type=''cantidad'']` en `jats-to-latex.xsl`. En el argumento opcional de un título va dentro de `\texorpdfstring`, con el texto formateado para el marcador (GV-118).
+
+El `\sisetup` de SC-64 y `\DeclareSIUnit\euro{€}` están en el contrato del libro (`preambulo-contrato.tex`, versión 15; `CONTRATO_VERSION = 15` en `m_GenerarPDFLibro`) y en el preámbulo de la revista (`m_XML`), con los mismos valores.
+
+EL HTML, EL EPUB Y EL ODT
+
+El texto lo arma el formateador de `cifras.lua` con las reglas de SC-64: punto decimal, grupos de a tres desde cinco dígitos de un lado del punto, signo menos U+2212, exponente «× 10ⁿ» con superíndice, U+202F entre los grupos y entre la cifra y la unidad, el grado pegado, `/` para `\per`. Las hojas de HTML y EPUB no necesitan plantilla: muestran el texto del elemento.
+
+MEDIDO: los veinticinco casos de la lista de Alberto, compuestos con siunitx 3.3.10 y el `\sisetup` de SC-64, coinciden con el formateador (comparados con `pdftotext`; la única diferencia es el superíndice, que `pdftotext` da como cifra común). De punta a punta, un capítulo con cifras en un párrafo, un título, una nota, una celda y un pie de cuadro, en español y en inglés: canónico válido (RNG y DTD), PDF compilado con el bloque de siunitx del contrato (marcadores «Cifras en 12 000 casos», «Rango de 50° to 51°»), HTML, EPUB, SciELO, Redalyc y ODT con el mismo texto.
+
+EL IDIOMA DEL RANGO (decisión b)
+
+La palabra del rango sale del idioma de la pieza: en la revista, `-M gb-idioma` (`ArgumentoIdiomaPandoc`); en el libro, `-M gb-idioma-pieza`, que el script pasa con el idioma del capítulo solo a la conversión (no `gb-idioma`, que `conversacion.lua` usa con otro fin). Se toman las dos primeras letras. La tabla es la de siunitx 3.3.10 (clave `to (numerical range)`): ca a, de bis, en to, es a, fr à, it a, pl do, pt a, sl do. Otro idioma frena, solo si la pieza tiene un `\SIrange`.
+
+EL DICCIONARIO
+
+Cerrado, el de SC-64. Una cifra con otra forma (coma, punto de miles, letras), una unidad fuera de la lista, un prefijo o una potencia que no van con su unidad, más de un `\per`, el grado o el porcentaje acompañados, o una orden incompleta, frenan la conversión con un mensaje que nombra la orden y dice qué falla. La orden incompleta se busca también en los `Str` (GV-124).
+
+LOS CONTROLES (decisiones c, e, g)
+
+En `controles_md.lua` (SC-54): `latex_en_linea` admite las tres órdenes; `porcentaje_suelto` y `cifra_fuera_de_num` son `aviso`: informan y la salida se genera (decisión de Alberto).
+
+EL PANEL Y EL RESALTADO (decisiones d, f)
+
+Tres filas en línea, modo plantilla, en gbShortcodes (`datos-v5-016`): `\num{•}`, `\SI{•}{}` y `\SIrange{•}{}{}`. En `Markdown.highlight`, el patrón de `\sptext` pasa a ser el de las órdenes admitidas (`$(orden)`), con el estado `latex.orden`; los estados hijos de la bastardilla, la negrita y el tachado lo usan igual (GV-119). Medido con el banco de gb.highlight: las tres órdenes se resaltan sueltas y dentro de la bastardilla y la negrita; los seis archivos de prueba anteriores dan el mismo resultado que antes.
+
+LO QUE NO CUBRE
+
+- El libro no cambia el idioma de babel por capítulo: un capítulo en inglés compone su `\SIrange` con la palabra del idioma principal en el PDF y con «to» en el HTML. Es anterior a este lote: `docbook-to-latex.xsl` no usa el `xml:lang` del capítulo.
+- En la revista, los controles todavía no corren (SC-54, pendiente 1): una cifra suelta no avisa. `cifras.lua` frena igual.
+- La columna numérica de un cuadro (`S`) es del lote 2.
+
+PROBADO EN MINT (Alberto, 22/10)
+
+Un libro real (preliminares de «El Atlántico de los exilios»): cifras en un título, un párrafo, una nota y una celda, en el PDF, el HTML y el EPUB; el marcador del PDF; la inserción desde el panel; el resaltado; el aviso de un «88%» suelto, con el capítulo generado igual; y un caso que frena, `\SI{88}{\per}`. Las filas `num`, `si` y `si-rango` se liberan con `datos-v5-017`.
+
+EL MOTIVO QUE NO SE VEÍA
+
+En esa prueba la terminal mostró el final del mensaje de `cifras.lua` y no su primera línea, la que dice qué falla: Pandoc agrega al mensaje de un filtro que frena una o dos «stack traceback:» (medido con pandoc 3.1.3: veinte líneas, el motivo en la tercera), y `mostrar_cola` de `engine/comun.sh` mostraba las últimas quince. Ahora `mostrar_cola` corta la salida desde la primera «stack traceback:»: vale para todos los filtros y todos los scripts de `engine/`.
+
+**Relaciones:** vinculo:SC-64,vinculo:SC-38,vinculo:SC-54,vinculo:SC-62,vinculo:SC-63,apoya:GV-116,apoya:GV-117,apoya:GV-118,vinculo:GV-119,apoya:GV-123,apoya:GV-124,vinculo:GV-125
+
+**PENDIENTE:** El cambio de idioma por capítulo en el PDF del libro, que no existe (ver LO QUE NO CUBRE), cuando se encare; con él, probar un capítulo en inglés con \SIrange. El ODT y la revista en Mint, con la fase de salidas que les corresponde.
 
 ---
 
@@ -6939,6 +7090,111 @@ Los escritores la escriben como una barra: «Corte de\ subtítulo» en las tres 
 El identificador que Pandoc arma para un título no lleva la barra («corte-de-subtítulo», «pegadosin-espacio»).
 
 **Relaciones:** apoya:SC-63,vinculo:GV-116,vinculo:SC-28
+
+### GV-122 — babel-spanish: \% pone un espacio fino antes del signo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 (Debian) / babel-spanish 5.0q / poppler pdftotext / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Con el español activo, babel-spanish redefine `\%`. Leído en `spanish.ldf` (5.0q):
+
+    \def\es@sppercent{% See tex.stack 435216 @egreg
+      \leavevmode
+      \ifnum\gluestretchorder\lastskip=\z@\unskip\fi
+      \textormath{$\m@th\,$}{\,}}
+    \def\spanishplainpercent{\let\es@sppercent\@empty}
+    \addto\textspanish{%
+      \let\percentsign\%%
+      \es@sDRC\%{\es@sppercent\percentsign{}}}
+
+Antes del signo pone `\,` y quita el espacio que hubiera. Sigue la recomendación de separar la cifra del signo (SI Brochure §5.4.7).
+
+EN EL PROYECTO: un `88%` del .md llega al PDF como «88 %», aunque esté pegado, porque `tex-comun.xsl` escapa `%` como `\%` (en LaTeX, `%` abre un comentario) y ese `\%` es el que babel redefinió. El HTML y el EPUB muestran «88%»: las salidas difieren hoy.
+
+MEDIDO (LuaLaTeX, posición de cada palabra con `pdftotext -bbox`):
+
+    sin \spanishplainpercent    «88» «%»     separados
+    con \spanishplainpercent    «88%»        pegados
+
+`\SI{25}{\percent}` sale «25 %» en los dos casos: ese espacio lo pone siunitx, entre cifra y unidad.
+
+`\spanishplainpercent` lo desactiva. Con la decisión de SC-64 (el porcentaje separado) no se usa.
+
+**Relaciones:** apoya:SC-64
+
+### GV-123 — siunitx 3.3.10 con babel-spanish: el punto decimal depende de detect-all
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 (Debian) / babel-spanish 5.0q / siunitx 3.3.10 / poppler pdftotext / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con LuaLaTeX, babel-spanish 5.0q y siunitx 3.3.10 (TeX Live 2023, la de Mint 22), leyendo el PDF con `pdftotext`.
+
+EL PUNTO DECIMAL DEPENDE DE detect-all
+
+babel-spanish convierte en coma todo punto decimal en modo matemático (`es-nodecimaldot` lo desactiva). siunitx compone la cifra en modo matemático, salvo que se le pida seguir al texto:
+
+    output-decimal-marker={.}, sin detect-all    \num{12.5} → «12,5»   \SI{2.5}{\hour} → «2,5 h»
+    output-decimal-marker={.}, con detect-all    \num{12.5} → «12.5»   \SI{2.5}{\hour} → «2.5 h»
+
+Con `detect-all`, una fórmula común (`$3.5$`) sigue saliendo «3,5»: lo hace babel, no siunitx. SACAR `detect-all` CAMBIA LOS DECIMALES A COMA SIN AVISO.
+
+`detect-all` es una opción de siunitx 2. En la 3.3.10 está deprecada: deja un aviso informativo en el log y se traduce, leído en `siunitx.sty`, a `mode = match, propagate-math-font = true, reset-math-version = false, reset-text-family = false, reset-text-series = false, reset-text-shape = false, text-family-to-math = true, text-series-to-math = true`. Escribir esas opciones en su lugar da lo mismo.
+
+LA ENTRADA
+
+El punto es el separador decimal de la entrada: `\num{16.000}` es dieciséis (sale «16,000» o «16.000» según el marcador de salida). Una cifra con el formato del Word se lee mal; por eso la entrada en el .md es la de siunitx (SC-64).
+
+AGRUPACIÓN
+
+`group-minimum-digits` es la cantidad mínima de dígitos de un lado del separador decimal para que se agrupe. Con 5 (el valor por omisión): «1000», «12 345», «1234.5678», «0.123 45». Con 3: «1 000», «9 000.00».
+
+UNIDADES
+
+- `per-mode=fraction` compone «km/h» como fracción vertical y agranda la línea; `per-mode=symbol` da «48 km/h» en una línea; el valor por omisión da «48 km h⁻¹».
+- `\euro`, `\perthousand` y `\pertenthousand` no existen: «Undefined control sequence». `\DeclareSIUnit\euro{€}` da «450 €/m²» y «1 250.5 €», sin aviso de carácter faltante.
+- `\SIrange{50}{51}{\degree}` da «50° a 51°»: la palabra del rango la pone el idioma.
+- `\SI`, `\SIrange` y `\num` funcionan en la 3.3.10; los nombres actuales son `\qty`, `\qtyrange` y `\num`.
+
+COLUMNA S
+
+`S[table-format=4.2]` alinea `9000.00`, `6.4` y `12.25` en el punto; una celda de texto va entre llaves (`{--}`).
+
+**Relaciones:** apoya:SC-64,vinculo:GV-122
+
+### GV-124 — pandoc 3.1.3: una orden de siunitx incompleta queda como texto, o se traga lo que sigue
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** pandoc 3.1.3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con pandoc 3.1.3 (la de Ubuntu 24.04), leyendo el AST con `-t native`. El lector de Markdown reconoce `\SI`, `\SIrange` y `\num` como órdenes de LaTeX con una cantidad fija de argumentos, y cuando faltan no hace lo mismo que con una orden desconocida:
+
+    Texto \SI{3}.                 Str "\\SI{3}."               texto común
+    Texto \SIrange{1}{2}.         Str "\\SIrange{1}{2}."       texto común
+    Texto \num 3.                 Str "\\num"                  texto común
+    Texto \foo{3}.                RawInline tex "\\foo{3}"     LaTeX crudo (GV-116)
+    Texto \SI{3}. Y \num{4}.      RawInline tex "\\SI{3}. Y \\num{4}"
+    A \SI{3}.  (línea vacía)  Otra \\ barra.
+                                  RawInline tex "\\SI{3}.\n\nOtra \\\\ barra"
+
+- Una orden incompleta al final de su párrafo queda como TEXTO COMÚN: un filtro que mira solo los `RawInline` no la ve, y sale literal en las tres salidas.
+- Si más adelante hay llaves, el lector las toma como los argumentos que faltan y se traga todo lo que hay en el medio, incluso una línea vacía: dos párrafos quedan unidos en un solo `RawInline`.
+- El texto de ese `RawInline` puede traer saltos de línea.
+
+EN EL PROYECTO: `cifras.lua` mira también los `Str` y frena si encuentra `\num` o `\SI` (SC-65); `controles_md.lua` informa como `latex_en_linea` una barra seguida de letras en un `Str` (no es un corte) y limpia los saltos del texto de la orden antes de escribirla en el informe, que es de una línea por hallazgo (SC-54).
+
+**Relaciones:** apoya:SC-65,apoya:SC-54,vinculo:GV-116
+
+### GV-125 — IBM Plex no tiene el espacio fino U+202F; Noto Serif sí
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** fontTools / tipografías de .hidden/fonts del repositorio (IBM Plex Sans y Mono, Noto Serif) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Leído el mapa de caracteres (`cmap`) de las tipografías que trae gbpublisher, con fontTools:
+
+    IBM Plex Sans y Mono (las ocho)   sin U+202F; con U+2212, U+20AC, °, ³, ⁹, ×
+    Noto Serif (las cuatro)           con todos
+
+U+202F es el espacio fino que no corta la línea que usa `cifras.lua` entre los grupos de una cifra y entre la cifra y la unidad (SC-64).
+
+EN EL PROYECTO: la hoja de estilo de la revista (`gbpublisher.css`) compone el cuerpo con IBM Plex Sans (`--font-sans: ''IBM Plex Sans'', system-ui, sans-serif`); el navegador toma ese carácter de la siguiente tipografía de la lista. El EPUB del libro compone con Noto Serif, que lo tiene. El PDF no usa U+202F: el espacio lo pone siunitx (`\hspace{0.15em}`). No se midió cómo lo muestra cada lector de EPUB.
+
+**Relaciones:** vinculo:SC-65,vinculo:SC-64
 
 ---
 
