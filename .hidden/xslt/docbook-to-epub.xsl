@@ -486,7 +486,7 @@
 
   <!-- CUADRO (SC-66): EL QUE ESCRIBIÓ cuadro-armar.lua. LA TABLA
        COMPLETA Y DERECHA; DEBAJO, COMO EN EL PDF, «Cuadro N» CON EL
-       TÍTULO Y, SI HAY, LA NOTA (EL <caption> DE DocBook). EL NÚMERO ES
+       TÍTULO Y LA NOTA (EL <caption> DE DocBook), EN UN PÁRRAFO. EL NÚMERO ES
        EL DEL PDF (numeracion-libro.xsl). LOS NAVEGADORES NO APLICAN
        align="char": LA COLUMNA DE CIFRAS VA A LA DERECHA, CON CIFRAS
        TABULARES. LA INSTRUCCIÓN gb-cuadro ES DEL PDF: ACÁ NO SALE -->
@@ -520,21 +520,27 @@
           </xsl:element>
         </xsl:for-each>
       </table>
+      <!-- EL PIE EN UN SOLO PÁRRAFO, COMO EN EL PDF (f:cuadro-pie): EL
+           TÍTULO Y, A CONTINUACIÓN, LA NOTA, CON PUNTO SEGUIDO SI EL
+           TÍTULO NO TERMINA EN . ? ! (decisión de Alberto) -->
+      <xsl:variable name="titulo" select="normalize-space((db:title | title)[1])"/>
       <p class="cuadro-pie">
         <span class="cuadro-label">
           <xsl:text>Cuadro </xsl:text>
           <xsl:value-of select="nl:numero-cuadro(., $piezasLibro)"/>
         </span>
-        <xsl:if test="normalize-space((db:title | title)[1]) != ''">
+        <xsl:if test="$titulo != ''">
           <xsl:text>. </xsl:text>
           <xsl:apply-templates select="(db:title | title)[1]/node()"/>
         </xsl:if>
+        <xsl:if test="db:caption | caption">
+          <xsl:value-of select="if ($titulo = '' or not(matches($titulo, '[.?!]$'))) then '. ' else ' '"/>
+          <xsl:for-each select="(db:caption | caption)/(db:para | para)">
+            <xsl:if test="position() &gt; 1"><xsl:text> </xsl:text></xsl:if>
+            <xsl:apply-templates/>
+          </xsl:for-each>
+        </xsl:if>
       </p>
-      <xsl:if test="db:caption | caption">
-        <div class="cuadro-nota">
-          <xsl:apply-templates select="(db:caption | caption)/node()"/>
-        </div>
-      </xsl:if>
     </div>
   </xsl:template>
 

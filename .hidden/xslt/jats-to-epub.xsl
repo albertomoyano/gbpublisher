@@ -785,27 +785,33 @@
 
   <!-- CUADRO (SC-66): EL QUE ESCRIBIÓ cuadro-armar.lua. LA TABLA
        COMPLETA Y DERECHA; DEBAJO, COMO EN EL PDF, «Cuadro N» CON EL
-       TÍTULO Y, SI HAY, LA NOTA. EL NÚMERO CUENTA LOS CUADROS DEL
+       TÍTULO Y LA NOTA, EN UN PÁRRAFO. EL NÚMERO CUENTA LOS CUADROS DEL
        ARTÍCULO, COMO \caption EN EL PDF. LA INSTRUCCIÓN gb-cuadro ES
        DEL PDF: ACÁ NO SALE -->
   <xsl:template match="table-wrap[processing-instruction('gb-cuadro')]" priority="2">
     <div class="table-wrap cuadro" id="{@id}">
       <xsl:apply-templates select="table"/>
+      <!-- EL PIE EN UN SOLO PÁRRAFO, COMO EN EL PDF (f:cuadro-pie): EL
+           TÍTULO Y, A CONTINUACIÓN, LA NOTA, CON PUNTO SEGUIDO SI EL
+           TÍTULO NO TERMINA EN . ? ! (decisión de Alberto) -->
+      <xsl:variable name="titulo" select="normalize-space(caption/title)"/>
       <p class="table-caption">
         <span class="table-label">
           <xsl:text>Cuadro </xsl:text>
           <xsl:value-of select="count(preceding::table-wrap[processing-instruction('gb-cuadro')]) + 1"/>
         </span>
-        <xsl:if test="normalize-space(caption/title) != ''">
+        <xsl:if test="$titulo != ''">
           <xsl:text>. </xsl:text>
           <xsl:apply-templates select="caption/title/node()"/>
         </xsl:if>
+        <xsl:if test="table-wrap-foot">
+          <xsl:value-of select="if ($titulo = '' or not(matches($titulo, '[.?!]$'))) then '. ' else ' '"/>
+          <xsl:for-each select="table-wrap-foot/p">
+            <xsl:if test="position() &gt; 1"><xsl:text> </xsl:text></xsl:if>
+            <xsl:apply-templates/>
+          </xsl:for-each>
+        </xsl:if>
       </p>
-      <xsl:if test="table-wrap-foot">
-        <div class="table-foot">
-          <xsl:apply-templates select="table-wrap-foot/node()"/>
-        </div>
-      </xsl:if>
     </div>
   </xsl:template>
 

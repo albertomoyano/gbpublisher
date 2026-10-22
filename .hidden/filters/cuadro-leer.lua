@@ -1,7 +1,8 @@
 -- ============================================================
 -- FILTRO      : cuadro-leer.lua
 -- PROPÓSITO   : TRAE AL DOCUMENTO EL ARCHIVO DE CADA CUADRO (SC-66) Y LO
---               CONTROLA. EL .md SOLO LO NOMBRA:
+--               CONTROLA. UNA TABLA ESCRITA EN EL .md FRENA: TODA TABLA VA
+--               EN SU ARCHIVO (decisión de Alberto). EL .md SOLO LA NOMBRA:
 --                 ::: {.cuadro #tbl-procedencia}
 --                 [/cuadro]: # ()
 --                 :::
@@ -357,7 +358,8 @@ end
 
 -- ============================================
 -- Función   : Pandoc
--- Propósito : Trae los cuadros del documento y frena el viejo ::: {.table}
+-- Propósito : Trae los cuadros del documento; frena el viejo ::: {.table}
+--             y la tabla escrita en el .md
 -- Parámetros: doc As Pandoc
 -- Retorna   : Pandoc — el documento con los cuadros
 -- ============================================
@@ -369,12 +371,35 @@ function Pandoc(doc)
     raiz = pandoc.utils.stringify(doc.meta['gb-proyecto']):gsub('/$', '')
   end
 
-  -- --- 2. CADA CUADRO; EL VIEJO ::: {.table} FRENA ---
-  return doc:walk({ Div = function(el)
+  -- --- 2. EL VIEJO ::: {.table} FRENA ---
+  -- ANTES QUE LA TABLA SUELTA: LA TABLA DE ADENTRO DARÍA EL OTRO MENSAJE
+  doc:walk({ Div = function(el)
     if el.classes:includes('table') then
       error('\n[cuadro] ::: {.table} se retiró: el cuadro va en su archivo, ' ..
         'cuadros/tbl-nombre.md, y en el texto ::: {.cuadro #tbl-nombre} (SC-66).\n', 0)
     end
+  end })
+
+  -- --- 3. UNA TABLA ESCRITA EN EL .md FRENA ---
+  -- RIGIDEZ ESTRUCTURAL (decisión de Alberto): TODA TABLA VA EN SU ARCHIVO.
+  -- SE MIRA ANTES DE TRAER LOS CUADROS, QUE SÍ SON TABLAS
+  doc:walk({ Table = function(t)
+    -- EL ENCABEZADO, PARA QUE EL EDITOR ENCUENTRE LA TABLA EN EL .md
+    local partes = {}
+    for _, f in ipairs(t.head.rows) do
+      for _, c in ipairs(f.cells) do partes[#partes + 1] = pandoc.utils.stringify(c.contents) end
+    end
+    local muestra = table.concat(partes, ' | '):gsub('%s+', ' ')
+    if utf8.len(muestra) and utf8.len(muestra) > 60 then
+      muestra = muestra:sub(1, utf8.offset(muestra, 61) - 1) .. '…'
+    end
+    error('\n[cuadro] hay una tabla escrita en el texto (encabezado: «' .. muestra ..
+      '»). Toda tabla va en su archivo, cuadros/tbl-nombre.md, y en el texto ' ..
+      '::: {.cuadro #tbl-nombre} (SC-66).\n', 0)
+  end })
+
+  -- --- 4. CADA CUADRO ---
+  return doc:walk({ Div = function(el)
     if not el.classes:includes('cuadro') then return nil end
     if not raiz then
       error('\n[cuadro] falta -M gb-proyecto: la cadena no pasa la raíz del proyecto.\n', 0)

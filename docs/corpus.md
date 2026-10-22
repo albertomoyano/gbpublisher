@@ -4012,7 +4012,7 @@ Las decisiones de composición van en la instrucción `gb-cuadro`, sin LaTeX (SC
 LAS SALIDAS
 
 - PDF: plantillas en `docbook-to-latex.xsl` y `jats-to-latex.xsl` (GV-117); funciones en `tex-comun.xsl`: `f:pi-valor`, `f:cuadro-columna`, `f:cuadro-formato` (el `table-format`: signo si hay una cifra negativa, los enteros y decimales más largos) y `f:cuadro-pie`. Una cifra sola va como la lee la columna `S`; el encabezado de una columna de cifras va entre llaves.
-- HTML y EPUB: la tabla completa y derecha; debajo, «Cuadro N» con el título, y la nota. El número es el del PDF (`nl:numero-cuadro`, misma regla que la figura). Los navegadores no aplican `align="char"`: la columna de cifras va a la derecha, con cifras tabulares.
+- HTML y EPUB: la tabla completa y derecha; debajo, en un solo párrafo como en el PDF, «Cuadro N», el título y, a continuación, la nota, con punto seguido si el título no termina en . ? ! (decisión de Alberto, 22/10: el PDF es el modelo). El número es el del PDF (`nl:numero-cuadro`, misma regla que la figura). Los navegadores no aplican `align="char"`: la columna de cifras va a la derecha, con cifras tabulares.
 - Referencias cruzadas en libros: `cite-to-biblioref-db.lua` admite `tbl-`; el HTML y el EPUB muestran el número del cuadro. En revistas no hay referencias cruzadas (SC-32).
 - ODT: el título en negrita, la tabla y la nota.
 
