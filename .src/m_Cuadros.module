@@ -1,0 +1,978 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_Cuadros
+' PROPÓSITO : Los archivos de los cuadros (SC-66) y su vista previa (SC-67):
+'             leerlos, escribirlos, listarlos y componer uno solo para ver si
+'             entra. FTabla es la cara; acá no hay controles.
+'
+' EL FORMATO QUE ESCRIBE GAMBAS
+' ----------------------------------------------------------
+'   ---
+'   titulo: 'Procedencia de los tesistas'
+'   nota: 'Fuente: elaboración propia.'
+'   cuerpo: normal
+'   separacion: normal
+'   rotar: sí                       (SOLO SI SÍ)
+'   agrupar: sí                     (SOLO SI SÍ)
+'   cortes: [12]                    (SOLO SI HAY)
+'   bloques: [4, 8]                 (SOLO SI HAY)
+'   ancho: total                    (SOLO SI ES total)
+'   columnas:
+'     - {tipo: texto}
+'     - {tipo: texto, ancho: 2.4, alinear: centro}
+'     - {tipo: cifra}
+'   ---
+'
+'   | … | … |
+'   |---|---|
+'   | … | … |
+'
+'   titulo Y nota VAN SIEMPRE ENTRE COMILLAS SIMPLES: ADENTRO LA BARRA ES
+'   LITERAL (\num{…} LLEGA ENTERO) Y LA COMILLA SE DUPLICA. ENTRE COMILLAS
+'   DOBLES, «\n» SERÍA UN SALTO DE LÍNEA PARA YAML.
+'
+' LO QUE GAMBAS LEE
+' ----------------------------------------------------------
+'   El mismo formato, con tolerancia: las claves en cualquier orden, los
+'   valores sin comillas, con comillas simples o con dobles sin barras, las
+'   líneas en blanco. Lo que YAML leería distinto que este lector —un
+'   comentario, una nota de varias líneas, una lista en bloque, una clave
+'   desconocida— NO ENCAJA: Leer devuelve Null y FTabla abre el archivo como
+'   texto, con el motivo (SC-67, b). El que controla de verdad sigue siendo
+'   cuadro-leer.lua, en la vista previa y en la generación.
+'
+'   La tabla: si es una pipe table, celda por celda; si no (grid table, con
+'   celdas unidas), como texto (SC-67, a). Pandoc no puede escribir el
+'   archivo: su escritor markdown pierde las celdas unidas y cambia las
+'   órdenes de LaTeX (GV-127). Por eso el formato es propio.
+'
+' LOS ERRORES
+' ----------------------------------------------------------
+'   Las funciones que pueden fallar dejan el motivo en UltimoError(), como
+'   m_PrimerasLibro (GV-24).
+' ==========================================================
+
+' CARPETA DE LOS CUADROS, EN LA RAÍZ DEL PROYECTO (cuadro-leer.lua)
+Public Const CARPETA_CUADROS As String = "cuadros"
+
+' LA VISTA PREVIA: SU CARPETA Y SUS ARCHIVOS (engine/vista_cuadro.sh)
+Private Const CARPETA_VISTA As String = "tmp/vista-cuadro"
+Private Const ARCHIVO_PREAMBULO As String = "preambulo-vista.tex"
+Private Const ARCHIVO_VEREDICTO As String = "veredicto.txt"
+Private Const ARCHIVO_PDF As String = "vista.pdf"
+
+' SEGUNDOS ANTES DE PREGUNTAR SI SEGUIR ESPERANDO: pandoc, SAXON Y UNA PASADA
+' DE LuaLaTeX. MEDIDO EN EL CONTENEDOR: ENTRE 8 Y 15 SEGUNDOS
+Private Const PLAZO_VISTA As Float = 120
+
+' LOS CARACTERES DE UN NOMBRE DE CUADRO, DESPUÉS DE tbl- (cuadro-leer.lua:
+' ^tbl%-[%w%-]+$)
+Private Const CARACTERES_NOMBRE As String = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+
+' MOTIVO DEL ÚLTIMO FALLO; VACÍO SI LA ÚLTIMA LLAMADA FUNCIONÓ
+Private $sUltimoError As String = ""
+
+' EL CUADRO QUE FTabla ELIGIÓ INSERTAR: EL CANAL DE VUELTA DEL MODAL (RC-GM-13)
+Private $sIdElegido As String = ""
+
+' ============================================
+' Función   : UltimoError
+' Propósito : El motivo del último fallo
+' Parámetros: ninguno
+' Retorna   : String — vacío si la última llamada funcionó
+' ============================================
+Public Function UltimoError() As String
+
+  Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : Carpeta
+' Propósito : La carpeta de los cuadros del proyecto abierto
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta; vacío si no hay proyecto
+' ============================================
+Public Function Carpeta() As String
+
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then Return ""
+  Return m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_CUADROS
+
+End
+
+' ============================================
+' Función   : RutaCuadro
+' Propósito : El archivo de un cuadro
+' Parámetros: sId As String — tbl-nombre
+' Retorna   : String — ruta absoluta
+' ============================================
+Public Function RutaCuadro(sId As String) As String
+
+  Return Carpeta() &/ sId & ".md"
+
+End
+
+' ============================================
+' Función   : Listar
+' Propósito : Los cuadros del proyecto, por nombre
+' Parámetros: ninguno
+' Retorna   : String[] — los id (tbl-…), sin la extensión; vacío si no hay
+' ============================================
+Public Function Listar() As String[]
+
+  Dim aArchivos As String[]
+  Dim aIds As New String[]
+  Dim sArchivo As String
+
+  ' --- 1. SIN CARPETA NO HAY CUADROS: NO ES UN ERROR ---
+  If Carpeta() = "" Then Return aIds
+  If Not Exist(Carpeta()) Then Return aIds
+
+  ' --- 2. LOS tbl-*.md; gb.File Y UN PATRÓN, NUNCA "*.*" (GV-01) ---
+  Try aArchivos = Dir(Carpeta(), "tbl-*.md", gb.File)
+  If Error Then Return aIds
+
+  ' EL FILTRO DE Dir NO ES VALIDACIÓN (RC-GM-19): EL NOMBRE SE CONTROLA ACÁ
+  For Each sArchivo In aArchivos
+    If NombreValido(File.BaseName(sArchivo)) Then aIds.Add(File.BaseName(sArchivo))
+  Next
+  aIds.Sort()
+  Return aIds
+
+End
+
+' ============================================
+' Función   : NombreValido
+' Propósito : Responde si un id sirve como nombre de cuadro: tbl- y letras
+'             sin tilde, cifras o guiones, como lo pide cuadro-leer.lua
+' Parámetros: sId As String
+' Retorna   : Boolean
+' ============================================
+Public Function NombreValido(sId As String) As Boolean
+
+  Dim i As Integer
+
+  If Not (sId Begins "tbl-") Then Return False
+  If Len(sId) <= 4 Then Return False
+  ' BYTE POR BYTE: UN CARÁCTER DE VARIOS BYTES NO ESTÁ EN LA LISTA Y DESCARTA,
+  ' QUE ES LO QUE SE QUIERE (RC-GM-12)
+  For i = 5 To Len(sId)
+    If InStr(CARACTERES_NOMBRE, Mid(sId, i, 1)) = 0 Then Return False
+  Next
+  Return True
+
+End
+
+' ============================================
+' Función   : Plantilla
+' Propósito : El texto de un cuadro nuevo: dos columnas de texto, el
+'             encabezado y una fila
+' Parámetros: ninguno
+' Retorna   : String
+' ============================================
+Public Function Plantilla() As String
+
+  Dim oCuadro As New CCuadro
+
+  oCuadro.ColTipo = ["texto", "texto"]
+  oCuadro.ColAncho = ["", ""]
+  oCuadro.ColAlinear = ["", ""]
+  oCuadro.Encabezado = ["Columna 1", "Columna 2"]
+  oCuadro.Filas.Add(["", ""])
+  Return Escribir(oCuadro)
+
+End
+
+' ============================================
+' Función   : Leer
+' Propósito : Lee el texto de un archivo de cuadro
+' Parámetros: sTexto As String — el contenido del archivo
+' Retorna   : CCuadro — el cuadro; Null si el encabezado no encaja en el
+'             formato (el motivo en UltimoError)
+' ============================================
+Public Function Leer(sTexto As String) As CCuadro
+
+  Dim oCuadro As New CCuadro
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sClave As String
+  Dim sValor As String
+  Dim aVistas As New String[]
+  Dim aTabla As New String[]
+  Dim i As Integer
+  Dim iCierre As Integer
+  Dim bEnColumnas As Boolean
+  Dim aEnteros As Integer[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  aLineas = Split(Replace(sTexto, "\r", ""), "\n")
+
+  ' --- 2. EL ENCABEZADO: ENTRE DOS LÍNEAS «---» ---
+  If aLineas.Count = 0 Then Return NoEncaja("el archivo está vacío")
+  If aLineas[0] <> "---" Then Return NoEncaja("la primera línea no es «---»")
+  iCierre = -1
+  For i = 1 To aLineas.Max
+    If aLineas[i] = "---" Then
+      iCierre = i
+      Break
+    Endif
+  Next
+  If iCierre = -1 Then Return NoEncaja("el encabezado no se cierra con «---»")
+
+  ' --- 3. CADA LÍNEA DEL ENCABEZADO ---
+  For i = 1 To iCierre - 1
+    sLinea = aLineas[i]
+    If Trim(sLinea) = "" Then Continue
+
+    ' 3a. UNA LÍNEA CON SANGRÍA SOLO PUEDE SER UNA COLUMNA
+    If sLinea Begins " " Then
+      If Not bEnColumnas Then Return NoEncaja("la línea " & CStr(i + 1) & " tiene sangría fuera de columnas")
+      If Not LeerColumna(Trim(sLinea), oCuadro) Then Return NoEncaja("línea " & CStr(i + 1) & ": " & $sUltimoError)
+      Continue
+    Endif
+    bEnColumnas = False
+
+    ' 3b. «clave: valor» O «columnas:»
+    If InStr(sLinea, ":") = 0 Then Return NoEncaja("la línea " & CStr(i + 1) & " no es «clave: valor»")
+    sClave = Left(sLinea, InStr(sLinea, ":") - 1)
+    sValor = Trim(Mid(sLinea, InStr(sLinea, ":") + 1))
+
+    ' UNA CLAVE REPETIDA: YAML SE QUEDA CON UNA Y ESTE LECTOR NO SABE CUÁL
+    If aVistas.Exist(sClave) Then Return NoEncaja("la clave «" & sClave & "» está dos veces")
+    aVistas.Add(sClave)
+
+    Select Case sClave
+      Case "titulo"
+        oCuadro.Titulo = Escalar(sValor)
+      Case "nota"
+        oCuadro.Nota = Escalar(sValor)
+      Case "cuerpo"
+        oCuadro.Cuerpo = String.LCase(Escalar(sValor))
+        If oCuadro.Cuerpo = "" Then oCuadro.Cuerpo = "normal"
+        If oCuadro.Cuerpo <> "normal" Then
+          If oCuadro.Cuerpo <> "chico" Then Return NoEncaja("cuerpo: «" & oCuadro.Cuerpo & "»")
+        Endif
+      Case "separacion"
+        oCuadro.Separacion = String.LCase(Escalar(sValor))
+        If oCuadro.Separacion = "" Then oCuadro.Separacion = "normal"
+        If oCuadro.Separacion <> "normal" Then
+          If oCuadro.Separacion <> "estrecha" Then Return NoEncaja("separacion: «" & oCuadro.Separacion & "»")
+        Endif
+      Case "ancho"
+        oCuadro.Ancho = String.LCase(Escalar(sValor))
+        If oCuadro.Ancho = "" Then oCuadro.Ancho = "columna"
+        If oCuadro.Ancho <> "columna" Then
+          If oCuadro.Ancho <> "total" Then Return NoEncaja("ancho: «" & oCuadro.Ancho & "»")
+        Endif
+      Case "rotar"
+        Select Case EsSi(Escalar(sValor))
+          Case 1
+            oCuadro.Rotar = True
+          Case 0
+            oCuadro.Rotar = False
+          Case Else
+            Return NoEncaja("rotar no es sí ni no")
+        End Select
+      Case "agrupar"
+        Select Case EsSi(Escalar(sValor))
+          Case 1
+            oCuadro.Agrupar = True
+          Case 0
+            oCuadro.Agrupar = False
+          Case Else
+            Return NoEncaja("agrupar no es sí ni no")
+        End Select
+      Case "cortes"
+        aEnteros = ListaEnteros(sValor)
+        If Not aEnteros Then Return NoEncaja("cortes no es una lista [n, m]")
+        oCuadro.Cortes = aEnteros
+      Case "bloques"
+        aEnteros = ListaEnteros(sValor)
+        If Not aEnteros Then Return NoEncaja("bloques no es una lista [n, m]")
+        oCuadro.Bloques = aEnteros
+      Case "columnas"
+        ' LAS COLUMNAS VIENEN EN LAS LÍNEAS SIGUIENTES, CON SANGRÍA
+        If sValor <> "" Then Return NoEncaja("columnas va sola en su línea, con una columna por línea debajo")
+        bEnColumnas = True
+      Case Else
+        Return NoEncaja("la clave «" & sClave & "» no es del formato")
+    End Select
+
+    ' Escalar MARCA EN $sUltimoError LO QUE YAML LEERÍA DISTINTO
+    If $sUltimoError <> "" Then Return NoEncaja(sClave & ": " & $sUltimoError)
+  Next
+
+  ' --- 4. LA TABLA: LO QUE SIGUE, SIN LAS LÍNEAS EN BLANCO DE LOS BORDES ---
+  For i = iCierre + 1 To aLineas.Max
+    aTabla.Add(aLineas[i])
+  Next
+  While aTabla.Count > 0
+    If Trim(aTabla[0]) <> "" Then Break
+    aTabla.Remove(0)
+  Wend
+  While aTabla.Count > 0
+    If Trim(aTabla[aTabla.Max]) <> "" Then Break
+    aTabla.Remove(aTabla.Max)
+  Wend
+  LeerTabla(aTabla.Join("\n"), oCuadro)
+
+  ' --- 5. LAS COLUMNAS Y LA TABLA TIENEN QUE COINCIDIR EN LA GRILLA ---
+  ' CON UNA TABLA COMO TEXTO NO SE PUEDEN CONTAR: LO CONTROLA cuadro-leer.lua
+  If Not oCuadro.EsTablaTexto Then
+    If oCuadro.ColTipo.Count <> oCuadro.Encabezado.Count Then
+      Return NoEncaja("columnas tiene " & CStr(oCuadro.ColTipo.Count) & " entradas y la tabla " &
+        CStr(oCuadro.Encabezado.Count) & " columnas")
+    Endif
+  Endif
+
+  Return oCuadro
+
+End
+
+' ============================================
+' Función   : LeerTabla
+' Propósito : Pasa el texto de la tabla al cuadro: celda por celda si es una
+'             pipe table de forma simple; si no, como texto
+' Parámetros: sTabla As String — la tabla, sin el encabezado
+'             oCuadro As CCuadro — donde se escribe
+' Retorna   : Boolean — True si quedó en la grilla; False si quedó como texto
+' ============================================
+Public Function LeerTabla(sTabla As String, oCuadro As CCuadro) As Boolean
+
+  Dim aLineas As String[]
+  Dim aCeldas As String[]
+  Dim aFilas As New String[][]
+  Dim i As Integer
+
+  ' --- 1. POR OMISIÓN, COMO TEXTO ---
+  oCuadro.EsTablaTexto = True
+  oCuadro.TablaTexto = sTabla
+  oCuadro.Encabezado = New String[]
+  oCuadro.Filas = New String[][]
+
+  ' --- 2. FORMA DE PIPE TABLE: TODAS LAS LÍNEAS EMPIEZAN CON «|» ---
+  aLineas = Split(sTabla, "\n")
+  If aLineas.Count < 3 Then Return False
+  For i = 0 To aLineas.Max
+    If Not (aLineas[i] Begins "|") Then Return False
+  Next
+
+  ' --- 3. LA SEGUNDA LÍNEA SEPARA EL ENCABEZADO: SOLO | : - Y ESPACIOS ---
+  If InStr(aLineas[1], "-") = 0 Then Return False
+  If Replace(Replace(Replace(Replace(aLineas[1], "|", ""), ":", ""), "-", ""), " ", "") <> "" Then Return False
+
+  ' --- 4. LAS CELDAS: TODAS LAS FILAS CON LAS COLUMNAS DEL ENCABEZADO ---
+  ' UNA FILA CON MÁS O MENOS CELDAS LA DECIDE PANDOC: QUEDA COMO TEXTO
+  aCeldas = PartirFila(aLineas[0])
+  If aCeldas.Count = 0 Then Return False
+  For i = 2 To aLineas.Max
+    aFilas.Add(PartirFila(aLineas[i]))
+    If aFilas[aFilas.Max].Count <> aCeldas.Count Then Return False
+  Next
+
+  ' --- 5. EN LA GRILLA ---
+  oCuadro.EsTablaTexto = False
+  oCuadro.TablaTexto = ""
+  oCuadro.Encabezado = aCeldas
+  oCuadro.Filas = aFilas
+  Return True
+
+End
+
+' ============================================
+' Función   : Escribir
+' Propósito : El texto del archivo de un cuadro, en el formato de Gambas
+' Parámetros: oCuadro As CCuadro
+' Retorna   : String — termina en salto de línea
+' ============================================
+Public Function Escribir(oCuadro As CCuadro) As String
+
+  Dim s As String
+  Dim sColumna As String
+  Dim i As Integer
+
+  ' --- 1. EL ENCABEZADO, EN EL ORDEN FIJO DEL FORMATO ---
+  s = "---\n"
+  s &= "titulo: " & Citar(oCuadro.Titulo) & "\n"
+  If oCuadro.Nota <> "" Then s &= "nota: " & Citar(oCuadro.Nota) & "\n"
+  s &= "cuerpo: " & oCuadro.Cuerpo & "\n"
+  s &= "separacion: " & oCuadro.Separacion & "\n"
+  If oCuadro.Rotar Then s &= "rotar: sí\n"
+  If oCuadro.Agrupar Then s &= "agrupar: sí\n"
+  If oCuadro.Cortes.Count > 0 Then s &= "cortes: [" & UnirEnteros(oCuadro.Cortes) & "]\n"
+  If oCuadro.Bloques.Count > 0 Then s &= "bloques: [" & UnirEnteros(oCuadro.Bloques) & "]\n"
+  If oCuadro.Ancho = "total" Then s &= "ancho: total\n"
+
+  ' --- 2. LAS COLUMNAS: tipo SIEMPRE; ancho Y alinear SI TIENEN VALOR ---
+  s &= "columnas:\n"
+  For i = 0 To oCuadro.ColTipo.Max
+    sColumna = "tipo: " & oCuadro.ColTipo[i]
+    If oCuadro.ColAncho[i] <> "" Then sColumna &= ", ancho: " & oCuadro.ColAncho[i]
+    If oCuadro.ColAlinear[i] <> "" Then sColumna &= ", alinear: " & oCuadro.ColAlinear[i]
+    s &= "  - {" & sColumna & "}\n"
+  Next
+  s &= "---\n\n"
+
+  ' --- 3. LA TABLA ---
+  If oCuadro.EsTablaTexto Then
+    s &= oCuadro.TablaTexto
+  Else
+    s &= EscribirTabla(oCuadro)
+  Endif
+  If Not (s Ends "\n") Then s &= "\n"
+
+  Return s
+
+End
+
+' ============================================
+' Función   : EscribirTabla
+' Propósito : La pipe table de la grilla. Sin alinear las columnas con
+'             espacios: una celda que crece no cambia las demás líneas, y el
+'             diff de git muestra solo la que cambió
+' Parámetros: oCuadro As CCuadro — con Encabezado y Filas
+' Retorna   : String — la tabla, una línea por fila, terminada en salto
+' ============================================
+Public Function EscribirTabla(oCuadro As CCuadro) As String
+
+  Dim s As String
+  Dim aFila As String[]
+  Dim i As Integer
+
+  s = FilaPipe(oCuadro.Encabezado)
+  s &= "|"
+  For i = 1 To oCuadro.Encabezado.Count
+    s &= "---|"
+  Next
+  s &= "\n"
+  For Each aFila In oCuadro.Filas
+    s &= FilaPipe(aFila)
+  Next
+  Return s
+
+End
+
+' ============================================
+' Función   : UnirEnteros
+' Propósito : Una lista de filas como texto: «4, 12». Integer[] NO TIENE
+'             Join: ES DE String[] (MEDIDO EN 3.19: «Unknown symbol 'Join'
+'             in class 'Integer[]'», GV-129)
+' Parámetros: aEnteros As Integer[]
+' Retorna   : String — vacío si la lista está vacía
+' ============================================
+Public Function UnirEnteros(aEnteros As Integer[]) As String
+
+  Dim aTextos As New String[]
+  Dim iValor As Integer
+
+  For Each iValor In aEnteros
+    aTextos.Add(CStr(iValor))
+  Next
+  Return aTextos.Join(", ")
+
+End
+
+' ============================================
+' Función   : Marca
+' Propósito : El bloque que nombra el cuadro en el .md (cuadro-leer.lua; el
+'             cierre nombrado de SC-33)
+' Parámetros: sId As String
+' Retorna   : String — tres líneas, terminadas en salto
+' ============================================
+Public Function Marca(sId As String) As String
+
+  Return "::: {.cuadro #" & sId & "}\n[/cuadro]: # ()\n:::\n"
+
+End
+
+' ============================================
+' Función   : ElegirParaInsertar
+' Propósito : Guarda el cuadro que FTabla eligió insertar (RC-GM-13)
+' Parámetros: sId As String — vacío para no insertar nada
+' Retorna   : nada
+' ============================================
+Public Sub ElegirParaInsertar(sId As String)
+
+  $sIdElegido = sId
+
+End
+
+' ============================================
+' Función   : IdElegido
+' Propósito : El cuadro que FTabla eligió insertar
+' Parámetros: ninguno
+' Retorna   : String — vacío si no eligió ninguno
+' ============================================
+Public Function IdElegido() As String
+
+  Return $sIdElegido
+
+End
+
+' ============================================
+' Función   : VistaPrevia
+' Propósito : Compone un cuadro solo, con el preámbulo de la pieza y la caja
+'             a la vista (SC-67). Gambas escribe lo que sale de la base —el
+'             preámbulo— y engine/vista_cuadro.sh hace el resto: filtros,
+'             composición, LuaLaTeX y veredicto (SC-13)
+' Parámetros: sId As String — el cuadro, ya guardado en disco
+' Retorna   : Integer — el código de vista_cuadro.sh (0, 3, 1) o un
+'             RESULTADO_* de m_GenerarSalidasLibro; RESULTADO_NO_LANZADO si
+'             no se pudo preparar (ya informado)
+' ============================================
+Public Function VistaPrevia(sId As String) As Integer
+
+  Dim sDirVista As String
+  Dim sPreambulo As String
+  Dim sTipo As String
+  Dim sIdioma As String
+  Dim sEstilo As String
+  Dim aArgumentos As New String[]
+
+  ' --- 1. PROYECTO Y CUADRO ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Abrí un proyecto antes de la vista previa.")
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+  If Not Exist(RutaCuadro(sId)) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No existe el archivo del cuadro:" & gb.NewLine & RutaCuadro(sId))
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 2. EL PREÁMBULO DE LA PIEZA, SEGÚN EL TIPO DE PROYECTO ---
+  If m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso) > 0 Then
+    sTipo = "libro"
+    ' LOS PREÁMBULOS DE latex/ AL DÍA (EL CONTRATO) Y EL DEL PROYECTO DESDE LA
+    ' BASE: LO MISMO QUE ANTES DEL PDF. LAS DOS FUNCIONES INFORMAN SUS FALLOS
+    If Not m_InicioCierre.CopiarRecursosLatex(m_InicioCierre.RutaProyectoEnCurso &/ "latex") Then Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+    If Not m_GenerarPDFLibro.GenerarPreambuloProyecto() Then Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+    sPreambulo = m_GenerarPDFLibro.PreambuloVistaCuadro()
+    sIdioma = IdiomaCapituloEnCurso()
+  Else
+    sTipo = "revista"
+    sEstilo = m_XML.EstiloCitaRevista(m_XML.ObtenerIdRevista(m_InicioCierre.IdProyectoEnCurso))
+    If sEstilo = "" Then
+      m_Sonido.sonar("Error")
+      Message.Error("La revista no tiene estilo de cita: el preámbulo del PDF lo necesita.")
+      Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+    Endif
+    sPreambulo = m_XML.PreambuloVistaCuadro(sEstilo)
+    sIdioma = IdiomaArticuloEnCurso()
+  Endif
+
+  ' --- 3. EL PREÁMBULO EN LA CARPETA DE LA VISTA ---
+  ' Mkdir NO CREA LOS PADRES: PRIMERO tmp/, DESPUÉS LA DE LA VISTA. UN FALLO
+  ' ACÁ LO INFORMA EL File.Save DE ABAJO
+  sDirVista = m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_VISTA
+  If Not Exist(File.Dir(sDirVista)) Then Try Mkdir File.Dir(sDirVista)
+  If Not Exist(sDirVista) Then Try Mkdir sDirVista
+  Try File.Save(sDirVista &/ ARCHIVO_PREAMBULO, sPreambulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el preámbulo de la vista previa:" & gb.NewLine &
+      sDirVista &/ ARCHIVO_PREAMBULO & gb.NewLine & Error.Text)
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 4. EL SCRIPT ---
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(sId)
+  aArgumentos.Add(sTipo)
+  aArgumentos.Add(sIdioma)
+  Return m_GenerarSalidasLibro.EjecutarScriptSalida("vista_cuadro.sh", aArgumentos, PLAZO_VISTA,
+    "Componiendo la vista previa de " & sId)
+
+End
+
+' ============================================
+' Función   : LeerVeredicto
+' Propósito : El veredicto que dejó vista_cuadro.sh
+' Parámetros: ninguno
+' Retorna   : String[] — una entrada por línea, «nivel<TAB>mensaje»; vacío
+'             si no hay veredicto
+' ============================================
+Public Function LeerVeredicto() As String[]
+
+  Dim sRuta As String
+  Dim sTexto As String
+  Dim aLineas As New String[]
+  Dim sLinea As String
+
+  sRuta = m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_VISTA &/ ARCHIVO_VEREDICTO
+  If Not Exist(sRuta) Then Return aLineas
+  Try sTexto = File.Load(sRuta)
+  If Error Then Return aLineas
+  For Each sLinea In Split(sTexto, "\n")
+    If InStr(sLinea, "\t") > 0 Then aLineas.Add(sLinea)
+  Next
+  Return aLineas
+
+End
+
+' ============================================
+' Función   : RutaPDFVista
+' Propósito : El PDF de la vista previa
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta, exista o no
+' ============================================
+Public Function RutaPDFVista() As String
+
+  Return m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_VISTA &/ ARCHIVO_PDF
+
+End
+
+' ============================================
+' Función   : IdiomaCapituloEnCurso
+' Propósito : El idioma del capítulo abierto en el editor, para los filtros
+'             que lo leen (volada, cifras, conversación)
+' Parámetros: ninguno
+' Retorna   : String — el código; "es" si no hay capítulo o no lo declara,
+'             como IdiomaDeCapitulo de m_GenerarSalidasLibro
+' ============================================
+Private Function IdiomaCapituloEnCurso() As String
+
+  Dim hCapitulo As Result
+
+  If m_InicioCierre.IdCapituloEnCurso = 0 Then Return "es"
+  Try hCapitulo = m_ConexionBD.mConn.Exec(
+    "SELECT idioma_capitulo FROM capitulos WHERE id_capitulo = &1 LIMIT 1",
+    m_InicioCierre.IdCapituloEnCurso)
+  If Error Then Return "es"
+  If Not hCapitulo.Available Then Return "es"
+  If IsNull(hCapitulo["idioma_capitulo"]) Then Return "es"
+  If Len(m_XML.TrimUTF8(hCapitulo["idioma_capitulo"])) = 0 Then Return "es"
+  Return m_XML.TrimUTF8(hCapitulo["idioma_capitulo"])
+
+End
+
+' ============================================
+' Función   : IdiomaArticuloEnCurso
+' Propósito : El idioma del artículo abierto en el editor, con la regla de
+'             m_XML.ArgumentoIdiomaPandoc: la misma que el artículo
+' Parámetros: ninguno
+' Retorna   : String — el código; "es" si no hay artículo
+' ============================================
+Private Function IdiomaArticuloEnCurso() As String
+
+  Dim hArticulo As Result
+  Dim sArgumento As String
+
+  If m_InicioCierre.IdArticuloEnCurso = 0 Then Return "es"
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT idioma_principal FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    m_InicioCierre.IdArticuloEnCurso)
+  If Error Then Return "es"
+  If Not hArticulo.Available Then Return "es"
+  ' ArgumentoIdiomaPandoc DEVUELVE « -M gb-idioma=xx»: EL CÓDIGO VA DESPUÉS DEL =
+  sArgumento = m_XML.ArgumentoIdiomaPandoc(hArticulo)
+  Return Mid(sArgumento, InStr(sArgumento, "=") + 1)
+
+End
+
+' ============================================
+' Función   : NoEncaja
+' Propósito : Deja el motivo por el que el archivo no encaja en el formato
+' Parámetros: sMotivo As String
+' Retorna   : CCuadro — siempre Null, para usarla en un Return
+' ============================================
+Private Function NoEncaja(sMotivo As String) As CCuadro
+
+  $sUltimoError = sMotivo
+  Return Null
+
+End
+
+' ============================================
+' Función   : Escalar
+' Propósito : El valor de una clave del encabezado, como lo leería YAML:
+'             entre comillas simples (con '' por '), entre dobles sin barras,
+'             o sin comillas
+' Parámetros: sCrudo As String — lo que sigue a «clave:», sin los bordes
+' Retorna   : String — el valor; si YAML lo leería distinto deja el motivo
+'             en $sUltimoError (la llamadora lo mira)
+' ============================================
+Private Function Escalar(sCrudo As String) As String
+
+  Dim s As String
+
+  s = sCrudo
+
+  ' --- 1. ENTRE COMILLAS SIMPLES: LA SIMPLE SE DUPLICA ---
+  If s Begins "'" Then
+    If Len(s) < 2 Or Not (s Ends "'") Then
+      $sUltimoError = "la comilla simple no se cierra"
+      Return ""
+    Endif
+    s = Mid(s, 2, Len(s) - 2)
+    If InStr(Replace(s, "''", ""), "'") > 0 Then
+      $sUltimoError = "una comilla simple sin duplicar dentro del valor"
+      Return ""
+    Endif
+    Return Replace(s, "''", "'")
+  Endif
+
+  ' --- 2. ENTRE COMILLAS DOBLES: SIN BARRAS, QUE YAML LEE COMO ESCAPES ---
+  If s Begins "\"" Then
+    If Len(s) < 2 Or Not (s Ends "\"") Then
+      $sUltimoError = "la comilla doble no se cierra"
+      Return ""
+    Endif
+    s = Mid(s, 2, Len(s) - 2)
+    If InStr(s, "\\") > 0 Or InStr(s, "\"") > 0 Then
+      $sUltimoError = "entre comillas dobles, una barra o una comilla son escapes de YAML"
+      Return ""
+    Endif
+    Return s
+  Endif
+
+  ' --- 3. SIN COMILLAS: LO QUE YAML NO LEE COMO TEXTO LLANO ---
+  ' UN COMENTARIO, UN «: » (OTRA CLAVE) O UN INDICADOR AL PRINCIPIO
+  If InStr(s, " #") > 0 Or InStr(s, ": ") > 0 Then
+    $sUltimoError = "sin comillas, un « #» o un «: » cambian la lectura de YAML"
+    Return ""
+  Endif
+  If s <> "" Then
+    If InStr("#&*!|>%@`[]{},?-", Left(s, 1)) > 0 Then
+      $sUltimoError = "sin comillas, «" & Left(s, 1) & "» al principio cambia la lectura de YAML"
+      Return ""
+    Endif
+  Endif
+  Return s
+
+End
+
+' ============================================
+' Función   : EsSi
+' Propósito : Lee un valor de sí o no, con las formas de cuadro-leer.lua
+' Parámetros: s As String — el valor ya leído
+' Retorna   : Integer — 1 sí, 0 no (también vacío), -1 otra cosa
+' ============================================
+Private Function EsSi(s As String) As Integer
+
+  Select Case String.LCase(s)
+    Case "sí", "si", "true"
+      Return 1
+    Case "", "no", "false"
+      Return 0
+  End Select
+  Return -1
+
+End
+
+' ============================================
+' Función   : ListaEnteros
+' Propósito : Lee una lista de filas: «[4, 12]» o «[]»
+' Parámetros: sCrudo As String
+' Retorna   : Integer[] — las filas; Null si no es una lista de enteros
+' ============================================
+Private Function ListaEnteros(sCrudo As String) As Integer[]
+
+  Dim aEnteros As New Integer[]
+  Dim sAdentro As String
+  Dim sParte As String
+
+  If Not (sCrudo Begins "[") Then Return Null
+  If Not (sCrudo Ends "]") Then Return Null
+  sAdentro = Trim(Mid(sCrudo, 2, Len(sCrudo) - 2))
+  If sAdentro = "" Then Return aEnteros
+  For Each sParte In Split(sAdentro, ",")
+    sParte = Trim(sParte)
+    If Not EsEntero(sParte) Then Return Null
+    aEnteros.Add(CInt(sParte))
+  Next
+  Return aEnteros
+
+End
+
+' ============================================
+' Función   : EsEntero
+' Propósito : Responde si un texto es un entero positivo, solo cifras
+' Parámetros: s As String
+' Retorna   : Boolean
+' ============================================
+Public Function EsEntero(s As String) As Boolean
+
+  Dim i As Integer
+
+  If s = "" Then Return False
+  If Len(s) > 6 Then Return False
+  For i = 1 To Len(s)
+    If InStr("0123456789", Mid(s, i, 1)) = 0 Then Return False
+  Next
+  Return True
+
+End
+
+' ============================================
+' Función   : LeerColumna
+' Propósito : Lee una línea de columnas: «- {tipo: texto, ancho: 2.4, alinear: centro}»
+' Parámetros: sLinea As String — sin la sangría
+'             oCuadro As CCuadro — donde se agrega la columna
+' Retorna   : Boolean — False con el motivo en $sUltimoError
+' ============================================
+Private Function LeerColumna(sLinea As String, oCuadro As CCuadro) As Boolean
+
+  Dim sAdentro As String
+  Dim sPar As String
+  Dim sClave As String
+  Dim sValor As String
+  Dim sTipo As String
+  Dim sAncho As String
+  Dim sAlinear As String
+
+  ' --- 1. LA FORMA: «- {…}» ---
+  If Not (sLinea Begins "-") Then
+    $sUltimoError = "una columna empieza con «- »"
+    Return False
+  Endif
+  sAdentro = Trim(Mid(sLinea, 2))
+  If Not (sAdentro Begins "{") Or Not (sAdentro Ends "}") Then
+    $sUltimoError = "una columna va entre llaves: - {tipo: texto}"
+    Return False
+  Endif
+  sAdentro = Mid(sAdentro, 2, Len(sAdentro) - 2)
+
+  ' --- 2. CADA «clave: valor»; UNA COMA DECIMAL DEJA UNA PARTE SIN «:» ---
+  For Each sPar In Split(sAdentro, ",")
+    If InStr(sPar, ":") = 0 Then
+      $sUltimoError = "«" & Trim(sPar) & "» no es clave: valor (¿una coma en el ancho?)"
+      Return False
+    Endif
+    sClave = Trim(Left(sPar, InStr(sPar, ":") - 1))
+    sValor = Trim(Mid(sPar, InStr(sPar, ":") + 1))
+    Select Case sClave
+      Case "tipo"
+        sTipo = sValor
+      Case "ancho"
+        sAncho = sValor
+      Case "alinear"
+        sAlinear = sValor
+      Case Else
+        $sUltimoError = "la columna tiene la clave «" & sClave & "»"
+        Return False
+    End Select
+  Next
+
+  ' --- 3. LOS VALORES QUE LA GRILLA PUEDE MOSTRAR ---
+  If sTipo <> "texto" And sTipo <> "cifra" Then
+    $sUltimoError = "tipo «" & sTipo & "»"
+    Return False
+  Endif
+  If sAlinear <> "" And sAlinear <> "izq" And sAlinear <> "centro" Then
+    $sUltimoError = "alinear «" & sAlinear & "»"
+    Return False
+  Endif
+  If sAncho <> "" Then
+    If Not EsAncho(sAncho) Then
+      $sUltimoError = "ancho «" & sAncho & "»"
+      Return False
+    Endif
+  Endif
+
+  oCuadro.ColTipo.Add(sTipo)
+  oCuadro.ColAncho.Add(sAncho)
+  oCuadro.ColAlinear.Add(sAlinear)
+  Return True
+
+End
+
+' ============================================
+' Función   : EsAncho
+' Propósito : Responde si un texto es un ancho en cm: cifras y, a lo sumo,
+'             un punto decimal (cuadro-leer.lua: ^%d+%.?%d*$)
+' Parámetros: s As String
+' Retorna   : Boolean
+' ============================================
+Public Function EsAncho(s As String) As Boolean
+
+  Dim i As Integer
+  Dim iPuntos As Integer
+
+  If s = "" Then Return False
+  If Left(s, 1) = "." Then Return False
+  For i = 1 To Len(s)
+    If Mid(s, i, 1) = "." Then
+      Inc iPuntos
+    Else If InStr("0123456789", Mid(s, i, 1)) = 0 Then
+      Return False
+    Endif
+  Next
+  Return iPuntos <= 1
+
+End
+
+' ============================================
+' Función   : Citar
+' Propósito : Un valor entre comillas simples de YAML
+' Parámetros: s As String
+' Retorna   : String
+' ============================================
+Private Function Citar(s As String) As String
+
+  Return "'" & Replace(s, "'", "''") & "'"
+
+End
+
+' ============================================
+' Función   : FilaPipe
+' Propósito : Una fila de la pipe table. La barra de una celda va escapada:
+'             sin la barra invertida, pandoc la lee como otra columna
+' Parámetros: aCeldas As String[]
+' Retorna   : String — la línea, terminada en salto
+' ============================================
+Private Function FilaPipe(aCeldas As String[]) As String
+
+  Dim s As String
+  Dim sCelda As String
+
+  s = "|"
+  For Each sCelda In aCeldas
+    s &= " " & Replace(Trim(sCelda), "|", "\\|") & " |"
+  Next
+  Return s & "\n"
+
+End
+
+' ============================================
+' Función   : PartirFila
+' Propósito : Las celdas de una fila de pipe table, con «\|» vuelto a «|»
+' Parámetros: sLinea As String — empieza con «|»
+' Retorna   : String[] — las celdas, sin los espacios de los bordes
+' ============================================
+Private Function PartirFila(sLinea As String) As String[]
+
+  Dim aCeldas As New String[]
+  Dim sCelda As String
+  Dim sCaracter As String
+  Dim i As Integer
+
+  ' BYTE POR BYTE: «|» Y «\» SON ASCII, Y NINGÚN BYTE DE UN CARÁCTER DE VARIOS
+  ' BYTES SE CONFUNDE CON ELLOS (RC-GM-12). LA CELDA SE ARMA CON LOS MISMOS
+  ' BYTES, ASÍ QUE LOS ACENTOS LLEGAN ENTEROS
+  i = 2
+  While i <= Len(sLinea)
+    sCaracter = Mid(sLinea, i, 1)
+    If sCaracter = "\\" And Mid(sLinea, i + 1, 1) = "|" Then
+      sCelda &= "|"
+      i += 2
+      Continue
+    Endif
+    If sCaracter = "|" Then
+      aCeldas.Add(Trim(sCelda))
+      sCelda = ""
+    Else
+      sCelda &= sCaracter
+    Endif
+    Inc i
+  Wend
+
+  ' LO QUE QUEDA DESPUÉS DE LA ÚLTIMA BARRA: UNA CELDA SI TIENE TEXTO (LA
+  ' BARRA FINAL ES OPCIONAL EN PANDOC)
+  If Trim(sCelda) <> "" Then aCeldas.Add(Trim(sCelda))
+  Return aCeldas
+
+End

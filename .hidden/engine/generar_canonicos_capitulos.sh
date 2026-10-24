@@ -103,58 +103,10 @@ XSL="$DIR_GBP_LOCAL/xslt/ensamblar-capitulo-canonico.xsl"
 RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
 DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 
-# EL ORDEN DE LOS FILTROS ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
-# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65, SC-66):
-#   0° cuadro-leer              TRAE EL ARCHIVO DE CADA CUADRO (SC-66) DE
-#      cuadros/ (-M gb-proyecto). PRIMERO: SU CONTENIDO PASA ASÍ POR TODOS
-#      LOS FILTROS. FRENA EL VIEJO ::: {.table}
-#   1° guillemets-to-quoted-db  « » A Quoted. ANTES QUE fenced-divs, QUE
-#      SERIALIZA LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
-#   2° volada                   n\sptext{o} A «n.» Y <superscript
-#      role="volada"> (SC-62). ANTES DE cite-to-biblioref-db, QUE SERIALIZA
-#      LAS NOTAS CON pandoc.write: UNA \sptext QUE LLEGUE AHÍ SIN TRADUCIR
-#      LA DESCARTA EL ESCRITOR DocBook (MEDIDO: «la 2 edición»)
-#   3° corte-titulo             EL \\ DE UN TÍTULO A <?gb-corte?> (SC-63). CON
-#      volada, ANTES DE LOS FILTROS QUE SERIALIZAN
-#   4° cifras                   \num, \SI Y \SIrange A <phrase role="cantidad">
-#      (SC-65). ANTES DE LOS FILTROS QUE SERIALIZAN, POR LA MISMA RAZÓN
-#      (GV-116). LA PALABRA DEL RANGO SALE DE -M gb-idioma-pieza, QUE ES
-#      EL IDIOMA DEL CAPÍTULO (NO gb-idioma: VER conversacion)
-#   5° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
-#   6° dos-partes               EPÍGRAFES {texto}{atribución}; FRENA SI UNO
-#      ESTÁ MAL FORMADO
-#   7° espacio-vertical         FICHA <?gb-espacio …?>; ANTES DE fenced-divs,
-#      QUE NO CONOCE EL BLOQUE espaciov
-#   8° alinear                  FICHA <?gb-alinear …?> AL COMIENZO DE CADA
-#      PÁRRAFO (SC-61); ANTES DE fenced-divs, QUE NO CONOCE LOS BLOQUES
-#      alinear-izq, alinear-centro Y alinear-der
-#   9° recuadros                DESPUÉS DE dos-partes, QUE PARTE EL recuadrob
-#  10° codigo                   <programlisting>; ANTES DE fenced-divs, QUE
-#      ARMA EL <example role="listado">
-#  11° conversacion             ANTES DE fenced-divs, QUE ARMA EL <qandaset>.
-#      SIN -M gb-idioma: LA ETIQUETA LA PONE LA HOJA SEGÚN xml:lang
-#  12° verso                    DESPUÉS DE dos-partes, ANTES DE fenced-divs
-#  13° cuadro-armar             ESCRIBE LA TABLA CALS DEL CUADRO (SC-66).
-#      DESPUÉS DE LAS CITAS Y LAS CIFRAS; ANTES DE fenced-divs, QUE
-#      SERIALIZA LOS BLOQUES QUE CONTIENEN A OTROS
-#  14° fenced-divs-to-elements-db  AL FINAL
-FILTROS=(
-    cuadro-leer.lua
-    guillemets-to-quoted-db.lua
-    volada.lua
-    corte-titulo.lua
-    cifras.lua
-    cite-to-biblioref-db.lua
-    dos-partes.lua
-    espacio-vertical.lua
-    alinear.lua
-    recuadros.lua
-    codigo.lua
-    conversacion.lua
-    verso.lua
-    cuadro-armar.lua
-    fenced-divs-to-elements-db.lua
-)
+# LA LISTA DE FILTROS, CON EL ORDEN Y SUS RAZONES, ESTÁ EN comun.sh
+# (FILTROS_LIBRO): LA USA TAMBIÉN vista_cuadro.sh, QUE TIENE QUE PASAR EL
+# CUADRO POR LOS MISMOS FILTROS QUE EL CAPÍTULO (SC-67)
+FILTROS=("${FILTROS_LIBRO[@]}")
 
 # EL ENVOLTORIO ES OBLIGATORIO: EL XSLT CARGA EL FRAGMENTO CON document() Y
 # SIN LOS NAMESPACES DECLARADOS FALLA (RC-DB-06)

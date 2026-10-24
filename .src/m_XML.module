@@ -2259,6 +2259,8 @@ Public Function GenerarBodyXML(iIdArticulo As Integer) As Boolean
   ' pandoc ... && { ENVOLTORIO } > body || : > fallo: SI UN FILTRO FRENA (UN
   ' EPÍGRAFE O UNA FIGURA MAL FORMADOS, POR EJEMPLO) NO SE ARMA UN body A MEDIAS; SE CREA LA
   ' MARCA DE FALLO Y EL MOTIVO QUEDA ESCRITO EN LA TERMINAL
+  ' LA MISMA LISTA, EN EL MISMO ORDEN, ESTÁ EN engine/comun.sh (FILTROS_REVISTA):
+  ' LA USA LA VISTA PREVIA DE LOS CUADROS (SC-67). UN CAMBIO ACÁ VA TAMBIÉN ALLÁ
   FMain.TerminalViewProyecto.Input(
     "pandoc '" & sRutaMD & "' " &
     "--from markdown --to jats --no-highlight --wrap=none" &
@@ -4477,6 +4479,78 @@ Private Function ObtenerPreambuloEmbebido(bBorrador As Boolean, sEstilo As Strin
   Return s
 
 End Function
+
+' ============================================
+' Función   : EstiloCitaRevista
+' Propósito : El estilo de cita de la revista, como lo usa el preámbulo del
+'             PDF: el nombre del CSL de revistas_md.estilo_cita reducido al
+'             identificador corto (apa, iso690, ieee, vancouver). Es lo que
+'             hacía el apartado 2 de m_GenerarPDF.GenerarPDFunaColumna, que
+'             ahora la llama: el PDF y la vista previa de los cuadros (SC-67)
+'             no pueden leer el estilo de dos maneras
+' Parámetros: iIdRevista As Integer
+' Retorna   : String — el identificador; vacío si la revista no lo tiene o
+'             la consulta falla (EL PDF LO RECIBÍA ASÍ Y ASÍ SIGUE)
+' ============================================
+Public Function EstiloCitaRevista(iIdRevista As Integer) As String
+
+  Dim hEstilo As Result
+  Dim sEstilo As String
+
+  ' --- 1. LA BASE; If ANIDADO: And NO CORTOCIRCUITA (RC-GM-17) ---
+  Try hEstilo = m_ConexionBD.mConn.Exec(
+    "SELECT estilo_cita FROM revistas_md WHERE id_revista = &1 LIMIT 1", iIdRevista)
+  If Not Error Then
+    If hEstilo.Available Then sEstilo = m_Metadatos.NullToString(hEstilo["estilo_cita"])
+  Endif
+
+  ' --- 2. DEL NOMBRE DEL CSL AL IDENTIFICADOR: apa.csl → apa ---
+  sEstilo = LCase(File.BaseName(sEstilo))
+  If sEstilo Begins "apa" Then
+    sEstilo = "apa"
+  Else If InStr(sEstilo, "iso690") > 0 Or sEstilo Begins "iso" Then
+    sEstilo = "iso690"
+  Else If sEstilo Begins "ieee" Then
+    sEstilo = "ieee"
+  Else If sEstilo Begins "vancouver" Or InStr(sEstilo, "numeric") > 0 Then
+    sEstilo = "vancouver"
+  Endif
+
+  Return sEstilo
+
+End
+
+' ============================================
+' Función   : PreambuloVistaCuadro
+' Propósito : El preámbulo de la vista previa de un cuadro de revista
+'             (SC-67): el del PDF en borrador —con showframe—, sin la
+'             bibliografía y sin \begin{document}, que lo pone el maestro de
+'             engine/vista_cuadro.sh
+' Parámetros: sEstilo As String — de EstiloCitaRevista
+' Retorna   : String
+' Nota      : CONSERVA hyperref, AL REVÉS QUE EL DEL LIBRO: ACÁ VA EMBEBIDO A
+'             MITAD DEL PREÁMBULO Y SEGUIDO DE \pdfstringdefDisableCommands,
+'             QUE SIN ÉL NO EXISTE. EN EL LIBRO ES UNA CAPA APARTE Y EL
+'             CONTRATO NO DEPENDE DE ELLA
+' ============================================
+Public Function PreambuloVistaCuadro(sEstilo As String) As String
+
+  Dim s As String
+  Dim iPos As Integer
+
+  ' --- 1. EL DEL PDF, EN BORRADOR ---
+  s = ObtenerPreambuloEmbebido(True, sEstilo)
+
+  ' --- 2. SIN .bib: EL CUADRO SOLO NO RESUELVE CITAS, Y biblatex COMPONE IGUAL ---
+  s = Replace(s, "%%BIBRESOURCE%%", "")
+
+  ' --- 3. SIN \begin{document}: ES LA ÚLTIMA LÍNEA DEL PREÁMBULO ---
+  iPos = RInStr(s, "\\begin{document}")
+  If iPos > 0 Then s = Left(s, iPos - 1)
+
+  Return s
+
+End
 
 ' ============================================
 ' Función   : GenerarTeXBodyDesdeCanonico

@@ -1,17 +1,69 @@
 ' Gambas class file
 
-' FORMULARIO PARA CREAR TABLAS EN FORMATO MARKDOWN
-' PERMITE DEFINIR FILAS, COLUMNAS Y CONTENIDO DE CELDAS
+' LOS CUADROS DEL PROYECTO (SC-66, SC-67): LA LISTA DE cuadros/, EL CUADRO
+' ABIERTO EN DOS PESTAÑAS —DATOS Y DISEÑO—, LA VISTA PREVIA CON SU VEREDICTO
+' E INSERTAR EL CUADRO EN EL .md.
+'
+' TRES MODOS PARA LOS DATOS
+'   MODO_GRILLA         una pipe table: la grilla, celda por celda, con el
+'                       texto de cada celda en Markdown tal cual
+'   MODO_TABLA_TEXTO    otra tabla (grid table, con celdas unidas): la tabla
+'                       como texto; el diseño sigue en su pestaña (SC-67, a)
+'   MODO_ARCHIVO_TEXTO  un encabezado que no encaja en el formato: el
+'                       archivo entero como texto, con el motivo (SC-67, b)
+'   NO HAY CONVERSIÓN AUTOMÁTICA. «La tabla como texto» pasa de la grilla al
+'   texto (para unir celdas) y «Pasar a la grilla» vuelve si el texto es una
+'   pipe table simple; si no, no cambia nada.
+'
+' LOS CORTES Y LOS BLOQUES VIVEN EN SUS DOS CAMPOS DE DISEÑO: EL MENÚ DE LA
+' FILA LOS ESCRIBE AHÍ, Y LOS TÍTULOS DE FILA DE LA GRILLA LOS MUESTRAN.
+'
+' LO QUE CONTROLA DE VERDAD ES cuadro-leer.lua: EL FORMULARIO SOLO EVITA LO
+' QUE NO SE PUEDE ESCRIBIR (UN CORTE QUE NO ES NÚMERO, UN ANCHO CON LETRAS).
+' LA VISTA PREVIA LO CORRE.
 
-Property Read MarkDownTable As String
-Private $sMarkdownTableDefinition As String
-Private $aMaxWidths As Variant  ' Array bidimensional para anchos máximos de columnas
-' FLAG PARA PERMITIR EL CIERRE DESDE EL BOTÓN
-Private bCierrePermitido As Boolean
+Private Const MODO_GRILLA As Integer = 0
+Private Const MODO_TABLA_TEXTO As Integer = 1
+Private Const MODO_ARCHIVO_TEXTO As Integer = 2
+
+' LAS MARCAS DE LOS TÍTULOS DE FILA
+Private Const MARCA_CORTE As String = " ✂"
+Private Const MARCA_BLOQUE As String = " ═"
+
+' EL CUADRO ABIERTO: SU id, EL TEXTO COMO ESTÁ EN DISCO, EL MODO Y EL MODELO
+Private $sId As String
+Private $sGuardado As String
+Private $iModo As Integer
+Private $oCuadro As CCuadro
+
+' EL COLOREO DEL MODO TEXTO (SC-15); SE QUITA AL CERRAR (QuitarVisor)
+Private $hVisor As CVisorResaltado
+
+' LA LISTA: EL ÍNDICE ELEGIDO, PARA VOLVER A ÉL SI SE CANCELA UN CAMBIO, Y
+' LA MARCA QUE CALLA SU EVENTO MIENTRAS SE LLENA
+Private $iIndiceLista As Integer = -1
+Private $bLlenando As Boolean
+
+' EL CIERRE SOLO POR LOS BOTONES
+Private $bCierrePermitido As Boolean
+
+' LA EDICIÓN ABIERTA EN CADA GRILLA: SOLO SE GUARDA LO QUE ABRIÓ UN CLIC. EL
+' EDITOR DE TableView VUELVE A LANZAR Save CON SU TEXTO VIEJO CUANDO LA
+' GRILLA CAMBIA DE FILAS, AUNQUE YA SE HAYA GUARDADO Y CERRADO (GV-129)
+Private $bEditandoDatos As Boolean
+Private $iFilaDatos As Integer
+Private $iColumnaDatos As Integer
+Private $bEditandoColumnas As Boolean
+Private $iFilaColumnas As Integer
+Private $iColumnaColumnas As Integer
+
+' LA LETRA DEL ENCABEZADO DE LA TABLA: SE ARMA UNA VEZ, PORQUE Data ES RUTA
+' CALIENTE (GV-15)
+Private $hNegrita As Font
 
 ' ============================================
 ' Función   : Form_Show
-' Propósito : APLICAR LA CONFIGURACIÓN DE BOTONES DEL MARCO
+' Propósito : Los botones del marco (SC-20)
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -21,229 +73,1329 @@ Public Sub Form_Show()
 
 End
 
-Public Sub btnCerrar_Click()
-  ' HABILITAR EL CIERRE Y CERRAR
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara las grillas, el coloreo y la lista; abre el primer
+'             cuadro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
 
-  bCierrePermitido = True
-  Me.Close()
+  ' --- 1. LAS GRILLAS ---
+  $hNegrita = Font["Bold"]
+  tvDatos.Header = GridView.Both
+  tvColumnas.Header = GridView.Horizontal
+  tvColumnas.Columns.Count = 3
+  tvColumnas.Columns[0].Title = "Tipo"
+  tvColumnas.Columns[1].Title = "Ancho (cm)"
+  tvColumnas.Columns[2].Title = "Alinear"
+  tvColumnas.Columns[0].Width = 120
+  tvColumnas.Columns[1].Width = 120
+  tvColumnas.Columns[2].Width = 120
+
+  ' --- 2. EL COLOREO DEL MODO TEXTO; SI NO SE PUEDE, EL TEXTO VA SIN COLOR ---
+  $hVisor = m_ResaltadoSintaxis.CrearVisor(txaTabla, "markdown")
+
+  ' --- 3. LA LISTA Y EL PRIMER CUADRO ---
+  m_Cuadros.ElegirParaInsertar("")
+  LlenarLista("")
+  If lstCuadros.Count > 0 Then
+    lstCuadros.Index = 0
+  Else
+    MostrarVacio()
+  Endif
 
 End
 
+' ============================================
+' Función   : Form_Close
+' Propósito : Solo se cierra por los botones
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub Form_Close()
-  ' SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO
 
-  If bCierrePermitido Then Return
-  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
+  If $bCierrePermitido Then Return
   m_Sonido.sonar("info")
-  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
+  Message.Info("Para cerrar el formulario use el botón <b>Cerrar</b>.")
   Stop Event
 
 End
 
-' EVENTO: APERTURA DEL FORMULARIO
-' INICIALIZA TODOS LOS CONTROLES Y PROPIEDADES DE LA INTERFAZ
-Public Sub Form_Open()
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra sin insertar, después de resolver los cambios
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
 
-  tblCuadros.AutoResize = True
-  tblCuadros.Mode = Select.Single
-  tblCuadros.Header = tblCuadros.Both
-  tblCuadros.Rows.Count = spinboxRows.Value
-  tblCuadros.Columns.Count = spinboxColumns.Value
-  tblCuadros.NoKeyboard = False
-
-  InicializarArray()
-  ConfigurarColumnas()
+  If Not ResolverCambios() Then Return
+  Cerrar(0)
 
 End
 
-' EVENTO: LLENAR DATOS INICIALES DE CADA CELDA
-Public Sub tblCuadros_Data(Row As Integer, Column As Integer)
+' ============================================
+' Función   : btnInsertar_Click
+' Propósito : Elige el cuadro abierto para insertarlo en el .md y cierra.
+'             FMain inserta la marca (RC-GM-13)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnInsertar_Click()
 
-  tblCuadros.Data.Text = ("Fila") & "-" & (Row + 1) & "-" & ("Columna") & "-" & (Column + 1)
-
-End
-
-' EVENTO: CAMBIO EN EL NÚMERO DE FILAS
-' AJUSTA EL NÚMERO DE FILAS EN LA TABLA Y REINICIALIZA EL ARRAY DE ANCHOS
-Public Sub spinboxRows_Change()
-
-  tblCuadros.Rows.Count = spinboxRows.Value
-  InicializarArray()
-
-End
-
-' EVENTO: CAMBIO EN EL NÚMERO DE COLUMNAS
-' AJUSTA EL NÚMERO DE COLUMNAS EN LA TABLA Y ACTUALIZA TÍTULOS
-Public Sub spinboxColumns_Change()
-
-  tblCuadros.Columns.Count = spinboxColumns.Value
-  InicializarArray()
-  ConfigurarColumnas()
+  If $sId = "" Then Return
+  ' LO QUE SE INSERTA ES EL NOMBRE: EL ARCHIVO TIENE QUE ESTAR GUARDADO
+  If Not ResolverCambios() Then Return
+  m_Cuadros.ElegirParaInsertar($sId)
+  Cerrar(1)
 
 End
 
-' EVENTO: CLICK EN UNA CELDA DE LA TABLA
-' ACTIVA EL MODO DE EDICIÓN PARA LA CELDA SELECCIONADA
-Public Sub tblCuadros_Click()
+' ============================================
+' Función   : Cerrar
+' Propósito : El único cierre: suelta el coloreo y cierra con un valor
+' Parámetros: iValor As Integer — 1 si hay que insertar, 0 si no
+' Retorna   : nada
+' ============================================
+Private Sub Cerrar(iValor As Integer)
 
-  Dim txbEditor As TextBox
-
-  txbEditor = New TextBox(tblCuadros)
-  tblCuadros[tblCuadros.Row, tblCuadros.Column].Text = ""
-  tblCuadros.EditWith(txbEditor)
-
-End
-
-' AJUSTA AUTOMÁTICAMENTE EL ANCHO DE COLUMNA SEGÚN EL CONTENIDO
-Public Sub tblCuadros_Save(Row As Integer, Column As Integer, ValueEdit As String)
-
-  Dim iTextWidth As Integer
-
-  tblCuadros[Row, Column].Text = ValueEdit
-
-  ' CALCULAR ANCHO DEL TEXTO
-  iTextWidth = tblCuadros.Font.TextWidth(ValueEdit)
-
-  ' ACTUALIZAR ANCHO MÁXIMO DE ESTA COLUMNA SI ES NECESARIO
-  If $aMaxWidths[Row][Column] < iTextWidth Then
-    $aMaxWidths[Row][Column] = iTextWidth
-    tblCuadros.Columns[Column].Width = iTextWidth + 8  ' +8 para padding
-  Else
-    tblCuadros.Columns[Column].Width = $aMaxWidths[Row][Column] + 8
-  Endif
+  ' SIN ESTO, EL PRÓXIMO CAMBIO DE TEMA REPINTA UN CONTROL QUE YA NO EXISTE
+  m_ResaltadoSintaxis.QuitarVisor($hVisor)
+  $hVisor = Null
+  $bCierrePermitido = True
+  Me.Close(iValor)
 
 End
 
-' EVENTO: CREAR TABLA MARKDOWN
-' VALIDA LA POSICIÓN DEL CURSOR Y GENERA LA TABLA SI ES VÁLIDA
-' CIERRA EL FORMULARIO CON CÓDIGO 1 SI TODO ES CORRECTO
-Public Sub btnCreateMDTable_Click()
+' ============================================
+' Función   : LlenarLista
+' Propósito : Lista los cuadros de cuadros/ y elige uno
+' Parámetros: sElegir As String — el id a dejar elegido; vacío, ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LlenarLista(sElegir As String)
 
-  ' VALIDAR QUE EL CURSOR ESTÉ AL INICIO DE UNA LÍNEA VACÍA
-  If Not m_EditorPrincipal.CursorEnLineaVaciaAlInicio() Then
-    Message.Title = ("Error de posición")
-    Message.Error(("No se puede insertar una tabla dentro de una línea.\nEl cursor debe estar al inicio de una línea vacía."))
+  Dim aIds As String[]
+  Dim i As Integer
+
+  ' EL EVENTO DE LA LISTA CALLA MIENTRAS SE LLENA: NO ES UNA ELECCIÓN
+  $bLlenando = True
+  aIds = m_Cuadros.Listar()
+  lstCuadros.List = aIds
+  $iIndiceLista = -1
+  For i = 0 To aIds.Max
+    If aIds[i] = sElegir Then
+      lstCuadros.Index = i
+      $iIndiceLista = i
+    Endif
+  Next
+  $bLlenando = False
+
+End
+
+' ============================================
+' Función   : lstCuadros_Click
+' Propósito : Abre el cuadro elegido, después de resolver los cambios del
+'             anterior; si se cancela, la lista vuelve al anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub lstCuadros_Click()
+
+  If $bLlenando Then Return
+  If lstCuadros.Index = $iIndiceLista Then Return
+
+  ' --- 1. LOS CAMBIOS DEL QUE ESTABA ABIERTO ---
+  If Not ResolverCambios() Then
+    $bLlenando = True
+    lstCuadros.Index = $iIndiceLista
+    $bLlenando = False
     Return
   Endif
 
-  CrearTablaMarkdown()
-  Me.Close(1)  ' RETORNA 1 PARA INDICAR ÉXITO
+  ' --- 2. EL NUEVO ---
+  $iIndiceLista = lstCuadros.Index
+  If $iIndiceLista < 0 Then Return
+  Abrir(lstCuadros.Text)
 
 End
 
-' PROCEDIMIENTO: CREAR TABLA EN FORMATO MARKDOWN
-' GENERA LA SINTAXIS DE TABLA MARKDOWN SEGÚN EL CONTENIDO DE TBLCUADROS
-' ALMACENA EL RESULTADO EN $SMARKDOWNTABLEDEFINITION
-Private Sub CrearTablaMarkdown()
+' ============================================
+' Función   : Abrir
+' Propósito : Lee un cuadro de disco y lo muestra en el modo que le toca
+' Parámetros: sId As String
+' Retorna   : nada
+' ============================================
+Private Sub Abrir(sId As String)
 
-  Dim r, c As Integer
-  Dim sMDQT As String
+  Dim sTexto As String
+  Dim oCuadro As CCuadro
+
+  ' --- 1. EL ARCHIVO ---
+  Try sTexto = File.Load(m_Cuadros.RutaCuadro(sId))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el cuadro:" & gb.NewLine & m_Cuadros.RutaCuadro(sId) & gb.NewLine & Error.Text)
+    MostrarVacio()
+    Return
+  Endif
+  $sId = sId
+  $sGuardado = sTexto
+  lblArchivo.Text = m_Cuadros.CARPETA_CUADROS &/ sId & ".md"
+  lstVeredicto.Clear()
+
+  ' --- 2. EL FORMATO: SI EL ENCABEZADO NO ENCAJA, EL ARCHIVO COMO TEXTO ---
+  oCuadro = m_Cuadros.Leer(sTexto)
+  If Not oCuadro Then
+    MostrarArchivoTexto(sTexto, m_Cuadros.UltimoError())
+    Return
+  Endif
+
+  ' --- 3. EL CUADRO ---
+  MostrarCuadro(oCuadro)
+
+  ' EL TEXTO GUARDADO, NORMALIZADO: SI EL ARCHIVO SE ESCRIBIÓ A MANO, LO QUE
+  ' DIFIERE SOLO EN LA FORMA (COMILLAS, ORDEN) NO CUENTA COMO CAMBIO
+  $sGuardado = TextoActual()
+
+End
+
+' ============================================
+' Función   : MostrarVacio
+' Propósito : Ningún cuadro abierto: todo deshabilitado salvo la lista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarVacio()
+
+  $sId = ""
+  $sGuardado = ""
+  $oCuadro = Null
+  lblArchivo.Text = ("Ningún cuadro abierto: elegí uno de la lista o creá uno nuevo.")
+  tabCuadro.Enabled = False
+  btnGuardar.Enabled = False
+  btnVista.Enabled = False
+  btnInsertar.Enabled = False
+  btnDuplicar.Enabled = False
+  lblEstado.Text = ""
+
+End
+
+' ============================================
+' Función   : MostrarCuadro
+' Propósito : Pasa un cuadro leído a los controles: el diseño y los datos
+'             en la grilla o como texto
+' Parámetros: oCuadro As CCuadro
+' Retorna   : nada
+' ============================================
+Private Sub MostrarCuadro(oCuadro As CCuadro)
+
+  ' --- 1. EL MODELO Y EL DISEÑO ---
+  $oCuadro = oCuadro
+  txtTitulo.Text = oCuadro.Titulo
+  txtNota.Text = oCuadro.Nota
+  cmbCuerpo.Text = oCuadro.Cuerpo
+  cmbSeparacion.Text = oCuadro.Separacion
+  cmbAncho.Text = oCuadro.Ancho
+  chkRotar.Value = oCuadro.Rotar
+  chkAgrupar.Value = oCuadro.Agrupar
+  txtCortes.Text = m_Cuadros.UnirEnteros(oCuadro.Cortes)
+  txtBloques.Text = m_Cuadros.UnirEnteros(oCuadro.Bloques)
+
+  ' --- 2. LOS DATOS ---
+  If oCuadro.EsTablaTexto Then
+    $iModo = MODO_TABLA_TEXTO
+    MostrarTexto(oCuadro.TablaTexto)
+    lblEstado.Text = ("La tabla tiene celdas unidas o no es una pipe table: se edita como texto.")
+  Else
+    $iModo = MODO_GRILLA
+    RefrescarGrilla()
+    lblEstado.Text = ""
+  Endif
+
+  ' --- 3. LOS CONTROLES DEL MODO ---
+  AjustarModo()
+  RefrescarColumnas()
+
+End
+
+' ============================================
+' Función   : MostrarArchivoTexto
+' Propósito : El archivo entero como texto, con el motivo
+' Parámetros: sTexto As String — el archivo; sMotivo As String
+' Retorna   : nada
+' ============================================
+Private Sub MostrarArchivoTexto(sTexto As String, sMotivo As String)
+
+  $iModo = MODO_ARCHIVO_TEXTO
+  $oCuadro = Null
+  MostrarTexto(sTexto)
+  AjustarModo()
+  tabCuadro.Index = 0
+  lblEstado.Text = ("El encabezado no encaja en el formato del formulario: ") & sMotivo &
+    (". Se edita como texto.")
+
+End
+
+' ============================================
+' Función   : MostrarTexto
+' Propósito : Pone un texto en txaTabla, coloreado si hay visor
+' Parámetros: sTexto As String
+' Retorna   : nada
+' ============================================
+Private Sub MostrarTexto(sTexto As String)
+
+  If $hVisor Then
+    If $hVisor.Mostrar(sTexto) Then Return
+  Endif
+  ' SIN VISOR O SI FALLÓ (YA INFORMADO): EL TEXTO SIN COLOR
+  txaTabla.Text = sTexto
+
+End
+
+' ============================================
+' Función   : AjustarModo
+' Propósito : Los controles que valen en el modo actual
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub AjustarModo()
+
+  Dim bGrilla As Boolean
+
+  bGrilla = ($iModo = MODO_GRILLA)
+  tabCuadro.Enabled = True
+  tvDatos.Visible = bGrilla
+  txaTabla.Visible = Not bGrilla
+  btnFila.Visible = bGrilla
+  btnColumna.Visible = bGrilla
+  btnPasarTexto.Visible = bGrilla
+  btnPasarGrilla.Visible = Not bGrilla
+  btnColorear.Visible = Not bGrilla
+
+  ' EL DISEÑO NO SE PUEDE TOCAR SI EL ENCABEZADO NO ENCAJA: ESTÁ EN EL TEXTO
+  ' vbxDiseno.Enabled = ($iModo <> MODO_ARCHIVO_TEXTO)
+
+  ' CON LA TABLA COMO TEXTO, LAS COLUMNAS NO SE CUENTAN: SE AGREGAN A MANO
+  btnColMas.Visible = ($iModo = MODO_TABLA_TEXTO)
+  btnColMenos.Visible = ($iModo = MODO_TABLA_TEXTO)
+
+  btnGuardar.Enabled = True
+  btnVista.Enabled = True
+  btnInsertar.Enabled = True
+  btnDuplicar.Enabled = True
+
+End
+
+' ============================================
+' Función   : RefrescarGrilla
+' Propósito : Ajusta la grilla al modelo y repone los títulos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub RefrescarGrilla()
+
+  CerrarEdicion()
+  ' LA FILA 0 ES EL ENCABEZADO DE LA TABLA; LAS DEMÁS, EL CUERPO
+  tvDatos.Columns.Count = $oCuadro.Encabezado.Count
+  tvDatos.Rows.Count = $oCuadro.Filas.Count + 1
+  TitularColumnas()
+  TitularFilas()
+  tvDatos.Refresh
+
+End
+
+' ============================================
+' Función   : TitularColumnas
+' Propósito : Los títulos de columna de la grilla: número y tipo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub TitularColumnas()
+
+  Dim i As Integer
+
+  If $iModo <> MODO_GRILLA Then Return
+  For i = 0 To tvDatos.Columns.Count - 1
+    tvDatos.Columns[i].Title = CStr(i + 1) & " · " & $oCuadro.ColTipo[i]
+  Next
+
+End
+
+' ============================================
+' Función   : TitularFilas
+' Propósito : Los títulos de fila de la grilla: «enc.» para el encabezado y
+'             el número de fila del cuerpo, con la marca de corte o de bloque
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub TitularFilas()
+
+  Dim aCortes As Integer[]
+  Dim aBloques As Integer[]
+  Dim sTitulo As String
+  Dim i As Integer
+
+  If $iModo <> MODO_GRILLA Then Return
+  ' UN CAMPO QUE TODAVÍA NO ES UNA LISTA NO MARCA NADA: SE AVISA AL GUARDAR
+  aCortes = ListaDeCampo(txtCortes.Text)
+  aBloques = ListaDeCampo(txtBloques.Text)
+  If Not aCortes Then aCortes = New Integer[]
+  If Not aBloques Then aBloques = New Integer[]
+
+  tvDatos.Rows[0].Title = ("enc.")
+  For i = 1 To tvDatos.Rows.Count - 1
+    sTitulo = CStr(i)
+    If aCortes.Exist(i) Then sTitulo &= MARCA_CORTE
+    If aBloques.Exist(i) Then sTitulo &= MARCA_BLOQUE
+    tvDatos.Rows[i].Title = sTitulo
+  Next
+
+End
+
+' ============================================
+' Función   : tvDatos_Data
+' Propósito : El texto de cada celda, del modelo. RUTA CALIENTE: SOLO
+'             INDEXA (GV-15)
+' Parámetros: Row As Integer, Column As Integer
+' Retorna   : nada
+' ============================================
+Public Sub tvDatos_Data(Row As Integer, Column As Integer)
+
+  If Not $oCuadro Then Return
+  If Row = 0 Then
+    tvDatos.Data.Text = $oCuadro.Encabezado[Column]
+    tvDatos.Data.Font = $hNegrita
+    tvDatos.Data.Background = &HD9E1EB
+  Else
+    tvDatos.Data.Text = $oCuadro.Filas[Row - 1][Column]
+  Endif
+
+End
+
+' ============================================
+' Función   : tvDatos_Click
+' Propósito : Edita la celda elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub tvDatos_Click()
+
+  ' LA CELDA QUE SE ABRE: Save SOLO VALE PARA ELLA (GV-129)
+  $iFilaDatos = tvDatos.Row
+  $iColumnaDatos = tvDatos.Column
+  $bEditandoDatos = True
+  tvDatos.Edit()
+
+End
+
+' ============================================
+' Función   : tvDatos_Save
+' Propósito : Guarda en el modelo lo escrito en una celda (RC-GM-03)
+' Parámetros: Row As Integer, Column As Integer, Value As String
+' Retorna   : nada
+' ============================================
+Public Sub tvDatos_Save(Row As Integer, Column As Integer, Value As String)
+
+  ' UN Save QUE NO VIENE DE UNA EDICIÓN ABIERTA POR UN CLIC ES EL EDITOR
+  ' REPITIENDO SU TEXTO VIEJO: SE DESCARTA (GV-129)
+  If Not $bEditandoDatos Then Return
+  If Row <> $iFilaDatos Or Column <> $iColumnaDatos Then Return
+  $bEditandoDatos = False
+  If Row = 0 Then
+    $oCuadro.Encabezado[Column] = Trim(Value)
+  Else
+    $oCuadro.Filas[Row - 1][Column] = Trim(Value)
+  Endif
+
+End
+
+' ============================================
+' Función   : mnuFila_Show
+' Propósito : Nombra en el menú la fila sobre la que actúa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFila_Show()
+
+  Dim iFila As Integer
+
+  iFila = tvDatos.Row
+  ' LA FILA 0 ES EL ENCABEZADO: NO SE QUITA NI SE CORTA DESPUÉS DE ELLA
+  mnuFilaQuitar.Enabled = (iFila >= 1)
+  mnuFilaCorte.Enabled = (iFila >= 1)
+  mnuFilaBloque.Enabled = (iFila >= 1)
+  mnuFilaArriba.Enabled = (iFila >= 1)
+  If iFila >= 1 Then
+    mnuFilaQuitar.Text = ("Quitar la fila ") & CStr(iFila)
+    mnuFilaCorte.Text = ("Cortar el cuadro después de la fila ") & CStr(iFila)
+    mnuFilaBloque.Text = ("Filete doble después de la fila ") & CStr(iFila)
+  Endif
+
+End
+
+' ============================================
+' Función   : mnuFilaArriba_Click
+' Propósito : Una fila vacía arriba de la elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaArriba_Click()
+
+  If tvDatos.Row < 1 Then Return
+  InsertarFila(tvDatos.Row - 1)
+
+End
+
+' ============================================
+' Función   : mnuFilaAbajo_Click
+' Propósito : Una fila vacía abajo de la elegida (debajo del encabezado si
+'             es el encabezado)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaAbajo_Click()
+
+  If tvDatos.Row < 0 Then Return
+  InsertarFila(tvDatos.Row)
+
+End
+
+' ============================================
+' Función   : InsertarFila
+' Propósito : Inserta una fila vacía en el cuerpo y corre los cortes y los
+'             bloques que quedan debajo
+' Parámetros: iIndice As Integer — índice en Filas (0 = primera del cuerpo)
+' Retorna   : nada
+' ============================================
+Private Sub InsertarFila(iIndice As Integer)
+
+  Dim aFila As New String[]
+  Dim i As Integer
+
+  CerrarEdicion()
+  For i = 1 To $oCuadro.Encabezado.Count
+    aFila.Add("")
+  Next
+  ' Add CON ÍNDICE INSERTA; Insert EMPALMA OTRO ARRAY (GV-13)
+  $oCuadro.Filas.Add(aFila, iIndice)
+  ' LA FILA NUEVA ES LA iIndice + 1: LO QUE ESTABA DESDE AHÍ BAJA UNA
+  CorrerFilas(iIndice + 1, 1)
+  RefrescarGrilla()
+
+End
+
+' ============================================
+' Función   : mnuFilaQuitar_Click
+' Propósito : Quita la fila elegida; el cuerpo conserva al menos una
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaQuitar_Click()
+
+  Dim iFila As Integer
+
+  CerrarEdicion()
+  iFila = tvDatos.Row
+  If iFila < 1 Then Return
+  If $oCuadro.Filas.Count <= 1 Then
+    m_Sonido.sonar("Info")
+    Message.Info("El cuadro necesita al menos una fila en el cuerpo.")
+    Return
+  Endif
+  $oCuadro.Filas.Remove(iFila - 1)
+  ' UN CORTE O UN BLOQUE EN LA FILA QUITADA SE VA CON ELLA
+  QuitarDeCampo(txtCortes, iFila)
+  QuitarDeCampo(txtBloques, iFila)
+  CorrerFilas(iFila + 1, -1)
+  RefrescarGrilla()
+
+End
+
+' ============================================
+' Función   : mnuFilaCorte_Click
+' Propósito : Pone o saca el corte después de la fila elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaCorte_Click()
+
+  If tvDatos.Row < 1 Then Return
+  AlternarEnCampo(txtCortes, tvDatos.Row)
+  TitularFilas()
+
+End
+
+' ============================================
+' Función   : mnuFilaBloque_Click
+' Propósito : Pone o saca el filete doble después de la fila elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaBloque_Click()
+
+  If tvDatos.Row < 1 Then Return
+  AlternarEnCampo(txtBloques, tvDatos.Row)
+  TitularFilas()
+
+End
+
+' ============================================
+' Función   : txtCortes_Change
+' Propósito : Los títulos de fila siguen al campo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtCortes_Change()
+
+  TitularFilas()
+
+End
+
+' ============================================
+' Función   : txtBloques_Change
+' Propósito : Los títulos de fila siguen al campo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBloques_Change()
+
+  TitularFilas()
+
+End
+
+' ============================================
+' Función   : mnuColIzquierda_Click
+' Propósito : Una columna vacía a la izquierda de la elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuColIzquierda_Click()
+
+  If tvDatos.Column < 0 Then Return
+  InsertarColumna(tvDatos.Column)
+
+End
+
+' ============================================
+' Función   : mnuColDerecha_Click
+' Propósito : Una columna vacía a la derecha de la elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuColDerecha_Click()
+
+  If tvDatos.Column < 0 Then Return
+  InsertarColumna(tvDatos.Column + 1)
+
+End
+
+' ============================================
+' Función   : InsertarColumna
+' Propósito : Inserta una columna de texto vacía en la tabla y en el diseño
+' Parámetros: iIndice As Integer
+' Retorna   : nada
+' ============================================
+Private Sub InsertarColumna(iIndice As Integer)
+
+  Dim aFila As String[]
+
+  CerrarEdicion()
+  $oCuadro.Encabezado.Add("", iIndice)
+  For Each aFila In $oCuadro.Filas
+    aFila.Add("", iIndice)
+  Next
+  $oCuadro.ColTipo.Add("texto", iIndice)
+  $oCuadro.ColAncho.Add("", iIndice)
+  $oCuadro.ColAlinear.Add("", iIndice)
+  RefrescarGrilla()
+  RefrescarColumnas()
+
+End
+
+' ============================================
+' Función   : mnuColQuitar_Click
+' Propósito : Quita la columna elegida, de la tabla y del diseño
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuColQuitar_Click()
+
+  Dim iColumna As Integer
+  Dim aFila As String[]
+
+  CerrarEdicion()
+  iColumna = tvDatos.Column
+  If iColumna < 0 Then Return
+  If $oCuadro.Encabezado.Count <= 1 Then
+    m_Sonido.sonar("Info")
+    Message.Info("El cuadro necesita al menos una columna.")
+    Return
+  Endif
+  If Message.Question(("¿Quitar la columna ") & CStr(iColumna + 1) & (" con todo su contenido?"),
+      ("Quitar"), ("Cancelar")) <> 1 Then Return
+
+    $oCuadro.Encabezado.Remove(iColumna)
+    For Each aFila In $oCuadro.Filas
+      aFila.Remove(iColumna)
+    Next
+    $oCuadro.ColTipo.Remove(iColumna)
+    $oCuadro.ColAncho.Remove(iColumna)
+    $oCuadro.ColAlinear.Remove(iColumna)
+    RefrescarGrilla()
+    RefrescarColumnas()
+
+End
+
+' ============================================
+' Función   : RefrescarColumnas
+' Propósito : La grilla del diseño de columnas, del modelo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub RefrescarColumnas()
+
+  CerrarEdicion()
+  If Not $oCuadro Then
+    tvColumnas.Rows.Count = 0
+    Return
+  Endif
+  tvColumnas.Rows.Count = $oCuadro.ColTipo.Count
+  tvColumnas.Refresh
+
+End
+
+' ============================================
+' Función   : tvColumnas_Data
+' Propósito : El diseño de cada columna. La alineación vacía es «izq», la
+'             que aplica cuadro-leer.lua
+' Parámetros: Row As Integer, Column As Integer
+' Retorna   : nada
+' ============================================
+Public Sub tvColumnas_Data(Row As Integer, Column As Integer)
+
+  If Not $oCuadro Then Return
+  Select Case Column
+    Case 0
+      tvColumnas.Data.Text = $oCuadro.ColTipo[Row]
+    Case 1
+      tvColumnas.Data.Text = $oCuadro.ColAncho[Row]
+    Case 2
+      If $oCuadro.ColTipo[Row] = "cifra" Then
+        tvColumnas.Data.Text = ""
+      Else If $oCuadro.ColAlinear[Row] = "" Then
+        tvColumnas.Data.Text = "izq"
+      Else
+        tvColumnas.Data.Text = $oCuadro.ColAlinear[Row]
+      Endif
+  End Select
+
+End
+
+' ============================================
+' Función   : tvColumnas_Click
+' Propósito : Edita el diseño de una columna: el tipo y la alineación de una
+'             lista cerrada, el ancho a mano. La de cifras no lleva ancho ni
+'             alineación: la alinea siunitx en el punto (cuadro-leer.lua)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub tvColumnas_Click()
+
+  If Not $oCuadro Then Return
+  If tvColumnas.Row < 0 Then Return
+  ' LA DE CIFRAS NO ABRE ANCHO NI ALINEACIÓN
+  If tvColumnas.Column >= 1 Then
+    If $oCuadro.ColTipo[tvColumnas.Row] = "cifra" Then Return
+  Endif
+
+  ' LA CELDA QUE SE ABRE: Save SOLO VALE PARA ELLA (GV-129)
+  $iFilaColumnas = tvColumnas.Row
+  $iColumnaColumnas = tvColumnas.Column
+  $bEditandoColumnas = True
+  Select Case tvColumnas.Column
+    Case 0
+      tvColumnas.Edit(["texto", "cifra"], True)
+    Case 1
+      tvColumnas.Edit()
+    Case 2
+      tvColumnas.Edit(["izq", "centro"], True)
+  End Select
+
+End
+
+' ============================================
+' Función   : tvColumnas_Save
+' Propósito : Guarda en el modelo el diseño de una columna (RC-GM-03)
+' Parámetros: Row As Integer, Column As Integer, Value As String
+' Retorna   : nada
+' ============================================
+Public Sub tvColumnas_Save(Row As Integer, Column As Integer, Value As String)
+
+  Dim sAncho As String
+
+  ' COMO EN tvDatos_Save: SOLO LA EDICIÓN QUE ABRIÓ UN CLIC (GV-129)
+  If Not $bEditandoColumnas Then Return
+  If Row <> $iFilaColumnas Or Column <> $iColumnaColumnas Then Return
+  $bEditandoColumnas = False
+  Select Case Column
+    Case 0
+      $oCuadro.ColTipo[Row] = Value
+      ' A CIFRA: SIN ANCHO NI ALINEACIÓN, QUE cuadro-leer.lua FRENARÍA
+      If Value = "cifra" Then
+        $oCuadro.ColAncho[Row] = ""
+        $oCuadro.ColAlinear[Row] = ""
+      Endif
+      TitularColumnas()
+    Case 1
+      ' LA COMA DECIMAL DEL TECLADO PASA A PUNTO: YAML LEERÍA «2,4» COMO DOS CLAVES
+      sAncho = Replace(Trim(Value), ",", ".")
+      If sAncho <> "" Then
+        If Not m_Cuadros.EsAncho(sAncho) Then
+          m_Sonido.sonar("Warning")
+          Message.Warning("El ancho va en centímetros, con decimales: 2.4")
+          Return
+        Endif
+      Endif
+      $oCuadro.ColAncho[Row] = sAncho
+    Case 2
+      ' «izq» ES LA DE OMISIÓN: EN EL ARCHIVO NO SE ESCRIBE
+      If Value = "izq" Then
+        $oCuadro.ColAlinear[Row] = ""
+      Else
+        $oCuadro.ColAlinear[Row] = Value
+      Endif
+  End Select
+  tvColumnas.Refresh
+
+End
+
+' ============================================
+' Función   : btnColMas_Click
+' Propósito : Con la tabla como texto: una columna más en el diseño
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnColMas_Click()
+
+  $oCuadro.ColTipo.Add("texto")
+  $oCuadro.ColAncho.Add("")
+  $oCuadro.ColAlinear.Add("")
+  RefrescarColumnas()
+
+End
+
+' ============================================
+' Función   : btnColMenos_Click
+' Propósito : Con la tabla como texto: quita la última columna del diseño
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnColMenos_Click()
+
+  If $oCuadro.ColTipo.Count <= 1 Then Return
+  $oCuadro.ColTipo.Remove($oCuadro.ColTipo.Max)
+  $oCuadro.ColAncho.Remove($oCuadro.ColAncho.Max)
+  $oCuadro.ColAlinear.Remove($oCuadro.ColAlinear.Max)
+  RefrescarColumnas()
+
+End
+
+' ============================================
+' Función   : btnPasarTexto_Click
+' Propósito : La tabla de la grilla pasa a texto, para unir celdas
+'             (grid table). Volver es «Pasar a la grilla»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnPasarTexto_Click()
+
+  CerrarEdicion()
+  $oCuadro.TablaTexto = m_Cuadros.EscribirTabla($oCuadro)
+  $oCuadro.EsTablaTexto = True
+  $iModo = MODO_TABLA_TEXTO
+  MostrarTexto($oCuadro.TablaTexto)
+  AjustarModo()
+  lblEstado.Text = ("La tabla está como texto: para unir celdas, pasala a grid table.")
+
+End
+
+' ============================================
+' Función   : btnPasarGrilla_Click
+' Propósito : Vuelve a la grilla si el texto lo permite: una pipe table
+'             simple (en el modo de tabla) o un archivo que encaja (en el
+'             modo de archivo). Si no, no cambia nada y dice por qué
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnPasarGrilla_Click()
+
+  Dim oCuadro As CCuadro
+  Dim sTexto As String
+
+  sTexto = txaTabla.Text
+
+  ' --- 1. EL ARCHIVO ENTERO: TIENE QUE ENCAJAR EN EL FORMATO ---
+  If $iModo = MODO_ARCHIVO_TEXTO Then
+    oCuadro = m_Cuadros.Leer(sTexto)
+    If Not oCuadro Then
+      m_Sonido.sonar("Info")
+      Message.Info("El encabezado todavía no encaja en el formato:" & gb.NewLine & m_Cuadros.UltimoError())
+      Return
+    Endif
+    MostrarCuadro(oCuadro)
+    Return
+  Endif
+
+  ' --- 2. LA TABLA: UNA PIPE TABLE SIMPLE, CON LAS COLUMNAS DEL DISEÑO ---
+  ' SE LEE EN UN CUADRO APARTE: SI NO SIRVE, EL MODELO QUEDA COMO ESTABA
+  oCuadro = New CCuadro
+  If Not m_Cuadros.LeerTabla(Trim(sTexto), oCuadro) Then
+    m_Sonido.sonar("Info")
+    Message.Info("La tabla no es una pipe table simple (una línea por fila, todas con las" & gb.NewLine &
+      "mismas celdas, sin celdas unidas): queda como texto.")
+    Return
+  Endif
+  If oCuadro.Encabezado.Count <> $oCuadro.ColTipo.Count Then
+    m_Sonido.sonar("Info")
+    Message.Info("La tabla tiene " & CStr(oCuadro.Encabezado.Count) & " columnas y el diseño " &
+      CStr($oCuadro.ColTipo.Count) & ": igualalas en Diseño antes de pasar a la grilla.")
+    Return
+  Endif
+  $oCuadro.EsTablaTexto = False
+  $oCuadro.TablaTexto = ""
+  $oCuadro.Encabezado = oCuadro.Encabezado
+  $oCuadro.Filas = oCuadro.Filas
+  $iModo = MODO_GRILLA
+  RefrescarGrilla()
+  AjustarModo()
+  lblEstado.Text = ""
+
+End
+
+' ============================================
+' Función   : btnColorear_Click
+' Propósito : Vuelve a colorear el texto. A pedido y no al escribir: cada
+'             coloreo corta el deshacer y dispara Change (GV-46, SC-18)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnColorear_Click()
+
+  If Not $hVisor Then Return
+  $hVisor.Repintar()
+  txaTabla.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnNuevo_Click
+' Propósito : Crea un cuadro con la plantilla y lo abre
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevo_Click()
+
+  Dim sId As String
+
+  If Not ResolverCambios() Then Return
+  sId = PedirNombre(("Nombre del cuadro nuevo"), "tbl-")
+  If sId = "" Then Return
+  If Not CrearArchivo(sId, m_Cuadros.Plantilla()) Then Return
+  LlenarLista(sId)
+  Abrir(sId)
+
+End
+
+' ============================================
+' Función   : btnDuplicar_Click
+' Propósito : Copia el cuadro abierto, como está en disco, con otro nombre
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnDuplicar_Click()
+
+  Dim sId As String
+  Dim sTexto As String
+
+  If $sId = "" Then Return
+  If Not ResolverCambios() Then Return
+  sId = PedirNombre(("Nombre de la copia de ") & $sId, $sId & "-copia")
+  If sId = "" Then Return
+  Try sTexto = File.Load(m_Cuadros.RutaCuadro($sId))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el cuadro:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+  If Not CrearArchivo(sId, sTexto) Then Return
+  LlenarLista(sId)
+  Abrir(sId)
+
+End
+
+' ============================================
+' Función   : PedirNombre
+' Propósito : Pide el nombre de un cuadro y lo controla: tbl-, los caracteres
+'             que admite cuadro-leer.lua, y que no exista
+' Parámetros: sPregunta As String; sInicial As String
+' Retorna   : String — el id; vacío si se canceló o no es válido (informado)
+' ============================================
+Private Function PedirNombre(sPregunta As String, sInicial As String) As String
+
+  Dim sId As String
+
+  sId = Trim(InputBox(sPregunta & gb.NewLine & ("(tbl- y letras sin tilde, cifras o guiones)"), ("Cuadro"), sInicial))
+  If sId = "" Then Return ""
+  If Not m_Cuadros.NombreValido(sId) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("«" & sId & "» no sirve como nombre de cuadro: tbl- y después" & gb.NewLine &
+      "solo letras sin tilde, cifras o guiones.")
+    Return ""
+  Endif
+  If Exist(m_Cuadros.RutaCuadro(sId)) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ya existe el cuadro «" & sId & "».")
+    Return ""
+  Endif
+  Return sId
+
+End
+
+' ============================================
+' Función   : CrearArchivo
+' Propósito : Escribe un cuadro nuevo; crea cuadros/ si no está
+' Parámetros: sId As String; sTexto As String
+' Retorna   : Boolean — True si se escribió (si no, informado)
+' ============================================
+Private Function CrearArchivo(sId As String, sTexto As String) As Boolean
+
+  If Not Exist(m_Cuadros.Carpeta()) Then
+    Try Mkdir m_Cuadros.Carpeta()
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta de los cuadros:" & gb.NewLine & m_Cuadros.Carpeta() & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
+  Try File.Save(m_Cuadros.RutaCuadro(sId), sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el cuadro:" & gb.NewLine & m_Cuadros.RutaCuadro(sId) & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Return True
+
+End
+
+' ============================================
+' Función   : btnGuardar_Click
+' Propósito : Guarda el cuadro abierto
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardar_Click()
+
+  If Guardar() Then lblEstado.Text = ("Guardado: ") & lblArchivo.Text
+
+End
+
+' ============================================
+' Función   : Guardar
+' Propósito : Escribe en disco el texto de los controles
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se guardó; False si un campo no se puede
+'             escribir o falló el disco (informado)
+' ============================================
+Private Function Guardar() As Boolean
+
+  Dim sTexto As String
+
+  If $sId = "" Then Return False
+  sTexto = TextoActual(True)
+  If sTexto = "" Then Return False
+  Try File.Save(m_Cuadros.RutaCuadro($sId), sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el cuadro:" & gb.NewLine & m_Cuadros.RutaCuadro($sId) & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  $sGuardado = sTexto
+  Return True
+
+End
+
+' ============================================
+' Función   : HayCambios
+' Propósito : Responde si los controles difieren de lo guardado
+' Parámetros: ninguno
+' Retorna   : Boolean — un campo que no se puede escribir cuenta como cambio
+' ============================================
+Private Function HayCambios() As Boolean
+
+  If $sId = "" Then Return False
+  Return TextoActual() <> $sGuardado
+
+End
+
+' ============================================
+' Función   : ResolverCambios
+' Propósito : Antes de dejar el cuadro abierto: guardar, descartar o
+'             quedarse (SC-06)
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se puede seguir
+' ============================================
+Private Function ResolverCambios() As Boolean
+
+  If Not HayCambios() Then Return True
+  Select Case Message.Question("El cuadro «" & $sId & "» tiene cambios sin guardar.",
+        ("Guardar"), ("Descartar"), ("Cancelar"))
+    Case 1
+      Return Guardar()
+    Case 2
+      Return True
+  End Select
+  Return False
+
+End
+
+' ============================================
+' Función   : TextoActual
+' Propósito : El texto del archivo según los controles
+' Parámetros: bAvisar As Boolean — True informa el campo que no se puede
+'             escribir (al guardar); False calla (al comparar)
+' Retorna   : String — vacío si un campo no se puede escribir
+' ============================================
+Private Function TextoActual(Optional bAvisar As Boolean = False) As String
+
+  Dim oCuadro As New CCuadro
+  Dim aCortes As Integer[]
+  Dim aBloques As Integer[]
+  Dim sTexto As String
+
+  CerrarEdicion()
+  ' --- 1. EL ARCHIVO ENTERO COMO TEXTO: TAL CUAL, CON SU SALTO FINAL ---
+  If $iModo = MODO_ARCHIVO_TEXTO Then
+    sTexto = txaTabla.Text
+    If Not (sTexto Ends "\n") Then sTexto &= "\n"
+    Return sTexto
+  Endif
+
+  ' --- 2. LAS LISTAS DE FILAS ---
+  aCortes = ListaDeCampo(txtCortes.Text)
+  aBloques = ListaDeCampo(txtBloques.Text)
+  If Not aCortes Or Not aBloques Then
+    If bAvisar Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Los cortes y los bloques son números de fila separados por comas: 4, 12")
+      tabCuadro.Index = 1
+    Endif
+    Return ""
+  Endif
+
+  ' --- 3. EL DISEÑO ---
+  oCuadro.Titulo = Trim(txtTitulo.Text)
+  oCuadro.Nota = Trim(txtNota.Text)
+  oCuadro.Cuerpo = cmbCuerpo.Text
+  oCuadro.Separacion = cmbSeparacion.Text
+  oCuadro.Ancho = cmbAncho.Text
+  oCuadro.Rotar = chkRotar.Value
+  oCuadro.Agrupar = chkAgrupar.Value
+  oCuadro.Cortes = aCortes
+  oCuadro.Bloques = aBloques
+  oCuadro.ColTipo = $oCuadro.ColTipo
+  oCuadro.ColAncho = $oCuadro.ColAncho
+  oCuadro.ColAlinear = $oCuadro.ColAlinear
+
+  ' --- 4. LA TABLA ---
+  If $iModo = MODO_TABLA_TEXTO Then
+    oCuadro.EsTablaTexto = True
+    oCuadro.TablaTexto = Trim(txaTabla.Text) & "\n"
+  Else
+    oCuadro.Encabezado = $oCuadro.Encabezado
+    oCuadro.Filas = $oCuadro.Filas
+  Endif
+
+  Return m_Cuadros.Escribir(oCuadro)
+
+End
+
+' ============================================
+' Función   : btnVista_Click
+' Propósito : Guarda, compone el cuadro solo y muestra el veredicto; abre el
+'             PDF con el visor del sistema
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnVista_Click()
+
+  Dim iCodigo As Integer
+  Dim aLineas As String[]
   Dim sLinea As String
-  Dim sSeparador As String
+  Dim aPartes As String[]
 
-  ' CONSTRUIR LA TABLA EN FORMATO MARKDOWN ESTÁNDAR (ESTILO GITHUB/EXCEL)
+  ' --- 1. LO QUE SE VE ES LO QUE ESTÁ EN DISCO: SE GUARDA ANTES ---
+  If $sId = "" Then Return
+  If HayCambios() Then
+    If Message.Question("La vista previa compone el cuadro guardado." & gb.NewLine & "¿Guardar los cambios y seguir?",
+        ("Guardar y seguir"), ("Cancelar")) <> 1 Then Return
+      If Not Guardar() Then Return
+    Endif
 
-  ' PRIMERA FILA (ENCABEZADO O PRIMERA LÍNEA DE DATOS)
-  sLinea = "|"
-  For c = 0 To tblCuadros.Columns.Count - 1
-    sLinea &= " " & tblCuadros[0, c].Text & " |"
+    ' --- 2. EL SCRIPT ---
+    lstVeredicto.Clear()
+    lblEstado.Text = ("Componiendo la vista previa…")
+    iCodigo = m_Cuadros.VistaPrevia($sId)
+
+    ' --- 3. EL VEREDICTO, LÍNEA POR LÍNEA ---
+    aLineas = m_Cuadros.LeerVeredicto()
+    For Each sLinea In aLineas
+      aPartes = Split(sLinea, "\t")
+      Select Case aPartes[0]
+        Case "error"
+          lstVeredicto.Add("✗ " & aPartes[1])
+        Case "aviso"
+          lstVeredicto.Add("⚠ " & aPartes[1])
+        Case Else
+          lstVeredicto.Add("· " & aPartes[1])
+      End Select
+    Next
+
+    ' --- 4. EL RESUMEN Y EL PDF ---
+    Select Case iCodigo
+      Case 0
+        lblEstado.Text = ("El cuadro entra en la caja.")
+      Case 3
+        lblEstado.Text = ("La vista previa salió con observaciones: ver abajo.")
+      Case 1
+        lblEstado.Text = ("No salió la vista previa: ver abajo y la terminal del proyecto.")
+      Case Else
+        ' NO SE LANZÓ, O SE ABANDONÓ: EjecutarScriptSalida YA LO INFORMÓ
+        lblEstado.Text = ("La vista previa no se completó.")
+    End Select
+    If iCodigo = 0 Or iCodigo = 3 Then
+      ' Desktop.Open SIN ESPERA, CON LA EXISTENCIA ANTES (GV-17, GV-23)
+      If Exist(m_Cuadros.RutaPDFVista()) Then Desktop.Open(m_Cuadros.RutaPDFVista())
+    Endif
+
+End
+
+' ============================================
+' Función   : CerrarEdicion
+' Propósito : Termina la edición de una celda en las dos grillas: guarda lo
+'             que se esté escribiendo y cierra el editor. Va antes de todo lo
+'             que cambia filas o columnas, cambia de modo o lee el modelo
+' Parámetros: ninguno
+' Retorna   : nada
+' Nota      : MEDIDO EN 3.19: EL EDITOR DE TableView NO SE CIERRA CON Save()
+'             NI CON Cancel(), Y CUANDO LA GRILLA CAMBIA DE FILAS VUELVE A
+'             LANZAR Save CON SU TEXTO VIEJO EN LA FILA Y LA COLUMNA DONDE SE
+'             ABRIÓ, QUE YA ES OTRA. POR ESO Save() SOLO SI HAY UNA EDICIÓN
+'             ABIERTA POR UN CLIC, Y LOS Save QUE LLEGAN DESPUÉS SE DESCARTAN
+'             EN tvDatos_Save Y tvColumnas_Save (GV-129)
+' ============================================
+Private Sub CerrarEdicion()
+
+  ' UNA EDICIÓN A MEDIO ESCRIBIR SE GUARDA, EN SU CELDA, ANTES DEL CAMBIO
+  If $bEditandoDatos Then tvDatos.Save()
+  $bEditandoDatos = False
+  tvDatos.Cancel()
+  If $bEditandoColumnas Then tvColumnas.Save()
+  $bEditandoColumnas = False
+  tvColumnas.Cancel()
+
+End
+
+' ============================================
+' Función   : ListaDeCampo
+' Propósito : Lee un campo de filas: «4, 12», vacío, o con espacios
+' Parámetros: sTexto As String
+' Retorna   : Integer[] — las filas, en el orden escrito; Null si no es una
+'             lista de números
+' ============================================
+Private Function ListaDeCampo(sTexto As String) As Integer[]
+
+  Dim aFilas As New Integer[]
+  Dim sParte As String
+
+  If Trim(sTexto) = "" Then Return aFilas
+  For Each sParte In Split(sTexto, ",")
+    sParte = Trim(sParte)
+    If Not m_Cuadros.EsEntero(sParte) Then Return Null
+    aFilas.Add(CInt(sParte))
   Next
-  sMDQT = "\n" & sLinea & "\n"
+  Return aFilas
 
-  ' LÍNEA SEPARADORA
-  If cboxHeader.Value = True Then
-    ' SI TIENE ENCABEZADO, AGREGAR SEPARADOR CON ALINEACIÓN
-    sSeparador = "|"
-    For c = 0 To tblCuadros.Columns.Count - 1
-      sSeparador &= " --- |"
-    Next
-    sMDQT &= sSeparador & "\n"
+End
 
-    ' RESTO DE LAS FILAS (DATOS)
-    For r = 1 To tblCuadros.Rows.Count - 1
-      sLinea = "|"
-      For c = 0 To tblCuadros.Columns.Count - 1
-        sLinea &= " " & tblCuadros[r, c].Text & " |"
-      Next
-      sMDQT &= sLinea & "\n"
-    Next
-  Else
-    ' SIN ENCABEZADO, AGREGAR SEPARADOR SIMPLE
-    sSeparador = "|"
-    For c = 0 To tblCuadros.Columns.Count - 1
-      sSeparador &= " --- |"
-    Next
-    sMDQT &= sSeparador & "\n"
+' ============================================
+' Función   : AlternarEnCampo
+' Propósito : Pone o saca una fila de un campo de filas, que queda en orden
+' Parámetros: hCampo As TextBox; iFila As Integer
+' Retorna   : nada
+' ============================================
+Private Sub AlternarEnCampo(hCampo As TextBox, iFila As Integer)
 
-    ' RESTO DE LAS FILAS
-    For r = 1 To tblCuadros.Rows.Count - 1
-      sLinea = "|"
-      For c = 0 To tblCuadros.Columns.Count - 1
-        sLinea &= " " & tblCuadros[r, c].Text & " |"
-      Next
-      sMDQT &= sLinea & "\n"
-    Next
+  Dim aFilas As Integer[]
+
+  aFilas = ListaDeCampo(hCampo.Text)
+  If Not aFilas Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El campo «" & hCampo.Text & "» no es una lista de números de fila: corregilo en Diseño.")
+    Return
   Endif
-
-  sMDQT &= "\n"
-
-  '-- DESCRIPCIÓN DE LA TABLA (OPCIONAL)
-  sMDQT &= "**Tabla 1:** Descripción de la tabla\n"
-
-  $sMarkdownTableDefinition = sMDQT
-
-Catch
-  Message.Title = ("¡Ha ocurrido un error!")
-  Message.Error(("No se pudo crear la tabla Markdown.") & "\n" &
-    "Clase: " & Error.Class & ", Código: " & Error.Code & "\n" &
-    "Ubicación: " & Error.Where & "\n" &
-    "Descripción: " & Error.Text)
-
-End
-
-' PROCEDIMIENTO: INICIALIZAR ARRAY DE ANCHOS MÁXIMOS
-' CREA UNA MATRIZ BIDIMENSIONAL PARA ALMACENAR LOS ANCHOS DE CADA CELDA
-Private Sub InicializarArray()
-
-  Dim r, c As Integer
-  Dim iAnchoDefault As Integer = 224
-
-  ' CREAR ARRAY BIDIMENSIONAL (PRIMERO FILAS, LUEGO COLUMNAS)
-  $aMaxWidths = New Variant[]
-  $aMaxWidths.Resize(tblCuadros.Rows.Count)
-
-  ' PARA CADA FILA, CREAR ARRAY DE COLUMNAS
-  For r = 0 To $aMaxWidths.Max
-    $aMaxWidths[r] = New Integer[tblCuadros.Columns.Count]
-    For c = 0 To tblCuadros.Columns.Count - 1
-      $aMaxWidths[r][c] = iAnchoDefault
-    Next
-  Next
-
-End
-
-' PROCEDIMIENTO: CONFIGURAR TÍTULOS Y ANCHOS DE COLUMNAS
-' ESTABLECE LOS TÍTULOS Y ANCHOS PREDETERMINADOS DE LAS COLUMNAS
-Private Sub ConfigurarColumnas()
-
-  Dim iCount As Integer
-
-  For iCount = 0 To tblCuadros.Columns.Count - 1
-    tblCuadros.Columns[iCount].Title = Str(iCount + 1) & ". Columna"
-    tblCuadros.Columns[iCount].Width = 224
-  Next
-
-End
-
-' FUNCIÓN: LEER TABLA MARKDOWN GENERADA (PROPERTY READ)
-Private Function MarkDownTable_Read() As String
-
-  ' SHOWMODAL RETORNA 0 SI SE CERRÓ CON [X] O BTNCANCEL
-  ' RETORNA 1 SI SE CERRÓ CON BTNCREATEMDTABLE (ÉXITO)
-  If Me.ShowModal() = 0 Then
-    Return ""  ' USUARIO CANCELÓ
+  If aFilas.Exist(iFila) Then
+    aFilas.Remove(aFilas.Find(iFila))
   Else
-    Return $sMarkdownTableDefinition  ' USUARIO CREÓ LA TABLA
+    aFilas.Add(iFila)
   Endif
+  aFilas.Sort()
+  hCampo.Text = m_Cuadros.UnirEnteros(aFilas)
+
+End
+
+' ============================================
+' Función   : QuitarDeCampo
+' Propósito : Saca una fila de un campo de filas, si está
+' Parámetros: hCampo As TextBox; iFila As Integer
+' Retorna   : nada
+' ============================================
+Private Sub QuitarDeCampo(hCampo As TextBox, iFila As Integer)
+
+  Dim aFilas As Integer[]
+
+  aFilas = ListaDeCampo(hCampo.Text)
+  If Not aFilas Then Return
+  If Not aFilas.Exist(iFila) Then Return
+  aFilas.Remove(aFilas.Find(iFila))
+  hCampo.Text = m_Cuadros.UnirEnteros(aFilas)
+
+End
+
+' ============================================
+' Función   : CorrerFilas
+' Propósito : Corre los cortes y los bloques desde una fila, cuando se
+'             inserta o se quita una: siguen marcando la misma fila de datos
+' Parámetros: iDesde As Integer — la primera fila que se corre
+'             iCuanto As Integer — 1 o -1
+' Retorna   : nada
+' ============================================
+Private Sub CorrerFilas(iDesde As Integer, iCuanto As Integer)
+
+  Dim hCampo As TextBox
+  Dim aFilas As Integer[]
+  Dim i As Integer
+
+  For Each hCampo In [txtCortes, txtBloques]
+    aFilas = ListaDeCampo(hCampo.Text)
+    ' UN CAMPO QUE NO ES LISTA QUEDA COMO ESTÁ: SE AVISA AL GUARDAR
+    If Not aFilas Then Continue
+    For i = 0 To aFilas.Max
+      If aFilas[i] >= iDesde Then aFilas[i] += iCuanto
+    Next
+    hCampo.Text = m_Cuadros.UnirEnteros(aFilas)
+  Next
 
 End
