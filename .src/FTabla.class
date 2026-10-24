@@ -243,7 +243,8 @@ Private Sub Abrir(sId As String)
   Endif
   $sId = sId
   $sGuardado = sTexto
-  lblArchivo.Text = m_Cuadros.CARPETA_CUADROS &/ sId & ".md"
+  ' LA RUTA COMPLETA: QUÉ ARCHIVO SE ESTÁ EDITANDO, SIN DUDA
+  lblArchivo.Text = m_Cuadros.RutaCuadro(sId)
   lstVeredicto.Clear()
 
   ' --- 2. EL FORMATO: SI EL ENCABEZADO NO ENCAJA, EL ARCHIVO COMO TEXTO ---
@@ -279,6 +280,8 @@ Private Sub MostrarVacio()
   btnVista.Enabled = False
   btnInsertar.Enabled = False
   btnDuplicar.Enabled = False
+  ' BORRAR ACTÚA SOBRE LA LISTA: SIN CUADRO ABIERTO, SOLO SI HAY UNO ELEGIDO
+  btnBorrarArchivo.Enabled = (lstCuadros.Index >= 0)
   lblEstado.Text = ""
 
 End
@@ -375,8 +378,11 @@ Private Sub AjustarModo()
   btnPasarGrilla.Visible = Not bGrilla
   btnColorear.Visible = Not bGrilla
 
-  ' EL DISEÑO NO SE PUEDE TOCAR SI EL ENCABEZADO NO ENCAJA: ESTÁ EN EL TEXTO
-  ' vbxDiseno.Enabled = ($iModo <> MODO_ARCHIVO_TEXTO)
+  ' EL DISEÑO NO SE PUEDE TOCAR SI EL ENCABEZADO NO ENCAJA: ESTÁ EN EL TEXTO, Y
+  ' LO QUE SE CAMBIARA EN LA PESTAÑA NO SE GUARDARÍA. CON LA PESTAÑA
+  ' DESHABILITADA NO SE PUEDE ELEGIR; SI ERA LA ACTUAL, TabStrip PASA SOLO A
+  ' LA 0 (MEDIDO EN 3.19)
+  tabCuadro[1].Enabled = ($iModo <> MODO_ARCHIVO_TEXTO)
 
   ' CON LA TABLA COMO TEXTO, LAS COLUMNAS NO SE CUENTAN: SE AGREGAN A MANO
   btnColMas.Visible = ($iModo = MODO_TABLA_TEXTO)
@@ -386,6 +392,7 @@ Private Sub AjustarModo()
   btnVista.Enabled = True
   btnInsertar.Enabled = True
   btnDuplicar.Enabled = True
+  btnBorrarArchivo.Enabled = True
 
 End
 
@@ -1037,6 +1044,57 @@ Public Sub btnDuplicar_Click()
 End
 
 ' ============================================
+' Función   : btnBorrarArchivo_Click
+' Propósito : Borra el archivo del cuadro elegido en la lista. Si alguna
+'             pieza lo nombra, lo dice antes: borrado, esa pieza frena al
+'             generarse («no existe el archivo cuadros/…»)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarArchivo_Click()
+
+  Dim sId As String
+  Dim aPiezas As String[]
+  Dim sPregunta As String
+
+  ' --- 1. EL CUADRO DE LA LISTA ---
+  If lstCuadros.Index < 0 Then Return
+  sId = lstCuadros.Text
+
+  ' --- 2. LA PREGUNTA, CON LAS PIEZAS QUE LO NOMBRAN ---
+  aPiezas = m_Cuadros.PiezasQueNombran(sId)
+  sPregunta = "¿Borrar el archivo " & m_Cuadros.CARPETA_CUADROS &/ sId & ".md?" & gb.NewLine &
+    "No se puede deshacer desde gbpublisher (queda en el historial de git, si estaba commiteado)."
+  If aPiezas.Count > 0 Then
+    sPregunta &= gb.NewLine & gb.NewLine & "Lo nombran estas piezas, que van a frenar al generarse:" &
+      gb.NewLine & aPiezas.Join(gb.NewLine)
+  Endif
+  m_Sonido.sonar("Warning")
+  If Message.Warning(sPregunta, ("Borrar"), ("Cancelar")) <> 1 Then Return
+
+  ' --- 3. EL BORRADO ---
+  Try Kill m_Cuadros.RutaCuadro(sId)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el cuadro:" & gb.NewLine & m_Cuadros.RutaCuadro(sId) & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. LA LISTA SIN ÉL ---
+  ' $sId VACÍO: EL CUADRO BORRADO YA NO TIENE CAMBIOS QUE PREGUNTAR AL ELEGIR
+  ' OTRO (HayCambios)
+  $sId = ""
+  LlenarLista("")
+  If lstCuadros.Count > 0 Then
+    lstCuadros.Index = 0
+  Else
+    MostrarVacio()
+  Endif
+  lblEstado.Text = ("Borrado: ") & m_Cuadros.CARPETA_CUADROS &/ sId & ".md"
+
+End
+
+' ============================================
 ' Función   : PedirNombre
 ' Propósito : Pide el nombre de un cuadro y lo controla: tbl-, los caracteres
 '             que admite cuadro-leer.lua, y que no exista
@@ -1098,7 +1156,7 @@ End
 ' ============================================
 Public Sub btnGuardar_Click()
 
-  If Guardar() Then lblEstado.Text = ("Guardado: ") & lblArchivo.Text
+  If Guardar() Then lblEstado.Text = ("Guardado: ") & m_Cuadros.CARPETA_CUADROS &/ $sId & ".md"
 
 End
 
