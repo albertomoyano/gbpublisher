@@ -190,8 +190,9 @@ local function normalizar_inlines_sufijo(inlines)
       end
     end
     local prefijo_pp = tiene_rango and "pp." or "p."
-    table.insert(lista, 1, pandoc.Space())
-    table.insert(lista, 1, pandoc.Str(prefijo_pp))
+    -- EL PREFIJO VA PEGADO AL NÚMERO CON UN ESPACIO DURO, EN EL MISMO Str:
+    -- CON UN Space, «p. 22» PODÍA PARTIRSE AL FIN DE LÍNEA (SC-68)
+    lista[1] = pandoc.Str(prefijo_pp .. '\u{00A0}' .. lista[1].text)
   end
 
   return lista

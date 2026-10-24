@@ -402,7 +402,11 @@ local function leer_cuadro(div, raiz)
   if not h then fallar(id, 'no existe el archivo cuadros/' .. id .. '.md.') end
   texto = h:read('a')
   h:close()
-  doc = pandoc.read(texto, 'markdown')
+  -- LA LISTA DE ABREVIATURAS DE LA LÍNEA DE ÓRDENES (SC-68): pandoc.read NO
+  -- LA TOMA SOLO. SE PASA ESA OPCIÓN Y NINGUNA OTRA: CON TODO
+  -- PANDOC_READER_OPTIONS CAMBIA columns Y EL ANCHO RELATIVO DE LAS
+  -- COLUMNAS DE UNA GRID TABLE (GV-133)
+  doc = pandoc.read(texto, 'markdown', { abbreviations = PANDOC_READER_OPTIONS.abbreviations })
   meta = doc.meta
 
   -- --- 3. EL ENCABEZADO: CLAVES CONOCIDAS ---

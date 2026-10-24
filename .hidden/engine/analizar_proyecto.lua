@@ -109,6 +109,35 @@ local function EsPalabra(sTexto)
 end
 
 -- ============================================
+-- Función   : PartirEspacioFijo
+-- Propósito : PARTE EL TEXTO DE UN Str EN LOS ESPACIOS FIJOS: LA MARCA ¬
+--             (U+00AC) DEL .md Y EL ESPACIO DURO (U+00A0) QUE PONE EL
+--             LECTOR DETRÁS DE UNA ABREVIATURA O CON «\ » (SC-68)
+-- Parámetros: sTexto — el texto del Str
+-- Retorna   : table — los tramos, en orden; sin espacio fijo, uno solo.
+--             UN TRAMO VACÍO (UNA MARCA AL BORDE) NO ES PALABRA NI SUMA
+-- ============================================
+local function PartirEspacioFijo(sTexto)
+
+  local aTramos = {}
+  local aActual = {}
+
+  -- POR PUNTOS DE CÓDIGO: LOS PATRONES DE LUA NO CONOCEN UTF-8 (GV-88)
+  for _, iCodigo in utf8.codes(sTexto) do
+    if iCodigo == 0x00AC or iCodigo == 0x00A0 then
+      table.insert(aTramos, table.concat(aActual))
+      aActual = {}
+    else
+      table.insert(aActual, utf8.char(iCodigo))
+    end
+  end
+  table.insert(aTramos, table.concat(aActual))
+
+  return aTramos
+
+end
+
+-- ============================================
 -- Función   : NuevoContador
 -- Propósito : ACUMULADOR DE UN BLOQUE DE TEXTO
 -- Retorna   : table — palabras, cc, cs, inicio
@@ -160,14 +189,24 @@ local function RecorrerInlines(aInlines, oCont, sClase)
     local t = el.t
 
     if t == "Str" then
-      local iLargo = utf8.len(el.text) or #el.text
-      table.insert(oCont.texto, el.text)
-      oCont.cc = oCont.cc + iLargo
-      oCont.cs = oCont.cs + iLargo
-      if EsPalabra(el.text) then
-        oCont.palabras = oCont.palabras + 1
-        if #oCont.inicio < PALABRAS_INICIO then
-          table.insert(oCont.inicio, el.text)
+      -- EL ESPACIO FIJO (¬ EN EL .md, O EL ESPACIO DURO QUE PONE EL LECTOR)
+      -- QUEDA DENTRO DEL Str: «siglo¬XX» SON DOS PALABRAS Y UN ESPACIO
+      -- IMPRESO, Y PERL RECIBE UN ESPACIO COMÚN (SC-68)
+      local aTramos = PartirEspacioFijo(el.text)
+      for iTramo, sTramo in ipairs(aTramos) do
+        if iTramo > 1 then
+          table.insert(oCont.texto, " ")
+          oCont.cc = oCont.cc + 1
+        end
+        local iLargo = utf8.len(sTramo) or #sTramo
+        table.insert(oCont.texto, sTramo)
+        oCont.cc = oCont.cc + iLargo
+        oCont.cs = oCont.cs + iLargo
+        if EsPalabra(sTramo) then
+          oCont.palabras = oCont.palabras + 1
+          if #oCont.inicio < PALABRAS_INICIO then
+            table.insert(oCont.inicio, sTramo)
+          end
         end
       end
 

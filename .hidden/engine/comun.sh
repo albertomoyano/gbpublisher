@@ -50,6 +50,12 @@ RUTA_SAXON="${GBP_SAXON:-/opt/Saxon-HE/saxon-he.jar}"
 # COPIA LOCAL DE TRABAJO: ES LA QUE LA APLICACIÓN LEE (SC-11)
 DIR_GBP_LOCAL="$HOME/.gbpublisher"
 
+# LA LISTA DE ABREVIATURAS DEL LECTOR (SC-68): pandoc PONE UN ESPACIO DURO
+# DETRÁS DE CADA UNA (pág. 22, cap. 3, n.º 5). REEMPLAZA LA LISTA QUE TRAE
+# PANDOC, QUE ES INGLESA (GV-133). VA CON --abbreviations EN TODO LECTOR
+# QUE PRODUCE UNA SALIDA; LA MISMA RUTA USA GAMBAS (m_Constantes)
+RUTA_ABREVIATURAS="$DIR_GBP_LOCAL/filters/abreviaturas-espacio-fijo.txt"
+
 # --- 3b. LAS CADENAS DE FILTROS ---
 # LIBRO: LA DE generar_canonicos_capitulos.sh Y DE vista_cuadro.sh (SC-67).
 # EL ORDEN ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
@@ -57,6 +63,9 @@ DIR_GBP_LOCAL="$HOME/.gbpublisher"
 #   0° cuadro-leer              TRAE EL ARCHIVO DE CADA CUADRO (SC-66) DE
 #      cuadros/ (-M gb-proyecto). PRIMERO: SU CONTENIDO PASA ASÍ POR TODOS
 #      LOS FILTROS. FRENA EL VIEJO ::: {.table}
+#  0b° espacio-fijo             ¬ A ESPACIO DURO (SC-68). DESPUÉS DE
+#      cuadro-leer, PARA ALCANZAR EL TEXTO DEL CUADRO; ANTES DE TODO
+#      FILTRO QUE SERIALIZA
 #   1° guillemets-to-quoted-db  « » A Quoted. ANTES QUE fenced-divs, QUE
 #      SERIALIZA LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
 #   2° volada                   n\sptext{o} A «n.» Y <superscript
@@ -89,6 +98,7 @@ DIR_GBP_LOCAL="$HOME/.gbpublisher"
 #  14° fenced-divs-to-elements-db  AL FINAL
 FILTROS_LIBRO=(
     cuadro-leer.lua
+    espacio-fijo.lua
     guillemets-to-quoted-db.lua
     volada.lua
     corte-titulo.lua
@@ -111,6 +121,7 @@ FILTROS_LIBRO=(
 # EN LA OTRA HASTA QUE SE MUDE A engine/
 FILTROS_REVISTA=(
     cuadro-leer.lua
+    espacio-fijo.lua
     guillemets-to-quoted-db.lua
     quoted-a-nivel-jats.lua
     dos-partes.lua

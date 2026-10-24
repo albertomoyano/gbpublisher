@@ -175,6 +175,7 @@ requerir_comandos pandoc java lualatex xmllint awk
 for filtro in "${FILTROS[@]}"; do
     [[ -f "$DIR_FILTROS/$filtro" ]] || frenar "falta el filtro $DIR_FILTROS/$filtro"
 done
+[[ -f "$RUTA_ABREVIATURAS" ]] || frenar "falta la lista de abreviaturas $RUTA_ABREVIATURAS"
 ok "cuadros/$ID.md"
 
 # LO DE LA CORRIDA ANTERIOR SE BORRA: UN PDF VIEJO NO PUEDE PASAR POR NUEVO
@@ -191,6 +192,7 @@ for filtro in "${FILTROS[@]}"; do
 done
 salida=$(timeout "$TIEMPO_PANDOC" pandoc "$DIR_VISTA/vista.md" \
             --from markdown --to "$FORMATO" --no-highlight --wrap=none \
+            --abbreviations "$RUTA_ABREVIATURAS" \
             "${ARGS_FORMATO[@]}" "${args_pandoc[@]}" \
             --metadata gb-proyecto="$DIR_PROYECTO" \
             --output "$DIR_VISTA/parcial.xml" 2>&1)

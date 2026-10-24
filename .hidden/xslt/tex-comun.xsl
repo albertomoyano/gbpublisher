@@ -88,9 +88,14 @@
   <!-- CADA CARÁCTER SE MIRA UNA SOLA VEZ: EL REEMPLAZO NO VUELVE   -->
   <!-- A ENTRAR AL PROCESO, ASÍ QUE NO HAY ORDEN QUE RESPETAR.      -->
   <!-- AGREGAR UN CARÁCTER ES AGREGAR UNA LÍNEA.                    -->
+  <!-- EL ESPACIO DURO U+00A0 (¬ DEL .md, LAS ABREVIATURAS, EL      -->
+  <!-- LOCATOR IMPLÍCITO DE LAS CITAS) SALE COMO EL ~ DE LaTeX: ASÍ -->
+  <!-- EL PDF NO DEPENDE DE CÓMO TRATEN EL CARÁCTER LA FUENTE O     -->
+  <!-- LuaLaTeX (SC-68).                                            -->
   <!-- ============================================================ -->
   <xsl:variable name="f:mapa-tex" as="map(xs:string, xs:string)" select="
     map {
+      '&#xA0;' : '~',
       '\'      : '\textbackslash{}',
       '{'      : '\{',
       '}'      : '\}',
@@ -106,7 +111,8 @@
   <!-- ============================================================ -->
   <!-- FUNCIÓN : f:latex                                            -->
   <!-- PROPÓSITO: ESCAPA LOS DIEZ CARACTERES ACTIVOS DE LATEX EN    -->
-  <!--            TEXTO PROVENIENTE DEL XML.                        -->
+  <!--            TEXTO PROVENIENTE DEL XML Y PASA EL ESPACIO DURO  -->
+  <!--            A ~ (SC-68).                                      -->
   <!-- PARÁMETROS: t As xs:string — texto crudo                     -->
   <!-- RETORNA  : xs:string — texto seguro para modo texto          -->
   <!-- NOTA     : RECORRE POR CODEPOINT, NO POR BYTE, ASÍ QUE ES    -->

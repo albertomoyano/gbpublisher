@@ -220,8 +220,10 @@ procesar_capitulo() {
         args_pandoc+=(--lua-filter "$DIR_FILTROS/$filtro")
     done
 
+    # --abbreviations: EL ESPACIO DURO DETRÁS DE pág., cap., n.º (SC-68)
     salida=$(timeout "$TIEMPO_PANDOC" pandoc "$md" \
                 --from markdown --to docbook5 --mathml --no-highlight --wrap=none \
+                --abbreviations "$RUTA_ABREVIATURAS" \
                 "${args_pandoc[@]}" \
                 --metadata gb-idioma-pieza="$idioma" \
                 --metadata gb-proyecto="$DIR_PROYECTO" \
@@ -391,6 +393,7 @@ done
 if (( ${#faltan[@]} > 0 )); then
     morir "Faltan filtros en $DIR_FILTROS: ${faltan[*]}"
 fi
+[[ -f "$RUTA_ABREVIATURAS" ]] || morir "No se encontró la lista de abreviaturas: $RUTA_ABREVIATURAS"
 
 [[ -f "$DIR_ENGINE/controles_md.lua" ]] || morir "No se encontró el filtro de controles: $DIR_ENGINE/controles_md.lua"
 

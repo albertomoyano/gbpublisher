@@ -70,6 +70,10 @@ local CONTROLES = {
   -- TAL CUAL, SIN EL AGRUPAMIENTO DE SC-64. LOS NÚMEROS DE IDENTIDAD (LEY
   -- 34.555) SON CORRECTOS ASÍ: POR ESO ES AVISO Y NO ERROR
   cifra_fuera_de_num = "aviso",
+  -- UN ¬ PEGADO A UN ESPACIO O AL BORDE DE UNA LÍNEA («siglo ¬XX»,
+  -- «siglo¬ XX»): EL ESPACIO DURO QUEDA AL LADO DE UNO COMÚN Y LA LÍNEA SE
+  -- PUEDE PARTIR IGUAL. ¬ VA ENTRE DOS PALABRAS, SIN ESPACIOS (SC-68)
+  espacio_fijo_suelto = "aviso",
 }
 
 -- LARGO MÁXIMO DEL CONTEXTO QUE ACOMPAÑA A UN HALLAZGO, EN CARACTERES
@@ -92,13 +96,18 @@ local PATRONES_LATEX = {
 -- UNA CIFRA CON SEPARADOR DE MILES: DÍGITO, PUNTO O COMA, TRES DÍGITOS
 local PATRON_MILES = "%d[.,]%d%d%d"
 
--- UN DÍGITO PEGADO AL %, O SEPARADO POR UN ESPACIO DURO (U+00A0) O FINO
--- (U+202F): LOS DOS ÚLTIMOS QUEDAN DENTRO DEL MISMO Str
+-- UN DÍGITO PEGADO AL %, O SEPARADO POR UN ESPACIO DURO (U+00A0), FINO
+-- (U+202F) O LA MARCA DE ESPACIO FIJO ¬ (U+00AC, SC-68): LOS TRES ÚLTIMOS
+-- QUEDAN DENTRO DEL MISMO Str
 local PATRONES_PORCENTAJE = {
   "%d%%",
   "%d\194\160%%",
   "%d\226\128\175%%",
+  "%d\194\172%%",
 }
+
+-- LA MARCA DE ESPACIO FIJO (SC-68). SE BUSCA COMO CADENA LITERAL
+local MARCA_ESPACIO_FIJO = "\u{00AC}"
 
 -- UN COMENTARIO HTML, QUE PANDOC TAMBIÉN LEE COMO HTML CRUDO
 local PATRON_COMENTARIO = "^%s*<!%-%-.*%-%->%s*$"
@@ -511,6 +520,77 @@ local function revisar_cifras(doc)
 end
 
 -- ============================================================================
+-- Función   : es_espacio
+-- Propósito : Dice si un inline es un espacio común, o si no hay inline (el
+--             borde de la lista): lo que no puede tocar a un ¬
+-- Parámetros: el — el inline vecino, o nil
+-- Retorna   : boolean
+-- ============================================================================
+local function es_espacio(el)
+  if el == nil then return true end
+  return el.t == "Space" or el.t == "SoftBreak" or el.t == "LineBreak"
+end
+
+-- ============================================================================
+-- Función   : revisar_espacio_fijo_inlines
+-- Propósito : Busca un ¬ al borde de un Str que toca un espacio o el borde
+--             de la lista (SC-68). Pegado a otro inline («siglo¬*XX*») está
+--             bien. Baja a los contenedores, no a una nota (sus párrafos
+--             los visita el walk). En una cita, el prefijo y el sufijo son
+--             listas propias: se revisan igual.
+-- Parámetros: aInlines — lista de inlines; bloque — el bloque que los
+--             contiene, para el contexto del mensaje
+-- ============================================================================
+local function revisar_espacio_fijo_inlines(aInlines, bloque)
+  local el, bSuelto
+  for i = 1, #aInlines do
+    el = aInlines[i]
+    if el.t == "Str" then
+      -- --- 1. UN SOLO HALLAZGO POR Str, AUNQUE TOQUE ESPACIOS DE LOS DOS LADOS ---
+      bSuelto = false
+      if el.text:sub(1, #MARCA_ESPACIO_FIJO) == MARCA_ESPACIO_FIJO and es_espacio(aInlines[i - 1]) then
+        bSuelto = true
+      end
+      if el.text:sub(-#MARCA_ESPACIO_FIJO) == MARCA_ESPACIO_FIJO and es_espacio(aInlines[i + 1]) then
+        bSuelto = true
+      end
+      if bSuelto then
+        registrar("espacio_fijo_suelto",
+          "el espacio fijo de «" .. el.text .. "» toca un espacio común o el borde de la línea: " ..
+          "¬ va entre dos palabras, sin espacios (siglo¬XX): «" .. contexto_crudo(bloque) .. "»")
+      end
+    elseif el.t == "Note" then
+      -- LA NOTA LA VISITA EL WALK
+    elseif el.t == "Cite" then
+      for _, oCita in ipairs(el.citations) do
+        revisar_espacio_fijo_inlines(oCita.prefix, bloque)
+        revisar_espacio_fijo_inlines(oCita.suffix, bloque)
+      end
+    elseif el.t == "Image" then
+      revisar_espacio_fijo_inlines(el.caption, bloque)
+    elseif el.content then
+      revisar_espacio_fijo_inlines(el.content, bloque)
+    end
+  end
+end
+
+-- ============================================================================
+-- Función   : revisar_espacio_fijo
+-- Propósito : El ¬ suelto en todo bloque con texto, títulos incluidos
+-- Parámetros: doc — el documento
+-- ============================================================================
+local function revisar_espacio_fijo(doc)
+  doc:walk({
+    Para = function(b) revisar_espacio_fijo_inlines(b.content, b) end,
+    Plain = function(b) revisar_espacio_fijo_inlines(b.content, b) end,
+    Header = function(b) revisar_espacio_fijo_inlines(b.content, b) end,
+    LineBlock = function(b)
+      for _, aLinea in ipairs(b.content) do revisar_espacio_fijo_inlines(aLinea, b) end
+    end,
+  })
+end
+
+-- ============================================================================
 -- Función   : revisar_definiciones
 -- Propósito : Busca definiciones de nota con la línea vacía. Se hace sobre el
 --             TEXTO FUENTE porque en el AST ya no están: la definición se
@@ -572,6 +652,7 @@ function Pandoc(doc)
   revisar_crudo(doc)
   revisar_cortes(doc)
   revisar_cifras(doc)
+  revisar_espacio_fijo(doc)
 
   -- --- EL INFORME: SIEMPRE SE ESCRIBE, VACÍO SI NO HUBO HALLAZGOS ---
   local h = io.open(sRuta, "w")
