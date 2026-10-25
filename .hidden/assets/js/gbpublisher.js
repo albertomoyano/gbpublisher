@@ -449,7 +449,10 @@ function buildFigsPanel() {
     item.style.cursor = 'pointer';
 
     var html = '';
+    // UN GRÁFICO INTERACTIVO NO TIENE <img>: SU PNG VIENE EN data-png (SC-69)
     if (img)     html += '<img src="' + img.src + '" alt="' + (img.alt || '') + '"/>';
+    else if (fig.getAttribute('data-png'))
+                 html += '<img src="' + fig.getAttribute('data-png') + '" alt=""/>';
     if (label)   html += '<div class="panel-item-label">' + label.textContent + '</div>';
     if (caption) html += '<div class="panel-item-text">' + caption.textContent + '</div>';
 
