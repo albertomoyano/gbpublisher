@@ -2514,9 +2514,13 @@ Private Const DEP_PYTHON As String = "python"
 
 ' ============================================
 ' Función   : IntegridadSistema
-' Propósito : Releva todas las dependencias externas y componentes de Gambas
-'             que gbpublisher necesita, y arma un informe para que el usuario
-'             —o su departamento de IT— resuelva manualmente lo que falte.
+' Propósito : Releva las dependencias externas que el paquete .deb NO puede
+'             garantizar (instalaciones manuales en /opt, módulos de pip,
+'             configuración del sistema, archivos propios y herramientas
+'             opcionales) y arma un informe para que el usuario —o su
+'             departamento de IT— resuelva manualmente lo que falte.
+'             Todo lo que se puede declarar como dependencia del .deb va en
+'             ExtraDependencies del IDE y NO se repite acá.
 ' Parámetros: bMostrarModal As Boolean — True muestra FEstructuraResultados
 ' Retorna   : Integer — cantidad de dependencias CRÍTICAS ausentes.
 '             Las OPCIONALES no se cuentan: sirven para diagnóstico pero no
@@ -2524,9 +2528,13 @@ Private Const DEP_PYTHON As String = "python"
 '
 ' CÓMO AGREGAR UNA DEPENDENCIA NUEVA
 ' ----------------------------------
-' Agregar UNA línea en el apartado 3, en la sección que corresponda. La lista
-' es declarativa: primero se declara todo y recién después se releva, así que
-' el orden dentro del apartado 3 solo afecta el orden de las filas del informe.
+' PRIMERO PREGUNTARSE SI PUEDE IR COMO DEPENDENCIA DEL .deb: SI ES UN PAQUETE
+' DE LOS REPOSITORIOS OFICIALES, IMPRESCINDIBLE PARA ALGUNA SALIDA Y LA
+' VERSIÓN DEL REPOSITORIO ALCANZA, VA EN ExtraDependencies Y NO ACÁ.
+' SI NO PUEDE, agregar UNA línea en el apartado 2, en la sección que
+' corresponda. La lista es declarativa: primero se declara todo y recién
+' después se releva, así que el orden dentro del apartado 2 solo afecta el
+' orden de las filas del informe.
 '
 '   AgregarDep(DEP_PAQUETE, "nombre-apt", "Descripción legible",
 '     "sudo apt install nombre-apt", NIVEL_CRITICO)
@@ -2573,18 +2581,24 @@ Public Function IntegridadSistema(bMostrarModal As Boolean) As Integer
   ' NADA SE EJECUTA TODAVÍA: SOLO SE ARMA LA LISTA. EL RELEVAMIENTO REAL
   ' OCURRE EN EL APARTADO 4, EN DOS LLAMADAS AL SISTEMA EN TOTAL
 
-  ' --- 2.A. BASE DE DATOS ---
-  ' NO SE VERIFICA EL SERVIDOR. LA BASE ES COMPARTIDA Y NORMALMENTE VIVE EN OTRA
-  ' MÁQUINA —EL PROPIO CÓDIGO HABLA DE "PROYECTO OCUPADO EN OTRA MÁQUINA" Y
-  ' GUARDA usuario_propietario—, ASÍ QUE BUSCAR mysqld EN EL PATH LOCAL DARÍA
-  ' FALLO EN TODA INSTALACIÓN CLIENTE. LO QUE EL CLIENTE NECESITA ES EL DRIVER
-  ' (gambas3-gb-db2-mysql, APARTADO 2.I); QUE EL SERVIDOR RESPONDA LO PRUEBA LA
-  ' CONEXIÓN REAL DE m_ConexionBD, NO UN CHEQUEO DE PATH
+  ' --- 2.A. LO QUE GARANTIZA EL PAQUETE .deb (NO SE VERIFICA ACÁ) ---
+  ' EL Depends DEL .deb LO ARMA EL EMPAQUETADOR DEL IDE CON TRES PARTES:
+  ' gambas3-runtime, UN PAQUETE POR CADA COMPONENTE DEL PROYECTO Y LAS
+  ' ExtraDependencies. VERIFICADO CON dpkg-deb -f ... Depends (OCT. 2026).
+  ' apt NO INSTALA gbpublisher SI FALTA ALGUNO, ASÍ QUE REPETIRLOS ACÁ SOLO
+  ' DUPLICARÍA EL CONTROL. QUEDAN FUERA DE ESTA LISTA:
+  '   - TODOS LOS COMPONENTES DE GAMBAS (INCLUIDA LA FAMILIA gb.qt6)
+  '   - default-jre, pandoc, texlive-full (TRAE biber, latexmk Y make4ht),
+  '     imagemagick, perl (EL COMPLETO, NO perl-base), libxml2-utils,
+  '     epubcheck, poppler-utils, zip, unzip, rsync, curl, wget, python3,
+  '     git, xdg-utils, openssh-client, mysql-client, hunspell, hunspell-es,
+  '     libimage-exiftool-perl
+  ' REQUISITO: INSTALAR CON «sudo apt install ./paquete.deb». dpkg -i NO
+  ' RESUELVE DEPENDENCIAS.
+  ' EL SERVIDOR MySQL TAMPOCO SE VERIFICA: NORMALMENTE VIVE EN OTRA MÁQUINA,
+  ' Y QUE RESPONDA LO PRUEBA LA CONEXIÓN REAL DE m_ConexionBD
 
-  ' --- 2.B. JAVA Y VALIDADORES BASADOS EN JAVA ---
-  AgregarDep(DEP_COMANDO, "java", "Java Runtime Environment (requerido por Saxon)",
-    "sudo apt install default-jre",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
+  ' --- 2.B. VALIDADORES INSTALADOS A MANO EN /opt ---
   AgregarDep(DEP_JAR, "/opt/verapdf|verapdf", "veraPDF (validador PDF/A-2b)",
     "Descargar de verapdf.org/software → sudo ./verapdf-install → instalar en /opt/verapdf",
     NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
@@ -2601,54 +2615,36 @@ Public Function IntegridadSistema(bMostrarModal As Boolean) As Integer
     "Copiar la carpeta lib/ del ZIP → sudo mkdir -p /opt/Saxon-HE/lib → sudo cp lib/xmlresolver-*.jar /opt/Saxon-HE/lib/",
     NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
 
-  ' --- 2.D. CONVERSIÓN Y COMPOSICIÓN ---
-  AgregarDep(DEP_PAQUETE, "pandoc", "Pandoc (ingreso de contenido)",
-    "sudo apt install pandoc",
+  ' --- 2.D. MÓDULOS DE PYTHON (pip, FUERA DE apt) ---
+  ' python3 VA EN EL .deb; EL MÓDULO NO, PORQUE SE INSTALA CON pip
+  AgregarDep(DEP_PYTHON, "packtools", "packtools (validador SciELO PS)",
+    "pip install packtools --break-system-packages",
     NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  ' SE VERIFICA EL EJECUTABLE Y NO EL PAQUETE texlive-full: LO QUE IMPORTA ES QUE
-  ' lualatex ESTÉ EN EL PATH, NO CÓMO SE HAYA INSTALADO TeX Live
-  AgregarDep(DEP_COMANDO, "lualatex", "LuaLaTeX (composición tipográfica)",
-    "sudo apt install texlive-full   (o el conjunto de colecciones que use su sitio)",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_COMANDO, "biber", "Biber (procesador bibliográfico de biblatex)",
-    "sudo apt install biber",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
+
+  ' --- 2.E. CONFIGURACIÓN DEL SISTEMA QUE NINGÚN Depends HACE ---
   ' OPCIONAL Y NO CRÍTICO POR DOS RAZONES. PRIMERA: LOS FILTROS LUA DE PANDOC
   ' CORREN DENTRO DE PANDOC, QUE LLEVA SU PROPIO INTÉRPRETE EMBEBIDO; EL BINARIO
   ' SUELTO SOLO LO NECESITA EjecutarScript PARA SCRIPTS .lua DEL USUARIO.
   ' SEGUNDA: EN UBUNTU Y MINT EL PAQUETE "lua" NO EXISTE (apt-cache policy lua
   ' DEVUELVE "Candidate: (none)") Y lua5.4 INSTALA /usr/bin/lua5.4, NO
-  ' /usr/bin/lua, ASÍ QUE ESTE RENGLÓN DABA ROJO PERMANENTE CON UNA INSTRUCCIÓN
-  ' QUE NO ARREGLABA NADA. SI CONFIRMÁS QUE NINGÚN SCRIPT .lua SE USA, BORRALO
+  ' /usr/bin/lua. POR ESO NO VA AL .deb: EL ALTERNATIVO /usr/bin/lua HAY QUE
+  ' CONFIGURARLO A MANO. SI CONFIRMÁS QUE NINGÚN SCRIPT .lua SE USA, BORRALO
   AgregarDep(DEP_COMANDO, "lua", "Lua (intérprete de scripts .lua del usuario)",
     "sudo apt install lua5.4   (crea /usr/bin/lua5.4; para tener /usr/bin/lua: " &
     "sudo update-alternatives --install /usr/bin/lua lua-interpreter /usr/bin/lua5.4 130)",
     NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "imagemagick", "ImageMagick (conversión de imágenes)",
-    "sudo apt install imagemagick",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
 
-  ' --- 2.E. PERL: MOTOR DE EXPRESIONES REGULARES Y ANÁLISIS LÉXICO ---
-  ' HACE FALTA EL PAQUETE perl COMPLETO, NO SOLO perl-base: buscar_regex.pl Y
-  ' analizar_lexico.pl ABREN LOS ARCHIVOS CON :encoding(UTF-8), QUE NECESITA
-  ' PerlIO Y Encode, Y perl-base NO LOS TRAE (CON SOLO perl-base: «Can't locate
-  ' PerlIO.pm»). POR ESO SE VERIFICA EL PAQUETE Y NO EL BINARIO: EL BINARIO
-  ' perl LO TRAE TAMBIÉN perl-base Y LA VERIFICACIÓN DARÍA VERDE SIN SERVIR
-  AgregarDep(DEP_PAQUETE, "perl", "Perl completo (expresiones regulares y análisis léxico)",
-    "sudo apt install perl",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  ' OPCIONAL HASTA QUE EL SCRIPT ESTÉ EFECTIVAMENTE EN EL .deb. CORRIENDO DESDE
+  ' --- 2.F. ARCHIVOS PROPIOS DEL PAQUETE (engine/) ---
+  ' OPCIONALES HASTA CONFIRMAR QUE EL EMPAQUETADO LOS INCLUYE. CORRIENDO DESDE
   ' EL IDE, RutaRecursos() DEVUELVE Application.Path/.hidden Y EL engine/ PUEDE
-  ' NO ESTAR AHÍ TODAVÍA, ASÍ QUE COMO CRÍTICO DABA UN ROJO DE DESARROLLO QUE NO
-  ' DESCRIBE NINGÚN PROBLEMA DE LA INSTALACIÓN DEL USUARIO. SUBIRLO A
-  ' NIVEL_CRITICO CUANDO EL EMPAQUETADO LO INCLUYA Y LO VEAS EN VERDE
+  ' NO ESTAR AHÍ TODAVÍA, ASÍ QUE COMO CRÍTICOS DABAN UN ROJO DE DESARROLLO QUE
+  ' NO DESCRIBE NINGÚN PROBLEMA DE LA INSTALACIÓN DEL USUARIO. SUBIRLOS A
+  ' NIVEL_CRITICO CUANDO EL .deb LOS INCLUYA Y SE VEAN EN VERDE
   AgregarDep(DEP_ARCHIVO, m_InicioCierre.RutaRecursos() &/ "engine" &/ "buscar_regex.pl",
     "Script del buscador regexp (engine/buscar_regex.pl)",
     "Falta un archivo del paquete instalado. Reinstalar el .deb de gbpublisher.",
     NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  ' FILTRO DEL ANÁLISIS DEL PROYECTO (SOLAPA «ESCANEAR»). OPCIONAL POR LA
-  ' MISMA RAZÓN QUE buscar_regex.pl: SUBIRLO A NIVEL_CRITICO CUANDO EL
-  ' EMPAQUETADO LO INCLUYA
+  ' FILTRO DEL ANÁLISIS DEL PROYECTO (SOLAPA «ESCANEAR»)
   AgregarDep(DEP_ARCHIVO, m_InicioCierre.RutaRecursos() &/ "engine" &/ "analizar_proyecto.lua",
     "Filtro del análisis del proyecto (engine/analizar_proyecto.lua)",
     "Falta un archivo del paquete instalado. Reinstalar el .deb de gbpublisher.",
@@ -2666,83 +2662,21 @@ Public Function IntegridadSistema(bMostrarModal As Boolean) As Integer
     "Falta un archivo del paquete instalado. Reinstalar el .deb de gbpublisher.",
     NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
 
-  ' --- 2.F. VALIDADORES ---
-  AgregarDep(DEP_COMANDO, "xmllint", "xmllint (validador XML)",
-    "sudo apt install libxml2-utils",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PYTHON, "packtools", "packtools (validador SciELO PS)",
-    "pip install packtools --break-system-packages",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "epubcheck", "epubcheck (validador EPUB 3)",
-    "sudo apt install epubcheck",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_COMANDO, "python3", "Python 3 (requerido por packtools)",
-    "sudo apt install python3",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-
-  ' --- 2.G. RED Y CONTROL DE VERSIONES ---
-  AgregarDep(DEP_COMANDO, "git", "Git (control de versiones)",
-    "sudo apt install git",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  ' curl LO USA VerificarURLDesdeCampo; wget LO USA GitVersion
-  AgregarDep(DEP_COMANDO, "curl", "curl (verificación de URLs)",
-    "sudo apt install curl",
-    NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_COMANDO, "wget", "wget (chequeo de versiones nuevas)",
-    "sudo apt install wget",
-    NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-
-  ' --- 2.H. HERRAMIENTAS AUXILIARES (SU AUSENCIA NO ROMPE NINGUNA SALIDA) ---
+  ' --- 2.G. HERRAMIENTAS AUXILIARES (SU AUSENCIA NO ROMPE NINGUNA SALIDA) ---
+  ' NO VAN AL .deb PORQUE EL EMPAQUETADOR DEL IDE SOLO ESCRIBE Depends, QUE ES
+  ' OBLIGATORIO: DECLARARLAS FORZARÍA A INSTALAR PROGRAMAS OPCIONALES
   AgregarDep(DEP_PAQUETE, "chromium", "Chromium (gráficos: control del dibujo y PNG)",
     "sudo apt install chromium",
     NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
   AgregarDep(DEP_PAQUETE, "calibre", "Calibre (visualizador de EPUB)",
     "sudo apt install calibre",
     NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "libimage-exiftool-perl", "exiftool (metadatos de imagen)",
-    "sudo apt install libimage-exiftool-perl",
-    NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  ' XSLT 1.0: EL STACK ES SAXON CON XSLT 2.0. SE DEJAN EN OPCIONAL HASTA
+  ' XSLT 1.0: EL STACK ES SAXON CON XSLT 2.0. SE DEJA EN OPCIONAL HASTA
   ' CONFIRMAR SI QUEDA ALGUNA TRANSFORMACIÓN EN 1.0. SI NO QUEDA NINGUNA,
-  ' BORRAR ESTAS DOS LÍNEAS Y LA DE gambas3-gb-xml-xslt DEL APARTADO 2.I
+  ' BORRAR ESTE RENGLÓN Y SACAR gb.xml.xslt DE LOS COMPONENTES DEL PROYECTO
   AgregarDep(DEP_COMANDO, "xsltproc", "xsltproc (XSLT 1.0 — heredado, ver nota)",
     "sudo apt install xsltproc",
     NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-
-  ' --- 2.I. COMPONENTES DE GAMBAS ---
-  AgregarDep(DEP_PAQUETE, "gambas3-runtime", "Gambas3 Runtime", "sudo apt install gambas3-runtime", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-qt5", "Gambas3 gb.qt5", "sudo apt install gambas3-gb-qt5", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-qt5-ext", "Gambas3 gb.qt5.ext", "sudo apt install gambas3-gb-qt5-ext", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-form", "Gambas3 gb.form", "sudo apt install gambas3-gb-form", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-form-dialog", "Gambas3 gb.form.dialog", "sudo apt install gambas3-gb-form-dialog", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-form-editor", "Gambas3 gb.form.editor", "sudo apt install gambas3-gb-form-editor", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-form-htmlview", "Gambas3 gb.form.htmlview", "sudo apt install gambas3-gb-form-htmlview", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-form-terminal", "Gambas3 gb.form.terminal", "sudo apt install gambas3-gb-form-terminal", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-highlight", "Gambas3 gb.highlight", "sudo apt install gambas3-gb-highlight", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-eval-highlight", "Gambas3 gb.eval / gb.eval.highlight", "sudo apt install gambas3-gb-eval-highlight", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-db2", "Gambas3 gb.db2", "sudo apt install gambas3-gb-db2", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-db2-mysql", "Gambas3 gb.db2.mysql", "sudo apt install gambas3-gb-db2-mysql", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-image", "Gambas3 gb.image", "sudo apt install gambas3-gb-image", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-desktop", "Gambas3 gb.desktop", "sudo apt install gambas3-gb-desktop", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-settings", "Gambas3 gb.settings", "sudo apt install gambas3-gb-settings", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-util", "Gambas3 gb.util", "sudo apt install gambas3-gb-util", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-util-web", "Gambas3 gb.util.web", "sudo apt install gambas3-gb-util-web", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-xml", "Gambas3 gb.xml", "sudo apt install gambas3-gb-xml", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-xml-html", "Gambas3 gb.xml.html", "sudo apt install gambas3-gb-xml-html", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-net", "Gambas3 gb.net", "sudo apt install gambas3-gb-net", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-net-curl", "Gambas3 gb.net.curl", "sudo apt install gambas3-gb-net-curl", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-openssl", "Gambas3 gb.openssl", "sudo apt install gambas3-gb-openssl", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-sdl2-audio", "Gambas3 gb.sdl2.audio", "sudo apt install gambas3-gb-sdl2-audio", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-markdown", "Gambas3 gb.markdown", "sudo apt install gambas3-gb-markdown", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-term", "Gambas3 gb.term", "sudo apt install gambas3-gb-term", NIVEL_CRITICO, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-dbus", "Gambas3 gb.dbus", "sudo apt install gambas3-gb-dbus", NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-complex", "Gambas3 gb.complex", "sudo apt install gambas3-gb-complex", NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-crypt", "Gambas3 gb.crypt", "sudo apt install gambas3-gb-crypt", NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-db2-sqlite3", "Gambas3 gb.db2.sqlite3", "sudo apt install gambas3-gb-db2-sqlite3", NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-xml-rpc", "Gambas3 gb.xml.rpc", "sudo apt install gambas3-gb-xml-rpc", NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  ' OPCIONALES POR DECISIÓN ARQUITECTÓNICA, VER NOTA DEL ENCABEZADO
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-pcre", "Gambas3 gb.pcre (sin uso — ver SC-05)", "sudo apt install gambas3-gb-pcre", NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
-  AgregarDep(DEP_PAQUETE, "gambas3-gb-xml-xslt", "Gambas3 gb.xml.xslt (XSLT 1.0 — heredado)", "sudo apt install gambas3-gb-xml-xslt", NIVEL_OPCIONAL, aTipos, aClaves, aDescripciones, aAcciones, aNiveles)
 
   ' ============================================================
   ' --- ZONA DE EXTENSIÓN — AGREGAR NUEVAS DEPENDENCIAS AQUÍ ---
