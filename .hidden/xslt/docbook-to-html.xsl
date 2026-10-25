@@ -53,7 +53,8 @@ RC APLICADAS:
                 xmlns:gbv="urn:gbpublisher:conversacion"
                 xmlns:gbvr="urn:gbpublisher:verso"
                 xmlns:gbct="urn:gbpublisher:citas"
-                exclude-result-prefixes="db xs xlink nl gbc gbv gbvr gbct">
+                xmlns:gbg="urn:gbpublisher:grafico"
+                exclude-result-prefixes="db xs xlink nl gbc gbv gbvr gbct gbg">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -81,6 +82,9 @@ RC APLICADAS:
        EL PDF, Y LA LECTURA DE citas.html (PARÁMETRO bib_dir) -->
   <xsl:include href="cita-comun.xsl"/>
   <xsl:include href="cita-fragmentos.xsl"/>
+
+  <!-- GRÁFICOS (SC-69): LA FIGURA INTERACTIVA, COMÚN A LAS DOS HOJAS DE HTML -->
+  <xsl:include href="grafico-comun.xsl"/>
 
   <!-- Output principal: no se usa en Fase 1 (todo va por xsl:result-document) -->
   <xsl:output method="xml"
@@ -1512,16 +1516,34 @@ RC APLICADAS:
                   select="normalize-space(((db:mediaobject/db:textobject/db:phrase
                           | mediaobject/textobject/phrase)[1], $titulo)[1])"/>
 
+    <!-- LA IMAGEN VIVE EN media/; EN docs/ VA A assets/media/ -->
+    <xsl:variable name="nombre" select="string(tokenize($fileref, '/')[last()])"/>
+
+    <!-- data-png: LA IMAGEN PARA EL PANEL DE FIGURAS, QUE CON UN IFRAME NO
+         TIENE UN <img> DE DONDE TOMARLA -->
     <figure class="fig-wrapper"
             id="{$figId}"
             data-fig-id="{$figId}"
+            data-png="assets/media/{$nombre}"
             onclick="highlightPanel('figs','{$figId}')"
             style="cursor:pointer">
-      <xsl:if test="$fileref != ''">
-        <!-- LA IMAGEN VIVE EN media/; EN docs/ VA A assets/media/ -->
-        <img src="assets/media/{tokenize($fileref, '/')[last()]}"
-             alt="{$alt}"/>
-      </xsl:if>
+      <xsl:choose>
+        <!-- UN GRÁFICO DE gbpublisher: media/fig-x.png CON media/fig-x.html
+             AL LADO VA EN UN IFRAME (SC-69). EL HTML DEL LIBRO ES SU SALIDA
+             DE PUBLICACIÓN: NO HAY MODO DE CONTROL COMO EN LAS REVISTAS -->
+        <xsl:when test="$fileref != '' and gbg:interactivo(concat($proyecto_dir, '/media'), $nombre)">
+          <xsl:call-template name="gbg:iframe">
+            <xsl:with-param name="src" select="concat('assets/media/', gbg:html-del-png($nombre))"/>
+            <xsl:with-param name="proporcion"
+              select="gbg:proporcion(concat($proyecto_dir, '/media'), $nombre)"/>
+            <xsl:with-param name="alt" select="string($alt)"/>
+            <xsl:with-param name="espacio" select="'http://www.w3.org/1999/xhtml'"/>
+          </xsl:call-template>
+        </xsl:when>
+        <xsl:when test="$fileref != ''">
+          <img src="assets/media/{$nombre}" alt="{$alt}"/>
+        </xsl:when>
+      </xsl:choose>
       <figcaption class="fig-caption">
         <span class="fig-label">Figura <xsl:value-of select="$num"/></span>
         <!-- EL TÍTULO SE RENDERIZA CON apply-templates (NO value-of) PARA

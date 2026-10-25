@@ -24,6 +24,9 @@
                   url_pdf      — URL de descarga del PDF
                   modo_salida  — control | final
                   modo_figura  — png | html
+                  dir_media    — ruta absoluta de media/ del
+                                 proyecto: ahí se busca el HTML de
+                                 cada gráfico (SC-69)
   VALIDACIÓN    : W3C HTML Validator
   DOCUMENTACIÓN : (interna gbpublisher)
   =====================================================
@@ -33,7 +36,7 @@
     — Google Fonts (IBM Plex Sans)
     — Metadatos enriquecidos: Highwire, Dublin Core,
       Open Graph, Schema.org JSON-LD
-    — Figuras interactivas (iframe fh*.html)
+    — Figuras interactivas: los gráficos (iframe fig-*.html, SC-69)
   =====================================================
 -->
 
@@ -45,7 +48,8 @@
   xmlns:gbc="urn:gbpublisher:codigo"
   xmlns:gbv="urn:gbpublisher:conversacion"
   xmlns:gbvr="urn:gbpublisher:verso"
-  exclude-result-prefixes="xs xlink gbc gbv gbvr">
+  xmlns:gbg="urn:gbpublisher:grafico"
+  exclude-result-prefixes="xs xlink gbc gbv gbvr gbg">
 
   <!-- LAS REGLAS DEL CÓDIGO COMUNES A LAS SEIS SALIDAS (SC-42) -->
   <xsl:include href="codigo-comun.xsl"/>
@@ -55,6 +59,9 @@
 
   <!-- VERSO (SC-49): ESTROFAS, VERSOS Y SANGRÍA, COMÚN A LAS SEIS HOJAS -->
   <xsl:include href="verso-comun.xsl"/>
+
+  <!-- GRÁFICOS (SC-69): LA FIGURA INTERACTIVA, COMÚN A LAS DOS HOJAS DE HTML -->
+  <xsl:include href="grafico-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS EXTERNOS
@@ -87,13 +94,17 @@
        'final'   → HTML para subir a OJS con canonical apuntando a url_articulo -->
   <xsl:param name="modo_salida" as="xs:string" select="'control'"/>
 
-  <!-- MODO DE FIGURA EN EL HTML:
-       'png'  → IMAGEN ESTÁTICA (fi*.png). APLICA A TODAS LAS FIGURAS.
-                ÚNICO MODO DISPONIBLE EN SALIDA BORRADOR.
-       'html' → FIGURA INTERACTIVA (fh*.html EN IFRAME).
-                SOLO APLICA A FIGURAS GENERADAS POR gbpublisher (fi*.png).
-                FIGURAS DEL AUTOR (NOMBRE LIBRE) CAEN AUTOMÁTICAMENTE A PNG. -->
+  <!-- MODO DE FIGURA EN EL HTML (SC-69):
+       'png'  → TODAS LAS FIGURAS COMO IMAGEN. ES EL DE LA SALIDA DE CONTROL.
+       'html' → LOS GRÁFICOS DE gbpublisher (media/fig-x.png CON SU
+                media/fig-x.html AL LADO) EN UN IFRAME; LAS DEMÁS
+                FIGURAS, COMO IMAGEN. ES EL DE LA SALIDA FINAL. -->
   <xsl:param name="modo_figura" as="xs:string" select="'png'"/>
+
+  <!-- LA RUTA ABSOLUTA DE media/ DEL PROYECTO: AHÍ SE BUSCA EL HTML DE
+       CADA GRÁFICO (gbg:interactivo). VACÍA: NINGUNA FIGURA ES
+       INTERACTIVA -->
+  <xsl:param name="dir_media" as="xs:string" select="''"/>
 
   <!-- CARPETA DE LOS BLOQUES DE CÓDIGO COLOREADOS POR colorear_codigo.sh
        (SC-42), COMO RUTA ABSOLUTA. VACÍA: EL CÓDIGO SALE SIN COLOR. LA
@@ -2767,7 +2778,10 @@
               item.id = 'panel-fig-' + id;
 
               var html = '';
+              // UN GRÁFICO INTERACTIVO NO TIENE IMAGEN: SU PNG VIENE EN data-png
               if (img)     html += '<img src="' + img.src + '" alt="' + (img.alt || '') + '"/>';
+              else if (fig.getAttribute('data-png'))
+                           html += '<img src="' + fig.getAttribute('data-png') + '" alt=""/>';
               if (label)   html += '<div class="panel-item-label">' + label.textContent + '</div>';
               if (caption) html += '<div class="panel-item-text">' + caption.textContent + '</div>';
 
@@ -3115,12 +3129,9 @@
        ================================================ -->
   <xsl:template match="fig">
     <!--
-      LÓGICA DE RENDERIZADO SEGÚN modo_figura Y NOMENCLATURA DEL ARCHIVO:
-      - modo_figura='png'  → SIEMPRE <img>. APLICA A TODAS LAS FIGURAS.
-      - modo_figura='html' Y nombre empieza con 'fi' → <iframe> AL fh*.html.
-                             FIGURAS GENERADAS POR gbpublisher.
-      - modo_figura='html' Y nombre NO empieza con 'fi' → <img>.
-                             FIGURAS DEL AUTOR (NOMBRE LIBRE, SIN VERSIÓN INTERACTIVA).
+      UNA FIGURA ES INTERACTIVA EN LA SALIDA FINAL SI ES UN GRÁFICO DE
+      gbpublisher: media/fig-x.png CON media/fig-x.html AL LADO (SC-69,
+      gbg:interactivo). TODAS LAS DEMÁS, Y TODAS EN CONTROL, VAN COMO IMAGEN.
     -->
     <xsl:variable name="href"   select="graphic/@xlink:href"/>
     <xsl:variable name="nombre" select="tokenize($href, '/')[last()]"/>
@@ -3143,43 +3154,28 @@
       </xsl:choose>
     </xsl:variable>
 
-    <!-- RUTA DEL HTML INTERACTIVO (SOLO RELEVANTE SI nombre empieza con 'fi') -->
-    <xsl:variable name="nombre_html"
-      select="replace(replace($nombre, '^fi', 'fh'), '\.png$', '.html')"/>
-    <xsl:variable name="src_html">
-      <xsl:choose>
-        <xsl:when test="$ruta_media != ''">
-          <xsl:value-of select="$ruta_media"/>
-          <xsl:text>/</xsl:text>
-          <xsl:value-of select="$nombre_html"/>
-        </xsl:when>
-        <xsl:otherwise>
-          <xsl:value-of select="$nombre_html"/>
-        </xsl:otherwise>
-      </xsl:choose>
-    </xsl:variable>
+    <xsl:variable name="interactivo" as="xs:boolean"
+      select="$modo_figura = 'html' and gbg:interactivo($dir_media, $nombre)"/>
 
-    <!-- EL id DEL EDITOR ES EL ANCLA ESTABLE DE LA FIGURA (SC-32) -->
+    <!-- EL id DEL EDITOR ES EL ANCLA ESTABLE DE LA FIGURA (SC-32). data-png:
+         LA IMAGEN PARA EL PANEL DE FIGURAS, QUE CON UN IFRAME NO TIENE UN
+         <img> DE DONDE TOMARLA -->
     <div class="fig-wrapper"
          id="{@id}"
          data-fig-id="{@id}"
+         data-png="{$src}"
          onclick="highlightPanel('figs', '{@id}')">
 
       <xsl:choose>
-        <!-- MODO INTERACTIVO: SOLO PARA FIGURAS CON NOMENCLATURA gbpublisher -->
-        <xsl:when test="$modo_figura = 'html' and starts-with($nombre, 'fi')">
-          <iframe src="{$src_html}"
-                  width="844"
-                  height="520"
-                  frameborder="0"
-                  scrolling="no"
-                  loading="lazy"
-                  title="{$alt}">
-            <!-- FALLBACK PARA NAVEGADORES SIN SOPORTE DE IFRAME -->
-            <img src="{$src}" alt="{$alt}"/>
-          </iframe>
+        <xsl:when test="$interactivo">
+          <xsl:call-template name="gbg:iframe">
+            <xsl:with-param name="src"
+              select="replace($src, '\.png$', '.html')"/>
+            <xsl:with-param name="proporcion"
+              select="gbg:proporcion($dir_media, $nombre)"/>
+            <xsl:with-param name="alt" select="string($alt)"/>
+          </xsl:call-template>
         </xsl:when>
-        <!-- MODO PNG: TODAS LAS FIGURAS, O FIGURA DEL AUTOR EN MODO html -->
         <xsl:otherwise>
           <img src="{$src}" alt="{$alt}"/>
         </xsl:otherwise>

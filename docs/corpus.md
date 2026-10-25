@@ -4217,10 +4217,10 @@ Cada gráfico vive en `graficos/fig-nombre.md`, en la raíz del proyecto como `c
 
 LAS SALIDAS
 
-- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. `engine/grafico.sh` (SC-13, lanzado por `EjecutarScriptSalida`, SC-53) llena los huecos de la plantilla de `.hidden/chart/` —el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción— y controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
+- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. Un texto vacío no queda en la `Collection` (GV-68): la clave no se escribe, y la plantilla toma como vacío lo que falta. `engine/grafico.sh` (SC-13, lanzado por `EjecutarScriptSalida`, SC-53) llena los huecos de la plantilla de `.hidden/chart/` —el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción— y controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
 - LA FUENTE. Noto Serif, la del HTML (decisión de Alberto). Un subconjunto latino en woff2, Regular y Bold, embebido como data URI (unos 32 KB): el iframe es otro documento y no hereda la fuente de la página, y el PNG se saca sin red. La plantilla dibuja después de `document.fonts.load` (GV-135). Los subconjuntos se generan una vez con el comando de GV-135 y viven en `.hidden/chart/`.
 - LO QUE LLEVA EL GRÁFICO. Las cifras de las marcas, del tooltip y de la tabla de datos con las reglas de SC-64, como el formateador de `cifras.lua` (SC-65): punto decimal, grupos de a tres con U+202F desde cinco dígitos, menos U+2212, «× 10ⁿ» con volado; títulos de ejes; apilado; `beginAtZero` salvo `cero: no`; la unidad en las marcas, el tooltip y la tabla, separada de la cifra con U+202F salvo el grado de ángulo (SC-64); tooltip de todas las series a la vez; `pointStyle` y `borderDash` distintos por serie, para que se distingan impresas en gris; en `torta` y `dona`, un color por porción. En las paletas secuenciales se omiten los dos tonos más claros: sobre blanco no se ven.
-- ACCESIBILIDAD. El canvas va con `aria-hidden` y, al lado, la tabla de datos, fuera de la vista y legible por un lector de pantalla. No se usa `role="img"` en el canvas: en WAI-ARIA 1.2 el rol img vuelve presentacional lo que tiene adentro, y la tabla de respaldo se perdería.
+- ACCESIBILIDAD. El canvas va con `aria-hidden` y, al lado, la tabla de datos, en un `div` fuera de la vista y legible por un lector de pantalla. La clase que la oculta va en el `div` y no en la tabla: una tabla no se achica y agrandaba el alto de la página (GV-144). No se usa `role="img"` en el canvas: en WAI-ARIA 1.2 el rol img vuelve presentacional lo que tiene adentro, y la tabla de respaldo se perdería.
 - EL PNG. Chromium headless sobre el mismo HTML, 844 px de ancho por el alto de la proporción, a escala 3 (GV-139). Es el que va al PDF, al EPUB y al HTML en borrador. Se genera en `tmp/vista-grafico/` del proyecto y se copia a `media/`.
 
 EN EL .md
@@ -4230,19 +4230,20 @@ El gráfico entra como una figura común, por el camino de `FMain.InsertarFigura
 EN EL HTML
 
 - `jats-to-html.xsl` y `docbook-to-html.xsl` deciden si una figura es interactiva por la existencia de `fig-nombre.html` junto al PNG: `unparsed-text-available()` sobre la ruta absoluta de `media`, que reciben como parámetro, armada con `encode-for-uri` por segmento (GV-136). Se retira `starts-with($nombre, 'fi')`.
-- En borrador, siempre el PNG; en final, el iframe si existe el HTML. La pregunta PNG o Chart.js de `m_GenerarHTML` se retira: cada figura sabe si tiene versión interactiva.
-- El iframe ocupa el ancho del contenedor con el `aspect-ratio` de la proporción, en lugar de 844×520 fijos. Adentro, el PNG como respaldo.
+- En borrador, siempre el PNG; en final, el iframe si existe el HTML. La pregunta PNG o Chart.js de `m_GenerarHTML` se retira: cada figura sabe si tiene versión interactiva. En libros no hay modo de control: el HTML del libro es de publicación, y cada gráfico con su HTML va en iframe.
+- Las reglas viven en `grafico-comun.xsl` (`gbg:interactivo`, `gbg:proporcion`, `gbg:iframe`), que incluyen las dos hojas. En `docbook-to-html.xsl` el iframe sale en el espacio de nombres de XHTML (`xsl:element`), como el resto de esa hoja: un elemento literal de la hoja común saldría sin espacio de nombres.
+- El iframe ocupa el ancho del contenedor con el `aspect-ratio` de la proporción, en lugar de 844×520 fijos; la hoja lee la proporción de la descripción que lleva el HTML («"proporcion":1.6»). Medido en Chromium a 1280, 800 y 390 px: el iframe mide lo que el gráfico. Sin respaldo adentro: HTML5 no muestra el contenido de un iframe. El panel de figuras toma la miniatura del atributo `data-png` del contenedor, porque con un iframe no hay imagen de donde tomarla.
 - El EPUB sigue con el PNG.
 
 EL FORMULARIO (FGraficos)
 
 Con la disposición y la lógica de FTabla (SC-67). A la izquierda, los gráficos de `graficos/`, con Nuevo (una plantilla), Borrar y Duplicar. Tres pestañas:
 
-- Datos: la grilla editable, con los menús de fila y de columna. Importar CSV llena la grilla desde un archivo: el CSV ya no es la fuente.
+- Datos: la grilla editable, con los menús de fila y de columna; la primera columna, la de las categorías, no se quita. Importar CSV llena la grilla desde un archivo: el CSV ya no es la fuente. El separador es el que más aparece en la primera línea (coma, punto y coma o tabulador); las celdas van tal cual: una cifra con coma decimal se señala al generar, no se adivina.
 - Diseño: las claves del encabezado; `series`, en una lista de selección múltiple con los encabezados (GV-138).
-- Vista: el gráfico en un WebView.
+- Vista: el gráfico en un WebView, con la URL codificada como en GV-141 (`m_Graficos.UrlDeArchivo`). Al abrir un gráfico muestra el último generado (GV-142).
 
-Guardar, Generar, Insertar y Cerrar; se cierra solo por los botones (SC-20). Cambiar de gráfico, Insertar y Cerrar con cambios sin guardar preguntan: guardar, descartar o quedarse (SC-06). Insertar devuelve el id a FMain por `m_Graficos` (RC-GM-13). Borrar quita el archivo y sus dos salidas, y avisa si alguna pieza nombra la figura. El retocador de imágenes (`m_GestionImagenes`) no lista los `fig-*` que tienen fuente en `graficos/`: se regeneran, no se retocan.
+Guardar, Vista previa, Generar, Insertar y Cerrar; se cierra solo por los botones (SC-20). Cambiar de gráfico, Insertar y Cerrar con cambios sin guardar preguntan: guardar, descartar o quedarse (SC-06). Insertar devuelve el id a FMain por `m_Graficos` (RC-GM-13), y FMain escribe el bloque de la figura con `BloqueFigura`, la misma función que `InsertarFigura`. Lo que se inserta es el PNG: si falta o es anterior al archivo, Insertar ofrece generarlo antes. Borrar quita el archivo y sus dos salidas, y avisa si alguna pieza nombra la figura. El retocador de imágenes (`m_GestionImagenes`) no lista los `fig-*` que tienen fuente en `graficos/`: se regeneran, no se retocan.
 
 QUÉ FRENA AL GENERAR
 
@@ -4250,11 +4251,13 @@ Una clave desconocida o repetida; un valor fuera de la lista; `series` con una c
 
 CORREGIDO EL 25/10 (act-68), al hacer la plantilla: la primera versión pedía `locale` con el idioma de la pieza, que da coma decimal y punto de miles y contradice SC-64; y pedía `role="img"` con la tabla adentro del canvas, que la oculta. Las dos cosas quedaron como se lee arriba.
 
-SE RETIRAN FFiguras.form/.class, FFigurasEditar.form/.class, la convención `fd/fi/fh` y la edición del CSV en LibreOffice.
+SE RETIRARON (25/10) FFiguras.form/.class, FFigurasEditar.form/.class, la convención `fd/fi/fh` y la edición del CSV en LibreOffice.
 
-**Relaciones:** vinculo:SC-32,vinculo:SC-66,vinculo:SC-67,vinculo:SC-64,vinculo:SC-06,vinculo:SC-20,vinculo:RC-GM-13,vinculo:GV-53,vinculo:GV-96,vinculo:GV-129,apoya:GV-134,apoya:GV-135,apoya:GV-136,apoya:GV-137,apoya:GV-138,apoya:GV-139,vinculo:SC-65,vinculo:SC-13,vinculo:SC-53,apoya:GV-141
+IMPLEMENTADO (25/10), en cinco pasos: la plantilla y la fuente; `m_Graficos`, `CGrafico` y `engine/grafico.sh`; FGraficos y `FMain`; las dos hojas de HTML, `m_GenerarHTML` y `m_GestionImagenes`; el retiro de FFiguras. MEDIDO en el contenedor: el módulo con un banco de prueba (ida y vuelta, lo que no encaja, lo que frena, las cifras, el CSV, vista y generación en una carpeta con espacio, ñ y #); el formulario bajo xvfb; las dos hojas con Saxon; el HTML de revista en Chromium.
 
-**PENDIENTE:** Implementar. Confirmar en Mint: chromium con --force-device-scale-factor (GV-139), JSON.Encode y ListBox múltiple en 3.22.1 (GV-137, GV-138).
+**Relaciones:** vinculo:SC-32,vinculo:SC-66,vinculo:SC-67,vinculo:SC-64,vinculo:SC-06,vinculo:SC-20,vinculo:RC-GM-13,vinculo:GV-53,vinculo:GV-96,vinculo:GV-129,apoya:GV-134,apoya:GV-135,apoya:GV-136,apoya:GV-137,apoya:GV-138,apoya:GV-139,vinculo:SC-65,vinculo:SC-13,vinculo:SC-53,apoya:GV-141,vinculo:GV-68,apoya:GV-142,apoya:GV-143,apoya:GV-144
+
+**PENDIENTE:** Probar en Mint: el formulario, la vista previa y la generación en un libro y en una revista, y el HTML final con un gráfico en los dos. Confirmar en Mint: chromium con --force-device-scale-factor (GV-139), JSON.Encode, ListBox múltiple y WebView en 3.22.1 (GV-137, GV-138, GV-142).
 
 ---
 
@@ -7788,10 +7791,12 @@ Medido con `Mode = Select.Multiple` y cuatro elementos:
     lst.Index, lst.Text                             -1 y vacío: elegir por código no mueve
                                                     el elemento actual
     UnselectAll()                                   no queda ninguno; ningún evento
+    List = <otra lista>                             los índices que siguen existiendo quedan
+                                                    elegidos: la selección no se borra
 
 A diferencia de `Index` (GV-53), reponer la selección de una lista múltiple no dispara los handlers: no hace falta la bandera de llenado para esto.
 
-EN EL PROYECTO: la lista de series de FGraficos (SC-69).
+EN EL PROYECTO: la lista de series de FGraficos (SC-69). `RefrescarSeries` reemplaza la lista, llama a `UnselectAll` y recién después elige: sin eso, al insertar una columna la serie elegida quedaba elegida dos veces, en su lugar viejo y en el nuevo.
 
 **Relaciones:** apoya:SC-69,vinculo:GV-53
 
@@ -7856,6 +7861,61 @@ EN EL PROYECTO: `engine/grafico.sh` controla así que el gráfico se haya dibuja
 **Relaciones:** apoya:SC-69
 
 **PENDIENTE:** Confirmar con el chromium de Mint.
+
+### GV-142 — WebView (gb.qt5.webview): asignar la misma URL vuelve a leer la página
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5.webview / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con un archivo en una carpeta con espacio y # en el nombre, cambiando su contenido entre una asignación y otra:
+
+    URL = <url>, después el archivo cambia, URL = <la misma>   muestra el contenido nuevo
+    Reload()                                                  muestra el contenido nuevo
+    leer URL                                                  la URL decodificada: espacio y ñ
+                                                              legibles, el # sigue como %23
+
+No hace falta `Reload()` ni pasar por about:blank para ver un archivo regenerado. Y la URL que se lee no es la que se asignó: compararlas para decidir si recargar no sirve.
+
+EN EL PROYECTO: FGraficos muestra la vista previa y lo generado asignando la URL (`MostrarEnVista`, SC-69).
+
+**Relaciones:** apoya:SC-69
+
+**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+
+### GV-143 — XSLT: el JavaScript escrito en una hoja se lee como XML
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Saxon-HE 12.5 / jats-to-html.xsl / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El JavaScript de las hojas de HTML va como texto de la hoja, sin CDATA. El parser de XML lo lee antes que nadie:
+
+    // … <img> … en un comentario de JS   la hoja no compila: «The element type "img" must be
+                                           terminated by the matching end-tag»
+    '<img src="' + x + '" alt=""/>'        compila: el parser lo toma como un elemento img
+                                           literal, con atributos que contienen JS, y el método
+                                           html lo vuelve a escribir como <img src="' + x + '"
+                                           alt="">, que sigue siendo JS válido
+
+La segunda forma funciona de casualidad: depende de que el texto parezca un elemento bien formado. Un comentario o una cadena con una etiqueta suelta rompe la hoja entera.
+
+EN EL PROYECTO: el panel de figuras de `jats-to-html.xsl` (SC-69). Al tocar el JS de una hoja: nada que parezca una etiqueta en los comentarios, y probar que la hoja compile.
+
+**Relaciones:** apoya:SC-69
+
+### GV-144 — CSS: una tabla no se achica a 1 px; agranda la página aunque esté recortada
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Chromium 153 headless (Playwright) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con la plantilla del gráfico (SC-69), en un iframe de 570 px de alto con el canvas de 570:
+
+    la clase «fuera de la vista» (position:absolute;   el documento mide 637 px: la tabla
+    width:1px; height:1px; overflow:hidden; clip)      crece con sus filas e ignora el height
+    en la <table>
+    la misma clase en un <div> que envuelve la tabla   el documento mide 570 px
+
+`clip` oculta lo que se ve pero no quita la tabla del alto de la página. Con `scrolling="no"` en el iframe no se notaba; en una página que se desplaza, sí.
+
+EN EL PROYECTO: la tabla de datos de la plantilla del gráfico va dentro de un div con la clase (SC-69).
+
+**Relaciones:** apoya:SC-69
 
 ---
 
