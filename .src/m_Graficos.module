@@ -1,0 +1,1215 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_Graficos
+' PROPÓSITO : Los archivos de los gráficos (SC-69): leerlos, escribirlos,
+'             listarlos, controlarlos y lanzar engine/grafico.sh, que arma el
+'             HTML y saca el PNG. FGraficos es la cara; acá no hay controles.
+'             Es el gemelo de m_Cuadros, y usa su lector del encabezado y de
+'             las filas (Escalar, EsSi, ListaEnteros, Citar, FilaPipe,
+'             PartirFila).
+'
+' EL FORMATO QUE ESCRIBE GAMBAS
+' ----------------------------------------------------------
+'   ---
+'   tipo: barras
+'   paleta: Dark2
+'   leyenda: sí
+'   series: [1, 3]          (SOLO SI SE ELIGEN)
+'   eje-x: 'Década'         (SOLO SI HAY)
+'   eje-y: 'Tesistas'       (SOLO SI HAY)
+'   unidad: '%'             (SOLO SI HAY)
+'   apilado: sí             (SOLO SI SÍ)
+'   cero: no                (SOLO SI NO)
+'   proporcion: 16:10
+'   ---
+'
+'   | Década | Capital | Interior |
+'   |---|---|---|
+'   | 1890 | 42 | 13 |
+'
+'   LOS TEXTOS VAN ENTRE COMILLAS SIMPLES, CON LA COMILLA DUPLICADA, COMO EN
+'   EL CUADRO (SC-67).
+'
+' LO QUE GAMBAS LEE
+' ----------------------------------------------------------
+'   El mismo formato, con la tolerancia del lector de m_Cuadros: las claves
+'   en cualquier orden, los valores sin comillas o con dobles sin barras, las
+'   líneas en blanco. Lo que no encaja —una clave desconocida o repetida, un
+'   valor fuera de la lista, una tabla que no es una pipe table— hace que
+'   Leer devuelva Null, con el motivo en UltimoError().
+'
+'   LO QUE FRENA AL GENERAR (SC-69) LO DICE Controlar: el archivo puede
+'   leerse y no poder dibujarse todavía (una celda a medio escribir).
+'
+' LA SALIDA
+' ----------------------------------------------------------
+'   Gambas escribe la descripción del gráfico (JSON.Encode, GV-137) en
+'   tmp/vista-grafico/fig-….json y engine/grafico.sh hace el resto (SC-13):
+'   el HTML desde la plantilla de ~/.gbpublisher/chart/, el control con
+'   chromium y, al generar, el PNG y la copia a media/.
+' ==========================================================
+
+' CARPETA DE LOS GRÁFICOS, EN LA RAÍZ DEL PROYECTO (SC-69)
+Public Const CARPETA_GRAFICOS As String = "graficos"
+
+' LA CARPETA DE TRABAJO Y EL VEREDICTO DE engine/grafico.sh
+Private Const CARPETA_VISTA As String = "tmp/vista-grafico"
+Private Const ARCHIVO_VEREDICTO As String = "veredicto.txt"
+
+' EL ANCHO DEL GRÁFICO EN PÍXELES CSS; EL PNG SALE A ESCALA 3 (GV-139)
+Public Const ANCHO_PX As Integer = 844
+
+' SEGUNDOS ANTES DE PREGUNTAR SI SEGUIR ESPERANDO: DOS PASADAS DE chromium.
+' MEDIDO EN EL CONTENEDOR: MENOS DE DOS SEGUNDOS CADA UNA
+Private Const PLAZO_GRAFICO As Float = 60
+
+' LOS CARACTERES DE UN NOMBRE DE GRÁFICO, DESPUÉS DE fig- (SC-69)
+Private Const CARACTERES_NOMBRE As String = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+
+' MOTIVO DEL ÚLTIMO FALLO; VACÍO SI LA ÚLTIMA LLAMADA FUNCIONÓ
+Private $sUltimoError As String = ""
+
+' EL GRÁFICO QUE FGraficos ELIGIÓ INSERTAR: EL CANAL DE VUELTA DEL MODAL (RC-GM-13)
+Private $sIdElegido As String = ""
+
+' ============================================
+' Función   : UltimoError
+' Propósito : El motivo del último fallo
+' Parámetros: ninguno
+' Retorna   : String — vacío si la última llamada funcionó
+' ============================================
+Public Function UltimoError() As String
+
+  Return $sUltimoError
+
+End
+
+' ============================================
+' Función   : Carpeta
+' Propósito : La carpeta de los gráficos del proyecto abierto
+' Parámetros: ninguno
+' Retorna   : String — ruta absoluta; vacío si no hay proyecto
+' ============================================
+Public Function Carpeta() As String
+
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then Return ""
+  Return m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_GRAFICOS
+
+End
+
+' ============================================
+' Función   : RutaGrafico
+' Propósito : El archivo de un gráfico
+' Parámetros: sId As String — fig-nombre
+' Retorna   : String — ruta absoluta
+' ============================================
+Public Function RutaGrafico(sId As String) As String
+
+  Return Carpeta() &/ sId & ".md"
+
+End
+
+' ============================================
+' Función   : RutaPNG
+' Propósito : El PNG de un gráfico, en media/ (SC-69)
+' Parámetros: sId As String
+' Retorna   : String — ruta absoluta, exista o no
+' ============================================
+Public Function RutaPNG(sId As String) As String
+
+  Return m_InicioCierre.RutaProyectoEnCurso &/ "media" &/ sId & ".png"
+
+End
+
+' ============================================
+' Función   : RutaHTML
+' Propósito : El HTML de un gráfico, en media/ (SC-69)
+' Parámetros: sId As String
+' Retorna   : String — ruta absoluta, exista o no
+' ============================================
+Public Function RutaHTML(sId As String) As String
+
+  Return m_InicioCierre.RutaProyectoEnCurso &/ "media" &/ sId & ".html"
+
+End
+
+' ============================================
+' Función   : RutaVista
+' Propósito : El HTML de la vista previa, que muestra FGraficos
+' Parámetros: sId As String
+' Retorna   : String — ruta absoluta, exista o no
+' ============================================
+Public Function RutaVista(sId As String) As String
+
+  Return m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_VISTA &/ sId & ".html"
+
+End
+
+' ============================================
+' Función   : Listar
+' Propósito : Los gráficos del proyecto, por nombre
+' Parámetros: ninguno
+' Retorna   : String[] — los id (fig-…), sin la extensión; vacío si no hay
+' ============================================
+Public Function Listar() As String[]
+
+  Dim aArchivos As String[]
+  Dim aIds As New String[]
+  Dim sArchivo As String
+
+  ' --- 1. SIN CARPETA NO HAY GRÁFICOS: NO ES UN ERROR ---
+  If Carpeta() = "" Then Return aIds
+  If Not Exist(Carpeta()) Then Return aIds
+
+  ' --- 2. LOS fig-*.md; gb.File Y UN PATRÓN, NUNCA "*.*" (GV-01) ---
+  Try aArchivos = Dir(Carpeta(), "fig-*.md", gb.File)
+  If Error Then Return aIds
+
+  ' EL FILTRO DE Dir NO ES VALIDACIÓN (RC-GM-19): EL NOMBRE SE CONTROLA ACÁ
+  For Each sArchivo In aArchivos
+    If NombreValido(File.BaseName(sArchivo)) Then aIds.Add(File.BaseName(sArchivo))
+  Next
+  aIds.Sort()
+  Return aIds
+
+End
+
+' ============================================
+' Función   : NombreValido
+' Propósito : Responde si un id sirve como nombre de gráfico: fig- y letras
+'             sin tilde, cifras o guiones (SC-69)
+' Parámetros: sId As String
+' Retorna   : Boolean
+' ============================================
+Public Function NombreValido(sId As String) As Boolean
+
+  Dim i As Integer
+
+  If Not (sId Begins "fig-") Then Return False
+  If Len(sId) <= 4 Then Return False
+  ' BYTE POR BYTE: UN CARÁCTER DE VARIOS BYTES NO ESTÁ EN LA LISTA Y DESCARTA,
+  ' QUE ES LO QUE SE QUIERE (RC-GM-12)
+  For i = 5 To Len(sId)
+    If InStr(CARACTERES_NOMBRE, Mid(sId, i, 1)) = 0 Then Return False
+  Next
+  Return True
+
+End
+
+' ============================================
+' Función   : Tipos
+' Propósito : Los tipos de gráfico, en el orden en que se ofrecen
+' Parámetros: ninguno
+' Retorna   : String[]
+' ============================================
+Public Function Tipos() As String[]
+
+  Return ["barras", "barras-h", "lineas", "area", "dispersion", "torta", "dona"]
+
+End
+
+' ============================================
+' Función   : Proporciones
+' Propósito : Las proporciones admitidas, ancho:alto
+' Parámetros: ninguno
+' Retorna   : String[]
+' ============================================
+Public Function Proporciones() As String[]
+
+  Return ["16:9", "16:10", "4:3", "1:1"]
+
+End
+
+' ============================================
+' Función   : Clases
+' Propósito : Las clases de paleta de ColorBrewer
+' Parámetros: ninguno
+' Retorna   : String[]
+' ============================================
+Public Function Clases() As String[]
+
+  Return ["cualitativa", "secuencial", "divergente"]
+
+End
+
+' ============================================
+' Función   : Paletas
+' Propósito : Las paletas de una clase
+' Parámetros: sClase As String — una de Clases()
+' Retorna   : String[] — vacío si la clase no existe
+' ============================================
+Public Function Paletas(sClase As String) As String[]
+
+  Select Case sClase
+    Case "cualitativa"
+      Return ["Set1", "Set2", "Set3", "Paired", "Dark2", "Accent", "Pastel1", "Pastel2"]
+    Case "secuencial"
+      Return ["Blues", "Greens", "Reds", "Purples", "Oranges", "YlOrRd", "YlGnBu", "BuGn"]
+    Case "divergente"
+      Return ["RdBu", "RdYlBu", "RdYlGn", "Spectral", "PiYG", "PRGn", "BrBG", "PuOr"]
+  End Select
+  Return New String[]
+
+End
+
+' ============================================
+' Función   : ClaseDePaleta
+' Propósito : La clase a la que pertenece una paleta (SC-69: la clase no se
+'             escribe en el archivo, sale del nombre)
+' Parámetros: sPaleta As String
+' Retorna   : String — vacío si la paleta no existe
+' ============================================
+Public Function ClaseDePaleta(sPaleta As String) As String
+
+  Dim sClase As String
+
+  For Each sClase In Clases()
+    If Paletas(sClase).Exist(sPaleta) Then Return sClase
+  Next
+  Return ""
+
+End
+
+' ============================================
+' Función   : Colores
+' Propósito : Los colores de una paleta ColorBrewer, de ocho clases. En las
+'             secuenciales se omiten los dos tonos más claros: sobre blanco no
+'             se ven (SC-69)
+' Parámetros: sPaleta As String
+' Retorna   : String[] — los colores #rrggbb; vacío si la paleta no existe
+' ============================================
+Public Function Colores(sPaleta As String) As String[]
+
+  Dim aColores As String[]
+
+  ' --- 1. LAS OCHO CLASES DE CADA PALETA (LOS VALORES DE FFiguras) ---
+  Select Case sPaleta
+    Case "Set1"
+      aColores = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33", "#a65628", "#f781bf"]
+    Case "Set2"
+      aColores = ["#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854", "#ffd92f", "#e5c494", "#b3b3b3"]
+    Case "Set3"
+      aColores = ["#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462", "#b3de69", "#fccde5"]
+    Case "Paired"
+      aColores = ["#a6cee3", "#1f78b4", "#b2df8a", "#33a02c", "#fb9a99", "#e31a1c", "#fdbf6f", "#ff7f00"]
+    Case "Dark2"
+      aColores = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666"]
+    Case "Accent"
+      aColores = ["#7fc97f", "#beaed4", "#fdc086", "#ffff99", "#386cb0", "#f0027f", "#bf5b17", "#666666"]
+    Case "Pastel1"
+      aColores = ["#fbb4ae", "#b3cde3", "#ccebc5", "#decbe4", "#fed9a6", "#ffffcc", "#e5d8bd", "#fddaec"]
+    Case "Pastel2"
+      aColores = ["#b3e2cd", "#fdcdac", "#cbd5e8", "#f4cae4", "#e6f5c9", "#fff2ae", "#f1e2cc", "#cccccc"]
+    Case "Blues"
+      aColores = ["#f7fbff", "#deebf7", "#c6dbef", "#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#084594"]
+    Case "Greens"
+      aColores = ["#f7fcf5", "#e5f5e0", "#c7e9c0", "#a1d99b", "#74c476", "#41ab5d", "#238b45", "#005a32"]
+    Case "Reds"
+      aColores = ["#fff5f0", "#fee0d2", "#fcbba1", "#fc9272", "#fb6a4a", "#ef3b2c", "#cb181d", "#99000d"]
+    Case "Purples"
+      aColores = ["#fcfbfd", "#efedf5", "#dadaeb", "#bcbddc", "#9e9ac8", "#807dba", "#6a51a3", "#4a1486"]
+    Case "Oranges"
+      aColores = ["#fff5eb", "#fee6ce", "#fdd0a2", "#fdae6b", "#fd8d3c", "#f16913", "#d94801", "#8c2d04"]
+    Case "YlOrRd"
+      aColores = ["#ffffcc", "#ffeda0", "#fed976", "#feb24c", "#fd8d3c", "#fc4e2a", "#e31a1c", "#800026"]
+    Case "YlGnBu"
+      aColores = ["#ffffd9", "#edf8b1", "#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#0c2c84"]
+    Case "BuGn"
+      aColores = ["#f7fcfd", "#e5f5f9", "#ccece6", "#99d8c9", "#66c2a4", "#41ae76", "#238b45", "#005824"]
+    Case "RdBu"
+      aColores = ["#b2182b", "#d6604d", "#f4a582", "#fddbc7", "#d1e5f0", "#92c5de", "#4393c3", "#2166ac"]
+    Case "RdYlBu"
+      aColores = ["#d73027", "#f46d43", "#fdae61", "#fee090", "#e0f3f8", "#abd9e9", "#74add1", "#4575b4"]
+    Case "RdYlGn"
+      aColores = ["#d73027", "#f46d43", "#fdae61", "#fee08b", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850"]
+    Case "Spectral"
+      aColores = ["#d53e4f", "#f46d43", "#fdae61", "#fee08b", "#e6f598", "#abdda4", "#66c2a5", "#3288bd"]
+    Case "PiYG"
+      aColores = ["#c51b7d", "#de77ae", "#f1b6da", "#fde0ef", "#e6f5d0", "#b8e186", "#7fbc41", "#4d9221"]
+    Case "PRGn"
+      aColores = ["#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#d9f0d3", "#a6dba0", "#5aae61", "#1b7837"]
+    Case "BrBG"
+      aColores = ["#8c510a", "#bf812d", "#dfc27d", "#f6e8c3", "#c7eae5", "#80cdc1", "#35978f", "#01665e"]
+    Case "PuOr"
+      aColores = ["#b35806", "#e08214", "#fdb863", "#fee0b6", "#d8daeb", "#b2abd2", "#8073ac", "#542788"]
+    Case Else
+      Return New String[]
+  End Select
+
+  ' --- 2. SECUENCIALES: SIN LOS DOS MÁS CLAROS (SC-69) ---
+  ' Remove(0, 2) QUITA DOS ELEMENTOS DESDE EL PRIMERO
+  If ClaseDePaleta(sPaleta) = "secuencial" Then aColores.Remove(0, 2)
+  Return aColores
+
+End
+
+' ============================================
+' Función   : AdmiteApilado
+' Propósito : Responde si un tipo de gráfico admite apilado (SC-69)
+' Parámetros: sTipo As String
+' Retorna   : Boolean
+' ============================================
+Public Function AdmiteApilado(sTipo As String) As Boolean
+
+  Return ["barras", "barras-h", "area"].Exist(sTipo)
+
+End
+
+' ============================================
+' Función   : Plantilla
+' Propósito : El texto de un gráfico nuevo: barras, una serie, tres
+'             categorías vacías
+' Parámetros: ninguno
+' Retorna   : String
+' ============================================
+Public Function Plantilla() As String
+
+  Dim oGrafico As New CGrafico
+
+  oGrafico.Encabezado = ["Categoría", "Serie 1"]
+  oGrafico.Filas.Add(["", ""])
+  oGrafico.Filas.Add(["", ""])
+  oGrafico.Filas.Add(["", ""])
+  Return Escribir(oGrafico)
+
+End
+
+' ============================================
+' Función   : Leer
+' Propósito : Lee el texto de un archivo de gráfico
+' Parámetros: sTexto As String — el contenido del archivo
+' Retorna   : CGrafico — el gráfico; Null si no encaja en el formato (el
+'             motivo en UltimoError)
+' ============================================
+Public Function Leer(sTexto As String) As CGrafico
+
+  Dim oGrafico As New CGrafico
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim sClave As String
+  Dim sValor As String
+  Dim aVistas As New String[]
+  Dim aTabla As New String[]
+  Dim aEnteros As Integer[]
+  Dim i As Integer
+  Dim iCierre As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  aLineas = Split(Replace(sTexto, "\r", ""), "\n")
+
+  ' --- 2. EL ENCABEZADO: ENTRE DOS LÍNEAS «---» ---
+  If aLineas.Count = 0 Then Return NoEncaja("el archivo está vacío")
+  If aLineas[0] <> "---" Then Return NoEncaja("la primera línea no es «---»")
+  iCierre = -1
+  For i = 1 To aLineas.Max
+    If aLineas[i] = "---" Then
+      iCierre = i
+      Break
+    Endif
+  Next
+  If iCierre = -1 Then Return NoEncaja("el encabezado no se cierra con «---»")
+
+  ' --- 3. CADA LÍNEA DEL ENCABEZADO: «clave: valor» ---
+  For i = 1 To iCierre - 1
+    sLinea = aLineas[i]
+    If Trim(sLinea) = "" Then Continue
+    If sLinea Begins " " Then Return NoEncaja("la línea " & CStr(i + 1) & " tiene sangría")
+    If InStr(sLinea, ":") = 0 Then Return NoEncaja("la línea " & CStr(i + 1) & " no es «clave: valor»")
+    sClave = Left(sLinea, InStr(sLinea, ":") - 1)
+    sValor = Trim(Mid(sLinea, InStr(sLinea, ":") + 1))
+
+    ' UNA CLAVE REPETIDA: YAML SE QUEDA CON UNA Y ESTE LECTOR NO SABE CUÁL
+    If aVistas.Exist(sClave) Then Return NoEncaja("la clave «" & sClave & "» está dos veces")
+    aVistas.Add(sClave)
+
+    ' EL ERROR DE Escalar QUEDA EN m_Cuadros: SE LIMPIA ANTES DE CADA CLAVE
+    m_Cuadros.LimpiarError()
+
+    Select Case sClave
+      Case "tipo"
+        oGrafico.Tipo = String.LCase(m_Cuadros.Escalar(sValor))
+        If Not Tipos().Exist(oGrafico.Tipo) Then Return NoEncaja("tipo: «" & oGrafico.Tipo & "»")
+      Case "paleta"
+        oGrafico.Paleta = m_Cuadros.Escalar(sValor)
+        If ClaseDePaleta(oGrafico.Paleta) = "" Then Return NoEncaja("paleta: «" & oGrafico.Paleta & "»")
+      Case "leyenda"
+        Select Case m_Cuadros.EsSi(m_Cuadros.Escalar(sValor))
+          Case 1
+            oGrafico.Leyenda = True
+          Case 0
+            oGrafico.Leyenda = False
+          Case Else
+            Return NoEncaja("leyenda no es sí ni no")
+        End Select
+      Case "series"
+        ' LA LISTA SE LEE CRUDA, COMO cortes EN EL CUADRO: NO ES UN ESCALAR
+        aEnteros = m_Cuadros.ListaEnteros(sValor)
+        If Not aEnteros Then Return NoEncaja("series no es una lista [n, m]")
+        oGrafico.Series = aEnteros
+      Case "eje-x"
+        oGrafico.EjeX = m_Cuadros.Escalar(sValor)
+      Case "eje-y"
+        oGrafico.EjeY = m_Cuadros.Escalar(sValor)
+      Case "unidad"
+        oGrafico.Unidad = m_Cuadros.Escalar(sValor)
+      Case "apilado"
+        Select Case m_Cuadros.EsSi(m_Cuadros.Escalar(sValor))
+          Case 1
+            oGrafico.Apilado = True
+          Case 0
+            oGrafico.Apilado = False
+          Case Else
+            Return NoEncaja("apilado no es sí ni no")
+        End Select
+      Case "cero"
+        Select Case m_Cuadros.EsSi(m_Cuadros.Escalar(sValor))
+          Case 1
+            oGrafico.Cero = True
+          Case 0
+            ' VACÍO CUENTA COMO no EN EsSi, PERO cero: VACÍO NO DICE NADA:
+            ' QUEDA EL VALOR POR OMISIÓN
+            If m_Cuadros.Escalar(sValor) <> "" Then oGrafico.Cero = False
+          Case Else
+            Return NoEncaja("cero no es sí ni no")
+        End Select
+      Case "proporcion"
+        oGrafico.Proporcion = m_Cuadros.Escalar(sValor)
+        If Not Proporciones().Exist(oGrafico.Proporcion) Then Return NoEncaja("proporcion: «" & oGrafico.Proporcion & "»")
+      Case Else
+        Return NoEncaja("la clave «" & sClave & "» no es del formato")
+    End Select
+
+    ' Escalar MARCA EN m_Cuadros LO QUE YAML LEERÍA DISTINTO
+    If m_Cuadros.UltimoError() <> "" Then Return NoEncaja(sClave & ": " & m_Cuadros.UltimoError())
+  Next
+
+  ' --- 4. LA TABLA: LO QUE SIGUE, SIN LAS LÍNEAS EN BLANCO DE LOS BORDES ---
+  For i = iCierre + 1 To aLineas.Max
+    aTabla.Add(aLineas[i])
+  Next
+  While aTabla.Count > 0
+    If Trim(aTabla[0]) <> "" Then Break
+    aTabla.Remove(0)
+  Wend
+  While aTabla.Count > 0
+    If Trim(aTabla[aTabla.Max]) <> "" Then Break
+    aTabla.Remove(aTabla.Max)
+  Wend
+  If Not LeerTabla(aTabla, oGrafico) Then Return NoEncaja($sUltimoError)
+
+  Return oGrafico
+
+End
+
+' ============================================
+' Función   : LeerTabla
+' Propósito : Pasa la pipe table al gráfico, celda por celda
+' Parámetros: aLineas As String[] — las líneas de la tabla, sin bordes vacíos
+'             oGrafico As CGrafico — donde se escribe
+' Retorna   : Boolean — False con el motivo en $sUltimoError
+' ============================================
+Private Function LeerTabla(aLineas As String[], oGrafico As CGrafico) As Boolean
+
+  Dim aCeldas As String[]
+  Dim aFilas As New String[][]
+  Dim i As Integer
+
+  ' --- 1. FORMA DE PIPE TABLE: ENCABEZADO, SEPARADOR, Y CADA LÍNEA CON «|» ---
+  ' UN GRÁFICO NO TIENE CELDAS UNIDAS: OTRA FORMA DE TABLA NO ENCAJA
+  If aLineas.Count < 2 Then
+    $sUltimoError = "debajo del encabezado tiene que haber una pipe table"
+    Return False
+  Endif
+  For i = 0 To aLineas.Max
+    If Not (aLineas[i] Begins "|") Then
+      $sUltimoError = "la línea " & CStr(i + 1) & " de la tabla no empieza con «|»"
+      Return False
+    Endif
+  Next
+
+  ' --- 2. LA SEGUNDA LÍNEA SEPARA EL ENCABEZADO: SOLO | : - Y ESPACIOS ---
+  If InStr(aLineas[1], "-") = 0 Or Replace(Replace(Replace(Replace(aLineas[1], "|", ""), ":", ""), "-", ""), " ", "") <> "" Then
+    $sUltimoError = "la segunda línea de la tabla no es la separación «|---|»"
+    Return False
+  Endif
+
+  ' --- 3. LAS CELDAS: TODAS LAS FILAS CON LAS COLUMNAS DEL ENCABEZADO ---
+  aCeldas = m_Cuadros.PartirFila(aLineas[0])
+  If aCeldas.Count = 0 Then
+    $sUltimoError = "el encabezado de la tabla no tiene columnas"
+    Return False
+  Endif
+  For i = 2 To aLineas.Max
+    aFilas.Add(m_Cuadros.PartirFila(aLineas[i]))
+    If aFilas[aFilas.Max].Count <> aCeldas.Count Then
+      $sUltimoError = "la fila " & CStr(i - 1) & " de la tabla tiene " & CStr(aFilas[aFilas.Max].Count) &
+        " celdas y el encabezado " & CStr(aCeldas.Count)
+      Return False
+    Endif
+  Next
+
+  oGrafico.Encabezado = aCeldas
+  oGrafico.Filas = aFilas
+  Return True
+
+End
+
+' ============================================
+' Función   : Escribir
+' Propósito : El texto del archivo de un gráfico, en el formato de Gambas
+' Parámetros: oGrafico As CGrafico
+' Retorna   : String — termina en salto de línea
+' ============================================
+Public Function Escribir(oGrafico As CGrafico) As String
+
+  Dim s As String
+  Dim aFila As String[]
+  Dim i As Integer
+
+  ' --- 1. EL ENCABEZADO, EN EL ORDEN FIJO DEL FORMATO ---
+  s = "---\n"
+  s &= "tipo: " & oGrafico.Tipo & "\n"
+  s &= "paleta: " & oGrafico.Paleta & "\n"
+  s &= "leyenda: " & If(oGrafico.Leyenda, "sí", "no") & "\n"
+  If oGrafico.Series.Count > 0 Then s &= "series: [" & m_Cuadros.UnirEnteros(oGrafico.Series) & "]\n"
+  If oGrafico.EjeX <> "" Then s &= "eje-x: " & m_Cuadros.Citar(oGrafico.EjeX) & "\n"
+  If oGrafico.EjeY <> "" Then s &= "eje-y: " & m_Cuadros.Citar(oGrafico.EjeY) & "\n"
+  If oGrafico.Unidad <> "" Then s &= "unidad: " & m_Cuadros.Citar(oGrafico.Unidad) & "\n"
+  If oGrafico.Apilado Then s &= "apilado: sí\n"
+  If Not oGrafico.Cero Then s &= "cero: no\n"
+  s &= "proporcion: " & oGrafico.Proporcion & "\n"
+  s &= "---\n\n"
+
+  ' --- 2. LA TABLA, SIN ALINEAR CON ESPACIOS (SC-67) ---
+  s &= m_Cuadros.FilaPipe(oGrafico.Encabezado)
+  s &= "|"
+  For i = 1 To oGrafico.Encabezado.Count
+    s &= "---|"
+  Next
+  s &= "\n"
+  For Each aFila In oGrafico.Filas
+    s &= m_Cuadros.FilaPipe(aFila)
+  Next
+
+  Return s
+
+End
+
+' ============================================
+' Función   : SeriesElegidas
+' Propósito : Las series que se dibujan: las de series, o todas
+' Parámetros: oGrafico As CGrafico
+' Retorna   : Integer[] — números de serie desde 1 (la columna 2 de la tabla)
+' ============================================
+Public Function SeriesElegidas(oGrafico As CGrafico) As Integer[]
+
+  Dim aSeries As New Integer[]
+  Dim i As Integer
+
+  If oGrafico.Series.Count > 0 Then Return oGrafico.Series.Copy()
+  For i = 1 To oGrafico.Encabezado.Count - 1
+    aSeries.Add(i)
+  Next
+  Return aSeries
+
+End
+
+' ============================================
+' Función   : Controlar
+' Propósito : Lo que frena al generar (SC-69): un archivo que se lee puede no
+'             poder dibujarse todavía
+' Parámetros: oGrafico As CGrafico
+' Retorna   : Boolean — False con el motivo en UltimoError
+' ============================================
+Public Function Controlar(oGrafico As CGrafico) As Boolean
+
+  Dim iSeries As Integer
+  Dim iSerie As Integer
+  Dim iAnterior As Integer
+  Dim aElegidas As Integer[]
+  Dim iFila As Integer
+  Dim sCelda As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoError = ""
+  iSeries = oGrafico.Encabezado.Count - 1
+
+  ' --- 2. LA TABLA: AL MENOS UNA SERIE Y UNA FILA ---
+  If iSeries < 1 Then Return Frena("la tabla no tiene series: hace falta una columna de datos además de la primera")
+  If oGrafico.Filas.Count = 0 Then Return Frena("la tabla no tiene filas")
+
+  ' --- 3. series: COLUMNAS QUE EXISTEN, SIN REPETIR Y EN ORDEN ---
+  For Each iSerie In oGrafico.Series
+    If iSerie < 1 Or iSerie > iSeries Then Return Frena("series: la serie " & CStr(iSerie) & " no existe (la tabla tiene " & CStr(iSeries) & ")")
+    If iSerie <= iAnterior Then Return Frena("series: cada serie una vez y en orden")
+    iAnterior = iSerie
+  Next
+  aElegidas = SeriesElegidas(oGrafico)
+
+  ' --- 4. LA TORTA DIBUJA UNA SOLA SERIE ---
+  If oGrafico.Tipo = "torta" And aElegidas.Count > 1 Then
+    If oGrafico.Series.Count = 0 Then Return Frena("una torta dibuja una sola serie: elegí cuál en series")
+    Return Frena("una torta dibuja una sola serie")
+  Endif
+
+  ' --- 5. apilado SOLO DONDE SE ADMITE ---
+  If oGrafico.Apilado And Not AdmiteApilado(oGrafico.Tipo) Then Return Frena("apilado no vale en «" & oGrafico.Tipo & "»")
+
+  ' --- 6. LAS CELDAS DE LAS SERIES DIBUJADAS: CIFRAS O VACÍAS ---
+  ' UNA CELDA VACÍA ES UN DATO QUE FALTA (null EN EL GRÁFICO)
+  For iFila = 0 To oGrafico.Filas.Max
+    For Each iSerie In aElegidas
+      sCelda = oGrafico.Filas[iFila][iSerie]
+      If sCelda <> "" And Not EsCifra(sCelda) Then
+        Return Frena("fila " & CStr(iFila + 1) & ", columna «" & oGrafico.Encabezado[iSerie] & "»: «" & sCelda &
+          "» no es una cifra (punto decimal, sin separador de miles)")
+      Endif
+    Next
+  Next
+
+  ' --- 7. EN DISPERSIÓN, LA PRIMERA COLUMNA SON LAS x: CIFRAS ---
+  If oGrafico.Tipo = "dispersion" Then
+    For iFila = 0 To oGrafico.Filas.Max
+      sCelda = oGrafico.Filas[iFila][0]
+      If Not EsCifra(sCelda) Then Return Frena("fila " & CStr(iFila + 1) & ": la x «" & sCelda & "» no es una cifra")
+    Next
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EsCifra
+' Propósito : Responde si un texto es una cifra con la forma de entrada de
+'             SC-64, la de PATRON_CIFRA en cifras.lua: signo menos opcional,
+'             dígitos, punto con decimales, e o E con exponente
+' Parámetros: s As String
+' Retorna   : Boolean
+' ============================================
+Public Function EsCifra(s As String) As Boolean
+
+  Dim i As Integer
+  Dim sCaracter As String
+  Dim iEstado As Integer
+  Dim bDigitos As Boolean
+
+  ' ESTADOS: 0 PARTE ENTERA, 1 DECIMALES, 2 EXPONENTE. bDigitos: SI LA PARTE
+  ' EN CURSO YA TIENE ALGÚN DÍGITO
+  If s = "" Then Return False
+  i = 1
+  If Left(s, 1) = "-" Then i = 2
+
+  ' BYTE POR BYTE: TODO LO ADMITIDO ES ASCII (RC-GM-12)
+  While i <= Len(s)
+    sCaracter = Mid(s, i, 1)
+    If InStr("0123456789", sCaracter) > 0 Then
+      bDigitos = True
+    Else If sCaracter = "." And iEstado = 0 And bDigitos Then
+      iEstado = 1
+      bDigitos = False
+    Else If (sCaracter = "e" Or sCaracter = "E") And iEstado < 2 And bDigitos Then
+      iEstado = 2
+      bDigitos = False
+      ' EL EXPONENTE ADMITE UN MENOS, NO UN MÁS (cifras.lua)
+      If Mid(s, i + 1, 1) = "-" Then Inc i
+    Else
+      Return False
+    Endif
+    Inc i
+  Wend
+
+  ' UN PUNTO SIN DECIMALES (12.) O UNA e SIN EXPONENTE (1e) NO SON CIFRAS
+  Return bDigitos
+
+End
+
+' ============================================
+' Función   : Descripcion
+' Propósito : La descripción del gráfico que lee la plantilla: JSON con las
+'             claves de la versión 1 (plantilla-grafico.html). «</» VA COMO
+'             «<\/»: JSON.Encode NO LO ESCAPA, Y DENTRO DE <script> CERRARÍA
+'             EL BLOQUE (GV-137)
+' Parámetros: oGrafico As CGrafico — ya controlado
+' Retorna   : String
+' ============================================
+Public Function Descripcion(oGrafico As CGrafico) As String
+
+  Dim cDatos As New Collection
+  Dim cSerie As Collection
+  Dim aCategorias As New Variant[]
+  Dim aSeries As New Variant[]
+  Dim aTextos As Variant[]
+  Dim aColores As New Variant[]
+  Dim aPartes As String[]
+  Dim sColor As String
+  Dim iSerie As Integer
+  Dim iFila As Integer
+
+  ' --- 1. LAS CATEGORÍAS: LA PRIMERA COLUMNA ---
+  For iFila = 0 To oGrafico.Filas.Max
+    aCategorias.Add(oGrafico.Filas[iFila][0])
+  Next
+
+  ' --- 2. LAS SERIES ELEGIDAS, CON LOS TEXTOS COMO SE ESCRIBIERON ---
+  For Each iSerie In SeriesElegidas(oGrafico)
+    cSerie = New Collection
+    aTextos = New Variant[]
+    For iFila = 0 To oGrafico.Filas.Max
+      aTextos.Add(oGrafico.Filas[iFila][iSerie])
+    Next
+    cSerie["nombre"] = oGrafico.Encabezado[iSerie]
+    cSerie["textos"] = aTextos
+    aSeries.Add(cSerie)
+  Next
+
+  ' --- 3. LOS COLORES DE LA PALETA, YA ELEGIDOS ---
+  For Each sColor In Colores(oGrafico.Paleta)
+    aColores.Add(sColor)
+  Next
+
+  ' --- 4. LA DESCRIPCIÓN, EN EL ORDEN DE LA PLANTILLA ---
+  ' LA PROPORCIÓN COMO ANCHO / ALTO: 16:10 DA 1.6. CFloat Y NO Val: SOLO
+  ' DÍGITOS, PERO Val DEPENDE DEL LOCALE (GV-96)
+  aPartes = Split(oGrafico.Proporcion, ":")
+  ' UN TEXTO VACÍO NO QUEDA EN LA Collection (GV-68): ejeX, ejeY, unidad Y
+  ' encabezado PUEDEN NO ESCRIBIRSE, Y LA PLANTILLA LOS TOMA COMO ""
+  cDatos["version"] = 1
+  cDatos["tipo"] = oGrafico.Tipo
+  cDatos["leyenda"] = oGrafico.Leyenda
+  cDatos["ejeX"] = oGrafico.EjeX
+  cDatos["ejeY"] = oGrafico.EjeY
+  cDatos["unidad"] = oGrafico.Unidad
+  cDatos["apilado"] = oGrafico.Apilado And AdmiteApilado(oGrafico.Tipo)
+  cDatos["cero"] = oGrafico.Cero
+  cDatos["proporcion"] = CFloat(aPartes[0]) / CFloat(aPartes[1])
+  cDatos["colores"] = aColores
+  cDatos["encabezado"] = oGrafico.Encabezado[0]
+  cDatos["categorias"] = aCategorias
+  cDatos["series"] = aSeries
+
+  Return Replace(JSON.Encode(cDatos), "</", "<\\/")
+
+End
+
+' ============================================
+' Función   : AltoPx
+' Propósito : El alto del gráfico en píxeles CSS para su proporción: el de la
+'             ventana de chromium al sacar el PNG. Hacia arriba: Chart.js
+'             redondea el alto del canvas, y una ventana un píxel más baja lo
+'             cortaría
+' Parámetros: sProporcion As String — ancho:alto
+' Retorna   : Integer
+' ============================================
+Public Function AltoPx(sProporcion As String) As Integer
+
+  Dim aPartes As String[]
+
+  aPartes = Split(sProporcion, ":")
+  Return CInt(Ceil(ANCHO_PX * CFloat(aPartes[1]) / CFloat(aPartes[0])))
+
+End
+
+' ============================================
+' Función   : UrlDeArchivo
+' Propósito : La URL file:// de una ruta, con cada byte que no es letra,
+'             cifra, «-._~» ni «/» escrito %XX. EL WebView NO PUEDE RECIBIR
+'             LA RUTA TAL CUAL: UN «#» EN LA CARPETA DEL PROYECTO SE LEE COMO
+'             EL COMIENZO DEL FRAGMENTO (LO MISMO QUE chromium, GV-141)
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String
+' ============================================
+Public Function UrlDeArchivo(sRuta As String) As String
+
+  Dim sUrl As String
+  Dim sByte As String
+  Dim i As Integer
+
+  ' BYTE POR BYTE: CADA BYTE DE UN CARÁCTER DE VARIOS BYTES SE ESCRIBE %XX,
+  ' QUE ES LO QUE PIDE UNA URL EN UTF-8 (RC-GM-12)
+  For i = 1 To Len(sRuta)
+    sByte = Mid(sRuta, i, 1)
+    If InStr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~/", sByte) > 0 Then
+      sUrl &= sByte
+    Else
+      sUrl &= "%" & Hex$(Asc(sByte), 2)
+    Endif
+  Next
+  Return "file://" & sUrl
+
+End
+
+' ============================================
+' Función   : LeerCSV
+' Propósito : Las filas de un CSV, para importar a la grilla. El separador
+'             es el que más aparece en la primera línea fuera de comillas
+'             (coma, punto y coma o tabulador). Un campo entre comillas
+'             dobles puede tener el separador, saltos de línea y "" por ".
+'             LAS CELDAS VAN TAL CUAL: UNA CIFRA CON COMA DECIMAL LA SEÑALA
+'             Controlar AL GENERAR; NO SE ADIVINA
+' Parámetros: sTexto As String — el contenido del archivo
+' Retorna   : String[][] — las filas, completadas con celdas vacías hasta
+'             la más larga; vacío si no hay nada
+' ============================================
+Public Function LeerCSV(sTexto As String) As String[][]
+
+  Dim aFilas As New String[][]
+  Dim aFila As New String[]
+  Dim sCampo As String
+  Dim sCaracter As String
+  Dim sSeparador As String
+  Dim bComillas As Boolean
+  Dim iMax As Integer
+  Dim i As Integer
+  Dim s As String
+
+  ' --- 1. SIN \r, Y EL SEPARADOR DE LA PRIMERA LÍNEA ---
+  s = Replace(sTexto, "\r", "")
+  sSeparador = SeparadorCSV(s)
+
+  ' --- 2. CAMPO POR CAMPO; TODO LO QUE SE COMPARA ES ASCII (RC-GM-12) ---
+  i = 1
+  While i <= Len(s)
+    sCaracter = Mid(s, i, 1)
+    If bComillas Then
+      ' DENTRO DE COMILLAS: "" ES UNA COMILLA; UNA SOLA, EL CIERRE
+      If sCaracter = "\"" Then
+        If Mid(s, i + 1, 1) = "\"" Then
+          sCampo &= "\""
+          Inc i
+        Else
+          bComillas = False
+        Endif
+      Else
+        sCampo &= sCaracter
+      Endif
+    Else If sCaracter = "\"" And Trim(sCampo) = "" Then
+      bComillas = True
+      sCampo = ""
+    Else If sCaracter = sSeparador Then
+      aFila.Add(Trim(sCampo))
+      sCampo = ""
+    Else If sCaracter = "\n" Then
+      aFila.Add(Trim(sCampo))
+      sCampo = ""
+      aFilas.Add(aFila)
+      aFila = New String[]
+    Else
+      sCampo &= sCaracter
+    Endif
+    Inc i
+  Wend
+
+  ' --- 3. LA ÚLTIMA FILA, SI EL ARCHIVO NO TERMINA EN SALTO ---
+  If sCampo <> "" Or aFila.Count > 0 Then
+    aFila.Add(Trim(sCampo))
+    aFilas.Add(aFila)
+  Endif
+
+  ' --- 4. SIN LAS FILAS VACÍAS DEL FINAL; TODAS DEL MISMO LARGO ---
+  While aFilas.Count > 0
+    If aFilas[aFilas.Max].Join("") <> "" Then Break
+    aFilas.Remove(aFilas.Max)
+  Wend
+  For Each aFila In aFilas
+    If aFila.Count > iMax Then iMax = aFila.Count
+  Next
+  For Each aFila In aFilas
+    While aFila.Count < iMax
+      aFila.Add("")
+    Wend
+  Next
+  Return aFilas
+
+End
+
+' ============================================
+' Función   : SeparadorCSV
+' Propósito : El separador de un CSV: el de la primera línea que más
+'             aparece fuera de comillas; con empate, la coma
+' Parámetros: s As String — el texto, sin \r
+' Retorna   : String — «,», «;» o un tabulador
+' ============================================
+Private Function SeparadorCSV(s As String) As String
+
+  Dim aCuentas As Integer[] = [0, 0, 0]
+  Dim aSeparadores As String[] = [",", ";", "\t"]
+  Dim sCaracter As String
+  Dim bComillas As Boolean
+  Dim iMejor As Integer
+  Dim i As Integer
+  Dim j As Integer
+
+  For i = 1 To Len(s)
+    sCaracter = Mid(s, i, 1)
+    If sCaracter = "\n" And Not bComillas Then Break
+    If sCaracter = "\"" Then bComillas = Not bComillas
+    If Not bComillas Then
+      j = aSeparadores.Find(sCaracter)
+      If j >= 0 Then Inc aCuentas[j]
+    Endif
+  Next
+  For j = 1 To 2
+    If aCuentas[j] > aCuentas[iMejor] Then iMejor = j
+  Next
+  Return aSeparadores[iMejor]
+
+End
+
+' ============================================
+' Función   : VistaPrevia
+' Propósito : Arma el HTML del gráfico en tmp/vista-grafico/, sin PNG, para
+'             mostrarlo en el formulario
+' Parámetros: sId As String — el gráfico, ya guardado en disco
+' Retorna   : Integer — el código de grafico.sh (0, 3, 1) o un RESULTADO_*
+'             de m_GenerarSalidasLibro (RESULTADO_NO_LANZADO si no se pudo
+'             preparar: ya informado)
+' ============================================
+Public Function VistaPrevia(sId As String) As Integer
+
+  Return Ejecutar(sId, "vista", "Vista previa de " & sId)
+
+End
+
+' ============================================
+' Función   : Generar
+' Propósito : Arma el HTML, saca el PNG y deja los dos en media/ (SC-69)
+' Parámetros: sId As String — el gráfico, ya guardado en disco
+' Retorna   : Integer — como VistaPrevia
+' ============================================
+Public Function Generar(sId As String) As Integer
+
+  Return Ejecutar(sId, "generar", "Generando " & sId)
+
+End
+
+' ============================================
+' Función   : Ejecutar
+' Propósito : Lee y controla el gráfico, escribe su descripción y lanza
+'             engine/grafico.sh (SC-13, SC-53)
+' Parámetros: sId As String — el gráfico
+'             sModo As String — vista | generar
+'             sQue As String — lo que muestra la lanzadora
+' Retorna   : Integer — el código del script o un RESULTADO_*
+' ============================================
+Private Function Ejecutar(sId As String, sModo As String, sQue As String) As Integer
+
+  Dim sTexto As String
+  Dim oGrafico As CGrafico
+  Dim sDirVista As String
+  Dim aArgumentos As New String[]
+
+  ' --- 1. PROYECTO Y ARCHIVO ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then
+    m_Sonido.sonar("Info")
+    Message.Info("Abrí un proyecto antes de trabajar con los gráficos.")
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+  Try sTexto = File.Load(RutaGrafico(sId))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el archivo del gráfico:" & gb.NewLine & RutaGrafico(sId) & gb.NewLine & Error.Text)
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 2. LO QUE SE LEE Y LO QUE FRENA: SE INFORMA ACÁ, ANTES DEL SCRIPT ---
+  oGrafico = Leer(sTexto)
+  If Not oGrafico Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El archivo del gráfico no encaja en el formato:" & gb.NewLine & $sUltimoError)
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+  If Not Controlar(oGrafico) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El gráfico no se puede dibujar:" & gb.NewLine & $sUltimoError)
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 3. LA DESCRIPCIÓN, EN LA CARPETA DE TRABAJO ---
+  ' Mkdir NO CREA LOS PADRES: PRIMERO tmp/, DESPUÉS LA DE LOS GRÁFICOS. UN
+  ' FALLO ACÁ LO INFORMA EL File.Save DE ABAJO
+  sDirVista = m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_VISTA
+  If Not Exist(File.Dir(sDirVista)) Then Try Mkdir File.Dir(sDirVista)
+  If Not Exist(sDirVista) Then Try Mkdir sDirVista
+  Try File.Save(sDirVista &/ sId & ".json", Descripcion(oGrafico))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir la descripción del gráfico:" & gb.NewLine &
+      sDirVista &/ sId & ".json" & gb.NewLine & Error.Text)
+    Return m_GenerarSalidasLibro.RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 4. EL SCRIPT: NINGÚN ARGUMENTO VACÍO (SC-53) ---
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(sId)
+  aArgumentos.Add(sModo)
+  aArgumentos.Add(m_Cuadros.IdiomaPiezaEnCurso())
+  aArgumentos.Add(CStr(AltoPx(oGrafico.Proporcion)))
+  Return m_GenerarSalidasLibro.EjecutarScriptSalida("grafico.sh", aArgumentos, PLAZO_GRAFICO, sQue)
+
+End
+
+' ============================================
+' Función   : LeerVeredicto
+' Propósito : El veredicto que dejó grafico.sh
+' Parámetros: ninguno
+' Retorna   : String[] — una entrada por línea, «nivel<TAB>mensaje»; vacío
+'             si no hay veredicto
+' ============================================
+Public Function LeerVeredicto() As String[]
+
+  Dim sRuta As String
+  Dim sTexto As String
+  Dim aLineas As New String[]
+  Dim sLinea As String
+
+  sRuta = m_InicioCierre.RutaProyectoEnCurso &/ CARPETA_VISTA &/ ARCHIVO_VEREDICTO
+  If Not Exist(sRuta) Then Return aLineas
+  Try sTexto = File.Load(sRuta)
+  If Error Then Return aLineas
+  For Each sLinea In Split(sTexto, "\n")
+    If InStr(sLinea, "\t") > 0 Then aLineas.Add(sLinea)
+  Next
+  Return aLineas
+
+End
+
+' ============================================
+' Función   : PiezasQueNombran
+' Propósito : Las piezas del proyecto que nombran la figura del gráfico: su
+'             imagen (media/fig-….png), su bloque (#fig-…}) o una referencia
+'             [@fig-…]. Las busca en los .md del disco, con la lista de
+'             m_BuscarRegex.ObtenerArchivosMD
+' Parámetros: sId As String
+' Retorna   : String[] — los nombres de archivo (sin ruta); vacío si ninguna
+' Nota      : LO QUE ESTÁ EN EL EDITOR SIN GUARDAR NO CUENTA: SE LEE EL DISCO,
+'             QUE ES LO QUE LEE LA GENERACIÓN
+' ============================================
+Public Function PiezasQueNombran(sId As String) As String[]
+
+  Dim aPiezas As New String[]
+  Dim sRuta As String
+  Dim sTexto As String
+
+  For Each sRuta In m_BuscarRegex.ObtenerArchivosMD()
+    Try sTexto = File.Load(sRuta)
+    ' UN ARCHIVO QUE NO SE PUEDE LEER NO SE INFORMA ACÁ: LO INFORMA LA GENERACIÓN
+    If Error Then Continue
+    If NombraFigura(sTexto, sId) Then aPiezas.Add(File.Name(sRuta))
+  Next
+  Return aPiezas
+
+End
+
+' ============================================
+' Función   : NombraFigura
+' Propósito : Responde si un texto nombra la figura: su imagen, su bloque o
+'             «@fig-x» seguido de algo que no sigue el nombre (así fig-x no
+'             se confunde con fig-x2)
+' Parámetros: sTexto As String; sId As String
+' Retorna   : Boolean
+' ============================================
+Private Function NombraFigura(sTexto As String, sId As String) As Boolean
+
+  Dim iPos As Integer
+  Dim sSigue As String
+
+  ' --- 1. LA IMAGEN Y EL BLOQUE (SC-32) ---
+  If InStr(sTexto, "media/" & sId & ".png") > 0 Then Return True
+  If InStr(sTexto, "#" & sId & "}") > 0 Then Return True
+
+  ' --- 2. LA REFERENCIA: InStr CON DESPLAZAMIENTO, BYTE A BYTE (RC-GM-12) ---
+  iPos = InStr(sTexto, "@" & sId)
+  While iPos > 0
+    sSigue = Mid(sTexto, iPos + Len(sId) + 1, 1)
+    ' FIN DEL TEXTO, O UN CARÁCTER QUE NO PUEDE SEGUIR UN NOMBRE DE GRÁFICO
+    If sSigue = "" Then Return True
+    If InStr(CARACTERES_NOMBRE, sSigue) = 0 Then Return True
+    iPos = InStr(sTexto, "@" & sId, iPos + 1)
+  Wend
+  Return False
+
+End
+
+' ============================================
+' Función   : Borrar
+' Propósito : Borra el gráfico: su archivo y sus dos salidas en media/
+'             (SC-69). Quien llama ya preguntó y avisó de las piezas que lo
+'             nombran
+' Parámetros: sId As String
+' Retorna   : Boolean — False con el motivo en UltimoError; lo que se pudo
+'             borrar queda borrado
+' ============================================
+Public Function Borrar(sId As String) As Boolean
+
+  Dim sRuta As String
+  Dim aNoBorrados As New String[]
+
+  ' --- 1. LOS TRES ARCHIVOS; UNO QUE NO ESTÁ NO ES UN ERROR ---
+  $sUltimoError = ""
+  For Each sRuta In [RutaGrafico(sId), RutaPNG(sId), RutaHTML(sId)]
+    If Not Exist(sRuta) Then Continue
+    Try Kill sRuta
+    If Error Then aNoBorrados.Add(sRuta & " (" & Error.Text & ")")
+  Next
+
+  ' --- 2. EL INFORME: CADA ARCHIVO QUE QUEDÓ ---
+  If aNoBorrados.Count > 0 Then
+    $sUltimoError = "No se pudieron borrar:" & gb.NewLine & aNoBorrados.Join(gb.NewLine)
+    Return False
+  Endif
+  Return True
+
+End
+
+' ============================================
+' Función   : ElegirParaInsertar
+' Propósito : Guarda el gráfico que FGraficos eligió insertar (RC-GM-13)
+' Parámetros: sId As String — vacío para no insertar nada
+' Retorna   : nada
+' ============================================
+Public Sub ElegirParaInsertar(sId As String)
+
+  $sIdElegido = sId
+
+End
+
+' ============================================
+' Función   : IdElegido
+' Propósito : El gráfico que FGraficos eligió insertar
+' Parámetros: ninguno
+' Retorna   : String — vacío si no eligió ninguno
+' ============================================
+Public Function IdElegido() As String
+
+  Return $sIdElegido
+
+End
+
+' ============================================
+' Función   : NoEncaja
+' Propósito : Deja el motivo por el que el archivo no encaja en el formato
+' Parámetros: sMotivo As String
+' Retorna   : CGrafico — siempre Null, para usarla en un Return
+' ============================================
+Private Function NoEncaja(sMotivo As String) As CGrafico
+
+  $sUltimoError = sMotivo
+  Return Null
+
+End
+
+' ============================================
+' Función   : Frena
+' Propósito : Deja el motivo por el que el gráfico no se puede dibujar
+' Parámetros: sMotivo As String
+' Retorna   : Boolean — siempre False, para usarla en un Return
+' ============================================
+Private Function Frena(sMotivo As String) As Boolean
+
+  $sUltimoError = sMotivo
+  Return False
+
+End

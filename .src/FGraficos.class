@@ -1,0 +1,1319 @@
+' Gambas class file
+
+' LOS GRÁFICOS DEL PROYECTO (SC-69): LA LISTA DE graficos/, EL GRÁFICO
+' ABIERTO EN TRES PESTAÑAS —DATOS, DISEÑO Y VISTA—, GENERAR EL PNG Y EL HTML
+' EN media/ E INSERTAR LA FIGURA EN EL .md. ES EL GEMELO DE FTabla (SC-67).
+'
+' DOS MODOS
+'   EL FORMULARIO       el archivo encaja en el formato: la tabla en la grilla,
+'                       celda por celda, y el encabezado en Diseño
+'   EL ARCHIVO COMO     el archivo no encaja (una clave desconocida, una tabla
+'   TEXTO               que no es pipe table): el archivo entero como texto,
+'                       con el motivo; Diseño y Vista deshabilitadas. «Pasar al
+'                       formulario» vuelve si ya encaja
+'
+' LO QUE FRENA AL GENERAR LO CONTROLA m_Graficos.Controlar, AL PEDIR LA VISTA
+' O AL GENERAR: EL FORMULARIO SOLO EVITA LO QUE NO SE PUEDE ESCRIBIR (APILADO
+' EN UN TIPO QUE NO LO ADMITE, QUITAR LA COLUMNA DE LAS CATEGORÍAS).
+
+' EL GRÁFICO ABIERTO: SU id, EL TEXTO COMO ESTÁ EN DISCO, EL MODO Y EL MODELO
+' DE LA TABLA (EL ENCABEZADO DEL ARCHIVO VIVE EN LOS CONTROLES DE DISEÑO)
+Private $sId As String
+Private $sGuardado As String
+Private $bModoTexto As Boolean
+Private $oGrafico As CGrafico
+
+' EL COLOREO DEL MODO TEXTO (SC-15); SE QUITA AL CERRAR (QuitarVisor)
+Private $hVisor As CVisorResaltado
+
+' LA LISTA: EL ÍNDICE ELEGIDO, PARA VOLVER A ÉL SI SE CANCELA UN CAMBIO, Y
+' LA MARCA QUE CALLA SU EVENTO MIENTRAS SE LLENA. LA MISMA MARCA CALLA LOS
+' COMBOS DE DISEÑO MIENTRAS SE LLENAN: REPONER UN COMBO NO ES UNA ELECCIÓN
+' (GV-53)
+Private $iIndiceLista As Integer = -1
+Private $bLlenando As Boolean
+
+' EL CIERRE SOLO POR LOS BOTONES
+Private $bCierrePermitido As Boolean
+
+' LA EDICIÓN ABIERTA EN LA GRILLA: SOLO SE GUARDA LO QUE ABRIÓ UN CLIC. EL
+' EDITOR DE TableView VUELVE A LANZAR Save CON SU TEXTO VIEJO CUANDO LA
+' GRILLA CAMBIA DE FILAS, AUNQUE YA SE HAYA GUARDADO Y CERRADO (GV-129)
+Private $bEditandoDatos As Boolean
+Private $iFilaDatos As Integer
+Private $iColumnaDatos As Integer
+
+' LA LETRA DEL ENCABEZADO DE LA TABLA: SE ARMA UNA VEZ, PORQUE Data ES RUTA
+' CALIENTE (GV-15)
+Private $hNegrita As Font
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Los botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara la grilla, los combos, el coloreo y la lista; abre el
+'             primer gráfico
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. LA GRILLA Y LOS COMBOS FIJOS ---
+  $hNegrita = Font["Bold"]
+  tvDatos.Header = GridView.Both
+  $bLlenando = True
+  cmbTipo.List = m_Graficos.Tipos()
+  cmbProporcion.List = m_Graficos.Proporciones()
+  cmbClase.List = m_Graficos.Clases()
+  $bLlenando = False
+
+  ' --- 2. EL COLOREO DEL MODO TEXTO; SI NO SE PUEDE, EL TEXTO VA SIN COLOR ---
+  $hVisor = m_ResaltadoSintaxis.CrearVisor(txaTexto, "markdown")
+
+  ' --- 3. LA LISTA Y EL PRIMER GRÁFICO ---
+  m_Graficos.ElegirParaInsertar("")
+  LlenarLista("")
+  If lstGraficos.Count > 0 Then
+    lstGraficos.Index = 0
+  Else
+    MostrarVacio()
+  Endif
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Solo se cierra por los botones
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  If $bCierrePermitido Then Return
+  m_Sonido.sonar("info")
+  Message.Info("Para cerrar el formulario use el botón <b>Cerrar</b>.")
+  Stop Event
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra sin insertar, después de resolver los cambios
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  If Not ResolverCambios() Then Return
+  Cerrar(0)
+
+End
+
+' ============================================
+' Función   : btnInsertar_Click
+' Propósito : Elige el gráfico abierto para insertar su figura en el .md y
+'             cierra. FMain inserta el bloque (RC-GM-13). Lo que se inserta
+'             es el PNG: si falta o es más viejo que el archivo, se genera
+'             antes
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnInsertar_Click()
+
+  Dim bGenerar As Boolean
+
+  ' --- 1. EL ARCHIVO GUARDADO ---
+  If $sId = "" Then Return
+  If Not ResolverCambios() Then Return
+
+  ' --- 2. EL PNG: QUE EXISTA Y QUE SEA POSTERIOR AL ARCHIVO ---
+  If Not Exist(m_Graficos.RutaPNG($sId)) Then
+    bGenerar = True
+  Else If Stat(m_Graficos.RutaGrafico($sId)).LastModified > Stat(m_Graficos.RutaPNG($sId)).LastModified Then
+    bGenerar = True
+  Endif
+  If bGenerar Then
+    m_Sonido.sonar("Question")
+    If Message.Question("La figura que se inserta es media/" & $sId & ".png, y falta o es anterior" & gb.NewLine &
+        "al último cambio del gráfico. ¿Generarla ahora?", ("Generar e insertar"), ("Cancelar")) <> 1 Then Return
+    If Not Generar() Then Return
+  Endif
+
+  ' --- 3. EL id VUELVE A FMain POR EL MÓDULO ---
+  m_Graficos.ElegirParaInsertar($sId)
+  Cerrar(1)
+
+End
+
+' ============================================
+' Función   : Cerrar
+' Propósito : El único cierre: suelta el coloreo y cierra con un valor
+' Parámetros: iValor As Integer — 1 si hay que insertar, 0 si no
+' Retorna   : nada
+' ============================================
+Private Sub Cerrar(iValor As Integer)
+
+  ' SIN ESTO, EL PRÓXIMO CAMBIO DE TEMA REPINTA UN CONTROL QUE YA NO EXISTE
+  m_ResaltadoSintaxis.QuitarVisor($hVisor)
+  $hVisor = Null
+  $bCierrePermitido = True
+  Me.Close(iValor)
+
+End
+
+' ============================================
+' Función   : LlenarLista
+' Propósito : Lista los gráficos de graficos/ y elige uno
+' Parámetros: sElegir As String — el id a dejar elegido; vacío, ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LlenarLista(sElegir As String)
+
+  Dim aIds As String[]
+  Dim i As Integer
+
+  ' EL EVENTO DE LA LISTA CALLA MIENTRAS SE LLENA: NO ES UNA ELECCIÓN
+  $bLlenando = True
+  aIds = m_Graficos.Listar()
+  lstGraficos.List = aIds
+  $iIndiceLista = -1
+  For i = 0 To aIds.Max
+    If aIds[i] = sElegir Then
+      lstGraficos.Index = i
+      $iIndiceLista = i
+    Endif
+  Next
+  $bLlenando = False
+
+End
+
+' ============================================
+' Función   : lstGraficos_Click
+' Propósito : Abre el gráfico elegido, después de resolver los cambios del
+'             anterior; si se cancela, la lista vuelve al anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub lstGraficos_Click()
+
+  If $bLlenando Then Return
+  If lstGraficos.Index = $iIndiceLista Then Return
+
+  ' --- 1. LOS CAMBIOS DEL QUE ESTABA ABIERTO ---
+  If Not ResolverCambios() Then
+    $bLlenando = True
+    lstGraficos.Index = $iIndiceLista
+    $bLlenando = False
+    Return
+  Endif
+
+  ' --- 2. EL NUEVO ---
+  $iIndiceLista = lstGraficos.Index
+  If $iIndiceLista < 0 Then Return
+  Abrir(lstGraficos.Text)
+
+End
+
+' ============================================
+' Función   : Abrir
+' Propósito : Lee un gráfico de disco y lo muestra en el modo que le toca
+' Parámetros: sId As String
+' Retorna   : nada
+' ============================================
+Private Sub Abrir(sId As String)
+
+  Dim sTexto As String
+  Dim oGrafico As CGrafico
+
+  ' --- 1. EL ARCHIVO ---
+  Try sTexto = File.Load(m_Graficos.RutaGrafico(sId))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el gráfico:" & gb.NewLine & m_Graficos.RutaGrafico(sId) & gb.NewLine & Error.Text)
+    MostrarVacio()
+    Return
+  Endif
+  $sId = sId
+  $sGuardado = sTexto
+  ' LA RUTA COMPLETA: QUÉ ARCHIVO SE ESTÁ EDITANDO, SIN DUDA
+  lblArchivo.Text = m_Graficos.RutaGrafico(sId)
+  LimpiarVista()
+
+  ' --- 2. EL FORMATO: SI NO ENCAJA, EL ARCHIVO COMO TEXTO ---
+  oGrafico = m_Graficos.Leer(sTexto)
+  If Not oGrafico Then
+    MostrarArchivoTexto(sTexto, m_Graficos.UltimoError())
+    Return
+  Endif
+
+  ' --- 3. EL GRÁFICO ---
+  MostrarGrafico(oGrafico)
+
+  ' EL TEXTO GUARDADO, NORMALIZADO: SI EL ARCHIVO SE ESCRIBIÓ A MANO, LO QUE
+  ' DIFIERE SOLO EN LA FORMA (COMILLAS, ORDEN) NO CUENTA COMO CAMBIO
+  $sGuardado = TextoActual()
+
+  ' --- 4. LA VISTA: LA ÚLTIMA GENERADA, SI HAY ---
+  If Exist(m_Graficos.RutaHTML(sId)) Then wvVista.URL = m_Graficos.UrlDeArchivo(m_Graficos.RutaHTML(sId))
+
+End
+
+' ============================================
+' Función   : MostrarVacio
+' Propósito : Ningún gráfico abierto: todo deshabilitado salvo la lista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarVacio()
+
+  $sId = ""
+  $sGuardado = ""
+  $oGrafico = Null
+  lblArchivo.Text = ("Ningún gráfico abierto: elegí uno de la lista o creá uno nuevo.")
+  tabGrafico.Enabled = False
+  btnGuardar.Enabled = False
+  btnVista.Enabled = False
+  btnGenerar.Enabled = False
+  btnInsertar.Enabled = False
+  btnDuplicar.Enabled = False
+  ' BORRAR ACTÚA SOBRE LA LISTA: SIN GRÁFICO ABIERTO, SOLO SI HAY UNO ELEGIDO
+  btnBorrarArchivo.Enabled = (lstGraficos.Index >= 0)
+  LimpiarVista()
+  lblEstado.Text = ""
+
+End
+
+' ============================================
+' Función   : MostrarGrafico
+' Propósito : Pasa un gráfico leído a los controles: el diseño, las series
+'             y la tabla en la grilla
+' Parámetros: oGrafico As CGrafico
+' Retorna   : nada
+' ============================================
+Private Sub MostrarGrafico(oGrafico As CGrafico)
+
+  ' --- 1. EL MODELO ---
+  $oGrafico = oGrafico
+  $bModoTexto = False
+
+  ' --- 2. EL DISEÑO, CON LOS EVENTOS CALLADOS (GV-53) ---
+  $bLlenando = True
+  cmbTipo.Text = oGrafico.Tipo
+  cmbProporcion.Text = oGrafico.Proporcion
+  cmbClase.Text = m_Graficos.ClaseDePaleta(oGrafico.Paleta)
+  cmbPaleta.List = m_Graficos.Paletas(cmbClase.Text)
+  cmbPaleta.Text = oGrafico.Paleta
+  chkLeyenda.Value = oGrafico.Leyenda
+  txtEjeX.Text = oGrafico.EjeX
+  txtEjeY.Text = oGrafico.EjeY
+  txtUnidad.Text = oGrafico.Unidad
+  chkApilado.Value = oGrafico.Apilado
+  chkCero.Value = oGrafico.Cero
+  $bLlenando = False
+
+  ' --- 3. LA TABLA, LAS SERIES Y LOS CONTROLES DEL MODO ---
+  RefrescarGrilla()
+  RefrescarSeries(oGrafico.Series)
+  AjustarModo()
+  AjustarApilado()
+  lblEstado.Text = ""
+
+End
+
+' ============================================
+' Función   : MostrarArchivoTexto
+' Propósito : El archivo entero como texto, con el motivo
+' Parámetros: sTexto As String — el archivo; sMotivo As String
+' Retorna   : nada
+' ============================================
+Private Sub MostrarArchivoTexto(sTexto As String, sMotivo As String)
+
+  $bModoTexto = True
+  $oGrafico = Null
+  MostrarTexto(sTexto)
+  AjustarModo()
+  tabGrafico.Index = 0
+  lblEstado.Text = ("El archivo no encaja en el formato del formulario: ") & sMotivo &
+    (". Se edita como texto.")
+
+End
+
+' ============================================
+' Función   : MostrarTexto
+' Propósito : Pone un texto en txaTexto, coloreado si hay visor
+' Parámetros: sTexto As String
+' Retorna   : nada
+' ============================================
+Private Sub MostrarTexto(sTexto As String)
+
+  If $hVisor Then
+    If $hVisor.Mostrar(sTexto) Then Return
+  Endif
+  ' SIN VISOR O SI FALLÓ (YA INFORMADO): EL TEXTO SIN COLOR
+  txaTexto.Text = sTexto
+
+End
+
+' ============================================
+' Función   : AjustarModo
+' Propósito : Los controles que valen en el modo actual
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub AjustarModo()
+
+  tabGrafico.Enabled = True
+  tvDatos.Visible = Not $bModoTexto
+  txaTexto.Visible = $bModoTexto
+  btnFila.Visible = Not $bModoTexto
+  btnColumna.Visible = Not $bModoTexto
+  btnImportarCSV.Visible = Not $bModoTexto
+  btnPasarFormulario.Visible = $bModoTexto
+  btnColorear.Visible = $bModoTexto
+
+  ' DISEÑO Y VISTA NO VALEN SI EL ARCHIVO NO ENCAJA: EL ENCABEZADO ESTÁ EN EL
+  ' TEXTO, Y LO QUE SE CAMBIARA EN DISEÑO NO SE GUARDARÍA. CON LA PESTAÑA
+  ' DESHABILITADA, TabStrip PASA SOLO A LA 0 (MEDIDO EN 3.19, FTabla)
+  tabGrafico[1].Enabled = Not $bModoTexto
+  tabGrafico[2].Enabled = Not $bModoTexto
+
+  btnGuardar.Enabled = True
+  btnVista.Enabled = Not $bModoTexto
+  btnGenerar.Enabled = Not $bModoTexto
+  btnInsertar.Enabled = Not $bModoTexto
+  btnDuplicar.Enabled = True
+  btnBorrarArchivo.Enabled = True
+
+End
+
+' ============================================
+' Función   : AjustarApilado
+' Propósito : Apilado solo en los tipos que lo admiten; en los demás queda
+'             apagado, para que el archivo no frene al generar (SC-69)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub AjustarApilado()
+
+  If m_Graficos.AdmiteApilado(cmbTipo.Text) Then
+    chkApilado.Enabled = True
+  Else
+    chkApilado.Value = False
+    chkApilado.Enabled = False
+  Endif
+
+End
+
+' ============================================
+' Función   : cmbTipo_Click
+' Propósito : El apilado sigue al tipo; la primera columna se titula según
+'             el tipo (las x en dispersión)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbTipo_Click()
+
+  If $bLlenando Then Return
+  AjustarApilado()
+  TitularColumnas()
+
+End
+
+' ============================================
+' Función   : cmbClase_Click
+' Propósito : Las paletas de la clase elegida; queda elegida la primera
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbClase_Click()
+
+  If $bLlenando Then Return
+  $bLlenando = True
+  cmbPaleta.List = m_Graficos.Paletas(cmbClase.Text)
+  cmbPaleta.Index = 0
+  $bLlenando = False
+
+End
+
+' ============================================
+' Función   : RefrescarGrilla
+' Propósito : Ajusta la grilla al modelo y repone los títulos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub RefrescarGrilla()
+
+  CerrarEdicion()
+  ' LA FILA 0 ES EL ENCABEZADO DE LA TABLA; LAS DEMÁS, LAS CATEGORÍAS
+  tvDatos.Columns.Count = $oGrafico.Encabezado.Count
+  tvDatos.Rows.Count = $oGrafico.Filas.Count + 1
+  TitularColumnas()
+  TitularFilas()
+  tvDatos.Refresh
+
+End
+
+' ============================================
+' Función   : TitularColumnas
+' Propósito : Los títulos de columna de la grilla: las categorías (o las x)
+'             y el número de cada serie, el mismo de la lista de series
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub TitularColumnas()
+
+  Dim i As Integer
+
+  If $bModoTexto Or Not $oGrafico Then Return
+  If tvDatos.Columns.Count = 0 Then Return
+  tvDatos.Columns[0].Title = If(cmbTipo.Text = "dispersion", ("x"), ("Categorías"))
+  For i = 1 To tvDatos.Columns.Count - 1
+    tvDatos.Columns[i].Title = ("Serie ") & CStr(i)
+  Next
+
+End
+
+' ============================================
+' Función   : TitularFilas
+' Propósito : Los títulos de fila: «enc.» para el encabezado y el número de
+'             fila, el mismo de los mensajes de Controlar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub TitularFilas()
+
+  Dim i As Integer
+
+  If tvDatos.Rows.Count = 0 Then Return
+  tvDatos.Rows[0].Title = ("enc.")
+  For i = 1 To tvDatos.Rows.Count - 1
+    tvDatos.Rows[i].Title = CStr(i)
+  Next
+
+End
+
+' ============================================
+' Función   : tvDatos_Data
+' Propósito : El texto de cada celda, del modelo. RUTA CALIENTE: SOLO
+'             INDEXA (GV-15)
+' Parámetros: Row As Integer, Column As Integer
+' Retorna   : nada
+' ============================================
+Public Sub tvDatos_Data(Row As Integer, Column As Integer)
+
+  If Not $oGrafico Then Return
+  If Row = 0 Then
+    tvDatos.Data.Text = $oGrafico.Encabezado[Column]
+    tvDatos.Data.Font = $hNegrita
+    tvDatos.Data.Background = &HD9E1EB
+  Else
+    tvDatos.Data.Text = $oGrafico.Filas[Row - 1][Column]
+  Endif
+
+End
+
+' ============================================
+' Función   : tvDatos_Click
+' Propósito : Edita la celda elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub tvDatos_Click()
+
+  ' LA CELDA QUE SE ABRE: Save SOLO VALE PARA ELLA (GV-129)
+  $iFilaDatos = tvDatos.Row
+  $iColumnaDatos = tvDatos.Column
+  $bEditandoDatos = True
+  tvDatos.Edit()
+
+End
+
+' ============================================
+' Función   : tvDatos_Save
+' Propósito : Guarda en el modelo lo escrito en una celda (RC-GM-03). Un
+'             encabezado de serie cambiado se ve en la lista de series
+' Parámetros: Row As Integer, Column As Integer, Value As String
+' Retorna   : nada
+' ============================================
+Public Sub tvDatos_Save(Row As Integer, Column As Integer, Value As String)
+
+  ' UN Save QUE NO VIENE DE UNA EDICIÓN ABIERTA POR UN CLIC ES EL EDITOR
+  ' REPITIENDO SU TEXTO VIEJO: SE DESCARTA (GV-129)
+  If Not $bEditandoDatos Then Return
+  If Row <> $iFilaDatos Or Column <> $iColumnaDatos Then Return
+  $bEditandoDatos = False
+  If Row = 0 Then
+    $oGrafico.Encabezado[Column] = Trim(Value)
+    If Column > 0 Then RefrescarSeries(SeriesElegidas())
+  Else
+    $oGrafico.Filas[Row - 1][Column] = Trim(Value)
+  Endif
+
+End
+
+' ============================================
+' Función   : mnuFila_Show
+' Propósito : Nombra en el menú la fila sobre la que actúa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFila_Show()
+
+  Dim iFila As Integer
+
+  iFila = tvDatos.Row
+  ' LA FILA 0 ES EL ENCABEZADO: NO SE QUITA NI SE INSERTA ARRIBA DE ELLA
+  mnuFilaQuitar.Enabled = (iFila >= 1)
+  mnuFilaArriba.Enabled = (iFila >= 1)
+  If iFila >= 1 Then mnuFilaQuitar.Text = ("Quitar la fila ") & CStr(iFila)
+
+End
+
+' ============================================
+' Función   : mnuFilaArriba_Click
+' Propósito : Una fila vacía arriba de la elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaArriba_Click()
+
+  If tvDatos.Row < 1 Then Return
+  InsertarFila(tvDatos.Row - 1)
+
+End
+
+' ============================================
+' Función   : mnuFilaAbajo_Click
+' Propósito : Una fila vacía abajo de la elegida (la primera si es el
+'             encabezado)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaAbajo_Click()
+
+  If tvDatos.Row < 0 Then Return
+  InsertarFila(tvDatos.Row)
+
+End
+
+' ============================================
+' Función   : InsertarFila
+' Propósito : Inserta una fila vacía en la tabla
+' Parámetros: iIndice As Integer — índice en Filas (0 = la primera)
+' Retorna   : nada
+' ============================================
+Private Sub InsertarFila(iIndice As Integer)
+
+  Dim aFila As New String[]
+  Dim i As Integer
+
+  CerrarEdicion()
+  For i = 1 To $oGrafico.Encabezado.Count
+    aFila.Add("")
+  Next
+  ' Add CON ÍNDICE INSERTA; Insert EMPALMA OTRO ARRAY (GV-13)
+  $oGrafico.Filas.Add(aFila, iIndice)
+  RefrescarGrilla()
+
+End
+
+' ============================================
+' Función   : mnuFilaQuitar_Click
+' Propósito : Quita la fila elegida; la tabla conserva al menos una
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuFilaQuitar_Click()
+
+  Dim iFila As Integer
+
+  CerrarEdicion()
+  iFila = tvDatos.Row
+  If iFila < 1 Then Return
+  If $oGrafico.Filas.Count <= 1 Then
+    m_Sonido.sonar("Info")
+    Message.Info("El gráfico necesita al menos una fila de datos.")
+    Return
+  Endif
+  $oGrafico.Filas.Remove(iFila - 1)
+  RefrescarGrilla()
+
+End
+
+' ============================================
+' Función   : mnuColumna_Show
+' Propósito : La primera columna son las categorías: no se quita ni se
+'             inserta otra a su izquierda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuColumna_Show()
+
+  mnuColIzquierda.Enabled = (tvDatos.Column >= 1)
+  mnuColQuitar.Enabled = (tvDatos.Column >= 1)
+  If tvDatos.Column >= 1 Then mnuColQuitar.Text = ("Quitar la serie ") & CStr(tvDatos.Column)
+
+End
+
+' ============================================
+' Función   : mnuColIzquierda_Click
+' Propósito : Una serie vacía a la izquierda de la elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuColIzquierda_Click()
+
+  If tvDatos.Column < 1 Then Return
+  InsertarColumna(tvDatos.Column)
+
+End
+
+' ============================================
+' Función   : mnuColDerecha_Click
+' Propósito : Una serie vacía a la derecha de la elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuColDerecha_Click()
+
+  If tvDatos.Column < 0 Then Return
+  InsertarColumna(tvDatos.Column + 1)
+
+End
+
+' ============================================
+' Función   : InsertarColumna
+' Propósito : Inserta una serie vacía; las series elegidas que quedan a la
+'             derecha se corren y siguen marcando la misma columna
+' Parámetros: iIndice As Integer — la columna nueva (>= 1)
+' Retorna   : nada
+' ============================================
+Private Sub InsertarColumna(iIndice As Integer)
+
+  Dim aFila As String[]
+  Dim aSeries As Integer[]
+  Dim i As Integer
+
+  CerrarEdicion()
+  aSeries = SeriesElegidas()
+  $oGrafico.Encabezado.Add("", iIndice)
+  For Each aFila In $oGrafico.Filas
+    aFila.Add("", iIndice)
+  Next
+  ' LA SERIE n ES LA COLUMNA n: LAS DE LA COLUMNA NUEVA EN ADELANTE SUBEN UNA
+  For i = 0 To aSeries.Max
+    If aSeries[i] >= iIndice Then Inc aSeries[i]
+  Next
+  RefrescarGrilla()
+  RefrescarSeries(aSeries)
+
+End
+
+' ============================================
+' Función   : mnuColQuitar_Click
+' Propósito : Quita la serie elegida, con su contenido; la tabla conserva al
+'             menos una
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub mnuColQuitar_Click()
+
+  Dim iColumna As Integer
+  Dim aFila As String[]
+  Dim aSeries As Integer[]
+  Dim aQuedan As New Integer[]
+  Dim iSerie As Integer
+
+  CerrarEdicion()
+  iColumna = tvDatos.Column
+  If iColumna < 1 Then Return
+  If $oGrafico.Encabezado.Count <= 2 Then
+    m_Sonido.sonar("Info")
+    Message.Info("El gráfico necesita al menos una serie.")
+    Return
+  Endif
+  If Message.Question(("¿Quitar la serie ") & CStr(iColumna) & (" con todo su contenido?"),
+      ("Quitar"), ("Cancelar")) <> 1 Then Return
+
+  ' LA SERIE QUITADA SALE DE LA SELECCIÓN; LAS DE LA DERECHA BAJAN UNA
+  aSeries = SeriesElegidas()
+  For Each iSerie In aSeries
+    If iSerie < iColumna Then aQuedan.Add(iSerie)
+    If iSerie > iColumna Then aQuedan.Add(iSerie - 1)
+  Next
+  $oGrafico.Encabezado.Remove(iColumna)
+  For Each aFila In $oGrafico.Filas
+    aFila.Remove(iColumna)
+  Next
+  RefrescarGrilla()
+  RefrescarSeries(aQuedan)
+
+End
+
+' ============================================
+' Función   : RefrescarSeries
+' Propósito : La lista de series, con los encabezados de la tabla, y la
+'             selección dada. Elegir por código no dispara eventos (GV-138)
+' Parámetros: aSeries As Integer[] — números de serie desde 1
+' Retorna   : nada
+' ============================================
+Private Sub RefrescarSeries(aSeries As Integer[])
+
+  Dim aNombres As New String[]
+  Dim iSerie As Integer
+  Dim i As Integer
+
+  ' --- 1. UNA ENTRADA POR SERIE: EL NÚMERO Y EL ENCABEZADO ---
+  For i = 1 To $oGrafico.Encabezado.Max
+    aNombres.Add(CStr(i) & " · " & $oGrafico.Encabezado[i])
+  Next
+  lstSeries.List = aNombres
+  ' REEMPLAZAR List NO BORRA LA SELECCIÓN: LOS ÍNDICES QUE SIGUEN EXISTIENDO
+  ' QUEDAN ELEGIDOS (MEDIDO EN 3.19). SE BORRA ANTES DE ELEGIR
+  lstSeries.UnselectAll()
+
+  ' --- 2. LA SELECCIÓN; UNA SERIE QUE YA NO EXISTE SE IGNORA ---
+  For Each iSerie In aSeries
+    If iSerie >= 1 And iSerie <= lstSeries.Count Then lstSeries[iSerie - 1].Selected = True
+  Next
+
+End
+
+' ============================================
+' Función   : SeriesElegidas
+' Propósito : Las series elegidas en la lista. Todas elegidas equivale a
+'             ninguna: el archivo no escribe series (SC-69)
+' Parámetros: ninguno
+' Retorna   : Integer[] — números de serie desde 1; vacío, todas
+' ============================================
+Private Function SeriesElegidas() As Integer[]
+
+  Dim aSeries As New Integer[]
+  Dim i As Integer
+
+  For i = 0 To lstSeries.Count - 1
+    If lstSeries[i].Selected Then aSeries.Add(i + 1)
+  Next
+  If aSeries.Count = lstSeries.Count Then Return New Integer[]
+  Return aSeries
+
+End
+
+' ============================================
+' Función   : btnImportarCSV_Click
+' Propósito : Reemplaza la tabla con los datos de un CSV: la primera fila es
+'             el encabezado. Las series elegidas se vacían: las columnas son
+'             otras
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnImportarCSV_Click()
+
+  Dim sTexto As String
+  Dim aFilas As String[][]
+  Dim aNinguna As New Integer[]
+
+  ' --- 1. EL ARCHIVO ---
+  CerrarEdicion()
+  Dialog.Title = ("Importar datos de un CSV")
+  Dialog.Filter = ["*.csv;*.txt", ("Archivos CSV"), "*", ("Todos los archivos")]
+  If Dialog.OpenFile() Then Return
+  Try sTexto = File.Load(Dialog.Path)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el archivo:" & gb.NewLine & Dialog.Path & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 2. LAS FILAS: UN ENCABEZADO Y AL MENOS UNA FILA, CON DOS COLUMNAS ---
+  aFilas = m_Graficos.LeerCSV(sTexto)
+  If aFilas.Count < 2 Or aFilas[0].Count < 2 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El CSV tiene que traer un encabezado, al menos una fila, y dos" & gb.NewLine &
+      "columnas: las categorías y una serie.")
+    Return
+  Endif
+
+  ' --- 3. LA CONFIRMACIÓN Y EL REEMPLAZO ---
+  m_Sonido.sonar("Question")
+  If Message.Question("Se reemplaza la tabla con " & CStr(aFilas.Count - 1) & " filas y " & CStr(aFilas[0].Count) &
+      " columnas de " & File.Name(Dialog.Path) & "." & gb.NewLine &
+      "Las cifras tienen que ir con punto decimal: lo que no, se señala al generar.",
+      ("Reemplazar"), ("Cancelar")) <> 1 Then Return
+  $oGrafico.Encabezado = aFilas[0]
+  aFilas.Remove(0)
+  $oGrafico.Filas = aFilas
+  RefrescarGrilla()
+  RefrescarSeries(aNinguna)
+  lblEstado.Text = ("Importado: ") & File.Name(Dialog.Path) & (". Guardá para conservarlo.")
+
+End
+
+' ============================================
+' Función   : btnPasarFormulario_Click
+' Propósito : Vuelve al formulario si el texto ya encaja en el formato; si
+'             no, no cambia nada y dice por qué
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnPasarFormulario_Click()
+
+  Dim oGrafico As CGrafico
+
+  oGrafico = m_Graficos.Leer(txaTexto.Text)
+  If Not oGrafico Then
+    m_Sonido.sonar("Info")
+    Message.Info("El archivo todavía no encaja en el formato:" & gb.NewLine & m_Graficos.UltimoError())
+    Return
+  Endif
+  MostrarGrafico(oGrafico)
+
+End
+
+' ============================================
+' Función   : btnColorear_Click
+' Propósito : Vuelve a colorear el texto. A pedido y no al escribir: cada
+'             coloreo corta el deshacer y dispara Change (GV-46, SC-18)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnColorear_Click()
+
+  If Not $hVisor Then Return
+  $hVisor.Repintar()
+  txaTexto.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnNuevo_Click
+' Propósito : Crea un gráfico con la plantilla y lo abre
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevo_Click()
+
+  Dim sId As String
+
+  If Not ResolverCambios() Then Return
+  sId = PedirNombre(("Nombre del gráfico nuevo"), "fig-")
+  If sId = "" Then Return
+  If Not CrearArchivo(sId, m_Graficos.Plantilla()) Then Return
+  LlenarLista(sId)
+  Abrir(sId)
+
+End
+
+' ============================================
+' Función   : btnDuplicar_Click
+' Propósito : Copia el gráfico abierto, como está en disco, con otro nombre.
+'             Las salidas no se copian: la copia se genera aparte
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnDuplicar_Click()
+
+  Dim sId As String
+  Dim sTexto As String
+
+  If $sId = "" Then Return
+  If Not ResolverCambios() Then Return
+  sId = PedirNombre(("Nombre de la copia de ") & $sId, $sId & "-copia")
+  If sId = "" Then Return
+  Try sTexto = File.Load(m_Graficos.RutaGrafico($sId))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el gráfico:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+  If Not CrearArchivo(sId, sTexto) Then Return
+  LlenarLista(sId)
+  Abrir(sId)
+
+End
+
+' ============================================
+' Función   : btnBorrarArchivo_Click
+' Propósito : Borra el gráfico elegido en la lista y sus salidas en media/.
+'             Si alguna pieza nombra la figura, lo dice antes: borrada, esa
+'             pieza frena al generarse (la imagen no existe)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarArchivo_Click()
+
+  Dim sId As String
+  Dim aPiezas As String[]
+  Dim sPregunta As String
+
+  ' --- 1. EL GRÁFICO DE LA LISTA ---
+  If lstGraficos.Index < 0 Then Return
+  sId = lstGraficos.Text
+
+  ' --- 2. LA PREGUNTA, CON LAS PIEZAS QUE LO NOMBRAN ---
+  aPiezas = m_Graficos.PiezasQueNombran(sId)
+  sPregunta = "¿Borrar el gráfico " & m_Graficos.CARPETA_GRAFICOS &/ sId & ".md" & gb.NewLine &
+    "y sus salidas media/" & sId & ".png y media/" & sId & ".html?" & gb.NewLine &
+    "No se puede deshacer desde gbpublisher (queda en el historial de git, si estaba commiteado)."
+  If aPiezas.Count > 0 Then
+    sPregunta &= gb.NewLine & gb.NewLine & "Nombran la figura estas piezas, que van a frenar al generarse:" &
+      gb.NewLine & aPiezas.Join(gb.NewLine)
+  Endif
+  m_Sonido.sonar("Warning")
+  If Message.Warning(sPregunta, ("Borrar"), ("Cancelar")) <> 1 Then Return
+
+  ' --- 3. EL BORRADO; LO QUE NO SE PUDO BORRAR SE NOMBRA ---
+  If Not m_Graficos.Borrar(sId) Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_Graficos.UltimoError())
+  Endif
+
+  ' --- 4. LA LISTA SIN ÉL ---
+  ' $sId VACÍO: EL GRÁFICO BORRADO YA NO TIENE CAMBIOS QUE PREGUNTAR AL ELEGIR
+  ' OTRO (HayCambios)
+  $sId = ""
+  LlenarLista("")
+  If lstGraficos.Count > 0 Then
+    lstGraficos.Index = 0
+  Else
+    MostrarVacio()
+  Endif
+  lblEstado.Text = ("Borrado: ") & m_Graficos.CARPETA_GRAFICOS &/ sId & ".md"
+
+End
+
+' ============================================
+' Función   : PedirNombre
+' Propósito : Pide el nombre de un gráfico y lo controla: fig-, letras sin
+'             tilde, cifras o guiones, y que no exista (SC-69)
+' Parámetros: sPregunta As String; sInicial As String
+' Retorna   : String — el id; vacío si se canceló o no es válido (informado)
+' ============================================
+Private Function PedirNombre(sPregunta As String, sInicial As String) As String
+
+  Dim sId As String
+
+  sId = Trim(InputBox(sPregunta & gb.NewLine & ("(fig- y letras sin tilde, cifras o guiones)"), ("Gráfico"), sInicial))
+  If sId = "" Then Return ""
+  If Not m_Graficos.NombreValido(sId) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("«" & sId & "» no sirve como nombre de gráfico: fig- y después" & gb.NewLine &
+      "solo letras sin tilde, cifras o guiones.")
+    Return ""
+  Endif
+  If Exist(m_Graficos.RutaGrafico(sId)) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ya existe el gráfico «" & sId & "».")
+    Return ""
+  Endif
+  ' UNA IMAGEN DE media/ CON ESE NOMBRE NO ES DE UN GRÁFICO: GENERAR LA PISARÍA
+  If Exist(m_Graficos.RutaPNG(sId)) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ya hay una imagen media/" & sId & ".png que no es de un gráfico." & gb.NewLine &
+      "Elegí otro nombre.")
+    Return ""
+  Endif
+  Return sId
+
+End
+
+' ============================================
+' Función   : CrearArchivo
+' Propósito : Escribe un gráfico nuevo; crea graficos/ si no está
+' Parámetros: sId As String; sTexto As String
+' Retorna   : Boolean — True si se escribió (si no, informado)
+' ============================================
+Private Function CrearArchivo(sId As String, sTexto As String) As Boolean
+
+  If Not Exist(m_Graficos.Carpeta()) Then
+    Try Mkdir m_Graficos.Carpeta()
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta de los gráficos:" & gb.NewLine & m_Graficos.Carpeta() & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Endif
+  Try File.Save(m_Graficos.RutaGrafico(sId), sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el gráfico:" & gb.NewLine & m_Graficos.RutaGrafico(sId) & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Return True
+
+End
+
+' ============================================
+' Función   : btnGuardar_Click
+' Propósito : Guarda el gráfico abierto
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardar_Click()
+
+  If Guardar() Then lblEstado.Text = ("Guardado: ") & m_Graficos.CARPETA_GRAFICOS &/ $sId & ".md"
+
+End
+
+' ============================================
+' Función   : Guardar
+' Propósito : Escribe en disco el texto de los controles
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se guardó (si no, informado)
+' ============================================
+Private Function Guardar() As Boolean
+
+  Dim sTexto As String
+
+  If $sId = "" Then Return False
+  sTexto = TextoActual()
+  Try File.Save(m_Graficos.RutaGrafico($sId), sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el gráfico:" & gb.NewLine & m_Graficos.RutaGrafico($sId) & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  $sGuardado = sTexto
+  Return True
+
+End
+
+' ============================================
+' Función   : HayCambios
+' Propósito : Responde si los controles difieren de lo guardado
+' Parámetros: ninguno
+' Retorna   : Boolean
+' ============================================
+Private Function HayCambios() As Boolean
+
+  If $sId = "" Then Return False
+  Return TextoActual() <> $sGuardado
+
+End
+
+' ============================================
+' Función   : ResolverCambios
+' Propósito : Antes de dejar el gráfico abierto: guardar, descartar o
+'             quedarse (SC-06)
+' Parámetros: ninguno
+' Retorna   : Boolean — True si se puede seguir
+' ============================================
+Private Function ResolverCambios() As Boolean
+
+  If Not HayCambios() Then Return True
+  Select Case Message.Question("El gráfico «" & $sId & "» tiene cambios sin guardar.",
+        ("Guardar"), ("Descartar"), ("Cancelar"))
+    Case 1
+      Return Guardar()
+    Case 2
+      Return True
+  End Select
+  Return False
+
+End
+
+' ============================================
+' Función   : TextoActual
+' Propósito : El texto del archivo según los controles
+' Parámetros: ninguno
+' Retorna   : String
+' ============================================
+Private Function TextoActual() As String
+
+  Dim oGrafico As New CGrafico
+  Dim sTexto As String
+
+  CerrarEdicion()
+
+  ' --- 1. EL ARCHIVO ENTERO COMO TEXTO: TAL CUAL, CON SU SALTO FINAL ---
+  If $bModoTexto Then
+    sTexto = txaTexto.Text
+    If Not (sTexto Ends "\n") Then sTexto &= "\n"
+    Return sTexto
+  Endif
+
+  ' --- 2. EL ENCABEZADO, DE LOS CONTROLES DE DISEÑO ---
+  oGrafico.Tipo = cmbTipo.Text
+  oGrafico.Paleta = cmbPaleta.Text
+  oGrafico.Leyenda = chkLeyenda.Value
+  oGrafico.Series = SeriesElegidas()
+  oGrafico.EjeX = Trim(txtEjeX.Text)
+  oGrafico.EjeY = Trim(txtEjeY.Text)
+  oGrafico.Unidad = Trim(txtUnidad.Text)
+  oGrafico.Apilado = chkApilado.Value
+  oGrafico.Cero = chkCero.Value
+  oGrafico.Proporcion = cmbProporcion.Text
+
+  ' --- 3. LA TABLA, DEL MODELO ---
+  oGrafico.Encabezado = $oGrafico.Encabezado
+  oGrafico.Filas = $oGrafico.Filas
+
+  Return m_Graficos.Escribir(oGrafico)
+
+End
+
+' ============================================
+' Función   : GuardarAntesDe
+' Propósito : La vista y la generación leen el archivo de disco: si hay
+'             cambios, se guardan antes, con permiso
+' Parámetros: sQue As String — «La vista previa», «La generación»
+' Retorna   : Boolean — True si se puede seguir
+' ============================================
+Private Function GuardarAntesDe(sQue As String) As Boolean
+
+  If Not HayCambios() Then Return True
+  If Message.Question(sQue & " lee el gráfico guardado." & gb.NewLine & "¿Guardar los cambios y seguir?",
+      ("Guardar y seguir"), ("Cancelar")) <> 1 Then Return False
+  Return Guardar()
+
+End
+
+' ============================================
+' Función   : btnVista_Click
+' Propósito : Guarda, arma el HTML del gráfico y lo muestra en la pestaña
+'             Vista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnVista_Click()
+
+  Dim iCodigo As Integer
+
+  ' --- 1. LO QUE SE VE ES LO QUE ESTÁ EN DISCO ---
+  If $sId = "" Then Return
+  If Not GuardarAntesDe(("La vista previa")) Then Return
+
+  ' --- 2. EL SCRIPT ---
+  lblEstado.Text = ("Armando la vista previa…")
+  iCodigo = m_Graficos.VistaPrevia($sId)
+
+  ' --- 3. EL RESULTADO ---
+  If iCodigo = 0 Then
+    MostrarEnVista(m_Graficos.RutaVista($sId))
+    lblEstado.Text = ("Vista previa: el gráfico como queda. Generar lo deja en media/.")
+  Else
+    InformarFallo(iCodigo, ("No salió la vista previa"))
+  Endif
+
+End
+
+' ============================================
+' Función   : btnGenerar_Click
+' Propósito : Genera el PNG y el HTML del gráfico en media/
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGenerar_Click()
+
+  If $sId = "" Then Return
+  If Not GuardarAntesDe(("La generación")) Then Return
+  Generar()
+
+End
+
+' ============================================
+' Función   : Generar
+' Propósito : Lanza la generación y muestra el resultado
+' Parámetros: ninguno
+' Retorna   : Boolean — True si el PNG y el HTML quedaron en media/
+' ============================================
+Private Function Generar() As Boolean
+
+  Dim iCodigo As Integer
+
+  lblEstado.Text = ("Generando…")
+  iCodigo = m_Graficos.Generar($sId)
+  If iCodigo <> 0 Then
+    InformarFallo(iCodigo, ("No se generó el gráfico"))
+    Return False
+  Endif
+  MostrarEnVista(m_Graficos.RutaHTML($sId))
+  lblEstado.Text = ("Generado: media/") & $sId & (".png y media/") & $sId & ".html"
+  Return True
+
+End
+
+' ============================================
+' Función   : MostrarEnVista
+' Propósito : Muestra un HTML en la pestaña Vista y pasa a ella. La URL va
+'             codificada: un «#» en la ruta la cortaría (UrlDeArchivo)
+' Parámetros: sRuta As String — el HTML
+' Retorna   : nada
+' ============================================
+Private Sub MostrarEnVista(sRuta As String)
+
+  ' ASIGNAR LA MISMA URL VUELVE A LEER EL ARCHIVO (MEDIDO EN 3.19): NO HACE
+  ' FALTA Reload
+  wvVista.URL = m_Graficos.UrlDeArchivo(sRuta)
+  tabGrafico.Index = 2
+
+End
+
+' ============================================
+' Función   : LimpiarVista
+' Propósito : La pestaña Vista en blanco: lo que mostraba era de otro gráfico
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarVista()
+
+  wvVista.URL = "about:blank"
+
+End
+
+' ============================================
+' Función   : InformarFallo
+' Propósito : Dice por qué no salió la vista o la generación: el motivo del
+'             veredicto si el script lo dejó; si no, que se vea la terminal
+' Parámetros: iCodigo As Integer — el código de m_Graficos; sQue As String
+' Retorna   : nada
+' ============================================
+Private Sub InformarFallo(iCodigo As Integer, sQue As String)
+
+  Dim aLineas As String[]
+
+  ' NEGATIVO: NO SE LANZÓ (LO QUE NO ENCAJA O FRENA YA SE INFORMÓ) O SE
+  ' ABANDONÓ LA ESPERA (LO INFORMÓ EjecutarScriptSalida)
+  If iCodigo < 0 Then
+    lblEstado.Text = sQue & "."
+    Return
+  Endif
+  aLineas = m_Graficos.LeerVeredicto()
+  If aLineas.Count > 0 Then
+    lblEstado.Text = sQue & ": " & Split(aLineas[0], "\t")[1]
+  Else
+    lblEstado.Text = sQue & (": ver la terminal del proyecto.")
+  Endif
+
+End
+
+' ============================================
+' Función   : CerrarEdicion
+' Propósito : Termina la edición de una celda: guarda lo que se esté
+'             escribiendo y cierra el editor. Va antes de todo lo que cambia
+'             filas o columnas o lee el modelo
+' Parámetros: ninguno
+' Retorna   : nada
+' Nota      : EL EDITOR DE TableView NO SE CIERRA CON Save() NI CON Cancel(),
+'             Y CUANDO LA GRILLA CAMBIA DE FILAS VUELVE A LANZAR Save CON SU
+'             TEXTO VIEJO: POR ESO Save() SOLO SI HAY UNA EDICIÓN ABIERTA POR
+'             UN CLIC, Y LOS Save QUE LLEGAN DESPUÉS SE DESCARTAN (GV-129)
+' ============================================
+Private Sub CerrarEdicion()
+
+  ' UNA EDICIÓN A MEDIO ESCRIBIR SE GUARDA, EN SU CELDA, ANTES DEL CAMBIO
+  If $bEditandoDatos Then tvDatos.Save()
+  $bEditandoDatos = False
+  tvDatos.Cancel()
+
+End

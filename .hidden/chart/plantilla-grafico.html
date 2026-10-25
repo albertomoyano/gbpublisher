@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<!--
+  ==========================================================
+  PLANTILLA : plantilla-grafico.html
+  PROPÓSITO : El HTML de un gráfico (SC-69). m_Graficos la lee de
+              ~/.gbpublisher/chart/ y reemplaza los cinco huecos; el
+              resultado es media/fig-nombre.html, que funciona solo: lleva
+              Chart.js, la fuente y los datos. Chromium saca el PNG de este
+              mismo archivo.
+
+  LOS HUECOS: CADA UNO ES SU NOMBRE ENTRE DOS PARES DE ARROBAS. ACÁ SE
+  NOMBRAN SIN ELLAS, PORQUE EL REEMPLAZO ALCANZA A TODO EL ARCHIVO: ESCRITOS
+  EN ESTE COMENTARIO, TAMBIÉN SE REEMPLAZARÍAN. CADA HUECO APARECE UNA SOLA
+  VEZ. SE REEMPLAZAN EN ESTE ORDEN; LOS DATOS AL FINAL, PARA QUE UN TEXTO DEL
+  USUARIO QUE CONTENGA UN HUECO NO SE VUELVA A REEMPLAZAR.
+    IDIOMA    el idioma de la pieza, para lang (es, en, pt…)
+    REGULAR   NotoSerif-Regular-latino.woff2 en base64
+    NEGRITA   NotoSerif-Bold-latino.woff2 en base64
+    CHARTJS   chart.min.js (Chart.js 4.4.1) entero
+    DATOS     la descripción del gráfico, de JSON.Encode, con «</»
+              cambiado por «<\/» (GV-137)
+
+  LA DESCRIPCIÓN (versión 1)
+    tipo         barras | barras-h | lineas | area | dispersion | torta | dona
+    leyenda      true | false
+    ejeX, ejeY   títulos de los ejes horizontal y vertical; "" o ausentes,
+                 sin título (ejeX, ejeY, unidad Y encabezado PUEDEN FALTAR:
+                 GAMBAS NO ESCRIBE UNA CLAVE CON TEXTO VACÍO, GV-68)
+    unidad       "" o el símbolo; va separado de la cifra con U+202F, salvo
+                 el grado de ángulo (SC-64)
+    apilado      true | false
+    cero         true | false: el eje de valores arranca en cero
+    proporcion   ancho / alto (16:10 → 1.6)
+    colores      los de la paleta, ya elegidos por m_Graficos
+    encabezado   el encabezado de la primera columna
+    categorias   los textos de la primera columna (en dispersion, las x
+                 tal como se escribieron)
+    series       [{nombre, textos}]: textos como se escribieron en el
+                 archivo; "" es un dato que falta
+
+  LAS CIFRAS (SC-64, COMO formatear_cifra DE cifras.lua): punto decimal,
+  grupos de a tres con U+202F desde cinco dígitos de un lado del punto,
+  menos U+2212, «× 10ⁿ» con volado.
+
+  LA FUENTE: se dibuja después de document.fonts.load. Sin esperar, el
+  canvas sale con la letra de respaldo y no se vuelve a pintar (GV-135).
+
+  ACCESIBILIDAD: el canvas va con aria-hidden y, al lado, la tabla de datos,
+  oculta a la vista y legible por un lector de pantalla. No se usa role="img"
+  en el canvas: vuelve presentacional lo que tiene adentro.
+
+  CUANDO TERMINA: <html data-listo="1">, o data-listo="error" y el motivo en
+  data-motivo.
+  ==========================================================
+-->
+<html lang="@@IDIOMA@@">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title></title>
+<style>
+  /* LA FUENTE DEL HTML (SC-69): SUBCONJUNTO LATINO, EMBEBIDO (GV-135) */
+  @font-face {
+    font-family: 'Noto Serif';
+    font-style: normal;
+    font-weight: 400;
+    src: url(data:font/woff2;base64,@@REGULAR@@) format('woff2');
+  }
+  @font-face {
+    font-family: 'Noto Serif';
+    font-style: normal;
+    font-weight: 700;
+    src: url(data:font/woff2;base64,@@NEGRITA@@) format('woff2');
+  }
+  /* SIN MÁRGENES: EL ANCHO DEL CANVAS ES EL DE LA VENTANA, Y EL PNG MIDE
+     EXACTAMENTE LO QUE PIDE m_Graficos */
+  html, body { margin: 0; padding: 0; background: #fff; }
+  .grafico { width: 100%; }
+  /* LA TABLA PARA EL LECTOR DE PANTALLA: FUERA DE LA VISTA, NO FUERA DEL
+     ÁRBOL DE ACCESIBILIDAD (display:none LA SACARÍA). LA CLASE VA EN UN div
+     Y NO EN LA TABLA: UNA TABLA NO SE ACHICA A 1px (CRECE CON SUS FILAS) Y
+     AGRANDABA EL ALTO DE LA PÁGINA, AUNQUE NO SE VIERA (MEDIDO) */
+  .solo-lector {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+</style>
+</head>
+<body>
+<div class="grafico"><canvas id="grafico" aria-hidden="true"></canvas></div>
+<div class="solo-lector"><table id="datos"></table></div>
+<script>
+@@CHARTJS@@
+</script>
+<script>
+const DATOS = @@DATOS@@;
+</script>
+<script>
+'use strict';
+
+// UN TEXTO VACÍO NO LLEGA: EN GAMBAS UNA CLAVE CON "" NO EXISTE EN UNA
+// Collection (GV-68), Y JSON.Encode NO LA ESCRIBE. LO QUE FALTA ES ""
+['ejeX', 'ejeY', 'unidad', 'encabezado'].forEach(k => {
+  if (DATOS[k] === undefined || DATOS[k] === null) DATOS[k] = '';
+});
+
+// ESPACIO FINO QUE NO CORTA LA LÍNEA, SIGNO MENOS Y SIGNO POR (SC-64)
+const FINO = ' ';
+const MENOS = '−';
+const POR = '×';
+const VOLADOS = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+                  '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻' };
+
+// LAS UNIDADES QUE VAN PEGADAS A LA CIFRA: EL GRADO DE ÁNGULO (SC-64)
+const PEGADAS = ['°', '′', '″'];
+
+// UN ESTILO DE PUNTO Y UN TRAZO POR SERIE: SE DISTINGUEN IMPRESAS EN GRIS
+const PUNTOS = ['circle', 'rect', 'triangle', 'rectRot', 'crossRot', 'star', 'rectRounded', 'cross'];
+const TRAZOS = [[], [8, 4], [2, 3], [10, 3, 2, 3], [4, 4], [12, 4], [2, 6], [6, 2, 2, 2]];
+
+// ============================================
+// Función   : agrupar
+// Propósito : Agrupa dígitos de a tres con el espacio fino, si son cinco o
+//             más (group-minimum-digits=5, SC-64)
+// Parámetros: s — dígitos; desdeDerecha — true para la parte entera
+// Retorna   : String
+// ============================================
+function agrupar(s, desdeDerecha) {
+  const grupos = [];
+  let resto, i;
+
+  // --- 1. CUATRO DÍGITOS NO SE AGRUPAN ---
+  if (s.length < 5) return s;
+
+  // --- 2. DE A TRES, DESDE EL PUNTO HACIA AFUERA ---
+  if (desdeDerecha) {
+    resto = s.length % 3;
+    if (resto > 0) grupos.push(s.slice(0, resto));
+    for (i = resto; i < s.length; i += 3) grupos.push(s.slice(i, i + 3));
+  } else {
+    for (i = 0; i < s.length; i += 3) grupos.push(s.slice(i, i + 3));
+  }
+  return grupos.join(FINO);
+}
+
+// ============================================
+// Función   : cifra
+// Propósito : Una cifra escrita con punto (del archivo o de una marca del
+//             eje) con el formato de salida de SC-64
+// Parámetros: s — la cifra como texto: «-1234.5», «1.2e6»
+// Retorna   : String — el texto formateado; s sin cambios si no es cifra
+// ============================================
+function cifra(s) {
+  const m = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(String(s).trim());
+  let texto;
+
+  // --- 1. LO QUE NO ES UNA CIFRA SE DEVUELVE COMO VINO ---
+  if (!m) return s;
+
+  // --- 2. SIGNO, PARTE ENTERA Y DECIMALES ---
+  texto = (m[1] ? MENOS : '') + agrupar(m[2], true);
+  if (m[3]) texto += '.' + agrupar(m[3], false);
+
+  // --- 3. EXPONENTE: «× 10ⁿ», SIN EL + (Chart.js ESCRIBE «1E16») ---
+  if (m[4]) {
+    texto += FINO + POR + FINO + '10' +
+      m[4].replace('+', '').replace(/./g, c => VOLADOS[c]);
+  }
+  return texto;
+}
+
+// ============================================
+// Función   : conUnidad
+// Propósito : Une cifra y unidad: separadas con el espacio fino, o pegadas
+//             si es el grado de ángulo (SC-64)
+// Parámetros: s — la cifra ya formateada
+// Retorna   : String
+// ============================================
+function conUnidad(s) {
+  if (DATOS.unidad === '') return s;
+  if (PEGADAS.includes(DATOS.unidad)) return s + DATOS.unidad;
+  return s + FINO + DATOS.unidad;
+}
+
+// ============================================
+// Función   : marca
+// Propósito : El texto de una marca del eje de valores: el formateador de
+//             Chart.js en inglés (punto decimal, la cantidad de decimales
+//             según el paso), sin sus comas de miles, con el formato de
+//             SC-64 y la unidad
+// Parámetros: los del callback de ticks de Chart.js
+// Retorna   : String
+// ============================================
+function marca(valor, indice, marcas) {
+  const crudo = Chart.Ticks.formatters.numeric.call(this, valor, indice, marcas);
+  return conUnidad(cifra(crudo.replace(/,/g, '')));
+}
+
+// ============================================
+// Función   : numero
+// Propósito : El valor numérico de un texto del archivo
+// Parámetros: s — el texto; "" es un dato que falta
+// Retorna   : Number o null
+// ============================================
+function numero(s) {
+  return s === '' ? null : Number(s);
+}
+
+// ============================================
+// Función   : conjuntos
+// Propósito : Los datasets de Chart.js, uno por serie, con su color, su
+//             punto y su trazo
+// Parámetros: ninguno (lee DATOS)
+// Retorna   : Array
+// ============================================
+function conjuntos() {
+  const t = DATOS.tipo;
+  const c = DATOS.colores;
+
+  return DATOS.series.map((serie, i) => {
+    const color = c[i % c.length];
+    const d = { label: serie.nombre, textos: serie.textos };
+
+    // --- 1. TORTA Y DONA: UN COLOR POR PORCIÓN (GV-134) ---
+    if (t === 'torta' || t === 'dona') {
+      d.data = serie.textos.map(numero);
+      d.backgroundColor = DATOS.categorias.map((_, j) => c[j % c.length]);
+      d.borderColor = '#fff';
+      d.borderWidth = 1;
+      return d;
+    }
+
+    // --- 2. DISPERSIÓN: PARES {x, y} (GV-134) ---
+    if (t === 'dispersion') {
+      d.data = serie.textos.map((s, j) => ({ x: numero(DATOS.categorias[j]), y: numero(s) }));
+    } else {
+      d.data = serie.textos.map(numero);
+    }
+
+    // --- 3. EL COLOR, EL PUNTO Y EL TRAZO DE LA SERIE ---
+    d.borderColor = color;
+    d.backgroundColor = color;
+    d.pointStyle = PUNTOS[i % PUNTOS.length];
+    if (t === 'lineas' || t === 'area') {
+      d.borderDash = TRAZOS[i % TRAZOS.length];
+      d.borderWidth = 2;
+      d.pointRadius = 4;
+    }
+    if (t === 'dispersion') d.pointRadius = 5;
+
+    // --- 4. ÁREA: TRANSPARENTE; APILADA, CADA UNA HASTA LA ANTERIOR ---
+    if (t === 'area') {
+      d.backgroundColor = color + '66';
+      d.fill = (DATOS.apilado && i > 0) ? '-1' : 'origin';
+    }
+    return d;
+  });
+}
+
+// ============================================
+// Función   : eje
+// Propósito : La configuración de un eje cartesiano
+// Parámetros: titulo — el título del eje; deValores — true si es el eje de
+//             las cifras
+// Retorna   : Object
+// ============================================
+function eje(titulo, deValores) {
+  const e = {
+    title: { display: titulo !== '', text: titulo },
+    stacked: DATOS.apilado
+  };
+
+  // EL EJE DE LAS CIFRAS: DESDE CERO SALVO cero: no, Y CON EL FORMATO DE SC-64
+  if (deValores) {
+    e.beginAtZero = DATOS.cero;
+    e.ticks = { callback: marca };
+  }
+  return e;
+}
+
+// ============================================
+// Función   : configuracion
+// Propósito : La configuración completa de Chart.js para la descripción
+// Parámetros: ninguno (lee DATOS)
+// Retorna   : Object
+// ============================================
+function configuracion() {
+  const t = DATOS.tipo;
+  const radial = (t === 'torta' || t === 'dona');
+  const tipos = { 'barras': 'bar', 'barras-h': 'bar', 'lineas': 'line', 'area': 'line',
+                  'dispersion': 'scatter', 'torta': 'pie', 'dona': 'doughnut' };
+  const cfg = {
+    type: tipos[t],
+    data: { datasets: conjuntos() },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: DATOS.proporcion,
+      animation: false,
+      // LAS CIFRAS BASE DEL FORMATEADOR DE Chart.js, EN INGLÉS: PUNTO DECIMAL
+      locale: 'en-US',
+      plugins: {
+        // EN LÍNEAS, ÁREA Y DISPERSIÓN LA LEYENDA MUESTRA EL PUNTO DE CADA
+        // SERIE: ES LO QUE LAS DISTINGUE EN GRIS
+        legend: {
+          display: DATOS.leyenda,
+          labels: { usePointStyle: (t === 'lineas' || t === 'area' || t === 'dispersion') }
+        },
+        tooltip: { callbacks: { label: etiqueta } }
+      }
+    }
+  };
+
+  // --- 1. LAS CATEGORÍAS: SALVO EN DISPERSIÓN, DONDE SON LAS x ---
+  if (t !== 'dispersion') cfg.data.labels = DATOS.categorias;
+
+  // --- 2. TORTA Y DONA: SIN EJES ---
+  if (radial) return cfg;
+
+  // --- 3. LOS EJES: EN barras-h LAS CIFRAS VAN EN EL HORIZONTAL ---
+  if (t === 'barras-h') {
+    cfg.options.indexAxis = 'y';
+    cfg.options.scales = { x: eje(DATOS.ejeX, true), y: eje(DATOS.ejeY, false) };
+  } else if (t === 'dispersion') {
+    cfg.options.scales = { x: eje(DATOS.ejeX, false), y: eje(DATOS.ejeY, true) };
+    cfg.options.scales.x.ticks = { callback: function (v, i, m) {
+      return cifra(Chart.Ticks.formatters.numeric.call(this, v, i, m).replace(/,/g, ''));
+    } };
+  } else {
+    cfg.options.scales = { x: eje(DATOS.ejeX, false), y: eje(DATOS.ejeY, true) };
+  }
+
+  // --- 4. EL TOOLTIP NOMBRA TODAS LAS SERIES DE LA CATEGORÍA ---
+  if (t !== 'dispersion') cfg.options.interaction = { mode: 'index', intersect: false };
+  return cfg;
+}
+
+// ============================================
+// Función   : etiqueta
+// Propósito : La línea del tooltip: la serie y la cifra como se escribió en
+//             el archivo, con el formato de SC-64 y la unidad
+// Parámetros: ctx — el contexto del tooltip de Chart.js
+// Retorna   : String
+// ============================================
+function etiqueta(ctx) {
+  const s = ctx.dataset.textos[ctx.dataIndex];
+  let texto = ctx.dataset.label ? ctx.dataset.label + ': ' : '';
+
+  // EN DISPERSIÓN, EL PAR; EN LOS DEMÁS, LA CIFRA
+  if (DATOS.tipo === 'dispersion') {
+    texto += '(' + cifra(DATOS.categorias[ctx.dataIndex]) + ', ' + conUnidad(cifra(s)) + ')';
+  } else {
+    texto += conUnidad(cifra(s));
+  }
+  return texto;
+}
+
+// ============================================
+// Función   : tablaDeDatos
+// Propósito : Llena la tabla para el lector de pantalla: la primera columna
+//             y las series, con las cifras como en el gráfico
+// Parámetros: ninguno (lee DATOS)
+// Retorna   : nada
+// ============================================
+function tablaDeDatos() {
+  const tabla = document.getElementById('datos');
+  const thead = tabla.createTHead().insertRow();
+  const tbody = tabla.createTBody();
+  let th, fila;
+
+  // --- 1. EL ENCABEZADO ---
+  [DATOS.encabezado].concat(DATOS.series.map(s => s.nombre)).forEach(texto => {
+    th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = texto;
+    thead.appendChild(th);
+  });
+
+  // --- 2. UNA FILA POR CATEGORÍA; LA PRIMERA CELDA ENCABEZA LA FILA ---
+  DATOS.categorias.forEach((categoria, j) => {
+    fila = tbody.insertRow();
+    th = document.createElement('th');
+    th.scope = 'row';
+    th.textContent = (DATOS.tipo === 'dispersion') ? cifra(categoria) : categoria;
+    fila.appendChild(th);
+    DATOS.series.forEach(s => {
+      fila.insertCell().textContent = s.textos[j] === '' ? '' : conUnidad(cifra(s.textos[j]));
+    });
+  });
+}
+
+// ============================================
+// Función   : dibujar
+// Propósito : Arma la tabla y el gráfico, y marca el final
+// Parámetros: ninguno
+// Retorna   : nada
+// ============================================
+function dibujar() {
+  try {
+    // --- 1. LA LETRA POR OMISIÓN DE Chart.js: LA EMBEBIDA ---
+    Chart.defaults.font.family = "'Noto Serif', Georgia, serif";
+    Chart.defaults.font.size = 14;
+    Chart.defaults.color = '#000';
+
+    // --- 2. LA TABLA Y EL GRÁFICO ---
+    tablaDeDatos();
+    new Chart(document.getElementById('grafico'), configuracion());
+
+    // --- 3. LISTO: LO LEEN LAS PRUEBAS Y QUIEN ESPERE EL DIBUJO ---
+    document.documentElement.dataset.listo = '1';
+  } catch (e) {
+    document.documentElement.dataset.listo = 'error';
+    document.documentElement.dataset.motivo = String(e);
+  }
+}
+
+// LAS DOS VARIANTES SE CARGAN ANTES DE DIBUJAR (GV-135). SI LA CARGA FALLA, SE
+// DIBUJA IGUAL, CON LA LETRA DE RESPALDO: UN GRÁFICO SIN LA FUENTE ES MEJOR
+// QUE NINGÚN GRÁFICO
+Promise.all([
+  document.fonts.load("400 14px 'Noto Serif'"),
+  document.fonts.load("700 14px 'Noto Serif'")
+]).then(dibujar, dibujar);
+</script>
+</body>
+</html>

@@ -4217,10 +4217,10 @@ Cada gráfico vive en `graficos/fig-nombre.md`, en la raíz del proyecto como `c
 
 LAS SALIDAS
 
-- EL HTML. Una plantilla en `.hidden/chart/` con Chart.js 4.4.1 entero y un hueco para la configuración. `m_Graficos` arma la configuración con `JSON.Encode` y reemplaza `</` por `<\/` antes de embeberla (GV-137). Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
+- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. `engine/grafico.sh` (SC-13, lanzado por `EjecutarScriptSalida`, SC-53) llena los huecos de la plantilla de `.hidden/chart/` —el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción— y controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
 - LA FUENTE. Noto Serif, la del HTML (decisión de Alberto). Un subconjunto latino en woff2, Regular y Bold, embebido como data URI (unos 32 KB): el iframe es otro documento y no hereda la fuente de la página, y el PNG se saca sin red. La plantilla dibuja después de `document.fonts.load` (GV-135). Los subconjuntos se generan una vez con el comando de GV-135 y viven en `.hidden/chart/`.
-- LO QUE LLEVA EL GRÁFICO. `locale` del idioma de la pieza (coma decimal y punto de miles en marcas y tooltips); títulos de ejes; apilado; `beginAtZero` salvo `cero: no`; la unidad en las marcas y en el tooltip; tooltip de todas las series a la vez; `pointStyle` y `borderDash` distintos por serie, para que se distingan impresas en gris; en `torta` y `dona`, un color por porción. En las paletas secuenciales se omiten los dos tonos más claros: sobre blanco no se ven.
-- ACCESIBILIDAD. El canvas lleva `role="img"`, un `aria-label` y, adentro, la tabla de datos como contenido de respaldo.
+- LO QUE LLEVA EL GRÁFICO. Las cifras de las marcas, del tooltip y de la tabla de datos con las reglas de SC-64, como el formateador de `cifras.lua` (SC-65): punto decimal, grupos de a tres con U+202F desde cinco dígitos, menos U+2212, «× 10ⁿ» con volado; títulos de ejes; apilado; `beginAtZero` salvo `cero: no`; la unidad en las marcas, el tooltip y la tabla, separada de la cifra con U+202F salvo el grado de ángulo (SC-64); tooltip de todas las series a la vez; `pointStyle` y `borderDash` distintos por serie, para que se distingan impresas en gris; en `torta` y `dona`, un color por porción. En las paletas secuenciales se omiten los dos tonos más claros: sobre blanco no se ven.
+- ACCESIBILIDAD. El canvas va con `aria-hidden` y, al lado, la tabla de datos, fuera de la vista y legible por un lector de pantalla. No se usa `role="img"` en el canvas: en WAI-ARIA 1.2 el rol img vuelve presentacional lo que tiene adentro, y la tabla de respaldo se perdería.
 - EL PNG. Chromium headless sobre el mismo HTML, 844 px de ancho por el alto de la proporción, a escala 3 (GV-139). Es el que va al PDF, al EPUB y al HTML en borrador. Se genera en `tmp/vista-grafico/` del proyecto y se copia a `media/`.
 
 EN EL .md
@@ -4248,9 +4248,11 @@ QUÉ FRENA AL GENERAR
 
 Una clave desconocida o repetida; un valor fuera de la lista; `series` con una columna que no existe, repetida o fuera de orden; `torta` con más de una serie elegida; `apilado` en un tipo que no lo admite; una celda de datos que no es un número con punto ni está vacía, nombrando la fila y la columna; en `dispersion`, una x que no es número; una tabla sin series.
 
+CORREGIDO EL 25/10 (act-68), al hacer la plantilla: la primera versión pedía `locale` con el idioma de la pieza, que da coma decimal y punto de miles y contradice SC-64; y pedía `role="img"` con la tabla adentro del canvas, que la oculta. Las dos cosas quedaron como se lee arriba.
+
 SE RETIRAN FFiguras.form/.class, FFigurasEditar.form/.class, la convención `fd/fi/fh` y la edición del CSV en LibreOffice.
 
-**Relaciones:** vinculo:SC-32,vinculo:SC-66,vinculo:SC-67,vinculo:SC-64,vinculo:SC-06,vinculo:SC-20,vinculo:RC-GM-13,vinculo:GV-53,vinculo:GV-96,vinculo:GV-129,apoya:GV-134,apoya:GV-135,apoya:GV-136,apoya:GV-137,apoya:GV-138,apoya:GV-139
+**Relaciones:** vinculo:SC-32,vinculo:SC-66,vinculo:SC-67,vinculo:SC-64,vinculo:SC-06,vinculo:SC-20,vinculo:RC-GM-13,vinculo:GV-53,vinculo:GV-96,vinculo:GV-129,apoya:GV-134,apoya:GV-135,apoya:GV-136,apoya:GV-137,apoya:GV-138,apoya:GV-139,vinculo:SC-65,vinculo:SC-13,vinculo:SC-53,apoya:GV-141
 
 **PENDIENTE:** Implementar. Confirmar en Mint: chromium con --force-device-scale-factor (GV-139), JSON.Encode y ListBox múltiple en 3.22.1 (GV-137, GV-138).
 
@@ -7718,10 +7720,10 @@ El canvas no se vuelve a pintar cuando la fuente llega: lo dibujado queda. `@fon
 EL SUBCONJUNTO. Noto Serif 2.015 (`.hidden/fonts`) es OFL 1.1 y su aviso no declara Reserved Font Name: se puede reducir y distribuir con el mismo nombre. Con `pyftsubset` (fonttools):
 
     pyftsubset NotoSerif-Regular.ttf \
-      --unicodes="U+0020-007E,U+00A0-00FF,U+0152-0153,U+2010-2015,U+2018-201E,U+2022,U+2026,U+2030,U+2032-2033,U+2039-203A,U+20AC,U+2212" \
+      --unicodes="U+0020-007E,U+00A0-00FF,U+0152-0153,U+2010-2015,U+2018-201E,U+2022,U+2026,U+202F,U+2030,U+2032-2033,U+2039-203A,U+2070,U+2074-2079,U+207B,U+20AC,U+2212" \
       --layout-features='kern,liga,tnum,lnum,pnum' --flavor=woff2 --output-file=…
 
-Regular, 11,6 KB; Bold, 12,4 KB. Las TTF enteras pesan unos 500 KB cada una.
+Regular, 12,0 KB; Bold, 12,8 KB. Las TTF enteras pesan unos 500 KB cada una. El espacio fino U+202F y los volados (⁰ ⁴–⁹ ⁻) los piden las cifras de SC-64: la primera versión del rango los dejaba afuera, y la TTF entera los tiene.
 
 EN EL PROYECTO: el HTML del gráfico embebe los dos subconjuntos y dibuja después de `document.fonts.load` (SC-69).
 
@@ -7805,6 +7807,8 @@ Medido:
     lo mismo con --force-device-scale-factor=3                 PNG de 2532×1680
     devicePixelRatio 3, canvas de 800 px de ancho en CSS       canvas.width = 2400
 
+`--screenshot` espera el dibujo que se hace después de `document.fonts.load` (GV-135): con la plantilla de SC-69, los siete tipos salieron dibujados y en Noto Serif, a 1× y a 3×, sin `--virtual-time-budget`. Con `--hide-scrollbars`, la tabla oculta de la plantilla no agrega barra.
+
 Chart.js toma `window.devicePixelRatio` y dibuja el canvas a esa escala: el PNG no es una ampliación. 844 px a 1× dan unos 7 cm a 300 ppp; a 3×, unos 21 cm.
 
 EN EL PROYECTO: el PNG del gráfico se saca a escala 3 (SC-69).
@@ -7812,6 +7816,46 @@ EN EL PROYECTO: el PNG del gráfico se saca a escala 3 (SC-69).
 **Relaciones:** apoya:SC-69
 
 **PENDIENTE:** Confirmar con el chromium de Mint (el paquete que pide la aplicación).
+
+### GV-140 — Base64$ con un archivo binario
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con `File.Load` de un woff2 (12 796 bytes) y `Base64$`:
+
+    Len(File.Load(…))         12 796: la cadena tiene los bytes del archivo
+    Base64$(…)                17 064 caracteres, en una sola línea, sin saltos
+    comparado con base64 -w0  idéntico (la misma suma md5)
+
+`Base64$` es una función del intérprete: no pide componente.
+
+EN EL PROYECTO: no se usa. El HTML del gráfico lo arma `engine/grafico.sh` (SC-13, SC-69), que codifica las fuentes con `base64 -w0`; en `.hidden/chart/` quedan los woff2 y no una copia en base64.
+
+**Relaciones:** vinculo:SC-69
+
+**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+
+### GV-141 — Chromium sin ventana: --dump-dom espera el dibujo; la página va como URL y sin perfil propio
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Chromium 153 headless (Playwright) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con la plantilla de SC-69, en un proyecto con espacio, ñ y # en el nombre de la carpeta:
+
+    --dump-dom <url>                   el DOM después de los scripts, incluido el dibujo que
+                                       espera a document.fonts.load: <html data-listo="1">; si la
+                                       plantilla falla, data-listo="error" y data-motivo
+    la ruta tal cual, con # en ella    la página no se encuentra: chromium lee el # como el
+                                       comienzo del fragmento
+    file:// con %XX por cada byte      funciona con espacio, ñ y #
+    --user-data-dir=<carpeta nueva>    --dump-dom no termina: vence el timeout
+    sin --user-data-dir                un perfil temporal en /tmp/org.chromium.Chromium.*: no toca
+                                       el de quien opera
+
+EN EL PROYECTO: `engine/grafico.sh` controla así que el gráfico se haya dibujado, y arma la URL con perl, un %XX por cada byte que no es letra, cifra ni -._~ (SC-69).
+
+**Relaciones:** apoya:SC-69
+
+**PENDIENTE:** Confirmar con el chromium de Mint.
 
 ---
 
