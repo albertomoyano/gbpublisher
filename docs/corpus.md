@@ -3197,8 +3197,8 @@ LOS CONTROLES
     comillas_desbalanceadas   aviso   « » que no cierran en su lista de inlines
     latex_en_linea            error   una orden de LaTeX en el texto que no es
                                       de las admitidas: \sptext, \num, \SI,
-                                      \SIrange (GV-116); o una de ellas
-                                      incompleta (GV-124)
+                                      \SIrange, \index (GV-116, SC-77);
+                                      o una de ellas incompleta (GV-124)
     latex_suelto              error   una orden de LaTeX sola entre párrafos,
                                       fuera de ::: espaciov
     html_crudo                error   HTML escrito en el .md, menos los
@@ -3226,7 +3226,7 @@ LaTeX Y HTML CRUDOS
 
 Lo que Pandoc lee como LaTeX o HTML crudo se pierde en las tres salidas: los escritores de XML lo descartan sin aviso (GV-116). Decisión de Alberto: los tres controles son `error`, y por ahora solo en libros, como los demás (pendiente 1).
 
-- En el texto, las órdenes de LaTeX admitidas son `\sptext{…}`, que traduce `volada.lua` (SC-62), y `\num`, `\SI` y `\SIrange`, que traduce `cifras.lua` (SC-65); su forma la valida cada filtro y no este control. El texto de la orden se escribe en el informe sin saltos de línea: puede traerlos (GV-124). El mensaje nombra la orden y muestra el contexto con el texto crudo a la vista: `stringify` lo descarta, y sin eso quedaban huecos.
+- En el texto, las órdenes de LaTeX admitidas son `\sptext{…}`, que traduce `volada.lua` (SC-62), `\num`, `\SI` y `\SIrange`, que traduce `cifras.lua` (SC-65), y `\index[…]{…}`, que traduce `indice.lua` (SC-77); su forma la valida cada filtro y no este control. `\index` se admite también sin el nombre del índice: lo frena `indice.lua`, con el mensaje de cómo se escribe. El texto de la orden se escribe en el informe sin saltos de línea: puede traerlos (GV-124). El mensaje nombra la orden y muestra el contexto con el texto crudo a la vista: `stringify` lo descarta, y sin eso quedaban huecos.
 - Suelto entre párrafos, el LaTeX solo vale dentro de `::: espaciov`, que valida `espacio-vertical.lua` (SC-39). El recorrido es de arriba abajo (`traverse = "topdown"`) y no baja a un `espaciov`.
 - Los comentarios HTML `<!-- … -->`, en línea o en bloque, también de varias líneas, no son texto y no se informan. Un `<div>` no es HTML crudo: Pandoc lo lee como un `Div`.
 - Como `revisar_inlines`, el recorrido en línea no baja al contenido de una nota: sus párrafos los visita el walk de bloques, y así no se informan dos veces.
@@ -3248,7 +3248,7 @@ Un decimal suelto (`2.5`, `3,14`) no se informa.
 
 MEDIDO: un .md con `\num{12000}` y «3.500» en un título, «88%», «88 %», «88» con espacio duro y «77» con espacio fino, «1.500», «12,345», «ley 34.555», «decreto 2.345/26», un DOI en un enlace, «2.5» y «3,14», y una nota con «4.000» y «5%»: diez avisos, los esperados; el decreto, el DOI y los decimales, ninguno.
 
-**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63,vinculo:SC-65,apoya:GV-124,vinculo:SC-75
+**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63,vinculo:SC-65,apoya:GV-124,vinculo:SC-75,vinculo:SC-77
 
 **PENDIENTE:** (1) Revistas: usar el mismo filtro, con los controles de LaTeX y HTML crudos, cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
 
@@ -4576,7 +4576,7 @@ No cambian todavía: `m_GenerarEpub` y `m_GenerarHTML` siguen copiando `media/` 
 
 ### SC-77 — Índices onomástico y de conceptos: la marca en el .md, el canónico y el PDF
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 / LuaHBTeX 1.17.0, TeX Live 2023, babel-spanish, imakeidx, esindex, biblatex + biber, hyperref / xindy (Ubuntu 24.04) / qpdf / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Pandoc 3.1.3 / LuaHBTeX 1.17.0, TeX Live 2023, babel-spanish, imakeidx, esindex, biblatex + biber, hyperref / xindy (Ubuntu 24.04) / qpdf / SaxonJ-HE 12.5 / jing / contenedor Ubuntu 24.04 y Linux Mint · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisión de Alberto, 30/10/2026). Los dos índices que carga el editor —onomástico y de conceptos— se marcan en el .md con la orden completa de LaTeX, como en el flujo legacy, y salen solo en el PDF de los libros. El tercero, el de autores de la bibliografía (`names`), lo sigue llenando biblatex con esindex y no lleva marca.
 
@@ -4616,7 +4616,7 @@ EL PDF
 - `docbook-to-latex.xsl` vuelve a escribir `\index[nombre]{…}` con el formato explícito: `|hyperpage`; `|(hyperpage` y `|)hyperpage`; `|gbIndNota` dentro de una nota (lo sabe por el ancestro `footnote`); `|gbIndPrincipal`; `|see{…}` y `|seealso{…}`.
 - hyperref con `hyperindex=false` (GV-159). El índice `names` agrega `|hyperpage` desde su formato de nombre y conserva los enlaces.
 - `\gbIndNota` y `\gbIndPrincipal` son del contrato: los escribe la hoja.
-- xindy corre con `-L spanish-modern -C utf8` (GV-158) y con el módulo `gbindice.xdy`, que declara los dos formatos (GV-160). El script avisa también las páginas descartadas por un formato desconocido.
+- xindy corre con `-L spanish-modern -C utf8` (GV-158), con el módulo `book-order` de xindy, que pone los romanos de los preliminares antes que los arábigos (GV-158), y con el módulo `gbindice.xdy`, que declara los dos formatos (GV-160). El script avisa también las páginas descartadas por un formato desconocido.
 
 Presentación, con el criterio de Valbusa (decisión de Alberto, 30/10/2026: coma y minúscula siempre que se pueda):
 
@@ -4626,7 +4626,21 @@ Presentación, con el criterio de Valbusa (decisión de Alberto, 30/10/2026: com
     educación superior, 2, véase también universidad
     universidad, véase educación superior
 
-La página principal, en negrita.
+La página principal, en negrita. Los romanos de los preliminares, primero: «Sarmiento, Domingo F., XIII n., 3 n.».
+
+REGLAS DEL LOTE 1
+
+Las propuso Claude al escribir el lote y quedaron en el código que Alberto probó en Mint (30/10/2026):
+
+- Adentro de una entrada, la única orden admitida es `\emph{…}`, para los títulos de obras (`Borges, Jorge Luis!\emph{Ficciones}`). Sin clave `@`, xindy ordena por el texto plano. Cualquier otra orden frena.
+- No va en el pie ni en la imagen de una figura, ni en el pie de un cuadro: el pie se copia a la lista de figuras o de cuadros, y desde ahí se indexaría otra vez con la página de la lista. Frena.
+- No va sola en un párrafo: quedaría un párrafo vacío. Frena.
+- Dos marcas de la misma entrada en la misma página dejan una sola (GV-160): principal y común, la página en negrita; común y en nota, la página sin «n.».
+- El marcador • del panel que queda sin reemplazar frena (acordado con Alberto, 30/10/2026): si no, «•» saldría como una entrada.
+
+EL PANEL
+
+Dos filas de gbShortcodes, solo para libros (decisión de Alberto, 30/10/2026): `index-onomastico` e `index-concepto`, grupo `comun`, modo `plantilla`, liberadas en libros y `no_aplica` en revistas (`datos-v5-021`, `datos-v5-022`). Insertan `\index[onomastico]{•}` e `\index[concepto]{•}` con el marcador seleccionado. Se usan con el cursor pegado después de la palabra y SIN selección: la plantilla reemplaza lo seleccionado. Un modo que inserte la marca después de la selección, con la entrada ya cargada, queda como idea si el uso lo pide.
 
 EPUB Y HTML
 
@@ -4639,11 +4653,13 @@ No se usan índices (decisión de Alberto, 30/10/2026): `no_aplica` en gbShortco
 FUERA DE ESTA DECISIÓN
 
 - «23 n. 45», con el número de nota. DESCARTADO por costo (decisión de Alberto, 30/10/2026): las notas se reinician por pieza (SC-31), así que «nota 45» sola es ambigua, y xindy no lo da de forma nativa (GV-160).
-- El código muerto de `ensamblar-capitulo-canonico.xsl` (`indice_tematico`, `indice_analitico`, quitados en el esquema 1.11.0): se limpia en el lote. Las piezas de índice no pasan por esa hoja.
+- El código muerto de `ensamblar-capitulo-canonico.xsl` (`indice_tematico`, `indice_analitico`, quitados en el esquema 1.11.0): se limpió en el lote 1. Las piezas de índice no pasan por esa hoja; las marcas sí, y la hoja prefija el `@startref` del cierre de un rango como los demás id.
+
+PROBADO EN MINT
+
+Alberto, 30/10/2026, con «El Atlántico de los exilios»: el párrafo de prueba en el capítulo 1 y en la introducción (preliminares). Los dos índices en el PDF: orden español con la Ñ en su grupo, subentradas, `\emph` en una subentrada, clave `@`, `¡…!` con `\!`, rango, página principal en negrita, «véase» y «véase también», «n.» en las páginas de nota, los romanos antes que los arábigos (con `book-order`), y los enlaces. Después, el resaltado de `\index` en el editor, la inserción desde el panel, la ayuda y los casos que frenan con el marcador olvidado.
 
 **Relaciones:** vinculo:SC-62,vinculo:SC-65,vinculo:SC-54,vinculo:SC-31,vinculo:SC-55,vinculo:GV-116,vinculo:GV-124,apoya:GV-157,apoya:GV-158,apoya:GV-159,apoya:GV-160
-
-**PENDIENTE:** Lote 1: indice.lua, controles_md.lua (SC-54 suma las dos órdenes admitidas), docbook-to-latex.xsl, plantillas vacías en las hojas HTML y EPUB del libro, contrato (\gbIndNota, \gbIndPrincipal), preambulo-hyperref (hyperindex=false) y formato de nombre del índice names, compilar_latex_comun.sh, gbindice.xdy, limpieza de ensamblar-capitulo-canonico.xsl y dos filas de gbShortcodes (borrador en libros, no_aplica en revistas). Probarlo en Mint con un libro real, incluido el orden de xindy (GV-158).
 
 ---
 
@@ -8535,7 +8551,7 @@ Medido con Pandoc 3.1.3 (`-f markdown -t native`).
 
 ### GV-158 — xindy: el módulo español cargado por ruta con -M no ordena en español; -L spanish-modern -C utf8 sí
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** xindy (paquete de Ubuntu 24.04, TeX Live 2023) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** xindy (paquete de Ubuntu 24.04, TeX Live 2023) / contenedor Ubuntu 24.04 y Linux Mint · **Verificado:** 2026-10
 
 Medido con el xindy de Ubuntu 24.04 (TeX Live 2023) y la invocación de `compilar_latex_comun.sh`: `-M texindy -M page-ranges -M word-order -M /usr/share/xindy/lang/spanish/modern-utf8.xdy -I latex`.
 
@@ -8543,10 +8559,11 @@ Medido con el xindy de Ubuntu 24.04 (TeX Live 2023) y la invocación de `compila
 2. Con `-L spanish-modern -C utf8` en lugar de `-M …/modern-utf8.xdy`: Absalón, Alberdi, Avellaneda, Ávila; Ñandú en su grupo Ñ, después de la N.
 3. `-L spanish -C utf8` no existe: «Cannot locate xindy module for language spanish in codepage utf8».
 4. El índice `names` no lo sufre con las tildes: esindex escribe la clave sin ellas (`Avila, Juan@Ávila, Juan`). Lo sufren los índices sin esindex: los que carga el editor.
+5. El orden de las páginas dentro de una entrada sigue el de las clases de ubicación, y texindy pone las arábigas antes que las romanas: «Borges, 3, XIII». El módulo `book-order` de xindy (`/usr/share/xindy/base/book-order.xdy`, `define-location-class-order`) pone primero las romanas en minúscula, después las romanas en mayúscula y después las arábigas: «Borges, XIII, 3». Las remisiones siguen al final. Afecta a los tres índices, también al de autores.
+
+Confirmado en Linux Mint (Alberto, 30/10/2026): la Ñ en su grupo y, con `book-order`, los romanos de los preliminares antes que los arábigos.
 
 **Relaciones:** apoya:SC-77
-
-**PENDIENTE:** Confirmar en Linux Mint con un índice real.
 
 ### GV-159 — hyperref: hyperindex rompe los índices de xindy; con hyperindex=false y |hyperpage explícito no
 
@@ -8569,7 +8586,8 @@ Medido con LuaLaTeX, imakeidx con la opción `xindy`, babel-spanish y hyperref c
 Medido con xindy (texindy, `-I latex`) y LuaLaTeX con babel-spanish.
 
 1. Una página con un formato que xindy no tiene declarado se descarta con un «WARNING: unknown attribute» y nada más: «Alberdi» perdió la página de su nota. `compilar_latex_comun.sh` solo cuenta «did not match any location-class».
-2. Un módulo propio lo declara: `(define-attributes (("default" "textbf" "textit" "hyperpage" "gbIndPrincipal" "gbIndNota")))` y un `markup-locref` por formato. xindy avisa que ignora la redefinición de los cuatro que ya tenía, sin efecto. Resultado: «Alberdi, Juan Bautista, 1 n., 3» y la principal en negrita.
+2. Un módulo propio lo declara: `define-attributes` con los formatos en un solo grupo y un `markup-locref` por formato. xindy avisa que ignora la redefinición de los cuatro que ya tenía, pero el orden nuevo se aplica. Resultado: «Alberdi, Juan Bautista, 1 n., 3» y la principal en negrita.
+   En un mismo grupo, dos marcas de una entrada en la misma página dejan la del formato que va primero en la lista. Con `(("gbIndPrincipal" "default" "textbf" "textit" "hyperpage" "gbIndNota"))`, el orden de `gbindice.xdy`: principal y común en la página 5 dan 5 en negrita; común y en nota dan 5, sin «n.». Con `"default"` primero, la principal perdía la negrita.
 3. Número de nota («23 n. 45»). Con un atributo por número (`gbIndNota1` a `gbIndNota999`) y la orden armada con `\edef` y `\detokenize`, el número llega bien al .idx usando solo `\index`. Pero cada atributo en su grupo: xindy pone las notas después de todas las páginas y sin separador («1, 2 1 nota 2 1 nota 3 2 nota 4»). Todos en un grupo: funde la página y las notas de esa página, y las notas se pierden. Ordenaría bien una clase de ubicación de dos capas (página y nota), que exige escribir el localizador por dentro de imakeidx (`\imki@wrindexentry…`, no es interfaz documentada). No probado.
 4. Escape. `"!` y `"@` dentro de `\index` llegan como `!` y `@` literales con babel-spanish activo, también con el `\index` dentro de `\emph` y de `\footnote`: «¡Absalón, Absalón!», «Twitter @jlb».
 5. Rango `|(hyperpage` … `|)hyperpage` de la página 1 a la 3: «1–3».

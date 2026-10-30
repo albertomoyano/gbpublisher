@@ -44,10 +44,15 @@
 --                 ENTRADA IDÉNTICA, Y NO VA EN UNA NOTA.
 --               - UNA PÁGINA PRINCIPAL NO VA EN UNA NOTA: CADA ENTRADA
 --                 LLEVA UN SOLO FORMATO, Y EL DE LA NOTA ES «23 n.».
+--               - NO QUEDA EL MARCADOR • DEL PANEL SIN REEMPLAZAR.
 -- ============================================================
 
 -- LOS ÍNDICES QUE CARGA EL EDITOR: LOS DEL \makeindex DE LA ESTÉTICA
 local NOMBRES = { onomastico = true, concepto = true }
+
+-- EL MARCADOR QUE DEJA EL PANEL AL INSERTAR LA PLANTILLA (SC-21,
+-- m_Constantes.SNIPPET_MARCADOR)
+local MARCADOR = '•'
 
 -- HASTA TRES NIVELES: primary, secondary, tertiary (DocBook 5.2)
 local NIVELES = { 'primary', 'secondary', 'tertiary' }
@@ -284,6 +289,12 @@ local function leer_orden(sOrden)
   end
   if not llaves_balanceadas(sContenido) then
     fallar('«' .. sOrden .. '»: las llaves no cierran.')
+  end
+  -- EL MARCADOR DEL PANEL (SC-21) QUE QUEDÓ SIN REEMPLAZAR: SIN ESTO, «•»
+  -- SALDRÍA COMO UNA ENTRADA DEL ÍNDICE
+  if sContenido:find(MARCADOR, 1, true) then
+    fallar('«' .. sOrden .. '»: quedó el marcador ' .. MARCADOR .. ' sin ' ..
+           'reemplazar. Se escribe la entrada encima.')
   end
 
   -- --- 2. LA ENTRADA Y EL FORMATO (EL PRIMER | DEL NIVEL 0) ---
