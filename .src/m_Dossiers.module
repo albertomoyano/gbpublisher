@@ -1,0 +1,440 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Dossiers
+' Propósito : Lógica de FDossiers: los dossiers del número abierto (agrupación
+'             dentro del número, equivalente a la parte del libro), con sus
+'             títulos por idioma y las personas a cargo
+'             (claude/rediseno-revistas.md, «Dossier»).
+'             FDossiers tiene los controles y los manejadores; acá viven las
+'             consultas, las validaciones y las grabaciones.
+' Conexión  : m_ConexionBD.mConn (se abre con proyecto, es decir, con sesión).
+'             Reusa m_Revistas.IdiomasDeRevista y m_Revistas.ListarSecciones,
+'             que reciben la conexión como parámetro.
+' Requiere  : esquema 1.14.0 (numero_dossier, numero_dossier_titulo,
+'             numero_contribuyente, revista_seccion).
+' Decisiones: se borran solo sin artículos; rol elegible por persona: editor o
+'             coordinador (Alberto, 25/10).
+' Dependencias: m_ConexionBD, m_Sonido, m_InicioCierre, m_Revistas.
+' ==============================================================================
+
+' ============================================
+' Función   : RolesCodigos
+' Propósito : Los roles de quien está a cargo de un dossier, en el orden del
+'             combo. Para Crossref los dos salen como editor
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a RolesLeyendas
+' ============================================
+Public Function RolesCodigos() As String[]
+
+  Return ["editor", "coordinador"]
+
+End
+
+' ============================================
+' Función   : RolesLeyendas
+' Propósito : Lo que muestra el combo del rol
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a RolesCodigos
+' ============================================
+Public Function RolesLeyendas() As String[]
+
+  Return ["Editor/a", "Coordinador/a"]
+
+End
+
+' ============================================
+' Función   : RevistaDeNumero
+' Propósito : La revista a la que pertenece un número
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : Integer — id_revista; 0 si no se pudo leer
+' ============================================
+Public Function RevistaDeNumero(iIdNumero As Integer) As Integer
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_revista FROM numero WHERE id_numero = &1", iIdNumero)
+  If Error Then Return 0
+  If Not rDatos.Available Then Return 0
+
+  Return rDatos!id_revista
+
+End
+
+' ============================================
+' Función   : ListarDossiers
+' Propósito : Los dossiers del número para la grilla, con su título en el
+'             idioma indicado
+' Parámetros: iIdNumero As Integer — número
+'             sIdioma As String — idioma del título que se muestra
+' Retorna   : Result — id_dossier, orden, titulo; Null si falló (ya se informó)
+' ============================================
+Public Function ListarDossiers(iIdNumero As Integer, sIdioma As String) As Result
+
+  Dim rDatos As Result
+
+  ' LEFT JOIN: UN DOSSIER SIN TÍTULO EN ESE IDIOMA SE VE IGUAL, PARA COMPLETARLO
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT d.id_dossier, d.orden, t.titulo " &
+    "FROM numero_dossier d " &
+    "LEFT JOIN numero_dossier_titulo t ON t.id_dossier = d.id_dossier AND t.idioma = &2 " &
+    "WHERE d.id_numero = &1 ORDER BY d.orden, d.id_dossier", iIdNumero, sIdioma)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los dossiers:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarDossier
+' Propósito : El registro de un dossier, para el editor
+' Parámetros: iIdDossier As Integer — dossier
+' Retorna   : Result — el registro; Null si falló o no existe (ya se informó)
+' ============================================
+Public Function CargarDossier(iIdDossier As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT * FROM numero_dossier WHERE id_dossier = &1", iIdDossier)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el dossier:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El dossier ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : TitulosDossier
+' Propósito : Los títulos de un dossier por idioma
+' Parámetros: iIdDossier As Integer — dossier
+' Retorna   : Collection — clave: idioma, valor: título. Vacía si no tiene
+' ============================================
+Public Function TitulosDossier(iIdDossier As Integer) As Collection
+
+  Dim cTitulos As New Collection
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT idioma, titulo FROM numero_dossier_titulo WHERE id_dossier = &1", iIdDossier)
+  If Error Then Return cTitulos
+  While rDatos.Available
+    cTitulos[rDatos!idioma] = rDatos!titulo
+    rDatos.MoveNext
+  Wend
+
+  Return cTitulos
+
+End
+
+' ============================================
+' Función   : SubtitulosDossier
+' Propósito : Los subtítulos de un dossier por idioma
+' Parámetros: iIdDossier As Integer — dossier
+' Retorna   : Collection — clave: idioma, valor: subtítulo. Un idioma sin
+'             subtítulo no tiene clave (GV-68)
+' ============================================
+Public Function SubtitulosDossier(iIdDossier As Integer) As Collection
+
+  Dim cSubtitulos As New Collection
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT idioma, subtitulo FROM numero_dossier_titulo WHERE id_dossier = &1 AND subtitulo IS NOT NULL", iIdDossier)
+  If Error Then Return cSubtitulos
+  While rDatos.Available
+    cSubtitulos[rDatos!idioma] = rDatos!subtitulo
+    rDatos.MoveNext
+  Wend
+
+  Return cSubtitulos
+
+End
+
+' ============================================
+' Función   : EditoresDossier
+' Propósito : Las personas a cargo de un dossier, en orden
+' Parámetros: iIdDossier As Integer — dossier
+' Retorna   : Result — id_autor, apellidos, nombre, rol; Null si falló
+' ============================================
+Public Function EditoresDossier(iIdDossier As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT c.id_autor, c.rol, a.apellidos, a.nombre " &
+    "FROM numero_contribuyente c JOIN autores a ON a.id_autor = c.id_autor " &
+    "WHERE c.id_dossier = &1 ORDER BY c.orden", iIdDossier)
+  If Error Then Return Null
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : SeccionPorDefecto
+' Propósito : La sección con que nace un dossier: la de código «dossier» si
+'             la revista la tiene; si no, la primera activa
+' Parámetros: iIdRevista As Integer — revista
+' Retorna   : Integer — id_seccion; 0 si la revista no tiene secciones
+' ============================================
+Public Function SeccionPorDefecto(iIdRevista As Integer) As Integer
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_seccion FROM revista_seccion WHERE id_revista = &1 AND activa = 1 " &
+    "ORDER BY (codigo = 'dossier') DESC, orden, codigo LIMIT 1", iIdRevista)
+  If Error Then Return 0
+  If Not rDatos.Available Then Return 0
+
+  Return rDatos!id_seccion
+
+End
+
+' ============================================
+' Función   : CrearDossier
+' Propósito : Alta mínima de un dossier al final del número
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : Integer — id del dossier nuevo; 0 si falló (ya se informó)
+' ============================================
+Public Function CrearDossier(iIdNumero As Integer) As Integer
+
+  Dim rDatos As Result
+  Dim iSeccion As Integer
+  Dim iOrden As Integer
+
+  ' --- 1. SECCIÓN: EL DOSSIER LA NECESITA PARA SU ENCABEZADO ---
+  iSeccion = SeccionPorDefecto(RevistaDeNumero(iIdNumero))
+  If iSeccion = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La revista no tiene secciones activas." & gb.NewLine & "Créelas en Administración, pestaña «Revistas», antes de agregar un dossier.")
+    Return 0
+  Endif
+
+  ' --- 2. ORDEN: AL FINAL, DE A DIEZ ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT IFNULL(MAX(orden), 0) + 10 AS orden FROM numero_dossier WHERE id_numero = &1", iIdNumero)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo preparar el dossier nuevo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  iOrden = rDatos!orden
+
+  ' --- 3. ALTA ---
+  Try m_ConexionBD.mConn.Exec("INSERT INTO numero_dossier (id_numero, id_seccion, orden, usuario_creacion) VALUES (&1, &2, &3, &4)",
+    iIdNumero, iSeccion, iOrden, m_InicioCierre.UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear el dossier:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return m_ConexionBD.mConn.LastInsertId
+
+End
+
+' ============================================
+' Función   : GuardarDossier
+' Propósito : Graba el dossier, reemplaza sus títulos y sus personas a cargo,
+'             en una transacción: o se graba todo o nada
+' Parámetros: iIdDossier As Integer — dossier
+'             iIdNumero As Integer — número del dossier
+'             cDatos As Collection — id_seccion, orden, epigrafe
+'             cTitulos As Collection — clave: idioma, valor: título
+'             cSubtitulos As Collection — clave: idioma, valor: subtítulo
+'             aIdiomas As String[] — idiomas de publicación de la revista
+'             aEditores As Integer[] — id_autor, en orden
+'             aRoles As String[] — rol de cada uno, paralelo a aEditores
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarDossier(iIdDossier As Integer, iIdNumero As Integer, cDatos As Collection, cTitulos As Collection, cSubtitulos As Collection, aIdiomas As String[], aEditores As Integer[], aRoles As String[]) As Boolean
+
+  Dim hConn As Connection
+  Dim rDossier As Result
+  Dim sIdioma As String
+  Dim i As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  ' EL TÍTULO EN EL PRIMER IDIOMA DE LA REVISTA ES EL QUE VA AL SUMARIO Y A LA
+  ' PORTADILLA: SIN ÉL NO HAY DOSSIER
+  If aIdiomas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La revista no tiene idiomas de publicación: cárguelos en Administración, pestaña «Revistas».")
+    Return False
+  Endif
+  If Not cTitulos.Exist(aIdiomas[0]) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Falta el título del dossier en el idioma principal de la revista (" & aIdiomas[0] & ").")
+    Return False
+  Endif
+  ' UN SUBTÍTULO VIVE EN LA FILA DE SU TÍTULO: SIN TÍTULO EN ESE IDIOMA NO HAY
+  ' DÓNDE GUARDARLO
+  For Each sIdioma In aIdiomas
+    If cSubtitulos.Exist(sIdioma) And Not cTitulos.Exist(sIdioma) Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Hay subtítulo sin título en «" & sIdioma & "».")
+      Return False
+    Endif
+  Next
+  If cDatos["id_seccion"] <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elija la sección del dossier.")
+    Return False
+  Endif
+
+  hConn = m_ConexionBD.mConn
+
+  ' --- 2. TRANSACCIÓN ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2.1 EL DOSSIER (RC-GM-15) ---
+  Try rDossier = hConn.Edit("numero_dossier", "id_dossier = &1", iIdDossier)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el dossier para editarlo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  With rDossier
+    !id_seccion = cDatos["id_seccion"]
+    !orden = cDatos["orden"]
+    ' Null SI QUEDÓ VACÍO (GV-74)
+    !epigrafe = cDatos["epigrafe"]
+  End With
+  Try rDossier.Update()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo grabar el dossier:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2.2 TÍTULOS: SE REEMPLAZAN ENTEROS, SOLO LOS IDIOMAS DE LA REVISTA ---
+  Try hConn.Exec("DELETE FROM numero_dossier_titulo WHERE id_dossier = &1", iIdDossier)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar los títulos del dossier:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  For Each sIdioma In aIdiomas
+    If cTitulos.Exist(sIdioma) Then
+      ' UN SUBTÍTULO AUSENTE SE LEE Null Y SE ESCRIBE NULL (GV-68, GV-74)
+      Try hConn.Exec("INSERT INTO numero_dossier_titulo (id_dossier, idioma, titulo, subtitulo) VALUES (&1, &2, &3, &4)",
+        iIdDossier, sIdioma, cTitulos[sIdioma], cSubtitulos[sIdioma])
+      If Error Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo grabar el título en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+        Return False
+      Endif
+    Endif
+  Next
+
+  ' --- 2.3 PERSONAS A CARGO: SE REEMPLAZAN ENTERAS ---
+  Try hConn.Exec("DELETE FROM numero_contribuyente WHERE id_dossier = &1", iIdDossier)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar las personas a cargo del dossier:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  For i = 0 To aEditores.Count - 1
+    Try hConn.Exec("INSERT INTO numero_contribuyente (id_numero, id_dossier, id_autor, rol, orden) VALUES (&1, &2, &3, &4, &5)",
+      iIdNumero, iIdDossier, aEditores[i], aRoles[i], i + 1)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar una persona a cargo del dossier:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Next
+
+  ' --- 2.4 CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar los cambios del dossier:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : BorrarDossier
+' Propósito : Borra un dossier sin artículos, con sus títulos y sus personas a
+'             cargo, en una transacción. Con artículos no se borra (decisión
+'             de Alberto, 25/10)
+' Parámetros: iIdDossier As Integer — dossier
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarDossier(iIdDossier As Integer) As Boolean
+
+  Dim hConn As Connection
+  Dim rDatos As Result
+
+  ' --- 1. SIN ARTÍCULOS ---
+  ' SE AVISA ANTES: LA CLAVE RESTRICT DE articulo LO IMPEDIRÍA CON UN ERROR CRUDO
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM articulo WHERE id_dossier = &1", iIdDossier)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar si el dossier tiene artículos:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!n > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El dossier tiene " & CStr(rDatos!n) & " artículo(s): no se puede borrar.")
+    Return False
+  Endif
+
+  hConn = m_ConexionBD.mConn
+
+  ' --- 2. TRANSACCIÓN ---
+  ' LOS TÍTULOS SE VAN EN CASCADA; LAS PERSONAS A CARGO TIENEN CLAVE RESTRICT Y
+  ' SE BORRAN ANTES
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Try hConn.Exec("DELETE FROM numero_contribuyente WHERE id_dossier = &1", iIdDossier)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron quitar las personas a cargo del dossier:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Try hConn.Exec("DELETE FROM numero_dossier WHERE id_dossier = &1", iIdDossier)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el dossier:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar el borrado del dossier:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End

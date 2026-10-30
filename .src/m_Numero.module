@@ -1,0 +1,628 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Numero
+' Propósito : Lógica de FMetadatosNumero: el número de revista (N1) del
+'             proyecto abierto, sobre el esquema nuevo de la actualización
+'             1.13.0 (claude/rediseno-revistas.md, sección 5 septies).
+'             FMetadatosNumero tiene los controles y los manejadores; acá viven
+'             las consultas, las validaciones y las grabaciones (cada
+'             formulario lleva su propio módulo).
+' Conexión  : m_ConexionBD.mConn. El formulario se abre con un proyecto
+'             abierto, es decir, con sesión de usuario (a diferencia de
+'             FSysAdmin, que funciona sin sesión).
+' Requiere  : esquema 1.14.0: volumen, numero y suplemento admiten NULL, que
+'             es «sin dato» (GV-74); la cadena vacía no se puede escribir
+'             desde Gambas (GV-68).
+' Dependencias: m_ConexionBD, m_Sonido, m_InicioCierre, m_Constantes,
+'             FVincularNumero.
+' Vínculo   : un r-*.md solo se abre vinculado a un número de una revista de la
+'             base, y cada apertura se confirma (decisión de Alberto, 25/10).
+'             AbrirProyectoMD llama a ConfirmarOVincular (proyecto existente)
+'             o a RegistrarProyectoConNumero (proyecto nuevo).
+' ==============================================================================
+
+' CANAL DE RETORNO DE FVincularNumero (RC-GM-13): EL FORMULARIO SE DESTRUYE AL
+' CERRARSE, ASÍ QUE LO ELEGIDO QUEDA ACÁ. CLAVES: id_revista, volumen, numero,
+' suplemento. UNA CLAVE VACÍA NO EXISTE (GV-68) Y SE LEE COMO Null
+Public cVinculo As Collection
+' NOMBRE DEL ARCHIVO QUE SE ESTÁ VINCULANDO, PARA MOSTRARLO EN EL DIÁLOGO
+Public sArchivoVinculo As String
+
+' ============================================
+' Función   : MesesLeyendas
+' Propósito : Lo que muestra el combo del mes. El índice es el número del mes;
+'             el 0, vacío, es «sin mes» (NULL)
+' Parámetros: (ninguno)
+' Retorna   : String[] — trece leyendas
+' ============================================
+Public Function MesesLeyendas() As String[]
+
+  Return ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+End
+
+' ============================================
+' Función   : EstadosCodigos
+' Propósito : Los valores de numero.estado, en el orden del combo
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a EstadosLeyendas
+' ============================================
+Public Function EstadosCodigos() As String[]
+
+  Return ["abierto", "cerrado"]
+
+End
+
+' ============================================
+' Función   : EstadosLeyendas
+' Propósito : Lo que muestra el combo del estado
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a EstadosCodigos
+' ============================================
+Public Function EstadosLeyendas() As String[]
+
+  Return ["Abierto", "Cerrado"]
+
+End
+
+' ============================================
+' Función   : ProyectoEsRevista
+' Propósito : Confirma que el proyecto abierto es de revista: el número no
+'             tiene sentido en un libro
+' Parámetros: iIdProyecto As Integer — proyecto
+' Retorna   : Boolean — True si proyectos.tipo_producto es revista
+' ============================================
+Public Function ProyectoEsRevista(iIdProyecto As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT tipo_producto FROM proyectos WHERE id = &1", iIdProyecto)
+  If Error Then Return False
+  If Not rDatos.Available Then Return False
+
+  Return rDatos!tipo_producto = m_Constantes.TIPO_REVISTA_MD
+
+End
+
+' ============================================
+' Función   : ListarRevistas
+' Propósito : Las revistas cargadas en FSysAdmin, para el combo
+' Parámetros: (ninguno)
+' Retorna   : Result — id_revista, titulo; Null si falló (ya se informó)
+' ============================================
+Public Function ListarRevistas() As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_revista, titulo FROM revista ORDER BY titulo")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las revistas (¿falta la actualización de esquema 1.13.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ModeloPaginacion
+' Propósito : El modelo de paginación de una revista: decide si el número
+'             muestra la página inicial (decisión 12)
+' Parámetros: iIdRevista As Integer — revista
+' Retorna   : String — por_numero, por_volumen o continua; vacío si no se
+'             pudo leer
+' ============================================
+Public Function ModeloPaginacion(iIdRevista As Integer) As String
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT modelo_paginacion FROM revista WHERE id_revista = &1", iIdRevista)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  Return rDatos!modelo_paginacion
+
+End
+
+' ============================================
+' Función   : CargarNumeroDeProyecto
+' Propósito : El número del proyecto, si ya existe
+' Parámetros: iIdProyecto As Integer — proyecto
+' Retorna   : Result — el registro; Null si el proyecto todavía no tiene
+'             número (alta) o si falló la lectura (ya se informó)
+' ============================================
+Public Function CargarNumeroDeProyecto(iIdProyecto As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT * FROM numero WHERE id_proyecto = &1", iIdProyecto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el número del proyecto:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  ' SIN FILA: EL PROYECTO TODAVÍA NO TIENE NÚMERO. NO ES UN ERROR
+  If Not rDatos.Available Then Return Null
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ContarArticulos
+' Propósito : Cuántos artículos (del esquema nuevo) tiene el número. Con
+'             artículos, la revista del número ya no se puede cambiar
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : Integer — la cantidad; -1 si no se pudo leer
+' ============================================
+Public Function ContarArticulos(iIdNumero As Integer) As Integer
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM articulo WHERE id_numero = &1", iIdNumero)
+  If Error Then Return -1
+
+  Return rDatos!n
+
+End
+
+' ============================================
+' Función   : NombreAutor
+' Propósito : Cómo se muestra un autor en la lista de editores
+' Parámetros: iIdAutor As Integer — autor
+' Retorna   : String — «Apellidos, Nombre»; vacío si no existe
+' ============================================
+Public Function NombreAutor(iIdAutor As Integer) As String
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT apellidos, nombre FROM autores WHERE id_autor = &1", iIdAutor)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  Return rDatos!apellidos & ", " & rDatos!nombre
+
+End
+
+' ============================================
+' Función   : EditoresNumero
+' Propósito : Los editores del número completo (no los de un dossier), en
+'             orden
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : Result — id_autor, apellidos, nombre; Null si falló
+' ============================================
+Public Function EditoresNumero(iIdNumero As Integer) As Result
+
+  Dim rDatos As Result
+
+  ' id_dossier NULO: EDITOR DEL NÚMERO COMPLETO (Crossref journal_issue)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT c.id_autor, a.apellidos, a.nombre " &
+    "FROM numero_contribuyente c JOIN autores a ON a.id_autor = c.id_autor " &
+    "WHERE c.id_numero = &1 AND c.id_dossier IS NULL ORDER BY c.orden", iIdNumero)
+  If Error Then Return Null
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ValidarNumero
+' Propósito : Controles previos al guardado. Avisa el primero que falla
+' Parámetros: iIdNumero As Integer — número (0 en el alta)
+'             cDatos As Collection — los valores del editor, por nombre de
+'             columna
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarNumero(iIdNumero As Integer, cDatos As Collection) As Boolean
+
+  Dim sAviso As String
+  Dim rDatos As Result
+  Dim iArticulos As Integer
+
+  ' --- 1. REVISTA ---
+  If cDatos["id_revista"] <= 0 Then sAviso = "Elija la revista del número."
+
+  ' --- 2. IDENTIDAD: AL MENOS VOLUMEN O NÚMERO ---
+  ' SIN NINGUNO DE LOS DOS EL NÚMERO NO SE PUEDE CITAR
+  If sAviso = "" Then
+    ' EN GAMBAS "" ES Null (GV-68): UN CAMPO VACÍO LLEGA COMO Null
+    If IsNull(cDatos["volumen"]) And IsNull(cDatos["numero"]) Then sAviso = "Cargue el volumen, el número o ambos."
+  Endif
+
+  ' --- 3. AÑO: LA COLUMNA ES YEAR (1901 A 2155 EN MySQL) ---
+  If sAviso = "" Then
+    If Not IsNull(cDatos["anio"]) Then
+      If cDatos["anio"] < 1901 Or cDatos["anio"] > 2155 Then sAviso = "El año tiene que estar entre 1901 y 2155."
+    Endif
+  Endif
+
+  ' --- 4. PÁGINA INICIAL: ENTERO POSITIVO ---
+  If sAviso = "" Then
+    If Not IsNull(cDatos["pagina_inicial"]) Then
+      If cDatos["pagina_inicial"] < 1 Then sAviso = "La página inicial tiene que ser mayor que cero."
+    Endif
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  ' --- 5. ÚNICO EN LA REVISTA: SE AVISA ANTES DE QUE LO RECHACE LA CLAVE ---
+  ' <=> ES LA IGUALDAD QUE ADMITE NULL: UN SUPLEMENTO VACÍO ES NULL (1.14.0,
+  ' GV-74) Y CON = NO COINCIDIRÍA NUNCA. MEDIDO: CON = EL AVISO NO SALÍA Y EL
+  ' ALTA CHOCABA CON LA CLAVE ÚNICA
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM numero WHERE id_revista = &1 AND volumen <=> &2 AND numero <=> &3 AND suplemento <=> &4 AND id_numero <> &5",
+    cDatos["id_revista"], cDatos["volumen"], cDatos["numero"], cDatos["suplemento"], iIdNumero)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar que el número no esté repetido:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!n > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La revista ya tiene un número con el mismo volumen, número y suplemento.")
+    Return False
+  Endif
+
+  ' --- 6. CAMBIO DE REVISTA: SOLO SIN ARTÍCULOS ---
+  ' CON ARTÍCULOS, SUS SECCIONES Y SUS VALORES HEREDADOS SON DE LA OTRA REVISTA
+  If iIdNumero > 0 Then
+    Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_revista FROM numero WHERE id_numero = &1", iIdNumero)
+    If Error Then Return False
+    If rDatos.Available Then
+      If rDatos!id_revista <> cDatos["id_revista"] Then
+        iArticulos = ContarArticulos(iIdNumero)
+        If iArticulos <> 0 Then
+          m_Sonido.sonar("Warning")
+          Message.Warning("El número ya tiene artículos: no se puede cambiar su revista.")
+          Return False
+        Endif
+      Endif
+    Endif
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : GuardarNumero
+' Propósito : Alta o modificación del número y reemplazo de sus editores, en
+'             una transacción: o se graba todo o nada
+' Parámetros: iIdNumero As Integer — número; 0 para el alta
+'             iIdProyecto As Integer — proyecto abierto
+'             cDatos As Collection — los valores del editor, por nombre de
+'             columna; Null donde no hay dato
+'             aEditores As Integer[] — id_autor de los editores, en orden
+' Retorna   : Integer — id del número grabado; 0 si no se grabó (ya se
+'             informó)
+' ============================================
+Public Function GuardarNumero(iIdNumero As Integer, iIdProyecto As Integer, cDatos As Collection, aEditores As Integer[]) As Integer
+
+  Dim hConn As Connection
+  Dim rNumero As Result
+  Dim iId As Integer
+  Dim i As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  If Not ValidarNumero(iIdNumero, cDatos) Then Return 0
+  hConn = m_ConexionBD.mConn
+
+  ' --- 2. TRANSACCIÓN ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  ' --- 2.1 ALTA O EDICIÓN (RC-GM-15) ---
+  If iIdNumero = 0 Then
+    Try rNumero = hConn.Create("numero")
+  Else
+    Try rNumero = hConn.Edit("numero", "id_numero = &1", iIdNumero)
+  Endif
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el número para grabarlo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  With rNumero
+    If iIdNumero = 0 Then
+      !id_proyecto = iIdProyecto
+      !usuario_creacion = m_InicioCierre.UsuarioEnCurso
+    Endif
+    !id_revista = cDatos["id_revista"]
+    !volumen = cDatos["volumen"]
+    !numero = cDatos["numero"]
+    !suplemento = cDatos["suplemento"]
+    !titulo_especial = cDatos["titulo_especial"]
+    !anio = cDatos["anio"]
+    !mes = cDatos["mes"]
+    !pagina_inicial = cDatos["pagina_inicial"]
+    !estado = cDatos["estado"]
+    !imagen_tapa = cDatos["imagen_tapa"]
+  End With
+
+  Try rNumero.Update()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo grabar el número:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  If iIdNumero = 0 Then
+    iId = hConn.LastInsertId
+  Else
+    iId = iIdNumero
+  Endif
+
+  ' --- 2.2 EDITORES DEL NÚMERO COMPLETO: SE REEMPLAZAN ENTEROS ---
+  ' LOS DE LOS DOSSIERS (id_dossier NO NULO) NO SE TOCAN
+  Try hConn.Exec("DELETE FROM numero_contribuyente WHERE id_numero = &1 AND id_dossier IS NULL", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar los editores del número:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For i = 0 To aEditores.Count - 1
+    ' EL ORDEN DE LA LISTA ES EL DE LA PUBLICACIÓN
+    Try hConn.Exec("INSERT INTO numero_contribuyente (id_numero, id_autor, rol, orden) VALUES (&1, &2, 'editor', &3)", iId, aEditores[i], i + 1)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar un editor del número:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+
+  ' --- 2.3 CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar los cambios del número:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return iId
+
+End
+
+' ============================================
+' Función   : CopiarTapa
+' Propósito : Copia la imagen de tapa elegida a media/ del proyecto con el
+'             nombre normalizado foto-tapa.<jpg|png>, como hace
+'             FMetadatosLibro.btnBuscarTapa_Click
+' Parámetros: sOrigen As String — ruta de la imagen elegida
+' Retorna   : String — el nombre normalizado; vacío si no se copió (ya se
+'             informó o el usuario no quiso reemplazar)
+' ============================================
+Public Function CopiarTapa(sOrigen As String) As String
+
+  Dim sExt As String
+  Dim sDirMedia As String
+  Dim sNombre As String
+  Dim sDestino As String
+
+  ' --- 1. NOMBRE NORMALIZADO: jpeg PASA A jpg ---
+  sExt = LCase(File.Ext(sOrigen))
+  If sExt = "jpeg" Then sExt = "jpg"
+  ' Dialog.Filter ES COSMÉTICO: LA EXTENSIÓN SE VALIDA ACÁ
+  If sExt <> "jpg" And sExt <> "png" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La tapa tiene que ser una imagen JPG o PNG.")
+    Return ""
+  Endif
+  sDirMedia = m_InicioCierre.RutaProyectoEnCurso &/ "media"
+  sNombre = "foto-tapa." & sExt
+  sDestino = sDirMedia &/ sNombre
+
+  ' --- 2. YA ESTÁ EN SU LUGAR ---
+  If sOrigen = sDestino Then Return sNombre
+
+  ' --- 3. CARPETA media/ ---
+  If Not Exist(sDirMedia) Then
+    Try Mkdir sDirMedia
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta media/:" & gb.NewLine & Error.Text)
+      Return ""
+    Endif
+  Endif
+
+  ' --- 4. REEMPLAZO, CON CONFIRMACIÓN ---
+  If Exist(sDestino) Then
+    If Message.Question("Ya existe «" & sNombre & "» en media/." & gb.NewLine & "¿Reemplazarla?", "Sí", "No") <> 1 Then Return ""
+    Try Kill sDestino
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo quitar la tapa anterior:" & gb.NewLine & Error.Text)
+      Return ""
+    Endif
+  Endif
+
+  ' --- 5. COPIA ---
+  Try Copy sOrigen To sDestino
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo copiar la imagen:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  Return sNombre
+
+End
+
+' ============================================
+' Función   : DescripcionNumero
+' Propósito : El número de un proyecto dicho en una línea, para la
+'             confirmación de apertura: «Revista X — vol. 12, núm. 1»
+' Parámetros: iIdProyecto As Integer — proyecto
+' Retorna   : String — la descripción; vacío si el proyecto no tiene número
+'             o falló la lectura
+' ============================================
+Public Function DescripcionNumero(iIdProyecto As Integer) As String
+
+  Dim rDatos As Result
+  Dim sTexto As String
+
+  ' --- 1. LECTURA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT r.titulo, n.volumen, n.numero, n.suplemento, n.anio " &
+    "FROM numero n JOIN revista r ON r.id_revista = n.id_revista WHERE n.id_proyecto = &1", iIdProyecto)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  ' --- 2. ARMADO: SOLO LO QUE TIENE DATO ---
+  sTexto = rDatos!titulo & " —"
+  If Not IsNull(rDatos!volumen) Then sTexto &= " vol. " & rDatos!volumen
+  If Not IsNull(rDatos!numero) Then sTexto &= " núm. " & rDatos!numero
+  If Not IsNull(rDatos!suplemento) Then sTexto &= " supl. " & rDatos!suplemento
+  If Not IsNull(rDatos!anio) Then sTexto &= " (" & CStr(rDatos!anio) & ")"
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : PedirVinculo
+' Propósito : Muestra FVincularNumero para elegir revista y volumen, número y
+'             suplemento. Lo elegido queda en cVinculo
+' Parámetros: sArchivo As String — nombre del r-*.md que se abre
+' Retorna   : Boolean — True si se eligió y validó; False si se canceló
+' ============================================
+Public Function PedirVinculo(sArchivo As String) As Boolean
+
+  Dim hForm As FVincularNumero
+  Dim iRespuesta As Integer
+
+  ' --- 1. CANAL LIMPIO ---
+  cVinculo = New Collection
+  sArchivoVinculo = sArchivo
+
+  ' --- 2. DIÁLOGO ---
+  ' ShowModal DEVUELVE EL VALOR DE Me.Close(valor); 0 SI SE CERRÓ SIN VALOR
+  ' (RC-GM-13, ALTERNATIVA PARA UNA DECISIÓN SIMPLE)
+  hForm = New FVincularNumero
+  iRespuesta = hForm.ShowModal()
+
+  Return iRespuesta = 1
+
+End
+
+' ============================================
+' Función   : ConfirmarOVincular
+' Propósito : Para un proyecto de revista que ya existe en la base: si tiene
+'             número, pide confirmar la apertura mostrando cuál es; si no lo
+'             tiene (proyectos anteriores al esquema nuevo), pide el vínculo
+'             y crea el número
+' Parámetros: iIdProyecto As Integer — proyecto
+'             sArchivo As String — nombre del r-*.md
+' Retorna   : Boolean — True si se puede seguir abriendo
+' ============================================
+Public Function ConfirmarOVincular(iIdProyecto As Integer, sArchivo As String) As Boolean
+
+  Dim sDescripcion As String
+
+  ' --- 1. VINCULADO: CONFIRMAR CUÁL SE ABRE ---
+  sDescripcion = DescripcionNumero(iIdProyecto)
+  If sDescripcion <> "" Then
+    m_Sonido.sonar("Info")
+    Return Message.Question("Se va a abrir:" & gb.NewLine & gb.NewLine & sDescripcion & gb.NewLine & gb.NewLine &
+      "Archivo: " & sArchivo, "Abrir", "Cancelar") = 1
+  Endif
+
+  ' --- 2. SIN NÚMERO: VINCULAR ANTES DE ABRIR ---
+  If Not PedirVinculo(sArchivo) Then Return False
+  Return CrearNumeroVinculado(iIdProyecto)
+
+End
+
+' ============================================
+' Función   : CrearNumeroVinculado
+' Propósito : Alta del número de un proyecto con lo elegido en
+'             FVincularNumero. El resto de los datos se completa en
+'             FMetadatosNumero
+' Parámetros: iIdProyecto As Integer — proyecto
+' Retorna   : Boolean — True si se creó (ya se informó si no)
+' ============================================
+Public Function CrearNumeroVinculado(iIdProyecto As Integer) As Boolean
+
+  ' NULL DONDE NO HAY DATO: UNA CLAVE VACÍA DE cVinculo SE LEE COMO Null
+  ' (GV-68) Y ASÍ SE ESCRIBE (1.14.0)
+  Try m_ConexionBD.mConn.Exec("INSERT INTO numero (id_proyecto, id_revista, volumen, numero, suplemento, usuario_creacion) VALUES (&1, &2, &3, &4, &5, &6)",
+    iIdProyecto, cVinculo["id_revista"], cVinculo["volumen"], cVinculo["numero"], cVinculo["suplemento"], m_InicioCierre.UsuarioEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear el número del proyecto:" & gb.NewLine & Error.Text & gb.NewLine & gb.NewLine & "Abortando apertura.")
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : RegistrarProyectoConNumero
+' Propósito : Para un r-*.md que no está en la base: pide el vínculo y, si se
+'             confirma, registra el proyecto y su número en UNA transacción.
+'             Si se cancela o algo falla, no queda nada creado
+' Parámetros: sArchivo As String — nombre del r-*.md (proyectos.nombre)
+' Retorna   : Integer — id del proyecto nuevo; 0 si se canceló o falló (ya se
+'             informó)
+' ============================================
+Public Function RegistrarProyectoConNumero(sArchivo As String) As Integer
+
+  Dim hConn As Connection
+  Dim iIdProyecto As Integer
+
+  ' --- 1. VÍNCULO PRIMERO: SIN ÉL NO SE CREA NADA ---
+  If Not PedirVinculo(sArchivo) Then Return 0
+  hConn = m_ConexionBD.mConn
+
+  ' --- 2. TRANSACCIÓN: PROYECTO Y NÚMERO, O NINGUNO ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text & gb.NewLine & gb.NewLine & "Abortando apertura.")
+    Return 0
+  Endif
+
+  ' --- 2.1 PROYECTO: LAS MISMAS COLUMNAS QUE EL ALTA DE AbrirProyectoMD ---
+  Try hConn.Exec("INSERT INTO proyectos (nombre, tipo_producto, usuario_propietario, activo, ocupado) VALUES (&1, &2, &3, 1, 0)",
+    sArchivo, m_Constantes.TIPO_REVISTA_MD, m_InicioCierre.UsuarioEnCurso)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo registrar el proyecto:" & gb.NewLine & Error.Text & gb.NewLine & gb.NewLine & "Abortando apertura.")
+    Return 0
+  Endif
+  iIdProyecto = hConn.LastInsertId
+
+  ' --- 2.2 NÚMERO ---
+  If Not CrearNumeroVinculado(iIdProyecto) Then
+    hConn.Rollback()
+    Return 0
+  Endif
+
+  ' --- 2.3 CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar el registro del proyecto:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return iIdProyecto
+
+End

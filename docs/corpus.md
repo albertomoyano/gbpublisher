@@ -33,11 +33,17 @@ Y no alcanza con verificar: hay que HACER algo con el error. Un `Try` seguido de
 
 **Relaciones:** apoya:GV-23
 
-### RC-GM-03 — Guardar en el evento, no en el botón
+### RC-GM-03 — Guardar en el evento, no en el botón: en los formularios que graban fila por fila
 
 **Estado:** vigente · **Evidencia:** inferida
 
 Los campos críticos (por ejemplo `es_autor_correspondencia`) deben guardarse en el evento del control (`CheckBox_Click`) para evitar que una deselección previa al guardado deje el dato sin escribir en la base.
+
+ALCANCE: vale para los formularios que graban fila por fila, donde cambiar de fila antes de «Guardar» pierde lo marcado.
+
+No vale para los editores que trabajan en memoria y graban todo junto (SC-73): ahí la marca pasa al objeto en memoria al aceptar el diálogo, al cambiar de idioma o de fila, y se graba con el resto en la transacción del registro. Guardar en el evento rompería esa transacción: dejaría escrita una parte aunque el usuario cierre sin guardar.
+
+**Relaciones:** contracara:SC-73
 
 ### RC-GM-04 — Verificar las columnas antes de usarlas en un SELECT
 
@@ -181,7 +187,7 @@ Patrón seguro y eficiente para buscar o contar ocurrencias de un carácter: `In
 
 Síntoma de este bug: la cuenta de caracteres ASCII funciona pero la de caracteres del español devuelve siempre 0. La consecuencia visual en validadores tipo ContarCaracteresPares es que la columna del carácter multibyte siempre aparece roja sin importar el contenido del archivo.
 
-**Relaciones:** apoya:GV-03, vinculo:SC-02, vinculo:GV-41
+**Relaciones:** apoya:GV-03, vinculo:SC-02, vinculo:GV-41,vinculo:GV-150
 
 ### RC-GM-13 — Variables de retorno entre formularios modales: módulos, no Public en el form
 
@@ -842,13 +848,15 @@ La ayuda contextual (`ayudas/`, SC-24) tampoco se copia, por otra razón: en ell
 
 El catálogo de shortcodes (`shortcodes/`, SC-34) tampoco se copia, por la misma razón.
 
+Los sonidos de aviso (`sonido/`) tampoco se copian, por la misma razón. `m_Sonido` los lee de `m_InicioCierre.RutaRecursos()`, que desde el IDE es `.hidden/` e instalado `/usr/share/gbpublisher/`. El caso que lo motivó (30/10/2026): al pasar los sonidos de `.ogg` a `.wav`, el `OpenApp.wav` nuevo nunca llegó a la copia local, que guardaba uno anterior, y la apertura sonaba con otro sonido sin que nada lo advirtiera. La carpeta `~/.gbpublisher/sonido` de las instalaciones previas queda sin uso y no se borra.
+
 CONTRAPARTIDA OBLIGATORIA
 
 Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un archivo ajeno debe poder DECLARAR si fue modificado. La comparación es directa contra `/usr/share/`, que por definición del modelo conserva siempre el original: no hace falta guardar ni versionar sumas de verificación. Es lo que hace `m_AuditarJats.EstadoRecurso()` con el catálogo de mensajes y la hoja de estilo del informe de auditoría.
 
 COTEJO AL ARRANCAR
 
-`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js`, `themes` y `ott` de la copia local con su par instalado. `ott` entra por el documento de referencia del ODT, que trae los estilos del epígrafe (SC-35); la comparación con `File.Load` sirve para un binario (GV-77). Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
+`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js`, `themes`, `ott` y `chart` de la copia local con su par instalado. `ott` entra por el documento de referencia del ODT, que trae los estilos del epígrafe (SC-35); la comparación con `File.Load` sirve para un binario (GV-77). `chart` entró el 29/10/2026: `grafico.sh` lee la plantilla de los gráficos, Chart.js y sus fuentes de la copia local, y sin cotejo una plantilla nueva no llegaba nunca (SC-69). Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
 
 El caso que lo motivó: después de una actualización, una hoja nueva de la copia local corrió con un script viejo de `/usr/share/gbpublisher/engine/` y Saxon frenó por un parámetro que el script no pasaba. El caso inverso no da error: Saxon ignora un parámetro que la hoja vieja no declara, y la salida sale con la regla anterior.
 
@@ -1277,7 +1285,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60). El refactor de bibtex tomará el número que le corresponda.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT). El refactor de bibtex tomará el número que le corresponda.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1308,7 +1316,7 @@ PUNTO DE RUPTURA: BASELINE 2.0.0 CON EL REFACTOR DE BIBTEX
 
 Decisión de Alberto (20/10). El baseline no se regenera con cada versión de la cadena. El 2.0.0 se genera junto con el refactor de bibtex y lo incorpora: las instalaciones nuevas parten de ahí. Las existentes siguen su cadena hasta ese mismo punto. Hasta entonces, una instalación nueva restaura `baseline-1.0.0` y corre la cadena completa (BBDD_LEEME.md §5, «Cuándo conviene rebasear»).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -1504,15 +1512,15 @@ Después de compilar, la aplicación lee las páginas del PDF con `pdfinfo` y AV
 
 LOGOS
 
-Solo PNG o JPG: el mismo archivo sirve al PDF y al EPUB, sin conversión. Un logo en PDF obligaba a generar un SVG para el EPUB, que no admite PDF como imagen; se descartó. Centrados a ancho fijo, definido en `preambulo-estetica.tex`: el de portada (logo de la editorial) a 20 mm (`\gbAnchoLogoPortada`) y el de colección a 110 mm (`\gbAnchoLogoColeccion`), nunca más anchos que la caja (`\gbLogo`). El logo de colección se diseña sobre un lienzo de 110 mm de ancho: el blanco a los costados iguala las colecciones cuyo nombre o dirección ocupan distinto ancho. La resolución del archivo no interviene, así que GV-66 no afecta a los logos y el diálogo no la controla; solo tiene que alcanzar en píxeles (a 300 ppp, unos 240 px para 20 mm y 1300 px para 110 mm). En el EPUB, la misma proporción sobre el ancho de pantalla: 18 % y 100 % (`gbpublisher-epub-libro.css`). El PDF y el EPUB frenan con un mensaje si el logo cargado no es PNG o JPG o no está en `media/`. `pdfinfo` (poppler-utils) entra en `integridad.sh`.
+Solo PNG o JPG: el mismo archivo sirve al PDF y al EPUB, sin conversión. Un logo en PDF obligaba a generar un SVG para el EPUB, que no admite PDF como imagen; se descartó. Centrados a ancho fijo, definido en `preambulo-estetica.tex`: los dos a 110 mm (`\gbAnchoLogoPortada` y `\gbAnchoLogoColeccion`), nunca más anchos que la caja (`\gbLogo`). El de portada fue de 20 mm hasta el 29/10/2026: en una coedición lleva los sellos de todas las editoriales y necesita el mismo ancho que el de colección. El logo de colección se diseña sobre un lienzo de 110 mm de ancho: el blanco a los costados iguala las colecciones cuyo nombre o dirección ocupan distinto ancho. La resolución del archivo no interviene, así que GV-66 no afecta a los logos y el diálogo no la controla; solo tiene que alcanzar en píxeles (a 300 ppp, unos 1300 px para 110 mm). En el EPUB, la misma proporción sobre el ancho de pantalla: 100 % los dos (`gbpublisher-epub-libro.css`). El PDF y el EPUB frenan con un mensaje si el logo cargado no es PNG o JPG o no está en `media/`. `pdfinfo` (poppler-utils) entra en `integridad.sh`.
 
-Del resto de `media/`, el EPUB toma solo las imágenes que admite —jpg, jpeg, png, gif, svg y webp—, con la misma lista en `m_GenerarEpubLibro.EsImagenEpub` y en `engine/generar_epub_libro.sh`. Antes copiaba todo y declaraba lo desconocido como `image/jpeg`: un PDF en `media/` dejaba el paquete inválido.
+Del resto de `media/`, el EPUB toma solo lo que el libro usa, en los formatos que admite —jpg, jpeg, png, gif, svg y webp, `m_GenerarEpubLibro.EsImagenEpub`—: la lista es la del manifiesto, y el script copia exactamente esa (SC-76). Antes copiaba todo y declaraba lo desconocido como `image/jpeg`: un PDF en `media/` dejaba el paquete inválido.
 
 ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56,vinculo:SC-76
 
 **PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
 
@@ -1848,7 +1856,7 @@ DECISIÓN CERRADA. Una figura se escribe de una sola forma, en libros y en revis
     ![Pie de la figura, con *formato* y citas [@clave]](media/fig-mapa.png)
     :::
 
-Con texto alternativo propio para el EPUB accesible: `::: {.fig #fig-mapa alt="..."}`. En revistas, `.fullwidth` la lleva al ancho completo; en libros no se usa.
+En un libro el texto alternativo es obligatorio y no se reemplaza con el pie (SC-76): el botón escribe la apertura `::: {.fig #fig-mapa ancho=100 alt=""}` (`FMain.BloqueFigura`), y un `alt` vacío, ausente o igual al pie lo señala gbp-alt al generar el canónico; el armado (`ensamblar-capitulo-canonico.xsl`) descarta el que repite el pie, a propósito. `ancho=NN`, un entero de 1 a 100, es el porcentaje del ancho de la columna (SC-76). En una revista el `alt` sigue siendo optativo: `::: {.fig #fig-mapa alt="..."}`, y el botón no cambió. En revistas, `.fullwidth` la lleva al ancho completo; en libros no se usa.
 
 LA CLASE ES .fig
 
@@ -1856,7 +1864,7 @@ Es la que escribe el shortcode y la que usan las revistas en producción. El bot
 
 EL FILTRO DE LIBRO ARMA EL <figure>
 
-El escritor DocBook de Pandoc 3.1 descarta el id de una figura (GV-72), así que `fenced-divs-to-elements-db.lua` emite el `<figure xml:id>` con el pie en `<title>` y el alternativo en `textobject`. Detiene la conversión con un mensaje si falta el id, si falta el pie (RC-DB-03) o si el bloque tiene algo más que la imagen: antes, el párrafo que seguía a la imagen se perdía sin aviso.
+El escritor DocBook de Pandoc 3.1 descarta el id de una figura (GV-72), así que `fenced-divs-to-elements-db.lua` emite el `<figure xml:id>` con el pie en `<title>`, el alternativo en `textobject` y el ancho en `imagedata/@width="NN%"`. Detiene la conversión con un mensaje si falta el id, si falta el pie (RC-DB-03), si el bloque tiene algo más que la imagen o si `ancho` no es un entero de 1 a 100: antes, el párrafo que seguía a la imagen se perdía sin aviso.
 
 Un filtro que detiene la conversión ya no deja un capítulo vacío (GV-23). En libros, `engine/generar_canonicos_capitulos.sh` no arma el fragmento, muestra el motivo del filtro y borra el canónico anterior del capítulo, para que el ensamblado no tome uno que ya no corresponde al .md. En revistas, `m_XML.GenerarBodyXML` escribe una marca de fallo en lugar del fragmento y lo informa.
 
@@ -2822,7 +2830,7 @@ Queda registrado para no usar ese camino creyendo que funciona.
 
 ### SC-50 — Aplicaciones satélite de gbpublisher: un solo modelo
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbCorpus 0.0.8 / gbShortcodes 0.0.5 (esquema 5) / Gambas 3.22.1 / Linux Mint; código de los dos repositorios · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbCorpus 0.0.10 (esquema 2) / gbShortcodes 0.0.5 (esquema 5) / Gambas 3.22.1 / Linux Mint; código de los dos repositorios · **Verificado:** 2026-10
 
 DECISIÓN CERRADA (decisión de Alberto). gbCorpus, gbShortcodes y gbAyudas son aplicaciones satélite de gbpublisher y siguen un solo modelo, descrito acá. Lo propio de cada una —su base y su contrato de exportación— está en su entrada de referencia: RF-08, RF-11 y SC-24.
 
@@ -2861,13 +2869,14 @@ Lo que el importador ya garantiza, y el script no repite:
 - Antepone `PRAGMA foreign_keys = ON`, `.bail on` y `.changes on`: el primer error detiene todo y SQLite deshace la transacción abierta.
 - Después: integridad y `foreign_key_check`. gbCorpus revisa además los vínculos de `relaciones` a códigos inexistentes y lista las entradas escritas en la corrida; gbShortcodes compara una huella del contenido antes y después, no solo la cantidad de filas.
 - Código de salida: 0 aplicado, 1 no aplicado. Tras un fallo comprueba si la base quedó como estaba; no lo afirma sin mirar (SC-13).
+- gbCorpus, desde el esquema 2, registra cada script aplicado en la tabla `importaciones`, con su número de la serie, la huella sha256 del archivo y el momento (RF-08). Antes de escribir vigila la serie `gbcorpus-act-NN`. Rechaza un archivo ya aplicado, por su huella, y un número ya registrado. Si el número no es el último más uno, dice cuáles faltan y se detiene; en una terminal interactiva sigue solo si se escribe «saltar», y sin terminal se detiene siempre. Un script fuera de la serie, como una migración, se registra sin número. Después comprueba que la fila haya entrado.
 
 EL SCRIPT
 
 Lo que debe traer:
 
 - Una cabecera de comentarios que diga qué hace, qué da de alta y qué modifica. El importador la muestra antes de pedir confirmación. Sin instrucciones para correrlo por línea de comando.
-- La línea `-- Esquema: N`, con la versión de la base para la que se escribió (hoy, 1 en gbCorpus y 5 en gbShortcodes). Si falta, el importador avisa; si no coincide con la base, aborta.
+- La línea `-- Esquema: N`, con la versión de la base para la que se escribió (hoy, 2 en gbCorpus y 5 en gbShortcodes). Si falta, el importador avisa; si no coincide con la base, aborta.
 - Su propia transacción, `BEGIN TRANSACTION;` … `COMMIT;`, para que las verificaciones propias queden dentro.
 - Verificaciones de lo que el importador no puede saber: que un código o un nombre nuevo esté libre, que un texto a reemplazar exista exactamente una vez, que un `UPDATE` se haya aplicado. Patrón: tabla temporal con `CHECK (ok = 1)`; un `INSERT` que da 0 hace fallar la sentencia, `.bail` la detiene y la transacción se deshace.
 - `fecha_alta` y `fecha_modificacion` con `datetime('now','localtime')`. El importador aísla lo escrito en la corrida comparando contra un sello de ese mismo reloj; con `date('now')` no puede.
@@ -2888,11 +2897,12 @@ El importador la acepta solo si la base está en N y él maneja M, y al terminar
 
 La aplicación no abre una base de una versión anterior. Si está una versión atrás, ofrece «Migrar» y corre su propio importador con su propio script de migración en la pestaña Terminal. Al abrir una base vacía, ofrece la carga inicial.
 
-Hoy solo gbShortcodes cambió de esquema (va por la 5; el detalle de cada migración está en RF-11). gbCorpus sigue en la 1 y su importador no tiene migraciones: si sube de versión, adopta este mismo mecanismo.
+Las dos aplicaciones cambiaron de esquema con este mismo mecanismo: gbShortcodes va por la 5 (el detalle de cada migración está en RF-11) y gbCorpus por la 2, que agregó el registro de importaciones (RF-08).
 
 NOMBRES Y LUGARES DE LOS SCRIPTS
 
     gbCorpus       gbcorpus-act-NN.sql                    raíz del repositorio
+                   .hidden/esquema/esquema-vN-a-vM.sql    migraciones
     gbShortcodes   datos/datos-vN-NNN.sql                 cambios de datos
                    .hidden/esquema/esquema-vN-a-vM.sql    migraciones
                    .hidden/esquema/carga-inicial.sql      catálogo completo para una base nueva
@@ -2901,7 +2911,7 @@ NOMBRES Y LUGARES DE LOS SCRIPTS
 - En gbShortcodes el número va dentro de su versión de esquema: el nombre dice a qué versión va y en qué orden. La diferencia con gbCorpus es deliberada: gbShortcodes cambia de esquema y su importador rechaza los scripts de otra versión.
 - `datos/` no viaja en el paquete y la aplicación no lo lee: un script de datos se importa a mano. `.hidden/esquema/` sí viaja: la aplicación lee de ahí la migración y la carga inicial.
 - La carga inicial se regenera en cada versión de esquema: una base nueva no puede aplicar scripts de una versión anterior.
-- Los scripts aplicados quedan en el repositorio. El número más alto es el último aplicado, y de ahí sale el siguiente.
+- Los scripts aplicados quedan en el repositorio, y el número del siguiente sale del más alto de la carpeta. Que un script esté en la carpeta no prueba que se haya aplicado: el 29/10/2026 act-75 y act-76 estaban en la carpeta de gbCorpus y no en la base. En gbCorpus lo dice el registro de importaciones (RF-08); gbShortcodes no tiene registro.
 - Los nombres anteriores (`corpus-alta-*.sql`, `gbshortcodes-act-*.sql`, `gbshortcodes-migrar-*.sql`) son históricos y no se usan más.
 
 RECURSOS QUE VIAJAN CON EL PROGRAMA
@@ -2923,7 +2933,7 @@ COTEJO ANTES DE ESCRIBIR UN SCRIPT
 El estado vigente se lee de dos lugares, según la aplicación:
 
 - gbpublisher: el repositorio de GitHub, clonado con `git clone --depth 1`. Antes de leerlo, Claude pregunta si está al día; un sí lo habilita como copia de trabajo, sin más cotejo, y un no obliga a esperar el push. De ahí salen el corpus (`docs/corpus.md`) y el catálogo de shortcodes (`_catalogo.tsv` en `.hidden/shortcodes/`). El `corpus.md` adjunto al proyecto de trabajo con Claude no se coteja ni se usa.
-- gbCorpus y gbShortcodes: la carpeta local de cada una en la máquina de Alberto, a la que Claude tiene acceso. No se consulta GitHub: los scripts se aplican en local y pueden no estar subidos. De ahí salen los scripts aplicados (`gbcorpus-act-NN.sql` en la raíz de gbCorpus, `datos/` de gbShortcodes).
+- gbCorpus y gbShortcodes: la carpeta local de cada una en la máquina de Alberto, a la que Claude tiene acceso. No se consulta GitHub: los scripts se aplican en local y pueden no estar subidos. De ahí salen los scripts escritos (`gbcorpus-act-NN.sql` en la raíz de gbCorpus, `datos/` de gbShortcodes). Cuáles se aplicaron en gbCorpus lo dice la tabla `importaciones` de `~/.gbcorpus/corpus.sqlite`, y se coteja antes de escribir: si la última registrada no es la más alta de la carpeta, falta aplicar algo y se avisa antes de redactar.
 - El número del script nuevo sale del más alto en la carpeta local de la aplicación.
 
 Es lo que garantiza que un código nuevo esté libre y que un texto a reemplazar exista tal como se lo cita.
@@ -2985,7 +2995,7 @@ LA PESTAÑA
 
 - El primer ítem del combo es «(patrón libre)». Elegirlo conserva lo que hay en los campos.
 - Elegir un patrón completa patrón, reemplazo y flags. Su texto de prueba entra en `areaEditor` solo si el área está vacía: así no se pisa un fragmento real pegado para probar varios patrones.
-- `lblDescripcionPatron` muestra la descripción y la marca «modificado, sin guardar». La marca compara patrón, reemplazo y flags con lo guardado; la descripción y el texto de prueba no cuentan. Se compara contra lo guardado, no se siguen eventos: no importa qué asignación dispara qué.
+- `txaDescripcionPatron` muestra la descripción y la marca «modificado, sin guardar». La marca compara patrón, reemplazo y flags con lo guardado; la descripción y el texto de prueba no cuentan. Se compara contra lo guardado, no se siguen eventos: no importa qué asignación dispara qué.
 - Reemplazar los campos con otro patrón pregunta si se perdería algo: un patrón libre escrito, o uno cargado con cambios. Es SC-06 aplicado a la pestaña. Volver a elegir el mismo patrón es volver a la versión guardada.
 - Reponer el combo desde el código pasa por una bandera: asignar `Index` dispara `Click` (GV-53); `Clear` y `Add` no (GV-69).
 - Guardar exige un patrón que el motor aceptó. `FGuardarPatron` propone el nombre cargado, su descripción y el contenido de `areaEditor` como texto de prueba, para recortarlo. Si el nombre existe, confirma: actualizar el mismo, o reemplazar otro distinto. Un nombre nuevo es «guardar como»: el anterior queda. No hay renombrar: se guarda como y se borra.
@@ -3064,7 +3074,7 @@ Todo comportamiento comprobado de XML, XPath, XSLT, Saxon, xmllint, jing, Schema
 
 **Relaciones:** vinculo:GV-21,vinculo:GV-22,vinculo:GV-25,vinculo:GV-26,vinculo:GV-28,vinculo:GV-71,vinculo:GV-81,vinculo:GV-82,vinculo:SC-50
 
-**PENDIENTE:** Mini-test: si SaxonJ-HE 12.5 acepta construcciones de XSLT 3.0 en una hoja declarada version="2.0". El resultado entra como GV-XML-01 y se quita este pendiente.
+**PENDIENTE:** Mini-test: si SaxonJ-HE 12.5 acepta construcciones de XSLT 3.0 en una hoja declarada version="2.0". El resultado entra como GV-XML-01 y se quita este pendiente. (2) La versión anclada de Saxon: buena parte del corpus dice SaxonJ-HE 12.5 y en Linux Mint está la 12.9; nada en el código la fija (m_Constantes solo da la ruta). Decidir cuál es la del proyecto y dónde se verifica.
 
 ### SC-53 — Lanzadora de scripts de engine/: un solo camino, código de salida por archivo de estado
 
@@ -3123,23 +3133,21 @@ Varias unidades del mismo trabajo van en UN lanzamiento con una lista, no en un 
 
 VALIDACIÓN DE UNA PIEZA SUELTA
 
-Un script que valida una parte del libro por separado —hoy, el canónico de cada capítulo— no cuenta como aviso los errores `IDREF "…" without matching ID` de jing. Son remisiones a algo que está fuera de la pieza: las citas a la bibliografía consolidada, cuyos `bib-*` entran recién al ensamblar, y las remisiones a figuras o secciones de otra pieza (SC-32). Contadas como aviso, daban código 3 en todo libro con bibliografía consolidada, y un aviso que sale siempre tapa a los que importan.
+La validación de una parte del libro por separado —hoy, el canónico de cada capítulo— la hace `validar_canonicos.sh` (SC-75), que no cuenta como aviso los errores `IDREF "…" without matching ID` de jing. Son remisiones a algo que está fuera de la pieza: las citas a la bibliografía consolidada, cuyos `bib-*` entran recién al ensamblar, y las remisiones a figuras o secciones de otra pieza (SC-32). Contadas como aviso, daban código 3 en todo libro con bibliografía consolidada, y un aviso que sale siempre tapa a los que importan.
 
-Se informan en tenue, con su cantidad, como remisiones que se verifican al ensamblar. Cualquier otro error de jing sigue siendo aviso. Si solo hubo remisiones, el informe no dice «válido»: dice que no hay errores de esquema propios de la pieza. Un IDREF colgado de verdad lo marca la validación del libro en `ensamblar_libro.sh`, que lo cuenta como aviso. Es la separación de capas de SC-52: válido como pieza no es válido como libro.
+Se informan en tenue, con su cantidad, como remisiones que se verifican al ensamblar. Cualquier otro error de jing sigue siendo aviso. Si solo hubo remisiones, el informe no dice «válido»: dice que no hay errores de esquema propios de la pieza. Un IDREF colgado de verdad lo marca la validación del libro, que `ensamblar_libro.sh` le pide al mismo validador y que lo cuenta como aviso. Es la separación de capas de SC-52: válido como pieza no es válido como libro.
 
 El patrón sale de la salida real de jing en Linux Mint: `69:1130: error: IDREF "bib-4308-TOCHO2020" without matching ID`.
 
 LOS USOS
 
-`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh` y `compilar_pdf_libro.sh`. Este último fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
+`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh`, `compilar_pdf_libro.sh` y `validar_canonicos.sh` (SC-75). `compilar_pdf_libro.sh` fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
 
 `preparar_latex_libro.sh` hace lo que antes hacía `m_GenerarPDFLibro.GenerarMainTeX` con `Exec` síncronos: colorear y transformar cada pieza (`colorear_codigo.sh` y `docbook-to-latex.xsl`), borrar los `c-*.tex` huérfanos y poner el `main.tex` en su lugar. Mientras eso corría en Gambas, la interfaz no se repintaba (GV-17) y no había señal de vida antes de que empezara la compilación. Gambas conserva lo que sale de la base, en `m_GenerarPDFLibro.ArmarInsumosLaTeX`: preámbulo derivado, `.bib`, la lista de piezas con cuerpo (`tmp/latex-piezas.txt`) y el `main.tex` propuesto (`latex/.main.tex.tmp`). «Solo generar» lanza `preparar_latex_libro.sh`; «Generar y compilar» lanza `compilar_pdf_libro.sh`, que lo llama anidado primero y no compila si falla.
 
 El `main.tex` sigue yendo último (criterio de SC-07): el script lo pone con `mv` solo si todas las piezas salieron bien, y si alguna falla el anterior queda intacto. Como `mv` conserva la fecha del temporal, anterior a las piezas, un `touch` lo deja como el archivo más nuevo. Una pieza que falla no corta el resto: se listan todas y no se pone el `main.tex`. El preámbulo derivado y el `.bib` los sigue escribiendo Gambas antes del script: si una pieza falla quedan nuevos junto al `main.tex` anterior, lo que se aceptó porque no son declarativos y la próxima corrida los reescribe. Decisión de Alberto.
 
-**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07
-
-**PENDIENTE:** Probado en Mint con un libro real: «Canónico archivo en curso», «Todos los canónicos» y «Ensamblar». Falta un lote en el que un capítulo falla (su canónico anterior se borra y «Ensamblar» se niega hasta regenerarlo), y volver a correr «Todos los canónicos» en un libro con bibliografía consolidada para ver las remisiones en tenue y el código 0. Hecho eso, quitar este pendiente.
+**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07,vinculo:SC-75
 
 ### SC-54 — Controles de corrección del .md: un filtro en engine/ con niveles declarados
 
@@ -3154,6 +3162,7 @@ DÓNDE
     pandoc ARCHIVO.md --from markdown --to plain
            --lua-filter engine/controles_md.lua
            --metadata gb-controles=tmp/controles-{base}.tsv
+           --metadata gb-fuentes=tmp/fuentes-{base}.txt
            --metadata gb-proyecto=RAIZ --output /dev/null
 
 - Pasada aparte y sin los filtros de producción, por el criterio de SC-46: `fenced-divs` serializa los divs a XML crudo y después ya no hay texto que revisar, y otros filtros frenan. Así el control ve el documento como lo escribió la corrección, también adentro de un recuadro.
@@ -3163,6 +3172,7 @@ EL CONTRATO
 
 - El informe va a un archivo, no a stderr, para no mezclarse con los mensajes de pandoc. Un hallazgo por línea: `nivel TAB control TAB mensaje`.
 - El filtro lo escribe siempre, vacío si no hay hallazgos. Si falta, el control no corrió y el capítulo falla: no se da por revisado lo que no se revisó.
+- En `gb-fuentes` escribe los `cuadros/{id}.md` que nombra el .md, uno por línea, con la misma regla id → archivo que `cuadro-leer.lua`. Mismo contrato: siempre escrito, vacío si no hay cuadros; si falta, el capítulo falla. No es un control y no registra nada: con esa lista `generar_canonicos_capitulos.sh` anota las huellas del canónico (SC-75). Va acá y no en `cuadro-leer.lua` porque este filtro está en `engine/` y no se modifica (SC-11).
 - `error`: el capítulo no se genera y su canónico anterior se borra (SC-53), así que «Ensamblar» se niega hasta corregirlo. `aviso`: se genera y el lote termina con código 3.
 - El script no conoce ningún control por su nombre: lee el nivel. Un nivel que no conoce es un fallo.
 - Los `[WARNING]` del lector de pandoc en esta pasada son también aviso. En la de conversión se omiten las líneas idénticas, para no informarlos dos veces.
@@ -3238,7 +3248,7 @@ Un decimal suelto (`2.5`, `3,14`) no se informa.
 
 MEDIDO: un .md con `\num{12000}` y «3.500» en un título, «88%», «88 %», «88» con espacio duro y «77» con espacio fino, «1.500», «12,345», «ley 34.555», «decreto 2.345/26», un DOI en un enlace, «2.5» y «3,14», y una nota con «4.000» y «5%»: diez avisos, los esperados; el decreto, el DOI y los decimales, ninguno.
 
-**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63,vinculo:SC-65,apoya:GV-124
+**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63,vinculo:SC-65,apoya:GV-124,vinculo:SC-75
 
 **PENDIENTE:** (1) Revistas: usar el mismo filtro, con los controles de LaTeX y HTML crudos, cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
 
@@ -3400,11 +3410,11 @@ Con tex4ht, biblatex no detecta las notas al pie («Patching footnotes failed»)
 
 EL ESTILO EN EL CANÓNICO DE CADA PIEZA
 
-El agrupamiento depende del estilo en un caso: `suppress` con afijos en un estilo numérico. El PDF y la pasada de citas transforman el canónico de cada pieza, que no traía `csl-style`: `docbook-to-latex.xsl` agrupaba siempre como `apa`. Desde este lote (decisión de Alberto, cuatro puntos):
+El agrupamiento depende del estilo en un caso: `suppress` con afijos en un estilo numérico. El PDF y la pasada de citas transforman el canónico de cada pieza, que no traía el estilo: `docbook-to-latex.xsl` agrupaba siempre como `apa`. Desde este lote (decisión de Alberto, cuatro puntos):
 
-1. `m_XML.GenerarInfoCapituloXML`, BLOQUE 2c, escribe `<bibliomisc role="csl-style">` en el `<info>` de cada pieza, con el `estilo_cita` de su libro: el mismo valor que el bloque 15 del canónico del libro (RC-XJ-02: el dato de la base va en el canónico, no por parámetro).
+1. `m_XML.GenerarInfoCapituloXML`, BLOQUE 2c, escribe `<bibliomisc role="estilo-cita">` (hasta el 29/10 se llamó `csl-style`, un nombre heredado de cuando el estilo era un `.csl`; se renombró como la columna `libros_md.estilo_cita`) en el `<info>` de cada pieza, con el `estilo_cita` de su libro: el mismo valor que el bloque 15 del canónico del libro (RC-XJ-02: el dato de la base va en el canónico, no por parámetro).
 2. `ensamblar-libro-canonico.xsl` lo descarta al copiar la pieza, como los tres marcadores de ubicación: el libro lo trae una vez en su propio `<info>` (medido: uno solo en el canónico ensamblado).
-3. `preparar_latex_libro.sh` y `preparar_citas_libro.sh` cotejan el `csl-style` de cada canónico con el `\estandar` del preámbulo o de las definiciones (`estilo_canonico`, en `comun.sh`). Si falta o no coincide, la pieza falla con «el canónico declara el estilo «…» y el libro usa «…»: regenerá el canónico». Así un cambio de estilo sin regenerar no compone con un estilo y agrupa con otro. HTML y EPUB por las plantillas de la hoja agrupan con el estilo que pasa Gambas, que es el de la base; por tex4ht, la pasada de citas ya cotejó.
+3. `preparar_latex_libro.sh` y `preparar_citas_libro.sh` cotejan el `estilo-cita` de cada canónico con el `\estandar` del preámbulo o de las definiciones (`estilo_canonico`, en `comun.sh`). Si falta o no coincide, la pieza falla con «el canónico declara el estilo «…» y el libro usa «…»: regenerá el canónico». Así un cambio de estilo sin regenerar no compone con un estilo y agrupa con otro. HTML y EPUB por las plantillas de la hoja agrupan con el estilo que pasa Gambas, que es el de la base; por tex4ht, la pasada de citas ya cotejó.
 4. Los canónicos anteriores a este lote no traen el dato: la primera generación de cada libro corta hasta regenerarlos (GV-23: mejor cortar que tomar `apa` en silencio).
 
 MEDIDO con Duek: con los canónicos viejos, las nueve piezas fallan con el mensaje; con el dato, los `.tex` del PDF salen idénticos byte a byte a los anteriores (para un autor-año el agrupamiento no cambia); con el estilo del libro distinto del canónico, la pasada de citas corta.
@@ -4217,7 +4227,7 @@ Cada gráfico vive en `graficos/fig-nombre.md`, en la raíz del proyecto como `c
 
 LAS SALIDAS
 
-- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. Un texto vacío no queda en la `Collection` (GV-68): la clave no se escribe, y la plantilla toma como vacío lo que falta. `engine/grafico.sh` (SC-13, lanzado por `EjecutarScriptSalida`, SC-53) llena los huecos de la plantilla de `.hidden/chart/` —el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción— y controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
+- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. Un texto vacío no queda en la `Collection` (GV-68): la clave no se escribe, y la plantilla toma como vacío lo que falta. `engine/grafico.sh` (SC-13, lanzado por `EjecutarScriptSalida`, SC-53) llena los seis huecos de la plantilla —el id del gráfico para el `<title>`, el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción—. La lee de la copia local, `~/.gbpublisher/chart/`, que se coteja con `.hidden/chart/` al arrancar (SC-11). La plantilla declara `<meta charset>` antes de su comentario de cabecera: la codificación tiene que estar en los primeros 1024 bytes, y un `<title>` vacío no es HTML válido. El validador del HTML del libro revisa también los `fig-nombre.html` de `docs/assets/media/`, y así aparecieron las dos faltas (29/10/2026). Después, controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
 - LA FUENTE. Noto Serif, la del HTML (decisión de Alberto). Un subconjunto latino en woff2, Regular y Bold, embebido como data URI (unos 32 KB): el iframe es otro documento y no hereda la fuente de la página, y el PNG se saca sin red. La plantilla dibuja después de `document.fonts.load` (GV-135). Los subconjuntos se generan una vez con el comando de GV-135 y viven en `.hidden/chart/`.
 - LO QUE LLEVA EL GRÁFICO. Las cifras de las marcas, del tooltip y de la tabla de datos con las reglas de SC-64, como el formateador de `cifras.lua` (SC-65): punto decimal, grupos de a tres con U+202F desde cinco dígitos, menos U+2212, «× 10ⁿ» con volado; títulos de ejes; apilado; `beginAtZero` salvo `cero: no`; la unidad en las marcas, el tooltip y la tabla, separada de la cifra con U+202F salvo el grado de ángulo (SC-64); tooltip de todas las series a la vez; `pointStyle` y `borderDash` distintos por serie, para que se distingan impresas en gris; en `torta` y `dona`, un color por porción. En las paletas secuenciales se omiten los dos tonos más claros: sobre blanco no se ven.
 - ACCESIBILIDAD. El canvas va con `aria-hidden` y, al lado, la tabla de datos, en un `div` fuera de la vista y legible por un lector de pantalla. La clase que la oculta va en el `div` y no en la tabla: una tabla no se achica y agrandaba el alto de la página (GV-144). No se usa `role="img"` en el canvas: en WAI-ARIA 1.2 el rol img vuelve presentacional lo que tiene adentro, y la tabla de respaldo se perdería.
@@ -4258,6 +4268,311 @@ IMPLEMENTADO (25/10), en cinco pasos: la plantilla y la fuente; `m_Graficos`, `C
 **Relaciones:** vinculo:SC-32,vinculo:SC-66,vinculo:SC-67,vinculo:SC-64,vinculo:SC-06,vinculo:SC-20,vinculo:RC-GM-13,vinculo:GV-53,vinculo:GV-96,vinculo:GV-129,apoya:GV-134,apoya:GV-135,apoya:GV-136,apoya:GV-137,apoya:GV-138,apoya:GV-139,vinculo:SC-65,vinculo:SC-13,vinculo:SC-53,apoya:GV-141,vinculo:GV-68,apoya:GV-142,apoya:GV-143,apoya:GV-144
 
 **PENDIENTE:** Probar en Mint: el formulario, la vista previa y la generación en un libro y en una revista, y el HTML final con un gráfico en los dos. Confirmar en Mint: chromium con --force-device-scale-factor (GV-139), JSON.Encode, ListBox múltiple y WebView en 3.22.1 (GV-137, GV-138, GV-142).
+
+### SC-70 — Un módulo por formulario o función principal
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (Alberto, 25/10). Cada formulario, o cada función principal de la aplicación, tiene su propio módulo. El formulario tiene los controles y los manejadores; el módulo, las consultas, las validaciones y las grabaciones.
+
+- Un formulario nuevo nace con su módulo: `FDossiers` + `m_Dossiers`, `FMetadatosNumero` + `m_Numero`, `FMetadatosArticulo` + `m_Articulo`, la pestaña «Revistas» de `FSysAdmin` + `m_Revistas`, `FVocabularios` + `m_Vocabularios`.
+- Un catálogo que usan varios formularios tiene su módulo propio, aunque ningún formulario sea suyo (`m_Licencias`, `m_Idiomas`, `m_Vocabularios`).
+- Los datos que viajan juntos entre el formulario y el módulo van en una clase chica (GV-24): `CContribuyente`, `CTextosArticulo`.
+
+Ya estaba aplicado caso por caso: SC-20 (`m_Ventana`), SC-21 (`m_Snippets`), SC-66 y SC-67 (`m_Cuadros`), SC-69 (`m_Graficos`). Esta entrada lo hace regla general.
+
+**Relaciones:** vinculo:SC-20,vinculo:SC-21,vinculo:SC-66,vinculo:SC-67,vinculo:SC-69,vinculo:GV-24
+
+### SC-71 — Revistas: la pirámide N0-N3 y el esquema nuevo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (Alberto, 25 a 28/10; documento de trabajo `claude/rediseno-revistas.md`).
+
+PIRÁMIDE
+
+- N0 Revista (permanente; pestaña «Revistas» de `FSysAdmin`, `m_Revistas`). N1 Número (uno por proyecto `r-*.md`; `FMetadatosNumero`, `m_Numero`). N2 Artículo (`FMetadatosArticulo`, `m_Articulo`). N3 bloques opcionales que activa cada revista (patrón de OJS: desactivar / habilitar / solicitar / exigir).
+- Revistas no comparte tablas con libros. Las tablas hijas se nombran para que `capitulos` pueda adoptarlas después.
+
+CRITERIOS DE ESQUEMA
+
+- Un campo existe solo si lo consume una salida, una validación o una decisión del flujo.
+- Estructura completa, columnas mínimas: todos los niveles y las tablas hijas desde el principio. Las declaraciones (COI, ética, ensayo, datos) son filas de una tabla por tipo, no columnas.
+- Esquema nuevo, no transformación del viejo: la 1.13.0 creó 23 tablas sin tocar las viejas (`revistas_md`, `articulos`, `articulo_autor`), que se retiran en el 2.0.0.
+- Los catálogos se guardan por valor (SC-23): `contribuyente_credit`, `articulo_declaracion`, `articulo_palabra_clave`.
+- «Sin dato» es NULL con `CHECK (<> '')` (GV-74, GV-147). Una clave única sobre columnas nulables se apoya en una columna generada (`numero.clave_identidad`, `articulo_palabra_clave.clave_vocabulario`).
+- Las hijas del artículo caen en cascada con él; todo lo demás es RESTRICT.
+
+REGLAS DEL FLUJO
+
+- Herencia viva hasta publicar (decisión 14): mientras el artículo no está publicado, un campo vacío toma el valor de la revista (licencia, titular del copyright, tipo de acceso). Al publicar se congela el valor efectivo.
+- Un artículo publicado es de solo lectura (decisión 17): el formulario lo bloquea y el módulo se niega a grabarlo. Reabrir exigirá un permiso desde `FSysAdmin` y quedará registrado en una tabla propia, con motivo obligatorio (entrega E, todavía no implementada).
+- Secciones por revista (decisión 15), con título por idioma, orden, article-type por defecto y plantilla de resumen. El artículo guarda su propio article-type: `subj-group-type="heading"` y `@article-type` se separan.
+- El dossier es una agrupación dentro del número, no una sección (`numero_dossier`), con título por idioma y personas a cargo (`numero_contribuyente` con `id_dossier`). Se borra solo sin artículos.
+- El número se vincula al proyecto al abrirlo: vincular y confirmar siempre. Volumen y número quedan de solo lectura con artículos consignados; la revista se cambia solo sin artículos.
+- La lista de artículos sale de los `a-*.md` de `articulos/` cruzados con la base por nombre de archivo: «sin metadatos» y «huérfana» se muestran.
+
+CADENA DE ESQUEMA (SC-22): 1.13.0 (las 23 tablas), 1.14.0 (NULL en vez de '', GV-74), 1.15.0 (ROR de la afiliación, GV-153, GV-154), 1.16.0 (vocabulario controlado, SC-74), 1.17.0 (dos términos CRediT a la forma de JATS4R).
+
+**Relaciones:** vinculo:SC-22,vinculo:SC-23,vinculo:GV-74,vinculo:SC-72,vinculo:SC-73,vinculo:SC-74,vinculo:SC-70
+
+### SC-72 — Revistas: las salidas
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / decisiones de diseño · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (Alberto, 25/10; documento de trabajo `claude/rediseno-revistas.md`, decisiones 6 a 13). Todavía no implementada: rige el rediseño de las salidas de revistas.
+
+- ORDEN: primero las salidas de lectura (PDF, HTML, EPUB, también del número completo); después los sabores XML, en el orden de necesidad real: JATS4R (que valida el canónico, no es un sabor), Crossref y DOAJ antes que PMC. Vancouver se resuelve en las salidas de lectura.
+- CITAS: SC-57 llega a revistas. biblatex escribe las citas de HTML y EPUB por tex4ht; el estilo de cita es atributo de la revista y sale del catálogo `cita-*-config.tex`.
+- REFERENCIAS: el texto formateado alimenta `mixed-citation` en los sabores (SciELO, PMC), no en el canónico, que queda como dato.
+- IBID. Y OP. CIT. son presentación, no dato: el `.md` lleva siempre la clave. El PDF conserva la tradición y el HTML lleva citas autosuficientes (`cita-<estilo>-html.tex`).
+- EL NÚMERO es un manifiesto interno que ordena los JATS de cada artículo. No se inventa un JATS de número.
+- PAGINACIÓN: es un dato que nace en la composición. Se compone el número, se leen los rangos, vuelven a la base y recién ahí salen los PDF por artículo y los XML. Modelo de paginación como atributo de la revista: corrida por número, por volumen o continua (`elocation-id`); se implementan los dos primeros y la estructura admite el continuo.
+- PROCESOS EXTERNOS: rigen SC-13 y SC-53. Gambas lee la base y la escribe como archivos (front del artículo, manifiesto del número, `.bib`); los scripts de `engine/` hacen el resto. Los generadores actuales de revistas en Gambas son deuda de migración: se reemplazan por scripts, no se adaptan.
+
+**Relaciones:** vinculo:SC-57,vinculo:SC-13,vinculo:SC-53,vinculo:SC-71
+
+**PENDIENTE:** Pendiente de implementación. Mini-tests previos: philosophy-verbose bajo make4ht; Vancouver bajo tex4ht; PDF por artículo; rango de páginas; griego politónico; mixed-citation para PMC y SciELO.
+
+### SC-73 — Editores con tablas hijas: memoria, una transacción y reemplazo entero
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22.1 / MySQL 8.0.46 / Linux Mint · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (Alberto, 25 a 28/10). Patrón de los editores del rediseño de revistas (`FMetadatosNumero`, `FDossiers`, `FMetadatosArticulo`, `FPlantillasResumen`).
+
+- Lo que tiene filas hijas (títulos por idioma, contribuyentes con afiliaciones y CRediT, resúmenes, palabras clave, secciones de una plantilla) se edita EN MEMORIA y se graba con el botón «Guardar», en la misma transacción que el registro principal: o se graba todo o nada.
+- Las hijas se reemplazan enteras (DELETE + INSERT) dentro de esa transacción. Solo se borra lo que el editor muestra: un tipo de fila que el editor no edita no se toca (por ejemplo, los resúmenes al grabar los títulos traducidos).
+- Si algo que se iba a reemplazar no se pudo leer, o la pestaña no puede mostrarlo entero, el guardado se bloquea y la línea de estado dice por qué. Grabar lo borraría.
+- Un diálogo edita una COPIA del objeto (`CContribuyente.Copia()`) y el llamador conserva la referencia. Al aceptar (`Me.Close(1)`), la copia reemplaza al original; al cerrar, no queda nada. La instancia automática del diálogo se destruye al cerrarse.
+- El módulo valida con las mismas reglas que el diálogo (una sola función de aviso, usada por los dos).
+- Pestañas con nombre, una por bloque (decisión 19). Textos por idioma con un selector de idioma (decisión 20): lo escrito pasa a memoria al cambiar de idioma y antes de grabar.
+- Un artículo publicado se abre para ver: los campos de texto quedan en solo lectura y no apagados, y el selector de idioma sigue vivo.
+
+**Relaciones:** vinculo:SC-71,vinculo:SC-70,vinculo:GV-68,vinculo:GV-74,vinculo:GV-24,contracara:RC-GM-03
+
+### SC-74 — Vocabulario controlado: catálogo global, búsqueda sin tildes, término e identificador por valor
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (Alberto, 28/10; entrega C3 del rediseño de revistas).
+
+- CATÁLOGO GLOBAL: `vocabulario_termino` (vocabulario, idioma, término, identificador), común a todas las revistas. Un término por vocabulario, idioma y término; un identificador por vocabulario e idioma.
+- COLACIÓN: la columna del término usa `utf8mb4_0900_as_ci` (no distingue mayúsculas; sí tildes y ñ) y la búsqueda, `COLLATE utf8mb4_0900_ai_ci` (GV-152). Los comodines del `LIKE` se escapan con `!` (SC-08).
+- IDENTIFICADOR: el código del vocabulario (MeSH: D006801). La URI de JATS (`kwd/@vocab-term-identifier`; `kwd-group/@vocab` y `@vocab-identifier`, DTD 1.4) se arma al generar. MeSH: `http://id.nlm.nih.gov/mesh/` + código (MeSH RDF). DeCS: sin patrón de URI verificado.
+- EN EL ARTÍCULO: sugerencias mientras se tipea (dos caracteres como mínimo); se agrega la sugerencia elegida o lo escrito. Si el catálogo ya tiene el término con otras mayúsculas, se usa su forma y su identificador. Un término nuevo entra al catálogo al guardar el artículo, en su transacción (`INSERT … ON DUPLICATE KEY UPDATE`, no `INSERT IGNORE`, que también callaría un CHECK).
+- El artículo guarda término e identificador por valor (SC-23).
+- CORRECCIÓN: solo desde `FVocabularios` (pestaña «Revistas» de `FSysAdmin`). Corregir un término corrige los artículos NO publicados que lo usan (herencia viva, SC-71); un publicado queda como salió. Se borra solo un término sin uso.
+- Las palabras clave del autor siguen libres, una por línea.
+- LICENCIAS: los datos de MeSH son de dominio público, con cita a NLM y versión declarada si se redistribuyen. Descargar DeCS exige un contrato de licencia gratuito con BIREME. Tipear términos no requiere nada.
+
+**Relaciones:** vinculo:SC-23,vinculo:SC-08,vinculo:SC-71,vinculo:SC-73,vinculo:GV-152,vinculo:GV-145,vinculo:GV-146,vinculo:GV-150
+
+### SC-75 — Validación del canónico DocBook de libros: un validador en engine/, huella de las fuentes y freno del desactualizado
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / jing 20220510-3 / SaxonJ-HE 12.5 (contenedor) y 12.9 (Linux Mint) / Pandoc 3.1.3 / libxml 2.9.14 (contenedor y Linux Mint) / gbc3 3.19 / contenedor Ubuntu 24.04 y Linux Mint con Duek y Califa; LuaHBTeX 1.17.0 (TeX Live 2023) · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (Alberto, 29/10; documento de trabajo `claude/validador-docbook.md`). Entrega 1 implementada y probada en Linux Mint (29/10). Revistas y JATS4R quedan para la fase de artículos.
+
+UN SOLO VALIDADOR
+
+`engine/validar_canonicos.sh <ruta_proyecto> <modo> <lista_rel|->`. Lo usan el botón «Validar» del visor XML, la apertura del proyecto, `generar_canonicos_capitulos.sh` y `ensamblar_libro.sh`; estos dos dejan de validar por su cuenta y lo llaman anidado (`GBP_ANIDADO=1`, SC-53).
+
+- Modo `completo`: todas las capas. Modo `vigencia`: solo la vigencia, sin JVM.
+- La lista es un archivo de `tmp/` con una ruta de canónico por línea, relativa al proyecto. «-» es todos los `jats/c-*.xml`.
+- Un lote es UNA llamada (SC-53): jing recibe todos los archivos juntos; el Schematron corre una vez sobre `tmp/validar/`, una carpeta de enlaces a la lista (GV-XML-03).
+- El alcance lo da la raíz de cada archivo: `book` es libro; las raíces de pieza (`chapter`, `preface`, `appendix`, `dedication`, `acknowledgements`…) son pieza; `article` y cualquier otra, fallo.
+
+LAS CAPAS
+
+    [1] vigencia      las PI gb-fuente contra el disco
+    [2] bien formado  xmllint; si falla, el resto «no ejecutado», nunca ✓
+    [3] DocBook 5.2   jing más el Schematron del RNG compilado aparte
+                      (GV-XML-02, GV-XML-03). En pieza, los IDREF sin ID
+                      van en tenue (SC-53); en libro, son aviso
+    [5] recursos      cada imagedata/@fileref, sin los ../ y ./ del
+                      principio, es media/{nombre} y existe. Una subcarpeta
+                      de media/ es aviso: LaTeX la encuentra, pero HTML y
+                      EPUB se quedan con el nombre y lo buscan en media/.
+                      Y tiene que ser png o jpg, lo único que sale en las
+                      tres salidas: LuaLaTeX no admite svg, gif ni webp
+                      (GV-155) y el EPUB y el HTML no muestran un pdf. Otro
+                      formato es aviso y dice en qué salida se pierde.
+                      Sin comprobar direcciones de red
+    [6] proyecto      las reglas propias de gbpublisher
+                      (schemas/gbpublisher/gbpublisher.sch), en la misma
+                      hoja y la misma pasada que las de DocBook. Se separan
+                      por el prefijo gbp- de su @id; cada una declara su
+                      nivel en @role (tenue informa; cualquier otro valor
+                      cuenta como aviso)
+
+Entrega 1: las capas [1], [2], [3] y [5], las huellas, la función de vigencia, el botón y la apertura. Entrega 2: las reglas propias [6] y el formato de imagen en [5]; gbp-ancho se sumó con el ancho de la figura (SC-76, 29/10). Las dos, implementadas y probadas en Linux Mint (29/10). La capa [4] —remisiones que jing no ve— quedó repartida en las reglas propias de citas y de figuras sin remitir; lo que falta de ella está en el pendiente.
+
+LAS REGLAS PROPIAS
+
+Decididas una por una (Alberto, 29/10). El @id del patrón y de cada aserción empieza con gbp-.
+
+    patrón          alcance        nivel   qué controla
+    gbp-ubicacion   pieza, y cada  aviso   seccion-libro: uno, fm, a o bm;
+                    pieza del               orden-seccion: uno, dos cifras;
+                    libro                   tipo-capitulo: a lo sumo uno, no
+                                            vacío. Un duplicado frena las
+                                            hojas de salida
+    gbp-estilo      pieza y libro  aviso   estilo-cita: uno en la pieza; uno
+                                            en el <info> del libro y ninguno
+                                            en sus capítulos.
+                                            lugar-bibliografia: uno en el
+                                            libro, por_capitulo o consolidada
+    gbp-pi          todos          aviso   PI gb-* conocidas (gb-alinear,
+                                            gb-corte, gb-cuadro, gb-espacio,
+                                            gb-fuente); gb-fuente solo en el
+                                            prólogo
+    gbp-cita        todos          aviso   un biblioref cuyo destino está en
+                                            el documento apunta a una entrada
+                                            de bibliografía. Destino ausente:
+                                            nada (en pieza, remisión externa;
+                                            en libro, lo dice jing)
+    gbp-bib         libro          tenue   entrada que nadie cita
+    gbp-remision    libro          tenue   figura o cuadro con id que nadie
+                                            remite
+    gbp-alt         todos          aviso   imagen sin texto alternativo, o con
+                                            uno que repetía el pie y el armado
+                                            descartó (SC-76); las de <info>,
+                                            como la tapa, no
+    gbp-idioma      raíz y piezas  aviso   xml:lang con forma de etiqueta de
+                    del libro               idioma (BCP 47)
+    gbp-ancho       todos          aviso   imagedata/@width: un entero de 1 a
+                                            100 seguido de %. El RNG acepta
+                                            cualquier texto en @width (SC-76)
+
+- tipo-capitulo se controla solo en cantidad y xml:lang solo en la forma: los dos catálogos están en la base (tipos de pieza, m_Idiomas), y el validador no la toca (SC-13). Una lista copiada en el Schematron se desactualizaría sin aviso: la de la hoja de capítulo ya no tiene indice_concepto ni indice_autores.
+- Una figura o una cita que remite a otra pieza no se juzga en la pieza: los fig-*, tbl-* y bib-* son globales (SC-32, SC-66), y esas reglas corren en el libro.
+- Las reglas sobre instrucciones de procesamiento se escriben sobre la raíz del documento: con el esqueleto ISO, una regla con contexto en una PI solo se dispara para las del prólogo (GV-XML-04).
+- Las raíces de pieza que las reglas nombran no incluyen bibliography: la bibliografía consolidada es hija del libro y no es una pieza.
+
+CÓDIGOS
+
+    0  corrieron todas las capas y no hubo hallazgos
+    3  hubo hallazgos, o una capa no pudo correr (jing ausente, por ejemplo)
+    1  no se pudo validar: mal formado, archivo ausente, raíz desconocida
+
+Es la lectura de los códigos de SC-53 para un script que no genera nada. Los mensajes de Gambas no dicen «se generó»: dicen «válido», «con hallazgos» o «no se pudo validar».
+
+EL INFORME
+
+`tmp/validacion.tsv`, reescrito siempre, también vacío: `archivo TAB capa TAB nivel TAB mensaje`, con nivel `ok`, `aviso`, `tenue`, `fallo` o `no_ejecutado`. Lo leen los scripts que llaman al validador, para atribuir los avisos a cada capítulo. Gambas no lo lee (SC-53).
+
+LA HUELLA DE LAS FUENTES
+
+La vigencia es respecto de lo que se copia DENTRO del canónico: el .md y los `cuadros/{id}.md` que nombra (SC-66). Lo que solo se referencia —las imágenes— no deja viejo al canónico y lo cubre la capa de recursos. Lo que llega de la base (`tmp/info-*`, `tmp/biblio-*`) no lo cubre ninguna huella: el informe dice «vigente respecto de sus archivos fuente», no «vigente».
+
+- sha256 y no fecha de modificación: una copia (el .md que vuelve de otra máquina) cambia la fecha sin cambiar el texto, o conserva una fecha vieja con texto nuevo.
+- `controles_md.lua` lista los cuadros que nombra el .md en `tmp/fuentes-{base}.txt` (`-M gb-fuentes`), siempre escrito, vacío si no hay; si falta, el capítulo falla (el contrato de SC-54). Va en `controles_md.lua` y no en `cuadro-leer.lua` porque está en `engine/` y no se modifica (SC-11); repite la regla id → archivo de `cuadro-leer.lua`, con referencia cruzada en los dos.
+- `generar_canonicos_capitulos.sh` calcula las huellas antes de pandoc, las escribe en `tmp/huellas-{base}.xml` y se las pasa a la hoja de capítulo, que escribe una `<?gb-fuente archivo="…" sha256="…"?>` por fuente antes de la raíz, con la ruta relativa al proyecto. Una ruta con comillas dobles se rechaza: el contenido de una PI no se escapa.
+- La hoja del libro copia las PI de cada capítulo a su propio prólogo. Las PI del prólogo no las ve jing ni las toman las hojas de salida (GV-XML-02).
+
+LOS ESTADOS
+
+`vigencia_canonico` en `comun.sh` reemplaza a `avisar_md_posterior` y devuelve un estado, sin avisar por su cuenta:
+
+    vigente         todas las fuentes coinciden
+    desactualizado  alguna fuente falta o tiene otra huella
+    huérfano        no existe el .md de la pieza (no aplica al libro)
+    sin huella      el canónico no tiene PI gb-fuente
+
+    estado           ensamblado   PDF        EPUB       validador   apertura
+    desactualizado   FRENO        FRENO      FRENO      aviso       mensaje
+    huérfano         FRENO*       FRENO*     FRENO*     aviso       mensaje
+    sin huella       aviso        aviso      aviso      tenue       nada
+
+    * solo si la pieza está en la lista del consumidor: un huérfano suelto
+      en jats/ no entra en ninguna, y solo lo ven el validador y la apertura
+
+- FRENO, decisión de Alberto, en los TRES consumidores de los canónicos de capítulo: `ensamblar_libro.sh` junta todos los capítulos desactualizados y no ensambla, y con él frena el HTML, que lo llama anidado; `preparar_latex_libro.sh` hace fallar la pieza, como ya hace con un estilo que no coincide (SC-57); `generar_epub_libro.sh`, que no ensambla y transforma cada capítulo por separado, lo cuenta como problema y no genera el EPUB. Frenar solo al ensamblar dejaba al PDF y al EPUB con la versión vieja.
+- «Sin huella» es aviso y no freno mientras dure la transición: todos los canónicos anteriores a esta regla la tienen, y se resuelve regenerándolos.
+- Un huérfano no se borra: un canónico se reconstruye desde su .md, y un huérfano no lo tiene. Lo borra el editor.
+
+LA APERTURA
+
+Al abrir un libro, `RevisarVigenciaLibro` lanza el validador en modo `vigencia` con «-», por `EjecutarScriptSalida` (SC-53): toda la lógica queda en `engine/` y no hay JVM. Con código 0 no muestra nada; con 3 —que en este modo solo pueden dar desactualizados y huérfanos— avisa que el ensamblado y el PDF van a frenar y que el detalle está en la terminal. «Sin huella» no se informa al abrir: avisaría en cada apertura.
+
+LOS RECURSOS DEL SISTEMA
+
+El RNG y el Schematron compilado salen de los recursos del sistema, no de `~/.gbpublisher/` (SC-11): un informe que dice «válido» solo se sostiene con el esquema del paquete. En bash, `$DIR_ENGINE/..`; en Gambas, `m_InicioCierre.RutaRecursos()`, que es `.hidden/` desde el IDE y `/usr/share/gbpublisher/` instalado. No una ruta fija: haría correr al IDE con los recursos de otra versión.
+
+El Schematron compilado (`schemas/schematron-canonico.xsl`) junta las reglas del RNG y las propias. Lo genera fuera de la aplicación `generar-schematron-canonico.sh`, en la raíz del repositorio, con la extracción y la compilación de GV-XML-03, y anota en su cabecera las huellas del RNG, de `gbpublisher.sch` y del esqueleto. Reemplazó a `generar-schematron-docbook.sh` y a `schemas/docbook/docbook-sch.xsl`, que solo tenían las de DocBook.
+
+LA INTERFAZ
+
+- `btnValidarXML`, en el visor XML (`TabPanelVisor`, índice 1), valida el archivo elegido en `cmbArchivosXML`.
+- En un proyecto de revista está deshabilitado: se decide en la apertura con el tipo ya resuelto (`iTipoSeleccionado`), no mirando otra vez el prefijo.
+- Entra en `BloquearSalidas` (SC-53); al desbloquear vuelve a habilitarse solo si el proyecto es un libro.
+
+EN EL CÓDIGO
+
+- `engine/validar_canonicos.sh`; en `comun.sh`, `vigencia_canonico`, que reemplazó a `avisar_md_posterior` y deja el resultado en `VIGENCIA_ESTADO` y `VIGENCIA_DETALLE`.
+- La huella: `controles_md.lua` (`gb-fuentes`, SC-54), `generar_canonicos_capitulos.sh` (`tmp/huellas-{base}.xml`), `ensamblar-capitulo-canonico.xsl` (parámetro `huellas`, obligatorio) y `ensamblar-libro-canonico.xsl` (copia las PI de cada capítulo).
+- El Schematron compilado lo genera `generar-schematron-canonico.sh`, con instancias de prueba que tienen que dar lo esperado antes de reemplazar la hoja: cuatro para DocBook (cantidad y mensaje exactos) y tres para las reglas propias, una limpia, una pieza y un libro, que comparan el conjunto exacto de @id que fallan.
+- En Gambas, `m_GenerarSalidasLibro`: `HabilitarValidacion` (apartado 20 de `FMain.AbrirProyectoMD`), `ValidarCanonico` (`btnValidarXML_Click`), `RevisarVigenciaLibro` (apartado 23) e `InformarValidacion`, con textos propios: un validador no genera nada.
+
+MEDIDO
+
+- Las tres salidas del libro con y sin `<?gb-fuente?>` en el prólogo: LaTeX (8 piezas), HTML (9 archivos) y EPUB (8 páginas) idénticos byte a byte.
+- Regenerar un canónico sin cambios en el .md reproduce el anterior salvo las PI. Un `touch` o una fecha vieja en el .md siguen dando «vigente»; cambiar el .md o un cuadro, o borrar un cuadro, da «desactualizado» en el capítulo y en el libro.
+- En Linux Mint con Duek y Califa: el lote con las huellas, el ensamblado vigente y válido, el PDF, el freno del EPUB con seis capítulos modificados a propósito, el aviso al abrir y el botón.
+
+**Relaciones:** vinculo:SC-52,vinculo:SC-53,vinculo:SC-54,vinculo:SC-11,vinculo:SC-13,vinculo:SC-66,vinculo:SC-32,vinculo:SC-57,vinculo:GV-XML-02,vinculo:GV-XML-03,vinculo:GV-XML-04,vinculo:GV-155
+
+**PENDIENTE:** (1) La remisión a un destino que la salida no sabe numerar (un xref a un elemento sin número): leer antes qué tipos numeran las tres hojas. (2) Posible regla: una figura con pocos píxeles para el ancho de la caja sale pixelada en el PDF, que la compone siempre a \linewidth; HTML y EPUB la muestran a su tamaño natural. Se retoma con el shortcode de figuras.
+
+### SC-76 — Imágenes en el EPUB y el HTML de libros: solo las usadas, y una copia para pantalla
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / ImageMagick 6.9.12-98 Q16 / libxml 2.9.14 / epubcheck 4.2.6 / gbc3 3.19 / contenedor Ubuntu 24.04 y Linux Mint, con Califa · **Verificado:** 2026-10
+
+DECISIÓN CERRADA (decisión de Alberto, 29/10/2026). El EPUB y el HTML de un libro llevan solo las imágenes que usan, y cada una va tal cual o en una copia preparada para pantalla. El PDF sigue usando el original de `media/`.
+
+QUÉ LLEVA CADA SALIDA
+
+- EPUB: la tapa, el logo de portada, el logo de colección y las imágenes que nombran los canónicos de las piezas (el `@fileref` de cada `imagedata`), sin repetir. La lista la arma `m_GenerarEpubLibro.ImagenesUsadas` y es la del manifiesto: `generar_epub_libro.sh` copia exactamente las que el OPF declara en `images/`, sin volver a elegir. Una imagen declarada que no está en `media/` detiene el EPUB con su nombre.
+- HTML: `docs/assets/media/` se vacía y recibe lo que usa el canónico del libro (que ya trae la tapa como `mediaobject`), la tapa que declara la base y el `.html` de cada gráfico interactivo: `fig-x.png` con `fig-x.html` al lado, el mismo patrón que `gbg:patron-png` (SC-69). Una imagen que el canónico nombra y no está en `media/` da aviso: el HTML sale igual.
+- Antes las dos salidas copiaban `media/` entera, y cada lado del EPUB la recorría por su cuenta. En Califa viajaban `desconocido.png`, `falta-tapa.png`, `logo-cabecera.png` y `logo-revista.png` sin usarse.
+- En pantalla la imagen sale a su tamaño natural con tope en el ancho de la columna (`max-width: 100%`).
+
+LA COPIA PARA PANTALLA
+
+`copiar_imagen_pantalla` en `engine/comun.sh`, que usan los dos scripts.
+
+- En pantalla cuentan los píxeles, no los ppp: el navegador y el lector de EPUB ignoran la densidad que declara el archivo.
+- Tope: 2000 px de lado mayor, y solo achica (`-resize 2000x2000>`). Con la grilla del HTML, la columna central mide unos 1070 px CSS en una pantalla de 1920; una pantalla de alta densidad la duplica. Es una decisión, no un estándar.
+- Color, antes del tamaño. CMYK con perfil: de su perfil a sRGB. CMYK sin perfil: se asume FOGRA39 y de ahí a sRGB. RGB con un perfil que no es sRGB: a sRGB. Escala de grises: no se toca. Los perfiles son los de TeX Live (`sRGB.icc`, `FOGRA39L_coated.icc`), que se ubican con `kpsewhich`: texlive-full es dependencia del `.deb`.
+- La copia se escribe siempre con `-strip`, que es lo que la hace reproducible (GV-156). Borra el perfil: por eso el color se convierte antes.
+- Una copia que solo reduce y pesa más que el original se descarta, y va el original; el informe lo dice. El tope existe por el peso. Una conversión de color no se descarta nunca.
+- Solo png y jpg, los formatos de las figuras (SC-75, GV-155) y de los logos. Cualquier otro formato se copia tal cual.
+- Sin nada que hacer, el original byte por byte.
+- Las copias quedan en `tmp/pantalla/`, con la huella sha256 del original en el nombre: se rehacen solo si el original cambia. `VERSION_PANTALLA` sube si cambia la receta y con ella se invalida el caché.
+
+EL ANCHO DE LA FIGURA
+
+- En el .md, `ancho=NN` en la apertura: un entero de 1 a 100, sin el signo. Otro valor detiene la conversión (`fenced-divs-to-elements-db.lua`), con el mensaje de cómo se escribe.
+- En el canónico, `imagedata/@width="NN%"`, como define DocBook el porcentaje: una fracción del ancho disponible. El RNG acepta cualquier texto en `@width` (medido: `width="abc"` valida), así que lo repite la regla propia gbp-ancho del validador (SC-75), para un canónico editado a mano.
+- En el PDF, `width=0.NN\linewidth`. Sin `@width`, `\linewidth`, que es igual a `\textwidth` en el cuerpo y se adapta dentro de un recuadro.
+- En el HTML y el EPUB, `max-width: NN%` sobre la imagen: un tope sobre el tamaño natural, no un ancho fijo. El gráfico interactivo del HTML no tiene tamaño natural: el iframe va exactamente a ese ancho, centrado (`gbg:iframe`, parámetro `ancho`, que las revistas no pasan).
+- El botón de figura escribe `ancho=100`, que es el ancho de siempre, a la vista para ajustarlo.
+
+EL TEXTO ALTERNATIVO
+
+En un libro es obligatorio y no se reemplaza con el pie (decisión de Alberto, 29/10/2026). El botón escribe `alt=""` vacío y no un texto provisorio: un `alt` vacío lo señala gbp-alt al generar el canónico, y un texto provisorio olvidado saldría publicado (el pie provisorio, «Pie de la figura», no lo detecta nadie). Si el `alt` falta, el filtro pone el pie como red de seguridad; el armado lo descarta por repetir el pie y gbp-alt avisa. Detalle en SC-32.
+
+LOGOS
+
+El de portada y el de colección van a 110 mm en el PDF y al 100 % en el EPUB (SC-25).
+
+REVISTAS
+
+No cambian todavía: `m_GenerarEpub` y `m_GenerarHTML` siguen copiando `media/` entera. Se retoma con el módulo de revistas.
+
+**Relaciones:** vinculo:SC-25,vinculo:SC-32,vinculo:SC-69,vinculo:SC-75,apoya:GV-156,vinculo:GV-155,vinculo:GV-22,vinculo:SC-11
+
+**PENDIENTE:** Revistas: la limpieza de media/, la copia para pantalla y el ancho proporcional, cuando se retome ese módulo. En una revista el botón de figura no escribe ancho ni alt.
 
 ---
 
@@ -4431,11 +4746,11 @@ ADVERTENCIA SOBRE LOS TOTALES
 
 ### RF-08 — Estructura de la base de gbCorpus
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbCorpus / SQLite / esquema versión 1 · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbCorpus 0.0.10 / SQLite / esquema versión 2 · **Verificado:** 2026-10
 
-Base local en `~/.gbcorpus/corpus.sqlite`. Tres tablas, sin vistas. Nivel registrado en `esquema_version`, igual que en gbpublisher y gbKumula.
+Base local en `~/.gbcorpus/corpus.sqlite`. Cuatro tablas, sin vistas. Nivel registrado en `esquema_version`, igual que en gbpublisher y gbKumula.
 
-ESTA ENTRADA DESCRIBE LA VERSIÓN 1 DEL ESQUEMA. Si `esquema_version` no dice 1, hay migraciones posteriores y esta descripción quedó vieja.
+ESTA ENTRADA DESCRIBE LA VERSIÓN 2 DEL ESQUEMA. Si `esquema_version` no dice 2, hay migraciones posteriores y esta descripción quedó vieja. La 2 agregó la tabla `importaciones` (`.hidden/esquema/esquema-v1-a-v2.sql`, 29/10/2026); las otras tres no cambiaron desde la 1.
 
 TABLA `entradas`
 
@@ -4493,9 +4808,29 @@ TABLA `esquema_version`
     version  INTEGER NOT NULL
     fecha    TEXT NOT NULL
 
+TABLA `importaciones` (DESDE EL ESQUEMA 2)
+
+    id_importacion  INTEGER PRIMARY KEY
+    archivo         TEXT NOT NULL CHECK (archivo <> '')
+    numero          INTEGER UNIQUE CHECK (numero > 0)
+    sha256          TEXT CHECK (64 dígitos hexadecimales en minúscula)
+    fecha           TEXT NOT NULL
+    origen          TEXT NOT NULL DEFAULT 'importador'
+                    CHECK (origen IN ('importador', 'retroactivo'))
+
+Una fila por script aplicado, en orden de llegada. La escribe solo el importador, en la misma sesión de `sqlite3` que aplica el script y después de él: si el script falla, no hay fila. La aplicación la lee y no la toca.
+
+- `archivo`: el nombre del `.sql`, sin carpeta.
+- `numero`: el NN de `gbcorpus-act-NN.sql`. NULL para un script fuera de la serie, como una migración; UNIQUE admite varios NULL en SQLite.
+- `sha256`: la huella del archivo tal como se aplicó. Detecta el mismo archivo aplicado dos veces, aunque haya cambiado de nombre.
+- `fecha`: `datetime('now','localtime')` del momento de la aplicación.
+- `origen`: `retroactivo` solo para la siembra de la migración, act-78, que se aplicó antes de que existiera el registro; su fecha es la `fecha_alta` de las entradas que dio de alta. Todo lo demás es `importador`.
+
+Lo que se aplicó antes del esquema 2 no está registrado, salvo act-78. La serie empieza ahí.
+
 CÓMO FUNCIONA LA APLICACIÓN
 
-El alcance, el importador, los scripts y la exportación son los de todas las aplicaciones satélite: SC-50.
+El alcance, el importador, los scripts y la exportación son los de todas las aplicaciones satélite: SC-50. La cabecera muestra, en `lblInformar`, el último registro de `importaciones` (`m_Base.UltimaImportacion`): «última importación: act-NN · fecha». Si el último script no es de la serie, agrega en qué act va la serie. Antes de pedir un cambio al corpus, ese número tiene que ser el más alto de la carpeta de gbCorpus. El volcado SQL incluye el registro.
 
 **Relaciones:** vinculo:RF-07, vinculo:GV-29,vinculo:SC-50
 
@@ -7917,8 +8252,279 @@ EN EL PROYECTO: la tabla de datos de la plantilla del gráfico va dentro de un d
 
 **Relaciones:** apoya:SC-69
 
+### GV-145 — TextBox: Change se dispara al asignar Text por código, pero no si el texto no cambia
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con un `TextBox` y un handler que cuenta:
+
+    txt.Text = "hum"          Change: 1 (el handler corre aunque no tipeó nadie)
+    txt.Text = ""             Change: 2
+    txt.Text = "ano" dos veces  la segunda asignación no dispara Change
+
+CONSECUENCIA: un handler de `Change` que depende de OTRO control (por ejemplo, sugerencias según el vocabulario elegido en un combo) no se vuelve a ejecutar si cambia ese otro control y el texto sigue igual. El otro control tiene que llamar al mismo procedimiento.
+
+EN EL PROYECTO: `FMetadatosArticulo` (SC-74): `txtBuscarControlado_Change`, `cmbVocabulario_Click` y `cmbVocabulario_Change` llaman a `ActualizarCoincidencias`. Las asignaciones por código que no deben buscar van con la bandera `$bCargando`.
+
+**Relaciones:** apoya:SC-74,vinculo:GV-53
+
+**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+
+### GV-146 — ListBox de selección simple: asignar Index no dispara Click
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con `ListBox` en su modo por omisión (una sola selección):
+
+    lst.Index = 1     queda elegido el 1; Click NO corre; lst.Text devuelve el elemento
+
+Es la contracara de GV-53: en un `ComboBox`, asignar `Index` dispara `Click` siempre. En una `ListBox` no hace falta la bandera de llenado para reponer la selección; si el código necesita lo que hace el handler, lo llama.
+
+Lo que pasa en `Select.Multiple` está en GV-138.
+
+EN EL PROYECTO: `FMetadatosArticulo` (SC-74): `RedibujarControladas` y `MostrarResumen` reponen el elemento elegido asignando `Index`.
+
+**Relaciones:** contracara:GV-53,vinculo:GV-138,apoya:SC-74
+
+**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+
+### GV-147 — If(s = "", Null, s) con s String no da Null: Exec escribe una cadena vacía
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.db / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+`If()` toma el tipo de sus ramas. Con una rama `String`, el `Null` de la otra se convierte en `""`, y `Connection.Exec` recibe una cadena: escribe `''`, no NULL.
+
+Medido: `Exec("INSERT … VALUES (&1)", If(sId = "", Null, sId))` con `sId` vacío escribió `''` y lo rechazó `CHECK (identificador <> '')`.
+
+PATRÓN: una función que devuelve `Variant`:
+
+    Private Function NuloSiVacio(sTexto As String) As Variant
+      If Trim(sTexto) = "" Then Return Null
+      Return Trim(sTexto)
+    End
+
+CON Edit + Update ES INOFENSIVO: asignar `""` a un campo ya escribe NULL (GV-74), así que `!campo = If(…, Null, …)` da el resultado esperado por otro camino.
+
+EN EL PROYECTO: `m_Vocabularios.NuloSiVacio`, `m_Articulo.NuloSiVacio`, `m_Revistas.NuloSiVacio`. Toda columna que la interfaz puede dejar vacía es NULL con `CHECK (<> '')` (GV-74), y con `Exec` el valor tiene que llegar como `Variant` nulo.
+
+**Relaciones:** vinculo:GV-74,vinculo:GV-34,apoya:SC-71
+
+### GV-148 — Los arreglos no tienen Exchange: el intercambio se escribe a mano
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido: `aLista.Exchange(i, j)` sobre un `String[]` compila y falla al ejecutar con «Unknown symbol 'Exchange' in class 'String[]'» (el miembro inexistente compila: GV-56).
+
+PATRÓN: intercambio con una variable auxiliar del tipo del elemento. Con arreglos paralelos, el intercambio se hace en todos en el mismo paso.
+
+EN EL PROYECTO: `CContribuyente.Intercambiar`, `CTextosArticulo.MoverControlado`, `FMetadatosArticulo.MoverContribuyente`, `FPlantillasResumen.MoverSeccion`.
+
+**Relaciones:** vinculo:GV-56
+
+**PENDIENTE:** Medido en 3.19.0. Confirmar en Gambas 3.22.1 (la instrucción Swap no se probó).
+
+### GV-149 — gb.db / MySQL: SELECT ROW_COUNT() en un Exec aparte dio 0 después de un UPDATE
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.db / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido dentro de una transacción: un `Exec` con `UPDATE … JOIN …` que corrigió una fila, seguido de `Exec("SELECT ROW_COUNT() AS n")` en la misma conexión, devolvió 0.
+
+No se averiguó la causa. No contar las filas afectadas así.
+
+PATRÓN: contar ANTES, con la misma condición y dentro de la misma transacción.
+
+EN EL PROYECTO: `m_Vocabularios.GuardarTermino` cuenta las palabras clave que va a corregir antes del `UPDATE` (SC-74).
+
+**Relaciones:** apoya:SC-74
+
+**PENDIENTE:** Una sola medición; causa sin averiguar.
+
+### GV-150 — LCase solo convierte ASCII; String.LCase convierte todo si el locale es UTF-8
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 (locale C y C.UTF-8) · **Verificado:** 2026-10
+
+Medido:
+
+    LCase("ÁRBOL Ñandú")           «Árbol Ñandú»: solo las letras ASCII
+    String.LCase("ÁRBOL Ñandú")    con LANG=C.UTF-8: «árbol ñandú»
+                                   con locale C (sin UTF-8): «Árbol Ñandú»
+
+Es otro caso de RC-GM-12: las funciones sin prefijo son de bytes. Y `String.LCase` depende de que el locale sea UTF-8 (Mint lo es; un contenedor con locale C, no).
+
+EN EL PROYECTO: el control de palabras clave repetidas (`m_Articulo.AvisoPalabras`) y el de términos repetidos al agregar uno controlado comparan con `String.LCase`, la misma regla que la clave única de la base (GV-152).
+
+**Relaciones:** vinculo:RC-GM-12,vinculo:GV-96,apoya:SC-74
+
+**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1 y locale es_AR.UTF-8.
+
+### GV-151 — FSysAdmin funciona sin sesión: nada de lo que llama puede depender de m_ConexionBD.mConn
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22.1 / Linux Mint (informado por Alberto, 25/10) · **Verificado:** 2026-10
+
+`FSysAdmin` se abre también sin sesión de usuario, con su propia conexión (`hConnServidor`). En ese caso `m_ConexionBD.mConn` no existe, y cualquier función que la use falla con «Null object».
+
+Medido: la pestaña «Revistas» llamaba a `m_Licencias.LlenarCombo`, que leía de `mConn`: «Null object» al abrir sin sesión.
+
+PATRÓN: toda función que llama `FSysAdmin` recibe la conexión como parámetro. En los módulos compartidos, un parámetro `Optional hConn As Connection` que, si falta, toma `mConn`.
+
+EN EL PROYECTO: `m_Revistas`, `m_Vocabularios`, `FPlantillasResumen` y `FVocabularios` (`hConn` del llamador); `m_Licencias.LlenarCombo`, `CompletarUrl` y `m_Idiomas.ListaValida` con `hConn` opcional.
+
+**Relaciones:** apoya:SC-71
+
+### GV-152 — MySQL 8: utf8mb4_unicode_ci iguala ñ con n y las vocales con y sin tilde
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 (cliente con --default-character-set=utf8mb4) · **Verificado:** 2026-10
+
+Medido con una clave única sobre una columna de texto:
+
+    utf8mb4_unicode_ci    «Año» = «Ano», «Niño» = «Nino», «Métodos» = «Metodos»,
+                          «humanos» = «Humanos»
+    utf8mb4_0900_as_ci    distingue tildes y ñ; no distingue mayúsculas:
+                          «Año» ≠ «Ano», «humanos» = «Humanos», «AÑO» = «Año»
+    utf8mb4_0900_ai_ci    como unicode_ci: sirve para BUSCAR sin tildes
+
+Para la clave única de un término en castellano, `unicode_ci` es un error: rechaza «Ano» si ya existe «Año». `0900_as_ci` va en la columna; `COLLATE utf8mb4_0900_ai_ci` va solo en la consulta de búsqueda. Pasar una columna a una colación más estricta (`MODIFY … COLLATE`) no crea repetidos y no choca con un CHECK de la columna.
+
+Las colaciones 0900 son de MySQL 8: MariaDB no las tiene con ese nombre.
+
+EN EL PROYECTO: actualización 1.16.0 (`vocabulario_termino.termino`, `articulo_palabra_clave.termino`; SC-74).
+
+**Relaciones:** apoya:SC-74,vinculo:SC-22
+
+### GV-153 — MySQL 8: un CHECK admite REGEXP_LIKE; con colación _ci hace falta la opción 'c'
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido: `CHECK (REGEXP_LIKE(ror, '^https://ror[.]org/0[a-hj-km-np-tv-z0-9]{6}[0-9]{2}$', 'c'))` se crea y controla. NULL pasa; `''`, la forma sin prefijo, una letra excluida y LAS MAYÚSCULAS se rechazan. Sin `'c'`, la comparación sigue la colación de la columna (`_ci`) y acepta mayúsculas.
+
+En un script bash con el SQL entre comillas dobles, el `$` del patrón va como `\$`.
+
+EN EL PROYECTO: `contribuyente_afiliacion.ror`, actualización 1.15.0 (SC-71).
+
+**Relaciones:** apoya:SC-71,vinculo:GV-111
+
+### GV-154 — ROR: el dígito de control es ISO 7064 Mod 97-10 sobre los siete primeros caracteres en base 32 de Crockford
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** ror.readme.io (identifier, jats, crossref) / Python 3 y Gambas 3.19.0 · **Verificado:** 2026-10
+
+Un ROR ID tiene nueve caracteres: un `0`, seis de base 32 de Crockford (minúsculas y cifras, sin i, l, o, u) y dos dígitos de control. La forma preferida es la URL completa: `https://ror.org/02mhbdp94` (ror.readme.io/docs/identifier; JATS e `institution-id` y Crossref `institution_id` muestran la URL).
+
+La documentación remite al código generador para la cuenta. Verificada con los seis ROR de ejemplo de esa documentación (02mhbdp94, 03134gf68, 024mw5h28, 020hgte69, 05gq02987, 02twcfp32):
+
+    n = valor en base 32 de los 7 primeros ("0123456789abcdefghjkmnpqrstvwxyz")
+    control = 98 - (n * 100 mod 97)
+
+En Gambas, `n` es `Long`: 32^7 no cabe en un `Integer`.
+
+EN EL PROYECTO: `m_Articulo.NormalizarRor` (cualquier forma que acepte la API → URL completa en minúsculas) y `m_Articulo.RorValido`. La base controla la forma (GV-153).
+
+**Relaciones:** apoya:SC-71,vinculo:GV-153
+
+### GV-155 — LuaLaTeX: graphicx admite pdf, png y jpg, no svg, gif ni webp
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0 / TeX Live 2023 (Debian) / graphics-def luatex.def / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El controlador de graphicx para LuaTeX (`luatex.def`) admite estas extensiones:
+
+    .pdf,.png,.jpg,.mps,.jpeg,.jbig2,.jb2  (y las mismas en mayúsculas)
+
+MEDIDO: un `\includegraphics[width=\linewidth]` con un png compila; con un svg o un gif, LuaLaTeX frena con «LaTeX Error: Unknown graphics extension: .svg.» (o .gif).
+
+CONSECUENCIA: de los formatos que admite el EPUB 3.3 (jpg, png, gif, svg, webp; GV-66), solo jpg y png salen también en el PDF, y el HTML los muestra todos. Una figura que tiene que salir en las tres salidas va en png o jpg; un pdf sale solo en el PDF. Es la regla de formato de la capa de recursos del validador (SC-75) y la que SC-25 ya fijaba para los logos.
+
+**Relaciones:** apoya:SC-75,vinculo:GV-66,vinculo:SC-25
+
+### GV-156 — ImageMagick 6: la copia reproducible, el perfil de color y el PNG reducido
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** ImageMagick 6.9.12-98 Q16 / perfiles de TeX Live 2023 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Medido con ImageMagick 6.9.12-98 Q16, sobre imágenes reales de Califa y Duek y un CMYK armado con el perfil FOGRA39 de TeX Live.
+
+1. Sin `-strip`, dos corridas idénticas de `convert x.png -resize 2000x2000> y.png` dan archivos distintos: el PNG guarda la fecha en el bloque tIME y en `date:create` / `date:modify`. `-define png:exclude-chunks=date,time` no alcanza. Con `-strip`, las dos corridas dan bytes idénticos, en PNG y en JPG.
+2. `-strip` borra también el perfil de color.
+3. `-profile sRGB.icc` sobre un CMYK CON perfil embebido lo convierte a sRGB. Sobre un CMYK SIN perfil no hace nada: la imagen sigue en CMYK. Hay que asignarle antes uno de origen: `-profile FOGRA39L_coated.icc -profile sRGB.icc`.
+4. Un PNG reducido puede pesar más que el original: al remuestrear aparecen tonos intermedios y comprime peor. La tapa de Califa (1747×2593) pasó de 1,1 MB a 1,8 MB a 2000 px; el gráfico fig-02 (2532×1584), de 50 KB a 82 KB. Ni `-filter Triangle` ni `png:compression-level=9` ni `png:compression-filter=0` lo evitan; `png:compression-filter=5` da advertencia y se ignora. Una foto grande sí baja: la tapa de Duek (1831×2717) pasó de 4,8 MB a 2,9 MB.
+5. Un PNG con el perfil sRGB estándar en su bloque iCCP (la tapa de Califa, «sRGB IEC61966-2.1» escrito por Photoshop) aparece sin perfil: `%[profile:icc]` sale vacío y advierte por stderr que la propiedad no existe. Un perfil que no reconoce sí lo expone, con su descripción.
+6. `identify -format '%[colorspace]'` devuelve `sRGB`, `CMYK` o `Gray`; es lo que decide la conversión.
+
+**Relaciones:** apoya:SC-76
+
 ---
 
 ## GV-XML — Comportamientos verificados XML
 
 Evidencia empírica sobre XML, XPath, XSLT, Saxon, los validadores y los esquemas JATS y DocBook
+
+### GV-XML-02 — jing no ejecuta el Schematron embebido en docbook.rng ni mira las instrucciones de procesamiento
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** jing 20220510-3 (paquete Debian; la misma versión que en Linux Mint) / DocBook 5.2 RNG; contenedor Ubuntu · **Verificado:** 2026-10
+
+El RNG de DocBook 5.2 trae embebidas 247 reglas Schematron ISO (`s:pattern`, espacio de nombres `http://purl.oclc.org/dsdl/schematron`). jing las ignora: valida solo la gramática RELAX NG.
+
+MEDIDO, contra `.hidden/schemas/docbook/docbook.rng-5.2`:
+
+    instancia                                         jing
+    <chapter> raíz sin @version                       válido
+    <note> dentro de <note>                           válido
+    footnoteref con @linkend a un <para>              válido
+    <?gb-fuente sha256="…"?> en el prólogo            válido
+    xref con @linkend a un id inexistente             IDREF "nada" without matching ID
+
+Las tres primeras las prohíbe el Schematron del RNG. La cuarta muestra que una PI en el prólogo no molesta a la validación. La quinta, que la comprobación de ID e IDREF sí la hace jing (es la que SC-53 informa en tenue en una pieza suelta).
+
+CONSECUENCIA: «válido para jing» no incluye ninguna regla Schematron de DocBook: ni las exclusiones (figura en figura, cuadro en nota, recuadro en recuadro), ni las comprobaciones de tipo de destino (`footnoteref`, `glossterm`, `indexterm/@startref`), ni la de `@version` en la raíz. Son una capa aparte (SC-52, criterio 4), y se ejecutan compiladas (GV-XML-03).
+
+DE LAS 248 ASERCIONES: 131 son la de `@version` en la raíz; el resto, exclusiones entre elementos, tipos de destino de remisiones y reglas de XLink, segmentedlist, termdef y transclusión.
+
+**Relaciones:** apoya:SC-52,vinculo:SC-53,vinculo:GV-XML-03
+
+### GV-XML-03 — El Schematron de DocBook 5.2, extraído del RNG, compila y ejecuta con el esqueleto ISO
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.5 / esqueleto ISO iso_svrl_for_xslt2.xsl del repositorio / DocBook 5.2 RNG / Java 21; contenedor Ubuntu; canónicos de Duek y Califa; en Linux Mint, SaxonJ-HE 12.9 con generar-schematron-docbook.sh (las cuatro instancias de prueba, como se esperaba) · **Verificado:** 2026-10
+
+Las reglas que jing no ejecuta (GV-XML-02) se pueden correr aparte.
+
+CÓMO
+
+1. Extraer del RNG los `s:ns` (10, sin repetir prefijo) y los `s:pattern` (247) y envolverlos en `<s:schema queryBinding="xslt2">`. Una hoja XSLT 2.0 de diez líneas lo hace.
+2. Compilar ese documento con `iso_svrl_for_xslt2.xsl` del repositorio (`.hidden/schematron/iso/`). No hay `include` que resolver.
+3. Correr la hoja compilada (unos 400 KB) sobre el canónico. La salida es SVRL.
+
+MEDIDO
+
+- Compila sin errores ni advertencias. A diferencia de JATS4R (GV-26), ninguna regla aborta la transformación.
+- Sobre las instancias de GV-XML-02 informa los tres incumplimientos: «If this element is the root element, it must have a version attribute.», «note must not occur among the children or descendants of note» y «@linkend on footnoteref must point to a footnote.».
+- Sobre los 21 canónicos de dos libros reales (Duek, publicado; Califa, en corrección), capítulos y libro ensamblado: cero incumplimientos y ningún aborto. En el libro de Califa las reglas se dispararon 7113 veces.
+- Toda salida contiene `schematron-output` (la comprobación de GV-28): es el informe, no la hoja.
+
+COSTO
+
+- Una llamada por archivo: unos 2,3 s, casi todo el arranque de la JVM y la carga de la hoja compilada.
+- Una sola llamada sobre una carpeta (`-s:carpeta -o:carpeta/`): los 11 archivos de Califa en 3,6 s. El modo carpeta toma la carpeta entera, no una lista.
+
+LÍMITE: el corpus real no tiene figuras ni cuadros. Las reglas de exclusión se probaron solo con instancias sintéticas.
+
+**Relaciones:** apoya:SC-52,vinculo:GV-26,vinculo:GV-28,vinculo:GV-XML-02
+
+### GV-XML-04 — Schematron con el esqueleto ISO: una regla con contexto en una PI solo se dispara para las del prólogo
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.5 / esqueleto ISO iso_svrl_for_xslt2.xsl del repositorio / contenedor Ubuntu; gbpublisher.sch compilado y probado también en Linux Mint con SaxonJ-HE 12.9 · **Verificado:** 2026-10
+
+Con el esqueleto ISO (`iso_svrl_for_xslt2.xsl`), una regla cuyo contexto es una instrucción de procesamiento solo se dispara para las PI que están fuera del elemento raíz.
+
+MEDIDO, sobre un capítulo con `<?gb-fuente …?>` en el prólogo y `<?gb-raro …?>` dentro de un `<para>`:
+
+    contexto de la regla                              resultado
+    processing-instruction()[starts-with(name(),      se dispara una vez, para la
+      'gb-')]                                         del prólogo; gb-raro no se
+                                                      revisa
+    /  con  //processing-instruction()[…]  en un      encuentra gb-raro
+      s:let y la aserción sobre él
+
+La hoja compilada recorre los elementos de cada patrón con `apply-templates select="*"`: las PI dentro de los elementos no entran en el recorrido.
+
+REGLA: una regla sobre instrucciones de procesamiento se escribe sobre la raíz del documento (`context="/"`), con las PI juntadas en un `s:let`. Así lo hace el patrón gbp-pi de `gbpublisher.sch` (SC-75).
+
+También medido: el `@id` y el `@role` de cada aserción llegan al SVRL como atributos de `svrl:failed-assert`. Es lo que usa el validador para separar las reglas propias y leer su nivel.
+
+**Relaciones:** apoya:SC-75,vinculo:GV-XML-03

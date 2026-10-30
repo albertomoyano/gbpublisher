@@ -208,6 +208,12 @@ function Div(el)
   --   :::
   -- CON TEXTO ALTERNATIVO PROPIO PARA EL EPUB ACCESIBLE:
   --   ::: {.fig #fig-mapa alt="Mapa de la provincia con las rutas"}
+  -- CON UN ANCHO PROPORCIONAL, EN PORCENTAJE DEL ANCHO DE LA COLUMNA:
+  --   ::: {.fig #fig-mapa ancho=60}
+  -- VA A imagedata/@width="60%", COMO DEFINE DocBook EL PORCENTAJE: UNA
+  -- FRACCIÓN DEL ANCHO DISPONIBLE. EN EL PDF ES EL 60 % DE \linewidth; EN
+  -- EL HTML Y EL EPUB, UN TOPE (max-width: 60%) SOBRE EL TAMAÑO NATURAL.
+  -- SIN ancho, EL ANCHO DE LA COLUMNA. SOLO EN LIBROS (29/10/2026).
   --
   -- EL <figure> SE ARMA ACÁ Y NO CON EL ESCRITOR DE PANDOC: EN PANDOC
   -- 3.1 EL ESCRITOR DocBook DESCARTA EL identifier DE UN Figure, Y SIN
@@ -220,6 +226,10 @@ function Div(el)
   --     LaTeX NO LA NUMERA.
   --   - CONTENIDO ADEMÁS DE LA IMAGEN: SE PERDERÍA EN SILENCIO, COMO
   --     LE PASABA AL PÁRRAFO «Figura 1. …» DEL EJEMPLO VIEJO.
+  -- Y UNA CUARTA: UN ancho QUE NO ES UN ENTERO DE 1 A 100. EL RNG DE
+  -- DocBook ACEPTA CUALQUIER TEXTO EN @width (MEDIDO: width="abc"
+  -- VALIDA), ASÍ QUE EL CONTROL TIENE QUE SER PROPIO; EL VALIDADOR LO
+  -- REPITE SOBRE EL CANÓNICO (gbp-ancho).
   -- .fullwidth → pgwide="1" (DOCBOOK 5.2 NATIVO).
   if el.classes:includes('fig') then
     local fig_id = el.identifier or ''
@@ -278,11 +288,25 @@ function Div(el)
     local pgwide = ''
     if es_fullwidth then pgwide = ' pgwide="1"' end
 
+    -- ANCHO PROPORCIONAL: UN ENTERO DE 1 A 100, SIN EL SIGNO. 060 SE
+    -- ESCRIBE 60: EL CANÓNICO LLEVA UNA SOLA FORMA
+    local width = ''
+    local ancho = el.attributes['ancho']
+    if ancho then
+      local n = ancho:match('^%d+$') and tonumber(ancho)
+      if not n or n < 1 or n > 100 then
+        error('\n[figura #' .. fig_id .. '] ancho=' .. ancho .. ' no sirve: va un ' ..
+              'número entero de 1 a 100, el porcentaje del ancho de la columna ' ..
+              '(::: {.fig #' .. fig_id .. ' ancho=60})', 0)
+      end
+      width = ' width="' .. tostring(math.floor(n)) .. '%"'
+    end
+
     local raw =
       '<figure xml:id="' .. escape_xml_attr(fig_id) .. '"' .. pgwide .. '>\n' ..
       '  <title>' .. inlines_a_docbook(pie) .. '</title>\n' ..
       '  <mediaobject>\n' ..
-      '    <imageobject><imagedata fileref="' .. escape_xml_attr(imagen.src) .. '"/></imageobject>\n' ..
+      '    <imageobject><imagedata fileref="' .. escape_xml_attr(imagen.src) .. '"' .. width .. '/></imageobject>\n' ..
       '    <textobject><phrase>' .. escape_xml_text(alt) .. '</phrase></textobject>\n' ..
       '  </mediaobject>\n' ..
       '</figure>'

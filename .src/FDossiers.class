@@ -1,0 +1,572 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FDossiers
+' Propósito  : Dossiers del número abierto: agrupación dentro del número con
+'              título y subtítulo por idioma, sección, orden, epígrafe y
+'              personas a cargo. Modelo de FPartesLibro. Se abre desde
+'              FMetadatosNumero. Los controles y los manejadores viven acá;
+'              las consultas, las validaciones y las grabaciones, en
+'              m_Dossiers.
+' ============================================
+
+' NÚMERO DEL PROYECTO ABIERTO
+Private $iIdNumero As Integer
+' DOSSIER EN EDICIÓN; 0 SI NO HAY NINGUNO ELEGIDO
+Private $iIdDossier As Integer
+' UNA ENTRADA POR FILA DE LA GRILLA, EN EL MISMO ORDEN
+Private $aIdsDossiers As New Integer[]
+' UNA ENTRADA POR ÍTEM DEL COMBO DE SECCIONES
+Private $aIdsSecciones As New Integer[]
+' IDIOMAS DE PUBLICACIÓN DE LA REVISTA: EL PRIMERO TITULA LA GRILLA
+Private $aIdiomas As New String[]
+' TÍTULOS Y SUBTÍTULOS EN EDICIÓN, POR IDIOMA (DECISIÓN 20: UN IDIOMA A LA VEZ)
+Private $cTitulos As New Collection
+Private $cSubtitulos As New Collection
+Private $sIdiomaActual As String
+' PERSONAS A CARGO, EN ORDEN: id, NOMBRE Y ROL EN TRES ARREGLOS PARALELOS
+Private $aEditores As New Integer[]
+Private $aNombres As New String[]
+Private $aRoles As New String[]
+' EVITA QUE LOS Click DE LOS COMBOS ACTÚEN MIENTRAS SE CARGA
+Private $bCargando As Boolean
+' COLUMNAS DE LA GRILLA (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_DOSSIERS As Integer = 2
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Ubica el número del proyecto, prepara grilla y combos y carga
+'             los dossiers
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim rNumero As Result
+  Dim rSecciones As Result
+  Dim iRevista As Integer
+
+  ' --- 1. NÚMERO DEL PROYECTO ---
+  ' RC-GM-16: EL id DEL PROYECTO SALE DE LA VARIABLE DE SESIÓN
+  rNumero = m_Numero.CargarNumeroDeProyecto(m_InicioCierre.IdProyectoEnCurso)
+  If Not rNumero Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto abierto no tiene número: complete primero los metadatos del número.")
+    Me.Close()
+    Return
+  Endif
+  $iIdNumero = rNumero!id_numero
+  iRevista = rNumero!id_revista
+  lblNumeroDossiers.Text = m_Numero.DescripcionNumero(m_InicioCierre.IdProyectoEnCurso)
+
+  ' --- 2. IDIOMAS Y SECCIONES DE LA REVISTA ---
+  $aIdiomas = m_Revistas.IdiomasDeRevista(m_ConexionBD.mConn, iRevista)
+  If $aIdiomas.Count > 0 Then
+    rSecciones = m_Revistas.ListarSecciones(m_ConexionBD.mConn, iRevista, $aIdiomas[0])
+  Else
+    rSecciones = m_Revistas.ListarSecciones(m_ConexionBD.mConn, iRevista, "")
+  Endif
+  If rSecciones Then
+    While rSecciones.Available
+      ' EL TÍTULO DE LA SECCIÓN SI LO TIENE; SI NO, SU CÓDIGO
+      If IsNull(rSecciones!titulo) Then
+        cmbSeccionDossier.Add(rSecciones!codigo)
+      Else
+        cmbSeccionDossier.Add(rSecciones!titulo & "  [" & rSecciones!codigo & "]")
+      Endif
+      $aIdsSecciones.Add(rSecciones!id_seccion)
+      rSecciones.MoveNext
+    Wend
+  Endif
+
+  ' --- 3. GRILLA, ROLES Y DATOS ---
+  With gvDossiers
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_DOSSIERS
+    .Columns[0].Title = "Orden"
+    .Columns[0].Width = 60
+    .Columns[1].Title = "Título"
+    .Columns[1].Width = 300
+  End With
+  cmbRolEditorDossier.List = m_Dossiers.RolesLeyendas()
+  cmbRolEditorDossier.Index = 0
+  CargarDossiers()
+
+End
+
+' ============================================
+' Función   : CargarDossiers
+' Propósito : Llena la grilla y deja el editor vacío
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarDossiers()
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. LECTURA ---
+  $aIdsDossiers.Clear()
+  gvDossiers.Rows.Count = 0
+  If $aIdiomas.Count > 0 Then
+    gvDossiers.Columns[1].Title = "Título (" & $aIdiomas[0] & ")"
+    rDatos = m_Dossiers.ListarDossiers($iIdNumero, $aIdiomas[0])
+  Else
+    rDatos = m_Dossiers.ListarDossiers($iIdNumero, "")
+  Endif
+
+  ' --- 2. GRILLA ---
+  If rDatos Then
+    gvDossiers.Rows.Count = rDatos.Count
+    iFila = 0
+    While rDatos.Available
+      $aIdsDossiers.Add(rDatos!id_dossier)
+      gvDossiers[iFila, 0].Text = CStr(rDatos!orden)
+      gvDossiers[iFila, 1].Text = If(IsNull(rDatos!titulo), "(sin título)", rDatos!titulo)
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 3. NADA ELEGIDO ---
+  LimpiarEditor()
+
+End
+
+' ============================================
+' Función   : LimpiarEditor
+' Propósito : Editor vacío y botones de «nada elegido»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarEditor()
+
+  $bCargando = True
+  $iIdDossier = 0
+  cmbSeccionDossier.Index = -1
+  spnOrdenDossier.Value = 0
+  cmbIdiomaDossier.Clear()
+  txtTituloDossier.Text = ""
+  txtSubtituloDossier.Text = ""
+  txaEpigrafeDossier.Text = ""
+  $cTitulos = New Collection
+  $cSubtitulos = New Collection
+  $sIdiomaActual = ""
+  $aEditores.Clear()
+  $aNombres.Clear()
+  $aRoles.Clear()
+  RedibujarEditores(-1)
+  btnGuardarDossier.Enabled = False
+  btnBorrarDossier.Enabled = False
+  $bCargando = False
+
+End
+
+' ============================================
+' Función   : gvDossiers_Click
+' Propósito : Al elegir un dossier, lo carga en el editor
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvDossiers_Click()
+
+  Dim iFila As Integer
+
+  iFila = gvDossiers.Row
+  If iFila < 0 Or iFila >= $aIdsDossiers.Count Then Return
+  CargarEditor($aIdsDossiers[iFila])
+
+End
+
+' ============================================
+' Función   : CargarEditor
+' Propósito : Vuelca un dossier, sus títulos y sus personas a cargo al editor
+' Parámetros: iIdDossier As Integer — dossier
+' Retorna   : nada
+' ============================================
+Private Sub CargarEditor(iIdDossier As Integer)
+
+  Dim rDossier As Result
+  Dim rEditores As Result
+
+  ' --- 1. LECTURA ---
+  rDossier = m_Dossiers.CargarDossier(iIdDossier)
+  If Not rDossier Then Return
+
+  ' --- 2. CAMPOS ---
+  $bCargando = True
+  $iIdDossier = iIdDossier
+  cmbSeccionDossier.Index = $aIdsSecciones.Find(rDossier!id_seccion)
+  spnOrdenDossier.Value = rDossier!orden
+  txaEpigrafeDossier.Text = If(IsNull(rDossier!epigrafe), "", rDossier!epigrafe)
+
+  ' --- 3. TÍTULOS POR IDIOMA ---
+  $cTitulos = m_Dossiers.TitulosDossier(iIdDossier)
+  $cSubtitulos = m_Dossiers.SubtitulosDossier(iIdDossier)
+  cmbIdiomaDossier.List = $aIdiomas.Copy()
+  If $aIdiomas.Count > 0 Then
+    cmbIdiomaDossier.Index = 0
+    $sIdiomaActual = $aIdiomas[0]
+  Else
+    $sIdiomaActual = ""
+  Endif
+  MostrarTitulos()
+
+  ' --- 4. PERSONAS A CARGO ---
+  $aEditores.Clear()
+  $aNombres.Clear()
+  $aRoles.Clear()
+  rEditores = m_Dossiers.EditoresDossier(iIdDossier)
+  If rEditores Then
+    While rEditores.Available
+      $aEditores.Add(rEditores!id_autor)
+      $aNombres.Add(rEditores!apellidos & ", " & rEditores!nombre)
+      $aRoles.Add(rEditores!rol)
+      rEditores.MoveNext
+    Wend
+  Endif
+  RedibujarEditores(-1)
+  cmbRolEditorDossier.Index = 0
+
+  ' --- 5. BOTONES ---
+  btnGuardarDossier.Enabled = True
+  btnBorrarDossier.Enabled = True
+  $bCargando = False
+
+End
+
+' ============================================
+' Función   : MostrarTitulos
+' Propósito : Pone en los campos el título y el subtítulo del idioma actual
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarTitulos()
+
+  ' UNA CLAVE AUSENTE SE LEE Null, QUE VA AL CAMPO COMO VACÍO (GV-68)
+  If $sIdiomaActual = "" Then
+    txtTituloDossier.Text = ""
+    txtSubtituloDossier.Text = ""
+    Return
+  Endif
+  txtTituloDossier.Text = $cTitulos[$sIdiomaActual]
+  txtSubtituloDossier.Text = $cSubtitulos[$sIdiomaActual]
+
+End
+
+' ============================================
+' Función   : GuardarTitulosEnMemoria
+' Propósito : Pasa lo escrito al idioma actual. Un campo vacío borra la clave
+'             (GV-68), que es justo «sin título» o «sin subtítulo»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarTitulosEnMemoria()
+
+  If $sIdiomaActual = "" Then Return
+  $cTitulos[$sIdiomaActual] = Trim(txtTituloDossier.Text)
+  $cSubtitulos[$sIdiomaActual] = Trim(txtSubtituloDossier.Text)
+
+End
+
+' ============================================
+' Función   : cmbIdiomaDossier_Click
+' Propósito : Cambio de idioma: guarda en memoria lo escrito y muestra el otro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaDossier_Click()
+
+  If $bCargando Then Return
+  GuardarTitulosEnMemoria()
+  $sIdiomaActual = cmbIdiomaDossier.Text
+  MostrarTitulos()
+
+End
+
+' ============================================
+' Función   : btnNuevoDossier_Click
+' Propósito : Alta mínima de un dossier y su selección
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevoDossier_Click()
+
+  Dim iNuevo As Integer
+  Dim iFila As Integer
+
+  ' --- 1. ALTA ---
+  iNuevo = m_Dossiers.CrearDossier($iIdNumero)
+  If iNuevo = 0 Then Return
+
+  ' --- 2. RELECTURA Y SELECCIÓN ---
+  CargarDossiers()
+  iFila = $aIdsDossiers.Find(iNuevo)
+  If iFila >= 0 Then
+    gvDossiers.Row = iFila
+    CargarEditor(iNuevo)
+  Endif
+  txtTituloDossier.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarDossier_Click
+' Propósito : Junta los valores del editor y los graba por m_Dossiers
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarDossier_Click()
+
+  Dim cDatos As New Collection
+  Dim iDossier As Integer
+  Dim iFila As Integer
+
+  ' --- 1. HAY DOSSIER ELEGIDO ---
+  If $iIdDossier <= 0 Then Return
+
+  ' --- 2. LO ESCRITO EN EL IDIOMA A LA VISTA TODAVÍA NO PASÓ A LA MEMORIA ---
+  GuardarTitulosEnMemoria()
+
+  ' --- 3. VALORES ---
+  If cmbSeccionDossier.Index < 0 Then
+    cDatos["id_seccion"] = 0
+  Else
+    cDatos["id_seccion"] = $aIdsSecciones[cmbSeccionDossier.Index]
+  Endif
+  cDatos["orden"] = spnOrdenDossier.Value
+  ' VACÍO: LA CLAVE NO EXISTE Y SE GRABA NULL (GV-68, GV-74)
+  cDatos["epigrafe"] = Trim(txaEpigrafeDossier.Text)
+
+  ' --- 4. GRABACIÓN ---
+  If Not m_Dossiers.GuardarDossier($iIdDossier, $iIdNumero, cDatos, $cTitulos, $cSubtitulos, $aIdiomas, $aEditores, $aRoles) Then Return
+
+  ' --- 5. RELECTURA MANTENIENDO LA SELECCIÓN ---
+  m_Sonido.sonar("Info")
+  iDossier = $iIdDossier
+  CargarDossiers()
+  iFila = $aIdsDossiers.Find(iDossier)
+  If iFila >= 0 Then
+    gvDossiers.Row = iFila
+    CargarEditor(iDossier)
+  Endif
+
+End
+
+' ============================================
+' Función   : btnBorrarDossier_Click
+' Propósito : Borra el dossier elegido, previa confirmación
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarDossier_Click()
+
+  If $iIdDossier <= 0 Then Return
+  If Message.Question("¿Borrar el dossier elegido, con sus títulos y sus personas a cargo?", "Borrar", "Cancelar") <> 1 Then Return
+  If Not m_Dossiers.BorrarDossier($iIdDossier) Then Return
+  m_Sonido.sonar("Info")
+  CargarDossiers()
+
+End
+
+' ============================================
+' Función   : btnAgregarEditorDossier_Click
+' Propósito : Elige un autor en FAutores y lo agrega con el rol del combo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnAgregarEditorDossier_Click()
+
+  Dim iIdAutor As Integer
+
+  ' --- 1. HAY DOSSIER ELEGIDO ---
+  If $iIdDossier <= 0 Then Return
+
+  ' --- 2. ELECCIÓN: FAutores DEVUELVE EL id POR MÓDULO (RC-GM-13) ---
+  m_FuncionesGenericas.iAutorSeleccionadoEnFAutores = 0
+  FAutores.ShowModal()
+  iIdAutor = m_FuncionesGenericas.iAutorSeleccionadoEnFAutores
+  If iIdAutor <= 0 Then Return
+
+  ' --- 3. SIN REPETIDOS ---
+  If $aEditores.Find(iIdAutor) >= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Esa persona ya está a cargo del dossier.")
+    Return
+  Endif
+
+  ' --- 4. AGREGADO, CON EL ROL ELEGIDO EN EL COMBO ---
+  $aEditores.Add(iIdAutor)
+  $aNombres.Add(m_Numero.NombreAutor(iIdAutor))
+  $aRoles.Add(m_Dossiers.RolesCodigos()[cmbRolEditorDossier.Index])
+  RedibujarEditores($aEditores.Count - 1)
+
+End
+
+' ============================================
+' Función   : lstEditoresDossier_Click
+' Propósito : Al elegir una persona, el combo muestra su rol
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub lstEditoresDossier_Click()
+
+  Dim iFila As Integer
+
+  iFila = lstEditoresDossier.Index
+  If iFila < 0 Then Return
+  $bCargando = True
+  cmbRolEditorDossier.Index = m_Dossiers.RolesCodigos().Find($aRoles[iFila])
+  $bCargando = False
+
+End
+
+' ============================================
+' Función   : cmbRolEditorDossier_Click
+' Propósito : Cambiar el rol en el combo cambia el de la persona elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbRolEditorDossier_Click()
+
+  Dim iFila As Integer
+
+  If $bCargando Then Return
+  iFila = lstEditoresDossier.Index
+  If iFila < 0 Then Return
+  $aRoles[iFila] = m_Dossiers.RolesCodigos()[cmbRolEditorDossier.Index]
+  RedibujarEditores(iFila)
+
+End
+
+' ============================================
+' Función   : btnQuitarEditorDossier_Click
+' Propósito : Quita a la persona elegida (se graba al guardar)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarEditorDossier_Click()
+
+  Dim iFila As Integer
+
+  iFila = lstEditoresDossier.Index
+  If iFila < 0 Then Return
+  $aEditores.Remove(iFila)
+  $aNombres.Remove(iFila)
+  $aRoles.Remove(iFila)
+  RedibujarEditores(-1)
+
+End
+
+' ============================================
+' Función   : btnSubirEditorDossier_Click
+' Propósito : Sube un lugar a la persona elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirEditorDossier_Click()
+
+  MoverEditor(-1)
+
+End
+
+' ============================================
+' Función   : btnBajarEditorDossier_Click
+' Propósito : Baja un lugar a la persona elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarEditorDossier_Click()
+
+  MoverEditor(1)
+
+End
+
+' ============================================
+' Función   : MoverEditor
+' Propósito : Intercambia a la persona elegida con la vecina en los tres
+'             arreglos: el orden de la lista es el de la publicación
+' Parámetros: iPaso As Integer — -1 sube, 1 baja
+' Retorna   : nada
+' ============================================
+Private Sub MoverEditor(iPaso As Integer)
+
+  Dim iFila As Integer
+  Dim iDestino As Integer
+  Dim iId As Integer
+  Dim sTexto As String
+
+  ' --- 1. POSICIONES VÁLIDAS ---
+  iFila = lstEditoresDossier.Index
+  If iFila < 0 Then Return
+  iDestino = iFila + iPaso
+  If iDestino < 0 Or iDestino >= $aEditores.Count Then Return
+
+  ' --- 2. INTERCAMBIO EN LOS TRES ARREGLOS ---
+  iId = $aEditores[iFila]
+  $aEditores[iFila] = $aEditores[iDestino]
+  $aEditores[iDestino] = iId
+  sTexto = $aNombres[iFila]
+  $aNombres[iFila] = $aNombres[iDestino]
+  $aNombres[iDestino] = sTexto
+  sTexto = $aRoles[iFila]
+  $aRoles[iFila] = $aRoles[iDestino]
+  $aRoles[iDestino] = sTexto
+
+  ' --- 3. LA LISTA SIGUE A LA PERSONA MOVIDA ---
+  RedibujarEditores(iDestino)
+
+End
+
+' ============================================
+' Función   : RedibujarEditores
+' Propósito : Vuelve a llenar la lista desde los arreglos, que son la fuente:
+'             «Apellidos, Nombre — rol»
+' Parámetros: iElegido As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarEditores(iElegido As Integer)
+
+  Dim aTextos As New String[]
+  Dim i As Integer
+  Dim iRol As Integer
+
+  ' --- 1. TEXTOS CON EL ROL LEGIBLE ---
+  For i = 0 To $aEditores.Count - 1
+    iRol = m_Dossiers.RolesCodigos().Find($aRoles[i])
+    If iRol < 0 Then
+      aTextos.Add($aNombres[i] & " — " & $aRoles[i])
+    Else
+      aTextos.Add($aNombres[i] & " — " & m_Dossiers.RolesLeyendas()[iRol])
+    Endif
+  Next
+
+  ' --- 2. LISTA ---
+  lstEditoresDossier.List = aTextos
+  If iElegido >= 0 Then lstEditoresDossier.Index = iElegido
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierre del formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End

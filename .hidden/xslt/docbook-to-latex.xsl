@@ -77,7 +77,7 @@
     NO HAY PARÁMETROS DE SAXON PARA DATOS DE LA BASE (codigo_dir,
     DECLARADO EN tex-comun.xsl, ES LA CARPETA DEL COLOREADO, NO UN DATO). EL XML
     CANÓNICO DEBE SER AUTÓNOMO Y REPRODUCIBLE POR SÍ SOLO.
-      bibliomisc[@role='csl-style']      estilo de cita
+      bibliomisc[@role='estilo-cita']    estilo de cita
       bibliomisc[@role='seccion-libro']  fm | a | bm
       bibliomisc[@role='orden-seccion']  NN con dos dígitos
     LOS DOS ÚLTIMOS, Y bibliomisc[@role='tipo-capitulo'], LOS
@@ -139,14 +139,14 @@
 
   <!-- ============================================================ -->
   <!-- VARIABLE GLOBAL: $estilo                                     -->
-  <!-- FAMILIA DE ESTILO DE CITA, SIN LA EXTENSIÓN .csl             -->
+  <!-- EL IDENTIFICADOR DEL ESTILO DE CITA (apa, verona-modern…)   -->
   <!-- SE USA SOLO PARA DECIDIR EL COMANDO DE CITA (VER LA NOTA     -->
   <!-- SOBRE 'suppress' EN tex-comun.xsl). LA MAQUETACIÓN DE LA     -->
   <!-- BIBLIOGRAFÍA LA RESUELVE EL PREÁMBULO.                       -->
   <!-- ============================================================ -->
   <xsl:variable name="estilo" as="xs:string" select="
-    let $v := normalize-space((//bibliomisc[@role='csl-style'])[1])
-    return if ($v = '') then 'apa' else lower-case(replace($v, '\.csl$', ''))"/>
+    let $v := normalize-space((//bibliomisc[@role='estilo-cita'])[1])
+    return if ($v = '') then 'apa' else lower-case($v)"/>
 
   <!-- ============================================================ -->
   <!-- VARIABLE GLOBAL: $idioma                                     -->
@@ -1129,8 +1129,18 @@
     <xsl:apply-templates select=".//imagedata"/>
   </xsl:template>
 
+  <!-- EL ANCHO: EL DE LA COLUMNA, O LA FRACCIÓN QUE PIDE @width   -->
+  <!-- («60%» → 0.60\linewidth). SOLO SE TOMA LA FORMA QUE ESCRIBE   -->
+  <!-- EL FILTRO, UN ENTERO DE 1 A 100 CON %: EL RNG ACEPTA          -->
+  <!-- CUALQUIER TEXTO, Y OTRA FORMA LA SEÑALA EL VALIDADOR          -->
+  <!-- (gbp-ancho). \linewidth Y NO \textwidth: ES IGUAL EN EL      -->
+  <!-- CUERPO Y SE ADAPTA DENTRO DE UN RECUADRO                      -->
   <xsl:template match="imagedata">
-    <xsl:text>\includegraphics[width=\linewidth]{</xsl:text>
+    <xsl:text>\includegraphics[width=</xsl:text>
+    <xsl:if test="matches(string(@width), '^([1-9][0-9]?|100)%$')">
+      <xsl:value-of select="format-number(number(substring-before(@width, '%')) div 100, '0.00')"/>
+    </xsl:if>
+    <xsl:text>\linewidth]{</xsl:text>
     <xsl:value-of select="f:ruta-imagen(@fileref, '')"/>
     <xsl:text>}&#10;</xsl:text>
   </xsl:template>

@@ -1,0 +1,350 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FContribuyenteArticulo
+' Propósito  : Edita un contribuyente del artículo: colectivo, rol,
+'              correspondencia, email, CRediT, notas y afiliaciones del
+'              momento (decisión de Alberto, 28/10: diálogo propio).
+'              Trabaja sobre la copia que le pasa FMetadatosArticulo; al
+'              aceptar la deja completa y cierra con 1. Nada se graba acá:
+'              se graba con el artículo.
+' Uso        : oCopia = oContribuyente.Copia()
+'              FContribuyenteArticulo.oContribuyente = oCopia
+'              FContribuyenteArticulo.bSoloLectura = …
+'              If FContribuyenteArticulo.ShowModal() = 1 Then … oCopia …
+'              EL LLAMADOR CONSERVA SU REFERENCIA A LA COPIA: AL CERRARSE, LA
+'              INSTANCIA AUTOMÁTICA DEL FORMULARIO SE DESTRUYE Y UNA LECTURA
+'              POSTERIOR DE FContribuyenteArticulo CREARÍA OTRA, VACÍA
+' ============================================
+
+' EL CONTRIBUYENTE EN EDICIÓN (UNA COPIA: VER Uso)
+Public oContribuyente As CContribuyente
+' PUBLICADO: SE MUESTRA SIN PERMITIR CAMBIOS (DECISIÓN 17)
+Public bSoloLectura As Boolean
+
+' AFILIACIÓN A LA VISTA EN LOS CAMPOS; -1 NINGUNA
+Private $iAfiliacion As Integer = -1
+' COLUMNAS DE LA GRILLA DE AFILIACIONES (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_AFILIACIONES As Integer = 4
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Vuelca el contribuyente a los controles
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim iIndice As Integer
+
+  ' --- 1. SIN CONTRIBUYENTE NO HAY QUÉ EDITAR ---
+  If Not oContribuyente Then
+    Me.Close(0)
+    Return
+  Endif
+
+  ' --- 2. QUIÉN: PERSONA (NOMBRE DE LA FICHA) O COLECTIVO (EDITABLE) ---
+  If oContribuyente.iIdAutor > 0 Then
+    lblNombreContribuyente.Text = oContribuyente.sNombre
+    hbxColectivoContribuyente.Visible = False
+  Else
+    lblNombreContribuyente.Text = "Autoría colectiva"
+    txtColectivoContribuyente.Text = oContribuyente.sNombreColectivo
+  Endif
+
+  ' --- 3. DATOS DEL CONTRIBUYENTE EN ESTE ARTÍCULO ---
+  cmbRolContribuyente.List = m_Articulo.RolesContribuyenteLeyendas()
+  iIndice = m_Articulo.RolesContribuyenteCodigos().Find(oContribuyente.sRol)
+  If iIndice < 0 Then iIndice = 0
+  cmbRolContribuyente.Index = iIndice
+  chkCorrespondenciaContribuyente.Value = oContribuyente.bCorrespondencia
+  txtEmailContribuyente.Text = oContribuyente.sEmail
+  txtCreditContribuyente.Text = oContribuyente.sCredit
+  txtNotasContribuyente.Text = oContribuyente.sNotas
+
+  ' --- 4. AFILIACIONES ---
+  With gvAfiliaciones
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_AFILIACIONES
+    .Columns[0].Title = "Institución"
+    .Columns[0].Width = 280
+    .Columns[1].Title = "Ciudad"
+    .Columns[1].Width = 130
+    .Columns[2].Title = "País"
+    .Columns[2].Width = 110
+    .Columns[3].Title = "ROR"
+    .Columns[3].Width = 150
+  End With
+  If oContribuyente.aInstituciones.Count > 0 Then
+    RedibujarAfiliaciones(0)
+  Else
+    RedibujarAfiliaciones(-1)
+  Endif
+
+  ' --- 5. PUBLICADO: SOLO PARA VER ---
+  If bSoloLectura Then
+    hbxColectivoContribuyente.Enabled = False
+    hbxRolContribuyente.Enabled = False
+    hbxCorrespondenciaContribuyente.Enabled = False
+    hbxEmailContribuyente.Enabled = False
+    btnCreditContribuyente.Enabled = False
+    hbxNotasContribuyente.Enabled = False
+    vbxBotonesAfiliacion.Enabled = False
+    FijarCamposAfiliacion(False)
+    btnAceptarContribuyente.Visible = False
+  Endif
+
+End
+
+' ============================================
+' Función   : RedibujarAfiliaciones
+' Propósito : Llena la grilla desde los arreglos del contribuyente, que son
+'             la fuente, y pone en los campos la afiliación elegida
+' Parámetros: iElegida As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarAfiliaciones(iElegida As Integer)
+
+  Dim i As Integer
+
+  ' --- 1. GRILLA ---
+  gvAfiliaciones.Rows.Count = oContribuyente.aInstituciones.Count
+  For i = 0 To oContribuyente.aInstituciones.Count - 1
+    gvAfiliaciones[i, 0].Text = oContribuyente.aInstituciones[i]
+    gvAfiliaciones[i, 1].Text = oContribuyente.aCiudades[i]
+    gvAfiliaciones[i, 2].Text = oContribuyente.aPaises[i]
+    gvAfiliaciones[i, 3].Text = oContribuyente.aRors[i]
+  Next
+
+  ' --- 2. ELEGIDA Y CAMPOS ---
+  If iElegida >= oContribuyente.aInstituciones.Count Then iElegida = oContribuyente.aInstituciones.Count - 1
+  $iAfiliacion = iElegida
+  If iElegida >= 0 Then gvAfiliaciones.Row = iElegida
+  MostrarAfiliacion()
+
+End
+
+' ============================================
+' Función   : MostrarAfiliacion
+' Propósito : Pone en los campos la afiliación a la vista; sin afiliación,
+'             los vacía y los apaga
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarAfiliacion()
+
+  If $iAfiliacion < 0 Then
+    txtInstitucionAfiliacion.Text = ""
+    txtDepartamentoAfiliacion.Text = ""
+    txtCiudadAfiliacion.Text = ""
+    txtPaisAfiliacion.Text = ""
+    txtRorAfiliacion.Text = ""
+    FijarCamposAfiliacion(False)
+    Return
+  Endif
+
+  txtInstitucionAfiliacion.Text = oContribuyente.aInstituciones[$iAfiliacion]
+  txtDepartamentoAfiliacion.Text = oContribuyente.aDepartamentos[$iAfiliacion]
+  txtCiudadAfiliacion.Text = oContribuyente.aCiudades[$iAfiliacion]
+  txtPaisAfiliacion.Text = oContribuyente.aPaises[$iAfiliacion]
+  txtRorAfiliacion.Text = oContribuyente.aRors[$iAfiliacion]
+  FijarCamposAfiliacion(Not bSoloLectura)
+
+End
+
+' ============================================
+' Función   : FijarCamposAfiliacion
+' Propósito : Habilita o apaga los campos de la afiliación
+' Parámetros: bHabilitados As Boolean — False: no se pueden editar
+' Retorna   : nada
+' ============================================
+Private Sub FijarCamposAfiliacion(bHabilitados As Boolean)
+
+  hbxInstitucionAfiliacion.Enabled = bHabilitados
+  hbxDepartamentoAfiliacion.Enabled = bHabilitados
+  hbxLugarAfiliacion.Enabled = bHabilitados
+  hbxRorAfiliacion.Enabled = bHabilitados
+
+End
+
+' ============================================
+' Función   : GuardarAfiliacionEnMemoria
+' Propósito : Pasa lo escrito en los campos a la afiliación a la vista y
+'             refresca su fila. El ROR se normaliza a la URL completa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarAfiliacionEnMemoria()
+
+  If $iAfiliacion < 0 Or bSoloLectura Then Return
+  oContribuyente.aInstituciones[$iAfiliacion] = Trim(txtInstitucionAfiliacion.Text)
+  oContribuyente.aDepartamentos[$iAfiliacion] = Trim(txtDepartamentoAfiliacion.Text)
+  oContribuyente.aCiudades[$iAfiliacion] = Trim(txtCiudadAfiliacion.Text)
+  oContribuyente.aPaises[$iAfiliacion] = Trim(txtPaisAfiliacion.Text)
+  ' FORMA PREFERIDA DE ROR Y LA QUE EXIGE EL CHECK DE LA BASE (1.15.0)
+  oContribuyente.aRors[$iAfiliacion] = m_Articulo.NormalizarRor(txtRorAfiliacion.Text)
+  txtRorAfiliacion.Text = oContribuyente.aRors[$iAfiliacion]
+  gvAfiliaciones[$iAfiliacion, 0].Text = oContribuyente.aInstituciones[$iAfiliacion]
+  gvAfiliaciones[$iAfiliacion, 1].Text = oContribuyente.aCiudades[$iAfiliacion]
+  gvAfiliaciones[$iAfiliacion, 2].Text = oContribuyente.aPaises[$iAfiliacion]
+  gvAfiliaciones[$iAfiliacion, 3].Text = oContribuyente.aRors[$iAfiliacion]
+
+End
+
+' ============================================
+' Función   : gvAfiliaciones_Click
+' Propósito : Cambia la afiliación a la vista, guardando antes la anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvAfiliaciones_Click()
+
+  If gvAfiliaciones.Row < 0 Or gvAfiliaciones.Row = $iAfiliacion Then Return
+  GuardarAfiliacionEnMemoria()
+  $iAfiliacion = gvAfiliaciones.Row
+  MostrarAfiliacion()
+
+End
+
+' ============================================
+' Función   : btnNuevaAfiliacion_Click
+' Propósito : Agrega una afiliación vacía al final y la deja a la vista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevaAfiliacion_Click()
+
+  GuardarAfiliacionEnMemoria()
+  oContribuyente.AgregarAfiliacion("", "", "", "", "")
+  RedibujarAfiliaciones(oContribuyente.aInstituciones.Count - 1)
+  txtInstitucionAfiliacion.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnQuitarAfiliacion_Click
+' Propósito : Quita la afiliación a la vista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarAfiliacion_Click()
+
+  If $iAfiliacion < 0 Then Return
+  oContribuyente.QuitarAfiliacion($iAfiliacion)
+  RedibujarAfiliaciones($iAfiliacion)
+
+End
+
+' ============================================
+' Función   : btnSubirAfiliacion_Click
+' Propósito : Sube la afiliación a la vista un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirAfiliacion_Click()
+
+  MoverAfiliacion(-1)
+
+End
+
+' ============================================
+' Función   : btnBajarAfiliacion_Click
+' Propósito : Baja la afiliación a la vista un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarAfiliacion_Click()
+
+  MoverAfiliacion(1)
+
+End
+
+' ============================================
+' Función   : MoverAfiliacion
+' Propósito : Mueve la afiliación a la vista; el orden es el de aparición en
+'             el XML
+' Parámetros: iPaso As Integer — -1 sube, 1 baja
+' Retorna   : nada
+' ============================================
+Private Sub MoverAfiliacion(iPaso As Integer)
+
+  If $iAfiliacion < 0 Then Return
+  GuardarAfiliacionEnMemoria()
+  RedibujarAfiliaciones(oContribuyente.MoverAfiliacion($iAfiliacion, iPaso))
+
+End
+
+' ============================================
+' Función   : btnCreditContribuyente_Click
+' Propósito : Elige los roles CRediT con FCreditRoles, que recibe y devuelve
+'             la lista por m_FuncionesGenericas.sCreditSeleccionado. Su botón
+'             Cerrar no la toca: cerrar sin aplicar deja la anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCreditContribuyente_Click()
+
+  m_FuncionesGenericas.sCreditSeleccionado = txtCreditContribuyente.Text
+  FCreditRoles.ShowModal()
+  txtCreditContribuyente.Text = m_FuncionesGenericas.sCreditSeleccionado
+
+End
+
+' ============================================
+' Función   : btnAceptarContribuyente_Click
+' Propósito : Pasa los controles al contribuyente, lo controla con las
+'             mismas reglas que el guardado del artículo y cierra con 1
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnAceptarContribuyente_Click()
+
+  Dim sAviso As String
+
+  ' --- 1. CONTROLES AL CONTRIBUYENTE ---
+  GuardarAfiliacionEnMemoria()
+  If oContribuyente.iIdAutor = 0 Then
+    oContribuyente.sNombreColectivo = Trim(txtColectivoContribuyente.Text)
+    oContribuyente.sNombre = oContribuyente.sNombreColectivo
+  Endif
+  oContribuyente.sRol = m_Articulo.RolesContribuyenteCodigos()[cmbRolContribuyente.Index]
+  oContribuyente.bCorrespondencia = chkCorrespondenciaContribuyente.Value
+  oContribuyente.sEmail = Trim(txtEmailContribuyente.Text)
+  oContribuyente.sCredit = Trim(txtCreditContribuyente.Text)
+  oContribuyente.sNotas = Trim(txtNotasContribuyente.Text)
+
+  ' --- 2. CONTROL: EL MISMO QUE APLICA EL GUARDADO (m_Articulo) ---
+  sAviso = m_Articulo.AvisoContribuyente(oContribuyente)
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return
+  Endif
+
+  Me.Close(1)
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra sin adoptar cambios
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close(0)
+
+End

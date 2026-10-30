@@ -115,9 +115,19 @@ preparar_pieza() {
         return 1
     fi
 
-    # EL .md POSTERIOR AL CANÓNICO: EL PDF SALDRÍA SIN LOS ÚLTIMOS CAMBIOS Y
-    # SIN ERROR. AVISO Y NO FALLO: LA PIEZA SE PREPARA IGUAL
-    avisar_md_posterior "$nombre" "$canonico"
+    # EL CANÓNICO QUE YA NO CORRESPONDE A SUS FUENTES: EL PDF SALDRÍA SIN
+    # LOS ÚLTIMOS CAMBIOS Y SIN ERROR. FRENA LA PIEZA, COMO EL ESTILO DE
+    # ARRIBA (SC-75, DECISIÓN DE ALBERTO). SIN HUELLA ES AVISO MIENTRAS DURE
+    # LA TRANSICIÓN: TODO CANÓNICO ANTERIOR A SC-75 ESTÁ ASÍ
+    vigencia_canonico "$canonico"
+    case "$VIGENCIA_ESTADO" in
+        vigente) ;;
+        sin_huella)
+            aviso "jats/c-$nombre.xml: vigencia desconocida, $VIGENCIA_DETALLE" ;;
+        *)
+            fallo "jats/c-$nombre.xml ${VIGENCIA_ESTADO/huerfano/huérfano}: $VIGENCIA_DETALLE. Regenerá su canónico"
+            return 1 ;;
+    esac
 
     # --- B. COLOREO DEL CÓDIGO (SC-42) ---
     # LA HOJA LEE LOS BLOQUES DE dir_codigo Y FRENA SI FALTA UNO: SIN ESTE

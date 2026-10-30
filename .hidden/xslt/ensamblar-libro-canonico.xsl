@@ -116,6 +116,19 @@ DOCUMENTACIÓN DE REFERENCIA:
     <!-- @version VA EN LA RAÍZ, QUE ES DONDE DocBook LA ESPERA. LAS PIEZAS
          LA TRAEN EN SU PROPIA RAÍZ Y AL COPIARSE QUEDABA REDUNDANTE ADENTRO:
          SE LES QUITA EN LOS MODOS DE COPIA. -->
+    <!-- LAS HUELLAS DE LOS CAPÍTULOS, ANTES DE LA RAÍZ Y EN EL ORDEN DEL
+         MANIFIESTO (SC-75). doc(…)/* SOLO TOMA EL ELEMENTO RAÍZ DE CADA
+         CAPÍTULO, ASÍ QUE LAS PI DE SU PRÓLOGO HAY QUE COPIARLAS APARTE.
+         CON ELLAS EL LIBRO QUEDA VIEJO CUANDO CAMBIA UNA FUENTE DE
+         CUALQUIER CAPÍTULO. UN CAPÍTULO QUE FALTA YA LO INFORMA EL
+         xsl:otherwise DE ABAJO -->
+    <xsl:for-each select="capitulos/capitulo">
+      <xsl:variable name="rutaHuellas" select="concat($proyecto_dir, '/', @path)"/>
+      <xsl:if test="doc-available($rutaHuellas)">
+        <xsl:copy-of select="doc($rutaHuellas)/processing-instruction('gb-fuente')"/>
+      </xsl:if>
+    </xsl:for-each>
+
     <book version="5.2" xml:lang="{$idiomaPrincipal}">
 
       <!-- INSERTAR EL <info> DEL LIBRO, CON EL MODELO DE BIBLIOGRAFÍA
@@ -322,11 +335,11 @@ DOCUMENTACIÓN DE REFERENCIA:
            SE VUELVEN A ESCRIBIR ABAJO DESDE EL MANIFIESTO. SIN ESTE FILTRO
            QUEDAN DOS DE CADA UNO, Y normalize-space() SOBRE DOS NODOS FRENA
            LAS HOJAS DE SALIDA.
-           EL ESTILO DE CITA (csl-style, BLOQUE 2c) TAMBIÉN SE DESCARTA: ES DEL
+           EL ESTILO DE CITA (estilo-cita, BLOQUE 2c) TAMBIÉN SE DESCARTA: ES DEL
            LIBRO, Y EL LIBRO YA LO TRAE UNA VEZ EN SU PROPIO <info> (SC-57) -->
       <info>
         <xsl:apply-templates select="db:info/@*
-          | db:info/node()[not(self::db:bibliomisc[@role = ('seccion-libro', 'orden-seccion', 'tipo-capitulo', 'csl-style')])]"
+          | db:info/node()[not(self::db:bibliomisc[@role = ('seccion-libro', 'orden-seccion', 'tipo-capitulo', 'estilo-cita')])]"
           mode="#current"/>
         <xsl:if test="$seccion != ''">
           <bibliomisc role="seccion-libro">

@@ -71,8 +71,10 @@
        SE ACTUALIZAN TAMBIÉN LOS xlink:href INTERNOS QUE LOS
        REFERENCIAN.
     2. ELIMINAR <textobject><phrase> DENTRO DE <figure> CUANDO
-       SU CONTENIDO DUPLICA EL <title> DE LA FIGURA (RUIDO
-       INTRODUCIDO POR PANDOC AL CONVERTIR IMÁGENES CON CAPTION).
+       SU CONTENIDO DUPLICA EL <title> DE LA FIGURA. EN UN LIBRO EL
+       TEXTO ALTERNATIVO ES OBLIGATORIO Y NO SE REEMPLAZA CON EL PIE
+       (SC-76): UNO QUE LO REPITE CUENTA COMO AUSENTE, Y gbp-alt LO
+       SEÑALA.
     3. DESCARTAR EL <title> DEL <section> RAÍZ DEL BODY PANDOC
        (ES EL PRIMER HEADING DEL MARKDOWN, REDUNDANTE CON EL
        <title> QUE VIENE EN <info>).
@@ -102,6 +104,14 @@
   <xsl:param name="tipo_capitulo" as="xs:string" select="'capitulo'"/>
   <xsl:param name="xml_id_capitulo" as="xs:string" select="''"/>
   <xsl:param name="idioma" as="xs:string" select="'es'"/>
+
+  <!-- RUTA DEL XML DE HUELLAS QUE ESCRIBE generar_canonicos_capitulos.sh
+       (SC-75): UNA <fuente archivo="…" sha256="…"/> POR CADA ARCHIVO QUE SE
+       COPIA DENTRO DEL CANÓNICO, EL .md Y SUS CUADROS. required: UN
+       CANÓNICO SIN SUS HUELLAS ES JUSTO LO QUE ESTA REGLA EVITA. CON UNA
+       HOJA ANTERIOR, QUE NO DECLARA EL PARÁMETRO, SAXON LO IGNORA Y EL
+       CANÓNICO SALE «SIN HUELLA»: EL VALIDADOR LO DICE (SC-11) -->
+  <xsl:param name="huellas" as="xs:string" required="yes"/>
 
   <!-- ================================================
        SALIDA: DOCBOOK 5.2 SIN DOCTYPE
@@ -240,6 +250,17 @@
 
     <!-- CARGAR FRAGMENTO body (OBLIGATORIO) -->
     <xsl:variable name="bodyDoc" select="document($body)"/>
+
+    <!-- LAS HUELLAS DE LAS FUENTES, ANTES DE LA RAÍZ (SC-75). EN EL PRÓLOGO
+         NO LAS VE jing NI LAS TOMAN LAS HOJAS DE SALIDA (GV-XML-02), Y LAS
+         LEE vigencia_canonico DE engine/comun.sh. LA FORMA —archivo PRIMERO,
+         sha256 DESPUÉS, COMILLAS DOBLES— ES LA QUE ESA FUNCIÓN ESPERA: SI
+         CAMBIA ACÁ, CAMBIA ALLÁ. EL CONTENIDO DE UNA PI NO SE ESCAPA: LA
+         RUTA LLEGA SIN COMILLAS PORQUE EL SCRIPT LAS RECHAZA -->
+    <xsl:for-each select="doc($huellas)/huellas/fuente">
+      <xsl:processing-instruction name="gb-fuente"
+        select="concat('archivo=&quot;', @archivo, '&quot; sha256=&quot;', @sha256, '&quot;')"/>
+    </xsl:for-each>
 
     <!-- ELEMENTO RAÍZ DINÁMICO -->
     <xsl:element name="{$elementoRaiz}">
@@ -416,9 +437,16 @@
 
   <!-- ================================================
        ELIMINAR <textobject><phrase> REDUNDANTE EN FIGURAS
-       PANDOC AGREGA UN <textobject> CON EL TEXTO DEL alt
-       DE LA IMAGEN, QUE COINCIDE CON EL <title> DE LA
-       <figure>. ES RUIDO VISUAL Y REDUNDANTE; SE OMITE.
+       NACIÓ CONTRA EL RUIDO DE PANDOC, QUE PONÍA EL alt
+       IGUAL AL <title>. HOY LA FIGURA LA ARMA EL FILTRO
+       (fenced-divs-to-elements-db.lua) Y SE QUEDA A
+       PROPÓSITO (DECISIÓN DE ALBERTO, 29/10/2026): EL TEXTO
+       ALTERNATIVO ES OBLIGATORIO Y NO SE REEMPLAZA CON EL
+       PIE. SI EL alt FALTA, EL FILTRO PONE EL PIE COMO RED
+       DE SEGURIDAD; ACÁ SE DESCARTA, Y LA REGLA gbp-alt
+       DEL VALIDADOR SEÑALA LA FIGURA SIN TEXTO ALTERNATIVO
+       (SC-76). NO SACAR ESTA PLANTILLA SIN AFLOJAR ANTES
+       ESA REGLA.
        ================================================ -->
   <xsl:template match="db:figure/db:mediaobject/db:textobject[
       normalize-space(db:phrase) = normalize-space(ancestor::db:figure[1]/db:title)

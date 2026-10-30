@@ -1,0 +1,2450 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FMetadatosArticulo
+' Propósito  : Metadatos de los artículos del número abierto, sobre el esquema
+'              nuevo. Reemplaza a FMetadatosArticulos como destino del botón
+'              de FMain (decisión de Alberto, 26/10). Pestañas con nombre
+'              (decisión 19). Entrega A: Identificación y Permisos; las demás
+'              pestañas llegan en las entregas B a E.
+'              Los títulos traducidos van en Identificación con su propio
+'              selector de idioma (decisión de Alberto, 26/10).
+'              Entrega B: Contribuyentes, en memoria (CContribuyente) y
+'              editados en FContribuyenteArticulo; se graban con «Guardar»
+'              (decisiones de Alberto, 28/10).
+'              Entrega C: Textos por idioma (resumen simple y palabras clave),
+'              en memoria (CTextosArticulo), con su propio selector de idioma
+'              (decisiones de Alberto, 28/10).
+'              Entrega D2: financiadores (grilla + campos) y declaraciones
+'              del núcleo por tipo e idioma, en memoria como
+'              CFinanciamientoArticulo (SC-73).
+'              Entrega D1: fechas, DOI y páginas (solo lectura) en «Fechas e
+'              identificadores»; autoría anónima y notas de autor en
+'              «Contribuyentes» (decisiones de Alberto, 28/10).
+'              Entrega C3: las palabras de vocabulario controlado se buscan
+'              en el catálogo global mientras se tipea; lo que no está, se
+'              agrega y entra al catálogo al guardar (decisiones de Alberto,
+'              28/10).
+'              Entrega C2: si la sección del artículo tiene plantilla de
+'              resumen, el resumen se edita por secciones (lista + texto).
+'              Los controles y los manejadores viven acá; las consultas, las
+'              validaciones y las grabaciones, en m_Articulo.
+' ============================================
+
+' NÚMERO DEL PROYECTO ABIERTO Y SU REVISTA
+Private $iIdNumero As Integer
+Private $iIdRevista As Integer
+' UNA ENTRADA POR FILA DE LA GRILLA, EN EL MISMO ORDEN: NOMBRE DEL ARCHIVO, id
+' (0 = SIN METADATOS) Y SI EL ARCHIVO EXISTE (False = HUÉRFANA)
+Private $aArchivos As New String[]
+Private $aIds As New Integer[]
+Private $aConArchivo As New Boolean[]
+' ARTÍCULO EN EDICIÓN: FILA DE LA GRILLA E id (0 = TODAVÍA NO ESTÁ EN LA BASE)
+Private $iFila As Integer = -1
+Private $iIdArticulo As Integer
+' UNA ENTRADA POR ÍTEM DE LOS COMBOS DE SECCIÓN Y DE DOSSIER (0 = SIN DOSSIER)
+Private $aIdsSecciones As New Integer[]
+Private $aIdsDossiers As New Integer[]
+' TIPO DE ACCESO: EL PRIMER ÍTEM ES «HEREDA» (NULL)
+Private $aAccesoCodigos As New String[]
+' IDIOMAS DE PUBLICACIÓN DE LA REVISTA, EN SU ORDEN
+Private $aIdiomasRevista As New String[]
+' TÍTULOS Y SUBTÍTULOS TRADUCIDOS EN MEMORIA (CLAVE: IDIOMA) E IDIOMA A LA
+' VISTA. SE GRABAN AL GUARDAR EL ARTÍCULO
+Private $cTitulosTrad As New Collection
+Private $cSubtitulosTrad As New Collection
+Private $sIdiomaTrad As String
+' CONTRIBUYENTES EN MEMORIA, EN ORDEN. SE GRABAN AL GUARDAR EL ARTÍCULO
+Private $aContribuyentes As New CContribuyente[]
+' SI NO SE PUDIERON LEER, GUARDAR BORRARÍA LOS QUE HAY: SE BLOQUEA
+Private $bContribuyentesIlegibles As Boolean
+' PUBLICADO A LA VISTA: EL DIÁLOGO DEL CONTRIBUYENTE SE ABRE SOLO PARA VER
+Private $bSoloLectura As Boolean
+' RESÚMENES Y PALABRAS CLAVE EN MEMORIA, E IDIOMA A LA VISTA EN LA PESTAÑA
+Private $oTextos As New CTextosArticulo
+' FINANCIAMIENTO Y DECLARACIONES EN MEMORIA (ENTREGA D2): FINANCIADOR ELEGIDO
+' (-1 NINGUNO); CÓDIGO DE TIPO POR ÍTEM DEL COMBO; TIPO E IDIOMA A LA VISTA
+Private $oFin As New CFinanciamientoArticulo
+Private $iFinanciador As Integer = -1
+Private $aTiposDecl As New String[]
+Private $sTipoDecl As String
+Private $sIdiomaDecl As String
+' SI NO SE PUDIERON LEER, GUARDAR LOS BORRARÍA: SE BLOQUEA (SC-73)
+Private $bFinIlegible As Boolean
+Private Const COLUMNAS_FINANCIADORES As Integer = 3
+' RELACIONES Y UBICACIONES EN MEMORIA (ENTREGA D3): RELACIÓN ELEGIDA (-1
+' NINGUNA) Y id DE CADA ÍTEM DEL COMBO DE DESTINO (0 = EXTERNO)
+Private $oRel As New CRelacionesArticulo
+Private $iRelacion As Integer = -1
+Private $aIdsDestino As New Integer[]
+' SI NO SE PUDIERON LEER, GUARDAR LAS BORRARÍA: SE BLOQUEA (SC-73)
+Private $bRelIlegible As Boolean
+Private Const COLUMNAS_RELACIONES As Integer = 2
+Private $sIdiomaTextos As String
+' SI HAY TEXTOS QUE LA PESTAÑA NO PUEDE MOSTRAR ENTEROS, GUARDAR LOS
+' BORRARÍA: SE BLOQUEA CON ESTE MOTIVO (VACÍO = SE PUEDE GUARDAR)
+Private $sAvisoTextos As String
+' SECCIÓN DEL RESUMEN ESTRUCTURADO A LA VISTA (ÍNDICE EN LA PLANTILLA; -1 NINGUNA)
+Private $iSeccionResumen As Integer = -1
+' MODO DEL RESUMEN A LA VISTA (True = POR SECCIONES). VARIABLE PROPIA Y NO
+' .Visible: CON LA PESTAÑA OCULTA, Visible PODRÍA INFORMAR LA DEL CONTENEDOR
+Private $bEstructuradoALaVista As Boolean
+' SUGERENCIAS DEL CATÁLOGO A LA VISTA: TÉRMINO E IDENTIFICADOR, UNA ENTRADA
+' POR ÍTEM DE lstCoincidencias, EN EL MISMO ORDEN
+Private $aCoincTerminos As New String[]
+Private $aCoincIds As New String[]
+' SUGERENCIAS COMO MÁXIMO
+Private Const MAX_COINCIDENCIAS As Integer = 20
+' EVITA QUE LOS Click DE LOS COMBOS ACTÚEN MIENTRAS SE CARGA
+Private $bCargando As Boolean
+' COLUMNAS DE LA GRILLA (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_ARTICULOS As Integer = 3
+Private Const COLUMNAS_CONTRIBUYENTES As Integer = 5
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Ubica el número del proyecto, prepara grilla y combos y llena
+'             la lista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim rNumero As Result
+  Dim i As Integer
+
+  ' --- 1. NÚMERO DEL PROYECTO (RC-GM-16: id DE LA VARIABLE DE SESIÓN) ---
+  rNumero = m_Numero.CargarNumeroDeProyecto(m_InicioCierre.IdProyectoEnCurso)
+  If Not rNumero Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto abierto no tiene número: complete primero los metadatos del número.")
+    Me.Close()
+    Return
+  Endif
+  $iIdNumero = rNumero!id_numero
+  $iIdRevista = rNumero!id_revista
+  lblNumeroArticulo.Text = m_Numero.DescripcionNumero(m_InicioCierre.IdProyectoEnCurso)
+
+  ' --- 2. GRILLA ---
+  With gvArticulos
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_ARTICULOS
+    .Columns[0].Title = "Archivo"
+    .Columns[0].Width = 150
+    .Columns[1].Title = "Título"
+    .Columns[1].Width = 200
+    .Columns[2].Title = "Estado"
+    .Columns[2].Width = 110
+  End With
+
+  With gvContribuyentes
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_CONTRIBUYENTES
+    .Columns[0].Title = "#"
+    .Columns[0].Width = 40
+    .Columns[1].Title = "Contribuyente"
+    .Columns[1].Width = 300
+    .Columns[2].Title = "Rol"
+    .Columns[2].Width = 110
+    .Columns[3].Title = "Correspondencia"
+    .Columns[3].Width = 140
+    .Columns[4].Title = "Afiliación principal"
+    .Columns[4].Width = 360
+  End With
+
+  With gvFinanciadores
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_FINANCIADORES
+    .Columns[0].Title = "Financiador"
+    .Columns[0].Width = 380
+    .Columns[1].Title = "Identificador"
+    .Columns[1].Width = 320
+    .Columns[2].Title = "Proyecto"
+    .Columns[2].Width = 160
+  End With
+
+  With gvRelaciones
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_RELACIONES
+    .Columns[0].Title = "Tipo"
+    .Columns[0].Width = 180
+    .Columns[1].Title = "Destino"
+    .Columns[1].Width = 680
+  End With
+
+  ' --- 3. COMBOS ---
+  LlenarCombos()
+  ' TIPOS DE RELACIÓN: CÓDIGO JATS Y QUÉ ES, DESDE ESTE ARTÍCULO
+  For i = 0 To m_Articulo.TiposRelacionCodigos().Count - 1
+    cmbTipoRelacion.Add(m_Articulo.TiposRelacionCodigos()[i] & " — " & m_Articulo.TiposRelacionLeyendas()[i])
+  Next
+
+  ' --- 4. LISTA ---
+  CargarLista()
+
+End
+
+' ============================================
+' Función   : LlenarCombos
+' Propósito : Secciones y dossiers del número, article-type, idiomas y
+'             licencias
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LlenarCombos()
+
+  Dim aIdiomas As String[]
+  Dim rDatos As Result
+  Dim sIdioma As String
+
+  ' --- 1. IDIOMA DE LOS TÍTULOS DE SECCIÓN Y DOSSIER: EL PRIMERO DE LA REVISTA ---
+  aIdiomas = m_Revistas.IdiomasDeRevista(m_ConexionBD.mConn, $iIdRevista)
+  If aIdiomas.Count > 0 Then sIdioma = aIdiomas[0]
+  ' LOS MISMOS IDIOMAS ALIMENTAN EL SELECTOR DE TRADUCCIÓN
+  $aIdiomasRevista = aIdiomas
+
+  ' --- 2. SECCIONES ---
+  cmbSeccionArticulo.Clear()
+  $aIdsSecciones.Clear()
+  rDatos = m_Revistas.ListarSecciones(m_ConexionBD.mConn, $iIdRevista, sIdioma)
+  If rDatos Then
+    While rDatos.Available
+      If IsNull(rDatos!titulo) Then
+        cmbSeccionArticulo.Add(rDatos!codigo)
+      Else
+        cmbSeccionArticulo.Add(rDatos!titulo & "  [" & rDatos!codigo & "]")
+      Endif
+      $aIdsSecciones.Add(rDatos!id_seccion)
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 3. DOSSIERS: EL PRIMER ÍTEM ES «SIN DOSSIER» ---
+  cmbDossierArticulo.Clear()
+  $aIdsDossiers.Clear()
+  cmbDossierArticulo.Add("(sin dossier)")
+  $aIdsDossiers.Add(0)
+  rDatos = m_Dossiers.ListarDossiers($iIdNumero, sIdioma)
+  If rDatos Then
+    While rDatos.Available
+      cmbDossierArticulo.Add(If(IsNull(rDatos!titulo), "(dossier sin título)", rDatos!titulo))
+      $aIdsDossiers.Add(rDatos!id_dossier)
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 4. CATÁLOGOS ---
+  cmbTipoArticulo.List = m_Revistas.TiposArticulo()
+  ' IDIOMA PRINCIPAL: EL CATÁLOGO COMPLETO, NO SOLO LOS DE LA REVISTA (UN
+  ' ARTÍCULO PUEDE ESTAR EN UN IDIOMA QUE LA REVISTA NO DECLARA)
+  m_Idiomas.LlenarCombo(cmbIdiomaArticulo)
+  ' LICENCIAS DE CONTENIDO: EDITABLE (SC-23)
+  m_Licencias.LlenarCombo(cmbLicenciaArticulo, False)
+  ' VOCABULARIOS CONTROLADOS: EDITABLE, ACEPTA OTROS (SC-23)
+  cmbVocabulario.List = m_Vocabularios.Vocabularios(m_ConexionBD.mConn)
+  ' FINANCIAMIENTO Y DECLARACIONES (ENTREGA D2)
+  cmbTipoIdFinanciador.List = m_Articulo.TiposIdFinanciadorLeyendas()
+  cmbTipoDeclaracion.Clear()
+  $aTiposDecl.Clear()
+  rDatos = m_Articulo.TiposDeclaracionNucleo()
+  If rDatos Then
+    While rDatos.Available
+      cmbTipoDeclaracion.Add(rDatos!etiqueta)
+      $aTiposDecl.Add(rDatos!codigo)
+      rDatos.MoveNext
+    Wend
+  Endif
+
+End
+
+' ============================================
+' Función   : CargarLista
+' Propósito : Cruza los a-*.md de articulos/ con las filas de la base y llena
+'             la grilla. Deja el editor vacío
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarLista()
+
+  Dim aEnDisco As String[]
+  Dim rFilas As Result
+  Dim cIds As New Collection
+  Dim cTitulos As New Collection
+  Dim cEstados As New Collection
+  Dim sArchivo As String
+  Dim iFila As Integer
+
+  ' --- 1. LO QUE HAY EN LA BASE, POR NOMBRE DE ARCHIVO ---
+  rFilas = m_Articulo.FilasDelNumero($iIdNumero)
+  If rFilas Then
+    While rFilas.Available
+      cIds[rFilas!nombre_archivo] = rFilas!id_articulo
+      cTitulos[rFilas!nombre_archivo] = rFilas!titulo
+      cEstados[rFilas!nombre_archivo] = rFilas!estado
+      rFilas.MoveNext
+    Wend
+  Endif
+
+  ' --- 2. LOS ARCHIVOS, EN ORDEN; DESPUÉS LAS HUÉRFANAS ---
+  $aArchivos.Clear()
+  $aIds.Clear()
+  $aConArchivo.Clear()
+  aEnDisco = m_Articulo.ArchivosDelProyecto()
+  For Each sArchivo In aEnDisco
+    $aArchivos.Add(sArchivo)
+    If cIds.Exist(sArchivo) Then
+      $aIds.Add(cIds[sArchivo])
+    Else
+      $aIds.Add(0)
+    Endif
+    $aConArchivo.Add(True)
+  Next
+  ' UNA FILA CUYO ARCHIVO YA NO ESTÁ: SE MUESTRA PARA QUE NO QUEDE OCULTA
+  For Each iFila In cIds
+    sArchivo = cIds.Key
+    If aEnDisco.Find(sArchivo) < 0 Then
+      $aArchivos.Add(sArchivo)
+      $aIds.Add(iFila)
+      $aConArchivo.Add(False)
+    Endif
+  Next
+
+  ' --- 3. GRILLA ---
+  gvArticulos.Rows.Count = $aArchivos.Count
+  For iFila = 0 To $aArchivos.Count - 1
+    sArchivo = $aArchivos[iFila]
+    gvArticulos[iFila, 0].Text = sArchivo
+    If $aIds[iFila] = 0 Then
+      gvArticulos[iFila, 1].Text = ""
+      gvArticulos[iFila, 2].Text = "Sin metadatos"
+    Else
+      ' UN TÍTULO NULL NO CREA SU CLAVE (GV-68) Y SE LEE VACÍO
+      gvArticulos[iFila, 1].Text = cTitulos[sArchivo]
+      gvArticulos[iFila, 2].Text = m_Articulo.LeyendaEstado(cEstados[sArchivo])
+    Endif
+    If Not $aConArchivo[iFila] Then gvArticulos[iFila, 2].Text = "Huérfana: falta el archivo"
+  Next
+
+  ' --- 4. NADA ELEGIDO ---
+  LimpiarEditor()
+
+End
+
+' ============================================
+' Función   : LimpiarEditor
+' Propósito : Editor vacío y botón de guardar apagado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarEditor()
+
+  $bCargando = True
+  $iFila = -1
+  $iIdArticulo = 0
+  txtArchivoArticulo.Text = ""
+  cmbSeccionArticulo.Index = -1
+  cmbDossierArticulo.Index = 0
+  cmbTipoArticulo.Index = -1
+  cmbIdiomaArticulo.Index = -1
+  txtTituloArticulo.Text = ""
+  txtSubtituloArticulo.Text = ""
+  txtTituloCortoArticulo.Text = ""
+  $cTitulosTrad = New Collection
+  $cSubtitulosTrad = New Collection
+  $sIdiomaTrad = ""
+  cmbIdiomaTradArticulo.Clear()
+  txtTituloTradArticulo.Text = ""
+  txtSubtituloTradArticulo.Text = ""
+  cmbLicenciaArticulo.Text = ""
+  txtUrlLicenciaArticulo.Text = ""
+  txtTitularArticulo.Text = ""
+  txtAnioCopyrightArticulo.Text = ""
+  dtbRecepcionArticulo.Value = Null
+  dtbRevisionArticulo.Value = Null
+  dtbAceptacionArticulo.Value = Null
+  dtbPublicacionArticulo.Value = Null
+  txtDoiArticulo.Text = ""
+  txtPaginasArticulo.Text = ""
+  chkAnonimosArticulo.Value = False
+  txaNotasAutorArticulo.Text = ""
+  $oFin = New CFinanciamientoArticulo
+  $bFinIlegible = False
+  RedibujarFinanciadores(-1)
+  $oRel = New CRelacionesArticulo
+  $bRelIlegible = False
+  cmbDestinoRelacion.Clear()
+  $aIdsDestino.Clear()
+  RedibujarRelaciones(-1)
+  MostrarUbicaciones()
+  ' EL TIPO DE DECLARACIÓN A LA VISTA ES EL PRIMERO DEL CATÁLOGO
+  If $aTiposDecl.Count > 0 Then
+    cmbTipoDeclaracion.Index = 0
+    $sTipoDecl = $aTiposDecl[0]
+  Else
+    $sTipoDecl = ""
+  Endif
+  $sIdiomaDecl = ""
+  cmbIdiomaDeclaracion.Clear()
+  txaDeclaracion.Text = ""
+  $aContribuyentes = New CContribuyente[]
+  $bContribuyentesIlegibles = False
+  RedibujarContribuyentes(-1)
+  hbxBotonesContribuyentes.Enabled = False
+  $oTextos = New CTextosArticulo
+  $sIdiomaTextos = ""
+  $sAvisoTextos = ""
+  cmbIdiomaTextos.Clear()
+  lblTipoResumen.Text = ""
+  txaResumen.Text = ""
+  $iSeccionResumen = -1
+  lstSeccionesResumen.Clear()
+  txaSeccionResumen.Text = ""
+  txaResumen.Visible = True
+  hbxResumenEstructurado.Visible = False
+  $bEstructuradoALaVista = False
+  txaPalabrasAutor.Text = ""
+  txtBuscarControlado.Text = ""
+  lstCoincidencias.Clear()
+  $aCoincTerminos.Clear()
+  $aCoincIds.Clear()
+  lstControladas.Clear()
+  cmbVocabulario.Text = ""
+  lblEstadoArticulo.Text = ""
+  btnGuardarArticulo.Enabled = False
+  $bCargando = False
+
+End
+
+' ============================================
+' Función   : gvArticulos_Click
+' Propósito : Al elegir una fila: carga el artículo, o prepara el alta si el
+'             archivo todavía no tiene metadatos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvArticulos_Click()
+
+  Dim iFila As Integer
+
+  iFila = gvArticulos.Row
+  If iFila < 0 Or iFila >= $aArchivos.Count Then Return
+
+  If $aIds[iFila] = 0 Then
+    PrepararAlta(iFila)
+  Else
+    CargarEditor(iFila)
+  Endif
+
+End
+
+' ============================================
+' Función   : PrepararHerencia
+' Propósito : Muestra en los campos heredables, como texto de ayuda, el valor
+'             de la revista que toman mientras estén vacíos (decisión 14). El
+'             tipo de acceso es un combo de solo lectura: su primer ítem dice
+'             qué se hereda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub PrepararHerencia()
+
+  Dim rRevista As Result
+  Dim sAcceso As String
+  Dim iIndice As Integer
+
+  ' --- 1. VALORES DE LA REVISTA ---
+  rRevista = m_Articulo.ValoresRevista($iIdNumero)
+
+  ' --- 2. TEXTOS DE AYUDA ---
+  ' Placeholder EXISTE EN TextBox Y EN ComboBox EDITABLE (VERIFICADO EN 3.19)
+  If rRevista Then
+    cmbLicenciaArticulo.Placeholder = TextoHerencia(rRevista!licencia_defecto)
+    txtUrlLicenciaArticulo.Placeholder = TextoHerencia(rRevista!url_licencia_defecto)
+    txtTitularArticulo.Placeholder = TextoHerencia(rRevista!titular_copyright_defecto)
+    If IsNull(rRevista!tipo_acceso_defecto) Then
+      sAcceso = "sin valor"
+    Else
+      iIndice = m_Revistas.TiposAccesoCodigos().Find(rRevista!tipo_acceso_defecto)
+      If iIndice < 0 Then
+        sAcceso = rRevista!tipo_acceso_defecto
+      Else
+        sAcceso = m_Revistas.TiposAccesoLeyendas()[iIndice]
+      Endif
+    Endif
+  Else
+    sAcceso = "sin valor"
+  Endif
+  txtAnioCopyrightArticulo.Placeholder = "Vacío: el año de la publicación"
+
+  ' --- 3. TIPO DE ACCESO: «HEREDA» + LOS TRES VALORES ---
+  $aAccesoCodigos = ["", "abierto", "suscripcion", "embargo"]
+  cmbAccesoArticulo.List = ["(hereda de la revista: " & sAcceso & ")", "Abierto", "Suscripción", "Embargo"]
+
+End
+
+' ============================================
+' Función   : TextoHerencia
+' Propósito : El texto de ayuda de un campo heredable
+' Parámetros: vValor As Variant — el valor de la revista (puede ser Null)
+' Retorna   : String — «Hereda de la revista: …»
+' ============================================
+Private Function TextoHerencia(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return "Hereda de la revista (que no define valor)"
+  Return "Hereda de la revista: " & vValor
+
+End
+
+' ============================================
+' Función   : PrepararAlta
+' Propósito : El archivo no tiene metadatos: editor vacío con el nombre del
+'             archivo; la fila se crea al guardar
+' Parámetros: iFila As Integer — fila de la grilla
+' Retorna   : nada
+' ============================================
+Private Sub PrepararAlta(iFila As Integer)
+
+  Dim aIdiomas As String[]
+
+  LimpiarEditor()
+  $bCargando = True
+  $iFila = iFila
+  $iIdArticulo = 0
+  txtArchivoArticulo.Text = $aArchivos[iFila]
+  PrepararHerencia()
+  cmbAccesoArticulo.Index = 0
+  ' IDIOMA PROPUESTO: EL PRIMERO DE LA REVISTA
+  aIdiomas = m_Revistas.IdiomasDeRevista(m_ConexionBD.mConn, $iIdRevista)
+  If aIdiomas.Count > 0 Then cmbIdiomaArticulo.Index = cmbIdiomaArticulo.Find(aIdiomas[0])
+  ' SIN TRADUCCIONES TODAVÍA: EL SELECTOR OFRECE LOS DEMÁS IDIOMAS DE LA REVISTA
+  ArmarIdiomasTraduccion("")
+  ArmarIdiomasTextos("")
+  ArmarIdiomasDeclaracion("")
+  ArmarDestinos()
+  RedibujarRelaciones(-1)
+  lblEstadoArticulo.Text = "Sin metadatos: se crean al guardar."
+  FijarEdicion(True)
+  $bCargando = False
+
+End
+
+' ============================================
+' Función   : CargarEditor
+' Propósito : Vuelca un artículo de la base al editor
+' Parámetros: iFila As Integer — fila de la grilla
+' Retorna   : nada
+' ============================================
+Private Sub CargarEditor(iFila As Integer)
+
+  Dim rArticulo As Result
+  Dim aLeidos As CContribuyente[]
+  Dim oTextos As CTextosArticulo
+  Dim oFin As CFinanciamientoArticulo
+  Dim oRel As CRelacionesArticulo
+  Dim iIndice As Integer
+  Dim bPublicado As Boolean
+
+  ' --- 1. LECTURA ---
+  rArticulo = m_Articulo.CargarArticulo($aIds[iFila])
+  If Not rArticulo Then Return
+
+  ' --- 2. IDENTIFICACIÓN ---
+  LimpiarEditor()
+  $bCargando = True
+  $iFila = iFila
+  $iIdArticulo = $aIds[iFila]
+  txtArchivoArticulo.Text = rArticulo!nombre_archivo
+  ' Find DE UN Integer[] NO ACEPTA Null (MEDIDO: «Type mismatch»)
+  If IsNull(rArticulo!id_seccion) Then
+    cmbSeccionArticulo.Index = -1
+  Else
+    cmbSeccionArticulo.Index = $aIdsSecciones.Find(rArticulo!id_seccion)
+  Endif
+  If IsNull(rArticulo!id_dossier) Then
+    cmbDossierArticulo.Index = 0
+  Else
+    cmbDossierArticulo.Index = $aIdsDossiers.Find(rArticulo!id_dossier)
+  Endif
+  cmbTipoArticulo.Index = m_Revistas.TiposArticulo().Find(rArticulo!article_type)
+  ' Find DISTINGUE MAYÚSCULAS, IGUAL QUE EL COMBO DE SOLO LECTURA (SC-23)
+  cmbIdiomaArticulo.Index = cmbIdiomaArticulo.Find(rArticulo!idioma_principal)
+  txtTituloArticulo.Text = rArticulo!titulo
+  txtSubtituloArticulo.Text = rArticulo!subtitulo
+  txtTituloCortoArticulo.Text = rArticulo!titulo_corto
+  ' TRADUCCIONES: A MEMORIA, Y A LA VISTA EL PRIMER IDIOMA DISPONIBLE
+  $cTitulosTrad = m_Articulo.TextosTraducidos($iIdArticulo, "titulo")
+  $cSubtitulosTrad = m_Articulo.TextosTraducidos($iIdArticulo, "subtitulo")
+  ArmarIdiomasTraduccion("")
+
+  ' --- 2 BIS. FECHAS E IDENTIFICADORES (ENTREGA D1) ---
+  ' UN NULL DE LA BASE DEJA EL DateBox VACÍO (MEDIDO: Value ACEPTA Null)
+  dtbRecepcionArticulo.Value = rArticulo!fecha_recepcion
+  dtbRevisionArticulo.Value = rArticulo!fecha_revision
+  dtbAceptacionArticulo.Value = rArticulo!fecha_aceptacion
+  dtbPublicacionArticulo.Value = rArticulo!fecha_publicacion
+  txtDoiArticulo.Text = rArticulo!doi
+  txtPaginasArticulo.Text = m_Articulo.TextoPaginas(rArticulo!pagina_inicio, rArticulo!pagina_fin)
+  ' TINYINT(1) LLEGA COMO Boolean (RC-GM-01)
+  chkAnonimosArticulo.Value = rArticulo!autores_anonimos
+  txaNotasAutorArticulo.Text = rArticulo!notas_autor
+
+  ' --- 3. PERMISOS: VACÍO ES «HEREDA» ---
+  PrepararHerencia()
+  cmbLicenciaArticulo.Text = rArticulo!licencia
+  txtUrlLicenciaArticulo.Text = rArticulo!url_licencia
+  txtTitularArticulo.Text = rArticulo!titular_copyright
+  txtAnioCopyrightArticulo.Text = If(IsNull(rArticulo!anio_copyright), "", CStr(rArticulo!anio_copyright))
+  If IsNull(rArticulo!tipo_acceso) Then
+    cmbAccesoArticulo.Index = 0
+  Else
+    iIndice = $aAccesoCodigos.Find(rArticulo!tipo_acceso)
+    If iIndice < 0 Then iIndice = 0
+    cmbAccesoArticulo.Index = iIndice
+  Endif
+
+  ' --- 4. CONTRIBUYENTES ---
+  aLeidos = m_Articulo.ContribuyentesArticulo($iIdArticulo)
+  If aLeidos Then
+    $aContribuyentes = aLeidos
+  Else
+    ' NO SE PUDIERON LEER (YA SE INFORMÓ): GUARDAR LOS BORRARÍA
+    $bContribuyentesIlegibles = True
+  Endif
+  RedibujarContribuyentes(-1)
+
+  ' --- 5. TEXTOS POR IDIOMA ---
+  ' PRIMERO SE MIRA SI HAY ALGO QUE LA PESTAÑA NO PUEDE MOSTRAR ENTERO
+  $sAvisoTextos = m_Articulo.AvisoTextosNoEditables($iIdArticulo)
+  oTextos = m_Articulo.TextosArticulo($iIdArticulo)
+  If oTextos Then
+    $oTextos = oTextos
+  Else
+    ' NO SE PUDIERON LEER (YA SE INFORMÓ): GUARDAR LOS BORRARÍA
+    If $sAvisoTextos = "" Then $sAvisoTextos = "No se pudieron leer los resúmenes y las palabras clave."
+  Endif
+  ' LA SECCIÓN DECIDE SI EL RESUMEN ES SIMPLE O ESTRUCTURADO (ENTREGA C2)
+  If IsNull(rArticulo!id_seccion) Then
+    m_Articulo.CargarPlantilla($oTextos, 0)
+  Else
+    m_Articulo.CargarPlantilla($oTextos, rArticulo!id_seccion)
+  Endif
+  ArmarIdiomasTextos("")
+
+  ' --- 5 BIS. FINANCIAMIENTO Y DECLARACIONES (ENTREGA D2) ---
+  oFin = m_Articulo.FinanciamientoArticulo($iIdArticulo)
+  If oFin Then
+    $oFin = oFin
+  Else
+    ' NO SE PUDIERON LEER (YA SE INFORMÓ): GUARDAR LOS BORRARÍA
+    $bFinIlegible = True
+  Endif
+  RedibujarFinanciadores(-1)
+  ArmarIdiomasDeclaracion("")
+
+  ' --- 5 TER. RELACIONES Y UBICACIONES (ENTREGA D3) ---
+  oRel = m_Articulo.RelacionesArticulo($iIdArticulo)
+  If oRel Then
+    $oRel = oRel
+  Else
+    ' NO SE PUDIERON LEER (YA SE INFORMÓ): GUARDAR LAS BORRARÍA
+    $bRelIlegible = True
+  Endif
+  ' EL COMBO DE DESTINO EXCLUYE A ESTE ARTÍCULO: SE ARMA CON SU id YA FIJADO
+  ArmarDestinos()
+  RedibujarRelaciones(-1)
+  MostrarUbicaciones()
+
+  ' --- 6. ESTADO: UN PUBLICADO ES DE SOLO LECTURA (DECISIÓN 17) ---
+  bPublicado = (rArticulo!estado = "publicado")
+  lblEstadoArticulo.Text = "Estado: " & m_Articulo.LeyendaEstado(rArticulo!estado)
+  If Not $aConArchivo[iFila] Then lblEstadoArticulo.Text &= "  ·  Huérfana: falta el archivo en articulos/"
+  FijarEdicion(Not bPublicado)
+  If $bContribuyentesIlegibles Then
+    btnGuardarArticulo.Enabled = False
+    lblEstadoArticulo.Text &= "  ·  No se pudieron leer los contribuyentes: no se puede guardar"
+  Endif
+  If $sAvisoTextos <> "" Then
+    btnGuardarArticulo.Enabled = False
+    lblEstadoArticulo.Text &= "  ·  " & $sAvisoTextos & " No se puede guardar desde acá."
+  Endif
+  If $bFinIlegible Then
+    btnGuardarArticulo.Enabled = False
+    lblEstadoArticulo.Text &= "  ·  No se pudieron leer el financiamiento y las declaraciones: no se puede guardar"
+  Endif
+  If $bRelIlegible Then
+    btnGuardarArticulo.Enabled = False
+    lblEstadoArticulo.Text &= "  ·  No se pudieron leer las relaciones y ubicaciones: no se puede guardar"
+  Endif
+  $bCargando = False
+
+End
+
+' ============================================
+' Función   : FijarEdicion
+' Propósito : Habilita o bloquea la edición de las pestañas y el guardado. Con
+'             la edición bloqueada, los contribuyentes se pueden abrir para
+'             ver pero no cambiar
+' Parámetros: bEditable As Boolean — False: solo lectura (publicado)
+' Retorna   : nada
+' ============================================
+Private Sub FijarEdicion(bEditable As Boolean)
+
+  svwIdentificacion.Enabled = bEditable
+  svwPermisos.Enabled = bEditable
+  btnGuardarArticulo.Enabled = bEditable
+  ' LA GRILLA QUEDA VIVA PARA ABRIR Y VER; LOS BOTONES QUE CAMBIAN, NO
+  hbxBotonesContribuyentes.Enabled = True
+  btnPersonaContribuyente.Enabled = bEditable
+  btnColectivoContribuyente.Enabled = bEditable
+  btnQuitarContribuyente.Enabled = bEditable
+  btnSubirContribuyente.Enabled = bEditable
+  btnBajarContribuyente.Enabled = bEditable
+  $bSoloLectura = Not bEditable
+  ' TEXTOS: SOLO LECTURA Y NO APAGADOS, PARA QUE UN PUBLICADO SE PUEDA LEER Y
+  ' RECORRER; EL SELECTOR DE IDIOMA SIGUE VIVO
+  txaResumen.ReadOnly = Not bEditable
+  txaSeccionResumen.ReadOnly = Not bEditable
+  txaPalabrasAutor.ReadOnly = Not bEditable
+  ' CONTROLADAS: LA LISTA ELEGIDA SE VE; BUSCAR, AGREGAR Y REORDENAR, NO
+  hbxBuscarControlado.Enabled = bEditable
+  vbxBotonesControladas.Enabled = bEditable
+  cmbVocabulario.Enabled = bEditable
+  ' FECHAS: Enabled Y NO ReadOnly, QUE NO BLOQUEA EL CALENDARIO (RC-GM-14)
+  svwFechasArticulo.Enabled = bEditable
+  chkAnonimosArticulo.Enabled = bEditable
+  txaNotasAutorArticulo.ReadOnly = Not bEditable
+  ' FINANCIAMIENTO: LA GRILLA SE VE; LOS BOTONES Y LOS CAMPOS, SEGÚN EL ESTADO
+  vbxBotonesFinanciadores.Enabled = bEditable
+  FijarCamposFinanciador()
+  txaDeclaracion.ReadOnly = Not bEditable
+  ' RELACIONES: LA GRILLA SE VE; LOS BOTONES Y LOS CAMPOS, SEGÚN EL ESTADO.
+  ' LAS URL, SOLO LECTURA Y NO APAGADAS, PARA PODER COPIARLAS
+  vbxBotonesRelaciones.Enabled = bEditable
+  FijarCamposRelacion()
+  txtUrlPagina.ReadOnly = Not bEditable
+  txtUrlHtml.ReadOnly = Not bEditable
+  txtUrlPdf.ReadOnly = Not bEditable
+  txtUrlEpub.ReadOnly = Not bEditable
+  txtUrlXml.ReadOnly = Not bEditable
+
+End
+
+' ============================================
+' Función   : cmbSeccionArticulo_Click
+' Propósito : Una sección propone su article-type, si todavía no hay uno
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbSeccionArticulo_Click()
+
+  Dim sTipo As String
+  Dim iIdSeccion As Integer
+
+  ' --- 1. SECCIÓN ELEGIDA ---
+  If $bCargando Then Return
+  If cmbSeccionArticulo.Index < 0 Then Return
+  iIdSeccion = $aIdsSecciones[cmbSeccionArticulo.Index]
+
+  ' --- 2. SU PLANTILLA DECIDE CÓMO SE EDITA EL RESUMEN (ENTREGA C2) ---
+  ' LO ESCRITO PASA ANTES A MEMORIA; SI EL MODO CAMBIA, LO QUE NO ENCAJE LO
+  ' SEÑALA LA VALIDACIÓN AL GUARDAR, SIN BORRAR NADA
+  GuardarTextosEnMemoria()
+  m_Articulo.CargarPlantilla($oTextos, iIdSeccion)
+  MostrarTextos()
+
+  ' --- 3. ARTICLE-TYPE PROPUESTO, SI TODAVÍA NO HAY UNO ---
+  If cmbTipoArticulo.Index >= 0 Then Return
+  sTipo = m_Articulo.TipoDeSeccion(iIdSeccion)
+  If sTipo <> "" Then cmbTipoArticulo.Index = m_Revistas.TiposArticulo().Find(sTipo)
+
+End
+
+' ============================================
+' Función   : cmbLicenciaArticulo_Click
+' Propósito : Al elegir una licencia del catálogo, completa su URL
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbLicenciaArticulo_Click()
+
+  If $bCargando Then Return
+  m_Licencias.CompletarUrl(cmbLicenciaArticulo, txtUrlLicenciaArticulo)
+
+End
+
+' ============================================
+' Función   : btnGuardarArticulo_Click
+' Propósito : Junta los valores de Identificación y Permisos y los graba por
+'             m_Articulo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarArticulo_Click()
+
+  Dim cDatos As New Collection
+  Dim iId As Integer
+  Dim sArchivo As String
+  Dim sAnio As String
+  Dim i As Integer
+
+  ' --- 1. HAY FILA ELEGIDA ---
+  If $iFila < 0 Then Return
+  sArchivo = $aArchivos[$iFila]
+  ' LO ESCRITO EN LOS IDIOMAS A LA VISTA TODAVÍA NO PASÓ A MEMORIA
+  GuardarTraduccionEnMemoria()
+  GuardarTextosEnMemoria()
+  GuardarFinanciadorEnMemoria()
+  GuardarDeclaracionEnMemoria()
+  GuardarRelacionEnMemoria()
+  GuardarUbicacionesEnMemoria()
+
+  ' --- 2. IDENTIFICACIÓN; UN VACÍO NO CREA SU CLAVE Y SE GRABA NULL (GV-68, GV-74) ---
+  If cmbSeccionArticulo.Index >= 0 Then cDatos["id_seccion"] = $aIdsSecciones[cmbSeccionArticulo.Index]
+  If cmbDossierArticulo.Index > 0 Then cDatos["id_dossier"] = $aIdsDossiers[cmbDossierArticulo.Index]
+  If cmbTipoArticulo.Index >= 0 Then cDatos["article_type"] = cmbTipoArticulo.Text
+  If cmbIdiomaArticulo.Index >= 0 Then cDatos["idioma_principal"] = cmbIdiomaArticulo.Text
+  cDatos["titulo"] = Trim(txtTituloArticulo.Text)
+  cDatos["subtitulo"] = Trim(txtSubtituloArticulo.Text)
+  cDatos["titulo_corto"] = Trim(txtTituloCortoArticulo.Text)
+
+  ' --- 3. PERMISOS: VACÍO ES «HEREDA» ---
+  cDatos["licencia"] = Trim(cmbLicenciaArticulo.Text)
+  cDatos["url_licencia"] = Trim(txtUrlLicenciaArticulo.Text)
+  cDatos["titular_copyright"] = Trim(txtTitularArticulo.Text)
+  sAnio = Trim(txtAnioCopyrightArticulo.Text)
+  If sAnio <> "" Then
+    ' SOLO DÍGITOS: Val ACEPTARÍA «20x6» A MEDIAS
+    For i = 1 To Len(sAnio)
+      If Mid(sAnio, i, 1) < "0" Or Mid(sAnio, i, 1) > "9" Then
+        m_Sonido.sonar("Warning")
+        Message.Warning("El año del copyright tiene que ser un número entero.")
+        tsArticulo.Index = 4
+        txtAnioCopyrightArticulo.SetFocus()
+        Return
+      Endif
+    Next
+    cDatos["anio_copyright"] = CInt(sAnio)
+  Endif
+  If cmbAccesoArticulo.Index > 0 Then cDatos["tipo_acceso"] = $aAccesoCodigos[cmbAccesoArticulo.Index]
+
+  ' --- 3 BIS. FECHAS E IDENTIFICADORES (ENTREGA D1); UNA FECHA VACÍA NO CREA SU CLAVE ---
+  If Not IsNull(dtbRecepcionArticulo.Value) Then cDatos["fecha_recepcion"] = dtbRecepcionArticulo.Value
+  If Not IsNull(dtbRevisionArticulo.Value) Then cDatos["fecha_revision"] = dtbRevisionArticulo.Value
+  If Not IsNull(dtbAceptacionArticulo.Value) Then cDatos["fecha_aceptacion"] = dtbAceptacionArticulo.Value
+  If Not IsNull(dtbPublicacionArticulo.Value) Then cDatos["fecha_publicacion"] = dtbPublicacionArticulo.Value
+  ' EL DOI SE GUARDA SIN EL RESOLVEDOR: LO QUE PIDE EL DEPÓSITO EN CROSSREF
+  cDatos["doi"] = m_Articulo.NormalizarDoi(txtDoiArticulo.Text)
+  txtDoiArticulo.Text = cDatos["doi"]
+  cDatos["autores_anonimos"] = If(chkAnonimosArticulo.Value, 1, 0)
+  cDatos["notas_autor"] = Trim(txaNotasAutorArticulo.Text)
+
+  ' --- 4. GRABACIÓN ---
+  iId = m_Articulo.GuardarArticulo($iIdArticulo, $iIdNumero, sArchivo, cDatos, $cTitulosTrad, $cSubtitulosTrad, $aContribuyentes, $oTextos, $oFin, $oRel)
+  If iId = 0 Then Return
+
+  ' --- 5. RELECTURA MANTENIENDO LA SELECCIÓN ---
+  m_Sonido.sonar("Info")
+  CargarLista()
+  i = $aArchivos.Find(sArchivo)
+  If i >= 0 Then
+    gvArticulos.Row = i
+    CargarEditor(i)
+  Endif
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierre del formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : btnTituloArticulo_Click
+' Propósito : Abre el título en el editor de texto extendido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnTituloArticulo_Click()
+
+  FTXTextendido.OriginalTextBox = txtTituloArticulo
+  FTXTextendido.ShowModal
+
+End
+
+' ============================================
+' Función   : btnSubtituloArticulo_Click
+' Propósito : Abre el subtítulo en el editor de texto extendido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubtituloArticulo_Click()
+
+  FTXTextendido.OriginalTextBox = txtSubtituloArticulo
+  FTXTextendido.ShowModal
+
+End
+
+' ============================================
+' Función   : btnTituloTradArticulo_Click
+' Propósito : Abre el título traducido en el editor de texto extendido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnTituloTradArticulo_Click()
+
+  ' FTXTextendido ESCRIBE DE VUELTA EN EL TextBox QUE RECIBE; PASA A MEMORIA AL
+  ' CAMBIAR DE IDIOMA O AL GUARDAR
+  FTXTextendido.OriginalTextBox = txtTituloTradArticulo
+  FTXTextendido.ShowModal
+
+End
+
+' ============================================
+' Función   : btnSubtituloTradArticulo_Click
+' Propósito : Abre el subtítulo traducido en el editor de texto extendido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubtituloTradArticulo_Click()
+
+  FTXTextendido.OriginalTextBox = txtSubtituloTradArticulo
+  FTXTextendido.ShowModal
+
+End
+
+' ============================================
+' Función   : ArmarIdiomasTraduccion
+' Propósito : Llena el selector de traducción: los idiomas de la revista menos
+'             el principal del artículo, más los que ya tienen traducción
+'             aunque la revista no los declare (para que no queden ocultos).
+'             Muestra el preferido si está en la lista; si no, el primero
+' Parámetros: sPreferido As String — idioma a dejar a la vista ("" = el primero)
+' Retorna   : nada
+' ============================================
+Private Sub ArmarIdiomasTraduccion(sPreferido As String)
+
+  Dim aLista As New String[]
+  Dim sIdioma As String
+  Dim sTexto As String
+  Dim sPrincipal As String
+  Dim bCargandoAntes As Boolean
+  Dim iIndice As Integer
+
+  ' --- 1. INICIALIZACIÓN: LOS Click DEL COMBO NO DEBEN ACTUAR MIENTRAS SE ARMA ---
+  bCargandoAntes = $bCargando
+  $bCargando = True
+  If cmbIdiomaArticulo.Index >= 0 Then sPrincipal = cmbIdiomaArticulo.Text
+
+  ' --- 2. IDIOMAS DE LA REVISTA, SIN EL PRINCIPAL ---
+  For Each sIdioma In $aIdiomasRevista
+    If sIdioma <> sPrincipal Then aLista.Add(sIdioma)
+  Next
+
+  ' --- 3. TRADUCCIONES EN IDIOMAS QUE LA REVISTA NO DECLARA ---
+  For Each sTexto In $cTitulosTrad
+    sIdioma = $cTitulosTrad.Key
+    If sIdioma <> sPrincipal And aLista.Find(sIdioma) < 0 Then aLista.Add(sIdioma)
+  Next
+  For Each sTexto In $cSubtitulosTrad
+    sIdioma = $cSubtitulosTrad.Key
+    If sIdioma <> sPrincipal And aLista.Find(sIdioma) < 0 Then aLista.Add(sIdioma)
+  Next
+
+  ' --- 4. SELECTOR Y CAMPOS ---
+  cmbIdiomaTradArticulo.List = aLista
+  If aLista.Count = 0 Then
+    ' REVISTA DE UN SOLO IDIOMA: NO HAY A QUÉ TRADUCIR
+    $sIdiomaTrad = ""
+    txtTituloTradArticulo.Placeholder = "La revista no declara otros idiomas de publicación"
+  Else
+    iIndice = aLista.Find(sPreferido)
+    If iIndice < 0 Then iIndice = 0
+    cmbIdiomaTradArticulo.Index = iIndice
+    $sIdiomaTrad = aLista[iIndice]
+    txtTituloTradArticulo.Placeholder = "trans-title"
+  Endif
+  hbxTituloTradArticulo.Enabled = (aLista.Count > 0)
+  hbxSubtituloTradArticulo.Enabled = (aLista.Count > 0)
+  MostrarTraduccion()
+
+  ' --- 5. LIMPIEZA ---
+  $bCargando = bCargandoAntes
+
+End
+
+' ============================================
+' Función   : MostrarTraduccion
+' Propósito : Pone en los campos el título y el subtítulo del idioma a la vista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarTraduccion()
+
+  ' UNA CLAVE AUSENTE SE LEE Null, QUE VA AL CAMPO COMO VACÍO (GV-68)
+  If $sIdiomaTrad = "" Then
+    txtTituloTradArticulo.Text = ""
+    txtSubtituloTradArticulo.Text = ""
+    Return
+  Endif
+  txtTituloTradArticulo.Text = $cTitulosTrad[$sIdiomaTrad]
+  txtSubtituloTradArticulo.Text = $cSubtitulosTrad[$sIdiomaTrad]
+
+End
+
+' ============================================
+' Función   : GuardarTraduccionEnMemoria
+' Propósito : Pasa lo escrito al idioma a la vista. Un campo vacío borra la
+'             clave (GV-68), que es justo «sin traducción»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarTraduccionEnMemoria()
+
+  If $sIdiomaTrad = "" Then Return
+  $cTitulosTrad[$sIdiomaTrad] = Trim(txtTituloTradArticulo.Text)
+  $cSubtitulosTrad[$sIdiomaTrad] = Trim(txtSubtituloTradArticulo.Text)
+
+End
+
+' ============================================
+' Función   : cmbIdiomaTradArticulo_Click
+' Propósito : Cambio de idioma de traducción: guarda en memoria lo escrito y
+'             muestra el otro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaTradArticulo_Click()
+
+  If $bCargando Then Return
+  GuardarTraduccionEnMemoria()
+  $sIdiomaTrad = cmbIdiomaTradArticulo.Text
+  MostrarTraduccion()
+
+End
+
+' ============================================
+' Función   : cmbIdiomaArticulo_Click
+' Propósito : Cambio del idioma principal: el selector de traducción deja de
+'             ofrecerlo. Una traducción ya escrita en ese idioma queda en
+'             memoria; si se guarda así, se borra (el título en el idioma
+'             principal es articulo.titulo). Vuelve si se elige otro principal
+'             antes de guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaArticulo_Click()
+
+  Dim sPrincipal As String
+
+  ' --- 1. LO ESCRITO PASA A MEMORIA ANTES DE REARMAR LA LISTA ---
+  If $bCargando Then Return
+  If $iFila < 0 Then Return
+  GuardarTraduccionEnMemoria()
+  sPrincipal = cmbIdiomaArticulo.Text
+
+  ' --- 2. AVISO: EL TÍTULO EN EL IDIOMA PRINCIPAL ES articulo.titulo ---
+  If $cTitulosTrad.Exist(sPrincipal) Or $cSubtitulosTrad.Exist(sPrincipal) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Hay una traducción del título en «" & sPrincipal & "», que ahora es el idioma principal." & gb.NewLine & "Si guarda así, esa traducción se borra. Para conservarla, vuelva al idioma principal anterior antes de guardar.")
+  Endif
+
+  ' --- 3. LISTAS NUEVAS, CONSERVANDO EL IDIOMA A LA VISTA SI SIGUE ---
+  ArmarIdiomasTraduccion($sIdiomaTrad)
+  ' EN TEXTOS EL PRINCIPAL ENCABEZA LA LISTA Y DECIDE abstract / trans-abstract
+  GuardarTextosEnMemoria()
+  ArmarIdiomasTextos($sIdiomaTextos)
+  ' DECLARACIONES: EL MISMO CRITERIO DE LISTA
+  GuardarDeclaracionEnMemoria()
+  ArmarIdiomasDeclaracion($sIdiomaDecl)
+
+End
+
+' ============================================
+' Función   : RedibujarContribuyentes
+' Propósito : Llena la grilla desde $aContribuyentes, que es la fuente: así
+'             la grilla y la lista no se desalinean nunca
+' Parámetros: iElegido As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarContribuyentes(iElegido As Integer)
+
+  Dim oContribuyente As CContribuyente
+  Dim sAfiliacion As String
+  Dim i As Integer
+
+  gvContribuyentes.Rows.Count = $aContribuyentes.Count
+  For i = 0 To $aContribuyentes.Count - 1
+    oContribuyente = $aContribuyentes[i]
+    gvContribuyentes[i, 0].Text = CStr(i + 1)
+    If oContribuyente.iIdAutor > 0 Then
+      gvContribuyentes[i, 1].Text = oContribuyente.sNombre
+    Else
+      gvContribuyentes[i, 1].Text = oContribuyente.sNombre & "  (colectivo)"
+    Endif
+    gvContribuyentes[i, 2].Text = m_Articulo.LeyendaRolContribuyente(oContribuyente.sRol)
+    gvContribuyentes[i, 3].Text = If(oContribuyente.bCorrespondencia, oContribuyente.sEmail, "")
+    ' LA PRIMERA AFILIACIÓN, Y CUÁNTAS MÁS HAY
+    sAfiliacion = ""
+    If oContribuyente.aInstituciones.Count > 0 Then
+      sAfiliacion = oContribuyente.aInstituciones[0]
+      If oContribuyente.aInstituciones.Count > 1 Then sAfiliacion &= "  (+" & CStr(oContribuyente.aInstituciones.Count - 1) & ")"
+    Endif
+    gvContribuyentes[i, 4].Text = sAfiliacion
+  Next
+  If iElegido >= 0 And iElegido < $aContribuyentes.Count Then gvContribuyentes.Row = iElegido
+
+End
+
+' ============================================
+' Función   : EditarContribuyente
+' Propósito : Abre el diálogo sobre una copia del contribuyente; si se acepta,
+'             la copia reemplaza al original
+' Parámetros: iFila As Integer — posición en la lista
+' Retorna   : Boolean — True si se aceptaron cambios
+' ============================================
+Private Function EditarContribuyente(iFila As Integer) As Boolean
+
+  Dim oCopia As CContribuyente
+
+  If iFila < 0 Or iFila >= $aContribuyentes.Count Then Return False
+
+  ' LA REFERENCIA A LA COPIA QUEDA ACÁ: LA INSTANCIA DEL DIÁLOGO SE DESTRUYE
+  ' AL CERRARSE (VER Uso EN FContribuyenteArticulo)
+  oCopia = $aContribuyentes[iFila].Copia()
+  FContribuyenteArticulo.oContribuyente = oCopia
+  FContribuyenteArticulo.bSoloLectura = $bSoloLectura
+  If FContribuyenteArticulo.ShowModal() <> 1 Then Return False
+
+  $aContribuyentes[iFila] = oCopia
+  RedibujarContribuyentes(iFila)
+  Return True
+
+End
+
+' ============================================
+' Función   : btnPersonaContribuyente_Click
+' Propósito : Elige una persona en FAutores, la agrega al final con su
+'             afiliación propuesta y abre el diálogo. Si se cierra sin
+'             aceptar, no queda agregada
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnPersonaContribuyente_Click()
+
+  Dim oNuevo As CContribuyente
+  Dim iIdAutor As Integer
+  Dim i As Integer
+
+  ' --- 1. ELECCIÓN: FAutores DEVUELVE EL id POR MÓDULO (RC-GM-13) ---
+  If $iFila < 0 Then Return
+  m_FuncionesGenericas.iAutorSeleccionadoEnFAutores = 0
+  FAutores.ShowModal()
+  iIdAutor = m_FuncionesGenericas.iAutorSeleccionadoEnFAutores
+  If iIdAutor <= 0 Then Return
+
+  ' --- 2. SIN REPETIDOS: UNA PERSONA FIGURA UNA SOLA VEZ ---
+  For i = 0 To $aContribuyentes.Count - 1
+    If $aContribuyentes[i].iIdAutor = iIdAutor Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("Esa persona ya está entre los contribuyentes.")
+      Return
+    Endif
+  Next
+
+  ' --- 3. ALTA PROVISORIA Y DIÁLOGO ---
+  oNuevo = m_Articulo.NuevaPersona(iIdAutor)
+  If Not oNuevo Then Return
+  $aContribuyentes.Add(oNuevo)
+  If Not EditarContribuyente($aContribuyentes.Count - 1) Then $aContribuyentes.Remove($aContribuyentes.Count - 1)
+  RedibujarContribuyentes($aContribuyentes.Count - 1)
+
+End
+
+' ============================================
+' Función   : btnColectivoContribuyente_Click
+' Propósito : Agrega una autoría colectiva: el nombre se escribe en el
+'             diálogo. Si se cierra sin aceptar, no queda agregada
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnColectivoContribuyente_Click()
+
+  If $iFila < 0 Then Return
+  $aContribuyentes.Add(m_Articulo.NuevoColectivo(""))
+  If Not EditarContribuyente($aContribuyentes.Count - 1) Then $aContribuyentes.Remove($aContribuyentes.Count - 1)
+  RedibujarContribuyentes($aContribuyentes.Count - 1)
+
+End
+
+' ============================================
+' Función   : btnEditarContribuyente_Click
+' Propósito : Abre el contribuyente elegido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnEditarContribuyente_Click()
+
+  EditarContribuyente(gvContribuyentes.Row)
+
+End
+
+' ============================================
+' Función   : gvContribuyentes_DblClick
+' Propósito : Doble clic: lo mismo que «Editar»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvContribuyentes_DblClick()
+
+  EditarContribuyente(gvContribuyentes.Row)
+
+End
+
+' ============================================
+' Función   : btnQuitarContribuyente_Click
+' Propósito : Quita el contribuyente elegido de la lista (se borra de la
+'             base al guardar)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarContribuyente_Click()
+
+  Dim iFila As Integer
+
+  iFila = gvContribuyentes.Row
+  If iFila < 0 Or iFila >= $aContribuyentes.Count Then Return
+  $aContribuyentes.Remove(iFila)
+  RedibujarContribuyentes(Min(iFila, $aContribuyentes.Count - 1))
+
+End
+
+' ============================================
+' Función   : btnSubirContribuyente_Click
+' Propósito : Sube el contribuyente elegido un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirContribuyente_Click()
+
+  MoverContribuyente(-1)
+
+End
+
+' ============================================
+' Función   : btnBajarContribuyente_Click
+' Propósito : Baja el contribuyente elegido un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarContribuyente_Click()
+
+  MoverContribuyente(1)
+
+End
+
+' ============================================
+' Función   : MoverContribuyente
+' Propósito : Mueve el contribuyente elegido; el orden es el de la firma
+' Parámetros: iPaso As Integer — -1 sube, 1 baja
+' Retorna   : nada
+' ============================================
+Private Sub MoverContribuyente(iPaso As Integer)
+
+  Dim oContribuyente As CContribuyente
+  Dim iFila As Integer
+  Dim iDestino As Integer
+
+  iFila = gvContribuyentes.Row
+  iDestino = iFila + iPaso
+  If iFila < 0 Or iDestino < 0 Or iDestino >= $aContribuyentes.Count Then Return
+  ' INTERCAMBIO A MANO: LOS ARREGLOS NO TIENEN Exchange EN 3.19 (MEDIDO, 28/10)
+  oContribuyente = $aContribuyentes[iFila]
+  $aContribuyentes[iFila] = $aContribuyentes[iDestino]
+  $aContribuyentes[iDestino] = oContribuyente
+  RedibujarContribuyentes(iDestino)
+
+End
+
+' ============================================
+' Función   : ArmarIdiomasTextos
+' Propósito : Llena el selector de «Textos por idioma»: primero el idioma
+'             principal del artículo, después los de la revista y al final
+'             los que ya tienen textos aunque la revista no los declare
+'             (decisión de Alberto, 28/10). Muestra el preferido si está
+' Parámetros: sPreferido As String — idioma a dejar a la vista ("" = el
+'             principal)
+' Retorna   : nada
+' ============================================
+Private Sub ArmarIdiomasTextos(sPreferido As String)
+
+  Dim aLista As New String[]
+  Dim aConDatos As New String[]
+  Dim aTerminos As String[]
+  Dim cDelIdioma As Collection
+  Dim sIdioma As String
+  Dim sTexto As String
+  Dim bCargandoAntes As Boolean
+  Dim iIndice As Integer
+
+  ' --- 1. INICIALIZACIÓN: LOS Click DEL COMBO NO DEBEN ACTUAR MIENTRAS SE ARMA ---
+  bCargandoAntes = $bCargando
+  $bCargando = True
+
+  ' --- 2. PRINCIPAL Y REVISTA ---
+  If cmbIdiomaArticulo.Index >= 0 Then aLista.Add(cmbIdiomaArticulo.Text)
+  For Each sIdioma In $aIdiomasRevista
+    If aLista.Find(sIdioma) < 0 Then aLista.Add(sIdioma)
+  Next
+
+  ' --- 3. IDIOMAS CON DATOS QUE LA REVISTA NO DECLARA ---
+  For Each sTexto In $oTextos.cResumenes
+    aConDatos.Add($oTextos.cResumenes.Key)
+  Next
+  For Each cDelIdioma In $oTextos.cSecciones
+    aConDatos.Add($oTextos.cSecciones.Key)
+  Next
+  For Each sTexto In $oTextos.cPalabrasAutor
+    aConDatos.Add($oTextos.cPalabrasAutor.Key)
+  Next
+  For Each aTerminos In $oTextos.cTerminosControlados
+    aConDatos.Add($oTextos.cTerminosControlados.Key)
+  Next
+  For Each sIdioma In aConDatos
+    If aLista.Find(sIdioma) < 0 Then aLista.Add(sIdioma)
+  Next
+
+  ' --- 4. SELECTOR ---
+  cmbIdiomaTextos.List = aLista
+  If aLista.Count = 0 Then
+    $sIdiomaTextos = ""
+  Else
+    iIndice = aLista.Find(sPreferido)
+    If iIndice < 0 Then iIndice = 0
+    cmbIdiomaTextos.Index = iIndice
+    $sIdiomaTextos = aLista[iIndice]
+  Endif
+  MostrarTextos()
+
+  ' --- 5. LIMPIEZA ---
+  $bCargando = bCargandoAntes
+
+End
+
+' ============================================
+' Función   : MostrarTextos
+' Propósito : Pone en la pestaña el resumen y las palabras clave del idioma a
+'             la vista, y dice cómo sale ese resumen en JATS
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarTextos()
+
+  ' --- 1. RESUMEN: SIMPLE O POR SECCIONES, SEGÚN LA PLANTILLA (ENTREGA C2) ---
+  MostrarResumen()
+
+  ' UNA CLAVE AUSENTE SE LEE Null, QUE VA AL CAMPO COMO VACÍO (GV-68)
+  If $sIdiomaTextos = "" Then
+    txaPalabrasAutor.Text = ""
+    RedibujarControladas(-1)
+    cmbVocabulario.Text = ""
+    lblTipoResumen.Text = ""
+    Return
+  Endif
+
+  ' --- 2. PALABRAS CLAVE ---
+  txaPalabrasAutor.Text = $oTextos.cPalabrasAutor[$sIdiomaTextos]
+  cmbVocabulario.Text = $oTextos.cVocabularios[$sIdiomaTextos]
+  ' CONTROLADAS: LA LISTA DEL IDIOMA Y BÚSQUEDA LIMPIA
+  RedibujarControladas(-1)
+  txtBuscarControlado.Text = ""
+
+  ' --- 3. CÓMO SALE: EL DEL PRINCIPAL ES <abstract>; LOS DEMÁS, TRADUCCIONES
+  ' (JATS4R); EL ESTRUCTURADO LLEVA UN <sec> POR SECCIÓN ---
+  If cmbIdiomaArticulo.Index >= 0 And $sIdiomaTextos = cmbIdiomaArticulo.Text Then
+    lblTipoResumen.Text = "Idioma principal: sale como <abstract>"
+  Else
+    lblTipoResumen.Text = "Traducción: sale como <trans-abstract>"
+  Endif
+  If $oTextos.iIdPlantilla > 0 Then lblTipoResumen.Text &= ", estructurado («" & $oTextos.sNombrePlantilla & "»)"
+
+End
+
+' ============================================
+' Función   : GuardarTextosEnMemoria
+' Propósito : Pasa lo escrito al idioma a la vista. Un campo vacío borra la
+'             clave (GV-68), que es justo «sin dato»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarTextosEnMemoria()
+
+  If $sIdiomaTextos = "" Then Return
+  ' EL RESUMEN QUE SE VE ES EL QUE SE GUARDA: SIMPLE O LA SECCIÓN A LA VISTA
+  If $bEstructuradoALaVista Then
+    GuardarSeccionResumenEnMemoria()
+  Else
+    $oTextos.cResumenes[$sIdiomaTextos] = Trim(txaResumen.Text)
+  Endif
+  ' LAS LISTAS VAN TAL CUAL: LAS LÍNEAS SE LIMPIAN AL GRABAR
+  ' (m_Articulo.Lineas); UN ÁREA CON SOLO BLANCOS CUENTA COMO VACÍA
+  If Trim(txaPalabrasAutor.Text) = "" Then
+    $oTextos.cPalabrasAutor[$sIdiomaTextos] = ""
+  Else
+    $oTextos.cPalabrasAutor[$sIdiomaTextos] = txaPalabrasAutor.Text
+  Endif
+  ' LAS CONTROLADAS NO SE PASAN: SE EDITAN DIRECTAMENTE EN MEMORIA (C3)
+  $oTextos.cVocabularios[$sIdiomaTextos] = Trim(cmbVocabulario.Text)
+
+End
+
+' ============================================
+' Función   : cmbIdiomaTextos_Click
+' Propósito : Cambio de idioma en la pestaña: guarda en memoria lo escrito y
+'             muestra el otro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaTextos_Click()
+
+  If $bCargando Then Return
+  GuardarTextosEnMemoria()
+  $sIdiomaTextos = cmbIdiomaTextos.Text
+  MostrarTextos()
+
+End
+
+' ============================================
+' Función   : MostrarResumen
+' Propósito : Muestra el resumen del idioma a la vista: un área si es simple;
+'             la lista de secciones de la plantilla y el texto de la elegida
+'             si la sección del artículo exige estructurado (entrega C2)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarResumen()
+
+  Dim bEstructurado As Boolean
+  Dim bCargandoAntes As Boolean
+  Dim sTitulo As String
+  Dim i As Integer
+
+  ' --- 1. MODO ---
+  bEstructurado = ($oTextos.iIdPlantilla > 0)
+  $bEstructuradoALaVista = bEstructurado
+  txaResumen.Visible = Not bEstructurado
+  hbxResumenEstructurado.Visible = bEstructurado
+  If bEstructurado Then
+    lblResumenTextos.Text = "resumen estructurado («" & $oTextos.sNombrePlantilla & "»; todas las secciones son obligatorias):"
+  Else
+    lblResumenTextos.Text = "resumen:"
+  Endif
+
+  ' --- 2. SIMPLE ---
+  If Not bEstructurado Then
+    txaResumen.Text = If($sIdiomaTextos = "", "", $oTextos.cResumenes[$sIdiomaTextos])
+    $iSeccionResumen = -1
+    Return
+  Endif
+
+  ' --- 3. ESTRUCTURADO: TÍTULOS EN EL IDIOMA A LA VISTA; SIN TÍTULO, EL CÓDIGO ---
+  bCargandoAntes = $bCargando
+  $bCargando = True
+  lstSeccionesResumen.Clear()
+  For i = 0 To $oTextos.aCodigosPlantilla.Count - 1
+    sTitulo = ""
+    If $sIdiomaTextos <> "" Then sTitulo = $oTextos.aTitulosPlantilla[i][$sIdiomaTextos]
+    If sTitulo = "" Then sTitulo = "[" & $oTextos.aCodigosPlantilla[i] & "]"
+    lstSeccionesResumen.Add(sTitulo)
+  Next
+  If $oTextos.aCodigosPlantilla.Count > 0 And $sIdiomaTextos <> "" Then
+    $iSeccionResumen = 0
+    lstSeccionesResumen.Index = 0
+  Else
+    $iSeccionResumen = -1
+  Endif
+  MostrarSeccionResumen()
+  $bCargando = bCargandoAntes
+
+End
+
+' ============================================
+' Función   : MostrarSeccionResumen
+' Propósito : Pone en el área el texto de la sección a la vista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarSeccionResumen()
+
+  If $iSeccionResumen < 0 Then
+    txaSeccionResumen.Text = ""
+    Return
+  Endif
+  txaSeccionResumen.Text = $oTextos.TextoSeccion($sIdiomaTextos, $oTextos.aCodigosPlantilla[$iSeccionResumen])
+
+End
+
+' ============================================
+' Función   : GuardarSeccionResumenEnMemoria
+' Propósito : Pasa el texto del área a la sección a la vista. Vacío la borra
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarSeccionResumenEnMemoria()
+
+  If $iSeccionResumen < 0 Or $sIdiomaTextos = "" Then Return
+  $oTextos.FijarTextoSeccion($sIdiomaTextos, $oTextos.aCodigosPlantilla[$iSeccionResumen], Trim(txaSeccionResumen.Text))
+
+End
+
+' ============================================
+' Función   : lstSeccionesResumen_Click
+' Propósito : Cambia la sección del resumen a la vista, guardando antes la
+'             anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub lstSeccionesResumen_Click()
+
+  If $bCargando Then Return
+  If lstSeccionesResumen.Index < 0 Or lstSeccionesResumen.Index = $iSeccionResumen Then Return
+  GuardarSeccionResumenEnMemoria()
+  $iSeccionResumen = lstSeccionesResumen.Index
+  MostrarSeccionResumen()
+
+End
+
+' ============================================
+' Función   : RedibujarControladas
+' Propósito : Llena la lista de términos controlados del idioma a la vista
+'             desde la memoria, que es la fuente
+' Parámetros: iElegido As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarControladas(iElegido As Integer)
+
+  Dim aTerminos As String[]
+  Dim aIds As String[]
+  Dim i As Integer
+
+  lstControladas.Clear()
+  If $sIdiomaTextos = "" Then Return
+  aTerminos = $oTextos.TerminosControlados($sIdiomaTextos)
+  aIds = $oTextos.IdsControlados($sIdiomaTextos)
+  For i = 0 To aTerminos.Count - 1
+    lstControladas.Add(TextoTermino(aTerminos[i], aIds[i]))
+  Next
+  ' ASIGNAR Index A UNA ListBox NO DISPARA Click (MEDIDO, 28/10)
+  If iElegido >= 0 And iElegido < aTerminos.Count Then lstControladas.Index = iElegido
+
+End
+
+' ============================================
+' Función   : TextoTermino
+' Propósito : Cómo se muestra un término: con su identificador, si tiene
+' Parámetros: sTermino As String — término
+'             sIdentificador As String — código; "" si no tiene
+' Retorna   : String — «Humanos  [D006801]»
+' ============================================
+Private Function TextoTermino(sTermino As String, sIdentificador As String) As String
+
+  If sIdentificador = "" Then Return sTermino
+  Return sTermino & "  [" & sIdentificador & "]"
+
+End
+
+' ============================================
+' Función   : txtBuscarControlado_Change
+' Propósito : Sugiere términos del catálogo mientras se tipea (Change se
+'             dispara también al asignar Text por código, pero no si el texto
+'             no cambia: MEDIDO, 28/10)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBuscarControlado_Change()
+
+  ActualizarCoincidencias()
+
+End
+
+' ============================================
+' Función   : cmbVocabulario_Click
+' Propósito : Otro vocabulario elegido de la lista: las sugerencias de lo ya
+'             tipeado cambian
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbVocabulario_Click()
+
+  ActualizarCoincidencias()
+
+End
+
+' ============================================
+' Función   : cmbVocabulario_Change
+' Propósito : Un vocabulario escrito a mano: las sugerencias cambian
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbVocabulario_Change()
+
+  ActualizarCoincidencias()
+
+End
+
+' ============================================
+' Función   : ActualizarCoincidencias
+' Propósito : Llena la lista de sugerencias del catálogo para lo tipeado,
+'             en el vocabulario e idioma a la vista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ActualizarCoincidencias()
+
+  Dim rDatos As Result
+  Dim sTexto As String
+
+  ' --- 1. LIMPIEZA ---
+  lstCoincidencias.Clear()
+  $aCoincTerminos.Clear()
+  $aCoincIds.Clear()
+  If $bCargando Then Return
+
+  ' --- 2. HACE FALTA VOCABULARIO, IDIOMA Y AL MENOS DOS CARACTERES ---
+  sTexto = Trim(txtBuscarControlado.Text)
+  If String.Len(sTexto) < 2 Or Trim(cmbVocabulario.Text) = "" Or $sIdiomaTextos = "" Then Return
+
+  ' --- 3. SUGERENCIAS: SIN DISTINGUIR TILDES (m_Vocabularios.Buscar) ---
+  rDatos = m_Vocabularios.Buscar(m_ConexionBD.mConn, Trim(cmbVocabulario.Text), $sIdiomaTextos, sTexto, MAX_COINCIDENCIAS)
+  If Not rDatos Then Return
+  While rDatos.Available
+    $aCoincTerminos.Add(rDatos!termino)
+    ' UN NULL SE LEE VACÍO
+    $aCoincIds.Add(rDatos!identificador)
+    lstCoincidencias.Add(TextoTermino(rDatos!termino, rDatos!identificador))
+    rDatos.MoveNext
+  Wend
+
+End
+
+' ============================================
+' Función   : btnAgregarControlado_Click
+' Propósito : Agrega al idioma a la vista la sugerencia elegida o, si no hay
+'             ninguna elegida, lo escrito: si el catálogo ya lo tiene (sin
+'             distinguir mayúsculas) se usa su forma y su identificador; si
+'             no, entra como término nuevo y se agrega al catálogo al guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnAgregarControlado_Click()
+
+  Dim rTermino As Result
+  Dim aTerminos As String[]
+  Dim sTermino As String
+  Dim sIdentificador As String
+  Dim sAviso As String
+  Dim i As Integer
+
+  ' --- 1. HACE FALTA VOCABULARIO E IDIOMA ---
+  If $sIdiomaTextos = "" Then Return
+  If Trim(cmbVocabulario.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elija o escriba primero el vocabulario controlado (MeSH, DeCS…).")
+    cmbVocabulario.SetFocus()
+    Return
+  Endif
+
+  ' --- 2. QUÉ TÉRMINO: LA SUGERENCIA ELEGIDA O LO ESCRITO ---
+  If lstCoincidencias.Index >= 0 And lstCoincidencias.Index < $aCoincTerminos.Count Then
+    sTermino = $aCoincTerminos[lstCoincidencias.Index]
+    sIdentificador = $aCoincIds[lstCoincidencias.Index]
+  Else
+    sTermino = Trim(txtBuscarControlado.Text)
+    If sTermino = "" Then Return
+    ' YA EN EL CATÁLOGO CON OTRAS MAYÚSCULAS: MANDA LA FORMA DEL CATÁLOGO
+    rTermino = m_Vocabularios.TerminoDelCatalogo(m_ConexionBD.mConn, Trim(cmbVocabulario.Text), $sIdiomaTextos, sTermino)
+    If rTermino Then
+      sTermino = rTermino!termino
+      sIdentificador = rTermino!identificador
+    Endif
+    sAviso = m_Vocabularios.AvisoTermino(Trim(cmbVocabulario.Text), $sIdiomaTextos, sTermino, sIdentificador)
+    If sAviso <> "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning(sAviso)
+      Return
+    Endif
+  Endif
+
+  ' --- 3. SIN REPETIDOS EN EL IDIOMA (MISMA REGLA QUE LA CLAVE: 0900_as_ci) ---
+  aTerminos = $oTextos.TerminosControlados($sIdiomaTextos)
+  For i = 0 To aTerminos.Count - 1
+    If String.LCase(aTerminos[i]) = String.LCase(sTermino) Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("«" & sTermino & "» ya está entre las palabras de vocabulario controlado.")
+      Return
+    Endif
+  Next
+
+  ' --- 4. AGREGADO Y BÚSQUEDA LIMPIA ---
+  $oTextos.AgregarControlado($sIdiomaTextos, sTermino, sIdentificador)
+  RedibujarControladas($oTextos.TerminosControlados($sIdiomaTextos).Count - 1)
+  txtBuscarControlado.Text = ""
+  txtBuscarControlado.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnQuitarControlada_Click
+' Propósito : Quita el término controlado elegido (del artículo, no del
+'             catálogo)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarControlada_Click()
+
+  Dim iFila As Integer
+
+  iFila = lstControladas.Index
+  If iFila < 0 Then Return
+  $oTextos.QuitarControlado($sIdiomaTextos, iFila)
+  RedibujarControladas(Min(iFila, $oTextos.TerminosControlados($sIdiomaTextos).Count - 1))
+
+End
+
+' ============================================
+' Función   : btnSubirControlada_Click
+' Propósito : Sube el término controlado elegido un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirControlada_Click()
+
+  If lstControladas.Index < 0 Then Return
+  RedibujarControladas($oTextos.MoverControlado($sIdiomaTextos, lstControladas.Index, -1))
+
+End
+
+' ============================================
+' Función   : btnBajarControlada_Click
+' Propósito : Baja el término controlado elegido un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarControlada_Click()
+
+  If lstControladas.Index < 0 Then Return
+  RedibujarControladas($oTextos.MoverControlado($sIdiomaTextos, lstControladas.Index, 1))
+
+End
+
+' ============================================
+' Función   : btnVaciarRecepcionArticulo_Click
+' Propósito : Deja vacía la fecha de recepción (se graba NULL)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnVaciarRecepcionArticulo_Click()
+
+  dtbRecepcionArticulo.Value = Null
+
+End
+
+' ============================================
+' Función   : btnVaciarRevisionArticulo_Click
+' Propósito : Deja vacía la fecha de revisión (se graba NULL)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnVaciarRevisionArticulo_Click()
+
+  dtbRevisionArticulo.Value = Null
+
+End
+
+' ============================================
+' Función   : btnVaciarAceptacionArticulo_Click
+' Propósito : Deja vacía la fecha de aceptación (se graba NULL)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnVaciarAceptacionArticulo_Click()
+
+  dtbAceptacionArticulo.Value = Null
+
+End
+
+' ============================================
+' Función   : btnVaciarPublicacionArticulo_Click
+' Propósito : Deja vacía la fecha de publicación (se graba NULL)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnVaciarPublicacionArticulo_Click()
+
+  dtbPublicacionArticulo.Value = Null
+
+End
+
+' ============================================
+' Función   : RedibujarFinanciadores
+' Propósito : Llena la grilla de financiadores desde la memoria, que es la
+'             fuente, y pone en los campos el elegido
+' Parámetros: iElegido As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarFinanciadores(iElegido As Integer)
+
+  Dim iIndice As Integer
+  Dim i As Integer
+
+  ' --- 1. GRILLA ---
+  gvFinanciadores.Rows.Count = $oFin.aFinanciadores.Count
+  For i = 0 To $oFin.aFinanciadores.Count - 1
+    gvFinanciadores[i, 0].Text = $oFin.aFinanciadores[i]
+    If $oFin.aTiposId[i] = "" Then
+      gvFinanciadores[i, 1].Text = ""
+    Else
+      iIndice = m_Articulo.TiposIdFinanciadorCodigos().Find($oFin.aTiposId[i])
+      gvFinanciadores[i, 1].Text = m_Articulo.TiposIdFinanciadorLeyendas()[Max(iIndice, 0)] & ": " & $oFin.aIdsFinanciador[i]
+    Endif
+    gvFinanciadores[i, 2].Text = $oFin.aProyectos[i]
+  Next
+
+  ' --- 2. ELEGIDO Y CAMPOS ---
+  If iElegido >= $oFin.aFinanciadores.Count Then iElegido = $oFin.aFinanciadores.Count - 1
+  $iFinanciador = iElegido
+  If iElegido >= 0 Then gvFinanciadores.Row = iElegido
+  MostrarFinanciador()
+
+End
+
+' ============================================
+' Función   : MostrarFinanciador
+' Propósito : Pone en los campos el financiador elegido; sin financiador, los
+'             vacía y los apaga
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarFinanciador()
+
+  Dim bCargandoAntes As Boolean
+  Dim iIndice As Integer
+
+  bCargandoAntes = $bCargando
+  $bCargando = True
+  If $iFinanciador < 0 Then
+    txtFinanciador.Text = ""
+    cmbTipoIdFinanciador.Index = 0
+    txtIdFinanciador.Text = ""
+    txtProyectoFinanciador.Text = ""
+  Else
+    txtFinanciador.Text = $oFin.aFinanciadores[$iFinanciador]
+    iIndice = m_Articulo.TiposIdFinanciadorCodigos().Find($oFin.aTiposId[$iFinanciador])
+    cmbTipoIdFinanciador.Index = Max(iIndice, 0)
+    txtIdFinanciador.Text = $oFin.aIdsFinanciador[$iFinanciador]
+    txtProyectoFinanciador.Text = $oFin.aProyectos[$iFinanciador]
+  Endif
+  FijarCamposFinanciador()
+  $bCargando = bCargandoAntes
+
+End
+
+' ============================================
+' Función   : FijarCamposFinanciador
+' Propósito : Los campos del financiador se editan si hay uno elegido y el
+'             artículo no está publicado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub FijarCamposFinanciador()
+
+  Dim bHabilitados As Boolean
+
+  bHabilitados = ($iFinanciador >= 0)
+  If $bSoloLectura Then bHabilitados = False
+  hbxFinanciador.Enabled = bHabilitados
+  hbxIdFinanciador.Enabled = bHabilitados
+  hbxProyectoFinanciador.Enabled = bHabilitados
+
+End
+
+' ============================================
+' Función   : GuardarFinanciadorEnMemoria
+' Propósito : Pasa los campos al financiador elegido y refresca su fila. El
+'             identificador se normaliza según su tipo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarFinanciadorEnMemoria()
+
+  Dim sTipo As String
+
+  If $iFinanciador < 0 Or $bSoloLectura Then Return
+  sTipo = m_Articulo.TiposIdFinanciadorCodigos()[Max(cmbTipoIdFinanciador.Index, 0)]
+  $oFin.aFinanciadores[$iFinanciador] = Trim(txtFinanciador.Text)
+  $oFin.aTiposId[$iFinanciador] = sTipo
+  $oFin.aIdsFinanciador[$iFinanciador] = m_Articulo.NormalizarIdFinanciador(sTipo, txtIdFinanciador.Text)
+  $oFin.aProyectos[$iFinanciador] = Trim(txtProyectoFinanciador.Text)
+  RedibujarFinanciadores($iFinanciador)
+
+End
+
+' ============================================
+' Función   : gvFinanciadores_Click
+' Propósito : Cambia el financiador elegido, guardando antes el anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvFinanciadores_Click()
+
+  Dim iFila As Integer
+
+  iFila = gvFinanciadores.Row
+  If iFila < 0 Or iFila = $iFinanciador Then Return
+  GuardarFinanciadorEnMemoria()
+  $iFinanciador = iFila
+  MostrarFinanciador()
+
+End
+
+' ============================================
+' Función   : btnNuevoFinanciador_Click
+' Propósito : Agrega un financiador vacío al final y lo deja elegido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevoFinanciador_Click()
+
+  If $iFila < 0 Then Return
+  GuardarFinanciadorEnMemoria()
+  $oFin.AgregarFinanciador("", "", "", "")
+  RedibujarFinanciadores($oFin.aFinanciadores.Count - 1)
+  txtFinanciador.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnQuitarFinanciador_Click
+' Propósito : Quita el financiador elegido (se borra de la base al guardar)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarFinanciador_Click()
+
+  If $iFinanciador < 0 Then Return
+  $oFin.QuitarFinanciador($iFinanciador)
+  RedibujarFinanciadores($iFinanciador)
+
+End
+
+' ============================================
+' Función   : btnSubirFinanciador_Click
+' Propósito : Sube el financiador elegido un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirFinanciador_Click()
+
+  If $iFinanciador < 0 Then Return
+  GuardarFinanciadorEnMemoria()
+  RedibujarFinanciadores($oFin.MoverFinanciador($iFinanciador, -1))
+
+End
+
+' ============================================
+' Función   : btnBajarFinanciador_Click
+' Propósito : Baja el financiador elegido un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarFinanciador_Click()
+
+  If $iFinanciador < 0 Then Return
+  GuardarFinanciadorEnMemoria()
+  RedibujarFinanciadores($oFin.MoverFinanciador($iFinanciador, 1))
+
+End
+
+' ============================================
+' Función   : ArmarIdiomasDeclaracion
+' Propósito : Llena el selector de idioma de las declaraciones con el mismo
+'             criterio que «Textos por idioma»: el principal, los de la
+'             revista y los que ya tienen declaraciones
+' Parámetros: sPreferido As String — idioma a dejar a la vista ("" = el
+'             principal)
+' Retorna   : nada
+' ============================================
+Private Sub ArmarIdiomasDeclaracion(sPreferido As String)
+
+  Dim aLista As New String[]
+  Dim aClave As String[]
+  Dim sIdioma As String
+  Dim sTexto As String
+  Dim bCargandoAntes As Boolean
+  Dim iIndice As Integer
+
+  ' --- 1. INICIALIZACIÓN: LOS Click DEL COMBO NO DEBEN ACTUAR (GV-53) ---
+  bCargandoAntes = $bCargando
+  $bCargando = True
+
+  ' --- 2. PRINCIPAL, REVISTA E IDIOMAS CON DECLARACIONES ---
+  If cmbIdiomaArticulo.Index >= 0 Then aLista.Add(cmbIdiomaArticulo.Text)
+  For Each sIdioma In $aIdiomasRevista
+    If aLista.Find(sIdioma) < 0 Then aLista.Add(sIdioma)
+  Next
+  For Each sTexto In $oFin.cDeclaraciones
+    aClave = Split($oFin.cDeclaraciones.Key, "|")
+    If aLista.Find(aClave[1]) < 0 Then aLista.Add(aClave[1])
+  Next
+
+  ' --- 3. SELECTOR ---
+  cmbIdiomaDeclaracion.List = aLista
+  If aLista.Count = 0 Then
+    $sIdiomaDecl = ""
+  Else
+    iIndice = aLista.Find(sPreferido)
+    If iIndice < 0 Then iIndice = 0
+    cmbIdiomaDeclaracion.Index = iIndice
+    $sIdiomaDecl = aLista[iIndice]
+  Endif
+  MostrarDeclaracion()
+
+  ' --- 4. LIMPIEZA ---
+  $bCargando = bCargandoAntes
+
+End
+
+' ============================================
+' Función   : MostrarDeclaracion
+' Propósito : Pone en el área la declaración del tipo y del idioma elegidos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarDeclaracion()
+
+  If $sTipoDecl = "" Or $sIdiomaDecl = "" Then
+    txaDeclaracion.Text = ""
+    Return
+  Endif
+  ' UNA CLAVE AUSENTE SE LEE Null, QUE VA AL ÁREA COMO VACÍO (GV-68)
+  txaDeclaracion.Text = $oFin.cDeclaraciones[$oFin.ClaveDeclaracion($sTipoDecl, $sIdiomaDecl)]
+
+End
+
+' ============================================
+' Función   : GuardarDeclaracionEnMemoria
+' Propósito : Pasa el área a la declaración del tipo y del idioma elegidos.
+'             Vacía la borra (GV-68)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarDeclaracionEnMemoria()
+
+  If $sTipoDecl = "" Or $sIdiomaDecl = "" Or $bSoloLectura Then Return
+  $oFin.cDeclaraciones[$oFin.ClaveDeclaracion($sTipoDecl, $sIdiomaDecl)] = Trim(txaDeclaracion.Text)
+
+End
+
+' ============================================
+' Función   : cmbTipoDeclaracion_Click
+' Propósito : Otro tipo de declaración: guarda lo escrito y muestra el otro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbTipoDeclaracion_Click()
+
+  If $bCargando Then Return
+  GuardarDeclaracionEnMemoria()
+  If cmbTipoDeclaracion.Index >= 0 Then $sTipoDecl = $aTiposDecl[cmbTipoDeclaracion.Index]
+  MostrarDeclaracion()
+
+End
+
+' ============================================
+' Función   : cmbIdiomaDeclaracion_Click
+' Propósito : Otro idioma: guarda lo escrito y muestra el otro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaDeclaracion_Click()
+
+  If $bCargando Then Return
+  GuardarDeclaracionEnMemoria()
+  $sIdiomaDecl = cmbIdiomaDeclaracion.Text
+  MostrarDeclaracion()
+
+End
+
+' ============================================
+' Función   : ArmarDestinos
+' Propósito : Llena el combo de destino: «externo» y los artículos de la
+'             revista, menos el que está en edición
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ArmarDestinos()
+
+  Dim rDatos As Result
+  Dim bCargandoAntes As Boolean
+
+  ' --- 1. EL PRIMER ÍTEM ES EL EXTERNO (id 0) ---
+  bCargandoAntes = $bCargando
+  $bCargando = True
+  cmbDestinoRelacion.Clear()
+  $aIdsDestino.Clear()
+  cmbDestinoRelacion.Add("(externo: DOI o datos de cita abajo)")
+  $aIdsDestino.Add(0)
+
+  ' --- 2. ARTÍCULOS DE LA REVISTA; SI FALLA, QUEDA SOLO EL EXTERNO (YA SE INFORMÓ) ---
+  rDatos = m_Articulo.ArticulosDeLaRevista($iIdNumero, $iIdArticulo)
+  If rDatos Then
+    While rDatos.Available
+      cmbDestinoRelacion.Add(m_Articulo.EtiquetaArticulo(rDatos!volumen, rDatos!numero, rDatos!nombre_archivo, rDatos!titulo))
+      $aIdsDestino.Add(rDatos!id_articulo)
+      rDatos.MoveNext
+    Wend
+  Endif
+  $bCargando = bCargandoAntes
+
+End
+
+' ============================================
+' Función   : RedibujarRelaciones
+' Propósito : Llena la grilla de relaciones desde la memoria, que es la
+'             fuente, y pone en los campos la elegida
+' Parámetros: iElegido As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarRelaciones(iElegido As Integer)
+
+  Dim oRelacion As CRelacion
+  Dim sDestino As String
+  Dim i As Integer
+
+  ' --- 1. GRILLA: TIPO Y DESTINO ---
+  gvRelaciones.Rows.Count = $oRel.aRelaciones.Count
+  For i = 0 To $oRel.aRelaciones.Count - 1
+    oRelacion = $oRel.aRelaciones[i]
+    gvRelaciones[i, 0].Text = oRelacion.sTipo
+    If oRelacion.iIdLocal > 0 Then
+      sDestino = oRelacion.sLocal
+    Else
+      ' EXTERNO: EL DOI SI LO HAY; SI NO, REVISTA Y AÑO
+      sDestino = oRelacion.sDoi
+      If sDestino = "" Then
+        sDestino = oRelacion.sRevista
+        If oRelacion.sAnio <> "" Then sDestino &= " (" & oRelacion.sAnio & ")"
+      Endif
+    Endif
+    gvRelaciones[i, 1].Text = sDestino
+  Next
+
+  ' --- 2. ELEGIDA Y CAMPOS ---
+  If iElegido >= $oRel.aRelaciones.Count Then iElegido = $oRel.aRelaciones.Count - 1
+  $iRelacion = iElegido
+  If iElegido >= 0 Then gvRelaciones.Row = iElegido
+  MostrarRelacion()
+
+End
+
+' ============================================
+' Función   : MostrarRelacion
+' Propósito : Pone en los campos la relación elegida; sin relación, los
+'             vacía y los apaga
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarRelacion()
+
+  Dim oRelacion As CRelacion
+  Dim bCargandoAntes As Boolean
+  Dim iIndice As Integer
+
+  ' --- 1. LOS Click DE LOS COMBOS NO ACTÚAN MIENTRAS SE LLENAN (GV-53) ---
+  bCargandoAntes = $bCargando
+  $bCargando = True
+
+  ' --- 2. SIN RELACIÓN: CAMPOS VACÍOS ---
+  If $iRelacion < 0 Then
+    cmbTipoRelacion.Index = -1
+    If cmbDestinoRelacion.Count > 0 Then cmbDestinoRelacion.Index = 0
+    txtDoiRelacion.Text = ""
+    txtRevistaRelacion.Text = ""
+    txtAnioRelacion.Text = ""
+    txtVolumenRelacion.Text = ""
+    txtNumeroRelacion.Text = ""
+    txtFpageRelacion.Text = ""
+    txtLpageRelacion.Text = ""
+  Else
+    ' --- 3. LA ELEGIDA ---
+    oRelacion = $oRel.aRelaciones[$iRelacion]
+    cmbTipoRelacion.Index = m_Articulo.TiposRelacionCodigos().Find(oRelacion.sTipo)
+    iIndice = $aIdsDestino.Find(oRelacion.iIdLocal)
+    ' UN DESTINO QUE EL COMBO NO TRAE (NO SE PUDO LEER LA LISTA) SE AGREGA
+    ' PARA NO PERDERLO AL GUARDAR
+    If iIndice < 0 Then
+      cmbDestinoRelacion.Add(oRelacion.sLocal)
+      $aIdsDestino.Add(oRelacion.iIdLocal)
+      iIndice = $aIdsDestino.Count - 1
+    Endif
+    cmbDestinoRelacion.Index = iIndice
+    txtDoiRelacion.Text = oRelacion.sDoi
+    txtRevistaRelacion.Text = oRelacion.sRevista
+    txtAnioRelacion.Text = oRelacion.sAnio
+    txtVolumenRelacion.Text = oRelacion.sVolumen
+    txtNumeroRelacion.Text = oRelacion.sNumero
+    txtFpageRelacion.Text = oRelacion.sFpage
+    txtLpageRelacion.Text = oRelacion.sLpage
+  Endif
+  FijarCamposRelacion()
+  $bCargando = bCargandoAntes
+
+End
+
+' ============================================
+' Función   : FijarCamposRelacion
+' Propósito : Los campos se editan si hay una relación elegida y el artículo
+'             no está publicado; los del externo, solo si el destino es
+'             externo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub FijarCamposRelacion()
+
+  Dim bHabilitados As Boolean
+  Dim bExterno As Boolean
+
+  bHabilitados = ($iRelacion >= 0)
+  If $bSoloLectura Then bHabilitados = False
+  bExterno = bHabilitados
+  If cmbDestinoRelacion.Index > 0 Then bExterno = False
+  hbxTipoRelacion.Enabled = bHabilitados
+  hbxDestinoRelacion.Enabled = bHabilitados
+  hbxDoiRelacion.Enabled = bExterno
+  hbxRevistaRelacion.Enabled = bExterno
+  hbxCitaRelacion.Enabled = bExterno
+  hbxPaginasRelacion.Enabled = bExterno
+
+End
+
+' ============================================
+' Función   : GuardarRelacionEnMemoria
+' Propósito : Pasa los campos a la relación elegida y refresca su fila. Un
+'             destino local descarta los datos del externo: se graba solo
+'             el id
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarRelacionEnMemoria()
+
+  Dim oRelacion As CRelacion
+
+  ' --- 1. HAY RELACIÓN ELEGIDA Y SE PUEDE EDITAR ---
+  If $iRelacion < 0 Or $bSoloLectura Then Return
+  oRelacion = $oRel.aRelaciones[$iRelacion]
+
+  ' --- 2. TIPO ---
+  If cmbTipoRelacion.Index >= 0 Then
+    oRelacion.sTipo = m_Articulo.TiposRelacionCodigos()[cmbTipoRelacion.Index]
+  Else
+    oRelacion.sTipo = ""
+  Endif
+
+  ' --- 3. DESTINO: LOCAL (SOLO EL id) O EXTERNO (SUS DATOS) ---
+  If cmbDestinoRelacion.Index > 0 Then
+    oRelacion.iIdLocal = $aIdsDestino[cmbDestinoRelacion.Index]
+    oRelacion.sLocal = cmbDestinoRelacion.Text
+    oRelacion.sDoi = ""
+    oRelacion.sRevista = ""
+    oRelacion.sAnio = ""
+    oRelacion.sVolumen = ""
+    oRelacion.sNumero = ""
+    oRelacion.sFpage = ""
+    oRelacion.sLpage = ""
+  Else
+    oRelacion.iIdLocal = 0
+    oRelacion.sLocal = ""
+    ' EL DOI SIN RESOLVEDOR, COMO EL DEL ARTÍCULO
+    oRelacion.sDoi = m_Articulo.NormalizarDoi(txtDoiRelacion.Text)
+    oRelacion.sRevista = Trim(txtRevistaRelacion.Text)
+    oRelacion.sAnio = Trim(txtAnioRelacion.Text)
+    oRelacion.sVolumen = Trim(txtVolumenRelacion.Text)
+    oRelacion.sNumero = Trim(txtNumeroRelacion.Text)
+    oRelacion.sFpage = Trim(txtFpageRelacion.Text)
+    oRelacion.sLpage = Trim(txtLpageRelacion.Text)
+  Endif
+  RedibujarRelaciones($iRelacion)
+
+End
+
+' ============================================
+' Función   : gvRelaciones_Click
+' Propósito : Cambia la relación elegida, guardando antes la anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvRelaciones_Click()
+
+  Dim iFila As Integer
+
+  iFila = gvRelaciones.Row
+  If iFila < 0 Or iFila = $iRelacion Then Return
+  GuardarRelacionEnMemoria()
+  $iRelacion = iFila
+  MostrarRelacion()
+
+End
+
+' ============================================
+' Función   : cmbDestinoRelacion_Click
+' Propósito : Un destino de la base apaga los datos del externo; volver a
+'             «externo» los prende
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbDestinoRelacion_Click()
+
+  If $bCargando Then Return
+  FijarCamposRelacion()
+
+End
+
+' ============================================
+' Función   : btnNuevaRelacion_Click
+' Propósito : Agrega una relación vacía (destino externo) al final y la deja
+'             elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevaRelacion_Click()
+
+  Dim oRelacion As CRelacion
+
+  If $iFila < 0 Then Return
+  GuardarRelacionEnMemoria()
+  ' New NO SE ADMITE COMO ARGUMENTO (GV-32)
+  oRelacion = New CRelacion
+  $oRel.aRelaciones.Add(oRelacion)
+  RedibujarRelaciones($oRel.aRelaciones.Count - 1)
+  cmbTipoRelacion.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnQuitarRelacion_Click
+' Propósito : Quita la relación elegida (se borra de la base al guardar)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarRelacion_Click()
+
+  If $iRelacion < 0 Then Return
+  $oRel.aRelaciones.Remove($iRelacion)
+  RedibujarRelaciones($iRelacion)
+
+End
+
+' ============================================
+' Función   : btnSubirRelacion_Click
+' Propósito : Sube la relación elegida un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirRelacion_Click()
+
+  If $iRelacion < 0 Then Return
+  GuardarRelacionEnMemoria()
+  RedibujarRelaciones($oRel.MoverRelacion($iRelacion, -1))
+
+End
+
+' ============================================
+' Función   : btnBajarRelacion_Click
+' Propósito : Baja la relación elegida un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarRelacion_Click()
+
+  If $iRelacion < 0 Then Return
+  GuardarRelacionEnMemoria()
+  RedibujarRelaciones($oRel.MoverRelacion($iRelacion, 1))
+
+End
+
+' ============================================
+' Función   : CajaUrl
+' Propósito : El TextBox de la URL de cada tipo de ubicación
+' Parámetros: sTipo As String — pagina, html, pdf, epub o xml
+' Retorna   : TextBox — su caja
+' ============================================
+Private Function CajaUrl(sTipo As String) As TextBox
+
+  Select Case sTipo
+    Case "pagina"
+      Return txtUrlPagina
+    Case "html"
+      Return txtUrlHtml
+    Case "pdf"
+      Return txtUrlPdf
+    Case "epub"
+      Return txtUrlEpub
+    Case Else
+      Return txtUrlXml
+  End Select
+
+End
+
+' ============================================
+' Función   : MostrarUbicaciones
+' Propósito : Pone en las cajas las URL que hay en memoria
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarUbicaciones()
+
+  Dim sTipo As String
+
+  ' UNA CLAVE AUSENTE DEVUELVE Null, QUE EN UN Text QUEDA VACÍO
+  For Each sTipo In m_Articulo.TiposUbicacion()
+    CajaUrl(sTipo).Text = $oRel.cUbicaciones[sTipo]
+  Next
+
+End
+
+' ============================================
+' Función   : GuardarUbicacionesEnMemoria
+' Propósito : Pasa las cajas a memoria; una caja vacía no crea su clave
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarUbicacionesEnMemoria()
+
+  Dim sTipo As String
+
+  If $bSoloLectura Then Return
+  $oRel.cUbicaciones = New Collection
+  For Each sTipo In m_Articulo.TiposUbicacion()
+    ' "" NO CREA LA CLAVE (GV-68): SIN FILA EN LA BASE
+    $oRel.cUbicaciones[sTipo] = Trim(CajaUrl(sTipo).Text)
+  Next
+
+End

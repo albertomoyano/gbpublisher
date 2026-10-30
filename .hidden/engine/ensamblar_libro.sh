@@ -39,11 +39,14 @@
 # QUÉ ABORTA Y QUÉ SOLO AVISA
 #
 #   aborta   insumos ausentes o mal formados, un capítulo declarado en el
-#            manifiesto que falta o está mal formado, un fallo de Saxon, un
-#            resultado mal formado. En todos esos casos NO se reemplaza nada.
-#   avisa    el canónico no valida contra el RNG de DocBook 5.2, o no se pudo
-#            validar. Se conserva, porque está bien formado y las salidas lo
-#            pueden consumir, pero el aviso llega a Gambas como código 3.
+#            manifiesto que falta, está mal formado o ya no corresponde a sus
+#            fuentes —desactualizado o huérfano (SC-75)—, un fallo de Saxon,
+#            un resultado mal formado. En todos esos casos NO se reemplaza
+#            nada.
+#   avisa    un capítulo sin huella (anterior a SC-75); el canónico tiene
+#            hallazgos en validar_canonicos.sh, o no se pudo validar. Se
+#            conserva, porque está bien formado y las salidas lo pueden
+#            consumir, pero el aviso llega a Gambas como código 3.
 # ============================================================================
 
 set -uo pipefail
@@ -56,7 +59,9 @@ fi
 
 # --- 1. CONFIGURACIÓN ---
 TIEMPO_SAXON=300
-LINEAS_ERROR_RNG=15
+
+# LA LISTA QUE ESTE SCRIPT LE PASA AL VALIDADOR, RELATIVA AL PROYECTO
+LISTA_VALIDAR="tmp/lote-validar.txt"
 
 # ============================================================================
 # ORQUESTACIÓN
@@ -83,7 +88,6 @@ CANONICO="$DIR_PROYECTO/jats/c-libro-$NOMBRE_BASE.xml"
 # SISTEMA DE ARCHIVOS, mv DEJARÍA DE SER UN RENOMBRE Y PASARÍA A SER UNA COPIA
 TEMPORAL="$DIR_PROYECTO/jats/.c-libro-$NOMBRE_BASE.xml.tmp"
 XSL="$DIR_GBP_LOCAL/xslt/ensamblar-libro-canonico.xsl"
-RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
 
 # --- 3. ENTORNO ---
 paso "verificando el entorno"
@@ -95,6 +99,7 @@ requerir_comandos java xmllint
 
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de ensamblado: $XSL"
+[[ -f "$DIR_ENGINE/validar_canonicos.sh" ]] || morir "No se encontró el validador: $DIR_ENGINE/validar_canonicos.sh"
 
 case "$LUGAR_BIB" in
     por_capitulo|consolidada) ;;
@@ -138,6 +143,9 @@ fi
 # ENSAMBLADOR VA A CARGAR. ANTES SE VERIFICABA LA LISTA DE LA BASE, Y LA
 # DEL MANIFIESTO PODÍA NO COINCIDIR CON ELLA.
 # BIEN FORMADO Y NO SOLO PRESENTE: UN CANÓNICO DE CAPÍTULO TRUNCADO EXISTE.
+# Y VIGENTE: UN CANÓNICO QUE YA NO CORRESPONDE A SUS FUENTES FRENA (SC-75,
+# DECISIÓN DE ALBERTO). EL LIBRO SALDRÍA CON LA VERSIÓN VIEJA DEL CAPÍTULO
+# SIN NINGÚN ERROR.
 # SE JUNTAN TODOS LOS PROBLEMAS ANTES DE ABORTAR: EL EDITOR NECESITA VER TODO
 # LO QUE HAY QUE REGENERAR, NO SOLO EL PRIMERO.
 paso "verificando los canónicos de los capítulos"
@@ -150,6 +158,7 @@ mapfile -t RUTAS < <(
 (( ${#RUTAS[@]} > 0 )) || morir "El manifiesto no declara ningún capítulo"
 
 problemas=0
+sin_huella=0
 for ruta in "${RUTAS[@]}"; do
     archivo="$DIR_PROYECTO/$ruta"
     if [[ ! -f "$archivo" ]]; then
@@ -159,11 +168,21 @@ for ruta in "${RUTAS[@]}"; do
         printf '  %s✗%s mal formado %s\n' "$C_ERROR" "$C_RESET" "$ruta"
         problemas=$((problemas + 1))
     else
-        # EL .md POSTERIOR AL CANÓNICO: HTML Y EPUB SALDRÍAN SIN LOS ÚLTIMOS
-        # CAMBIOS. AVISO Y NO PROBLEMA: EL ENSAMBLADO SIGUE. EL NOMBRE SALE
-        # DE LA RUTA DEL MANIFIESTO, jats/c-{nombre}.xml (m_XML)
-        nombre_pieza="$(basename "$ruta" .xml)"
-        avisar_md_posterior "${nombre_pieza#c-}" "$archivo"
+        vigencia_canonico "$archivo"
+        case "$VIGENCIA_ESTADO" in
+            vigente) ;;
+            # SIN HUELLA: AVISO Y NO FRENO MIENTRAS DURE LA TRANSICIÓN. TODO
+            # CANÓNICO ANTERIOR A SC-75 ESTÁ ASÍ, Y SE RESUELVE REGENERÁNDOLO
+            sin_huella)
+                aviso "$ruta: vigencia desconocida, $VIGENCIA_DETALLE"
+                sin_huella=$((sin_huella + 1)) ;;
+            # DESACTUALIZADO, HUÉRFANO O ILEGIBLE: NO CORRESPONDE A SUS
+            # FUENTES, O NO SE PUEDE SABER
+            *)
+                printf '  %s✗%s %s %s: %s\n' "$C_ERROR" "$C_RESET" \
+                    "${VIGENCIA_ESTADO/huerfano/huérfano}" "$ruta" "$VIGENCIA_DETALLE"
+                problemas=$((problemas + 1)) ;;
+        esac
     fi
 done
 
@@ -171,7 +190,12 @@ if (( problemas > 0 )); then
     morir "$problemas canónico(s) de capítulo con problemas: regenerá cada uno antes de ensamblar"
 fi
 
-ok "${#RUTAS[@]} capítulos presentes y bien formados"
+# «AL DÍA» SOLO SI TODOS TIENEN HUELLA: DE LOS QUE NO, NO SE SABE
+if (( sin_huella == 0 )); then
+    ok "${#RUTAS[@]} capítulos presentes, bien formados y al día con sus fuentes"
+else
+    ok "${#RUTAS[@]} capítulos presentes y bien formados; $sin_huella sin huella, de vigencia desconocida"
+fi
 
 # --- 6. ENSAMBLADO ---
 paso "ensamblando"
@@ -218,38 +242,27 @@ fi
 mv -f "$TEMPORAL" "$CANONICO" || morir "No se pudo reemplazar el canónico: $CANONICO"
 ok "canónico ensamblado y bien formado"
 
-# --- 7. VALIDACIÓN CONTRA DocBook 5.2 ---
+# --- 7. VALIDACIÓN (SC-75) ---
 # INFORMATIVA POR DECISIÓN: UN CANÓNICO BIEN FORMADO QUE NO VALIDA SE CONSERVA
 # Y LAS SALIDAS LO PUEDEN CONSUMIR, PERO EL AVISO LLEGA A GAMBAS COMO CÓDIGO 3.
-# NO VALIDAR —jing AUSENTE O ESQUEMA AUSENTE— TAMBIÉN ES AVISO: EL INFORME NO
-# PUEDE DAR POR VÁLIDO LO QUE NO VALIDÓ.
-paso "validando contra DocBook 5.2"
+# EN EL LIBRO LOS IDREF SIN ID SON AVISO: ACÁ YA ESTÁ TODO LO QUE SE REMITE.
+# EL VALIDADOR CORRE EN OTRO PROCESO: SUS AVISOS SE HEREDAN CON UNO PROPIO
+# EL VALIDADOR ANIDADO SE PRESENTA COMO UN PASO MÁS (encabezado, comun.sh)
+printf 'jats/c-libro-%s.xml\n' "$NOMBRE_BASE" > "$DIR_PROYECTO/$LISTA_VALIDAR" ||
+    morir "No se pudo escribir la lista del validador: $LISTA_VALIDAR"
 
-if ! command -v jing >/dev/null 2>&1; then
-    aviso "jing no está instalado: el canónico no se validó contra el esquema"
-elif [[ ! -f "$RNG" ]]; then
-    aviso "no se encontró el esquema $RNG: el canónico no se validó"
-else
-    salida=$(jing "$RNG" "$CANONICO" 2>&1)
-    codigo=$?
-    if (( codigo == 0 )); then
-        ok "válido"
-    else
-        errores=$(printf '%s\n' "$salida" | grep -c .)
-        aviso "$errores error(es) de validación contra el esquema:"
-        # SE QUITA LA RUTA DEL ARCHIVO, QUE SE REPITE EN CADA LÍNEA: QUEDA
-        # LÍNEA:COLUMNA Y EL MENSAJE
-        printf '%s\n' "$salida" | sed "s|^$CANONICO:||" |
-            head -"$LINEAS_ERROR_RNG" | sed 's/^/     /'
-        if (( errores > LINEAS_ERROR_RNG )); then
-            tenue "(+$((errores - LINEAS_ERROR_RNG)) más)"
-        fi
-    fi
+GBP_ANIDADO=1 bash "$DIR_ENGINE/validar_canonicos.sh" "$DIR_PROYECTO" completo "$LISTA_VALIDAR"
+codigo=$?
+
+if (( codigo == SALIDA_AVISOS )); then
+    aviso "la validación del libro encontró hallazgos: el canónico se conserva"
+elif (( codigo != SALIDA_OK )); then
+    aviso "la validación del libro no pudo completarse (código $codigo): el canónico se conserva, pero no se da por válido"
 fi
 
 # --- 8. RESUMEN ---
-# SOLO SE AFIRMA LO VERIFICADO: BIEN FORMADO SIEMPRE; VÁLIDO SOLO SI jing LO
-# DIJO, Y ESO YA QUEDÓ ESCRITO ARRIBA.
+# SOLO SE AFIRMA LO VERIFICADO: BIEN FORMADO SIEMPRE; VÁLIDO SOLO SI EL
+# VALIDADOR LO DIJO, Y ESO YA QUEDÓ ESCRITO ARRIBA.
 if [[ -z "${GBP_ANIDADO:-}" ]]; then
     echo
     titulo "$REGLA"

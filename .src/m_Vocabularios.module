@@ -1,0 +1,407 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Vocabularios
+' Propósito : Catálogo GLOBAL de vocabulario controlado (MeSH, DeCS…): buscar
+'             y sugerir términos, y administrarlos. Lo usan FVocabularios
+'             (diálogo abierto desde la pestaña «Revistas» de FSysAdmin) y
+'             m_Articulo (pestaña «Textos por idioma»). Entrega C3,
+'             decisiones de Alberto, 28/10.
+' Términos  : uno por (vocabulario, idioma, término). El término se compara sin
+'             distinguir mayúsculas pero sí tildes y ñ (columna con colación
+'             utf8mb4_0900_as_ci): «Año» y «Ano» son distintos. La BÚSQUEDA
+'             usa utf8mb4_0900_ai_ci, que sí ignora tildes: tipear «metodos»
+'             sugiere «Métodos» (medido en MySQL 8.0.46, 28/10).
+' Identific.: el código del vocabulario (MeSH: D006801), opcional y único por
+'             (vocabulario, idioma). La URI de JATS (vocab-term-identifier)
+'             se arma al generar.
+' Artículos : guardan término e identificador por valor (SC-23). Corregir un
+'             término del catálogo corrige los artículos NO publicados que lo
+'             usan (herencia viva hasta publicar, decisión 14); un publicado
+'             queda como salió.
+' Conexión  : todas reciben la conexión: FSysAdmin trabaja con la suya.
+' Requiere  : esquema 1.16.0 (vocabulario_termino).
+' Dependencias: m_Sonido.
+' ==============================================================================
+
+' ============================================
+' Función   : VocabulariosConocidos
+' Propósito : Los vocabularios que se ofrecen aunque el catálogo esté vacío
+' Parámetros: (ninguno)
+' Retorna   : String[] — MeSH (NLM) y DeCS (BIREME)
+' ============================================
+Public Function VocabulariosConocidos() As String[]
+
+  Return ["MeSH", "DeCS"]
+
+End
+
+' ============================================
+' Función   : Vocabularios
+' Propósito : Los vocabularios conocidos más los que ya tiene el catálogo
+' Parámetros: hConn As Connection — conexión abierta
+' Retorna   : String[] — los nombres, sin repetir
+' ============================================
+Public Function Vocabularios(hConn As Connection) As String[]
+
+  Dim aLista As String[]
+  Dim rDatos As Result
+
+  aLista = VocabulariosConocidos()
+  Try rDatos = hConn.Exec("SELECT DISTINCT vocabulario FROM vocabulario_termino ORDER BY vocabulario")
+  If Error Then Return aLista
+  While rDatos.Available
+    If aLista.Find(rDatos!vocabulario) < 0 Then aLista.Add(rDatos!vocabulario)
+    rDatos.MoveNext
+  Wend
+
+  Return aLista
+
+End
+
+' ============================================
+' Función   : IdiomasActivos
+' Propósito : Los códigos de idioma activos del catálogo de idiomas, con la
+'             conexión que se pasa (FSysAdmin puede no tener sesión: por eso
+'             no se usa m_Idiomas.LlenarCombo, que lee de mConn)
+' Parámetros: hConn As Connection — conexión abierta
+' Retorna   : String[] — los códigos, en el orden del catálogo
+' ============================================
+Public Function IdiomasActivos(hConn As Connection) As String[]
+
+  Dim aIdiomas As New String[]
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT codigo FROM idiomas WHERE activo = 1 ORDER BY orden, codigo")
+  If Error Then Return aIdiomas
+  While rDatos.Available
+    aIdiomas.Add(rDatos!codigo)
+    rDatos.MoveNext
+  Wend
+
+  Return aIdiomas
+
+End
+
+' ============================================
+' Función   : NuloSiVacio
+' Propósito : Null para un texto vacío al pasarlo a Exec: «sin dato» es NULL
+'             (GV-74). Función que devuelve Variant y no If(s = "", Null, s):
+'             con s String, If toma el tipo String, el Null se vuelve "" y la
+'             base recibe '' (MEDIDO: lo rechazó chk_voc_identificador, 28/10)
+' Parámetros: sTexto As String — el valor
+' Retorna   : Variant — el texto sin espacios de borde, o Null si está vacío
+' ============================================
+Private Function NuloSiVacio(sTexto As String) As Variant
+
+  If Trim(sTexto) = "" Then Return Null
+  Return Trim(sTexto)
+
+End
+
+' ============================================
+' Función   : PatronLike
+' Propósito : Arma el patrón de LIKE «contiene» para un texto tipeado, con
+'             sus comodines escapados: un «%» o un «_» del término es texto.
+'             Escape con «!» y ESCAPE '!' en la consulta, no con la barra
+'             invertida (SC-08); primero se escapa el propio «!»
+' Parámetros: sTexto As String — lo tipeado
+' Retorna   : String — «%texto%», para usar con ESCAPE '!'
+' ============================================
+Private Function PatronLike(sTexto As String) As String
+
+  Dim sPatron As String
+
+  sPatron = Replace(sTexto, "!", "!!")
+  sPatron = Replace(sPatron, "%", "!%")
+  sPatron = Replace(sPatron, "_", "!_")
+
+  Return "%" & sPatron & "%"
+
+End
+
+' ============================================
+' Función   : Buscar
+' Propósito : Sugerencias del catálogo para lo tipeado: términos del
+'             vocabulario e idioma que lo contienen, sin distinguir tildes;
+'             primero los que empiezan así
+' Parámetros: hConn As Connection — conexión abierta
+'             sVocabulario As String — vocabulario
+'             sIdioma As String — idioma
+'             sTexto As String — lo tipeado
+'             iLimite As Integer — cuántas sugerencias, como máximo
+' Retorna   : Result — termino, identificador; Null si falló (sin aviso: es
+'             una sugerencia mientras se tipea)
+' ============================================
+Public Function Buscar(hConn As Connection, sVocabulario As String, sIdioma As String, sTexto As String, iLimite As Integer) As Result
+
+  Dim rDatos As Result
+
+  ' 0900_ai_ci SOLO EN LA CONSULTA: LA COLUMNA DISTINGUE TILDES PARA LA CLAVE
+  Try rDatos = hConn.Exec("SELECT termino, identificador FROM vocabulario_termino WHERE vocabulario = &1 AND idioma = &2 " &
+    "AND termino COLLATE utf8mb4_0900_ai_ci LIKE &3 ESCAPE '!' " &
+    "ORDER BY (termino COLLATE utf8mb4_0900_ai_ci LIKE &4 ESCAPE '!') DESC, termino LIMIT &5",
+    sVocabulario, sIdioma, PatronLike(sTexto), Mid(PatronLike(sTexto), 2), iLimite)
+  If Error Then Return Null
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : TerminoDelCatalogo
+' Propósito : El término del catálogo igual a lo escrito (sin distinguir
+'             mayúsculas; sí tildes y ñ): si existe, se usa su forma y su
+'             identificador
+' Parámetros: hConn As Connection — conexión abierta
+'             sVocabulario As String — vocabulario
+'             sIdioma As String — idioma
+'             sTermino As String — lo escrito
+' Retorna   : Result — termino, identificador; Null si no existe o falló
+' ============================================
+Public Function TerminoDelCatalogo(hConn As Connection, sVocabulario As String, sIdioma As String, sTermino As String) As Result
+
+  Dim rDatos As Result
+
+  ' LA IGUALDAD USA LA COLACIÓN DE LA COLUMNA (0900_as_ci)
+  Try rDatos = hConn.Exec("SELECT termino, identificador FROM vocabulario_termino WHERE vocabulario = &1 AND idioma = &2 AND termino = &3", sVocabulario, sIdioma, sTermino)
+  If Error Then Return Null
+  If Not rDatos.Available Then Return Null
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ListarTerminos
+' Propósito : Los términos de un vocabulario e idioma para el diálogo, con
+'             cuántas palabras clave de artículos los usan
+' Parámetros: hConn As Connection — conexión abierta
+'             sVocabulario As String — vocabulario
+'             sIdioma As String — idioma
+'             sFiltro As String — texto a buscar; vacío: todos
+' Retorna   : Result — id_termino, termino, identificador, usos; Null si
+'             falló (ya se informó)
+' ============================================
+Public Function ListarTerminos(hConn As Connection, sVocabulario As String, sIdioma As String, sFiltro As String) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT v.id_termino, v.termino, v.identificador, " &
+    "(SELECT COUNT(*) FROM articulo_palabra_clave k WHERE k.vocabulario = v.vocabulario AND k.idioma = v.idioma AND k.termino = v.termino) AS usos " &
+    "FROM vocabulario_termino v WHERE v.vocabulario = &1 AND v.idioma = &2 AND v.termino COLLATE utf8mb4_0900_ai_ci LIKE &3 ESCAPE '!' ORDER BY v.termino",
+    sVocabulario, sIdioma, PatronLike(sFiltro))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el catálogo (¿falta la actualización de esquema 1.16.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : AvisoTermino
+' Propósito : Controla un término y su identificador antes de grabarlos
+' Parámetros: sVocabulario, sIdioma, sTermino, sIdentificador As String
+' Retorna   : String — el primer problema; vacío si está bien
+' ============================================
+Public Function AvisoTermino(sVocabulario As String, sIdioma As String, sTermino As String, sIdentificador As String) As String
+
+  Dim i As Integer
+
+  If Trim(sVocabulario) = "" Then Return "Falta el nombre del vocabulario."
+  ' String.Len CUENTA CARACTERES; Len CUENTA BYTES (UTF-8)
+  If String.Len(sVocabulario) > 50 Then Return "El nombre del vocabulario pasa de 50 caracteres."
+  If sIdioma = "" Then Return "Falta el idioma."
+  If Trim(sTermino) = "" Then Return "Falta el término."
+  If String.Len(sTermino) > 300 Then Return "El término pasa de 300 caracteres."
+  ' EL IDENTIFICADOR ES UN CÓDIGO: SIN ESPACIOS, HASTA 50
+  If sIdentificador <> "" Then
+    If Len(sIdentificador) > 50 Then Return "El identificador pasa de 50 caracteres."
+    For i = 1 To Len(sIdentificador)
+      If Asc(sIdentificador, i) <= 32 Then Return "El identificador no puede tener espacios."
+    Next
+  Endif
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : GuardarTermino
+' Propósito : Alta o corrección de un término del catálogo, en una
+'             transacción. Una corrección se lleva a las palabras clave de los
+'             artículos NO publicados que usaban la forma anterior
+'             (decisión 14); los publicados no se tocan
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdTermino As Integer — término; 0 para el alta
+'             sVocabulario, sIdioma As String — dónde va
+'             sTermino As String — la forma correcta
+'             sIdentificador As String — código; vacío si no tiene
+' Retorna   : Integer — artículos corregidos (0 o más); -1 si no se grabó
+'             (ya se informó)
+' ============================================
+Public Function GuardarTermino(hConn As Connection, iIdTermino As Integer, sVocabulario As String, sIdioma As String, sTermino As String, sIdentificador As String) As Integer
+
+  Dim rAnterior As Result
+  Dim rDatos As Result
+  Dim sAviso As String
+  Dim iCorregidos As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  sVocabulario = Trim(sVocabulario)
+  sTermino = Trim(sTermino)
+  sIdentificador = Trim(sIdentificador)
+  sAviso = AvisoTermino(sVocabulario, sIdioma, sTermino, sIdentificador)
+
+  ' ÚNICOS: SE AVISA ANTES DE QUE LO RECHACEN LAS CLAVES
+  If sAviso = "" Then
+    Try rDatos = hConn.Exec("SELECT termino FROM vocabulario_termino WHERE vocabulario = &1 AND idioma = &2 AND termino = &3 AND id_termino <> &4", sVocabulario, sIdioma, sTermino, iIdTermino)
+    If Error Then
+      sAviso = "No se pudo verificar el término: " & Error.Text
+    Else If rDatos.Available Then
+      sAviso = "El catálogo ya tiene «" & rDatos!termino & "» en " & sVocabulario & " (" & sIdioma & ")."
+    Endif
+  Endif
+  If sAviso = "" And sIdentificador <> "" Then
+    Try rDatos = hConn.Exec("SELECT termino FROM vocabulario_termino WHERE vocabulario = &1 AND idioma = &2 AND identificador = &3 AND id_termino <> &4", sVocabulario, sIdioma, sIdentificador, iIdTermino)
+    If Error Then
+      sAviso = "No se pudo verificar el identificador: " & Error.Text
+    Else If rDatos.Available Then
+      sAviso = "El identificador «" & sIdentificador & "» ya es de «" & rDatos!termino & "»."
+    Endif
+  Endif
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return -1
+  Endif
+
+  ' --- 2. FORMA ANTERIOR (CORRECCIÓN) ---
+  If iIdTermino > 0 Then
+    Try rAnterior = hConn.Exec("SELECT vocabulario, idioma, termino FROM vocabulario_termino WHERE id_termino = &1", iIdTermino)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer el término:" & gb.NewLine & Error.Text)
+      Return -1
+    Endif
+    If Not rAnterior.Available Then
+      m_Sonido.sonar("Error")
+      Message.Error("El término ya no existe.")
+      Return -1
+    Endif
+  Endif
+
+  ' --- 3. TRANSACCIÓN ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' --- 3.1 EL CATÁLOGO; «SIN IDENTIFICADOR» ES NULL (GV-74) ---
+  If iIdTermino = 0 Then
+    Try hConn.Exec("INSERT INTO vocabulario_termino (vocabulario, idioma, termino, identificador) VALUES (&1, &2, &3, &4)", sVocabulario, sIdioma, sTermino, NuloSiVacio(sIdentificador))
+  Else
+    Try hConn.Exec("UPDATE vocabulario_termino SET vocabulario = &1, idioma = &2, termino = &3, identificador = &4 WHERE id_termino = &5", sVocabulario, sIdioma, sTermino, NuloSiVacio(sIdentificador), iIdTermino)
+  Endif
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo grabar el término:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' --- 3.2 LOS ARTÍCULOS NO PUBLICADOS SIGUEN AL CATÁLOGO (DECISIÓN 14) ---
+  If iIdTermino > 0 Then
+    ' CUÁNTOS SE CORRIGEN: SE CUENTA ANTES, CON EL MISMO CRITERIO. ROW_COUNT()
+    ' EN UNA CONSULTA APARTE DIO 0 A TRAVÉS DE gb.db (MEDIDO, 28/10)
+    Try rDatos = hConn.Exec("SELECT COUNT(*) AS n FROM articulo_palabra_clave k JOIN articulo a ON a.id_articulo = k.id_articulo " &
+      "WHERE a.estado <> 'publicado' AND k.vocabulario = &1 AND k.idioma = &2 AND k.termino = &3", rAnterior!vocabulario, rAnterior!idioma, rAnterior!termino)
+    If Not Error Then iCorregidos = rDatos!n
+    Try hConn.Exec("UPDATE articulo_palabra_clave k JOIN articulo a ON a.id_articulo = k.id_articulo " &
+      "SET k.vocabulario = &1, k.idioma = &2, k.termino = &3, k.identificador = &4 " &
+      "WHERE a.estado <> 'publicado' AND k.vocabulario = &5 AND k.idioma = &6 AND k.termino = &7",
+      sVocabulario, sIdioma, sTermino, NuloSiVacio(sIdentificador), rAnterior!vocabulario, rAnterior!idioma, rAnterior!termino)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      ' UN ARTÍCULO QUE YA TENÍA LA FORMA NUEVA Y LA VIEJA CHOCA CON SU CLAVE
+      Message.Error("No se pudo llevar la corrección a los artículos:" & gb.NewLine & Error.Text)
+      Return -1
+    Endif
+  Endif
+
+  ' --- 3.3 CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar los cambios del término:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  Return iCorregidos
+
+End
+
+' ============================================
+' Función   : BorrarTermino
+' Propósito : Borra un término que ninguna palabra clave usa
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdTermino As Integer — término
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarTermino(hConn As Connection, iIdTermino As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  ' --- 1. EN USO: NO SE BORRA (NO HAY CLAVE QUE LO IMPIDA: LA COPIA ES POR VALOR) ---
+  Try rDatos = hConn.Exec("SELECT COUNT(*) AS n FROM articulo_palabra_clave k JOIN vocabulario_termino v ON k.vocabulario = v.vocabulario AND k.idioma = v.idioma AND k.termino = v.termino WHERE v.id_termino = &1", iIdTermino)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar el uso del término:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!n > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El término está en " & CStr(rDatos!n) & " palabra(s) clave de artículos: no se puede borrar.")
+    Return False
+  Endif
+
+  ' --- 2. BORRADO ---
+  Try hConn.Exec("DELETE FROM vocabulario_termino WHERE id_termino = &1", iIdTermino)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el término:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AgregarSiFalta
+' Propósito : Al guardar un artículo, un término nuevo entra al catálogo
+'             dentro de la transacción del artículo: si el guardado se
+'             cancela, el catálogo no queda con términos sueltos. Si ya
+'             existe, no hace nada
+' Parámetros: hConn As Connection — conexión con la transacción abierta
+'             sVocabulario, sIdioma, sTermino As String — el término
+'             sIdentificador As String — código; vacío si no tiene
+' Retorna   : Boolean — True si quedó en el catálogo (nuevo o existente)
+' ============================================
+Public Function AgregarSiFalta(hConn As Connection, sVocabulario As String, sIdioma As String, sTermino As String, sIdentificador As String) As Boolean
+
+  ' ON DUPLICATE KEY Y NO INSERT IGNORE: IGNORE TAMBIÉN CALLARÍA UN CHECK
+  Try hConn.Exec("INSERT INTO vocabulario_termino (vocabulario, idioma, termino, identificador) VALUES (&1, &2, &3, &4) ON DUPLICATE KEY UPDATE id_termino = id_termino",
+    sVocabulario, sIdioma, sTermino, NuloSiVacio(sIdentificador))
+  If Error Then Return False
+
+  Return True
+
+End

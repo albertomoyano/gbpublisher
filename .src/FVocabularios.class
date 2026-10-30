@@ -1,0 +1,333 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FVocabularios
+' Propósito  : Administra el catálogo GLOBAL de vocabulario controlado:
+'              buscar, cargar, corregir (término e identificador) y borrar
+'              términos sin uso (entrega C3, decisión de Alberto, 28/10:
+'              diálogo en FSysAdmin; desde el artículo solo se eligen o
+'              agregan). La lógica vive en m_Vocabularios.
+' Uso        : FVocabularios.hConn = hConnServidor
+'              FVocabularios.ShowModal()
+' ============================================
+
+' CONEXIÓN: LA DA EL LLAMADOR (FSysAdmin PUEDE NO TENER SESIÓN)
+Public hConn As Connection
+
+' UN id POR FILA DE LA GRILLA; 0 EN EL EDITOR = TÉRMINO NUEVO
+Private $aIds As New Integer[]
+Private $iIdTermino As Integer
+' HAY ALGO EN EL EDITOR (UN TÉRMINO ELEGIDO O UNO NUEVO)
+Private $bEditando As Boolean
+' EVITA QUE LOS Click/Change ACTÚEN MIENTRAS SE CARGA
+Private $bCargando As Boolean
+' COLUMNAS DE LA GRILLA (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_TERMINOS As Integer = 3
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara filtros y grilla y lista el primer vocabulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim aIdiomas As String[]
+
+  ' --- 1. SIN CONEXIÓN NO HAY QUÉ EDITAR ---
+  If Not hConn Then
+    Me.Close()
+    Return
+  Endif
+
+  ' --- 2. FILTROS: EL VOCABULARIO ES EDITABLE (UNO NUEVO SE ESCRIBE) ---
+  $bCargando = True
+  cmbVocabularioFiltro.List = m_Vocabularios.Vocabularios(hConn)
+  cmbVocabularioFiltro.Index = 0
+  aIdiomas = m_Vocabularios.IdiomasActivos(hConn)
+  cmbIdiomaFiltro.List = aIdiomas
+  If aIdiomas.Find("es") >= 0 Then
+    cmbIdiomaFiltro.Index = aIdiomas.Find("es")
+  Else If aIdiomas.Count > 0 Then
+    cmbIdiomaFiltro.Index = 0
+  Endif
+  $bCargando = False
+
+  ' --- 3. GRILLA ---
+  With gvTerminos
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_TERMINOS
+    .Columns[0].Title = "Término"
+    .Columns[0].Width = 520
+    .Columns[1].Title = "Identificador"
+    .Columns[1].Width = 160
+    .Columns[2].Title = "Usos"
+    .Columns[2].Width = 80
+  End With
+
+  ' --- 4. LISTA ---
+  CargarTerminos(0)
+
+End
+
+' ============================================
+' Función   : CargarTerminos
+' Propósito : Llena la grilla con los términos del vocabulario e idioma
+'             elegidos que contienen lo buscado, y elige uno
+' Parámetros: iElegido As Integer — id a dejar elegido; 0 ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarTerminos(iElegido As Integer)
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. GRILLA, CON UN id POR FILA EN EL MISMO ORDEN ---
+  $aIds.Clear()
+  gvTerminos.Rows.Count = 0
+  If Trim(cmbVocabularioFiltro.Text) <> "" And cmbIdiomaFiltro.Index >= 0 Then
+    rDatos = m_Vocabularios.ListarTerminos(hConn, Trim(cmbVocabularioFiltro.Text), cmbIdiomaFiltro.Text, Trim(txtBuscarTermino.Text))
+  Endif
+  If rDatos Then
+    gvTerminos.Rows.Count = rDatos.Count
+    While rDatos.Available
+      $aIds.Add(rDatos!id_termino)
+      gvTerminos[iFila, 0].Text = rDatos!termino
+      ' UN NULL VA A LA CELDA COMO VACÍO
+      gvTerminos[iFila, 1].Text = rDatos!identificador
+      gvTerminos[iFila, 2].Text = CStr(rDatos!usos)
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 2. ELEGIDO O EDITOR VACÍO ---
+  iFila = $aIds.Find(iElegido)
+  If iFila >= 0 Then
+    gvTerminos.Row = iFila
+    MostrarFila(iFila)
+  Else
+    LimpiarEditor()
+  Endif
+
+End
+
+' ============================================
+' Función   : LimpiarEditor
+' Propósito : Editor vacío y apagado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarEditor()
+
+  $iIdTermino = 0
+  $bEditando = False
+  txtTermino.Text = ""
+  txtIdentificador.Text = ""
+  lblEstadoTermino.Text = ""
+  FijarEditor(False)
+
+End
+
+' ============================================
+' Función   : FijarEditor
+' Propósito : Habilita o apaga el editor del término
+' Parámetros: bHabilitado As Boolean — True: hay término en edición
+' Retorna   : nada
+' ============================================
+Private Sub FijarEditor(bHabilitado As Boolean)
+
+  hbxTermino.Enabled = bHabilitado
+  hbxIdentificador.Enabled = bHabilitado
+  btnGuardarTermino.Enabled = bHabilitado
+  ' SOLO SE BORRA UN TÉRMINO QUE YA ESTÁ EN EL CATÁLOGO
+  btnBorrarTermino.Enabled = bHabilitado And $iIdTermino > 0
+
+End
+
+' ============================================
+' Función   : MostrarFila
+' Propósito : Pone en el editor el término de una fila de la grilla
+' Parámetros: iFila As Integer — fila
+' Retorna   : nada
+' ============================================
+Private Sub MostrarFila(iFila As Integer)
+
+  $iIdTermino = $aIds[iFila]
+  $bEditando = True
+  txtTermino.Text = gvTerminos[iFila, 0].Text
+  txtIdentificador.Text = gvTerminos[iFila, 1].Text
+  lblEstadoTermino.Text = "En " & gvTerminos[iFila, 2].Text & " palabra(s) clave de artículos."
+  FijarEditor(True)
+
+End
+
+' ============================================
+' Función   : gvTerminos_Click
+' Propósito : Elige un término para corregirlo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvTerminos_Click()
+
+  If gvTerminos.Row < 0 Or gvTerminos.Row >= $aIds.Count Then Return
+  MostrarFila(gvTerminos.Row)
+
+End
+
+' ============================================
+' Función   : cmbVocabularioFiltro_Click
+' Propósito : Otro vocabulario elegido de la lista: vuelve a listar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbVocabularioFiltro_Click()
+
+  If $bCargando Then Return
+  CargarTerminos(0)
+
+End
+
+' ============================================
+' Función   : cmbVocabularioFiltro_Change
+' Propósito : Un vocabulario escrito a mano: vuelve a listar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbVocabularioFiltro_Change()
+
+  If $bCargando Then Return
+  CargarTerminos(0)
+
+End
+
+' ============================================
+' Función   : cmbIdiomaFiltro_Click
+' Propósito : Otro idioma: vuelve a listar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaFiltro_Click()
+
+  If $bCargando Then Return
+  CargarTerminos(0)
+
+End
+
+' ============================================
+' Función   : txtBuscarTermino_Change
+' Propósito : Filtra la grilla mientras se tipea
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBuscarTermino_Change()
+
+  If $bCargando Then Return
+  CargarTerminos(0)
+
+End
+
+' ============================================
+' Función   : btnNuevoTermino_Click
+' Propósito : Prepara el alta de un término en el vocabulario e idioma
+'             elegidos; se crea al guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevoTermino_Click()
+
+  If Trim(cmbVocabularioFiltro.Text) = "" Or cmbIdiomaFiltro.Index < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elija primero el vocabulario y el idioma.")
+    Return
+  Endif
+  gvTerminos.Row = -1
+  $iIdTermino = 0
+  $bEditando = True
+  ' LO BUSCADO SE PROPONE COMO TÉRMINO NUEVO
+  txtTermino.Text = Trim(txtBuscarTermino.Text)
+  txtIdentificador.Text = ""
+  lblEstadoTermino.Text = "Término nuevo en " & Trim(cmbVocabularioFiltro.Text) & " (" & cmbIdiomaFiltro.Text & ")."
+  FijarEditor(True)
+  txtTermino.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarTermino_Click
+' Propósito : Graba el alta o la corrección por m_Vocabularios e informa
+'             cuántos artículos no publicados se corrigieron
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarTermino_Click()
+
+  Dim iCorregidos As Integer
+  Dim sTermino As String
+  Dim i As Integer
+
+  ' --- 1. HAY QUÉ GUARDAR ---
+  If Not $bEditando Then Return
+  sTermino = Trim(txtTermino.Text)
+
+  ' --- 2. GRABACIÓN ---
+  iCorregidos = m_Vocabularios.GuardarTermino(hConn, $iIdTermino, Trim(cmbVocabularioFiltro.Text), cmbIdiomaFiltro.Text, sTermino, Trim(txtIdentificador.Text))
+  If iCorregidos < 0 Then Return
+
+  ' --- 3. RELECTURA, CON EL TÉRMINO GRABADO ELEGIDO ---
+  ' SE BUSCA POR SU FORMA EXACTA: LA BÚSQUEDA PUEDE TRAER OTROS QUE LO CONTIENEN
+  m_Sonido.sonar("Info")
+  $bCargando = True
+  txtBuscarTermino.Text = sTermino
+  $bCargando = False
+  CargarTerminos(0)
+  For i = 0 To $aIds.Count - 1
+    If gvTerminos[i, 0].Text = sTermino Then
+      gvTerminos.Row = i
+      MostrarFila(i)
+      Break
+    Endif
+  Next
+  If iCorregidos > 0 Then lblEstadoTermino.Text = "Guardado. Se corrigieron " & CStr(iCorregidos) & " palabra(s) clave de artículos no publicados."
+
+End
+
+' ============================================
+' Función   : btnBorrarTermino_Click
+' Propósito : Borra el término elegido, si ningún artículo lo usa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarTermino_Click()
+
+  If $iIdTermino <= 0 Then Return
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar «" & txtTermino.Text & "» del catálogo?", "Borrar", "Cancelar") <> 1 Then Return
+  If Not m_Vocabularios.BorrarTermino(hConn, $iIdTermino) Then Return
+  CargarTerminos(0)
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierre del diálogo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End

@@ -30,6 +30,13 @@
 #   citas contra ella y enlazan a chapters/bibliografia.xhtml, que se
 #   transforma desde ella. Sin el archivo, la bibliografía es por capítulo.
 #
+#   LAS IMÁGENES LAS DECIDE EL OPF (29/10/2026): Gambas declara solo las que
+#   el libro usa —las que nombran los canónicos de las piezas, la tapa y los
+#   logos de portada y de colección— y este script copia exactamente esas,
+#   cada una por copiar_imagen_pantalla (comun.sh): tal cual, o reducida a
+#   2000 px de lado mayor y en sRGB. Antes cada lado recorría media/ por su
+#   cuenta y el paquete llevaba todo lo que hubiera ahí.
+#
 #   Este script hace todo lo demás: copia recursos, transforma cada capítulo,
 #   escribe mimetype y container.xml, VERIFICA QUE CADA ARCHIVO QUE EL OPF
 #   DECLARA EXISTA, empaqueta y valida. No toca la base.
@@ -41,12 +48,14 @@
 #   declarado que falta impide empaquetar.
 #
 # QUÉ ABORTA Y QUÉ SOLO AVISA
-#   aborta   recursos o insumos ausentes, un capítulo sin canónico o que no se
-#            pudo transformar, un archivo declarado en el OPF que no existe,
-#            un fallo al empaquetar. Un libro al que le falta un capítulo no
-#            se genera.
-#   avisa    errores de epubcheck, o epubcheck ausente. El EPUB se conserva y
-#            el aviso llega a Gambas como código 3.
+#   aborta   recursos o insumos ausentes, un capítulo sin canónico, que ya
+#            no corresponde a sus fuentes —desactualizado o huérfano (SC-75)—
+#            o que no se pudo transformar, un archivo declarado en el OPF que
+#            no existe, un fallo al empaquetar. Un libro al que le falta un
+#            capítulo no se genera.
+#   avisa    un capítulo sin huella (anterior a SC-75); errores de epubcheck,
+#            o epubcheck ausente. El EPUB se conserva y el aviso llega a
+#            Gambas como código 3.
 # ============================================================================
 
 set -uo pipefail
@@ -117,7 +126,7 @@ paso "verificando el entorno"
 
 [[ -d "$DIR_PROYECTO" ]] || morir "No existe el proyecto: $DIR_PROYECTO"
 
-requerir_comandos java xmllint zip
+requerir_comandos java xmllint zip identify convert sha256sum
 
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de salida EPUB: $XSL"
@@ -178,35 +187,36 @@ for fuente in "${FUENTES[@]}"; do
 done
 ok "hoja de estilos y ${#FUENTES[@]} fuentes"
 
-# LAS IMÁGENES SE COPIAN DESDE media/, SALTEANDO SUBDIRECTORIOS Y LO QUE NO ES
-# UNA IMAGEN QUE EL EPUB ADMITA: jpg, jpeg, png, gif, svg Y webp (EPUB 3.3).
-# LA MISMA LISTA ESTÁ EN m_GenerarEpubLibro.EsImagenEpub, QUE DECLARA EL OPF.
-# UN PDF EN media/ SE COPIABA Y SE DECLARABA COMO image/jpeg.
-# EL GLOB NO INCLUYE ARCHIVOS OCULTOS, Y GAMBAS TAMPOCO LOS DECLARA
+# LAS IMÁGENES: LAS QUE EL OPF DECLARA EN images/, Y NINGUNA MÁS. LA LISTA LA
+# ARMA GAMBAS (m_GenerarEpubLibro.ImagenesUsadas) CON LO QUE EL LIBRO USA; EL
+# SCRIPT NO VUELVE A DECIDIRLA. local-name() Y NO EL PREFIJO: xmllint --xpath
+# NO CONOCE LOS NAMESPACES DEL DOCUMENTO (GV-22)
+mapfile -t IMAGENES_OPF < <(
+    xmllint --xpath "//*[local-name()='manifest']/*[local-name()='item']/@href" "$OPF" 2>/dev/null |
+    grep -oP 'href="images/\K[^"]+'
+)
+
 imagenes=0
-omitidos=0
-if [[ -d "$DIR_PROYECTO/media" ]]; then
-    for archivo in "$DIR_PROYECTO/media"/*; do
-        [[ -f "$archivo" ]] || continue
-        extension="${archivo##*.}"
-        case "${extension,,}" in
-            jpg|jpeg|png|gif|svg|webp)
-                cp -f "$archivo" "$DIR_OEBPS/images/" || morir "No se pudo copiar $(basename "$archivo")"
-                imagenes=$((imagenes + 1))
-                ;;
-            *)
-                omitidos=$((omitidos + 1))
-                ;;
-        esac
-    done
-fi
-if (( imagenes > 0 )); then
-    ok "$imagenes imagen(es)"
+reducidas=0
+for nombre in "${IMAGENES_OPF[@]}"; do
+    [[ -n "$nombre" ]] || continue
+    origen="$DIR_PROYECTO/media/$nombre"
+    # UNA IMAGEN DECLARADA QUE NO ESTÁ DEJARÍA EL PAQUETE ROTO: SE DICE CUÁL
+    # ANTES DE QUE LA VERIFICACIÓN DEL PUNTO 9 LA DÉ COMO AUSENTE
+    [[ -f "$origen" ]] || morir "El libro usa una imagen que no está en media/: $nombre"
+    copiar_imagen_pantalla "$origen" "$DIR_OEBPS/images/$nombre" "$DIR_PROYECTO/tmp/pantalla" ||
+        morir "No se pudo preparar la imagen $nombre${PANTALLA_NOTA:+: $PANTALLA_NOTA}"
+    imagenes=$((imagenes + 1))
+    [[ -z "$PANTALLA_NOTA" ]] || tenue "$nombre: $PANTALLA_NOTA"
+    reducidas=$((reducidas + PANTALLA_PREPARADA))
+done
+
+if (( imagenes > 0 && reducidas > 0 )); then
+    ok "$imagenes imagen(es) de las que usa el libro, $reducidas preparada(s) para pantalla"
+elif (( imagenes > 0 )); then
+    ok "$imagenes imagen(es) de las que usa el libro"
 else
-    tenue "el proyecto no tiene imágenes en media/"
-fi
-if (( omitidos > 0 )); then
-    tenue "$omitidos archivo(s) de media/ no son imágenes EPUB y no se copian"
+    tenue "el libro no usa imágenes"
 fi
 
 # --- 6. CITAS (SC-57) ---
@@ -260,6 +270,23 @@ for pieza in "${PIEZAS[@]}"; do
         problemas=$((problemas + 1))
         continue
     fi
+
+    # EL CANÓNICO QUE YA NO CORRESPONDE A SUS FUENTES: EL EPUB SALDRÍA CON
+    # LA VERSIÓN VIEJA DEL CAPÍTULO Y SIN ERROR. ES UN PROBLEMA, COMO UN
+    # CANÓNICO QUE FALTA: EL EPUB NO SE GENERA (SC-75, DECISIÓN DE ALBERTO).
+    # ESTE SCRIPT NO ENSAMBLA, ASÍ QUE EL FRENO DEL ENSAMBLADO NO LO CUBRE.
+    # SIN HUELLA ES AVISO MIENTRAS DURE LA TRANSICIÓN
+    vigencia_canonico "$canonico"
+    case "$VIGENCIA_ESTADO" in
+        vigente) ;;
+        sin_huella)
+            aviso "$pieza: vigencia desconocida, $VIGENCIA_DETALLE" ;;
+        *)
+            printf '  %s✗%s %s %s: %s. Regenerá su canónico\n' "$C_ERROR" "$C_RESET" \
+                "${VIGENCIA_ESTADO/huerfano/huérfano}" "$pieza" "$VIGENCIA_DETALLE"
+            problemas=$((problemas + 1))
+            continue ;;
+    esac
 
     salida=$(timeout "$TIEMPO_SAXON" java -Djavax.xml.accessExternalDTD=all -jar "$RUTA_SAXON" \
                 -s:"$canonico" \

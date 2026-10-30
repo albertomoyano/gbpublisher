@@ -1,0 +1,196 @@
+' Gambas class file
+
+' ============================================
+' Clase     : CTextosArticulo
+' Propósito : Resúmenes y palabras clave del artículo en memoria, por idioma,
+'             mientras se editan en la pestaña «Textos por idioma». Se graban
+'             con el artículo, en su transacción. Clase chica y no Collection
+'             sueltas por GV-24: viajan juntas a m_Articulo.
+'             Lleva también la plantilla de resumen estructurado que exige la
+'             sección del artículo (entrega C2): decide cómo se edita y cómo
+'             se valida el resumen.
+' Tablas    : articulo_texto (tipo resumen), articulo_resumen_seccion,
+'             articulo_palabra_clave (términos controlados del catálogo
+'             vocabulario_termino, entrega C3).
+' Claves    : el código de idioma (BCP 47, SC-23). Una clave ausente es «sin
+'             dato»: asignar "" a una Collection borra la clave (GV-68).
+' ============================================
+
+' RESUMEN SIMPLE POR IDIOMA (Markdown en línea)
+Public cResumenes As New Collection
+' RESUMEN ESTRUCTURADO POR IDIOMA: CADA VALOR ES UNA Collection CON CLAVE EL
+' CÓDIGO DE LA SECCIÓN Y VALOR SU TEXTO
+Public cSecciones As New Collection
+' PALABRAS CLAVE DEL AUTOR POR IDIOMA: UNA POR LÍNEA, EN ORDEN
+Public cPalabrasAutor As New Collection
+' PALABRAS DE VOCABULARIO CONTROLADO POR IDIOMA (ENTREGA C3): CADA VALOR ES
+' UN String[] DE TÉRMINOS EN ORDEN Y, PARALELO, OTRO DE IDENTIFICADORES
+' ("" = SIN IDENTIFICADOR). SE TOCAN SOLO CON LOS MÉTODOS DE ABAJO, QUE LOS
+' MANTIENEN ALINEADOS
+Public cTerminosControlados As New Collection
+Public cIdsControlados As New Collection
+' NOMBRE DEL VOCABULARIO CONTROLADO DE CADA IDIOMA (MeSH, DeCS…)
+Public cVocabularios As New Collection
+
+' PLANTILLA QUE EXIGE LA SECCIÓN DEL ARTÍCULO: 0 = RESUMEN SIMPLE. CÓDIGOS EN
+' ORDEN Y, PARALELA, UNA Collection DE TÍTULOS POR IDIOMA PARA CADA UNO
+Public iIdPlantilla As Integer
+Public sNombrePlantilla As String
+Public aCodigosPlantilla As New String[]
+Public aTitulosPlantilla As New Collection[]
+
+' ============================================
+' Función   : TextoSeccion
+' Propósito : El texto de una sección del resumen estructurado en un idioma
+' Parámetros: sIdioma As String — idioma
+'             sCodigo As String — código de la sección
+' Retorna   : String — el texto; vacío si no hay
+' ============================================
+Public Function TextoSeccion(sIdioma As String, sCodigo As String) As String
+
+  Dim cDelIdioma As Collection
+
+  If Not cSecciones.Exist(sIdioma) Then Return ""
+  cDelIdioma = cSecciones[sIdioma]
+  ' UNA CLAVE AUSENTE SE LEE Null, QUE COMO String ES VACÍO (GV-68)
+  Return cDelIdioma[sCodigo]
+
+End
+
+' ============================================
+' Función   : FijarTextoSeccion
+' Propósito : Guarda el texto de una sección; un texto vacío la borra, y un
+'             idioma sin secciones con texto desaparece
+' Parámetros: sIdioma As String — idioma
+'             sCodigo As String — código de la sección
+'             sTexto As String — el texto
+' Retorna   : nada
+' ============================================
+Public Sub FijarTextoSeccion(sIdioma As String, sCodigo As String, sTexto As String)
+
+  Dim cDelIdioma As Collection
+
+  If cSecciones.Exist(sIdioma) Then
+    cDelIdioma = cSecciones[sIdioma]
+  Else
+    If sTexto = "" Then Return
+    cDelIdioma = New Collection
+    cSecciones[sIdioma] = cDelIdioma
+  Endif
+  ' "" BORRA LA CLAVE (GV-68)
+  cDelIdioma[sCodigo] = sTexto
+  If cDelIdioma.Count = 0 Then cSecciones.Remove(sIdioma)
+
+End
+
+' ============================================
+' Función   : TerminosControlados
+' Propósito : Los términos controlados de un idioma, en orden
+' Parámetros: sIdioma As String — idioma
+' Retorna   : String[] — los términos; vacío si no hay
+' ============================================
+Public Function TerminosControlados(sIdioma As String) As String[]
+
+  If Not cTerminosControlados.Exist(sIdioma) Then Return New String[]
+  Return cTerminosControlados[sIdioma]
+
+End
+
+' ============================================
+' Función   : IdsControlados
+' Propósito : Los identificadores de los términos controlados de un idioma,
+'             paralelos a TerminosControlados
+' Parámetros: sIdioma As String — idioma
+' Retorna   : String[] — los identificadores ("" sin identificador)
+' ============================================
+Public Function IdsControlados(sIdioma As String) As String[]
+
+  If Not cIdsControlados.Exist(sIdioma) Then Return New String[]
+  Return cIdsControlados[sIdioma]
+
+End
+
+' ============================================
+' Función   : AgregarControlado
+' Propósito : Agrega un término controlado al final de un idioma
+' Parámetros: sIdioma As String — idioma
+'             sTermino As String — el término
+'             sIdentificador As String — su código; "" si no tiene
+' Retorna   : nada
+' ============================================
+Public Sub AgregarControlado(sIdioma As String, sTermino As String, sIdentificador As String)
+
+  Dim aTerminos As String[]
+  Dim aIds As String[]
+
+  If cTerminosControlados.Exist(sIdioma) Then
+    aTerminos = cTerminosControlados[sIdioma]
+    aIds = cIdsControlados[sIdioma]
+  Else
+    aTerminos = New String[]
+    aIds = New String[]
+    cTerminosControlados[sIdioma] = aTerminos
+    cIdsControlados[sIdioma] = aIds
+  Endif
+  aTerminos.Add(sTermino)
+  aIds.Add(sIdentificador)
+
+End
+
+' ============================================
+' Función   : QuitarControlado
+' Propósito : Quita un término controlado; un idioma sin términos desaparece
+' Parámetros: sIdioma As String — idioma
+'             iIndice As Integer — posición
+' Retorna   : nada
+' ============================================
+Public Sub QuitarControlado(sIdioma As String, iIndice As Integer)
+
+  Dim aTerminos As String[]
+  Dim aIds As String[]
+
+  If Not cTerminosControlados.Exist(sIdioma) Then Return
+  aTerminos = cTerminosControlados[sIdioma]
+  aIds = cIdsControlados[sIdioma]
+  If iIndice < 0 Or iIndice >= aTerminos.Count Then Return
+  aTerminos.Remove(iIndice)
+  aIds.Remove(iIndice)
+  If aTerminos.Count = 0 Then
+    cTerminosControlados.Remove(sIdioma)
+    cIdsControlados.Remove(sIdioma)
+  Endif
+
+End
+
+' ============================================
+' Función   : MoverControlado
+' Propósito : Intercambia un término controlado con el vecino
+' Parámetros: sIdioma As String — idioma
+'             iIndice As Integer — posición
+'             iPaso As Integer — -1 sube, 1 baja
+' Retorna   : Integer — la nueva posición; la misma si no se pudo mover
+' ============================================
+Public Function MoverControlado(sIdioma As String, iIndice As Integer, iPaso As Integer) As Integer
+
+  Dim aTerminos As String[]
+  Dim aIds As String[]
+  Dim sTexto As String
+  Dim iDestino As Integer
+
+  If Not cTerminosControlados.Exist(sIdioma) Then Return iIndice
+  aTerminos = cTerminosControlados[sIdioma]
+  aIds = cIdsControlados[sIdioma]
+  iDestino = iIndice + iPaso
+  If iIndice < 0 Or iDestino < 0 Or iDestino >= aTerminos.Count Then Return iIndice
+
+  ' INTERCAMBIO A MANO: LOS ARREGLOS NO TIENEN Exchange EN 3.19 (MEDIDO, 28/10)
+  sTexto = aTerminos[iIndice]
+  aTerminos[iIndice] = aTerminos[iDestino]
+  aTerminos[iDestino] = sTexto
+  sTexto = aIds[iIndice]
+  aIds[iIndice] = aIds[iDestino]
+  aIds[iDestino] = sTexto
+
+  Return iDestino
+
+End

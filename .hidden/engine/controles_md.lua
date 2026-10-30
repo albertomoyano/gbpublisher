@@ -10,6 +10,7 @@
 --                pandoc ARCHIVO.md --from markdown --to plain
 --                       --lua-filter controles_md.lua
 --                       --metadata gb-controles=RUTA
+--                       --metadata gb-fuentes=RUTA_FUENTES
 --                       --metadata gb-proyecto=RAIZ --output /dev/null
 --              RAIZ es la raíz del proyecto: las imágenes se escriben en el
 --              .md con ruta relativa a ella (media/fig-mapa.png, SC-32).
@@ -18,6 +19,11 @@
 --              nivel: error (el capítulo no se genera) | aviso (se genera,
 --              y el lote termina con código 3). El archivo se escribe siempre,
 --              vacío si no hubo hallazgos: su ausencia es un fallo del control.
+--              En RUTA_FUENTES, los cuadros que nombra el .md, uno por línea
+--              y relativos a RAIZ (cuadros/tbl-nombre.md): con el .md, son
+--              las fuentes cuya huella se anota en el canónico (SC-75). Se
+--              escribe siempre, vacío si no hay cuadros, con el mismo
+--              contrato que el informe. NO es un control: no registra nada.
 -- Ubicación  : engine/ — NO se copia a ~/.gbpublisher (SC-11): un control que
 --              dice «este capítulo está bien» no se ajusta localmente.
 --
@@ -630,15 +636,54 @@ local function revisar_definiciones()
 end
 
 -- ============================================================================
+-- Función   : listar_cuadros
+-- Propósito : Los archivos de cuadro que nombra el .md, en el orden en que
+--             aparecen y sin repetir (SC-75). Son fuentes del canónico:
+--             cuadro-leer.lua copia su contenido adentro, así que un cambio
+--             en uno deja viejo al canónico aunque el .md no cambie.
+-- Parámetros: doc — el documento
+-- Retorna   : tabla de rutas relativas a la raíz (cuadros/tbl-nombre.md)
+-- Nota      : LA MISMA REGLA QUE cuadro-leer.lua (leer_cuadro, apartado 2):
+--             UN ::: {.cuadro #id} ES EL ARCHIVO cuadros/{id}.md. SI CAMBIA
+--             ALLÁ, CAMBIA ACÁ. SE REPITE EN VEZ DE QUE LA LISTA LA ESCRIBA
+--             cuadro-leer.lua PORQUE ESTE FILTRO ESTÁ EN engine/ Y NO SE
+--             MODIFICA (SC-11): LA HUELLA NO PUEDE DEPENDER DE UNA COPIA LOCAL.
+--             SOLO LOS id VÁLIDOS PARA cuadro-leer.lua (tbl- Y LETRAS, CIFRAS
+--             Y GUIONES): UNO INVÁLIDO LO FRENA ESE FILTRO, Y ASÍ NINGUNA RUTA
+--             LISTADA SALE DE cuadros/ NI TRAE COMILLAS
+-- ============================================================================
+local function listar_cuadros(doc)
+  local aRutas = {}
+  local hVistos = {}
+  doc:walk({
+    Div = function(el)
+      if el.classes:includes("cuadro") and el.identifier:match("^tbl%-[%w%-]+$") then
+        local sRuta = "cuadros/" .. el.identifier .. ".md"
+        if not hVistos[sRuta] then
+          hVistos[sRuta] = true
+          table.insert(aRutas, sRuta)
+        end
+      end
+      return nil
+    end,
+  })
+  return aRutas
+end
+
+-- ============================================================================
 -- Función   : Pandoc
--- Propósito : Corre los controles y escribe el informe. El documento no se
---             toca.
+-- Propósito : Corre los controles y escribe el informe y la lista de
+--             cuadros. El documento no se toca.
 -- ============================================================================
 function Pandoc(doc)
   if not doc.meta["gb-controles"] then
     error("controles_md.lua: falta --metadata gb-controles=RUTA")
   end
   local sRuta = pandoc.utils.stringify(doc.meta["gb-controles"])
+  if not doc.meta["gb-fuentes"] then
+    error("controles_md.lua: falta --metadata gb-fuentes=RUTA")
+  end
+  local sRutaFuentes = pandoc.utils.stringify(doc.meta["gb-fuentes"])
   if not doc.meta["gb-proyecto"] then
     error("controles_md.lua: falta --metadata gb-proyecto=RAIZ")
   end
@@ -661,6 +706,16 @@ function Pandoc(doc)
   end
   for _, a in ipairs(aHallazgos) do
     h:write(a[1], "\t", a[2], "\t", a[3], "\n")
+  end
+  h:close()
+
+  -- --- LOS CUADROS: SIEMPRE SE ESCRIBE, VACÍO SI NO HAY (SC-75) ---
+  h = io.open(sRutaFuentes, "w")
+  if not h then
+    error("controles_md.lua: no se pudo escribir " .. sRutaFuentes)
+  end
+  for _, sCuadro in ipairs(listar_cuadros(doc)) do
+    h:write(sCuadro, "\n")
   end
   h:close()
 

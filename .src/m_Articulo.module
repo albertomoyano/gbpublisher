@@ -1,0 +1,1842 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Articulo
+' Propósito : Lógica de FMetadatosArticulo: los artículos del número abierto
+'             sobre el esquema nuevo (tabla articulo y sus hijas). Entrega A:
+'             la lista atada a los archivos, Identificación y Permisos (con la
+'             herencia de la revista a la vista, decisión 14). Los títulos y
+'             subtítulos traducidos van en Identificación, con su propio
+'             selector de idioma (decisión de Alberto, 26/10): en JATS son
+'             trans-title-group, dentro de title-group.
+' Contribuy.: entrega B. En memoria como CContribuyente (con afiliaciones y
+'             CRediT), editados en FContribuyenteArticulo y grabados con el
+'             artículo, en su transacción (decisiones de Alberto, 28/10).
+' Textos   : entrega C. Resumen simple y palabras clave por idioma, en
+'             memoria como CTextosArticulo; palabras una por línea, del autor
+'             y de un vocabulario controlado (decisiones de Alberto, 28/10).
+'             Resumen estructurado (entrega C2): si la sección del artículo
+'             tiene plantilla, el resumen se edita por secciones y todas son
+'             obligatorias (decisión de Alberto, 28/10).
+'             FMetadatosArticulo tiene los controles y los manejadores; acá
+'             viven las consultas, las validaciones y las grabaciones.
+' Lista     : sale de los a-*.md de la carpeta articulos/ del proyecto,
+'             cruzados con la base por nombre_archivo (único por número). Un
+'             archivo sin fila es «sin metadatos»; una fila sin archivo,
+'             «huérfana» (decisión de Alberto, 26/10). Así no se puede atar un
+'             archivo ajeno al proyecto.
+' Publicado : un artículo publicado es de solo lectura (decisión 17): acá se
+'             niega a grabarlo. Publicar y reabrir llegan en la entrega E.
+' Conexión  : m_ConexionBD.mConn (con proyecto abierto, hay sesión).
+' Requiere  : esquema 1.16.0 (vocabulario_termino; antes, 1.15.0 para el ROR).
+' Dependencias: m_ConexionBD, m_Sonido, m_InicioCierre, m_Revistas (plantillas),
+'             m_Vocabularios (catálogo de vocabulario controlado, entrega C3).
+' Fechas    : entrega D1. Recibido, revisado, aceptado y publicado, en ese
+'             orden; el DOI se guarda sin resolvedor, único, y se avisa si no
+'             lleva el prefijo de la revista. Las páginas las escribe la
+'             composición del número (decisión 11): acá solo se muestran.
+' Financ.   : entrega D2. Financiadores en orden (nombre, ROR o Funder ID,
+'             número de proyecto) y declaraciones del núcleo (financiamiento,
+'             conflicto de intereses) por tipo e idioma, en memoria como
+'             CFinanciamientoArticulo. Las declaraciones de los bloques N3 no
+'             se leen ni se tocan.
+' Relac.    : entrega D3. Relaciones con otros artículos (tipos de JATS 1.4;
+'             destino de la base o externo) y las URL de cada salida, en
+'             memoria como CRelacionesArticulo.
+' Vocabul.  : las palabras de vocabulario controlado salen del catálogo
+'             global (vocabulario_termino) y se copian por valor con su
+'             identificador; un término nuevo entra al catálogo al guardar,
+'             dentro de la transacción del artículo (decisiones de Alberto,
+'             28/10).
+' ==============================================================================
+
+' ============================================
+' Función   : EstadosCodigos
+' Propósito : Los valores de articulo.estado
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a EstadosLeyendas
+' ============================================
+Public Function EstadosCodigos() As String[]
+
+  Return ["borrador", "en_produccion", "publicado"]
+
+End
+
+' ============================================
+' Función   : EstadosLeyendas
+' Propósito : Cómo se muestra cada estado
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a EstadosCodigos
+' ============================================
+Public Function EstadosLeyendas() As String[]
+
+  Return ["Borrador", "En producción", "Publicado"]
+
+End
+
+' ============================================
+' Función   : LeyendaEstado
+' Propósito : La leyenda de un estado guardado
+' Parámetros: sEstado As String — código
+' Retorna   : String — la leyenda; el código si no se conoce
+' ============================================
+Public Function LeyendaEstado(sEstado As String) As String
+
+  Dim iIndice As Integer
+
+  iIndice = EstadosCodigos().Find(sEstado)
+  If iIndice < 0 Then Return sEstado
+  Return EstadosLeyendas()[iIndice]
+
+End
+
+' ============================================
+' Función   : ArchivosDelProyecto
+' Propósito : Los artículos que existen como archivo: los a-*.md de la carpeta
+'             articulos/ del proyecto, sin extensión, en orden
+' Parámetros: (ninguno)
+' Retorna   : String[] — nombres sin .md («a-03-tal-cosa»); vacío si la
+'             carpeta no existe o no se puede leer
+' ============================================
+Public Function ArchivosDelProyecto() As String[]
+
+  Dim aNombres As New String[]
+  Dim aArchivos As String[]
+  Dim sArchivo As String
+  Dim sCarpeta As String
+
+  ' --- 1. LECTURA DE LA CARPETA ---
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ "articulos"
+  If Not Exist(sCarpeta) Then Return aNombres
+  Try aArchivos = Dir(sCarpeta, "*.md", gb.File)
+  If Error Then Return aNombres
+
+  ' --- 2. SOLO LOS a-: EL PREFIJO ES EL DE LA CARPETA (m_OrdenPiezas) ---
+  ' NOMBRE Y PREFIJO SON ASCII POR LA NOMENCLATURA DEL PROYECTO
+  For Each sArchivo In aArchivos
+    If LCase(sArchivo) Begins "a-" Then aNombres.Add(File.BaseName(sArchivo))
+  Next
+
+  ' DENTRO DE UNA FAMILIA, EL ORDEN ALFABÉTICO ES EL NUMÉRICO (NN DE DOS DÍGITOS)
+  aNombres.Sort()
+  Return aNombres
+
+End
+
+' ============================================
+' Función   : FilasDelNumero
+' Propósito : Los artículos del número que están en la base
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : Result — id_articulo, nombre_archivo, titulo, estado; Null si
+'             falló (ya se informó)
+' ============================================
+Public Function FilasDelNumero(iIdNumero As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_articulo, nombre_archivo, titulo, estado FROM articulo WHERE id_numero = &1 ORDER BY nombre_archivo", iIdNumero)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los artículos del número (¿falta la actualización de esquema 1.13.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarArticulo
+' Propósito : El registro completo de un artículo, para el editor
+' Parámetros: iIdArticulo As Integer — artículo
+' Retorna   : Result — el registro; Null si falló o no existe (ya se informó)
+' ============================================
+Public Function CargarArticulo(iIdArticulo As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT * FROM articulo WHERE id_articulo = &1", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el artículo:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El artículo ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ValoresRevista
+' Propósito : Los valores por defecto de la revista del número, que el
+'             artículo hereda mientras no está publicado (decisión 14)
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : Result — licencia_defecto, url_licencia_defecto,
+'             titular_copyright_defecto, tipo_acceso_defecto; Null si falló
+' ============================================
+Public Function ValoresRevista(iIdNumero As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT r.licencia_defecto, r.url_licencia_defecto, r.titular_copyright_defecto, r.tipo_acceso_defecto " &
+    "FROM numero n JOIN revista r ON r.id_revista = n.id_revista WHERE n.id_numero = &1", iIdNumero)
+  If Error Then Return Null
+  If Not rDatos.Available Then Return Null
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : TipoDeSeccion
+' Propósito : El article-type que una sección propone para sus artículos
+' Parámetros: iIdSeccion As Integer — sección
+' Retorna   : String — el código; vacío si la sección no define uno
+' ============================================
+Public Function TipoDeSeccion(iIdSeccion As Integer) As String
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT article_type_defecto FROM revista_seccion WHERE id_seccion = &1", iIdSeccion)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+  If IsNull(rDatos!article_type_defecto) Then Return ""
+
+  Return rDatos!article_type_defecto
+
+End
+
+' ============================================
+' Función   : TextosTraducidos
+' Propósito : Los títulos o los subtítulos traducidos de un artículo, por
+'             idioma (tabla articulo_texto)
+' Parámetros: iIdArticulo As Integer — artículo
+'             sTipo As String — "titulo" o "subtitulo"
+' Retorna   : Collection — clave: idioma, valor: texto. Vacía si no hay o si
+'             falló la lectura
+' ============================================
+Public Function TextosTraducidos(iIdArticulo As Integer, sTipo As String) As Collection
+
+  Dim cTextos As New Collection
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT idioma, texto FROM articulo_texto WHERE id_articulo = &1 AND tipo = &2", iIdArticulo, sTipo)
+  If Error Then Return cTextos
+  While rDatos.Available
+    cTextos[rDatos!idioma] = rDatos!texto
+    rDatos.MoveNext
+  Wend
+
+  Return cTextos
+
+End
+
+' ============================================
+' Función   : ValidarTraducciones
+' Propósito : Un subtítulo traducido necesita su título en el mismo idioma
+'             (en JATS, trans-subtitle va dentro del trans-title-group de su
+'             trans-title). Avisa el primero que falla
+' Parámetros: cTitulos As Collection — títulos traducidos por idioma
+'             cSubtitulos As Collection — subtítulos traducidos por idioma
+'             sPrincipal As String — idioma principal (no se valida: no se graba)
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarTraducciones(cTitulos As Collection, cSubtitulos As Collection, sPrincipal As String) As Boolean
+
+  Dim sTexto As String
+  Dim sIdioma As String
+
+  For Each sTexto In cSubtitulos
+    sIdioma = cSubtitulos.Key
+    ' CONDICIONES SEPARADAS: Not NO SE ENCADENA CON OTRO OPERADOR (GV-12)
+    If sIdioma = sPrincipal Then Continue
+    If cTitulos.Exist(sIdioma) Then Continue
+    m_Sonido.sonar("Warning")
+    Message.Warning("Hay subtítulo traducido sin título en «" & sIdioma & "».")
+    Return False
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : RolesContribuyenteCodigos
+' Propósito : Los valores de articulo_contribuyente.rol; se traducen a JATS
+'             contrib-type al generar
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a RolesContribuyenteLeyendas
+' ============================================
+Public Function RolesContribuyenteCodigos() As String[]
+
+  Return ["autor", "editor", "traductor"]
+
+End
+
+' ============================================
+' Función   : RolesContribuyenteLeyendas
+' Propósito : Cómo se muestra cada rol
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a RolesContribuyenteCodigos
+' ============================================
+Public Function RolesContribuyenteLeyendas() As String[]
+
+  Return ["Autor", "Editor", "Traductor"]
+
+End
+
+' ============================================
+' Función   : LeyendaRolContribuyente
+' Propósito : La leyenda de un rol guardado
+' Parámetros: sRol As String — código
+' Retorna   : String — la leyenda; el código si no se conoce
+' ============================================
+Public Function LeyendaRolContribuyente(sRol As String) As String
+
+  Dim iIndice As Integer
+
+  iIndice = RolesContribuyenteCodigos().Find(sRol)
+  If iIndice < 0 Then Return sRol
+  Return RolesContribuyenteLeyendas()[iIndice]
+
+End
+
+' ============================================
+' Función   : NormalizarRor
+' Propósito : Lleva un ROR escrito de cualquier forma aceptada por la API de
+'             ROR («02mhbdp94», «ror.org/02mhbdp94», con http o https) a la
+'             forma preferida: la URL completa en minúsculas
+'             (ror.readme.io/docs/identifier). No valida: eso es RorValido
+' Parámetros: sTexto As String — lo escrito
+' Retorna   : String — «https://ror.org/…»; vacío si no se escribió nada
+' ============================================
+Public Function NormalizarRor(sTexto As String) As String
+
+  Dim sRor As String
+
+  ' --- 1. SIN ESPACIOS NI MAYÚSCULAS: EL CHECK DE LA BASE ES SENSIBLE A ELLAS ---
+  sRor = LCase(Trim(sTexto))
+  If sRor = "" Then Return ""
+
+  ' --- 2. FUERA LOS PREFIJOS QUE PUEDA TRAER ---
+  If sRor Begins "https://" Then
+    sRor = Mid(sRor, 9)
+  Else If sRor Begins "http://" Then
+    sRor = Mid(sRor, 8)
+  Endif
+  If sRor Begins "ror.org/" Then sRor = Mid(sRor, 9)
+
+  Return "https://ror.org/" & sRor
+
+End
+
+' ============================================
+' Función   : RorValido
+' Propósito : Controla un ROR en forma de URL completa: un cero, seis
+'             caracteres Crockford base 32 (sin i, l, o, u) y dos dígitos de
+'             control ISO 7064 Mod 97-10 sobre el valor base 32 de los siete
+'             primeros (ror.readme.io/docs/identifier; la cuenta se verificó
+'             con los seis ROR de ejemplo de esa documentación, 28/10)
+' Parámetros: sRor As String — URL completa, como la deja NormalizarRor
+' Retorna   : Boolean — True si la forma y el dígito de control son correctos
+' ============================================
+Public Function RorValido(sRor As String) As Boolean
+
+  Dim sAlfabeto As String = "0123456789abcdefghjkmnpqrstvwxyz"
+  Dim sId As String
+  Dim sCaracter As String
+  Dim iPosicion As Integer
+  Dim iValor As Long
+  Dim i As Integer
+
+  ' --- 1. FORMA: PREFIJO Y NUEVE CARACTERES QUE EMPIEZAN EN CERO ---
+  If Not (sRor Begins "https://ror.org/") Then Return False
+  sId = Mid(sRor, 17)
+  If Len(sId) <> 9 Then Return False
+  If Left(sId, 1) <> "0" Then Return False
+
+  ' --- 2. VALOR BASE 32 DE LOS SIETE PRIMEROS ---
+  ' Long: 32^7 NO CABE EN UN Integer
+  For i = 1 To 7
+    sCaracter = Mid(sId, i, 1)
+    iPosicion = InStr(sAlfabeto, sCaracter)
+    If iPosicion = 0 Then Return False
+    iValor = iValor * 32 + (iPosicion - 1)
+  Next
+
+  ' --- 3. LOS DOS ÚLTIMOS SON DÍGITOS ---
+  For i = 8 To 9
+    sCaracter = Mid(sId, i, 1)
+    If sCaracter < "0" Or sCaracter > "9" Then Return False
+  Next
+
+  ' --- 4. DÍGITO DE CONTROL: 98 - (VALOR * 100 MOD 97) ---
+  Return (98 - ((iValor * 100) Mod 97)) = CInt(Right(sId, 2))
+
+End
+
+' ============================================
+' Función   : NuevaPersona
+' Propósito : Un contribuyente persona, con la afiliación y el email de su
+'             ficha en autores como propuesta editable (decisión de Alberto,
+'             28/10). Lo propuesto queda como dato de este artículo
+' Parámetros: iIdAutor As Integer — id en autores
+' Retorna   : CContribuyente — el nuevo; Null si el autor no se pudo leer
+' ============================================
+Public Function NuevaPersona(iIdAutor As Integer) As CContribuyente
+
+  Dim oNuevo As New CContribuyente
+  Dim rAutor As Result
+  Dim sRor As String
+
+  ' --- 1. LA FICHA ---
+  Try rAutor = m_ConexionBD.mConn.Exec("SELECT apellidos, nombre, afiliacion_actual, departamento, ciudad_afiliacion, pais_afiliacion, ror_afiliacion_actual, email_correspondencia, email_principal FROM autores WHERE id_autor = &1", iIdAutor)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el autor:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rAutor.Available Then Return Null
+
+  ' --- 2. IDENTIDAD ---
+  oNuevo.iIdAutor = iIdAutor
+  oNuevo.sNombre = rAutor!apellidos & ", " & rAutor!nombre
+  oNuevo.sRol = "autor"
+
+  ' --- 3. PROPUESTAS: EMAIL DE CORRESPONDENCIA O, SI NO HAY, EL PRINCIPAL ---
+  ' UN NULL SE LEE COMO CADENA VACÍA AL ASIGNARLO A UN String
+  oNuevo.sEmail = rAutor!email_correspondencia
+  If oNuevo.sEmail = "" Then oNuevo.sEmail = rAutor!email_principal
+  ' SIN INSTITUCIÓN NO HAY AFILIACIÓN QUE PROPONER (ES OBLIGATORIA)
+  If Not IsNull(rAutor!afiliacion_actual) Then
+    ' UN ROR DE LA FICHA EN OTRA FORMA SE NORMALIZA; SI NO ES VÁLIDO, QUEDA
+    ' ASÍ Y EL DIÁLOGO LO SEÑALA AL ACEPTAR
+    sRor = NormalizarRor(rAutor!ror_afiliacion_actual)
+    oNuevo.AgregarAfiliacion(rAutor!afiliacion_actual, rAutor!departamento, rAutor!ciudad_afiliacion, rAutor!pais_afiliacion, sRor)
+  Endif
+
+  Return oNuevo
+
+End
+
+' ============================================
+' Función   : NuevoColectivo
+' Propósito : Un contribuyente de autoría colectiva (JATS collab)
+' Parámetros: sNombre As String — nombre del colectivo
+' Retorna   : CContribuyente — el nuevo
+' ============================================
+Public Function NuevoColectivo(sNombre As String) As CContribuyente
+
+  Dim oNuevo As New CContribuyente
+
+  oNuevo.iIdAutor = 0
+  oNuevo.sNombreColectivo = sNombre
+  oNuevo.sNombre = sNombre
+  oNuevo.sRol = "autor"
+
+  Return oNuevo
+
+End
+
+' ============================================
+' Función   : ContribuyentesArticulo
+' Propósito : Los contribuyentes de un artículo, en orden, con sus
+'             afiliaciones y sus roles CRediT
+' Parámetros: iIdArticulo As Integer — artículo
+' Retorna   : CContribuyente[] — vacío si no tiene; Null si falló (ya se
+'             informó)
+' ============================================
+Public Function ContribuyentesArticulo(iIdArticulo As Integer) As CContribuyente[]
+
+  Dim aContribuyentes As New CContribuyente[]
+  Dim cPorId As New Collection
+  Dim oContribuyente As CContribuyente
+  Dim rDatos As Result
+  Dim sClave As String
+
+  ' --- 1. LOS CONTRIBUYENTES, CON EL NOMBRE DE LA FICHA SI SON PERSONAS ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT c.id_contribuyente, c.id_autor, c.nombre_colectivo, c.rol, c.correspondencia, c.email, c.notas, a.apellidos, a.nombre " &
+    "FROM articulo_contribuyente c LEFT JOIN autores a ON a.id_autor = c.id_autor WHERE c.id_articulo = &1 ORDER BY c.orden", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los contribuyentes:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    oContribuyente = New CContribuyente
+    If IsNull(rDatos!id_autor) Then
+      oContribuyente.iIdAutor = 0
+      oContribuyente.sNombreColectivo = rDatos!nombre_colectivo
+      oContribuyente.sNombre = rDatos!nombre_colectivo
+    Else
+      oContribuyente.iIdAutor = rDatos!id_autor
+      oContribuyente.sNombre = rDatos!apellidos & ", " & rDatos!nombre
+    Endif
+    oContribuyente.sRol = rDatos!rol
+    ' CBool: gb.db ENTREGA TINYINT(1) COMO Boolean Y True VALE -1; «= 1» DABA
+    ' FALSO Y AL VOLVER A GUARDAR SE PERDÍA LA MARCA (MEDIDO, 28/10)
+    oContribuyente.bCorrespondencia = CBool(rDatos!correspondencia)
+    oContribuyente.sEmail = rDatos!email
+    oContribuyente.sNotas = rDatos!notas
+    aContribuyentes.Add(oContribuyente)
+    ' LA CLAVE DE UNA Collection ES TEXTO
+    cPorId[CStr(rDatos!id_contribuyente)] = oContribuyente
+    rDatos.MoveNext
+  Wend
+  If aContribuyentes.Count = 0 Then Return aContribuyentes
+
+  ' --- 2. AFILIACIONES, EN ORDEN ---
+  ' (¿FALTA LA 1.15.0? ESTA CONSULTA ES LA QUE LO DELATA: PIDE ror)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT f.id_contribuyente, f.institucion, f.departamento, f.ciudad, f.pais, f.ror " &
+    "FROM contribuyente_afiliacion f JOIN articulo_contribuyente c ON c.id_contribuyente = f.id_contribuyente WHERE c.id_articulo = &1 ORDER BY f.id_contribuyente, f.orden", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las afiliaciones (¿falta la actualización de esquema 1.15.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    sClave = CStr(rDatos!id_contribuyente)
+    If cPorId.Exist(sClave) Then
+      oContribuyente = cPorId[sClave]
+      oContribuyente.AgregarAfiliacion(rDatos!institucion, rDatos!departamento, rDatos!ciudad, rDatos!pais, rDatos!ror)
+    Endif
+    rDatos.MoveNext
+  Wend
+
+  ' --- 3. ROLES CRediT, EN LA FORMA DE FCreditRoles («a; b») ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT r.id_contribuyente, r.rol_credit FROM contribuyente_credit r JOIN articulo_contribuyente c ON c.id_contribuyente = r.id_contribuyente WHERE c.id_articulo = &1 ORDER BY r.id_contribuyente, r.rol_credit", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los roles CRediT:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    sClave = CStr(rDatos!id_contribuyente)
+    If cPorId.Exist(sClave) Then
+      oContribuyente = cPorId[sClave]
+      If oContribuyente.sCredit <> "" Then oContribuyente.sCredit &= "; "
+      oContribuyente.sCredit &= rDatos!rol_credit
+    Endif
+    rDatos.MoveNext
+  Wend
+
+  Return aContribuyentes
+
+End
+
+' ============================================
+' Función   : AvisoContribuyente
+' Propósito : Controla un contribuyente: lo usan el diálogo al aceptar y el
+'             guardado del artículo
+' Parámetros: oContribuyente As CContribuyente — el contribuyente
+' Retorna   : String — el primer problema encontrado; vacío si está bien
+' ============================================
+Public Function AvisoContribuyente(oContribuyente As CContribuyente) As String
+
+  Dim sEmail As String
+  Dim iArroba As Integer
+  Dim i As Integer
+
+  ' --- 1. QUIÉN: PERSONA O COLECTIVO, NUNCA LOS DOS (chk_contrib_quien) ---
+  If oContribuyente.iIdAutor = 0 And Trim(oContribuyente.sNombreColectivo) = "" Then Return "Falta el nombre del colectivo."
+
+  ' --- 2. ROL DEL CATÁLOGO ---
+  If RolesContribuyenteCodigos().Find(oContribuyente.sRol) < 0 Then Return "Elija el rol."
+
+  ' --- 3. CORRESPONDENCIA: SIN EMAIL NO HAY A DÓNDE ESCRIBIR ---
+  sEmail = Trim(oContribuyente.sEmail)
+  If oContribuyente.bCorrespondencia And sEmail = "" Then Return "Un autor de correspondencia necesita email."
+  ' CONTROL MÍNIMO DE FORMA: TEXTO, UNA SOLA ARROBA, TEXTO, SIN ESPACIOS
+  If sEmail <> "" Then
+    iArroba = InStr(sEmail, "@")
+    If InStr(sEmail, " ") > 0 Or iArroba < 2 Or iArroba = Len(sEmail) Or InStr(sEmail, "@", iArroba + 1) > 0 Then Return "El email «" & sEmail & "» no tiene forma de dirección."
+  Endif
+
+  ' --- 4. AFILIACIONES: INSTITUCIÓN OBLIGATORIA, ROR VÁLIDO SI LO HAY ---
+  For i = 0 To oContribuyente.aInstituciones.Count - 1
+    If Trim(oContribuyente.aInstituciones[i]) = "" Then Return "La afiliación " & CStr(i + 1) & " no tiene institución."
+    If oContribuyente.aRors[i] <> "" Then
+      If Not RorValido(oContribuyente.aRors[i]) Then Return "El ROR de la afiliación " & CStr(i + 1) & " no es válido: «" & oContribuyente.aRors[i] & "»."
+    Endif
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : ValidarContribuyentes
+' Propósito : Controla la lista completa antes de grabarla. Avisa el primero
+'             que falla
+' Parámetros: aContribuyentes As CContribuyente[] — la lista, en orden
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarContribuyentes(aContribuyentes As CContribuyente[]) As Boolean
+
+  Dim aPersonas As New Integer[]
+  Dim sAviso As String
+  Dim i As Integer
+
+  For i = 0 To aContribuyentes.Count - 1
+    ' UNA PERSONA FIGURA UNA SOLA VEZ
+    If aContribuyentes[i].iIdAutor > 0 Then
+      If aPersonas.Find(aContribuyentes[i].iIdAutor) >= 0 Then
+        sAviso = "«" & aContribuyentes[i].sNombre & "» figura dos veces entre los contribuyentes."
+        Break
+      Endif
+      aPersonas.Add(aContribuyentes[i].iIdAutor)
+    Endif
+    sAviso = AvisoContribuyente(aContribuyentes[i])
+    If sAviso <> "" Then
+      sAviso = "Contribuyente " & CStr(i + 1) & " («" & aContribuyentes[i].sNombre & "»): " & sAviso
+      Break
+    Endif
+  Next
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : NuloSiVacio
+' Propósito : Null para un texto vacío al pasarlo a Exec: «sin dato» es NULL
+'             (GV-74), sin depender de cómo convierta Exec un ""
+' Parámetros: sTexto As String — el valor
+' Retorna   : Variant — el texto sin espacios de borde, o Null si está vacío
+' ============================================
+Private Function NuloSiVacio(sTexto As String) As Variant
+
+  If Trim(sTexto) = "" Then Return Null
+  Return Trim(sTexto)
+
+End
+
+' ============================================
+' Función   : Lineas
+' Propósito : Las palabras clave de un área de texto: una por línea, sin
+'             espacios de borde y sin líneas vacías, en orden
+' Parámetros: sTexto As String — el contenido del área
+' Retorna   : String[] — los términos
+' ============================================
+Public Function Lineas(sTexto As String) As String[]
+
+  Dim aTerminos As New String[]
+  Dim sLinea As String
+
+  ' SIN \r: UN TEXTO PEGADO DESDE OTRO SISTEMA PUEDE TRAERLO
+  For Each sLinea In Split(Replace(sTexto, "\r", ""), "\n")
+    sLinea = Trim(sLinea)
+    If sLinea <> "" Then aTerminos.Add(sLinea)
+  Next
+
+  Return aTerminos
+
+End
+
+' ============================================
+' Función   : AvisoTextosNoEditables
+' Propósito : Detecta datos que la pestaña no puede mostrar enteros y que
+'             guardar borraría: más de un vocabulario controlado en un idioma.
+'             (Un resumen estructurado ya se edita: entrega C2)
+' Parámetros: iIdArticulo As Integer — artículo
+' Retorna   : String — el motivo; vacío si la pestaña puede editarlos
+' ============================================
+Public Function AvisoTextosNoEditables(iIdArticulo As Integer) As String
+
+  Dim rDatos As Result
+
+  ' --- 1. UN SOLO VOCABULARIO CONTROLADO POR IDIOMA (LO QUE MUESTRA LA PESTAÑA) ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT idioma FROM articulo_palabra_clave WHERE id_articulo = &1 AND vocabulario IS NOT NULL GROUP BY idioma HAVING COUNT(DISTINCT vocabulario) > 1 LIMIT 1", iIdArticulo)
+  If Error Then Return "No se pudieron leer las palabras clave: " & Error.Text
+  If rDatos.Available Then Return "Las palabras clave en «" & rDatos!idioma & "» usan más de un vocabulario controlado."
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : TextosArticulo
+' Propósito : Resúmenes (simples y estructurados) y palabras clave de un
+'             artículo, por idioma. La plantilla la fija CargarPlantilla
+' Parámetros: iIdArticulo As Integer — artículo
+' Retorna   : CTextosArticulo — los textos; Null si falló la lectura (ya se
+'             informó)
+' ============================================
+Public Function TextosArticulo(iIdArticulo As Integer) As CTextosArticulo
+
+  Dim oTextos As New CTextosArticulo
+  Dim rDatos As Result
+  Dim sIdioma As String
+
+  ' --- 1. RESÚMENES SIMPLES (UN ESTRUCTURADO TIENE texto NULL Y NO ENTRA) ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT idioma, texto FROM articulo_texto WHERE id_articulo = &1 AND tipo = 'resumen' AND texto IS NOT NULL", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los resúmenes:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    oTextos.cResumenes[rDatos!idioma] = rDatos!texto
+    rDatos.MoveNext
+  Wend
+
+  ' --- 1 BIS. RESÚMENES ESTRUCTURADOS: TEXTO POR SECCIÓN ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT t.idioma, s.codigo, s.texto FROM articulo_resumen_seccion s JOIN articulo_texto t ON t.id_texto = s.id_texto WHERE t.id_articulo = &1 AND t.tipo = 'resumen' ORDER BY t.idioma, s.orden", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los resúmenes estructurados:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    oTextos.FijarTextoSeccion(rDatos!idioma, rDatos!codigo, rDatos!texto)
+    rDatos.MoveNext
+  Wend
+
+  ' --- 2. PALABRAS CLAVE: UNA LÍNEA POR TÉRMINO, EN ORDEN ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT idioma, vocabulario, termino, identificador FROM articulo_palabra_clave WHERE id_articulo = &1 ORDER BY idioma, clave_vocabulario, orden", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las palabras clave:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    sIdioma = rDatos!idioma
+    ' VOCABULARIO NULL: DEL AUTOR, UNA LÍNEA POR TÉRMINO
+    If IsNull(rDatos!vocabulario) Then
+      If oTextos.cPalabrasAutor.Exist(sIdioma) Then
+        oTextos.cPalabrasAutor[sIdioma] = oTextos.cPalabrasAutor[sIdioma] & "\n" & rDatos!termino
+      Else
+        oTextos.cPalabrasAutor[sIdioma] = rDatos!termino
+      Endif
+    Else
+      ' CONTROLADO: TÉRMINO E IDENTIFICADOR (UN NULL SE LEE VACÍO)
+      oTextos.cVocabularios[sIdioma] = rDatos!vocabulario
+      oTextos.AgregarControlado(sIdioma, rDatos!termino, rDatos!identificador)
+    Endif
+    rDatos.MoveNext
+  Wend
+
+  Return oTextos
+
+End
+
+' ============================================
+' Función   : AvisoPalabras
+' Propósito : Controla una lista de palabras clave: largo de cada término
+'             (termino VARCHAR(300)) y repetidos sin distinguir mayúsculas
+'             pero sí tildes y ñ, como la clave única (0900_as_ci, 1.16.0)
+' Parámetros: aTerminos As String[] — la lista
+'             sDonde As String — para el aviso («del autor en «es»»…)
+' Retorna   : String — el primer problema; vacío si está bien
+' ============================================
+Public Function AvisoPalabras(aTerminos As String[], sDonde As String) As String
+
+  Dim aVistos As New String[]
+  Dim sTermino As String
+
+  For Each sTermino In aTerminos
+    ' String.Len CUENTA CARACTERES; Len CUENTA BYTES (UTF-8)
+    If String.Len(sTermino) > 300 Then Return "Una palabra clave " & sDonde & " pasa de 300 caracteres."
+    ' String.LCase Y NO LCase: LCase SOLO BAJA ASCII («ÁRBOL» → «Árbol»;
+    ' MEDIDO, 28/10). String.LCase NECESITA UN LOCALE UTF-8
+    If aVistos.Find(String.LCase(sTermino)) >= 0 Then Return "«" & sTermino & "» está repetida entre las palabras clave " & sDonde & "."
+    aVistos.Add(String.LCase(sTermino))
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : CargarPlantilla
+' Propósito : Pone en los textos la plantilla que exige la sección elegida:
+'             códigos en orden, títulos por idioma y nombre. Sin sección o sin
+'             plantilla, resumen simple
+' Parámetros: oTextos As CTextosArticulo — los textos del artículo
+'             iIdSeccion As Integer — sección elegida; 0 ninguna
+' Retorna   : nada
+' ============================================
+Public Sub CargarPlantilla(oTextos As CTextosArticulo, iIdSeccion As Integer)
+
+  Dim rPlantilla As Result
+  Dim iIdPlantilla As Integer
+
+  ' --- 1. LA DE LA SECCIÓN ---
+  If iIdSeccion > 0 Then iIdPlantilla = m_Revistas.PlantillaDeSeccion(m_ConexionBD.mConn, iIdSeccion)
+
+  ' --- 2. SIN PLANTILLA: RESUMEN SIMPLE ---
+  oTextos.iIdPlantilla = 0
+  oTextos.sNombrePlantilla = ""
+  oTextos.aCodigosPlantilla = New String[]
+  oTextos.aTitulosPlantilla = New Collection[]
+  If iIdPlantilla = 0 Then Return
+
+  ' --- 3. CON PLANTILLA ---
+  Try rPlantilla = m_ConexionBD.mConn.Exec("SELECT nombre FROM revista_plantilla_resumen WHERE id_plantilla = &1", iIdPlantilla)
+  If Error Then Return
+  If Not rPlantilla.Available Then Return
+  oTextos.iIdPlantilla = iIdPlantilla
+  oTextos.sNombrePlantilla = rPlantilla!nombre
+  oTextos.aCodigosPlantilla = m_Revistas.CodigosPlantilla(m_ConexionBD.mConn, iIdPlantilla)
+  oTextos.aTitulosPlantilla = m_Revistas.TitulosPlantilla(m_ConexionBD.mConn, iIdPlantilla, oTextos.aCodigosPlantilla)
+
+End
+
+' ============================================
+' Función   : AvisoResumenes
+' Propósito : Controla los resúmenes contra la plantilla de la sección. Con
+'             plantilla: no hay resumen simple; cada idioma con resumen tiene
+'             todas las secciones (decisión de Alberto, 28/10), ninguna ajena
+'             a la plantilla, y la plantilla tiene título en ese idioma. Sin
+'             plantilla: no hay resumen estructurado
+' Parámetros: oTextos As CTextosArticulo — los textos en memoria
+' Retorna   : String — el primer problema; vacío si está bien
+' ============================================
+Public Function AvisoResumenes(oTextos As CTextosArticulo) As String
+
+  Dim cDelIdioma As Collection
+  Dim sTexto As String
+  Dim sIdioma As String
+  Dim sCodigo As String
+  Dim i As Integer
+
+  ' --- 1. SIN PLANTILLA: TODO RESUMEN ES SIMPLE ---
+  If oTextos.iIdPlantilla = 0 Then
+    For Each cDelIdioma In oTextos.cSecciones
+      Return "El resumen en «" & oTextos.cSecciones.Key & "» es estructurado, pero la sección del artículo no tiene plantilla de resumen."
+    Next
+    Return ""
+  Endif
+
+  ' --- 2. CON PLANTILLA: NINGÚN RESUMEN SIMPLE ---
+  For Each sTexto In oTextos.cResumenes
+    Return "La sección del artículo pide resumen estructurado («" & oTextos.sNombrePlantilla & "»), pero el resumen en «" & oTextos.cResumenes.Key & "» es simple: páselo a sus secciones."
+  Next
+
+  ' --- 3. CADA IDIOMA CON RESUMEN: COMPLETO Y SIN SECCIONES AJENAS ---
+  For Each cDelIdioma In oTextos.cSecciones
+    sIdioma = oTextos.cSecciones.Key
+    For Each sTexto In cDelIdioma
+      sCodigo = cDelIdioma.Key
+      If oTextos.aCodigosPlantilla.Find(sCodigo) < 0 Then Return "El resumen en «" & sIdioma & "» tiene la sección «" & sCodigo & "», que la plantilla «" & oTextos.sNombrePlantilla & "» no tiene."
+    Next
+    For i = 0 To oTextos.aCodigosPlantilla.Count - 1
+      If Not oTextos.aTitulosPlantilla[i].Exist(sIdioma) Then Return "La plantilla «" & oTextos.sNombrePlantilla & "» no tiene título en «" & sIdioma & "» para «" & oTextos.aCodigosPlantilla[i] & "»: complétela en Administración, pestaña «Revistas»."
+      If Not cDelIdioma.Exist(oTextos.aCodigosPlantilla[i]) Then Return "Al resumen en «" & sIdioma & "» le falta la sección «" & oTextos.aTitulosPlantilla[i][sIdioma] & "»: todas son obligatorias."
+    Next
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : ValidarTextos
+' Propósito : Controla resúmenes y palabras clave antes de grabarlos. Avisa
+'             el primero que falla
+' Parámetros: oTextos As CTextosArticulo — los textos en memoria
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarTextos(oTextos As CTextosArticulo) As Boolean
+
+  Dim aTerminos As String[]
+  Dim sTexto As String
+  Dim sIdioma As String
+  Dim sAviso As String
+
+  ' --- 1. RESÚMENES CONTRA LA PLANTILLA ---
+  sAviso = AvisoResumenes(oTextos)
+
+  ' --- 2. DEL AUTOR ---
+  If sAviso = "" Then
+    For Each sTexto In oTextos.cPalabrasAutor
+      sIdioma = oTextos.cPalabrasAutor.Key
+      sAviso = AvisoPalabras(Lineas(sTexto), "del autor en «" & sIdioma & "»")
+      If sAviso <> "" Then Break
+    Next
+  Endif
+
+  ' --- 3. CONTROLADAS: NECESITAN SABER DE QUÉ VOCABULARIO SON ---
+  If sAviso = "" Then
+    For Each aTerminos In oTextos.cTerminosControlados
+      sIdioma = oTextos.cTerminosControlados.Key
+      If aTerminos.Count = 0 Then Continue
+      If Not oTextos.cVocabularios.Exist(sIdioma) Then
+        sAviso = "Hay palabras de vocabulario controlado en «" & sIdioma & "» sin el nombre del vocabulario."
+        Break
+      Endif
+      If String.Len(oTextos.cVocabularios[sIdioma]) > 50 Then
+        sAviso = "El nombre del vocabulario en «" & sIdioma & "» pasa de 50 caracteres."
+        Break
+      Endif
+      sAviso = AvisoPalabras(aTerminos, "de " & oTextos.cVocabularios[sIdioma] & " en «" & sIdioma & "»")
+      If sAviso <> "" Then Break
+    Next
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : TextoPaginas
+' Propósito : Cómo se muestra el rango de páginas, de solo lectura
+' Parámetros: vInicio As Variant — pagina_inicio (puede ser Null)
+'             vFin As Variant — pagina_fin (puede ser Null)
+' Retorna   : String — «12–34», «12», o vacío si no hay
+' ============================================
+Public Function TextoPaginas(vInicio As Variant, vFin As Variant) As String
+
+  If IsNull(vInicio) Then Return ""
+  If IsNull(vFin) Or vFin = vInicio Then Return vInicio
+  Return vInicio & "–" & vFin
+
+End
+
+' ============================================
+' Función   : NormalizarDoi
+' Propósito : Quita lo que no es el DOI: espacios de borde y un resolvedor o
+'             prefijo «doi:» pegado con él. El DOI no se pasa a minúsculas:
+'             se guarda como lo registró la revista
+' Parámetros: sTexto As String — lo escrito
+' Retorna   : String — el DOI («10.xxxx/sufijo»); vacío si no hay
+' ============================================
+Public Function NormalizarDoi(sTexto As String) As String
+
+  Dim sDoi As String
+  Dim sPrefijo As String
+
+  sDoi = Trim(sTexto)
+  ' LOS PREFIJOS SON ASCII: LCase ALCANZA PARA COMPARARLOS (GV-150)
+  For Each sPrefijo In ["https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:"]
+    If LCase(Left(sDoi, Len(sPrefijo))) = sPrefijo Then
+      sDoi = Trim(Mid(sDoi, Len(sPrefijo) + 1))
+      Break
+    Endif
+  Next
+
+  Return sDoi
+
+End
+
+' ============================================
+' Función   : DoiValido
+' Propósito : Forma mínima de un DOI: «10.», un código de registrante de
+'             cifras y puntos, «/» y un sufijo sin espacios ni caracteres de
+'             control
+' Parámetros: sDoi As String — el DOI normalizado
+' Retorna   : Boolean — True si tiene esa forma
+' ============================================
+Public Function DoiValido(sDoi As String) As Boolean
+
+  Dim iBarra As Integer
+  Dim sCaracter As String
+  Dim i As Integer
+
+  ' --- 1. PREFIJO: 10. + CIFRAS Y PUNTOS HASTA LA BARRA ---
+  If Not (sDoi Begins "10.") Then Return False
+  iBarra = InStr(sDoi, "/")
+  If iBarra <= 4 Then Return False
+  For i = 4 To iBarra - 1
+    sCaracter = Mid(sDoi, i, 1)
+    If (sCaracter < "0" Or sCaracter > "9") And sCaracter <> "." Then Return False
+  Next
+
+  ' --- 2. SUFIJO: NO VACÍO, SIN ESPACIOS NI CONTROL ---
+  If iBarra = Len(sDoi) Then Return False
+  For i = iBarra + 1 To Len(sDoi)
+    If Asc(sDoi, i) <= 32 Then Return False
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : PrefijoDoiRevista
+' Propósito : El prefijo DOI de la revista del número
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : String — el prefijo («10.xxxx»); vacío si no tiene o falló
+' ============================================
+Public Function PrefijoDoiRevista(iIdNumero As Integer) As String
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT r.doi_prefix FROM numero n JOIN revista r ON r.id_revista = n.id_revista WHERE n.id_numero = &1", iIdNumero)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  ' UN NULL SE LEE VACÍO
+  Return Trim(rDatos!doi_prefix)
+
+End
+
+' ============================================
+' Función   : TiposDeclaracionNucleo
+' Propósito : Los tipos de declaración del núcleo (sin bloque N3), activos,
+'             en el orden del catálogo: los que edita la pestaña (entrega D2).
+'             Los de los bloques N3 llegan con Medicina
+' Parámetros: (ninguno)
+' Retorna   : Result — codigo, etiqueta; Null si falló (ya se informó)
+' ============================================
+Public Function TiposDeclaracionNucleo() As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT codigo, etiqueta FROM tipo_declaracion WHERE bloque IS NULL AND activo = 1 ORDER BY orden, codigo")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el catálogo de declaraciones:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : TiposIdFinanciadorCodigos
+' Propósito : Los valores de articulo_financiamiento.tipo_id; "" es «sin
+'             identificador» (NULL en la base)
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a TiposIdFinanciadorLeyendas
+' ============================================
+Public Function TiposIdFinanciadorCodigos() As String[]
+
+  Return ["", "ror", "funder_id"]
+
+End
+
+' ============================================
+' Función   : TiposIdFinanciadorLeyendas
+' Propósito : Cómo se muestra cada tipo de identificador de financiador
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a TiposIdFinanciadorCodigos
+' ============================================
+Public Function TiposIdFinanciadorLeyendas() As String[]
+
+  Return ["(sin identificador)", "ROR", "Funder ID (Crossref)"]
+
+End
+
+' ============================================
+' Función   : NormalizarIdFinanciador
+' Propósito : Lleva el identificador a su forma guardada: el ROR como URL
+'             completa (GV-154); el Funder ID como DOI sin resolvedor
+' Parámetros: sTipo As String — "" | "ror" | "funder_id"
+'             sTexto As String — lo escrito
+' Retorna   : String — el identificador normalizado; vacío si no hay
+' ============================================
+Public Function NormalizarIdFinanciador(sTipo As String, sTexto As String) As String
+
+  Select Case sTipo
+    Case "ror"
+      Return NormalizarRor(sTexto)
+    Case "funder_id"
+      Return NormalizarDoi(sTexto)
+  End Select
+
+  Return Trim(sTexto)
+
+End
+
+' ============================================
+' Función   : AvisoFinanciamiento
+' Propósito : Controla los financiadores antes de grabarlos
+' Parámetros: oFin As CFinanciamientoArticulo — el financiamiento en memoria
+' Retorna   : String — el primer problema; vacío si está bien
+' ============================================
+Public Function AvisoFinanciamiento(oFin As CFinanciamientoArticulo) As String
+
+  Dim sDonde As String
+  Dim i As Integer
+
+  For i = 0 To oFin.aFinanciadores.Count - 1
+    sDonde = "Financiador " & CStr(i + 1) & ": "
+    ' --- 1. NOMBRE (NOT NULL, VARCHAR(500)) ---
+    If Trim(oFin.aFinanciadores[i]) = "" Then Return sDonde & "falta el nombre."
+    If String.Len(oFin.aFinanciadores[i]) > 500 Then Return sDonde & "el nombre pasa de 500 caracteres."
+    ' --- 2. IDENTIFICADOR Y TIPO VAN JUNTOS (chk_fin_id) ---
+    If oFin.aTiposId[i] = "" Then
+      If oFin.aIdsFinanciador[i] <> "" Then Return sDonde & "elija el tipo de identificador (ROR o Funder ID)."
+    Else If oFin.aIdsFinanciador[i] = "" Then
+      Return sDonde & "falta el identificador."
+    Else If oFin.aTiposId[i] = "ror" Then
+      If Not RorValido(oFin.aIdsFinanciador[i]) Then Return sDonde & "el ROR «" & oFin.aIdsFinanciador[i] & "» no es válido."
+    Else
+      ' FUNDER ID: UN DOI DEL PREFIJO DEL OPEN FUNDER REGISTRY
+      If Not DoiValido(oFin.aIdsFinanciador[i]) Then Return sDonde & "el Funder ID «" & oFin.aIdsFinanciador[i] & "» no tiene forma de DOI."
+      If Not (oFin.aIdsFinanciador[i] Begins "10.13039/") Then Return sDonde & "un Funder ID empieza con 10.13039/."
+    Endif
+    If Len(oFin.aIdsFinanciador[i]) > 100 Then Return sDonde & "el identificador pasa de 100 caracteres."
+    ' --- 3. NÚMERO DE PROYECTO (VARCHAR(200)) ---
+    If String.Len(oFin.aProyectos[i]) > 200 Then Return sDonde & "el número de proyecto pasa de 200 caracteres."
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : FinanciamientoArticulo
+' Propósito : Los financiadores del artículo, en orden, y sus declaraciones
+'             del núcleo por tipo e idioma
+' Parámetros: iIdArticulo As Integer — artículo
+' Retorna   : CFinanciamientoArticulo — lo leído; Null si falló (ya se
+'             informó)
+' ============================================
+Public Function FinanciamientoArticulo(iIdArticulo As Integer) As CFinanciamientoArticulo
+
+  Dim oFin As New CFinanciamientoArticulo
+  Dim rDatos As Result
+
+  ' --- 1. FINANCIADORES ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT financiador, tipo_id, id_financiador, numero_proyecto FROM articulo_financiamiento WHERE id_articulo = &1 ORDER BY orden, id", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el financiamiento:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    ' UN NULL SE LEE VACÍO AL PASARLO A UN String
+    oFin.AgregarFinanciador(rDatos!financiador, rDatos!tipo_id, rDatos!id_financiador, rDatos!numero_proyecto)
+    rDatos.MoveNext
+  Wend
+
+  ' --- 2. DECLARACIONES DEL NÚCLEO (LAS DE N3 NO SE LEEN NI SE TOCAN) ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT tipo, idioma, texto FROM articulo_declaracion WHERE id_articulo = &1 AND tipo IN (SELECT codigo FROM tipo_declaracion WHERE bloque IS NULL)", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las declaraciones:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    oFin.cDeclaraciones[oFin.ClaveDeclaracion(rDatos!tipo, rDatos!idioma)] = rDatos!texto
+    rDatos.MoveNext
+  Wend
+
+  Return oFin
+
+End
+
+' ============================================
+' Función   : TiposRelacionCodigos
+' Propósito : Los valores de related-article-type que sugiere la Tag Library
+'             de JATS 1.4 (versión de octubre de 2024; copia local
+'             Green-1_4-HTML.zip, verificada el 28/10)
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a TiposRelacionLeyendas
+' ============================================
+Public Function TiposRelacionCodigos() As String[]
+
+  Return ["addendum", "commentary", "commentary-article", "companion", "corrected-article", "correction-forward", "in-this-issue", "letter", "partial-retraction", "preprint", "retracted-article", "retraction-forward", "version-of-record"]
+
+End
+
+' ============================================
+' Función   : TiposRelacionLeyendas
+' Propósito : Qué significa cada tipo, desde ESTE artículo (resumen de la
+'             Tag Library 1.4)
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a TiposRelacionCodigos
+' ============================================
+Public Function TiposRelacionLeyendas() As String[]
+
+  Return ["su adenda", "un comentario sobre este artículo", "el artículo que este comenta", "un artículo complementario", "el artículo que esta fe de erratas corrige", "su fe de erratas", "un artículo relacionado del mismo número", "una carta o respuesta sobre este artículo", "su retractación parcial", "su preprint", "el artículo que esta nota retracta", "su retractación", "la versión de registro"]
+
+End
+
+' ============================================
+' Función   : TiposUbicacion
+' Propósito : Los valores de articulo_ubicacion.tipo, en el orden de la
+'             pestaña
+' Parámetros: (ninguno)
+' Retorna   : String[] — pagina, html, pdf, epub, xml
+' ============================================
+Public Function TiposUbicacion() As String[]
+
+  Return ["pagina", "html", "pdf", "epub", "xml"]
+
+End
+
+' ============================================
+' Función   : ArticulosDeLaRevista
+' Propósito : Los artículos de la misma revista que pueden ser destino de
+'             una relación (todos sus números, menos el artículo en edición)
+' Parámetros: iIdNumero As Integer — número del artículo en edición
+'             iIdArticulo As Integer — artículo en edición; 0 en el alta
+' Retorna   : Result — id_articulo, volumen, numero, nombre_archivo, titulo;
+'             Null si falló (ya se informó)
+' ============================================
+Public Function ArticulosDeLaRevista(iIdNumero As Integer, iIdArticulo As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT a.id_articulo, n.volumen, n.numero, a.nombre_archivo, a.titulo FROM articulo a " &
+    "JOIN numero n ON n.id_numero = a.id_numero " &
+    "WHERE n.id_revista = (SELECT id_revista FROM numero WHERE id_numero = &1) AND a.id_articulo <> &2 " &
+    "ORDER BY n.clave_identidad, a.nombre_archivo", iIdNumero, iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los artículos de la revista:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : EtiquetaArticulo
+' Propósito : Cómo se nombra un artículo de la base como destino: volumen,
+'             número, archivo y título
+' Parámetros: vVolumen, vNumero, vArchivo, vTitulo As Variant — sus datos
+' Retorna   : String — «vol. 3, n.º 2 · a-01-tal · Título»
+' ============================================
+Public Function EtiquetaArticulo(vVolumen As Variant, vNumero As Variant, vArchivo As Variant, vTitulo As Variant) As String
+
+  Dim sEtiqueta As String
+
+  If Not IsNull(vVolumen) Then sEtiqueta = "vol. " & vVolumen
+  If Not IsNull(vNumero) Then
+    If sEtiqueta <> "" Then sEtiqueta &= ", "
+    sEtiqueta &= "n.º " & vNumero
+  Endif
+  If sEtiqueta <> "" Then sEtiqueta &= " · "
+  sEtiqueta &= vArchivo
+  If Not IsNull(vTitulo) Then sEtiqueta &= " · " & vTitulo
+
+  Return sEtiqueta
+
+End
+
+' ============================================
+' Función   : RelacionesArticulo
+' Propósito : Las relaciones del artículo, en el orden en que se cargaron, y
+'             sus ubicaciones
+' Parámetros: iIdArticulo As Integer — artículo
+' Retorna   : CRelacionesArticulo — lo leído; Null si falló (ya se informó)
+' ============================================
+Public Function RelacionesArticulo(iIdArticulo As Integer) As CRelacionesArticulo
+
+  Dim oRel As New CRelacionesArticulo
+  Dim oRelacion As CRelacion
+  Dim rDatos As Result
+
+  ' --- 1. RELACIONES, CON LA ETIQUETA DEL DESTINO LOCAL ---
+  ' SIN COLUMNA orden: SE GRABAN EN ORDEN Y SE LEEN POR id
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT r.tipo, r.id_articulo_local, r.doi, r.revista, r.anio, r.volumen, r.numero, r.fpage, r.lpage, " &
+    "n.volumen AS l_volumen, n.numero AS l_numero, a.nombre_archivo AS l_archivo, a.titulo AS l_titulo " &
+    "FROM articulo_relacion r LEFT JOIN articulo a ON a.id_articulo = r.id_articulo_local LEFT JOIN numero n ON n.id_numero = a.id_numero " &
+    "WHERE r.id_articulo = &1 ORDER BY r.id", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las relaciones:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    oRelacion = New CRelacion
+    oRelacion.sTipo = rDatos!tipo
+    If Not IsNull(rDatos!id_articulo_local) Then
+      oRelacion.iIdLocal = rDatos!id_articulo_local
+      oRelacion.sLocal = EtiquetaArticulo(rDatos!l_volumen, rDatos!l_numero, rDatos!l_archivo, rDatos!l_titulo)
+    Endif
+    ' UN NULL SE LEE VACÍO AL PASARLO A UN String
+    oRelacion.sDoi = rDatos!doi
+    oRelacion.sRevista = rDatos!revista
+    If Not IsNull(rDatos!anio) Then oRelacion.sAnio = CStr(rDatos!anio)
+    oRelacion.sVolumen = rDatos!volumen
+    oRelacion.sNumero = rDatos!numero
+    oRelacion.sFpage = rDatos!fpage
+    oRelacion.sLpage = rDatos!lpage
+    oRel.aRelaciones.Add(oRelacion)
+    rDatos.MoveNext
+  Wend
+
+  ' --- 2. UBICACIONES ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT tipo, url FROM articulo_ubicacion WHERE id_articulo = &1", iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las ubicaciones:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    oRel.cUbicaciones[rDatos!tipo] = rDatos!url
+    rDatos.MoveNext
+  Wend
+
+  Return oRel
+
+End
+
+' ============================================
+' Función   : AvisoRelaciones
+' Propósito : Controla relaciones y ubicaciones antes de grabarlas
+' Parámetros: oRel As CRelacionesArticulo — lo que está en memoria
+' Retorna   : String — el primer problema; vacío si está bien
+' ============================================
+Public Function AvisoRelaciones(oRel As CRelacionesArticulo) As String
+
+  Dim oRelacion As CRelacion
+  Dim sDonde As String
+  Dim sUrl As String
+  Dim i As Integer
+  Dim j As Integer
+
+  ' --- 1. RELACIONES ---
+  For i = 0 To oRel.aRelaciones.Count - 1
+    oRelacion = oRel.aRelaciones[i]
+    sDonde = "Relación " & CStr(i + 1) & ": "
+    If TiposRelacionCodigos().Find(oRelacion.sTipo) < 0 Then Return sDonde & "elija el tipo."
+    ' UN DESTINO LOCAL NO NECESITA MÁS DATOS
+    If oRelacion.iIdLocal > 0 Then Continue
+    ' EXTERNO: DOI O REVISTA (chk_rel_destino)
+    If oRelacion.sDoi = "" And oRelacion.sRevista = "" Then Return sDonde & "elija un artículo de la base o cargue el DOI o la revista del externo."
+    If oRelacion.sDoi <> "" Then
+      If Not DoiValido(oRelacion.sDoi) Then Return sDonde & "el DOI «" & oRelacion.sDoi & "» no tiene la forma 10.xxxx/sufijo."
+      If String.Len(oRelacion.sDoi) > 100 Then Return sDonde & "el DOI pasa de 100 caracteres."
+    Endif
+    If String.Len(oRelacion.sRevista) > 500 Then Return sDonde & "el nombre de la revista pasa de 500 caracteres."
+    ' AÑO: COLUMNA YEAR (1901 A 2155), SOLO CIFRAS
+    If oRelacion.sAnio <> "" Then
+      For j = 1 To Len(oRelacion.sAnio)
+        If Mid(oRelacion.sAnio, j, 1) < "0" Or Mid(oRelacion.sAnio, j, 1) > "9" Then Return sDonde & "el año tiene que ser un número."
+      Next
+      If CInt(oRelacion.sAnio) < 1901 Or CInt(oRelacion.sAnio) > 2155 Then Return sDonde & "el año tiene que estar entre 1901 y 2155."
+    Endif
+    If String.Len(oRelacion.sVolumen) > 20 Or String.Len(oRelacion.sNumero) > 20 Or String.Len(oRelacion.sFpage) > 20 Or String.Len(oRelacion.sLpage) > 20 Then Return sDonde & "volumen, número y páginas tienen hasta 20 caracteres."
+  Next
+
+  ' --- 2. UBICACIONES: URL http(s) SIN ESPACIOS, HASTA 500 ---
+  For Each sUrl In oRel.cUbicaciones
+    sDonde = "URL «" & oRel.cUbicaciones.Key & "»: "
+    If Not (LCase(sUrl) Begins "http://") Then
+      If Not (LCase(sUrl) Begins "https://") Then Return sDonde & "tiene que empezar con http:// o https://."
+    Endif
+    If InStr(sUrl, " ") > 0 Then Return sDonde & "no puede tener espacios."
+    If Len(sUrl) > 500 Then Return sDonde & "pasa de 500 caracteres."
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : ValidarArticulo
+' Propósito : Controles previos al guardado. Avisa el primero que falla
+' Parámetros: cDatos As Collection — los valores del editor, por nombre de
+'             columna (una clave vacía no existe y se lee Null, GV-68)
+'             iIdArticulo As Integer — artículo; 0 en el alta
+'             iIdNumero As Integer — número (para el prefijo DOI)
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarArticulo(cDatos As Collection, iIdArticulo As Integer, iIdNumero As Integer) As Boolean
+
+  Dim rDatos As Result
+  Dim aClaves As String[] = ["fecha_recepcion", "fecha_revision", "fecha_aceptacion", "fecha_publicacion"]
+  Dim aNombres As String[] = ["recepción", "revisión", "aceptación", "publicación"]
+  Dim vAnterior As Variant
+  Dim sAnterior As String
+  Dim sAviso As String
+  Dim sPrefijo As String
+  Dim sDoi As String
+  Dim i As Integer
+
+  ' --- 1. OBLIGATORIOS DE LA TABLA ---
+  ' EL IDIOMA PRINCIPAL ES OBLIGATORIO (SC-23); article_type ES NOT NULL
+  If IsNull(cDatos["idioma_principal"]) Then
+    sAviso = "Elija el idioma principal del artículo."
+  Else If IsNull(cDatos["article_type"]) Then
+    sAviso = "Elija el article-type del artículo."
+  Endif
+
+  ' --- 2. AÑO DEL COPYRIGHT: COLUMNA YEAR (1901 A 2155 EN MySQL) ---
+  If sAviso = "" Then
+    If Not IsNull(cDatos["anio_copyright"]) Then
+      If cDatos["anio_copyright"] < 1901 Or cDatos["anio_copyright"] > 2155 Then sAviso = "El año del copyright tiene que estar entre 1901 y 2155."
+    Endif
+  Endif
+
+  ' --- 3. FECHAS EN ORDEN: CADA UNA NO ANTES QUE LA ANTERIOR CARGADA ---
+  If sAviso = "" Then
+    vAnterior = Null
+    For i = 0 To aClaves.Count - 1
+      If IsNull(cDatos[aClaves[i]]) Then Continue
+      If Not IsNull(vAnterior) Then
+        If cDatos[aClaves[i]] < vAnterior Then
+          sAviso = "La fecha de " & aNombres[i] & " es anterior a la de " & sAnterior & "."
+          Break
+        Endif
+      Endif
+      vAnterior = cDatos[aClaves[i]]
+      sAnterior = aNombres[i]
+    Next
+  Endif
+
+  ' --- 4. DOI: FORMA Y UNICIDAD ---
+  ' CONDICIONES SEPARADAS: Not NO SE ENCADENA CON OTRO OPERADOR (GV-12)
+  If sAviso = "" Then sDoi = cDatos["doi"]
+  If sDoi <> "" Then
+    If Not DoiValido(sDoi) Then
+      sAviso = "El DOI «" & sDoi & "» no tiene la forma 10.xxxx/sufijo."
+    Else
+      ' LA CLAVE ÚNICA LO RECHAZARÍA IGUAL: SE AVISA CON EL ARTÍCULO QUE LO TIENE
+      Try rDatos = m_ConexionBD.mConn.Exec("SELECT nombre_archivo FROM articulo WHERE doi = &1 AND id_articulo <> &2", sDoi, iIdArticulo)
+      If Error Then
+        sAviso = "No se pudo verificar el DOI: " & Error.Text
+      Else If rDatos.Available Then
+        sAviso = "El DOI «" & sDoi & "» ya es de «" & rDatos!nombre_archivo & "»."
+      Endif
+    Endif
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  ' --- 5. DOI CON OTRO PREFIJO: SE AVISA SIN BLOQUEAR (DECISIÓN DE ALBERTO, 28/10) ---
+  If sDoi <> "" Then sPrefijo = PrefijoDoiRevista(iIdNumero)
+  If sPrefijo <> "" Then
+    If sDoi Begins sPrefijo & "/" Then Return True
+    m_Sonido.sonar("Question")
+    If Message.Question("El DOI «" & sDoi & "» no lleva el prefijo de la revista (" & sPrefijo & ").", "Guardar igual", "Revisar") <> 1 Then Return False
+  Endif
+
+  Return True
+
+End
+
+
+' ============================================
+' Función   : GuardarArticulo
+' Propósito : Alta o modificación del artículo (Identificación y Permisos),
+'             de sus títulos traducidos, contribuyentes, resúmenes y palabras
+'             clave, financiamiento, declaraciones, relaciones y ubicaciones,
+'             en una transacción. El artículo con
+'             Create o Edit + Update (RC-GM-15)
+' Parámetros: iIdArticulo As Integer — artículo; 0 para el alta
+'             iIdNumero As Integer — número del proyecto
+'             sArchivo As String — nombre del a-*.md sin extensión (solo alta)
+'             cDatos As Collection — los valores del editor; Null donde no
+'             hay dato, que en los campos heredables significa «hereda»
+'             cTitulos As Collection — títulos traducidos, por idioma
+'             cSubtitulos As Collection — subtítulos traducidos, por idioma
+'             aContribuyentes As CContribuyente[] — la lista, en orden
+'             oTextos As CTextosArticulo — resúmenes y palabras clave
+'             oFin As CFinanciamientoArticulo — financiamiento y declaraciones
+'             oRel As CRelacionesArticulo — relaciones y ubicaciones
+' Retorna   : Integer — id del artículo grabado; 0 si no se grabó (ya se
+'             informó)
+' ============================================
+Public Function GuardarArticulo(iIdArticulo As Integer, iIdNumero As Integer, sArchivo As String, cDatos As Collection, cTitulos As Collection, cSubtitulos As Collection, aContribuyentes As CContribuyente[], oTextos As CTextosArticulo, oFin As CFinanciamientoArticulo, oRel As CRelacionesArticulo) As Integer
+
+  Dim hConn As Connection
+  Dim rArticulo As Result
+  Dim rEstado As Result
+  Dim iId As Integer
+  Dim sTexto As String
+  Dim sIdioma As String
+  Dim oContribuyente As CContribuyente
+  Dim vAutor As Variant
+  Dim vColectivo As Variant
+  Dim sRolCredit As String
+  Dim iIdContribuyente As Integer
+  Dim aTerminos As String[]
+  Dim aIdsTerminos As String[]
+  Dim aClave As String[]
+  Dim sAvisoFin As String
+  Dim oRelacion As CRelacion
+  Dim cDelIdioma As Collection
+  Dim iIdTexto As Integer
+  Dim i As Integer
+  Dim j As Integer
+
+  ' --- 1. UN PUBLICADO NO SE TOCA (DECISIÓN 17) ---
+  hConn = m_ConexionBD.mConn
+  If iIdArticulo > 0 Then
+    Try rEstado = hConn.Exec("SELECT estado FROM articulo WHERE id_articulo = &1", iIdArticulo)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo leer el estado del artículo:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+    If rEstado.Available Then
+      If rEstado!estado = "publicado" Then
+        m_Sonido.sonar("Warning")
+        Message.Warning("El artículo está publicado: es de solo lectura.")
+        Return 0
+      Endif
+    Endif
+  Endif
+
+  ' --- 2. VALIDACIÓN ---
+  If Not ValidarArticulo(cDatos, iIdArticulo, iIdNumero) Then Return 0
+  If Not ValidarTraducciones(cTitulos, cSubtitulos, cDatos["idioma_principal"]) Then Return 0
+  If Not ValidarContribuyentes(aContribuyentes) Then Return 0
+  If Not ValidarTextos(oTextos) Then Return 0
+  sAvisoFin = AvisoFinanciamiento(oFin)
+  If sAvisoFin = "" Then sAvisoFin = AvisoRelaciones(oRel)
+  If sAvisoFin <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAvisoFin)
+    Return 0
+  Endif
+
+  ' --- 3. TRANSACCIÓN: ARTÍCULO Y TODAS SUS HIJAS EDITADAS, JUNTOS O NADA ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  ' --- 3.1 ALTA O EDICIÓN DEL ARTÍCULO ---
+  If iIdArticulo = 0 Then
+    Try rArticulo = hConn.Create("articulo")
+  Else
+    Try rArticulo = hConn.Edit("articulo", "id_articulo = &1", iIdArticulo)
+  Endif
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el artículo para grabarlo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  With rArticulo
+    If iIdArticulo = 0 Then
+      ' EL VÍNCULO CON EL ARCHIVO SE FIJA EN EL ALTA Y NO CAMBIA
+      !id_numero = iIdNumero
+      !nombre_archivo = sArchivo
+      !usuario_creacion = m_InicioCierre.UsuarioEnCurso
+    Endif
+    !id_seccion = cDatos["id_seccion"]
+    !id_dossier = cDatos["id_dossier"]
+    !article_type = cDatos["article_type"]
+    !idioma_principal = cDatos["idioma_principal"]
+    !titulo = cDatos["titulo"]
+    !subtitulo = cDatos["subtitulo"]
+    !titulo_corto = cDatos["titulo_corto"]
+    ' FECHAS E IDENTIFICADORES (ENTREGA D1); Null DONDE NO HAY DATO
+    !fecha_recepcion = cDatos["fecha_recepcion"]
+    !fecha_revision = cDatos["fecha_revision"]
+    !fecha_aceptacion = cDatos["fecha_aceptacion"]
+    !fecha_publicacion = cDatos["fecha_publicacion"]
+    !doi = cDatos["doi"]
+    !autores_anonimos = cDatos["autores_anonimos"]
+    !notas_autor = cDatos["notas_autor"]
+    ' HEREDABLES: NULL ES «TOMA EL DE LA REVISTA HASTA PUBLICAR» (DECISIÓN 14)
+    !licencia = cDatos["licencia"]
+    !url_licencia = cDatos["url_licencia"]
+    !titular_copyright = cDatos["titular_copyright"]
+    !anio_copyright = cDatos["anio_copyright"]
+    !tipo_acceso = cDatos["tipo_acceso"]
+  End With
+
+  Try rArticulo.Update()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo grabar el artículo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  If iIdArticulo = 0 Then
+    iId = hConn.LastInsertId
+  Else
+    iId = iIdArticulo
+  Endif
+
+  ' --- 3.2 TÍTULOS TRADUCIDOS: SE REEMPLAZAN ENTEROS ---
+  ' SOLO titulo Y subtitulo: LOS RESÚMENES DE LA MISMA TABLA NO SE TOCAN
+  Try hConn.Exec("DELETE FROM articulo_texto WHERE id_articulo = &1 AND tipo IN ('titulo', 'subtitulo')", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar los títulos traducidos:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  ' EL IDIOMA PRINCIPAL NO SE GRABA COMO TRADUCCIÓN: SU TÍTULO ES articulo.titulo.
+  ' UN IDIOMA QUE LA REVISTA DEJÓ DE DECLARAR SE CONSERVA (NO SE PIERDE EN SILENCIO)
+  For Each sTexto In cTitulos
+    sIdioma = cTitulos.Key
+    If sIdioma = cDatos["idioma_principal"] Then Continue
+    Try hConn.Exec("INSERT INTO articulo_texto (id_articulo, tipo, idioma, texto) VALUES (&1, 'titulo', &2, &3)", iId, sIdioma, sTexto)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar el título en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+  For Each sTexto In cSubtitulos
+    sIdioma = cSubtitulos.Key
+    If sIdioma = cDatos["idioma_principal"] Then Continue
+    Try hConn.Exec("INSERT INTO articulo_texto (id_articulo, tipo, idioma, texto) VALUES (&1, 'subtitulo', &2, &3)", iId, sIdioma, sTexto)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar el subtítulo en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+
+  ' --- 3.3 CONTRIBUYENTES: SE REEMPLAZAN ENTEROS ---
+  ' AFILIACIONES Y CRediT CAEN EN CASCADA; NINGUNA OTRA TABLA APUNTA A
+  ' articulo_contribuyente (VERIFICADO EN information_schema, 28/10)
+  Try hConn.Exec("DELETE FROM articulo_contribuyente WHERE id_articulo = &1", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar los contribuyentes:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For i = 0 To aContribuyentes.Count - 1
+    oContribuyente = aContribuyentes[i]
+    ' PERSONA O COLECTIVO: LO OTRO VA NULL (chk_contrib_quien)
+    If oContribuyente.iIdAutor > 0 Then
+      vAutor = oContribuyente.iIdAutor
+      vColectivo = Null
+    Else
+      vAutor = Null
+      vColectivo = NuloSiVacio(oContribuyente.sNombreColectivo)
+    Endif
+    Try hConn.Exec("INSERT INTO articulo_contribuyente (id_articulo, id_autor, nombre_colectivo, orden, rol, correspondencia, email, notas) VALUES (&1, &2, &3, &4, &5, &6, &7, &8)",
+      iId, vAutor, vColectivo, i + 1, oContribuyente.sRol, If(oContribuyente.bCorrespondencia, 1, 0), NuloSiVacio(oContribuyente.sEmail), NuloSiVacio(oContribuyente.sNotas))
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar el contribuyente «" & oContribuyente.sNombre & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+    iIdContribuyente = hConn.LastInsertId
+
+    ' AFILIACIONES DEL MOMENTO, EN ORDEN
+    For j = 0 To oContribuyente.aInstituciones.Count - 1
+      Try hConn.Exec("INSERT INTO contribuyente_afiliacion (id_contribuyente, orden, institucion, departamento, ciudad, pais, ror) VALUES (&1, &2, &3, &4, &5, &6, &7)",
+        iIdContribuyente, j + 1, NuloSiVacio(oContribuyente.aInstituciones[j]), NuloSiVacio(oContribuyente.aDepartamentos[j]), NuloSiVacio(oContribuyente.aCiudades[j]), NuloSiVacio(oContribuyente.aPaises[j]), NuloSiVacio(oContribuyente.aRors[j]))
+      If Error Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo grabar una afiliación de «" & oContribuyente.sNombre & "»:" & gb.NewLine & Error.Text)
+        Return 0
+      Endif
+    Next
+
+    ' CRediT POR VALOR (SC-23): EL TEXTO DE FCreditRoles, QUE ES EL DE LA
+    ' TABLA DE JATS4R (vocab-term TIENE QUE COINCIDIR EXACTO)
+    For Each sRolCredit In Split(oContribuyente.sCredit, ";")
+      sRolCredit = Trim(sRolCredit)
+      If sRolCredit = "" Then Continue
+      Try hConn.Exec("INSERT INTO contribuyente_credit (id_contribuyente, rol_credit) VALUES (&1, &2)", iIdContribuyente, sRolCredit)
+      If Error Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo grabar el rol CRediT «" & sRolCredit & "» de «" & oContribuyente.sNombre & "»:" & gb.NewLine & Error.Text)
+        Return 0
+      Endif
+    Next
+  Next
+
+  ' --- 3.4 RESÚMENES: SE REEMPLAZAN ENTEROS ---
+  ' LAS SECCIONES DE UN ESTRUCTURADO CAEN EN CASCADA CON SU FILA; LA
+  ' VALIDACIÓN YA GARANTIZÓ QUE LO QUE SE ESCRIBE CORRESPONDE A LA PLANTILLA
+  Try hConn.Exec("DELETE FROM articulo_texto WHERE id_articulo = &1 AND tipo = 'resumen'", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar los resúmenes:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For Each sTexto In oTextos.cResumenes
+    sIdioma = oTextos.cResumenes.Key
+    Try hConn.Exec("INSERT INTO articulo_texto (id_articulo, tipo, idioma, texto) VALUES (&1, 'resumen', &2, &3)", iId, sIdioma, sTexto)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar el resumen en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+  ' ESTRUCTURADOS: LA FILA DEL RESUMEN CON texto NULL Y UNA FILA POR SECCIÓN,
+  ' EN EL ORDEN DE LA PLANTILLA
+  For Each cDelIdioma In oTextos.cSecciones
+    sIdioma = oTextos.cSecciones.Key
+    Try hConn.Exec("INSERT INTO articulo_texto (id_articulo, tipo, idioma, texto) VALUES (&1, 'resumen', &2, NULL)", iId, sIdioma)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar el resumen estructurado en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+    iIdTexto = hConn.LastInsertId
+    For j = 0 To oTextos.aCodigosPlantilla.Count - 1
+      Try hConn.Exec("INSERT INTO articulo_resumen_seccion (id_texto, codigo, orden, texto) VALUES (&1, &2, &3, &4)", iIdTexto, oTextos.aCodigosPlantilla[j], j + 1, cDelIdioma[oTextos.aCodigosPlantilla[j]])
+      If Error Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo grabar la sección «" & oTextos.aCodigosPlantilla[j] & "» del resumen en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+        Return 0
+      Endif
+    Next
+  Next
+
+  ' --- 3.5 PALABRAS CLAVE: SE REEMPLAZAN ENTERAS, EN EL ORDEN DE LAS LÍNEAS ---
+  Try hConn.Exec("DELETE FROM articulo_palabra_clave WHERE id_articulo = &1", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar las palabras clave:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  ' DEL AUTOR: vocabulario NULL (GV-74, 1.14.0)
+  For Each sTexto In oTextos.cPalabrasAutor
+    sIdioma = oTextos.cPalabrasAutor.Key
+    aTerminos = Lineas(sTexto)
+    For j = 0 To aTerminos.Count - 1
+      Try hConn.Exec("INSERT INTO articulo_palabra_clave (id_articulo, idioma, vocabulario, orden, termino) VALUES (&1, &2, NULL, &3, &4)", iId, sIdioma, j + 1, aTerminos[j])
+      If Error Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo grabar la palabra clave «" & aTerminos[j] & "» en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+        Return 0
+      Endif
+    Next
+  Next
+  ' CONTROLADAS: VOCABULARIO, TÉRMINO E IDENTIFICADOR POR VALOR (SC-23); UN
+  ' TÉRMINO NUEVO ENTRA AL CATÁLOGO EN ESTA MISMA TRANSACCIÓN (ENTREGA C3)
+  For Each aTerminos In oTextos.cTerminosControlados
+    sIdioma = oTextos.cTerminosControlados.Key
+    aIdsTerminos = oTextos.IdsControlados(sIdioma)
+    For j = 0 To aTerminos.Count - 1
+      If Not m_Vocabularios.AgregarSiFalta(hConn, oTextos.cVocabularios[sIdioma], sIdioma, aTerminos[j], aIdsTerminos[j]) Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo agregar «" & aTerminos[j] & "» al catálogo de " & oTextos.cVocabularios[sIdioma] & ":" & gb.NewLine & Error.Text)
+        Return 0
+      Endif
+      Try hConn.Exec("INSERT INTO articulo_palabra_clave (id_articulo, idioma, vocabulario, orden, termino, identificador) VALUES (&1, &2, &3, &4, &5, &6)",
+        iId, sIdioma, oTextos.cVocabularios[sIdioma], j + 1, aTerminos[j], NuloSiVacio(aIdsTerminos[j]))
+      If Error Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo grabar la palabra clave «" & aTerminos[j] & "» en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+        Return 0
+      Endif
+    Next
+  Next
+
+  ' --- 3.6 FINANCIAMIENTO: SE REEMPLAZA ENTERO, EN ORDEN (ENTREGA D2) ---
+  Try hConn.Exec("DELETE FROM articulo_financiamiento WHERE id_articulo = &1", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo reemplazar el financiamiento:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For j = 0 To oFin.aFinanciadores.Count - 1
+    ' TIPO E IDENTIFICADOR: LOS DOS O NINGUNO (chk_fin_id); Null POR NuloSiVacio (GV-147)
+    Try hConn.Exec("INSERT INTO articulo_financiamiento (id_articulo, orden, financiador, id_financiador, tipo_id, numero_proyecto) VALUES (&1, &2, &3, &4, &5, &6)",
+      iId, j + 1, Trim(oFin.aFinanciadores[j]), NuloSiVacio(oFin.aIdsFinanciador[j]), NuloSiVacio(oFin.aTiposId[j]), NuloSiVacio(oFin.aProyectos[j]))
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar el financiador «" & oFin.aFinanciadores[j] & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+
+  ' --- 3.7 DECLARACIONES DEL NÚCLEO: SE REEMPLAZAN ENTERAS ---
+  ' SOLO LOS TIPOS SIN BLOQUE: LOS DE N3 NO LOS MUESTRA LA PESTAÑA Y NO SE
+  ' TOCAN (SC-73)
+  Try hConn.Exec("DELETE FROM articulo_declaracion WHERE id_articulo = &1 AND tipo IN (SELECT codigo FROM tipo_declaracion WHERE bloque IS NULL)", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar las declaraciones:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For Each sTexto In oFin.cDeclaraciones
+    aClave = Split(oFin.cDeclaraciones.Key, "|")
+    Try hConn.Exec("INSERT INTO articulo_declaracion (id_articulo, tipo, idioma, texto) VALUES (&1, &2, &3, &4)", iId, aClave[0], aClave[1], sTexto)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar la declaración «" & aClave[0] & "» en «" & aClave[1] & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+
+  ' --- 3.8 RELACIONES: SE REEMPLAZAN ENTERAS, EN ORDEN (ENTREGA D3) ---
+  Try hConn.Exec("DELETE FROM articulo_relacion WHERE id_articulo = &1", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar las relaciones:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For Each oRelacion In oRel.aRelaciones
+    ' LOCAL: SOLO EL id; EXTERNO: SOLO SUS DATOS. «SIN DATO» ES NULL (GV-147)
+    If oRelacion.iIdLocal > 0 Then
+      Try hConn.Exec("INSERT INTO articulo_relacion (id_articulo, tipo, id_articulo_local) VALUES (&1, &2, &3)", iId, oRelacion.sTipo, oRelacion.iIdLocal)
+    Else
+      Try hConn.Exec("INSERT INTO articulo_relacion (id_articulo, tipo, doi, revista, anio, volumen, numero, fpage, lpage) VALUES (&1, &2, &3, &4, &5, &6, &7, &8, &9)",
+        iId, oRelacion.sTipo, NuloSiVacio(oRelacion.sDoi), NuloSiVacio(oRelacion.sRevista), NuloSiVacio(oRelacion.sAnio), NuloSiVacio(oRelacion.sVolumen), NuloSiVacio(oRelacion.sNumero), NuloSiVacio(oRelacion.sFpage), NuloSiVacio(oRelacion.sLpage))
+    Endif
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar una relación «" & oRelacion.sTipo & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+
+  ' --- 3.9 UBICACIONES: SE REEMPLAZAN ENTERAS ---
+  Try hConn.Exec("DELETE FROM articulo_ubicacion WHERE id_articulo = &1", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar las ubicaciones:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For Each sTexto In oRel.cUbicaciones
+    Try hConn.Exec("INSERT INTO articulo_ubicacion (id_articulo, tipo, url) VALUES (&1, &2, &3)", iId, oRel.cUbicaciones.Key, sTexto)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar la URL «" & oRel.cUbicaciones.Key & "»:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+
+  ' --- 3.10 CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar los cambios del artículo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return iId
+
+End

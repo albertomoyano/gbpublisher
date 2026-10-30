@@ -397,6 +397,9 @@ local function leer_cuadro(div, raiz)
   end
 
   -- --- 2. EL ARCHIVO ---
+  -- LA REGLA id → cuadros/{id}.md LA REPITE engine/controles_md.lua
+  -- (listar_cuadros) PARA ANOTAR LA HUELLA DEL CUADRO EN EL CANÓNICO
+  -- (SC-75): SI CAMBIA ACÁ, CAMBIA ALLÁ
   ruta = raiz .. '/cuadros/' .. id .. '.md'
   h = io.open(ruta, 'r')
   if not h then fallar(id, 'no existe el archivo cuadros/' .. id .. '.md.') end

@@ -1519,6 +1519,13 @@ RC APLICADAS:
     <!-- LA IMAGEN VIVE EN media/; EN docs/ VA A assets/media/ -->
     <xsl:variable name="nombre" select="string(tokenize($fileref, '/')[last()])"/>
 
+    <!-- EL ANCHO DEL SHORTCODE (ancho=60 → @width="60%"): UN TOPE SOBRE
+         EL TAMAÑO NATURAL, COMO max-width: 100% SIN ÉL. SOLO LA FORMA QUE
+         ESCRIBE EL FILTRO; OTRA LA SEÑALA EL VALIDADOR (gbp-ancho) -->
+    <xsl:variable name="ancho" as="xs:string"
+                  select="if (matches(string($imgdata/@width), '^([1-9][0-9]?|100)%$'))
+                          then string($imgdata/@width) else ''"/>
+
     <!-- data-png: LA IMAGEN PARA EL PANEL DE FIGURAS, QUE CON UN IFRAME NO
          TIENE UN <img> DE DONDE TOMARLA -->
     <figure class="fig-wrapper"
@@ -1538,10 +1545,15 @@ RC APLICADAS:
               select="gbg:proporcion(concat($proyecto_dir, '/media'), $nombre)"/>
             <xsl:with-param name="alt" select="string($alt)"/>
             <xsl:with-param name="espacio" select="'http://www.w3.org/1999/xhtml'"/>
+            <xsl:with-param name="ancho" select="$ancho"/>
           </xsl:call-template>
         </xsl:when>
         <xsl:when test="$fileref != ''">
-          <img src="assets/media/{$nombre}" alt="{$alt}"/>
+          <img src="assets/media/{$nombre}" alt="{$alt}">
+            <xsl:if test="$ancho != ''">
+              <xsl:attribute name="style" select="concat('max-width:', $ancho)"/>
+            </xsl:if>
+          </img>
         </xsl:when>
       </xsl:choose>
       <figcaption class="fig-caption">

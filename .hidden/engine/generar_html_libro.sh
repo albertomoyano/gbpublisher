@@ -16,8 +16,15 @@
 #                  (cita-<estilo>-html.tex). Con tex4ht, este script corre
 #                  antes la pasada de citas (preparar_citas_libro.sh) y la
 #                  hoja toma el texto de citas.html
-#   imagen_tapa    nombre del archivo de tapa según la base. Opcional, y solo
-#                  para avisar si falta: la tapa se copia con el resto de media/
+#   imagen_tapa    nombre del archivo de tapa según la base. Opcional: se
+#                  copia con las imágenes del canónico, y si falta se avisa
+#
+# LAS IMÁGENES (29/10/2026)
+#   docs/assets/media/ se vacía y recibe solo lo que el HTML usa: las imágenes
+#   que nombra el canónico del libro, la tapa y, para cada gráfico de
+#   gbpublisher (fig-x.png con fig-x.html al lado, SC-69), su HTML. Cada
+#   imagen pasa por copiar_imagen_pantalla (comun.sh): tal cual, o reducida
+#   a 2000 px de lado mayor y en sRGB. Antes se copiaba media/ entera.
 # ============================================================================
 # POR QUÉ ENSAMBLA PRIMERO
 #
@@ -92,7 +99,7 @@ paso "verificando el entorno"
 
 [[ -d "$DIR_PROYECTO" ]] || morir "No existe el proyecto: $DIR_PROYECTO"
 
-requerir_comandos java xmllint
+requerir_comandos java xmllint identify convert sha256sum
 
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de salida HTML: $XSL"
@@ -126,42 +133,71 @@ fi
 
 # --- 5. ESTRUCTURA docs/ Y RECURSOS ---
 # CSS Y JS SE SOBRESCRIBEN SIEMPRE PARA PROPAGAR ACTUALIZACIONES (DECISIÓN
-# PREVIA DEL PROYECTO). LAS IMÁGENES SE COPIAN TODAS DESDE media/, TAPA
-# INCLUIDA: LA TAPA NO NECESITA UN CAMINO APARTE.
+# PREVIA DEL PROYECTO).
 paso "preparando docs/"
 
-mkdir -p "$DIR_ASSETS/css" "$DIR_ASSETS/js" "$DIR_ASSETS/media" ||
+mkdir -p "$DIR_ASSETS/css" "$DIR_ASSETS/js" ||
     morir "No se pudo crear $DIR_ASSETS"
 
 cp -f "$CSS" "$DIR_ASSETS/css/" || morir "No se pudo copiar la hoja de estilos"
 cp -f "$JS"  "$DIR_ASSETS/js/"  || morir "No se pudo copiar el script"
 ok "hoja de estilos y script"
 
+# --- 5b. IMÁGENES: SOLO LAS QUE EL HTML USA ---
+# LA CARPETA SE VACÍA: SIN ESO QUEDAN LAS DE UNA CORRIDA ANTERIOR, O LAS DE
+# CUANDO SE COPIABA media/ ENTERA. ES SALIDA DEL SCRIPT: NADIE LA EDITA A MANO
+rm -rf "$DIR_ASSETS/media" || morir "No se pudo vaciar $DIR_ASSETS/media"
+mkdir -p "$DIR_ASSETS/media" || morir "No se pudo crear $DIR_ASSETS/media"
+
+# LAS DEL CANÓNICO DEL LIBRO (QUE YA INCLUYE LA TAPA COMO mediaobject) Y LA
+# TAPA QUE DECLARA LA BASE. sort -u: LA TAPA LLEGA POR LOS DOS LADOS
+mapfile -t USADAS < <(
+    {
+        imagenes_canonico "$CANONICO"
+        if [[ -n "$IMAGEN_TAPA" ]]; then printf '%s\n' "$IMAGEN_TAPA"; fi
+    } | sort -u
+)
+
 imagenes=0
-if [[ -d "$DIR_PROYECTO/media" ]]; then
-    for archivo in "$DIR_PROYECTO/media"/*; do
-        # LOS SUBDIRECTORIOS SE SALTEAN, COMO HACÍA LA VERSIÓN EN GAMBAS
-        [[ -f "$archivo" ]] || continue
-        cp -f "$archivo" "$DIR_ASSETS/media/" ||
-            morir "No se pudo copiar $(basename "$archivo")"
-        imagenes=$((imagenes + 1))
-    done
-fi
+reducidas=0
+faltan=0
+for nombre in "${USADAS[@]}"; do
+    [[ -n "$nombre" ]] || continue
+    origen="$DIR_PROYECTO/media/$nombre"
 
-if (( imagenes > 0 )); then
-    ok "$imagenes imagen(es)"
-else
-    tenue "el proyecto no tiene imágenes en media/"
-fi
-
-# LA TAPA QUE DECLARA LA BASE Y NO ESTÁ EN DISCO NO IMPIDE LA SALIDA, PERO EL
-# HTML VA A REFERENCIAR UN ARCHIVO INEXISTENTE
-if [[ -n "$IMAGEN_TAPA" ]]; then
-    if [[ -f "$DIR_PROYECTO/media/$IMAGEN_TAPA" ]]; then
-        tenue "tapa: $IMAGEN_TAPA"
-    else
-        aviso "la tapa declarada en la base no está en media/: $IMAGEN_TAPA"
+    # UNA IMAGEN QUE EL CANÓNICO NOMBRA Y NO ESTÁ NO IMPIDE LA SALIDA, PERO EL
+    # HTML LA VA A MOSTRAR ROTA. EL VALIDADOR LA MARCA COMO ERROR (SC-75)
+    if [[ ! -f "$origen" ]]; then
+        if [[ "$nombre" == "$IMAGEN_TAPA" ]]; then
+            aviso "la tapa declarada en la base no está en media/: $nombre"
+        else
+            aviso "el canónico usa una imagen que no está en media/: $nombre"
+        fi
+        faltan=$((faltan + 1))
+        continue
     fi
+
+    copiar_imagen_pantalla "$origen" "$DIR_ASSETS/media/$nombre" "$DIR_PROYECTO/tmp/pantalla" ||
+        morir "No se pudo preparar la imagen $nombre${PANTALLA_NOTA:+: $PANTALLA_NOTA}"
+    imagenes=$((imagenes + 1))
+    [[ -z "$PANTALLA_NOTA" ]] || tenue "$nombre: $PANTALLA_NOTA"
+    reducidas=$((reducidas + PANTALLA_PREPARADA))
+
+    # EL GRÁFICO INTERACTIVO (SC-69): EL MISMO PATRÓN QUE gbg:patron-png EN
+    # grafico-comun.xsl, QUE ES QUIEN DECIDE SI LA FIGURA VA COMO IFRAME
+    if [[ "$nombre" =~ ^fig-[A-Za-z0-9-]+\.png$ && -f "$DIR_PROYECTO/media/${nombre%.png}.html" ]]; then
+        cp -f "$DIR_PROYECTO/media/${nombre%.png}.html" "$DIR_ASSETS/media/" ||
+            morir "No se pudo copiar ${nombre%.png}.html"
+        tenue "$nombre: gráfico interactivo, con su HTML"
+    fi
+done
+
+if (( imagenes > 0 && reducidas > 0 )); then
+    ok "$imagenes imagen(es) de las que usa el libro, $reducidas preparada(s) para pantalla"
+elif (( imagenes > 0 )); then
+    ok "$imagenes imagen(es) de las que usa el libro"
+elif (( faltan == 0 )); then
+    tenue "el libro no usa imágenes"
 fi
 
 # --- 6. CÓDIGO (SC-42) ---

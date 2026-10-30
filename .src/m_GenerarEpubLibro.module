@@ -1044,7 +1044,7 @@ Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
   Dim s As String
   Dim sIdentificador As String
   Dim sNombreTapa As String
-  Dim sRutaMedia As String
+  Dim aImagenes As String[]
   Dim sImagen As String
   Dim sFuente As String
   Dim sPieza As String
@@ -1103,31 +1103,23 @@ Private Function ArmarOPF(cMeta As Collection, aPiezas As String[]) As String
       " href=" & Comillas("fonts/" & sFuente) & " media-type=" & Comillas("font/ttf") & "/>" & Chr(10)
   Next
 
-  ' IMÁGENES: LAS DE media/, LAS MISMAS QUE COPIA EL SCRIPT. SE SALTEAN LOS
-  ' SUBDIRECTORIOS, LOS OCULTOS Y LO QUE NO ES UNA IMAGEN QUE EL EPUB ADMITA,
-  ' CON LA MISMA LISTA QUE EL SCRIPT: UN PDF EN media/ SE DECLARABA COMO
-  ' image/jpeg Y DEJABA EL PAQUETE INVÁLIDO. Dir() SOBRE UNA RUTA QUE NO ES
-  ' CARPETA FALLA (GV-01): SE COMPRUEBA ANTES
-  sRutaMedia = $sRutaProyecto &/ "media"
-  If Exist(sRutaMedia) Then
-    If IsDir(sRutaMedia) Then
-      For Each sImagen In Dir(sRutaMedia)
-        If IsDir(sRutaMedia &/ sImagen) Then Continue
-        If String.Left(sImagen, 1) = "." Then Continue
-        If Not EsImagenEpub(sImagen) Then Continue
-        If sImagen = sNombreTapa Then
-          s &= "<item id=" & Comillas("cover-image") & " href=" & Comillas("images/" & EscaparXml(sImagen)) &
-            " media-type=" & Comillas(MediaTypeDeImagen(sImagen)) & " properties=" & Comillas("cover-image") & "/>" & Chr(10)
-        Else
-          ' EL id SALE DEL NOMBRE COMPLETO, CON EXTENSIÓN: foto.png Y foto.jpg
-          ' NO PUEDEN COMPARTIR UNO, Y UN id DUPLICADO INVALIDA EL OPF
-          sId = "img-" & LCase(Replace(Replace(sImagen, ".", "-"), " ", "-"))
-          s &= "<item id=" & Comillas(EscaparXml(sId)) & " href=" & Comillas("images/" & EscaparXml(sImagen)) &
-            " media-type=" & Comillas(MediaTypeDeImagen(sImagen)) & "/>" & Chr(10)
-        Endif
-      Next
+  ' IMÁGENES: SOLO LAS QUE EL LIBRO USA (ImagenesUsadas). EL SCRIPT COPIA
+  ' EXACTAMENTE LAS QUE ESTE MANIFIESTO DECLARA: ES LA ÚNICA LISTA. ANTES
+  ' CADA LADO RECORRÍA media/ POR SU CUENTA Y EL PAQUETE LLEVABA TODO LO QUE
+  ' HUBIERA AHÍ, USADO O NO
+  aImagenes = ImagenesUsadas(cMeta, aPiezas)
+  For Each sImagen In aImagenes
+    If sImagen = sNombreTapa Then
+      s &= "<item id=" & Comillas("cover-image") & " href=" & Comillas("images/" & EscaparXml(sImagen)) &
+        " media-type=" & Comillas(MediaTypeDeImagen(sImagen)) & " properties=" & Comillas("cover-image") & "/>" & Chr(10)
+    Else
+      ' EL id SALE DEL NOMBRE COMPLETO, CON EXTENSIÓN: foto.png Y foto.jpg
+      ' NO PUEDEN COMPARTIR UNO, Y UN id DUPLICADO INVALIDA EL OPF
+      sId = "img-" & LCase(Replace(Replace(sImagen, ".", "-"), " ", "-"))
+      s &= "<item id=" & Comillas(EscaparXml(sId)) & " href=" & Comillas("images/" & EscaparXml(sImagen)) &
+        " media-type=" & Comillas(MediaTypeDeImagen(sImagen)) & "/>" & Chr(10)
     Endif
-  Endif
+  Next
 
   s &= "<item id=" & Comillas("tapa") & " href=" & Comillas("chapters/front-tapa.xhtml") &
     " media-type=" & Comillas("application/xhtml+xml") & "/>" & Chr(10)
@@ -1273,14 +1265,78 @@ Private Function ItemNavBibliografia() As String
 End
 
 ' ============================================
+' Función   : ImagenesUsadas
+' Propósito : Las imágenes que el EPUB lleva: la tapa, los logos de portada y
+'             de colección, y las que nombran los canónicos de las piezas, en
+'             ese orden y sin repetir. Es la lista que declara el manifiesto
+'             y la única que copia el script.
+' Parámetros: cMeta As Collection — metadatos del libro (tapa y logos)
+'             aPiezas As String[] — piezas del EPUB, en orden
+' Retorna   : String[] — nombres de archivo de media/, sin carpeta
+' Nota      : LOS CANÓNICOS SE LEEN CON xmllint --xpath Y Exec ... To, EL
+'             MISMO CAMINO QUE m_AuditarJats.ConsultarXPath. local-name()
+'             PORQUE xmllint NO CONOCE LOS ESPACIOS DE NOMBRES (GV-22). SIN
+'             RESULTADOS xmllint SALE CON 10 Y Exec LEVANTA ERROR: ES UNA
+'             PIEZA SIN IMÁGENES, NO UNA FALLA. UN CANÓNICO QUE FALTA DA LO
+'             MISMO, Y LO DETIENE EL SCRIPT, QUE LO EXIGE. NO SE COMPRUEBA QUE
+'             CADA IMAGEN ESTÉ EN media/: EL SCRIPT LO HACE Y DICE CUÁL FALTA
+' ============================================
+Private Function ImagenesUsadas(cMeta As Collection, aPiezas As String[]) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aImagenes As New String[]
+  Dim aCandidatas As New String[]
+  Dim sPieza As String
+  Dim sSalida As String
+  Dim sNombre As String
+  Dim iIni As Integer
+  Dim iFin As Integer
+
+  ' --- 2. LAS QUE VIENEN DE LA BASE ---
+  If cMeta["imagen_tapa"] <> "" Then aCandidatas.Add(File.Name(cMeta["imagen_tapa"]))
+  If cMeta["logo_portada"] <> "" Then aCandidatas.Add(cMeta["logo_portada"])
+  If cMeta["logo_coleccion"] <> "" Then aCandidatas.Add(cMeta["logo_coleccion"])
+
+  ' --- 3. LAS QUE NOMBRA CADA CANÓNICO ---
+  ' LA SALIDA ES « fileref="../media/x.png"», UN ATRIBUTO POR LÍNEA. SE
+  ' RECORRE POR PARES DE COMILLAS Y NO POR ESPACIOS: UN NOMBRE PUEDE TENERLOS
+  For Each sPieza In aPiezas
+    sSalida = ""
+    Try Exec ["xmllint", "--nonet", "--xpath", "//*[local-name()='imagedata']/@fileref",
+      $sRutaProyecto &/ "jats" &/ ("c-" & sPieza & ".xml")] To sSalida
+    If Error Then Continue
+
+    iIni = 1
+    Do
+      iIni = InStr(sSalida, Chr(34), iIni)
+      If iIni = 0 Then Break
+      iFin = InStr(sSalida, Chr(34), iIni + 1)
+      If iFin = 0 Then Break
+      If iFin > iIni + 1 Then aCandidatas.Add(File.Name(Mid(sSalida, iIni + 1, iFin - iIni - 1)))
+      iIni = iFin + 1
+    Loop
+  Next
+
+  ' --- 4. SIN REPETIR Y SOLO LO QUE EL EPUB ADMITE ---
+  ' UN id DUPLICADO INVALIDA EL OPF: LA TAPA PUEDE SER TAMBIÉN UNA FIGURA
+  For Each sNombre In aCandidatas
+    If sNombre = "" Then Continue
+    If Not EsImagenEpub(sNombre) Then Continue
+    If aImagenes.Find(sNombre) >= 0 Then Continue
+    aImagenes.Add(sNombre)
+  Next
+
+  Return aImagenes
+
+End
+
+' ============================================
 ' Función   : EsImagenEpub
 ' Propósito : Dice si un archivo de media/ es una imagen que el EPUB admite.
 ' Parámetros: sNombre As String — nombre del archivo
 ' Retorna   : Boolean — True para jpg, jpeg, png, gif, svg y webp
-' Nota      : SON LOS TIPOS DE IMAGEN DE EPUB 3.3. LA MISMA LISTA ESTÁ EN
-'             engine/generar_epub_libro.sh: SI DIVERGEN, EL SCRIPT COPIA UN
-'             ARCHIVO QUE EL OPF NO DECLARA, O EL OPF DECLARA UNO QUE NO SE
-'             COPIÓ, Y LA VERIFICACIÓN DEL OPF LO ATRAPA.
+' Nota      : SON LOS TIPOS DE IMAGEN DE EPUB 3.3. ES EL ÚNICO FILTRO: EL
+'             SCRIPT COPIA LO QUE EL OPF DECLARA, SIN VOLVER A ELEGIR.
 ' ============================================
 Private Function EsImagenEpub(sNombre As String) As Boolean
 

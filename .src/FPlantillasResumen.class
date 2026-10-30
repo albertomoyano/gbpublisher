@@ -1,0 +1,505 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FPlantillasResumen
+' Propósito  : Plantillas de resumen estructurado de una revista: nombre,
+'              secciones en orden (código estable) y su título en cada idioma
+'              de publicación (entrega C2, decisión de Alberto, 28/10: diálogo
+'              propio, abierto desde la pestaña «Revistas» de FSysAdmin).
+'              La plantilla se edita en memoria y se graba entera con
+'              «Guardar»; elegir otra plantilla descarta lo no guardado.
+' Uso        : FPlantillasResumen.hConn = hConnServidor
+'              FPlantillasResumen.iIdRevista = …
+'              FPlantillasResumen.ShowModal()
+' Conexión   : la que pasa FSysAdmin (puede no haber sesión: m_Revistas).
+' ============================================
+
+' CONEXIÓN Y REVISTA, LAS DA EL LLAMADOR
+Public hConn As Connection
+Public iIdRevista As Integer
+
+' IDIOMAS DE PUBLICACIÓN DE LA REVISTA
+Private $aIdiomas As New String[]
+' UN id POR FILA DE LA GRILLA DE PLANTILLAS
+Private $aIdsPlantillas As New Integer[]
+' PLANTILLA EN EDICIÓN (0 = NINGUNA) Y SUS SECCIONES EN MEMORIA: CÓDIGOS EN
+' ORDEN Y, PARALELA, UNA Collection DE TÍTULOS POR IDIOMA PARA CADA UNO
+Private $iIdPlantilla As Integer
+Private $aCodigos As New String[]
+Private $aTitulos As New Collection[]
+' SECCIÓN E IDIOMA A LA VISTA EN LOS CAMPOS (-1 / "" = NINGUNO)
+Private $iSeccion As Integer = -1
+Private $sIdioma As String
+' EVITA QUE LOS Click ACTÚEN MIENTRAS SE CARGA
+Private $bCargando As Boolean
+' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_PLANTILLAS As Integer = 3
+Private Const COLUMNAS_SECCIONES As Integer = 2
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara las grillas y el selector de idioma y lista las
+'             plantillas de la revista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim rRevista As Result
+
+  ' --- 1. SIN CONEXIÓN O SIN REVISTA NO HAY QUÉ EDITAR ---
+  If Not hConn Or iIdRevista <= 0 Then
+    Me.Close()
+    Return
+  Endif
+
+  ' --- 2. REVISTA E IDIOMAS ---
+  rRevista = m_Revistas.CargarRevista(hConn, iIdRevista)
+  If rRevista Then lblRevistaPlantillas.Text = rRevista!titulo
+  $aIdiomas = m_Revistas.IdiomasDeRevista(hConn, iIdRevista)
+  cmbIdiomaPlantilla.List = $aIdiomas
+
+  ' --- 3. GRILLAS ---
+  With gvPlantillas
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_PLANTILLAS
+    .Columns[0].Title = "Nombre"
+    .Columns[0].Width = 400
+    .Columns[1].Title = "Secciones"
+    .Columns[1].Width = 100
+    .Columns[2].Title = "Estado"
+    .Columns[2].Width = 100
+  End With
+  With gvSeccionesPlantilla
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_SECCIONES
+    .Columns[0].Title = "Código"
+    .Columns[0].Width = 220
+    .Columns[1].Title = "Título"
+    .Columns[1].Width = 500
+  End With
+
+  ' --- 4. LISTA ---
+  CargarPlantillas(0)
+
+End
+
+' ============================================
+' Función   : CargarPlantillas
+' Propósito : Llena la grilla de plantillas y elige una
+' Parámetros: iElegida As Integer — id a dejar elegida; 0 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub CargarPlantillas(iElegida As Integer)
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. GRILLA, CON UN id POR FILA EN EL MISMO ORDEN ---
+  $aIdsPlantillas.Clear()
+  gvPlantillas.Rows.Count = 0
+  rDatos = m_Revistas.ListarPlantillas(hConn, iIdRevista)
+  If rDatos Then
+    gvPlantillas.Rows.Count = rDatos.Count
+    While rDatos.Available
+      $aIdsPlantillas.Add(rDatos!id_plantilla)
+      gvPlantillas[iFila, 0].Text = rDatos!nombre
+      gvPlantillas[iFila, 1].Text = CStr(rDatos!secciones)
+      ' CBool: TINYINT(1) LLEGA COMO Boolean Y True VALE -1 (MEDIDO, 28/10)
+      gvPlantillas[iFila, 2].Text = If(CBool(rDatos!activa), "Activa", "Inactiva")
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 2. ELEGIDA O EDITOR VACÍO ---
+  iFila = $aIdsPlantillas.Find(iElegida)
+  If iFila >= 0 Then
+    gvPlantillas.Row = iFila
+    CargarEditor(iElegida)
+  Else
+    LimpiarEditor()
+  Endif
+
+End
+
+' ============================================
+' Función   : LimpiarEditor
+' Propósito : Editor vacío y apagado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarEditor()
+
+  $bCargando = True
+  $iIdPlantilla = 0
+  $aCodigos = New String[]
+  $aTitulos = New Collection[]
+  $iSeccion = -1
+  txtNombrePlantilla.Text = ""
+  chkActivaPlantilla.Value = False
+  gvSeccionesPlantilla.Rows.Count = 0
+  txtCodigoSeccionPlantilla.Text = ""
+  txtTituloSeccionPlantilla.Text = ""
+  FijarEditor(False)
+  $bCargando = False
+
+End
+
+' ============================================
+' Función   : FijarEditor
+' Propósito : Habilita o apaga el editor de la plantilla
+' Parámetros: bHabilitado As Boolean — True: hay plantilla elegida
+' Retorna   : nada
+' ============================================
+Private Sub FijarEditor(bHabilitado As Boolean)
+
+  hbxNombrePlantilla.Enabled = bHabilitado
+  hbxIdiomaPlantilla.Enabled = bHabilitado
+  hbxSeccionesPlantilla.Enabled = bHabilitado
+  btnBorrarPlantilla.Enabled = bHabilitado
+  btnGuardarPlantilla.Enabled = bHabilitado
+  FijarCamposSeccion(bHabilitado And $iSeccion >= 0)
+
+End
+
+' ============================================
+' Función   : FijarCamposSeccion
+' Propósito : Habilita o apaga los campos de la sección a la vista
+' Parámetros: bHabilitados As Boolean — True: hay sección elegida
+' Retorna   : nada
+' ============================================
+Private Sub FijarCamposSeccion(bHabilitados As Boolean)
+
+  hbxCodigoSeccionPlantilla.Enabled = bHabilitados
+  ' SIN IDIOMAS DE PUBLICACIÓN NO HAY DÓNDE TITULAR: SE AVISA AL GUARDAR
+  hbxTituloSeccionPlantilla.Enabled = bHabilitados And $aIdiomas.Count > 0
+
+End
+
+' ============================================
+' Función   : CargarEditor
+' Propósito : Vuelca una plantilla de la base a memoria y al editor
+' Parámetros: iIdPlantilla As Integer — plantilla
+' Retorna   : nada
+' ============================================
+Private Sub CargarEditor(iIdPlantilla As Integer)
+
+  Dim rPlantilla As Result
+
+  ' --- 1. LECTURA ---
+  rPlantilla = m_Revistas.CargarPlantilla(hConn, iIdPlantilla)
+  If Not rPlantilla Then
+    LimpiarEditor()
+    Return
+  Endif
+
+  ' --- 2. MEMORIA Y CAMPOS ---
+  $bCargando = True
+  $iIdPlantilla = iIdPlantilla
+  txtNombrePlantilla.Text = rPlantilla!nombre
+  chkActivaPlantilla.Value = CBool(rPlantilla!activa)
+  $aCodigos = m_Revistas.CodigosPlantilla(hConn, iIdPlantilla)
+  $aTitulos = m_Revistas.TitulosPlantilla(hConn, iIdPlantilla, $aCodigos)
+  If $aIdiomas.Count > 0 Then
+    cmbIdiomaPlantilla.Index = 0
+    $sIdioma = $aIdiomas[0]
+  Else
+    $sIdioma = ""
+  Endif
+  $bCargando = False
+
+  ' --- 3. SECCIONES ---
+  $iSeccion = -1
+  FijarEditor(True)
+  If $aCodigos.Count > 0 Then
+    RedibujarSecciones(0)
+  Else
+    RedibujarSecciones(-1)
+  Endif
+
+End
+
+' ============================================
+' Función   : RedibujarSecciones
+' Propósito : Llena la grilla de secciones desde la memoria, que es la
+'             fuente, y pone en los campos la sección elegida
+' Parámetros: iElegida As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarSecciones(iElegida As Integer)
+
+  Dim i As Integer
+
+  ' --- 1. GRILLA: EL TÍTULO EN EL IDIOMA ELEGIDO ---
+  gvSeccionesPlantilla.Columns[1].Title = If($sIdioma = "", "Título", "Título (" & $sIdioma & ")")
+  gvSeccionesPlantilla.Rows.Count = $aCodigos.Count
+  For i = 0 To $aCodigos.Count - 1
+    gvSeccionesPlantilla[i, 0].Text = $aCodigos[i]
+    ' UNA CLAVE AUSENTE SE LEE Null, QUE VA A LA CELDA COMO VACÍO (GV-68)
+    gvSeccionesPlantilla[i, 1].Text = If($sIdioma = "", "", $aTitulos[i][$sIdioma])
+  Next
+
+  ' --- 2. ELEGIDA Y CAMPOS ---
+  If iElegida >= $aCodigos.Count Then iElegida = $aCodigos.Count - 1
+  $iSeccion = iElegida
+  If iElegida >= 0 Then gvSeccionesPlantilla.Row = iElegida
+  MostrarSeccion()
+
+End
+
+' ============================================
+' Función   : MostrarSeccion
+' Propósito : Pone en los campos el código y el título de la sección a la
+'             vista; sin sección, los vacía y los apaga
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub MostrarSeccion()
+
+  If $iSeccion < 0 Then
+    txtCodigoSeccionPlantilla.Text = ""
+    txtTituloSeccionPlantilla.Text = ""
+    FijarCamposSeccion(False)
+    Return
+  Endif
+
+  txtCodigoSeccionPlantilla.Text = $aCodigos[$iSeccion]
+  txtTituloSeccionPlantilla.Text = If($sIdioma = "", "", $aTitulos[$iSeccion][$sIdioma])
+  FijarCamposSeccion(True)
+
+End
+
+' ============================================
+' Función   : GuardarSeccionEnMemoria
+' Propósito : Pasa los campos a la sección a la vista y refresca su fila. Un
+'             título vacío borra la clave (GV-68), que es «sin título»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarSeccionEnMemoria()
+
+  If $iSeccion < 0 Then Return
+  ' EL CÓDIGO ES ASCII EN MINÚSCULAS: SE NORMALIZA LO QUE SE PUEDE
+  $aCodigos[$iSeccion] = LCase(Trim(txtCodigoSeccionPlantilla.Text))
+  If $sIdioma <> "" Then $aTitulos[$iSeccion][$sIdioma] = Trim(txtTituloSeccionPlantilla.Text)
+  gvSeccionesPlantilla[$iSeccion, 0].Text = $aCodigos[$iSeccion]
+  gvSeccionesPlantilla[$iSeccion, 1].Text = If($sIdioma = "", "", $aTitulos[$iSeccion][$sIdioma])
+
+End
+
+' ============================================
+' Función   : gvPlantillas_Click
+' Propósito : Elige otra plantilla; lo no guardado de la anterior se descarta
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvPlantillas_Click()
+
+  Dim iFila As Integer
+
+  iFila = gvPlantillas.Row
+  If iFila < 0 Or iFila >= $aIdsPlantillas.Count Then Return
+  If $aIdsPlantillas[iFila] = $iIdPlantilla Then Return
+  CargarEditor($aIdsPlantillas[iFila])
+
+End
+
+' ============================================
+' Función   : gvSeccionesPlantilla_Click
+' Propósito : Cambia la sección a la vista, guardando antes la anterior
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvSeccionesPlantilla_Click()
+
+  If gvSeccionesPlantilla.Row < 0 Or gvSeccionesPlantilla.Row = $iSeccion Then Return
+  GuardarSeccionEnMemoria()
+  $iSeccion = gvSeccionesPlantilla.Row
+  MostrarSeccion()
+
+End
+
+' ============================================
+' Función   : cmbIdiomaPlantilla_Click
+' Propósito : Cambio del idioma de los títulos: guarda lo escrito y muestra
+'             los títulos del otro idioma
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaPlantilla_Click()
+
+  If $bCargando Then Return
+  GuardarSeccionEnMemoria()
+  $sIdioma = cmbIdiomaPlantilla.Text
+  RedibujarSecciones($iSeccion)
+
+End
+
+' ============================================
+' Función   : btnNuevaPlantilla_Click
+' Propósito : Alta mínima de una plantilla y su selección
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevaPlantilla_Click()
+
+  Dim iNueva As Integer
+
+  iNueva = m_Revistas.CrearPlantilla(hConn, iIdRevista)
+  If iNueva = 0 Then Return
+  CargarPlantillas(iNueva)
+  txtNombrePlantilla.SetFocus()
+  txtNombrePlantilla.SelectAll()
+
+End
+
+' ============================================
+' Función   : btnBorrarPlantilla_Click
+' Propósito : Borra la plantilla elegida, si ninguna sección la usa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarPlantilla_Click()
+
+  If $iIdPlantilla <= 0 Then Return
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar la plantilla «" & txtNombrePlantilla.Text & "»?", "Borrar", "Cancelar") <> 1 Then Return
+  If Not m_Revistas.BorrarPlantilla(hConn, $iIdPlantilla) Then Return
+  CargarPlantillas(0)
+
+End
+
+' ============================================
+' Función   : btnNuevaSeccionPlantilla_Click
+' Propósito : Agrega una sección al final y la deja a la vista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevaSeccionPlantilla_Click()
+
+  Dim cTitulos As Collection
+
+  GuardarSeccionEnMemoria()
+  ' New NO SE ADMITE COMO ARGUMENTO (MEDIDO): SE CREA ANTES
+  cTitulos = New Collection
+  $aCodigos.Add("")
+  $aTitulos.Add(cTitulos)
+  RedibujarSecciones($aCodigos.Count - 1)
+  txtCodigoSeccionPlantilla.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnQuitarSeccionPlantilla_Click
+' Propósito : Quita la sección a la vista (al guardar se controla que no
+'             tenga texto en artículos)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarSeccionPlantilla_Click()
+
+  If $iSeccion < 0 Then Return
+  $aCodigos.Remove($iSeccion)
+  $aTitulos.Remove($iSeccion)
+  RedibujarSecciones($iSeccion)
+
+End
+
+' ============================================
+' Función   : btnSubirSeccionPlantilla_Click
+' Propósito : Sube la sección a la vista un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirSeccionPlantilla_Click()
+
+  MoverSeccion(-1)
+
+End
+
+' ============================================
+' Función   : btnBajarSeccionPlantilla_Click
+' Propósito : Baja la sección a la vista un lugar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarSeccionPlantilla_Click()
+
+  MoverSeccion(1)
+
+End
+
+' ============================================
+' Función   : MoverSeccion
+' Propósito : Mueve la sección a la vista; el orden es el del resumen
+' Parámetros: iPaso As Integer — -1 sube, 1 baja
+' Retorna   : nada
+' ============================================
+Private Sub MoverSeccion(iPaso As Integer)
+
+  Dim sCodigo As String
+  Dim cTitulos As Collection
+  Dim iDestino As Integer
+
+  If $iSeccion < 0 Then Return
+  iDestino = $iSeccion + iPaso
+  If iDestino < 0 Or iDestino >= $aCodigos.Count Then Return
+  GuardarSeccionEnMemoria()
+
+  ' INTERCAMBIO A MANO: LOS ARREGLOS NO TIENEN Exchange EN 3.19 (MEDIDO, 28/10)
+  sCodigo = $aCodigos[$iSeccion]
+  $aCodigos[$iSeccion] = $aCodigos[iDestino]
+  $aCodigos[iDestino] = sCodigo
+  cTitulos = $aTitulos[$iSeccion]
+  $aTitulos[$iSeccion] = $aTitulos[iDestino]
+  $aTitulos[iDestino] = cTitulos
+  RedibujarSecciones(iDestino)
+
+End
+
+' ============================================
+' Función   : btnGuardarPlantilla_Click
+' Propósito : Graba la plantilla entera por m_Revistas y la vuelve a leer
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarPlantilla_Click()
+
+  Dim iId As Integer
+
+  If $iIdPlantilla <= 0 Then Return
+  GuardarSeccionEnMemoria()
+  If Not m_Revistas.GuardarPlantilla(hConn, $iIdPlantilla, iIdRevista, txtNombrePlantilla.Text, chkActivaPlantilla.Value, $aCodigos, $aTitulos, $aIdiomas) Then Return
+
+  m_Sonido.sonar("Info")
+  iId = $iIdPlantilla
+  ' FUERZA LA RELECTURA AUNQUE SEA LA MISMA PLANTILLA
+  $iIdPlantilla = 0
+  CargarPlantillas(iId)
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierre del diálogo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End

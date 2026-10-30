@@ -858,6 +858,7 @@ End
 
 Public Sub menuSalir_Click()
 
+  m_Sonido.sonar("Close")
   m_InicioCierre.CerrarTodoMySQL()
 
 End
@@ -1870,6 +1871,7 @@ End
 
 Public Sub ButtonCerrarApp_Click()
 
+  m_Sonido.sonar("Close")
   m_ConexionBD.CerrarTodo()
 
 End
@@ -2834,6 +2836,7 @@ End
 Private Function BloqueFigura(sNombreArchivo As String, bAnchoCompleto As Boolean) As String
 
   Dim sClases As String
+  Dim sAtributos As String
   Dim sCodigo As String
 
   ' LA CLASE ES .fig, LA QUE RECONOCEN LOS FILTROS DE LIBRO Y DE REVISTA.
@@ -2844,7 +2847,21 @@ Private Function BloqueFigura(sNombreArchivo As String, bAnchoCompleto As Boolea
   ' CIERRA CON EL ANCLA NOMBRADA, PRECEDIDA DE LÍNEA EN BLANCO (SC-33)
   sClases = ".fig"
   If bAnchoCompleto Then sClases &= " .fullwidth"
-  sCodigo = "::: {" & sClases & " #" & IdFiguraDesdeArchivo(sNombreArchivo) & "}" & Chr(10)
+
+  ' EN UN LIBRO LA APERTURA OFRECE LOS DOS ATRIBUTOS (SC-76):
+  '   ancho=100  EL ANCHO DE LA COLUMNA, QUE ES EL DE SIEMPRE: QUEDA A LA
+  '              VISTA PARA AJUSTARLO
+  '   alt=""     EL TEXTO ALTERNATIVO, OBLIGATORIO. VACÍO Y NO CON UN TEXTO
+  '              PROVISORIO: UN alt VACÍO LO SEÑALA gbp-alt AL GENERAR EL
+  '              CANÓNICO; UN TEXTO PROVISORIO OLVIDADO SALDRÍA PUBLICADO
+  ' EN UNA REVISTA LA APERTURA NO CAMBIA: ancho NO TIENE EFECTO TODAVÍA, Y
+  ' CÓMO LLEGA alt AL JATS NO ESTÁ VERIFICADO
+  sAtributos = ""
+  If TipoProyectoActual = m_Constantes.TIPO_LIBRO_MD Then
+    sAtributos = " ancho=100 alt=" & Chr(34) & Chr(34)
+  Endif
+
+  sCodigo = "::: {" & sClases & " #" & IdFiguraDesdeArchivo(sNombreArchivo) & sAtributos & "}" & Chr(10)
   sCodigo &= "![" & m_Constantes.FIGURA_PIE_PLACEHOLDER & "](media/" & sNombreArchivo & ")" & Chr(10)
   sCodigo &= Chr(10)
   sCodigo &= m_Shortcodes.AnclaCierre("fig") & Chr(10)
@@ -3141,6 +3158,20 @@ Public Sub cmbArchivosXML_Click()
     m_Sonido.sonar("Error")
     Message.Error("No se pudo cargar el contenido del archivo XML")
   Endif
+
+End
+
+' ============================================
+' Función   : btnValidarXML_Click
+' Propósito : Valida el canónico elegido en el visor XML con
+'             engine/validar_canonicos.sh (SC-75). Solo en libros: en una
+'             revista el botón está deshabilitado desde la apertura.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnValidarXML_Click()
+
+  m_GenerarSalidasLibro.ValidarCanonico(cmbArchivosXML.Text)
 
 End
 
@@ -3489,15 +3520,13 @@ End
 
 Public Sub btnMetadatosArticulos_Click()
 
-  m_Sonido.sonar("Info")
-  FMetadatosArticulos.ShowModal()
+  FMetadatosArticulo.ShowModal()
 
 End
 
 Public Sub btnMetadatosRevista_Click()
 
-  m_Sonido.sonar("Info")
-  FMetadatosRevista.ShowModal()
+  FMetadatosNumero.ShowModal()
 
 End
 
@@ -5284,7 +5313,6 @@ Public Sub btnAutoresVarios_Click()
 
   Dim frmAutores As New FAutores
 
-  m_Sonido.sonar("Info")
   frmAutores.EsFormularioInicial = False
   frmAutores.ShowModal()
 
@@ -5819,14 +5847,12 @@ End
 
 Public Sub btnMetadatosLibro_Click()
 
-  m_Sonido.sonar("Info")
   FMetadatosLibro.ShowModal()
 
 End
 
 Public Sub btnMetadatosCapitulos_Click()
 
-  m_Sonido.sonar("Info")
   FMetadatosCapitulos.ShowModal()
 
 End
@@ -6634,6 +6660,23 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
     nuevoID = Contenido["id"]
     m_Sonido.sonar("Info")
 
+    ' 6.4 REVISTA: EL r-*.md TIENE QUE ESTAR VINCULADO A UN NÚMERO DE UNA
+    ' REVISTA DE LA BASE, Y CADA APERTURA SE CONFIRMA MOSTRANDO CUÁL ES
+    ' (DECISIÓN DE ALBERTO, 25/10). UN PROYECTO SIN NÚMERO SE VINCULA ACÁ.
+    ' SI SE CANCELA, NO SE TOCÓ NADA DEL PROYECTO ANTERIOR (APARTADO 7)
+    If iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD Then
+      If Not m_Numero.ConfirmarOVincular(nuevoID, sNombreProyectoNuevo) Then Return False
+    Endif
+
+  Else If iTipoSeleccionado = m_Constantes.TIPO_REVISTA_MD Then
+
+    ' NO EXISTE EN BD Y ES REVISTA: VÍNCULO PRIMERO, Y PROYECTO Y NÚMERO EN UNA
+    ' SOLA TRANSACCIÓN (m_Numero). SI SE CANCELA, NO QUEDA NADA CREADO
+    nuevoID = m_Numero.RegistrarProyectoConNumero(sNombreProyectoNuevo)
+    If nuevoID = 0 Then Return False
+    m_Sonido.sonar("Info")
+    Message.Info("Proyecto nuevo registrado y vinculado:" & gb.NewLine & gb.NewLine & m_Numero.DescripcionNumero(nuevoID))
+
   Else
 
     ' NO EXISTE EN BD: CREAR REGISTRO NUEVO
@@ -6884,13 +6927,18 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   SpringTemporal.Visible = False
   FMain.Splitter1.Visible = True
 
+  ' EL BOTÓN «Validar» DEL VISOR XML, SOLO EN LIBROS: LA VALIDACIÓN DE LOS
+  ' ARTÍCULOS (JATS4R) TODAVÍA NO ESTÁ EN engine/ (SC-75). SE DECIDE CON EL
+  ' TIPO YA RESUELTO EN EL APARTADO 4, NO MIRANDO OTRA VEZ EL PREFIJO
   Select Case iTipoSeleccionado
     Case m_Constantes.TIPO_REVISTA_MD
       FMain.MenuButtonSalidas.Menu = "menuSalidaRevistaMD"
       m_FuncionesGenericas.BotonesLibroRevista(True)
+      m_GenerarSalidasLibro.HabilitarValidacion(False)
     Case m_Constantes.TIPO_LIBRO_MD
       FMain.MenuButtonSalidas.Menu = "mnuSalidaLibroMD"
       m_FuncionesGenericas.BotonesLibroRevista(False)
+      m_GenerarSalidasLibro.HabilitarValidacion(True)
   End Select
 
   ' --- 21. ASEGURAR LA RUTA EN LA TERMINAL Y EN DirViewProyecto ---
@@ -6911,7 +6959,16 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   Next
   m_EditorHTML.bCargandoLista = False
 
-  ' --- 23. RETORNO ---
+  ' --- 23. VIGENCIA DE LOS CANÓNICOS (SOLO LIBROS) ---
+  ' ¿CORRESPONDEN TODAVÍA A SUS .md Y SUS CUADROS? EL CASO: UN .md QUE VUELVE
+  ' DE OTRA MÁQUINA (SC-75). DESPUÉS DEL APARTADO 21, PORQUE EL SCRIPT SE
+  ' TIPEA EN LA TERMINAL DEL PROYECTO. EL PROYECTO YA QUEDÓ ABIERTO: UN
+  ' RESULTADO MALO SE INFORMA, NO DESHACE LA APERTURA
+  If iTipoSeleccionado = m_Constantes.TIPO_LIBRO_MD Then
+    m_GenerarSalidasLibro.RevisarVigenciaLibro()
+  Endif
+
+  ' --- 24. RETORNO ---
   ' ÚNICA SALIDA CON True: SE LLEGA ACÁ SOLO SI EL PROYECTO QUEDÓ TOMADO EN BD,
   ' LAS GLOBALES FIJADAS Y EL ARCHIVO CARGADO EN EL EDITOR
   Return True

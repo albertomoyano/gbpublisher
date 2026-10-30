@@ -1,0 +1,545 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FMetadatosNumero
+' Propósito  : Metadatos del número de revista (N1) del proyecto abierto,
+'              sobre el esquema nuevo (1.13.0). Reemplaza a FMetadatosRevista
+'              como destino del botón de FMain (decisión de Alberto, 25/10).
+'              Los controles y los manejadores viven acá; las consultas, las
+'              validaciones y las grabaciones, en m_Numero.
+' ============================================
+
+' NÚMERO EN EDICIÓN: 0 MIENTRAS EL PROYECTO NO TIENE NÚMERO (ALTA)
+Private $iIdNumero As Integer
+' UNA ENTRADA POR ÍTEM DEL COMBO, EN EL MISMO ORDEN
+Private $aIdsRevistas As New Integer[]
+' EDITORES DEL NÚMERO COMPLETO, EN ORDEN; PARALELO A lstEditoresNumero
+Private $aEditores As New Integer[]
+' NOMBRES DE ESOS EDITORES, PARALELO A $aEditores: LA LISTA SE REDIBUJA DESDE ACÁ
+Private $aNombresEditores As New String[]
+' PERMITE EL CIERRE SOLO DESDE EL BOTÓN (PATRÓN DE LOS FORMULARIOS DE METADATOS)
+Private $bCierrePermitido As Boolean
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Verifica el proyecto, llena los combos y carga el número del
+'             proyecto, o deja el formulario listo para el alta
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim rNumero As Result
+
+  ' --- 1. PROYECTO ABIERTO Y DE REVISTA ---
+  ' RC-GM-16: EL id DEL PROYECTO SALE DE LA VARIABLE DE SESIÓN, NO DE UN CONTROL
+  If m_InicioCierre.IdProyectoEnCurso <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Abra un número de revista antes de editar sus metadatos.")
+    CerrarSinPreguntar()
+    Return
+  Endif
+  If Not m_Numero.ProyectoEsRevista(m_InicioCierre.IdProyectoEnCurso) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto abierto no es una revista.")
+    CerrarSinPreguntar()
+    Return
+  Endif
+
+  ' --- 2. COMBOS ---
+  cmbMesNumero.List = m_Numero.MesesLeyendas()
+  cmbEstadoNumero.List = m_Numero.EstadosLeyendas()
+  If Not LlenarComboRevistas() Then
+    CerrarSinPreguntar()
+    Return
+  Endif
+
+  ' --- 3. NÚMERO DEL PROYECTO, O ALTA ---
+  rNumero = m_Numero.CargarNumeroDeProyecto(m_InicioCierre.IdProyectoEnCurso)
+  If rNumero Then
+    CargarNumero(rNumero)
+  Else
+    PrepararAlta()
+  Endif
+
+End
+
+' ============================================
+' Función   : LlenarComboRevistas
+' Propósito : Carga las revistas de FSysAdmin en el combo
+' Parámetros: ninguno
+' Retorna   : Boolean — False si no hay revistas o no se pudieron leer (ya se
+'             informó)
+' ============================================
+Private Function LlenarComboRevistas() As Boolean
+
+  Dim rDatos As Result
+
+  ' --- 1. LECTURA ---
+  cmbRevistaNumero.Clear()
+  $aIdsRevistas.Clear()
+  rDatos = m_Numero.ListarRevistas()
+  If Not rDatos Then Return False
+
+  ' --- 2. SIN REVISTAS NO HAY NÚMERO POSIBLE ---
+  If rDatos.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Todavía no hay revistas cargadas." & gb.NewLine & "Créela en Administración, pestaña «Revistas».")
+    Return False
+  Endif
+
+  ' --- 3. COMBO, CON SU id POR ÍTEM ---
+  While rDatos.Available
+    cmbRevistaNumero.Add(rDatos!titulo)
+    $aIdsRevistas.Add(rDatos!id_revista)
+    rDatos.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : PrepararAlta
+' Propósito : El proyecto todavía no tiene número: formulario vacío, con la
+'             revista a elegir
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub PrepararAlta()
+
+  $iIdNumero = 0
+  ' EN EL ALTA, VOLUMEN Y NÚMERO TODAVÍA NO ESTÁN CONSIGNADOS
+  FijarSoloLectura(txtVolumenNumero, False)
+  FijarSoloLectura(txtNumeroNumero, False)
+  cmbRevistaNumero.Index = -1
+  cmbRevistaNumero.Enabled = True
+  cmbEstadoNumero.Index = 0
+  cmbMesNumero.Index = 0
+  lblAvisoNumero.Text = "El proyecto todavía no tiene número: elija la revista, complete los datos y guarde."
+  ActualizarPaginaInicial()
+
+End
+
+' ============================================
+' Función   : CargarNumero
+' Propósito : Vuelca el número del proyecto al formulario
+' Parámetros: rNumero As Result — el registro de numero
+' Retorna   : nada
+' ============================================
+Private Sub CargarNumero(rNumero As Result)
+
+  Dim rEditores As Result
+  Dim iIndice As Integer
+
+  ' --- 1. IDENTIDAD ---
+  $iIdNumero = rNumero!id_numero
+  cmbRevistaNumero.Index = $aIdsRevistas.Find(rNumero!id_revista)
+  ' LA REVISTA SE PUEDE CAMBIAR SOLO MIENTRAS EL NÚMERO NO TENGA ARTÍCULOS
+  cmbRevistaNumero.Enabled = (m_Numero.ContarArticulos($iIdNumero) = 0)
+  lblAvisoNumero.Text = ""
+
+  ' --- 2. CAMPOS ---
+  txtVolumenNumero.Text = rNumero!volumen
+  txtNumeroNumero.Text = rNumero!numero
+  ' VOLUMEN Y NÚMERO, UNA VEZ CONSIGNADOS, SON LA IDENTIDAD DEL NÚMERO CON QUE
+  ' SE VINCULÓ EL r-*.md: QUEDAN DE SOLO LECTURA. UNO VACÍO SIGUE EDITABLE
+  ' (DECISIÓN DE ALBERTO, 25/10)
+  FijarSoloLectura(txtVolumenNumero, Not IsNull(rNumero!volumen))
+  FijarSoloLectura(txtNumeroNumero, Not IsNull(rNumero!numero))
+  txtSuplementoNumero.Text = rNumero!suplemento
+  txtTituloEspecialNumero.Text = If(IsNull(rNumero!titulo_especial), "", rNumero!titulo_especial)
+  txtAnioNumero.Text = If(IsNull(rNumero!anio), "", CStr(rNumero!anio))
+  If IsNull(rNumero!mes) Then
+    cmbMesNumero.Index = 0
+  Else
+    cmbMesNumero.Index = rNumero!mes
+  Endif
+  txtPaginaInicialNumero.Text = If(IsNull(rNumero!pagina_inicial), "", CStr(rNumero!pagina_inicial))
+  iIndice = m_Numero.EstadosCodigos().Find(rNumero!estado)
+  If iIndice < 0 Then iIndice = 0
+  cmbEstadoNumero.Index = iIndice
+  txtTapaNumero.Text = If(IsNull(rNumero!imagen_tapa), "", rNumero!imagen_tapa)
+
+  ' --- 3. EDITORES DEL NÚMERO COMPLETO ---
+  $aEditores.Clear()
+  $aNombresEditores.Clear()
+  rEditores = m_Numero.EditoresNumero($iIdNumero)
+  If rEditores Then
+    While rEditores.Available
+      $aEditores.Add(rEditores!id_autor)
+      $aNombresEditores.Add(rEditores!apellidos & ", " & rEditores!nombre)
+      rEditores.MoveNext
+    Wend
+  Endif
+  RedibujarEditores(-1)
+
+  ActualizarPaginaInicial()
+
+End
+
+' ============================================
+' Función   : FijarSoloLectura
+' Propósito : Pone un campo en solo lectura con el aspecto de la casa para los
+'             datos que no se editan (fondo del formulario, letra azul), o lo
+'             devuelve al aspecto editable
+' Parámetros: hCampo As TextBox — el campo
+'             bSoloLectura As Boolean — True: solo lectura
+' Retorna   : nada
+' ============================================
+Private Sub FijarSoloLectura(hCampo As TextBox, bSoloLectura As Boolean)
+
+  hCampo.ReadOnly = bSoloLectura
+  If bSoloLectura Then
+    hCampo.Background = Color.Background
+    hCampo.Foreground = &H0000FF
+  Else
+    hCampo.Background = Color.Default
+    hCampo.Foreground = Color.Default
+  Endif
+
+End
+
+' ============================================
+' Función   : ActualizarPaginaInicial
+' Propósito : La página inicial solo tiene sentido si la revista pagina
+'             corrido por volumen (decisión 12)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ActualizarPaginaInicial()
+
+  Dim bVisible As Boolean
+
+  If cmbRevistaNumero.Index >= 0 Then
+    bVisible = (m_Numero.ModeloPaginacion($aIdsRevistas[cmbRevistaNumero.Index]) = "por_volumen")
+  Endif
+  hbxPaginaInicialNumero.Visible = bVisible
+
+End
+
+' ============================================
+' Función   : cmbRevistaNumero_Click
+' Propósito : Otra revista puede tener otro modelo de paginación
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbRevistaNumero_Click()
+
+  ActualizarPaginaInicial()
+
+End
+
+' ============================================
+' Función   : btnBuscarTapaNumero_Click
+' Propósito : Elige la imagen de tapa y la copia a media/ por m_Numero
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBuscarTapaNumero_Click()
+
+  Dim sNombre As String
+
+  ' --- 1. DIÁLOGO ---
+  Dialog.Title = "Seleccionar imagen de tapa"
+  Dialog.Filter = ["*.jpg;*.jpeg;*.png", "Imágenes (JPG, PNG)"]
+  If Dialog.OpenFile() Then Return
+
+  ' --- 2. COPIA Y NOMBRE ---
+  sNombre = m_Numero.CopiarTapa(Dialog.Path)
+  If sNombre <> "" Then txtTapaNumero.Text = sNombre
+
+End
+
+' ============================================
+' Función   : btnQuitarTapaNumero_Click
+' Propósito : Desvincula la tapa del número (el archivo queda en media/)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarTapaNumero_Click()
+
+  txtTapaNumero.Text = ""
+
+End
+
+' ============================================
+' Función   : btnAgregarEditorNumero_Click
+' Propósito : Elige un autor en FAutores y lo agrega al final de la lista
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnAgregarEditorNumero_Click()
+
+  Dim iIdAutor As Integer
+
+  ' --- 1. ELECCIÓN: FAutores DEVUELVE EL id POR MÓDULO (RC-GM-13) ---
+  m_FuncionesGenericas.iAutorSeleccionadoEnFAutores = 0
+  FAutores.ShowModal()
+  iIdAutor = m_FuncionesGenericas.iAutorSeleccionadoEnFAutores
+  If iIdAutor <= 0 Then Return
+
+  ' --- 2. SIN REPETIDOS ---
+  If $aEditores.Find(iIdAutor) >= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ese autor ya está entre los editores del número.")
+    Return
+  Endif
+
+  ' --- 3. AGREGADO ---
+  $aEditores.Add(iIdAutor)
+  $aNombresEditores.Add(m_Numero.NombreAutor(iIdAutor))
+  RedibujarEditores($aEditores.Count - 1)
+
+End
+
+' ============================================
+' Función   : btnQuitarEditorNumero_Click
+' Propósito : Quita de la lista el editor elegido (se graba al guardar)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarEditorNumero_Click()
+
+  Dim iFila As Integer
+
+  iFila = lstEditoresNumero.Index
+  If iFila < 0 Then Return
+  $aEditores.Remove(iFila)
+  $aNombresEditores.Remove(iFila)
+  RedibujarEditores(-1)
+
+End
+
+' ============================================
+' Función   : btnSubirEditorNumero_Click
+' Propósito : Sube un lugar el editor elegido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSubirEditorNumero_Click()
+
+  MoverEditor(-1)
+
+End
+
+' ============================================
+' Función   : btnBajarEditorNumero_Click
+' Propósito : Baja un lugar el editor elegido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBajarEditorNumero_Click()
+
+  MoverEditor(1)
+
+End
+
+' ============================================
+' Función   : MoverEditor
+' Propósito : Intercambia el editor elegido con el vecino: el orden de la
+'             lista es el de la publicación
+' Parámetros: iPaso As Integer — -1 sube, 1 baja
+' Retorna   : nada
+' ============================================
+Private Sub MoverEditor(iPaso As Integer)
+
+  Dim iFila As Integer
+  Dim iDestino As Integer
+  Dim iId As Integer
+  Dim sTexto As String
+
+  ' --- 1. POSICIONES VÁLIDAS ---
+  iFila = lstEditoresNumero.Index
+  If iFila < 0 Then Return
+  iDestino = iFila + iPaso
+  If iDestino < 0 Or iDestino >= $aEditores.Count Then Return
+
+  ' --- 2. INTERCAMBIO EN LOS DOS ARREGLOS PARALELOS ---
+  iId = $aEditores[iFila]
+  $aEditores[iFila] = $aEditores[iDestino]
+  $aEditores[iDestino] = iId
+  sTexto = $aNombresEditores[iFila]
+  $aNombresEditores[iFila] = $aNombresEditores[iDestino]
+  $aNombresEditores[iDestino] = sTexto
+
+  ' --- 3. LA LISTA SIGUE AL EDITOR MOVIDO ---
+  RedibujarEditores(iDestino)
+
+End
+
+' ============================================
+' Función   : RedibujarEditores
+' Propósito : Vuelve a llenar la lista desde $aNombresEditores, que es la
+'             fuente: así la lista y los id no se desalinean nunca
+' Parámetros: iElegido As Integer — fila a dejar elegida; -1 ninguna
+' Retorna   : nada
+' ============================================
+Private Sub RedibujarEditores(iElegido As Integer)
+
+  lstEditoresNumero.List = $aNombresEditores.Copy()
+  If iElegido >= 0 Then lstEditoresNumero.Index = iElegido
+
+End
+
+' ============================================
+' Función   : btnDossiersNumero_Click
+' Propósito : Abre los dossiers del número. El número tiene que estar grabado:
+'             los dossiers cuelgan de él
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnDossiersNumero_Click()
+
+  If $iIdNumero <= 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Guarde primero el número.")
+    Return
+  Endif
+  FDossiers.ShowModal()
+
+End
+
+' ============================================
+' Función   : btnGuardarNumero_Click
+' Propósito : Junta los valores del formulario y los graba por m_Numero
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarNumero_Click()
+
+  Dim cDatos As New Collection
+  Dim iId As Integer
+  Dim rNumero As Result
+
+  ' --- 1. REVISTA ---
+  If cmbRevistaNumero.Index < 0 Then
+    cDatos["id_revista"] = 0
+  Else
+    cDatos["id_revista"] = $aIdsRevistas[cmbRevistaNumero.Index]
+  Endif
+
+  ' --- 2. IDENTIDAD ---
+  ' UN CAMPO VACÍO QUEDA COMO Null EN LA COLECCIÓN (GV-68) Y SE GRABA NULL,
+  ' QUE ES «SIN DATO» (1.14.0, GV-74)
+  cDatos["volumen"] = Trim(txtVolumenNumero.Text)
+  cDatos["numero"] = Trim(txtNumeroNumero.Text)
+  cDatos["suplemento"] = Trim(txtSuplementoNumero.Text)
+
+  ' --- 3. RESTO DE LOS CAMPOS; Null DONDE NO HAY DATO ---
+  cDatos["titulo_especial"] = If(Trim(txtTituloEspecialNumero.Text) = "", Null, Trim(txtTituloEspecialNumero.Text))
+  If Not EnteroOpcional(txtAnioNumero, "El año", cDatos, "anio") Then Return
+  If cmbMesNumero.Index <= 0 Then
+    cDatos["mes"] = Null
+  Else
+    cDatos["mes"] = cmbMesNumero.Index
+  Endif
+  ' LA PÁGINA INICIAL SOLO SE GUARDA SI SU RENGLÓN ESTÁ A LA VISTA
+  If hbxPaginaInicialNumero.Visible Then
+    If Not EnteroOpcional(txtPaginaInicialNumero, "La página inicial", cDatos, "pagina_inicial") Then Return
+  Else
+    cDatos["pagina_inicial"] = Null
+  Endif
+  cDatos["estado"] = m_Numero.EstadosCodigos()[cmbEstadoNumero.Index]
+  cDatos["imagen_tapa"] = If(Trim(txtTapaNumero.Text) = "", Null, Trim(txtTapaNumero.Text))
+
+  ' --- 4. GRABACIÓN ---
+  iId = m_Numero.GuardarNumero($iIdNumero, m_InicioCierre.IdProyectoEnCurso, cDatos, $aEditores)
+  If iId = 0 Then Return
+
+  ' --- 5. RELECTURA: QUEDA A LA VISTA LO QUE QUEDÓ EN LA BASE ---
+  m_Sonido.sonar("Info")
+  rNumero = m_Numero.CargarNumeroDeProyecto(m_InicioCierre.IdProyectoEnCurso)
+  If rNumero Then CargarNumero(rNumero)
+
+End
+
+' ============================================
+' Función   : EnteroOpcional
+' Propósito : Pasa un campo numérico opcional a la colección: vacío es Null;
+'             si no es un entero, avisa
+' Parámetros: hCampo As TextBox — el campo
+'             sNombre As String — cómo se nombra en el aviso
+'             cDatos As Collection — destino
+'             sClave As String — columna
+' Retorna   : Boolean — False si el texto no es un entero (ya se avisó)
+' ============================================
+Private Function EnteroOpcional(hCampo As TextBox, sNombre As String, cDatos As Collection, sClave As String) As Boolean
+
+  Dim sTexto As String
+  Dim i As Integer
+
+  ' --- 1. VACÍO: SIN DATO ---
+  sTexto = Trim(hCampo.Text)
+  If sTexto = "" Then
+    cDatos[sClave] = Null
+    Return True
+  Endif
+
+  ' --- 2. SOLO DÍGITOS ---
+  ' Val ACEPTARÍA «12abc» A MEDIAS; SE EXIGE QUE TODO SEA DÍGITO
+  For i = 1 To Len(sTexto)
+    If Mid(sTexto, i, 1) < "0" Or Mid(sTexto, i, 1) > "9" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning(sNombre & " tiene que ser un número entero.")
+      hCampo.SetFocus()
+      Return False
+    Endif
+  Next
+
+  cDatos[sClave] = CInt(sTexto)
+  Return True
+
+End
+
+' ============================================
+' Función   : CerrarSinPreguntar
+' Propósito : Cierre desde el código (proyecto inválido, sin revistas)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CerrarSinPreguntar()
+
+  $bCierrePermitido = True
+  Me.Close()
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierre normal del formulario
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  CerrarSinPreguntar()
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Bloquea el cierre desde la X del marco: se cierra con el botón
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  If $bCierrePermitido Then Return
+  m_Sonido.sonar("Info")
+  Message.Info("Para cerrar el formulario use el botón «Cerrar».")
+  Stop Event
+
+End

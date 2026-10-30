@@ -1,0 +1,1161 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Revistas
+' Propósito : Lógica de la pestaña «Revistas» de FSysAdmin: la revista (N0) y
+'             sus secciones, sobre el esquema nuevo de la actualización 1.13.0
+'             (claude/rediseno-revistas.md, decisiones 15, 18 y 20).
+'             FSysAdmin tiene los controles y los manejadores; acá viven las
+'             consultas, las validaciones y las grabaciones. Cada formulario o
+'             función principal lleva su propio módulo (modelo de trabajo del
+'             proyecto: SC-20, SC-21, SC-66/67, SC-69).
+'             Plantillas de resumen estructurado (entrega C2, decisiones de
+'             Alberto, 28/10): las administra el diálogo FPlantillasResumen,
+'             abierto desde la pestaña «Revistas»; la sección elige la suya.
+' Conexión  : todas las funciones que tocan la base reciben la conexión como
+'             parámetro: FSysAdmin trabaja con la suya (hConnServidor), no con
+'             m_ConexionBD.mConn. FSysAdmin se puede abrir SIN SESIÓN DE
+'             USUARIO, y entonces mConn no existe («Null object»): por eso
+'             también los catálogos de licencias e idiomas (m_Licencias,
+'             m_Idiomas) se leen con la conexión que se pasa.
+' Requiere  : esquema 1.13.0 (revista, revista_seccion, revista_seccion_titulo,
+'             revista_plantilla_resumen y sus hijas).
+' Dependencias: m_Sonido, m_Idiomas, m_Licencias, m_GenerarSalidasLibro (catálogo de estilos
+'             de cita, SC-57), m_XML (TrimUTF8).
+' ==============================================================================
+
+' ============================================
+' Función   : ModelosPaginacionCodigos
+' Propósito : Los valores del ENUM revista.modelo_paginacion, en el orden del
+'             combo (decisión 12)
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a ModelosPaginacionLeyendas
+' ============================================
+Public Function ModelosPaginacionCodigos() As String[]
+
+  ' SI SE AGREGA UN VALOR AL ENUM EN LA BASE, AGREGARLO ACÁ Y EN LAS LEYENDAS
+  Return ["por_numero", "por_volumen", "continua"]
+
+End
+
+' ============================================
+' Función   : ModelosPaginacionLeyendas
+' Propósito : Lo que muestra el combo para cada modelo de paginación
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a ModelosPaginacionCodigos
+' ============================================
+Public Function ModelosPaginacionLeyendas() As String[]
+
+  Return ["Corrida por número", "Corrida por volumen", "Publicación continua (elocation-id)"]
+
+End
+
+' ============================================
+' Función   : TiposAccesoCodigos
+' Propósito : Los valores de revista.tipo_acceso_defecto, en el orden del
+'             combo. El primero, vacío, es «sin valor por defecto» (NULL)
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos, paralelos a TiposAccesoLeyendas
+' ============================================
+Public Function TiposAccesoCodigos() As String[]
+
+  ' EL MISMO CONJUNTO QUE articulo.tipo_acceso: CONDICIÓN PARA HEREDAR
+  ' (DECISIÓN 14)
+  Return ["", "abierto", "suscripcion", "embargo"]
+
+End
+
+' ============================================
+' Función   : TiposAccesoLeyendas
+' Propósito : Lo que muestra el combo para cada tipo de acceso
+' Parámetros: (ninguno)
+' Retorna   : String[] — las leyendas, paralelas a TiposAccesoCodigos
+' ============================================
+Public Function TiposAccesoLeyendas() As String[]
+
+  Return ["(sin valor por defecto)", "Abierto", "Suscripción", "Embargo"]
+
+End
+
+' ============================================
+' Función   : TiposArticulo
+' Propósito : Los códigos de article-type que ofrece el combo de la sección
+'             (y, más adelante, el del artículo)
+' Parámetros: (ninguno)
+' Retorna   : String[] — los códigos
+' Nota      : ES LA LISTA QUE HOY USA FMetadatosArticulos.CargarTiposArticulo.
+'             PENDIENTE: COTEJARLA CON LOS VALORES SUGERIDOS DE @article-type
+'             EN LA TAG LIBRARY DE JATS 1.4 (NO SE PUDO LEER EN FORMA
+'             AUTOMATIZADA).
+' ============================================
+Public Function TiposArticulo() As String[]
+
+  Return ["research-article", "review-article", "case-report",
+    "editorial", "letter", "correction", "retraction",
+    "book-review", "brief-report", "data-paper", "method-article",
+    "opinion", "perspective", "commentary", "abstract",
+    "announcement", "obituary", "other"]
+
+End
+
+' ============================================
+' Función   : IndiceDe
+' Propósito : Posición de un valor en una lista, para ubicar un combo de solo
+'             lectura en el valor guardado
+' Parámetros: aLista As String[] — la lista
+'             sValor As String — el valor buscado
+' Retorna   : Integer — el índice, o -1 si no está
+' ============================================
+Public Function IndiceDe(aLista As String[], sValor As String) As Integer
+
+  Dim i As Integer
+
+  ' COMPARACIÓN EXACTA: LOS CÓDIGOS SON ASCII Y DISTINGUEN MAYÚSCULAS
+  For i = 0 To aLista.Count - 1
+    If aLista[i] = sValor Then Return i
+  Next
+
+  Return -1
+
+End
+
+' ============================================
+' Función   : LlenarComboEstilos
+' Propósito : Carga los estilos de cita instalados (cita-*-config.tex) con su
+'             leyenda, en el mismo formato que FMetadatosLibro:
+'             «Leyenda  [identificador]». El estilo de la revista sale del
+'             mismo catálogo que el de los libros (decisión 7, SC-57)
+' Parámetros: hCombo As ComboBox — combo a llenar
+' Retorna   : nada
+' ============================================
+Public Sub LlenarComboEstilos(hCombo As ComboBox)
+
+  Dim sEstilo As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  hCombo.Clear()
+
+  ' --- 2. UN ÍTEM POR ESTILO INSTALADO ---
+  For Each sEstilo In m_GenerarSalidasLibro.EstilosLibro()
+    hCombo.Add(TextoComboEstilo(sEstilo))
+  Next
+
+End
+
+' ============================================
+' Función   : TextoComboEstilo
+' Propósito : El texto con que un estilo aparece en el combo
+' Parámetros: sEstilo As String — identificador (apa, verona-modern)
+' Retorna   : String — «Leyenda  [identificador]», o el identificador solo si
+'             el archivo no declara leyenda
+' ============================================
+Public Function TextoComboEstilo(sEstilo As String) As String
+
+  Dim sLeyenda As String
+
+  sLeyenda = m_GenerarSalidasLibro.LeyendaEstilo(sEstilo)
+  ' SIN LÍNEA «% ESTILO:» SE MUESTRA EL IDENTIFICADOR SOLO
+  If sLeyenda = "" Then Return sEstilo
+  Return sLeyenda & "  [" & sEstilo & "]"
+
+End
+
+' ============================================
+' Función   : EstiloDesdeCombo
+' Propósito : Extrae el identificador del texto del combo: «apa» de
+'             «APA 7.ª edición  [apa]»
+' Parámetros: sTexto As String — texto mostrado en el combo
+' Retorna   : String — lo que está entre los últimos corchetes, o el texto
+'             entero si no los tiene
+' Nota      : MISMA REGLA QUE FMetadatosLibro.ExtraerIdEstilo. NO SE LLAMA A LA
+'             DEL FORMULARIO PARA NO CREAR SU INSTANCIA AUTOMÁTICA DESDE
+'             FSysAdmin. SE UNIFICAN CUANDO EL CATÁLOGO DE ESTILOS PASE A SU
+'             PROPIO MÓDULO (DECISIÓN ABIERTA DEL REDISEÑO).
+' ============================================
+Public Function EstiloDesdeCombo(sTexto As String) As String
+
+  Dim iAbre As Integer
+  Dim iCierra As Integer
+  Dim i As Integer
+
+  ' --- 1. EL ÚLTIMO PAR DE CORCHETES ---
+  ' LOS CORCHETES SON ASCII: RECORRER POR BYTES NO PARTE UN CARÁCTER
+  For i = Len(sTexto) To 1 Step -1
+    If Mid(sTexto, i, 1) = "]" Then
+      If iCierra = 0 Then iCierra = i
+    Endif
+    If Mid(sTexto, i, 1) = "[" Then
+      If iCierra > 0 Then
+        iAbre = i
+        Break
+      Endif
+    Endif
+  Next
+
+  ' --- 2. CONTENIDO ENTRE CORCHETES, O EL TEXTO ENTERO ---
+  If iAbre > 0 Then
+    If iCierra > iAbre Then Return m_XML.TrimUTF8(Mid(sTexto, iAbre + 1, iCierra - iAbre - 1))
+  Endif
+  Return m_XML.TrimUTF8(sTexto)
+
+End
+
+' ============================================
+' Función   : NuloSiVacio
+' Propósito : Un texto recortado, o Null si quedó vacío: la base distingue
+'             «sin dato» (NULL) de un texto
+' Parámetros: sTexto As String — el valor del control
+' Retorna   : Variant — Null o el texto recortado
+' ============================================
+Public Function NuloSiVacio(sTexto As String) As Variant
+
+  If Trim(sTexto) = "" Then Return Null
+  Return Trim(sTexto)
+
+End
+
+' ============================================
+' Función   : TextoDe
+' Propósito : El valor de un campo de un resultado como texto, vacío si es
+'             NULL: para volcar a un control
+' Parámetros: rDatos As Result — registro actual
+'             sCampo As String — nombre de la columna
+' Retorna   : String — el valor o ""
+' ============================================
+Public Function TextoDe(rDatos As Result, sCampo As String) As String
+
+  If IsNull(rDatos[sCampo]) Then Return ""
+  Return CStr(rDatos[sCampo])
+
+End
+
+' ============================================
+' Función   : IssnValido
+' Propósito : Valida un ISSN: forma NNNN-NNNC y dígito de control (ISO 3297:
+'             pesos 8 a 2 sobre los siete primeros dígitos, módulo 11; 10 se
+'             escribe X)
+' Parámetros: sIssn As String — el ISSN tal como se cargó
+' Retorna   : Boolean — True si es válido
+' ============================================
+Public Function IssnValido(sIssn As String) As Boolean
+
+  Dim sValor As String
+  Dim iSuma As Integer
+  Dim iPeso As Integer
+  Dim iControl As Integer
+  Dim sControl As String
+  Dim sCaracter As String
+  Dim i As Integer
+
+  ' --- 1. FORMA ---
+  ' UN ISSN ES ASCII: Len Y Mid POR BYTES SON CORRECTOS ACÁ, Y UN CARÁCTER
+  ' MULTIBYTE ALARGA LA CADENA Y LA HACE FALLAR, QUE ES LO QUE CORRESPONDE
+  sValor = UCase(Trim(sIssn))
+  If Len(sValor) <> 9 Then Return False
+  If Mid(sValor, 5, 1) <> "-" Then Return False
+
+  ' --- 2. LOS SIETE PRIMEROS DÍGITOS, PONDERADOS DE 8 A 2 ---
+  iPeso = 8
+  For i = 1 To 8
+    If i <> 5 Then
+      sCaracter = Mid(sValor, i, 1)
+      If sCaracter < "0" Or sCaracter > "9" Then Return False
+      iSuma += CInt(sCaracter) * iPeso
+      Dec iPeso
+    Endif
+  Next
+
+  ' --- 3. DÍGITO DE CONTROL ---
+  iControl = 11 - (iSuma Mod 11)
+  If iControl = 11 Then iControl = 0
+  If iControl = 10 Then
+    sControl = "X"
+  Else
+    sControl = CStr(iControl)
+  Endif
+
+  Return Mid(sValor, 9, 1) = sControl
+
+End
+
+' ============================================
+' Función   : ListarRevistas
+' Propósito : Las revistas para la grilla, ordenadas por título
+' Parámetros: hConn As Connection — conexión abierta
+' Retorna   : Result — id_revista, titulo, issn_electronico; Null si falló
+'             (ya se informó)
+' ============================================
+Public Function ListarRevistas(hConn As Connection) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT id_revista, titulo, issn_electronico FROM revista ORDER BY titulo")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las revistas (¿falta la actualización de esquema 1.13.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarRevista
+' Propósito : El registro completo de una revista, para el editor
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : Result — el registro; Null si falló o no existe (ya se informó)
+' ============================================
+Public Function CargarRevista(hConn As Connection, iIdRevista As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT * FROM revista WHERE id_revista = &1", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la revista:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("La revista ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CrearRevista
+' Propósito : Alta mínima de una revista, como Colecciones: un título
+'             provisorio que el editor reemplaza antes de guardar
+' Parámetros: hConn As Connection — conexión abierta
+'             sUsuario As String — usuario de FSysAdmin, para la auditoría
+' Retorna   : Integer — id de la revista nueva; 0 si falló (ya se informó)
+' ============================================
+Public Function CrearRevista(hConn As Connection, sUsuario As String) As Integer
+
+  ' modelo_paginacion TOMA EL DEFAULT DEL ESQUEMA (por_numero)
+  Try hConn.Exec("INSERT INTO revista (titulo, usuario_creacion) VALUES (&1, &2)", "(Nueva revista)", sUsuario)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear la revista:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return hConn.LastInsertId
+
+End
+
+' ============================================
+' Función   : ValidarRevista
+' Propósito : Controles previos al guardado de la revista. Avisa el primero
+'             que falla
+' Parámetros: hConn As Connection — conexión abierta (catálogo de idiomas)
+'             cDatos As Collection — los valores del editor, por nombre de
+'             columna
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarRevista(hConn As Connection, cDatos As Collection) As Boolean
+
+  Dim sAviso As String
+
+  ' --- 1. TÍTULO OBLIGATORIO ---
+  ' journal-title ES OBLIGATORIO EN JATS Y EL TÍTULO PROVISORIO NO VALE
+  If IsNull(cDatos["titulo"]) Then
+    sAviso = "El título de la revista no puede quedar vacío."
+  Else If cDatos["titulo"] = "(Nueva revista)" Then
+    sAviso = "Reemplace el título provisorio «(Nueva revista)»."
+  Endif
+
+  ' --- 2. ISSN: FORMA Y DÍGITO DE CONTROL ---
+  ' UN ISSN MAL CARGADO VIAJA A JATS, SciELO Y Crossref
+  If sAviso = "" Then
+    If Not IsNull(cDatos["issn_impreso"]) Then
+      If Not IssnValido(cDatos["issn_impreso"]) Then sAviso = "El ISSN impreso no es válido (forma NNNN-NNNC y dígito de control)."
+    Endif
+  Endif
+  If sAviso = "" Then
+    If Not IsNull(cDatos["issn_electronico"]) Then
+      If Not IssnValido(cDatos["issn_electronico"]) Then sAviso = "El ISSN electrónico no es válido (forma NNNN-NNNC y dígito de control)."
+    Endif
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  ' --- 3. IDIOMAS: CÓDIGOS DEL CATÁLOGO SEPARADOS POR COMA (SC-23) ---
+  ' ListaValida AVISA POR SU CUENTA
+  If Not IsNull(cDatos["idiomas_publicacion"]) Then
+    If Not m_Idiomas.ListaValida(cDatos["idiomas_publicacion"], "idiomas de publicación", hConn) Then Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : GuardarRevista
+' Propósito : Graba la revista con Edit + Update (RC-GM-15), después de
+'             validar
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+'             cDatos As Collection — los valores del editor, por nombre de
+'             columna; Null donde no hay dato
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarRevista(hConn As Connection, iIdRevista As Integer, cDatos As Collection) As Boolean
+
+  Dim rRevista As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Not ValidarRevista(hConn, cDatos) Then Return False
+
+  ' --- 2. REGISTRO A EDITAR ---
+  Try rRevista = hConn.Edit("revista", "id_revista = &1", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la revista para editarla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. CAMPOS, POR NOMBRE (RC-GM-15) ---
+  With rRevista
+    !titulo = cDatos["titulo"]
+    !titulo_abreviado = cDatos["titulo_abreviado"]
+    !acronimo = cDatos["acronimo"]
+    !issn_impreso = cDatos["issn_impreso"]
+    !issn_electronico = cDatos["issn_electronico"]
+    !editorial = cDatos["editorial"]
+    !institucion_editora = cDatos["institucion_editora"]
+    !ror_editorial = cDatos["ror_editorial"]
+    !ciudad = cDatos["ciudad"]
+    !pais = cDatos["pais"]
+    !email_editorial = cDatos["email_editorial"]
+    !doi_prefix = cDatos["doi_prefix"]
+    !estilo_cita = cDatos["estilo_cita"]
+    !modelo_paginacion = cDatos["modelo_paginacion"]
+    !idiomas_publicacion = cDatos["idiomas_publicacion"]
+    !licencia_defecto = cDatos["licencia_defecto"]
+    !url_licencia_defecto = cDatos["url_licencia_defecto"]
+    !titular_copyright_defecto = cDatos["titular_copyright_defecto"]
+    !tipo_acceso_defecto = cDatos["tipo_acceso_defecto"]
+  End With
+
+  ' --- 4. GRABACIÓN ---
+  Try rRevista.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar la revista:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : IdiomasDeRevista
+' Propósito : Los idiomas de publicación de una revista, en su orden. Son los
+'             idiomas en que se cargan los títulos de las secciones
+'             (decisión 20)
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : String[] — los códigos; vacío si no hay o falló la lectura
+' ============================================
+Public Function IdiomasDeRevista(hConn As Connection, iIdRevista As Integer) As String[]
+
+  Dim aIdiomas As New String[]
+  Dim rDatos As Result
+  Dim sCodigo As String
+
+  ' --- 1. CONSULTA ---
+  Try rDatos = hConn.Exec("SELECT idiomas_publicacion FROM revista WHERE id_revista = &1", iIdRevista)
+  If Error Then Return aIdiomas
+  If Not rDatos.Available Then Return aIdiomas
+  If IsNull(rDatos!idiomas_publicacion) Then Return aIdiomas
+
+  ' --- 2. CÓDIGOS SEPARADOS POR COMA (SC-23), SIN VACÍOS NI REPETIDOS ---
+  For Each sCodigo In Split(rDatos!idiomas_publicacion, ",")
+    sCodigo = Trim(sCodigo)
+    If sCodigo <> "" Then
+      If aIdiomas.Find(sCodigo) < 0 Then aIdiomas.Add(sCodigo)
+    Endif
+  Next
+
+  Return aIdiomas
+
+End
+
+' ============================================
+' Función   : ListarSecciones
+' Propósito : Las secciones de una revista para la grilla, con su título en
+'             el idioma indicado
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+'             sIdioma As String — idioma del título que se muestra (el
+'             primero de la revista)
+' Retorna   : Result — id_seccion, codigo, orden, activa, titulo; Null si
+'             falló (ya se informó)
+' ============================================
+Public Function ListarSecciones(hConn As Connection, iIdRevista As Integer, sIdioma As String) As Result
+
+  Dim rDatos As Result
+
+  ' LEFT JOIN: UNA SECCIÓN SIN TÍTULO EN ESE IDIOMA SE VE IGUAL, CON EL TÍTULO
+  ' VACÍO, PARA QUE SE PUEDA COMPLETAR
+  Try rDatos = hConn.Exec("SELECT s.id_seccion, s.codigo, s.orden, s.activa, t.titulo " &
+    "FROM revista_seccion s " &
+    "LEFT JOIN revista_seccion_titulo t ON t.id_seccion = s.id_seccion AND t.idioma = &2 " &
+    "WHERE s.id_revista = &1 ORDER BY s.orden, s.codigo", iIdRevista, sIdioma)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las secciones:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarSeccion
+' Propósito : El registro de una sección, para el editor
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdSeccion As Integer — sección
+' Retorna   : Result — el registro; Null si falló o no existe (ya se informó)
+' ============================================
+Public Function CargarSeccion(hConn As Connection, iIdSeccion As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT * FROM revista_seccion WHERE id_seccion = &1", iIdSeccion)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la sección:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("La sección ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : TitulosSeccion
+' Propósito : Los títulos de una sección, por idioma
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdSeccion As Integer — sección
+' Retorna   : Collection — clave: código de idioma, valor: título. Vacía si
+'             no tiene o falló la lectura
+' ============================================
+Public Function TitulosSeccion(hConn As Connection, iIdSeccion As Integer) As Collection
+
+  Dim cTitulos As New Collection
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT idioma, titulo FROM revista_seccion_titulo WHERE id_seccion = &1", iIdSeccion)
+  If Error Then Return cTitulos
+
+  While rDatos.Available
+    cTitulos[rDatos!idioma] = rDatos!titulo
+    rDatos.MoveNext
+  Wend
+
+  Return cTitulos
+
+End
+
+' ============================================
+' Función   : CrearSeccion
+' Propósito : Alta mínima de una sección con un código provisorio único, que
+'             el editor reemplaza antes de guardar
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : Integer — id de la sección nueva; 0 si falló (ya se informó)
+' ============================================
+Public Function CrearSeccion(hConn As Connection, iIdRevista As Integer) As Integer
+
+  Dim rDatos As Result
+  Dim iSiguiente As Integer
+  Dim iOrden As Integer
+
+  ' --- 1. CÓDIGO PROVISORIO Y ORDEN AL FINAL ---
+  ' MAX + 1 Y NO COUNT (RC-GM-09): DESPUÉS DE UN BORRADO, COUNT REPITE
+  Try rDatos = hConn.Exec("SELECT IFNULL(MAX(id_seccion), 0) + 1 AS siguiente, " &
+    "(SELECT IFNULL(MAX(orden), 0) + 10 FROM revista_seccion WHERE id_revista = &1) AS orden " &
+    "FROM revista_seccion", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo preparar la sección nueva:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  iSiguiente = rDatos!siguiente
+  iOrden = rDatos!orden
+
+  ' --- 2. ALTA ---
+  Try hConn.Exec("INSERT INTO revista_seccion (id_revista, codigo, orden) VALUES (&1, &2, &3)",
+    iIdRevista, "seccion-" & CStr(iSiguiente), iOrden)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear la sección:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return hConn.LastInsertId
+
+End
+
+' ============================================
+' Función   : CodigoSeccionValido
+' Propósito : El código de una sección es estable y viaja a los nombres
+'             internos: solo minúsculas ASCII, dígitos y guion, sin empezar ni
+'             terminar con guion
+' Parámetros: sCodigo As String — el código cargado
+' Retorna   : Boolean — True si es válido
+' ============================================
+Public Function CodigoSeccionValido(sCodigo As String) As Boolean
+
+  Dim sCaracter As String
+  Dim i As Integer
+
+  ' --- 1. LARGO ---
+  ' POR BYTES A PROPÓSITO: UNA LETRA ACENTUADA (MULTIBYTE) NO ES ASCII Y
+  ' TIENE QUE FALLAR
+  If Len(sCodigo) < 1 Or Len(sCodigo) > 50 Then Return False
+  If Left(sCodigo, 1) = "-" Or Right(sCodigo, 1) = "-" Then Return False
+
+  ' --- 2. CARACTERES PERMITIDOS ---
+  For i = 1 To Len(sCodigo)
+    sCaracter = Mid(sCodigo, i, 1)
+    If sCaracter >= "a" And sCaracter <= "z" Then Continue
+    If sCaracter >= "0" And sCaracter <= "9" Then Continue
+    If sCaracter = "-" Then Continue
+    Return False
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : GuardarSeccion
+' Propósito : Graba la sección y reemplaza sus títulos, en una transacción:
+'             o se graba todo o nada
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdSeccion As Integer — sección
+'             iIdRevista As Integer — revista de la sección
+'             cDatos As Collection — codigo, orden, article_type_defecto,
+'             activa, id_plantilla_resumen (Null = resumen simple)
+'             cTitulos As Collection — clave: idioma, valor: título
+'             aIdiomas As String[] — idiomas de publicación de la revista
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarSeccion(hConn As Connection, iIdSeccion As Integer, iIdRevista As Integer, cDatos As Collection, cTitulos As Collection, aIdiomas As String[]) As Boolean
+
+  Dim rSeccion As Result
+  Dim rDatos As Result
+  Dim sTitulo As String
+  Dim sIdioma As String
+
+  ' --- 1. VALIDACIÓN DEL CÓDIGO ---
+  If Not CodigoSeccionValido(cDatos["codigo"]) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El código de la sección solo admite minúsculas sin acento, dígitos y guiones (por ejemplo: articulos, dossier, resenas).")
+    Return False
+  Endif
+
+  ' ÚNICO POR REVISTA: SE AVISA ANTES DE QUE LO RECHACE LA CLAVE ÚNICA
+  Try rDatos = hConn.Exec("SELECT COUNT(*) AS n FROM revista_seccion WHERE id_revista = &1 AND codigo = &2 AND id_seccion <> &3",
+    iIdRevista, cDatos["codigo"], iIdSeccion)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar el código de la sección:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!n > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La revista ya tiene una sección con el código «" & cDatos["codigo"] & "».")
+    Return False
+  Endif
+
+  ' --- 2. VALIDACIÓN DEL TÍTULO ---
+  ' EL TÍTULO EN EL PRIMER IDIOMA DE LA REVISTA ES EL ENCABEZADO DE LA SECCIÓN
+  ' EN JATS (subj-group heading) Y EN EL SUMARIO: SIN ÉL NO HAY SECCIÓN
+  If aIdiomas.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La revista no tiene idiomas de publicación: cárguelos en la pestaña «Revista» antes de titular la sección.")
+    Return False
+  Endif
+  sTitulo = ""
+  If cTitulos.Exist(aIdiomas[0]) Then sTitulo = Trim(cTitulos[aIdiomas[0]])
+  If sTitulo = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Falta el título de la sección en el idioma principal de la revista (" & aIdiomas[0] & ").")
+    Return False
+  Endif
+
+  ' --- 3. TRANSACCIÓN ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3.1 LA SECCIÓN, CON Edit + Update (RC-GM-15) ---
+  Try rSeccion = hConn.Edit("revista_seccion", "id_seccion = &1", iIdSeccion)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la sección para editarla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  With rSeccion
+    !codigo = cDatos["codigo"]
+    !orden = cDatos["orden"]
+    !article_type_defecto = cDatos["article_type_defecto"]
+    !activa = cDatos["activa"]
+    ' Null: RESUMEN SIMPLE (ENTREGA C2)
+    !id_plantilla_resumen = cDatos["id_plantilla_resumen"]
+  End With
+  Try rSeccion.Update()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar la sección:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3.2 LOS TÍTULOS: SE REEMPLAZAN ENTEROS ---
+  ' SOLO LOS DE LOS IDIOMAS DE LA REVISTA Y CON TEXTO: UN TÍTULO VACIADO
+  ' DESAPARECE, Y UNO DE UN IDIOMA QUE LA REVISTA YA NO PUBLICA NO SE REESCRIBE
+  Try hConn.Exec("DELETE FROM revista_seccion_titulo WHERE id_seccion = &1", iIdSeccion)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar los títulos de la sección:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  For Each sIdioma In aIdiomas
+    If cTitulos.Exist(sIdioma) Then
+      sTitulo = Trim(cTitulos[sIdioma])
+      If sTitulo <> "" Then
+        Try hConn.Exec("INSERT INTO revista_seccion_titulo (id_seccion, idioma, titulo) VALUES (&1, &2, &3)", iIdSeccion, sIdioma, sTitulo)
+        If Error Then
+          hConn.Rollback()
+          m_Sonido.sonar("Error")
+          Message.Error("No se pudo guardar el título en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+          Return False
+        Endif
+      Endif
+    Endif
+  Next
+
+  ' --- 3.3 CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar los cambios de la sección:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ListarPlantillas
+' Propósito : Las plantillas de resumen estructurado de una revista, con la
+'             cantidad de secciones de cada una
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : Result — id_plantilla, nombre, activa, secciones; Null si falló
+'             (ya se informó)
+' ============================================
+Public Function ListarPlantillas(hConn As Connection, iIdRevista As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT p.id_plantilla, p.nombre, p.activa, (SELECT COUNT(*) FROM revista_plantilla_resumen_seccion s WHERE s.id_plantilla = p.id_plantilla) AS secciones " &
+    "FROM revista_plantilla_resumen p WHERE p.id_revista = &1 ORDER BY p.nombre", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las plantillas de resumen:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CrearPlantilla
+' Propósito : Alta mínima de una plantilla con un nombre provisorio único, que
+'             el diálogo reemplaza antes de guardar
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : Integer — id de la plantilla nueva; 0 si falló (ya se informó)
+' ============================================
+Public Function CrearPlantilla(hConn As Connection, iIdRevista As Integer) As Integer
+
+  Dim rDatos As Result
+
+  ' --- 1. NOMBRE PROVISORIO: MAX + 1 Y NO COUNT (RC-GM-09) ---
+  Try rDatos = hConn.Exec("SELECT IFNULL(MAX(id_plantilla), 0) + 1 AS siguiente FROM revista_plantilla_resumen")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo preparar la plantilla nueva:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  ' --- 2. ALTA ---
+  Try hConn.Exec("INSERT INTO revista_plantilla_resumen (id_revista, nombre) VALUES (&1, &2)", iIdRevista, "plantilla-" & CStr(rDatos!siguiente))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear la plantilla:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return hConn.LastInsertId
+
+End
+
+' ============================================
+' Función   : CargarPlantilla
+' Propósito : El registro de una plantilla
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdPlantilla As Integer — plantilla
+' Retorna   : Result — id_plantilla, nombre, activa; Null si falló o no
+'             existe (ya se informó)
+' ============================================
+Public Function CargarPlantilla(hConn As Connection, iIdPlantilla As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT id_plantilla, nombre, activa FROM revista_plantilla_resumen WHERE id_plantilla = &1", iIdPlantilla)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la plantilla:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("La plantilla ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CodigosPlantilla
+' Propósito : Los códigos de las secciones de una plantilla, en orden
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdPlantilla As Integer — plantilla
+' Retorna   : String[] — los códigos; vacío si no tiene o falló la lectura
+' ============================================
+Public Function CodigosPlantilla(hConn As Connection, iIdPlantilla As Integer) As String[]
+
+  Dim aCodigos As New String[]
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT codigo FROM revista_plantilla_resumen_seccion WHERE id_plantilla = &1 ORDER BY orden", iIdPlantilla)
+  If Error Then Return aCodigos
+  While rDatos.Available
+    aCodigos.Add(rDatos!codigo)
+    rDatos.MoveNext
+  Wend
+
+  Return aCodigos
+
+End
+
+' ============================================
+' Función   : TitulosPlantilla
+' Propósito : Los títulos de las secciones de una plantilla, por idioma, en
+'             el mismo orden que CodigosPlantilla
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdPlantilla As Integer — plantilla
+'             aCodigos As String[] — los códigos, en orden
+' Retorna   : Collection[] — una Collection por código (clave: idioma, valor:
+'             título); vacías si falló la lectura
+' ============================================
+Public Function TitulosPlantilla(hConn As Connection, iIdPlantilla As Integer, aCodigos As String[]) As Collection[]
+
+  Dim aTitulos As New Collection[]
+  Dim cTitulos As Collection
+  Dim rDatos As Result
+  Dim iIndice As Integer
+  Dim i As Integer
+
+  ' --- 1. UNA Collection POR CÓDIGO, AUNQUE NO TENGA TÍTULOS ---
+  ' New NO SE ADMITE COMO ARGUMENTO (MEDIDO): SE CREA ANTES
+  For i = 0 To aCodigos.Count - 1
+    cTitulos = New Collection
+    aTitulos.Add(cTitulos)
+  Next
+
+  ' --- 2. LOS TÍTULOS, EN LA Collection DE SU CÓDIGO ---
+  Try rDatos = hConn.Exec("SELECT codigo, idioma, titulo FROM revista_plantilla_resumen_titulo WHERE id_plantilla = &1", iIdPlantilla)
+  If Error Then Return aTitulos
+  While rDatos.Available
+    iIndice = aCodigos.Find(rDatos!codigo)
+    If iIndice >= 0 Then aTitulos[iIndice][rDatos!idioma] = rDatos!titulo
+    rDatos.MoveNext
+  Wend
+
+  Return aTitulos
+
+End
+
+' ============================================
+' Función   : CodigosEnUso
+' Propósito : Los códigos de una plantilla que ya tienen texto en algún
+'             artículo de una sección que la usa: no se pueden quitar ni
+'             renombrar sin dejar ese texto huérfano (articulo_resumen_seccion
+'             guarda el código por valor)
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdPlantilla As Integer — plantilla
+' Retorna   : String[] — los códigos; Null si falló la lectura (ya se informó)
+' ============================================
+Public Function CodigosEnUso(hConn As Connection, iIdPlantilla As Integer) As String[]
+
+  Dim aCodigos As New String[]
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT DISTINCT rs.codigo FROM articulo_resumen_seccion rs JOIN articulo_texto t ON t.id_texto = rs.id_texto " &
+    "JOIN articulo a ON a.id_articulo = t.id_articulo JOIN revista_seccion s ON s.id_seccion = a.id_seccion WHERE s.id_plantilla_resumen = &1", iIdPlantilla)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar el uso de la plantilla:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  While rDatos.Available
+    aCodigos.Add(rDatos!codigo)
+    rDatos.MoveNext
+  Wend
+
+  Return aCodigos
+
+End
+
+' ============================================
+' Función   : GuardarPlantilla
+' Propósito : Graba la plantilla y reemplaza sus secciones y títulos, en una
+'             transacción. Todas las secciones son obligatorias en el
+'             artículo (decisión de Alberto, 28/10): por eso cada una lleva
+'             título en todos los idiomas de la revista
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdPlantilla As Integer — plantilla
+'             iIdRevista As Integer — revista
+'             sNombre As String — nombre (único por revista)
+'             bActiva As Boolean — activa
+'             aCodigos As String[] — códigos de las secciones, en orden
+'             aTitulos As Collection[] — títulos por idioma, uno por código
+'             aIdiomas As String[] — idiomas de publicación de la revista
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarPlantilla(hConn As Connection, iIdPlantilla As Integer, iIdRevista As Integer, sNombre As String, bActiva As Boolean, aCodigos As String[], aTitulos As Collection[], aIdiomas As String[]) As Boolean
+
+  Dim aEnUso As String[]
+  Dim rDatos As Result
+  Dim sAviso As String
+  Dim sCodigo As String
+  Dim sIdioma As String
+  Dim i As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  sNombre = Trim(sNombre)
+  If sNombre = "" Then sAviso = "Falta el nombre de la plantilla."
+  If sAviso = "" And aCodigos.Count = 0 Then sAviso = "La plantilla no tiene secciones."
+  If sAviso = "" And aIdiomas.Count = 0 Then sAviso = "La revista no tiene idiomas de publicación: cárguelos en la pestaña «Revista»."
+  If sAviso = "" Then
+    For i = 0 To aCodigos.Count - 1
+      ' EL MISMO CRITERIO QUE EL CÓDIGO DE SECCIÓN: ESTABLE, ASCII
+      If Not CodigoSeccionValido(aCodigos[i]) Then
+        sAviso = "El código de la sección " & CStr(i + 1) & " («" & aCodigos[i] & "») solo admite minúsculas sin acento, dígitos y guiones (por ejemplo: introduccion, metodos)."
+        Break
+      Endif
+      If aCodigos.Find(aCodigos[i]) <> i Then
+        sAviso = "El código «" & aCodigos[i] & "» está repetido."
+        Break
+      Endif
+      ' EL TÍTULO SALE EN CADA RESUMEN (<sec><title>): HACE FALTA EN TODOS
+      For Each sIdioma In aIdiomas
+        If Not aTitulos[i].Exist(sIdioma) Then
+          sAviso = "Falta el título de «" & aCodigos[i] & "» en «" & sIdioma & "»."
+          Break
+        Endif
+      Next
+      If sAviso <> "" Then Break
+    Next
+  Endif
+
+  ' NOMBRE ÚNICO POR REVISTA: SE AVISA ANTES DE QUE LO RECHACE LA CLAVE
+  If sAviso = "" Then
+    Try rDatos = hConn.Exec("SELECT COUNT(*) AS n FROM revista_plantilla_resumen WHERE id_revista = &1 AND nombre = &2 AND id_plantilla <> &3", iIdRevista, sNombre, iIdPlantilla)
+    If Error Then
+      sAviso = "No se pudo verificar el nombre: " & Error.Text
+    Else If rDatos!n > 0 Then
+      sAviso = "La revista ya tiene una plantilla llamada «" & sNombre & "»."
+    Endif
+  Endif
+
+  ' UN CÓDIGO CON TEXTO EN ALGÚN ARTÍCULO NO SE PUEDE QUITAR NI RENOMBRAR
+  If sAviso = "" Then
+    aEnUso = CodigosEnUso(hConn, iIdPlantilla)
+    If Not aEnUso Then Return False
+    For Each sCodigo In aEnUso
+      If aCodigos.Find(sCodigo) < 0 Then
+        sAviso = "La sección «" & sCodigo & "» ya tiene texto en artículos: no se puede quitar ni cambiar su código."
+        Break
+      Endif
+    Next
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  ' --- 2. TRANSACCIÓN ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2.1 LA PLANTILLA ---
+  Try hConn.Exec("UPDATE revista_plantilla_resumen SET nombre = &1, activa = &2 WHERE id_plantilla = &3", sNombre, If(bActiva, 1, 0), iIdPlantilla)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo grabar la plantilla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2.2 SECCIONES Y TÍTULOS: SE REEMPLAZAN ENTEROS ---
+  ' PRIMERO LOS TÍTULOS (SU CLAVE APUNTA A LA SECCIÓN, RESTRICT). LOS ARTÍCULOS
+  ' NO APUNTAN A ESTAS FILAS: GUARDAN EL CÓDIGO POR VALOR
+  Try hConn.Exec("DELETE FROM revista_plantilla_resumen_titulo WHERE id_plantilla = &1", iIdPlantilla)
+  If Not Error Then Try hConn.Exec("DELETE FROM revista_plantilla_resumen_seccion WHERE id_plantilla = &1", iIdPlantilla)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar las secciones de la plantilla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  For i = 0 To aCodigos.Count - 1
+    Try hConn.Exec("INSERT INTO revista_plantilla_resumen_seccion (id_plantilla, codigo, orden) VALUES (&1, &2, &3)", iIdPlantilla, aCodigos[i], i + 1)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar la sección «" & aCodigos[i] & "»:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+    ' SOLO LOS IDIOMAS DE LA REVISTA: UNO QUE YA NO PUBLICA NO SE REESCRIBE
+    For Each sIdioma In aIdiomas
+      Try hConn.Exec("INSERT INTO revista_plantilla_resumen_titulo (id_plantilla, codigo, idioma, titulo) VALUES (&1, &2, &3, &4)", iIdPlantilla, aCodigos[i], sIdioma, aTitulos[i][sIdioma])
+      If Error Then
+        hConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo grabar el título de «" & aCodigos[i] & "» en «" & sIdioma & "»:" & gb.NewLine & Error.Text)
+        Return False
+      Endif
+    Next
+  Next
+
+  ' --- 2.3 CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar los cambios de la plantilla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : BorrarPlantilla
+' Propósito : Borra una plantilla que ninguna sección usa, con sus secciones
+'             y títulos, en una transacción
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdPlantilla As Integer — plantilla
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarPlantilla(hConn As Connection, iIdPlantilla As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  ' --- 1. EN USO: LA CLAVE DE revista_seccion LO RECHAZARÍA IGUAL; SE AVISA CLARO ---
+  Try rDatos = hConn.Exec("SELECT COUNT(*) AS n FROM revista_seccion WHERE id_plantilla_resumen = &1", iIdPlantilla)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar el uso de la plantilla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!n > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La plantilla está asignada a " & CStr(rDatos!n) & " sección(es) de la revista: quítela de ellas antes de borrarla.")
+    Return False
+  Endif
+
+  ' --- 2. TRANSACCIÓN: TÍTULOS, SECCIONES, PLANTILLA ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Try hConn.Exec("DELETE FROM revista_plantilla_resumen_titulo WHERE id_plantilla = &1", iIdPlantilla)
+  If Not Error Then Try hConn.Exec("DELETE FROM revista_plantilla_resumen_seccion WHERE id_plantilla = &1", iIdPlantilla)
+  If Not Error Then Try hConn.Exec("DELETE FROM revista_plantilla_resumen WHERE id_plantilla = &1", iIdPlantilla)
+  If Not Error Then Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar la plantilla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : PlantillaDeSeccion
+' Propósito : La plantilla de resumen que una sección exige
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdSeccion As Integer — sección
+' Retorna   : Integer — id de la plantilla; 0 si la sección pide resumen
+'             simple (o no se pudo leer)
+' ============================================
+Public Function PlantillaDeSeccion(hConn As Connection, iIdSeccion As Integer) As Integer
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT id_plantilla_resumen FROM revista_seccion WHERE id_seccion = &1", iIdSeccion)
+  If Error Then Return 0
+  If Not rDatos.Available Then Return 0
+  If IsNull(rDatos!id_plantilla_resumen) Then Return 0
+
+  Return rDatos!id_plantilla_resumen
+
+End

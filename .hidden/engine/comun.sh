@@ -200,10 +200,166 @@ bien_formado() {
 }
 
 # ============================================================================
+# IMÁGENES PARA PANTALLA (EPUB Y HTML)
+# ----------------------------------------------------------------------------
+# EL PDF USA EL ORIGINAL DE media/. EL EPUB Y EL HTML LLEVAN SOLO LAS IMÁGENES
+# QUE USAN, Y UNA COPIA REDUCIDA CUANDO EL ORIGINAL SUPERA EL TOPE O NO ESTÁ
+# EN sRGB. EN PANTALLA NO CUENTAN LOS DPI SINO LOS PÍXELES: EL NAVEGADOR Y EL
+# LECTOR DE EPUB IGNORAN LA DENSIDAD QUE DECLARA EL ARCHIVO.
+#
+# EL TOPE: 2000 px DE LADO MAYOR, Y SOLO ACHICA. CON LA GRILLA DEL HTML, LA
+# COLUMNA CENTRAL MIDE UNOS 1070 px CSS EN UNA PANTALLA DE 1920; UNA PANTALLA
+# DE ALTA DENSIDAD LA DUPLICA. ES UNA DECISIÓN, NO UN ESTÁNDAR (29/10/2026).
+#
+# LA COPIA SE ESCRIBE CON -strip: SIN ÉL, DOS CORRIDAS IGUALES DAN ARCHIVOS
+# DISTINTOS, PORQUE EL PNG GUARDA LA FECHA DE CREACIÓN; CON ÉL, BYTES
+# IDÉNTICOS (MEDIDO CON ImageMagick 6.9.12-98). -strip BORRA TAMBIÉN EL
+# PERFIL DE COLOR, Y POR ESO ANTES SE CONVIERTE A sRGB LO QUE NO LO ES:
+#   - CMYK CON PERFIL: DE SU PERFIL A sRGB
+#   - CMYK SIN PERFIL: SE ASUME FOGRA39 (EL DE TEXLIVE) Y DE AHÍ A sRGB.
+#     -profile sRGB SOLO, SIN PERFIL DE ORIGEN, DEJA LA IMAGEN EN CMYK (MEDIDO)
+#   - RGB CON UN PERFIL QUE NO ES sRGB (ADOBE RGB, POR EJEMPLO): A sRGB
+#   - ESCALA DE GRISES: NO SE TOCA
+# LOS PERFILES SON LOS QUE TRAE TEXLIVE (texlive-full ES DEPENDENCIA DEL
+# .deb): SE UBICAN CON kpsewhich, NO CON UNA RUTA FIJA.
+#
+# UNA COPIA QUE SOLO REDUCE Y PESA MÁS QUE EL ORIGINAL SE DESCARTA: VA EL
+# ORIGINAL. PASA CON UN PNG DE COLORES PLANOS O YA SUAVIZADO: AL REMUESTREAR
+# APARECEN TONOS INTERMEDIOS Y COMPRIME PEOR (MEDIDO: LA TAPA DE CALIFA,
+# 1747×2593, PASÓ DE 1,1 MB A 1,8 MB A 2000 px; EL GRÁFICO fig-02, DE 50 KB A
+# 82 KB; NINGÚN AJUSTE DE COMPRESIÓN DE PNG LO EVITA). EL TOPE EXISTE POR EL
+# PESO: SI NO LO BAJA, NO SIRVE. UNA CONVERSIÓN DE COLOR NO SE DESCARTA NUNCA.
+#
+# LAS COPIAS QUEDAN EN tmp/pantalla/, CON LA HUELLA DEL ORIGINAL EN EL
+# NOMBRE: SE REHACEN SOLO SI EL ORIGINAL CAMBIA. VERSION_PANTALLA SUBE SI
+# CAMBIA LA RECETA, Y CON ELLA SE INVALIDA TODO EL CACHÉ.
+# ============================================================================
+TOPE_PANTALLA_PX=2000
+VERSION_PANTALLA=1
+PERFIL_SRGB="sRGB.icc"
+PERFIL_CMYK_SUPUESTO="FOGRA39L_coated.icc"
+
+# ============================================================================
+# Función   : imagenes_canonico
+# Propósito : Los nombres de las imágenes que un canónico DocBook usa: el
+#             @fileref de cada imagedata, sin carpeta, sin repetir.
+# Parámetros: $1 ruta del canónico
+# Retorna   : imprime un nombre por línea; nada si no usa imágenes
+# Nota      : local-name() PORQUE xmllint --xpath NO CONOCE LOS ESPACIOS DE
+#             NOMBRES DEL DOCUMENTO (GV-22). xmllint ESCRIBE CADA ATRIBUTO
+#             COMO « fileref="valor"» EN SU LÍNEA (MEDIDO, libxml 20914); SIN
+#             RESULTADOS SALE CON 10 Y NO IMPRIME NADA EN stdout. EL NOMBRE
+#             ES LO QUE SIGUE A LA ÚLTIMA BARRA, COMO tokenize(...)[last()] EN
+#             LAS HOJAS DE SALIDA
+# ============================================================================
+imagenes_canonico() {
+    xmllint --nonet --xpath "//*[local-name()='imagedata']/@fileref" "$1" 2>/dev/null |
+        grep -oP 'fileref="\K[^"]+' | sed 's|.*/||' | sort -u
+}
+
+# ============================================================================
+# Función   : copiar_imagen_pantalla
+# Propósito : Copia una imagen de media/ a la salida de pantalla: tal cual si
+#             no supera el tope y está en sRGB o en grises; si no, la copia
+#             reducida o convertida, desde el caché.
+# Parámetros: $1 original; $2 destino (archivo); $3 carpeta del caché
+# Retorna   : 0 si quedó copiada, 1 si no. Deja en PANTALLA_NOTA qué se le
+#             hizo o por qué no («» si se copió tal cual), para el informe,
+#             y en PANTALLA_PREPARADA 1 si lo que quedó es una copia y no el
+#             original
+# Nota      : SOLO png Y jpg: SON LOS FORMATOS DE LAS FIGURAS (SC-75, GV-155)
+#             Y DE LOS LOGOS. CUALQUIER OTRA COSA SE COPIA TAL CUAL: identify
+#             SOBRE UN svg LO RASTERIZA Y DARÍA MEDIDAS QUE NO SON LAS SUYAS
+# ============================================================================
+copiar_imagen_pantalla() {
+    local origen="$1" destino="$2" dir_cache="$3"
+    local extension datos ancho alto espacio perfil lado huella cache temporal
+    local srgb cmyk
+    local color=0
+    local receta=()
+    PANTALLA_NOTA=""
+    PANTALLA_PREPARADA=0
+
+    # --- 1. LO QUE NO ES png NI jpg VA TAL CUAL ---
+    extension="${origen##*.}"
+    extension="${extension,,}"
+    case "$extension" in
+        png|jpg|jpeg) ;;
+        *) cp -f "$origen" "$destino"; return ;;
+    esac
+
+    # --- 2. MEDIDAS, ESPACIO DE COLOR Y PERFIL ---
+    # UNA SOLA LÍNEA: [0] ES EL PRIMER CUADRO, POR SI EL ARCHIVO TRAE VARIOS
+    datos=$(identify -format '%w|%h|%[colorspace]|%[profile:icc]' "$origen[0]" 2>/dev/null) || return 1
+    [[ -n "$datos" ]] || return 1
+    IFS='|' read -r ancho alto espacio perfil <<< "$datos"
+    lado=$(( ancho > alto ? ancho : alto ))
+
+    # --- 3. LA RECETA: COLOR PRIMERO, TAMAÑO DESPUÉS ---
+    if [[ "$espacio" == "CMYK" ]]; then
+        srgb=$(kpsewhich "$PERFIL_SRGB" 2>/dev/null)
+        [[ -n "$srgb" ]] || { PANTALLA_NOTA="no se encontró $PERFIL_SRGB con kpsewhich"; return 1; }
+        if [[ -z "$perfil" ]]; then
+            cmyk=$(kpsewhich "$PERFIL_CMYK_SUPUESTO" 2>/dev/null)
+            [[ -n "$cmyk" ]] || { PANTALLA_NOTA="no se encontró $PERFIL_CMYK_SUPUESTO con kpsewhich"; return 1; }
+            receta+=(-profile "$cmyk")
+            PANTALLA_NOTA="CMYK sin perfil (se asume FOGRA39) → sRGB"
+        else
+            PANTALLA_NOTA="CMYK ($perfil) → sRGB"
+        fi
+        receta+=(-profile "$srgb")
+        color=1
+    elif [[ "$espacio" != "Gray" && -n "$perfil" && "${perfil,,}" != *srgb* ]]; then
+        srgb=$(kpsewhich "$PERFIL_SRGB" 2>/dev/null)
+        [[ -n "$srgb" ]] || { PANTALLA_NOTA="no se encontró $PERFIL_SRGB con kpsewhich"; return 1; }
+        receta+=(-profile "$srgb")
+        PANTALLA_NOTA="perfil «$perfil» → sRGB"
+        color=1
+    fi
+
+    if (( lado > TOPE_PANTALLA_PX )); then
+        # «>» SOLO ACHICA: UNA IMAGEN MENOR QUE EL TOPE NO SE AGRANDA
+        receta+=(-resize "${TOPE_PANTALLA_PX}x${TOPE_PANTALLA_PX}>")
+        PANTALLA_NOTA="${PANTALLA_NOTA:+$PANTALLA_NOTA; }${ancho}×${alto} → lado mayor ${TOPE_PANTALLA_PX}"
+    fi
+
+    # --- 4. SIN RECETA: EL ORIGINAL, BYTE POR BYTE ---
+    if (( ${#receta[@]} == 0 )); then
+        cp -f "$origen" "$destino"
+        return
+    fi
+
+    # --- 5. LA COPIA, DESDE EL CACHÉ O NUEVA ---
+    mkdir -p "$dir_cache" || return 1
+    huella=$(sha256sum "$origen" | cut -d' ' -f1)
+    cache="$dir_cache/$huella-v$VERSION_PANTALLA-$TOPE_PANTALLA_PX.$extension"
+    if [[ ! -f "$cache" ]]; then
+        # EL TEMPORAL CONSERVA LA EXTENSIÓN: convert ELIGE EL FORMATO POR ELLA
+        temporal="$dir_cache/.tmp-$$.$extension"
+        if ! convert "$origen[0]" "${receta[@]}" -strip "$temporal" 2>/dev/null; then
+            rm -f "$temporal"
+            return 1
+        fi
+        mv -f "$temporal" "$cache" || return 1
+    fi
+
+    # --- 6. SOLO REDUCIDA Y MÁS PESADA: VA EL ORIGINAL ---
+    if (( color == 0 )) && (( $(stat -c %s "$cache") >= $(stat -c %s "$origen") )); then
+        PANTALLA_NOTA="${ancho}×${alto}: reducida pesaba más que el original; va el original"
+        cp -f "$origen" "$destino"
+        return
+    fi
+    cp -f "$cache" "$destino" || return 1
+    PANTALLA_PREPARADA=1
+}
+
+# ============================================================================
 # Función   : estilo_canonico
 # Propósito : El estilo de cita que declara el canónico de una pieza: el
-#             <bibliomisc role="csl-style"> de su <info> (SC-57). Lo escribe
-#             m_XML.GenerarInfoCapituloXML.
+#             <bibliomisc role="estilo-cita"> de su <info> (SC-57). Lo escribe
+#             m_XML.GenerarInfoCapituloXML. Un canónico anterior al cambio de
+#             nombre (csl-style) no lo declara: el cotejo lo hace fallar y se
+#             regenera.
 # Parámetros: $1 ruta del canónico
 # Retorna   : imprime el valor; nada si el canónico no lo declara
 # Nota      : SOLO EL <info> DE LA RAÍZ: UNA SECCIÓN TAMBIÉN PUEDE TENER
@@ -211,7 +367,7 @@ bien_formado() {
 #             NOMBRES DE DocBook
 # ============================================================================
 estilo_canonico() {
-    xmllint --xpath 'string(/*/*[local-name()="info"]/*[local-name()="bibliomisc"][@role="csl-style"][1])' "$1" 2>/dev/null
+    xmllint --xpath 'string(/*/*[local-name()="info"]/*[local-name()="bibliomisc"][@role="estilo-cita"][1])' "$1" 2>/dev/null
 }
 
 # ============================================================================
@@ -222,9 +378,9 @@ estilo_canonico() {
 # Retorna   : imprime la carpeta y devuelve 0; con un prefijo no reconocido
 #             no imprime nada y devuelve 1
 # Nota      : ÚNICO LUGAR DE ESTA REGLA EN engine/. LA USAN
-#             generar_canonicos_capitulos.sh Y, POR avisar_md_posterior,
-#             preparar_latex_libro.sh Y ensamblar_libro.sh: SI CAMBIA UNA
-#             CARPETA, CAMBIA ACÁ
+#             generar_canonicos_capitulos.sh Y vigencia_canonico, QUE A SU
+#             VEZ USAN ensamblar_libro.sh, preparar_latex_libro.sh Y
+#             validar_canonicos.sh: SI CAMBIA UNA CARPETA, CAMBIA ACÁ
 # ============================================================================
 carpeta_de_pieza() {
     case "$1" in
@@ -236,26 +392,111 @@ carpeta_de_pieza() {
 }
 
 # ============================================================================
-# Función   : avisar_md_posterior
-# Propósito : Avisa si el .md de una pieza es posterior a su canónico: el
-#             canónico no tiene los últimos cambios y la salida los pierde
-#             sin ningún error.
-# Parámetros: $1 nombre_archivo  $2 ruta del canónico
-# Retorna   : siempre 0; el aviso lo cuenta aviso()
+# Función   : vigencia_canonico
+# Propósito : El estado de un canónico frente a sus archivos fuente (SC-75).
+#             Las fuentes son lo que se copia DENTRO del canónico: el .md y
+#             los cuadros que nombra. Cada una quedó anotada al generarlo, con
+#             su huella, en una <?gb-fuente archivo="…" sha256="…"?> del
+#             prólogo; el canónico del libro trae las de todos sus capítulos.
+# Parámetros: $1 ruta del canónico
+# Retorna   : siempre 0. El resultado queda en dos globales, para que quien
+#             llama decida qué hace con él (el ensamblado frena, el validador
+#             avisa):
+#               VIGENCIA_ESTADO   vigente | desactualizado | huerfano |
+#                                 sin_huella | ilegible
+#               VIGENCIA_DETALLE  el motivo, para el editor
 # Nota      : USA DIR_PROYECTO, QUE DEFINE CADA SCRIPT.
-#             POR FECHA DE MODIFICACIÓN: UN GUARDADO SIN CAMBIOS REALES
-#             TAMBIÉN AVISA. SOLO MIRA EL .md: UN CAMBIO EN LA BASE QUE
-#             LLEGA AL CANÓNICO POR tmp/info-*.xml O tmp/biblio-*.xml NO SE
-#             DETECTA. SIN .md O CON PREFIJO NO RECONOCIDO NO AVISA: ESO LO
-#             INFORMA LA GENERACIÓN DEL CANÓNICO
+#             GLOBALES Y NO UNA SALIDA IMPRESA: CON $(…) LA FUNCIÓN CORRERÍA
+#             EN UNA SUBSHELL Y NO PODRÍA DEVOLVER DOS VALORES.
+#             sha256 Y NO FECHA DE MODIFICACIÓN: UNA COPIA DESDE OTRA MÁQUINA
+#             CAMBIA LA FECHA SIN CAMBIAR EL TEXTO, O CONSERVA UNA FECHA VIEJA
+#             CON TEXTO NUEVO.
+#             LO QUE LLEGA DE LA BASE (tmp/info-*, tmp/biblio-*) NO TIENE
+#             HUELLA: «vigente» QUIERE DECIR VIGENTE RESPECTO DE SUS ARCHIVOS
+#             FUENTE, NO RESPECTO DE LA BASE
 # ============================================================================
-avisar_md_posterior() {
-    local carpeta md
-    carpeta="$(carpeta_de_pieza "$1")" || return 0
-    md="$DIR_PROYECTO/$carpeta/$1.md"
-    # EL -f PRIMERO: SIN .md NO HAY NADA QUE COMPARAR
-    if [[ -f "$md" && "$md" -nt "$2" ]]; then
-        aviso "$carpeta/$1.md es posterior a su canónico: regenerá el canónico"
+vigencia_canonico() {
+    local canonico="$1"
+    local nombre carpeta pis pi archivo huella actual
+    local fuentes=0
+    local problemas=()
+
+    VIGENCIA_ESTADO=""
+    VIGENCIA_DETALLE=""
+
+    # --- A. BIEN FORMADO: SIN ESO NO HAY PI QUE LEER ---
+    if ! bien_formado "$canonico"; then
+        VIGENCIA_ESTADO="ilegible"
+        VIGENCIA_DETALLE="el canónico está mal formado"
+        return 0
+    fi
+
+    # --- B. HUÉRFANO: UNA PIEZA SIN SU .md ---
+    # EL NOMBRE ES jats/c-{nombre_archivo}.xml (m_XML). EL DEL LIBRO,
+    # c-libro-{base}.xml, NO TIENE .md PROPIO: SUS FUENTES SON LAS DE SUS
+    # CAPÍTULOS. UN NOMBRE CON PREFIJO DESCONOCIDO TAMPOCO TIENE DE DÓNDE
+    # REGENERARSE: ES HUÉRFANO
+    nombre="$(basename "$canonico" .xml)"
+    nombre="${nombre#c-}"
+    if [[ "$nombre" != libro-* ]]; then
+        if ! carpeta="$(carpeta_de_pieza "$nombre")"; then
+            VIGENCIA_ESTADO="huerfano"
+            VIGENCIA_DETALLE="«$nombre» no corresponde a ninguna pieza (se espera fm-, a- o bm-)"
+            return 0
+        fi
+        if [[ ! -f "$DIR_PROYECTO/$carpeta/$nombre.md" ]]; then
+            VIGENCIA_ESTADO="huerfano"
+            VIGENCIA_DETALLE="no existe $carpeta/$nombre.md"
+            return 0
+        fi
+    fi
+
+    # --- C. LAS PI DEL PRÓLOGO ---
+    # grep -o Y NO UNA PI POR LÍNEA: NO DEPENDE DE CÓMO SEPARE xmllint LOS
+    # NODOS QUE DEVUELVE. EL CONJUNTO VACÍO NO ES UN ERROR: ES «SIN HUELLA»
+    pis="$(xmllint --xpath '/processing-instruction("gb-fuente")' "$canonico" 2>/dev/null |
+           grep -oP '<\?gb-fuente\s.*?\?>')"
+
+    while IFS= read -r pi; do
+        [[ -z "$pi" ]] && continue
+        fuentes=$((fuentes + 1))
+
+        # LA FORMA LA ESCRIBE ensamblar-capitulo-canonico.xsl: archivo
+        # PRIMERO, sha256 DESPUÉS, 64 CIFRAS HEXADECIMALES
+        if [[ ! "$pi" =~ archivo=\"([^\"]*)\"\ sha256=\"([0-9a-f]{64})\" ]]; then
+            problemas+=("una huella ilegible: $pi")
+            continue
+        fi
+        archivo="${BASH_REMATCH[1]}"
+        huella="${BASH_REMATCH[2]}"
+
+        # LA RUTA ES RELATIVA AL PROYECTO Y NO SALE DE ÉL
+        if [[ "$archivo" == /* || "$archivo" == *..* ]]; then
+            problemas+=("una huella con una ruta fuera del proyecto: $archivo")
+            continue
+        fi
+        if [[ ! -f "$DIR_PROYECTO/$archivo" ]]; then
+            problemas+=("falta $archivo")
+            continue
+        fi
+        actual="$(sha256sum "$DIR_PROYECTO/$archivo" | cut -d' ' -f1)"
+        if [[ "$actual" != "$huella" ]]; then
+            problemas+=("$archivo cambió")
+        fi
+    done <<< "$pis"
+
+    # --- D. ESTADO ---
+    if (( ${#problemas[@]} > 0 )); then
+        VIGENCIA_ESTADO="desactualizado"
+        local IFS=";"
+        VIGENCIA_DETALLE="${problemas[*]}"
+        VIGENCIA_DETALLE="${VIGENCIA_DETALLE//;/; }"
+    elif (( fuentes == 0 )); then
+        VIGENCIA_ESTADO="sin_huella"
+        VIGENCIA_DETALLE="el canónico no registra sus fuentes: es anterior a SC-75"
+    else
+        VIGENCIA_ESTADO="vigente"
+        VIGENCIA_DETALLE="$fuentes archivo(s) fuente sin cambios"
     fi
     return 0
 }

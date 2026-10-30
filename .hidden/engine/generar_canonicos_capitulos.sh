@@ -27,13 +27,19 @@
 # POR CADA CAPÍTULO
 #   0. controles_md.lua sobre el .md: lo que el Markdown deja pasar y llega
 #      mal al impreso. Un hallazgo «error» frena el capítulo; un «aviso», no.
-#      Ver «CONTROLES DEL .md»
-#   1. pandoc con los filtros de libro → tmp/body-{base}.xml (con su envoltorio)
-#   2. Saxon con ensamblar-capitulo-canonico.xsl → jats/c-{nombre}.xml,
+#      El mismo filtro lista los cuadros que nombra el .md. Ver «CONTROLES
+#      DEL .md»
+#   1. las huellas de las fuentes —el .md y sus cuadros— → tmp/huellas-{base}.xml.
+#      Ver «HUELLAS»
+#   2. pandoc con los filtros de libro → tmp/body-{base}.xml (con su envoltorio)
+#   3. Saxon con ensamblar-capitulo-canonico.xsl → jats/c-{nombre}.xml,
 #      escrito en un temporal y renombrado con mv: nunca queda en disco un
 #      canónico a medio escribir (el mismo motivo que en ensamblar_libro.sh)
-#   3. jing contra DocBook 5.2: informativo, como en el libro. Los IDREF sin
-#      ID no cuentan como aviso: ver «VALIDACIÓN DEL CAPÍTULO SUELTO»
+#
+# AL FINAL DEL LOTE
+#   validar_canonicos.sh, anidado y UNA vez, con los canónicos que se
+#   generaron (SC-75). Informativo: un canónico bien formado que no valida
+#   se conserva, pero el aviso llega a Gambas como código 3.
 # ============================================================================
 # QUÉ PASA CUANDO UN CAPÍTULO FALLA
 #
@@ -61,24 +67,31 @@
 #   Lo mismo con el aviso de comillas de guillemets-to-quoted-db.lua: lo da
 #   el control comillas_desbalanceadas y en la conversión se omite.
 #
-# VALIDACIÓN DEL CAPÍTULO SUELTO
+# HUELLAS (SC-75)
 #
-#   Un capítulo validado solo no puede resolver lo que remite afuera de él: las
-#   citas a la bibliografía consolidada (sus bib-* viven en otro archivo, que
-#   entra recién al ensamblar) y las remisiones a figuras o secciones de otra
-#   pieza. jing las informa como «IDREF "…" without matching ID» aunque el
-#   libro esté bien (SC-32). Contarlas como aviso daría código 3 en todo libro
-#   con bibliografía consolidada, y un aviso que sale siempre tapa a los que
-#   importan.
+#   El canónico anota en su prólogo, en una <?gb-fuente archivo="…"
+#   sha256="…"?> por archivo, la huella de cada fuente que se copia dentro de
+#   él: el .md y los cuadros/{id}.md que nombra (los lista controles_md.lua en
+#   tmp/fuentes-{base}.txt). Con eso vigencia_canonico (comun.sh) sabe si el
+#   canónico corresponde todavía a sus fuentes; el ensamblado y el PDF frenan
+#   si no.
 #
-#   Así que el capítulo se valida en dos capas: los IDREF sin ID se informan en
-#   tenue, como remisiones que se verifican al ensamblar; todo otro error de
-#   jing sigue siendo aviso. No se pierde nada: un IDREF colgado de verdad lo
+#   Se calculan ANTES de pandoc, sobre los mismos archivos que pandoc va a
+#   leer. Una ruta con comillas dobles se rechaza: el contenido de una PI no
+#   se escapa y la comilla cortaría el valor.
+#
+# VALIDACIÓN
+#
+#   La hace validar_canonicos.sh, con las reglas de la pieza suelta: los
+#   IDREF sin ID van en tenue, porque una pieza sola no puede resolver lo que
+#   remite afuera de ella —las citas a la bibliografía consolidada y las
+#   remisiones a otra pieza (SC-32, SC-53)—. Un IDREF colgado de verdad lo
 #   marca la validación del libro en ensamblar_libro.sh, que sí avisa.
 #
 # CÓDIGOS DE SALIDA (comun.sh)
 #   0  todos los capítulos generados y válidos
-#   3  todos generados, alguno con avisos (validación de esquema)
+#   3  todos generados, alguno con avisos (de los controles, de pandoc o de
+#      la validación)
 #   1  al menos un capítulo no se generó, o el lote no pudo empezar
 # ============================================================================
 
@@ -93,15 +106,12 @@ fi
 # --- 1. CONFIGURACIÓN ---
 TIEMPO_PANDOC=120
 TIEMPO_SAXON=120
-LINEAS_ERROR_RNG=15
-
-# EL MENSAJE DE jing PARA UN IDREF SIN SU ID. TOMADO DE LA SALIDA REAL DE jing
-# EN LINUX MINT: «69:1130: error: IDREF "bib-4308-TOCHO2020" without matching ID»
-PATRON_IDREF='IDREF "[^"]*" without matching ID'
 
 XSL="$DIR_GBP_LOCAL/xslt/ensamblar-capitulo-canonico.xsl"
-RNG="$DIR_GBP_LOCAL/schemas/docbook/docbook.rng"
 DIR_FILTROS="$DIR_GBP_LOCAL/filters"
+
+# LA LISTA QUE ESTE SCRIPT LE PASA AL VALIDADOR, RELATIVA AL PROYECTO
+LISTA_VALIDAR="tmp/lote-validar.txt"
 
 # LA LISTA DE FILTROS, CON EL ORDEN Y SUS RAZONES, ESTÁ EN comun.sh
 # (FILTROS_LIBRO): LA USA TAMBIÉN vista_cuadro.sh, QUE TIENE QUE PASAR EL
@@ -124,17 +134,68 @@ fallo() {
 }
 
 # ============================================================================
+# Función   : escribir_huellas
+# Propósito : Escribe el XML de huellas que lee ensamblar-capitulo-canonico.xsl
+#             (SC-75): una <fuente archivo="…" sha256="…"/> por archivo.
+# Parámetros: $1 ruta del XML a escribir; $2… rutas de las fuentes, relativas
+#             al proyecto
+# Retorna   : 0 escrito; 1 no, con el motivo informado por fallo()
+# Nota      : SE ESCRIBE EN UN TEMPORAL Y SE PONE CON mv, COMO TODO PRODUCTO
+#             (SC-53). SE ESCAPAN & < >; LAS COMILLAS SE RECHAZAN ANTES: EL
+#             XML LAS ADMITIRÍA ESCAPADAS, PERO LA PI DEL CANÓNICO NO
+# ============================================================================
+escribir_huellas() {
+    local destino="$1"
+    shift
+    local rel valor suma
+
+    for rel in "$@"; do
+        if [[ "$rel" == *\"* || "$rel" == *$'\t'* || "$rel" == *$'\n'* ]]; then
+            fallo "la fuente «$rel» tiene comillas, tabuladores o saltos de línea en el nombre"
+            return 1
+        fi
+        if [[ ! -f "$DIR_PROYECTO/$rel" ]]; then
+            fallo "no existe la fuente $rel"
+            return 1
+        fi
+    done
+
+    {
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n<huellas>\n'
+        for rel in "$@"; do
+            suma="$(sha256sum "$DIR_PROYECTO/$rel" | cut -d' ' -f1)"
+            valor="${rel//&/&amp;}"
+            valor="${valor//</&lt;}"
+            valor="${valor//>/&gt;}"
+            printf '  <fuente archivo="%s" sha256="%s"/>\n' "$valor" "$suma"
+        done
+        printf '</huellas>\n'
+    } > "$destino.tmp" || { fallo "no se pudo escribir ${destino#$DIR_PROYECTO/}"; return 1; }
+
+    if ! bien_formado "$destino.tmp"; then
+        rm -f "$destino.tmp"
+        fallo "las huellas quedaron mal formadas: ${destino#$DIR_PROYECTO/}"
+        return 1
+    fi
+    mv -f "$destino.tmp" "$destino" || { fallo "no se pudo reemplazar ${destino#$DIR_PROYECTO/}"; return 1; }
+    return 0
+}
+
+# ============================================================================
 # Función   : procesar_capitulo
-# Propósito : pandoc, Saxon y jing para un capítulo.
+# Propósito : Controles, huellas, pandoc y Saxon para un capítulo. La
+#             validación la hace el lote al final.
 # Parámetros: $1 nombre_archivo  $2 xml_id  $3 tipo_capitulo  $4 idioma
 # Retorna   : 0 generado (con o sin avisos, que cuenta aviso()); 1 no generado
 # ============================================================================
 procesar_capitulo() {
     local nombre="$1" xml_id="$2" tipo="$3" idioma="$4"
     local base carpeta md info body biblio parcial canonico temporal
-    local salida codigo filtro errores remisiones propios
+    local salida codigo filtro
     local informe nivel control mensaje errores_control lectura linea
+    local fuentes huellas cuadro
     local args_pandoc=()
+    local lista_fuentes=()
 
     # --- A. RUTAS ---
     # EL NOMBRE SIN PREFIJO, COMO Mid(…, InStr(…, "-") + 1) EN GAMBAS
@@ -165,12 +226,16 @@ procesar_capitulo() {
     # EL INFORME VA A UN ARCHIVO Y NO A stderr: ASÍ NO SE MEZCLA CON LOS
     # MENSAJES DE PANDOC. SE BORRA ANTES: UNO VIEJO NO PUEDE PASAR POR ESTE
     informe="$DIR_PROYECTO/tmp/controles-$base.tsv"
-    rm -f "$informe"
+    # LA LISTA DE CUADROS QUE NOMBRA EL .md, PARA LAS HUELLAS (SC-75). MISMO
+    # CONTRATO QUE EL INFORME: SE BORRA ANTES Y SU AUSENCIA ES UN FALLO
+    fuentes="$DIR_PROYECTO/tmp/fuentes-$base.txt"
+    rm -f "$informe" "$fuentes"
 
     lectura=$(timeout "$TIEMPO_PANDOC" pandoc "$md" \
                 --from markdown --to plain \
                 --lua-filter "$DIR_ENGINE/controles_md.lua" \
                 --metadata gb-controles="$informe" \
+                --metadata gb-fuentes="$fuentes" \
                 --metadata gb-proyecto="$DIR_PROYECTO" \
                 --output /dev/null 2>&1)
     codigo=$?
@@ -184,6 +249,10 @@ procesar_capitulo() {
     # ESTÁ, EL CONTROL NO CORRIÓ, Y NO SE PUEDE DAR EL .md POR REVISADO
     if [[ ! -f "$informe" ]]; then
         fallo "los controles del .md no escribieron su informe"
+        return 1
+    fi
+    if [[ ! -f "$fuentes" ]]; then
+        fallo "los controles del .md no escribieron la lista de cuadros"
         return 1
     fi
 
@@ -210,6 +279,16 @@ procesar_capitulo() {
         return 1
     fi
     ok "controles del .md"
+
+    # --- C2. HUELLAS (SC-75) ---
+    # ANTES DE PANDOC: LA HUELLA ES DE LO QUE PANDOC VA A LEER
+    huellas="$DIR_PROYECTO/tmp/huellas-$base.xml"
+    lista_fuentes=("$carpeta/$nombre.md")
+    while IFS= read -r cuadro || [[ -n "$cuadro" ]]; do
+        [[ -n "$cuadro" ]] && lista_fuentes+=("$cuadro")
+    done < "$fuentes"
+    escribir_huellas "$huellas" "${lista_fuentes[@]}" || return 1
+    ok "huellas de ${#lista_fuentes[@]} fuente(s)"
 
     # --- D. PANDOC ---
     # SE BORRA EL body ANTERIOR: SI ESTA CORRIDA FALLA, NO PUEDE QUEDAR EL
@@ -285,7 +364,8 @@ procesar_capitulo() {
                 biblio="$biblio" \
                 tipo_capitulo="$tipo" \
                 xml_id_capitulo="$xml_id" \
-                idioma="$idioma" 2>&1)
+                idioma="$idioma" \
+                huellas="$huellas" 2>&1)
     codigo=$?
 
     if (( codigo == 124 )); then
@@ -317,45 +397,6 @@ procesar_capitulo() {
 
     mv -f "$temporal" "$canonico" || { fallo "no se pudo reemplazar jats/c-$nombre.xml"; return 1; }
     ok "canónico bien formado"
-
-    # --- F. VALIDACIÓN CONTRA DocBook 5.2 ---
-    # INFORMATIVA, COMO EN EL LIBRO: UN CANÓNICO BIEN FORMADO QUE NO VALIDA SE
-    # CONSERVA, PERO EL AVISO LLEGA A GAMBAS COMO CÓDIGO 3. LA AUSENCIA DE jing
-    # O DEL ESQUEMA SE AVISA UNA SOLA VEZ, ANTES DEL LOTE
-    if [[ "$VALIDAR" == "si" ]]; then
-        salida=$(jing "$RNG" "$canonico" 2>&1)
-        codigo=$?
-        if (( codigo == 0 )); then
-            ok "válido contra DocBook 5.2"
-        else
-            # SE QUITA LA RUTA, QUE SE REPITE EN CADA LÍNEA. QUEDA
-            # LÍNEA:COLUMNA Y EL MENSAJE
-            salida=$(printf '%s\n' "$salida" | sed "s|^$canonico:||")
-            remisiones=$(printf '%s\n' "$salida" | grep -c -- "$PATRON_IDREF")
-            propios=$(printf '%s\n' "$salida" | grep -v -- "$PATRON_IDREF" | grep .)
-
-            # LOS ERRORES PROPIOS DEL CAPÍTULO: AVISO, COMO SIEMPRE
-            if [[ -n "$propios" ]]; then
-                errores=$(printf '%s\n' "$propios" | grep -c .)
-                aviso "$errores error(es) de validación contra el esquema:"
-                printf '%s\n' "$propios" | head -"$LINEAS_ERROR_RNG" | sed 's/^/     /'
-                if (( errores > LINEAS_ERROR_RNG )); then
-                    tenue "(+$((errores - LINEAS_ERROR_RNG)) más)"
-                fi
-            elif (( remisiones == 0 )); then
-                # jing FALLÓ SIN ERRORES QUE MOSTRAR: NO SE PUEDE DAR POR VÁLIDO
-                aviso "jing terminó con código $codigo sin informar errores: el canónico no se validó"
-            else
-                # NO SE DICE «VÁLIDO»: LAS REMISIONES TODAVÍA NO SE VERIFICARON
-                ok "sin errores de esquema propios del capítulo"
-            fi
-
-            # LAS REMISIONES: INFORMACIÓN, NO AVISO (VER LA CABECERA)
-            if (( remisiones > 0 )); then
-                tenue "$remisiones remisión(es) a IDs fuera del capítulo (bibliografía consolidada u otra pieza): se verifican al ensamblar el libro"
-            fi
-        fi
-    fi
 
     return 0
 }
@@ -397,18 +438,11 @@ fi
 
 [[ -f "$DIR_ENGINE/controles_md.lua" ]] || morir "No se encontró el filtro de controles: $DIR_ENGINE/controles_md.lua"
 
-ok "herramientas, hoja, filtros y controles"
+ok "herramientas, hoja, filtros, controles y validador"
 
-# LA FALTA DE VALIDADOR SE AVISA UNA VEZ, NO UNA POR CAPÍTULO. SIGUE SIENDO
-# AVISO: EL INFORME NO PUEDE DAR POR VÁLIDO LO QUE NO VALIDÓ
-VALIDAR="si"
-if ! command -v jing >/dev/null 2>&1; then
-    aviso "jing no está instalado: los canónicos no se validan contra el esquema"
-    VALIDAR="no"
-elif [[ ! -f "$RNG" ]]; then
-    aviso "no se encontró el esquema $RNG: los canónicos no se validan"
-    VALIDAR="no"
-fi
+# EL VALIDADOR ES DEL LOTE: SI NO ESTÁ, NO SE EMPIEZA. VERIFICA ÉL MISMO SUS
+# HERRAMIENTAS (jing, Saxon, LOS ESQUEMAS) Y AVISA SI FALTA ALGUNA
+[[ -f "$DIR_ENGINE/validar_canonicos.sh" ]] || morir "No se encontró el validador: $DIR_ENGINE/validar_canonicos.sh"
 
 # --- 4. LISTA ---
 paso "leyendo la lista de capítulos"
@@ -436,6 +470,8 @@ ok "$TOTAL capítulo(s)"
 GENERADOS=0
 CON_AVISOS=()
 FALLIDOS=()
+# LOS QUE SE GENERARON, PARA EL VALIDADOR
+GENERADOS_LISTA=()
 
 for (( i = 0; i < TOTAL; i++ )); do
     nombre="${NOMBRES[$i]}"
@@ -444,6 +480,7 @@ for (( i = 0; i < TOTAL; i++ )); do
     avisos_antes=$AVISOS
     if procesar_capitulo "$nombre" "${IDS[$i]}" "${TIPOS[$i]}" "${IDIOMAS[$i]}"; then
         GENERADOS=$((GENERADOS + 1))
+        GENERADOS_LISTA+=("$nombre")
         (( AVISOS > avisos_antes )) && CON_AVISOS+=("$nombre")
     else
         FALLIDOS+=("$nombre")
@@ -455,8 +492,41 @@ for (( i = 0; i < TOTAL; i++ )); do
     fi
 done
 
-# --- 6. RESUMEN ---
-# SOLO SE AFIRMA LO VERIFICADO: CADA ✓ DE ARRIBA LO DIJO xmllint O jing
+# --- 6. VALIDACIÓN DEL LOTE (SC-75) ---
+# UNA SOLA LLAMADA CON TODOS LOS QUE SE GENERARON: jing Y EL SCHEMATRON CORREN
+# UNA VEZ. INFORMATIVA: EL CANÓNICO SE CONSERVA, PERO LOS HALLAZGOS LLEGAN A
+# GAMBAS COMO CÓDIGO 3. EL VALIDADOR CORRE EN OTRO PROCESO Y SUS AVISOS NO
+# SUMAN ACÁ: EL CÓDIGO SE HEREDA CON UN aviso PROPIO, Y EL INFORME DICE QUÉ
+# CAPÍTULO LOS TUVO
+if (( GENERADOS > 0 )); then
+    : > "$DIR_PROYECTO/$LISTA_VALIDAR" || morir "No se pudo escribir la lista del validador: $LISTA_VALIDAR"
+    for nombre in "${GENERADOS_LISTA[@]}"; do
+        printf 'jats/c-%s.xml\n' "$nombre" >> "$DIR_PROYECTO/$LISTA_VALIDAR"
+    done
+
+    GBP_ANIDADO=1 bash "$DIR_ENGINE/validar_canonicos.sh" "$DIR_PROYECTO" completo "$LISTA_VALIDAR"
+    codigo=$?
+
+    if (( codigo != SALIDA_OK )); then
+        # LOS CAPÍTULOS CON UN aviso O UN fallo EN EL INFORME. awk CON
+        # IGUALDAD EXACTA: EL NOMBRE NO ES UNA EXPRESIÓN REGULAR
+        for nombre in "${GENERADOS_LISTA[@]}"; do
+            if awk -F '\t' -v a="jats/c-$nombre.xml" '$1 == a && ($3 == "aviso" || $3 == "fallo") { e = 1 } END { exit !e }' \
+                   "$DIR_PROYECTO/tmp/validacion.tsv" 2>/dev/null; then
+                [[ " ${CON_AVISOS[*]} " == *" $nombre "* ]] || CON_AVISOS+=("$nombre")
+            fi
+        done
+        if (( codigo == SALIDA_AVISOS )); then
+            aviso "la validación encontró hallazgos: los canónicos se conservan"
+        else
+            aviso "la validación no pudo completarse (código $codigo): los canónicos se conservan, pero no se dan por válidos"
+        fi
+    fi
+fi
+
+# --- 7. RESUMEN ---
+# SOLO SE AFIRMA LO VERIFICADO: CADA ✓ DE ARRIBA LO DIJO xmllint, jing O EL
+# SCHEMATRON
 echo
 titulo "$REGLA"
 if (( ${#FALLIDOS[@]} == 0 )); then
@@ -467,11 +537,8 @@ else
     printf '    %s\n' "${FALLIDOS[@]}"
 fi
 if (( ${#CON_AVISOS[@]} > 0 )); then
-    printf '  %s⚠ Con avisos (de los controles, de pandoc o del esquema):%s\n' "$C_AVISO" "$C_RESET"
+    printf '  %s⚠ Con avisos (de los controles, de pandoc o de la validación):%s\n' "$C_AVISO" "$C_RESET"
     printf '    %s\n' "${CON_AVISOS[@]}"
-fi
-if [[ "$VALIDAR" == "no" ]]; then
-    printf '  %s⚠ Sin validar contra el esquema: ver el aviso del principio%s\n' "$C_AVISO" "$C_RESET"
 fi
 echo
 

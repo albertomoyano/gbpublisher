@@ -1003,8 +1003,17 @@
       <xsl:if test="@xml:id">
         <xsl:attribute name="id" select="@xml:id"/>
       </xsl:if>
+      <!-- EL ANCHO DEL SHORTCODE (@width="60%"): UN TOPE SOBRE EL TAMAÑO
+           NATURAL, COMO max-width: 100% SIN ÉL (gbpublisher-epub-libro.css).
+           SOLO LA FORMA QUE ESCRIBE EL FILTRO (gbp-ancho) -->
       <xsl:if test="$fileref != ''">
-        <img src="../images/{tokenize($fileref, '/')[last()]}" alt="{$alt}"/>
+        <img src="../images/{tokenize($fileref, '/')[last()]}" alt="{$alt}">
+          <xsl:variable name="ancho" select="string((db:mediaobject/db:imageobject/db:imagedata/@width
+                                             | mediaobject/imageobject/imagedata/@width)[1])"/>
+          <xsl:if test="matches($ancho, '^([1-9][0-9]?|100)%$')">
+            <xsl:attribute name="style" select="concat('max-width:', $ancho)"/>
+          </xsl:if>
+        </img>
       </xsl:if>
       <figcaption class="figura-caption">
         <span class="figura-label">Figura <xsl:value-of select="$num"/></span>

@@ -147,7 +147,9 @@ ok "graficos/$ID.md, descripción escrita"
 # POR NUEVO
 rm -f "$HTML" "$PNG"
 
-# --- 4. EL HTML: LA PLANTILLA CON SUS CINCO HUECOS ---
+# --- 4. EL HTML: LA PLANTILLA CON SUS SEIS HUECOS ---
+# TITULO ES EL ID, YA CONTROLADO ARRIBA (fig-[A-Za-z0-9-]+): NO NECESITA
+# ESCAPE EN HTML. UN <title> VACÍO NO ES HTML VÁLIDO (29/10/2026)
 # perl Y NO LA SUSTITUCIÓN DE bash: CON patsub_replacement (bash 5.2) UN «&»
 # EN EL REEMPLAZO ES LO ENCONTRADO, Y chart.min.js TIENE MUCHOS. index Y
 # substr NO INTERPRETAN NADA DEL REEMPLAZO: VA BYTE POR BYTE. CADA HUECO
@@ -156,14 +158,14 @@ rm -f "$HTML" "$PNG"
 paso "el HTML"
 regular=$(base64 -w0 "$FUENTE_REGULAR") || frenar "no se pudo codificar $FUENTE_REGULAR"
 negrita=$(base64 -w0 "$FUENTE_NEGRITA") || frenar "no se pudo codificar $FUENTE_NEGRITA"
-salida=$(GBP_IDIOMA="$IDIOMA" GBP_REGULAR="$regular" GBP_NEGRITA="$negrita" \
+salida=$(GBP_TITULO="$ID" GBP_IDIOMA="$IDIOMA" GBP_REGULAR="$regular" GBP_NEGRITA="$negrita" \
     perl -e '
         use strict; use warnings;
         sub leer { my ($r) = @_; open(my $f, "<:raw", $r) or die "no se pudo leer $r\n";
                    local $/; my $t = <$f>; close $f; return $t; }
         my ($plantilla, $chartjs, $datos, $destino) = @ARGV;
         my $t = leer($plantilla);
-        my @huecos = (["IDIOMA", $ENV{GBP_IDIOMA}], ["REGULAR", $ENV{GBP_REGULAR}],
+        my @huecos = (["TITULO", $ENV{GBP_TITULO}], ["IDIOMA", $ENV{GBP_IDIOMA}], ["REGULAR", $ENV{GBP_REGULAR}],
                       ["NEGRITA", $ENV{GBP_NEGRITA}], ["CHARTJS", leer($chartjs)],
                       ["DATOS", leer($datos)]);
         for my $h (@huecos) {

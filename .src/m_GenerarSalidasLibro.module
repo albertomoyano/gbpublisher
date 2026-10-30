@@ -2,9 +2,10 @@
 
 ' ==========================================================
 ' MÓDULO    : m_GenerarSalidasLibro
-' PROPÓSITO : Punto de entrada de las salidas del libro y del ensamblado de su
-'             canónico. La lógica pesada vive en scripts de engine/ (SC-13);
-'             acá queda lo que sale de la base y el lanzamiento.
+' PROPÓSITO : Punto de entrada de las salidas del libro, del ensamblado de su
+'             canónico y de su validación (SC-75). La lógica pesada vive en
+'             scripts de engine/ (SC-13); acá queda lo que sale de la base y
+'             el lanzamiento.
 '
 ' CÓMO SE LANZA UN SCRIPT, Y POR QUÉ ASÍ
 ' ----------------------------------------------------------
@@ -53,6 +54,10 @@ Private Const PLAZO_CANONICOS_CAPITULO As Float = 600.0
 Private Const PLAZO_HTML As Float = 600.0
 ' EL PDF HACE CINCO O MÁS PASADAS DE LuaLaTeX, MÁS biber Y xindy
 Private Const PLAZO_PDF As Float = 1200.0
+' LA VALIDACIÓN DE UN CANÓNICO: jing Y UNA JVM DE SAXON PARA EL SCHEMATRON
+Private Const PLAZO_VALIDAR As Float = 300.0
+' LA REVISIÓN DE VIGENCIA AL ABRIR: SOLO sha256sum Y xmllint, SIN JVM
+Private Const PLAZO_VIGENCIA As Float = 120.0
 
 ' --- PDF/A DE LIBROS ---
 ' latex/pdfa/: LOS AUXILIARES DEL PDF/A NO PISAN LOS DEL PDF ESTÁNDAR (LOS
@@ -70,6 +75,11 @@ Public Const SALIDA_FALLO As Integer = 1
 ' RELATIVA AL PROYECTO. UNA SOLA: NO PUEDE HABER DOS LOTES A LA VEZ
 Private Const LISTA_CANONICOS As String = "tmp/lote-canonicos.tsv"
 
+' LISTA DE CANÓNICOS QUE GAMBAS LE PASA A validar_canonicos.sh, RELATIVA AL
+' PROYECTO. LA MISMA QUE USAN LOS SCRIPTS QUE LO LLAMAN ANIDADO: NUNCA CORREN
+' DOS A LA VEZ (SC-53)
+Private Const LISTA_VALIDAR As String = "tmp/lote-validar.txt"
+
 ' RESULTADOS PROPIOS DE LA LANZADORA. NEGATIVOS PARA QUE NO SE CONFUNDAN CON
 ' NINGÚN CÓDIGO DE SALIDA DE UN PROCESO
 Public Const RESULTADO_EN_CURSO As Integer = -1
@@ -83,6 +93,11 @@ Private $bScriptEnCurso As Boolean = False
 
 ' CONTADOR DE LANZAMIENTOS DE LA SESIÓN, PARA EL NOMBRE ÚNICO DEL ESTADO
 Private $iLanzamiento As Integer = 0
+
+' EL PROYECTO ABIERTO ADMITE LA VALIDACIÓN DEL VISOR XML: SOLO LOS LIBROS
+' (SC-75). LA FIJA HabilitarValidacion EN LA APERTURA Y LA RESPETA
+' BloquearSalidas AL DESBLOQUEAR
+Private $bValidacionHabilitada As Boolean = False
 
 ' ============================================
 ' Función   : HayScriptEnCurso
@@ -101,7 +116,8 @@ End
 ' ============================================
 ' Función   : BloquearSalidas
 ' Propósito : Habilita o deshabilita los controles que pueden escribir en la
-'             terminal: el menú de salidas y el de canónicos DocBook.
+'             terminal: el menú de salidas, el de canónicos DocBook y el botón
+'             «Validar» del visor XML.
 '             Ninguno es ancestro del TerminalView: apagar un contenedor que lo
 '             contiene apagaría también el terminal (GV-42).
 ' Parámetros: bBloquear As Boolean — True deshabilita, False habilita
@@ -111,6 +127,26 @@ Private Sub BloquearSalidas(bBloquear As Boolean)
 
   FMain.MenuButtonSalidas.Enabled = Not bBloquear
   FMain.mDocBook.Enabled = Not bBloquear
+  ' AL DESBLOQUEAR, EL BOTÓN VUELVE SOLO SI EL PROYECTO ES UN LIBRO: SI NO,
+  ' TERMINAR UN SCRIPT LO ENCENDERÍA EN UNA REVISTA (SC-75)
+  FMain.btnValidarXML.Enabled = (Not bBloquear) And $bValidacionHabilitada
+
+End
+
+' ============================================
+' Función   : HabilitarValidacion
+' Propósito : Fija si el proyecto abierto admite la validación del visor XML.
+'             La llama la apertura del proyecto con el tipo ya resuelto: True
+'             para un libro, False para una revista, cuya validación (JATS4R)
+'             todavía no está en engine/ (SC-75).
+' Parámetros: bHabilitar As Boolean — True en un libro
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub HabilitarValidacion(bHabilitar As Boolean)
+
+  $bValidacionHabilitada = bHabilitar
+  ' CON UN SCRIPT EN CURSO EL BOTÓN SIGUE APAGADO: LO ENCIENDE EL DESBLOQUEO
+  FMain.btnValidarXML.Enabled = bHabilitar And (Not $bScriptEnCurso)
 
 End
 
@@ -1161,6 +1197,190 @@ Private Function IdiomaDeCapitulo(hCapitulo As Result) As String
   If IsNull(hCapitulo["idioma_capitulo"]) Then Return "es"
   If Len(m_XML.TrimUTF8(hCapitulo["idioma_capitulo"])) = 0 Then Return "es"
   Return m_XML.TrimUTF8(hCapitulo["idioma_capitulo"])
+
+End
+
+' ============================================
+' Función   : ValidarCanonico
+' Propósito : Valida un canónico del visor XML con engine/validar_canonicos.sh
+'             en modo completo (SC-75): bien formado, vigencia, DocBook 5.2
+'             (RNG y Schematron) y recursos. El informe queda en la terminal.
+' Parámetros: sArchivo As String — nombre del archivo dentro de jats/, como lo
+'               muestra cmbArchivosXML (c-a-01-CAP01.xml)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub ValidarCanonico(sArchivo As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaProyecto As String
+  Dim aArgumentos As New String[]
+  Dim iResultado As Integer
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  If sRutaProyecto = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+
+  ' EL BOTÓN YA ESTÁ APAGADO EN UNA REVISTA; ESTO CUBRE UNA LLAMADA DESDE
+  ' OTRO LUGAR (SC-75)
+  If Not $bValidacionHabilitada Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La validación del visor es solo para libros." & gb.NewLine &
+      "La de los artículos de revista todavía no está disponible.")
+    Return
+  Endif
+
+  If sArchivo = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí en la lista el canónico que querés validar.")
+    Return
+  Endif
+
+  ' UN NOMBRE CON / SALDRÍA DE jats/: LA LISTA SOLO TRAE NOMBRES DE ARCHIVO
+  If InStr(sArchivo, "/") > 0 Or Not Exist(sRutaProyecto &/ "jats" &/ sArchivo) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No existe el archivo:" & gb.NewLine & sRutaProyecto &/ "jats" &/ sArchivo)
+    Return
+  Endif
+
+  ' --- 3. LISTA DEL VALIDADOR ---
+  ' UN SOLO ARCHIVO, RELATIVO AL PROYECTO, COMO LO ESPERA EL SCRIPT
+  Try File.Save(sRutaProyecto &/ LISTA_VALIDAR, "jats/" & sArchivo & Chr(10))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir la lista del validador:" & gb.NewLine &
+      LISTA_VALIDAR & gb.NewLine & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 4. LANZAMIENTO ---
+  aArgumentos.Add(sRutaProyecto)
+  aArgumentos.Add("completo")
+  aArgumentos.Add(LISTA_VALIDAR)
+
+  iResultado = EjecutarScriptSalida("validar_canonicos.sh", aArgumentos, PLAZO_VALIDAR,
+    "Validando " & sArchivo)
+
+  ' --- 5. INFORME ---
+  InformarValidacion(iResultado, "«" & sArchivo & "»")
+
+End
+
+' ============================================
+' Función   : RevisarVigenciaLibro
+' Propósito : Revisa al abrir un libro si sus canónicos corresponden todavía a
+'             sus archivos fuente: engine/validar_canonicos.sh en modo
+'             vigencia, sobre todos los jats/c-*.xml (SC-75). Sin JVM. Con
+'             código 0 no muestra nada; un canónico sin huella tampoco se
+'             informa acá, porque avisaría en cada apertura.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub RevisarVigenciaLibro()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaProyecto As String
+  Dim aArgumentos As New String[]
+  Dim iResultado As Integer
+
+  ' --- 2. VALIDACIÓN DE ENTRADA ---
+  ' UN LIBRO SIN jats/ TODAVÍA NO TIENE CANÓNICOS: NO HAY NADA QUE REVISAR, Y
+  ' EL SCRIPT SALDRÍA CON CÓDIGO 1 POR LA CARPETA QUE FALTA
+  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  If sRutaProyecto = "" Then Return
+  If Not IsDir(sRutaProyecto &/ "jats") Then Return
+
+  ' --- 3. LANZAMIENTO ---
+  ' «-» ES TODOS LOS jats/c-*.xml: LOS HUÉRFANOS NO ESTÁN EN NINGUNA LISTA DE
+  ' LA BASE, Y SON PARTE DE LO QUE HAY QUE VER
+  aArgumentos.Add(sRutaProyecto)
+  aArgumentos.Add("vigencia")
+  aArgumentos.Add("-")
+
+  iResultado = EjecutarScriptSalida("validar_canonicos.sh", aArgumentos, PLAZO_VIGENCIA,
+    "Revisando la vigencia de los canónicos")
+
+  ' --- 4. INFORME ---
+  ' EN MODO vigencia EL CÓDIGO 3 SOLO LO DAN DESACTUALIZADOS Y HUÉRFANOS:
+  ' «SIN HUELLA» VA EN TENUE (SC-75)
+  Select Case iResultado
+
+    Case SALIDA_OK
+      ' NADA QUE DECIR: LA APERTURA SIGUE SIN INTERRUPCIONES
+
+    Case SALIDA_AVISOS
+      m_Sonido.sonar("Warning")
+      Message.Warning("Hay canónicos desactualizados o huérfanos." & gb.NewLine & gb.NewLine &
+        "Un canónico desactualizado ya no corresponde a su .md o a sus" & gb.NewLine &
+        "cuadros: el ensamblado, el PDF y el EPUB no se generan hasta" & gb.NewLine &
+        "regenerarlo. Uno huérfano no tiene .md: no se puede regenerar" & gb.NewLine &
+        "y, si sobra, se borra a mano." & gb.NewLine & gb.NewLine &
+        "El detalle está en la terminal.")
+
+    Case SALIDA_FALLO
+      m_Sonido.sonar("Warning")
+      Message.Warning("No se pudo revisar la vigencia de todos los canónicos." & gb.NewLine & gb.NewLine &
+        "El motivo está en la terminal.")
+
+    Case Else
+      ' EN CURSO, NO LANZADO, ABANDONADO, ILEGIBLE U OTRO CÓDIGO
+      InformarValidacion(iResultado, "La revisión de vigencia")
+
+  End Select
+
+End
+
+' ============================================
+' Función   : InformarValidacion
+' Propósito : Traduce el resultado de validar_canonicos.sh a un mensaje. No
+'             usa los textos de InformarResultado: un validador no genera
+'             nada, y «se generó» sería falso (SC-75). Los resultados propios
+'             de la lanzadora sí van a InformarResultado, que ya los conoce.
+' Parámetros: iResultado As Integer — lo que devolvió EjecutarScriptSalida
+'             sQue As String — qué se validó, para el texto («c-a-01.xml»)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub InformarValidacion(iResultado As Integer, sQue As String)
+
+  ' --- 1. RESULTADOS PROPIOS DE LA LANZADORA ---
+  ' NEGATIVOS: EN CURSO, NO LANZADO, ABANDONADO, ILEGIBLE. NINGUNO HABLA DE
+  ' LO QUE SE GENERÓ, ASÍ QUE SUS TEXTOS SIRVEN TAL CUAL
+  If iResultado < 0 Then
+    InformarResultado(iResultado, sQue, "")
+    Return
+  Endif
+
+  ' --- 2. CÓDIGOS DEL VALIDADOR ---
+  ' SOLO SE AFIRMA LO QUE EL SCRIPT VERIFICÓ: «VÁLIDO» ES QUE CORRIERON
+  ' TODAS LAS CAPAS Y NINGUNA ENCONTRÓ NADA
+  Select Case iResultado
+
+    Case SALIDA_OK
+      m_Sonido.sonar("Info")
+      Message.Info(sQue & ": sin hallazgos." & gb.NewLine & gb.NewLine &
+        "Bien formado, al día con sus archivos fuente, válido contra" & gb.NewLine &
+        "DocBook 5.2 (RNG y Schematron), conforme a las reglas de" & gb.NewLine &
+        "gbpublisher y con sus imágenes en png o jpg en media/.")
+
+    Case SALIDA_AVISOS
+      m_Sonido.sonar("Warning")
+      Message.Warning(sQue & " tiene hallazgos." & gb.NewLine & gb.NewLine &
+        "Revisá la terminal: están marcados con ⚠.")
+
+    Case SALIDA_FALLO
+      m_Sonido.sonar("Error")
+      Message.Error(sQue & " no se pudo validar." & gb.NewLine & gb.NewLine &
+        "El motivo está en la terminal.")
+
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error(sQue & " no se pudo validar (código " & CStr(iResultado) & ")." & gb.NewLine & gb.NewLine &
+        "El motivo está al final de la salida en la terminal.")
+
+  End Select
 
 End
 

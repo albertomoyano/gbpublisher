@@ -107,13 +107,19 @@
     <xsl:param name="proporcion" as="xs:string"/>
     <xsl:param name="alt" as="xs:string"/>
     <xsl:param name="espacio" as="xs:string" select="''"/>
+    <!-- EL ANCHO DE LA FIGURA (imagedata/@width, «60%»), SOLO EN LIBROS.
+         UN IFRAME NO TIENE TAMAÑO NATURAL: VA A ESE ANCHO, CENTRADO. SIN
+         ÉL, EL DE LA COLUMNA, COMO ANTES (LAS REVISTAS NO LO PASAN) -->
+    <xsl:param name="ancho" as="xs:string" select="''"/>
     <xsl:element name="iframe" namespace="{$espacio}">
       <xsl:attribute name="class" select="'fig-grafico'"/>
       <xsl:attribute name="src" select="$src"/>
       <xsl:attribute name="title" select="$alt"/>
       <xsl:attribute name="loading" select="'lazy'"/>
       <xsl:attribute name="scrolling" select="'no'"/>
-      <xsl:attribute name="style" select="concat('width:100%;aspect-ratio:', $proporcion, ';border:0;display:block')"/>
+      <xsl:attribute name="style" select="if ($ancho != '')
+                                          then concat('width:', $ancho, ';margin:0 auto;aspect-ratio:', $proporcion, ';border:0;display:block')
+                                          else concat('width:100%;aspect-ratio:', $proporcion, ';border:0;display:block')"/>
     </xsl:element>
   </xsl:template>
 
