@@ -1,0 +1,1 @@
+La democracia\index[concepto]{democracia!liberal|(} es un régimen; la universidad\index[concepto]{universidad|see{educación superior}} es parte de la educación superior\index[concepto]{educación superior|textbf}\index[concepto]{educación superior|seealso{universidad}}, y aquí termina el rango\index[concepto]{democracia!liberal|)}.

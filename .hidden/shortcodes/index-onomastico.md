@@ -1,0 +1,1 @@
+Borges\index[onomastico]{Borges, Jorge Luis!infancia} nació en Buenos Aires y escribió *Ficciones*\index[onomastico]{Borges, Jorge Luis!\emph{Ficciones}}; De la Torre\index[onomastico]{Torre Lisandro@Torre, Lisandro de la} no lo leyó.
