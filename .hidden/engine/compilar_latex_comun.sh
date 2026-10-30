@@ -35,7 +35,16 @@ INTERACTION="nonstopmode"
 TIEMPO_LUALATEX=600
 TIEMPO_BIBER=180
 TIEMPO_XINDY=120
+# EL ESPAÑOL SE PIDE POR IDIOMA Y CODIFICACIÓN (-L -C), NO POR RUTA CON -M:
+# CON LA RUTA, xindy NO ORDENA EN ESPAÑOL (Ávila ANTES QUE Absalón, LA Ñ EN LA
+# A; GV-158). EL ARCHIVO SOLO SE MIRA PARA SABER QUE EL MÓDULO ESTÁ INSTALADO:
+# ES EL QUE CARGA -L spanish-modern -C utf8
+XINDY_IDIOMA="spanish-modern"
+XINDY_CODIFICACION="utf8"
 XINDY_MODULO_ES="/usr/share/xindy/lang/spanish/modern-utf8.xdy"
+# LOS FORMATOS DE PÁGINA DE gbpublisher (SC-77, GV-160). VIAJA EN engine/
+# (DIR_ENGINE LO DEFINE EL LLAMADOR)
+XINDY_MODULO_GB="gbindice.xdy"
 
 # EXTENSIONES QUE SE BORRAN ANTES DE COMPILAR. NUNCA .tex NI .pdf.
 EXT_AUXILIARES=(aux toc lof lot out bcf run.xml bbl blg idx ind ilg log
@@ -229,11 +238,14 @@ correr_biber() {
 #             ENTRADAS DE ESE ÍNDICE.
 #             LOS .idx TIENEN NOMBRE FIJO (\makeindex[name=…] EN LA ESTÉTICA):
 #             POR ESO CADA SALIDA COMPILA EN SU PROPIO DIR_AUX.
+#             UNA PÁGINA CON UN FORMATO QUE xindy NO TIENE DECLARADO SE
+#             DESCARTA CON UN «unknown attribute» Y NADA MÁS (GV-160): SE
+#             AVISA COMO LAS DE NÚMERO NO RECONOCIDO.
 # ============================================================================
 procesar_indices() {
     paso "componiendo los índices"
 
-    local idx ind hay=0 salida descartadas
+    local idx ind hay=0 salida descartadas desconocidos
     for idx in "$DIR_AUX"/*.idx; do
         [[ -f "$idx" ]] || continue
         hay=1
@@ -244,9 +256,12 @@ procesar_indices() {
         fi
 
         ind="${idx%.idx}.ind"
+        # book-order (MÓDULO DE xindy): LOS ROMANOS DE LOS PRELIMINARES ANTES
+        # QUE LOS ARÁBIGOS. SIN ÉL SALÍA «3, XIII» (MEDIDO, 30/10/2026)
         salida=$( cd "$DIR_AUX" && timeout "$TIEMPO_XINDY" xindy \
-                -M texindy -M page-ranges -M word-order \
-                -M "$MODULO_ES" -o "$ind" -I latex "$idx" 2>&1 )
+                -M texindy -M page-ranges -M word-order -M book-order \
+                -M "$MODULO_GB" -L "$XINDY_IDIOMA" -C "$XINDY_CODIFICACION" \
+                -o "$ind" -I latex "$idx" 2>&1 )
 
         if [[ -f "$ind" ]]; then
             ok "$(basename "${idx%.idx}")"
@@ -259,6 +274,10 @@ procesar_indices() {
                           grep -c 'did not match any location-class')
             (( descartadas > 0 )) && aviso \
                 "$descartadas entrada(s) descartadas: número de página no reconocido"
+            desconocidos=$(printf '%s\n' "$salida" |
+                           grep -c 'unknown attribute')
+            (( desconocidos > 0 )) && aviso \
+                "$desconocidos página(s) descartadas: formato no declarado en $XINDY_MODULO_GB"
         else
             aviso "no se pudo componer el índice $(basename "${idx%.idx}")"
         fi
@@ -269,19 +288,22 @@ procesar_indices() {
 
 # ============================================================================
 # Función   : verificar_herramientas_latex
-# Propósito : lualatex, biber y xindy, y el módulo español de xindy. Deja
-#             MODULO_ES con la ruta que se va a usar.
+# Propósito : lualatex, biber y xindy, el módulo español de xindy y el de
+#             gbpublisher. Deja MODULO_GB con la ruta que se va a usar.
 # Nota      : LOS TRES BINARIOS SON OBLIGATORIOS. xindy NO ES OPCIONAL: SIN ÉL
 #             LOS ÍNDICES NO SE COMPONEN Y EL PDF SALE INCOMPLETO SIN DECIRLO.
 # ============================================================================
 verificar_herramientas_latex() {
     requerir_comandos lualatex biber xindy
 
-    MODULO_ES="$XINDY_MODULO_ES"
-    if [[ ! -f "$MODULO_ES" ]]; then
-        MODULO_ES=$(find /usr/share/xindy/lang/spanish -name '*.xdy' 2>/dev/null | head -1)
-        [[ -n "$MODULO_ES" ]] || morir "Falta el módulo español de xindy"
-    fi
+    # SIN RESPALDO A OTRO .xdy DE LA CARPETA: OTRO MÓDULO ORDENARÍA DISTINTO
+    # SIN DECIRLO
+    [[ -f "$XINDY_MODULO_ES" ]] ||
+        morir "Falta el módulo español de xindy: $XINDY_MODULO_ES"
+
+    MODULO_GB="$DIR_ENGINE/$XINDY_MODULO_GB"
+    [[ -f "$MODULO_GB" ]] ||
+        morir "Falta el módulo de índices de gbpublisher: $MODULO_GB"
 
     ok "herramientas del sistema"
 }

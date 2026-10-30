@@ -1080,6 +1080,13 @@
     <xsl:value-of select="."/>
   </xsl:template>
 
+  <!-- MARCAS DE ÍNDICE (SC-77): EN EL HTML Y EL EPUB NO HAY ÍNDICES
+       (DECISIÓN DE ALBERTO, 30/10/2026; LA PIEZA LA OMITE LA MATRIZ DE
+       m_PiezasLibro). EL indexterm NO SE IMPRIME EN NINGÚN MODO: SIN ESTA
+       PLANTILLA, LOS CATCH-ALL QUE PROCESAN LOS HIJOS DEJARÍAN EL TEXTO
+       DEL TÉRMINO EN EL CUERPO («Borges, Jorge Luisinfancia»). -->
+  <xsl:template match="db:indexterm | indexterm" mode="#all"/>
+
   <!-- CATCH-ALL: ELEMENTOS NO CONTEMPLADOS AÚN → PROCESAR HIJOS.
        EVITA QUE CONTENIDO DESCONOCIDO DESAPAREZCA SILENCIOSAMENTE. -->
   <xsl:template match="*">

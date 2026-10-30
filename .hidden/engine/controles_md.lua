@@ -92,11 +92,16 @@ local PATRON_LLAMADA = "%[%^[^%]%s]+%]"
 -- VALIDA EL FILTRO QUE LA TRADUCE, Y FRENA SI ESTÁ MAL
 --   \sptext{…}                     volada.lua (SC-62)
 --   \num{…} \SI{…}{…} \SIrange{…}  cifras.lua (SC-65)
+--   \index[…]{…}                   indice.lua (SC-77). TAMBIÉN SIN EL
+--                                  NOMBRE DEL ÍNDICE: indice.lua FRENA Y
+--                                  DICE CÓMO SE ESCRIBE
 local PATRONES_LATEX = {
   "^\\sptext{.*}$",
   "^\\num{.*}$",
   "^\\SI{.*}$",
   "^\\SIrange{.*}$",
+  "^\\index%[.*}$",
+  "^\\index{.*}$",
 }
 
 -- UNA CIFRA CON SEPARADOR DE MILES: DÍGITO, PUNTO O COMA, TRES DÍGITOS
@@ -347,7 +352,7 @@ local function revisar_crudo_inlines(aInlines, bloque)
         if not latex_admitido(el.text) then
           registrar("latex_en_linea",
             "la orden de LaTeX «" .. contexto(el.text) .. "» se pierde en las tres salidas " ..
-            "(las admitidas en el texto son \\sptext, \\num, \\SI y \\SIrange): «" ..
+            "(las admitidas en el texto son \\sptext, \\num, \\SI, \\SIrange y \\index): «" ..
             contexto_crudo(bloque) .. "»")
         end
       -- --- 2. HTML: TODO, MENOS LOS COMENTARIOS ---

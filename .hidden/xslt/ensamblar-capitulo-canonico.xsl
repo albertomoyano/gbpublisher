@@ -60,10 +60,11 @@
       lista_figuras         → <toc role="lof">
       lista_tablas          → <toc role="lot">
       lista_abreviaturas    → <glossary role="abreviaturas">
-      indice_onomastico     → <index type="onomastic">
-      indice_tematico       → <index type="thematic">
-      indice_analitico      → <index>
       otro                  → <chapter role="otro"> (FALLBACK)
+    LOS ÍNDICES (indice_onomastico, indice_concepto, indice_autores) NO
+    PASAN POR ESTA HOJA: SON PIEZAS SIN CUERPO (m_PiezasLibro.TieneCuerpo)
+    Y LOS COMPONE LaTeX (SC-77). LAS MARCAS SÍ: indexterm EN EL CUERPO DE
+    CADA PIEZA, CON SU startref PREFIJADO COMO LOS DEMÁS id.
 
   TRANSFORMACIONES APLICADAS:
     1. SLUGIFY xml:id CON CARACTERES NO-ASCII (TÍPICAMENTE LOS
@@ -207,9 +208,6 @@
         <xsl:when test="$tipo_capitulo = 'colofon'">colophon</xsl:when>
         <xsl:when test="$tipo_capitulo = 'lista_figuras'">toc</xsl:when>
         <xsl:when test="$tipo_capitulo = 'lista_tablas'">toc</xsl:when>
-        <xsl:when test="$tipo_capitulo = 'indice_onomastico'">index</xsl:when>
-        <xsl:when test="$tipo_capitulo = 'indice_tematico'">index</xsl:when>
-        <xsl:when test="$tipo_capitulo = 'indice_analitico'">index</xsl:when>
         <xsl:otherwise>chapter</xsl:otherwise>
       </xsl:choose>
     </xsl:variable>
@@ -239,14 +237,6 @@
       </xsl:choose>
     </xsl:variable>
 
-    <!-- DERIVAR ATRIBUTO type PARA <index> -->
-    <xsl:variable name="indexType">
-      <xsl:choose>
-        <xsl:when test="$tipo_capitulo = 'indice_onomastico'">onomastic</xsl:when>
-        <xsl:when test="$tipo_capitulo = 'indice_tematico'">thematic</xsl:when>
-        <xsl:otherwise></xsl:otherwise>
-      </xsl:choose>
-    </xsl:variable>
 
     <!-- CARGAR FRAGMENTO body (OBLIGATORIO) -->
     <xsl:variable name="bodyDoc" select="document($body)"/>
@@ -276,9 +266,6 @@
       </xsl:if>
       <xsl:if test="$roleAtributo != ''">
         <xsl:attribute name="role" select="$roleAtributo"/>
-      </xsl:if>
-      <xsl:if test="$indexType != ''">
-        <xsl:attribute name="type" select="$indexType"/>
       </xsl:if>
 
       <!-- PASO 1: INSERTAR <info> DESDE EL ARCHIVO PRINCIPAL -->
@@ -400,6 +387,39 @@
     </xsl:choose>
   </xsl:template>
 
+
+  <!-- ================================================
+       PREFIJAR @startref (CIERRE DE UN RANGO DE ÍNDICE, SC-77)
+       EL xml:id DEL COMIENZO (idx-N, DE indice.lua) SE PREFIJA CON
+       EL DEL CAPÍTULO EN EL TEMPLATE @xml:id; SIN ESTO, EL CIERRE
+       APUNTARÍA A UN id QUE YA NO EXISTE Y EL CANÓNICO NO VALIDARÍA
+       (startref ES IDREF EN EL RNG). idx-N NO ES GLOBAL Y ES ASCII,
+       PERO SE APLICA EL MISMO CRITERIO QUE A @linkend.
+       ================================================ -->
+  <xsl:template match="@startref">
+    <xsl:variable name="targetNormalizado" as="xs:string">
+      <xsl:choose>
+        <xsl:when test="matches(., '[^\p{IsBasicLatin}]')">
+          <xsl:value-of select="db:slugify(.)"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="."/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:choose>
+      <xsl:when test="db:es-id-global($targetNormalizado)">
+        <xsl:attribute name="startref" select="$targetNormalizado"/>
+      </xsl:when>
+      <xsl:when test="$xml_id_capitulo != ''">
+        <xsl:attribute name="startref"
+                       select="concat($xml_id_capitulo, '.', $targetNormalizado)"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:attribute name="startref" select="$targetNormalizado"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
 
   <!-- ================================================
        PREFIJAR @linkend INTERNO (biblioref, xref)

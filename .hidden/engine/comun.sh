@@ -59,7 +59,7 @@ RUTA_ABREVIATURAS="$DIR_GBP_LOCAL/filters/abreviaturas-espacio-fijo.txt"
 # --- 3b. LAS CADENAS DE FILTROS ---
 # LIBRO: LA DE generar_canonicos_capitulos.sh Y DE vista_cuadro.sh (SC-67).
 # EL ORDEN ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
-# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65, SC-66):
+# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65, SC-66, SC-77):
 #   0° cuadro-leer              TRAE EL ARCHIVO DE CADA CUADRO (SC-66) DE
 #      cuadros/ (-M gb-proyecto). PRIMERO: SU CONTENIDO PASA ASÍ POR TODOS
 #      LOS FILTROS. FRENA EL VIEJO ::: {.table}
@@ -78,6 +78,10 @@ RUTA_ABREVIATURAS="$DIR_GBP_LOCAL/filters/abreviaturas-espacio-fijo.txt"
 #      (SC-65). ANTES DE LOS FILTROS QUE SERIALIZAN, POR LA MISMA RAZÓN
 #      (GV-116). LA PALABRA DEL RANGO SALE DE -M gb-idioma-pieza, QUE ES
 #      EL IDIOMA DEL CAPÍTULO (NO gb-idioma: VER conversacion)
+#  4b° indice                   \index[…]{…} A <indexterm> (SC-77). ANTES DE
+#      cite-to-biblioref-db, QUE SERIALIZA LAS NOTAS: UNA MARCA QUE LLEGUE
+#      AHÍ SIN TRADUCIR LA DESCARTA EL ESCRITOR DocBook (GV-116). SOLO EN
+#      EL LIBRO: LAS REVISTAS NO USAN ÍNDICES
 #   5° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
 #   6° dos-partes               EPÍGRAFES {texto}{atribución}; FRENA SI UNO
 #      ESTÁ MAL FORMADO
@@ -103,6 +107,7 @@ FILTROS_LIBRO=(
     volada.lua
     corte-titulo.lua
     cifras.lua
+    indice.lua
     cite-to-biblioref-db.lua
     dos-partes.lua
     espacio-vertical.lua

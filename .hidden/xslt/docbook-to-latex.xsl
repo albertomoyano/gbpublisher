@@ -69,6 +69,8 @@
       \includegraphics (graphicx)
       gbCodigo \gbPieCodigo (contrato 11) — programlisting y el
                       listado, coloreados por colorear_codigo.sh (SC-42)
+      \index (imakeidx) \gbIndNota \gbIndPrincipal (contrato 18) —
+                      índices onomástico y de conceptos (SC-77)
       \parencite \parencite* \textcite \printbibliography (biblatex)
       refsection      entorno     (biblatex)
       \toprule \midrule \bottomrule (booktabs)
@@ -1253,6 +1255,132 @@
   </xsl:template>
 
   <xsl:template match="colspec"/>
+
+  <!-- ============================================================ -->
+  <!-- ÍNDICES ONOMÁSTICO Y DE CONCEPTOS (SC-77)                    -->
+  <!-- EL indexterm QUE ESCRIBE indice.lua VUELVE A SER \index.     -->
+  <!-- EL FORMATO VA SIEMPRE EXPLÍCITO, PORQUE hyperref VA CON       -->
+  <!-- hyperindex=false (GV-159):                                   -->
+  <!--   |hyperpage          LA PÁGINA, CON ENLACE                   -->
+  <!--   |gbIndNota          DENTRO DE UNA NOTA: «23 n.»             -->
+  <!--   |gbIndPrincipal     significance="preferred": EN NEGRITA     -->
+  <!--   |(hyperpage |)hyperpage   EL RANGO, LOS DOS CON EL MISMO     -->
+  <!--                       FORMATO: SI NO, xindy NO LO CIERRA       -->
+  <!--   |see{…} |seealso{…} LAS REMISIONES, SIN PÁGINA               -->
+  <!-- gbIndNota Y gbIndPrincipal LOS DECLARA gbindice.xdy: SIN ESO,  -->
+  <!-- xindy DESCARTA LA PÁGINA CON UN WARNING Y NADA MÁS (GV-160).  -->
+  <!-- ============================================================ -->
+  <xsl:key name="indexterm-por-id" match="indexterm[@xml:id]" use="@xml:id"/>
+
+  <!-- ============================================================ -->
+  <!-- FUNCIÓN : f:indice-xindy                                     -->
+  <!-- PROPÓSITO: ESCAPA PARA xindy LOS CARACTERES DE SU SINTAXIS:  -->
+  <!--            ! NIVEL, @ CLAVE, | FORMATO Y " ESCAPE. CON LA    -->
+  <!--            COMILLA DE xindy, QUE LLEGA LITERAL AL .idx CON   -->
+  <!--            babel-spanish ACTIVO, TAMBIÉN DENTRO DE \emph Y DE -->
+  <!--            \footnote (GV-160).                               -->
+  <!-- PARÁMETROS: t As xs:string — texto YA ESCAPADO PARA LaTeX     -->
+  <!-- RETORNA  : xs:string                                         -->
+  <!-- ============================================================ -->
+  <xsl:function name="f:indice-xindy" as="xs:string">
+    <xsl:param name="t" as="xs:string"/>
+    <xsl:sequence select="replace($t, '([&quot;!@|])', '&quot;$1')"/>
+  </xsl:function>
+
+  <!-- UN NIVEL: [CLAVE@]TEXTO. SI EL TEXTO LLEVA BASTARDILLA Y NO HAY -->
+  <!-- CLAVE, LA CLAVE ES EL TEXTO PLANO: xindy ORDENA POR LO QUE VE, -->
+  <!-- Y \emph{…} ORDENARÍA POR LA BARRA.                             -->
+  <xsl:template match="primary | secondary | tertiary" mode="indice">
+    <xsl:choose>
+      <xsl:when test="@sortas">
+        <xsl:value-of select="f:indice-xindy(f:latex(@sortas))"/>
+        <xsl:text>@</xsl:text>
+      </xsl:when>
+      <xsl:when test="*">
+        <xsl:value-of select="f:indice-xindy(f:latex(string(.)))"/>
+        <xsl:text>@</xsl:text>
+      </xsl:when>
+    </xsl:choose>
+    <xsl:apply-templates mode="indice"/>
+  </xsl:template>
+
+  <xsl:template match="text()" mode="indice">
+    <xsl:value-of select="f:indice-xindy(f:latex(.))"/>
+  </xsl:template>
+
+  <!-- LA ÚNICA MARCA QUE ADMITE indice.lua ADENTRO DE UNA ENTRADA -->
+  <xsl:template match="emphasis" mode="indice">
+    <xsl:text>\emph{</xsl:text>
+    <xsl:apply-templates mode="indice"/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="*" mode="indice">
+    <xsl:call-template name="abortar-elemento">
+      <xsl:with-param name="contexto" select="'docbook-to-latex (índice)'"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- LA ENTRADA ENTERA: LOS NIVELES SEPARADOS POR ! -->
+  <xsl:template name="indice-entrada">
+    <xsl:param name="termino" as="element()"/>
+    <xsl:for-each select="$termino/(primary | secondary | tertiary)">
+      <xsl:if test="position() > 1">
+        <xsl:text>!</xsl:text>
+      </xsl:if>
+      <xsl:apply-templates select="." mode="indice"/>
+    </xsl:for-each>
+  </xsl:template>
+
+  <xsl:template match="indexterm">
+    <!-- 1. EL FORMATO, SEGÚN LO QUE ES Y DÓNDE ESTÁ -->
+    <xsl:variable name="formato" as="xs:string">
+      <xsl:choose>
+        <xsl:when test="see">
+          <xsl:variable name="r"><xsl:apply-templates select="see/node()" mode="indice"/></xsl:variable>
+          <xsl:sequence select="concat('see{', string($r), '}')"/>
+        </xsl:when>
+        <xsl:when test="seealso">
+          <xsl:variable name="r"><xsl:apply-templates select="seealso/node()" mode="indice"/></xsl:variable>
+          <xsl:sequence select="concat('seealso{', string($r), '}')"/>
+        </xsl:when>
+        <xsl:when test="@class = 'startofrange'">(hyperpage</xsl:when>
+        <xsl:when test="@significance = 'preferred'">gbIndPrincipal</xsl:when>
+        <xsl:when test="ancestor::footnote">gbIndNota</xsl:when>
+        <xsl:otherwise>hyperpage</xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <!-- 2. LA ORDEN -->
+    <xsl:text>\index[</xsl:text>
+    <xsl:value-of select="@type"/>
+    <xsl:text>]{</xsl:text>
+    <xsl:call-template name="indice-entrada">
+      <xsl:with-param name="termino" select="."/>
+    </xsl:call-template>
+    <xsl:text>|</xsl:text>
+    <xsl:value-of select="$formato"/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <!-- EL CIERRE DE UN RANGO NO TIENE CONTENIDO: LA ENTRADA ES LA DE SU -->
+  <!-- COMIENZO, QUE ESTÁ EN LA MISMA PIEZA (indice.lua LO GARANTIZA).  -->
+  <xsl:template match="indexterm[@class = 'endofrange']" priority="2">
+    <xsl:variable name="inicio" select="key('indexterm-por-id', @startref)"/>
+    <xsl:if test="count($inicio) != 1">
+      <xsl:message terminate="yes">
+        <xsl:text>&#10;[docbook-to-latex] RANGO DE ÍNDICE SIN COMIENZO: startref="</xsl:text>
+        <xsl:value-of select="@startref"/>
+        <xsl:text>"&#10;</xsl:text>
+      </xsl:message>
+    </xsl:if>
+    <xsl:text>\index[</xsl:text>
+    <xsl:value-of select="$inicio/@type"/>
+    <xsl:text>]{</xsl:text>
+    <xsl:call-template name="indice-entrada">
+      <xsl:with-param name="termino" select="$inicio"/>
+    </xsl:call-template>
+    <xsl:text>|)hyperpage}</xsl:text>
+  </xsl:template>
 
   <!-- ============================================================ -->
   <!-- CAPTURA DE VOCABULARIO NO PREVISTO                           -->
