@@ -1,34 +1,40 @@
 ' Gambas class file
 
-' EVENTO IMPORTANTE: SE EJECUTA CUANDO EL FORMULARIO SE ABRE
-Public Sub Form_Open()
+' ============================================
+' Formulario : FSiglas
+' Propósito  : Siglas del libro abierto (actualización 1.18.0; decisiones de
+'              Alberto, 31/10). Tres pestañas:
+'                Catálogo   — ABM del catálogo DE LA EDITORIAL, común a todos
+'                             los libros; corregir una sigla corrige los
+'                             libros en curso que la usan (SC-71).
+'                Este libro — las siglas del libro, de solo lectura. Se
+'                             sincronizan con las marcas del texto al abrir
+'                             y con «Sincronizar»: se agregan las marcadas y
+'                             se quitan las que no tienen marcas (decisión
+'                             de Alberto, 31/10). La adopción de todos los
+'                             días la hace F2.
+'                Caja       — carga de una lista «SIGLA: desarrollo».
+'              La lógica vive en m_Siglas.
+' Uso        : FSiglas.ShowModal() desde FMain.btnSiglas, solo en libros.
+' ============================================
 
-  ' CONFIGURAR EL GRIDVIEW AL ABRIR EL FORMULARIO
-  m_Siglas.ConfigurarTableViewGlosarioEnCurso(gvSiglasEnCurso)
-
-  ' INICIALIZAR DATOS
-  m_Siglas.IniciarSiglas()
-
-End
-
-' ESTE EVENTO ES CRUCIAL: POBLA CADA CELDA DEL GRIDVIEW
-Public Sub gvSiglasEnCurso_Data(Row As Integer, Column As Integer)
-
-  ' VERIFICAR QUE TENEMOS DATOS VÁLIDOS
-  If m_Siglas.ContenidoGlo = Null Then Return
-  If Row < 0 Or Row >= m_Siglas.ContenidoGlo.Count Then Return
-
-  ' MOVER EL PUNTERO A LA FILA CORRESPONDIENTE
-  m_Siglas.ContenidoGlo.MoveTo(Row)
-
-  ' POBLAR LA CELDA CON EL VALOR CORRESPONDIENTE
-  Try gvSiglasEnCurso.Data.Text = m_Siglas.ContenidoGlo[Column]
-
-End
+' UN id POR FILA DE CADA GRILLA; 0 EN EL EDITOR = SIGLA NUEVA
+Private $aIdsCatalogo As New Integer[]
+Private $aIdsLibro As New Integer[]
+Private $iIdSigla As Integer
+' HAY ALGO EN EL EDITOR (UNA SIGLA ELEGIDA O UNA NUEVA)
+Private $bEditando As Boolean
+' EVITA QUE LOS Change ACTÚEN MIENTRAS SE CARGA
+Private $bCargando As Boolean
+' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_CATALOGO As Integer = 6
+Private Const COLUMNAS_LIBRO As Integer = 5
+' COLUMNA DE LA GRILLA DEL LIBRO QUE DICE SI EL TEXTO LA USA
+Private Const COLUMNA_EN_TEXTO As Integer = 4
 
 ' ============================================
 ' Función   : Form_Show
-' Propósito : APLICAR LA CONFIGURACIÓN DE BOTONES DEL MARCO
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -38,142 +44,482 @@ Public Sub Form_Show()
 
 End
 
-Public Sub gvSiglasEnCurso_Click()
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara el combo de idiomas y las grillas y lista el catálogo
+'             y las siglas del libro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
 
-  btnNuevoGlosario.Visible = True
-  btnGuardarGlosario.Visible = False
-  btnGuardarCambiosGlosario.Visible = True
-  btnBorrarGlosario.Visible = True
+  Dim aIdiomas As String[]
 
-  m_Siglas.MostrarSiglasEnTableViewGlosarioEnCurso(gvSiglasEnCurso.Row)
+  ' --- 1. SOLO CON UN LIBRO ABIERTO (EL BOTÓN YA ESTÁ APAGADO EN REVISTAS) ---
+  If Not m_InicioCierre.EsLibroEnCurso Then
+    Me.Close()
+    Return
+  Endif
+  Me.Text = "Siglas — " & File.BaseName(m_InicioCierre.NombreProyectoEnCurso)
+  ' EL NOMBRE DEL PROYECTO TAMBIÉN EN LA PESTAÑA: «Este libro (l-CALIFA.md)»
+  tbsSiglas[1].Text = "Este libro (" & File.Name(m_InicioCierre.NombreProyectoEnCurso) & ")"
 
-End
+  ' --- 2. IDIOMAS: EL PRIMERO VACÍO ES «LA LENGUA DEL LIBRO» ---
+  aIdiomas = m_Vocabularios.IdiomasActivos(m_ConexionBD.mConn)
+  aIdiomas.Add("", 0)
+  cmbIdioma.List = aIdiomas
 
-Public Sub btnNuevoGlosario_Click()
+  ' --- 3. GRILLAS ---
+  With gvCatalogo
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_CATALOGO
+    .Columns[0].Title = "Clave"
+    .Columns[0].Width = 140
+    .Columns[1].Title = "Sigla"
+    .Columns[1].Width = 100
+    .Columns[2].Title = "Desarrollo"
+    .Columns[2].Width = 400
+    .Columns[3].Title = "Plural"
+    .Columns[3].Width = 110
+    .Columns[4].Title = "Idioma"
+    .Columns[4].Width = 60
+    .Columns[5].Title = "Libros"
+    .Columns[5].Width = 60
+  End With
+  With gvLibro
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_LIBRO
+    .Columns[0].Title = "Clave"
+    .Columns[0].Width = 140
+    .Columns[1].Title = "Sigla"
+    .Columns[1].Width = 100
+    .Columns[2].Title = "Desarrollo"
+    .Columns[2].Width = 400
+    .Columns[3].Title = "Plural"
+    .Columns[3].Width = 200
+    .Columns[COLUMNA_EN_TEXTO].Title = "En el texto"
+    .Columns[COLUMNA_EN_TEXTO].Width = 60
+  End With
 
-  m_Siglas.NuevoGlosario()
+  ' --- 4. SINCRONÍA CON LAS MARCAS, SIN MENSAJES (EL RESULTADO VA A LA
+  ' LÍNEA DE ESTADO DEL LIBRO) ---
+  m_Siglas.Sincronizar(m_InicioCierre.IdProyectoEnCurso, True)
 
-End
-
-Public Sub btnGuardarGlosario_Click()
-
-  m_Siglas.GuardarGlosarioPrimeraVez()
-
-End
-
-Public Sub btnGuardarCambiosGlosario_Click()
-
-  m_Siglas.GuardarCambiosSigla()
-
-End
-
-Public Sub btnBorrarGlosario_Click()
-
-  m_Siglas.BorrarGlosario()
-
-End
-
-Public Sub btnAgregarClaveGlosario_Click()
-
-  ' LIMPIAMOS EL TEXTBOX DE LA CLAVE
-  txtClaveGlosario.Text = ""
-
-  Dim textoOrigen As String
-  textoOrigen = txtNameGlosario.Text
-
-  ' REEMPLAZA CARACTERES PROBLEMÁTICOS
-  textoOrigen = Replace(textoOrigen, "´", "")
-  textoOrigen = Replace(textoOrigen, "`", "")
-  textoOrigen = Replace(textoOrigen, " ", "")
-  textoOrigen = Replace(textoOrigen, "á", "a")
-  textoOrigen = Replace(textoOrigen, "à", "a")
-  textoOrigen = Replace(textoOrigen, "ä", "a")
-  textoOrigen = Replace(textoOrigen, "é", "e")
-  textoOrigen = Replace(textoOrigen, "è", "e")
-  textoOrigen = Replace(textoOrigen, "ë", "e")
-  textoOrigen = Replace(textoOrigen, "í", "i")
-  textoOrigen = Replace(textoOrigen, "ì", "i")
-  textoOrigen = Replace(textoOrigen, "ï", "i")
-  textoOrigen = Replace(textoOrigen, "ó", "o")
-  textoOrigen = Replace(textoOrigen, "ò", "o")
-  textoOrigen = Replace(textoOrigen, "ö", "o")
-  textoOrigen = Replace(textoOrigen, "ú", "u")
-  textoOrigen = Replace(textoOrigen, "ù", "u")
-  textoOrigen = Replace(textoOrigen, "ü", "u")
-  textoOrigen = Replace(textoOrigen, "ñ", "n")
-  textoOrigen = Replace(textoOrigen, "&", "")
-  textoOrigen = Replace(textoOrigen, "ç", "c")
-  textoOrigen = Replace(textoOrigen, "{", "")
-  textoOrigen = Replace(textoOrigen, "}", "")
-  textoOrigen = Replace(textoOrigen, "[", "")
-  textoOrigen = Replace(textoOrigen, "]", "")
-  textoOrigen = Replace(textoOrigen, "¿", "")
-  textoOrigen = Replace(textoOrigen, "?", "")
-  textoOrigen = Replace(textoOrigen, "¡", "")
-  textoOrigen = Replace(textoOrigen, "!", "")
-  textoOrigen = Replace(textoOrigen, "(", "")
-  textoOrigen = Replace(textoOrigen, ")", "")
-  textoOrigen = Replace(textoOrigen, "-", "")
-  textoOrigen = Replace(textoOrigen, "_", "")
-  textoOrigen = Replace(textoOrigen, "'", "")
-  textoOrigen = Replace(textoOrigen, "#", "")
-  textoOrigen = Replace(textoOrigen, "@", "")
-  textoOrigen = Replace(textoOrigen, "/", "")
-  textoOrigen = Replace(textoOrigen, "°", "")
-  textoOrigen = Replace(textoOrigen, "~", "")
-
-  ' CONVIERTE A MINÚSCULAS Y ELIMINA ESPACIOS
-  textoOrigen = Trim(LCase(textoOrigen))
-
-  ' CONSTRUYE LA CLAVE
-  txtClaveGlosario.Text = "glo" & id_sigla.Text & textoOrigen
+  ' --- 5. LISTAS ---
+  CargarCatalogo(0)
+  CargarLibro(True)
 
 End
 
-Public Sub btnMostrarGlosarioDescripcionExtendido_Click()
+' ============================================
+' Función   : CargarCatalogo
+' Propósito : Llena la grilla del catálogo con lo que contiene lo buscado y
+'             deja elegida una entrada
+' Parámetros: iElegido As Integer — id a dejar elegido; 0 ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarCatalogo(iElegido As Integer)
 
-  FTXTextendido.OriginalTextBox = txtDescripcionGlosario
-  FTXTextendido.ShowModal
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. GRILLA, CON UN id POR FILA EN EL MISMO ORDEN ---
+  $aIdsCatalogo.Clear()
+  gvCatalogo.Rows.Count = 0
+  rDatos = m_Siglas.ListarCatalogo(Trim(txtBuscarSigla.Text))
+  If rDatos Then
+    gvCatalogo.Rows.Count = rDatos.Count
+    While rDatos.Available
+      $aIdsCatalogo.Add(rDatos!id_sigla)
+      gvCatalogo[iFila, 0].Text = m_Siglas.ClaveDe(rDatos!id_sigla, rDatos!sigla)
+      gvCatalogo[iFila, 1].Text = rDatos!sigla
+      gvCatalogo[iFila, 2].Text = rDatos!desarrollo
+      ' UN NULL VA A LA CELDA COMO VACÍO
+      gvCatalogo[iFila, 3].Text = rDatos!desarrollo_plural
+      gvCatalogo[iFila, 4].Text = rDatos!idioma
+      gvCatalogo[iFila, 5].Text = CStr(rDatos!usos)
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 2. ELEGIDA O EDITOR VACÍO ---
+  iFila = $aIdsCatalogo.Find(iElegido)
+  If iFila >= 0 Then
+    gvCatalogo.Row = iFila
+    MostrarFila(iFila)
+  Else
+    LimpiarEditor()
+  Endif
 
 End
 
-Public Sub menuImportar_Click()
+' ============================================
+' Función   : CargarLibro
+' Propósito : Llena la grilla de las siglas del libro y marca cuáles usa el
+'             texto (lee los .md guardados). Después de sincronizar, todas
+'             dicen «sí» salvo que no se haya podido quitar (ver la nota)
+' Parámetros: bConSincro As Boolean — agrega a la línea de estado el
+'             resultado de la última sincronización
+' Retorna   : nada
+' ============================================
+Private Sub CargarLibro(Optional bConSincro As Boolean = False)
 
-  m_Json.ImportarJSONsiglas()
-  Wait 1
-  m_Siglas.RefrescarTableViewGlosarioEnCurso()
+  Dim rDatos As Result
+  Dim aSiglas As New String[]
+  Dim aClaves As New String[]
+  Dim sFallas As String
+  Dim iFila As Integer
+  Dim iSinUso As Integer
+
+  ' --- 1. LAS MARCAS DEL TEXTO ---
+  sFallas = m_Siglas.LeerMarcasDelLibro(aSiglas, aClaves)
+
+  ' --- 2. GRILLA ---
+  $aIdsLibro.Clear()
+  gvLibro.Rows.Count = 0
+  rDatos = m_Siglas.ListarLibro(m_InicioCierre.IdProyectoEnCurso)
+  If rDatos Then
+    gvLibro.Rows.Count = rDatos.Count
+    While rDatos.Available
+      $aIdsLibro.Add(rDatos!id_libro_sigla)
+      gvLibro[iFila, 0].Text = rDatos!clave
+      gvLibro[iFila, 1].Text = rDatos!sigla
+      gvLibro[iFila, 2].Text = rDatos!desarrollo
+      gvLibro[iFila, 3].Text = rDatos!desarrollo_plural
+      ' UNA SIGLA SIN USO NO SALE EN LA LISTA DEL LIBRO; LA QUITA LA SINCRONÍA
+      If m_Siglas.UsadaEnMarcas(rDatos!sigla, rDatos!clave, aSiglas, aClaves) Then
+        gvLibro[iFila, COLUMNA_EN_TEXTO].Text = "sí"
+      Else
+        gvLibro[iFila, COLUMNA_EN_TEXTO].Text = "no"
+        Inc iSinUso
+      Endif
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 3. ESTADO ---
+  lblEstadoLibro.Text = CStr($aIdsLibro.Count) & " sigla(s) en el libro."
+  If iSinUso > 0 Then lblEstadoLibro.Text &= " " & CStr(iSinUso) & " sin marcas en el texto."
+  If sFallas <> "" Then lblEstadoLibro.Text &= " No se pudieron leer: " & sFallas
+  If bConSincro Then
+    If m_Siglas.SincroAgregadas > 0 Or m_Siglas.SincroQuitadas > 0 Then
+      lblEstadoLibro.Text &= " Sincronizado: " & CStr(m_Siglas.SincroAgregadas) & " agregada(s), " & CStr(m_Siglas.SincroQuitadas) & " quitada(s)."
+    Endif
+    If m_Siglas.SincroPendientes > 0 Then lblEstadoLibro.Text &= " " & CStr(m_Siglas.SincroPendientes) & " marca(s) para resolver: botón «Sincronizar»."
+    If m_Siglas.SincroNota <> "" Then lblEstadoLibro.Text &= " " & m_Siglas.SincroNota
+  Endif
 
 End
 
-Public Sub menuExportar_Click()
+' ============================================
+' Función   : LimpiarEditor
+' Propósito : Editor vacío y apagado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarEditor()
 
-  m_Json.ExportarJSONsiglas()
+  $iIdSigla = 0
+  $bEditando = False
+  txtSigla.Text = ""
+  txtDesarrollo.Text = ""
+  txtPlural.Text = ""
+  cmbIdioma.Index = 0
+  lblEstadoSigla.Text = ""
+  FijarEditor(False)
 
 End
 
-' FLAG PARA PERMITIR EL CIERRE DESDE EL BOTÓN
-Private bCierrePermitido As Boolean
+' ============================================
+' Función   : FijarEditor
+' Propósito : Habilita o apaga el editor de la sigla
+' Parámetros: bHabilitado As Boolean — True: hay una sigla en edición
+' Retorna   : nada
+' ============================================
+Private Sub FijarEditor(bHabilitado As Boolean)
 
+  hbxSigla.Enabled = bHabilitado
+  hbxDesarrollo.Enabled = bHabilitado
+  hbxPlural.Enabled = bHabilitado
+  hbxIdioma.Enabled = bHabilitado
+  btnGuardarSigla.Enabled = bHabilitado
+  ' SOLO SE BORRA O SE ADOPTA UNA SIGLA QUE YA ESTÁ EN EL CATÁLOGO
+  btnBorrarSigla.Enabled = bHabilitado And $iIdSigla > 0
+  btnAdoptarSigla.Enabled = bHabilitado And $iIdSigla > 0
+
+End
+
+' ============================================
+' Función   : MostrarFila
+' Propósito : Pone en el editor la sigla de una fila del catálogo
+' Parámetros: iFila As Integer — fila
+' Retorna   : nada
+' ============================================
+Private Sub MostrarFila(iFila As Integer)
+
+  Dim sIdioma As String
+
+  $iIdSigla = $aIdsCatalogo[iFila]
+  $bEditando = True
+  txtSigla.Text = gvCatalogo[iFila, 1].Text
+  txtDesarrollo.Text = gvCatalogo[iFila, 2].Text
+  txtPlural.Text = gvCatalogo[iFila, 3].Text
+
+  ' UN IDIOMA QUE YA NO ESTÁ ACTIVO SE AGREGA AL COMBO: EN UN COMBO ReadOnly UN
+  ' VALOR FUERA DE LA LISTA SE PIERDE EN SILENCIO AL ASIGNARLO (m_Idiomas)
+  sIdioma = gvCatalogo[iFila, 4].Text
+  If cmbIdioma.Find(sIdioma) < 0 Then cmbIdioma.Add(sIdioma)
+  cmbIdioma.Index = cmbIdioma.Find(sIdioma)
+
+  lblEstadoSigla.Text = "En " & gvCatalogo[iFila, 5].Text & " libro(s). Clave: " & gvCatalogo[iFila, 0].Text
+  FijarEditor(True)
+
+End
+
+' ============================================
+' Función   : gvCatalogo_Click
+' Propósito : Elige una sigla del catálogo para corregirla o adoptarla
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvCatalogo_Click()
+
+  If gvCatalogo.Row < 0 Or gvCatalogo.Row >= $aIdsCatalogo.Count Then Return
+  MostrarFila(gvCatalogo.Row)
+
+End
+
+' ============================================
+' Función   : txtBuscarSigla_Change
+' Propósito : Filtra el catálogo mientras se tipea
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBuscarSigla_Change()
+
+  If $bCargando Then Return
+  CargarCatalogo(0)
+
+End
+
+' ============================================
+' Función   : btnNuevaSigla_Click
+' Propósito : Prepara el alta de una sigla; se crea al guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevaSigla_Click()
+
+  Dim sBuscado As String
+
+  gvCatalogo.Row = -1
+  $iIdSigla = 0
+  $bEditando = True
+  ' LO BUSCADO SE PROPONE COMO SIGLA SI PUEDE SERLO (SIN ESPACIOS, HASTA 32)
+  sBuscado = Trim(txtBuscarSigla.Text)
+  If InStr(sBuscado, " ") = 0 And String.Len(sBuscado) <= m_Siglas.LARGO_SIGLA Then
+    txtSigla.Text = sBuscado
+  Else
+    txtSigla.Text = ""
+  Endif
+  txtDesarrollo.Text = ""
+  txtPlural.Text = ""
+  cmbIdioma.Index = 0
+  lblEstadoSigla.Text = "Sigla nueva en el catálogo de la editorial."
+  FijarEditor(True)
+  If txtSigla.Text = "" Then
+    txtSigla.SetFocus()
+  Else
+    txtDesarrollo.SetFocus()
+  Endif
+
+End
+
+' ============================================
+' Función   : btnGuardarSigla_Click
+' Propósito : Graba el alta o la corrección por m_Siglas e informa cuántos
+'             libros en curso se corrigieron y cuántos publicados no
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarSigla_Click()
+
+  Dim iCorregidas As Integer
+  Dim iPublicados As Integer
+  Dim iId As Integer
+
+  ' --- 1. HAY QUÉ GUARDAR ---
+  If Not $bEditando Then Return
+
+  ' --- 2. GRABACIÓN; LOS PUBLICADOS SE CUENTAN ANTES (NO CAMBIAN) ---
+  If $iIdSigla > 0 Then iPublicados = m_Siglas.UsosPublicados($iIdSigla)
+  iCorregidas = m_Siglas.GuardarEntrada($iIdSigla, txtSigla.Text, txtDesarrollo.Text, txtPlural.Text, cmbIdioma.Text)
+  If iCorregidas < 0 Then Return
+
+  ' --- 3. RELECTURA, CON LA SIGLA GRABADA ELEGIDA ---
+  ' SE BUSCA POR SU SIGLA: LA BÚSQUEDA ANTERIOR PODRÍA NO MOSTRARLA
+  iId = $iIdSigla
+  If iId = 0 Then iId = m_Siglas.IdDe(Trim(txtSigla.Text), Trim(txtDesarrollo.Text))
+  m_Sonido.sonar("Info")
+  $bCargando = True
+  txtBuscarSigla.Text = Trim(txtSigla.Text)
+  $bCargando = False
+  CargarCatalogo(iId)
+  lblEstadoSigla.Text = "Guardada."
+  If iCorregidas > 0 Then lblEstadoSigla.Text &= " Se corrigió en " & CStr(iCorregidas) & " libro(s) en curso."
+  If iPublicados > 0 Then lblEstadoSigla.Text &= " " & CStr(iPublicados) & " libro(s) publicado(s) quedan como salieron."
+
+  ' --- 4. LAS COPIAS DEL LIBRO ABIERTO PUEDEN HABER CAMBIADO ---
+  If iCorregidas > 0 Then CargarLibro()
+
+End
+
+' ============================================
+' Función   : btnBorrarSigla_Click
+' Propósito : Borra la sigla elegida, si ningún libro la usa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarSigla_Click()
+
+  If $iIdSigla <= 0 Then Return
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar «" & txtSigla.Text & ": " & txtDesarrollo.Text & "» del catálogo?", "Borrar", "Cancelar") <> 1 Then Return
+  If Not m_Siglas.BorrarEntrada($iIdSigla) Then Return
+  CargarCatalogo(0)
+
+End
+
+' ============================================
+' Función   : btnAdoptarSigla_Click
+' Propósito : Agrega la sigla elegida al libro abierto. Si el libro ya tiene
+'             otra con la misma sigla, avisa que las marcas sin clave van a
+'             frenar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnAdoptarSigla_Click()
+
+  Dim bOtra As Boolean
+  Dim sClave As String
+  Dim iId As Integer
+
+  ' --- 1. ADOPCIÓN ---
+  If $iIdSigla <= 0 Then Return
+  iId = $iIdSigla
+  bOtra = m_Siglas.OtraConLaMismaSigla(m_InicioCierre.IdProyectoEnCurso, txtSigla.Text, iId)
+  sClave = m_Siglas.Adoptar(m_InicioCierre.IdProyectoEnCurso, iId)
+  If sClave = "" Then Return
+
+  ' --- 2. AVISOS ---
+  If Not m_Siglas.AdopcionNueva Then
+    lblEstadoSigla.Text = "Ya estaba en este libro, con la clave " & sClave & "."
+    Return
+  Endif
+  m_Sonido.sonar("Info")
+  If bOtra Then
+    Message.Warning("El libro ya tenía otra «" & txtSigla.Text & "». Las marcas [" & txtSigla.Text & "]{.sigla} que ya están en el texto no dicen cuál es y van a frenar: agregales la clave. Con F2 las nuevas salen con clave.")
+  Endif
+
+  ' --- 3. RELECTURA ---
+  CargarCatalogo(iId)
+  lblEstadoSigla.Text = "Agregada a este libro con la clave " & sClave & "."
+  CargarLibro()
+
+End
+
+' ============================================
+' Función   : btnSincronizar_Click
+' Propósito : Sincroniza las siglas del libro con sus marcas e informa lo
+'             agregado, lo quitado y lo que queda por resolver a mano
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnSincronizar_Click()
+
+  Dim sInforme As String
+
+  ' UN LIBRO PUBLICADO YA LO INFORMÓ Sincronizar
+  sInforme = m_Siglas.Sincronizar(m_InicioCierre.IdProyectoEnCurso, False)
+  If sInforme = "" Then Return
+  m_Sonido.sonar("Info")
+  Message.Info(sInforme)
+  CargarLibro(True)
+  CargarCatalogo($iIdSigla)
+
+End
+
+' ============================================
+' Función   : btnCargarLista_Click
+' Propósito : Carga en el catálogo la lista pegada en la caja e informa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCargarLista_Click()
+
+  Dim sInforme As String
+
+  If Trim(txaLista.Text) = "" Then Return
+  sInforme = m_Siglas.CargarLista(txaLista.Text, chkAdoptarLista.Value, m_InicioCierre.IdProyectoEnCurso)
+  If sInforme = "" Then Return
+  m_Sonido.sonar("Info")
+  Message.Info(sInforme)
+  CargarCatalogo(0)
+  CargarLibro()
+
+End
+
+' ============================================
+' Función   : btnImportarJSON_Click
+' Propósito : Importa en este libro las siglas de un JSON exportado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnImportarJSON_Click()
+
+  Dim sInforme As String
+
+  sInforme = m_Siglas.Importar(m_InicioCierre.IdProyectoEnCurso)
+  If sInforme = "" Then Return
+  m_Sonido.sonar("Info")
+  Message.Info(sInforme)
+  CargarCatalogo(0)
+  CargarLibro()
+
+End
+
+' ============================================
+' Función   : btnExportarJSON_Click
+' Propósito : Exporta a JSON las siglas de este libro
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnExportarJSON_Click()
+
+  m_Siglas.Exportar(m_InicioCierre.IdProyectoEnCurso)
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierre del diálogo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub btnCerrar_Click()
-  ' HABILITAR EL CIERRE Y CERRAR
 
-  bCierrePermitido = True
   Me.Close()
 
 End
 
-Public Sub Form_Close()
-  ' SI EL CIERRE VIENE DEL BOTÓN, PERMITIRLO
-
-  If bCierrePermitido Then Return
-  ' BLOQUEAR EL CIERRE DESDE LA X DEL SISTEMA
-  m_Sonido.sonar("info")
-  Message.Info("Para cerrar el formulario correctamente," & Chr(10) & "use el botón <b>Cerrar</b>.")
-  Stop Event
-
-End
-
-' DETECTA CTRL + F1
+' ============================================
+' Función   : Form_KeyRelease
+' Propósito : Ctrl+F1 abre la ayuda contextual, como en el resto de la app
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub Form_KeyRelease()
 
   If Key.Control And Key.Code = Key.F1 Then

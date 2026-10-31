@@ -2086,6 +2086,28 @@ RC APLICADAS:
     </xsl:choose>
   </xsl:template>
 
+  <!-- SIGLAS (1.18.0, filters/siglas.lua): EL DESARROLLO EN EL title DEL
+       <abbr>, QUE EL LECTOR VE AL PASAR EL CURSOR. EL DESARROLLO EN OTRO
+       IDIOMA VA EN <i lang>: CURSIVA, Y EL IDIOMA PARA LA PARTICIÓN Y LOS
+       LECTORES DE PANTALLA. SIN ESTAS PLANTILLAS EL CATCH-ALL DEJABA EL
+       TEXTO Y SE PERDÍA LA CURSIVA. -->
+  <xsl:template match="db:acronym | acronym">
+    <abbr>
+      <xsl:if test="normalize-space(@xlink:title) != ''">
+        <xsl:attribute name="title" select="@xlink:title"/>
+      </xsl:if>
+      <xsl:apply-templates/>
+    </abbr>
+  </xsl:template>
+  <xsl:template match="db:foreignphrase | foreignphrase">
+    <i>
+      <xsl:if test="normalize-space(@xml:lang) != ''">
+        <xsl:attribute name="lang" select="@xml:lang"/>
+      </xsl:if>
+      <xsl:apply-templates/>
+    </i>
+  </xsl:template>
+
   <!-- SUPERÍNDICE Y SUBÍNDICE (SC-30). NO HABÍA PLANTILLA: LA REGLA
        INCORPORADA DEJABA EL TEXTO, Y x^2^ SALÍA «x2». -->
   <xsl:template match="db:superscript | superscript">
@@ -2170,6 +2192,22 @@ RC APLICADAS:
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
+  <xsl:template match="db:acronym | acronym" mode="nota-panel">
+    <abbr xmlns="">
+      <xsl:if test="normalize-space(@xlink:title) != ''">
+        <xsl:attribute name="title" select="@xlink:title"/>
+      </xsl:if>
+      <xsl:apply-templates mode="nota-panel"/>
+    </abbr>
+  </xsl:template>
+  <xsl:template match="db:foreignphrase | foreignphrase" mode="nota-panel">
+    <i xmlns="">
+      <xsl:if test="normalize-space(@xml:lang) != ''">
+        <xsl:attribute name="lang" select="@xml:lang"/>
+      </xsl:if>
+      <xsl:apply-templates mode="nota-panel"/>
+    </i>
+  </xsl:template>
   <xsl:template match="db:superscript | superscript" mode="nota-panel">
     <sup xmlns=""><xsl:apply-templates mode="nota-panel"/></sup>
   </xsl:template>
@@ -2199,6 +2237,11 @@ RC APLICADAS:
   </xsl:template>
   <xsl:template match="text()" mode="texto-plano">
     <xsl:value-of select="."/>
+  </xsl:template>
+  <!-- SIGLAS (1.18.0): SIN EL ESPACIO DEL GENÉRICO, QUE DEJABA «(OMS )» -->
+  <xsl:template match="db:acronym | acronym | db:foreignphrase | foreignphrase"
+                mode="texto-plano">
+    <xsl:apply-templates mode="texto-plano"/>
   </xsl:template>
 
   <!-- TEMPLATE ESPECÍFICO PARA biblioref EN MODO texto-plano:

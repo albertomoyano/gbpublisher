@@ -586,6 +586,32 @@
     <xsl:text>}</xsl:text>
   </xsl:template>
 
+  <!-- SIGLAS (1.18.0, filters/siglas.lua). LA SIGLA VA COMO TEXTO:   -->
+  <!-- xlink:title ES PARA EL <abbr> DEL HTML Y DEL EPUB. EL TEXTO LO  -->
+  <!-- ESCAPA f:latex (A&C, $).                                        -->
+  <xsl:template match="acronym">
+    <xsl:apply-templates/>
+  </xsl:template>
+
+  <!-- EL DESARROLLO EN OTRO IDIOMA: CURSIVA Y LA PARTICIÓN DE SU      -->
+  <!-- IDIOMA. \gbextranjero ESTÁ EN preambulo-contrato.tex Y TOMA EL  -->
+  <!-- NOMBRE DE babel DE LAS DEFINICIONES QUE ESCRIBE GAMBAS           -->
+  <!-- (m_GenerarPDFLibro.DefinicionesCita), QUE TAMBIÉN CARGA EL       -->
+  <!-- IDIOMA EN babel. SIN xml:lang, O CON UNO QUE NO ES UN CÓDIGO,    -->
+  <!-- CORTA: NO HAY DE DÓNDE SACAR LA PARTICIÓN.                       -->
+  <xsl:template match="foreignphrase">
+    <xsl:if test="not(matches(string(@xml:lang), '^[A-Za-z]{2,3}(-[A-Za-z0-9]+)*$'))">
+      <xsl:call-template name="abortar-elemento">
+        <xsl:with-param name="contexto" select="'docbook-to-latex (foreignphrase sin un xml:lang válido)'"/>
+      </xsl:call-template>
+    </xsl:if>
+    <xsl:text>\gbextranjero{</xsl:text>
+    <xsl:value-of select="@xml:lang"/>
+    <xsl:text>}{</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
   <!-- LOS role DE emphasis QUE ESCRIBE PANDOC (SC-30): strong PARA   -->
   <!-- **x**, smallcaps PARA [x]{.smallcaps}, strikethrough PARA ~~x~~ -->
   <!-- Y underline PARA [x]{.underline}. SIN ESTAS PLANTILLAS LOS TRES -->

@@ -1,0 +1,326 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FSiglaRapida
+' Propósito  : La ventanita de F2 en el editor (decisiones de Alberto, 31/10):
+'              busca en el catálogo de siglas de la editorial mientras se
+'              tipea y, al elegir, adopta la sigla en el libro y deja la marca
+'              en m_Siglas.MarcaElegida para que FMain la inserte donde estaba
+'              el cursor. Si la sigla no existe, la da de alta.
+' Teclado    : el foco queda en el cuadro de búsqueda; ↑ y ↓ recorren la lista.
+'              Enter: [CI]{.sigla} · Ctrl+Enter: .plural · Shift+Enter:
+'              .inicial · Esc: cierra (o vuelve de la alta).
+' Posición   : centrada en vertical sobre el editor, con el borde izquierdo en
+'              el borde derecho del editor: el editor se sigue viendo completo
+'              (decisión de Alberto, 31/10). TextEdit no da las coordenadas del
+'              cursor (CTextEdit.cpp no expone CursorAt; verificado en el código
+'              fuente, 31/10).
+' Uso        : m_Siglas.TextoInicial = "…"
+'              If FSiglaRapida.ShowModal() = 1 Then … m_Siglas.MarcaElegida
+'              El retorno va por el módulo, no por el formulario (RC-GM-13).
+' ============================================
+
+' UN id DEL CATÁLOGO POR RENGLÓN DE LA LISTA, EN EL MISMO ORDEN
+Private $aIds As New Integer[]
+' CUÁNTAS SUGERENCIAS, COMO MÁXIMO
+Private Const LIMITE_SUGERENCIAS As Integer = 30
+Private Const AYUDA_TECLAS As String = "Enter inserta · Ctrl+Enter plural · Shift+Enter mayúscula inicial · Esc cierra"
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Ubica la ventanita sobre el editor y arranca la búsqueda con
+'             el texto recibido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  Dim hEditor As TextEdit
+  Dim iX As Integer
+
+  ' --- 1. POSICIÓN: BORDE IZQUIERDO EN EL BORDE DERECHO DEL EDITOR, CENTRADA EN
+  ' VERTICAL SOBRE ÉL: EL EDITOR SE SIGUE VIENDO COMPLETO. CON EL DIVISOR
+  ' CORRIDO A LA DERECHA NO ENTRARÍA: SE ARRIMA AL BORDE DE LA PANTALLA ---
+  hEditor = FMain.txtEditorProyecto
+  iX = hEditor.ScreenX + hEditor.Width
+  If iX + Me.Width > Desktop.Width Then iX = Desktop.Width - Me.Width
+  Me.Move(iX, hEditor.ScreenY + (hEditor.Height - Me.Height) \ 2)
+
+  ' --- 2. ESTADO INICIAL ---
+  m_Siglas.MarcaElegida = ""
+  vbxAlta.Visible = False
+  ' ASIGNAR EL TEXTO DISPARA _Change, QUE BUSCA
+  txtBuscarSigla.Text = m_Siglas.TextoInicial
+  If txtBuscarSigla.Text = "" Then lblEstadoRapida.Text = "Tipee la sigla o parte del desarrollo."
+
+End
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Botones del marco (SC-20) y foco en la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+  txtBuscarSigla.SetFocus()
+
+End
+
+' ============================================
+' Función   : txtBuscarSigla_Change
+' Propósito : Vuelve a buscar mientras se tipea
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBuscarSigla_Change()
+
+  Buscar()
+
+End
+
+' ============================================
+' Función   : Buscar
+' Propósito : Llena la lista con las siglas del catálogo que contienen lo
+'             tipeado y deja elegida la primera
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Buscar()
+
+  Dim rDatos As Result
+
+  ' --- 1. LISTA VACÍA ---
+  lstSiglas.Clear()
+  $aIds.Clear()
+  If Trim(txtBuscarSigla.Text) = "" Then Return
+
+  ' --- 2. SUGERENCIAS ---
+  rDatos = m_Siglas.Buscar(Trim(txtBuscarSigla.Text), LIMITE_SUGERENCIAS)
+  If rDatos Then
+    While rDatos.Available
+      lstSiglas.Add(rDatos!sigla & " — " & rDatos!desarrollo)
+      $aIds.Add(rDatos!id_sigla)
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 3. ELEGIDA Y AYUDA ---
+  If $aIds.Count > 0 Then
+    lstSiglas.Index = 0
+    lblEstadoRapida.Text = AYUDA_TECLAS
+  Else
+    lblEstadoRapida.Text = "No está en el catálogo: Enter para darla de alta."
+  Endif
+
+End
+
+' ============================================
+' Función   : txtBuscarSigla_KeyPress
+' Propósito : Teclado de la ventanita: recorrer, elegir, dar de alta, cerrar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBuscarSigla_KeyPress()
+
+  Select Case Key.Code
+      ' --- 1. Esc: CIERRA SIN INSERTAR ---
+    Case Key.Esc
+      Stop Event
+      Me.Close()
+      ' --- 2. ↓ Y ↑: RECORREN LA LISTA SIN SACAR EL FOCO DE LA BÚSQUEDA ---
+    Case Key.Down
+      Stop Event
+      If lstSiglas.Index < lstSiglas.Count - 1 Then lstSiglas.Index += 1
+    Case Key.Up
+      Stop Event
+      If lstSiglas.Index > 0 Then lstSiglas.Index -= 1
+      ' --- 3. Enter: ELIGE LA DE LA LISTA O ABRE LA ALTA ---
+    Case Key.Return, Key.Enter
+      Stop Event
+      If $aIds.Count = 0 Then
+        AbrirAlta()
+      Else If lstSiglas.Index >= 0 Then
+        Elegir($aIds[lstSiglas.Index], Key.Control, Key.Shift)
+      Endif
+  End Select
+
+End
+
+' ============================================
+' Función   : lstSiglas_DblClick
+' Propósito : Doble clic en la lista: elige esa sigla, sin plural ni inicial
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub lstSiglas_DblClick()
+
+  If lstSiglas.Index < 0 Or lstSiglas.Index >= $aIds.Count Then Return
+  Elegir($aIds[lstSiglas.Index], False, False)
+
+End
+
+' ============================================
+' Función   : lstSiglas_KeyPress
+' Propósito : Si el foco quedó en la lista (por un clic), Enter y Esc
+'             funcionan igual que en la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub lstSiglas_KeyPress()
+
+  Select Case Key.Code
+    Case Key.Esc
+      Stop Event
+      Me.Close()
+    Case Key.Return, Key.Enter
+      Stop Event
+      If lstSiglas.Index >= 0 And lstSiglas.Index < $aIds.Count Then Elegir($aIds[lstSiglas.Index], Key.Control, Key.Shift)
+  End Select
+
+End
+
+' ============================================
+' Función   : Elegir
+' Propósito : Adopta la sigla en el libro y deja la marca para FMain. La
+'             clave va solo si el libro tiene otra entrada con la misma sigla
+' Parámetros: iIdSigla As Integer — la entrada del catálogo
+'             bPlural As Boolean — pide el plural
+'             bInicial As Boolean — pide la mayúscula inicial
+' Retorna   : nada
+' ============================================
+Private Sub Elegir(iIdSigla As Integer, bPlural As Boolean, bInicial As Boolean)
+
+  Dim rEntrada As Result
+  Dim sSigla As String
+  Dim sPlural As String
+  Dim sClave As String
+  Dim bOtra As Boolean
+
+  ' --- 1. LA ENTRADA ---
+  rEntrada = m_Siglas.Entrada(iIdSigla)
+  If Not rEntrada Then Return
+  sSigla = rEntrada!sigla
+  sPlural = rEntrada!desarrollo_plural
+
+  ' --- 2. EL PLURAL TIENE QUE ESTAR CARGADO: SI NO, EL FILTRO FRENA ---
+  If bPlural And sPlural = "" Then
+    m_Sonido.sonar("Warning")
+    lblEstadoRapida.Text = "«" & sSigla & "» no tiene plural: cárguelo en el catálogo (botón Siglas)."
+    Return
+  Endif
+
+  ' --- 3. ADOPCIÓN Y CLAVE ---
+  bOtra = m_Siglas.OtraConLaMismaSigla(m_InicioCierre.IdProyectoEnCurso, sSigla, iIdSigla)
+  sClave = m_Siglas.Adoptar(m_InicioCierre.IdProyectoEnCurso, iIdSigla)
+  If sClave = "" Then Return
+  ' UNA SEGUNDA «PO» RECIÉN AGREGADA DEJA AMBIGUAS LAS MARCAS SIN CLAVE QUE YA HABÍA
+  If bOtra And m_Siglas.AdopcionNueva Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro ya tenía otra «" & sSigla & "». Las marcas [" & sSigla & "]{.sigla} que ya están en el texto no dicen cuál es y van a frenar: agregales la clave.")
+  Endif
+  If Not bOtra Then sClave = ""
+
+  ' --- 4. LA MARCA, POR EL MÓDULO (RC-GM-13) ---
+  m_Siglas.MarcaElegida = m_Siglas.Marca(sSigla, sClave, bPlural, bInicial)
+  Me.Close(1)
+
+End
+
+' ============================================
+' Función   : AbrirAlta
+' Propósito : Muestra la alta mínima, con lo tipeado como sigla si puede serlo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub AbrirAlta()
+
+  Dim sBuscado As String
+
+  sBuscado = Trim(txtBuscarSigla.Text)
+  If InStr(sBuscado, " ") = 0 And String.Len(sBuscado) <= m_Siglas.LARGO_SIGLA Then
+    txtAltaSigla.Text = sBuscado
+  Else
+    txtAltaSigla.Text = ""
+  Endif
+  txtAltaDesarrollo.Text = ""
+  vbxAlta.Visible = True
+  lblEstadoRapida.Text = "Sigla nueva en el catálogo: Enter la guarda e inserta · Esc vuelve."
+  If txtAltaSigla.Text = "" Then
+    txtAltaSigla.SetFocus()
+  Else
+    txtAltaDesarrollo.SetFocus()
+  Endif
+
+End
+
+' ============================================
+' Función   : CerrarAlta
+' Propósito : Esconde la alta y vuelve a la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CerrarAlta()
+
+  vbxAlta.Visible = False
+  lblEstadoRapida.Text = "No está en el catálogo: Enter para darla de alta."
+  txtBuscarSigla.SetFocus()
+
+End
+
+' ============================================
+' Función   : GuardarAlta
+' Propósito : Da de alta la sigla en el catálogo y la elige
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub GuardarAlta()
+
+  Dim iIdSigla As Integer
+
+  ' GuardarEntrada VALIDA Y AVISA; -1 ES QUE NO SE GRABÓ
+  If m_Siglas.GuardarEntrada(0, txtAltaSigla.Text, txtAltaDesarrollo.Text, "", "") < 0 Then Return
+  iIdSigla = m_Siglas.IdDe(Trim(txtAltaSigla.Text), Trim(txtAltaDesarrollo.Text))
+  If iIdSigla = 0 Then Return
+  Elegir(iIdSigla, False, False)
+
+End
+
+' ============================================
+' Función   : txtAltaSigla_KeyPress
+' Propósito : Enter pasa al desarrollo; Esc vuelve a la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtAltaSigla_KeyPress()
+
+  Select Case Key.Code
+    Case Key.Esc
+      Stop Event
+      CerrarAlta()
+    Case Key.Return, Key.Enter
+      Stop Event
+      txtAltaDesarrollo.SetFocus()
+  End Select
+
+End
+
+' ============================================
+' Función   : txtAltaDesarrollo_KeyPress
+' Propósito : Enter guarda la alta e inserta; Esc vuelve a la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtAltaDesarrollo_KeyPress()
+
+  Select Case Key.Code
+    Case Key.Esc
+      Stop Event
+      CerrarAlta()
+    Case Key.Return, Key.Enter
+      Stop Event
+      GuardarAlta()
+  End Select
+
+End

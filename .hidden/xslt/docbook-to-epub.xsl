@@ -404,6 +404,28 @@
     </xsl:choose>
   </xsl:template>
 
+  <!-- SIGLAS (1.18.0, filters/siglas.lua): EL DESARROLLO EN EL title DEL
+       <abbr>. EL DESARROLLO EN OTRO IDIOMA VA EN <i> CON lang Y xml:lang,
+       COMO EL RESTO DEL XHTML DEL EPUB: CURSIVA, Y EL IDIOMA PARA LA
+       PARTICIÓN Y LA LECTURA EN VOZ ALTA. -->
+  <xsl:template match="db:acronym | acronym">
+    <abbr>
+      <xsl:if test="normalize-space(@xlink:title) != ''">
+        <xsl:attribute name="title" select="@xlink:title"/>
+      </xsl:if>
+      <xsl:apply-templates/>
+    </abbr>
+  </xsl:template>
+  <xsl:template match="db:foreignphrase | foreignphrase">
+    <i>
+      <xsl:if test="normalize-space(@xml:lang) != ''">
+        <xsl:attribute name="lang" select="@xml:lang"/>
+        <xsl:attribute name="xml:lang" select="@xml:lang"/>
+      </xsl:if>
+      <xsl:apply-templates/>
+    </i>
+  </xsl:template>
+
   <!-- SUPERÍNDICE Y SUBÍNDICE (SC-30). NO HABÍA PLANTILLA: LA REGLA
        INCORPORADA DEJABA EL TEXTO, Y x^2^ SALÍA «x2». -->
   <xsl:template match="db:superscript | superscript">

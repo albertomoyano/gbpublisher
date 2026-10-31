@@ -19,8 +19,9 @@
 #                   distingue: procesa lo que la lista declara, en ese orden.
 #
 # LOS INSUMOS LOS ESCRIBE GAMBAS ANTES DE LANZAR ESTE SCRIPT: la lista,
-# tmp/info-{base}.xml y tmp/biblio-{base}.xml de cada capítulo, y el .bib del
-# proyecto ya exportado. Todo lo que sale de la base llega como archivo. Este
+# tmp/info-{base}.xml y tmp/biblio-{base}.xml de cada capítulo, el .bib del
+# proyecto ya exportado y las siglas del libro ($RUTA_SIGLAS, comun.sh: la
+# lee filters/siglas.lua). Todo lo que sale de la base llega como archivo. Este
 # script no toca la base ({base} es nombre_archivo sin su prefijo fm-, a- o
 # bm-: a-02-metodologia → 02-metodologia).
 #
@@ -435,6 +436,9 @@ if (( ${#faltan[@]} > 0 )); then
     morir "Faltan filtros en $DIR_FILTROS: ${faltan[*]}"
 fi
 [[ -f "$RUTA_ABREVIATURAS" ]] || morir "No se encontró la lista de abreviaturas: $RUTA_ABREVIATURAS"
+# GAMBAS LO ESCRIBE SIEMPRE, VACÍO EN UN LIBRO SIN SIGLAS: SI FALTA, EL
+# SCRIPT NO SE LANZÓ DESDE LA APLICACIÓN Y LAS SIGLAS PUEDEN SER VIEJAS
+[[ -f "$DIR_PROYECTO/$RUTA_SIGLAS" ]] || morir "No está $RUTA_SIGLAS: lo escribe gbpublisher al generar. Generá desde la aplicación."
 
 [[ -f "$DIR_ENGINE/controles_md.lua" ]] || morir "No se encontró el filtro de controles: $DIR_ENGINE/controles_md.lua"
 

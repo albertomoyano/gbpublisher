@@ -56,6 +56,12 @@ DIR_GBP_LOCAL="$HOME/.gbpublisher"
 # QUE PRODUCE UNA SALIDA; LA MISMA RUTA USA GAMBAS (m_Constantes)
 RUTA_ABREVIATURAS="$DIR_GBP_LOCAL/filters/abreviaturas-espacio-fijo.txt"
 
+# LAS SIGLAS DEL LIBRO, RELATIVAS AL PROYECTO (1.18.0). LAS ESCRIBE GAMBAS
+# (m_Siglas.EscribirParaFiltro) ANTES DE LANZAR LOS SCRIPTS QUE LAS USAN; LAS
+# LEEN filters/siglas.lua Y vigencia_canonico. LA MISMA RUTA ESTÁ EN siglas.lua
+# (RUTA_SIGLAS) Y EN m_Siglas (ARCHIVO_FILTRO): SI CAMBIA ACÁ, CAMBIA EN LOS TRES
+RUTA_SIGLAS="tmp/siglas-libro.tsv"
+
 # --- 3b. LAS CADENAS DE FILTROS ---
 # LIBRO: LA DE generar_canonicos_capitulos.sh Y DE vista_cuadro.sh (SC-67).
 # EL ORDEN ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
@@ -82,6 +88,13 @@ RUTA_ABREVIATURAS="$DIR_GBP_LOCAL/filters/abreviaturas-espacio-fijo.txt"
 #      cite-to-biblioref-db, QUE SERIALIZA LAS NOTAS: UNA MARCA QUE LLEGUE
 #      AHÍ SIN TRADUCIR LA DESCARTA EL ESCRITOR DocBook (GV-116). SOLO EN
 #      EL LIBRO: LAS REVISTAS NO USAN ÍNDICES
+#  4c° siglas                   [OMS]{.sigla} A «desarrollo (<acronym>)» LA
+#      PRIMERA VEZ EN LA PIEZA Y A <acronym> DESPUÉS (1.18.0). DESPUÉS DE
+#      indice; ANTES DE cite-to-biblioref-db, QUE SERIALIZA LAS NOTAS: LAS
+#      MARCAS DE UNA NOTA CUENTAN EN SU LLAMADA Y TIENEN QUE RESOLVERSE EN EL
+#      MISMO RECORRIDO QUE EL TEXTO. DESPUÉS DE guillemets: EL DESARROLLO ES
+#      LITERAL. LEE $RUTA_SIGLAS DEL PROYECTO (-M gb-proyecto). SOLO EN EL
+#      LIBRO: LAS REVISTAS NO TIENEN SIGLAS
 #   5° cite-to-biblioref-db     CITAS BIBLIOGRÁFICAS
 #   6° dos-partes               EPÍGRAFES {texto}{atribución}; FRENA SI UNO
 #      ESTÁ MAL FORMADO
@@ -108,6 +121,7 @@ FILTROS_LIBRO=(
     corte-titulo.lua
     cifras.lua
     indice.lua
+    siglas.lua
     cite-to-biblioref-db.lua
     dos-partes.lua
     espacio-vertical.lua
@@ -418,13 +432,23 @@ carpeta_de_pieza() {
 #             CON TEXTO NUEVO.
 #             LO QUE LLEGA DE LA BASE (tmp/info-*, tmp/biblio-*) NO TIENE
 #             HUELLA: «vigente» QUIERE DECIR VIGENTE RESPECTO DE SUS ARCHIVOS
-#             FUENTE, NO RESPECTO DE LA BASE
+#             FUENTE, NO RESPECTO DE LA BASE. LA EXCEPCIÓN SON LAS SIGLAS
+#             (1.18.0): EL DESARROLLO SE COPIA EN EL CANÓNICO, Y UNA
+#             CORRECCIÓN EN EL CATÁLOGO LO DEJA VIEJO SIN QUE CAMBIE NINGÚN
+#             ARCHIVO FUENTE. CADA SIGLA USADA DEJA UNA
+#             <?gb-sigla clave="…" sha1="…"?> EN EL CUERPO (filters/siglas.lua),
+#             CON LA HUELLA DE SU LÍNEA EN $RUTA_SIGLAS, QUE GAMBAS ESCRIBE
+#             DESDE LA BASE ANTES DE LANZAR EL SCRIPT. LAS SIGLAS NO CUENTAN
+#             COMO FUENTES: UN CANÓNICO SIN gb-fuente SIGUE «SIN HUELLA»
 # ============================================================================
 vigencia_canonico() {
     local canonico="$1"
     local nombre carpeta pis pi archivo huella actual
+    local clave linea
     local fuentes=0
     local problemas=()
+    local -A lineas_sigla=()
+    local -A siglas_vistas=()
 
     VIGENCIA_ESTADO=""
     VIGENCIA_DETALLE=""
@@ -489,6 +513,54 @@ vigencia_canonico() {
             problemas+=("$archivo cambió")
         fi
     done <<< "$pis"
+
+    # --- C2. LAS SIGLAS DEL CUERPO (1.18.0) ---
+    # // Y NO /: VAN AL FINAL DE CADA PIEZA, DENTRO DEL CUERPO, Y EL CANÓNICO
+    # DEL LIBRO TRAE LAS DE TODOS SUS CAPÍTULOS
+    pis="$(xmllint --xpath '//processing-instruction("gb-sigla")' "$canonico" 2>/dev/null |
+           grep -oP '<\?gb-sigla\s.*?\?>')"
+
+    if [[ -n "$pis" ]]; then
+        # LAS LÍNEAS DEL ARCHIVO, POR CLAVE. LA HUELLA SE CALCULA DESPUÉS Y
+        # SOLO DE LAS USADAS: UN sha1sum POR LÍNEA SERÍAN CIENTOS DE PROCESOS
+        # POR CANÓNICO
+        if [[ -f "$DIR_PROYECTO/$RUTA_SIGLAS" ]]; then
+            while IFS= read -r linea || [[ -n "$linea" ]]; do
+                [[ -z "$linea" ]] && continue
+                lineas_sigla["${linea%%$'\t'*}"]="$linea"
+            done < "$DIR_PROYECTO/$RUTA_SIGLAS"
+        else
+            problemas+=("falta $RUTA_SIGLAS (lo escribe la aplicación al generar)")
+        fi
+
+        while IFS= read -r pi; do
+            [[ -z "$pi" ]] && continue
+            [[ -f "$DIR_PROYECTO/$RUTA_SIGLAS" ]] || break
+
+            # LA FORMA LA ESCRIBE filters/siglas.lua: clave PRIMERO, sha1
+            # DESPUÉS, 40 CIFRAS HEXADECIMALES
+            if [[ ! "$pi" =~ clave=\"([0-9a-z-]+)\"\ sha1=\"([0-9a-f]{40})\" ]]; then
+                problemas+=("una huella de sigla ilegible: $pi")
+                continue
+            fi
+            clave="${BASH_REMATCH[1]}"
+            huella="${BASH_REMATCH[2]}"
+
+            # EN EL CANÓNICO DEL LIBRO UNA SIGLA SE REPITE EN CADA CAPÍTULO
+            # QUE LA USA: SE INFORMA UNA VEZ
+            [[ -n "${siglas_vistas[$clave]+x}" ]] && continue
+            siglas_vistas["$clave"]=1
+
+            if [[ -z "${lineas_sigla[$clave]+x}" ]]; then
+                problemas+=("la sigla $clave ya no está en el libro")
+                continue
+            fi
+            actual="$(printf '%s' "${lineas_sigla[$clave]}" | sha1sum | cut -d' ' -f1)"
+            if [[ "$actual" != "$huella" ]]; then
+                problemas+=("la sigla $clave cambió en el catálogo")
+            fi
+        done <<< "$pis"
+    fi
 
     # --- D. ESTADO ---
     if (( ${#problemas[@]} > 0 )); then

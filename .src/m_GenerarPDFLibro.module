@@ -923,8 +923,12 @@ End
 ' Retorna   : String — el texto de los dos bloques, o "ABORTAR" con el motivo
 '             ya informado (la señal de ComandoGenerado y RutaLogo)
 ' Nota      : EL TEXTO ES EL QUE ANTES ESCRIBÍA GenerarPreambuloProyecto,
-'             CARÁCTER POR CARÁCTER: preambulo-proyecto.tex NO CAMBIA.
+'             CARÁCTER POR CARÁCTER: preambulo-proyecto.tex NO CAMBIA. LA
+'             EXCEPCIÓN SON LAS SIGLAS CON IDIOMA (1.18.0): SU IDIOMA SE CARGA
+'             EN babel Y SU NOMBRE SE DEFINE PARA \gbextranjero
+'             (preambulo-contrato.tex). UN LIBRO SIN ESAS SIGLAS SALE IGUAL.
 ' ============================================
+
 Private Function DefinicionesCita(hLibro As Result) As String
 
   Dim s As String
@@ -934,6 +938,9 @@ Private Function DefinicionesCita(hLibro As Result) As String
   Dim sCodigo As String
   Dim aCodigos As String[]
   Dim aIdiomas As New String[]
+  Dim aIdiomasSiglas As String[]
+  Dim sBabelSigla As String
+  Dim sNombresSiglas As String
 
   ' --- 1. ESTILO DE CITA ---
   ' EL CANÓNICO TAMBIÉN LO TRAE, PERO LA FUENTE ES LA BASE: EL XML ES COPIA.
@@ -987,6 +994,29 @@ Private Function DefinicionesCita(hLibro As Result) As String
     Next
   Endif
 
+  ' --- 2b. LOS IDIOMAS DE LAS SIGLAS (1.18.0) ---
+  ' EL DESARROLLO DE UNA SIGLA EN OTRO IDIOMA SALE EN \gbextranjero{en}{…}
+  ' (docbook-to-latex.xsl), QUE NECESITA EL IDIOMA CARGADO EN babel Y SU
+  ' NOMBRE: \csname gbbabel@en\endcsname. UNO QUE babel NO RECONOCE FRENA,
+  ' COMO EL PRINCIPAL: COMPONER CON OTRA PARTICIÓN NO LO VE NADIE
+  aIdiomasSiglas = m_Siglas.IdiomasDelLibro(m_InicioCierre.IdProyectoEnCurso)
+  If IsNull(aIdiomasSiglas) Then Return "ABORTAR"
+  For Each sCodigo In aIdiomasSiglas
+    sBabelSigla = CodigoABabel(sCodigo)
+    If sBabelSigla = "" Then
+      m_Sonido.sonar("Error")
+      Message.Error("El idioma de una sigla del libro no está entre los " &
+        "reconocidos por babel: " & sCodigo & gb.NewLine &
+        "Corregilo en Siglas, en el catálogo.")
+      Return "ABORTAR"
+    Endif
+    If sBabelSigla <> sIdiomaPrincipal Then
+      If Not aIdiomas.Exist(sBabelSigla) Then aIdiomas.Add(sBabelSigla)
+    Endif
+    sNombresSiglas &= "\\expandafter\\def\\csname gbbabel@" & sCodigo &
+      "\\endcsname{" & sBabelSigla & "}" & gb.NewLine
+  Next
+
   aIdiomas.Add("main=" & sIdiomaPrincipal)
   sIdiomasBabel = aIdiomas.Join(",")
 
@@ -995,6 +1025,8 @@ Private Function DefinicionesCita(hLibro As Result) As String
   s = "% --- IDIOMA ---" & gb.NewLine
   s &= "\\def\\gbidiomas{" & sIdiomasBabel & "}" & gb.NewLine
   s &= "\\def\\gbidiomaprincipal{" & sIdiomaPrincipal & "}" & gb.NewLine
+  ' LOS NOMBRES DE babel DE LOS IDIOMAS DE LAS SIGLAS (APARTADO 2b)
+  s &= sNombresSiglas
   s &= "\\newif\\ifgbcjk   \\gbcjkfalse" & gb.NewLine
   s &= gb.NewLine
 

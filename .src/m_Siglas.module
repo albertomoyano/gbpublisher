@@ -1,293 +1,1526 @@
 ' Gambas module file
 
-' MÓDULO m_Siglas
+' ==============================================================================
+' Módulo    : m_Siglas
+' Propósito : Siglas de los libros (actualización 1.18.0; documento de trabajo
+'             claude/siglas-glosario.md, decisiones de Alberto, 31/10). Catálogo
+'             DE LA EDITORIAL, común a todos los libros (sigla_catalogo), y las
+'             siglas que adopta cada libro (libro_sigla), con copia por valor
+'             (SC-23). Lo usan FSiglas (ABM del catálogo y vista del libro) y
+'             FSiglaRapida (F2 en el editor).
+' Marca     : [OMS]{.sigla} en el .md. .plural y .inicial piden el plural y la
+'             mayúscula inicial del desarrollo; clave=N-sigla va solo cuando el
+'             libro tiene dos entradas con la misma sigla (PO: Partido Obrero /
+'             Prensa Obrera).
+' Clave     : <id_sigla>-<sigla normalizada> («44-oms»), como en referencias.
+'             El catálogo NO la guarda: una columna generada no puede usar una
+'             AUTO_INCREMENT (error 3109, medido en 8.0.46). El libro la guarda
+'             al adoptar y no cambia nunca: así un libro que viaja por JSON a otra
+'             instalación conserva sus marcas.
+' Colación  : sigla utf8mb4_0900_as_cs (LyF y LYF son distintas); desarrollo
+'             0900_as_ci (no distingue mayúsculas, sí tildes y ñ). La BÚSQUEDA
+'             usa 0900_ai_ci en la consulta (GV-152).
+' Desarrollo: solo admite cursiva, *…*; todo lo demás es literal ($, &, %…).
+' Corrección: corregir una entrada del catálogo corrige las copias de los
+'             libros que no están publicados (libros_md.estado_libro); un libro
+'             publicado queda como salió (SC-71).
+' Sincronía : las siglas del libro son las de sus marcas (decisión de Alberto,
+'             31/10). Sincronizar adopta las marcadas y quita las copias sin
+'             marca; corre al abrir FSiglas y con su botón. No quita nada si el
+'             editor tiene cambios sin guardar o si un archivo no se pudo leer,
+'             y no toca un libro publicado.
+' Filtro    : antes de generar, EscribirParaFiltro deja las siglas del libro en
+'             tmp/siglas-libro.tsv para filters/siglas.lua (la primera vez en
+'             la pieza, «desarrollo (SIGLA)»; después, la sigla) y para
+'             vigencia_canonico (engine/comun.sh). La llama
+'             m_GenerarSalidasLibro.EjecutarScriptSalida.
+' Requiere  : esquema 1.18.0.
+' Dependencias: m_ConexionBD, m_InicioCierre, m_BuscarRegex, m_EditorPrincipal,
+'             m_Vocabularios (IdiomasActivos), m_Sonido.
+' ==============================================================================
 
-Public ContenidoGlo As Result
+' LARGOS DE LAS COLUMNAS (1.18.0)
+Public Const LARGO_SIGLA As Integer = 32
+Public Const LARGO_DESARROLLO As Integer = 500
 
-Public Sub ConfigurarTableViewGlosarioEnCurso(grid As GridView)
+' LA MARCA EN EL .md: LO QUE SIGUE AL CORCHETE QUE CIERRA LA SIGLA
+Private Const INICIO_ATRIBUTOS As String = "]{.sigla"
+' UNA SIGLA OCUPA HASTA 32 CARACTERES (128 BYTES EN UTF-8): HACIA ATRÁS DE LA
+' MARCA SE BUSCA EL CORCHETE QUE ABRE EN ESE TRAMO Y NO EN TODO EL TEXTO
+Private Const TRAMO_SIGLA_BYTES As Integer = 132
+' CARACTERES QUE ROMPERÍAN LA MARCA [SIGLA]{.sigla} O LA CURSIVA
+Private Const PROHIBIDOS_SIGLA As String = " []{}*\\"
+' TRANSLITERACIÓN PARA LA CLAVE: MISMA POSICIÓN EN LAS DOS CADENAS
+Private Const CON_TILDE As String = "áàäâãéèëêíìïîóòöôõúùüûñçÁÀÄÂÃÉÈËÊÍÌÏÎÓÒÖÔÕÚÙÜÛÑÇ"
+Private Const SIN_TILDE As String = "aaaaaeeeeiiiiooooouuuuncaaaaaeeeeiiiiooooouuuunc"
+' EL ARCHIVO PARA filters/siglas.lua, EN tmp/ DEL PROYECTO. LA MISMA RUTA ESTÁ
+' EN siglas.lua (RUTA_SIGLAS) Y EN engine/comun.sh (RUTA_SIGLAS): SI CAMBIA ACÁ,
+' CAMBIA EN LOS TRES
+Public Const ARCHIVO_FILTRO As String = "siglas-libro.tsv"
+' EL ARCHIVO ES DE CAMPOS SEPARADOS POR TABULADOR, UNA SIGLA POR LÍNEA: NINGÚN
+' CAMPO PUEDE TENER UNO DE ESTOS CARACTERES
+Private Const SEPARADORES_FILTRO As String = "\t\n\r"
+' EL ARCHIVO JSON DE INTERCAMBIO
+Private Const FORMATO_JSON As String = "gbpublisher-siglas"
+Private Const VERSION_JSON As Integer = 1
 
-  With grid
-    .Header = GridView.Both
-    .Grid = True
-    .Columns.Count = 11
-    .Mode = Select.Single  ' IMPORTANTE: HABILITA SELECCIÓN DE FILAS
+' CANAL ENTRE FMain Y FSiglaRapida: VARIABLES DE MÓDULO Y NO PUBLIC DEL
+' FORMULARIO, QUE SE PIERDEN AL CERRARLO (RC-GM-13)
+Public TextoInicial As String
+Public MarcaElegida As String
+' LA ÚLTIMA LLAMADA A Adoptar CREÓ LA COPIA (NO ESTABA EN EL LIBRO)
+Public AdopcionNueva As Boolean
+' EL PROBLEMA DE LA ÚLTIMA AdoptarSinAviso FALLIDA. VA EN EL MÓDULO Y NO EN UN
+' PARÁMETRO ByRef: EN GAMBAS LOS PRIMITIVOS SE PASAN SIEMPRE POR VALOR (GV-24)
+Private $sErrorAdopcion As String
+' EL RESULTADO DE LA ÚLTIMA Sincronizar, PARA LA LÍNEA DE ESTADO DEL FORMULARIO
+Public SincroAgregadas As Integer
+Public SincroQuitadas As Integer
+Public SincroPendientes As Integer
+Public SincroNota As String
 
-    ' CONFIGURACIÓN DE COLUMNAS
-    For i As Integer = 0 To 10
-      Select Case i
-        Case 0
-          .Columns[i].Title = "Id"
-          .Columns[i].Width = 0
-        Case 1
-          .Columns[i].Title = "Id Proyecto"
-          .Columns[i].Width = 0
-        Case 2
-          .Columns[i].Title = "Clave"
-          .Columns[i].Width = 150
-        Case 3
-          .Columns[i].Title = "Tipo"
-          .Columns[i].Width = 100
-        Case 4
-          .Columns[i].Title = "Nombre"
-          .Columns[i].Width = 150
-        Case 5
-          .Columns[i].Title = "Descripción"
-          .Columns[i].Width = 500
-        Case 6
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-        Case 7
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-        Case 8
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-        Case 9
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-        Case 10
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-      End Select
+' ============================================
+' Función   : NuloSiVacio
+' Propósito : Null para un texto vacío al pasarlo a Exec: «sin dato» es NULL
+'             (GV-74). Devuelve Variant: con If(s = "", Null, s) el Null se
+'             vuelve "" y lo rechaza el CHECK (medido en m_Vocabularios, 28/10)
+' Parámetros: sTexto As String — el valor
+' Retorna   : Variant — el texto sin espacios de borde, o Null si está vacío
+' ============================================
+Private Function NuloSiVacio(sTexto As String) As Variant
+
+  If Trim(sTexto) = "" Then Return Null
+  Return Trim(sTexto)
+
+End
+
+' ============================================
+' Función   : PatronLike
+' Propósito : Patrón de LIKE «contiene» con los comodines escapados: un «%» o
+'             un «_» tipeados son texto. Escape con «!» (SC-08)
+' Parámetros: sTexto As String — lo tipeado
+' Retorna   : String — «%texto%», para usar con ESCAPE '!'
+' ============================================
+Private Function PatronLike(sTexto As String) As String
+
+  Dim sPatron As String
+
+  ' PRIMERO EL PROPIO «!», DESPUÉS LOS COMODINES (SC-08)
+  sPatron = Replace(sTexto, "!", "!!")
+  sPatron = Replace(sPatron, "%", "!%")
+  sPatron = Replace(sPatron, "_", "!_")
+
+  Return "%" & sPatron & "%"
+
+End
+
+' ============================================
+' Función   : NormalizarClave
+' Propósito : La parte de la sigla que va en la clave: minúsculas ASCII y
+'             cifras; el guion y el espacio pasan a un guion; lo demás se
+'             pierde (LyF → lyf, SITRAC-SITRAM → sitrac-sitram, AT&T → att)
+' Parámetros: sSigla As String — la sigla
+' Retorna   : String — la forma normalizada; vacía si no queda nada
+' ============================================
+Public Function NormalizarClave(sSigla As String) As String
+
+  Dim sResultado As String
+  Dim sCaracter As String
+  Dim iPos As Integer
+  Dim i As Integer
+
+  ' --- 1. CARÁCTER POR CARÁCTER: String.* PORQUE HAY TILDES (RC-GM-12) ---
+  For i = 1 To String.Len(sSigla)
+    sCaracter = String.Mid(sSigla, i, 1)
+    iPos = String.InStr(CON_TILDE, sCaracter)
+    If iPos > 0 Then sCaracter = String.Mid(SIN_TILDE, iPos, 1)
+    sCaracter = LCase(sCaracter)
+    ' UN CARÁCTER DE VARIOS BYTES QUE NO SE TRANSLITERÓ QUEDA FUERA DE LOS RANGOS
+    If (sCaracter >= "a" And sCaracter <= "z") Or (sCaracter >= "0" And sCaracter <= "9") Then
+      sResultado &= sCaracter
+    Else If sCaracter = "-" Or sCaracter = " " Then
+      ' UN SOLO GUION SEGUIDO Y NUNCA AL PRINCIPIO
+      If sResultado <> "" Then
+        If Right(sResultado, 1) <> "-" Then sResultado &= "-"
+      Endif
+    Endif
+  Next
+
+  ' --- 2. SIN GUION AL FINAL: LO EXIGE EL CHECK DE libro_sigla.clave ---
+  If Right(sResultado, 1) = "-" Then sResultado = Left(sResultado, Len(sResultado) - 1)
+
+  Return sResultado
+
+End
+
+' ============================================
+' Función   : ClaveDe
+' Propósito : La clave de una entrada del catálogo: <id>-<sigla normalizada>
+' Parámetros: iIdSigla As Integer — id de la entrada
+'             sSigla As String — su sigla
+' Retorna   : String — «44-oms»; solo el número si la sigla no deja nada
+' ============================================
+Public Function ClaveDe(iIdSigla As Integer, sSigla As String) As String
+
+  Dim sNormal As String
+
+  sNormal = NormalizarClave(sSigla)
+  If sNormal = "" Then Return CStr(iIdSigla)
+
+  Return CStr(iIdSigla) & "-" & sNormal
+
+End
+
+' ============================================
+' Función   : ClaveValida
+' Propósito : Controla la forma de una clave antes de grabarla: la misma del
+'             CHECK chk_libsig_clave, ^[0-9]+(-[a-z0-9]+)*$
+' Parámetros: sClave As String — la clave
+' Retorna   : Boolean — True si tiene la forma
+' ============================================
+Private Function ClaveValida(sClave As String) As Boolean
+
+  Dim aPartes As String[]
+  Dim sCaracter As String
+  Dim i As Integer
+  Dim j As Integer
+
+  If sClave = "" Then Return False
+  aPartes = Split(sClave, "-")
+
+  ' LA PRIMERA PARTE SON CIFRAS; LAS DEMÁS, MINÚSCULAS Y CIFRAS; NINGUNA VACÍA
+  For i = 0 To aPartes.Max
+    If aPartes[i] = "" Then Return False
+    For j = 1 To Len(aPartes[i])
+      sCaracter = Mid(aPartes[i], j, 1)
+      If sCaracter >= "0" And sCaracter <= "9" Then Continue
+      If i > 0 And sCaracter >= "a" And sCaracter <= "z" Then Continue
+      Return False
     Next
-  End With
+  Next
+
+  Return True
 
 End
 
-Public Sub RefrescarTableViewGlosarioEnCurso()
+' ============================================
+' Función   : AvisoCursiva
+' Propósito : Controla los asteriscos de un desarrollo: van de a pares y
+'             encierran texto (*Clarín*); «**» sería negrita o una cursiva vacía
+' Parámetros: sTexto As String — el desarrollo
+'             sCampo As String — nombre del campo, para el aviso
+' Retorna   : String — el problema; vacío si está bien
+' ============================================
+Private Function AvisoCursiva(sTexto As String, sCampo As String) As String
 
-  Dim gloSQL As String
+  Dim iCuenta As Integer
+  Dim iPos As Integer
 
-  ' EJECUTAR CONSULTA Y ACTUALIZAR VARIABLE PÚBLICA
-  gloSQL = "SELECT * FROM siglas WHERE id_proyecto = &1 ORDER BY id DESC"
-  ContenidoGlo = m_ConexionBD.mConn.Exec(gloSQL, FMain.id_proyecto.Value)
+  ' InStr CON DESPLAZAMIENTO ES CORRECTO EN UTF-8 PARA BUSCAR UN CARÁCTER ASCII (RC-GM-12)
+  iPos = InStr(sTexto, "*")
+  While iPos > 0
+    Inc iCuenta
+    iPos = InStr(sTexto, "*", iPos + 1)
+  Wend
 
-  ' LIMPIAR GRIDVIEW SIEMPRE
-  FSiglas.gvSiglasEnCurso.Clear
+  If iCuenta Mod 2 <> 0 Then Return "El " & sCampo & " tiene un asterisco suelto: la cursiva va entre dos (*Clarín*)."
+  If InStr(sTexto, "**") > 0 Then Return "El " & sCampo & " tiene «**»: solo se admite la cursiva, con un asterisco a cada lado."
 
-  ' CONFIGURAR NÚMERO DE FILAS SEGÚN RESULTADO
-  If ContenidoGlo <> Null And ContenidoGlo.Available Then
-    FSiglas.gvSiglasEnCurso.Rows.Count = ContenidoGlo.Count
-  Else
-    FSiglas.gvSiglasEnCurso.Rows.Count = 0
+  Return ""
+
+End
+
+' ============================================
+' Función   : HaySeparador
+' Propósito : Dice si un texto tiene un tabulador o un salto de línea
+' Parámetros: sTexto As String
+' Retorna   : Boolean
+' ============================================
+Private Function HaySeparador(sTexto As String) As Boolean
+
+  Dim i As Integer
+
+  ' InStr ES CORRECTO EN UTF-8 PARA BUSCAR UN CARÁCTER ASCII (RC-GM-12)
+  For i = 1 To Len(SEPARADORES_FILTRO)
+    If InStr(sTexto, Mid(SEPARADORES_FILTRO, i, 1)) > 0 Then Return True
+  Next
+
+  Return False
+
+End
+
+' ============================================
+' Función   : AvisoEntrada
+' Propósito : Controla una entrada antes de grabarla; la usan el ABM, la
+'             ventanita, la caja de texto y la importación
+' Parámetros: sSigla, sDesarrollo, sPlural As String — los textos, sin espacios
+'             de borde
+' Retorna   : String — el primer problema; vacío si está bien
+' ============================================
+Public Function AvisoEntrada(sSigla As String, sDesarrollo As String, sPlural As String) As String
+
+  Dim sAviso As String
+  Dim i As Integer
+
+  ' --- 0. TABULADORES Y SALTOS DE LÍNEA ---
+  ' LLEGAN PEGANDO TEXTO (LA CAJA DE TEXTO, UN JSON) Y ROMPERÍAN EL ARCHIVO DEL
+  ' FILTRO, QUE SEPARA LOS CAMPOS CON TABULADOR (EscribirParaFiltro)
+  If HaySeparador(sSigla) Or HaySeparador(sDesarrollo) Or HaySeparador(sPlural) Then Return "La entrada tiene un tabulador o un salto de línea: van solo espacios."
+
+  ' --- 1. LA SIGLA ---
+  If sSigla = "" Then Return "Falta la sigla."
+  ' String.Len CUENTA CARACTERES; Len CUENTA BYTES (RC-GM-12)
+  If String.Len(sSigla) > LARGO_SIGLA Then Return "La sigla pasa de " & CStr(LARGO_SIGLA) & " caracteres."
+  For i = 1 To Len(PROHIBIDOS_SIGLA)
+    If InStr(sSigla, Mid(PROHIBIDOS_SIGLA, i, 1)) > 0 Then Return "La sigla no puede tener espacios ni los caracteres [ ] { } * \\."
+  Next
+
+  ' --- 2. EL DESARROLLO ---
+  If sDesarrollo = "" Then Return "Falta el desarrollo."
+  If String.Len(sDesarrollo) > LARGO_DESARROLLO Then Return "El desarrollo pasa de " & CStr(LARGO_DESARROLLO) & " caracteres."
+  sAviso = AvisoCursiva(sDesarrollo, "desarrollo")
+  If sAviso <> "" Then Return sAviso
+
+  ' --- 3. EL PLURAL, SI LO HAY ---
+  If sPlural <> "" Then
+    If String.Len(sPlural) > LARGO_DESARROLLO Then Return "El plural pasa de " & CStr(LARGO_DESARROLLO) & " caracteres."
+    sAviso = AvisoCursiva(sPlural, "plural")
+    If sAviso <> "" Then Return sAviso
   Endif
 
-  ' EL EVENTO Data SE ENCARGARÁ DE POBLAR LAS CELDAS
-  ' NO HACEMOS NADA MÁS AQUÍ
+  Return ""
 
 End
 
-Public Sub MostrarSiglasEnTableViewGlosarioEnCurso(iRow As Integer)
+' ============================================
+' Función   : ListarCatalogo
+' Propósito : Las entradas del catálogo que contienen lo buscado (en la sigla
+'             o en el desarrollo, sin distinguir tildes), con cuántos libros
+'             las usan; en el orden de la lista del libro
+' Parámetros: sFiltro As String — texto a buscar; vacío: todas
+' Retorna   : Result — id_sigla, sigla, desarrollo, desarrollo_plural, idioma,
+'             usos; Null si falló (ya se informó)
+' ============================================
+Public Function ListarCatalogo(sFiltro As String) As Result
 
-  ' VERIFICAR QUE EL Result TENGA DATOS Y QUE LA FILA SEA VÁLIDA
-  If ContenidoGlo = Null Or ContenidoGlo.Count = 0 Then Return
-  If iRow < 0 Or iRow >= ContenidoGlo.Count Then Return
+  Dim rDatos As Result
 
-  ' MOVER EL PUNTERO DEL Result A LA FILA SELECCIONADA
-  ContenidoGlo.MoveTo(iRow)
-
-  ' POBLAR LOS CONTROLES CON LOS DATOS DE LA FILA
-  With FSiglas
-    .id_sigla.Value = ContenidoGlo!id
-    FMain.id_proyecto.Value = ContenidoGlo!id_proyecto
-    .txtClaveGlosario.Text = ContenidoGlo!clave_glosario
-    .cmbTipoDeEntradaGlosario.Text = ContenidoGlo!tipo_de_entrada_glosario
-    .txtNameGlosario.Text = ContenidoGlo!name_glosario
-    .txtDescripcionGlosario.Text = ContenidoGlo!descripcion_glosario
-    .txtFirstGlosario.Text = ContenidoGlo!first_glosario
-    .txtTextGlosario.Text = ContenidoGlo!text_glosario
-    .txtFirstPluraIGlosario.Text = ContenidoGlo!first_plural_glosario
-    .txtPluralGlosario.Text = ContenidoGlo!plural_glosario
-    .txtSortGlosario.Text = ContenidoGlo!sort_glosario
-  End With
-
-End
-
-Public Sub LimpiarTextboxSigla()
-
-  FSiglas.txtClaveGlosario.Text = ""
-  FSiglas.cmbTipoDeEntradaGlosario.Text = "sigla"
-  FSiglas.txtNameGlosario.Text = ""
-  FSiglas.txtDescripcionGlosario.Text = ""
-  FSiglas.txtFirstGlosario.Text = ""
-  FSiglas.txtTextGlosario.Text = ""
-  FSiglas.txtFirstPluraIGlosario.Text = ""
-  FSiglas.txtPluralGlosario.Text = ""
-  FSiglas.txtSortGlosario.Text = ""
-
-End
-
-Public Sub GuardarCamposSigla()
-
-  ContenidoGlo!id = FSiglas.id_sigla.Value
-  ContenidoGlo!id_proyecto = FMain.id_proyecto.Value
-  ContenidoGlo!clave_glosario = Trim(FSiglas.txtClaveGlosario.Text)
-  ContenidoGlo!tipo_de_entrada_glosario = FSiglas.cmbTipoDeEntradaGlosario.Text
-  ContenidoGlo!name_glosario = Trim(FSiglas.txtNameGlosario.Text)
-  ContenidoGlo!descripcion_glosario = Trim(FSiglas.txtDescripcionGlosario.Text)
-  ContenidoGlo!first_glosario = Trim(FSiglas.txtFirstGlosario.Text)
-  ContenidoGlo!text_glosario = Trim(FSiglas.txtTextGlosario.Text)
-  ContenidoGlo!first_plural_glosario = Trim(FSiglas.txtFirstPluraIGlosario.Text)
-  ContenidoGlo!plural_glosario = Trim(FSiglas.txtPluralGlosario.Text)
-  ContenidoGlo!sort_glosario = Trim(FSiglas.txtSortGlosario.Text)
-
-End
-
-Public Sub GuardarSiglaPrimeraVez()
-
-  ContenidoGlo = m_ConexionBD.mConn.Create("siglas")
-  GuardarCamposSigla()
-  ContenidoGlo.Update
-  m_ConexionBD.mConn.Commit()
-
-  ' REFRESCAR VISTA
-  RefrescarTableViewGlosarioEnCurso()
-  m_Sonido.sonar("Info")
-  Message.Info("La entrada se guardó con éxito.")
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al intentar guardar la entrada: " & Error.Text)
-
-End
-
-Public Sub GuardarCambiosSigla()
-
-  ContenidoGlo = m_ConexionBD.mConn.Edit("siglas", "id=" & FSiglas.id_sigla.Value)
-
-  If Not ContenidoGlo.Available Then
+  ' ORDEN DE LA LISTA (DECISIÓN DE ALBERTO): POR LA SIGLA, SIN MAYÚSCULAS NI
+  ' GUIONES; MEDIDO: LF, LN, LyF Y SIDE ANTES DE SITRAC-SITRAM. A IGUAL SIGLA,
+  ' POR EL DESARROLLO SIN LOS ASTERISCOS DE LA CURSIVA (EL «*» IRÍA PRIMERO)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT c.id_sigla, c.sigla, c.desarrollo, c.desarrollo_plural, c.idioma, " &
+    "(SELECT COUNT(*) FROM libro_sigla l WHERE l.id_sigla = c.id_sigla) AS usos FROM sigla_catalogo c " &
+    "WHERE (c.sigla COLLATE utf8mb4_0900_ai_ci LIKE &1 ESCAPE '!' OR c.desarrollo COLLATE utf8mb4_0900_ai_ci LIKE &2 ESCAPE '!') " &
+    "ORDER BY REPLACE(c.sigla, '-', '') COLLATE utf8mb4_0900_ai_ci, c.sigla, REPLACE(c.desarrollo, '*', '') COLLATE utf8mb4_0900_ai_ci",
+    PatronLike(sFiltro), PatronLike(sFiltro))
+  If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("No se encontró la referencia para editar.")
-    Return
+    Message.Error("No se pudo leer el catálogo de siglas (¿falta la actualización de esquema 1.18.0?):" & gb.NewLine & Error.Text)
+    Return Null
   Endif
 
-  GuardarCamposSigla()
-  ContenidoGlo.Update
-  m_ConexionBD.mConn.Commit()
-
-  ' REFRESCAR VISTA
-  RefrescarTableViewGlosarioEnCurso()
-  m_Sonido.sonar("Info")
-  Message.Info("Cambios guardados correctamente.")
-
-  FSiglas.btnNuevoGlosario.Visible = True
-  FSiglas.btnGuardarGlosario.Visible = False
-  FSiglas.btnGuardarCambiosGlosario.Visible = False
-  FSiglas.btnBorrarGlosario.Visible = False
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al guardar los cambios: " & Error.Text)
+  Return rDatos
 
 End
 
-Public Sub NuevoGlosario()
+' ============================================
+' Función   : Buscar
+' Propósito : Sugerencias para la ventanita (F2): entradas cuya sigla o
+'             desarrollo contienen lo tipeado, sin distinguir tildes; primero
+'             las siglas que empiezan así
+' Parámetros: sTexto As String — lo tipeado
+'             iLimite As Integer — cuántas, como máximo
+' Retorna   : Result — id_sigla, sigla, desarrollo; Null si falló (sin aviso:
+'             es una sugerencia mientras se tipea)
+' ============================================
+Public Function Buscar(sTexto As String, iLimite As Integer) As Result
 
-  ' VERIFICAR SI HAY UN PROYECTO ACTIVO
-  If Trim(m_InicioCierre.ArchivoProyectoEnCurso) = "" Then
-    m_Sonido.sonar("Info")
-    Message.Info("No hay un proyecto en curso.")
-    Return
-  Endif
+  Dim rDatos As Result
 
-  LimpiarTextboxSigla()
+  ' Mid(…, 2) QUITA EL «%» INICIAL: «texto%» ES «EMPIEZA CON»
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_sigla, sigla, desarrollo FROM sigla_catalogo " &
+    "WHERE (sigla COLLATE utf8mb4_0900_ai_ci LIKE &1 ESCAPE '!' OR desarrollo COLLATE utf8mb4_0900_ai_ci LIKE &2 ESCAPE '!') " &
+    "ORDER BY (sigla COLLATE utf8mb4_0900_ai_ci LIKE &3 ESCAPE '!') DESC, REPLACE(sigla, '-', '') COLLATE utf8mb4_0900_ai_ci, sigla, REPLACE(desarrollo, '*', '') COLLATE utf8mb4_0900_ai_ci LIMIT &4",
+    PatronLike(sTexto), PatronLike(sTexto), Mid(PatronLike(sTexto), 2), iLimite)
+  If Error Then Return Null
 
-  ' CALCULAR NUEVO ID
-  Dim Idn As Integer
-  Dim MaxId As Variant
-
-  MaxId = m_ConexionBD.mConn.Exec("SELECT MAX(id) FROM siglas LIMIT 1")
-
-  If MaxId["MAX(id)"] = Null Then
-    Idn = 0
-  Else
-    Idn = CInt(MaxId["MAX(id)"]) + 1
-  Endif
-
-  FSiglas.id_sigla.Value = Idn
-
-  ' CONFIGURAR INTERFAZ
-  FSiglas.tbPanelGlosarios.Index = 1
-  FSiglas.txtTMPglosario.Enabled = True
-  FSiglas.txtTMPglosario.Font = Font["Monospace"]
-  FSiglas.txtTMPglosario.Background = Color.White
-  FSiglas.txtTMPglosario.SetFocus
-
-  FSiglas.btnNuevoGlosario.Visible = False
-  FSiglas.btnGuardarGlosario.Visible = True
-  FSiglas.btnGuardarCambiosGlosario.Visible = False
-  FSiglas.btnBorrarGlosario.Visible = False
+  Return rDatos
 
 End
 
-Public Sub GuardarGlosarioPrimeraVez()
+' ============================================
+' Función   : Entrada
+' Propósito : Una entrada del catálogo
+' Parámetros: iIdSigla As Integer — id
+' Retorna   : Result — id_sigla, sigla, desarrollo, desarrollo_plural, idioma;
+'             Null si no existe o falló (ya se informó)
+' ============================================
+Public Function Entrada(iIdSigla As Integer) As Result
 
-  ' VERIFICAR QUE HAY UNA CLAVE
-  If Trim(FSiglas.txtClaveGlosario.Text) = "" Then
-    m_Sonido.sonar("Info")
-    Message.Info("Debe generar una clave.\nNo es posible guardar la entrada.")
-    Return
-  Endif
+  Dim rDatos As Result
 
-  ' VERIFICAR SI YA EXISTE
-  ContenidoGlo = m_ConexionBD.mConn.Exec("SELECT * FROM siglas WHERE name_glosario = &1 AND id_proyecto = &2", Trim(FSiglas.txtNameGlosario.Text), FMain.id_proyecto.Value)
-
-  If ContenidoGlo.Count > 0 Then
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_sigla, sigla, desarrollo, desarrollo_plural, idioma FROM sigla_catalogo WHERE id_sigla = &1", iIdSigla)
+  If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("La sigla o glosario que desea agregar ya existe en este libro/revista.")
-    Return
+    Message.Error("No se pudo leer la sigla:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("La sigla ya no está en el catálogo.")
+    Return Null
   Endif
 
-  ' GUARDAR
-  GuardarSiglaPrimeraVez()
-  LimpiarTextboxSigla()
-
-  ' LIMPIAR Y CONFIGURAR INTERFAZ
-  FSiglas.txtTMPglosario.Enabled = False
-  FSiglas.txtTMPglosario.Background = Color.Background
-  FSiglas.txtTMPglosario.Clear
-  FSiglas.tbPanelGlosarios.Index = 0
-
-  FSiglas.btnNuevoGlosario.Visible = True
-  FSiglas.btnGuardarGlosario.Visible = False
-  FSiglas.btnGuardarCambiosGlosario.Visible = False
-  FSiglas.btnBorrarGlosario.Visible = False
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Se obtuvo el siguiente error al intentar guardar: <b>" & Error.Text & "</b>.")
+  Return rDatos
 
 End
 
-Public Sub BorrarGlosario()
+' ============================================
+' Función   : IdDe
+' Propósito : El id de la entrada con esa sigla y ese desarrollo (la clave
+'             única del catálogo, con la colación de cada columna)
+' Parámetros: sSigla, sDesarrollo As String — la entrada
+' Retorna   : Integer — el id; 0 si no existe o falló
+' ============================================
+Public Function IdDe(sSigla As String, sDesarrollo As String) As Integer
 
-  Dim buscarEliminar As Result
+  Dim rDatos As Result
 
-  ' VERIFICAR QUE SE HAYA SELECCIONADO UNA ENTRADA
-  If FSiglas.id_sigla.Text = "" Then
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_sigla FROM sigla_catalogo WHERE sigla = &1 AND desarrollo = &2", sSigla, sDesarrollo)
+  If Error Then Return 0
+  If Not rDatos.Available Then Return 0
+
+  Return rDatos!id_sigla
+
+End
+
+' ============================================
+' Función   : UsosPublicados
+' Propósito : Cuántos libros publicados tienen una copia de la entrada: esas
+'             copias no siguen al catálogo
+' Parámetros: iIdSigla As Integer — id
+' Retorna   : Integer — la cantidad; 0 si falló
+' ============================================
+Public Function UsosPublicados(iIdSigla As Integer) As Integer
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM libro_sigla l WHERE l.id_sigla = &1 " &
+    "AND EXISTS (SELECT 1 FROM libros_md m WHERE m.id_proyecto = l.id_proyecto AND m.estado_libro = 'publicado')", iIdSigla)
+  If Error Then Return 0
+
+  Return rDatos!n
+
+End
+
+' ============================================
+' Función   : GuardarEntrada
+' Propósito : Alta o corrección de una entrada del catálogo, en una
+'             transacción. Una corrección se lleva a las copias de los libros
+'             NO publicados; los publicados no se tocan (SC-71). La clave de
+'             las copias no cambia
+' Parámetros: iIdSigla As Integer — entrada; 0 para el alta
+'             sSigla, sDesarrollo, sPlural As String — los textos
+'             sIdioma As String — código BCP 47; vacío: la lengua del libro
+' Retorna   : Integer — copias corregidas (0 o más); -1 si no se grabó (ya se
+'             informó)
+' ============================================
+Public Function GuardarEntrada(iIdSigla As Integer, sSigla As String, sDesarrollo As String, sPlural As String, sIdioma As String) As Integer
+
+  Dim rDatos As Result
+  Dim sAviso As String
+  Dim iCorregidas As Integer
+
+  ' --- 1. VALIDACIÓN ---
+  sSigla = Trim(sSigla)
+  sDesarrollo = Trim(sDesarrollo)
+  sPlural = Trim(sPlural)
+  sAviso = AvisoEntrada(sSigla, sDesarrollo, sPlural)
+
+  ' ÚNICA (sigla, desarrollo): SE AVISA ANTES DE QUE LA RECHACE LA CLAVE
+  If sAviso = "" Then
+    Try rDatos = m_ConexionBD.mConn.Exec("SELECT sigla, desarrollo FROM sigla_catalogo WHERE sigla = &1 AND desarrollo = &2 AND id_sigla <> &3", sSigla, sDesarrollo, iIdSigla)
+    If Error Then
+      sAviso = "No se pudo verificar la sigla: " & Error.Text
+    Else If rDatos.Available Then
+      sAviso = "El catálogo ya tiene «" & rDatos!sigla & ": " & rDatos!desarrollo & "»."
+    Endif
+  Endif
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return -1
+  Endif
+
+  ' --- 2. TRANSACCIÓN ---
+  Try m_ConexionBD.mConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' --- 2.1 EL CATÁLOGO; «SIN DATO» ES NULL (GV-74) ---
+  If iIdSigla = 0 Then
+    Try m_ConexionBD.mConn.Exec("INSERT INTO sigla_catalogo (sigla, desarrollo, desarrollo_plural, idioma) VALUES (&1, &2, &3, &4)",
+      sSigla, sDesarrollo, NuloSiVacio(sPlural), NuloSiVacio(sIdioma))
+  Else
+    Try m_ConexionBD.mConn.Exec("UPDATE sigla_catalogo SET sigla = &1, desarrollo = &2, desarrollo_plural = &3, idioma = &4 WHERE id_sigla = &5",
+      sSigla, sDesarrollo, NuloSiVacio(sPlural), NuloSiVacio(sIdioma), iIdSigla)
+  Endif
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo grabar la sigla:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' --- 2.2 LOS LIBROS NO PUBLICADOS SIGUEN AL CATÁLOGO (SC-71) ---
+  ' NOT EXISTS Y NO UN JOIN: UN LIBRO SIN FILA EN libros_md CUENTA COMO NO
+  ' PUBLICADO. SE CUENTA ANTES, CON EL MISMO CRITERIO: ROW_COUNT() EN UNA
+  ' CONSULTA APARTE DA 0 A TRAVÉS DE gb.db (MEDIDO EN m_Vocabularios, 28/10)
+  If iIdSigla > 0 Then
+    Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM libro_sigla l WHERE l.id_sigla = &1 " &
+      "AND NOT EXISTS (SELECT 1 FROM libros_md m WHERE m.id_proyecto = l.id_proyecto AND m.estado_libro = 'publicado')", iIdSigla)
+    If Not Error Then iCorregidas = rDatos!n
+    Try m_ConexionBD.mConn.Exec("UPDATE libro_sigla l SET l.sigla = &1, l.desarrollo = &2, l.desarrollo_plural = &3, l.idioma = &4 " &
+      "WHERE l.id_sigla = &5 AND NOT EXISTS (SELECT 1 FROM libros_md m WHERE m.id_proyecto = l.id_proyecto AND m.estado_libro = 'publicado')",
+      sSigla, sDesarrollo, NuloSiVacio(sPlural), NuloSiVacio(sIdioma), iIdSigla)
+    If Error Then
+      m_ConexionBD.mConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo llevar la corrección a los libros:" & gb.NewLine & Error.Text)
+      Return -1
+    Endif
+  Endif
+
+  ' --- 2.3 CONFIRMACIÓN ---
+  Try m_ConexionBD.mConn.Commit()
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar los cambios de la sigla:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  Return iCorregidas
+
+End
+
+' ============================================
+' Función   : BorrarEntrada
+' Propósito : Borra una entrada que ningún libro usa. La clave foránea con
+'             RESTRICT es la red: el control previo da un aviso claro
+' Parámetros: iIdSigla As Integer — id
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarEntrada(iIdSigla As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  ' --- 1. EN USO: NO SE BORRA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM libro_sigla WHERE id_sigla = &1", iIdSigla)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo verificar el uso de la sigla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!n > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La sigla está en " & CStr(rDatos!n) & " libro(s): no se puede borrar del catálogo.")
+    Return False
+  Endif
+
+  ' --- 2. BORRADO ---
+  Try m_ConexionBD.mConn.Exec("DELETE FROM sigla_catalogo WHERE id_sigla = &1", iIdSigla)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar la sigla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : AdoptarSinAviso
+' Propósito : Copia una entrada del catálogo al libro, con su clave. Si ya
+'             está en el libro, devuelve la clave que tiene. No abre ni cierra
+'             transacciones: sirve dentro de las de Sincronizar, CargarLista
+'             e Importar
+' Parámetros: iIdProyecto As Integer — el libro
+'             iIdSigla As Integer — la entrada
+'             sClave As String — clave a usar; vacía: la que corresponde
+' Retorna   : String — la clave en el libro; vacía si falló, con el problema
+'             en $sErrorAdopcion
+' ============================================
+Private Function AdoptarSinAviso(iIdProyecto As Integer, iIdSigla As Integer, sClave As String) As String
+
+  Dim rDatos As Result
+
+  ' --- 1. YA ESTÁ EN EL LIBRO: SE CONSERVA SU CLAVE ---
+  AdopcionNueva = False
+  $sErrorAdopcion = ""
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT clave FROM libro_sigla WHERE id_proyecto = &1 AND id_sigla = &2", iIdProyecto, iIdSigla)
+  If Error Then
+    $sErrorAdopcion = Error.Text
+    Return ""
+  Endif
+  If rDatos.Available Then Return rDatos!clave
+
+  ' --- 2. LA CLAVE QUE CORRESPONDE ---
+  If sClave = "" Then
+    Try rDatos = m_ConexionBD.mConn.Exec("SELECT sigla FROM sigla_catalogo WHERE id_sigla = &1", iIdSigla)
+    If Error Then
+      $sErrorAdopcion = Error.Text
+      Return ""
+    Endif
+    If Not rDatos.Available Then
+      $sErrorAdopcion = "La sigla ya no está en el catálogo."
+      Return ""
+    Endif
+    sClave = ClaveDe(iIdSigla, rDatos!sigla)
+  Endif
+
+  ' --- 3. COPIA POR VALOR (SC-23) ---
+  Try m_ConexionBD.mConn.Exec("INSERT INTO libro_sigla (id_proyecto, id_sigla, sigla, desarrollo, desarrollo_plural, idioma, clave) " &
+    "SELECT &1, id_sigla, sigla, desarrollo, desarrollo_plural, idioma, &2 FROM sigla_catalogo WHERE id_sigla = &3",
+    iIdProyecto, sClave, iIdSigla)
+  If Error Then
+    $sErrorAdopcion = Error.Text
+    Return ""
+  Endif
+
+  AdopcionNueva = True
+  Return sClave
+
+End
+
+' ============================================
+' Función   : Adoptar
+' Propósito : Copia una entrada del catálogo al libro (ventanita y botón
+'             «Adoptar» del catálogo). AdopcionNueva dice si la copia es nueva
+' Parámetros: iIdProyecto As Integer — el libro
+'             iIdSigla As Integer — la entrada
+' Retorna   : String — la clave en el libro; vacía si falló (ya se informó)
+' ============================================
+Public Function Adoptar(iIdProyecto As Integer, iIdSigla As Integer) As String
+
+  Dim sClave As String
+
+  sClave = AdoptarSinAviso(iIdProyecto, iIdSigla, "")
+  If sClave = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo agregar la sigla al libro:" & gb.NewLine & $sErrorAdopcion)
+  Endif
+
+  Return sClave
+
+End
+
+' ============================================
+' Función   : OtraConLaMismaSigla
+' Propósito : Dice si el libro tiene otra entrada con la misma sigla (PO dos
+'             veces): entonces la marca lleva la clave
+' Parámetros: iIdProyecto As Integer — el libro
+'             sSigla As String — la sigla
+'             iIdSigla As Integer — la entrada que no se cuenta
+' Retorna   : Boolean — True si hay otra; también si no se pudo leer (la
+'             clave de más no hace daño; la que falta frena)
+' ============================================
+Public Function OtraConLaMismaSigla(iIdProyecto As Integer, sSigla As String, iIdSigla As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  ' LA IGUALDAD USA LA COLACIÓN DE LA COLUMNA (0900_as_cs): FORMA EXACTA
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM libro_sigla WHERE id_proyecto = &1 AND sigla = &2 AND id_sigla <> &3", iIdProyecto, sSigla, iIdSigla)
+  If Error Then Return True
+
+  Return rDatos!n > 0
+
+End
+
+' ============================================
+' Función   : Marca
+' Propósito : La marca que se escribe en el .md
+' Parámetros: sSigla As String — la sigla
+'             sClave As String — vacía salvo sigla repetida en el libro
+'             bPlural As Boolean — pide el plural del desarrollo
+'             bInicial As Boolean — pide la mayúscula inicial
+' Retorna   : String — [CI]{.sigla .plural .inicial clave=12-ci}
+' ============================================
+Public Function Marca(sSigla As String, sClave As String, bPlural As Boolean, bInicial As Boolean) As String
+
+  Dim sMarca As String
+
+  sMarca = "[" & sSigla & "]{.sigla"
+  If bPlural Then sMarca &= " .plural"
+  If bInicial Then sMarca &= " .inicial"
+  If sClave <> "" Then sMarca &= " clave=" & sClave
+
+  Return sMarca & "}"
+
+End
+
+' ============================================
+' Función   : ListarLibro
+' Propósito : Las siglas adoptadas por el libro, en el orden de la lista
+' Parámetros: iIdProyecto As Integer — el libro
+' Retorna   : Result — id_libro_sigla, id_sigla, sigla, desarrollo,
+'             desarrollo_plural, idioma, clave; Null si falló (ya se informó)
+' ============================================
+Public Function ListarLibro(iIdProyecto As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_libro_sigla, id_sigla, sigla, desarrollo, desarrollo_plural, idioma, clave FROM libro_sigla " &
+    "WHERE id_proyecto = &1 ORDER BY REPLACE(sigla, '-', '') COLLATE utf8mb4_0900_ai_ci, sigla, REPLACE(desarrollo, '*', '') COLLATE utf8mb4_0900_ai_ci", iIdProyecto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las siglas del libro:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : AcumularMarcas
+' Propósito : Agrega las marcas [SIGLA]{.sigla …} de un texto, sin repetir el
+'             par sigla y clave. Busca el comienzo de los atributos y vuelve
+'             hacia atrás hasta el corchete que abre, en un tramo corto
+' Parámetros: sTexto As String — el contenido de un .md
+'             cVistas As Collection — pares ya agregados (se modifica)
+'             aSiglas, aClaves As String[] — las marcas (se modifican); la
+'             clave queda vacía si la marca no la lleva
+' Retorna   : nada
+' ============================================
+Private Sub AcumularMarcas(sTexto As String, cVistas As Collection, aSiglas As String[], aClaves As String[])
+
+  Dim iPos As Integer
+  Dim iDesde As Integer
+  Dim iAbre As Integer
+  Dim iCierra As Integer
+  Dim sTramo As String
+  Dim sSigla As String
+  Dim sAtributos As String
+  Dim sClave As String
+  Dim sToken As String
+  Dim sSiguiente As String
+
+  ' POSICIONES EN BYTES: InStr Y Mid SON CORRECTOS EN UTF-8 PORQUE LOS
+  ' DELIMITADORES SON ASCII (RC-GM-12)
+  iPos = InStr(sTexto, INICIO_ATRIBUTOS)
+  While iPos > 0
+    ' --- 1. «]{.sigla» SEGUIDO DE ESPACIO O «}»: NO «]{.siglaX}» ---
+    sSiguiente = Mid(sTexto, iPos + Len(INICIO_ATRIBUTOS), 1)
+    iCierra = InStr(sTexto, "}", iPos)
+    If (sSiguiente = " " Or sSiguiente = "}") And iCierra > 0 Then
+      ' --- 2. EL CORCHETE QUE ABRE, EN EL TRAMO ANTERIOR ---
+      iDesde = Max(1, iPos - TRAMO_SIGLA_BYTES)
+      sTramo = Mid(sTexto, iDesde, iPos - iDesde)
+      iAbre = RInStr(sTramo, "[")
+      If iAbre > 0 Then
+        sSigla = Mid(sTramo, iAbre + 1)
+        ' UNA SIGLA NO CRUZA LÍNEAS NI CONTIENE OTRO CORCHETE
+        If sSigla <> "" And InStr(sSigla, "]") = 0 And InStr(sSigla, Chr(10)) = 0 Then
+          ' --- 3. LA CLAVE, SI LA HAY ---
+          sAtributos = Mid(sTexto, iPos + Len(INICIO_ATRIBUTOS), iCierra - iPos - Len(INICIO_ATRIBUTOS))
+          sClave = ""
+          For Each sToken In Split(sAtributos, " ")
+            If Left(sToken, 6) = "clave=" Then sClave = Replace(Mid(sToken, 7), Chr(34), "")
+          Next
+          ' --- 4. SIN REPETIR EL PAR ---
+          If Not cVistas.Exist(sSigla & Chr(9) & sClave) Then
+            cVistas[sSigla & Chr(9) & sClave] = True
+            aSiglas.Add(sSigla)
+            aClaves.Add(sClave)
+          Endif
+        Endif
+      Endif
+    Endif
+    iPos = InStr(sTexto, INICIO_ATRIBUTOS, iPos + Len(INICIO_ATRIBUTOS))
+  Wend
+
+End
+
+' ============================================
+' Función   : LeerMarcasDelLibro
+' Propósito : Las marcas de siglas de todos los .md del libro, tal como están
+'             GUARDADOS en el disco (la lista de archivos es la de
+'             m_BuscarRegex.ObtenerArchivosMD, la definición única)
+' Parámetros: aSiglas, aClaves As String[] — se vacían y se llenan con los
+'             pares sigla y clave, sin repetir
+' Retorna   : String — los archivos que no se pudieron leer; vacío si se
+'             leyeron todos
+' ============================================
+Public Function LeerMarcasDelLibro(aSiglas As String[], aClaves As String[]) As String
+
+  Dim cVistas As New Collection
+  Dim sRuta As String
+  Dim sTexto As String
+  Dim sFallas As String
+
+  aSiglas.Clear()
+  aClaves.Clear()
+  For Each sRuta In m_BuscarRegex.ObtenerArchivosMD()
+    Try sTexto = File.Load(sRuta)
+    If Error Then
+      sFallas &= File.Name(sRuta) & " "
+      Continue
+    Endif
+    AcumularMarcas(sTexto, cVistas, aSiglas, aClaves)
+  Next
+
+  Return Trim(sFallas)
+
+End
+
+' ============================================
+' Función   : UsadaEnMarcas
+' Propósito : Dice si una sigla del libro aparece en las marcas: por su clave,
+'             o por su sigla en una marca sin clave
+' Parámetros: sSigla, sClave As String — la copia del libro
+'             aSiglas, aClaves As String[] — las marcas (LeerMarcasDelLibro)
+' Retorna   : Boolean — True si alguna marca la usa
+' ============================================
+Public Function UsadaEnMarcas(sSigla As String, sClave As String, aSiglas As String[], aClaves As String[]) As Boolean
+
+  Dim i As Integer
+
+  ' «=» DISTINGUE MAYÚSCULAS: LyF Y LYF SON DOS SIGLAS, COMO EN LA BASE
+  For i = 0 To aSiglas.Max
+    If aClaves[i] <> "" Then
+      If aClaves[i] = sClave Then Return True
+    Else If aSiglas[i] = sSigla Then
+      Return True
+    Endif
+  Next
+
+  Return False
+
+End
+
+' ============================================
+' Función   : ListaCorta
+' Propósito : Une los elementos de una lista para un informe, con tope
+' Parámetros: aLista As String[] — los elementos
+' Retorna   : String — «A, B, C» o «A, B, C y N más»
+' ============================================
+Private Function ListaCorta(aLista As String[]) As String
+
+  Dim sTexto As String
+  Dim i As Integer
+
+  For i = 0 To Min(aLista.Max, 29)
+    If sTexto <> "" Then sTexto &= ", "
+    sTexto &= aLista[i]
+  Next
+  If aLista.Count > 30 Then sTexto &= " y " & CStr(aLista.Count - 30) & " más"
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : LibroPublicado
+' Propósito : Dice si el libro está publicado (libros_md.estado_libro): un
+'             libro publicado queda como salió (SC-71)
+' Parámetros: iIdProyecto As Integer — el libro
+' Retorna   : Boolean — True si está publicado; False si no o si no tiene
+'             fila en libros_md
+' ============================================
+Public Function LibroPublicado(iIdProyecto As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM libros_md WHERE id_proyecto = &1 AND estado_libro = 'publicado'", iIdProyecto)
+  If Error Then Return False
+
+  Return rDatos!n > 0
+
+End
+
+' ============================================
+' Función   : Sincronizar
+' Propósito : Deja las siglas del libro iguales a sus marcas: adopta las
+'             marcadas que tienen un solo significado en el catálogo y quita
+'             las copias que ninguna marca usa. Las ambiguas y las que faltan
+'             en el catálogo se informan para resolverlas a mano. Deja el
+'             resultado en SincroAgregadas, SincroQuitadas, SincroPendientes
+'             y SincroNota
+' Parámetros: iIdProyecto As Integer — el libro
+'             bSilencioso As Boolean — True al abrir el formulario: sin
+'             mensajes salvo los errores
+' Retorna   : String — el informe; vacío si no se hizo nada o falló
+' ============================================
+Public Function Sincronizar(iIdProyecto As Integer, bSilencioso As Boolean) As String
+
+  Dim aSiglas As New String[]
+  Dim aClaves As New String[]
+  Dim aLibroId As New Integer[]
+  Dim aLibroSigla As New String[]
+  Dim aLibroClave As New String[]
+  Dim aCatSigla As New String[]
+  Dim aCatId As New Integer[]
+  Dim aCatDesarrollo As New String[]
+  Dim aAdoptadas As New String[]
+  Dim aQuitadas As New String[]
+  Dim aAmbiguas As New String[]
+  Dim aFaltan As New String[]
+  Dim aClavesDesconocidas As New String[]
+  Dim aIdsCandidatos As New Integer[]
+  Dim sCandidatos As String
+  Dim rDatos As Result
+  Dim sFallas As String
+  Dim sInforme As String
+  Dim bPuedeQuitar As Boolean
+  Dim iEnLibro As Integer
+  Dim i As Integer
+  Dim j As Integer
+
+  ' --- 1. ESTADO INICIAL ---
+  SincroAgregadas = 0
+  SincroQuitadas = 0
+  SincroPendientes = 0
+  SincroNota = ""
+
+  ' --- 2. UN LIBRO PUBLICADO QUEDA COMO SALIÓ (SC-71) ---
+  If LibroPublicado(iIdProyecto) Then
+    SincroNota = "Libro publicado: sus siglas no se sincronizan."
+    If Not bSilencioso Then
+      m_Sonido.sonar("Info")
+      Message.Info(SincroNota)
+    Endif
+    Return ""
+  Endif
+
+  ' --- 3. LAS MARCAS DEL TEXTO GUARDADO ---
+  ' SOLO SE QUITA LO QUE SE PUEDE AFIRMAR QUE NO SE USA: CON UN ARCHIVO SIN
+  ' LEER O CON CAMBIOS SIN GUARDAR EN EL EDITOR, UNA MARCA PODRÍA NO VERSE
+  sFallas = LeerMarcasDelLibro(aSiglas, aClaves)
+  bPuedeQuitar = True
+  If sFallas <> "" Then
+    bPuedeQuitar = False
+    SincroNota = "No se pudieron leer: " & sFallas & ". No se quitó ninguna sigla."
+  Else If m_EditorPrincipal.HayCambios() Then
+    bPuedeQuitar = False
+    SincroNota = "El archivo abierto tiene cambios sin guardar: guárdelo para que se quiten las siglas sin uso."
+  Endif
+
+  ' --- 4. LO QUE YA TIENE EL LIBRO Y EL CATÁLOGO, LEÍDOS UNA VEZ ---
+  ' UNA CONSULTA POR MARCA SERÍAN CIENTOS DE IDAS Y VUELTAS AL SERVIDOR
+  rDatos = ListarLibro(iIdProyecto)
+  If Not rDatos Then Return ""
+  While rDatos.Available
+    aLibroId.Add(rDatos!id_libro_sigla)
+    aLibroSigla.Add(rDatos!sigla)
+    aLibroClave.Add(rDatos!clave)
+    rDatos.MoveNext
+  Wend
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_sigla, sigla, desarrollo FROM sigla_catalogo")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el catálogo de siglas:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+  While rDatos.Available
+    aCatId.Add(rDatos!id_sigla)
+    aCatSigla.Add(rDatos!sigla)
+    aCatDesarrollo.Add(rDatos!desarrollo)
+    rDatos.MoveNext
+  Wend
+
+  ' --- 5. CAMBIOS, EN UNA TRANSACCIÓN ---
+  Try m_ConexionBD.mConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 5.1 QUITAR LAS COPIAS QUE NINGUNA MARCA USA ---
+  ' VA ANTES QUE LA ADOPCIÓN: UNA PO VIEJA SIN USO NO DEBE VOLVER AMBIGUA A
+  ' UNA [PO]{.sigla} QUE AHORA SE REFIERE A LA OTRA
+  If bPuedeQuitar Then
+    For i = aLibroId.Max To 0 Step -1
+      If UsadaEnMarcas(aLibroSigla[i], aLibroClave[i], aSiglas, aClaves) Then Continue
+      Try m_ConexionBD.mConn.Exec("DELETE FROM libro_sigla WHERE id_libro_sigla = &1", aLibroId[i])
+      If Error Then
+        m_ConexionBD.mConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo quitar «" & aLibroSigla[i] & "» del libro; no se cambió nada:" & gb.NewLine & Error.Text)
+        Return ""
+      Endif
+      aQuitadas.Add(aLibroSigla[i])
+      aLibroId.Remove(i)
+      aLibroSigla.Remove(i)
+      aLibroClave.Remove(i)
+    Next
+  Endif
+
+  ' --- 5.2 ADOPTAR LAS MARCADAS ---
+  For i = 0 To aSiglas.Max
+    ' MARCA CON CLAVE: TIENE QUE ESTAR EN EL LIBRO
+    If aClaves[i] <> "" Then
+      If aLibroClave.Find(aClaves[i]) < 0 Then aClavesDesconocidas.Add(aSiglas[i] & " (" & aClaves[i] & ")")
+      Continue
+    Endif
+
+    ' MARCA SIN CLAVE: CUÁNTAS VECES ESTÁ LA SIGLA EN EL LIBRO. «=» DISTINGUE
+    ' MAYÚSCULAS, COMO LA COLUMNA (0900_as_cs)
+    iEnLibro = 0
+    For j = 0 To aLibroSigla.Max
+      If aLibroSigla[j] = aSiglas[i] Then Inc iEnLibro
+    Next
+    If iEnLibro = 1 Then Continue
+    If iEnLibro > 1 Then
+      aAmbiguas.Add(aSiglas[i] & " (el libro la tiene dos veces: la marca necesita la clave)")
+      Continue
+    Endif
+
+    ' NO ESTÁ EN EL LIBRO: LA BUSCA EN EL CATÁLOGO
+    aIdsCandidatos.Clear()
+    sCandidatos = ""
+    For j = 0 To aCatSigla.Max
+      If aCatSigla[j] = aSiglas[i] Then
+        aIdsCandidatos.Add(aCatId[j])
+        If sCandidatos <> "" Then sCandidatos &= " / "
+        sCandidatos &= aCatDesarrollo[j]
+      Endif
+    Next
+    If aIdsCandidatos.Count = 0 Then
+      aFaltan.Add(aSiglas[i])
+    Else If aIdsCandidatos.Count > 1 Then
+      aAmbiguas.Add(aSiglas[i] & ": " & sCandidatos)
+    Else
+      If AdoptarSinAviso(iIdProyecto, aIdsCandidatos[0], "") = "" Then
+        m_ConexionBD.mConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo agregar «" & aSiglas[i] & "» al libro; no se cambió nada:" & gb.NewLine & $sErrorAdopcion)
+        Return ""
+      Endif
+      aAdoptadas.Add(aSiglas[i])
+      ' QUEDA EN EL LIBRO PARA LAS MARCAS SIGUIENTES
+      aLibroSigla.Add(aSiglas[i])
+      aLibroClave.Add("")
+    Endif
+  Next
+
+  Try m_ConexionBD.mConn.Commit()
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron confirmar las siglas del libro:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 6. RESULTADO E INFORME ---
+  SincroAgregadas = aAdoptadas.Count
+  SincroQuitadas = aQuitadas.Count
+  SincroPendientes = aAmbiguas.Count + aFaltan.Count + aClavesDesconocidas.Count
+  If SincroNota <> "" Then sInforme = SincroNota & gb.NewLine & gb.NewLine
+  sInforme &= "Agregadas al libro: " & CStr(aAdoptadas.Count) & "." & gb.NewLine & "Quitadas del libro (sin marcas en el texto): " & CStr(aQuitadas.Count) & "."
+  If aAdoptadas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Agregadas: " & ListaCorta(aAdoptadas) & "."
+  If aQuitadas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Quitadas: " & ListaCorta(aQuitadas) & "."
+  If aAmbiguas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Elegir a mano en el catálogo (botón «Adoptar»): " & ListaCorta(aAmbiguas) & "."
+  If aFaltan.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Faltan en el catálogo: " & ListaCorta(aFaltan) & "."
+  If aClavesDesconocidas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Marcas con una clave que el libro no tiene: " & ListaCorta(aClavesDesconocidas) & "."
+
+  Return sInforme
+
+End
+
+' ============================================
+' Función   : CursivaDesdeLatex
+' Propósito : Pasa \emph{…} y \textit{…} a *…*: las listas de siglas de la
+'             época de LaTeX vienen así (CL: \emph{Clarín})
+' Parámetros: sTexto As String — el desarrollo
+' Retorna   : String — el desarrollo con la cursiva de la marca
+' ============================================
+Private Function CursivaDesdeLatex(sTexto As String) As String
+
+  Dim sOrden As String
+  Dim iPos As Integer
+  Dim iCierra As Integer
+
+  For Each sOrden In ["\\emph{", "\\textit{"]
+    iPos = InStr(sTexto, sOrden)
+    While iPos > 0
+      ' LA LLAVE QUE CIERRA ES LA PRIMERA: UN DESARROLLO NO ANIDA ÓRDENES
+      iCierra = InStr(sTexto, "}", iPos + Len(sOrden))
+      If iCierra = 0 Then Break
+      sTexto = Left(sTexto, iPos - 1) & "*" & Mid(sTexto, iPos + Len(sOrden), iCierra - iPos - Len(sOrden)) & "*" & Mid(sTexto, iCierra + 1)
+      iPos = InStr(sTexto, sOrden)
+    Wend
+  Next
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : CargarLista
+' Propósito : Carga en el catálogo una lista pegada en la caja de texto, una
+'             sigla por línea con la forma «SIGLA: desarrollo». Las líneas con
+'             « / » (plural o dos significados) se señalan y no se cargan
+' Parámetros: sTexto As String — el contenido de la caja
+'             bAdoptar As Boolean — además, adoptarlas en el libro
+'             iIdProyecto As Integer — el libro
+' Retorna   : String — el informe; vacío si no se cargó nada (ya se informó)
+' ============================================
+Public Function CargarLista(sTexto As String, bAdoptar As Boolean, iIdProyecto As Integer) As String
+
+  Dim aLineas As String[]
+  Dim aSigla As New String[]
+  Dim aDesarrollo As New String[]
+  Dim aSenaladas As New String[]
+  Dim aInvalidas As New String[]
+  Dim cVistas As New Collection
+  Dim sLinea As String
+  Dim sSigla As String
+  Dim sDesarrollo As String
+  Dim sAviso As String
+  Dim sInforme As String
+  Dim iDosPuntos As Integer
+  Dim iNuevas As Integer
+  Dim iExistentes As Integer
+  Dim iAdoptadas As Integer
+  Dim iIdSigla As Integer
+  Dim i As Integer
+
+  ' --- 1. LECTURA Y CONTROL DE CADA LÍNEA ---
+  aLineas = Split(Replace(sTexto, Chr(13), ""), Chr(10))
+  For i = 0 To aLineas.Max
+    sLinea = Trim(aLineas[i])
+    If sLinea = "" Then Continue
+    ' PLURAL O DOS SIGNIFICADOS: LO DECIDE EL EDITOR
+    If InStr(sLinea, " / ") > 0 Then
+      aSenaladas.Add("línea " & CStr(i + 1) & ": " & sLinea)
+      Continue
+    Endif
+    iDosPuntos = InStr(sLinea, ":")
+    If iDosPuntos = 0 Then
+      aInvalidas.Add("línea " & CStr(i + 1) & ": falta «:» entre la sigla y el desarrollo")
+      Continue
+    Endif
+    sSigla = Trim(Left(sLinea, iDosPuntos - 1))
+    sDesarrollo = CursivaDesdeLatex(Trim(Mid(sLinea, iDosPuntos + 1)))
+    sAviso = AvisoEntrada(sSigla, sDesarrollo, "")
+    If sAviso <> "" Then
+      aInvalidas.Add("línea " & CStr(i + 1) & ": " & sAviso)
+      Continue
+    Endif
+    ' UNA LÍNEA REPETIDA EN LA LISTA SE CARGA UNA VEZ
+    If cVistas.Exist(sSigla & Chr(9) & LCase(sDesarrollo)) Then Continue
+    cVistas[sSigla & Chr(9) & LCase(sDesarrollo)] = True
+    aSigla.Add(sSigla)
+    aDesarrollo.Add(sDesarrollo)
+  Next
+
+  If aSigla.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    sInforme = "No hay líneas para cargar."
+    If aSenaladas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Con « / », para resolver a mano: " & ListaCorta(aSenaladas)
+    If aInvalidas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Con problemas: " & ListaCorta(aInvalidas)
+    Message.Warning(sInforme)
+    Return ""
+  Endif
+
+  ' --- 2. CARGA, EN UNA TRANSACCIÓN ---
+  Try m_ConexionBD.mConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  For i = 0 To aSigla.Max
+    ' LA QUE YA ESTÁ (MISMA SIGLA Y MISMO DESARROLLO) NO SE DUPLICA
+    iIdSigla = IdDe(aSigla[i], aDesarrollo[i])
+    If iIdSigla > 0 Then
+      Inc iExistentes
+    Else
+      Try m_ConexionBD.mConn.Exec("INSERT INTO sigla_catalogo (sigla, desarrollo) VALUES (&1, &2)", aSigla[i], aDesarrollo[i])
+      If Error Then
+        m_ConexionBD.mConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo cargar «" & aSigla[i] & "»; no se cargó ninguna:" & gb.NewLine & Error.Text)
+        Return ""
+      Endif
+      Inc iNuevas
+      iIdSigla = IdDe(aSigla[i], aDesarrollo[i])
+    Endif
+    If bAdoptar Then
+      If AdoptarSinAviso(iIdProyecto, iIdSigla, "") = "" Then
+        m_ConexionBD.mConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo agregar «" & aSigla[i] & "» al libro; no se cargó ninguna:" & gb.NewLine & $sErrorAdopcion)
+        Return ""
+      Endif
+      If AdopcionNueva Then Inc iAdoptadas
+    Endif
+  Next
+
+  Try m_ConexionBD.mConn.Commit()
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar la carga:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 3. INFORME ---
+  sInforme = "Nuevas en el catálogo: " & CStr(iNuevas) & "." & gb.NewLine & "Ya estaban en el catálogo: " & CStr(iExistentes) & "."
+  If bAdoptar Then sInforme &= gb.NewLine & "Agregadas al libro: " & CStr(iAdoptadas) & "."
+  If aSenaladas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Con « / », para resolver a mano: " & ListaCorta(aSenaladas)
+  If aInvalidas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Con problemas, no cargadas: " & ListaCorta(aInvalidas)
+
+  Return sInforme
+
+End
+
+' ============================================
+' Función   : Exportar
+' Propósito : Exporta a JSON las siglas del libro con sus claves, para
+'             llevarlas a otra instalación (quien compone afuera)
+' Parámetros: iIdProyecto As Integer — el libro
+' Retorna   : Boolean — True si se guardó el archivo
+' ============================================
+Public Function Exportar(iIdProyecto As Integer) As Boolean
+
+  Dim rDatos As Result
+  Dim cRaiz As New Collection
+  Dim aSiglas As New Collection[]
+  Dim cSigla As Collection
+  Dim sDato As String
+
+  ' --- 1. LAS SIGLAS DEL LIBRO ---
+  rDatos = ListarLibro(iIdProyecto)
+  If Not rDatos Then Return False
+  If rDatos.Count = 0 Then
     m_Sonido.sonar("Info")
-    Message.Info("Debe primero seleccionarse la entrada a borrar.")
-    Return
+    Message.Info("El libro no tiene siglas para exportar.")
+    Return False
   Endif
 
-  m_Sonido.sonar("Question")
-  If Message.Question("¿Desea borrar la entrada?", "Si", "No") = 1 Then
-    buscarEliminar = m_ConexionBD.mConn.Exec("DELETE FROM siglas WHERE id=" & FSiglas.id_sigla.Value)
+  ' --- 2. EL JSON. UN VALOR VACÍO NO SE ESCRIBE: ASIGNAR Null A UN ELEMENTO
+  ' DE UNA Collection LO BORRA ---
+  While rDatos.Available
+    cSigla = New Collection
+    cSigla["sigla"] = rDatos!sigla
+    cSigla["desarrollo"] = rDatos!desarrollo
+    sDato = rDatos!desarrollo_plural
+    If sDato <> "" Then cSigla["desarrollo_plural"] = sDato
+    sDato = rDatos!idioma
+    If sDato <> "" Then cSigla["idioma"] = sDato
+    cSigla["clave"] = rDatos!clave
+    aSiglas.Add(cSigla)
+    rDatos.MoveNext
+  Wend
+  cRaiz["formato"] = FORMATO_JSON
+  cRaiz["version"] = VERSION_JSON
+  cRaiz["siglas"] = aSiglas
+
+  ' --- 3. ARCHIVO ---
+  Dialog.Title = "Exportar las siglas del libro"
+  Dialog.Filter = ["*.json", "Archivos JSON"]
+  Dialog.Path = m_InicioCierre.RutaProyectoEnCurso &/ "siglas-" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".json"
+  If Dialog.SaveFile() Then Return False
+  Try File.Save(Dialog.Path, JSON.Encode(cRaiz))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el archivo:" & gb.NewLine & Error.Text)
+    Return False
   Endif
 
-  LimpiarTextboxSigla()
-  RefrescarTableViewGlosarioEnCurso()
-
-  FSiglas.btnNuevoGlosario.Visible = True
-  FSiglas.btnGuardarGlosario.Visible = False
-  FSiglas.btnGuardarCambiosGlosario.Visible = False
-  FSiglas.btnBorrarGlosario.Visible = False
+  m_Sonido.sonar("Info")
+  Message.Info("Se exportaron " & CStr(aSiglas.Count) & " siglas." & gb.NewLine & Dialog.Path)
+  Return True
 
 End
 
-Public Sub IniciarSiglas()
+' ============================================
+' Función   : TextoDe
+' Propósito : Un valor de texto de un elemento del JSON; vacío si falta o es null
+' Parámetros: cItem As Collection — el elemento
+'             sClave As String — el nombre del valor
+' Retorna   : String — el texto, sin espacios de borde
+' ============================================
+Private Function TextoDe(cItem As Collection, sClave As String) As String
 
-  LimpiarTextboxSigla()
-  RefrescarTableViewGlosarioEnCurso()
+  If Not cItem.Exist(sClave) Then Return ""
+  If IsNull(cItem[sClave]) Then Return ""
+
+  Return Trim(CStr(cItem[sClave]))
+
+End
+
+' ============================================
+' Función   : Importar
+' Propósito : Importa un JSON exportado por Exportar en el libro abierto: da
+'             de alta en el catálogo lo que falta (por sigla y desarrollo) y
+'             lo adopta con la clave original, para que las marcas del .md
+'             sigan valiendo
+' Parámetros: iIdProyecto As Integer — el libro
+' Retorna   : String — el informe; vacío si se canceló o falló (ya se informó)
+' ============================================
+Public Function Importar(iIdProyecto As Integer) As String
+
+  Dim vRaiz As Variant
+  Dim cRaiz As Collection
+  Dim aLista As Variant[]
+  Dim vItem As Variant
+  Dim cItem As Collection
+  Dim aIdiomas As String[]
+  Dim aProblemas As New String[]
+  Dim rDatos As Result
+  Dim sSigla As String
+  Dim sDesarrollo As String
+  Dim sPlural As String
+  Dim sIdioma As String
+  Dim sClave As String
+  Dim sAviso As String
+  Dim sInforme As String
+  Dim iIdSigla As Integer
+  Dim iNuevas As Integer
+  Dim iAdoptadas As Integer
+  Dim iYaEstaban As Integer
+
+  ' --- 1. ARCHIVO Y FORMATO ---
+  Dialog.Title = "Importar siglas en este libro"
+  Dialog.Filter = ["*.json", "Archivos JSON"]
+  Dialog.Path = m_InicioCierre.RutaProyectoEnCurso & "/"
+  If Dialog.OpenFile() Then Return ""
+  Try vRaiz = JSON.Decode(File.Load(Dialog.Path))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo no es un JSON válido:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+  Try cRaiz = vRaiz
+  If Error Then cRaiz = Null
+  If cRaiz Then
+    If TextoDe(cRaiz, "formato") <> FORMATO_JSON Then cRaiz = Null
+  Endif
+  If cRaiz Then
+    Try aLista = cRaiz["siglas"]
+    If Error Then aLista = Null
+  Endif
+  If Not aLista Then
+    m_Sonido.sonar("Error")
+    Message.Error("El archivo no es una exportación de siglas de gbpublisher.")
+    Return ""
+  Endif
+
+  ' --- 2. IDIOMAS CONOCIDOS: UNO QUE NO ESTÁ EN EL CATÁLOGO SE DESCARTA ---
+  aIdiomas = m_Vocabularios.IdiomasActivos(m_ConexionBD.mConn)
+
+  ' --- 3. ALTA Y ADOPCIÓN, EN UNA TRANSACCIÓN ---
+  Try m_ConexionBD.mConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  For Each vItem In aLista
+    Try cItem = vItem
+    If Error Then
+      aProblemas.Add("un elemento que no es una sigla")
+      Continue
+    Endif
+    sSigla = TextoDe(cItem, "sigla")
+    sDesarrollo = TextoDe(cItem, "desarrollo")
+    sPlural = TextoDe(cItem, "desarrollo_plural")
+    sIdioma = TextoDe(cItem, "idioma")
+    sClave = TextoDe(cItem, "clave")
+    sAviso = AvisoEntrada(sSigla, sDesarrollo, sPlural)
+    If sAviso <> "" Then
+      aProblemas.Add(sSigla & ": " & sAviso)
+      Continue
+    Endif
+    If sIdioma <> "" And aIdiomas.Find(sIdioma) < 0 Then
+      aProblemas.Add(sSigla & ": idioma «" & sIdioma & "» descartado (no está activo en el catálogo de idiomas)")
+      sIdioma = ""
+    Endif
+
+    ' --- 3.1 EL CATÁLOGO: SE USA LA ENTRADA QUE YA ESTÁ ---
+    iIdSigla = IdDe(sSigla, sDesarrollo)
+    If iIdSigla = 0 Then
+      Try m_ConexionBD.mConn.Exec("INSERT INTO sigla_catalogo (sigla, desarrollo, desarrollo_plural, idioma) VALUES (&1, &2, &3, &4)",
+        sSigla, sDesarrollo, NuloSiVacio(sPlural), NuloSiVacio(sIdioma))
+      If Error Then
+        m_ConexionBD.mConn.Rollback()
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo cargar «" & sSigla & "»; no se importó nada:" & gb.NewLine & Error.Text)
+        Return ""
+      Endif
+      Inc iNuevas
+      iIdSigla = IdDe(sSigla, sDesarrollo)
+    Endif
+
+    ' --- 3.2 LA CLAVE ORIGINAL, SI SIRVE Y ESTÁ LIBRE EN EL LIBRO ---
+    If Not ClaveValida(sClave) Then sClave = ""
+    If sClave <> "" Then
+      Try rDatos = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS n FROM libro_sigla WHERE id_proyecto = &1 AND clave = &2 AND id_sigla <> &3", iIdProyecto, sClave, iIdSigla)
+      If Error Then
+        sClave = ""
+      Else If rDatos!n > 0 Then
+        aProblemas.Add(sSigla & ": la clave " & sClave & " ya es de otra sigla del libro; se usó otra")
+        sClave = ""
+      Endif
+    Endif
+
+    ' --- 3.3 ADOPCIÓN ---
+    If AdoptarSinAviso(iIdProyecto, iIdSigla, sClave) = "" Then
+      m_ConexionBD.mConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo agregar «" & sSigla & "» al libro; no se importó nada:" & gb.NewLine & $sErrorAdopcion)
+      Return ""
+    Endif
+    If AdopcionNueva Then
+      Inc iAdoptadas
+    Else
+      Inc iYaEstaban
+    Endif
+  Next
+
+  Try m_ConexionBD.mConn.Commit()
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar la importación:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 4. INFORME ---
+  sInforme = "Nuevas en el catálogo: " & CStr(iNuevas) & "." & gb.NewLine & "Agregadas al libro: " & CStr(iAdoptadas) & "." & gb.NewLine & "Ya estaban en el libro: " & CStr(iYaEstaban) & "."
+  If aProblemas.Count > 0 Then sInforme &= gb.NewLine & gb.NewLine & "Observaciones: " & ListaCorta(aProblemas) & "."
+
+  Return sInforme
+
+End
+
+' ============================================
+' Función   : TextoDeCampo
+' Propósito : El valor de una columna como texto, vacío si es NULL
+' Parámetros: vValor As Variant — el campo del Result
+' Retorna   : String
+' ============================================
+Private Function TextoDeCampo(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return CStr(vValor)
+
+End
+
+' ============================================
+' Función   : EscribirParaFiltro
+' Propósito : Deja las siglas del libro en tmp/siglas-libro.tsv para
+'             filters/siglas.lua y para vigencia_canonico (engine/comun.sh):
+'             una línea por sigla, con clave, sigla, desarrollo, plural e
+'             idioma separados por tabulador. Antes iguala el libro a sus
+'             marcas, en silencio. La llama EjecutarScriptSalida antes de los
+'             scripts que leen las siglas
+' Parámetros: iIdProyecto As Integer — el libro
+'             sDirTmp As String — la carpeta tmp/ del proyecto
+' Retorna   : Boolean — True si el archivo quedó escrito (vacío en un libro sin
+'             siglas); False si no, con el motivo ya informado
+' Nota      : SE ESCRIBE SIEMPRE, AUNQUE EL LIBRO NO TENGA SIGLAS:
+'             generar_canonicos_capitulos.sh FRENA SI FALTA, PORQUE UN ARCHIVO
+'             QUE NO SE ESCRIBIÓ AHORA PUEDE TRAER SIGLAS VIEJAS.
+'             LA HUELLA DE CADA LÍNEA (sha1) LA CALCULAN EL FILTRO Y comun.sh
+'             SOBRE LOS MISMOS BYTES: UN CAMBIO EN EL ORDEN DE LOS CAMPOS O EN
+'             SU FORMA DEJA DESACTUALIZADOS TODOS LOS CANÓNICOS CON SIGLAS,
+'             QUE ES LO CORRECTO PERO OBLIGA A REGENERARLOS.
+' ============================================
+Public Function EscribirParaFiltro(iIdProyecto As Integer, sDirTmp As String) As Boolean
+
+  Dim rDatos As Result
+  Dim aCampos As New String[]
+  Dim aLineas As New String[]
+  Dim sCampo As String
+  Dim sTexto As String
+
+  ' --- 1. LAS SIGLAS DEL LIBRO, IGUALES A SUS MARCAS ---
+  ' EN SILENCIO: LO QUE QUEDE SIN RESOLVER (UNA AMBIGUA, UNA QUE FALTA EN EL
+  ' CATÁLOGO) LO DICE EL FILTRO AL FRENAR, CON LA MARCA. UN LIBRO PUBLICADO
+  ' NO SE SINCRONIZA (SC-71) Y SALE CON LAS COPIAS QUE TIENE
+  Sincronizar(iIdProyecto, True)
+
+  ' --- 2. LECTURA ---
+  rDatos = ListarLibro(iIdProyecto)
+  If Not rDatos Then Return False
+
+  ' --- 3. LAS LÍNEAS ---
+  While rDatos.Available
+    aCampos.Clear()
+    aCampos.Add(TextoDeCampo(rDatos!clave))
+    aCampos.Add(TextoDeCampo(rDatos!sigla))
+    aCampos.Add(TextoDeCampo(rDatos!desarrollo))
+    aCampos.Add(TextoDeCampo(rDatos!desarrollo_plural))
+    aCampos.Add(TextoDeCampo(rDatos!idioma))
+
+    ' UNA COPIA ANTERIOR A ESTE CONTROL PUEDE TRAER UN TABULADOR: PARTIRÍA LA
+    ' LÍNEA Y EL FILTRO LEERÍA OTRA SIGLA
+    For Each sCampo In aCampos
+      If HaySeparador(sCampo) Then
+        m_Sonido.sonar("Error")
+        Message.Error("La sigla «" & aCampos[1] & "» tiene un tabulador o un salto de línea." & gb.NewLine &
+          "Corregila en Siglas, en el catálogo, y volvé a generar.")
+        Return False
+      Endif
+    Next
+
+    aLineas.Add(aCampos.Join("\t"))
+    rDatos.MoveNext
+  Wend
+
+  ' --- 4. ESCRITURA ---
+  ' CON SALTO FINAL SI HAY LÍNEAS; VACÍO SI NO HAY SIGLAS
+  If aLineas.Count > 0 Then sTexto = aLineas.Join("\n") & "\n"
+  Try File.Save(sDirTmp &/ ARCHIVO_FILTRO, sTexto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron escribir las siglas del libro para la generación:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : IdiomasDelLibro
+' Propósito : Los idiomas de las siglas del libro, sin repetir. El PDF los
+'             carga en babel y les da nombre para \gbextranjero
+'             (m_GenerarPDFLibro.DefinicionesCita)
+' Parámetros: iIdProyecto As Integer — el libro
+' Retorna   : String[] — los códigos (en, pt-BR…); vacío si ninguna sigla tiene
+'             idioma; Null si falló (ya se informó)
+' ============================================
+Public Function IdiomasDelLibro(iIdProyecto As Integer) As String[]
+
+  Dim rDatos As Result
+  Dim aIdiomas As New String[]
+
+  ' --- 1. CONSULTA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT DISTINCT idioma FROM libro_sigla WHERE id_proyecto = &1 AND idioma IS NOT NULL ORDER BY idioma", iIdProyecto)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los idiomas de las siglas del libro:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  ' --- 2. LISTA ---
+  While rDatos.Available
+    aIdiomas.Add(rDatos!idioma)
+    rDatos.MoveNext
+  Wend
+
+  Return aIdiomas
 
 End
