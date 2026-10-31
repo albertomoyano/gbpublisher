@@ -69,7 +69,8 @@
       \includegraphics (graphicx)
       gbCodigo \gbPieCodigo (contrato 11) — programlisting y el
                       listado, coloreados por colorear_codigo.sh (SC-42)
-      \index (imakeidx) \gbIndNota \gbIndPrincipal (contrato 18) —
+      \index (imakeidx) \gbIndNota \gbIndPrincipal (contrato 18)
+      \gbextranjero, \gbSiglasInicio, \gbSiglaMedir y gbsiglas (contrato 19) —
                       índices onomástico y de conceptos (SC-77)
       \parencite \parencite* \textcite \printbibliography (biblatex)
       refsection      entorno     (biblatex)
@@ -610,6 +611,33 @@
     <xsl:text>}{</xsl:text>
     <xsl:apply-templates/>
     <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <!-- LA LISTA DE SIGLAS DEL LIBRO (1.18.0, CONTRATO 19). LA ESCRIBE  -->
+  <!-- generar_canonicos_capitulos.sh (procesar_lista_siglas) EN LA    -->
+  <!-- PIEZA lista_abreviaturas: UN <glossentry> POR SIGLA, EN ORDEN.   -->
+  <!-- DOS COLUMNAS ALINEADAS (DECISIÓN DE ALBERTO, 31/10): LA PRIMERA  -->
+  <!-- MIDE LO QUE LA SIGLA MÁS ANCHA, QUE SE MIDE EN LaTeX CON          -->
+  <!-- \gbSiglaMedir ANTES DE ABRIR EL ENTORNO: CONTAR LETRAS NO SIRVE  -->
+  <!-- (MMM Y III NO MIDEN LO MISMO).                                   -->
+  <xsl:template match="glosslist[@role = 'siglas']">
+    <xsl:text>&#10;\gbSiglasInicio&#10;</xsl:text>
+    <xsl:for-each select="glossentry">
+      <xsl:text>\gbSiglaMedir{</xsl:text>
+      <xsl:apply-templates select="glossterm/node()"/>
+      <xsl:text>}&#10;</xsl:text>
+    </xsl:for-each>
+    <xsl:text>\begin{gbsiglas}&#10;</xsl:text>
+    <xsl:for-each select="glossentry">
+      <!-- LA SIGLA NO TIENE [ NI ] (m_Siglas.AvisoEntrada): EL ARGUMENTO -->
+      <!-- OPCIONAL DE \item NO SE CORTA                                -->
+      <xsl:text>\item[</xsl:text>
+      <xsl:apply-templates select="glossterm/node()"/>
+      <xsl:text>] </xsl:text>
+      <xsl:apply-templates select="glossdef/para/node()"/>
+      <xsl:text>&#10;</xsl:text>
+    </xsl:for-each>
+    <xsl:text>\end{gbsiglas}&#10;&#10;</xsl:text>
   </xsl:template>
 
   <!-- LOS role DE emphasis QUE ESCRIBE PANDOC (SC-30): strong PARA   -->

@@ -37,6 +37,11 @@
 #      escrito en un temporal y renombrado con mv: nunca queda en disco un
 #      canónico a medio escribir (el mismo motivo que en ensamblar_libro.sh)
 #
+# LA LISTA DE SIGLAS (lista_abreviaturas, 1.18.0)
+#   No tiene .md. Va después de las demás piezas del lote y lleva las siglas
+#   que usan sus canónicos, con los datos de $RUTA_SIGLAS y la lista de piezas
+#   de $RUTA_SIGLAS_PIEZAS (comun.sh). Ver procesar_lista_siglas.
+#
 # AL FINAL DEL LOTE
 #   validar_canonicos.sh, anidado y UNA vez, con los canónicos que se
 #   generaron (SC-75). Informativo: un canónico bien formado que no valida
@@ -113,6 +118,8 @@ DIR_FILTROS="$DIR_GBP_LOCAL/filters"
 
 # LA LISTA QUE ESTE SCRIPT LE PASA AL VALIDADOR, RELATIVA AL PROYECTO
 LISTA_VALIDAR="tmp/lote-validar.txt"
+# EL TIPO DE LA LISTA DE SIGLAS: NO SALE DE UN .md (procesar_lista_siglas)
+TIPO_LISTA_SIGLAS="lista_abreviaturas"
 
 # LA LISTA DE FILTROS, CON EL ORDEN Y SUS RAZONES, ESTÁ EN comun.sh
 # (FILTROS_LIBRO): LA USA TAMBIÉN vista_cuadro.sh, QUE TIENE QUE PASAR EL
@@ -191,7 +198,7 @@ escribir_huellas() {
 # ============================================================================
 procesar_capitulo() {
     local nombre="$1" xml_id="$2" tipo="$3" idioma="$4"
-    local base carpeta md info body biblio parcial canonico temporal
+    local base carpeta md info body biblio parcial
     local salida codigo filtro
     local informe nivel control mensaje errores_control lectura linea
     local fuentes huellas cuadro
@@ -212,9 +219,6 @@ procesar_capitulo() {
     biblio="$DIR_PROYECTO/tmp/biblio-$base.xml"
     body="$DIR_PROYECTO/tmp/body-$base.xml"
     parcial="$body.parcial"
-    canonico="$DIR_PROYECTO/jats/c-$nombre.xml"
-    # EN LA MISMA CARPETA QUE EL DEFINITIVO: mv TIENE QUE SER UN RENOMBRE
-    temporal="$DIR_PROYECTO/jats/.c-$nombre.xml.tmp"
 
     # --- B. INSUMOS ---
     [[ -f "$md" ]] || { fallo "no existe $carpeta/$nombre.md"; return 1; }
@@ -355,6 +359,30 @@ procesar_capitulo() {
     ok "cuerpo"
 
     # --- E. SAXON ---
+    ensamblar_pieza "$nombre" "$xml_id" "$tipo" "$idioma" "$info" "$body" "$biblio" "$huellas" || return 1
+
+    return 0
+}
+
+# ============================================================================
+# Función   : ensamblar_pieza
+# Propósito : Saxon con ensamblar-capitulo-canonico.xsl: info, cuerpo,
+#             bibliografía y huellas → jats/c-{nombre}.xml, escrito en un
+#             temporal y renombrado con mv. Es el paso común de las piezas que
+#             salen de su .md (procesar_capitulo) y de la lista de siglas
+#             (procesar_lista_siglas)
+# Parámetros: $1 nombre_archivo  $2 xml_id  $3 tipo_capitulo  $4 idioma
+#             $5 info  $6 body  $7 biblio  $8 huellas (rutas absolutas)
+# Retorna   : 0 escrito; 1 no, con fallo() ya informado
+# ============================================================================
+ensamblar_pieza() {
+    local nombre="$1" xml_id="$2" tipo="$3" idioma="$4"
+    local info="$5" body="$6" biblio="$7" huellas="$8"
+    local canonico temporal salida codigo
+
+    canonico="$DIR_PROYECTO/jats/c-$nombre.xml"
+    # EN LA MISMA CARPETA QUE EL DEFINITIVO: mv TIENE QUE SER UN RENOMBRE
+    temporal="$DIR_PROYECTO/jats/.c-$nombre.xml.tmp"
     rm -f "$temporal"
 
     salida=$(timeout "$TIEMPO_SAXON" java -jar "$RUTA_SAXON" \
@@ -398,8 +426,185 @@ procesar_capitulo() {
 
     mv -f "$temporal" "$canonico" || { fallo "no se pudo reemplazar jats/c-$nombre.xml"; return 1; }
     ok "canónico bien formado"
-
     return 0
+}
+
+# ============================================================================
+# Función   : xml_desarrollo
+# Propósito : Un desarrollo del .tsv de siglas como contenido DocBook: escapa
+#             & < > y pasa la cursiva *…* a <emphasis>. Lo mismo que hace
+#             filters/siglas.lua en el texto
+# Parámetros: $1 el desarrollo (los asteriscos van de a pares: lo controla
+#             m_Siglas.AvisoEntrada al grabar)
+# Retorna   : imprime el XML
+# ============================================================================
+xml_desarrollo() {
+    local t="$1"
+    t="${t//&/&amp;}"
+    t="${t//</&lt;}"
+    t="${t//>/&gt;}"
+    printf '%s' "$t" | sed 's/\*\([^*]*\)\*/<emphasis>\1<\/emphasis>/g'
+}
+
+# ============================================================================
+# Función   : procesar_lista_siglas
+# Propósito : La lista de siglas del libro (lista_abreviaturas, 1.18.0). NO
+#             SALE DE UN .md: lleva las siglas que usan los canónicos de las
+#             piezas del libro (sus <?gb-sigla?>, claves_siglas_usadas en
+#             comun.sh), con los datos de $RUTA_SIGLAS, que Gambas escribe
+#             en el orden de la lista. Una sigla con dos significados en el
+#             libro (PO) va en una sola entrada, con los desarrollos unidos
+#             por « / ». El cuerpo pasa por la misma hoja que los capítulos
+# Parámetros: $1 nombre_archivo  $2 xml_id  $3 tipo_capitulo  $4 idioma
+# Retorna   : 0 generado; 1 no generado
+# Nota      : CORRE DESPUÉS DE LAS DEMÁS PIEZAS DEL LOTE: SUS SIGLAS SALEN
+#             DE LOS CANÓNICOS QUE EL LOTE ACABA DE ESCRIBIR. GAMBAS LA AGREGA
+#             A TODO LOTE (m_GenerarSalidasLibro.LanzarCanonicos).
+#             LA ANOTA EN <?gb-lista-siglas claves="…"?> PARA vigencia_canonico.
+#             LA LISTA NO REPITE EL plural: SOLO EL DESARROLLO SINGULAR
+#             (DECISIÓN DE ALBERTO, 31/10)
+# ============================================================================
+procesar_lista_siglas() {
+    local nombre="$1" xml_id="$2" tipo="$3" idioma="$4"
+    local base carpeta info biblio body parcial huellas
+    local linea clave sigla desarrollo idioma_sigla resto contenido falta
+    local sigla_actual="" definicion=""
+    local entradas=() huellas_siglas=()
+    local -A usadas=()
+    local -A encontradas=()
+
+    # --- A. RUTAS ---
+    base="${nombre#*-}"
+    if ! carpeta="$(carpeta_de_pieza "$nombre")"; then
+        fallo "prefijo no reconocido (se espera fm-, a- o bm-)"
+        return 1
+    fi
+    info="$DIR_PROYECTO/tmp/info-$base.xml"
+    biblio="$DIR_PROYECTO/tmp/biblio-$base.xml"
+    body="$DIR_PROYECTO/tmp/body-$base.xml"
+    parcial="$body.parcial"
+    huellas="$DIR_PROYECTO/tmp/huellas-$base.xml"
+
+    # UN .md DE UNA LISTA ESCRITA A MANO NO SE USA: QUE NO PAREZCA QUE SÍ
+    if [[ -f "$DIR_PROYECTO/$carpeta/$nombre.md" ]]; then
+        aviso "$carpeta/$nombre.md no se usa: la lista sale de las siglas marcadas en los capítulos"
+    fi
+
+    # --- B. INSUMOS ---
+    [[ -f "$info" ]] || { fallo "no existe tmp/info-$base.xml"; return 1; }
+    bien_formado "$info" || { fallo "tmp/info-$base.xml está mal formado"; return 1; }
+    [[ -f "$biblio" ]] || { fallo "no existe tmp/biblio-$base.xml"; return 1; }
+    bien_formado "$biblio" || { fallo "tmp/biblio-$base.xml está mal formado"; return 1; }
+
+    # --- C. LAS SIGLAS QUE USAN LOS CANÓNICOS ---
+    if ! claves_siglas_usadas; then
+        fallo "no está $RUTA_SIGLAS_PIEZAS: lo escribe gbpublisher al generar"
+        return 1
+    fi
+    for falta in "${SIGLAS_FALTAN[@]}"; do
+        aviso "falta $falta: sus siglas no entran a la lista"
+    done
+    if [[ -z "$SIGLAS_USADAS" ]]; then
+        fallo "ningún capítulo usa siglas marcadas: la lista quedaría vacía. Marcá las siglas o quitá la pieza del libro"
+        return 1
+    fi
+    for clave in $SIGLAS_USADAS; do usadas["$clave"]=1; done
+
+    # --- D. LAS ENTRADAS, EN EL ORDEN DEL .tsv ---
+    # LOS CAMPOS SE SEPARAN A MANO: CON IFS=$'\t', read JUNTA DOS TABULADORES
+    # SEGUIDOS (EL TABULADOR ES ESPACIO PARA IFS) Y UN plural VACÍO CORRERÍA
+    # EL idioma A SU LUGAR
+    while IFS= read -r linea || [[ -n "$linea" ]]; do
+        [[ -z "$linea" ]] && continue
+        clave="${linea%%$'\t'*}"
+        [[ -n "${usadas[$clave]+x}" ]] || continue
+        resto="${linea#*$'\t'}"
+        sigla="${resto%%$'\t'*}" ; resto="${resto#*$'\t'}"
+        desarrollo="${resto%%$'\t'*}" ; resto="${resto#*$'\t'}"
+        # EL plural NO VA EN LA LISTA
+        resto="${resto#*$'\t'}"
+        idioma_sigla="$resto"
+        encontradas["$clave"]=1
+
+        # CON IDIOMA YA SALE EN CURSIVA: ENTRE ASTERISCOS SALDRÍA EN REDONDA
+        # (LO CONTROLA m_Siglas.AvisoIdioma AL GRABAR; ACÁ, LO GRABADO ANTES)
+        if [[ -n "$idioma_sigla" && "$desarrollo" =~ ^\*[^*]+\*$ ]]; then
+            fallo "la sigla $clave tiene idioma y el desarrollo entre asteriscos: con idioma ya va en cursiva. Sacá los asteriscos en Siglas, en el catálogo"
+            return 1
+        fi
+        contenido="$(xml_desarrollo "$desarrollo")"
+        if [[ -n "$idioma_sigla" ]]; then
+            if [[ ! "$idioma_sigla" =~ ^[A-Za-z]{2,3}(-[A-Za-z0-9]+)*$ ]]; then
+                fallo "la sigla $clave tiene un idioma ilegible: «$idioma_sigla»"
+                return 1
+            fi
+            contenido="<foreignphrase xml:lang=\"$idioma_sigla\">$contenido</foreignphrase>"
+        fi
+
+        # LA MISMA SIGLA SEGUIDA (EL .tsv VIENE ORDENADO POR SIGLA): UNA
+        # SOLA ENTRADA CON LOS DESARROLLOS UNIDOS
+        if [[ "$sigla" == "$sigla_actual" ]]; then
+            definicion+=" / $contenido"
+        else
+            [[ -n "$sigla_actual" ]] && entradas+=("$(entrada_lista_siglas "$sigla_actual" "$definicion")")
+            sigla_actual="$sigla"
+            definicion="$contenido"
+        fi
+        huellas_siglas+=("<?gb-sigla clave=\"$clave\" sha1=\"$(printf '%s' "$linea" | sha1sum | cut -d' ' -f1)\"?>")
+    done < "$DIR_PROYECTO/$RUTA_SIGLAS"
+    [[ -n "$sigla_actual" ]] && entradas+=("$(entrada_lista_siglas "$sigla_actual" "$definicion")")
+
+    # UNA SIGLA QUE UN CANÓNICO USA Y EL LIBRO YA NO TIENE: ESE CANÓNICO ESTÁ
+    # VIEJO (LO DICE SU VIGENCIA). LA LISTA SALE SIN ELLA
+    for clave in $SIGLAS_USADAS; do
+        [[ -n "${encontradas[$clave]+x}" ]] ||
+            aviso "la sigla $clave la usa un canónico viejo y ya no está en el libro: regenerá ese capítulo"
+    done
+    if (( ${#entradas[@]} == 0 )); then
+        fallo "ninguna de las siglas usadas está en el libro: regenerá los capítulos"
+        return 1
+    fi
+
+    # --- E. EL CUERPO ---
+    rm -f "$body" "$parcial"
+    {
+        printf '%s\n' "$ENVOLTORIO_ABRE"
+        printf '<glosslist role="siglas">\n'
+        printf '%s\n' "${entradas[@]}"
+        printf '</glosslist>\n'
+        printf '%s\n' "${huellas_siglas[@]}"
+        printf '<?gb-lista-siglas claves="%s"?>\n' "$SIGLAS_USADAS"
+        printf '%s\n' "$ENVOLTORIO_CIERRA"
+    } > "$parcial" || { fallo "no se pudo escribir tmp/body-$base.xml"; return 1; }
+    if ! bien_formado "$parcial"; then
+        mv -f "$parcial" "$body.fallo"
+        fallo "la lista de siglas quedó mal formada: tmp/body-$base.xml.fallo"
+        return 1
+    fi
+    mv -f "$parcial" "$body"
+    ok "lista de ${#entradas[@]} sigla(s)"
+
+    # --- F. HUELLAS: NINGUNA FUENTE ---
+    # SIN .md NO HAY gb-fuente. SU VIGENCIA ES LA DE SUS SIGLAS (comun.sh, C2 Y C3)
+    escribir_huellas "$huellas" || return 1
+
+    # --- G. SAXON ---
+    ensamblar_pieza "$nombre" "$xml_id" "$tipo" "$idioma" "$info" "$body" "$biblio" "$huellas" || return 1
+    return 0
+}
+
+# ============================================================================
+# Función   : entrada_lista_siglas
+# Propósito : Un <glossentry> de la lista de siglas
+# Parámetros: $1 la sigla, sin escapar  $2 la definición, ya en XML
+# Retorna   : imprime el XML
+# ============================================================================
+entrada_lista_siglas() {
+    local s="$1"
+    s="${s//&/&amp;}"
+    s="${s//</&lt;}"
+    s="${s//>/&gt;}"
+    printf '<glossentry><glossterm><acronym>%s</acronym></glossterm><glossdef><para>%s</para></glossdef></glossentry>' "$s" "$2"
 }
 
 # ============================================================================
@@ -439,6 +644,7 @@ fi
 # GAMBAS LO ESCRIBE SIEMPRE, VACÍO EN UN LIBRO SIN SIGLAS: SI FALTA, EL
 # SCRIPT NO SE LANZÓ DESDE LA APLICACIÓN Y LAS SIGLAS PUEDEN SER VIEJAS
 [[ -f "$DIR_PROYECTO/$RUTA_SIGLAS" ]] || morir "No está $RUTA_SIGLAS: lo escribe gbpublisher al generar. Generá desde la aplicación."
+[[ -f "$DIR_PROYECTO/$RUTA_SIGLAS_PIEZAS" ]] || morir "No está $RUTA_SIGLAS_PIEZAS: lo escribe gbpublisher al generar. Generá desde la aplicación."
 
 [[ -f "$DIR_ENGINE/controles_md.lua" ]] || morir "No se encontró el filtro de controles: $DIR_ENGINE/controles_md.lua"
 
@@ -477,12 +683,29 @@ FALLIDOS=()
 # LOS QUE SE GENERARON, PARA EL VALIDADOR
 GENERADOS_LISTA=()
 
+# LA LISTA DE SIGLAS (lista_abreviaturas) VA AL FINAL, CUALQUIERA SEA SU
+# LUGAR EN EL LIBRO: SUS SIGLAS SALEN DE LOS CANÓNICOS QUE EL LOTE ESCRIBE
+# ANTES (procesar_lista_siglas)
+ORDEN=()
 for (( i = 0; i < TOTAL; i++ )); do
+    [[ "${TIPOS[$i]}" == "$TIPO_LISTA_SIGLAS" ]] || ORDEN+=("$i")
+done
+for (( i = 0; i < TOTAL; i++ )); do
+    [[ "${TIPOS[$i]}" == "$TIPO_LISTA_SIGLAS" ]] && ORDEN+=("$i")
+done
+
+for (( n = 0; n < TOTAL; n++ )); do
+    i="${ORDEN[$n]}"
     nombre="${NOMBRES[$i]}"
-    paso "$((i + 1))/$TOTAL  $nombre"
+    paso "$((n + 1))/$TOTAL  $nombre"
 
     avisos_antes=$AVISOS
-    if procesar_capitulo "$nombre" "${IDS[$i]}" "${TIPOS[$i]}" "${IDIOMAS[$i]}"; then
+    if [[ "${TIPOS[$i]}" == "$TIPO_LISTA_SIGLAS" ]]; then
+        procesar_lista_siglas "$nombre" "${IDS[$i]}" "${TIPOS[$i]}" "${IDIOMAS[$i]}"
+    else
+        procesar_capitulo "$nombre" "${IDS[$i]}" "${TIPOS[$i]}" "${IDIOMAS[$i]}"
+    fi
+    if (( $? == 0 )); then
         GENERADOS=$((GENERADOS + 1))
         GENERADOS_LISTA+=("$nombre")
         (( AVISOS > avisos_antes )) && CON_AVISOS+=("$nombre")

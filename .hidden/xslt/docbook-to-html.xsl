@@ -1032,7 +1032,10 @@ RC APLICADAS:
     <!-- Etiqueta del tipo de capítulo (chapter, preface, appendix, etc.) -->
     <xsl:variable name="capTipo">
       <xsl:call-template name="etiqueta-tipo-capitulo">
-        <xsl:with-param name="elemento" select="local-name($capitulo)"/>
+        <!-- LA LISTA DE SIGLAS ES UN <glossary role="abreviaturas"> (1.18.0):
+             SIN ESTO, EL ÍNDICE LA PRESENTABA COMO «Glosario» -->
+        <xsl:with-param name="elemento"
+          select="if ($capitulo/@role = 'abreviaturas') then 'abreviaturas' else local-name($capitulo)"/>
       </xsl:call-template>
     </xsl:variable>
 
@@ -1072,6 +1075,7 @@ RC APLICADAS:
       <xsl:when test="$elemento = 'colophon'">Colofón</xsl:when>
       <xsl:when test="$elemento = 'bibliography'">Bibliografía</xsl:when>
       <xsl:when test="$elemento = 'glossary'">Glosario</xsl:when>
+      <xsl:when test="$elemento = 'abreviaturas'">Siglas</xsl:when>
       <xsl:otherwise>
         <xsl:value-of select="$elemento"/>
       </xsl:otherwise>
@@ -2098,6 +2102,17 @@ RC APLICADAS:
       </xsl:if>
       <xsl:apply-templates/>
     </abbr>
+  </xsl:template>
+  <!-- LA LISTA DE SIGLAS DEL LIBRO (1.18.0): LA ESCRIBE
+       generar_canonicos_capitulos.sh EN LA PIEZA lista_abreviaturas. UNA
+       LISTA DE DEFINICIONES EN DOS COLUMNAS (gbpublisher.css, dl.siglas). -->
+  <xsl:template match="db:glosslist[@role = 'siglas'] | glosslist[@role = 'siglas']">
+    <dl class="siglas">
+      <xsl:for-each select="db:glossentry | glossentry">
+        <dt><xsl:apply-templates select="db:glossterm/node() | glossterm/node()"/></dt>
+        <dd><xsl:apply-templates select="db:glossdef/db:para/node() | glossdef/para/node()"/></dd>
+      </xsl:for-each>
+    </dl>
   </xsl:template>
   <xsl:template match="db:foreignphrase | foreignphrase">
     <i>

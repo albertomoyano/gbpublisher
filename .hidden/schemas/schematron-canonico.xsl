@@ -9,13 +9,13 @@
   RNG        docbook.rng-5.2
              sha256 e44da3bfa9db2a4b58b21c33f2ec441913f40b99dc04430ab30ddc745c729421
   propias    gbpublisher.sch
-             sha256 5a3fb07d97b7bd53c52319fbee18cfbb925b9dfd2f59ba43db64e3c73e4cbd27
+             sha256 13a61709c4eca4bfff674f45a8e0506d7b5943ce18357e9ca14b9713d5907071
   esqueleto  iso_svrl_for_xslt2.xsl
              sha256 0588d617924a0686255f6d182633d434c7986d561be8fcc3b363907d3f671b26
              iso_schematron_skeleton_for_saxon.xsl
              sha256 95f3195d9f437ea8ff5f75d1a27f4e68ae20b236fe0d4a217bb4209f498a10a3
   patrones   247 de DocBook y 9 propios
-  compilado  SaxonJ-HE 12.9, 2026-10-29
+  compilado  SaxonJ-HE 12.9, 2026-10-31
 -->
 <xsl:stylesheet xmlns:a="http://relaxng.org/ns/compatibility/annotations/1.0" xmlns:ctrl="http://nwalsh.com/xmlns/schema-control/" xmlns:db="http://docbook.org/ns/docbook" xmlns:html="http://www.w3.org/1999/xhtml" xmlns:iso="http://purl.oclc.org/dsdl/schematron" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:rng="http://relaxng.org/ns/structure/1.0" xmlns:s="http://purl.oclc.org/dsdl/schematron" xmlns:saxon="http://saxon.sf.net/" xmlns:schold="http://www.ascc.net/xml/schematron" xmlns:svg="http://www.w3.org/2000/svg" xmlns:trans="http://docbook.org/ns/transclusion" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="2.0"><!--Implementers: please note that overriding process-prolog or process-root is 
     the preferred method for meta-stylesheets to use where possible. -->
@@ -8161,7 +8161,7 @@
    <!--RULE gbp-pi-documento-->
    <xsl:template match="/" priority="1000" mode="M259">
       <svrl:fired-rule xmlns:svrl="http://purl.oclc.org/dsdl/svrl" context="/" id="gbp-pi-documento"/>
-      <xsl:variable name="desconocidas" select="//processing-instruction()[starts-with(name(), 'gb-')][not(name() = ('gb-alinear', 'gb-corte', 'gb-cuadro', 'gb-espacio', 'gb-fuente'))]"/>
+      <xsl:variable name="desconocidas" select="//processing-instruction()[starts-with(name(), 'gb-')][not(name() = ('gb-alinear', 'gb-corte', 'gb-cuadro', 'gb-espacio', 'gb-fuente', 'gb-sigla', 'gb-lista-siglas'))]"/>
       <xsl:variable name="fuentes-adentro" select="//processing-instruction('gb-fuente')[parent::*]"/>
       <!--ASSERT aviso-->
       <xsl:choose>

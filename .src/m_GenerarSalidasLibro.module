@@ -1033,6 +1033,8 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
   Dim sLista As String
   Dim iCantidad As Integer
   Dim aArgumentos As New String[]
+  Dim hListas As Result
+  Dim iIdLibro As Integer
 
   ' --- 2. REENTRADA ---
   ' ANTES DE ESCRIBIR NADA: UN SCRIPT EN CURSO PUEDE ESTAR LEYENDO LOS MISMOS
@@ -1093,6 +1095,39 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
 
     hCapitulos.MoveNext
   Wend
+
+  ' --- 5b. LA LISTA DE SIGLAS, EN TODO LOTE (1.18.0) ---
+  ' NO TIENE .md: SUS SIGLAS SALEN DE LOS CANÓNICOS DE LAS DEMÁS PIEZAS, Y UN
+  ' LOTE QUE CAMBIA UNO LA DEJA VIEJA. SE AGREGA SI EL LOTE NO LA TRAE (UN
+  ' SOLO CAPÍTULO); EL SCRIPT LA PROCESA AL FINAL. SIN OTRAS PIEZAS NO HAY DE
+  ' DÓNDE SACAR SIGLAS
+  If iCantidad > 0 Then
+    If InStr(sLista, Chr(9) & m_Siglas.TIPO_LISTA & Chr(9)) = 0 Then
+      iIdLibro = m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso)
+      Try hListas = m_ConexionBD.mConn.Exec(
+        "SELECT id_capitulo, nombre_archivo, tipo_capitulo, idioma_capitulo " &
+        "FROM capitulos WHERE id_libro = &1 AND nombre_archivo IS NOT NULL AND tipo_capitulo = &2", iIdLibro, m_Siglas.TIPO_LISTA)
+      If Error Then
+        m_Sonido.sonar("Error")
+        Message.Error("No se pudo leer la lista de siglas del libro:" & gb.NewLine & Error.Text)
+        Return RESULTADO_NO_LANZADO
+      Endif
+      While hListas.Available
+        iIdCapitulo = hListas["id_capitulo"]
+        sNombre = m_XML.TrimUTF8(hListas["nombre_archivo"])
+        sIdioma = IdiomaDeCapitulo(hListas)
+        ' LOS MISMOS INSUMOS QUE CUALQUIER PIEZA: info Y biblio. EL TIPO ES
+        ' LA CONSTANTE, Y EL CONTROL DE TABULADORES DEL NOMBRE LO HACE
+        ' m_Siglas.EscribirPiezas ANTES DEL LANZAMIENTO
+        If Not m_XML.GenerarInfoCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
+        If Not m_XML.GenerarBiblioCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
+        sLista &= sNombre & Chr(9) & "cap-" & CStr(iIdCapitulo) & Chr(9) &
+          m_Siglas.TIPO_LISTA & Chr(9) & sIdioma & Chr(10)
+        Inc iCantidad
+        hListas.MoveNext
+      Wend
+    Endif
+  Endif
 
   If iCantidad = 0 Then
     m_Sonido.sonar("Warning")

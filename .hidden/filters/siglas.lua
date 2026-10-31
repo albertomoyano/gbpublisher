@@ -451,6 +451,14 @@ local function primer_uso(oSpan, oSigla, aLista, iPos)
   end
 
   -- --- 3. EL DESARROLLO, EN SU IDIOMA SI LO TIENE ---
+  -- CON IDIOMA YA SALE EN CURSIVA: UNA CURSIVA QUE LO ENVUELVE ENTERO SE
+  -- INVERTIRÍA (\emph DENTRO DE \emph). LA CONTROLA TAMBIÉN
+  -- m_Siglas.AvisoIdioma AL GRABAR; ACÁ, LO GRABADO ANTES
+  if oSigla.idioma ~= '' and sDesarrollo:match('^%*[^*]+%*$') then
+    fallar('«' .. oSigla.sigla .. '» tiene idioma y el desarrollo entre ' ..
+           'asteriscos: con idioma ya sale en cursiva y así saldría en ' ..
+           'redonda. Sacá los asteriscos en Siglas, en el catálogo.', true)
+  end
   aDesarrollo = desarrollo_inlines(sDesarrollo)
   aSalida = pandoc.Inlines({})
   if oSigla.idioma ~= '' then

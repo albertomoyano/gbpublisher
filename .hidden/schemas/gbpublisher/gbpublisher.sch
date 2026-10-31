@@ -87,8 +87,10 @@
   <!-- ==========================================================================
        3. INSTRUCCIONES DE PROCESAMIENTO gb-*
        Las que el proyecto escribe y alguna hoja lee: gb-alinear (SC-61),
-       gb-corte (SC-63), gb-cuadro (SC-66), gb-espacio (SC-39) y gb-fuente
-       (SC-75). Una gb-* desconocida es un error de un filtro o una hoja
+       gb-corte (SC-63), gb-cuadro (SC-66), gb-espacio (SC-39), gb-fuente
+       (SC-75), y gb-sigla y gb-lista-siglas (siglas, 1.18.0: las huellas que
+       lee vigencia_canonico; las escriben filters/siglas.lua y
+       generar_canonicos_capitulos.sh dentro del cuerpo). Una gb-* desconocida es un error de un filtro o una hoja
        vieja: ninguna salida la entiende. gb-fuente va en el prólogo: ahí la
        lee vigencia_canonico, y adentro de un elemento la copiaría la
        transformación identidad de alguna hoja.
@@ -96,7 +98,7 @@
        ========================================================================== -->
   <s:pattern id="gbp-pi">
     <s:rule id="gbp-pi-documento" context="/">
-      <s:let name="desconocidas" value="//processing-instruction()[starts-with(name(), 'gb-')][not(name() = ('gb-alinear', 'gb-corte', 'gb-cuadro', 'gb-espacio', 'gb-fuente'))]"/>
+      <s:let name="desconocidas" value="//processing-instruction()[starts-with(name(), 'gb-')][not(name() = ('gb-alinear', 'gb-corte', 'gb-cuadro', 'gb-espacio', 'gb-fuente', 'gb-sigla', 'gb-lista-siglas'))]"/>
       <s:let name="fuentes-adentro" value="//processing-instruction('gb-fuente')[parent::*]"/>
       <s:assert id="gbp-pi-conocida" role="aviso" test="empty($desconocidas)"><s:value-of select="count($desconocidas)"/> instrucción(es) de procesamiento desconocida(s): <s:value-of select="string-join(distinct-values(for $p in $desconocidas return name($p)), ', ')"/>; ninguna salida las interpreta</s:assert>
       <s:assert id="gbp-pi-fuente-prologo" role="aviso" test="empty($fuentes-adentro)"><s:value-of select="count($fuentes-adentro)"/> gb-fuente dentro del documento: van solo en el prólogo, antes de la raíz</s:assert>

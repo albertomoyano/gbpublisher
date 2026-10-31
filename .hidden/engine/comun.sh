@@ -62,6 +62,15 @@ RUTA_ABREVIATURAS="$DIR_GBP_LOCAL/filters/abreviaturas-espacio-fijo.txt"
 # (RUTA_SIGLAS) Y EN m_Siglas (ARCHIVO_FILTRO): SI CAMBIA ACÁ, CAMBIA EN LOS TRES
 RUTA_SIGLAS="tmp/siglas-libro.tsv"
 
+# LAS PIEZAS DE LA LISTA DE SIGLAS (lista_abreviaturas) Y LOS CANÓNICOS DE
+# DONDE SALEN SUS SIGLAS, RELATIVOS AL PROYECTO. LO ESCRIBE GAMBAS CON EL
+# ANTERIOR (m_Siglas.EscribirParaFiltro). DOS CAMPOS POR LÍNEA, CON TABULADOR:
+#   lista   fm-04-siglas            UNA PIEZA DE TIPO lista_abreviaturas
+#   pieza   jats/c-a-01-intro.xml   EL CANÓNICO DE UNA PIEZA CON CUERPO
+# LO LEEN generar_canonicos_capitulos.sh, QUE ARMA LA LISTA, Y
+# vigencia_canonico, QUE LA CONTROLA
+RUTA_SIGLAS_PIEZAS="tmp/siglas-piezas.txt"
+
 # --- 3b. LAS CADENAS DE FILTROS ---
 # LIBRO: LA DE generar_canonicos_capitulos.sh Y DE vista_cuadro.sh (SC-67).
 # EL ORDEN ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
@@ -411,6 +420,68 @@ carpeta_de_pieza() {
 }
 
 # ============================================================================
+# Función   : claves_siglas_usadas
+# Propósito : Las siglas que usan los canónicos de las piezas del libro: las
+#             claves de sus <?gb-sigla?>, sin repetir y ordenadas. Es el
+#             contenido de la lista de siglas (1.18.0): la arma
+#             generar_canonicos_capitulos.sh y la controla vigencia_canonico,
+#             con esta misma función para que los dos lleguen al mismo
+#             conjunto.
+# Parámetros: ninguno; lee $RUTA_SIGLAS_PIEZAS (las líneas «pieza»)
+# Retorna   : 0 si leyó el archivo; 1 si falta. Las claves quedan en la global
+#             SIGLAS_USADAS, separadas por un espacio; los canónicos que faltan
+#             en SIGLAS_FALTAN (arreglo)
+# Nota      : UN CANÓNICO QUE FALTA NO APORTA SIGLAS: LO INFORMA QUIEN LLAMA.
+#             EL ENSAMBLADO DEL LIBRO FRENA IGUAL POR ESE CANÓNICO.
+#             GLOBALES Y NO SALIDA IMPRESA, POR LA MISMA RAZÓN QUE
+#             vigencia_canonico
+# ============================================================================
+claves_siglas_usadas() {
+    local tipo valor resto clave
+    local -A vistas=()
+    local claves=()
+
+    SIGLAS_USADAS=""
+    SIGLAS_FALTAN=()
+
+    [[ -f "$DIR_PROYECTO/$RUTA_SIGLAS_PIEZAS" ]] || return 1
+
+    while IFS=$'\t' read -r tipo valor resto || [[ -n "$tipo" ]]; do
+        [[ "$tipo" == "pieza" ]] || continue
+        # LA RUTA ES RELATIVA AL PROYECTO Y NO SALE DE ÉL
+        [[ "$valor" == /* || "$valor" == *..* ]] && continue
+        if [[ ! -f "$DIR_PROYECTO/$valor" ]]; then
+            SIGLAS_FALTAN+=("$valor")
+            continue
+        fi
+        while IFS= read -r clave; do
+            [[ -n "$clave" ]] && vistas["$clave"]=1
+        done < <(xmllint --xpath '//processing-instruction("gb-sigla")' "$DIR_PROYECTO/$valor" 2>/dev/null |
+                 grep -oP '<\?gb-sigla\s+clave="\K[0-9a-z-]+')
+    done < "$DIR_PROYECTO/$RUTA_SIGLAS_PIEZAS"
+
+    # sort Y NO EL ORDEN DE LLEGADA: EL CONJUNTO SE COMPARA COMO TEXTO
+    if (( ${#vistas[@]} > 0 )); then
+        mapfile -t claves < <(printf '%s\n' "${!vistas[@]}" | LC_ALL=C sort)
+    fi
+    SIGLAS_USADAS="${claves[*]}"
+    return 0
+}
+
+# ============================================================================
+# Función   : es_lista_siglas
+# Propósito : Dice si un nombre de pieza es una lista de siglas del libro (una
+#             línea «lista» de $RUTA_SIGLAS_PIEZAS)
+# Parámetros: $1 nombre_archivo (fm-04-siglas)
+# Retorna   : 0 si lo es; 1 si no, o si el archivo falta
+# ============================================================================
+es_lista_siglas() {
+    [[ -f "$DIR_PROYECTO/$RUTA_SIGLAS_PIEZAS" ]] || return 1
+    awk -F '\t' -v n="$1" '$1 == "lista" && $2 == n { e = 1 } END { exit !e }' \
+        "$DIR_PROYECTO/$RUTA_SIGLAS_PIEZAS"
+}
+
+# ============================================================================
 # Función   : vigencia_canonico
 # Propósito : El estado de un canónico frente a sus archivos fuente (SC-75).
 #             Las fuentes son lo que se copia DENTRO del canónico: el .md y
@@ -439,12 +510,19 @@ carpeta_de_pieza() {
 #             <?gb-sigla clave="…" sha1="…"?> EN EL CUERPO (filters/siglas.lua),
 #             CON LA HUELLA DE SU LÍNEA EN $RUTA_SIGLAS, QUE GAMBAS ESCRIBE
 #             DESDE LA BASE ANTES DE LANZAR EL SCRIPT. LAS SIGLAS NO CUENTAN
-#             COMO FUENTES: UN CANÓNICO SIN gb-fuente SIGUE «SIN HUELLA»
+#             COMO FUENTES: UN CANÓNICO SIN gb-fuente SIGUE «SIN HUELLA».
+#             LA LISTA DE SIGLAS (lista_abreviaturas) NO TIENE .md: LA ARMA
+#             generar_canonicos_capitulos.sh CON LAS SIGLAS QUE USAN LOS OTROS
+#             CANÓNICOS, Y LAS ANOTA EN UNA <?gb-lista-siglas claves="…"?>.
+#             ESTÁ VIGENTE SI ESE CONJUNTO ES EL QUE USAN HOY (C3) Y SI SUS
+#             SIGLAS NO CAMBIARON (C2); ES HUÉRFANA SI YA NO ES UNA PIEZA DEL
+#             LIBRO
 # ============================================================================
 vigencia_canonico() {
     local canonico="$1"
     local nombre carpeta pis pi archivo huella actual
-    local clave linea
+    local clave linea anotadas
+    local lista=0
     local fuentes=0
     local problemas=()
     local -A lineas_sigla=()
@@ -467,7 +545,19 @@ vigencia_canonico() {
     # REGENERARSE: ES HUÉRFANO
     nombre="$(basename "$canonico" .xml)"
     nombre="${nombre#c-}"
-    if [[ "$nombre" != libro-* ]]; then
+    # LA LISTA DE SIGLAS SE RECONOCE POR SU PI, Y SE CONTROLA EN C3: NO TIENE
+    # .md, Y ES HUÉRFANA SI YA NO ES UNA PIEZA DEL LIBRO
+    if [[ "$nombre" != libro-* ]] &&
+       xmllint --xpath 'boolean(//processing-instruction("gb-lista-siglas"))' "$canonico" 2>/dev/null |
+           grep -qx 'true'; then
+        lista=1
+        if ! es_lista_siglas "$nombre"; then
+            VIGENCIA_ESTADO="huerfano"
+            VIGENCIA_DETALLE="«$nombre» ya no es una lista de siglas del libro"
+            return 0
+        fi
+    fi
+    if [[ "$nombre" != libro-* ]] && (( lista == 0 )); then
         if ! carpeta="$(carpeta_de_pieza "$nombre")"; then
             VIGENCIA_ESTADO="huerfano"
             VIGENCIA_DETALLE="«$nombre» no corresponde a ninguna pieza (se espera fm-, a- o bm-)"
@@ -562,12 +652,29 @@ vigencia_canonico() {
         done <<< "$pis"
     fi
 
+    # --- C3. LA LISTA DE SIGLAS: LAS QUE USAN HOY LOS CANÓNICOS (1.18.0) ---
+    # EN LA PIEZA Y EN EL CANÓNICO DEL LIBRO, QUE LA TRAE COPIADA. UNA SIGLA
+    # NUEVA EN UN CAPÍTULO REGENERADO SOLO DEJA VIEJA A LA LISTA
+    anotadas="$(xmllint --xpath '//processing-instruction("gb-lista-siglas")' "$canonico" 2>/dev/null |
+                grep -oP '<\?gb-lista-siglas\s+claves="\K[0-9a-z -]*' | head -n 1)"
+    if (( lista == 1 )) || [[ -n "$anotadas" ]]; then
+        if ! claves_siglas_usadas; then
+            problemas+=("falta $RUTA_SIGLAS_PIEZAS (lo escribe la aplicación al generar)")
+        elif [[ "$anotadas" != "$SIGLAS_USADAS" ]]; then
+            problemas+=("la lista de siglas no es la que usan hoy los capítulos")
+        fi
+    fi
+
     # --- D. ESTADO ---
     if (( ${#problemas[@]} > 0 )); then
         VIGENCIA_ESTADO="desactualizado"
         local IFS=";"
         VIGENCIA_DETALLE="${problemas[*]}"
         VIGENCIA_DETALLE="${VIGENCIA_DETALLE//;/; }"
+    elif (( lista == 1 )); then
+        # SIN .md NO HAY gb-fuente: LA VIGENCIA DE LA LISTA ES C2 Y C3
+        VIGENCIA_ESTADO="vigente"
+        VIGENCIA_DETALLE="la lista de siglas corresponde a los capítulos"
     elif (( fuentes == 0 )); then
         VIGENCIA_ESTADO="sin_huella"
         VIGENCIA_DETALLE="el canónico no registra sus fuentes: es anterior a SC-75"

@@ -55,7 +55,7 @@ Public Const INSUMOS_CITAS As String = "tmp/citas-proyecto.tex"
 ' \gbCuadro…, SC-66). VERSIÓN 17: CUADROS, ENTREGA 2 (rotating Y LOS TEXTOS DE
 ' CONTINUACIÓN \gbCuadroContinua Y \gbCuadroViene, SC-66). VERSIÓN 18: ÍNDICES
 ' (\index CON LOS FORMATOS \gbIndNota Y \gbIndPrincipal, SC-77).
-Public Const CONTRATO_VERSION As Integer = 18
+Public Const CONTRATO_VERSION As Integer = 19
 
 ' PERFIL DE PRESTACIONES DEL PDF/A. NO ES UN VALOR DE libros_md.estado_libro:
 ' LO ELIGE EL MAESTRO DEL PDF/A CON \gbPerfilPreservacion (APARTADO 8.1 DE
@@ -352,6 +352,54 @@ Private Function ZonaDeTipo(sTipo As String) As Integer
 End
 
 ' ============================================
+' Función   : ZonaDePieza
+' Propósito : La zona de una pieza: la de su tipo (ZonaDeTipo), salvo la lista
+'             de siglas, que va donde dice su prefijo: fm- en preliminares y
+'             bm- en posliminares (decisión de Alberto, 31/10)
+' Parámetros: sTipo As String — capitulos.tipo_capitulo
+'             sNombre As String — capitulos.nombre_archivo
+' Retorna   : Integer — una de las constantes ZONA_*
+' Nota      : ES LA ÚNICA EXCEPCIÓN A «LA ZONA NO LA DECIDE LA CARPETA»
+'             (ZonaDeTipo). UNA LISTA DE SIGLAS ES TAN DE PRELIMINARES COMO DE
+'             POSLIMINARES: LA DECIDE LA EDITORIAL AL NOMBRAR LA PIEZA. EN bm-
+'             IBA A PRELIMINARES Y EL PDF VOLVÍA A ABRIR \frontmatter DESPUÉS
+'             DE LOS POSLIMINARES: LA PÁGINA SALÍA «iii» (MEDIDO EN MINT, 31/10)
+' ============================================
+Private Function ZonaDePieza(sTipo As String, sNombre As String) As Integer
+
+  ' GV-12: NADA DE Not DELANTE DE Begins
+  If LCase(Trim(sTipo)) = m_Siglas.TIPO_LISTA Then
+    If sNombre Begins "bm-" Then Return ZONA_BACK
+  Endif
+
+  Return ZonaDeTipo(sTipo)
+
+End
+
+' ============================================
+' Función   : NombreZona
+' Propósito : El nombre de una zona, para los mensajes
+' Parámetros: iZona As Integer — una de las constantes ZONA_*
+' Retorna   : String
+' ============================================
+Private Function NombreZona(iZona As Integer) As String
+
+  Select Case iZona
+    Case ZONA_FRONT
+      Return "preliminares"
+    Case ZONA_BODY
+      Return "el cuerpo"
+    Case ZONA_APENDICE
+      Return "los apéndices"
+    Case ZONA_BACK
+      Return "posliminares"
+  End Select
+
+  Return "una zona desconocida"
+
+End
+
+' ============================================
 ' Función   : EsPiezaSinNumerar
 ' Propósito : Dice si una pieza del cuerpo va sin numerar, y por lo tanto
 '             necesita \gbPiezaSinNumerar antes de su \include.
@@ -395,9 +443,11 @@ End
 ' docbook-to-latex.xsl LAS VUELVE A ESCRIBIR COMO \index, CON EL FORMATO DE
 ' PÁGINA EXPLÍCITO. xindy LAS ORDENA CON gbindice.xdy (compilar_latex_comun.sh).
 '
-' PENDIENTE: lista_abreviaturas y glosario se tratan como piezas CON cuerpo,
-' porque el ABM de siglas todavía no se encaró. Si esas piezas pasan a
-' generarse desde glossaries, hay que moverlas acá con \printglossary.
+' lista_abreviaturas Y glosario SON PIEZAS CON CUERPO Y NO VAN ACÁ. LA LISTA
+' DE SIGLAS (1.18.0) TIENE UN CANÓNICO SIN .md, QUE ARMA
+' generar_canonicos_capitulos.sh CON LAS SIGLAS DE LOS DEMÁS: SE INCLUYE COMO
+' CUALQUIER PIEZA, Y LA COMPONE docbook-to-latex.xsl CON EL ENTORNO gbsiglas
+' DEL CONTRATO 19. EL GLOSARIO TIENE .md.
 ' ============================================
 Private Function ComandoGenerado(sTipo As String, sTitulo As String) As String
 
@@ -1434,6 +1484,9 @@ Public Function ArmarInsumosLaTeX() As Boolean
   ' LA MISMA REGLA DE POSICIÓN QUE EL ABM APLICA AL GUARDAR: UNA PIEZA CARGADA
   ' ANTES DE ESTE CONTROL, O CON EL ARCHIVO RENOMBRADO A MANO, SE FRENA ACÁ
   If Not VerificarPosiciones(aNombre, aTipo) Then Return False
+  ' LAS ZONAS NO VUELVEN ATRÁS: UNA PIEZA DE PRELIMINARES NOMBRADA bm- REABRÍA
+  ' \frontmatter Y LA NUMERACIÓN DE PÁGINAS EMPEZARÍA DE NUEVO
+  If Not VerificarZonas(aNombre, aTipo) Then Return False
   ' CÓDIGOS REPETIDOS: ANTES QUE EL ORDEN DE LOS FINALES, QUE CON UN CÓDIGO
   ' REPETIDO PODRÍA DAR BIEN POR CASUALIDAD (SC-55)
   sProblema = m_PiezasLibro.ProblemaCodigoRepetido(iIdLibro)
@@ -1544,7 +1597,7 @@ Public Function ArmarInsumosLaTeX() As Boolean
 
     sNombre = aNombre[i]
     sTipo = aTipo[i]
-    iZona = ZonaDeTipo(sTipo)
+    iZona = ZonaDePieza(sTipo, sNombre)
     sComando = ComandoGenerado(sTipo, aTitulo[i])
 
     ' 7.1 CAMBIO DE ZONA
@@ -1768,7 +1821,7 @@ Private Function VerificarPrimeras(aNombre As String[], aTipo As String[], iIdLi
 
       If aTipo[i] = "creditos" Then bCreditos = True
 
-    Else If ZonaDeTipo(aTipo[i]) = ZONA_FRONT Then
+    Else If ZonaDePieza(aTipo[i], aNombre[i]) = ZONA_FRONT Then
       ' LA PRIMERA PIEZA DE PRELIMINARES QUE NO ES UNA PRIMERA
       If sOtraPieza = "" Then sOtraPieza = aNombre[i]
     Endif
@@ -1830,6 +1883,49 @@ Private Function VerificarPosiciones(aNombre As String[], aTipo As String[]) As 
       m_Sonido.sonar("Error")
       Message.Error(sProblema)
       Return False
+    Endif
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : VerificarZonas
+' Propósito : Comprueba que, en el orden del libro, ninguna pieza obligue a
+'             volver a una zona anterior: preliminares, cuerpo, apéndices,
+'             posliminares (ZonaDePieza)
+' Parámetros: aNombre As String[] — nombre_archivo de cada pieza, en orden
+'             aTipo As String[] — tipo_capitulo de cada pieza
+' Retorna   : Boolean — True si se puede seguir; False con mensaje
+' Nota      : EL RECORRIDO DEL main.tex (ArmarInsumosLaTeX, APARTADO 7) ABRE
+'             UNA ZONA CADA VEZ QUE CAMBIA. UNA QUE VUELVE ATRÁS EMITE OTRA VEZ
+'             \frontmatter O \mainmatter, Y LaTeX REINICIA LA NUMERACIÓN DE
+'             PÁGINAS SIN AVISAR: UN PRÓLOGO NOMBRADO bm- SALÍA CON FOLIO
+'             ROMANO DESPUÉS DE LOS ÍNDICES
+' ============================================
+Private Function VerificarZonas(aNombre As String[], aTipo As String[]) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim i As Integer
+  Dim iZona As Integer
+  Dim iZonaMayor As Integer
+  Dim sPiezaMayor As String
+
+  ' --- 2. RECORRIDO: LA PRIMERA QUE VUELVE ATRÁS FRENA ---
+  For i = 0 To aNombre.Max
+    iZona = ZonaDePieza(aTipo[i], aNombre[i])
+    If iZona < iZonaMayor Then
+      m_Sonido.sonar("Error")
+      Message.Error("La pieza «" & aNombre[i] & "» (" & aTipo[i] & ") va en " & NombreZona(iZona) &
+        " y está después de «" & sPiezaMayor & "», que va en " & NombreZona(iZonaMayor) & "." & gb.NewLine & gb.NewLine &
+        "El PDF tendría que volver a una zona anterior y la numeración de las páginas empezaría de nuevo." & gb.NewLine &
+        "Renombrá la pieza para que quede antes, o cambiá su tipo.")
+      Return False
+    Endif
+    If iZona > iZonaMayor Then
+      iZonaMayor = iZona
+      sPiezaMayor = aNombre[i]
     Endif
   Next
 

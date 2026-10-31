@@ -416,6 +416,18 @@
       <xsl:apply-templates/>
     </abbr>
   </xsl:template>
+  <!-- LA LISTA DE SIGLAS DEL LIBRO (1.18.0): LA ESCRIBE
+       generar_canonicos_capitulos.sh EN LA PIEZA lista_abreviaturas. UNA
+       LISTA DE DEFINICIONES EN DOS COLUMNAS (gbpublisher-epub-libro.css,
+       dl.siglas). -->
+  <xsl:template match="db:glosslist[@role = 'siglas'] | glosslist[@role = 'siglas']">
+    <dl class="siglas">
+      <xsl:for-each select="db:glossentry | glossentry">
+        <dt><xsl:apply-templates select="db:glossterm/node() | glossterm/node()"/></dt>
+        <dd><xsl:apply-templates select="db:glossdef/db:para/node() | glossdef/para/node()"/></dd>
+      </xsl:for-each>
+    </dl>
+  </xsl:template>
   <xsl:template match="db:foreignphrase | foreignphrase">
     <i>
       <xsl:if test="normalize-space(@xml:lang) != ''">
