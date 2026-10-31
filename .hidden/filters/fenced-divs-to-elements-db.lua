@@ -32,6 +32,7 @@
 --   8. FORMULA (.formula)                      → <equation xml:id="X">
 --   9. CONVERSACIÓN (.conversacion, SC-43)      → <qandaset role="conversacion">
 --  10. FORMAL (.theorem/.definition/.proof)    → <example role="X">
+--  (EL GLOSARIO NO ES UN BLOQUE: LO ARMA glosario.lua; ::: glossary FRENA)
 -- =====================================================
 
 -- =====================================================
@@ -674,25 +675,17 @@ function Div(el)
   end
 
   -- =====================================================
-  -- 6.10c. GLOSARIO (.glossary term=)
+  -- 6.10c. GLOSARIO: YA NO ES UN BLOQUE
   -- =====================================================
-  -- ESTRUCTURA EN MD:
-  --   ::: {.glossary term="Hermenéutica"}
-  --   Método de interpretación de textos.
-  --   :::
-  --
-  -- SE MODELA COMO <variablelist role="glossary"> CON UNA ENTRADA
-  -- (term + listitem), PARA REUSAR EL RENDER DE LISTA DE DEFINICIÓN.
+  -- EL VIEJO ::: {.glossary term="…"} (UN <variablelist> POR ENTRADA,
+  -- SHORTCODE EN BORRADOR, NUNCA LIBERADO) SE RETIRÓ EN 1.18.0: EL
+  -- GLOSARIO ES LA LISTA DE DEFINICIONES DE LA PIEZA glosario, Y LO ARMA
+  -- glosario.lua (DECISIÓN DE ALBERTO, 31/10). FRENA EN VEZ DE DEJAR
+  -- PASAR UN Div QUE NINGUNA SALIDA ENTIENDE.
   if el.classes:includes('glossary') then
-    local term = el.attributes['term'] or ''
-    local contenido_db = blocks_a_docbook(el.content)
-    local raw = '<variablelist role="glossary">\n' ..
-                '  <varlistentry>\n' ..
-                '    <term>' .. escape_xml_text(term) .. '</term>\n' ..
-                '    <listitem>\n' .. contenido_db .. '\n    </listitem>\n' ..
-                '  </varlistentry>\n' ..
-                '</variablelist>'
-    return pandoc.RawBlock('docbook', raw)
+    error('\n[gbpublisher] ::: glossary ya no existe: el glosario se escribe ' ..
+          'como lista de definiciones (el término en una línea y «:   ' ..
+          'definición» debajo) en la pieza de tipo glosario.\n', 0)
   end
 
   -- =====================================================

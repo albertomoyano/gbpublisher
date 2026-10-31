@@ -428,6 +428,47 @@
       </xsl:for-each>
     </dl>
   </xsl:template>
+  <!-- EL GLOSARIO DEL LIBRO (1.18.0). LO ARMA glosario.lua: UNA
+       <glossdiv> POR LETRA, CON SUS <glossentry> ORDENADAS. PÁRRAFO
+       FRANCÉS, COMO EL PDF (gbpublisher-epub-libro.css,
+       .glosario-entrada): EL TÉRMINO (<dfn>) ABRE EL PRIMER PÁRRAFO DE LA
+       DEFINICIÓN. CADA ENTRADA LLEVA SU id PARA LAS REMISIONES. -->
+  <xsl:template match="db:glossdiv | glossdiv">
+    <section class="glosario-letra">
+      <h2 class="glosario-letra-titulo"><xsl:apply-templates select="(db:title | title)/node()"/></h2>
+      <xsl:apply-templates select="db:glossentry | glossentry"/>
+    </section>
+  </xsl:template>
+  <xsl:template match="db:glossdiv/db:glossentry | glossdiv/glossentry">
+    <xsl:variable name="def" select="(db:glossdef | glossdef)/*"/>
+    <div class="glosario-entrada" id="{@xml:id}">
+      <xsl:choose>
+        <xsl:when test="db:glosssee | glosssee">
+          <p><dfn><xsl:apply-templates select="(db:glossterm | glossterm)/node()"/></dfn>
+            <xsl:text>, véase </xsl:text>
+            <a href="#{(db:glosssee | glosssee)/@otherterm}"><xsl:apply-templates select="(db:glosssee | glosssee)/node()"/></a></p>
+        </xsl:when>
+        <xsl:when test="$def[1][self::db:para or self::para]">
+          <!-- EL SEPARADOR: SEMIRRAYA ENTRE ESPACIOS, EL PRIMERO DURO PARA QUE
+               LA RAYA NO EMPIECE UNA LÍNEA (DECISIÓN DE ALBERTO, 31/10; EL
+               MISMO QUE \gbGlosarioSep EN EL PDF) -->
+          <p><dfn><xsl:apply-templates select="(db:glossterm | glossterm)/node()"/></dfn>
+            <xsl:text>&#160;– </xsl:text>
+            <xsl:apply-templates select="$def[1]/node()"/></p>
+          <xsl:apply-templates select="$def[position() > 1]"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <p><dfn><xsl:apply-templates select="(db:glossterm | glossterm)/node()"/></dfn></p>
+          <xsl:apply-templates select="$def"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </div>
+  </xsl:template>
+  <!-- UNA REMISIÓN DENTRO DE UNA DEFINICIÓN: ENLACE A LA ENTRADA, EN LA
+       MISMA PÁGINA -->
+  <xsl:template match="db:glossterm[@linkend] | glossterm[@linkend]">
+    <a href="#{@linkend}"><xsl:apply-templates/></a>
+  </xsl:template>
   <xsl:template match="db:foreignphrase | foreignphrase">
     <i>
       <xsl:if test="normalize-space(@xml:lang) != ''">

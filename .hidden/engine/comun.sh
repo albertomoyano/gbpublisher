@@ -121,7 +121,12 @@ RUTA_SIGLAS_PIEZAS="tmp/siglas-piezas.txt"
 #  13° cuadro-armar             ESCRIBE LA TABLA CALS DEL CUADRO (SC-66).
 #      DESPUÉS DE LAS CITAS Y LAS CIFRAS; ANTES DE fenced-divs, QUE
 #      SERIALIZA LOS BLOQUES QUE CONTIENEN A OTROS
-#  14° fenced-divs-to-elements-db  AL FINAL
+#  14° fenced-divs-to-elements-db  ANTES DE glosario
+#  15° glosario                 LA LISTA DE DEFINICIONES DE LA PIEZA glosario
+#      A <glossdiv>/<glossentry>, ORDENADA, Y LAS REMISIONES [x]{.vease}
+#      (1.18.0). AL FINAL: SERIALIZA LAS DEFINICIONES CON pandoc.write, Y LO
+#      QUE LLEVAN ADENTRO YA TIENE QUE ESTAR TRADUCIDO. ACTÚA SOLO CON
+#      -M gb-tipo-pieza=glosario; EN LAS DEMÁS PIEZAS FRENA UN [x]{.vease}
 FILTROS_LIBRO=(
     cuadro-leer.lua
     espacio-fijo.lua
@@ -141,6 +146,7 @@ FILTROS_LIBRO=(
     verso.lua
     cuadro-armar.lua
     fenced-divs-to-elements-db.lua
+    glosario.lua
 )
 
 # REVISTA: LA DE vista_cuadro.sh. ES GEMELA DE LA QUE ARMA

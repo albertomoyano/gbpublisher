@@ -311,6 +311,7 @@ procesar_capitulo() {
                 "${args_pandoc[@]}" \
                 --metadata gb-idioma-pieza="$idioma" \
                 --metadata gb-proyecto="$DIR_PROYECTO" \
+                --metadata gb-tipo-pieza="$tipo" \
                 --output "$parcial" 2>&1)
     codigo=$?
 

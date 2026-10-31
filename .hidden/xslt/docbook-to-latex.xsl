@@ -70,7 +70,9 @@
       gbCodigo \gbPieCodigo (contrato 11) — programlisting y el
                       listado, coloreados por colorear_codigo.sh (SC-42)
       \index (imakeidx) \gbIndNota \gbIndPrincipal (contrato 18)
-      \gbextranjero, \gbSiglasInicio, \gbSiglaMedir y gbsiglas (contrato 19) —
+      \gbextranjero, \gbSiglasInicio, \gbSiglaMedir y gbsiglas (contrato 19)
+      gbglosario, \gbGlosarioLetra, \gbGlosarioAncla, \gbGlosarioTermino,
+      \gbGlosarioSep, \gbGlosarioVease y \gbGlosarioRemite (contrato 20) —
                       índices onomástico y de conceptos (SC-77)
       \parencite \parencite* \textcite \printbibliography (biblatex)
       refsection      entorno     (biblatex)
@@ -638,6 +640,51 @@
       <xsl:text>&#10;</xsl:text>
     </xsl:for-each>
     <xsl:text>\end{gbsiglas}&#10;&#10;</xsl:text>
+  </xsl:template>
+
+  <!-- EL GLOSARIO DEL LIBRO (1.18.0, CONTRATO 20). LO ARMA            -->
+  <!-- glosario.lua: UNA <glossdiv> POR LETRA, CON SUS <glossentry>     -->
+  <!-- ORDENADAS. PÁRRAFO FRANCÉS (DECISIÓN DE ALBERTO, 31/10): EL      -->
+  <!-- TÉRMINO, « – » (\gbGlosarioSep) Y LA DEFINICIÓN, LAS LÍNEAS      -->
+  <!-- SIGUIENTES SANGRADAS (ENTORNO gbglosario). EL PRIMER PÁRRAFO DE  -->
+  <!-- LA DEFINICIÓN SIGUE AL TÉRMINO; LOS DEMÁS, EN PÁRRAFOS PROPIOS.  -->
+  <xsl:template match="glossdiv">
+    <xsl:text>&#10;\gbGlosarioLetra{</xsl:text>
+    <xsl:apply-templates select="title/node()"/>
+    <xsl:text>}&#10;\begin{gbglosario}&#10;</xsl:text>
+    <xsl:apply-templates select="glossentry"/>
+    <xsl:text>\end{gbglosario}&#10;</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="glossdiv/glossentry">
+    <xsl:text>\item[]\gbGlosarioAncla{</xsl:text>
+    <xsl:value-of select="@xml:id"/>
+    <xsl:text>}\gbGlosarioTermino{</xsl:text>
+    <xsl:apply-templates select="glossterm/node()"/>
+    <xsl:text>}</xsl:text>
+    <xsl:choose>
+      <!-- UNA REMISIÓN: «Traveling, véase Travelling» -->
+      <xsl:when test="glosssee">
+        <xsl:text>\gbGlosarioVease{</xsl:text>
+        <xsl:value-of select="glosssee/@otherterm"/>
+        <xsl:text>}{</xsl:text>
+        <xsl:apply-templates select="glosssee/node()"/>
+        <xsl:text>}&#10;&#10;</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\gbGlosarioSep </xsl:text>
+        <xsl:apply-templates select="glossdef/*"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- UNA REMISIÓN DENTRO DE UNA DEFINICIÓN: ENLACE A LA ENTRADA -->
+  <xsl:template match="glossterm[@linkend]">
+    <xsl:text>\gbGlosarioRemite{</xsl:text>
+    <xsl:value-of select="@linkend"/>
+    <xsl:text>}{</xsl:text>
+    <xsl:apply-templates/>
+    <xsl:text>}</xsl:text>
   </xsl:template>
 
   <!-- LOS role DE emphasis QUE ESCRIBE PANDOC (SC-30): strong PARA   -->

@@ -422,12 +422,15 @@
   </xsl:template>
 
   <!-- ================================================
-       PREFIJAR @linkend INTERNO (biblioref, xref)
+       PREFIJAR @linkend INTERNO (biblioref, xref) Y @otherterm
        APLICA EL MISMO CRITERIO QUE @xml:id Y @xlink:href
        PARA MANTENER CONSISTENCIA CON LOS IDs PREFIJADOS.
        LOS linkend A bib-* SE PRESERVAN INTACTOS.
+       @otherterm ES LA REMISIÓN DEL GLOSARIO (<glosssee>, glosario.lua,
+       1.18.0): ES IDREF COMO linkend, Y SIN PREFIJO APUNTARÍA A UN id
+       QUE YA NO EXISTE. EL NOMBRE DEL ATRIBUTO SE CONSERVA (name()).
        ================================================ -->
-  <xsl:template match="@linkend">
+  <xsl:template match="@linkend | @otherterm">
     <!-- PASO 1: NORMALIZAR A ASCII -->
     <xsl:variable name="targetNormalizado" as="xs:string">
       <xsl:choose>
@@ -443,14 +446,14 @@
     <!-- PASO 2: PREFIJAR CONSISTENTE -->
     <xsl:choose>
       <xsl:when test="db:es-id-global($targetNormalizado)">
-        <xsl:attribute name="linkend" select="$targetNormalizado"/>
+        <xsl:attribute name="{name()}" select="$targetNormalizado"/>
       </xsl:when>
       <xsl:when test="$xml_id_capitulo != ''">
-        <xsl:attribute name="linkend"
+        <xsl:attribute name="{name()}"
                        select="concat($xml_id_capitulo, '.', $targetNormalizado)"/>
       </xsl:when>
       <xsl:otherwise>
-        <xsl:attribute name="linkend" select="$targetNormalizado"/>
+        <xsl:attribute name="{name()}" select="$targetNormalizado"/>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
