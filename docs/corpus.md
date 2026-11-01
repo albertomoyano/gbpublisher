@@ -3273,6 +3273,10 @@ La función es `m_PiezasLibro.ProblemaOrdenFinales(aNombre, aTipo, bConsolidada)
 
 No se controlan `glosario`, `sobre_autores` ni `cronologia`: su lugar es tradición editorial, no error, y una regla rígida frenaría libros bien compuestos.
 
+LAS ZONAS NO VUELVEN ATRÁS (1.18.0)
+
+Independiente del tipo de cada pieza: en el orden del libro, ninguna puede obligar a volver a una zona anterior —preliminares, cuerpo, apéndices, posliminares—. `VerificarZonas` (m_GenerarPDFLibro, apartado 2b de `ArmarInsumosLaTeX`) frena antes de escribir nada y dice qué pieza está después de cuál. Sin el control, el recorrido del main.tex emitía otra vez `\frontmatter` o `\mainmatter` y el folio se reiniciaba sin aviso (GV-164): un prólogo nombrado `bm-` salía con folio romano después de los índices. La zona sale de `ZonaDePieza`, que es la del tipo salvo la lista de siglas, que va donde dice su prefijo (SC-78).
+
 POR QUÉ UN SEMÁFORO
 
 Es una regla del LIBRO, no de una pieza, y por eso no va en `ProblemaPosicion` (la de la dedicatoria, que con el nombre de la pieza alcanza). Al renumerar dos piezas hay un estado intermedio inválido que no se puede evitar; un freno al guardar obligaría a pasar por un nombre provisorio.
@@ -3300,7 +3304,7 @@ FUERA DEL ALCANCE
 
 EPUB y HTML: los índices no se generan (`m_PiezasLibro.Tratamiento`), así que el orden respecto de la bibliografía no cambia nada. El EPUB ubica su colofón solo.
 
-**Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17,vinculo:SC-20,vinculo:GV-102
+**Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17,vinculo:SC-20,vinculo:GV-102,vinculo:SC-78,apoya:GV-164
 
 ### SC-56 — Bibliografía con Verona en HTML y EPUB: nombre en cada entrada, versalitas por CSS, tipografía con smcp y c2sc
 
@@ -4424,8 +4428,9 @@ Decididas una por una (Alberto, 29/10). El @id del patrón y de cada aserción e
                                             libro, por_capitulo o consolidada
     gbp-pi          todos          aviso   PI gb-* conocidas (gb-alinear,
                                             gb-corte, gb-cuadro, gb-espacio,
-                                            gb-fuente); gb-fuente solo en el
-                                            prólogo
+                                            gb-fuente, gb-sigla,
+                                            gb-lista-siglas); gb-fuente solo
+                                            en el prólogo
     gbp-cita        todos          aviso   un biblioref cuyo destino está en
                                             el documento apunta a una entrada
                                             de bibliografía. Destino ausente:
@@ -4469,6 +4474,12 @@ La vigencia es respecto de lo que se copia DENTRO del canónico: el .md y los `c
 - `controles_md.lua` lista los cuadros que nombra el .md en `tmp/fuentes-{base}.txt` (`-M gb-fuentes`), siempre escrito, vacío si no hay; si falta, el capítulo falla (el contrato de SC-54). Va en `controles_md.lua` y no en `cuadro-leer.lua` porque está en `engine/` y no se modifica (SC-11); repite la regla id → archivo de `cuadro-leer.lua`, con referencia cruzada en los dos.
 - `generar_canonicos_capitulos.sh` calcula las huellas antes de pandoc, las escribe en `tmp/huellas-{base}.xml` y se las pasa a la hoja de capítulo, que escribe una `<?gb-fuente archivo="…" sha256="…"?>` por fuente antes de la raíz, con la ruta relativa al proyecto. Una ruta con comillas dobles se rechaza: el contenido de una PI no se escapa.
 - La hoja del libro copia las PI de cada capítulo a su propio prólogo. Las PI del prólogo no las ve jing ni las toman las hojas de salida (GV-XML-02).
+
+LAS SIGLAS (1.18.0, SC-78)
+
+El desarrollo de una sigla se copia en el canónico y llega de la base: una corrección en el catálogo lo deja viejo sin que cambie ningún archivo fuente. Cada sigla usada deja en el cuerpo `<?gb-sigla clave="…" sha1="…"?>`, con la huella de su línea en `tmp/siglas-libro.tsv`, que Gambas escribe desde la base antes de los scripts que la leen. `vigencia_canonico` las busca con `//` (el canónico del libro trae las de todos sus capítulos) y da el canónico por desactualizado si una cambió («la sigla 44-oms cambió en el catálogo»), si ya no está en el libro o si falta el archivo. No cuentan como fuentes: un canónico sin gb-fuente sigue «sin huella».
+
+La lista de siglas no tiene .md: no es huérfana por eso. Se reconoce por su `<?gb-lista-siglas claves="…"?>` y está vigente si ese conjunto es el que usan hoy los canónicos de las piezas (`claves_siglas_usadas`, la misma función con que se arma); es huérfana si ya no es una pieza del libro.
 
 LOS ESTADOS
 
@@ -4520,7 +4531,7 @@ MEDIDO
 - Regenerar un canónico sin cambios en el .md reproduce el anterior salvo las PI. Un `touch` o una fecha vieja en el .md siguen dando «vigente»; cambiar el .md o un cuadro, o borrar un cuadro, da «desactualizado» en el capítulo y en el libro.
 - En Linux Mint con Duek y Califa: el lote con las huellas, el ensamblado vigente y válido, el PDF, el freno del EPUB con seis capítulos modificados a propósito, el aviso al abrir y el botón.
 
-**Relaciones:** vinculo:SC-52,vinculo:SC-53,vinculo:SC-54,vinculo:SC-11,vinculo:SC-13,vinculo:SC-66,vinculo:SC-32,vinculo:SC-57,vinculo:GV-XML-02,vinculo:GV-XML-03,vinculo:GV-XML-04,vinculo:GV-155
+**Relaciones:** vinculo:SC-52,vinculo:SC-53,vinculo:SC-54,vinculo:SC-11,vinculo:SC-13,vinculo:SC-66,vinculo:SC-32,vinculo:SC-57,vinculo:GV-XML-02,vinculo:GV-XML-03,vinculo:GV-XML-04,vinculo:GV-155,vinculo:SC-78,vinculo:SC-79
 
 **PENDIENTE:** (1) La remisión a un destino que la salida no sabe numerar (un xref a un elemento sin número): leer antes qué tipos numeran las tres hojas. (2) Posible regla: una figura con pocos píxeles para el ancho de la caja sale pixelada en el PDF, que la compone siempre a \linewidth; HTML y EPUB la muestran a su tamaño natural. Se retoma con el shortcode de figuras.
 
@@ -4659,7 +4670,105 @@ PROBADO EN MINT
 
 Alberto, 30/10/2026, con «El Atlántico de los exilios»: el párrafo de prueba en el capítulo 1 y en la introducción (preliminares). Los dos índices en el PDF: orden español con la Ñ en su grupo, subentradas, `\emph` en una subentrada, clave `@`, `¡…!` con `\!`, rango, página principal en negrita, «véase» y «véase también», «n.» en las páginas de nota, los romanos antes que los arábigos (con `book-order`), y los enlaces. Después, el resaltado de `\index` en el editor, la inserción desde el panel, la ayuda y los casos que frenan con el marcador olvidado.
 
-**Relaciones:** vinculo:SC-62,vinculo:SC-65,vinculo:SC-54,vinculo:SC-31,vinculo:SC-55,vinculo:GV-116,vinculo:GV-124,apoya:GV-157,apoya:GV-158,apoya:GV-159,apoya:GV-160
+**Relaciones:** vinculo:SC-62,vinculo:SC-65,vinculo:SC-54,vinculo:SC-31,vinculo:SC-55,vinculo:GV-116,vinculo:GV-124,apoya:GV-157,apoya:GV-158,apoya:GV-159,apoya:GV-160,vinculo:SC-79
+
+### SC-78 — Siglas del libro: catálogo de la editorial, la marca en el .md, el primer uso por pieza y la lista generada
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.18.0 / Pandoc 3.1.3 / SaxonJ-HE 12.5 (contenedor) y 12.9 (Linux Mint) / jing / LuaHBTeX 1.17.0, TeX Live 2023, babel / MySQL 8.0.46 / gbc3 3.19 (contenedor) y Gambas 3.22 (Linux Mint) / contenedor Ubuntu 24.04 y Linux Mint con Califa · **Verificado:** 2026-10
+
+Solo libros (decisión de Alberto, 31/10/2026). En revistas, `no_aplica`, sin cerrar el camino a una lista de abreviaturas en el `<back>` de JATS si algún día la pide una biomédica.
+
+EL DATO (ESQUEMA 1.18.0)
+
+- `sigla_catalogo`: el catálogo de la EDITORIAL, común a todos los libros. Sigla `VARCHAR(32)` `utf8mb4_0900_as_cs` (LyF y LYF son distintas), desarrollo `VARCHAR(500)` `0900_as_ci`, plural e idioma opcionales (NULL, GV-74). Única (sigla, desarrollo): PO puede ser Partido Obrero y *Prensa Obrera*.
+- `libro_sigla`: la copia en el libro, por valor (SC-23), con su `clave`. Corregir una entrada del catálogo corrige las copias de los libros no publicados (`libros_md.estado_libro`); un libro publicado queda como salió, como lo publicado en SC-23 y con el criterio de la herencia viva hasta publicar de SC-71.
+- La clave es `<id_sigla>-<sigla normalizada>` («44-oms»), como en referencias. El catálogo no la guarda: una columna generada no puede usar una AUTO_INCREMENT (GV-165). El libro la guarda al adoptar y no cambia nunca: un libro que viaja por JSON a otra instalación conserva sus marcas.
+- El desarrollo admite solo cursiva, `*…*`; todo lo demás es literal ($, &, %, #, _). Con idioma, el desarrollo ya sale en cursiva y no lleva asteriscos que lo envuelvan entero (`m_Siglas.AvisoIdioma`, GV-163). No admite tabulador ni salto de línea: rompería el archivo del filtro.
+- Las abreviaturas («leg. 79/26», «f. 32») no se cargan ni se marcan: son texto.
+
+LA MARCA EN EL .md
+
+    [OMS]{.sigla}                  la sigla, sola en el libro
+    [CI]{.sigla .plural}           el plural del desarrollo
+    [CI]{.sigla .inicial}          mayúscula inicial (comienzo de oración)
+    [PO]{.sigla clave=12-po}       solo cuando el libro tiene dos con esa sigla
+
+Equivale al `\gls{OMS}` de glossaries. La inserta F2 (`FSiglaRapida`): busca por la sigla y dentro del desarrollo, sin tildes; elegir una la adopta en el libro; una sigla nueva se da de alta ahí mismo. Enter, Ctrl+Enter (plural) y Shift+Enter (inicial). Una selección corta de una línea es la búsqueda y la marca la reemplaza.
+
+LA SINCRONÍA
+
+Las siglas del libro son las de sus marcas: al abrir FSiglas, con su botón «Sincronizar» y antes de cada script que las lee, se adoptan las marcadas de un solo significado y se quitan las copias sin marca. No quita nada si el editor tiene cambios sin guardar o si un archivo no se pudo leer, y no toca un libro publicado. Motivo: adoptada no es usada, y mostrar como «en uso» una sigla que ya no tiene marcas confundía.
+
+EL FILTRO: siglas.lua
+
+4c° de FILTROS_LIBRO, después de indice.lua y antes de cite-to-biblioref-db.lua. Lee `tmp/siglas-libro.tsv` del proyecto: una línea por sigla, `clave TAB sigla TAB desarrollo TAB plural TAB idioma`, en el orden de la lista. Lo escribe `m_Siglas.EscribirParaFiltro` desde `EjecutarScriptSalida`, la única lanzadora (SC-13), antes de los scripts que lo leen.
+
+- Primer uso EN CADA PIEZA, sin importar la autoría: «Organización Mundial de la Salud (OMS)»; después, la sigla. Con idioma, el desarrollo va en `<foreignphrase xml:lang>`.
+- La nota cuenta en el lugar de su llamada, como en glossaries: el recorrido es propio y en el orden del texto (un `walk` de Pandoc no lo garantiza).
+- En el canónico: `<acronym xlink:title="desarrollo">OMS</acronym>`.
+- Frena: una marca en un título, una cita en bloque, un epígrafe, un verso, una cita de fuente, una figura, un cuadro o una cita bibliográfica (ahí la sigla se escribe a mano; las comillas en línea sí la admiten); una sigla ambigua sin clave; una clave que el libro no tiene o que es de otra sigla; `.plural` sin plural; el desarrollo escrito a mano delante del primer uso (saldría dos veces); una marca partida, que Pandoc no leyó y saldría literal (GV-161).
+- Al final de la pieza, `<?gb-sigla clave="…" sha1="…"?>` por sigla usada, con la huella de su línea del .tsv: una corrección en el catálogo deja viejo al canónico (SC-75).
+
+LA LISTA DE SIGLAS (PIEZA lista_abreviaturas)
+
+Un canónico SIN .md: lo arma `generar_canonicos_capitulos.sh` (`procesar_lista_siglas`) al final de cada lote, y Gambas la agrega a todo lote, también al generar un solo capítulo. Lleva las siglas que usan los CANÓNICOS de las piezas del libro (sus `gb-sigla`), no las marcas del .md: así coincide con el texto publicado. Las piezas salen de `tmp/siglas-piezas.txt` (`m_Siglas.EscribirPiezas`, desde la base: un canónico huérfano no aporta siglas).
+
+- `<glossary role="abreviaturas">` con `<glosslist role="siglas">`, un `<glossentry>` por sigla, solo el desarrollo singular; una sigla con dos significados en el libro va en una entrada, con los desarrollos unidos por « / ».
+- Orden: por la sigla, sin mayúsculas ni guiones (LyF después de LN); a igual sigla, por el desarrollo sin asteriscos.
+- Al final, las `gb-sigla` y `<?gb-lista-siglas claves="…"?>`, el conjunto ordenado. La vigencia la da por vieja si los canónicos usan hoy otro conjunto (SC-75).
+- Frena si ningún capítulo usa siglas: saldría vacía.
+- Va donde dice su prefijo: `fm-` en preliminares, `bm-` en posliminares (`ZonaDePieza`, decisión de Alberto, 31/10/2026). Es la única pieza cuya zona decide el prefijo; con la zona del tipo, en `bm-` el PDF reabría `\frontmatter` y el folio volvía a «iii» (GV-164). Desde entonces el PDF frena si cualquier pieza obliga a volver a una zona anterior (SC-55).
+
+LAS SALIDAS
+
+- PDF: `acronym` es texto; `foreignphrase` es `\gbextranjero{en}{…}`, que en el contrato es `\foreignlanguage{\csname gbbabel@en\endcsname}{\emph{…}}` (GV-163). `DefinicionesCita` carga en babel los idiomas de las siglas (`m_Siglas.IdiomasDelLibro`, nombre por `m_Idiomas.Babel`) y define `gbbabel@<código>`; un idioma que babel no reconoce frena. La lista, en dos columnas alineadas (entorno `gbsiglas`): la primera mide la sigla más ancha, medida en LaTeX con `\gbSiglaMedir` (contar letras no sirve). Contrato 19.
+- EPUB y HTML: `<abbr title>` y `<i lang>` (el EPUB también `xml:lang`); la lista, `<dl class="siglas">` en dos columnas con CSS grid, que sin grid se lee como lista de definiciones común. En el índice del HTML, «Siglas».
+
+EL VALIDADOR
+
+`gbpublisher.sch` reconoce `gb-sigla` y `gb-lista-siglas` como instrucciones conocidas (gbp-pi); hay que regenerar `schematron-canonico.xsl`.
+
+**Relaciones:** vinculo:SC-23,vinculo:SC-71,vinculo:SC-13,vinculo:SC-75,vinculo:SC-55,vinculo:SC-77,vinculo:SC-79,vinculo:GV-74,vinculo:GV-116,apoya:GV-161,apoya:GV-162,apoya:GV-163,apoya:GV-164,apoya:GV-165,apoya:GV-166,apoya:GV-XML-05
+
+### SC-79 — Glosario del libro: lista de definiciones en el .md, orden con letras, «véase» y párrafo francés
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.18.0 / Pandoc 3.1.3 / SaxonJ-HE 12.5 (contenedor) y 12.9 (Linux Mint) / jing / LuaHBTeX 1.17.0 y XeTeX, TeX Live 2023 / contenedor Ubuntu 24.04 y Linux Mint con Califa · **Verificado:** 2026-10
+
+Propio de cada libro, en el .md de la pieza `glosario`. No pasa por el formulario de siglas (decisión de Alberto, 31/10/2026).
+
+LA ESCRITURA
+
+La lista de definiciones de Pandoc, que Pandoc lee de forma nativa (el término admite cursiva; la definición, varios párrafos):
+
+    Una introducción opcional.
+
+    *Travelling*
+    :   Desplazamiento de la cámara. Véase también [plano secuencia]{.vease}.
+
+    Traveling
+    :   [Travelling]{.vease}
+
+El viejo bloque `::: {.glossary term="…"}` (un `<variablelist>` por entrada, shortcode en borrador, nunca liberado) se retiró: `fenced-divs-to-elements-db.lua` frena con un mensaje que dice cómo escribirlo.
+
+EL FILTRO: glosario.lua
+
+15°, el último de FILTROS_LIBRO: serializa las definiciones con `pandoc.write`, y lo que llevan adentro (citas, siglas, cifras) ya tiene que estar traducido. Actúa solo con `-M gb-tipo-pieza=glosario`, que `generar_canonicos_capitulos.sh` pasa desde 1.18.0; en las demás piezas una lista de definiciones sigue siendo `<variablelist>` y un `[x]{.vease}` frena, porque el escritor DocBook lo descartaría en silencio (GV-161).
+
+- Sale `<glossdiv>` por letra con sus `<glossentry xml:id="gl-…">`, `<glossterm>` y `<glossdef>`.
+- Orden alfabético sin mayúsculas ni tildes; la ñ, después de la n; los signos del comienzo (« ¿ ¡ " ( *) no cuentan; las cifras, antes de las letras, en «0–9».
+- El «véase»: una definición que es solo `[x]{.vease}` es una remisión, `<glosssee otherterm>`, y sale «Traveling, véase Travelling», en minúscula y después de coma, como en los índices (SC-77). Dentro de un texto, `<glossterm linkend>`: un enlace a la entrada, con la redacción del autor. El término se busca sin mayúsculas ni tildes.
+- Frena: un título (las letras las pone el filtro; `<glossary>` no admite secciones); texto después de las entradas; un término repetido; una remisión a un término que no existe o a sí mismo; un glosario sin entradas.
+- Las huellas que dejan otros filtros (`gb-sigla`) van al final del cuerpo.
+- `ensamblar-capitulo-canonico.xsl` prefija `@otherterm` como `@linkend`: es IDREF, y sin prefijo el «véase» apuntaba a un id que ya no existía (GV-XML-05).
+
+LAS SALIDAS
+
+Párrafo francés en las tres (decisión de Alberto, 31/10/2026): el término en negrita, « – » (semirraya entre espacios, el primero duro) y la definición; las líneas siguientes y los demás párrafos, sangrados.
+
+- PDF: entorno `gbglosario`, `\gbGlosarioLetra`, `\gbGlosarioAncla` (`\phantomsection\label`), `\gbGlosarioTermino`, `\gbGlosarioSep` (`\nobreakspace–\space`, el carácter literal y no `--`, que depende de las ligaduras), `\gbGlosarioVease` y `\gbGlosarioRemite` (`\hyperref`). Contrato 20. La estética puede redefinir el aspecto; el contrato garantiza que existan.
+- EPUB y HTML: `section.glosario-letra`, `div.glosario-entrada` con su id y `<dfn>`; las remisiones, `<a href="#id">` en la misma página.
+
+**Relaciones:** vinculo:SC-77,vinculo:SC-78,vinculo:SC-75,vinculo:SC-55,apoya:GV-161,apoya:GV-XML-05
 
 ---
 
@@ -8594,6 +8703,99 @@ Medido con xindy (texindy, `-I latex`) y LuaLaTeX con babel-spanish.
 
 **Relaciones:** apoya:SC-77
 
+### GV-161 — Pandoc 3.1.3, escritor DocBook: un Span con clase sale solo con su texto; una lista de definiciones sale como <variablelist>
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El escritor `docbook5` de Pandoc 3.1.3 no tiene forma para un Span con clases: escribe su contenido y descarta clases y atributos, sin aviso. Una lista de definiciones de Markdown la escribe como `<variablelist>` con `<varlistentry>`, `<term>` y `<listitem>`.
+
+MEDIDO (contenedor, pandoc 3.1.3):
+
+    Plano secuencia
+    :   Véase también [plano secuencia]{.vease}.
+
+sale `<varlistentry><term>Plano secuencia</term><listitem><para>Véase también plano secuencia.</para>…`: el `{.vease}` desapareció. Lo mismo un `[OMS]{.sigla}` sin filtro: queda «OMS».
+
+Una marca mal escrita, `[OMS] {.sigla}` (con espacio), no es un Span: Pandoc deja `{.sigla}` como texto, que saldría literal.
+
+EN EL PROYECTO: toda marca en línea que Pandoc lee como Span la tiene que traducir un filtro antes del escritor, y el filtro frena con la que quedó partida (siglas.lua, glosario.lua). Es el mismo criterio que con el LaTeX crudo (GV-116).
+
+**Relaciones:** apoya:SC-78,apoya:SC-79,vinculo:GV-116
+
+### GV-162 — bash: con IFS=$'\t', read junta dos tabuladores seguidos y un campo vacío corre a los siguientes
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** GNU bash 5.2.21 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+El tabulador es «espacio de IFS» (como el espacio y el salto de línea): una secuencia de ellos cuenta como un solo separador, y los del comienzo y el final se descartan. Un campo vacío entre dos tabuladores desaparece y los siguientes se corren uno a la izquierda.
+
+MEDIDO (GNU bash 5.2.21):
+
+    printf 'a\t\tc\n' | { IFS=$'\t' read -r x y z; echo "x=[$x] y=[$y] z=[$z]"; }
+    x=[a] y=[c] z=[]
+
+Con `read -a`, el arreglo tiene 2 elementos y no 3.
+
+EN EL PROYECTO: `tmp/siglas-libro.tsv` tiene campos opcionales (plural, idioma). `generar_canonicos_capitulos.sh` (`procesar_lista_siglas`) parte cada línea a mano, con `${linea%%$'\t'*}` y `${linea#*$'\t'}`, y no con `IFS=$'\t' read`. Las listas de dos o cuatro campos siempre llenos (la del lote, `tmp/siglas-piezas.txt`) se pueden leer con `read`.
+
+**Relaciones:** apoya:SC-78
+
+### GV-163 — babel acepta \foreignlanguage{\csname …\endcsname}; \emph dentro de \emph sale en redonda
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX 1.17.0, TeX Live 2023 / babel (english, main=spanish) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Dos comportamientos medidos al componer el desarrollo de una sigla en otro idioma.
+
+1. `\foreignlanguage` acepta el nombre del idioma armado con `\csname`: con
+
+    \expandafter\def\csname gbbabel@en\endcsname{english}
+    \foreignlanguage{\csname gbbabel@en\endcsname}{…}
+
+adentro `\languagename` es `english` (la partición es la inglesa). Un `\csname` sin definir no es un error de babel: hay que controlarlo antes con `\ifcsname`.
+
+2. `\emph` alterna: dentro de un texto en cursiva, `\emph` vuelve a redonda. `\emph{Clarín \emph{The Times}}` compone «The Times» en redonda. Es la regla tipográfica (lo citado dentro de una cursiva va en redonda), pero un desarrollo con idioma escrito `*The Times*` saldría en redonda, porque el idioma ya pone la cursiva.
+
+MEDIDO: LuaLaTeX, TeX Live 2023, babel con `english,main=spanish`, `pdftotext` del resultado.
+
+EN EL PROYECTO: `\gbextranjero` (contrato 19, SC-78) usa la forma 1 con `\ifcsname` y un `\PackageError` si el código no tiene nombre. La forma 2 la evita `m_Siglas.AvisoIdioma` al grabar, y la frenan siglas.lua y la lista sobre lo ya grabado.
+
+**Relaciones:** apoya:SC-78
+
+### GV-164 — LaTeX, clase book: un \frontmatter después de \backmatter reinicia el folio en romanos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaHBTeX, TeX Live 2023, clase book / Linux Mint con Califa · **Verificado:** 2026-10
+
+`\frontmatter` hace `\cleardoublepage`, pone la numeración en romanos y la reinicia en 1. No mira en qué parte del libro está: emitido después de `\backmatter`, la página siguiente sale «i» o «iii», sin aviso.
+
+MEDIDO (Linux Mint, Alberto, 31/10/2026): una lista de siglas declarada `bm-12` iba, por su tipo, a preliminares (`ZonaDeTipo`); el recorrido del main.tex cerró posliminares, abrió otra vez la zona de preliminares, y la página salió «iii» después del índice de autores. En `fm-` salía bien. Lo mismo pasaría con `\mainmatter` después de los apéndices o los posliminares: vuelve a arábigos desde 1.
+
+EN EL PROYECTO: `ArmarInsumosLaTeX` abre una zona cada vez que cambia. `VerificarZonas` (m_GenerarPDFLibro) frena antes de escribir nada si una pieza obliga a volver a una zona anterior, y dice cuál está después de cuál (SC-55); la lista de siglas va donde dice su prefijo (`ZonaDePieza`, SC-78).
+
+**Relaciones:** apoya:SC-78,apoya:SC-55
+
+### GV-165 — MySQL 8.0.46: una columna generada no puede usar una columna AUTO_INCREMENT (error 3109)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Una columna generada (`GENERATED ALWAYS AS`, virtual o almacenada) no puede referirse a una columna `AUTO_INCREMENT`: el `CREATE TABLE` falla con el error 3109. El valor de la AUTO_INCREMENT no existe todavía cuando se calcula la generada.
+
+MEDIDO: MySQL 8.0.46, al diseñar `sigla_catalogo` con una clave `<id>-<sigla>` generada.
+
+EN EL PROYECTO: la clave de una sigla no se guarda en el catálogo; se calcula (`m_Siglas.ClaveDe`) y se guarda, fija, en la copia del libro (`libro_sigla.clave`, SC-78).
+
+**Relaciones:** apoya:SC-78
+
+### GV-166 — TextEdit (gb.qt6.ext): no da las coordenadas en pantalla del cursor
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22, gb.qt6.ext (fuente CTextEdit.cpp, master 3.22.99) · **Verificado:** 2026-10
+
+El control `TextEdit` de gb.qt6.ext no expone la posición en pantalla del cursor de texto: no hay un `CursorAt` ni un equivalente, y una ventana emergente no se puede abrir junto a donde se escribe.
+
+VERIFICADO EN EL FUENTE: `CTextEdit.cpp` de gb.qt6.ext, rama master 3.22.99 (gambaswiki.org bloquea el acceso automatizado: la verificación es en el código).
+
+EN EL PROYECTO: la ventanita de siglas (F2, SC-78) se ubica respecto del editor y no del cursor: centrada en vertical, con su borde izquierdo en el borde derecho del editor, que se sigue viendo entero; si no entra, se arrima al borde de la pantalla (`Desktop.Width`).
+
+**Relaciones:** apoya:SC-78
+
 ---
 
 ## GV-XML — Comportamientos verificados XML
@@ -8673,3 +8875,19 @@ REGLA: una regla sobre instrucciones de procesamiento se escribe sobre la raíz 
 También medido: el `@id` y el `@role` de cada aserción llegan al SVRL como atributos de `svrl:failed-assert`. Es lo que usa el validador para separar las reglas propias y leer su nivel.
 
 **Relaciones:** apoya:SC-75,vinculo:GV-XML-03
+
+### GV-XML-05 — DocBook 5.2: acronym admite xlink:title; glossary admite glosslist y glossdiv; @otherterm es IDREF
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** jing / RNG DocBook 5.2 del repositorio / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+Validado con jing contra el RNG 5.2 del repositorio:
+
+- `<acronym xlink:title="…">` es válido: los atributos de enlace (`db.common.linking.attributes`) admiten los de XLink sin `xlink:href`.
+- `<foreignphrase xml:lang="en">` en línea, válido.
+- Una instrucción de procesamiento dentro del cuerpo (un `<para>`, un `<section>`) no afecta la validación.
+- `<glossary>` admite, después de su `<info>`, bloques (`<para>`, `<glosslist>`) y después `<glossdiv>` o `<glossentry>`. `<glossentry>`: `<glossterm>`, y `<glosssee>` o uno o más `<glossdef>`.
+- `@otherterm` de `<glosssee>` y `<glossseealso>` es IDREF: un destino inexistente invalida el documento.
+
+EN EL PROYECTO: la lista de siglas es `<glossary role="abreviaturas">` con un `<glosslist role="siglas">`; el glosario, `<glossary role="glosario">` con `<glossdiv>` por letra (SC-78, SC-79). `ensamblar-capitulo-canonico.xsl` prefija los id con el de la pieza: prefija también `@otherterm`, con el mismo criterio que `@linkend`; sin eso, el «véase» apuntaba a un id que ya no existía.
+
+**Relaciones:** apoya:SC-78,apoya:SC-79
