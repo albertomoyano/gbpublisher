@@ -1285,7 +1285,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT). El refactor de bibtex tomará el número que le corresponda.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT); 1.18.0 (siglas, SC-78); 1.19.0 (contrato con gbWeb, SC-81). El refactor de bibtex tomará el número que le corresponda.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1311,12 +1311,13 @@ DETALLES VERIFICADOS
 - En los informes con CTE, los `CAST(… AS CHAR)` llevan `COLLATE` explícito: sin él toman la colación de la conexión y el `UNION` falla por mezcla de colaciones.
 - Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
 - El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, la restauración borra `articulos` y falla al recrearla (GV-67).
+- Restaurar el respaldo no borra lo que el script creó después: una VIEW nueva queda apuntando a una columna que ya no existe (GV-169). Desde 1.19.0, la vuelta atrás que imprime el script borra primero lo creado y después restaura.
 
 PUNTO DE RUPTURA: BASELINE 2.0.0 CON EL REFACTOR DE BIBTEX
 
 Decisión de Alberto (20/10). El baseline no se regenera con cada versión de la cadena. El 2.0.0 se genera junto con el refactor de bibtex y lo incorpora: las instalaciones nuevas parten de ahí. Las existentes siguen su cadena hasta ese mismo punto. Hasta entonces, una instalación nueva restaura `baseline-1.0.0` y corre la cadena completa (BBDD_LEEME.md §5, «Cuándo conviene rebasear»).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -4769,6 +4770,126 @@ Párrafo francés en las tres (decisión de Alberto, 31/10/2026): el término en
 - EPUB y HTML: `section.glosario-letra`, `div.glosario-entrada` con su id y `<dfn>`; las remisiones, `<a href="#id">` en la misma página.
 
 **Relaciones:** vinculo:SC-77,vinculo:SC-78,vinculo:SC-75,vinculo:SC-55,apoya:GV-161,apoya:GV-XML-05
+
+### SC-80 — gbWeb: el portal estático de la editorial o de la revista, cosido con lo que publica gbpublisher
+
+**Estado:** vigente
+
+Decisiones de Alberto, 02/11/2026. gbWeb es una aplicación aparte, en Gambas 3 y con su repositorio, que construye y mantiene el sitio estático de una editorial (libros) o de una revista (una sola). Es una ampliación de gbpublisher, como gbCorpus y gbShortcodes (SC-50), con una diferencia deliberada: no guarda datos que gbpublisher consume, sino que consume lo que gbpublisher publica. Lee la base MySQL de gbpublisher a través de un contrato (SC-81), y sus datos propios también van en MySQL, no en SQLite.
+
+QUÉ ES
+
+Una costurera: arma el portal —cabecera, páginas estáticas, imagen destacada, catálogo— y cose una lista indefinida de obras, cada una con su propio sitio. Ese sitio es una salida HTML más de gbpublisher, con los botones de descarga del EPUB y del PDF, publicada aparte (Netlify u otro). gbWeb no transforma el contenido de las obras: usa metadatos y enlaces.
+
+El `L-ALGO.md` (portal de libros) o `R-ALGO.md` (portal de una revista) cumple el mismo papel que el `l-*.md` en gbpublisher: da nombre al proyecto y al repositorio, y sirve de anotador. No interviene en la construcción.
+
+LA PUERTA DE ENTRADA
+
+Solo gbpublisher. Una obra que no está en gbpublisher no existe para gbWeb: no hay alta de obras en gbWeb. El fondo editorial anterior a gbpublisher se da de alta en gbpublisher, a mano; cada libro con su proyecto mínimo, porque `libros_md.id_proyecto` es NOT NULL y único.
+
+LO QUE MUESTRA
+
+- Visibilidad: `estado_publicacion` publicado, agotado o descatalogado. Solo `en_preparacion` queda afuera. Descatalogado se muestra: le sirve a las bibliotecas. Es la única condición; `estado_libro` no cuenta.
+- Una ficha propia de cada obra en el portal, que enlaza al sitio completo cuando hay `url_libro`. Un libro del fondo no tiene sitio propio.
+- Revista: la unidad que se cose es el número.
+- La venta queda fuera del portal: un botón lleva al punto de venta (`url_compra`, Mercado Libre u otro) y la venta se resuelve en una pasarela externa.
+- Las marcas visuales salen de los datos, nunca se cargan a mano: agotado y descatalogado, con su etiqueta y sin botón de compra; acceso abierto, con la descarga (`tipo_acceso`).
+- La imagen destacada la elige gbWeb, en el formulario de diseño del sitio, para lo que la editorial comunica por un tiempo (una promoción, un evento). Se activa a mano, nunca por fecha: con la fecha, el mismo estado daría sitios distintos según el día.
+- El sitio de cada obra lleva una cabecera mínima (logo y vuelta al catálogo); el diseño fuerte queda en el portal. Si la cabecera de las obras siguiera la del portal, cambiar el portal obligaría a reconstruir cada obra.
+- Idiomas: español, inglés y portugués. Se traduce todo lo del portal (menús, páginas estáticas, etiquetas, nombres de los roles); lo que viene de los metadatos se muestra tal cual. El título de cada obra lleva su `lang`, de `idioma_principal`.
+- Buscador: título, ISBN, autor y palabras clave, en un índice JSON que genera gbWeb. Normaliza igual el índice y la consulta: el ISBN sin guiones ni espacios (impreso y electrónico); el autor por palabras en cualquier orden («Silvina Jensen» encuentra «Jensen, Silvina»); sin tildes ni mayúsculas (`normalize('NFD')`).
+
+DETERMINISMO
+
+Los mismos datos dan los mismos bytes: plantillas cerradas, con una lista finita de variables de diseño; orden explícito y con desempate, nunca el de la base (SC-81); sin fecha de generación en la salida; la tapa llega ya convertida y gbWeb copia sus bytes (SC-81). Es el criterio de exportación de SC-50: el diff de git muestra solo lo que cambió.
+
+CÓMO SE ARMA
+
+- Motor: XSLT con Saxon. gbWeb vuelca las VIEW del contrato y sus datos propios en un `sitio.xml`, y una sola corrida genera el sitio entero, una página por `xsl:result-document`. Gambas lleva los datos y la interfaz; XSLT, la presentación. `sitio.xml` queda como archivo intermedio que se puede comparar.
+- Páginas: inicio (cabecera, imagen destacada, últimos títulos), catálogo, una por colección, la ficha de cada obra y las páginas estáticas (Acerca de, Cómo publicar, Cómo comprar…), bajo `/es/`, `/en/` y `/pt/`. La raíz es la versión en español, con `hreflang` a las otras; sin redirección por JavaScript. Más el índice de búsqueda y `sitemap.xml`.
+- URL de la ficha: `id_libro`, lo único que gbpublisher garantiza estable. En la revista, volumen y número.
+- Orden de construcción: primero un esqueleto de punta a punta (las VIEW, `sitio.xml`, una XSLT, portada y fichas en un idioma, dos construcciones con el mismo hash); los formularios crecen encima.
+
+**Relaciones:** vinculo:SC-50,vinculo:SC-81,vinculo:SC-82,vinculo:SC-22
+
+**PENDIENTE:** Precios en la ficha: la propuesta es no mostrarlos (cambian seguido y el precio vigente está en el punto de venta); falta la decisión. Carga del fondo con una semilla de los CSV de WooCommerce y de Mercado Libre, cruzados por ISBN: se trata después. Contrato de la revista: `numero` no tiene estado de publicación ni URL. Repositorio de gbWeb y su esquema MySQL propio (configuración, imagen destacada, páginas estáticas, textos de interfaz en tres idiomas).
+
+### SC-81 — Contrato gbpublisher → gbWeb: cuatro VIEW, una cuenta de solo lectura y la tapa web en la base (esquema 1.19.0)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.19.0 (esquema) / MySQL 8.0.46 / Gambas 3.19 (gbc3, gbx3; gb.db.mysql) / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 y Linux Mint (la tapa) · **Verificado:** 2026-11
+
+Decisiones de Alberto, 02/11/2026. gbWeb (SC-80) lee la base de gbpublisher solo a través de este contrato. Lo aplica `actualizar-esquema-1.19.0.sh` (SC-22).
+
+EL LÍMITE: LAS VIEW
+
+    v_web_libro           una fila por libro visible
+    v_web_libro_persona   una fila por persona y libro
+    v_web_coleccion       colecciones con al menos un libro visible
+    v_web_libro_tapa      la tapa web de cada libro visible
+
+Las crea y las mantiene gbpublisher. Si cambia una tabla interna, se adapta la VIEW y gbWeb no se entera. La regla de visibilidad (SC-80) está una sola vez, en el WHERE de `v_web_libro`; las otras tres la heredan porque se unen con ella. No exponen el email ni la afiliación de las personas ni ningún campo interno (`notas_internas` y similares): la VIEW es también el filtro de lo público.
+
+LA CUENTA: UNA POR APLICACIÓN
+
+gbWeb se conecta con `gbweb_lector`, una cuenta de MySQL con `SELECT` solo sobre las cuatro VIEW. No es un usuario de trabajo (esos se dan de alta en FSysAdmin, en la tabla `usuarios`): es una credencial de infraestructura, como `app_user`. Las VIEW son `SQL SECURITY DEFINER`, así que la cuenta las lee sin permisos sobre las tablas, y cualquier otra cosa le da error 1142 (GV-167): el aislamiento lo garantiza el motor, no la disciplina. Con `app_user` el contrato sería una costumbre, no un límite. La crea la cuenta administrativa en un script aparte, no en el de esquema: tener gbWeb es una decisión de cada instalación.
+
+LOS DATOS
+
+- Personas: una fila por persona y libro, y la agrupación la hace la XSLT. Sin `GROUP_CONCAT`, que corta en `group_concat_max_len` sin error. `nombre_mostrar` es `nombre_preferido`, o `nombre_completo` si está vacío. Los nombres de los roles («coord.», «comp.») son textos de interfaz: los traduce gbWeb.
+- Mes: `libros_md.mes_publicacion` es texto («Noviembre»). La VIEW lo da como número (`mes_numero`), con setiembre y septiembre; otro valor sale NULL. Se resuelve en la VIEW, no con una migración de la columna.
+- `url_compra`: `VARCHAR(500) NULL` con `CHECK (url_compra <> '')` (GV-74), al final de `libros_md`.
+
+EL ORDEN LO PONE gbWeb
+
+Una VIEW no garantiza el orden de las filas: gbWeb lo pide al consultar.
+
+    libros     ano_publicacion DESC, mes_numero DESC, id_libro DESC
+    personas   id_libro, orden_autoria, id_relacion
+
+Con `DESC`, MySQL pone los NULL al final: un libro sin mes va detrás de los de su año (GV-167). `orden_autoria` no es único en `libro_autor` y `id_relacion` desempata.
+
+LA TAPA WEB, EN LA BASE
+
+La identidad del proyecto es el nombre de su .md, no la carpeta (SC-82): la base no sabe dónde está `media/`. Solo gbpublisher, con el proyecto abierto, puede leer la tapa. Por eso la convierte al guardar y deja el resultado en la base, en `libro_tapa_web`:
+
+    id_libro   INT, clave; FK a libros_md, CASCADE
+    imagen     MEDIUMBLOB, el JPEG ya convertido
+    formato    'jpg' (CHECK)
+    ancho      INT > 0
+    alto       INT > 0
+    sha256     CHAR(64) ascii_bin, hexadecimal en minúsculas (CHECK)
+
+- Conversión: `convert <tapa> -resize '600x>' -strip -quality 80 <destino>.jpg`, unos 117 KB por tapa (GV-156). El ancho alcanza para la tarjeta y la ficha en pantallas de alta densidad.
+- `sha256` se calcula en el propio SQL con `SHA2(imagen, 256)`, que da lo mismo que `sha256sum` (GV-168).
+- Sin fecha de actualización, a propósito: nada variable llega a la salida.
+- gbWeb escribe los bytes tal cual: el determinismo está en lo guardado. Publica `tapas/<id>-<primeros 8 del sha256>.jpg`: si la tapa cambia, cambia el nombre y ningún navegador muestra la vieja. Con `ancho` y `alto` pone `width` y `height` en el `<img>`, y la página no salta mientras carga.
+
+Así el contrato no depende de ninguna ruta ni de ninguna máquina, y viaja en los respaldos de `mysqldump`. Una persona que carga el fondo desde otra computadora no necesita compartir carpetas.
+
+EL LOTE DE 1.19.0 (SC-22)
+
+`m_ConexionBD.ObtenerEsquemaEsperado`: `libros_md` pasa de 79 a 80 y entra `libro_tapa_web` con 6. Las VIEW no se cuentan: `ValidarEsquemaBD` solo mira las tablas que lista.
+
+**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169
+
+**PENDIENTE:** Script de la cuenta `gbweb_lector` (pide la clave sin mostrarla; idempotente) y la cuarta capa de identidad en BBDD_LEEME.md §2. `generar-baseline.sh` enumera solo `BASE TABLE`: el próximo baseline saldría sin las VIEW. En gbpublisher: generar y guardar la tapa web al guardar los metadatos, y el campo `url_compra` en el formulario. Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3).
+
+### SC-82 — La identidad de un proyecto es el nombre de su .md, no la carpeta que lo contiene
+
+**Estado:** vigente
+
+Decisión de Alberto, de siempre; escrita el 02/11/2026. gbpublisher identifica un proyecto por el nombre de su archivo (`l-*.md`, `r-*.md`; en proyectos anteriores, `.tex`). En la base, `proyectos.nombre` guarda solo ese nombre, sin ruta.
+
+La carpeta puede llamarse de cualquier forma y estar en cualquier lugar: un `git clone` la trae con otro nombre, y en la máquina de Alberto `l-JENSEN.md` está en `Jensen/`. Del nombre del archivo no se deduce la carpeta.
+
+CONSECUENCIAS
+
+- Ninguna tabla guarda la ruta de un proyecto, ni siquiera relativa a un directorio base.
+- Lo que otra aplicación necesita de la carpeta lo saca gbpublisher cuando el proyecto está abierto, y lo deja en la base. El primer caso es la tapa web de gbWeb (SC-81).
+
+Es la misma idea que SC-16: el .md viaja solo.
+
+**Relaciones:** vinculo:SC-16,vinculo:SC-81
 
 ---
 
@@ -8642,8 +8763,9 @@ Medido con ImageMagick 6.9.12-98 Q16, sobre imágenes reales de Califa y Duek y 
 4. Un PNG reducido puede pesar más que el original: al remuestrear aparecen tonos intermedios y comprime peor. La tapa de Califa (1747×2593) pasó de 1,1 MB a 1,8 MB a 2000 px; el gráfico fig-02 (2532×1584), de 50 KB a 82 KB. Ni `-filter Triangle` ni `png:compression-level=9` ni `png:compression-filter=0` lo evitan; `png:compression-filter=5` da advertencia y se ignora. Una foto grande sí baja: la tapa de Duek (1831×2717) pasó de 4,8 MB a 2,9 MB.
 5. Un PNG con el perfil sRGB estándar en su bloque iCCP (la tapa de Califa, «sRGB IEC61966-2.1» escrito por Photoshop) aparece sin perfil: `%[profile:icc]` sale vacío y advierte por stderr que la propiedad no existe. Un perfil que no reconoce sí lo expone, con su descripción.
 6. `identify -format '%[colorspace]'` devuelve `sRGB`, `CMYK` o `Gray`; es lo que decide la conversión.
+7. La tapa web en JPEG (SC-81), sobre la tapa de Duek: `-resize '800x>' -strip -quality 85` da 800×1187 y 229 KB; `-resize '600x>' -strip -quality 80`, 600×890 y 117 KB (en PNG a 800 px, 1,1 MB). Dos corridas separadas por `sleep 2` dan el mismo sha256: no hay fecha guardada, tampoco con segundos de diferencia. En pantalla, Alberto no distingue la de 600 de la de 800 (02/11/2026).
 
-**Relaciones:** apoya:SC-76
+**Relaciones:** apoya:SC-76,apoya:SC-81
 
 ### GV-157 — Pandoc: \index[…]{…} en el .md es LaTeX en línea entero; solo lo rompen un % y una llave sin cerrar
 
@@ -8795,6 +8917,66 @@ VERIFICADO EN EL FUENTE: `CTextEdit.cpp` de gb.qt6.ext, rama master 3.22.99 (gam
 EN EL PROYECTO: la ventanita de siglas (F2, SC-78) se ubica respecto del editor y no del cursor: centrada en vertical, con su borde izquierdo en el borde derecho del editor, que se sigue viendo entero; si no entra, se arrima al borde de la pantalla (`Desktop.Width`).
 
 **Relaciones:** apoya:SC-78
+
+### GV-167 — MySQL 8.0.46: una cuenta con SELECT solo sobre VIEW con SQL SECURITY DEFINER lee esas VIEW y nada más
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+MEDIDO (MySQL 8.0.46, contenedor, con el esquema de gbpublisher): cuatro VIEW creadas `SQL SECURITY DEFINER` y una cuenta con `GRANT SELECT ON gbpublisher.<vista>` para cada una.
+
+    SELECT … FROM v_web_libro                 lee
+    SELECT … FROM libros_md                   ERROR 1142: SELECT command denied
+    SELECT … FROM libro_tapa_web              ERROR 1142: SELECT command denied
+    UPDATE v_web_libro SET …                  ERROR 1142: UPDATE command denied
+    SHOW TABLES                               solo las cuatro VIEW
+
+- La VIEW corre con los permisos de quien la creó: `information_schema.VIEWS` da `DEFINER` y `SECURITY_TYPE = DEFINER`. Es el comportamiento por omisión; se escribe igual para que quede la intención.
+- Una VIEW apoyada en otra VIEW funciona igual: la cuenta solo necesita permiso sobre la que consulta.
+- `app_user` no puede crear cuentas: `CREATE USER` da ERROR 1227. Va con la cuenta administrativa (`sudo mysql`), como los cambios de esquema.
+- Con `ORDER BY … DESC`, los NULL van al final; con `ASC`, al principio.
+
+EN EL PROYECTO: la cuenta `gbweb_lector` del contrato con gbWeb (SC-81).
+
+**Relaciones:** apoya:SC-81
+
+### GV-168 — Gambas 3.19, gb.db.mysql: un MEDIUMBLOB va y vuelve byte a byte con Connection.Create y Blob.Data
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbc3, gbx3; gb.db, gb.db.mysql) / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Escritura y lectura de un campo binario:
+
+    rRes = hCon.Create("prueba_blob")
+    rRes!id = 1
+    rRes!imagen = File.Load("/tmp/t3.jpg")     ' UN String CON LOS BYTES
+    rRes.Update()
+
+    rRes = hCon.Exec("SELECT imagen FROM prueba_blob WHERE id = 1")
+    hBlob = rRes!imagen                         ' UN OBJETO Blob
+    sLeido = hBlob.Data                         ' String CON LOS BYTES
+
+MEDIDO (gbc3 y gbx3 3.19.0, gb.db y gb.db.mysql, MySQL 8.0.46, contenedor): con 117.001 bytes aleatorios, que incluyen NUL, comillas y barras invertidas, el largo y el String leído son iguales al original y `sha256sum` da el mismo hash en los dos archivos. `SHA2(imagen, 256)` en MySQL da ese mismo hash. También leído con otra cuenta a través de una VIEW (GV-167).
+
+FUENTE DEL PATRÓN: el ejemplo `db-blob` del curso de Gambas de jsbsan (github.com/jsbsan/Ejemplos-del-Curso-De-Gambas3), con SQLite; gambaswiki.org bloquea el acceso automatizado. Acá se midió con MySQL. No se midió en Gambas 3.22.
+
+EN EL PROYECTO: gbpublisher guarda la tapa web en `libro_tapa_web` y gbWeb la lee de `v_web_libro_tapa` (SC-81).
+
+**Relaciones:** apoya:SC-81,vinculo:GV-167
+
+### GV-169 — mysqldump: restaurar el respaldo previo no borra lo creado después; una VIEW queda apuntando a una columna que ya no existe
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+El respaldo trae `DROP TABLE IF EXISTS` y `CREATE` solo de lo que existía al hacerlo. Lo que un script creó después (una tabla, una VIEW) sigue en la base tras restaurar.
+
+MEDIDO (MySQL 8.0.46, contenedor, con actualizar-esquema-1.19.0.sh): después de restaurar el respaldo previo con el comando de GV-67, `libros_md` volvió a 79 columnas, pero `libro_tapa_web` y las cuatro VIEW seguían. `v_web_libro` lee `url_compra`, que ya no existía:
+
+    ERROR 1356: View 'gbpublisher.v_web_libro' references invalid table(s) or column(s) …
+
+Por la misma razón, la vuelta atrás de 1.18.0 dejaría `sigla_catalogo` y `libro_sigla` (no medido).
+
+EN EL PROYECTO: la vuelta atrás que imprime un script de esquema borra antes lo que el script creó y después restaura (SC-22). Medido en 1.19.0: la base queda exactamente como antes, `esquema_version` incluida.
+
+**Relaciones:** apoya:SC-22,apoya:SC-81,vinculo:GV-67
 
 ---
 
