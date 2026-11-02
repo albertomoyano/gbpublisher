@@ -43,10 +43,11 @@ máquinas cliente, o se le puede indicar directamente:
 
 ---
 
-## 2. Las tres capas de identidad
+## 2. Las capas de identidad
 
 Es la confusión más frecuente en las instalaciones nuevas, así que conviene
-dejarla clara de entrada. Hay tres cosas distintas que suelen mezclarse:
+dejarla clara de entrada. Hay tres cosas distintas que suelen mezclarse, y
+una cuarta donde se usa gbWeb:
 
 **El usuario de la aplicación (`app_user`).** Es una cuenta de MySQL, una
 sola por instalación, con su clave propia. Es la que usa gbpublisher para
@@ -61,6 +62,14 @@ del lado del servidor de base de datos.
 para instalar y para aplicar cambios de esquema. La aplicación nunca la
 usa, y `app_user` no puede reemplazarla: no tiene permisos para modificar
 estructuras.
+
+**La cuenta de lectura de gbWeb (`gbweb_lector`).** Es una cuenta de
+MySQL, como `app_user`, pero de otra aplicación: gbWeb, el portal estático
+de la editorial. Solo puede leer las cuatro vistas `v_web_*` que crea la
+actualización 1.19.0; cualquier tabla le está vedada. No la crea este
+instalador: existe solo donde se usa gbWeb, y la crea
+`crear-cuenta-gbweb.sh`, del repositorio de gbWeb, que guarda su clave en
+`~/.gbweb/conexion.conf`.
 
 La aplicación valida en dos etapas independientes: primero abre la conexión
 con `app_user`, donde el usuario final no interviene; después valida usuario

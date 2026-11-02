@@ -4831,7 +4831,16 @@ Las crea y las mantiene gbpublisher. Si cambia una tabla interna, se adapta la V
 
 LA CUENTA: UNA POR APLICACIÓN
 
-gbWeb se conecta con `gbweb_lector`, una cuenta de MySQL con `SELECT` solo sobre las cuatro VIEW. No es un usuario de trabajo (esos se dan de alta en FSysAdmin, en la tabla `usuarios`): es una credencial de infraestructura, como `app_user`. Las VIEW son `SQL SECURITY DEFINER`, así que la cuenta las lee sin permisos sobre las tablas, y cualquier otra cosa le da error 1142 (GV-167): el aislamiento lo garantiza el motor, no la disciplina. Con `app_user` el contrato sería una costumbre, no un límite. La crea la cuenta administrativa en un script aparte, no en el de esquema: tener gbWeb es una decisión de cada instalación.
+gbWeb se conecta con `gbweb_lector`, una cuenta de MySQL con `SELECT` solo sobre las cuatro VIEW. No es un usuario de trabajo (esos se dan de alta en FSysAdmin, en la tabla `usuarios`): es una credencial de infraestructura, como `app_user`. Las VIEW son `SQL SECURITY DEFINER`, así que la cuenta las lee sin permisos sobre las tablas, y cualquier otra cosa le da error 1142 (GV-167): el aislamiento lo garantiza el motor, no la disciplina. Con `app_user` el contrato sería una costumbre, no un límite. La crea `crear-cuenta-gbweb.sh`, en el repositorio de gbWeb (privado), no el script de esquema: tener gbWeb es una decisión de cada instalación, y gbWeb es de uso casi exclusivo de la editorial.
+
+- Se corre SIN sudo y lo pide cuando lo necesita: la credencial es del usuario que va a correr gbWeb y va a su carpeta personal. Con sudo se niega.
+- La clave la genera el script (decisión de Alberto, 02/11/2026): 28 letras y cifras al azar más un sufijo fijo con mayúscula, minúscula, cifra y símbolo, por si el servidor tiene `validate_password`. Nadie la tipea ni la recuerda, y no queda en ningún repositorio. Viaja al servidor por la entrada estándar, no por la línea de comandos.
+- La guarda en `~/.gbweb/conexion.conf` (carpeta 700, archivo 600), escrito entero y movido a su lugar. Es un archivo de opciones de MySQL: `[client]` con `user`, `password`, `host` y `database`. El propio cliente lo lee con `mysql --defaults-extra-file`, y gbWeb solo necesita esas cuatro líneas.
+- Idempotente, por el estado real: la cuenta existe; sus permisos son exactamente SELECT sobre las cuatro VIEW (en `information_schema`: `TABLE_PRIVILEGES`, `SCHEMA_PRIVILEGES` y `USER_PRIVILEGES`); la clave del archivo abre la sesión. Lo que no está en regla se corrige: crea la cuenta, renueva la clave (`ALTER USER`) o repone los permisos (`REVOKE ALL PRIVILEGES, GRANT OPTION` y los cuatro `GRANT`). Si todo está en regla, no hace nada.
+- Verifica con la clave del archivo: lee `v_web_libro`, NO lee `libros_md` y ve solo las cuatro VIEW (GV-167).
+- No es un cambio de esquema: no toca la base gbpublisher, no hace respaldo ni escribe en `esquema_version`.
+
+Probado en el contenedor con un usuario común y sudo, en siete situaciones: primera corrida, segunda, archivo borrado, un permiso de más, clave equivocada, cuenta borrada con archivo viejo y una corrida más con todo en regla.
 
 LOS DATOS
 
@@ -4870,9 +4879,9 @@ EL LOTE DE 1.19.0 (SC-22)
 
 `m_ConexionBD.ObtenerEsquemaEsperado`: `libros_md` pasa de 79 a 80 y entra `libro_tapa_web` con 6. Las VIEW no se cuentan: `ValidarEsquemaBD` solo mira las tablas que lista.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169
+**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170
 
-**PENDIENTE:** Script de la cuenta `gbweb_lector` (pide la clave sin mostrarla; idempotente) y la cuarta capa de identidad en BBDD_LEEME.md §2. `generar-baseline.sh` enumera solo `BASE TABLE`: el próximo baseline saldría sin las VIEW. En gbpublisher: generar y guardar la tapa web al guardar los metadatos, y el campo `url_compra` en el formulario. Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3).
+**PENDIENTE:** `generar-baseline.sh` enumera solo `BASE TABLE`: el próximo baseline saldría sin las VIEW. En gbpublisher: generar y guardar la tapa web al guardar los metadatos, y el campo `url_compra` en el formulario. Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3).
 
 ### SC-82 — La identidad de un proyecto es el nombre de su .md, no la carpeta que lo contiene
 
@@ -8977,6 +8986,29 @@ Por la misma razón, la vuelta atrás de 1.18.0 dejaría `sigla_catalogo` y `lib
 EN EL PROYECTO: la vuelta atrás que imprime un script de esquema borra antes lo que el script creó y después restaura (SC-22). Medido en 1.19.0: la base queda exactamente como antes, `esquema_version` incluida.
 
 **Relaciones:** apoya:SC-22,apoya:SC-81,vinculo:GV-67
+
+### GV-170 — bash: con pipefail, tr … </dev/urandom | head -c N termina con 141 (SIGPIPE) y set -e aborta el script
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** GNU bash 5.2.21 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+`head` termina apenas tiene sus N bytes y cierra el caño; `tr`, que sigue leyendo de `/dev/urandom` (que no se acaba nunca), muere por SIGPIPE al escribir. Con `set -o pipefail`, el estado del caño es el de `tr`, 141; con `set -e`, el script termina ahí, sin mensaje propio.
+
+MEDIDO (GNU bash 5.2.21, contenedor): `crear-cuenta-gbweb.sh` con
+
+    CLAVE="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 28)Aa9_"
+
+anunció «Se crea la cuenta…», recibió la confirmación y salió con 141 antes de crearla.
+
+FORMA CORRECTA: leer un bloque acotado, que `tr` consume entero, y cortar con bash:
+
+    ALEATORIO="$(head -c 4096 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')"
+    CLAVE="${ALEATORIO:0:28}Aa9_"
+
+Acá el que corta es `head` leyendo de un archivo, que no recibe SIGPIPE. Conviene controlar el largo (4096 bytes al azar dan unas 990 letras y cifras).
+
+EN EL PROYECTO: `crear-cuenta-gbweb.sh` (SC-81). Vale para cualquier caño con `head` dentro de un script con `set -euo pipefail`, que es el encabezado de los scripts de esquema (SC-22).
+
+**Relaciones:** apoya:SC-81,vinculo:SC-22
 
 ---
 
