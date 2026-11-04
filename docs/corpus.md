@@ -3142,7 +3142,7 @@ El patrón sale de la salida real de jing en Linux Mint: `69:1130: error: IDREF 
 
 LOS USOS
 
-`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh`, `compilar_pdf_libro.sh` y `validar_canonicos.sh` (SC-75). `compilar_pdf_libro.sh` fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
+`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh`, `compilar_pdf_libro.sh`, `validar_canonicos.sh` (SC-75) y `tapa_web.sh` (SC-81). `compilar_pdf_libro.sh` fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
 
 `preparar_latex_libro.sh` hace lo que antes hacía `m_GenerarPDFLibro.GenerarMainTeX` con `Exec` síncronos: colorear y transformar cada pieza (`colorear_codigo.sh` y `docbook-to-latex.xsl`), borrar los `c-*.tex` huérfanos y poner el `main.tex` en su lugar. Mientras eso corría en Gambas, la interfaz no se repintaba (GV-17) y no había señal de vida antes de que empezara la compilación. Gambas conserva lo que sale de la base, en `m_GenerarPDFLibro.ArmarInsumosLaTeX`: preámbulo derivado, `.bib`, la lista de piezas con cuerpo (`tmp/latex-piezas.txt`) y el `main.tex` propuesto (`latex/.main.tex.tmp`). «Solo generar» lanza `preparar_latex_libro.sh`; «Generar y compilar» lanza `compilar_pdf_libro.sh`, que lo llama anidado primero y no compila si falla.
 
@@ -4557,6 +4557,7 @@ LA COPIA PARA PANTALLA
 - Tope: 2000 px de lado mayor, y solo achica (`-resize 2000x2000>`). Con la grilla del HTML, la columna central mide unos 1070 px CSS en una pantalla de 1920; una pantalla de alta densidad la duplica. Es una decisión, no un estándar.
 - Color, antes del tamaño. CMYK con perfil: de su perfil a sRGB. CMYK sin perfil: se asume FOGRA39 y de ahí a sRGB. RGB con un perfil que no es sRGB: a sRGB. Escala de grises: no se toca. Los perfiles son los de TeX Live (`sRGB.icc`, `FOGRA39L_coated.icc`), que se ubican con `kpsewhich`: texlive-full es dependencia del `.deb`.
 - La copia se escribe siempre con `-strip`, que es lo que la hace reproducible (GV-156). Borra el perfil: por eso el color se convierte antes.
+- La decisión de color está en `receta_color_srgb` (`comun.sh`), que comparte la tapa del portal (`tapa_web.sh`, SC-81): una sola receta de color. Se extrajo de `copiar_imagen_pantalla` el 04/11/2026 sin cambiar el resultado: medido sobre ocho casos, los mismos códigos, notas y bytes antes y después, también con los perfiles ausentes.
 - Una copia que solo reduce y pesa más que el original se descarta, y va el original; el informe lo dice. El tope existe por el peso. Una conversión de color no se descarta nunca.
 - Solo png y jpg, los formatos de las figuras (SC-75, GV-155) y de los logos. Cualquier otro formato se copia tal cual.
 - Sin nada que hacer, el original byte por byte.
@@ -4582,7 +4583,7 @@ REVISTAS
 
 No cambian todavía: `m_GenerarEpub` y `m_GenerarHTML` siguen copiando `media/` entera. Se retoma con el módulo de revistas.
 
-**Relaciones:** vinculo:SC-25,vinculo:SC-32,vinculo:SC-69,vinculo:SC-75,apoya:GV-156,vinculo:GV-155,vinculo:GV-22,vinculo:SC-11
+**Relaciones:** vinculo:SC-25,vinculo:SC-32,vinculo:SC-69,vinculo:SC-75,apoya:GV-156,vinculo:GV-155,vinculo:GV-22,vinculo:SC-11,vinculo:SC-81
 
 **PENDIENTE:** Revistas: la limpieza de media/, la copia para pantalla y el ancho proporcional, cuando se retome ese módulo. En una revista el botón de figura no escribe ancho ni alt.
 
@@ -4787,6 +4788,22 @@ LA PUERTA DE ENTRADA
 
 Solo gbpublisher. Una obra que no está en gbpublisher no existe para gbWeb: no hay alta de obras en gbWeb. El fondo editorial anterior a gbpublisher se da de alta en gbpublisher, a mano; cada libro con su proyecto mínimo, porque `libros_md.id_proyecto` es NOT NULL y único.
 
+LOS PORTALES Y SUS OBRAS (decisiones de Alberto, 04/11/2026)
+
+Dos mundos separados, unidos solo por la base:
+
+- Los PROYECTOS de gbpublisher: un libro o un número cada uno, con `l-` o `r-` en minúscula (`l-CALIFA.md`). gbWeb no toca nunca sus carpetas.
+- Los PORTALES de gbWeb: uno por editorial (`L-IMAGO.md`) o por revista (`R-MEDIEVALES.md`), con `L-` o `R-` en MAYÚSCULA. La mayúscula distingue a simple vista un portal de un proyecto. El portal no está asociado a ningún proyecto. Su carpeta puede llamarse de cualquier forma (SC-82): la identidad es el nombre del .md, que es también el del repositorio en GitHub o Netlify. gbWeb abre ese .md con un diálogo y escribe en su carpeta (`tmp/` lo intermedio, `docs/` el sitio). Qué otras carpetas o archivos lleva se decide a medida que haga falta.
+
+La ASOCIACIÓN es un dato de gbWeb. gbpublisher dice qué libros están publicados (`v_web_libro`); gbWeb, con un buscador sobre esa disponibilidad, asocia cada libro a una editorial, y lo mismo cada número de revista (volumen y número) a su revista. Hace falta porque en la misma base conviven los libros de Imago Mundi con los que Alberto edita para colegas.
+
+- Un libro está en UN SOLO portal (decisión de Alberto): se puede pasar de un portal a otro, no estar en dos.
+- El esquema propio de gbWeb, `gbweb`, en el mismo servidor MySQL: `portal` (`codigo` = nombre del .md sin extensión, `ascii_bin`; `tipo` libros o revista, atado a la letra por un CHECK) y `portal_libro` (clave `id_libro`, FK a `portal` con CASCADE). Lo crea `actualizar-esquema-1.0.0.sh` del repositorio de gbWeb, con las reglas de los scripts de esquema de gbpublisher (SC-22): versión en `gbweb.esquema_version`, decide por el estado real, respaldo verificado si ya había datos.
+- SIN clave foránea hacia gbpublisher: ataría los dos esquemas y frenaría borrar un libro allá. Una asociación cuyo libro dejó de ser visible no sale en el sitio, y gbWeb la lista como huérfana para que se decida.
+- La asociación de números de revista llega con la VIEW de números de gbpublisher, después del esqueleto de libros.
+
+MEDIDO (contenedor, MySQL 8.0.46, con la cuenta de gbWeb): `l-IMAGO` en minúscula, un `L-` declarado como revista y un código repetido se rechazan; el mismo libro en dos portales se rechaza, pasarlo de uno a otro funciona; borrar un portal suelta sus libros; la cuenta no puede borrar tablas de `gbweb` ni leer las de gbpublisher.
+
 LO QUE MUESTRA
 
 - Visibilidad: `estado_publicacion` publicado, agotado o descatalogado. Solo `en_preparacion` queda afuera. Descatalogado se muestra: le sirve a las bibliotecas. Es la única condición; `estado_libro` no cuenta.
@@ -4812,11 +4829,11 @@ CÓMO SE ARMA
 
 **Relaciones:** vinculo:SC-50,vinculo:SC-81,vinculo:SC-82,vinculo:SC-22
 
-**PENDIENTE:** Precios en la ficha: la propuesta es no mostrarlos (cambian seguido y el precio vigente está en el punto de venta); falta la decisión. Carga del fondo con una semilla de los CSV de WooCommerce y de Mercado Libre, cruzados por ISBN: se trata después. Contrato de la revista: `numero` no tiene estado de publicación ni URL. Repositorio de gbWeb y su esquema MySQL propio (configuración, imagen destacada, páginas estáticas, textos de interfaz en tres idiomas).
+**PENDIENTE:** Precios en la ficha: la propuesta es no mostrarlos (cambian seguido y el precio vigente está en el punto de venta); falta la decisión. Carga del fondo con una semilla de los CSV de WooCommerce y de Mercado Libre, cruzados por ISBN: se trata después. Contrato de la revista: `numero` no tiene estado de publicación ni URL. Lo que falta en el esquema `gbweb`: configuración del sitio, imagen destacada, páginas estáticas, textos de interfaz en tres idiomas, asociación de números de revista. El esqueleto de gbWeb: FMain y terminal, como gbpublisher (decisión de Alberto, 04/11/2026).
 
 ### SC-81 — Contrato gbpublisher → gbWeb: cuatro VIEW, una cuenta de solo lectura y la tapa web en la base (esquema 1.19.0)
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.19.0 (esquema) / MySQL 8.0.46 / Gambas 3.19 (gbc3, gbx3; gb.db.mysql) / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 y Linux Mint (la tapa) · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.19.0 (esquema) / MySQL 8.0.46 / Gambas 3.19 (gbc3, gbx3; gb.db.mysql) / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 y Linux Mint (la tapa) / Gambas 3.22 (gb.db2), Linux Mint · **Verificado:** 2026-11
 
 Decisiones de Alberto, 02/11/2026. gbWeb (SC-80) lee la base de gbpublisher solo a través de este contrato. Lo aplica `actualizar-esquema-1.19.0.sh` (SC-22).
 
@@ -4831,7 +4848,7 @@ Las crea y las mantiene gbpublisher. Si cambia una tabla interna, se adapta la V
 
 LA CUENTA: UNA POR APLICACIÓN
 
-gbWeb se conecta con `gbweb_lector`, una cuenta de MySQL con `SELECT` solo sobre las cuatro VIEW. No es un usuario de trabajo (esos se dan de alta en FSysAdmin, en la tabla `usuarios`): es una credencial de infraestructura, como `app_user`. Las VIEW son `SQL SECURITY DEFINER`, así que la cuenta las lee sin permisos sobre las tablas, y cualquier otra cosa le da error 1142 (GV-167): el aislamiento lo garantiza el motor, no la disciplina. Con `app_user` el contrato sería una costumbre, no un límite. La crea `crear-cuenta-gbweb.sh`, en el repositorio de gbWeb (privado), no el script de esquema: tener gbWeb es una decisión de cada instalación, y gbWeb es de uso casi exclusivo de la editorial.
+gbWeb se conecta con `gbweb_lector`, una cuenta de MySQL con `SELECT` solo sobre las cuatro VIEW. Desde el 04/11/2026 tiene además `SELECT`, `INSERT`, `UPDATE` y `DELETE` sobre el esquema propio de gbWeb (`gbweb`, SC-80), sin permisos de estructura: la misma cuenta con más permisos y una sola credencial (decisión de Alberto). Sobre gbpublisher no cambia nada. No es un usuario de trabajo (esos se dan de alta en FSysAdmin, en la tabla `usuarios`): es una credencial de infraestructura, como `app_user`. Las VIEW son `SQL SECURITY DEFINER`, así que la cuenta las lee sin permisos sobre las tablas, y cualquier otra cosa le da error 1142 (GV-167): el aislamiento lo garantiza el motor, no la disciplina. Con `app_user` el contrato sería una costumbre, no un límite. La crea `crear-cuenta-gbweb.sh`, en el repositorio de gbWeb (privado), no el script de esquema: tener gbWeb es una decisión de cada instalación, y gbWeb es de uso casi exclusivo de la editorial.
 
 - Se corre SIN sudo y lo pide cuando lo necesita: la credencial es del usuario que va a correr gbWeb y va a su carpeta personal. Con sudo se niega.
 - La clave la genera el script (decisión de Alberto, 02/11/2026): 28 letras y cifras al azar más un sufijo fijo con mayúscula, minúscula, cifra y símbolo, por si el servidor tiene `validate_password`. Nadie la tipea ni la recuerda, y no queda en ningún repositorio. Viaja al servidor por la entrada estándar, no por la línea de comandos.
@@ -4868,20 +4885,31 @@ La identidad del proyecto es el nombre de su .md, no la carpeta (SC-82): la base
     alto       INT > 0
     sha256     CHAR(64) ascii_bin, hexadecimal en minúsculas (CHECK)
 
-- Conversión: `convert <tapa> -resize '600x>' -strip -quality 80 <destino>.jpg`, unos 117 KB por tapa (GV-156). El ancho alcanza para la tarjeta y la ficha en pantallas de alta densidad.
+- Conversión: color a sRGB, aplanado sobre blanco, `-resize '600x>'`, `-strip`, JPEG calidad 80 (detalle en CÓMO SE GENERA). Unos 117 KB por tapa (GV-156). El ancho alcanza para la tarjeta y la ficha en pantallas de alta densidad.
 - `sha256` se calcula en el propio SQL con `SHA2(imagen, 256)`, que da lo mismo que `sha256sum` (GV-168).
 - Sin fecha de actualización, a propósito: nada variable llega a la salida.
 - gbWeb escribe los bytes tal cual: el determinismo está en lo guardado. Publica `tapas/<id>-<primeros 8 del sha256>.jpg`: si la tapa cambia, cambia el nombre y ningún navegador muestra la vieja. Con `ancho` y `alto` pone `width` y `height` en el `<img>`, y la página no salta mientras carga.
 
 Así el contrato no depende de ninguna ruta ni de ninguna máquina, y viaja en los respaldos de `mysqldump`. Una persona que carga el fondo desde otra computadora no necesita compartir carpetas.
 
+CÓMO SE GENERA (decisiones de Alberto, 04/11/2026)
+
+- `engine/tapa_web.sh <ruta_proyecto> <imagen_tapa>`, por la lanzadora (SC-53). No toca la base (SC-13): deja `tmp/tapa-web.jpg` y sus medidas en `tmp/tapa-web.txt` («ancho alto», leídas del resultado y no calculadas). Solo png y jpg, los formatos que acepta el formulario.
+- La receta, en este orden: el color con `receta_color_srgb` de `comun.sh`, la misma de las imágenes de pantalla (SC-76), porque una tapa de imprenta suele venir en CMYK y `-strip` borra el perfil; aplanado sobre blanco (`-background white -flatten`), porque JPEG no tiene transparencia y la zona transparente de un PNG saldría negra; `-resize '600x>'`; `-strip`; JPEG calidad 80.
+- `m_TapaWeb` (Gambas) lee los dos archivos y reemplaza la fila en una transacción: `DELETE` y `INSERT … VALUES (&1, &2, 'jpg', &3, &4, SHA2(&2, 256))`. Los bytes y su huella salen del mismo valor (GV-168). La tapa vieja se va solo si la nueva entra. Un libro que ya no declara tapa pierde su fila: una tapa quitada no sigue publicándose.
+- CUÁNDO: al cerrar FMetadatosLibro, si se guardó. El formulario levanta `m_TapaWeb.Pendiente` y FMain, al volver de `ShowModal`, llama a `AtenderPendiente`: la lanzadora escribe en la terminal de FMain, que el formulario modal tapa. La marca vive en el módulo porque la instancia del formulario no sobrevive a su cierre (RC-GM-13). Es el camino de los libros del fondo, que nunca generan salidas. Además, después de generar el HTML del libro, si salió: cubre una tapa reemplazada en `media/` sin volver a guardar el formulario.
+- El mensaje aparece solo si falla; en el éxito lo dice la terminal, y otro mensaje después de «Metadatos guardados» sería ruido.
+- `url_compra` se carga en el formulario de metadatos del libro, debajo de las descargas.
+
+MEDIDO (contenedor; MySQL 8.0.46, ImageMagick 6.9.12-98, perfiles de TeX Live): siete tapas de prueba —sRGB grande y chica, CMYK con y sin perfil, Adobe RGB, grises, PNG con transparencia— dan los mismos bytes en dos corridas, los CMYK salen en sRGB y la transparencia en blanco. `m_TapaWeb` en un banco con MySQL: sin guardado no hace nada; con guardado convierte y guarda (el `sha256` de la fila es el del archivo); una segunda vez reemplaza sin duplicar; una tapa que falta en `media/` avisa y deja la anterior; un libro sin tapa queda sin fila. El proyecto completo compila con los cambios (gbc3 3.19, con gb.db y Qt5 en lugar de gb.db2 y Qt6). En Linux Mint (Alberto, 04/11/2026, Gambas 3.22): al guardar y cerrar el formulario, la terminal mostró la conversión, y la fila de `libro_tapa_web` tiene el mismo `sha256` que `tmp/tapa-web.jpg` (GV-168). Es también el mismo que la prueba del 02/11 sobre esa tapa: la receta da los mismos bytes en días distintos, y el aplanado sobre blanco no cambia una tapa sin transparencia.
+
 EL LOTE DE 1.19.0 (SC-22)
 
 `m_ConexionBD.ObtenerEsquemaEsperado`: `libros_md` pasa de 79 a 80 y entra `libro_tapa_web` con 6. Las VIEW no se cuentan: `ValidarEsquemaBD` solo mira las tablas que lista.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170
+**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13
 
-**PENDIENTE:** `generar-baseline.sh` enumera solo `BASE TABLE`: el próximo baseline saldría sin las VIEW. En gbpublisher: generar y guardar la tapa web al guardar los metadatos, y el campo `url_compra` en el formulario. Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3).
+**PENDIENTE:** Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3). Las VIEW entran en las instalaciones nuevas con el baseline 2.0.0, que se genera junto con el refactor de bibtex (SC-22, PUNTO DE RUPTURA); para entonces, `generar-baseline.sh` tiene que dejar de enumerar solo `BASE TABLE`.
 
 ### SC-82 — La identidad de un proyecto es el nombre de su .md, no la carpeta que lo contiene
 
@@ -8950,7 +8978,7 @@ EN EL PROYECTO: la cuenta `gbweb_lector` del contrato con gbWeb (SC-81).
 
 ### GV-168 — Gambas 3.19, gb.db.mysql: un MEDIUMBLOB va y vuelve byte a byte con Connection.Create y Blob.Data
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbc3, gbx3; gb.db, gb.db.mysql) / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbc3, gbx3; gb.db, gb.db.mysql) / MySQL 8.0.46 / contenedor Ubuntu 24.04 / fuente de gb.db2 y gb.db2.mysql (master 3.22.99) / Linux Mint, Gambas 3.22 (gb.db2) · **Verificado:** 2026-11
 
 Escritura y lectura de un campo binario:
 
@@ -8969,7 +8997,17 @@ FUENTE DEL PATRÓN: el ejemplo `db-blob` del curso de Gambas de jsbsan (github.c
 
 EN EL PROYECTO: gbpublisher guarda la tapa web en `libro_tapa_web` y gbWeb la lee de `v_web_libro_tapa` (SC-81).
 
-**Relaciones:** apoya:SC-81,vinculo:GV-167
+EN gb.db2, EL COMPONENTE DE gbpublisher (04/11/2026)
+
+gbpublisher usa gb.db2, no gb.db. Leído en el fuente (gitlab.com/gambas/gambas, rama master 3.22.99: `main/comp/gb.db2` y `gb.db2.mysql`):
+
+- No existe la clase `Blob`: el código de arriba no compila en gbpublisher. Un campo binario se lee como `String`: `Result` llama a `GetResultBlob`, que en MySQL devuelve los bytes con su largo real (`GB.ReturnConstString(row[field], mysql_fetch_lengths(res)[field])`).
+- Se escribe como `String`, con `Exec` y sus `&N` o con `Create`/`Edit`: el controlador lo cita con `quote_string`, que escapa `\`, `'` y NUL y deja los demás bytes tal cual, sobre una conexión con `SET NAMES 'utf8mb4'`. Un mismo `&N` puede repetirse en la sentencia (`Subst`).
+- `Begin` y `Commit` con MySQL: `NoTransactionNest` es falso, así que cada `Begin` emite `START TRANSACTION` y cada `Commit` un `COMMIT`, aunque el contador de `Connection` quede desparejo por los `Commit` sin `Begin` de gbpublisher.
+
+MEDIDO (MySQL 8.0.46, `sql_mode` estricto): la sentencia que arma gb.db2, reproducida byte a byte, con 117.001 bytes al azar y con un JPEG: `LENGTH` y `SHA2(imagen, 256)` iguales a los del archivo, sin advertencias. MEDIDO EN LINUX MINT (Alberto, 04/11/2026; Gambas 3.22, gb.db2): `m_TapaWeb` guardó la tapa de Duek con `Exec` y `&2` repetido; en la base, `LENGTH(imagen)` 117001 y `sha256` e6c2df368048973413f3ec84d1f1ced63a42bf0aab9f1286d16ef1bb75b7a125, igual al `sha256sum` del archivo.
+
+**Relaciones:** apoya:SC-81,vinculo:GV-167,vinculo:SC-81
 
 ### GV-169 — mysqldump: restaurar el respaldo previo no borra lo creado después; una VIEW queda apuntando a una columna que ya no existe
 

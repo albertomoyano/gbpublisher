@@ -1,0 +1,223 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_TapaWeb
+' Propósito : La tapa del libro para el portal (gbWeb, SC-80 y SC-81). La
+'             convierte engine/tapa_web.sh y este módulo la guarda en
+'             libro_tapa_web, de donde gbWeb la lee por v_web_libro_tapa.
+'             La base no sabe dónde está la carpeta del proyecto (SC-82):
+'             solo gbpublisher, con el proyecto abierto, puede leer media/.
+' Cuándo    : (1) al cerrar FMetadatosLibro, si se guardó: FMain llama a
+'             AtenderPendiente al volver de ShowModal, con la terminal a la
+'             vista (la lanzadora escribe en la terminal de FMain, que el
+'             formulario modal tapa); es el camino de los libros del fondo,
+'             que nunca generan salidas. (2) Después de generar el HTML del
+'             libro: cubre una tapa reemplazada en media/ sin volver a
+'             guardar el formulario (decisión de Alberto, 04/11/2026).
+' Requiere  : esquema 1.19.0 (libro_tapa_web).
+' Dependencias: m_ConexionBD, m_GenerarSalidasLibro, m_InicioCierre, m_XML,
+'             m_Sonido.
+' ==============================================================================
+
+' LA MARCA QUE DEJA FMetadatosLibro AL GUARDAR Y QUE FMain ATIENDE AL CERRARSE
+' EL FORMULARIO. VA EN EL MÓDULO Y NO EN EL FORMULARIO: LA INSTANCIA DEL
+' FORMULARIO NO SOBREVIVE A SU CIERRE (RC-GM-13)
+Public Pendiente As Boolean
+
+Private Const SCRIPT_TAPA As String = "tapa_web.sh"
+' UNA TAPA SE CONVIERTE EN MENOS DE UN SEGUNDO; EL PLAZO ES PARA UNA MÁQUINA LENTA
+Private Const PLAZO_TAPA As Float = 60.0
+' LOS NOMBRES QUE ESCRIBE tapa_web.sh, RELATIVOS AL PROYECTO
+Private Const ARCHIVO_TAPA As String = "tmp/tapa-web.jpg"
+Private Const ARCHIVO_MEDIDAS As String = "tmp/tapa-web.txt"
+
+' ============================================
+' Función   : AtenderPendiente
+' Propósito : Si FMetadatosLibro guardó, prepara la tapa web del libro en
+'             curso y baja la marca. La llama FMain al volver de ShowModal
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub AtenderPendiente()
+
+  ' --- 1. SIN GUARDADO NO HAY NADA QUE HACER ---
+  If Not Pendiente Then Return
+
+  ' --- 2. LA MARCA SE BAJA ANTES: UN FALLO NO DEBE REPETIRSE EN CADA CIERRE ---
+  Pendiente = False
+  ActualizarLibroEnCurso()
+
+End
+
+' ============================================
+' Función   : ActualizarLibroEnCurso
+' Propósito : Pone libro_tapa_web al día con la tapa que declara la base para
+'             el libro del proyecto abierto: la convierte y la guarda, o borra
+'             la fila si el libro ya no tiene tapa
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si quedó al día; False si no, con el motivo ya
+'             informado
+' ============================================
+Public Function ActualizarLibroEnCurso() As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaProyecto As String
+  Dim iIdLibro As Integer
+  Dim rTapa As Result
+  Dim sImagenTapa As String
+  Dim iResultado As Integer
+
+  ' --- 2. PROYECTO Y LIBRO ---
+  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  If sRutaProyecto = "" Then Return False
+
+  ' EL ID SALE DE LA GLOBAL DE SESIÓN, NO DE UN CONTROL (RC-GM-16)
+  iIdLibro = m_XML.ObtenerIdLibro(m_InicioCierre.IdProyectoEnCurso)
+  If iIdLibro = 0 Then Return False
+
+  ' --- 3. LA TAPA QUE DECLARA LA BASE ---
+  Try rTapa = m_ConexionBD.mConn.Exec(
+    "SELECT imagen_tapa FROM libros_md WHERE id_libro = &1 LIMIT 1", iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la tapa del libro:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  sImagenTapa = ""
+  If rTapa.Available Then
+    If Not IsNull(rTapa["imagen_tapa"]) Then sImagenTapa = m_XML.TrimUTF8(rTapa["imagen_tapa"])
+  Endif
+
+  ' --- 4. SIN TAPA: SE BORRA LA DEL PORTAL, SI HABÍA ---
+  ' UNA TAPA QUITADA EN EL FORMULARIO NO DEBE SEGUIR PUBLICÁNDOSE
+  If sImagenTapa = "" Then Return BorrarTapaWeb(iIdLibro)
+
+  ' --- 5. CONVERSIÓN: EL SCRIPT NO TOCA LA BASE (SC-13, SC-53) ---
+  iResultado = m_GenerarSalidasLibro.EjecutarScriptSalida(SCRIPT_TAPA,
+    [sRutaProyecto, sImagenTapa], PLAZO_TAPA, "Preparando la tapa para el portal")
+
+  ' EL MENSAJE SOLO EN EL FALLO: EN EL ÉXITO LO DICE LA TERMINAL, Y UN
+  ' MENSAJE MÁS DESPUÉS DE «METADATOS GUARDADOS» SERÍA RUIDO
+  If iResultado <> m_GenerarSalidasLibro.SALIDA_OK And If iResultado <> m_GenerarSalidasLibro.SALIDA_AVISOS Then
+    m_GenerarSalidasLibro.InformarResultado(iResultado, "La tapa para el portal", sRutaProyecto &/ ARCHIVO_TAPA)
+    Return False
+  Endif
+
+  ' --- 6. A LA BASE ---
+  Return GuardarTapaWeb(iIdLibro, sRutaProyecto)
+
+End
+
+' ============================================
+' Función   : GuardarTapaWeb
+' Propósito : Reemplaza la fila de libro_tapa_web con la tapa que dejó
+'             tapa_web.sh, en una transacción
+' Parámetros: iIdLibro As Integer — el libro
+'             sRutaProyecto As String — carpeta del proyecto
+' Retorna   : Boolean — True si quedó guardada
+' Nota      : gb.db2 NO TIENE LA CLASE Blob: UN CAMPO BINARIO SE ESCRIBE COMO
+'             String Y EL CONTROLADOR LO CITA ESCAPANDO \, ' Y NUL (FUENTE DE
+'             gb.db2.mysql, quote_string; MEDIDO EN MySQL 8.0.46: LOS BYTES
+'             VUELVEN IDÉNTICOS). EL sha256 LO CALCULA MySQL SOBRE LOS BYTES
+'             GUARDADOS, NO GAMBAS (SC-81)
+' ============================================
+Private Function GuardarTapaWeb(iIdLibro As Integer, sRutaProyecto As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sDatos As String
+  Dim sMedidas As String
+  Dim aMedidas As String[]
+  Dim iAncho As Integer
+  Dim iAlto As Integer
+
+  ' --- 2. LO QUE DEJÓ EL SCRIPT ---
+  Try sDatos = File.Load(sRutaProyecto &/ ARCHIVO_TAPA)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la tapa preparada:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Try sMedidas = File.Load(sRutaProyecto &/ ARCHIVO_MEDIDAS)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las medidas de la tapa:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' «ANCHO ALTO» EN UNA LÍNEA: OTRA FORMA ES UN ARCHIVO QUE NO ESCRIBIÓ EL SCRIPT
+  aMedidas = Split(Trim(sMedidas), " ")
+  If aMedidas.Count <> 2 Then
+    m_Sonido.sonar("Error")
+    Message.Error("Las medidas de la tapa no tienen la forma esperada: «" & Trim(sMedidas) & "»")
+    Return False
+  Endif
+  Try iAncho = CInt(aMedidas[0])
+  If Not Error Then Try iAlto = CInt(aMedidas[1])
+  If Error Or If iAncho <= 0 Or If iAlto <= 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("Las medidas de la tapa no son válidas: «" & Trim(sMedidas) & "»")
+    Return False
+  Endif
+  If sDatos = "" Then
+    m_Sonido.sonar("Error")
+    Message.Error("La tapa preparada está vacía.")
+    Return False
+  Endif
+
+  ' --- 3. TRANSACCIÓN: LA TAPA VIEJA SE VA SOLO SI LA NUEVA ENTRA ---
+  Try m_ConexionBD.mConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la transacción:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Try m_ConexionBD.mConn.Exec("DELETE FROM libro_tapa_web WHERE id_libro = &1", iIdLibro)
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo reemplazar la tapa del portal:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' &2 DOS VECES: LOS BYTES Y SU HUELLA SALEN DEL MISMO VALOR
+  Try m_ConexionBD.mConn.Exec("INSERT INTO libro_tapa_web (id_libro, imagen, formato, ancho, alto, sha256) " &
+    "VALUES (&1, &2, 'jpg', &3, &4, SHA2(&2, 256))", iIdLibro, sDatos, iAncho, iAlto)
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar la tapa del portal:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 4. CONFIRMACIÓN ---
+  Try m_ConexionBD.mConn.Commit()
+  If Error Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar la tapa del portal:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : BorrarTapaWeb
+' Propósito : Quita la tapa del portal de un libro que ya no declara tapa
+' Parámetros: iIdLibro As Integer — el libro
+' Retorna   : Boolean — True si quedó sin fila (también si no había)
+' ============================================
+Private Function BorrarTapaWeb(iIdLibro As Integer) As Boolean
+
+  Try m_ConexionBD.mConn.Exec("DELETE FROM libro_tapa_web WHERE id_libro = &1", iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo quitar la tapa del portal:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  m_ConexionBD.mConn.Commit()
+  Return True
+
+End

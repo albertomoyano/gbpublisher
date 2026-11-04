@@ -292,6 +292,49 @@ imagenes_canonico() {
 }
 
 # ============================================================================
+# Función   : receta_color_srgb
+# Propósito : Decide la conversión a sRGB de una imagen según su espacio de
+#             color y su perfil (SC-76): CMYK con perfil, de su perfil a sRGB;
+#             CMYK sin perfil, se asume FOGRA39 y de ahí a sRGB; RGB con un
+#             perfil que no es sRGB, a sRGB; escala de grises, nada.
+# Parámetros: $1 espacio de color (%[colorspace] de identify)
+#             $2 perfil (%[profile:icc] de identify; vacío si no tiene)
+# Retorna   : 0 si pudo decidir, 1 si falta un perfil de TeX Live. Deja en
+#             RECETA_COLOR las opciones de convert (vacía si no hay que
+#             convertir) y en NOTA_COLOR qué se hace o por qué no se pudo
+# Nota      : LA COMPARTEN copiar_imagen_pantalla (EPUB Y HTML) Y tapa_web.sh
+#             (LA TAPA DEL PORTAL, SC-81): UNA SOLA RECETA DE COLOR. VA ANTES
+#             DE -strip, QUE BORRA EL PERFIL (GV-156)
+# ============================================================================
+receta_color_srgb() {
+    local espacio="$1" perfil="$2"
+    local srgb cmyk
+    RECETA_COLOR=()
+    NOTA_COLOR=""
+
+    if [[ "$espacio" == "CMYK" ]]; then
+        srgb=$(kpsewhich "$PERFIL_SRGB" 2>/dev/null)
+        [[ -n "$srgb" ]] || { NOTA_COLOR="no se encontró $PERFIL_SRGB con kpsewhich"; return 1; }
+        if [[ -z "$perfil" ]]; then
+            # -profile sRGB SOLO, SIN PERFIL DE ORIGEN, DEJA LA IMAGEN EN CMYK
+            cmyk=$(kpsewhich "$PERFIL_CMYK_SUPUESTO" 2>/dev/null)
+            [[ -n "$cmyk" ]] || { NOTA_COLOR="no se encontró $PERFIL_CMYK_SUPUESTO con kpsewhich"; return 1; }
+            RECETA_COLOR+=(-profile "$cmyk")
+            NOTA_COLOR="CMYK sin perfil (se asume FOGRA39) → sRGB"
+        else
+            NOTA_COLOR="CMYK ($perfil) → sRGB"
+        fi
+        RECETA_COLOR+=(-profile "$srgb")
+    elif [[ "$espacio" != "Gray" && -n "$perfil" && "${perfil,,}" != *srgb* ]]; then
+        srgb=$(kpsewhich "$PERFIL_SRGB" 2>/dev/null)
+        [[ -n "$srgb" ]] || { NOTA_COLOR="no se encontró $PERFIL_SRGB con kpsewhich"; return 1; }
+        RECETA_COLOR+=(-profile "$srgb")
+        NOTA_COLOR="perfil «$perfil» → sRGB"
+    fi
+    return 0
+}
+
+# ============================================================================
 # Función   : copiar_imagen_pantalla
 # Propósito : Copia una imagen de media/ a la salida de pantalla: tal cual si
 #             no supera el tope y está en sRGB o en grises; si no, la copia
@@ -308,7 +351,6 @@ imagenes_canonico() {
 copiar_imagen_pantalla() {
     local origen="$1" destino="$2" dir_cache="$3"
     local extension datos ancho alto espacio perfil lado huella cache temporal
-    local srgb cmyk
     local color=0
     local receta=()
     PANTALLA_NOTA=""
@@ -330,24 +372,15 @@ copiar_imagen_pantalla() {
     lado=$(( ancho > alto ? ancho : alto ))
 
     # --- 3. LA RECETA: COLOR PRIMERO, TAMAÑO DESPUÉS ---
-    if [[ "$espacio" == "CMYK" ]]; then
-        srgb=$(kpsewhich "$PERFIL_SRGB" 2>/dev/null)
-        [[ -n "$srgb" ]] || { PANTALLA_NOTA="no se encontró $PERFIL_SRGB con kpsewhich"; return 1; }
-        if [[ -z "$perfil" ]]; then
-            cmyk=$(kpsewhich "$PERFIL_CMYK_SUPUESTO" 2>/dev/null)
-            [[ -n "$cmyk" ]] || { PANTALLA_NOTA="no se encontró $PERFIL_CMYK_SUPUESTO con kpsewhich"; return 1; }
-            receta+=(-profile "$cmyk")
-            PANTALLA_NOTA="CMYK sin perfil (se asume FOGRA39) → sRGB"
-        else
-            PANTALLA_NOTA="CMYK ($perfil) → sRGB"
-        fi
-        receta+=(-profile "$srgb")
-        color=1
-    elif [[ "$espacio" != "Gray" && -n "$perfil" && "${perfil,,}" != *srgb* ]]; then
-        srgb=$(kpsewhich "$PERFIL_SRGB" 2>/dev/null)
-        [[ -n "$srgb" ]] || { PANTALLA_NOTA="no se encontró $PERFIL_SRGB con kpsewhich"; return 1; }
-        receta+=(-profile "$srgb")
-        PANTALLA_NOTA="perfil «$perfil» → sRGB"
+    # LA DECISIÓN DE COLOR ES LA DE receta_color_srgb, QUE COMPARTE CON LA
+    # TAPA WEB (tapa_web.sh, SC-81): UNA SOLA RECETA DE COLOR
+    if ! receta_color_srgb "$espacio" "$perfil"; then
+        PANTALLA_NOTA="$NOTA_COLOR"
+        return 1
+    fi
+    PANTALLA_NOTA="$NOTA_COLOR"
+    if (( ${#RECETA_COLOR[@]} > 0 )); then
+        receta+=("${RECETA_COLOR[@]}")
         color=1
     fi
 
