@@ -1,0 +1,159 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_VentaLibro
+' Propósito : Los puntos de venta del libro (tabla libro_venta, esquema
+'             1.21.0): una URL por tienda. Carga, valida y guarda las cuatro
+'             cajas de FMetadatosLibro. Reemplaza a libros_md.url_compra, que
+'             queda en desuso: la actualización pasó su valor a Mercado Libre.
+'             gbWeb los lee por v_web_libro_venta (SC-81) y muestra un botón
+'             por tienda.
+' Dependencias: m_ConexionBD, m_Sonido, FMetadatosLibro.
+' ==============================================================================
+
+' LAS CLAVES DEL ENUM DE libro_venta.tienda, EN SU ORDEN. Cajas() DEVUELVE LAS
+' CAJAS DEL FORMULARIO EN ESTE MISMO ORDEN
+Private Const TIENDAS As String = "amazon|apple|google|mercadolibre"
+Private Const NOMBRES As String = "Amazon|Apple Books|Google Play|Mercado Libre"
+
+' ============================================
+' Función   : Cajas
+' Propósito : Las cajas de texto de las tiendas, en el orden de TIENDAS
+' Parámetros: (ninguno)
+' Retorna   : Object[] — los TextBox de FMetadatosLibro
+' ============================================
+Private Function Cajas() As Object[]
+
+  Return [FMetadatosLibro.txtVentaAmazon, FMetadatosLibro.txtVentaApple, FMetadatosLibro.txtVentaGoogle, FMetadatosLibro.txtVentaMercadoLibre]
+
+End
+
+' ============================================
+' Función   : Cargar
+' Propósito : Llena las cajas con los puntos de venta del libro
+' Parámetros: iIdLibro As Integer — el libro
+' Retorna   : Boolean — True si se leyeron
+' ============================================
+Public Function Cargar(iIdLibro As Integer) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim rVenta As Result
+  Dim aTiendas As String[]
+  Dim aCajas As Object[]
+  Dim oCaja As TextBox
+  Dim iPos As Integer
+
+  aTiendas = Split(TIENDAS, "|")
+  aCajas = Cajas()
+
+  ' LAS CAJAS SE VACÍAN SIEMPRE: AL CAMBIAR DE PROYECTO NO QUEDAN LAS DEL ANTERIOR
+  For Each oCaja In aCajas
+    oCaja.Text = ""
+  Next
+
+  ' --- 2. CONSULTA ---
+  Try rVenta = m_ConexionBD.mConn.Exec("SELECT tienda, url FROM libro_venta WHERE id_libro = &1", iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los puntos de venta:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. CADA FILA A SU CAJA ---
+  For Each rVenta
+    iPos = aTiendas.Find(rVenta!tienda)
+    ' UNA TIENDA QUE ESTA VERSIÓN NO CONOCE SE IGNORA: NO HAY CAJA PARA ELLA
+    If iPos >= 0 Then aCajas[iPos].Text = rVenta!url
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Validar
+' Propósito : Controla las URL antes de guardar, con la misma regla que el
+'             CHECK chk_libro_venta_url, para dar un aviso claro en vez del
+'             error de la base
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si todas están vacías o son direcciones
+' ============================================
+Public Function Validar() As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aNombres As String[]
+  Dim aCajas As Object[]
+  Dim sUrl As String
+  Dim bValida As Boolean
+  Dim iPos As Integer
+
+  aNombres = Split(NOMBRES, "|")
+  aCajas = Cajas()
+
+  ' --- 2. CADA CAJA CON TEXTO ---
+  For iPos = 0 To aCajas.Max
+    sUrl = Trim(aCajas[iPos].Text)
+    If sUrl = "" Then Continue
+    ' EL CHECK: ^https?://[^ ]+$. Y EL LARGO DE LA COLUMNA
+    bValida = Left(sUrl, 8) = "https://" Or Left(sUrl, 7) = "http://"
+    If InStr(sUrl, " ") > 0 Or If String.Len(sUrl) > 500 Then bValida = False
+    If Not bValida Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("La dirección de " & aNombres[iPos] & " tiene que empezar con https:// (o http://), sin espacios.")
+      aCajas[iPos].SetFocus
+      Return False
+    Endif
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Guardar
+' Propósito : Reescribe los puntos de venta del libro con lo que tienen las
+'             cajas, todo o nada (una transacción)
+' Parámetros: iIdLibro As Integer — el libro (ya guardado en libros_md)
+' Retorna   : Boolean — True si se guardaron
+' ============================================
+Public Function Guardar(iIdLibro As Integer) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aTiendas As String[]
+  Dim aCajas As Object[]
+  Dim sUrl As String
+  Dim sError As String
+  Dim iPos As Integer
+
+  aTiendas = Split(TIENDAS, "|")
+  aCajas = Cajas()
+
+  ' --- 2. TRANSACCIÓN ---
+  ' Begin Y Commit EN PAR: EL DELETE Y LOS INSERT VAN JUNTOS. UNA CAJA VACÍA
+  ' NO ES UNA FILA: LA COLUMNA url ES NOT NULL
+  m_ConexionBD.mConn.Begin()
+
+  Try m_ConexionBD.mConn.Exec("DELETE FROM libro_venta WHERE id_libro = &1", iIdLibro)
+  If Error Then sError = Error.Text
+
+  For iPos = 0 To aCajas.Max
+    If sError <> "" Then Break
+    sUrl = Trim(aCajas[iPos].Text)
+    If sUrl = "" Then Continue
+    Try m_ConexionBD.mConn.Exec("INSERT INTO libro_venta (id_libro, tienda, url) VALUES (&1, &2, &3)", iIdLibro, aTiendas[iPos], sUrl)
+    If Error Then sError = Error.Text
+  Next
+
+  ' --- 3. CONFIRMACIÓN, O NADA A MEDIAS ---
+  ' EL TEXTO DEL ERROR SE GUARDA ANTES: Rollback PUEDE PISAR Error
+  If sError <> "" Then
+    m_ConexionBD.mConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar los puntos de venta:" & gb.NewLine & sError)
+    Return False
+  Endif
+
+  m_ConexionBD.mConn.Commit()
+  Return True
+
+End

@@ -460,6 +460,9 @@ Public Function CargarMetadatosDeLibro() As Boolean
   aTipoAcceso.Add("mixto")
   aTipoAcceso.Add("embargado")
 
+  ' DESTINO DE LA SALIDA HTML (1.22.0), EN EL ORDEN DEL COMBO
+  Dim aDestinoHtml As String[] = ["autonomo", "portal"]
+
   ' --- 3. CARGAR CAMPOS EN EL FORMULARIO FMetadatosLibro ---
   With FMetadatosLibro
 
@@ -532,6 +535,11 @@ Public Function CargarMetadatosDeLibro() As Boolean
     .disciplina.Text = NullToString(resultado["disciplina"])
     .subdisciplina.Text = NullToString(resultado["subdisciplina"])
     .palabras_clave_libro.Text = NullToString(resultado["palabras_clave_libro"])
+    ' LAS DOS TRADUCCIONES DE LAS PALABRAS CLAVE, CON SU IDIOMA (1.21.0)
+    .palabras_clave_traducidas.Text = NullToString(resultado["palabras_clave_traducidas"])
+    .idioma_palabras_clave_traducidas.Text = NullToString(resultado["idioma_palabras_clave_traducidas"])
+    .palabras_clave_traducidas_2.Text = NullToString(resultado["palabras_clave_traducidas_2"])
+    .idioma_palabras_clave_traducidas_2.Text = NullToString(resultado["idioma_palabras_clave_traducidas_2"])
     .clasificacion_unesco.Text = NullToString(resultado["clasificacion_unesco"])
     .clasificacion_oecd.Text = NullToString(resultado["clasificacion_oecd"])
 
@@ -545,11 +553,15 @@ Public Function CargarMetadatosDeLibro() As Boolean
     ' URLS Y ACTIVOS
     .imagen_tapa.Text = NullToString(resultado["imagen_tapa"])
     .url_libro.Text = NullToString(resultado["url_libro"])
+    ' DESTINO DE LA SALIDA HTML Y DIRECCIÓN DEL PORTAL (1.22.0)
+    SeleccionarComboEnum(.destino_html, NullToString(resultado["destino_html"]), aDestinoHtml)
+    .url_portal.Text = NullToString(resultado["url_portal"])
     .url_oai_pmh.Text = NullToString(resultado["url_oai_pmh"])
     .url_logo.Text = NullToString(resultado["url_logo"])
     .url_descarga_pdf.Text = NullToString(resultado["url_descarga_pdf"])
     .url_descarga_epub.Text = NullToString(resultado["url_descarga_epub"])
-    .url_compra.Text = NullToString(resultado["url_compra"])
+    ' LOS PUNTOS DE VENTA VIVEN EN libro_venta (1.21.0): LOS CARGA m_VentaLibro
+    ' AL FINAL. url_compra QUEDÓ EN DESUSO Y NO SE LEE
 
     ' PRIMERAS DEL LIBRO (SC-25): LOGOS Y TEXTOS DE CRÉDITOS
     .leyenda_autoria.Text = NullToString(resultado["leyenda_autoria"])
@@ -583,6 +595,8 @@ Public Function CargarMetadatosDeLibro() As Boolean
     .resumen_libro.Text = NullToString(resultado["resumen_libro"])
     .resumen_traducido.Text = NullToString(resultado["resumen_traducido"])
     .idioma_resumen_traducido.Text = NullToString(resultado["idioma_resumen_traducido"])
+    .resumen_traducido_2.Text = NullToString(resultado["resumen_traducido_2"])
+    .idioma_resumen_traducido_2.Text = NullToString(resultado["idioma_resumen_traducido_2"])
     .descripcion_libro.Text = NullToString(resultado["descripcion_libro"])
     .objetivos_alcance.Text = NullToString(resultado["objetivos_alcance"])
 
@@ -620,6 +634,9 @@ Public Function CargarMetadatosDeLibro() As Boolean
 
   End With
 
+  ' --- 4. PUNTOS DE VENTA (TABLA libro_venta, 1.21.0) ---
+  If Not m_VentaLibro.Cargar(resultado["id_libro"]) Then Return False
+
   Return True
 
 Catch
@@ -628,6 +645,76 @@ Catch
     "Mensaje: " & Error.Text & gb.NewLine &
     "Lugar: " & Error.Where & gb.NewLine &
     "Código: " & Error.Code)
+  Return False
+
+End
+
+' ============================================
+' Función   : UrlPortalValida
+' Propósito : Controla y normaliza la dirección del portal antes de guardar,
+'             con las reglas de los CHECK de libros_md (1.22.0): empieza con
+'             https:// (o http://), sin espacios, con / final (se agrega si
+'             falta, como en gbWeb), y es obligatoria si el libro se publica
+'             integrado al portal
+' Parámetros: (ninguno; lee y corrige FMetadatosLibro.url_portal)
+' Retorna   : Boolean — True si se puede guardar; si no, avisa y devuelve False
+' ============================================
+Private Function UrlPortalValida() As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sUrl As String
+  Dim bEnPortal As Boolean
+
+  sUrl = Trim(FMetadatosLibro.url_portal.Text)
+  ' EL ÍNDICE 1 DEL COMBO ES «INTEGRADO AL PORTAL» (FMetadatosLibro.Form_Open)
+  bEnPortal = (FMetadatosLibro.destino_html.Index = 1)
+
+  ' --- 2. INTEGRADO AL PORTAL SIN DIRECCIÓN ---
+  If sUrl = "" Then
+    If Not bEnPortal Then Return True
+    m_Sonido.sonar("Warning")
+    Message.Warning("Un libro integrado al portal necesita la dirección del portal (url-portal).")
+    FMetadatosLibro.url_portal.SetFocus
+    Return False
+  Endif
+
+  ' --- 3. LA FORMA ---
+  If (Left(sUrl, 8) <> "https://" And Left(sUrl, 7) <> "http://") Or InStr(sUrl, " ") > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La dirección del portal tiene que empezar con https:// (o http://), sin espacios.")
+    FMetadatosLibro.url_portal.SetFocus
+    Return False
+  Endif
+
+  ' --- 4. LA / FINAL, COMO gbweb.portal.url_base ---
+  If Right(sUrl, 1) <> "/" Then sUrl &= "/"
+  FMetadatosLibro.url_portal.Text = sUrl
+  Return True
+
+End
+
+' ============================================
+' Función   : IdiomasDistintos
+' Propósito : Controla que las dos traducciones de un mismo texto (resumen o
+'             palabras clave) no estén en el mismo idioma. Solo cuentan las
+'             que tienen texto: un idioma sin texto no produce nada
+' Parámetros: hTexto1 As TextBox — la primera traducción
+'             hIdioma1 As ComboBox — su idioma
+'             hTexto2 As TextBox — la segunda traducción
+'             hIdioma2 As ComboBox — su idioma
+'             sCampo As String — qué se traduce, para el aviso («los resúmenes»)
+' Retorna   : Boolean — True si los idiomas son distintos o falta alguna
+' ============================================
+Private Function IdiomasDistintos(hTexto1 As TextBox, hIdioma1 As ComboBox, hTexto2 As TextBox, hIdioma2 As ComboBox, sCampo As String) As Boolean
+
+  ' --- 1. CON UNA SOLA TRADUCCIÓN NO HAY NADA QUE COMPARAR ---
+  If Trim(hTexto1.Text) = "" Or If Trim(hTexto2.Text) = "" Then Return True
+  If hIdioma1.Text <> hIdioma2.Text Then Return True
+
+  ' --- 2. AVISO ---
+  m_Sonido.sonar("Warning")
+  Message.Warning("Las dos traducciones de " & sCampo & " están en el mismo idioma." & gb.NewLine & "Cada una tiene que estar en un idioma distinto.")
+  hIdioma2.SetFocus
   Return False
 
 End
@@ -667,6 +754,21 @@ Public Function GuardarMetadatosDeLibro() As Boolean
   ' PARES TEXTO + IDIOMA: SI EL TEXTO ESTÁ CARGADO, SU IDIOMA ES OBLIGATORIO
   If Not m_Idiomas.IdiomaAsignado(FMetadatosLibro.titulo_original.Text, FMetadatosLibro.idioma_titulo_original, "el título original") Then Return False
   If Not m_Idiomas.IdiomaAsignado(FMetadatosLibro.resumen_traducido.Text, FMetadatosLibro.idioma_resumen_traducido, "el resumen traducido") Then Return False
+  If Not m_Idiomas.IdiomaAsignado(FMetadatosLibro.resumen_traducido_2.Text, FMetadatosLibro.idioma_resumen_traducido_2, "el segundo resumen traducido") Then Return False
+  If Not m_Idiomas.IdiomaAsignado(FMetadatosLibro.palabras_clave_traducidas.Text, FMetadatosLibro.idioma_palabras_clave_traducidas, "las palabras clave traducidas") Then Return False
+  If Not m_Idiomas.IdiomaAsignado(FMetadatosLibro.palabras_clave_traducidas_2.Text, FMetadatosLibro.idioma_palabras_clave_traducidas_2, "las segundas palabras clave traducidas") Then Return False
+
+  ' CADA TRADUCCIÓN EN UN IDIOMA PROPIO: gbWeb ELIGE EL RESUMEN POR EL IDIOMA
+  ' DE LA PÁGINA, Y DOS EN EL MISMO SERÍAN AMBIGUOS
+  If Not IdiomasDistintos(FMetadatosLibro.resumen_traducido, FMetadatosLibro.idioma_resumen_traducido, FMetadatosLibro.resumen_traducido_2, FMetadatosLibro.idioma_resumen_traducido_2, "los resúmenes") Then Return False
+  If Not IdiomasDistintos(FMetadatosLibro.palabras_clave_traducidas, FMetadatosLibro.idioma_palabras_clave_traducidas, FMetadatosLibro.palabras_clave_traducidas_2, FMetadatosLibro.idioma_palabras_clave_traducidas_2, "las palabras clave") Then Return False
+
+  ' PUNTOS DE VENTA: DIRECCIONES, COMO EXIGE EL CHECK DE libro_venta
+  If Not m_VentaLibro.Validar() Then Return False
+
+  ' DESTINO DE LA SALIDA HTML: LA DIRECCIÓN DEL PORTAL, CON LAS REGLAS DE
+  ' LOS CHECK DE libros_md (1.22.0)
+  If Not UrlPortalValida() Then Return False
 
   ' --- 2. ARRAYS DE ENUM (MISMO ORDEN QUE EL POBLADO EN FMetadatosLibro.Form_Open) ---
   Dim aTipoLibro As New String[]
@@ -702,6 +804,9 @@ Public Function GuardarMetadatosDeLibro() As Boolean
   aTipoAcceso.Add("venta")
   aTipoAcceso.Add("mixto")
   aTipoAcceso.Add("embargado")
+
+  ' DESTINO DE LA SALIDA HTML (1.22.0), EN EL ORDEN DEL COMBO
+  Dim aDestinoHtml As String[] = ["autonomo", "portal"]
 
   ' --- 3. VERIFICAR QUE EXISTE EL REGISTRO; SI NO, CREARLO ---
   verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
@@ -814,6 +919,10 @@ Public Function GuardarMetadatosDeLibro() As Boolean
     resultado!disciplina = StringToNull(.disciplina.Text)
     resultado!subdisciplina = StringToNull(.subdisciplina.Text)
     resultado!palabras_clave_libro = StringToNull(.palabras_clave_libro.Text)
+    resultado!palabras_clave_traducidas = StringToNull(.palabras_clave_traducidas.Text)
+    resultado!idioma_palabras_clave_traducidas = StringToNull(.idioma_palabras_clave_traducidas.Text)
+    resultado!palabras_clave_traducidas_2 = StringToNull(.palabras_clave_traducidas_2.Text)
+    resultado!idioma_palabras_clave_traducidas_2 = StringToNull(.idioma_palabras_clave_traducidas_2.Text)
     resultado!clasificacion_unesco = StringToNull(.clasificacion_unesco.Text)
     resultado!clasificacion_oecd = StringToNull(.clasificacion_oecd.Text)
 
@@ -826,12 +935,15 @@ Public Function GuardarMetadatosDeLibro() As Boolean
 
     ' URLS Y ACTIVOS
     resultado!url_libro = StringToNull(.url_libro.Text)
+    ' DESTINO DE LA SALIDA HTML Y DIRECCIÓN DEL PORTAL (1.22.0). VACÍA ES
+    ' NULL (GV-74): LA COLUMNA TIENE CHECK DE FORMA
+    resultado!destino_html = ObtenerEnumDeCombo(.destino_html, aDestinoHtml)
+    resultado!url_portal = StringToNull(.url_portal.Text)
     resultado!url_oai_pmh = StringToNull(.url_oai_pmh.Text)
     resultado!url_logo = StringToNull(.url_logo.Text)
     resultado!imagen_tapa = StringToNull(.imagen_tapa.Text)
     resultado!url_descarga_epub = StringToNull(.url_descarga_epub.Text)
-    ' «SIN DATO» ES NULL: LA COLUMNA TIENE CHECK (url_compra <> '') (GV-74, SC-81)
-    resultado!url_compra = StringToNull(.url_compra.Text)
+    ' url_compra YA NO SE ESCRIBE: LOS PUNTOS DE VENTA VAN A libro_venta (1.21.0)
 
     ' PRIMERAS DEL LIBRO (SC-25). StringToNull SOLO RECORTA LOS BORDES: LOS
     ' SALTOS DE LÍNEA DE ADENTRO SE CONSERVAN, Y SON PARTE DEL TEXTO
@@ -863,6 +975,8 @@ Public Function GuardarMetadatosDeLibro() As Boolean
     resultado!resumen_libro = StringToNull(.resumen_libro.Text)
     resultado!resumen_traducido = StringToNull(.resumen_traducido.Text)
     resultado!idioma_resumen_traducido = StringToNull(.idioma_resumen_traducido.Text)
+    resultado!resumen_traducido_2 = StringToNull(.resumen_traducido_2.Text)
+    resultado!idioma_resumen_traducido_2 = StringToNull(.idioma_resumen_traducido_2.Text)
     resultado!descripcion_libro = StringToNull(.descripcion_libro.Text)
     resultado!objetivos_alcance = StringToNull(.objetivos_alcance.Text)
 
@@ -878,6 +992,11 @@ Public Function GuardarMetadatosDeLibro() As Boolean
   resultado.Update
   m_ConexionBD.mConn.Commit()
   resultado = Null
+
+  ' --- 5.b PUNTOS DE VENTA (TABLA libro_venta, 1.21.0) ---
+  ' DESPUÉS DEL LIBRO: SI EL REGISTRO SE ACABA DE CREAR, RECIÉN AHORA TIENE id_libro
+  verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
+  If Not m_VentaLibro.Guardar(verificacion!id_libro) Then Return False
 
   m_Sonido.sonar("Info")
   Message.Info("Metadatos de libro guardados correctamente.")

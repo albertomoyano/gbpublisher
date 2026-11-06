@@ -1442,6 +1442,10 @@ End
 '             primero el canónico del libro y recién después transforma: el
 '             HTML es la única salida que lo lee, y la costura entre los dos
 '             pasos era donde se rompía.
+'             Con destino_html = 'portal' (1.22.0) la salida es la integrada
+'             al portal: antes de lanzar el script se escriben la portada y
+'             los créditos de la página de entrada, y el script recibe el
+'             destino y la dirección del portal, de donde baja el marco.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
@@ -1454,6 +1458,8 @@ Public Sub GenerarLibroHTML()
   Dim sEstiloCita As String
   Dim sModoCitas As String
   Dim sImagenTapa As String
+  Dim sDestino As String
+  Dim sUrlPortal As String
   Dim iRespuesta As Integer
   Dim iResultado As Integer
 
@@ -1475,19 +1481,41 @@ Public Sub GenerarLibroHTML()
   sModoCitas = PrepararCitasPantalla(sEstiloCita)
   If sModoCitas = "" Then Return
 
-  ' --- 5. TAPA ---
-  ' SOLO PARA QUE EL SCRIPT AVISE SI LA BASE DECLARA UNA TAPA QUE NO ESTÁ EN
-  ' media/: LA TAPA SE COPIA CON EL RESTO DE LAS IMÁGENES.
-  ' LA VERSIÓN ANTERIOR LEÍA hLibro SIN VERIFICAR EL ERROR NI Available
+  ' --- 5. TAPA Y DESTINO ---
+  ' LA TAPA, SOLO PARA QUE EL SCRIPT AVISE SI LA BASE DECLARA UNA QUE NO ESTÁ
+  ' EN media/: SE COPIA CON EL RESTO DE LAS IMÁGENES.
+  ' EL DESTINO DECIDE LA SALIDA: UN ERROR AL LEERLO NO PUEDE CAER EN SILENCIO
+  ' EN LA AUTÓNOMA, ASÍ QUE ESTA LECTURA, A DIFERENCIA DE LA ANTERIOR, FRENA
   sImagenTapa = ""
+  sDestino = "autonomo"
+  sUrlPortal = ""
   Try hTapa = m_ConexionBD.mConn.Exec(
-    "SELECT imagen_tapa FROM libros_md WHERE id_libro = &1 LIMIT 1", oInsumos.iIdLibro)
-  If Not Error Then
-    If hTapa.Available Then
-      If Not IsNull(hTapa["imagen_tapa"]) Then
-        sImagenTapa = m_XML.TrimUTF8(hTapa["imagen_tapa"])
-      Endif
+    "SELECT imagen_tapa, destino_html, url_portal FROM libros_md WHERE id_libro = &1 LIMIT 1",
+    oInsumos.iIdLibro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer la tapa y el destino del HTML:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  If hTapa.Available Then
+    If Not IsNull(hTapa["imagen_tapa"]) Then
+      sImagenTapa = m_XML.TrimUTF8(hTapa["imagen_tapa"])
     Endif
+    ' destino_html ES NOT NULL; url_portal PUEDE SER NULL (GV-74)
+    sDestino = m_XML.TrimUTF8(hTapa["destino_html"])
+    If Not IsNull(hTapa["url_portal"]) Then
+      sUrlPortal = m_XML.TrimUTF8(hTapa["url_portal"])
+    Endif
+  Endif
+
+  ' LA BASE YA LO IMPIDE (chk_libros_destino_html); SE MIRA OTRA VEZ PARA DAR
+  ' UN MENSAJE CLARO EN LUGAR DEL DEL SCRIPT
+  If sDestino = "portal" And sUrlPortal = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El libro está integrado al portal pero no tiene la dirección del portal." & gb.NewLine &
+      "Cargala en el formulario del libro.")
+    Return
   Endif
 
   ' --- 6. COLOFÓN DEL PIE ---
@@ -1495,13 +1523,33 @@ Public Sub GenerarLibroHTML()
   ' OMITIRÍA EL PIE EN SILENCIO
   If Not EscribirColofonDigital(oInsumos.sRutaProyecto) Then Return
 
+  ' --- 6b. PORTADA Y CRÉDITOS DE LA PÁGINA DE ENTRADA (SOLO INTEGRADO) ---
+  ' LAS MISMAS PÁGINAS DEL EPUB, EN tmp/html-portal/. LA FUNCIÓN AVISA SOLA
+  If sDestino = "portal" Then
+    If Not m_GenerarEpubLibro.EscribirPrimerasHtml(oInsumos.sRutaProyecto, oInsumos.iIdLibro) Then Return
+  Endif
+
   ' --- 7. ARGUMENTOS ---
-  ' LOS CUATRO DEL ENSAMBLADO, MÁS EL ESTILO, EL MODO DE LAS CITAS Y, SI HAY,
-  ' LA TAPA. LA TAPA VA ÚLTIMA Y ES OPCIONAL: SI NO HAY, NO SE AGREGA
+  ' LOS CUATRO DEL ENSAMBLADO, MÁS EL ESTILO, EL MODO DE LAS CITAS Y LA TAPA.
+  ' AUTÓNOMO: LA TAPA VA ÚLTIMA Y SOLO SI HAY. INTEGRADO: TAPA (O «-»),
+  ' DESTINO Y DIRECCIÓN DEL PORTAL
   aArgumentos = ArgumentosEnsamblado(oInsumos)
   aArgumentos.Add(sEstiloCita)
   aArgumentos.Add(sModoCitas)
-  If sImagenTapa <> "" Then aArgumentos.Add(sImagenTapa)
+  If sDestino = "portal" Then
+    ' INTEGRADO: LA TAPA OCUPA SU LUGAR AUNQUE NO HAYA («-»), PARA QUE LLEGUEN
+    ' EL DESTINO Y LA DIRECCIÓN DEL PORTAL
+    If sImagenTapa <> "" Then
+      aArgumentos.Add(sImagenTapa)
+    Else
+      aArgumentos.Add("-")
+    Endif
+    aArgumentos.Add(sDestino)
+    aArgumentos.Add(sUrlPortal)
+  Else
+    ' AUTÓNOMO: LOS MISMOS ARGUMENTOS DE SIEMPRE
+    If sImagenTapa <> "" Then aArgumentos.Add(sImagenTapa)
+  Endif
 
   ' --- 8. GENERACIÓN ---
   iResultado = EjecutarScriptSalida("generar_html_libro.sh", aArgumentos, PLAZO_HTML,

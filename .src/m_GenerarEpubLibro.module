@@ -64,6 +64,11 @@ Private Const ARCHIVO_BIBLIO_EPUB As String = "epub-bibliografia.xml"
 ' QUE ESCRIBE GenerarBiblioLibroXML, EL MISMO QUE MUESTRA EL HTML
 Private Const TITULO_BIBLIOGRAFIA As String = "Referencias"
 
+' CARPETA, DENTRO DE tmp/, DE LA PORTADA Y LOS CRÉDITOS DEL HTML INTEGRADO AL
+' PORTAL (EscribirPrimerasHtml). DEBE COINCIDIR CON DIR_PRIMERAS DE
+' engine/generar_html_libro.sh
+Public Const CARPETA_PRIMERAS_HTML As String = "html-portal"
+
 ' RUTAS Y LIBRO DE LA GENERACIÓN EN CURSO
 Private $sRutaProyecto As String
 Private $sRutaEpubWork As String
@@ -210,6 +215,83 @@ Public Sub GenerarEpubLibro()
   ' --- 9. INFORME ---
   m_GenerarSalidasLibro.InformarResultado(iResultado, "El EPUB del libro",
     $sRutaProyecto &/ "salidas" &/ "epub" &/ sNombreEpub)
+
+End
+
+' ============================================
+' Función   : EscribirPrimerasHtml
+' Propósito : Escribe la portada y los créditos de la página de entrada del
+'             HTML integrado al portal, en tmp/html-portal/. Son las mismas
+'             páginas del EPUB, armadas por las mismas funciones: el HTML no
+'             tiene una tercera versión de las primeras (SC-25). La hoja
+'             docbook-to-html-portal.xsl toma de cada una su <section>.
+' Parámetros: sRutaProyecto As String — raíz del proyecto
+'             iIdLibro As Integer — el libro
+' Retorna   : Boolean — False si no se pudo, con el motivo ya informado
+' Nota      : LA PORTADA SOLO SE ESCRIBE SI EL LIBRO LA DECLARA, COMO EN EL
+'             EPUB; LOS CRÉDITOS, SIEMPRE. LA CARPETA SE VACÍA ANTES: UNA
+'             PORTADA DE UNA CORRIDA ANTERIOR NO PUEDE SOBREVIVIR A QUE EL
+'             LIBRO DEJE DE DECLARARLA.
+' ============================================
+Public Function EscribirPrimerasHtml(sRutaProyecto As String, iIdLibro As Integer) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPiezas As String[]
+  Dim cMeta As Collection
+  Dim cValores As Collection
+  Dim sAutores As String
+  Dim sCarpeta As String
+  Dim sPagina As String
+
+  ' LAS FUNCIONES DEL EPUB LEEN EL PROYECTO Y EL LIBRO DE ESTAS VARIABLES
+  $sRutaProyecto = sRutaProyecto
+  $iIdLibro = iIdLibro
+  sCarpeta = sRutaProyecto &/ "tmp" &/ CARPETA_PRIMERAS_HTML
+
+  ' --- 2. PIEZAS DECLARADAS ---
+  ' ListaPiezasEpub DEJA $bHayPortada Y $bHayCreditos; LA LISTA EN SÍ NO SE USA
+  aPiezas = ListaPiezasEpub()
+  If Not aPiezas Then Return False
+
+  ' --- 3. DATOS DEL LIBRO ---
+  cMeta = LeerMetadatosLibro()
+  If Not cMeta Then Return False
+  sAutores = LeerAutoresLibro()
+
+  cValores = m_PrimerasLibro.LeerValores(iIdLibro)
+  If Not cValores Then
+    m_Sonido.sonar("Error")
+    Message.Error(m_PrimerasLibro.UltimoError())
+    Return False
+  Endif
+
+  ' LOS LOGOS SE VERIFICAN ANTES DE ESCRIBIR NADA, COMO EN EL EPUB
+  If Not VerificarLogo(cMeta["logo_portada"], "de portada") Then Return False
+  If Not VerificarLogo(cMeta["logo_coleccion"], "de colección") Then Return False
+
+  ' --- 4. CARPETA LIMPIA ---
+  ' Exec CON ARRAY Y NO Shell: LA RUTA NO PASA POR sh -c (SC-05)
+  Try Exec ["rm", "-rf", sCarpeta] Wait
+  Try Exec ["mkdir", "-p", sCarpeta] Wait
+  ' Exec ... Wait NO INFORMA SI mkdir FALLÓ: SE COMPRUEBA EL RESULTADO
+  If Not IsDir(sCarpeta) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear la carpeta de la página de entrada:" & gb.NewLine & sCarpeta)
+    Return False
+  Endif
+
+  ' --- 5. PÁGINAS ---
+  If $bHayPortada Then
+    If Not EscribirArchivo(sCarpeta &/ "portada.xhtml", ArmarPortada(cMeta, cValores)) Then Return False
+  Endif
+
+  ' LOS CRÉDITOS PUEDEN FALLAR AL CONVERTIR LOS TEXTOS: EN ESE CASO YA
+  ' AVISARON Y DEVUELVEN VACÍO
+  sPagina = ArmarCreditos(cMeta, sAutores, cValores)
+  If sPagina = "" Then Return False
+  If Not EscribirArchivo(sCarpeta &/ "creditos.xhtml", sPagina) Then Return False
+
+  Return True
 
 End
 

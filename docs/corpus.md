@@ -1285,7 +1285,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT); 1.18.0 (siglas, SC-78); 1.19.0 (contrato con gbWeb, SC-81). El refactor de bibtex tomará el número que le corresponda.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT); 1.18.0 (siglas, SC-78); 1.19.0 (contrato con gbWeb, SC-81); 1.20.0 (la licencia en el contrato con gbWeb, SC-81); 1.21.0 (el libro en tres idiomas, `libro_venta` y el contrato con gbWeb, SC-81). El refactor de bibtex tomará el número que le corresponda.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1317,7 +1317,11 @@ PUNTO DE RUPTURA: BASELINE 2.0.0 CON EL REFACTOR DE BIBTEX
 
 Decisión de Alberto (20/10). El baseline no se regenera con cada versión de la cadena. El 2.0.0 se genera junto con el refactor de bibtex y lo incorpora: las instalaciones nuevas parten de ahí. Las existentes siguen su cadena hasta ese mismo punto. Hasta entonces, una instalación nueva restaura `baseline-1.0.0` y corre la cadena completa (BBDD_LEEME.md §5, «Cuándo conviene rebasear»).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169
+EL ESQUEMA PROPIO DE gbWeb
+
+El esquema `gbweb` (SC-80) sigue las mismas reglas, con su cadena en el repositorio de gbWeb y su propia `gbweb.esquema_version`: 1.0.0 (portales y asociación, SC-80), 1.1.0 (logo e imagen destacada, SC-83), 1.2.0 (datos del portal y perfiles en las redes, SC-83).
+
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -4793,7 +4797,7 @@ LOS PORTALES Y SUS OBRAS (decisiones de Alberto, 04/11/2026)
 Dos mundos separados, unidos solo por la base:
 
 - Los PROYECTOS de gbpublisher: un libro o un número cada uno, con `l-` o `r-` en minúscula (`l-CALIFA.md`). gbWeb no toca nunca sus carpetas.
-- Los PORTALES de gbWeb: uno por editorial (`L-IMAGO.md`) o por revista (`R-MEDIEVALES.md`), con `L-` o `R-` en MAYÚSCULA. La mayúscula distingue a simple vista un portal de un proyecto. El portal no está asociado a ningún proyecto. Su carpeta puede llamarse de cualquier forma (SC-82): la identidad es el nombre del .md, que es también el del repositorio en GitHub o Netlify. gbWeb abre ese .md con un diálogo y escribe en su carpeta (`tmp/` lo intermedio, `docs/` el sitio). Qué otras carpetas o archivos lleva se decide a medida que haga falta.
+- Los PORTALES de gbWeb: uno por editorial (`L-IMAGO.md`) o por revista (`R-MEDIEVALES.md`), con `L-` o `R-` en MAYÚSCULA. La mayúscula distingue a simple vista un portal de un proyecto. El portal no está asociado a ningún proyecto. Su carpeta puede llamarse de cualquier forma (SC-82): la identidad es el nombre del .md, que es también el del repositorio en GitHub o Netlify. gbWeb abre ese .md con un diálogo y escribe en su carpeta; qué lleva esa carpeta está en SC-83.
 
 La ASOCIACIÓN es un dato de gbWeb. gbpublisher dice qué libros están publicados (`v_web_libro`); gbWeb, con un buscador sobre esa disponibilidad, asocia cada libro a una editorial, y lo mismo cada número de revista (volumen y número) a su revista. Hace falta porque en la misma base conviven los libros de Imago Mundi con los que Alberto edita para colegas.
 
@@ -4809,33 +4813,58 @@ LO QUE MUESTRA
 - Visibilidad: `estado_publicacion` publicado, agotado o descatalogado. Solo `en_preparacion` queda afuera. Descatalogado se muestra: le sirve a las bibliotecas. Es la única condición; `estado_libro` no cuenta.
 - Una ficha propia de cada obra en el portal, que enlaza al sitio completo cuando hay `url_libro`. Un libro del fondo no tiene sitio propio.
 - Revista: la unidad que se cose es el número.
-- La venta queda fuera del portal: un botón lleva al punto de venta (`url_compra`, Mercado Libre u otro) y la venta se resuelve en una pasarela externa.
-- Las marcas visuales salen de los datos, nunca se cargan a mano: agotado y descatalogado, con su etiqueta y sin botón de compra; acceso abierto, con la descarga (`tipo_acceso`).
-- La imagen destacada la elige gbWeb, en el formulario de diseño del sitio, para lo que la editorial comunica por un tiempo (una promoción, un evento). Se activa a mano, nunca por fecha: con la fecha, el mismo estado daría sitios distintos según el día.
+- La venta queda fuera del portal: un botón por tienda (`libro_venta`, SC-81) lleva a la página del libro en esa tienda, y la venta se resuelve ahí.
+- Las marcas visuales salen de los datos, nunca se cargan a mano: agotado y descatalogado, con su etiqueta y sin botones de venta; acceso abierto, con la descarga (`tipo_acceso`).
+- La imagen destacada la elige gbWeb, entre las de `media/` del portal, para lo que la editorial comunica por un tiempo (una promoción, un evento). Se activa a mano, nunca por fecha: con la fecha, el mismo estado daría sitios distintos según el día. Siempre hay una: sin elegir, va la imagen por defecto («Reemplazar esta imagen»).
 - El sitio de cada obra lleva una cabecera mínima (logo y vuelta al catálogo); el diseño fuerte queda en el portal. Si la cabecera de las obras siguiera la del portal, cambiar el portal obligaría a reconstruir cada obra.
-- Idiomas: español, inglés y portugués. Se traduce todo lo del portal (menús, páginas estáticas, etiquetas, nombres de los roles); lo que viene de los metadatos se muestra tal cual. El título de cada obra lleva su `lang`, de `idioma_principal`.
-- Buscador: título, ISBN, autor y palabras clave, en un índice JSON que genera gbWeb. Normaliza igual el índice y la consulta: el ISBN sin guiones ni espacios (impreso y electrónico); el autor por palabras en cualquier orden («Silvina Jensen» encuentra «Jensen, Silvina»); sin tildes ni mayúsculas (`normalize('NFD')`).
+- Idiomas: español, inglés y portugués. El español va en la raíz del sitio; el inglés y el portugués, en `en/` y `pt/`. Se traduce todo lo del portal (menús, etiquetas, nombres de los roles, páginas escritas); lo que viene de los metadatos se muestra tal cual. El título de cada obra lleva su `lang`, de `idioma_principal`.
+- Buscador: título, ISBN, autor y palabras clave, en un índice JSON que genera gbWeb. Normaliza igual el índice y la consulta: el ISBN sin guiones ni espacios (impreso y electrónico); el autor por palabras en cualquier orden («Silvina Jensen» encuentra «Jensen, Silvina»); sin tildes ni mayúsculas (`normalize('NFD')`). Está plantado en la cabecera y todavía no busca: falta el índice.
 
-DETERMINISMO
+LA PÁGINA (decisiones de Alberto, 02 al 04/11/2026)
 
-Los mismos datos dan los mismos bytes: plantillas cerradas, con una lista finita de variables de diseño; orden explícito y con desempate, nunca el de la base (SC-81); sin fecha de generación en la salida; la tapa llega ya convertida y gbWeb copia sus bytes (SC-81). Es el criterio de exportación de SC-50: el diff de git muestra solo lo que cambió.
+- Contenedor de 1200 px. Noto Serif 400 y 600 en WOFF2, las del libro (SC-83: archivos fijos). La paleta de `gbpublisher.css` (el azul `#2d5a8e`).
+- CABECERA, la misma en todas las páginas: una franja de unos 2 cm con el logo a la izquierda (sin logo, el nombre del portal) y el menú a la derecha, que despliega «Acerca de» solo con CSS; un filete; la línea del buscador, los 8 íconos para compartir la página abierta (Facebook, X, LinkedIn, WhatsApp, Telegram, Bluesky, Reddit, correo) y las 3 banderas, con un filete bajo la activa. Sin URL del sitio no hay botones de compartir ni vista previa (`og:`): necesitan direcciones completas.
+- PIE, el mismo en todas las páginas: fondo azul con letra blanca, sin filete, siempre al fondo de la ventana aunque la página sea corta. Nombre, dirección, correo, «Desde <año>», licencia de los textos y los íconos de los perfiles en las redes (9: Facebook, X, LinkedIn, Bluesky, Telegram, Reddit, ResearchGate, Instagram, YouTube). Los datos son del portal (esquema `gbweb` 1.2.0, SC-83).
+- Los íconos son de Font Awesome Free 7.2.0 (CC BY 4.0), copiados en la página con su comentario, que lleva la atribución; toman el color del texto.
 
-CÓMO SE ARMA
+INICIO Y CATÁLOGO
 
-- Motor: XSLT con Saxon. gbWeb vuelca las VIEW del contrato y sus datos propios en un `sitio.xml`, y una sola corrida genera el sitio entero, una página por `xsl:result-document`. Gambas lleva los datos y la interfaz; XSLT, la presentación. `sitio.xml` queda como archivo intermedio que se puede comparar.
-- Páginas: inicio (cabecera, imagen destacada, últimos títulos), catálogo, una por colección, la ficha de cada obra y las páginas estáticas (Acerca de, Cómo publicar, Cómo comprar…), bajo `/es/`, `/en/` y `/pt/`. La raíz es la versión en español, con `hreflang` a las otras; sin redirección por JavaScript. Más el índice de búsqueda y `sitemap.xml`.
-- URL de la ficha: `id_libro`, lo único que gbpublisher garantiza estable. En la revista, volumen y número.
-- Orden de construcción: primero un esqueleto de punta a punta (las VIEW, `sitio.xml`, una XSLT, portada y fichas en un idioma, dos construcciones con el mismo hash); los formularios crecen encima.
+- INICIO: la imagen destacada al ancho del contenedor, con el alto de su propia proporción; un filete; «Últimos títulos», a la izquierda y en azul; los 4 libros más nuevos; «Ver el catálogo».
+- CATÁLOGO: todos los libros, de a 8 por página, con flechas y el número de página; la que no tiene adónde ir queda apagada.
+- Cada libro es una fila: la tapita a la izquierda y, al lado, título, subtítulo, personas, año, colección, ISBN y páginas, y la marca de agotado o descatalogado. El título lleva a la ficha.
+- Las filas van en DOS COLUMNAS (2 × 2 en el inicio, 4 × 2 en el catálogo), sin filete vertical; cada libro con su filete abajo. En el teléfono, una columna.
+- El orden es siempre el de SC-81: lo más nuevo primero.
 
-**Relaciones:** vinculo:SC-50,vinculo:SC-81,vinculo:SC-82,vinculo:SC-22
+LA FICHA
 
-**PENDIENTE:** Precios en la ficha: la propuesta es no mostrarlos (cambian seguido y el precio vigente está en el punto de venta); falta la decisión. Carga del fondo con una semilla de los CSV de WooCommerce y de Mercado Libre, cruzados por ISBN: se trata después. Contrato de la revista: `numero` no tiene estado de publicación ni URL. Lo que falta en el esquema `gbweb`: configuración del sitio, imagen destacada, páginas estáticas, textos de interfaz en tres idiomas, asociación de números de revista. El esqueleto de gbWeb: FMain y terminal, como gbpublisher (decisión de Alberto, 04/11/2026).
+- Dos columnas: la tapa (unos 280 px, la del HTML del libro) y los datos.
+- Personas agrupadas por rol, en el orden de autoría; la autoría sin rótulo; sin la dirección de la colección, que es de la colección. Quien tiene ORCID lleva el ícono, que es el enlace; el nombre no se enlaza.
+- El resumen: una etiqueta con el triángulo, como en el HTML del libro; cerrado muestra tres líneas, para que quien ve el corte decida si lo abre. Es una casilla oculta con `line-clamp`, sin JavaScript: `<details>` cerrado no muestra nada de su contenido. Va el resumen en el idioma de la página si lo hay; si no, el del idioma principal, marcado con su `lang` (se compara el idioma base: `pt-BR` es `pt`).
+- Los datos: Publicación (mes y año en el idioma de la página), Colección y su número, ISBN impreso y electrónico, Páginas, Idioma y Licencia (con su enlace si lo hay). El idioma se nombra en el de la página: español e inglés salen del catálogo `idiomas` de gbpublisher; el portugués, de una tabla corta en la XSLT; un idioma que no está en ella va en castellano.
+- Las palabras clave no se muestran: sirven a los sugeridos y al buscador.
+- LOS BOTONES salen de los datos, todos del mismo ancho: leer en línea si hay `url_libro`; las descargas (PDF, EPUB) con acceso abierto o mixto, si está la URL. Debajo, en otra fila, uno por tienda con su ícono y su nombre (Amazon, Apple Books, Google Play, Mercado Libre), solo con acceso de venta o mixto y estado publicado. Un libro de acceso abierto que se vende en papel se carga como mixto (confirmado por Alberto, 04/11/2026). Los íconos de Amazon, Apple y Google Play son de Font Awesome; Mercado Libre no está ahí y va su logo en PNG, en color.
+- OTROS LIBROS SUGERIDOS, después de un filete y a todo el ancho, como en el inicio. Son 4 (decisión de Alberto: nunca menos, salvo que no haya más libros), por escalones: (1) los que comparten una persona, por `id_autor` y con cualquier rol salvo la dirección de la colección; (2) los que comparten una palabra clave, en cualquiera de los tres idiomas, sin tildes ni mayúsculas ni espacios de más; (3) los de la misma colección; (4) el resto. Cada escalón, lo más nuevo primero. Lo calcula la XSLT (`gbw:sugeridos`) con el orden de la secuencia, no el del documento (GV-183).
 
-### SC-81 — Contrato gbpublisher → gbWeb: cuatro VIEW, una cuenta de solo lectura y la tapa web en la base (esquema 1.19.0)
+EL MENÚ Y LAS PÁGINAS ESCRITAS
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.19.0 (esquema) / MySQL 8.0.46 / Gambas 3.19 (gbc3, gbx3; gb.db.mysql) / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 y Linux Mint (la tapa) / Gambas 3.22 (gb.db2), Linux Mint · **Verificado:** 2026-11
+- El menú es una matriz fija por clase de portal (`menu.xml`), con la lógica de OJS: libros, Inicio (el «Actual»), Catálogo (el «Archivos») y Acerca de (Sobre la editorial, Sobre las colecciones, Contacto); revista, Actual, Archivos y Acerca de (Sobre la revista, Envíos, Equipo editorial, Privacidad, Contacto). El blog quedó descartado.
+- Las páginas de «Acerca de» se escriben en Markdown, en `paginas/<clave>.<idioma>.md` del portal. gbWeb crea las que faltan con «Acá va el texto» y nunca pisa una que existe. Una página sale si está su español; sin la traducción, va el español con `lang="es"`. El título es el nombre de la matriz, el mismo del menú.
 
-Decisiones de Alberto, 02/11/2026. gbWeb (SC-80) lee la base de gbpublisher solo a través de este contrato. Lo aplica `actualizar-esquema-1.19.0.sh` (SC-22).
+CÓMO SE ARMA, EN OTRAS ENTRADAS
+
+- El contrato con gbpublisher: SC-81.
+- La construcción del sitio, el determinismo y el esquema `gbweb`: SC-83.
+- La aplicación y el despliegue: SC-84.
+
+**Relaciones:** vinculo:SC-50,vinculo:SC-81,vinculo:SC-82,vinculo:SC-22,vinculo:SC-83,vinculo:SC-84,apoya:GV-183
+
+**PENDIENTE:** Precios en la ficha: la propuesta es no mostrarlos (cambian seguido y el precio vigente está en el punto de venta); falta la decisión. Carga del fondo con una semilla de los CSV de WooCommerce y de Mercado Libre, cruzados por ISBN: se trata después. Contrato de la revista: `numero` no tiene estado de publicación ni URL; falta la asociación de números. El buscador: el índice JSON. Una página por colección y `sitemap.xml`. Favicon y descripción del portal. Analítica: suspendida hasta elegir la herramienta (decisión de Alberto, 04/11/2026).
+
+### SC-81 — Contrato gbpublisher → gbWeb: cinco VIEW, una cuenta de solo lectura y la tapa web en la base (esquemas 1.19.0 a 1.21.0)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.19.0 a 1.21.0 (esquema) / MySQL 8.0.46 / Gambas 3.19 (gbc3, gbx3; gb.db.mysql) / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 y Linux Mint (la tapa) / Gambas 3.22 (gb.db2), Linux Mint · **Verificado:** 2026-11
+
+Decisiones de Alberto, 02/11/2026. gbWeb (SC-80) lee la base de gbpublisher solo a través de este contrato. Lo aplica `actualizar-esquema-1.19.0.sh` (SC-22); lo amplían la 1.20.0 (la licencia) y la 1.21.0 (los idiomas del libro y los puntos de venta).
 
 EL LÍMITE: LAS VIEW
 
@@ -4843,18 +4872,25 @@ EL LÍMITE: LAS VIEW
     v_web_libro_persona   una fila por persona y libro
     v_web_coleccion       colecciones con al menos un libro visible
     v_web_libro_tapa      la tapa web de cada libro visible
+    v_web_libro_venta     los puntos de venta de cada libro visible (1.21.0)
 
-Las crea y las mantiene gbpublisher. Si cambia una tabla interna, se adapta la VIEW y gbWeb no se entera. La regla de visibilidad (SC-80) está una sola vez, en el WHERE de `v_web_libro`; las otras tres la heredan porque se unen con ella. No exponen el email ni la afiliación de las personas ni ningún campo interno (`notas_internas` y similares): la VIEW es también el filtro de lo público.
+Las crea y las mantiene gbpublisher. Si cambia una tabla interna, se adapta la VIEW y gbWeb no se entera. La regla de visibilidad (SC-80) está una sola vez, en el WHERE de `v_web_libro`; las otras cuatro la heredan porque se unen con ella.
+
+Las columnas que se agregan van al final, como en las tablas (SC-22), con `CREATE OR REPLACE VIEW`, que conserva el permiso de la cuenta (GV-177):
+
+- 1.20.0, `v_web_libro`: `licencia` (es `licencia_defecto`, la etiqueta del catálogo: «CC BY 4.0») y `url_licencia`.
+- 1.21.0, `v_web_libro`: `idioma_nombre` e `idioma_nombre_ingles` (LEFT JOIN al catálogo `idiomas`) y los pares de texto e idioma `resumen_traducido`, `resumen_traducido_2`, `palabras_clave_traducidas`, `palabras_clave_traducidas_2`. Queda con 32 columnas.
+- 1.21.0, `v_web_libro_persona`: `id_autor`. gbWeb reconoce a la misma persona en otro libro por él, nunca por el nombre. No exponen el email ni la afiliación de las personas ni ningún campo interno (`notas_internas` y similares): la VIEW es también el filtro de lo público.
 
 LA CUENTA: UNA POR APLICACIÓN
 
-gbWeb se conecta con `gbweb_lector`, una cuenta de MySQL con `SELECT` solo sobre las cuatro VIEW. Desde el 04/11/2026 tiene además `SELECT`, `INSERT`, `UPDATE` y `DELETE` sobre el esquema propio de gbWeb (`gbweb`, SC-80), sin permisos de estructura: la misma cuenta con más permisos y una sola credencial (decisión de Alberto). Sobre gbpublisher no cambia nada. No es un usuario de trabajo (esos se dan de alta en FSysAdmin, en la tabla `usuarios`): es una credencial de infraestructura, como `app_user`. Las VIEW son `SQL SECURITY DEFINER`, así que la cuenta las lee sin permisos sobre las tablas, y cualquier otra cosa le da error 1142 (GV-167): el aislamiento lo garantiza el motor, no la disciplina. Con `app_user` el contrato sería una costumbre, no un límite. La crea `crear-cuenta-gbweb.sh`, en el repositorio de gbWeb (privado), no el script de esquema: tener gbWeb es una decisión de cada instalación, y gbWeb es de uso casi exclusivo de la editorial.
+gbWeb se conecta con `gbweb_lector`, una cuenta de MySQL con `SELECT` solo sobre las VIEW del contrato (cinco desde la 1.21.0). Desde el 04/11/2026 tiene además `SELECT`, `INSERT`, `UPDATE` y `DELETE` sobre el esquema propio de gbWeb (`gbweb`, SC-80), sin permisos de estructura: la misma cuenta con más permisos y una sola credencial (decisión de Alberto). Sobre gbpublisher no cambia nada. No es un usuario de trabajo (esos se dan de alta en FSysAdmin, en la tabla `usuarios`): es una credencial de infraestructura, como `app_user`. Las VIEW son `SQL SECURITY DEFINER`, así que la cuenta las lee sin permisos sobre las tablas, y cualquier otra cosa le da error 1142 (GV-167): el aislamiento lo garantiza el motor, no la disciplina. Con `app_user` el contrato sería una costumbre, no un límite. La crea `crear-cuenta-gbweb.sh`, en el repositorio de gbWeb (privado), no el script de esquema: tener gbWeb es una decisión de cada instalación, y gbWeb es de uso casi exclusivo de la editorial.
 
 - Se corre SIN sudo y lo pide cuando lo necesita: la credencial es del usuario que va a correr gbWeb y va a su carpeta personal. Con sudo se niega.
 - La clave la genera el script (decisión de Alberto, 02/11/2026): 28 letras y cifras al azar más un sufijo fijo con mayúscula, minúscula, cifra y símbolo, por si el servidor tiene `validate_password`. Nadie la tipea ni la recuerda, y no queda en ningún repositorio. Viaja al servidor por la entrada estándar, no por la línea de comandos.
 - La guarda en `~/.gbweb/conexion.conf` (carpeta 700, archivo 600), escrito entero y movido a su lugar. Es un archivo de opciones de MySQL: `[client]` con `user`, `password`, `host` y `database`. El propio cliente lo lee con `mysql --defaults-extra-file`, y gbWeb solo necesita esas cuatro líneas.
-- Idempotente, por el estado real: la cuenta existe; sus permisos son exactamente SELECT sobre las cuatro VIEW (en `information_schema`: `TABLE_PRIVILEGES`, `SCHEMA_PRIVILEGES` y `USER_PRIVILEGES`); la clave del archivo abre la sesión. Lo que no está en regla se corrige: crea la cuenta, renueva la clave (`ALTER USER`) o repone los permisos (`REVOKE ALL PRIVILEGES, GRANT OPTION` y los cuatro `GRANT`). Si todo está en regla, no hace nada.
-- Verifica con la clave del archivo: lee `v_web_libro`, NO lee `libros_md` y ve solo las cuatro VIEW (GV-167).
+- Idempotente, por el estado real: la cuenta existe; sus permisos son exactamente SELECT sobre las VIEW (en `information_schema`: `TABLE_PRIVILEGES`, `SCHEMA_PRIVILEGES` y `USER_PRIVILEGES`); la clave del archivo abre la sesión. Lo que no está en regla se corrige: crea la cuenta, renueva la clave (`ALTER USER`) o repone los permisos (`REVOKE ALL PRIVILEGES, GRANT OPTION` y un `GRANT` por VIEW). Exige la versión del esquema que crea la última VIEW (hoy, la 1.21.0). Si todo está en regla, no hace nada.
+- Verifica con la clave del archivo: lee `v_web_libro`, NO lee `libros_md` y ve solo las VIEW del contrato (GV-167).
 - No es un cambio de esquema: no toca la base gbpublisher, no hace respaldo ni escribe en `esquema_version`.
 
 Probado en el contenedor con un usuario común y sudo, en siete situaciones: primera corrida, segunda, archivo borrado, un permiso de más, clave equivocada, cuenta borrada con archivo viejo y una corrida más con todo en regla.
@@ -4863,7 +4899,8 @@ LOS DATOS
 
 - Personas: una fila por persona y libro, y la agrupación la hace la XSLT. Sin `GROUP_CONCAT`, que corta en `group_concat_max_len` sin error. `nombre_mostrar` es `nombre_preferido`, o `nombre_completo` si está vacío. Los nombres de los roles («coord.», «comp.») son textos de interfaz: los traduce gbWeb.
 - Mes: `libros_md.mes_publicacion` es texto («Noviembre»). La VIEW lo da como número (`mes_numero`), con setiembre y septiembre; otro valor sale NULL. Se resuelve en la VIEW, no con una migración de la columna.
-- `url_compra`: `VARCHAR(500) NULL` con `CHECK (url_compra <> '')` (GV-74), al final de `libros_md`.
+- Los tres idiomas del libro (1.21.0, decisión de Alberto): el modelo de los capítulos. El resumen y las palabras clave en el idioma principal y en dos traducciones, cada una con su código del catálogo: seis columnas al final de `libros_md` (`resumen_traducido_2`, `palabras_clave_traducidas`, `palabras_clave_traducidas_2` y su `idioma_…` cada una). Al guardar, un texto cargado exige su idioma (`m_Idiomas.IdiomaAsignado`) y las dos traducciones de un mismo texto no pueden estar en el mismo idioma (`m_Metadatos.IdiomasDistintos`): gbWeb elige el resumen por el idioma de la página.
+- Los puntos de venta (1.21.0, decisión de Alberto): `libro_venta`, una fila por tienda. `id_libro` (FK a `libros_md`, CASCADE), `tienda` ENUM (`amazon`, `apple`, `google`, `mercadolibre`; su orden es el de los botones), `url` `VARCHAR(500)` NOT NULL con `CHECK` `^https?://[^ ]+$`; clave (`id_libro`, `tienda`). Reemplaza a `url_compra` (1.19.0), que quedó en desuso: la 1.21.0 pasó su valor a la fila `mercadolibre` y la dejó en NULL. No se edita ni se lee; no se borra porque la nombra `v_web_libro`.
 
 EL ORDEN LO PONE gbWeb
 
@@ -4871,6 +4908,7 @@ Una VIEW no garantiza el orden de las filas: gbWeb lo pide al consultar.
 
     libros     ano_publicacion DESC, mes_numero DESC, id_libro DESC
     personas   id_libro, orden_autoria, id_relacion
+    ventas     tienda   (un ENUM ordena por su posición, GV-176)
 
 Con `DESC`, MySQL pone los NULL al final: un libro sin mes va detrás de los de su año (GV-167). `orden_autoria` no es único en `libro_autor` y `id_relacion` desempata.
 
@@ -4899,7 +4937,7 @@ CÓMO SE GENERA (decisiones de Alberto, 04/11/2026)
 - `m_TapaWeb` (Gambas) lee los dos archivos y reemplaza la fila en una transacción: `DELETE` y `INSERT … VALUES (&1, &2, 'jpg', &3, &4, SHA2(&2, 256))`. Los bytes y su huella salen del mismo valor (GV-168). La tapa vieja se va solo si la nueva entra. Un libro que ya no declara tapa pierde su fila: una tapa quitada no sigue publicándose.
 - CUÁNDO: al cerrar FMetadatosLibro, si se guardó. El formulario levanta `m_TapaWeb.Pendiente` y FMain, al volver de `ShowModal`, llama a `AtenderPendiente`: la lanzadora escribe en la terminal de FMain, que el formulario modal tapa. La marca vive en el módulo porque la instancia del formulario no sobrevive a su cierre (RC-GM-13). Es el camino de los libros del fondo, que nunca generan salidas. Además, después de generar el HTML del libro, si salió: cubre una tapa reemplazada en `media/` sin volver a guardar el formulario.
 - El mensaje aparece solo si falla; en el éxito lo dice la terminal, y otro mensaje después de «Metadatos guardados» sería ruido.
-- `url_compra` se carga en el formulario de metadatos del libro, debajo de las descargas.
+- Las cuatro tiendas se cargan en FMetadatosLibro, debajo de las descargas. `m_VentaLibro` las carga, las valida con la regla del CHECK y las reescribe después del `Update` del libro, en una transacción (`Begin`, `DELETE`, los `INSERT`, `Commit`; GV-173). Vuelve a leer el `id_libro`, que un libro recién creado no tenía.
 
 MEDIDO (contenedor; MySQL 8.0.46, ImageMagick 6.9.12-98, perfiles de TeX Live): siete tapas de prueba —sRGB grande y chica, CMYK con y sin perfil, Adobe RGB, grises, PNG con transparencia— dan los mismos bytes en dos corridas, los CMYK salen en sRGB y la transparencia en blanco. `m_TapaWeb` en un banco con MySQL: sin guardado no hace nada; con guardado convierte y guarda (el `sha256` de la fila es el del archivo); una segunda vez reemplaza sin duplicar; una tapa que falta en `media/` avisa y deja la anterior; un libro sin tapa queda sin fila. El proyecto completo compila con los cambios (gbc3 3.19, con gb.db y Qt5 en lugar de gb.db2 y Qt6). En Linux Mint (Alberto, 04/11/2026, Gambas 3.22): al guardar y cerrar el formulario, la terminal mostró la conversión, y la fila de `libro_tapa_web` tiene el mismo `sha256` que `tmp/tapa-web.jpg` (GV-168). Es también el mismo que la prueba del 02/11 sobre esa tapa: la receta da los mismos bytes en días distintos, y el aplanado sobre blanco no cambia una tapa sin transparencia.
 
@@ -4907,9 +4945,15 @@ EL LOTE DE 1.19.0 (SC-22)
 
 `m_ConexionBD.ObtenerEsquemaEsperado`: `libros_md` pasa de 79 a 80 y entra `libro_tapa_web` con 6. Las VIEW no se cuentan: `ValidarEsquemaBD` solo mira las tablas que lista.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13
+LA 1.20.0 Y LA 1.21.0
 
-**PENDIENTE:** Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3). Las VIEW entran en las instalaciones nuevas con el baseline 2.0.0, que se genera junto con el refactor de bibtex (SC-22, PUNTO DE RUPTURA); para entonces, `generar-baseline.sh` tiene que dejar de enumerar solo `BASE TABLE`.
+- 1.20.0: sin lote; solo cambia la VIEW.
+- 1.21.0: `libros_md` pasa de 80 a 86 y entra `libro_venta` con 3; va con el `.deb` que trae el formulario nuevo. `crear-cuenta-gbweb.sh` suma el permiso sobre `v_web_libro_venta`.
+- MEDIDO (contenedor, MySQL 8.0.46): la primera corrida de la 1.21.0 aplica todo (17 URL de compra pasan a `mercadolibre`, las seis columnas al final, las VIEW DEFINER, el permiso de la cuenta intacto); la segunda no tiene nada que cambiar; la vuelta atrás que imprime (DROP de lo nuevo y restauración, GV-169) deja la base en 80 columnas y la VIEW en 22. Aplicada por Alberto en Linux Mint el 04/11/2026, con el portal reconstruido.
+
+**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13,apoya:GV-173,apoya:GV-176,apoya:GV-177,vinculo:SC-83
+
+**PENDIENTE:** Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3). Las VIEW entran en las instalaciones nuevas con el baseline 2.0.0, que se genera junto con el refactor de bibtex (SC-22, PUNTO DE RUPTURA); para entonces, `generar-baseline.sh` tiene que dejar de enumerar solo `BASE TABLE`. Las hojas DocBook y EPUB del libro todavía no usan las traducciones nuevas del resumen y de las palabras clave. `url_compra` se retira en el baseline 2.0.0.
 
 ### SC-82 — La identidad de un proyecto es el nombre de su .md, no la carpeta que lo contiene
 
@@ -4927,6 +4971,128 @@ CONSECUENCIAS
 Es la misma idea que SC-16: el .md viaja solo.
 
 **Relaciones:** vinculo:SC-16,vinculo:SC-81
+
+### SC-83 — gbWeb: cómo se construye el sitio (sitio.xml, portal.xsl, construir_sitio.sh, docs/) y el esquema gbweb
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbWeb / Saxon-HE 12.5 / Pandoc 3.1.3 / MySQL 8.0.46 / contenedor Ubuntu 24.04 y Linux Mint · **Verificado:** 2026-11
+
+Decisiones de Alberto, 02 al 04/11/2026. Lo que muestra el portal está en SC-80 y lo que lee de gbpublisher, en SC-81. Acá, cómo se arma y por qué sale siempre igual.
+
+DETERMINISMO
+
+Los mismos datos dan los mismos bytes: plantillas cerradas, con una lista finita de variables de diseño; orden explícito y con desempate, nunca el de la base (SC-81); sin fecha de generación en la salida; la tapa llega ya convertida y gbWeb copia sus bytes (SC-81). Es el criterio de exportación de SC-50: el diff de git muestra solo lo que cambió. `construir_sitio.sh` termina imprimiendo la huella de `docs/`, y dos construcciones seguidas dan la misma.
+
+- Las fuentes WOFF2 no se generan en cada construcción: son archivos fijos de `.hidden/sitio/fuentes/`, con su licencia OFL (GV-180).
+- Las imágenes que gbWeb convierte llevan `-strip` y `-define png:exclude-chunks=date,time`: un PNG guarda la fecha si no.
+
+CÓMO SE ARMA
+
+- Motor: XSLT con Saxon. gbWeb (Gambas, `m_Sitio`) vuelca las VIEW del contrato y sus datos propios en `tmp/sitio.xml` y las tapas en `tmp/tapas/`; una sola corrida de `portal.xsl` genera el sitio entero, una página por `xsl:result-document`, en los tres idiomas. Gambas lleva los datos y la interfaz; XSLT, la presentación. `sitio.xml` queda como archivo intermedio que se puede comparar.
+- Páginas: inicio, catálogo (`catalogo/`, `catalogo/2/`…), la ficha de cada libro (`libro/<id>/`) y las páginas escritas (`<clave>/`), con el español en la raíz y el inglés y el portugués en `en/` y `pt/`. Sin redirección por JavaScript.
+- URL de la ficha: `id_libro`, lo único que gbpublisher garantiza estable. En la revista, volumen y número.
+- Se armó primero un esqueleto de punta a punta (las VIEW, `sitio.xml`, una XSLT, portada y fichas, dos construcciones con la misma huella) y los formularios crecieron encima.
+
+LA CARPETA DEL PORTAL
+
+    <CÓDIGO>.md   el anotador (SC-80); no interviene en la construcción
+    media/        los originales: logo-portal.<ext> e imagen-NN.<ext>
+    paginas/      las páginas escritas, <clave>.<idioma>.md
+    tmp/          sitio.xml, tapas/, paginas/; fuera de git
+    docs/         el sitio, ENTERO de gbWeb: cada construcción lo reemplaza
+                  y lo puesto ahí a mano se pierde
+
+- EL LOGO: se copia a `media/logo-portal.<ext>`, borrando antes los de otra extensión. LAS IMÁGENES, como en gbpublisher: una que ya está en `media/` se activa sin copiar; una idéntica a otra de `media/` (comparados los bytes) no se duplica; las demás se copian como `imagen-NN`. La activa la guarda la base (`gbweb` 1.1.0).
+
+sitio.xml
+
+    <sitio codigo tipo logo imagen>
+      <datos> nombre, url-base, direccion, correo, ano-inicio, licencia,
+              <red tipo>url</red>…
+      <libro id estado acceso idioma ano mes>
+        titulo, subtitulo (planos: el corte \\ es un espacio, SC-28),
+        isbn-impreso, isbn-electronico, paginas, url-libro, url-pdf, url-epub,
+        <idioma-nombre es en/>, <resumen idioma>…, <palabras-clave idioma>…,
+        <licencia url>, <coleccion id numero>, <persona id rol orcid>…,
+        <venta tienda>url</venta>…, <tapa archivo ancho alto sha256/>
+
+Un dato que falta no aparece: la XSLT decide con eso. El resumen y las palabras clave del idioma principal van primero.
+
+construir_sitio.sh
+
+Corre por la lanzadora (SC-53) y no toca la base (SC-13): todo lo que necesita lo dejó Gambas en `tmp/`.
+
+1. Comprueba `sitio.xml` y cada tapa: la forma del nombre (`<id>-<sha8>.jpg`) y su sha256 contra el del XML.
+2. El logo y la imagen activa, publicados con su huella; sin imagen, la de por defecto, con un aviso.
+3. Avisa si faltan el nombre o la URL del sitio.
+4. Las páginas escritas: crea las que faltan con «Acá va el texto» (nunca pisa) y las pasa con Pandoc a un fragmento XML (GV-181), envuelto en un `<div>` y validado con `xmllint`. Un nombre fuera de la matriz se avisa. Las imágenes dentro de una página escrita todavía no se publican: se avisa.
+5. Saxon, con los parámetros del logo, la imagen y sus medidas, y la hoja de estilo, en `tmp/docs-nuevo/`.
+6. Copia las tapas, la hoja de estilo, las fuentes con su licencia, las banderas y los íconos PNG.
+7. Reemplaza `docs/` (pasando la anterior por `tmp/docs-anterior`) e imprime la huella.
+
+NOMBRES CON HUELLA
+
+Lo que cambia de contenido cambia de nombre: `tapas/<id>-<sha8>.jpg`, `media/logo-portal-<sha8>.<ext>`, `media/destacada-<sha8>.<ext>`, `estilo-<sha8>.css` (los primeros 8 del sha256). Así ningún navegador ni GitHub Pages sirve de su caché una versión vieja. Se agregó para la hoja de estilo cuando un CSS viejo siguió publicado después de corregido.
+
+LOS ENLACES
+
+- Internos: relativos y con `index.html` explícito, para que el sitio funcione abierto desde el disco, en el visor de gbWeb (GV-179).
+- `canonical`, `og:` y `hreflang`: absolutos, con la URL del sitio (`url_base`). Sin ella no van, y tampoco los botones de compartir.
+- Los de compartir, con `encode-for-uri` sobre la URL y el título de la página.
+
+EL ESQUEMA gbweb
+
+Los scripts del repositorio de gbWeb siguen las reglas de SC-22 (cadena en SC-22):
+
+- 1.0.0: `portal` y `portal_libro` (SC-80).
+- 1.1.0: `portal.logo` y `portal.imagen_destacada`, solo el nombre, sin ruta (SC-82), con CHECK de su forma: `logo-portal.(svg|png|jpg)`, `imagen-NN.(jpg|png)`.
+- 1.2.0: `portal.nombre`, `url_base`, `direccion`, `correo`, `ano_inicio` y `licencia` (NULL si no hay dato; CHECK de la forma: la URL con `/` final, el correo nombre@dominio.algo, el año entre 1000 y 2999), y `portal_red` (`id_portal`, `red` ENUM de las 9 redes del pie, `url` https con CHECK; clave `id_portal`, `red`). Se editan en FDatosPortal (SC-84).
+
+MEDIDO (contenedor; Saxon-HE 12.5, Pandoc 3.1.3, MySQL 8.0.46): la misma huella en dos construcciones seguidas, también después de reescribir `sitio.xml`; 1758 enlaces locales sin uno roto en el portal de prueba (18 libros, tres idiomas); los sugeridos de SC-80 con un `sitio.xml` armado para cada escalón.
+
+**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-84,vinculo:SC-50,vinculo:SC-53,vinculo:SC-13,vinculo:SC-22,vinculo:SC-28,apoya:GV-179,apoya:GV-180,apoya:GV-181,apoya:GV-182,apoya:GV-183,apoya:GV-186
+
+**PENDIENTE:** Las imágenes dentro de las páginas escritas. El índice de búsqueda y `sitemap.xml` (SC-80).
+
+### SC-84 — gbWeb: la aplicación (ventana, salida, entorno) y el despliegue en GitHub
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbWeb / Gambas 3.22 (gb.db2, gb.qt6) / Linux Mint; Gambas 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Decisiones de Alberto, 04/11/2026. gbWeb sigue el modelo de gbpublisher siempre que puede: quien usa una sabe usar la otra.
+
+LA VENTANA (FMain)
+
+- A la izquierda, la grilla de libros disponibles con su buscador y los botones para asociar y quitar (SC-80), y debajo la terminal; a la derecha, el visor (WebView) con el sitio construido.
+- El reparto entre las dos mitades es FIJO, como en gbpublisher: `spPrincipal_Resize` vuelve a poner el `Layout` cada vez, porque el Splitter dispara `Resize` mientras se arrastra el separador (GV-171).
+- Menú «Acciones»: abrir portal, «Datos del portal…», desplegar, salir. Botones: logo, imagen, construir. Mientras corre un script, la lanzadora bloquea los que lanzarían otro.
+- Los mensajes de la lanzadora son neutros («terminó correctamente»): no hablan de una acción en particular.
+
+SALIR
+
+Un solo camino, por el menú o por la X (`Form_Close` frena el evento y llama a `Salir`): pregunta (y avisa si hay un proceso en la terminal), mata el bash de la terminal, cierra la conexión y termina con `Quit`. Con `Me.Close` solo, la ventana se cerraba y el programa seguía vivo (GV-174). Es lo que hace `m_InicioCierre.CerrarTodoMySQL` en gbpublisher; la diferencia, deliberada, es que en gbWeb la X sale y no solo avisa.
+
+EL ENTORNO
+
+- Las 17 líneas `StartupEnvironment` de gbpublisher, en el `.project`: modo claro (`GB_GUI_DARK_THEME=0`), estilo Fusion, X11. Llegan al proceso antes de que se carguen los componentes (GV-172).
+- Los recursos (`engine/`, `xslt/`, `css/`, `sitio/`) se toman de `.hidden/` del proyecto y, si no están, de `/usr/share/gbweb`: desde el IDE, los de la versión en ejecución (criterio de SC-11).
+- Las preferencias, en `~/.gbweb/gbweb.conf` (`New Settings`), como gbpublisher; la credencial de la base, en `~/.gbweb/conexion.conf` (SC-81).
+
+LOS DATOS DEL PORTAL (FDatosPortal)
+
+Desde «Datos del portal…»: nombre, URL del sitio, dirección, correo, año de inicio, licencia de los textos y un perfil por red. Las filas de las redes se arman en el código, una por red del ENUM, y el formulario ajusta su alto a ellas al mostrarse. `m_DatosPortal` valida con las mismas reglas que los CHECK (la URL termina en `/`, que se agrega si falta; el año, cuatro cifras; los perfiles, `https://` sin espacios) y guarda todo en una transacción. Es también el canal de retorno del formulario (RC-GM-13).
+
+DESPLEGAR
+
+- `desplegar_portal.sh`, por la lanzadora: comprueba la clave SSH de GitHub; crea el repositorio con la rama `main` si no lo hay; pone `/tmp/` en `.gitignore`; si falta el remoto, pone `git@github.com:<usuario>/<código>.git`; `git add -A`, commit si hay cambios y push. Que lo corra un script y no comandos tipeados en la terminal es lo que permite saber si salió bien (SC-53).
+- El repositorio se llama como el portal (SC-80) y tiene que existir en GitHub: el script no lo crea, y si no está, el push falla con ese mensaje.
+- Si el remoto usa HTTPS, gbWeb ofrece pasarlo a SSH antes de pedir nada (`VerificarProtocoloRemoto` de gbpublisher). Para comparar el remoto se lee `git config --get remote.origin.url` (GV-178).
+- FCommits pide el usuario de GitHub (propone el último, guardado en `gbweb.conf`, sección `[GitHub]`; se controla con la forma de los usuarios de GitHub porque va en la URL) y el mensaje del commit. Los dos vuelven por `m_Desplegar`; la decisión, por `ShowModal` (RC-GM-13).
+- Se suben el `.md`, `media/` y `docs/`; `tmp/` no. Durante el desarrollo el repositorio es público; después, privado, con Netlify publicando `docs/`.
+
+PROBADO por Alberto en Linux Mint (04/11/2026, Gambas 3.22, gb.db2 y Qt6): el despliegue de `L-IMAGO`, y la salida por el menú y por la X, que termina el programa.
+
+**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-83,vinculo:SC-53,vinculo:SC-11,vinculo:RC-GM-13,apoya:GV-171,apoya:GV-172,apoya:GV-174,apoya:GV-178,vinculo:GV-142
+
+**PENDIENTE:** El visor no muestra el portal hasta hacer clic en su borde. Mini-test propuesto: `wvPortal.Url = "about:blank"` al final de `Form_Open` (sospecha de Alberto: el momento en que se asigna la URL). Junto con eso, el `#` en la ruta (GV-142).
 
 ---
 
@@ -5515,6 +5681,13 @@ Esto es un agregado a RC-GM-17: la regla dice separar en `If` anidados, y el ref
     Loop
 
 El `While` con `And` común revienta con Out of bounds cuando el array se vacía, porque evalúa `a[a.Max]` con `Max = -1`. Verificado, y encontrado vivo en `ProcesarArchivoFootnote`.
+
+TAMPOCO ENTRE PARÉNTESIS, AUNQUE ESTÉN DENTRO DE UN If (medido con gbc3 3.19, 04/11/2026):
+
+    If (Left(s, 8) <> "https://" And If Left(s, 7) <> "http://") Or If InStr(s, " ") > 0 Then
+                                 ^ error: Missing ')'
+
+`And If` y `Or If` son parte de la sintaxis del `If`, no operadores de una expresión. Una condición compuesta se arma antes en una variable Boolean (`m_VentaLibro.Validar`).
 
 ### GV-03 — UTF-8 y cadenas
 
@@ -9047,6 +9220,238 @@ Acá el que corta es `head` leyendo de un archivo, que no recibe SIGPIPE. Convie
 EN EL PROYECTO: `crear-cuenta-gbweb.sh` (SC-81). Vale para cualquier caño con `head` dentro de un script con `set -euo pipefail`, que es el encabezado de los scripts de esquema (SC-22).
 
 **Relaciones:** apoya:SC-81,vinculo:SC-22
+
+### GV-171 — Splitter (gb.gui.base): Resize se dispara mientras se arrastra el separador
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.gui.base, código fuente de Split/Splitter.class (rama principal) / Linux Mint · **Verificado:** 2026-11
+
+En el fuente de `Split/Splitter.class` (gb.gui.base), el arrastre del separador pasa por `Resize_MouseMove`, que termina con `Raise Resize`. El evento no espera a que se suelte el mouse.
+
+EN EL PROYECTO: un handler de `Resize` que vuelve a asignar el `Layout` (`[1, 2]`) deja el reparto fijo: el separador se mueve con el mouse y vuelve a su lugar. Es como gbpublisher mantiene fija la proporción de su ventana, y lo mismo hace gbWeb (`spPrincipal_Resize`, SC-84). El handler no sobra: sacarlo devuelve el separador al usuario.
+
+**Relaciones:** apoya:SC-84
+
+### GV-172 — StartupEnvironment del .project: llega al proceso antes de que se carguen los componentes
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 (gbc3, gba3) / contenedor Ubuntu 24.04; código fuente de gbc_compile.c, gba.c y gbx_project.c (rama principal) · **Verificado:** 2026-11
+
+Cada línea `StartupEnvironment=VARIABLE=valor` del `.project` termina en el entorno del programa ANTES de cargar los componentes:
+
+- gbc la escribe en el archivo `.environment` del proyecto;
+- gba mete `.environment` en el ejecutable `.gambas`;
+- gbx hace `putenv` de cada línea antes de cargar los componentes.
+
+Por eso sirve para lo que Qt lee al arrancar (`QT_STYLE_OVERRIDE`, `QT_QPA_PLATFORM`) y para `GB_GUI` o `GB_GUI_DARK_THEME`, que deciden qué componente gráfico se carga y cómo. Una variable puesta desde el código, en cambio, llega tarde.
+
+LEÍDO en el fuente (rama principal: `gbc_compile.c`, `gba.c`, `gbx_project.c`) y MEDIDO con gbc3 y gba3 3.19: el `.environment` se genera y viaja en el ejecutable.
+
+EN EL PROYECTO: gbWeb lleva las 17 líneas de gbpublisher (modo claro, Fusion, X11), así las dos aplicaciones se ven igual (SC-84).
+
+**Relaciones:** apoya:SC-84
+
+### GV-173 — gb.db2: Commit() sin Begin() deja el contador de transacciones en negativo; Begin llega siempre al driver
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.db2 / código fuente de Connection.class y _DatabaseDriver.class (rama principal); MySQL 8.0.46 · **Verificado:** 2026-11
+
+En `Connection.class` de gb.db2, `Begin` incrementa y `Commit`/`Rollback` decrementan un contador privado (`$iTrans`). Cada uno llama al driver si el contador está en 0 o si el driver no declara `NoTransactionNest`, que por omisión es False (`_DatabaseDriver.class`). Con MySQL, entonces:
+
+- Un `Commit()` sin `Begin()` deja el contador en negativo y no hace daño: la conexión está en autocommit y cada sentencia suelta ya quedó escrita.
+- Un `Begin()` posterior llega igual al driver y abre la transacción, aunque el contador esté en negativo.
+
+REGLA DE USO: una sentencia suelta no necesita `Commit`. Varias que van juntas, entre `Begin` y `Commit`, con `Rollback` si una falla; conviene guardar el texto del error antes del `Rollback`, que pasa por el driver.
+
+EN EL PROYECTO: `m_DatosPortal.Guardar` (gbWeb) y `m_VentaLibro.Guardar` (gbpublisher) usan el par; el `Commit` suelto que sigue a `resultado.Update` en `m_Metadatos` es de antes y no molesta.
+
+**Relaciones:** apoya:SC-81,apoya:SC-84
+
+### GV-174 — Me.Close no termina el programa mientras vive el bash de un TerminalView
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.form.terminal / gb.qt6 / Linux Mint · **Verificado:** 2026-11
+
+Cerrar la ventana principal con `Me.Close` cierra la ventana, pero si un TerminalView tiene su bash corriendo, el programa sigue vivo y sin ventana: mientras un proceso hijo vive, gbx no termina.
+
+La salida tiene que matar el bash, cerrar la conexión y llamar a `Quit`. Es lo que hace `m_InicioCierre.CerrarTodoMySQL` en gbpublisher (`DetenerProcesoBash`).
+
+OBSERVADO por Alberto en Linux Mint con gbWeb, y CONFIRMADO con la salida corregida (04/11/2026): por el menú y por la X, el programa termina.
+
+**Relaciones:** apoya:SC-84
+
+### GV-175 — MySQL 8.0.46: IFNULL sobre una columna ascii_bin con un literal utf8mb4 no ASCII da el error 1267
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+    SELECT IFNULL(codigo, '—') FROM gbweb.portal;
+    ERROR 1267: Illegal mix of collations (ascii_bin,IMPLICIT) and
+                (utf8mb4_0900_ai_ci,COERCIBLE) for operation 'ifnull'
+
+`codigo` es `ascii` con `ascii_bin`; la raya del literal no es ASCII. Se resuelve convirtiendo la columna: `IFNULL(CONVERT(codigo USING utf8mb4), '—')`.
+
+Es pariente del detalle de SC-22 sobre `COLLATE` en los `CAST` de los informes.
+
+**Relaciones:** vinculo:SC-22,vinculo:SC-80
+
+### GV-176 — MySQL 8.0.46: ORDER BY sobre un ENUM ordena por la posición en la lista, también a través de una VIEW
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Una columna ENUM se ordena por el índice de cada valor en la definición, no por el texto. Una VIEW que la expone conserva el tipo: `information_schema.COLUMNS` da `enum` para `v_web_libro_venta.tienda`, y `ORDER BY tienda` sigue el orden de la definición.
+
+EN EL PROYECTO: el orden de los botones de las tiendas es el del ENUM de `libro_venta.tienda` (SC-81): para cambiarlo se cambia la definición, no el código de gbWeb.
+
+**Relaciones:** apoya:SC-81
+
+### GV-177 — MySQL 8.0.46: CREATE OR REPLACE VIEW conserva los permisos que ya tenía la VIEW
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Reemplazar una VIEW con `CREATE OR REPLACE VIEW` (con columnas nuevas) no toca los `GRANT` que había sobre ella: `SHOW GRANTS` da lo mismo antes y después.
+
+MEDIDO con `gbweb_lector` en las actualizaciones 1.20.0 y 1.21.0 de gbpublisher: después de reemplazar `v_web_libro` y `v_web_libro_persona`, la cuenta las sigue leyendo sin correr de nuevo `crear-cuenta-gbweb.sh`. Una VIEW NUEVA, en cambio, no tiene permiso hasta que se da.
+
+**Relaciones:** apoya:SC-81
+
+### GV-178 — git: remote get-url devuelve la URL ya reescrita por url.insteadOf; config --get, la guardada
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** git 2.43.0 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Con una regla `url.<base>.insteadOf` activa, `git remote get-url origin` devuelve la URL YA REESCRITA, no la que está guardada en la configuración del repositorio. `git config --get remote.origin.url` devuelve la guardada.
+
+    git remote get-url origin              /tmp/bare/r.git
+    git config --get remote.origin.url     git@github.com:u/r.git
+
+EN EL PROYECTO: `desplegar_portal.sh` compara el remoto con `git config --get`, para decidir sobre lo que dice el repositorio y no sobre lo que resuelve la máquina (SC-84).
+
+**Relaciones:** apoya:SC-84
+
+### GV-179 — Por file://, un enlace a una carpeta no abre su index.html
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Chromium (Playwright) y WebView de Gambas / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Un sitio estático abierto desde el disco (`file://`) no tiene servidor que resuelva `catalogo/` a `catalogo/index.html`: el enlace a la carpeta no abre su `index.html`.
+
+EN EL PROYECTO: los enlaces internos del portal terminan en `index.html` explícito (`gbw:enlace`), y el sitio se navega igual en el visor de gbWeb, que lo abre desde `docs/`, y publicado (SC-83). La alternativa, un servidor local para el visor, quedó descartada por ahora.
+
+**Relaciones:** apoya:SC-83
+
+### GV-180 — fontTools: guardar una fuente (también como WOFF2) reescribe la fecha de modificación de la tabla head
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** fontTools 4.67.0 / Python 3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Por omisión, fontTools pone la hora actual en `head.modified` al guardar: dos conversiones del mismo TTF a WOFF2 dan archivos distintos.
+
+MEDIDO (fontTools 4.67.0), dos conversiones con un segundo y medio de diferencia:
+
+    TTFont(ttf)                          head.modified distinto, archivos distintos
+    TTFont(ttf, recalcTimestamp=False)   archivos idénticos
+
+EN EL PROYECTO: las WOFF2 del portal son archivos fijos en `.hidden/sitio/fuentes/` y no se regeneran al construir (SC-83). Si alguna vez se generan en la construcción, con `recalcTimestamp=False`.
+
+**Relaciones:** apoya:SC-83
+
+### GV-181 — Pandoc 3.1.3: markdown-raw_html a html5 da un fragmento que, envuelto en un elemento, es XML bien formado
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / xmllint / SaxonJ-HE 12.5 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+    pandoc -f markdown-raw_html -t html5 --shift-heading-level-by=1 pagina.md
+
+- `-raw_html` desactiva el HTML suelto del Markdown: lo que no es Markdown sale escapado, y no puede colarse una etiqueta sin cerrar.
+- `--shift-heading-level-by=1` baja los títulos un nivel: el `#` del archivo sale `<h2>`, porque el `<h1>` de la página es su nombre.
+- La salida es una secuencia de elementos (`<h2 id="t">T</h2>`, `<p>…</p>`); envuelta en un `<div>`, `xmllint --noout` la acepta y Saxon la lee con `doc()`.
+
+EN EL PROYECTO: las páginas escritas del portal (SC-83).
+
+**Relaciones:** apoya:SC-83,vinculo:GV-161
+
+### GV-182 — XSLT 2.0: dentro de un predicado sobre doc(), la / es la raíz de ese documento
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.5 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+En `doc('menu.xml')/menu/tipo[@t = /sitio/@tipo]`, la `/` del predicado no es la raíz del documento de entrada: es la del árbol del nodo de contexto, que dentro del predicado es `menu.xml`. La comparación no encuentra nada y no hay error.
+
+Se resuelve leyendo antes el valor en una variable:
+
+    <xsl:variable name="tipo" select="string(/sitio/@tipo)"/>
+    <xsl:variable name="matriz" select="doc('menu.xml')/menu/tipo[@t = $tipo]"/>
+
+EN EL PROYECTO: `portal.xsl` (SC-83).
+
+**Relaciones:** apoya:SC-83
+
+### GV-183 — XPath 2.0: una ruta como f()/@id devuelve los nodos en orden de documento, no en el de la secuencia
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.5 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Un paso de ruta (`/`) ordena su resultado por orden de documento y quita los repetidos. Si `f()` devuelve libros en un orden propio (6, 4, 7, 3), `f()/@id` da sus id en el orden en que están en el XML (3, 4, 6, 7).
+
+Para conservar el orden de la secuencia: `for $x in f() return string($x/@id)`. `xsl:apply-templates select="$v"` y `xsl:for-each select="$v"`, con una variable, sí procesan en el orden de la secuencia.
+
+MEDIDO con Saxon-HE 12.5 (04/11/2026) al probar los sugeridos (SC-80): con la ruta, los escalones parecían mal ordenados; con `for`, salían bien.
+
+EN EL PROYECTO: `gbw:sugeridos` arma los escalones con la coma (`($e1, $e2, $e3, $e4)`) y la ficha los aplica desde una variable (SC-83).
+
+**Relaciones:** apoya:SC-83,vinculo:SC-80
+
+### GV-184 — Gambas: un arreglo literal de controles se puede usar como Object[]
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+    Dim a As Object[]
+    a = [t1, t2]            ' t1 y t2, TextBox
+    Print Object.Type(a)    ' Object[]
+    a[1].Text = "hola"      ' enlace tardío: escribe en t2
+
+MEDIDO con Gambas 3.19 y gb.qt5 (04/11/2026). Sirve para recorrer controles hermanos en un orden fijo sin repetir el código de cada uno.
+
+EN EL PROYECTO: `m_VentaLibro.Cajas()` (gbpublisher) devuelve las cuatro cajas de las tiendas en el orden del ENUM (SC-81).
+
+**Relaciones:** apoya:SC-81
+
+### GV-185 — Split toma cada carácter del separador como un separador aparte
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+    Split("uno<>dos>tres", "<>")   →   [uno] [] [dos] [tres]   (4 elementos)
+
+El segundo argumento no es una cadena separadora: es un conjunto de caracteres, y cada uno corta. Entre `<` y `>` queda un elemento vacío.
+
+Para cortar por una marca de varios caracteres, como el corte de título `\\` (SC-28), se recorre el texto con `InStr` y `String.Mid` (`m_Texto.TituloPlano` en gbWeb, como `m_CorteTitulo` en gbpublisher).
+
+MEDIDO con Gambas 3.19 (04/11/2026).
+
+**Relaciones:** vinculo:SC-28
+
+### GV-186 — bash: read sobre una entrada sin salto de línea final devuelve 1, aunque asignó las variables
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** bash 5 / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+    printf 'a b' > x.txt
+    read A B < x.txt      # código 1; A=a, B=b
+
+`read` devuelve 1 cuando llega al fin de la entrada sin encontrar el salto de línea, pero asigna lo que leyó. Con `set -e`, o con `read … || morir`, el script se corta en un caso que salió bien.
+
+La salida de `identify -format '%w %h'` no termina en salto de línea. Se lee en dos pasos (primero a una variable con `$( … )`, después se separa), o se agrega el salto en el formato.
+
+Es pariente de GV-162 (`read` con `IFS` de tabulador).
+
+MEDIDO con bash 5 (04/11/2026). EN EL PROYECTO: `construir_sitio.sh` lee las medidas de la imagen destacada (SC-83).
+
+**Relaciones:** apoya:SC-83,vinculo:GV-162
+
+### GV-187 — IDE de Gambas: un archivo de .hidden/ reemplazado desde afuera con el IDE abierto volvió a la versión anterior
+
+**Estado:** hipotesis · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / IDE / Linux Mint · **Verificado:** 2026-11
+
+OBSERVADO por Alberto (04/11/2026, Gambas 3.22, Linux Mint): con gbWeb abierto en el IDE, se copió desde afuera un `.hidden/css/estilo.css` nuevo y se hizo «Recargar» (RC-GM-05). En el disco quedó la versión anterior (14.281 bytes en lugar de 15.565), y el sitio salió con la hoja vieja.
+
+SOSPECHA: el archivo estaba abierto en un editor del IDE, y el IDE grabó encima su copia en memoria.
+
+MINI-TEST: abrir un `.css` de `.hidden/` en el IDE; reemplazarlo desde afuera; Recargar, Compilar y cerrar el IDE; comparar el sha256 con el del archivo copiado. Repetir con el archivo cerrado en el IDE.
+
+Si se confirma, RC-GM-05 suma: aplicar las entregas con el IDE cerrado. Mientras tanto, es lo que se hace.
+
+**Relaciones:** vinculo:RC-GM-05
+
+**PENDIENTE:** Correr el mini-test y pasar a vigente o descartar.
 
 ---
 

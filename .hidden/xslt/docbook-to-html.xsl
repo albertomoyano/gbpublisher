@@ -833,27 +833,7 @@ RC APLICADAS:
              DESPLAZA NO HAY TOPE DE CAJA (EXCEPCIÓN 2 DE SC-31).
              EL TÍTULO DEL CANÓNICO QUEDA COMO NOMBRE ACCESIBLE.
              role="doc-dedication": DPUB-ARIA 1.1, SUPERCLASE section. -->
-        <xsl:for-each select="$book/db:dedication | $book/dedication">
-          <xsl:variable name="dedTitulo"
-                        select="normalize-space((db:info/db:title | info/title)[1])"/>
-          <section class="dedicatoria" role="doc-dedication">
-            <xsl:if test="$dedTitulo != ''">
-              <xsl:attribute name="aria-label" select="$dedTitulo"/>
-            </xsl:if>
-            <div class="epigrafe">
-              <xsl:for-each select="*[not(self::db:info or self::info)]">
-                <xsl:choose>
-                  <xsl:when test="self::db:para or self::para">
-                    <p class="epigrafe-texto"><xsl:apply-templates/></p>
-                  </xsl:when>
-                  <xsl:otherwise>
-                    <xsl:apply-templates select="."/>
-                  </xsl:otherwise>
-                </xsl:choose>
-              </xsl:for-each>
-            </div>
-          </section>
-        </xsl:for-each>
+        <xsl:call-template name="emitir-dedicatoria"/>
 
         <section class="indice-capitulos">
 
@@ -915,6 +895,35 @@ RC APLICADAS:
 
       </div>
     </main>
+  </xsl:template>
+
+  <!-- ==========================================================
+       DEDICATORIA (SC-31)
+       ==========================================================
+       VA EN LA PÁGINA DE ENTRADA, ANTES DEL ÍNDICE EN LA SALIDA
+       AUTÓNOMA Y DESPUÉS DE LOS CRÉDITOS EN LA INTEGRADA. -->
+  <xsl:template name="emitir-dedicatoria">
+        <xsl:for-each select="$book/db:dedication | $book/dedication">
+          <xsl:variable name="dedTitulo"
+                        select="normalize-space((db:info/db:title | info/title)[1])"/>
+          <section class="dedicatoria" role="doc-dedication">
+            <xsl:if test="$dedTitulo != ''">
+              <xsl:attribute name="aria-label" select="$dedTitulo"/>
+            </xsl:if>
+            <div class="epigrafe">
+              <xsl:for-each select="*[not(self::db:info or self::info)]">
+                <xsl:choose>
+                  <xsl:when test="self::db:para or self::para">
+                    <p class="epigrafe-texto"><xsl:apply-templates/></p>
+                  </xsl:when>
+                  <xsl:otherwise>
+                    <xsl:apply-templates select="."/>
+                  </xsl:otherwise>
+                </xsl:choose>
+              </xsl:for-each>
+            </div>
+          </section>
+        </xsl:for-each>
   </xsl:template>
 
   <!-- ==========================================================
@@ -1227,6 +1236,25 @@ RC APLICADAS:
         </xsl:call-template>
       </xsl:if>
 
+      <!-- BOTÓN "DESCARGAR PDF" DEL CAPÍTULO (SI HAY URL) -->
+      <xsl:call-template name="emitir-boton-pdf-capitulo">
+        <xsl:with-param name="capInfo" select="$capInfo"/>
+      </xsl:call-template>
+
+      <!-- WIDGET "CÓMO CITAR" (FASE 5) -->
+      <xsl:call-template name="emitir-widget-citar"/>
+
+    </aside>
+  </xsl:template>
+
+  <!-- ==========================================================
+       BOTÓN «DESCARGAR PDF» DEL CAPÍTULO
+       ==========================================================
+       EN LA SALIDA AUTÓNOMA VA EN LA COLUMNA IZQUIERDA; EN LA
+       INTEGRADA, EN LA CABEZA DEL TEXTO. -->
+  <xsl:template name="emitir-boton-pdf-capitulo">
+    <xsl:param name="capInfo"/>
+
       <!-- BOTÓN "DESCARGAR PDF" DEL CAPÍTULO.
            Lee la URL de descarga del PDF del capítulo desde el canónico
            (bibliomisc role="url-descarga-pdf-capitulo"), que provendrá de
@@ -1242,11 +1270,6 @@ RC APLICADAS:
           <xsl:text>Descargar PDF</xsl:text>
         </a>
       </xsl:if>
-
-      <!-- WIDGET "CÓMO CITAR" (FASE 5) -->
-      <xsl:call-template name="emitir-widget-citar"/>
-
-    </aside>
   </xsl:template>
 
   <!-- ==========================================================
@@ -1262,6 +1285,33 @@ RC APLICADAS:
     <xsl:param name="capTitulo"/>
 
     <main class="col-center">
+
+      <xsl:call-template name="emitir-cabeza-capitulo">
+        <xsl:with-param name="capitulo" select="$capitulo"/>
+        <xsl:with-param name="capInfo" select="$capInfo"/>
+        <xsl:with-param name="capTitulo" select="$capTitulo"/>
+      </xsl:call-template>
+
+      <div class="article-body">
+        <xsl:call-template name="emitir-cuerpo-capitulo">
+          <xsl:with-param name="capitulo" select="$capitulo"/>
+          <xsl:with-param name="capInfo" select="$capInfo"/>
+        </xsl:call-template>
+      </div>
+    </main>
+  </xsl:template>
+
+  <!-- ==========================================================
+       CABEZA DEL CAPÍTULO: PARTE, TÍTULO, SUBTÍTULO Y AUTORÍA
+       ==========================================================
+       LA COMPARTEN LA SALIDA AUTÓNOMA Y LA INTEGRADA AL PORTAL
+       (docbook-to-html-portal.xsl), QUE DEBAJO SUMA «CÓMO CITAR» Y EL
+       PDF DEL CAPÍTULO. -->
+  <xsl:template name="emitir-cabeza-capitulo">
+    <xsl:param name="capitulo"/>
+    <xsl:param name="capInfo"/>
+    <xsl:param name="capTitulo"/>
+
 
       <!-- BARRA SUPERIOR: PARTE ESTRUCTURAL (Preliminares / Cuerpo
            principal / Material complementario), derivada del prefijo
@@ -1306,7 +1356,17 @@ RC APLICADAS:
         </div>
       </xsl:if>
 
-      <div class="article-body">
+  </xsl:template>
+
+  <!-- ==========================================================
+       CUERPO DEL CAPÍTULO: RESÚMENES Y CONTENIDO
+       ==========================================================
+       EL CONTENIDO DE <div class="article-body">, COMPARTIDO CON LA
+       SALIDA INTEGRADA AL PORTAL. -->
+  <xsl:template name="emitir-cuerpo-capitulo">
+    <xsl:param name="capitulo"/>
+    <xsl:param name="capInfo"/>
+
 
         <!-- ==========================================================
              RESUMEN(ES) DEL CAPÍTULO (desplegable, patrón del index)
@@ -1355,8 +1415,6 @@ RC APLICADAS:
         <xsl:apply-templates select="$capitulo/*[not(local-name() = 'info')
                                                  and not(local-name() = 'bibliography')]"/>
 
-      </div>
-    </main>
   </xsl:template>
 
   <!-- ==========================================================
