@@ -1285,7 +1285,7 @@ LÍMITE ACEPTADO
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT); 1.18.0 (siglas, SC-78); 1.19.0 (contrato con gbWeb, SC-81); 1.20.0 (la licencia en el contrato con gbWeb, SC-81); 1.21.0 (el libro en tres idiomas, `libro_venta` y el contrato con gbWeb, SC-81). El refactor de bibtex tomará el número que le corresponda.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT); 1.18.0 (siglas, SC-78); 1.19.0 (contrato con gbWeb, SC-81); 1.20.0 (la licencia en el contrato con gbWeb, SC-81); 1.21.0 (el libro en tres idiomas, `libro_venta` y el contrato con gbWeb, SC-81); 1.22.0 (el destino del HTML del libro, SC-85). El refactor de bibtex tomará el número que le corresponda.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1321,7 +1321,7 @@ EL ESQUEMA PROPIO DE gbWeb
 
 El esquema `gbweb` (SC-80) sigue las mismas reglas, con su cadena en el repositorio de gbWeb y su propia `gbweb.esquema_version`: 1.0.0 (portales y asociación, SC-80), 1.1.0 (logo e imagen destacada, SC-83), 1.2.0 (datos del portal y perfiles en las redes, SC-83).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -1467,6 +1467,7 @@ MATRIZ
     portada      \gbPortada (impar)           titlepage         omitida
     creditos     \gbCreditos (par)            copyright-page    omitida
 
+- HTML integrado al portal (SC-85): la portadilla se omite; la portada es `index.html`, adonde lleva «Leer en línea» desde el portal, y los créditos son `creditos.html`, con las mismas páginas que el EPUB (portada mínima si el libro no la declara). Son pasos de la lectura y no entran en el menú. El HTML autónomo sigue la matriz.
 - Las blancas las ponen `\gbclearrecto` y `\gbclearverso`; nunca `\newpage\hbox{}` a mano.
 - Macros nuevas: el contrato sube a la versión 2. El aspecto va en la estética.
 - El sumario se emite DESPUÉS de la última pieza del espacio reservado `fm-00` a `fm-09`: las primeras y las piezas sueltas, como la dedicatoria (SC-45). Antes de esta regla `AbrirZona(ZONA_FRONT)` lo escribía al abrir la zona, y una primera declarada quedaba detrás de él.
@@ -1525,7 +1526,7 @@ ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56,vinculo:SC-76
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56,vinculo:SC-76,vinculo:SC-85
 
 **PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
 
@@ -3085,7 +3086,7 @@ Todo comportamiento comprobado de XML, XPath, XSLT, Saxon, xmllint, jing, Schema
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 / gb.form.terminal / bash / Linux Mint; generar_canonicos_capitulos.sh probado en contenedor Ubuntu 24.04 con Pandoc 3.1.3, SaxonJ-HE 12.5 y jing, y el proyecto compilado con gbc3 3.19 · **Verificado:** 2026-10
 
-DECISIÓN CERRADA. Todo script de `engine/` que Gambas lanza en la terminal del proyecto pasa por `m_GenerarSalidasLibro.EjecutarScriptSalida`. Es el contrato del criterio 1 de SC-13: Gambas recibe una decisión, el código de salida, y no parsea nada.
+DECISIÓN CERRADA. Todo script de `engine/` que Gambas lanza en la terminal del proyecto pasa por `m_Lanzadora.EjecutarScript`. Es el contrato del criterio 1 de SC-13: Gambas recibe una decisión, el código de salida, y no parsea nada.
 
 POR QUÉ NO Exec
 
@@ -3111,13 +3112,19 @@ QUÉ VE QUIEN OPERA
 Mientras espera, la lanzadora muestra que está trabajando. Sin eso, una composición LaTeX de varios minutos parecía una máquina colgada.
 
 - El puntero ocupado en toda la aplicación: `Inc Application.Busy` al bloquear y `Dec` al desbloquear, en el mismo único camino de salida. `Inc` y no `= 1`: si otra cosa ya lo tenía en uso, vuelve a ese valor. Los diálogos de `Message`, incluida la pregunta del plazo, lo ponen en cero y lo restauran solos (GV-100).
-- `FMain.lblMensajes`, sobre la terminal: qué se está generando —el parámetro opcional `sQue` de `EjecutarScriptSalida`, o el nombre del script si falta— y el tiempo transcurrido, una vez por segundo. Es tiempo, no un porcentaje: solo dice que el proceso sigue vivo. Se vacía al desbloquear.
+- `FMain.lblMensajes`, sobre la terminal: qué se está generando —el parámetro opcional `sQue` de `EjecutarScript`, o el nombre del script si falta— y el tiempo transcurrido, una vez por segundo. Es tiempo, no un porcentaje: solo dice que el proceso sigue vivo. Se vacía al desbloquear.
 
 Al dejar de esperar también se desbloquea y se vuelve al puntero normal: el script sigue corriendo, pero la aplicación ya no lo sigue y no puede seguir diciendo que trabaja.
 
+UN MÓDULO NEUTRO (decisión de Alberto, 07/11/2026)
+
+La lanzadora nació en `m_GenerarSalidasLibro`, con las salidas del libro, y el resto de la aplicación llamaba ahí para lanzar algo que no era un libro: cuadros, gráficos, la tapa web. Con las salidas de revistas pasó a un módulo propio, `m_Lanzadora`, sin cambiar su comportamiento (el código es el mismo, comparado función por función). Los nombres son los de la lanzadora de gbWeb (SC-50, SC-84): `EjecutarScript`, `InformarResultado`, `HayScriptEnCurso`, `HabilitarValidacion` y `ValidacionHabilitada`, que lee el guard de `m_GenerarSalidasLibro.ValidarCanonico`.
+
+Lo que es de un tipo de proyecto queda en su módulo. Las siglas que leen algunos scripts del libro las prepara `m_Siglas.PrepararParaScript`, dueño de la lista de esos scripts (`SCRIPTS_CON_SIGLAS`): la lanzadora la llama antes de cada lanzamiento y no sabe nada de libros (SC-78).
+
 CÓDIGOS
 
-Los fija `engine/comun.sh` y los replica `m_GenerarSalidasLibro`:
+Los fija `engine/comun.sh` y los replica `m_Lanzadora`:
 
     0  SALIDA_OK       el producto se generó y lo verificado dio bien
     3  SALIDA_AVISOS   se generó, pero algo merece revisión
@@ -3152,7 +3159,7 @@ LOS USOS
 
 El `main.tex` sigue yendo último (criterio de SC-07): el script lo pone con `mv` solo si todas las piezas salieron bien, y si alguna falla el anterior queda intacto. Como `mv` conserva la fecha del temporal, anterior a las piezas, un `touch` lo deja como el archivo más nuevo. Una pieza que falla no corta el resto: se listan todas y no se pone el `main.tex`. El preámbulo derivado y el `.bib` los sigue escribiendo Gambas antes del script: si una pieza falla quedan nuevos junto al `main.tex` anterior, lo que se aceptó porque no son declarativos y la próxima corrida los reescribe. Decisión de Alberto.
 
-**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07,vinculo:SC-75
+**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07,vinculo:SC-75,vinculo:SC-78,vinculo:SC-84
 
 ### SC-54 — Controles de corrección del .md: un filtro en engine/ con niveles declarados
 
@@ -4128,7 +4135,7 @@ LA VISTA PREVIA
 Compone el cuadro solo, con todo lo de la pieza: los mismos filtros en el mismo orden, la misma plantilla de composición y el mismo preámbulo, con la caja a la vista. Lo que se ve es lo que sale; no hay otra composición del cuadro.
 
 - Gambas escribe lo que sale de la base, `tmp/vista-cuadro/preambulo-vista.tex`: en libros, las capas del `main.tex` con `\gbshowframetrue` y sin `preambulo-hyperref` (el contrato se engancha a hyperref con `\AddToHook{package/hyperref/after}` y no lo necesita; la capa registra el .bib, que el cuadro solo no usa): `m_GenerarPDFLibro.PreambuloVistaCuadro`. En revistas, el del PDF en borrador, sin el .bib y sin `\begin{document}`: `m_XML.PreambuloVistaCuadro`. La revista CONSERVA hyperref: va embebido a mitad del preámbulo y seguido de `\pdfstringdefDisableCommands`. El estilo de cita lo lee `m_XML.EstiloCitaRevista`, la misma función que ahora usa `m_GenerarPDF.GenerarPDFunaColumna`.
-- `engine/vista_cuadro.sh` (SC-13, lanzado por `EjecutarScriptSalida`, SC-53) hace el resto: el .md mínimo que nombra el cuadro, pandoc con la cadena de la pieza (`FILTROS_LIBRO` y `FILTROS_REVISTA` en `comun.sh`; la de libros la usa también `generar_canonicos_capitulos.sh`, la de revistas es gemela de `m_XML.GenerarBodyXML`), Saxon con `vista-cuadro-libro.xsl` o `vista-cuadro-revista.xsl` (importan la hoja del PDF y solo cambian la raíz), una pasada de LuaLaTeX y el veredicto. El idioma es el de la pieza abierta en el editor.
+- `engine/vista_cuadro.sh` (SC-13, lanzado por `m_Lanzadora.EjecutarScript`, SC-53) hace el resto: el .md mínimo que nombra el cuadro, pandoc con la cadena de la pieza (`FILTROS_LIBRO` y `FILTROS_REVISTA` en `comun.sh`; la de libros la usa también `generar_canonicos_capitulos.sh`, la de revistas es gemela de `m_XML.GenerarBodyXML`), Saxon con `vista-cuadro-libro.xsl` o `vista-cuadro-revista.xsl` (importan la hoja del PDF y solo cambian la raíz), una pasada de LuaLaTeX y el veredicto. El idioma es el de la pieza abierta en el editor.
 - EL VEREDICTO (`veredicto.txt`, una línea por hallazgo, `nivel<TAB>mensaje`): por tramo, el ancho y el alto contra la caja, en milímetros (info); un tramo más ancho o más alto que la caja, una celda que se sale de su columna, «Float too large» (el alto con el pie) y un error de LaTeX en el cuadro: error. Un error de LaTeX del preámbulo: aviso, porque no es del cuadro y sale igual en el PDF de la pieza. Las medidas las toma `engine/vista_cuadro_medir.lua` (GV-128): en el libro, linebreaker calla los Overfull y el .log no las daría. Código 0, el cuadro entra; 3, hay observaciones; 1, no salió el PDF, con el motivo del filtro que frenó también en el veredicto.
 - El formulario muestra el veredicto y abre `vista.pdf` con el visor del sistema (`Desktop.Open`, sin espera).
 
@@ -4236,7 +4243,7 @@ Cada gráfico vive en `graficos/fig-nombre.md`, en la raíz del proyecto como `c
 
 LAS SALIDAS
 
-- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. Un texto vacío no queda en la `Collection` (GV-68): la clave no se escribe, y la plantilla toma como vacío lo que falta. `engine/grafico.sh` (SC-13, lanzado por `EjecutarScriptSalida`, SC-53) llena los seis huecos de la plantilla —el id del gráfico para el `<title>`, el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción—. La lee de la copia local, `~/.gbpublisher/chart/`, que se coteja con `.hidden/chart/` al arrancar (SC-11). La plantilla declara `<meta charset>` antes de su comentario de cabecera: la codificación tiene que estar en los primeros 1024 bytes, y un `<title>` vacío no es HTML válido. El validador del HTML del libro revisa también los `fig-nombre.html` de `docs/assets/media/`, y así aparecieron las dos faltas (29/10/2026). Después, controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
+- EL HTML. `m_Graficos` lee y controla el archivo y escribe la descripción del gráfico con `JSON.Encode`, con `</` cambiado por `<\/` (GV-137), en `tmp/vista-grafico/fig-nombre.json`. Un texto vacío no queda en la `Collection` (GV-68): la clave no se escribe, y la plantilla toma como vacío lo que falta. `engine/grafico.sh` (SC-13, lanzado por `m_Lanzadora.EjecutarScript`, SC-53) llena los seis huecos de la plantilla —el id del gráfico para el `<title>`, el idioma, las dos fuentes en base64, Chart.js 4.4.1 entero y la descripción—. La lee de la copia local, `~/.gbpublisher/chart/`, que se coteja con `.hidden/chart/` al arrancar (SC-11). La plantilla declara `<meta charset>` antes de su comentario de cabecera: la codificación tiene que estar en los primeros 1024 bytes, y un `<title>` vacío no es HTML válido. El validador del HTML del libro revisa también los `fig-nombre.html` de `docs/assets/media/`, y así aparecieron las dos faltas (29/10/2026). Después, controla con `chromium --dump-dom` que la plantilla haya dibujado (GV-141). La configuración de Chart.js la arma la plantilla: las funciones de las marcas y del tooltip no pueden ir en JSON. Cada `fig-nombre.html` funciona solo: lleva Chart.js y la fuente.
 - LA FUENTE. Noto Serif, la del HTML (decisión de Alberto). Un subconjunto latino en woff2, Regular y Bold, embebido como data URI (unos 32 KB): el iframe es otro documento y no hereda la fuente de la página, y el PNG se saca sin red. La plantilla dibuja después de `document.fonts.load` (GV-135). Los subconjuntos se generan una vez con el comando de GV-135 y viven en `.hidden/chart/`.
 - LO QUE LLEVA EL GRÁFICO. Las cifras de las marcas, del tooltip y de la tabla de datos con las reglas de SC-64, como el formateador de `cifras.lua` (SC-65): punto decimal, grupos de a tres con U+202F desde cinco dígitos, menos U+2212, «× 10ⁿ» con volado; títulos de ejes; apilado; `beginAtZero` salvo `cero: no`; la unidad en las marcas, el tooltip y la tabla, separada de la cifra con U+202F salvo el grado de ángulo (SC-64); tooltip de todas las series a la vez; `pointStyle` y `borderDash` distintos por serie, para que se distingan impresas en gris; en `torta` y `dona`, un color por porción. En las paletas secuenciales se omiten los dos tonos más claros: sobre blanco no se ven.
 - ACCESIBILIDAD. El canvas va con `aria-hidden` y, al lado, la tabla de datos, en un `div` fuera de la vista y legible por un lector de pantalla. La clase que la oculta va en el `div` y no en la tabla: una tabla no se achica y agrandaba el alto de la página (GV-144). No se usa `role="img"` en el canvas: en WAI-ARIA 1.2 el rol img vuelve presentacional lo que tiene adentro, y la tabla de respaldo se perdería.
@@ -4509,7 +4516,7 @@ LOS ESTADOS
 
 LA APERTURA
 
-Al abrir un libro, `RevisarVigenciaLibro` lanza el validador en modo `vigencia` con «-», por `EjecutarScriptSalida` (SC-53): toda la lógica queda en `engine/` y no hay JVM. Con código 0 no muestra nada; con 3 —que en este modo solo pueden dar desactualizados y huérfanos— avisa que el ensamblado y el PDF van a frenar y que el detalle está en la terminal. «Sin huella» no se informa al abrir: avisaría en cada apertura.
+Al abrir un libro, `RevisarVigenciaLibro` lanza el validador en modo `vigencia` con «-», por `m_Lanzadora.EjecutarScript` (SC-53): toda la lógica queda en `engine/` y no hay JVM. Con código 0 no muestra nada; con 3 —que en este modo solo pueden dar desactualizados y huérfanos— avisa que el ensamblado y el PDF van a frenar y que el detalle está en la terminal. «Sin huella» no se informa al abrir: avisaría en cada apertura.
 
 LOS RECURSOS DEL SISTEMA
 
@@ -4528,7 +4535,7 @@ EN EL CÓDIGO
 - `engine/validar_canonicos.sh`; en `comun.sh`, `vigencia_canonico`, que reemplazó a `avisar_md_posterior` y deja el resultado en `VIGENCIA_ESTADO` y `VIGENCIA_DETALLE`.
 - La huella: `controles_md.lua` (`gb-fuentes`, SC-54), `generar_canonicos_capitulos.sh` (`tmp/huellas-{base}.xml`), `ensamblar-capitulo-canonico.xsl` (parámetro `huellas`, obligatorio) y `ensamblar-libro-canonico.xsl` (copia las PI de cada capítulo).
 - El Schematron compilado lo genera `generar-schematron-canonico.sh`, con instancias de prueba que tienen que dar lo esperado antes de reemplazar la hoja: cuatro para DocBook (cantidad y mensaje exactos) y tres para las reglas propias, una limpia, una pieza y un libro, que comparan el conjunto exacto de @id que fallan.
-- En Gambas, `m_GenerarSalidasLibro`: `HabilitarValidacion` (apartado 20 de `FMain.AbrirProyectoMD`), `ValidarCanonico` (`btnValidarXML_Click`), `RevisarVigenciaLibro` (apartado 23) e `InformarValidacion`, con textos propios: un validador no genera nada.
+- En Gambas: `m_Lanzadora.HabilitarValidacion` (apartado 20 de `FMain.AbrirProyectoMD`); en `m_GenerarSalidasLibro`, `ValidarCanonico` (`btnValidarXML_Click`), `RevisarVigenciaLibro` (apartado 23) e `InformarValidacion`, con textos propios: un validador no genera nada.
 
 MEDIDO
 
@@ -4707,7 +4714,7 @@ Las siglas del libro son las de sus marcas: al abrir FSiglas, con su botón «Si
 
 EL FILTRO: siglas.lua
 
-4c° de FILTROS_LIBRO, después de indice.lua y antes de cite-to-biblioref-db.lua. Lee `tmp/siglas-libro.tsv` del proyecto: una línea por sigla, `clave TAB sigla TAB desarrollo TAB plural TAB idioma`, en el orden de la lista. Lo escribe `m_Siglas.EscribirParaFiltro` desde `EjecutarScriptSalida`, la única lanzadora (SC-13), antes de los scripts que lo leen.
+4c° de FILTROS_LIBRO, después de indice.lua y antes de cite-to-biblioref-db.lua. Lee `tmp/siglas-libro.tsv` del proyecto: una línea por sigla, `clave TAB sigla TAB desarrollo TAB plural TAB idioma`, en el orden de la lista. Lo escribe `m_Siglas.EscribirParaFiltro`, llamada por `m_Siglas.PrepararParaScript` desde `m_Lanzadora.EjecutarScript`, la única lanzadora (SC-53), antes de los scripts que lo leen.
 
 - Primer uso EN CADA PIEZA, sin importar la autoría: «Organización Mundial de la Salud (OMS)»; después, la sigla. Con idioma, el desarrollo va en `<foreignphrase xml:lang>`.
 - La nota cuenta en el lugar de su llamada, como en glossaries: el recorrido es propio y en el orden del texto (un `walk` de Pandoc no lo garantiza).
@@ -4816,7 +4823,7 @@ LO QUE MUESTRA
 - La venta queda fuera del portal: un botón por tienda (`libro_venta`, SC-81) lleva a la página del libro en esa tienda, y la venta se resuelve ahí.
 - Las marcas visuales salen de los datos, nunca se cargan a mano: agotado y descatalogado, con su etiqueta y sin botones de venta; acceso abierto, con la descarga (`tipo_acceso`).
 - La imagen destacada la elige gbWeb, entre las de `media/` del portal, para lo que la editorial comunica por un tiempo (una promoción, un evento). Se activa a mano, nunca por fecha: con la fecha, el mismo estado daría sitios distintos según el día. Siempre hay una: sin elegir, va la imagen por defecto («Reemplazar esta imagen»).
-- El sitio de cada obra lleva una cabecera mínima (logo y vuelta al catálogo); el diseño fuerte queda en el portal. Si la cabecera de las obras siguiera la del portal, cambiar el portal obligaría a reconstruir cada obra.
+- El sitio de cada obra lleva la cabecera y el pie COMPLETOS del portal cuando la obra se integra a él (SC-85). Corrige lo decidido el 02/11 (una cabecera mínima, para no reconstruir las obras al cambiar el portal): el costo se acepta porque el portal es estable (decisión de Alberto, 05/11/2026). Una obra autónoma conserva su propia cabecera.
 - Idiomas: español, inglés y portugués. El español va en la raíz del sitio; el inglés y el portugués, en `en/` y `pt/`. Se traduce todo lo del portal (menús, etiquetas, nombres de los roles, páginas escritas); lo que viene de los metadatos se muestra tal cual. El título de cada obra lleva su `lang`, de `idioma_principal`.
 - Buscador: título, ISBN, autor y palabras clave, en un índice JSON que genera gbWeb. Normaliza igual el índice y la consulta: el ISBN sin guiones ni espacios (impreso y electrónico); el autor por palabras en cualquier orden («Silvina Jensen» encuentra «Jensen, Silvina»); sin tildes ni mayúsculas (`normalize('NFD')`). Está plantado en la cabecera y todavía no busca: falta el índice.
 
@@ -4856,13 +4863,13 @@ CÓMO SE ARMA, EN OTRAS ENTRADAS
 - La construcción del sitio, el determinismo y el esquema `gbweb`: SC-83.
 - La aplicación y el despliegue: SC-84.
 
-**Relaciones:** vinculo:SC-50,vinculo:SC-81,vinculo:SC-82,vinculo:SC-22,vinculo:SC-83,vinculo:SC-84,apoya:GV-183
+**Relaciones:** vinculo:SC-50,vinculo:SC-81,vinculo:SC-82,vinculo:SC-22,vinculo:SC-83,vinculo:SC-84,apoya:GV-183,vinculo:SC-85
 
 **PENDIENTE:** Precios en la ficha: la propuesta es no mostrarlos (cambian seguido y el precio vigente está en el punto de venta); falta la decisión. Carga del fondo con una semilla de los CSV de WooCommerce y de Mercado Libre, cruzados por ISBN: se trata después. Contrato de la revista: `numero` no tiene estado de publicación ni URL; falta la asociación de números. El buscador: el índice JSON. Una página por colección y `sitemap.xml`. Favicon y descripción del portal. Analítica: suspendida hasta elegir la herramienta (decisión de Alberto, 04/11/2026).
 
-### SC-81 — Contrato gbpublisher → gbWeb: cinco VIEW, una cuenta de solo lectura y la tapa web en la base (esquemas 1.19.0 a 1.21.0)
+### SC-81 — Contrato gbpublisher → gbWeb: cinco VIEW, una cuenta de solo lectura y la tapa web en la base (esquemas 1.19.0 a 1.22.0)
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.19.0 a 1.21.0 (esquema) / MySQL 8.0.46 / Gambas 3.19 (gbc3, gbx3; gb.db.mysql) / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 y Linux Mint (la tapa) / Gambas 3.22 (gb.db2), Linux Mint · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.19.0 a 1.22.0 (esquema) / MySQL 8.0.46 / Gambas 3.19 (gbc3, gbx3; gb.db.mysql) / ImageMagick 6.9.12-98 / contenedor Ubuntu 24.04 y Linux Mint (la tapa) / Gambas 3.22 (gb.db2), Linux Mint · **Verificado:** 2026-11
 
 Decisiones de Alberto, 02/11/2026. gbWeb (SC-80) lee la base de gbpublisher solo a través de este contrato. Lo aplica `actualizar-esquema-1.19.0.sh` (SC-22); lo amplían la 1.20.0 (la licencia) y la 1.21.0 (los idiomas del libro y los puntos de venta).
 
@@ -4880,6 +4887,7 @@ Las columnas que se agregan van al final, como en las tablas (SC-22), con `CREAT
 
 - 1.20.0, `v_web_libro`: `licencia` (es `licencia_defecto`, la etiqueta del catálogo: «CC BY 4.0») y `url_licencia`.
 - 1.21.0, `v_web_libro`: `idioma_nombre` e `idioma_nombre_ingles` (LEFT JOIN al catálogo `idiomas`) y los pares de texto e idioma `resumen_traducido`, `resumen_traducido_2`, `palabras_clave_traducidas`, `palabras_clave_traducidas_2`. Queda con 32 columnas.
+- 1.22.0, `v_web_libro`: `destino_html` y `url_portal` (SC-85). Queda con 34 columnas. gbWeb avisa al construir si un libro integrado declara otro portal.
 - 1.21.0, `v_web_libro_persona`: `id_autor`. gbWeb reconoce a la misma persona en otro libro por él, nunca por el nombre. No exponen el email ni la afiliación de las personas ni ningún campo interno (`notas_internas` y similares): la VIEW es también el filtro de lo público.
 
 LA CUENTA: UNA POR APLICACIÓN
@@ -4951,7 +4959,7 @@ LA 1.20.0 Y LA 1.21.0
 - 1.21.0: `libros_md` pasa de 80 a 86 y entra `libro_venta` con 3; va con el `.deb` que trae el formulario nuevo. `crear-cuenta-gbweb.sh` suma el permiso sobre `v_web_libro_venta`.
 - MEDIDO (contenedor, MySQL 8.0.46): la primera corrida de la 1.21.0 aplica todo (17 URL de compra pasan a `mercadolibre`, las seis columnas al final, las VIEW DEFINER, el permiso de la cuenta intacto); la segunda no tiene nada que cambiar; la vuelta atrás que imprime (DROP de lo nuevo y restauración, GV-169) deja la base en 80 columnas y la VIEW en 22. Aplicada por Alberto en Linux Mint el 04/11/2026, con el portal reconstruido.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13,apoya:GV-173,apoya:GV-176,apoya:GV-177,vinculo:SC-83
+**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13,apoya:GV-173,apoya:GV-176,apoya:GV-177,vinculo:SC-83,vinculo:SC-85
 
 **PENDIENTE:** Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3). Las VIEW entran en las instalaciones nuevas con el baseline 2.0.0, que se genera junto con el refactor de bibtex (SC-22, PUNTO DE RUPTURA); para entonces, `generar-baseline.sh` tiene que dejar de enumerar solo `BASE TABLE`. Las hojas DocBook y EPUB del libro todavía no usan las traducciones nuevas del resumen y de las palabras clave. `url_compra` se retira en el baseline 2.0.0.
 
@@ -5039,6 +5047,12 @@ LOS ENLACES
 - `canonical`, `og:` y `hreflang`: absolutos, con la URL del sitio (`url_base`). Sin ella no van, y tampoco los botones de compartir.
 - Los de compartir, con `encode-for-uri` sobre la URL y el título de la página.
 
+EL MARCO PARA LAS OBRAS INTEGRADAS (05/11/2026; .xml desde el 07/11/2026)
+
+Con la dirección del sitio, `portal.xsl` escribe además la cabecera y el pie de cada idioma como fragmentos XML, `marco/<idioma>/cabecera.xml` y `pie.xml`, con `marco` en verdadero: enlaces absolutos a `url_base`, el logo relativo al fragmento (`../media/…`) y los botones de compartir con los patrones `{u}` y `{t}`, que gbpublisher completa en cada página de la obra. Sin banderas: la obra está en un idioma. El paso 7b de `construir_sitio.sh` suma la hoja con nombre fijo (`marco.css`), las fuentes con su licencia y el logo, y escribe `marco/marco.xml`: el portal (`codigo`, `url-base`) y cada archivo con su sha256, en orden fijo. Lo baja y lo verifica gbpublisher (SC-85).
+
+POR QUÉ .xml: un servidor puede reescribir los .html que publica. Netlify, con «Pretty URLs», cambia los enlaces `…/index.html` por `…/` (GV-188): la cabecera llegaba con otros bytes y gbpublisher la rechazaba por su sha256, mientras el pie, sin enlaces internos, pasaba. Los fragmentos ya eran XML (gbpublisher los lee con `doc()`); con la extensión `.xml` se sirven tal cual. Además el despliegue apaga Pretty URLs (SC-84), para que lo publicado sea lo construido.
+
 EL ESQUEMA gbweb
 
 Los scripts del repositorio de gbWeb siguen las reglas de SC-22 (cadena en SC-22):
@@ -5049,7 +5063,7 @@ Los scripts del repositorio de gbWeb siguen las reglas de SC-22 (cadena en SC-22
 
 MEDIDO (contenedor; Saxon-HE 12.5, Pandoc 3.1.3, MySQL 8.0.46): la misma huella en dos construcciones seguidas, también después de reescribir `sitio.xml`; 1758 enlaces locales sin uno roto en el portal de prueba (18 libros, tres idiomas); los sugeridos de SC-80 con un `sitio.xml` armado para cada escalón.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-84,vinculo:SC-50,vinculo:SC-53,vinculo:SC-13,vinculo:SC-22,vinculo:SC-28,apoya:GV-179,apoya:GV-180,apoya:GV-181,apoya:GV-182,apoya:GV-183,apoya:GV-186
+**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-84,vinculo:SC-50,vinculo:SC-53,vinculo:SC-13,vinculo:SC-22,vinculo:SC-28,apoya:GV-179,apoya:GV-180,apoya:GV-181,apoya:GV-182,apoya:GV-183,apoya:GV-186,vinculo:SC-85,apoya:GV-188
 
 **PENDIENTE:** Las imágenes dentro de las páginas escritas. El índice de búsqueda y `sitemap.xml` (SC-80).
 
@@ -5087,12 +5101,50 @@ DESPLEGAR
 - Si el remoto usa HTTPS, gbWeb ofrece pasarlo a SSH antes de pedir nada (`VerificarProtocoloRemoto` de gbpublisher). Para comparar el remoto se lee `git config --get remote.origin.url` (GV-178).
 - FCommits pide el usuario de GitHub (propone el último, guardado en `gbweb.conf`, sección `[GitHub]`; se controla con la forma de los usuarios de GitHub porque va en la URL) y el mensaje del commit. Los dos vuelven por `m_Desplegar`; la decisión, por `ShowModal` (RC-GM-13).
 - Se suben el `.md`, `media/` y `docs/`; `tmp/` no. Durante el desarrollo el repositorio es público; después, privado, con Netlify publicando `docs/`.
+- `netlify.toml` en la raíz del repositorio, al lado de `docs/`, con `[build.processing.html] pretty_urls = false` (decisión de Alberto, 07/11/2026): Netlify no reescribe lo que publica (GV-188). Lo escribe el script si falta; si existe y no apaga Pretty URLs, avisa y no lo pisa. El archivo pisa el interruptor del panel de Netlify (documentación de Netlify, «File-based configuration»).
 
 PROBADO por Alberto en Linux Mint (04/11/2026, Gambas 3.22, gb.db2 y Qt6): el despliegue de `L-IMAGO`, y la salida por el menú y por la X, que termina el programa.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-83,vinculo:SC-53,vinculo:SC-11,vinculo:RC-GM-13,apoya:GV-171,apoya:GV-172,apoya:GV-174,apoya:GV-178,vinculo:GV-142
+**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-83,vinculo:SC-53,vinculo:SC-11,vinculo:RC-GM-13,apoya:GV-171,apoya:GV-172,apoya:GV-174,apoya:GV-178,vinculo:GV-142,apoya:GV-188
 
 **PENDIENTE:** El visor no muestra el portal hasta hacer clic en su borde. Mini-test propuesto: `wvPortal.Url = "about:blank"` al final de `Form_Open` (sospecha de Alberto: el momento en que se asigna la URL). Junto con eso, el `#` en la ruta (GV-142).
+
+### SC-85 — HTML del libro integrado al portal de gbWeb: el destino, el marco descargado y la página (modelo 2)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 1.22.0 / Saxon-HE 12.5 / vnu / contenedor Ubuntu 24.04; Gambas 3.22 y Netlify, Linux Mint · **Verificado:** 2026-11
+
+Decisiones de Alberto, 05 y 07/11/2026; documento de trabajo `claude/gbweb.md`. El sitio de una obra es una salida HTML de gbpublisher (SC-80). Desde la 1.22.0 tiene dos destinos.
+
+EL DESTINO, DATO DEL LIBRO
+
+- `libros_md.destino_html` ENUM('autonomo','portal'), NOT NULL, 'autonomo' por omisión: lo que la salida HTML hacía hasta entonces. `url_portal`: la dirección del portal, con su `/` final, como `gbweb.portal.url_base`. Dos CHECK: la forma de la URL, y que el destino portal tenga su URL. Sin catálogo de portales: el portal es estable y es una sola URL por libro. Se cargan en FMetadatosLibro (`m_Metadatos.UrlPortalValida`: obligatoria con portal, forma, agrega la `/`).
+- La vista del contrato (`v_web_libro`, SC-81) lleva las dos columnas: gbWeb avisa al construir si un libro integrado declara otro portal. La asociación de gbWeb decide qué libros aparecen en el portal; la URL del libro decide solo su cabecera.
+- Revistas: el mismo par va en la revista, no en el número (decisión de Alberto, 07/11/2026, `claude/salidas-revistas.md`).
+
+LA CABECERA DEL PORTAL, COPIADA AL GENERAR
+
+gbWeb publica el marco (SC-83); `generar_html_libro.sh`, con destino portal, lo baja de `<url_portal>marco/`, controla cada sha256 y recién entonces reemplaza `docs/assets/marco/`. El libro no depende de que el portal responda después: sin red, usa el marco anterior si sigue íntegro y es del mismo portal, con aviso (código 3). Si el `url-base` del manifiesto no es la URL del libro, frena: el portal se mudó y hay que corregir el formulario. Con destino autónomo, el marco y la hoja integrada se borran de `docs/`: un libro que deja el portal no conserva restos.
+
+POR QUÉ COPIADA: el sitio del libro es otro repositorio y otra dirección, y en un sitio estático nada junta dos sitios al mostrar una página; copiada, el libro funciona solo (sin JavaScript para la cabecera, aunque el portal esté caído, sin pedidos al portal ni CORS); es determinista (la cabecera queda fechada con la edición del libro); y al libro se llega seguido sin pasar por el portal (Google Scholar, el DOI, un enlace compartido), y la cabecera le da a ese lector el camino al catálogo. Descartadas: armarla al abrir con JavaScript (salto visible, sin cabecera si falla el portal o no hay JavaScript) y armarla en el servidor con funciones de Netlify (lo más complejo de montar). La primera se puede sumar después sin rehacer nada.
+
+LA PÁGINA (MODELO 2)
+
+- La hoja `docbook-to-html-portal.xsl` importa la autónoma y reemplaza solo la raíz y las plantillas de página: la salida autónoma no la lee y no puede cambiar. De la autónoma se extrajeron plantillas compartidas con salida idéntica byte a byte.
+- Una sola familia, Noto Serif 400 y 600 con sus cursivas, y Noto Sans Mono para el código y «Cómo citar»; nada de IBM Plex (`gbpublisher-integrado.css`).
+- Cabecera y pie del marco. El idioma del marco es el del libro si el portal lo publica (se compara la primera parte del código: `pt-BR` es `pt`); si no, el castellano.
+- Barra del libro fija al desplazar: «Índice» abre un menú de 600 px sobre el texto (tapa chica, título, autoría y la lista, con la pieza actual en negrita; sin JavaScript, con una casilla; Esc lo cierra), dónde se está, y Anterior / Siguiente, que se repiten al final de la pieza.
+- Dos columnas fijas en el ancho útil del portal (1168 px): texto 600 | calle 24 | panel 544 (notas, referencias, figuras), siempre a la vista. Debajo de 1232 px, el panel es un cajón.
+- En la cabeza del texto, «Cómo citar» y el PDF del capítulo.
+- Portada (`index.html`, adonde lleva «Leer en línea»), créditos (`creditos.html`) y dedicatoria son pasos de la lectura, en páginas separadas y fuera del menú (SC-25). «Cómo citar» del libro, a la derecha, en las tres; los metadatos para indexadores, solo en la portada.
+- ORCID como en la ficha del portal: el nombre sin enlace y el ícono enlazado.
+- Compartir: la URL de cada página es `url_libro` + su archivo; sin `url_libro` no hay botones de compartir.
+- La validación HTML5 (vnu) recibe todos los .html de `docs/` menos los de `assets/marco/`: los fragmentos no son páginas.
+
+PROBADO por Alberto en Linux Mint (07/11/2026): el libro de Duek integrado al portal L-IMAGO, publicado en Netlify. Abrir el portal, ir al libro, navegarlo y volver desde el libro al inicio y al catálogo, sin errores. Antes, en el contenedor: cero enlaces rotos, cero errores de vnu y la misma salida en dos generaciones.
+
+**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-83,vinculo:SC-84,vinculo:SC-25,vinculo:SC-53,vinculo:SC-22,apoya:GV-188
+
+**PENDIENTE:** El HTML integrado de las revistas (etapa A de las salidas de revistas): la ficha del número y «Archivos» en gbWeb. Las figuras en el panel con el pie completo y uno corto en el texto (pedido de Alberto).
 
 ---
 
@@ -9452,6 +9504,21 @@ Si se confirma, RC-GM-05 suma: aplicar las entregas con el IDE cerrado. Mientras
 **Relaciones:** vinculo:RC-GM-05
 
 **PENDIENTE:** Correr el mini-test y pasar a vigente o descartar.
+
+### GV-188 — Netlify, con «Pretty URLs», reescribe los enlaces de los .html que publica: …/index.html pasa a …/ y las comillas a simples
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Netlify (sitio estático desde un repositorio privado de GitHub) / curl / Linux Mint · **Verificado:** 2026-11
+
+MEDIDO el 07/11/2026 con curl sobre el portal L-IMAGO publicado en Netlify (https://monumental-tapioca-7b0eaf.netlify.app/), construido por gbWeb con enlaces internos a `…/index.html` y comillas dobles (GV-179):
+
+- Las páginas llegan con `href='/en/'` y `href='/en/catalogo/'`: sin `index.html`, y con comillas simples donde `portal.xsl` escribió dobles.
+- Del marco (SC-83), en ese momento con extensión .html: `marco.xml`, los `pie.html` (sin enlaces internos), `marco.css`, el logo y las fuentes coinciden con el sha256 de `marco.xml`; las `cabecera.html`, con enlaces al menú del portal, no.
+
+Es el post-procesado «Pretty URLs» de Netlify. Se apaga desde el repositorio con `netlify.toml` (`[build.processing.html] pretty_urls = false`), que pisa el interruptor del panel según la documentación de Netlify («File-based configuration»). Con eso y los fragmentos del marco en `.xml`, Alberto volvió a construir y desplegar el portal y a generar el libro integrado, y el flujo anduvo sin errores (07/11/2026).
+
+CONSECUENCIA: un archivo que se verifica por su huella después de publicarse no puede ser un .html servido por un host que reescribe páginas.
+
+**Relaciones:** vinculo:GV-179,vinculo:SC-83,vinculo:SC-84,vinculo:SC-85
 
 ---
 

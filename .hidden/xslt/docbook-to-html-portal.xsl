@@ -73,16 +73,17 @@ DETERMINISMO
        ==========================================================
        EL IDIOMA DEL MARCO ES EL DEL LIBRO SI EL PORTAL LO TIENE: SE COMPARA
        LA PRIMERA PARTE DEL CÓDIGO (pt-BR → pt). SI NO, EL CASTELLANO, QUE
-       gbWeb SIEMPRE PUBLICA -->
+       gbWeb SIEMPRE PUBLICA. LOS FRAGMENTOS SON .xml DESDE EL 07/11/2026:
+       UN SERVIDOR PUEDE REESCRIBIR LOS .html (NETLIFY, «PRETTY URLS») -->
   <xsl:variable name="marco_base" as="xs:string"
                 select="lower-case(tokenize($idioma_principal, '[-_]')[1])"/>
   <xsl:variable name="marco_idioma" as="xs:string"
-                select="if (doc-available(concat($marco_dir, '/', $marco_base, '/cabecera.html')))
+                select="if (doc-available(concat($marco_dir, '/', $marco_base, '/cabecera.xml')))
                         then $marco_base else 'es'"/>
   <xsl:variable name="marco_cabecera"
-                select="doc(concat($marco_dir, '/', $marco_idioma, '/cabecera.html'))/*"/>
+                select="doc(concat($marco_dir, '/', $marco_idioma, '/cabecera.xml'))/*"/>
   <xsl:variable name="marco_pie"
-                select="doc(concat($marco_dir, '/', $marco_idioma, '/pie.html'))/*"/>
+                select="doc(concat($marco_dir, '/', $marco_idioma, '/pie.xml'))/*"/>
 
   <!-- LAS PRIMERAS QUE ESCRIBIÓ GAMBAS. LA PORTADA SOLO EXISTE SI EL LIBRO LA
        DECLARA (SC-25); LOS CRÉDITOS, SIEMPRE -->

@@ -82,6 +82,13 @@ TIEMPO_CURL=30
 # RUTA DE UN ARCHIVO DEL MARCO: RELATIVA, SIN «..», SIN SEGMENTOS QUE EMPIECEN
 # CON PUNTO. EL MANIFIESTO VIENE DE LA RED: SIN ESTE CONTROL, UNA RUTA PODRÍA
 # ESCRIBIR FUERA DE docs/assets/marco/
+# LOS FRAGMENTOS DEL MARCO: .xml Y NO .html DESDE EL 07/11/2026 (gbWeb,
+# portal.xsl): UN SERVIDOR PUEDE REESCRIBIR LOS .html QUE PUBLICA (NETLIFY
+# CON «PRETTY URLS») Y EL sha256 DEJA DE COINCIDIR. UN PORTAL CONSTRUIDO
+# ANTES PUBLICA .html: HAY QUE RECONSTRUIRLO Y DESPLEGARLO
+CABECERA_MARCO="cabecera.xml"
+PIE_MARCO="pie.xml"
+
 RUTA_MARCO_VALIDA='^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(/[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*)*$'
 
 # ----------------------------------------------------------------------------
@@ -115,9 +122,14 @@ verificar_marco() {
     fi
 
     total=$(xmllint --nonet --xpath 'count(/marco/archivo)' "$manifiesto" 2>/dev/null)
-    for ruta in es/cabecera.html es/pie.html marco.css; do
+    for ruta in "es/$CABECERA_MARCO" "es/$PIE_MARCO" marco.css; do
         if [[ $(xmllint --nonet --xpath "count(/marco/archivo[@ruta='$ruta'])" "$manifiesto" 2>/dev/null) != 1 ]]; then
             MARCO_MOTIVO="marco.xml no lista $ruta"
+            # UN PORTAL CONSTRUIDO ANTES DEL 07/11/2026 PUBLICA LOS FRAGMENTOS
+            # COMO .html: SE DICE QUÉ HACER
+            if [[ $(xmllint --nonet --xpath "count(/marco/archivo[@ruta='es/cabecera.html'])" "$manifiesto" 2>/dev/null) == 1 ]]; then
+                MARCO_MOTIVO+=" (el portal publica el marco anterior, en .html: reconstruilo y desplegalo con gbWeb)"
+            fi
             return 1
         fi
     done
@@ -140,7 +152,7 @@ verificar_marco() {
     done
 
     # LOS FRAGMENTOS LOS LEE LA HOJA CON doc(): TIENEN QUE SER XML
-    for ruta in es/cabecera.html es/pie.html; do
+    for ruta in "es/$CABECERA_MARCO" "es/$PIE_MARCO"; do
         if ! bien_formado "$dir/$ruta"; then
             MARCO_MOTIVO="$ruta no es XML bien formado"
             return 1
@@ -507,9 +519,11 @@ paso "validando el HTML"
 if [[ ! -f "$RUTA_VNU" ]]; then
     tenue "vnu no está instalado en $RUTA_VNU: el HTML no se validó"
 else
-    # LOS FRAGMENTOS DEL MARCO (assets/marco/<idioma>/*.html) NO SON PÁGINAS:
+    # LOS FRAGMENTOS DEL MARCO (assets/marco/<idioma>/*.xml) NO SON PÁGINAS:
     # SON XML SIN DOCTYPE, Y COMPARTIR LLEVA {u} Y {t}, QUE LA HOJA COMPLETA
-    # AL COPIARLOS. vnu RECIBE TODOS LOS .html DE docs/ MENOS ESOS; CON EL
+    # AL COPIARLOS. DESDE QUE SON .xml, find YA NO LOS TOMA; LA EXCLUSIÓN DE
+    # assets/marco/ QUEDA POR SI EL PORTAL PUBLICARA UN .html AHÍ. vnu RECIBE
+    # TODOS LOS .html DE docs/ MENOS ESOS; CON EL
     # DESTINO AUTÓNOMO NO HAY MARCO Y LA LISTA ES LA DE SIEMPRE (INCLUIDOS LOS
     # GRÁFICOS DE assets/media/, SC-69)
     mapfile -t PAGINAS_VNU < <(find "$DIR_DOCS" -type f -name '*.html' \
