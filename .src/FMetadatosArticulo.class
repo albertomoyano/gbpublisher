@@ -15,6 +15,10 @@
 '              Entrega C: Textos por idioma (resumen simple y palabras clave),
 '              en memoria (CTextosArticulo), con su propio selector de idioma
 '              (decisiones de Alberto, 28/10).
+'              Entrega E: «Publicar» guarda, controla los requisitos y
+'              publica (m_Articulo.PublicarArticulo); reabrir se hace en
+'              FSysAdmin (FReabrirArticulo). Entrega D3: relaciones y
+'              ubicaciones, en memoria como CRelacionesArticulo.
 '              Entrega D2: financiadores (grilla + campos) y declaraciones
 '              del núcleo por tipo e idioma, en memoria como
 '              CFinanciamientoArticulo (SC-73).
@@ -423,6 +427,7 @@ Private Sub LimpiarEditor()
   cmbVocabulario.Text = ""
   lblEstadoArticulo.Text = ""
   btnGuardarArticulo.Enabled = False
+  btnPublicarArticulo.Enabled = False
   $bCargando = False
 
 End
@@ -687,6 +692,9 @@ Private Sub CargarEditor(iFila As Integer)
     btnGuardarArticulo.Enabled = False
     lblEstadoArticulo.Text &= "  ·  No se pudieron leer las relaciones y ubicaciones: no se puede guardar"
   Endif
+  ' PUBLICAR GUARDA PRIMERO: SI NO SE PUEDE GUARDAR, TAMPOCO PUBLICAR
+  btnPublicarArticulo.Enabled = btnGuardarArticulo.Enabled
+  If bPublicado Then lblEstadoArticulo.Text &= "  ·  Para reabrirlo: Administración, pestaña «Revistas»"
   $bCargando = False
 
 End
@@ -704,6 +712,7 @@ Private Sub FijarEdicion(bEditable As Boolean)
   svwIdentificacion.Enabled = bEditable
   svwPermisos.Enabled = bEditable
   btnGuardarArticulo.Enabled = bEditable
+  btnPublicarArticulo.Enabled = bEditable
   ' LA GRILLA QUEDA VIVA PARA ABRIR Y VER; LOS BOTONES QUE CAMBIAN, NO
   hbxBotonesContribuyentes.Enabled = True
   btnPersonaContribuyente.Enabled = bEditable
@@ -785,23 +794,23 @@ Public Sub cmbLicenciaArticulo_Click()
 End
 
 ' ============================================
-' Función   : btnGuardarArticulo_Click
-' Propósito : Junta los valores de Identificación y Permisos y los graba por
-'             m_Articulo
+' Función   : GuardarFormulario
+' Propósito : Junta los valores de todas las pestañas y los graba por
+'             m_Articulo. Lo usan «Guardar» y «Publicar», que guarda primero
+'             (decisión de Alberto, 28/10)
 ' Parámetros: ninguno
-' Retorna   : nada
+' Retorna   : Integer — id del artículo grabado; 0 si no se grabó (ya se
+'             informó)
 ' ============================================
-Public Sub btnGuardarArticulo_Click()
+Private Function GuardarFormulario() As Integer
 
   Dim cDatos As New Collection
   Dim iId As Integer
-  Dim sArchivo As String
   Dim sAnio As String
   Dim i As Integer
 
   ' --- 1. HAY FILA ELEGIDA ---
-  If $iFila < 0 Then Return
-  sArchivo = $aArchivos[$iFila]
+  If $iFila < 0 Then Return 0
   ' LO ESCRITO EN LOS IDIOMAS A LA VISTA TODAVÍA NO PASÓ A MEMORIA
   GuardarTraduccionEnMemoria()
   GuardarTextosEnMemoria()
@@ -832,7 +841,7 @@ Public Sub btnGuardarArticulo_Click()
         Message.Warning("El año del copyright tiene que ser un número entero.")
         tsArticulo.Index = 4
         txtAnioCopyrightArticulo.SetFocus()
-        Return
+        Return 0
       Endif
     Next
     cDatos["anio_copyright"] = CInt(sAnio)
@@ -851,17 +860,78 @@ Public Sub btnGuardarArticulo_Click()
   cDatos["notas_autor"] = Trim(txaNotasAutorArticulo.Text)
 
   ' --- 4. GRABACIÓN ---
-  iId = m_Articulo.GuardarArticulo($iIdArticulo, $iIdNumero, sArchivo, cDatos, $cTitulosTrad, $cSubtitulosTrad, $aContribuyentes, $oTextos, $oFin, $oRel)
-  If iId = 0 Then Return
+  iId = m_Articulo.GuardarArticulo($iIdArticulo, $iIdNumero, $aArchivos[$iFila], cDatos, $cTitulosTrad, $cSubtitulosTrad, $aContribuyentes, $oTextos, $oFin, $oRel)
+  Return iId
 
-  ' --- 5. RELECTURA MANTENIENDO LA SELECCIÓN ---
-  m_Sonido.sonar("Info")
+End
+
+' ============================================
+' Función   : RecargarArticulo
+' Propósito : Relee la lista y vuelve a cargar el artículo, manteniendo la
+'             selección
+' Parámetros: sArchivo As String — archivo del artículo
+' Retorna   : nada
+' ============================================
+Private Sub RecargarArticulo(sArchivo As String)
+
+  Dim i As Integer
+
   CargarLista()
   i = $aArchivos.Find(sArchivo)
   If i >= 0 Then
     gvArticulos.Row = i
     CargarEditor(i)
   Endif
+
+End
+
+' ============================================
+' Función   : btnGuardarArticulo_Click
+' Propósito : Graba el artículo y lo relee
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarArticulo_Click()
+
+  Dim sArchivo As String
+
+  If $iFila < 0 Then Return
+  sArchivo = $aArchivos[$iFila]
+  If GuardarFormulario() = 0 Then Return
+  m_Sonido.sonar("Info")
+  RecargarArticulo(sArchivo)
+
+End
+
+' ============================================
+' Función   : btnPublicarArticulo_Click
+' Propósito : Guarda, controla los requisitos y publica (entrega E). Si el
+'             guardado sale bien y la publicación no, lo guardado queda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnPublicarArticulo_Click()
+
+  Dim sArchivo As String
+  Dim iId As Integer
+  Dim bPublicado As Boolean
+
+  ' --- 1. HAY FILA ELEGIDA Y SE CONFIRMA: PUBLICAR NO SE DESHACE DESDE ACÁ ---
+  If $iFila < 0 Then Return
+  sArchivo = $aArchivos[$iFila]
+  m_Sonido.sonar("Question")
+  If Message.Question("Se guardan los cambios y se publica el artículo." & gb.NewLine & "Publicado queda de solo lectura: reabrirlo lo hace el administrador desde Administración.", "Publicar", "Cancelar") <> 1 Then Return
+
+  ' --- 2. GUARDAR CON TODAS SUS VALIDACIONES ---
+  iId = GuardarFormulario()
+  If iId = 0 Then Return
+
+  ' --- 3. REQUISITOS, CONGELADO Y ESTADO ---
+  bPublicado = m_Articulo.PublicarArticulo(iId)
+
+  ' --- 4. RELECTURA: LO GUARDADO SE VE AUNQUE NO SE HAYA PODIDO PUBLICAR ---
+  If bPublicado Then m_Sonido.sonar("Info")
+  RecargarArticulo(sArchivo)
 
 End
 

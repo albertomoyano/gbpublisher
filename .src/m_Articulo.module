@@ -26,9 +26,13 @@
 '             «huérfana» (decisión de Alberto, 26/10). Así no se puede atar un
 '             archivo ajeno al proyecto.
 ' Publicado : un artículo publicado es de solo lectura (decisión 17): acá se
-'             niega a grabarlo. Publicar y reabrir llegan en la entrega E.
+'             niega a grabarlo. Entrega E: PublicarArticulo controla los
+'             requisitos, congela la herencia y publica; ReabrirArticulo
+'             (desde FSysAdmin, con su conexión) vuelve a «en producción» y
+'             deja la reapertura en articulo_reapertura, solo de altas.
 ' Conexión  : m_ConexionBD.mConn (con proyecto abierto, hay sesión).
-' Requiere  : esquema 1.16.0 (vocabulario_termino; antes, 1.15.0 para el ROR).
+' Requiere  : esquema 1.23.0 (articulo_reapertura; antes, 1.16.0 para el
+'             vocabulario y 1.15.0 para el ROR).
 ' Dependencias: m_ConexionBD, m_Sonido, m_InicioCierre, m_Revistas (plantillas),
 '             m_Vocabularios (catálogo de vocabulario controlado, entrega C3).
 ' Fechas    : entrega D1. Recibido, revisado, aceptado y publicado, en ese
@@ -1335,6 +1339,270 @@ Public Function AvisoRelaciones(oRel As CRelacionesArticulo) As String
   Next
 
   Return ""
+
+End
+
+' ============================================
+' Función   : PublicarArticulo
+' Propósito : Publica un artículo ya guardado: controla los requisitos,
+'             congela la herencia de la revista (decisión 14) y pasa el
+'             estado a publicado, en una transacción. La fecha de
+'             publicación vacía toma la del día
+' Parámetros: iIdArticulo As Integer — artículo
+' Retorna   : Boolean — True si quedó publicado; False si falta algo o
+'             falló (ya se informó)
+' ============================================
+Public Function PublicarArticulo(iIdArticulo As Integer) As Boolean
+
+  Dim hConn As Connection
+  Dim rArticulo As Result
+  Dim rCuenta As Result
+  Dim aFaltan As New String[]
+  Dim dFecha As Date
+  Dim vUltima As Variant
+
+  ' --- 1. TRANSACCIÓN: LO CONTROLADO ES LO QUE SE PUBLICA ---
+  hConn = m_ConexionBD.mConn
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la publicación:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. EL ARTÍCULO Y LOS VALORES DE SU REVISTA, BLOQUEADOS HASTA EL FINAL ---
+  Try rArticulo = hConn.Exec("SELECT a.estado, a.titulo, a.id_seccion, a.idioma_principal, a.fecha_publicacion, a.fecha_recepcion, a.fecha_revision, a.fecha_aceptacion, " &
+    "COALESCE(a.licencia, r.licencia_defecto) AS licencia_efectiva, COALESCE(a.url_licencia, r.url_licencia_defecto) AS url_efectiva, " &
+    "r.licencia_defecto, r.url_licencia_defecto, r.titular_copyright_defecto, r.tipo_acceso_defecto " &
+    "FROM articulo a JOIN numero n ON n.id_numero = a.id_numero JOIN revista r ON r.id_revista = n.id_revista " &
+    "WHERE a.id_articulo = &1 FOR UPDATE", iIdArticulo)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el artículo para publicarlo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If Not rArticulo.Available Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("El artículo ya no existe.")
+    Return False
+  Endif
+  If rArticulo!estado = "publicado" Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("El artículo ya está publicado.")
+    Return False
+  Endif
+
+  ' --- 3. REQUISITOS (DECISIÓN DE ALBERTO, 28/10): SE JUNTAN TODOS LOS QUE FALTAN ---
+  If Trim(rArticulo!titulo) = "" Then aFaltan.Add("el título")
+  If IsNull(rArticulo!id_seccion) Then aFaltan.Add("la sección")
+  ' UN AUTOR, PERSONA O COLECTIVO; LA AUTORÍA ANÓNIMA OCULTA LA FIRMA, NO LA QUITA
+  Try rCuenta = hConn.Exec("SELECT COUNT(*) AS n FROM articulo_contribuyente WHERE id_articulo = &1 AND rol = 'autor'", iIdArticulo)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron contar los autores:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rCuenta!n = 0 Then aFaltan.Add("al menos un autor")
+  ' RESUMEN EN EL IDIOMA PRINCIPAL: SIMPLE CON TEXTO, O ESTRUCTURADO CON SUS
+  ' SECCIONES (QUE AL GUARDAR YA SE EXIGEN TODAS, AvisoResumenes)
+  Try rCuenta = hConn.Exec("SELECT COUNT(*) AS n FROM articulo_texto t WHERE t.id_articulo = &1 AND t.tipo = 'resumen' AND t.idioma = &2 " &
+    "AND (t.texto <> '' OR EXISTS (SELECT 1 FROM articulo_resumen_seccion s WHERE s.id_texto = t.id_texto))", iIdArticulo, rArticulo!idioma_principal)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el resumen:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rCuenta!n = 0 Then aFaltan.Add("el resumen en «" & rArticulo!idioma_principal & "»")
+  ' LICENCIA EFECTIVA: LA PROPIA O LA DE LA REVISTA, CON SU URL
+  If IsNull(rArticulo!licencia_efectiva) Then aFaltan.Add("la licencia (del artículo o de la revista)")
+  If IsNull(rArticulo!url_efectiva) Then aFaltan.Add("la URL de la licencia (del artículo o de la revista)")
+  ' LA FECHA DEL DÍA NO PUEDE QUEDAR ANTES DE LA ÚLTIMA DEL PROCESO EDITORIAL
+  If IsNull(rArticulo!fecha_publicacion) Then
+    dFecha = Date(Now)
+  Else
+    dFecha = rArticulo!fecha_publicacion
+  Endif
+  vUltima = rArticulo!fecha_aceptacion
+  If IsNull(vUltima) Then vUltima = rArticulo!fecha_revision
+  If IsNull(vUltima) Then vUltima = rArticulo!fecha_recepcion
+  If Not IsNull(vUltima) Then
+    If vUltima > dFecha Then aFaltan.Add("una fecha de publicación posterior a la de " & Format(vUltima, "dd/mm/yyyy"))
+  Endif
+  If aFaltan.Count > 0 Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se puede publicar. Falta:" & gb.NewLine & "– " & aFaltan.Join(gb.NewLine & "– "))
+    Return False
+  Endif
+
+  ' --- 4. CONGELADO Y ESTADO (DECISIÓN 14): LO VACÍO TOMA EL VALOR EFECTIVO ---
+  ' EL AÑO DEL COPYRIGHT VACÍO ES EL DE LA PUBLICACIÓN, PERO SOLO CON TITULAR
+  ' (PROPIO O DE LA REVISTA): JATS4R EXIGE copyright-year Y copyright-holder
+  ' JUNTOS (permissions-errors.sch, v0.0.17). EL CASE NO DEPENDE DEL ORDEN EN
+  ' QUE MySQL EVALÚA LAS ASIGNACIONES: COALESCE DA LO MISMO ANTES O DESPUÉS
+  Try hConn.Exec("UPDATE articulo SET estado = 'publicado', fecha_publicacion = &2, " &
+    "licencia = COALESCE(licencia, &3), url_licencia = COALESCE(url_licencia, &4), " &
+    "titular_copyright = COALESCE(titular_copyright, &5), tipo_acceso = COALESCE(tipo_acceso, &6), " &
+    "anio_copyright = CASE WHEN COALESCE(titular_copyright, &5) IS NULL THEN anio_copyright ELSE COALESCE(anio_copyright, &7) END WHERE id_articulo = &1",
+    iIdArticulo, dFecha, rArticulo!licencia_defecto, rArticulo!url_licencia_defecto, rArticulo!titular_copyright_defecto, rArticulo!tipo_acceso_defecto, Year(dFecha))
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo publicar el artículo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 5. CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar la publicación:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Return True
+
+End
+
+' ============================================
+' Función   : PublicadosDeLaRevista
+' Propósito : Los artículos publicados de una revista, para elegir cuál
+'             reabrir (FReabrirArticulo, desde FSysAdmin)
+' Parámetros: hConn As Connection — la del llamador (FSysAdmin)
+'             iIdRevista As Integer — revista
+' Retorna   : Result — id_articulo, volumen, numero, nombre_archivo, titulo,
+'             fecha_publicacion; Null si falló (ya se informó)
+' ============================================
+Public Function PublicadosDeLaRevista(hConn As Connection, iIdRevista As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT a.id_articulo, n.volumen, n.numero, a.nombre_archivo, a.titulo, a.fecha_publicacion FROM articulo a " &
+    "JOIN numero n ON n.id_numero = a.id_numero " &
+    "WHERE n.id_revista = &1 AND a.estado = 'publicado' ORDER BY n.clave_identidad, a.nombre_archivo", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los artículos publicados:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ReaperturasDeLaRevista
+' Propósito : El registro de reaperturas de una revista, de la más reciente
+'             a la más vieja
+' Parámetros: hConn As Connection — la del llamador (FSysAdmin)
+'             iIdRevista As Integer — revista
+' Retorna   : Result — fecha, usuario, volumen, numero, nombre_archivo,
+'             motivo; Null si falló (ya se informó)
+' ============================================
+Public Function ReaperturasDeLaRevista(hConn As Connection, iIdRevista As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT ra.fecha, ra.usuario, n.volumen, n.numero, a.nombre_archivo, ra.motivo FROM articulo_reapertura ra " &
+    "JOIN articulo a ON a.id_articulo = ra.id_articulo JOIN numero n ON n.id_numero = a.id_numero " &
+    "WHERE n.id_revista = &1 ORDER BY ra.fecha DESC, ra.id_reapertura DESC", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el registro de reaperturas:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ReabrirArticulo
+' Propósito : Reabre un artículo publicado (decisión 17): vuelve a «en
+'             producción» y queda registrado quién, cuándo y por qué, en una
+'             transacción. Los valores congelados al publicar quedan
+'             escritos (decisión de Alberto, 28/10)
+' Parámetros: hConn As Connection — la del llamador (FSysAdmin)
+'             iIdArticulo As Integer — artículo
+'             sUsuario As String — el administrador que reabre
+'             sMotivo As String — por qué (obligatorio)
+' Retorna   : Boolean — True si quedó reabierto; False si no (ya se informó)
+' ============================================
+Public Function ReabrirArticulo(hConn As Connection, iIdArticulo As Integer, sUsuario As String, sMotivo As String) As Boolean
+
+  Dim rEstado As Result
+
+  ' --- 1. QUIÉN Y POR QUÉ (chk_reap_usuario, chk_reap_motivo) ---
+  If Trim(sMotivo) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Escriba el motivo de la reapertura: queda registrado.")
+    Return False
+  Endif
+  If Trim(sUsuario) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay administrador identificado: no se puede registrar la reapertura.")
+    Return False
+  Endif
+
+  ' --- 2. TRANSACCIÓN: ESTADO Y REGISTRO, JUNTOS O NADA ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar la reapertura:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. SIGUE PUBLICADO (OTRO PUESTO PUDO REABRIRLO ANTES) ---
+  Try rEstado = hConn.Exec("SELECT estado FROM articulo WHERE id_articulo = &1 FOR UPDATE", iIdArticulo)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el estado del artículo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If Not rEstado.Available Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("El artículo ya no existe.")
+    Return False
+  Endif
+  If rEstado!estado <> "publicado" Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("El artículo ya no está publicado.")
+    Return False
+  Endif
+
+  ' --- 4. ESTADO Y REGISTRO ---
+  Try hConn.Exec("UPDATE articulo SET estado = 'en_produccion' WHERE id_articulo = &1", iIdArticulo)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo reabrir el artículo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Try hConn.Exec("INSERT INTO articulo_reapertura (id_articulo, usuario, motivo) VALUES (&1, &2, &3)", iIdArticulo, Trim(sUsuario), Trim(sMotivo))
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo registrar la reapertura:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 5. CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar la reapertura:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Return True
 
 End
 

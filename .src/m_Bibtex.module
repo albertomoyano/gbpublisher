@@ -247,6 +247,7 @@ End
 ' Nota      : RECORRE LAS SOLAPAS DE TabPanelBibliografia COMO LimpiarTabStrip.
 '             LA CLAVE NO SE MIRA: LA SANEA SanitizarClaveBibtex.
 ' ============================================
+
 Public Function VerificarOrdenesLatex() As Boolean
 
   Dim aTotal As New String[]
@@ -1221,44 +1222,23 @@ Public Sub InicializarMapaCampos()
 End
 
 ' ============================================
-' Función   : ExtraerYGuardarReferenciasDelEditor
-' Propósito : Parsea el contenido del archivo abierto en el editor
-'             buscando citekeys en todos los formatos Pandoc:
-'               [@key], [-@key], [ver @key], [@key, p. 5],
-'               [@key1; @key2], [@key1; -@key2], etc.
-'             y los guarda como CSV en la columna referencias_citadas
-'             de la tabla correspondiente según el tipo de proyecto:
-'               - TIPO_REVISTA_MD → articulos.referencias_citadas
-'               - TIPO_LIBRO_MD   → capitulos.referencias_citadas
-'
-'             Reemplaza a ExtraerYGuardarReferenciasDelArticulo
-'             (versión anterior solo para revistas). El renombre
-'             refleja que la función es agnóstica del tipo: opera
-'             sobre lo que hay en el editor, sea artículo o capítulo.
-'
-'             Prefijos válidos: fm-, a-, bm-. Cualquier otro archivo
-'             se ignora silenciosamente. El caso especial bm-99-colofon
-'             no tiene registro en BD por diseño y también se ignora.
-'
-' Parámetros: sContenidoMD  As String — contenido completo del .md
-'             sRutaArchivo  As String — ruta completa del .md abierto
-' Retorna   : Boolean — True si se guardó exitosamente o si el archivo
-'                       no requiere procesamiento (prefijo no aplicable
-'                       o colofón reservado)
+' Función   : ClavesCitadas
+' Propósito : Las claves citadas de un texto Markdown, en todos los formatos
+'             de Pandoc entre corchetes: [@key], [-@key], [ver @key],
+'             [@key, p. 5], [@key1; @key2]. Es el análisis de
+'             ExtraerYGuardarReferenciasDelEditor, que ahora la usa, y lo usa
+'             también el canónico de revistas (m_CanonicoRevista), que saca
+'             las claves del .md al generar (SC-16)
+' Parámetros: sContenido As String — el Markdown
+' Retorna   : String[] — las claves sin repetir, en orden de aparición
+' Nota      : UNA CITA SIN CORCHETES (@key en el texto) NO SE TOMA, COMO
+'             ANTES DE ESTA FUNCIÓN
 ' ============================================
-Public Function ExtraerYGuardarReferenciasDelEditor(sContenidoMD As String, sRutaArchivo As String) As Boolean
+Public Function ClavesCitadas(sContenido As String) As String[]
 
-  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
-  Dim sNombreArchivo As String
-  Dim sPrefijoTres As String
-  Dim sPrefijoDos As String
-  Dim bPrefijoValido As Boolean
-  Dim sTabla As String
-  Dim sColumnaId As String
-  Dim iIdRegistro As Integer
-  Dim sLinea As String
+  ' --- 1. INICIALIZACIÓN ---
   Dim aLineas As String[]
-  Dim sCitekeys As String
+  Dim sLinea As String
   Dim aEncontradas As New String[]
   Dim colUnicas As New Collection
   Dim iPos As Integer
@@ -1270,71 +1250,10 @@ Public Function ExtraerYGuardarReferenciasDelEditor(sContenidoMD As String, sRut
   Dim aPartes As String[]
   Dim sParte As String
   Dim sCitekey As String
-  Dim hResult As Result
 
-  ' --- 2. VALIDACIÓN DE ENTRADA: NOMBRE Y PREFIJO ---
-  ' EXTRAER NOMBRE DE ARCHIVO SIN EXTENSIÓN NI RUTA
-  sNombreArchivo = File.BaseName(sRutaArchivo)
-
-  ' CHEQUEAR PREFIJOS VÁLIDOS EN LIBROS Y REVISTAS
-  '   fm-  → front-matter (LIBROS)
-  '   a-   → articulos    (LIBROS Y REVISTAS)
-  '   bm-  → back-matter  (LIBROS)
-  sPrefijoTres = Left(sNombreArchivo, 3)
-  sPrefijoDos = Left(sNombreArchivo, 2)
-  bPrefijoValido = (sPrefijoTres = "fm-" Or sPrefijoTres = "bm-" Or sPrefijoDos = "a-")
-
-  If Not bPrefijoValido Then
-    ' NO ES UN CAPÍTULO/ARTÍCULO: NO HAY NADA QUE HACER
-    Return True
-  Endif
-
-  ' EL COLOFÓN NO TIENE REGISTRO EN BD (CONVENCIÓN DE LIBROS)
-  If sNombreArchivo = "bm-99-colofon" Then
-    Return True
-  Endif
-
-  ' --- 3. RESOLVER TABLA DESTINO SEGÚN TIPO DE PROYECTO ---
-  ' USAR FMain.TipoProyectoActual (SETEADO EN AbrirProyecto) EN LUGAR
-  ' DE INTENTAR AMBAS TABLAS: EVITA AMBIGÜEDAD Y AHORRA UNA QUERY.
-  Select Case FMain.TipoProyectoActual
-    Case m_Constantes.TIPO_REVISTA_MD
-      sTabla = "articulos"
-      sColumnaId = "id_articulo"
-    Case m_Constantes.TIPO_LIBRO_MD
-      sTabla = "capitulos"
-      sColumnaId = "id_capitulo"
-    Case Else
-      ' TIPO NO SOPORTADO PARA GUARDADO DE REFERENCIAS (EJ. LATEX)
-      Return True
-  End Select
-
-  ' --- 4. BUSCAR REGISTRO EN LA BD POR nombre_archivo ---
-  Try hResult = m_ConexionBD.mConn.Exec(
-    "SELECT " & sColumnaId & " FROM " & sTabla &
-    " WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
-    sNombreArchivo,
-    m_InicioCierre.IdProyectoEnCurso)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al buscar el archivo en la base de datos:" & Chr(10) &
-      Error.Text)
-    Return False
-  Endif
-
-  If Not hResult.Available Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("El archivo " & sNombreArchivo &
-      " no tiene registro en la base de datos." & Chr(10) &
-      "Las referencias citadas no se pudieron guardar.")
-    Return False
-  Endif
-
-  iIdRegistro = hResult[sColumnaId]
-
-  ' --- 5. PARSEAR EL CONTENIDO MD BUSCANDO CITEKEYS EN FORMATOS PANDOC ---
+  ' --- 2. BLOQUES ENTRE CORCHETES CON @, LÍNEA POR LÍNEA ---
   ' CUBRE: [@key], [-@key], [ver @key], [@key, p. 5], [@key1; @key2], ETC.
-  aLineas = Split(sContenidoMD, Chr(10))
+  aLineas = Split(sContenido, Chr(10))
 
   For Each sLinea In aLineas
 
@@ -1399,6 +1318,118 @@ Public Function ExtraerYGuardarReferenciasDelEditor(sContenidoMD As String, sRut
       iPos = iPosFin + 1
     Wend
   Next
+
+  Return aEncontradas
+
+End
+
+' ============================================
+' Función   : ExtraerYGuardarReferenciasDelEditor
+' Propósito : Parsea el contenido del archivo abierto en el editor
+'             buscando citekeys en todos los formatos Pandoc:
+'               [@key], [-@key], [ver @key], [@key, p. 5],
+'               [@key1; @key2], [@key1; -@key2], etc.
+'             y los guarda como CSV en la columna referencias_citadas
+'             de la tabla correspondiente según el tipo de proyecto:
+'               - TIPO_REVISTA_MD → articulos.referencias_citadas
+'               - TIPO_LIBRO_MD   → capitulos.referencias_citadas
+'
+'             Reemplaza a ExtraerYGuardarReferenciasDelArticulo
+'             (versión anterior solo para revistas). El renombre
+'             refleja que la función es agnóstica del tipo: opera
+'             sobre lo que hay en el editor, sea artículo o capítulo.
+'
+'             Prefijos válidos: fm-, a-, bm-. Cualquier otro archivo
+'             se ignora silenciosamente. El caso especial bm-99-colofon
+'             no tiene registro en BD por diseño y también se ignora.
+'
+' Parámetros: sContenidoMD  As String — contenido completo del .md
+'             sRutaArchivo  As String — ruta completa del .md abierto
+' Retorna   : Boolean — True si se guardó exitosamente o si el archivo
+'                       no requiere procesamiento (prefijo no aplicable
+'                       o colofón reservado)
+' ============================================
+Public Function ExtraerYGuardarReferenciasDelEditor(sContenidoMD As String, sRutaArchivo As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sNombreArchivo As String
+  Dim sPrefijoTres As String
+  Dim sPrefijoDos As String
+  Dim bPrefijoValido As Boolean
+  Dim sTabla As String
+  Dim sColumnaId As String
+  Dim iIdRegistro As Integer
+  Dim sCitekeys As String
+  Dim aEncontradas As String[]
+  Dim hResult As Result
+
+  ' --- 2. VALIDACIÓN DE ENTRADA: NOMBRE Y PREFIJO ---
+  ' EXTRAER NOMBRE DE ARCHIVO SIN EXTENSIÓN NI RUTA
+  sNombreArchivo = File.BaseName(sRutaArchivo)
+
+  ' CHEQUEAR PREFIJOS VÁLIDOS EN LIBROS Y REVISTAS
+  '   fm-  → front-matter (LIBROS)
+  '   a-   → articulos    (LIBROS Y REVISTAS)
+  '   bm-  → back-matter  (LIBROS)
+  sPrefijoTres = Left(sNombreArchivo, 3)
+  sPrefijoDos = Left(sNombreArchivo, 2)
+  bPrefijoValido = (sPrefijoTres = "fm-" Or sPrefijoTres = "bm-" Or sPrefijoDos = "a-")
+
+  If Not bPrefijoValido Then
+    ' NO ES UN CAPÍTULO/ARTÍCULO: NO HAY NADA QUE HACER
+    Return True
+  Endif
+
+  ' EL COLOFÓN NO TIENE REGISTRO EN BD (CONVENCIÓN DE LIBROS)
+  If sNombreArchivo = "bm-99-colofon" Then
+    Return True
+  Endif
+
+  ' --- 3. RESOLVER TABLA DESTINO SEGÚN TIPO DE PROYECTO ---
+  ' USAR FMain.TipoProyectoActual (SETEADO EN AbrirProyecto) EN LUGAR
+  ' DE INTENTAR AMBAS TABLAS: EVITA AMBIGÜEDAD Y AHORRA UNA QUERY.
+  Select Case FMain.TipoProyectoActual
+    Case m_Constantes.TIPO_REVISTA_MD
+      sTabla = "articulos"
+      sColumnaId = "id_articulo"
+    Case m_Constantes.TIPO_LIBRO_MD
+      sTabla = "capitulos"
+      sColumnaId = "id_capitulo"
+    Case Else
+      ' TIPO NO SOPORTADO PARA GUARDADO DE REFERENCIAS (EJ. LATEX)
+      Return True
+  End Select
+
+  ' --- 4. BUSCAR REGISTRO EN LA BD POR nombre_archivo ---
+  Try hResult = m_ConexionBD.mConn.Exec(
+    "SELECT " & sColumnaId & " FROM " & sTabla &
+    " WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
+    sNombreArchivo,
+    m_InicioCierre.IdProyectoEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al buscar el archivo en la base de datos:" & Chr(10) &
+      Error.Text)
+    Return False
+  Endif
+
+  If Not hResult.Available Then
+    ' UN NÚMERO DEL ESQUEMA NUEVO NO TIENE FILA EN articulos: SUS CLAVES SE
+    ' SACAN DEL .md AL GENERAR EL CANÓNICO (m_CanonicoRevista, SC-16) Y NO
+    ' HAY NADA QUE GUARDAR NI QUE AVISAR EN CADA GUARDADO
+    If FMain.TipoProyectoActual = m_Constantes.TIPO_REVISTA_MD Then Return True
+    m_Sonido.sonar("Warning")
+    Message.Warning("El archivo " & sNombreArchivo &
+      " no tiene registro en la base de datos." & Chr(10) &
+      "Las referencias citadas no se pudieron guardar.")
+    Return False
+  Endif
+
+  iIdRegistro = hResult[sColumnaId]
+
+  ' --- 5. LAS CLAVES CITADAS, CON EL MISMO ANÁLISIS QUE USA EL CANÓNICO ---
+  ' DE REVISTAS (ClavesCitadas: UNA SOLA FUNCIÓN PARA LOS DOS)
+  aEncontradas = ClavesCitadas(sContenidoMD)
 
   ' --- 6. CONSTRUIR EL STRING SEPARADO POR COMAS ---
   sCitekeys = aEncontradas.Join(",")

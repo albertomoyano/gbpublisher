@@ -2350,8 +2350,62 @@ End Function
 Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
 
   Dim hArticulo As Result
-  Dim sNombreArchivo As String
-  Dim sReferenciasCSV As String
+  Dim aCitekeys As String[]
+  Dim sCk As String
+  Dim aClaves As New String[]
+
+  ' --- 1. Obtener nombre_archivo y referencias_citadas ---
+  Try hArticulo = m_ConexionBD.mConn.Exec(
+    "SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
+    iIdArticulo)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
+    Return False
+  Endif
+  If Not hArticulo.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
+    Return False
+  Endif
+
+  ' --- 2. LAS CLAVES DE LA COLUMNA, EN SU ORDEN ---
+  ' SIN REFERENCIAS, LA LISTA VA VACÍA: EscribirRefList ESCRIBE <ref-list/>
+  If Not IsNull(hArticulo["referencias_citadas"]) Then
+    If TrimUTF8(hArticulo["referencias_citadas"]) <> "" Then
+      aCitekeys = Split(TrimUTF8(hArticulo["referencias_citadas"]), ",")
+      For Each sCk In aCitekeys
+        sCk = TrimUTF8(sCk)
+        If sCk <> "" Then aClaves.Add(sCk)
+      Next
+      ' COLUMNA CON TEXTO PERO SIN NINGUNA CLAVE: EL AVISO DE SIEMPRE
+      If aClaves.Count = 0 Then
+        m_Sonido.sonar("Warning")
+        Message.Warning("No se encontraron citekeys válidos en referencias_citadas.")
+        Return False
+      Endif
+    Endif
+  Endif
+
+  ' --- 3. EL reflist, CON EL MISMO CONVERSOR QUE EL CANÓNICO NUEVO ---
+  Return EscribirRefList(TrimUTF8(hArticulo["nombre_archivo"]), aClaves)
+
+End Function
+
+' ============================================
+' Función   : EscribirRefList
+' Propósito : Escribe tmp/reflist-{base}.xml: el <ref-list> de JATS 1.4 con
+'             las entradas del .bib del proyecto cuyas claves se piden, en
+'             ese orden. Es el cuerpo de GenerarRefListXML, separado para que
+'             lo use también el canónico de revistas (m_CanonicoRevista), que
+'             saca las claves del .md (SC-16). Sin claves escribe un
+'             <ref-list/> vacío y devuelve True: el XSLT omite <back>
+' Parámetros: sNombreArchivo As String — el archivo del artículo («a-01-tal»)
+'             aClaves As String[] — las claves, en el orden de la lista
+' Retorna   : Boolean — True si reflist-*.xml quedó escrito
+' ============================================
+Public Function EscribirRefList(sNombreArchivo As String, aClaves As String[]) As Boolean
+
   Dim aCitekeys As String[]
   Dim colCitekeys As New Collection
   Dim sBibFile As String
@@ -2370,31 +2424,13 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
   Dim sFilePath As String
   Dim sCk As String
 
-  ' --- 1. Obtener nombre_archivo y referencias_citadas ---
-  Try hArticulo = m_ConexionBD.mConn.Exec(
-    "SELECT nombre_archivo, referencias_citadas FROM articulos WHERE id_articulo = &1 LIMIT 1",
-    iIdArticulo)
-
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al consultar el artículo:" & Chr(10) & Error.Text)
-    Return False
-  Endif
-
-  If Not hArticulo.Available Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontraron datos para el artículo id=" & CStr(iIdArticulo))
-    Return False
-  Endif
-
-  sNombreArchivo = TrimUTF8(hArticulo["nombre_archivo"])
+  ' --- 1. RUTA DEL reflist ---
   sDirTmp = m_InicioCierre.RutaProyectoEnCurso &/ "tmp"
   sNombreBase = "reflist-" & Mid(sNombreArchivo, 3)
   sFilePath = sDirTmp & "/" & sNombreBase & ".xml"
 
   ' --- 2. Sin referencias → ref-list vacío ---
-  If IsNull(hArticulo["referencias_citadas"]) Or
-      TrimUTF8(hArticulo["referencias_citadas"]) = "" Then
+  If aClaves.Count = 0 Then
     Try File.Save(sFilePath, "<ref-list/>" & Chr(10))
     If Error Then
       m_Sonido.sonar("Error")
@@ -2404,20 +2440,11 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
     Return True
   Endif
 
-  sReferenciasCSV = TrimUTF8(hArticulo["referencias_citadas"])
-
   ' --- 3. Construir colección de citekeys esperados ---
-  aCitekeys = Split(sReferenciasCSV, ",")
+  aCitekeys = aClaves
   For Each sCk In aCitekeys
-    sCk = TrimUTF8(sCk)
-    If sCk <> "" Then colCitekeys[sCk] = True
+    colCitekeys[sCk] = True
   Next
-
-  If colCitekeys.Count = 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No se encontraron citekeys válidos en referencias_citadas.")
-    Return False
-  Endif
 
   ' --- 4. Verificar .bib ---
   sBibFile = m_InicioCierre.RutaProyectoEnCurso &/ "referencias/ref-" &
@@ -2519,7 +2546,7 @@ Public Function GenerarRefListXML(iIdArticulo As Integer) As Boolean
 
 Catch
   m_Sonido.sonar("Error")
-  Message.Error("Error inesperado en GenerarRefListXML:" & Chr(10) &
+  Message.Error("Error inesperado en EscribirRefList:" & Chr(10) &
     Error.Text & Chr(10) & "Donde: " & Error.Where)
   Return False
 

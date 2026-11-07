@@ -1,0 +1,828 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_CanonicoRevista
+' Propósito : Lo que el canónico JATS de los artículos de un número necesita
+'             de la base, escrito como archivos (SC-13, SC-72; etapa A0 de
+'             las salidas de revistas, decisiones de Alberto del 07/11/2026,
+'             documento de trabajo claude/salidas-revistas.md):
+'               - tmp/numero-datos.xml: el número entero, con la revista,
+'                 las secciones, las plantillas de resumen, los dossiers y
+'                 cada artículo con todas sus tablas hijas. Es un volcado
+'                 NEUTRO de los datos, no JATS: el front lo escribe una
+'                 XSLT (datos-a-front-jats.xsl). Es también el MANIFIESTO
+'                 del número (decisión 10): el orden de los <articulo> es
+'                 el de los archivos.
+'               - tmp/reflist-{base}.xml de cada artículo pedido, con el
+'                 conversor de siempre (m_XML.EscribirRefList) y las claves
+'                 citadas sacadas del .md en el momento (SC-16), no de la
+'                 base.
+'             La herencia de la revista ya va resuelta (decisión 14): un
+'             artículo no publicado lleva el valor efectivo; uno publicado,
+'             el que quedó congelado.
+' Esquema   : el nuevo de revistas (SC-71), 1.23.0. NO lee las tablas viejas
+'             (articulos, revistas_md, articulo_autor): las salidas nuevas
+'             son solo para números nuevos (decisión de Alberto, 07/11).
+' Dependencias: m_ConexionBD, m_InicioCierre, m_Articulo (ArchivosDelProyecto),
+'             m_Bibtex (ClavesCitadas), m_XML (EscaparXML, TituloXML,
+'             EscribirRefList), m_CorteTitulo, m_Sonido.
+' ==============================================================================
+
+' VERSIÓN DEL FORMATO DE numero-datos.xml. LA LEE LA XSLT: SI CAMBIA LA FORMA,
+' SUBE ACÁ Y ALLÁ
+Public Const VERSION_DATOS As Integer = 1
+
+' EL ARCHIVO DEL VOLCADO, RELATIVO A LA CARPETA DEL PROYECTO
+Public Const ARCHIVO_DATOS As String = "tmp/numero-datos.xml"
+
+' LAS LÍNEAS DEL VOLCADO MIENTRAS SE ARMA
+Private $aXml As String[]
+
+' EL PRIMER ERROR DE LECTURA: SE INFORMA UNA SOLA VEZ, AL FINAL
+Private $sError As String
+
+' ============================================
+' Función   : PrepararNumero
+' Propósito : Escribe tmp/numero-datos.xml del número y el reflist de cada
+'             artículo pedido. Es lo que hace Gambas antes de lanzar el
+'             script de canónicos: todo lo que sale de la base llega como
+'             archivo (SC-13)
+' Parámetros: iIdNumero As Integer — el número del proyecto abierto
+'             aArchivos As String[] — los artículos cuyo reflist se escribe
+'               (nombres sin .md: «a-01-tal»). Vacío: ninguno
+' Retorna   : Boolean — True si todo quedó escrito; False si no, con el
+'             motivo ya informado
+' ============================================
+Public Function PrepararNumero(iIdNumero As Integer, aArchivos As String[]) As Boolean
+
+  Dim sRuta As String
+  Dim sArchivo As String
+  Dim aClaves As String[]
+
+  ' --- 1. EL VOLCADO DEL NÚMERO ---
+  sRuta = m_InicioCierre.RutaProyectoEnCurso
+  If Not VolcarNumero(iIdNumero, sRuta &/ ARCHIVO_DATOS) Then Return False
+
+  ' --- 2. LAS REFERENCIAS DE CADA ARTÍCULO PEDIDO ---
+  ' LAS CLAVES SALEN DEL .md DEL DISCO, EN EL ORDEN EN QUE SE CITAN (SC-16).
+  ' EL .bib LO EXPORTA EL LLAMADOR ANTES (m_Bibtex.ExportarBibTeX)
+  For Each sArchivo In aArchivos
+    aClaves = ClavesDelArchivo(sRuta &/ "articulos" &/ sArchivo & ".md")
+    If Not aClaves Then Return False
+    ' EscribirRefList INFORMA SU PROPIO MOTIVO
+    If Not m_XML.EscribirRefList(sArchivo, aClaves) Then Return False
+  Next
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ClavesDelArchivo
+' Propósito : Las claves citadas de un .md del disco
+' Parámetros: sRutaMd As String — ruta del .md
+' Retorna   : String[] — las claves, sin repetir, en orden de aparición;
+'             Null si no se pudo leer (ya se informó)
+' ============================================
+Private Function ClavesDelArchivo(sRutaMd As String) As String[]
+
+  Dim sContenido As String
+
+  Try sContenido = File.Load(sRutaMd)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer " & sRutaMd & ":" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return m_Bibtex.ClavesCitadas(sContenido)
+
+End
+
+' ============================================
+' Función   : VolcarNumero
+' Propósito : Escribe el volcado neutro del número: revista, número,
+'             secciones, plantillas, dossiers y artículos en el orden de sus
+'             archivos (el manifiesto, decisión 10). Los archivos sin
+'             metadatos y las filas sin archivo se anotan, no se omiten en
+'             silencio: el script los informa
+' Parámetros: iIdNumero As Integer — el número
+'             sDestino As String — ruta del archivo a escribir
+' Retorna   : Boolean — True si quedó escrito; False si no, con el motivo ya
+'             informado
+' ============================================
+Public Function VolcarNumero(iIdNumero As Integer, sDestino As String) As Boolean
+
+  Dim rNumero As Result
+  Dim rArticulos As Result
+  Dim aArchivos As String[]
+  Dim cConFila As New Collection
+  Dim cIdPorArchivo As New Collection
+  Dim sArchivo As String
+  Dim iIdRevista As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  $aXml = New String[]
+  $sError = ""
+
+  ' --- 2. EL NÚMERO Y SU REVISTA ---
+  Try rNumero = m_ConexionBD.mConn.Exec("SELECT * FROM numero WHERE id_numero = &1", iIdNumero)
+  If Error Then Return Fallo("No se pudo leer el número:" & gb.NewLine & Error.Text)
+  If Not rNumero.Available Then Return Fallo("El número " & CStr(iIdNumero) & " no existe.")
+  iIdRevista = rNumero!id_revista
+
+  $aXml.Add("<?xml version=" & Chr(34) & "1.0" & Chr(34) & " encoding=" & Chr(34) & "UTF-8" & Chr(34) & "?>")
+  $aXml.Add("<!-- VOLCADO DE gbpublisher (m_CanonicoRevista): DATOS, NO JATS. LO LEE datos-a-front-jats.xsl -->")
+  $aXml.Add("<numero-datos version=" & Chr(34) & CStr(VERSION_DATOS) & Chr(34) & ">")
+  If Not EscribirRevista(iIdRevista) Then Return Fallo($sError)
+  If Not EscribirNumero(rNumero) Then Return Fallo($sError)
+  If Not EscribirSecciones(iIdRevista) Then Return Fallo($sError)
+  If Not EscribirPlantillas(iIdRevista) Then Return Fallo($sError)
+  If Not EscribirDossiers(iIdNumero) Then Return Fallo($sError)
+
+  ' --- 3. LOS ARTÍCULOS: EL ORDEN ES EL DE LOS ARCHIVOS (m_OrdenPiezas) ---
+  Try rArticulos = m_ConexionBD.mConn.Exec("SELECT id_articulo, nombre_archivo FROM articulo WHERE id_numero = &1", iIdNumero)
+  If Error Then Return Fallo("No se pudieron leer los artículos del número:" & gb.NewLine & Error.Text)
+  While rArticulos.Available
+    cIdPorArchivo[rArticulos!nombre_archivo] = rArticulos!id_articulo
+    rArticulos.MoveNext
+  Wend
+  aArchivos = m_Articulo.ArchivosDelProyecto()
+  For Each sArchivo In aArchivos
+    ' UN ARCHIVO SIN FILA NO TIENE METADATOS: SE ANOTA PARA QUE EL SCRIPT LO DIGA
+    If Not cIdPorArchivo.Exist(sArchivo) Then
+      $aXml.Add("  <sin-metadatos archivo=" & Chr(34) & m_XML.EscaparXML(sArchivo) & Chr(34) & "/>")
+      Continue
+    Endif
+    cConFila[sArchivo] = True
+    If Not EscribirArticulo(cIdPorArchivo[sArchivo], sArchivo, iIdRevista) Then Return Fallo($sError)
+  Next
+  ' UNA FILA SIN ARCHIVO ES HUÉRFANA (DECISIÓN DE ALBERTO, 26/10)
+  For Each cIdPorArchivo
+    If Not cConFila.Exist(cIdPorArchivo.Key) Then
+      $aXml.Add("  <huerfano archivo=" & Chr(34) & m_XML.EscaparXML(cIdPorArchivo.Key) & Chr(34) & " id=" & Chr(34) & CStr(cIdPorArchivo[cIdPorArchivo.Key]) & Chr(34) & "/>")
+    Endif
+  Next
+  $aXml.Add("</numero-datos>")
+
+  ' --- 4. ESCRITURA ---
+  ' tmp/ LA CREA LA LANZADORA; ACÁ PUEDE NO EXISTIR TODAVÍA
+  If Not Exist(File.Dir(sDestino)) Then
+    Try Mkdir File.Dir(sDestino)
+    If Error Then Return Fallo("No se pudo crear " & File.Dir(sDestino) & ":" & gb.NewLine & Error.Text)
+  Endif
+  Try File.Save(sDestino, $aXml.Join(gb.NewLine) & gb.NewLine)
+  If Error Then Return Fallo("No se pudo escribir " & sDestino & ":" & gb.NewLine & Error.Text)
+
+  Return True
+
+End
+
+' ============================================
+' Función   : Fallo
+' Propósito : Informa el motivo una sola vez y devuelve False
+' Parámetros: sMotivo As String — qué falló
+' Retorna   : Boolean — siempre False
+' ============================================
+Private Function Fallo(sMotivo As String) As Boolean
+
+  m_Sonido.sonar("Error")
+  Message.Error("No se pudieron preparar los datos del número para el canónico." & gb.NewLine & gb.NewLine & sMotivo)
+  Return False
+
+End
+
+' ============================================
+' Función   : Atr
+' Propósito : Un atributo escapado; vacío si el valor no tiene dato. Así un
+'             dato que falta no aparece (el criterio de sitio.xml, SC-83)
+' Parámetros: sNombre As String — nombre del atributo
+'             vValor As Variant — valor (Null o vacío: sin atributo)
+' Retorna   : String — « nombre="valor"» o vacío
+' ============================================
+Private Function Atr(sNombre As String, vValor As Variant) As String
+
+  Dim sValor As String
+
+  If IsNull(vValor) Then Return ""
+  sValor = CStr(vValor)
+  If sValor = "" Then Return ""
+  Return " " & sNombre & "=" & Chr(34) & m_XML.EscaparXML(sValor) & Chr(34)
+
+End
+
+' ============================================
+' Función   : Elem
+' Propósito : Un elemento con texto escapado; vacío si no hay dato
+' Parámetros: sNombre As String — nombre del elemento
+'             vValor As Variant — el texto (Null o vacío: sin elemento)
+'             sAtributos As String — atributos ya armados con Atr
+' Retorna   : String — el elemento o vacío
+' ============================================
+Private Function Elem(sNombre As String, vValor As Variant, Optional sAtributos As String = "") As String
+
+  Dim sValor As String
+
+  If IsNull(vValor) Then Return ""
+  sValor = CStr(vValor)
+  If sValor = "" Then Return ""
+  Return "<" & sNombre & sAtributos & ">" & m_XML.EscaparXML(sValor) & "</" & sNombre & ">"
+
+End
+
+' ============================================
+' Función   : Agregar
+' Propósito : Suma una línea al volcado si tiene contenido
+' Parámetros: iSangria As Integer — niveles de sangría (dos espacios)
+'             sLinea As String — la línea; vacía no se agrega
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub Agregar(iSangria As Integer, sLinea As String)
+
+  If sLinea = "" Then Return
+  $aXml.Add(Space$(iSangria * 2) & sLinea)
+
+End
+
+' ============================================
+' Función   : Fecha
+' Propósito : Una fecha de la base en forma ISO (aaaa-mm-dd)
+' Parámetros: vFecha As Variant — DATE de MySQL o Null
+' Retorna   : Variant — el texto, o Null sin fecha
+' ============================================
+Private Function Fecha(vFecha As Variant) As Variant
+
+  If IsNull(vFecha) Then Return Null
+  Return Format(vFecha, "yyyy-mm-dd")
+
+End
+
+' ============================================
+' Función   : Titulo
+' Propósito : Un título o subtítulo con el corte del editor traducido al
+'             separador de JATS (SC-28): el volcado lleva <break/>, que la
+'             XSLT copia
+' Parámetros: vTexto As Variant — el título de la base
+' Retorna   : String — el título escapado; vacío sin dato
+' ============================================
+Private Function Titulo(vTexto As Variant) As String
+
+  If IsNull(vTexto) Then Return ""
+  Return m_XML.TituloXML(CStr(vTexto), m_CorteTitulo.SEPARADOR_JATS)
+
+End
+
+' ============================================
+' Función   : ElemTitulo
+' Propósito : Un elemento de título (marcado ya escapado por Titulo)
+' Parámetros: sNombre As String — nombre del elemento
+'             vTexto As Variant — el título de la base
+'             sAtributos As String — atributos ya armados
+' Retorna   : String — el elemento o vacío
+' ============================================
+Private Function ElemTitulo(sNombre As String, vTexto As Variant, Optional sAtributos As String = "") As String
+
+  Dim sTitulo As String
+
+  sTitulo = Titulo(vTexto)
+  If sTitulo = "" Then Return ""
+  Return "<" & sNombre & sAtributos & ">" & sTitulo & "</" & sNombre & ">"
+
+End
+
+' ============================================
+' Función   : EscribirRevista
+' Propósito : La revista (N0)
+' Parámetros: iIdRevista As Integer — la revista
+' Retorna   : Boolean — False si falló la lectura ($sError)
+' ============================================
+Private Function EscribirRevista(iIdRevista As Integer) As Boolean
+
+  Dim r As Result
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT * FROM revista WHERE id_revista = &1", iIdRevista)
+  If Error Then
+    $sError = "No se pudo leer la revista:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  If Not r.Available Then
+    $sError = "La revista del número no existe."
+    Return False
+  Endif
+
+  Agregar(1, "<revista" & Atr("id", r!id_revista) & Atr("modelo-paginacion", r!modelo_paginacion) & ">")
+  Agregar(2, Elem("titulo", r!titulo))
+  Agregar(2, Elem("titulo-abreviado", r!titulo_abreviado))
+  Agregar(2, Elem("acronimo", r!acronimo))
+  Agregar(2, Elem("issn", r!issn_impreso, Atr("tipo", "impreso")))
+  Agregar(2, Elem("issn", r!issn_electronico, Atr("tipo", "electronico")))
+  Agregar(2, Elem("editorial", r!editorial))
+  Agregar(2, Elem("institucion", r!institucion_editora))
+  Agregar(2, Elem("ror", r!ror_editorial))
+  Agregar(2, Elem("ciudad", r!ciudad))
+  Agregar(2, Elem("pais", r!pais))
+  Agregar(2, Elem("email", r!email_editorial))
+  Agregar(2, Elem("doi-prefijo", r!doi_prefix))
+  Agregar(2, Elem("estilo-cita", r!estilo_cita))
+  Agregar(2, Elem("idiomas", r!idiomas_publicacion))
+  Agregar(1, "</revista>")
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirNumero
+' Propósito : El número (N1) y las personas a cargo que no son de un dossier
+' Parámetros: r As Result — la fila del número
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirNumero(r As Result) As Boolean
+
+  Dim rPersonas As Result
+
+  Agregar(1, "<numero" & Atr("id", r!id_numero) & Atr("volumen", r!volumen) & Atr("numero", r!numero) & Atr("suplemento", r!suplemento) &
+    Atr("anio", r!anio) & Atr("mes", r!mes) & Atr("pagina-inicial", r!pagina_inicial) & Atr("estado", r!estado) & ">")
+  Agregar(2, ElemTitulo("titulo-especial", r!titulo_especial))
+  Agregar(2, Elem("imagen-tapa", r!imagen_tapa))
+
+  ' LAS PERSONAS DEL NÚMERO (EDICIÓN, COORDINACIÓN); LAS DE UN DOSSIER VAN EN EL DOSSIER
+  Try rPersonas = m_ConexionBD.mConn.Exec("SELECT nc.rol, nc.orden, a.id_autor, a.apellidos, a.nombre, a.orcid FROM numero_contribuyente nc " &
+    "JOIN autores a ON a.id_autor = nc.id_autor WHERE nc.id_numero = &1 AND nc.id_dossier IS NULL ORDER BY nc.orden, nc.id", r!id_numero)
+  If Error Then
+    $sError = "No se pudieron leer las personas del número:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While rPersonas.Available
+    Agregar(2, "<persona" & Atr("rol", rPersonas!rol) & Atr("orden", rPersonas!orden) & Atr("id-autor", rPersonas!id_autor) & Atr("orcid", rPersonas!orcid) & ">" &
+      Elem("apellidos", rPersonas!apellidos) & Elem("nombre", rPersonas!nombre) & "</persona>")
+    rPersonas.MoveNext
+  Wend
+  Agregar(1, "</numero>")
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirSecciones
+' Propósito : Las secciones de la revista con su título por idioma (decisión
+'             15). Todas: el artículo las nombra por código
+' Parámetros: iIdRevista As Integer — la revista
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirSecciones(iIdRevista As Integer) As Boolean
+
+  Dim rSecciones As Result
+  Dim rTitulos As Result
+
+  Try rSecciones = m_ConexionBD.mConn.Exec("SELECT * FROM revista_seccion WHERE id_revista = &1 ORDER BY orden, id_seccion", iIdRevista)
+  If Error Then
+    $sError = "No se pudieron leer las secciones:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While rSecciones.Available
+    Agregar(1, "<seccion" & Atr("id", rSecciones!id_seccion) & Atr("codigo", rSecciones!codigo) & Atr("orden", rSecciones!orden) &
+      Atr("article-type", rSecciones!article_type_defecto) & Atr("plantilla", rSecciones!id_plantilla_resumen) & ">")
+    Try rTitulos = m_ConexionBD.mConn.Exec("SELECT idioma, titulo FROM revista_seccion_titulo WHERE id_seccion = &1 ORDER BY idioma", rSecciones!id_seccion)
+    If Error Then
+      $sError = "No se pudieron leer los títulos de las secciones:" & gb.NewLine & Error.Text
+      Return False
+    Endif
+    While rTitulos.Available
+      Agregar(2, Elem("titulo", rTitulos!titulo, Atr("idioma", rTitulos!idioma)))
+      rTitulos.MoveNext
+    Wend
+    Agregar(1, "</seccion>")
+    rSecciones.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirPlantillas
+' Propósito : Las plantillas de resumen estructurado de la revista: sus
+'             apartados en orden y el título de cada uno por idioma
+' Parámetros: iIdRevista As Integer — la revista
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirPlantillas(iIdRevista As Integer) As Boolean
+
+  Dim rPlantillas As Result
+  Dim rApartados As Result
+  Dim rTitulos As Result
+
+  Try rPlantillas = m_ConexionBD.mConn.Exec("SELECT id_plantilla, nombre FROM revista_plantilla_resumen WHERE id_revista = &1 ORDER BY id_plantilla", iIdRevista)
+  If Error Then
+    $sError = "No se pudieron leer las plantillas de resumen:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While rPlantillas.Available
+    Agregar(1, "<plantilla" & Atr("id", rPlantillas!id_plantilla) & Atr("nombre", rPlantillas!nombre) & ">")
+    Try rApartados = m_ConexionBD.mConn.Exec("SELECT codigo, orden FROM revista_plantilla_resumen_seccion WHERE id_plantilla = &1 ORDER BY orden, codigo", rPlantillas!id_plantilla)
+    If Error Then
+      $sError = "No se pudieron leer los apartados de las plantillas:" & gb.NewLine & Error.Text
+      Return False
+    Endif
+    While rApartados.Available
+      Agregar(2, "<apartado" & Atr("codigo", rApartados!codigo) & Atr("orden", rApartados!orden) & ">")
+      Try rTitulos = m_ConexionBD.mConn.Exec("SELECT idioma, titulo FROM revista_plantilla_resumen_titulo WHERE id_plantilla = &1 AND codigo = &2 ORDER BY idioma", rPlantillas!id_plantilla, rApartados!codigo)
+      If Error Then
+        $sError = "No se pudieron leer los títulos de los apartados:" & gb.NewLine & Error.Text
+        Return False
+      Endif
+      While rTitulos.Available
+        Agregar(3, Elem("titulo", rTitulos!titulo, Atr("idioma", rTitulos!idioma)))
+        rTitulos.MoveNext
+      Wend
+      Agregar(2, "</apartado>")
+      rApartados.MoveNext
+    Wend
+    Agregar(1, "</plantilla>")
+    rPlantillas.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirDossiers
+' Propósito : Los dossiers del número, con título por idioma y personas a
+'             cargo
+' Parámetros: iIdNumero As Integer — el número
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirDossiers(iIdNumero As Integer) As Boolean
+
+  Dim rDossiers As Result
+  Dim rTitulos As Result
+  Dim rPersonas As Result
+
+  Try rDossiers = m_ConexionBD.mConn.Exec("SELECT d.id_dossier, d.orden, d.epigrafe, s.codigo AS seccion FROM numero_dossier d " &
+    "LEFT JOIN revista_seccion s ON s.id_seccion = d.id_seccion WHERE d.id_numero = &1 ORDER BY d.orden, d.id_dossier", iIdNumero)
+  If Error Then
+    $sError = "No se pudieron leer los dossiers:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While rDossiers.Available
+    Agregar(1, "<dossier" & Atr("id", rDossiers!id_dossier) & Atr("orden", rDossiers!orden) & Atr("seccion", rDossiers!seccion) & ">")
+    Try rTitulos = m_ConexionBD.mConn.Exec("SELECT idioma, titulo, subtitulo FROM numero_dossier_titulo WHERE id_dossier = &1 ORDER BY idioma", rDossiers!id_dossier)
+    If Error Then
+      $sError = "No se pudieron leer los títulos de los dossiers:" & gb.NewLine & Error.Text
+      Return False
+    Endif
+    While rTitulos.Available
+      Agregar(2, ElemTitulo("titulo", rTitulos!titulo, Atr("idioma", rTitulos!idioma)))
+      Agregar(2, ElemTitulo("subtitulo", rTitulos!subtitulo, Atr("idioma", rTitulos!idioma)))
+      rTitulos.MoveNext
+    Wend
+    Agregar(2, Elem("epigrafe", rDossiers!epigrafe))
+    Try rPersonas = m_ConexionBD.mConn.Exec("SELECT nc.rol, nc.orden, a.id_autor, a.apellidos, a.nombre, a.orcid FROM numero_contribuyente nc " &
+      "JOIN autores a ON a.id_autor = nc.id_autor WHERE nc.id_dossier = &1 ORDER BY nc.orden, nc.id", rDossiers!id_dossier)
+    If Error Then
+      $sError = "No se pudieron leer las personas de los dossiers:" & gb.NewLine & Error.Text
+      Return False
+    Endif
+    While rPersonas.Available
+      Agregar(2, "<persona" & Atr("rol", rPersonas!rol) & Atr("orden", rPersonas!orden) & Atr("id-autor", rPersonas!id_autor) & Atr("orcid", rPersonas!orcid) & ">" &
+        Elem("apellidos", rPersonas!apellidos) & Elem("nombre", rPersonas!nombre) & "</persona>")
+      rPersonas.MoveNext
+    Wend
+    Agregar(1, "</dossier>")
+    rDossiers.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirArticulo
+' Propósito : Un artículo (N2) con todas sus tablas hijas, con la herencia
+'             de la revista resuelta (decisión 14)
+' Parámetros: iIdArticulo As Integer — el artículo
+'             sArchivo As String — su archivo, sin .md
+'             iIdRevista As Integer — su revista (valores por defecto)
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirArticulo(iIdArticulo As Integer, sArchivo As String, iIdRevista As Integer) As Boolean
+
+  Dim r As Result
+  Dim aClaves As String[]
+  Dim sClave As String
+  Dim sRutaMd As String
+  Dim sContenido As String
+
+  ' --- 1. LA FILA, CON LOS VALORES EFECTIVOS ---
+  ' NO PUBLICADO: EL VACÍO TOMA EL DE LA REVISTA; PUBLICADO: LO CONGELADO.
+  ' EL AÑO DEL COPYRIGHT VACÍO ES EL DE LA PUBLICACIÓN, SOLO CON TITULAR
+  ' (JATS4R: AÑO Y TITULAR VAN JUNTOS; MISMA REGLA QUE PublicarArticulo)
+  Try r = m_ConexionBD.mConn.Exec("SELECT a.*, s.codigo AS seccion_codigo, " &
+    "IF(a.estado = 'publicado', a.licencia, COALESCE(a.licencia, rv.licencia_defecto)) AS licencia_ef, " &
+    "IF(a.estado = 'publicado', a.url_licencia, COALESCE(a.url_licencia, rv.url_licencia_defecto)) AS url_licencia_ef, " &
+    "IF(a.estado = 'publicado', a.titular_copyright, COALESCE(a.titular_copyright, rv.titular_copyright_defecto)) AS titular_ef, " &
+    "IF(a.estado = 'publicado', a.tipo_acceso, COALESCE(a.tipo_acceso, rv.tipo_acceso_defecto)) AS acceso_ef " &
+    "FROM articulo a JOIN revista rv ON rv.id_revista = &2 LEFT JOIN revista_seccion s ON s.id_seccion = a.id_seccion WHERE a.id_articulo = &1", iIdArticulo, iIdRevista)
+  If Error Then
+    $sError = "No se pudo leer el artículo " & sArchivo & ":" & gb.NewLine & Error.Text
+    Return False
+  Endif
+
+  ' --- 2. IDENTIFICACIÓN ---
+  ' TINYINT(1) LLEGA COMO Boolean (RC-GM-01)
+  Agregar(1, "<articulo" & Atr("id", r!id_articulo) & Atr("archivo", sArchivo) & Atr("article-type", r!article_type) & Atr("idioma", r!idioma_principal) &
+    Atr("estado", r!estado) & Atr("seccion", r!seccion_codigo) & Atr("dossier", r!id_dossier) & Atr("anonimos", If(r!autores_anonimos, "si", "")) & ">")
+  Agregar(2, ElemTitulo("titulo", r!titulo))
+  Agregar(2, ElemTitulo("subtitulo", r!subtitulo))
+  Agregar(2, ElemTitulo("titulo-corto", r!titulo_corto))
+  If Not EscribirTraducciones(iIdArticulo) Then Return False
+
+  ' --- 3. FECHAS, PÁGINAS E IDENTIFICADORES ---
+  Agregar(2, Elem("fecha", Fecha(r!fecha_recepcion), Atr("tipo", "recepcion")))
+  Agregar(2, Elem("fecha", Fecha(r!fecha_revision), Atr("tipo", "revision")))
+  Agregar(2, Elem("fecha", Fecha(r!fecha_aceptacion), Atr("tipo", "aceptacion")))
+  Agregar(2, Elem("fecha", Fecha(r!fecha_publicacion), Atr("tipo", "publicacion")))
+  ' SIN RANGO HASTA LA COMPOSICIÓN (DECISIÓN 11; F1 DEL RELEVAMIENTO)
+  If Not IsNull(r!pagina_inicio) Or Not IsNull(r!elocation_id) Then
+    Agregar(2, "<paginas" & Atr("inicio", r!pagina_inicio) & Atr("fin", r!pagina_fin) & Atr("elocation", r!elocation_id) & "/>")
+  Endif
+  Agregar(2, Elem("doi", r!doi))
+  Agregar(2, Elem("pmid", r!pmid))
+  Agregar(2, Elem("id-doaj", r!id_doaj))
+  Agregar(2, Elem("notas-autor", r!notas_autor))
+
+  ' --- 4. PERMISOS, YA EFECTIVOS ---
+  Agregar(2, "<permisos" & Atr("acceso", r!acceso_ef) & ">")
+  Agregar(3, Elem("licencia", r!licencia_ef, Atr("url", r!url_licencia_ef)))
+  Agregar(3, Elem("titular", r!titular_ef))
+  If Not IsNull(r!titular_ef) Then
+    If Not IsNull(r!anio_copyright) Then
+      Agregar(3, Elem("anio", r!anio_copyright))
+    Else If Not IsNull(r!fecha_publicacion) Then
+      Agregar(3, Elem("anio", Year(r!fecha_publicacion)))
+    Endif
+  Endif
+  Agregar(2, "</permisos>")
+
+  ' --- 5. TABLAS HIJAS ---
+  If Not EscribirContribuyentes(iIdArticulo) Then Return False
+  If Not EscribirResumenes(iIdArticulo) Then Return False
+  If Not EscribirPalabrasClave(iIdArticulo) Then Return False
+  If Not EscribirFinanciamiento(iIdArticulo) Then Return False
+  If Not EscribirRelaciones(iIdArticulo) Then Return False
+
+  ' --- 6. LAS CLAVES CITADAS, DEL .md DEL DISCO (SC-16) ---
+  ' QUEDAN EN EL MANIFIESTO PARA CONTROLAR QUE EL reflist SEA DE ESTE .md
+  sRutaMd = m_InicioCierre.RutaProyectoEnCurso &/ "articulos" &/ sArchivo & ".md"
+  Try sContenido = File.Load(sRutaMd)
+  If Error Then
+    $sError = "No se pudo leer " & sRutaMd & ":" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  aClaves = m_Bibtex.ClavesCitadas(sContenido)
+  For Each sClave In aClaves
+    Agregar(2, "<cita" & Atr("clave", sClave) & "/>")
+  Next
+
+  Agregar(1, "</articulo>")
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirTraducciones
+' Propósito : Los títulos y subtítulos traducidos (articulo_texto)
+' Parámetros: iIdArticulo As Integer — el artículo
+' Retorna   : Boolean — False si falló la lectura ($sError)
+' ============================================
+Private Function EscribirTraducciones(iIdArticulo As Integer) As Boolean
+
+  Dim r As Result
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT tipo, idioma, texto FROM articulo_texto WHERE id_articulo = &1 AND tipo IN ('titulo', 'subtitulo') ORDER BY idioma, tipo", iIdArticulo)
+  If Error Then
+    $sError = "No se pudieron leer las traducciones del título:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    Agregar(2, ElemTitulo(r!tipo & "-traducido", r!texto, Atr("idioma", r!idioma)))
+    r.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirContribuyentes
+' Propósito : Los contribuyentes en orden, con su persona o colectivo, sus
+'             afiliaciones y sus roles CRediT (por valor, SC-23)
+' Parámetros: iIdArticulo As Integer — el artículo
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirContribuyentes(iIdArticulo As Integer) As Boolean
+
+  Dim r As Result
+  Dim rAfil As Result
+  Dim rCredit As Result
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT c.*, a.apellidos, a.nombre, a.sufijo, a.orcid FROM articulo_contribuyente c " &
+    "LEFT JOIN autores a ON a.id_autor = c.id_autor WHERE c.id_articulo = &1 ORDER BY c.orden", iIdArticulo)
+  If Error Then
+    $sError = "No se pudieron leer los contribuyentes:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    Agregar(2, "<contribuyente" & Atr("orden", r!orden) & Atr("rol", r!rol) & Atr("correspondencia", If(r!correspondencia, "si", "")) & Atr("email", r!email) & ">")
+    ' PERSONA O COLECTIVO: UNO DE LOS DOS (chk_contrib_quien)
+    If IsNull(r!id_autor) Then
+      Agregar(3, Elem("colectivo", r!nombre_colectivo))
+    Else
+      Agregar(3, "<persona" & Atr("id-autor", r!id_autor) & Atr("orcid", r!orcid) & ">" & Elem("apellidos", r!apellidos) & Elem("nombre", r!nombre) & Elem("sufijo", r!sufijo) & "</persona>")
+    Endif
+    Try rAfil = m_ConexionBD.mConn.Exec("SELECT * FROM contribuyente_afiliacion WHERE id_contribuyente = &1 ORDER BY orden", r!id_contribuyente)
+    If Error Then
+      $sError = "No se pudieron leer las afiliaciones:" & gb.NewLine & Error.Text
+      Return False
+    Endif
+    While rAfil.Available
+      Agregar(3, "<afiliacion" & Atr("orden", rAfil!orden) & Atr("ror", rAfil!ror) & ">" & Elem("institucion", rAfil!institucion) &
+        Elem("departamento", rAfil!departamento) & Elem("ciudad", rAfil!ciudad) & Elem("pais", rAfil!pais) & "</afiliacion>")
+      rAfil.MoveNext
+    Wend
+    Try rCredit = m_ConexionBD.mConn.Exec("SELECT rol_credit FROM contribuyente_credit WHERE id_contribuyente = &1 ORDER BY rol_credit", r!id_contribuyente)
+    If Error Then
+      $sError = "No se pudieron leer los roles CRediT:" & gb.NewLine & Error.Text
+      Return False
+    Endif
+    While rCredit.Available
+      Agregar(3, Elem("credit", rCredit!rol_credit))
+      rCredit.MoveNext
+    Wend
+    Agregar(3, Elem("notas", r!notas))
+    Agregar(2, "</contribuyente>")
+    r.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirResumenes
+' Propósito : Los resúmenes por idioma: el simple con su texto; el
+'             estructurado con sus apartados en orden (el título de cada
+'             apartado está en la plantilla)
+' Parámetros: iIdArticulo As Integer — el artículo
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirResumenes(iIdArticulo As Integer) As Boolean
+
+  Dim r As Result
+  Dim rApartados As Result
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT id_texto, idioma, texto FROM articulo_texto WHERE id_articulo = &1 AND tipo = 'resumen' ORDER BY orden, idioma", iIdArticulo)
+  If Error Then
+    $sError = "No se pudieron leer los resúmenes:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    ' TEXTO NULL: ESTRUCTURADO, EL TEXTO VA POR APARTADO
+    If Not IsNull(r!texto) Then
+      Agregar(2, Elem("resumen", r!texto, Atr("idioma", r!idioma)))
+    Else
+      Agregar(2, "<resumen" & Atr("idioma", r!idioma) & Atr("estructurado", "si") & ">")
+      Try rApartados = m_ConexionBD.mConn.Exec("SELECT codigo, orden, texto FROM articulo_resumen_seccion WHERE id_texto = &1 ORDER BY orden", r!id_texto)
+      If Error Then
+        $sError = "No se pudieron leer los apartados del resumen:" & gb.NewLine & Error.Text
+        Return False
+      Endif
+      While rApartados.Available
+        Agregar(3, Elem("apartado", rApartados!texto, Atr("codigo", rApartados!codigo) & Atr("orden", rApartados!orden)))
+        rApartados.MoveNext
+      Wend
+      Agregar(2, "</resumen>")
+    Endif
+    r.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirPalabrasClave
+' Propósito : Las palabras clave por idioma y vocabulario, en orden: un
+'             grupo por par (idioma, vocabulario); vocabulario vacío es «del
+'             autor»
+' Parámetros: iIdArticulo As Integer — el artículo
+' Retorna   : Boolean — False si falló la lectura ($sError)
+' ============================================
+Private Function EscribirPalabrasClave(iIdArticulo As Integer) As Boolean
+
+  Dim r As Result
+  Dim sGrupo As String
+  Dim sAnterior As String
+  Dim bAbierto As Boolean
+
+  ' EL ORDEN AGRUPA: idioma, LUEGO EL DEL AUTOR ANTES QUE LOS VOCABULARIOS
+  Try r = m_ConexionBD.mConn.Exec("SELECT idioma, vocabulario, orden, termino, identificador FROM articulo_palabra_clave WHERE id_articulo = &1 " &
+    "ORDER BY idioma, vocabulario IS NOT NULL, vocabulario, orden", iIdArticulo)
+  If Error Then
+    $sError = "No se pudieron leer las palabras clave:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    sGrupo = r!idioma & "|" & If(IsNull(r!vocabulario), "", r!vocabulario)
+    If sGrupo <> sAnterior Then
+      If bAbierto Then Agregar(2, "</palabras-clave>")
+      Agregar(2, "<palabras-clave" & Atr("idioma", r!idioma) & Atr("vocabulario", r!vocabulario) & ">")
+      bAbierto = True
+      sAnterior = sGrupo
+    Endif
+    Agregar(3, Elem("palabra", r!termino, Atr("identificador", r!identificador)))
+    r.MoveNext
+  Wend
+  If bAbierto Then Agregar(2, "</palabras-clave>")
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirFinanciamiento
+' Propósito : Financiadores en orden y declaraciones (todas las de la base,
+'             también las de N3: el volcado no filtra, decide la XSLT)
+' Parámetros: iIdArticulo As Integer — el artículo
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirFinanciamiento(iIdArticulo As Integer) As Boolean
+
+  Dim r As Result
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT * FROM articulo_financiamiento WHERE id_articulo = &1 ORDER BY orden", iIdArticulo)
+  If Error Then
+    $sError = "No se pudo leer el financiamiento:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    Agregar(2, "<financiador" & Atr("orden", r!orden) & Atr("tipo-id", r!tipo_id) & Atr("id", r!id_financiador) & ">" &
+      Elem("nombre", r!financiador) & Elem("proyecto", r!numero_proyecto) & "</financiador>")
+    r.MoveNext
+  Wend
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT * FROM articulo_declaracion WHERE id_articulo = &1 ORDER BY tipo, idioma, orden", iIdArticulo)
+  If Error Then
+    $sError = "No se pudieron leer las declaraciones:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    Agregar(2, Elem("declaracion", r!texto, Atr("tipo", r!tipo) & Atr("idioma", r!idioma) & Atr("identificador", r!identificador)))
+    r.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirRelaciones
+' Propósito : Las relaciones con otros artículos (con el DOI y el archivo
+'             del destino local) y las ubicaciones publicadas
+' Parámetros: iIdArticulo As Integer — el artículo
+' Retorna   : Boolean — False si falló una lectura ($sError)
+' ============================================
+Private Function EscribirRelaciones(iIdArticulo As Integer) As Boolean
+
+  Dim r As Result
+
+  ' SIN COLUMNA orden: SE GRABAN EN ORDEN Y SE LEEN POR id (D3)
+  Try r = m_ConexionBD.mConn.Exec("SELECT rel.*, l.nombre_archivo AS local_archivo, l.doi AS local_doi FROM articulo_relacion rel " &
+    "LEFT JOIN articulo l ON l.id_articulo = rel.id_articulo_local WHERE rel.id_articulo = &1 ORDER BY rel.id", iIdArticulo)
+  If Error Then
+    $sError = "No se pudieron leer las relaciones:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    Agregar(2, "<relacion" & Atr("tipo", r!tipo) & Atr("local", r!id_articulo_local) & Atr("local-archivo", r!local_archivo) & Atr("local-doi", r!local_doi) &
+      Atr("doi", r!doi) & Atr("anio", r!anio) & Atr("volumen", r!volumen) & Atr("numero", r!numero) & Atr("fpage", r!fpage) & Atr("lpage", r!lpage) & ">" &
+      Elem("revista", r!revista) & "</relacion>")
+    r.MoveNext
+  Wend
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT tipo, url FROM articulo_ubicacion WHERE id_articulo = &1 ORDER BY tipo", iIdArticulo)
+  If Error Then
+    $sError = "No se pudieron leer las ubicaciones:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    Agregar(2, Elem("ubicacion", r!url, Atr("tipo", r!tipo)))
+    r.MoveNext
+  Wend
+
+  Return True
+
+End

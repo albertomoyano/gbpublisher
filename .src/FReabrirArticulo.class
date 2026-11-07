@@ -1,0 +1,220 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FReabrirArticulo
+' Propósito  : Reabre un artículo publicado de la revista elegida en
+'              FSysAdmin (decisión 17; entrega E, decisión de Alberto del
+'              28/10: la reapertura se hace acá, donde el administrador ya
+'              está validado). Muestra el registro de reaperturas de la
+'              revista, que es solo de altas. La lógica vive en m_Articulo.
+' Uso        : FReabrirArticulo.hConn = hConnServidor
+'              FReabrirArticulo.iIdRevista = $iRevistaActual
+'              FReabrirArticulo.sRevista = título de la revista
+'              FReabrirArticulo.sUsuario = sUsuarioActual
+'              FReabrirArticulo.ShowModal()
+' ============================================
+
+' DATOS QUE DA EL LLAMADOR (FSysAdmin PUEDE NO TENER SESIÓN)
+Public hConn As Connection
+Public iIdRevista As Integer
+Public sRevista As String
+' EL ADMINISTRADOR QUE REABRE: QUEDA EN EL REGISTRO
+Public sUsuario As String
+
+' UN id POR FILA DE gvPublicados
+Private $aIds As New Integer[]
+' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_PUBLICADOS As Integer = 4
+Private Const COLUMNAS_REAPERTURAS As Integer = 4
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara las grillas y las llena
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. SIN CONEXIÓN O SIN REVISTA NO HAY QUÉ REABRIR ---
+  If Not hConn Then
+    Me.Close()
+    Return
+  Endif
+  If iIdRevista <= 0 Then
+    Me.Close()
+    Return
+  Endif
+  lblRevistaReabrir.Text = sRevista
+
+  ' --- 2. GRILLAS ---
+  With gvPublicados
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_PUBLICADOS
+    .Columns[0].Title = "Número"
+    .Columns[0].Width = 150
+    .Columns[1].Title = "Archivo"
+    .Columns[1].Width = 180
+    .Columns[2].Title = "Título"
+    .Columns[2].Width = 470
+    .Columns[3].Title = "Publicado"
+    .Columns[3].Width = 110
+  End With
+  With gvReaperturas
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_REAPERTURAS
+    .Columns[0].Title = "Fecha"
+    .Columns[0].Width = 140
+    .Columns[1].Title = "Quién"
+    .Columns[1].Width = 120
+    .Columns[2].Title = "Artículo"
+    .Columns[2].Width = 230
+    .Columns[3].Title = "Motivo"
+    .Columns[3].Width = 420
+  End With
+
+  ' --- 3. LISTAS ---
+  CargarListas()
+
+End
+
+' ============================================
+' Función   : CargarListas
+' Propósito : Llena los publicados y el registro de reaperturas; sin
+'             artículo elegido, «Reabrir» se apaga
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarListas()
+
+  Dim rDatos As Result
+  Dim sNumero As String
+  Dim i As Integer
+
+  ' --- 1. PUBLICADOS ---
+  gvPublicados.Rows.Count = 0
+  $aIds.Clear()
+  rDatos = m_Articulo.PublicadosDeLaRevista(hConn, iIdRevista)
+  If rDatos Then
+    gvPublicados.Rows.Count = rDatos.Count
+    i = 0
+    While rDatos.Available
+      gvPublicados[i, 0].Text = EtiquetaNumero(rDatos!volumen, rDatos!numero)
+      gvPublicados[i, 1].Text = rDatos!nombre_archivo
+      gvPublicados[i, 2].Text = rDatos!titulo
+      gvPublicados[i, 3].Text = Format(rDatos!fecha_publicacion, "dd/mm/yyyy")
+      $aIds.Add(rDatos!id_articulo)
+      i += 1
+      rDatos.MoveNext
+    Wend
+  Endif
+  btnReabrir.Enabled = False
+
+  ' --- 2. REGISTRO, DE LA MÁS RECIENTE A LA MÁS VIEJA ---
+  gvReaperturas.Rows.Count = 0
+  rDatos = m_Articulo.ReaperturasDeLaRevista(hConn, iIdRevista)
+  If rDatos Then
+    gvReaperturas.Rows.Count = rDatos.Count
+    i = 0
+    While rDatos.Available
+      sNumero = EtiquetaNumero(rDatos!volumen, rDatos!numero)
+      gvReaperturas[i, 0].Text = Format(rDatos!fecha, "dd/mm/yyyy hh:nn")
+      gvReaperturas[i, 1].Text = rDatos!usuario
+      gvReaperturas[i, 2].Text = If(sNumero = "", "", sNumero & " · ") & rDatos!nombre_archivo
+      gvReaperturas[i, 3].Text = rDatos!motivo
+      i += 1
+      rDatos.MoveNext
+    Wend
+  Endif
+
+End
+
+' ============================================
+' Función   : EtiquetaNumero
+' Propósito : Cómo se nombra el número de un artículo en las grillas
+' Parámetros: vVolumen, vNumero As Variant — sus datos (pueden ser Null)
+' Retorna   : String — «vol. 3, n.º 2»; vacío sin datos
+' ============================================
+Private Function EtiquetaNumero(vVolumen As Variant, vNumero As Variant) As String
+
+  Dim sEtiqueta As String
+
+  If Not IsNull(vVolumen) Then sEtiqueta = "vol. " & vVolumen
+  If Not IsNull(vNumero) Then
+    If sEtiqueta <> "" Then sEtiqueta &= ", "
+    sEtiqueta &= "n.º " & vNumero
+  Endif
+
+  Return sEtiqueta
+
+End
+
+' ============================================
+' Función   : gvPublicados_Click
+' Propósito : Con un artículo elegido, «Reabrir» se prende
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvPublicados_Click()
+
+  btnReabrir.Enabled = (gvPublicados.Row >= 0 And gvPublicados.Row < $aIds.Count)
+
+End
+
+' ============================================
+' Función   : btnReabrir_Click
+' Propósito : Reabre el artículo elegido con el motivo escrito, previa
+'             confirmación, y refresca las listas
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnReabrir_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. ARTÍCULO ELEGIDO ---
+  iFila = gvPublicados.Row
+  If iFila < 0 Or iFila >= $aIds.Count Then Return
+
+  ' --- 2. MOTIVO ANTES DE PREGUNTAR: SIN ÉL NO SE REGISTRA (chk_reap_motivo) ---
+  If Trim(txaMotivoReabrir.Text) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Escriba el motivo de la reapertura: queda registrado.")
+    txaMotivoReabrir.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Reabrir «" & gvPublicados[iFila, 1].Text & "»?" & gb.NewLine & "Vuelve a «En producción» y la reapertura queda registrada a nombre de «" & sUsuario & "».", "Reabrir", "Cancelar") <> 1 Then Return
+
+  ' --- 4. REAPERTURA Y LISTAS NUEVAS ---
+  If Not m_Articulo.ReabrirArticulo(hConn, $aIds[iFila], sUsuario, txaMotivoReabrir.Text) Then Return
+  m_Sonido.sonar("Info")
+  txaMotivoReabrir.Text = ""
+  CargarListas()
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierre del diálogo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close()
+
+End
