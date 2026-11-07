@@ -1,0 +1,393 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_Lanzadora
+' PROPÓSITO : El único camino por el que gbpublisher lanza un script de
+'             engine/ (SC-53), para libros, revistas, cuadros, gráficos y la
+'             tapa web. Sale de m_GenerarSalidasLibro, donde nació con las
+'             salidas del libro, sin cambiar su comportamiento: el resto de
+'             la aplicación llamaba ahí para lanzar algo que no era un libro.
+'             Es el modelo de m_Lanzadora de gbWeb (SC-50): mismos nombres
+'             (EjecutarScript, InformarResultado, HayScriptEnCurso).
+'             Lo que es de un tipo de proyecto queda en su módulo: las siglas
+'             que leen algunos scripts del libro las prepara m_Siglas
+'             (PrepararParaScript).
+' DEPENDENCIAS: m_InicioCierre (RutaRecursos, RutaProyectoEnCurso),
+'             m_Siglas, m_Sonido; FMain (TerminalViewProyecto, lblMensajes,
+'             tbMostrarPanelInferior, TabPanelIzquierdaInferior y los
+'             controles que se bloquean).
+'
+' CÓMO SE LANZA UN SCRIPT, Y POR QUÉ ASÍ
+' ----------------------------------------------------------
+'   TerminalView.Exec() queda descartado: el control ya tiene un bash
+'   interactivo corriendo y Exec responde «Terminal already in use»
+'   (verificado; confirma el pendiente de GV-42).
+'
+'   Así que se sigue tipeando con Input(), pero cambia lo que Gambas espera.
+'   Antes esperaba que APARECIERA EL PRODUCTO, y eso tenía tres fallas: el
+'   archivo aparece con el primer byte, no cuando termina de escribirse; no
+'   había código de salida; y lo que Gambas tipeaba mientras la terminal
+'   estaba ocupada se encolaba y se ejecutaba después, fuera de contexto —el
+'   «echo ERROR» del HTML apareció en medio de la compilación del PDF—.
+'
+'   Ahora Gambas tipea UNA sola línea: el script y, a continuación, la
+'   escritura de su código de salida en un archivo de estado, primero a un
+'   temporal y después con mv. mv dentro de la misma carpeta es atómico: el
+'   archivo de estado aparece de una vez, completo, y solo cuando el script
+'   terminó. Gambas espera ESE archivo y lee el código.
+'
+'   El archivo de estado lleva un nombre único por lanzamiento. Si alguien deja
+'   de esperar y lanza otra cosa, la segunda línea se encola detrás de la
+'   primera, y cada una espera su propio archivo: ninguna lee el código de la
+'   otra.
+'
+'   Mientras espera, Gambas NO tipea nada en la terminal. Si vence el plazo,
+'   pregunta si seguir esperando; nunca escribe un echo.
+'
+'   Y muestra que está trabajando: el puntero ocupado (Application.Busy) y,
+'   sobre la terminal, lblMensajes con qué se está generando y el tiempo
+'   transcurrido. Sin eso, una composición LaTeX de varios minutos parecía
+'   una máquina colgada. El tiempo no es un porcentaje inventado: solo
+'   muestra que el proceso sigue vivo.
+' ==========================================================
+
+' DONDE VIVEN LOS SCRIPTS: INFRAESTRUCTURA, NO SE COPIA A ~/.gbpublisher (SC-11).
+' LA CARPETA SALE DE m_InicioCierre.RutaRecursos(): .hidden/engine DESDE EL
+' IDE, /usr/share/gbpublisher/engine INSTALADO. UNA RUTA FIJA HACÍA QUE EL IDE
+' CORRIERA LOS SCRIPTS DEL PAQUETE INSTALADO, DE OTRA VERSIÓN
+Private Const CARPETA_ENGINE As String = "engine"
+
+' CÓDIGOS DE SALIDA DE LOS SCRIPTS. DEBEN COINCIDIR CON engine/comun.sh
+Public Const SALIDA_OK As Integer = 0
+Public Const SALIDA_AVISOS As Integer = 3
+Public Const SALIDA_FALLO As Integer = 1
+
+' RESULTADOS PROPIOS DE LA LANZADORA. NEGATIVOS PARA QUE NO SE CONFUNDAN CON
+' NINGÚN CÓDIGO DE SALIDA DE UN PROCESO
+Public Const RESULTADO_EN_CURSO As Integer = -1
+Public Const RESULTADO_NO_LANZADO As Integer = -2
+Public Const RESULTADO_ABANDONADO As Integer = -3
+Public Const RESULTADO_ILEGIBLE As Integer = -4
+
+' HAY UN SCRIPT CORRIENDO. LO CONSULTAN LOS GUARDS DE OTRAS PARTES DE LA
+' APLICACIÓN A TRAVÉS DE HayScriptEnCurso()
+Private $bScriptEnCurso As Boolean = False
+
+' CONTADOR DE LANZAMIENTOS DE LA SESIÓN, PARA EL NOMBRE ÚNICO DEL ESTADO
+Private $iLanzamiento As Integer = 0
+
+' EL PROYECTO ABIERTO ADMITE LA VALIDACIÓN DEL VISOR XML: SOLO LOS LIBROS
+' (SC-75). LA FIJA HabilitarValidacion EN LA APERTURA Y LA RESPETA
+' BloquearSalidas AL DESBLOQUEAR
+Private $bValidacionHabilitada As Boolean = False
+
+' ============================================
+' Función   : HayScriptEnCurso
+' Propósito : Informa si hay un script de engine/ corriendo. Para los guards de
+'             acciones que cambian el contexto —abrir otro proyecto, cerrar la
+'             aplicación— y que no pasan por los controles que se bloquean.
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True mientras la lanzadora espera un script
+' ============================================
+Public Function HayScriptEnCurso() As Boolean
+
+  Return $bScriptEnCurso
+
+End
+
+' ============================================
+' Función   : BloquearSalidas
+' Propósito : Habilita o deshabilita los controles que pueden escribir en la
+'             terminal: el menú de salidas, el de canónicos DocBook y el botón
+'             «Validar» del visor XML.
+'             Ninguno es ancestro del TerminalView: apagar un contenedor que lo
+'             contiene apagaría también el terminal (GV-42).
+' Parámetros: bBloquear As Boolean — True deshabilita, False habilita
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub BloquearSalidas(bBloquear As Boolean)
+
+  FMain.MenuButtonSalidas.Enabled = Not bBloquear
+  FMain.mDocBook.Enabled = Not bBloquear
+  ' AL DESBLOQUEAR, EL BOTÓN VUELVE SOLO SI EL PROYECTO ES UN LIBRO: SI NO,
+  ' TERMINAR UN SCRIPT LO ENCENDERÍA EN UNA REVISTA (SC-75)
+  FMain.btnValidarXML.Enabled = (Not bBloquear) And $bValidacionHabilitada
+
+End
+
+' ============================================
+' Función   : HabilitarValidacion
+' Propósito : Fija si el proyecto abierto admite la validación del visor XML.
+'             La llama la apertura del proyecto con el tipo ya resuelto: True
+'             para un libro, False para una revista, cuya validación (JATS4R)
+'             todavía no está en engine/ (SC-75).
+' Parámetros: bHabilitar As Boolean — True en un libro
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub HabilitarValidacion(bHabilitar As Boolean)
+
+  $bValidacionHabilitada = bHabilitar
+  ' CON UN SCRIPT EN CURSO EL BOTÓN SIGUE APAGADO: LO ENCIENDE EL DESBLOQUEO
+  FMain.btnValidarXML.Enabled = bHabilitar And (Not $bScriptEnCurso)
+
+End
+
+' ============================================
+' Función   : ValidacionHabilitada
+' Propósito : Informa si el proyecto abierto admite la validación del visor
+'             XML (solo los libros, SC-75). La consulta el guard de
+'             m_GenerarSalidasLibro.ValidarCanonico
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True en un libro
+' ============================================
+Public Function ValidacionHabilitada() As Boolean
+
+  Return $bValidacionHabilitada
+
+End
+
+' ============================================
+' Función   : EjecutarScript
+' Propósito : Lanza un script de engine/ en la terminal del proyecto, espera a
+'             que termine y devuelve su código de salida. Es el único camino
+'             por el que un script se lanza: bloqueo, espera y desbloqueo
+'             ocurren acá y en ningún otro lado.
+' Parámetros: sScript As String — nombre del script dentro de engine/
+'             aArgumentos As String[] — argumentos, en orden. Ninguno vacío:
+'               el que no aplica se pasa como «-»
+'             fPlazo As Float — segundos antes de preguntar si seguir esperando
+'             sQue As String — qué se está generando, para lblMensajes
+'               («Componiendo el PDF del libro»). Opcional: si falta, se
+'               muestra el nombre del script
+' Retorna   : Integer — el código de salida del script (0, 3, 1...) o uno de
+'             los RESULTADO_*, todos negativos
+' ============================================
+Public Function EjecutarScript(sScript As String, aArgumentos As String[], fPlazo As Float, Optional sQue As String = "") As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaScript As String
+  Dim sDirTmp As String
+  Dim sNombreEstado As String
+  Dim sEstado As String
+  Dim sEstadoTmp As String
+  Dim sLinea As String
+  Dim sArgumento As String
+  Dim sContenido As String
+  Dim fVence As Float
+  Dim fInicio As Float
+  Dim sEtiqueta As String
+  Dim iSegundos As Integer
+  Dim iSegundosMostrados As Integer
+  Dim iRespuesta As Integer
+  Dim iResultado As Integer
+
+  ' --- 2. REENTRADA ---
+  ' LOS CONTROLES YA ESTÁN BLOQUEADOS, PERO LA FUNCIÓN ES PÚBLICA Y NO DEBE
+  ' DEPENDER DE ESO
+  If $bScriptEnCurso Then Return RESULTADO_EN_CURSO
+
+  ' --- 3. VALIDACIÓN ---
+  sRutaScript = m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ sScript
+  If Not Exist(sRutaScript) Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se encontró el script:" & gb.NewLine & sRutaScript &
+      gb.NewLine & gb.NewLine & "Verificá la instalación de gbpublisher.")
+    Return RESULTADO_NO_LANZADO
+  Endif
+
+  sDirTmp = m_InicioCierre.RutaProyectoEnCurso &/ "tmp"
+  If Not Exist(sDirTmp) Then
+    Try Mkdir sDirTmp
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo crear la carpeta tmp/ del proyecto:" & gb.NewLine & Error.Text)
+      Return RESULTADO_NO_LANZADO
+    Endif
+  Endif
+
+  ' --- 3b. LO QUE UN SCRIPT LEE Y NO SALE DE SUS ARGUMENTOS ---
+  ' LAS SIGLAS DEL LIBRO (1.18.0): ANTES DE CADA SCRIPT QUE LAS LEE, Y ACÁ
+  ' PORQUE ESTA ES LA ÚNICA LANZADORA. QUÉ SCRIPTS LAS LEEN LO SABE m_Siglas
+  ' (PrepararParaScript YA INFORMÓ EL MOTIVO SI NO PUDO)
+  If Not m_Siglas.PrepararParaScript(sScript, sDirTmp) Then Return RESULTADO_NO_LANZADO
+
+  ' --- 4. ARCHIVO DE ESTADO CON NOMBRE ÚNICO ---
+  ' ÚNICO POR LANZAMIENTO: SI UNA LÍNEA ANTERIOR SIGUE ENCOLADA EN LA TERMINAL,
+  ' SU ESTADO NO PUEDE CONFUNDIRSE CON EL DE ESTA
+  Inc $iLanzamiento
+  sNombreEstado = ".estado-" & Format(Now, "yyyymmdd-hhnnss") & "-" & CStr($iLanzamiento)
+  sEstado = sDirTmp &/ sNombreEstado
+  sEstadoTmp = sEstado & ".tmp"
+
+  ' --- 5. LÍNEA DE COMANDO ---
+  ' Shell$() Y NO Quote(): Quote() DEVUELVE COMILLAS DOBLES, DENTRO DE LAS
+  ' CUALES sh SIGUE EXPANDIENDO $(...) Y BACKTICKS (GV-06).
+  ' «;» Y NO «&&» DESPUÉS DEL SCRIPT: EL ESTADO SE ESCRIBE AUNQUE EL SCRIPT
+  ' FALLE, QUE ES JUSTAMENTE CUANDO MÁS HACE FALTA. $? ES LITERAL EN UN STRING
+  ' DE GAMBAS: LO EXPANDE EL SHELL DE LA TERMINAL.
+  sLinea = "bash " & Shell$(sRutaScript)
+  For Each sArgumento In aArgumentos
+    sLinea &= " " & Shell$(sArgumento)
+  Next
+  sLinea &= " ; echo $? > " & Shell$(sEstadoTmp) &
+    " && mv -f " & Shell$(sEstadoTmp) & " " & Shell$(sEstado)
+
+  ' --- 6. BLOQUEO Y LANZAMIENTO ---
+  ' A PARTIR DE ACÁ HAY UN SOLO CAMINO DE SALIDA, AL FINAL: EL DESBLOQUEO NO
+  ' PUEDE QUEDAR ATRÁS DE UN Return. Finally NO SIRVE PARA ESTO (RC-GM-20)
+  $bScriptEnCurso = True
+  BloquearSalidas(True)
+
+  ' PUNTERO OCUPADO EN TODA LA APLICACIÓN. Inc Y NO = 1: SI ALGO MÁS YA LO
+  ' TENÍA EN USO, AL TERMINAR VUELVE A ESE VALOR Y NO A CERO. LOS DIÁLOGOS
+  ' DE Message LO GUARDAN, LO PONEN EN CERO Y LO RESTAURAN SOLOS
+  ' (gb.gui.base, FMessage.class, 3.22.1): LA PREGUNTA DEL PLAZO NO
+  ' NECESITA NADA ESPECIAL
+  Inc Application.Busy
+
+  sEtiqueta = sQue
+  If sEtiqueta = "" Then sEtiqueta = sScript
+  fInicio = Timer
+  iSegundosMostrados = -1
+  FMain.lblMensajes.Text = sEtiqueta & "…"
+
+  FMain.tbMostrarPanelInferior.Value = True
+  FMain.TabPanelIzquierdaInferior.Index = 0
+  FMain.TerminalViewProyecto.Input(sLinea & gb.NewLine)
+
+  ' --- 7. ESPERA ---
+  ' LA SENTENCIA Wait DEJA CORRER EL BUCLE DE EVENTOS: LA TERMINAL SE PINTA Y
+  ' LA INTERFAZ RESPONDE (GV-17). LO QUE PODRÍA ESCRIBIR EN LA TERMINAL ESTÁ
+  ' BLOQUEADO
+  iResultado = RESULTADO_ABANDONADO
+  fVence = Timer + fPlazo
+
+  Do
+    If Exist(sEstado) Then Break
+
+    ' EL TIEMPO TRANSCURRIDO, UNA VEZ POR SEGUNDO Y NO EN CADA VUELTA
+    iSegundos = Int(Timer - fInicio)
+    If iSegundos <> iSegundosMostrados Then
+      iSegundosMostrados = iSegundos
+      FMain.lblMensajes.Text = sEtiqueta & "…  " & MinutosSegundos(iSegundos)
+    Endif
+
+    If Timer > fVence Then
+      ' AL VENCER NO SE ESCRIBE NADA EN LA TERMINAL: SE PREGUNTA
+      iRespuesta = Message.Question(
+        "La generación todavía no terminó." & gb.NewLine & gb.NewLine &
+        "Puede estar trabajando todavía: su avance se ve en la terminal." & gb.NewLine &
+        "Si dejás de esperar, sigue corriendo igual, pero la aplicación" & gb.NewLine &
+        "no va a poder informarte cómo terminó.",
+        "Seguir esperando", "Dejar de esperar")
+      If iRespuesta <> 1 Then Break
+      fVence = Timer + fPlazo
+    Endif
+
+    Wait 0.1
+  Loop
+
+  ' --- 8. LECTURA DEL CÓDIGO ---
+  If Exist(sEstado) Then
+    Try sContenido = File.Load(sEstado)
+    If Error Then
+      iResultado = RESULTADO_ILEGIBLE
+    Else
+      Try iResultado = CInt(Trim(sContenido))
+      If Error Then iResultado = RESULTADO_ILEGIBLE
+    Endif
+    ' EL ESTADO YA SE LEYÓ: NO TIENE OTRO USO
+    Try Kill sEstado
+  Endif
+
+  ' --- 9. DESBLOQUEO ---
+  ' EN EL MISMO ÚNICO CAMINO QUE EL BLOQUEO: TAMBIÉN AL DEJAR DE ESPERAR. EN
+  ' ESE CASO EL SCRIPT SIGUE CORRIENDO, PERO LA APLICACIÓN YA NO LO SIGUE Y
+  ' NO PUEDE SEGUIR DICIENDO QUE ESTÁ TRABAJANDO
+  FMain.lblMensajes.Text = ""
+  Dec Application.Busy
+  BloquearSalidas(False)
+  $bScriptEnCurso = False
+
+  Return iResultado
+
+End
+
+' ============================================
+' Función   : MinutosSegundos
+' Propósito : Un tiempo en segundos como mm:ss (h:mm:ss pasada la hora).
+'             Right("0" & …) Y NO UNA MÁSCARA DE Format: NO DEPENDE DE CÓMO
+'             TRATE Format UN ENTERO.
+' Parámetros: iSegundos As Integer — segundos transcurridos
+' Retorna   : String — el tiempo formateado
+' ============================================
+Private Function MinutosSegundos(iSegundos As Integer) As String
+
+  Dim iHoras As Integer
+  Dim iMinutos As Integer
+  Dim sTexto As String
+
+  iHoras = iSegundos \ 3600
+  iMinutos = (iSegundos Mod 3600) \ 60
+
+  sTexto = Right("0" & CStr(iMinutos), 2) & ":" & Right("0" & CStr(iSegundos Mod 60), 2)
+  If iHoras > 0 Then sTexto = CStr(iHoras) & ":" & sTexto
+
+  Return sTexto
+
+End
+
+' ============================================
+' Función   : InformarResultado
+' Propósito : Traduce el resultado de EjecutarScript a un mensaje. El
+'             detalle está en la terminal; el mensaje dice qué pasó y dónde
+'             mirar, y solo afirma lo que el script verificó.
+' Parámetros: iResultado As Integer — lo que devolvió EjecutarScript
+'             sQue As String — qué se generó, para el texto («El HTML del libro»)
+'             sArchivo As String — ruta del producto, para el mensaje de éxito
+' Retorna   : Boolean — True si el producto se generó (con o sin avisos)
+' ============================================
+Public Function InformarResultado(iResultado As Integer, sQue As String, sArchivo As String) As Boolean
+
+  Select Case iResultado
+
+    Case SALIDA_OK
+      m_Sonido.sonar("Info")
+      Message.Info(sQue & " se generó correctamente." & gb.NewLine & gb.NewLine &
+        "Archivo:" & gb.NewLine & sArchivo)
+      Return True
+
+    Case SALIDA_AVISOS
+      m_Sonido.sonar("Warning")
+      Message.Warning(sQue & " se generó, pero con avisos." & gb.NewLine & gb.NewLine &
+        "Revisá la terminal: los avisos están marcados con ⚠." & gb.NewLine & gb.NewLine &
+        "Archivo:" & gb.NewLine & sArchivo)
+      Return True
+
+    Case RESULTADO_EN_CURSO
+      m_Sonido.sonar("Warning")
+      Message.Warning("Ya hay una generación en curso. Esperá a que termine.")
+
+    Case RESULTADO_NO_LANZADO
+      ' LA LANZADORA YA MOSTRÓ POR QUÉ
+
+    Case RESULTADO_ABANDONADO
+      m_Sonido.sonar("Warning")
+      Message.Warning("Se dejó de esperar la generación." & gb.NewLine & gb.NewLine &
+        "Puede seguir corriendo en la terminal. Cómo termine se ve ahí.")
+
+    Case RESULTADO_ILEGIBLE
+      m_Sonido.sonar("Error")
+      Message.Error("La generación terminó, pero no se pudo leer su resultado." & gb.NewLine &
+        "Revisá la terminal.")
+
+    Case Else
+      m_Sonido.sonar("Error")
+      Message.Error(sQue & " no se generó (código " & CStr(iResultado) & ")." & gb.NewLine & gb.NewLine &
+        "El motivo está al final de la salida en la terminal.")
+
+  End Select
+
+  Return False
+
+End

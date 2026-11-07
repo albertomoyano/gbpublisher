@@ -7,45 +7,11 @@
 '             scripts de engine/ (SC-13); acá queda lo que sale de la base y
 '             el lanzamiento.
 '
-' CÓMO SE LANZA UN SCRIPT, Y POR QUÉ ASÍ
+' CÓMO SE LANZA UN SCRIPT
 ' ----------------------------------------------------------
-'   TerminalView.Exec() queda descartado: el control ya tiene un bash
-'   interactivo corriendo y Exec responde «Terminal already in use»
-'   (verificado; confirma el pendiente de GV-42).
-'
-'   Así que se sigue tipeando con Input(), pero cambia lo que Gambas espera.
-'   Antes esperaba que APARECIERA EL PRODUCTO, y eso tenía tres fallas: el
-'   archivo aparece con el primer byte, no cuando termina de escribirse; no
-'   había código de salida; y lo que Gambas tipeaba mientras la terminal
-'   estaba ocupada se encolaba y se ejecutaba después, fuera de contexto —el
-'   «echo ERROR» del HTML apareció en medio de la compilación del PDF—.
-'
-'   Ahora Gambas tipea UNA sola línea: el script y, a continuación, la
-'   escritura de su código de salida en un archivo de estado, primero a un
-'   temporal y después con mv. mv dentro de la misma carpeta es atómico: el
-'   archivo de estado aparece de una vez, completo, y solo cuando el script
-'   terminó. Gambas espera ESE archivo y lee el código.
-'
-'   El archivo de estado lleva un nombre único por lanzamiento. Si alguien deja
-'   de esperar y lanza otra cosa, la segunda línea se encola detrás de la
-'   primera, y cada una espera su propio archivo: ninguna lee el código de la
-'   otra.
-'
-'   Mientras espera, Gambas NO tipea nada en la terminal. Si vence el plazo,
-'   pregunta si seguir esperando; nunca escribe un echo.
-'
-'   Y muestra que está trabajando: el puntero ocupado (Application.Busy) y,
-'   sobre la terminal, lblMensajes con qué se está generando y el tiempo
-'   transcurrido. Sin eso, una composición LaTeX de varios minutos parecía
-'   una máquina colgada. El tiempo no es un porcentaje inventado: solo
-'   muestra que el proceso sigue vivo.
+'   Por m_Lanzadora.EjecutarScript, el único camino (SC-53). Ahí está por qué
+'   se lanza así.
 ' ==========================================================
-
-' DONDE VIVEN LOS SCRIPTS: INFRAESTRUCTURA, NO SE COPIA A ~/.gbpublisher (SC-11).
-' LA CARPETA SALE DE m_InicioCierre.RutaRecursos(): .hidden/engine DESDE EL
-' IDE, /usr/share/gbpublisher/engine INSTALADO. UNA RUTA FIJA HACÍA QUE EL IDE
-' CORRIERA LOS SCRIPTS DEL PAQUETE INSTALADO, DE OTRA VERSIÓN
-Private Const CARPETA_ENGINE As String = "engine"
 
 ' PLAZOS EN SEGUNDOS. NO SON UN CORTE: AL VENCER SE PREGUNTA SI SEGUIR
 Private Const PLAZO_CANONICO As Float = 300.0
@@ -59,23 +25,12 @@ Private Const PLAZO_VALIDAR As Float = 300.0
 ' LA REVISIÓN DE VIGENCIA AL ABRIR: SOLO sha256sum Y xmllint, SIN JVM
 Private Const PLAZO_VIGENCIA As Float = 120.0
 
-' LOS SCRIPTS QUE LEEN LAS SIGLAS DEL LIBRO, tmp/siglas-libro.tsv (1.18.0): EL
-' QUE CORRE filters/siglas.lua Y LOS QUE LLAMAN A vigencia_canonico
-' (engine/comun.sh). ENTRE BARRAS: InStr NO ENCUENTRA ASÍ UN NOMBRE DENTRO DE
-' OTRO. UN SCRIPT NUEVO QUE LLAME A vigencia_canonico SE AGREGA ACÁ
-Private Const SCRIPTS_CON_SIGLAS As String = "|generar_canonicos_capitulos.sh|ensamblar_libro.sh|preparar_latex_libro.sh|validar_canonicos.sh|generar_epub_libro.sh|"
-
 ' --- PDF/A DE LIBROS ---
 ' latex/pdfa/: LOS AUXILIARES DEL PDF/A NO PISAN LOS DEL PDF ESTÁNDAR (LOS
 ' .idx TIENEN NOMBRE FIJO). EL SUFIJO DISTINGUE EL ARCHIVO EN salidas/pdf/
 Private Const CARPETA_PDFA As String = "pdfa"
 Private Const SUFIJO_PDFA2U As String = "_pdfa2u"
 Private Const NIVEL_PDFA2U As String = "2u"
-
-' CÓDIGOS DE SALIDA DE LOS SCRIPTS. DEBEN COINCIDIR CON engine/comun.sh
-Public Const SALIDA_OK As Integer = 0
-Public Const SALIDA_AVISOS As Integer = 3
-Public Const SALIDA_FALLO As Integer = 1
 
 ' LISTA DE CAPÍTULOS QUE GAMBAS ESCRIBE PARA generar_canonicos_capitulos.sh,
 ' RELATIVA AL PROYECTO. UNA SOLA: NO PUEDE HABER DOS LOTES A LA VEZ
@@ -85,327 +40,6 @@ Private Const LISTA_CANONICOS As String = "tmp/lote-canonicos.tsv"
 ' PROYECTO. LA MISMA QUE USAN LOS SCRIPTS QUE LO LLAMAN ANIDADO: NUNCA CORREN
 ' DOS A LA VEZ (SC-53)
 Private Const LISTA_VALIDAR As String = "tmp/lote-validar.txt"
-
-' RESULTADOS PROPIOS DE LA LANZADORA. NEGATIVOS PARA QUE NO SE CONFUNDAN CON
-' NINGÚN CÓDIGO DE SALIDA DE UN PROCESO
-Public Const RESULTADO_EN_CURSO As Integer = -1
-Public Const RESULTADO_NO_LANZADO As Integer = -2
-Public Const RESULTADO_ABANDONADO As Integer = -3
-Public Const RESULTADO_ILEGIBLE As Integer = -4
-
-' HAY UN SCRIPT CORRIENDO. LO CONSULTAN LOS GUARDS DE OTRAS PARTES DE LA
-' APLICACIÓN A TRAVÉS DE HayScriptEnCurso()
-Private $bScriptEnCurso As Boolean = False
-
-' CONTADOR DE LANZAMIENTOS DE LA SESIÓN, PARA EL NOMBRE ÚNICO DEL ESTADO
-Private $iLanzamiento As Integer = 0
-
-' EL PROYECTO ABIERTO ADMITE LA VALIDACIÓN DEL VISOR XML: SOLO LOS LIBROS
-' (SC-75). LA FIJA HabilitarValidacion EN LA APERTURA Y LA RESPETA
-' BloquearSalidas AL DESBLOQUEAR
-Private $bValidacionHabilitada As Boolean = False
-
-' ============================================
-' Función   : HayScriptEnCurso
-' Propósito : Informa si hay un script de engine/ corriendo. Para los guards de
-'             acciones que cambian el contexto —abrir otro proyecto, cerrar la
-'             aplicación— y que no pasan por los controles que se bloquean.
-' Parámetros: (ninguno)
-' Retorna   : Boolean — True mientras la lanzadora espera un script
-' ============================================
-Public Function HayScriptEnCurso() As Boolean
-
-  Return $bScriptEnCurso
-
-End
-
-' ============================================
-' Función   : BloquearSalidas
-' Propósito : Habilita o deshabilita los controles que pueden escribir en la
-'             terminal: el menú de salidas, el de canónicos DocBook y el botón
-'             «Validar» del visor XML.
-'             Ninguno es ancestro del TerminalView: apagar un contenedor que lo
-'             contiene apagaría también el terminal (GV-42).
-' Parámetros: bBloquear As Boolean — True deshabilita, False habilita
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Private Sub BloquearSalidas(bBloquear As Boolean)
-
-  FMain.MenuButtonSalidas.Enabled = Not bBloquear
-  FMain.mDocBook.Enabled = Not bBloquear
-  ' AL DESBLOQUEAR, EL BOTÓN VUELVE SOLO SI EL PROYECTO ES UN LIBRO: SI NO,
-  ' TERMINAR UN SCRIPT LO ENCENDERÍA EN UNA REVISTA (SC-75)
-  FMain.btnValidarXML.Enabled = (Not bBloquear) And $bValidacionHabilitada
-
-End
-
-' ============================================
-' Función   : HabilitarValidacion
-' Propósito : Fija si el proyecto abierto admite la validación del visor XML.
-'             La llama la apertura del proyecto con el tipo ya resuelto: True
-'             para un libro, False para una revista, cuya validación (JATS4R)
-'             todavía no está en engine/ (SC-75).
-' Parámetros: bHabilitar As Boolean — True en un libro
-' Retorna   : (Sub, sin retorno)
-' ============================================
-Public Sub HabilitarValidacion(bHabilitar As Boolean)
-
-  $bValidacionHabilitada = bHabilitar
-  ' CON UN SCRIPT EN CURSO EL BOTÓN SIGUE APAGADO: LO ENCIENDE EL DESBLOQUEO
-  FMain.btnValidarXML.Enabled = bHabilitar And (Not $bScriptEnCurso)
-
-End
-
-' ============================================
-' Función   : EjecutarScriptSalida
-' Propósito : Lanza un script de engine/ en la terminal del proyecto, espera a
-'             que termine y devuelve su código de salida. Es el único camino
-'             por el que un script se lanza: bloqueo, espera y desbloqueo
-'             ocurren acá y en ningún otro lado.
-' Parámetros: sScript As String — nombre del script dentro de engine/
-'             aArgumentos As String[] — argumentos, en orden. Ninguno vacío:
-'               el que no aplica se pasa como «-»
-'             fPlazo As Float — segundos antes de preguntar si seguir esperando
-'             sQue As String — qué se está generando, para lblMensajes
-'               («Componiendo el PDF del libro»). Opcional: si falta, se
-'               muestra el nombre del script
-' Retorna   : Integer — el código de salida del script (0, 3, 1...) o uno de
-'             los RESULTADO_*, todos negativos
-' ============================================
-Public Function EjecutarScriptSalida(sScript As String, aArgumentos As String[], fPlazo As Float, Optional sQue As String = "") As Integer
-
-  ' --- 1. INICIALIZACIÓN ---
-  Dim sRutaScript As String
-  Dim sDirTmp As String
-  Dim sNombreEstado As String
-  Dim sEstado As String
-  Dim sEstadoTmp As String
-  Dim sLinea As String
-  Dim sArgumento As String
-  Dim sContenido As String
-  Dim fVence As Float
-  Dim fInicio As Float
-  Dim sEtiqueta As String
-  Dim iSegundos As Integer
-  Dim iSegundosMostrados As Integer
-  Dim iRespuesta As Integer
-  Dim iResultado As Integer
-
-  ' --- 2. REENTRADA ---
-  ' LOS CONTROLES YA ESTÁN BLOQUEADOS, PERO LA FUNCIÓN ES PÚBLICA Y NO DEBE
-  ' DEPENDER DE ESO
-  If $bScriptEnCurso Then Return RESULTADO_EN_CURSO
-
-  ' --- 3. VALIDACIÓN ---
-  sRutaScript = m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ sScript
-  If Not Exist(sRutaScript) Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontró el script:" & gb.NewLine & sRutaScript &
-      gb.NewLine & gb.NewLine & "Verificá la instalación de gbpublisher.")
-    Return RESULTADO_NO_LANZADO
-  Endif
-
-  sDirTmp = m_InicioCierre.RutaProyectoEnCurso &/ "tmp"
-  If Not Exist(sDirTmp) Then
-    Try Mkdir sDirTmp
-    If Error Then
-      m_Sonido.sonar("Error")
-      Message.Error("No se pudo crear la carpeta tmp/ del proyecto:" & gb.NewLine & Error.Text)
-      Return RESULTADO_NO_LANZADO
-    Endif
-  Endif
-
-  ' --- 3b. LAS SIGLAS DEL LIBRO (1.18.0) ---
-  ' ANTES DE CADA SCRIPT QUE LAS LEE, Y ACÁ PORQUE ESTA ES LA ÚNICA LANZADORA:
-  ' UNA CORRECCIÓN EN EL CATÁLOGO TIENE QUE VERSE EN LA PRÓXIMA REVISIÓN DE
-  ' VIGENCIA AUNQUE NO SE REGENERE NADA. EN UNA REVISTA NO HAY SIGLAS
-  If m_InicioCierre.EsLibroEnCurso Then
-    If InStr(SCRIPTS_CON_SIGLAS, "|" & sScript & "|") > 0 Then
-      ' EscribirParaFiltro YA INFORMÓ EL MOTIVO
-      If Not m_Siglas.EscribirParaFiltro(m_InicioCierre.IdProyectoEnCurso, sDirTmp) Then Return RESULTADO_NO_LANZADO
-    Endif
-  Endif
-
-  ' --- 4. ARCHIVO DE ESTADO CON NOMBRE ÚNICO ---
-  ' ÚNICO POR LANZAMIENTO: SI UNA LÍNEA ANTERIOR SIGUE ENCOLADA EN LA TERMINAL,
-  ' SU ESTADO NO PUEDE CONFUNDIRSE CON EL DE ESTA
-  Inc $iLanzamiento
-  sNombreEstado = ".estado-" & Format(Now, "yyyymmdd-hhnnss") & "-" & CStr($iLanzamiento)
-  sEstado = sDirTmp &/ sNombreEstado
-  sEstadoTmp = sEstado & ".tmp"
-
-  ' --- 5. LÍNEA DE COMANDO ---
-  ' Shell$() Y NO Quote(): Quote() DEVUELVE COMILLAS DOBLES, DENTRO DE LAS
-  ' CUALES sh SIGUE EXPANDIENDO $(...) Y BACKTICKS (GV-06).
-  ' «;» Y NO «&&» DESPUÉS DEL SCRIPT: EL ESTADO SE ESCRIBE AUNQUE EL SCRIPT
-  ' FALLE, QUE ES JUSTAMENTE CUANDO MÁS HACE FALTA. $? ES LITERAL EN UN STRING
-  ' DE GAMBAS: LO EXPANDE EL SHELL DE LA TERMINAL.
-  sLinea = "bash " & Shell$(sRutaScript)
-  For Each sArgumento In aArgumentos
-    sLinea &= " " & Shell$(sArgumento)
-  Next
-  sLinea &= " ; echo $? > " & Shell$(sEstadoTmp) &
-    " && mv -f " & Shell$(sEstadoTmp) & " " & Shell$(sEstado)
-
-  ' --- 6. BLOQUEO Y LANZAMIENTO ---
-  ' A PARTIR DE ACÁ HAY UN SOLO CAMINO DE SALIDA, AL FINAL: EL DESBLOQUEO NO
-  ' PUEDE QUEDAR ATRÁS DE UN Return. Finally NO SIRVE PARA ESTO (RC-GM-20)
-  $bScriptEnCurso = True
-  BloquearSalidas(True)
-
-  ' PUNTERO OCUPADO EN TODA LA APLICACIÓN. Inc Y NO = 1: SI ALGO MÁS YA LO
-  ' TENÍA EN USO, AL TERMINAR VUELVE A ESE VALOR Y NO A CERO. LOS DIÁLOGOS
-  ' DE Message LO GUARDAN, LO PONEN EN CERO Y LO RESTAURAN SOLOS
-  ' (gb.gui.base, FMessage.class, 3.22.1): LA PREGUNTA DEL PLAZO NO
-  ' NECESITA NADA ESPECIAL
-  Inc Application.Busy
-
-  sEtiqueta = sQue
-  If sEtiqueta = "" Then sEtiqueta = sScript
-  fInicio = Timer
-  iSegundosMostrados = -1
-  FMain.lblMensajes.Text = sEtiqueta & "…"
-
-  FMain.tbMostrarPanelInferior.Value = True
-  FMain.TabPanelIzquierdaInferior.Index = 0
-  FMain.TerminalViewProyecto.Input(sLinea & gb.NewLine)
-
-  ' --- 7. ESPERA ---
-  ' LA SENTENCIA Wait DEJA CORRER EL BUCLE DE EVENTOS: LA TERMINAL SE PINTA Y
-  ' LA INTERFAZ RESPONDE (GV-17). LO QUE PODRÍA ESCRIBIR EN LA TERMINAL ESTÁ
-  ' BLOQUEADO
-  iResultado = RESULTADO_ABANDONADO
-  fVence = Timer + fPlazo
-
-  Do
-    If Exist(sEstado) Then Break
-
-    ' EL TIEMPO TRANSCURRIDO, UNA VEZ POR SEGUNDO Y NO EN CADA VUELTA
-    iSegundos = Int(Timer - fInicio)
-    If iSegundos <> iSegundosMostrados Then
-      iSegundosMostrados = iSegundos
-      FMain.lblMensajes.Text = sEtiqueta & "…  " & MinutosSegundos(iSegundos)
-    Endif
-
-    If Timer > fVence Then
-      ' AL VENCER NO SE ESCRIBE NADA EN LA TERMINAL: SE PREGUNTA
-      iRespuesta = Message.Question(
-        "La generación todavía no terminó." & gb.NewLine & gb.NewLine &
-        "Puede estar trabajando todavía: su avance se ve en la terminal." & gb.NewLine &
-        "Si dejás de esperar, sigue corriendo igual, pero la aplicación" & gb.NewLine &
-        "no va a poder informarte cómo terminó.",
-        "Seguir esperando", "Dejar de esperar")
-      If iRespuesta <> 1 Then Break
-      fVence = Timer + fPlazo
-    Endif
-
-    Wait 0.1
-  Loop
-
-  ' --- 8. LECTURA DEL CÓDIGO ---
-  If Exist(sEstado) Then
-    Try sContenido = File.Load(sEstado)
-    If Error Then
-      iResultado = RESULTADO_ILEGIBLE
-    Else
-      Try iResultado = CInt(Trim(sContenido))
-      If Error Then iResultado = RESULTADO_ILEGIBLE
-    Endif
-    ' EL ESTADO YA SE LEYÓ: NO TIENE OTRO USO
-    Try Kill sEstado
-  Endif
-
-  ' --- 9. DESBLOQUEO ---
-  ' EN EL MISMO ÚNICO CAMINO QUE EL BLOQUEO: TAMBIÉN AL DEJAR DE ESPERAR. EN
-  ' ESE CASO EL SCRIPT SIGUE CORRIENDO, PERO LA APLICACIÓN YA NO LO SIGUE Y
-  ' NO PUEDE SEGUIR DICIENDO QUE ESTÁ TRABAJANDO
-  FMain.lblMensajes.Text = ""
-  Dec Application.Busy
-  BloquearSalidas(False)
-  $bScriptEnCurso = False
-
-  Return iResultado
-
-End
-
-' ============================================
-' Función   : MinutosSegundos
-' Propósito : Un tiempo en segundos como mm:ss (h:mm:ss pasada la hora).
-'             Right("0" & …) Y NO UNA MÁSCARA DE Format: NO DEPENDE DE CÓMO
-'             TRATE Format UN ENTERO.
-' Parámetros: iSegundos As Integer — segundos transcurridos
-' Retorna   : String — el tiempo formateado
-' ============================================
-Private Function MinutosSegundos(iSegundos As Integer) As String
-
-  Dim iHoras As Integer
-  Dim iMinutos As Integer
-  Dim sTexto As String
-
-  iHoras = iSegundos \ 3600
-  iMinutos = (iSegundos Mod 3600) \ 60
-
-  sTexto = Right("0" & CStr(iMinutos), 2) & ":" & Right("0" & CStr(iSegundos Mod 60), 2)
-  If iHoras > 0 Then sTexto = CStr(iHoras) & ":" & sTexto
-
-  Return sTexto
-
-End
-
-' ============================================
-' Función   : InformarResultado
-' Propósito : Traduce el resultado de EjecutarScriptSalida a un mensaje. El
-'             detalle está en la terminal; el mensaje dice qué pasó y dónde
-'             mirar, y solo afirma lo que el script verificó.
-' Parámetros: iResultado As Integer — lo que devolvió EjecutarScriptSalida
-'             sQue As String — qué se generó, para el texto («El HTML del libro»)
-'             sArchivo As String — ruta del producto, para el mensaje de éxito
-' Retorna   : Boolean — True si el producto se generó (con o sin avisos)
-' ============================================
-Public Function InformarResultado(iResultado As Integer, sQue As String, sArchivo As String) As Boolean
-
-  Select Case iResultado
-
-    Case SALIDA_OK
-      m_Sonido.sonar("Info")
-      Message.Info(sQue & " se generó correctamente." & gb.NewLine & gb.NewLine &
-        "Archivo:" & gb.NewLine & sArchivo)
-      Return True
-
-    Case SALIDA_AVISOS
-      m_Sonido.sonar("Warning")
-      Message.Warning(sQue & " se generó, pero con avisos." & gb.NewLine & gb.NewLine &
-        "Revisá la terminal: los avisos están marcados con ⚠." & gb.NewLine & gb.NewLine &
-        "Archivo:" & gb.NewLine & sArchivo)
-      Return True
-
-    Case RESULTADO_EN_CURSO
-      m_Sonido.sonar("Warning")
-      Message.Warning("Ya hay una generación en curso. Esperá a que termine.")
-
-    Case RESULTADO_NO_LANZADO
-      ' LA LANZADORA YA MOSTRÓ POR QUÉ
-
-    Case RESULTADO_ABANDONADO
-      m_Sonido.sonar("Warning")
-      Message.Warning("Se dejó de esperar la generación." & gb.NewLine & gb.NewLine &
-        "Puede seguir corriendo en la terminal. Cómo termine se ve ahí.")
-
-    Case RESULTADO_ILEGIBLE
-      m_Sonido.sonar("Error")
-      Message.Error("La generación terminó, pero no se pudo leer su resultado." & gb.NewLine &
-        "Revisá la terminal.")
-
-    Case Else
-      m_Sonido.sonar("Error")
-      Message.Error(sQue & " no se generó (código " & CStr(iResultado) & ")." & gb.NewLine & gb.NewLine &
-        "El motivo está al final de la salida en la terminal.")
-
-  End Select
-
-  Return False
-
-End
 
 ' ============================================
 ' Función   : RutaSalidaLibro
@@ -479,7 +113,7 @@ Public Sub AbrirSalidaEnVisor(sSalida As String)
 
   ' --- 3. NINGUNA GENERACIÓN EN CURSO ---
   ' MIENTRAS UN SCRIPT CORRE, EL ARCHIVO PUEDE ESTAR A MEDIO ESCRIBIR
-  If HayScriptEnCurso() Then
+  If m_Lanzadora.HayScriptEnCurso() Then
     m_Sonido.sonar("Warning")
     Message.Warning("Hay una generación en curso. Esperá a que termine para abrir la salida.")
     Return
@@ -877,11 +511,11 @@ Public Sub GenerarCanonicoLibro()
   If Not oInsumos.bListo Then Return
 
   ' --- 4. ENSAMBLADO ---
-  iResultado = EjecutarScriptSalida("ensamblar_libro.sh", ArgumentosEnsamblado(oInsumos), PLAZO_CANONICO,
+  iResultado = m_Lanzadora.EjecutarScript("ensamblar_libro.sh", ArgumentosEnsamblado(oInsumos), PLAZO_CANONICO,
     "Ensamblando el canónico del libro")
 
   ' --- 5. INFORME ---
-  InformarResultado(iResultado, "El canónico del libro",
+  m_Lanzadora.InformarResultado(iResultado, "El canónico del libro",
     oInsumos.sRutaProyecto &/ "jats" &/ "c-libro-" & oInsumos.sNombreBase & ".xml")
 
 End
@@ -1018,8 +652,8 @@ End
 ' Parámetros: hCapitulos As Result — capítulos a generar, sin recorrer, con las
 '               columnas id_capitulo, nombre_archivo, tipo_capitulo e
 '               idioma_capitulo
-' Retorna   : Integer — lo que devuelve EjecutarScriptSalida, o
-'             RESULTADO_EN_CURSO / RESULTADO_NO_LANZADO si no se lanzó; en el
+' Retorna   : Integer — lo que devuelve m_Lanzadora.EjecutarScript, o
+'             m_Lanzadora.RESULTADO_EN_CURSO / m_Lanzadora.RESULTADO_NO_LANZADO si no se lanzó; en el
 '             segundo caso el motivo ya se informó o el usuario canceló
 ' ============================================
 Private Function LanzarCanonicos(hCapitulos As Result) As Integer
@@ -1038,23 +672,23 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
 
   ' --- 2. REENTRADA ---
   ' ANTES DE ESCRIBIR NADA: UN SCRIPT EN CURSO PUEDE ESTAR LEYENDO LOS MISMOS
-  ' ARCHIVOS DE tmp/ QUE ESTA FUNCIÓN REESCRIBE. EjecutarScriptSalida LO
+  ' ARCHIVOS DE tmp/ QUE ESTA FUNCIÓN REESCRIBE. m_Lanzadora.EjecutarScript LO
   ' VERIFICA TAMBIÉN, PERO DESPUÉS DE LA ESCRITURA SERÍA TARDE
-  If $bScriptEnCurso Then Return RESULTADO_EN_CURSO
+  If m_Lanzadora.HayScriptEnCurso() Then Return m_Lanzadora.RESULTADO_EN_CURSO
 
   ' --- 3. EL EDITOR IGUAL AL DISCO (SC-06) ---
   ' EL SCRIPT LEE LOS .md DEL DISCO. LO QUE ESTÁ SIN GUARDAR EN EL EDITOR SE
   ' GUARDA O SE DESCARTA ACÁ, Y DESPUÉS SE ALINEA: «DESCARTAR» DEJA EL TEXTO
   ' DESCARTADO EN EL EDITOR (m_BuscarRegex.AlinearEditorConDisco)
-  If Not FMain.ConfirmarDescartarCambios() Then Return RESULTADO_NO_LANZADO
-  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return RESULTADO_NO_LANZADO
+  If Not FMain.ConfirmarDescartarCambios() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
 
   ' --- 4. REFERENCIAS DEL PROYECTO, UNA VEZ POR LANZAMIENTO ---
   ' EL .bib LO LEE GenerarBiblioCapituloXML; EL ref-*.xml, LAS SALIDAS. ANTES SE
   ' EXPORTABAN UNA VEZ POR CAPÍTULO Y SIN MIRAR EL RESULTADO. LAS DOS
   ' FUNCIONES INFORMAN SUS FALLOS
-  If Not m_Bibtex.ExportarBibTeX() Then Return RESULTADO_NO_LANZADO
-  If Not m_XML.ExportarDocBookdesdeBIB() Then Return RESULTADO_NO_LANZADO
+  If Not m_Bibtex.ExportarBibTeX() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_XML.ExportarDocBookdesdeBIB() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
 
   ' --- 5. INSUMOS DE CADA CAPÍTULO Y LISTA ---
   ' UN INSUMO QUE NO SE PUEDE ESCRIBIR FRENA TODO ANTES DE LANZAR: ES UN
@@ -1081,12 +715,12 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
       Message.Error("El capítulo id=" & CStr(iIdCapitulo) & " tiene un tabulador o un salto" & gb.NewLine &
         "de línea en el nombre de archivo, el tipo o el idioma." & gb.NewLine &
         "Corregilo en la base antes de generar.")
-      Return RESULTADO_NO_LANZADO
+      Return m_Lanzadora.RESULTADO_NO_LANZADO
     Endif
 
     ' LAS DOS FUNCIONES INFORMAN SUS FALLOS
-    If Not m_XML.GenerarInfoCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
-    If Not m_XML.GenerarBiblioCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
+    If Not m_XML.GenerarInfoCapituloXML(iIdCapitulo) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+    If Not m_XML.GenerarBiblioCapituloXML(iIdCapitulo) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
 
     ' nombre_archivo, xml:id, tipo E idioma: EL ORDEN QUE ESPERA EL SCRIPT
     sLista &= sNombre & Chr(9) & "cap-" & CStr(iIdCapitulo) & Chr(9) &
@@ -1110,7 +744,7 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
       If Error Then
         m_Sonido.sonar("Error")
         Message.Error("No se pudo leer la lista de siglas del libro:" & gb.NewLine & Error.Text)
-        Return RESULTADO_NO_LANZADO
+        Return m_Lanzadora.RESULTADO_NO_LANZADO
       Endif
       While hListas.Available
         iIdCapitulo = hListas["id_capitulo"]
@@ -1119,8 +753,8 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
         ' LOS MISMOS INSUMOS QUE CUALQUIER PIEZA: info Y biblio. EL TIPO ES
         ' LA CONSTANTE, Y EL CONTROL DE TABULADORES DEL NOMBRE LO HACE
         ' m_Siglas.EscribirPiezas ANTES DEL LANZAMIENTO
-        If Not m_XML.GenerarInfoCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
-        If Not m_XML.GenerarBiblioCapituloXML(iIdCapitulo) Then Return RESULTADO_NO_LANZADO
+        If Not m_XML.GenerarInfoCapituloXML(iIdCapitulo) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+        If Not m_XML.GenerarBiblioCapituloXML(iIdCapitulo) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
         sLista &= sNombre & Chr(9) & "cap-" & CStr(iIdCapitulo) & Chr(9) &
           m_Siglas.TIPO_LISTA & Chr(9) & sIdioma & Chr(10)
         Inc iCantidad
@@ -1132,7 +766,7 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
   If iCantidad = 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("Ninguna pieza del libro tiene cuerpo propio: no hay canónicos que generar.")
-    Return RESULTADO_NO_LANZADO
+    Return m_Lanzadora.RESULTADO_NO_LANZADO
   Endif
 
   Try File.Save(m_InicioCierre.RutaProyectoEnCurso &/ LISTA_CANONICOS, sLista)
@@ -1140,18 +774,18 @@ Private Function LanzarCanonicos(hCapitulos As Result) As Integer
     m_Sonido.sonar("Error")
     Message.Error("No se pudo escribir la lista de capítulos:" & gb.NewLine &
       LISTA_CANONICOS & gb.NewLine & gb.NewLine & Error.Text)
-    Return RESULTADO_NO_LANZADO
+    Return m_Lanzadora.RESULTADO_NO_LANZADO
   Endif
 
   ' --- 6. LANZAMIENTO ---
   ' LA PESTAÑA DEL PROYECTO, COMO LOS BOTONES QUE ESTO REEMPLAZA. EL PANEL
-  ' INFERIOR Y LA TERMINAL LOS MUESTRA EjecutarScriptSalida
+  ' INFERIOR Y LA TERMINAL LOS MUESTRA m_Lanzadora.EjecutarScript
   FMain.TabStrip1.Index = 0
 
   aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
   aArgumentos.Add(LISTA_CANONICOS)
 
-  Return EjecutarScriptSalida("generar_canonicos_capitulos.sh", aArgumentos, PLAZO_CANONICOS_CAPITULO,
+  Return m_Lanzadora.EjecutarScript("generar_canonicos_capitulos.sh", aArgumentos, PLAZO_CANONICOS_CAPITULO,
     "Generando los canónicos de capítulo")
 
 End
@@ -1177,13 +811,13 @@ Private Sub InformarCanonicos(iResultado As Integer, sNombreUnico As String)
   ' --- 2. UN SOLO CAPÍTULO ---
   ' LOS MENSAJES GENERALES SIRVEN; SOLO EL FALLO AGREGA LO DEL CANÓNICO BORRADO
   If sNombreUnico <> "" Then
-    If iResultado = SALIDA_FALLO Then
+    If iResultado = m_Lanzadora.SALIDA_FALLO Then
       m_Sonido.sonar("Error")
       Message.Error("El canónico de «" & sNombreUnico & "» no se generó." & gb.NewLine & gb.NewLine &
         "El motivo está en la terminal. Si había un canónico anterior," & gb.NewLine &
         "se borró: ya no correspondía al .md.")
     Else
-      InformarResultado(iResultado, "El canónico de «" & sNombreUnico & "»",
+      m_Lanzadora.InformarResultado(iResultado, "El canónico de «" & sNombreUnico & "»",
         sCarpeta &/ "c-" & sNombreUnico & ".xml")
     Endif
     Return
@@ -1192,19 +826,19 @@ Private Sub InformarCanonicos(iResultado As Integer, sNombreUnico As String)
   ' --- 3. LOTE DE TODOS ---
   Select Case iResultado
 
-    Case SALIDA_OK
+    Case m_Lanzadora.SALIDA_OK
       m_Sonido.sonar("Info")
       Message.Info("Se generaron los canónicos de todos los capítulos." & gb.NewLine & gb.NewLine &
         "Carpeta:" & gb.NewLine & sCarpeta)
 
-    Case SALIDA_AVISOS
+    Case m_Lanzadora.SALIDA_AVISOS
       m_Sonido.sonar("Warning")
       Message.Warning("Se generaron los canónicos de todos los capítulos," & gb.NewLine &
         "pero con avisos." & gb.NewLine & gb.NewLine &
         "Revisá la terminal: al final están los capítulos con avisos," & gb.NewLine &
         "y cada aviso está marcado con ⚠ en su capítulo.")
 
-    Case SALIDA_FALLO
+    Case m_Lanzadora.SALIDA_FALLO
       ' NO SE AFIRMA QUE EL LOTE HAYA CORRIDO: EL CÓDIGO 1 TAMBIÉN LO DA UN
       ' FALLO DEL ENTORNO, ANTES DEL PRIMER CAPÍTULO
       m_Sonido.sonar("Error")
@@ -1216,7 +850,7 @@ Private Sub InformarCanonicos(iResultado As Integer, sNombreUnico As String)
 
     Case Else
       ' EN CURSO, NO LANZADO, ABANDONADO, ILEGIBLE U OTRO CÓDIGO
-      InformarResultado(iResultado, "El lote de canónicos", sCarpeta)
+      m_Lanzadora.InformarResultado(iResultado, "El lote de canónicos", sCarpeta)
 
   End Select
 
@@ -1278,7 +912,7 @@ Public Sub ValidarCanonico(sArchivo As String)
 
   ' EL BOTÓN YA ESTÁ APAGADO EN UNA REVISTA; ESTO CUBRE UNA LLAMADA DESDE
   ' OTRO LUGAR (SC-75)
-  If Not $bValidacionHabilitada Then
+  If Not m_Lanzadora.ValidacionHabilitada() Then
     m_Sonido.sonar("Warning")
     Message.Warning("La validación del visor es solo para libros." & gb.NewLine &
       "La de los artículos de revista todavía no está disponible.")
@@ -1313,7 +947,7 @@ Public Sub ValidarCanonico(sArchivo As String)
   aArgumentos.Add("completo")
   aArgumentos.Add(LISTA_VALIDAR)
 
-  iResultado = EjecutarScriptSalida("validar_canonicos.sh", aArgumentos, PLAZO_VALIDAR,
+  iResultado = m_Lanzadora.EjecutarScript("validar_canonicos.sh", aArgumentos, PLAZO_VALIDAR,
     "Validando " & sArchivo)
 
   ' --- 5. INFORME ---
@@ -1352,7 +986,7 @@ Public Sub RevisarVigenciaLibro()
   aArgumentos.Add("vigencia")
   aArgumentos.Add("-")
 
-  iResultado = EjecutarScriptSalida("validar_canonicos.sh", aArgumentos, PLAZO_VIGENCIA,
+  iResultado = m_Lanzadora.EjecutarScript("validar_canonicos.sh", aArgumentos, PLAZO_VIGENCIA,
     "Revisando la vigencia de los canónicos")
 
   ' --- 4. INFORME ---
@@ -1360,10 +994,10 @@ Public Sub RevisarVigenciaLibro()
   ' «SIN HUELLA» VA EN TENUE (SC-75)
   Select Case iResultado
 
-    Case SALIDA_OK
+    Case m_Lanzadora.SALIDA_OK
       ' NADA QUE DECIR: LA APERTURA SIGUE SIN INTERRUPCIONES
 
-    Case SALIDA_AVISOS
+    Case m_Lanzadora.SALIDA_AVISOS
       m_Sonido.sonar("Warning")
       Message.Warning("Hay canónicos desactualizados o huérfanos." & gb.NewLine & gb.NewLine &
         "Un canónico desactualizado ya no corresponde a su .md o a sus" & gb.NewLine &
@@ -1372,7 +1006,7 @@ Public Sub RevisarVigenciaLibro()
         "y, si sobra, se borra a mano." & gb.NewLine & gb.NewLine &
         "El detalle está en la terminal.")
 
-    Case SALIDA_FALLO
+    Case m_Lanzadora.SALIDA_FALLO
       m_Sonido.sonar("Warning")
       Message.Warning("No se pudo revisar la vigencia de todos los canónicos." & gb.NewLine & gb.NewLine &
         "El motivo está en la terminal.")
@@ -1391,7 +1025,7 @@ End
 '             usa los textos de InformarResultado: un validador no genera
 '             nada, y «se generó» sería falso (SC-75). Los resultados propios
 '             de la lanzadora sí van a InformarResultado, que ya los conoce.
-' Parámetros: iResultado As Integer — lo que devolvió EjecutarScriptSalida
+' Parámetros: iResultado As Integer — lo que devolvió m_Lanzadora.EjecutarScript
 '             sQue As String — qué se validó, para el texto («c-a-01.xml»)
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
@@ -1401,7 +1035,7 @@ Private Sub InformarValidacion(iResultado As Integer, sQue As String)
   ' NEGATIVOS: EN CURSO, NO LANZADO, ABANDONADO, ILEGIBLE. NINGUNO HABLA DE
   ' LO QUE SE GENERÓ, ASÍ QUE SUS TEXTOS SIRVEN TAL CUAL
   If iResultado < 0 Then
-    InformarResultado(iResultado, sQue, "")
+    m_Lanzadora.InformarResultado(iResultado, sQue, "")
     Return
   Endif
 
@@ -1410,19 +1044,19 @@ Private Sub InformarValidacion(iResultado As Integer, sQue As String)
   ' TODAS LAS CAPAS Y NINGUNA ENCONTRÓ NADA
   Select Case iResultado
 
-    Case SALIDA_OK
+    Case m_Lanzadora.SALIDA_OK
       m_Sonido.sonar("Info")
       Message.Info(sQue & ": sin hallazgos." & gb.NewLine & gb.NewLine &
         "Bien formado, al día con sus archivos fuente, válido contra" & gb.NewLine &
         "DocBook 5.2 (RNG y Schematron), conforme a las reglas de" & gb.NewLine &
         "gbpublisher y con sus imágenes en png o jpg en media/.")
 
-    Case SALIDA_AVISOS
+    Case m_Lanzadora.SALIDA_AVISOS
       m_Sonido.sonar("Warning")
       Message.Warning(sQue & " tiene hallazgos." & gb.NewLine & gb.NewLine &
         "Revisá la terminal: están marcados con ⚠.")
 
-    Case SALIDA_FALLO
+    Case m_Lanzadora.SALIDA_FALLO
       m_Sonido.sonar("Error")
       Message.Error(sQue & " no se pudo validar." & gb.NewLine & gb.NewLine &
         "El motivo está en la terminal.")
@@ -1552,17 +1186,17 @@ Public Sub GenerarLibroHTML()
   Endif
 
   ' --- 8. GENERACIÓN ---
-  iResultado = EjecutarScriptSalida("generar_html_libro.sh", aArgumentos, PLAZO_HTML,
+  iResultado = m_Lanzadora.EjecutarScript("generar_html_libro.sh", aArgumentos, PLAZO_HTML,
     "Generando el HTML del libro")
 
   ' --- 9. INFORME ---
-  InformarResultado(iResultado, "El HTML del libro",
+  m_Lanzadora.InformarResultado(iResultado, "El HTML del libro",
     oInsumos.sRutaProyecto &/ "docs" &/ "index.html")
 
   ' --- 10. LA TAPA DEL PORTAL ---
   ' CUBRE UNA TAPA REEMPLAZADA EN media/ SIN VOLVER A GUARDAR EL FORMULARIO
   ' (SC-81). SOLO SI EL HTML SALIÓ: SI FALLÓ POR LA TAPA, SERÍA EL MISMO AVISO DOS VECES
-  If iResultado = SALIDA_OK Or iResultado = SALIDA_AVISOS Then m_TapaWeb.ActualizarLibroEnCurso()
+  If iResultado = m_Lanzadora.SALIDA_OK Or iResultado = m_Lanzadora.SALIDA_AVISOS Then m_TapaWeb.ActualizarLibroEnCurso()
 
 End
 
@@ -1662,12 +1296,12 @@ Public Sub GenerarPDFLibro()
     aArgumentos.Add(m_GenerarPDFLibro.LISTA_PIEZAS_LATEX)
     aArgumentos.Add(m_GenerarPDFLibro.MAIN_PROPUESTO)
 
-    iResultado = EjecutarScriptSalida("preparar_latex_libro.sh", aArgumentos, PLAZO_PDF,
+    iResultado = m_Lanzadora.EjecutarScript("preparar_latex_libro.sh", aArgumentos, PLAZO_PDF,
       "Preparando los archivos LaTeX del libro")
 
     ' EL main.tex QUEDA EN latex/ PARA REVISARLO O PERSONALIZARLO ANTES DE
     ' COMPILAR
-    InformarResultado(iResultado, "El main.tex",
+    m_Lanzadora.InformarResultado(iResultado, "El main.tex",
       m_InicioCierre.RutaProyectoEnCurso &/ "latex" &/ "main.tex")
     Return
   Endif
@@ -1690,11 +1324,11 @@ Public Sub GenerarPDFLibro()
   aArgumentos.Add(m_GenerarPDFLibro.LISTA_PIEZAS_LATEX)
   aArgumentos.Add(m_GenerarPDFLibro.MAIN_PROPUESTO)
 
-  iResultado = EjecutarScriptSalida("compilar_pdf_libro.sh", aArgumentos, PLAZO_PDF,
+  iResultado = m_Lanzadora.EjecutarScript("compilar_pdf_libro.sh", aArgumentos, PLAZO_PDF,
     "Componiendo el PDF del libro")
 
   ' --- 7. INFORME ---
-  InformarResultado(iResultado, "El PDF del libro",
+  m_Lanzadora.InformarResultado(iResultado, "El PDF del libro",
     m_InicioCierre.RutaProyectoEnCurso &/ "salidas" &/ "pdf" &/ sNombreSalida & ".pdf")
 
 Catch
@@ -1883,11 +1517,11 @@ Public Sub GenerarPDFA2uLibro()
   aArgumentos.Add(sMaestroRel)
   aArgumentos.Add(NIVEL_PDFA2U)
 
-  iResultado = EjecutarScriptSalida("compilar_pdfa_libro.sh", aArgumentos, PLAZO_PDF,
+  iResultado = m_Lanzadora.EjecutarScript("compilar_pdfa_libro.sh", aArgumentos, PLAZO_PDF,
     "Componiendo el PDF/A-2u del libro")
 
   ' --- 6. INFORME ---
-  InformarResultado(iResultado, "El PDF/A-2u del libro",
+  m_Lanzadora.InformarResultado(iResultado, "El PDF/A-2u del libro",
     m_InicioCierre.RutaProyectoEnCurso &/ "salidas" &/ "pdf" &/ sNombreSalida & ".pdf")
 
 Catch
