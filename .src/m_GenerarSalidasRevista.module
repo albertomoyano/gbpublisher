@@ -1,0 +1,355 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_GenerarSalidasRevista
+' Propósito : Las salidas de los números nuevos de revista (SC-71, SC-72;
+'             etapas A y B de claude/salidas-revistas.md), del lado de Gambas:
+'             lo que sale de la base se escribe como archivo y el trabajo
+'             pesado lo hace un script de engine/ por m_Lanzadora (SC-13,
+'             SC-53). Es el gemelo de m_GenerarSalidasLibro.
+'             Hoy: los canónicos JATS de artículo (etapa A0, menuJats de
+'             FMain) con engine/generar_canonicos_articulos.sh.
+' Alcance   : solo los números del esquema nuevo, los que tienen artículos en
+'             la tabla articulo (NumeroEsNuevo). Los números viejos siguen con
+'             btnGenerarXMLcanonico y m_XML hasta el 2.0.0 (decisión de
+'             Alberto, 07/11).
+' Dependencias: m_Lanzadora, m_CanonicoRevista, m_Numero, m_Articulo,
+'             m_Bibtex, m_BuscarRegex, m_InicioCierre, m_Sonido, FMain.
+' ==============================================================================
+
+' EL PLAZO DEL LOTE DE CANÓNICOS, EN SEGUNDOS: EL MISMO QUE EL DE LOS
+' CAPÍTULOS (m_GenerarSalidasLibro.PLAZO_CANONICOS_CAPITULO)
+Private Const PLAZO_CANONICOS_ARTICULO As Float = 600.0
+
+' LA LISTA QUE GAMBAS LE PASA A generar_canonicos_articulos.sh, RELATIVA AL
+' PROYECTO: UN nombre_archivo POR LÍNEA
+Private Const LISTA_CANONICOS As String = "tmp/lote-articulos.txt"
+
+' ============================================
+' Función   : NumeroDelProyecto
+' Propósito : El número vinculado al proyecto abierto. Todo proyecto de
+'             revista lo tiene desde la apertura (m_Numero.ConfirmarOVincular)
+' Parámetros: (ninguno)
+' Retorna   : Integer — id_numero; 0 si no hay (ya se informó si falló la
+'             lectura)
+' ============================================
+Public Function NumeroDelProyecto() As Integer
+
+  Dim rNumero As Result
+
+  rNumero = m_Numero.CargarNumeroDeProyecto(m_InicioCierre.IdProyectoEnCurso)
+  If Not rNumero Then Return 0
+
+  Return rNumero!id_numero
+
+End
+
+' ============================================
+' Función   : NumeroEsNuevo
+' Propósito : Decide qué camino de canónicos ve el editor (decisión de
+'             Alberto, 07/11): un número con artículos en el esquema nuevo
+'             usa menuJats; uno sin ellos, el botón viejo
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si el número del proyecto tiene artículos en la
+'             tabla articulo
+' Nota      : SE DECIDE AL ABRIR EL PROYECTO. UN NÚMERO QUE RECIBE SU PRIMER
+'             ARTÍCULO EN EL ESQUEMA NUEVO CAMBIA DE CAMINO AL REABRIRLO
+' ============================================
+Public Function NumeroEsNuevo() As Boolean
+
+  Dim iIdNumero As Integer
+
+  iIdNumero = NumeroDelProyecto()
+  If iIdNumero = 0 Then Return False
+
+  ' -1 ES UN ERROR DE LECTURA: NO SE DA POR NUEVO
+  Return m_Numero.ContarArticulos(iIdNumero) > 0
+
+End
+
+' ============================================
+' Función   : ConfigurarControles
+' Propósito : Al abrir un proyecto de revista, muestra el camino de canónicos
+'             que corresponde al número (decisión de Alberto, 07/11):
+'               - número nuevo: menuJats, y el botón «Validar» del visor XML
+'                 encendido (el validador conoce JATS desde A0.4);
+'               - número viejo: btnGenerarXMLcanonico, y «Validar» apagado.
+'             Nunca los dos
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : LA LLAMA FMain DESPUÉS DE m_FuncionesGenericas.BotonesLibroRevista,
+'             QUE PONE LOS BOTONES DEL TIPO DE PROYECTO
+' ============================================
+Public Sub ConfigurarControles()
+
+  Dim bNuevo As Boolean
+
+  bNuevo = NumeroEsNuevo()
+  FMain.mJats.Visible = bNuevo
+  FMain.btnGenerarXMLcanonico.Visible = Not bNuevo
+  m_Lanzadora.HabilitarValidacion(bNuevo)
+
+End
+
+' ============================================
+' Función   : GenerarCanonicoEnCurso
+' Propósito : El canónico JATS del artículo abierto en el editor
+'             («Canónico archivo en curso» de menuJats). Es un lote de un
+'             solo artículo: el mismo camino que «Todos los canónicos»
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarCanonicoEnCurso()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaArticulos As String
+  Dim sAbierto As String
+  Dim bEsArticulo As Boolean
+  Dim sNombre As String
+  Dim aArchivos As New String[]
+  Dim iResultado As Integer
+
+  ' --- 2. EL ARCHIVO DEL EDITOR ---
+  ' EL ARTÍCULO LO DA EL ARCHIVO ABIERTO Y NO IdArticuloEnCurso, QUE ES DE LA
+  ' TABLA VIEJA articulos. TIENE QUE SER UN a-*.md DE articulos/
+  sRutaArticulos = m_InicioCierre.RutaProyectoEnCurso &/ "articulos"
+  sAbierto = FMain.sRutaArchivoAbierto
+  If sAbierto <> "" Then
+    bEsArticulo = (File.Dir(sAbierto) = sRutaArticulos) And (LCase(File.Name(sAbierto)) Begins "a-")
+  Endif
+  If Not bEsArticulo Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo abierto en el editor." & gb.NewLine &
+      "Abrí un archivo a-… de la carpeta articulos/.")
+    Return
+  Endif
+  sNombre = File.BaseName(sAbierto)
+
+  ' --- 3. CON METADATOS ---
+  ' EL SCRIPT TAMBIÉN LO FRENA; ACÁ SE AVISA ANTES Y CON EL CAMINO PARA
+  ' ARREGLARLO
+  If Not TieneMetadatos(sNombre) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("«" & sNombre & "» no tiene metadatos en la base." & gb.NewLine & gb.NewLine &
+      "Cargalos en los metadatos del artículo antes de generar su canónico.")
+    Return
+  Endif
+
+  ' --- 4. LANZAMIENTO E INFORME ---
+  aArchivos.Add(sNombre)
+  iResultado = LanzarCanonicos(aArchivos)
+  InformarCanonicos(iResultado, sNombre)
+
+End
+
+' ============================================
+' Función   : GenerarCanonicosTodos
+' Propósito : Los canónicos JATS de todos los artículos del número que tienen
+'             metadatos y su .md («Todos los canónicos» de menuJats)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarCanonicosTodos()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdNumero As Integer
+  Dim rFilas As Result
+  Dim sNombre As String
+  Dim sRutaArticulos As String
+  Dim aArchivos As New String[]
+  Dim iResultado As Integer
+
+  ' --- 2. EL NÚMERO ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún proyecto abierto.")
+    Return
+  Endif
+  iIdNumero = NumeroDelProyecto()
+  If iIdNumero = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto no tiene un número vinculado.")
+    Return
+  Endif
+
+  ' --- 3. LOS ARTÍCULOS: EN LA BASE Y CON SU .md ---
+  ' LOS .md SIN METADATOS Y LOS ARTÍCULOS SIN .md LOS INFORMA EL SCRIPT, DEL
+  ' VOLCADO, COMO AVISO DEL NÚMERO
+  rFilas = m_Articulo.FilasDelNumero(iIdNumero)
+  If Not rFilas Then Return
+  sRutaArticulos = m_InicioCierre.RutaProyectoEnCurso &/ "articulos"
+  While rFilas.Available
+    sNombre = rFilas!nombre_archivo
+    If Exist(sRutaArticulos &/ sNombre & ".md") Then aArchivos.Add(sNombre)
+    rFilas.MoveNext
+  Wend
+
+  If aArchivos.Count = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Ningún artículo del número tiene metadatos y su .md:" & gb.NewLine &
+      "no hay canónicos que generar.")
+    Return
+  Endif
+
+  ' --- 4. LANZAMIENTO E INFORME ---
+  iResultado = LanzarCanonicos(aArchivos)
+  InformarCanonicos(iResultado, "")
+
+End
+
+' ============================================
+' Función   : TieneMetadatos
+' Propósito : Si el archivo es un artículo del número en la base
+' Parámetros: sNombre As String — nombre_archivo, sin .md
+' Retorna   : Boolean — True si está en FilasDelNumero
+' ============================================
+Private Function TieneMetadatos(sNombre As String) As Boolean
+
+  Dim iIdNumero As Integer
+  Dim rFilas As Result
+
+  iIdNumero = NumeroDelProyecto()
+  If iIdNumero = 0 Then Return False
+  rFilas = m_Articulo.FilasDelNumero(iIdNumero)
+  If Not rFilas Then Return False
+
+  ' EL RECORRIDO Y NO UN SELECT PROPIO: LA CONSULTA DE LOS ARTÍCULOS DEL
+  ' NÚMERO ES UNA SOLA (m_Articulo)
+  While rFilas.Available
+    If rFilas!nombre_archivo = sNombre Then Return True
+    rFilas.MoveNext
+  Wend
+  Return False
+
+End
+
+' ============================================
+' Función   : LanzarCanonicos
+' Propósito : Escribe los insumos del lote y lanza
+'             engine/generar_canonicos_articulos.sh
+' Parámetros: aArchivos As String[] — los nombre_archivo del lote, sin .md
+' Retorna   : Integer — el resultado de m_Lanzadora.EjecutarScript, o
+'             RESULTADO_EN_CURSO / RESULTADO_NO_LANZADO si no se llegó a lanzar
+' ============================================
+Private Function LanzarCanonicos(aArchivos As String[]) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdNumero As Integer
+  Dim sLista As String
+  Dim aArgumentos As New String[]
+
+  ' --- 2. REENTRADA ---
+  ' ANTES DE ESCRIBIR NADA: UN SCRIPT EN CURSO PUEDE ESTAR LEYENDO LOS MISMOS
+  ' ARCHIVOS DE tmp/ QUE ESTA FUNCIÓN REESCRIBE
+  If m_Lanzadora.HayScriptEnCurso() Then Return m_Lanzadora.RESULTADO_EN_CURSO
+
+  ' --- 3. EL EDITOR IGUAL AL DISCO (SC-06) ---
+  ' EL SCRIPT Y EL VOLCADO LEEN LOS .md DEL DISCO: LAS CLAVES CITADAS SALEN
+  ' DE AHÍ (m_CanonicoRevista). LO MISMO QUE m_GenerarSalidasLibro
+  If Not FMain.ConfirmarDescartarCambios() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+
+  ' --- 4. LOS INSUMOS ---
+  ' EL .bib PRIMERO: LO LEE EL CONVERSOR DE LAS REFERENCIAS (m_XML.EscribirRefList).
+  ' DESPUÉS EL VOLCADO DEL NÚMERO Y EL reflist DE CADA ARTÍCULO DEL LOTE. LAS
+  ' FUNCIONES INFORMAN SUS FALLOS
+  iIdNumero = NumeroDelProyecto()
+  If iIdNumero = 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto no tiene un número vinculado.")
+    Return m_Lanzadora.RESULTADO_NO_LANZADO
+  Endif
+  If Not m_Bibtex.ExportarBibTeX() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_CanonicoRevista.PrepararNumero(iIdNumero, aArchivos) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+
+  ' --- 5. LA LISTA ---
+  ' LOS NOMBRES VIENEN DE LA BASE Y DEL DISCO; EL SCRIPT RECHAZA LO QUE NO SEA
+  ' a-[A-Za-z0-9._-]
+  sLista = aArchivos.Join(Chr(10)) & Chr(10)
+  Try File.Save(m_InicioCierre.RutaProyectoEnCurso &/ LISTA_CANONICOS, sLista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir la lista de artículos:" & gb.NewLine &
+      LISTA_CANONICOS & gb.NewLine & gb.NewLine & Error.Text)
+    Return m_Lanzadora.RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 6. LANZAMIENTO ---
+  ' LA PESTAÑA DEL PROYECTO. EL PANEL INFERIOR Y LA TERMINAL LOS MUESTRA
+  ' m_Lanzadora.EjecutarScript
+  FMain.TabStrip1.Index = 0
+
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(LISTA_CANONICOS)
+
+  Return m_Lanzadora.EjecutarScript("generar_canonicos_articulos.sh", aArgumentos, PLAZO_CANONICOS_ARTICULO,
+    "Generando los canónicos de artículo")
+
+End
+
+' ============================================
+' Función   : InformarCanonicos
+' Propósito : Traduce el resultado del lote a un mensaje. Como en libros, el
+'             fallo se informa aparte: en un lote puede haber canónicos
+'             generados y otros no, y los que no se generaron se borraron
+' Parámetros: iResultado As Integer — lo que devolvió LanzarCanonicos
+'             sNombreUnico As String — nombre_archivo si fue un solo
+'               artículo; vacío si fue el lote de todos
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub InformarCanonicos(iResultado As Integer, sNombreUnico As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sCarpeta As String
+
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ "jats"
+
+  ' --- 2. UN SOLO ARTÍCULO ---
+  ' EL NOMBRE DEL CANÓNICO LLEVA EL PREFIJO: jats/c-a-01-tal.xml (DECISIÓN DE
+  ' ALBERTO, 07/11: ASÍ vigencia_canonico ENCUENTRA SU .md)
+  If sNombreUnico <> "" Then
+    If iResultado = m_Lanzadora.SALIDA_FALLO Then
+      m_Sonido.sonar("Error")
+      Message.Error("El canónico de «" & sNombreUnico & "» no se generó." & gb.NewLine & gb.NewLine &
+        "El motivo está en la terminal. Si había un canónico anterior," & gb.NewLine &
+        "se borró: ya no correspondía al .md.")
+    Else
+      m_Lanzadora.InformarResultado(iResultado, "El canónico de «" & sNombreUnico & "»",
+        sCarpeta &/ "c-" & sNombreUnico & ".xml")
+    Endif
+    Return
+  Endif
+
+  ' --- 3. LOTE DE TODOS ---
+  Select Case iResultado
+
+    Case m_Lanzadora.SALIDA_OK
+      m_Sonido.sonar("Info")
+      Message.Info("Se generaron los canónicos de todos los artículos." & gb.NewLine & gb.NewLine &
+        "Carpeta:" & gb.NewLine & sCarpeta)
+
+    Case m_Lanzadora.SALIDA_AVISOS
+      ' LOS AVISOS PUEDEN SER DE UN ARTÍCULO O DEL NÚMERO (.md SIN METADATOS,
+      ' ARTÍCULOS SIN .md): EL RESUMEN DE LA TERMINAL SEPARA LOS DOS
+      m_Sonido.sonar("Warning")
+      Message.Warning("Se generaron los canónicos de todos los artículos," & gb.NewLine &
+        "pero con avisos." & gb.NewLine & gb.NewLine &
+        "Revisá la terminal: al final están los artículos con avisos" & gb.NewLine &
+        "y los del número, y cada aviso está marcado con ⚠.")
+
+    Case m_Lanzadora.SALIDA_FALLO
+      ' NO SE AFIRMA QUE EL LOTE HAYA CORRIDO: EL CÓDIGO 1 TAMBIÉN LO DA UN
+      ' FALLO DEL ENTORNO, ANTES DEL PRIMER ARTÍCULO
+      m_Sonido.sonar("Error")
+      Message.Error("No se generaron todos los canónicos." & gb.NewLine & gb.NewLine &
+        "El detalle está en la terminal. Si el lote llegó a correr," & gb.NewLine &
+        "al final está la lista de los artículos que fallaron; sus" & gb.NewLine &
+        "canónicos anteriores se borraron.")
+
+    Case Else
+      ' EN CURSO, NO LANZADO, ABANDONADO, ILEGIBLE U OTRO CÓDIGO
+      m_Lanzadora.InformarResultado(iResultado, "El lote de canónicos", sCarpeta)
+
+  End Select
+
+End

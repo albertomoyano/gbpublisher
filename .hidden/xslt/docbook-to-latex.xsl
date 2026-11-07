@@ -773,6 +773,19 @@
     <xsl:value-of select="f:cifra-latex(., string(@remap), $notasTitulo = 'sumario')"/>
   </xsl:template>
 
+  <!-- UNA DIRECCIÓN COMO TEXTO VA CON \url: SOLO ASÍ LaTeX LA CORTA CON  -->
+  <!-- \UrlBreaks DEL PREÁMBULO. CON \href{…}{…} EL TEXTO ES TEXTO      -->
+  <!-- COMÚN: NO SE CORTA, DESBORDA EL MARGEN Y HASTA SE SILABEA (MEDIDO, -->
+  <!-- 7/11/2026). ES role="uri" LO QUE ESCRIBE url.lua Y LO QUE PANDOC   -->
+  <!-- ARMA CON <…>; TAMBIÉN [url](url), DONDE EL TEXTO ES LA DIRECCIÓN.  -->
+  <!-- [texto](url) SIGUE CON \href                                       -->
+  <xsl:template match="link[@xlink:href][@role = 'uri' or normalize-space(.) = normalize-space(@xlink:href)]"
+                priority="2">
+    <xsl:text>\url{</xsl:text>
+    <xsl:value-of select="f:latex-url(@xlink:href)"/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
   <xsl:template match="link[@xlink:href]">
     <xsl:text>\href{</xsl:text>
     <xsl:value-of select="f:latex-url(@xlink:href)"/>

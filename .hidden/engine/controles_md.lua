@@ -80,6 +80,14 @@ local CONTROLES = {
   -- «siglo¬ XX»): EL ESPACIO DURO QUEDA AL LADO DE UNO COMÚN Y LA LÍNEA SE
   -- PUEDE PARTIR IGUAL. ¬ VA ENTRE DOS PALABRAS, SIN ESPACIOS (SC-68)
   espacio_fijo_suelto = "aviso",
+  -- UNA DIRECCIÓN SUELTA (https://…): url.lua LA CONVIERTE IGUAL Y LA
+  -- SALIDA SALE BIEN, PERO EL .md LA ESCRIBE \url{…}, COMO EN LaTeX
+  -- (DECISIÓN DE ALBERTO, 7/11). AVISO: INFORMA Y LA SALIDA SE GENERA
+  url_suelta = "aviso",
+  -- UN \url{…} QUE EL LECTOR DE PANDOC NO PUDO LEER: UN % SIN LA BARRA ES
+  -- PARA TeX UN COMENTARIO, Y SE TRAGA EL TEXTO QUE SIGUE (MEDIDO CON
+  -- pandoc 3.1.3). SE PIERDE TEXTO: FRENA. url.lua FRENA TAMBIÉN
+  url_rota = "error",
 }
 
 -- LARGO MÁXIMO DEL CONTEXTO QUE ACOMPAÑA A UN HALLAZGO, EN CARACTERES
@@ -95,6 +103,8 @@ local PATRON_LLAMADA = "%[%^[^%]%s]+%]"
 --   \index[…]{…}                   indice.lua (SC-77). TAMBIÉN SIN EL
 --                                  NOMBRE DEL ÍNDICE: indice.lua FRENA Y
 --                                  DICE CÓMO SE ESCRIBE
+--   \url{…}                        url.lua (7/11/2026). LA FORMA ENTERA LA
+--                                  CONTROLA revisar_crudo_inlines (url_rota)
 local PATRONES_LATEX = {
   "^\\sptext{.*}$",
   "^\\num{.*}$",
@@ -102,7 +112,16 @@ local PATRONES_LATEX = {
   "^\\SIrange{.*}$",
   "^\\index%[.*}$",
   "^\\index{.*}$",
+  "^\\url{.*}$",
 }
+
+-- \url{…} BIEN LEÍDO: LAS LLAVES BALANCEADAS Y NADA DESPUÉS. LO MISMO QUE
+-- PATRON_ORDEN DE url.lua: SI CAMBIA ALLÁ, CAMBIA ACÁ
+local PATRON_URL = "^\\url%b{}$"
+
+-- EL COMIENZO DE UNA DIRECCIÓN SUELTA. LO MISMO QUE PATRON_SUELTA DE
+-- url.lua: SI CAMBIA ALLÁ, CAMBIA ACÁ
+local PATRON_SUELTA = "https?://"
 
 -- UNA CIFRA CON SEPARADOR DE MILES: DÍGITO, PUNTO O COMA, TRES DÍGITOS
 local PATRON_MILES = "%d[.,]%d%d%d"
@@ -349,10 +368,17 @@ local function revisar_crudo_inlines(aInlines, bloque)
     if el.t == "RawInline" then
       -- --- 1. LaTeX: SOLO LAS ADMITIDAS, QUE TRADUCEN volada.lua Y cifras.lua ---
       if el.format == "tex" or el.format == "latex" then
-        if not latex_admitido(el.text) then
+        -- \url{…} ROTO POR UN %: EL TEXTO QUE LO SEGUÍA YA ESTÁ ADENTRO DE
+        -- LA ORDEN. SE MUESTRA HASTA LA PRIMERA LLAVE QUE CIERRA
+        if el.text:sub(1, 5) == "\\url{" and not el.text:match(PATRON_URL) then
+          registrar("url_rota",
+            "la dirección «" .. (el.text:match("^\\url%b{}") or contexto(el.text)) ..
+            "» no se pudo leer y se pierde el texto que la sigue: un % de la dirección va \\% " ..
+            "(como en LaTeX dentro de una nota): «" .. contexto_crudo(bloque) .. "»")
+        elseif not latex_admitido(el.text) then
           registrar("latex_en_linea",
             "la orden de LaTeX «" .. contexto(el.text) .. "» se pierde en las tres salidas " ..
-            "(las admitidas en el texto son \\sptext, \\num, \\SI, \\SIrange y \\index): «" ..
+            "(las admitidas en el texto son \\sptext, \\num, \\SI, \\SIrange, \\index y \\url): «" ..
             contexto_crudo(bloque) .. "»")
         end
       -- --- 2. HTML: TODO, MENOS LOS COMENTARIOS ---
@@ -478,7 +504,10 @@ local function revisar_cifras_inlines(aInlines, bloque)
   local el, sig, sig2
   for i = 1, #aInlines do
     el = aInlines[i]
-    if el.t == "Str" then
+    if el.t == "Str" and el.text:find(PATRON_SUELTA) then
+      -- UNA DIRECCIÓN SUELTA NO ES TEXTO CON CIFRAS (%20, AÑOS EN LA RUTA):
+      -- LA INFORMA revisar_urls
+    elseif el.t == "Str" then
       -- --- 1. PORCENTAJE PEGADO, O CON ESPACIO DURO O FINO ---
       for _, sPatron in ipairs(PATRONES_PORCENTAJE) do
         if el.text:find(sPatron) then
@@ -676,6 +705,49 @@ local function listar_cuadros(doc)
 end
 
 -- ============================================================================
+-- Función   : revisar_urls_inlines
+-- Propósito : Busca direcciones sueltas en una lista de inlines. Baja a los
+--             contenedores pero no a una nota (sus párrafos los visita el
+--             walk), ni a un enlace ([texto](url) o <url>: ya es enlace), ni
+--             a una cita
+-- Parámetros: aInlines — lista de inlines; bloque — el bloque que los
+--             contiene, para el contexto del mensaje
+-- ============================================================================
+local function revisar_urls_inlines(aInlines, bloque)
+  for _, el in ipairs(aInlines) do
+    if el.t == "Str" then
+      if el.text:find(PATRON_SUELTA) then
+        registrar("url_suelta",
+          "la dirección «" .. contexto(el) .. "» está suelta: sale bien, pero se escribe \\url{…}: «" ..
+          contexto_crudo(bloque) .. "»")
+      end
+    elseif el.t == "Note" or el.t == "Link" or el.t == "Cite" then
+      -- LA NOTA LA VISITA EL WALK; EL ENLACE YA LO ES; LA CITA NO ES TEXTO
+    elseif el.t == "Image" then
+      revisar_urls_inlines(el.caption, bloque)
+    elseif el.content then
+      revisar_urls_inlines(el.content, bloque)
+    end
+  end
+end
+
+-- ============================================================================
+-- Función   : revisar_urls
+-- Propósito : Direcciones sueltas en todo bloque con texto (url_suelta)
+-- Parámetros: doc — el documento
+-- ============================================================================
+local function revisar_urls(doc)
+  doc:walk({
+    Para = function(b) revisar_urls_inlines(b.content, b) end,
+    Plain = function(b) revisar_urls_inlines(b.content, b) end,
+    Header = function(b) revisar_urls_inlines(b.content, b) end,
+    LineBlock = function(b)
+      for _, aLinea in ipairs(b.content) do revisar_urls_inlines(aLinea, b) end
+    end,
+  })
+end
+
+-- ============================================================================
 -- Función   : Pandoc
 -- Propósito : Corre los controles y escribe el informe y la lista de
 --             cuadros. El documento no se toca.
@@ -703,6 +775,7 @@ function Pandoc(doc)
   revisar_cortes(doc)
   revisar_cifras(doc)
   revisar_espacio_fijo(doc)
+  revisar_urls(doc)
 
   -- --- EL INFORME: SIEMPRE SE ESCRIBE, VACÍO SI NO HUBO HALLAZGOS ---
   local h = io.open(sRuta, "w")

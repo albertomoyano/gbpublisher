@@ -1,5 +1,5 @@
 #!/bin/bash
-# Validador de los canónicos DocBook del libro — gbpublisher
+# Validador de los canónicos: DocBook del libro y JATS de los artículos — gbpublisher
 # ============================================================================
 # Vive en /usr/share/gbpublisher/engine/ y viaja en el .deb. Es
 # infraestructura: no se personaliza y no se copia a ~/.gbpublisher (SC-11).
@@ -17,10 +17,11 @@
 #                   (jats/c-a-01-CAP01.xml). «-» es todos los jats/c-*.xml.
 #
 # LO LLAMAN el botón «Validar» del visor XML y la apertura del proyecto (por
-# m_GenerarSalidasLibro.EjecutarScriptSalida, SC-53), y anidados
-# generar_canonicos_capitulos.sh y ensamblar_libro.sh, que ya no validan por
-# su cuenta. Un lote es UNA llamada: jing y el Schematron corren una vez para
-# todos los archivos (GV-XML-03).
+# m_Lanzadora.EjecutarScript, SC-53), y anidados
+# generar_canonicos_capitulos.sh, ensamblar_libro.sh y
+# generar_canonicos_articulos.sh, que no validan por su cuenta. Un lote es
+# UNA llamada: jing y cada Schematron corren una vez para todos los archivos
+# (GV-XML-03).
 # ============================================================================
 # LAS CAPAS
 #
@@ -39,6 +40,14 @@
 #                 misma hoja que las de DocBook y corren en la misma pasada;
 #                 se distinguen por el prefijo gbp- de su @id, y cada una
 #                 declara su nivel en @role: aviso o tenue
+#   jats          SOLO ARTÍCULOS. La DTD de JATS 1.4 Archiving, con xmllint
+#                 y sin red, y las reglas de JATS4R (schemas/jats4r/, las
+#                 compila generar-schematron-jats4r.sh). Las dos corren
+#                 sobre una copia sin DOCTYPE (tmp/validar-jats/): con el
+#                 DOCTYPE, xmllint avisa que no puede cargar la DTD remota y
+#                 Saxon sale a buscarla a la red en cada archivo (GV-25). Un
+#                 error de la DTD es aviso. De JATS4R, la severidad la da
+#                 @role (GV-27): error es aviso; warning e info, tenue
 #   recursos      cada imagedata/@fileref tiene que ser media/{nombre} —con
 #                 o sin ../ adelante— y existir. Las hojas de salida toman el
 #                 nombre y lo buscan en media/: HTML y EPUB se quedan con el
@@ -48,19 +57,23 @@
 #                 PDF y no en las salidas digitales: es aviso.
 #                 Y tiene que ser png o jpg, lo único que sale en las tres:
 #                 LuaLaTeX no admite svg, gif ni webp (luatex.def, medido), y
-#                 el EPUB y el HTML no muestran un pdf. Otro formato es aviso
+#                 el EPUB y el HTML no muestran un pdf. Otro formato es aviso.
+#                 En un artículo, lo mismo con graphic e inline-graphic
+#                 (@xlink:href), que es lo que escribe cite-to-xref.lua
 #
 #   El modo vigencia corre solo las dos primeras.
 #
 # EL ALCANCE lo da la raíz de cada archivo: book es libro; las raíces que
-# escribe ensamblar-capitulo-canonico.xsl son pieza; article (JATS) y
-# cualquier otra son fallo.
+# escribe ensamblar-capitulo-canonico.xsl son pieza; article sin espacio de
+# nombres (JATS) es articulo; cualquier otra es fallo. Las capas docbook y
+# jats corren solo si el lote tiene archivos de su alcance: lo que falta del
+# entorno para una (jing, por ejemplo) no se avisa en un lote que no la usa.
 #
 # LOS RECURSOS DEL SISTEMA
-#   El RNG y el Schematron compilado salen de la carpeta de recursos de ESTE
-#   script ($DIR_ENGINE/..): .hidden/ desde el IDE, /usr/share/gbpublisher/
-#   instalado. No de ~/.gbpublisher: un informe que dice «válido» solo se
-#   sostiene con el esquema del paquete (SC-11, SC-75).
+#   El RNG, la DTD de JATS y los Schematron compilados salen de la carpeta de
+#   recursos de ESTE script ($DIR_ENGINE/..): .hidden/ desde el IDE,
+#   /usr/share/gbpublisher/ instalado. No de ~/.gbpublisher: un informe que
+#   dice «válido» solo se sostiene con el esquema del paquete (SC-11, SC-75).
 #
 # EL INFORME
 #   tmp/validacion.tsv, reescrito en cada corrida, también vacío. Una línea
@@ -103,6 +116,12 @@ SCH="$DIR_RECURSOS/schemas/schematron-canonico.xsl"
 
 NS_DOCBOOK="http://docbook.org/ns/docbook"
 
+# JATS: LA DTD DE ARCHIVING 1.4, LA MISMA QUE DECLARA EL DOCTYPE QUE ESCRIBE
+# ensamblar-articulo-canonico.xsl, Y LAS REGLAS DE JATS4R CON SUS
+# VOCABULARIOS AL LADO (generar-schematron-jats4r.sh)
+DTD_JATS="$DIR_RECURSOS/dtd/JATS-archivearticle1-4.dtd"
+J4R="$DIR_RECURSOS/schemas/jats4r/jats4r.xsl"
+
 # LAS RAÍCES DE PIEZA: LAS QUE ESCRIBE ensamblar-capitulo-canonico.xsl SEGÚN
 # tipo_capitulo. SI ESA HOJA SUMA UNA, SE SUMA ACÁ
 RAICES_PIEZA=" chapter preface dedication acknowledgements appendix glossary bibliography colophon toc index "
@@ -118,6 +137,9 @@ ARCHIVOS=()
 # LAS IMÁGENES QUE SALEN EN LAS TRES SALIDAS (VER LA CABECERA, «recursos»)
 FORMATOS_COMUNES=" png jpg jpeg "
 PARA_DOCBOOK=()
+# LOS QUE ESTÁN BIEN FORMADOS Y SON ARTÍCULOS JATS: LOS QUE VAN A LA DTD Y A
+# JATS4R
+PARA_JATS=()
 
 # ============================================================================
 # Función   : limpiar
@@ -211,7 +233,8 @@ capa_vigencia() {
 
 # ============================================================================
 # Función   : capa_recursos
-# Propósito : Cada imagedata/@fileref del canónico, contra media/.
+# Propósito : Cada imagen del canónico, contra media/: imagedata/@fileref en
+#             DocBook; graphic e inline-graphic/@xlink:href en un artículo.
 # Parámetros: $1 ruta relativa  $2 ruta absoluta
 # ============================================================================
 capa_recursos() {
@@ -220,9 +243,15 @@ capa_recursos() {
     local total=0 problemas=0
 
     # grep -oP SOBRE LA SERIALIZACIÓN DE xmllint: UN SOLO PROCESO POR ARCHIVO,
-    # NO UNO POR IMAGEN. EL CONJUNTO VACÍO NO ES UN ERROR
-    refs="$(xmllint --xpath '//*[local-name()="imagedata"]/@fileref' "$abs" 2>/dev/null |
-            grep -oP 'fileref="\K[^"]*')"
+    # NO UNO POR IMAGEN. EL CONJUNTO VACÍO NO ES UN ERROR. xmllint ESCRIBE EL
+    # ATRIBUTO CON SU PREFIJO (xlink:href="…"): \K TOMA SOLO EL VALOR
+    if [[ "${ALCANCE[$rel]:-}" == "articulo" ]]; then
+        refs="$(xmllint --xpath '//*[local-name()="graphic" or local-name()="inline-graphic"]/@*[local-name()="href"]' "$abs" 2>/dev/null |
+                grep -oP 'href="\K[^"]*')"
+    else
+        refs="$(xmllint --xpath '//*[local-name()="imagedata"]/@fileref' "$abs" 2>/dev/null |
+                grep -oP 'fileref="\K[^"]*')"
+    fi
 
     while IFS= read -r ref; do
         [[ -z "$ref" ]] && continue
@@ -284,13 +313,18 @@ capa_recursos() {
 #             lugares es una línea con su cantidad.
 # Parámetros: $1 ruta del informe  $2 predicado XPath sobre failed-assert y
 #             successful-report ([starts-with(@id, 'gbp-')], por ejemplo)
+#             $3 la carpeta de los informes, para el mensaje de «hay más»
+#             (tmp/validar-svrl/ si se omite)
 # Retorna   : imprime las líneas; nada si no hay incumplimientos
 # ============================================================================
 listar_svrl() {
-    local svrl="$1" filtro="$2" textos linea cantidad
+    local svrl="$1" filtro="$2" carpeta="${3:-tmp/validar-svrl/}" textos linea cantidad
 
+    # tr ANTES DE grep: UN TEXTO PUEDE OCUPAR VARIAS LÍNEAS (LOS DE JATS4R
+    # VIENEN SANGRADOS EN EL .sch), Y grep MIRA LÍNEA POR LÍNEA. CADA TEXTO
+    # QUEDA EN SU LÍNEA CON EL SEPARADOR DEL FINAL DE LA EXPRESIÓN
     textos="$(xmllint --xpath "//*[local-name()='failed-assert' or local-name()='successful-report']$filtro/*[local-name()='text']" "$svrl" 2>/dev/null |
-              grep -oP '<svrl:text>\K.*?(?=</svrl:text>)')"
+              tr '\n' ' ' | grep -oP '<svrl:text>\K.*?(?=</svrl:text>)' | tr -s ' ')"
     [[ -n "$textos" ]] || return 0
 
     cantidad=$(printf '%s\n' "$textos" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u | grep -c .)
@@ -300,7 +334,7 @@ listar_svrl() {
              sort | uniq -c | sort -rn | head -"$LINEAS_POR_ARCHIVO" |
              sed -E 's/^ *([0-9]+) (.*)$/\1 × \2/')
     if (( cantidad > LINEAS_POR_ARCHIVO )); then
-        tenue "(+$(( cantidad - LINEAS_POR_ARCHIVO )) mensaje(s) más: el informe SVRL completo está en tmp/validar-svrl/)"
+        tenue "(+$(( cantidad - LINEAS_POR_ARCHIVO )) mensaje(s) más: el informe SVRL completo está en $carpeta)"
     fi
 }
 
@@ -339,6 +373,24 @@ capa_docbook() {
     (( n > 0 )) || return 0
 
     paso "esquema DocBook 5.2 y reglas de gbpublisher ($n archivo(s))"
+
+    # LA FALTA DE UN VALIDADOR SE AVISA UNA VEZ, NO UNA POR ARCHIVO, Y SOLO SI
+    # EL LOTE TIENE ARCHIVOS DocBook. ES AVISO Y NO FALLO: LAS OTRAS CAPAS
+    # CORREN IGUAL, Y EL INFORME NO DA POR VÁLIDO LO QUE NO VALIDÓ
+    if ! command -v jing >/dev/null 2>&1; then
+        anotar - entorno aviso "jing no está instalado: el RNG de DocBook no se comprueba"
+    elif [[ ! -f "$RNG" ]]; then
+        anotar - entorno aviso "no se encontró el RNG del sistema: $RNG"
+    else
+        HAY_JING="si"
+    fi
+    if [[ "$HAY_JAVA" != "si" ]]; then
+        anotar - entorno aviso "$MOTIVO_JAVA: el Schematron (DocBook y reglas de gbpublisher) no se comprueba"
+    elif [[ ! -f "$SCH" ]]; then
+        anotar - entorno aviso "no se encontró el Schematron compilado del sistema: $SCH"
+    else
+        HAY_SCH="si"
+    fi
 
     for rel in "${PARA_DOCBOOK[@]}"; do
         abs_lista+=("$DIR_PROYECTO/$rel")
@@ -472,6 +524,139 @@ capa_docbook() {
 }
 
 # ============================================================================
+# Función   : capa_jats
+# Propósito : La DTD de JATS 1.4 y las reglas de JATS4R para los artículos de
+#             PARA_JATS: la DTD archivo por archivo (xmllint es un proceso
+#             corto), JATS4R UNA vez para todos (una JVM por lote).
+# Nota      : LAS DOS SOBRE UNA COPIA SIN DOCTYPE, HECHA CON xmllint
+#             --dropdtd: ES EL PARSER EL QUE LO QUITA, NO UN sed, Y NO HAY
+#             CORCHETES QUE CONTAR (GV-25). CON --dtdvalid LA DTD ES LA DEL
+#             SISTEMA, Y NO LA QUE DECLARA EL ARCHIVO. LAS COPIAS LLEVAN UN
+#             NÚMERO ADELANTE, COMO LOS ENLACES DE capa_docbook. EL INFORME
+#             SVRL QUEDA EN tmp/validar-jats-svrl/ PARA LEERLO ENTERO
+# ============================================================================
+capa_jats() {
+    local rel abs i n copia svrl errores cantidad
+    local hay_dtd="no" hay_j4r="no" j4r_corrio="no"
+    local salida_saxon codigo_saxon fallidas tenues
+    local dir_copias="$DIR_PROYECTO/tmp/validar-jats"
+    local dir_svrl="$DIR_PROYECTO/tmp/validar-jats-svrl"
+    declare -A COPIA=()
+
+    n=${#PARA_JATS[@]}
+    (( n > 0 )) || return 0
+
+    paso "DTD de JATS 1.4 y reglas de JATS4R ($n artículo(s))"
+
+    # --- A. ENTORNO: SE AVISA UNA VEZ, COMO EN capa_docbook ---
+    if [[ ! -f "$DTD_JATS" ]]; then
+        anotar - entorno aviso "no se encontró la DTD de JATS del sistema: $DTD_JATS"
+    else
+        hay_dtd="si"
+    fi
+    if [[ "$HAY_JAVA" != "si" ]]; then
+        anotar - entorno aviso "$MOTIVO_JAVA: las reglas de JATS4R no se comprueban"
+    elif [[ ! -f "$J4R" ]]; then
+        anotar - entorno aviso "no se encontraron las reglas de JATS4R compiladas del sistema: $J4R"
+    else
+        hay_j4r="si"
+    fi
+
+    # --- B. LAS COPIAS SIN DOCTYPE ---
+    rm -rf "$dir_copias" "$dir_svrl"
+    if ! mkdir -p "$dir_copias" "$dir_svrl"; then
+        for rel in "${PARA_JATS[@]}"; do
+            anotar "$rel" jats no_ejecutado "no se pudo crear tmp/validar-jats/"
+        done
+        return 0
+    fi
+    i=0
+    for rel in "${PARA_JATS[@]}"; do
+        i=$((i + 1))
+        copia="$(printf '%03d' "$i")-$(basename "$rel")"
+        if xmllint --nonet --dropdtd "$DIR_PROYECTO/$rel" > "$dir_copias/$copia" 2>/dev/null; then
+            COPIA[$rel]="$copia"
+        else
+            rm -f "$dir_copias/$copia"
+        fi
+    done
+
+    # --- C. JATS4R, UNA VEZ PARA TODOS ---
+    # LA SALIDA DE Saxon SOLO SE MUESTRA SI FALLA: LA HOJA COMPILADA TRAE
+    # ADVERTENCIAS DE COMPILACIÓN (SXWN9032) QUE NO SON DEL ARCHIVO
+    if [[ "$hay_j4r" == "si" ]]; then
+        salida_saxon=$(timeout "$TIEMPO_SAXON" java -jar "$RUTA_SAXON" \
+            -s:"$dir_copias" -xsl:"$J4R" -o:"$dir_svrl/" 2>&1)
+        codigo_saxon=$?
+        j4r_corrio="si"
+        if (( codigo_saxon != 0 )); then
+            mostrar_cola "$salida_saxon" 10
+            tenue "las reglas de JATS4R terminaron con código $codigo_saxon: lo que no dejó informe no se comprobó"
+        fi
+    fi
+
+    # --- D. EL RESULTADO DE CADA ARTÍCULO ---
+    for rel in "${PARA_JATS[@]}"; do
+        tenue "$rel"
+        copia="${COPIA[$rel]:-}"
+        if [[ -z "$copia" ]]; then
+            anotar "$rel" jats aviso "no se pudo hacer la copia sin DOCTYPE: la DTD y JATS4R no se comprobaron"
+            continue
+        fi
+
+        # LA DTD. LAS LÍNEAS SIN LA RUTA NI EL NÚMERO DE LÍNEA, QUE SON DE LA
+        # COPIA: QUEDA EL ELEMENTO Y EL MOTIVO. SIN EL RESUMEN FINAL DE
+        # xmllint, QUE NO DICE NADA QUE NO DIGA EL CÓDIGO
+        if [[ "$hay_dtd" != "si" ]]; then
+            anotar "$rel" jats no_ejecutado "la DTD de JATS no se comprobó"
+        else
+            errores="$(xmllint --noout --nonet --dtdvalid "$DTD_JATS" "$dir_copias/$copia" 2>&1 |
+                       grep -v '^Document .* does not validate against ' |
+                       sed -E "s|^$dir_copias/$copia:[0-9]+: ||" | grep .)"
+            if [[ -z "$errores" ]]; then
+                anotar "$rel" jats ok "válido contra la DTD de JATS 1.4 (Archiving)"
+            else
+                cantidad=$(printf '%s\n' "$errores" | grep -c 'validity error')
+                (( cantidad > 0 )) || cantidad=$(printf '%s\n' "$errores" | grep -c .)
+                anotar "$rel" jats aviso "$cantidad error(es) contra la DTD de JATS 1.4:"
+                printf '%s\n' "$errores" | grep 'error' | head -"$LINEAS_POR_ARCHIVO" |
+                    cut -c1-"$ANCHO_LINEA" | sed 's/^/     /'
+                (( cantidad > LINEAS_POR_ARCHIVO )) &&
+                    tenue "(+$(( cantidad - LINEAS_POR_ARCHIVO )) más)"
+            fi
+        fi
+
+        # JATS4R. LA SEVERIDAD, DE @role (GV-27): error ES aviso; warning E
+        # info, tenue. UN role QUE NO ES NINGUNO DE LOS DOS SEGUNDOS CUENTA
+        # COMO error: UN HALLAZGO NO PUEDE QUEDAR SIN CONTAR
+        if [[ "$j4r_corrio" != "si" ]]; then
+            anotar "$rel" jats no_ejecutado "las reglas de JATS4R no corrieron"
+            continue
+        fi
+        svrl="$dir_svrl/$copia"
+        # GV-28: QUE SEA EL INFORME Y NO OTRA COSA ANTES DE CONTAR
+        if [[ ! -f "$svrl" || "$(xmllint --xpath 'local-name(/*)' "$svrl" 2>/dev/null)" != "schematron-output" ]]; then
+            anotar "$rel" jats aviso "JATS4R no dejó un informe SVRL: sus reglas no se comprobaron"
+            continue
+        fi
+        fallidas=$(contar_svrl "$svrl" "[not(@role = 'warning' or @role = 'info')]")
+        tenues=$(contar_svrl "$svrl" "[@role = 'warning' or @role = 'info']")
+        if [[ "${fallidas:-0}" == "0" ]]; then
+            anotar "$rel" jats ok "cumple las reglas de JATS4R"
+        else
+            anotar "$rel" jats aviso "$fallidas incumplimiento(s) de las reglas de JATS4R:"
+            listar_svrl "$svrl" "[not(@role = 'warning' or @role = 'info')]" "tmp/validar-jats-svrl/"
+        fi
+        if [[ "${tenues:-0}" != "0" ]]; then
+            anotar "$rel" jats tenue "$tenues recomendación(es) de JATS4R:"
+            listar_svrl "$svrl" "[@role = 'warning' or @role = 'info']" "tmp/validar-jats-svrl/"
+        fi
+    done
+
+    rm -rf "$dir_copias"
+}
+
+# ============================================================================
 # ORQUESTACIÓN
 # ============================================================================
 
@@ -505,27 +690,20 @@ requerir_comandos xmllint sha256sum grep sed timeout
 # PASAR POR ESTE
 : > "$INFORME" || morir "No se pudo escribir el informe: $INFORME"
 
+# LAS HERRAMIENTAS DE CADA CAPA DE ESQUEMA SE COMPRUEBAN EN LA CAPA
+# (capa_docbook, capa_jats), Y SOLO SI EL LOTE TIENE ARCHIVOS DE SU ALCANCE.
+# ACÁ, LO QUE LAS DOS COMPARTEN: java Y Saxon
 HAY_JING="no"
 HAY_SCH="no"
+HAY_JAVA="no"
+MOTIVO_JAVA=""
 if [[ "$MODO" == "completo" ]]; then
-    # LA FALTA DE UN VALIDADOR SE AVISA UNA VEZ, NO UNA POR ARCHIVO. ES AVISO
-    # Y NO FALLO: LAS OTRAS CAPAS CORREN IGUAL, Y EL INFORME NO DA POR VÁLIDO
-    # LO QUE NO VALIDÓ
-    if ! command -v jing >/dev/null 2>&1; then
-        anotar - entorno aviso "jing no está instalado: el RNG de DocBook no se comprueba"
-    elif [[ ! -f "$RNG" ]]; then
-        anotar - entorno aviso "no se encontró el RNG del sistema: $RNG"
-    else
-        HAY_JING="si"
-    fi
     if ! command -v java >/dev/null 2>&1; then
-        anotar - entorno aviso "java no está instalado: el Schematron (DocBook y reglas de gbpublisher) no se comprueba"
+        MOTIVO_JAVA="java no está instalado"
     elif [[ ! -f "$RUTA_SAXON" ]]; then
-        anotar - entorno aviso "Saxon-HE no está en $RUTA_SAXON: el Schematron (DocBook y reglas de gbpublisher) no se comprueba"
-    elif [[ ! -f "$SCH" ]]; then
-        anotar - entorno aviso "no se encontró el Schematron compilado del sistema: $SCH"
+        MOTIVO_JAVA="Saxon-HE no está en $RUTA_SAXON"
     else
-        HAY_SCH="si"
+        HAY_JAVA="si"
     fi
 fi
 ok "herramientas ($MODO)"
@@ -579,6 +757,8 @@ for rel in "${ARCHIVOS[@]}"; do
         mostrar_cola "$(xmllint --noout "$abs" 2>&1 | sed "s|^$abs:|línea |")" 5
         anotar "$rel" vigencia no_ejecutado "el archivo está mal formado"
         if [[ "$MODO" == "completo" ]]; then
+            # SIN RAÍZ LEGIBLE NO SE SABE SI ES DocBook O JATS: SE ANOTA EN
+            # docbook, COMO ANTES DE LOS ARTÍCULOS
             anotar "$rel" docbook no_ejecutado "el archivo está mal formado"
             anotar "$rel" recursos no_ejecutado "el archivo está mal formado"
         fi
@@ -590,15 +770,13 @@ for rel in "${ARCHIVOS[@]}"; do
     if [[ "$MODO" == "completo" ]]; then
         raiz="$(xmllint --xpath 'local-name(/*)' "$abs" 2>/dev/null)"
         ns="$(xmllint --xpath 'namespace-uri(/*)' "$abs" 2>/dev/null)"
-        if [[ "$raiz" == "article" ]]; then
-            anotar "$rel" docbook fallo "es un artículo JATS: la validación de revistas todavía no está en engine/"
+        # UN ARTÍCULO JATS NO TIENE ESPACIO DE NOMBRES
+        if [[ "$raiz" == "article" && -z "$ns" ]]; then
+            ALCANCE[$rel]="articulo"
+        elif [[ "$ns" != "$NS_DOCBOOK" ]]; then
+            anotar "$rel" docbook fallo "la raíz <$raiz> no es DocBook ni un artículo JATS"
             continue
-        fi
-        if [[ "$ns" != "$NS_DOCBOOK" ]]; then
-            anotar "$rel" docbook fallo "la raíz <$raiz> no es DocBook"
-            continue
-        fi
-        if [[ "$raiz" == "book" ]]; then
+        elif [[ "$raiz" == "book" ]]; then
             ALCANCE[$rel]="libro"
         elif [[ "$RAICES_PIEZA" == *" $raiz "* ]]; then
             ALCANCE[$rel]="pieza"
@@ -612,16 +790,21 @@ for rel in "${ARCHIVOS[@]}"; do
     # --- C. VIGENCIA ---
     capa_vigencia "$rel" "$abs"
 
-    # --- D. RECURSOS; LA CAPA docbook VA DESPUÉS, PARA TODOS JUNTOS ---
+    # --- D. RECURSOS; LAS CAPAS docbook Y jats VAN DESPUÉS, PARA TODOS JUNTOS ---
     if [[ "$MODO" == "completo" ]]; then
         capa_recursos "$rel" "$abs"
-        PARA_DOCBOOK+=("$rel")
+        if [[ "${ALCANCE[$rel]}" == "articulo" ]]; then
+            PARA_JATS+=("$rel")
+        else
+            PARA_DOCBOOK+=("$rel")
+        fi
     fi
 done
 
-# --- 6. DocBook, EN UN SOLO LOTE ---
+# --- 6. DocBook Y JATS, CADA UNO EN UN SOLO LOTE ---
 if [[ "$MODO" == "completo" ]]; then
     capa_docbook
+    capa_jats
 fi
 
 # --- 7. RESUMEN ---

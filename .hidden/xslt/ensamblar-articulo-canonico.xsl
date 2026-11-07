@@ -10,6 +10,8 @@
                            datos-a-front-jats.xsl
                   body   ← EL FRAGMENTO DE PANDOC (tmp/body-{base}.xml)
                   back   ← EL reflist (tmp/reflist-{base}.xml), SI TIENE <ref>
+                  prólogo← LAS HUELLAS DE LAS FUENTES (tmp/huellas-{base}.xml),
+                           UNA <?gb-fuente?> POR ARCHIVO (SC-75)
   REEMPLAZA   : A ensamblar-canonico.xsl PARA LOS NÚMEROS NUEVOS. AQUELLA
                 QUEDA PARA EL CAMINO VIEJO HASTA EL 2.0.0, Y ESTA LA IMPORTA:
                 EL TRATAMIENTO DEL body (sec-type, ids de sección, tablas de
@@ -18,6 +20,8 @@
                   -xsl:ensamblar-articulo-canonico.xsl -o:jats/c-{base}.xml
                   archivo=a-01-tal body=tmp/body-{base}.xml
                   reflist=tmp/reflist-{base}.xml
+                  huellas=tmp/huellas-{base}.xml
+                LO LANZA engine/generar_canonicos_articulos.sh
   ENTRADA     : numero-datos versión 1 (m_CanonicoRevista.VERSION_DATOS)
   =====================================================
 -->
@@ -36,13 +40,32 @@
   <!-- EL ARTÍCULO DEL VOLCADO: SU ARCHIVO SIN .md -->
   <xsl:param name="archivo" as="xs:string" select="''"/>
 
+  <!-- RUTA DEL XML DE HUELLAS QUE ESCRIBE generar_canonicos_articulos.sh
+       (SC-75): UNA <fuente archivo="…" sha256="…"/> POR CADA ARCHIVO QUE SE
+       COPIA DENTRO DEL CANÓNICO, EL .md Y SUS CUADROS. required, COMO EN
+       ensamblar-capitulo-canonico.xsl: UN CANÓNICO SIN SUS HUELLAS ES JUSTO
+       LO QUE ESA REGLA EVITA -->
+  <xsl:param name="huellas" as="xs:string" required="yes"/>
+
+  <!-- EL DOCTYPE: EL IDENTIFICADOR PÚBLICO QUE DECLARA LA DTD DE JATS 1.4
+       ARCHIVING (JATS-archivearticle1-4.dtd) Y SU CATÁLOGO OFICIAL. EL QUE
+       TRAE ensamblar-canonico.xsl («Article Archiving and Interchange DTD
+       v1.4») NO EXISTE: UN VALIDADOR QUE RESUELVE POR CATÁLOGO NO LO
+       ENCUENTRA. ESTA DECLARACIÓN TIENE MÁS PRECEDENCIA QUE LA IMPORTADA Y
+       REEMPLAZA SUS ATRIBUTOS; EL RESTO (indent="no", SC-30) SE HEREDA -->
+  <xsl:output
+    method="xml"
+    encoding="UTF-8"
+    doctype-public="-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD v1.4 20241031//EN"
+    doctype-system="https://jats.nlm.nih.gov/archiving/1.4/JATS-archivearticle1-4.dtd"/>
+
   <!-- LA VERSIÓN DEL VOLCADO QUE ESTA HOJA SABE LEER -->
   <xsl:variable name="version-datos" select="'1'"/>
 
   <xsl:template match="/">
     <xsl:variable name="art" select="/numero-datos/articulo[@archivo = $archivo]"/>
 
-    <!-- 1. CONTROLES: VOLCADO, VERSIÓN Y ARTÍCULO -->
+    <!-- 1. CONTROLES: VOLCADO, VERSIÓN, ARTÍCULO Y HUELLA DEL .md -->
     <xsl:if test="not(/numero-datos)">
       <xsl:message terminate="yes">ERROR: la entrada no es un volcado del número (numero-datos)</xsl:message>
     </xsl:if>
@@ -52,8 +75,20 @@
     <xsl:if test="count($art) ne 1">
       <xsl:message terminate="yes">ERROR: el volcado no tiene el artículo «<xsl:value-of select="$archivo"/>» (o lo tiene repetido)</xsl:message>
     </xsl:if>
+    <!-- UN ARTÍCULO SALE SIEMPRE DE SU .md: SIN SU HUELLA, EL CANÓNICO NO
+         PODRÍA DECIR DESPUÉS SI SIGUE CORRESPONDIENDO A ÉL -->
+    <xsl:if test="not(doc($huellas)/huellas/fuente[@archivo = concat('articulos/', $archivo, '.md')])">
+      <xsl:message terminate="yes">ERROR: las huellas no traen la de articulos/<xsl:value-of select="$archivo"/>.md</xsl:message>
+    </xsl:if>
 
-    <!-- 2. EL ARTÍCULO -->
+    <!-- 2. LAS HUELLAS, EN EL PRÓLOGO: LA FORMA QUE LEE vigencia_canonico
+         (comun.sh), archivo PRIMERO Y sha256 DESPUÉS -->
+    <xsl:for-each select="doc($huellas)/huellas/fuente">
+      <xsl:processing-instruction name="gb-fuente"
+        select="concat('archivo=&quot;', @archivo, '&quot; sha256=&quot;', @sha256, '&quot;')"/>
+    </xsl:for-each>
+
+    <!-- 3. EL ARTÍCULO -->
     <article dtd-version="1.4" article-type="{$art/@article-type}" xml:lang="{$art/@idioma}">
       <xsl:call-template name="front">
         <xsl:with-param name="art" select="$art"/>

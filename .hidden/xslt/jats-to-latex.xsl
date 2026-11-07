@@ -1203,6 +1203,17 @@
   <!-- PLANTILLAS: ENLACES EXTERNOS                                  -->
   <!-- ============================================================ -->
 
+  <!-- UNA DIRECCIÓN COMO TEXTO VA CON \url: SOLO ASÍ LaTeX LA CORTA CON  -->
+  <!-- \UrlBreaks DEL PREÁMBULO (MEDIDO, 7/11/2026). EN JATS, url.lua Y  -->
+  <!-- EL <…> DE PANDOC DAN UN ext-link CUYO TEXTO ES LA MISMA DIRECCIÓN: -->
+  <!-- NO HAY OTRA MARCA. [texto](url) SIGUE CON \href                    -->
+  <xsl:template match="ext-link[@xlink:href][normalize-space(.) = normalize-space(@xlink:href)]"
+                priority="2">
+    <xsl:text>\url{</xsl:text>
+    <xsl:value-of select="f:latex-url(@xlink:href)"/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
   <xsl:template match="ext-link[@xlink:href]">
     <xsl:text>\href{</xsl:text>
     <xsl:value-of select="f:latex-url(@xlink:href)"/>

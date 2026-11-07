@@ -83,6 +83,11 @@ RUTA_SIGLAS_PIEZAS="tmp/siglas-piezas.txt"
 #      FILTRO QUE SERIALIZA
 #   1° guillemets-to-quoted-db  « » A Quoted. ANTES QUE fenced-divs, QUE
 #      SERIALIZA LOS DIVS CON pandoc.write Y DESPUÉS NO QUEDAN Str QUE PROCESAR
+#  1b° url                      \url{…} Y LAS DIRECCIONES SUELTAS A <link
+#      role="uri"> (7/11/2026). DESPUÉS DE guillemets: UNA DIRECCIÓN ENTRE
+#      « » QUEDA DENTRO DEL <quote>. ANTES DE cite-to-biblioref-db, QUE
+#      SERIALIZA LAS NOTAS: UNA \url QUE LLEGUE AHÍ SIN TRADUCIR LA DESCARTA
+#      EL ESCRITOR DocBook Y LA DIRECCIÓN DESAPARECE (GV-116)
 #   2° volada                   n\sptext{o} A «n.» Y <superscript
 #      role="volada"> (SC-62). ANTES DE cite-to-biblioref-db, QUE SERIALIZA
 #      LAS NOTAS CON pandoc.write: UNA \sptext QUE LLEGUE AHÍ SIN TRADUCIR
@@ -131,6 +136,7 @@ FILTROS_LIBRO=(
     cuadro-leer.lua
     espacio-fijo.lua
     guillemets-to-quoted-db.lua
+    url.lua
     volada.lua
     corte-titulo.lua
     cifras.lua
@@ -149,15 +155,17 @@ FILTROS_LIBRO=(
     glosario.lua
 )
 
-# REVISTA: LA DE vista_cuadro.sh. ES GEMELA DE LA QUE ARMA
-# m_XML.GenerarBodyXML, CON SUS RAZONES EN EL APARTADO 4 DE ESA FUNCIÓN: LA
-# CADENA DE LA REVISTA TODAVÍA VIVE EN GAMBAS (SC-13). UN CAMBIO EN UNA VA
-# EN LA OTRA HASTA QUE SE MUDE A engine/
+# REVISTA: LA DE generar_canonicos_articulos.sh (LOS NÚMEROS NUEVOS, SC-71)
+# Y DE vista_cuadro.sh. EL ORDEN Y SUS RAZONES ESTÁN EN EL APARTADO 4 DE
+# m_XML.GenerarBodyXML, QUE ARMA LA MISMA CADENA PARA EL CAMINO VIEJO DE
+# REVISTAS HASTA EL 2.0.0. MIENTRAS LAS DOS VIVAN, UN CAMBIO EN UNA VA EN LA
+# OTRA
 FILTROS_REVISTA=(
     cuadro-leer.lua
     espacio-fijo.lua
     guillemets-to-quoted-db.lua
     quoted-a-nivel-jats.lua
+    url.lua
     dos-partes.lua
     unwrap-structural-divs.lua
     espacio-vertical.lua
@@ -722,6 +730,191 @@ vigencia_canonico() {
         VIGENCIA_DETALLE="$fuentes archivo(s) fuente sin cambios"
     fi
     return 0
+}
+
+# ============================================================================
+# FUNCIONES DE LOS GENERADORES DE CANÓNICOS
+# ----------------------------------------------------------------------------
+# LAS USAN generar_canonicos_capitulos.sh Y generar_canonicos_articulos.sh.
+# VIVÍAN EN EL PRIMERO; SE MUDARON ACÁ CUANDO LLEGÓ EL SEGUNDO, PARA QUE LOS
+# CONTROLES Y LAS HUELLAS DE UN CAPÍTULO Y DE UN ARTÍCULO SEAN LOS MISMOS Y
+# NO DIVERJAN. ESPERAN DE QUIEN LAS LLAMA: DIR_PROYECTO, DIR_ENGINE Y
+# TIEMPO_PANDOC
+# ============================================================================
+
+# ============================================================================
+# Función   : fallo
+# Propósito : Informa el fallo de UNA pieza sin terminar el script: morir()
+#             saldría del lote entero.
+# Parámetros: $1 mensaje
+# ============================================================================
+fallo() {
+    printf '  %s✗%s %s\n' "$C_ERROR" "$C_RESET" "$1"
+}
+
+# ============================================================================
+# Función   : escribir_huellas
+# Propósito : Escribe el XML de huellas que leen las hojas de ensamblado
+#             (SC-75): una <fuente archivo="…" sha256="…"/> por archivo.
+# Parámetros: $1 ruta del XML a escribir; $2… rutas de las fuentes, relativas
+#             al proyecto
+# Retorna   : 0 escrito; 1 no, con el motivo informado por fallo()
+# Nota      : SE ESCRIBE EN UN TEMPORAL Y SE PONE CON mv, COMO TODO PRODUCTO
+#             (SC-53). SE ESCAPAN & < >; LAS COMILLAS SE RECHAZAN ANTES: EL
+#             XML LAS ADMITIRÍA ESCAPADAS, PERO LA PI DEL CANÓNICO NO
+# ============================================================================
+escribir_huellas() {
+    local destino="$1"
+    shift
+    local rel valor suma
+
+    for rel in "$@"; do
+        if [[ "$rel" == *\"* || "$rel" == *$'\t'* || "$rel" == *$'\n'* ]]; then
+            fallo "la fuente «$rel» tiene comillas, tabuladores o saltos de línea en el nombre"
+            return 1
+        fi
+        if [[ ! -f "$DIR_PROYECTO/$rel" ]]; then
+            fallo "no existe la fuente $rel"
+            return 1
+        fi
+    done
+
+    {
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n<huellas>\n'
+        for rel in "$@"; do
+            suma="$(sha256sum "$DIR_PROYECTO/$rel" | cut -d' ' -f1)"
+            valor="${rel//&/&amp;}"
+            valor="${valor//</&lt;}"
+            valor="${valor//>/&gt;}"
+            printf '  <fuente archivo="%s" sha256="%s"/>\n' "$valor" "$suma"
+        done
+        printf '</huellas>\n'
+    } > "$destino.tmp" || { fallo "no se pudo escribir ${destino#$DIR_PROYECTO/}"; return 1; }
+
+    if ! bien_formado "$destino.tmp"; then
+        rm -f "$destino.tmp"
+        fallo "las huellas quedaron mal formadas: ${destino#$DIR_PROYECTO/}"
+        return 1
+    fi
+    mv -f "$destino.tmp" "$destino" || { fallo "no se pudo reemplazar ${destino#$DIR_PROYECTO/}"; return 1; }
+    return 0
+}
+
+# ============================================================================
+# Función   : controles_md
+# Propósito : Corre engine/controles_md.lua sobre el .md de una pieza, en una
+#             pasada de pandoc propia y sin los filtros de producción
+#             (criterio de SC-46), e informa sus hallazgos: un «error» frena
+#             la pieza; un «aviso», no. Los [WARNING] que pandoc emite al LEER
+#             el .md también son aviso.
+# Parámetros: $1 ruta absoluta del .md  $2 ruta del .md relativa al proyecto
+#             (para los mensajes)  $3 {base}: nombra el informe
+#             (tmp/controles-{base}.tsv) y la lista de cuadros
+#             (tmp/fuentes-{base}.txt)
+# Retorna   : 0 la pieza sigue; 1 no, con el motivo informado. Deja en
+#             globales lo que la conversión necesita después:
+#               CONTROLES_LECTURA  la salida de esta pasada, para no repetir
+#                                  sus [WARNING] (filtrar_mensajes_pandoc)
+#               CONTROLES_CUADROS  los cuadros que nombra el .md, relativos al
+#                                  proyecto, para las huellas (SC-75)
+# Nota      : LOS CONTROLES Y SU NIVEL ESTÁN EN controles_md.lua, QUE ES DONDE
+#             SE SUMAN LOS NUEVOS: ESTA FUNCIÓN SOLO LEE EL INFORME Y NO
+#             CONOCE NINGÚN CONTROL POR SU NOMBRE. GLOBALES Y NO SALIDA
+#             IMPRESA: LA FUNCIÓN YA IMPRIME LOS HALLAZGOS
+# ============================================================================
+controles_md() {
+    local md="$1" rel="$2" base="$3"
+    local informe fuentes codigo nivel control mensaje linea cuadro
+    local errores_control=0
+
+    CONTROLES_LECTURA=""
+    CONTROLES_CUADROS=()
+
+    # EL INFORME VA A UN ARCHIVO Y NO A stderr: ASÍ NO SE MEZCLA CON LOS
+    # MENSAJES DE PANDOC. SE BORRA ANTES: UNO VIEJO NO PUEDE PASAR POR ESTE
+    informe="$DIR_PROYECTO/tmp/controles-$base.tsv"
+    # LA LISTA DE CUADROS QUE NOMBRA EL .md, PARA LAS HUELLAS (SC-75). MISMO
+    # CONTRATO QUE EL INFORME: SE BORRA ANTES Y SU AUSENCIA ES UN FALLO
+    fuentes="$DIR_PROYECTO/tmp/fuentes-$base.txt"
+    rm -f "$informe" "$fuentes"
+
+    CONTROLES_LECTURA=$(timeout "${TIEMPO_PANDOC:-120}" pandoc "$md" \
+                --from markdown --to plain \
+                --lua-filter "$DIR_ENGINE/controles_md.lua" \
+                --metadata gb-controles="$informe" \
+                --metadata gb-fuentes="$fuentes" \
+                --metadata gb-proyecto="$DIR_PROYECTO" \
+                --output /dev/null 2>&1)
+    codigo=$?
+
+    if (( codigo != 0 )); then
+        mostrar_cola "$CONTROLES_LECTURA"
+        fallo "los controles del .md no pudieron correr"
+        return 1
+    fi
+    # EL FILTRO ESCRIBE EL INFORME SIEMPRE, VACÍO SI NO HAY HALLAZGOS: SI NO
+    # ESTÁ, EL CONTROL NO CORRIÓ, Y NO SE PUEDE DAR EL .md POR REVISADO
+    if [[ ! -f "$informe" ]]; then
+        fallo "los controles del .md no escribieron su informe"
+        return 1
+    fi
+    if [[ ! -f "$fuentes" ]]; then
+        fallo "los controles del .md no escribieron la lista de cuadros"
+        return 1
+    fi
+
+    while IFS=$'\t' read -r nivel control mensaje || [[ -n "$nivel" ]]; do
+        [[ -z "$nivel" ]] && continue
+        case "$nivel" in
+            error) fallo "$mensaje"; errores_control=$((errores_control + 1)) ;;
+            aviso) aviso "$mensaje" ;;
+            # UN NIVEL QUE ESTA FUNCIÓN NO CONOCE ES UN ERROR DEL FILTRO: NO SE
+            # DEJA PASAR COMO SI NADA
+            *)     fallo "nivel «$nivel» desconocido en el control $control: $mensaje"
+                   errores_control=$((errores_control + 1)) ;;
+        esac
+    done < "$informe"
+
+    # LOS [WARNING] DEL LECTOR DE PANDOC: AVISO
+    while IFS= read -r linea; do
+        [[ "$linea" == "[WARNING]"* ]] && aviso "pandoc: ${linea#\[WARNING\] }"
+    done <<< "$CONTROLES_LECTURA"
+
+    if (( errores_control > 0 )); then
+        fallo "$rel tiene $errores_control error(es) de corrección: no se genera"
+        return 1
+    fi
+
+    while IFS= read -r cuadro || [[ -n "$cuadro" ]]; do
+        [[ -n "$cuadro" ]] && CONTROLES_CUADROS+=("$cuadro")
+    done < "$fuentes"
+
+    ok "controles del .md"
+    return 0
+}
+
+# ============================================================================
+# Función   : filtrar_mensajes_pandoc
+# Propósito : Los mensajes de la conversión que no frenan, sin los que ya se
+#             informaron en los controles: el lector es el mismo y repite sus
+#             [WARNING] iguales. Y sin el aviso de comillas de
+#             guillemets-to-quoted-db.lua, que ya dio el control
+#             comillas_desbalanceadas. El filtro lo sigue escribiendo porque
+#             el camino viejo de revistas (m_XML.GenerarBodyXML), que no pasa
+#             por los controles, depende de él (SC-54)
+# Parámetros: $1 la salida de pandoc  $2 la de los controles
+#             (CONTROLES_LECTURA)
+# Retorna   : imprime lo que queda
+# ============================================================================
+filtrar_mensajes_pandoc() {
+    local salida="$1" lectura="$2"
+    if [[ -n "$salida" && -n "$lectura" ]]; then
+        salida=$(printf '%s\n' "$salida" | grep -vxF -f <(printf '%s\n' "$lectura" | grep '^\[WARNING\]'))
+    fi
+    if [[ -n "$salida" ]]; then
+        salida=$(printf '%s\n' "$salida" | grep -v '^guillemets-to-quoted: comillas sin cerrar en: ')
+    fi
+    printf '%s' "$salida"
 }
 
 # ============================================================================

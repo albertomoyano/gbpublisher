@@ -131,63 +131,9 @@ FILTROS=("${FILTROS_LIBRO[@]}")
 ENVOLTORIO_ABRE='<section xmlns="http://docbook.org/ns/docbook" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink">'
 ENVOLTORIO_CIERRA='</section>'
 
-# ============================================================================
-# Función   : fallo
-# Propósito : Informa el fallo de UN capítulo sin terminar el script: morir()
-#             saldría del lote entero.
-# Parámetros: $1 mensaje
-# ============================================================================
-fallo() {
-    printf '  %s✗%s %s\n' "$C_ERROR" "$C_RESET" "$1"
-}
-
-# ============================================================================
-# Función   : escribir_huellas
-# Propósito : Escribe el XML de huellas que lee ensamblar-capitulo-canonico.xsl
-#             (SC-75): una <fuente archivo="…" sha256="…"/> por archivo.
-# Parámetros: $1 ruta del XML a escribir; $2… rutas de las fuentes, relativas
-#             al proyecto
-# Retorna   : 0 escrito; 1 no, con el motivo informado por fallo()
-# Nota      : SE ESCRIBE EN UN TEMPORAL Y SE PONE CON mv, COMO TODO PRODUCTO
-#             (SC-53). SE ESCAPAN & < >; LAS COMILLAS SE RECHAZAN ANTES: EL
-#             XML LAS ADMITIRÍA ESCAPADAS, PERO LA PI DEL CANÓNICO NO
-# ============================================================================
-escribir_huellas() {
-    local destino="$1"
-    shift
-    local rel valor suma
-
-    for rel in "$@"; do
-        if [[ "$rel" == *\"* || "$rel" == *$'\t'* || "$rel" == *$'\n'* ]]; then
-            fallo "la fuente «$rel» tiene comillas, tabuladores o saltos de línea en el nombre"
-            return 1
-        fi
-        if [[ ! -f "$DIR_PROYECTO/$rel" ]]; then
-            fallo "no existe la fuente $rel"
-            return 1
-        fi
-    done
-
-    {
-        printf '<?xml version="1.0" encoding="UTF-8"?>\n<huellas>\n'
-        for rel in "$@"; do
-            suma="$(sha256sum "$DIR_PROYECTO/$rel" | cut -d' ' -f1)"
-            valor="${rel//&/&amp;}"
-            valor="${valor//</&lt;}"
-            valor="${valor//>/&gt;}"
-            printf '  <fuente archivo="%s" sha256="%s"/>\n' "$valor" "$suma"
-        done
-        printf '</huellas>\n'
-    } > "$destino.tmp" || { fallo "no se pudo escribir ${destino#$DIR_PROYECTO/}"; return 1; }
-
-    if ! bien_formado "$destino.tmp"; then
-        rm -f "$destino.tmp"
-        fallo "las huellas quedaron mal formadas: ${destino#$DIR_PROYECTO/}"
-        return 1
-    fi
-    mv -f "$destino.tmp" "$destino" || { fallo "no se pudo reemplazar ${destino#$DIR_PROYECTO/}"; return 1; }
-    return 0
-}
+# fallo, escribir_huellas, controles_md Y filtrar_mensajes_pandoc VIVEN EN
+# comun.sh: LAS COMPARTE generar_canonicos_articulos.sh, Y LOS CONTROLES Y LAS
+# HUELLAS DE UN CAPÍTULO Y DE UN ARTÍCULO TIENEN QUE SER LOS MISMOS
 
 # ============================================================================
 # Función   : procesar_capitulo
@@ -199,9 +145,7 @@ escribir_huellas() {
 procesar_capitulo() {
     local nombre="$1" xml_id="$2" tipo="$3" idioma="$4"
     local base carpeta md info body biblio parcial
-    local salida codigo filtro
-    local informe nivel control mensaje errores_control lectura linea
-    local fuentes huellas cuadro
+    local salida codigo filtro huellas
     local args_pandoc=()
     local lista_fuentes=()
 
@@ -227,71 +171,13 @@ procesar_capitulo() {
     [[ -f "$biblio" ]] || { fallo "no existe tmp/biblio-$base.xml"; return 1; }
     bien_formado "$biblio" || { fallo "tmp/biblio-$base.xml está mal formado"; return 1; }
 
-    # --- C. CONTROLES DEL .md ---
-    # EL INFORME VA A UN ARCHIVO Y NO A stderr: ASÍ NO SE MEZCLA CON LOS
-    # MENSAJES DE PANDOC. SE BORRA ANTES: UNO VIEJO NO PUEDE PASAR POR ESTE
-    informe="$DIR_PROYECTO/tmp/controles-$base.tsv"
-    # LA LISTA DE CUADROS QUE NOMBRA EL .md, PARA LAS HUELLAS (SC-75). MISMO
-    # CONTRATO QUE EL INFORME: SE BORRA ANTES Y SU AUSENCIA ES UN FALLO
-    fuentes="$DIR_PROYECTO/tmp/fuentes-$base.txt"
-    rm -f "$informe" "$fuentes"
-
-    lectura=$(timeout "$TIEMPO_PANDOC" pandoc "$md" \
-                --from markdown --to plain \
-                --lua-filter "$DIR_ENGINE/controles_md.lua" \
-                --metadata gb-controles="$informe" \
-                --metadata gb-fuentes="$fuentes" \
-                --metadata gb-proyecto="$DIR_PROYECTO" \
-                --output /dev/null 2>&1)
-    codigo=$?
-
-    if (( codigo != 0 )); then
-        mostrar_cola "$lectura"
-        fallo "los controles del .md no pudieron correr"
-        return 1
-    fi
-    # EL FILTRO ESCRIBE EL INFORME SIEMPRE, VACÍO SI NO HAY HALLAZGOS: SI NO
-    # ESTÁ, EL CONTROL NO CORRIÓ, Y NO SE PUEDE DAR EL .md POR REVISADO
-    if [[ ! -f "$informe" ]]; then
-        fallo "los controles del .md no escribieron su informe"
-        return 1
-    fi
-    if [[ ! -f "$fuentes" ]]; then
-        fallo "los controles del .md no escribieron la lista de cuadros"
-        return 1
-    fi
-
-    errores_control=0
-    while IFS=$'\t' read -r nivel control mensaje || [[ -n "$nivel" ]]; do
-        [[ -z "$nivel" ]] && continue
-        case "$nivel" in
-            error) fallo "$mensaje"; errores_control=$((errores_control + 1)) ;;
-            aviso) aviso "$mensaje" ;;
-            # UN NIVEL QUE ESTE SCRIPT NO CONOCE ES UN ERROR DEL FILTRO: NO SE
-            # DEJA PASAR COMO SI NADA
-            *)     fallo "nivel «$nivel» desconocido en el control $control: $mensaje"
-                   errores_control=$((errores_control + 1)) ;;
-        esac
-    done < "$informe"
-
-    # LOS [WARNING] DEL LECTOR DE PANDOC: AVISO (VER LA CABECERA)
-    while IFS= read -r linea; do
-        [[ "$linea" == "[WARNING]"* ]] && aviso "pandoc: ${linea#\[WARNING\] }"
-    done <<< "$lectura"
-
-    if (( errores_control > 0 )); then
-        fallo "el .md tiene $errores_control error(es) de corrección: el capítulo no se genera"
-        return 1
-    fi
-    ok "controles del .md"
+    # --- C. CONTROLES DEL .md (comun.sh) ---
+    controles_md "$md" "$carpeta/$nombre.md" "$base" || return 1
 
     # --- C2. HUELLAS (SC-75) ---
     # ANTES DE PANDOC: LA HUELLA ES DE LO QUE PANDOC VA A LEER
     huellas="$DIR_PROYECTO/tmp/huellas-$base.xml"
-    lista_fuentes=("$carpeta/$nombre.md")
-    while IFS= read -r cuadro || [[ -n "$cuadro" ]]; do
-        [[ -n "$cuadro" ]] && lista_fuentes+=("$cuadro")
-    done < "$fuentes"
+    lista_fuentes=("$carpeta/$nombre.md" "${CONTROLES_CUADROS[@]}")
     escribir_huellas "$huellas" "${lista_fuentes[@]}" || return 1
     ok "huellas de ${#lista_fuentes[@]} fuente(s)"
 
@@ -342,17 +228,8 @@ procesar_capitulo() {
     fi
 
     # LOS AVISOS DE PANDOC QUE NO FRENAN SE MUESTRAN PARA QUE NO SE PIERDAN,
-    # SALVO LOS QUE YA SE INFORMARON COMO AVISO EN LOS CONTROLES: EL LECTOR ES
-    # EL MISMO Y LOS REPITE IGUALES
-    if [[ -n "$salida" && -n "$lectura" ]]; then
-        salida=$(printf '%s\n' "$salida" | grep -vxF -f <(printf '%s\n' "$lectura" | grep '^\[WARNING\]'))
-    fi
-    # EL AVISO DE COMILLAS DE guillemets-to-quoted-db.lua TAMBIÉN: LO INFORMÓ
-    # EL CONTROL comillas_desbalanceadas. EL FILTRO LO SIGUE ESCRIBIENDO PORQUE
-    # REVISTAS, QUE TODAVÍA NO PASA POR LOS CONTROLES, DEPENDE DE ÉL (SC-54)
-    if [[ -n "$salida" ]]; then
-        salida=$(printf '%s\n' "$salida" | grep -v '^guillemets-to-quoted: comillas sin cerrar en: ')
-    fi
+    # SALVO LOS QUE YA SE INFORMARON EN LOS CONTROLES (comun.sh)
+    salida="$(filtrar_mensajes_pandoc "$salida" "$CONTROLES_LECTURA")"
     if [[ -n "$salida" ]]; then
         tenue "mensajes de pandoc:"
         mostrar_cola "$salida" 10
