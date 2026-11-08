@@ -30,7 +30,8 @@
     xmlns:xs="http://www.w3.org/2001/XMLSchema"
     xmlns:xlink="http://www.w3.org/1999/xlink"
     xmlns:ali="http://www.niso.org/schemas/ali/1.0/"
-    exclude-result-prefixes="xs">
+    xmlns:gbj="urn:gbpublisher:jats"
+    exclude-result-prefixes="xs gbj">
 
   <!-- EL body Y EL DOCTYPE, LOS DEL ENSAMBLADO DE SIEMPRE (SU PLANTILLA
        RAÍZ QUEDA TAPADA POR LA DE ACÁ, QUE TIENE PRECEDENCIA) -->
@@ -98,16 +99,44 @@
       <xsl:variable name="bodyDoc" select="document($body)"/>
       <xsl:apply-templates select="$bodyDoc//body"/>
 
-      <!-- LA BIBLIOGRAFÍA, SOLO SI HAY REFERENCIAS -->
-      <xsl:if test="$reflist ne ''">
-        <xsl:variable name="reflistDoc" select="document($reflist)"/>
-        <xsl:if test="$reflistDoc//ref-list/ref">
-          <back>
-            <xsl:apply-templates select="$reflistDoc//ref-list"/>
-          </back>
-        </xsl:if>
+      <!-- 4. EL back: LA DECLARACIÓN DE DISPONIBILIDAD DE DATOS Y LA
+           BIBLIOGRAFÍA. SOLO SI HAY ALGUNA DE LAS DOS: EL DTD NO ADMITE UN
+           back VACÍO EN EL SENTIDO DE QUE NO DICE NADA -->
+      <xsl:variable name="refs" select="if ($reflist ne '') then document($reflist)//ref-list[ref] else ()"/>
+      <xsl:variable name="datos" select="$art/declaracion[@tipo = 'disponibilidad_datos'][normalize-space()]"/>
+      <xsl:if test="$refs or $datos">
+        <back>
+          <!-- DISPONIBILIDAD DE DATOS (SciELO §2.3 Y §5.2.2; 1.25.0): UN
+               <sec sec-type="data-availability"> EN EL back, LA FORMA QUE
+               PIDE JATS4R (data-availability-errors.sch). UNA POR IDIOMA,
+               LA DEL ARTÍCULO PRIMERO. VA ANTES DE ref-list, COMO EN EL
+               ORDEN DE LECTURA -->
+          <xsl:for-each select="$datos">
+            <xsl:sort select="if (@idioma = $art/@idioma) then 0 else 1"/>
+            <sec sec-type="data-availability">
+              <xsl:if test="@idioma ne $art/@idioma">
+                <xsl:attribute name="xml:lang" select="@idioma"/>
+              </xsl:if>
+              <title><xsl:value-of select="gbj:titulo-datos(@idioma)"/></title>
+              <p><xsl:value-of select="normalize-space(.)"/></p>
+            </sec>
+          </xsl:for-each>
+          <xsl:apply-templates select="$refs"/>
+        </back>
       </xsl:if>
     </article>
   </xsl:template>
+
+  <!-- EL TÍTULO DE LA DECLARACIÓN DE DISPONIBILIDAD DE DATOS SEGÚN SU
+       IDIOMA. UN IDIOMA QUE NO ESTÁ EN LA TABLA LLEVA EL INGLÉS: JATS4R
+       SUGIERE «Data Availability» (data-availability-warnings.sch) -->
+  <xsl:function name="gbj:titulo-datos" as="xs:string">
+    <xsl:param name="idioma" as="xs:string?"/>
+    <xsl:variable name="i" select="lower-case(substring(string($idioma), 1, 2))"/>
+    <xsl:sequence select="if ($i eq 'es') then 'Disponibilidad de datos'
+                          else if ($i eq 'pt') then 'Disponibilidade de dados'
+                          else if ($i eq 'fr') then 'Disponibilité des données'
+                          else 'Data availability'"/>
+  </xsl:function>
 
 </xsl:stylesheet>
