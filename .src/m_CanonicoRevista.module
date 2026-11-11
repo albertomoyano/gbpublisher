@@ -17,6 +17,11 @@
 '                 conversor de siempre (m_XML.EscribirRefList) y las claves
 '                 citadas sacadas del .md en el momento (SC-16), no de la
 '                 base.
+'             Desde la versión 2 del volcado lleva también el nombre de
+'             babel de cada idioma que aparece en él (<idioma codigo babel>),
+'             resuelto con el catálogo (m_Idiomas.Babel): las hojas de LaTeX
+'             lo toman de acá y no de una tabla propia (A1.1b-3, decisión de
+'             Alberto del 11/11/2026).
 '             La herencia de la revista ya va resuelta (decisión 14): un
 '             artículo no publicado lleva el valor efectivo; uno publicado,
 '             el que quedó congelado.
@@ -24,13 +29,17 @@
 '             (articulos, revistas_md, articulo_autor): las salidas nuevas
 '             son solo para números nuevos (decisión de Alberto, 07/11).
 ' Dependencias: m_ConexionBD, m_InicioCierre, m_Articulo (ArchivosDelProyecto),
+'             m_Idiomas (Babel),
 '             m_Bibtex (ClavesCitadas), m_XML (EscaparXML, TituloXML,
 '             EscribirRefList), m_CorteTitulo, m_Sonido.
 ' ==============================================================================
 
 ' VERSIÓN DEL FORMATO DE numero-datos.xml. LA LEE LA XSLT: SI CAMBIA LA FORMA,
-' SUBE ACÁ Y ALLÁ
-Public Const VERSION_DATOS As Integer = 1
+' SUBE ACÁ Y ALLÁ (ensamblar-articulo-canonico.xsl, numero-a-latex.xsl Y
+' generar_canonicos_articulos.sh)
+'   1  07/11/2026  A0
+'   2  11/11/2026  <idioma codigo babel> POR CADA IDIOMA DEL VOLCADO
+Public Const VERSION_DATOS As Integer = 2
 
 ' EL ARCHIVO DEL VOLCADO, RELATIVO A LA CARPETA DEL PROYECTO
 Public Const ARCHIVO_DATOS As String = "tmp/numero-datos.xml"
@@ -40,6 +49,11 @@ Private $aXml As String[]
 
 ' EL PRIMER ERROR DE LECTURA: SE INFORMA UNA SOLA VEZ, AL FINAL
 Private $sError As String
+
+' LOS CÓDIGOS DE IDIOMA QUE APARECEN EN EL VOLCADO, COMO CLAVES: LOS JUNTA Atr
+' (TODO ATRIBUTO idioma PASA POR AHÍ) Y EscribirRevista (LOS DE LA REVISTA).
+' LAS CLAVES DISTINGUEN MAYÚSCULAS (GV-04), COMO EL CATÁLOGO
+Private $cIdiomas As Collection
 
 ' ============================================
 ' Función   : PrepararNumero
@@ -124,6 +138,7 @@ Public Function VolcarNumero(iIdNumero As Integer, sDestino As String) As Boolea
   ' --- 1. INICIALIZACIÓN ---
   $aXml = New String[]
   $sError = ""
+  $cIdiomas = New Collection
 
   ' --- 2. EL NÚMERO Y SU REVISTA ---
   Try rNumero = m_ConexionBD.mConn.Exec("SELECT * FROM numero WHERE id_numero = &1", iIdNumero)
@@ -163,6 +178,8 @@ Public Function VolcarNumero(iIdNumero As Integer, sDestino As String) As Boolea
       $aXml.Add("  <huerfano archivo=" & Chr(34) & m_XML.EscaparXML(cIdPorArchivo.Key) & Chr(34) & " id=" & Chr(34) & CStr(cIdPorArchivo[cIdPorArchivo.Key]) & Chr(34) & "/>")
     Endif
   Next
+  ' LOS NOMBRES DE babel VAN AL FINAL: RECIÉN AHORA SE CONOCEN TODOS LOS IDIOMAS
+  If Not EscribirIdiomas() Then Return Fallo($sError)
   $aXml.Add("</numero-datos>")
 
   ' --- 4. ESCRITURA ---
@@ -207,6 +224,8 @@ Private Function Atr(sNombre As String, vValor As Variant) As String
   If IsNull(vValor) Then Return ""
   sValor = CStr(vValor)
   If sValor = "" Then Return ""
+  ' UN IDIOMA QUE ENTRA AL VOLCADO NECESITA SU NOMBRE DE babel (EscribirIdiomas)
+  If sNombre = "idioma" Then RegistrarIdioma(sValor)
   Return " " & sNombre & "=" & Chr(34) & m_XML.EscaparXML(sValor) & Chr(34)
 
 End
@@ -291,6 +310,56 @@ Private Function ElemTitulo(sNombre As String, vTexto As Variant, Optional sAtri
 End
 
 ' ============================================
+' Función   : RegistrarIdioma
+' Propósito : Anota un código de idioma que aparece en el volcado
+' Parámetros: sCodigo As String — código BCP 47 tal como está en la base
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub RegistrarIdioma(sCodigo As String)
+
+  $cIdiomas[sCodigo] = True
+
+End
+
+' ============================================
+' Función   : EscribirIdiomas
+' Propósito : Un <idioma codigo babel> por cada idioma del volcado, con el
+'             nombre de babel del catálogo (m_Idiomas.Babel), en orden de
+'             código: el mismo volcado sale igual dos veces. Un código que el
+'             catálogo no conoce frena: componer con otra partición es un
+'             error que nadie ve
+' Parámetros: (ninguno — usa $cIdiomas)
+' Retorna   : Boolean — False si un idioma no tiene nombre de babel ($sError)
+' ============================================
+Private Function EscribirIdiomas() As Boolean
+
+  Dim aCodigos As New String[]
+  Dim sCodigo As String
+  Dim sBabel As String
+
+  ' --- 1. LOS CÓDIGOS, ORDENADOS ---
+  ' LA FORMA For Each COLECCIÓN Y .Key, COMO EN VolcarNumero (HUÉRFANOS)
+  For Each $cIdiomas
+    aCodigos.Add($cIdiomas.Key)
+  Next
+  aCodigos.Sort()
+
+  ' --- 2. UNO POR CÓDIGO ---
+  For Each sCodigo In aCodigos
+    sBabel = m_Idiomas.Babel(sCodigo)
+    If sBabel = "" Then
+      $sError = "El idioma «" & sCodigo & "» no está en el catálogo de idiomas, o no tiene nombre de babel." & gb.NewLine &
+        "Corregí el dato que lo usa (revista, artículo, resumen, palabras clave…)."
+      Return False
+    Endif
+    Agregar(1, "<idioma" & Atr("codigo", sCodigo) & Atr("babel", sBabel) & "/>")
+  Next
+
+  Return True
+
+End
+
+' ============================================
 ' Función   : EscribirRevista
 ' Propósito : La revista (N0)
 ' Parámetros: iIdRevista As Integer — la revista
@@ -299,6 +368,7 @@ End
 Private Function EscribirRevista(iIdRevista As Integer) As Boolean
 
   Dim r As Result
+  Dim sCodigo As String
 
   Try r = m_ConexionBD.mConn.Exec("SELECT * FROM revista WHERE id_revista = &1", iIdRevista)
   If Error Then
@@ -326,6 +396,14 @@ Private Function EscribirRevista(iIdRevista As Integer) As Boolean
   Agregar(2, Elem("estilo-cita", r!estilo_cita))
   Agregar(2, Elem("idiomas", r!idiomas_publicacion))
   Agregar(1, "</revista>")
+
+  ' LOS IDIOMAS DE PUBLICACIÓN VAN EN UNA LISTA, NO EN UN ATRIBUTO idioma: SE
+  ' REGISTRAN A MANO. EL PRIMERO ES EL PRINCIPAL DE LA REVISTA (main= DE babel)
+  If Not IsNull(r!idiomas_publicacion) Then
+    For Each sCodigo In Split(r!idiomas_publicacion, ",")
+      If Trim(sCodigo) <> "" Then RegistrarIdioma(Trim(sCodigo))
+    Next
+  Endif
 
   Return True
 

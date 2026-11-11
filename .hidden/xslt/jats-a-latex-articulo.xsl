@@ -4,14 +4,14 @@
   HOJA DE ESTILO : jats-a-latex-articulo.xsl
   VERSIÓN XSLT   : 3.0 (Saxon-HE)
   PROPÓSITO      : EL CUERPO LaTeX DE UN ARTÍCULO PARA EL CAMINO NUEVO
-                   (engine/, CONTRATO DE REVISTA 2). IMPORTA
+                   (engine/, CONTRATO DE REVISTA 3). IMPORTA
                    jats-to-latex.xsl Y REEMPLAZA SOLO LA PRIMERA PÁGINA,
                    EL BLOQUE DE DECLARACIONES Y LOS DATOS DEL PDF: EL
                    CUERPO (SECCIONES, CITAS, FIGURAS, CUADROS, NOTAS) ES
                    EL DE LA HOJA IMPORTADA.
   POR QUÉ APARTE : m_XML (EL CAMINO VIEJO, HASTA EL 2.0.0) SIGUE USANDO
                    jats-to-latex.xsl CON SU PREÁMBULO EMBEBIDO. LAS
-                   MACROS DE ESTA HOJA SON DEL CONTRATO DE REVISTA 2 Y
+                   MACROS DE ESTA HOJA SON DEL CONTRATO DE REVISTA 3 Y
                    ESE PREÁMBULO NO LAS TIENE: CAMBIAR LA HOJA VIEJA
                    ROMPÍA EL CAMINO VIEJO. EN EL 2.0.0 LAS DOS SE FUNDEN.
   ENTRADA        : {proyecto}/jats/c-{nombre}.xml (CANÓNICO, A0.4)
@@ -191,8 +191,11 @@
     <xsl:variable name="fpage" select="normalize-space($meta/fpage)"/>
 
     <!-- 1. IDIOMA, MACROS, FOLIO, ESTILO DE LA PRIMERA PÁGINA -->
-    <xsl:text>\selectlanguage{</xsl:text>
-    <xsl:value-of select="f:babel-lang($xmlLang)"/>
+    <!-- EL IDIOMA POR CÓDIGO: EL NOMBRE DE babel LO PONE preambulo-numero.tex
+         DESDE EL CATÁLOGO (CONTRATO 3, 4.0). f:babel-lang NO: SU TABLA
+         DIVERGE DEL CATÁLOGO (de → german; LO DESCONOCIDO, spanish) -->
+    <xsl:text>\gbselectlanguage{</xsl:text>
+    <xsl:value-of select="$xmlLang"/>
     <xsl:text>}&#10;&#10;</xsl:text>
     <xsl:call-template name="emitir-macros-metadatos"/>
 
@@ -248,7 +251,7 @@
 
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: emitir-macros-metadatos                      -->
-  <!-- \renewcommand DE LOS DATOS DEL ARTÍCULO (CONTRATO 2, 4.1).   -->
+  <!-- \renewcommand DE LOS DATOS DEL ARTÍCULO (CONTRATO 3, 4.1).   -->
   <!-- REEMPLAZA AL DE LA HOJA IMPORTADA, QUE CON EL FRONT NUEVO    -->
   <!-- FALLA: LEE pub-date/year COMO UNO SOLO Y EL CANÓNICO TRAE    -->
   <!-- DOS (pub Y collection; MEDIDO: XPTY0004), Y BUSCA issn POR   -->
@@ -636,7 +639,7 @@
 
     <!-- 1. APERTURA, CON EL RÓTULO EN EL IDIOMA DEL RESUMEN -->
     <xsl:text>\begin{gbresumen}{</xsl:text>
-    <xsl:value-of select="f:babel-lang($lang)"/>
+    <xsl:value-of select="$lang"/>
     <xsl:text>}{</xsl:text>
     <xsl:value-of select="f:latex(string(($r/@*[local-name() = $l2], $r/@en)[1]))"/>
     <xsl:text>}</xsl:text>
@@ -828,7 +831,6 @@
           <xsl:sequence select="'url = {' || normalize-space($meta/self-uri[@content-type = 'pagina'][1]/@xlink:href) || '}'"/>
         </xsl:when>
       </xsl:choose>
-      <xsl:sequence select="'langid = {' || f:babel-lang($xmlLang) || '}'"/>
     </xsl:variable>
     <xsl:result-document href="{$bib_cita}" method="text" encoding="UTF-8">
       <xsl:text>% ESCRITO POR jats-a-latex-articulo.xsl: EL «CÓMO CITAR» DEL ARTÍCULO&#10;</xsl:text>
