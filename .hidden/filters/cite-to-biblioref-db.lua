@@ -389,8 +389,25 @@ end
 -- PROCESADAS POR Cite() (PANDOC PROCESA EL AST EN ORDEN: LAS
 -- CITAS DENTRO DE NOTAS YA HAN PASADO POR Cite ANTES DE LLEGAR
 -- AQUÍ, POR LO QUE EL CONTENIDO YA TIENE EL MARKUP CORRECTO).
+-- NOTA CON SÍMBOLO (SC-86): nota-simbolo.lua DEJA AL COMIENZO DEL PRIMER
+-- PÁRRAFO LA MARCA <?gb-nota-simbolo NOMBRE?>. SE QUITA DEL TEXTO Y EL
+-- NOMBRE PASA AL label DE <footnote>, QUE EN DocBook 5.2 ES NMTOKEN: POR
+-- ESO VA EL NOMBRE (ast, dag…) Y NO EL SIGNO (GV-191).
+local MARCA_SIMBOLO = '^<%?gb%-nota%-simbolo (%w+)%?>$'
+
 function Note(el)
+  local label = ''
+  local primero = el.content[1]
+  if primero and (primero.t == 'Para' or primero.t == 'Plain')
+     and primero.content[1] and primero.content[1].t == 'RawInline'
+     and primero.content[1].format == 'docbook' then
+    local nombre = primero.content[1].text:match(MARCA_SIMBOLO)
+    if nombre then
+      label = ' label="' .. nombre .. '"'
+      primero.content:remove(1)
+    end
+  end
   local content = pandoc.write(pandoc.Pandoc(el.content), 'docbook5')
   content = content:gsub("^%s+", ""):gsub("%s+$", "")
-  return pandoc.RawInline('docbook', '<footnote>' .. content .. '</footnote>')
+  return pandoc.RawInline('docbook', '<footnote' .. label .. '>' .. content .. '</footnote>')
 end

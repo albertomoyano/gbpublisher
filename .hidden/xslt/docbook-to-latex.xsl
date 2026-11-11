@@ -103,8 +103,9 @@
   xmlns:gbv="urn:gbpublisher:conversacion"
   xmlns:gbvr="urn:gbpublisher:verso"
   xmlns:gbct="urn:gbpublisher:citas"
+  xmlns:gbns="urn:gbpublisher:nota-simbolo"
   xpath-default-namespace="http://docbook.org/ns/docbook"
-  exclude-result-prefixes="xs xlink f gbv gbvr gbct">
+  exclude-result-prefixes="xs xlink f gbv gbvr gbct gbns">
 
   <xsl:import href="tex-comun.xsl"/>
 
@@ -123,6 +124,10 @@
   <!-- CITAS (SC-57): EL COMANDO DE CADA MODO, EL AGRUPAMIENTO Y EL id DE
        CADA GRUPO, COMUNES CON LA PASADA DE CITAS Y CON HTML Y EPUB -->
   <xsl:include href="cita-comun.xsl"/>
+
+  <!-- NOTA CON SÍMBOLO (SC-86): DEL label DEL CANÓNICO AL ÍNDICE QUE
+       RECIBE \gbNotaSimbolo, COMÚN CON HTML Y EPUB -->
+  <xsl:include href="nota-simbolo-comun.xsl"/>
 
   <xsl:output method="text" encoding="UTF-8"/>
 
@@ -469,14 +474,16 @@
   <!-- <?gb-corte?> QUE ESCRIBE corte-titulo.lua DESDE EL \\ DEL .md. -->
   <!-- CORTA SOLO EN LA APERTURA; EN EL SUMARIO, EL FOLIO Y LOS       -->
   <!-- MARCADORES NO ESCRIBE NADA: EL ESPACIO YA ESTÁ ANTES. EL       -->
-  <!-- ESPACIO DESPUÉS DE \gbCorteTitulo SEPARA LA ORDEN DE LA        -->
+  <!-- ESPACIO DESPUÉS DE \gbCorteSeccion SEPARA LA ORDEN DE LA       -->
   <!-- PALABRA QUE SIGUE, Y TeX LO DESCARTA. LOS TÍTULOS QUE VIENEN    -->
   <!-- DE LA BASE NO PASAN POR ACÁ: LOS ARMAN f:titulo-compuesto Y     -->
-  <!-- f:titulo-plano (tex-comun.xsl).                                 -->
+  <!-- f:titulo-plano (tex-comun.xsl), CON \gbCorteTitulo.            -->
+  <!-- \gbCorteSeccion (CONTRATO 23) Y NO \gbCorteTitulo: CON \\, LA  -->
+  <!-- SEGUNDA LÍNEA DEL TÍTULO CAÍA DEBAJO DEL NÚMERO (GV-192).       -->
   <xsl:template match="processing-instruction('gb-corte')">
     <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
     <xsl:if test="$notasTitulo = 'apertura'">
-      <xsl:text>\gbCorteTitulo </xsl:text>
+      <xsl:text>\gbCorteSeccion </xsl:text>
     </xsl:if>
   </xsl:template>
 
@@ -808,11 +815,32 @@
   <!--             DE LA NOTA SE SEPARAN CON \endgraf                  -->
   <!--   sumario   NADA: LA NOTA NO VA AL SUMARIO NI A LOS MARCADORES -->
   <!-- FUERA DE UN TÍTULO, \footnote COMO SIEMPRE.                    -->
+  <!-- CON label ES UNA NOTA CON SÍMBOLO (SC-86): \gbNotaTituloSimbolo -->
+  <!-- O \gbNotaSimbolo, CON EL ÍNDICE DEL DICCIONARIO COMO PRIMER     -->
+  <!-- ARGUMENTO. EL SÍMBOLO LO COMPONE EL CONTRATO (v22) Y NO CONSUME -->
+  <!-- NÚMERO. EL SUMARIO LA DEJA AFUERA IGUAL QUE A LA NUMERADA.      -->
   <xsl:template match="footnote">
     <xsl:param name="notasTitulo" tunnel="yes" select="''"/>
     <xsl:variable name="c"><xsl:apply-templates/></xsl:variable>
+    <xsl:variable name="simbolo"
+      select="if (@label) then concat('{', gbns:indice(string(@label)), '}') else ''"/>
     <xsl:choose>
       <xsl:when test="$notasTitulo = 'sumario'"/>
+      <xsl:when test="$notasTitulo = 'apertura' and @label">
+        <xsl:text>\gbNotaTituloSimbolo</xsl:text>
+        <xsl:value-of select="$simbolo"/>
+        <xsl:text>{</xsl:text>
+        <xsl:value-of select="replace(f:recortar(string($c)),
+                                      '[ \t]*\n([ \t]*\n)+[ \t]*', '\\endgraf ')"/>
+        <xsl:text>}</xsl:text>
+      </xsl:when>
+      <xsl:when test="@label">
+        <xsl:text>\gbNotaSimbolo</xsl:text>
+        <xsl:value-of select="$simbolo"/>
+        <xsl:text>{</xsl:text>
+        <xsl:value-of select="f:recortar(string($c))"/>
+        <xsl:text>}</xsl:text>
+      </xsl:when>
       <xsl:when test="$notasTitulo = 'apertura'">
         <xsl:text>\gbNotaTitulo{</xsl:text>
         <xsl:value-of select="replace(f:recortar(string($c)),

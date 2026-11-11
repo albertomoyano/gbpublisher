@@ -74,7 +74,7 @@ RUTA_SIGLAS_PIEZAS="tmp/siglas-piezas.txt"
 # --- 3b. LAS CADENAS DE FILTROS ---
 # LIBRO: LA DE generar_canonicos_capitulos.sh Y DE vista_cuadro.sh (SC-67).
 # EL ORDEN ES EL QUE FIJABA m_XML.GenerarBodyCapituloXML, CON
-# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65, SC-66, SC-77):
+# SUS RAZONES (RC-DB-07, SC-35, SC-39, SC-41, SC-42, SC-43, SC-49, SC-61, SC-62, SC-63, SC-65, SC-66, SC-77, SC-86):
 #   0° cuadro-leer              TRAE EL ARCHIVO DE CADA CUADRO (SC-66) DE
 #      cuadros/ (-M gb-proyecto). PRIMERO: SU CONTENIDO PASA ASÍ POR TODOS
 #      LOS FILTROS. FRENA EL VIEJO ::: {.table}
@@ -92,6 +92,13 @@ RUTA_SIGLAS_PIEZAS="tmp/siglas-piezas.txt"
 #      role="volada"> (SC-62). ANTES DE cite-to-biblioref-db, QUE SERIALIZA
 #      LAS NOTAS CON pandoc.write: UNA \sptext QUE LLEGUE AHÍ SIN TRADUCIR
 #      LA DESCARTA EL ESCRITOR DocBook (MEDIDO: «la 2 edición»)
+#  2b° nota-simbolo             \footnote{*}{texto} DE UN TÍTULO DE SECCIÓN A
+#      UNA NOTA CON LA MARCA <?gb-nota-simbolo …?> (SC-86). DESPUÉS DE
+#      volada; ANTES DE corte-titulo, PARA QUE UNA \\ DEL TEXTO DE LA NOTA
+#      NO SE TOME COMO CORTE DEL TÍTULO, Y DE cifras, indice Y siglas, QUE
+#      ASÍ ENCUENTRAN EL TEXTO ADENTRO DE LA NOTA. ANTES DE
+#      cite-to-biblioref-db, QUE SERIALIZA LA NOTA Y PASA LA MARCA A
+#      <footnote label="…">. SOLO EN EL LIBRO, POR AHORA
 #   3° corte-titulo             EL \\ DE UN TÍTULO A <?gb-corte?> (SC-63). CON
 #      volada, ANTES DE LOS FILTROS QUE SERIALIZAN
 #   4° cifras                   \num, \SI Y \SIrange A <phrase role="cantidad">
@@ -138,6 +145,7 @@ FILTROS_LIBRO=(
     guillemets-to-quoted-db.lua
     url.lua
     volada.lua
+    nota-simbolo.lua
     corte-titulo.lua
     cifras.lua
     indice.lua

@@ -54,7 +54,8 @@ RC APLICADAS:
                 xmlns:gbvr="urn:gbpublisher:verso"
                 xmlns:gbct="urn:gbpublisher:citas"
                 xmlns:gbg="urn:gbpublisher:grafico"
-                exclude-result-prefixes="db xs xlink nl gbc gbv gbvr gbct gbg">
+                xmlns:gbns="urn:gbpublisher:nota-simbolo"
+                exclude-result-prefixes="db xs xlink nl gbc gbv gbvr gbct gbg gbns">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -85,6 +86,9 @@ RC APLICADAS:
 
   <!-- GRÁFICOS (SC-69): LA FIGURA INTERACTIVA, COMÚN A LAS DOS HOJAS DE HTML -->
   <xsl:include href="grafico-comun.xsl"/>
+
+  <!-- NOTA CON SÍMBOLO (SC-86): EL SIGNO DE CADA label DEL CANÓNICO -->
+  <xsl:include href="nota-simbolo-comun.xsl"/>
 
   <!-- Output principal: no se usa en Fase 1 (todo va por xsl:result-document) -->
   <xsl:output method="xml"
@@ -2236,16 +2240,35 @@ RC APLICADAS:
        LLEVA data-fn-id Y data-fn-text PARA QUE EL JS CONSTRUYA
        EL PANEL DE NOTAS Y CABLEE LA NAVEGACIÓN CRUZADA.
        CLASES fn-ref ALINEADAS CON REVISTAS.
-       NUMERACIÓN CORRELATIVA POR CAPÍTULO CON xsl:number. -->
+       NUMERACIÓN CORRELATIVA POR CAPÍTULO CON xsl:number.
+       LA NOTA CON SÍMBOLO (label, SC-86) NO SE CUENTA: LA MARCA ES SU
+       SIGNO Y SU data-fn-id ES s1, s2… EN EL CAPÍTULO, PARA QUE NO
+       CHOQUE CON EL DE LAS NUMERADAS. EL JS NO CAMBIA: EL PANEL MUESTRA
+       «Nota *» PORQUE TOMA EL TEXTO DE LA MARCA. -->
   <xsl:template match="db:footnote | footnote">
     <xsl:variable name="num">
-      <xsl:number count="db:footnote | footnote"
-                  from="db:chapter | db:preface | db:appendix | db:dedication
-                        | db:colophon | db:glossary
-                        | chapter | preface | appendix | dedication
-                        | colophon | glossary"
-                  level="any"/>
+      <xsl:choose>
+        <xsl:when test="@label">
+          <xsl:text>s</xsl:text>
+          <xsl:number count="db:footnote[@label] | footnote[@label]"
+                      from="db:chapter | db:preface | db:appendix | db:dedication
+                            | db:colophon | db:glossary
+                            | chapter | preface | appendix | dedication
+                            | colophon | glossary"
+                      level="any"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:number count="db:footnote[not(@label)] | footnote[not(@label)]"
+                      from="db:chapter | db:preface | db:appendix | db:dedication
+                            | db:colophon | db:glossary
+                            | chapter | preface | appendix | dedication
+                            | colophon | glossary"
+                      level="any"/>
+        </xsl:otherwise>
+      </xsl:choose>
     </xsl:variable>
+    <xsl:variable name="marca"
+      select="if (@label) then gbns:signo(string(@label)) else string($num)"/>
     <!-- EL CONTENIDO DE LA NOTA VA AL data-fn-text COMO HTML
          SERIALIZADO, Y EL JS LO INYECTA EN EL PANEL CON innerHTML.
          ANTES IBA COMO TEXTO PLANO (MODO texto-plano): EL PANEL PERDÍA
@@ -2262,7 +2285,7 @@ RC APLICADAS:
                           map{'method':'html', 'html-version':5.0, 'indent':false()}))}"
          onclick="highlightPanel('notas','{$num}')"
          style="cursor:pointer">
-      <xsl:value-of select="$num"/>
+      <xsl:value-of select="$marca"/>
     </sup>
   </xsl:template>
 

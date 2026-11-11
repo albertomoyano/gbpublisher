@@ -38,7 +38,8 @@
                 xmlns:gbv="urn:gbpublisher:conversacion"
                 xmlns:gbvr="urn:gbpublisher:verso"
                 xmlns:gbct="urn:gbpublisher:citas"
-                exclude-result-prefixes="xsl xs db xlink nl gbc gbv gbvr gbct">
+                xmlns:gbns="urn:gbpublisher:nota-simbolo"
+                exclude-result-prefixes="xsl xs db xlink nl gbc gbv gbvr gbct gbns">
 
   <!-- NIVELADO DE COMILLAS POR PROFUNDIDAD. ES LA ÚNICA REGLA DEL PROYECTO:
        NO DEFINIR ACÁ OTRA PLANTILLA PARA db:quote. SIN ESTE INCLUDE, <quote>
@@ -66,6 +67,9 @@
        EL PDF, Y LA LECTURA DE citas.html (PARÁMETRO bib_dir) -->
   <xsl:include href="cita-comun.xsl"/>
   <xsl:include href="cita-fragmentos.xsl"/>
+
+  <!-- NOTA CON SÍMBOLO (SC-86): EL SIGNO DE CADA label DEL CANÓNICO -->
+  <xsl:include href="nota-simbolo-comun.xsl"/>
 
   <!-- ================================================
        PARÁMETROS DE ENTRADA
@@ -323,12 +327,11 @@
                 </xsl:choose>
               </h2>
               <xsl:for-each select="$cap//db:footnote | $cap//footnote">
-                <xsl:variable name="fn-num">
-                  <xsl:number count="db:footnote | footnote" level="any"/>
-                </xsl:variable>
+                <!-- EL id Y LA MARCA, LOS MISMOS DE LA LLAMADA (SC-86) -->
+                <xsl:variable name="fn-num" select="gbns:id-nota(.)"/>
                 <div role="doc-endnote" id="fn-{$fn-num}" class="nota-item">
                   <p>
-                    <sup class="nota-num"><xsl:value-of select="$fn-num"/></sup>
+                    <sup class="nota-num"><xsl:value-of select="gbns:marca-nota(.)"/></sup>
                     <xsl:text> </xsl:text>
                     <xsl:apply-templates select="db:para/node() | para/node()"/>
                     <xsl:text> </xsl:text>
@@ -713,12 +716,39 @@
        EL TEXTO VA EN LA SECCIÓN endnotes (template raíz).
        ================================================ -->
   <xsl:template match="db:footnote | footnote">
-    <xsl:variable name="fn-num">
-      <xsl:number count="db:footnote | footnote" level="any"/>
-    </xsl:variable>
+    <xsl:variable name="fn-num" select="gbns:id-nota(.)"/>
     <sup class="nota-ref"><a id="fnref-{$fn-num}" href="#fn-{$fn-num}"
-      epub:type="noteref" role="doc-noteref"><xsl:value-of select="$fn-num"/></a></sup>
+      epub:type="noteref" role="doc-noteref"><xsl:value-of select="gbns:marca-nota(.)"/></a></sup>
   </xsl:template>
+
+  <!-- ================================================
+       NOTA CON SÍMBOLO (SC-86): EL id Y LA MARCA DE UNA NOTA, QUE
+       USAN LA LLAMADA Y LA LISTA DE NOTAS DEL CAPÍTULO. LA NUMERADA
+       SE CUENTA SIN LAS DE SÍMBOLO (1, 2, 3); LA DE SÍMBOLO LLEVA SU
+       SIGNO Y UN id s1, s2… QUE NO CHOCA CON EL DE LAS NUMERADAS.
+       ================================================ -->
+  <xsl:function name="gbns:id-nota" as="xs:string">
+    <xsl:param name="nota" as="element()"/>
+    <xsl:variable name="n">
+      <xsl:for-each select="$nota">
+        <xsl:choose>
+          <xsl:when test="@label">
+            <xsl:text>s</xsl:text>
+            <xsl:number count="db:footnote[@label] | footnote[@label]" level="any"/>
+          </xsl:when>
+          <xsl:otherwise>
+            <xsl:number count="db:footnote[not(@label)] | footnote[not(@label)]" level="any"/>
+          </xsl:otherwise>
+        </xsl:choose>
+      </xsl:for-each>
+    </xsl:variable>
+    <xsl:sequence select="string($n)"/>
+  </xsl:function>
+  <xsl:function name="gbns:marca-nota" as="xs:string">
+    <xsl:param name="nota" as="element()"/>
+    <xsl:sequence select="if ($nota/@label) then gbns:signo(string($nota/@label))
+                          else gbns:id-nota($nota)"/>
+  </xsl:function>
 
   <!-- ================================================
        REFERENCIA (biblioref) → enlace a la bibliografía

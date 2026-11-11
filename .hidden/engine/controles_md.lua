@@ -88,6 +88,11 @@ local CONTROLES = {
   -- PARA TeX UN COMENTARIO, Y SE TRAGA EL TEXTO QUE SIGUE (MEDIDO CON
   -- pandoc 3.1.3). SE PIERDE TEXTO: FRENA. url.lua FRENA TAMBIÉN
   url_rota = "error",
+  -- MÁS DE UNA NOTA EN UN TÍTULO DE SECCIÓN, NUMERADA O CON SÍMBOLO: titlesec
+  -- GUARDA UNA SOLA Y LAS OTRAS SE PIERDEN DEL PDF SIN AVISO (GV-190). ES UN
+  -- TEMA DE CORRECCIÓN A RESOLVER CON EL AUTOR (DECISIÓN DE ALBERTO, 11/11,
+  -- SC-29). nota-simbolo.lua FRENA IGUAL AL GENERAR
+  nota_doble_en_titulo = "error",
 }
 
 -- LARGO MÁXIMO DEL CONTEXTO QUE ACOMPAÑA A UN HALLAZGO, EN CARACTERES
@@ -105,6 +110,12 @@ local PATRON_LLAMADA = "%[%^[^%]%s]+%]"
 --                                  DICE CÓMO SE ESCRIBE
 --   \url{…}                        url.lua (7/11/2026). LA FORMA ENTERA LA
 --                                  CONTROLA revisar_crudo_inlines (url_rota)
+--   \footnote{…}                   nota-simbolo.lua (SC-86): EL SÍMBOLO DE
+--                                  UNA NOTA DE TÍTULO. EL TEXTO VA EN EL
+--                                  PAR DE LLAVES QUE SIGUE, QUE PANDOC LEE
+--                                  COMO MARKDOWN (GV-189); CON ESE PAR
+--                                  VACÍO LLEGA TODO JUNTO Y NO COINCIDE: SE
+--                                  INFORMA, Y EL FILTRO FRENA
 local PATRONES_LATEX = {
   "^\\sptext{.*}$",
   "^\\num{.*}$",
@@ -113,6 +124,7 @@ local PATRONES_LATEX = {
   "^\\index%[.*}$",
   "^\\index{.*}$",
   "^\\url{.*}$",
+  "^\\footnote%b{}$",
 }
 
 -- \url{…} BIEN LEÍDO: LAS LLAVES BALANCEADAS Y NADA DESPUÉS. LO MISMO QUE
@@ -378,7 +390,7 @@ local function revisar_crudo_inlines(aInlines, bloque)
         elseif not latex_admitido(el.text) then
           registrar("latex_en_linea",
             "la orden de LaTeX «" .. contexto(el.text) .. "» se pierde en las tres salidas " ..
-            "(las admitidas en el texto son \\sptext, \\num, \\SI, \\SIrange, \\index y \\url): «" ..
+            "(las admitidas en el texto son \\sptext, \\num, \\SI, \\SIrange, \\index y \\url, y \\footnote en un título): «" ..
             contexto_crudo(bloque) .. "»")
         end
       -- --- 2. HTML: TODO, MENOS LOS COMENTARIOS ---
@@ -486,6 +498,36 @@ local function revisar_cortes(doc)
     Plain = function(b) revisar_cortes_inlines(b.content, b) end,
     LineBlock = function(b)
       for _, aLinea in ipairs(b.content) do revisar_cortes_inlines(aLinea, b) end
+    end,
+  })
+end
+
+-- ============================================================================
+-- Función   : revisar_notas_titulo
+-- Propósito : Una sola nota por título de sección (SC-29, SC-86). Cuenta las
+--             notas del primer nivel del título: las numeradas, que Pandoc ya
+--             leyó como Note, y las de símbolo, que en esta pasada, sin los
+--             filtros de producción, siguen siendo \footnote{…} crudo
+--             (GV-189).
+-- Parámetros: doc — el documento
+-- ============================================================================
+local function revisar_notas_titulo(doc)
+  doc:walk({
+    Header = function(h)
+      local n = 0
+      for _, el in ipairs(h.content) do
+        if el.t == "Note" then
+          n = n + 1
+        elseif el.t == "RawInline" and (el.format == "tex" or el.format == "latex")
+               and el.text:sub(1, 10) == "\\footnote{" then
+          n = n + 1
+        end
+      end
+      if n > 1 then
+        registrar("nota_doble_en_titulo",
+          "el título tiene " .. n .. " notas y va una sola: en el PDF se pierden " ..
+          "todas menos una, sin aviso: «" .. contexto(h) .. "»")
+      end
     end,
   })
 end
@@ -773,6 +815,7 @@ function Pandoc(doc)
   revisar_imagenes(doc, sRaiz)
   revisar_crudo(doc)
   revisar_cortes(doc)
+  revisar_notas_titulo(doc)
   revisar_cifras(doc)
   revisar_espacio_fijo(doc)
   revisar_urls(doc)

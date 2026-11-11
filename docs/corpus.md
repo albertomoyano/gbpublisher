@@ -1701,15 +1701,19 @@ En el contenedor, con TeX Live 2023, las fuentes de la estética y las cuatro ca
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint: la prueba fue en el contenedor, sin la base. Del PDF de revista se verificó el .tex que emite jats-to-latex, sin compilar el artículo entero.
 
-### SC-29 — Notas al pie en títulos de sección: marca numérica y dos versiones del título
+### SC-29 — Notas al pie en títulos de sección: una por título, marca numérica o con símbolo, y dos versiones del título
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / DocBook 5.2 / JATS 1.4 / SaxonJ-HE 12.5 / LuaLaTeX + titlesec + hyperref + biblatex / TeX Live 2023 / contenedor · **Verificado:** 2026-10
 
 DECISIÓN CERRADA. Un título de sección (`##` y siguientes) puede llevar una nota al pie. El título de la pieza, del libro o de la revista no: es una decisión editorial del modelo de trabajo.
 
-LA MARCA ES NUMÉRICA
+UNA NOTA POR TÍTULO
 
-La nota del título se numera con las demás, en el orden del texto. Se renuncia a la marca con asterisco u otro signo que en LaTeX da `\Footnote{}{}` (consejo de la AMS: no poner números en títulos ni fórmulas). Markdown no tiene forma de expresarla, y la confusión que se buscaba evitar la compensan los corchetes del PDF y el hipervínculo de EPUB y HTML.
+Un título de sección lleva una sola nota (decisión de Alberto, 11/11/2026): titlesec guarda una sola y las otras se pierden del PDF sin aviso (GV-190). Lo informa el control `nota_doble_en_titulo` (SC-54); lo que sobre es un tema de corrección con el autor.
+
+LA MARCA
+
+La nota del título se numera con las demás, en el orden del texto. Desde el 11/11/2026 puede llevar, en cambio, un símbolo de la secuencia de la AMS, `\footnote{*}{texto}` (SC-86). Acá se había renunciado a esa marca porque Markdown no tenía forma de expresarla; la tiene (GV-189).
 
 EL CANÓNICO YA ESTABA BIEN
 
@@ -1762,7 +1766,7 @@ ENLACES EN EL HTML Y EL EPUB DE REVISTA
 
 `jats-to-html` y `jats-to-epub` no tenían plantilla para `<ext-link>`: la regla incorporada dejaba solo el texto y el enlace se perdía, en el cuerpo y en las notas. Ahora es un `<a href>`, con `target="_blank"` en el HTML.
 
-**Relaciones:** vinculo:SC-28,apoya:GV-70
+**Relaciones:** vinculo:SC-28,apoya:GV-70,vinculo:SC-86,vinculo:GV-190
 
 **PENDIENTE:** Probar con un libro y una revista reales en Mint.
 
@@ -3210,6 +3214,7 @@ LOS CONTROLES
     latex_en_linea            error   una orden de LaTeX en el texto que no es
                                       de las admitidas: \sptext, \num, \SI,
                                       \SIrange, \index (GV-116, SC-77);
+                                      \footnote{…} en un título (SC-86);
                                       o una de ellas incompleta (GV-124)
     latex_suelto              error   una orden de LaTeX sola entre párrafos,
                                       fuera de ::: espaciov
@@ -3220,6 +3225,9 @@ LOS CONTROLES
     porcentaje_suelto         aviso   88% o 88 % escrito suelto (SC-64, SC-65)
     cifra_fuera_de_num        aviso   una cifra con punto o coma de miles fuera
                                       de \num (SC-64, SC-65)
+    nota_doble_en_titulo      error   más de una nota en un título de sección,
+                                      numerada o con símbolo (SC-29, SC-86,
+                                      GV-190)
     [WARNING] de pandoc       aviso   entre ellos, nota definida y nunca llamada
 
 `definicion_sin_texto` lee el archivo fuente (`PANDOC_STATE.input_files`) porque en el AST el caso ya no existe (GV-99), y saltea los bloques de código cercados con ``` o ~~~. Una definición de nota vacía al final del archivo la informan dos controles, `definicion_sin_texto` (con la línea) y `nota_vacia`: es el mismo error.
@@ -3260,7 +3268,7 @@ Un decimal suelto (`2.5`, `3,14`) no se informa.
 
 MEDIDO: un .md con `\num{12000}` y «3.500» en un título, «88%», «88 %», «88» con espacio duro y «77» con espacio fino, «1.500», «12,345», «ley 34.555», «decreto 2.345/26», un DOI en un enlace, «2.5» y «3,14», y una nota con «4.000» y «5%»: diez avisos, los esperados; el decreto, el DOI y los decimales, ninguno.
 
-**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63,vinculo:SC-65,apoya:GV-124,vinculo:SC-75,vinculo:SC-77
+**Relaciones:** vinculo:SC-53,vinculo:SC-46,vinculo:SC-11,vinculo:SC-13,apoya:GV-99,vinculo:SC-30,vinculo:SC-32,vinculo:GV-116,vinculo:SC-62,vinculo:SC-39,vinculo:SC-63,vinculo:SC-65,apoya:GV-124,vinculo:SC-75,vinculo:SC-77,vinculo:SC-86
 
 **PENDIENTE:** (1) Revistas: usar el mismo filtro, con los controles de LaTeX y HTML crudos, cuando su cadena se migre a engine/ (SC-13); entonces sacar el mensaje de comillas de guillemets-to-quoted-db.lua, que hoy queda solo por revistas. (2) Probar en Mint con un libro real los controles de notas, imágenes y comillas.
 
@@ -3814,10 +3822,10 @@ PDF
 
 Las plantillas de título de sección de las dos hojas arman el título dos veces (SC-29): la apertura y el argumento opcional que va al sumario, al folio y a los marcadores (`notasTitulo`).
 
-- `docbook-to-latex.xsl`: una plantilla para `processing-instruction('gb-corte')` escribe `\gbCorteTitulo` en la apertura y nada en el sumario. Los títulos que vienen de la base no pasan por ella: los arman `f:titulo-compuesto` y `f:titulo-plano`.
+- `docbook-to-latex.xsl`: una plantilla para `processing-instruction('gb-corte')` escribe `\gbCorteSeccion` en la apertura y nada en el sumario. Los títulos que vienen de la base no pasan por ella: los arman `f:titulo-compuesto` y `f:titulo-plano`, con `\gbCorteTitulo`.
 - `jats-to-latex.xsl`: `sec/title/break` hace lo mismo. La plantilla general de `break` escribe `\\` sin mirar el contexto, y en un título habría ido también al sumario y a los marcadores.
 
-`\gbCorteTitulo` ya está en el contrato del libro (versión 6) y en el preámbulo de la revista (`m_XML`): no hay contrato nuevo.
+`\gbCorteSeccion` es `\newline` (contrato 23 del libro, 11/11/2026). Hasta entonces la hoja escribía `\gbCorteTitulo`, que es `\\`: en la forma `hang` de titlesec, con `\raggedright`, `\\` termina el párrafo del título, y la segunda línea caía debajo del número (GV-192). Con `\newline` queda alineada con el texto del título, como cuando LaTeX lo parte solo: lo que da la composición en LaTeX (decisión de Alberto). `\gbCorteTitulo` sigue siendo `\\` para los títulos centrados que vienen de la base. En el preámbulo de la revista, `jats-to-latex` sigue escribiendo `\gbCorteTitulo` (ver el pendiente).
 
 MEDIDO: el .tex compila con LuaLaTeX, titlesec (`newlinetospace`) y hyperref, sin errores ni avisos. La apertura corta en dos y en tres líneas; el sumario y los marcadores (leídos con qpdf) salen en una línea. Con una nota en el título (SC-29) y una volada (SC-62), también.
 
@@ -3851,9 +3859,11 @@ Alberto, 21/10, con un libro y una revista reales: el PDF corta en la apertura d
 
 Alberto, 11/11, en un libro: el corte escrito a mano y el insertado desde el panel. El PDF corta; el HTML y el EPUB salen de corrido. Desde el panel, una inserción en un título de sección y dos avisos: con el cursor en un párrafo y con una palabra seleccionada. La fila sigue en borrador hasta probarla en una revista (gbShortcodes `datos-v5-024.sql`).
 
-**Relaciones:** vinculo:SC-28,vinculo:SC-29,vinculo:SC-39,vinculo:SC-54,vinculo:SC-62,vinculo:GV-121,vinculo:RF-11,vinculo:SC-34
+Alberto, 11/11, en el mismo libro, con el arreglo de GV-192 (contrato 23): la segunda línea del título de sección queda alineada con el texto del título en el PDF; el HTML y el EPUB, sin cambios. Liberado para libros con gbShortcodes `datos-v5-026.sql`. En revistas, la fila queda `no_aplica` hasta la refactorización del módulo de revistas, que la retoma (decisión de Alberto, 11/11).
 
-**PENDIENTE:** Falta en Mint: un caso que frene (corte al final, dos seguidos o dentro de una bastardilla) y el control corte_fuera_de_titulo. El ODT, cuando se encare (decisión de Alberto, 21/10). En el panel (corte-titulo, en borrador hasta probarlo en una revista, SC-34): en una revista, la inserción y las tres salidas, después de la refactorización del módulo de revistas; en los dos productos, los avisos que faltan (# del capítulo en un libro, al principio, al final, dentro de una palabra, pegado a otro corte) y la ayuda.
+**Relaciones:** vinculo:SC-28,vinculo:SC-29,vinculo:SC-39,vinculo:SC-54,vinculo:SC-62,vinculo:GV-121,vinculo:RF-11,vinculo:SC-34,vinculo:GV-192
+
+**PENDIENTE:** Falta en Mint, en libros: un caso que frene en la conversión (corte al final, dos seguidos o dentro de una bastardilla), el control corte_fuera_de_titulo y los avisos del panel que no se vieron (# del capítulo, al principio, al final, dentro de una palabra, pegado a otro corte). Revistas, en la refactorización del módulo (otra conversación): `jats-to-latex.xsl` escribe `\gbCorteTitulo` en `sec/title/break` y la segunda línea cae debajo del número (GV-192), se corrige con `\gbCorteSeccion` como en el libro; después, la fila corte-titulo pasa de no_aplica a borrador y se prueba en una revista. El ODT, cuando se encare (decisión de Alberto, 21/10).
 
 ### SC-64 — Cifras y unidades: la norma internacional, escrita con siunitx
 
@@ -5155,6 +5165,74 @@ PROBADO por Alberto en Linux Mint (07/11/2026): el libro de Duek integrado al po
 **Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-83,vinculo:SC-84,vinculo:SC-25,vinculo:SC-53,vinculo:SC-22,apoya:GV-188
 
 **PENDIENTE:** El HTML integrado de las revistas (etapa A de las salidas de revistas): la ficha del número y «Archivos» en gbWeb. Las figuras en el panel con el pie completo y uno corto en el texto (pedido de Alberto).
+
+### SC-86 — Nota con símbolo en un título de sección: \footnote{símbolo}{texto}, con el diccionario de la AMS (libros)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / jing 20220510 / LuaLaTeX (TeX Live 2023) con titlesec 2.16, footmisc, scrextend y hyperref / fontTools / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (decisiones de Alberto, 11/11/2026). Deja sin efecto la renuncia de SC-29: un título de sección puede llevar una nota con símbolo en lugar de número, como `\Footnote{}{}` en LaTeX (consejo de la AMS). Por ahora solo en libros; las revistas, después de su refactorización.
+
+CÓMO SE ESCRIBE
+
+    ## La edición universitaria\footnote{*}{Versión revisada de la ponencia leída en las *Jornadas*.}
+
+El primer par de llaves lleva el símbolo; el segundo, el texto, en Markdown (bastardilla, citas, volada, cifras). Pegado al título y entero en su línea. El sumario sale solo, como en SC-29: no hace falta escribir el argumento opcional.
+
+EL DICCIONARIO
+
+La secuencia de la AMS sin ‖, que IBM Plex Sans y Plex Sans Condensed no tienen (medido con fontTools):
+
+    en el .md       *    \dag   \ddag   \S   \P   **     \dag\dag   \ddag\ddag
+    signo           *    †      ‡       §    ¶    **     ††         ‡‡
+    nombre (label)  ast  dag    ddag    S    P    ast2   dag2       ddag2
+    índice (PDF)    1    2      3       4    5    6      7          8
+
+Cerrado (decisión de Alberto): sin números, que chocarían con la numeración, ni otros signos. Tres gemelos, en el mismo orden: `nota-simbolo.lua`, `nota-simbolo-comun.xsl` y `\gbSimboloNota` del contrato.
+
+EL SÍMBOLO LO ELIGE QUIEN EDITA
+
+Sin contador: el símbolo es un dato del canónico y sale igual en todas las salidas. La regla de la página —el mismo símbolo puede volver cinco páginas después, nunca dos veces en la misma— la controla quien edita en la prueba del PDF, como en LaTeX (decisión de Alberto). Un contador por página (footmisc `perpage`) daría símbolos distintos en el PDF y en la web, y reiniciaría también las numeradas. Las numeradas no se enteran: 1, 2, *, 3, 4, **, 5.
+
+LA REGLA
+
+- Solo en un título de sección: `##` y siguientes. En el `#` del capítulo, que sale de la base (SC-28), o fuera de un título, frena.
+- Una sola nota por título, numerada o con símbolo (decisión de Alberto: lo que sobre es un tema de corrección con el autor). titlesec guarda una sola (GV-190): lo informa el control `nota_doble_en_titulo` (SC-54) y lo frena el filtro.
+- Frena también: un símbolo fuera del diccionario; un solo par de llaves; un espacio entre los dos pares; el texto sin la llave de cierre (una nota partida en dos líneas); el texto vacío; una nota dentro de la nota.
+
+CANÓNICO
+
+`nota-simbolo.lua`, en la cadena del libro después de `volada.lua` y antes de `corte-titulo.lua`, reconstruye la nota desde lo que deja Pandoc (GV-189): cuenta las llaves en los Str del primer nivel, arma un Note con la marca `<?gb-nota-simbolo ast?>` al comienzo y rearma el identificador automático del título, que traía el texto de la nota. `cite-to-biblioref-db.lua`, que serializa las notas, quita la marca y la pasa al atributo:
+
+    DocBook   <title>La edición universitaria<footnote label="ast"><para>…</para></footnote></title>
+
+`label` es NMTOKEN: va el nombre, no el signo (GV-191). `controles_md.lua` admite `\footnote{…}` en `latex_en_linea`.
+
+PDF (CONTRATO 22)
+
+- `docbook-to-latex.xsl`: en la apertura del título, `\gbNotaTituloSimbolo{N}{texto}`; fuera de un título, `\gbNotaSimbolo{N}{texto}`. El sumario, el folio y los marcadores van sin la nota, como en SC-29.
+- `\gbNotaSimbolo{N}` es `\footnote[1000+N]`: con el argumento opcional no avanza el contador, y titlesec difiere la nota con el mismo valor (GV-190). `\gbNotaTituloSimbolo` no emite nada cuando titlesec mide el título (GV-70).
+- La estética arma `\thefootnote` con `\gbMarcaNota{[\arabic{footnote}]}`: un valor mayor que `\gbBaseSimbolo` (1000) compone el símbolo, sin corchetes; si no, la marca numerada de la casa. Una estética de editorial que no use `\gbMarcaNota` mostraría «[1001]».
+- La llamada con símbolo de un título no tiene vínculo en el PDF (GV-190; aceptado por Alberto): el lector ve el símbolo al pie de la misma página.
+
+HTML
+
+`docbook-to-html.xsl`: la marca es el signo y no se cuenta en la numeración del capítulo; su `data-fn-id` es `s1`, `s2`… El panel muestra «Nota *» y la navegación cruzada funciona igual: el JS no cambia.
+
+EPUB
+
+`docbook-to-epub.xsl`: la llamada lleva el signo (`epub:type="noteref"`) y la lista de notas del capítulo la encabeza con el mismo signo; los ids son `fn-s1` y `fnref-s1`. Las numeradas se cuentan sin las de símbolo.
+
+MEDIDO EN EL CONTENEDOR
+
+Pandoc 3.1.3 con volada, nota-simbolo, corte-titulo y cite-to-biblioref-db: el capítulo valida contra el RNG de DocBook 5.2 (jing), y los once casos que frenan, frenan con su mensaje. SaxonJ-HE 12.5: `docbook-to-latex` (la apertura con la nota, el sumario sin ella), `docbook-to-epub` (ids y marcas) y la plantilla de nota de `docbook-to-html`. LuaLaTeX (TeX Live 2023, titlesec 2.16) con las capas reales del libro —contrato, contrato común, estética y hyperref; la estética con las Plex .ttf del sistema en lugar de .otf—: «1, 2, *, 3, 4, †, ‡, 5, [6] en un título, 7», cada nota al pie con su marca, sin avisos de hyperref, siete vínculos para las siete numeradas.
+
+PROBADO EN MINT
+
+Alberto, 11/11, con un libro real («El Atlántico de los exilios»): en el PDF, la llamada * en la apertura del título, sin corchetes, y al pie la nota con el mismo símbolo entre las numeradas, que siguen [2], *, [3]; en el HTML, la llamada * y «Nota *» en el panel; en el EPUB, la llamada * y la nota emergente encabezada por *. Liberada para libros con gbShortcodes `datos-v5-026.sql` (decisión de Alberto, 11/11).
+
+**Relaciones:** vinculo:SC-29,vinculo:SC-28,vinculo:SC-54,vinculo:SC-63,vinculo:SC-62,vinculo:GV-70,vinculo:GV-189,vinculo:GV-190,vinculo:GV-191
+
+**PENDIENTE:** Falta en Mint: epubcheck del EPUB, la inserción desde el panel, la ayuda y un caso que frene. Revistas, en la refactorización del módulo (otra conversación): el canónico JATS (fn/@symbol con <label>), jats-to-latex, jats-to-html, jats-to-epub, los sabores SciELO y Redalyc, y la fila nota-simbolo de no_aplica a borrador. El ODT.
 
 ---
 
@@ -9530,6 +9608,79 @@ Es el post-procesado «Pretty URLs» de Netlify. Se apaga desde el repositorio c
 CONSECUENCIA: un archivo que se verifica por su huella después de publicarse no puede ser un .html servido por un host que reescribe páginas.
 
 **Relaciones:** vinculo:GV-179,vinculo:SC-83,vinculo:SC-84,vinculo:SC-85
+
+### GV-189 — Pandoc 3.1.3: \footnote{x}{y} en Markdown — el primer par de llaves es LaTeX crudo y el segundo, Markdown con las llaves como texto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / jing 20220510 / LuaLaTeX (TeX Live 2023) con titlesec 2.16, footmisc, scrextend y hyperref / fontTools / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido con Pandoc 3.1.3, lector markdown, sin filtros:
+
+    en el .md                                      resultado
+    ## A\footnote{*}{Texto *cursiva* [@c].}         RawInline tex "\footnote{*}", Str "{Texto", Emph, Cite, Str ".}"
+    ## A\footnote{\dag\dag}{x}                   RawInline tex "\footnote{\dag\dag}", Str "{x}"
+    ## A\footnote{*} {x}                            RawInline, Space, Str "{x}"
+    ## A\footnote{*}{}                              un solo RawInline: "\footnote{*}{}"
+    ## A\footnote{*}{ }                             RawInline "\footnote{*}"; el par con un espacio desaparece
+    ## A\footnote{texto}                            RawInline "\footnote{texto}"
+    ## A\footnote{*}{Nota (salto) sigue}             el título termina en Str "{Nota"; «sigue}» es otro párrafo
+
+El segundo par se lee como Markdown: la bastardilla, las citas, \sptext y \num (como RawInline) y una nota ^[…] adentro salen como en cualquier texto. Las llaves quedan como caracteres de los Str, también las de adentro («{llaves}»): para encontrar el cierre hay que contarlas. Pandoc no interpreta \footnote: no crea una nota (Note), y el RawInline lo descartan los escritores de XML (GV-116).
+
+El identificador automático del título incluye el texto del segundo par: «## A\footnote{**}{*Cursiva* inicial}» da `acursiva-inicial`.
+
+**Relaciones:** apoya:SC-86,vinculo:GV-116,vinculo:GV-124
+
+### GV-190 — titlesec 2.16: dentro de un título, \footnote es \footnotemark más un \footnotetext que se compone después; guarda una sola nota
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / jing 20220510 / LuaLaTeX (TeX Live 2023) con titlesec 2.16, footmisc, scrextend y hyperref / fontTools / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Leído en titlesec.sty 2.16 (2023/10/27) y medido con LuaLaTeX (TeX Live 2023), footmisc (bottom, stable), scrextend y hyperref, con las capas del libro.
+
+Al componer un título, titlesec redefine \footnote: emite la llamada con \footnotemark y guarda el texto con `\gdef\ttl@fn{\footnotetext{…}}`, que se compone después del título (`\ttl@savefn`, `\ttl@finmarks`).
+
+- Una sola nota por título: cada \footnote pisa `\ttl@fn`. Con dos notas numeradas en un título, la primera pierde el texto sin aviso (medido: la llamada [2] queda sin nota al pie; la [3] sale).
+- El texto se compone fuera del título y del grupo que lo rodeaba. Un \footnote agrupado, con \thefootnote local y el contador devuelto a mano, daba la llamada con el símbolo y, al pie, el número ([2] en lugar de *).
+- Con el argumento opcional, `\footnote[N]{…}`, titlesec guarda `\footnotemark[N]` y `\footnotetext[N]{…}`: la llamada y el texto usan el mismo valor, y el contador no avanza. Es lo que usa la nota con símbolo (SC-86).
+- hyperref no vincula esa llamada de un título; la de un `\footnote[N]` en un párrafo, sí. Medido: siete vínculos para siete notas numeradas, ninguno para tres notas con símbolo en títulos; sin avisos de destinos repetidos.
+
+Vale también para la nota numerada de SC-29: una por título.
+
+**Relaciones:** apoya:SC-86,apoya:SC-29,vinculo:GV-70
+
+### GV-191 — DocBook 5.2: footnote/@label es NMTOKEN — «*» y «†» no validan
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / jing 20220510 / LuaLaTeX (TeX Live 2023) con titlesec 2.16, footmisc, scrextend y hyperref / fontTools / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+En el RNG de DocBook 5.2, `db.footnote.label.attribute` («Identifies the desired footnote mark») es de tipo NMTOKEN.
+
+Medido con jing 20220510: `<footnote label="*">` y `label="†"` fallan («value of attribute "label" is invalid; must be an XML NMTOKEN»); `label="ast"` y `label="dag"` validan. Un NMTOKEN admite letras, dígitos, punto, guion, guion bajo y dos puntos: un signo tipográfico, no.
+
+Por eso el canónico del libro guarda el nombre del símbolo y las hojas lo traducen (SC-86). En JATS 1.4, `fn/@symbol` es CDATA y `<fn>` admite `<label>` (`fn-model`: `(label?, (%just-para.class;)+)`): ahí el signo entra tal cual.
+
+**Relaciones:** apoya:SC-86
+
+### GV-192 — LaTeX: con \raggedright, \\ termina el párrafo; en la forma hang de titlesec la línea cortada cae debajo del número
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** LuaLaTeX (TeX Live 2023) con titlesec 2.16 y la estética del libro / SaxonJ-HE 12.5 / Pandoc 3.1.3 / contenedor Ubuntu 24.04; gbpublisher en Linux Mint (observación de Alberto, 11/11) · **Verificado:** 2026-11
+
+Observado por Alberto en Mint (11/11/2026) en un título de sección con corte: la segunda línea empezaba en el margen, debajo de «1.1», y no alineada con el texto del título como en LaTeX.
+
+POR QUÉ
+
+- En el núcleo de LaTeX, `\raggedright` cambia `\\` por `\@centercr`, que hace `\par`. titlesec solo le agrega `\nobreak` (`\ttl@changecentercr`, 2.16).
+- La forma `hang` de titlesec (`\ttlh@hang`) pone el número y su separación en una caja y compone el título como un párrafo con `\hangindent` igual al ancho de esa caja.
+- Un `\\` en el título cierra ese párrafo: la línea siguiente empieza otro, sin la sangría colgante.
+- `\newline` corta la línea dentro del mismo párrafo, y la sangría se conserva.
+
+MEDIDO
+
+LuaLaTeX (TeX Live 2023) con las capas reales del libro —la estética compone las secciones con `\titleformat{\section}[hang]{\sf\bfseries\large\raggedright}{\thesection}{.5em}{}`—: con `\\` la segunda línea empieza en el margen del número; con `\newline` queda alineada con el texto del título, igual que la segunda línea de un título largo que LaTeX parte solo. Desde el .md, por la cadena real (filtros, `docbook-to-latex`), en una sección con nota con símbolo y en una subsección: las dos alineadas.
+
+NO MEDIDO
+
+En un texto centrado (`\centering`), `\\` sirve: cada línea es un párrafo centrado. `\newline` termina la línea con `\hfil\break`, y ese `\hfil` correría la línea cortada hacia la izquierda: por eso `\gbCorteTitulo`, que usan los títulos centrados, no se cambió.
+
+**Relaciones:** apoya:SC-63,vinculo:GV-70,vinculo:GV-190
 
 ---
 
