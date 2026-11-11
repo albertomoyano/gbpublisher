@@ -8,7 +8,7 @@
 '     grupo y perfil, con los shortcodes que el diccionario deja ver
 '   - Ayuda del shortcode elegido, con el ejemplo coloreado como en el editor
 '   - Inserción según el modo: envolver, plantilla, figura, dos-partes,
-'     separador, separador-valor o codigo
+'     separador, separador-valor, codigo o marca
 '   - Cierre nombrado de los bloques (SC-33)
 '
 ' LOS DATOS SALEN DE m_CatalogoShortcodes, EL DICCIONARIO QUE LEE LO QUE
@@ -413,6 +413,7 @@ End
 '             - plantilla: inserta el marcador • en lugar del contenido y
 '               lo deja seleccionado (SC-21)
 '             - codigo: el camino de InsertarCodigo (SC-42)
+'             - marca: el camino de InsertarMarca (SC-63)
 '             Un bloque ocupa líneas propias y cierra con el ancla nombrada
 '             precedida de línea en blanco (SC-33); una marca en línea
 '             cierra en la misma línea.
@@ -442,6 +443,12 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
   ' CÓDIGO: PIDE EL LENGUAJE Y ARMA LA CERCA (SC-42)
   If oFila.sModo = m_CatalogoShortcodes.MODO_CODIGO Then
     InsertarCodigo(oFila)
+    Return
+  Endif
+
+  ' MARCA SUELTA: EL CORTE DE UN TÍTULO, CON SUS PROPIOS CONTROLES (SC-63)
+  If oFila.sModo = m_CatalogoShortcodes.MODO_MARCA Then
+    InsertarMarca(oFila)
     Return
   Endif
 
@@ -558,6 +565,160 @@ Public Sub InsertarShortcode(oFila As CShortcodeCatalogo)
   Endif
 
   ' --- 7. FOCO AL EDITOR (RC-GM-07) ---
+  FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ==============================================================================
+' Función   : InsertarMarca
+' Propósito : Inserta una marca suelta (modo marca): la apertura y el cierre
+'             juntos, en lugar de los espacios que rodean al cursor. Hoy es
+'             el corte de un título (SC-63), que se escribe como en LaTeX:
+'             pegado a la palabra anterior y con un espacio antes de la
+'             siguiente, «Hola\\ mundo» (decisión de Alberto, 11/11). El
+'             espacio es el cierre de la fila del catálogo.
+'             Controla lo que se ve en la línea: título de sección, cursor
+'             entre dos palabras, ni al principio ni al final del título, ni
+'             pegado a otra barra. Un corte dentro de una bastardilla o una
+'             negrita lo frena corte-titulo.lua al generar.
+' Parámetros: oFila As CShortcodeCatalogo — shortcode de modo marca
+' Retorna   : nada
+' ==============================================================================
+Private Sub InsertarMarca(oFila As CShortcodeCatalogo)
+
+  Dim sLinea As String
+  Dim sResto As String
+  Dim iLinea As Integer
+  Dim iColumna As Integer
+  Dim iLargo As Integer
+  Dim iNivel As Integer
+  Dim iTexto As Integer
+  Dim iIzq As Integer
+  Dim iDer As Integer
+  Dim iPos As Integer
+  Dim bLibro As Boolean
+
+  ' --- 1. SIN SELECCIÓN: LA MARCA NO ENVUELVE NI REEMPLAZA TEXTO ---
+  If m_EditorPrincipal.TextoSeleccionado() <> "" Then
+    AvisoMarca(oFila, "no se aplica sobre texto." & gb.NewLine & gb.NewLine &
+      "Quite la selección y ubique el cursor entre las dos palabras del título.")
+    Return
+  Endif
+
+  ' --- 2. LA LÍNEA DEL CURSOR: LAS COLUMNAS SON CARACTERES, BASE 0 (RC-GM-21) ---
+  iLinea = m_EditorPrincipal.ParrafoActual()
+  iColumna = m_EditorPrincipal.ColumnaActual()
+  sLinea = m_EditorPrincipal.TextoParrafo(iLinea)
+  iLargo = String.Len(sLinea)
+  bLibro = (FMain.TipoProyectoActual = m_Constantes.TIPO_LIBRO_MD)
+
+  ' --- 3. UN TÍTULO DE SECCIÓN: ## Y SIGUIENTES EN UN LIBRO, TODOS EN UNA REVISTA (SC-63) ---
+  iNivel = NivelTitulo(sLinea)
+  If iNivel = 0 Then
+    AvisoMarca(oFila, "va en un título de sección: una línea que empieza con # y un espacio." & gb.NewLine & gb.NewLine &
+      "Ubique el cursor entre las dos palabras donde va el corte.")
+    Return
+  Endif
+  ' EN UN LIBRO EL # DEL .md NO LLEGA AL CANÓNICO: EL TÍTULO DEL CAPÍTULO
+  ' SALE DE LA BASE Y SU CORTE SE ESCRIBE AHÍ (SC-28)
+  If bLibro And iNivel = 1 Then
+    AvisoMarca(oFila, "no va en el título del capítulo: en un libro, ese título sale de los metadatos del capítulo, y el corte se escribe ahí." & gb.NewLine & gb.NewLine &
+      "En el .md, el corte va en los títulos de sección (## y siguientes).")
+    Return
+  Endif
+
+  ' PRIMERA COLUMNA DEL TEXTO DEL TÍTULO: DESPUÉS DE LOS # Y SUS ESPACIOS
+  iTexto = iNivel
+  While iTexto < iLargo
+    If String.Mid(sLinea, iTexto + 1, 1) <> " " Then Break
+    Inc iTexto
+  Wend
+  If iColumna <= iTexto Then
+    AvisoMarca(oFila, "no va al principio del título.")
+    Return
+  Endif
+
+  ' --- 4. LOS ESPACIOS QUE RODEAN AL CURSOR: SON LOS QUE LA MARCA REEMPLAZA ---
+  ' EL CARÁCTER DE LA COLUMNA c ES String.Mid(sLinea, c + 1, 1)
+  iIzq = iColumna
+  While iIzq > iTexto
+    If String.Mid(sLinea, iIzq, 1) <> " " Then Break
+    Dec iIzq
+  Wend
+  iDer = iColumna
+  While iDer < iLargo
+    If String.Mid(sLinea, iDer + 1, 1) <> " " Then Break
+    Inc iDer
+  Wend
+
+  ' --- 5. DÓNDE CAE: LOS MISMOS CASOS QUE FRENA corte-titulo.lua, VISTOS ANTES ---
+  ' DESPUÉS DEL CORTE TIENE QUE SEGUIR EL TÍTULO: NO SU FIN, NI LOS
+  ' ATRIBUTOS {#id}, NI LOS # DE CIERRE
+  sResto = Trim(String.Mid(sLinea, iDer + 1))
+  If sResto = "" Or String.Left(sResto, 1) = "{" Or Replace(sResto, "#", "") = "" Then
+    AvisoMarca(oFila, "no va al final del título.")
+    Return
+  Endif
+  ' SIN ESPACIOS ALREDEDOR, EL CURSOR ESTÁ DENTRO DE UNA PALABRA
+  If iIzq = iDer Then
+    AvisoMarca(oFila, "va entre dos palabras, no dentro de una." & gb.NewLine & gb.NewLine &
+      "Ubique el cursor junto al espacio donde va el corte.")
+    Return
+  Endif
+  ' DOS CORTES SEGUIDOS: UNA BARRA A UN LADO DE LOS ESPACIOS
+  If String.Mid(sLinea, iIzq, 1) = "\\" Or String.Mid(sLinea, iDer + 1, 1) = "\\" Then
+    AvisoMarca(oFila, "no va pegado a otro corte.")
+    Return
+  Endif
+
+  ' --- 6. INSERCIÓN: LOS ESPACIOS PASAN A SER LA APERTURA Y EL CIERRE ---
+  ' «Hola |mundo» Y «Hola| mundo» DAN «Hola\\ mundo», CON EL CURSOR ANTES DE
+  ' «mundo». ReemplazarTramo CONSERVA EL DESHACER
+  iPos = m_EditorPrincipal.PosicionDe(iLinea, iIzq)
+  If Not m_EditorPrincipal.ReemplazarTramo(iPos, iDer - iIzq, oFila.sApertura & oFila.sCierre) Then Return
+
+  ' --- 7. FOCO AL EDITOR (RC-GM-07) ---
+  FMain.txtEditorProyecto.SetFocus()
+
+End
+
+' ==============================================================================
+' Función   : NivelTitulo
+' Propósito : El nivel de un título ATX del .md: de uno a seis # al comienzo
+'             de la línea, seguidos del espacio que Pandoc exige
+' Parámetros: sLinea As String — la línea
+' Retorna   : Integer — el nivel; 0 si la línea no es un título
+' ==============================================================================
+Private Function NivelTitulo(sLinea As String) As Integer
+
+  Dim iNivel As Integer
+
+  ' --- 1. LOS # DEL COMIENZO, HASTA SEIS ---
+  While iNivel < 6
+    If String.Mid(sLinea, iNivel + 1, 1) <> "#" Then Break
+    Inc iNivel
+  Wend
+
+  ' --- 2. SIN #, O SIN EL ESPACIO DESPUÉS (#hashtag, ####### SIETE): NO ES UN TÍTULO ---
+  If iNivel = 0 Then Return 0
+  If String.Mid(sLinea, iNivel + 1, 1) <> " " Then Return 0
+
+  Return iNivel
+
+End
+
+' ==============================================================================
+' Función   : AvisoMarca
+' Propósito : Avisa por qué no se insertó una marca y devuelve el foco al
+'             editor, con el cursor donde estaba
+' Parámetros: oFila As CShortcodeCatalogo — el shortcode, por su etiqueta
+'             sMotivo As String — qué falla y qué hacer
+' Retorna   : nada
+' ==============================================================================
+Private Sub AvisoMarca(oFila As CShortcodeCatalogo, sMotivo As String)
+
+  m_Sonido.sonar("Warning")
+  Message.Warning("«" & oFila.sEtiqueta & "» " & sMotivo)
   FMain.txtEditorProyecto.SetFocus()
 
 End

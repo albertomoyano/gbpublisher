@@ -3786,7 +3786,7 @@ Los casos que frenan, también en Mint (Alberto, 21/10): `n.\sptext{e}` (punto a
 
 ### SC-63 — Corte de línea en los títulos de sección del .md: \\, como en la base
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / titlesec / hyperref / qpdf / gbc3 3.19 / contenedor Ubuntu 24.04; gbpublisher en Linux Mint (prueba de Alberto, 21/10) · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / titlesec / hyperref / qpdf / gbc3 3.19 / contenedor Ubuntu 24.04; gbpublisher en Linux Mint (prueba de Alberto, 21/10) · **Verificado:** 2026-11
 
 DECISIÓN CERRADA (decisión de Alberto, 21/10). La regla de SC-28 vale también para los títulos de sección que se escriben en el .md (`##` y siguientes en libros; todos los niveles en revistas): el editor marca el corte con `\\` y el corte se cumple solo en la apertura del PDF.
 
@@ -3837,13 +3837,23 @@ VERIFICADO EN EL CONTENEDOR
 
 Pandoc 3.1.3 con las cadenas reales de libro, revista y ODT, incluidos los casos que frenan; SaxonJ-HE 12.5 con `ensamblar-capitulo-canonico.xsl`, las dos hojas LaTeX, HTML, EPUB, SciELO y Redalyc; el capítulo valida contra el RNG de DocBook 5.2 y el artículo contra la DTD Archiving 1.4; gbpublisher compila con gbc3 3.19.
 
+EN EL PANEL
+
+Desde el 11/11 (decisión de Alberto) el corte está en el panel de shortcodes, en las marcas en línea del grupo composición: `corte-titulo`, modo `marca` (gbShortcodes `datos-v5-023.sql`, en borrador). Se escribe como en LaTeX: pegado a la palabra anterior y con un espacio antes de la siguiente, `Hola\\ mundo`. Por eso la fila tiene apertura `\\` y cierre un espacio, y el panel los inserta juntos en lugar de los espacios que rodean al cursor: «Hola |mundo» y «Hola| mundo» dan «Hola\\ mundo», con el cursor antes de «mundo». El modo `marca` es un dato de la tabla `modos` (RF-11): no hubo migración del esquema.
+
+Antes de insertar, `m_Shortcodes.InsertarMarca` mira la línea del cursor y, si no corresponde, avisa y no inserta: con una selección; fuera de un título ATX (uno a seis `#` y un espacio al comienzo de la línea); en un libro, en el `#` del capítulo; al principio o al final del título (después del corte tiene que seguir texto, no los atributos `{#id}` ni los `#` de cierre); dentro de una palabra; pegado a otra barra. Un corte dentro de una bastardilla o una negrita lo sigue frenando `corte-titulo.lua` al generar.
+
+MEDIDO en el contenedor (gbc3 y gbx3 3.19): `InsertarShortcode` real, con un doble del editor, en veinte casos de libro y de revista: las inserciones dan `Hola\\ |mundo` (también con varios espacios, con un corte previo en el título, en la segunda línea del texto y con letras acentuadas); los demás avisan con su motivo. Lo que inserta el panel pasa por `corte-titulo.lua` (Pandoc 3.1.3) a `<break/>` y `<?gb-corte?>`. `datos-v5-023.sql`, aplicado con `importar_shortcodes.sh` sobre una copia de la base.
+
 PROBADO EN MINT
 
 Alberto, 21/10, con un libro y una revista reales: el PDF corta en la apertura del título de sección; el HTML y el EPUB, sin corte.
 
-**Relaciones:** vinculo:SC-28,vinculo:SC-29,vinculo:SC-39,vinculo:SC-54,vinculo:SC-62,vinculo:GV-121
+Alberto, 11/11, en un libro: el corte escrito a mano y el insertado desde el panel. El PDF corta; el HTML y el EPUB salen de corrido. Desde el panel, una inserción en un título de sección y dos avisos: con el cursor en un párrafo y con una palabra seleccionada. La fila sigue en borrador hasta probarla en una revista (gbShortcodes `datos-v5-024.sql`).
 
-**PENDIENTE:** Falta en Mint: un caso que frene (corte al final, dos seguidos o dentro de una bastardilla) y el control corte_fuera_de_titulo. El ODT, cuando se encare (decisión de Alberto, 21/10).
+**Relaciones:** vinculo:SC-28,vinculo:SC-29,vinculo:SC-39,vinculo:SC-54,vinculo:SC-62,vinculo:GV-121,vinculo:RF-11,vinculo:SC-34
+
+**PENDIENTE:** Falta en Mint: un caso que frene (corte al final, dos seguidos o dentro de una bastardilla) y el control corte_fuera_de_titulo. El ODT, cuando se encare (decisión de Alberto, 21/10). En el panel (corte-titulo, en borrador hasta probarlo en una revista, SC-34): en una revista, la inserción y las tres salidas, después de la refactorización del módulo de revistas; en los dos productos, los avisos que faltan (# del capítulo en un libro, al principio, al final, dentro de una palabra, pegado a otro corte) y la ayuda.
 
 ### SC-64 — Cifras y unidades: la norma internacional, escrita con siunitx
 
@@ -5511,6 +5521,7 @@ Desde la versión 4 son filas de la tabla `modos` (modo, tipo, descripción), un
 - dos-partes: envolver, con el control de la forma `{primera}{segunda}` antes de insertar (SC-35).
 - separador: un bloque vacío, sin selección y con el cursor al principio de una línea vacía (SC-36). Se agrega con `datos-v4-001`.
 - codigo: en bloque, pide el lenguaje (y en el listado, el nombre) y cerca la selección con `~~~ lenguaje`; en línea, la envuelve en comillas inversas (SC-42). Se agrega con `datos-v5-005`, para bloque y para línea.
+- marca: solo en línea. Inserta la apertura y el cierre juntos, sin contenido ni selección, en lugar de los espacios que rodean al cursor, después de los controles propios del shortcode (SC-63: el corte de un título, apertura `\\` y cierre un espacio). Se agrega con `datos-v5-023`. El cierre de una marca queda al final de su línea de `_catalogo.tsv`: un editor que recorta los blancos finales lo borraría, y gbpublisher rechaza una fila de modo marca sin cierre.
 
 COMPORTAMIENTO
 
@@ -5555,7 +5566,7 @@ El mecanismo es el de SC-50. Lo propio de cada una:
 
 `User.Home` no sigue la variable `HOME`: una prueba con otra `HOME` abre igual la base del usuario real (medido en 3.19).
 
-**Relaciones:** vinculo:RF-08,vinculo:SC-50,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35,vinculo:SC-36,vinculo:SC-42,vinculo:SC-38,vinculo:SC-39
+**Relaciones:** vinculo:RF-08,vinculo:SC-50,vinculo:SC-24,vinculo:SC-11,vinculo:SC-32,vinculo:GV-74,vinculo:GV-64,vinculo:SC-33,vinculo:SC-35,vinculo:SC-36,vinculo:SC-42,vinculo:SC-38,vinculo:SC-39,vinculo:SC-63
 
 **PENDIENTE:** Versiones 2 y 3 verificadas en Mint con 3.22.1. La 4 se probó en el contenedor (Gambas 3.19, gb.db, aplicación bajo xvfb). La 5 está en uso en Mint: los datos-v5-* se aplicaron y probaron ahí (datos-v5-011).
 
