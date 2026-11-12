@@ -2,24 +2,34 @@
 
 ' ==============================================================================
 ' Módulo    : m_Revistas
-' Propósito : Lógica de la pestaña «Revistas» de FSysAdmin: la revista (N0) y
+' Propósito : Lógica del formulario FRevistas (lo abre la pestaña «Editorial»
+'             de FSysAdmin; antes era la pestaña «Revistas»): la revista (N0) y
 '             sus secciones, sobre el esquema nuevo de la actualización 1.13.0
 '             (claude/rediseno-revistas.md, decisiones 15, 18 y 20).
-'             FSysAdmin tiene los controles y los manejadores; acá viven las
+'             El formulario tiene los controles y los manejadores; acá viven las
 '             consultas, las validaciones y las grabaciones. Cada formulario o
 '             función principal lleva su propio módulo (modelo de trabajo del
 '             proyecto: SC-20, SC-21, SC-66/67, SC-69).
 '             Plantillas de resumen estructurado (entrega C2, decisiones de
 '             Alberto, 28/10): las administra el diálogo FPlantillasResumen,
-'             abierto desde la pestaña «Revistas»; la sección elige la suya.
+'             abierto desde FRevistas; la sección elige la suya.
 ' Conexión  : todas las funciones que tocan la base reciben la conexión como
-'             parámetro: FSysAdmin trabaja con la suya (hConnServidor), no con
-'             m_ConexionBD.mConn. FSysAdmin se puede abrir SIN SESIÓN DE
-'             USUARIO, y entonces mConn no existe («Null object»): por eso
+'             parámetro: FSysAdmin trabaja con la suya (hConnServidor, que
+'             pasa a FRevistas), no con m_ConexionBD.mConn. FSysAdmin se
+'             puede abrir SIN SESIÓN DE USUARIO, y entonces mConn no existe
+'             («Null object»): por eso
 '             también los catálogos de licencias e idiomas (m_Licencias,
 '             m_Idiomas) se leen con la conexión que se pasa.
-' Requiere  : esquema 1.13.0 (revista, revista_seccion, revista_seccion_titulo,
-'             revista_plantilla_resumen y sus hijas).
+'             Etapa B2 (1.26.0): la revista es hija de una editorial. La
+'             editorial y sus datos (nombre, institución, ROR, lugar, correo,
+'             prefijo DOI, licencia y titular por defecto) se administran en
+'             m_Editorial; las revistas se listan y se crean por editorial, y
+'             la grabación ya no escribe esas columnas viejas de revista (las
+'             borra la 1.27.0). email_editorial queda como correo propio de la
+'             revista: vacío, vale el de la editorial.
+' Requiere  : esquema 1.26.0 (revista.id_editorial y revista.rotulo_volumen),
+'             sobre el de la 1.13.0 (revista, revista_seccion,
+'             revista_seccion_titulo, revista_plantilla_resumen y sus hijas).
 ' Dependencias: m_Sonido, m_Idiomas, m_Licencias, m_GenerarSalidasLibro (catálogo de estilos
 '             de cita, SC-57), m_XML (TrimUTF8).
 ' ==============================================================================
@@ -282,19 +292,24 @@ End
 
 ' ============================================
 ' Función   : ListarRevistas
-' Propósito : Las revistas para la grilla, ordenadas por título
+' Propósito : Las revistas de una editorial para la grilla, ordenadas por
+'             título
 ' Parámetros: hConn As Connection — conexión abierta
-' Retorna   : Result — id_revista, titulo, issn_electronico; Null si falló
-'             (ya se informó)
+'             iIdEditorial As Integer — editorial
+' Retorna   : Result — id_revista, titulo, issn_electronico, numeros (la
+'             cantidad de números: sin números se puede borrar); Null si
+'             falló (ya se informó)
 ' ============================================
-Public Function ListarRevistas(hConn As Connection) As Result
+Public Function ListarRevistas(hConn As Connection, iIdEditorial As Integer) As Result
 
   Dim rDatos As Result
 
-  Try rDatos = hConn.Exec("SELECT id_revista, titulo, issn_electronico FROM revista ORDER BY titulo")
+  Try rDatos = hConn.Exec("SELECT r.id_revista, r.titulo, r.issn_electronico, " &
+    "(SELECT COUNT(*) FROM numero n WHERE n.id_revista = r.id_revista) AS numeros " &
+    "FROM revista r WHERE r.id_editorial = &1 ORDER BY r.titulo", iIdEditorial)
   If Error Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudieron leer las revistas (¿falta la actualización de esquema 1.13.0?):" & gb.NewLine & Error.Text)
+    Message.Error("No se pudieron leer las revistas (¿falta la actualización de esquema 1.26.0?):" & gb.NewLine & Error.Text)
     Return Null
   Endif
 
@@ -332,15 +347,17 @@ End
 ' ============================================
 ' Función   : CrearRevista
 ' Propósito : Alta mínima de una revista, como Colecciones: un título
-'             provisorio que el editor reemplaza antes de guardar
+'             provisorio que el editor reemplaza antes de guardar. Nace
+'             dentro de su editorial
 ' Parámetros: hConn As Connection — conexión abierta
 '             sUsuario As String — usuario de FSysAdmin, para la auditoría
+'             iIdEditorial As Integer — la editorial madre
 ' Retorna   : Integer — id de la revista nueva; 0 si falló (ya se informó)
 ' ============================================
-Public Function CrearRevista(hConn As Connection, sUsuario As String) As Integer
+Public Function CrearRevista(hConn As Connection, sUsuario As String, iIdEditorial As Integer) As Integer
 
   ' modelo_paginacion TOMA EL DEFAULT DEL ESQUEMA (por_numero)
-  Try hConn.Exec("INSERT INTO revista (titulo, usuario_creacion) VALUES (&1, &2)", "(Nueva revista)", sUsuario)
+  Try hConn.Exec("INSERT INTO revista (titulo, id_editorial, usuario_creacion) VALUES (&1, &2, &3)", "(Nueva revista)", iIdEditorial, sUsuario)
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("No se pudo crear la revista:" & gb.NewLine & Error.Text)
@@ -348,6 +365,122 @@ Public Function CrearRevista(hConn As Connection, sUsuario As String) As Integer
   Endif
 
   Return hConn.LastInsertId
+
+End
+
+' ============================================
+' Función   : ContenidoRevista
+' Propósito : Lo que se borra junto con una revista, en palabras, para la
+'             pregunta de confirmación: secciones, plantillas de resumen y
+'             órganos (con sus miembros)
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : String — «2 secciones, 1 plantilla de resumen…»; vacío si no
+'             hay nada o falló la lectura
+' ============================================
+Public Function ContenidoRevista(hConn As Connection, iIdRevista As Integer) As String
+
+  Dim rDatos As Result
+  Dim aPartes As New String[]
+
+  ' --- 1. CUENTAS, EN UNA SOLA LECTURA (COUNT LLEGA COMO Long) ---
+  Try rDatos = hConn.Exec("SELECT (SELECT COUNT(*) FROM revista_seccion WHERE id_revista = &1) AS secciones, " &
+    "(SELECT COUNT(*) FROM revista_plantilla_resumen WHERE id_revista = &1) AS plantillas, " &
+    "(SELECT COUNT(*) FROM revista_organo WHERE id_revista = &1) AS organos, " &
+    "(SELECT COUNT(*) FROM revista_organo_miembro m JOIN revista_organo o ON o.id_organo = m.id_organo WHERE o.id_revista = &1) AS miembros", iIdRevista)
+  If Error Then Return ""
+
+  ' --- 2. SOLO LO QUE HAY, CON SU PLURAL ---
+  If rDatos!secciones > 0 Then aPartes.Add(CStr(rDatos!secciones) & If(rDatos!secciones = 1, " sección", " secciones"))
+  If rDatos!plantillas > 0 Then aPartes.Add(CStr(rDatos!plantillas) & If(rDatos!plantillas = 1, " plantilla de resumen", " plantillas de resumen"))
+  If rDatos!organos > 0 Then aPartes.Add(CStr(rDatos!organos) & If(rDatos!organos = 1, " órgano", " órganos") & " con " & CStr(rDatos!miembros) & If(rDatos!miembros = 1, " miembro", " miembros"))
+
+  Return aPartes.Join(", ")
+
+End
+
+' ============================================
+' Función   : BorrarRevista
+' Propósito : Borra una revista sin números y todo lo que cuelga de ella, en
+'             una transacción (B2d, decisión de Alberto, 12/11: el mismo
+'             criterio que la editorial). Sin números no hay nada publicado
+'             ni en preparación que dependa de sus secciones, plantillas u
+'             órganos. Frena también si algún artículo sin número usa una
+'             de sus secciones (articulo.id_numero admite NULL). Todas las
+'             claves foráneas son RESTRICT: se borra de las hojas a la raíz.
+'             La confirmación la pide el formulario
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarRevista(hConn As Connection, iIdRevista As Integer) As Boolean
+
+  Dim rDatos As Result
+  Dim aSentencias As String[]
+  Dim sSentencia As String
+
+  ' --- 1. TRANSACCIÓN ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar el borrado:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. ¿TIENE NÚMEROS O ARTÍCULOS EN SUS SECCIONES? DENTRO DE LA TRANSACCIÓN ---
+  Try rDatos = hConn.Exec("SELECT (SELECT COUNT(*) FROM numero WHERE id_revista = &1) AS numeros, " &
+    "(SELECT COUNT(*) FROM articulo a JOIN revista_seccion s ON s.id_seccion = a.id_seccion WHERE s.id_revista = &1) AS articulos", iIdRevista)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo revisar lo que depende de la revista:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!numeros > 0 Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("La revista tiene números: no se puede borrar.")
+    Return False
+  Endif
+  If rDatos!articulos > 0 Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("Hay artículos que usan secciones de esta revista: no se puede borrar.")
+    Return False
+  Endif
+
+  ' --- 3. DE LAS HOJAS A LA RAÍZ (TODAS LAS CLAVES SON RESTRICT) ---
+  ' LAS SECCIONES VAN ANTES QUE LAS PLANTILLAS: revista_seccion.id_plantilla_resumen
+  ' APUNTA A revista_plantilla_resumen
+  aSentencias = ["DELETE t FROM revista_seccion_titulo t JOIN revista_seccion s ON s.id_seccion = t.id_seccion WHERE s.id_revista = &1",
+    "DELETE FROM revista_seccion WHERE id_revista = &1",
+    "DELETE t FROM revista_plantilla_resumen_titulo t JOIN revista_plantilla_resumen p ON p.id_plantilla = t.id_plantilla WHERE p.id_revista = &1",
+    "DELETE s FROM revista_plantilla_resumen_seccion s JOIN revista_plantilla_resumen p ON p.id_plantilla = s.id_plantilla WHERE p.id_revista = &1",
+    "DELETE FROM revista_plantilla_resumen WHERE id_revista = &1",
+    "DELETE m FROM revista_organo_miembro m JOIN revista_organo o ON o.id_organo = m.id_organo WHERE o.id_revista = &1",
+    "DELETE FROM revista_organo WHERE id_revista = &1",
+    "DELETE FROM revista_bloque WHERE id_revista = &1",
+    "DELETE FROM revista WHERE id_revista = &1"]
+  For Each sSentencia In aSentencias
+    Try hConn.Exec(sSentencia, iIdRevista)
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo borrar la revista:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+  Next
+
+  ' --- 4. CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar el borrado:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
 
 End
 
@@ -433,20 +566,16 @@ Public Function GuardarRevista(hConn As Connection, iIdRevista As Integer, cDato
     !acronimo = cDatos["acronimo"]
     !issn_impreso = cDatos["issn_impreso"]
     !issn_electronico = cDatos["issn_electronico"]
-    !editorial = cDatos["editorial"]
-    !institucion_editora = cDatos["institucion_editora"]
-    !ror_editorial = cDatos["ror_editorial"]
-    !ciudad = cDatos["ciudad"]
-    !pais = cDatos["pais"]
+    ' CORREO PROPIO DE LA REVISTA; VACÍO, VALE EL DE LA EDITORIAL (1.26.0)
     !email_editorial = cDatos["email_editorial"]
-    !doi_prefix = cDatos["doi_prefix"]
     !estilo_cita = cDatos["estilo_cita"]
     !modelo_paginacion = cDatos["modelo_paginacion"]
+    !rotulo_volumen = cDatos["rotulo_volumen"]
     !idiomas_publicacion = cDatos["idiomas_publicacion"]
-    !licencia_defecto = cDatos["licencia_defecto"]
-    !url_licencia_defecto = cDatos["url_licencia_defecto"]
-    !titular_copyright_defecto = cDatos["titular_copyright_defecto"]
     !tipo_acceso_defecto = cDatos["tipo_acceso_defecto"]
+    ' editorial, institucion_editora, ror_editorial, ciudad, pais, doi_prefix
+    ' Y LOS TRES DE LICENCIA YA NO SE ESCRIBEN: SON DE LA EDITORIAL
+    ' (m_Editorial). LA 1.27.0 BORRA ESAS COLUMNAS
   End With
 
   ' --- 4. GRABACIÓN ---

@@ -1,0 +1,458 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Organos
+' Propósito : Órganos editoriales de una revista (Comité editorial, Consejo
+'             asesor, Coordinación editorial…) y sus miembros con vigencia,
+'             sobre el esquema 1.26.0 (etapa B3; claude/salidas-revistas.md).
+'             FRevistas (solapa «Órganos») tiene los controles; FBuscarAutor
+'             elige la persona. Acá viven las consultas, las validaciones y
+'             las grabaciones.
+'             Decisiones de Alberto (12/11):
+'               - los miembros salen de autores; se eligen con un buscador
+'                 propio que usa la conexión que se pasa (FSysAdmin puede no
+'                 tener sesión);
+'               - la afiliación es de la membresía; al agregar se propone la
+'                 de la ficha y se puede corregir. No se sincroniza después;
+'               - un órgano se borra solo si nunca tuvo miembros; si los tuvo,
+'                 se desactiva, para poder regenerar los números viejos.
+' Conexión  : todas las funciones reciben la conexión (hConnServidor).
+' Requiere  : esquema 1.26.0 (revista_organo, revista_organo_miembro).
+' Dependencias: m_Sonido, m_Revistas (NuloSiVacio, TextoDe).
+' ==============================================================================
+
+' LARGO MÁXIMO DE revista_organo_miembro.afiliacion (VARCHAR(300)); LA
+' FICHA DEL AUTOR ADMITE 500
+Private Const LARGO_AFILIACION As Integer = 300
+' FECHA ABIERTA PARA COMPARAR VIGENCIAS SIN FIN
+Private Const FECHA_ABIERTA As String = "9999-12-31"
+
+' ============================================
+' Función   : ListarOrganos
+' Propósito : Los órganos de una revista para la grilla, en su orden, con la
+'             cantidad de miembros (todos y vigentes hoy)
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : Result — id_organo, nombre, orden, activo, miembros, vigentes;
+'             Null si falló (ya se informó)
+' ============================================
+Public Function ListarOrganos(hConn As Connection, iIdRevista As Integer) As Result
+
+  Dim rDatos As Result
+
+  ' COUNT DEVUELVE Long (NO SUM, QUE LLEGA COMO TEXTO DESDE gb.db.mysql).
+  ' VIGENTE HOY: YA EMPEZÓ Y NO TERMINÓ. m.desde <= CURDATE() TAMBIÉN DESCARTA
+  ' LA FILA VACÍA DEL LEFT JOIN DE UN ÓRGANO SIN MIEMBROS (desde ES NOT NULL)
+  Try rDatos = hConn.Exec("SELECT o.id_organo, o.nombre, o.orden, o.activo, COUNT(m.id_miembro) AS miembros, " &
+    "COUNT(CASE WHEN m.desde <= CURDATE() AND (m.hasta IS NULL OR m.hasta >= CURDATE()) THEN 1 END) AS vigentes " &
+    "FROM revista_organo o LEFT JOIN revista_organo_miembro m ON m.id_organo = o.id_organo " &
+    "WHERE o.id_revista = &1 GROUP BY o.id_organo, o.nombre, o.orden, o.activo ORDER BY o.orden, o.nombre", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los órganos de la revista (¿falta la actualización de esquema 1.26.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarOrgano
+' Propósito : Un órgano, para el editor
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdOrgano As Integer — órgano
+' Retorna   : Result — el registro; Null si falló o no existe (ya se informó)
+' ============================================
+Public Function CargarOrgano(hConn As Connection, iIdOrgano As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT * FROM revista_organo WHERE id_organo = &1", iIdOrgano)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el órgano:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El órgano ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : GuardarOrgano
+' Propósito : Alta o edición de un órgano con Create/Edit + Update
+'             (RC-GM-15). El nombre es obligatorio
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdOrgano As Integer — órgano; 0 = alta
+'             iIdRevista As Integer — revista (se usa en el alta)
+'             cDatos As Collection — nombre, orden, activo
+' Retorna   : Integer — id del órgano grabado; 0 si falló (ya se informó)
+' ============================================
+Public Function GuardarOrgano(hConn As Connection, iIdOrgano As Integer, iIdRevista As Integer, cDatos As Collection) As Integer
+
+  Dim rOrgano As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If IsNull(cDatos["nombre"]) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Falta el nombre del órgano, como lo llama la revista (por ejemplo «Comité editorial»).")
+    Return 0
+  Endif
+
+  ' --- 2. ALTA O EDICIÓN ---
+  If iIdOrgano = 0 Then
+    Try rOrgano = hConn.Create("revista_organo")
+  Else
+    Try rOrgano = hConn.Edit("revista_organo", "id_organo = &1", iIdOrgano)
+  Endif
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el órgano para grabarlo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  ' --- 3. CAMPOS, POR NOMBRE (RC-GM-15) ---
+  With rOrgano
+    If iIdOrgano = 0 Then !id_revista = iIdRevista
+    !nombre = cDatos["nombre"]
+    !orden = cDatos["orden"]
+    !activo = cDatos["activo"]
+  End With
+
+  ' --- 4. GRABACIÓN ---
+  Try rOrgano.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el órgano:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  If iIdOrgano = 0 Then Return hConn.LastInsertId
+  Return iIdOrgano
+
+End
+
+' ============================================
+' Función   : BorrarOrgano
+' Propósito : Borra un órgano que nunca tuvo miembros. Si los tuvo, avisa
+'             que se desactive (decisión de Alberto, 12/11): borrarlo
+'             perdería la historia de los números ya publicados. La
+'             confirmación la pide el formulario
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdOrgano As Integer — órgano
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarOrgano(hConn As Connection, iIdOrgano As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  ' --- 1. ¿TUVO MIEMBROS? ---
+  ' LA CLAVE FORÁNEA (RESTRICT) TAMBIÉN LO FRENARÍA; ACÁ SE AVISA EN CASTELLANO
+  Try rDatos = hConn.Exec("SELECT COUNT(*) AS total FROM revista_organo_miembro WHERE id_organo = &1", iIdOrgano)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron contar los miembros del órgano:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!total > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El órgano tuvo miembros: no se borra, porque los números en que figuraron dejarían de mostrarlo." & gb.NewLine &
+      "Desmarque «Activo» y guárdelo.")
+    Return False
+  Endif
+
+  ' --- 2. BORRADO ---
+  Try hConn.Exec("DELETE FROM revista_organo WHERE id_organo = &1", iIdOrgano)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el órgano:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ListarMiembros
+' Propósito : Los miembros de un órgano para la grilla, vigentes e
+'             históricos, en el orden de composición
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdOrgano As Integer — órgano
+' Retorna   : Result — id_miembro, persona, afiliacion, orden, desde, hasta;
+'             Null si falló (ya se informó)
+' ============================================
+Public Function ListarMiembros(hConn As Connection, iIdOrgano As Integer) As Result
+
+  Dim rDatos As Result
+
+  ' A IGUAL ORDEN, POR APELLIDO; LA PERSONA SE MUESTRA «Apellidos, Nombre»
+  Try rDatos = hConn.Exec("SELECT m.id_miembro, CONCAT_WS(', ', a.apellidos, a.nombre) AS persona, m.afiliacion, m.orden, m.desde, m.hasta " &
+    "FROM revista_organo_miembro m JOIN autores a ON a.id_autor = m.id_autor " &
+    "WHERE m.id_organo = &1 ORDER BY m.orden, a.apellidos, a.nombre, m.desde DESC", iIdOrgano)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los miembros del órgano:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarMiembro
+' Propósito : Una membresía, con el nombre de la persona, para el editor
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdMiembro As Integer — membresía
+' Retorna   : Result — el registro y persona; Null si falló (ya se informó)
+' ============================================
+Public Function CargarMiembro(hConn As Connection, iIdMiembro As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT m.*, CONCAT_WS(', ', a.apellidos, a.nombre) AS persona " &
+    "FROM revista_organo_miembro m JOIN autores a ON a.id_autor = m.id_autor WHERE m.id_miembro = &1", iIdMiembro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el miembro:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El miembro ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : NombrePersona
+' Propósito : «Apellidos, Nombre» de una ficha de autores
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdAutor As Integer — persona
+' Retorna   : String — el nombre; vacío si no existe o falló
+' ============================================
+Public Function NombrePersona(hConn As Connection, iIdAutor As Integer) As String
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT CONCAT_WS(', ', apellidos, nombre) AS persona FROM autores WHERE id_autor = &1", iIdAutor)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+  Return m_Revistas.TextoDe(rDatos, "persona")
+
+End
+
+' ============================================
+' Función   : AfiliacionPropuesta
+' Propósito : La afiliación que se propone al agregar a una persona: la
+'             afiliación actual de su ficha y el país, separados por coma
+'             (decisión de Alberto, 12/11). Se puede corregir en el campo
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdAutor As Integer — persona
+' Retorna   : String — la propuesta; vacío si la ficha no tiene datos
+' ============================================
+Public Function AfiliacionPropuesta(hConn As Connection, iIdAutor As Integer) As String
+
+  Dim rDatos As Result
+  Dim aPartes As New String[]
+
+  ' --- 1. LECTURA ---
+  Try rDatos = hConn.Exec("SELECT afiliacion_actual, pais_afiliacion FROM autores WHERE id_autor = &1", iIdAutor)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  ' --- 2. LO QUE HAYA, EN ORDEN ---
+  If Trim(m_Revistas.TextoDe(rDatos, "afiliacion_actual")) <> "" Then aPartes.Add(Trim(rDatos!afiliacion_actual))
+  If Trim(m_Revistas.TextoDe(rDatos, "pais_afiliacion")) <> "" Then aPartes.Add(Trim(rDatos!pais_afiliacion))
+
+  Return aPartes.Join(", ")
+
+End
+
+' ============================================
+' Función   : ValidarMiembro
+' Propósito : Controles previos al guardado de una membresía. Avisa el
+'             primero que falla: desde obligatorio, hasta no anterior a
+'             desde (lo mismo que chk_miembro_vigencia), afiliación dentro
+'             del largo de la columna y sin dos períodos superpuestos de la
+'             misma persona en el mismo órgano (saldría dos veces en la
+'             página legal)
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdMiembro As Integer — membresía; 0 = alta
+'             iIdOrgano As Integer — órgano
+'             cDatos As Collection — id_autor, afiliacion, orden, desde, hasta
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarMiembro(hConn As Connection, iIdMiembro As Integer, iIdOrgano As Integer, cDatos As Collection) As Boolean
+
+  Dim sAviso As String
+  Dim rDatos As Result
+
+  ' --- 1. OBLIGATORIOS Y FORMA ---
+  If IsNull(cDatos["id_autor"]) Then
+    sAviso = "Falta la persona: elíjala con el buscador."
+  Else If IsNull(cDatos["desde"]) Then
+    sAviso = "Falta la fecha «desde»: sin ella no se sabe en qué números corresponde mostrar a la persona."
+  Endif
+  ' If ANIDADOS (RC-GM-17)
+  If sAviso = "" Then
+    If Not IsNull(cDatos["hasta"]) Then
+      If cDatos["hasta"] < cDatos["desde"] Then sAviso = "La fecha «hasta» es anterior a «desde»."
+    Endif
+  Endif
+  If sAviso = "" Then
+    If Not IsNull(cDatos["afiliacion"]) Then
+      ' String.Len CUENTA CARACTERES, COMO VARCHAR EN utf8mb4
+      If String.Len(cDatos["afiliacion"]) > LARGO_AFILIACION Then sAviso = "La afiliación pasa de " & CStr(LARGO_AFILIACION) & " caracteres: abréviela."
+    Endif
+  Endif
+
+  ' --- 2. PERÍODOS SUPERPUESTOS DE LA MISMA PERSONA EN EL MISMO ÓRGANO ---
+  ' DOS PERÍODOS SE TOCAN SI CADA UNO EMPIEZA ANTES DE QUE TERMINE EL OTRO;
+  ' hasta NULO ES «SIGUE»
+  If sAviso = "" Then
+    Try rDatos = hConn.Exec("SELECT COUNT(*) AS total FROM revista_organo_miembro WHERE id_organo = &1 AND id_autor = &2 AND id_miembro <> &3 " &
+      "AND desde <= COALESCE(&5, &6) AND COALESCE(hasta, &6) >= &4",
+      iIdOrgano, cDatos["id_autor"], iIdMiembro, cDatos["desde"], cDatos["hasta"], FECHA_ABIERTA)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudieron comparar los períodos del miembro:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+    If rDatos!total > 0 Then sAviso = "Esa persona ya figura en este órgano en un período que se superpone con este. Corrija las fechas o edite la otra fila."
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : GuardarMiembro
+' Propósito : Alta o edición de una membresía con Create/Edit + Update
+'             (RC-GM-15), después de validar. La persona se fija en el alta
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdMiembro As Integer — membresía; 0 = alta
+'             iIdOrgano As Integer — órgano (se usa en el alta)
+'             cDatos As Collection — id_autor, afiliacion, orden, desde, hasta
+' Retorna   : Integer — id de la membresía grabada; 0 si falló (ya se
+'             informó)
+' ============================================
+Public Function GuardarMiembro(hConn As Connection, iIdMiembro As Integer, iIdOrgano As Integer, cDatos As Collection) As Integer
+
+  Dim rMiembro As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Not ValidarMiembro(hConn, iIdMiembro, iIdOrgano, cDatos) Then Return 0
+
+  ' --- 2. ALTA O EDICIÓN ---
+  If iIdMiembro = 0 Then
+    Try rMiembro = hConn.Create("revista_organo_miembro")
+  Else
+    Try rMiembro = hConn.Edit("revista_organo_miembro", "id_miembro = &1", iIdMiembro)
+  Endif
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el miembro para grabarlo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  ' --- 3. CAMPOS, POR NOMBRE (RC-GM-15) ---
+  ' OTRA PERSONA ES OTRA MEMBRESÍA: id_autor SOLO SE ESCRIBE EN EL ALTA
+  With rMiembro
+    If iIdMiembro = 0 Then
+      !id_organo = iIdOrgano
+      !id_autor = cDatos["id_autor"]
+    Endif
+    !afiliacion = cDatos["afiliacion"]
+    !orden = cDatos["orden"]
+    !desde = cDatos["desde"]
+    !hasta = cDatos["hasta"]
+  End With
+
+  ' --- 4. GRABACIÓN ---
+  Try rMiembro.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el miembro:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  If iIdMiembro = 0 Then Return hConn.LastInsertId
+  Return iIdMiembro
+
+End
+
+' ============================================
+' Función   : BorrarMiembro
+' Propósito : Borra una membresía. La confirmación la pide el formulario
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdMiembro As Integer — membresía
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarMiembro(hConn As Connection, iIdMiembro As Integer) As Boolean
+
+  Try hConn.Exec("DELETE FROM revista_organo_miembro WHERE id_miembro = &1", iIdMiembro)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el miembro:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : BuscarAutores
+' Propósito : Busca personas en autores por apellido, nombre u ORCID, para
+'             FBuscarAutor. Los comodines del texto se toman literales
+'             (SC-08)
+' Parámetros: hConn As Connection — conexión abierta
+'             sTexto As String — lo que escribió el usuario
+' Retorna   : Result — id_autor, apellidos, nombre, orcid, afiliacion_actual;
+'             Null si falló (ya se informó)
+' ============================================
+Public Function BuscarAutores(hConn As Connection, sTexto As String) As Result
+
+  Dim rDatos As Result
+  Dim sPatron As String
+
+  ' --- 1. PATRÓN: PRIMERO EL CARÁCTER DE ESCAPE, DESPUÉS LOS COMODINES (SC-08) ---
+  sPatron = Trim(sTexto)
+  sPatron = Replace(sPatron, "!", "!!")
+  sPatron = Replace(sPatron, "%", "!%")
+  sPatron = Replace(sPatron, "_", "!_")
+  sPatron = "%" & sPatron & "%"
+
+  ' --- 2. CONSULTA ---
+  ' LA COLACIÓN utf8mb4_unicode_ci NO DISTINGUE ACENTOS NI MAYÚSCULAS: «perez»
+  ' ENCUENTRA «Pérez». CONCAT_WS PERMITE BUSCAR «Pérez, Ana» TAL COMO SE VE
+  Try rDatos = hConn.Exec("SELECT id_autor, apellidos, nombre, orcid, afiliacion_actual FROM autores " &
+    "WHERE apellidos LIKE &1 ESCAPE '!' OR nombre LIKE &1 ESCAPE '!' OR orcid LIKE &1 ESCAPE '!' " &
+    "OR CONCAT_WS(', ', apellidos, nombre) LIKE &1 ESCAPE '!' " &
+    "ORDER BY apellidos, nombre LIMIT 200", sPatron)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo buscar en autores:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End

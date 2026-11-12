@@ -43,29 +43,23 @@ Private $aNotasGrupos As New Integer[]
 Private $aNotasCreadorActivo As New Boolean[]
 Private $aNotasAutores As New Integer[]
 Private $aNotasCandidatos As New Integer[]
-' --- PESTAÑA «Revistas» (tsFSysAdmin, ÍNDICE 7): REVISTA (N0) Y SECCIONES ---
-' LA LÓGICA ESTÁ EN m_Revistas; ACÁ SOLO EL ESTADO DE LA INTERFAZ
-Private Const PESTANA_REVISTAS As Integer = 7
+' --- PESTAÑA «Editorial» (tsFSysAdmin, ÍNDICE 7): LA EDITORIAL Y SUS CRÉDITOS
+' (ETAPA B2, 1.26.0). LAS REVISTAS DE LA EDITORIAL SE EDITAN EN FRevistas.
+' LA LÓGICA ESTÁ EN m_Editorial; ACÁ SOLO EL ESTADO DE LA INTERFAZ
+Private Const PESTANA_EDITORIAL As Integer = 7
 ' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
-Private Const COLUMNAS_REVISTAS As Integer = 2
-Private Const COLUMNAS_SECCIONES As Integer = 4
-' GRILLAS Y COMBOS SE PREPARAN UNA SOLA VEZ POR APERTURA DEL FORMULARIO
-Private $bRevistasPreparada As Boolean
+Private Const COLUMNAS_EDITORIALES As Integer = 2
+Private Const COLUMNAS_CREDITOS As Integer = 5
+' GRILLAS Y COMBO SE PREPARAN UNA SOLA VEZ POR APERTURA DEL FORMULARIO
+Private $bEditorialPreparada As Boolean
 ' UNA ENTRADA POR FILA, EN EL MISMO ORDEN QUE LA GRILLA
-Private $aIdsRevistas As New Integer[]
-Private $aIdsSecciones As New Integer[]
-Private $iRevistaActual As Integer
-Private $iSeccionActual As Integer
-' IDIOMAS DE PUBLICACIÓN DE LA REVISTA ELEGIDA: EL PRIMERO TITULA LA GRILLA
-Private $aIdiomasRevista As New String[]
-' TÍTULOS DE LA SECCIÓN EN EDICIÓN, POR IDIOMA (DECISIÓN 20: UN IDIOMA A LA VEZ)
-Private $cTitulosSeccion As New Collection
-Private $sIdiomaTitulo As String
-' EVITA QUE EL Click DEL COMBO DE IDIOMA ACTÚE MIENTRAS SE CARGA LA SECCIÓN
-Private $bCargandoSeccion As Boolean
-' PLANTILLAS DE RESUMEN DE LA REVISTA ELEGIDA: UN id POR ÍTEM DEL COMBO DE LA
-' SECCIÓN; EL PRIMERO ES 0, «RESUMEN SIMPLE» (ENTREGA C2)
-Private $aIdsPlantillas As New Integer[]
+Private $aIdsEditoriales As New Integer[]
+Private $aIdsCreditos As New Integer[]
+Private $iEditorialActual As Integer
+' CANTIDAD DE REVISTAS DE CADA FILA: SIN REVISTAS SE PUEDE BORRAR
+Private $aRevistasEditoriales As New Integer[]
+' CRÉDITO EN EL EDITOR DE LA FILA: -1 NINGUNO, 0 ALTA, >0 EDICIÓN
+Private $iCreditoActual As Integer = -1
 
 ' ============================================
 ' Función   : Form_Show
@@ -3053,14 +3047,14 @@ End
 ' Función   : tsFSysAdmin_Click
 ' Propósito : AL ENTRAR A UNA PESTAÑA QUE MUESTRA DATOS DEL SERVIDOR, RELEERLOS.
 '             «Notas»: UN USUARIO DADO DE BAJA EN «Usuarios» CAMBIA LAS DOS
-'             GRILLAS. «Revistas»: LAS REVISTAS Y SUS SECCIONES
+'             GRILLAS. «Editorial»: LAS EDITORIALES Y SUS CRÉDITOS
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
 Public Sub tsFSysAdmin_Click()
 
   If tsFSysAdmin.Index = PESTANA_NOTAS Then CargarNotasAdmin()
-  If tsFSysAdmin.Index = PESTANA_REVISTAS Then CargarPestanaRevistas()
+  If tsFSysAdmin.Index = PESTANA_EDITORIAL Then CargarPestanaEditorial()
 
 End
 
@@ -3244,700 +3238,378 @@ Public Sub btnNotasCerrarAutor_Click()
 End
 
 ' ════════════════════════════════════════════════════════════════════════════
-' PESTAÑA «Revistas» (tsFSysAdmin, ÍNDICE 7): LA REVISTA (N0) Y SUS SECCIONES.
-' ESQUEMA 1.13.0. ACÁ VAN LOS CONTROLES Y LOS MANEJADORES; LAS CONSULTAS, LAS
-' VALIDACIONES Y LAS GRABACIONES ESTÁN EN m_Revistas
+' PESTAÑA «Editorial» (tsFSysAdmin, ÍNDICE 7): LA EDITORIAL Y SUS CRÉDITOS.
+' ESQUEMA 1.26.0 (ETAPA B2). LA EDITORIAL ES LA MADRE DE SUS REVISTAS: LAS
+' REVISTAS Y SUS SECCIONES SE EDITAN EN FRevistas, QUE SE ABRE CON EL BOTÓN
+' «Revistas». ACÁ VAN LOS CONTROLES Y LOS MANEJADORES; LAS CONSULTAS, LAS
+' VALIDACIONES Y LAS GRABACIONES ESTÁN EN m_Editorial
 ' ════════════════════════════════════════════════════════════════════════════
 
 ' ============================================
-' Función   : CargarPestanaRevistas
-' Propósito : Al entrar a la pestaña: prepara grillas y combos (una vez por
-'             apertura del formulario) y relee las revistas del servidor
+' Función   : CargarPestanaEditorial
+' Propósito : Al entrar a la pestaña: prepara grillas y combo (una vez por
+'             apertura del formulario) y relee las editoriales del servidor
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Private Sub CargarPestanaRevistas()
+Private Sub CargarPestanaEditorial()
 
   ' --- 1. GUARD: LA CONEXIÓN DEL ADMINISTRADOR TIENE QUE ESTAR ABIERTA ---
   If Not hConnServidor Then Return
   If Not hConnServidor.Opened Then Return
 
   ' --- 2. PREPARACIÓN, UNA SOLA VEZ ---
-  If Not $bRevistasPreparada Then
-    ConfigurarGridsRevistas()
-    LlenarCombosRevistas()
-    $bRevistasPreparada = True
+  If Not $bEditorialPreparada Then
+    ConfigurarGridsEditorial()
+    ' LICENCIAS: EL COMBO QUEDA EDITABLE (SC-23). CON LA CONEXIÓN DEL
+    ' FORMULARIO: FSysAdmin SE ABRE SIN SESIÓN Y mConn PUEDE NO EXISTIR
+    m_Licencias.LlenarCombo(cmbLicenciaEditorial, False, hConnServidor)
+    $bEditorialPreparada = True
   Endif
 
   ' --- 3. DATOS FRESCOS ---
-  CargarRevistas()
+  CargarEditoriales()
 
 End
 
 ' ============================================
-' Función   : ConfigurarGridsRevistas
-' Propósito : Columnas de las grillas de revistas y de secciones (GV-58:
+' Función   : ConfigurarGridsEditorial
+' Propósito : Columnas de las grillas de editoriales y de créditos (GV-58:
 '             conteo fijo)
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Private Sub ConfigurarGridsRevistas()
+Private Sub ConfigurarGridsEditorial()
 
-  ' --- 1. REVISTAS ---
-  With gvRevistas
+  ' --- 1. EDITORIALES ---
+  With gvEditoriales
     .Header = GridView.Horizontal
-    .Columns.Count = COLUMNAS_REVISTAS
-    .Columns[0].Title = "Título"
-    .Columns[0].Width = 330
-    .Columns[1].Title = "ISSN-e"
+    .Columns.Count = COLUMNAS_EDITORIALES
+    .Columns[0].Title = "Editorial"
+    .Columns[0].Width = 700
+    .Columns[1].Title = "Revistas"
     .Columns[1].Width = 90
     .Rows.Count = 0
   End With
 
-  ' --- 2. SECCIONES ---
-  With gvSecciones
+  ' --- 2. CRÉDITOS ---
+  With gvCreditos
     .Header = GridView.Horizontal
-    .Columns.Count = COLUMNAS_SECCIONES
-    .Columns[0].Title = "Código"
-    .Columns[0].Width = 140
-    .Columns[1].Title = "Título"
-    .Columns[1].Width = 260
+    .Columns.Count = COLUMNAS_CREDITOS
+    .Columns[0].Title = "Cargo"
+    .Columns[0].Width = 260
+    .Columns[1].Title = "Nombre"
+    .Columns[1].Width = 300
     .Columns[2].Title = "Orden"
     .Columns[2].Width = 60
-    .Columns[3].Title = "Estado"
-    .Columns[3].Width = 70
+    .Columns[3].Title = "Desde"
+    .Columns[3].Width = 100
+    .Columns[4].Title = "Hasta"
+    .Columns[4].Width = 100
     .Rows.Count = 0
   End With
 
 End
 
 ' ============================================
-' Función   : LlenarCombosRevistas
-' Propósito : Carga los combos de valores cerrados de los dos editores
+' Función   : CargarEditoriales
+' Propósito : Llena la grilla de editoriales, limpia los dos editores y deja
+'             los botones como corresponde a «nada elegido»
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Private Sub LlenarCombosRevistas()
-
-  ' --- 1. LISTAS FIJAS: EL ÍNDICE DEL COMBO ES EL DE LA LISTA DE CÓDIGOS ---
-  cmbModeloPaginacionRevista.List = m_Revistas.ModelosPaginacionLeyendas()
-  cmbTipoAccesoRevista.List = m_Revistas.TiposAccesoLeyendas()
-  cmbTipoArticuloSeccion.List = m_Revistas.TiposArticulo()
-
-  ' --- 2. CATÁLOGOS ---
-  ' ESTILOS DE CITA: EL MISMO CATÁLOGO QUE LIBROS (SC-57)
-  m_Revistas.LlenarComboEstilos(cmbEstiloCitaRevista)
-  ' LICENCIAS DE CONTENIDO: EL COMBO QUEDA EDITABLE (SC-23). CON LA CONEXIÓN
-  ' DEL FORMULARIO: FSysAdmin SE ABRE SIN SESIÓN Y mConn PUEDE NO EXISTIR
-  m_Licencias.LlenarCombo(cmbLicenciaRevista, False, hConnServidor)
-
-End
-
-' ============================================
-' Función   : CargarRevistas
-' Propósito : Llena la grilla de revistas, limpia los dos editores y deja los
-'             botones como corresponde a «nada elegido»
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Private Sub CargarRevistas()
+Private Sub CargarEditoriales()
 
   Dim rDatos As Result
   Dim iFila As Integer
 
   ' --- 1. LECTURA ---
-  $aIdsRevistas.Clear()
-  gvRevistas.Rows.Count = 0
-  rDatos = m_Revistas.ListarRevistas(hConnServidor)
+  $aIdsEditoriales.Clear()
+  $aRevistasEditoriales.Clear()
+  gvEditoriales.Rows.Count = 0
+  rDatos = m_Editorial.ListarEditoriales(hConnServidor)
 
   ' --- 2. GRILLA, CON UN id POR FILA EN EL MISMO ORDEN ---
   If rDatos Then
-    gvRevistas.Rows.Count = rDatos.Count
+    gvEditoriales.Rows.Count = rDatos.Count
     iFila = 0
     While rDatos.Available
-      $aIdsRevistas.Add(rDatos!id_revista)
-      gvRevistas[iFila, 0].Text = rDatos!titulo
-      gvRevistas[iFila, 1].Text = m_Revistas.TextoDe(rDatos, "issn_electronico")
+      $aIdsEditoriales.Add(rDatos!id_editorial)
+      $aRevistasEditoriales.Add(rDatos!revistas)
+      gvEditoriales[iFila, 0].Text = rDatos!nombre
+      ' COUNT LLEGA COMO Long
+      gvEditoriales[iFila, 1].Text = CStr(rDatos!revistas)
       Inc iFila
       rDatos.MoveNext
     Wend
   Endif
 
   ' --- 3. NADA ELEGIDO ---
-  $iRevistaActual = 0
-  $iSeccionActual = 0
-  LimpiarEditorRevista()
-  LimpiarEditorSeccion()
-  gvSecciones.Rows.Count = 0
-  $aIdsSecciones.Clear()
-  btnGuardarRevista.Enabled = False
-  btnNuevaSeccion.Enabled = False
-  btnGuardarSeccion.Enabled = False
-  btnPlantillasResumen.Enabled = False
-  btnReaperturas.Enabled = False
+  $iEditorialActual = 0
+  LimpiarEditorEditorial()
+  LimpiarCreditos()
+  btnGuardarEditorial.Enabled = False
+  btnBorrarEditorial.Enabled = False
+  btnRevistasEditorial.Enabled = False
 
 End
 
 ' ============================================
-' Función   : gvRevistas_Click
-' Propósito : Al elegir una revista, carga su editor y sus secciones
+' Función   : gvEditoriales_Click
+' Propósito : Al elegir una editorial, carga su editor y sus créditos
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub gvRevistas_Click()
+Public Sub gvEditoriales_Click()
 
   Dim iFila As Integer
 
   ' --- 1. FILA VÁLIDA ---
-  iFila = gvRevistas.Row
-  If iFila < 0 Or iFila >= $aIdsRevistas.Count Then Return
+  iFila = gvEditoriales.Row
+  If iFila < 0 Or iFila >= $aIdsEditoriales.Count Then Return
 
-  ' --- 2. EDITOR Y SECCIONES ---
-  $iRevistaActual = $aIdsRevistas[iFila]
-  If Not CargarRevistaEnEditor($iRevistaActual) Then Return
-  CargarSecciones()
-  ' LAS PLANTILLAS SON DE LA REVISTA: EL COMBO DE LA SECCIÓN SE REARMA
-  LlenarComboPlantillas()
+  ' --- 2. EDITOR Y CRÉDITOS ---
+  $iEditorialActual = $aIdsEditoriales[iFila]
+  If Not CargarEditorialEnEditor($iEditorialActual) Then Return
+  CargarCreditos()
 
   ' --- 3. BOTONES ---
-  btnGuardarRevista.Enabled = True
-  btnNuevaSeccion.Enabled = True
-  btnGuardarSeccion.Enabled = False
-  btnPlantillasResumen.Enabled = True
-  btnReaperturas.Enabled = True
-  tsRevistas.Index = 0
+  btnGuardarEditorial.Enabled = True
+  ' SOLO SIN REVISTAS: LA QUE TIENE REVISTAS NO SE BORRA
+  btnBorrarEditorial.Enabled = $aRevistasEditoriales[iFila] = 0
+  btnRevistasEditorial.Enabled = True
+  btnNuevoCredito.Enabled = True
 
 End
 
 ' ============================================
-' Función   : CargarRevistaEnEditor
-' Propósito : Vuelca el registro de la revista a la pestaña «Revista»
-' Parámetros: iIdRevista As Integer — revista
+' Función   : CargarEditorialEnEditor
+' Propósito : Vuelca el registro de la editorial a la pestaña «Editorial»
+' Parámetros: iIdEditorial As Integer — editorial
 ' Retorna   : Boolean — True si se cargó
 ' ============================================
-Private Function CargarRevistaEnEditor(iIdRevista As Integer) As Boolean
+Private Function CargarEditorialEnEditor(iIdEditorial As Integer) As Boolean
 
   Dim rDatos As Result
-  Dim iIndice As Integer
-  Dim sEstilo As String
 
   ' --- 1. LECTURA ---
-  rDatos = m_Revistas.CargarRevista(hConnServidor, iIdRevista)
+  rDatos = m_Editorial.CargarEditorial(hConnServidor, iIdEditorial)
   If Not rDatos Then Return False
 
-  ' --- 2. TEXTOS ---
-  txtTituloRevista.Text = m_Revistas.TextoDe(rDatos, "titulo")
-  txtTituloAbreviadoRevista.Text = m_Revistas.TextoDe(rDatos, "titulo_abreviado")
-  txtAcronimoRevista.Text = m_Revistas.TextoDe(rDatos, "acronimo")
-  txtIssnImpresoRevista.Text = m_Revistas.TextoDe(rDatos, "issn_impreso")
-  txtIssnElectronicoRevista.Text = m_Revistas.TextoDe(rDatos, "issn_electronico")
-  txtEditorialRevista.Text = m_Revistas.TextoDe(rDatos, "editorial")
-  txtInstitucionRevista.Text = m_Revistas.TextoDe(rDatos, "institucion_editora")
-  txtRorRevista.Text = m_Revistas.TextoDe(rDatos, "ror_editorial")
-  txtCiudadRevista.Text = m_Revistas.TextoDe(rDatos, "ciudad")
-  txtPaisRevista.Text = m_Revistas.TextoDe(rDatos, "pais")
-  txtEmailRevista.Text = m_Revistas.TextoDe(rDatos, "email_editorial")
-  txtDoiPrefixRevista.Text = m_Revistas.TextoDe(rDatos, "doi_prefix")
-  txtIdiomasRevista.Text = m_Revistas.TextoDe(rDatos, "idiomas_publicacion")
-  cmbLicenciaRevista.Text = m_Revistas.TextoDe(rDatos, "licencia_defecto")
-  txtUrlLicenciaRevista.Text = m_Revistas.TextoDe(rDatos, "url_licencia_defecto")
-  txtTitularCopyrightRevista.Text = m_Revistas.TextoDe(rDatos, "titular_copyright_defecto")
+  ' --- 2. CAMPOS ---
+  txtNombreEditorial.Text = m_Revistas.TextoDe(rDatos, "nombre")
+  txtInstitucionEditorial.Text = m_Revistas.TextoDe(rDatos, "institucion")
+  txtRorEditorial.Text = m_Revistas.TextoDe(rDatos, "ror")
+  txtDireccionEditorial.Text = m_Revistas.TextoDe(rDatos, "direccion")
+  txtRegionEditorial.Text = m_Revistas.TextoDe(rDatos, "region")
+  txtCiudadEditorial.Text = m_Revistas.TextoDe(rDatos, "ciudad")
+  txtPaisEditorial.Text = m_Revistas.TextoDe(rDatos, "pais")
+  txtUrlPortalEditorial.Text = m_Revistas.TextoDe(rDatos, "url_portal")
+  txtEmailEditorial.Text = m_Revistas.TextoDe(rDatos, "email")
+  txtDoiPrefixEditorial.Text = m_Revistas.TextoDe(rDatos, "doi_prefix")
+  ' UNA LICENCIA QUE NO ESTÁ EN EL CATÁLOGO SE MUESTRA IGUAL: EL COMBO ES
+  ' EDITABLE (SC-23)
+  cmbLicenciaEditorial.Text = m_Revistas.TextoDe(rDatos, "licencia_defecto")
+  txtUrlLicenciaEditorial.Text = m_Revistas.TextoDe(rDatos, "url_licencia_defecto")
+  txtTitularCopyrightEditorial.Text = m_Revistas.TextoDe(rDatos, "titular_copyright_defecto")
+  txtLeyendaDistribucionEditorial.Text = m_Revistas.TextoDe(rDatos, "leyenda_distribucion")
+  txaAvisoResponsabilidadEditorial.Text = m_Revistas.TextoDe(rDatos, "aviso_responsabilidad")
 
-  ' --- 3. COMBOS DE SOLO LECTURA: SE UBICAN POR ÍNDICE ---
-  iIndice = m_Revistas.IndiceDe(m_Revistas.ModelosPaginacionCodigos(), m_Revistas.TextoDe(rDatos, "modelo_paginacion"))
-  If iIndice < 0 Then iIndice = 0
-  cmbModeloPaginacionRevista.Index = iIndice
-
-  iIndice = m_Revistas.IndiceDe(m_Revistas.TiposAccesoCodigos(), m_Revistas.TextoDe(rDatos, "tipo_acceso_defecto"))
-  If iIndice < 0 Then iIndice = 0
-  cmbTipoAccesoRevista.Index = iIndice
-
-  ' --- 4. ESTILO DE CITA ---
-  ' UN ESTILO GUARDADO QUE YA NO ESTÁ INSTALADO SE MUESTRA IGUAL: EL COMBO ES
-  ' EDITABLE Y NO LO PIERDE (SC-23)
-  sEstilo = m_Revistas.TextoDe(rDatos, "estilo_cita")
-  If sEstilo = "" Then
-    cmbEstiloCitaRevista.Text = ""
-  Else
-    cmbEstiloCitaRevista.Text = m_Revistas.TextoComboEstilo(sEstilo)
-  Endif
-
-  ' --- 5. AUDITORÍA, SOLO LECTURA ---
-  txtAuditoriaRevista.Text = m_Revistas.TextoDe(rDatos, "fecha_creacion") & "  ·  " & m_Revistas.TextoDe(rDatos, "usuario_creacion")
+  ' --- 3. AUDITORÍA, SOLO LECTURA ---
+  txtAuditoriaEditorial.Text = m_Revistas.TextoDe(rDatos, "fecha_creacion")
 
   Return True
 
 End
 
 ' ============================================
-' Función   : LimpiarEditorRevista
-' Propósito : Deja vacía la pestaña «Revista»
+' Función   : LimpiarEditorEditorial
+' Propósito : Deja vacía la pestaña «Editorial»
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Private Sub LimpiarEditorRevista()
+Private Sub LimpiarEditorEditorial()
 
-  txtTituloRevista.Text = ""
-  txtTituloAbreviadoRevista.Text = ""
-  txtAcronimoRevista.Text = ""
-  txtIssnImpresoRevista.Text = ""
-  txtIssnElectronicoRevista.Text = ""
-  txtEditorialRevista.Text = ""
-  txtInstitucionRevista.Text = ""
-  txtRorRevista.Text = ""
-  txtCiudadRevista.Text = ""
-  txtPaisRevista.Text = ""
-  txtEmailRevista.Text = ""
-  txtDoiPrefixRevista.Text = ""
-  txtIdiomasRevista.Text = ""
-  cmbEstiloCitaRevista.Text = ""
-  cmbLicenciaRevista.Text = ""
-  txtUrlLicenciaRevista.Text = ""
-  txtTitularCopyrightRevista.Text = ""
-  cmbModeloPaginacionRevista.Index = 0
-  cmbTipoAccesoRevista.Index = 0
-  txtAuditoriaRevista.Text = ""
+  txtNombreEditorial.Text = ""
+  txtInstitucionEditorial.Text = ""
+  txtRorEditorial.Text = ""
+  txtDireccionEditorial.Text = ""
+  txtRegionEditorial.Text = ""
+  txtCiudadEditorial.Text = ""
+  txtPaisEditorial.Text = ""
+  txtUrlPortalEditorial.Text = ""
+  txtEmailEditorial.Text = ""
+  txtDoiPrefixEditorial.Text = ""
+  cmbLicenciaEditorial.Text = ""
+  txtUrlLicenciaEditorial.Text = ""
+  txtTitularCopyrightEditorial.Text = ""
+  txtLeyendaDistribucionEditorial.Text = ""
+  txaAvisoResponsabilidadEditorial.Text = ""
+  txtAuditoriaEditorial.Text = ""
 
 End
 
 ' ============================================
-' Función   : btnNuevaRevista_Click
-' Propósito : Alta mínima y selección de la revista nueva, como Colecciones
+' Función   : btnNuevaEditorial_Click
+' Propósito : Alta mínima y selección de la editorial nueva, como las revistas
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub btnNuevaRevista_Click()
+Public Sub btnNuevaEditorial_Click()
 
   Dim iNueva As Integer
 
   ' --- 1. ALTA ---
-  iNueva = m_Revistas.CrearRevista(hConnServidor, sUsuarioActual)
+  iNueva = m_Editorial.CrearEditorial(hConnServidor)
   If iNueva = 0 Then Return
 
   ' --- 2. RELECTURA Y SELECCIÓN DE LA NUEVA ---
-  CargarRevistas()
-  SeleccionarRevista(iNueva)
-  txtTituloRevista.SetFocus()
-  txtTituloRevista.SelectAll()
+  CargarEditoriales()
+  SeleccionarEditorial(iNueva)
+  tsEditorial.Index = 0
+  txtNombreEditorial.SetFocus()
+  txtNombreEditorial.SelectAll()
 
 End
 
 ' ============================================
-' Función   : SeleccionarRevista
-' Propósito : Ubica la grilla en una revista y la carga
-' Parámetros: iIdRevista As Integer — revista
+' Función   : SeleccionarEditorial
+' Propósito : Ubica la grilla en una editorial y la carga
+' Parámetros: iIdEditorial As Integer — editorial
 ' Retorna   : nada
 ' ============================================
-Private Sub SeleccionarRevista(iIdRevista As Integer)
+Private Sub SeleccionarEditorial(iIdEditorial As Integer)
 
   Dim iFila As Integer
 
-  iFila = $aIdsRevistas.Find(iIdRevista)
+  iFila = $aIdsEditoriales.Find(iIdEditorial)
   If iFila < 0 Then Return
-  gvRevistas.Row = iFila
-  gvRevistas_Click()
+  gvEditoriales.Row = iFila
+  gvEditoriales_Click()
 
 End
 
 ' ============================================
-' Función   : btnGuardarRevista_Click
-' Propósito : Junta los valores del editor y los graba por m_Revistas
+' Función   : btnGuardarEditorial_Click
+' Propósito : Junta los valores del editor y los graba por m_Editorial
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub btnGuardarRevista_Click()
+Public Sub btnGuardarEditorial_Click()
 
   Dim cDatos As New Collection
-  Dim iRevista As Integer
+  Dim iEditorial As Integer
 
-  ' --- 1. HAY REVISTA ELEGIDA ---
-  If $iRevistaActual <= 0 Then Return
+  ' --- 1. HAY EDITORIAL ELEGIDA ---
+  If $iEditorialActual <= 0 Then Return
 
   ' --- 2. VALORES, POR NOMBRE DE COLUMNA; Null DONDE NO HAY DATO ---
-  cDatos["titulo"] = m_Revistas.NuloSiVacio(txtTituloRevista.Text)
-  cDatos["titulo_abreviado"] = m_Revistas.NuloSiVacio(txtTituloAbreviadoRevista.Text)
-  cDatos["acronimo"] = m_Revistas.NuloSiVacio(txtAcronimoRevista.Text)
-  cDatos["issn_impreso"] = m_Revistas.NuloSiVacio(UCase(txtIssnImpresoRevista.Text))
-  cDatos["issn_electronico"] = m_Revistas.NuloSiVacio(UCase(txtIssnElectronicoRevista.Text))
-  cDatos["editorial"] = m_Revistas.NuloSiVacio(txtEditorialRevista.Text)
-  cDatos["institucion_editora"] = m_Revistas.NuloSiVacio(txtInstitucionRevista.Text)
-  cDatos["ror_editorial"] = m_Revistas.NuloSiVacio(txtRorRevista.Text)
-  cDatos["ciudad"] = m_Revistas.NuloSiVacio(txtCiudadRevista.Text)
-  cDatos["pais"] = m_Revistas.NuloSiVacio(txtPaisRevista.Text)
-  cDatos["email_editorial"] = m_Revistas.NuloSiVacio(txtEmailRevista.Text)
-  cDatos["doi_prefix"] = m_Revistas.NuloSiVacio(txtDoiPrefixRevista.Text)
-  cDatos["estilo_cita"] = m_Revistas.NuloSiVacio(m_Revistas.EstiloDesdeCombo(cmbEstiloCitaRevista.Text))
-  cDatos["modelo_paginacion"] = m_Revistas.ModelosPaginacionCodigos()[cmbModeloPaginacionRevista.Index]
-  cDatos["idiomas_publicacion"] = m_Revistas.NuloSiVacio(txtIdiomasRevista.Text)
-  cDatos["licencia_defecto"] = m_Revistas.NuloSiVacio(cmbLicenciaRevista.Text)
-  cDatos["url_licencia_defecto"] = m_Revistas.NuloSiVacio(txtUrlLicenciaRevista.Text)
-  cDatos["titular_copyright_defecto"] = m_Revistas.NuloSiVacio(txtTitularCopyrightRevista.Text)
-  cDatos["tipo_acceso_defecto"] = m_Revistas.NuloSiVacio(m_Revistas.TiposAccesoCodigos()[cmbTipoAccesoRevista.Index])
+  cDatos["nombre"] = m_Revistas.NuloSiVacio(txtNombreEditorial.Text)
+  cDatos["institucion"] = m_Revistas.NuloSiVacio(txtInstitucionEditorial.Text)
+  cDatos["ror"] = m_Revistas.NuloSiVacio(txtRorEditorial.Text)
+  cDatos["direccion"] = m_Revistas.NuloSiVacio(txtDireccionEditorial.Text)
+  cDatos["region"] = m_Revistas.NuloSiVacio(txtRegionEditorial.Text)
+  cDatos["ciudad"] = m_Revistas.NuloSiVacio(txtCiudadEditorial.Text)
+  cDatos["pais"] = m_Revistas.NuloSiVacio(txtPaisEditorial.Text)
+  cDatos["url_portal"] = m_Revistas.NuloSiVacio(txtUrlPortalEditorial.Text)
+  cDatos["email"] = m_Revistas.NuloSiVacio(txtEmailEditorial.Text)
+  cDatos["doi_prefix"] = m_Revistas.NuloSiVacio(txtDoiPrefixEditorial.Text)
+  cDatos["licencia_defecto"] = m_Revistas.NuloSiVacio(cmbLicenciaEditorial.Text)
+  cDatos["url_licencia_defecto"] = m_Revistas.NuloSiVacio(txtUrlLicenciaEditorial.Text)
+  cDatos["titular_copyright_defecto"] = m_Revistas.NuloSiVacio(txtTitularCopyrightEditorial.Text)
+  cDatos["leyenda_distribucion"] = m_Revistas.NuloSiVacio(txtLeyendaDistribucionEditorial.Text)
+  cDatos["aviso_responsabilidad"] = m_Revistas.NuloSiVacio(txaAvisoResponsabilidadEditorial.Text)
 
   ' --- 3. GRABACIÓN ---
-  If Not m_Revistas.GuardarRevista(hConnServidor, $iRevistaActual, cDatos) Then Return
+  If Not m_Editorial.GuardarEditorial(hConnServidor, $iEditorialActual, cDatos) Then Return
 
   ' --- 4. RELECTURA MANTENIENDO LA SELECCIÓN ---
-  ' EL TÍTULO PUEDE HABER CAMBIADO EL ORDEN DE LA GRILLA
+  ' EL NOMBRE PUEDE HABER CAMBIADO EL ORDEN DE LA GRILLA
   m_Sonido.sonar("Info")
-  iRevista = $iRevistaActual
-  CargarRevistas()
-  SeleccionarRevista(iRevista)
+  iEditorial = $iEditorialActual
+  CargarEditoriales()
+  SeleccionarEditorial(iEditorial)
 
 End
 
 ' ============================================
-' Función   : cmbLicenciaRevista_Click
+' Función   : btnBorrarEditorial_Click
+' Propósito : Borra la editorial elegida si no tiene revistas, con sus
+'             créditos, después de confirmar (por ejemplo, una «(Nueva
+'             editorial)» creada por error)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarEditorial_Click()
+
+  Dim iFila As Integer
+  Dim sCreditos As String
+
+  ' --- 1. HAY EDITORIAL ELEGIDA ---
+  If $iEditorialActual <= 0 Then Return
+  iFila = $aIdsEditoriales.Find($iEditorialActual)
+  If iFila < 0 Then Return
+
+  ' --- 2. CONFIRMACIÓN; SE NOMBRAN LOS CRÉDITOS QUE SE VAN CON ELLA ---
+  If gvCreditos.Rows.Count > 0 Then sCreditos = Chr(10) & Chr(10) & "También se borran sus " & CStr(gvCreditos.Rows.Count) & " créditos."
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar la editorial «" & gvEditoriales[iFila, 0].Text & "»?" & sCreditos, "Borrar", "Cancelar") <> 1 Then Return
+
+  ' --- 3. BORRADO Y RELECTURA ---
+  If Not m_Editorial.BorrarEditorial(hConnServidor, $iEditorialActual) Then Return
+  m_Sonido.sonar("Info")
+  CargarEditoriales()
+
+End
+
+' ============================================
+' Función   : cmbLicenciaEditorial_Click
 ' Propósito : Al elegir una licencia del catálogo, completa su URL
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub cmbLicenciaRevista_Click()
+Public Sub cmbLicenciaEditorial_Click()
 
-  ' CON LA CONEXIÓN DEL FORMULARIO (VER LlenarCombosRevistas)
-  m_Licencias.CompletarUrl(cmbLicenciaRevista, txtUrlLicenciaRevista, hConnServidor)
-
-End
-
-' ============================================
-' Función   : CargarSecciones
-' Propósito : Llena la grilla de secciones de la revista elegida, con el
-'             título en su primer idioma de publicación
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Private Sub CargarSecciones()
-
-  Dim rDatos As Result
-  Dim iFila As Integer
-
-  ' --- 1. LIMPIEZA ---
-  gvSecciones.Rows.Count = 0
-  $aIdsSecciones.Clear()
-  $iSeccionActual = 0
-  LimpiarEditorSeccion()
-
-  ' --- 2. IDIOMAS DE LA REVISTA: EL PRIMERO TITULA LA GRILLA ---
-  $aIdiomasRevista = m_Revistas.IdiomasDeRevista(hConnServidor, $iRevistaActual)
-  If $aIdiomasRevista.Count > 0 Then
-    gvSecciones.Columns[1].Title = "Título (" & $aIdiomasRevista[0] & ")"
-    rDatos = m_Revistas.ListarSecciones(hConnServidor, $iRevistaActual, $aIdiomasRevista[0])
-  Else
-    gvSecciones.Columns[1].Title = "Título"
-    rDatos = m_Revistas.ListarSecciones(hConnServidor, $iRevistaActual, "")
-  Endif
-  If Not rDatos Then Return
-
-  ' --- 3. GRILLA ---
-  gvSecciones.Rows.Count = rDatos.Count
-  iFila = 0
-  While rDatos.Available
-    $aIdsSecciones.Add(rDatos!id_seccion)
-    gvSecciones[iFila, 0].Text = rDatos!codigo
-    gvSecciones[iFila, 1].Text = m_Revistas.TextoDe(rDatos, "titulo")
-    gvSecciones[iFila, 2].Text = CStr(rDatos!orden)
-    ' RC-GM-01: TINYINT(1) LLEGA COMO Boolean
-    gvSecciones[iFila, 3].Text = If(rDatos!activa, "Activa", "Inactiva")
-    Inc iFila
-    rDatos.MoveNext
-  Wend
+  ' CON LA CONEXIÓN DEL FORMULARIO (VER CargarPestanaEditorial)
+  m_Licencias.CompletarUrl(cmbLicenciaEditorial, txtUrlLicenciaEditorial, hConnServidor)
 
 End
 
 ' ============================================
-' Función   : gvSecciones_Click
-' Propósito : Al elegir una sección, la carga en la pestaña «Secciones»
+' Función   : btnRevistasEditorial_Click
+' Propósito : Abre las revistas de la editorial elegida y, al volver, relee
+'             la grilla (la cantidad de revistas puede haber cambiado)
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub gvSecciones_Click()
+Public Sub btnRevistasEditorial_Click()
 
   Dim iFila As Integer
+  Dim iEditorial As Integer
 
-  ' --- 1. FILA VÁLIDA ---
-  iFila = gvSecciones.Row
-  If iFila < 0 Or iFila >= $aIdsSecciones.Count Then Return
+  ' --- 1. HAY EDITORIAL ELEGIDA ---
+  If $iEditorialActual <= 0 Then Return
+  iFila = $aIdsEditoriales.Find($iEditorialActual)
 
-  ' --- 2. EDITOR ---
-  $iSeccionActual = $aIdsSecciones[iFila]
-  If Not CargarSeccionEnEditor($iSeccionActual) Then Return
-  btnGuardarSeccion.Enabled = True
-  tsRevistas.Index = 1
+  ' --- 2. FORMULARIO HIJO, CON LA CONEXIÓN DEL FORMULARIO (PUEDE NO HABER
+  ' SESIÓN). EL NOMBRE SALE DE LA GRILLA, QUE ES LO GUARDADO ---
+  FRevistas.hConn = hConnServidor
+  FRevistas.iIdEditorial = $iEditorialActual
+  If iFila >= 0 Then FRevistas.sEditorial = gvEditoriales[iFila, 0].Text
+  FRevistas.sUsuario = sUsuarioActual
+  FRevistas.ShowModal()
 
-End
-
-' ============================================
-' Función   : CargarSeccionEnEditor
-' Propósito : Vuelca la sección y sus títulos a la pestaña «Secciones». Los
-'             títulos quedan en $cTitulosSeccion; el campo muestra el del
-'             idioma elegido en el combo (decisión 20)
-' Parámetros: iIdSeccion As Integer — sección
-' Retorna   : Boolean — True si se cargó
-' ============================================
-Private Function CargarSeccionEnEditor(iIdSeccion As Integer) As Boolean
-
-  Dim rDatos As Result
-  Dim iIndice As Integer
-
-  ' --- 1. LECTURA ---
-  rDatos = m_Revistas.CargarSeccion(hConnServidor, iIdSeccion)
-  If Not rDatos Then Return False
-
-  ' --- 2. CAMPOS ---
-  ' $bCargandoSeccion: ASIGNAR UN COMBO POR CÓDIGO PUEDE DISPARAR SU Click, Y
-  ' ESE Click NO DEBE GUARDAR EL TÍTULO DEL IDIOMA ANTERIOR
-  $bCargandoSeccion = True
-  txtCodigoSeccion.Text = rDatos!codigo
-  spnOrdenSeccion.Value = rDatos!orden
-  chkActivaSeccion.Value = rDatos!activa
-  iIndice = m_Revistas.IndiceDe(m_Revistas.TiposArticulo(), m_Revistas.TextoDe(rDatos, "article_type_defecto"))
-  cmbTipoArticuloSeccion.Index = iIndice
-  ' PLANTILLA DE RESUMEN: NULL ES EL PRIMER ÍTEM, «RESUMEN SIMPLE»
-  If IsNull(rDatos!id_plantilla_resumen) Then
-    cmbPlantillaSeccion.Index = 0
-  Else
-    cmbPlantillaSeccion.Index = $aIdsPlantillas.Find(rDatos!id_plantilla_resumen)
-  Endif
-
-  ' --- 3. TÍTULOS POR IDIOMA ---
-  $cTitulosSeccion = m_Revistas.TitulosSeccion(hConnServidor, iIdSeccion)
-  cmbIdiomaSeccion.List = $aIdiomasRevista
-  If $aIdiomasRevista.Count > 0 Then
-    cmbIdiomaSeccion.Index = 0
-    $sIdiomaTitulo = $aIdiomasRevista[0]
-    txtTituloSeccion.Enabled = True
-  Else
-    ' SIN IDIOMAS DE PUBLICACIÓN NO HAY DÓNDE TITULAR: SE AVISA AL GUARDAR
-    $sIdiomaTitulo = ""
-    txtTituloSeccion.Enabled = False
-  Endif
-  MostrarTituloSeccion()
-  $bCargandoSeccion = False
-
-  Return True
-
-End
-
-' ============================================
-' Función   : MostrarTituloSeccion
-' Propósito : Pone en el campo el título del idioma actual
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Private Sub MostrarTituloSeccion()
-
-  If $sIdiomaTitulo <> "" Then
-    If $cTitulosSeccion.Exist($sIdiomaTitulo) Then
-      txtTituloSeccion.Text = $cTitulosSeccion[$sIdiomaTitulo]
-      Return
-    Endif
-  Endif
-  txtTituloSeccion.Text = ""
-
-End
-
-' ============================================
-' Función   : GuardarTituloEnMemoria
-' Propósito : Pasa lo escrito en el campo al título del idioma actual, antes
-'             de cambiar de idioma o de grabar
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Private Sub GuardarTituloEnMemoria()
-
-  If $sIdiomaTitulo = "" Then Return
-  $cTitulosSeccion[$sIdiomaTitulo] = txtTituloSeccion.Text
-
-End
-
-' ============================================
-' Función   : cmbIdiomaSeccion_Click
-' Propósito : Cambio de idioma: guarda en memoria el título del idioma que se
-'             deja y muestra el del nuevo
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Public Sub cmbIdiomaSeccion_Click()
-
-  ' --- 1. DURANTE LA CARGA NO SE TOCA NADA ---
-  If $bCargandoSeccion Then Return
-
-  ' --- 2. CAMBIO DE IDIOMA ---
-  GuardarTituloEnMemoria()
-  $sIdiomaTitulo = cmbIdiomaSeccion.Text
-  MostrarTituloSeccion()
-
-End
-
-' ============================================
-' Función   : LimpiarEditorSeccion
-' Propósito : Deja vacía la pestaña «Secciones»
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Private Sub LimpiarEditorSeccion()
-
-  $bCargandoSeccion = True
-  txtCodigoSeccion.Text = ""
-  spnOrdenSeccion.Value = 0
-  chkActivaSeccion.Value = False
-  cmbTipoArticuloSeccion.Index = -1
-  cmbPlantillaSeccion.Index = -1
-  cmbIdiomaSeccion.Clear()
-  txtTituloSeccion.Text = ""
-  $cTitulosSeccion = New Collection
-  $sIdiomaTitulo = ""
-  $bCargandoSeccion = False
-
-End
-
-' ============================================
-' Función   : btnNuevaSeccion_Click
-' Propósito : Alta mínima de una sección en la revista elegida y su selección
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Public Sub btnNuevaSeccion_Click()
-
-  Dim iNueva As Integer
-
-  ' --- 1. HAY REVISTA ELEGIDA ---
-  If $iRevistaActual <= 0 Then Return
-
-  ' --- 2. ALTA ---
-  iNueva = m_Revistas.CrearSeccion(hConnServidor, $iRevistaActual)
-  If iNueva = 0 Then Return
-
-  ' --- 3. RELECTURA Y SELECCIÓN DE LA NUEVA ---
-  CargarSecciones()
-  SeleccionarSeccion(iNueva)
-  txtCodigoSeccion.SetFocus()
-  txtCodigoSeccion.SelectAll()
-
-End
-
-' ============================================
-' Función   : SeleccionarSeccion
-' Propósito : Ubica la grilla en una sección y la carga
-' Parámetros: iIdSeccion As Integer — sección
-' Retorna   : nada
-' ============================================
-Private Sub SeleccionarSeccion(iIdSeccion As Integer)
-
-  Dim iFila As Integer
-
-  iFila = $aIdsSecciones.Find(iIdSeccion)
-  If iFila < 0 Then Return
-  gvSecciones.Row = iFila
-  gvSecciones_Click()
-
-End
-
-' ============================================
-' Función   : btnGuardarSeccion_Click
-' Propósito : Junta los valores de la sección y sus títulos y los graba por
-'             m_Revistas
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Public Sub btnGuardarSeccion_Click()
-
-  Dim cDatos As New Collection
-  Dim iSeccion As Integer
-
-  ' --- 1. HAY SECCIÓN ELEGIDA ---
-  If $iSeccionActual <= 0 Then Return
-
-  ' --- 2. EL TÍTULO A LA VISTA TODAVÍA NO PASÓ A LA MEMORIA ---
-  GuardarTituloEnMemoria()
-
-  ' --- 3. VALORES ---
-  cDatos["codigo"] = Trim(txtCodigoSeccion.Text)
-  cDatos["orden"] = spnOrdenSeccion.Value
-  If cmbTipoArticuloSeccion.Index < 0 Then
-    cDatos["article_type_defecto"] = Null
-  Else
-    cDatos["article_type_defecto"] = cmbTipoArticuloSeccion.Text
-  Endif
-  cDatos["activa"] = If(chkActivaSeccion.Value, 1, 0)
-  ' SIN ELEGIR O «RESUMEN SIMPLE»: NULL
-  If cmbPlantillaSeccion.Index > 0 Then
-    cDatos["id_plantilla_resumen"] = $aIdsPlantillas[cmbPlantillaSeccion.Index]
-  Else
-    cDatos["id_plantilla_resumen"] = Null
-  Endif
-
-  ' --- 4. GRABACIÓN ---
-  If Not m_Revistas.GuardarSeccion(hConnServidor, $iSeccionActual, $iRevistaActual, cDatos, $cTitulosSeccion, $aIdiomasRevista) Then Return
-
-  ' --- 5. RELECTURA MANTENIENDO LA SELECCIÓN ---
-  m_Sonido.sonar("Info")
-  iSeccion = $iSeccionActual
-  CargarSecciones()
-  SeleccionarSeccion(iSeccion)
-
-End
-
-' ============================================
-' Función   : LlenarComboPlantillas
-' Propósito : Llena el combo de plantilla de la sección con las plantillas de
-'             la revista elegida; el primer ítem es «resumen simple» (Null)
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Private Sub LlenarComboPlantillas()
-
-  Dim rDatos As Result
-
-  ' --- 1. PRIMER ÍTEM: SIN PLANTILLA ---
-  cmbPlantillaSeccion.Clear()
-  $aIdsPlantillas.Clear()
-  cmbPlantillaSeccion.Add("(resumen simple)")
-  $aIdsPlantillas.Add(0)
-
-  ' --- 2. LAS DE LA REVISTA; LAS INACTIVAS SE MARCAN PERO SE MUESTRAN, PORQUE
-  ' UNA SECCIÓN PUEDE TENERLA ASIGNADA ---
-  rDatos = m_Revistas.ListarPlantillas(hConnServidor, $iRevistaActual)
-  If Not rDatos Then Return
-  While rDatos.Available
-    ' CBool: TINYINT(1) LLEGA COMO Boolean Y True VALE -1 (MEDIDO, 28/10)
-    cmbPlantillaSeccion.Add(rDatos!nombre & If(CBool(rDatos!activa), "", "  (inactiva)"))
-    $aIdsPlantillas.Add(rDatos!id_plantilla)
-    rDatos.MoveNext
-  Wend
-
-End
-
-' ============================================
-' Función   : btnPlantillasResumen_Click
-' Propósito : Abre el diálogo de plantillas de la revista elegida y, al
-'             volver, rearma el combo y recarga la sección a la vista
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Public Sub btnPlantillasResumen_Click()
-
-  Dim iSeccion As Integer
-
-  ' --- 1. HAY REVISTA ELEGIDA ---
-  If $iRevistaActual <= 0 Then Return
-
-  ' --- 2. DIÁLOGO, CON LA CONEXIÓN DEL FORMULARIO (PUEDE NO HABER SESIÓN) ---
-  FPlantillasResumen.hConn = hConnServidor
-  FPlantillasResumen.iIdRevista = $iRevistaActual
-  FPlantillasResumen.ShowModal()
-
-  ' --- 3. COMBO NUEVO Y SECCIÓN A LA VISTA RECARGADA ---
-  iSeccion = $iSeccionActual
-  LlenarComboPlantillas()
-  If iSeccion > 0 Then SeleccionarSeccion(iSeccion)
+  ' --- 3. RELECTURA MANTENIENDO LA SELECCIÓN ---
+  iEditorial = $iEditorialActual
+  CargarEditoriales()
+  SeleccionarEditorial(iEditorial)
 
 End
 
 ' ============================================
 ' Función   : btnVocabularios_Click
 ' Propósito : Abre el catálogo de vocabulario controlado. Es global: no
-'             depende de la revista elegida (entrega C3)
+'             depende de la editorial ni de la revista (entrega C3)
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -3950,27 +3622,227 @@ Public Sub btnVocabularios_Click()
 End
 
 ' ============================================
-' Función   : btnReaperturas_Click
-' Propósito : Abre el diálogo para reabrir un artículo publicado de la
-'             revista elegida (entrega E, decisión 17). Quien reabre es el
-'             administrador validado en este formulario
+' Función   : CargarCreditos
+' Propósito : Llena la grilla de créditos de la editorial elegida y deja el
+'             editor de la fila vacío
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
-Public Sub btnReaperturas_Click()
+Private Sub CargarCreditos()
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. LIMPIEZA ---
+  LimpiarCreditos()
+  If $iEditorialActual <= 0 Then Return
+
+  ' --- 2. LECTURA ---
+  rDatos = m_Editorial.ListarCreditos(hConnServidor, $iEditorialActual)
+  If Not rDatos Then Return
+
+  ' --- 3. GRILLA; «Hasta» VACÍO ES UN CRÉDITO VIGENTE ---
+  gvCreditos.Rows.Count = rDatos.Count
+  iFila = 0
+  While rDatos.Available
+    $aIdsCreditos.Add(rDatos!id_credito)
+    gvCreditos[iFila, 0].Text = rDatos!cargo
+    gvCreditos[iFila, 1].Text = rDatos!nombre
+    gvCreditos[iFila, 2].Text = CStr(rDatos!orden)
+    gvCreditos[iFila, 3].Text = m_Editorial.TextoFecha(rDatos, "desde")
+    gvCreditos[iFila, 4].Text = m_Editorial.TextoFecha(rDatos, "hasta")
+    Inc iFila
+    rDatos.MoveNext
+  Wend
+
+End
+
+' ============================================
+' Función   : LimpiarCreditos
+' Propósito : Vacía la grilla y el editor de créditos; los botones quedan como
+'             corresponde a «nada elegido»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarCreditos()
+
+  ' --- 1. GRILLA ---
+  gvCreditos.Rows.Count = 0
+  $aIdsCreditos.Clear()
+
+  ' --- 2. EDITOR DE LA FILA ---
+  LimpiarEditorCredito()
+  $iCreditoActual = -1
+
+  ' --- 3. BOTONES: SIN EDITORIAL NO HAY ALTA; SIN CRÉDITO NO HAY GUARDAR NI BORRAR ---
+  btnNuevoCredito.Enabled = $iEditorialActual > 0
+  btnGuardarCredito.Enabled = False
+  btnBorrarCredito.Enabled = False
+
+End
+
+' ============================================
+' Función   : LimpiarEditorCredito
+' Propósito : Deja vacíos los campos del crédito
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarEditorCredito()
+
+  txtCargoCredito.Text = ""
+  txtNombreCredito.Text = ""
+  spnOrdenCredito.Value = 0
+  dtbDesdeCredito.Value = Null
+  dtbHastaCredito.Value = Null
+
+End
+
+' ============================================
+' Función   : gvCreditos_Click
+' Propósito : Al elegir un crédito, lo carga en el editor de la fila
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvCreditos_Click()
+
+  Dim iFila As Integer
+  Dim rDatos As Result
+
+  ' --- 1. FILA VÁLIDA ---
+  iFila = gvCreditos.Row
+  If iFila < 0 Or iFila >= $aIdsCreditos.Count Then Return
+
+  ' --- 2. LECTURA ---
+  rDatos = m_Editorial.CargarCredito(hConnServidor, $aIdsCreditos[iFila])
+  If Not rDatos Then Return
+
+  ' --- 3. CAMPOS ---
+  $iCreditoActual = $aIdsCreditos[iFila]
+  txtCargoCredito.Text = rDatos!cargo
+  txtNombreCredito.Text = rDatos!nombre
+  spnOrdenCredito.Value = rDatos!orden
+  dtbDesdeCredito.Value = rDatos!desde
+  ' NULL: VIGENTE. EL DateBox ACEPTA Null (MISMO USO QUE FMetadatosArticulo)
+  dtbHastaCredito.Value = rDatos!hasta
+
+  ' --- 4. BOTONES ---
+  btnGuardarCredito.Enabled = True
+  btnBorrarCredito.Enabled = True
+
+End
+
+' ============================================
+' Función   : btnNuevoCredito_Click
+' Propósito : Prepara el editor para un crédito nuevo. No graba nada: el alta
+'             la hace «Guardar», porque cargo, nombre y desde son obligatorios
+'             y un alta mínima necesitaría inventarlos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevoCredito_Click()
+
+  ' --- 1. HAY EDITORIAL ELEGIDA ---
+  If $iEditorialActual <= 0 Then Return
+
+  ' --- 2. EDITOR VACÍO EN MODO ALTA (0) ---
+  LimpiarEditorCredito()
+  $iCreditoActual = 0
+  btnGuardarCredito.Enabled = True
+  btnBorrarCredito.Enabled = False
+  txtCargoCredito.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarCredito_Click
+' Propósito : Junta los valores del crédito y los graba por m_Editorial (alta
+'             si es nuevo, edición si no)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarCredito_Click()
+
+  Dim cDatos As New Collection
+  Dim iCredito As Integer
+
+  ' --- 1. HAY EDITORIAL Y UN CRÉDITO EN EDICIÓN (0 = ALTA) ---
+  If $iEditorialActual <= 0 Then Return
+  If $iCreditoActual < 0 Then Return
+
+  ' --- 2. VALORES ---
+  cDatos["cargo"] = m_Revistas.NuloSiVacio(txtCargoCredito.Text)
+  cDatos["nombre"] = m_Revistas.NuloSiVacio(txtNombreCredito.Text)
+  cDatos["orden"] = spnOrdenCredito.Value
+  cDatos["desde"] = dtbDesdeCredito.Value
+  cDatos["hasta"] = dtbHastaCredito.Value
+
+  ' --- 3. GRABACIÓN ---
+  iCredito = m_Editorial.GuardarCredito(hConnServidor, $iCreditoActual, $iEditorialActual, cDatos)
+  If iCredito = 0 Then Return
+
+  ' --- 4. RELECTURA Y SELECCIÓN DEL GRABADO ---
+  m_Sonido.sonar("Info")
+  CargarCreditos()
+  SeleccionarCredito(iCredito)
+
+End
+
+' ============================================
+' Función   : SeleccionarCredito
+' Propósito : Ubica la grilla en un crédito y lo carga
+' Parámetros: iIdCredito As Integer — crédito
+' Retorna   : nada
+' ============================================
+Private Sub SeleccionarCredito(iIdCredito As Integer)
 
   Dim iFila As Integer
 
-  ' --- 1. HAY REVISTA ELEGIDA ---
-  If $iRevistaActual <= 0 Then Return
-  iFila = $aIdsRevistas.Find($iRevistaActual)
+  iFila = $aIdsCreditos.Find(iIdCredito)
+  If iFila < 0 Then Return
+  gvCreditos.Row = iFila
+  gvCreditos_Click()
 
-  ' --- 2. DIÁLOGO, CON LA CONEXIÓN DEL FORMULARIO (PUEDE NO HABER SESIÓN) ---
-  ' EL TÍTULO SALE DE LA GRILLA, QUE ES LO GUARDADO (NO DEL EDITOR)
-  FReabrirArticulo.hConn = hConnServidor
-  FReabrirArticulo.iIdRevista = $iRevistaActual
-  If iFila >= 0 Then FReabrirArticulo.sRevista = gvRevistas[iFila, 0].Text
-  FReabrirArticulo.sUsuario = sUsuarioActual
-  FReabrirArticulo.ShowModal()
+End
+
+' ============================================
+' Función   : btnBorrarCredito_Click
+' Propósito : Borra el crédito elegido, con confirmación (decisión de
+'             Alberto, 12/11). La pregunta recuerda que una persona que deja
+'             el cargo se cierra con «hasta»: borrarla la quita también de la
+'             página legal de los números en que figuraba
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarCredito_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. HAY CRÉDITO GRABADO ELEGIDO ---
+  If $iCreditoActual <= 0 Then Return
+  iFila = $aIdsCreditos.Find($iCreditoActual)
+  If iFila < 0 Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar el crédito «" & gvCreditos[iFila, 0].Text & ": " & gvCreditos[iFila, 1].Text & "»?" & Chr(10) & Chr(10) &
+      "Si la persona dejó el cargo, conviene cargar «hasta» en lugar de borrar: así sigue figurando en los números en que estuvo.", "Borrar", "Cancelar") <> 1 Then Return
+
+  ' --- 3. BORRADO Y RELECTURA ---
+  If Not m_Editorial.BorrarCredito(hConnServidor, $iCreditoActual) Then Return
+  m_Sonido.sonar("Info")
+  CargarCreditos()
+
+End
+
+' ============================================
+' Función   : btnVaciarHastaCredito_Click
+' Propósito : Deja vacía la fecha «hasta»: el crédito queda vigente (se graba
+'             NULL)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnVaciarHastaCredito_Click()
+
+  dtbHastaCredito.Value = Null
 
 End

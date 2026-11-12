@@ -1,0 +1,433 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Editorial
+' Propósito : Lógica de la pestaña «Editorial» de FSysAdmin: la editorial
+'             (madre de sus revistas) y sus créditos con vigencia, sobre el
+'             esquema 1.26.0 (claude/salidas-revistas.md, etapa B).
+'             FSysAdmin tiene los controles y los manejadores; acá viven las
+'             consultas, las validaciones y las grabaciones (SC-20, SC-21).
+' Conexión  : todas las funciones que tocan la base reciben la conexión como
+'             parámetro: FSysAdmin trabaja con hConnServidor y se puede abrir
+'             SIN SESIÓN DE USUARIO, cuando m_ConexionBD.mConn no existe (el
+'             mismo criterio que m_Revistas).
+' Requiere  : esquema 1.26.0 (editorial, editorial_credito, revista.id_editorial).
+' Dependencias: m_Sonido, m_Revistas (NuloSiVacio, TextoDe).
+' ==============================================================================
+
+' TÍTULO PROVISORIO DEL ALTA MÍNIMA: EL EDITOR LO REEMPLAZA ANTES DE GUARDAR
+Private Const NOMBRE_PROVISORIO As String = "(Nueva editorial)"
+
+' ============================================
+' Función   : ListarEditoriales
+' Propósito : Las editoriales para la grilla, ordenadas por nombre, con la
+'             cantidad de revistas de cada una
+' Parámetros: hConn As Connection — conexión abierta
+' Retorna   : Result — id_editorial, nombre, revistas; Null si falló (ya se
+'             informó)
+' ============================================
+Public Function ListarEditoriales(hConn As Connection) As Result
+
+  Dim rDatos As Result
+
+  ' LEFT JOIN: UNA EDITORIAL RECIÉN CREADA TODAVÍA NO TIENE REVISTAS
+  Try rDatos = hConn.Exec("SELECT e.id_editorial, e.nombre, COUNT(r.id_revista) AS revistas " &
+    "FROM editorial e LEFT JOIN revista r ON r.id_editorial = e.id_editorial " &
+    "GROUP BY e.id_editorial, e.nombre ORDER BY e.nombre")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las editoriales (¿falta la actualización de esquema 1.26.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarEditorial
+' Propósito : El registro completo de una editorial, para el editor
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdEditorial As Integer — editorial
+' Retorna   : Result — el registro; Null si falló o no existe (ya se informó)
+' ============================================
+Public Function CargarEditorial(hConn As Connection, iIdEditorial As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT * FROM editorial WHERE id_editorial = &1", iIdEditorial)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar la editorial:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("La editorial ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CrearEditorial
+' Propósito : Alta mínima de una editorial, como las revistas: un nombre
+'             provisorio que el editor reemplaza antes de guardar
+' Parámetros: hConn As Connection — conexión abierta
+' Retorna   : Integer — id de la editorial nueva; 0 si falló (ya se informó)
+' ============================================
+Public Function CrearEditorial(hConn As Connection) As Integer
+
+  ' nombre ES NOT NULL EN EL ESQUEMA: POR ESO EL PROVISORIO
+  Try hConn.Exec("INSERT INTO editorial (nombre) VALUES (&1)", NOMBRE_PROVISORIO)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo crear la editorial:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  Return hConn.LastInsertId
+
+End
+
+' ============================================
+' Función   : BorrarEditorial
+' Propósito : Borra una editorial que no tiene revistas, junto con sus
+'             créditos, en una transacción. Sin revistas no hay números que
+'             muestren esos créditos: no se pierde historia. Con revistas no
+'             se borra (además la clave foránea de revista lo frenaría). La
+'             confirmación la pide el formulario
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdEditorial As Integer — editorial
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarEditorial(hConn As Connection, iIdEditorial As Integer) As Boolean
+
+  Dim rDatos As Result
+
+  ' --- 1. TRANSACCIÓN ---
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo iniciar el borrado:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 2. ¿TIENE REVISTAS? SE CUENTA DENTRO DE LA TRANSACCIÓN ---
+  Try rDatos = hConn.Exec("SELECT COUNT(*) AS total FROM revista WHERE id_editorial = &1", iIdEditorial)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron contar las revistas de la editorial:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If rDatos!total > 0 Then
+    hConn.Rollback()
+    m_Sonido.sonar("Warning")
+    Message.Warning("La editorial tiene revistas: no se puede borrar.")
+    Return False
+  Endif
+
+  ' --- 3. CRÉDITOS Y EDITORIAL (EN ESE ORDEN: fk_credito_editorial ES RESTRICT) ---
+  Try hConn.Exec("DELETE FROM editorial_credito WHERE id_editorial = &1", iIdEditorial)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron borrar los créditos de la editorial:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  Try hConn.Exec("DELETE FROM editorial WHERE id_editorial = &1", iIdEditorial)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar la editorial:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 4. CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo confirmar el borrado:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ValidarEditorial
+' Propósito : Controles previos al guardado de la editorial. Avisa el primero
+'             que falla
+' Parámetros: cDatos As Collection — los valores del editor, por nombre de
+'             columna
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarEditorial(cDatos As Collection) As Boolean
+
+  Dim sAviso As String
+
+  ' --- 1. NOMBRE OBLIGATORIO ---
+  ' ES EL publisher-name DE JATS Y DE Crossref; EL PROVISORIO NO VALE
+  If IsNull(cDatos["nombre"]) Then
+    sAviso = "El nombre de la editorial no puede quedar vacío."
+  Else If cDatos["nombre"] = NOMBRE_PROVISORIO Then
+    sAviso = "Reemplace el nombre provisorio «" & NOMBRE_PROVISORIO & "»."
+  Endif
+
+  ' --- 2. PREFIJO DOI: TODO PREFIJO DOI EMPIEZA CON «10.» ---
+  ' If ANIDADO: And NO ES SHORT-CIRCUIT (RC-GM-17)
+  If sAviso = "" Then
+    If Not IsNull(cDatos["doi_prefix"]) Then
+      If Left(cDatos["doi_prefix"], 3) <> "10." Then sAviso = "El prefijo DOI tiene que empezar con «10.» (por ejemplo 10.12345)."
+    Endif
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : GuardarEditorial
+' Propósito : Graba la editorial con Edit + Update (RC-GM-15), después de
+'             validar
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdEditorial As Integer — editorial
+'             cDatos As Collection — los valores del editor, por nombre de
+'             columna; Null donde no hay dato
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarEditorial(hConn As Connection, iIdEditorial As Integer, cDatos As Collection) As Boolean
+
+  Dim rEditorial As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Not ValidarEditorial(cDatos) Then Return False
+
+  ' --- 2. REGISTRO A EDITAR ---
+  Try rEditorial = hConn.Edit("editorial", "id_editorial = &1", iIdEditorial)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la editorial para editarla:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. CAMPOS, POR NOMBRE (RC-GM-15) ---
+  With rEditorial
+    !nombre = cDatos["nombre"]
+    !institucion = cDatos["institucion"]
+    !ror = cDatos["ror"]
+    !direccion = cDatos["direccion"]
+    !region = cDatos["region"]
+    !ciudad = cDatos["ciudad"]
+    !pais = cDatos["pais"]
+    !url_portal = cDatos["url_portal"]
+    !email = cDatos["email"]
+    !doi_prefix = cDatos["doi_prefix"]
+    !licencia_defecto = cDatos["licencia_defecto"]
+    !url_licencia_defecto = cDatos["url_licencia_defecto"]
+    !titular_copyright_defecto = cDatos["titular_copyright_defecto"]
+    !leyenda_distribucion = cDatos["leyenda_distribucion"]
+    !aviso_responsabilidad = cDatos["aviso_responsabilidad"]
+  End With
+
+  ' --- 4. GRABACIÓN ---
+  Try rEditorial.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar la editorial:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : ListarCreditos
+' Propósito : Los créditos de una editorial para la grilla: vigentes e
+'             históricos, en el orden de composición
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdEditorial As Integer — editorial
+' Retorna   : Result — id_credito, cargo, nombre, orden, desde, hasta; Null
+'             si falló (ya se informó)
+' ============================================
+Public Function ListarCreditos(hConn As Connection, iIdEditorial As Integer) As Result
+
+  Dim rDatos As Result
+
+  ' EL ORDEN ES EL DE LA PÁGINA LEGAL; A IGUAL ORDEN, EL MÁS RECIENTE PRIMERO
+  Try rDatos = hConn.Exec("SELECT id_credito, cargo, nombre, orden, desde, hasta FROM editorial_credito " &
+    "WHERE id_editorial = &1 ORDER BY orden, desde DESC, id_credito", iIdEditorial)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los créditos de la editorial:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : CargarCredito
+' Propósito : Un crédito, para el editor de la fila
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdCredito As Integer — crédito
+' Retorna   : Result — el registro; Null si falló o no existe (ya se informó)
+' ============================================
+Public Function CargarCredito(hConn As Connection, iIdCredito As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT * FROM editorial_credito WHERE id_credito = &1", iIdCredito)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo cargar el crédito:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+  If Not rDatos.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("El crédito ya no existe.")
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ValidarCredito
+' Propósito : Controles previos al guardado de un crédito. Avisa el primero
+'             que falla. Repite en castellano lo que el esquema exige (NOT NULL
+'             y chk_credito_vigencia), para no mostrar el error de MySQL
+' Parámetros: cDatos As Collection — cargo, nombre, orden, desde, hasta
+' Retorna   : Boolean — True si se puede guardar
+' ============================================
+Public Function ValidarCredito(cDatos As Collection) As Boolean
+
+  Dim sAviso As String
+
+  ' --- 1. OBLIGATORIOS ---
+  If IsNull(cDatos["cargo"]) Then
+    sAviso = "Falta el cargo (por ejemplo «Rector» o «Corrección de estilo»)."
+  Else If IsNull(cDatos["nombre"]) Then
+    sAviso = "Falta el nombre de la persona."
+  Else If IsNull(cDatos["desde"]) Then
+    sAviso = "Falta la fecha «desde»: sin ella no se sabe en qué números corresponde mostrar el crédito."
+  Endif
+
+  ' --- 2. VIGENCIA: hasta NO PUEDE SER ANTERIOR A desde ---
+  ' If ANIDADOS (RC-GM-17)
+  If sAviso = "" Then
+    If Not IsNull(cDatos["hasta"]) Then
+      If cDatos["hasta"] < cDatos["desde"] Then sAviso = "La fecha «hasta» es anterior a «desde»."
+    Endif
+  Endif
+
+  If sAviso <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sAviso)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : GuardarCredito
+' Propósito : Alta o edición de un crédito con Create/Edit + Update
+'             (RC-GM-15), después de validar
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdCredito As Integer — crédito; 0 = alta
+'             iIdEditorial As Integer — editorial (se usa en el alta)
+'             cDatos As Collection — cargo, nombre, orden, desde, hasta
+' Retorna   : Integer — id del crédito grabado; 0 si falló (ya se informó)
+' ============================================
+Public Function GuardarCredito(hConn As Connection, iIdCredito As Integer, iIdEditorial As Integer, cDatos As Collection) As Integer
+
+  Dim rCredito As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Not ValidarCredito(cDatos) Then Return 0
+
+  ' --- 2. ALTA O EDICIÓN ---
+  If iIdCredito = 0 Then
+    Try rCredito = hConn.Create("editorial_credito")
+  Else
+    Try rCredito = hConn.Edit("editorial_credito", "id_credito = &1", iIdCredito)
+  Endif
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el crédito para grabarlo:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  ' --- 3. CAMPOS, POR NOMBRE (RC-GM-15) ---
+  With rCredito
+    If iIdCredito = 0 Then !id_editorial = iIdEditorial
+    !cargo = cDatos["cargo"]
+    !nombre = cDatos["nombre"]
+    !orden = cDatos["orden"]
+    !desde = cDatos["desde"]
+    !hasta = cDatos["hasta"]
+  End With
+
+  ' --- 4. GRABACIÓN ---
+  Try rCredito.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el crédito:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+
+  If iIdCredito = 0 Then Return hConn.LastInsertId
+  Return iIdCredito
+
+End
+
+' ============================================
+' Función   : BorrarCredito
+' Propósito : Borra un crédito. La confirmación la pide el formulario
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdCredito As Integer — crédito
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarCredito(hConn As Connection, iIdCredito As Integer) As Boolean
+
+  Try hConn.Exec("DELETE FROM editorial_credito WHERE id_credito = &1", iIdCredito)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el crédito:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : TextoFecha
+' Propósito : Una fecha de un resultado como texto ISO (aaaa-mm-dd) para la
+'             grilla; vacío si es NULL
+' Parámetros: rDatos As Result — registro actual
+'             sCampo As String — nombre de la columna
+' Retorna   : String — la fecha o ""
+' ============================================
+Public Function TextoFecha(rDatos As Result, sCampo As String) As String
+
+  If IsNull(rDatos[sCampo]) Then Return ""
+  Return Format(rDatos[sCampo], "yyyy-mm-dd")
+
+End

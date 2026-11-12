@@ -61,8 +61,10 @@
     doctype-system="https://jats.nlm.nih.gov/archiving/1.4/JATS-archivearticle1-4.dtd"/>
 
   <!-- LA VERSIÓN DEL VOLCADO QUE ESTA HOJA SABE LEER. LA 2 (11/11/2026) SOLO
-       SUMA <idioma codigo babel>, QUE ESTA HOJA NO USA: SE LEE IGUAL -->
-  <xsl:variable name="version-datos" select="'2'"/>
+       SUMA <idioma codigo babel> Y LA 3 (12/11/2026) <preliminares>,
+       <pagina-legal> Y revista/@rotulo-volumen: ESTA HOJA NO USA NINGUNO, SE
+       LEE IGUAL -->
+  <xsl:variable name="version-datos" select="'3'"/>
 
   <xsl:template match="/">
     <xsl:variable name="art" select="/numero-datos/articulo[@archivo = $archivo]"/>

@@ -42,9 +42,10 @@
 
   <xsl:param name="bib" as="xs:string" required="yes"/>
 
-  <!-- LA VERSIÓN DEL VOLCADO QUE ESTA HOJA SABE LEER: LA PRIMERA CON
-       <idioma codigo babel> -->
-  <xsl:variable name="gbn:version-datos" select="'2'"/>
+  <!-- LA VERSIÓN DEL VOLCADO QUE ESTA HOJA SABE LEER. LA 2 TRAJO
+       <idioma codigo babel>; LA 3 (12/11/2026) SUMA <preliminares> Y
+       <pagina-legal>, QUE ESTA HOJA TODAVÍA NO USA (LLEGAN CON B5) -->
+  <xsl:variable name="gbn:version-datos" select="'3'"/>
 
   <!-- LA VERSIÓN DEL CONTRATO DE REVISTA QUE PIDEN LOS main -->
   <xsl:variable name="gbn:contrato" select="'3'"/>

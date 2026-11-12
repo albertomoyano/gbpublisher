@@ -22,6 +22,14 @@
 '             resuelto con el catálogo (m_Idiomas.Babel): las hojas de LaTeX
 '             lo toman de acá y no de una tabla propia (A1.1b-3, decisión de
 '             Alberto del 11/11/2026).
+'             Desde la versión 3 (etapa B4, decisiones de Alberto del
+'             12/11/2026) lleva las preliminares declaradas del número
+'             (<preliminares>) y la página legal ya filtrada a la fecha de
+'             referencia del número, el último día de su período
+'             (<pagina-legal>): la editorial con sus créditos vigentes y los
+'             órganos de la revista con sus miembros vigentes. Un órgano sale
+'             si tiene al menos un miembro vigente: «activo» no filtra, para
+'             que un número viejo se regenere igual.
 '             La herencia de la revista ya va resuelta (decisión 14): un
 '             artículo no publicado lleva el valor efectivo; uno publicado,
 '             el que quedó congelado.
@@ -39,7 +47,9 @@
 ' generar_canonicos_articulos.sh)
 '   1  07/11/2026  A0
 '   2  11/11/2026  <idioma codigo babel> POR CADA IDIOMA DEL VOLCADO
-Public Const VERSION_DATOS As Integer = 2
+'   3  12/11/2026  <preliminares>, <pagina-legal> Y revista/@rotulo-volumen
+'                  (TAMBIÉN generar_pdf_revista.sh)
+Public Const VERSION_DATOS As Integer = 3
 
 ' EL ARCHIVO DEL VOLCADO, RELATIVO A LA CARPETA DEL PROYECTO
 Public Const ARCHIVO_DATOS As String = "tmp/numero-datos.xml"
@@ -154,6 +164,8 @@ Public Function VolcarNumero(iIdNumero As Integer, sDestino As String) As Boolea
   If Not EscribirSecciones(iIdRevista) Then Return Fallo($sError)
   If Not EscribirPlantillas(iIdRevista) Then Return Fallo($sError)
   If Not EscribirDossiers(iIdNumero) Then Return Fallo($sError)
+  If Not EscribirPreliminares(iIdNumero) Then Return Fallo($sError)
+  If Not EscribirPaginaLegal(iIdNumero, iIdRevista) Then Return Fallo($sError)
 
   ' --- 3. LOS ARTÍCULOS: EL ORDEN ES EL DE LOS ARCHIVOS (m_OrdenPiezas) ---
   Try rArticulos = m_ConexionBD.mConn.Exec("SELECT id_articulo, nombre_archivo FROM articulo WHERE id_numero = &1", iIdNumero)
@@ -361,7 +373,11 @@ End
 
 ' ============================================
 ' Función   : EscribirRevista
-' Propósito : La revista (N0)
+' Propósito : La revista (N0). Los datos de editorial salen de la tabla
+'             editorial (1.26.0) con alias propios, para no chocar con las
+'             columnas viejas de revista que siguen hasta la 1.27.0. El
+'             correo es el de la revista si tiene uno; si no, el de la
+'             editorial. Los elementos del volcado no cambian
 ' Parámetros: iIdRevista As Integer — la revista
 ' Retorna   : Boolean — False si falló la lectura ($sError)
 ' ============================================
@@ -370,7 +386,10 @@ Private Function EscribirRevista(iIdRevista As Integer) As Boolean
   Dim r As Result
   Dim sCodigo As String
 
-  Try r = m_ConexionBD.mConn.Exec("SELECT * FROM revista WHERE id_revista = &1", iIdRevista)
+  Try r = m_ConexionBD.mConn.Exec("SELECT r.id_revista, r.modelo_paginacion, r.rotulo_volumen, r.titulo, r.titulo_abreviado, r.acronimo, r.issn_impreso, r.issn_electronico, " &
+    "r.estilo_cita, r.idiomas_publicacion, e.nombre AS ed_nombre, e.institucion AS ed_institucion, e.ror AS ed_ror, " &
+    "e.ciudad AS ed_ciudad, e.pais AS ed_pais, COALESCE(r.email_editorial, e.email) AS ed_email, e.doi_prefix AS ed_doi_prefix " &
+    "FROM revista r LEFT JOIN editorial e ON e.id_editorial = r.id_editorial WHERE r.id_revista = &1", iIdRevista)
   If Error Then
     $sError = "No se pudo leer la revista:" & gb.NewLine & Error.Text
     Return False
@@ -380,19 +399,19 @@ Private Function EscribirRevista(iIdRevista As Integer) As Boolean
     Return False
   Endif
 
-  Agregar(1, "<revista" & Atr("id", r!id_revista) & Atr("modelo-paginacion", r!modelo_paginacion) & ">")
+  Agregar(1, "<revista" & Atr("id", r!id_revista) & Atr("modelo-paginacion", r!modelo_paginacion) & Atr("rotulo-volumen", r!rotulo_volumen) & ">")
   Agregar(2, Elem("titulo", r!titulo))
   Agregar(2, Elem("titulo-abreviado", r!titulo_abreviado))
   Agregar(2, Elem("acronimo", r!acronimo))
   Agregar(2, Elem("issn", r!issn_impreso, Atr("tipo", "impreso")))
   Agregar(2, Elem("issn", r!issn_electronico, Atr("tipo", "electronico")))
-  Agregar(2, Elem("editorial", r!editorial))
-  Agregar(2, Elem("institucion", r!institucion_editora))
-  Agregar(2, Elem("ror", r!ror_editorial))
-  Agregar(2, Elem("ciudad", r!ciudad))
-  Agregar(2, Elem("pais", r!pais))
-  Agregar(2, Elem("email", r!email_editorial))
-  Agregar(2, Elem("doi-prefijo", r!doi_prefix))
+  Agregar(2, Elem("editorial", r!ed_nombre))
+  Agregar(2, Elem("institucion", r!ed_institucion))
+  Agregar(2, Elem("ror", r!ed_ror))
+  Agregar(2, Elem("ciudad", r!ed_ciudad))
+  Agregar(2, Elem("pais", r!ed_pais))
+  Agregar(2, Elem("email", r!ed_email))
+  Agregar(2, Elem("doi-prefijo", r!ed_doi_prefix))
   Agregar(2, Elem("estilo-cita", r!estilo_cita))
   Agregar(2, Elem("idiomas", r!idiomas_publicacion))
   Agregar(1, "</revista>")
@@ -404,6 +423,158 @@ Private Function EscribirRevista(iIdRevista As Integer) As Boolean
       If Trim(sCodigo) <> "" Then RegistrarIdioma(Trim(sCodigo))
     Next
   Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirPreliminares
+' Propósito : Las preliminares que declara el número (numero_pieza), en el
+'             orden de su nombre (SC-44). Sin ninguna, no hay elemento
+' Parámetros: iIdNumero As Integer — el número
+' Retorna   : Boolean — False si falló la lectura ($sError)
+' ============================================
+Private Function EscribirPreliminares(iIdNumero As Integer) As Boolean
+
+  Dim r As Result
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT nombre_archivo, tipo FROM numero_pieza WHERE id_numero = &1 ORDER BY nombre_archivo", iIdNumero)
+  If Error Then
+    $sError = "No se pudieron leer las preliminares del número:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  If r.Count = 0 Then Return True
+
+  Agregar(1, "<preliminares>")
+  While r.Available
+    Agregar(2, "<pieza" & Atr("tipo", r!tipo) & Atr("archivo", r!nombre_archivo) & "/>")
+    r.MoveNext
+  Wend
+  Agregar(1, "</preliminares>")
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirPaginaLegal
+' Propósito : Lo que muestra la página legal del número, ya filtrado a su
+'             fecha de referencia: el último día del mes, o el 31/12 si no
+'             tiene mes (decisión de Alberto, 12/11). Lleva la editorial con
+'             sus créditos vigentes y los órganos de la revista que tienen
+'             algún miembro vigente, con esos miembros. Vigente: desde <=
+'             fecha y (hasta vacío o hasta >= fecha).
+'             Sin año no hay fecha: si el número declara la página legal,
+'             frena; si no, el elemento no sale
+' Parámetros: iIdNumero As Integer — el número
+'             iIdRevista As Integer — su revista
+' Retorna   : Boolean — False si falló una lectura o falta el año ($sError)
+' ============================================
+Private Function EscribirPaginaLegal(iIdNumero As Integer, iIdRevista As Integer) As Boolean
+
+  Dim r As Result
+  Dim sFecha As String
+  Dim iOrgano As Integer
+
+  ' --- 1. FECHA DE REFERENCIA, CALCULADA POR MySQL ---
+  ' LAST_DAY DA EL ÚLTIMO DÍA DEL MES; SIN MES, EL AÑO ENTERO
+  Try r = m_ConexionBD.mConn.Exec("SELECT CASE WHEN n.anio IS NULL THEN NULL " &
+    "WHEN n.mes IS NULL THEN DATE_FORMAT(MAKEDATE(n.anio, 1) + INTERVAL 1 YEAR - INTERVAL 1 DAY, '%Y-%m-%d') " &
+    "ELSE DATE_FORMAT(LAST_DAY(MAKEDATE(n.anio, 1) + INTERVAL (n.mes - 1) MONTH), '%Y-%m-%d') END AS fecha, " &
+    "(SELECT COUNT(*) FROM numero_pieza p WHERE p.id_numero = n.id_numero AND p.tipo = 'legales') AS legales " &
+    "FROM numero n WHERE n.id_numero = &1", iIdNumero)
+  If Error Then
+    $sError = "No se pudo calcular la fecha de referencia del número:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  If IsNull(r!fecha) Then
+    If r!legales > 0 Then
+      $sError = "El número declara la página legal pero no tiene año: cárguelo en los metadatos del número."
+      Return False
+    Endif
+    Return True
+  Endif
+  sFecha = r!fecha
+
+  Agregar(1, "<pagina-legal" & Atr("fecha-referencia", sFecha) & ">")
+
+  ' --- 2. LA EDITORIAL DE LA REVISTA ---
+  ' HASTA LA 1.27.0 UNA REVISTA PUEDE NO TENER EDITORIAL: ENTONCES NO SALE
+  Try r = m_ConexionBD.mConn.Exec("SELECT e.* FROM revista r JOIN editorial e ON e.id_editorial = r.id_editorial WHERE r.id_revista = &1", iIdRevista)
+  If Error Then
+    $sError = "No se pudo leer la editorial de la revista:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  If r.Available Then
+    Agregar(2, "<editorial" & Atr("id", r!id_editorial) & ">")
+    Agregar(3, Elem("nombre", r!nombre))
+    Agregar(3, Elem("institucion", r!institucion))
+    Agregar(3, Elem("ror", r!ror))
+    Agregar(3, Elem("direccion", r!direccion))
+    Agregar(3, Elem("region", r!region))
+    Agregar(3, Elem("ciudad", r!ciudad))
+    Agregar(3, Elem("pais", r!pais))
+    Agregar(3, Elem("url-portal", r!url_portal))
+    Agregar(3, Elem("email", r!email))
+    Agregar(3, Elem("leyenda-distribucion", r!leyenda_distribucion))
+    Agregar(3, Elem("aviso-responsabilidad", r!aviso_responsabilidad))
+    If Not EscribirCreditos(r!id_editorial, sFecha) Then Return False
+    Agregar(2, "</editorial>")
+  Endif
+
+  ' --- 3. ÓRGANOS CON MIEMBROS VIGENTES; «activo» NO FILTRA ---
+  Try r = m_ConexionBD.mConn.Exec("SELECT o.id_organo, o.nombre AS organo, o.orden AS orden_organo, m.orden, m.afiliacion, " &
+    "a.id_autor, a.apellidos, a.nombre, a.orcid FROM revista_organo o " &
+    "JOIN revista_organo_miembro m ON m.id_organo = o.id_organo JOIN autores a ON a.id_autor = m.id_autor " &
+    "WHERE o.id_revista = &1 AND m.desde <= &2 AND (m.hasta IS NULL OR m.hasta >= &2) " &
+    "ORDER BY o.orden, o.nombre, o.id_organo, m.orden, a.apellidos, a.nombre, m.id_miembro", iIdRevista, sFecha)
+  If Error Then
+    $sError = "No se pudieron leer los órganos de la revista:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  iOrgano = 0
+  While r.Available
+    ' UN ÓRGANO ABRE CUANDO CAMBIA EL id: LAS FILAS VIENEN AGRUPADAS POR ÓRGANO
+    If r!id_organo <> iOrgano Then
+      If iOrgano <> 0 Then Agregar(2, "</organo>")
+      iOrgano = r!id_organo
+      Agregar(2, "<organo" & Atr("id", r!id_organo) & Atr("nombre", r!organo) & Atr("orden", r!orden_organo) & ">")
+    Endif
+    Agregar(3, "<miembro" & Atr("id-autor", r!id_autor) & Atr("orden", r!orden) & Atr("orcid", r!orcid) & ">" &
+      Elem("apellidos", r!apellidos) & Elem("nombre", r!nombre) & Elem("afiliacion", r!afiliacion) & "</miembro>")
+    r.MoveNext
+  Wend
+  If iOrgano <> 0 Then Agregar(2, "</organo>")
+
+  Agregar(1, "</pagina-legal>")
+
+  Return True
+
+End
+
+' ============================================
+' Función   : EscribirCreditos
+' Propósito : Los créditos de la editorial vigentes a la fecha de referencia,
+'             en su orden. Las filas del mismo cargo se agrupan al componer
+' Parámetros: iIdEditorial As Integer — la editorial
+'             sFecha As String — fecha de referencia (aaaa-mm-dd)
+' Retorna   : Boolean — False si falló la lectura ($sError)
+' ============================================
+Private Function EscribirCreditos(iIdEditorial As Integer, sFecha As String) As Boolean
+
+  Dim r As Result
+
+  Try r = m_ConexionBD.mConn.Exec("SELECT cargo, nombre, orden FROM editorial_credito " &
+    "WHERE id_editorial = &1 AND desde <= &2 AND (hasta IS NULL OR hasta >= &2) ORDER BY orden, desde, id_credito", iIdEditorial, sFecha)
+  If Error Then
+    $sError = "No se pudieron leer los créditos de la editorial:" & gb.NewLine & Error.Text
+    Return False
+  Endif
+  While r.Available
+    Agregar(3, "<credito" & Atr("cargo", r!cargo) & Atr("orden", r!orden) & ">" & m_XML.EscaparXML(r!nombre) & "</credito>")
+    r.MoveNext
+  Wend
 
   Return True
 
@@ -595,15 +766,17 @@ Private Function EscribirArticulo(iIdArticulo As Integer, sArchivo As String, iI
   Dim sContenido As String
 
   ' --- 1. LA FILA, CON LOS VALORES EFECTIVOS ---
-  ' NO PUBLICADO: EL VACÍO TOMA EL DE LA REVISTA; PUBLICADO: LO CONGELADO.
+  ' NO PUBLICADO: EL VACÍO TOMA EL DE LA REVISTA (LICENCIA, URL Y TITULAR DE SU
+  ' EDITORIAL DESDE LA 1.26.0); PUBLICADO: LO CONGELADO.
   ' EL AÑO DEL COPYRIGHT VACÍO ES EL DE LA PUBLICACIÓN, SOLO CON TITULAR
   ' (JATS4R: AÑO Y TITULAR VAN JUNTOS; MISMA REGLA QUE PublicarArticulo)
   Try r = m_ConexionBD.mConn.Exec("SELECT a.*, s.codigo AS seccion_codigo, " &
-    "IF(a.estado = 'publicado', a.licencia, COALESCE(a.licencia, rv.licencia_defecto)) AS licencia_ef, " &
-    "IF(a.estado = 'publicado', a.url_licencia, COALESCE(a.url_licencia, rv.url_licencia_defecto)) AS url_licencia_ef, " &
-    "IF(a.estado = 'publicado', a.titular_copyright, COALESCE(a.titular_copyright, rv.titular_copyright_defecto)) AS titular_ef, " &
+    "IF(a.estado = 'publicado', a.licencia, COALESCE(a.licencia, e.licencia_defecto)) AS licencia_ef, " &
+    "IF(a.estado = 'publicado', a.url_licencia, COALESCE(a.url_licencia, e.url_licencia_defecto)) AS url_licencia_ef, " &
+    "IF(a.estado = 'publicado', a.titular_copyright, COALESCE(a.titular_copyright, e.titular_copyright_defecto)) AS titular_ef, " &
     "IF(a.estado = 'publicado', a.tipo_acceso, COALESCE(a.tipo_acceso, rv.tipo_acceso_defecto)) AS acceso_ef " &
-    "FROM articulo a JOIN revista rv ON rv.id_revista = &2 LEFT JOIN revista_seccion s ON s.id_seccion = a.id_seccion WHERE a.id_articulo = &1", iIdArticulo, iIdRevista)
+    "FROM articulo a JOIN revista rv ON rv.id_revista = &2 LEFT JOIN editorial e ON e.id_editorial = rv.id_editorial " &
+    "LEFT JOIN revista_seccion s ON s.id_seccion = a.id_seccion WHERE a.id_articulo = &1", iIdArticulo, iIdRevista)
   If Error Then
     $sError = "No se pudo leer el artículo " & sArchivo & ":" & gb.NewLine & Error.Text
     Return False

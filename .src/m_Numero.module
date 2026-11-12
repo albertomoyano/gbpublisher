@@ -16,6 +16,11 @@
 '             desde Gambas (GV-68).
 ' Dependencias: m_ConexionBD, m_Sonido, m_InicioCierre, m_Constantes,
 '             FVincularNumero.
+' Preliminares (etapa B4, 1.26.0): tapa, página legal y sumario se declaran
+'             con tres casillas y se graban en numero_pieza con nombres
+'             fijos del espacio reservado (decisión de Alberto, 12/11; como
+'             las primeras del libro, SC-25). La página legal necesita el año:
+'             de él sale la fecha de referencia de créditos y órganos.
 ' Vínculo   : un r-*.md solo se abre vinculado a un número de una revista de la
 '             base, y cada apertura se confirma (decisión de Alberto, 25/10).
 '             AbrirProyectoMD llama a ConfirmarOVincular (proyecto existente)
@@ -194,6 +199,56 @@ End
 ' Parámetros: iIdNumero As Integer — número
 ' Retorna   : Result — id_autor, apellidos, nombre; Null si falló
 ' ============================================
+' Función   : PiezasTipos
+' Propósito : Los tipos de preliminar del número (ENUM numero_pieza.tipo), en
+'             el orden de las casillas
+' Parámetros: (ninguno)
+' Retorna   : String[] — tapa, legales, sumario
+' ============================================
+Public Function PiezasTipos() As String[]
+
+  Return ["tapa", "legales", "sumario"]
+
+End
+
+' ============================================
+' Función   : PiezasArchivos
+' Propósito : El nombre fijo de cada preliminar, paralelo a PiezasTipos. Van
+'             en el espacio reservado fm-00 a fm-09 (SC-44): el nombre da la
+'             posición. fm-00 y fm-04 a fm-09 quedan libres para piezas que
+'             surjan
+' Parámetros: (ninguno)
+' Retorna   : String[] — fm-01-tapa, fm-02-legales, fm-03-sumario
+' ============================================
+Public Function PiezasArchivos() As String[]
+
+  Return ["fm-01-tapa", "fm-02-legales", "fm-03-sumario"]
+
+End
+
+' ============================================
+' Función   : PiezasDeNumero
+' Propósito : Los tipos de preliminar que declara un número
+' Parámetros: iIdNumero As Integer — número
+' Retorna   : String[] — los tipos declarados; vacío si no hay o falló
+' ============================================
+Public Function PiezasDeNumero(iIdNumero As Integer) As String[]
+
+  Dim rDatos As Result
+  Dim aTipos As New String[]
+
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT tipo FROM numero_pieza WHERE id_numero = &1 ORDER BY nombre_archivo", iIdNumero)
+  If Error Then Return aTipos
+  While rDatos.Available
+    aTipos.Add(rDatos!tipo)
+    rDatos.MoveNext
+  Wend
+
+  Return aTipos
+
+End
+
+' ============================================
 Public Function EditoresNumero(iIdNumero As Integer) As Result
 
   Dim rDatos As Result
@@ -292,25 +347,36 @@ End
 
 ' ============================================
 ' Función   : GuardarNumero
-' Propósito : Alta o modificación del número y reemplazo de sus editores, en
-'             una transacción: o se graba todo o nada
+' Propósito : Alta o modificación del número, reemplazo de sus editores y de
+'             sus preliminares declaradas, en una transacción: o se graba
+'             todo o nada
 ' Parámetros: iIdNumero As Integer — número; 0 para el alta
 '             iIdProyecto As Integer — proyecto abierto
 '             cDatos As Collection — los valores del editor, por nombre de
 '             columna; Null donde no hay dato
 '             aEditores As Integer[] — id_autor de los editores, en orden
+'             aPiezas As String[] — los tipos de preliminar marcados
+'               (PiezasTipos)
 ' Retorna   : Integer — id del número grabado; 0 si no se grabó (ya se
 '             informó)
 ' ============================================
-Public Function GuardarNumero(iIdNumero As Integer, iIdProyecto As Integer, cDatos As Collection, aEditores As Integer[]) As Integer
+Public Function GuardarNumero(iIdNumero As Integer, iIdProyecto As Integer, cDatos As Collection, aEditores As Integer[], aPiezas As String[]) As Integer
 
   Dim hConn As Connection
   Dim rNumero As Result
   Dim iId As Integer
   Dim i As Integer
+  Dim iTipo As Integer
 
   ' --- 1. VALIDACIÓN ---
   If Not ValidarNumero(iIdNumero, cDatos) Then Return 0
+  ' LA PÁGINA LEGAL MUESTRA LOS CRÉDITOS Y LOS ÓRGANOS VIGENTES AL ÚLTIMO DÍA
+  ' DEL PERÍODO DEL NÚMERO (DECISIÓN DE ALBERTO, 12/11): SIN AÑO NO HAY FECHA
+  If aPiezas.Find("legales") >= 0 And IsNull(cDatos["anio"]) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La página legal necesita el año del número: con él se eligen los créditos y los miembros de los órganos que corresponden.")
+    Return 0
+  Endif
   hConn = m_ConexionBD.mConn
 
   ' --- 2. TRANSACCIÓN ---
@@ -385,7 +451,28 @@ Public Function GuardarNumero(iIdNumero As Integer, iIdProyecto As Integer, cDat
     Endif
   Next
 
-  ' --- 2.3 CONFIRMACIÓN ---
+  ' --- 2.3 PRELIMINARES DECLARADAS: SE REEMPLAZAN ENTERAS ---
+  ' LOS NOMBRES SON FIJOS Y NADA APUNTA A numero_pieza: BORRAR Y VOLVER A
+  ' INSERTAR NO PIERDE NADA
+  Try hConn.Exec("DELETE FROM numero_pieza WHERE id_numero = &1", iId)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron reemplazar las preliminares del número:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  For iTipo = 0 To PiezasTipos().Count - 1
+    If aPiezas.Find(PiezasTipos()[iTipo]) < 0 Then Continue
+    Try hConn.Exec("INSERT INTO numero_pieza (id_numero, nombre_archivo, tipo) VALUES (&1, &2, &3)", iId, PiezasArchivos()[iTipo], PiezasTipos()[iTipo])
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo grabar una preliminar del número:" & gb.NewLine & Error.Text)
+      Return 0
+    Endif
+  Next
+
+  ' --- 2.4 CONFIRMACIÓN ---
   Try hConn.Commit()
   If Error Then
     hConn.Rollback()

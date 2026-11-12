@@ -178,7 +178,9 @@ End
 ' ============================================
 ' Función   : ValoresRevista
 ' Propósito : Los valores por defecto de la revista del número, que el
-'             artículo hereda mientras no está publicado (decisión 14)
+'             artículo hereda mientras no está publicado (decisión 14).
+'             Licencia, URL y titular son de la editorial de la revista desde
+'             la 1.26.0; el tipo de acceso sigue en la revista
 ' Parámetros: iIdNumero As Integer — número
 ' Retorna   : Result — licencia_defecto, url_licencia_defecto,
 '             titular_copyright_defecto, tipo_acceso_defecto; Null si falló
@@ -187,8 +189,10 @@ Public Function ValoresRevista(iIdNumero As Integer) As Result
 
   Dim rDatos As Result
 
-  Try rDatos = m_ConexionBD.mConn.Exec("SELECT r.licencia_defecto, r.url_licencia_defecto, r.titular_copyright_defecto, r.tipo_acceso_defecto " &
-    "FROM numero n JOIN revista r ON r.id_revista = n.id_revista WHERE n.id_numero = &1", iIdNumero)
+  ' LEFT JOIN: UNA REVISTA SIN EDITORIAL (POSIBLE HASTA LA 1.27.0) DA NULL, QUE
+  ' ES «SIN VALOR»; NO SE PIERDE EL tipo_acceso_defecto
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT e.licencia_defecto, e.url_licencia_defecto, e.titular_copyright_defecto, r.tipo_acceso_defecto " &
+    "FROM numero n JOIN revista r ON r.id_revista = n.id_revista LEFT JOIN editorial e ON e.id_editorial = r.id_editorial WHERE n.id_numero = &1", iIdNumero)
   If Error Then Return Null
   If Not rDatos.Available Then Return Null
 
@@ -975,7 +979,8 @@ End
 
 ' ============================================
 ' Función   : PrefijoDoiRevista
-' Propósito : El prefijo DOI de la revista del número
+' Propósito : El prefijo DOI de la revista del número: el de su editorial
+'             (1.26.0)
 ' Parámetros: iIdNumero As Integer — número
 ' Retorna   : String — el prefijo («10.xxxx»); vacío si no tiene o falló
 ' ============================================
@@ -983,7 +988,8 @@ Public Function PrefijoDoiRevista(iIdNumero As Integer) As String
 
   Dim rDatos As Result
 
-  Try rDatos = m_ConexionBD.mConn.Exec("SELECT r.doi_prefix FROM numero n JOIN revista r ON r.id_revista = n.id_revista WHERE n.id_numero = &1", iIdNumero)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT e.doi_prefix FROM numero n JOIN revista r ON r.id_revista = n.id_revista " &
+    "LEFT JOIN editorial e ON e.id_editorial = r.id_editorial WHERE n.id_numero = &1", iIdNumero)
   If Error Then Return ""
   If Not rDatos.Available Then Return ""
 
@@ -1371,10 +1377,13 @@ Public Function PublicarArticulo(iIdArticulo As Integer) As Boolean
   Endif
 
   ' --- 2. EL ARTÍCULO Y LOS VALORES DE SU REVISTA, BLOQUEADOS HASTA EL FINAL ---
+  ' LICENCIA, URL Y TITULAR POR DEFECTO SON DE LA EDITORIAL (1.26.0); EL TIPO
+  ' DE ACCESO, DE LA REVISTA
   Try rArticulo = hConn.Exec("SELECT a.estado, a.titulo, a.id_seccion, a.idioma_principal, a.fecha_publicacion, a.fecha_recepcion, a.fecha_revision, a.fecha_aceptacion, " &
-    "COALESCE(a.licencia, r.licencia_defecto) AS licencia_efectiva, COALESCE(a.url_licencia, r.url_licencia_defecto) AS url_efectiva, " &
-    "r.licencia_defecto, r.url_licencia_defecto, r.titular_copyright_defecto, r.tipo_acceso_defecto " &
+    "COALESCE(a.licencia, e.licencia_defecto) AS licencia_efectiva, COALESCE(a.url_licencia, e.url_licencia_defecto) AS url_efectiva, " &
+    "e.licencia_defecto, e.url_licencia_defecto, e.titular_copyright_defecto, r.tipo_acceso_defecto " &
     "FROM articulo a JOIN numero n ON n.id_numero = a.id_numero JOIN revista r ON r.id_revista = n.id_revista " &
+    "LEFT JOIN editorial e ON e.id_editorial = r.id_editorial " &
     "WHERE a.id_articulo = &1 FOR UPDATE", iIdArticulo)
   If Error Then
     hConn.Rollback()

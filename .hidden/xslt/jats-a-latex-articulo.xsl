@@ -27,6 +27,11 @@
                                    LO BUSCA POR BIBINPUTS, QUE DEBE
                                    INCLUIR {proyecto}/latex/. VACÍO: LA
                                    COLUMNA SALE SIN «CÓMO CITAR»
+                   pagina_final    LA ÚLTIMA PÁGINA, QUE generar_pdf_revista.sh
+                                   LEE DE LA COMPOSICIÓN (A1.2a): CON
+                                   pagina_inicial, EL RANGO DEL «CÓMO CITAR»
+                                   SALE DEL PROPIO LaTeX Y NO DEL CANÓNICO
+                                   (DECISIÓN DE A1). VACÍO: fpage Y lpage
   ============================================================
   ORDEN DEL FRAGMENTO:
     1. IDIOMA, MACROS \articulo*, FOLIO INICIAL, ESTILO firstpage
@@ -60,6 +65,7 @@
 
   <xsl:param name="pagina_inicial" as="xs:string" select="''"/>
   <xsl:param name="bib_cita" as="xs:string" select="''"/>
+  <xsl:param name="pagina_final" as="xs:string" select="''"/>
 
   <!-- LA CLAVE DEL ARTÍCULO EN EL .bib DEL «CÓMO CITAR» -->
   <xsl:variable name="gbr:clave-cita" select="'gb-articulo'"/>
@@ -791,8 +797,12 @@
   <!-- ============================================================ -->
   <xsl:template name="gbr:bib-cita">
     <xsl:variable name="meta" select="front/article-meta"/>
-    <xsl:variable name="fp" select="normalize-space($meta/fpage)"/>
-    <xsl:variable name="lp" select="normalize-space($meta/lpage)"/>
+    <!-- EL RANGO DE LA COMPOSICIÓN GANA SOBRE EL DEL CANÓNICO: LOS DOS
+         PARÁMETROS LOS PASA generar_pdf_revista.sh DESPUÉS DE COMPONER -->
+    <xsl:variable name="fp" select="if ($pagina_inicial castable as xs:integer and $pagina_final castable as xs:integer)
+                                    then $pagina_inicial else normalize-space($meta/fpage)"/>
+    <xsl:variable name="lp" select="if ($pagina_inicial castable as xs:integer and $pagina_final castable as xs:integer)
+                                    then $pagina_final else normalize-space($meta/lpage)"/>
     <xsl:variable name="pub" select="$meta/pub-date[@date-type = 'pub'][1]"/>
     <xsl:variable name="col" select="$meta/pub-date[@date-type = 'collection'][1]"/>
     <xsl:variable name="fecha" select="
@@ -820,7 +830,8 @@
           <xsl:sequence select="'eid = {' || f:latex(normalize-space($meta/elocation-id)) || '}'"/>
         </xsl:when>
         <xsl:when test="$fp ne '' and $lp ne ''">
-          <xsl:sequence select="'pages = {' || $fp || '--' || $lp || '}'"/>
+          <!-- UNA SOLA PÁGINA VA SOLA: CON EL RANGO, APA ESCRIBE «101-101» -->
+          <xsl:sequence select="'pages = {' || $fp || (if ($fp eq $lp) then '' else '--' || $lp) || '}'"/>
         </xsl:when>
       </xsl:choose>
       <xsl:choose>

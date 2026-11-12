@@ -1,0 +1,195 @@
+' Gambas class file
+
+' ============================================
+' Formulario : FBuscarAutor
+' Propósito  : Buscador mínimo de personas en autores (etapa B3, decisión de
+'              Alberto, 12/11). Lo usa FRevistas para los miembros de los
+'              órganos. No usa FAutores porque FAutores trabaja con
+'              m_ConexionBD.mConn, que no existe cuando FSysAdmin se abre sin
+'              sesión. No da de alta personas: eso se hace en Autores.
+' Uso        : FBuscarAutor.hConn = hConn
+'              iIdAutor = FBuscarAutor.ShowModal()
+'              EL id VUELVE POR Me.Close(valor), COMO FCandidatosBib; 0 ES
+'              «NO SE ELIGIÓ»
+' ============================================
+
+' CONEXIÓN, LA DA EL LLAMADOR
+Public hConn As Connection
+
+' COLUMNAS DE LA GRILLA (GV-58: CONTEO FIJO)
+' EL id DISTINGUE HOMÓNIMOS SIN ORCID (PUEDE HABER FICHAS REPETIDAS)
+Private Const COLUMNAS_AUTORES As Integer = 5
+' UN id POR FILA, EN EL MISMO ORDEN QUE LA GRILLA
+Private $aIdsAutores As New Integer[]
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Aplicar la configuración de botones del marco (SC-20)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara la grilla y deja el foco en la búsqueda
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. SIN CONEXIÓN NO HAY DÓNDE BUSCAR ---
+  If Not hConn Then
+    Me.Close(0)
+    Return
+  Endif
+
+  ' --- 2. GRILLA ---
+  With gvAutores
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_AUTORES
+    .Columns[0].Title = "Apellidos"
+    .Columns[0].Width = 200
+    .Columns[1].Title = "Nombre"
+    .Columns[1].Width = 170
+    .Columns[2].Title = "ORCID"
+    .Columns[2].Width = 160
+    .Columns[3].Title = "Afiliación"
+    .Columns[3].Width = 250
+    .Columns[4].Title = "Id"
+    .Columns[4].Width = 60
+    .Rows.Count = 0
+  End With
+  btnElegirAutor.Enabled = False
+  txtBuscarAutor.SetFocus()
+
+End
+
+' ============================================
+' Función   : txtBuscarAutor_Activate
+' Propósito : Enter en el campo busca
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBuscarAutor_Activate()
+
+  Buscar()
+
+End
+
+' ============================================
+' Función   : btnBuscarAutor_Click
+' Propósito : Busca con lo escrito
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBuscarAutor_Click()
+
+  Buscar()
+
+End
+
+' ============================================
+' Función   : Buscar
+' Propósito : Llena la grilla con las personas que coinciden
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub Buscar()
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. LIMPIEZA ---
+  gvAutores.Rows.Count = 0
+  $aIdsAutores.Clear()
+  btnElegirAutor.Enabled = False
+
+  ' --- 2. AL MENOS DOS CARACTERES: UNO SOLO TRAE MEDIA BASE ---
+  If String.Len(Trim(txtBuscarAutor.Text)) < 2 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Escriba al menos dos caracteres.")
+    Return
+  Endif
+
+  ' --- 3. LECTURA ---
+  rDatos = m_Organos.BuscarAutores(hConn, txtBuscarAutor.Text)
+  If Not rDatos Then Return
+
+  ' --- 4. GRILLA ---
+  gvAutores.Rows.Count = rDatos.Count
+  iFila = 0
+  While rDatos.Available
+    $aIdsAutores.Add(rDatos!id_autor)
+    gvAutores[iFila, 0].Text = m_Revistas.TextoDe(rDatos, "apellidos")
+    gvAutores[iFila, 1].Text = m_Revistas.TextoDe(rDatos, "nombre")
+    gvAutores[iFila, 2].Text = m_Revistas.TextoDe(rDatos, "orcid")
+    gvAutores[iFila, 3].Text = m_Revistas.TextoDe(rDatos, "afiliacion_actual")
+    gvAutores[iFila, 4].Text = CStr(rDatos!id_autor)
+    Inc iFila
+    rDatos.MoveNext
+  Wend
+
+  ' --- 5. RESULTADO ---
+  If rDatos.Count = 0 Then
+    m_Sonido.sonar("Info")
+    Message.Info("No hay personas con ese texto. Si falta, se da de alta en Autores.")
+  Endif
+
+End
+
+' ============================================
+' Función   : gvAutores_Click
+' Propósito : Con una fila elegida se puede aceptar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvAutores_Click()
+
+  btnElegirAutor.Enabled = gvAutores.Row >= 0
+
+End
+
+' ============================================
+' Función   : gvAutores_DblClick
+' Propósito : Doble clic elige la fila
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvAutores_DblClick()
+
+  btnElegirAutor_Click()
+
+End
+
+' ============================================
+' Función   : btnElegirAutor_Click
+' Propósito : Devuelve el id de la fila elegida y cierra
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnElegirAutor_Click()
+
+  Dim iFila As Integer
+
+  iFila = gvAutores.Row
+  If iFila < 0 Or iFila >= $aIdsAutores.Count Then Return
+  Me.Close($aIdsAutores[iFila])
+
+End
+
+' ============================================
+' Función   : btnCancelarAutor_Click
+' Propósito : Cierra sin elegir
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCancelarAutor_Click()
+
+  Me.Close(0)
+
+End

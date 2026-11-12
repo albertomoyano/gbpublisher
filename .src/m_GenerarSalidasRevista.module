@@ -7,14 +7,25 @@
 '             lo que sale de la base se escribe como archivo y el trabajo
 '             pesado lo hace un script de engine/ por m_Lanzadora (SC-13,
 '             SC-53). Es el gemelo de m_GenerarSalidasLibro.
-'             Hoy: los canónicos JATS de artículo (etapa A0, menuJats de
-'             FMain) con engine/generar_canonicos_articulos.sh.
+'             Hoy, desde FMain:
+'               - en menuJats, que es solo para el XML (como menuDocBook en
+'                 libros): los canónicos JATS de artículo (etapa A0) con
+'                 engine/generar_canonicos_articulos.sh;
+'               - en menuSalidaRevistaMD, el menú de las salidas (como
+'                 mnuSalidaLibroMD en libros): el PDF de prueba del artículo
+'                 en curso y el PDF del número (etapa A1.3) con
+'                 engine/generar_pdf_revista.sh. El del
+'                 número es un solo botón con todo encadenado (decisión de
+'                 A1): asigna los e-id que falten, compone, guarda las
+'                 páginas que devuelve la composición y regenera los
+'                 canónicos con los rangos.
 ' Alcance   : solo los números del esquema nuevo, los que tienen artículos en
 '             la tabla articulo (NumeroEsNuevo). Los números viejos siguen con
 '             btnGenerarXMLcanonico y m_XML hasta el 2.0.0 (decisión de
 '             Alberto, 07/11).
 ' Dependencias: m_Lanzadora, m_CanonicoRevista, m_Numero, m_Articulo,
-'             m_Bibtex, m_BuscarRegex, m_InicioCierre, m_Sonido, FMain.
+'             m_Bibtex, m_BuscarRegex, m_InicioCierre, m_ConexionBD,
+'             m_Sonido, FMain.
 ' ==============================================================================
 
 ' EL PLAZO DEL LOTE DE CANÓNICOS, EN SEGUNDOS: EL MISMO QUE EL DE LOS
@@ -24,6 +35,19 @@ Private Const PLAZO_CANONICOS_ARTICULO As Float = 600.0
 ' LA LISTA QUE GAMBAS LE PASA A generar_canonicos_articulos.sh, RELATIVA AL
 ' PROYECTO: UN nombre_archivo POR LÍNEA
 Private Const LISTA_CANONICOS As String = "tmp/lote-articulos.txt"
+
+' LOS PLAZOS DE LA COMPOSICIÓN: EL NÚMERO COMPONE CADA ARTÍCULO CON CINCO
+' PASADAS Y LO VALIDA CON veraPDF; LA PRUEBA, UNO SOLO. EL DEL LIBRO ES 1200
+' (m_GenerarSalidasLibro.PLAZO_PDF). NO SON UN CORTE: AL VENCER SE PREGUNTA
+Private Const PLAZO_PDF_NUMERO As Float = 1800.0
+Private Const PLAZO_PDF_ARTICULO As Float = 600.0
+
+' LO QUE DEJA generar_pdf_revista.sh CUANDO EL NÚMERO SALIÓ BIEN: DÓNDE QUEDÓ
+' CADA ARTÍCULO. LA MISMA RUTA QUE TSV EN EL SCRIPT
+Private Const ARCHIVO_PAGINACION As String = "tmp/paginacion.tsv"
+
+' EL e-id: e + AÑO + TRES CIFRAS (DECISIÓN DE ALBERTO, 07/11)
+Private Const MAXIMO_EID As Integer = 999
 
 ' ============================================
 ' Función   : NumeroDelProyecto
@@ -46,9 +70,9 @@ End
 
 ' ============================================
 ' Función   : NumeroEsNuevo
-' Propósito : Decide qué camino de canónicos ve el editor (decisión de
-'             Alberto, 07/11): un número con artículos en el esquema nuevo
-'             usa menuJats; uno sin ellos, el botón viejo
+' Propósito : Decide qué camino ve el editor (decisión de Alberto, 07/11):
+'             un número con artículos en el esquema nuevo usa menuJats y el
+'             PDF nuevo; uno sin ellos, el botón viejo y la salida PDF vieja
 ' Parámetros: (ninguno)
 ' Retorna   : Boolean — True si el número del proyecto tiene artículos en la
 '             tabla articulo
@@ -69,12 +93,16 @@ End
 
 ' ============================================
 ' Función   : ConfigurarControles
-' Propósito : Al abrir un proyecto de revista, muestra el camino de canónicos
-'             que corresponde al número (decisión de Alberto, 07/11):
-'               - número nuevo: menuJats, y el botón «Validar» del visor XML
-'                 encendido (el validador conoce JATS desde A0.4);
-'               - número viejo: btnGenerarXMLcanonico, y «Validar» apagado.
-'             Nunca los dos
+' Propósito : Al abrir un proyecto de revista, muestra el camino que
+'             corresponde al número (decisión de Alberto, 07/11):
+'               - número nuevo: menuJats, el botón «Validar» del visor XML
+'                 encendido (el validador conoce JATS desde A0.4) y, en
+'                 menuSalidaRevistaMD, «PDF del artículo en curso» y «PDF del
+'                 número» (A1.3);
+'               - número viejo: btnGenerarXMLcanonico, «Validar» apagado y
+'                 «Generar salida PDF» (Menu6, m_XML).
+'             Nunca los dos. Lo viejo se quita al terminar la refactorización
+'             (decisión de Alberto, 12/11)
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
 ' Nota      : LA LLAMA FMain DESPUÉS DE m_FuncionesGenericas.BotonesLibroRevista,
@@ -85,9 +113,15 @@ Public Sub ConfigurarControles()
   Dim bNuevo As Boolean
 
   bNuevo = NumeroEsNuevo()
+  ' --- 1. EL XML ---
   FMain.mJats.Visible = bNuevo
   FMain.btnGenerarXMLcanonico.Visible = Not bNuevo
   m_Lanzadora.HabilitarValidacion(bNuevo)
+
+  ' --- 2. EL PDF, EN EL MENÚ DE LAS SALIDAS ---
+  FMain.menuSalidaPDFEnCurso.Visible = bNuevo
+  FMain.menuSalidaPDFNumero.Visible = bNuevo
+  FMain.Menu6.Visible = Not bNuevo
 
 End
 
@@ -102,40 +136,15 @@ End
 Public Sub GenerarCanonicoEnCurso()
 
   ' --- 1. INICIALIZACIÓN ---
-  Dim sRutaArticulos As String
-  Dim sAbierto As String
-  Dim bEsArticulo As Boolean
   Dim sNombre As String
   Dim aArchivos As New String[]
   Dim iResultado As Integer
 
-  ' --- 2. EL ARCHIVO DEL EDITOR ---
-  ' EL ARTÍCULO LO DA EL ARCHIVO ABIERTO Y NO IdArticuloEnCurso, QUE ES DE LA
-  ' TABLA VIEJA articulos. TIENE QUE SER UN a-*.md DE articulos/
-  sRutaArticulos = m_InicioCierre.RutaProyectoEnCurso &/ "articulos"
-  sAbierto = FMain.sRutaArchivoAbierto
-  If sAbierto <> "" Then
-    bEsArticulo = (File.Dir(sAbierto) = sRutaArticulos) And (LCase(File.Name(sAbierto)) Begins "a-")
-  Endif
-  If Not bEsArticulo Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No hay ningún artículo abierto en el editor." & gb.NewLine &
-      "Abrí un archivo a-… de la carpeta articulos/.")
-    Return
-  Endif
-  sNombre = File.BaseName(sAbierto)
+  ' --- 2. EL ARTÍCULO DEL EDITOR, CON METADATOS ---
+  sNombre = ArticuloDelEditor("generar su canónico")
+  If sNombre = "" Then Return
 
-  ' --- 3. CON METADATOS ---
-  ' EL SCRIPT TAMBIÉN LO FRENA; ACÁ SE AVISA ANTES Y CON EL CAMINO PARA
-  ' ARREGLARLO
-  If Not TieneMetadatos(sNombre) Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("«" & sNombre & "» no tiene metadatos en la base." & gb.NewLine & gb.NewLine &
-      "Cargalos en los metadatos del artículo antes de generar su canónico.")
-    Return
-  Endif
-
-  ' --- 4. LANZAMIENTO E INFORME ---
+  ' --- 3. LANZAMIENTO E INFORME ---
   aArchivos.Add(sNombre)
   iResultado = LanzarCanonicos(aArchivos)
   InformarCanonicos(iResultado, sNombre)
@@ -152,48 +161,622 @@ End
 Public Sub GenerarCanonicosTodos()
 
   ' --- 1. INICIALIZACIÓN ---
-  Dim iIdNumero As Integer
-  Dim rFilas As Result
+  Dim aArchivos As String[]
+  Dim iResultado As Integer
+
+  ' --- 2. LOS ARTÍCULOS DEL NÚMERO CON METADATOS Y SU .md ---
+  aArchivos = ArticulosDelNumero("no hay canónicos que generar")
+  If Not aArchivos Then Return
+
+  ' --- 3. LANZAMIENTO E INFORME ---
+  iResultado = LanzarCanonicos(aArchivos)
+  InformarCanonicos(iResultado, "")
+
+End
+
+' ============================================
+' Función   : GenerarPDFEnCurso
+' Propósito : El PDF de prueba del artículo abierto en el editor («PDF del
+'             artículo en curso» de menuSalidaRevistaMD). Es una prueba (decisión de
+'             A1): compone ese artículo solo, desde donde lo dejó la última
+'             composición del número, y no escribe en la base
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarPDFEnCurso()
+
+  ' --- 1. INICIALIZACIÓN ---
   Dim sNombre As String
-  Dim sRutaArticulos As String
   Dim aArchivos As New String[]
   Dim iResultado As Integer
+
+  ' --- 2. EL ARTÍCULO DEL EDITOR, CON METADATOS ---
+  sNombre = ArticuloDelEditor("componer su PDF")
+  If sNombre = "" Then Return
+
+  ' --- 3. LANZAMIENTO E INFORME ---
+  ' LA PRUEBA QUEDA APARTE DEL PDF DEL NÚMERO: {archivo}-prueba.pdf
+  aArchivos.Add(sNombre)
+  iResultado = LanzarPDF("articulo", sNombre, aArchivos)
+  m_Lanzadora.InformarResultado(iResultado, "El PDF de prueba de «" & sNombre & "»",
+    m_InicioCierre.RutaProyectoEnCurso &/ "salidas/pdf" &/ sNombre & "-prueba.pdf")
+
+End
+
+' ============================================
+' Función   : GenerarPDFNumero
+' Propósito : El PDF de todos los artículos del número y el del número entero
+'             («PDF del número» de menuSalidaRevistaMD), con todo encadenado
+'             (decisión de A1):
+'               1. los e-id que falten (modelo continua; LanzarPDF);
+'               2. la composición (generar_pdf_revista.sh): los artículos y,
+'                  desde B5, salidas/pdf/numero.pdf con las preliminares que
+'                  el número declara y los artículos incluidos;
+'               3. las páginas que devuelve, a la base (GuardarPaginacion);
+'               4. los canónicos de nuevo, para que el JATS lleve los rangos.
+'             Si la composición falla —también si un publicado se corre—, el
+'             script no deja tmp/paginacion.tsv y no se guarda nada
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GenerarPDFNumero()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aArchivos As String[]
+  Dim iResultado As Integer
+  Dim iCanonicos As Integer
+  Dim iGuardados As Integer
+  Dim sCarpeta As String
+
+  ' --- 2. LOS ARTÍCULOS DEL NÚMERO CON METADATOS Y SU .md ---
+  aArchivos = ArticulosDelNumero("no hay PDF que componer")
+  If Not aArchivos Then Return
+  sCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ "salidas/pdf"
+
+  ' --- 3. LA COMPOSICIÓN ---
+  iResultado = LanzarPDF("numero", "", aArchivos)
+  If iResultado <> m_Lanzadora.SALIDA_OK And iResultado <> m_Lanzadora.SALIDA_AVISOS Then
+    If iResultado = m_Lanzadora.SALIDA_FALLO Then
+      ' NO SE AFIRMA QUE HAYA COMPUESTO: EL 1 TAMBIÉN LO DA UN FALLO DEL ENTORNO
+      m_Sonido.sonar("Error")
+      Message.Error("No se entregaron los PDF del número y no se guardó nada en la base." & gb.NewLine & gb.NewLine &
+        "El motivo está en la terminal. Si la composición llegó a correr," & gb.NewLine &
+        "al final está la lista de los artículos con problemas (un PDF que" & gb.NewLine &
+        "no es PDF/A-2u, un artículo publicado que cambiaría de páginas…)," & gb.NewLine &
+        "y sus PDF quedaron en latex/compilacion/ para revisarlos.")
+    Else
+      m_Lanzadora.InformarResultado(iResultado, "El PDF del número", sCarpeta)
+    Endif
+    Return
+  Endif
+
+  ' --- 4. LAS PÁGINAS A LA BASE ---
+  iGuardados = GuardarPaginacion(NumeroDelProyecto())
+  If iGuardados < 0 Then Return
+
+  ' --- 5. LOS CANÓNICOS CON LOS RANGOS ---
+  ' EL MISMO LANZAMIENTO QUE «Todos los canónicos»: EL VOLCADO SE REESCRIBE
+  ' CON LAS PÁGINAS RECIÉN GUARDADAS
+  iCanonicos = LanzarCanonicos(aArchivos)
+
+  ' --- 6. INFORME ---
+  If iCanonicos = m_Lanzadora.SALIDA_OK And iResultado = m_Lanzadora.SALIDA_OK Then
+    m_Sonido.sonar("Info")
+    Message.Info("Se compusieron el PDF del número (numero.pdf) y los de " & CStr(aArchivos.Count) & " artículo(s), todos PDF/A-2u." & gb.NewLine &
+      "Se guardaron las páginas de " & CStr(iGuardados) & " y los canónicos se regeneraron con sus rangos." & gb.NewLine & gb.NewLine &
+      "Carpeta:" & gb.NewLine & sCarpeta)
+  Else If iCanonicos = m_Lanzadora.SALIDA_OK Or iCanonicos = m_Lanzadora.SALIDA_AVISOS Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Se compusieron el PDF del número (numero.pdf) y los de " & CStr(aArchivos.Count) & " artículo(s), todos PDF/A-2u," & gb.NewLine &
+      "se guardaron las páginas de " & CStr(iGuardados) & " y se regeneraron los canónicos," & gb.NewLine &
+      "pero hubo avisos." & gb.NewLine & gb.NewLine &
+      "Revisá la terminal: los avisos están marcados con ⚠ (por ejemplo, una" & gb.NewLine &
+      "columna derecha que no entra en la primera página)." & gb.NewLine & gb.NewLine &
+      "Carpeta:" & gb.NewLine & sCarpeta)
+  Else
+    ' LOS PDF Y LAS PÁGINAS QUEDARON: LO QUE FALTA ES EL JATS CON LOS RANGOS
+    m_Sonido.sonar("Warning")
+    Message.Warning("Los PDF están en " & sCarpeta & gb.NewLine &
+      "y las páginas se guardaron, pero los canónicos no se regeneraron." & gb.NewLine & gb.NewLine &
+      "El motivo está en la terminal. Cuando esté resuelto, regeneralos" & gb.NewLine &
+      "con «Todos los canónicos»: el JATS todavía no lleva los rangos.")
+  Endif
+
+End
+
+' ============================================
+' Función   : ArticuloDelEditor
+' Propósito : El artículo abierto en el editor, si es un a-*.md de articulos/
+'             con metadatos en la base. Si no, avisa y devuelve vacío
+' Parámetros: sPara As String — para qué se pide, para el aviso de los
+'               metadatos («generar su canónico», «componer su PDF»)
+' Retorna   : String — nombre_archivo sin .md; vacío si no corresponde
+'             (ya se avisó)
+' ============================================
+Private Function ArticuloDelEditor(sPara As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaArticulos As String
+  Dim sAbierto As String
+  Dim bEsArticulo As Boolean
+  Dim sNombre As String
+
+  ' --- 2. EL ARCHIVO DEL EDITOR ---
+  ' EL ARTÍCULO LO DA EL ARCHIVO ABIERTO Y NO IdArticuloEnCurso, QUE ES DE LA
+  ' TABLA VIEJA articulos. TIENE QUE SER UN a-*.md DE articulos/
+  sRutaArticulos = m_InicioCierre.RutaProyectoEnCurso &/ "articulos"
+  sAbierto = FMain.sRutaArchivoAbierto
+  If sAbierto <> "" Then
+    bEsArticulo = (File.Dir(sAbierto) = sRutaArticulos) And (LCase(File.Name(sAbierto)) Begins "a-")
+  Endif
+  If Not bEsArticulo Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay ningún artículo abierto en el editor." & gb.NewLine &
+      "Abrí un archivo a-… de la carpeta articulos/.")
+    Return ""
+  Endif
+  sNombre = File.BaseName(sAbierto)
+
+  ' --- 3. CON METADATOS ---
+  ' EL SCRIPT TAMBIÉN LO FRENA; ACÁ SE AVISA ANTES Y CON EL CAMINO PARA
+  ' ARREGLARLO
+  If Not TieneMetadatos(sNombre) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("«" & sNombre & "» no tiene metadatos en la base." & gb.NewLine & gb.NewLine &
+      "Cargalos en los metadatos del artículo antes de " & sPara & ".")
+    Return ""
+  Endif
+
+  Return sNombre
+
+End
+
+' ============================================
+' Función   : ArticulosDelNumero
+' Propósito : Los artículos del número que tienen metadatos y su .md, en el
+'             orden de los archivos: el mismo del volcado y del número
+'             (m_Articulo.ArchivosDelProyecto, decisión 10)
+' Parámetros: sSinNada As String — el final del aviso cuando no hay ninguno
+'               («no hay canónicos que generar»)
+' Retorna   : String[] — los nombre_archivo; Null si no hay proyecto, número
+'             o artículos (ya se avisó)
+' Nota      : LOS .md SIN METADATOS Y LOS ARTÍCULOS SIN .md LOS INFORMA EL
+'             SCRIPT DE CANÓNICOS, DEL VOLCADO, COMO AVISO DEL NÚMERO
+' ============================================
+Private Function ArticulosDelNumero(sSinNada As String) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iIdNumero As Integer
+  Dim rFilas As Result
+  Dim cConFila As New Collection
+  Dim sNombre As String
+  Dim aArchivos As New String[]
 
   ' --- 2. EL NÚMERO ---
   If m_InicioCierre.RutaProyectoEnCurso = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay ningún proyecto abierto.")
-    Return
+    Return Null
   Endif
   iIdNumero = NumeroDelProyecto()
   If iIdNumero = 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("El proyecto no tiene un número vinculado.")
-    Return
+    Return Null
   Endif
 
-  ' --- 3. LOS ARTÍCULOS: EN LA BASE Y CON SU .md ---
-  ' LOS .md SIN METADATOS Y LOS ARTÍCULOS SIN .md LOS INFORMA EL SCRIPT, DEL
-  ' VOLCADO, COMO AVISO DEL NÚMERO
+  ' --- 3. LOS QUE ESTÁN EN LA BASE ---
   rFilas = m_Articulo.FilasDelNumero(iIdNumero)
-  If Not rFilas Then Return
-  sRutaArticulos = m_InicioCierre.RutaProyectoEnCurso &/ "articulos"
+  If Not rFilas Then Return Null
   While rFilas.Available
-    sNombre = rFilas!nombre_archivo
-    If Exist(sRutaArticulos &/ sNombre & ".md") Then aArchivos.Add(sNombre)
+    cConFila[rFilas!nombre_archivo] = True
     rFilas.MoveNext
   Wend
 
+  ' --- 4. EN EL ORDEN DE LOS ARCHIVOS, LOS QUE TIENEN FILA ---
+  ' ArchivosDelProyecto YA DEVUELVE SOLO LOS .md QUE EXISTEN
+  For Each sNombre In m_Articulo.ArchivosDelProyecto()
+    If cConFila.Exist(sNombre) Then aArchivos.Add(sNombre)
+  Next
+
   If aArchivos.Count = 0 Then
     m_Sonido.sonar("Warning")
-    Message.Warning("Ningún artículo del número tiene metadatos y su .md:" & gb.NewLine &
-      "no hay canónicos que generar.")
-    Return
+    Message.Warning("Ningún artículo del número tiene metadatos y su .md:" & gb.NewLine & sSinNada & ".")
+    Return Null
   Endif
 
-  ' --- 4. LANZAMIENTO E INFORME ---
-  iResultado = LanzarCanonicos(aArchivos)
-  InformarCanonicos(iResultado, "")
+  Return aArchivos
+
+End
+
+' ============================================
+' Función   : LanzarPDF
+' Propósito : Escribe los insumos y lanza engine/generar_pdf_revista.sh
+' Parámetros: sModo As String — "numero" o "articulo" (los del script)
+'             sArchivo As String — el artículo de la prueba; vacío en numero
+'             aArchivos As String[] — los artículos cuyo reflist se escribe:
+'               todos en numero, el de la prueba en articulo
+' Retorna   : Integer — el resultado de m_Lanzadora.EjecutarScript, o
+'             RESULTADO_EN_CURSO / RESULTADO_NO_LANZADO si no se llegó a lanzar
+' ============================================
+Private Function LanzarPDF(sModo As String, sArchivo As String, aArchivos As String[]) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim rNumero As Result
+  Dim iIdNumero As Integer
+  Dim sModelo As String
+  Dim iInicio As Integer
+  Dim aArgumentos As New String[]
+  Dim fPlazo As Float
+  Dim sQue As String
+
+  ' --- 2. REENTRADA ---
+  ' ANTES DE ESCRIBIR NADA EN LA BASE NI EN tmp/
+  If m_Lanzadora.HayScriptEnCurso() Then Return m_Lanzadora.RESULTADO_EN_CURSO
+
+  ' --- 3. EL EDITOR IGUAL AL DISCO (SC-06) ---
+  If Not FMain.ConfirmarDescartarCambios() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+
+  ' --- 4. EL NÚMERO Y SU MODELO DE PAGINACIÓN ---
+  rNumero = m_Numero.CargarNumeroDeProyecto(m_InicioCierre.IdProyectoEnCurso)
+  If Not rNumero Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proyecto no tiene un número vinculado.")
+    Return m_Lanzadora.RESULTADO_NO_LANZADO
+  Endif
+  iIdNumero = rNumero!id_numero
+  sModelo = m_Numero.ModeloPaginacion(rNumero!id_revista)
+  If sModelo = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("La revista no tiene modelo de paginación." & gb.NewLine &
+      "Elegilo en la ficha de la revista.")
+    Return m_Lanzadora.RESULTADO_NO_LANZADO
+  Endif
+
+  ' --- 5. LO QUE EL NÚMERO NECESITA ANTES DE COMPONER ---
+  ' VAN ANTES DEL VOLCADO: EL e-id VIAJA EN ÉL. LA PRUEBA NO ASIGNA NADA
+  ' (NO ESCRIBE EN LA BASE)
+  If sModo = "numero" Then
+    If sModelo = "continua" Then
+      If Not AsignarEids(rNumero, aArchivos) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+    Endif
+    If sModelo = "por_volumen" Then
+      iInicio = PaginaInicialNumero(rNumero)
+      If iInicio = 0 Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+    Endif
+  Endif
+
+  ' --- 6. LOS INSUMOS: EL .bib, EL VOLCADO Y LOS reflist ---
+  ' LAS FUNCIONES INFORMAN SUS FALLOS
+  If Not m_Bibtex.ExportarBibTeX() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_CanonicoRevista.PrepararNumero(iIdNumero, aArchivos) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+
+  ' --- 7. LANZAMIENTO ---
+  ' EL NOMBRE DEL .bib SE CALCULA EN UN SOLO LUGAR (m_Bibtex.NombreArchivoBib)
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(m_Bibtex.NombreArchivoBib())
+  aArgumentos.Add(sModo)
+  If sModo = "numero" Then
+    ' LA PÁGINA INICIAL SOLO EN por_volumen: LOS OTROS MODELOS LA FIJA EL SCRIPT
+    If sModelo = "por_volumen" Then aArgumentos.Add(CStr(iInicio))
+    fPlazo = PLAZO_PDF_NUMERO
+    sQue = "Componiendo los PDF del número"
+  Else
+    aArgumentos.Add(sArchivo)
+    fPlazo = PLAZO_PDF_ARTICULO
+    sQue = "Componiendo el PDF de prueba"
+  Endif
+
+  FMain.TabStrip1.Index = 0
+  Return m_Lanzadora.EjecutarScript("generar_pdf_revista.sh", aArgumentos, fPlazo, sQue)
+
+End
+
+' ============================================
+' Función   : AsignarEids
+' Propósito : Da e-id a los artículos del número que no lo tienen (modelo
+'             continua): e + año del número + tres cifras, corrido dentro del
+'             año en toda la revista (decisiones de Alberto, 07/11). Se
+'             asigna una vez y no se renumera, aunque el número se reordene
+'             (decisión de Alberto, 12/11): un e-id ya comunicado no cambia
+' Parámetros: rNumero As Result — el número
+'             aArchivos As String[] — los artículos, en el orden del número
+' Retorna   : Boolean — True si todos tienen e-id; False si no (ya se avisó)
+' Nota      : UN PUBLICADO SIN e-id NO SE TOCA (LO PUBLICADO ESTÁ CONGELADO):
+'             FRENA. EL ORDEN DE ASIGNACIÓN ES EL DEL NÚMERO
+' ============================================
+Private Function AsignarEids(rNumero As Result, aArchivos As String[]) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sPrefijo As String
+  Dim rUltimo As Result
+  Dim rFilas As Result
+  Dim iUltimo As Integer
+  Dim cId As New Collection
+  Dim cEstado As New Collection
+  Dim cEid As New Collection
+  Dim sNombre As String
+  Dim sEid As String
+  Dim iAsignados As Integer
+
+  ' --- 2. EL AÑO DEL NÚMERO ---
+  If IsNull(rNumero!anio) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El número no tiene año, y el e-id se forma con él" & gb.NewLine &
+      "(e + año + tres cifras: e2026001)." & gb.NewLine & gb.NewLine &
+      "Cargalo en los metadatos del número.")
+    Return False
+  Endif
+  sPrefijo = "e" & CStr(rNumero!anio)
+
+  ' --- 3. EL ÚLTIMO e-id DEL AÑO EN LA REVISTA ---
+  ' SOLO LOS QUE TIENEN LA FORMA EXACTA: UNO CARGADO A MANO CON OTRA FORMA NO
+  ' CORRE LA NUMERACIÓN
+  Try rUltimo = m_ConexionBD.mConn.Exec("SELECT MAX(CAST(SUBSTRING(a.elocation_id, 6) AS UNSIGNED)) AS ultimo " &
+    "FROM articulo a JOIN numero n ON n.id_numero = a.id_numero " &
+    "WHERE n.id_revista = &1 AND a.elocation_id REGEXP &2", rNumero!id_revista, "^" & sPrefijo & "[0-9]{3}$")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los e-id de la revista:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If Not IsNull(rUltimo!ultimo) Then iUltimo = rUltimo!ultimo
+
+  ' --- 4. LOS ARTÍCULOS DEL NÚMERO ---
+  Try rFilas = m_ConexionBD.mConn.Exec("SELECT id_articulo, nombre_archivo, estado, elocation_id FROM articulo WHERE id_numero = &1", rNumero!id_numero)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los artículos del número:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  While rFilas.Available
+    cId[rFilas!nombre_archivo] = rFilas!id_articulo
+    cEstado[rFilas!nombre_archivo] = rFilas!estado
+    If Not IsNull(rFilas!elocation_id) Then
+      If Trim(rFilas!elocation_id) <> "" Then cEid[rFilas!nombre_archivo] = True
+    Endif
+    rFilas.MoveNext
+  Wend
+
+  ' --- 5. LA ASIGNACIÓN, EN EL ORDEN DEL NÚMERO ---
+  For Each sNombre In aArchivos
+    ' EL QUE YA TIENE e-id LO CONSERVA
+    If cEid.Exist(sNombre) Then Continue
+    If cEstado[sNombre] = "publicado" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("«" & sNombre & "» está publicado y no tiene e-id." & gb.NewLine & gb.NewLine &
+        "Lo publicado no se modifica: el e-id de un artículo publicado" & gb.NewLine &
+        "no se puede asignar desde la composición.")
+      Return False
+    Endif
+    Inc iUltimo
+    If iUltimo > MAXIMO_EID Then
+      m_Sonido.sonar("Error")
+      Message.Error("Se agotaron los e-id de " & CStr(rNumero!anio) & " en la revista" & gb.NewLine &
+        "(tres cifras: hasta " & sPrefijo & CStr(MAXIMO_EID) & ").")
+      Return False
+    Endif
+    sEid = sPrefijo & Format(iUltimo, "000")
+    ' elocation_id IS NULL O VACÍO EN EL WHERE: SI OTRO PROCESO LO ASIGNÓ
+    ' ENTRE LA LECTURA Y ACÁ, NO SE PISA
+    Try m_ConexionBD.mConn.Exec("UPDATE articulo SET elocation_id = &1 WHERE id_articulo = &2 AND (elocation_id IS NULL OR elocation_id = '')", sEid, cId[sNombre])
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo guardar el e-id " & sEid & " de «" & sNombre & "»:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+    Inc iAsignados
+  Next
+
+  If iAsignados > 0 Then FMain.lblMensajes.Text = "e-id asignados: " & CStr(iAsignados)
+  Return True
+
+End
+
+' ============================================
+' Función   : PaginaInicialNumero
+' Propósito : Dónde empieza el número en el modelo por_volumen (decisiones
+'             de Alberto, 07/11 y 12/11):
+'               - numero.pagina_inicial, si está cargada, manda;
+'               - un suplemento va aparte: empieza en 1;
+'               - si no, la página que sigue a la última del número anterior
+'                 del mismo volumen: el de número (como entero)
+'                 inmediatamente menor, sin contar suplementos;
+'               - el primero del volumen empieza en 1.
+'             Si el anterior no tiene todas sus páginas guardadas (no se
+'             compuso con gbpublisher), frena y pide el dato
+' Parámetros: rNumero As Result — el número
+' Retorna   : Integer — la página inicial; 0 si no se pudo saber (ya se avisó)
+' ============================================
+Private Function PaginaInicialNumero(rNumero As Result) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sNumero As String
+  Dim rAnterior As Result
+  Dim rPaginas As Result
+  Dim sPedido As String
+
+  sPedido = gb.NewLine & gb.NewLine & "Cargá la página inicial de este número en sus metadatos:" & gb.NewLine &
+    "si está cargada, manda."
+
+  ' --- 2. CARGADA A MANO: MANDA ---
+  If Not IsNull(rNumero!pagina_inicial) Then
+    If rNumero!pagina_inicial > 0 Then Return rNumero!pagina_inicial
+  Endif
+
+  ' --- 3. UN SUPLEMENTO VA APARTE ---
+  If Not IsNull(rNumero!suplemento) Then
+    If Trim(rNumero!suplemento) <> "" Then Return 1
+  Endif
+
+  ' --- 4. EL NÚMERO Y EL VOLUMEN TIENEN QUE PERMITIR EL CÁLCULO ---
+  If IsNull(rNumero!volumen) Or IsNull(rNumero!numero) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El número no tiene volumen o número, y en la paginación" & gb.NewLine &
+      "por volumen la página inicial se calcula con ellos." & sPedido)
+    Return 0
+  Endif
+  sNumero = Trim(rNumero!numero)
+  If Not EsEntero(sNumero) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El número («" & sNumero & "») no es un entero, y no se puede" & gb.NewLine &
+      "saber cuál es el anterior del volumen." & sPedido)
+    Return 0
+  Endif
+
+  ' --- 5. EL ANTERIOR DEL VOLUMEN: SIN SUPLEMENTOS, NÚMERO ENTERO MENOR ---
+  Try rAnterior = m_ConexionBD.mConn.Exec("SELECT id_numero, numero FROM numero " &
+    "WHERE id_revista = &1 AND volumen = &2 AND (suplemento IS NULL OR suplemento = '') " &
+    "AND numero REGEXP '^[0-9]+$' AND CAST(numero AS UNSIGNED) < &3 " &
+    "ORDER BY CAST(numero AS UNSIGNED) DESC LIMIT 1", rNumero!id_revista, rNumero!volumen, CInt(sNumero))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el número anterior del volumen:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  ' EL PRIMERO DEL VOLUMEN
+  If Not rAnterior.Available Then Return 1
+
+  ' --- 6. SU ÚLTIMA PÁGINA: TODOS SUS ARTÍCULOS TIENEN QUE TENERLA ---
+  ' EL SUM VA CON CAST: gb.db.mysql DEVUELVE UN DECIMAL (LO QUE DA SUM) COMO
+  ' String, Y LA COMPARACIÓN CON UN NÚMERO FALLA CON «Type mismatch»
+  ' (MEDIDO: SUM → gb.String; COUNT, MAX Y CAST AS SIGNED → gb.Long)
+  Try rPaginas = m_ConexionBD.mConn.Exec("SELECT COUNT(*) AS total, " &
+    "CAST(SUM(pagina_fin IS NULL OR pagina_fin NOT REGEXP '^[0-9]+$') AS SIGNED) AS sin_paginas, " &
+    "MAX(CAST(pagina_fin AS UNSIGNED)) AS ultima FROM articulo WHERE id_numero = &1", rAnterior!id_numero)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer las páginas del número anterior:" & gb.NewLine & Error.Text)
+    Return 0
+  Endif
+  If rPaginas!total = 0 Or rPaginas!sin_paginas > 0 Or IsNull(rPaginas!ultima) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El número anterior del volumen (n.º " & rAnterior!numero & ") no tiene" & gb.NewLine &
+      "todas sus páginas guardadas: no se compuso con gbpublisher." & sPedido)
+    Return 0
+  Endif
+
+  Return rPaginas!ultima + 1
+
+End
+
+' ============================================
+' Función   : EsEntero
+' Propósito : Si un texto son solo cifras (0-9), no vacío
+' Parámetros: sTexto As String — el texto
+' Retorna   : Boolean
+' Nota      : InStr Y Mid$ OPERAN EN BYTES: CORRECTO, LAS CIFRAS SON ASCII Y
+'             UN BYTE DE UN CARÁCTER MULTIBYTE NUNCA ES UNA CIFRA (RC-GM-12)
+' ============================================
+Private Function EsEntero(sTexto As String) As Boolean
+
+  Dim i As Integer
+
+  If sTexto = "" Then Return False
+  For i = 1 To Len(sTexto)
+    If InStr("0123456789", Mid$(sTexto, i, 1)) = 0 Then Return False
+  Next
+  Return True
+
+End
+
+' ============================================
+' Función   : GuardarPaginacion
+' Propósito : Lee tmp/paginacion.tsv (generar_pdf_revista.sh) y guarda en la
+'             base dónde quedó cada artículo, en una transacción: todo o
+'             nada. Los publicados no se tocan (el script ya verificó que
+'             caen en sus páginas congeladas). En por_articulo y continua se
+'             guarda 1 y la última (decisión de Alberto, 12/11)
+' Parámetros: iIdNumero As Integer — el número
+' Retorna   : Integer — cuántos artículos se actualizaron; -1 si no se pudo
+'             (ya se avisó)
+' Nota      : LÍNEAS SEPARADAS POR TABULADOR: archivo, inicio, fin, paginas,
+'             elocation. LA QUE EMPIEZA CON # NOMBRA LAS COLUMNAS
+' ============================================
+Private Function GuardarPaginacion(iIdNumero As Integer) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+  Dim sContenido As String
+  Dim sLinea As String
+  Dim aCampos As String[]
+  Dim rFilas As Result
+  Dim cId As New Collection
+  Dim cEstado As New Collection
+  Dim hConn As Connection
+  Dim iGuardados As Integer
+
+  ' --- 2. EL ARCHIVO DEL SCRIPT ---
+  sRuta = m_InicioCierre.RutaProyectoEnCurso &/ ARCHIVO_PAGINACION
+  Try sContenido = File.Load(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("La composición terminó bien, pero no se pudo leer" & gb.NewLine &
+      ARCHIVO_PAGINACION & ": las páginas no se guardaron." & gb.NewLine & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  ' --- 3. LOS ARTÍCULOS DEL NÚMERO EN LA BASE ---
+  Try rFilas = m_ConexionBD.mConn.Exec("SELECT id_articulo, nombre_archivo, estado FROM articulo WHERE id_numero = &1", iIdNumero)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los artículos del número:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+  While rFilas.Available
+    cId[rFilas!nombre_archivo] = rFilas!id_articulo
+    cEstado[rFilas!nombre_archivo] = rFilas!estado
+    rFilas.MoveNext
+  Wend
+
+  ' --- 4. LA TRANSACCIÓN ---
+  ' TODO O NADA: UN NÚMERO CON LA MITAD DE LAS PÁGINAS NUEVAS Y LA MITAD
+  ' VIEJAS PARECERÍA COMPUESTO Y NO LO ESTÁ
+  hConn = m_ConexionBD.mConn
+  Try hConn.Begin()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar las páginas:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  For Each sLinea In Split(sContenido, gb.NewLine)
+    If Trim(sLinea) = "" Then Continue
+    If sLinea Begins "#" Then Continue
+    ' Chr(9) Y NO "\t": EL ESCAPE EN UN LITERAL DE GAMBAS ES UNA TRAMPA
+    ' CONOCIDA (SC-01). SIN IgnoreVoid: EL e-id VACÍO ES UN CAMPO
+    aCampos = Split(sLinea, Chr(9))
+    If aCampos.Count < 3 Or Not cId.Exist(aCampos[0]) Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error(ARCHIVO_PAGINACION & " no corresponde al número:" & gb.NewLine &
+        "«" & sLinea & "»" & gb.NewLine & gb.NewLine & "Las páginas no se guardaron.")
+      Return -1
+    Endif
+    ' LO PUBLICADO NO SE MODIFICA
+    If cEstado[aCampos[0]] = "publicado" Then Continue
+    Try hConn.Exec("UPDATE articulo SET pagina_inicio = &1, pagina_fin = &2 WHERE id_articulo = &3",
+      aCampos[1], aCampos[2], cId[aCampos[0]])
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudieron guardar las páginas de «" & aCampos[0] & "»:" & gb.NewLine & Error.Text &
+        gb.NewLine & gb.NewLine & "No se guardó ninguna.")
+      Return -1
+    Endif
+    Inc iGuardados
+  Next
+
+  Try hConn.Commit()
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron guardar las páginas:" & gb.NewLine & Error.Text)
+    Return -1
+  Endif
+
+  Return iGuardados
 
 End
 
