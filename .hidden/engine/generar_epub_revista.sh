@@ -28,7 +28,8 @@
 # QUÉ HACE
 #
 #   1. Verifica el volcado y lo que el número necesita: las preliminares que
-#      declara y las páginas de cada artículo. Las páginas salen de la última
+#      declara, los PDF del número y de cada artículo en salidas/pdf/ (la
+#      pinza de las salidas, desde H2) y las páginas de cada artículo. Las páginas salen de la última
 #      composición del PDF (las guarda Gambas en la base): sin ellas el
 #      «cómo citar» saldría sin rango, y el EPUB no se genera (decisión de
 #      Alberto). En el modelo continua, lo que hace falta es el e-id.
@@ -198,16 +199,15 @@ ok "preliminares: ${PRELIMINARES:-ninguna}"
 # COMPOSICIÓN DEL PDF. SIN ELLAS NO HAY EPUB (DECISIÓN DE ALBERTO, 14/11): SE
 # JUNTAN TODOS LOS QUE FALTAN ANTES DE FRENAR. QUE EL PDF HAYA QUEDADO VIEJO
 # NO SE DETECTA ACÁ
-sin_paginas=()
-for a in "${ARTICULOS[@]}"; do
-    if [[ "$MODELO" == "continua" ]]; then
-        [[ -n "$(dato_articulo "$a" 'paginas/@elocation')" ]] || sin_paginas+=("$a")
-    else
-        if [[ -z "$(dato_articulo "$a" 'paginas/@inicio')" || -z "$(dato_articulo "$a" 'paginas/@fin')" ]]; then
-            sin_paginas+=("$a")
-        fi
-    fi
-done
+# LA PINZA (ALBERTO, 14/11): SIN LOS PDF DEL NÚMERO NO HAY EPUB
+mapfile -t faltan_salidas < <(salidas_que_faltan pdf "$DIR_PROYECTO" "$base" "${ARTICULOS[@]}")
+if (( ${#faltan_salidas[@]} > 0 )); then
+    printf '%s\n' "${faltan_salidas[@]}" | sed 's/^/     /'
+    morir "Faltan ${#faltan_salidas[@]} PDF del número: componé primero el PDF del número"
+fi
+ok "los PDF del número y de sus ${#ARTICULOS[@]} artículo(s)"
+
+mapfile -t sin_paginas < <(articulos_sin_paginas "$MODELO" "${ARTICULOS[@]}")
 if (( ${#sin_paginas[@]} > 0 )); then
     printf '%s\n' "${sin_paginas[@]}" | sed 's/^/     /'
     if [[ "$MODELO" == "continua" ]]; then

@@ -20,8 +20,12 @@
 '                 páginas que devuelve la composición y regenera los
 '                 canónicos con los rangos;
 '               - en el mismo menú, el EPUB del número (etapa E3) con
-'                 engine/generar_epub_revista.sh. No escribe en la base:
-'                 toma las páginas y los e-id que dejó el PDF del número.
+'                 engine/generar_epub_revista.sh y el HTML autónomo del
+'                 número (etapa H2) con engine/generar_html_revista.sh. No
+'                 escriben en la base: toman las páginas y los e-id que dejó
+'                 el PDF del número. Las salidas se validan cruzadas
+'                 (Alberto, 14/11): el EPUB exige los PDF y el HTML exige
+'                 los PDF y el EPUB.
 ' Alcance   : solo los números del esquema nuevo, los que tienen artículos en
 '             la tabla articulo (NumeroEsNuevo). Los números viejos siguen con
 '             btnGenerarXMLcanonico y m_XML hasta el 2.0.0 (decisión de
@@ -49,6 +53,10 @@ Private Const PLAZO_PDF_ARTICULO As Float = 600.0
 ' EN preparar_citas_revista.sh) Y epubcheck. EL DEL LIBRO ES 900
 ' (m_GenerarEpubLibro.PLAZO_EPUB). NO ES UN CORTE: AL VENCER SE PREGUNTA
 Private Const PLAZO_EPUB_NUMERO As Float = 1200.0
+
+' EL PLAZO DEL HTML DEL NÚMERO: LOS MISMOS PASOS QUE EL EPUB, MÁS EL COLOREO
+' DEL CÓDIGO Y vnu. NO ES UN CORTE: AL VENCER SE PREGUNTA
+Private Const PLAZO_HTML_NUMERO As Float = 1200.0
 
 ' LO QUE DEJA generar_pdf_revista.sh CUANDO EL NÚMERO SALIÓ BIEN: DÓNDE QUEDÓ
 ' CADA ARTÍCULO. LA MISMA RUTA QUE TSV EN EL SCRIPT
@@ -106,10 +114,12 @@ End
 '               - número nuevo: menuJats, el botón «Validar» del visor XML
 '                 encendido (el validador conoce JATS desde A0.4) y, en
 '                 menuSalidaRevistaMD, «PDF del artículo en curso», «PDF del
-'                 número» (A1.3) y «EPUB del número» (E3);
+'                 número» (A1.3), «EPUB del número» (E3) y «HTML del
+'                 número» (H2);
 '               - número viejo: btnGenerarXMLcanonico, «Validar» apagado,
-'                 «Generar salida PDF» (Menu6, m_XML) y «Generar salida
-'                 ePub» (menuGenerarEpub, m_GenerarEpub).
+'                 «Generar salida PDF» (Menu6, m_XML), «Generar salida
+'                 ePub» (menuGenerarEpub, m_GenerarEpub) y «Generar salida
+'                 HTML» (HTMLcontrol, m_GenerarHTML).
 '             Nunca los dos. Lo viejo se quita al terminar la refactorización
 '             (decisión de Alberto, 12/11)
 ' Parámetros: (ninguno)
@@ -135,6 +145,10 @@ Public Sub ConfigurarControles()
   ' --- 3. EL EPUB, EN EL MISMO MENÚ (E3) ---
   FMain.menuSalidaEpubNumero.Visible = bNuevo
   FMain.menuGenerarEpub.Visible = Not bNuevo
+
+  ' --- 4. EL HTML, EN EL MISMO MENÚ (H2) ---
+  FMain.menuSalidaHtmlNumero.Visible = bNuevo
+  FMain.HTMLcontrol.Visible = Not bNuevo
 
 End
 
@@ -329,22 +343,62 @@ Public Sub GenerarEpubNumero()
 
   ' --- 3. LANZAMIENTO E INFORME ---
   ' SE INFORMA LA CARPETA: EL NOMBRE DEL ARCHIVO LO ARMA EL SCRIPT
-  iResultado = LanzarEpub(iIdNumero, aArchivos)
+  iResultado = LanzarSalidaNumero("generar_epub_revista.sh", PLAZO_EPUB_NUMERO,
+    "Generando el EPUB del número", iIdNumero, aArchivos)
   m_Lanzadora.InformarResultado(iResultado, "El EPUB del número",
     m_InicioCierre.RutaProyectoEnCurso &/ "salidas/epub")
 
 End
 
 ' ============================================
-' Función   : LanzarEpub
-' Propósito : Escribe los insumos del EPUB del número —el .bib y el volcado—
-'             y lanza engine/generar_epub_revista.sh
-' Parámetros: iIdNumero As Integer — el número del proyecto
+' Función   : GenerarHtmlNumero
+' Propósito : El HTML autónomo del número («HTML completo del número en
+'             curso» de menuSalidaRevistaMD; H2, decisiones de Alberto del
+'             14/11/2026): escribe los insumos y lanza
+'             engine/generar_html_revista.sh, que arma el sitio en docs/:
+'             index.html con el sumario y una página por artículo, con las
+'             descargas copiadas
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : NO ESCRIBE EN LA BASE. EL SCRIPT FRENA SI FALTAN LOS PDF O EL
+'             EPUB DEL NÚMERO EN salidas/ (LA PINZA DE LAS SALIDAS)
+' ============================================
+Public Sub GenerarHtmlNumero()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aArchivos As String[]
+  Dim iIdNumero As Integer
+  Dim iResultado As Integer
+
+  ' --- 2. LOS ARTÍCULOS DEL NÚMERO CON METADATOS Y SU .md ---
+  ' ArticulosDelNumero YA AVISÓ SI NO HAY PROYECTO, NÚMERO O ARTÍCULOS
+  aArchivos = ArticulosDelNumero("no hay HTML que generar")
+  If Not aArchivos Then Return
+  iIdNumero = NumeroDelProyecto()
+
+  ' --- 3. LANZAMIENTO E INFORME ---
+  iResultado = LanzarSalidaNumero("generar_html_revista.sh", PLAZO_HTML_NUMERO,
+    "Generando el HTML del número", iIdNumero, aArchivos)
+  m_Lanzadora.InformarResultado(iResultado, "El HTML del número",
+    m_InicioCierre.RutaProyectoEnCurso &/ "docs" &/ "index.html")
+
+End
+
+' ============================================
+' Función   : LanzarSalidaNumero
+' Propósito : Escribe los insumos de una salida del número que no escribe en
+'             la base —el .bib y el volcado— y lanza su script. La usan el
+'             EPUB (E3) y el HTML (H2): los dos scripts reciben lo mismo.
+'             Se llamaba LanzarEpub hasta H2
+' Parámetros: sScript As String — el script de engine/
+'             fPlazo As Float — el plazo antes de preguntar si seguir
+'             sQue As String — el texto de la espera
+'             iIdNumero As Integer — el número del proyecto
 '             aArchivos As String[] — sus artículos, en el orden del número
 ' Retorna   : Integer — el resultado de m_Lanzadora.EjecutarScript, o
 '             RESULTADO_EN_CURSO / RESULTADO_NO_LANZADO si no se llegó a lanzar
 ' ============================================
-Private Function LanzarEpub(iIdNumero As Integer, aArchivos As String[]) As Integer
+Private Function LanzarSalidaNumero(sScript As String, fPlazo As Float, sQue As String, iIdNumero As Integer, aArchivos As String[]) As Integer
 
   ' --- 1. INICIALIZACIÓN ---
   Dim aArgumentos As New String[]
@@ -370,8 +424,7 @@ Private Function LanzarEpub(iIdNumero As Integer, aArchivos As String[]) As Inte
   aArgumentos.Add(m_Bibtex.NombreArchivoBib())
 
   FMain.TabStrip1.Index = 0
-  Return m_Lanzadora.EjecutarScript("generar_epub_revista.sh", aArgumentos, PLAZO_EPUB_NUMERO,
-    "Generando el EPUB del número")
+  Return m_Lanzadora.EjecutarScript(sScript, aArgumentos, fPlazo, sQue)
 
 End
 

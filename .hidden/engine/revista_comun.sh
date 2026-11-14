@@ -76,3 +76,69 @@ nombre_numero() {
     [[ -n "$suplemento" ]] && nombre+="-s$suplemento"
     printf '%s' "$nombre"
 }
+
+# ============================================================================
+# Función   : articulos_sin_paginas
+# Propósito : Los artículos a los que les falta lo que el «cómo citar» toma
+#             de la última composición del PDF del número: las páginas
+#             (inicio y fin) o, en el modelo continua, el e-id. Lo usan el
+#             EPUB y el HTML para frenar (decisión de Alberto, 14/11): las
+#             salidas se validan cruzadas, y sin el PDF no hay las demás
+# Parámetros: $1 modelo de paginación; $2… archivos de los artículos
+# Retorna   : imprime uno por línea; nada si todos las tienen
+# Nota      : SE MUDÓ DE generar_epub_revista.sh EN H2 (14/11/2026)
+# ============================================================================
+articulos_sin_paginas() {
+    local modelo="$1" a
+    shift
+    for a in "$@"; do
+        if [[ "$modelo" == "continua" ]]; then
+            [[ -n "$(dato_articulo "$a" 'paginas/@elocation')" ]] || printf '%s\n' "$a"
+        elif [[ -z "$(dato_articulo "$a" 'paginas/@inicio')" || -z "$(dato_articulo "$a" 'paginas/@fin')" ]]; then
+            printf '%s\n' "$a"
+        fi
+    done
+}
+
+# ============================================================================
+# Función   : salidas_que_faltan
+# Propósito : La pinza de las salidas del número (Alberto, 14/11/2026): la
+#             revista es de acceso abierto y cada salida enlaza o se apoya
+#             en las otras, así que una salida no se genera si falta una
+#             anterior. El PDF (de cada artículo y del número) es la base;
+#             el EPUB lo exige; el HTML exige el PDF y el EPUB, que ofrece
+#             como descargas
+# Parámetros: $1 qué se pide: pdf o pdf+epub; $2 raíz del proyecto;
+#             $3 base del nombre del número (nombre_numero); $4… archivos
+#             de los artículos
+# Retorna   : imprime, una por línea y relativa al proyecto, cada salida
+#             que falta; nada si están todas
+# ============================================================================
+salidas_que_faltan() {
+    local que="$1" proyecto="$2" base="$3" a
+    shift 3
+    for a in "$@"; do
+        [[ -f "$proyecto/salidas/pdf/$a.pdf" ]] || printf 'salidas/pdf/%s.pdf\n' "$a"
+    done
+    [[ -f "$proyecto/salidas/pdf/$base.pdf" ]] || printf 'salidas/pdf/%s.pdf\n' "$base"
+    if [[ "$que" == "pdf+epub" ]]; then
+        [[ -f "$proyecto/salidas/epub/$base.epub" ]] || printf 'salidas/epub/%s.epub\n' "$base"
+    fi
+}
+
+# ============================================================================
+# Función   : imagenes_canonico_jats
+# Propósito : Las imágenes que usa un canónico de artículo: el xlink:href de
+#             cada fig/graphic, sin carpeta, sin repetir. Es la regla de
+#             numero-a-epub.xsl y de la plantilla fig de las hojas de
+#             revista (tokenize(...)[last()]). imagenes_canonico (comun.sh)
+#             es la de DocBook
+# Parámetros: $1 ruta del canónico (sin DOCTYPE)
+# Retorna   : imprime un nombre por línea; nada si no usa imágenes
+# Nota      : local-name() PORQUE xmllint --xpath NO CONOCE LOS ESPACIOS DE
+#             NOMBRES DEL DOCUMENTO (GV-22)
+# ============================================================================
+imagenes_canonico_jats() {
+    xmllint --nonet --xpath "//*[local-name()='fig']/*[local-name()='graphic']/@*[local-name()='href']" "$1" 2>/dev/null |
+        grep -oP 'href="\K[^"]+' | sed 's|.*/||' | sort -u
+}
