@@ -63,7 +63,10 @@ Private $iCreditoActual As Integer = -1
 ' --- PESTAÑA «Catálogos» (tsFSysAdmin, ÍNDICE 8): NOMBRES DE LOS ROLES CRediT
 ' Y TEXTOS DE LAS LICENCIAS POR IDIOMA (ETAPA C2, 1.28.0). SOLO SE EDITAN
 ' TEXTOS: NI ROLES NI LICENCIAS SE DAN DE ALTA O DE BAJA ACÁ. LA LÓGICA ESTÁ
-' EN m_CreditRoles Y m_Licencias, COMUNES A REVISTAS Y LIBROS
+' EN m_CreditRoles Y m_Licencias, COMUNES A REVISTAS Y LIBROS. DESDE C2e
+' (DECISIÓN DE ALBERTO, 14/11) TAMBIÉN EL VOCABULARIO CONTROLADO, QUE ERA EL
+' DIÁLOGO FVocabularios ABIERTO DESDE «Editorial»: ES UN CATÁLOGO GLOBAL, NO
+' DE LA EDITORIAL. LA LÓGICA SIGUE EN m_Vocabularios
 Private Const PESTANA_CATALOGOS As Integer = 8
 ' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
 Private Const COLUMNAS_ROLES_CREDIT As Integer = 2
@@ -90,6 +93,13 @@ Private $sUrlLicenciaActual As String
 Private $aIdiomasTextosLicencia As New String[]
 Private $iModoTextoLicencia As Integer = -1
 Private $sIdiomaTextoLicencia As String
+' VOCABULARIOS: UN id POR FILA DE gvTerminosVoc; 0 EN EL EDITOR = TÉRMINO
+' NUEVO. $bCargandoVoc EVITA QUE LOS Click/Change ACTÚEN MIENTRAS SE CARGA
+Private Const COLUMNAS_TERMINOS_VOC As Integer = 3
+Private $aIdsTerminosVoc As New Integer[]
+Private $iIdTerminoVoc As Integer
+Private $bEditandoVoc As Boolean
+Private $bCargandoVoc As Boolean
 
 ' ============================================
 ' Función   : Form_Show
@@ -3655,21 +3665,6 @@ Public Sub btnRevistasEditorial_Click()
 End
 
 ' ============================================
-' Función   : btnVocabularios_Click
-' Propósito : Abre el catálogo de vocabulario controlado. Es global: no
-'             depende de la editorial ni de la revista (entrega C3)
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-Public Sub btnVocabularios_Click()
-
-  ' CON LA CONEXIÓN DEL FORMULARIO (PUEDE NO HABER SESIÓN)
-  FVocabularios.hConn = hConnServidor
-  FVocabularios.ShowModal()
-
-End
-
-' ============================================
 ' Función   : CargarCreditos
 ' Propósito : Llena la grilla de créditos de la editorial elegida y deja el
 '             editor de la fila vacío
@@ -3919,18 +3914,28 @@ Private Sub CargarPestanaCatalogos()
     aIdiomas = m_Vocabularios.IdiomasActivos(hConnServidor)
     cmbIdiomaNombreRol.List = aIdiomas.Copy()
     cmbIdiomaTextoLicencia.List = aIdiomas.Copy()
+    ' EL IDIOMA DEL VOCABULARIO EMPIEZA EN es, SI ESTÁ ACTIVO
+    $bCargandoVoc = True
+    cmbIdiomaVoc.List = aIdiomas.Copy()
+    If aIdiomas.Find("es") >= 0 Then
+      cmbIdiomaVoc.Index = aIdiomas.Find("es")
+    Else If aIdiomas.Count > 0 Then
+      cmbIdiomaVoc.Index = 0
+    Endif
+    $bCargandoVoc = False
     $bCatalogosPreparada = True
   Endif
 
   ' --- 3. DATOS FRESCOS ---
   CargarRolesCredit()
   CargarLicenciasTexto()
+  CargarVocabulariosVoc()
 
 End
 
 ' ============================================
 ' Función   : ConfigurarGridsCatalogos
-' Propósito : Columnas de las cuatro grillas de «Catálogos» (GV-58: conteo
+' Propósito : Columnas de las cinco grillas de «Catálogos» (GV-58: conteo
 '             fijo)
 ' Parámetros: ninguno
 ' Retorna   : nada
@@ -3978,6 +3983,19 @@ Private Sub ConfigurarGridsCatalogos()
     .Columns[0].Width = 90
     .Columns[1].Title = "Texto"
     .Columns[1].Width = 700
+    .Rows.Count = 0
+  End With
+
+  ' --- 5. TÉRMINOS DEL VOCABULARIO ---
+  With gvTerminosVoc
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_TERMINOS_VOC
+    .Columns[0].Title = "Término"
+    .Columns[0].Width = 520
+    .Columns[1].Title = "Identificador"
+    .Columns[1].Width = 160
+    .Columns[2].Title = "Usos"
+    .Columns[2].Width = 80
     .Rows.Count = 0
   End With
 
@@ -4494,5 +4512,282 @@ Public Sub btnBorrarTextoLicencia_Click()
     If Not m_Licencias.BorrarTexto(hConnServidor, $sUrlLicenciaActual, $sIdiomaTextoLicencia) Then Return
     m_Sonido.sonar("Info")
     CargarTextosLicencia()
+
+End
+
+' ============================================
+' Función   : CargarVocabulariosVoc
+' Propósito : Al entrar a la pestaña: relee la lista de vocabularios (uno
+'             nuevo, escrito en otra sesión, aparece) sin perder el elegido,
+'             y lista sus términos
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarVocabulariosVoc()
+
+  Dim sVocabulario As String
+
+  ' --- 1. LA LISTA, CONSERVANDO EL ELEGIDO ---
+  ' EL COMBO ES EDITABLE: UN VOCABULARIO NUEVO (TAMBIÉN UNO PROPIO) SE
+  ' ESCRIBE, Y EXISTE CUANDO SE GUARDA SU PRIMER TÉRMINO (m_Vocabularios)
+  $bCargandoVoc = True
+  sVocabulario = Trim(cmbVocabularioVoc.Text)
+  cmbVocabularioVoc.List = m_Vocabularios.Vocabularios(hConnServidor)
+  If sVocabulario <> "" Then
+    cmbVocabularioVoc.Text = sVocabulario
+  Else If cmbVocabularioVoc.Count > 0 Then
+    cmbVocabularioVoc.Index = 0
+  Endif
+  $bCargandoVoc = False
+
+  ' --- 2. LOS TÉRMINOS ---
+  CargarTerminosVoc(0)
+
+End
+
+' ============================================
+' Función   : CargarTerminosVoc
+' Propósito : Llena la grilla con los términos del vocabulario e idioma
+'             elegidos que contienen lo buscado, y elige uno
+' Parámetros: iElegido As Integer — id a dejar elegido; 0 ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarTerminosVoc(iElegido As Integer)
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. GRILLA, CON UN id POR FILA EN EL MISMO ORDEN ---
+  $aIdsTerminosVoc.Clear()
+  gvTerminosVoc.Rows.Count = 0
+  If Trim(cmbVocabularioVoc.Text) <> "" And cmbIdiomaVoc.Index >= 0 Then
+    rDatos = m_Vocabularios.ListarTerminos(hConnServidor, Trim(cmbVocabularioVoc.Text), cmbIdiomaVoc.Text, Trim(txtBuscarVoc.Text))
+  Endif
+  If rDatos Then
+    gvTerminosVoc.Rows.Count = rDatos.Count
+    While rDatos.Available
+      $aIdsTerminosVoc.Add(rDatos!id_termino)
+      gvTerminosVoc[iFila, 0].Text = rDatos!termino
+      ' UN NULL VA A LA CELDA COMO VACÍO
+      gvTerminosVoc[iFila, 1].Text = rDatos!identificador
+      gvTerminosVoc[iFila, 2].Text = CStr(rDatos!usos)
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 2. ELEGIDO O EDITOR VACÍO ---
+  iFila = $aIdsTerminosVoc.Find(iElegido)
+  If iFila >= 0 Then
+    gvTerminosVoc.Row = iFila
+    MostrarFilaVoc(iFila)
+  Else
+    LimpiarEditorVoc()
+  Endif
+
+End
+
+' ============================================
+' Función   : LimpiarEditorVoc
+' Propósito : Editor del término vacío y apagado
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarEditorVoc()
+
+  $iIdTerminoVoc = 0
+  $bEditandoVoc = False
+  txtTerminoVoc.Text = ""
+  txtIdentificadorVoc.Text = ""
+  lblEstadoVoc.Text = ""
+  FijarEditorVoc(False)
+
+End
+
+' ============================================
+' Función   : FijarEditorVoc
+' Propósito : Habilita o apaga el editor del término
+' Parámetros: bHabilitado As Boolean — True: hay término en edición
+' Retorna   : nada
+' ============================================
+Private Sub FijarEditorVoc(bHabilitado As Boolean)
+
+  hbxTerminoVoc.Enabled = bHabilitado
+  hbxIdentificadorVoc.Enabled = bHabilitado
+  btnGuardarTerminoVoc.Enabled = bHabilitado
+  ' SOLO SE BORRA UN TÉRMINO QUE YA ESTÁ EN EL CATÁLOGO
+  btnBorrarTerminoVoc.Enabled = bHabilitado And $iIdTerminoVoc > 0
+
+End
+
+' ============================================
+' Función   : MostrarFilaVoc
+' Propósito : Pone en el editor el término de una fila de la grilla
+' Parámetros: iFila As Integer — fila
+' Retorna   : nada
+' ============================================
+Private Sub MostrarFilaVoc(iFila As Integer)
+
+  $iIdTerminoVoc = $aIdsTerminosVoc[iFila]
+  $bEditandoVoc = True
+  txtTerminoVoc.Text = gvTerminosVoc[iFila, 0].Text
+  txtIdentificadorVoc.Text = gvTerminosVoc[iFila, 1].Text
+  lblEstadoVoc.Text = "En " & gvTerminosVoc[iFila, 2].Text & " palabra(s) clave de artículos."
+  FijarEditorVoc(True)
+
+End
+
+' ============================================
+' Función   : gvTerminosVoc_Click
+' Propósito : Elige un término para corregirlo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvTerminosVoc_Click()
+
+  If gvTerminosVoc.Row < 0 Or gvTerminosVoc.Row >= $aIdsTerminosVoc.Count Then Return
+  MostrarFilaVoc(gvTerminosVoc.Row)
+
+End
+
+' ============================================
+' Función   : cmbVocabularioVoc_Click
+' Propósito : Otro vocabulario elegido de la lista: vuelve a listar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbVocabularioVoc_Click()
+
+  If $bCargandoVoc Then Return
+  CargarTerminosVoc(0)
+
+End
+
+' ============================================
+' Función   : cmbVocabularioVoc_Change
+' Propósito : Un vocabulario escrito a mano (también uno propio): vuelve a
+'             listar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbVocabularioVoc_Change()
+
+  If $bCargandoVoc Then Return
+  CargarTerminosVoc(0)
+
+End
+
+' ============================================
+' Función   : cmbIdiomaVoc_Click
+' Propósito : Otro idioma: vuelve a listar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub cmbIdiomaVoc_Click()
+
+  If $bCargandoVoc Then Return
+  CargarTerminosVoc(0)
+
+End
+
+' ============================================
+' Función   : txtBuscarVoc_Change
+' Propósito : Filtra la grilla mientras se tipea
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub txtBuscarVoc_Change()
+
+  If $bCargandoVoc Then Return
+  CargarTerminosVoc(0)
+
+End
+
+' ============================================
+' Función   : btnNuevoTerminoVoc_Click
+' Propósito : Prepara el alta de un término en el vocabulario e idioma
+'             elegidos; se crea al guardar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevoTerminoVoc_Click()
+
+  ' --- 1. HAY VOCABULARIO E IDIOMA ---
+  If Trim(cmbVocabularioVoc.Text) = "" Or cmbIdiomaVoc.Index < 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí primero el vocabulario y el idioma.")
+    Return
+  Endif
+
+  ' --- 2. EDITOR EN ALTA ---
+  $iIdTerminoVoc = 0
+  $bEditandoVoc = True
+  ' LO BUSCADO SE PROPONE COMO TÉRMINO NUEVO
+  txtTerminoVoc.Text = Trim(txtBuscarVoc.Text)
+  txtIdentificadorVoc.Text = ""
+  lblEstadoVoc.Text = "Término nuevo en " & Trim(cmbVocabularioVoc.Text) & " (" & cmbIdiomaVoc.Text & ")."
+  FijarEditorVoc(True)
+  txtTerminoVoc.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarTerminoVoc_Click
+' Propósito : Graba el alta o la corrección por m_Vocabularios e informa
+'             cuántos artículos no publicados se corrigieron
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarTerminoVoc_Click()
+
+  Dim iCorregidos As Integer
+  Dim sTermino As String
+  Dim i As Integer
+
+  ' --- 1. HAY QUÉ GUARDAR ---
+  If Not $bEditandoVoc Then Return
+  sTermino = Trim(txtTerminoVoc.Text)
+
+  ' --- 2. GRABACIÓN ---
+  iCorregidos = m_Vocabularios.GuardarTermino(hConnServidor, $iIdTerminoVoc, Trim(cmbVocabularioVoc.Text), cmbIdiomaVoc.Text, sTermino, Trim(txtIdentificadorVoc.Text))
+  If iCorregidos < 0 Then Return
+
+  ' --- 3. RELECTURA, CON EL TÉRMINO GRABADO ELEGIDO ---
+  ' UN VOCABULARIO NUEVO ENTRA A LA LISTA CON SU PRIMER TÉRMINO. SE BUSCA
+  ' POR SU FORMA EXACTA: LA BÚSQUEDA PUEDE TRAER OTROS QUE LO CONTIENEN
+  m_Sonido.sonar("Info")
+  $bCargandoVoc = True
+  txtBuscarVoc.Text = sTermino
+  $bCargandoVoc = False
+  CargarVocabulariosVoc()
+  For i = 0 To $aIdsTerminosVoc.Count - 1
+    If gvTerminosVoc[i, 0].Text = sTermino Then
+      gvTerminosVoc.Row = i
+      MostrarFilaVoc(i)
+      Break
+    Endif
+  Next
+  If iCorregidos > 0 Then lblEstadoVoc.Text = "Guardado. Se corrigieron " & CStr(iCorregidos) & " palabra(s) clave de artículos no publicados."
+
+End
+
+' ============================================
+' Función   : btnBorrarTerminoVoc_Click
+' Propósito : Borra el término elegido, si ningún artículo lo usa
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarTerminoVoc_Click()
+
+  ' --- 1. HAY UN TÉRMINO GRABADO ELEGIDO ---
+  If $iIdTerminoVoc <= 0 Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar «" & txtTerminoVoc.Text & "» del catálogo?", "Borrar", "Cancelar") <> 1 Then Return
+
+  ' --- 3. BORRADO Y RELECTURA ---
+  If Not m_Vocabularios.BorrarTermino(hConnServidor, $iIdTerminoVoc) Then Return
+  CargarTerminosVoc(0)
 
 End
