@@ -1290,3 +1290,183 @@ Public Function PlantillaDeSeccion(hConn As Connection, iIdSeccion As Integer) A
   Return rDatos!id_plantilla_resumen
 
 End
+
+' ============================================
+' LOGO DE LA REVISTA (ETAPA C2, ESQUEMA 1.28.0; DECISIÓN DE ALBERTO, 14/11)
+' revista.logo (MEDIUMBLOB) GUARDA EL PNG DE LA CABECERA DEL ARTÍCULO. LA
+' ESTÉTICA LO DIBUJA A 184 × 20 mm SIN CONSERVAR LA PROPORCIÓN
+' (preambulo-revista-estetica.tex, keepaspectratio=false): UNA IMAGEN CON
+' OTRA PROPORCIÓN SALE DEFORMADA. SE AVISA Y SE DEJA SEGUIR.
+' UN MEDIUMBLOB NULL SE LEE EN gb.db.mysql COMO UN Blob CON .Data VACÍO, NO
+' COMO Null (MINI-TEST DE C2a): POR ESO SE MIRA EL LARGO, NO IsNull
+' ============================================
+
+' LA PROPORCIÓN DE LA CABECERA (184 / 20) Y CUÁNTO SE PUEDE APARTAR SIN AVISO
+Private Const PROPORCION_LOGO As Float = 9.2
+Private Const TOLERANCIA_LOGO As Float = 0.05
+
+' ============================================
+' Función   : LeerLogoDeArchivo
+' Propósito : Lee un archivo elegido como logo y lo valida: tiene que ser
+'             PNG (por su firma, no por la extensión); si su proporción se
+'             aparta de la cabecera, pregunta si seguir
+' Parámetros: sRuta As String — el archivo elegido
+' Retorna   : String — los bytes del PNG; vacío si no es válido o si el
+'             usuario no quiso seguir (ya se informó)
+' ============================================
+Public Function LeerLogoDeArchivo(sRuta As String) As String
+
+  Dim sDatos As String
+  Dim hImagen As Image
+  Dim fProporcion As Float
+
+  ' --- 1. LECTURA ---
+  Try sDatos = File.Load(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el archivo:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+
+  ' --- 2. TIENE QUE SER PNG: EL ARCHIVO DEL PROYECTO ES logo-revista.png ---
+  ' LA FIRMA SON LOS OCHO PRIMEROS BYTES: 137 80 78 71 13 10 26 10 (W3C,
+  ' PNG 2.ª EDICIÓN, §5.2). Left CUENTA BYTES, NO CARACTERES
+  If Left(sDatos, 8) <> Chr(137) & "PNG" & Chr(13) & Chr(10) & Chr(26) & Chr(10) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El logo tiene que ser una imagen PNG." & gb.NewLine & "«" & File.Name(sRuta) & "» no lo es.")
+    Return ""
+  Endif
+
+  ' --- 3. LAS MEDIDAS ---
+  Try hImagen = Image.Load(sRuta)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la imagen:" & gb.NewLine & Error.Text)
+    Return ""
+  Endif
+  If hImagen.Height = 0 Then Return ""
+  fProporcion = hImagen.Width / hImagen.Height
+
+  ' --- 4. LA PROPORCIÓN: AVISA Y DEJA SEGUIR ---
+  If Abs(fProporcion - PROPORCION_LOGO) / PROPORCION_LOGO > TOLERANCIA_LOGO Then
+    m_Sonido.sonar("Question")
+    If Message.Question("La imagen mide " & hImagen.Width & " × " & hImagen.Height & " píxeles (proporción " & Format(fProporcion, "0.0#") & ":1)." & gb.NewLine &
+        "La cabecera del artículo es de 184 × 20 mm (9,2:1) y la imagen se estira a esa medida: va a salir deformada." & gb.NewLine & gb.NewLine &
+        "¿Usarla igual?", "Usarla", "Cancelar") <> 1 Then Return ""
+  Endif
+
+  Return sDatos
+
+End
+
+' ============================================
+' Función   : GuardarLogo
+' Propósito : Graba el logo de una revista, o lo quita
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+'             sDatos As String — los bytes del PNG; vacío para quitarlo
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarLogo(hConn As Connection, iIdRevista As Integer, sDatos As String) As Boolean
+
+  Dim rRevista As Result
+
+  ' --- 1. QUITAR: UPDATE DIRECTO ---
+  ' EXCEPCIÓN A RC-GM-15, MEDIDA: CON Edit, !logo = Null GRABA UN BLOB VACÍO
+  ' (LENGTH 0), NO NULL (gb.db.mysql, 14/11). VACÍO Y NULL SE LEEN IGUAL,
+  ' PERO «SIN LOGO» EN LA BASE ES NULL
+  If sDatos = "" Then
+    Try hConn.Exec("UPDATE revista SET logo = NULL WHERE id_revista = &1", iIdRevista)
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo quitar el logo:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+    Return True
+  Endif
+
+  ' --- 2. CARGAR: EL REGISTRO ---
+  Try rRevista = hConn.Edit("revista", "id_revista = &1", iIdRevista)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir la revista para grabar el logo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. EL CAMPO, POR NOMBRE (RC-GM-15) ---
+  rRevista!logo = sDatos
+
+  ' --- 4. GRABACIÓN ---
+  Try rRevista.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el logo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : LogoDeRevista
+' Propósito : Los bytes del logo de una revista
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRevista As Integer — revista
+' Retorna   : String — los bytes; vacío si no tiene o si la lectura falla
+' ============================================
+Public Function LogoDeRevista(hConn As Connection, iIdRevista As Integer) As String
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT logo FROM revista WHERE id_revista = &1", iIdRevista)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+  ' NULL LLEGA COMO Blob VACÍO (VER EL ENCABEZADO DE ESTE APARTADO)
+  Return DatosDeBlob(rDatos!logo)
+
+End
+
+' ============================================
+' Función   : DatosDeBlob
+' Propósito : Los bytes de un campo Blob de un Result, a salvo de un Null
+' Parámetros: vCampo As Variant — el valor del campo
+' Retorna   : String — los bytes; vacío si no hay
+' ============================================
+Public Function DatosDeBlob(vCampo As Variant) As String
+
+  If IsNull(vCampo) Then Return ""
+  Return vCampo.Data
+
+End
+
+' ============================================
+' Función   : EscribirLogo
+' Propósito : Escribe el logo de la revista en media/logo-revista.png del
+'             proyecto, antes de componer. Si la revista no tiene logo en la
+'             base, no toca el archivo: queda el que está (el genérico que
+'             copia CopiarArchivosBase_MD, o uno puesto a mano)
+' Parámetros: iIdRevista As Integer — la revista del número
+'             sRaiz As String — la carpeta del proyecto
+' Retorna   : Boolean — False solo si había logo y no se pudo escribir (ya se
+'             informó)
+' ============================================
+Public Function EscribirLogo(iIdRevista As Integer, sRaiz As String) As Boolean
+
+  Dim sDatos As String
+
+  ' --- 1. EL LOGO DE LA BASE ---
+  sDatos = LogoDeRevista(m_ConexionBD.mConn, iIdRevista)
+  If sDatos = "" Then Return True
+
+  ' --- 2. ESCRITURA: LA BASE MANDA SOBRE EL ARCHIVO ---
+  Try File.Save(sRaiz &/ "media" &/ "logo-revista.png", sDatos)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo escribir el logo de la revista en media/logo-revista.png:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End

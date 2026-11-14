@@ -14,6 +14,9 @@
 '              Etapa B3: la solapa «Órganos» edita los órganos editoriales de
 '              la revista y sus miembros con vigencia (m_Organos; la persona
 '              se elige con FBuscarAutor).
+'              Etapa C2 (1.28.0): el logo de la cabecera del artículo, en la
+'              base (revista.logo). Se carga y se quita en el acto, sin
+'              «Guardar»: es un archivo, no un campo del formulario.
 ' Uso        : FRevistas.hConn = hConnServidor
 '              FRevistas.iIdEditorial = …
 '              FRevistas.sEditorial = …
@@ -221,6 +224,8 @@ Private Sub CargarRevistas()
   btnGuardarSeccion.Enabled = False
   btnPlantillasResumen.Enabled = False
   btnReaperturas.Enabled = False
+  btnCargarLogoRevista.Enabled = False
+  btnQuitarLogoRevista.Enabled = False
   ' SIN REVISTA, LA SOLAPA «Órganos» QUEDA VACÍA Y SIN ALTA
   CargarOrganos()
 
@@ -257,6 +262,8 @@ Public Sub gvRevistas_Click()
   btnGuardarSeccion.Enabled = False
   btnPlantillasResumen.Enabled = True
   btnReaperturas.Enabled = True
+  btnCargarLogoRevista.Enabled = True
+  ' QUITAR, SOLO SI HAY LOGO (LO DECIDE MostrarLogo, LLAMADA AL CARGAR)
   tsRevistas.Index = 0
 
 End
@@ -307,7 +314,11 @@ Private Function CargarRevistaEnEditor(iIdRevista As Integer) As Boolean
     cmbEstiloCitaRevista.Text = m_Revistas.TextoComboEstilo(sEstilo)
   Endif
 
-  ' --- 5. AUDITORÍA, SOLO LECTURA ---
+  ' --- 5. EL LOGO (1.28.0) ---
+  ' SELECT * LO TRAE; NULL LLEGA COMO Blob VACÍO (m_Revistas.DatosDeBlob)
+  MostrarLogo(m_Revistas.DatosDeBlob(rDatos!logo))
+
+  ' --- 6. AUDITORÍA, SOLO LECTURA ---
   txtAuditoriaRevista.Text = m_Revistas.TextoDe(rDatos, "fecha_creacion") & "  ·  " & m_Revistas.TextoDe(rDatos, "usuario_creacion")
 
   Return True
@@ -333,6 +344,7 @@ Private Sub LimpiarEditorRevista()
   cmbEstiloCitaRevista.Text = ""
   cmbModeloPaginacionRevista.Index = 0
   cmbTipoAccesoRevista.Index = 0
+  MostrarLogo("")
   txtAuditoriaRevista.Text = ""
 
 End
@@ -1284,5 +1296,88 @@ End
 Public Sub btnVaciarHastaMiembro_Click()
 
   dtbHastaMiembro.Value = Null
+
+End
+
+' ============================================
+' Función   : MostrarLogo
+' Propósito : Muestra el logo de la revista en la vista previa, o la deja
+'             vacía; habilita «Quitar» solo si hay logo
+' Parámetros: sDatos As String — los bytes del PNG; vacío si no hay
+' Retorna   : nada
+' ============================================
+Private Sub MostrarLogo(sDatos As String)
+
+  Dim sTemporal As String
+
+  ' --- 1. SIN LOGO ---
+  btnQuitarLogoRevista.Enabled = sDatos <> ""
+  If sDatos = "" Then
+    picLogoRevista.Picture = Null
+    Return
+  Endif
+
+  ' --- 2. CON LOGO: Picture.Load LEE DE UN ARCHIVO; SE PASA POR UNO TEMPORAL ---
+  sTemporal = Temp() & ".png"
+  Try File.Save(sTemporal, sDatos)
+  If Not Error Then Try picLogoRevista.Picture = Picture.Load(sTemporal)
+  ' UNA VISTA PREVIA QUE NO SE PUDO ARMAR NO IMPIDE NADA: EL LOGO ESTÁ EN LA BASE
+  If Error Then picLogoRevista.Picture = Null
+  Try Kill sTemporal
+
+End
+
+' ============================================
+' Función   : btnCargarLogoRevista_Click
+' Propósito : Elige un PNG, lo valida (m_Revistas.LeerLogoDeArchivo) y lo
+'             graba en la revista en el acto
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnCargarLogoRevista_Click()
+
+  Dim sDatos As String
+
+  ' --- 1. HAY REVISTA ELEGIDA ---
+  If $iRevistaActual <= 0 Then Return
+
+  ' --- 2. DIÁLOGO ---
+  Dialog.Title = "Logo de la cabecera del artículo (PNG, 184 × 20 mm)"
+  Dialog.Filter = ["*.png", "Imágenes PNG"]
+  ' Dialog.OpenFile DEVUELVE True CUANDO EL USUARIO CANCELA
+  If Dialog.OpenFile() Then Return
+
+  ' --- 3. VALIDACIÓN: PNG, Y AVISO SI LA PROPORCIÓN NO ES LA DE LA CABECERA ---
+  sDatos = m_Revistas.LeerLogoDeArchivo(Dialog.Path)
+  If sDatos = "" Then Return
+
+  ' --- 4. GRABACIÓN Y VISTA PREVIA ---
+  If Not m_Revistas.GuardarLogo(hConn, $iRevistaActual, sDatos) Then Return
+  m_Sonido.sonar("Info")
+  MostrarLogo(sDatos)
+
+End
+
+' ============================================
+' Función   : btnQuitarLogoRevista_Click
+' Propósito : Quita el logo de la revista, con confirmación. Lo que se
+'             componga después lleva el que esté en media/ del proyecto
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnQuitarLogoRevista_Click()
+
+  ' --- 1. HAY REVISTA ELEGIDA ---
+  If $iRevistaActual <= 0 Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Quitar el logo de la revista?" & gb.NewLine & gb.NewLine &
+      "Los números que se compongan después van a usar el logo que tenga cada proyecto en media/logo-revista.png (el genérico, si nadie lo cambió).", "Quitar", "Cancelar") <> 1 Then Return
+
+  ' --- 3. GRABACIÓN Y VISTA PREVIA ---
+  If Not m_Revistas.GuardarLogo(hConn, $iRevistaActual, "") Then Return
+  m_Sonido.sonar("Info")
+  MostrarLogo("")
 
 End
