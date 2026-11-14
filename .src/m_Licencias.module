@@ -9,7 +9,11 @@
 '             libro o revista sigue guardando su propio texto y su URL
 '             (decisión de Alberto, camino B): lo publicado queda como se
 '             publicó aunque el catálogo cambie después.
-' Requiere  : esquema 1.2.0 (tabla licencias).
+'             Desde la 1.28.0, también el texto que describe cada licencia
+'             por idioma (licencia_texto), con la url como clave: el ABM lo
+'             usa FSysAdmin (pestaña «Catálogos») y TextoLicencia los
+'             volcados (revistas desde C2d; libros cuando le toque).
+' Requiere  : esquema 1.2.0 (tabla licencias); 1.28.0 (licencia_texto).
 ' Dependencias: m_ConexionBD, m_Sonido.
 ' ==============================================================================
 
@@ -121,5 +125,181 @@ Public Function EsAbierta(sUrl As String) As Boolean
   If Error Then Return False
 
   Return CInt(rDatos["n"]) > 0
+
+End
+
+' ============================================
+' Función   : ListarConUrl
+' Propósito : Las licencias de contenido que tienen url, para la grilla de
+'             textos de Administración. Sin url no hay clave para el texto
+'             (licencia_texto, 1.28.0)
+' Parámetros: hConn As Connection — conexión abierta
+' Retorna   : Result — etiqueta, url, activo; Null si falló (ya se informó)
+' ============================================
+Public Function ListarConUrl(hConn As Connection) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT etiqueta, url, activo FROM licencias WHERE para_contenido = 1 AND url IS NOT NULL AND url <> '' ORDER BY orden, etiqueta")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el catálogo de licencias:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ListarTextos
+' Propósito : Los textos de una licencia, uno por idioma
+' Parámetros: hConn As Connection — conexión abierta
+'             sUrl As String — la url de la licencia
+' Retorna   : Result — idioma, texto; Null si falló (ya se informó)
+' ============================================
+Public Function ListarTextos(hConn As Connection, sUrl As String) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT idioma, texto FROM licencia_texto WHERE url = &1 ORDER BY idioma", Trim(sUrl))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los textos de la licencia (¿falta la actualización de esquema 1.28.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : GuardarTexto
+' Propósito : Graba el texto de una licencia en un idioma: alta si es nuevo,
+'             edición si ya estaba
+' Parámetros: hConn As Connection — conexión abierta
+'             sUrl As String — la url de la licencia
+'             sIdioma As String — código BCP 47 del catálogo de idiomas
+'             sTexto As String — el texto (license-p del canónico)
+'             bAlta As Boolean — True: alta (frena si el idioma ya tiene
+'             texto); False: edición del texto existente
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarTexto(hConn As Connection, sUrl As String, sIdioma As String, sTexto As String, bAlta As Boolean) As Boolean
+
+  Dim rTexto As Result
+  Dim rExiste As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Trim(sIdioma) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí el idioma.")
+    Return False
+  Endif
+  If Trim(sTexto) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Escribí el texto de la licencia.")
+    Return False
+  Endif
+
+  ' --- 2. ALTA: EL IDIOMA NO PUEDE TENER YA UN TEXTO ---
+  ' LA CLAVE PRIMARIA LO IMPIDE IGUAL; ACÁ SE AVISA CON UN MENSAJE CLARO
+  If bAlta Then
+    Try rExiste = hConn.Exec("SELECT COUNT(*) AS n FROM licencia_texto WHERE url = &1 AND idioma = &2", Trim(sUrl), Trim(sIdioma))
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo consultar la licencia:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+    If CInt(rExiste!n) > 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("La licencia ya tiene texto en «" & Trim(sIdioma) & "»: elegilo en la grilla para cambiarlo.")
+      Return False
+    Endif
+    Try rTexto = hConn.Create("licencia_texto")
+  Else
+    Try rTexto = hConn.Edit("licencia_texto", "url = &1 AND idioma = &2", Trim(sUrl), Trim(sIdioma))
+  Endif
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el texto de la licencia para grabarlo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. CAMPOS, POR NOMBRE (RC-GM-15) ---
+  With rTexto
+    If bAlta Then
+      !url = Trim(sUrl)
+      !idioma = Trim(sIdioma)
+    Endif
+    !texto = Trim(sTexto)
+  End With
+
+  ' --- 4. GRABACIÓN ---
+  Try rTexto.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el texto de la licencia:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : BorrarTexto
+' Propósito : Borra el texto de una licencia en un idioma. Lo ya publicado no
+'             cambia: el canónico guardó el texto que tenía
+' Parámetros: hConn As Connection — conexión abierta
+'             sUrl As String — la url de la licencia
+'             sIdioma As String — el idioma
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarTexto(hConn As Connection, sUrl As String, sIdioma As String) As Boolean
+
+  Try hConn.Exec("DELETE FROM licencia_texto WHERE url = &1 AND idioma = &2", Trim(sUrl), Trim(sIdioma))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el texto de la licencia:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : TextoLicencia
+' Propósito : El texto de una licencia en un idioma, para los volcados.
+'             Busca el idioma exacto y después su subetiqueta primaria
+'             (pt-BR → pt)
+' Parámetros: sUrl As String — la url de la licencia del artículo o la pieza
+'             sIdioma As String — código BCP 47 del artículo o la pieza
+'             hConn As Connection — opcional: si falta, m_ConexionBD.mConn
+' Retorna   : String — el texto; vacío si no hay o si la consulta falla. El
+'             que llama decide qué va en su lugar (en revistas, la etiqueta)
+' ============================================
+Public Function TextoLicencia(sUrl As String, sIdioma As String, Optional hConn As Connection) As String
+
+  Dim rDatos As Result
+  Dim sPrimaria As String
+
+  ' --- 1. VALIDACIÓN ---
+  If Not hConn Then hConn = m_ConexionBD.mConn
+  If Trim(sUrl) = "" Then Return ""
+  ' SIN IDIOMA NO HAY QUÉ BUSCAR (Y Split DE UNA CADENA VACÍA NO DA ELEMENTOS)
+  If Trim(sIdioma) = "" Then Return ""
+  ' LA SUBETIQUETA PRIMARIA: LO QUE VA ANTES DEL PRIMER GUION
+  sPrimaria = Split(Trim(sIdioma), "-")[0]
+
+  ' --- 2. CONSULTA: EL IDIOMA EXACTO PRIMERO ---
+  Try rDatos = hConn.Exec("SELECT texto FROM licencia_texto WHERE url = &1 AND idioma IN (&2, &3) ORDER BY (idioma = &2) DESC LIMIT 1",
+    Trim(sUrl), Trim(sIdioma), sPrimaria)
+  If Error Then Return ""
+
+  ' --- 3. RESULTADO ---
+  If Not rDatos.Available Then Return ""
+  Return rDatos!texto
 
 End

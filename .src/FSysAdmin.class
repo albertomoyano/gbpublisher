@@ -60,6 +60,36 @@ Private $iEditorialActual As Integer
 Private $aRevistasEditoriales As New Integer[]
 ' CRÉDITO EN EL EDITOR DE LA FILA: -1 NINGUNO, 0 ALTA, >0 EDICIÓN
 Private $iCreditoActual As Integer = -1
+' --- PESTAÑA «Catálogos» (tsFSysAdmin, ÍNDICE 8): NOMBRES DE LOS ROLES CRediT
+' Y TEXTOS DE LAS LICENCIAS POR IDIOMA (ETAPA C2, 1.28.0). SOLO SE EDITAN
+' TEXTOS: NI ROLES NI LICENCIAS SE DAN DE ALTA O DE BAJA ACÁ. LA LÓGICA ESTÁ
+' EN m_CreditRoles Y m_Licencias, COMUNES A REVISTAS Y LIBROS
+Private Const PESTANA_CATALOGOS As Integer = 8
+' COLUMNAS DE LAS GRILLAS (GV-58: CONTEO FIJO)
+Private Const COLUMNAS_ROLES_CREDIT As Integer = 2
+Private Const COLUMNAS_NOMBRES_ROL As Integer = 2
+Private Const COLUMNAS_LICENCIAS_TEXTO As Integer = 2
+Private Const COLUMNAS_TEXTOS_LICENCIA As Integer = 2
+' MODO DEL EDITOR DE LA FILA
+Private Const MODO_NINGUNO As Integer = -1
+Private Const MODO_ALTA As Integer = 0
+Private Const MODO_EDICION As Integer = 1
+' GRILLAS Y COMBOS SE PREPARAN UNA SOLA VEZ POR APERTURA DEL FORMULARIO
+Private $bCatalogosPreparada As Boolean
+' ROLES: UN id POR FILA DE gvRolesCredit; UN IDIOMA POR FILA DE gvNombresRol
+Private $aIdsRoles As New Integer[]
+Private $iRolActual As Integer
+Private $aIdiomasNombresRol As New String[]
+Private $iModoNombreRol As Integer = -1
+' EL IDIOMA DEL NOMBRE EN EDICIÓN: LA CLAVE SALE DE LA FILA, NO DEL COMBO
+Private $sIdiomaNombreRol As String
+' LICENCIAS: UNA url POR FILA DE gvLicenciasTexto; UN IDIOMA POR FILA DE
+' gvTextosLicencia
+Private $aUrlsLicencias As New String[]
+Private $sUrlLicenciaActual As String
+Private $aIdiomasTextosLicencia As New String[]
+Private $iModoTextoLicencia As Integer = -1
+Private $sIdiomaTextoLicencia As String
 
 ' ============================================
 ' Función   : Form_Show
@@ -3047,7 +3077,8 @@ End
 ' Función   : tsFSysAdmin_Click
 ' Propósito : AL ENTRAR A UNA PESTAÑA QUE MUESTRA DATOS DEL SERVIDOR, RELEERLOS.
 '             «Notas»: UN USUARIO DADO DE BAJA EN «Usuarios» CAMBIA LAS DOS
-'             GRILLAS. «Editorial»: LAS EDITORIALES Y SUS CRÉDITOS
+'             GRILLAS. «Editorial»: LAS EDITORIALES Y SUS CRÉDITOS.
+'             «Catálogos»: LOS ROLES CRediT Y LAS LICENCIAS
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -3055,6 +3086,7 @@ Public Sub tsFSysAdmin_Click()
 
   If tsFSysAdmin.Index = PESTANA_NOTAS Then CargarNotasAdmin()
   If tsFSysAdmin.Index = PESTANA_EDITORIAL Then CargarPestanaEditorial()
+  If tsFSysAdmin.Index = PESTANA_CATALOGOS Then CargarPestanaCatalogos()
 
 End
 
@@ -3827,10 +3859,10 @@ Public Sub btnBorrarCredito_Click()
   If Message.Question("¿Borrar el crédito «" & gvCreditos[iFila, 0].Text & ": " & gvCreditos[iFila, 1].Text & "»?" & Chr(10) & Chr(10) &
       "Si la persona dejó el cargo, conviene cargar «hasta» en lugar de borrar: así sigue figurando en los números en que estuvo.", "Borrar", "Cancelar") <> 1 Then Return
 
-  ' --- 3. BORRADO Y RELECTURA ---
-  If Not m_Editorial.BorrarCredito(hConnServidor, $iCreditoActual) Then Return
-  m_Sonido.sonar("Info")
-  CargarCreditos()
+    ' --- 3. BORRADO Y RELECTURA ---
+    If Not m_Editorial.BorrarCredito(hConnServidor, $iCreditoActual) Then Return
+    m_Sonido.sonar("Info")
+    CargarCreditos()
 
 End
 
@@ -3844,5 +3876,607 @@ End
 Public Sub btnVaciarHastaCredito_Click()
 
   dtbHastaCredito.Value = Null
+
+End
+
+' ============================================
+' Función   : CargarPestanaCatalogos
+' Propósito : Al entrar a la pestaña «Catálogos»: prepara grillas y combos
+'             (una vez por apertura del formulario) y relee los roles y las
+'             licencias del servidor
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarPestanaCatalogos()
+
+  Dim aIdiomas As String[]
+
+  ' --- 1. GUARD: LA CONEXIÓN DEL ADMINISTRADOR TIENE QUE ESTAR ABIERTA ---
+  If Not hConnServidor Then Return
+  If Not hConnServidor.Opened Then Return
+
+  ' --- 2. PREPARACIÓN, UNA SOLA VEZ ---
+  If Not $bCatalogosPreparada Then
+    ConfigurarGridsCatalogos()
+    ' LOS IDIOMAS ACTIVOS, CON LA CONEXIÓN DEL FORMULARIO: FSysAdmin SE ABRE
+    ' SIN SESIÓN Y m_Idiomas.LlenarCombo LEE DE mConn
+    aIdiomas = m_Vocabularios.IdiomasActivos(hConnServidor)
+    cmbIdiomaNombreRol.List = aIdiomas.Copy()
+    cmbIdiomaTextoLicencia.List = aIdiomas.Copy()
+    $bCatalogosPreparada = True
+  Endif
+
+  ' --- 3. DATOS FRESCOS ---
+  CargarRolesCredit()
+  CargarLicenciasTexto()
+
+End
+
+' ============================================
+' Función   : ConfigurarGridsCatalogos
+' Propósito : Columnas de las cuatro grillas de «Catálogos» (GV-58: conteo
+'             fijo)
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub ConfigurarGridsCatalogos()
+
+  ' --- 1. ROLES ---
+  With gvRolesCredit
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_ROLES_CREDIT
+    .Columns[0].Title = "Rol (término de CRediT)"
+    .Columns[0].Width = 300
+    .Columns[1].Title = "URI"
+    .Columns[1].Width = 560
+    .Rows.Count = 0
+  End With
+
+  ' --- 2. NOMBRES DEL ROL ---
+  With gvNombresRol
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_NOMBRES_ROL
+    .Columns[0].Title = "Idioma"
+    .Columns[0].Width = 90
+    .Columns[1].Title = "Nombre"
+    .Columns[1].Width = 700
+    .Rows.Count = 0
+  End With
+
+  ' --- 3. LICENCIAS ---
+  With gvLicenciasTexto
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_LICENCIAS_TEXTO
+    .Columns[0].Title = "Licencia"
+    .Columns[0].Width = 300
+    .Columns[1].Title = "URL"
+    .Columns[1].Width = 560
+    .Rows.Count = 0
+  End With
+
+  ' --- 4. TEXTOS DE LA LICENCIA ---
+  With gvTextosLicencia
+    .Header = GridView.Horizontal
+    .Columns.Count = COLUMNAS_TEXTOS_LICENCIA
+    .Columns[0].Title = "Idioma"
+    .Columns[0].Width = 90
+    .Columns[1].Title = "Texto"
+    .Columns[1].Width = 700
+    .Rows.Count = 0
+  End With
+
+End
+
+' ============================================
+' Función   : CargarRolesCredit
+' Propósito : Llena la grilla de roles y deja vacío lo de abajo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarRolesCredit()
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. LECTURA ---
+  $aIdsRoles.Clear()
+  gvRolesCredit.Rows.Count = 0
+  rDatos = m_CreditRoles.ListarRoles(hConnServidor)
+
+  ' --- 2. GRILLA, CON UN id POR FILA EN EL MISMO ORDEN ---
+  If rDatos Then
+    gvRolesCredit.Rows.Count = rDatos.Count
+    iFila = 0
+    While rDatos.Available
+      $aIdsRoles.Add(rDatos!id)
+      gvRolesCredit[iFila, 0].Text = rDatos!nombre
+      ' SIN URI: UN ROL QUE NO ES DE CRediT; EL CANÓNICO LO ESCRIBE SIN vocab
+      gvRolesCredit[iFila, 1].Text = m_Revistas.TextoDe(rDatos, "uri")
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 3. NADA ELEGIDO ---
+  $iRolActual = 0
+  LimpiarNombresRol()
+
+End
+
+' ============================================
+' Función   : gvRolesCredit_Click
+' Propósito : Al elegir un rol, muestra sus nombres por idioma
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvRolesCredit_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. FILA VÁLIDA ---
+  iFila = gvRolesCredit.Row
+  If iFila < 0 Or iFila >= $aIdsRoles.Count Then Return
+
+  ' --- 2. NOMBRES DEL ROL ---
+  $iRolActual = $aIdsRoles[iFila]
+  CargarNombresRol()
+
+End
+
+' ============================================
+' Función   : CargarNombresRol
+' Propósito : Llena la grilla de nombres del rol elegido
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarNombresRol()
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. LIMPIEZA ---
+  LimpiarNombresRol()
+  If $iRolActual <= 0 Then Return
+
+  ' --- 2. LECTURA ---
+  rDatos = m_CreditRoles.ListarNombres(hConnServidor, $iRolActual)
+  If Not rDatos Then Return
+
+  ' --- 3. GRILLA, CON UN IDIOMA POR FILA EN EL MISMO ORDEN ---
+  gvNombresRol.Rows.Count = rDatos.Count
+  iFila = 0
+  While rDatos.Available
+    $aIdiomasNombresRol.Add(rDatos!idioma)
+    gvNombresRol[iFila, 0].Text = rDatos!idioma
+    gvNombresRol[iFila, 1].Text = rDatos!nombre
+    Inc iFila
+    rDatos.MoveNext
+  Wend
+
+End
+
+' ============================================
+' Función   : LimpiarNombresRol
+' Propósito : Vacía la grilla y el editor de nombres; los botones quedan como
+'             corresponde a «nada elegido»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarNombresRol()
+
+  ' --- 1. GRILLA ---
+  gvNombresRol.Rows.Count = 0
+  $aIdiomasNombresRol.Clear()
+
+  ' --- 2. EDITOR ---
+  EditorNombreRol(MODO_NINGUNO, "", "")
+
+  ' --- 3. ALTA: SOLO CON UN ROL ELEGIDO ---
+  btnNuevoNombreRol.Enabled = $iRolActual > 0
+
+End
+
+' ============================================
+' Función   : EditorNombreRol
+' Propósito : Pone el editor del nombre en un modo, con sus valores y sus
+'             botones. En edición el idioma no se cambia: es la clave
+'             (cambiarlo es borrar y dar de alta)
+' Parámetros: iModo As Integer — MODO_NINGUNO, MODO_ALTA o MODO_EDICION
+'             sIdioma As String — el idioma (vacío en alta y en ninguno)
+'             sNombre As String — el nombre
+' Retorna   : nada
+' ============================================
+Private Sub EditorNombreRol(iModo As Integer, sIdioma As String, sNombre As String)
+
+  ' --- 1. ESTADO ---
+  $iModoNombreRol = iModo
+  $sIdiomaNombreRol = sIdioma
+
+  ' --- 2. VALORES ---
+  ' UN IDIOMA QUE YA NO ESTÁ ACTIVO NO ESTÁ EN EL COMBO (ReadOnly): SE VE EN
+  ' LA GRILLA, Y LA CLAVE SALE DE $sIdiomaNombreRol
+  If cmbIdiomaNombreRol.Find(sIdioma) >= 0 Then
+    cmbIdiomaNombreRol.Text = sIdioma
+  Else
+    cmbIdiomaNombreRol.Index = -1
+  Endif
+  txtNombreRol.Text = sNombre
+
+  ' --- 3. CONTROLES ---
+  cmbIdiomaNombreRol.Enabled = iModo = MODO_ALTA
+  txtNombreRol.Enabled = iModo <> MODO_NINGUNO
+  btnGuardarNombreRol.Enabled = iModo <> MODO_NINGUNO
+  btnBorrarNombreRol.Enabled = iModo = MODO_EDICION
+
+End
+
+' ============================================
+' Función   : gvNombresRol_Click
+' Propósito : Al elegir un nombre, lo carga en el editor para cambiarlo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvNombresRol_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. FILA VÁLIDA ---
+  iFila = gvNombresRol.Row
+  If iFila < 0 Or iFila >= $aIdiomasNombresRol.Count Then Return
+
+  ' --- 2. EDITOR EN MODO EDICIÓN ---
+  EditorNombreRol(MODO_EDICION, $aIdiomasNombresRol[iFila], gvNombresRol[iFila, 1].Text)
+
+End
+
+' ============================================
+' Función   : btnNuevoNombreRol_Click
+' Propósito : Prepara el editor para el nombre del rol en otro idioma. No
+'             graba nada: el alta la hace «Guardar»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevoNombreRol_Click()
+
+  ' --- 1. HAY ROL ELEGIDO ---
+  If $iRolActual <= 0 Then Return
+
+  ' --- 2. EDITOR VACÍO EN MODO ALTA ---
+  EditorNombreRol(MODO_ALTA, "", "")
+  cmbIdiomaNombreRol.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarNombreRol_Click
+' Propósito : Graba el nombre por m_CreditRoles (alta o edición) y lo deja
+'             elegido en la grilla
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarNombreRol_Click()
+
+  Dim sIdioma As String
+
+  ' --- 1. HAY ROL Y UN NOMBRE EN EDICIÓN ---
+  If $iRolActual <= 0 Then Return
+  If $iModoNombreRol = MODO_NINGUNO Then Return
+
+  ' --- 2. LA CLAVE: EN ALTA, EL COMBO; EN EDICIÓN, LA FILA ---
+  If $iModoNombreRol = MODO_ALTA Then
+    sIdioma = cmbIdiomaNombreRol.Text
+  Else
+    sIdioma = $sIdiomaNombreRol
+  Endif
+
+  ' --- 3. GRABACIÓN ---
+  If Not m_CreditRoles.GuardarNombre(hConnServidor, $iRolActual, sIdioma, txtNombreRol.Text, $iModoNombreRol = MODO_ALTA) Then Return
+
+  ' --- 4. RELECTURA Y SELECCIÓN DEL GRABADO ---
+  m_Sonido.sonar("Info")
+  CargarNombresRol()
+  SeleccionarNombreRol(sIdioma)
+
+End
+
+' ============================================
+' Función   : SeleccionarNombreRol
+' Propósito : Ubica la grilla de nombres en un idioma y lo carga
+' Parámetros: sIdioma As String — el idioma
+' Retorna   : nada
+' ============================================
+Private Sub SeleccionarNombreRol(sIdioma As String)
+
+  Dim iFila As Integer
+
+  iFila = $aIdiomasNombresRol.Find(sIdioma)
+  If iFila < 0 Then Return
+  gvNombresRol.Row = iFila
+  gvNombresRol_Click()
+
+End
+
+' ============================================
+' Función   : btnBorrarNombreRol_Click
+' Propósito : Borra el nombre del rol en el idioma elegido, con confirmación.
+'             Lo publicado no cambia; lo que se componga después en ese
+'             idioma lleva el término en inglés
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarNombreRol_Click()
+
+  ' --- 1. HAY UN NOMBRE GRABADO ELEGIDO ---
+  If $iRolActual <= 0 Then Return
+  If $iModoNombreRol <> MODO_EDICION Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar el nombre en «" & $sIdiomaNombreRol & "»: «" & txtNombreRol.Text & "»?" & Chr(10) & Chr(10) &
+      "Lo que se componga después en ese idioma va a llevar el término en inglés. Lo ya publicado no cambia.", "Borrar", "Cancelar") <> 1 Then Return
+
+    ' --- 3. BORRADO Y RELECTURA ---
+    If Not m_CreditRoles.BorrarNombre(hConnServidor, $iRolActual, $sIdiomaNombreRol) Then Return
+    m_Sonido.sonar("Info")
+    CargarNombresRol()
+
+End
+
+' ============================================
+' Función   : CargarLicenciasTexto
+' Propósito : Llena la grilla de licencias (las de contenido con url: sin url
+'             no hay clave para el texto) y deja vacío lo de abajo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarLicenciasTexto()
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. LECTURA ---
+  $aUrlsLicencias.Clear()
+  gvLicenciasTexto.Rows.Count = 0
+  rDatos = m_Licencias.ListarConUrl(hConnServidor)
+
+  ' --- 2. GRILLA, CON UNA url POR FILA EN EL MISMO ORDEN ---
+  If rDatos Then
+    gvLicenciasTexto.Rows.Count = rDatos.Count
+    iFila = 0
+    While rDatos.Available
+      $aUrlsLicencias.Add(rDatos!url)
+      ' UNA INACTIVA SIGUE ACÁ: LA PUEDE TENER UN ARTÍCULO VIEJO
+      If CBool(rDatos!activo) Then
+        gvLicenciasTexto[iFila, 0].Text = rDatos!etiqueta
+      Else
+        gvLicenciasTexto[iFila, 0].Text = rDatos!etiqueta & " (inactiva)"
+      Endif
+      gvLicenciasTexto[iFila, 1].Text = rDatos!url
+      Inc iFila
+      rDatos.MoveNext
+    Wend
+  Endif
+
+  ' --- 3. NADA ELEGIDO ---
+  $sUrlLicenciaActual = ""
+  LimpiarTextosLicencia()
+
+End
+
+' ============================================
+' Función   : gvLicenciasTexto_Click
+' Propósito : Al elegir una licencia, muestra sus textos por idioma
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvLicenciasTexto_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. FILA VÁLIDA ---
+  iFila = gvLicenciasTexto.Row
+  If iFila < 0 Or iFila >= $aUrlsLicencias.Count Then Return
+
+  ' --- 2. TEXTOS DE LA LICENCIA ---
+  $sUrlLicenciaActual = $aUrlsLicencias[iFila]
+  CargarTextosLicencia()
+
+End
+
+' ============================================
+' Función   : CargarTextosLicencia
+' Propósito : Llena la grilla de textos de la licencia elegida
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub CargarTextosLicencia()
+
+  Dim rDatos As Result
+  Dim iFila As Integer
+
+  ' --- 1. LIMPIEZA ---
+  LimpiarTextosLicencia()
+  If $sUrlLicenciaActual = "" Then Return
+
+  ' --- 2. LECTURA ---
+  rDatos = m_Licencias.ListarTextos(hConnServidor, $sUrlLicenciaActual)
+  If Not rDatos Then Return
+
+  ' --- 3. GRILLA, CON UN IDIOMA POR FILA EN EL MISMO ORDEN ---
+  gvTextosLicencia.Rows.Count = rDatos.Count
+  iFila = 0
+  While rDatos.Available
+    $aIdiomasTextosLicencia.Add(rDatos!idioma)
+    gvTextosLicencia[iFila, 0].Text = rDatos!idioma
+    gvTextosLicencia[iFila, 1].Text = rDatos!texto
+    Inc iFila
+    rDatos.MoveNext
+  Wend
+
+End
+
+' ============================================
+' Función   : LimpiarTextosLicencia
+' Propósito : Vacía la grilla y el editor de textos; los botones quedan como
+'             corresponde a «nada elegido»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarTextosLicencia()
+
+  ' --- 1. GRILLA ---
+  gvTextosLicencia.Rows.Count = 0
+  $aIdiomasTextosLicencia.Clear()
+
+  ' --- 2. EDITOR ---
+  EditorTextoLicencia(MODO_NINGUNO, "", "")
+
+  ' --- 3. ALTA: SOLO CON UNA LICENCIA ELEGIDA ---
+  btnNuevoTextoLicencia.Enabled = $sUrlLicenciaActual <> ""
+
+End
+
+' ============================================
+' Función   : EditorTextoLicencia
+' Propósito : Pone el editor del texto en un modo, con sus valores y sus
+'             botones. En edición el idioma no se cambia: es la clave
+' Parámetros: iModo As Integer — MODO_NINGUNO, MODO_ALTA o MODO_EDICION
+'             sIdioma As String — el idioma (vacío en alta y en ninguno)
+'             sTexto As String — el texto
+' Retorna   : nada
+' ============================================
+Private Sub EditorTextoLicencia(iModo As Integer, sIdioma As String, sTexto As String)
+
+  ' --- 1. ESTADO ---
+  $iModoTextoLicencia = iModo
+  $sIdiomaTextoLicencia = sIdioma
+
+  ' --- 2. VALORES ---
+  ' UN IDIOMA QUE YA NO ESTÁ ACTIVO NO ESTÁ EN EL COMBO (ReadOnly): LA CLAVE
+  ' SALE DE $sIdiomaTextoLicencia
+  If cmbIdiomaTextoLicencia.Find(sIdioma) >= 0 Then
+    cmbIdiomaTextoLicencia.Text = sIdioma
+  Else
+    cmbIdiomaTextoLicencia.Index = -1
+  Endif
+  txaTextoLicencia.Text = sTexto
+
+  ' --- 3. CONTROLES ---
+  cmbIdiomaTextoLicencia.Enabled = iModo = MODO_ALTA
+  txaTextoLicencia.Enabled = iModo <> MODO_NINGUNO
+  btnGuardarTextoLicencia.Enabled = iModo <> MODO_NINGUNO
+  btnBorrarTextoLicencia.Enabled = iModo = MODO_EDICION
+
+End
+
+' ============================================
+' Función   : gvTextosLicencia_Click
+' Propósito : Al elegir un texto, lo carga en el editor para cambiarlo
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub gvTextosLicencia_Click()
+
+  Dim iFila As Integer
+
+  ' --- 1. FILA VÁLIDA ---
+  iFila = gvTextosLicencia.Row
+  If iFila < 0 Or iFila >= $aIdiomasTextosLicencia.Count Then Return
+
+  ' --- 2. EDITOR EN MODO EDICIÓN ---
+  EditorTextoLicencia(MODO_EDICION, $aIdiomasTextosLicencia[iFila], gvTextosLicencia[iFila, 1].Text)
+
+End
+
+' ============================================
+' Función   : btnNuevoTextoLicencia_Click
+' Propósito : Prepara el editor para el texto de la licencia en otro idioma.
+'             No graba nada: el alta la hace «Guardar»
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnNuevoTextoLicencia_Click()
+
+  ' --- 1. HAY LICENCIA ELEGIDA ---
+  If $sUrlLicenciaActual = "" Then Return
+
+  ' --- 2. EDITOR VACÍO EN MODO ALTA ---
+  EditorTextoLicencia(MODO_ALTA, "", "")
+  cmbIdiomaTextoLicencia.SetFocus()
+
+End
+
+' ============================================
+' Función   : btnGuardarTextoLicencia_Click
+' Propósito : Graba el texto por m_Licencias (alta o edición) y lo deja
+'             elegido en la grilla
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnGuardarTextoLicencia_Click()
+
+  Dim sIdioma As String
+
+  ' --- 1. HAY LICENCIA Y UN TEXTO EN EDICIÓN ---
+  If $sUrlLicenciaActual = "" Then Return
+  If $iModoTextoLicencia = MODO_NINGUNO Then Return
+
+  ' --- 2. LA CLAVE: EN ALTA, EL COMBO; EN EDICIÓN, LA FILA ---
+  If $iModoTextoLicencia = MODO_ALTA Then
+    sIdioma = cmbIdiomaTextoLicencia.Text
+  Else
+    sIdioma = $sIdiomaTextoLicencia
+  Endif
+
+  ' --- 3. GRABACIÓN ---
+  If Not m_Licencias.GuardarTexto(hConnServidor, $sUrlLicenciaActual, sIdioma, txaTextoLicencia.Text, $iModoTextoLicencia = MODO_ALTA) Then Return
+
+  ' --- 4. RELECTURA Y SELECCIÓN DEL GRABADO ---
+  m_Sonido.sonar("Info")
+  CargarTextosLicencia()
+  SeleccionarTextoLicencia(sIdioma)
+
+End
+
+' ============================================
+' Función   : SeleccionarTextoLicencia
+' Propósito : Ubica la grilla de textos en un idioma y lo carga
+' Parámetros: sIdioma As String — el idioma
+' Retorna   : nada
+' ============================================
+Private Sub SeleccionarTextoLicencia(sIdioma As String)
+
+  Dim iFila As Integer
+
+  iFila = $aIdiomasTextosLicencia.Find(sIdioma)
+  If iFila < 0 Then Return
+  gvTextosLicencia.Row = iFila
+  gvTextosLicencia_Click()
+
+End
+
+' ============================================
+' Función   : btnBorrarTextoLicencia_Click
+' Propósito : Borra el texto de la licencia en el idioma elegido, con
+'             confirmación. Lo que se componga después en ese idioma lleva la
+'             etiqueta
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub btnBorrarTextoLicencia_Click()
+
+  ' --- 1. HAY UN TEXTO GRABADO ELEGIDO ---
+  If $sUrlLicenciaActual = "" Then Return
+  If $iModoTextoLicencia <> MODO_EDICION Then Return
+
+  ' --- 2. CONFIRMACIÓN ---
+  m_Sonido.sonar("Question")
+  If Message.Question("¿Borrar el texto en «" & $sIdiomaTextoLicencia & "» de esta licencia?" & Chr(10) & Chr(10) &
+      "Lo que se componga después en ese idioma va a llevar solo la etiqueta de la licencia. Lo ya publicado no cambia.", "Borrar", "Cancelar") <> 1 Then Return
+
+    ' --- 3. BORRADO Y RELECTURA ---
+    If Not m_Licencias.BorrarTexto(hConnServidor, $sUrlLicenciaActual, $sIdiomaTextoLicencia) Then Return
+    m_Sonido.sonar("Info")
+    CargarTextosLicencia()
 
 End

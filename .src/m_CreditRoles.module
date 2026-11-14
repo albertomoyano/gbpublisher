@@ -1,0 +1,219 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_CreditRoles
+' Propósito : Acceso al catálogo de roles CRediT (credit_roles, credit_rol_nombre;
+'             esquema 1.28.0), común a revistas, libros y autores. Cada
+'             artículo, capítulo, libro o autor guarda el TÉRMINO EN INGLÉS
+'             del rol, sin clave foránea al catálogo (SC-23): el catálogo
+'             aporta la URI y el nombre en cada idioma al componer.
+'               - El ABM de los nombres lo usa FSysAdmin (pestaña
+'                 «Catálogos»).
+'               - NombreRol y UriRol los usan los volcados (revistas desde
+'                 C2d; libros cuando le toque).
+' Respaldo  : sin nombre en el idioma pedido ni en su subetiqueta primaria
+'             (pt-BR → pt), el nombre es el término en inglés.
+' Requiere  : esquema 1.28.0.
+' Dependencias: m_ConexionBD, m_Sonido.
+' ==============================================================================
+
+' ============================================
+' Función   : ListarRoles
+' Propósito : Los roles del catálogo, para la grilla de Administración
+' Parámetros: hConn As Connection — conexión abierta
+' Retorna   : Result — id, nombre, uri; Null si falló (ya se informó)
+' ============================================
+Public Function ListarRoles(hConn As Connection) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT id, nombre, uri FROM credit_roles ORDER BY nombre")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los roles CRediT (¿falta la actualización de esquema 1.28.0?):" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : ListarNombres
+' Propósito : Los nombres de un rol, uno por idioma
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRol As Integer — el rol
+' Retorna   : Result — idioma, nombre; Null si falló (ya se informó)
+' ============================================
+Public Function ListarNombres(hConn As Connection, iIdRol As Integer) As Result
+
+  Dim rDatos As Result
+
+  Try rDatos = hConn.Exec("SELECT idioma, nombre FROM credit_rol_nombre WHERE id_rol = &1 ORDER BY idioma", iIdRol)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los nombres del rol:" & gb.NewLine & Error.Text)
+    Return Null
+  Endif
+
+  Return rDatos
+
+End
+
+' ============================================
+' Función   : GuardarNombre
+' Propósito : Graba el nombre de un rol en un idioma: alta si es nuevo,
+'             edición si ya estaba
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRol As Integer — el rol
+'             sIdioma As String — código BCP 47 del catálogo de idiomas
+'             sNombre As String — el nombre
+'             bAlta As Boolean — True: alta (frena si el idioma ya tiene
+'             nombre); False: edición del nombre existente
+' Retorna   : Boolean — True si se grabó
+' ============================================
+Public Function GuardarNombre(hConn As Connection, iIdRol As Integer, sIdioma As String, sNombre As String, bAlta As Boolean) As Boolean
+
+  Dim rNombre As Result
+  Dim rExiste As Result
+
+  ' --- 1. VALIDACIÓN ---
+  If Trim(sIdioma) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Elegí el idioma.")
+    Return False
+  Endif
+  If Trim(sNombre) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Escribí el nombre del rol.")
+    Return False
+  Endif
+
+  ' --- 2. ALTA: EL IDIOMA NO PUEDE TENER YA UN NOMBRE ---
+  ' LA CLAVE PRIMARIA LO IMPIDE IGUAL; ACÁ SE AVISA CON UN MENSAJE CLARO
+  If bAlta Then
+    Try rExiste = hConn.Exec("SELECT COUNT(*) AS n FROM credit_rol_nombre WHERE id_rol = &1 AND idioma = &2", iIdRol, Trim(sIdioma))
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo consultar el rol:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+    If CInt(rExiste!n) > 0 Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("El rol ya tiene nombre en «" & Trim(sIdioma) & "»: elegilo en la grilla para cambiarlo.")
+      Return False
+    Endif
+    Try rNombre = hConn.Create("credit_rol_nombre")
+  Else
+    Try rNombre = hConn.Edit("credit_rol_nombre", "id_rol = &1 AND idioma = &2", iIdRol, Trim(sIdioma))
+  Endif
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir el nombre del rol para grabarlo:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. CAMPOS, POR NOMBRE (RC-GM-15) ---
+  With rNombre
+    If bAlta Then
+      !id_rol = iIdRol
+      !idioma = Trim(sIdioma)
+    Endif
+    !nombre = Trim(sNombre)
+  End With
+
+  ' --- 4. GRABACIÓN ---
+  Try rNombre.Update()
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar el nombre del rol:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : BorrarNombre
+' Propósito : Borra el nombre de un rol en un idioma. Lo publicado no cambia:
+'             guarda el término en inglés (SC-23)
+' Parámetros: hConn As Connection — conexión abierta
+'             iIdRol As Integer — el rol
+'             sIdioma As String — el idioma
+' Retorna   : Boolean — True si se borró
+' ============================================
+Public Function BorrarNombre(hConn As Connection, iIdRol As Integer, sIdioma As String) As Boolean
+
+  Try hConn.Exec("DELETE FROM credit_rol_nombre WHERE id_rol = &1 AND idioma = &2", iIdRol, Trim(sIdioma))
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo borrar el nombre del rol:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : NombreRol
+' Propósito : El nombre de un rol en un idioma, para los volcados. Busca el
+'             idioma exacto y después su subetiqueta primaria (pt-BR → pt);
+'             sin ninguno de los dos, el término en inglés
+' Parámetros: sTermino As String — el término guardado (inglés)
+'             sIdioma As String — código BCP 47 del artículo o la pieza
+'             hConn As Connection — opcional: si falta, m_ConexionBD.mConn
+' Retorna   : String — el nombre; el término si no hay traducción o si la
+'             consulta falla
+' ============================================
+Public Function NombreRol(sTermino As String, sIdioma As String, Optional hConn As Connection) As String
+
+  Dim rDatos As Result
+  Dim sPrimaria As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  If Not hConn Then hConn = m_ConexionBD.mConn
+  ' SIN IDIOMA NO HAY QUÉ BUSCAR (Y Split DE UNA CADENA VACÍA NO DA ELEMENTOS)
+  If Trim(sIdioma) = "" Then Return sTermino
+  ' LA SUBETIQUETA PRIMARIA: LO QUE VA ANTES DEL PRIMER GUION
+  sPrimaria = Split(Trim(sIdioma), "-")[0]
+
+  ' --- 2. CONSULTA: EL IDIOMA EXACTO PRIMERO ---
+  ' LA COMPARACIÓN DEL TÉRMINO ES SIN DISTINGUIR MAYÚSCULAS (COLACIÓN DE LA
+  ' TABLA): UN «Formal Analysis» VIEJO ENCUENTRA «Formal analysis»
+  Try rDatos = hConn.Exec("SELECT n.nombre FROM credit_rol_nombre n JOIN credit_roles r ON r.id = n.id_rol " &
+    "WHERE r.nombre = &1 AND n.idioma IN (&2, &3) ORDER BY (n.idioma = &2) DESC LIMIT 1",
+    Trim(sTermino), Trim(sIdioma), sPrimaria)
+  If Error Then Return sTermino
+
+  ' --- 3. SIN TRADUCCIÓN, EL INGLÉS ---
+  If Not rDatos.Available Then Return sTermino
+  Return rDatos!nombre
+
+End
+
+' ============================================
+' Función   : UriRol
+' Propósito : La URI de un rol en credit.niso.org, para el canónico
+'             (vocab-term-identifier)
+' Parámetros: sTermino As String — el término guardado (inglés)
+'             hConn As Connection — opcional: si falta, m_ConexionBD.mConn
+' Retorna   : String — la URI; vacío si el rol no está en el catálogo o no
+'             es de CRediT
+' ============================================
+Public Function UriRol(sTermino As String, Optional hConn As Connection) As String
+
+  Dim rDatos As Result
+
+  ' --- 1. CONSULTA ---
+  If Not hConn Then hConn = m_ConexionBD.mConn
+  Try rDatos = hConn.Exec("SELECT uri FROM credit_roles WHERE nombre = &1", Trim(sTermino))
+  If Error Then Return ""
+
+  ' --- 2. RESULTADO ---
+  If Not rDatos.Available Then Return ""
+  If IsNull(rDatos!uri) Then Return ""
+  Return rDatos!uri
+
+End
