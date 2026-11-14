@@ -4,14 +4,14 @@
   HOJA DE ESTILO : jats-a-latex-articulo.xsl
   VERSIÓN XSLT   : 3.0 (Saxon-HE)
   PROPÓSITO      : EL CUERPO LaTeX DE UN ARTÍCULO PARA EL CAMINO NUEVO
-                   (engine/, CONTRATO DE REVISTA 2). IMPORTA
+                   (engine/, CONTRATO DE REVISTA 3). IMPORTA
                    jats-to-latex.xsl Y REEMPLAZA SOLO LA PRIMERA PÁGINA,
                    EL BLOQUE DE DECLARACIONES Y LOS DATOS DEL PDF: EL
                    CUERPO (SECCIONES, CITAS, FIGURAS, CUADROS, NOTAS) ES
                    EL DE LA HOJA IMPORTADA.
   POR QUÉ APARTE : m_XML (EL CAMINO VIEJO, HASTA EL 2.0.0) SIGUE USANDO
                    jats-to-latex.xsl CON SU PREÁMBULO EMBEBIDO. LAS
-                   MACROS DE ESTA HOJA SON DEL CONTRATO DE REVISTA 2 Y
+                   MACROS DE ESTA HOJA SON DEL CONTRATO DE REVISTA 3 Y
                    ESE PREÁMBULO NO LAS TIENE: CAMBIAR LA HOJA VIEJA
                    ROMPÍA EL CAMINO VIEJO. EN EL 2.0.0 LAS DOS SE FUNDEN.
   ENTRADA        : {proyecto}/jats/c-{nombre}.xml (CANÓNICO, A0.4)
@@ -27,6 +27,11 @@
                                    LO BUSCA POR BIBINPUTS, QUE DEBE
                                    INCLUIR {proyecto}/latex/. VACÍO: LA
                                    COLUMNA SALE SIN «CÓMO CITAR»
+                   pagina_final    LA ÚLTIMA PÁGINA, QUE generar_pdf_revista.sh
+                                   LEE DE LA COMPOSICIÓN (A1.2a): CON
+                                   pagina_inicial, EL RANGO DEL «CÓMO CITAR»
+                                   SALE DEL PROPIO LaTeX Y NO DEL CANÓNICO
+                                   (DECISIÓN DE A1). VACÍO: fpage Y lpage
   ============================================================
   ORDEN DEL FRAGMENTO:
     1. IDIOMA, MACROS \articulo*, FOLIO INICIAL, ESTILO firstpage
@@ -60,6 +65,7 @@
 
   <xsl:param name="pagina_inicial" as="xs:string" select="''"/>
   <xsl:param name="bib_cita" as="xs:string" select="''"/>
+  <xsl:param name="pagina_final" as="xs:string" select="''"/>
 
   <!-- LA CLAVE DEL ARTÍCULO EN EL .bib DEL «CÓMO CITAR» -->
   <xsl:variable name="gbr:clave-cita" select="'gb-articulo'"/>
@@ -82,6 +88,7 @@
     <r k="comocitar" es="Cómo citar" en="How to cite" pt="Como citar" fr="Comment citer"/>
     <r k="compartir" es="Compartir" en="Share" pt="Compartilhar" fr="Partager"/>
     <r k="licencia" es="Licencia" en="License" pt="Licença" fr="Licence"/>
+    <r k="notas" es="Notas" en="Notes" pt="Notas" fr="Notes"/>
     <r k="declaraciones" es="Declaraciones" en="Declarations" pt="Declarações" fr="Déclarations"/>
     <r k="contribuciones" es="Contribuciones de autoría (CRediT)" en="Author contributions (CRediT)" pt="Contribuições de autoria (CRediT)" fr="Contributions des auteurs (CRediT)"/>
     <r k="financiamiento" es="Financiamiento" en="Funding" pt="Financiamento" fr="Financement"/>
@@ -191,8 +198,11 @@
     <xsl:variable name="fpage" select="normalize-space($meta/fpage)"/>
 
     <!-- 1. IDIOMA, MACROS, FOLIO, ESTILO DE LA PRIMERA PÁGINA -->
-    <xsl:text>\selectlanguage{</xsl:text>
-    <xsl:value-of select="f:babel-lang($xmlLang)"/>
+    <!-- EL IDIOMA POR CÓDIGO: EL NOMBRE DE babel LO PONE preambulo-numero.tex
+         DESDE EL CATÁLOGO (CONTRATO 3, 4.0). f:babel-lang NO: SU TABLA
+         DIVERGE DEL CATÁLOGO (de → german; LO DESCONOCIDO, spanish) -->
+    <xsl:text>\gbselectlanguage{</xsl:text>
+    <xsl:value-of select="$xmlLang"/>
     <xsl:text>}&#10;&#10;</xsl:text>
     <xsl:call-template name="emitir-macros-metadatos"/>
 
@@ -248,7 +258,7 @@
 
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: emitir-macros-metadatos                      -->
-  <!-- \renewcommand DE LOS DATOS DEL ARTÍCULO (CONTRATO 2, 4.1).   -->
+  <!-- \renewcommand DE LOS DATOS DEL ARTÍCULO (CONTRATO 3, 4.1).   -->
   <!-- REEMPLAZA AL DE LA HOJA IMPORTADA, QUE CON EL FRONT NUEVO    -->
   <!-- FALLA: LEE pub-date/year COMO UNO SOLO Y EL CANÓNICO TRAE    -->
   <!-- DOS (pub Y collection; MEDIDO: XPTY0004), Y BUSCA issn POR   -->
@@ -406,7 +416,8 @@
 
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: emitir-bloque-lateral                        -->
-  <!-- LA COLUMNA DERECHA (A1.1b): AUTORES, EDICIÓN, TRADUCCIÓN,    -->
+  <!-- LA COLUMNA DERECHA (A1.1b): AUTORES, NOTAS DE AUTOR (C2),   -->
+  <!-- EDICIÓN, TRADUCCIÓN,                                         -->
   <!-- FECHAS, DOI O e-id, CÓMO CITAR, DERECHOS Y LICENCIA. VA EN   -->
   <!-- gbcolumna, QUE LA GUARDA EN UNA CAJA; LA COLOCA Y LA MIDE    -->
   <!-- \gbcolocarcolumna. EL DISEÑO VIEJO (textblock* A 92 mm FIJOS)-->
@@ -428,6 +439,23 @@
       <xsl:if test="position() gt 1"><xsl:text>\gbentreautores&#10;</xsl:text></xsl:if>
       <xsl:call-template name="gbr:persona"/>
     </xsl:for-each>
+
+    <!-- 1b. NOTAS DE AUTOR (C2, DECISIÓN DE ALBERTO, 14/11): PEGADAS A LAS
+         PERSONAS. EN EL CANÓNICO SON author-notes/fn[@fn-type = 'other'];
+         EL CONFLICTO DE INTERESES (coi-statement) VA EN LAS DECLARACIONES -->
+    <xsl:variable name="notas" select="$meta/author-notes/fn[@fn-type = 'other']"/>
+    <xsl:if test="$notas">
+      <xsl:text>\gbbloque&#10;\gbrotulo{</xsl:text>
+      <xsl:value-of select="gbr:rotulo('notas')"/>
+      <xsl:text>}&#10;</xsl:text>
+      <!-- UN \gbtexto POR PÁRRAFO DE LA NOTA: CADA UNO CIERRA CON SU
+           \par, COMO LOS DEMÁS DATOS DE LA COLUMNA -->
+      <xsl:for-each select="$notas/p">
+        <xsl:text>\gbtexto{</xsl:text>
+        <xsl:value-of select="f:latex(normalize-space(.))"/>
+        <xsl:text>}&#10;</xsl:text>
+      </xsl:for-each>
+    </xsl:if>
 
     <!-- 2. EDICIÓN Y TRADUCCIÓN (SCIELO §5.2.4: EL EDITOR RESPONSABLE) -->
     <xsl:for-each-group select="$meta/contrib-group/contrib[@contrib-type = ('editor', 'translator')]"
@@ -636,7 +664,7 @@
 
     <!-- 1. APERTURA, CON EL RÓTULO EN EL IDIOMA DEL RESUMEN -->
     <xsl:text>\begin{gbresumen}{</xsl:text>
-    <xsl:value-of select="f:babel-lang($lang)"/>
+    <xsl:value-of select="$lang"/>
     <xsl:text>}{</xsl:text>
     <xsl:value-of select="f:latex(string(($r/@*[local-name() = $l2], $r/@en)[1]))"/>
     <xsl:text>}</xsl:text>
@@ -711,7 +739,9 @@
         <xsl:for-each select="$con-roles">
           <xsl:value-of select="gbr:nombre(.)"/>
           <xsl:text>: </xsl:text>
-          <xsl:value-of select="string-join(role ! f:latex(normalize-space((@vocab-term, string(.))[1])), ', ')"/>
+          <!-- EL CONTENIDO DE <role>: EL NOMBRE EN EL IDIOMA DEL ARTÍCULO
+               DESDE LA VERSIÓN 4 DEL VOLCADO (C2); @vocab-term ES EL INGLÉS -->
+          <xsl:value-of select="string-join(role ! f:latex(normalize-space((string(.)[normalize-space(.) ne ''], @vocab-term)[1])), ', ')"/>
           <xsl:text>. </xsl:text>
         </xsl:for-each>
         <xsl:text>&#10;&#10;</xsl:text>
@@ -788,8 +818,12 @@
   <!-- ============================================================ -->
   <xsl:template name="gbr:bib-cita">
     <xsl:variable name="meta" select="front/article-meta"/>
-    <xsl:variable name="fp" select="normalize-space($meta/fpage)"/>
-    <xsl:variable name="lp" select="normalize-space($meta/lpage)"/>
+    <!-- EL RANGO DE LA COMPOSICIÓN GANA SOBRE EL DEL CANÓNICO: LOS DOS
+         PARÁMETROS LOS PASA generar_pdf_revista.sh DESPUÉS DE COMPONER -->
+    <xsl:variable name="fp" select="if ($pagina_inicial castable as xs:integer and $pagina_final castable as xs:integer)
+                                    then $pagina_inicial else normalize-space($meta/fpage)"/>
+    <xsl:variable name="lp" select="if ($pagina_inicial castable as xs:integer and $pagina_final castable as xs:integer)
+                                    then $pagina_final else normalize-space($meta/lpage)"/>
     <xsl:variable name="pub" select="$meta/pub-date[@date-type = 'pub'][1]"/>
     <xsl:variable name="col" select="$meta/pub-date[@date-type = 'collection'][1]"/>
     <xsl:variable name="fecha" select="
@@ -817,7 +851,8 @@
           <xsl:sequence select="'eid = {' || f:latex(normalize-space($meta/elocation-id)) || '}'"/>
         </xsl:when>
         <xsl:when test="$fp ne '' and $lp ne ''">
-          <xsl:sequence select="'pages = {' || $fp || '--' || $lp || '}'"/>
+          <!-- UNA SOLA PÁGINA VA SOLA: CON EL RANGO, APA ESCRIBE «101-101» -->
+          <xsl:sequence select="'pages = {' || $fp || (if ($fp eq $lp) then '' else '--' || $lp) || '}'"/>
         </xsl:when>
       </xsl:choose>
       <xsl:choose>
@@ -828,7 +863,6 @@
           <xsl:sequence select="'url = {' || normalize-space($meta/self-uri[@content-type = 'pagina'][1]/@xlink:href) || '}'"/>
         </xsl:when>
       </xsl:choose>
-      <xsl:sequence select="'langid = {' || f:babel-lang($xmlLang) || '}'"/>
     </xsl:variable>
     <xsl:result-document href="{$bib_cita}" method="text" encoding="UTF-8">
       <xsl:text>% ESCRITO POR jats-a-latex-articulo.xsl: EL «CÓMO CITAR» DEL ARTÍCULO&#10;</xsl:text>

@@ -30,6 +30,12 @@
 '             órganos de la revista con sus miembros vigentes. Un órgano sale
 '             si tiene al menos un miembro vigente: «activo» no filtra, para
 '             que un número viejo se regenere igual.
+'             Desde la versión 4 (etapa C2, decisiones de Alberto del
+'             14/11/2026) lleva los textos del catálogo en el idioma del
+'             artículo: <licencia texto> y <credit nombre uri>. Un artículo
+'             no publicado los toma del catálogo (m_Licencias.TextoLicencia,
+'             m_CreditRoles); uno publicado, de lo que congeló
+'             PublicarArticulo (1.29.0).
 '             La herencia de la revista ya va resuelta (decisión 14): un
 '             artículo no publicado lleva el valor efectivo; uno publicado,
 '             el que quedó congelado.
@@ -37,7 +43,8 @@
 '             (articulos, revistas_md, articulo_autor): las salidas nuevas
 '             son solo para números nuevos (decisión de Alberto, 07/11).
 ' Dependencias: m_ConexionBD, m_InicioCierre, m_Articulo (ArchivosDelProyecto),
-'             m_Idiomas (Babel),
+'             m_Idiomas (Babel), m_Licencias (TextoLicencia), m_CreditRoles
+'             (NombreRol, UriRol), m_Revistas (TextoDe),
 '             m_Bibtex (ClavesCitadas), m_XML (EscaparXML, TituloXML,
 '             EscribirRefList), m_CorteTitulo, m_Sonido.
 ' ==============================================================================
@@ -49,7 +56,9 @@
 '   2  11/11/2026  <idioma codigo babel> POR CADA IDIOMA DEL VOLCADO
 '   3  12/11/2026  <preliminares>, <pagina-legal> Y revista/@rotulo-volumen
 '                  (TAMBIÉN generar_pdf_revista.sh)
-Public Const VERSION_DATOS As Integer = 3
+'   4  14/11/2026  licencia/@texto Y credit/@nombre, credit/@uri (TAMBIÉN
+'                  numero-maestro-latex.xsl)
+Public Const VERSION_DATOS As Integer = 4
 
 ' EL ARCHIVO DEL VOLCADO, RELATIVO A LA CARPETA DEL PROYECTO
 Public Const ARCHIVO_DATOS As String = "tmp/numero-datos.xml"
@@ -764,6 +773,8 @@ Private Function EscribirArticulo(iIdArticulo As Integer, sArchivo As String, iI
   Dim sClave As String
   Dim sRutaMd As String
   Dim sContenido As String
+  Dim bPublicado As Boolean
+  Dim vTextoLicencia As Variant
 
   ' --- 1. LA FILA, CON LOS VALORES EFECTIVOS ---
   ' NO PUBLICADO: EL VACÍO TOMA EL DE LA REVISTA (LICENCIA, URL Y TITULAR DE SU
@@ -806,8 +817,16 @@ Private Function EscribirArticulo(iIdArticulo As Integer, sArchivo As String, iI
   Agregar(2, Elem("notas-autor", r!notas_autor))
 
   ' --- 4. PERMISOS, YA EFECTIVOS ---
+  ' EL TEXTO DE LA LICENCIA EN EL IDIOMA DEL ARTÍCULO (1.28.0): PUBLICADO, EL
+  ' CONGELADO (1.29.0); SI NO, EL DEL CATÁLOGO. SIN TEXTO, SOLO LA ETIQUETA
+  bPublicado = r!estado = "publicado"
+  If bPublicado Then
+    vTextoLicencia = r!licencia_texto
+  Else
+    vTextoLicencia = m_Licencias.TextoLicencia(m_Revistas.TextoDe(r, "url_licencia_ef"), r!idioma_principal)
+  Endif
   Agregar(2, "<permisos" & Atr("acceso", r!acceso_ef) & ">")
-  Agregar(3, Elem("licencia", r!licencia_ef, Atr("url", r!url_licencia_ef)))
+  Agregar(3, Elem("licencia", r!licencia_ef, Atr("url", r!url_licencia_ef) & Atr("texto", vTextoLicencia)))
   Agregar(3, Elem("titular", r!titular_ef))
   If Not IsNull(r!titular_ef) Then
     If Not IsNull(r!anio_copyright) Then
@@ -819,7 +838,7 @@ Private Function EscribirArticulo(iIdArticulo As Integer, sArchivo As String, iI
   Agregar(2, "</permisos>")
 
   ' --- 5. TABLAS HIJAS ---
-  If Not EscribirContribuyentes(iIdArticulo) Then Return False
+  If Not EscribirContribuyentes(iIdArticulo, r!idioma_principal, bPublicado) Then Return False
   If Not EscribirResumenes(iIdArticulo) Then Return False
   If Not EscribirPalabrasClave(iIdArticulo) Then Return False
   If Not EscribirFinanciamiento(iIdArticulo) Then Return False
@@ -870,15 +889,21 @@ End
 ' ============================================
 ' Función   : EscribirContribuyentes
 ' Propósito : Los contribuyentes en orden, con su persona o colectivo, sus
-'             afiliaciones y sus roles CRediT (por valor, SC-23)
+'             afiliaciones y sus roles CRediT (por valor, SC-23). Cada rol
+'             lleva su nombre en el idioma del artículo y su URI (versión 4)
 ' Parámetros: iIdArticulo As Integer — el artículo
+'             sIdioma As String — el idioma principal del artículo
+'             bPublicado As Boolean — True: nombre y URI congelados
+'             (1.29.0); False: los del catálogo
 ' Retorna   : Boolean — False si falló una lectura ($sError)
 ' ============================================
-Private Function EscribirContribuyentes(iIdArticulo As Integer) As Boolean
+Private Function EscribirContribuyentes(iIdArticulo As Integer, sIdioma As String, bPublicado As Boolean) As Boolean
 
   Dim r As Result
   Dim rAfil As Result
   Dim rCredit As Result
+  Dim vNombre As Variant
+  Dim vUri As Variant
 
   Try r = m_ConexionBD.mConn.Exec("SELECT c.*, a.apellidos, a.nombre, a.sufijo, a.orcid FROM articulo_contribuyente c " &
     "LEFT JOIN autores a ON a.id_autor = c.id_autor WHERE c.id_articulo = &1 ORDER BY c.orden", iIdArticulo)
@@ -904,13 +929,25 @@ Private Function EscribirContribuyentes(iIdArticulo As Integer) As Boolean
         Elem("departamento", rAfil!departamento) & Elem("ciudad", rAfil!ciudad) & Elem("pais", rAfil!pais) & "</afiliacion>")
       rAfil.MoveNext
     Wend
-    Try rCredit = m_ConexionBD.mConn.Exec("SELECT rol_credit FROM contribuyente_credit WHERE id_contribuyente = &1 ORDER BY rol_credit", r!id_contribuyente)
+    Try rCredit = m_ConexionBD.mConn.Exec("SELECT rol_credit, nombre_rol, uri_rol FROM contribuyente_credit WHERE id_contribuyente = &1 ORDER BY rol_credit", r!id_contribuyente)
     If Error Then
       $sError = "No se pudieron leer los roles CRediT:" & gb.NewLine & Error.Text
       Return False
     Endif
     While rCredit.Available
-      Agregar(3, Elem("credit", rCredit!rol_credit))
+      ' PUBLICADO: LO CONGELADO, SALVO QUE FALTE (UN PUBLICADO DE ANTES DE LA
+      ' 1.29.0 QUE LA ACTUALIZACIÓN NO ALCANZÓ: SE TOMA EL CATÁLOGO)
+      vNombre = Null
+      vUri = Null
+      If bPublicado Then
+        vNombre = rCredit!nombre_rol
+        vUri = rCredit!uri_rol
+      Endif
+      If IsNull(vNombre) Then
+        vNombre = m_CreditRoles.NombreRol(rCredit!rol_credit, sIdioma)
+        vUri = m_CreditRoles.UriRol(rCredit!rol_credit)
+      Endif
+      Agregar(3, Elem("credit", rCredit!rol_credit, Atr("nombre", vNombre) & Atr("uri", vUri)))
       rCredit.MoveNext
     Wend
     Agregar(3, Elem("notas", r!notas))

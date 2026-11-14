@@ -47,8 +47,9 @@
   <xsl:param name="dir_pdf" as="xs:string" select="'latex/compilacion/'"/>
 
   <!-- LA VERSIÓN DEL VOLCADO QUE ESTA HOJA SABE LEER: LA PRIMERA CON
-       <preliminares> Y <pagina-legal> -->
-  <xsl:variable name="gbm:version-datos" select="'3'"/>
+       <preliminares> Y <pagina-legal>. LA 4 (14/11/2026) SUMA LOS TEXTOS
+       DEL CATÁLOGO, QUE ESTA HOJA NO USA -->
+  <xsl:variable name="gbm:version-datos" select="'4'"/>
 
   <!-- LA VERSIÓN DEL CONTRATO DE REVISTA QUE PIDE EL MAESTRO -->
   <xsl:variable name="gbm:contrato" select="'4'"/>

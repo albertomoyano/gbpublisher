@@ -5,7 +5,7 @@
   =====================================================
   DESCRIPCIÓN : EL <front> JATS 1.4 DE UN ARTÍCULO, A PARTIR DEL VOLCADO DEL
                 NÚMERO QUE ESCRIBE GAMBAS (m_CanonicoRevista,
-                tmp/numero-datos.xml, versión 1). ETAPA A0 DE LAS SALIDAS DE
+                tmp/numero-datos.xml, versión 4). ETAPA A0 DE LAS SALIDAS DE
                 REVISTAS (DECISIONES DE ALBERTO, 07/11/2026; DOCUMENTO DE
                 TRABAJO claude/salidas-revistas.md): GAMBAS LLEVA LOS DATOS,
                 LA XSLT SABE JATS.
@@ -18,6 +18,12 @@
                   DOI pelado con vocab="open-funder-registry".
                 - CRediT: role/@vocab="credit", vocab-identifier, y
                   vocab-term y vocab-term-identifier como en credit-roles.xml.
+                  DESDE LA VERSIÓN 4 DEL VOLCADO (C2, 14/11/2026) EL
+                  CONTENIDO DE <role> ES EL NOMBRE EN EL IDIOMA DEL ARTÍCULO
+                  (credit/@nombre) Y LA URI VIENE DE LA BASE (credit/@uri).
+                - licencia: license-p ES LA ETIQUETA Y, SI LA BASE TIENE EL
+                  TEXTO EN EL IDIOMA DEL ARTÍCULO (licencia/@texto), EL
+                  TEXTO A CONTINUACIÓN (DECISIÓN DE ALBERTO, 14/11).
                 - conflicto de intereses: fn[@fn-type="coi-statement"] DENTRO
                   DE author-notes.
                 - permisos: SIEMPRE <permissions>; copyright-year Y
@@ -43,8 +49,12 @@
        ========================================================== -->
 
   <!-- CRediT: LOS 14 TÉRMINOS Y SUS URI, COMO credit-roles.xml DE JATS4R
-       (v0.0.17). LA BASE GUARDA EL TÉRMINO (SC-23; 1.17.0 LOS DEJÓ EN ESTA
-       FORMA) -->
+       (v0.0.17). DESDE LA VERSIÓN 4 SE BUSCA POR LA URI (credit/@uri, DE LA
+       BASE) Y DE ACÁ SALE SOLO EL vocab-term: JATS4R EXIGE SU ESCRITURA
+       EXACTA (credit-errors.sch, @term = @vocab-term) Y NO ES SIEMPRE LA DEL
+       CATÁLOGO: JATS4R DICE «Formal Analysis»; credit_roles, DESDE LA 1.17.0,
+       «Formal analysis», COMO NISO. ANTES SE BUSCABA POR EL TÉRMINO Y ESE
+       ROL SALÍA SIN vocab -->
   <xsl:variable name="gbj:credit" as="element()*">
     <r t="Conceptualization" u="https://credit.niso.org/contributor-roles/conceptualization/"/>
     <r t="Data curation" u="https://credit.niso.org/contributor-roles/data-curation/"/>
@@ -395,14 +405,15 @@
               </xsl:otherwise>
             </xsl:choose>
             <xsl:for-each select="credit">
-              <xsl:variable name="t" select="string(.)"/>
-              <xsl:variable name="r" select="$gbj:credit[@t = $t]"/>
+              <xsl:variable name="r" select="$gbj:credit[@u = current()/@uri]"/>
+              <!-- EL NOMBRE EN EL IDIOMA DEL ARTÍCULO; SIN ÉL, EL TÉRMINO -->
+              <xsl:variable name="nombre" select="(@nombre, string(.))[1]"/>
               <xsl:choose>
                 <xsl:when test="$r">
-                  <role vocab="credit" vocab-identifier="https://credit.niso.org/" vocab-term="{$t}" vocab-term-identifier="{$r/@u}"><xsl:value-of select="$t"/></role>
+                  <role vocab="credit" vocab-identifier="https://credit.niso.org/" vocab-term="{$r/@t}" vocab-term-identifier="{$r/@u}"><xsl:value-of select="$nombre"/></role>
                 </xsl:when>
-                <!-- UN TÉRMINO FUERA DE LA TABLA NO SE DECLARA CRediT -->
-                <xsl:otherwise><role><xsl:value-of select="$t"/></role></xsl:otherwise>
+                <!-- SIN URI DE CRediT, O CON UNA QUE NO ESTÁ EN LA TABLA: NO SE DECLARA CRediT -->
+                <xsl:otherwise><role><xsl:value-of select="$nombre"/></role></xsl:otherwise>
               </xsl:choose>
             </xsl:for-each>
             <xsl:for-each select="afiliacion">
@@ -458,7 +469,8 @@
           <xsl:if test="@url">
             <ali:license_ref><xsl:value-of select="@url"/></ali:license_ref>
           </xsl:if>
-          <license-p><xsl:value-of select="."/></license-p>
+          <!-- LA ETIQUETA Y, SI HAY, EL TEXTO EN EL IDIOMA DEL ARTÍCULO -->
+          <license-p><xsl:value-of select="string-join((normalize-space(.)[. ne ''], normalize-space(@texto)[. ne '']), '. ')"/></license-p>
         </license>
       </xsl:for-each>
     </permissions>

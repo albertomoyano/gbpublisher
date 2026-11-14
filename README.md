@@ -1,6 +1,6 @@
 **gbpublisher** es un sistema de producción editorial para libros académicos y revistas científicas. Lleva el trabajo desde el manuscrito hasta las salidas finales —PDF, EPUB, HTML y los XML que piden los indexadores— a partir de una única fuente XML canónica: DocBook 5 para libros y JATS 1.4 para revistas.
 
-Es una aplicación de escritorio para Linux con arquitectura cliente-servidor. El equipo editorial trabaja sobre una base MySQL compartida, aunque cada persona esté en su casa. La usan quienes producen el libro o la revista (edición, corrección, composición), no quienes lo escriben.
+Es una aplicación de escritorio para Linux con arquitectura cliente-servidor. El equipo editorial trabaja sobre una base MySQL compartida, aunque cada persona esté en su casa. La usan quienes producen el libro o la revista (edición, corrección, maquetación y coordinación), no está pensada para autores.
 
 Los textos se escriben en Markdown y se normalizan con Pandoc. Las salidas salen del XML canónico por XSLT y se componen con LuaLaTeX. El PDF es la referencia, el EPUB y el HTML reproducen fielmente su estructura. Las versiones del stack están fijas y se verifican al arrancar, así que un título puede regenerarse idéntico años después.
 

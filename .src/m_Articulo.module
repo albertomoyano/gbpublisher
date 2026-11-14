@@ -1366,6 +1366,8 @@ Public Function PublicarArticulo(iIdArticulo As Integer) As Boolean
   Dim aFaltan As New String[]
   Dim dFecha As Date
   Dim vUltima As Variant
+  Dim rCredit As Result
+  Dim sIdioma As String
 
   ' --- 1. TRANSACCIÓN: LO CONTROLADO ES LO QUE SE PUBLICA ---
   hConn = m_ConexionBD.mConn
@@ -1482,7 +1484,41 @@ Public Function PublicarArticulo(iIdArticulo As Integer) As Boolean
     Return False
   Endif
 
-  ' --- 5. CONFIRMACIÓN ---
+  ' --- 5. LOS TEXTOS DEL CATÁLOGO, CONGELADOS (1.29.0; DECISIÓN DE ALBERTO,
+  ' 14/11: LA REPRODUCIBILIDAD MANDA) ---
+  ' EL TEXTO DE LA LICENCIA Y EL NOMBRE Y LA URI DE CADA ROL, EN EL IDIOMA DEL
+  ' ARTÍCULO, COMO ESTÁN HOY EN «Catálogos». EL VOLCADO DE UN PUBLICADO LOS
+  ' TOMA DE ACÁ: CORREGIR EL CATÁLOGO DESPUÉS NO CAMBIA LO PUBLICADO. SE
+  ' REESCRIBEN EN CADA PUBLICACIÓN: UNO REABIERTO SE VUELVE A CONGELAR. CON
+  ' LA CONEXIÓN DE LA TRANSACCIÓN
+  sIdioma = rArticulo!idioma_principal
+  Try hConn.Exec("UPDATE articulo SET licencia_texto = &2 WHERE id_articulo = &1",
+    iIdArticulo, m_Revistas.NuloSiVacio(m_Licencias.TextoLicencia(rArticulo!url_efectiva, sIdioma, hConn)))
+  If Not Error Then Try rCredit = hConn.Exec("SELECT cc.id_contribuyente, cc.rol_credit FROM contribuyente_credit cc " &
+    "JOIN articulo_contribuyente ac ON ac.id_contribuyente = cc.id_contribuyente WHERE ac.id_articulo = &1", iIdArticulo)
+  If Error Then
+    hConn.Rollback()
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron congelar la licencia y los roles:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  ' SIN TRADUCCIÓN, EL NOMBRE ES EL TÉRMINO EN INGLÉS; SIN URI (UN ROL QUE NO
+  ' ES DE CRediT), NULL
+  While rCredit.Available
+    Try hConn.Exec("UPDATE contribuyente_credit SET nombre_rol = &3, uri_rol = &4 WHERE id_contribuyente = &1 AND rol_credit = &2",
+      rCredit!id_contribuyente, rCredit!rol_credit,
+      m_CreditRoles.NombreRol(rCredit!rol_credit, sIdioma, hConn),
+      m_Revistas.NuloSiVacio(m_CreditRoles.UriRol(rCredit!rol_credit, hConn)))
+    If Error Then
+      hConn.Rollback()
+      m_Sonido.sonar("Error")
+      Message.Error("No se pudo congelar el rol «" & rCredit!rol_credit & "»:" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+    rCredit.MoveNext
+  Wend
+
+  ' --- 6. CONFIRMACIÓN ---
   Try hConn.Commit()
   If Error Then
     hConn.Rollback()

@@ -44,8 +44,9 @@
 
   <!-- LA VERSIÓN DEL VOLCADO QUE ESTA HOJA SABE LEER. LA 2 TRAJO
        <idioma codigo babel>; LA 3 (12/11/2026) SUMA <preliminares> Y
-       <pagina-legal>, QUE ESTA HOJA TODAVÍA NO USA (LLEGAN CON B5) -->
-  <xsl:variable name="gbn:version-datos" select="'3'"/>
+       <pagina-legal>, QUE ESTA HOJA TODAVÍA NO USA (LLEGAN CON B5); LA 4
+       (14/11/2026), LOS TEXTOS DEL CATÁLOGO, QUE VAN AL CANÓNICO -->
+  <xsl:variable name="gbn:version-datos" select="'4'"/>
 
   <!-- LA VERSIÓN DEL CONTRATO DE REVISTA QUE PIDEN LOS main -->
   <xsl:variable name="gbn:contrato" select="'3'"/>

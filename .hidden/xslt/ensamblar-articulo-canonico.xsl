@@ -22,7 +22,7 @@
                   reflist=tmp/reflist-{base}.xml
                   huellas=tmp/huellas-{base}.xml
                 LO LANZA engine/generar_canonicos_articulos.sh
-  ENTRADA     : numero-datos versión 1 (m_CanonicoRevista.VERSION_DATOS)
+  ENTRADA     : numero-datos versión 4 (m_CanonicoRevista.VERSION_DATOS)
   =====================================================
 -->
 <xsl:stylesheet version="2.0"
@@ -63,8 +63,9 @@
   <!-- LA VERSIÓN DEL VOLCADO QUE ESTA HOJA SABE LEER. LA 2 (11/11/2026) SOLO
        SUMA <idioma codigo babel> Y LA 3 (12/11/2026) <preliminares>,
        <pagina-legal> Y revista/@rotulo-volumen: ESTA HOJA NO USA NINGUNO, SE
-       LEE IGUAL -->
-  <xsl:variable name="version-datos" select="'3'"/>
+       LEE IGUAL. LA 4 (14/11/2026) SUMA licencia/@texto Y credit/@nombre Y
+       @uri, QUE LEE datos-a-front-jats.xsl (INCLUIDA) -->
+  <xsl:variable name="version-datos" select="'4'"/>
 
   <xsl:template match="/">
     <xsl:variable name="art" select="/numero-datos/articulo[@archivo = $archivo]"/>
