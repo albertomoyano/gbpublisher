@@ -18,7 +18,10 @@
 '                 número es un solo botón con todo encadenado (decisión de
 '                 A1): asigna los e-id que falten, compone, guarda las
 '                 páginas que devuelve la composición y regenera los
-'                 canónicos con los rangos.
+'                 canónicos con los rangos;
+'               - en el mismo menú, el EPUB del número (etapa E3) con
+'                 engine/generar_epub_revista.sh. No escribe en la base:
+'                 toma las páginas y los e-id que dejó el PDF del número.
 ' Alcance   : solo los números del esquema nuevo, los que tienen artículos en
 '             la tabla articulo (NumeroEsNuevo). Los números viejos siguen con
 '             btnGenerarXMLcanonico y m_XML hasta el 2.0.0 (decisión de
@@ -41,6 +44,11 @@ Private Const LISTA_CANONICOS As String = "tmp/lote-articulos.txt"
 ' (m_GenerarSalidasLibro.PLAZO_PDF). NO SON UN CORTE: AL VENCER SE PREGUNTA
 Private Const PLAZO_PDF_NUMERO As Float = 1800.0
 Private Const PLAZO_PDF_ARTICULO As Float = 600.0
+
+' EL PLAZO DEL EPUB DEL NÚMERO: LOS CANÓNICOS, LA PASADA DE CITAS (HASTA 900 s
+' EN preparar_citas_revista.sh) Y epubcheck. EL DEL LIBRO ES 900
+' (m_GenerarEpubLibro.PLAZO_EPUB). NO ES UN CORTE: AL VENCER SE PREGUNTA
+Private Const PLAZO_EPUB_NUMERO As Float = 1200.0
 
 ' LO QUE DEJA generar_pdf_revista.sh CUANDO EL NÚMERO SALIÓ BIEN: DÓNDE QUEDÓ
 ' CADA ARTÍCULO. LA MISMA RUTA QUE TSV EN EL SCRIPT
@@ -97,10 +105,11 @@ End
 '             corresponde al número (decisión de Alberto, 07/11):
 '               - número nuevo: menuJats, el botón «Validar» del visor XML
 '                 encendido (el validador conoce JATS desde A0.4) y, en
-'                 menuSalidaRevistaMD, «PDF del artículo en curso» y «PDF del
-'                 número» (A1.3);
-'               - número viejo: btnGenerarXMLcanonico, «Validar» apagado y
-'                 «Generar salida PDF» (Menu6, m_XML).
+'                 menuSalidaRevistaMD, «PDF del artículo en curso», «PDF del
+'                 número» (A1.3) y «EPUB del número» (E3);
+'               - número viejo: btnGenerarXMLcanonico, «Validar» apagado,
+'                 «Generar salida PDF» (Menu6, m_XML) y «Generar salida
+'                 ePub» (menuGenerarEpub, m_GenerarEpub).
 '             Nunca los dos. Lo viejo se quita al terminar la refactorización
 '             (decisión de Alberto, 12/11)
 ' Parámetros: (ninguno)
@@ -122,6 +131,10 @@ Public Sub ConfigurarControles()
   FMain.menuSalidaPDFEnCurso.Visible = bNuevo
   FMain.menuSalidaPDFNumero.Visible = bNuevo
   FMain.Menu6.Visible = Not bNuevo
+
+  ' --- 3. EL EPUB, EN EL MISMO MENÚ (E3) ---
+  FMain.menuSalidaEpubNumero.Visible = bNuevo
+  FMain.menuGenerarEpub.Visible = Not bNuevo
 
 End
 
@@ -283,6 +296,82 @@ Public Sub GenerarPDFNumero()
       "El motivo está en la terminal. Cuando esté resuelto, regeneralos" & gb.NewLine &
       "con «Todos los canónicos»: el JATS todavía no lleva los rangos.")
   Endif
+
+End
+
+' ============================================
+' Función   : GenerarEpubNumero
+' Propósito : El EPUB del número entero («EPUB completo del número en curso»
+'             de menuSalidaRevistaMD; E3, decisiones de Alberto del
+'             14/11/2026): escribe los insumos y lanza
+'             engine/generar_epub_revista.sh, que regenera los canónicos,
+'             pasa las citas por biblatex, arma el paquete desde el volcado
+'             y lo valida con epubcheck. El nombre del EPUB (el del PDF con
+'             .epub) lo arma el script y lo muestra la terminal
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : NO ESCRIBE EN LA BASE NI ASIGNA e-id: LAS PÁGINAS Y LOS e-id
+'             LOS DEJA EL PDF DEL NÚMERO, Y SIN ELLOS EL SCRIPT FRENA
+'             (DECISIÓN DE ALBERTO: SIN PÁGINAS NO HAY «CÓMO CITAR»)
+' ============================================
+Public Sub GenerarEpubNumero()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aArchivos As String[]
+  Dim iIdNumero As Integer
+  Dim iResultado As Integer
+
+  ' --- 2. LOS ARTÍCULOS DEL NÚMERO CON METADATOS Y SU .md ---
+  ' ArticulosDelNumero YA AVISÓ SI NO HAY PROYECTO, NÚMERO O ARTÍCULOS
+  aArchivos = ArticulosDelNumero("no hay EPUB que generar")
+  If Not aArchivos Then Return
+  iIdNumero = NumeroDelProyecto()
+
+  ' --- 3. LANZAMIENTO E INFORME ---
+  ' SE INFORMA LA CARPETA: EL NOMBRE DEL ARCHIVO LO ARMA EL SCRIPT
+  iResultado = LanzarEpub(iIdNumero, aArchivos)
+  m_Lanzadora.InformarResultado(iResultado, "El EPUB del número",
+    m_InicioCierre.RutaProyectoEnCurso &/ "salidas/epub")
+
+End
+
+' ============================================
+' Función   : LanzarEpub
+' Propósito : Escribe los insumos del EPUB del número —el .bib y el volcado—
+'             y lanza engine/generar_epub_revista.sh
+' Parámetros: iIdNumero As Integer — el número del proyecto
+'             aArchivos As String[] — sus artículos, en el orden del número
+' Retorna   : Integer — el resultado de m_Lanzadora.EjecutarScript, o
+'             RESULTADO_EN_CURSO / RESULTADO_NO_LANZADO si no se llegó a lanzar
+' ============================================
+Private Function LanzarEpub(iIdNumero As Integer, aArchivos As String[]) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aArgumentos As New String[]
+
+  ' --- 2. REENTRADA ---
+  ' ANTES DE ESCRIBIR NADA EN tmp/
+  If m_Lanzadora.HayScriptEnCurso() Then Return m_Lanzadora.RESULTADO_EN_CURSO
+
+  ' --- 3. EL EDITOR IGUAL AL DISCO (SC-06) ---
+  ' EL SCRIPT REGENERA LOS CANÓNICOS DESDE LOS .md DEL DISCO
+  If Not FMain.ConfirmarDescartarCambios() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_BuscarRegex.AlinearEditorConDisco() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+
+  ' --- 4. LOS INSUMOS: EL .bib Y EL VOLCADO ---
+  ' LAS FUNCIONES INFORMAN SUS FALLOS. EL VOLCADO LLEVA LAS PÁGINAS Y LOS
+  ' e-id QUE GUARDÓ EL PDF DEL NÚMERO
+  If Not m_Bibtex.ExportarBibTeX() Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+  If Not m_CanonicoRevista.PrepararNumero(iIdNumero, aArchivos) Then Return m_Lanzadora.RESULTADO_NO_LANZADO
+
+  ' --- 5. LANZAMIENTO ---
+  ' EL NOMBRE DEL .bib SE CALCULA EN UN SOLO LUGAR (m_Bibtex.NombreArchivoBib)
+  aArgumentos.Add(m_InicioCierre.RutaProyectoEnCurso)
+  aArgumentos.Add(m_Bibtex.NombreArchivoBib())
+
+  FMain.TabStrip1.Index = 0
+  Return m_Lanzadora.EjecutarScript("generar_epub_revista.sh", aArgumentos, PLAZO_EPUB_NUMERO,
+    "Generando el EPUB del número")
 
 End
 

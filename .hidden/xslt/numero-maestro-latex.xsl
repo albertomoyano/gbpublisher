@@ -35,11 +35,19 @@
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
   xmlns:f="urn:gbpublisher:functions"
   xmlns:gbm="urn:gbpublisher:numero-maestro"
-  exclude-result-prefixes="xs f gbm">
+  xmlns:gbrc="urn:gbpublisher:revista-comun"
+  exclude-result-prefixes="xs f gbm gbrc">
 
   <!-- f:latex (EL ESCAPE DE LOS CARACTERES ACTIVOS) Y f:titulo-tramos (EL
        TÍTULO PARTIDO EN SUS CORTES, SC-28) -->
   <xsl:import href="tex-comun.xsl"/>
+
+  <!-- LO QUE EL SUMARIO Y LA PÁGINA LEGAL COMPARTEN CON LAS PRELIMINARES
+       DEL EPUB (numero-a-epub.xsl): LA CONJUNCIÓN, LA PERSONA, EL TÍTULO
+       EN EL IDIOMA PRINCIPAL Y LOS TRAMOS DEL SUMARIO. ESTABAN ACÁ COMO
+       gbm:conjuncion, gbm:persona Y gbm:titulo-idioma; SE MUDARON EN E3
+       (14/11/2026) SIN CAMBIOS -->
+  <xsl:include href="revista-comun.xsl"/>
 
   <xsl:output method="text" encoding="UTF-8"/>
 
@@ -101,40 +109,6 @@
     <xsl:sequence select="string(tokenize(string($fila), '&#9;')[$n])"/>
   </xsl:function>
 
-  <!-- ============================================
-       Función   : gbm:conjuncion
-       Propósito : Lo que va antes del último nombre de una lista, según
-                   el idioma principal de la revista. En castellano, «e»
-                   ante el sonido i (la regla de m_PrimerasLibro.Conjuncion,
-                   DPD «y»): «Pérez e Ibáñez», pero «Ana y Iolanda». Un
-                   idioma que esta hoja no conoce separa con coma
-       Parámetros: idioma As xs:string — código de la revista (es, en…)
-                   siguiente As xs:string — el último nombre
-       Retorna   : xs:string — la conjunción con sus espacios
-       ============================================ -->
-  <xsl:function name="gbm:conjuncion" as="xs:string">
-    <xsl:param name="idioma" as="xs:string"/>
-    <xsl:param name="siguiente" as="xs:string"/>
-    <xsl:variable name="base" select="substring-before(concat($idioma, '-'), '-')"/>
-    <!-- LA h NO SUENA -->
-    <xsl:variable name="palabra" select="replace(normalize-space($siguiente), '^[hH]', '')"/>
-    <xsl:variable name="primera" select="substring($palabra, 1, 1)"/>
-    <xsl:variable name="segunda" select="substring($palabra, 2, 1)"/>
-    <xsl:choose>
-      <xsl:when test="$base eq 'es'">
-        <xsl:choose>
-          <xsl:when test="not($primera = ('i', 'I', 'í', 'Í'))"> y </xsl:when>
-          <!-- i SIN TILDE ANTE VOCAL: DIPTONGO, «y» -->
-          <xsl:when test="$primera = ('i', 'I') and contains('aeiouáéíóúüAEIOUÁÉÍÓÚÜ', $segunda) and $segunda ne ''"> y </xsl:when>
-          <xsl:otherwise> e </xsl:otherwise>
-        </xsl:choose>
-      </xsl:when>
-      <xsl:when test="$base = ('pt', 'gl', 'it')"> e </xsl:when>
-      <xsl:when test="$base eq 'en'"> and </xsl:when>
-      <xsl:when test="$base eq 'fr'"> et </xsl:when>
-      <xsl:otherwise>, </xsl:otherwise>
-    </xsl:choose>
-  </xsl:function>
 
   <!-- ============================================
        Función   : gbm:lista
@@ -150,38 +124,12 @@
     <xsl:sequence select="string-join(
       for $i in 1 to $n return concat(
         if ($i eq 1) then ''
-        else if ($i eq $n) then gbm:conjuncion($idioma, $nombres[$i])
+        else if ($i eq $n) then gbrc:conjuncion($idioma, $nombres[$i])
         else ', ',
         gbm:tex($nombres[$i])), '')"/>
   </xsl:function>
 
-  <!-- ============================================
-       Función   : gbm:persona
-       Propósito : «Nombre Apellidos» de una persona del volcado, o el
-                   nombre del colectivo
-       Parámetros: e As element() — <persona>, <miembro> o <contribuyente>
-       Retorna   : xs:string — sin escapar
-       ============================================ -->
-  <xsl:function name="gbm:persona" as="xs:string">
-    <xsl:param name="e" as="element()"/>
-    <xsl:variable name="p" select="($e/persona, $e)[1]"/>
-    <xsl:sequence select="if ($e/colectivo) then normalize-space($e/colectivo)
-      else normalize-space(string-join(($p/nombre, $p/apellidos) ! normalize-space(.), ' '))"/>
-  </xsl:function>
 
-  <!-- ============================================
-       Función   : gbm:titulo-idioma
-       Propósito : El título de una sección o un dossier en el idioma
-                   principal; si no lo tiene, el primero
-       Parámetros: e As element()? — la sección o el dossier
-                   idioma As xs:string — código principal
-       Retorna   : xs:string — sin escapar; vacío si no hay
-       ============================================ -->
-  <xsl:function name="gbm:titulo-idioma" as="xs:string">
-    <xsl:param name="e" as="element()?"/>
-    <xsl:param name="idioma" as="xs:string"/>
-    <xsl:sequence select="normalize-space(string(($e/titulo[@idioma eq $idioma], $e/titulo)[1]))"/>
-  </xsl:function>
 
   <!-- ============================================================ -->
   <!-- PLANTILLA: /                                                 -->
@@ -325,7 +273,7 @@
       <xsl:text>}{%&#10;</xsl:text>
       <xsl:for-each select="miembro">
         <xsl:text>  \gblegalmiembro{</xsl:text>
-        <xsl:value-of select="gbm:tex(gbm:persona(.))"/>
+        <xsl:value-of select="gbm:tex(gbrc:persona(.))"/>
         <xsl:text>}{</xsl:text>
         <xsl:value-of select="gbm:tex(normalize-space(afiliacion))"/>
         <xsl:text>}&#10;</xsl:text>
@@ -387,21 +335,8 @@
     <xsl:text>\begin{gbsumarionumero}&#10;</xsl:text>
     <!-- UN GRUPO POR TRAMO SEGUIDO DEL MISMO DOSSIER O, SIN DOSSIER, DE LA
          MISMA SECCIÓN -->
-    <xsl:for-each-group select="$d/articulo"
-      group-adjacent="if (@dossier) then concat('d', @dossier) else concat('s', @seccion)">
-      <xsl:variable name="primero" select="current-group()[1]"/>
-      <xsl:variable name="encabezado">
-        <xsl:choose>
-          <xsl:when test="$primero/@dossier">
-            <xsl:variable name="dos" select="$d/dossier[@id eq $primero/@dossier]"/>
-            <xsl:variable name="sec" select="gbm:titulo-idioma($d/seccion[@codigo eq $dos/@seccion], $principal)"/>
-            <xsl:value-of select="string-join(($sec, gbm:titulo-idioma($dos, $principal))[. ne ''], '. ')"/>
-          </xsl:when>
-          <xsl:when test="$primero/@seccion">
-            <xsl:value-of select="gbm:titulo-idioma($d/seccion[@codigo eq $primero/@seccion], $principal)"/>
-          </xsl:when>
-        </xsl:choose>
-      </xsl:variable>
+    <xsl:for-each-group select="$d/articulo" group-adjacent="gbrc:tramo-sumario(.)">
+      <xsl:variable name="encabezado" select="gbrc:encabezado-tramo($d, current-group()[1], $principal)"/>
       <xsl:if test="normalize-space($encabezado) ne ''">
         <xsl:text>\gbsumarioseccion{</xsl:text>
         <xsl:value-of select="gbm:tex(normalize-space($encabezado))"/>
@@ -420,7 +355,7 @@
         <xsl:text>}{</xsl:text>
         <xsl:value-of select="gbm:titulo(titulo)"/>
         <xsl:text>}{</xsl:text>
-        <xsl:value-of select="gbm:lista(contribuyente[@rol eq 'autor'] ! gbm:persona(.), $principal)"/>
+        <xsl:value-of select="gbm:lista(contribuyente[@rol eq 'autor'] ! gbrc:persona(.), $principal)"/>
         <xsl:text>}{</xsl:text>
         <xsl:value-of select="gbm:tex($folio)"/>
         <xsl:text>}&#10;</xsl:text>

@@ -56,7 +56,8 @@
   xmlns:f="urn:gbpublisher:functions"
   xmlns:gbr="urn:gbpublisher:revista-latex"
   xmlns:gbcj="urn:gbpublisher:citas-jats"
-  exclude-result-prefixes="xs xlink ali f gbr gbcj">
+  xmlns:gbrc="urn:gbpublisher:revista-comun"
+  exclude-result-prefixes="xs xlink ali f gbr gbcj gbrc">
 
   <!-- EL CUERPO ES EL DE LA HOJA VIEJA. xsl:import VA PRIMERO; LO QUE
        ESTA HOJA DEFINE GANA POR PRECEDENCIA DE IMPORTACIÓN -->
@@ -65,6 +66,10 @@
   <!-- EL AGRUPAMIENTO DE CITAS (SC-57 SOBRE JATS): COMÚN CON LA PASADA DE
        CITAS Y EL EPUB -->
   <xsl:include href="cita-jats-comun.xsl"/>
+
+  <!-- LOS RÓTULOS, LOS MESES, LOS TIPOS DE ARTÍCULO Y LOS DATOS EN TEXTO
+       (FECHA, NOMBRE, AFILIACIÓN): COMUNES CON EL EPUB (E2) -->
+  <xsl:include href="revista-comun.xsl"/>
 
   <xsl:output method="text" encoding="UTF-8"/>
 
@@ -75,51 +80,13 @@
   <!-- LA CLAVE DEL ARTÍCULO EN EL .bib DEL «CÓMO CITAR» -->
   <xsl:variable name="gbr:clave-cita" select="'gb-articulo'"/>
 
-  <!-- ============================================================ -->
-  <!-- RÓTULOS POR IDIOMA. EL IDIOMA ES EL DEL ARTÍCULO; FUERA DE    -->
-  <!-- es, en, pt Y fr, EN CASTELLANO                                -->
-  <!-- ============================================================ -->
-  <xsl:variable name="gbr:rotulos" as="element()*">
-    <r k="resumen" es="Resumen" en="Abstract" pt="Resumo" fr="Résumé"/>
-    <r k="palabras" es="Palabras clave" en="Keywords" pt="Palavras-chave" fr="Mots-clés"/>
-    <r k="correspondencia" es="Correspondencia" en="Correspondence" pt="Correspondência" fr="Correspondance"/>
-    <r k="editor" es="Editor responsable" en="Handling editor" pt="Editor responsável" fr="Éditeur responsable"/>
-    <r k="traductor" es="Traducción" en="Translation" pt="Tradução" fr="Traduction"/>
-    <r k="received" es="Recibido" en="Received" pt="Recebido" fr="Reçu"/>
-    <r k="rev-recd" es="Revisado" en="Revised" pt="Revisado" fr="Révisé"/>
-    <r k="accepted" es="Aceptado" en="Accepted" pt="Aceito" fr="Accepté"/>
-    <r k="pub" es="Publicado" en="Published" pt="Publicado" fr="Publié"/>
-    <r k="eid" es="Número de artículo" en="Article number" pt="Número do artigo" fr="Numéro d’article"/>
-    <r k="comocitar" es="Cómo citar" en="How to cite" pt="Como citar" fr="Comment citer"/>
-    <r k="compartir" es="Compartir" en="Share" pt="Compartilhar" fr="Partager"/>
-    <r k="licencia" es="Licencia" en="License" pt="Licença" fr="Licence"/>
-    <r k="notas" es="Notas" en="Notes" pt="Notas" fr="Notes"/>
-    <r k="declaraciones" es="Declaraciones" en="Declarations" pt="Declarações" fr="Déclarations"/>
-    <r k="contribuciones" es="Contribuciones de autoría (CRediT)" en="Author contributions (CRediT)" pt="Contribuições de autoria (CRediT)" fr="Contributions des auteurs (CRediT)"/>
-    <r k="financiamiento" es="Financiamiento" en="Funding" pt="Financiamento" fr="Financement"/>
-    <r k="coi" es="Conflicto de intereses" en="Conflict of interest" pt="Conflito de interesses" fr="Conflit d’intérêts"/>
-    <r k="datos" es="Disponibilidad de datos" en="Data availability" pt="Disponibilidade de dados" fr="Disponibilité des données"/>
-  </xsl:variable>
+  <!-- LOS RÓTULOS, LOS MESES Y LOS TIPOS ESTÁN EN revista-comun.xsl (E2):
+       ACÁ, SOLO LAS ENVOLTURAS QUE ESCAPAN PARA LaTeX -->
 
-  <xsl:variable name="gbr:meses" as="element()*">
-    <m es="enero" en="January" pt="janeiro" fr="janvier"/>
-    <m es="febrero" en="February" pt="fevereiro" fr="février"/>
-    <m es="marzo" en="March" pt="março" fr="mars"/>
-    <m es="abril" en="April" pt="abril" fr="avril"/>
-    <m es="mayo" en="May" pt="maio" fr="mai"/>
-    <m es="junio" en="June" pt="junho" fr="juin"/>
-    <m es="julio" en="July" pt="julho" fr="juillet"/>
-    <m es="agosto" en="August" pt="agosto" fr="août"/>
-    <m es="septiembre" en="September" pt="setembro" fr="septembre"/>
-    <m es="octubre" en="October" pt="outubro" fr="octobre"/>
-    <m es="noviembre" en="November" pt="novembro" fr="novembre"/>
-    <m es="diciembre" en="December" pt="dezembro" fr="décembre"/>
-  </xsl:variable>
 
   <!-- EL IDIOMA DE LOS RÓTULOS: LAS DOS LETRAS DEL ARTÍCULO, SI HAY TABLA -->
   <xsl:variable name="gbr:lang" as="xs:string"
-    select="let $l := lower-case(substring($xmlLang, 1, 2))
-            return if ($l = ('es', 'en', 'pt', 'fr')) then $l else 'es'"/>
+    select="gbrc:lang($xmlLang)"/>
 
   <!-- ============================================
        Función   : gbr:rotulo
@@ -129,8 +96,7 @@
        ============================================ -->
   <xsl:function name="gbr:rotulo" as="xs:string">
     <xsl:param name="clave" as="xs:string"/>
-    <xsl:variable name="r" select="$gbr:rotulos[@k = $clave]"/>
-    <xsl:sequence select="f:latex(string(($r/@*[local-name() = $gbr:lang], $r/@es)[1]))"/>
+    <xsl:sequence select="f:latex(gbrc:rotulo($clave, $gbr:lang))"/>
   </xsl:function>
 
   <!-- ============================================
@@ -154,14 +120,7 @@
        ============================================ -->
   <xsl:function name="gbr:fecha" as="xs:string">
     <xsl:param name="d" as="element()"/>
-    <xsl:variable name="dia" select="if ($d/day castable as xs:integer) then string(xs:integer($d/day)) else ''"/>
-    <xsl:variable name="mes" select="if ($d/month castable as xs:integer)
-      then string($gbr:meses[xs:integer($d/month)]/@*[local-name() = $gbr:lang]) else ''"/>
-    <xsl:variable name="anio" select="normalize-space($d/year)"/>
-    <xsl:sequence select="
-      if ($gbr:lang = ('es', 'pt'))
-      then string-join(($dia[. ne ''], $mes[. ne ''], $anio), ' de ')
-      else string-join(($dia, $mes, $anio)[. ne ''], ' ')"/>
+    <xsl:sequence select="gbrc:fecha($d, $gbr:lang)"/>
   </xsl:function>
 
   <!-- ============================================
@@ -173,9 +132,7 @@
        ============================================ -->
   <xsl:function name="gbr:nombre" as="xs:string">
     <xsl:param name="c" as="element()"/>
-    <xsl:sequence select="f:latex(normalize-space(
-      if ($c/name) then string-join(($c/name/given-names, $c/name/surname, $c/name/suffix), ' ')
-      else string($c/collab)))"/>
+    <xsl:sequence select="f:latex(gbrc:nombre($c))"/>
   </xsl:function>
 
   <!-- ============================================
@@ -187,11 +144,7 @@
        ============================================ -->
   <xsl:function name="gbr:afiliacion" as="xs:string">
     <xsl:param name="a" as="element()"/>
-    <xsl:sequence select="f:latex(string-join((
-      $a//institution[@content-type = 'orgname'],
-      $a//institution[starts-with(@content-type, 'orgdiv')],
-      $a//institution[not(@content-type)],
-      $a/city, $a/country) ! normalize-space(.)[. ne ''], ', '))"/>
+    <xsl:sequence select="f:latex(gbrc:afiliacion($a))"/>
   </xsl:function>
 
   <!-- ============================================================ -->
@@ -278,7 +231,6 @@
     <xsl:variable name="issn" select="normalize-space((front/journal-meta/issn[@publication-format = 'electronic'],
                                                      front/journal-meta/issn[@pub-type = 'epub'])[1])"/>
     <xsl:variable name="tipo-art" select="string(/article/@article-type)"/>
-    <xsl:variable name="tipo" select="$gbr:tipos[@t = $tipo-art]"/>
     <xsl:variable name="periodo" select="($meta/pub-date[@date-type = 'collection'], $meta/pub-date)[1]"/>
 
     <!-- 1. IDIOMA Y TÍTULOS (EL <break/> PASA A \gbCorteTitulo, SC-28) -->
@@ -305,8 +257,7 @@
 
     <!-- 4. TIPO DE ARTÍCULO, EN MAYÚSCULAS, EN EL IDIOMA DEL ARTÍCULO -->
     <xsl:value-of select="gbr:macro('articulotipo', upper-case(f:latex(
-      if ($tipo) then string(($tipo/@*[local-name() = $gbr:lang], $tipo/@es)[1])
-      else $tipo-art)))"/>
+      gbrc:tipo($tipo-art, $gbr:lang))))"/>
 
     <!-- 5. LA REVISTA Y EL NÚMERO -->
     <xsl:value-of select="gbr:macro('articulorevista', f:latex(normalize-space(front/journal-meta/journal-title-group/journal-title)))"/>
@@ -336,17 +287,6 @@
   </xsl:function>
 
   <!-- EL TIPO DE ARTÍCULO POR IDIOMA: LA TABLA DE LA HOJA IMPORTADA -->
-  <xsl:variable name="gbr:tipos" as="element()*">
-    <t t="research-article" es="Artículo de investigación" en="Research article" pt="Artigo de pesquisa" fr="Article de recherche"/>
-    <t t="review-article" es="Artículo de revisión" en="Review article" pt="Artigo de revisão" fr="Article de synthèse"/>
-    <t t="editorial" es="Editorial" en="Editorial" pt="Editorial" fr="Éditorial"/>
-    <t t="book-review" es="Reseña" en="Book review" pt="Resenha" fr="Compte rendu"/>
-    <t t="letter" es="Carta" en="Letter" pt="Carta" fr="Lettre"/>
-    <t t="case-report" es="Reporte de caso" en="Case report" pt="Relato de caso" fr="Rapport de cas"/>
-    <t t="correction" es="Corrección" en="Correction" pt="Correção" fr="Correction"/>
-    <t t="obituary" es="Obituario" en="Obituary" pt="Obituário" fr="Nécrologie"/>
-    <t t="systematic-review" es="Revisión sistemática" en="Systematic review" pt="Revisão sistemática" fr="Revue systématique"/>
-  </xsl:variable>
 
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: gbr:datos-pdf                                -->
@@ -664,8 +604,8 @@
     <xsl:param name="kwds"/>
     <xsl:variable name="grupos" select="../kwd-group[normalize-space((@xml:lang, $xmlLang)[1]) = $lang][kwd]"/>
     <xsl:variable name="l2" select="lower-case(substring($lang, 1, 2))"/>
-    <xsl:variable name="r" select="$gbr:rotulos[@k = 'resumen']"/>
-    <xsl:variable name="p" select="$gbr:rotulos[@k = 'palabras']"/>
+    <xsl:variable name="r" select="$gbrc:rotulos[@k = 'resumen']"/>
+    <xsl:variable name="p" select="$gbrc:rotulos[@k = 'palabras']"/>
 
     <!-- 1. APERTURA, CON EL RÓTULO EN EL IDIOMA DEL RESUMEN -->
     <xsl:text>\begin{gbresumen}{</xsl:text>

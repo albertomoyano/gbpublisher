@@ -9,7 +9,10 @@
               BIBLIOGRAFÍA Y LA COPIA DE ESE MARCADO A LA SALIDA.
   USO       : SE INCLUYE CON xsl:include DESDE docbook-to-html.xsl Y
               docbook-to-epub.xsl, JUNTO CON cita-comun.xsl Y
-              codigo-comun.xsl, DE LOS QUE DEPENDE.
+              codigo-comun.xsl, DE LOS QUE DEPENDE. DESDE E2 TAMBIÉN
+              DESDE jats-a-epub-articulo.xsl (REVISTA): ESA HOJA NO USA
+              gbct:fragmento-cita NI gbct:marca-bib, QUE SON DE DocBook;
+              BUSCA LAS MARCAS POR id CON LA MISMA CLAVE gbct:por-id.
   CONTRATO  : - EL PARÁMETRO bib_dir LO DECLARA ESTE MÓDULO. VACÍO: LA
                 HOJA ARMA LAS CITAS CON SUS PLANTILLAS POR ESTILO, COMO
                 ANTES. CON VALOR: LA CARPETA DE LA PASADA, CON
@@ -124,10 +127,11 @@
                ': el canónico cambió después de la pasada de citas.'))"/>
     </xsl:if>
     <!-- LA ETIQUETA DEL <dt> TIENE QUE SER LA DEL ESTILO: [n] EN UNO
-         NUMÉRICO, NINGUNA EN UN AUTOR-AÑO. OTRA COSA (UN ESTILO ALFABÉTICO,
-         UN citas.html DE OTRO ESTILO) NO SE MIDIÓ Y CORTA (GV-23, SC-57) -->
+         NUMÉRICO (ieee), n. EN vancouver (MEDIDO EN E3, 14/11/2026),
+         NINGUNA EN UN AUTOR-AÑO. OTRA COSA (UN ESTILO ALFABÉTICO, UN
+         citas.html DE OTRO ESTILO) NO SE MIDIÓ Y CORTA (GV-23, SC-57) -->
     <xsl:variable name="ajenas" select="if ($numerico)
-                                        then $dl/dt[not(matches(normalize-space(), '^\[[0-9]+\]$'))]
+                                        then $dl/dt[not(matches(normalize-space(), '^(\[[0-9]+\]|[0-9]+\.)$'))]
                                         else $dl/dt[normalize-space() != '']"/>
     <xsl:if test="exists($ajenas)">
       <xsl:sequence select="error(QName('urn:gbpublisher:citas', 'etiqueta'),
@@ -135,7 +139,7 @@
                if (normalize-space($ajenas[1]) = '') then 'una entrada sin etiqueta'
                else concat('la etiqueta «', normalize-space($ajenas[1]), '»'),
                ' y el estilo del libro ',
-               if ($numerico) then 'es numérico: espera [n].' else 'es autor-año: no lleva etiqueta.'))"/>
+               if ($numerico) then 'es numérico: espera [n] o n.' else 'es autor-año: no lleva etiqueta.'))"/>
     </xsl:if>
     <xsl:sequence select="$dl/dd"/>
   </xsl:function>
@@ -143,7 +147,7 @@
   <!-- ============================================================ -->
   <!-- FUNCIÓN : gbct:etiqueta-entrada                              -->
   <!-- PROPÓSITO: LA ETIQUETA DE UNA ENTRADA DE citas.html, DEL     -->
-  <!--            <dt> QUE LA PRECEDE: «[1]» EN UN ESTILO NUMÉRICO  -->
+  <!--            <dt> QUE LA PRECEDE: «[1]» O «1.» EN UNO NUMÉRICO -->
   <!-- PARÁMETROS: dd As element() — la entrada                     -->
   <!-- RETORNA  : xs:string — la etiqueta; vacía en un autor-año    -->
   <!-- ============================================================ -->
@@ -167,7 +171,7 @@
     <xsl:param name="entradas" as="element()*"/>
     <xsl:variable name="cifras" as="xs:integer*"
                   select="for $d in $entradas
-                          return string-length(translate(gbct:etiqueta-entrada($d), '[]', ''))"/>
+                          return string-length(translate(gbct:etiqueta-entrada($d), '[].', ''))"/>
     <!-- EL TOPE: 999 ENTRADAS EN UNA LISTA. MÁS ALLÁ, LA ETIQUETA SOLO
          EMPUJA EL TEXTO DE LA PRIMERA LÍNEA -->
     <xsl:sequence select="if (empty($cifras) or max($cifras) = 0) then ''
@@ -260,11 +264,14 @@
   </xsl:template>
 
   <!-- ENLACE DE CITA: #cite.N@clave → EL linkend DEL biblioref DEL GRUPO
-       CON ESA CLAVE. EL ENLACE LO ARMA LA HOJA (gbct:enlace-cita) -->
+       CON ESA CLAVE. EL ENLACE LO ARMA LA HOJA (gbct:enlace-cita). DESDE
+       E2 (14/11/2026) EL GRUPO PUEDE SER DE xref DE JATS (EPUB DE
+       REVISTA): SU DESTINO ESTÁ EN @rid (bib-clave), Y gbct:clave LE QUITA
+       EL PREFIJO IGUAL. EN DocBook NO CAMBIA NADA: @linkend VA PRIMERO -->
   <xsl:template match="a[starts-with(@href, '#cite.')]" mode="gbct:fragmento">
     <xsl:param name="grupo" as="element()*" tunnel="yes"/>
     <xsl:variable name="clave" select="substring-after(@href, '@')"/>
-    <xsl:variable name="b" select="$grupo[gbct:clave(@linkend) = $clave][1]"/>
+    <xsl:variable name="b" select="$grupo[gbct:clave((@linkend, @rid)[1]) = $clave][1]"/>
     <xsl:if test="empty($b)">
       <xsl:message terminate="yes">
         <xsl:text>[citas] citas.html enlaza a la clave </xsl:text>
@@ -272,13 +279,13 @@
         <xsl:text>, que no está en el grupo de citas</xsl:text>
         <xsl:if test="exists($grupo)">
           <xsl:text> de </xsl:text>
-          <xsl:value-of select="$grupo[1]/@linkend"/>
+          <xsl:value-of select="($grupo[1]/@linkend, $grupo[1]/@rid)[1]"/>
         </xsl:if>
         <xsl:text>.</xsl:text>
       </xsl:message>
     </xsl:if>
     <xsl:call-template name="gbct:enlace-cita">
-      <xsl:with-param name="rid" select="string($b/@linkend)"/>
+      <xsl:with-param name="rid" select="string(($b/@linkend, $b/@rid)[1])"/>
       <xsl:with-param name="contenido">
         <xsl:apply-templates mode="gbct:fragmento"/>
       </xsl:with-param>

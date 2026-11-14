@@ -72,11 +72,15 @@
   <!--            ETIQUETA [n] DE LAS ENTRADAS POR tex4ht           -->
   <!--            (cita-fragmentos.xsl). UNA SOLA LISTA PARA LOS DOS -->
   <!-- PARÁMETROS: estilo As xs:string — familia de estilo activa   -->
-  <!-- RETORNA  : xs:boolean — true() PARA ieee                     -->
+  <!-- RETORNA  : xs:boolean — true() PARA ieee Y vancouver         -->
+  <!-- NOTA     : vancouver DESDE E3 (14/11/2026): EL EPUB DE REVISTA -->
+  <!--            LO NECESITA PARA LA ETIQUETA «1.» DE SUS ENTRADAS.  -->
+  <!--            EN LIBROS NO CAMBIA NADA: docbook-to-latex.xsl     -->
+  <!--            FRENA CON vancouver                               -->
   <!-- ============================================================ -->
   <xsl:function name="gbct:estilo-numerico" as="xs:boolean">
     <xsl:param name="estilo" as="xs:string"/>
-    <xsl:sequence select="$estilo = 'ieee'"/>
+    <xsl:sequence select="$estilo = ('ieee', 'vancouver')"/>
   </xsl:function>
 
   <!-- ============================================================ -->
