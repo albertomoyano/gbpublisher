@@ -1321,7 +1321,11 @@ EL ESQUEMA PROPIO DE gbWeb
 
 El esquema `gbweb` (SC-80) sigue las mismas reglas, con su cadena en el repositorio de gbWeb y su propia `gbweb.esquema_version`: 1.0.0 (portales y asociación, SC-80), 1.1.0 (logo e imagen destacada, SC-83), 1.2.0 (datos del portal y perfiles en las redes, SC-83).
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85
+CADENA DE LAS SALIDAS DE REVISTAS (7 A 14/11/2026)
+
+1.23.0 (reapertura de un artículo publicado, `articulo_reapertura` y sus disparadores), 1.24.0 (`por_articulo` al final del ENUM de `revista.modelo_paginacion`: así MySQL no copia la tabla ni renumera los valores), 1.25.0 (la fila `disponibilidad_datos` de `tipo_declaracion`), 1.26.0 (editorial, créditos, órganos y preliminares; migra), 1.27.0 (borra de `revista` las columnas que pasaron a la editorial; su vuelta atrás las repone desde la editorial), 1.28.0 (`credit_roles.uri`, `credit_rol_nombre`, `licencia_texto`, `revista.logo`), 1.29.0 (`articulo.licencia_texto`, `contribuyente_credit.nombre_rol` y `uri_rol`; congela los publicados con el catálogo del momento). Cada uno con respaldo, PREVIO, idempotencia y vuelta atrás probados en la base de prueba; los que borran o migran dejan un `…-volver-atras.sql` junto al respaldo. `m_ConexionBD.ObtenerEsquemaEsperado` se actualiza con cada uno. Ver SC-71, SC-88 y SC-90.
+
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -3473,7 +3477,9 @@ ALCANCE
 
 Verona, APA, ISO 690 e IEEE. Los demás estilos siguen con sus hojas hasta que se releven (SC-14: un estilo sin RF no se implementa), y cuando entren lo hacen por este mismo camino, con su archivo `-html.tex`.
 
-**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104,vinculo:SC-58,vinculo:GV-105,vinculo:RF-13,vinculo:RF-14,vinculo:SC-59
+REVISTAS (14/11/2026). El mismo camino, sobre el canónico JATS: `jats-a-latex-citas.xsl` (importa la hoja del PDF del artículo y escribe cada grupo como `\gbcita{archivo-n}{comando}`, con la regla de agrupamiento de `cita-jats-comun.xsl`, la misma del PDF), una `refsection` por artículo con su bibliografía, y el «cómo citar» como `\gbcita{archivo-comocitar}` en una `refsection` aparte. `engine/preparar_citas_revista.sh <proyecto> <bib> <carpeta>` lo junta para todo el número desde el volcado y verifica las marcas. Los cinco estilos de revista tienen versión de pantalla: Vancouver por biblatex-vancouver, con `cita-vancouver-html.tex` (la etiqueta «1.», GV-203). Medido con los cinco (mini-test E0): las citas de make4ht son las del PDF. Las hojas del EPUB y del HTML de revista (SC-91, SC-92) toman de `citas.html` las citas, las referencias y el «cómo citar».
+
+**Relaciones:** vinculo:SC-14,vinculo:SC-56,vinculo:SC-31,vinculo:SC-42,vinculo:RF-12,vinculo:GV-102,apoya:GV-23,vinculo:GV-103,vinculo:GV-104,vinculo:SC-58,vinculo:GV-105,vinculo:RF-13,vinculo:RF-14,vinculo:SC-59,vinculo:SC-72,vinculo:SC-89,vinculo:SC-91,vinculo:SC-92,apoya:GV-203
 
 **PENDIENTE:** Implementado y medido en el contenedor con el libro de Duek (132 citas, 113 referencias): el texto de cada cita del HTML y del EPUB es el de citas.html, y las referencias de cada pieza son las mismas y en el mismo orden; los enlaces de cita del EPUB no tienen destinos rotos; vnu sin errores en el HTML; epubcheck 4.2.6 sin errores en el EPUB; bibliografía consolidada simulada (103 referencias) en HTML y EPUB; los cortes de la hoja con un citas.html incompleto. Falta: la prueba en Mint con un libro real; cómo responden los lectores de EPUB a all-small-caps; la fuente del panel de referencias del HTML (GV-104).
 
@@ -4327,7 +4333,7 @@ DECISIÓN CERRADA (Alberto, 25 a 28/10; documento de trabajo `claude/rediseno-re
 
 PIRÁMIDE
 
-- N0 Revista (permanente; pestaña «Revistas» de `FSysAdmin`, `m_Revistas`). N1 Número (uno por proyecto `r-*.md`; `FMetadatosNumero`, `m_Numero`). N2 Artículo (`FMetadatosArticulo`, `m_Articulo`). N3 bloques opcionales que activa cada revista (patrón de OJS: desactivar / habilitar / solicitar / exigir).
+- N0 Revista (permanente; `FRevistas`, que se abre desde la pestaña «Editorial» de `FSysAdmin`, `m_Revistas`). La editorial es la madre de sus revistas (SC-88). N1 Número (uno por proyecto `r-*.md`; `FMetadatosNumero`, `m_Numero`). N2 Artículo (`FMetadatosArticulo`, `m_Articulo`). N3 bloques opcionales que activa cada revista (patrón de OJS: desactivar / habilitar / solicitar / exigir).
 - Revistas no comparte tablas con libros. Las tablas hijas se nombran para que `capitulos` pueda adoptarlas después.
 
 CRITERIOS DE ESQUEMA
@@ -4342,33 +4348,33 @@ CRITERIOS DE ESQUEMA
 REGLAS DEL FLUJO
 
 - Herencia viva hasta publicar (decisión 14): mientras el artículo no está publicado, un campo vacío toma el valor de la revista (licencia, titular del copyright, tipo de acceso). Al publicar se congela el valor efectivo.
-- Un artículo publicado es de solo lectura (decisión 17): el formulario lo bloquea y el módulo se niega a grabarlo. Reabrir exigirá un permiso desde `FSysAdmin` y quedará registrado en una tabla propia, con motivo obligatorio (entrega E, todavía no implementada).
+- Un artículo publicado es de solo lectura (decisión 17): el formulario lo bloquea y el módulo se niega a grabarlo. Reabrir exige un permiso y queda registrado con motivo obligatorio en `articulo_reapertura` (`FReabrirArticulo`, esquema 1.23.0, implementado el 7/11/2026). Al republicar se vuelve a congelar.
 - Secciones por revista (decisión 15), con título por idioma, orden, article-type por defecto y plantilla de resumen. El artículo guarda su propio article-type: `subj-group-type="heading"` y `@article-type` se separan.
 - El dossier es una agrupación dentro del número, no una sección (`numero_dossier`), con título por idioma y personas a cargo (`numero_contribuyente` con `id_dossier`). Se borra solo sin artículos.
 - El número se vincula al proyecto al abrirlo: vincular y confirmar siempre. Volumen y número quedan de solo lectura con artículos consignados; la revista se cambia solo sin artículos.
 - La lista de artículos sale de los `a-*.md` de `articulos/` cruzados con la base por nombre de archivo: «sin metadatos» y «huérfana» se muestran.
 
-CADENA DE ESQUEMA (SC-22): 1.13.0 (las 23 tablas), 1.14.0 (NULL en vez de '', GV-74), 1.15.0 (ROR de la afiliación, GV-153, GV-154), 1.16.0 (vocabulario controlado, SC-74), 1.17.0 (dos términos CRediT a la forma de JATS4R).
+CADENA DE ESQUEMA (SC-22): 1.13.0 (las 23 tablas), 1.14.0 (NULL en vez de '', GV-74), 1.15.0 (ROR de la afiliación, GV-153, GV-154), 1.16.0 (vocabulario controlado, SC-74), 1.17.0 (dos términos CRediT a la forma de JATS4R), 1.23.0 (reapertura), 1.24.0 (modelo `por_articulo`), 1.25.0 (declaración de disponibilidad de datos), 1.26.0 y 1.27.0 (editorial, órganos y preliminares, SC-88), 1.28.0 y 1.29.0 (catálogos de CRediT y licencias por idioma y congelado al publicar, logo de la revista, SC-90).
 
-**Relaciones:** vinculo:SC-22,vinculo:SC-23,vinculo:GV-74,vinculo:SC-72,vinculo:SC-73,vinculo:SC-74,vinculo:SC-70
+**Relaciones:** vinculo:SC-22,vinculo:SC-23,vinculo:GV-74,vinculo:SC-72,vinculo:SC-73,vinculo:SC-74,vinculo:SC-70,vinculo:SC-87,vinculo:SC-88,vinculo:SC-89,vinculo:SC-90
 
 ### SC-72 — Revistas: las salidas
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / decisiones de diseño · **Verificado:** 2026-10
 
-DECISIÓN CERRADA (Alberto, 25/10; documento de trabajo `claude/rediseno-revistas.md`, decisiones 6 a 13). Todavía no implementada: rige el rediseño de las salidas de revistas.
+DECISIÓN CERRADA (Alberto, 25/10; documento de trabajo `claude/rediseno-revistas.md`, decisiones 6 a 13). IMPLEMENTADA del 7 al 14/11/2026 (documento de trabajo `claude/salidas-revistas.md`): el canónico (SC-87), la editorial y las preliminares (SC-88), el PDF (SC-89), los catálogos comunes (SC-90), el EPUB (SC-91), el HTML autónomo (SC-92) y la pinza entre ellas (SC-93). Las salidas leen solo el esquema nuevo; los números viejos siguen con el camino viejo hasta su retiro, sin migración.
 
 - ORDEN: primero las salidas de lectura (PDF, HTML, EPUB, también del número completo); después los sabores XML, en el orden de necesidad real: JATS4R (que valida el canónico, no es un sabor), Crossref y DOAJ antes que PMC. Vancouver se resuelve en las salidas de lectura.
 - CITAS: SC-57 llega a revistas. biblatex escribe las citas de HTML y EPUB por tex4ht; el estilo de cita es atributo de la revista y sale del catálogo `cita-*-config.tex`.
 - REFERENCIAS: el texto formateado alimenta `mixed-citation` en los sabores (SciELO, PMC), no en el canónico, que queda como dato.
 - IBID. Y OP. CIT. son presentación, no dato: el `.md` lleva siempre la clave. El PDF conserva la tradición y el HTML lleva citas autosuficientes (`cita-<estilo>-html.tex`).
 - EL NÚMERO es un manifiesto interno que ordena los JATS de cada artículo. No se inventa un JATS de número.
-- PAGINACIÓN: es un dato que nace en la composición. Se compone el número, se leen los rangos, vuelven a la base y recién ahí salen los PDF por artículo y los XML. Modelo de paginación como atributo de la revista: corrida por número, por volumen o continua (`elocation-id`); se implementan los dos primeros y la estructura admite el continuo.
+- PAGINACIÓN: es un dato que nace en la composición y vuelve a la base. CORREGIDO al implementar (SC-89): no se compone el número para partirlo; cada artículo se compone solo, en el orden del número, y el PDF del número junta los de los artículos. Modelo de paginación como atributo de la revista, con cuatro modelos: por número, por volumen, por artículo y continuo (`elocation-id`), todos implementados.
 - PROCESOS EXTERNOS: rigen SC-13 y SC-53. Gambas lee la base y la escribe como archivos (front del artículo, manifiesto del número, `.bib`); los scripts de `engine/` hacen el resto. Los generadores actuales de revistas en Gambas son deuda de migración: se reemplazan por scripts, no se adaptan.
 
-**Relaciones:** vinculo:SC-57,vinculo:SC-13,vinculo:SC-53,vinculo:SC-71
+**Relaciones:** vinculo:SC-57,vinculo:SC-13,vinculo:SC-53,vinculo:SC-71,vinculo:SC-87,vinculo:SC-88,vinculo:SC-89,vinculo:SC-90,vinculo:SC-91,vinculo:SC-92,vinculo:SC-93
 
-**PENDIENTE:** Pendiente de implementación. Mini-tests previos: philosophy-verbose bajo make4ht; Vancouver bajo tex4ht; PDF por artículo; rango de páginas; griego politónico; mixed-citation para PMC y SciELO.
+**PENDIENTE:** Los sabores XML (Crossref, DOAJ, SciELO, Redalyc, PMC), con mixed-citation para PMC y SciELO. El HTML integrado al portal, cuando gbWeb publique el portal R-. Mini-tests que siguen abiertos: philosophy-verbose bajo make4ht y griego politónico. El retiro del camino viejo.
 
 ### SC-73 — Editores con tablas hijas: memoria, una transacción y reemplazo entero
 
@@ -4397,11 +4403,11 @@ DECISIÓN CERRADA (Alberto, 28/10; entrega C3 del rediseño de revistas).
 - IDENTIFICADOR: el código del vocabulario (MeSH: D006801). La URI de JATS (`kwd/@vocab-term-identifier`; `kwd-group/@vocab` y `@vocab-identifier`, DTD 1.4) se arma al generar. MeSH: `http://id.nlm.nih.gov/mesh/` + código (MeSH RDF). DeCS: sin patrón de URI verificado.
 - EN EL ARTÍCULO: sugerencias mientras se tipea (dos caracteres como mínimo); se agrega la sugerencia elegida o lo escrito. Si el catálogo ya tiene el término con otras mayúsculas, se usa su forma y su identificador. Un término nuevo entra al catálogo al guardar el artículo, en su transacción (`INSERT … ON DUPLICATE KEY UPDATE`, no `INSERT IGNORE`, que también callaría un CHECK).
 - El artículo guarda término e identificador por valor (SC-23).
-- CORRECCIÓN: solo desde `FVocabularios` (pestaña «Revistas» de `FSysAdmin`). Corregir un término corrige los artículos NO publicados que lo usan (herencia viva, SC-71); un publicado queda como salió. Se borra solo un término sin uso.
+- CORRECCIÓN: solo desde la tercera subpestaña de «Catálogos» de `FSysAdmin` (desde el 14/11/2026; antes `FVocabularios`, que se borró). Una sola subpestaña con filtro por vocabulario e idioma, para que un vocabulario nuevo no obligue a tocar el formulario. Un vocabulario propio se crea escribiendo su nombre y guardando su primer término; en el canónico, `kwd-group-type` y `vocab` llevan ese nombre. Corregir un término corrige los artículos NO publicados que lo usan (herencia viva, SC-71); un publicado queda como salió. Se borra solo un término sin uso.
 - Las palabras clave del autor siguen libres, una por línea.
 - LICENCIAS: los datos de MeSH son de dominio público, con cita a NLM y versión declarada si se redistribuyen. Descargar DeCS exige un contrato de licencia gratuito con BIREME. Tipear términos no requiere nada.
 
-**Relaciones:** vinculo:SC-23,vinculo:SC-08,vinculo:SC-71,vinculo:SC-73,vinculo:GV-152,vinculo:GV-145,vinculo:GV-146,vinculo:GV-150
+**Relaciones:** vinculo:SC-23,vinculo:SC-08,vinculo:SC-71,vinculo:SC-73,vinculo:GV-152,vinculo:GV-145,vinculo:GV-146,vinculo:GV-150,vinculo:SC-90
 
 ### SC-75 — Validación del canónico DocBook de libros: un validador en engine/, huella de las fuentes y freno del desactualizado
 
@@ -4614,9 +4620,13 @@ REVISTAS
 
 No cambian todavía: `m_GenerarEpub` y `m_GenerarHTML` siguen copiando `media/` entera. Se retoma con el módulo de revistas.
 
-**Relaciones:** vinculo:SC-25,vinculo:SC-32,vinculo:SC-69,vinculo:SC-75,apoya:GV-156,vinculo:GV-155,vinculo:GV-22,vinculo:SC-11,vinculo:SC-81
+REVISTAS (14/11/2026)
 
-**PENDIENTE:** Revistas: la limpieza de media/, la copia para pantalla y el ancho proporcional, cuando se retome ese módulo. En una revista el botón de figura no escribe ancho ni alt.
+El mismo criterio en el EPUB y el HTML del número (SC-91, SC-92): solo las imágenes que usan los artículos (el `xlink:href` de cada `fig/graphic`, sin carpeta: `imagenes_canonico_jats` en `engine/revista_comun.sh`, la gemela de `imagenes_canonico` para DocBook) y la tapa del número, cada una por `copiar_imagen_pantalla`. En el EPUB la lista es la del OPF, que arma `numero-a-epub.xsl`; en el HTML, `docs/assets/media/` se vacía en cada corrida y recibe esas, con el `.html` de cada gráfico (SC-69). Una imagen que falta en `media/` frena en las dos.
+
+**Relaciones:** vinculo:SC-25,vinculo:SC-32,vinculo:SC-69,vinculo:SC-75,apoya:GV-156,vinculo:GV-155,vinculo:GV-22,vinculo:SC-11,vinculo:SC-81,vinculo:SC-91,vinculo:SC-92
+
+**PENDIENTE:** Revistas: el ancho proporcional de la figura. En una revista el botón de figura no escribe ancho ni alt.
 
 ### SC-77 — Índices onomástico y de conceptos: la marca en el .md, el canónico y el PDF
 
@@ -5233,6 +5243,177 @@ Alberto, 11/11, con un libro real («El Atlántico de los exilios»): en el PDF,
 **Relaciones:** vinculo:SC-29,vinculo:SC-28,vinculo:SC-54,vinculo:SC-63,vinculo:SC-62,vinculo:GV-70,vinculo:GV-189,vinculo:GV-190,vinculo:GV-191
 
 **PENDIENTE:** Falta en Mint: epubcheck del EPUB, la inserción desde el panel, la ayuda y un caso que frene. Revistas, en la refactorización del módulo (otra conversación): el canónico JATS (fn/@symbol con <label>), jats-to-latex, jats-to-html, jats-to-epub, los sabores SciELO y Redalyc, y la fila nota-simbolo de no_aplica a borrador. El ODT.
+
+### SC-87 — Revistas: el canónico JATS por script — el volcado de la base, el front por XSLT, la validación y el camino que deciden los datos
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / jats-schematrons v0.0.17 / gbc3 3.19 / contenedor Ubuntu 24.04 y Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 7/11/2026; etapa A0 de las salidas de revistas, `claude/salidas-revistas.md`). El canónico JATS de cada artículo de un número del esquema nuevo (SC-71) lo arma un script de `engine/`, como el de los capítulos (SC-75). Gambas solo escribe la base como archivos (SC-13).
+
+EL VOLCADO
+
+`m_CanonicoRevista.PrepararNumero(iIdNumero, aArchivos)` escribe `tmp/numero-datos.xml`, un XML de datos (no JATS) con todo lo que las salidas necesitan del número: revista, número, secciones y plantillas con sus títulos por idioma, dossiers, preliminares y página legal (SC-88), y cada artículo en el orden de los archivos, con la herencia ya resuelta. También escribe el `reflist-{base}.xml` de cada artículo. Al final lista `<sin-metadatos>` (archivo sin fila) y `<huerfano>` (fila sin archivo), que el script informa.
+
+El volcado lleva versión (`numero-datos/@version`). Cada lector exige la suya y frena con un mensaje si no coincide: `ensamblar-articulo-canonico.xsl`, `numero-a-latex.xsl`, `numero-maestro-latex.xsl`, `numero-a-epub.xsl`, `numero-a-html.xsl` y los scripts que lo leen. Historia: 1 (A0.2), 2 (los nombres de babel de cada idioma, resueltos con el catálogo), 3 (preliminares y página legal, SC-88), 4 (los textos del catálogo en el idioma del artículo, SC-90).
+
+EL CANÓNICO
+
+`engine/generar_canonicos_articulos.sh <proyecto> <lista>`, por artículo: controles del .md (`controles_md.lua`: un error frena el artículo, un aviso da código 3), huellas de las fuentes (SC-75), pandoc `--to jats` con `FILTROS_REVISTA`, `ensamblar-articulo-canonico.xsl` (que importa `ensamblar-canonico.xsl` para el cuerpo e incluye `datos-a-front-jats.xsl` para el front) y `mv`. Un artículo que falla pierde su canónico anterior. Rehace todos los de la lista aunque el .md no haya cambiado: el volcado puede traer datos nuevos. Al final corre `validar_canonicos.sh` anidado.
+
+- Nombre: `jats/c-a-NN-x.xml`, con el prefijo del .md.
+- `<article dtd-version="1.4" article-type xml:lang>`, con el identificador público real de la DTD: «-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD v1.4 20241031//EN». El de `ensamblar-canonico.xsl` (camino viejo) no existe; queda igual hasta el retiro.
+- Front en el orden de la DTD: `contrib` con ORCID como URL, CRediT con vocabulario de JATS4R (GV-202), `aff` compartida con `institution-wrap` y ROR; `author-notes` con el conflicto de intereses y las notas; las dos `pub-date` (pub y collection); páginas o `elocation-id` solo si existen; `pub-history`; `permissions` siempre, con `ali:free_to_read` y `ali:license_ref`; `self-uri` por cada ubicación del artículo; `related-article` (un destino local sin DOI, con `@specific-use="gbpublisher-local:<archivo>"`); `abstract` estructurado con `sec`; `kwd-group` con `@kwd-group-type` y `@vocab`; un `funding-group`.
+- La declaración de disponibilidad de datos va en el back como `<sec sec-type="data-availability">` (JATS4R).
+
+LA VALIDACIÓN
+
+`validar_canonicos.sh` con alcance `articulo`: la DTD JATS 1.4 (`xmllint --dtdvalid --nonet`) y JATS4R con una sola JVM por lote, las dos sobre una copia sin DOCTYPE. Las reglas de JATS4R se compilan con `generar-schematron-jats4r.sh` (herramienta de desarrollo, en la raíz del repositorio): clona jats-schematrons v0.0.17, comprueba el commit, compila el maestro con el esqueleto ISO (GV-26), copia los vocabularios que las reglas leen y prueba cinco instancias con resultado exacto antes de reemplazar el producto (`.hidden/schemas/jats4r/`).
+
+EL CAMINO LO DECIDEN LOS DATOS
+
+`m_GenerarSalidasRevista.NumeroEsNuevo`: un número con artículos en la tabla `articulo` usa el camino nuevo; uno sin ellos, el viejo. `ConfigurarControles` (al abrir el proyecto) muestra uno u otro, nunca los dos. Menú propio «JATS» (`mJats`, `menuJats`) para el XML, como `menuDocBook` en libros: «Canónico archivo en curso» y «Todos los canónicos». Las salidas van en `menuSalidaRevistaMD` (SC-89, SC-91, SC-92). Un número que recibe su primer artículo nuevo cambia de camino al reabrirlo.
+
+**Relaciones:** vinculo:SC-71,vinculo:SC-72,vinculo:SC-13,vinculo:SC-53,vinculo:SC-75,vinculo:SC-52,vinculo:SC-28,vinculo:GV-25,vinculo:GV-26,apoya:GV-202
+
+**PENDIENTE:** El código ISO 3166 del país de la afiliación (la base guarda el nombre: JATS4R lo avisa). El vocab-identifier de MeSH y de DeCS. La figura de revista sin alt-text (JATS4R lo marca): decidir si controles_md lo avisa en revistas. Las reglas compiladas por grupo para el auditor de XML ajenos.
+
+### SC-88 — Revistas: la editorial, los órganos editoriales y las preliminares del número
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / gbc3 3.19 / SaxonJ-HE 12.5 / contenedor Ubuntu 24.04 y Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 12/11/2026; etapa B de las salidas de revistas). Modelo: el PDF de *Sociedad y Desigualdades* n.º 4 (UNPAZ): tapa, página legal y sumario.
+
+LA EDITORIAL ES LA MADRE DE SUS REVISTAS
+
+- Tabla `editorial` (nombre, institución, ROR, ciudad, país, prefijo DOI, correo, licencia, URL y titular por defecto) y `editorial_credito` (cargo, persona, desde, hasta): la producción y las autoridades viven en la editorial, con vigencia.
+- `revista.id_editorial` NOT NULL. El correo queda también en la revista como reemplazo opcional; `tipo_acceso_defecto` sigue en la revista. La editorial se vincula solo a revistas por ahora; los libros, después.
+- Esquemas: 1.26.0 crea las tablas y migra una editorial por grupo de identidad (frena si hay conflicto); 1.27.0 borra de `revista` las nueve columnas que pasaron.
+- Interfaz: la pestaña «Revistas» de `FSysAdmin` pasa a «Editorial» (`m_Editorial`), con un botón que abre `FRevistas`. Una editorial se borra solo sin revistas; una revista, solo sin números.
+
+LOS ÓRGANOS EDITORIALES
+
+- `revista_organo` y `revista_organo_miembro` (persona de `autores`, afiliación de la membresía, desde, hasta). La afiliación se propone desde la ficha y no se sincroniza. Un órgano con miembros no se borra, se desactiva. `ValidarMiembro` frena períodos superpuestos de la misma persona en el mismo órgano.
+- Buscador propio de personas (`FBuscarAutor`), con la conexión del administrador.
+
+LAS PRELIMINARES
+
+- Se declaran por número, como en libros (SC-25): `numero_pieza`, con tres nombres fijos (tapa, página legal, sumario). El formulario ofrece las tres; no se crean solas.
+- Fecha de referencia de las vigencias: el último día del mes del número (sin mes, el 31/12; sin año, frena si declara la página legal). El volcado (versión 3) trae `<preliminares>` y `<pagina-legal>` ya filtrados: un órgano sale si tiene algún miembro vigente a esa fecha. Ninguna salida decide vigencias.
+- El rótulo del volumen es de la revista (`revista.rotulo_volumen`: «Año III»); el período, un solo mes.
+- La tapa es `numero.imagen_tapa`: si el número declara la tapa y no tiene imagen, frena.
+- Las arman el PDF del número (`numero-maestro-latex.xsl`, SC-89) y el EPUB (`numero-a-epub.xsl`, SC-91) con las mismas funciones (`revista-comun.xsl`: la conjunción «y/e», la persona, los tramos del sumario por sección o dossier). El sumario agrupa los artículos por tramo seguido del mismo dossier o, sin dossier, de la misma sección. Un órgano de un solo miembro va en línea.
+
+**Relaciones:** vinculo:SC-71,vinculo:SC-22,vinculo:SC-25,vinculo:SC-87
+
+### SC-89 — Revistas: el PDF de cada artículo y el del número — contrato partido, primera página con columna, paginación que vuelve a la base y PDF/A-2u
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / LuaLaTeX y biber (TeX Live 2023) / veraPDF 1.30.3 / SaxonJ-HE 12.5 / gbc3 3.19 / contenedor Ubuntu 24.04 y Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 7 a 14/11/2026; etapas A1, B5 y C de las salidas de revistas). Reemplaza la decisión 11 de SC-72 (componer el número y partirlo): cada artículo se compone solo y el PDF del número junta los PDF de los artículos.
+
+EL CONTRATO DE LaTeX, PARTIDO
+
+- `preambulo-contrato-comun.tex` (común a libros y revistas): corte y nota en títulos, paquetes, babel con los idiomas del volcado, csquotes, siunitx, cuadros, bloques, llamadas y código. Versión 2: el gancho de castellano y gallego (GV-200).
+- `preambulo-contrato.tex` (libros, versión 21): lo que depende del capítulo (`\counterwithin*{gbcodigo}{chapter}`, `citereset=chapter`, GV-193).
+- `preambulo-revista-contrato.tex` (versión 4): la primera página, los idiomas por código (`\gbselectlanguage`, `gbotroidioma`, GV-198), las declaraciones y las preliminares del número. La estética, en `preambulo-revista-estetica.tex`, sobre ganchos.
+- Los `cita-*-config.tex` son comunes, sin `citereset`. Vancouver va por biblatex (biblatex-vancouver ajustado a la guía de la UAB, 2021).
+- `numero-a-latex.xsl` escribe `preambulo-numero.tex` (idiomas con su nombre de babel, banderas, el .bib) y un `main-{archivo}.tex` por artículo, con `\DocumentMetadata` en su idioma.
+
+LA HOJA
+
+`jats-a-latex-articulo.xsl` importa `jats-to-latex.xsl` y reemplaza la primera página (la vieja frenaba con el front nuevo: dos `pub-date`). Primera página (modelo de Alberto, requisitos de Redalyc, SciELO, DOAJ y Latindex verificados en sus fuentes): títulos a ancho completo; a la izquierda los resúmenes con sus palabras clave; a la derecha una columna (autores con ORCID, correo y afiliación; notas de autor; edición y traducción; fechas; DOI o e-id; cómo citar; licencia y copyright; compartir), armada en caja (GV-197) y colocada a la altura del primer resumen. Si no entra, el `.log` lo dice y el script da código 3. Las declaraciones (CRediT, financiamiento, conflicto de intereses, disponibilidad de datos) van al final, en un bloque. El membrete de las interiores lleva los autores en forma corta. El «cómo citar» lo compone biblatex: la hoja escribe un .bib propio y `\fullcite` corre en una `refsection` aparte, en el estilo de la revista; el rango de páginas sale del propio LaTeX (una segunda pasada con `pagina_final`). La regla de agrupamiento de citas (SC-57) vale sobre JATS (`cita-jats-comun.xsl`). Rótulos, tipos, fechas y nombres salen de `revista-comun.xsl`, que comparten el EPUB y el HTML.
+
+LA PAGINACIÓN
+
+Cuatro modelos (`revista.modelo_paginacion`): `por_numero` (desde 1), `por_volumen` (el número sigue al anterior entero del mismo volumen; los suplementos empiezan en 1; `numero.pagina_inicial` manda si está cargada; sin las páginas del anterior y sin ese dato, frena), `por_articulo` (cada uno desde 1) y `continua` (e-id «e» + año + tres cifras, corrido en el año, asignado una vez y nunca renumerado; las páginas internas van de 1). Foliado corrido, sin páginas en blanco. La paginación nace en la composición y vuelve a la base: `generar_pdf_revista.sh` deja `tmp/paginacion.tsv` solo si todo salió bien, y Gambas lo guarda (`GuardarPaginacion`, sin tocar los publicados) y regenera los canónicos con los rangos. Un publicado que caería en otras páginas frena sin escribir nada. Publicar exige las páginas o, en `continua`, el e-id.
+
+EL PDF DEL NÚMERO
+
+`numero-maestro-latex.xsl` arma un maestro con las preliminares que el número declara (SC-88) y los PDF de los artículos ya compuestos, incluidos con pdfpages (GV-201: los enlaces quedan en los PDF sueltos). Folio del sumario: la página inicial, el e-id o nada, según el modelo. Escapa `< > "` (GV-199). Todo PDF de revista es PDF/A-2u y se valida con veraPDF; el PDF/X queda para después. Nombre: ACRÓNIMO-AÑO-vVOL-nNÚM[-sSUPL].pdf, armado por `nombre_numero` (`engine/revista_comun.sh`, GV-204); sin acrónimo o sin año, frena al empezar. Las salidas van a `salidas/pdf/`.
+
+DESDE GAMBAS
+
+`m_GenerarSalidasRevista`: «PDF del artículo en curso» (prueba, `{archivo}-prueba.pdf`, no escribe en la base) y «PDF completo del número en curso», un botón con todo encadenado (e-id, página inicial, composición, páginas a la base, canónicos de nuevo). `media/logo-revista.png` se escribe desde la base en cada composición.
+
+**Relaciones:** vinculo:SC-72,vinculo:SC-87,vinculo:SC-88,vinculo:SC-57,vinculo:SC-31,vinculo:SC-13,vinculo:SC-53,apoya:GV-193,apoya:GV-194,apoya:GV-197,apoya:GV-198,apoya:GV-199,apoya:GV-200,apoya:GV-201,apoya:GV-204
+
+**PENDIENTE:** La comilla recta en f:latex (GV-199). El PDF/X. El retiro del camino viejo (Menu6, m_XML.GenerarPDF, btnGenerarXMLcanonico). Los paquetes de idioma de TeX Live que pide cada revista podrían verificarse en integridad.sh.
+
+### SC-90 — Catálogos comunes de CRediT y licencias: el nombre del rol y el texto de la licencia por idioma, congelados al publicar
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / gbc3 3.19 / SaxonJ-HE 12.5 / jats-schematrons v0.0.17 / contenedor Ubuntu 24.04 y Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 14/11/2026; etapa C de las salidas de revistas). CRediT y licencias son catálogos comunes a revistas, libros y autores: la consulta vive en módulos comunes (`m_CreditRoles`, `m_Licencias`), no en el volcado de revista.
+
+LOS CATÁLOGOS (esquema 1.28.0)
+
+- `credit_roles.uri` y `credit_rol_nombre` (id_rol, idioma, nombre): las traducciones es y pt de Contributorship Collaboration (credit-translation v1.0.0), tal cual la fuente. Sin traducción, el término en inglés.
+- `licencia_texto` (url, idioma, texto), con la URL como clave (SC-23), cargada con los seis textos CC 4.0 en castellano. Sin texto, la licencia se nombra solo con su etiqueta.
+- Respaldo de idioma en las dos: el código exacto, después la subetiqueta primaria (pt-BR → pt).
+- Se editan en la pestaña «Catálogos» de `FSysAdmin` (Roles CRediT, Licencias, Vocabularios, SC-74), que edita textos y no da de alta ni de baja licencias. La licencia de la editorial se elige del catálogo (combo de solo lectura) y su URL sale de él.
+- `revista.logo` (MEDIUMBLOB, GV-195): el logo de la cabecera, cargado en `FRevistas` (solo PNG, reconocido por su firma; avisa si la proporción se aparta más de un 5 % de 184:20).
+
+CONGELADO AL PUBLICAR (esquema 1.29.0; la reproducibilidad manda)
+
+`PublicarArticulo` escribe, dentro de su transacción, el texto de la licencia efectiva en el idioma del artículo (`articulo.licencia_texto`) y el nombre y la URI de cada rol (`contribuyente_credit.nombre_rol`, `uri_rol`). El volcado (versión 4) lleva `<licencia url texto>` y `<credit nombre uri>`: un artículo no publicado los toma del catálogo; uno publicado, los congelados. Cambiar el catálogo no toca lo publicado. El script de 1.29.0 congeló los publicados con el catálogo de ese día.
+
+EN EL CANÓNICO
+
+`<role>` lleva el nombre en el idioma del artículo; `@vocab-term` el término de JATS4R, buscado por la URI (GV-202); `@vocab-term-identifier`, la URI. `license-p` = etiqueta + «. » + texto.
+
+**Relaciones:** vinculo:SC-23,vinculo:SC-71,vinculo:SC-74,vinculo:SC-87,vinculo:SC-22,apoya:GV-195,apoya:GV-196,apoya:GV-202
+
+### SC-91 — Revistas: el EPUB del número — un solo EPUB, el armazón desde el volcado y cada artículo con los datos de la columna del PDF
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / SaxonJ-HE 12.5 / make4ht v0.3m / epubcheck 4.2.6 / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 14/11/2026; etapa E de las salidas de revistas).
+
+- UN SOLO EPUB por número: tapa, página legal, sumario y todos los artículos. No hay EPUB por artículo, como en libros. Noto Serif embebida. Nombre: el del PDF del número con `.epub` (`nombre_numero`, SC-89), en `salidas/epub/`.
+- EL ARMAZÓN LO ARMA UNA XSLT DESDE EL VOLCADO, no Gambas como en libros (`m_GenerarEpubLibro`): `numero-a-epub.xsl` escribe `content.opf`, `nav.xhtml` y las preliminares. Las del PDF salen del volcado con las mismas funciones (`revista-comun.xsl`): escritas dos veces podían divergir. La frontera con la base no cambia: Gambas escribe el volcado y el script no la toca.
+- PRELIMINARES: las que el número declara (SC-88), en el orden de su nombre. El sumario es una página propia, sin folios, con cada artículo enlazado y sus autores; el nav va aparte, fuera del recorrido de lectura, con los artículos agrupados por tramo y los landmarks (tapa, sumario, primer artículo). La imagen de la tapa es la cover-image cuando la tapa está declarada. Los rótulos de las preliminares son los del contrato de revista en castellano y se traducen en una revista de otro idioma (en, pt, fr); el PDF los deja en castellano salvo que la estética los redefina.
+- OPF: identificador `urn:gbpublisher:numero-{id}` (el ISSN es de la revista, no del número), título con la identificación del número, el idioma principal y los de los artículos, fecha AAAA-MM.
+- CADA ARTÍCULO: `jats-a-epub-articulo.xsl` importa `jats-to-epub.xsl` para el cuerpo (que sigue sirviendo al camino viejo hasta su retiro) y reemplaza el resto, en este orden: cabecera, resúmenes con sus palabras clave, un bloque con los datos de la columna del PDF en su orden y sin «compartir», cuerpo, agradecimientos, declaraciones (como en el PDF), apéndices, notas (solo las del texto: las de author-notes van en el bloque de datos) y referencias. Citas, referencias y «cómo citar» desde `citas.html` (SC-57).
+- IMÁGENES: las que usan los artículos y la tapa; el OPF es la única lista y el script copia exactamente esas (SC-76).
+- `engine/generar_epub_revista.sh <proyecto> <bib>`: verifica el volcado, las preliminares, la pinza y las páginas (SC-93); regenera los canónicos; la pasada de citas; el armazón y los artículos; recursos, mimetype y container.xml; verifica que todo lo que el OPF declara exista; empaqueta y pasa epubcheck (sus errores avisan, código 3).
+- DESDE GAMBAS: «EPUB completo del número en curso» (`GenerarEpubNumero`): escribe el .bib y el volcado y lanza el script (`LanzarSalidaNumero`). No escribe en la base.
+
+**Relaciones:** vinculo:SC-72,vinculo:SC-87,vinculo:SC-88,vinculo:SC-89,vinculo:SC-57,vinculo:SC-76,vinculo:SC-31,vinculo:SC-25,apoya:GV-203
+
+**PENDIENTE:** Probar en Mint con un número real. En jats-to-epub.xsl (también camino viejo): el texto alternativo de una figura sin alt es el pie aplanado, con la clave de la cita; «Figura N» va fijo en castellano. Se pueden resolver en la hoja nueva.
+
+### SC-92 — Revistas: el HTML autónomo del número — un sitio por número en docs/, el diseño del libro y las descargas en el sitio
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / SaxonJ-HE 12.5 / vnu 24.10.17 / Chromium (Playwright) / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 14/11/2026; etapa H de las salidas de revistas).
+
+- ALCANCE: el HTML autónomo. El integrado al portal (como SC-85 en libros) espera el portal de revista (R-) de gbWeb, con su esquema en `revista` y `FSysAdmin`.
+- UN SITIO POR NÚMERO en `docs/` del proyecto: `index.html` es el sumario y hay una página por artículo (`h-{archivo}.html`), la que se enlaza desde OJS. Desaparecen los modos control y final de la hoja vieja: el canonical va a la página del artículo cargada en la base (`articulo_ubicacion`, tipo pagina, `self-uri` en el canónico), y con ella se comparte; sin ella no hay canonical ni compartir.
+- EL DISEÑO DEL LIBRO AUTÓNOMO: `gbpublisher.css` y `gbpublisher.js` enlazados desde `docs/assets/` (jats-to-html.xsl los metía en cada página; las dos compartían 149 de 152 clases). La página del artículo tiene las tres columnas del capítulo del libro: a la izquierda, volver al sumario, la tapa, la identificación del número, compartir, el PDF y los datos de la columna del PDF; al centro, cabecera, resúmenes, cuerpo, agradecimientos, declaraciones y apéndices; a la derecha, el panel de notas, referencias y figuras. El sumario, dos columnas como la entrada del libro: la tapa, los ISSN y las descargas del número; los tramos de `revista-comun.xsl`, con cada artículo enlazado, sus autores y su PDF. La página legal no va: es de las ediciones.
+- LAS HOJAS: `jats-a-html-articulo.xsl` importa `jats-to-html.xsl` para el cuerpo; la raíz, los metadatos y la columna de datos de la vieja leían el canónico viejo y no se usan. Metadatos nuevos desde el canónico: Highwire, Dublin Core, Open Graph y Schema.org (ScholarlyArticle dentro de PublicationIssue, PublicationVolume y Periodical). `numero-a-html.xsl` escribe el sumario desde el volcado. Las dos salen sin espacio de nombres, como toda la hoja de revista.
+- CITAS: desde `citas.html` (SC-57), la misma pasada que el EPUB. El «cómo citar» es el de biblatex, en el estilo de la revista: no va el widget de cinco formatos del libro, que arma la cita en JavaScript.
+- LAS DESCARGAS se copian al sitio (`docs/descargas/`): el PDF de cada artículo y el PDF y el EPUB del número. No hace falta esquema nuevo. Están siempre: la revista es de acceso abierto (SC-93).
+- `engine/generar_html_revista.sh <proyecto> <bib>`: verifica la pinza y las páginas; regenera los canónicos; la pasada de citas; colorea el código por artículo (SC-42); rehace en `docs/` solo lo que escribe (`index.html`, `h-a-*.html`, `assets/media/`, `descargas/`), así un artículo que salió del número no queda publicado; imágenes por SC-76 con los gráficos interactivos (SC-69); las hojas; vnu (sus errores avisan, código 3).
+- DESDE GAMBAS: «HTML completo del número en curso» (`GenerarHtmlNumero`). El viejo «Generar salida HTML» queda solo para los números viejos.
+
+**Relaciones:** vinculo:SC-72,vinculo:SC-87,vinculo:SC-89,vinculo:SC-91,vinculo:SC-57,vinculo:SC-76,vinculo:SC-69,vinculo:SC-42,vinculo:SC-85,vinculo:SC-80
+
+**PENDIENTE:** Probar en Mint con un número real. El HTML integrado al portal de revista de gbWeb. Si se suma el widget de cinco formatos de cita, es una decisión aparte.
+
+### SC-93 — La pinza de las salidas del número: cada salida exige las anteriores; el PDF es la base
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / bash / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 14/11/2026). Las revistas son solo de acceso abierto, a diferencia de los libros, que pueden producirse para venta (sin descarga ni lectura en línea: de ahí los ajustes del formulario del libro). En una revista las salidas se validan cruzadas, «en pinza»: cada una se apoya en las otras o las ofrece, y no se genera si falta una de las que necesita.
+
+- PDF DEL NÚMERO (SC-89): es la base. Deja en la base las páginas y los e-id, y en `salidas/pdf/` el PDF de cada artículo y el del número.
+- EPUB (SC-91): exige los PDF del número y de cada artículo, y las páginas (o el e-id) de cada artículo en la base: sin ellas el «cómo citar» no tendría rango.
+- HTML (SC-92): exige los PDF y el EPUB, que ofrece como descargas, y las páginas.
+
+Lo que falta frena antes de trabajar, con la lista de lo que falta y qué generar primero. Se verifica la EXISTENCIA, no la frescura: un PDF viejo pasa. Las funciones viven en `engine/revista_comun.sh` (`salidas_que_faltan pdf | pdf+epub`, `articulos_sin_paginas`), compartidas por los dos scripts.
+
+**Relaciones:** vinculo:SC-89,vinculo:SC-91,vinculo:SC-92,vinculo:SC-72
 
 ---
 
@@ -6210,7 +6391,7 @@ REGLA: nunca usar un parámetro como canal de salida para un primitivo. Alternat
 
 **Relaciones:** vinculo:GV-23, vinculo:GV-14
 
-### GV-25 — Saxon 12 resuelve la DTD por red y no se lo puede impedir
+### GV-25 — Saxon 12 resuelve la DTD por red: las propiedades de JAXP no lo impiden; un catálogo (-catalog) o la copia sin DOCTYPE, sí
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.9 / Java 21 · **Verificado:** 2026-08
 
@@ -6227,11 +6408,15 @@ Ninguna opción lo evita. Se probaron `-Djavax.xml.accessExternalDTD`, `-Djavax.
 
 SOLUCIÓN: cuando la DTD no hace falta para la transformación, entregarle a Saxon una copia SIN DOCTYPE. Verificado: 0,43 s en lugar de 8,1 s, con resultados idénticos.
 
+MATIZ (7/11/2026, SaxonJ-HE 12.5): la opción `-catalog:archivo` de Saxon SÍ resuelve la DTD sin red, con el catálogo de NISO: 1,9 s contra 16 s, y sin red ni catálogo falla. No se había probado. La copia sin DOCTYPE (`xmllint --nonet --dropdtd`) sigue siendo más rápida (0,6 s) y es la que usan los scripts de revistas (SC-87, SC-89).
+
 Al recortar el DOCTYPE hay que CONTAR CORCHETES: el de JATS trae declaraciones de entidades entre `[` y `]`, que contienen sus propios `>`. Cortar en el primero rompe el documento; un `sed` ingenuo dejó el prefijo `ali` sin enlazar.
 
 Esto es la contracara de RC-XJ-03, y las dos reglas deben leerse juntas: allí el problema era que Saxon no conseguía la DTD y la solución fue permitirle buscarla; acá la busca cuando no hace falta.
 
 Vale para todo el proyecto: cualquier cadena XSLT que reciba un JATS con DOCTYPE remoto está pagando esos ocho segundos por archivo.
+
+**Relaciones:** vinculo:SC-87,vinculo:SC-89
 
 ### GV-26 — Los Schematron de JATS4R no se ejecutan tal como se distribuyen
 
@@ -6251,7 +6436,9 @@ COMBINACIÓN QUE FUNCIONA: `include.xsl` de SchXslt para resolver los includes, 
 
 REGLA: compilar y ejecutar temático por temático, nunca el maestro completo, y verificar cada grupo contra un corpus real antes de darlo por bueno. Que una regla compile no garantiza que ejecute.
 
-**Relaciones:** vinculo:GV-28
+ALCANCE (7/11/2026): la regla vale para el auditor de XML ajenos. Para los canónicos de gbpublisher se compila el maestro (`generar-schematron-jats4r.sh`, SC-87): el aborto XPTY0004 de la regla de `sec` (dos `title`) no puede darse en un canónico que la DTD ya controla, y las cinco instancias de prueba confirman cada compilación.
+
+**Relaciones:** vinculo:GV-28,vinculo:SC-87
 
 ### GV-27 — El SVRL no trae identificador por aserción
 
@@ -9681,6 +9868,168 @@ NO MEDIDO
 En un texto centrado (`\centering`), `\\` sirve: cada línea es un párrafo centrado. `\newline` termina la línea con `\hfil\break`, y ese `\hfil` correría la línea cortada hacia la izquierda: por eso `\gbCorteTitulo`, que usan los títulos centrados, no se cambió.
 
 **Relaciones:** apoya:SC-63,vinculo:GV-70,vinculo:GV-190
+
+### GV-193 — biblatex: \ExecuteBibliographyOptions{citereset=chapter} después de cargar el paquete rige igual que la opción de carga
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / babel / LuaLaTeX (TeX Live 2023) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido con biblatex de TeX Live 2023, un documento de dos capítulos que cita la misma obra en los dos:
+
+    \usepackage[style=verbose-ibid]{biblatex}
+    \ExecuteBibliographyOptions{citereset=chapter}
+
+En el segundo capítulo la cita vuelve a salir completa, igual que con `citereset=chapter` en las opciones de carga. Sin la orden, sale «ibid.».
+
+POR QUÉ IMPORTA: los `cita-*-config.tex` son comunes a libros y revistas (SC-89). `citereset=chapter` es de libros (un artículo no tiene capítulos), así que salió de los archivos de estilo y la pone `preambulo-contrato.tex` (libros, versión 21) con esta orden, después de que el estilo cargó biblatex.
+
+**Relaciones:** vinculo:SC-57,vinculo:SC-59
+
+### GV-194 — gb.db.mysql: SUM() llega como String; COUNT, MAX y CAST(… AS SIGNED), como Long
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19, gb.db.mysql / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido con `TypeOf` sobre el Result de `Connection.Exec`:
+
+    SELECT SUM(paginas) …                 String   (MySQL devuelve DECIMAL)
+    SELECT COUNT(*) …                     Long
+    SELECT MAX(pagina_fin) …              Long
+    SELECT CAST(SUM(paginas) AS SIGNED)   Long
+
+Comparar el String de un SUM() con un número da «Type mismatch» en tiempo de ejecución, no al compilar. Una suma que se compara o se opera se pide con `CAST(… AS SIGNED)` en la consulta.
+
+**Relaciones:** vinculo:RC-GM-01
+
+### GV-195 — gb.db.mysql: un MEDIUMBLOB NULL se lee como un Blob con .Data vacío, y !campo = Null con Edit graba un blob vacío, no NULL
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19, gb.db.mysql / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido sobre `revista.logo` (MEDIUMBLOB, esquema 1.28.0):
+
+- LECTURA: una fila con `logo` NULL no da `IsNull(r!logo)`: da un objeto Blob cuyo `.Data` es la cadena vacía. Lo que distingue «sin logo» es `Len(r!logo.Data) = 0`. `m_Revistas.DatosDeBlob` lo resuelve en un solo lugar.
+- ESCRITURA: con `Edit`, `rEdit!logo = Null` y `Update` deja `LENGTH(logo) = 0`, no NULL (comprobado con `SELECT logo IS NULL, LENGTH(logo)`).
+
+Para quitar el dato se usa `UPDATE revista SET logo = NULL WHERE …`. Es una excepción a RC-GM-15, comentada en el código con este motivo. La escritura de un valor sigue siendo la de GV-168 (Create/Edit con `.Data`).
+
+**Relaciones:** vinculo:GV-168,vinculo:RC-GM-15
+
+### GV-196 — gb.db.mysql: Create y Edit funcionan sobre una tabla con clave primaria compuesta
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19, gb.db.mysql / MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Mini-test previo a la pestaña «Catálogos» (C2b): `credit_rol_nombre` (PRIMARY KEY (id_rol, idioma)) y `licencia_texto` (PRIMARY KEY (url, idioma)).
+
+- `Create("credit_rol_nombre")`, los dos campos de la clave y `Update` dan de alta la fila.
+- `Edit("credit_rol_nombre", "id_rol = &1 AND idioma = &2", …)` y `Update` cambian solo esa fila.
+
+No hace falta una clave sustituta para usar el patrón de RC-GM-15 en una tabla de traducciones.
+
+**Relaciones:** vinculo:RC-GM-15
+
+### GV-197 — LaTeX: una caja guardada con lrbox dentro de un entorno se pierde al cerrarlo; hace falta \global\setbox
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / babel / LuaLaTeX (TeX Live 2023) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+La columna derecha de la primera página del artículo (contrato de revista, `gbcolumna`) se arma en una caja para medirla y colocarla después (`\gbcolocarcolumna`). Con `lrbox` dentro del entorno, la caja queda en el grupo del entorno y en el `\end{gbcolumna}` vuelve a estar vacía: la columna no salía, sin error.
+
+Lo que funciona, medido:
+
+    \global\setbox\gbcajacolumna\box\gbcajacolumna
+
+al final del entorno, que saca el contenido del grupo.
+
+### GV-198 — babel: \selectlanguage y otherlanguage no expanden un \csname en su argumento
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / babel / LuaLaTeX (TeX Live 2023) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido con babel de TeX Live 2023:
+
+    \selectlanguage{\csname gbbabel@de\endcsname}
+
+no cambia al alemán: toma «csnamegbbabel@de…» como nombre de idioma. Lo mismo `\begin{otherlanguage}{\csname …\endcsname}`. `\foreignlanguage` sí lo acepta (GV-163).
+
+Lo que funciona: expandir antes con `\edef` y llamar después.
+
+    \edef\gb@idioma{\noexpand\selectlanguage{\csname gbbabel@#1\endcsname}}%
+    \gb@idioma
+
+Es lo que hacen `\gbselectlanguage{código}` y `gbotroidioma{código}` del contrato de revista: las hojas emiten el código del idioma (es, pt-BR) y el preámbulo del número define `\gbbabel@<código>` con el nombre de babel del catálogo.
+
+**Relaciones:** vinculo:GV-163
+
+### GV-199 — babel-spanish: ~ se lleva el token siguiente, y < > " son activos y rompen los marcadores, el sumario y el texto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / babel / LuaLaTeX (TeX Live 2023) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Con `\usepackage[spanish]{babel}` (TeX Live 2023), medido:
+
+- `~` es un atajo activo que toma el token siguiente: `\nobreakspace` y no `~` dentro de una macro (`«~de~\fi»` se comía el `\fi`).
+- `<` y `>` son activos: un título con «<» en un marcador o en el sumario frena con «Argument of \language@active@arg> has an extra }».
+- `"` es activo: «Nota "de" autor» sale «Nota ”de.autor» en el PDF.
+
+El maestro del número escapa los tres (`gbm:tex`: `\textless{}`, `\textgreater{}`, `\textquotedbl{}`). `f:latex` (`tex-comun.xsl`, común con libros) no escapa la comilla recta: en el PDF de un artículo sale rota.
+
+**Relaciones:** vinculo:GV-163
+
+**PENDIENTE:** Decidir dónde se escapa la comilla recta: en f:latex para libros y revistas, o solo en el camino de revistas (al final de la serie de salidas de revistas, decisión de Alberto del 14/11).
+
+### GV-200 — babel: castellano y gallego en el mismo documento frenan con «Command \quoting already defined»
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex 3.19 / biber 2.19 / babel / LuaLaTeX (TeX Live 2023) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+`spanish.ldf` define el entorno `quoting` con `\newenvironment`, sin mirar si existe; `galician.ldf` lo define o lo redefine según exista. babel carga el idioma principal al final: con `main=spanish` y `galician` entre los otros, el castellano llega después y frena (medido, babel de TeX Live 2023). Con `main=galician` no pasa.
+
+Arreglo medido, en `preambulo-contrato-comun.tex` (versión 2), antes de cargar babel:
+
+    \AddToHook{file/spanish.ldf/before}{%
+      \let\quoting\@undefined\let\endquoting\@undefined}
+
+Compila en los dos órdenes. No cambia nada más: las hojas no emiten `quoting`; las comillas son de csquotes.
+
+### GV-201 — Unir PDF/A: qpdf deja los enlaces internos colgados; pdfpages pierde todos los enlaces de los PDF que incluye y pax no corre con LuaLaTeX
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** veraPDF 1.30.3 / qpdf 11.9.0 / pdfpages / pax / LuaLaTeX y pdflatex (TeX Live 2023) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Mini-test para el PDF del número (7/11, veraPDF 1.30.3, qpdf 11.9.0, TeX Live 2023), con dos artículos y una tapa que pasan PDF/A-2b cada uno:
+
+- qpdf con la tapa como base: falla 6.1.7.1-2 (Length del stream); con `--newline-before-endstream` valida. Conserva los enlaces externos y pierde los marcadores. Los enlaces internos quedan colgados: apuntan a destinos con nombre que no están en el árbol del archivo base y que además se repiten entre artículos (`section.1`). El XMP es el de la tapa.
+- qpdf `--empty`: falla tres reglas (sin XMP ni intención de salida).
+- pdfpages en un maestro con `\DocumentMetadata`: valida en una sola compilación, los marcadores los arma el maestro y el XMP es el del número; pierde todos los enlaces de los artículos, también los URI.
+- pax, que recupera los enlaces: frena con LuaLaTeX («pdfTeX is too old»; medido en B5).
+
+Por eso el PDF del número usa pdfpages y los enlaces viven en los PDF sueltos de cada artículo (SC-89).
+
+### GV-202 — JATS4R: el vocab-term de CRediT tiene la escritura de credit-roles.xml de JATS4R («Formal Analysis»), no la de NISO
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** jats-schematrons v0.0.17 / SaxonJ-HE 12.5 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+La regla de JATS4R (`credit-errors.sch`, jats-schematrons v0.0.17) compara `@vocab-term` con el término de su `credit-roles.xml`, que escribe «Formal Analysis» con mayúscula. NISO y el catálogo de gbpublisher (`credit_roles`) dicen «Formal analysis». Con la escritura de NISO el rol no valida.
+
+En el canónico, `datos-a-front-jats.xsl` toma `vocab-term` de su tabla buscando por la URI del rol (`vocab-term-identifier`), no por el término del catálogo. El contenido de `<role>` es el nombre en el idioma del artículo (SC-90).
+
+**Relaciones:** vinculo:GV-26
+
+### GV-203 — biblatex-vancouver bajo tex4ht: las entradas de la bibliografía salen etiquetadas «1.», no «[1]»
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** biblatex-vancouver (vancouver.bbx v0.1, 2020/05/20) / make4ht v0.3m / TeX Live 2023 / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+En `citas.html` (make4ht con `cita-tex4ht.cfg`, SC-57), el `<dt>` de cada entrada con `style=vancouver` dice «1.», «2.»; con `ieee`, «[1]». Las citas del texto salen igual en los dos: «[1, p. 3, ver 2]».
+
+`gbct:estilo-numerico` reconocía solo ieee: con vancouver la hoja esperaba una lista sin etiquetas y frenaba. Desde E3 (14/11/2026) la lista incluye vancouver y `cita-fragmentos.xsl` acepta «[n]» o «n.»; el ancho de la columna de la etiqueta descuenta el punto.
+
+**Relaciones:** vinculo:SC-57
+
+### GV-204 — iconv //TRANSLIT translitera las letras con tilde solo con un locale UTF-8
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** glibc iconv / bash / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido con el iconv de glibc:
+
+    printf 'Ñandú' | LC_ALL=C.UTF-8 iconv -f UTF-8 -t ASCII//TRANSLIT    Nandu
+    printf 'Ñandú' | LC_ALL=C       iconv -f UTF-8 -t ASCII//TRANSLIT    ?and?
+
+Con el locale C las letras con tilde salen como «?», y una limpieza posterior que deja solo [A-Za-z0-9.] las borra: «Ñandú» quedaba «and».
+
+Por eso `limpiar_parte_nombre` (engine/revista_comun.sh), que arma el nombre del PDF y el EPUB del número, fija `LC_ALL=C.UTF-8` en la llamada.
 
 ---
 
