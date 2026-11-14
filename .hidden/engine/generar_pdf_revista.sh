@@ -53,7 +53,8 @@
 #      no conserva los enlaces de los artículos: quedan en sus PDF sueltos
 #      (decisión de Alberto, 12/11). El sumario enlaza a cada artículo.
 #   5. En el modo numero, si todo salió bien: los PDF van a salidas/pdf/
-#      (cada artículo y numero.pdf) y tmp/paginacion.tsv dice dónde quedó
+#      (cada artículo y el del número, con su nombre de distribución: ver
+#      nombre_pdf_numero; C3) y tmp/paginacion.tsv dice dónde quedó
 #      cada artículo. Gambas lo lee y guarda las páginas en la base (A1.3).
 #
 # LOS MODELOS DE PAGINACIÓN (revista.modelo_paginacion)
@@ -152,6 +153,47 @@ VUELTAS_RANGO_MAX=2
 # ============================================================================
 dato_volcado() {
     xmllint --xpath "$1" "$VOLCADO" 2>/dev/null
+}
+
+# ============================================================================
+# Función   : nombre_pdf_numero
+# Propósito : El nombre con que se distribuye el PDF del número (C3, decisión
+#             de Alberto del 14/11/2026): ACRÓNIMO-AÑO-vVOLUMEN-nNÚMERO.pdf,
+#             p. ej. rp-2026-v3-n3.pdf. Un número sin volumen o sin número
+#             omite esa parte; un suplemento suma -sSUPLEMENTO. Cada parte
+#             pasa por limpiar_parte_nombre: el nombre va a una ruta
+# Parámetros: (ninguno; lee el volcado)
+# Retorna   : imprime el nombre; vacío si faltan el acrónimo o el año (el
+#             llamador frena)
+# ============================================================================
+nombre_pdf_numero() {
+    local acronimo anio volumen numero suplemento nombre
+    acronimo="$(limpiar_parte_nombre "$(dato_volcado 'normalize-space(/numero-datos/revista/acronimo)')")"
+    anio="$(limpiar_parte_nombre "$(dato_volcado 'string(/numero-datos/numero/@anio)')")"
+    volumen="$(limpiar_parte_nombre "$(dato_volcado 'normalize-space(/numero-datos/numero/@volumen)')")"
+    numero="$(limpiar_parte_nombre "$(dato_volcado 'normalize-space(/numero-datos/numero/@numero)')")"
+    suplemento="$(limpiar_parte_nombre "$(dato_volcado 'normalize-space(/numero-datos/numero/@suplemento)')")"
+    [[ -n "$acronimo" && -n "$anio" ]] || return 0
+    nombre="$acronimo-$anio"
+    [[ -n "$volumen" ]]    && nombre+="-v$volumen"
+    [[ -n "$numero" ]]     && nombre+="-n$numero"
+    [[ -n "$suplemento" ]] && nombre+="-s$suplemento"
+    printf '%s.pdf' "$nombre"
+}
+
+# ============================================================================
+# Función   : limpiar_parte_nombre
+# Propósito : Una parte del nombre del PDF, apta para una ruta: las letras
+#             con tilde pasan a su base (iconv //TRANSLIT de glibc, con
+#             C.UTF-8: «Ñandú» → «Nandu», medido); lo que no es letra ASCII,
+#             cifra o punto pasa a guion, sin guiones repetidos ni en los
+#             bordes. «Vol. 3/4» → «Vol.-3-4»
+# Parámetros: $1 el texto
+# Retorna   : imprime la parte limpia (puede quedar vacía)
+# ============================================================================
+limpiar_parte_nombre() {
+    printf '%s' "$1" | LC_ALL=C.UTF-8 iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null |
+        LC_ALL=C sed -e 's/[^A-Za-z0-9.]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//'
 }
 
 # ============================================================================
@@ -454,7 +496,7 @@ cd "$DIR_PROYECTO" || morir "No se pudo entrar a $DIR_PROYECTO"
 
 # LAS HERRAMIENTAS. NO SE USA verificar_herramientas_latex: EXIGE xindy, Y LA
 # REVISTA NO TIENE ÍNDICES
-requerir_comandos lualatex biber java xmllint pdfinfo perl
+requerir_comandos lualatex biber java xmllint pdfinfo perl iconv
 [[ -f "$RUTA_SAXON" ]]   || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: actualizá la copia local (~/.gbpublisher/xslt)"
 [[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: actualizá la copia local (~/.gbpublisher/xslt)"
@@ -512,6 +554,11 @@ if [[ "$MODO" == "numero" ]]; then
             INICIO="$VALOR" ;;
         *) INICIO=1 ;;
     esac
+    # EL NOMBRE DEL PDF DEL NÚMERO (C3): SIN ACRÓNIMO O SIN AÑO NO HAY NOMBRE.
+    # FRENA ACÁ, ANTES DE COMPONER, COMO LAS PRELIMINARES
+    NOMBRE_PDF_NUMERO="$(nombre_pdf_numero)"
+    [[ -n "$NOMBRE_PDF_NUMERO" ]] ||
+        morir "Para nombrar el PDF del número hacen falta el acrónimo de la revista (en Revistas) y el año del número (en sus metadatos)"
     # LAS PRELIMINARES DEL NÚMERO (B5): LO QUE FALTA FRENA ANTES DE COMPONER
     # LOS ARTÍCULOS, NO DESPUÉS DE MINUTOS DE COMPILACIÓN
     if [[ -n "$(dato_volcado "string(/numero-datos/preliminares/pieza[@tipo='tapa']/@tipo)")" ]]; then
@@ -634,8 +681,8 @@ for a in "${ARTICULOS[@]}"; do
     rm -rf -- "${DIR_COMPILACION:?}/$a"
 done
 if [[ "$MODO" == "numero" ]]; then
-    mv -f "$DIR_COMPILACION/numero/maestro-numero.pdf" "$DIR_SALIDA/numero.pdf" || morir "No se pudo mover el PDF del número a salidas/pdf"
-    ok "salidas/pdf/numero.pdf"
+    mv -f "$DIR_COMPILACION/numero/maestro-numero.pdf" "$DIR_SALIDA/$NOMBRE_PDF_NUMERO" || morir "No se pudo mover el PDF del número a salidas/pdf"
+    ok "salidas/pdf/$NOMBRE_PDF_NUMERO"
     rm -rf -- "${DIR_COMPILACION:?}/numero"
 fi
 rmdir "$DIR_COMPILACION" 2>/dev/null
