@@ -4,14 +4,14 @@
   HOJA DE ESTILO : jats-a-latex-articulo.xsl
   VERSIÓN XSLT   : 3.0 (Saxon-HE)
   PROPÓSITO      : EL CUERPO LaTeX DE UN ARTÍCULO PARA EL CAMINO NUEVO
-                   (engine/, CONTRATO DE REVISTA 3). IMPORTA
+                   (engine/, CONTRATO DE REVISTA 2). IMPORTA
                    jats-to-latex.xsl Y REEMPLAZA SOLO LA PRIMERA PÁGINA,
                    EL BLOQUE DE DECLARACIONES Y LOS DATOS DEL PDF: EL
                    CUERPO (SECCIONES, CITAS, FIGURAS, CUADROS, NOTAS) ES
                    EL DE LA HOJA IMPORTADA.
   POR QUÉ APARTE : m_XML (EL CAMINO VIEJO, HASTA EL 2.0.0) SIGUE USANDO
                    jats-to-latex.xsl CON SU PREÁMBULO EMBEBIDO. LAS
-                   MACROS DE ESTA HOJA SON DEL CONTRATO DE REVISTA 3 Y
+                   MACROS DE ESTA HOJA SON DEL CONTRATO DE REVISTA 2 Y
                    ESE PREÁMBULO NO LAS TIENE: CAMBIAR LA HOJA VIEJA
                    ROMPÍA EL CAMINO VIEJO. EN EL 2.0.0 LAS DOS SE FUNDEN.
   ENTRADA        : {proyecto}/jats/c-{nombre}.xml (CANÓNICO, A0.4)
@@ -27,11 +27,6 @@
                                    LO BUSCA POR BIBINPUTS, QUE DEBE
                                    INCLUIR {proyecto}/latex/. VACÍO: LA
                                    COLUMNA SALE SIN «CÓMO CITAR»
-                   pagina_final    LA ÚLTIMA PÁGINA, QUE generar_pdf_revista.sh
-                                   LEE DE LA COMPOSICIÓN (A1.2a): CON
-                                   pagina_inicial, EL RANGO DEL «CÓMO CITAR»
-                                   SALE DEL PROPIO LaTeX Y NO DEL CANÓNICO
-                                   (DECISIÓN DE A1). VACÍO: fpage Y lpage
   ============================================================
   ORDEN DEL FRAGMENTO:
     1. IDIOMA, MACROS \articulo*, FOLIO INICIAL, ESTILO firstpage
@@ -65,7 +60,6 @@
 
   <xsl:param name="pagina_inicial" as="xs:string" select="''"/>
   <xsl:param name="bib_cita" as="xs:string" select="''"/>
-  <xsl:param name="pagina_final" as="xs:string" select="''"/>
 
   <!-- LA CLAVE DEL ARTÍCULO EN EL .bib DEL «CÓMO CITAR» -->
   <xsl:variable name="gbr:clave-cita" select="'gb-articulo'"/>
@@ -197,11 +191,8 @@
     <xsl:variable name="fpage" select="normalize-space($meta/fpage)"/>
 
     <!-- 1. IDIOMA, MACROS, FOLIO, ESTILO DE LA PRIMERA PÁGINA -->
-    <!-- EL IDIOMA POR CÓDIGO: EL NOMBRE DE babel LO PONE preambulo-numero.tex
-         DESDE EL CATÁLOGO (CONTRATO 3, 4.0). f:babel-lang NO: SU TABLA
-         DIVERGE DEL CATÁLOGO (de → german; LO DESCONOCIDO, spanish) -->
-    <xsl:text>\gbselectlanguage{</xsl:text>
-    <xsl:value-of select="$xmlLang"/>
+    <xsl:text>\selectlanguage{</xsl:text>
+    <xsl:value-of select="f:babel-lang($xmlLang)"/>
     <xsl:text>}&#10;&#10;</xsl:text>
     <xsl:call-template name="emitir-macros-metadatos"/>
 
@@ -257,7 +248,7 @@
 
   <!-- ============================================================ -->
   <!-- NAMED TEMPLATE: emitir-macros-metadatos                      -->
-  <!-- \renewcommand DE LOS DATOS DEL ARTÍCULO (CONTRATO 3, 4.1).   -->
+  <!-- \renewcommand DE LOS DATOS DEL ARTÍCULO (CONTRATO 2, 4.1).   -->
   <!-- REEMPLAZA AL DE LA HOJA IMPORTADA, QUE CON EL FRONT NUEVO    -->
   <!-- FALLA: LEE pub-date/year COMO UNO SOLO Y EL CANÓNICO TRAE    -->
   <!-- DOS (pub Y collection; MEDIDO: XPTY0004), Y BUSCA issn POR   -->
@@ -645,7 +636,7 @@
 
     <!-- 1. APERTURA, CON EL RÓTULO EN EL IDIOMA DEL RESUMEN -->
     <xsl:text>\begin{gbresumen}{</xsl:text>
-    <xsl:value-of select="$lang"/>
+    <xsl:value-of select="f:babel-lang($lang)"/>
     <xsl:text>}{</xsl:text>
     <xsl:value-of select="f:latex(string(($r/@*[local-name() = $l2], $r/@en)[1]))"/>
     <xsl:text>}</xsl:text>
@@ -797,12 +788,8 @@
   <!-- ============================================================ -->
   <xsl:template name="gbr:bib-cita">
     <xsl:variable name="meta" select="front/article-meta"/>
-    <!-- EL RANGO DE LA COMPOSICIÓN GANA SOBRE EL DEL CANÓNICO: LOS DOS
-         PARÁMETROS LOS PASA generar_pdf_revista.sh DESPUÉS DE COMPONER -->
-    <xsl:variable name="fp" select="if ($pagina_inicial castable as xs:integer and $pagina_final castable as xs:integer)
-                                    then $pagina_inicial else normalize-space($meta/fpage)"/>
-    <xsl:variable name="lp" select="if ($pagina_inicial castable as xs:integer and $pagina_final castable as xs:integer)
-                                    then $pagina_final else normalize-space($meta/lpage)"/>
+    <xsl:variable name="fp" select="normalize-space($meta/fpage)"/>
+    <xsl:variable name="lp" select="normalize-space($meta/lpage)"/>
     <xsl:variable name="pub" select="$meta/pub-date[@date-type = 'pub'][1]"/>
     <xsl:variable name="col" select="$meta/pub-date[@date-type = 'collection'][1]"/>
     <xsl:variable name="fecha" select="
@@ -830,8 +817,7 @@
           <xsl:sequence select="'eid = {' || f:latex(normalize-space($meta/elocation-id)) || '}'"/>
         </xsl:when>
         <xsl:when test="$fp ne '' and $lp ne ''">
-          <!-- UNA SOLA PÁGINA VA SOLA: CON EL RANGO, APA ESCRIBE «101-101» -->
-          <xsl:sequence select="'pages = {' || $fp || (if ($fp eq $lp) then '' else '--' || $lp) || '}'"/>
+          <xsl:sequence select="'pages = {' || $fp || '--' || $lp || '}'"/>
         </xsl:when>
       </xsl:choose>
       <xsl:choose>
@@ -842,6 +828,7 @@
           <xsl:sequence select="'url = {' || normalize-space($meta/self-uri[@content-type = 'pagina'][1]/@xlink:href) || '}'"/>
         </xsl:when>
       </xsl:choose>
+      <xsl:sequence select="'langid = {' || f:babel-lang($xmlLang) || '}'"/>
     </xsl:variable>
     <xsl:result-document href="{$bib_cita}" method="text" encoding="UTF-8">
       <xsl:text>% ESCRITO POR jats-a-latex-articulo.xsl: EL «CÓMO CITAR» DEL ARTÍCULO&#10;</xsl:text>
@@ -851,6 +838,266 @@
       <xsl:value-of select="string-join($campos, ',&#10;  ')"/>
       <xsl:text>&#10;}&#10;</xsl:text>
     </xsl:result-document>
+  </xsl:template>
+
+  <!-- ============================================================ -->
+  <!-- CITAS BIBLIOGRÁFICAS: AGRUPAMIENTO CON AFIJOS POR CLAVE      -->
+  <!-- LA PLANTILLA DE jats-to-latex.xsl JUNTABA LAS CLAVES DE UN   -->
+  <!-- GRUPO EN UN SOLO \autocite Y SE QUEDABA CON LOS AFIJOS DE LA -->
+  <!-- PRIMERA:                                                     -->
+  <!--   [@lopez2020, p. 3; ver @gil_2019]                          -->
+  <!--   → \autocite[p.~3]{lopez2020,gil_2019}                      -->
+  <!-- SE PERDÍA «ver» Y «p. 3» QUEDABA COMO POSTNOTA DEL GRUPO     -->
+  <!-- (biblatex LA IMPRIME DESPUÉS DE LA ÚLTIMA CLAVE). MEDIDO EN  -->
+  <!-- LOS CINCO ESTILOS.                                           -->
+  <!-- ACÁ VA LA REGLA DE LIBROS (cita-comun.xsl, SC-57), LEÍDA     -->
+  <!-- SOBRE LA FORMA JATS DE LA CITA: LOS AFIJOS SON named-content -->
+  <!-- HIJOS DEL xref, NO HERMANOS COMO EN DocBook.                 -->
+  <!--   - DOS CITAS SEGUIDAS, CON UN SEPARADOR (, ; O GUION) ENTRE -->
+  <!--     ELLAS, SE AGRUPAN SI TIENEN EL MISMO MODO Y EL COMANDO   -->
+  <!--     TIENE FORMA MÚLTIPLE; SI NO LA TIENE (\autocite*), SOLO  -->
+  <!--     CUANDO NINGUNA DE LAS DOS LLEVA AFIJOS.                  -->
+  <!--   - GRUPO SIN AFIJOS: UN COMANDO CON TODAS LAS CLAVES        -->
+  <!--     (\autocite{a,b}): EL ESTILO ORDENA Y COMPRIME.           -->
+  <!--   - GRUPO CON ALGÚN AFIJO: EL COMANDO MÚLTIPLE, CON LOS      -->
+  <!--     AFIJOS DE CADA CITA (\autocites[p.~3]{a}[ver][]{b}).     -->
+  <!--   - EL SEPARADOR SE SUPRIME SOLO ENTRE DOS CITAS DEL MISMO   -->
+  <!--     GRUPO (EL DELIMITADOR LO PONE biblatex); SI NO, QUEDA    -->
+  <!--     COMO TEXTO. ANTES, ENTRE DOS MODOS DISTINTOS, SE         -->
+  <!--     CAMBIABA POR UN ESPACIO.                                 -->
+  <!-- LOS COMANDOS SON LOS DE LA HOJA IMPORTADA (\autocite,        -->
+  <!-- \autocite*, \textcite): LO QUE CAMBIA ES EL AGRUPAMIENTO.    -->
+  <!-- EL CAMINO VIEJO (m_XML) SIGUE CON LA REGLA DE                -->
+  <!-- jats-to-latex.xsl HASTA QUE SE RETIRE.                       -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================
+       Función   : gbr:modo-cita
+       Propósito : El modo de una cita: lo que va antes de «|» en
+                   @specific-use; sin atributo, 'normal'
+       Parámetros: x As element()? — el xref, o vacío
+       Retorna   : xs:string — normal | author-in-text | suppress,
+                   o vacío si no hay xref
+       ============================================ -->
+  <xsl:function name="gbr:modo-cita" as="xs:string">
+    <xsl:param name="x" as="element()?"/>
+    <xsl:variable name="su" select="normalize-space($x/@specific-use)"/>
+    <xsl:sequence select="if (empty($x)) then ''
+                          else if ($su = '') then 'normal'
+                          else if (contains($su, '|')) then substring-before($su, '|')
+                          else $su"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:comando-cita
+       Propósito : El comando de biblatex de un modo, el mismo que
+                   emite jats-to-latex.xsl
+       Parámetros: modo As xs:string — normal | author-in-text | suppress
+       Retorna   : xs:string — el comando, con la barra
+       ============================================ -->
+  <xsl:function name="gbr:comando-cita" as="xs:string">
+    <xsl:param name="modo" as="xs:string"/>
+    <xsl:sequence select="if ($modo = 'author-in-text') then '\textcite'
+                          else if ($modo = 'suppress') then '\autocite*'
+                          else '\autocite'"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:comando-multicita
+       Propósito : La forma múltiple de un comando (biblatex agrega
+                   «s»). Los comandos con asterisco no la tienen
+       Parámetros: comando As xs:string — el de gbr:comando-cita
+       Retorna   : xs:string — el múltiple, o vacío
+       ============================================ -->
+  <xsl:function name="gbr:comando-multicita" as="xs:string">
+    <xsl:param name="comando" as="xs:string"/>
+    <xsl:sequence select="if (ends-with($comando, '*')) then '' else concat($comando, 's')"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:sin-afijos
+       Propósito : ¿La cita no tiene prefijo ni sufijo?
+       Parámetros: x As element() — el xref
+       Retorna   : xs:boolean
+       ============================================ -->
+  <xsl:function name="gbr:sin-afijos" as="xs:boolean">
+    <xsl:param name="x" as="element()"/>
+    <xsl:sequence select="empty($x/named-content[@content-type = ('cite-prefix', 'cite-suffix')])"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:es-separador
+       Propósito : ¿El nodo es el texto que separa dos citas
+                   agrupables (coma, punto y coma o guion suelto)?
+       Parámetros: n As node()? — el nodo
+       Retorna   : xs:boolean
+       ============================================ -->
+  <xsl:function name="gbr:es-separador" as="xs:boolean">
+    <xsl:param name="n" as="node()?"/>
+    <xsl:sequence select="exists($n[self::text()])
+                          and matches(string($n), '^\s*[,;\p{Pd}]\s*$')"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:agrupables
+       Propósito : ¿Dos citas consecutivas van en el mismo comando?
+       Parámetros: a As element() — la primera
+                   b As element() — la segunda
+       Retorna   : xs:boolean
+       ============================================ -->
+  <xsl:function name="gbr:agrupables" as="xs:boolean">
+    <xsl:param name="a" as="element()"/>
+    <xsl:param name="b" as="element()"/>
+    <xsl:variable name="modo" select="gbr:modo-cita($a)"/>
+    <xsl:sequence select="$modo = gbr:modo-cita($b)
+      and (gbr:comando-multicita(gbr:comando-cita($modo)) != ''
+           or (gbr:sin-afijos($a) and gbr:sin-afijos($b)))"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:siguiente-en-grupo
+       Propósito : La cita que sigue a esta en el mismo grupo:
+                   xref, separador, xref; o vacío
+       Parámetros: x As element() — el xref
+       Retorna   : element()? — el xref siguiente del grupo
+       ============================================ -->
+  <xsl:function name="gbr:siguiente-en-grupo" as="element()?">
+    <xsl:param name="x" as="element()"/>
+    <xsl:variable name="sep" select="$x/following-sibling::node()[1]"/>
+    <xsl:variable name="c" select="if (gbr:es-separador($sep))
+                                   then $sep/following-sibling::node()[1] else ()"/>
+    <xsl:sequence select="$c[self::xref[@ref-type = 'bibr']][gbr:agrupables($x, .)]"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:anterior-en-grupo
+       Propósito : La cita que precede a esta en el mismo grupo, o vacío
+       Parámetros: x As element() — el xref
+       Retorna   : element()? — el xref anterior del grupo
+       ============================================ -->
+  <xsl:function name="gbr:anterior-en-grupo" as="element()?">
+    <xsl:param name="x" as="element()"/>
+    <xsl:variable name="sep" select="$x/preceding-sibling::node()[1]"/>
+    <xsl:variable name="a" select="if (gbr:es-separador($sep))
+                                   then $sep/preceding-sibling::node()[1] else ()"/>
+    <xsl:sequence select="$a[self::xref[@ref-type = 'bibr']][gbr:agrupables(., $x)]"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : gbr:grupo-desde
+       Propósito : Las citas del grupo que empieza en x, en orden
+       Parámetros: x As element() — el primer xref del grupo
+       Retorna   : element()* — los xref del grupo
+       ============================================ -->
+  <xsl:function name="gbr:grupo-desde" as="element()*">
+    <xsl:param name="x" as="element()"/>
+    <xsl:variable name="c" select="gbr:siguiente-en-grupo($x)"/>
+    <xsl:sequence select="$x, if (exists($c)) then gbr:grupo-desde($c) else ()"/>
+  </xsl:function>
+
+  <!-- ============================================
+       Función   : xref[@ref-type='bibr'] (plantilla)
+       Propósito : Emite el comando de cita del grupo que empieza en
+                   este xref; si el xref ya está en el grupo del
+                   anterior, no emite nada
+       Parámetros: (nodo de contexto) — el xref
+       Retorna   : texto LaTeX
+       ============================================ -->
+  <xsl:template match="xref[@ref-type = 'bibr']">
+    <xsl:variable name="grupo" select="gbr:grupo-desde(.)"/>
+    <xsl:variable name="comando" select="gbr:comando-cita(gbr:modo-cita(.))"/>
+
+    <!-- APARTADO 1. UNA CITA ABSORBIDA POR EL GRUPO ANTERIOR NO EMITE NADA -->
+    <xsl:if test="empty(gbr:anterior-en-grupo(.))">
+      <xsl:choose>
+
+        <!-- APARTADO 2. NINGUNA CITA DEL GRUPO LLEVA AFIJOS: UN SOLO COMANDO -->
+        <xsl:when test="every $x in $grupo satisfies gbr:sin-afijos($x)">
+          <xsl:value-of select="$comando"/>
+          <xsl:text>{</xsl:text>
+          <xsl:value-of select="string-join(for $x in $grupo return substring-after($x/@rid, 'bib-'), ',')"/>
+          <xsl:text>}</xsl:text>
+        </xsl:when>
+
+        <!-- APARTADO 3. UNA SOLA CITA CON AFIJOS -->
+        <xsl:when test="count($grupo) = 1">
+          <xsl:value-of select="$comando"/>
+          <xsl:call-template name="gbr:afijos-y-clave">
+            <xsl:with-param name="x" select="."/>
+          </xsl:call-template>
+        </xsl:when>
+
+        <!-- APARTADO 4. VARIAS CITAS Y ALGUNA CON AFIJOS: EL COMANDO MÚLTIPLE -->
+        <!-- SOLO LLEGA ACÁ UN MODO CON FORMA MÚLTIPLE (gbr:agrupables) -->
+        <xsl:otherwise>
+          <xsl:value-of select="gbr:comando-multicita($comando)"/>
+          <xsl:for-each select="$grupo">
+            <xsl:call-template name="gbr:afijos-y-clave">
+              <xsl:with-param name="x" select="."/>
+            </xsl:call-template>
+          </xsl:for-each>
+        </xsl:otherwise>
+
+      </xsl:choose>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- ============================================
+       Función   : gbr:afijos-y-clave (plantilla nombrada)
+       Propósito : Los argumentos opcionales y la clave de una cita;
+                   sirve igual para un comando simple y para cada
+                   cita de uno múltiple
+       Parámetros: x As element() — el xref
+       Retorna   : [pre][post]{clave}, [pre][]{clave}, [post]{clave}
+                   o {clave}
+       ============================================ -->
+  <xsl:template name="gbr:afijos-y-clave">
+    <xsl:param name="x" as="element()"/>
+    <xsl:variable name="pre" select="$x/named-content[@content-type = 'cite-prefix'][1]"/>
+    <xsl:variable name="post" select="$x/named-content[@content-type = 'cite-suffix'][1]"/>
+
+    <!-- biblatex LEE UN SOLO [] COMO POSTNOTA: CON PREFIJO Y SIN SUFIJO -->
+    <!-- VA [pre][] PARA QUE EL PRIMERO SEA LA PRENOTA                   -->
+    <xsl:choose>
+      <xsl:when test="$pre and $post">
+        <xsl:text>[</xsl:text>
+        <xsl:apply-templates select="$pre/node()"/>
+        <xsl:text>][</xsl:text>
+        <xsl:apply-templates select="$post/node()"/>
+        <xsl:text>]</xsl:text>
+      </xsl:when>
+      <xsl:when test="$pre">
+        <xsl:text>[</xsl:text>
+        <xsl:apply-templates select="$pre/node()"/>
+        <xsl:text>][]</xsl:text>
+      </xsl:when>
+      <xsl:when test="$post">
+        <xsl:text>[</xsl:text>
+        <xsl:apply-templates select="$post/node()"/>
+        <xsl:text>]</xsl:text>
+      </xsl:when>
+    </xsl:choose>
+    <xsl:text>{</xsl:text>
+    <xsl:value-of select="substring-after($x/@rid, 'bib-')"/>
+    <xsl:text>}</xsl:text>
+  </xsl:template>
+
+  <!-- ============================================
+       Función   : separador entre citas (plantilla)
+       Propósito : El texto entre dos citas: se suprime si la segunda
+                   quedó en el grupo de la primera (el delimitador lo
+                   pone biblatex); si no, sale como texto. Reemplaza
+                   la plantilla de jats-to-latex.xsl, que lo cambiaba
+                   por un espacio
+       Parámetros: (nodo de contexto) — el texto
+       Retorna   : texto LaTeX, o nada
+       ============================================ -->
+  <xsl:template match="text()[gbr:es-separador(.)]
+                             [preceding-sibling::node()[1][self::xref[@ref-type = 'bibr']]]
+                             [following-sibling::node()[1][self::xref[@ref-type = 'bibr']]]">
+    <xsl:if test="not(gbr:agrupables(preceding-sibling::node()[1], following-sibling::node()[1]))">
+      <xsl:value-of select="f:latex(.)"/>
+    </xsl:if>
   </xsl:template>
 
 </xsl:stylesheet>
