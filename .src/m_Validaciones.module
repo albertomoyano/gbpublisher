@@ -2,7 +2,7 @@
 
 ' ============================================
 ' Módulo    : m_Validaciones
-' Propósito : SOLAPA «VALIDACIONES» DE FMain (TabStrip1, índice 7). Es dueño
+' Propósito : SOLAPA «VALIDACIONES» DE FMain (tsPrincipal, PESTANA_VALIDAR). Es dueño
 '             del estado de la solapa; los handlers de FMain solo delegan acá
 '             (patrón módulo-dueño-del-estado, como m_AnalizarProyecto).
 '
@@ -22,11 +22,22 @@
 '             LOS VALORES ESPERADOS SALEN DE LA BASE Y LOS ESCRIBE ESTE
 '             MÓDULO EN tmp/: EL SCRIPT NO TOCA LA BASE (SC-05).
 '
-'             TIPOS IMPLEMENTADOS: pdf (engine/validar_pdf.pl). Los demás
-'             radios (JATS4R, DOAJ, Crossref, Redalyc, SciELO, PubMed) quedan
-'             deshabilitados hasta el rediseño de revistas.
-'             En un proyecto de revista, rbPDF corre igual: el archivo de
-'             esperados va vacío y el grupo metadatos sale como INFO.
+'             TIPOS IMPLEMENTADOS:
+'               pdf     engine/validar_pdf.pl, con los esperados de la base.
+'                       En un proyecto de revista corre igual: el archivo
+'                       de esperados va vacío y el grupo metadatos sale
+'                       como INFO.
+'               jats4r  engine/validar_sabor.sh jats4r: el canónico de
+'                       jats/ (no es un sabor, SC-72). El script corre
+'                       validar_canonicos.sh y traduce su informe al
+'                       contrato: una sola regla de qué es válido (SC-75).
+'                       Solo en revistas.
+'               doaj    engine/validar_sabor.sh doaj: el archivo del número
+'                       en salidas/doaj/ (generar_doaj_revista.sh). El
+'                       esquema de DOAJ sin red y, por artículo, lo que DOAJ
+'                       usa y el esquema no mira. Solo en revistas.
+'             Los demás radios (Crossref, Redalyc, SciELO, PubMed) llegan
+'             con sus sabores, en ese orden, por validar_sabor.sh.
 '
 '             EL EJECUTOR DE PROCESOS ES PROPIO: es gemelo de
 '             m_AuditarJats.EjecutarHerramienta (Exec con array, Wait que entra
@@ -35,7 +46,7 @@
 '             el rediseño de revistas toque el auditor.
 '
 ' Controles de FMain (solapa «Validaciones»):
-'   rbPDF, rbJATS4R, rbDOAJ, rbCrossref, rbRedalyc, rbSciELO, rbPubMed
+'   rbJATS4R, rbDOAJ, rbCrossref, rbRedalyc, rbSciELO, rbPubMed, rbPDF
 '   cmbValidaciones       — «(todos)» y los archivos del tipo elegido
 '   btnValidar            — corre la validación
 '   btnExportarValidacion — guarda el último resultado como CSV (m_CSV)
@@ -48,6 +59,20 @@ Private Const TIPO_PDF As String = "pdf"
 Private Const CARPETA_PDF As String = "salidas/pdf"
 Private Const PATRON_PDF As String = "*.pdf"
 Private Const SCRIPT_PDF As String = "validar_pdf.pl"
+
+' EL CANÓNICO DE CADA ARTÍCULO, COMO LO ESCRIBE generar_canonicos_articulos.sh
+' (LOS TEMPORALES .c-*.xml.tmp NO ENTRAN EN EL PATRÓN)
+Private Const TIPO_JATS4R As String = "jats4r"
+Private Const CARPETA_JATS As String = "jats"
+Private Const PATRON_JATS As String = "c-*.xml"
+
+' EL SABOR DOAJ: UN ARCHIVO POR NÚMERO (generar_doaj_revista.sh)
+Private Const TIPO_DOAJ As String = "doaj"
+Private Const CARPETA_DOAJ As String = "salidas/doaj"
+Private Const PATRON_DOAJ As String = "doaj-*.xml"
+
+' UN SOLO SCRIPT PARA LOS TIPOS DE REVISTA: EL TIPO ES SU PRIMER ARGUMENTO
+Private Const SCRIPT_SABOR As String = "validar_sabor.sh"
 
 ' --- INFRAESTRUCTURA (engine/, NO ~/.gbpublisher, SC-11) ---
 Private Const CARPETA_ENGINE As String = "engine"
@@ -96,12 +121,14 @@ Public Sub InicializarTab()
   Detener()
 
   ' --- 2. RADIOS: SOLO LOS TIPOS IMPLEMENTADOS ---
-  ' LOS DE REVISTAS LLEGAN CON EL REDISEÑO: DESHABILITADOS Y NO OCULTOS, PARA
-  ' QUE SE VEA QUÉ VIENE
+  ' LOS SABORES QUE FALTAN QUEDAN DESHABILITADOS Y NO OCULTOS, PARA QUE SE
+  ' VEA QUÉ VIENE. LOS DE REVISTA, SOLO EN UN PROYECTO DE REVISTA
   FMain.rbPDF.Enabled = (m_InicioCierre.RutaProyectoEnCurso <> "")
   FMain.rbPDF.Value = False
-  FMain.rbJATS4R.Enabled = False
-  FMain.rbDOAJ.Enabled = False
+  FMain.rbJATS4R.Enabled = EsRevista()
+  FMain.rbJATS4R.Value = False
+  FMain.rbDOAJ.Enabled = EsRevista()
+  FMain.rbDOAJ.Value = False
   FMain.rbCrossref.Enabled = False
   FMain.rbRedalyc.Enabled = False
   FMain.rbSciELO.Enabled = False
@@ -169,6 +196,49 @@ End
 Public Sub SeleccionarPDF()
 
   SeleccionarTipo(TIPO_PDF)
+
+End
+
+' ============================================
+' Función   : SeleccionarJATS4R
+' Propósito : Atiende rbJATS4R_Click: fija el tipo y llena el combo con los
+'             canónicos de jats/.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub SeleccionarJATS4R()
+
+  SeleccionarTipo(TIPO_JATS4R)
+
+End
+
+' ============================================
+' Función   : SeleccionarDOAJ
+' Propósito : Atiende rbDOAJ_Click: fija el tipo y llena el combo con los
+'             archivos de salidas/doaj/.
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub SeleccionarDOAJ()
+
+  SeleccionarTipo(TIPO_DOAJ)
+
+End
+
+' ============================================
+' Función   : EsRevista
+' Propósito : Si hay un proyecto de revista abierto: los tipos de revista no
+'             tienen sentido en un libro.
+' Parámetros: ninguno
+' Retorna   : Boolean
+' ============================================
+Private Function EsRevista() As Boolean
+
+  ' --- 1. SIN PROYECTO NO HAY TIPO ---
+  If m_InicioCierre.RutaProyectoEnCurso = "" Then Return False
+
+  ' --- 2. EL TIPO QUE GUARDÓ LA APERTURA (FMain.AbrirProyecto) ---
+  Return (FMain.TipoProyectoActual = m_Constantes.TIPO_REVISTA_MD)
 
 End
 
@@ -245,6 +315,10 @@ Private Function CarpetaDelTipo() As String
   Select Case $sTipo
     Case TIPO_PDF
       Return CARPETA_PDF
+    Case TIPO_JATS4R
+      Return CARPETA_JATS
+    Case TIPO_DOAJ
+      Return CARPETA_DOAJ
   End Select
   Return ""
 
@@ -269,6 +343,10 @@ Private Function ArchivosDelTipo() As String[]
   Select Case $sTipo
     Case TIPO_PDF
       sPatron = PATRON_PDF
+    Case TIPO_JATS4R
+      sPatron = PATRON_JATS
+    Case TIPO_DOAJ
+      sPatron = PATRON_DOAJ
     Case Else
       Return aArchivos
   End Select
@@ -295,8 +373,9 @@ End
 
 ' ============================================
 ' Función   : Validar
-' Propósito : Atiende btnValidar: escribe los esperados, corre el script del
-'             tipo sobre el archivo elegido o sobre todos, e interpreta.
+' Propósito : Atiende btnValidar: escribe los esperados (solo PDF), corre
+'             el script del tipo sobre el archivo elegido o sobre todos, e
+'             interpreta.
 ' Parámetros: ninguno
 ' Retorna   : nada
 ' ============================================
@@ -312,7 +391,8 @@ Public Sub Validar()
 
   ' --- 2. VALIDACIÓN DE ENTRADA ---
   If $bCorriendo Then Return
-  If $sTipo <> TIPO_PDF Then Return
+  ' UN TIPO SIN CARPETA ES UN TIPO NO IMPLEMENTADO
+  If CarpetaDelTipo() = "" Then Return
   If FMain.cmbValidaciones.Text = "" Then Return
 
   sCarpeta = m_InicioCierre.RutaProyectoEnCurso &/ CarpetaDelTipo()
@@ -338,17 +418,30 @@ Public Sub Validar()
   Endif
 
   ' --- 4. VALORES ESPERADOS ---
-  ' EscribirEsperadoPDF AVISA CON SU PROPIO MENSAJE CUANDO FALLA
+  ' SOLO EL PDF COMPARA CONTRA LA BASE. EscribirEsperadoPDF AVISA CON SU
+  ' PROPIO MENSAJE CUANDO FALLA
   LimpiarResultado()
-  If Not EscribirEsperadoPDF() Then Return
+  If $sTipo = TIPO_PDF Then
+    If Not EscribirEsperadoPDF() Then Return
+  Endif
 
   ' --- 5. COMANDO ---
-  ' perl -CSDA, COMO analizar_lexico.pl: ENTRADA, SALIDA Y ARGUMENTOS EN
-  ' UTF-8 (GV-90: HACE FALTA EL PAQUETE perl COMPLETO)
-  aComando.Add("perl")
-  aComando.Add("-CSDA")
-  aComando.Add(m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ SCRIPT_PDF)
-  aComando.Add(m_InicioCierre.RutaProyectoEnCurso &/ ARCHIVO_ESPERADO)
+  Select Case $sTipo
+    Case TIPO_PDF
+      ' perl -CSDA, COMO analizar_lexico.pl: ENTRADA, SALIDA Y ARGUMENTOS EN
+      ' UTF-8 (GV-90: HACE FALTA EL PAQUETE perl COMPLETO)
+      aComando.Add("perl")
+      aComando.Add("-CSDA")
+      aComando.Add(m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ SCRIPT_PDF)
+      aComando.Add(m_InicioCierre.RutaProyectoEnCurso &/ ARCHIVO_ESPERADO)
+    Case Else
+      ' bash EXPLÍCITO: NO DEPENDE DEL BIT DE EJECUCIÓN DEL ARCHIVO. EL TIPO
+      ' Y EL PROYECTO VAN ADELANTE, LOS ARCHIVOS DETRÁS, COMO EN EL PDF
+      aComando.Add("bash")
+      aComando.Add(m_InicioCierre.RutaRecursos() &/ CARPETA_ENGINE &/ SCRIPT_SABOR)
+      aComando.Add($sTipo)
+      aComando.Add(m_InicioCierre.RutaProyectoEnCurso)
+  End Select
   For Each sArchivo In aArchivos
     aComando.Add(sCarpeta &/ sArchivo)
   Next
@@ -634,6 +727,8 @@ Private Sub BloquearControles(bBloquear As Boolean)
   ' SIN PROYECTO NO SE REHABILITA: Detener PUEDE HABER CORTADO EL PROCESO
   ' DURANTE EL CIERRE, Y ESTE DESBLOQUEO LLEGA DESPUÉS
   FMain.rbPDF.Enabled = (Not bBloquear) And (m_InicioCierre.RutaProyectoEnCurso <> "")
+  FMain.rbJATS4R.Enabled = (Not bBloquear) And EsRevista()
+  FMain.rbDOAJ.Enabled = (Not bBloquear) And EsRevista()
   ' EXPORTAR SOLO CON UN RESULTADO A LA VISTA
   FMain.btnExportarValidacion.Enabled = (Not bBloquear) And $bHayResultado
 
@@ -818,7 +913,9 @@ End
 ' ============================================
 ' Función   : NombreGrupo
 ' Propósito : El nombre visible de un grupo del contrato.
-' Parámetros: sGrupo As String — metadatos, tecnico, conformidad
+' Parámetros: sGrupo As String — metadatos, tecnico, conformidad (pdf);
+'             canonico, jats, jats4r, entorno (jats4r); esquema, archivo
+'             y el nombre de cada artículo (doaj)
 ' Retorna   : String
 ' ============================================
 Private Function NombreGrupo(sGrupo As String) As String
@@ -830,6 +927,18 @@ Private Function NombreGrupo(sGrupo As String) As String
       Return "Técnico"
     Case "conformidad"
       Return "Conformidad"
+    Case "canonico"
+      Return "Canónico"
+    Case "jats"
+      Return "JATS"
+    Case "jats4r"
+      Return "JATS4R"
+    Case "entorno"
+      Return "Entorno"
+    Case "esquema"
+      Return "Esquema"
+    Case "archivo"
+      Return "Archivo"
   End Select
   Return sGrupo
 

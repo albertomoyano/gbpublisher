@@ -10,7 +10,21 @@
 # sin copiar el código (decisión de Alberto: el mismo esquema de nombre).
 #
 # REQUIERE la variable VOLCADO: la ruta absoluta de tmp/numero-datos.xml.
+# Las funciones de los esquemas de los sabores (esquema_doaj_presente,
+# validar_doaj) no la usan: las carga también validar_sabor.sh.
 # ============================================================================
+
+# LOS ESQUEMAS DE LOS SABORES SON DEL PAQUETE, NO DE ~/.gbpublisher: UN
+# «VÁLIDO» SOLO SE SOSTIENE CON EL ESQUEMA DEL SISTEMA (SC-11, COMO
+# validar_canonicos.sh). LA CARPETA DE RECURSOS ES LA DE ESTE ARCHIVO, UN
+# NIVEL ARRIBA: .hidden/ DESDE EL IDE, /usr/share/gbpublisher/ INSTALADO
+DIR_RECURSOS_REVISTA="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")"
+XSD_DOAJ="$DIR_RECURSOS_REVISTA/schemas/doajArticles.xsd"
+# doajArticles.xsd IMPORTA LOS CÓDIGOS DE IDIOMA DESDE doaj.org. EL CATÁLOGO
+# LOS RESUELVE A LA COPIA LOCAL (iso_639-2b.xsd): SIN RED Y SIEMPRE LA MISMA
+# VERSIÓN. SIN ÉL, xmllint --nonet NO COMPILA EL ESQUEMA (MEDIDO, libxml
+# 2.9.14)
+CATALOGO_DOAJ="$DIR_RECURSOS_REVISTA/schemas/catalogo-doaj.xml"
 
 # ============================================================================
 # Función   : dato_volcado
@@ -141,4 +155,30 @@ salidas_que_faltan() {
 imagenes_canonico_jats() {
     xmllint --nonet --xpath "//*[local-name()='fig']/*[local-name()='graphic']/@*[local-name()='href']" "$1" 2>/dev/null |
         grep -oP 'href="\K[^"]+' | sed 's|.*/||' | sort -u
+}
+
+# ============================================================================
+# Función   : esquema_doaj_presente
+# Propósito : Si están el esquema de DOAJ, su catálogo y los códigos de
+#             idioma que importa.
+# Retorna   : 0 si están; 1 si falta algo
+# ============================================================================
+esquema_doaj_presente() {
+    [[ -f "$XSD_DOAJ" && -f "$CATALOGO_DOAJ" && -f "$(dirname "$XSD_DOAJ")/iso_639-2b.xsd" ]]
+}
+
+# ============================================================================
+# Función   : validar_doaj
+# Propósito : Valida un archivo contra doajArticles.xsd, sin red.
+# Parámetros: $1 ruta del archivo
+# Retorna   : imprime los errores, una línea cada uno, sin la ruta del
+#             archivo; nada si es válido
+# Nota      : XML_CATALOG_FILES SOLO PARA ESTA LLAMADA: NO CAMBIA LO QUE
+#             RESUELVEN LAS DEMÁS
+# ============================================================================
+validar_doaj() {
+    local archivo="$1"
+    XML_CATALOG_FILES="$CATALOGO_DOAJ" xmllint --nonet --noout --schema "$XSD_DOAJ" "$archivo" 2>&1 |
+        grep -v ' validates$' | grep -v ' fails to validate$' |
+        sed -E "s|^$archivo:||" | grep .
 }
