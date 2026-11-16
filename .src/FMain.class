@@ -54,6 +54,11 @@ Private $aHallazgosPares As New CHallazgoPar[]
 ' PUEDE INDEXAR UN ARRAY YA ARMADO: NADA DE CONCATENAR NI FORMATEAR AHÍ
 Private $aCeldasPares As New String[]
 
+' TAMAÑO DE LA VENTANA DE mc, EN PÍXELES. EL TERMINAL LO REDONDEA A CELDAS
+' ENTERAS DE CARÁCTER: EL RESULTADO PUEDE DIFERIR EN UNOS PÍXELES
+Private Const ANCHO_VENTANA_MC As Integer = 1024
+Private Const ALTO_VENTANA_MC As Integer = 600
+
 ' ============================================
 ' Función   : Form_Show
 ' Propósito : APLICAR LA CONFIGURACIÓN DE BOTONES DEL MARCO
@@ -1674,22 +1679,114 @@ Public Sub BtnEliminarBib_Click()
 
 End
 
+' ============================================
+' Función   : btnAbrirDirectorio_Click
+' Propósito : Abre Midnight Commander en una ventana de terminal propia,
+'             parado en la carpeta del proyecto en curso. Reemplaza al gestor
+'             de archivos del escritorio (Desktop.Open).
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub btnAbrirDirectorio_Click()
 
-  Dim sText As String = m_InicioCierre.RutaProyectoEnCurso
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+  Dim aVentanasAntes As Integer[]
+  Dim iVentana As Integer
+  Dim hVentana As DesktopWindow
 
-  If Trim(sText) = "" Then
+  sRuta = m_InicioCierre.RutaProyectoEnCurso
+
+  ' --- 2. VALIDACIÓN ---
+  If Trim(sRuta) = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("No tiene ningún proyecto abierto.")
     Return
   Endif
 
-  If Exist(sText) Then
-    m_Sonido.sonar("Info")
-    Desktop.Open(sText)
+  If Not Exist(sRuta) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se encontró la carpeta del proyecto:" & gb.NewLine & sRuta)
+    Return
   Endif
 
-  TerminalViewProyecto.SetFocus
+  ' --- 3. LANZAMIENTO ---
+  ' LAS VENTANAS QUE YA EXISTEN, PARA RECONOCER DESPUÉS LA DE mc. SI FALLA,
+  ' mc SE ABRE IGUAL: SOLO QUE NO SE PODRÁ TRAER AL FRENTE
+  Try aVentanasAntes = Desktop.FindWindow()
+  ' Exec SOBRE UN ARRAY: SIN sh -c, LA RUTA NO SE INTERPRETA (GV-06).
+  ' «--» SEPARA LAS OPCIONES DE gnome-terminal DEL COMANDO QUE CORRE ADENTRO.
+  ' SIN Wait: LA VENTANA VIVE POR SU CUENTA Y LA INTERFAZ NO SE CONGELA
+  Try Exec ["gnome-terminal", "--", "mc", sRuta]
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo abrir Midnight Commander:" & gb.NewLine & Error.Text &
+      gb.NewLine & gb.NewLine & "Verificá que estén instalados gnome-terminal y mc.")
+    Return
+  Endif
+
+  ' --- 4. TAMAÑO Y AL FRENTE ---
+  ' NINGUNO DE LOS DOS PASOS ES CRÍTICO: SI FALLAN, mc QUEDA ABIERTO IGUAL
+  If aVentanasAntes Then
+    iVentana = EsperarVentanaNueva(aVentanasAntes)
+    If iVentana <> 0 Then
+      ' FromHandle BUSCA EN UNA LISTA CACHEADA: SIN Refresh NO VE LA VENTANA
+      ' RECIÉN CREADA (gb.desktop.x11, _Desktop_Windows.class)
+      Try Desktop.Windows.Refresh()
+      Try hVentana = Desktop.Windows.FromHandle(iVentana)
+      ' SOLO EL TAMAÑO: LA POSICIÓN LA DECIDE gnome-terminal. CENTRARLA DESDE
+      ' ACÁ OBLIGA A MOVERLA DESPUÉS DE QUE APARECE Y SE VEN DOS PASOS
+      If hVentana Then Try hVentana.Resize(ANCHO_VENTANA_MC, ALTO_VENTANA_MC)
+
+      ' gnome-terminal ABRE LA VENTANA DESDE SU SERVIDOR Y CINNAMON LA DEJA
+      ' DETRÁS DE gbpublisher (PREVENCIÓN DE ROBO DE FOCO). _NET_ACTIVE_WINDOW
+      ' CON LA HORA DEL ÚLTIMO EVENTO DEL USUARIO (X11.Time) LA TRAE AL FRENTE
+      Try Desktop.ActiveWindow = iVentana
+    Endif
+  Endif
+
+  m_Sonido.sonar("Info")
+
+End
+
+' ============================================
+' Función   : EsperarVentanaNueva
+' Propósito : Espera a que aparezca una ventana que no estaba en la lista
+'             recibida y devuelve su id. Sirve para programas externos lanzados
+'             con Exec cuya ventana hay que ubicar, dimensionar o traer al
+'             frente.
+' Parámetros: aVentanasAntes As Integer[] — ids de las ventanas existentes
+'               antes de lanzar el programa
+' Retorna   : Integer — id de la ventana nueva, o 0 si no apareció en el plazo
+' ============================================
+Private Function EsperarVentanaNueva(aVentanasAntes As Integer[]) As Integer
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aVentanasAhora As Integer[]
+  Dim iVentana As Integer
+  Dim fVence As Float
+
+  ' LA VENTANA TARDA EN APARECER: SE ESPERA HASTA TRES SEGUNDOS
+  fVence = Timer + 3
+
+  ' --- 2. ESPERA ---
+  ' LA SENTENCIA Wait DEJA CORRER EL BUCLE DE EVENTOS: LA INTERFAZ NO SE
+  ' CONGELA MIENTRAS TANTO (GV-17)
+  Do
+    Wait 0.1
+
+    Try aVentanasAhora = Desktop.FindWindow()
+    If Error Then Return 0
+
+    ' LA PRIMERA QUE NO ESTABA ANTES ES LA DEL PROGRAMA RECIÉN LANZADO
+    For Each iVentana In aVentanasAhora
+      If Not aVentanasAntes.Exist(iVentana) Then Return iVentana
+    Next
+
+  Loop Until Timer > fVence
+
+  ' --- 3. SIN VENTANA NUEVA EN EL PLAZO ---
+  Return 0
 
 End
 
