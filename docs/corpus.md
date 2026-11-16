@@ -5415,6 +5415,45 @@ Lo que falta frena antes de trabajar, con la lista de lo que falta y qué genera
 
 **Relaciones:** vinculo:SC-89,vinculo:SC-91,vinculo:SC-92,vinculo:SC-72
 
+### SC-94 — El gestor de archivos del proyecto: Midnight Commander en una ventana de gnome-terminal, no Desktop.Open ni un TerminalView
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 / gb.desktop / mc / gnome-terminal / Cinnamon / X11 / Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 15/11/2026, después de probar las dos variantes).
+
+El botón que abre la carpeta del proyecto (`btnAbrirDirectorio` en `FMain`) lanza Midnight Commander en una ventana propia de gnome-terminal, parado en la carpeta del proyecto. Reemplaza a `Desktop.Open` (GV-43), que abría el gestor de archivos del escritorio.
+
+POR QUÉ mc
+
+Los gestores de archivos gráficos (Nemo, Dolphin, Nautilus) piden demasiados clics y fallan al mover grandes volúmenes; mc no falla. La consola que sigue la ruta, como la de Dolphin, la trae mc de fábrica: su línea de comandos ejecuta en la carpeta del panel activo, y el subshell (Ctrl+O) se sincroniza con el panel en los dos sentidos.
+
+POR QUÉ EN UNA VENTANA EXTERNA Y NO EN UN TerminalView
+
+Un formulario con su propio TerminalView daba más control (posición y tamaño en píxeles, sin gestor de ventanas de por medio) y se descartó por la robustez, que es la razón de usar mc:
+- Quien lee la salida de mc es el TerminalView, o sea el bucle de eventos de gbpublisher. Si la aplicación se ocupa en algo que bloquea, el pseudo-terminal se llena y mc se detiene al escribir la pantalla: una copia grande se pausa. Razonado, no medido.
+- Cerrar gbpublisher mata a sus procesos hijos (GV-174): una copia en curso se cortaría. La ventana de gnome-terminal no depende de gbpublisher.
+El TerminalView de `FMain` tampoco sirve: tiene un bash y `Exec` responde «Terminal already in use» (GV-42).
+
+CÓMO SE LANZA
+
+    Exec ["gnome-terminal", "--", "mc", sRuta]
+
+`Exec` sobre un array, sin `Wait`: no hay shell, la ruta no se interpreta (GV-06) y la interfaz no se congela. mc recibe la carpeta como argumento: no hace falta `cd`. Al salir con F10, gnome-terminal se cierra solo.
+
+LA VENTANA (GV-205)
+
+- AL FRENTE, con `Desktop.ActiveWindow`: si no, Cinnamon la deja detrás de gbpublisher.
+- TAMAÑO de 960×720 píxeles (`ANCHO_VENTANA_MC`, `ALTO_VENTANA_MC`), con `Resize`; el terminal lo redondea a celdas.
+- POSICIÓN: la que decide gnome-terminal. Centrarla después de creada se veía en dos pasos; el costo se aceptó.
+
+LA CONFIGURACIÓN DE mc
+
+Vive en `~/.config/mc/` (`ini`, `panels.ini`; `mc -F` da las rutas). OBSERVADO por Alberto: con el guardado automático activado los cambios no persistían; persisten guardándolos a mano (F9 → Opciones → Guardar configuración). Cerrar la ventana con la X, en lugar de F10, mata a mc sin que guarde.
+
+**Relaciones:** vinculo:GV-205,vinculo:GV-43,vinculo:GV-42,vinculo:GV-174,vinculo:GV-06,vinculo:GV-17
+
+**PENDIENTE:** Que `Exec` dispare un error atrapable cuando falta gnome-terminal (va con Try, sin verificar). Que `gambas3-gb-desktop-x11` figure en las dependencias del .deb, y mc y gnome-terminal.
+
 ---
 
 ## RF — Referencia de API
@@ -10030,6 +10069,44 @@ Medido con el iconv de glibc:
 Con el locale C las letras con tilde salen como «?», y una limpieza posterior que deja solo [A-Za-z0-9.] las borra: «Ñandú» quedaba «and».
 
 Por eso `limpiar_parte_nombre` (engine/revista_comun.sh), que arma el nombre del PDF y el EPUB del número, fija `LC_ALL=C.UTF-8` en la llamada.
+
+### GV-205 — gb.desktop en X11: encontrar, dimensionar y traer al frente la ventana de otro programa
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.desktop / gb.desktop.x11 / código fuente (master, 15/11/2026) / gnome-terminal / Cinnamon / X11 / Linux Mint · **Verificado:** 2026-11
+
+Leído en el código fuente de Gambas (`comp/src/gb.desktop/.src/Desktop.class`; `gb.desktop.x11`: `X11.class`, `DesktopWindow.class`, `_Desktop_Windows.class`, `c_x11.c`, `x11.c`; rama master del 15/11/2026, no la etiqueta 3.22.1) y probado por Alberto en Linux Mint Cinnamon el 15/11/2026, con mc en gnome-terminal (SC-94).
+
+`Desktop` carga solo `gb.desktop.x11` en X11 (`Component.Load` en `LoadPlatform`): no hace falta declararlo en el proyecto, pero el paquete `gambas3-gb-desktop-x11` tiene que estar instalado.
+
+ENCONTRAR LA VENTANA
+
+    Desktop.FindWindow(Optional Title, Application, Role) As Integer[]
+
+Sin argumentos devuelve todas las ventanas que el gestor registra (`_NET_CLIENT_LIST`). `Application` compara contra `WM_CLASS`. Para la ventana de un programa recién lanzado no se busca por título ni por clase (el título lo cambia el programa; la clase depende de la versión): se toma la lista antes del `Exec` y se espera, con la sentencia `Wait` (GV-17), la primera ventana que no estaba. Es `EsperarVentanaNueva` en `FMain` de gbpublisher, con tres segundos de plazo.
+
+TRAERLA AL FRENTE
+
+    Desktop.ActiveWindow = iVentana
+
+Manda `_NET_ACTIVE_WINDOW` como pedido de aplicación, con `X11.Time`: la hora del último evento del usuario en la aplicación Gambas, el clic que lanzó el programa. Con eso Cinnamon acepta el pedido. Hace falta porque gnome-terminal abre la ventana desde su servidor, ya corriendo, y la prevención de robo de foco la dejaba detrás de gbpublisher.
+
+DIMENSIONARLA
+
+    Desktop.Windows.Refresh()
+    hVentana = Desktop.Windows.FromHandle(iVentana)
+    hVentana.Resize(iAncho, iAlto)
+
+`FromHandle` busca en una lista que la colección guarda en caché: sin `Refresh` no ve una ventana recién creada y devuelve Null. `Resize` y `Move(X, Y, Width, Height)` mandan `_NET_MOVERESIZE_WINDOW`. Un terminal redondea el tamaño a celdas enteras de carácter.
+
+MOVERLA SE VE EN DOS PASOS
+
+El gestor ubica y muestra la ventana antes de que Gambas la encuentre: moverla después (centrarla con `Move`) se ve como una ventana que aparece en un lugar y salta a otro. Se probó y se descartó. La posición, si importa, tiene que viajar con la creación de la ventana (en gnome-terminal, `--geometry=COLUMNASxFILAS+X+Y`, no probado).
+
+Ninguno de los tres pasos es crítico: van con `Try` y, si fallan, el programa queda abierto igual.
+
+**Relaciones:** apoya:SC-94,vinculo:GV-17,vinculo:GV-43
+
+**PENDIENTE:** Cotejar contra la etiqueta 3.22.1 del fuente: se leyó master. `Integer[].Exist()`, que usa EsperarVentanaNueva, no tiene entrada propia en el corpus. Si `--geometry` con posición lo respeta Cinnamon.
 
 ---
 
