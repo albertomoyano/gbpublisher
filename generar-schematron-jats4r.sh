@@ -1,11 +1,17 @@
 #!/bin/bash
 # ============================================================================
 # Script    : generar-schematron-jats4r.sh — gbpublisher
-# Propósito : Genera .hidden/schemas/jats4r/: las reglas de JATS4R compiladas
-#             a XSLT 2.0 en una sola hoja (jats4r.xsl), con los vocabularios
-#             que esas reglas leen con document() al lado. Las usa
-#             engine/validar_canonicos.sh para los canónicos de artículo
-#             (etapa A0 de las salidas de revistas, claude/salidas-revistas.md).
+# Propósito : Genera, desde la misma versión fijada de JATS4R, dos productos:
+#               .hidden/schemas/jats4r/       el maestro compilado en una sola
+#                 hoja (jats4r.xsl) con sus vocabularios al lado. Lo usa
+#                 engine/validar_canonicos.sh para los canónicos de artículo
+#                 (etapa A0 de las salidas de revistas).
+#               .hidden/schematron/compilados/ un .xsl por temático, con los
+#                 mismos vocabularios al lado. Lo usa el auditor de XML ajenos
+#                 (m_ValidacionSchematron), que corre cada grupo por separado
+#                 (GV-26). Hasta el 18/11/2026 estas hojas se hacían a mano y
+#                 no estaban en el repositorio: una instalación nueva no las
+#                 tenía (SC-97, bloque 3a).
 #
 # Es una herramienta de desarrollo: se corre a mano, desde la raíz del
 # repositorio, cuando cambia la versión fijada de JATS4R o el esqueleto ISO.
@@ -47,6 +53,15 @@
 #                   entra en la hoja
 #   5. verificación instancias de prueba con resultado conocido. Si alguna no
 #                   da lo esperado, el producto nuevo NO reemplaza al anterior
+#   6. temáticos    cada <include> del maestro, compilado solo con un
+#                   envoltorio DERIVADO DEL MAESTRO: sus <ns>, sus funciones
+#                   j4r: y sus <let>, sin las fases (nombran patrones de los
+#                   otros temáticos) y con ese único <include>. Los mismos tres
+#                   pasos del esqueleto ISO. Cada uno se verifica contra el
+#                   maestro: sobre las mismas instancias, los hallazgos de sus
+#                   patrones tienen que ser IDÉNTICOS a los del maestro (por
+#                   patrón, ubicación, test y texto). Si uno difiere, no se
+#                   reemplaza ninguno de los dos productos
 #
 # EL MAESTRO Y NO TEMÁTICO POR TEMÁTICO (GV-26)
 #
@@ -63,8 +78,8 @@
 # criterio de SC-53).
 #
 # CÓDIGOS
-#   0  reglas compiladas y verificadas
-#   1  no se generaron; las anteriores, si había, quedan intactas
+#   0  los dos productos compilados y verificados
+#   1  no se generaron; los anteriores, si había, quedan intactos (los dos)
 # ============================================================================
 
 set -uo pipefail
@@ -102,9 +117,16 @@ HOJA="jats4r.xsl"
 TEMPORAL="$DIR_ESQUEMAS/.jats4r.tmp"
 ANTERIOR="$DIR_ESQUEMAS/.jats4r.anterior"
 
+# LAS HOJAS POR TEMÁTICO DEL AUDITOR. DIR_COMPILADOS ES LA QUE LEE
+# m_ValidacionSchematron INSTALADA (/usr/share/gbpublisher/schematron/compilados)
+DIR_SCHEMATRON="$DIR_OCULTO/schematron"
+COMPILADOS="$DIR_SCHEMATRON/compilados"
+TEMPORAL_C="$DIR_SCHEMATRON/.compilados.tmp"
+ANTERIOR_C="$DIR_SCHEMATRON/.compilados.anterior"
+
 # LOS INTERMEDIOS VAN A UNA CARPETA PROPIA, QUE SE BORRA AL SALIR
 DIR_TRABAJO="$(mktemp -d)" || { echo "No se pudo crear una carpeta temporal" >&2; exit 1; }
-trap 'rm -rf "$DIR_TRABAJO" "$TEMPORAL"' EXIT
+trap 'rm -rf "$DIR_TRABAJO" "$TEMPORAL" "$TEMPORAL_C"' EXIT
 
 TIEMPO_SAXON=300
 TIEMPO_GIT=120
@@ -416,6 +438,182 @@ if (( fallidas > 0 )); then
     morir "$fallidas instancia(s) de prueba no dieron lo esperado: las reglas anteriores se conservan"
 fi
 
+# --- 8b. LOS TEMÁTICOS, PARA EL AUDITOR ---
+# UN .xsl POR CADA <include> DEL MAESTRO. EL ENVOLTORIO SE DERIVA DEL MAESTRO
+# CON UNA HOJA (NO SE ESCRIBE A MANO): ASÍ LLEVA SUS MISMOS <ns>, FUNCIONES Y
+# <let>, Y UNA VERSIÓN NUEVA DE JATS4R NO LO DESACTUALIZA. EL TEMÁTICO SE
+# COPIA AL LADO DEL ENVOLTORIO PARA QUE EL <include> RESUELVA SIN RUTAS
+paso "compilando los temáticos para el auditor"
+
+cat > "$DIR_TRABAJO/envoltorio.xsl" <<'XSL'
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- EL MAESTRO SIN FASES Y CON UN SOLO <include>, EL DEL PARÁMETRO -->
+<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+    xmlns:sch="http://purl.oclc.org/dsdl/schematron">
+  <xsl:param name="tematico" required="yes"/>
+  <xsl:template match="@*|node()">
+    <xsl:copy><xsl:apply-templates select="@*|node()"/></xsl:copy>
+  </xsl:template>
+  <xsl:template match="sch:phase | sch:include"/>
+  <xsl:template match="/sch:schema/sch:ns[not(following-sibling::sch:ns)]">
+    <xsl:copy-of select="."/>
+    <sch:include href="{$tematico}"/>
+  </xsl:template>
+</xsl:stylesheet>
+XSL
+
+# LOS HALLAZGOS DE UN INFORME, UNO POR LÍNEA: PATRÓN|TIPO|UBICACIÓN|ID O
+# TEST|TEXTO. EL PATRÓN ES EL active-pattern QUE LOS PRECEDE
+cat > "$DIR_TRABAJO/hallazgos.xsl" <<'XSL'
+<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+    xmlns:svrl="http://purl.oclc.org/dsdl/svrl">
+  <xsl:output method="text" encoding="UTF-8"/>
+  <xsl:template match="/">
+    <xsl:for-each select="/svrl:schematron-output/(svrl:failed-assert | svrl:successful-report)">
+      <xsl:value-of select="string-join((
+          string((preceding-sibling::svrl:active-pattern[1]/(@id, @name))[1]),
+          local-name(), string(@location), string((@id, @test)[1]),
+          normalize-space(string(svrl:text))), '|')"/>
+      <xsl:text>&#10;</xsl:text>
+    </xsl:for-each>
+  </xsl:template>
+</xsl:stylesheet>
+XSL
+
+TEMATICOS=()
+while IFS= read -r nombre; do
+    [[ -n "$nombre" ]] && TEMATICOS+=("$nombre")
+done < <(grep -oP '<include\s+href="\K[^"]+(?=")' "$DIR_FUENTE/$MAESTRO")
+(( ${#TEMATICOS[@]} == INCLUIDOS )) ||
+    morir "Se leyeron ${#TEMATICOS[@]} <include> y el maestro tiene $INCLUIDOS"
+
+mkdir -p "$TEMPORAL_C" || morir "No se pudo crear $TEMPORAL_C"
+for nombre in "${VOCABULARIOS[@]}"; do
+    cp "$DIR_FUENTE/$nombre" "$TEMPORAL_C/$nombre" || morir "No se pudo copiar $nombre"
+done
+
+for tematico in "${TEMATICOS[@]}"; do
+    [[ "$tematico" == */* ]] && morir "Un <include> del maestro apunta fuera de su carpeta: $tematico"
+    base="${tematico%.sch}"
+    dir_t="$DIR_TRABAJO/t-$base"
+    mkdir -p "$dir_t" && cp "$DIR_FUENTE/$tematico" "$dir_t/$tematico" ||
+        morir "No se pudo preparar $tematico"
+
+    saxon -s:"$DIR_FUENTE/$MAESTRO" -xsl:"$DIR_TRABAJO/envoltorio.xsl" \
+        -o:"$dir_t/envoltorio.sch" tematico="$tematico" || {
+        mostrar_cola "$(cat "$DIR_TRABAJO/saxon.log")"; morir "$base: no se pudo armar el envoltorio"; }
+    saxon -s:"$dir_t/envoltorio.sch" -xsl:"$INCLUIR" -o:"$dir_t/paso1.sch" || {
+        mostrar_cola "$(cat "$DIR_TRABAJO/saxon.log")"; morir "$base: iso_dsdl_include no pudo resolver el <include>"; }
+    saxon -s:"$dir_t/paso1.sch" -xsl:"$EXPANDIR" -o:"$dir_t/paso2.sch" || {
+        mostrar_cola "$(cat "$DIR_TRABAJO/saxon.log")"; morir "$base: iso_abstract_expand no pudo expandir"; }
+
+    # SUS PATRONES, CON id: SON LA CLAVE PARA COMPARAR CON EL MAESTRO
+    xmllint --xpath '//*[local-name()="pattern"]/@id' "$dir_t/paso2.sch" 2>/dev/null |
+        grep -oP 'id="\K[^"]+' | sort -u > "$dir_t/patrones.txt"
+    sin_id="$(xmllint --xpath 'count(//*[local-name()="pattern"][not(@id)])' "$dir_t/paso2.sch" 2>/dev/null)"
+    [[ -s "$dir_t/patrones.txt" && "$sin_id" == "0" ]] ||
+        morir "$base: algún patrón no tiene id y no se lo puede comparar con el maestro"
+
+    saxon -s:"$dir_t/paso2.sch" -xsl:"$ESQUELETO" -o:"$dir_t/compilada.xsl" || {
+        mostrar_cola "$(cat "$DIR_TRABAJO/saxon.log")"; morir "$base: el esqueleto ISO no pudo compilarlo"; }
+    bien_formado "$dir_t/compilada.xsl" || morir "$base: la compilación produjo un XSLT mal formado"
+
+    printf '%s' "
+  GENERADO POR generar-schematron-jats4r.sh. NO EDITAR A MANO: SE REGENERA
+  DESDE LA VERSIÓN FIJADA DE jats-schematrons (SC-11, GV-26, SC-97).
+
+  Un temático de JATS4R para el auditor de XML ajenos, compilado solo con
+  un envoltorio derivado del maestro ($MAESTRO sin fases, con este único
+  <include>) y el esqueleto ISO. Verificado contra el maestro.
+
+  fuente     $JATS4R_URL
+             $JATS4R_ETIQUETA, commit $JATS4R_COMMIT
+  temático   $SUBCARPETA/$tematico
+             sha256 $(sha256sum "$DIR_FUENTE/$tematico" | cut -d' ' -f1)
+  maestro    sha256 $(sha256sum "$DIR_FUENTE/$MAESTRO" | cut -d' ' -f1)
+  esqueleto  el mismo de jats4r.xsl (ver su cabecera)
+  compilado  $VERSION_SAXON, $(date '+%Y-%m-%d')
+" > "$dir_t/cabecera.txt"
+    saxon -s:"$dir_t/compilada.xsl" -xsl:"$DIR_TRABAJO/cabecera.xsl" -o:"$TEMPORAL_C/$base.xsl" \
+        texto="$dir_t/cabecera.txt" || {
+        mostrar_cola "$(cat "$DIR_TRABAJO/saxon.log")"; morir "$base: no se pudo escribir la cabecera"; }
+done
+ok "${#TEMATICOS[@]} temáticos compilados"
+
+# --- 8c. CADA TEMÁTICO CONTRA EL MAESTRO ---
+# LAS INSTANCIAS: LAS CINCO DE ARRIBA Y LAS DE PRUEBA DE JATS4R (testfiles/),
+# SIN SU DOCTYPE (GV-25). LAS QUE NO SE LEEN LIMPIAS SIN SU DTD SE OMITEN Y
+# SE CUENTAN: LAS QUE USAN SUS ENTIDADES, Y LAS QUE USAN UN PREFIJO SIN
+# DECLARARLO (auths-affs-test1 Y 2 EN v0.0.17: xmllint LO DEJA PASAR CON UN
+# AVISO, SAXON NO). POR ESO CUALQUIER SALIDA DE xmllint LA DESCARTA. EL MAESTRO YA QUEDÓ VERIFICADO EN EL APARTADO 8:
+# ES LA REFERENCIA. SAXON CORRE SOBRE LA CARPETA ENTERA: UNA JVM POR HOJA
+paso "verificando cada temático contra el maestro"
+
+DIR_INST="$DIR_TRABAJO/instancias"
+mkdir -p "$DIR_INST" || morir "No se pudo crear $DIR_INST"
+cp "$DIR_TRABAJO"/{limpia,credit-mal,financiador-mal,pais-mal,idioma-mal}.xml "$DIR_INST/" ||
+    morir "No se pudieron reunir las instancias del apartado 8"
+omitidas=0
+for f in "$DIR_CLON"/testfiles/*.xml; do
+    [[ -f "$f" ]] || continue
+    destino="$DIR_INST/j4r-$(basename "$f")"
+    if ! xmllint --dropdtd --nonet "$f" > "$destino" 2>"$DIR_TRABAJO/xmllint.log" ||
+       [[ -s "$DIR_TRABAJO/xmllint.log" ]] ||
+       [[ -n "$(xmllint --noout --nonet "$destino" 2>&1)" ]]; then
+        rm -f "$destino"
+        omitidas=$((omitidas + 1))
+    fi
+done
+INSTANCIAS=$(find "$DIR_INST" -name '*.xml' | wc -l)
+
+# ============================================================================
+# Función   : hallazgos_de
+# Propósito : Corre una hoja sobre todas las instancias y deja, por
+#             instancia, la lista ordenada de sus hallazgos.
+# Parámetros: $1 la hoja  $2 la carpeta de salida
+# Retorna   : 0 si corrió; 1 si Saxon falló
+# ============================================================================
+hallazgos_de() {
+    mkdir -p "$2/svrl" "$2/lineas" || return 1
+    saxon -s:"$DIR_INST" -xsl:"$1" -o:"$2/svrl" || return 1
+    saxon -s:"$2/svrl" -xsl:"$DIR_TRABAJO/hallazgos.xsl" -o:"$2/lineas" || return 1
+    return 0
+}
+
+hallazgos_de "$TEMPORAL/$HOJA" "$DIR_TRABAJO/r-maestro" || {
+    mostrar_cola "$(cat "$DIR_TRABAJO/saxon.log")"; morir "El maestro no corrió sobre las instancias"; }
+
+distintos=0
+comparados=0
+for tematico in "${TEMATICOS[@]}"; do
+    base="${tematico%.sch}"
+    r="$DIR_TRABAJO/r-$base"
+    if ! hallazgos_de "$TEMPORAL_C/$base.xsl" "$r"; then
+        mostrar_cola "$(cat "$DIR_TRABAJO/saxon.log")"
+        printf '  %s✗%s %s: no corrió sobre las instancias\n' "$C_ERROR" "$C_RESET" "$base"
+        distintos=$((distintos + 1)); continue
+    fi
+    for lineas in "$DIR_TRABAJO/r-maestro/lineas"/*; do
+        inst="$(basename "$lineas")"
+        # LOS DEL MAESTRO EN LOS PATRONES DE ESTE TEMÁTICO
+        awk -F'|' 'NR==FNR { p[$0]=1; next } ($1 in p)' \
+            "$DIR_TRABAJO/t-$base/patrones.txt" "$lineas" | sort > "$r/esperado.txt"
+        sort "$r/lineas/$inst" > "$r/obtenido.txt"
+        comparados=$((comparados + $(wc -l < "$r/esperado.txt")))
+        if ! cmp -s "$r/esperado.txt" "$r/obtenido.txt"; then
+            printf '  %s✗%s %s: en %s difiere del maestro\n' "$C_ERROR" "$C_RESET" "$base" "$inst"
+            diff "$r/esperado.txt" "$r/obtenido.txt" | head -n 6 | sed 's/^/      /'
+            distintos=$((distintos + 1))
+            break
+        fi
+    done
+done
+(( distintos == 0 )) ||
+    morir "$distintos temático(s) no coinciden con el maestro: no se reemplaza ningún producto"
+ok "${#TEMATICOS[@]} temáticos idénticos al maestro: $comparados hallazgo(s) en $INSTANCIAS instancias"
+(( omitidas > 0 )) && tenue "$omitidas instancia(s) de JATS4R omitida(s): no se leen limpias sin su DTD"
+
 # --- 9. REEMPLAZO ---
 # LA CARPETA ENTERA: LA HOJA Y SUS VOCABULARIOS VAN JUNTOS. LA ANTERIOR SE
 # APARTA PRIMERO Y SE BORRA SOLO CUANDO LA NUEVA YA ESTÁ EN SU LUGAR
@@ -429,6 +627,19 @@ if ! mv "$TEMPORAL" "$PRODUCTO"; then
 fi
 rm -rf "$ANTERIOR"
 
+# LOS TEMÁTICOS, CON EL MISMO CRITERIO. SI ESTE SEGUNDO mv FALLA, jats4r YA
+# QUEDÓ NUEVO: SE AVISA, PORQUE LOS DOS SALEN DE LA MISMA VERSIÓN Y LA
+# VERIFICACIÓN YA PASÓ PARA LOS DOS
+rm -rf "$ANTERIOR_C"
+if [[ -d "$COMPILADOS" ]]; then
+    mv "$COMPILADOS" "$ANTERIOR_C" || morir "No se pudo apartar $COMPILADOS (jats4r ya se reemplazó)"
+fi
+if ! mv "$TEMPORAL_C" "$COMPILADOS"; then
+    [[ -d "$ANTERIOR_C" ]] && mv "$ANTERIOR_C" "$COMPILADOS"
+    morir "No se pudo poner $COMPILADOS: quedan los anteriores (jats4r ya se reemplazó)"
+fi
+rm -rf "$ANTERIOR_C"
+
 echo
 titulo "$REGLA"
 printf '%s✓ Reglas de JATS4R compiladas y verificadas%s\n' "$C_OK" "$C_RESET"
@@ -436,6 +647,7 @@ printf '%s✓ Reglas de JATS4R compiladas y verificadas%s\n' "$C_OK" "$C_RESET"
 printf '  Carpeta:    %s\n' "$PRODUCTO"
 printf '  Versión:    %s (%s)\n' "$JATS4R_ETIQUETA" "${JATS4R_COMMIT:0:12}"
 printf '  Patrones:   %s de %s temáticos\n' "$PATRONES" "$INCLUIDOS"
+printf '  Auditor:    %s (%s hojas)\n' "$COMPILADOS" "${#TEMATICOS[@]}"
 echo
 
 terminar

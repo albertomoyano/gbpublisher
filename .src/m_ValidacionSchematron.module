@@ -2,10 +2,10 @@
 
 ' ============================================
 ' Módulo    : m_ValidacionSchematron
-' Propósito : Servicio compartido de validación Schematron. Lo
-'             consumen tanto el pipeline propio, para verificar el
-'             JATS que produce gbpublisher, como el auditor de XML
-'             externos.
+' Propósito : Validación Schematron por grupo temático de JATS4R para
+'             el auditor de XML externos (m_AuditarJats). El pipeline
+'             propio ya no lo usa: valida los canónicos con el maestro
+'             compilado en una sola hoja (validar_canonicos.sh, SC-87).
 '
 ' PIPELINE:  .sch precompilado a .xsl  →  Saxon-HE  →  SVRL  →  objetos
 '
@@ -35,8 +35,13 @@
 ' 4. Los <successful-report> también tienen <svrl:text>, así que el
 '    parseo por líneas los emitía como si fueran errores.
 '
-' DECISIÓN DE DISEÑO: los .sch se compilan UNA VEZ con
-' compilar-schematron.sh y los .xsl resultantes se distribuyen. En
+' DECISIÓN DE DISEÑO: los .sch se compilan UNA VEZ y los .xsl
+' resultantes se distribuyen en .hidden/schematron/compilados. Los
+' genera generar-schematron-jats4r.sh (raíz del repositorio), desde la
+' versión fijada de JATS4R y verificados contra el maestro, junto con
+' los vocabularios que leen con document(). Hasta el 18/11/2026 se
+' hacían a mano con un compilar-schematron.sh que no quedó en el
+' repositorio, y no viajaban en el .deb (SC-97, bloque 3a). En
 ' tiempo de ejecución hay una sola invocación de Saxon por regla, sin
 ' pasos de compilación. Y el SVRL se recibe por STDOUT en lugar de
 ' escribirse a disco: 'Exec ... To' captura stdout, verificado, y así
@@ -77,7 +82,12 @@
 ' ============================================
 
 Private Const SAXON_JAR As String = "/opt/Saxon-HE/saxon-he.jar"
-Private Const DIR_COMPILADOS As String = "/usr/share/gbpublisher/schematron/compilados"
+' LA CARPETA DE LAS REGLAS COMPILADAS: LA DE LOS RECURSOS DEL SISTEMA
+' (m_InicioCierre.RutaRecursos: .hidden/ DESDE EL IDE, /usr/share/gbpublisher
+' INSTALADO), COMO m_Sonido. NUNCA ~/.gbpublisher: UN INFORME DE JATS4R SOLO
+' SE SOSTIENE CON LAS REGLAS DEL PAQUETE (SC-11). HASTA EL 18/11/2026 ERA
+' UNA RUTA FIJA A /usr/share, Y DESDE EL IDE SE PROBABA CONTRA LO INSTALADO
+Private Const SUBRUTA_COMPILADOS As String = "schematron/compilados"
 
 ' --- TRAZA DE TIEMPOS ---
 ' Imprime en consola cuánto tarda cada invocación de Saxon. Sirve para
@@ -142,7 +152,7 @@ Public Function ValidarConSchematron(sArchivoXML As String, sRegla As String) As
     Return Null
   Endif
 
-  sRutaXsl = DIR_COMPILADOS &/ sRegla & ".xsl"
+  sRutaXsl = m_InicioCierre.RutaRecursos() &/ SUBRUTA_COMPILADOS &/ sRegla & ".xsl"
   If Not Exist(sRutaXsl) Then
     $sUltimoError = ("No se encuentra la regla compilada: ") & sRutaXsl
     Return Null
@@ -482,7 +492,8 @@ End
 
 ' ============================================
 ' Función   : ReglasDisponibles
-' Propósito : Lista las reglas compiladas presentes en la instalación.
+' Propósito : Lista las reglas compiladas presentes en los recursos del
+'             sistema (.hidden/ desde el IDE, /usr/share/gbpublisher instalado).
 ' Parámetros: ninguno
 ' Retorna   : String[] — nombres sin extensión, ordenados
 ' ============================================
@@ -492,14 +503,17 @@ Public Function ReglasDisponibles() As String[]
   Dim aArchivos As String[]
   Dim aResultado As New String[]
   Dim sNombre As String
+  Dim sCarpeta As String
+
+  sCarpeta = m_InicioCierre.RutaRecursos() &/ SUBRUTA_COMPILADOS
 
   ' --- 2. GUARDA ---
   ' RC-GM-17: Exist e IsDir en If separados, porque And no cortocircuita
-  If Not Exist(DIR_COMPILADOS) Then Return aResultado
-  If Not IsDir(DIR_COMPILADOS) Then Return aResultado
+  If Not Exist(sCarpeta) Then Return aResultado
+  If Not IsDir(sCarpeta) Then Return aResultado
 
   ' --- 3. LISTADO ---
-  Try aArchivos = Dir(DIR_COMPILADOS, "*.xsl")
+  Try aArchivos = Dir(sCarpeta, "*.xsl")
   If Error Then Return aResultado
 
   For Each sNombre In aArchivos
@@ -525,9 +539,3 @@ Public Function EstaInstalado() As Boolean
   Return True
 
 End
-
-' ============================================
-' 5. API HEREDADA
-' Se conserva para no tocar los llamadores existentes, pero ahora se
-' apoya en el núcleo corregido. Un solo mecanismo.
-' ============================================

@@ -5583,9 +5583,17 @@ Lo que nadie lee y viajaba en el `.deb` (y en la copia a `~/.gbpublisher`):
 
 `scripts/` NO es código muerto: es el espacio del usuario para sus filtros y scripts personales sobre lo que genera la app (por ejemplo, el `main.tex`). Se copia y se queda (Alberto).
 
+BLOQUE 3a, HECHO (18/11/2026): las reglas compiladas del auditor salen del repositorio. Hasta ese día se hacían a mano con un `compilar-schematron.sh` que no quedó guardado: estaban solo en el `/usr/share` de la máquina de Alberto, y una instalación nueva desde el `.deb` no las tenía. En ese caso el auditor avisa en el informe «faltan las reglas compiladas» y no evalúa JATS4R.
+
+Qué cambió:
+- `generar-schematron-jats4r.sh` escribe también `.hidden/schematron/compilados/`: un `.xsl` por temático (36 en v0.0.17), con los vocabularios al lado y una cabecera con su origen. Cada temático se verifica contra el maestro (GV-211). Si uno difiere, no se reemplaza ninguno de los dos productos. Se probó saboteando la comparación: frena, dice qué temático, en qué instancia y qué hallazgo, y deja intactos los anteriores.
+- `m_ValidacionSchematron` lee la carpeta desde `m_InicioCierre.RutaRecursos()`, como `m_Sonido`: `.hidden/` desde el IDE, `/usr/share/gbpublisher` instalado. Antes era una ruta fija a `/usr/share`, y desde el IDE se probaba contra lo instalado.
+- Se corrigieron los comentarios que decían que el pipeline propio compartía la carpeta (no lo hace desde SC-87), y se borró el encabezado huérfano de una «API heredada» ya borrada.
+- Sale `schematron/schxslt-xslt/`.
+
 **Relaciones:** vinculo:GV-210,vinculo:SC-96,vinculo:SC-70
 
-**PENDIENTE:** El bloque 3a: que generar-schematron-jats4r.sh escriba también .hidden/schematron/compilados/ (un .xsl por temático, GV-26) con la versión fijada y su verificación. Hoy esas reglas existen solo en el /usr/share de la máquina de Alberto, hechas a mano el 30/08/2026: una instalación nueva desde el .deb no las tiene y el auditor marca los grupos como «no evaluado» sin otro aviso. Después, decidir si schxslt-xslt/ sigue (GV-26 usa su include.xsl). Comprobar que jats-a-marcalyc quita las instrucciones gb- (SC-38) como jats-a-scielo.
+**PENDIENTE:** Comprobar que jats-a-marcalyc quita las instrucciones gb- (SC-38), como jats-a-scielo. Decidir qué pasa con csl/ y el menú «Exportar CSL-JSON»: nada lee los .csl desde que salió el ODT. Probar en Mint: generar-schematron-jats4r.sh con el Saxon de /opt, el auditor desde el IDE (lee .hidden/) y, con el .deb siguiente, instalado.
 
 ### SC-98 — Revistas: el camino viejo se retira — el código, las tablas viejas y articulo.id_doaj (actualización 1.32.0)
 
@@ -6668,6 +6676,8 @@ Los archivos temáticos NO son documentos Schematron completos. Empiezan en `<pa
 Y hay reglas que abortan con estructuras normales. Una regla sobre `<sec>` llama a `normalize-space()` sobre un conjunto de títulos y falla con `XPTY0004` en cuanto un artículo tiene subsecciones. En el corpus de referencia, doce secciones de un solo artículo tenían más de un título. Como Saxon aborta, se pierde el análisis del ARCHIVO ENTERO, no solo esa regla.
 
 COMBINACIÓN QUE FUNCIONA: `include.xsl` de SchXslt para resolver los includes, esqueleto ISO `iso_svrl_for_xslt2.xsl` para compilar. Cada implementación aporta lo que la otra rompe.
+
+ACTUALIZACIÓN (18/11/2026): SchXslt ya no hace falta. Un envoltorio derivado del maestro y los tres pasos del esqueleto ISO compilan cada temático, con hallazgos idénticos a los del maestro (GV-211).
 
 REGLA: compilar y ejecutar temático por temático, nunca el maestro completo, y verificar cada grupo contra un corpus real antes de darlo por bueno. Que una regla compile no garantiza que ejecute.
 
@@ -10387,6 +10397,24 @@ Sí detecta un identificador desconocido dentro de la misma clase o un nombre de
 CONSECUENCIA: compilar no prueba que un borrado sea seguro. Después de borrar hay que buscar cada nombre borrado en el código vivo (SC-97).
 
 **Relaciones:** apoya:SC-97
+
+### GV-211 — Un temático de JATS4R se compila solo, sin SchXslt, con un envoltorio derivado del maestro, y da los mismos hallazgos que el maestro
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** SaxonJ-HE 12.9 (Maven) / jats-schematrons v0.0.17 / esqueleto ISO del repositorio / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 18/11/2026 en el contenedor (Ubuntu 24.04, Java del sistema, SaxonJ-HE 12.9 de Maven Central: misma versión que la de `/opt/Saxon-HE` de Mint, pero no los mismos bytes), con jats-schematrons v0.0.17 (commit `6589a03`) y el esqueleto ISO del repositorio (`.hidden/schematron/iso`).
+
+UN TEMÁTICO SE COMPILA SOLO SIN SchXslt. El envoltorio se DERIVA DEL MAESTRO: `jats4r.sch` sin sus `<phase>` (nombran patrones de los otros temáticos) y con un único `<include>`, el del temático, que se copia al lado. Así lleva los mismos `<ns>`, las funciones `j4r:` y los `<let>` del maestro. Después, los tres pasos ISO de siempre: `iso_dsdl_include`, `iso_abstract_expand` y `iso_svrl_for_xslt2`. Compilan los 36 `<include>` del maestro.
+
+SON EQUIVALENTES AL MAESTRO. Las 36 hojas se corrieron sobre 15 instancias: las cinco del generador más diez de `testfiles/` de JATS4R, sin DOCTYPE. Los hallazgos de cada temático son IDÉNTICOS a los del maestro en los patrones de ese temático, comparados por patrón, tipo, ubicación, id o test y texto. En total, 98 hallazgos sin una diferencia. Se omitieron dos instancias de JATS4R, `auths-affs-test1` y `test2`: usan el prefijo `ali:` sin declararlo. `xmllint --dropdtd` las deja pasar con un aviso y Saxon las rechaza (SXXP0003), con el maestro igual que con los temáticos.
+
+LAS HOJAS QUE TENÍA EL AUDITOR SON DEL MISMO COMPILADOR. Las 31 hechas a mano el 30/08/2026 llevan la cabecera del esqueleto ISO («Implementers: please note that overriding process-prolog…», los bloques PHASES y PROLOG), no la de SchXslt. El SVRL que parsea `m_ValidacionSchematron` no cambia de forma.
+
+CONSECUENCIA. El `include.xsl` de SchXslt que pedía GV-26 ya no hace falta. `generar-schematron-jats4r.sh` produce las dos cosas desde la misma versión fijada: el maestro para `validar_canonicos.sh` y los temáticos para el auditor (SC-97, bloque 3a).
+
+**Relaciones:** apoya:SC-97,vinculo:GV-26,vinculo:GV-28,vinculo:SC-87
+
+**PENDIENTE:** Repetir la corrida en Mint con el Saxon de /opt (el jar del zip oficial).
 
 ---
 
