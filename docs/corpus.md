@@ -1206,7 +1206,7 @@ DECISIÓN CERRADA. El editor principal (`txtEditorProyecto`) expande abreviatura
 
 CONTENIDO, NO PREFERENCIA
 
-Un snippet es contenido del usuario, como un `.csl`. Por eso no va en `gbpublisher.conf`, y esto no contradice SC-17, que rige solo las preferencias.
+Un snippet es contenido del usuario, como un script de `scripts/`. Por eso no va en `gbpublisher.conf`, y esto no contradice SC-17, que rige solo las preferencias.
 
 Son personales: cada usuario tiene sus propias lógicas de trabajo, y no hay juego de la casa. No se guarda nada en la base.
 
@@ -2178,7 +2178,7 @@ LAS REGLAS
 1. En el canónico van como INSTRUCCIÓN DE PROCESAMIENTO con prefijo `gb-`, nunca como elemento: `<?gb-corte?>` (SC-28, en DocBook) y `<?gb-espacio …?>` (SC-39). El estándar XML las define para eso: indicaciones para una aplicación, fuera del modelo del documento. El canónico sigue validando contra el RNG de DocBook 5.2 y la DTD de JATS 1.4 (verificado), y el PDF se puede regenerar idéntico porque la instrucción queda en él. Una instrucción de procesamiento también puede ir dentro de un párrafo.
 2. Lleva una FICHA propia, no LaTeX: `bigskip`, `vspace* 2baselineskip`. Solo las hojas LaTeX la traducen (en `tex-comun.xsl` cuando la ficha es igual en JATS y en DocBook), y frenan ante una ficha que no conocen.
 3. Las hojas de HTML y EPUB no hacen nada: la regla incorporada de XSLT para una instrucción de procesamiento no escribe nada (medido en SC-28 y en SC-39). Una hoja que copie con `xsl:copy-of` o con una identidad sobre `node()` sí las copiaría: hay que mirarlo en cada hoja nueva.
-4. Los indexadores las quitan todas de una vez. `jats-to-scielo.xsl` y `jats-to-redalyc.xsl` (retiradas el 18/11/2026, SC-97: los paquetes salen de `jats-a-scielo` y `jats-a-marcalyc`, que importan `jats-a-epub-articulo`) partían de una identidad sobre `@* | node()`, que incluye las instrucciones de procesamiento (verificado: copiaban `<?gb-espacio?>` al paquete). Una sola plantilla vacía, `processing-instruction()[starts-with(name(), 'gb-')]`, las quita: una instrucción nueva no se filtra por olvido.
+4. Los indexadores las quitan todas de una vez. `jats-to-scielo.xsl` y `jats-to-redalyc.xsl` (retiradas el 18/11/2026, SC-97: los paquetes salen de `jats-a-scielo` y `jats-a-marcalyc`, que importan `jats-a-epub-articulo`) partían de una identidad sobre `@* | node()`, que incluye las instrucciones de procesamiento (verificado: copiaban `<?gb-espacio?>` al paquete). Una sola plantilla vacía, `processing-instruction()[starts-with(name(), 'gb-')]`, las quita: una instrucción nueva no se filtra por olvido. `jats-a-marcalyc` tampoco las deja pasar: arma el HTML con las plantillas del EPUB, que no copian instrucciones, y para una instrucción la regla incorporada de XSLT no escribe nada. Verificado el 18/11/2026 con `gb-espacio` y `gb-alinear` (SC-97).
 5. Diccionario cerrado, en un solo filtro Lua por instrucción, que corre en las dos cadenas (revista y libro) con el patrón de `dos-partes.lua` (SC-35). Lo que no está en el diccionario frena la conversión con un mensaje que dice qué falla y qué se admite.
 6. En el catálogo de shortcodes, grupo propio: `composicion`, «Composición (solo PDF)», al final de la lista. El editor ve en el panel que son instrucciones de página y no de contenido. El grupo entró con el esquema 5 de gbShortcodes. El modo dice qué es cada una: las de un punto se insertan como separador (`separador-valor`); las de un tramo, con `envolver`. `m_AnalizarProyecto` cuenta como cuerpo el texto de las de un tramo y no cuenta las de un punto.
 7. En una hoja LaTeX, la instrucción solo se alcanza donde se la pide: `*` selecciona elementos, no instrucciones de procesamiento. `docbook-to-latex.xsl` la agrega en unión, `(* except info) | processing-instruction('gb-espacio')`, que conserva el orden del documento; `jats-to-latex.xsl` ya recorría todos los nodos de `body` y `sec`.
@@ -5591,9 +5591,19 @@ Qué cambió:
 - Se corrigieron los comentarios que decían que el pipeline propio compartía la carpeta (no lo hace desde SC-87), y se borró el encabezado huérfano de una «API heredada» ya borrada.
 - Sale `schematron/schxslt-xslt/`.
 
+BLOQUE 3b, HECHO (18/11/2026): CSL sale entero. Los `.csl` y el CSL-JSON eran el camino anterior de las referencias del EPUB y del HTML, con citeproc. Se reemplazó por tex4ht sobre lo que generan biblatex y biber, que unifica las salidas con el PDF (SC-57, Alberto).
+
+Salieron:
+- la carpeta `csl/`, con su entrada en la lista de copia de `m_InicioCierre` y en ExtraFiles;
+- el menú «Exportar CSL-JSON», con `m_Json.ExportarCSLJSON` y las cinco funciones que solo usaba él (`ConvertirTipoCSL`, `CrearFechaCSL`, `MapearCampoCSL`, `ParsearFechaCompleta` y `ParsearNombres`).
+
+El combo de estilo de cita de `FMetadatosLibro` pasó de `cmb_tipo_csl` a `cmbEstiloCita`: listaba los estilos de biblatex, no CSL. Solo lo nombran `FMetadatosLibro` y `m_Metadatos`, por nombre; la columna es `libros_md.estilo_cita`. También se corrigió su ayuda emergente, que decía que leía de `~/.gbpublisher/csl/`.
+
+Verificado además: `jats-a-marcalyc` no deja pasar las instrucciones `gb-*` (SC-38).
+
 **Relaciones:** vinculo:GV-210,vinculo:SC-96,vinculo:SC-70
 
-**PENDIENTE:** Comprobar que jats-a-marcalyc quita las instrucciones gb- (SC-38), como jats-a-scielo. Decidir qué pasa con csl/ y el menú «Exportar CSL-JSON»: nada lee los .csl desde que salió el ODT. Probar en Mint: generar-schematron-jats4r.sh con el Saxon de /opt, el auditor desde el IDE (lee .hidden/) y, con el .deb siguiente, instalado.
+**PENDIENTE:** Probar en Mint: generar-schematron-jats4r.sh con el Saxon de /opt, el auditor desde el IDE (lee .hidden/) y, con el .deb siguiente, instalado.
 
 ### SC-98 — Revistas: el camino viejo se retira — el código, las tablas viejas y articulo.id_doaj (actualización 1.32.0)
 
