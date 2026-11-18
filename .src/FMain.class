@@ -96,11 +96,6 @@ Public Sub Form_Open()
   SplitterPrincipal.Visible = False
   SplitterPrincipal.Layout = [1, 1]
   Splitter1.Layout = [1, 1]
-  SplitterDOAJ.Layout = [2, 5]
-  SplitterCROSSREF.Layout = [2, 5]
-  SplitterRedalyc.Layout = [2, 5]
-  SplitterScieLO.Layout = [2, 5]
-  SplitterLaTeX.Layout = [2, 5]
   ' ACTUALIZAR TÍTULO
   FMain.Text = Application.Name & "  -  v" & Application.Version
 
@@ -150,33 +145,9 @@ Public Sub Form_Open()
 
 End
 
-Public Sub SplitterLaTeX_Resize()
-
-  SplitterLaTeX.Layout = [2, 5]
-
-End
-
 Public Sub SplitterPrincipal_Resize()
 
   SplitterPrincipal.Layout = [1, 1]
-
-End
-
-Public Sub SplitterScieLO_Resize()
-
-  SplitterScieLO.Layout = [2, 5]
-
-End
-
-Public Sub SplitterDOAJ_Resize()
-
-  SplitterDOAJ.Layout = [2, 5]
-
-End
-
-Public Sub SplitterRedalyc_Resize()
-
-  SplitterRedalyc.Layout = [2, 5]
 
 End
 
@@ -3775,615 +3746,6 @@ Public Sub txtBuscarPalabra_KeyPress()
 
 End
 
-Public Sub ExportarReferenciasXMLJATS()
-
-  ' NOS ASEGURAMOS DE QUE EXISTA EL ARCHIVO .BIB
-  m_Bibtex.ExportarBibTeX()
-
-  Dim resultado As Boolean
-  resultado = m_XML.ExportarJATSdesdeBIB()
-
-End
-
-' =====================================================
-' EVENTO: btnGenerarXMLcanonico_Click
-' DESCRIPCIÓN: ORQUESTADOR DEL FLUJO DE GENERACIÓN
-'              DEL XML CANÓNICO JATS 1.4
-'
-'   PASO 1.1 — GenerarFrontXML()   → tmp/front-*.xml
-'   PASO 1.2 — GenerarBodyXML()    → tmp/body-*.xml
-'   PASO 1.3 — GenerarRefListXML() → tmp/reflist-*.xml
-'   PASO 1.4 — Saxon-HE            → jats/c-*.xml
-' =====================================================
-Public Sub btnGenerarXMLcanonico_Click()
-
-  Dim sNombreArchivo As String
-  Dim sRutaProyecto As String
-  Dim sFileFront As String
-  Dim sFileBody As String
-  Dim sFileReflist As String
-  Dim sFileCanonico As String
-  Dim sXsl As String
-  Dim sSaxon As String
-  Dim hResult As Result
-  Dim iEspera As Integer
-  Dim idRevista As Integer = m_XML.ObtenerIdRevista(id_proyecto.Value) 'CInt(FMain.id_revista.Value)
-  Dim idArticulo As Integer = m_InicioCierre.IdArticuloEnCurso
-
-  ' MOSTRAMOS CONSOLA
-  tsPrincipal.Index = m_Constantes.PESTANA_PROYECTO
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  ' EXPORTAMOS .BIB Y GENERAMOS XML-JATS DE REFERENCIAS
-  ExportarReferenciasXMLJATS()
-
-  If idArticulo = 0 Then
-    Message.Warning("No hay ningún artículo seleccionado." & Chr(10) &
-      "Seleccione un archivo de la carpeta articulos/")
-    Return
-  Endif
-
-  ' VERIFICAR QUE SAXON-HE ESTÁ INSTALADO
-  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
-  If Not Exist(sSaxon) Then
-    Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
-      "Instale Saxon-HE y cree el symlink:" & Chr(10) &
-      "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
-    Return
-  Endif
-
-  ' VERIFICAR QUE EL XSLT ESTÁ INSTALADO
-  sXsl = User.Home & "/.gbpublisher/xslt/ensamblar-canonico.xsl"
-  If Not Exist(sXsl) Then
-    Message.Error("XSLT de ensamblado no encontrado en:" & Chr(10) & sXsl)
-    Return
-  Endif
-
-  ' OBTENER nombre_archivo PARA CONSTRUIR TODOS LOS PATHS
-  Try hResult = m_ConexionBD.mConn.Exec(
-    "SELECT nombre_archivo FROM articulos WHERE id_articulo = &1 LIMIT 1",
-    idArticulo)
-
-  If Not hResult.Available Then
-    Message.Error("No se encontró el artículo id=" & CStr(idArticulo))
-    Return
-  Endif
-
-  sNombreArchivo = m_XML.TrimUTF8(hResult["nombre_archivo"])
-  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
-
-  sFileFront = sRutaProyecto & "/tmp/front-" & Mid(sNombreArchivo, 3) & ".xml"
-  sFileBody = sRutaProyecto & "/tmp/body-" & Mid(sNombreArchivo, 3) & ".xml"
-  sFileReflist = sRutaProyecto & "/tmp/reflist-" & Mid(sNombreArchivo, 3) & ".xml"
-  sFileCanonico = sRutaProyecto & "/jats/c-" & Mid(sNombreArchivo, 3) & ".xml"
-
-  ' ====================================================
-  ' PASO 1.1: GENERAR front.xml
-  ' ====================================================
-  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.1: GENERANDO front ---'" & Chr(10))
-
-  If Not m_XML.GenerarFrontXML(idArticulo, idRevista) Then
-    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló front.xml'" & Chr(10))
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: front generado'" & Chr(10))
-
-  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileFront & "' && echo 'front: bien formado' || echo 'front: ERROR'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 1.2: GENERAR body.xml
-  ' ====================================================
-
-  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.2: GENERANDO body ---'" & Chr(10))
-
-  If Not m_XML.GenerarBodyXML(idArticulo) Then
-    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló body.xml'" & Chr(10))
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: body generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileBody & "' && echo 'body: bien formado' || echo 'body: ERROR'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 1.3: GENERAR reflist.xml
-  ' ====================================================
-  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.3: GENERANDO reflist ---'" & Chr(10))
-
-  If Not m_XML.GenerarRefListXML(idArticulo) Then
-    FMain.TerminalViewProyecto.Input("echo 'ERROR: falló reflist.xml'" & Chr(10))
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: reflist generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileReflist & "' && echo 'reflist: bien formado' || echo 'reflist: ERROR'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 1.4: ENSAMBLAR CANÓNICO CON SAXON-HE
-  ' ELIMINAR CANÓNICO ANTERIOR SI EXISTE PARA QUE
-  ' EL LOOP DE ESPERA NO SE CONFUNDA
-  ' ====================================================
-  FMain.TerminalViewProyecto.Input("echo '--- PASO 1.4: ENSAMBLANDO CANÓNICO ---'" & Chr(10))
-
-  If Exist(sFileCanonico) Then
-    Shell "rm '" & sFileCanonico & "'" Wait
-  Endif
-
-  FMain.TerminalViewProyecto.Input(
-    "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
-    "-s:'" & sFileFront & "' " &
-    "-xsl:'" & sXsl & "' " &
-    "-o:'" & sFileCanonico & "' " &
-    "body='" & sFileBody & "' " &
-    "reflist='" & sFileReflist & "'" & Chr(10))
-
-  ' ESPERAR HASTA QUE SAXON GENERE EL CANÓNICO (MÁXIMO 60 SEGUNDOS)
-  iEspera = 0
-  While Not Exist(sFileCanonico) And iEspera < 600
-    Wait 0.1
-    Inc iEspera
-  Wend
-
-  If Not Exist(sFileCanonico) Then
-    FMain.TerminalViewProyecto.Input("echo 'ERROR: Saxon no generó el canónico'" & Chr(10))
-    Message.Error("Saxon-HE no generó el archivo canónico en el tiempo esperado." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: canónico generado'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("echo 'Ruta: " & sFileCanonico & "'" & Chr(10))
-  FMain.TerminalViewProyecto.Input("xmllint --noout '" & sFileCanonico & "' && echo 'canónico: bien formado' || echo 'canónico: ERROR'" & Chr(10))
-
-  ' ====================================================
-  ' PASO 1.5: VALIDACIÓN DTD JATS 1.4
-  ' --nonet EVITA QUE XMLLINT INTENTE CARGAR EL DTD
-  ' REMOTO DEL DOCTYPE (YA TENEMOS COPIA LOCAL)
-  ' EL WARNING DE "failed to load external entity"
-  ' ES ESPERADO E INOFENSIVO CON --nonet
-  ' ====================================================
-  Dim sDtd As String = User.Home & "/.gbpublisher/dtd/JATS-archivearticle1-4.dtd"
-
-  If Not Exist(sDtd) Then
-    FMain.TerminalViewProyecto.Input("echo 'AVISO: DTD local no encontrado, omitiendo validación'" & Chr(10))
-  Else
-    FMain.TerminalViewProyecto.Input("echo '--- PASO 1.5: VALIDANDO CONTRA DTD JATS 1.4 ---'" & Chr(10))
-    FMain.TerminalViewProyecto.Input(
-      "xmllint --noout --nonet --dtdvalid '" & sDtd & "' " &
-      "'" & sFileCanonico & "' " &
-      "&& echo 'DTD válido: JATS 1.4 OK' " &
-      "|| echo 'DTD INVÁLIDO: revisar errores arriba'" & Chr(10))
-  Endif
-
-  ' ====================================================
-  ' PASO 1.6: VALIDACIÓN SCHEMATRON JATS4R
-  ' ====================================================
-  Dim sSchXslt As String = User.Home & "/.gbpublisher/schematron/schxslt-xslt/xslt/2.0/pipeline-for-svrl.xsl"
-  Dim sSchDir As String = User.Home & "/.gbpublisher/schematron/jats-schematrons/schematrons/1.0"
-
-  If Not Exist(sSchXslt) Or Not Exist(sSchDir) Then
-    FMain.TerminalViewProyecto.Input("echo 'AVISO: Schematrons no encontrados, omitiendo JATS4R'" & Chr(10))
-  Else
-    FMain.TerminalViewProyecto.Input("echo '--- PASO 1.6: VALIDACIÓN SCHEMATRON JATS4R ---'" & Chr(10))
-    FMain.TerminalViewProyecto.Input("TOTAL=0" & Chr(10))
-    FMain.TerminalViewProyecto.Input(
-      "for SCH in " & sSchDir & "/*-errors.sch; do " &
-      "NOMBRE=$(basename \"$SCH\" .sch); " &
-      "SVRL=$(java -jar " & sSaxon & " -s:\"$SCH\" -xsl:'" & sSchXslt & "' " &
-      "document='" & sFileCanonico & "' 2>/dev/null); " &
-      "ERR=$(echo \"$SVRL\" | grep -c 'failed-assert'); " &
-      "ERR=${ERR:-0}; " &
-      "TOTAL=$((TOTAL + ERR)); " &
-      "[ \"$ERR\" -gt 0 ] && echo \"  [ERROR] $NOMBRE: $ERR error(es)\" || echo \"  [OK] $NOMBRE\"; " &
-      "done" & Chr(10))
-
-    ' FMain.TerminalViewProyecto.Input(
-    '   "for SCH in " & sSchDir & "/*-errors.sch; do " &
-    '   "NOMBRE=$(basename \"$SCH\" .sch); " &
-    '   "SVRL=$(java -jar " & sSaxon & " -s:\"$SCH\" -xsl:'" & sSchXslt & "' " &
-    '   "document='" & sFileCanonico & "' 2>/dev/null); " &
-    '   "ERR=$(echo \"$SVRL\" | grep -c 'failed-assert' || echo 0); " &
-    '   "TOTAL=$((TOTAL + ERR)); " &
-    '   "[ \"$ERR\" -gt 0 ] && echo \"  [ERROR] $NOMBRE: $ERR error(es)\" || echo \"  [OK] $NOMBRE\"; " &
-    '   "done" & Chr(10))
-    FMain.TerminalViewProyecto.Input(
-      "[ \"$TOTAL\" -eq 0 ] && echo 'JATS4R: documento sin errores' " &
-      "|| echo \"JATS4R: $TOTAL problema(s) encontrado(s)\"" & Chr(10))
-  Endif
-
-  ' ====================================================
-  ' VERIFICACIÓN FINAL: CONFIRMAR QUE EL CANÓNICO EXISTE
-  ' PEQUEÑA ESPERA PARA QUE LA TERMINAL TERMINE
-  ' ====================================================
-  Wait 2.0
-
-  If Exist(sFileCanonico) Then
-    m_Sonido.sonar("Info")
-    Message.Info("Proceso completado." & Chr(10) & Chr(10) &
-      "Archivo canónico JATS 1.4 generado:" & Chr(10) &
-      sFileCanonico)
-  Else
-    m_Sonido.sonar("Warning")
-    Message.Warning("El proceso terminó pero no se encontró el archivo canónico." & Chr(10) &
-      "Revise los mensajes en la terminal.")
-  Endif
-
-End Sub
-
-Public Sub menuXMLDoaj_Click()
-
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-  m_GenerarDOAJ.GenerarDoajUnaColumna()
-
-End Sub
-
-Public Sub HTMLcontrol_Click()
-
-  ' MOSTRAMOS CONSOLA
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  m_GenerarHTML.GenerarHTMLunaColumna()
-
-End
-
-Public Sub menuJsonDoaj_Click()
-
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-  m_GenerarDOAJ.GenerarDoajJsonUnaColumna()
-
-End Sub
-
-' ============================================
-' Función   : btnEnviarDoaj_Click
-' Propósito : Valida y envía el JSON seleccionado a la API de DOAJ.
-'             Detecta automáticamente si es primer envío (POST)
-'             o actualización (PUT) según id_doaj en la BD.
-' ============================================
-Public Sub btnEnviarDoaj_Click()
-
-  ' --- 1. Validaciones previas ---
-  If lbDOAJ.Index < 0 Then
-    Message.Info("Seleccioná un archivo JSON del listado.")
-    Return
-  Endif
-
-  Dim sArchivo As String = lbDOAJ.Text
-  If Not (sArchivo Ends ".json") Then
-    Message.Info("Para enviar a la API de DOAJ seleccioná un archivo .json" & Chr(10) &
-      "El archivo .xml es para carga manual en el panel web de DOAJ.")
-    Return
-  Endif
-
-  Dim sApiKey As String = Trim(txtCredencial.Text)
-  If sApiKey = "" Then
-    Message.Info("Ingresá tu API key de DOAJ antes de enviar.")
-    txtCredencial.SetFocus()
-    Return
-  Endif
-
-  ' --- 2. Obtener ID del artículo ---
-  Dim sNombreBD As String = m_XML.NombreArchivoDoajANombreBD(sArchivo)
-  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
-  If idArt = 0 Then
-    Message.Error("No se pudo determinar el artículo correspondiente al archivo.")
-    Return
-  Endif
-
-  ' --- 3. Confirmar envío ---
-  If Message.Question("¿Enviar " & sArchivo & " a DOAJ?",
-      "Enviar", "Cancelar") = 2 Then Return
-
-    ' --- 4. Construir ruta y enviar ---
-    Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
-    Dim sRutaJson As String = sRutaProyecto & "/jats/" & sArchivo
-
-    FMain.TerminalViewProyecto.Input("echo '--- ENVIANDO A DOAJ API ---'" & Chr(10))
-
-    ' EL MÉTODO POST/PUT LO DECIDE EnviarJsonDoaj INTERNAMENTE
-    ' SEGÚN SI id_doaj EXISTE O NO EN LA BD
-    Dim sIdDoaj As String = m_XML.EnviarJsonDoaj(sRutaJson, sApiKey, idArt)
-
-    ' --- 5. Procesar resultado ---
-    If sIdDoaj = "" Then
-      FMain.TerminalViewProyecto.Input("echo 'ERROR: DOAJ rechazó el artículo'" & Chr(10))
-      Return
-    Endif
-
-    FMain.TerminalViewProyecto.Input("echo 'OK: artículo aceptado por DOAJ'" & Chr(10))
-    FMain.TerminalViewProyecto.Input("echo 'ID DOAJ: " & sIdDoaj & "'" & Chr(10))
-
-    ' --- 6. Confirmación final y bloqueo del botón ---
-    Message.Info("Artículo enviado correctamente a DOAJ." & Chr(10) & "ID asignado: " & sIdDoaj)
-    btnEnviarDoaj.Enabled = False
-
-End Sub
-
-' ============================================
-' Función   : lbDOAJ_Click
-' Propósito : Al seleccionar un archivo determina el flujo:
-'             .xml → validación GridView (sin envío API)
-'             .json → estado en GridView + habilitar envío API
-' ============================================
-Public Sub lbDOAJ_Click()
-
-  Dim sArchivo As String = lbDOAJ.Text
-  Dim sNombreBD As String = m_XML.NombreArchivoDoajANombreBD(sArchivo)
-  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
-
-  If sArchivo Ends ".xml" Then
-    ' FLUJO EXISTENTE: VALIDAR CONTRA XSD Y MOSTRAR EN GRIDVIEW
-    btnEnviarDoaj.Enabled = False
-    Dim bApto As Boolean = m_XML.ValidarArchivoDoaj(sArchivo, idArt)
-    lblEstadoDoaj.Text = If(bApto, "APTO para carga manual (panel web DOAJ)", "NO APTO — revisar errores")
-
-  Else If sArchivo Ends ".json" Then
-    ' FLUJO NUEVO: MOSTRAR ESTADO Y HABILITAR ENVÍO API
-    Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
-    Dim sRutaJson As String = sRutaProyecto & "/jats/" & sArchivo
-    MostrarEstadoJson(sRutaJson, idArt)
-
-  Endif
-
-End Sub
-
-' ============================================
-' Función   : MostrarEstadoJson
-' Propósito : Muestra en el GridView el estado de los campos
-'             del JSON DOAJ y habilita el botón de envío
-'             si los campos obligatorios están presentes.
-' Parámetros: sRutaJson As String  — ruta al d-*.json
-'             idArt     As Integer — ID del artículo en BD
-' ============================================
-Public Sub MostrarEstadoJson(sRutaJson As String, idArt As Integer)
-
-  ' --- 1. Preparar el GridView ---
-  gvDOAJ.Clear
-  gvDOAJ.Rows.Count = 0
-  gvDOAJ.Columns.Count = 4
-  gvDOAJ.Columns[0].Text = "Estado"
-  gvDOAJ.Columns[0].Width = 120
-  gvDOAJ.Columns[1].Text = "Campo DOAJ"
-  gvDOAJ.Columns[1].Width = 200
-  gvDOAJ.Columns[2].Text = "Valor encontrado"
-  gvDOAJ.Columns[2].Width = 300
-  gvDOAJ.Columns[3].Text = "Acción requerida"
-  gvDOAJ.Columns[3].Width = 800
-  btnEnviarDoaj.Enabled = False
-
-  If Not Exist(sRutaJson) Then
-    lblEstadoDoaj.Text = "Archivo JSON no encontrado"
-    Return
-  Endif
-
-  ' --- 2. Leer el JSON ---
-  Dim hFile As File
-  Dim sJson As String
-  Try hFile = Open sRutaJson For Input
-  If Error Then Return
-  Try sJson = Read #hFile, Lof(hFile)
-  Try Close #hFile
-
-  ' --- 3. Verificar campos clave ---
-  Dim q As String = Chr(34)
-  Dim bTieneTitle As Boolean = InStr(sJson, q & "title" & q & ":") > 0
-  Dim bTieneIssn As Boolean = InStr(sJson, q & "eissn" & q) > 0 Or InStr(sJson, q & "pissn" & q) > 0
-  Dim bTieneLink As Boolean = InStr(sJson, q & "fulltext" & q) > 0
-  Dim bTieneAutores As Boolean = InStr(sJson, q & "author" & q & ":") > 0
-  Dim bTieneAbstract As Boolean = InStr(sJson, q & "abstract" & q & ":") > 0
-  Dim bTieneYear As Boolean = InStr(sJson, q & "year" & q & ":") > 0
-
-  ' --- 4. Verificar si ya fue enviado ---
-  Dim sIdDoajExistente As String = ""
-  Dim hRes As Result
-  Try hRes = m_ConexionBD.mConn.Exec(
-    "SELECT id_doaj FROM articulos WHERE id_articulo = " & CStr(idArt))
-  If Not Error Then
-    If hRes.Count > 0 Then
-      If Not IsNull(hRes["id_doaj"]) Then
-        sIdDoajExistente = Trim(CStr(hRes["id_doaj"]))
-      Endif
-    Endif
-  Endif
-
-  ' --- 5. Agregar filas al GridView ---
-  m_XML.AgregarFilaGv(gvDOAJ, If(bTieneTitle, "OK", "ERROR"),
-    "title", If(bTieneTitle, "Presente", "(ausente)"),
-    If(Not bTieneTitle, "Obligatorio — regenerar JSON", ""))
-
-    m_XML.AgregarFilaGv(gvDOAJ, If(bTieneIssn, "OK", "ERROR"),
-      "issn/eissn", If(bTieneIssn, "Presente", "(ausente)"),
-      If(Not bTieneIssn, "Obligatorio — verificar BD de revista", ""))
-
-      m_XML.AgregarFilaGv(gvDOAJ, If(bTieneLink, "OK", "ERROR"),
-        "link/fulltext", If(bTieneLink, "Presente", "(ausente)"),
-        If(Not bTieneLink, "Obligatorio — completar URL en BD", ""))
-
-        m_XML.AgregarFilaGv(gvDOAJ, If(bTieneYear, "OK", "ADVERTENCIA"),
-          "year", If(bTieneYear, "Presente", "(ausente)"),
-          If(Not bTieneYear, "Recomendado — completar año en BD", ""))
-
-          m_XML.AgregarFilaGv(gvDOAJ, If(bTieneAutores, "OK", "ADVERTENCIA"),
-            "author", If(bTieneAutores, "Presente", "(ausente)"),
-            If(Not bTieneAutores, "Recomendado — vincular autores", ""))
-
-            m_XML.AgregarFilaGv(gvDOAJ, If(bTieneAbstract, "OK", "ADVERTENCIA"),
-              "abstract", If(bTieneAbstract, "Presente", "(ausente)"),
-              If(Not bTieneAbstract, "Recomendado para indexación", ""))
-
-              ' --- 6. Fila resumen ---
-              Dim bApto As Boolean = bTieneTitle And bTieneIssn And bTieneLink
-              Dim sEstadoEnvio As String
-              If sIdDoajExistente <> "" Then
-                sEstadoEnvio = "Ya enviado — próximo envío actualizará (PUT) ID: " & sIdDoajExistente
-              Else
-                sEstadoEnvio = If(bApto, "Listo para primer envío (POST)", "Corregir campos en error")
-              Endif
-
-              Dim iUlt As Integer = gvDOAJ.Rows.Count
-              gvDOAJ.Rows.Count = iUlt + 1
-              gvDOAJ[iUlt, 0].Text = If(bApto, If(sIdDoajExistente <> "", "ACTUALIZAR", "LISTO"), "INCOMPLETO")
-              gvDOAJ[iUlt, 1].Text = "Estado envío API"
-              gvDOAJ[iUlt, 2].Text = sEstadoEnvio
-              gvDOAJ[iUlt, 3].Text = ""
-              Dim cFondo As Integer = If(bApto, Color.RGB(232, 245, 233), Color.RGB(255, 235, 238))
-              Dim j As Integer
-              For j = 0 To 3
-                gvDOAJ[iUlt, j].Background = cFondo
-                gvDOAJ[iUlt, j].Font.Bold = True
-              Next
-
-              ' --- 7. Estado final ---
-              btnEnviarDoaj.Enabled = bApto
-              lblEstadoDoaj.Text = sEstadoEnvio
-
-End Sub
-
-' ============================================
-' Función   : lbRedalyc_Click
-' Propósito : Al seleccionar un archivo r-*.xml en el listbox,
-'             busca el artículo correspondiente en la BD
-'             y lanza la validación Redalyc en gvRedalyc.
-' ============================================
-Public Sub lbRedalyc_Click()
-
-  ' --- 1. Obtener el archivo seleccionado ---
-  Dim sArchivo As String = lbRedalyc.Text
-
-  If sArchivo = "" Then Return
-
-  ' --- 2. Derivar el nombre_archivo de la BD ---
-  Dim sNombreArchivoBD As String = m_XML.NombreArchivoRedalycANombreBD(sArchivo)
-
-  ' --- 3. Buscar el id_articulo ---
-  Dim idArticulo As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreArchivoBD)
-
-  ' --- 4. Advertir si no se encontró en la BD ---
-  If idArticulo = 0 Then
-    Message.Warning("El archivo '" & sArchivo & "' no tiene un artículo " &
-      "correspondiente en la base de datos." & Chr(10) &
-      "Se validará el XML sin datos complementarios de la BD.")
-  Endif
-
-  ' --- 5. Lanzar validación y actualizar etiqueta de estado ---
-  Dim bApto As Boolean = m_XML.ValidarArchivoRedalyc(sArchivo, idArticulo)
-
-  lblEstadoRedalyc.Text = If(bApto,
-    "APTO para envío a Marcalyc / Redalyc",
-    "NO APTO — revisar errores antes de enviar")
-
-End Sub
-
-' ============================================
-' Función   : menuXMLRedalyc_Click
-' Propósito : Genera el archivo r-*.xml aplicando la hoja
-'             jats-to-redalyc.xsl sobre el canónico c-*.xml
-'             del artículo activo. Réplica del patrón de
-'             menuXMLDoaj_Click adaptada para Redalyc.
-' ============================================
-Public Sub menuXMLRedalyc_Click()
-
-  ' --- 1. Mostrar consola ---
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  ' --- 2. Verificar que hay un artículo activo ---
-  If id_articulo.Value = 0 Then
-    Message.Info("Seleccioná un artículo antes de generar el XML Redalyc.")
-    Return
-  Endif
-
-  ' --- 3. Obtener nombre del archivo desde la BD ---
-  Dim hRes As Result
-  Try hRes = m_ConexionBD.mConn.Exec(
-    "SELECT nombre_archivo FROM articulos WHERE id_articulo = " & CStr(id_articulo.Value))
-  If Error Or hRes.Count = 0 Then
-    Message.Error("No se encontró el artículo en la BD.")
-    Return
-  Endif
-
-  ' nombre_archivo GUARDADO COMO a-01-revista-v01-n01 (SIN EXTENSIÓN)
-  Dim sNombreArchivo As String = Trim(hRes!nombre_archivo)
-
-  ' --- 4. Construir rutas ---
-  ' PATRÓN: a-01-revista-v01-n01 → c-01-revista-v01-n01.xml → r-01-revista-v01-n01.xml
-  Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
-  Dim sNombreCanonico As String = "c-" & Mid(sNombreArchivo, 3) & ".xml"
-  Dim sNombreRedalyc As String = "r-" & Mid(sNombreArchivo, 3) & ".xml"
-  Dim sRutaCanonico As String = sRutaProyecto &/ "jats" &/ sNombreCanonico
-  Dim sRutaRedalyc As String = sRutaProyecto &/ "jats" &/ sNombreRedalyc
-  Dim sRutaXSL As String = User.Home &/ ".gbpublisher/xslt/jats-to-redalyc.xsl"
-  Dim sSaxon As String
-
-  ' VERIFICAR QUE SAXON-HE ESTÁ INSTALADO
-  sSaxon = "/opt/Saxon-HE/saxon-he.jar"
-  If Not Exist(sSaxon) Then
-    Message.Error("Saxon-HE no encontrado en " & sSaxon & Chr(10) &
-      "Instale Saxon-HE y cree el symlink:" & Chr(10) &
-      "ln -s /opt/Saxon-HE/saxon-he-XX.X.jar " & sSaxon)
-    Return
-  Endif
-
-  ' --- 5. Verificar que el canónico existe ---
-  If Not Exist(sRutaCanonico) Then
-    Message.Error("No existe el canónico:" & Chr(10) & sRutaCanonico & Chr(10) &
-      "Generá primero el XML JATS.")
-    Return
-  Endif
-
-  ' --- 6. Verificar que el XSL existe ---
-  If Not Exist(sRutaXSL) Then
-    Message.Error("No se encontró la hoja de transformación:" & Chr(10) & sRutaXSL & Chr(10) &
-      "Verificar la instalación de gbpublisher.")
-    Return
-  Endif
-
-  ' --- 7. Ejecutar Saxon-HE en el terminal integrado ---
-  ' PATRÓN IDÉNTICO AL USADO PARA DOAJ EN EL RESTO DEL PROYECTO
-  FMain.TerminalViewProyecto.Input("echo '--- REDALYC XML: TRANSFORMANDO CANÓNICO ---'" & Chr(10))
-
-  Dim sComandoSaxon As String =
-    "java -Djavax.xml.accessExternalDTD=all -jar " & sSaxon & " " &
-    "-s:'" & sRutaCanonico & "' " &
-    "-xsl:'" & sRutaXSL & "' " &
-    "-o:'" & sRutaRedalyc & "'" & Chr(10)
-
-  FMain.TerminalViewProyecto.Input(sComandoSaxon)
-
-  ' --- 8. Esperar hasta que el archivo exista ---
-  Dim iEspera As Integer = 0
-  While Not Exist(sRutaRedalyc) And iEspera < 1000
-    Wait 0.2
-    Inc iEspera
-  Wend
-
-  If Not Exist(sRutaRedalyc) Then
-    Message.Error("Saxon no generó el archivo Redalyc en el tiempo esperado." & Chr(10) &
-      "Verificar la consola para ver el error.")
-    Return
-  Endif
-
-  FMain.TerminalViewProyecto.Input("echo 'OK: " & sNombreRedalyc & " generado'" & Chr(10))
-
-  ' --- 9. Cargar el listbox y auto-seleccionar el archivo generado ---
-  TabPanelIzquierdaInferior.Index = 6
-  TabStripValidaciones.Index = 3
-  m_XML.MostrarArchivosRedalyc()
-
-  Dim i As Integer
-  For i = 0 To lbRedalyc.Count - 1
-    If lbRedalyc[i].Text = sNombreRedalyc Then
-      lbRedalyc.Index = i
-      lbRedalyc_Click()
-      Break
-    Endif
-  Next
-
-End Sub
-
 Public Sub menuAcercaPC_Click()
 
   m_FuncionesGenericas.ButtonInfoPC()
@@ -4470,43 +3832,6 @@ Public Sub menuConsultasSQL_Click()
 
 End
 
-Public Sub menuGenerarEpub_Click()
-
-  ' MOSTRAMOS CONSOLA
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  m_GenerarEpub.GenerarSalidaEpub
-
-End
-
-Public Sub menuPDFunaColumna_Click()
-
-  ' MOSTRAMOS CONSOLA
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  m_GenerarPDF.GenerarPDFunaColumna()
-
-End
-
-' ============================================
-' Función   : lbLatex_Click
-' Propósito : Responde al click en lbLatex. Convierte el
-'             nombre del archivo al nombre_archivo de la BD,
-'             obtiene el id_articulo y dispara la validación.
-'             Réplica del patrón de lbDOAJ_Click.
-' ============================================
-Public Sub lbLatex_Click()
-
-  Dim sArchivo As String = lbLatex.Text
-  Dim sNombreBD As String = m_XML.NombreArchivoLatexANombreBD(sArchivo)
-  Dim idArt As Integer = m_XML.ObtenerIdArticuloPorNombre(sNombreBD)
-
-  m_XML.ValidarArchivoLatex(sArchivo, idArt)
-
-End Sub
-
 Public Sub menuCarpetaPrograma_Click()
 
   Dim sText As String = rutaApp
@@ -4517,231 +3842,6 @@ Public Sub menuCarpetaPrograma_Click()
   Endif
 
 End
-
-Public Sub menuSCIELO_Click()
-
-  tbMostrarPanelInferior.Value = True
-  TabPanelIzquierdaInferior.Index = 0
-
-  m_GenerarSCIELO.GenerarScieloUnaColumna()
-
-End Sub
-
-' ============================================
-' Evento    : lbSciELO_Click
-' Propósito : Al seleccionar un archivo en lbSciELO:
-'             .xml → re-valida con packtools y puebla grid
-'             .zip → muestra contenido del ZIP en grid
-' ============================================
-Public Sub lbSciELO_Click()
-
-  Dim sArchivo As String = lbSciELO.Text
-  Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
-
-  ' SOLO LOS XML DISPARAN LA VALIDACIÓN EN EL GRID
-  ' LOS ZIP SON SOLO INFORMATIVOS EN EL LISTBOX
-  If sArchivo Ends ".xml" Then
-    Dim sFileScielo As String = sRutaProyecto &/ "jats" &/ sArchivo
-    m_GenerarSCIELO.MostrarResultadoScieloDesdeArchivo(sFileScielo)
-  Endif
-
-End Sub
-
-Public Sub SplitterCROSSREF_Resize()
-
-  SplitterCROSSREF.Layout = [2, 5]
-
-End
-
-Public Sub lbCROSSREF_Click()
-
-  Dim sArchivo As String = lbCROSSREF.Text
-  Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
-
-  If sArchivo Ends ".xml" Then
-    Dim sFileCrossref As String = sRutaProyecto &/ "jats" &/ sArchivo
-    m_GenerarCROSSREF.MostrarResultadoCrossrefDesdeArchivo(sFileCrossref)
-  Endif
-
-End Sub
-
-' ============================================
-' Evento    : btnEnviarCrossref_Click
-' Propósito : Envía el o-*.xml seleccionado a Crossref
-'             via HTTPS POST multipart/form-data.
-'             Pregunta antes si es sandbox o producción.
-' ============================================
-Public Sub btnEnviarCrossref_Click()
-
-  ' --- 1. Validaciones previas ---
-  If lbCROSSREF.Index < 0 Then
-    m_Sonido.sonar("Info")
-    Message.Info("Seleccioná un archivo del listado.")
-    Return
-  Endif
-
-  Dim sArchivo As String = lbCROSSREF.Text
-  If Not (sArchivo Ends ".xml") Then
-    m_Sonido.sonar("Info")
-    Message.Info("Seleccioná un archivo .xml para depositar.")
-    Return
-  Endif
-
-  Dim sUsuario As String = Trim(txtUsuarioCrossref.Text)
-  Dim sClave As String = Trim(txtClaveCrossref.Text)
-
-  If sUsuario = "" Then
-    m_Sonido.sonar("Info")
-    Message.Info("Ingresá el usuario de Crossref.")
-    txtUsuarioCrossref.SetFocus()
-    Return
-  Endif
-
-  If sClave = "" Then
-    m_Sonido.sonar("Info")
-    Message.Info("Ingresá la contraseña de Crossref.")
-    txtClaveCrossref.SetFocus()
-    Return
-  Endif
-
-  ' --- 2. Elegir sandbox o producción ---
-  m_Sonido.sonar("Question")
-  Dim iModo As Integer = Message.Question(
-    "¿A qué entorno querés depositar?" & Chr(10) & Chr(10) &
-    "Sandbox: entorno de pruebas (test.crossref.org)" & Chr(10) &
-    "Producción: registro real (doi.crossref.org)",
-    "Sandbox", "Producción", "Cancelar")
-
-  If iModo = 3 Then Return
-
-  Dim sEndpoint As String
-  If iModo = 1 Then
-    sEndpoint = "https://test.crossref.org/servlet/deposit"
-  Else
-    ' CONFIRMACIÓN ADICIONAL PARA PRODUCCIÓN
-    m_Sonido.sonar("Question")
-    If Message.Question(
-        "¿Confirmar depósito en PRODUCCIÓN?" & Chr(10) &
-        "Este registro será definitivo y público.",
-        "Confirmar", "Cancelar") = 2 Then Return
-      sEndpoint = "https://doi.crossref.org/servlet/deposit"
-    Endif
-
-    ' --- 3. Construir ruta del archivo ---
-    Dim sRutaProyecto As String = File.Dir(txtProyecto.Text)
-    Dim sRutaXml As String = sRutaProyecto &/ "jats" &/ sArchivo
-
-    If Not Exist(sRutaXml) Then
-      m_Sonido.sonar("Error")
-      Message.Error("No se encuentra el archivo:" & Chr(10) & sRutaXml)
-      Return
-    Endif
-
-    ' --- 4. Enviar ---
-    FMain.TerminalViewProyecto.Input(
-      "echo '--- ENVIANDO A CROSSREF (" &
-      If(iModo = 1, "SANDBOX", "PRODUCCIÓN") & ") ---'" & Chr(10))
-
-      Dim sTmpResp As String = "/tmp/gbpublisher-crossref-resp.txt"
-      Dim sTmpCode As String = "/tmp/gbpublisher-crossref-code.txt"
-
-      Dim sCmd As String = "curl -s " &
-        "-o '" & sTmpResp & "' " &
-        "-w '%{http_code}' " &
-        "-F 'operation=doMDUpload' " &
-        "-F 'login_id=" & sUsuario & "' " &
-        "-F 'login_passwd=" & sClave & "' " &
-        "-F 'fname=@" & sRutaXml & "' " &
-        "'" & sEndpoint & "' " &
-        "> '" & sTmpCode & "'"
-
-      Dim sHttpCode As String
-      Shell sCmd To sHttpCode
-      Wait
-
-      ' LEER CÓDIGO HTTP Y RESPUESTA
-      sHttpCode = Trim(sHttpCode)
-      If sHttpCode = "" And Exist(sTmpCode) Then
-        sHttpCode = Trim(File.Load(sTmpCode))
-      Endif
-
-      Dim sRespuesta As String = ""
-      If Exist(sTmpResp) Then
-        sRespuesta = File.Load(sTmpResp)
-      Endif
-
-      FMain.TerminalViewProyecto.Input(
-        "echo 'HTTP: " & sHttpCode & "'" & Chr(10))
-
-      ' --- 5. Procesar respuesta ---
-      ' CROSSREF DEVUELVE 200 CON UN XML DE CONFIRMACIÓN
-      If sHttpCode = "200" Then
-        ' DETECTAR SI ES ÉXITO O ERROR EN EL XML DE RESPUESTA
-        Dim bExito As Boolean = InStr(sRespuesta, "queued") > 0 Or
-          InStr(sRespuesta, "success") > 0
-
-        If bExito Then
-          FMain.TerminalViewProyecto.Input(
-            "echo 'OK: depósito aceptado por Crossref'" & Chr(10))
-          lblEstadoCrossref.Text = If(iModo = 1, "Enviado al sandbox", "Enviado a producción") &
-            " — " & Format(Now(), "yyyy-mm-dd hh:nn")
-          m_Sonido.sonar("Info")
-          Message.Info("Depósito aceptado por Crossref." & Chr(10) &
-            "El DOI quedará activo en unos minutos.")
-          btnEnviarCrossref.Enabled = False
-        Else
-          FMain.TerminalViewProyecto.Input(
-            "echo 'AVISO: Crossref respondió 200 pero revisar el contenido'" & Chr(10))
-          m_Sonido.sonar("Warning")
-          Message.Warning("Crossref respondió 200 pero la respuesta merece revisión." & Chr(10) &
-            "Ver detalle en la terminal.")
-        Endif
-      Else
-        FMain.TerminalViewProyecto.Input(
-          "echo 'ERROR: Crossref devolvió HTTP " & sHttpCode & "'" & Chr(10))
-        m_Sonido.sonar("Error")
-        Message.Error("Crossref rechazó el depósito (HTTP " & sHttpCode & ")." & Chr(10) &
-          "Verificá las credenciales y el archivo.")
-      Endif
-
-      ' --- 6. GUARDAR ESTADO DEL DEPÓSITO EN LA BD ---
-      ' OBTENER id_articulo DESDE EL NOMBRE DEL ARCHIVO
-      Dim sNombreBase As String = Mid(File.BaseName(sArchivo), 3)
-      Dim hBuscar As Result
-      Dim idArt As Integer = 0
-      Try hBuscar = m_ConexionBD.mConn.Exec(
-        "SELECT id_articulo FROM articulos " &
-        "WHERE nombre_archivo LIKE &1 LIMIT 1",
-        "%-" & sNombreBase)
-      If Not Error And hBuscar.Available Then
-        idArt = CInt(hBuscar["id_articulo"])
-      Endif
-
-      If idArt > 0 Then
-        Dim sEstado As String = If(iModo = 1, "sandbox", "produccion")
-        Try m_ConexionBD.mConn.Exec(
-          "UPDATE articulos SET " &
-          "crossref_estado = &1, " &
-          "crossref_fecha_deposito = NOW() " &
-          "WHERE id_articulo = &2",
-          sEstado, idArt)
-        If Error Then
-          m_Sonido.sonar("Warning")
-          Message.Warning("Depósito exitoso pero no se pudo guardar el estado en la BD." & Chr(10) &
-            Error.Text)
-        Endif
-      Endif
-
-      ' MOSTRAR RESPUESTA EN TERMINAL
-      FMain.TerminalViewProyecto.Input(
-        "echo '--- RESPUESTA CROSSREF ---'" & Chr(10))
-      FMain.TerminalViewProyecto.Input(
-        "cat '" & sTmpResp & "'" & Chr(10))
-
-      Try Kill sTmpResp
-      Try Kill sTmpCode
-
-End Sub
 
 ' ============================================
 ' Evento    : btnChequearCrossref_Click
@@ -5279,18 +4379,6 @@ Public Sub btnCrossrefTitulo_Click()
 
 End Sub
 
-Public Sub ToggleButtonMostrar_Click()
-
-  If ToggleButtonMostrar.Value Then
-    txtClaveCrossref.Password = False
-  Else
-    txtClaveCrossref.Password = True
-  Endif
-  txtClaveCrossref.Refresh()
-  txtClaveCrossref.SetFocus()
-
-End
-
 ' ============================================
 ' Función   : btnDisenarFigura_Click
 ' Propósito : Abre los gráficos del proyecto (FGraficos) e inserta en el
@@ -5323,22 +4411,6 @@ Public Sub btnDisenarFigura_Click()
     If sId <> "" Then InsertarCodigoImagen(BloqueFigura(sId & ".png", False))
   Endif
   txtEditorProyecto.SetFocus()
-
-End
-
-Public Sub btnVisitarCrossref_Click()
-
-  Dim sURL As String = Trim("https://test.crossref.org/servlet/useragent")
-
-  ' VERIFICAR QUE NO ESTÉ VACÍO
-  If Trim(sURL) = "" Then
-    m_Sonido.sonar("Error")
-    Message.Error("Por favor, introduce un URL.")
-    Return
-  Endif
-
-  ' ABRIR LA URL EN EL NAVEGADOR PREDETERMINADO
-  Desktop.Open(sURL)
 
 End
 
@@ -5375,26 +4447,6 @@ Public Sub ButtonVerTitle_Click()
   FTXTextendido.ShowModal
 
 End
-
-' ============================================
-' Función   : btnValidaPDF_Click
-' Propósito : Delega la validación PDF/A-2b al módulo m_XML
-'             usando el archivo .tex seleccionado en lbLatex.
-'             El PDF/A-2b se deriva automáticamente del .tex.
-' ============================================
-Public Sub btnValidaPDF_Click()
-
-  ' --- 1. Verificar que hay un .tex seleccionado ---
-  If lbLatex.Index < 0 Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("Seleccioná un archivo .tex en la lista para validar su PDF/A-2b.")
-    Return
-  Endif
-
-  ' --- 2. Delegar al módulo de validaciones ---
-  m_XML.ValidarPDFA(lbLatex.Text)
-
-End Sub
 
 Public Sub btnImportarJASON_Click()
 
@@ -5748,32 +4800,19 @@ Public Sub cmbArticulosRevista_Click()
   ' ACTUALIZAR id_articulo (REVISTAS) O id_capitulo (LIBROS)
   ' SEGÚN EL ARCHIVO SELECCIONADO Y SU CARPETA DE ORIGEN.
   '
-  ' LA FUENTE DE VERDAD ES m_InicioCierre.IdArticuloEnCurso /
-  ' IdCapituloEnCurso (RC-GM-11). LOS ValueBox id_articulo /
-  ' id_capitulo SE ESCRIBEN SOLO POR REDUNDANCIA VISUAL (DEBUGGING).
+  ' LA FUENTE DE VERDAD DEL CAPÍTULO ES m_InicioCierre.IdCapituloEnCurso
+  ' (RC-GM-11). LOS ValueBox id_articulo / id_capitulo SE ESCRIBEN SOLO
+  ' POR REDUNDANCIA VISUAL (DEBUGGING).
   ' NO LEER LOS ValueBox EN OTROS HANDLERS — LEER LAS GLOBALES.
   ' ====================================================
   id_articulo.Value = 0
   id_capitulo.Value = 0
-  m_InicioCierre.IdArticuloEnCurso = 0
   m_InicioCierre.IdCapituloEnCurso = 0
 
-  ' --- REVISTAS: SOLO ARCHIVOS DE articulos/ TIENEN id_articulo ---
-  If Left(sArchivoSeleccionado, 10) = "articulos/" Then
-    Dim sNombreArchivoArt As String = File.BaseName(Mid(sArchivoSeleccionado, 11))
-    If Left(sNombreArchivoArt, 2) = "a-" Then
-      Dim hResultArt As Result
-      Try hResultArt = m_ConexionBD.mConn.Exec(
-        "SELECT id_articulo FROM articulos WHERE nombre_archivo = &1 AND id_proyecto = &2 LIMIT 1",
-        sNombreArchivoArt, id_proyecto.Value)
-      If Not Error Then
-        If hResultArt.Available Then
-          id_articulo.Value = hResultArt["id_articulo"]
-          m_InicioCierre.IdArticuloEnCurso = hResultArt["id_articulo"]
-        Endif
-      Endif
-    Endif
-  Endif
+  ' --- REVISTAS: SIN id ---
+  ' EL ARTÍCULO DEL EDITOR LO DA EL ARCHIVO ABIERTO (m_GenerarSalidasRevista.
+  ' ArticuloDelEditor, m_Cuadros). HASTA EL 18/11/2026 ACÁ SE BUSCABA EL id EN
+  ' LA TABLA VIEJA articulos (SC-98)
 
   ' --- LIBROS: front-matter/, articulos/ Y back-matter/ TODOS POPULAN id_capitulo ---
   ' EL MISMO ARCHIVO articulos/a-NN-X.md SIRVE DE FUENTE EN REVISTAS Y EN LIBROS.
@@ -6915,42 +5954,19 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   tbMostrarPanelInferior.Visible = True
   tbMostrarPanelInferior.Value = False
 
-  ' --- 19. ACTUALIZAR LISTAS DE ARCHIVOS DE SALIDAS PARA INDEXADORES ---
-  lbDOAJ.Clear
-  gvDOAJ.Clear
-  gvDOAJ.Refresh
-  m_XML.MostrarArchivosDOAJ()
-  lbCROSSREF.Clear
-  gvCROSSREF.Clear
-  gvCROSSREF.Refresh
-  m_XML.MostrarArchivosCrossref()
-  lbRedalyc.Clear
-  gvRedalyc.Clear
-  gvRedalyc.Refresh
-  m_XML.MostrarArchivosRedalyc()
-  lbLatex.Clear
-  gvLatex.Clear
-  gvLatex.Refresh
-  m_XML.MostrarArchivosLatex()
-  lbSciELO.Clear
-  gvSciELO.Clear
-  gvSciELO.Refresh
-  m_XML.MostrarArchivosScielo()
-
-  ' --- 20. CONFIGURAR MENÚ DE SALIDAS Y BOTONES DEL TIPO DE PROYECTO ---
+  ' --- 19. CONFIGURAR MENÚ DE SALIDAS Y BOTONES DEL TIPO DE PROYECTO ---
   MenuButtonSalidas.Visible = True
   SpringTemporal.Visible = False
   FMain.Splitter1.Visible = True
 
-  ' EL BOTÓN «Validar» DEL VISOR XML: EN UN LIBRO, SIEMPRE; EN UNA REVISTA,
-  ' SOLO EN UN NÚMERO NUEVO, QUE ES EL QUE TIENE CANÓNICOS DE engine/ (A0.5).
-  ' SE DECIDE CON EL TIPO YA RESUELTO EN EL APARTADO 4, NO MIRANDO OTRA VEZ
-  ' EL PREFIJO
+  ' EL BOTÓN «Validar» DEL VISOR XML: SIEMPRE, EN LIBROS Y EN REVISTAS. SE
+  ' DECIDE CON EL TIPO YA RESUELTO EN EL APARTADO 4, NO MIRANDO OTRA VEZ EL
+  ' PREFIJO
   Select Case iTipoSeleccionado
     Case m_Constantes.TIPO_REVISTA_MD
       FMain.MenuButtonSalidas.Menu = "menuSalidaRevistaMD"
       m_FuncionesGenericas.BotonesLibroRevista(True)
-      ' menuJats O EL BOTÓN VIEJO, Y «Validar», SEGÚN EL NÚMERO (07/11)
+      ' menuJats, «Validar» Y LAS SALIDAS DEL NÚMERO
       m_GenerarSalidasRevista.ConfigurarControles()
     Case m_Constantes.TIPO_LIBRO_MD
       FMain.MenuButtonSalidas.Menu = "mnuSalidaLibroMD"
@@ -6958,12 +5974,12 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
       m_Lanzadora.HabilitarValidacion(True)
   End Select
 
-  ' --- 21. ASEGURAR LA RUTA EN LA TERMINAL Y EN DirViewProyecto ---
+  ' --- 20. ASEGURAR LA RUTA EN LA TERMINAL Y EN DirViewProyecto ---
   ' SE LEE LA GLOBAL, YA FIJADA EN EL APARTADO 9
   InicializarTerminalProyecto(m_InicioCierre.RutaProyectoEnCurso)
   FMain.DirViewProyecto.Root = m_InicioCierre.RutaProyectoEnCurso
 
-  ' --- 22. CARGAMOS EL EDITOR DE BIBLIOGRAFÍA ---
+  ' --- 21. CARGAMOS EL EDITOR DE BIBLIOGRAFÍA ---
   ' LA GLOBAL YA ESTÁ FIJADA EN EL APARTADO 9 (RC-GM-16). EL MÓDULO LE AGREGA
   ' POR SU CUENTA LA SUBCARPETA /originales.
   txtEditorHTML.Clear()
@@ -6976,7 +5992,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
   Next
   m_EditorHTML.bCargandoLista = False
 
-  ' --- 23. VIGENCIA DE LOS CANÓNICOS (SOLO LIBROS) ---
+  ' --- 22. VIGENCIA DE LOS CANÓNICOS (SOLO LIBROS) ---
   ' ¿CORRESPONDEN TODAVÍA A SUS .md Y SUS CUADROS? EL CASO: UN .md QUE VUELVE
   ' DE OTRA MÁQUINA (SC-75). DESPUÉS DEL APARTADO 21, PORQUE EL SCRIPT SE
   ' TIPEA EN LA TERMINAL DEL PROYECTO. EL PROYECTO YA QUEDÓ ABIERTO: UN
@@ -6985,7 +6001,7 @@ Public Sub AbrirProyectoMD(iTipoEsperado As Integer) As Boolean
     m_GenerarSalidasLibro.RevisarVigenciaLibro()
   Endif
 
-  ' --- 24. RETORNO ---
+  ' --- 23. RETORNO ---
   ' ÚNICA SALIDA CON True: SE LLEGA ACÁ SOLO SI EL PROYECTO QUEDÓ TOMADO EN BD,
   ' LAS GLOBALES FIJADAS Y EL ARCHIVO CARGADO EN EL EDITOR
   Return True

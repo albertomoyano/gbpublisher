@@ -391,7 +391,7 @@ Vale también para los atributos (`alt`, `href`) y para los nombres de archivo q
 
 Si el valor lleva una marca que se traduce a marcado —el corte de título de SC-28—, el escape va sobre cada tramo y no sobre el texto entero: partir, escapar, unir.
 
-Corregido en `m_GenerarEpub` (portada, sumario, índice de autores, `content.opf`, `nav.xhtml`, cabecera de los XHTML de Pandoc) y en `m_GenerarHTML.GenerarIndiceHtml`. `m_GenerarEpubLibro` y `m_XML` ya escapaban.
+Se corrigió en `m_GenerarEpub` y `m_GenerarHTML`, el EPUB y el HTML viejos de revistas, que salieron el 18/11/2026 (SC-98). `m_GenerarEpubLibro` y `m_XML` ya escapaban.
 
 **Relaciones:** vinculo:SC-28
 
@@ -958,7 +958,7 @@ Si el proceso externo escribe en la misma base que la aplicación tiene abierta,
 
 **Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53
 
-**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, las salidas de revista (m_GenerarEpub, m_GenerarSCIELO, m_GenerarDOAJ, m_GenerarHTML, m_GenerarODT, m_GenerarCROSSREF, m_GenerarPDF), m_XML, m_GitHub, m_OrdenTaller, m_FuncionesGenericas, m_InicioCierre. La salida PDF de libros ya no tiene nada fuera de la lanzadora.
+**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, m_XML, m_GitHub, m_OrdenTaller, m_FuncionesGenericas, m_InicioCierre. La salida PDF de libros ya no tiene nada fuera de la lanzadora. Las salidas viejas de revista, que también tipeaban, salieron el 18/11/2026 (SC-96, SC-98).
 
 ### SC-14 — Bibliografía en HTML y EPUB: se replica el estilo biblatex del libro
 
@@ -1088,7 +1088,7 @@ Costo medido del refresco: alrededor de 0,1 s en 190.000 caracteres, reanalizand
 
 LO QUE REEMPLAZA A LO QUE NO TIENE TextEdit
 
-- Plegado por títulos: un árbol de estructura (`TreeView`, GV-51) en la pestaña «Estructura» del panel derecho (`tvEstructura`), a cargo de `m_Estructura`. Primer nivel: un nodo por .md de front-matter, articulos y back-matter, en el orden del combobox, con su título tomado de la base: `capitulos.titulo_capitulo` en libros, `articulos.titulo_articulo` en revistas, por `nombre_archivo` e `id_proyecto`; sin fila, el nombre del archivo. El archivo principal del proyecto no va, igual que en canónicos y compilación. Debajo, los títulos de cada archivo anidados por nivel.
+- Plegado por títulos: un árbol de estructura (`TreeView`, GV-51) en la pestaña «Estructura» del panel derecho (`tvEstructura`), a cargo de `m_Estructura`. Primer nivel: un nodo por .md de front-matter, articulos y back-matter, en el orden del combobox, con su título tomado de la base: `capitulos.titulo_capitulo` en libros, por `nombre_archivo` e `id_proyecto`; `articulo.titulo` en revistas, por `nombre_archivo` en el número del proyecto (hasta el 18/11/2026 leía la tabla vieja `articulos`, y en un número nuevo mostraba el nombre del archivo: SC-98); sin fila, el nombre del archivo. El archivo principal del proyecto no va, igual que en canónicos y compilación. Debajo, los títulos de cada archivo anidados por nivel.
   Títulos: solo ATX (`#` en la columna 0, de uno a seis, seguidos de un espacio), que es lo único que usan revistas y libros. Se saltean los bloques de código cercados (``` y ~~~) y el encabezado YAML inicial; un `#` sin espacio no es título. Se muestran sin el cierre de `#` ni el bloque de atributos `{…}`.
   Cada nodo guarda archivo y línea (`CTituloMD`). Se reconstruye completo al abrir el proyecto y cuando cambia la lista de archivos; al guardar se rehacen solo los títulos del archivo guardado; al cambiar de archivo no se reconstruye, se despliega ese capítulo y se pliegan los demás. Medido en banco: 32 archivos y 3,7 MB, 800 títulos, en 0,02 s.
   Un click pasa por el aviso de SC-06, cambia de archivo por el combobox si hace falta (GV-53), lleva el cursor al título, lo deja en la primera línea de la vista (GV-52) y devuelve el foco al editor. Solo mouse, como TeXstudio. Si el archivo abierto tiene cambios sin guardar, el título se reubica por su texto, buscando desde la línea guardada hacia afuera.
@@ -1310,7 +1310,7 @@ DETALLES VERIFICADOS
 - Esas sentencias se leen con `mysql -N -B -r`: sin `-r`, el modo batch duplica las barras que `QUOTE()` pone en un comentario con apóstrofo y el ALTER sale mal formado.
 - En los informes con CTE, los `CAST(… AS CHAR)` llevan `COLLATE` explícito: sin él toman la colación de la conexión y el `UNION` falla por mezcla de colaciones.
 - Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
-- El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, la restauración borra `articulos` y falla al recrearla (GV-67).
+- El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, un respaldo anterior a la 1.32.0, que trae la tabla vieja `articulos`, la borra y falla al recrearla (GV-67).
 - Restaurar el respaldo no borra lo que el script creó después: una VIEW nueva queda apuntando a una columna que ya no existe (GV-169). Desde 1.19.0, la vuelta atrás que imprime el script borra primero lo creado y después restaura.
 
 PUNTO DE RUPTURA: BASELINE 2.0.0 CON EL REFACTOR DE BIBTEX
@@ -1440,7 +1440,7 @@ La ayuda se muestra en un `TextEdit` con `ReadOnly` y `Wrap = True`, cargada por
 
 LO QUE SE RETIRA
 
-`FAyudas`, `FAyudaABM`, `m_EstilosHTML` (solo lo usaban las ayudas), los seis idiomas con su detección, y la tabla `manual_ayudas`. La tabla se elimina con una actualización de esquema (SC-22), recién cuando la ayuda nueva funcione.
+`FAyudas`, `m_EstilosHTML` (solo lo usaban las ayudas), los seis idiomas con su detección, y la tabla `manual_ayudas`. La tabla se elimina con una actualización de esquema (SC-22), recién cuando la ayuda nueva funcione. `FAyudaABM` ya salió el 18/11/2026: nada lo abría (SC-97).
 
 **Relaciones:** vinculo:SC-11,vinculo:GV-64,vinculo:SC-22,vinculo:GV-56,vinculo:SC-05,vinculo:GV-20,vinculo:SC-50
 
@@ -1600,7 +1600,7 @@ DECISIÓN CERRADA. Un combo que lista los archivos de una carpeta del proyecto s
 
 POR QUÉ SONDEO
 
-Varias salidas se generan escribiendo comandos en `TerminalViewProyecto` (`m_GenerarPDF`, `m_XML`, `m_OrdenTaller`): Gambas no se entera de cuándo terminan, así que no hay evento del que colgar el refresco. Los archivos también cambian por fuera: el gestor de archivos, otros procesos. El costo es un `Dir` sobre una carpeta cada 3 s.
+Varias salidas se generan escribiendo comandos en `TerminalViewProyecto` (`m_XML`, `m_OrdenTaller`; antes también `m_GenerarPDF`, retirado el 18/11/2026: SC-98): Gambas no se entera de cuándo terminan, así que no hay evento del que colgar el refresco. Los archivos también cambian por fuera: el gestor de archivos, otros procesos. El costo es un `Dir` sobre una carpeta cada 3 s.
 
 PIEZAS
 
@@ -2041,7 +2041,7 @@ Quien marca. Selecciona `{…}{…}` y aplica el shortcode, que es de modo `dos-
 
 UNA SOLA REGLA PARA LAS TRES CADENAS
 
-`dos-partes.lua` corre en revista (antes de `cite-to-xref.lua`), libro (antes de `fenced-divs-to-elements-db.lua`) y ODT (antes de `epigrafe-odt.lua`). Cuenta las llaves del nivel del párrafo: Pandoc las deja como texto y las de adentro, balanceadas, son texto (medido con Pandoc 3.1.3). Deja el bloque con dos hijos, `.epigrafe-texto` y `.epigrafe-atrib`, y cada filtro solo serializa. Frena la conversión con un mensaje que cita el comienzo del bloque si falta una llave, si hay texto fuera, si las partes no van pegadas, si hay más de dos, si la primera está vacía o si la atribución tiene más de un párrafo.
+`dos-partes.lua` corre en revista (antes de `cite-to-xref.lua`) y libro (antes de `fenced-divs-to-elements-db.lua`). Cuenta las llaves del nivel del párrafo: Pandoc las deja como texto y las de adentro, balanceadas, son texto (medido con Pandoc 3.1.3). Deja el bloque con dos hijos, `.epigrafe-texto` y `.epigrafe-atrib`, y cada filtro solo serializa. Frena la conversión con un mensaje que cita el comienzo del bloque si falta una llave, si hay texto fuera, si las partes no van pegadas, si hay más de dos, si la primera está vacía o si la atribución tiene más de un párrafo.
 
 - Revista: `<disp-quote specific-use="epigraph">` con `<p>` y `<attrib>` (valida contra la DTD 1.4).
 - Libro: `<epigraph>` con `<attribution>` primero y los `<para>` (DocBook 5.2).
@@ -2053,8 +2053,7 @@ DISEÑO (EL LEGADO LaTeX DE ALBERTO)
 Bloque a la derecha, del 60 % de la columna, en letra menor (`\small`) y sin corte de palabra. El texto, alineado a la izquierda; un filete de 0,6 pt; la atribución, alineada a la derecha. Sin atribución no hay filete. Igual en libros y revistas, y en el PDF, el EPUB y el HTML.
 
 - PDF: `\gbepigrafe{texto}{atribución}`, macro propia y no el paquete `epigraph`, que no permite omitir el filete. Está en `preambulo-contrato.tex` (libros) y en `m_XML.ObtenerPreambuloEmbebido` (revistas), gemelas: un cambio en una va en la otra. `jats-to-latex.xsl` reconoce el epígrafe por `@specific-use`, no por tener `<attrib>`.
-- HTML y EPUB: `div.epigrafe` con `p.epigrafe-texto` y `p.epigrafe-atrib`; el filete es el borde superior de la atribución. Mismas reglas en `gbpublisher.css`, `gbpublisher-epub-libro.css`, `jats-to-html.xsl` y `m_GenerarEpub`. La atribución conserva sus marcas y no lleva raya.
-- ODT: los estilos de párrafo `gbEpigrafe` y `gbEpigrafeAtrib` de `ott/reference.ott`, que Pandoc aplica por `custom-style`. Con margen izquierdo fijo de 6,6 cm (el 60 % de la caja del documento de referencia).
+- HTML y EPUB: `div.epigrafe` con `p.epigrafe-texto` y `p.epigrafe-atrib`; el filete es el borde superior de la atribución. Mismas reglas en `gbpublisher.css`, `gbpublisher-epub-libro.css`, `jats-to-html.xsl` (y estaban en el CSS de `m_GenerarEpub`, el EPUB viejo de revistas, retirado el 18/11/2026: SC-98). La atribución conserva sus marcas y no lleva raya.
 
 - Dedicatoria (SC-45): el mismo bloque sin atribución, sin filete. En el PDF, el entorno `gbdedicatoria` del contrato es gemelo de `\gbepigrafe`: un cambio de diseño del epígrafe va en los dos.
 
@@ -2068,7 +2067,7 @@ En revistas, `GenerarBodyXML` sigue ahora el patrón de los capítulos: si Pando
 
 **Relaciones:** vinculo:SC-34,vinculo:SC-33,vinculo:SC-31,vinculo:SC-30,vinculo:RF-11,vinculo:SC-11,apoya:GV-23,vinculo:SC-45,vinculo:SC-49
 
-**PENDIENTE:** Probado en el contenedor: los filtros, las cinco hojas que se pueden correr sueltas (las de HTML y EPUB de libro, con la plantilla aislada), el PDF y el ODT. Falta en Mint, con un libro y una revista reales, y epubcheck sobre un EPUB completo.
+**PENDIENTE:** Probado en el contenedor: los filtros, las cinco hojas que se pueden correr sueltas (las de HTML y EPUB de libro, con la plantilla aislada) y el PDF. Falta en Mint, con un libro y una revista reales, y epubcheck sobre un EPUB completo.
 
 ### SC-36 — Froufrou: separador ornamental de libros, modo separador
 
@@ -2100,7 +2099,6 @@ SALIDAS
 - Canónico: `<para role="froufrou">* * *</para>`. DocBook no tiene elemento de separación; el texto hace que cualquier lector sin nuestras hojas muestre el corte. Valida contra el RNG de DocBook 5.2.
 - PDF: `\froufrou`, con `\usepackage{froufrou}` en `preambulo-contrato.tex` (carga `tikz` y `fourier-orns`; el ornamento queda incrustado). Compilado con LuaLaTeX.
 - HTML y EPUB: tres asteriscos centrados a 1 cm, sin depender de la fuente, en `div.froufrou` con `role="separator"` y un `span` por asterisco. En el HTML, `display: flex` con `column-gap: 1cm`: la salida está indentada y, con márgenes, el espacio entre los `span` se sumaba al centímetro (medido en Chromium: 41,8 px en lugar de 37,8). En el EPUB, sin indentar (GV-71), basta el margen izquierdo de 1 cm desde el segundo `span`.
-- ODT de libros: todavía no existe.
 
 **Relaciones:** vinculo:SC-34,vinculo:SC-33,vinculo:SC-35,vinculo:RF-11,vinculo:GV-71
 
@@ -2179,7 +2177,7 @@ LAS REGLAS
 2. Lleva una FICHA propia, no LaTeX: `bigskip`, `vspace* 2baselineskip`. Solo las hojas LaTeX la traducen (en `tex-comun.xsl` cuando la ficha es igual en JATS y en DocBook), y frenan ante una ficha que no conocen.
 3. Las hojas de HTML y EPUB no hacen nada: la regla incorporada de XSLT para una instrucción de procesamiento no escribe nada (medido en SC-28 y en SC-39). Una hoja que copie con `xsl:copy-of` o con una identidad sobre `node()` sí las copiaría: hay que mirarlo en cada hoja nueva.
 4. Los indexadores las quitan todas de una vez. `jats-to-scielo.xsl` y `jats-to-redalyc.xsl` parten de una identidad sobre `@* | node()`, que incluye las instrucciones de procesamiento (verificado: copiaban `<?gb-espacio?>` al paquete). Una sola plantilla vacía, `processing-instruction()[starts-with(name(), 'gb-')]`, las quita: una instrucción nueva no se filtra por olvido.
-5. Diccionario cerrado, en un solo filtro Lua por instrucción, que corre en las tres cadenas (revista, libro, ODT) con el patrón de `dos-partes.lua` (SC-35). En el ODT la quita. Lo que no está en el diccionario frena la conversión con un mensaje que dice qué falla y qué se admite.
+5. Diccionario cerrado, en un solo filtro Lua por instrucción, que corre en las dos cadenas (revista y libro) con el patrón de `dos-partes.lua` (SC-35). Lo que no está en el diccionario frena la conversión con un mensaje que dice qué falla y qué se admite.
 6. En el catálogo de shortcodes, grupo propio: `composicion`, «Composición (solo PDF)», al final de la lista. El editor ve en el panel que son instrucciones de página y no de contenido. El grupo entró con el esquema 5 de gbShortcodes. El modo dice qué es cada una: las de un punto se insertan como separador (`separador-valor`); las de un tramo, con `envolver`. `m_AnalizarProyecto` cuenta como cuerpo el texto de las de un tramo y no cuenta las de un punto.
 7. En una hoja LaTeX, la instrucción solo se alcanza donde se la pide: `*` selecciona elementos, no instrucciones de procesamiento. `docbook-to-latex.xsl` la agrega en unión, `(* except info) | processing-instruction('gb-espacio')`, que conserva el orden del documento; `jats-to-latex.xsl` ya recorría todos los nodos de `body` y `sec`.
 
@@ -2218,14 +2216,13 @@ L es un número con unidad (`pt`, `mm`, `cm`, `em`, `ex`) o `N\baselineskip` (fi
 
 FRENA LA CONVERSIÓN (CÓDIGO 83, CON MENSAJE)
 
-Un valor fuera del diccionario, una longitud mal formada, `\cleardoublepage` en una revista, un bloque vacío, con más de un bloque adentro, o sin la barra. Y un bloque que no esté en el primer nivel: dentro de otro bloque, una lista, una cita, una tabla o una nota. En revista el filtro corre después de `unwrap-structural-divs.lua`, así que dentro de una sección estructural (`::: intro`) vale. En el ODT no se controla el nivel, porque esa cadena no desenvuelve las secciones: la revista ya lo controla en la del XML.
+Un valor fuera del diccionario, una longitud mal formada, `\cleardoublepage` en una revista, un bloque vacío, con más de un bloque adentro, o sin la barra. Y un bloque que no esté en el primer nivel: dentro de otro bloque, una lista, una cita, una tabla o una nota. En revista el filtro corre después de `unwrap-structural-divs.lua`, así que dentro de una sección estructural (`::: intro`) vale.
 
 SALIDAS
 
 - Canónico: `<?gb-espacio bigskip?>` entre los párrafos, en JATS y en DocBook.
 - PDF: la plantilla de `tex-comun.xsl` escribe el comando. Compilado con LuaLaTeX.
 - HTML, EPUB, Crossref, DOAJ: nada. SciELO y Redalyc: la plantilla vacía de SC-38.
-- ODT: el bloque se quita.
 
 INSERCIÓN: MODO separador-valor
 
@@ -2249,7 +2246,7 @@ DECISIÓN CERRADA (decisión de Alberto). En el .md, la semirraya, la raya y los
     ---    raya (U+2014)
     ...    puntos suspensivos (U+2026)
 
-Nunca el carácter Unicode. Los lectores `--from markdown` del proyecto (`m_XML`, `m_GenerarEpub`, `m_GenerarODT`) tienen `smart` activo por omisión y los vuelven a U+2013, U+2014 y U+2026 (GV-79): el canónico JATS o DocBook y todas las salidas reciben el carácter tipográfico.
+Nunca el carácter Unicode. Los lectores `--from markdown` del proyecto (los de las cadenas de `engine/` y `m_PrimerasLibro`; también `m_GenerarEpub` y `m_GenerarODT`, retirados: SC-96, SC-98) tienen `smart` activo por omisión y los vuelven a U+2013, U+2014 y U+2026 (GV-79): el canónico JATS o DocBook y todas las salidas reciben el carácter tipográfico.
 
 POR QUÉ
 
@@ -2355,7 +2352,6 @@ POR SALIDA
 - PDF de pantalla y HTML: caja oscura con la paleta Gruvbox del tema de la aplicación, rótulo del lenguaje arriba, números de línea y ↩ en gris. En el HTML el número y el ↩ los dibuja el CSS y no se copian con el código.
 - PDF de libro en estado «Imprenta» (valor `publicado`; el combo decía «Publicado»): fondo blanco, texto negro, sin color; la negrita y la bastardilla de los tokens quedan. Es la quinta prestación de `PrestacionesDeSalida`, `codigocolor`. Las revistas no van a imprenta: su PDF va siempre en color.
 - EPUB: fondo negro, texto blanco, sin color, número y ↩ como texto (los lectores no siempre dibujan contenido generado).
-- ODT (revistas): el bloque con el resaltado claro de Pandoc; el listado, bloque y pie sin número.
 
 EL PIE
 
@@ -2363,7 +2359,7 @@ EL PIE
 
 GEMELOS
 
-La paleta está en la sección 8 de `preambulo-contrato.tex`, su gemela en `m_XML.ObtenerPreambuloEmbebido`, el CSS de `jats-to-html.xsl` y `gbpublisher.css`; el EPUB en `gbpublisher-epub-libro.css` y `m_GenerarEpub`. La lista de lenguajes en `codigo.lua`, `codigo-comun.xsl` y `FCodigo`. La regla del ↩ en `colorear_codigo.lua` y `codigo-comun.xsl`.
+La paleta está en la sección 8 de `preambulo-contrato.tex`, su gemela en `m_XML.ObtenerPreambuloEmbebido`, el CSS de `jats-to-html.xsl` y `gbpublisher.css`; el EPUB en `gbpublisher-epub-libro.css` (y estaba en `m_GenerarEpub`, el EPUB viejo de revistas, retirado el 18/11/2026: SC-98). La lista de lenguajes en `codigo.lua`, `codigo-comun.xsl` y `FCodigo`. La regla del ↩ en `colorear_codigo.lua` y `codigo-comun.xsl`.
 
 INSERCIÓN
 
@@ -2375,7 +2371,7 @@ LOS SCRIPTS DE LIBRO SALEN DE RutaRecursos
 
 PROBADO EN MINT (2026-10)
 
-PDF de pantalla y de imprenta, HTML, EPUB y ODT, en libros y en revistas; inserción desde el panel; los casos que frenan. Los tres shortcodes se liberan con `datos-v5-006` de gbShortcodes.
+PDF de pantalla y de imprenta, HTML y EPUB (y el ODT, retirado: SC-96), en libros y en revistas; inserción desde el panel; los casos que frenan. Los tres shortcodes se liberan con `datos-v5-006` de gbShortcodes.
 
 **Relaciones:** vinculo:SC-32,vinculo:SC-33,vinculo:SC-21,vinculo:SC-31,vinculo:SC-30,vinculo:SC-34,vinculo:RF-11,vinculo:GV-80,vinculo:RC-GM-13,vinculo:SC-57
 
@@ -2474,14 +2470,13 @@ IDIOMA DE LA ETIQUETA POR OMISIÓN (decisión de Alberto: español por omisión)
 
 Tabla cerrada: español P. y R.; inglés Q. y A. Cualquier otro idioma, o ninguno, da español. Se compara el código principal, sin región (`es-AR` es `es`).
 
-- Revista y ODT: la etiqueta la escribe el filtro, y el idioma está en la base (`articulos.idioma_principal`). `m_XML.ArgumentoIdiomaPandoc` lo pasa como `-M gb-idioma=xx`: solo letras ASCII y guiones, si no `es`. Clave propia y no `lang`: en el ODT, `lang` cambiaría además el idioma de citeproc y del documento. `conversacion.lua` lo lee en su función `Pandoc`, con el documento entero: en una función `Div` de la misma tabla, `Meta` todavía no habría corrido (GV-84).
+- Revista: la etiqueta la escribe el filtro, y el idioma está en la base (`articulo.idioma_principal`, desde el volcado del número: `idioma_pandoc` en `generar_canonicos_articulos.sh`). `m_XML.ArgumentoIdiomaPandoc` lo pasa como `-M gb-idioma=xx`: solo letras ASCII y guiones, si no `es`. Clave propia y no `lang`: se eligió por el ODT (retirado: SC-96), donde `lang` cambiaba además el idioma de citeproc y del documento. `conversacion.lua` lo lee en su función `Pandoc`, con el documento entero: en una función `Div` de la misma tabla, `Meta` todavía no habría corrido (GV-84).
 - Libro: nada que pasar. Sin `quien` no hay `label`, y la hoja pone la etiqueta según `defaultlabel` y el `xml:lang` más cercano al turno.
 
 IMPLEMENTACIÓN
 
-- `conversacion.lua`, filtro nuevo, corre en las tres cadenas: revista, después de `codigo.lua` y antes de `cite-to-xref.lua`; libro, antes de `fenced-divs-to-elements-db.lua`; ODT, después de `codigo.lua`. Controla la forma (los frenos de arriba). Busca los turnos sueltos recorriendo el documento de arriba hacia abajo sin entrar en las conversaciones (GV-85). En revista y ODT escribe en cada turno el atributo `etiqueta` (`quien` o la de la tabla).
+- `conversacion.lua`, filtro nuevo, corre en las dos cadenas: revista, después de `codigo.lua` y antes de `cite-to-xref.lua`; libro, antes de `fenced-divs-to-elements-db.lua`. Controla la forma (los frenos de arriba). Busca los turnos sueltos recorriendo el documento de arriba hacia abajo sin entrar en las conversaciones (GV-85). En revista escribe en cada turno el atributo `etiqueta` (`quien` o la de la tabla).
 - `cite-to-xref.lua` y `fenced-divs-to-elements-db.lua` solo serializan; frenan si `conversacion.lua` no corrió antes.
-- ODT: la conversación se resuelve en párrafos; la etiqueta en negrita y mayúsculas abre el primer párrafo de cada turno; la acotación queda tal cual.
 - Hojas: `conversacion-comun.xsl`, incluida por las seis, da la etiqueta (`gbv:etiqueta`, ya en mayúsculas), si el turno es pregunta y sus bloques. PDF: entorno `gbconversacion` y `\gbetiqueta` (contrato 12); después de cada pregunta, `\nopagebreak[4]` en modo vertical. HTML y EPUB: `div.conversacion`, `div.turno` con `turno-pregunta` o `turno-respuesta`, `span.turno-etiqueta` y `p.acotacion`. Un turno de libro que empieza con una lista lleva la etiqueta sola en su párrafo.
 - Medido en contenedor (pdfLaTeX, 60 pares de largo variable, con `\raggedbottom`, `\clubpenalty=10000` y `\widowpenalty=10000`, como los preámbulos del proyecto): ninguna página termina con una pregunta completa; una pregunta larga puede partirse entre páginas, con dos líneas al menos de cada lado, y la respuesta sigue a su final.
 
@@ -2489,11 +2484,11 @@ GEMELOS
 
 - La tabla de etiquetas: `conversacion.lua` y `conversacion-comun.xsl`.
 - El entorno: `preambulo-contrato.tex` (contrato 12) y `m_XML.ObtenerPreambuloEmbebido`.
-- El CSS: `jats-to-html.xsl` y `gbpublisher.css` (etiqueta en negrita y azul, en los dos turnos); `gbpublisher-epub-libro.css` y `m_GenerarEpub` (negrita, negro).
+- El CSS: `jats-to-html.xsl` y `gbpublisher.css` (etiqueta en negrita y azul, en los dos turnos); `gbpublisher-epub-libro.css` (negrita, negro; y estaba en `m_GenerarEpub`, el EPUB viejo de revistas, retirado el 18/11/2026: SC-98).
 
 PROBADO EN MINT (2026-10)
 
-PDF, HTML y EPUB, en libros y en revistas. Dos ajustes salieron de esa prueba: en el HTML la etiqueta de quien responde también va en azul, y en el PDF el bloque va corrido 14 pt a la izquierda. Los cuatro shortcodes —conversacion, pregunta, respuesta y acotacion— se liberan para libros y revistas con datos-v5-009 de gbShortcodes, por decisión de Alberto, con el ODT y el XML JATS todavía sin probar (ver el pendiente).
+PDF, HTML y EPUB, en libros y en revistas. Dos ajustes salieron de esa prueba: en el HTML la etiqueta de quien responde también va en azul, y en el PDF el bloque va corrido 14 pt a la izquierda. Los cuatro shortcodes —conversacion, pregunta, respuesta y acotacion— se liberan para libros y revistas con datos-v5-009 de gbShortcodes, por decisión de Alberto, con el XML JATS todavía sin probar (ver el pendiente).
 
 ALTERNATIVA DESCARTADA: LA CLASE Q-and-A
 
@@ -2503,7 +2498,7 @@ TAMPOCO BITS question-answer: es para evaluaciones, no para entrevistas.
 
 **Relaciones:** vinculo:RC-DB-04,apoya:GV-81,apoya:GV-82,apoya:GV-83,vinculo:SC-33,vinculo:SC-32,vinculo:SC-31,vinculo:RF-11,apoya:GV-84,apoya:GV-85,apoya:GV-86
 
-**PENDIENTE:** Probar el ODT (revistas) y el XML JATS: validación del canónico, sabores (SciELO, Redalyc) y packtools. Los shortcodes ya están liberados (datos-v5-009).
+**PENDIENTE:** Probar el XML JATS: validación del canónico, sabores (SciELO, Redalyc) y packtools. Los shortcodes ya están liberados (datos-v5-009).
 
 ### SC-44 — Orden editorial de las piezas: por nombre de archivo, desde m_OrdenPiezas
 
@@ -2530,7 +2525,7 @@ Lo usan `m_GenerarPDFLibro.ArmarInsumosLaTeX`, `m_GenerarEpubLibro.ListaPiezasEp
 
 GRILLAS DE METADATOS
 
-`gbCapitulos` (`FMetadatosCapitulos`) y `gbArticulos` (`FMetadatosArticulos`) siguen la misma forma:
+`gbCapitulos` (`FMetadatosCapitulos`) y `gbArticulos` (`FMetadatosArticulos`, del camino viejo de revistas, retirado el 18/11/2026: SC-98) siguen la misma forma:
 
 - Columnas: id oculto (ancho 0, lo usa el `Click`), Código y Título. Tipo, Estado y Fecha no se muestran.
 - El estado se lee en la consulta aunque no se muestre: `PintarEstado` colorea la celda del código con la paleta de estados que antes tenía la columna Estado.
@@ -2540,7 +2535,7 @@ Verificado: el orden y la extracción del código, en MariaDB 10.11 con nombres 
 
 **Relaciones:** vinculo:SC-25,vinculo:SC-45,vinculo:SC-55
 
-**PENDIENTE:** `m_GenerarEpub` y `m_GenerarHTML` (revistas) ordenan solo por `nombre_archivo ASC`: si un número tiene un `fm-`, queda después de los `a-`. Revisar si esos módulos ven solo artículos o si tienen que pasar a `m_OrdenPiezas`. La copia del CASE en `FMain` está comentada y no se tocó.
+**PENDIENTE:** Resuelto por retiro: `m_GenerarEpub` y `m_GenerarHTML` (revistas), que ordenaban solo por `nombre_archivo ASC`, salieron el 18/11/2026 (SC-98), y la copia comentada del CASE ya no está en `FMain`.
 
 ### SC-45 — Dedicatoria: pieza suelta de fm-00 a fm-09, antes del sumario, con el bloque del epígrafe sin filete
 
@@ -2751,7 +2746,7 @@ Se descartó el bloque de líneas de Pandoc (`| ` al principio de cada verso): o
 
 QUIÉN HACE QUÉ
 
-- `verso.lua` controla y normaliza, con una sola regla para las tres cadenas (revista, libro y ODT), después de `conversacion.lua`. Deja un Div `.estrofa` por estrofa y un Div `.linea` por verso con el atributo `nivel`. Una marca que cruza versos (una bastardilla de dos versos) se parte en dos marcas iguales: ningún elemento del canónico cruza un fin de verso. Las notas, las citas, el código y las fórmulas no se parten.
+- `verso.lua` controla y normaliza, con una sola regla para las dos cadenas (revista y libro), después de `conversacion.lua`. Deja un Div `.estrofa` por estrofa y un Div `.linea` por verso con el atributo `nivel`. Una marca que cruza versos (una bastardilla de dos versos) se parte en dos marcas iguales: ningún elemento del canónico cruza un fin de verso. Las notas, las citas, el código y las fórmulas no se parten.
 - `cite-to-xref.lua` (revista) y `fenced-divs-to-elements-db.lua` (libro) solo serializan.
 - `verso-comun.xsl`, incluido en las seis hojas como `conversacion-comun.xsl`, dice cuáles son las estrofas de un poema, los versos de una estrofa y el nivel de cada verso. Devuelve los nodos del canónico, no copias: las notas y las citas se numeran y resuelven en su lugar.
 
@@ -2781,11 +2776,7 @@ El paquete `verse` de Peter Wilson (en Mint, la 2.4a de 2009; lo que se usa exis
 
 HTML Y EPUB
 
-`div.verso` con un `div.estrofa` por estrofa y un `span.verso-linea` por verso; la sangría es la clase `nivel-N`. El CSS reproduce el PDF: bastardilla, 0,75 em entre estrofas, cada verso un bloque con `padding-left: 3em` y `text-indent` de -3 em más 1,5 em por nivel, así que la primera línea queda en su sangría y la continuación a 3 em. En un epígrafe, `div.verso.verso-epigrafe`: la letra del epígrafe, sin bastardilla ni margen. Mismas reglas en `gbpublisher.css`, `gbpublisher-epub-libro.css`, `jats-to-html.xsl` y `m_GenerarEpub`; las clases son las mismas en libros y revistas. Antes eran `verse-group` y `verse-line` en revistas, con diseños distintos en cada salida y un filete a la izquierda en libros.
-
-ODT
-
-`verso.lua` lo resuelve en un párrafo por estrofa, con salto de línea entre versos y la sangría como un espacio eme y uno ene por nivel (1,5 em). Sin estilo propio: el ODT es para revisar.
+`div.verso` con un `div.estrofa` por estrofa y un `span.verso-linea` por verso; la sangría es la clase `nivel-N`. El CSS reproduce el PDF: bastardilla, 0,75 em entre estrofas, cada verso un bloque con `padding-left: 3em` y `text-indent` de -3 em más 1,5 em por nivel, así que la primera línea queda en su sangría y la continuación a 3 em. En un epígrafe, `div.verso.verso-epigrafe`: la letra del epígrafe, sin bastardilla ni margen. Mismas reglas en `gbpublisher.css`, `gbpublisher-epub-libro.css`, `jats-to-html.xsl` (y estaban en `m_GenerarEpub`, el EPUB viejo de revistas, retirado el 18/11/2026: SC-98); las clases son las mismas en libros y revistas. Antes eran `verse-group` y `verse-line` en revistas, con diseños distintos en cada salida y un filete a la izquierda en libros.
 
 EN UN EPÍGRAFE
 
@@ -2840,7 +2831,7 @@ Queda registrado para no usar ese camino creyendo que funciona.
 
 **Relaciones:** vinculo:RC-DB-04,vinculo:SC-35,vinculo:SC-33,vinculo:SC-34,vinculo:SC-43,vinculo:SC-45,vinculo:SC-25,vinculo:RF-11,vinculo:GV-92,vinculo:GV-93,vinculo:GV-94,vinculo:GV-95,vinculo:GV-85,vinculo:GV-86
 
-**PENDIENTE:** Probado en Mint (2026-10) con prueba-verso.md: PDF, HTML y EPUB en libros y revistas, correctos; el shortcode se liberó (gbShortcodes datos-v5-011). Falta: el ODT; la inserción desde el panel; los casos que frenan (prueba/frena); epubcheck sobre un EPUB completo. El XML JATS, sus sabores (SciELO, Redalyc) y packtools con un verse-group se prueban en la fase de JATS, cuando estén todos los shortcodes desarrollados (decisión de Alberto).
+**PENDIENTE:** Probado en Mint (2026-10) con prueba-verso.md: PDF, HTML y EPUB en libros y revistas, correctos; el shortcode se liberó (gbShortcodes datos-v5-011). Falta: la inserción desde el panel; los casos que frenan (prueba/frena); epubcheck sobre un EPUB completo. El XML JATS, sus sabores (SciELO, Redalyc) y packtools con un verse-group se prueban en la fase de JATS, cuando estén todos los shortcodes desarrollados (decisión de Alberto).
 
 ### SC-50 — Aplicaciones satélite de gbpublisher: un solo modelo
 
@@ -3696,11 +3687,10 @@ SALIDAS
 - PDF: el párrafo en su grupo, como arriba.
 - HTML y EPUB, de libros y de revistas: el párrafo común. La regla incorporada de XSLT no escribe nada para la instrucción (SC-38).
 - SciELO y Redalyc: la plantilla vacía de SC-38. Crossref y DOAJ no llevan el cuerpo.
-- ODT: los párrafos, sin el bloque ni la ficha.
 
 CADENAS
 
-`alinear.lua` corre justo después de `espacio-vertical.lua` en las tres: `generar_canonicos_capitulos.sh` (libro, antes de `fenced-divs-to-elements-db.lua`), `m_XML` (revista, después de `unwrap-structural-divs.lua` y antes de `cite-to-xref.lua`) y `m_GenerarODT`.
+`alinear.lua` corre justo después de `espacio-vertical.lua` en las dos: `generar_canonicos_capitulos.sh` (libro, antes de `fenced-divs-to-elements-db.lua`), y `FILTROS_REVISTA` de `engine/comun.sh` (revista, después de `unwrap-structural-divs.lua` y antes de `cite-to-xref.lua`). Antes, la revista en `m_XML` y el ODT en `m_GenerarODT`, retirados (SC-96, SC-98).
 
 ANÁLISIS DEL PROYECTO
 
@@ -3720,7 +3710,7 @@ Alberto, 21/10, con un libro y una revista reales: las tres alineaciones, con ne
 
 **Relaciones:** vinculo:SC-38,vinculo:SC-39,vinculo:SC-33,vinculo:SC-34,vinculo:SC-49,vinculo:GV-113,vinculo:GV-114,vinculo:GV-115
 
-**PENDIENTE:** ODT: se encara cuando estén terminadas las salidas PDF (decisión de Alberto, 21/10). Sin confirmar en Mint: la inserción desde el panel, el conteo de m_AnalizarProyecto y el mensaje de un caso que frena (probados solo en el contenedor, los casos que frenan). Las hojas de HTML y EPUB de libros no se corrieron sueltas en el contenedor; en Mint salieron bien.
+**PENDIENTE:** Sin confirmar en Mint: la inserción desde el panel, el conteo de m_AnalizarProyecto y el mensaje de un caso que frena (probados solo en el contenedor, los casos que frenan). Las hojas de HTML y EPUB de libros no se corrieron sueltas en el contenedor; en Mint salieron bien.
 
 ### SC-62 — Letra volada en el texto: n\sptext{o}
 
@@ -3763,13 +3753,9 @@ HTML Y EPUB
 
 `n.<sup>o</sup>`, con las plantillas de superíndice que ya existen. SciELO y Redalyc copian el `<sup specific-use="volada">`, que es JATS válido.
 
-ODT
-
-El punto y la volada en superíndice.
-
 CADENAS
 
-`volada.lua` corre antes de todo filtro que serialice con `pandoc.write`, que la descartaría (GV-116). Libro: segundo, después de `guillemets-to-quoted-db.lua` y antes de `cite-to-biblioref-db.lua`, que serializa las notas. Revista: después de `alinear.lua` y antes de `cite-to-xref.lua`. ODT: después de `alinear.lua`.
+`volada.lua` corre antes de todo filtro que serialice con `pandoc.write`, que la descartaría (GV-116). Libro: segundo, después de `guillemets-to-quoted-db.lua` y antes de `cite-to-biblioref-db.lua`, que serializa las notas. Revista: después de `alinear.lua` y antes de `cite-to-xref.lua`.
 
 CATÁLOGO
 
@@ -3796,8 +3782,6 @@ Los casos que frenan, también en Mint (Alberto, 21/10): `n.\sptext{e}` (punto a
 
 **Relaciones:** vinculo:SC-58,vinculo:GV-105,vinculo:GV-116,vinculo:GV-117,vinculo:GV-118,vinculo:SC-29,vinculo:SC-21,vinculo:GV-119,vinculo:SC-54
 
-**PENDIENTE:** El ODT, cuando se encare (decisión de Alberto, 21/10).
-
 ### SC-63 — Corte de línea en los títulos de sección del .md: \\, como en la base
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** Pandoc 3.1.3 / SaxonJ-HE 12.5 / xmllint / LuaLaTeX (TeX Live 2023) / titlesec / hyperref / qpdf / gbc3 3.19 / contenedor Ubuntu 24.04; gbpublisher en Linux Mint (prueba de Alberto, 21/10) · **Verificado:** 2026-11
@@ -3806,7 +3790,7 @@ DECISIÓN CERRADA (decisión de Alberto, 21/10). La regla de SC-28 vale también
 
     ## Corte de\\ subtítulo
 
-En el sumario, el folio, los marcadores, el HTML, el EPUB, el ODT y los indexadores, el corte es un espacio. En libros el `#` del .md no llega al canónico: el título del capítulo sale de la base y ya tiene su regla (SC-28).
+En el sumario, el folio, los marcadores, el HTML, el EPUB y los indexadores, el corte es un espacio. En libros el `#` del .md no llega al canónico: el título del capítulo sale de la base y ya tiene su regla (SC-28).
 
 LA REGLA
 
@@ -3839,13 +3823,9 @@ HTML, EPUB E INDEXADORES
 
 `jats-to-html` y `jats-to-epub` no tienen plantilla para `break`, y la regla incorporada no escribe nada para una instrucción de procesamiento: sale «Corte de subtítulo». `jats-to-scielo` y `jats-to-redalyc` quitan `sec/title/break` con una plantilla vacía. No usan `normalize-space`, como en el `article-title` de SC-28, porque un título de sección puede llevar bastardilla.
 
-ODT
-
-Un espacio.
-
 CADENAS
 
-`corte-titulo.lua`, justo después de `volada.lua` en las tres: libro, tercero, antes de `cite-to-biblioref-db.lua`; revista, antes de `cite-to-xref.lua`; ODT.
+`corte-titulo.lua`, justo después de `volada.lua` en las dos: libro, tercero, antes de `cite-to-biblioref-db.lua`; revista, antes de `cite-to-xref.lua`.
 
 VERIFICADO EN EL CONTENEDOR
 
@@ -3869,7 +3849,7 @@ Alberto, 11/11, en el mismo libro, con el arreglo de GV-192 (contrato 23): la se
 
 **Relaciones:** vinculo:SC-28,vinculo:SC-29,vinculo:SC-39,vinculo:SC-54,vinculo:SC-62,vinculo:GV-121,vinculo:RF-11,vinculo:SC-34,vinculo:GV-192
 
-**PENDIENTE:** Falta en Mint, en libros: un caso que frene en la conversión (corte al final, dos seguidos o dentro de una bastardilla), el control corte_fuera_de_titulo y los avisos del panel que no se vieron (# del capítulo, al principio, al final, dentro de una palabra, pegado a otro corte). Revistas, en la refactorización del módulo (otra conversación): `jats-to-latex.xsl` escribe `\gbCorteTitulo` en `sec/title/break` y la segunda línea cae debajo del número (GV-192), se corrige con `\gbCorteSeccion` como en el libro; después, la fila corte-titulo pasa de no_aplica a borrador y se prueba en una revista. El ODT, cuando se encare (decisión de Alberto, 21/10).
+**PENDIENTE:** Falta en Mint, en libros: un caso que frene en la conversión (corte al final, dos seguidos o dentro de una bastardilla), el control corte_fuera_de_titulo y los avisos del panel que no se vieron (# del capítulo, al principio, al final, dentro de una palabra, pegado a otro corte). Revistas, en la refactorización del módulo (otra conversación): `jats-to-latex.xsl` escribe `\gbCorteTitulo` en `sec/title/break` y la segunda línea cae debajo del número (GV-192), se corrige con `\gbCorteSeccion` como en el libro; después, la fila corte-titulo pasa de no_aplica a borrador y se prueba en una revista.
 
 ### SC-64 — Cifras y unidades: la norma internacional, escrita con siunitx
 
@@ -3934,7 +3914,7 @@ Tres lotes, cada uno probado en Mint antes del siguiente:
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** pandoc 3.1.3 / Saxon-HE / xmllint / LuaHBTeX 1.17.0, TeX Live 2023, babel-spanish 5.0q, siunitx 3.3.10 / gbc3 3.19 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
 
-IMPLEMENTACIÓN del lote 1 de SC-64: las cifras y las cantidades en el texto, con `\num`, `\SI` y `\SIrange`, en el libro, la revista y el ODT. Las decisiones de diseño (a)–(g) son de Alberto (22/10).
+IMPLEMENTACIÓN del lote 1 de SC-64: las cifras y las cantidades en el texto, con `\num`, `\SI` y `\SIrange`, en el libro y la revista (y el ODT, retirado: SC-96). Las decisiones de diseño (a)–(g) son de Alberto (22/10).
 
 LA CADENA
 
@@ -3944,7 +3924,6 @@ El filtro `cifras.lua` corre en las tres cadenas antes de todo filtro que serial
               corte-titulo, antes de cite-to-biblioref-db
     revista   m_XML.GenerarBodyXML: después de corte-titulo, antes de recuadros
               y de cite-to-xref
-    ODT       m_GenerarODT.GenerarODTunaColumna: después de corte-titulo
 
 EL CANÓNICO (decisión a)
 
@@ -3952,7 +3931,6 @@ El elemento lleva el texto ya formateado, y la entrada tal como se escribió va 
 
     JATS     <named-content content-type="cantidad" specific-use="SI 2.5 kilo metre per hour">2.5 km/h</named-content>
     DocBook  <phrase role="cantidad" remap="SI 2.5 kilo metre per hour">2.5 km/h</phrase>
-    ODT      el texto formateado, sin marca
 
 La ficha es la orden y sus argumentos separados por espacios, con las unidades sin barra: `num 1500`, `SI 88 percent`, `SIrange 50 51 degree`. Sin LaTeX en el canónico (SC-38). Validado: `named-content` en `p`, `title`, `td` y `caption` contra la DTD de JATS 1.4; `phrase` con `remap` contra el RNG de DocBook 5.2.
 
@@ -3962,7 +3940,7 @@ EL PDF
 
 El `\sisetup` de SC-64 y `\DeclareSIUnit\euro{€}` están en el contrato del libro (`preambulo-contrato.tex`, versión 15; `CONTRATO_VERSION = 15` en `m_GenerarPDFLibro`) y en el preámbulo de la revista (`m_XML`), con los mismos valores.
 
-EL HTML, EL EPUB Y EL ODT
+EL HTML Y EL EPUB
 
 El texto lo arma el formateador de `cifras.lua` con las reglas de SC-64: punto decimal, grupos de a tres desde cinco dígitos de un lado del punto, signo menos U+2212, exponente «× 10ⁿ» con superíndice, U+202F entre los grupos y entre la cifra y la unidad, el grado pegado, `/` para `\per`. Las hojas de HTML y EPUB no necesitan plantilla: muestran el texto del elemento.
 
@@ -4000,7 +3978,7 @@ En esa prueba la terminal mostró el final del mensaje de `cifras.lua` y no su p
 
 **Relaciones:** vinculo:SC-64,vinculo:SC-38,vinculo:SC-54,vinculo:SC-62,vinculo:SC-63,apoya:GV-116,apoya:GV-117,apoya:GV-118,vinculo:GV-119,apoya:GV-123,apoya:GV-124,vinculo:GV-125
 
-**PENDIENTE:** El cambio de idioma por capítulo en el PDF del libro, que no existe (ver LO QUE NO CUBRE), cuando se encare; con él, probar un capítulo en inglés con \SIrange. El ODT y la revista en Mint, con la fase de salidas que les corresponde.
+**PENDIENTE:** El cambio de idioma por capítulo en el PDF del libro, que no existe (ver LO QUE NO CUBRE), cuando se encare; con él, probar un capítulo en inglés con \SIrange. La revista en Mint, con la fase de salidas que le corresponde.
 
 ### SC-66 — Cuadros: el archivo del cuadro, el estilo de la casa y la cadena (lote 2 de SC-64)
 
@@ -4051,8 +4029,8 @@ El mismo diseño y el mismo criterio: el maquetador decide dónde corta y si rot
 
 LA CADENA
 
-- `cuadro-leer.lua`, PRIMERO en las tres cadenas: trae el archivo (con `-M gb-proyecto`), controla el encabezado y la tabla, y deja un Div `.cuadro` con las decisiones en sus atributos, el título, la nota y la tabla. Así el contenido pasa por todos los filtros: comillas, volada, cifras, citas. Una cifra sola en una columna de cifras pasa a `\num{…}`, que traduce `cifras.lua` (SC-65). Frena el viejo `::: {.table}`.
-- `cuadro-armar.lua` escribe el cuadro: en libros, antes de `fenced-divs-to-elements-db.lua`; en revistas, después de `cite-to-xref.lua`; en el ODT, antes de `--citeproc`. Lo escribe el filtro y no Pandoc porque el escritor DocBook pierde las celdas unidas (GV-126) y ninguno lleva la nota ni las decisiones.
+- `cuadro-leer.lua`, PRIMERO en las dos cadenas: trae el archivo (con `-M gb-proyecto`), controla el encabezado y la tabla, y deja un Div `.cuadro` con las decisiones en sus atributos, el título, la nota y la tabla. Así el contenido pasa por todos los filtros: comillas, volada, cifras, citas. Una cifra sola en una columna de cifras pasa a `\num{…}`, que traduce `cifras.lua` (SC-65). Frena el viejo `::: {.table}`.
+- `cuadro-armar.lua` escribe el cuadro: en libros, antes de `fenced-divs-to-elements-db.lua`; en revistas, después de `cite-to-xref.lua`. Lo escribe el filtro y no Pandoc porque el escritor DocBook pierde las celdas unidas (GV-126) y ninguno lleva la nota ni las decisiones.
 - `table-to-end.lua` sale de la cadena de la revista: solo marcaba el viejo `.table`.
 
 EL CANÓNICO
@@ -4072,7 +4050,6 @@ LAS SALIDAS
 - PDF: plantillas en `docbook-to-latex.xsl` y `jats-to-latex.xsl` (GV-117); funciones en `tex-comun.xsl`: `f:pi-valor`, `f:cuadro-columna`, `f:cuadro-formato` (el `table-format`: signo si hay una cifra negativa, los enteros y decimales más largos) y `f:cuadro-pie`. Una cifra sola va como la lee la columna `S`; el encabezado de una columna de cifras va entre llaves.
 - HTML y EPUB: la tabla completa y derecha; debajo, en un solo párrafo como en el PDF, «Cuadro N», el título y, a continuación, la nota, con punto seguido si el título no termina en . ? ! (decisión de Alberto, 22/10: el PDF es el modelo). El número es el del PDF (`nl:numero-cuadro`, misma regla que la figura). Los navegadores no aplican `align="char"`: la columna de cifras va a la derecha, con cifras tabulares.
 - Referencias cruzadas en libros: `cite-to-biblioref-db.lua` admite `tbl-`, y `ensamblar-capitulo-canonico.xsl` no le pone el prefijo del capítulo a un id `tbl-` (`db:es-id-global`, como `fig-`): así una referencia a un cuadro de otro capítulo funciona (medido: en la prueba de Alberto salía «??»). El id es único en el proyecto porque es el nombre del archivo; el HTML y el EPUB muestran el número del cuadro. En revistas no hay referencias cruzadas (SC-32).
-- ODT: el título en negrita, la tabla y la nota.
 
 QUÉ FRENA
 
@@ -4160,7 +4137,7 @@ LA VISTA PREVIA
 
 Compone el cuadro solo, con todo lo de la pieza: los mismos filtros en el mismo orden, la misma plantilla de composición y el mismo preámbulo, con la caja a la vista. Lo que se ve es lo que sale; no hay otra composición del cuadro.
 
-- Gambas escribe lo que sale de la base, `tmp/vista-cuadro/preambulo-vista.tex`: en libros, las capas del `main.tex` con `\gbshowframetrue` y sin `preambulo-hyperref` (el contrato se engancha a hyperref con `\AddToHook{package/hyperref/after}` y no lo necesita; la capa registra el .bib, que el cuadro solo no usa): `m_GenerarPDFLibro.PreambuloVistaCuadro`. En revistas, el del PDF en borrador, sin el .bib y sin `\begin{document}`: `m_XML.PreambuloVistaCuadro`. La revista CONSERVA hyperref: va embebido a mitad del preámbulo y seguido de `\pdfstringdefDisableCommands`. El estilo de cita lo lee `m_XML.EstiloCitaRevista`, la misma función que ahora usa `m_GenerarPDF.GenerarPDFunaColumna`.
+- Gambas escribe lo que sale de la base, `tmp/vista-cuadro/preambulo-vista.tex`: en libros, las capas del `main.tex` con `\gbshowframetrue` y sin `preambulo-hyperref` (el contrato se engancha a hyperref con `\AddToHook{package/hyperref/after}` y no lo necesita; la capa registra el .bib, que el cuadro solo no usa): `m_GenerarPDFLibro.PreambuloVistaCuadro`. En revistas, el del PDF VIEJO en borrador (`m_XML.ObtenerPreambuloEmbebido`, y no el de capas del PDF nuevo: pendiente en SC-98), sin el .bib y sin `\begin{document}`: `m_XML.PreambuloVistaCuadro`. La revista CONSERVA hyperref: va embebido a mitad del preámbulo y seguido de `\pdfstringdefDisableCommands`. El estilo de cita lo lee `m_XML.EstiloCitaRevista`, de `revista.estilo_cita` desde el 18/11/2026 (antes, de la tabla vieja `revistas_md`; la usaba también `m_GenerarPDF`, retirado: SC-98).
 - `engine/vista_cuadro.sh` (SC-13, lanzado por `m_Lanzadora.EjecutarScript`, SC-53) hace el resto: el .md mínimo que nombra el cuadro, pandoc con la cadena de la pieza (`FILTROS_LIBRO` y `FILTROS_REVISTA` en `comun.sh`; la de libros la usa también `generar_canonicos_capitulos.sh`, la de revistas es gemela de `m_XML.GenerarBodyXML`), Saxon con `vista-cuadro-libro.xsl` o `vista-cuadro-revista.xsl` (importan la hoja del PDF y solo cambian la raíz), una pasada de LuaLaTeX y el veredicto. El idioma es el de la pieza abierta en el editor.
 - EL VEREDICTO (`veredicto.txt`, una línea por hallazgo, `nivel<TAB>mensaje`): por tramo, el ancho y el alto contra la caja, en milímetros (info); un tramo más ancho o más alto que la caja, una celda que se sale de su columna, «Float too large» (el alto con el pie) y un error de LaTeX en el cuadro: error. Un error de LaTeX del preámbulo: aviso, porque no es del cuadro y sale igual en el PDF de la pieza. Las medidas las toma `engine/vista_cuadro_medir.lua` (GV-128): en el libro, linebreaker calla los Overfull y el .log no las daría. Código 0, el cuadro entra; 3, hay observaciones; 1, no salió el PDF, con el motivo del filtro que frenó también en el veredicto.
 - El formulario muestra el veredicto y abre `vista.pdf` con el visor del sistema (`Desktop.Open`, sin espera).
@@ -4200,14 +4177,14 @@ EXCEPCIÓN A SC-40: es la única marca del .md que no es ASCII. La convención A
 LA CADENA
 
 - `filters/espacio-fijo.lua` cambia `¬` por U+00A0 en los Str: también en el prefijo y el sufijo de una cita, las notas, las celdas, los pies, el texto de un enlace y los metadatos. En el código, la matemática y las URL queda literal.
-- Va SEGUNDO: después de `cuadro-leer`, que inserta el texto del cuadro, y antes de todo filtro que serializa. Está en FILTROS_LIBRO y FILTROS_REVISTA (`engine/comun.sh`), en `m_XML.GenerarBodyXML` y en `m_GenerarODT`; solo, sin los demás filtros, en `m_GenerarEpub.ConvertirMdAXhtml` (el front y el back matter de la revista) y en `m_PrimerasLibro.ConvertirMarkdown`.
+- Va SEGUNDO: después de `cuadro-leer`, que inserta el texto del cuadro, y antes de todo filtro que serializa. Está en FILTROS_LIBRO y FILTROS_REVISTA (`engine/comun.sh`); solo, sin los demás filtros, en `m_PrimerasLibro.ConvertirMarkdown`. También estaba en `m_XML.GenerarBodyXML`, `m_GenerarODT` y `m_GenerarEpub.ConvertirMdAXhtml`, retirados (SC-96, SC-98).
 - `--abbreviations` en esos mismos lectores y en `vista_cuadro.sh`. La ruta está en `comun.sh` (`RUTA_ABREVIATURAS`) y en `m_Constantes` (`SUBRUTA_ABREVIATURAS`, con `SUBRUTA_FILTRO_ESPACIO_FIJO`). `generar_canonicos_capitulos.sh` y `vista_cuadro.sh` frenan si falta la lista.
 - `cuadro-leer.lua` lee el archivo del cuadro con `pandoc.read`, pasándole solo la lista (GV-133).
 - La lista viaja en `filters/`: se copia a `~/.gbpublisher/filters/` y se coteja con la instalada, como los filtros.
 
 LAS SALIDAS
 
-- Canónico JATS o DocBook, HTML, EPUB y ODT: el carácter U+00A0.
+- Canónico JATS o DocBook, HTML y EPUB: el carácter U+00A0.
 - PDF: `f:mapa-tex` (`tex-comun.xsl`) pasa U+00A0 a `~`, así el resultado no depende de cómo traten el carácter la fuente o LuaLaTeX. En una cita llega a la postnota: `\autocite[p.~22]{…}`.
 - Primeras: Pandoc escribe `~` en LaTeX y el carácter en HTML.
 
@@ -4228,7 +4205,7 @@ MEDIDO en el contenedor (pandoc 3.1.3, SaxonJ-HE 12.5, gbc3 3.19 con gb.db en lu
 
 **Relaciones:** vinculo:SC-40,vinculo:SC-30,vinculo:SC-31,vinculo:SC-54,vinculo:SC-46,vinculo:SC-66,vinculo:GV-47,vinculo:GV-88,apoya:GV-130,apoya:GV-131,apoya:GV-132,apoya:GV-133
 
-**PENDIENTE:** Probar en Mint con un libro y una revista reales: el PDF (una cita con «p.~22» en la postnota), el HTML, el EPUB, el ODT y las primeras; el aviso espacio_fijo_suelto al generar los canónicos.
+**PENDIENTE:** Probar en Mint con un libro y una revista reales: el PDF (una cita con «p.~22» en la postnota), el HTML, el EPUB y las primeras; el aviso espacio_fijo_suelto al generar los canónicos.
 
 ### SC-69 — Gráficos: el archivo, el formulario y las salidas
 
@@ -4317,7 +4294,7 @@ IMPLEMENTADO (25/10), en cinco pasos: la plantilla y la fuente; `m_Graficos`, `C
 
 DECISIÓN CERRADA (Alberto, 25/10). Cada formulario, o cada función principal de la aplicación, tiene su propio módulo. El formulario tiene los controles y los manejadores; el módulo, las consultas, las validaciones y las grabaciones.
 
-- Un formulario nuevo nace con su módulo: `FDossiers` + `m_Dossiers`, `FMetadatosNumero` + `m_Numero`, `FMetadatosArticulo` + `m_Articulo`, la pestaña «Revistas» de `FSysAdmin` + `m_Revistas`, `FVocabularios` + `m_Vocabularios`.
+- Un formulario nuevo nace con su módulo: `FDossiers` + `m_Dossiers`, `FMetadatosNumero` + `m_Numero`, `FMetadatosArticulo` + `m_Articulo`, la pestaña «Revistas» de `FSysAdmin` + `m_Revistas`, la subpestaña «Vocabularios» de `FSysAdmin` + `m_Vocabularios`.
 - Un catálogo que usan varios formularios tiene su módulo propio, aunque ningún formulario sea suyo (`m_Licencias`, `m_Idiomas`, `m_Vocabularios`).
 - Los datos que viajan juntos entre el formulario y el módulo van en una clase chica (GV-24): `CContribuyente`, `CTextosArticulo`.
 
@@ -4340,7 +4317,7 @@ CRITERIOS DE ESQUEMA
 
 - Un campo existe solo si lo consume una salida, una validación o una decisión del flujo.
 - Estructura completa, columnas mínimas: todos los niveles y las tablas hijas desde el principio. Las declaraciones (COI, ética, ensayo, datos) son filas de una tabla por tipo, no columnas.
-- Esquema nuevo, no transformación del viejo: la 1.13.0 creó 23 tablas sin tocar las viejas (`revistas_md`, `articulos`, `articulo_autor`), que se retiran en el 2.0.0.
+- Esquema nuevo, no transformación del viejo: la 1.13.0 creó 23 tablas sin tocar las viejas (`revistas_md`, `articulos`, `articulo_autor`), que se retiraron en la 1.32.0 con `articulo_revisor` y el camino viejo (SC-98). El 2.0.0 queda para los cambios de `bibtex`.
 - Los catálogos se guardan por valor (SC-23): `contribuyente_credit`, `articulo_declaracion`, `articulo_palabra_clave`.
 - «Sin dato» es NULL con `CHECK (<> '')` (GV-74, GV-147). Una clave única sobre columnas nulables se apoya en una columna generada (`numero.clave_identidad`, `articulo_palabra_clave.clave_vocabulario`).
 - Las hijas del artículo caen en cascada con él; todo lo demás es RESTRICT.
@@ -4362,7 +4339,7 @@ CADENA DE ESQUEMA (SC-22): 1.13.0 (las 23 tablas), 1.14.0 (NULL en vez de '', GV
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / decisiones de diseño · **Verificado:** 2026-10
 
-DECISIÓN CERRADA (Alberto, 25/10; documento de trabajo `claude/rediseno-revistas.md`, decisiones 6 a 13). IMPLEMENTADA del 7 al 14/11/2026 (documento de trabajo `claude/salidas-revistas.md`): el canónico (SC-87), la editorial y las preliminares (SC-88), el PDF (SC-89), los catálogos comunes (SC-90), el EPUB (SC-91), el HTML autónomo (SC-92) y la pinza entre ellas (SC-93). Las salidas leen solo el esquema nuevo; los números viejos siguen con el camino viejo hasta su retiro, sin migración.
+DECISIÓN CERRADA (Alberto, 25/10; documento de trabajo `claude/rediseno-revistas.md`, decisiones 6 a 13). IMPLEMENTADA del 7 al 14/11/2026 (documento de trabajo `claude/salidas-revistas.md`): el canónico (SC-87), la editorial y las preliminares (SC-88), el PDF (SC-89), los catálogos comunes (SC-90), el EPUB (SC-91), el HTML autónomo (SC-92) y la pinza entre ellas (SC-93). Las salidas leen solo el esquema nuevo. El camino viejo se retiró el 18/11/2026, sin migración: sus números eran de prueba (SC-98).
 
 - ORDEN: primero las salidas de lectura (PDF, HTML, EPUB, también del número completo); después los sabores XML, en el orden de necesidad real: JATS4R (que valida el canónico, no es un sabor), Crossref y DOAJ antes que PMC. Vancouver se resuelve en las salidas de lectura.
 - CITAS: SC-57 llega a revistas. biblatex escribe las citas de HTML y EPUB por tex4ht; el estilo de cita es atributo de la revista y sale del catálogo `cita-*-config.tex`.
@@ -4374,7 +4351,7 @@ DECISIÓN CERRADA (Alberto, 25/10; documento de trabajo `claude/rediseno-revista
 
 **Relaciones:** vinculo:SC-57,vinculo:SC-13,vinculo:SC-53,vinculo:SC-71,vinculo:SC-87,vinculo:SC-88,vinculo:SC-89,vinculo:SC-90,vinculo:SC-91,vinculo:SC-92,vinculo:SC-93
 
-**PENDIENTE:** Los sabores XML (Crossref, DOAJ, SciELO, Redalyc, PMC), con mixed-citation para PMC y SciELO. El HTML integrado al portal, cuando gbWeb publique el portal R-. Mini-tests que siguen abiertos: philosophy-verbose bajo make4ht y griego politónico. El retiro del camino viejo.
+**PENDIENTE:** Los sabores XML (Crossref, DOAJ, SciELO, Redalyc, PMC), con mixed-citation para PMC y SciELO. El HTML integrado al portal, cuando gbWeb publique el portal R-. Mini-tests que siguen abiertos: philosophy-verbose bajo make4ht y griego politónico.
 
 ### SC-73 — Editores con tablas hijas: memoria, una transacción y reemplazo entero
 
@@ -4618,7 +4595,7 @@ El de portada y el de colección van a 110 mm en el PDF y al 100 % en el EPUB (S
 
 REVISTAS
 
-No cambian todavía: `m_GenerarEpub` y `m_GenerarHTML` siguen copiando `media/` entera. Se retoma con el módulo de revistas.
+`m_GenerarEpub` y `m_GenerarHTML`, que copiaban `media/` entera, eran el camino viejo de revistas y salieron el 18/11/2026 (SC-98).
 
 REVISTAS (14/11/2026)
 
@@ -5242,7 +5219,7 @@ Alberto, 11/11, con un libro real («El Atlántico de los exilios»): en el PDF,
 
 **Relaciones:** vinculo:SC-29,vinculo:SC-28,vinculo:SC-54,vinculo:SC-63,vinculo:SC-62,vinculo:GV-70,vinculo:GV-189,vinculo:GV-190,vinculo:GV-191
 
-**PENDIENTE:** Falta en Mint: epubcheck del EPUB, la inserción desde el panel, la ayuda y un caso que frene. Revistas, en la refactorización del módulo (otra conversación): el canónico JATS (fn/@symbol con <label>), jats-to-latex, jats-to-html, jats-to-epub, los sabores SciELO y Redalyc, y la fila nota-simbolo de no_aplica a borrador. El ODT.
+**PENDIENTE:** Falta en Mint: epubcheck del EPUB, la inserción desde el panel, la ayuda y un caso que frene. Revistas, en la refactorización del módulo (otra conversación): el canónico JATS (fn/@symbol con <label>), jats-to-latex, jats-to-html, jats-to-epub, los sabores SciELO y Redalyc, y la fila nota-simbolo de no_aplica a borrador.
 
 ### SC-87 — Revistas: el canónico JATS por script — el volcado de la base, el front por XSLT, la validación y el camino que deciden los datos
 
@@ -5261,7 +5238,7 @@ EL CANÓNICO
 `engine/generar_canonicos_articulos.sh <proyecto> <lista>`, por artículo: controles del .md (`controles_md.lua`: un error frena el artículo, un aviso da código 3), huellas de las fuentes (SC-75), pandoc `--to jats` con `FILTROS_REVISTA`, `ensamblar-articulo-canonico.xsl` (que importa `ensamblar-canonico.xsl` para el cuerpo e incluye `datos-a-front-jats.xsl` para el front) y `mv`. Un artículo que falla pierde su canónico anterior. Rehace todos los de la lista aunque el .md no haya cambiado: el volcado puede traer datos nuevos. Al final corre `validar_canonicos.sh` anidado.
 
 - Nombre: `jats/c-a-NN-x.xml`, con el prefijo del .md.
-- `<article dtd-version="1.4" article-type xml:lang>`, con el identificador público real de la DTD: «-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD v1.4 20241031//EN». El de `ensamblar-canonico.xsl` (camino viejo) no existe; queda igual hasta el retiro.
+- `<article dtd-version="1.4" article-type xml:lang>`, con el identificador público real de la DTD: «-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD v1.4 20241031//EN». El de `ensamblar-canonico.xsl` (camino viejo) no existe. La hoja sigue en uso porque `ensamblar-articulo-canonico.xsl` la importa: se revisa en el bloque 3 de SC-97.
 - Front en el orden de la DTD: `contrib` con ORCID como URL, CRediT con vocabulario de JATS4R (GV-202), `aff` compartida con `institution-wrap` y ROR; `author-notes` con el conflicto de intereses y las notas; las dos `pub-date` (pub y collection); páginas o `elocation-id` solo si existen; `pub-history`; `permissions` siempre, con `ali:free_to_read` y `ali:license_ref`; `self-uri` por cada ubicación del artículo; `related-article` (un destino local sin DOI, con `@specific-use="gbpublisher-local:<archivo>"`); `abstract` estructurado con `sec`; `kwd-group` con `@kwd-group-type` y `@vocab`; un `funding-group`.
 - La declaración de disponibilidad de datos va en el back como `<sec sec-type="data-availability">` (JATS4R).
 
@@ -5271,7 +5248,7 @@ LA VALIDACIÓN
 
 EL CAMINO LO DECIDEN LOS DATOS
 
-`m_GenerarSalidasRevista.NumeroEsNuevo`: un número con artículos en la tabla `articulo` usa el camino nuevo; uno sin ellos, el viejo. `ConfigurarControles` (al abrir el proyecto) muestra uno u otro, nunca los dos. Menú propio «JATS» (`mJats`, `menuJats`) para el XML, como `menuDocBook` en libros: «Canónico archivo en curso» y «Todos los canónicos». Las salidas van en `menuSalidaRevistaMD` (SC-89, SC-91, SC-92). Un número que recibe su primer artículo nuevo cambia de camino al reabrirlo.
+`m_GenerarSalidasRevista.ConfigurarControles` (al abrir el proyecto) muestra los menús del camino nuevo. Hasta el 18/11/2026, `NumeroEsNuevo` elegía entre el nuevo y el viejo según hubiera artículos en `articulo` (SC-98). Menú propio «JATS» (`mJats`, `menuJats`) para el XML, como `menuDocBook` en libros: «Canónico archivo en curso» y «Todos los canónicos». Las salidas van en `menuSalidaRevistaMD` (SC-89, SC-91, SC-92).
 
 **Relaciones:** vinculo:SC-71,vinculo:SC-72,vinculo:SC-13,vinculo:SC-53,vinculo:SC-75,vinculo:SC-52,vinculo:SC-28,vinculo:GV-25,vinculo:GV-26,apoya:GV-202
 
@@ -5337,7 +5314,7 @@ DESDE GAMBAS
 
 **Relaciones:** vinculo:SC-72,vinculo:SC-87,vinculo:SC-88,vinculo:SC-57,vinculo:SC-31,vinculo:SC-13,vinculo:SC-53,apoya:GV-193,apoya:GV-194,apoya:GV-197,apoya:GV-198,apoya:GV-199,apoya:GV-200,apoya:GV-201,apoya:GV-204
 
-**PENDIENTE:** La comilla recta en f:latex (GV-199). El PDF/X. El retiro del camino viejo (Menu6, m_XML.GenerarPDF, btnGenerarXMLcanonico).
+**PENDIENTE:** La comilla recta en f:latex (GV-199). El PDF/X.
 
 ### SC-90 — Catálogos comunes de CRediT y licencias: el nombre del rol y el texto de la licencia por idioma, congelados al publicar
 
@@ -5373,14 +5350,14 @@ DECISIÓN CERRADA (Alberto, 14/11/2026; etapa E de las salidas de revistas).
 - EL ARMAZÓN LO ARMA UNA XSLT DESDE EL VOLCADO, no Gambas como en libros (`m_GenerarEpubLibro`): `numero-a-epub.xsl` escribe `content.opf`, `nav.xhtml` y las preliminares. Las del PDF salen del volcado con las mismas funciones (`revista-comun.xsl`): escritas dos veces podían divergir. La frontera con la base no cambia: Gambas escribe el volcado y el script no la toca.
 - PRELIMINARES: las que el número declara (SC-88), en el orden de su nombre. El sumario es una página propia, sin folios, con cada artículo enlazado y sus autores; el nav va aparte, fuera del recorrido de lectura, con los artículos agrupados por tramo y los landmarks (tapa, sumario, primer artículo). La imagen de la tapa es la cover-image cuando la tapa está declarada. Los rótulos de las preliminares son los del contrato de revista en castellano y se traducen en una revista de otro idioma (en, pt, fr); el PDF los deja en castellano salvo que la estética los redefina.
 - OPF: identificador `urn:gbpublisher:numero-{id}` (el ISSN es de la revista, no del número), título con la identificación del número, el idioma principal y los de los artículos, fecha AAAA-MM.
-- CADA ARTÍCULO: `jats-a-epub-articulo.xsl` importa `jats-to-epub.xsl` para el cuerpo (que sigue sirviendo al camino viejo hasta su retiro) y reemplaza el resto, en este orden: cabecera, resúmenes con sus palabras clave, un bloque con los datos de la columna del PDF en su orden y sin «compartir», cuerpo, agradecimientos, declaraciones (como en el PDF), apéndices, notas (solo las del texto: las de author-notes van en el bloque de datos) y referencias. Citas, referencias y «cómo citar» desde `citas.html` (SC-57).
+- CADA ARTÍCULO: `jats-a-epub-articulo.xsl` importa `jats-to-epub.xsl` para el cuerpo (la hoja del EPUB viejo, que sigue por esa importación) y reemplaza el resto, en este orden: cabecera, resúmenes con sus palabras clave, un bloque con los datos de la columna del PDF en su orden y sin «compartir», cuerpo, agradecimientos, declaraciones (como en el PDF), apéndices, notas (solo las del texto: las de author-notes van en el bloque de datos) y referencias. Citas, referencias y «cómo citar» desde `citas.html` (SC-57).
 - IMÁGENES: las que usan los artículos y la tapa; el OPF es la única lista y el script copia exactamente esas (SC-76).
 - `engine/generar_epub_revista.sh <proyecto> <bib>`: verifica el volcado, las preliminares, la pinza y las páginas (SC-93); regenera los canónicos; la pasada de citas; el armazón y los artículos; recursos, mimetype y container.xml; verifica que todo lo que el OPF declara exista; empaqueta y pasa epubcheck (sus errores avisan, código 3).
 - DESDE GAMBAS: «EPUB completo del número en curso» (`GenerarEpubNumero`): escribe el .bib y el volcado y lanza el script (`LanzarSalidaNumero`). No escribe en la base.
 
 **Relaciones:** vinculo:SC-72,vinculo:SC-87,vinculo:SC-88,vinculo:SC-89,vinculo:SC-57,vinculo:SC-76,vinculo:SC-31,vinculo:SC-25,apoya:GV-203
 
-**PENDIENTE:** Probar en Mint con un número real. En jats-to-epub.xsl (también camino viejo): el texto alternativo de una figura sin alt es el pie aplanado, con la clave de la cita; «Figura N» va fijo en castellano. Se pueden resolver en la hoja nueva.
+**PENDIENTE:** Probar en Mint con un número real. En jats-to-epub.xsl (la hoja del EPUB viejo, importada por la nueva): el texto alternativo de una figura sin alt es el pie aplanado, con la clave de la cita; «Figura N» va fijo en castellano. Se pueden resolver en la hoja nueva.
 
 ### SC-92 — Revistas: el HTML autónomo del número — un sitio por número en docs/, el diseño del libro y las descargas en el sitio
 
@@ -5508,7 +5485,7 @@ No hay control al arrancar: es una instancia de control del usuario (decisión d
 
 LAS RUTAS EN LA CADENA
 
-`RUTA_PANDOC` y `RUTA_EPUBCHECK` en `engine/comun.sh` (con `GBP_PANDOC` y `GBP_EPUBCHECK` para probar a mano otra versión), en `m_Constantes` y en `convertir_docx.sh`, que no carga `comun.sh`. Nadie llama a pandoc por su nombre: ni los scripts de `engine/` ni Gambas (`m_AnalizarProyecto`, `m_GenerarODT`, `m_GenerarEpub`, `m_PrimerasLibro`, `m_XML`). `requerir_pandoc` reemplaza a «requerir_comandos pandoc». Todo aviso de herramienta faltante termina con `COMO_REPARAR`: «Abrí cualquier proyecto y usá «Acerca de... → Controlar integridad del sistema»: instala lo que falte».
+`RUTA_PANDOC` y `RUTA_EPUBCHECK` en `engine/comun.sh` (con `GBP_PANDOC` y `GBP_EPUBCHECK` para probar a mano otra versión), en `m_Constantes` (solo `RUTA_PANDOC`: `RUTA_EPUBCHECK` salió el 18/11/2026, la usaba solo el EPUB viejo de revistas) y en `convertir_docx.sh`, que no carga `comun.sh`. Nadie llama a pandoc por su nombre: ni los scripts de `engine/` ni Gambas (`m_AnalizarProyecto`, `m_PrimerasLibro`). `requerir_pandoc` reemplaza a «requerir_comandos pandoc». Todo aviso de herramienta faltante termina con `COMO_REPARAR`: «Abrí cualquier proyecto y usá «Acerca de... → Controlar integridad del sistema»: instala lo que falte».
 
 LO QUE SE RETIRÓ
 
@@ -5544,11 +5521,116 @@ QUÉ NO ES ODT
 
 LAS MENCIONES EN OTRAS ENTRADAS
 
-Varias entradas describen cómo cada filtro o shortcode resolvía el ODT («las tres cadenas: revista, libro y ODT», los párrafos «ODT», «las seis salidas»). Esas menciones quedan sin efecto desde esta entrada y se limpian junto con el retiro del camino viejo de revistas, que toca las mismas entradas: una sola pasada y no dos.
+Varias entradas describen cómo cada filtro o shortcode resolvía el ODT («las tres cadenas: revista, libro y ODT», los párrafos «ODT», «las seis salidas»). Esas menciones quedan sin efecto desde esta entrada y se limpian junto con el retiro del camino viejo de revistas, que toca las mismas entradas: una sola pasada y no dos. Hecho el 18/11/2026 (act-106, SC-98).
 
 **Relaciones:** vinculo:SC-11,vinculo:SC-35
 
-**PENDIENTE:** Limpiar las menciones al ODT en las demás entradas, junto con el retiro del camino viejo de revistas.
+### SC-97 — Limpieza de código muerto: por bloques, con rastreo de referencias y compilación completa
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 (Mint) y gbc3 3.19 (contenedor) · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 18/11/2026). La limpieza de código muerto se hace por bloques; cada bloque es un zip que compila y que Alberto prueba en Mint antes del siguiente. La mayor parte es borrar.
+
+QUÉ CUENTA COMO MUERTO
+
+- Una función, propiedad, constante o variable que nada nombra fuera de su propia declaración.
+- Un handler cuyo control ya no está en el formulario: el código existe pero ningún evento lo dispara.
+- Un formulario que nadie abre, un módulo o una clase que nadie nombra.
+- Lo que solo usaba algo de lo anterior: la segunda capa. Se repite el rastreo hasta que no aparezca nada nuevo.
+- El código viejo dentro de comentarios. Los comentarios que explican se quedan.
+
+CÓMO SE RASTREA (lo que costó aprender)
+
+- Un control público se declara en el `.form` con `!` delante del nombre (`{ !btnX Button`); uno no visual, con `#` delante de la clase (`{ TimerX #Timer`); y el tercer elemento de la línea es su grupo (`{ txtA TextBox AllTextBoxes`). Un handler `Grupo_Evento` está vivo si el grupo existe.
+- El nombre de un control puede tener guiones bajos (`ano_publicacion`): el evento es lo que va después del ÚLTIMO.
+- También están vivos los handlers de objetos creados en código con `New X As "Nombre"`.
+- Una propiedad (`Property Read X` y `X_Read`) se usa como `objeto.X`: está viva si `X` aparece fuera de su declaración. Un error en esta cuenta borró dos propiedades usadas por `m_AuditarJats` y el compilador no lo detectó (GV-210); se repusieron en el mismo bloque.
+- Lo que se nombra por texto en tiempo de ejecución no lo ve el rastreo: `Object.GetProperty(FMain[sControl], …)` en `m_AplicarBib`. Antes de borrar un control, se busca su nombre como texto.
+- Un encabezado de función separado de la función por una línea en blanco queda huérfano al borrarla: se busca y se borra aparte.
+
+CÓMO SE VERIFICA
+
+1. El proyecto completo se compila con `gbc3` en el contenedor (Gambas 3.19, cambiando para la prueba `gb.qt6` por `gb.qt5` y `gb.db2` por `gb.db`). Compiló sin errores antes de empezar.
+2. Como el compilador no ve las llamadas a lo borrado en otro módulo ni en otra clase (GV-210), se busca cada nombre borrado en el código vivo, sin comentarios.
+3. Las menciones en el corpus se corrigen en el mismo bloque.
+4. Alberto aplica el zip, compila en Mint y prueba.
+
+LOS BLOQUES (orden acordado)
+
+1. La salida ODT (SC-96). 2. El muerto directo y sus capas, y el código comentado. 3. Recursos de `.hidden` sin uso (XSLT, filtros, scripts de prueba) y entradas de `ExtraFiles`. 4. El camino viejo de revistas: el esquema viejo es todo de prueba (Alberto, 18/11/2026), así que se retira entero, con las tablas viejas, en una actualización de esquema.
+
+BLOQUE 2, HECHO (18/11/2026): 61 funciones, handlers y propiedades; 15 constantes; 7 variables; los formularios `FVocabularios` (reemplazado por la subpestaña de `FSysAdmin` el 14/11), `FAyudaABM` y `FDoi`; el módulo `m_FuncionesExportar`; la clase `CPosicionTexto`; cuatro funciones viejas comentadas. Dos herencias viejas: la capa de claves en `Settings` de `m_Traduccion` (el traductor ya usa `m_ApiCredenciales`) y `LiberarLock`, que nadie llamaba (`OtraInstanciaActiva` ya descarta un bloqueo viejo por el PID).
+
+BLOQUE 1, HECHO (18/11/2026): la salida ODT (SC-96).
+
+BLOQUE 4, HECHO (18/11/2026): el camino viejo de revistas, con la actualización de esquema 1.32.0 (SC-98). Dos lecciones para el rastreo. La primera: el alcance desde el formulario de arranque (`FAvisoLegal`) encuentra los ciclos muertos que el rastreo por nombres no ve, como formularios que solo se abren entre sí. La segunda: lo muerto no es lo único que deja un camino retirado. Hay que buscar también el código vivo que lee las tablas del camino viejo: falla sin aviso con los datos nuevos (las herencias huérfanas de SC-98).
+
+**Relaciones:** vinculo:GV-210,vinculo:SC-96,vinculo:SC-70
+
+**PENDIENTE:** El bloque 3 (recursos de .hidden).
+
+### SC-98 — Revistas: el camino viejo se retira — el código, las tablas viejas y articulo.id_doaj (actualización 1.32.0)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 (Mint) y gbc3 3.19 (contenedor) / MariaDB 10.11 (prueba del script) · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 18/11/2026). El camino viejo de revistas se retira entero: el código, sus menús y controles, las tablas viejas y la columna `articulo.id_doaj`. Los números del esquema viejo eran todos de prueba, así que no hay migración. Es el bloque 4 de la limpieza (SC-97).
+
+QUÉ SALE DEL CÓDIGO
+
+- Los módulos `m_GenerarEpub`, `m_GenerarHTML`, `m_GenerarPDF`, `m_GenerarDOAJ`, `m_GenerarCROSSREF` y `m_GenerarSCIELO`, y los formularios `FMetadatosRevista`, `FMetadatosArticulos` y `FResumenEstructurado`.
+- En `FMain`: `btnGenerarXMLcanonico`, `Menu6` (PDF a una y a dos columnas), `menuGenerarEpub`, `HTMLcontrol`, `Menu9` (los envíos a DOAJ, Crossref, SciELO, Redalyc y PMC) y el bloque `TabStripValidaciones`, que ya estaba oculto. 81 controles y 25 handlers.
+- En `m_XML`: el front y el body JATS, el envío a DOAJ, la validación de archivos de indexadores y el PDF viejo (`GenerarTeXBodyDesdeCanonico`, `EnsamblarTeX`, `CompilarPDF`, `GenerarPDF`, `MostrarArchivos*`): 41 funciones; el módulo pasa de 379 KB a 219 KB. Se queda `ObtenerPreambuloEmbebido`, que usa la vista de cuadros.
+- `m_GenerarSalidasRevista.NumeroEsNuevo`: `ConfigurarControles` muestra siempre el camino nuevo.
+- `m_InicioCierre.IdArticuloEnCurso`: era el id de la tabla vieja `articulos`. El artículo del editor lo da el archivo abierto (`ArticuloDelEditor`).
+- `m_Constantes.RUTA_SAXON` y `RUTA_EPUBCHECK`, sin uso. `GBA_RUTA_SAXON` sigue.
+- La segunda capa, que solo usaba lo anterior: funciones sueltas de `m_Metadatos`, `m_AplicarBib`, `m_AuditarJats`, `m_Licencias`, `m_OrdenTaller`, `m_InicioCierre` y `CAsercionSVRL`.
+
+HERENCIAS HUÉRFANAS: CÓDIGO VIVO QUE LEÍA LAS TABLAS VIEJAS
+
+El camino nuevo seguía leyendo `revistas_md` y `articulos` en cinco lugares. En un número nuevo no hay filas ahí, así que fallaban sin aviso. Pasan al esquema nuevo:
+- `m_XML.ObtenerIdRevista`: de `numero` (`numero.id_proyecto` es único). Antes, en un número nuevo, devolvía 0.
+- `m_XML.EstiloCitaRevista`: de `revista.estilo_cita`. Lo usa la vista de cuadros (SC-67).
+- `m_Cuadros.IdiomaArticuloEnCurso`: el artículo lo da el archivo abierto, como `m_GenerarSalidasRevista.ArticuloDelEditor`, buscado en `articulo` por el número del proyecto. Antes daba siempre «es» en un número nuevo.
+- `m_Estructura.TitulosDeLaBase`: `articulo.titulo` (SC-18). Antes mostraba el nombre del archivo.
+- `m_GitHub.GenerarEstadoProyecto` y `ObtenerAutoresArticulo`: de `articulo` y `articulo_contribuyente` (`rol='autor'`, por `orden`; una autoría colectiva va con su nombre). Las claves del JSON no cambian, porque las lee `.github/workflows/estado-editorial.yml`. Dos diferencias: `responsable_edicion` va nulo (no tiene columna en el esquema nuevo; el workflow muestra «N/D»), y `estado` toma los valores nuevos (`borrador`, `en_produccion`, `publicado`).
+- `m_Bibtex`: en revistas no guarda las claves citadas en la base. Salen del .md al generar el canónico (SC-16). Antes buscaba la fila en `articulos`.
+- El selector de archivos de `FMain` ya no busca el id del artículo en `articulos`.
+
+LA BASE: ACTUALIZACIÓN 1.32.0
+
+`actualizar-esquema-1.32.0.sh` sigue el patrón de la 1.31.0 (SC-22): exige la 1.31.0, es idempotente, pide SI, hace un respaldo verificado, verifica después y registra.
+- Borra `articulo_revisor`, `articulo_autor`, `articulos` y `revistas_md`, en ese orden.
+- Borra los proyectos del esquema viejo: los que tienen filas en `revistas_md` o `articulos` y no tienen número nuevo ni libro. Lo que cuelga de ellos con CASCADE se va con ellos (bibliografía, siglas, tiempos, órdenes de taller), y `usuarios.id_proyecto_actual` queda en NULL. Un proyecto con número nuevo se conserva: solo pierde sus filas viejas.
+- Con cada proyecto borrado sale su grupo de notas: vistas, respuestas, notas, miembros y grupo, en ese orden y en una transacción. Las claves son todas RESTRICT (GV-111). La regla «nada se borra» es para el uso de las notas, no para retirar un proyecto de prueba (Alberto, 18/11/2026). El grupo se borra antes que las tablas: si falla, no se tocó nada más. Lo encontró el freno del script en la primera corrida en Mint, en el proyecto `r-03REV-EJEMPLO.md`: 1 nota y 2 miembros.
+- Borra `articulo.id_doaj`: la escribía el envío viejo a DOAJ por API, y la subida a DOAJ es a mano (Alberto).
+- Antes de tocar nada, consulta la base y frena si alguna tabla fuera del camino viejo apunta a sus tablas, o si una clave RESTRICT hacia `proyectos` tiene filas de los proyectos a borrar.
+- No se vuelve atrás con un parche. Se restaura el respaldo completo con `--init-command="SET SESSION innodb_strict_mode=0"` (GV-67): el respaldo trae `articulos`. El script muestra el comando.
+- Las carpetas de los proyectos borrados quedan en el disco. El script lista sus nombres.
+
+`m_ConexionBD.ObtenerEsquemaEsperado`: salen las cuatro tablas, y `articulo` baja a 31 columnas. El 2.0.0 queda para los cambios de `bibtex`.
+
+VERIFICADO
+
+- Compilación completa con `gbc3` 3.19 en el contenedor.
+- Búsqueda de cada nombre borrado (funciones, controles, módulos y formularios) en el código vivo, fuera de comentarios y de cadenas (GV-210): ninguno.
+- Los 107 controles que `m_AplicarBib` y `m_Bibtex` nombran por texto siguen en `FMain.form`.
+- Ninguna consulta viva nombra las tablas viejas.
+- El script 1.32.0, sobre MariaDB 10.11 con una base de prueba: los casos normales (un proyecto viejo, uno viejo con solo `articulos`, uno nuevo con una fila vieja, un libro), la segunda corrida, la cancelación, los dos frenos y la restauración del respaldo. No se probó sobre MySQL 8: las consultas son de `information_schema`, comunes a los dos.
+
+LA PASADA SOBRE EL CORPUS
+
+Con act-106 se corrigieron las menciones del camino viejo y del ODT (SC-96) en las entradas vigentes: las cadenas, las salidas, los pendientes y los nombres de módulos. El criterio para el resto:
+- Los registros de lo MEDIDO («con las cadenas reales de libro, revista y ODT») quedan como historia: dicen lo que se midió.
+- Las hojas XSLT del camino viejo que el nuevo todavía importa (`ensamblar-canonico.xsl`, `jats-to-epub.xsl`) se tratan en el bloque 3.
+
+LO QUE QUEDÓ A LA VISTA
+
+- La vista de cuadros de revista compone con el preámbulo del PDF viejo (`m_XML.ObtenerPreambuloEmbebido`: clase `article`, sus fuentes), no con el de capas del PDF nuevo (`generar_pdf_revista.sh`). El cuadro se ve con otra letra y otra caja que en el PDF. Se encara aparte.
+- Varias entradas daban las reglas de CSS del EPUB en `m_GenerarEpub`, que salió. No se cotejó si el EPUB nuevo de revistas las tiene.
+
+**Relaciones:** vinculo:SC-97,vinculo:SC-96,vinculo:SC-71,vinculo:SC-72,vinculo:SC-87,vinculo:SC-22,vinculo:GV-67,vinculo:GV-210
+
+**PENDIENTE:** La vista de cuadros de revista con el preámbulo de capas del PDF nuevo. Cotejar el CSS del EPUB nuevo de revistas con las reglas que citaban el de m_GenerarEpub (epígrafe SC-35, código SC-42, conversación SC-43, verso SC-49). Aplicar la 1.32.0 en Mint y probar: abrir un número, la vista de cuadros (idioma), el árbol de estructura (títulos) y el JSON de GitHub.
 
 ---
 
@@ -7283,7 +7365,7 @@ LA OPCIÓN DEL PROYECTO LO CAMBIA TODO
 
 `ControlPublic=1` en el `.project` hace públicos TODOS los controles de todos los formularios, lleven o no `#Public`. El compilador la recibe como `-f public-control`. Medido en banco: con esa opción, las tres situaciones anteriores funcionan.
 
-gbpublisher tiene `ControlPublic=1` (y también `ModulePublic=1`). Por eso `FMetadatosRevista.numero_especial`, que no tenía `#Public`, abría y guardaba bien desde `m_Metadatos` en 3.22.1 (verificado por Alberto). En este proyecto, el `#Public` de cada control no decide nada.
+gbpublisher tiene `ControlPublic=1` (y también `ModulePublic=1`). Por eso `FMetadatosRevista.numero_especial` (formulario del camino viejo de revistas, retirado el 18/11/2026: SC-98), que no tenía `#Public`, abría y guardaba bien desde `m_Metadatos` en 3.22.1 (verificado por Alberto). En este proyecto, el `#Public` de cada control no decide nada.
 
 CORRECCIÓN
 
@@ -7516,7 +7598,7 @@ Y falla DESPUÉS de haberla borrado: el volcado trae un `DROP TABLE IF EXISTS` a
 
 CAUSA
 
-Con `innodb_strict_mode` activo —el valor por omisión en MySQL 8—, InnoDB rechaza un `CREATE TABLE` cuyo peor caso teórico de tamaño de fila supera el límite, aunque ninguna fila real lo alcance. `articulos` tiene 220 columnas. El baseline desactiva el chequeo en su cabecera (`SET SESSION innodb_strict_mode=0`); `mysqldump` no escribe esa línea.
+Con `innodb_strict_mode` activo —el valor por omisión en MySQL 8—, InnoDB rechaza un `CREATE TABLE` cuyo peor caso teórico de tamaño de fila supera el límite, aunque ninguna fila real lo alcance. `articulos` tenía 220 columnas. La 1.32.0 la borró (SC-98), pero todo respaldo anterior a la 1.32.0 la trae; no se midió si un respaldo posterior se restaura con el comando directo, así que la regla de SC-22 sigue. El baseline desactiva el chequeo en su cabecera (`SET SESSION innodb_strict_mode=0`); `mysqldump` no escribe esa línea.
 
 RESTAURACIÓN CORRECTA
 
@@ -7738,7 +7820,7 @@ Caso del proyecto: el ancla de cierre `[/clase]: # ()` (SC-33) en `Markdown.high
 
 CONSECUENCIA
 
-El cotejo de recursos de SC-11 sirve también para un binario, como el `.ott` del ODT, sin sumas de verificación.
+El cotejo de recursos de SC-11 sirve también para un binario, como era el `.ott` del ODT (retirado: SC-96), sin sumas de verificación.
 
 **Relaciones:** vinculo:SC-11
 
@@ -9357,7 +9439,7 @@ Medido: la pestaña «Revistas» llamaba a `m_Licencias.LlenarCombo`, que leía 
 
 PATRÓN: toda función que llama `FSysAdmin` recibe la conexión como parámetro. En los módulos compartidos, un parámetro `Optional hConn As Connection` que, si falta, toma `mConn`.
 
-EN EL PROYECTO: `m_Revistas`, `m_Vocabularios`, `FPlantillasResumen` y `FVocabularios` (`hConn` del llamador); `m_Licencias.LlenarCombo`, `CompletarUrl` y `m_Idiomas.ListaValida` con `hConn` opcional.
+EN EL PROYECTO: `m_Revistas`, `m_Vocabularios`, `FPlantillasResumen` (`hConn` del llamador); `m_Licencias.LlenarCombo`, `CompletarUrl` y `m_Idiomas.ListaValida` con `hConn` opcional.
 
 **Relaciones:** apoya:SC-71
 
@@ -10231,7 +10313,7 @@ Medido el 18/11/2026 en un Ubuntu 24.04 (la base de Linux Mint 22) y confirmado 
 
 PANDOC
 
-El paquete de apt es `3.1.3+ds-2`: Debian lo compila contra sus propios paquetes de las bibliotecas de Haskell, así que no es el binario oficial (`pandoc-3.1.3-linux-amd64.tar.gz`, de las releases de jgm). Las 15 piezas del libro de Jensen, con la llamada de `generar_canonicos_capitulos.sh` (los 21 filtros del libro, `--to docbook5 --mathml`), dan el mismo XML byte a byte con los dos. Antes se verificó que la corrida reproducía la de la aplicación: lo generado con el pandoc de apt fue idéntico a los `tmp/body-*.xml` de la app. Límite: Jensen no tiene fórmulas (texmath sin probar), y la ruta `--citeproc` del ODT no se comparó.
+El paquete de apt es `3.1.3+ds-2`: Debian lo compila contra sus propios paquetes de las bibliotecas de Haskell, así que no es el binario oficial (`pandoc-3.1.3-linux-amd64.tar.gz`, de las releases de jgm). Las 15 piezas del libro de Jensen, con la llamada de `generar_canonicos_capitulos.sh` (los 21 filtros del libro, `--to docbook5 --mathml`), dan el mismo XML byte a byte con los dos. Antes se verificó que la corrida reproducía la de la aplicación: lo generado con el pandoc de apt fue idéntico a los `tmp/body-*.xml` de la app. Límite: Jensen no tiene fórmulas (texmath sin probar), y la ruta `--citeproc` del ODT no se comparó (ya no hace falta: el ODT se retiró, SC-96).
 
 El binario oficial trae `pandoc-lua` y `pandoc-server` como enlaces a `pandoc`; `pandoc lua -e` funciona.
 
@@ -10245,7 +10327,7 @@ Hoy pasar de apt a /opt no cambia la producción. El congelamiento protege del c
 
 **Relaciones:** apoya:SC-95
 
-**PENDIENTE:** Comparar con un libro o un artículo con fórmulas (texmath) y la salida ODT (--citeproc).
+**PENDIENTE:** Comparar con un libro o un artículo con fórmulas (texmath).
 
 ### GV-208 — veraPDF 1.30.1: instalación sin preguntas con -options y un archivo con INSTALL_PATH; instalado por root, lo usa un usuario común
 
@@ -10273,6 +10355,20 @@ Medido el 18/11/2026 en Linux Mint 22 con `apt-cache show`.
 Consecuencia para un instalador: si encuentra MariaDB, tiene que frenar, no instalar MySQL encima. Para detectarlo no alcanza el nombre del paquete (un MySQL de los repositorios de Oracle se llama distinto): `mysqld --version` dice «MariaDB» en MariaDB.
 
 **Relaciones:** vinculo:SC-95
+
+### GV-210 — gbc3 compila la llamada a una función o propiedad que no existe en otro módulo o clase, aun con la variable tipada
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 (gbc3) / Ubuntu 24.04 / proyecto gbpublisher · **Verificado:** 2026-11
+
+Medido el 18/11/2026 con `gbc3` 3.19 sobre el proyecto gbpublisher completo, en un Ubuntu 24.04.
+
+Compila sin errores un módulo que llama a una función que no existe en otro módulo (`m_Traduccion.ObtenerDeepLKey()`, recién borrada) y que lee una propiedad que no existe en una variable TIPADA (`Dim o As CArchivoAuditado` … `o.TotalHallazgos`, borrada). El fallo llega recién al ejecutar esa línea.
+
+Sí detecta un identificador desconocido dentro de la misma clase o un nombre de clase o módulo que no existe (`Unknown identifier: m_EstilosHTML`).
+
+CONSECUENCIA: compilar no prueba que un borrado sea seguro. Después de borrar hay que buscar cada nombre borrado en el código vivo (SC-97).
+
+**Relaciones:** apoya:SC-97
 
 ---
 

@@ -26,16 +26,18 @@ Public Function GenerarEstadoProyecto(sRutaProyecto As String, iIdProyecto As In
   ' --- 1. DEFINIR RUTA DEL ARCHIVO JSON ---
   Dim sRutaJSON As String = sRutaProyecto &/ ".estado-proyecto.json"
 
-  ' --- 2. CONSULTAR ARTÍCULOS DEL PROYECTO EN LA BD ---
+  ' --- 2. CONSULTAR ARTÍCULOS DEL NÚMERO DEL PROYECTO EN LA BD ---
+  ' ESQUEMA NUEVO (articulo, numero) DESDE EL 18/11/2026 (SC-98). LAS CLAVES
+  ' DEL JSON NO CAMBIAN: LAS LEE .github/workflows/estado-editorial.yml.
+  ' fecha_publicacion_online SALE DE fecha_publicacion; responsable_edicion
+  ' NO TIENE COLUMNA EN EL ESQUEMA NUEVO Y VA NULO (EL WORKFLOW MUESTRA N/D)
   Dim hDB As Result
 
   Try hDB = m_ConexionBD.mConn.Exec(
-    "SELECT id_articulo, nombre_archivo, titulo_articulo, doi, " &
-    "estado_articulo, tipo_articulo, " &
-    "fecha_recepcion, fecha_aceptacion, fecha_publicacion_online, " &
-    "responsable_edicion " &
-    "FROM articulos WHERE id_proyecto = " & iIdProyecto &
-    " ORDER BY nombre_archivo")
+    "SELECT a.id_articulo, a.nombre_archivo, a.titulo, a.doi, a.estado, a.article_type, " &
+    "a.fecha_recepcion, a.fecha_aceptacion, a.fecha_publicacion " &
+    "FROM articulo a JOIN numero n ON n.id_numero = a.id_numero " &
+    "WHERE n.id_proyecto = &1 ORDER BY a.nombre_archivo", iIdProyecto)
   If Error Then Return False
 
   ' PROYECTO SIN ARTÍCULOS AÚN: NO HAY NADA QUE REPORTAR
@@ -49,14 +51,14 @@ Public Function GenerarEstadoProyecto(sRutaProyecto As String, iIdProyecto As In
     Dim jArticulo As New JSONCollection
     jArticulo["nombre_archivo"] = CStr(hDB["nombre_archivo"])
     ' LOS TÍTULOS VAN PLANOS: EL JSON NO CORTA (SC-28)
-    jArticulo["titulo"] = m_CorteTitulo.Plano(CStr(hDB["titulo_articulo"]))
+    jArticulo["titulo"] = m_CorteTitulo.Plano(CStr(hDB["titulo"]))
     jArticulo["doi"] = ValorONull(hDB["doi"])
-    jArticulo["tipo_articulo"] = ValorONull(hDB["tipo_articulo"])
-    jArticulo["estado"] = CStr(hDB["estado_articulo"])
+    jArticulo["tipo_articulo"] = ValorONull(hDB["article_type"])
+    jArticulo["estado"] = CStr(hDB["estado"])
     jArticulo["fecha_recepcion"] = FechaONull(hDB["fecha_recepcion"])
     jArticulo["fecha_aceptacion"] = FechaONull(hDB["fecha_aceptacion"])
-    jArticulo["fecha_publicacion_online"] = FechaONull(hDB["fecha_publicacion_online"])
-    jArticulo["responsable_edicion"] = ValorONull(hDB["responsable_edicion"])
+    jArticulo["fecha_publicacion_online"] = FechaONull(hDB["fecha_publicacion"])
+    jArticulo["responsable_edicion"] = Null
     jArticulo["autores"] = ObtenerAutoresArticulo(CInt(hDB["id_articulo"]))
 
     aArticulos.Add(jArticulo)
@@ -85,7 +87,8 @@ End Function
 ' Función   : ObtenerAutoresArticulo
 ' Propósito : Devuelve Variant[] con los apellidos_nombre
 '             de los autores del artículo ordenados por
-'             orden de autoría.
+'             orden de autoría. Una autoría colectiva va con
+'             su nombre (articulo_contribuyente, esquema nuevo)
 ' Parámetros: iIdArticulo As Integer
 ' Retorna   : Variant[] — ["Apellidos, Nombre", ...]
 ' ============================================
@@ -97,11 +100,9 @@ Private Function ObtenerAutoresArticulo(iIdArticulo As Integer) As Variant[]
   Dim hAut As Result
 
   Try hAut = m_ConexionBD.mConn.Exec(
-    "SELECT a.apellidos_nombre " &
-    "FROM autores a " &
-    "JOIN articulo_autor aa ON a.id_autor = aa.id_autor " &
-    "WHERE aa.id_articulo = " & iIdArticulo &
-    " ORDER BY aa.orden_autoria")
+    "SELECT COALESCE(a.apellidos_nombre, c.nombre_colectivo) AS apellidos_nombre " &
+    "FROM articulo_contribuyente c LEFT JOIN autores a ON a.id_autor = c.id_autor " &
+    "WHERE c.id_articulo = &1 AND c.rol = 'autor' ORDER BY c.orden", iIdArticulo)
   If Error Then Return aAutores
 
   ' --- 2. ACUMULAR NOMBRES NO NULOS ---
