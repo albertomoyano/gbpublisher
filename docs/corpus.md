@@ -649,7 +649,7 @@ Los archivos `.md` y `.tex` son siempre generados por Pandoc en Linux, por lo qu
 - Para recorrer o cortar contenido, usar `String.Len()` y `String.Mid()`, NUNCA `Len()` / `Mid()`, porque las funciones sin prefijo operan en bytes y pueden cortar caracteres multibyte.
 - Pandoc: invocar sin flags de codificación. UTF-8 es su default en entrada y salida.
 - LuaLaTeX: consume UTF-8 nativamente. NO usar `\usepackage[utf8]{inputenc}` ni `[latin1]`.
-- Shell: no se requiere `LANG` explícito. Documentarlo igualmente en `integridad.sh` como precondición verificable.
+- Shell: no se requiere `LANG` explícito.
 
 PROHIBIDO: cualquier paso intermedio que recodifique a Latin-1, ISO-8859-1 o Windows-1252, aun de forma transitoria.
 
@@ -705,7 +705,7 @@ DECISIÓN CERRADA: gbpublisher NO usa `gb.pcre` para expresiones regulares. El m
 
 - `gb.pcre` (PCRE2) tiene siete limitaciones duras para texto en castellano y para uso desde UI: offsets en BYTES y no en caracteres, sin constante UCP expuesta (`\w` `\b` `\d` rompen con acentos), `Exec` sin start-offset (obliga a truncar y rompe `\b` y lookbehind), match vacío que cuelga el proceso, sin timeout, sin grupos nombrados accesibles.
 - Un match in-process no se puede cancelar (Gambas es single-thread en el loop de eventos); un proceso externo sí (`Process.Kill`).
-- Hace falta el paquete `perl` completo, NO solo `perl-base`. `perl-base` es Essential, pero no trae `PerlIO` ni `Encode`, y el script abre los archivos con `:encoding(UTF-8)`, que los necesita (GV-90). En el `.deb`: `Depends: perl`, sin versión. `IntegridadSistema` verifica el paquete `perl`, no el binario, que también lo trae `perl-base`.
+- Hace falta el paquete `perl` completo, NO solo `perl-base`. `perl-base` es Essential, pero no trae `PerlIO` ni `Encode`, y el script abre los archivos con `:encoding(UTF-8)`, que los necesita (GV-90). En el `.deb`: `Depends: perl`, sin versión. Lo garantiza el `.deb` y no se vuelve a controlar (SC-95).
 - perl con `-CSD` da offsets en CARACTERES y `\w` `\b` `\d` correctos en UTF-8 sin verbos ni configuración.
 
 ARQUITECTURA DEL MOTOR
@@ -856,7 +856,7 @@ Todo recurso que sí se copia y que afecte lo que la aplicación afirma sobre un
 
 COTEJO AL ARRANCAR
 
-`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js`, `themes`, `ott` y `chart` de la copia local con su par instalado. `ott` entra por el documento de referencia del ODT, que trae los estilos del epígrafe (SC-35); la comparación con `File.Load` sirve para un binario (GV-77). `chart` entró el 29/10/2026: `grafico.sh` lee la plantilla de los gráficos, Chart.js y sus fuentes de la copia local, y sin cotejo una plantilla nueva no llegaba nunca (SC-69). Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
+`m_InicioCierre.VerificarRecursosLocales`, después de `DirectorioOcultoApp`, compara cada archivo de `xslt`, `filters`, `latex`, `assets/css`, `assets/js`, `themes` y `chart` de la copia local con su par instalado. `ott`, que entraba por el documento de referencia del ODT, salió con la salida ODT (SC-96). `chart` entró el 29/10/2026: `grafico.sh` lee la plantilla de los gráficos, Chart.js y sus fuentes de la copia local, y sin cotejo una plantilla nueva no llegaba nunca (SC-69). Si alguno difiere, lo lista y ofrece reemplazarlo: el actual se guarda en `~/.gbpublisher/respaldo/recursos-AAAAMMDD-HHMMSS/` y se copia el instalado. Un archivo que solo existe en la copia local no se mira: puede ser del usuario.
 
 El caso que lo motivó: después de una actualización, una hoja nueva de la copia local corrió con un script viejo de `/usr/share/gbpublisher/engine/` y Saxon frenó por un parámetro que el script no pasaba. El caso inverso no da error: Saxon ignora un parámetro que la hoja vieja no declara, y la salida sale con la regla anterior.
 
@@ -868,7 +868,7 @@ RAZÓN DEL MODELO
 
 Divide según haya o no departamento de sistemas. Donde lo hay, los cambios se hacen sobre la copia local y se distribuyen a las estaciones; donde no lo hay, el usuario es a la vez administrador y necesita poder ajustar sin privilegios de root. En los dos casos el punto de intervención es el mismo, y la actualización del paquete nunca pisa lo ajustado.
 
-**Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34,vinculo:SC-35,vinculo:GV-77
+**Relaciones:** vinculo:SC-05,vinculo:SC-24,vinculo:SC-34,vinculo:SC-35,vinculo:GV-77,vinculo:SC-96
 
 ### SC-12 — Editor de bibliografia: el formato de trabajo es HTML, no RTF
 
@@ -1522,7 +1522,7 @@ Después de compilar, la aplicación lee las páginas del PDF con `pdfinfo` y AV
 
 LOGOS
 
-Solo PNG o JPG: el mismo archivo sirve al PDF y al EPUB, sin conversión. Un logo en PDF obligaba a generar un SVG para el EPUB, que no admite PDF como imagen; se descartó. Centrados a ancho fijo, definido en `preambulo-estetica.tex`: los dos a 110 mm (`\gbAnchoLogoPortada` y `\gbAnchoLogoColeccion`), nunca más anchos que la caja (`\gbLogo`). El de portada fue de 20 mm hasta el 29/10/2026: en una coedición lleva los sellos de todas las editoriales y necesita el mismo ancho que el de colección. El logo de colección se diseña sobre un lienzo de 110 mm de ancho: el blanco a los costados iguala las colecciones cuyo nombre o dirección ocupan distinto ancho. La resolución del archivo no interviene, así que GV-66 no afecta a los logos y el diálogo no la controla; solo tiene que alcanzar en píxeles (a 300 ppp, unos 1300 px para 110 mm). En el EPUB, la misma proporción sobre el ancho de pantalla: 100 % los dos (`gbpublisher-epub-libro.css`). El PDF y el EPUB frenan con un mensaje si el logo cargado no es PNG o JPG o no está en `media/`. `pdfinfo` (poppler-utils) entra en `integridad.sh`.
+Solo PNG o JPG: el mismo archivo sirve al PDF y al EPUB, sin conversión. Un logo en PDF obligaba a generar un SVG para el EPUB, que no admite PDF como imagen; se descartó. Centrados a ancho fijo, definido en `preambulo-estetica.tex`: los dos a 110 mm (`\gbAnchoLogoPortada` y `\gbAnchoLogoColeccion`), nunca más anchos que la caja (`\gbLogo`). El de portada fue de 20 mm hasta el 29/10/2026: en una coedición lleva los sellos de todas las editoriales y necesita el mismo ancho que el de colección. El logo de colección se diseña sobre un lienzo de 110 mm de ancho: el blanco a los costados iguala las colecciones cuyo nombre o dirección ocupan distinto ancho. La resolución del archivo no interviene, así que GV-66 no afecta a los logos y el diálogo no la controla; solo tiene que alcanzar en píxeles (a 300 ppp, unos 1300 px para 110 mm). En el EPUB, la misma proporción sobre el ancho de pantalla: 100 % los dos (`gbpublisher-epub-libro.css`). El PDF y el EPUB frenan con un mensaje si el logo cargado no es PNG o JPG o no está en `media/`. `pdfinfo` lo trae `poppler-utils`, dependencia del `.deb` (SC-95).
 
 Del resto de `media/`, el EPUB toma solo lo que el libro usa, en los formatos que admite —jpg, jpeg, png, gif, svg y webp, `m_GenerarEpubLibro.EsImagenEpub`—: la lista es la del manifiesto, y el script copia exactamente esa (SC-76). Antes copiaba todo y declaraba lo desconocido como `image/jpeg`: un PDF en `media/` dejaba el paquete inválido.
 
@@ -3045,7 +3045,7 @@ La primera versión recargaba al cerrar el formulario disparando `cmbArticulosRe
 
 ### SC-52 — Verificación en XML, JATS y DocBook: lo que no pasa el validador no está verificado
 
-**Estado:** vigente · **Evidencia:** inferida · **Entorno:** JATS Archiving 1.4 / DocBook 5.2 / SaxonJ-HE 12.5
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** JATS Archiving 1.4 / DocBook 5.2 / SaxonJ-HE 12.9
 
 DECISIÓN CERRADA (decisión de Alberto). Cómo se trabaja cuando Claude propone XML, XPath o XSLT para JATS o DocBook.
 
@@ -3080,15 +3080,15 @@ Válido para el esquema JATS no quiere decir que pase SciELO PS (packtools), PMC
 
 5. LO QUE DEPENDE DE LA VERSIÓN SE PRUEBA CON EL PROCESADOR ANCLADO
 
-El comportamiento de XSLT, XPath y los validadores se prueba con la versión anclada del proyecto, no se deduce. Caso abierto en el pendiente de esta entrada.
+El comportamiento de XSLT, XPath y los validadores se prueba con la versión anclada del proyecto, no se deduce. La versión anclada es SaxonJ-HE 12.9 (decisión de Alberto, 18/11/2026): en /opt/Saxon-HE con el enlace saxon-he.jar, que es la ruta que llama la cadena; engine/integridad.sh la instala y la controla por la huella del JAR (SC-95). Caso abierto en el pendiente de esta entrada.
 
 6. LO VERIFICADO SE ACUMULA EN GV-XML
 
 Todo comportamiento comprobado de XML, XPath, XSLT, Saxon, xmllint, jing, Schematron, packtools y los esquemas JATS y DocBook entra como GV-XML-NN, con entorno y fecha. Las entradas anteriores sobre esos temas (GV-21, GV-22, GV-25, GV-26, GV-28, GV-71, GV-81, GV-82) quedan en GV con su código: están citadas en el código y en otras entradas, y renumerarlas rompería esas citas.
 
-**Relaciones:** vinculo:GV-21,vinculo:GV-22,vinculo:GV-25,vinculo:GV-26,vinculo:GV-28,vinculo:GV-71,vinculo:GV-81,vinculo:GV-82,vinculo:SC-50
+**Relaciones:** vinculo:GV-21,vinculo:GV-22,vinculo:GV-25,vinculo:GV-26,vinculo:GV-28,vinculo:GV-71,vinculo:GV-81,vinculo:GV-82,vinculo:SC-50,vinculo:SC-95
 
-**PENDIENTE:** Mini-test: si SaxonJ-HE 12.5 acepta construcciones de XSLT 3.0 en una hoja declarada version="2.0". El resultado entra como GV-XML-01 y se quita este pendiente. (2) La versión anclada de Saxon: buena parte del corpus dice SaxonJ-HE 12.5 y en Linux Mint está la 12.9; nada en el código la fija (m_Constantes solo da la ruta). Decidir cuál es la del proyecto y dónde se verifica.
+**PENDIENTE:** Mini-test: si SaxonJ-HE 12.9 acepta construcciones de XSLT 3.0 en una hoja declarada version="2.0". El resultado entra como GV-XML-01 y se quita este pendiente.
 
 ### SC-53 — Lanzadora de scripts de engine/: un solo camino, código de salida por archivo de estado
 
@@ -5337,7 +5337,7 @@ DESDE GAMBAS
 
 **Relaciones:** vinculo:SC-72,vinculo:SC-87,vinculo:SC-88,vinculo:SC-57,vinculo:SC-31,vinculo:SC-13,vinculo:SC-53,apoya:GV-193,apoya:GV-194,apoya:GV-197,apoya:GV-198,apoya:GV-199,apoya:GV-200,apoya:GV-201,apoya:GV-204
 
-**PENDIENTE:** La comilla recta en f:latex (GV-199). El PDF/X. El retiro del camino viejo (Menu6, m_XML.GenerarPDF, btnGenerarXMLcanonico). Los paquetes de idioma de TeX Live que pide cada revista podrían verificarse en integridad.sh.
+**PENDIENTE:** La comilla recta en f:latex (GV-199). El PDF/X. El retiro del camino viejo (Menu6, m_XML.GenerarPDF, btnGenerarXMLcanonico).
 
 ### SC-90 — Catálogos comunes de CRediT y licencias: el nombre del rol y el texto de la licencia por idioma, congelados al publicar
 
@@ -5453,6 +5453,102 @@ Vive en `~/.config/mc/` (`ini`, `panels.ini`; `mc -F` da las rutas). OBSERVADO p
 **Relaciones:** vinculo:GV-205,vinculo:GV-43,vinculo:GV-42,vinculo:GV-174,vinculo:GV-06,vinculo:GV-17
 
 **PENDIENTE:** Que `Exec` dispare un error atrapable cuando falta gnome-terminal (va con Try, sin verificar). Que `gambas3-gb-desktop-x11` figure en las dependencias del .deb, y mc y gnome-terminal.
+
+### SC-95 — Integridad del sistema: una sola lista en engine/integridad.sh, herramientas de producción congeladas en /opt y control por funcionamiento
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / engine/integridad.sh / pkexec / Saxon-HE 12.9 / pandoc 3.1.3 / epubcheck 4.2.6 / veraPDF 1.30.1 / packtools 4.18.2 / Linux Mint 22 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 18/11/2026, después de probarlo en Linux Mint con el libro de Jensen).
+
+POR QUÉ
+
+La mayoría de quienes usan gbpublisher no tienen formación técnica: son usuarios de Windows que pasaron a Linux Mint sin fricción, pero que no leen la consola. El control anterior fallaba hasta para quien sí sabía leerlo. Había dos listas (`IntegridadSistema` en Gambas y el viejo `integridad.sh`) y ninguna miraba lo que usa la cadena. Saxon se buscaba como `saxon-he-*.jar` y la cadena llama a `saxon-he.jar`: sin el enlace, el control daba OK y la generación moría. packtools se probaba con el Python del sistema y vive en su propio entorno en `/opt/packtools`.
+
+UNA SOLA LISTA, EN engine/
+
+`engine/integridad.sh` es la única lista. Gambas no tiene otra.
+
+QUÉ SE CONGELA EN /opt
+
+Se congela, con versión y huella fijas, lo que cumple las tres condiciones a la vez: su resultado es el contenido de una salida o el veredicto de una validación; una versión nueva no garantiza el mismo resultado; y congelarlo cuesta poco (un JAR o un binario autónomo).
+
+    Saxon-HE 12.9     /opt/Saxon-HE, con el enlace saxon-he.jar (SC-52)
+    pandoc 3.1.3      /opt/pandoc/bin/pandoc, el binario oficial
+    epubcheck 4.2.6   /opt/epubcheck/epubcheck.jar
+    veraPDF 1.30.1    /opt/verapdf
+    packtools 4.18.2  /opt/packtools (engine/instalar_packtools.sh)
+
+La URL, la huella de la descarga y la huella de lo instalado de cada uno viven en `integridad.sh`. Para cambiar de versión se cambian las tres juntas, más la versión esperada.
+
+Por qué pandoc: el canónico se regenera desde el `.md` muchas veces durante la edición, así que pandoc está dentro de lo que tiene que poder reproducirse. Ubuntu no cambia la versión de un paquete durante una LTS, pero Mint saca una base nueva cada dos años y cada una dura unos cinco: van a convivir usuarios en dos versiones. Y el pandoc 3.1.3 de apt no es el binario oficial (Debian lo compila con sus bibliotecas de Haskell), así que la misma versión no garantiza el mismo XML (GV-207).
+
+Por qué epubcheck: es un veredicto, y `generar_epub_libro.sh` cuenta los errores leyendo el texto que imprime.
+
+QUÉ QUEDA EN EL SISTEMA
+
+Lo que garantiza el `.deb` y no se vuelve a controlar: Java, TeX Live (`texlive-full`), xmllint, Python con venv, perl, ImageMagick, poppler-utils. TeX Live no rompe hacia atrás salvo algún paquete puntual: si un cambio rompe algo, se corrige cuando aparece. MySQL tampoco se controla: si hay un proyecto abierto, la aplicación ya se conectó a la base.
+
+CONTROL POR FUNCIONAMIENTO, NO POR PRESENCIA
+
+Cada componente se controla por la huella de lo instalado y haciéndolo trabajar, como usuario común, que es como lo usa la cadena: Saxon transforma un XML mínimo y el enlace tiene que llevar al JAR de la 12.9; pandoc convierte una línea a DocBook y responde como intérprete Lua (`pandoc lua`, que usa `colorear_codigo.sh`); epubcheck y veraPDF dan su versión; packtools carga su validador desde su entorno. Una instalación que funciona no se toca, aunque se haya hecho a mano: solo se repara lo que falla, y se reemplaza la carpeta entera.
+
+CÓMO SE INSTALA
+
+1. Como usuario común: el control y las descargas. Cada descarga se acepta solo si su huella coincide. Sin conexión, el script dice «No hay conexión a internet» (curl sale con 6, 7, 28 o 35) y no un error de curl.
+2. Una sola llamada a `pkexec`, con todo lo que falta. La contraseña se pide en una ventana gráfica: con sudo, la línea «[sudo] contraseña para...» se pierde entre los mensajes (GV-206). La parte de root es el mismo script con `--instalar <carpeta> <componentes>`: vuelve a verificar las huellas, instala y deja cada carpeta de root y legible por todos, componente por componente. pkexec limpia el entorno: la parte de root no toca `~/.gbpublisher`.
+3. El control final, igual al primero.
+
+Mensajes con el vocabulario de `comun.sh` y códigos de SC-53: 0 todo en orden, 1 algo quedó sin resolver. Cada falta se explica por lo que deja de poder hacerse («sin esto los .md no se convierten en el XML canónico»), no por el archivo que falta.
+
+DÓNDE SE LANZA
+
+Desde el menú «Acerca de... → Controlar integridad del sistema» (`FMain.menuAcercaIntegridad_Click`), con `m_Lanzadora.EjecutarScript`, que bloquea las salidas mientras corre: nadie genera un PDF a mitad de una instalación. Hace falta un proyecto abierto, revista o libro: el script corre en su terminal. Sin proyecto, el menú lo dice.
+
+No hay control al arrancar: es una instancia de control del usuario (decisión de Alberto). Se quitó el de `FAvisoLegal.Form_Open`.
+
+LAS RUTAS EN LA CADENA
+
+`RUTA_PANDOC` y `RUTA_EPUBCHECK` en `engine/comun.sh` (con `GBP_PANDOC` y `GBP_EPUBCHECK` para probar a mano otra versión), en `m_Constantes` y en `convertir_docx.sh`, que no carga `comun.sh`. Nadie llama a pandoc por su nombre: ni los scripts de `engine/` ni Gambas (`m_AnalizarProyecto`, `m_GenerarODT`, `m_GenerarEpub`, `m_PrimerasLibro`, `m_XML`). `requerir_pandoc` reemplaza a «requerir_comandos pandoc». Todo aviso de herramienta faltante termina con `COMO_REPARAR`: «Abrí cualquier proyecto y usá «Acerca de... → Controlar integridad del sistema»: instala lo que falte».
+
+LO QUE SE RETIRÓ
+
+`IntegridadSistema`, `ReporteIntegridadTexto` y sus auxiliares (`m_FuncionesGenericas`); el control al arrancar; `instalar-packtools.sh` de la raíz del repositorio, mudado a `engine/instalar_packtools.sh` para que viaje en el `.deb`; `pandoc` y `epubcheck` de las dependencias del paquete.
+
+PROBADO
+
+En Mint (18/11/2026): el script reparó pandoc y epubcheck con una sola ventana de contraseña y respetó el Saxon instalado a mano. Con el libro de Jensen, los canónicos regenerados con el pandoc de /opt son idénticos byte a byte a los del pandoc de apt; el EPUB pasa epubcheck 4.2.6 sin mensajes. En un Ubuntu 24.04 de prueba: la instalación desde cero de pandoc, epubcheck y veraPDF, el control como usuario común, y la ventana cerrada (código 126).
+
+**Relaciones:** apoya:GV-206,apoya:GV-207,apoya:GV-208,vinculo:GV-209,vinculo:SC-52,vinculo:SC-53,vinculo:SC-11,vinculo:GV-42
+
+**PENDIENTE:** El instalador de la base (instalar-gbpublisher.sh), con la lógica acordada: después del .deb, usa comun.sh; instala MySQL si no está y frena si encuentra MariaDB (GV-209); sin base existente la crea sin preguntar y la confirmación queda para cuando ya existe una. La política de polkit (GV-206).
+
+### SC-96 — La salida ODT se retira, en revistas y en libros
+
+**Estado:** vigente · **Evidencia:** inferida · **Entorno:** gbpublisher · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 18/11/2026).
+
+La salida ODT se retira, en revistas y en libros. La necesidad real es remota: un autor pidió alguna vez su texto actualizado en un procesador de texto, y no justifica, para un solo desarrollador, mantener una salida más con su margen de error en cada filtro y cada shortcode.
+
+QUÉ SE RETIRÓ
+
+- `m_GenerarODT` entero y `FMain.menuSalidaODT_Click`.
+- Los dos menús «Generar salida ODT»: el de revistas (`menuSalidaODT`) y el de libros (`Menu2`), que no tenía handler y nunca hizo nada.
+- La carpeta `salidas/odt` de los proyectos nuevos (las que existen no se tocan).
+- El documento de referencia `ott/reference.ott`: sale de `ExtraFiles`, de la copia a `~/.gbpublisher` (`DirectorioOcultoApp`) y del cotejo de SC-11.
+- El filtro `epigrafe-odt.lua` y el icono `libreoffice.png`.
+
+QUÉ NO ES ODT
+
+`m_EditorHTML` usa LibreOffice (`soffice`) para IMPORTAR un documento al editor. Es una entrada, no una salida: sigue.
+
+LAS MENCIONES EN OTRAS ENTRADAS
+
+Varias entradas describen cómo cada filtro o shortcode resolvía el ODT («las tres cadenas: revista, libro y ODT», los párrafos «ODT», «las seis salidas»). Esas menciones quedan sin efecto desde esta entrada y se limpian junto con el retiro del camino viejo de revistas, que toca las mismas entradas: una sola pasada y no dos.
+
+**Relaciones:** vinculo:SC-11,vinculo:SC-35
+
+**PENDIENTE:** Limpiar las menciones al ODT en las demás entradas, junto con el retiro del camino viejo de revistas.
 
 ---
 
@@ -7939,7 +8035,7 @@ El paquete `perl` depende de `perl-base`, `perl-modules-5.38` y `libperl5.38t64`
 
 `libencode-perl` es una versión más nueva de Encode que se distribuye aparte y que instala como dependencia algún otro programa. Si está, perl la prefiere, porque su carpeta va antes en `@INC`; si no está, usa la de `libperl5.38t64`, que también trae `Encode.pm` (verificado con `dpkg -L`). No hace falta declararla.
 
-CONSECUENCIA: en el `.deb`, `Depends: perl`, SIN versión. Los paquetes de los módulos llevan la versión de Perl en el nombre y cambian de una versión de Mint a otra; `perl` es el nombre estable que trae los que correspondan. En `IntegridadSistema` se verifica el PAQUETE `perl` (`DEP_PAQUETE`), no el comando: el binario `perl` lo trae también `perl-base` y la verificación daría verde sin servir.
+CONSECUENCIA: en el `.deb`, `Depends: perl`, SIN versión. Los paquetes de los módulos llevan la versión de Perl en el nombre y cambian de una versión de Mint a otra; `perl` es el nombre estable que trae los que correspondan. No se controla el comando `perl`: el binario lo trae también `perl-base` y un control así daría verde sin servir. Lo garantiza la dependencia del `.deb` (SC-95).
 
 **Relaciones:** vinculo:SC-05,apoya:SC-47
 
@@ -10107,6 +10203,76 @@ Ninguno de los tres pasos es crítico: van con `Try` y, si fallan, el programa q
 **Relaciones:** apoya:SC-94,vinculo:GV-17,vinculo:GV-43
 
 **PENDIENTE:** Cotejar contra la etiqueta 3.22.1 del fuente: se leyó master. `Integer[].Exist()`, que usa EsperarVentanaNueva, no tiene entrada propia en el corpus. Si `--geometry` con posición lo respeta Cinnamon.
+
+### GV-206 — pkexec desde el TerminalView de FMain: ventana gráfica, salida visible en la terminal, 0 al autenticar y 126 al cerrar
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / gb.form.terminal / pkexec (polkit) / Cinnamon / X11 / Linux Mint 22 · **Verificado:** 2026-11
+
+Probado por Alberto el 18/11/2026 en Linux Mint 22 Cinnamon, desde el TerminalView de `FMain` (la terminal del proyecto), con un script de prueba que llamaba a `pkexec /bin/bash -c '…'`.
+
+- La ventana gráfica de contraseña aparece: la pone el agente de polkit de Cinnamon. No hace falta una terminal con tty para contestar.
+- La salida del proceso que corre como root se ve en la misma terminal, línea por línea: pkexec conserva los descriptores de salida del proceso que lo llama.
+- El proceso corre como root (`id -un` da `root`).
+- Código de salida: 0 al autenticar (el del programa); 126 al cerrar la ventana («Error executing command as another user: Request dismissed»). Por el manual de pkexec, 127 cuando no se obtiene autorización.
+
+pkexec limpia el entorno: el programa no recibe el HOME del usuario. Lo que corre como root no puede contar con `~/.gbpublisher`.
+
+La ventana describe la acción como la ejecución de `/bin/bash` como superusuario. El texto se cambia con una política de polkit propia, no probada.
+
+**Relaciones:** apoya:SC-95,vinculo:GV-42,vinculo:SC-53
+
+**PENDIENTE:** Una política de polkit propia, para que la ventana describa la acción en castellano y no como la ejecución de /bin/bash.
+
+### GV-207 — pandoc 3.1.3 y epubcheck 4.2.6: el binario oficial y el paquete de apt de Mint 22 dan el mismo resultado
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** pandoc 3.1.3 (oficial y 3.1.3+ds-2) / epubcheck 4.2.6 (oficial y 4.2.6-2) / Ubuntu 24.04 / Linux Mint 22 · **Verificado:** 2026-11
+
+Medido el 18/11/2026 en un Ubuntu 24.04 (la base de Linux Mint 22) y confirmado en Mint con la cadena real.
+
+PANDOC
+
+El paquete de apt es `3.1.3+ds-2`: Debian lo compila contra sus propios paquetes de las bibliotecas de Haskell, así que no es el binario oficial (`pandoc-3.1.3-linux-amd64.tar.gz`, de las releases de jgm). Las 15 piezas del libro de Jensen, con la llamada de `generar_canonicos_capitulos.sh` (los 21 filtros del libro, `--to docbook5 --mathml`), dan el mismo XML byte a byte con los dos. Antes se verificó que la corrida reproducía la de la aplicación: lo generado con el pandoc de apt fue idéntico a los `tmp/body-*.xml` de la app. Límite: Jensen no tiene fórmulas (texmath sin probar), y la ruta `--citeproc` del ODT no se comparó.
+
+El binario oficial trae `pandoc-lua` y `pandoc-server` como enlaces a `pandoc`; `pandoc lua -e` funciona.
+
+EPUBCHECK
+
+El 4.2.6 oficial (`epubcheck-4.2.6.zip`, releases de w3c) y el paquete `4.2.6-2` de Ubuntu dan el mismo informe línea por línea, sobre un EPUB válido y sobre uno roto a propósito (1 fatal, 3 errores, 1 advertencia). El `/usr/bin/epubcheck` de Debian es un JAR que se ejecuta por binfmt (jarwrapper): sin binfmt, bash lo trata como un script de texto.
+
+CONCLUSIÓN
+
+Hoy pasar de apt a /opt no cambia la producción. El congelamiento protege del cambio de versión de la distribución, no de una diferencia actual (SC-95).
+
+**Relaciones:** apoya:SC-95
+
+**PENDIENTE:** Comparar con un libro o un artículo con fórmulas (texmath) y la salida ODT (--citeproc).
+
+### GV-208 — veraPDF 1.30.1: instalación sin preguntas con -options y un archivo con INSTALL_PATH; instalado por root, lo usa un usuario común
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** veraPDF 1.30.1 / IzPack 5.2.4 / Java 21 / Ubuntu 24.04 / Linux Mint 22 · **Verificado:** 2026-11
+
+Probado el 18/11/2026: por Alberto en Linux Mint 22 y en un Ubuntu 24.04 de prueba.
+
+El zip oficial (`verapdf-greenfield-1.30.1-installer.zip`, de software.verapdf.org; la URL y el sha256 los fija también el manifiesto de Flathub) trae `verapdf-install`, `verapdf-install.bat` y `verapdf-izpack-installer-1.30.1.jar`. Es un instalador IzPack.
+
+- `./verapdf-install -options-template archivo` escribe la plantilla: su única clave es `INSTALL_PATH=`.
+- `./verapdf-install -options archivo`, con `INSTALL_PATH` completo, instala sin preguntas los tres paquetes (GUI, CLI, documentación). Si la carpeta existe, la limpia antes.
+- Instalado por root en `/opt/verapdf` y dejado legible por todos, un usuario común lo usa: `--version` y una validación con `-f 2u --format json` funcionan. La configuración la escribe en `~/.verapdf`, no en la carpeta de instalación.
+- Flathub instala con `java -jar <instalador> auto-install.xml`: el formato XML también existe; no se probó.
+
+**Relaciones:** apoya:SC-95
+
+### GV-209 — MySQL y MariaDB se excluyen en apt por virtual-mysql-server: instalar uno saca al otro
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** mysql-server-8.0 8.0.46 / mariadb-server 10.11.14 / Linux Mint 22 (Ubuntu 24.04) · **Verificado:** 2026-11
+
+Medido el 18/11/2026 en Linux Mint 22 con `apt-cache show`.
+
+`mysql-server-8.0` (8.0.46-0ubuntu0.24.04.5) y `mariadb-server` (1:10.11.14-0ubuntu0.24.04.1) declaran los dos `Provides: virtual-mysql-server` y `Conflicts: virtual-mysql-server`. apt nunca deja los dos instalados: instalar uno saca al otro. `mariadb-server` además declara `Breaks` y `Replaces` sobre `mysql-server-8.0`.
+
+Consecuencia para un instalador: si encuentra MariaDB, tiene que frenar, no instalar MySQL encima. Para detectarlo no alcanza el nombre del paquete (un MySQL de los repositorios de Oracle se llama distinto): `mysqld --version` dice «MariaDB» en MariaDB.
+
+**Relaciones:** vinculo:SC-95
 
 ---
 
