@@ -7,8 +7,8 @@
 # USO
 #   validar_sabor.sh <tipo> <ruta_proyecto> <archivo> [<archivo>...]
 #
-#   tipo            jats4r, doaj (los demás llegan con sus sabores:
-#                   crossref, redalyc, scielo, pmc)
+#   tipo            jats4r, doaj, crossref (los demás llegan con sus
+#                   sabores: redalyc, scielo, pmc)
 #   ruta_proyecto   raíz del proyecto
 #   archivo         ruta absoluta de cada archivo a validar, dentro del
 #                   proyecto. Un lote es UNA llamada (SC-53)
@@ -46,6 +46,15 @@
 #   autores, resúmenes y grupos de palabras clave lleva. El grupo de esas
 #   filas es el publisherRecordId: el nombre del artículo.
 #
+# TIPO crossref
+#   El depósito del número (salidas/crossref/crossref-{número}.xml, de
+#   generar_crossref_revista.sh). Primero el esquema 5.4.0, sin red
+#   (validar_crossref): lo que no valida, Crossref lo rechaza, y es ERROR.
+#   Después el encabezado (el correo al que Crossref manda el informe) y,
+#   por artículo, lo que el esquema no exige y Crossref usa: la página, los
+#   ORCID y los ROR, los resúmenes, el financiamiento, la licencia y las
+#   referencias con DOI. El grupo de esas filas es el DOI del artículo.
+#
 # CÓDIGOS
 #   0  hubo registros: los hallazgos van en ellos, no en el código
 #   1  no se pudo validar (argumentos, entorno, el validador no dejó informe).
@@ -59,7 +68,8 @@ if ! source "$DIR_ENGINE/comun.sh"; then
     echo "No se pudo cargar $DIR_ENGINE/comun.sh" >&2
     exit 1
 fi
-# LOS ESQUEMAS DE LOS SABORES (esquema_doaj_presente, validar_doaj)
+# LOS ESQUEMAS DE LOS SABORES (esquema_*_presente, validar_doaj,
+# validar_crossref)
 if ! source "$DIR_ENGINE/revista_comun.sh"; then
     echo "No se pudo cargar $DIR_ENGINE/revista_comun.sh" >&2
     exit 1
@@ -421,6 +431,132 @@ validar_doaj_tipo() {
 }
 
 # ============================================================================
+# Función   : validar_crossref_archivo
+# Propósito : Los registros de un depósito de Crossref.
+# Parámetros: $1 ruta absoluta del archivo
+# Nota      : EL DEPÓSITO TIENE ESPACIO DE NOMBRES: EN XPath SE NOMBRA POR
+#             local-name() (GV-22)
+# ============================================================================
+validar_crossref_archivo() {
+    local abs="$1" objeto errores cantidad total i a id valor n m
+    objeto="$(basename "$abs")"
+
+    # --- A. BIEN FORMADO ---
+    if ! xmllint --nonet --noout "$abs" 2>/dev/null; then
+        registro "$objeto" esquema "Bien formado" ERROR "mal formado" "" \
+            "$(xmllint --nonet --noout "$abs" 2>&1 | head -3 | sed "s|^$abs:|línea |" | tr '\n' ' ')"
+        return
+    fi
+
+    # --- B. EL ESQUEMA 5.4.0 ---
+    errores="$(validar_crossref "$abs")"
+    if [[ -z "$errores" ]]; then
+        registro "$objeto" esquema "crossref5.4.0.xsd" OK "válido" "" ""
+    else
+        cantidad=$(printf '%s\n' "$errores" | grep -c .)
+        registro "$objeto" esquema "crossref5.4.0.xsd" ERROR "$cantidad error(es)" "válido" \
+            "$(printf '%s\n' "$errores" | head -5 | tr '\n' ' ')"
+    fi
+
+    # --- C. EL ENCABEZADO Y EL ARCHIVO ---
+    valor="$(valor_xpath "$abs" "normalize-space(//*[local-name()='depositor']/*[local-name()='email_address'])")"
+    registro "$objeto" archivo "Correo del depositante" "$([[ "$valor" == *@*.* ]] && echo OK || echo ERROR)" \
+        "${valor:-ninguno}" "" "Crossref manda ahí el informe del depósito"
+    valor="$(valor_xpath "$abs" "normalize-space(//*[local-name()='head']/*[local-name()='timestamp'])")"
+    registro "$objeto" archivo "Timestamp" INFO "$valor" "" \
+        "Crossref exige que crezca en cada depósito: un archivo viejo, subido después de uno nuevo, se rechaza. Regenerá antes de subir"
+    total=$(valor_xpath "$abs" "count(//*[local-name()='journal_article'])")
+    [[ "$total" =~ ^[0-9]+$ ]] || total=0
+    if (( total == 0 )); then
+        registro "$objeto" archivo "Artículos" ERROR "ninguno" "uno por artículo" ""
+        return
+    fi
+    registro "$objeto" archivo "Artículos" OK "$total" "" ""
+
+    # --- D. CADA ARTÍCULO ---
+    for (( i = 1; i <= total; i++ )); do
+        a="(//*[local-name()='journal_article'])[$i]"
+        id="$(valor_xpath "$abs" "normalize-space($a/*[local-name()='doi_data']/*[local-name()='doi'])")"
+        [[ -n "$id" ]] || id="artículo $i"
+
+        valor="$(valor_xpath "$abs" "normalize-space($a/*[local-name()='doi_data']/*[local-name()='resource'])")"
+        if [[ "$valor" =~ ^https?:// ]]; then
+            registro "$objeto" "$id" "Página" OK "$valor" "" "El DOI resuelve a esta URL"
+        else
+            registro "$objeto" "$id" "Página" ERROR "${valor:-ninguna}" "una URL http(s)" ""
+        fi
+
+        n=$(valor_xpath "$abs" "count($a//*[local-name()='person_name'] | $a//*[local-name()='organization'])")
+        if [[ "$n" == "0" ]]; then
+            registro "$objeto" "$id" "Autores" INFO "ninguno" "" ""
+        else
+            m=$(valor_xpath "$abs" "count($a//*[local-name()='person_name'][*[local-name()='ORCID']])")
+            registro "$objeto" "$id" "Autores" OK "$n" "" "Con ORCID: $m"
+        fi
+
+        n=$(valor_xpath "$abs" "count($a//*[local-name()='institution'])")
+        if [[ "$n" != "0" ]]; then
+            m=$(valor_xpath "$abs" "count($a//*[local-name()='institution'][*[local-name()='institution_id']])")
+            registro "$objeto" "$id" "Afiliaciones" "$([[ "$m" == "$n" ]] && echo OK || echo INFO)" \
+                "$n" "" "Con ROR: $m. Una afiliación sin ROR va solo con el nombre"
+        fi
+
+        n=$(valor_xpath "$abs" "count($a/*[local-name()='abstract'])")
+        registro "$objeto" "$id" "Resúmenes" "$([[ "$n" == "0" ]] && echo INFO || echo OK)" "$n" "" ""
+
+        if [[ "$(valor_xpath "$abs" "count($a/*[local-name()='pages'])")" != "0" ]]; then
+            registro "$objeto" "$id" "Páginas" OK \
+                "$(valor_xpath "$abs" "concat($a/*[local-name()='pages']/*[local-name()='first_page'], '-', $a/*[local-name()='pages']/*[local-name()='last_page'])")" "" ""
+        elif [[ "$(valor_xpath "$abs" "count($a/*[local-name()='publisher_item'])")" != "0" ]]; then
+            registro "$objeto" "$id" "Páginas" OK \
+                "e-id $(valor_xpath "$abs" "normalize-space($a/*[local-name()='publisher_item']/*[local-name()='item_number'])")" "" \
+                "Sin páginas: el e-id va como número de artículo (item_number article_number)"
+        else
+            registro "$objeto" "$id" "Páginas" AVISO "ninguna" "páginas o e-id" ""
+        fi
+
+        n=$(valor_xpath "$abs" "count($a/*[local-name()='program'][@name='fundref']/*)")
+        registro "$objeto" "$id" "Financiamiento" "$([[ "$n" == "0" ]] && echo INFO || echo OK)" "$n" "" ""
+
+        valor="$(valor_xpath "$abs" "normalize-space($a/*[local-name()='program'][@name='AccessIndicators']/*[local-name()='license_ref'])")"
+        if [[ -n "$valor" ]]; then
+            registro "$objeto" "$id" "Licencia" OK "$valor" "" ""
+        else
+            registro "$objeto" "$id" "Licencia" AVISO "ninguna" "la URL de la licencia" \
+                "Una revista de acceso abierto declara su licencia"
+        fi
+
+        n=$(valor_xpath "$abs" "count($a//*[local-name()='citation'])")
+        if [[ "$n" == "0" ]]; then
+            registro "$objeto" "$id" "Referencias" INFO "ninguna" "" ""
+        else
+            m=$(valor_xpath "$abs" "count($a//*[local-name()='citation'][*[local-name()='doi']])")
+            registro "$objeto" "$id" "Referencias" OK "$n" "" \
+                "Con DOI: $m. Crossref relaciona las citas sobre todo por el DOI"
+        fi
+    done
+}
+
+# ============================================================================
+# Función   : validar_crossref_tipo
+# Propósito : El tipo crossref: cada archivo de la lista.
+# Parámetros: los archivos (rutas absolutas)
+# ============================================================================
+validar_crossref_tipo() {
+    local abs
+
+    esquema_crossref_presente ||
+        morir "No está el esquema de Crossref del sistema: $XSD_CROSSREF (o su catálogo, $CATALOGO_CROSSREF, o standard-modules/)"
+
+    for abs in "$@"; do
+        abs="$(readlink -f "$abs")"
+        [[ "$abs" == "$DIR_PROYECTO/"* ]] || morir "El archivo no está dentro del proyecto: $abs"
+        [[ -f "$abs" ]] || morir "No existe: $abs"
+        validar_crossref_archivo "$abs"
+    done
+}
+
+# ============================================================================
 # ORQUESTACIÓN
 # ============================================================================
 
@@ -441,6 +577,7 @@ command -v xmllint >/dev/null 2>&1 || morir "Falta xmllint (paquete libxml2-util
 case "$TIPO" in
     jats4r) validar_jats4r "$@" ;;
     doaj)   validar_doaj_tipo "$@" ;;
+    crossref) validar_crossref_tipo "$@" ;;
     *)      morir "Tipo de validación no reconocido: «$TIPO»" ;;
 esac
 
