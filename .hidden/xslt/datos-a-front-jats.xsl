@@ -439,7 +439,17 @@
             </xsl:for-each>
           </institution-wrap>
           <xsl:for-each select="$a/ciudad"><xsl:text>, </xsl:text><city><xsl:value-of select="."/></city></xsl:for-each>
-          <xsl:for-each select="$a/pais"><xsl:text>, </xsl:text><country><xsl:value-of select="."/></country></xsl:for-each>
+          <!-- EL CÓDIGO ISO 3166-1 DEL VOLCADO (1.30.0): country/@country, QUE
+               EXIGE SciELO Y RECOMIENDA JATS4R. SIN CÓDIGO, SOLO EL TEXTO -->
+          <xsl:for-each select="$a/pais">
+            <xsl:text>, </xsl:text>
+            <country>
+              <xsl:if test="normalize-space(@codigo) ne ''">
+                <xsl:attribute name="country" select="normalize-space(@codigo)"/>
+              </xsl:if>
+              <xsl:value-of select="."/>
+            </country>
+          </xsl:for-each>
         </aff>
       </xsl:for-each>
     </xsl:if>
@@ -447,7 +457,7 @@
 
   <xsl:function name="gbj:clave-aff" as="xs:string">
     <xsl:param name="a" as="element()"/>
-    <xsl:sequence select="string-join(($a/institucion, $a/departamento, $a/@ror, $a/ciudad, $a/pais), '|')"/>
+    <xsl:sequence select="string-join(($a/institucion, $a/departamento, $a/@ror, $a/ciudad, $a/pais, $a/pais/@codigo), '|')"/>
   </xsl:function>
 
   <!-- ==========================================================
