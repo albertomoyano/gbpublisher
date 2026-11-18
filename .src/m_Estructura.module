@@ -20,6 +20,9 @@
 ' CUÁNDO SE RECONSTRUYE:
 '   - COMPLETO: AL ABRIR EL PROYECTO Y CUANDO CAMBIA LA LISTA DE ARCHIVOS
 '   - SOLO EL ARCHIVO GUARDADO: EN CADA GUARDADO, DESDE EL TEXTO GUARDADO
+'   - SOLO LOS NOMBRES DE LOS ARCHIVOS: CUANDO SE GUARDAN LOS METADATOS DE UN
+'     CAPÍTULO O UN ARTÍCULO (RefrescarNombres). HASTA EL 18/11/2026 EL ÁRBOL
+'     NO SE ENTERABA DE UN TÍTULO NUEVO HASTA REABRIR EL PROYECTO
 '   - AL CAMBIAR DE ARCHIVO NO SE RECONSTRUYE: SE DESPLIEGA ESE CAPÍTULO
 
 Private $hVista As TreeView
@@ -127,6 +130,38 @@ Public Sub ActualizarArchivo(sRutaAbsoluta As String, sContenido As String)
   ' --- 3. FILTROS Y MARCA DEL CURSOR ---
   AplicarFiltros()
   SeguirEditor(False)
+
+End
+
+' ============================================
+' Función   : RefrescarNombres
+' Propósito : Volver a leer de la base los títulos de capítulos y artículos y
+'             ponerlos en los nodos de archivo, sin releer los .md ni tocar
+'             lo desplegado
+' Parámetros: ninguno
+' Retorna   : nada
+' Nota      : LO LLAMAN LOS FORMULARIOS DE METADATOS AL GUARDAR. UNA SOLA
+'             CONSULTA POR TABLA (TitulosDeLaBase). LOS ARCHIVOS SON LAS
+'             CLAVES DE $cTitulos, LAS MISMAS QUE ARMÓ Construir
+' ============================================
+Public Sub RefrescarNombres()
+
+  Dim cNombres As Collection
+  Dim aTitulos As CTituloMD[]
+  Dim sRel As String
+
+  ' --- 1. SIN ÁRBOL ARMADO NO HAY NADA QUE REFRESCAR ---
+  If Not $hVista Then Return
+  If $cTitulos.Count = 0 Then Return
+
+  ' --- 2. LOS TÍTULOS ACTUALES DE LA BASE ---
+  cNombres = TitulosDeLaBase()
+
+  ' --- 3. EL TEXTO DE CADA NODO DE ARCHIVO ---
+  For Each aTitulos In $cTitulos
+    sRel = $cTitulos.Key
+    If $hVista.Exist(ClaveArchivo(sRel)) Then $hVista[ClaveArchivo(sRel)].Text = NombreDeArchivo(sRel, cNombres)
+  Next
 
 End
 
@@ -600,16 +635,24 @@ End
 ' Propósito : Texto del nodo de un archivo: su título en la base, o su nombre
 ' Parámetros: sRel As String — ruta relativa
 '             cNombres As Collection — títulos por nombre_archivo
-' Retorna   : String — el texto a mostrar
+' Retorna   : String — el texto a mostrar, en una línea
+' Nota      : EL TÍTULO PASA POR m_CorteTitulo.Plano (LA MARCA \\ A ESPACIO,
+'             SC-28) Y CADA SALTO O TABULACIÓN A ESPACIO: UN NODO DE UNA LÍNEA
+'             CON UN SALTO SE DIBUJA VACÍO (CAPÍTULO 67 DE JENSEN, CON UN
+'             SALTO FINAL PEGADO, 18/11/2026). ES DEFENSA: LA VENTANA
+'             FTXTextendido YA NO DEJA ENTRAR ESOS SALTOS EN UN TÍTULO
 ' ============================================
 Private Function NombreDeArchivo(sRel As String, cNombres As Collection) As String
 
   Dim sBase As String
+  Dim sTitulo As String
 
   ' nombre_archivo SE GUARDA SIN EXTENSIÓN, COMO LO COMPARA cmbArticulosRevista_Click
   sBase = File.BaseName(sRel)
   If cNombres.Exist(sBase) Then
-    If cNombres[sBase] <> "" Then Return cNombres[sBase]
+    sTitulo = Replace(Replace(Replace(cNombres[sBase], Chr(13), " "), Chr(10), " "), Chr(9), " ")
+    sTitulo = m_CorteTitulo.Plano(sTitulo)
+    If sTitulo <> "" Then Return sTitulo
   Endif
   Return File.Name(sRel)
 

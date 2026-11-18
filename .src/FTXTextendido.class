@@ -1,7 +1,32 @@
 ' Gambas class file
 
-' Este módulo almacena la referencia al cuadro de texto original.
+' ============================================
+' Clase     : FTXTextendido
+' Propósito : Ventana para editar con comodidad el texto de un TextBox
+'             largo. El llamador fija OriginalTextBox (y UnaLinea, si el
+'             campo es de una sola línea) y abre la ventana con ShowModal.
+'
+' LO QUE LIMPIA AL APLICAR
+'   - SIEMPRE: los espacios, tabulaciones y saltos del principio y del
+'     final. Nunca son intencionales; llegan al pegar un texto copiado de
+'     un documento. Un título del capítulo 67 de Jensen quedó con un salto
+'     final y su línea del árbol de estructura se veía vacía (18/11/2026).
+'   - CON UnaLinea: además, cada tramo de blancos que tenga un salto o una
+'     tabulación pasa a ser UN espacio. Para títulos, subtítulos y palabras
+'     clave. Los demás campos (resúmenes, textos legales en Markdown por
+'     líneas, biografías, notas) conservan sus saltos internos.
+'
+' POR QUÉ POR BYTES: Trim() DE GAMBAS PUEDE ROMPER UN CARÁCTER UTF-8
+' (m_XML.TrimUTF8). LOS BLANCOS QUE SE MIRAN SON ASCII (9, 10, 13, 32) Y
+' NINGÚN BYTE DE UN CARÁCTER MULTIBYTE CAE EN ESE RANGO (RC-GM-12)
+' ============================================
+
+' EL CUADRO DE TEXTO QUE SE EDITA
 Public OriginalTextBox As TextBox
+
+' True PARA UN CAMPO DE UNA SOLA LÍNEA. LO FIJA EL LLAMADOR ANTES DE
+' ShowModal; Form_Close LO VUELVE A False PARA QUE NO PASE AL USO SIGUIENTE
+Public UnaLinea As Boolean
 
 ' ============================================
 ' Función   : Form_Show
@@ -15,16 +40,119 @@ Public Sub Form_Show()
 
 End
 
+' ============================================
+' Función   : Form_Open
+' Propósito : Cargar en el área de texto el contenido del cuadro original
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub Form_Open()
 
   txtTextAreaCompleto.Text = OriginalTextBox.Text
 
 End
 
-' Evento del botón "Guardar y Cerrar".
+' ============================================
+' Función   : Form_Close
+' Propósito : Dejar UnaLinea en su valor por omisión para el uso siguiente
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
+Public Sub Form_Close()
+
+  UnaLinea = False
+
+End
+
+' ============================================
+' Función   : ButtonGuardarCerrar_Click
+' Propósito : Devolver el texto, limpio, al cuadro original y cerrar
+' Parámetros: ninguno
+' Retorna   : nada
+' ============================================
 Public Sub ButtonGuardarCerrar_Click()
 
-  OriginalTextBox.Text = txtTextAreaCompleto.Text
+  OriginalTextBox.Text = Limpiar(txtTextAreaCompleto.Text, UnaLinea)
   Me.Close
+
+End
+
+' ============================================
+' Función   : EsBlanco
+' Propósito : Decir si un carácter de un byte es un blanco ASCII
+' Parámetros: sCaracter As String — un byte (Mid$ de longitud 1)
+' Retorna   : Boolean — True para espacio, tabulación, LF o CR
+' ============================================
+Private Function EsBlanco(sCaracter As String) As Boolean
+
+  Return sCaracter = " " Or sCaracter = Chr(9) Or sCaracter = Chr(10) Or sCaracter = Chr(13)
+
+End
+
+' ============================================
+' Función   : Limpiar
+' Propósito : Quitar los blancos de los extremos y, para un campo de una
+'             sola línea, convertir en un espacio cada tramo de blancos que
+'             tenga un salto o una tabulación
+' Parámetros: sTexto As String — el texto del área
+'             bUnaLinea As Boolean — True para un campo de una sola línea
+' Retorna   : String — el texto limpio
+' ============================================
+Private Function Limpiar(sTexto As String, bUnaLinea As Boolean) As String
+
+  Dim iIni As Integer
+  Dim iFin As Integer
+  Dim i As Integer
+  Dim j As Integer
+  Dim sCaracter As String
+  Dim bQuiebre As Boolean
+  Dim sSalida As String
+
+  ' --- 1. EXTREMOS: LOS PRIMEROS Y ÚLTIMOS BYTES QUE NO SON BLANCOS ---
+  ' Mid$ OPERA EN BYTES (RC-GM-12)
+  iIni = 1
+  iFin = Len(sTexto)
+  While iIni <= iFin
+    If Not EsBlanco(Mid$(sTexto, iIni, 1)) Then Break
+    Inc iIni
+  Wend
+  While iFin >= iIni
+    If Not EsBlanco(Mid$(sTexto, iFin, 1)) Then Break
+    Dec iFin
+  Wend
+  If iIni > iFin Then Return ""
+  sTexto = Mid$(sTexto, iIni, iFin - iIni + 1)
+
+  ' --- 2. CAMPO DE VARIAS LÍNEAS: SOLO LOS EXTREMOS ---
+  If Not bUnaLinea Then Return sTexto
+
+  ' --- 3. UNA LÍNEA: CADA TRAMO DE BLANCOS CON UN SALTO O UNA TABULACIÓN
+  '        PASA A SER UN ESPACIO; LOS DEMÁS ESPACIOS QUEDAN COMO ESTÁN ---
+  i = 1
+  While i <= Len(sTexto)
+    sCaracter = Mid$(sTexto, i, 1)
+    If Not EsBlanco(sCaracter) Then
+      sSalida &= sCaracter
+      Inc i
+      Continue
+    Endif
+    ' UN TRAMO DE BLANCOS: SE MIRA ENTERO ANTES DE ESCRIBIRLO
+    j = i
+    bQuiebre = False
+    While j <= Len(sTexto)
+      sCaracter = Mid$(sTexto, j, 1)
+      If Not EsBlanco(sCaracter) Then Break
+      If sCaracter <> " " Then bQuiebre = True
+      Inc j
+    Wend
+    If bQuiebre Then
+      sSalida &= " "
+    Else
+      sSalida &= Mid$(sTexto, i, j - i)
+    Endif
+    i = j
+  Wend
+
+  Return sSalida
 
 End

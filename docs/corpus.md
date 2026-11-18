@@ -1117,7 +1117,17 @@ Todo acceso al editor que no sea trivial (foco, fuente, visibilidad) pasa por `m
 - Notas: «Ir a la otra marca de la nota» (`menuPopUp`, `m_FuncionesGenericas.IrAParFootnote`) salta entre la marca en el texto y su definición al final del capítulo. Alcanza con que el cursor esté sobre la marca; si la nota tiene varias marcas, desde la definición va a la primera y avisa.
 - Las funciones no devuelven el foco: lo hace el handler al final del evento (RC-GM-07). Así sirven también desde los diálogos de búsqueda y ortografía.
 
-**Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16, vinculo:GV-51, vinculo:GV-52, vinculo:GV-53, vinculo:GV-54, vinculo:GV-55
+EL NOMBRE DE CADA ARCHIVO, AL DÍA Y EN UNA LÍNEA (18/11/2026). El árbol no se enteraba de un título cambiado en los metadatos hasta reabrir el proyecto. Ahora los formularios de metadatos de capítulo y de artículo llaman a `m_Estructura.RefrescarNombres` al guardar. Esa función relee los títulos de la base, con una consulta por tabla, y cambia solo el texto de los nodos de archivo, sin releer los `.md` ni tocar lo desplegado.
+
+El texto del nodo pasa por `m_CorteTitulo.Plano` (SC-28), y cada salto o tabulación pasa a ser un espacio. El caso que lo motivó: un título pegado en la ventana extendida con un salto final (capítulo 67 de Jensen) dibujaba la línea del árbol vacía. Las salidas no lo notaban, porque normalizan los blancos.
+
+La causa se cerró en `FTXTextendido`:
+- siempre quita los blancos de los extremos;
+- con `UnaLinea`, convierte en un espacio cada tramo de blancos con un salto. Lo activan los títulos, subtítulos y palabras clave de capítulo, libro y artículo, y el título y el título del libro de la bibliografía.
+
+Los demás campos de la ventana (resúmenes, textos legales en Markdown por líneas, biografías, notas) conservan sus saltos internos.
+
+**Relaciones:** vinculo:SC-15, vinculo:GV-46, vinculo:GV-49, vinculo:GV-44, vinculo:GV-45, vinculo:GV-47, vinculo:SC-16, vinculo:GV-51, vinculo:GV-52, vinculo:GV-53, vinculo:GV-54, vinculo:GV-55, vinculo:GV-212
 
 **PENDIENTE:** Migración integrada y probada en 3.22.1: carga y cambio de archivo, guardado, búsqueda, notas, barra de herramientas, ortografía y cambio de tema. Árbol (m_Estructura): probado en 3.22.1 con un libro real. Refresco incremental no implementado: Refrescar recolorea todo, 1,2 s sobre 2.000 párrafos en el banco.
 
@@ -10456,6 +10466,23 @@ CONSECUENCIA. El `include.xsl` de SchXslt que pedía GV-26 ya no hace falta. `ge
 **Relaciones:** apoya:SC-97,vinculo:GV-26,vinculo:GV-28,vinculo:SC-87
 
 **PENDIENTE:** Repetir la corrida en Mint con el Saxon de /opt (el jar del zip oficial).
+
+### GV-212 — Trim() de Gambas 3.19 no quita el byte 0xA0 de un carácter UTF-8: la advertencia de m_XML.TrimUTF8 no se cumple en esa versión
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 (gbc3, gbx3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido el 18/11/2026 con Gambas 3.19 (gbc3 y gbx3, en un contenedor Ubuntu 24.04): un proyecto de consola imprime los bytes antes y después de `Trim()`.
+
+- `Trim("Voilà" & Chr(10))` da `56 6F 69 6C C3 A0`: quita el salto y deja intacta la «à», cuyos bytes son `C3 A0`.
+- `Trim("à")` queda en 2 bytes, `Trim(Chr(194) & Chr(160))` (un NBSP) en 2 bytes y `Trim(Chr(160))` en 1 byte.
+
+En 3.19, `Trim()` NO quita el byte 0xA0. El comentario de `m_XML.TrimUTF8` («Trim() de Gambas elimina bytes 0xA0 que son parte de secuencias UTF-8 válidas, ej. à = 0xC3 0xA0») no se cumple en esta versión.
+
+ALCANCE. Lo medido es 3.19, no la 3.22 de Mint. Hasta medirlo allá, la precaución de `TrimUTF8` se conserva. El código nuevo que necesite recortar blancos lo hace por bytes ASCII (9, 10, 13, 32), que es correcto en cualquier versión (`FTXTextendido.Limpiar`).
+
+**Relaciones:** vinculo:SC-18
+
+**PENDIENTE:** Repetir la medición en Mint con Gambas 3.22. Si da lo mismo, decidir si TrimUTF8 sigue haciendo falta.
 
 ---
 
