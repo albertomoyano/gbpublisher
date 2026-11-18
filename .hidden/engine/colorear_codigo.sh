@@ -42,7 +42,8 @@ LUA="$DIR_ENGINE/colorear_codigo.lua"
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de extracción: $XSL"
 [[ -f "$LUA" ]]        || morir "No se encontró el coloreador: $LUA"
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
-requerir_comandos java pandoc
+requerir_pandoc
+requerir_comandos java
 
 # --- 2. CARPETA LIMPIA: UN ARCHIVO DE UNA CORRIDA ANTERIOR NO SE MEZCLA ---
 rm -rf "$CARPETA"
@@ -65,7 +66,7 @@ fi
 [[ -f "$CARPETA/indice.txt" ]] || morir "La extracción terminó sin escribir el índice"
 
 # --- 4. COLOREADO ---
-salida=$(timeout "$TIEMPO_PANDOC" pandoc lua "$LUA" "$CARPETA_ABS" "$FORMATO" 2>&1)
+salida=$(timeout "$TIEMPO_PANDOC" "$RUTA_PANDOC" lua "$LUA" "$CARPETA_ABS" "$FORMATO" 2>&1)
 if (( $? != 0 )); then
     mostrar_cola "$salida"
     morir "No se pudieron colorear los bloques de código"

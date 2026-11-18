@@ -412,17 +412,16 @@ ok "$NOMBRE_EPUB"
 # --- 11. VALIDACIÓN CON epubcheck ---
 paso "validando con epubcheck"
 
+# UNA SOLA RUTA: EL epubcheck CONGELADO EN /opt (integridad.sh). EL DE apt
+# YA NO SE BUSCA: EL CONTEO DE MÁS ABAJO LEE EL TEXTO QUE IMPRIME, Y ESE
+# FORMATO CAMBIA ENTRE VERSIONES
 EPUBCHECK=()
-if command -v epubcheck >/dev/null 2>&1; then
-    EPUBCHECK=(epubcheck)
-elif [[ -f /opt/epubcheck/epubcheck.jar ]]; then
-    EPUBCHECK=(java -jar /opt/epubcheck/epubcheck.jar)
-elif [[ -x "$HOME/.local/bin/epubcheck" ]]; then
-    EPUBCHECK=("$HOME/.local/bin/epubcheck")
+if [[ -f "$RUTA_EPUBCHECK" ]]; then
+    EPUBCHECK=(java -jar "$RUTA_EPUBCHECK")
 fi
 
 if (( ${#EPUBCHECK[@]} == 0 )); then
-    aviso "epubcheck no está instalado: el EPUB no se validó"
+    aviso "epubcheck no está en $RUTA_EPUBCHECK: el EPUB no se validó. $COMO_REPARAR"
 else
     salida=$(timeout "$TIEMPO_EPUBCHECK" "${EPUBCHECK[@]}" "$EPUB" 2>&1)
     codigo=$?

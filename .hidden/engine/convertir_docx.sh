@@ -30,6 +30,9 @@
 set -u
 
 readonly VERSION_PANDOC_MINIMA="3.1.3"
+# EL PANDOC CONGELADO EN /opt (integridad.sh). ESTE SCRIPT NO CARGA comun.sh:
+# LA RUTA DEBE COINCIDIR CON SU RUTA_PANDOC Y CON m_Constantes.RUTA_PANDOC
+RUTA_PANDOC="${GBP_PANDOC:-/opt/pandoc/bin/pandoc}"
 DIR_ENGINE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly DIR_ENGINE
 readonly FILTRO="$DIR_ENGINE/limpiar_docx.lua"
@@ -135,11 +138,11 @@ if ! command -v python3 >/dev/null 2>&1; then
   fallar 11 "python3 no está instalado"
 fi
 
-if ! command -v pandoc >/dev/null 2>&1; then
-  fallar 11 "pandoc no está instalado"
+if [ ! -x "$RUTA_PANDOC" ]; then
+  fallar 11 "pandoc no está en $RUTA_PANDOC. Abrí cualquier proyecto y usá «Acerca de... → Controlar integridad del sistema»"
 fi
 
-VERSION_PANDOC="$(pandoc --version 2>/dev/null | head -n 1 | cut -d ' ' -f 2)"
+VERSION_PANDOC="$("$RUTA_PANDOC" --version 2>/dev/null | head -n 1 | cut -d ' ' -f 2)"
 
 # sort -V -C TIENE ÉXITO SI LA LISTA YA ESTÁ ORDENADA: MÍNIMA <= INSTALADA
 if ! printf '%s\n%s\n' "$VERSION_PANDOC_MINIMA" "$VERSION_PANDOC" | sort -V -C; then
@@ -246,7 +249,7 @@ fi
 # REFERENCIAS RELATIVAS media/..., LA CONVENCIÓN DEL PROYECTO
 etapa 3 "Convirtiendo con pandoc"
 
-pandoc original.docx \
+"$RUTA_PANDOC" original.docx \
   --from=docx-styles-citations-empty_paragraphs \
   --to=markdown-smart \
   --wrap=none \

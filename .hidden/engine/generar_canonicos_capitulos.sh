@@ -191,7 +191,7 @@ procesar_capitulo() {
     done
 
     # --abbreviations: EL ESPACIO DURO DETRÁS DE pág., cap., n.º (SC-68)
-    salida=$(timeout "$TIEMPO_PANDOC" pandoc "$md" \
+    salida=$(timeout "$TIEMPO_PANDOC" "$RUTA_PANDOC" "$md" \
                 --from markdown --to docbook5 --mathml --no-highlight --wrap=none \
                 --abbreviations "$RUTA_ABREVIATURAS" \
                 "${args_pandoc[@]}" \
@@ -506,7 +506,8 @@ paso "verificando el entorno"
 [[ -d "$DIR_PROYECTO/jats" ]] || morir "El proyecto no tiene carpeta jats/"
 [[ -d "$DIR_PROYECTO/tmp" ]]  || morir "El proyecto no tiene carpeta tmp/"
 
-requerir_comandos pandoc java xmllint timeout
+requerir_pandoc
+requerir_comandos java xmllint timeout
 
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de ensamblado: $XSL"

@@ -165,7 +165,8 @@ esac
 
 # --- 3. INSUMOS ---
 paso "insumos"
-requerir_comandos pandoc java lualatex xmllint awk
+requerir_pandoc
+requerir_comandos java lualatex xmllint awk
 [[ "$ID" =~ ^tbl-[A-Za-z0-9_-]+$ ]] || frenar "«$ID» no es el nombre de un cuadro (tbl-…)"
 [[ -f "$DIR_PROYECTO/cuadros/$ID.md" ]] || frenar "no existe cuadros/$ID.md"
 [[ -f "$DIR_VISTA/preambulo-vista.tex" ]] || frenar "falta tmp/vista-cuadro/preambulo-vista.tex: lo escribe gbpublisher antes de la vista"
@@ -190,7 +191,7 @@ args_pandoc=()
 for filtro in "${FILTROS[@]}"; do
     args_pandoc+=(--lua-filter "$DIR_FILTROS/$filtro")
 done
-salida=$(timeout "$TIEMPO_PANDOC" pandoc "$DIR_VISTA/vista.md" \
+salida=$(timeout "$TIEMPO_PANDOC" "$RUTA_PANDOC" "$DIR_VISTA/vista.md" \
             --from markdown --to "$FORMATO" --no-highlight --wrap=none \
             --abbreviations "$RUTA_ABREVIATURAS" \
             "${ARGS_FORMATO[@]}" "${args_pandoc[@]}" \

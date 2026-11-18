@@ -47,6 +47,19 @@ AVISOS=0
 # SOBRESCRIBIR CON LA VARIABLE GBP_SAXON PARA PROBAR A MANO OTRA VERSIÓN
 RUTA_SAXON="${GBP_SAXON:-/opt/Saxon-HE/saxon-he.jar}"
 
+# PANDOC Y EPUBCHECK CONGELADOS EN /opt, COMO SAXON: LOS INSTALA
+# integridad.sh CON VERSIÓN Y HUELLA FIJAS. NO SE USAN LOS DE apt: EL PANDOC
+# DE CADA VERSIÓN DE MINT ES OTRO, Y EL MISMO .md DARÍA OTRO CANÓNICO. LAS
+# MISMAS RUTAS ESTÁN EN m_Constantes (RUTA_PANDOC, RUTA_EPUBCHECK) Y EN
+# convertir_docx.sh, QUE NO CARGA ESTE ARCHIVO. SE PUEDEN SOBRESCRIBIR CON
+# GBP_PANDOC Y GBP_EPUBCHECK PARA PROBAR A MANO OTRA VERSIÓN
+RUTA_PANDOC="${GBP_PANDOC:-/opt/pandoc/bin/pandoc}"
+RUTA_EPUBCHECK="${GBP_EPUBCHECK:-/opt/epubcheck/epubcheck.jar}"
+
+# DÓNDE MANDA CADA AVISO DE HERRAMIENTA FALTANTE. ES LO ÚNICO QUE UN USUARIO
+# SIN FORMACIÓN TÉCNICA PUEDE HACER CON ESE AVISO, ASÍ QUE TODOS LO DICEN
+COMO_REPARAR="Abrí cualquier proyecto y usá «Acerca de... → Controlar integridad del sistema»: instala lo que falte."
+
 # COPIA LOCAL DE TRABAJO: ES LA QUE LA APLICACIÓN LEE (SC-11)
 DIR_GBP_LOCAL="$HOME/.gbpublisher"
 
@@ -237,8 +250,18 @@ requerir_comandos() {
         command -v "$c" >/dev/null 2>&1 || faltan+=("$c")
     done
     if (( ${#faltan[@]} > 0 )); then
-        morir "Faltan herramientas del sistema: ${faltan[*]}"
+        morir "Faltan herramientas del sistema: ${faltan[*]}. $COMO_REPARAR"
     fi
+}
+
+# ============================================================================
+# Función   : requerir_pandoc
+# Propósito : Aborta si el pandoc congelado no está en RUTA_PANDOC. Reemplaza
+#             a «requerir_comandos pandoc», que lo buscaba en el PATH y
+#             encontraba el de apt
+# ============================================================================
+requerir_pandoc() {
+    [[ -x "$RUTA_PANDOC" ]] || morir "pandoc no está en $RUTA_PANDOC. $COMO_REPARAR"
 }
 
 # ============================================================================
@@ -846,7 +869,7 @@ controles_md() {
     fuentes="$DIR_PROYECTO/tmp/fuentes-$base.txt"
     rm -f "$informe" "$fuentes"
 
-    CONTROLES_LECTURA=$(timeout "${TIEMPO_PANDOC:-120}" pandoc "$md" \
+    CONTROLES_LECTURA=$(timeout "${TIEMPO_PANDOC:-120}" "$RUTA_PANDOC" "$md" \
                 --from markdown --to plain \
                 --lua-filter "$DIR_ENGINE/controles_md.lua" \
                 --metadata gb-controles="$informe" \

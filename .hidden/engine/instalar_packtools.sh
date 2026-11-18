@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-#
-# ============================================
-# Script    : instalar-packtools.sh
+# ============================================================================
+# Script    : instalar_packtools.sh
 # Propósito : Instala packtools 4.18.2 (el validador de SciELO PS) en un
 #             entorno de Python propio, en /opt/packtools. Lo usan
 #             generar_scielo_revista.sh y la solapa «Validaciones» (tipo
@@ -11,17 +10,33 @@
 #             Un entorno propio no toca el Python del sistema (sin
 #             --break-system-packages) y fija las versiones de cada
 #             dependencia: las mismas con que se probó (18/11/2026).
-# Uso       : ./instalar-packtools.sh
-# Requisitos: python3 >= 3.11 con venv (paquete python3-venv); red hacia
-#             github.com y pypi.org; permisos sudo para /opt.
-# ============================================
+# Uso       : lo llama integridad.sh, ya como root (pkexec), con
+#             GBP_ANIDADO=1. Corrido a mano por un usuario común, pide
+#             la contraseña con sudo para escribir en /opt.
+# Requisitos: python3 >= 3.11 con venv (python3-venv, dependencia del .deb);
+#             red hacia github.com y pypi.org.
+# Historia  : era instalar-packtools.sh, en la raíz del repositorio y fuera
+#             del .deb. Se mudó a engine/ para que integridad.sh lo use sin
+#             copiar la lista de versiones, y habla con el vocabulario de
+#             comun.sh. La lógica es la misma.
+# ============================================================================
 
 set -euo pipefail
+
+DIR_ENGINE="$(dirname "$(readlink -f "$0")")"
+if ! source "$DIR_ENGINE/comun.sh"; then
+    echo "No se pudo cargar $DIR_ENGINE/comun.sh" >&2
+    exit 1
+fi
 
 # --- 0. CONFIGURACIÓN ---
 VERSION="4.18.2"
 DESTINO="/opt/packtools"
 FUENTE="https://github.com/scieloorg/packtools/archive/refs/tags/${VERSION}.tar.gz"
+
+# COMO root (integridad.sh) NO HACE FALTA sudo; A MANO, SÍ
+SUDO=""
+(( EUID == 0 )) || SUDO="sudo"
 
 # LAS DEPENDENCIAS, FIJADAS: LAS DEL ENTORNO DONDE SE PROBÓ (pip freeze).
 # lxml 6.1 OBLIGA A validar_sps.py (VER SU ENCABEZADO)
@@ -55,55 +70,50 @@ urllib3==2.8.0
 yarl==1.25.1
 FIJAS
 
-if [ -t 1 ]; then
-  ROJO=$'\e[0;31m'; VERDE=$'\e[0;32m'; AZUL=$'\e[0;34m'; RESET=$'\e[0m'
-else
-  ROJO=""; VERDE=""; AZUL=""; RESET=""
-fi
-info()  { echo "${AZUL}➜${RESET} $*"; }
-ok()    { echo "${VERDE}✔${RESET} $*"; }
-error() { echo "${ROJO}✖${RESET} $*" >&2; }
+encabezado "packtools ${VERSION}"
 
 # --- 1. PYTHON 3.11 O MÁS, CON venv ---
-info "Verificando Python"
 if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-  error "packtools ${VERSION} pide Python 3.11 o más; este sistema tiene $(python3 -V 2>&1)."
-  exit 1
+    morir "packtools ${VERSION} pide Python 3.11 o más; este sistema tiene $(python3 -V 2>&1)."
 fi
 if ! python3 -c 'import ensurepip, venv' 2>/dev/null; then
-  error "Falta el módulo venv de Python: sudo apt install python3-venv"
-  exit 1
+    morir "Falta el módulo venv de Python (paquete python3-venv). Reinstalá gbpublisher: es una de sus dependencias."
 fi
 ok "$(python3 -V)"
 
 # --- 2. EL ENTORNO, DE CERO ---
-# UNA INSTALACIÓN ANTERIOR SE REEMPLAZA: ASÍ QUEDAN LAS VERSIONES FIJADAS
+# UNA INSTALACIÓN ANTERIOR SE REEMPLAZA: ASÍ QUEDAN LAS VERSIONES FIJADAS.
+# TAMBIÉN LA QUE QUEDÓ ROTA PORQUE CAMBIÓ EL PYTHON DEL SISTEMA (UN SALTO DE
+# VERSIÓN DE MINT): UN ENTORNO DE venv APUNTA AL INTÉRPRETE CON QUE SE CREÓ
 TRABAJO="$(mktemp -d)"
 trap 'rm -rf -- "$TRABAJO"' EXIT
-info "Creando el entorno en ${DESTINO}"
-sudo rm -rf -- "${DESTINO:?}"
-sudo mkdir -p "$DESTINO"
-sudo chown "$(id -u):$(id -g)" "$DESTINO"
+tenue "creando el entorno en ${DESTINO}"
+$SUDO rm -rf -- "${DESTINO:?}"
+$SUDO mkdir -p "$DESTINO"
+$SUDO chown "$(id -u):$(id -g)" "$DESTINO"
 python3 -m venv "$DESTINO"
 "$DESTINO/bin/pip" install --quiet --upgrade pip
+ok "entorno creado"
 
 # --- 3. packtools DESDE EL TAG, CON LAS DEPENDENCIAS FIJADAS ---
-info "Instalando packtools ${VERSION} desde GitHub"
+tenue "instalando packtools ${VERSION} desde GitHub (puede tardar unos minutos)"
 printf '%s\n' "$RESTRICCIONES" > "$TRABAJO/restricciones.txt"
-"$DESTINO/bin/pip" install --quiet -c "$TRABAJO/restricciones.txt" "$FUENTE"
+"$DESTINO/bin/pip" install --quiet -c "$TRABAJO/restricciones.txt" "$FUENTE" ||
+    morir "pip no pudo instalar packtools ${VERSION}: el motivo está más arriba."
 
 # --- 4. COMPROBACIÓN: LA VERSIÓN DEL CÓDIGO Y QUE CARGUE EL VALIDADOR ---
 # packtools/version.py: LA VERSIÓN DE LA INSTALACIÓN LLEVA «rc» Y LA FECHA
 # (tag_build Y tag_date EN SU setup.cfg)
 instalada="$("$DESTINO/bin/python" -I -c 'import packtools.version as v; print(v.__version__)')"
 if [[ "$instalada" != "$VERSION" ]]; then
-  error "Se instaló packtools «${instalada}» y se esperaba ${VERSION}."
-  exit 1
+    morir "Se instaló packtools «${instalada}» y se esperaba ${VERSION}."
 fi
 "$DESTINO/bin/python" -I -c 'from packtools import catalogs, stylechecker; from packtools.sps.models.sps_package import SPS_Package' ||
-  { error "packtools se instaló pero no carga."; exit 1; }
+    morir "packtools se instaló pero no carga."
 
 # EL ENTORNO QUEDA DE root Y LEGIBLE PARA TODOS: NADIE LO CAMBIA SIN sudo
-sudo chown -R root:root "$DESTINO"
-sudo chmod -R a+rX "$DESTINO"
+$SUDO chown -R root:root "$DESTINO"
+$SUDO chmod -R a+rX "$DESTINO"
 ok "packtools ${VERSION} en ${DESTINO}"
+
+terminar
