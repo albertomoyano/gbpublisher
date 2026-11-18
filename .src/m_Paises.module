@@ -1,0 +1,195 @@
+' Gambas module file
+
+' ==============================================================================
+' Módulo    : m_Paises
+' Propósito : El catálogo de países ISO 3166-1 (tabla pais, actualización
+'             1.30.0; decisión de Alberto del 18/11/2026, F5). Lo usan las
+'             afiliaciones de los contribuyentes (FContribuyenteArticulo) y la
+'             editorial (FSysAdmin, pestaña «Editorial»).
+'             El país se guarda POR VALOR, como un término de vocabulario
+'             (SC-23, SC-74): el código en pais_codigo y el nombre elegido en
+'             pais. SciELO exige el código (country/@country) y JATS4R lo
+'             recomienda.
+'             UN TEXTO SIN CÓDIGO (el que la migración no reconoció) se
+'             muestra en el combo como «texto (sin código)» y se conserva
+'             mientras no se elija otro país: el combo es de solo lectura, y
+'             un valor fuera de la lista se perdería en silencio.
+' Requiere  : esquema 1.30.0 (tabla pais).
+' Dependencias: m_Sonido.
+' ==============================================================================
+
+' LA MARCA DE UN TEXTO HEREDADO SIN CÓDIGO, EN EL COMBO
+Private Const SUFIJO_SIN_CODIGO As String = " (sin código)"
+
+' EL CATÁLOGO EN MEMORIA: ES FIJO (iso-codes), SE LEE UNA VEZ POR SESIÓN.
+' DOS ARREGLOS PARALELOS, EN EL ORDEN DEL COMBO (POR NOMBRE, SIN TILDES)
+Private $aCodigos As String[]
+Private $aNombres As String[]
+
+' ============================================
+' Función   : Cargar
+' Propósito : Lee el catálogo la primera vez; después usa la memoria
+' Parámetros: hConn As Connection — conexión abierta (la del formulario:
+'               FSysAdmin usa la suya, no m_ConexionBD.mConn)
+' Retorna   : Boolean — True si el catálogo está en memoria
+' ============================================
+Public Function Cargar(hConn As Connection) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim rDatos As Result
+  Dim aCodigos As New String[]
+  Dim aNombres As New String[]
+
+  ' --- 2. SOLO LA PRIMERA VEZ ---
+  ' Not SOBRE UN ARREGLO ES «ES NULL», COMO EN m_Validaciones.PoblarCombo
+  If Not $aCodigos Then
+
+    ' 2.1 CONSULTA. EL ORDEN SIN TILDES NI MAYÚSCULAS (utf8mb4_0900_ai_ci,
+    ' GV-152): «Árabes» VA CON LA A, NO AL FINAL
+    Try rDatos = hConn.Exec("SELECT codigo, nombre FROM pais ORDER BY nombre COLLATE utf8mb4_0900_ai_ci")
+    If Error Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("No se pudo leer el catálogo de países (¿falta la actualización de esquema 1.30.0?):" & gb.NewLine & Error.Text)
+      Return False
+    Endif
+
+    ' 2.2 MEMORIA
+    While rDatos.Available
+      aCodigos.Add(rDatos!codigo)
+      aNombres.Add(rDatos!nombre)
+      rDatos.MoveNext
+    Wend
+    $aCodigos = aCodigos
+    $aNombres = aNombres
+
+  Endif
+
+  Return True
+
+End
+
+' ============================================
+' Función   : LlenarCombo
+' Propósito : Carga el combo con «» (sin país) y los países, y deja elegido
+'             el del dato. Un texto sin código se agrega como
+'             «texto (sin código)», segundo, y queda elegido
+' Parámetros: hConn As Connection — conexión abierta
+'             hCombo As ComboBox — el combo
+'             sCodigo As String — el código guardado; vacío si no hay
+'             sTexto As String — el nombre guardado
+' Retorna   : nada
+' ============================================
+Public Sub LlenarCombo(hConn As Connection, hCombo As ComboBox, sCodigo As String, sTexto As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sNombre As String
+  Dim iPosicion As Integer
+
+  hCombo.Clear()
+  hCombo.ReadOnly = True
+  If Not Cargar(hConn) Then Return
+
+  ' --- 2. LA LISTA ---
+  ' EL PRIMERO VACÍO: UNA AFILIACIÓN PUEDE NO TENER PAÍS
+  hCombo.Add("")
+  If sCodigo = "" And Trim(sTexto) <> "" Then hCombo.Add(Trim(sTexto) & SUFIJO_SIN_CODIGO)
+  For Each sNombre In $aNombres
+    hCombo.Add(sNombre)
+  Next
+
+  ' --- 3. EL ELEGIDO ---
+  If sCodigo <> "" Then
+    iPosicion = $aCodigos.Find(sCodigo)
+    ' UN CÓDIGO QUE EL CATÁLOGO NO TIENE NO PUEDE ESTAR: LO IMPIDE LA CLAVE
+    ' FORÁNEA. SI PASA, QUEDA SIN ELEGIR, NO EN OTRO PAÍS
+    If iPosicion >= 0 Then
+      hCombo.Index = hCombo.Find($aNombres[iPosicion])
+    Else
+      hCombo.Index = 0
+    Endif
+  Else If Trim(sTexto) <> "" Then
+    hCombo.Index = 1
+  Else
+    hCombo.Index = 0
+  Endif
+
+End
+
+' ============================================
+' Función   : CodigoDelCombo
+' Propósito : El código del país elegido
+' Parámetros: hCombo As ComboBox — el combo de LlenarCombo
+' Retorna   : String — el código; vacío sin país o con un texto sin código
+' ============================================
+Public Function CodigoDelCombo(hCombo As ComboBox) As String
+
+  ' --- 1. SIN PAÍS O TEXTO HEREDADO ---
+  If hCombo.Index <= 0 Then Return ""
+  If Right(hCombo.Text, Len(SUFIJO_SIN_CODIGO)) = SUFIJO_SIN_CODIGO Then Return ""
+  If Not $aNombres Then Return ""
+
+  ' --- 2. EL CÓDIGO DEL NOMBRE ---
+  Return $aCodigos[$aNombres.Find(hCombo.Text)]
+
+End
+
+' ============================================
+' Función   : NombreDelCombo
+' Propósito : El nombre del país elegido, para guardarlo por valor
+' Parámetros: hCombo As ComboBox — el combo de LlenarCombo
+' Retorna   : String — el nombre; el texto heredado sin la marca; vacío
+'             sin país
+' ============================================
+Public Function NombreDelCombo(hCombo As ComboBox) As String
+
+  If hCombo.Index <= 0 Then Return ""
+  ' Len Y Left CUENTAN BYTES: LA MARCA SE QUITA CON LA MISMA CUENTA
+  If Right(hCombo.Text, Len(SUFIJO_SIN_CODIGO)) = SUFIJO_SIN_CODIGO Then
+    Return Left(hCombo.Text, Len(hCombo.Text) - Len(SUFIJO_SIN_CODIGO))
+  Endif
+  Return hCombo.Text
+
+End
+
+' ============================================
+' Función   : CodigoDeNombre
+' Propósito : El código de un país dado por su nombre, en español o en
+'             inglés, o por su código; sin distinguir mayúsculas ni tildes.
+'             Es la regla de la migración 1.30.0. NO inventa: vacío si no lo
+'             reconoce
+' Parámetros: hConn As Connection — conexión abierta
+'             sTexto As String — el nombre o el código
+' Retorna   : String — el código; vacío si no está en el catálogo
+' ============================================
+Public Function CodigoDeNombre(hConn As Connection, sTexto As String) As String
+
+  Dim rDatos As Result
+  Dim sValor As String
+
+  ' --- 1. VALIDACIÓN ---
+  sValor = Trim(sTexto)
+  If sValor = "" Then Return ""
+
+  ' --- 2. BÚSQUEDA ---
+  Try rDatos = hConn.Exec("SELECT codigo FROM pais WHERE nombre COLLATE utf8mb4_0900_ai_ci = &1 OR nombre_en COLLATE utf8mb4_0900_ai_ci = &1 OR codigo COLLATE utf8mb4_0900_ai_ci = &1 LIMIT 1", sValor)
+  If Error Then Return ""
+  If Not rDatos.Available Then Return ""
+
+  Return rDatos!codigo
+
+End
+
+' ============================================
+' Función   : TextoGrilla
+' Propósito : Cómo se ve el país en una grilla: el nombre, y la marca si no
+'             tiene código (SciELO lo rechazaría)
+' Parámetros: sTexto As String — el nombre guardado
+'             sCodigo As String — el código guardado
+' Retorna   : String
+' ============================================
+Public Function TextoGrilla(sTexto As String, sCodigo As String) As String
+
+  If sCodigo = "" And sTexto <> "" Then Return sTexto & SUFIJO_SIN_CODIGO
+  Return sTexto
+
+End

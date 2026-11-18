@@ -3157,9 +3157,17 @@
     <xsl:variable name="href"   select="graphic/@xlink:href"/>
     <xsl:variable name="nombre" select="tokenize($href, '/')[last()]"/>
     <!-- TEXTO ALTERNATIVO: EL DECLARADO (alt-text), O EL PIE SIN FORMATO -->
+    <!-- EL PIE, SIN LAS CITAS NI LAS NOTAS: EN EL CANÓNICO UNA CITA ES SU
+         CLAVE (lopez2020), Y ESO NO ES TEXTO PARA LEER. CADA BLOQUE DEL PIE
+         (title, p) POR SEPARADO: normalize-space(caption/p) FALLABA CON UN
+         PIE DE DOS PÁRRAFOS (XPTY0004) -->
     <xsl:variable name="alt" select="if (normalize-space(graphic/alt-text) != '')
                                      then normalize-space(graphic/alt-text)
-                                     else normalize-space(caption/p)"/>
+                                     else normalize-space(string-join(
+                                       for $b in caption/(title | p) return
+                                         string-join($b//text()[not(ancestor::xref[@ref-type = 'bibr'])]
+                                                               [not(ancestor::fn)], ''),
+                                       ' '))"/>
 
     <!-- RUTA DE LA IMAGEN PNG -->
     <xsl:variable name="src">

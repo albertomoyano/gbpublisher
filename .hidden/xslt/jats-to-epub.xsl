@@ -525,9 +525,17 @@
       <xsl:number count="fig[not(@fig-type = 'listado')]" level="any"/>
     </xsl:variable>
     <!-- TEXTO ALTERNATIVO: EL DECLARADO (alt-text), O EL PIE SIN FORMATO -->
+    <!-- EL PIE, SIN LAS CITAS NI LAS NOTAS: EN EL CANÓNICO UNA CITA ES SU
+         CLAVE (lopez2020), Y ESO NO ES TEXTO PARA LEER. CADA BLOQUE DEL PIE
+         (title, p) POR SEPARADO: normalize-space(caption/p) FALLABA CON UN
+         PIE DE DOS PÁRRAFOS (XPTY0004) -->
     <xsl:variable name="alt" select="if (normalize-space(graphic/alt-text) != '')
                                      then normalize-space(graphic/alt-text)
-                                     else normalize-space(caption/p)"/>
+                                     else normalize-space(string-join(
+                                       for $b in caption/(title | p) return
+                                         string-join($b//text()[not(ancestor::xref[@ref-type = 'bibr'])]
+                                                               [not(ancestor::fn)], ''),
+                                       ' '))"/>
     <!-- EL id DEL EDITOR ES EL ANCLA ESTABLE DE LA FIGURA (SC-32); EL
          NÚMERO QUEDA PARA UNA FIGURA SIN id -->
     <div class="fig-wrapper" id="{if (@id) then @id else concat('fig-', $fignum)}">
