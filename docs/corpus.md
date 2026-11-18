@@ -960,7 +960,7 @@ Si el proceso externo escribe en la misma base que la aplicación tiene abierta,
 
 **Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53
 
-**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, m_XML, m_GitHub, m_OrdenTaller, m_FuncionesGenericas, m_InicioCierre. La salida PDF de libros ya no tiene nada fuera de la lanzadora. Las salidas viejas de revista, que también tipeaban, salieron el 18/11/2026 (SC-96, SC-98).
+**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, m_XML, m_GitHub, m_FuncionesGenericas, m_InicioCierre (m_OrdenTaller salió el 18/11/2026: SC-99). La salida PDF de libros ya no tiene nada fuera de la lanzadora. Las salidas viejas de revista, que también tipeaban, salieron el 18/11/2026 (SC-96, SC-98).
 
 ### SC-14 — Bibliografía en HTML y EPUB: se replica el estilo biblatex del libro
 
@@ -1602,7 +1602,7 @@ DECISIÓN CERRADA. Un combo que lista los archivos de una carpeta del proyecto s
 
 POR QUÉ SONDEO
 
-Varias salidas se generan escribiendo comandos en `TerminalViewProyecto` (`m_XML`, `m_OrdenTaller`; antes también `m_GenerarPDF`, retirado el 18/11/2026: SC-98): Gambas no se entera de cuándo terminan, así que no hay evento del que colgar el refresco. Los archivos también cambian por fuera: el gestor de archivos, otros procesos. El costo es un `Dir` sobre una carpeta cada 3 s.
+Varias salidas se generan escribiendo comandos en `TerminalViewProyecto` (`m_XML`; antes también `m_GenerarPDF` y `m_OrdenTaller`, retirados el 18/11/2026: SC-98, SC-99): Gambas no se entera de cuándo terminan, así que no hay evento del que colgar el refresco. Los archivos también cambian por fuera: el gestor de archivos, otros procesos. El costo es un `Dir` sobre una carpeta cada 3 s.
 
 PIEZAS
 
@@ -5667,6 +5667,37 @@ LO QUE QUEDÓ A LA VISTA
 **Relaciones:** vinculo:SC-97,vinculo:SC-96,vinculo:SC-71,vinculo:SC-72,vinculo:SC-87,vinculo:SC-22,vinculo:GV-67,vinculo:GV-210
 
 **PENDIENTE:** La vista de cuadros de revista con el preámbulo de capas del PDF nuevo. Cotejar el CSS del EPUB nuevo de revistas con las reglas que citaban el de m_GenerarEpub (epígrafe SC-35, código SC-42, conversación SC-43, verso SC-49). Aplicar la 1.32.0 en Mint y probar: abrir un número, la vista de cuadros (idioma), el árbol de estructura (títulos) y el JSON de GitHub.
+
+### SC-99 — La orden de taller se retira: el circuito de imprenta de las editoriales no pasa por gbpublisher (actualización 1.33.0)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 (Mint) y gbc3 3.19 (contenedor) / MariaDB 10.11 (prueba del script) · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 18/11/2026). La orden de taller (OT) se retira entera: el menú, el formulario, el módulo, el icono y la tabla.
+
+POR QUÉ. La OT supone un circuito de imprenta que no es el de las editoriales reales:
+- unas no imprimen nada;
+- otras imprimen en la imprenta de su facultad, con un trámite administrativo propio, fuera de esta app;
+- otras imprimen con talleres externos, casi siempre por licitación pública, también con su trámite.
+
+Ninguna de las tres pasa por un documento armado en gbpublisher.
+
+QUÉ SALE
+- El menú «OT para imprenta» (`FMain.menuImprenta`) y el separador que lo precedía (`Menu4`).
+- El formulario `FOrdenTaller` y el módulo `m_OrdenTaller`.
+- El icono `iconos/impresora.png`.
+- La tabla `orden_taller`, con la actualización de esquema 1.33.0 (patrón de SC-22). Pide SI, hace un respaldo verificado y frena si alguna tabla apunta a ella. Se vuelve atrás restaurando el respaldo. El 2.0.0 sigue reservado para `bibtex`.
+- `m_ConexionBD.ObtenerEsquemaEsperado`: sale `orden_taller`.
+- La cascada sacó además `m_Json.RutaProyecto`, una variable que solo usaba la cadena de CSL-JSON (bloque 3b de SC-97).
+
+ESTABA ROTA. `m_OrdenTaller` leía y escribía `FMain.txtProveedorOT`, `FMain.txtCabeceraOT` y el resto, pero esos controles estaban en `FOrdenTaller` y no en `FMain`. Compilaba (GV-210) y fallaba al guardar o al generar el PDF.
+
+SE QUEDA `media/logo-cabecera.png`: la OT lo usaba, pero también lo usan el logo de cabecera de las revistas (`FRevistas`) y la copia a cada proyecto (`m_FuncionesGenericas`). Los PDF de OT ya generados quedan en `salidas/pdf/` de cada proyecto.
+
+VERIFICADO: compilación completa con `gbc3` 3.19; ningún nombre borrado en el código vivo; el script 1.33.0 sobre MariaDB 10.11 (el caso normal, la segunda corrida, la cancelación y el freno).
+
+**Relaciones:** vinculo:SC-97,vinculo:SC-22,vinculo:GV-210
+
+**PENDIENTE:** Aplicar la 1.33.0 en Mint.
 
 ---
 
