@@ -11,8 +11,8 @@
 #
 # REQUIERE la variable VOLCADO: la ruta absoluta de tmp/numero-datos.xml.
 # Las funciones de los esquemas de los sabores (esquema_*_presente,
-# validar_doaj, validar_crossref) no la usan: las carga también
-# validar_sabor.sh.
+# validar_doaj, validar_crossref, packtools_presente, validar_sps) no la
+# usan: las carga también validar_sabor.sh.
 # ============================================================================
 
 # LOS ESQUEMAS DE LOS SABORES SON DEL PAQUETE, NO DE ~/.gbpublisher: UN
@@ -42,6 +42,17 @@ MARCALYC_MAX_ZIP=$(( 4 * 1024 * 1024 ))
 MARCALYC_MAX_IMAGEN=$(( 1024 * 1024 ))
 MARCALYC_MAX_PDF=$(( 4 * 1024 * 1024 ))
 MARCALYC_TOPE_PX=750
+
+# SciELO (F6, DECISIÓN DE ALBERTO DEL 18/11/2026): packtools 4.18.2 EN UN
+# ENTORNO PROPIO EN /opt/packtools (instalar-packtools.sh): LA VERSIÓN DE
+# PyPI ES LA 2.6.4, VIEJA; LA 4.18.2 SOLO ESTÁ EN GitHub Y PIDE Python 3.11
+# O MÁS. GBP_PACKTOOLS LO MUEVE (PRUEBAS). EL VALIDADOR ES validar_sps.py,
+# AL LADO DE ESTE ARCHIVO: stylechecker NO VALIDA SIN RED CON lxml 6
+# (MEDIDO; LA CAUSA, EN validar_sps.py)
+DIR_PACKTOOLS="${GBP_PACKTOOLS:-/opt/packtools}"
+SCIELO_PY="$DIR_PACKTOOLS/bin/python"
+SCIELO_VERSION_PACKTOOLS="4.18.2"
+VALIDADOR_SPS="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/validar_sps.py"
 
 # ============================================================================
 # Función   : dato_volcado
@@ -247,4 +258,100 @@ marcalyc_formato_imagen() {
         jpg|jpeg|png|gif|svg) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# ============================================================================
+# Función   : packtools_presente
+# Propósito : Si está el packtools de SciELO, en la versión fijada, con su
+#             validador (validar_sps.py).
+# Parámetros: ninguno
+# Retorna   : 0 si está; 1 si no. Imprime el motivo si no está
+# Nota      : -I: EL PYTHON DEL ENTORNO NO LEE MÓDULOS DE LA CARPETA ACTUAL
+# ============================================================================
+packtools_presente() {
+    local version
+    if [[ ! -x "$SCIELO_PY" ]]; then
+        printf 'no está %s: corré instalar-packtools.sh' "$SCIELO_PY"
+        return 1
+    fi
+    [[ -f "$VALIDADOR_SPS" ]] || { printf 'falta %s' "$VALIDADOR_SPS"; return 1; }
+    # LA VERSIÓN DEL CÓDIGO (packtools/version.py), NO LA DE LA INSTALACIÓN:
+    # EL setup.cfg DE packtools AGREGA «rc» Y LA FECHA AL INSTALAR DESDE EL
+    # FUENTE (tag_build, tag_date: «4.18.2rc20261118», MEDIDO)
+    version="$("$SCIELO_PY" -I -c 'import packtools.version as v; print(v.__version__)' 2>/dev/null)"
+    if [[ "$version" != "$SCIELO_VERSION_PACKTOOLS" ]]; then
+        printf 'packtools es «%s» y gbpublisher fija la %s: corré instalar-packtools.sh' \
+            "${version:-ninguna}" "$SCIELO_VERSION_PACKTOOLS"
+        return 1
+    fi
+    return 0
+}
+
+# ============================================================================
+# Función   : validar_sps
+# Propósito : Valida XML SciELO PS con packtools (validar_sps.py): DTD, reglas
+#             de estilo sps-1.9, el nombre del paquete y los archivos que
+#             nombra cada XML.
+# Parámetros: $1… rutas de los XML
+# Retorna   : imprime el TSV de validar_sps.py (archivo, tipo, línea,
+#             mensaje); el código de validar_sps.py: 0 válidos, 1 no, 2 sin
+#             packtools
+# ============================================================================
+validar_sps() {
+    "$SCIELO_PY" -I "$VALIDADOR_SPS" "$@" 2>/dev/null
+}
+
+# ============================================================================
+# Función   : rellenar_ceros
+# Propósito : Ceros a la izquierda hasta un ancho, como str.zfill de Python
+#             (lo usa packtools para el nombre del paquete).
+# Parámetros: $1 texto  $2 ancho
+# Retorna   : imprime el texto rellenado
+# ============================================================================
+rellenar_ceros() {
+    local texto="$1" ancho="$2"
+    while (( ${#texto} < ancho )); do
+        texto="0$texto"
+    done
+    printf '%s' "$texto"
+}
+
+# ============================================================================
+# Función   : nombre_sps
+# Propósito : El nombre SciELO PS de un artículo (sin extensión), con la
+#             regla de packtools 4.18.2 (sps/models/sps_package.py,
+#             Identity.package_name):
+#               ISSN-acrónimo-volumen-número[-sSuplemento]-último
+#             ISSN: el electrónico; si no hay, el impreso. Acrónimo:
+#             journal-id publisher-id. Cada parte con dos cifras como mínimo;
+#             «último» es la página inicial (con su seq), o el e-location,
+#             o el orden en el número, con cinco cifras como mínimo.
+#             validar_sps.py lo compara con el que calcula packtools.
+# Parámetros: $1 canónico del artículo (sin DOCTYPE)  $2 orden en el número
+# Retorna   : imprime el nombre; vacío si falta el ISSN o el acrónimo
+# Nota      : local-name() PORQUE xmllint --xpath NO CONOCE LOS ESPACIOS DE
+#             NOMBRES DEL DOCUMENTO (GV-22)
+# ============================================================================
+nombre_sps() {
+    local canonico="$1" orden="$2" issn acron volumen numero suplemento ultimo parte nombre=""
+    local meta="//*[local-name()='article-meta']" revista="//*[local-name()='journal-meta']"
+    # xmllint ES XPath 1.0: SIN SECUENCIAS, LA PREFERENCIA VA EN UN CICLO
+    for parte in "[@publication-format='electronic']" "[@publication-format='print']" ""; do
+        issn="$(xmllint --nonet --xpath "normalize-space($revista/*[local-name()='issn']$parte[1])" "$canonico" 2>/dev/null)"
+        [[ -n "$issn" ]] && break
+    done
+    acron="$(xmllint --nonet --xpath "normalize-space($revista/*[local-name()='journal-id'][@journal-id-type='publisher-id'][1])" "$canonico" 2>/dev/null)"
+    volumen="$(xmllint --nonet --xpath "normalize-space($meta/*[local-name()='volume'][1])" "$canonico" 2>/dev/null)"
+    numero="$(xmllint --nonet --xpath "normalize-space($meta/*[local-name()='issue'][1])" "$canonico" 2>/dev/null)"
+    suplemento="$(xmllint --nonet --xpath "normalize-space($meta/*[local-name()='supplement'][1])" "$canonico" 2>/dev/null)"
+    ultimo="$(xmllint --nonet --xpath "concat(normalize-space($meta/*[local-name()='fpage'][1]), normalize-space($meta/*[local-name()='fpage'][1]/@seq))" "$canonico" 2>/dev/null)"
+    [[ -n "$ultimo" ]] || ultimo="$(xmllint --nonet --xpath "normalize-space($meta/*[local-name()='elocation-id'][1])" "$canonico" 2>/dev/null)"
+    [[ -n "$ultimo" ]] || ultimo="$((10#$orden))"
+    [[ -n "$issn" && -n "$acron" ]] || return 0
+    # EL ORDEN DE packtools: LAS PARTES VACÍAS NO VAN
+    for parte in "$issn" "$acron" "$volumen" "$numero" "${suplemento:+s$suplemento}" "$(rellenar_ceros "$ultimo" 5)"; do
+        [[ -n "$parte" ]] || continue
+        nombre+="${nombre:+-}$(rellenar_ceros "$parte" 2)"
+    done
+    printf '%s' "$nombre"
 }

@@ -7,8 +7,8 @@
 # USO
 #   validar_sabor.sh <tipo> <ruta_proyecto> <archivo> [<archivo>...]
 #
-#   tipo            jats4r, doaj, crossref, redalyc (los demás llegan con
-#                   sus sabores: scielo, pmc)
+#   tipo            jats4r, doaj, crossref, redalyc, scielo (pmc llega con
+#                   su sabor)
 #   ruta_proyecto   raíz del proyecto
 #   archivo         ruta absoluta de cada archivo a validar, dentro del
 #                   proyecto. Un lote es UNA llamada (SC-53)
@@ -63,6 +63,16 @@
 #   GIF o SVG hasta 1 MB (ERROR) y hasta 750 px (AVISO: es recomendación),
 #   que estén todas las imágenes que nombra el HTML y el PDF del artículo
 #   al lado, hasta 4 MB. Una fila por imagen, en el grupo «imagenes».
+#
+# TIPO scielo
+#   El paquete SciELO PS del número (salidas/scielo/{número SPS}.zip, de
+#   generar_scielo_revista.sh). La estructura (una carpeta con el nombre del
+#   ZIP) y, por artículo (el grupo es el nombre SPS del XML): packtools
+#   4.18.2 con validar_sps.py (la DTD de JATS 1.1 y las reglas sps-1.9, un
+#   registro por mensaje distinto: ERROR, porque SciELO lo rechaza), que el
+#   archivo se llame como packtools arma el nombre (ERROR), que estén los
+#   archivos que nombra el XML (ERROR) y su PDF (ERROR). Sin packtools no se
+#   puede validar: código 1.
 #
 # CÓDIGOS
 #   0  hubo registros: los hallazgos van en ellos, no en el código
@@ -677,6 +687,122 @@ validar_redalyc_tipo() {
 }
 
 # ============================================================================
+# Función   : validar_scielo_archivo
+# Propósito : Los registros de un paquete SciELO PS del número.
+# Parámetros: $1 ruta absoluta del ZIP
+# ============================================================================
+validar_scielo_archivo() {
+    local abs="$1" objeto dir carpeta entradas xml grupo informe
+    local archivo tipo linea mensaje clave
+    local -A CANTIDAD=() LINEAS=() TIPO=() GRUPO=() MENSAJE=()
+    local -a ORDEN=()
+    objeto="$(basename "$abs")"
+    carpeta="${objeto%.zip}"
+    dir="$DIR_PROYECTO/tmp/validar-scielo/$carpeta"
+
+    # --- A. EL ZIP: QUE SE PUEDA LEER ---
+    if ! unzip -tq "$abs" > /dev/null 2>&1; then
+        registro "$objeto" paquete "ZIP" ERROR "no se puede leer" "" ""
+        return
+    fi
+    rm -rf -- "${dir:?}"
+    mkdir -p "$dir" && unzip -q -o "$abs" -d "$dir" 2>/dev/null ||
+        { registro "$objeto" paquete "ZIP" ERROR "no se pudo extraer" "" ""; return; }
+
+    # --- B. LA ESTRUCTURA: UNA CARPETA CON EL NOMBRE DEL NÚMERO ---
+    entradas="$(unzip -Z1 "$abs" 2>/dev/null)"
+    if printf '%s\n' "$entradas" | grep -qv "^$carpeta/"; then
+        registro "$objeto" paquete "Estructura" AVISO "archivos fuera de $carpeta/" "todo en $carpeta/" ""
+    else
+        registro "$objeto" paquete "Estructura" OK "$carpeta/" "" ""
+    fi
+    shopt -s nullglob
+    local -a XMLS=("$dir/$carpeta"/*.xml)
+    shopt -u nullglob
+    if (( ${#XMLS[@]} == 0 )); then
+        registro "$objeto" paquete "Artículos" ERROR "ningún XML" "un XML por artículo" ""
+        rm -rf -- "${dir:?}"
+        return
+    fi
+    registro "$objeto" paquete "Artículos" OK "${#XMLS[@]}" "" ""
+
+    # --- C. EL PDF DE CADA ARTÍCULO, CON EL NOMBRE DEL XML ---
+    for xml in "${XMLS[@]}"; do
+        grupo="$(basename "${xml%.xml}")"
+        if [[ -f "${xml%.xml}.pdf" ]]; then
+            registro "$objeto" "$grupo" "PDF" OK "$grupo.pdf" "" ""
+        else
+            registro "$objeto" "$grupo" "PDF" ERROR "no está" "$grupo.pdf" "SciELO publica el PDF junto al XML"
+        fi
+    done
+
+    # --- D. packtools: UN REGISTRO POR MENSAJE DISTINTO DE CADA ARTÍCULO ---
+    informe="$(validar_sps "${XMLS[@]}")"
+    while IFS=$'\t' read -r archivo tipo linea mensaje; do
+        [[ -n "$archivo" ]] || continue
+        grupo="${archivo%.xml}"
+        case "$tipo" in
+            ok)        registro "$objeto" "$grupo" "packtools" OK "$mensaje" "" "DTD de JATS 1.1 y reglas sps-1.9" ;;
+            nombre_ok) registro "$objeto" "$grupo" "Nombre SPS" OK "$grupo" "" "" ;;
+            nombre)    registro "$objeto" "$grupo" "Nombre SPS" ERROR "$grupo" "$mensaje" \
+                           "El nombre que arma packtools con ISSN, acrónimo, volumen, número y página" ;;
+            activo_ok) registro "$objeto" "$grupo" "$mensaje" OK "está" "" "" ;;
+            activo)    registro "$objeto" "$grupo" "$mensaje" ERROR "no está" "en el paquete" "El XML lo nombra" ;;
+            error)     registro "$objeto" "$grupo" "packtools" ERROR "no se pudo validar" "" "$mensaje" ;;
+            dtd|sps)
+                # LOS MENSAJES REPETIDOS SE JUNTAN, CON SUS LÍNEAS
+                clave="$grupo"$'\t'"$tipo"$'\t'"$mensaje"
+                if [[ -z "${CANTIDAD[$clave]:-}" ]]; then
+                    ORDEN+=("$clave")
+                    CANTIDAD[$clave]=0
+                    LINEAS[$clave]=""
+                    TIPO[$clave]="$tipo"
+                    GRUPO[$clave]="$grupo"
+                    MENSAJE[$clave]="$mensaje"
+                fi
+                CANTIDAD[$clave]=$(( ${CANTIDAD[$clave]} + 1 ))
+                if (( ${CANTIDAD[$clave]} <= UBICACIONES_POR_HALLAZGO )); then
+                    LINEAS[$clave]+="${LINEAS[$clave]:+, }$linea"
+                fi
+                ;;
+        esac
+    done <<< "$informe"
+
+    for clave in "${ORDEN[@]}"; do
+        local detalle
+        if [[ "${TIPO[$clave]}" == "dtd" ]]; then
+            detalle="DTD de JATS 1.1 Publishing."
+        else
+            detalle="Reglas de SciELO PS 1.9."
+        fi
+        detalle+=" Línea(s): ${LINEAS[$clave]}"
+        (( ${CANTIDAD[$clave]} > UBICACIONES_POR_HALLAZGO )) &&
+            detalle+=" (y $(( ${CANTIDAD[$clave]} - UBICACIONES_POR_HALLAZGO )) más)"
+        registro "$objeto" "${GRUPO[$clave]}" "${MENSAJE[$clave]}" ERROR "${CANTIDAD[$clave]} ×" "" "$detalle"
+    done
+
+    rm -rf -- "${dir:?}"
+}
+
+# ============================================================================
+# Función   : validar_scielo_tipo
+# Propósito : El tipo scielo: cada paquete de la lista.
+# Parámetros: los archivos (rutas absolutas)
+# ============================================================================
+validar_scielo_tipo() {
+    local abs motivo
+    command -v unzip >/dev/null 2>&1 || morir "Falta unzip (paquete unzip)"
+    # SIN packtools NO HAY VALIDACIÓN: NO SE PUEDE DAR NADA POR BUENO (GV-23)
+    motivo="$(packtools_presente)" || morir "No se puede validar SciELO: $motivo"
+    for abs in "$@"; do
+        abs="$(readlink -f "$abs")"
+        [[ "$abs" == "$DIR_PROYECTO/"* ]] || morir "El archivo no está dentro del proyecto: $abs"
+        [[ -f "$abs" ]] || morir "No existe: $abs"
+        validar_scielo_archivo "$abs"
+    done
+}
+
+# ============================================================================
 # ORQUESTACIÓN
 # ============================================================================
 
@@ -699,6 +825,7 @@ case "$TIPO" in
     doaj)   validar_doaj_tipo "$@" ;;
     crossref) validar_crossref_tipo "$@" ;;
     redalyc) validar_redalyc_tipo "$@" ;;
+    scielo) validar_scielo_tipo "$@" ;;
     *)      morir "Tipo de validación no reconocido: «$TIPO»" ;;
 esac
 
