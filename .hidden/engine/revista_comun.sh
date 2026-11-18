@@ -33,6 +33,16 @@ DIR_ESQUEMA_CROSSREF="$DIR_RECURSOS_REVISTA/schemas/crossref"
 XSD_CROSSREF="$DIR_ESQUEMA_CROSSREF/crossref5.4.0.xsd"
 CATALOGO_CROSSREF="$DIR_ESQUEMA_CROSSREF/catalogo-crossref.xml"
 
+# LOS LÍMITES DE MARCALYC (REDALYC), DEL MANUAL DE USUARIO DE MARCALYC 4.0
+# (ABRIL DE 2024): EL ZIP HASTA 4 MB, CADA IMAGEN HASTA 1 MB Y SE
+# RECOMIENDA NO PASAR DE 750 px, EL PDF DE LA REVISTA HASTA 4 MB. LOS USAN
+# generar_redalyc_revista.sh Y validar_sabor.sh: SI MARCALYC LOS CAMBIA,
+# CAMBIAN ACÁ
+MARCALYC_MAX_ZIP=$(( 4 * 1024 * 1024 ))
+MARCALYC_MAX_IMAGEN=$(( 1024 * 1024 ))
+MARCALYC_MAX_PDF=$(( 4 * 1024 * 1024 ))
+MARCALYC_TOPE_PX=750
+
 # ============================================================================
 # Función   : dato_volcado
 # Propósito : Un valor del volcado, por XPath (la de generar_canonicos_articulos.sh).
@@ -222,4 +232,19 @@ validar_crossref() {
     XML_CATALOG_FILES="$CATALOGO_CROSSREF" xmllint --nonet --noout --schema "$XSD_CROSSREF" "$archivo" 2>&1 |
         grep -E 'error|failed to compile' |
         sed -E "s|^$archivo:||" | grep .
+}
+
+# ============================================================================
+# Función   : marcalyc_formato_imagen
+# Propósito : Si Marcalyc acepta el formato de una imagen, por su extensión:
+#             JPG, JPEG, PNG, GIF o SVG (manual de Marcalyc 4.0).
+# Parámetros: $1 nombre del archivo
+# Retorna   : 0 si lo acepta; 1 si no
+# ============================================================================
+marcalyc_formato_imagen() {
+    local extension="${1##*.}"
+    case "${extension,,}" in
+        jpg|jpeg|png|gif|svg) return 0 ;;
+        *) return 1 ;;
+    esac
 }

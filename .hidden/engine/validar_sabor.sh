@@ -7,8 +7,8 @@
 # USO
 #   validar_sabor.sh <tipo> <ruta_proyecto> <archivo> [<archivo>...]
 #
-#   tipo            jats4r, doaj, crossref (los demás llegan con sus
-#                   sabores: redalyc, scielo, pmc)
+#   tipo            jats4r, doaj, crossref, redalyc (los demás llegan con
+#                   sus sabores: scielo, pmc)
 #   ruta_proyecto   raíz del proyecto
 #   archivo         ruta absoluta de cada archivo a validar, dentro del
 #                   proyecto. Un lote es UNA llamada (SC-53)
@@ -54,6 +54,15 @@
 #   por artículo, lo que el esquema no exige y Crossref usa: la página, los
 #   ORCID y los ROR, los resúmenes, el financiamiento, la licencia y las
 #   referencias con DOI. El grupo de esas filas es el DOI del artículo.
+#
+# TIPO redalyc
+#   El paquete de Marcalyc de un artículo (salidas/redalyc/{archivo}.zip,
+#   de generar_redalyc_revista.sh), contra lo que Marcalyc pide (manual de
+#   Marcalyc 4.0): un solo index.html en la raíz y en UTF-8 (sin eso
+#   Marcalyc lo rechaza: ERROR), el ZIP hasta 4 MB, cada imagen JPG, PNG,
+#   GIF o SVG hasta 1 MB (ERROR) y hasta 750 px (AVISO: es recomendación),
+#   que estén todas las imágenes que nombra el HTML y el PDF del artículo
+#   al lado, hasta 4 MB. Una fila por imagen, en el grupo «imagenes».
 #
 # CÓDIGOS
 #   0  hubo registros: los hallazgos van en ellos, no en el código
@@ -557,6 +566,117 @@ validar_crossref_tipo() {
 }
 
 # ============================================================================
+# Función   : validar_redalyc_archivo
+# Propósito : Los registros de un paquete de Marcalyc.
+# Parámetros: $1 ruta absoluta del ZIP
+# ============================================================================
+validar_redalyc_archivo() {
+    local abs="$1" objeto dir peso entradas n nombre medidas ancho alto pdf
+    local referidas faltan sobran
+    objeto="$(basename "$abs")"
+    dir="$DIR_PROYECTO/tmp/validar-redalyc/${objeto%.zip}"
+
+    # --- A. EL ZIP: QUE SE PUEDA LEER Y SU PESO ---
+    if ! unzip -tq "$abs" > /dev/null 2>&1; then
+        registro "$objeto" archivo "ZIP" ERROR "no se puede leer" "" ""
+        return
+    fi
+    peso=$(stat -c %s "$abs")
+    registro "$objeto" archivo "Peso del ZIP" "$( (( peso <= MARCALYC_MAX_ZIP )) && echo OK || echo ERROR)" \
+        "$(( peso / 1024 )) KB" "hasta $(( MARCALYC_MAX_ZIP / 1024 )) KB" ""
+
+    # --- B. UN SOLO index.html, EN LA RAÍZ ---
+    entradas="$(unzip -Z1 "$abs" 2>/dev/null)"
+    n=$(printf '%s\n' "$entradas" | grep -c -i '\.html\?$')
+    if [[ "$(printf '%s\n' "$entradas" | grep -cx 'index.html')" == "1" && "$n" == "1" ]]; then
+        registro "$objeto" archivo "index.html" OK "uno, en la raíz" "" ""
+    else
+        registro "$objeto" archivo "index.html" ERROR "$n archivo(s) HTML" "uno solo, index.html, en la raíz" \
+            "Marcalyc rechaza un ZIP que no contiene un solo index.html"
+        return
+    fi
+    if printf '%s\n' "$entradas" | grep -q '/'; then
+        registro "$objeto" archivo "Carpetas" AVISO "tiene carpetas" "todo en la raíz" \
+            "Las imágenes van junto a index.html"
+    fi
+
+    rm -rf -- "${dir:?}"
+    mkdir -p "$dir" && unzip -q -o "$abs" -d "$dir" 2>/dev/null ||
+        { registro "$objeto" archivo "ZIP" ERROR "no se pudo extraer" "" ""; return; }
+
+    # --- C. UTF-8 ---
+    if iconv -f UTF-8 -t UTF-8 "$dir/index.html" > /dev/null 2>&1; then
+        registro "$objeto" archivo "Codificación" OK "UTF-8" "" ""
+    else
+        registro "$objeto" archivo "Codificación" ERROR "no es UTF-8 válido" "UTF-8" ""
+    fi
+
+    # --- D. LAS IMÁGENES QUE NOMBRA EL HTML Y LAS QUE TRAE EL ZIP ---
+    referidas="$(grep -oP '<img[^>]*\ssrc="\K[^"]+' "$dir/index.html" | sort -u)"
+    faltan="$(comm -23 <(printf '%s\n' "$referidas" | grep .) <(printf '%s\n' "$entradas" | grep -vx index.html | sort -u))"
+    sobran="$(comm -13 <(printf '%s\n' "$referidas" | grep .) <(printf '%s\n' "$entradas" | grep -vx index.html | sort -u))"
+    if [[ -z "$faltan" ]]; then
+        registro "$objeto" archivo "Imágenes del HTML" OK "$(printf '%s\n' "$referidas" | grep -c .)" "" ""
+    else
+        registro "$objeto" archivo "Imágenes del HTML" ERROR "faltan $(printf '%s\n' "$faltan" | grep -c .)" "todas en el ZIP" \
+            "$(printf '%s ' $faltan)"
+    fi
+    if [[ -n "$sobran" ]]; then
+        registro "$objeto" archivo "Archivos sin usar" INFO "$(printf '%s\n' "$sobran" | grep -c .)" "" "$(printf '%s ' $sobran)"
+    fi
+
+    # --- E. CADA IMAGEN ---
+    while IFS= read -r nombre; do
+        [[ -n "$nombre" && -f "$dir/$nombre" ]] || continue
+        if ! marcalyc_formato_imagen "$nombre"; then
+            registro "$objeto" imagenes "$nombre" ERROR "formato ${nombre##*.}" "JPG, PNG, GIF o SVG" ""
+            continue
+        fi
+        peso=$(stat -c %s "$dir/$nombre")
+        medidas="$(identify -format '%w %h' "$dir/$nombre[0]" 2>/dev/null)"
+        read -r ancho alto <<< "$medidas"
+        if (( peso > MARCALYC_MAX_IMAGEN )); then
+            registro "$objeto" imagenes "$nombre" ERROR "$(( peso / 1024 )) KB" "hasta $(( MARCALYC_MAX_IMAGEN / 1024 )) KB" "${ancho:-?}×${alto:-?} px"
+        elif [[ "${nombre,,}" != *.svg ]] && (( ${ancho:-0} > MARCALYC_TOPE_PX || ${alto:-0} > MARCALYC_TOPE_PX )); then
+            registro "$objeto" imagenes "$nombre" AVISO "${ancho}×${alto} px" "hasta $MARCALYC_TOPE_PX px" \
+                "Marcalyc lo recomienda; $(( peso / 1024 )) KB"
+        else
+            registro "$objeto" imagenes "$nombre" OK "${ancho:-?}×${alto:-?} px, $(( peso / 1024 )) KB" "" ""
+        fi
+    done < <(printf '%s\n' "$entradas" | grep -vx index.html)
+
+    # --- F. EL PDF AL LADO ---
+    pdf="${abs%.zip}.pdf"
+    if [[ -f "$pdf" ]]; then
+        peso=$(stat -c %s "$pdf")
+        registro "$objeto" archivo "PDF del artículo" "$( (( peso <= MARCALYC_MAX_PDF )) && echo OK || echo ERROR)" \
+            "$(( peso / 1024 )) KB" "hasta $(( MARCALYC_MAX_PDF / 1024 )) KB" "$(basename "$pdf")"
+    else
+        registro "$objeto" archivo "PDF del artículo" AVISO "no está" "$(basename "$pdf")" \
+            "Marcalyc acepta el PDF de la revista aparte; generá Redalyc de nuevo"
+    fi
+
+    rm -rf -- "${dir:?}"
+}
+
+# ============================================================================
+# Función   : validar_redalyc_tipo
+# Propósito : El tipo redalyc: cada paquete de la lista.
+# Parámetros: los archivos (rutas absolutas)
+# ============================================================================
+validar_redalyc_tipo() {
+    local abs
+    command -v unzip >/dev/null 2>&1 || morir "Falta unzip (paquete unzip)"
+    command -v identify >/dev/null 2>&1 || morir "Falta identify (paquete imagemagick)"
+    for abs in "$@"; do
+        abs="$(readlink -f "$abs")"
+        [[ "$abs" == "$DIR_PROYECTO/"* ]] || morir "El archivo no está dentro del proyecto: $abs"
+        [[ -f "$abs" ]] || morir "No existe: $abs"
+        validar_redalyc_archivo "$abs"
+    done
+}
+
+# ============================================================================
 # ORQUESTACIÓN
 # ============================================================================
 
@@ -578,6 +698,7 @@ case "$TIPO" in
     jats4r) validar_jats4r "$@" ;;
     doaj)   validar_doaj_tipo "$@" ;;
     crossref) validar_crossref_tipo "$@" ;;
+    redalyc) validar_redalyc_tipo "$@" ;;
     *)      morir "Tipo de validación no reconocido: «$TIPO»" ;;
 esac
 
