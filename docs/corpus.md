@@ -848,6 +848,8 @@ La ayuda contextual (`ayudas/`, SC-24) tampoco se copia, por otra razón: en ell
 
 El catálogo de shortcodes (`shortcodes/`, SC-34) tampoco se copia, por la misma razón.
 
+`schematron/` tampoco se copia desde el 18/11/2026 (SC-97): las reglas compiladas del auditor se leen de `/usr/share/gbpublisher/schematron/compilados`, y el resto de la carpeta es de los generadores del repositorio. Estaba en la lista de copia y nadie leía la copia.
+
 Los sonidos de aviso (`sonido/`) tampoco se copian, por la misma razón. `m_Sonido` los lee de `m_InicioCierre.RutaRecursos()`, que desde el IDE es `.hidden/` e instalado `/usr/share/gbpublisher/`. El caso que lo motivó (30/10/2026): al pasar los sonidos de `.ogg` a `.wav`, el `OpenApp.wav` nuevo nunca llegó a la copia local, que guardaba uno anterior, y la apertura sonaba con otro sonido sin que nada lo advirtiera. La carpeta `~/.gbpublisher/sonido` de las instalaciones previas queda sin uso y no se borra.
 
 CONTRAPARTIDA OBLIGATORIA
@@ -1675,8 +1677,8 @@ EVIDENCIA
 - DocBook 5.2 no tiene elemento de corte en `title` ni en `subtitle`. La documentación lo dice: «DocBook does not offer any mechanism for indicating where a line break should occur in long titles». Una instrucción de procesamiento dentro del título valida contra `schemas/docbook/docbook.rng` del repositorio (xmllint).
 - El DocBook no se puede saltear: el título de capítulo del PDF sale de la base, pasa por el canónico y llega a `\chapter` por `docbook-to-latex.xsl`. Un espacio en el canónico perdería el corte justo donde hace falta.
 - XSLT: el valor de texto de `<break/>` y de una instrucción de procesamiento es vacío, y la regla incorporada para instrucciones no produce nada. Medido: `Uno <?gb-corte?> dos` da `Uno dos` con `normalize-space` y `Uno  dos` con `value-of` y con `apply-templates` por defecto; `Pegado<?gb-corte?>mal` da `Pegadomal`. Lo mismo `<break/>`. Medido con SaxonJ-HE 12.5, la versión del proyecto, y con SaxonC-HE 13.0.
-- Consecuencia: `jats-to-html`, `jats-to-epub`, `jats-to-crossref`, `jats-to-doaj`, `docbook-to-html` y `docbook-to-epub` no se tocan.
-- `jats-to-scielo` y `jats-to-redalyc` sí: parten de una plantilla identidad y copiaban el `<break/>` tal cual al paquete del indexador. Llevan una plantilla para `article-title` y `subtitle` de `title-group` con `<break/>`, que escribe el título con `normalize-space`. Por eso no hace falta pasar el `<break/>` por packtools: no llega a SciELO.
+- Consecuencia: `jats-to-html`, `jats-to-epub`, `jats-to-crossref` y `jats-to-doaj` (estas dos retiradas: SC-97), `docbook-to-html` y `docbook-to-epub` no se tocan.
+- `jats-to-scielo` y `jats-to-redalyc` (retiradas el 18/11/2026, SC-97: los paquetes salen de `jats-a-scielo` y `jats-a-marcalyc`, que importan `jats-a-epub-articulo`) sí: parten de una plantilla identidad y copiaban el `<break/>` tal cual al paquete del indexador. Llevan una plantilla para `article-title` y `subtitle` de `title-group` con `<break/>`, que escribe el título con `normalize-space`. Por eso no hace falta pasar el `<break/>` por packtools: no llega a SciELO.
 - LuaLaTeX con hyperref: `\newcommand{\gbCorteTitulo}{\\}` y `\pdfstringdefDisableCommands{\def\gbCorteTitulo{ }}`. Cortan la apertura de capítulo, la de parte y el título compuesto con `\LARGE`; el sumario, el folio corrido y los marcadores salen en una línea porque toman el argumento opcional; `pdftitle` sale con un espacio y hyperref no avisa.
 
 EN LaTeX, DOS VERSIONES DEL TÍTULO
@@ -1782,7 +1784,7 @@ DECISIÓN CERRADA. Lo que el editor marca en línea en el .md sale igual en el P
 
 1. SIN SANGRÍA EN LA SERIALIZACIÓN XML
 
-Las hojas que escriben XML lo hacen con `indent="no"`: los tres ensamblados del canónico (`ensamblar-capitulo-canonico`, `ensamblar-libro-canonico`, `ensamblar-canonico`), los dos EPUB (`docbook-to-epub`, `jats-to-epub`) y los cuatro indexadores (`jats-to-crossref`, `jats-to-doaj`, `jats-to-scielo`, `jats-to-redalyc`). Con `indent="yes"` metían un espacio donde un elemento quedaba pegado a otro (GV-71):
+Las hojas que escriben XML lo hacen con `indent="no"`: los tres ensamblados del canónico (`ensamblar-capitulo-canonico`, `ensamblar-libro-canonico`, `ensamblar-canonico`), los dos EPUB (`docbook-to-epub`, `jats-to-epub`) y los cuatro indexadores (`jats-to-crossref`, `jats-to-doaj`, `jats-to-scielo`, `jats-to-redalyc`; retirados el 18/11/2026, SC-97). Con `indent="yes"` metían un espacio donde un elemento quedaba pegado a otro (GV-71):
 
     «esta es una prueba de «texto»»   →   …“texto” »
     «*Cursiva* al inicio»             →   « Cursiva…
@@ -2176,7 +2178,7 @@ LAS REGLAS
 1. En el canónico van como INSTRUCCIÓN DE PROCESAMIENTO con prefijo `gb-`, nunca como elemento: `<?gb-corte?>` (SC-28, en DocBook) y `<?gb-espacio …?>` (SC-39). El estándar XML las define para eso: indicaciones para una aplicación, fuera del modelo del documento. El canónico sigue validando contra el RNG de DocBook 5.2 y la DTD de JATS 1.4 (verificado), y el PDF se puede regenerar idéntico porque la instrucción queda en él. Una instrucción de procesamiento también puede ir dentro de un párrafo.
 2. Lleva una FICHA propia, no LaTeX: `bigskip`, `vspace* 2baselineskip`. Solo las hojas LaTeX la traducen (en `tex-comun.xsl` cuando la ficha es igual en JATS y en DocBook), y frenan ante una ficha que no conocen.
 3. Las hojas de HTML y EPUB no hacen nada: la regla incorporada de XSLT para una instrucción de procesamiento no escribe nada (medido en SC-28 y en SC-39). Una hoja que copie con `xsl:copy-of` o con una identidad sobre `node()` sí las copiaría: hay que mirarlo en cada hoja nueva.
-4. Los indexadores las quitan todas de una vez. `jats-to-scielo.xsl` y `jats-to-redalyc.xsl` parten de una identidad sobre `@* | node()`, que incluye las instrucciones de procesamiento (verificado: copiaban `<?gb-espacio?>` al paquete). Una sola plantilla vacía, `processing-instruction()[starts-with(name(), 'gb-')]`, las quita: una instrucción nueva no se filtra por olvido.
+4. Los indexadores las quitan todas de una vez. `jats-to-scielo.xsl` y `jats-to-redalyc.xsl` (retiradas el 18/11/2026, SC-97: los paquetes salen de `jats-a-scielo` y `jats-a-marcalyc`, que importan `jats-a-epub-articulo`) partían de una identidad sobre `@* | node()`, que incluye las instrucciones de procesamiento (verificado: copiaban `<?gb-espacio?>` al paquete). Una sola plantilla vacía, `processing-instruction()[starts-with(name(), 'gb-')]`, las quita: una instrucción nueva no se filtra por olvido.
 5. Diccionario cerrado, en un solo filtro Lua por instrucción, que corre en las dos cadenas (revista y libro) con el patrón de `dos-partes.lua` (SC-35). Lo que no está en el diccionario frena la conversión con un mensaje que dice qué falla y qué se admite.
 6. En el catálogo de shortcodes, grupo propio: `composicion`, «Composición (solo PDF)», al final de la lista. El editor ve en el panel que son instrucciones de página y no de contenido. El grupo entró con el esquema 5 de gbShortcodes. El modo dice qué es cada una: las de un punto se insertan como separador (`separador-valor`); las de un tramo, con `envolver`. `m_AnalizarProyecto` cuenta como cuerpo el texto de las de un tramo y no cuenta las de un punto.
 7. En una hoja LaTeX, la instrucción solo se alcanza donde se la pide: `*` selecciona elementos, no instrucciones de procesamiento. `docbook-to-latex.xsl` la agrega en unión, `(* except info) | processing-instruction('gb-espacio')`, que conserva el orden del documento; `jats-to-latex.xsl` ya recorría todos los nodos de `body` y `sec`.
@@ -3821,7 +3823,7 @@ MEDIDO: el .tex compila con LuaLaTeX, titlesec (`newlinetospace`) y hyperref, si
 
 HTML, EPUB E INDEXADORES
 
-`jats-to-html` y `jats-to-epub` no tienen plantilla para `break`, y la regla incorporada no escribe nada para una instrucción de procesamiento: sale «Corte de subtítulo». `jats-to-scielo` y `jats-to-redalyc` quitan `sec/title/break` con una plantilla vacía. No usan `normalize-space`, como en el `article-title` de SC-28, porque un título de sección puede llevar bastardilla.
+`jats-to-html` y `jats-to-epub` no tienen plantilla para `break`, y la regla incorporada no escribe nada para una instrucción de procesamiento: sale «Corte de subtítulo». `jats-to-scielo` y `jats-to-redalyc` (retiradas el 18/11/2026, SC-97: los paquetes salen de `jats-a-scielo` y `jats-a-marcalyc`, que importan `jats-a-epub-articulo`) quitaban `sec/title/break` con una plantilla vacía. No usan `normalize-space`, como en el `article-title` de SC-28, porque un título de sección puede llevar bastardilla.
 
 CADENAS
 
@@ -4031,7 +4033,7 @@ LA CADENA
 
 - `cuadro-leer.lua`, PRIMERO en las dos cadenas: trae el archivo (con `-M gb-proyecto`), controla el encabezado y la tabla, y deja un Div `.cuadro` con las decisiones en sus atributos, el título, la nota y la tabla. Así el contenido pasa por todos los filtros: comillas, volada, cifras, citas. Una cifra sola en una columna de cifras pasa a `\num{…}`, que traduce `cifras.lua` (SC-65). Frena el viejo `::: {.table}`.
 - `cuadro-armar.lua` escribe el cuadro: en libros, antes de `fenced-divs-to-elements-db.lua`; en revistas, después de `cite-to-xref.lua`. Lo escribe el filtro y no Pandoc porque el escritor DocBook pierde las celdas unidas (GV-126) y ninguno lleva la nota ni las decisiones.
-- `table-to-end.lua` sale de la cadena de la revista: solo marcaba el viejo `.table`.
+- `table-to-end.lua` sale de la cadena de la revista: solo marcaba el viejo `.table`. El archivo se borró el 18/11/2026 (SC-97).
 
 EL CANÓNICO
 
@@ -5565,9 +5567,25 @@ BLOQUE 1, HECHO (18/11/2026): la salida ODT (SC-96).
 
 BLOQUE 4, HECHO (18/11/2026): el camino viejo de revistas, con la actualización de esquema 1.32.0 (SC-98). Dos lecciones para el rastreo. La primera: el alcance desde el formulario de arranque (`FAvisoLegal`) encuentra los ciclos muertos que el rastreo por nombres no ve, como formularios que solo se abren entre sí. La segunda: lo muerto no es lo único que deja un camino retirado. Hay que buscar también el código vivo que lee las tablas del camino viejo: falla sin aviso con los datos nuevos (las herencias huérfanas de SC-98).
 
+BLOQUE 3, HECHO (18/11/2026): los recursos de `.hidden` sin uso. El criterio para las hojas XSLT no fue «alguien las nombra», porque los comentarios las nombran todas. Fue el alcance desde los puntos de entrada reales: las hojas que invocan `engine/` y Gambas, más sus `xsl:import` e `xsl:include`. Así quedan vivas `jats-to-latex`, `jats-to-html`, `jats-to-epub` y `ensamblar-canonico`, porque las importan las nuevas.
+
+Salieron:
+- `jats-to-crossref`, `jats-to-doaj`, `jats-to-redalyc` y `jats-to-scielo`: los envíos viejos.
+- `prueba-saxon.xslt`.
+- El filtro `table-to-end.lua`.
+- El menú «Exportar XML-JATS», con `m_XML.ExportarJATSdesdeBIB`, `AplicarReglasPostproceso` y `filters/postprocesar_jats.py`.
+- `m_XML.ExportarDocBookdesdeBIB`: escribía un `ref-*.xml` en cada lanzamiento de los canónicos del libro y nadie lo leía. La bibliografía de las salidas sale del `.bib` (SC-57).
+
+Lo que nadie lee y viajaba en el `.deb` (y en la copia a `~/.gbpublisher`):
+- En `dtd/`: la Tag Library (`Green-1_4-HTML.zip`, 44 MB) y los doce zips de DTD, RNG y XSD.
+- En `schematron/`: el clon de `jats-schematrons` (con `.git` y `testfiles`) y `schxslt-cli.jar`.
+- En `schemas/crossref/`: los XSD que la validación no alcanza. Se conservan los veinte que alcanza `crossref5.4.0.xsd` (calculado siguiendo sus `include` e `import`, con el catálogo) y `catalogo-crossref.xml`.
+
+`scripts/` NO es código muerto: es el espacio del usuario para sus filtros y scripts personales sobre lo que genera la app (por ejemplo, el `main.tex`). Se copia y se queda (Alberto).
+
 **Relaciones:** vinculo:GV-210,vinculo:SC-96,vinculo:SC-70
 
-**PENDIENTE:** El bloque 3 (recursos de .hidden).
+**PENDIENTE:** El bloque 3a: que generar-schematron-jats4r.sh escriba también .hidden/schematron/compilados/ (un .xsl por temático, GV-26) con la versión fijada y su verificación. Hoy esas reglas existen solo en el /usr/share de la máquina de Alberto, hechas a mano el 30/08/2026: una instalación nueva desde el .deb no las tiene y el auditor marca los grupos como «no evaluado» sin otro aviso. Después, decidir si schxslt-xslt/ sigue (GV-26 usa su include.xsl). Comprobar que jats-a-marcalyc quita las instrucciones gb- (SC-38) como jats-a-scielo.
 
 ### SC-98 — Revistas: el camino viejo se retira — el código, las tablas viejas y articulo.id_doaj (actualización 1.32.0)
 

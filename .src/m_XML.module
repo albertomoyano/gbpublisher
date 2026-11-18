@@ -12,16 +12,15 @@ Private $iBibPos As Integer
 '   El XML que arma Gambas desde la base y el .bib:
 '
 '   — Libros (DocBook 5.2): GenerarInfoLibroXML, GenerarInfoCapituloXML,
-'       GenerarBiblioLibroXML, GenerarBiblioCapituloXML,
-'       ExportarDocBookdesdeBIB, GenerarManifiestoLibro
+'       GenerarBiblioLibroXML, GenerarBiblioCapituloXML, GenerarManifiestoLibro
 '
-'   — Bibliografía JATS desde el .bib: ExportarJATSdesdeBIB, EscribirRefList
+'   — Bibliografía JATS del canónico de revista: EscribirRefList
 '
 '   — Auxiliares de revista: ObtenerIdRevista, EstiloCitaRevista,
 '       ArgumentoIdiomaPandoc, PreambuloVistaCuadro (vista de cuadros)
 '
 '   — Comunes: EscaparXML, TituloXML, SanitizarCitekey, TrimUTF8,
-'       AplicarReglasPostproceso, ObtenerIdLibro
+'       ObtenerIdLibro
 '
 '   EL CAMINO VIEJO DE REVISTAS (FRONT Y BODY JATS, DOAJ, VALIDACIÓN DE
 '   INDEXADORES, PDF) SE RETIRÓ EL 18/11/2026 (SC-98). EL CANÓNICO Y LAS
@@ -270,137 +269,6 @@ Private Function GenerarPersonGroup(sNombres As String, sTipo As String) As Stri
 
 End Function
 
-' =====================================================
-' FUNCIÓN: ExportarJATSdesdeBIB
-' =====================================================
-' DESCRIPCIÓN: EXPORTA TODAS LAS REFERENCIAS DEL .bib A UN
-'              ARCHIVO XML-JATS COMPLETO (ref-*.xml)
-'              DIFERENTE DE GenerarRefListXML() QUE FILTRA
-'              POR CITEKEYS DEL ARTÍCULO ACTIVO
-' RETORNA:    Boolean — TRUE SI SE EXPORTÓ EXITOSAMENTE
-' =====================================================
-' ============================================
-' Función   : ExportarJATSdesdeBIB
-' Propósito : Exporta todas las referencias del .bib a un archivo
-'             XML-JATS completo (ref-*.xml) en /referencias.
-'             A diferencia de GenerarRefListXML() que filtra por los
-'             citekeys citados en el artículo activo, esta función
-'             exporta la bibliografía COMPLETA del .bib sin filtrar.
-'             Mantiene la misma simetría que GenerarRefListXML:
-'             - Prefijo "bib-" en el id (R-03)
-'             - Sanitización del citekey vía SanitizarCitekey
-'             - Detección de colisión: dos citekeys distintos que
-'               sanitizan al mismo valor abortan con error explícito
-' Retorna   : Boolean — True si el archivo se generó correctamente
-' ============================================
-Public Function ExportarJATSdesdeBIB() As Boolean
-
-  ' COMILLA DOBLE COMO VARIABLE LOCAL PARA LEGIBILIDAD EN CONSTRUCCIÓN
-  ' DE ATRIBUTOS XML (SC-01)
-  Dim cQ As String = Chr(34)
-
-  Dim sBibFile As String
-  Dim sBibContent As String
-  Dim sXML As String
-  Dim outputFile As String
-  Dim aEntries As String[]
-  Dim sEntry As String
-  Dim sCitekey As String
-  Dim sCitekeySanitizado As String
-  Dim sType As String
-  Dim iPosLlave As Integer
-  Dim iPosComa As Integer
-  Dim dictEntries As New Collection
-  Dim colSanitizados As New Collection
-
-  ' --- 1. Verificar y leer el .bib ---
-  sBibFile = m_InicioCierre.RutaProyectoEnCurso &/ "referencias/ref-" &
-    File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".bib"
-
-  If Not Exist(sBibFile) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo .bib no existe. Exporte primero las referencias.")
-    Return False
-  Endif
-
-  sBibContent = File.Load(sBibFile)
-
-  ' --- 2. Primera pasada: almacenar entradas para resolver crossref ---
-  aEntries = Split(sBibContent, "@", "", True)
-
-  For Each sEntry In aEntries
-    If TrimUTF8(sEntry) = "" Then Continue
-    iPosLlave = InStr(sEntry, "{")
-    iPosComa = InStr(sEntry, ",")
-    If iPosLlave = 0 Or iPosComa = 0 Then Continue
-    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
-    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
-    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
-    dictEntries[sCitekey] = sEntry
-  Next
-
-  ' --- 3. Segunda pasada: generar XML ---
-  ' EL NAMESPACE xlink ES OBLIGATORIO PORQUE ext-link USA xlink:href
-  sXML = "<?xml version=" & cQ & "1.0" & cQ & " encoding=" & cQ & "UTF-8" & cQ & "?>" & gb.NewLine
-  sXML &= "<ref-list xmlns:xlink=" & cQ & "http://www.w3.org/1999/xlink" & cQ & ">" & gb.NewLine
-
-  ' DETECCIÓN DE COLISIÓN: SI DOS CITEKEYS DISTINTOS PRODUCEN EL MISMO
-  ' RESULTADO AL SANITIZARSE (POSIBLE EN BIBLIOGRAFÍAS HEREDADAS CON
-  ' CARACTERES ESPECIALES EN LAS KEYS), ABORTAR Y AVISAR AL USUARIO.
-  ' NO APLICAR UN HEURÍSTICO SILENCIOSO QUE PUEDA FUNDIR DOS REFERENCIAS
-  ' DISTINTAS BAJO EL MISMO id.
-  For Each sEntry In aEntries
-    If TrimUTF8(sEntry) = "" Then Continue
-    iPosLlave = InStr(sEntry, "{")
-    iPosComa = InStr(sEntry, ",")
-    If iPosLlave = 0 Or iPosComa = 0 Then Continue
-    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
-    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
-    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
-
-    ' SANITIZAR Y VERIFICAR COLISIÓN ANTES DE EMITIR EL <ref>
-    sCitekeySanitizado = SanitizarCitekey(sCitekey)
-    If colSanitizados.Exist(sCitekeySanitizado) Then
-      If colSanitizados[sCitekeySanitizado] <> sCitekey Then
-        m_Sonido.sonar("Error")
-        Message.Error(
-          "Colisión de citekeys al sanitizar para XML JATS:" & gb.NewLine & gb.NewLine &
-          "Original 1: " & colSanitizados[sCitekeySanitizado] & gb.NewLine &
-          "Original 2: " & sCitekey & gb.NewLine &
-          "Ambos resultan en: " & sCitekeySanitizado & gb.NewLine & gb.NewLine &
-          "Renombre uno de los dos en el archivo .bib y reintente.")
-        Return False
-      Endif
-      ' MISMO CITEKEY APARECE DOS VECES EN EL .bib: SALTAR
-      Continue
-    Endif
-    colSanitizados[sCitekeySanitizado] = sCitekey
-
-    ' EL id USA EL FORMATO "bib-{citekey_sanitizado}", IGUAL QUE
-    ' GenerarRefListXML Y QUE EL rid DEL <xref> GENERADO POR
-    ' cite-to-xref.lua. AMBOS COINCIDEN EXACTAMENTE Y EL XML
-    ' RESULTANTE ES NMTOKEN-VÁLIDO SEGÚN LA DTD DE JATS.
-    sXML &= "  <ref id=" & cQ & "bib-" & sCitekeySanitizado & cQ & ">" & gb.NewLine
-    sXML &= GenerarElementCitationDesdeBib(sEntry, sType, dictEntries)
-    sXML &= "  </ref>" & gb.NewLine
-  Next
-
-  sXML &= "</ref-list>" & gb.NewLine
-
-  ' --- 4. Guardar y postprocesar ---
-  outputFile = m_InicioCierre.RutaProyectoEnCurso &/ "referencias/ref-" &
-    File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".xml"
-  File.Save(outputFile, sXML)
-
-  If Not AplicarReglasPostproceso(outputFile) Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error en el postproceso del archivo XML")
-    Return False
-  Endif
-
-  Return Exist(outputFile)
-
-End
 
 ' =====================================================
 ' FUNCIÓN: GenerarElementCitationDesdeBib
@@ -847,46 +715,6 @@ Private Function FusionarEntradas(sEntryBase As String, sEntryActual As String) 
 
 End
 
-' =====================================================
-' FUNCIÓN: AplicarReglasPostproceso
-' =====================================================
-' DESCRIPCIÓN: EJECUTA EL SCRIPT PYTHON DE POSTPROCESO SOBRE
-'              EL ARCHIVO XML EXPORTADO
-' PARÁMETROS: sXmlFile — RUTA COMPLETA AL ARCHIVO XML
-' RETORNA:    Boolean — True si exitoso
-' =====================================================
-Public Function AplicarReglasPostproceso(sXmlFile As String) As Boolean
-
-  Dim sScriptPython As String
-  Dim sComando As String
-
-  If Not Exist(sXmlFile) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo XML no existe: " & sXmlFile)
-    Return False
-  Endif
-
-  sScriptPython = User.Home &/ ".gbpublisher/filters/postprocesar_jats.py"
-
-  If Not Exist(sScriptPython) Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No se encontró el script de postproceso: " & sScriptPython & "\nNo se aplicará postproceso.")
-    Return True
-  Endif
-
-  sComando = "python3 '" & sScriptPython & "' '" & sXmlFile & "'" & "\n"
-  FMain.TerminalViewProyecto.Input(sComando)
-  Wait 0.5
-  FMain.TerminalViewProyecto.Input("clear" & "\n")
-
-  Return True
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error en postproceso:\n" & Error.Text)
-  Return False
-
-End Function
 
 ' =====================================================
 ' FUNCIÓN: TrimUTF8
@@ -1827,14 +1655,15 @@ End Function
 '   - MapearTipoEditor          → MapearTipoEditorDocBook
 '   - GenerarPersonGroup        → GenerarPersonGroupDocBook
 '   - GenerarElementCitationDesdeBib → GenerarBiblioentryDesdeBib
-'   - GenerarRefListXML         → GenerarBiblioCapituloXML
+'   - EscribirRefList           → GenerarBiblioCapituloXML
 '                                  (+ GenerarBiblioLibroXML PARA CONSOLIDADA)
 '
 ' CONVENCIÓN DE ASOCIACIÓN (RC-BIB-01):
 '   La asociación bibtex ↔ artículo/capítulo NO usa FKs ni id_articulo.
-'   El matching es por clave_bibtex contra el CSV de citekeys en
-'   articulos.referencias_citadas (revistas) o capitulos.referencias_citadas
-'   (libros). El .bib es compartido a nivel proyecto.
+'   El matching es por clave_bibtex: en libros, contra el CSV de citekeys de
+'   capitulos.referencias_citadas; en revistas, contra las claves que el
+'   canónico saca del .md (SC-16; la tabla vieja articulos salió, SC-98).
+'   El .bib es compartido a nivel proyecto.
 ' ==========================================================
 
 ' ============================================
@@ -3631,115 +3460,6 @@ Catch
 
 End Function
 
-' ============================================
-' Función   : ExportarDocBookdesdeBIB
-' Propósito : Exporta todas las referencias del .bib a un archivo
-'             XML DocBook 5.2 completo (ref-*.xml) en /referencias.
-'             A diferencia de GenerarBiblioCapituloXML que filtra por
-'             los citekeys citados en el capítulo activo, esta función
-'             exporta la bibliografía COMPLETA del .bib sin filtrar.
-'             Mantiene la misma simetría que ExportarJATSdesdeBIB:
-'             - Prefijo "bib-" en el xml:id
-'             - Sanitización del citekey vía SanitizarCitekey
-'             - Detección de colisión: dos citekeys distintos que
-'               sanitizan al mismo valor abortan con error explícito
-' Retorna   : Boolean — True si el archivo se generó correctamente
-' ============================================
-Public Function ExportarDocBookdesdeBIB() As Boolean
-
-  ' COMILLA DOBLE COMO VARIABLE LOCAL (SC-01)
-  Dim cQ As String = Chr(34)
-
-  Dim sBibFile As String
-  Dim sBibContent As String
-  Dim sXML As String
-  Dim outputFile As String
-  Dim aEntries As String[]
-  Dim sEntry As String
-  Dim sCitekey As String
-  Dim sCitekeySanitizado As String
-  Dim sType As String
-  Dim iPosLlave As Integer
-  Dim iPosComa As Integer
-  Dim dictEntries As New Collection
-  Dim colSanitizados As New Collection
-
-  ' --- 1. VERIFICAR Y LEER EL .bib ---
-  sBibFile = m_InicioCierre.RutaProyectoEnCurso &/ "referencias/ref-" &
-    File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".bib"
-
-  If Not Exist(sBibFile) Then
-    m_Sonido.sonar("Error")
-    Message.Error("El archivo .bib no existe. Exporte primero las referencias.")
-    Return False
-  Endif
-
-  sBibContent = File.Load(sBibFile)
-
-  ' --- 2. PRIMERA PASADA: ALMACENAR ENTRADAS PARA RESOLVER CROSSREF ---
-  aEntries = Split(sBibContent, "@", "", True)
-
-  For Each sEntry In aEntries
-    If TrimUTF8(sEntry) = "" Then Continue
-    iPosLlave = InStr(sEntry, "{")
-    iPosComa = InStr(sEntry, ",")
-    If iPosLlave = 0 Or iPosComa = 0 Then Continue
-    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
-    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
-    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
-    dictEntries[sCitekey] = sEntry
-  Next
-
-  ' --- 3. SEGUNDA PASADA: GENERAR XML ---
-  ' DECLARA xmlns + xmlns:xlink EN EL <bibliography>, IGUAL QUE
-  ' GenerarBiblioCapituloXML PARA QUE EL FRAGMENTO SEA AUTÓNOMO Y
-  ' POSTPROCESABLE POR HERRAMIENTAS QUE NO HEREDEN NAMESPACES.
-  sXML = "<?xml version=" & cQ & "1.0" & cQ & " encoding=" & cQ & "UTF-8" & cQ & "?>" & gb.NewLine
-  sXML &= "<bibliography xmlns=" & cQ & "http://docbook.org/ns/docbook" & cQ &
-    " xmlns:xlink=" & cQ & "http://www.w3.org/1999/xlink" & cQ & ">" & gb.NewLine
-  sXML &= "  <title>Referencias</title>" & gb.NewLine
-
-  For Each sEntry In aEntries
-    If TrimUTF8(sEntry) = "" Then Continue
-    iPosLlave = InStr(sEntry, "{")
-    iPosComa = InStr(sEntry, ",")
-    If iPosLlave = 0 Or iPosComa = 0 Then Continue
-    sType = TrimUTF8(Left(sEntry, iPosLlave - 1))
-    If Lower(sType) = "comment" Or Lower(sType) = "string" Then Continue
-    sCitekey = TrimUTF8(Mid(sEntry, iPosLlave + 1, iPosComa - iPosLlave - 1))
-
-    ' SANITIZAR Y VERIFICAR COLISIÓN ANTES DE EMITIR LA ENTRADA
-    sCitekeySanitizado = SanitizarCitekey(sCitekey)
-    If colSanitizados.Exist(sCitekeySanitizado) Then
-      If colSanitizados[sCitekeySanitizado] <> sCitekey Then
-        m_Sonido.sonar("Error")
-        Message.Error(
-          "Colisión de citekeys al sanitizar para XML DocBook:" & gb.NewLine & gb.NewLine &
-          "Original 1: " & colSanitizados[sCitekeySanitizado] & gb.NewLine &
-          "Original 2: " & sCitekey & gb.NewLine &
-          "Ambos resultan en: " & sCitekeySanitizado & gb.NewLine & gb.NewLine &
-          "Renombre uno de los dos en el archivo .bib y reintente.")
-        Return False
-      Endif
-      ' MISMO CITEKEY APARECE DOS VECES EN EL .bib: SALTAR
-      Continue
-    Endif
-    colSanitizados[sCitekeySanitizado] = sCitekey
-
-    sXML &= GenerarBiblioentryDesdeBib(sEntry, sType, sCitekeySanitizado,
-      dictEntries)
-  Next
-
-  sXML &= "</bibliography>" & gb.NewLine
-
-  ' --- 4. GUARDAR ARCHIVO ---
-  outputFile = m_InicioCierre.RutaProyectoEnCurso &/ "referencias/ref-" &
-    File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".xml"
-  File.Save(outputFile, sXML)
-
-  Return Exist(outputFile)
-
-End
 
 ' ==========================================================
 ' FUNCIÓN PÚBLICA: GenerarInfoLibroXML

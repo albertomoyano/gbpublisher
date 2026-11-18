@@ -5,7 +5,9 @@
 -- ANALOGÍA CON REVISTAS:
 --   ESTE FILTRO REEMPLAZA DOS FILTROS DEL PIPELINE JATS:
 --     - unwrap-structural-divs.lua  (PARCIAL)
---     - table-to-end.lua            (FUSIONA CASO fullwidth/rotate)
+--     - table-to-end.lua            (FUSIONA CASO fullwidth/rotate;
+--                                    RETIRADO DE REVISTAS, BORRADO EL
+--                                    18/11/2026: SC-66, SC-97)
 --   PLUS LA LÓGICA DE Div() EMBEBIDA EN cite-to-xref.lua.
 --   CONSOLIDADO EN UN SOLO ARCHIVO PORQUE EN DOCBOOK LA
 --   CASUÍSTICA ES MENOR Y EL MANTENIMIENTO DE 3-4 ARCHIVOS
