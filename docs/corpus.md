@@ -305,7 +305,7 @@ El filtro del diálogo es comodidad visual, no validación: cualquier regla sobr
 
 ### RC-GM-20 — No hay bloque Try/Catch: hay dos mecanismos de error de alcances distintos
 
-**Estado:** vigente · **Evidencia:** doc_oficial · **Entorno:** gambaswiki.org/wiki/lang/try, /lang/catch, /lang/finally · **Verificado:** 2026-08
+**Estado:** vigente · **Evidencia:** doc_oficial · **Entorno:** gambaswiki.org/wiki/lang/try, /lang/catch, /lang/finally / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Escribir `Try ... End Try` es error de compilación. La confusión viene de VB/.NET y de código generado por IA. Lo que existe es:
 
@@ -347,9 +347,9 @@ REGLA OPERATIVA
 3. `Finally` no se usa para liberar recursos. Si aparece la necesidad, revisar si el problema real es que la función tiene demasiados caminos de salida.
 4. Nunca `End Try`. Nunca `Catch` como bloque a mitad de función.
 
-**Relaciones:** apoya:RC-GM-02, vinculo:RC-GM-07, vinculo:SC-07
+MEDIDO (19/11/2026, banco gbBanco322, en 3.19 y en 3.22.2 de Mint): una función que sale con `Return` antes de su `Finally` no lo ejecuta; la misma función sin `Return` sí. Lo que decía la documentación se cumple.
 
-**PENDIENTE:** Verificar empíricamente el comportamiento de Finally con Return en 3.22.1 antes de comprometer código que dependa de él.
+**Relaciones:** apoya:RC-GM-02, vinculo:RC-GM-07, vinculo:SC-07
 
 ### RC-GM-21 — Firmas de posicionamiento de TextEdit: no son las de TextEditor
 
@@ -5747,6 +5747,32 @@ PROBADO. Compila con gbc3 3.19. En un proyecto de consola con gbx3 3.19: `File.B
 
 **PENDIENTE:** Probar en Mint: un proyecto nuevo de cada tipo y uno existente con el readme.md vacío.
 
+### SC-101 — El respaldo diario de la aplicación: completo o ninguno, sin la contraseña a la vista, y SHOW VIEW para app_user (actualización 1.34.0)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8 (Mint) y MariaDB 10.11 (contenedor) / gbc3, gbx3 3.19 · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 19/11/2026).
+
+EL PROBLEMA. `FMain.RespaldarBaseDatos` corre al arrancar la aplicación (`FAvisoLegal`, formulario inicial) y respalda la base local con mysqldump y la cuenta `app_user`. Desde la 1.19.0 cortaba en la primera VIEW de gbWeb (GV-214) y dejaba un archivo incompleto: sin las vistas ni la tabla `vocabulario_termino`, que va después en orden alfabético. Nadie se enteraba, porque se corría con `Try Shell ... Wait` sin mirar el resultado. Lo mostró una corrida de la aplicación desde la terminal en Mint (19/11/2026).
+
+LOS PERMISOS DE app_user. En Mint, `app_user` tiene `SELECT, INSERT, UPDATE, DELETE` sobre `gbpublisher`, y la aplicación no necesita más para trabajar. El instalador, en cambio, le da `ALL PRIVILEGES`, y el comentario de la 1.23.0 lo da por hecho. Lo que tiene que tener queda para el bloque de credenciales.
+
+LA ACTUALIZACIÓN 1.34.0. Da `SHOW VIEW` sobre la base a cada host de `app_user` que no lo tenga. Es de solo lectura y es lo que necesita mysqldump para copiar las vistas. No toca tablas ni datos, así que no hace respaldo; se deshace con un `REVOKE` que el script muestra. NO da `TRIGGER`: con él, `app_user` podría borrar los disparadores que hacen de `articulo_reapertura` un registro solo de altas (1.23.0).
+
+EL RESPALDO
+- `mysqldump` con `Exec` y un arreglo, sin `Shell`. Opciones: `--no-tablespaces`, `--skip-lock-tables`, `--single-transaction`, `--skip-triggers` (a propósito: sin el permiso, mysqldump los omite en silencio), `--default-character-set=utf8mb4`, `--result-file` y `--log-error`.
+- La contraseña va en un archivo de opciones en la carpeta temporal del proceso (`--defaults-extra-file`, el primer argumento), que se borra al terminar. En la línea de comandos la veía cualquier usuario en la lista de procesos.
+- Se escribe en `gbpublisher_AAMMDD.sql.parcial` y se renombra solo si mysqldump salió con 0 y el archivo cierra con «Dump completed». Si no, se borra el parcial, el anterior queda intacto y un aviso dice el motivo, con el mensaje de mysqldump.
+- El archivo queda legible solo por el usuario: tiene toda la base, con las claves cifradas de `usuarios_sistema`.
+
+RESTAURAR. Un respaldo de la aplicación no trae los disparadores. Después de restaurarlo se corre otra vez `actualizar-esquema-1.23.0.sh`, que decide por el estado real y repone los que falten.
+
+PROBADO en el contenedor (MariaDB 10.11, gbc3 y gbx3 3.19), sobre una base con una VIEW, `vocabulario_termino`, un disparador y `app_user` con los cuatro permisos de Mint: el corte reproducido (código 2, sin la marca final); la 1.34.0 aplicada, repetida, cancelada y con un segundo host que ya tenía `ALL`; la función, con un respaldo completo (permisos 600) y con el permiso quitado (aviso con el mensaje de mysqldump y el archivo anterior intacto, la misma huella md5); la contraseña ausente de `/proc/*/cmdline`.
+
+**Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67
+
+**PENDIENTE:** Aplicar la 1.34.0 en Mint, abrir la aplicación y ver el respaldo del día completo. Probar el aviso quitando el permiso un momento (REVOKE) y reponiéndolo con la 1.34.0.
+
 ---
 
 ## RF — Referencia de API
@@ -7452,7 +7478,7 @@ CONSECUENCIA: dos grupos de opciones independientes necesitan un contenedor cada
 
 ### GV-56 — Una referencia a un miembro inexistente de otro módulo compila: la falla queda para la ejecución
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / Linux Mint / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Caso de la sesión que implementó los snippets (SC-21). `m_Snippets.Expandir` usaba `m_Constantes.SNIPPET_MARCADOR` antes de que la constante existiera en `m_Constantes`. Limpiar y Compilar no dio ningún error; la aplicación arrancó y el formulario de snippets funcionó.
 
@@ -7466,9 +7492,9 @@ REGLA
 
 Un parche que agrega una referencia a un miembro de otro módulo —constante, variable, función— entra en el MISMO lote que el alta de ese miembro, y el lote se aplica entero antes de recompilar. Ante la duda, buscar el nombre en `.src` antes de dar el parche por aplicado: no alcanza con que compile.
 
-**Relaciones:** vinculo:GV-32, apoya:GV-23, vinculo:SC-03, vinculo:SC-21
+EL MENSAJE EN EJECUCIÓN (19/11/2026, banco gbBanco322, en 3.19 y en 3.22.2): `Unknown symbol 'NoExiste' in class 'M2'`, código 11. Se provocó con un módulo `M2` sin ese miembro, dentro de un `Try`.
 
-**PENDIENTE:** Falta provocar la falla a propósito, ejecutando la línea sin el miembro, para registrar el mensaje exacto de ejecución.
+**Relaciones:** vinculo:GV-32, apoya:GV-23, vinculo:SC-03, vinculo:SC-21
 
 ### GV-57 — Visibilidad de los controles de un formulario: la decide la opción ControlPublic del proyecto
 
@@ -7737,7 +7763,7 @@ MENSAJES CORREGIDOS (18/11/2026): `actualizar-esquema-1.1.0.sh`, `1.2.0.sh` y `1
 
 ### GV-68 — Asignar "" a una clave de Collection no la crea, y si existía la borra
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbs3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbs3 / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Asignar una cadena vacía a una clave de `Collection` no la crea, y si la clave ya existía, la borra:
 
@@ -7759,9 +7785,9 @@ Un OBJETO sí se conserva aunque esté vacío: un `String[]` sin elementos asign
 
 Caso del proyecto: `m_PrimerasLibro`, marcadores de los textos de créditos (SC-25): `EsMarcadorConocido` y `ValorDe`.
 
-**Relaciones:** vinculo:SC-25,vinculo:GV-24
+CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): los cuatro casos, incluido el `String[]` vacío que sí crea la clave.
 
-**PENDIENTE:** Medido en 3.19, no en 3.22.1.
+**Relaciones:** vinculo:SC-25,vinculo:GV-24
 
 ### GV-69 — ComboBox de solo lectura: Clear y Add mueven el índice sin disparar Click
 
@@ -7902,7 +7928,7 @@ REGLA: el nombre después del prefijo tiene al menos dos letras con sentido (`iC
 
 ### GV-76 — gb.highlight: un espacio literal en un patrón match es error de sintaxis
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.highlight / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.highlight / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 En un archivo `.highlight` de gb.highlight, un patrón `match` con un espacio literal no carga. Tampoco dentro de una clase de caracteres:
 
@@ -7924,13 +7950,13 @@ Medido con un programa de prueba que registra la gramática con `TextHighlighter
 
 Caso del proyecto: el ancla de cierre `[/clase]: # ()` (SC-33) en `Markdown.highlight`.
 
-**Relaciones:** vinculo:SC-34,vinculo:SC-33
+CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint). El error aparece al crear el resaltador (`TextHighlighter[clave]`), no al registrar la gramática. En 3.22.2 el mensaje nombra otra línea del componente: «[gb.highlight].TextHighlighter.CreateCustomHighlighter.681: [gb.highlight].CCommandMatch.SetArgs.12: Syntax error at line 2». Con `\x20`, carga.
 
-**PENDIENTE:** Medido en 3.19, no en 3.22.1.
+**Relaciones:** vinculo:SC-34,vinculo:SC-33
 
 ### GV-77 — File.Load y <> comparan bien un archivo binario, con bytes nulos
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbx3 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbx3 / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 `File.Load` devuelve el archivo entero aunque tenga bytes nulos, y `<>` compara las cadenas por su largo y su contenido, no hasta el primer nulo:
 
@@ -7943,9 +7969,9 @@ CONSECUENCIA
 
 El cotejo de recursos de SC-11 sirve también para un binario, como era el `.ott` del ODT (retirado: SC-96), sin sumas de verificación.
 
-**Relaciones:** vinculo:SC-11
+CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): los tres casos.
 
-**PENDIENTE:** Medido en 3.19, no en 3.22.1.
+**Relaciones:** vinculo:SC-11
 
 ### GV-78 — GridView: asignar Row emite Change y Select, nunca Click
 
@@ -8365,7 +8391,7 @@ Caso del proyecto: `fenced-divs-to-elements-db.lua` (6.5) escribe así el verso 
 
 ### GV-96 — Val y Str dependen del locale; CFloat y CStr no
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbs3 / contenedor Ubuntu 24.04 / locales C.UTF-8 y es_AR.UTF-8 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gbs3 / contenedor Ubuntu 24.04 / locales C.UTF-8 y es_AR.UTF-8 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 `Val` y `Str` usan el separador decimal y el de miles del locale. `CFloat` y `CStr` usan siempre el punto. Con `es_AR.UTF-8`, el locale de Mint en la editorial, la diferencia rompe la lectura de números escritos con punto.
 
@@ -8408,9 +8434,9 @@ Las usan `FAutores` (alta y modificación: índice h, i10, publicaciones, citas,
 
 MEDIDO en 3.19 (gbx3): «1.234», «12,5», «1 234», «-3», un NBSP delante y diez dígitos son inválidos; «», «0», « 42 » y nueve dígitos son válidos. `CInt("1.234")` da «Type mismatch» en vez de adivinar.
 
-**Relaciones:** vinculo:GV-03,vinculo:RC-GM-02
+CONFIRMADO EN 3.22.2 CON es_AR.UTF-8 (19/11/2026, banco gbBanco322, Mint): `Val("15.5")` Null, `Val("15,5")` 15.5, `Val("1.234")` 1234, `Str(15.5)` «15,5», `CStr(15.5)` «15.5», `CFloat("15.5")` 15.5, `CFloat("15,5")` error, y `CInt("1.234")` error (la base de `EnteroDeTexto`).
 
-**PENDIENTE:** Repetir el mini-test en Mint con Gambas 3.22.2 y el locale real.
+**Relaciones:** vinculo:GV-03,vinculo:RC-GM-02
 
 ### GV-97 — Dialog.SaveFile con gb.form.dialog: la pregunta de sobrescritura la hace gb.form
 
@@ -8559,7 +8585,7 @@ Para tex4ht (SC-56): el documento mínimo que genere `docbook-to-latex.xsl` tien
 
 ### GV-103 — Gambas Like: la clase negada es [^…]; [!…] no niega
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbs3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbs3) / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 En un patrón de `Like`, la clase de caracteres negada se escribe con circunflejo: `[^a-z]`. La forma con signo de exclamación, `[!a-z]`, que es la del glob de bash y la de Visual Basic, NO niega: Gambas la lee como una clase que contiene el propio `!` y el rango.
 
@@ -8575,9 +8601,9 @@ REGLA: en `Like`, la negación va con `[^…]`. Si la línea existe por esta ent
 
 Es otra de las diferencias con Visual Basic que rompen código (CONTEXTO, punto 4).
 
-**Relaciones:** vinculo:SC-57,apoya:GV-23
+CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): los tres casos.
 
-**PENDIENTE:** Medido en Gambas 3.19. Repetir en Mint con la versión instalada, con este script de gbs3: Print "abc" Like "*[!a-z]*", "abc" Like "*[^a-z]*" — tiene que dar True y False.
+**Relaciones:** vinculo:SC-57,apoya:GV-23
 
 ### GV-104 — IBM Plex Sans no trae smcp ni c2sc; Noto Serif sí
 
@@ -9296,7 +9322,7 @@ EN EL PROYECTO: Mint usa es_AR.UTF-8. La hoja del HTML decide así si una figura
 
 ### GV-137 — JSON.Encode (gb.util.web): qué escapa y qué no
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.util.web / contenedor Ubuntu 24.04, C.UTF-8 y es_AR.UTF-8 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.util.web / contenedor Ubuntu 24.04, C.UTF-8 y es_AR.UTF-8 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Medido con una `Collection` y un `Variant[]`:
 
@@ -9313,9 +9339,9 @@ LEER LOS NÚMEROS. Con es_AR.UTF-8, `Val("1234.5")` da Null y `CFloat("1234.5")`
 
 EN EL PROYECTO: la configuración del gráfico se escribe con `JSON.Encode` (SC-69).
 
-**Relaciones:** apoya:SC-69,vinculo:GV-96,vinculo:GV-98
+CONFIRMADO EN 3.22.2 CON es_AR.UTF-8 (19/11/2026, banco gbBanco322, Mint): los escapes, el orden de inserción, `</script>` sin escapar, `null` y el Float con punto.
 
-**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+**Relaciones:** apoya:SC-69,vinculo:GV-96,vinculo:GV-98
 
 ### GV-138 — ListBox en Select.Multiple: la selección por código no emite eventos
 
@@ -9362,7 +9388,7 @@ EN EL PROYECTO: el PNG del gráfico se saca a escala 3 (SC-69).
 
 ### GV-140 — Base64$ con un archivo binario
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Medido con `File.Load` de un woff2 (12 796 bytes) y `Base64$`:
 
@@ -9374,9 +9400,9 @@ Medido con `File.Load` de un woff2 (12 796 bytes) y `Base64$`:
 
 EN EL PROYECTO: no se usa. El HTML del gráfico lo arma `engine/grafico.sh` (SC-13, SC-69), que codifica las fuentes con `base64 -w0`; en `.hidden/chart/` quedan los woff2 y no una copia en base64.
 
-**Relaciones:** vinculo:SC-69
+CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): `Base64$` de una cadena con un nulo da «YWIAY2Q=», y una larga sale sin saltos de línea.
 
-**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+**Relaciones:** vinculo:SC-69
 
 ### GV-141 — Chromium sin ventana: --dump-dom espera el dibujo; la página va como URL y sin perfil propio
 
@@ -9514,7 +9540,7 @@ EN EL PROYECTO: `m_Vocabularios.NuloSiVacio`, `m_Articulo.NuloSiVacio`, `m_Revis
 
 ### GV-148 — Los arreglos no tienen Exchange: el intercambio se escribe a mano
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Medido: `aLista.Exchange(i, j)` sobre un `String[]` compila y falla al ejecutar con «Unknown symbol 'Exchange' in class 'String[]'» (el miembro inexistente compila: GV-56).
 
@@ -9522,9 +9548,9 @@ PATRÓN: intercambio con una variable auxiliar del tipo del elemento. Con arregl
 
 EN EL PROYECTO: `CContribuyente.Intercambiar`, `CTextosArticulo.MoverControlado`, `FMetadatosArticulo.MoverContribuyente`, `FPlantillasResumen.MoverSeccion`.
 
-**Relaciones:** vinculo:GV-56
+CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): `Exchange` falla al ejecutar. La instrucción `Swap` entre dos variables sí funciona (medido en 3.19 y en 3.22.2): sirve para dos variables sueltas, no para dos elementos de un arreglo con su índice, que siguen con la variable auxiliar.
 
-**PENDIENTE:** Medido en 3.19.0. Confirmar en Gambas 3.22.1 (la instrucción Swap no se probó).
+**Relaciones:** vinculo:GV-56
 
 ### GV-149 — gb.db / MySQL: SELECT ROW_COUNT() en un Exec aparte dio 0 después de un UPDATE
 
@@ -9544,7 +9570,7 @@ EN EL PROYECTO: `m_Vocabularios.GuardarTermino` cuenta las palabras clave que va
 
 ### GV-150 — LCase solo convierte ASCII; String.LCase convierte todo si el locale es UTF-8
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 (locale C y C.UTF-8) · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 / contenedor Ubuntu 24.04 (locale C y C.UTF-8) / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Medido:
 
@@ -9556,9 +9582,9 @@ Es otro caso de RC-GM-12: las funciones sin prefijo son de bytes. Y `String.LCas
 
 EN EL PROYECTO: el control de palabras clave repetidas (`m_Articulo.AvisoPalabras`) y el de términos repetidos al agregar uno controlado comparan con `String.LCase`, la misma regla que la clave única de la base (GV-152).
 
-**Relaciones:** vinculo:RC-GM-12,vinculo:GV-96,apoya:SC-74
+CONFIRMADO EN 3.22.2 CON es_AR.UTF-8 (19/11/2026, banco gbBanco322, Mint): `LCase` deja «Árbol Ñandú» y `String.LCase` da «árbol ñandú».
 
-**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1 y locale es_AR.UTF-8.
+**Relaciones:** vinculo:RC-GM-12,vinculo:GV-96,apoya:SC-74
 
 ### GV-151 — FSysAdmin funciona sin sesión: nada de lo que llama puede depender de m_ConexionBD.mConn
 
@@ -10521,7 +10547,7 @@ CONSECUENCIA. El `include.xsl` de SchXslt que pedía GV-26 ya no hace falta. `ge
 
 ### GV-212 — Trim() de Gambas 3.19 no quita el byte 0xA0 de un carácter UTF-8: la advertencia de m_XML.TrimUTF8 no se cumple en esa versión
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 (gbc3, gbx3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 (gbc3, gbx3) / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2, Linux Mint, es_AR.UTF-8 (banco gbBanco322, 19/11/2026) · **Verificado:** 2026-11
 
 Medido el 18/11/2026 con Gambas 3.19 (gbc3 y gbx3, en un contenedor Ubuntu 24.04): un proyecto de consola imprime los bytes antes y después de `Trim()`.
 
@@ -10532,9 +10558,49 @@ En 3.19, `Trim()` NO quita el byte 0xA0. El comentario de `m_XML.TrimUTF8` («Tr
 
 ALCANCE. Lo medido es 3.19, no la 3.22 de Mint. Hasta medirlo allá, la precaución de `TrimUTF8` se conserva. El código nuevo que necesite recortar blancos lo hace por bytes ASCII (9, 10, 13, 32), que es correcto en cualquier versión (`FTXTextendido.Limpiar`).
 
+CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): los cuatro casos dan lo mismo que en 3.19. `Trim()` no quita el byte 0xA0 tampoco en la versión de Mint.
+
 **Relaciones:** vinculo:SC-18
 
-**PENDIENTE:** Repetir la medición en Mint con Gambas 3.22. Si da lo mismo, decidir si TrimUTF8 sigue haciendo falta.
+**PENDIENTE:** Decidir si m_XML.TrimUTF8 sigue haciendo falta: ni en 3.19 ni en 3.22.2 Trim() quita el byte 0xA0.
+
+### GV-213 — CStr de un Boolean da «T» o la cadena vacía, no «True» ni «False»
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 (gbx3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+`CStr` de un Boolean no da «True» ni «False»: da «T» para True y la cadena vacía para False.
+
+    CStr(True)            «T»
+    CStr(False)           «»
+    CStr(1 = 1)           «T»
+
+CONSECUENCIA. Comparar el resultado con «True», escribirlo en un archivo de texto o mostrarlo en un mensaje no da lo que se espera, y no hay error que lo avise. Lo vio el banco gbBanco322: la primera versión comparaba `CStr(c.Exist("a"))` con «False» y daba 12 falsas diferencias.
+
+REGLA. Para mostrar o escribir un Boolean, decidir el texto: `If(b, "True", "False")`, o las palabras del caso («sí»/«no»).
+
+**Relaciones:** vinculo:RC-GM-01
+
+**PENDIENTE:** Confirmar en Mint con 3.22.2: gbs3 con Print "«"; CStr(True); "» «"; CStr(False); "»".
+
+### GV-214 — mysqldump: sin SHOW VIEW corta en la primera vista y deja el archivo incompleto; sin TRIGGER omite los disparadores en silencio
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8 (Mint, el mensaje) / MariaDB 10.11 y mysqldump (contenedor) · **Verificado:** 2026-11
+
+Medido el 19/11/2026.
+
+SIN SHOW VIEW. Una cuenta con `SELECT, INSERT, UPDATE, DELETE` sobre la base y sin `SHOW VIEW` no puede respaldarla con mysqldump si la base tiene vistas: corta en la primera y sale con código 2.
+
+    mysqldump: Couldn't execute 'show create table `v_web_coleccion`':
+    SHOW VIEW command denied to user 'app_user'@'localhost' for table
+    'v_web_coleccion' (1142)
+
+El archivo queda con lo escrito hasta ahí y sin la línea final «-- Dump completed». Las tablas que van después de la vista en orden alfabético no están. El mensaje es el de MySQL 8 en Mint; en MariaDB 10.11 da el mismo error, con el nombre de la tabla calificado con la base.
+
+SIN TRIGGER. Sin el permiso `TRIGGER`, mysqldump no da error: omite los disparadores en silencio y el respaldo termina completo (MariaDB 10.11).
+
+CONSECUENCIA. Un respaldo se da por bueno solo si mysqldump salió con 0 y el archivo cierra con «Dump completed» (SC-22, SC-101).
+
+**Relaciones:** vinculo:SC-101
 
 ---
 

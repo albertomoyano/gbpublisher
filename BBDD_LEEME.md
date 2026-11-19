@@ -269,7 +269,7 @@ Las propiedades que todo script de actualización debe tener:
 | Paso | Script |
 |---|---|
 | Instalación | `gbpublisher-baseline-1.0.0.sql` con `instalar-gbpublisher.sh` |
-| Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.33.0.sh`, en orden |
+| Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.34.0.sh`, en orden |
 
 Para saber en qué punto está una base:
 
@@ -281,6 +281,23 @@ Se corren con `sudo bash actualizar-esquema-X.Y.Z.sh`. Los respaldos quedan
 en `~/gbpublisher-respaldos/`. Las actualizaciones que borran tablas o datos
 (1.32.0, 1.33.0) no se deshacen con un parche: se vuelve atrás restaurando el
 respaldo que hicieron antes de empezar, y cada una muestra el comando.
+
+La 1.34.0 no toca tablas ni datos: le da a `app_user` el permiso `SHOW VIEW`,
+de solo lectura, que necesita el respaldo diario de la aplicación para copiar
+las vistas de gbWeb. Por eso no hace respaldo, y se deshace con un `REVOKE`
+que el script muestra.
+
+### El respaldo diario de la aplicación
+
+Al abrirse, la aplicación respalda la base local en
+`~/.gbpublisher/respaldo/gbpublisher_AAMMDD.sql`, uno por día, legible solo
+por el usuario. El archivo del día se reemplaza solo por un respaldo
+completo; si mysqldump falla, la aplicación lo avisa y deja el anterior.
+
+Va **sin los disparadores** de `articulo_reapertura`: `app_user` no tiene el
+permiso `TRIGGER`, a propósito, porque con él podría borrarlos. Después de
+restaurar uno de estos respaldos hay que volver a correr
+`actualizar-esquema-1.23.0.sh`, que repone los disparadores que falten.
 
 El número 2.0.0 está reservado para los cambios pendientes en la tabla
 `bibtex`.

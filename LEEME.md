@@ -74,14 +74,14 @@ El baseline es la base tal como era en la versión 1.0.0. Las actualizaciones la
 sudo bash actualizar-esquema-1.1.0.sh
 sudo bash actualizar-esquema-1.2.0.sh
 ...
-sudo bash actualizar-esquema-1.33.0.sh
+sudo bash actualizar-esquema-1.34.0.sh
 ```
 
 Cada actualización:
 
 - dice qué va a cambiar y pide que escribas `SI` para continuar (si borra datos, muestra cuáles);
 - comprueba que la anterior esté aplicada, y frena con un mensaje si no lo está;
-- hace un respaldo de la base en `~/gbpublisher-respaldos/` antes de cambiar nada;
+- si cambia tablas o datos, hace un respaldo de la base en `~/gbpublisher-respaldos/` antes de empezar (la 1.34.0 solo da un permiso y no lo necesita);
 - si ya estaba aplicada, lo dice y no toca nada.
 
 Si una actualización frena, no sigas con la siguiente: pasá el mensaje al responsable técnico.
@@ -151,7 +151,8 @@ Esta sección es para el responsable técnico de la institución. El detalle de 
 | Usuario de aplicación | `app_user` |
 | Puerto | 3306 |
 | Codificación | utf8mb4 / utf8mb4_unicode_ci |
-| Herramientas fijadas | `/opt/pandoc`, `/opt/Saxon-HE`, `/opt/epubcheck`, `/opt/verapdf`, `/opt/packtools` |
+| Herramientas fijadas | `/opt/pandoc`, `/opt/Saxon-HE`, `/opt/epubcheck`, `/opt/verapdf`, `/opt/packtools`, `/opt/vnu` |
 | Respaldos de las actualizaciones | `~/gbpublisher-respaldos/` |
+| Respaldo diario de la aplicación | `~/.gbpublisher/respaldo/`, uno por día, al abrir la aplicación |
 
 La contraseña del usuario `app_user` está configurada en el archivo de conexión de la aplicación. No se muestra en esta guía por razones de seguridad.

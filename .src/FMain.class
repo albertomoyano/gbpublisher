@@ -2037,70 +2037,147 @@ Public Sub Form_KeyRelease()
 
 End
 
+' ============================================
+' Función   : RespaldarBaseDatos
+' Propósito : Respaldo diario de la base local al arrancar la aplicación, en
+'             ~/.gbpublisher/respaldo/gbpublisher_AAMMDD.sql. El archivo del
+'             día se reemplaza solo por un respaldo COMPLETO: mysqldump tiene
+'             que salir con 0 y el archivo, cerrar con «Dump completed». Si
+'             no, se avisa y el respaldo anterior queda intacto
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+'
+' HISTORIA: HASTA LA 1.34.0 CORTABA EN LA PRIMERA VIEW DE gbWeb (app_user SIN
+' SHOW VIEW) Y DEJABA UN ARCHIVO INCOMPLETO, SIN AVISO: SE CORRÍA CON
+' Try Shell ... Wait Y NADIE MIRABA EL RESULTADO
+' ============================================
 Public Sub RespaldarBaseDatos()
 
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sHost As String
   Dim sUsuario As String
   Dim sPassword As String
   Dim sBaseDatos As String = "gbpublisher"
-  Dim sFecha As String
   Dim sRutaRespaldo As String
   Dim sArchivoRespaldo As String
-  Dim sComando As String
+  Dim sTemporal As String
+  Dim sCredenciales As String
+  Dim sRegistro As String
+  Dim sMotivo As String
+  Dim sCola As String
   Dim hConexion As Connection
+  Dim hProceso As Process
+  Dim hArchivo As File
 
   ' CONFIGURAR PARÁMETROS DE CONEXIÓN
+  ' PENDIENTE: LAS CREDENCIALES SALEN DEL CÓDIGO EN EL BLOQUE DE CREDENCIALES
   sHost = "localhost"
   sUsuario = "app_user"
   sPassword = "AppUser2024!"
 
-  ' SOLO HACER RESPALDO SI LA BD ES LOCAL (LOCALHOST O 127.0.0.1)
-  If sHost <> "localhost" And sHost <> "127.0.0.1" Then
-    Return
-  Endif
+  ' --- 2. SOLO SI LA BASE ES LOCAL Y EXISTE ---
+  If sHost <> "localhost" And sHost <> "127.0.0.1" Then Return
 
-  ' VERIFICAR SI LA BASE DE DATOS EXISTE
   hConexion = New Connection
   hConexion.Type = "mysql"
   hConexion.Host = sHost
   hConexion.Login = sUsuario
   hConexion.Password = sPassword
   hConexion.Name = sBaseDatos
-
   Try hConexion.Open()
+  If Error Then Return
+  hConexion.Close()
 
+  ' --- 3. RUTAS ---
+  ' EL TEMPORAL VA EN LA MISMA CARPETA QUE EL DESTINO: Move ES UN RENOMBRADO
+  ' Y EL ARCHIVO DEL DÍA NUNCA QUEDA A MEDIO ESCRIBIR
+  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
+  If Not Exist(sRutaRespaldo) Then Try Mkdir sRutaRespaldo
+  sArchivoRespaldo = sRutaRespaldo &/ "gbpublisher_" & Format(Now, "yymmdd") & ".sql"
+  sTemporal = sArchivoRespaldo & ".parcial"
+  sRegistro = Temp$("mysqldump") & ".log"
+
+  ' --- 4. LA CONTRASEÑA, EN UN ARCHIVO Y NO EN LA LÍNEA DE COMANDOS ---
+  ' EN LA LÍNEA DE COMANDOS LA VE CUALQUIER USUARIO EN LA LISTA DE PROCESOS.
+  ' Temp$ VIVE EN UNA CARPETA DEL PROCESO QUE SOLO LEE EL USUARIO, Y EL
+  ' ARCHIVO SE BORRA AL TERMINAR
+  sCredenciales = Temp$("cliente") & ".cnf"
+  Try File.Save(sCredenciales, "[client]" & gb.NewLine & "password=" & sPassword & gb.NewLine)
   If Error Then
+    AvisarRespaldoFallido("no se pudo preparar la conexión: " & Error.Text)
     Return
   Endif
 
-  ' SI LLEGAMOS AQUÍ, LA BASE EXISTE
-  hConexion.Close()
+  ' --- 5. mysqldump ---
+  ' --defaults-extra-file    TIENE QUE IR PRIMERO (REGLA DE mysqldump)
+  ' --no-tablespaces         EVITA QUE app_user NECESITE EL PRIVILEGIO PROCESS
+  ' --skip-lock-tables       EVITA QUE app_user NECESITE EL PRIVILEGIO LOCK TABLES
+  ' --single-transaction     UNA FOTO CONSISTENTE DE LAS TABLAS InnoDB
+  ' --skip-triggers          A PROPÓSITO: app_user NO TIENE EL PERMISO TRIGGER
+  '                          (CON ÉL PODRÍA BORRAR LOS DISPARADORES DE
+  '                          articulo_reapertura). TRAS RESTAURAR, SE REPONEN
+  '                          CORRIENDO OTRA VEZ actualizar-esquema-1.23.0.sh
+  ' --result-file Y --log-error: SIN Shell NI REDIRECCIONES; EL MOTIVO DE UN
+  '                          ERROR QUEDA EN EL REGISTRO
+  Try hProceso = Exec ["mysqldump", "--defaults-extra-file=" & sCredenciales,
+    "-h", sHost, "-u", sUsuario,
+    "--no-tablespaces", "--skip-lock-tables", "--single-transaction", "--skip-triggers",
+    "--default-character-set=utf8mb4",
+    "--result-file=" & sTemporal, "--log-error=" & sRegistro, sBaseDatos] Wait
+  If Error Then sMotivo = "no se pudo ejecutar mysqldump: " & Error.Text
 
-  ' OBTENER FECHA EN FORMATO YYMMDD
-  sFecha = Format(Now, "yymmdd")
+  Try Kill sCredenciales
 
-  ' CONSTRUIR RUTA DEL ARCHIVO DE RESPALDO
-  sRutaRespaldo = User.Home &/ ".gbpublisher/respaldo"
-  sArchivoRespaldo = sRutaRespaldo &/ "gbpublisher_" & sFecha & ".sql"
+  ' --- 6. ¿QUEDÓ COMPLETO? ---
+  ' LA SALIDA 0 NO ALCANZA SOLA: SE MIRA TAMBIÉN LA MARCA FINAL DEL ARCHIVO
+  If sMotivo = "" Then
+    If hProceso.Value <> 0 Then
+      sMotivo = "mysqldump terminó con el código " & hProceso.Value
+      Try sMotivo &= ":" & gb.NewLine & Trim(File.Load(sRegistro))
+    Else If Not Exist(sTemporal) Then
+      sMotivo = "mysqldump no escribió el archivo"
+    Else
+      ' SOLO LAS ÚLTIMAS LÍNEAS: EL ARCHIVO PUEDE PESAR DECENAS DE MEGAS
+      Try hArchivo = Open sTemporal For Read
+      If Not Error Then
+        If Lof(hArchivo) > 200 Then Seek #hArchivo, Lof(hArchivo) - 200
+        Try sCola = Read #hArchivo, -200
+        Close #hArchivo
+      Endif
+      If InStr(sCola, "Dump completed") = 0 Then sMotivo = "el archivo quedó incompleto (falta la marca final)"
+    Endif
+  Endif
+  Try Kill sRegistro
 
-  ' CONSTRUIR COMANDO MYSQLDUMP
-  sComando = "mysqldump -h " & sHost & " -u " & sUsuario
-
-  If sPassword <> "" Then
-    sComando &= " -p" & sPassword
+  ' --- 7. RESULTADO ---
+  If sMotivo <> "" Then
+    Try Kill sTemporal
+    AvisarRespaldoFallido(sMotivo)
+    Return
   Endif
 
-  ' OPCIONES PARA EVITAR ERRORES DE PERMISOS Y GARANTIZAR CONSISTENCIA
-  ' --no-tablespaces      EVITA QUE app_user NECESITE EL PRIVILEGIO PROCESS
-  ' --skip-lock-tables    EVITA QUE app_user NECESITE EL PRIVILEGIO LOCK TABLES
-  ' --single-transaction  ENVUELVE EL DUMP EN UNA TRANSACCIÓN CONSISTENTE
-  '                       (REEMPLAZA AL LOCK COMO MECANISMO DE CONSISTENCIA
-  '                       PARA TABLAS InnoDB, QUE ES NUESTRO CASO).
-  sComando &= " --no-tablespaces --skip-lock-tables --single-transaction"
-  sComando &= " " & sBaseDatos & " > " & Shell(sArchivoRespaldo)
+  ' COMPLETO: REEMPLAZA EL DEL DÍA. SOLO LO LEE EL USUARIO: TIENE TODA LA
+  ' BASE, INCLUIDAS LAS CLAVES (CIFRADAS) DE usuarios_sistema
+  Try Chmod sTemporal To "rw-------"
+  Try Kill sArchivoRespaldo
+  Try Move sTemporal To sArchivoRespaldo
+  If Error Then AvisarRespaldoFallido("no se pudo guardar el archivo: " & Error.Text)
 
-  ' EJECUTAR RESPALDO
-  Try Shell sComando Wait
+End
+
+' ============================================
+' Función   : AvisarRespaldoFallido
+' Propósito : Avisa que el respaldo del día no se hizo, y por qué. Es la única
+'             forma de que se sepa: antes fallaba en silencio
+' Parámetros: sMotivo As String — la causa, para quien da soporte
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub AvisarRespaldoFallido(sMotivo As String)
+
+  m_Sonido.sonar("Warning")
+  Message.Warning("No se pudo hacer el respaldo diario de la base de datos." & gb.NewLine & gb.NewLine &
+    "El respaldo anterior quedó como estaba. Si se repite, enviá este mensaje a quien te da soporte:" & gb.NewLine & gb.NewLine &
+    sMotivo)
 
 End
 
