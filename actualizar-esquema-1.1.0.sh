@@ -239,7 +239,8 @@ fi
 
 if [ "$FALLAS" -ne 0 ]; then
   error "La verificación falló. NO se registra la actualización."
-  error "Para volver atrás: sudo mysql ${DB} < ${RESPALDO}"
+  error "Para volver atrás (GV-67: articulos supera el límite de fila sin esta opción):"
+  error "  sudo mysql --init-command=\"SET SESSION innodb_strict_mode=0\" ${DB} < ${RESPALDO}"
   exit 1
 fi
 

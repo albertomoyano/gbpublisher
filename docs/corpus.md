@@ -209,7 +209,7 @@ ALTERNATIVA PARA UNA DECISIÓN SIMPLE
 
 `ShowModal` devuelve el valor pasado a `Me.Close(valor)`, 0 si se cierra sin valor. La decisión vuelve así; los datos elegidos van a un módulo. Aplicado en FCandidatosBib: `iAccion = hCandidatos.ShowModal()` con las constantes `m_BuscarBib.ACCION_*`, y la fila elegida en `m_BuscarBib.RegistrarEleccion`.
 
-**PENDIENTE:** FEstructuraResultados lee FAplicarCrossRef.bAplicado después de ShowModal con la instancia automática: por esta regla, siempre lee el valor inicial. Revisar.
+CORREGIDO EN FAplicarCrossRef (18/11/2026). El caso que señalaba el pendiente era real: `FEstructuraResultados` leía `FAplicarCrossRef.bAplicado` después del `ShowModal`, siempre daba `False` y el formulario de resultados nunca se autocerraba después de aplicar. Ahora `FAplicarCrossRef` cierra con `Me.Close(APLICADO)` (una `Public Const` del formulario) y el llamador decide con `iResultado = FAplicarCrossRef.ShowModal()`. La variable `bAplicado` se retiró.
 
 ### RC-GM-14 — DateBox.ReadOnly no bloquea el botón del calendario
 
@@ -292,8 +292,6 @@ REGLA DE ESTILO: declarar todos los `Dim` al inicio de la función por legibilid
 SÍNTOMA HUÉRFANO: la regla nació de un caso observado, un bloque condicional con `Dim` inline que no emitía output aunque las condiciones se cumplían. Como el mecanismo atribuido era falso, esa causa sigue SIN identificar. Si el síntoma reaparece, buscar la causa real: posible `Try` que traga un error, o una condición que no se cumple como se cree.
 
 **Relaciones:** apoya:RC-GM-02
-
-**PENDIENTE:** El síntoma original que dio origen a la regla sigue sin diagnóstico. Si reaparece, no atribuirlo al Dim inline.
 
 ### RC-GM-19 — Dialog.Filter es cosmético, no un mecanismo de control
 
@@ -900,9 +898,9 @@ Estructura de parrafos, negrita, italica y dos semaforos de cotejo: fondo amaril
 
 Los semaforos son el registro de avance de varios dias de trabajo, no decoracion. De ahi el guardado atomico con respaldo y el contador de marcas por parrafo.
 
-**Relaciones:** vinculo:GV-40, vinculo:GV-35, vinculo:GV-37, vinculo:RC-GM-21
+LA REENTRADA DURANTE LA IMPORTACIÓN (18/11/2026). Mientras LibreOffice convierte, la espera de `m_EditorHTML` deja correr los eventos (GV-17). `FMain.cmbArchivosHTML_Click` deshabilita el panel de bibliografía entero (`Panel2`, la pestaña del editor HTML) durante `m_EditorHTML.AbrirArchivo` y lo rehabilita siempre, antes de mirar el resultado. Cubre de una vez el combo, los botones de marca y el guardado, sin una bandera en cada uno.
 
-**PENDIENTE:** Falta la bandera de reentrada durante la importacion: la sentencia Wait deja correr los eventos y los botones siguen siendo pulsables (GV-17).
+**Relaciones:** vinculo:GV-40, vinculo:GV-35, vinculo:GV-37, vinculo:RC-GM-21
 
 ### SC-13 — Trabajo pesado con herramientas externas: script propio y terminal embebido
 
@@ -1062,9 +1060,9 @@ Secciones en uso: `[Editor]` (FontName, FontSize), `[EditorHTML]` (FontName, Fon
 
 La ruta se obtiene siempre de `m_InicioCierre.RutaConfiguracion()`; no se escribe literal.
 
-**Relaciones:** vinculo:SC-11, vinculo:SC-15
+LAS CREDENCIALES NO VAN ACÁ (18/11/2026). Las claves de los servicios externos (Azure Translator y los demás) viven cifradas en la tabla `api_credenciales` de la base, por `m_ApiCredenciales`, y se cargan en el panel de administración. `m_Traduccion` y `FTraducir` ya no usan `Settings`, y DeepL salió del código. Verificado con grep: el último uso del `Settings` global era `m_LLM` (el modo elegido y el último proveedor por modo). El mismo día pasó a `gbpublisher.conf`, secciones `[LLM]` y `[LLM/Ultimo]`, con `LeerPreferencia` y `GuardarPreferencia` privadas del módulo. Los valores guardados antes no se migran: el proveedor se vuelve a elegir una vez.
 
-**PENDIENTE:** m_Traduccion guarda con el Settings global las claves de DeepL y Azure, la región y el motor predeterminado. Son credenciales: antes de migrarlas, decidir si van en gbpublisher.conf o en un archivo propio fuera de lo que se distribuye a las estaciones (SC-11).
+**Relaciones:** vinculo:SC-11, vinculo:SC-15
 
 ### SC-18 — Editor principal de Markdown: TextEdit con refresco determinista
 
@@ -1204,9 +1202,11 @@ CONTRAPARTIDA OBLIGATORIA
 
 Un formulario sin botón de cerrar necesita una salida propia en la interfaz: un botón, la tecla Escape, o las dos. Excepción consciente: `FMetadatosCapitulos` deshabilita su botón mientras el orden del libro esté roto (SC-55).
 
+ALCANCE: X11, como GV-50. En Wayland no está verificado.
+
 **Relaciones:** vinculo:GV-50, vinculo:GV-11,vinculo:SC-55
 
-**PENDIENTE:** WAYLAND: sin verificar, ver GV-50. Tampoco está verificada la variante FijarBotones(Me, True), que conserva el botón de cerrar.
+**PENDIENTE:** Verificar en Mint la variante FijarBotones(Me, True), que conserva el botón de cerrar.
 
 ### SC-21 — Snippets del editor: un archivo por snippet en ~/.gbpublisher/snippets/
 
@@ -2547,8 +2547,6 @@ Verificado: el orden y la extracción del código, en MariaDB 10.11 con nombres 
 
 **Relaciones:** vinculo:SC-25,vinculo:SC-45,vinculo:SC-55
 
-**PENDIENTE:** Resuelto por retiro: `m_GenerarEpub` y `m_GenerarHTML` (revistas), que ordenaban solo por `nombre_archivo ASC`, salieron el 18/11/2026 (SC-98), y la copia comentada del CASE ya no está en `FMain`.
-
 ### SC-45 — Dedicatoria: pieza suelta de fm-00 a fm-09, antes del sumario, con el bloque del epígrafe sin filete
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / LuaLaTeX (TeX Live 2023) / SaxonJ-HE 12.5 / epubcheck 4.2.6 / Gambas 3.19 (gbc3, gbs3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
@@ -3564,9 +3562,11 @@ ALCANCE
 
 Libros. Revistas arman su `element-citation` de JATS desde el mismo `.bib` sin traducir ni escapar; se resuelve cuando se encare revistas entero, después de libros (decisión de Alberto). Molinaro, que trae `\dots`, sale por legacy y no se corrige.
 
-**Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23,vinculo:SC-62
+ESTADO (act-46). IEEE va por tex4ht y las comillas salen de biblatex. Las plantillas por estilo de las hojas (las que leen el título con normalize-space y pierden las comillas de un <quote>) solo quedan para un libro sin la pasada de citas. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
 
-**PENDIENTE:** Resuelto en act-46: IEEE va por tex4ht y las comillas salen de biblatex. Las plantillas por estilo de las hojas (las que leen el título con normalize-space y pierden las comillas de un <quote>) solo quedan para un libro sin la pasada de citas. \sptext es de babel-spanish: un libro cuyo idioma principal no sea el español no lo tiene definido. Probado por Alberto en Mint con APA: las tres salidas y los tres controles. Medido en el contenedor con Verona: \sptext y \emph bien en el PDF y en tex4ht.
+LÍMITE CONOCIDO: \sptext es de babel-spanish. Un libro cuyo idioma principal no sea el español no lo tiene definido.
+
+**Relaciones:** vinculo:SC-57,vinculo:SC-30,vinculo:SC-14,apoya:GV-23,vinculo:SC-62
 
 ### SC-59 — Cadenas en castellano comunes a todos los estilos de biblatex: cita-cadenas-es.tex
 
@@ -5439,9 +5439,11 @@ LA CONFIGURACIÓN DE mc
 
 Vive en `~/.config/mc/` (`ini`, `panels.ini`; `mc -F` da las rutas). OBSERVADO por Alberto: con el guardado automático activado los cambios no persistían; persisten guardándolos a mano (F9 → Opciones → Guardar configuración). Cerrar la ventana con la X, en lugar de F10, mata a mc sin que guarde.
 
+DEPENDENCIAS Y ERROR DE Exec (18/11/2026). Un `Exec` de un programa que no existe da un error atrapable con `Try`: código 45, «File or directory does not exist» (medido en 3.19 con gbx3). `gambas3-gb-desktop-x11` entra al .deb solo, porque `gb.desktop.x11` es componente del proyecto; `mc` ya estaba entre las dependencias extra del `.project`, y se agregó `gnome-terminal`.
+
 **Relaciones:** vinculo:GV-205,vinculo:GV-43,vinculo:GV-42,vinculo:GV-174,vinculo:GV-06,vinculo:GV-17
 
-**PENDIENTE:** Que `Exec` dispare un error atrapable cuando falta gnome-terminal (va con Try, sin verificar). Que `gambas3-gb-desktop-x11` figure en las dependencias del .deb, y mc y gnome-terminal.
+**PENDIENTE:** Confirmar en Mint, con el .deb siguiente, que gnome-terminal figura entre sus dependencias.
 
 ### SC-95 — Integridad del sistema: una sola lista en engine/integridad.sh, herramientas de producción congeladas en /opt y control por funcionamiento
 
@@ -7338,9 +7340,11 @@ Leídas en el fuente, no medidas. Ninguna quita el botón de cerrar.
 
 Aplicado en SC-20.
 
+ALCANCE: X11. En Wayland no está verificado. Lo único leído en el fuente de Muffin, no medido: los hints Motif solo se aplican a ventanas de clientes X11, y una ventana Wayland nativa se decora del lado del cliente. El resultado dependería de si la aplicación corre por XWayland o como cliente Wayland nativo, y gb.desktop.x11 necesita un display X. Mientras el proyecto apunte exclusivamente a X11 no afecta; si eso cambia, esta entrada deja de valer hasta medirla.
+
 **Relaciones:** vinculo:SC-20, vinculo:GV-11
 
-**PENDIENTE:** WAYLAND: sin verificar, y hoy no se sabe qué pasará. Lo único leído en el fuente de Muffin, no medido: los hints Motif solo se aplican a ventanas de clientes X11; una ventana Wayland nativa se decora del lado del cliente. Así que el resultado dependería de si la aplicación corre por XWayland o como cliente Wayland nativo, y gb.desktop.x11 necesita un display X. Mientras el proyecto apunte exclusivamente a X11 no afecta; si eso cambia, esta entrada deja de valer hasta medirla. Tampoco está verificado si Alt+F4 sigue cerrando la ventana.
+**PENDIENTE:** Verificar en Mint si Alt+F4 sigue cerrando una ventana sin botones.
 
 ### GV-51 — TreeView: el click del mouse dispara Select y Click; asignar Key, solo Select
 
@@ -7725,9 +7729,11 @@ ALCANCE
 
 Los mensajes «Para volver atrás» de `actualizar-esquema-1.1.0.sh` a `1.3.0.sh` dan el comando directo. Los respaldos que dejaron en `~/gbpublisher-respaldos` están bien; lo que cambia es cómo se restauran. `actualizar-esquema-1.4.0.sh` ya trae el comando correcto.
 
+MENSAJES CORREGIDOS (18/11/2026): `actualizar-esquema-1.1.0.sh`, `1.2.0.sh` y `1.3.0.sh` muestran el comando con `--init-command="SET SESSION innodb_strict_mode=0"`, como los demás.
+
 **Relaciones:** vinculo:SC-22
 
-**PENDIENTE:** Corregir el mensaje de restauración en actualizar-esquema-1.1.0.sh a 1.3.0.sh. Sin verificar en MariaDB.
+**PENDIENTE:** Sin verificar en MariaDB.
 
 ### GV-68 — Asignar "" a una clave de Collection no la crea, y si existía la borra
 
@@ -8392,9 +8398,19 @@ Para leer un número que escribe una persona: normalizar la coma a punto, descar
 
 `Str` al mostrar y `CFloat` al leer, después de normalizar la coma, son compatibles: el formulario muestra «15,5» y lo vuelve a leer como 15.5.
 
+LOS ENTEROS ESCRITOS POR EL USUARIO (18/11/2026). Ningún campo numérico se lee con `Val`. `m_FuncionesGenericas` tiene tres funciones:
+
+- `EsEnteroOVacio`: vacío, o solo dígitos y hasta nueve;
+- `EnteroDeTexto`: `Null` si está vacío, el `Integer` si no (`CInt` sobre solo dígitos no depende del locale);
+- `ControlarEnteros`: antes de guardar, un solo aviso que nombra todos los campos inválidos, y no se guarda nada.
+
+Las usan `FAutores` (alta y modificación: índice h, i10, publicaciones, citas, director actual, calificación), `m_Metadatos` (capítulo: páginas, figuras, tablas, ecuaciones, año del copyright; libro: edición, páginas, año de publicación, embargo, que antes iban como texto y MySQL los rechazaba con un error de tipo) y `FSysAdmin` (años de colección y de serie).
+
+MEDIDO en 3.19 (gbx3): «1.234», «12,5», «1 234», «-3», un NBSP delante y diez dígitos son inválidos; «», «0», « 42 » y nueve dígitos son válidos. `CInt("1.234")` da «Type mismatch» en vez de adivinar.
+
 **Relaciones:** vinculo:GV-03,vinculo:RC-GM-02
 
-**PENDIENTE:** Repetir el mini-test en Mint con Gambas 3.22.2 y el locale real. Revisar los demás Val sobre texto de usuario: m_Metadatos (numero_paginas, numero_figuras, numero_tablas, numero_ecuaciones, copyright_year) y FAutores (h_index, i10_index, numero_publicaciones) son enteros, pero «1.234» da 1234.
+**PENDIENTE:** Repetir el mini-test en Mint con Gambas 3.22.2 y el locale real.
 
 ### GV-97 — Dialog.SaveFile con gb.form.dialog: la pregunta de sobrescritura la hace gb.form
 
