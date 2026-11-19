@@ -41,6 +41,13 @@ máquinas cliente, o se le puede indicar directamente:
 ./instalar-gbpublisher.sh -r '192.168.128.%'
 ```
 
+**El baseline es el punto de partida, no el esquema actual.** El archivo de
+distribución sigue siendo el de la versión 1.0.0. Después de instalarlo hay
+que aplicar, en orden, las actualizaciones `actualizar-esquema-X.Y.Z.sh`
+hasta la que declara la versión de la aplicación (ver la sección 5). Está
+previsto que un único instalador haga todo esto; mientras tanto, la guía
+paso a paso está en [LEEME.md](LEEME.md).
+
 ---
 
 ## 2. Las capas de identidad
@@ -136,9 +143,17 @@ pasa esas verificaciones no debería distribuirse.
 
 ---
 
-## 4. La tabla `articulos` y el límite de fila
+## 4. Las tablas anchas y el límite de fila
 
-`articulos` tiene 220 columnas. Es una decisión deliberada: los metadatos
+> **Histórico.** Esta sección describe la tabla `articulos` del esquema viejo
+> de revistas, que la actualización 1.32.0 borró junto con `revistas_md`,
+> `articulo_autor` y `articulo_revisor`. Sigue importando por dos razones:
+> el baseline 1.0.0 todavía la crea, y todo respaldo anterior a la 1.32.0 la
+> trae. Restaurar uno de esos respaldos requiere
+> `--init-command="SET SESSION innodb_strict_mode=0"`; sin eso, MySQL 8
+> falla con el error 1118 al recrear la tabla.
+
+`articulos` tenía 220 columnas. Es una decisión deliberada: los metadatos
 de un artículo académico son muchos y muy variados, y resolverlos en una
 tabla ancha evita una decena de uniones en cada consulta a lo largo de toda
 la producción editorial. La mayoría de esas columnas están vacías en
@@ -172,10 +187,11 @@ de fila. Las columnas que participan en índices (`titulo_articulo`,
 `nombre_archivo`, `tipo_articulo`, `doi`) siguen siendo `VARCHAR`, porque
 un índice sobre `TEXT` requiere longitud de prefijo.
 
-**Consecuencia práctica para el futuro:** al agregar columnas a `articulos`,
-usar `TEXT` para texto libre y reservar `VARCHAR` para códigos cortos y
-campos indexados. Cada `VARCHAR` grande nuevo acerca la tabla al límite; un
-`TEXT` no.
+**Consecuencia práctica para el futuro:** en cualquier tabla ancha, usar
+`TEXT` para texto libre y reservar `VARCHAR` para códigos cortos y campos
+indexados. Cada `VARCHAR` grande nuevo acerca la tabla al límite; un `TEXT`
+no. El esquema nuevo de revistas (`articulo`, desde la 1.13.0) reparte los
+metadatos en tablas relacionadas en lugar de una sola tabla ancha.
 
 ---
 
@@ -221,26 +237,53 @@ actualizada tendrá dos (`baseline-1.0.0` y el script aplicado).
 
 ### La regla que se desprende
 
-Como el historial difiere pero el esquema no, **un script de actualización
-nunca debe decidir en función de qué scripts previos figuren registrados**.
-Debe consultar el nivel de baseline y, sobre todo, **verificar el estado
-real del esquema** antes de actuar: si la columna ya existe, no la agrega;
-si la tabla ya tiene la forma esperada, no la toca.
+Un script de actualización **verifica el estado real del esquema** antes de
+actuar: si la columna ya existe, no la agrega; si la tabla ya tiene la forma
+esperada, no la toca.
+
+Además, desde la 1.10.0 cada script **exige que la actualización anterior
+esté registrada** en `esquema_version`, y frena si no lo está. Las dos
+cosas no se contradicen: el registro asegura que la cadena se aplique en
+orden, y la verificación del estado real asegura que aplicar un script dos
+veces no cause daño.
 
 Esto tiene un efecto valioso: los scripts se vuelven **idempotentes**. Se
 pueden ejecutar más de una vez sin consecuencias, y se pueden ejecutar
 sobre una base cuyo estado exacto no se conoce. Que es justamente la
 situación de quien instala a mil kilómetros de distancia.
 
-Tres propiedades que todo script de actualización debe tener:
+Las propiedades que todo script de actualización debe tener:
 
-1. **Respaldo previo verificado.** Antes de modificar nada, generar un
+1. **Confirmación explícita.** Explica qué va a cambiar y pide que se
+   escriba `SI`. Si borra datos, muestra cuáles antes de preguntar.
+2. **Respaldo previo verificado.** Antes de modificar nada, generar un
    volcado y comprobar que quedó completo. No alcanza con que el comando
    devuelva éxito: hay que verificar el archivo producido.
-2. **Verificación posterior.** Comprobar que el resultado es el esperado
+3. **Verificación posterior.** Comprobar que el resultado es el esperado
    —conteos, tipos de columna, filas preservadas— y avisar si no lo es.
-3. **Salida sin efecto si ya está aplicado.** Detectar el estado y
+4. **Salida sin efecto si ya está aplicado.** Detectar el estado y
    terminar sin tocar nada cuando no hay trabajo pendiente.
+
+### La cadena actual
+
+| Paso | Script |
+|---|---|
+| Instalación | `gbpublisher-baseline-1.0.0.sql` con `instalar-gbpublisher.sh` |
+| Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.33.0.sh`, en orden |
+
+Para saber en qué punto está una base:
+
+```sql
+SELECT parche, aplicado_en FROM esquema_version ORDER BY aplicado_en;
+```
+
+Se corren con `sudo bash actualizar-esquema-X.Y.Z.sh`. Los respaldos quedan
+en `~/gbpublisher-respaldos/`. Las actualizaciones que borran tablas o datos
+(1.32.0, 1.33.0) no se deshacen con un parche: se vuelve atrás restaurando el
+respaldo que hicieron antes de empezar, y cada una muestra el comando.
+
+El número 2.0.0 está reservado para los cambios pendientes en la tabla
+`bibtex`.
 
 ### Cuándo conviene rebasear
 
@@ -284,8 +327,9 @@ rango de red concreto en lugar de habilitar cualquier origen.
 
 | Archivo | Para quién | Qué hace |
 |---|---|---|
-| `gbpublisher-baseline-X.Y.Z.sql` | Quien instala | Base completa, lista para usar |
+| `gbpublisher-baseline-X.Y.Z.sql` | Quien instala | Base inicial, punto de partida de la cadena |
 | `instalar-gbpublisher.sh` | Quien instala | Asistente de instalación limpia |
+| `actualizar-esquema-X.Y.Z.sh` | Quien instala o actualiza | Lleva la base a la versión siguiente |
 | `generar-baseline.sh` | Mantenimiento | Regenera el baseline desde la base de desarrollo |
 
 El baseline y el asistente viajan juntos: el asistente busca el archivo en
@@ -297,7 +341,10 @@ distribuye a las instalaciones.
 ## 8. Verificación de una instalación
 
 El asistente verifica automáticamente, pero estas consultas sirven para
-comprobar el estado en cualquier momento:
+comprobar el estado en cualquier momento. Los números corresponden a una
+base recién instalada desde el baseline 1.0.0, antes de aplicar la cadena;
+la aplicación controla el esquema actual al conectarse
+(`m_ConexionBD.ObtenerEsquemaEsperado`) y avisa de cualquier diferencia.
 
 ```sql
 -- Nivel de esquema
@@ -321,5 +368,5 @@ SELECT user, host FROM mysql.user WHERE user='app_user';
 ```
 
 Una instalación recién hecha debe tener las tablas de trabajo vacías
-(`proyectos`, `articulos`, `libros_md`, `autores`, `usuarios`). Si alguna
-trae datos, el baseline no era el correcto.
+(`proyectos`, `libros_md`, `autores`, `usuarios`, y en el baseline 1.0.0
+también `articulos`). Si alguna trae datos, el baseline no era el correcto.

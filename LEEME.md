@@ -14,273 +14,118 @@
 
 ---
 
-## ¿Qué es cada archivo?
+> **Un solo instalador, próximamente**
+> Hoy la instalación tiene varios pasos. Está previsto reemplazarlos por un único script que descarga e instala todo. Mientras tanto, seguí esta guía.
 
-La distribución de gbpublisher incluye cuatro archivos que trabajás en este orden:
+---
+
+## ¿Qué trae cada versión?
+
+Cada versión de gbpublisher (cada *release* en GitHub) trae estos archivos:
 
 | Archivo | Para qué sirve |
 |---|---|
-| `integridad.sh` | Verifica que tu computadora tiene todo lo necesario instalado |
-| `gbpublisher.sql` | Contiene la estructura de la base de datos (no lo abrís directamente) |
-| `generar_bbdd.sh` | Crea la base de datos en tu servidor |
 | `gbpublisher_X.X.deb` | El instalador de la aplicación |
+| `instalar-gbpublisher.sh` | Crea la base de datos en una instalación nueva |
+| `gbpublisher-baseline-1.0.0.sql` | La estructura inicial de la base (no lo abrís directamente) |
+| `actualizar-esquema-X.Y.Z.sh` | Las actualizaciones de la base, una por versión de esquema |
+
+La nota de cada versión dice hasta qué actualización de la base corresponde aplicar: por ejemplo, «esquema 1.33.0».
 
 ---
 
-## Paso 1 — Verificar dependencias
+## Instalación nueva
 
-Este paso revisa que el servidor tiene todo el software necesario para que gbpublisher funcione. **No instala ni modifica nada**: solo informa.
-
-### Cómo ejecutarlo
-
-Abrí una terminal y escribí:
-
-```
-bash integridad.sh
-```
-
-Presioná Enter.
-
-### Qué vas a ver
-
-El script recorre una lista de programas y muestra el estado de cada uno:
-
-```
-  gbpublisher — Verificación de integridad del sistema
-  ────────────────────────────────────────────────────────────────────
-
-  Base de datos
-  MySQL Server                                        OK
-
-  Java y procesadores XSLT
-  Java Runtime Environment                            OK
-  Saxon-HE — JAR principal                            OK
-  Saxon-HE — dependencias lib/xmlresolver             OK
-
-  Procesadores de documentos
-  Pandoc                                              OK
-  TeX Live (completo)                                 OK
-  ...
-```
-
-Cada línea muestra **OK** (en verde) o **FALLO** (en rojo).
-
-### Interpretando el resultado
-
-**Si el resumen final dice:**
-
-```
-  Sistema listo: todas las dependencias (N) están disponibles.
-  Podés instalar gbpublisher y ejecutar generar_bbdd.sh para crear la base de datos.
-```
-
-Todo está en orden. Continuá con el Paso 2.
-
-**Si aparece algún FALLO:**
-
-```
-  3 de 45 dependencia(s) con FALLO.
-  Instalá las dependencias faltantes antes de continuar.
-```
-
-Cada línea con FALLO muestra el comando exacto para instalar esa dependencia. Por ejemplo:
-
-```
-  TeX Live (completo)      FALLO   →  sudo apt install texlive-full
-```
-
-Pasá esa información al responsable técnico para que instale lo que falta. Una vez resuelto, volvé a ejecutar `integridad.sh` para confirmar que todo está en orden.
-
-> **Importante:** No pases al Paso 2 si quedan dependencias con FALLO. La aplicación puede abrirse pero algunas funciones no van a funcionar correctamente.
-
----
-
-### Herramientas que requieren instalación manual
-
-La mayoría de las dependencias se instalan con un solo comando `apt`. Dos herramientas son la excepción: tienen su propio instalador y deben colocarse en una ruta específica para que gbpublisher pueda encontrarlas. Si `integridad.sh` reporta FALLO para alguna de ellas, seguí las instrucciones correspondientes.
-
----
-
-#### Saxon-HE (procesador XSLT)
-
-Saxon-HE se distribuye como un archivo ZIP que contiene varios archivos. Es importante copiar **todo el contenido**, no solo el archivo principal.
-
-**Instalación:**
-
-1. Descargá el ZIP de Saxon-HE desde [saxonica.com](https://www.saxonica.com/download/java.xml)
-2. Descomprimí el archivo. Vas a ver una carpeta con este contenido:
-   ```
-   saxon-he-XX.X.jar
-   lib/
-     xmlresolver-X.X.X.jar
-     xmlresolver-X.X.X-data.jar
-     ...
-   ```
-3. Copiá el JAR principal y la carpeta `lib/` completa a `/opt/Saxon-HE/`:
-   ```bash
-   sudo mkdir -p /opt/Saxon-HE/lib
-   sudo cp saxon-he-*.jar /opt/Saxon-HE/
-   sudo cp lib/xmlresolver-*.jar /opt/Saxon-HE/lib/
-   ```
-
-> **Error frecuente:** copiar solo el archivo `saxon-he-XX.X.jar` e ignorar la carpeta `lib/`. En ese caso Saxon arranca pero falla al procesar documentos con el error `NoClassDefFoundError: org/xmlresolver/ResolverConfiguration`. La carpeta `lib/` es obligatoria.
-
----
-
-#### veraPDF (validador PDF/A)
-
-veraPDF tiene su propio instalador gráfico y debe instalarse en la ruta exacta `/opt/verapdf/` para que gbpublisher pueda encontrarlo.
-
-**Instalación:**
-
-1. Descargá el instalador desde [verapdf.org/software](https://verapdf.org/software/)
-2. Abrí una terminal en la carpeta donde descargaste el archivo y ejecutá:
-   ```bash
-   sudo ./verapdf-installer --installpath /opt/verapdf
-   ```
-3. Seguí los pasos del instalador gráfico.
-
-> **Error frecuente:** instalar veraPDF sin `sudo` o sin especificar `--installpath`. En ese caso el instalador lo coloca en `~/verapdf/` (directorio personal del usuario), que gbpublisher no lo puede encontrar. `integridad.sh` reportará FALLO aunque veraPDF funcione desde la terminal.
-
----
-
-## Paso 2 — Crear la base de datos
-
-Este paso crea la base de datos donde gbpublisher va a guardar toda la información de tus revistas y artículos. **Es una operación destructiva**: si ya existía una base de datos de gbpublisher en este servidor (por ejemplo, de una instalación de prueba), va a ser eliminada y reemplazada por una nueva vacía.
-
-### Cómo ejecutarlo
-
-En la misma terminal, escribí:
-
-```
-bash generar_bbdd.sh
-```
-
-Presioná Enter.
-
-### Qué vas a ver
-
-El script verifica que el servidor MySQL está activo y que el archivo `gbpublisher.sql` está presente:
-
-```
-  gbpublisher — Generación de base de datos
-  ════════════════════════════════════════════════════════════════════
-
-  Paso 1: Verificando servicio MySQL
-  MySQL             activo
-
-  Paso 2: Verificando archivo de base de datos
-  gbpublisher.sql   encontrado  (1743 líneas)
-```
-
-A continuación aparece una advertencia importante:
-
-```
-  Paso 3: Confirmación
-
-  ATENCIÓN — OPERACIÓN DESTRUCTIVA
-
-  Este proceso realizará las siguientes acciones:
-
-    1. Eliminar la base de datos 'gbpublisher' si existe
-       (se perderán TODOS los datos de cualquier instalación
-       o prueba previa de gbpublisher en este servidor)
-
-    2. Crear una base de datos 'gbpublisher' limpia
-    3. Crear el usuario de conexión 'app_user'
-    4. Cargar el esquema y datos de referencia
-
-  ¿Confirmar? Escribí 'si' para continuar:
-```
-
-Escribí exactamente `si` (sin acento, en minúscula) y presioná Enter.
-
-### Qué pasa después
-
-El script crea la base de datos e informa el avance:
-
-```
-  Paso 4: Creando base de datos y usuario
-  Base de datos     creada
-  Usuario           creado  (app_user@localhost)
-
-  Paso 5: Cargando esquema y datos de referencia
-  Tablas creadas    27 tablas
-```
-
-Si todo salió bien, el resumen final muestra:
-
-```
-  ════════════════════════════════════════════════════════════════════
-  Proceso completado con éxito.
-  ════════════════════════════════════════════════════════════════════
-
-  La base de datos 'gbpublisher' está lista.
-
-  Próximos pasos:
-
-    1. Abrí gbpublisher
-    2. En la pantalla principal, hacé clic en el ícono de
-       administración (mano abierta con cubos) en la esquina
-       inferior derecha
-    3. Iniciá sesión con:  usuario: admin  /  contraseña: admin123
-    4. Creá al menos 1 usuario operativo
-    5. Cerrá Administración y logueate con ese usuario
-
-  Nota: cambiá la contraseña del administrador después del primer acceso.
-```
-
-### Si algo sale mal
-
-**"El servicio MySQL no está corriendo"**
-El servidor de base de datos no está activo. Ejecutá `sudo systemctl start mysql` y volvé a intentar.
-
-**"No se encontró el archivo gbpublisher.sql"**
-El archivo `gbpublisher.sql` no está en el mismo directorio que `generar_bbdd.sh`. Verificá que ambos archivos están juntos en la misma carpeta.
-
-**"No se pudo crear la base de datos"**
-El usuario del sistema no tiene permisos de administrador. Contactá al responsable técnico.
-
----
-
-## Paso 3 — Instalar la aplicación
+### Paso 1 — Instalar la aplicación
 
 Hacé doble clic sobre el archivo `gbpublisher_X.X.deb`. El instalador del sistema va a pedir tu contraseña de usuario y completará la instalación automáticamente.
 
-Una vez instalado, gbpublisher aparece en el menú de aplicaciones de tu sistema.
+Una vez instalado, gbpublisher aparece en el menú de aplicaciones de tu sistema. **Todavía no lo abras**: falta la base de datos.
 
----
+### Paso 2 — Crear la base de datos
 
-## Paso 4 — Primer acceso y creación de usuarios
+Este paso crea la base de datos donde gbpublisher guarda toda la información de tus libros y revistas. **Es una operación destructiva**: si ya existía una base de gbpublisher en esta computadora (por ejemplo, de una prueba), se borra y se reemplaza por una nueva vacía.
 
-La base de datos recién creada no tiene usuarios de aplicación. Antes de poder trabajar, necesitás crear al menos uno.
+Abrí una terminal en la carpeta donde están los archivos de la versión y escribí:
 
-### Abrir gbpublisher por primera vez
+```
+bash instalar-gbpublisher.sh
+```
 
-Al abrir gbpublisher aparece la pantalla de aviso legal. Leé los términos y aceptá para continuar. La pantalla principal de la aplicación se abre sin datos cargados.
+Te va a pedir tu contraseña de usuario una sola vez, al principio. Después, el asistente:
 
-### Acceder al panel de administración
+1. busca el archivo `gbpublisher-baseline-1.0.0.sql` en la misma carpeta;
+2. pregunta si otras computadoras se van a conectar a esta base por la red (respondé **no** si gbpublisher se usa solo en esta computadora);
+3. avisa que va a borrar la base existente y pide que escribas `SI`, en mayúsculas;
+4. crea la base, el usuario de conexión de la aplicación, y comprueba el resultado.
 
-En la **esquina inferior derecha** de la pantalla principal encontrás un ícono con una mano abierta y tres cubos. Hacé clic sobre él para abrir el panel de Administración del sistema.
+Si todo salió bien, termina con:
 
-### Iniciar sesión como administrador
+```
+Instalación completada.
+Ya podés abrir gbpublisher.
+```
 
-En el panel de Administración ingresá con las credenciales iniciales:
+### Paso 3 — Llevar la base a la versión actual
+
+El baseline es la base tal como era en la versión 1.0.0. Las actualizaciones la llevan al día. Hay que aplicarlas **en orden**, desde la 1.1.0 hasta la que indica la nota de la versión:
+
+```
+sudo bash actualizar-esquema-1.1.0.sh
+sudo bash actualizar-esquema-1.2.0.sh
+...
+sudo bash actualizar-esquema-1.33.0.sh
+```
+
+Cada actualización:
+
+- dice qué va a cambiar y pide que escribas `SI` para continuar (si borra datos, muestra cuáles);
+- comprueba que la anterior esté aplicada, y frena con un mensaje si no lo está;
+- hace un respaldo de la base en `~/gbpublisher-respaldos/` antes de cambiar nada;
+- si ya estaba aplicada, lo dice y no toca nada.
+
+Si una actualización frena, no sigas con la siguiente: pasá el mensaje al responsable técnico.
+
+### Paso 4 — Primer acceso y creación de usuarios
+
+**Abrir gbpublisher por primera vez.** Aparece la pantalla de aviso legal. Leé los términos y aceptá para continuar. La pantalla principal se abre sin datos cargados.
+
+**Acceder al panel de administración.** En la esquina inferior derecha de la pantalla principal hay un ícono con una mano abierta y tres cubos. Hacé clic para abrir el panel de Administración. La primera vez, la aplicación crea la cuenta del administrador y muestra sus datos:
 
 - **Usuario:** `admin`
 - **Contraseña:** `admin123`
 
-> **Importante:** Estas credenciales son públicamente conocidas. Cambiá la contraseña del administrador inmediatamente después de este primer acceso.
+> **Importante:** estas credenciales son públicamente conocidas. Cambiá la contraseña del administrador inmediatamente después de este primer acceso. La cuenta del administrador vive solo en esta computadora; no es un usuario de la base de datos.
 
-### Crear el primer usuario operativo
+**Crear el primer usuario operativo.** Desde el panel de Administración creá al menos un usuario con el que vas a trabajar normalmente. Completá los campos requeridos y guardá.
 
-Desde el panel de Administración creá al menos un usuario con el que vas a trabajar normalmente en la aplicación. Completá los campos requeridos y guardá.
+**Conectarse.** Cerrá el panel de Administración. En la pantalla principal abrí el formulario de conexión, ingresá la IP del servidor (si es la misma computadora: `127.0.0.1`), el usuario y la contraseña que acabás de crear, y conectate.
 
-### Cerrar Administración y conectarse
+### Paso 5 — Controlar la integridad del sistema
 
-Cerrá el panel de Administración. En la pantalla principal, abrí el formulario de conexión al servidor, ingresá la IP del servidor (si es la misma máquina: `127.0.0.1`), el usuario y la contraseña que acabás de crear, y conectate.
+gbpublisher usa versiones fijas de algunas herramientas (Pandoc, Saxon-HE, epubcheck, veraPDF, packtools). Este paso las instala o las repara.
 
-A partir de este punto gbpublisher está listo para usar.
+1. Abrí o creá un proyecto.
+2. Elegí el menú **Acerca de → Controlar integridad del sistema**.
+3. Si falta algo, aparece una ventana que pide tu contraseña: es la de tu usuario de la computadora.
+
+La terminal de la aplicación muestra cada herramienta en verde (está bien), en ámbar (aviso) o en rojo (problema), y dice qué hizo con cada una. Si al final queda algo en rojo, pasá ese texto al responsable técnico.
+
+Este control se puede repetir cuando quieras: no rompe nada que esté bien.
+
+---
+
+## Actualizar una instalación existente
+
+Cuando sale una versión nueva:
+
+1. Instalá el `.deb` nuevo con doble clic, como en el Paso 1.
+2. Aplicá, en orden, las actualizaciones de la base que todavía no tengas, hasta la que indica la nota de la versión. Para saber cuál fue la última aplicada:
+   ```
+   sudo mysql gbpublisher -e "SELECT parche FROM esquema_version ORDER BY aplicado_en DESC LIMIT 1;"
+   ```
+   Si dice `actualizacion-1.31.0`, empezás por `actualizar-esquema-1.32.0.sh`.
+3. Abrí un proyecto y controlá la integridad del sistema, como en el Paso 5.
 
 ---
 
@@ -291,13 +136,13 @@ Para confirmar que la instalación está completa y funcional, verificá que pod
 - [x] Abrir gbpublisher sin mensajes de error
 - [x] Conectarte con el usuario creado
 - [x] Ver el menú principal habilitado
-- [x] Acceder a Acerca de... → la integridad del sistema sin elementos en rojo
+- [x] Controlar la integridad del sistema sin elementos en rojo
 
 ---
 
 ## Información técnica de la instalación
 
-Esta sección es para el responsable técnico de la institución.
+Esta sección es para el responsable técnico de la institución. El detalle de la base de datos está en [BBDD_LEEME.md](BBDD_LEEME.md).
 
 | Parámetro | Valor |
 |---|---|
@@ -306,6 +151,7 @@ Esta sección es para el responsable técnico de la institución.
 | Usuario de aplicación | `app_user` |
 | Puerto | 3306 |
 | Codificación | utf8mb4 / utf8mb4_unicode_ci |
+| Herramientas fijadas | `/opt/pandoc`, `/opt/Saxon-HE`, `/opt/epubcheck`, `/opt/verapdf`, `/opt/packtools` |
+| Respaldos de las actualizaciones | `~/gbpublisher-respaldos/` |
 
 La contraseña del usuario `app_user` está configurada en el archivo de conexión de la aplicación. No se muestra en esta guía por razones de seguridad.
-

@@ -24,7 +24,7 @@ Este documento reconoce a todas las personas que han contribuido al desarrollo d
 - 📖 Mejoras en claridad expositiva
 
 
-**Segio Santamaría**
+**Sergio Santamaría**
 
 - 📖 Revisión y corrección de documentación
 - 📖 Mejoras en claridad expositiva
@@ -96,12 +96,12 @@ Para más detalles, véase
 
 Para consultas sobre contribuciones o reconocimientos:
 
-- Email: <estudio2a@outlook.com.ar>
+- Email: <contacto@estudio2a.ar>
 - Issues: <https://github.com/albertomoyano/gbpublisher/issues>
 
 ---
 
-**Última actualización:** 17 de junio de 2026
+**Última actualización:** 18 de noviembre de 2026
 
 ---
 

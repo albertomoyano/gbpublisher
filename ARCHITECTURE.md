@@ -24,7 +24,7 @@ La elección de Gambas responde a una decisión arquitectónica coherente con el
 
 Gambas permite desarrollar aplicaciones gráficas de escritorio con modelo de eventos claro, relación directa entre interfaz y funcionalidad, y comportamiento previsible y estable. Está orientado a aplicaciones de usuario final, no a scripts invisibles ni servicios en segundo plano. Esto favorece interfaces claras, acciones explícitas y una curva de aprendizaje baja para usuarios no técnicos.
 
-El toolkit gráfico utilizado es `gb.qt5`. Esta elección no es intercambiable: `gb.gtk` y otras variantes presentan diferencias de comportamiento en campos de texto con acentos y acelerados de teclado que afectan la experiencia de edición en español y portugués.
+El toolkit gráfico utilizado es `gb.qt6`, sobre Gambas 3.22. Esta elección no es intercambiable: `gb.gtk` y otras variantes presentan diferencias de comportamiento en campos de texto con acentos y acelerados de teclado que afectan la experiencia de edición en español y portugués.
 
 ### Por qué no Python como base principal
 
@@ -44,7 +44,7 @@ Linux ofrece integración nativa con herramientas científicas y editoriales, en
 
 La arquitectura adopta un modelo en tres capas claramente diferenciadas:
 
-1. **Contenido.** Textos, metadatos y referencias en formatos abiertos y legibles: Markdown, XML JATS, BibTeX.
+1. **Contenido.** Textos, metadatos y referencias en formatos abiertos y legibles: Markdown, XML JATS (revistas), DocBook (libros), BibTeX.
 2. **Procesamiento.** Herramientas externas especializadas que transforman y validan el contenido: XSLT, validadores, conversores, LaTeX.
 3. **Interfaz y control.** La aplicación de escritorio, que coordina acciones, presenta estados y expone resultados.
 
@@ -56,15 +56,19 @@ Desde el punto de vista editorial, equivale a separar claramente escritura y cor
 
 ## Integración con herramientas externas
 
-gbpublisher no incluye ni distribuye las herramientas de procesamiento que utiliza. En su lugar, verifica su disponibilidad en el sistema del usuario y las invoca mediante llamadas al sistema operativo.
+gbpublisher no reimplementa las herramientas de procesamiento que utiliza: las invoca mediante llamadas al sistema operativo. Pero no todas se tratan igual.
 
-Las herramientas externas utilizadas incluyen:
+**Herramientas fijadas.** Las que deciden el resultado de una salida, o su validez, se instalan en una versión fija en `/opt`, con su suma de verificación, y la aplicación usa siempre esa copia:
 
-- `pandoc` — conversión de formatos de documento
-- `xmllint` — validación de XML
-- `Saxon-HE` — procesamiento XSLT 2.0
-- `LuaLaTeX` — composición tipográfica
-- `epubcheck` — validación de EPUB
+- `pandoc` 3.1.3 — conversión de Markdown a XML canónico
+- `Saxon-HE` 12.9 — procesamiento XSLT 2.0
+- `epubcheck` 4.2.6 — validación de EPUB
+- `veraPDF` 1.30.1 — validación de PDF/A
+- `packtools` 4.18.2 — validación de paquetes SciELO
+
+El canónico se regenera muchas veces durante la edición, y una versión distinta de una de estas herramientas puede producir otro XML u otro veredicto. Fijarlas es lo que permite regenerar un título idéntico años después.
+
+**Herramientas del sistema.** Las que mantienen compatibilidad hacia atrás se toman de la distribución: `LuaLaTeX` y TeX Live, `xmllint`, Java. Fijarlas no aportaría reproducibilidad y sí un costo de mantenimiento.
 
 ### Scripts del sistema y scripts del usuario
 
@@ -72,9 +76,9 @@ gbpublisher incluye scripts propios de sistema, escritos en Bash y Python, que f
 
 Adicionalmente, la aplicación expone una interfaz que permite al usuario escribir y ejecutar sus propios scripts de procesamiento, visualizando la salida en consola. Este mecanismo no requiere modificar la aplicación ni instalar dependencias adicionales.
 
-### Verificación de dependencias
+### Integridad del sistema
 
-El script `integridad.sh` comprueba la disponibilidad de las herramientas externas esperadas. No instala software ni modifica el sistema: genera un informe sobre el estado de las herramientas instaladas y faltantes. Este informe también puede obtenerse desde la propia aplicación.
+El script `integridad.sh` controla las herramientas externas y repara las fijadas: si falta una, o no es la versión esperada, la descarga, comprueba su suma de verificación y la instala en `/opt`. Pide la contraseña de administrador en una ventana. Se lanza desde la aplicación (menú **Acerca de → Controlar integridad del sistema**, con un proyecto abierto) y muestra su avance en la terminal embebida, con mensajes pensados para quien no lee la consola. No corre al arrancar: es una herramienta de control en manos del usuario.
 
 ---
 
@@ -112,7 +116,7 @@ La aplicación incorpora ayuda contextual inspirada en las `man pages` de UNIX: 
 
 La arquitectura está alineada con prácticas editoriales profesionales donde la claridad reduce errores, la previsibilidad genera confianza y los procesos deben ser repetibles y auditables.
 
-Cada salida generada por gbpublisher pasa por procesos de validación formal. El JATS canónico es validado contra su DTD. Las salidas específicas son validadas por flavor. El PDF garantiza reproducibilidad tipográfica. El HTML y el EPUB mantienen estructura semántica consistente.
+Cada salida generada por gbpublisher pasa por procesos de validación formal. El canónico se valida contra su esquema (RNG y DTD de JATS, o RNG de DocBook) y contra reglas Schematron: las propias del proyecto y, en revistas, las de JATS4R. Las salidas para indexadores se validan con el esquema de cada destino. El EPUB pasa por epubcheck, el PDF/A por veraPDF y el HTML por el Nu Html Checker. El PDF garantiza reproducibilidad tipográfica; el HTML y el EPUB mantienen estructura semántica consistente.
 
 ---
 

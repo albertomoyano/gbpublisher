@@ -8,15 +8,14 @@ Las contribuciones a gbpublisher son bienvenidas, especialmente de la comunidad 
 
 Para contribuir código es necesario contar con:
 
-- Linux Mint con escritorio Cinnamon (única plataforma soportada)
-- Gambas 3.21 o superior (IDE y runtime)
-- MySQL/MariaDB
-- TeXLive full
-- Pandoc
-- Saxon-HE (JAR en `/opt/Saxon-HE/`)
-- Java (para Saxon-HE)
+- Linux Mint con escritorio Cinnamon y X11 (única plataforma soportada)
+- Gambas 3.22 (IDE y runtime)
+- MySQL 8
+- TeX Live completo
+- Java
+- Las herramientas fijadas en `/opt` (Pandoc, Saxon-HE, epubcheck, veraPDF, packtools). No se instalan a mano: las instala la propia aplicación desde **Acerca de → Controlar integridad del sistema**, con un proyecto abierto.
 
-El proyecto usa `gb.qt5` como toolkit gráfico. No usar `gb.gtk` ni otras variantes: afecta el comportamiento de los acelerados de teclado y los campos de texto con acentos.
+El proyecto usa `gb.qt6` como toolkit gráfico. No usar `gb.gtk` ni otras variantes: afecta el comportamiento de los acelerados de teclado y los campos de texto con acentos.
 
 ---
 
@@ -47,7 +46,7 @@ No requerimos un CLA formal. Al enviar un pull request confirmás que sos el aut
 1. Hacé un **fork** del repositorio.
 2. Creá una **rama** con nombre descriptivo: `fix/nombre-error` o `feature/nueva-funcionalidad`.
 3. Realizá tus cambios siguiendo las convenciones del proyecto.
-4. Documentá tu código en MAYÚSCULAS (estilo gbpublisher).
+4. Documentá tu código con las convenciones de abajo: comentarios en MAYÚSCULAS, encabezado en cada función y apartados numerados.
 5. Probá tus cambios exhaustivamente.
 6. Enviá un **pull request** con descripción clara de qué cambia y por qué.
 
@@ -57,34 +56,37 @@ No requerimos un CLA formal. Al enviar un pull request confirmás que sos el aut
 
 ### Encabezado de función obligatorio
 
+Sin excepciones por brevedad: un manejador de una línea también lo lleva.
+
 ```gambas
-'' ============================================
-'' Función   : NombreFuncion
-'' Propósito : Descripción clara de qué hace
-'' Parámetros: NombreParam As Tipo — descripción
-'' Retorna   : Tipo — descripción del valor de retorno
-'' ============================================
+' ============================================
+' Función   : NombreFuncion
+' Propósito : Descripción clara de qué hace
+' Parámetros: sParam As String — descripción
+' Retorna   : Boolean — descripción del valor de retorno
+' ============================================
 Public Function NombreFuncion(sParam As String) As Boolean
 ```
 
 ### Apartados dentro de la función
 
+Las variables se declaran al principio de la función, no dentro de un `If`.
+
 ```gambas
 Public Function NombreFuncion(sParam As String) As Boolean
 
-  ' --- 1. Inicialización de variables ---
   Dim sResultado As String
 
-  ' --- 2. Validación de entrada ---
+  ' --- 1. VALIDACIÓN DE ENTRADA ---
   If sParam = "" Then Return False
 
-  ' --- 3. Procesamiento ---
+  ' --- 2. PROCESAMIENTO ---
   Try sResultado = OtraFuncion(sParam)
   If Error Then Return False
 
   Return True
 
-End Function
+End
 ```
 
 ### Manejo de errores
@@ -94,10 +96,9 @@ En Gambas, `Try` precede una sola línea. No existen bloques `Try/Catch/End`. El
 ```gambas
 Public Function LeerArchivo(sRuta As String) As String
 
-  ' --- 1. Inicialización ---
   Dim sContenido As String
 
-  ' --- 2. Lectura defensiva ---
+  ' --- 1. LECTURA DEFENSIVA ---
   Try sContenido = File.Load(sRuta)
   If Error Then Return ""
 
@@ -108,16 +109,23 @@ Catch
   Message.Error("Error inesperado en LeerArchivo: " & Error.Text)
   Return ""
 
-End Function
+End
 ```
+
+Gambas no es Visual Basic: la herencia se nota, pero las diferencias son justamente las que rompen el código (`ByRef`, `Const` local, `End Try`, la evaluación de `And` y `Or`, que no cortocircuita).
 
 ### Estilo general
 
 - Nombres de funciones y procedimientos: **PascalCase**
-- Variables locales: **camelCase** con prefijo de tipo (`s` para String, `i` para Integer, `b` para Boolean, `h` para objetos)
+- Variables privadas de módulo o clase: prefijo `$` (`$cTitulos`)
+- Variables locales y parámetros: prefijo de tipo — `s` String, `i` Integer, `b` Boolean, `a` arreglo, `o` objeto, `h` handle, `r` Result
+- Controles: prefijo del tipo de control — `txt`, `cmb`, `lst`, `btn`, `lbl`, `txa`, `hbx`, `vbx`, `hsp`. Si el control cambia de tipo, el nombre cambia con él
 - Constantes: **MAYÚSCULAS_CON_GUIONES**
-- Comentarios internos: siempre en MAYÚSCULAS
+- Comentarios internos: siempre en MAYÚSCULAS, explicando el propósito y no la mecánica. Si una línea existe por una regla del proyecto, citarla
+- Rutas siempre Unix
 - Indentación: 2 espacios, sin tabs
+
+Las reglas completas, con los comportamientos de Gambas verificados que las sostienen, están en el corpus normativo del proyecto (`docs/corpus.md`).
 
 ---
 
@@ -152,7 +160,7 @@ Los contribuidores son reconocidos en [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## Contacto
 
-Para preguntas sobre contribuciones, abrí un **issue** en GitHub o escribí a [estudio2a@outlook.com.ar](mailto:estudio2a@outlook.com.ar).
+Para preguntas sobre contribuciones, abrí un **issue** en GitHub o escribí a [contacto@estudio2a.ar](mailto:contacto@estudio2a.ar).
 
 ---
 
