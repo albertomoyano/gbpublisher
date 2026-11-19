@@ -534,18 +534,21 @@ End
 ' ============================================
 ' Función   : CopiarArchivosBase_MD
 ' Propósito : Copia los archivos base al proyecto Markdown en curso desde los
-'             recursos instalados en ~/.gbpublisher. Respeta la lógica de
-'             no-sobreescritura para preservar personalizaciones del usuario.
-' Parámetros: (ninguno)
+'             recursos instalados en ~/.gbpublisher, y escribe su readme.md.
+'             Respeta la lógica de no-sobreescritura para preservar
+'             personalizaciones del usuario.
+' Parámetros: iTipo As Integer — TIPO_REVISTA_MD o TIPO_LIBRO_MD: el readme.md
+'             no dice lo mismo de un número que de un libro
 ' Retorna   : (Sub, sin retorno)
 ' ============================================
-Public Sub CopiarArchivosBase_MD()
+Public Sub CopiarArchivosBase_MD(iTipo As Integer)
 
   ' --- 1. INICIALIZACIÓN DE VARIABLES ---
   Dim sRaiz As String
   Dim sRecursos As String
   Dim sOrigenWorkflow As String
   Dim sDestinoWorkflow As String
+  Dim sReadme As String
 
   sRecursos = User.Home &/ ".gbpublisher"
 
@@ -561,9 +564,17 @@ Public Sub CopiarArchivosBase_MD()
   ' NO NECESITA VOLVER A CREARLOS COMO HACÍA LA VERSIÓN ANTERIOR
   If Not ControlarCarpetas() Then Return
 
-  ' --- 4. ARCHIVOS EN LA RAÍZ DEL PROYECTO ---
-  If Not File.RealPath(sRaiz &/ "readme.md") Then
-    Try Copy "./readme.md" To sRaiz &/ "readme.md"
+  ' --- 4. readme.md DEL PROYECTO ---
+  ' ES LA PORTADA DEL PROYECTO CUANDO SE SUBE A GITHUB. SE ESCRIBE SI NO
+  ' EXISTE O SI ESTÁ VACÍO: HASTA EL 18/11/2026 SE COPIABA UN readme.md VACÍO
+  ' DE LA APLICACIÓN, Y UN ARCHIVO VACÍO NO TIENE NADA DEL USUARIO QUE CUIDAR.
+  ' UNO CON CONTENIDO NO SE TOCA: PUDO HABERLO ESCRITO EL EQUIPO
+  ' DOS RAMAS Y NO Or: Or EVALÚA LAS DOS PARTES Y Stat FALLA SI NO EXISTE
+  sReadme = sRaiz &/ "readme.md"
+  If Not Exist(sReadme) Then
+    EscribirReadme(sReadme, iTipo)
+  Else If Stat(sReadme).Size = 0 Then
+    EscribirReadme(sReadme, iTipo)
   Endif
 
   ' --- 5. WORKFLOW DE GITHUB ACTIONS ---
@@ -589,6 +600,51 @@ Public Sub CopiarArchivosBase_MD()
   Endif
   If Not File.RealPath(sRaiz &/ "media" &/ "logo-cabecera.png") Then
     Try Copy sRecursos &/ "media/logo-cabecera.png" To sRaiz &/ "media" &/ "logo-cabecera.png"
+  Endif
+
+End
+
+' ============================================
+' Función   : EscribirReadme
+' Propósito : Escribe el readme.md de un proyecto con lo que se sabe en su
+'             primera apertura: el nombre y qué es. En una revista el número
+'             ya quedó vinculado, así que se dice cuál; en un libro todavía
+'             no hay título ni editorial en la base, y no se ponen porque el
+'             archivo no se vuelve a escribir
+' Parámetros: sReadme As String — ruta del readme.md
+'             iTipo As Integer — TIPO_REVISTA_MD o TIPO_LIBRO_MD
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub EscribirReadme(sReadme As String, iTipo As Integer)
+
+  ' --- 1. INICIALIZACIÓN DE VARIABLES ---
+  Dim sTexto As String
+  Dim sNumero As String
+
+  ' --- 2. EL TÍTULO: EL NOMBRE DEL PROYECTO, SIN .md ---
+  sTexto = "# " & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & gb.NewLine & gb.NewLine
+
+  ' --- 3. QUÉ ES ---
+  ' LA REVISTA, EL VOLUMEN Y EL NÚMERO LOS DEJA m_Numero AL VINCULAR, ANTES DE
+  ' ESTA LLAMADA. SI LA LECTURA FALLA, LA LÍNEA SE OMITE: EL readme NO ES
+  ' MOTIVO PARA INTERRUMPIR LA APERTURA
+  If iTipo = m_Constantes.TIPO_REVISTA_MD Then
+    sTexto &= "Número de revista en producción editorial." & gb.NewLine & gb.NewLine
+    sNumero = m_Numero.DescripcionNumero(m_InicioCierre.IdProyectoEnCurso)
+    If sNumero <> "" Then sTexto &= sNumero & gb.NewLine & gb.NewLine
+  Else
+    sTexto &= "Libro en producción editorial." & gb.NewLine & gb.NewLine
+  Endif
+
+  sTexto &= "Producido con [gbpublisher](https://github.com/albertomoyano/gbpublisher)." & gb.NewLine
+
+  ' --- 4. ESCRITURA ---
+  ' COMO EL .gitignore DE ControlarCarpetas: SI NO SE PUEDE ESCRIBIR SE AVISA
+  ' Y LA APERTURA SIGUE (RC-GM-02: Try NO INTERRUMPE)
+  Try File.Save(sReadme, sTexto)
+  If Error Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No se pudo escribir el readme.md del proyecto:" & Chr(10) & Error.Text)
   Endif
 
 End

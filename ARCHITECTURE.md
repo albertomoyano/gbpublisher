@@ -65,6 +65,7 @@ gbpublisher no reimplementa las herramientas de procesamiento que utiliza: las i
 - `epubcheck` 4.2.6 — validación de EPUB
 - `veraPDF` 1.30.1 — validación de PDF/A
 - `packtools` 4.18.2 — validación de paquetes SciELO
+- `vnu` 26.7.3 (Nu Html Checker) — validación de HTML5; sin él, el HTML no se genera
 
 El canónico se regenera muchas veces durante la edición, y una versión distinta de una de estas herramientas puede producir otro XML u otro veredicto. Fijarlas es lo que permite regenerar un título idéntico años después.
 

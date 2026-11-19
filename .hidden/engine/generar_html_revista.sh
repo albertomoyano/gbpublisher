@@ -37,14 +37,15 @@
 #   5. jats-a-html-articulo.xsl escribe cada artículo; numero-a-html.xsl,
 #      index.html.
 #   6. Valida con vnu (HTML5). Sus errores no impiden la salida: llegan a
-#      Gambas como código 3, como en libros.
+#      Gambas como código 3, como en libros. Sin vnu no se genera: se
+#      controla al verificar el entorno.
 #
 # QUÉ ABORTA Y QUÉ SOLO AVISA
-#   aborta   insumos ausentes, la pinza, un artículo sin páginas, un
+#   aborta   insumos ausentes (vnu incluido), la pinza, un artículo sin páginas, un
 #            canónico que no se generó, la pasada de citas o el coloreo
 #            fallidos, una página que no se pudo transformar, una imagen
 #            que falta en media/
-#   avisa    canónicos o citas con avisos, errores de vnu o vnu ausente
+#   avisa    canónicos o citas con avisos, errores de vnu
 #
 # CÓDIGOS DE SALIDA (comun.sh): 0 generado y válido; 3 con avisos; 1 no
 # ============================================================================
@@ -65,8 +66,8 @@ fi
 
 # --- 2. CONFIGURACIÓN ---
 TIEMPO_SAXON=120
+# RUTA_VNU VIVE EN comun.sh, COMO LAS DEMÁS HERRAMIENTAS CONGELADAS
 TIEMPO_VNU=300
-RUTA_VNU="/opt/vnu/vnu.jar"
 LINEAS_ERROR_VNU=15
 
 VOLCADO_REL="tmp/numero-datos.xml"
@@ -106,12 +107,14 @@ paso "verificando el entorno"
 [[ -d "$DIR_PROYECTO" ]] || morir "No existe el proyecto: $DIR_PROYECTO"
 [[ "$NOMBRE_BIB" == */* ]] && morir "Nombre de .bib no válido: $NOMBRE_BIB"
 requerir_comandos java xmllint identify convert sha256sum iconv
+# SIN vnu EL HTML NO SE GENERA: SE SABE ACÁ Y NO AL FINAL (SC-95)
+requerir_vnu
 [[ -f "$RUTA_SAXON" ]]   || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL_NUMERO" ]]   || morir "Falta la hoja $XSL_NUMERO: actualizá la copia local (~/.gbpublisher/xslt)"
 [[ -f "$XSL_ARTICULO" ]] || morir "Falta la hoja $XSL_ARTICULO: actualizá la copia local (~/.gbpublisher/xslt)"
 [[ -f "$CSS" ]]          || morir "No se encontró la hoja de estilos: $CSS"
 [[ -f "$JS" ]]           || morir "No se encontró el script: $JS"
-ok "herramientas, hojas, hoja de estilos y script"
+ok "herramientas (con vnu), hojas, hoja de estilos y script"
 
 # --- 5. EL VOLCADO ---
 [[ -f "$VOLCADO" ]] || morir "No está $VOLCADO_REL: lo escribe gbpublisher al generar. Generá desde la aplicación."
@@ -308,26 +311,23 @@ fi
 # --- 11. VALIDACIÓN HTML5 (Nu Html Checker) ---
 # vnu Y NO xmllint, COMO EN LIBROS: xmllint ES UN PARSER HTML 4.01. SIN
 # --exit-zero-always, vnu DEVUELVE DISTINTO DE CERO SI ENCUENTRA ERRORES
+# SU PRESENCIA YA SE CONTROLÓ EN EL APARTADO 4 (requerir_vnu)
 paso "validando el HTML"
-if [[ ! -f "$RUTA_VNU" ]]; then
-    aviso "vnu no está instalado en $RUTA_VNU: el HTML no se validó"
+mapfile -t PAGINAS_VNU < <(find "$DIR_DOCS" -type f -name '*.html' | LC_ALL=C sort)
+salida=$(timeout "$TIEMPO_VNU" java -jar "$RUTA_VNU" \
+            --format gnu --errors-only --skip-non-html "${PAGINAS_VNU[@]}" 2>&1)
+codigo=$?
+if (( codigo == 0 )); then
+    ok "HTML5 sin errores"
+elif (( codigo == 124 )); then
+    aviso "la validación HTML5 no terminó en $TIEMPO_VNU segundos"
 else
-    mapfile -t PAGINAS_VNU < <(find "$DIR_DOCS" -type f -name '*.html' | LC_ALL=C sort)
-    salida=$(timeout "$TIEMPO_VNU" java -jar "$RUTA_VNU" \
-                --format gnu --errors-only --skip-non-html "${PAGINAS_VNU[@]}" 2>&1)
-    codigo=$?
-    if (( codigo == 0 )); then
-        ok "HTML5 sin errores"
-    elif (( codigo == 124 )); then
-        aviso "la validación HTML5 no terminó en $TIEMPO_VNU segundos"
-    else
-        errores=$(printf '%s\n' "$salida" | grep -c .)
-        aviso "$errores error(es) de HTML5:"
-        printf '%s\n' "$salida" | sed "s|$DIR_DOCS/||" |
-            head -"$LINEAS_ERROR_VNU" | sed 's/^/     /'
-        if (( errores > LINEAS_ERROR_VNU )); then
-            tenue "(+$((errores - LINEAS_ERROR_VNU)) más)"
-        fi
+    errores=$(printf '%s\n' "$salida" | grep -c .)
+    aviso "$errores error(es) de HTML5:"
+    printf '%s\n' "$salida" | sed "s|$DIR_DOCS/||" |
+        head -"$LINEAS_ERROR_VNU" | sed 's/^/     /'
+    if (( errores > LINEAS_ERROR_VNU )); then
+        tenue "(+$((errores - LINEAS_ERROR_VNU)) más)"
     fi
 fi
 

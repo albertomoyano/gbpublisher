@@ -68,7 +68,7 @@ This approach ensures reproducibility, traceability and full portability of the 
 - Full TeX Live
 - xmllint
 
-The tools that determine the result of an output are not taken from the system: they are installed in fixed versions under `/opt` from the application itself (menu **Acerca de → Controlar integridad del sistema**, with a project open). They are Pandoc 3.1.3, Saxon-HE 12.9, epubcheck 4.2.6, veraPDF 1.30.1 and packtools 4.18.2. The HTML validator (vnu) will be added to that list soon.
+The tools that determine the result of an output are not taken from the system: they are installed in fixed versions under `/opt` from the application itself (menu **Acerca de → Controlar integridad del sistema**, with a project open). They are Pandoc 3.1.3, Saxon-HE 12.9, epubcheck 4.2.6, veraPDF 1.30.1, packtools 4.18.2 and the HTML validator vnu 26.7.3. Without vnu, the HTML output is not generated.
 
 The application interface is in Spanish.
 

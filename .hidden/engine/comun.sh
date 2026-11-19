@@ -56,6 +56,12 @@ RUTA_SAXON="${GBP_SAXON:-/opt/Saxon-HE/saxon-he.jar}"
 RUTA_PANDOC="${GBP_PANDOC:-/opt/pandoc/bin/pandoc}"
 RUTA_EPUBCHECK="${GBP_EPUBCHECK:-/opt/epubcheck/epubcheck.jar}"
 
+# vnu (Nu Html Checker) CONGELADO EN /opt POR LA MISMA RAZÓN: SU VEREDICTO
+# CAMBIA CON CADA VERSIÓN. LO INSTALA integridad.sh. LO USAN LOS DOS HTML
+# (generar_html_libro.sh, generar_html_revista.sh). GBP_VNU PARA PROBAR A
+# MANO OTRA VERSIÓN
+RUTA_VNU="${GBP_VNU:-/opt/vnu/vnu.jar}"
+
 # DÓNDE MANDA CADA AVISO DE HERRAMIENTA FALTANTE. ES LO ÚNICO QUE UN USUARIO
 # SIN FORMACIÓN TÉCNICA PUEDE HACER CON ESE AVISO, ASÍ QUE TODOS LO DICEN
 COMO_REPARAR="Abrí cualquier proyecto y usá «Acerca de... → Controlar integridad del sistema»: instala lo que falte."
@@ -262,6 +268,17 @@ requerir_comandos() {
 # ============================================================================
 requerir_pandoc() {
     [[ -x "$RUTA_PANDOC" ]] || morir "pandoc no está en $RUTA_PANDOC. $COMO_REPARAR"
+}
+
+# ============================================================================
+# Función   : requerir_vnu
+# Propósito : Aborta si el vnu congelado no está en RUTA_VNU. Los HTML lo
+#             llaman al verificar el entorno, antes de generar: un HTML que no
+#             se puede validar no se genera, y no hay que esperar la
+#             generación entera para enterarse
+# ============================================================================
+requerir_vnu() {
+    [[ -f "$RUTA_VNU" ]] || morir "El validador de HTML (vnu) no está en $RUTA_VNU: sin él el HTML no se puede validar. $COMO_REPARAR"
 }
 
 # ============================================================================

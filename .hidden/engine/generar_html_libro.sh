@@ -69,8 +69,8 @@ fi
 
 # --- 1. CONFIGURACIÓN ---
 TIEMPO_SAXON=300
+# RUTA_VNU VIVE EN comun.sh, COMO LAS DEMÁS HERRAMIENTAS CONGELADAS
 TIEMPO_VNU=300
-RUTA_VNU="/opt/vnu/vnu.jar"
 LINEAS_ERROR_VNU=15
 # PLAZO DE CADA DESCARGA DEL MARCO, EN SEGUNDOS
 TIEMPO_CURL=30
@@ -270,6 +270,8 @@ paso "verificando el entorno"
 [[ -d "$DIR_PROYECTO" ]] || morir "No existe el proyecto: $DIR_PROYECTO"
 
 requerir_comandos java xmllint identify convert sha256sum
+# SIN vnu EL HTML NO SE GENERA: SE SABE ACÁ Y NO AL FINAL (SC-95)
+requerir_vnu
 
 [[ -f "$RUTA_SAXON" ]] || morir "Saxon-HE no está en $RUTA_SAXON"
 [[ -f "$XSL" ]]        || morir "No se encontró la hoja de salida HTML: $XSL"
@@ -514,35 +516,32 @@ ok "docs/index.html"
 # vnu Y NO xmllint: xmllint ES UN PARSER HTML 4.01 Y DA FALSOS POSITIVOS CON
 # aside, details Y EL RESTO DE HTML5. SIN --exit-zero-always, vnu DEVUELVE
 # DISTINTO DE CERO CUANDO ENCUENTRA ERRORES, Y ESO ES LO QUE SE USA ACÁ.
+# SU PRESENCIA YA SE CONTROLÓ EN EL APARTADO 3 (requerir_vnu)
 paso "validando el HTML"
 
-if [[ ! -f "$RUTA_VNU" ]]; then
-    tenue "vnu no está instalado en $RUTA_VNU: el HTML no se validó"
+# LOS FRAGMENTOS DEL MARCO (assets/marco/<idioma>/*.xml) NO SON PÁGINAS:
+# SON XML SIN DOCTYPE, Y COMPARTIR LLEVA {u} Y {t}, QUE LA HOJA COMPLETA
+# AL COPIARLOS. DESDE QUE SON .xml, find YA NO LOS TOMA; LA EXCLUSIÓN DE
+# assets/marco/ QUEDA POR SI EL PORTAL PUBLICARA UN .html AHÍ. vnu RECIBE
+# TODOS LOS .html DE docs/ MENOS ESOS; CON EL
+# DESTINO AUTÓNOMO NO HAY MARCO Y LA LISTA ES LA DE SIEMPRE (INCLUIDOS LOS
+# GRÁFICOS DE assets/media/, SC-69)
+mapfile -t PAGINAS_VNU < <(find "$DIR_DOCS" -type f -name '*.html' \
+                                -not -path "$DIR_MARCO/*" | LC_ALL=C sort)
+salida=$(timeout "$TIEMPO_VNU" java -jar "$RUTA_VNU" \
+            --format gnu --errors-only --skip-non-html "${PAGINAS_VNU[@]}" 2>&1)
+codigo=$?
+if (( codigo == 0 )); then
+    ok "HTML5 sin errores"
+elif (( codigo == 124 )); then
+    aviso "la validación HTML5 no terminó en $TIEMPO_VNU segundos"
 else
-    # LOS FRAGMENTOS DEL MARCO (assets/marco/<idioma>/*.xml) NO SON PÁGINAS:
-    # SON XML SIN DOCTYPE, Y COMPARTIR LLEVA {u} Y {t}, QUE LA HOJA COMPLETA
-    # AL COPIARLOS. DESDE QUE SON .xml, find YA NO LOS TOMA; LA EXCLUSIÓN DE
-    # assets/marco/ QUEDA POR SI EL PORTAL PUBLICARA UN .html AHÍ. vnu RECIBE
-    # TODOS LOS .html DE docs/ MENOS ESOS; CON EL
-    # DESTINO AUTÓNOMO NO HAY MARCO Y LA LISTA ES LA DE SIEMPRE (INCLUIDOS LOS
-    # GRÁFICOS DE assets/media/, SC-69)
-    mapfile -t PAGINAS_VNU < <(find "$DIR_DOCS" -type f -name '*.html' \
-                                    -not -path "$DIR_MARCO/*" | LC_ALL=C sort)
-    salida=$(timeout "$TIEMPO_VNU" java -jar "$RUTA_VNU" \
-                --format gnu --errors-only --skip-non-html "${PAGINAS_VNU[@]}" 2>&1)
-    codigo=$?
-    if (( codigo == 0 )); then
-        ok "HTML5 sin errores"
-    elif (( codigo == 124 )); then
-        aviso "la validación HTML5 no terminó en $TIEMPO_VNU segundos"
-    else
-        errores=$(printf '%s\n' "$salida" | grep -c .)
-        aviso "$errores error(es) de HTML5:"
-        printf '%s\n' "$salida" | sed "s|$DIR_DOCS/||" |
-            head -"$LINEAS_ERROR_VNU" | sed 's/^/     /'
-        if (( errores > LINEAS_ERROR_VNU )); then
-            tenue "(+$((errores - LINEAS_ERROR_VNU)) más)"
-        fi
+    errores=$(printf '%s\n' "$salida" | grep -c .)
+    aviso "$errores error(es) de HTML5:"
+    printf '%s\n' "$salida" | sed "s|$DIR_DOCS/||" |
+        head -"$LINEAS_ERROR_VNU" | sed 's/^/     /'
+    if (( errores > LINEAS_ERROR_VNU )); then
+        tenue "(+$((errores - LINEAS_ERROR_VNU)) más)"
     fi
 fi
 

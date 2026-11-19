@@ -5383,7 +5383,7 @@ DECISIÓN CERRADA (Alberto, 14/11/2026; etapa H de las salidas de revistas).
 - LAS HOJAS: `jats-a-html-articulo.xsl` importa `jats-to-html.xsl` para el cuerpo; la raíz, los metadatos y la columna de datos de la vieja leían el canónico viejo y no se usan. Metadatos nuevos desde el canónico: Highwire, Dublin Core, Open Graph y Schema.org (ScholarlyArticle dentro de PublicationIssue, PublicationVolume y Periodical). `numero-a-html.xsl` escribe el sumario desde el volcado. Las dos salen sin espacio de nombres, como toda la hoja de revista.
 - CITAS: desde `citas.html` (SC-57), la misma pasada que el EPUB. El «cómo citar» es el de biblatex, en el estilo de la revista: no va el widget de cinco formatos del libro, que arma la cita en JavaScript.
 - LAS DESCARGAS se copian al sitio (`docs/descargas/`): el PDF de cada artículo y el PDF y el EPUB del número. No hace falta esquema nuevo. Están siempre: la revista es de acceso abierto (SC-93).
-- `engine/generar_html_revista.sh <proyecto> <bib>`: verifica la pinza y las páginas; regenera los canónicos; la pasada de citas; colorea el código por artículo (SC-42); rehace en `docs/` solo lo que escribe (`index.html`, `h-a-*.html`, `assets/media/`, `descargas/`), así un artículo que salió del número no queda publicado; imágenes por SC-76 con los gráficos interactivos (SC-69); las hojas; vnu (sus errores avisan, código 3).
+- `engine/generar_html_revista.sh <proyecto> <bib>`: verifica la pinza y las páginas; regenera los canónicos; la pasada de citas; colorea el código por artículo (SC-42); rehace en `docs/` solo lo que escribe (`index.html`, `h-a-*.html`, `assets/media/`, `descargas/`), así un artículo que salió del número no queda publicado; imágenes por SC-76 con los gráficos interactivos (SC-69); las hojas; vnu (sus errores avisan, código 3; sin vnu el HTML no se genera: SC-95).
 - DESDE GAMBAS: «HTML completo del número en curso» (`GenerarHtmlNumero`). El viejo «Generar salida HTML» queda solo para los números viejos.
 
 **Relaciones:** vinculo:SC-72,vinculo:SC-87,vinculo:SC-89,vinculo:SC-91,vinculo:SC-57,vinculo:SC-76,vinculo:SC-69,vinculo:SC-42,vinculo:SC-85,vinculo:SC-80
@@ -5445,7 +5445,7 @@ Vive en `~/.config/mc/` (`ini`, `panels.ini`; `mc -F` da las rutas). OBSERVADO p
 
 ### SC-95 — Integridad del sistema: una sola lista en engine/integridad.sh, herramientas de producción congeladas en /opt y control por funcionamiento
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / engine/integridad.sh / pkexec / Saxon-HE 12.9 / pandoc 3.1.3 / epubcheck 4.2.6 / veraPDF 1.30.1 / packtools 4.18.2 / Linux Mint 22 · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / engine/integridad.sh / pkexec / Saxon-HE 12.9 / pandoc 3.1.3 / epubcheck 4.2.6 / veraPDF 1.30.1 / packtools 4.18.2 / vnu 26.7.3 / Linux Mint 22 · **Verificado:** 2026-11
 
 DECISIÓN CERRADA (Alberto, 18/11/2026, después de probarlo en Linux Mint con el libro de Jensen).
 
@@ -5466,6 +5466,7 @@ Se congela, con versión y huella fijas, lo que cumple las tres condiciones a la
     epubcheck 4.2.6   /opt/epubcheck/epubcheck.jar
     veraPDF 1.30.1    /opt/verapdf
     packtools 4.18.2  /opt/packtools (engine/instalar_packtools.sh)
+    vnu 26.7.3        /opt/vnu/vnu.jar
 
 La URL, la huella de la descarga y la huella de lo instalado de cada uno viven en `integridad.sh`. Para cambiar de versión se cambian las tres juntas, más la versión esperada.
 
@@ -5479,7 +5480,7 @@ Lo que garantiza el `.deb` y no se vuelve a controlar: Java, TeX Live (`texlive-
 
 CONTROL POR FUNCIONAMIENTO, NO POR PRESENCIA
 
-Cada componente se controla por la huella de lo instalado y haciéndolo trabajar, como usuario común, que es como lo usa la cadena: Saxon transforma un XML mínimo y el enlace tiene que llevar al JAR de la 12.9; pandoc convierte una línea a DocBook y responde como intérprete Lua (`pandoc lua`, que usa `colorear_codigo.sh`); epubcheck y veraPDF dan su versión; packtools carga su validador desde su entorno. Una instalación que funciona no se toca, aunque se haya hecho a mano: solo se repara lo que falla, y se reemplaza la carpeta entera.
+Cada componente se controla por la huella de lo instalado y haciéndolo trabajar, como usuario común, que es como lo usa la cadena: Saxon transforma un XML mínimo y el enlace tiene que llevar al JAR de la 12.9; pandoc convierte una línea a DocBook y responde como intérprete Lua (`pandoc lua`, que usa `colorear_codigo.sh`); epubcheck y veraPDF dan su versión; packtools carga su validador desde su entorno; vnu da su versión y valida una página HTML5 mínima. Una instalación que funciona no se toca, aunque se haya hecho a mano: solo se repara lo que falla, y se reemplaza la carpeta entera.
 
 CÓMO SE INSTALA
 
@@ -5506,6 +5507,14 @@ LO QUE SE RETIRÓ
 PROBADO
 
 En Mint (18/11/2026): el script reparó pandoc y epubcheck con una sola ventana de contraseña y respetó el Saxon instalado a mano. Con el libro de Jensen, los canónicos regenerados con el pandoc de /opt son idénticos byte a byte a los del pandoc de apt; el EPUB pasa epubcheck 4.2.6 sin mensajes. En un Ubuntu 24.04 de prueba: la instalación desde cero de pandoc, epubcheck y veraPDF, el control como usuario común, y la ventana cerrada (código 126).
+
+VNU SE CONGELA (18/11/2026). El validador de HTML, que ya usaban los dos HTML (`generar_html_libro.sh`, `generar_html_revista.sh`), se suma a la lista: su veredicto cambia con cada versión, igual que el de epubcheck. Se congela la 26.7.3, la que estaba instalada en Mint: el jar de Mint y el del paquete son idénticos byte a byte.
+
+- DE DÓNDE SE BAJA. Las releases de GitHub de `validator/validator` no tienen un archivo por versión. Se usa el paquete `vnu-jar` de npm, que publica el propio repositorio desde GitHub Actions. No hace falta npm: el `.tgz` trae `package/build/dist/vnu.jar` y la licencia, y `integridad.sh` lo baja con curl y controla dos huellas, la del `.tgz` y la del jar. Queda en `/opt/vnu/vnu.jar`, con su `LICENSE`.
+- EL CONTROL. La huella del jar; que `--version` empiece con «26.7.3»; y que una página HTML5 con `aside` y `details` dé código 0. Se mira solo el código: vnu escribe sus mensajes en stderr, donde Java también avisa «Picked up JAVA_TOOL_OPTIONS» si esa variable está puesta.
+- LOS HTML. `RUTA_VNU` pasa a `comun.sh` (con `GBP_VNU` para probar a mano otra versión), y `requerir_vnu` corta al verificar el entorno, antes de generar. Antes, sin vnu el HTML se generaba entero y solo avisaba al final que no se había validado. Los errores que vnu encuentra siguen siendo avisos (código 3).
+
+PROBADO en el contenedor (Ubuntu 24.04, Java 21): instalación desde cero, un jar de otra versión reemplazado, el control como usuario común, y `requerir_vnu` con y sin el jar.
 
 **Relaciones:** apoya:GV-206,apoya:GV-207,apoya:GV-208,vinculo:GV-209,vinculo:SC-52,vinculo:SC-53,vinculo:SC-11,vinculo:GV-42
 
@@ -5708,6 +5717,33 @@ VERIFICADO: compilación completa con `gbc3` 3.19; ningún nombre borrado en el 
 **Relaciones:** vinculo:SC-97,vinculo:SC-22,vinculo:GV-210
 
 **PENDIENTE:** Aplicar la 1.33.0 en Mint.
+
+### SC-100 — El readme.md del proyecto se escribe en la primera apertura, con el nombre y qué es; reemplaza la copia vacía
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22 (Mint) y gbc3, gbx3 3.19 (contenedor) · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 18/11/2026).
+
+El `readme.md` es la portada del proyecto cuando se sube a GitHub. Hasta esta fecha `CopiarArchivosBase_MD` copiaba a cada proyecto un `readme.md` vacío de la raíz de la aplicación. Ahora lo escribe `m_FuncionesGenericas.EscribirReadme` en la primera apertura, con lo que se sabe en ese momento:
+
+- el título: el nombre del proyecto sin `.md` (`l-ALGO`, `r-ALGO-V99-N01`);
+- qué es: «Número de revista en producción editorial» o «Libro en producción editorial»;
+- en una revista, el número en una línea (`m_Numero.DescripcionNumero`: revista, volumen, número, suplemento y año). El número ya quedó vinculado antes, en el alta del proyecto;
+- «Producido con gbpublisher», con el enlace al repositorio.
+
+La editorial y el título del libro no se ponen: en la primera apertura todavía no están en la base, y el archivo no se vuelve a escribir.
+
+CUÁNDO SE ESCRIBE. `CopiarArchivosBase_MD` corre en cada apertura (`FMain`, apartado 11). El `readme.md` se escribe si no existe o si está vacío: un archivo vacío no tiene nada del usuario que cuidar, y así los proyectos que ya tenían la copia vacía reciben el suyo. Uno con contenido no se toca, porque pudo escribirlo el equipo. La condición va en dos ramas y no con `Or`, porque `Or` evalúa las dos partes y `Stat` falla si el archivo no existe. Si no se puede escribir, se avisa y la apertura sigue, como con el `.gitignore` de `ControlarCarpetas`.
+
+EL TIPO VA COMO PARÁMETRO. `CopiarArchivosBase_MD(iTipo)` lo recibe de `FMain`: `EsLibroEnCurso` recién se fija en el apartado 12, después de la llamada.
+
+LO QUE SE RETIRÓ. El `readme.md` vacío de la raíz de la aplicación. Convivía en el repositorio con `README.md`, la portada de gbpublisher, y los dos nombres solo se distinguían por la caja.
+
+PROBADO. Compila con gbc3 3.19. En un proyecto de consola con gbx3 3.19: `File.BaseName` da el nombre sin `.md`, `Stat().Size` da 0 para un archivo vacío y `Stat` de un archivo que no existe falla con «File or directory does not exist».
+
+**Relaciones:** vinculo:RC-GM-02
+
+**PENDIENTE:** Probar en Mint: un proyecto nuevo de cada tipo y uno existente con el readme.md vacío.
 
 ---
 

@@ -16,7 +16,7 @@
 #   En /opt, con versión y huella fijas, lo que define el contenido de una
 #   salida o el veredicto de una validación, cuando una versión nueva no
 #   garantiza el mismo resultado y congelarlo es barato (un JAR, un binario):
-#   Saxon-HE, pandoc, epubcheck, veraPDF y packtools. Lo demás lo da el
+#   Saxon-HE, pandoc, epubcheck, veraPDF, packtools y vnu. Lo demás lo da el
 #   sistema por las dependencias del .deb (Java, TeX Live, xmllint, Python
 #   con venv...) y no se controla acá. MySQL tampoco: si la aplicación está
 #   abierta con un proyecto, ya se conectó a la base.
@@ -95,7 +95,18 @@ VERAPDF_ZIP_SHA="9f03fc5da454348329f4054256351aa6c6a91683329978e8294f21fe8a5d7ab
 PACKTOOLS_DIR="/opt/packtools"
 PACKTOOLS_VERSION="4.18.2"
 
-COMPONENTES=(saxon pandoc epubcheck verapdf packtools)
+# VNU (NU HTML CHECKER) 26.7.3. NO HAY UN ARCHIVO POR VERSIÓN EN LAS RELEASES
+# DE GITHUB: SE BAJA DEL PAQUETE vnu-jar DE npm, QUE PUBLICA EL PROPIO
+# REPOSITORIO validator/validator DESDE GITHUB ACTIONS. NO HACE FALTA npm: ES
+# UN .tgz QUE SOLO TRAE package/build/dist/vnu.jar Y SU LICENCIA. LA HUELLA
+# DEL JAR ES LA DEL QUE YA ESTABA EN MINT, IDÉNTICO BYTE A BYTE AL DEL PAQUETE
+VNU_DIR="/opt/vnu"
+VNU_VERSION="26.7.3"
+VNU_URL="https://registry.npmjs.org/vnu-jar/-/vnu-jar-26.7.3.tgz"
+VNU_TGZ_SHA="075162071097058ddbe9d5b686366c374e8da1122460915c5516352d5ae60269"
+VNU_JAR_SHA="2e2067cb9c23705b3f7185d90e715462398f4c1b7c61756c8aab258eedb3bbb5"
+
+COMPONENTES=(saxon pandoc epubcheck verapdf packtools vnu)
 
 # --- 2. CÓMO SE NOMBRA CADA UNO ANTE EL USUARIO ---
 # EN LENGUAJE DE OFICIO: QUÉ DEJA DE PODER HACERSE, NO QUÉ ARCHIVO FALTA
@@ -105,6 +116,7 @@ declare -A NOMBRE=(
     [epubcheck]="epubcheck 4.2.6"
     [verapdf]="veraPDF 1.30.1"
     [packtools]="packtools 4.18.2"
+    [vnu]="vnu 26.7.3 (validador de HTML)"
 )
 declare -A SIN_ESTO=(
     [saxon]="sin esto no se genera ninguna salida: XML, HTML, PDF ni EPUB"
@@ -112,6 +124,7 @@ declare -A SIN_ESTO=(
     [epubcheck]="sin esto los EPUB se generan pero no se validan"
     [verapdf]="sin esto no se puede comprobar que los PDF cumplan PDF/A"
     [packtools]="sin esto no se validan los paquetes para SciELO"
+    [vnu]="sin esto no se genera el HTML: no se lo podría validar"
 )
 
 # ============================================================================
@@ -221,6 +234,34 @@ controlar_packtools() {
     salida="$(timeout 120 "$py" -I -c 'import packtools.version as v; from packtools import catalogs, stylechecker; print(v.__version__)' 2>/dev/null)"
     if [[ "$salida" != "$PACKTOOLS_VERSION" ]]; then
         MOTIVO="el entorno no carga packtools $PACKTOOLS_VERSION"
+        return 1
+    fi
+    return 0
+}
+
+controlar_vnu() {
+    local jar="$VNU_DIR/vnu.jar" salida
+    if [[ ! -f "$jar" ]]; then
+        MOTIVO="no está $jar"
+        return 1
+    fi
+    if [[ "$(huella "$jar")" != "$VNU_JAR_SHA" ]]; then
+        MOTIVO="$jar no es la versión $VNU_VERSION"
+        return 1
+    fi
+    # --version IMPRIME «26.7.3 (ff14d46)»: SE COMPARA EL COMIENZO
+    salida="$(timeout 60 java -jar "$jar" --version 2>/dev/null)"
+    if [[ "$salida" != "$VNU_VERSION "* ]]; then
+        MOTIVO="vnu no arrancó"
+        return 1
+    fi
+    # Y TIENE QUE VALIDAR: UNA PÁGINA HTML5 CORRECTA, CON aside Y details
+    # (LO QUE xmllint NO ENTIENDE), DA CÓDIGO 0. SE MIRA SOLO EL CÓDIGO: vnu
+    # ESCRIBE SUS MENSAJES EN stderr, DONDE JAVA TAMBIÉN AVISA «Picked up
+    # JAVA_TOOL_OPTIONS» SI ESA VARIABLE ESTÁ PUESTA
+    printf '<!DOCTYPE html>\n<html lang="es"><head><meta charset="utf-8"><title>t</title></head><body><aside><p>a</p></aside><details><summary>s</summary>d</details></body></html>\n' > "$PRUEBAS/t.html"
+    if ! timeout 120 java -jar "$jar" --errors-only "$PRUEBAS/t.html" >/dev/null 2>&1; then
+        MOTIVO="vnu no validó la página de prueba"
         return 1
     fi
     return 0
@@ -340,6 +381,21 @@ instalar_verapdf() {
     ok "veraPDF 1.30.1 en $VERAPDF_DIR"
 }
 
+instalar_vnu() {
+    local tmp
+    tmp="$(mktemp -d)"
+    tar -xzf "$DESCARGAS/vnu.tgz" -C "$tmp" || morir "No se pudo descomprimir vnu"
+    [[ -f "$tmp/package/build/dist/vnu.jar" ]] || morir "El paquete de vnu no trae vnu.jar"
+    rm -rf -- "${VNU_DIR:?}"
+    mkdir -p "$VNU_DIR"
+    # EL JAR Y SU LICENCIA (MIT): EL RESTO DEL PAQUETE ES EL ENVOLTORIO DE npm
+    mv "$tmp/package/build/dist/vnu.jar" "$VNU_DIR/vnu.jar"
+    mv "$tmp/package/LICENSE" "$VNU_DIR/LICENSE" 2>/dev/null
+    rm -rf -- "$tmp"
+    dejar_de_root "$VNU_DIR"
+    ok "vnu $VNU_VERSION en $VNU_DIR"
+}
+
 instalar_packtools() {
     GBP_ANIDADO=1 bash "$DIR_ENGINE/instalar_packtools.sh" ||
         morir "No se pudo instalar packtools"
@@ -364,6 +420,7 @@ modo_root() {
             pandoc)    [[ "$(huella "$DESCARGAS/pandoc.tar.gz")" == "$PANDOC_TGZ_SHA" ]] ;;
             epubcheck) [[ "$(huella "$DESCARGAS/epubcheck.zip")" == "$EPUBCHECK_ZIP_SHA" ]] ;;
             verapdf)   [[ "$(huella "$DESCARGAS/verapdf.zip")" == "$VERAPDF_ZIP_SHA" ]] ;;
+            vnu)       [[ "$(huella "$DESCARGAS/vnu.tgz")" == "$VNU_TGZ_SHA" ]] ;;
             packtools) true ;;
             *)         morir "Componente desconocido: $c" ;;
         esac || morir "La descarga de ${NOMBRE[$c]} cambió antes de instalarse. No se instaló nada."
@@ -427,6 +484,7 @@ for c in "${FALTAN[@]}"; do
         pandoc)    descargar "$PANDOC_URL" "$TRABAJO/pandoc.tar.gz" "$PANDOC_TGZ_SHA" "pandoc 3.1.3" ;;
         epubcheck) descargar "$EPUBCHECK_URL" "$TRABAJO/epubcheck.zip" "$EPUBCHECK_ZIP_SHA" "epubcheck 4.2.6" ;;
         verapdf)   descargar "$VERAPDF_URL" "$TRABAJO/verapdf.zip" "$VERAPDF_ZIP_SHA" "veraPDF 1.30.1" ;;
+        vnu)       descargar "$VNU_URL" "$TRABAJO/vnu.tgz" "$VNU_TGZ_SHA" "vnu 26.7.3" ;;
         packtools) tenue "packtools se baja durante la instalación (GitHub y PyPI)" ;;
     esac
 done

@@ -68,7 +68,7 @@ Este enfoque garantiza reproducibilidad, trazabilidad y portabilidad total de lo
 - TeX Live completo
 - xmllint
 
-Las herramientas que deciden el resultado de una salida no se toman del sistema: se instalan en versiones fijas en `/opt` desde la propia aplicación (menú **Acerca de → Controlar integridad del sistema**, con un proyecto abierto). Son Pandoc 3.1.3, Saxon-HE 12.9, epubcheck 4.2.6, veraPDF 1.30.1 y packtools 4.18.2. El validador de HTML (vnu) se suma a esa lista próximamente.
+Las herramientas que deciden el resultado de una salida no se toman del sistema: se instalan en versiones fijas en `/opt` desde la propia aplicación (menú **Acerca de → Controlar integridad del sistema**, con un proyecto abierto). Son Pandoc 3.1.3, Saxon-HE 12.9, epubcheck 4.2.6, veraPDF 1.30.1, packtools 4.18.2 y el validador de HTML vnu 26.7.3. Sin vnu, el HTML no se genera.
 
 ---
 
