@@ -4396,7 +4396,7 @@ DECISIÓN CERRADA (Alberto, 28/10; entrega C3 del rediseño de revistas).
 - Las palabras clave del autor siguen libres, una por línea.
 - LICENCIAS: los datos de MeSH son de dominio público, con cita a NLM y versión declarada si se redistribuyen. Descargar DeCS exige un contrato de licencia gratuito con BIREME. Tipear términos no requiere nada.
 
-**Relaciones:** vinculo:SC-23,vinculo:SC-08,vinculo:SC-71,vinculo:SC-73,vinculo:GV-152,vinculo:GV-145,vinculo:GV-146,vinculo:GV-150,vinculo:SC-90
+**Relaciones:** vinculo:SC-23,vinculo:SC-08,vinculo:SC-71,vinculo:SC-73,vinculo:GV-152,vinculo:GV-145,vinculo:GV-215,vinculo:GV-150,vinculo:SC-90
 
 ### SC-75 — Validación del canónico DocBook de libros: un validador en engine/, huella de las fuentes y freno del desactualizado
 
@@ -5749,7 +5749,7 @@ PROBADO. Compila con gbc3 3.19. En un proyecto de consola con gbx3 3.19: `File.B
 
 ### SC-101 — El respaldo diario de la aplicación: completo o ninguno, sin la contraseña a la vista, y SHOW VIEW para app_user (actualización 1.34.0)
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8 (Mint) y MariaDB 10.11 (contenedor) / gbc3, gbx3 3.19 · **Verificado:** 2026-11
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8 (Mint) y MariaDB 10.11 (contenedor) / gbc3, gbx3 3.19 / probado en Mint · **Verificado:** 2026-11
 
 DECISIÓN CERRADA (Alberto, 19/11/2026).
 
@@ -5769,9 +5769,9 @@ RESTAURAR. Un respaldo de la aplicación no trae los disparadores. Después de r
 
 PROBADO en el contenedor (MariaDB 10.11, gbc3 y gbx3 3.19), sobre una base con una VIEW, `vocabulario_termino`, un disparador y `app_user` con los cuatro permisos de Mint: el corte reproducido (código 2, sin la marca final); la 1.34.0 aplicada, repetida, cancelada y con un segundo host que ya tenía `ALL`; la función, con un respaldo completo (permisos 600) y con el permiso quitado (aviso con el mensaje de mysqldump y el archivo anterior intacto, la misma huella md5); la contraseña ausente de `/proc/*/cmdline`.
 
-**Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67
+PROBADO EN MINT por Alberto (19/11/2026, MySQL 8): sin la 1.34.0, la aplicación avisó al arrancar con el mensaje de mysqldump («SHOW VIEW command denied … v_web_coleccion (1142)») y no escribió el archivo del día. Con la 1.34.0 aplicada, el respaldo del día quedó completo («-- Dump completed») y con permisos 600. Los respaldos de Mint estaban cortados desde el 2/11/2026; se rescató con un respaldo manual de la cuenta de administración.
 
-**PENDIENTE:** Aplicar la 1.34.0 en Mint, abrir la aplicación y ver el respaldo del día completo. Probar el aviso quitando el permiso un momento (REVOKE) y reponiéndolo con la 1.34.0.
+**Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67
 
 ---
 
@@ -7211,7 +7211,7 @@ Aplicado en `m_RevisarPDF.AbrirPDFEnVisorExterno`, que abre en el visor del sist
 
 ### GV-44 — TextEdit.Pos: escribirlo manda el cursor al final
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint; código fuente de CTextEdit.cpp (rama principal) · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint; código fuente de CTextEdit.cpp (rama principal) / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 Escribir `Pos` en un `TextEdit` (gb.qt5.ext) falla en silencio cuando el documento creció desde la primera vez que se usó la propiedad.
 
@@ -7233,9 +7233,9 @@ LA MISMA CACHÉ EN OTRAS DOS FUNCIONES
 
 `Paragraph` e `Index` en LECTURA no tienen el problema: leen `blockNumber()` y la posición del cursor menos la del bloque, en el momento. Verificados en banco como equivalentes de `Line` y `Column` de `TextEditor`.
 
-**Relaciones:** vinculo:RC-GM-21, vinculo:GV-45, apoya:GV-23
+MEDIDO (19/11/2026, banco gbBancoForm322, en 3.19 con gb.qt5 y en 3.22.2 con gb.qt6). La caché se fija la primera vez que se ESCRIBE `Pos`: con «abc», leer `Pos` y escribir `Pos = 1`, cargar 1.000 caracteres y escribir `Pos = 500` deja el cursor en 1.000. Si antes solo se leyó `Pos`, `Pos = 500` funciona. `Select(500, 0)` deja 500. `ToIndex(500)` devuelve 1.000, el final: pasa por la misma caché, como se leyó en el fuente. `ToParagraph(500)` dio 0 en un documento de un solo párrafo, que no distingue nada. La REGLA no cambia.
 
-**PENDIENTE:** ToParagraph y ToIndex: leído en el fuente de CTextEdit.cpp, no medido en ejecución.
+**Relaciones:** vinculo:RC-GM-21, vinculo:GV-45, apoya:GV-23
 
 ### GV-45 — TextEdit.ToPos cuenta mal
 
@@ -7374,7 +7374,7 @@ ALCANCE: X11. En Wayland no está verificado. Lo único leído en el fuente de M
 
 ### GV-51 — TreeView: el click del mouse dispara Select y Click; asignar Key, solo Select
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.gui.base / Linux Mint y Gambas 3.19 / contenedor Ubuntu noble; código fuente de _TreeView.class (etiqueta 3.22.1) · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.gui.base / Linux Mint y Gambas 3.19 / contenedor Ubuntu noble; código fuente de _TreeView.class (etiqueta 3.22.1) / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 `TreeView` y `ListView` son la misma clase interna, `_TreeView`, escrita en Gambas en `gb.gui.base`. Difieren en `Add`: el de `ListView` no tiene parámetro `Parent`, así que no anida. `ListBox` es una lista de cadenas sin clave por ítem.
 
@@ -7396,6 +7396,8 @@ No lo marca, y `Key` se lee vacío: el nodo no tiene fila (`_ItemToRow` devuelve
 FILTRAR SIN RECONSTRUIR
 
 `Item.Visible = False` oculta el nodo sin tocar la estructura: sirve para filtrar por profundidad. Detalle estético: un padre desplegado cuyos hijos se ocultaron conserva la flecha abierta.
+
+CONFIRMADO CON gb.qt6 (19/11/2026, banco gbBancoForm322, Mint): asignar Key da Select 1 y Click 0; sobre el hijo de un padre plegado, Key se lee vacío; con `EnsureVisible` antes, se lee el hijo.
 
 **Relaciones:** vinculo:SC-18, vinculo:GV-52
 
@@ -7426,7 +7428,7 @@ Nunca se escribe `Pos` (GV-44).
 
 ### GV-53 — ComboBox: asignar Index dispara Click aunque el índice no cambie
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1); uso en Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1); uso en Gambas 3.22.1 / Linux Mint / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 En `gb.qt5` el `ComboBox` es el de `gb.gui.base`, escrito en Gambas: el componente no trae uno propio en C++. `Index_Write` termina en `Raise Click` sin comparar con el valor anterior, así que asignar el índice que ya está elegido también dispara `Click`.
 
@@ -7438,9 +7440,9 @@ CASO EN EL PROYECTO: el temporizador de archivos llama a `CargarListaArticulosMD
 
 MÁS CASOS: los refrescos en caliente de `cmbVerPDF` y `cmbImagenes` (SC-27) reponen el `Index` con una bandera que el handler consulta. Lo que hacen `Clear` y `Add` al volver a llenar un combo de solo lectura está en GV-69.
 
-**Relaciones:** vinculo:SC-06, vinculo:GV-46, vinculo:SC-18, vinculo:SC-27, vinculo:GV-69
+MEDIDO AISLADO (19/11/2026, banco gbBancoForm322, en 3.19 con gb.qt5 y en 3.22.2 con gb.qt6): asignar Index de 0 a 1 da un Click, y volver a asignar 1 da otro.
 
-**PENDIENTE:** Leído en el fuente (etiqueta 3.22.1). En uso, en 3.22.1, se probaron las correcciones que dependen de este comportamiento (SC-27), no el disparo aislado. Mini-test: con un ítem elegido, asignar el mismo Index y contar los Click (esperado 1).
+**Relaciones:** vinculo:SC-06, vinculo:GV-46, vinculo:SC-18, vinculo:SC-27, vinculo:GV-69
 
 ### GV-54 — TextEdit: lo que se escribe en un párrafo vacío sin color sale con el color por omisión
 
@@ -7672,7 +7674,7 @@ Un HTML hecho para mostrarse en `TextEdit` puede llevar una sola hoja de estilo 
 
 ### GV-65 — TextEdit.Selection: Start es el extremo menor y cuenta caracteres; String.Mid es lineal en los dos sentidos
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.1 / gb.qt5.ext / Linux Mint / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 `Selection.Start` y `Selection.Length` de `TextEdit` existen y cuentan CARACTERES del texto plano, igual que `Select` y `Pos` (RC-GM-21). Verificado con «¿» y «»», de dos bytes cada uno: `Length` vale 1, y `String.Mid(.Text, Start + 1, Length)` coincide con `Selection.Text`.
 
@@ -7698,9 +7700,9 @@ GV-03 midió el recorrido hacia adelante. Hacia atrás, desde el final, también
 
 Banco: `MBanco` (selección de pares). Aplicado en `m_ParesDelimitadores`.
 
-**Relaciones:** vinculo:RC-GM-21, vinculo:GV-03, vinculo:GV-44, vinculo:SC-18
+CONFIRMADO CON gb.qt6 (19/11/2026, banco gbBancoForm322, Mint): `Select(0, 1)` sobre «¿hola» da Start 0, Length 1 y «¿»; la selección de espacio, raya y espacio devuelve « — ».
 
-**PENDIENTE:** La selección de dos caracteres (espacio + raya) no se midió en el banco; queda cubierta al probar m_ParesDelimitadores.
+**Relaciones:** vinculo:RC-GM-21, vinculo:GV-03, vinculo:GV-44, vinculo:SC-18
 
 ### GV-66 — Imágenes sin escala: el tamaño lo da el archivo, y un PNG sin resolución sale cuatro veces más grande
 
@@ -7791,7 +7793,7 @@ CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): los cuatro casos, inc
 
 ### GV-69 — ComboBox de solo lectura: Clear y Add mueven el índice sin disparar Click
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1 y rama principal 41d9348) · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, ComboBox.class (etiqueta 3.22.1 y rama principal 41d9348) / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 Leído en el fuente de `gb.gui.base` (`ComboBox.class`), idéntico en la etiqueta 3.22.1 y en la rama principal (`41d9348`). Completa a GV-53 y GV-59 para el caso de volver a llenar un combo de solo lectura.
 
@@ -7810,9 +7812,9 @@ CONSECUENCIAS
 - Insertar en posición delante del ítem elegido deja el índice apuntando a otro ítem. Para conservar lo abierto no se inserta: se vacía, se vuelve a llenar y se repone la selección por nombre (SC-27).
 - Dejar el combo sin selección (`Index = -1`) también pasa por el `Click`: se suprime igual que al reponer la selección.
 
-**Relaciones:** vinculo:GV-53, vinculo:GV-59, vinculo:SC-27
+MEDIDO (19/11/2026, banco gbBancoForm322, en 3.19 con gb.qt5 y en 3.22.2 con gb.qt6): los seis casos de la tabla, tal como se leyeron en el fuente. `Add("z", 0)` deja Index en 0, que ahora es «z».
 
-**PENDIENTE:** Leído en el fuente, no medido aislado. Mini-test: combo con ReadOnly = True; Clear, Add("a"), Print .Index (esperado 0) contando los Click (esperado 0); después Index = -1 (esperado 1 Click). Lo probado en uso en 3.22.1 son los dos refrescos de SC-27, que dependen de este comportamiento.
+**Relaciones:** vinculo:GV-53, vinculo:GV-59, vinculo:SC-27
 
 ### GV-70 — titlesec con calcwidth compone el título dos veces: un contador en el título avanza doble
 
@@ -7975,7 +7977,7 @@ CONFIRMADO EN 3.22.2 (19/11/2026, banco gbBanco322, Mint): los tres casos.
 
 ### GV-78 — GridView: asignar Row emite Change y Select, nunca Click
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, GridView.class (etiqueta 3.22.1); uso en Gambas 3.22.1 / Linux Mint · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Código fuente de gb.gui.base, GridView.class (etiqueta 3.22.1); uso en Gambas 3.22.1 / Linux Mint / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 `Row_Write` llama a `MoveTo`, que emite `Change` y, en modo `Select.Single`, `Select`. `Click` no sale de ahí: solo lo emite `ScrollArea_MouseDown`, diferido con `After Do RaiseClick`, y solo si el mouse cayó sobre una celda (`$bInCell`). Leído en `GridView.class` de `gb.gui.base`, etiqueta 3.22.1. `gb.qt5` no trae un `GridView` propio en C++: usa ese, como con el `ComboBox` (GV-53).
 
@@ -7999,9 +8001,9 @@ En modo `Select.Multiple`, `MoveTo` emite `Change` pero no `Select`. `Select` sa
 
 CASO EN EL PROYECTO (2): `FRegexResultados`, que es `Select.Multiple` para elegir qué reemplazar, navegaba desde `gvResultados_Select` y en Mint el editor no cambiaba de archivo. Pasó a `gvResultados_Click`, con el preview en `gvResultados_Change` (SC-51).
 
-**Relaciones:** vinculo:GV-51,vinculo:GV-53,vinculo:GV-15,vinculo:GV-58,vinculo:GV-69,vinculo:SC-51
+MEDIDO AISLADO (19/11/2026, banco gbBancoForm322, en 3.19 con gb.qt5 y en 3.22.2 con gb.qt6): `Row = 1` da Change 1, Select 1 y Click 0; repetirlo no emite nada; `Row = 10` con tres filas se ignora sin error.
 
-**PENDIENTE:** Leído en el fuente; en uso en 3.22.1 se probó la búsqueda con la fila marcada, no el disparo aislado. Mini-test: Debug en gvResultados_Click, buscar con Enter o F3 con varias coincidencias; asignar Row desde el código no debe imprimir nada.
+**Relaciones:** vinculo:GV-51,vinculo:GV-53,vinculo:GV-15,vinculo:GV-58,vinculo:GV-69,vinculo:SC-51
 
 ### GV-79 — Pandoc: smart en el escritor Markdown aplana y escapa; en el lector convierte
 
@@ -8758,15 +8760,15 @@ CASO EN EL PROYECTO: la 1.10.0 (notas, SC-60) tiene `CHECK` sobre columnas con c
 
 ### GV-112 — GridView: volver Rows.Count a 0 no borra el formato de las celdas
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor (arnés de m_Notas) · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / contenedor (arnés de m_Notas) / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 Una grilla se vació con `Rows.Count = 0` y se volvió a llenar. Las celdas a las que no se les asignó `Background` en la carga nueva mostraron el fondo de la carga anterior: una nota cerrada heredaba el verde del índice de días.
 
 REGLA: una carga que pinta celdas asigna el fondo en TODAS las celdas de la columna, también `Color.Default` en las que no llevan color. Aplicado en `m_Notas.CargarLista` y en `FSysAdmin.CargarNotasAdmin`.
 
-**Relaciones:** vinculo:GV-58,vinculo:SC-60
+MEDIDO (19/11/2026, banco gbBancoForm322, en 3.19 con gb.qt5 y en 3.22.2 con gb.qt6). Al volver `Rows.Count` a 0 y llenarla otra vez, la celda conserva `Background`, y también `Foreground` y `Alignment`. `Clear()` sí borra el formato: después de `Clear`, el fondo ya no es el de antes. La REGLA sigue: una carga que pinta asigna el formato en todas las celdas, o vacía con `Clear`.
 
-**PENDIENTE:** No se miró si pasa lo mismo con Foreground, Font y Alignment, ni si Clear lo evita. Falta confirmarlo en 3.22.
+**Relaciones:** vinculo:GV-58,vinculo:SC-60
 
 ### GV-113 — LaTeX: \raggedright, \centering y \raggedleft no parten palabras
 
@@ -9345,7 +9347,7 @@ CONFIRMADO EN 3.22.2 CON es_AR.UTF-8 (19/11/2026, banco gbBanco322, Mint): los e
 
 ### GV-138 — ListBox en Select.Multiple: la selección por código no emite eventos
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 Medido con `Mode = Select.Multiple` y cuatro elementos:
 
@@ -9362,9 +9364,9 @@ A diferencia de `Index` (GV-53), reponer la selección de una lista múltiple no
 
 EN EL PROYECTO: la lista de series de FGraficos (SC-69). `RefrescarSeries` reemplaza la lista, llama a `UnselectAll` y recién después elige: sin eso, al insertar una columna la serie elegida quedaba elegida dos veces, en su lugar viejo y en el nuevo.
 
-**Relaciones:** apoya:SC-69,vinculo:GV-53
+CONFIRMADO CON gb.qt6 (19/11/2026, banco gbBancoForm322, Mint): los cinco casos.
 
-**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+**Relaciones:** apoya:SC-69,vinculo:GV-53
 
 ### GV-139 — Chromium headless: --force-device-scale-factor multiplica el PNG y Chart.js dibuja a esa escala
 
@@ -9483,7 +9485,7 @@ EN EL PROYECTO: la tabla de datos de la plantilla del gráfico va dentro de un d
 
 ### GV-145 — TextBox: Change se dispara al asignar Text por código, pero no si el texto no cambia
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 / confirmado en Gambas 3.22.2 con gb.qt6, Linux Mint (banco gbBancoForm322, 19/11/2026) · **Verificado:** 2026-11
 
 Medido con un `TextBox` y un handler que cuenta:
 
@@ -9495,13 +9497,15 @@ CONSECUENCIA: un handler de `Change` que depende de OTRO control (por ejemplo, s
 
 EN EL PROYECTO: `FMetadatosArticulo` (SC-74): `txtBuscarControlado_Change`, `cmbVocabulario_Click` y `cmbVocabulario_Change` llaman a `ActualizarCoincidencias`. Las asignaciones por código que no deben buscar van con la bandera `$bCargando`.
 
-**Relaciones:** apoya:SC-74,vinculo:GV-53
+CONFIRMADO CON gb.qt6 (19/11/2026, banco gbBancoForm322, Mint): los tres casos.
 
-**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+**Relaciones:** apoya:SC-74,vinculo:GV-53
 
 ### GV-146 — ListBox de selección simple: asignar Index no dispara Click
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+**Estado:** corregida · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0, gb.qt5 / xvfb / contenedor Ubuntu 24.04 · **Verificado:** 2026-10
+
+CORREGIDA (19/11/2026). Lo que dice esta entrada es falso: asignar `Index` en una `ListBox` simple SÍ dispara `Select` y `Click`. Lo midió el banco gbBancoForm322 en el mismo entorno de la medición original (3.19, gb.qt5, xvfb) y en Mint (3.22.2, gb.qt6), con el mismo resultado. Lo vigente está en GV-215.
 
 Medido con `ListBox` en su modo por omisión (una sola selección):
 
@@ -9513,9 +9517,7 @@ Lo que pasa en `Select.Multiple` está en GV-138.
 
 EN EL PROYECTO: `FMetadatosArticulo` (SC-74): `RedibujarControladas` y `MostrarResumen` reponen el elemento elegido asignando `Index`.
 
-**Relaciones:** contracara:GV-53,vinculo:GV-138,apoya:SC-74
-
-**PENDIENTE:** Confirmar en Mint con Gambas 3.22.1.
+**Relaciones:** contracara:GV-53,vinculo:GV-138,apoya:SC-74,reemplazada_por:GV-215
 
 ### GV-147 — If(s = "", Null, s) con s String no da Null: Exec escribe una cadena vacía
 
@@ -10601,6 +10603,25 @@ SIN TRIGGER. Sin el permiso `TRIGGER`, mysqldump no da error: omite los disparad
 CONSECUENCIA. Un respaldo se da por bueno solo si mysqldump salió con 0 y el archivo cierra con «Dump completed» (SC-22, SC-101).
 
 **Relaciones:** vinculo:SC-101
+
+### GV-215 — ListBox de selección simple: asignar Index dispara Select y Click, como en el ComboBox
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / gb.qt5 / xvfb (contenedor) y Gambas 3.22.2 / gb.qt6 / Linux Mint (banco gbBancoForm322) · **Verificado:** 2026-11
+
+Medido el 19/11/2026 con el banco gbBancoForm322, en Gambas 3.19 con gb.qt5 (contenedor, xvfb) y en 3.22.2 con gb.qt6 (Mint), con el mismo resultado. Una `ListBox` en su modo por omisión (una sola selección) y un handler que cuenta:
+
+    lst.Index = 1     Select 1, Click 1; lst.Text devuelve el elemento
+
+Es lo mismo que el `ComboBox` (GV-53): asignar `Index` desde el código corre el handler de `Click`. Reemplaza a GV-146, que decía lo contrario. En `Select.Multiple` es distinto: elegir por código no emite nada (GV-138).
+
+REGLA: reponer la selección de una `ListBox` simple corre su `Click`. Si el handler no debe correr, se suprime con la bandera de llenado, o el handler compara con el índice que ya tenía.
+
+EN EL PROYECTO (revisado el 19/11/2026, ningún error): todas las asignaciones de `Index` a una `ListBox` con `Click` ya funcionan con el evento.
+- `FTabla.lstCuadros` y `FGraficos.lstGraficos`: al abrir y después de borrar, `Index = 0` abre el primero justamente porque corre el `Click`. Al llenar, la bandera `$bLlenando` lo calla, y el handler compara con `$iIndiceLista`.
+- `FMetadatosArticulo.lstSeccionesResumen`: se repone con `$bCargando` puesto (SC-74).
+- `FDossiers.lstEditoresDossier`, `FOrtografia.lstSugerencias` y `FEditarIPs.ListBox1`: el `Click` hace lo mismo que el código que asigna, o lo que ese código quiere.
+
+**Relaciones:** vinculo:GV-53,vinculo:GV-138,vinculo:SC-74
 
 ---
 
