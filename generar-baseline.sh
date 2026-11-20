@@ -21,20 +21,27 @@
 #   -S SOCKET    Ruta del socket Unix (alternativa a -h/-P)
 #   -u USUARIO   Usuario con permiso de lectura     (por defecto: root)
 #   -d BASE      Base de origen                     (por defecto: gbpublisher)
-#   -V VERSION   Versión del baseline a generar     (por defecto: 1.0.0)
+#   -V VERSION   Versión del baseline a generar     (por defecto: 2.0.0)
 #   -o DIR       Directorio de salida               (por defecto: .)
 #   -v           Verificar cargando el artefacto en una base temporal
 #
+# Origen recomendado (2.0.0): una base instalada desde cero con la cadena
+#   completa (baseline 1.0.0 + actualizaciones hasta la 2.0.0), no la base
+#   de trabajo. Así el baseline coincide con lo que tiene toda instalación
+#   actualizada, sin los ajustes propios de una instalación (por ejemplo,
+#   un formato de página desactivado).
+#
 # Correcciones que aplica automáticamente:
-#   1. Normaliza la colación de formatos_pdf (venía utf8mb4_0900_ai_ci,
-#      que MariaDB no reconoce y hace fallar la carga completa).
+#   1. Normaliza la colación a utf8mb4_unicode_ci, la del proyecto: una
+#      columna utf8mb4_0900_ai_ci comparada con una del proyecto da
+#      «Illegal mix of collations» (GV-175).
 #   2. Elimina las cláusulas DEFINER de triggers y rutinas, que apuntan a
 #      un usuario que no existe en los servidores de destino.
 #   3. Resetea los contadores AUTO_INCREMENT residuales.
 #   4. Marca las consultas canónicas con consulta_sistema = 1.
 #   5. Declara el nivel de esquema en esquema_version.
 #
-# Requisitos: mysqldump/mariadb-dump y mysql/mariadb en el PATH.
+# Requisitos: mysqldump y mysql (MySQL 8; el proyecto no usa MariaDB).
 #             El usuario necesita SELECT sobre la base, más SHOW VIEW y
 #             TRIGGER para volcar triggers y rutinas.
 # ==============================================================================
@@ -47,7 +54,7 @@ DB_PORT="3306"
 DB_SOCKET=""
 DB_USER="root"
 DB_NAME="gbpublisher"
-VERSION="1.0.0"
+VERSION="2.0.0"
 OUT_DIR="."
 VERIFICAR=0
 
@@ -56,18 +63,31 @@ VERIFICAR=0
 # TODA TABLA QUE NO ESTÉ ACÁ SE VUELCA VACÍA, INCLUIDAS LAS FUTURAS.
 # shortcodes DEJÓ DE SER SEMILLA EN LA 1.7.0: LA TABLA SE RETIRÓ Y EL
 # CATÁLOGO VIAJA COMO ARCHIVO EN EL PAQUETE (shortcodes/_catalogo.tsv).
+# DESDE LA 2.0.0 LA LISTA INCLUYE LAS SEMILLAS QUE FUERON SUMANDO LAS
+# ACTUALIZACIONES 1.x (idiomas, pais, licencias...) Y EL CATÁLOGO DE CAMPOS
+# DE LA BIBLIOGRAFÍA. ES LA LISTA DE TABLAS CON DATOS EN UNA INSTALACIÓN
+# NUEVA (MEDIDO EL 20/11/2026 SOBRE LA CADENA 1.0.0 → 2.0.0).
 TABLAS_SEMILLA=(
-  manual_ayudas   # MANUAL CONTEXTUAL, SOLO LECTURA EN PRODUCCIÓN
-  consultas       # BIBLIOTECA DE CONSULTAS CANÓNICAS DEL EDITOR
-  cmb_biblatex    # TIPOS DE ENTRADA BIBLATEX
-  formatos_pdf    # FORMATOS DE PÁGINA PREDEFINIDOS
-  credit_roles    # TAXONOMÍA CRediT
+  manual_ayudas           # MANUAL CONTEXTUAL, SOLO LECTURA EN PRODUCCIÓN
+  consultas               # BIBLIOTECA DE CONSULTAS CANÓNICAS DEL EDITOR
+  cmb_biblatex            # TIPOS DE ENTRADA BIBLATEX
+  bibtex_campo_catalogo   # CAMPOS BIBLATEX DE LA BIBLIOGRAFÍA (2.0.0)
+  formatos_pdf            # FORMATOS DE PÁGINA PREDEFINIDOS
+  credit_roles            # TAXONOMÍA CRediT
+  credit_rol_nombre       # NOMBRES DE LOS ROLES CRediT POR IDIOMA
+  idiomas                 # IDIOMAS (ISO Y NOMBRE DE BABEL)
+  pais                    # PAÍSES
+  licencias               # LICENCIAS
+  licencia_texto          # TEXTOS DE LICENCIA
+  tipo_declaracion        # TIPOS DE DECLARACIÓN
 )
 
 # COLUMNAS ESPERADAS EN LA TABLA TESTIGO. SI NO COINCIDE, LA BASE DE ORIGEN
 # NO ESTÁ EN EL ESTADO QUE ESTE BASELINE DICE REPRESENTAR.
-TABLA_TESTIGO="libros_md"
-COLUMNAS_TESTIGO=72
+# 2.0.0: bibtex QUEDA CON 6 COLUMNAS (EL RESTO PASÓ A bibtex_campo). UNA
+# BASE SIN LA 2.0.0 TIENE 110 Y ABORTA ACÁ.
+TABLA_TESTIGO="bibtex"
+COLUMNAS_TESTIGO=6
 
 while getopts "h:P:S:u:d:V:o:v" opt; do
   case "$opt" in
@@ -94,21 +114,10 @@ abortar() {
 }
 
 detectar_binarios() {
-  if command -v mysql > /dev/null 2>&1; then
-    CLI="mysql"
-  elif command -v mariadb > /dev/null 2>&1; then
-    CLI="mariadb"
-  else
-    abortar "no se encontró el cliente (mysql o mariadb)."
-  fi
-
-  if command -v mysqldump > /dev/null 2>&1; then
-    DUMP="mysqldump"
-  elif command -v mariadb-dump > /dev/null 2>&1; then
-    DUMP="mariadb-dump"
-  else
-    abortar "no se encontró mysqldump ni mariadb-dump."
-  fi
+  command -v mysql > /dev/null 2>&1 || abortar "no se encontró el cliente mysql."
+  command -v mysqldump > /dev/null 2>&1 || abortar "no se encontró mysqldump."
+  CLI="mysql"
+  DUMP="mysqldump"
 }
 
 sql_escalar() {
@@ -260,15 +269,10 @@ FECHA="$(date '+%Y-%m-%d %H:%M:%S')"
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 
--- La tabla articulos tiene 220 columnas. El chequeo estricto de InnoDB
--- (innodb_strict_mode, activo por defecto en MySQL 8) rechaza su CREATE
--- calculando el peor caso teórico del tamaño de fila, aunque en
--- ROW_FORMAT=DYNAMIC los VARCHAR y TEXT grandes se almacenan fuera de la
--- fila y la tabla funciona sin problema. Relajar el chequeo durante la
--- restauración es el mecanismo previsto para tablas anchas legítimas; no
--- altera el comportamiento posterior de la base.
-/*!50500 SET @OLD_INNODB_STRICT_MODE=@@SESSION.innodb_strict_mode */;
-/*!50500 SET SESSION innodb_strict_mode=0 */;
+-- Este baseline carga con innodb_strict_mode activo (el default de
+-- MySQL 8): la tabla que lo hacía fallar con el error 1118 (articulos,
+-- 220 columnas) se retiró en la 1.32.0 y la más ancha que quedaba
+-- (bibtex, 110) pasó a pares campo/valor en la 2.0.0 (GV-67).
 
 CREATE DATABASE IF NOT EXISTS \`gbpublisher\`
   DEFAULT CHARACTER SET utf8mb4
@@ -319,7 +323,6 @@ INSERT IGNORE INTO \`esquema_version\` (\`parche\`, \`descripcion\`)
 VALUES ('baseline-$VERSION', 'Esquema de distribución inicial');
 
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
-/*!50500 SET SESSION innodb_strict_mode=@OLD_INNODB_STRICT_MODE */;
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
 /*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
 /*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
@@ -336,13 +339,13 @@ CONTROL
 
 echo "[..] Aplicando correcciones de portabilidad"
 
-# 1. COLACIÓN: utf8mb4_0900_ai_ci ES DE MySQL 8 Y MariaDB NO LA RECONOCE.
+# 1. COLACIÓN: utf8mb4_0900_ai_ci NO ES LA DEL PROYECTO (GV-175).
 # 2. DEFINER: LOS TRIGGERS APUNTAN A UN USUARIO QUE NO EXISTE EN DESTINO.
 # 3. AUTO_INCREMENT: CONTADORES RESIDUALES QUE ARRANCARÍAN LOS IDs FUERA DE 1.
 # 4. ROW_FORMAT: mysqldump OMITE ROW_FORMAT CUANDO COINCIDE CON EL DEFAULT DEL
 #    SERVIDOR DE ORIGEN. SI EL DESTINO TIENE OTRO DEFAULT (p. ej. COMPACT), LAS
-#    TABLAS ANCHAS (articulos, con 220 columnas) NO ENTRAN EN EL LÍMITE DE FILA
-#    DE 8126 BYTES Y LA CARGA FALLA CON "Row size too large". FORZAR DYNAMIC
+#    TABLAS ANCHAS (libros_md, 89 COLUMNAS) PUEDEN NO ENTRAR EN EL LÍMITE DE
+#    FILA DE 8126 BYTES Y LA CARGA FALLA CON "Row size too large". FORZAR DYNAMIC
 #    EXPLÍCITO HACE LA CARGA INDEPENDIENTE DEL DEFAULT DEL DESTINO.
 #    NOTA: NO SE AGREGA A TABLAS QUE YA DECLARAN UN ROW_FORMAT PROPIO.
 sed -e 's/utf8mb4_0900_ai_ci/utf8mb4_unicode_ci/g' \
@@ -376,8 +379,10 @@ n_tablas=$(grep -c "^CREATE TABLE" "$SALIDA")
 comprobar "estructura: $n_tablas tablas (esperadas $esperadas)" \
           "$([ "$n_tablas" -eq "$esperadas" ] && echo 1 || echo 0)"
 
-comprobar "sin colaciones incompatibles con MariaDB" \
-          "$(grep -qc 'utf8mb4_0900' "$SALIDA" && echo 0 || echo 1)"
+# SOLO utf8mb4_0900_ai_ci: LAS COLUMNAS utf8mb4_0900_as_ci Y _as_cs DE SIGLAS
+# E ÍNDICES SON DELIBERADAS (DISTINGUEN TILDES O MAYÚSCULAS) Y SE CONSERVAN
+comprobar "sin la colación utf8mb4_0900_ai_ci" \
+          "$(grep -q 'utf8mb4_0900_ai_ci' "$SALIDA" && echo 0 || echo 1)"
 
 comprobar "sin cláusulas DEFINER" \
           "$(grep -q 'DEFINER=' "$SALIDA" && echo 0 || echo 1)"
@@ -388,10 +393,10 @@ comprobar "sin contadores AUTO_INCREMENT residuales" \
 comprobar "declara el nivel baseline-$VERSION" \
           "$(grep -q "baseline-$VERSION" "$SALIDA" && echo 1 || echo 0)"
 
-# SIN ESTA LÍNEA, LA RESTAURACIÓN FALLA CON ERROR 1118 EN CUALQUIER SERVIDOR
-# CON innodb_strict_mode ACTIVO (EL DEFAULT EN MySQL 8).
-comprobar "relaja innodb_strict_mode para la restauración" \
-          "$(grep -q 'innodb_strict_mode=0' "$SALIDA" && echo 1 || echo 0)"
+# DESDE LA 2.0.0 EL BASELINE CARGA CON EL CHEQUEO ESTRICTO ACTIVO (GV-67):
+# RELAJARLO ESCONDERÍA UNA TABLA DEMASIADO ANCHA EN VEZ DE AVISAR
+comprobar "no relaja innodb_strict_mode" \
+          "$(grep -q 'innodb_strict_mode=0' "$SALIDA" && echo 0 || echo 1)"
 
 # NINGUNA TABLA QUE NO SEA SEMILLA DEBE TRAER INSERT
 for t in "${TODAS[@]}"; do

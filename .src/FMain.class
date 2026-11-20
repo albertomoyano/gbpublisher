@@ -469,14 +469,19 @@ Public Sub BtnNuevoBib_Click()
   ' LIMPIAMOS LOS TEXTBOX
   m_Bibtex.LimpiarTextboxBibtex()
 
-  ' OBTENER SIGUIENTE ID
+  ' ID PROVISORIO: SOLO PARA ARMAR LA CLAVE (btnGenerarClaveBib). EL id REAL
+  ' LO DA AUTO_INCREMENT AL GUARDAR, Y SI ES OTRO, m_Bibtex.EscribirEntrada
+  ' CORRIGE EL PREFIJO DE LA CLAVE (2.0.0). ANTES ESTE id SE ESCRIBÍA EN LA
+  ' FILA Y DOS ALTAS SIMULTÁNEAS CHOCABAN EN LA CLAVE PRIMARIA
   Dim Idn As Integer
   Dim MaxId As Result
-  MaxId = m_ConexionBD.mConn.Exec("SELECT MAX(id) FROM bibtex")
-  If IsNull(MaxId["MAX(id)"]) Then
+  Try MaxId = m_ConexionBD.mConn.Exec("SELECT MAX(id) AS m FROM bibtex")
+  If Error Then
+    Idn = 0
+  Else If IsNull(MaxId["m"]) Then
     Idn = 0
   Else
-    Idn = CInt(MaxId["MAX(id)"]) + 1
+    Idn = CInt(MaxId["m"]) + 1
   Endif
   id_bibtex.Value = Idn
 
@@ -596,7 +601,7 @@ End
 
 Public Sub BtnBuscarBookAuthor_Click()
 
-  m_Bibtex.BuscarPorCampo(book_author, gvReferenciasEnCurso, "book_author")
+  m_Bibtex.BuscarPorCampo(book_author, gvReferenciasEnCurso, "bookauthor")
 
 End
 
@@ -614,13 +619,13 @@ End
 
 Public Sub BtnBuscarBookTitle_Click()
 
-  m_Bibtex.BuscarPorCampo(txtBookTitle, gvReferenciasEnCurso, "book_title")
+  m_Bibtex.BuscarPorCampo(txtBookTitle, gvReferenciasEnCurso, "booktitle")
 
 End
 
 Public Sub BtnBuscarMainTitle_Click()
 
-  m_Bibtex.BuscarPorCampo(txtMainTitle, gvReferenciasEnCurso, "main_title")
+  m_Bibtex.BuscarPorCampo(txtMainTitle, gvReferenciasEnCurso, "maintitle")
 
 End
 
@@ -1897,12 +1902,112 @@ Public Sub txtHyphenation_LostFocus()
 
 End
 
+' ============================================
+' Función   : TimerHyphenation_Timer
+' Propósito : Oculta los selectores de idioma (hyphenation, language y
+'             origlanguage) al salir del campo, como los de editorial o lugar
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : EL Timer EXISTÍA EN EL FORMULARIO Y SE ARRANCABA, PERO NO TENÍA
+'             HANDLER: EL COMBO DE hyphenation QUEDABA VISIBLE. EL RETARDO DE
+'             100 ms DEJA LLEGAR EL CLIC SOBRE EL COMBO ANTES DE OCULTARLO.
+'             UN SOLO Timer PARA LOS TRES: OCULTAR UN COMBO YA OCULTO NO HACE NADA
+' ============================================
+Public Sub TimerHyphenation_Timer()
+
+  TimerHyphenation.Stop()
+  cmbHyphenation.Visible = False
+  cmbLanguage.Visible = False
+  cmbOrigLanguage.Visible = False
+
+End
+
+' ============================================
+' Función   : txtLanguage_LostFocus
+' Propósito : Al salir de language, oculta su selector (TimerHyphenation)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtLanguage_LostFocus()
+
+  TimerHyphenation.Delay = 100
+  TimerHyphenation.Start()
+
+End
+
+' ============================================
+' Función   : txtOrigLanguage_LostFocus
+' Propósito : Al salir de origlanguage, oculta su selector (TimerHyphenation)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtOrigLanguage_LostFocus()
+
+  TimerHyphenation.Delay = 100
+  TimerHyphenation.Start()
+
+End
+
 Public Sub cmbHyphenation_Click()
 
   If cmbHyphenation.Index >= 0 Then
     txtHyphenation.Text = cmbHyphenation.Text
     cmbHyphenation.Visible = False
   Endif
+
+End
+
+' ============================================
+' Función   : txtLanguage_KeyPress
+' Propósito : Con Enter, muestra las claves de idioma de biblatex que
+'             contienen lo escrito (como hyphenation)
+' Parámetros: (ninguno — lee Key)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtLanguage_KeyPress()
+
+  If Key.Code = Key.Enter Or Key.Code = Key.Return Then
+    m_FuncionesGenericas.BuscarIdiomaBiblatexDesdeTexto(txtLanguage, cmbLanguage)
+  Endif
+
+End
+
+' ============================================
+' Función   : cmbLanguage_Click
+' Propósito : Pasa la clave elegida a language
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub cmbLanguage_Click()
+
+  m_FuncionesGenericas.ElegirIdiomaBiblatex(txtLanguage, cmbLanguage)
+
+End
+
+' ============================================
+' Función   : txtOrigLanguage_KeyPress
+' Propósito : Con Enter, muestra las claves de idioma de biblatex que
+'             contienen lo escrito (como hyphenation)
+' Parámetros: (ninguno — lee Key)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub txtOrigLanguage_KeyPress()
+
+  If Key.Code = Key.Enter Or Key.Code = Key.Return Then
+    m_FuncionesGenericas.BuscarIdiomaBiblatexDesdeTexto(txtOrigLanguage, cmbOrigLanguage)
+  Endif
+
+End
+
+' ============================================
+' Función   : cmbOrigLanguage_Click
+' Propósito : Pasa la clave elegida a origlanguage
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub cmbOrigLanguage_Click()
+
+  m_FuncionesGenericas.ElegirIdiomaBiblatex(txtOrigLanguage, cmbOrigLanguage)
 
 End
 
@@ -4087,9 +4192,12 @@ Public Sub btnChequearCrossref_Click()
 
   If id_bibtex.Value > 0 Then
     Dim hLocal As Result
+    ' LOS CAMPOS SALEN DE bibtex_campo (2.0.0)
     Try hLocal = m_ConexionBD.mConn.Exec(
-      "SELECT title, author, editor, year, pages, issn, doi " &
-      "FROM bibtex WHERE id = &1 LIMIT 1",
+      "SELECT " & m_Bibtex.SubconsultaCampo("title") & ", " & m_Bibtex.SubconsultaCampo("author") & ", " &
+      m_Bibtex.SubconsultaCampo("editor") & ", " & m_Bibtex.SubconsultaCampo("year") & ", " &
+      m_Bibtex.SubconsultaCampo("pages") & ", " & m_Bibtex.SubconsultaCampo("issn") & ", " &
+      m_Bibtex.SubconsultaCampo("doi") & " FROM bibtex b WHERE b.id = &1 LIMIT 1",
       CInt(id_bibtex.Value))
     If Not Error And hLocal.Available Then
       sTituloLocal = If(IsNull(hLocal["title"]), "", Trim(CStr(hLocal["title"])))

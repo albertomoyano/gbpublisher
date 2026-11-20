@@ -574,7 +574,9 @@ CONSECUENCIA PARA gbpublisher: los dos campos son mutuamente excluyentes en la i
 
 Es la versión biblatex de GV-23: un dato que se guarda bien y se pierde en silencio lejos de donde se cargó.
 
-**Relaciones:** vinculo:RC-BL-02,apoya:GV-23
+DESDE LA 2.0.0 (SC-102). Los campos se llaman como en biblatex: `relatedtype` y `relatedstring`. El que no se usa no tiene par en `bibtex_campo` (sin dato, sin par); ya no se escribe NULL. `FRelacionarBib` borra los tres pares de la relación e inserta `related` y uno de los dos, en una transacción. `m_Bibtex.VerificacionBase` marca como error una entrada con los dos, que puede llegar por JSON o por la base.
+
+**Relaciones:** vinculo:RC-BL-02,apoya:GV-23,vinculo:SC-102
 
 ### RC-BL-02 — El modelo de relaciones depende del estilo de bibliografía
 
@@ -1295,9 +1297,9 @@ LÍMITE ACEPTADO
 
 ### SC-22 — Cambio de esquema de la base de gbpublisher: un script por versión y el lote completo
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / MySQL 8.0.46 / bash / Linux Mint · **Verificado:** 2026-11
 
-DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT); 1.18.0 (siglas, SC-78); 1.19.0 (contrato con gbWeb, SC-81); 1.20.0 (la licencia en el contrato con gbWeb, SC-81); 1.21.0 (el libro en tres idiomas, `libro_venta` y el contrato con gbWeb, SC-81); 1.22.0 (el destino del HTML del libro, SC-85). El refactor de bibtex tomará el número que le corresponda.
+DECISIÓN CERRADA. Todo cambio de estructura de la base de gbpublisher sobre una instalación en uso se aplica con un script `actualizar-esquema-X.Y.Z.sh`, con las reglas de `BBDD_LEEME.md` §5. Cadena: 1.1.0 (bibtex: trazabilidad y FULLTEXT), 1.2.0 (licencias), 1.3.0 (idiomas), 1.4.0 (primeras del libro, SC-25), 1.5.0 (leyenda de autoría, SC-25), 1.6.0 (autoría en la apertura de capítulo, SC-26), 1.7.0 (retiro de la tabla shortcodes, SC-34); 1.8.0 (valores de los formatos de sistema Estudio 2A); 1.9.0 (`libros_md.estilo_cita` al identificador del estilo biblatex); 1.10.0 (notas internas, SC-60); 1.11.0 (tipos de pieza `indice_concepto` e `indice_autores`); 1.12.0 (retiro de la tabla `postits`, SC-60); 1.13.0 a 1.17.0 (rediseño de revistas, SC-71: las 23 tablas nuevas, NULL en lugar de '', ROR de la afiliación, vocabulario controlado y dos términos CRediT); 1.18.0 (siglas, SC-78); 1.19.0 (contrato con gbWeb, SC-81); 1.20.0 (la licencia en el contrato con gbWeb, SC-81); 1.21.0 (el libro en tres idiomas, `libro_venta` y el contrato con gbWeb, SC-81); 1.22.0 (el destino del HTML del libro, SC-85). La 2.0.0 (la bibliografía en pares campo/valor, SC-102) cierra la cadena 1.x.
 
 QUÉ HACE CADA SCRIPT
 
@@ -1322,12 +1324,18 @@ DETALLES VERIFICADOS
 - Esas sentencias se leen con `mysql -N -B -r`: sin `-r`, el modo batch duplica las barras que `QUOTE()` pone en un comentario con apóstrofo y el ALTER sale mal formado.
 - En los informes con CTE, los `CAST(… AS CHAR)` llevan `COLLATE` explícito: sin él toman la colación de la conexión y el `UNION` falla por mezcla de colaciones.
 - Una columna `DATETIME` nueva que no debe fechar las filas existentes se agrega en dos pasos: primero NULL, después el DEFAULT.
-- El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, un respaldo anterior a la 1.32.0, que trae la tabla vieja `articulos`, la borra y falla al recrearla (GV-67).
+- El respaldo de `mysqldump` se restaura con `--init-command="SET SESSION innodb_strict_mode=0"`: sin eso, un respaldo anterior a la 1.32.0, que trae la tabla vieja `articulos`, la borra y falla al recrearla (GV-67). Un respaldo posterior a la 1.32.0 se restaura con el comando directo (medido, GV-67).
+- `GROUP_CONCAT` corta en `group_concat_max_len` (1024 por omisión) sin error: una lista de columnas armada así aborta un control de orden. La cuenta administrativa del script lo sube con `--init-command="SET SESSION group_concat_max_len = 1073741824"` (2.0.0).
+- `GROUP_CONCAT(… SEPARATOR CHAR(10))` es un error de sintaxis: el separador es un literal (`SEPARATOR '\n'`).
+- Bajo `set -e`, una consulta de control que falla dentro de `$( )` corta el script sin la limpieza: se envuelve en `if ! X=$(…)` y la falla cuenta como falla del control (2.0.0).
+- Un FULLTEXT de una tabla que se llena de una vez se crea después de la copia (GV-217).
 - Restaurar el respaldo no borra lo que el script creó después: una VIEW nueva queda apuntando a una columna que ya no existe (GV-169). Desde 1.19.0, la vuelta atrás que imprime el script borra primero lo creado y después restaura.
 
 PUNTO DE RUPTURA: BASELINE 2.0.0 CON EL REFACTOR DE BIBTEX
 
 Decisión de Alberto (20/10). El baseline no se regenera con cada versión de la cadena. El 2.0.0 se genera junto con el refactor de bibtex y lo incorpora: las instalaciones nuevas parten de ahí. Las existentes siguen su cadena hasta ese mismo punto. Hasta entonces, una instalación nueva restaura `baseline-1.0.0` y corre la cadena completa (BBDD_LEEME.md §5, «Cuándo conviene rebasear»).
+
+HECHO (20/11/2026, SC-102). El baseline 2.0.0 se genera con `generar-baseline.sh` desde una base instalada desde cero con la cadena completa, no desde la base de trabajo: así es igual a toda instalación actualizada. Una instalación nueva lo restaura y no corre ninguna actualización. Desde ahí, cada script acepta como antecesor la actualización anterior o el baseline que la incluye: la 2.0.0 sale sin hacer nada en una base `baseline-2.0.0`, la 1.23.0 (que repone los disparadores después de restaurar un respaldo de la aplicación) corre en ella, y la 2.1.0 tendrá que aceptar `actualizacion-2.0.0` o `baseline-2.0.0`.
 
 EL ESQUEMA PROPIO DE gbWeb
 
@@ -1337,7 +1345,7 @@ CADENA DE LAS SALIDAS DE REVISTAS (7 A 14/11/2026)
 
 1.23.0 (reapertura de un artículo publicado, `articulo_reapertura` y sus disparadores), 1.24.0 (`por_articulo` al final del ENUM de `revista.modelo_paginacion`: así MySQL no copia la tabla ni renumera los valores), 1.25.0 (la fila `disponibilidad_datos` de `tipo_declaracion`), 1.26.0 (editorial, créditos, órganos y preliminares; migra), 1.27.0 (borra de `revista` las columnas que pasaron a la editorial; su vuelta atrás las repone desde la editorial), 1.28.0 (`credit_roles.uri`, `credit_rol_nombre`, `licencia_texto`, `revista.logo`), 1.29.0 (`articulo.licencia_texto`, `contribuyente_credit.nombre_rol` y `uri_rol`; congela los publicados con el catálogo del momento). Cada uno con respaldo, PREVIO, idempotencia y vuelta atrás probados en la base de prueba; los que borran o migran dejan un `…-volver-atras.sql` junto al respaldo. `m_ConexionBD.ObtenerEsquemaEsperado` se actualiza con cada uno. Ver SC-71, SC-88 y SC-90.
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -4329,7 +4337,7 @@ CRITERIOS DE ESQUEMA
 
 - Un campo existe solo si lo consume una salida, una validación o una decisión del flujo.
 - Estructura completa, columnas mínimas: todos los niveles y las tablas hijas desde el principio. Las declaraciones (COI, ética, ensayo, datos) son filas de una tabla por tipo, no columnas.
-- Esquema nuevo, no transformación del viejo: la 1.13.0 creó 23 tablas sin tocar las viejas (`revistas_md`, `articulos`, `articulo_autor`), que se retiraron en la 1.32.0 con `articulo_revisor` y el camino viejo (SC-98). El 2.0.0 queda para los cambios de `bibtex`.
+- Esquema nuevo, no transformación del viejo: la 1.13.0 creó 23 tablas sin tocar las viejas (`revistas_md`, `articulos`, `articulo_autor`), que se retiraron en la 1.32.0 con `articulo_revisor` y el camino viejo (SC-98). El 2.0.0 fue el de `bibtex` (SC-102).
 - Los catálogos se guardan por valor (SC-23): `contribuyente_credit`, `articulo_declaracion`, `articulo_palabra_clave`.
 - «Sin dato» es NULL con `CHECK (<> '')` (GV-74, GV-147). Una clave única sobre columnas nulables se apoya en una columna generada (`numero.clave_identidad`, `articulo_palabra_clave.clave_vocabulario`).
 - Las hijas del artículo caen en cascada con él; todo lo demás es RESTRICT.
@@ -4345,7 +4353,7 @@ REGLAS DEL FLUJO
 
 CADENA DE ESQUEMA (SC-22): 1.13.0 (las 23 tablas), 1.14.0 (NULL en vez de '', GV-74), 1.15.0 (ROR de la afiliación, GV-153, GV-154), 1.16.0 (vocabulario controlado, SC-74), 1.17.0 (dos términos CRediT a la forma de JATS4R), 1.23.0 (reapertura), 1.24.0 (modelo `por_articulo`), 1.25.0 (declaración de disponibilidad de datos), 1.26.0 y 1.27.0 (editorial, órganos y preliminares, SC-88), 1.28.0 y 1.29.0 (catálogos de CRediT y licencias por idioma y congelado al publicar, logo de la revista, SC-90).
 
-**Relaciones:** vinculo:SC-22,vinculo:SC-23,vinculo:GV-74,vinculo:SC-72,vinculo:SC-73,vinculo:SC-74,vinculo:SC-70,vinculo:SC-87,vinculo:SC-88,vinculo:SC-89,vinculo:SC-90
+**Relaciones:** vinculo:SC-22,vinculo:SC-23,vinculo:GV-74,vinculo:SC-72,vinculo:SC-73,vinculo:SC-74,vinculo:SC-70,vinculo:SC-87,vinculo:SC-88,vinculo:SC-89,vinculo:SC-90,vinculo:SC-102
 
 ### SC-72 — Revistas: las salidas
 
@@ -4978,9 +4986,11 @@ LA 1.20.0 Y LA 1.21.0
 - 1.21.0: `libros_md` pasa de 80 a 86 y entra `libro_venta` con 3; va con el `.deb` que trae el formulario nuevo. `crear-cuenta-gbweb.sh` suma el permiso sobre `v_web_libro_venta`.
 - MEDIDO (contenedor, MySQL 8.0.46): la primera corrida de la 1.21.0 aplica todo (17 URL de compra pasan a `mercadolibre`, las seis columnas al final, las VIEW DEFINER, el permiso de la cuenta intacto); la segunda no tiene nada que cambiar; la vuelta atrás que imprime (DROP de lo nuevo y restauración, GV-169) deja la base en 80 columnas y la VIEW en 22. Aplicada por Alberto en Linux Mint el 04/11/2026, con el portal reconstruido.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13,apoya:GV-173,apoya:GV-176,apoya:GV-177,vinculo:SC-83,vinculo:SC-85
+BASELINE 2.0.0 (20/11/2026, SC-102). Las cinco VIEW viajan en el baseline: `generar-baseline.sh` vuelca la estructura de la base entera, vistas incluidas; enumera `BASE TABLE` solo para contar y para separar las semillas. Medido al cargarlo: las cinco vistas, iguales a las de la base de origen. `url_compra` NO se retiró en la 2.0.0: la nombra `v_web_libro`, que lee gbWeb, y gbWeb no se revisó en este lote.
 
-**PENDIENTE:** Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3). Las VIEW entran en las instalaciones nuevas con el baseline 2.0.0, que se genera junto con el refactor de bibtex (SC-22, PUNTO DE RUPTURA); para entonces, `generar-baseline.sh` tiene que dejar de enumerar solo `BASE TABLE`. Las hojas DocBook y EPUB del libro todavía no usan las traducciones nuevas del resumen y de las palabras clave. `url_compra` se retira en el baseline 2.0.0.
+**Relaciones:** vinculo:SC-80,vinculo:SC-82,vinculo:SC-22,vinculo:GV-74,apoya:GV-156,apoya:GV-167,apoya:GV-168,apoya:GV-169,apoya:GV-170,vinculo:SC-76,vinculo:SC-53,vinculo:RC-GM-13,apoya:GV-173,apoya:GV-176,apoya:GV-177,vinculo:SC-83,vinculo:SC-85,vinculo:SC-102
+
+**PENDIENTE:** Revisar las exportaciones e importaciones que recorren todas las columnas de `libros_md` (SC-22, lote 3). Las hojas DocBook y EPUB del libro todavía no usan las traducciones nuevas del resumen y de las palabras clave. Retirar `url_compra` de `libros_md` y de `v_web_libro` junto con una revisión de gbWeb: no entró en el baseline 2.0.0.
 
 ### SC-82 — La identidad de un proyecto es el nombre de su .md, no la carpeta que lo contiene
 
@@ -5664,7 +5674,7 @@ LA BASE: ACTUALIZACIÓN 1.32.0
 - No se vuelve atrás con un parche. Se restaura el respaldo completo con `--init-command="SET SESSION innodb_strict_mode=0"` (GV-67): el respaldo trae `articulos`. El script muestra el comando.
 - Las carpetas de los proyectos borrados quedan en el disco. El script lista sus nombres.
 
-`m_ConexionBD.ObtenerEsquemaEsperado`: salen las cuatro tablas, y `articulo` baja a 31 columnas. El 2.0.0 queda para los cambios de `bibtex`.
+`m_ConexionBD.ObtenerEsquemaEsperado`: salen las cuatro tablas, y `articulo` baja a 31 columnas. El 2.0.0 fue el de `bibtex` (SC-102).
 
 VERIFICADO
 
@@ -5685,7 +5695,7 @@ LO QUE QUEDÓ A LA VISTA
 - La vista de cuadros de revista compone con el preámbulo del PDF viejo (`m_XML.ObtenerPreambuloEmbebido`: clase `article`, sus fuentes), no con el de capas del PDF nuevo (`generar_pdf_revista.sh`). El cuadro se ve con otra letra y otra caja que en el PDF. Se encara aparte.
 - Varias entradas daban las reglas de CSS del EPUB en `m_GenerarEpub`, que salió. No se cotejó si el EPUB nuevo de revistas las tiene.
 
-**Relaciones:** vinculo:SC-97,vinculo:SC-96,vinculo:SC-71,vinculo:SC-72,vinculo:SC-87,vinculo:SC-22,vinculo:GV-67,vinculo:GV-210
+**Relaciones:** vinculo:SC-97,vinculo:SC-96,vinculo:SC-71,vinculo:SC-72,vinculo:SC-87,vinculo:SC-22,vinculo:GV-67,vinculo:GV-210,vinculo:SC-102
 
 **PENDIENTE:** La vista de cuadros de revista con el preámbulo de capas del PDF nuevo. Cotejar el CSS del EPUB nuevo de revistas con las reglas que citaban el de m_GenerarEpub (epígrafe SC-35, código SC-42, conversación SC-43, verso SC-49). Aplicar la 1.32.0 en Mint y probar: abrir un número, la vista de cuadros (idioma), el árbol de estructura (títulos) y el JSON de GitHub.
 
@@ -5706,7 +5716,7 @@ QUÉ SALE
 - El menú «OT para imprenta» (`FMain.menuImprenta`) y el separador que lo precedía (`Menu4`).
 - El formulario `FOrdenTaller` y el módulo `m_OrdenTaller`.
 - El icono `iconos/impresora.png`.
-- La tabla `orden_taller`, con la actualización de esquema 1.33.0 (patrón de SC-22). Pide SI, hace un respaldo verificado y frena si alguna tabla apunta a ella. Se vuelve atrás restaurando el respaldo. El 2.0.0 sigue reservado para `bibtex`.
+- La tabla `orden_taller`, con la actualización de esquema 1.33.0 (patrón de SC-22). Pide SI, hace un respaldo verificado y frena si alguna tabla apunta a ella. Se vuelve atrás restaurando el respaldo. El 2.0.0 fue el de `bibtex` (SC-102).
 - `m_ConexionBD.ObtenerEsquemaEsperado`: sale `orden_taller`.
 - La cascada sacó además `m_Json.RutaProyecto`, una variable que solo usaba la cadena de CSL-JSON (bloque 3b de SC-97).
 
@@ -5716,7 +5726,7 @@ SE QUEDA `media/logo-cabecera.png`: la OT lo usaba, pero también lo usan el log
 
 VERIFICADO: compilación completa con `gbc3` 3.19; ningún nombre borrado en el código vivo; el script 1.33.0 sobre MariaDB 10.11 (el caso normal, la segunda corrida, la cancelación y el freno).
 
-**Relaciones:** vinculo:SC-97,vinculo:SC-22,vinculo:GV-210
+**Relaciones:** vinculo:SC-97,vinculo:SC-22,vinculo:GV-210,vinculo:SC-102
 
 **PENDIENTE:** Aplicar la 1.33.0 en Mint.
 
@@ -5772,6 +5782,101 @@ PROBADO en el contenedor (MariaDB 10.11, gbc3 y gbx3 3.19), sobre una base con u
 PROBADO EN MINT por Alberto (19/11/2026, MySQL 8): sin la 1.34.0, la aplicación avisó al arrancar con el mensaje de mysqldump («SHOW VIEW command denied … v_web_coleccion (1142)») y no escribió el archivo del día. Con la 1.34.0 aplicada, el respaldo del día quedó completo («-- Dump completed») y con permisos 600. Los respaldos de Mint estaban cortados desde el 2/11/2026; se rescató con un respaldo manual de la cuenta de administración.
 
 **Relaciones:** apoya:GV-214,vinculo:SC-22,vinculo:SC-81,vinculo:GV-67
+
+### SC-102 — La bibliografía en entrada y pares campo/valor: bibtex, bibtex_campo y el catálogo de campos de biblatex (actualización y baseline 2.0.0)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher 2.0.0 / MySQL 8.0.46 (contenedor Ubuntu 24.04) / Gambas 3.19 gbc3 (contenedor; gb.qt5 y gb.db en lugar de gb.qt6 y gb.db2) / bash · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 20/11/2026). La tabla `bibtex` tenía 110 columnas, una por campo de biblatex. En la base de trabajo, al migrar, 4.933 referencias tenían 33.932 valores: siete campos en promedio, de 105. Pasa a un modelo de entrada y pares, y con ella se genera el baseline 2.0.0 (SC-22, PUNTO DE RUPTURA).
+
+EL MODELO
+
+- `bibtex` es la entrada: `id`, `id_proyecto`, `tipo_de_entrada`, `clave_bibtex`, `fecha_modificacion`, `id_origen`.
+- `bibtex_campo` guarda un par por dato: `id_bibtex`, `campo`, `valor`. Clave (`id_bibtex`, `campo`): un valor por campo. FK a `bibtex` con ON DELETE CASCADE; FK de `campo` al catálogo con RESTRICT y ON UPDATE CASCADE. `CHECK chk_bibtex_campo_valor (CHAR_LENGTH(TRIM(valor)) > 0)`: sin dato no hay par, ni vacío ni NULL. Índice (`campo`, `valor`(100)) para los autocompletados y las búsquedas por campo; FULLTEXT `ft_bibtex_campo_valor` sobre `valor` (GV-217).
+- `bibtex_campo_catalogo` tiene los 105 campos: `campo` (nombre de biblatex, clave), `orden` (único, de 10 en 10: el orden de escritura en el `.bib`, que es el de las columnas viejas), `literal` (el campo no pasa por la regla de órdenes de LaTeX, SC-58) y `nombre_anterior` (la columna vieja, para leer JSON viejos).
+- Los nombres son los de biblatex: `tipo_de_tesis` pasa a `type`; `hyphenation` y `lang_id` se unen en `langid` (`lang_id` solo donde `hyphenation` estaba vacío).
+- Las referencias siguen por proyecto. Una biblioteca compartida trajo más problemas de los que resolvía; el buscador de relación uniforma la escritura.
+- La clave sigue con 32 caracteres como máximo.
+- El formulario no cambia: «son campos, se usan o no se usan». Sale el par `txtLangId`/`cmbLangId` (`HBox251`), que se borra en el IDE.
+
+EN EL CÓDIGO
+
+- `m_Bibtex.$MapaCampos` (control → campo). `CargarCatalogo` lo contrasta con el catálogo al arrancar y frena si un campo no tiene control.
+- Lectura: una subconsulta por campo (`SubconsultaCampo`). La grilla es de 8 columnas fijas (`ConsultaGrilla`, constantes `COL_*`; GV-58).
+- Escritura: una sola función, `EscribirEntrada`, en transacción (GV-173). Hace el INSERT o el UPDATE de la entrada, borra los pares e inserta los que tienen dato; ante cualquier error hace Rollback. Con un id provisorio en la clave, la corrige con el id real dentro de la misma transacción. `FRelacionarBib` (los tres pares de la relación) y `FCorregirBibTeX` (corrección en masa) escriben también en transacción.
+- Control al guardar. `langid` admite un solo nombre de babel (`idiomas.babel`). `m_Idiomas.EsNombreBabel` compara en binario.
+- `language` y `origlanguage` son texto que se imprime: con una clave de localización de biblatex, el nombre sale traducido («inglés»); con otro valor, sale tal cual (`biblatex.def`, `\DeclareListFormat{language}`, que acepta la clave con o sin el prefijo `lang`). Decisión de Alberto (20/11/2026): solo se admiten claves. Son las 29 de `spanish.lbx` de biblatex 3.19, en la constante `m_Bibtex.CLAVES_IDIOMA_BIBLATEX`. Varias van unidas con « and ». La importación JSON informa los valores que no lo son.
+- Selector de idioma, como el de hyphenation: en `language` y `origlanguage`, Enter muestra las claves que contienen lo escrito. Filtra por el último nombre de la lista, y la elección lo reemplaza (`m_FuncionesGenericas.BuscarIdiomaBiblatexDesdeTexto` y `ElegirIdiomaBiblatex`). No va a la base.
+- `VerificacionBase` marca como error `relatedtype` y `relatedstring` juntos (RC-BL-01).
+- `.bib`: `ExportarBibTeX` recorre dos `Result` en paralelo: las entradas por clave, y los pares unidos al catálogo por clave y orden.
+- JSON: exporta con los nombres de biblatex y `"schema": "2.0.0"`. Importa los nombres nuevos y los viejos (`CampoDeNombreAnterior`) e informa los campos descartados, las entradas que fallaron y los idiomas que no son de babel.
+- Búsqueda FULLTEXT (`m_BuscarBib`): sobre los pares de `title`, `author`, `booktitle` y `journaltitle`; suma de MATCH por entrada, las 20 mejores.
+- `m_ConexionBD.ObtenerEsquemaEsperado`: `bibtex` 6, `bibtex_campo` 3, `bibtex_campo_catalogo` 4.
+- Consultas canónicas (`consultas`): la 2.0.0 reescribe las nueve de bibliografía que leían columnas (BIB-002 a BIB-006, BIB-CAL-001 a BIB-CAL-003, BIB-GEO-001). Se identifican por el prefijo del nombre. BIB-001 no cambia.
+
+LA ACTUALIZACIÓN 2.0.0 (`actualizar-esquema-2.0.0.sh`, SC-22)
+
+1. Exige la 1.34.0. Una base instalada desde el baseline 2.0.0 sale sin tocar nada.
+2. Antes de empezar, controla que las columnas de `bibtex` sean las del catálogo y estén en su orden, y que ninguna clave foránea apunte a una columna que se borra.
+3. Respaldo verificado.
+4. Crea el catálogo y `bibtex_campo`.
+5. En una transacción: corrige `eng` y `span` a `english` y `spanish`, y copia cada valor no vacío.
+6. Crea el FULLTEXT después de la copia (GV-217).
+7. Prueba del `.bib`: por proyecto, el SHA2 del `.bib` armado desde las columnas y el armado desde los pares. Si uno difiere, o si la consulta de la prueba falla, vacía los pares y no borra nada.
+8. Borra las columnas viejas y `ft_bibtex_busqueda` en un solo ALTER.
+9. Pasa `formatos_pdf` a `utf8mb4_unicode_ci` y reescribe las consultas canónicas. Lo hace también al repetir el script: una corrida cortada después del ALTER se completa en la siguiente.
+10. Verificación, registro e informe de control de solo lectura:
+    - idiomas que no son de babel;
+    - claves de 32 caracteres;
+    - valores con caracteres de control;
+    - consultas guardadas que nombran tablas retiradas en la 1.32.0.
+
+La vuelta atrás que imprime el script borra las dos tablas nuevas y después restaura el respaldo.
+
+MEDIDO (20/11/2026, MySQL 8.0.46 en el contenedor, sobre el respaldo de Alberto `gbpublisher_261120.sql`):
+
+- La migración tarda 4 s.
+- Los 31 proyectos dan el `.bib` idéntico byte a byte.
+- Las 24 consultas de la aplicación andan.
+- La búsqueda FULLTEXT encuentra 300 de 300 referencias reales, como el índice viejo.
+- Probados: el alta con corrección de la clave provisoria, la edición, la relación y la corrección en masa; los rechazos del CHECK y de la FK; el borrado en cascada.
+- Las nueve consultas reescritas dan las mismas filas que las viejas.
+- La segunda corrida y la reanudación tras un corte funcionan; la vuelta atrás también.
+- Una copia saboteada se detecta.
+
+Esquema: una instalación desde cero (baseline 1.0.0 y la cadena hasta la 2.0.0) da las mismas columnas, índices, claves, CHECK y vistas que la base de Alberto migrada. La única diferencia es el orden del ENUM `capitulos.tipo_capitulo`, que la 1.11.0 acepta.
+
+EL BASELINE 2.0.0. `generar-baseline.sh` lo genera desde esa instalación desde cero, no desde la base de trabajo:
+
+- doce tablas semilla;
+- testigo: `bibtex` con 6 columnas;
+- carga con `innodb_strict_mode` activo (GV-67);
+- solo MySQL.
+
+Cargado: 68 tablas, las cinco vistas de gbWeb y los disparadores, con esquema y semillas idénticos a los de la base de origen. `instalar-gbpublisher.sh` pasa a esperar 68 tablas y las doce semillas.
+
+La 1.23.0, que repone los disparadores después de restaurar un respaldo de la aplicación, acepta también una base instalada desde el baseline 2.0.0.
+
+**Relaciones:** vinculo:SC-22,apoya:GV-217,vinculo:RC-BL-01,vinculo:SC-58,vinculo:GV-58,vinculo:GV-173,vinculo:RC-GM-15,vinculo:GV-67,vinculo:SC-81
+
+**PENDIENTE:** Aplicar en Mint:
+1. Instalar el .deb y correr la 2.0.0 antes de abrir la aplicación.
+2. Borrar `HBox251` en `FMain.form`.
+3. Probar:
+   - alta, edición y relación;
+   - corrección en masa;
+   - importar y exportar JSON;
+   - exportar el `.bib`;
+   - compilar un libro con bibliografía.
+
+Revisar a mano lo que listó el informe de control:
+- la referencia 1515 (`language` IX, `origlanguage` 73: parecen ser volumen y número);
+- seis títulos con saltos de línea;
+- cuatro claves de 32 caracteres, dos cortadas.
+
+Decidir:
+- si al guardar se cambian los saltos de línea por espacios;
+- qué hacer con las 48 consultas guardadas que nombran `articulos` o `revistas_md` (SC-98), entre ellas BIB-ART-001 y BIB-ART-002.
 
 ---
 
@@ -6982,7 +7087,9 @@ Importa porque hasta acá la única vía segura para escribir un NULL parecía s
 
 Aplicado en FRelacionarBib: de `related_type` y `related_string` se escribe uno y el otro va a NULL.
 
-**Relaciones:** vinculo:RC-GM-15
+DESDE LA 2.0.0 (SC-102) `FRelacionarBib` ya no usa `Edit` + `Update` sobre `bibtex`: el campo que no se usa no tiene par en `bibtex_campo`. El comportamiento medido sigue valiendo para gb.db.
+
+**Relaciones:** vinculo:RC-GM-15,vinculo:SC-102
 
 ### GV-35 — Leer Format en TextEdit: no distingue seleccion mixta, y cuanto cuesta recorrer
 
@@ -7548,7 +7655,9 @@ REGLA
 
 Un volcado de un `Result` a una grilla de columnas fijas recorre `Min(resultado.Fields.Count, Grid.Columns.Count)`. Y todo cambio de esquema revisa los `Columns.Count` fijos de las grillas de esa tabla (SC-22).
 
-**Relaciones:** vinculo:GV-15,vinculo:SC-22
+DESDE LA 2.0.0 (SC-102). La grilla de la bibliografía tiene 8 columnas fijas (`m_Bibtex.COLUMNAS_GRILLA`, constantes `COL_*`) y `ConsultaGrilla` devuelve esas 8: la cantidad ya no depende del esquema de `bibtex`. El caso de arriba queda como antecedente.
+
+**Relaciones:** vinculo:GV-15,vinculo:SC-22,vinculo:SC-102
 
 ### GV-59 — ComboBox: qué pasa al asignar Text, según sea de solo lectura o editable
 
@@ -7734,7 +7843,7 @@ EPUB 3.3 admite como imagen gif, jpeg, png, svg+xml y webp. PDF no.
 
 ### GV-67 — Un respaldo de mysqldump de gbpublisher no se restaura con el comando directo: articulos supera el tamaño de fila
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 / MySQL 8.0.46, respaldo posterior a la 1.32.0 (20/11/2026) · **Verificado:** 2026-11
 
 Restaurar un respaldo con el comando directo falla en la tabla `articulos`:
 
@@ -7745,7 +7854,7 @@ Y falla DESPUÉS de haberla borrado: el volcado trae un `DROP TABLE IF EXISTS` a
 
 CAUSA
 
-Con `innodb_strict_mode` activo —el valor por omisión en MySQL 8—, InnoDB rechaza un `CREATE TABLE` cuyo peor caso teórico de tamaño de fila supera el límite, aunque ninguna fila real lo alcance. `articulos` tenía 220 columnas. La 1.32.0 la borró (SC-98), pero todo respaldo anterior a la 1.32.0 la trae; no se midió si un respaldo posterior se restaura con el comando directo, así que la regla de SC-22 sigue. El baseline desactiva el chequeo en su cabecera (`SET SESSION innodb_strict_mode=0`); `mysqldump` no escribe esa línea.
+Con `innodb_strict_mode` activo —el valor por omisión en MySQL 8—, InnoDB rechaza un `CREATE TABLE` cuyo peor caso teórico de tamaño de fila supera el límite, aunque ninguna fila real lo alcance. `articulos` tenía 220 columnas. La 1.32.0 la borró (SC-98), pero todo respaldo anterior a la 1.32.0 la trae; un respaldo posterior se restaura con el comando directo (medido, ver abajo); para uno anterior la regla de SC-22 sigue. El baseline desactiva el chequeo en su cabecera (`SET SESSION innodb_strict_mode=0`); `mysqldump` no escribe esa línea.
 
 RESTAURACIÓN CORRECTA
 
@@ -7759,9 +7868,9 @@ Los mensajes «Para volver atrás» de `actualizar-esquema-1.1.0.sh` a `1.3.0.sh
 
 MENSAJES CORREGIDOS (18/11/2026): `actualizar-esquema-1.1.0.sh`, `1.2.0.sh` y `1.3.0.sh` muestran el comando con `--init-command="SET SESSION innodb_strict_mode=0"`, como los demás.
 
-**Relaciones:** vinculo:SC-22
+MEDIDO (20/11/2026, MySQL 8.0.46, `innodb_strict_mode` = 1). El respaldo diario de la aplicación `gbpublisher_261120.sql`, posterior a la 1.32.0, se restauró varias veces con `sudo mysql gbpublisher < respaldo.sql`, sin error. También se restauró así un volcado de la base ya migrada a la 2.0.0, cuya tabla más ancha es `libros_md` (89 columnas). El baseline 2.0.0 ya no relaja el chequeo, y `generar-baseline.sh` controla que no lo haga (SC-102). El pendiente de MariaDB no aplica: el proyecto usa solo MySQL.
 
-**PENDIENTE:** Sin verificar en MariaDB.
+**Relaciones:** vinculo:SC-22,vinculo:SC-102
 
 ### GV-68 — Asignar "" a una clave de Collection no la crea, y si existía la borra
 
@@ -10122,7 +10231,13 @@ Para cortar por una marca de varios caracteres, como el corte de título `\\` (S
 
 MEDIDO con Gambas 3.19 (04/11/2026).
 
-**Relaciones:** vinculo:SC-28
+CASOS EN gbpublisher (20/11/2026, SC-102):
+- `Split(texto, " and ")` partía «spanish» en [sp] [] [ish] y la referencia no se guardaba.
+- `Split(html, "<p")` en `m_EditorHTML.ContarMarcas` cortaba en cada `<` de un `<span>`: contaba tramos, no párrafos. Con un párrafo de dos tramos marcados y otro de uno, daba 3 en lugar de 2.
+
+En los dos se cambió la marca por `Chr(1)` con `Replace` y se cortó por ese carácter: `Split(Replace(texto, " and ", Chr(1)), Chr(1))`. Es más corto que recorrer con `InStr`, y vale cuando el carácter de reemplazo no puede aparecer en el texto.
+
+**Relaciones:** vinculo:SC-28,apoya:SC-102
 
 ### GV-186 — bash: read sobre una entrada sin salto de línea final devuelve 1, aunque asignó las variables
 
@@ -10650,6 +10765,43 @@ REGLA. `-p` sirve para VERIFICAR, desde la terminal: `gbc3 -a -p . ; echo $?`, s
 **Relaciones:** vinculo:GV-210,apoya:RC-GM-05,vinculo:RC-GM-02,vinculo:GV-57
 
 **PENDIENTE:** El punto del bytecode es una sola observación: repetirla (gbc3 -a -p, ejecutar; Limpiar, compilar sin -p, ejecutar) para confirmar que la causa es -p. Reportar al bugtracker de Gambas el cuelgue del IDE y el bytecode, con la versión y el commit de gbpublisher anterior a la consolidación de DetenerBashEnCurso. Revisar esta entrada cuando cambie la versión de master.
+
+### GV-217 — MySQL 8: un índice FULLTEXT creado antes de una carga masiva con INSERT … SELECT dio relevancia 0 hasta un OPTIMIZE; creado después de la carga, no
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** MySQL 8.0.46 / contenedor Ubuntu 24.04 / InnoDB · **Verificado:** 2026-11
+
+Medido el 20/11/2026 con MySQL 8.0.46 en el contenedor, al escribir la actualización 2.0.0 (SC-102).
+
+CASO. `bibtex_campo` creada con su FULLTEXT `ft_bibtex_campo_valor` sobre `valor`, y después cargada con un `INSERT … SELECT` por columna dentro de una transacción (33.932 filas). Terminado el COMMIT, `MATCH (valor) AGAINST (…)` dio relevancia 0 en todas las filas: la búsqueda de `m_BuscarBib` no encontraba nada. Después de un `OPTIMIZE TABLE` la relevancia volvió.
+
+CON EL ÍNDICE CREADO DESPUÉS DE LA CARGA (`ALTER TABLE bibtex_campo ADD FULLTEXT …`), las relevancias salen bien de entrada: 300 de 300 referencias reales encontradas, como con el índice viejo de `bibtex`. Un volcado de esa base restaurado con `mysql` (que trae el FULLTEXT en el CREATE TABLE y después los INSERT) también busca bien.
+
+REGLA. En un script de esquema que crea una tabla con FULLTEXT y la llena de una vez, el índice se crea después de la copia. La causa no se estableció: no se aisló si depende de la transacción, del tamaño de la carga o de las estadísticas del índice.
+
+**Relaciones:** apoya:SC-102,vinculo:SC-22
+
+**PENDIENTE:** Mini-test para la causa: tabla con FULLTEXT; INSERT … SELECT de unas miles de filas en una transacción; COMMIT; medir MATCH. Repetir sin transacción y con OPTIMIZE intermedio. Ver si lo cambia innodb_ft_cache_size.
+
+### GV-218 — If Not con un entero: el If niega en lógico (Not 1 da Else), pero Not como expresión es bit a bit (Not 1 = -2)
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19.0 (gbs3) / contenedor Ubuntu 24.04 · **Verificado:** 2026-11
+
+Medido con `gbs3` 3.19.0 en el contenedor (20/11/2026):
+
+    Dim i As Integer = 1
+    Print Not i                         ' -2
+    If Not i Then ... Else ...          ' rama Else
+    If (Not i) Then ... Else ...        ' rama Else
+    Dim b As Boolean = Not i            ' True
+    If Not 2 → Else;  If Not 0 → Then
+
+`Not` sobre un entero es bit a bit: `Not 1` vale -2, y -2 convertido a Boolean es True. Pero en la condición de un `If`, aun entre paréntesis, `Not` se comporta como negación lógica del entero: da Else con 1 y 2, y Then con 0. El mismo `Not i` da True asignado a un Boolean y Else en un `If`.
+
+CONSECUENCIA. `If Not Message.Question(…) Then` funciona como se lee: `Message.Question` devuelve 1 con el primer botón, y el `If` entra con cualquier otro. Esto se midió al revisar `FCorregirBibTeX` (SC-102), donde se había sospechado lo contrario. Fuera de un `If` (asignado, en una expresión, como argumento), `Not` de un entero no es una negación lógica: para eso, comparar (`= 0`, `<> 1`).
+
+**Relaciones:** vinculo:RC-GM-17,vinculo:SC-102
+
+**PENDIENTE:** Confirmar en 3.22 (Mint) con el mismo script. Leer en el fuente del compilador cómo se compila Not dentro de la condición de un If.
 
 ---
 

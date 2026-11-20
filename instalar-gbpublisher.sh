@@ -23,10 +23,14 @@ PATRON_BASELINE="gbpublisher-baseline-*.sql"
 
 # VALORES ESPERADOS EN UN BASELINE ÍNTEGRO. SI LA IMPORTACIÓN NO LLEGA A
 # ESTOS NÚMEROS, ALGO FALLÓ AUNQUE mysql NO HAYA DEVUELTO ERROR.
-N_TABLAS_ESPERADAS=30
+# CORRESPONDEN AL BASELINE 2.0.0 (MEDIDOS AL CARGARLO EL 20/11/2026). CON
+# OTRO BASELINE LA VERIFICACIÓN FALLA: HAY QUE ACTUALIZARLOS CON ÉL.
+N_TABLAS_ESPERADAS=68
 declare -A SEMILLA_ESPERADA=(
-  [shortcodes]=77 [manual_ayudas]=36 [consultas]=82
-  [cmb_biblatex]=120 [formatos_pdf]=45 [credit_roles]=14
+  [manual_ayudas]=36 [consultas]=82 [cmb_biblatex]=120
+  [bibtex_campo_catalogo]=105 [formatos_pdf]=45 [credit_roles]=14
+  [credit_rol_nombre]=28 [idiomas]=386 [pais]=249 [licencias]=19
+  [licencia_texto]=6 [tipo_declaracion]=3
 )
 
 RANGO_RED=""
@@ -157,10 +161,8 @@ info "Eliminando la base de datos anterior (si existe)..."
 sudo mysql -e "DROP DATABASE IF EXISTS \`${DB}\`;"
 
 # --- 6. IMPORTAR EL BASELINE ---
-# EL ARCHIVO YA RELAJA innodb_strict_mode POR SU CUENTA (LA TABLA 'articulos'
-# TIENE 220 COLUMNAS Y EL CHEQUEO ESTRICTO DE MySQL 8 RECHAZARÍA SU CREATE
-# AUNQUE EN ROW_FORMAT=DYNAMIC LA FILA ENTRE SIN PROBLEMA). NO HACE FALTA
-# ANTEPONER NADA: SE IMPORTA TAL CUAL.
+# DESDE EL BASELINE 2.0.0 EL ARCHIVO CARGA CON innodb_strict_mode ACTIVO: YA
+# NO TIENE TABLAS QUE LO HAGAN FALLAR (GV-67). SE IMPORTA TAL CUAL.
 info "Importando estructura y datos de configuración..."
 sudo mysql < "$RUTA_DUMP"
 ok "Contenido importado."
@@ -205,7 +207,7 @@ else
 fi
 
 # LOS DATOS SEMILLA SON LO QUE HACE USABLE LA APLICACIÓN RECIÉN INSTALADA:
-# SIN SHORTCODES NI AYUDAS, LA BASE ESTÁ "CREADA" PERO NO SIRVE.
+# SIN AYUDAS NI CATÁLOGOS, LA BASE ESTÁ "CREADA" PERO NO SIRVE.
 for TABLA in "${!SEMILLA_ESPERADA[@]}"; do
   N="$(sudo mysql -N -B -e "SELECT COUNT(*) FROM \`${DB}\`.\`${TABLA}\`;" 2>/dev/null || echo 0)"
   if [ "${N:-0}" -eq "${SEMILLA_ESPERADA[$TABLA]}" ]; then

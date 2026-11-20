@@ -123,7 +123,15 @@ Private Sub Llenar()
 
   ' --- 2. UNA CONSULTA POR ID: SE RESPETA EL ORDEN DE m_BuscarBib (AÑO CITADO PRIMERO) ---
   For i = 0 To $aIds.Max
-    Try rFila = m_ConexionBD.mConn.Exec("SELECT b.id_proyecto, b.clave_bibtex, COALESCE(LEFT(b.date, 4), b.year) AS anio, p.nombre AS proyecto, b.author, b.editor, b.title, COALESCE(b.journal_title, b.book_title) AS contenedor, b.tipo_de_entrada FROM bibtex b LEFT JOIN proyectos p ON p.id = b.id_proyecto WHERE b.id = &1", $aIds[i])
+    ' LOS CAMPOS SALEN DE bibtex_campo CON SubconsultaCampo (2.0.0). EL AÑO
+    ' (date, Y SI NO year) Y EL CONTENEDOR (journaltitle, Y SI NO booktitle)
+    ' SE RESUELVEN ABAJO, EN GAMBAS
+    Try rFila = m_ConexionBD.mConn.Exec("SELECT b.id_proyecto, b.clave_bibtex, p.nombre AS proyecto, b.tipo_de_entrada, " &
+      m_Bibtex.SubconsultaCampo("author") & ", " & m_Bibtex.SubconsultaCampo("editor") & ", " &
+      m_Bibtex.SubconsultaCampo("title") & ", " & m_Bibtex.SubconsultaCampo("date") & ", " &
+      m_Bibtex.SubconsultaCampo("year") & ", " & m_Bibtex.SubconsultaCampo("journaltitle") & ", " &
+      m_Bibtex.SubconsultaCampo("booktitle") &
+      " FROM bibtex b LEFT JOIN proyectos p ON p.id = b.id_proyecto WHERE b.id = &1", $aIds[i])
     If Error Then
       m_Sonido.sonar("Error")
       Message.Error("No se pudo leer un candidato:" & gb.NewLine & Error.Text)
@@ -137,7 +145,12 @@ Private Sub Llenar()
     $aProyectos.Add(rFila["id_proyecto"])
     $aClaves.Add(Texto(rFila["clave_bibtex"]))
 
-    gvCandidatos[iFila, COL_ANIO].Text = Texto(rFila["anio"])
+    ' AÑO: LOS CUATRO PRIMEROS DE date; SIN date, year
+    If Texto(rFila["date"]) <> "" Then
+      gvCandidatos[iFila, COL_ANIO].Text = Left(Texto(rFila["date"]), 4)
+    Else
+      gvCandidatos[iFila, COL_ANIO].Text = Texto(rFila["year"])
+    Endif
     gvCandidatos[iFila, COL_PROYECTO].Text = Texto(rFila["proyecto"])
     ' SIN AUTOR (OBRA COLECTIVA), EL EDITOR
     If Texto(rFila["author"]) <> "" Then
@@ -146,7 +159,12 @@ Private Sub Llenar()
       gvCandidatos[iFila, COL_AUTOR].Text = Texto(rFila["editor"])
     Endif
     gvCandidatos[iFila, COL_TITULO].Text = Texto(rFila["title"])
-    gvCandidatos[iFila, COL_CONTENEDOR].Text = Texto(rFila["contenedor"])
+    ' CONTENEDOR: LA REVISTA; SIN REVISTA, EL LIBRO
+    If Texto(rFila["journaltitle"]) <> "" Then
+      gvCandidatos[iFila, COL_CONTENEDOR].Text = Texto(rFila["journaltitle"])
+    Else
+      gvCandidatos[iFila, COL_CONTENEDOR].Text = Texto(rFila["booktitle"])
+    Endif
     gvCandidatos[iFila, COL_TIPO].Text = Texto(rFila["tipo_de_entrada"])
 
     ' EL PROYECTO EN CURSO SE MARCA: ELEGIR ESA FILA ES UN DUPLICADO

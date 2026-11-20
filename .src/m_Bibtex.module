@@ -1,5 +1,8 @@
 ' Gambas module file
 
+' --- MAPA CONTROL → CAMPO DE biblatex (2.0.0) ---
+' UN CONTROL POR CAMPO DEL CATÁLOGO (bibtex_campo_catalogo). LOS DATOS DE LA
+' ENTRADA (tipo_de_entrada, clave_bibtex) NO ESTÁN ACÁ: SON COLUMNAS DE bibtex
 Private $MapaCampos As New Collection
 Public ContenidoBib As Result
 Public mMapaPubState As New Collection
@@ -20,45 +23,216 @@ Private $iUltimoMaxIdRef As Integer = -1
 ' PORQUE LO LEE FMain.
 Public bRefrescandoReferencias As Boolean = False
 
-' --- MAPA DE NOMBRES DE COLUMNA A CAMPOS DE biblatex ---
-' SE CONSTRUYE UNA SOLA VEZ Y SE REUSA. Private DE MÓDULO CON PREFIJO $.
-Private $cMapaBiblatex As Collection
+' --- INVERSA DE $MapaCampos: CAMPO → CONTROL. SE ARMA AL PRIMER USO ---
+Private $cControlDeCampo As Collection
 
-' --- INVERSA DE $MapaCampos: COLUMNA → CONTROL. SE ARMA AL PRIMER USO ---
-Private $cControlDeColumna As Collection
+' --- EL CATÁLOGO DE CAMPOS (bibtex_campo_catalogo), LEÍDO UNA VEZ ---
+' $aCampos EN EL ORDEN DEL .bib; $cLiteral: campo → True SI ES LITERAL
+Private $aCampos As String[]
+Private $cLiteral As Collection
+Private $cAnterior As Collection
+Private $iAnchoCampo As Integer
 
+' --- ÚLTIMO ERROR Y ÚLTIMA CLAVE DE EscribirEntrada ---
+Private $sUltimoErrorEscritura As String
+Private $sUltimaClave As String
+
+' --- COLUMNAS DE LA GRILLA DE REFERENCIAS (POSICIÓN EN ConsultaGrilla) ---
+Public Const COL_ID As Integer = 0
+Public Const COL_TIPO As Integer = 1
+Public Const COL_CLAVE As Integer = 2
+Public Const COL_AUTOR As Integer = 3
+Public Const COL_EDITOR As Integer = 4
+Public Const COL_TITULO As Integer = 5
+Public Const COL_ANIO As Integer = 6
+Public Const COL_FECHA As Integer = 7
+Private Const COLUMNAS_GRILLA As Integer = 8
+
+' --- CONTROLES DE LAS COLUMNAS DE LA ENTRADA (NO SON CAMPOS DEL CATÁLOGO) ---
+Public Const CONTROL_TIPO As String = "cmbTipoDeEntrada"
+
+' CLAVES DE LOCALIZACIÓN DE IDIOMA DE biblatex PARA language Y origlanguage:
+' SON LAS lang<clave> DEFINIDAS EN spanish.lbx (biblatex 3.19). CON UNA DE
+' ESTAS, biblatex IMPRIME EL NOMBRE TRADUCIDO («inglés»); CON OTRO VALOR LO
+' IMPRIME TAL CUAL. DECISIÓN DEL 20/11/2026: SOLO SE ADMITEN ESTAS (SC-102).
+' SI UNA VERSIÓN NUEVA DE biblatex AGREGA CLAVES, SE SUMAN ACÁ
+Public Const CLAVES_IDIOMA_BIBLATEX As String = "american,brazilian,bulgarian,catalan,croatian,czech,danish,dutch,english,estonian,finnish,french,galician,german,greek,hungarian,italian,japanese,latin,latvian,norwegian,polish,portuguese,russian,slovak,slovene,spanish,swedish,ukrainian"
+
+' ============================================
+' Función   : ConfigurarTableViewBibtexEnCurso
+' Propósito : Prepara la grilla de referencias: las ocho columnas de
+'             ConsultaGrilla, con id, tipo y clave ocultos
+' Parámetros: grid As GridView — la grilla a configurar
+' Retorna   : nada
+' Nota      : LAS COLUMNAS SE LEEN POR NOMBRE EN LA CONSULTA Y POR LAS
+'             CONSTANTES COL_* EN LA GRILLA: YA NO DEPENDEN DEL ORDEN DE LAS
+'             COLUMNAS DE LA TABLA (2.0.0)
+' ============================================
 Public Sub ConfigurarTableViewBibtexEnCurso(grid As GridView)
+
+  Dim i As Integer
 
   With grid
     .Header = True
     .Grid = True
-    .Columns.Count = 112
+    .Columns.Count = COLUMNAS_GRILLA
 
-    ' CONFIGURACIÓN DE COLUMNAS
-    For i As Integer = 0 To 111
-      Select Case i
-        Case 6
-          .Columns[i].Title = "Autor"
-          .Columns[i].Width = 180
-        Case 7
-          .Columns[i].Title = "Editor"
-          .Columns[i].Width = 180
-        Case 8
-          .Columns[i].Title = "Título"
-          .Columns[i].Width = 340
-        Case 51
-          .Columns[i].Title = "Año"
-          .Columns[i].Alignment = Align.Center
-          .Columns[i].Width = 52
-        Case 53
-          .Columns[i].Title = "Fecha"
-          .Columns[i].Width = 100
-        Case Else
-          .Columns[i].Title = ""
-          .Columns[i].Width = 0
-      End Select
+    ' --- 1. TODAS OCULTAS ---
+    For i = 0 To COLUMNAS_GRILLA - 1
+      .Columns[i].Title = ""
+      .Columns[i].Width = 0
     Next
+
+    ' --- 2. LAS VISIBLES ---
+    .Columns[COL_AUTOR].Title = "Autor"
+    .Columns[COL_AUTOR].Width = 180
+    .Columns[COL_EDITOR].Title = "Editor"
+    .Columns[COL_EDITOR].Width = 180
+    .Columns[COL_TITULO].Title = "Título"
+    .Columns[COL_TITULO].Width = 340
+    .Columns[COL_ANIO].Title = "Año"
+    .Columns[COL_ANIO].Alignment = Align.Center
+    .Columns[COL_ANIO].Width = 52
+    .Columns[COL_FECHA].Title = "Fecha"
+    .Columns[COL_FECHA].Width = 100
   End With
+
+End
+
+' ============================================
+' Función   : CargarCatalogo
+' Propósito : Lee bibtex_campo_catalogo una vez por sesión: los campos en el
+'             orden del .bib, cuáles son literales y el ancho de alineación
+'             del .bib. Controla que cada campo tenga su control en FMain
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si el catálogo está cargado
+' Nota      : UN CAMPO SIN CONTROL SE PERDERÍA AL EDITAR LA ENTRADA: EL
+'             GUARDADO REESCRIBE LOS PARES DESDE EL FORMULARIO. POR ESO ES UN
+'             ERROR Y NO UN AVISO
+' ============================================
+Public Function CargarCatalogo() As Boolean
+
+  Dim rDatos As Result
+  Dim aCampos As New String[]
+  Dim cLiteral As New Collection
+  Dim cAnterior As New Collection
+  Dim aSinControl As New String[]
+  Dim sCampo As String
+  Dim iAncho As Integer
+
+  ' --- 1. YA CARGADO ---
+  If $aCampos Then Return True
+
+  ' --- 2. CONSULTA ---
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT campo, literal, nombre_anterior FROM bibtex_campo_catalogo ORDER BY orden")
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer el catálogo de campos de la bibliografía " &
+      "(¿falta la actualización de esquema 2.0.0?):" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. ARMADO ---
+  ' literal ES TINYINT(1): SE COMPARA CON 1 Y NO SE TOMA COMO Boolean (RC-GM-01)
+  While rDatos.Available
+    sCampo = rDatos["campo"]
+    aCampos.Add(sCampo)
+    cLiteral[sCampo] = (CInt(rDatos["literal"]) = 1)
+    If Not IsNull(rDatos["nombre_anterior"]) Then cAnterior[rDatos["nombre_anterior"]] = sCampo
+    If Len(sCampo) > iAncho Then iAncho = Len(sCampo)
+    rDatos.MoveNext
+  Wend
+
+  ' --- 4. CADA CAMPO TIENE SU CONTROL ---
+  For Each sCampo In aCampos
+    If ControlDeCampo(sCampo) = "" Then aSinControl.Add(sCampo)
+  Next
+  If aSinControl.Count > 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("Hay campos de la bibliografía sin control en el formulario:" &
+      gb.NewLine & "  " & aSinControl.Join(", ") & gb.NewLine & gb.NewLine &
+      "No se pueden editar referencias hasta corregirlo.")
+    Return False
+  Endif
+
+  ' lang_id NO ESTÁ EN EL CATÁLOGO: SE UNIÓ A langid EN LA MIGRACIÓN
+  cAnterior["lang_id"] = "langid"
+  $aCampos = aCampos
+  $cLiteral = cLiteral
+  $cAnterior = cAnterior
+  $iAnchoCampo = iAncho
+  Return True
+
+End
+
+' ============================================
+' Función   : EsCampo
+' Propósito : Dice si un nombre es un campo del catálogo de biblatex
+' Parámetros: sCampo As String — nombre del campo
+' Retorna   : Boolean
+' Nota      : ES LA GUARDA DE LAS CONSULTAS QUE ARMAN EL NOMBRE DEL CAMPO EN
+'             EL SQL (SubconsultaCampo): UN NOMBRE FUERA DEL CATÁLOGO NO LLEGA
+' ============================================
+Public Function EsCampo(sCampo As String) As Boolean
+
+  If Not CargarCatalogo() Then Return False
+  Return $cLiteral.Exist(sCampo)
+
+End
+
+' ============================================
+' Función   : CampoDeNombreAnterior
+' Propósito : Traduce el nombre de una columna de bibtex anterior a la 2.0.0
+'             (journal_title, hyphenation…) a su campo de biblatex. Lo usa la
+'             importación de los JSON exportados antes de la 2.0.0
+' Parámetros: sNombre As String — nombre de la columna vieja
+' Retorna   : String — el campo, o vacío si no era una columna de datos
+' ============================================
+Public Function CampoDeNombreAnterior(sNombre As String) As String
+
+  If Not CargarCatalogo() Then Return ""
+  If $cAnterior.Exist(sNombre) Then Return $cAnterior[sNombre]
+  Return ""
+
+End
+
+' ============================================
+' Función   : SubconsultaCampo
+' Propósito : Expresión SQL que devuelve el valor de un campo de una entrada,
+'             para usar en un SELECT sobre bibtex: el reemplazo de la columna
+'             que el campo tenía hasta la 2.0.0
+' Parámetros: sCampo As String — campo del catálogo (author, journaltitle…)
+'             sAlias As String — alias de bibtex en la consulta (por omisión b)
+' Retorna   : String — «(SELECT …) AS `campo`», o vacío si el campo no está en
+'             el catálogo
+' Nota      : LA CLAVE PRIMARIA (id_bibtex, campo) HACE QUE CADA SUBCONSULTA
+'             SEA UNA LECTURA POR ÍNDICE. EL NOMBRE VA EN EL SQL PORQUE NO ES
+'             UN DATO DEL USUARIO: SE VALIDA CONTRA EL CATÁLOGO
+' ============================================
+Public Function SubconsultaCampo(sCampo As String, Optional sAlias As String = "b") As String
+
+  If Not EsCampo(sCampo) Then Return ""
+  Return "(SELECT c_" & sCampo & ".valor FROM bibtex_campo c_" & sCampo &
+    " WHERE c_" & sCampo & ".id_bibtex = " & sAlias & ".id AND c_" & sCampo &
+    ".campo = '" & sCampo & "') AS `" & sCampo & "`"
+
+End
+
+' ============================================
+' Función   : ConsultaGrilla
+' Propósito : SELECT de la grilla de referencias: id, tipo, clave, autor,
+'             editor, título, año y fecha, en el orden de las constantes COL_*
+' Parámetros: sFiltro As String — condición del WHERE sobre bibtex b; puede
+'             llevar marcadores &1, &2… que completa el llamador
+' Retorna   : String — la consulta, ordenada del id más nuevo al más viejo
+' ============================================
+Public Function ConsultaGrilla(sFiltro As String) As String
+
+  Return "SELECT b.id, b.tipo_de_entrada, b.clave_bibtex, " &
+    SubconsultaCampo("author") & ", " & SubconsultaCampo("editor") & ", " &
+    SubconsultaCampo("title") & ", " & SubconsultaCampo("year") & ", " &
+    SubconsultaCampo("date") &
+    " FROM bibtex b WHERE " & sFiltro & " ORDER BY b.id DESC"
 
 End
 
@@ -194,8 +368,8 @@ End
 ' Propósito : Cuántos niveles de \enquote admite un campo de una referencia:
 '             uno en el título y el subtítulo de los tipos cuyo título algún
 '             estilo pone entre comillas; dos en todo lo demás (SC-58).
-' Parámetros: sColumna As String — la columna de la tabla bibtex
-'             sTipo    As String — tipo_de_entrada
+' Parámetros: sCampo As String — el campo de biblatex
+'             sTipo  As String — tipo_de_entrada
 ' Retorna   : Integer — 1 o 2
 ' Nota      : LA LISTA ES LA UNIÓN DE LOS ESTILOS DE LA APLICACIÓN, NO LA DEL
 '             ESTILO DEL LIBRO: EL ESTILO SE PUEDE CAMBIAR DESPUÉS (MISMO
@@ -209,13 +383,14 @@ End
 '             EL SUBTÍTULO VA DENTRO DE LAS MISMAS COMILLAS QUE EL TÍTULO
 '             (MEDIDO CON VERONA).
 ' ============================================
-Public Function NivelesEnquote(sColumna As String, sTipo As String) As Integer
+Public Function NivelesEnquote(sCampo As String, sTipo As String) As Integer
 
   Dim aTipos As String[] = ["article", "conference", "inbook", "incollection",
     "inproceedings", "inreference", "online", "patent", "report", "thesis",
     "unpublished"]
 
-  If sColumna <> "title" And sColumna <> "sub_title" Then Return 2
+  ' EL CAMPO CON SU NOMBRE DE biblatex (2.0.0): subtitle, YA NO sub_title
+  If sCampo <> "title" And sCampo <> "subtitle" Then Return 2
   If aTipos.Exist(LCase(Trim(sTipo))) Then Return 1
   Return 2
 
@@ -223,17 +398,20 @@ End
 
 ' ============================================
 ' Función   : EsCampoLiteral
-' Propósito : Dice si una columna es un campo que biblatex toma literal, sin
+' Propósito : Dice si un campo es de los que biblatex toma literal, sin
 '             interpretar LaTeX: ahí no corre la regla de SC-58.
-' Parámetros: sColumna As String — la columna de la tabla bibtex
+' Parámetros: sCampo As String — el campo de biblatex
 ' Retorna   : Boolean
 ' Nota      : LOS DE TIPO verbatim Y uri DEL MODELO DE DATOS DE biblatex
 '             (blx-dm.def, 3.19): doi, eprint, file Y url. UNA URL PUEDE
 '             LLEVAR «&» SIN ESCAPAR, Y ESTÁ BIEN.
+'             DESDE LA 2.0.0 LA LISTA ES LA COLUMNA literal DEL CATÁLOGO
 ' ============================================
-Public Function EsCampoLiteral(sColumna As String) As Boolean
+Public Function EsCampoLiteral(sCampo As String) As Boolean
 
-  Return ["doi", "eprint", "file", "url"].Exist(sColumna)
+  If Not CargarCatalogo() Then Return False
+  If Not $cLiteral.Exist(sCampo) Then Return False
+  Return $cLiteral[sCampo]
 
 End
 ' ============================================
@@ -291,8 +469,8 @@ End
 ' Parámetros: hContenedor As Container — contenedor a recorrer
 ' Retorna   : String[] — «campo: problema», uno por control
 ' Nota      : RECURSIVA, COMO LimpiarControlesPegados: LOS CAMPOS ESTÁN EN
-'             CONTENEDORES ANIDADOS. EL CAMPO SE NOMBRA POR SU COLUMNA
-'             ($MapaCampos) Y, SI NO LA TIENE, POR EL NOMBRE DEL CONTROL.
+'             CONTENEDORES ANIDADOS. EL CAMPO SE NOMBRA POR SU NOMBRE DE
+'             biblatex ($MapaCampos) Y, SI NO LO TIENE, POR EL DEL CONTROL.
 ' ============================================
 Private Function OrdenesLatexEnControles(hContenedor As Container) As String[]
 
@@ -320,7 +498,7 @@ Private Function OrdenesLatexEnControles(hContenedor As Container) As String[]
     ' (RC-GM-17)
     If hCtrl Is TextBox Then
       If hCtrl.Name <> "txtClaveBibtex" Then
-        ' EL CAMPO SE NOMBRA POR SU COLUMNA: LA NECESITA NivelesEnquote
+        ' EL CAMPO SE NOMBRA POR SU NOMBRE DE biblatex: LO NECESITA NivelesEnquote
         sCampo = hCtrl.Name
         If $MapaCampos.Exist(hCtrl.Name) Then sCampo = $MapaCampos[hCtrl.Name]
         ' LOS CAMPOS LITERALES (url, doi…) NO PASAN POR LA REGLA
@@ -341,8 +519,18 @@ Private Function OrdenesLatexEnControles(hContenedor As Container) As String[]
 
 End
 
+' ============================================
+' Función   : VerificacionBase
+' Propósito : Controles de la entrada antes de guardarla: tipo de entrada,
+'             idioma, tipo de tesis, los nombres de idioma de biblatex y la
+'             relación (RC-BL-01)
+' Parámetros: (ninguno — trabaja sobre los controles de FMain)
+' Retorna   : Boolean — True SI HAY UN ERROR (CONVENCIÓN DE
+'             VerificarCaracteresInvalidos)
+' ============================================
 Public Function VerificacionBase() As Boolean
 
+  ' --- 1. TIPO DE ENTRADA ---
   If FMain.cmbTipoDeEntrada.Text = "" Then
     m_Sonido.sonar("Error")
     Message.Error("Debe seleccionar un tipo de entrada.")
@@ -350,13 +538,15 @@ Public Function VerificacionBase() As Boolean
     Return True
   Endif
 
-  If FMain.txtHyphenation.Text = "" Then
+  ' --- 2. IDIOMA (langid) ---
+  If Trim(FMain.txtHyphenation.Text) = "" Then
     m_Sonido.sonar("Error")
     Message.Error("Debe seleccionar un idioma.")
     FMain.txtHyphenation.SetFocus
     Return True
   Endif
 
+  ' --- 3. TIPO DE TESIS ---
   If FMain.cmbTipoDeEntrada.Text = "thesis" And FMain.cmbTipoDeTesis.Text = "" Then
     m_Sonido.sonar("Error")
     Message.Error("Debe seleccionar el tipo de tesis.")
@@ -364,127 +554,220 @@ Public Function VerificacionBase() As Boolean
     Return True
   Endif
 
+  ' --- 4. NOMBRES DE IDIOMA ---
+  ' langid LLEVA UN NOMBRE DE babel: CON UNO QUE NO LO ES («eng», «span») LA
+  ' PARTICIÓN SALE MAL Y NADA AVISA. language Y origlanguage SON TEXTO QUE SE
+  ' IMPRIME: SOLO SE ADMITEN CLAVES DE LOCALIZACIÓN DE biblatex, QUE SALEN
+  ' TRADUCIDAS (SC-102)
+  If IdiomaInvalido(FMain.txtHyphenation, "langid", True) Then Return True
+  If IdiomaInvalido(FMain.txtLanguage, "language", False) Then Return True
+  If IdiomaInvalido(FMain.txtOrigLanguage, "origlanguage", False) Then Return True
+
+  ' --- 5. RELACIÓN: relatedtype O relatedstring, NO LOS DOS (RC-BL-01) ---
+  ' CON LOS DOS CARGADOS, biber IMPRIME relatedtype Y relatedstring NO SALE
+  ' EN NINGUNA PARTE, SIN AVISO
+  If Trim(FMain.cmbRelatedType.Text) <> "" Then
+    If Trim(FMain.txtRelatedString.Text) <> "" Then
+      m_Sonido.sonar("Error")
+      Message.Error("relatedtype y relatedstring no pueden ir juntos: con los dos, " &
+        "relatedstring no sale en la bibliografía (RC-BL-01)." & gb.NewLine &
+        "Deje uno solo.")
+      FMain.txtRelatedString.SetFocus
+      Return True
+    Endif
+  Endif
+
   Return False
 
 End
 
+' ============================================
+' Función   : IdiomaInvalido
+' Propósito : Controla los campos de idioma. langid: un solo nombre de babel
+'             (catálogo idiomas). language y origlanguage: una lista de
+'             claves de localización de biblatex unidas por « and »
+'             (CLAVES_IDIOMA_BIBLATEX)
+' Parámetros: hTexto As TextBox — el control del campo
+'             sCampo As String — nombre del campo, para el aviso
+'             bBabel As Boolean — True para langid, False para language y
+'             origlanguage
+' Retorna   : Boolean — True SI HAY UN ERROR (avisa y pone el foco)
+' ============================================
+Private Function IdiomaInvalido(hTexto As TextBox, sCampo As String, bBabel As Boolean) As Boolean
+
+  Dim aMalos As New String[]
+  Dim sNombre As String
+  Dim sTexto As String
+
+  ' --- 1. VACÍO: NADA QUE CONTROLAR ---
+  sTexto = Trim(hTexto.Text)
+  If sTexto = "" Then Return False
+
+  ' --- 2. langid: UN SOLO NOMBRE DE babel ---
+  If bBabel Then
+    If m_Idiomas.EsNombreBabel(sTexto) Then Return False
+    m_Sonido.sonar("Error")
+    Message.Error("En " & sCampo & ", «" & sTexto & "» no es un idioma de babel." & gb.NewLine &
+      "Use el nombre completo, como spanish, english o portuguese (la lista " &
+      "aparece al escribir y pulsar Enter). La referencia no se guardó.")
+    hTexto.SetFocus
+    Return True
+  Endif
+
+  ' --- 3. language Y origlanguage: CADA CLAVE DE LA LISTA ---
+  ' Split TOMA SU SEGUNDO ARGUMENTO COMO UNA LISTA DE CARACTERES SEPARADORES,
+  ' NO COMO UNA CADENA: Split("spanish", " and ") DA [sp] [] [ish] (GV-185;
+  ' MEDIDO DE NUEVO EL 20/11/2026). LA PALABRA « and » SE CAMBIA ANTES POR
+  ' Chr(1), QUE NO APARECE EN UN NOMBRE DE IDIOMA, Y SE CORTA POR ESE CARÁCTER
+  For Each sNombre In Split(Replace(sTexto, " and ", Chr(1)), Chr(1))
+    sNombre = Trim(sNombre)
+    If sNombre = "" Then Continue
+    If Not EsClaveIdiomaBiblatex(sNombre) Then aMalos.Add(sNombre)
+  Next
+  If aMalos.Count = 0 Then Return False
+
+  ' --- 4. AVISO ---
+  m_Sonido.sonar("Error")
+  Message.Error("En " & sCampo & " hay valores que no son idiomas de biblatex: " &
+    aMalos.Join(", ") & gb.NewLine &
+    "Use uno de la lista, como english, german o portuguese (aparece al " &
+    "escribir y pulsar Enter); varios van unidos con « and ». La referencia " &
+    "no se guardó.")
+  hTexto.SetFocus
+  Return True
+
+End
+
+' ============================================
+' Función   : EsClaveIdiomaBiblatex
+' Propósito : Dice si un nombre es una clave de idioma de biblatex, con o
+'             sin el prefijo lang (biblatex acepta las dos formas:
+'             biblatex.def, \DeclareListFormat{language})
+' Parámetros: sNombre As String — el nombre a controlar
+' Retorna   : Boolean — True si es una clave de CLAVES_IDIOMA_BIBLATEX
+' ============================================
+Public Function EsClaveIdiomaBiblatex(sNombre As String) As Boolean
+
+  Dim aClaves As String[]
+
+  ' --- 1. LA LISTA, Y EL NOMBRE SIN EL PREFIJO lang ---
+  ' EL SEPARADOR ES UN SOLO CARÁCTER (GV-185)
+  aClaves = Split(CLAVES_IDIOMA_BIBLATEX, ",")
+  If sNombre Begins "lang" Then sNombre = Mid$(sNombre, 5)
+
+  ' --- 2. COMPARACIÓN EXACTA (biblatex DISTINGUE MAYÚSCULAS) ---
+  Return aClaves.Exist(sNombre, gb.Binary)
+
+End
+
+' ============================================
+' Función   : MostrarRefereciasEnTableViewBibtexEnCurso
+' Propósito : Muestra en el formulario la entrada de una fila de la grilla
+' Parámetros: iRow As Integer — fila de gvReferenciasEnCurso
+' Retorna   : nada
+' Nota      : EL id SALE DE ContenidoBib, QUE ES LO QUE MUESTRA LA GRILLA EN
+'             TODOS LOS CASOS (CARGA COMPLETA, BÚSQUEDA, DUPLICADOS)
+' ============================================
 Public Sub MostrarRefereciasEnTableViewBibtexEnCurso(iRow As Integer)
 
-  With FMain
-    .id_bibtex.Value = .gvReferenciasEnCurso[iRow, 0].Text
-    .id_articulo.Value = .gvReferenciasEnCurso[iRow, 2].Text
-    .cmbTipoDeEntrada.Text = .gvReferenciasEnCurso[iRow, 3].Text
-    .txtClaveBibtex.Text = .gvReferenciasEnCurso[iRow, 4].Text
-    .cmbTipoDeTesis.Text = .gvReferenciasEnCurso[iRow, 5].Text
-    .txtAuthor.Text = .gvReferenciasEnCurso[iRow, 6].Text
-    .txtEditor.Text = .gvReferenciasEnCurso[iRow, 7].Text
-    .txtTitle.Text = .gvReferenciasEnCurso[iRow, 8].Text
-    .txtNameAddOn.Text = .gvReferenciasEnCurso[iRow, 9].Text
-    .book_author.Text = .gvReferenciasEnCurso[iRow, 10].Text
-    .txtEditorA.Text = .gvReferenciasEnCurso[iRow, 11].Text
-    .txtEditorB.Text = .gvReferenciasEnCurso[iRow, 12].Text
-    .txtEditorC.Text = .gvReferenciasEnCurso[iRow, 13].Text
-    .txtAfterword.Text = .gvReferenciasEnCurso[iRow, 14].Text
-    .txtForeword.Text = .gvReferenciasEnCurso[iRow, 15].Text
-    .txtCommentator.Text = .gvReferenciasEnCurso[iRow, 16].Text
-    .txtIntroduction.Text = .gvReferenciasEnCurso[iRow, 17].Text
-    .txtTranslator.Text = .gvReferenciasEnCurso[iRow, 18].Text
-    .txtAnnotator.Text = .gvReferenciasEnCurso[iRow, 19].Text
-    .txtHolder.Text = .gvReferenciasEnCurso[iRow, 20].Text
-    .txtGender.Text = .gvReferenciasEnCurso[iRow, 21].Text
-    .txtShortAuthor.Text = .gvReferenciasEnCurso[iRow, 22].Text
-    .cmbEditorType.Text = .gvReferenciasEnCurso[iRow, 23].Text
-    .cmbEditorTypeA.Text = .gvReferenciasEnCurso[iRow, 24].Text
-    .cmbEditorTypeB.Text = .gvReferenciasEnCurso[iRow, 25].Text
-    .cmbEditorTypeC.Text = .gvReferenciasEnCurso[iRow, 26].Text
-    .txtTitleAddOn.Text = .gvReferenciasEnCurso[iRow, 27].Text
-    .txtSubTitle.Text = .gvReferenciasEnCurso[iRow, 28].Text
-    .txtSeries.Text = .gvReferenciasEnCurso[iRow, 29].Text
-    .txtBookTitle.Text = .gvReferenciasEnCurso[iRow, 30].Text
-    .txtBookTitleAddOn.Text = .gvReferenciasEnCurso[iRow, 31].Text
-    .txtMainTitle.Text = .gvReferenciasEnCurso[iRow, 32].Text
-    .txtMainTitleAddOn.Text = .gvReferenciasEnCurso[iRow, 33].Text
-    .txtJournalTitle.Text = .gvReferenciasEnCurso[iRow, 34].Text
-    .txtJournalTitleAddOn.Text = .gvReferenciasEnCurso[iRow, 35].Text
-    .txtIssueTitle.Text = .gvReferenciasEnCurso[iRow, 36].Text
-    .txtIssueTitleAddOn.Text = .gvReferenciasEnCurso[iRow, 37].Text
-    .txtEventTitle.Text = .gvReferenciasEnCurso[iRow, 38].Text
-    .txtEventTitleAddOn.Text = .gvReferenciasEnCurso[iRow, 39].Text
-    .txtIndexTitle.Text = .gvReferenciasEnCurso[iRow, 40].Text
-    .txtShortTitle.Text = .gvReferenciasEnCurso[iRow, 41].Text
-    .txtReprintTitle.Text = .gvReferenciasEnCurso[iRow, 42].Text
-    .txtVolume.Text = .gvReferenciasEnCurso[iRow, 43].Text
-    .txtVolumes.Text = .gvReferenciasEnCurso[iRow, 44].Text
-    .txtNumber.Text = .gvReferenciasEnCurso[iRow, 45].Text
-    .txtChapter.Text = .gvReferenciasEnCurso[iRow, 46].Text
-    .txtEid.Text = .gvReferenciasEnCurso[iRow, 47].Text
-    .txtPart.Text = .gvReferenciasEnCurso[iRow, 48].Text
-    .txtEdition.Text = .gvReferenciasEnCurso[iRow, 49].Text
-    .txtIssue.Text = .gvReferenciasEnCurso[iRow, 50].Text
-    .txtYear.Text = .gvReferenciasEnCurso[iRow, 51].Text
-    .txtEventDate.Text = .gvReferenciasEnCurso[iRow, 52].Text
-    .txtDate.Text = .gvReferenciasEnCurso[iRow, 53].Text
-    .txtOrigDate.Text = .gvReferenciasEnCurso[iRow, 54].Text
-    .txtUrlDate.Text = .gvReferenciasEnCurso[iRow, 55].Text
-    .txtVersion.Text = .gvReferenciasEnCurso[iRow, 56].Text
-    .txtHyphenation.Text = .gvReferenciasEnCurso[iRow, 57].Text' pasa al campo text
-    .txtLanguage.Text = .gvReferenciasEnCurso[iRow, 58].Text
-    .txtOrigLanguage.Text = .gvReferenciasEnCurso[iRow, 59].Text
-    .txtLangId.Text = .gvReferenciasEnCurso[iRow, 60].Text
-    .txtLandIdOpts.Text = .gvReferenciasEnCurso[iRow, 61].Text
-    .cmbPubState.Text = .gvReferenciasEnCurso[iRow, 62].Text
-    .txtPages.Text = .gvReferenciasEnCurso[iRow, 63].Text
-    .txtPageTotal.Text = .gvReferenciasEnCurso[iRow, 64].Text
-    .cmbPagination.Text = .gvReferenciasEnCurso[iRow, 65].Text
-    .cmbBookPagination.Text = .gvReferenciasEnCurso[iRow, 66].Text
-    .txtLocation.Text = .gvReferenciasEnCurso[iRow, 67].Text
-    .txtOrigLocation.Text = .gvReferenciasEnCurso[iRow, 68].Text
-    .txtInstitution.Text = .gvReferenciasEnCurso[iRow, 69].Text
-    .txtOrganization.Text = .gvReferenciasEnCurso[iRow, 70].Text
-    .txtPublisher.Text = .gvReferenciasEnCurso[iRow, 71].Text
-    .txtOrigPublisher.Text = .gvReferenciasEnCurso[iRow, 72].Text
-    .txtVenue.Text = .gvReferenciasEnCurso[iRow, 73].Text
-    .txtEprint.Text = .gvReferenciasEnCurso[iRow, 74].Text
-    .cmbEprintType.Text = .gvReferenciasEnCurso[iRow, 75].Text
-    .txtUrl.Text = .gvReferenciasEnCurso[iRow, 76].Text
-    .txtIsbn.Text = .gvReferenciasEnCurso[iRow, 77].Text
-    .txtIssn.Text = .gvReferenciasEnCurso[iRow, 78].Text
-    .txtIsmn.Text = .gvReferenciasEnCurso[iRow, 79].Text
-    .txtIsrn.Text = .gvReferenciasEnCurso[iRow, 80].Text
-    .txtIsan.Text = .gvReferenciasEnCurso[iRow, 81].Text
-    .txtIswc.Text = .gvReferenciasEnCurso[iRow, 82].Text
-    .txtDoi.Text = .gvReferenciasEnCurso[iRow, 83].Text
-    .cmbRelatedType.Text = .gvReferenciasEnCurso[iRow, 84].Text
-    .txtRelated.Text = .gvReferenciasEnCurso[iRow, 85].Text
-    .txtRelatedString.Text = .gvReferenciasEnCurso[iRow, 86].Text
-    .txtAddendum.Text = .gvReferenciasEnCurso[iRow, 87].Text
-    .txtEntrySubType.Text = .gvReferenciasEnCurso[iRow, 88].Text
-    .txtOptions.Text = .gvReferenciasEnCurso[iRow, 89].Text
-    .txtLabel.Text = .gvReferenciasEnCurso[iRow, 90].Text
-    .txtHowPublished.Text = .gvReferenciasEnCurso[iRow, 91].Text
-    .txtShortHand.Text = .gvReferenciasEnCurso[iRow, 92].Text
-    .txtShortHandIntro.Text = .gvReferenciasEnCurso[iRow, 93].Text
-    .txtIds.Text = .gvReferenciasEnCurso[iRow, 94].Text
-    .txtEntrySet.Text = .gvReferenciasEnCurso[iRow, 95].Text
-    .txtCrossRef.Text = .gvReferenciasEnCurso[iRow, 96].Text
-    .txtXref.Text = .gvReferenciasEnCurso[iRow, 97].Text
-    .txtXdata.Text = .gvReferenciasEnCurso[iRow, 98].Text
-    .txtPreSort.Text = .gvReferenciasEnCurso[iRow, 99].Text
-    .txtSortKey.Text = .gvReferenciasEnCurso[iRow, 100].Text
-    .txtSortName.Text = .gvReferenciasEnCurso[iRow, 101].Text
-    .txtSortHand.Text = .gvReferenciasEnCurso[iRow, 102].Text
-    .txtSortYear.Text = .gvReferenciasEnCurso[iRow, 103].Text
-    .txtSortTitle.Text = .gvReferenciasEnCurso[iRow, 104].Text
-    .txtIndexSortTitle.Text = .gvReferenciasEnCurso[iRow, 105].Text
-    .txtAbstract.Text = .gvReferenciasEnCurso[iRow, 106].Text
-    .txtNote.Text = .gvReferenciasEnCurso[iRow, 107].Text
-    .txtLibrary.Text = .gvReferenciasEnCurso[iRow, 108].Text
-    .txtAnnotation.Text = .gvReferenciasEnCurso[iRow, 109].Text
-    .txtFile.Text = .gvReferenciasEnCurso[iRow, 110].Text
+  ' --- 1. VALIDACIÓN (RC-GM-17: ANIDADO) ---
+  If ContenidoBib = Null Then Return
+  If iRow < 0 Then Return
+  If iRow >= ContenidoBib.Count Then Return
 
-  End With
+  ' --- 2. LA ENTRADA DE ESA FILA ---
+  ContenidoBib.MoveTo(iRow)
+  MostrarEntrada(ContenidoBib["id"])
 
-End Sub
+End
+
+' ============================================
+' Función   : MostrarEntrada
+' Propósito : Carga en el formulario una entrada: sus columnas de bibtex y
+'             cada par de bibtex_campo en el control de su campo
+' Parámetros: iId As Integer — id de la entrada
+' Retorna   : Boolean — True si se mostró
+' ============================================
+Public Function MostrarEntrada(iId As Integer) As Boolean
+
+  Dim rEntrada As Result
+  Dim rPares As Result
+  Dim sControl As String
+
+  ' --- 1. LA ENTRADA ---
+  Try rEntrada = m_ConexionBD.mConn.Exec("SELECT tipo_de_entrada, clave_bibtex FROM bibtex WHERE id = &1", iId)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo leer la referencia:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+  If Not rEntrada.Available Then
+    m_Sonido.sonar("Error")
+    Message.Error("La referencia ya no existe (id " & iId & ").")
+    Return False
+  Endif
+
+  ' --- 2. SUS CAMPOS ---
+  Try rPares = m_ConexionBD.mConn.Exec("SELECT campo, valor FROM bibtex_campo WHERE id_bibtex = &1", iId)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudieron leer los campos de la referencia:" & gb.NewLine & Error.Text)
+    Return False
+  Endif
+
+  ' --- 3. FORMULARIO LIMPIO: UN CAMPO SIN PAR QUEDA VACÍO ---
+  LimpiarCamposDatos()
+
+  ' --- 4. COLUMNAS DE LA ENTRADA ---
+  ' EL TIPO VA PRIMERO: SU Click DECIDE SI SE VE EL TIPO DE TESIS
+  FMain.id_bibtex.Value = iId
+  FMain.cmbTipoDeEntrada.Text = TextoDe(rEntrada["tipo_de_entrada"])
+  FMain.txtClaveBibtex.Text = TextoDe(rEntrada["clave_bibtex"])
+
+  ' --- 5. CADA PAR EN SU CONTROL ---
+  ' CargarCatalogo GARANTIZA QUE TODO CAMPO DEL CATÁLOGO TIENE CONTROL; LA
+  ' CLAVE FORÁNEA HACIA EL CATÁLOGO, QUE NO HAY PARES FUERA DE ÉL
+  While rPares.Available
+    sControl = ControlDeCampo(rPares["campo"])
+    If sControl <> "" Then Object.SetProperty(FMain[sControl], "Text", rPares["valor"])
+    rPares.MoveNext
+  Wend
+
+  Return True
+
+End
+
+' ============================================
+' Función   : TextoDe
+' Propósito : Valor de un campo de un Result como texto: vacío si es NULL
+' Parámetros: vValor As Variant — el valor
+' Retorna   : String
+' ============================================
+Private Function TextoDe(vValor As Variant) As String
+
+  If IsNull(vValor) Then Return ""
+  Return CStr(vValor)
+
+End
+
+' ============================================
+' Función   : LimpiarCamposDatos
+' Propósito : Vacía los controles de los campos del catálogo, sin tocar lo
+'             demás del formulario (a diferencia de LimpiarTextboxBibtex, no
+'             olvida el origen pendiente de «Usar esta»)
+' Parámetros: (ninguno)
+' Retorna   : nada
+' ============================================
+Private Sub LimpiarCamposDatos()
+
+  Dim sCampo As String
+
+  For Each sCampo In $MapaCampos
+    Object.SetProperty(FMain[$MapaCampos.Key], "Text", "")
+  Next
+
+End
+
 
 ' ============================================
 ' Función   : AgregarClaveBib
@@ -676,7 +959,8 @@ Public Sub RefrescarTableViewBibtexEnCurso()
   Dim iRow As Integer
   Dim iCol As Integer
 
-  Try ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC", m_InicioCierre.IdProyectoEnCurso)
+  ' LA GRILLA SE ARMA CON ConsultaGrilla: COLUMNAS POR NOMBRE (2.0.0)
+  Try ContenidoBib = m_ConexionBD.mConn.Exec(ConsultaGrilla("b.id_proyecto = &1"), m_InicioCierre.IdProyectoEnCurso)
   If Error Then
     Debug "ERROR EN REFRESCO BIBTEX: " & Error.Text
     Return
@@ -778,7 +1062,6 @@ Public Sub LimpiarTextboxBibtex()
   FMain.txtHyphenation.Text = ""
   FMain.txtLanguage.Text = ""
   FMain.txtOrigLanguage.Text = ""
-  FMain.txtLangId.Text = ""
   FMain.txtLandIdOpts.Text = ""
   FMain.cmbPubState.Text = ""
   FMain.txtPages.Text = ""
@@ -872,123 +1155,177 @@ Private Function SanitizarClaveBibtex(sClave As String) As String
 
 End Function
 
-Public Sub GuardarCamposBib()
+' ============================================
+' Función   : ValoresDelFormulario
+' Propósito : Los campos con dato del formulario: un valor por campo del
+'             catálogo, recortado. Un control vacío no entra: sin dato, sin
+'             par (2.0.0)
+' Parámetros: (ninguno — lee los controles de $MapaCampos)
+' Retorna   : Collection — campo → valor
+' ============================================
+Public Function ValoresDelFormulario() As Collection
 
-  ContenidoBib!id = FMain.id_bibtex.Value
-  ' FUENTE DE VERDAD DEL ID: GLOBAL DE SESIÓN, NO EL CONTROL (RC-GM-16)
-  ContenidoBib!id_proyecto = m_InicioCierre.IdProyectoEnCurso
-  ContenidoBib!id_articulo = FMain.id_articulo.Value
-  ContenidoBib!author = Trim(FMain.txtAuthor.Text)
-  ContenidoBib!title = Trim(FMain.txtTitle.Text)
-  ContenidoBib!tipo_de_tesis = FMain.cmbTipoDeTesis.Text
-  ' --- Sanitización y validación de la clave BibTeX antes de guardar ---
-  Dim sClaveSanitizada As String
-  sClaveSanitizada = SanitizarClaveBibtex(FMain.txtClaveBibtex.Text)
-  ContenidoBib!clave_bibtex = sClaveSanitizada
-  ContenidoBib!tipo_de_entrada = FMain.cmbTipoDeEntrada.Text
-  ContenidoBib!name_addon = Trim(FMain.txtNameAddOn.Text)
-  ContenidoBib!book_author = Trim(FMain.book_author.Text)
-  ContenidoBib!editor = Trim(FMain.txtEditor.Text)
-  ContenidoBib!editor_a = Trim(FMain.txtEditorA.Text)
-  ContenidoBib!editor_b = Trim(FMain.txtEditorB.Text)
-  ContenidoBib!editor_c = Trim(FMain.txtEditorC.Text)
-  ContenidoBib!afterword = Trim(FMain.txtAfterword.Text)
-  ContenidoBib!foreword = Trim(FMain.txtForeword.Text)
-  ContenidoBib!commentator = Trim(FMain.txtCommentator.Text)
-  ContenidoBib!introduction = Trim(FMain.txtIntroduction.Text)
-  ContenidoBib!translator = Trim(FMain.txtTranslator.Text)
-  ContenidoBib!annotator = Trim(FMain.txtAnnotator.Text)
-  ContenidoBib!holder = Trim(FMain.txtHolder.Text)
-  ContenidoBib!gender = Trim(FMain.txtGender.Text)
-  ContenidoBib!short_author = Trim(FMain.txtShortAuthor.Text)
-  ContenidoBib!editor_type = FMain.cmbEditorType.Text
-  ContenidoBib!editor_type_a = FMain.cmbEditorTypeA.Text
-  ContenidoBib!editor_type_b = FMain.cmbEditorTypeB.Text
-  ContenidoBib!editor_type_c = FMain.cmbEditorTypeC.Text
-  ContenidoBib!title_addon = Trim(FMain.txtTitleAddOn.Text)
-  ContenidoBib!sub_title = Trim(FMain.txtSubTitle.Text)
-  ContenidoBib!series = Trim(FMain.txtSeries.Text)
-  ContenidoBib!book_title = Trim(FMain.txtBookTitle.Text)
-  ContenidoBib!book_title_addon = Trim(FMain.txtBookTitleAddOn.Text)
-  ContenidoBib!main_title = Trim(FMain.txtMainTitle.Text)
-  ContenidoBib!main_title_addon = Trim(FMain.txtMainTitleAddOn.Text)
-  ContenidoBib!journal_title = Trim(FMain.txtJournalTitle.Text)
-  ContenidoBib!journal_title_addon = Trim(FMain.txtJournalTitleAddOn.Text)
-  ContenidoBib!issue_title = Trim(FMain.txtIssueTitle.Text)
-  ContenidoBib!issue_title_addon = Trim(FMain.txtIssueTitleAddOn.Text)
-  ContenidoBib!event_title = Trim(FMain.txtEventTitle.Text)
-  ContenidoBib!event_title_addon = Trim(FMain.txtEventTitleAddOn.Text)
-  ContenidoBib!index_title = Trim(FMain.txtIndexTitle.Text)
-  ContenidoBib!short_title = Trim(FMain.txtShortTitle.Text)
-  ContenidoBib!reprint_title = Trim(FMain.txtReprintTitle.Text)
-  ContenidoBib!volume = Trim(FMain.txtVolume.Text)
-  ContenidoBib!volumes = Trim(FMain.txtVolumes.Text)
-  ContenidoBib!number = Trim(FMain.txtNumber.Text)
-  ContenidoBib!chapter = Trim(FMain.txtChapter.Text)
-  ContenidoBib!eid = Trim(FMain.txtEid.Text)
-  ContenidoBib!part = Trim(FMain.txtPart.Text)
-  ContenidoBib!edition = Trim(FMain.txtEdition.Text)
-  ContenidoBib!issue = Trim(FMain.txtIssue.Text)
-  ContenidoBib!year = Trim(FMain.txtYear.Text)
-  ContenidoBib!event_date = Trim(FMain.txtEventDate.Text)
-  ContenidoBib!date = Trim(FMain.txtDate.Text)
-  ContenidoBib!orig_date = Trim(FMain.txtOrigDate.Text)
-  ContenidoBib!url_date = Trim(FMain.txtUrlDate.Text)
-  ContenidoBib!version = Trim(FMain.txtVersion.Text)
-  ContenidoBib!hyphenation = FMain.txtHyphenation.Text
-  ContenidoBib!language = FMain.txtLanguage.Text
-  ContenidoBib!orig_language = FMain.txtOrigLanguage.Text
-  ContenidoBib!lang_id = FMain.txtLangId.Text
-  ContenidoBib!land_id_opts = Trim(FMain.txtLandIdOpts.Text)
-  ContenidoBib!pub_state = FMain.cmbPubState.Text
-  ContenidoBib!pages = Trim(FMain.txtPages.Text)
-  ContenidoBib!page_total = Trim(FMain.txtPageTotal.Text)
-  ContenidoBib!pagination = FMain.cmbPagination.Text
-  ContenidoBib!book_pagination = FMain.cmbBookPagination.Text
-  ContenidoBib!location = Trim(FMain.txtLocation.Text)
-  ContenidoBib!orig_location = Trim(FMain.txtOrigLocation.Text)
-  ContenidoBib!institution = Trim(FMain.txtInstitution.Text)
-  ContenidoBib!organization = Trim(FMain.txtOrganization.Text)
-  ContenidoBib!publisher = Trim(FMain.txtPublisher.Text)
-  ContenidoBib!orig_publisher = Trim(FMain.txtOrigPublisher.Text)
-  ContenidoBib!venue = Trim(FMain.txtVenue.Text)
-  ContenidoBib!eprint = Trim(FMain.txtEprint.Text)
-  ContenidoBib!eprint_type = Trim(FMain.cmbEprintType.Text)
-  ContenidoBib!url = Trim(FMain.txtUrl.Text)
-  ContenidoBib!isbn = Trim(FMain.txtIsbn.Text)
-  ContenidoBib!issn = Trim(FMain.txtIssn.Text)
-  ContenidoBib!ismn = Trim(FMain.txtIsmn.Text)
-  ContenidoBib!isrn = Trim(FMain.txtIsrn.Text)
-  ContenidoBib!isan = Trim(FMain.txtIsan.Text)
-  ContenidoBib!iswc = Trim(FMain.txtIswc.Text)
-  ContenidoBib!doi = Trim(FMain.txtDoi.Text)
-  ContenidoBib!related_type = FMain.cmbRelatedType.Text
-  ContenidoBib!related = Trim(FMain.txtRelated.Text)
-  ContenidoBib!related_string = Trim(FMain.txtRelatedString.Text)
-  ContenidoBib!addendum = Trim(FMain.txtAddendum.Text)
-  ContenidoBib!entry_sub_type = Trim(FMain.txtEntrySubType.Text)
-  ContenidoBib!options = Trim(FMain.txtOptions.Text)
-  ContenidoBib!label = Trim(FMain.txtLabel.Text)
-  ContenidoBib!how_published = Trim(FMain.txtHowPublished.Text)
-  ContenidoBib!short_hand = Trim(FMain.txtShortHand.Text)
-  ContenidoBib!short_hand_intro = Trim(FMain.txtShortHandIntro.Text)
-  ContenidoBib!ids = Trim(FMain.txtIds.Text)
-  ContenidoBib!entry_set = Trim(FMain.txtEntrySet.Text)
-  ContenidoBib!cross_ref = Trim(FMain.txtCrossRef.Text)
-  ContenidoBib!xref = Trim(FMain.txtXref.Text)
-  ContenidoBib!xdata = Trim(FMain.txtXdata.Text)
-  ContenidoBib!pre_sort = Trim(FMain.txtPreSort.Text)
-  ContenidoBib!sort_key = Trim(FMain.txtSortKey.Text)
-  ContenidoBib!sort_name = Trim(FMain.txtSortName.Text)
-  ContenidoBib!sort_hand = Trim(FMain.txtSortHand.Text)
-  ContenidoBib!sort_year = Trim(FMain.txtSortYear.Text)
-  ContenidoBib!sort_title = Trim(FMain.txtSortTitle.Text)
-  ContenidoBib!index_sort_title = Trim(FMain.txtIndexSortTitle.Text)
-  ContenidoBib!abstract = Trim(FMain.txtAbstract.Text)
-  ContenidoBib!note = Trim(FMain.txtNote.Text)
-  ContenidoBib!library = Trim(FMain.txtLibrary.Text)
-  ContenidoBib!annotation = Trim(FMain.txtAnnotation.Text)
-  ContenidoBib!file = Trim(FMain.txtFile.Text)
+  Dim cValores As New Collection
+  Dim sCampo As String
+  Dim sValor As String
+
+  For Each sCampo In $MapaCampos
+    sValor = Trim(Object.GetProperty(FMain[$MapaCampos.Key], "Text"))
+    If sValor <> "" Then cValores[sCampo] = sValor
+  Next
+
+  Return cValores
+
+End
+
+' ============================================
+' Función   : EscribirEntrada
+' Propósito : Escribe una entrada en una transacción: crea la fila de bibtex
+'             (iId = 0) o actualiza la existente, y reemplaza todos sus pares
+'             de bibtex_campo por los de cValores. Sin interfaz: la usan
+'             GuardarEntrada (formulario) y m_Json.ImportarJSON
+' Parámetros: iId As Integer — id de la entrada; 0 para una nueva
+'             sTipo As String — tipo_de_entrada
+'             sClave As String — clave_bibtex
+'             cValores As Collection — campo → valor, campos del catálogo
+'             iIdOrigen As Integer — entrada de origen de «Usar esta»; 0 si no hay
+'             sProvisorio As String — prefijo «id-» con el que se armó la
+'             clave antes de tener el id real; vacío si no hay que corregirlo
+' Retorna   : Integer — id de la entrada escrita; 0 si falló (el motivo, en
+'             UltimoErrorEscritura). La clave final, en UltimaClaveEscrita
+' Nota      : EL id DE UNA ENTRADA NUEVA LO DA AUTO_INCREMENT. ANTES SE
+'             CALCULABA CON MAX(id) + 1 ANTES DE GUARDAR, Y DOS ALTAS
+'             SIMULTÁNEAS CHOCABAN EN LA CLAVE PRIMARIA. SI LA CLAVE SE ARMÓ
+'             CON EL id PROVISORIO (AgregarClaveBib) Y EL REAL ES OTRO, SE
+'             CORRIGE EL PREFIJO: LA CLAVE QUEDA ÚNICA.
+'             fecha_modificacion SE ACTUALIZA A MANO: CAMBIAR SOLO LOS PARES NO
+'             TOCA LA FILA DE bibtex Y SU ON UPDATE NO SE DISPARA.
+'             Begin / Commit / Rollback (GV-173). EL TEXTO DEL ERROR SE
+'             GUARDA ANTES DEL Rollback, QUE PASA POR EL DRIVER
+' ============================================
+Public Function EscribirEntrada(iId As Integer, sTipo As String, sClave As String, cValores As Collection, Optional iIdOrigen As Integer, Optional sProvisorio As String) As Integer
+
+  Dim hConn As Connection
+  Dim rId As Result
+  Dim iEscrito As Integer
+  Dim sValor As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  $sUltimoErrorEscritura = ""
+  $sUltimaClave = sClave
+  hConn = m_ConexionBD.mConn
+
+  Try hConn.Begin()
+  If Error Then
+    $sUltimoErrorEscritura = Error.Text
+    Return 0
+  Endif
+
+  ' --- 2. LA FILA DE bibtex ---
+  ' ID DEL PROYECTO DESDE LA GLOBAL DE SESIÓN (RC-GM-16)
+  If iId = 0 Then
+    Try hConn.Exec("INSERT INTO bibtex (id_proyecto, tipo_de_entrada, clave_bibtex) VALUES (&1, &2, &3)",
+      m_InicioCierre.IdProyectoEnCurso, sTipo, sClave)
+    If Error Then Goto Fallo
+    ' LAST_INSERT_ID ES DE ESTA CONEXIÓN: OTRA ALTA AL MISMO TIEMPO NO LO MUEVE
+    Try rId = hConn.Exec("SELECT LAST_INSERT_ID() AS id")
+    If Error Then Goto Fallo
+    iEscrito = rId["id"]
+    ' PREFIJO PROVISORIO → EL REAL
+    If sProvisorio <> "" Then
+      If Left(sClave, Len(sProvisorio)) = sProvisorio And If CStr(iEscrito) & "-" <> sProvisorio Then
+        sClave = CStr(iEscrito) & "-" & Mid(sClave, Len(sProvisorio) + 1)
+        Try hConn.Exec("UPDATE bibtex SET clave_bibtex = &1 WHERE id = &2", sClave, iEscrito)
+        If Error Then Goto Fallo
+      Endif
+    Endif
+    ' TRAZABILIDAD (1.1.0): UN 0 NO SE ESCRIBE, VIOLARÍA fk_bibtex_origen
+    If iIdOrigen > 0 Then
+      Try hConn.Exec("UPDATE bibtex SET id_origen = &1 WHERE id = &2", iIdOrigen, iEscrito)
+      If Error Then Goto Fallo
+    Endif
+  Else
+    iEscrito = iId
+    Try hConn.Exec("UPDATE bibtex SET tipo_de_entrada = &1, clave_bibtex = &2, fecha_modificacion = NOW() WHERE id = &3",
+      sTipo, sClave, iEscrito)
+    If Error Then Goto Fallo
+  Endif
+
+  ' --- 3. LOS PARES: SE REEMPLAZAN TODOS ---
+  ' EL FORMULARIO TIENE UN CONTROL POR CAMPO DEL CATÁLOGO (CargarCatalogo):
+  ' LO QUE NO ESTÁ EN cValores ES UN CAMPO QUE QUEDÓ VACÍO
+  Try hConn.Exec("DELETE FROM bibtex_campo WHERE id_bibtex = &1", iEscrito)
+  If Error Then Goto Fallo
+  For Each sValor In cValores
+    Try hConn.Exec("INSERT INTO bibtex_campo (id_bibtex, campo, valor) VALUES (&1, &2, &3)",
+      iEscrito, cValores.Key, sValor)
+    If Error Then Goto Fallo
+  Next
+
+  ' --- 4. CONFIRMACIÓN ---
+  Try hConn.Commit()
+  If Error Then Goto Fallo
+  $sUltimaClave = sClave
+  Return iEscrito
+
+Fallo:
+  $sUltimoErrorEscritura = Error.Text
+  Try hConn.Rollback()
+  Return 0
+
+End
+
+' ============================================
+' Función   : UltimoErrorEscritura
+' Propósito : Motivo del último fallo de EscribirEntrada
+' Parámetros: (ninguno)
+' Retorna   : String — vacío si la última escritura fue bien
+' ============================================
+Public Function UltimoErrorEscritura() As String
+
+  Return $sUltimoErrorEscritura
+
+End
+
+' ============================================
+' Función   : UltimaClaveEscrita
+' Propósito : Clave con la que quedó la última entrada escrita: puede diferir
+'             de la pedida si se corrigió el prefijo provisorio
+' Parámetros: (ninguno)
+' Retorna   : String
+' ============================================
+Public Function UltimaClaveEscrita() As String
+
+  Return $sUltimaClave
+
+End
+
+' ============================================
+' Función   : GuardarEntrada
+' Propósito : Escribe la entrada del formulario (EscribirEntrada) y avisa si
+'             falla. Deja en txtClaveBibtex la clave con la que quedó
+' Parámetros: iId As Integer — id de la entrada; 0 para una nueva
+'             sTipo As String — tipo_de_entrada
+'             sClave As String — clave_bibtex ya sanitizada
+'             cValores As Collection — campo → valor (ValoresDelFormulario)
+'             iIdOrigen As Integer — entrada de origen de «Usar esta»; 0 si no hay
+' Retorna   : Integer — id de la entrada escrita; 0 si falló (con mensaje)
+' Nota      : EL PREFIJO PROVISORIO ES EL id QUE MUESTRA id_bibtex, CON EL QUE
+'             AgregarClaveBib ARMÓ LA CLAVE
+' ============================================
+Public Function GuardarEntrada(iId As Integer, sTipo As String, sClave As String, cValores As Collection, Optional iIdOrigen As Integer) As Integer
+
+  Dim iEscrito As Integer
+
+  iEscrito = EscribirEntrada(iId, sTipo, sClave, cValores, iIdOrigen, CStr(FMain.id_bibtex.Value) & "-")
+  If iEscrito = 0 Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo guardar la referencia:" & gb.NewLine & $sUltimoErrorEscritura)
+    Return 0
+  Endif
+
+  FMain.txtClaveBibtex.Text = $sUltimaClave
+  Return iEscrito
 
 End
 
@@ -1035,7 +1372,8 @@ Public Sub IniciarBibtex()
   Dim iniBIB As String
 
   LimpiarTextboxBibtex()
-  iniBIB = "SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC"
+  ' LA GRILLA SE ARMA CON ConsultaGrilla: COLUMNAS POR NOMBRE (2.0.0)
+  iniBIB = ConsultaGrilla("b.id_proyecto = &1")
   ' FUENTE DE VERDAD DEL ID: GLOBAL DE SESIÓN, NO EL CONTROL (RC-GM-16)
   ContenidoBib = m_ConexionBD.mConn.Exec(iniBIB, m_InicioCierre.IdProyectoEnCurso)
   If ContenidoBib.Available Then
@@ -1050,43 +1388,55 @@ Public Sub IniciarBibtex()
 
 End
 
+' ============================================
+' Función   : GuardarBibtexPrimeraVez
+' Propósito : Alta de la entrada que está en el formulario
+' Parámetros: (ninguno — trabaja sobre los controles de FMain)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub GuardarBibtexPrimeraVez()
 
-  ' VERIFICAMOS CAMPOS
+  Dim iId As Integer
+
+  ' --- 1. VERIFICAMOS CAMPOS ---
   If VerificacionBase() Then Return
 
-  ContenidoBib = m_ConexionBD.mConn.Create("bibtex")
-  GuardarCamposBib()
+  ' --- 2. ALTA ---
   ' TRAZABILIDAD (1.1.0): ENTRADA COPIADA DE OTRO PROYECTO CON «Usar esta».
-  ' VA ACÁ Y NO EN GuardarCamposBib, QUE TAMBIÉN USA LA EDICIÓN: SOLO EN EL
-  ' ALTA. UN 0 NO SE ESCRIBE: VIOLARÍA fk_bibtex_origen
-  If m_BuscarBib.IdOrigenPendiente() > 0 Then ContenidoBib!id_origen = m_BuscarBib.IdOrigenPendiente()
-  ContenidoBib.Update()
-  m_ConexionBD.mConn.Commit()
-  IniciarBibtex()   ' ERA RefrescarTableViewBibtexEnCurso()
+  ' SOLO EN EL ALTA
+  iId = GuardarEntrada(0, FMain.cmbTipoDeEntrada.Text,
+    SanitizarClaveBibtex(FMain.txtClaveBibtex.Text), ValoresDelFormulario(),
+    m_BuscarBib.IdOrigenPendiente())
+  If iId = 0 Then Return
 
-  RefrescarTableViewBibtexEnCurso()
+  ' --- 3. RECARGA Y AVISO ---
+  IniciarBibtex()
   m_Sonido.sonar("Info")
   Message.Info("La referencia se guardó con éxito.")
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al intentar guardar la entrada: " & Error.Text)
 
 End
 
-' MOSTRAMOS AYUDA SOBRE EL ITEM
+'' ============================================
+' Función   : InicializarMapaCampos
+' Propósito : Une cada control del formulario de referencias con su campo de
+'             biblatex. Lo llama FMain al crearse
+' Parámetros: (ninguno)
+' Retorna   : nada
+' Nota      : DESDE LA 2.0.0 EL VALOR ES EL NOMBRE DE biblatex, QUE ES EL QUE SE
+'             GUARDA EN bibtex_campo.campo. txtHyphenation ES EL CONTROL DE
+'             langid; lang_id SE UNIÓ A langid EN LA MIGRACIÓN Y SU CONTROL SE
+'             RETIRÓ. LA CLAVE Y EL TIPO NO ESTÁN: SON COLUMNAS DE bibtex.
+'             CargarCatalogo CONTROLA QUE NO FALTE NINGÚN CAMPO DEL CATÁLOGO
+' ============================================
 Public Sub InicializarMapaCampos()
 
-  ' CAMPOS DE AUTOR Y EDITORES
   $MapaCampos["txtAuthor"] = "author"
-  $MapaCampos["book_author"] = "book_author"
+  $MapaCampos["book_author"] = "bookauthor"
   $MapaCampos["txtEditor"] = "editor"
-  $MapaCampos["txtEditorA"] = "editor_a"
-  $MapaCampos["txtEditorB"] = "editor_b"
-  $MapaCampos["txtEditorC"] = "editor_c"
-  $MapaCampos["txtShortAuthor"] = "short_author"
-
-  ' ROLES ADICIONALES
+  $MapaCampos["txtEditorA"] = "editora"
+  $MapaCampos["txtEditorB"] = "editorb"
+  $MapaCampos["txtEditorC"] = "editorc"
+  $MapaCampos["txtShortAuthor"] = "shortauthor"
   $MapaCampos["txtAfterword"] = "afterword"
   $MapaCampos["txtForeword"] = "foreword"
   $MapaCampos["txtCommentator"] = "commentator"
@@ -1094,39 +1444,29 @@ Public Sub InicializarMapaCampos()
   $MapaCampos["txtTranslator"] = "translator"
   $MapaCampos["txtAnnotator"] = "annotator"
   $MapaCampos["txtHolder"] = "holder"
-
-  ' Información de género y tipos
   $MapaCampos["txtGender"] = "gender"
-  $MapaCampos["cmbTipoDeTesis"] = "tipo_de_tesis"
-  $MapaCampos["cmbTipoDeEntrada"] = "tipo_de_entrada"
-  $MapaCampos["cmbEditorType"] = "editor_type"
-  $MapaCampos["cmbEditorTypeA"] = "editor_type_a"
-  $MapaCampos["cmbEditorTypeB"] = "editor_type_b"
-  $MapaCampos["cmbEditorTypeC"] = "editor_type_c"
-
-  ' TÍTULOS
+  $MapaCampos["cmbTipoDeTesis"] = "type"
+  $MapaCampos["cmbEditorType"] = "editortype"
+  $MapaCampos["cmbEditorTypeA"] = "editortypea"
+  $MapaCampos["cmbEditorTypeB"] = "editortypeb"
+  $MapaCampos["cmbEditorTypeC"] = "editortypec"
   $MapaCampos["txtTitle"] = "title"
-  $MapaCampos["txtTitleAddOn"] = "title_addon"
-  $MapaCampos["txtSubTitle"] = "sub_title"
-  $MapaCampos["txtBookTitle"] = "book_title"
-  $MapaCampos["txtBookTitleAddOn"] = "book_title_addon"
-  $MapaCampos["txtMainTitle"] = "main_title"
-  $MapaCampos["txtMainTitleAddOn"] = "main_title_addon"
-  $MapaCampos["txtJournalTitle"] = "journal_title"
-  $MapaCampos["txtJournalTitleAddOn"] = "journal_title_addon"
-  $MapaCampos["txtIssueTitle"] = "issue_title"
-  $MapaCampos["txtIssueTitleAddOn"] = "issue_title_addon"
-  $MapaCampos["txtEventTitle"] = "event_title"
-  $MapaCampos["txtEventTitleAddOn"] = "event_title_addon"
-  $MapaCampos["txtIndexTitle"] = "index_title"
-  $MapaCampos["txtShortTitle"] = "short_title"
-  $MapaCampos["txtReprintTitle"] = "reprint_title"
-
-  ' CLAVE Y ADDONS
-  $MapaCampos["txtClaveBibtex"] = "clave_bibtex"
-  $MapaCampos["txtNameAddOn"] = "name_addon"
-
-  ' SERIES Y VOLÚMENES
+  $MapaCampos["txtTitleAddOn"] = "titleaddon"
+  $MapaCampos["txtSubTitle"] = "subtitle"
+  $MapaCampos["txtBookTitle"] = "booktitle"
+  $MapaCampos["txtBookTitleAddOn"] = "booktitleaddon"
+  $MapaCampos["txtMainTitle"] = "maintitle"
+  $MapaCampos["txtMainTitleAddOn"] = "maintitleaddon"
+  $MapaCampos["txtJournalTitle"] = "journaltitle"
+  $MapaCampos["txtJournalTitleAddOn"] = "journaltitleaddon"
+  $MapaCampos["txtIssueTitle"] = "issuetitle"
+  $MapaCampos["txtIssueTitleAddOn"] = "issuetitleaddon"
+  $MapaCampos["txtEventTitle"] = "eventtitle"
+  $MapaCampos["txtEventTitleAddOn"] = "eventtitleaddon"
+  $MapaCampos["txtIndexTitle"] = "indextitle"
+  $MapaCampos["txtShortTitle"] = "shorttitle"
+  $MapaCampos["txtReprintTitle"] = "reprinttitle"
+  $MapaCampos["txtNameAddOn"] = "nameaddon"
   $MapaCampos["txtSeries"] = "series"
   $MapaCampos["txtVolume"] = "volume"
   $MapaCampos["txtVolumes"] = "volumes"
@@ -1136,41 +1476,30 @@ Public Sub InicializarMapaCampos()
   $MapaCampos["txtPart"] = "part"
   $MapaCampos["txtEdition"] = "edition"
   $MapaCampos["txtIssue"] = "issue"
-
-  ' FECHAS
   $MapaCampos["txtYear"] = "year"
-  $MapaCampos["txtEventDate"] = "event_date"
+  $MapaCampos["txtEventDate"] = "eventdate"
   $MapaCampos["txtDate"] = "date"
-  $MapaCampos["txtOrigDate"] = "orig_date"
-  $MapaCampos["txtUrlDate"] = "url_date"
-
-  ' VERSIÓN E IDIOMAS
+  $MapaCampos["txtOrigDate"] = "origdate"
+  $MapaCampos["txtUrlDate"] = "urldate"
   $MapaCampos["txtVersion"] = "version"
-  $MapaCampos["txtHyphenation"] = "hyphenation"
+  $MapaCampos["txtHyphenation"] = "langid"
   $MapaCampos["txtLanguage"] = "language"
-  $MapaCampos["txtOrigLanguage"] = "orig_language"
-  $MapaCampos["txtLangId"] = "lang_id"
-  $MapaCampos["txtLandIdOpts"] = "land_id_opts"
-
-  ' ESTADO Y PAGINACIÓN
-  $MapaCampos["cmbPubState"] = "pub_state"
+  $MapaCampos["txtOrigLanguage"] = "origlanguage"
+  $MapaCampos["txtLandIdOpts"] = "langidopts"
+  $MapaCampos["cmbPubState"] = "pubstate"
   $MapaCampos["txtPages"] = "pages"
-  $MapaCampos["txtPageTotal"] = "page_total"
+  $MapaCampos["txtPageTotal"] = "pagetotal"
   $MapaCampos["cmbPagination"] = "pagination"
-  $MapaCampos["cmbBookPagination"] = "book_pagination"
-
-  ' UBICACIONES E INSTITUCIONES
+  $MapaCampos["cmbBookPagination"] = "bookpagination"
   $MapaCampos["txtLocation"] = "location"
-  $MapaCampos["txtOrigLocation"] = "orig_location"
+  $MapaCampos["txtOrigLocation"] = "origlocation"
   $MapaCampos["txtInstitution"] = "institution"
   $MapaCampos["txtOrganization"] = "organization"
   $MapaCampos["txtPublisher"] = "publisher"
-  $MapaCampos["txtOrigPublisher"] = "orig_publisher"
+  $MapaCampos["txtOrigPublisher"] = "origpublisher"
   $MapaCampos["txtVenue"] = "venue"
-
-  ' IDENTIFICADORES ELECTRÓNICOS
   $MapaCampos["txtEprint"] = "eprint"
-  $MapaCampos["cmbEprintType"] = "eprint_type"
+  $MapaCampos["cmbEprintType"] = "eprinttype"
   $MapaCampos["txtUrl"] = "url"
   $MapaCampos["txtIsbn"] = "isbn"
   $MapaCampos["txtIssn"] = "issn"
@@ -1179,40 +1508,28 @@ Public Sub InicializarMapaCampos()
   $MapaCampos["txtIsan"] = "isan"
   $MapaCampos["txtIswc"] = "iswc"
   $MapaCampos["txtDoi"] = "doi"
-
-  ' RELACIONES
-  $MapaCampos["cmbRelatedType"] = "related_type"
+  $MapaCampos["cmbRelatedType"] = "relatedtype"
   $MapaCampos["txtRelated"] = "related"
-  $MapaCampos["txtRelatedString"] = "related_string"
-
-  ' INFORMACIÓN ADICIONAL
+  $MapaCampos["txtRelatedString"] = "relatedstring"
   $MapaCampos["txtAddendum"] = "addendum"
-  $MapaCampos["txtEntrySubType"] = "entry_sub_type"
+  $MapaCampos["txtEntrySubType"] = "entrysubtype"
   $MapaCampos["txtOptions"] = "options"
   $MapaCampos["txtLabel"] = "label"
-  $MapaCampos["txtHowPublished"] = "how_published"
-
-  ' SHORT HAND
-  $MapaCampos["txtShortHand"] = "short_hand"
-  $MapaCampos["txtShortHandIntro"] = "short_hand_intro"
-
-  ' IDS Y REFERENCIAS
+  $MapaCampos["txtHowPublished"] = "howpublished"
+  $MapaCampos["txtShortHand"] = "shorthand"
+  $MapaCampos["txtShortHandIntro"] = "shorthandintro"
   $MapaCampos["txtIds"] = "ids"
-  $MapaCampos["txtEntrySet"] = "entry_set"
-  $MapaCampos["txtCrossRef"] = "cross_ref"
+  $MapaCampos["txtEntrySet"] = "entryset"
+  $MapaCampos["txtCrossRef"] = "crossref"
   $MapaCampos["txtXref"] = "xref"
   $MapaCampos["txtXdata"] = "xdata"
-
-  ' ORDENAMIENTO
-  $MapaCampos["txtPreSort"] = "pre_sort"
-  $MapaCampos["txtSortKey"] = "sort_key"
-  $MapaCampos["txtSortName"] = "sort_name"
-  $MapaCampos["txtSortHand"] = "sort_hand"
-  $MapaCampos["txtSortYear"] = "sort_year"
-  $MapaCampos["txtSortTitle"] = "sort_title"
-  $MapaCampos["txtIndexSortTitle"] = "index_sort_title"
-
-  ' NOTAS Y ARCHIVOS
+  $MapaCampos["txtPreSort"] = "presort"
+  $MapaCampos["txtSortKey"] = "sortkey"
+  $MapaCampos["txtSortName"] = "sortname"
+  $MapaCampos["txtSortHand"] = "sortshorthand"
+  $MapaCampos["txtSortYear"] = "sortyear"
+  $MapaCampos["txtSortTitle"] = "sorttitle"
+  $MapaCampos["txtIndexSortTitle"] = "indexsorttitle"
   $MapaCampos["txtAbstract"] = "abstract"
   $MapaCampos["txtNote"] = "note"
   $MapaCampos["txtLibrary"] = "library"
@@ -1477,22 +1794,37 @@ Public Sub RellenarEditorTypes(Combos As ComboBox[])
 
 End
 
+' ============================================
+' Función   : RellenarIdiomas
+' Propósito : Carga en los combos de idioma los nombres de babel del catálogo
+'             idiomas: los mismos que acepta VerificacionBase al guardar
+' Parámetros: Combos As ComboBox[] — combos a llenar
+' Retorna   : nada
+' Nota      : ANTES SALÍAN DE cmb_biblatex, QUE TENÍA NOMBRES QUE NO SON DE
+'             babel (norwegian, slovenian, scottish). Y EL Result SE LEÍA UNA
+'             SOLA VEZ: DEL SEGUNDO COMBO EN ADELANTE QUEDABAN VACÍOS. AHORA SE
+'             VUELVE AL PRINCIPIO PARA CADA COMBO
+' ============================================
 Public Sub RellenarIdiomas(Combos As ComboBox[])
 
   Dim rsIdiomas As Result
   Dim cmb As ComboBox
 
-  Try rsIdiomas = m_ConexionBD.mConn.Exec("SELECT nombre FROM cmb_biblatex WHERE tipo='language' AND activo=TRUE ORDER BY nombre;")
+  ' --- 1. CONSULTA ---
+  Try rsIdiomas = m_ConexionBD.mConn.Exec("SELECT DISTINCT babel FROM idiomas ORDER BY babel")
   If Error Then
-    Message.Warning("Error al obtener language: " & Error.Text)
+    Message.Warning("Error al obtener los idiomas: " & Error.Text)
     Error.Clear
     Return
   Endif
 
+  ' --- 2. LLENADO DE CADA COMBO ---
   For Each cmb In Combos
     cmb.Clear
+    If rsIdiomas.Count = 0 Then Continue
+    rsIdiomas.MoveFirst
     While rsIdiomas.Available
-      cmb.Add(rsIdiomas["nombre"])
+      cmb.Add(rsIdiomas["babel"])
       rsIdiomas.MoveNext
     Wend
   Next
@@ -1727,12 +2059,21 @@ Public Sub RellenarTipoDeEntrada(Combos As ComboBox[])
 
 End
 
+' ============================================
+' Función   : BuscarPorCampo
+' Propósito : Muestra en la grilla las entradas del proyecto en curso cuyo
+'             campo contiene el texto del control
+' Parámetros: campo As TextBox — control con el texto a buscar
+'             grid As GridView — grilla de destino
+'             campoBD As String — campo de biblatex (author, booktitle…) o
+'             clave_bibtex
+' Retorna   : nada
+' ============================================
 Public Sub BuscarPorCampo(campo As TextBox, grid As GridView, campoBD As String)
 
   Dim sValor As String = Trim(campo.Text)
-  Dim sConsulta As String
-  Dim resultado As Result
 
+  ' --- 1. VALIDACIÓN ---
   If sValor = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("Debe introducir contenido a buscar.")
@@ -1740,25 +2081,61 @@ Public Sub BuscarPorCampo(campo As TextBox, grid As GridView, campoBD As String)
     Return
   Endif
 
-  ' ESCAPAR COMILLAS SIMPLES PARA EVITAR ERRORES SQL
-  sValor = Replace(sValor, "'", "''")
+  ' --- 2. BÚSQUEDA ---
+  BuscarEnProyecto(grid, campoBD, sValor)
 
-  ' campoBD ES NOMBRE DE COLUMNA (NO PARAMETRIZABLE), VIENE DE UNA LISTA CERRADA
-  ' DEL CÓDIGO, NO DEL USUARIO. sValor E id_proyecto SÍ VAN PARAMETRIZADOS:
-  ' ANTES SE CONCATENABAN CRUDOS (DOBLE INYECCIÓN). ID DESDE LA GLOBAL (RC-GM-16)
-  sConsulta = "SELECT * FROM bibtex WHERE " & campoBD & " LIKE &1 AND id_proyecto = &2"
-  ' EJECUTAR CONSULTA EN VARIABLE LOCAL
-  resultado = m_ConexionBD.mConn.Exec(sConsulta, "%" & sValor & "%", m_InicioCierre.IdProyectoEnCurso)
+End
 
-  ' VERIFICAR SI HAY RESULTADOS
+' ============================================
+' Función   : BuscarEnProyecto
+' Propósito : Consulta común de BuscarPorCampo y BuscarBibTeXEnEditor: las
+'             entradas del proyecto en curso con sValor dentro del campo
+' Parámetros: grid As GridView — grilla de destino
+'             sCampo As String — campo de biblatex o clave_bibtex
+'             sValor As String — texto a buscar
+' Retorna   : nada
+' Nota      : EL VALOR VA PARAMETRIZADO. ANTES SE DUPLICABAN LAS COMILLAS
+'             ADEMÁS DE PARAMETRIZAR, Y «O'Brien» SE BUSCABA COMO «O''Brien».
+'             EL NOMBRE DEL CAMPO SE VALIDA CONTRA EL CATÁLOGO (EsCampo).
+'             EL RESULTADO QUEDA EN ContenidoBib: ES LO QUE LEEN EL Data Y EL
+'             Click DE LA GRILLA
+' ============================================
+Private Sub BuscarEnProyecto(grid As GridView, sCampo As String, sValor As String)
+
+  Dim sFiltro As String
+  Dim resultado As Result
+
+  ' --- 1. FILTRO ---
+  ' ID DESDE LA GLOBAL DE SESIÓN (RC-GM-16)
+  If sCampo = "clave_bibtex" Then
+    sFiltro = "b.id_proyecto = &2 AND b.clave_bibtex LIKE &1"
+  Else If EsCampo(sCampo) Then
+    sFiltro = "b.id_proyecto = &2 AND EXISTS (SELECT 1 FROM bibtex_campo c " &
+      "WHERE c.id_bibtex = b.id AND c.campo = '" & sCampo & "' AND c.valor LIKE &1)"
+  Else
+    m_Sonido.sonar("Error")
+    Message.Error("No se puede buscar por «" & sCampo & "»: no es un campo de la bibliografía.")
+    Return
+  Endif
+
+  ' --- 2. CONSULTA ---
+  Try resultado = m_ConexionBD.mConn.Exec(ConsultaGrilla(sFiltro), "%" & sValor & "%", m_InicioCierre.IdProyectoEnCurso)
+  If Error Then
+    m_Sonido.sonar("Error")
+    Message.Error("No se pudo buscar en las referencias:" & gb.NewLine & Error.Text)
+    Return
+  Endif
+
+  ' --- 3. SIN RESULTADOS: LA GRILLA NO SE TOCA ---
   If resultado.Count = 0 Then
     m_Sonido.sonar("Info")
     Message.Info("No se ha encontrado ningún resultado.")
-    Return  ' <-- SALE SIN TOCAR EL GRID
+    Return
   Endif
 
-  ' SOLO SI HAY RESULTADOS, CARGAR EN EL GRID
-  CargarDatosResultados(grid, resultado)
+  ' --- 4. CARGA ---
+  ContenidoBib = resultado
+  CargarDatosResultados(grid, ContenidoBib)
 
 End
 
@@ -1778,13 +2155,13 @@ Public Sub CargarDatosResultados(Grid As GridView, resultado As Result)
   ' --- 1. INICIALIZACIÓN ---
   Grid.Clear()
   Grid.Rows.Count = resultado.Count
-  ' SOLO LAS COLUMNAS QUE LA GRILLA TIENE: LA TABLA PUEDE TENER MÁS
-  ' (ACTUALIZACIÓN 1.1.0: id_origen Y fecha_modificacion, AL FINAL). ESCRIBIR
-  ' UNA CELDA FUERA DE Columns.Count DA «Bad column index» DENTRO DE
-  ' gb.gui.base (VERIFICADO EN BANCO)
+  ' SOLO LAS COLUMNAS QUE LA GRILLA TIENE. ESCRIBIR UNA CELDA FUERA DE
+  ' Columns.Count DA «Bad column index» DENTRO DE gb.gui.base (GV-58)
   iColumnas = Min(resultado.Fields.Count, Grid.Columns.Count)
 
   ' --- 2. VOLCADO ---
+  ' DESDE EL PRINCIPIO: EL Result PUDO QUEDAR LEÍDO POR OTRA RUTINA
+  If resultado.Count > 0 Then resultado.MoveFirst
   For i = 0 To resultado.Count - 1
     For j = 0 To iColumnas - 1
       If IsNull(resultado[j]) Then
@@ -1798,13 +2175,19 @@ Public Sub CargarDatosResultados(Grid As GridView, resultado As Result)
 
 End
 
+' ============================================
+' Función   : BuscarBibTeXEnEditor
+' Propósito : Muestra en la grilla la entrada cuya clave está seleccionada en
+'             el editor (con su @)
+' Parámetros: grid As GridView — grilla de destino
+'             campoBD As String — clave_bibtex
+' Retorna   : nada
+' ============================================
 Public Sub BuscarBibTeXEnEditor(grid As GridView, campoBD As String)
 
-  Dim sConsulta As String
-  Dim resultado As Result
   Dim sValor As String
 
-  ' OBTENER EL TEXTO SELECCIONADO EN EL EDITOR
+  ' --- 1. EL TEXTO SELECCIONADO EN EL EDITOR ---
   sValor = Trim(m_EditorPrincipal.TextoSeleccionado())
 
   If sValor = "" Then
@@ -1813,33 +2196,15 @@ Public Sub BuscarBibTeXEnEditor(grid As GridView, campoBD As String)
     Return
   Endif
 
-  ' LA REFERENCIA DEBE COMENZAR CON @
+  ' --- 2. LA REFERENCIA DEBE COMENZAR CON @ ---
   If Left(sValor, 1) <> "@" Then
     m_Sonido.sonar("Warning")
     Message.Warning("El texto seleccionado debe comenzar con @ para ser entendida como una referencia BibTeX.")
     Return
   Endif
 
-  ' ELIMINAR EL @ SI LA CLAVE EN LA BD NO LO CONTIENE
-  sValor = Mid(sValor, 2)
-
-  ' ESCAPAR COMILLAS SIMPLES
-  sValor = Replace(sValor, "'", "''")
-
-  ' campoBD ES NOMBRE DE COLUMNA (NO PARAMETRIZABLE), VIENE DE UNA LISTA CERRADA
-  ' DEL CÓDIGO, NO DEL USUARIO. sValor E id_proyecto SÍ VAN PARAMETRIZADOS:
-  ' ANTES SE CONCATENABAN CRUDOS (DOBLE INYECCIÓN). ID DESDE LA GLOBAL (RC-GM-16)
-  sConsulta = "SELECT * FROM bibtex WHERE " & campoBD & " LIKE &1 AND id_proyecto = &2"
-  ' EJECUTAR CONSULTA EN VARIABLE LOCAL
-  resultado = m_ConexionBD.mConn.Exec(sConsulta, "%" & sValor & "%", m_InicioCierre.IdProyectoEnCurso)
-
-  If resultado.Count = 0 Then
-    m_Sonido.sonar("Info")
-    Message.Info("No se ha encontrado ningún resultado.")
-    Return
-  Endif
-
-  CargarDatosResultados(grid, resultado)
+  ' --- 3. BÚSQUEDA, SIN EL @ ---
+  BuscarEnProyecto(grid, campoBD, Mid(sValor, 2))
 
 End
 
@@ -1887,8 +2252,7 @@ Public Sub RecargarSoloGridReferencias()
 
   ' --- 1. RECARGAR EL RESULTADO (MISMO SCOPE QUE IniciarBibtex: id_proyecto) ---
   ' GLOBAL DE SESIÓN COMO FUENTE DE VERDAD DEL ID (RC-GM-16)
-  Try ContenidoBib = m_ConexionBD.mConn.Exec(
-    "SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC",
+  Try ContenidoBib = m_ConexionBD.mConn.Exec(ConsultaGrilla("b.id_proyecto = &1"),
     m_InicioCierre.IdProyectoEnCurso)
   If Error Then Return   ' FALLO TRANSITORIO: NO TOCAR LA UI, REINTENTA AL SIGUIENTE TICK
 
@@ -2045,126 +2409,6 @@ Public Function NombreArchivoBib() As String
 End
 
 ' ============================================
-' Función   : InicializarMapaBiblatex
-' Propósito : Construye la tabla que traduce el nombre de una columna de la
-'             tabla bibtex al campo que espera biblatex. Las columnas usan
-'             snake_case y biblatex no.
-'             Una columna que no está acá se emite con su propio nombre, que
-'             es lo correcto para author, title, volume, doi y compañía.
-' Parámetros: (ninguno)
-' Retorna   : (Sub, sin retorno) — deja $cMapaBiblatex poblada
-' Nota      : LAS CLAVES DE Collection SON CASE-SENSITIVE (GV-04). LOS NOMBRES
-'             DE COLUMNA LLEGAN EN MINÚSCULA DESDE EL DRIVER, ASÍ QUE SE
-'             ESCRIBEN EN MINÚSCULA ACÁ.
-' ============================================
-Private Sub InicializarMapaBiblatex()
-
-  If $cMapaBiblatex Then Return
-
-  $cMapaBiblatex = New Collection
-
-  ' --- 1. PERSONAS Y ROLES ---
-  $cMapaBiblatex["book_author"] = "bookauthor"
-  $cMapaBiblatex["short_author"] = "shortauthor"
-  $cMapaBiblatex["name_addon"] = "nameaddon"
-  $cMapaBiblatex["editor_a"] = "editora"
-  $cMapaBiblatex["editor_b"] = "editorb"
-  $cMapaBiblatex["editor_c"] = "editorc"
-  $cMapaBiblatex["editor_type"] = "editortype"
-  $cMapaBiblatex["editor_type_a"] = "editortypea"
-  $cMapaBiblatex["editor_type_b"] = "editortypeb"
-  $cMapaBiblatex["editor_type_c"] = "editortypec"
-
-  ' --- 2. TÍTULOS ---
-  $cMapaBiblatex["sub_title"] = "subtitle"
-  $cMapaBiblatex["title_addon"] = "titleaddon"
-  $cMapaBiblatex["book_title"] = "booktitle"
-  $cMapaBiblatex["book_title_addon"] = "booktitleaddon"
-  $cMapaBiblatex["main_title"] = "maintitle"
-  $cMapaBiblatex["main_title_addon"] = "maintitleaddon"
-  $cMapaBiblatex["journal_title"] = "journaltitle"
-  $cMapaBiblatex["journal_title_addon"] = "journaltitleaddon"
-  $cMapaBiblatex["issue_title"] = "issuetitle"
-  $cMapaBiblatex["issue_title_addon"] = "issuetitleaddon"
-  $cMapaBiblatex["event_title"] = "eventtitle"
-  $cMapaBiblatex["event_title_addon"] = "eventtitleaddon"
-  $cMapaBiblatex["index_title"] = "indextitle"
-  $cMapaBiblatex["short_title"] = "shorttitle"
-  $cMapaBiblatex["reprint_title"] = "reprinttitle"
-
-  ' --- 3. FECHAS ---
-  $cMapaBiblatex["event_date"] = "eventdate"
-  $cMapaBiblatex["orig_date"] = "origdate"
-  $cMapaBiblatex["url_date"] = "urldate"
-
-  ' --- 4. IDIOMA ---
-  ' hyphenation ES EL NOMBRE VIEJO DE langid: SE RENOMBRÓ EN biblatex 2.8, EN
-  ' 2013, Y SOLO SE CONSERVA COMO ALIAS DE COMPATIBILIDAD. LAS DOS COLUMNAS
-  ' EXISTEN EN LA TABLA Y APUNTAN AL MISMO CAMPO, ASÍ QUE EL BUCLE DE EMISIÓN
-  ' TIENE UNA GUARDA PARA NO ESCRIBIRLO DOS VECES.
-  $cMapaBiblatex["hyphenation"] = "langid"
-  $cMapaBiblatex["lang_id"] = "langid"
-  ' LA COLUMNA TIENE UN TYPO DE ORIGEN: land POR lang. EL CAMPO DE biblatex ES
-  ' langidopts, Y EL MAPEO ANTERIOR EMITÍA landidopts, QUE biber IGNORABA.
-  $cMapaBiblatex["land_id_opts"] = "langidopts"
-  $cMapaBiblatex["orig_language"] = "origlanguage"
-
-  ' --- 5. PAGINACIÓN ---
-  $cMapaBiblatex["page_total"] = "pagetotal"
-  $cMapaBiblatex["book_pagination"] = "bookpagination"
-
-  ' --- 6. EDICIÓN Y LUGAR ---
-  $cMapaBiblatex["orig_publisher"] = "origpublisher"
-  $cMapaBiblatex["orig_location"] = "origlocation"
-  $cMapaBiblatex["how_published"] = "howpublished"
-  $cMapaBiblatex["pub_state"] = "pubstate"
-
-  ' --- 7. IDENTIFICADORES Y RELACIONES ---
-  $cMapaBiblatex["eprint_type"] = "eprinttype"
-  $cMapaBiblatex["related_type"] = "relatedtype"
-  $cMapaBiblatex["related_string"] = "relatedstring"
-  $cMapaBiblatex["cross_ref"] = "crossref"
-  $cMapaBiblatex["entry_set"] = "entryset"
-  $cMapaBiblatex["entry_sub_type"] = "entrysubtype"
-
-  ' --- 8. ETIQUETAS Y ORDENAMIENTO ---
-  $cMapaBiblatex["short_hand"] = "shorthand"
-  $cMapaBiblatex["short_hand_intro"] = "shorthandintro"
-  ' NO TENÍA MAPEO Y SALÍA LITERAL. EL CAMPO ES sortshorthand.
-  $cMapaBiblatex["sort_hand"] = "sortshorthand"
-  $cMapaBiblatex["pre_sort"] = "presort"
-  $cMapaBiblatex["sort_key"] = "sortkey"
-  $cMapaBiblatex["sort_name"] = "sortname"
-  $cMapaBiblatex["sort_year"] = "sortyear"
-  $cMapaBiblatex["sort_title"] = "sorttitle"
-  $cMapaBiblatex["index_sort_title"] = "indexsorttitle"
-
-  ' --- 9. TIPO DE TESIS ---
-  ' EN biblatex EL TIPO DE UNA @thesis VA EN EL CAMPO type.
-  $cMapaBiblatex["tipo_de_tesis"] = "type"
-
-End
-
-' ============================================
-' Función   : CampoBiblatex
-' Propósito : Traduce el nombre de una columna al campo de biblatex. Si no
-'             está en el mapa, devuelve el nombre tal cual.
-' Parámetros: sColumna As String — nombre de la columna
-' Retorna   : String — nombre del campo para el .bib
-' ============================================
-Private Function CampoBiblatex(sColumna As String) As String
-
-  InicializarMapaBiblatex()
-
-  If $cMapaBiblatex.Exist(sColumna) Then
-    Return $cMapaBiblatex[sColumna]
-  Endif
-
-  Return sColumna
-
-End
-
-' ============================================
 ' Función   : ExportarBibTeX
 ' Propósito : Escribe {proyecto}/referencias/ref-{proyecto}.bib con todas las
 '             referencias del proyecto en curso.
@@ -2173,102 +2417,82 @@ End
 '             el ORDER BY y la ausencia de marca de tiempo.
 ' Parámetros: (ninguno — trabaja sobre m_InicioCierre.IdProyectoEnCurso)
 ' Retorna   : Boolean — True si se escribió, False si falló con mensaje
+' Nota      : DESDE LA 2.0.0 LOS CAMPOS SALEN DE bibtex_campo, EN EL ORDEN DEL
+'             CATÁLOGO, QUE ES EL DE LAS COLUMNAS VIEJAS: EL .bib SALE IGUAL
+'             QUE ANTES (LO COMPRUEBA actualizar-esquema-2.0.0.sh). EL ANCHO
+'             DE ALINEACIÓN ES EL DEL NOMBRE MÁS LARGO DEL CATÁLOGO, COMO
+'             ANTES LO ERA EL DE TODAS LAS COLUMNAS
 ' ============================================
 Public Function ExportarBibTeX() As Boolean
 
-  Dim hRes As Result
-  Dim oCampo As ResultField
-  Dim aColumnas As New String[]
-  Dim cEmitidos As Collection
-  Dim sSQL As String
+  Dim hEntradas As Result
+  Dim hPares As Result
   Dim s As String
-  Dim sColumna As String
   Dim sCampo As String
   Dim sValor As String
+  Dim sTipo As String
   Dim sRelleno As String
   Dim sArchivo As String
-  Dim iAncho As Integer
   Dim sProblema As String
   Dim aProblemas As New String[]
+  Dim iId As Integer
 
-  ' COLUMNAS DE CONTROL: NO SON CAMPOS BIBLIOGRÁFICOS Y NO VAN AL .bib.
-  ' SE SALTEAN POR NOMBRE Y NO POR POSICIÓN: UNA COLUMNA NUEVA INSERTADA EN EL
-  ' MEDIO CORRÍA TODO Y EL .bib SALÍA CON LA CLAVE EQUIVOCADA, SIN ERROR. NO BIBLIOGRAFÍA
-  Dim aControl As String[] = ["id", "id_proyecto", "id_articulo",
-    "tipo_de_entrada", "clave_bibtex", "id_origen", "fecha_modificacion"]
+  ' --- 1. CATÁLOGO ---
+  If Not CargarCatalogo() Then Return False
 
-  ' --- 1. CONSULTA ---
+  ' --- 2. CONSULTAS ---
   ' EL ORDER BY NO ES COSMÉTICO: SIN ÉL MySQL NO GARANTIZA EL ORDEN DE LAS
-  ' FILAS, Y EL .bib PODRÍA SALIR DISTINTO CON LOS MISMOS DATOS. COMO EL
-  ' ARCHIVO ESTÁ VERSIONADO, ESO PRODUCE UN DIFF QUE NO CORRESPONDE A NINGÚN
-  ' CAMBIO REAL.
-  sSQL = "SELECT * FROM bibtex WHERE id_proyecto = &1 ORDER BY clave_bibtex"
-
-  Try hRes = m_ConexionBD.mConn.Exec(sSQL, m_InicioCierre.IdProyectoEnCurso)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudieron leer las referencias del proyecto:" &
-      gb.NewLine & Error.Text)
-    Return False
-  Endif
-
-  ' --- 2. INVENTARIO DE COLUMNAS Y ANCHO DE ALINEACIÓN ---
-  ' EL ANCHO SE CALCULA SOBRE EL NOMBRE YA TRADUCIDO, QUE ES EL QUE SE IMPRIME.
-  For Each oCampo In hRes.Fields
-    If Not aControl.Exist(oCampo.Name) Then
-      aColumnas.Add(oCampo.Name)
-      sCampo = CampoBiblatex(oCampo.Name)
-      If Len(sCampo) > iAncho Then iAncho = Len(sCampo)
-    Endif
-  Next
+  ' FILAS, Y EL .bib PODRÍA SALIR DISTINTO CON LOS MISMOS DATOS. LOS PARES
+  ' VIENEN EN EL MISMO ORDEN DE ENTRADAS Y, DENTRO DE CADA UNA, EN EL DEL
+  ' CATÁLOGO: SE RECORREN LOS DOS Result A LA PAR
+  Try hEntradas = m_ConexionBD.mConn.Exec("SELECT id, tipo_de_entrada, clave_bibtex FROM bibtex " &
+    "WHERE id_proyecto = &1 ORDER BY clave_bibtex, id", m_InicioCierre.IdProyectoEnCurso)
+  If Error Then Goto FalloLectura
+  Try hPares = m_ConexionBD.mConn.Exec("SELECT c.id_bibtex, c.campo, c.valor FROM bibtex b " &
+    "JOIN bibtex_campo c ON c.id_bibtex = b.id " &
+    "JOIN bibtex_campo_catalogo k ON k.campo = c.campo " &
+    "WHERE b.id_proyecto = &1 ORDER BY b.clave_bibtex, b.id, k.orden", m_InicioCierre.IdProyectoEnCurso)
+  If Error Then Goto FalloLectura
 
   ' --- 3. RECORRIDO DE LAS ENTRADAS ---
   s = ""
 
-  While hRes.Available
+  While hEntradas.Available
 
-    s &= "\n@" & hRes["tipo_de_entrada"] & "{" & hRes["clave_bibtex"] & ",\n"
+    iId = hEntradas["id"]
+    sTipo = TextoDe(hEntradas["tipo_de_entrada"])
+    s &= "\n@" & sTipo & "{" & TextoDe(hEntradas["clave_bibtex"]) & ",\n"
 
-    ' GUARDA DE CAMPO YA EMITIDO. hyphenation Y lang_id SON DOS COLUMNAS QUE
-    ' APUNTAN AL MISMO CAMPO langid: SIN ESTO, UNA ENTRADA CON LAS DOS
-    ' CARGADAS SALE CON langid DUPLICADO Y biber AVISA.
-    cEmitidos = New Collection
+    ' LOS PARES DE ESTA ENTRADA. UN SOLO PAR POR CAMPO: LO ASEGURA LA CLAVE
+    ' PRIMARIA (id_bibtex, campo). ANTES HACÍA FALTA UNA GUARDA PORQUE
+    ' hyphenation Y lang_id SALÍAN LOS DOS COMO langid
+    While hPares.Available
+      If hPares["id_bibtex"] <> iId Then Break
 
-    For Each sColumna In aColumnas
+      sCampo = hPares["campo"]
+      sValor = Trim(hPares["valor"])
+      If sValor <> "" Then
 
-      ' RC-GM-17: And NO CORTOCIRCUITA. CON EL CAMPO EN NULL, EL Len(NULL) DE
-      ' LA VERSIÓN ANTERIOR SE EJECUTABA IGUAL. VAN ANIDADOS.
-      If Not IsNull(hRes[sColumna]) Then
-        sValor = Trim(CStr(hRes[sColumna]))
-        If sValor <> "" Then
-
-          sCampo = CampoBiblatex(sColumna)
-
-          ' LAS ÓRDENES DE LaTeX (SC-57): LO QUE YA ESTÁ EN LA BASE O LLEGÓ
-          ' SIN PASAR POR EL FORMULARIO TAMBIÉN SE CONTROLA ACÁ
-          ' LOS CAMPOS LITERALES (url, doi…) NO PASAN POR LA REGLA
-          sProblema = ""
-          If Not EsCampoLiteral(sColumna) Then
-            sProblema = ProblemaOrdenesLatex(sValor,
-              NivelesEnquote(sColumna, hRes["tipo_de_entrada"]))
-          Endif
-          If sProblema <> "" Then
-            aProblemas.Add(hRes["clave_bibtex"] & " — " & sCampo & ": " & sProblema)
-          Endif
-
-          If Not cEmitidos.Exist(sCampo) Then
-            cEmitidos[sCampo] = True
-            sRelleno = String$(iAncho - Len(sCampo), " ")
-            s &= "  " & sCampo & sRelleno & " = {" & sValor & "},\n"
-          Endif
-
+        ' LAS ÓRDENES DE LaTeX (SC-58): LO QUE YA ESTÁ EN LA BASE O LLEGÓ
+        ' SIN PASAR POR EL FORMULARIO TAMBIÉN SE CONTROLA ACÁ
+        ' LOS CAMPOS LITERALES (url, doi…) NO PASAN POR LA REGLA
+        sProblema = ""
+        If Not EsCampoLiteral(sCampo) Then
+          sProblema = ProblemaOrdenesLatex(sValor, NivelesEnquote(sCampo, sTipo))
         Endif
-      Endif
+        If sProblema <> "" Then
+          aProblemas.Add(TextoDe(hEntradas["clave_bibtex"]) & " — " & sCampo & ": " & sProblema)
+        Endif
 
-    Next
+        sRelleno = String$($iAnchoCampo - Len(sCampo), " ")
+        s &= "  " & sCampo & sRelleno & " = {" & sValor & "},\n"
+
+      Endif
+      hPares.MoveNext
+    Wend
 
     s &= "}\n"
-    hRes.MoveNext
+    hEntradas.MoveNext
 
   Wend
 
@@ -2305,6 +2529,12 @@ Public Function ExportarBibTeX() As Boolean
   ' NO SE VERIFICA CON Exist(): SI EL ARCHIVO QUEDÓ DE UNA CORRIDA ANTERIOR Y
   ' EL GUARDADO FALLÓ, DEVOLVERÍA True IGUAL. EL Try ES LA VERIFICACIÓN.
   Return True
+
+FalloLectura:
+  m_Sonido.sonar("Error")
+  Message.Error("No se pudieron leer las referencias del proyecto:" &
+    gb.NewLine & Error.Text)
+  Return False
 
 End
 
@@ -2511,60 +2741,22 @@ Public Sub GuardarCambiosBibtex()
   FMain.BtnEliminarBib.Visible = False
   Wait
 
-  ' --- 5. APERTURA DEL REGISTRO ---
-  ' PLACEHOLDER Y NO CONCATENACIÓN (RC-GM-15)
-  Try ContenidoBib = m_ConexionBD.mConn.Edit("bibtex", "id = &1", iIdBibtex)
-
-  If Error Then
+  ' --- 5. ESCRITURA: LA FILA Y TODOS SUS PARES, EN UNA TRANSACCIÓN ---
+  If GuardarEntrada(iIdBibtex, FMain.cmbTipoDeEntrada.Text,
+    SanitizarClaveBibtex(FMain.txtClaveBibtex.Text), ValoresDelFormulario()) = 0 Then
     FMain.btnGuardarCambiosBib.Visible = True
     FMain.BtnEliminarBib.Visible = True
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo abrir la referencia para editar:" & gb.NewLine &
-      Error.Text)
     Return
   Endif
 
-  If Not ContenidoBib.Available Then
-    FMain.btnGuardarCambiosBib.Visible = True
-    FMain.BtnEliminarBib.Visible = True
-    m_Sonido.sonar("Error")
-    Message.Error("No se encontró la referencia para editar.")
-    Return
-  Endif
-
-  ' --- 6. ESCRITURA ---
-  GuardarCamposBib()
-
-  Try ContenidoBib.Update
-
-  If Error Then
-    FMain.btnGuardarCambiosBib.Visible = True
-    FMain.BtnEliminarBib.Visible = True
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudieron guardar los cambios:" & gb.NewLine & Error.Text)
-    Return
-  Endif
-
-  ' EL Commit SOLO CORRE SI EL Update FUE BIEN. ANTES CORRÍA IGUAL, AUNQUE LA
-  ' ESCRITURA HUBIERA FALLADO.
-  Try m_ConexionBD.mConn.Commit()
-
-  If Error Then
-    FMain.btnGuardarCambiosBib.Visible = True
-    FMain.BtnEliminarBib.Visible = True
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo confirmar la transacción:" & gb.NewLine & Error.Text)
-    Return
-  Endif
-
-  ' --- 7. REFRESCO Y AVISO ---
+  ' --- 6. REFRESCO Y AVISO ---
   RefrescarTableViewBibtexEnCurso()
   FMain.gvReferenciasEnCurso.Refresh()
   LimpiarTextboxBibtex()
   m_Sonido.sonar("Info")
   Message.Info("Cambios guardados correctamente.")
 
-  ' --- 8. ESTADO FINAL DE LA INTERFAZ ---
+  ' --- 7. ESTADO FINAL DE LA INTERFAZ ---
   FMain.BtnNuevoBib.Visible = True
   FMain.btnGuardarBib.Visible = False
   FMain.hbTipoDeTesis.Visible = False
@@ -2630,65 +2822,31 @@ Public Function LimpiarTabStrip(oTabStrip As TabStrip, aExcluidos As String[]) A
 End
 
 ' ============================================
-' Función   : ColumnaDeCampo
-' Propósito : Inversa de CampoBiblatex: traduce un campo de biblatex a la
-'             columna de la tabla bibtex. La usa m_AplicarBib
-' Parámetros: sCampo As String — nombre del campo, en minúscula
-' Retorna   : String — columna, vacío si el campo no tiene columna
-' ============================================
-Public Function ColumnaDeCampo(sCampo As String) As String
-
-  Dim sDestino As String
-  Dim aControl As String[] = ["id", "id_proyecto", "id_articulo", "tipo_de_entrada", "clave_bibtex"]
-
-  InicializarMapaBiblatex()
-
-  ' --- 1. CAMPO CON DOS COLUMNAS DE ORIGEN ---
-  ' langid LO PRODUCEN hyphenation Y lang_id (VER InicializarMapaBiblatex).
-  ' SE CARGA EN lang_id: hyphenation ES EL NOMBRE VIEJO
-  If sCampo = "langid" Then Return "lang_id"
-
-  ' --- 2. COLUMNAS QUE CAMBIAN DE NOMBRE AL EXPORTAR ---
-  For Each sDestino In $cMapaBiblatex
-    If sDestino = sCampo Then Return $cMapaBiblatex.Key
-  Next
-
-  ' --- 3. COLUMNAS QUE SE EXPORTAN CON SU PROPIO NOMBRE ---
-  ' LAS COLUMNAS DE CONTROL NO SON CAMPOS: UN «tipo_de_entrada = …» EN LA
-  ' ENTRADA NO DEBE LLEGAR A SU CONTROL
-  If aControl.Exist(sCampo) Then Return ""
-  ' UNA COLUMNA RENOMBRADA NO SE ACEPTA POR SU NOMBRE INTERNO: book_title NO ES UN CAMPO
-  If CampoBiblatex(sCampo) <> sCampo Then Return ""
-  If ControlDeColumna(sCampo) = "" Then Return ""
-
-  Return sCampo
-
-End
-
-' ============================================
-' Función   : ControlDeColumna
+' Función   : ControlDeCampo
 ' Propósito : Inversa de $MapaCampos: nombre del control de FMain que
-'             muestra una columna de la tabla bibtex
-' Parámetros: sColumna As String — nombre de la columna
+'             muestra un campo de biblatex
+' Parámetros: sCampo As String — nombre del campo (author, journaltitle…)
 ' Retorna   : String — nombre del control, vacío si no tiene
+' Nota      : REEMPLAZA A ColumnaDeCampo + ControlDeColumna (2.0.0): EL CAMPO
+'             YA NO SE TRADUCE A UNA COLUMNA
 ' ============================================
-Public Function ControlDeColumna(sColumna As String) As String
+Public Function ControlDeCampo(sCampo As String) As String
 
-  Dim sCol As String
+  Dim sValor As String
 
   ' --- 1. INVERSA, AL PRIMER USO ---
   ' $MapaCampos LO LLENA InicializarMapaCampos, QUE FMain LLAMA AL ARRANCAR
   ' SI TODAVÍA ESTÁ VACÍO NO SE ARMA: QUEDARÍA UNA INVERSA VACÍA PARA SIEMPRE
   If $MapaCampos.Count = 0 Then Return ""
-  If Not $cControlDeColumna Then
-    $cControlDeColumna = New Collection
-    For Each sCol In $MapaCampos
-      $cControlDeColumna[sCol] = $MapaCampos.Key
+  If Not $cControlDeCampo Then
+    $cControlDeCampo = New Collection
+    For Each sValor In $MapaCampos
+      $cControlDeCampo[sValor] = $MapaCampos.Key
     Next
   Endif
 
   ' --- 2. BÚSQUEDA ---
-  If $cControlDeColumna.Exist(sColumna) Then Return $cControlDeColumna[sColumna]
+  If $cControlDeCampo.Exist(sCampo) Then Return $cControlDeCampo[sCampo]
 
   Return ""
 
@@ -2723,7 +2881,7 @@ Public Sub MostrarEntradasEnGrilla(aIds As Integer[], bOfrecerForzar As Boolean)
 
   ' --- 3. FILTRO: ESAS ENTRADAS, SOLO DEL PROYECTO EN CURSO ---
   ' ID DEL PROYECTO DESDE LA GLOBAL DE SESIÓN (RC-GM-16)
-  Try ContenidoBib = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id_proyecto = &1 AND id IN (" & aTextos.Join(",") & ") ORDER BY id DESC", m_InicioCierre.IdProyectoEnCurso)
+  Try ContenidoBib = m_ConexionBD.mConn.Exec(ConsultaGrilla("b.id_proyecto = &1 AND b.id IN (" & aTextos.Join(",") & ")"), m_InicioCierre.IdProyectoEnCurso)
   If Error Then
     m_Sonido.sonar("Error")
     Message.Error("No se pudo mostrar la entrada existente:" & gb.NewLine & Error.Text)

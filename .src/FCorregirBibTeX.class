@@ -50,23 +50,23 @@ Public Sub Form_Open()
   ' LIMPIAMOS EL LISTBOX
   ListarBBDD.Clear
 
-  ' LLENAMOS EL LISTBOX CON LOS NOMBRES REALES DE LOS CAMPOS
+  ' LLENAMOS EL LISTBOX CON LOS CAMPOS, CON SU NOMBRE DE biblatex (2.0.0)
   ListarBBDD.Add("author")
   ListarBBDD.Add("editor")
-  ListarBBDD.Add("book_author")
+  ListarBBDD.Add("bookauthor")
   ListarBBDD.Add("foreword")
   ListarBBDD.Add("commentator")
   ListarBBDD.Add("introduction")
-  ListarBBDD.Add("journal_title")
+  ListarBBDD.Add("journaltitle")
   ListarBBDD.Add("translator")
   ListarBBDD.Add("annotator")
   ListarBBDD.Add("institution")
   ListarBBDD.Add("organization")
   ListarBBDD.Add("publisher")
-  ListarBBDD.Add("orig_publisher")
+  ListarBBDD.Add("origpublisher")
   ListarBBDD.Add("location")
-  ListarBBDD.Add("orig_location")
-  ListarBBDD.Add("hyphenation")
+  ListarBBDD.Add("origlocation")
+  ListarBBDD.Add("langid")
 
   ' Configuramos el GridView desde el inicio
   ConfigurarGridView()
@@ -128,18 +128,15 @@ Public Sub btnBuscarCoincidencias_Click()
   Dim sValorParam As String
   sValorParam = "%" & UCase(sValorBuscar) & "%"
 
-  ' SQL CON BACKTICKS Y USANDO PARÁMETROS PREPARADOS
-  sSQL = "SELECT DISTINCT `" & sCampoBusqueda & "` AS valor " &
-    "FROM bibtex " &
-    "WHERE `" & sCampoBusqueda & "` IS NOT NULL " &
-    "AND TRIM(`" & sCampoBusqueda & "`) <> '' " &
-    "AND UPPER(`" & sCampoBusqueda & "`) LIKE &1 " &
-    "ORDER BY `" & sCampoBusqueda & "` ASC"
+  ' DESDE LA 2.0.0 EL CAMPO ES UN DATO (bibtex_campo.campo) Y VA PARAMETRIZADO
+  ' COMO EL VALOR: YA NO SE ARMA EL NOMBRE DE UNA COLUMNA EN EL SQL
+  sSQL = "SELECT DISTINCT valor FROM bibtex_campo " &
+    "WHERE campo = &2 AND UPPER(valor) LIKE &1 ORDER BY valor ASC"
 
   On Error Goto ErrorConsulta
 
   ' EJECUTAMOS LA CONSULTA CON PARÁMETRO PREPARADO
-  rBibtex = m_ConexionBD.mConn.Exec(sSQL, sValorParam)
+  rBibtex = m_ConexionBD.mConn.Exec(sSQL, sValorParam, sCampoBusqueda)
 
   ' VALIDAR QUE RBIBTEX NO SEA NULO
   If IsNull(rBibtex) Then
@@ -218,15 +215,24 @@ Public Sub gbMostrarResultado_Click()
 
 End
 
-' BOTÓN ACTUALIZAR - ACTUALIZA TODOS LOS REGISTROS QUE COINCIDAN
+' ============================================
+' Función   : btnActualizar_Click
+' Propósito : Cambia un valor de un campo en todas las referencias que lo
+'             tienen, en todos los proyectos
+' Parámetros: ninguno
+' Retorna   : nada
+' Nota      : ANTES UN ERROR DEL UPDATE SE PERDÍA EN EL Catch SIN AVISO.
+'             LA PREGUNTA LLEVA «Sí» Y «No» EXPLÍCITOS, COMO EliminarBibtex
+' ============================================
 Public Sub btnActualizar_Click()
 
   Dim sValorOriginal As String
   Dim sValorNuevo As String
-  Dim sSQL As String
   Dim sCampoActualizar As String
+  Dim hConn As Connection
+  Dim sError As String
 
-  ' VALIDACIONES
+  ' --- 1. VALIDACIONES ---
   If gbMostrarResultado.Row < 0 Then
     m_Sonido.sonar("Warning")
     Message.Warning("Debe seleccionar un valor de la lista.")
@@ -247,34 +253,56 @@ Public Sub btnActualizar_Click()
     Return
   Endif
 
-  ' OBTENEMOS LOS VALORES NECESARIOS
+  ' --- 2. VALORES ---
   sCampoActualizar = ListarBBDD.Text
   sValorOriginal = gbMostrarResultado[gbMostrarResultado.Row, 0].Text
   sValorNuevo = Trim(txtCambiar.Text)
 
-  ' VERIFICAMOS SI REALMENTE HAY CAMBIOS
   If Trim(sValorOriginal) = sValorNuevo Then
     m_Sonido.sonar("Info")
     Message.Info("El valor no ha cambiado.")
     Return
   Endif
 
-  ' CONFIRMACIÓN ANTES DE ACTUALIZAR
+  ' EL IDIOMA TIENE QUE SER UN NOMBRE DE babel: ES EL MISMO CONTROL QUE AL
+  ' GUARDAR UNA REFERENCIA (m_Bibtex.VerificacionBase)
+  If sCampoActualizar = "langid" Then
+    If Not m_Idiomas.EsNombreBabel(sValorNuevo) Then
+      m_Sonido.sonar("Error")
+      Message.Error("«" & sValorNuevo & "» no es un idioma de babel." & gb.NewLine &
+        "Use el nombre completo, como spanish, english o portuguese.")
+      txtCambiar.SetFocus()
+      Return
+    Endif
+  Endif
+
+  ' --- 3. CONFIRMACIÓN ---
   m_Sonido.sonar("Question")
-  If Not Message.Question("¿Está seguro de cambiar todas las ocurrencias de:" & gb.NewLine &
+  If Message.Question("¿Está seguro de cambiar todas las ocurrencias de:" & gb.NewLine &
       "'" & sValorOriginal & "'" & gb.NewLine &
       "por:" & gb.NewLine &
       "'" & sValorNuevo & "'" & gb.NewLine &
-      "en el campo: " & sCampoActualizar & "?") Then
+      "en el campo: " & sCampoActualizar & "?", "Sí", "No") <> 1 Then
     Return
   Endif
 
-  ' CONSTRUIMOS LA CONSULTA UPDATE USANDO PARÁMETROS PREPARADOS
-  sSQL = "UPDATE bibtex SET `" & sCampoActualizar & "` = &1 WHERE `" & sCampoActualizar & "` = &2"
+  ' --- 4. CAMBIO, EN UNA TRANSACCIÓN (GV-173) ---
+  ' PRIMERO SE FECHAN LAS ENTRADAS AFECTADAS: CAMBIAR UN PAR NO TOCA LA FILA
+  ' DE bibtex Y SU ON UPDATE NO SE DISPARA
+  hConn = m_ConexionBD.mConn
+  Try hConn.Begin()
+  If Error Then Goto Fallo
+  Try hConn.Exec("UPDATE bibtex SET fecha_modificacion = NOW() WHERE id IN " &
+    "(SELECT id_bibtex FROM bibtex_campo WHERE campo = &1 AND valor = &2)",
+    sCampoActualizar, sValorOriginal)
+  If Error Then Goto Fallo
+  Try hConn.Exec("UPDATE bibtex_campo SET valor = &1 WHERE campo = &2 AND valor = &3",
+    sValorNuevo, sCampoActualizar, sValorOriginal)
+  If Error Then Goto Fallo
+  Try hConn.Commit()
+  If Error Then Goto Fallo
 
-  Try
-  m_ConexionBD.mConn.Exec(sSQL, sValorNuevo, sValorOriginal)
-
+  ' --- 5. AVISO Y NUEVA BÚSQUEDA ---
   m_Sonido.sonar("Info")
   Message.Info("Actualización completada exitosamente." & gb.NewLine &
     "Valor cambiado de: '" & sValorOriginal & "'" & gb.NewLine &
@@ -283,9 +311,13 @@ Public Sub btnActualizar_Click()
   txtBuscar.Text = sValorNuevo
   txtCambiar.Text = ""
   btnBuscarCoincidencias_Click()
-
-Catch
   Return
+
+Fallo:
+  sError = Error.Text
+  Try hConn.Rollback()
+  m_Sonido.sonar("Error")
+  Message.Error("No se pudo cambiar el valor:" & gb.NewLine & sError)
 
 End
 

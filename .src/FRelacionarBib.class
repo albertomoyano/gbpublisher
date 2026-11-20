@@ -2,19 +2,20 @@
 
 ' ============================================
 ' Clase     : FRelacionarBib
-' Propósito : Construir la relación biblatex (related / related_type /
-'             related_string) entre una referencia del proyecto en curso
+' Propósito : Construir la relación biblatex (related / relatedtype /
+'             relatedstring) entre una referencia del proyecto en curso
 '             y otra referencia cualquiera de la base.
 '             La escritura es SIEMPRE sobre la fila del grid superior
 '             (proyecto en curso); el grid inferior es solo lectura.
 ' ============================================
 
-' --- CONSULTAS BASE ---
-' SELECT ACOTADO, NO "SELECT *": FIJA LAS POSICIONES DE COLUMNA DESDE ACÁ Y
-' NO DEPENDE DEL ORDEN FÍSICO DE LA TABLA, QUE UN ALTER TABLE PUEDE CORRER.
-Private Const CONSULTA_EN_CURSO As String = "SELECT id, clave_bibtex, author, title, year, related, related_type, related_string FROM bibtex"
+' --- CONSULTAS BASE: ConsultaEnCurso Y ConsultaTotal ---
+' DESDE LA 2.0.0 LOS CAMPOS SALEN DE bibtex_campo (m_Bibtex.SubconsultaCampo),
+' CON SU NOMBRE DE biblatex: related, relatedtype, relatedstring
 
-Private Const CONSULTA_TOTAL As String = "SELECT id, clave_bibtex, author, title, year FROM bibtex"
+' --- FILTRO POR AUTOR O TÍTULO: LOS DOS PATRONES VAN EN MARCADORES DISTINTOS ---
+' NO SE REUSA UN MARCADOR (RC-GM-15). %A Y %T SE REEMPLAZAN POR EL NÚMERO
+Private Const FILTRO_AUTOR_TITULO As String = "(EXISTS (SELECT 1 FROM bibtex_campo fa WHERE fa.id_bibtex = b.id AND fa.campo = 'author' AND fa.valor LIKE &%A ESCAPE '!') OR EXISTS (SELECT 1 FROM bibtex_campo ft WHERE ft.id_bibtex = b.id AND ft.campo = 'title' AND ft.valor LIKE &%T ESCAPE '!'))"
 
 ' --- POSICIONES DE COLUMNA EN LOS GRIDS (NO EN LA TABLA) ---
 Private Const COL_CLAVE As Integer = 0
@@ -53,6 +54,37 @@ Private $bAjustandoCampos As Boolean = False
 ' --- HUBO ESCRITURA EN LA BASE ---
 ' DECIDE SI AL CERRAR HAY QUE RECARGAR EL GRID DE FMain.
 Private $bHuboCambios As Boolean = False
+
+' ============================================
+' Función   : ConsultaEnCurso
+' Propósito : SELECT de las referencias para el grid del proyecto en curso,
+'             con la relación actual de cada una
+' Parámetros: (ninguno)
+' Retorna   : String — la consulta sobre bibtex b, sin WHERE
+' ============================================
+Private Function ConsultaEnCurso() As String
+
+  Return "SELECT b.id, b.clave_bibtex, " &
+    m_Bibtex.SubconsultaCampo("author") & ", " & m_Bibtex.SubconsultaCampo("title") & ", " &
+    m_Bibtex.SubconsultaCampo("year") & ", " & m_Bibtex.SubconsultaCampo("related") & ", " &
+    m_Bibtex.SubconsultaCampo("relatedtype") & ", " & m_Bibtex.SubconsultaCampo("relatedstring") &
+    " FROM bibtex b"
+
+End
+
+' ============================================
+' Función   : ConsultaTotal
+' Propósito : SELECT de las referencias para el grid de toda la base
+' Parámetros: (ninguno)
+' Retorna   : String — la consulta sobre bibtex b, sin WHERE
+' ============================================
+Private Function ConsultaTotal() As String
+
+  Return "SELECT b.id, b.clave_bibtex, " &
+    m_Bibtex.SubconsultaCampo("author") & ", " & m_Bibtex.SubconsultaCampo("title") & ", " &
+    m_Bibtex.SubconsultaCampo("year") & " FROM bibtex b"
+
+End
 
 ' ============================================
 ' Función   : Form_Show
@@ -136,7 +168,7 @@ Private Sub ConfigurarGrid(grid As TableView, bConRelacion As Boolean)
 
     ' --- 3. COLUMNA DE RELACIÓN ACTUAL, SOLO EN EL GRID DEL PROYECTO ---
     ' EL USUARIO TIENE QUE VER SI LA REFERENCIA YA ESTABA RELACIONADA ANTES
-    ' DE PISARLE EL DATO: related ES varchar(64) Y ADMITE UNA SOLA CLAVE.
+    ' DE PISARLE EL DATO: related GUARDA UNA SOLA CLAVE.
     If bConRelacion Then
       .Columns[COL_RELACION].Title = "Relación actual"
       .Columns[COL_RELACION].Width = 170
@@ -147,7 +179,7 @@ End
 
 ' ============================================
 ' Función   : CargarComboRelatedType
-' Propósito : Llena el combo con los códigos de related_type de cmb_biblatex
+' Propósito : Llena el combo con los códigos de relatedtype de cmb_biblatex
 '             y garantiza un elemento vacío para poder desmarcar.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
@@ -228,7 +260,7 @@ Private Sub CargarGridEnCurso(sFiltro As String)
   If sFiltro = "" Then
 
     Try rDatos = m_ConexionBD.mConn.Exec(
-      CONSULTA_EN_CURSO & " WHERE id_proyecto = &1 ORDER BY id DESC",
+      ConsultaEnCurso() & " WHERE b.id_proyecto = &1 ORDER BY b.id DESC",
       m_InicioCierre.IdProyectoEnCurso)
     If Error Then
       m_Sonido.sonar("Error")
@@ -243,9 +275,9 @@ Private Sub CargarGridEnCurso(sFiltro As String)
 
     ' LA CONSULTA SE ARMA ANTES: LA CONTINUACIÓN DE LÍNEA SE MARCA AL FINAL DE
     ' LA LÍNEA ANTERIOR, NUNCA ABRIENDO LA SIGUIENTE CON UN OPERADOR.
-    sConsulta = CONSULTA_EN_CURSO & " WHERE id_proyecto = &1"
-    sConsulta &= " AND (author LIKE &2 ESCAPE '!' OR title LIKE &3 ESCAPE '!')"
-    sConsulta &= " ORDER BY id DESC"
+    sConsulta = ConsultaEnCurso() & " WHERE b.id_proyecto = &1"
+    sConsulta &= " AND " & Replace(Replace(FILTRO_AUTOR_TITULO, "%A", "2"), "%T", "3")
+    sConsulta &= " ORDER BY b.id DESC"
 
     Try rDatos = m_ConexionBD.mConn.Exec(sConsulta, m_InicioCierre.IdProyectoEnCurso, sPatron, sPatron)
     If Error Then
@@ -273,15 +305,15 @@ Private Sub CargarGridEnCurso(sFiltro As String)
     $aIdEnCurso.Add(rDatos["id"])
     $aClaveEnCurso.Add(TextoDe(rDatos["clave_bibtex"]))
     $aRelatedEnCurso.Add(TextoDe(rDatos["related"]))
-    $aTipoEnCurso.Add(TextoDe(rDatos["related_type"]))
-    $aCadenaEnCurso.Add(TextoDe(rDatos["related_string"]))
+    $aTipoEnCurso.Add(TextoDe(rDatos["relatedtype"]))
+    $aCadenaEnCurso.Add(TextoDe(rDatos["relatedstring"]))
 
     Me.gridRefEnCurso[iFila, COL_CLAVE].Text = TextoDe(rDatos["clave_bibtex"])
     Me.gridRefEnCurso[iFila, COL_AUTOR].Text = TextoDe(rDatos["author"])
     Me.gridRefEnCurso[iFila, COL_TITULO].Text = TextoDe(rDatos["title"])
     Me.gridRefEnCurso[iFila, COL_ANIO].Text = TextoDe(rDatos["year"])
     Me.gridRefEnCurso[iFila, COL_RELACION].Text = DescribirRelacion(
-      TextoDe(rDatos["related"]), TextoDe(rDatos["related_type"]), TextoDe(rDatos["related_string"]))
+      TextoDe(rDatos["related"]), TextoDe(rDatos["relatedtype"]), TextoDe(rDatos["relatedstring"]))
 
     Inc iFila
   Next
@@ -317,8 +349,8 @@ Private Sub CargarGridTotal(sFiltro As String)
   ' CUALQUIER PROYECTO, Y LA CLAVE ES ÚNICA EN TODO EL SISTEMA.
   sPatron = EscaparParaLike(sFiltro)
 
-  sConsulta = CONSULTA_TOTAL & " WHERE author LIKE &1 ESCAPE '!' OR title LIKE &2 ESCAPE '!'"
-  sConsulta &= " ORDER BY clave_bibtex"
+  sConsulta = ConsultaTotal() & " WHERE " & Replace(Replace(FILTRO_AUTOR_TITULO, "%A", "1"), "%T", "2")
+  sConsulta &= " ORDER BY b.clave_bibtex"
 
   Try rDatos = m_ConexionBD.mConn.Exec(sConsulta, sPatron, sPatron)
   If Error Then
@@ -394,8 +426,8 @@ End
 ' Propósito : Arma el texto legible de una relación ya cargada, para mostrarlo
 '             en la columna del grid y en el mensaje de confirmación.
 ' Parámetros: sClave As String — contenido de related
-'             sTipo As String — contenido de related_type
-'             sCadena As String — contenido de related_string
+'             sTipo As String — contenido de relatedtype
+'             sCadena As String — contenido de relatedstring
 ' Retorna   : String — descripción, o cadena vacía si no hay relación
 ' ============================================
 Private Function DescribirRelacion(sClave As String, sTipo As String, sCadena As String) As String
@@ -519,7 +551,7 @@ End
 
 ' ============================================
 ' Función   : cmbRelatedType_Click
-' Propósito : Aplica la exclusión mutua con related_string y muestra la
+' Propósito : Aplica la exclusión mutua con relatedstring y muestra la
 '             descripción del tipo elegido.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
@@ -545,7 +577,7 @@ Public Sub cmbRelatedType_Click()
 
   ' --- 3. CON TIPO: LA REDACCIÓN MANUAL SE VACÍA Y SE BLOQUEA ---
   ' SI LOS DOS CAMPOS TIENEN CONTENIDO, BIBLATEX IMPRIME EL DEL TIPO Y
-  ' related_string QUEDA EN LA BASE SIN SALIR NUNCA. VERIFICADO.
+  ' relatedstring QUEDA EN LA BASE SIN SALIR NUNCA. VERIFICADO.
   Me.txtRelatedString.Text = ""
   Me.txtRelatedString.Enabled = False
 
@@ -592,7 +624,7 @@ End
 ' ============================================
 ' Función   : btnAplicarRelacion_Click
 ' Propósito : Valida las dos selecciones, confirma con el usuario y escribe
-'             related / related_type / related_string en la referencia del
+'             related / relatedtype / relatedstring en la referencia del
 '             proyecto en curso.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
@@ -607,7 +639,8 @@ Public Sub btnAplicarRelacion_Click()
   Dim sCadena As String
   Dim sRelacionPrevia As String
   Dim sMensaje As String
-  Dim rReg As Result
+  Dim hConn As Connection
+  Dim sError As String
 
   ' --- 1. LAS DOS SELECCIONES SON OBLIGATORIAS ---
   If $iFilaEnCurso < 0 Then
@@ -689,7 +722,7 @@ Public Sub btnAplicarRelacion_Click()
     sMensaje &= "Redacción manual: " & sCadena & Chr(10)
   Endif
 
-  ' EL REEMPLAZO SE AVISA: related ES varchar(64) Y GUARDA UNA SOLA CLAVE,
+  ' EL REEMPLAZO SE AVISA: related GUARDA UNA SOLA CLAVE,
   ' ASÍ QUE LA RELACIÓN ANTERIOR SE PIERDE.
   If sRelacionPrevia <> "" Then
     sMensaje &= Chr(10) & "ATENCIÓN: esta referencia ya estaba relacionada con:" & Chr(10)
@@ -701,40 +734,29 @@ Public Sub btnAplicarRelacion_Click()
 
   If Message.Question(sMensaje, "Aceptar", "Cancelar") <> 1 Then Return
 
-  ' --- 6. ESCRITURA: Edit + Update, NUNCA Exec INTERPOLADO (RC-GM-15) ---
-  Try rReg = m_ConexionBD.mConn.Edit("bibtex", "id = &1", iIdDestino)
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo abrir la referencia para modificarla:" & Chr(10) & Error.Text)
-    Return
+  ' --- 6. ESCRITURA: LOS TRES CAMPOS DE LA RELACIÓN, EN UNA TRANSACCIÓN ---
+  ' SE BORRAN LOS TRES Y SE ESCRIBEN LOS QUE CORRESPONDEN: relatedtype O
+  ' relatedstring, NUNCA LOS DOS (RC-BL-01). EL QUE NO VA NO TIENE FILA: ES
+  ' EL EQUIVALENTE DEL NULL DE ANTES (2.0.0). VALORES PARAMETRIZADOS (RC-GM-15)
+  hConn = m_ConexionBD.mConn
+  Try hConn.Begin()
+  If Error Then Goto Fallo
+  Try hConn.Exec("DELETE FROM bibtex_campo WHERE id_bibtex = &1 AND campo IN ('related', 'relatedtype', 'relatedstring')", iIdDestino)
+  If Error Then Goto Fallo
+  Try hConn.Exec("INSERT INTO bibtex_campo (id_bibtex, campo, valor) VALUES (&1, 'related', &2)", iIdDestino, sClaveOrigen)
+  If Error Then Goto Fallo
+  If sTipo <> "" Then
+    Try hConn.Exec("INSERT INTO bibtex_campo (id_bibtex, campo, valor) VALUES (&1, 'relatedtype', &2)", iIdDestino, sTipo)
+    If Error Then Goto Fallo
+  Else If Trim(sCadena) <> "" Then
+    Try hConn.Exec("INSERT INTO bibtex_campo (id_bibtex, campo, valor) VALUES (&1, 'relatedstring', &2)", iIdDestino, sCadena)
+    If Error Then Goto Fallo
   Endif
-
-  If rReg = Null Then
-    m_Sonido.sonar("Error")
-    Message.Error("La referencia ya no está disponible en la base.")
-    Return
-  Endif
-
-  With rReg
-    ' EL CAMPO NO USADO VA A NULL, NO A CADENA VACÍA: NULL ES "NO APLICA".
-    !related = sClaveOrigen
-
-    If sTipo <> "" Then
-      !related_type = sTipo
-      !related_string = Null
-    Else
-      !related_type = Null
-      !related_string = sCadena
-    Endif
-
-    Try .Update()
-  End With
-
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo guardar la relación:" & Chr(10) & Error.Text)
-    Return
-  Endif
+  ' CAMBIAR SOLO LOS PARES NO TOCA LA FILA DE bibtex: SE FECHA A MANO
+  Try hConn.Exec("UPDATE bibtex SET fecha_modificacion = NOW() WHERE id = &1", iIdDestino)
+  If Error Then Goto Fallo
+  Try hConn.Commit()
+  If Error Then Goto Fallo
 
   ' --- 7. ESTADO POSTERIOR ---
   $bHuboCambios = True
@@ -754,6 +776,14 @@ Public Sub btnAplicarRelacion_Click()
   Me.txtRelatedString.Text = ""
   Me.txtRelatedString.Enabled = True
   $bAjustandoCampos = False
+
+  Return
+
+Fallo:
+  sError = Error.Text
+  Try hConn.Rollback()
+  m_Sonido.sonar("Error")
+  Message.Error("No se pudo guardar la relación:" & Chr(10) & sError)
 
 End
 

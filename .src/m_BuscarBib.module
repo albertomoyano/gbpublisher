@@ -29,8 +29,10 @@
 Private Const COBERTURA_TITULO As Float = 0.8
 Private Const LIMITE_CANDIDATOS As Integer = 20
 
-' --- COLUMNAS QUE EL ÍNDICE FULLTEXT CUBRE: DEBEN COINCIDIR EXACTAMENTE ---
-Private Const COLUMNAS_FT As String = "title, author, book_title, journal_title"
+' --- CAMPOS EN LOS QUE BUSCA EL FULLTEXT (2.0.0) ---
+' EL ÍNDICE ft_bibtex_campo_valor CUBRE EL valor DE TODOS LOS PARES; LA
+' BÚSQUEDA SE LIMITA A LOS MISMOS CUATRO CAMPOS QUE CUBRÍA ft_bibtex_busqueda
+Private Const CAMPOS_FT As String = "'title', 'author', 'booktitle', 'journaltitle'"
 
 ' --- DECISIÓN TOMADA EN FCandidatosBib: ES EL VALOR QUE DEVUELVE ShowModal ---
 ' EL FORMULARIO LA DEVUELVE CON Me.Close(valor) Y DEJA LA FILA ELEGIDA EN ESTE
@@ -331,7 +333,7 @@ Public Function Buscar(sReferencia As String) As Integer[]
   ' EN LA BASE EL DOI SE GUARDA DESNUDO; LA COLACIÓN _ci RESUELVE MAYÚSCULAS
   sDOI = ExtraerDOI(sReferencia)
   If sDOI <> "" Then
-    Try rDatos = m_ConexionBD.mConn.Exec("SELECT id FROM bibtex WHERE doi = &1 ORDER BY id DESC", sDOI)
+    Try rDatos = m_ConexionBD.mConn.Exec("SELECT id_bibtex AS id FROM bibtex_campo WHERE campo = 'doi' AND valor = &1 ORDER BY id_bibtex DESC", sDOI)
     If Error Then
       $sUltimoError = "No se pudo buscar por DOI: " & Error.Text
       Return aIds
@@ -349,11 +351,21 @@ Public Function Buscar(sReferencia As String) As Integer[]
   ' --- 3. FULLTEXT SOBRE TODOS LOS PROYECTOS: JUNTA CANDIDATOS ---
   ' EL AÑO NO ES TEXTO INDEXADO: SE TRAE APARTE PARA ORDENAR. EN LA BASE
   ' CONVIVEN year (VANCOUVER, BibTeX PURO) Y date (biblatex); SE RESUELVE CON
-  ' AnioDeCampos Y NO CON COALESCE: SI UN date VACÍO QUEDÓ GUARDADO COMO ''
-  ' (Y NO COMO NULL), COALESCE LO ELIGE IGUAL Y TAPA EL year
-  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id, author, editor, title, year, date, MATCH(" & COLUMNAS_FT & ") AGAINST (&1) AS puntaje FROM bibtex WHERE MATCH(" & COLUMNAS_FT & ") AGAINST (&1) ORDER BY puntaje DESC LIMIT " & LIMITE_CANDIDATOS, sReferencia)
+  ' AnioDeCampos Y NO CON COALESCE.
+  ' DESDE LA 2.0.0 CADA CAMPO ES UNA FILA: EL PUNTAJE DE UNA ENTRADA ES LA SUMA
+  ' DE LOS DE SUS CAMPOS. EN BANCO, CON 300 REFERENCIAS REALES ARMADAS DESDE LA
+  ' BASE DE ALBERTO, LA ENTRADA PROPIA QUEDÓ ENTRE LOS 20 CANDIDATOS EN LAS 300,
+  ' IGUAL QUE CON EL ÍNDICE VIEJO. EL ORDEN FINO LO DECIDE Coincide
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT b.id, " &
+    m_Bibtex.SubconsultaCampo("author") & ", " & m_Bibtex.SubconsultaCampo("editor") & ", " &
+    m_Bibtex.SubconsultaCampo("title") & ", " & m_Bibtex.SubconsultaCampo("year") & ", " &
+    m_Bibtex.SubconsultaCampo("date") & ", ft.puntaje " &
+    "FROM (SELECT c.id_bibtex, SUM(MATCH(c.valor) AGAINST (&1)) AS puntaje FROM bibtex_campo c " &
+    "WHERE c.campo IN (" & CAMPOS_FT & ") AND MATCH(c.valor) AGAINST (&1) " &
+    "GROUP BY c.id_bibtex ORDER BY puntaje DESC, c.id_bibtex DESC LIMIT " & LIMITE_CANDIDATOS & ") ft " &
+    "JOIN bibtex b ON b.id = ft.id_bibtex ORDER BY ft.puntaje DESC, b.id DESC", sReferencia)
   If Error Then
-    $sUltimoError = "No se pudo buscar en la base (¿falta la actualización de esquema 1.1.0?): " & Error.Text
+    $sUltimoError = "No se pudo buscar en la base (¿falta la actualización de esquema 2.0.0?): " & Error.Text
     Return aIds
   Endif
 
@@ -545,7 +557,8 @@ Public Function AnioDeEntrada(iId As Integer) As String
 
   ' --- 1. LECTURA ---
   $sUltimoError = ""
-  Try rDatos = m_ConexionBD.mConn.Exec("SELECT year, date FROM bibtex WHERE id = &1", iId)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT " & m_Bibtex.SubconsultaCampo("year") & ", " &
+    m_Bibtex.SubconsultaCampo("date") & " FROM bibtex b WHERE b.id = &1", iId)
   If Error Then
     $sUltimoError = "No se pudo leer el año de la entrada: " & Error.Text
     Return ""
@@ -595,7 +608,11 @@ Public Function DuplicadosEnProyecto(sTitulo As String, sAutor As String, sEdito
   ' LA COMPARACIÓN SE HACE EN GAMBAS Y NO CON title = &1: LA COLACIÓN IGNORA
   ' MAYÚSCULAS Y ACENTOS PERO NO LA PUNTUACIÓN («: tomo 1» / «. Tomo 1»).
   ' UN PROYECTO TIENE CIENTOS DE FILAS, NO MILES. ID DESDE LA GLOBAL (RC-GM-16)
-  Try rDatos = m_ConexionBD.mConn.Exec("SELECT id, clave_bibtex, author, editor, title, year, date FROM bibtex WHERE id_proyecto = &1 ORDER BY id DESC", m_InicioCierre.IdProyectoEnCurso)
+  Try rDatos = m_ConexionBD.mConn.Exec("SELECT b.id, b.clave_bibtex, " &
+    m_Bibtex.SubconsultaCampo("author") & ", " & m_Bibtex.SubconsultaCampo("editor") & ", " &
+    m_Bibtex.SubconsultaCampo("title") & ", " & m_Bibtex.SubconsultaCampo("year") & ", " &
+    m_Bibtex.SubconsultaCampo("date") &
+    " FROM bibtex b WHERE b.id_proyecto = &1 ORDER BY b.id DESC", m_InicioCierre.IdProyectoEnCurso)
   If Error Then
     $sUltimoError = "No se pudo verificar si la entrada ya existe: " & Error.Text
     Return aIds
@@ -691,68 +708,73 @@ End
 ' ============================================
 ' Función   : UsarEntrada
 ' Propósito : Copia una entrada de OTRO proyecto a los controles de FMain,
-'             como entrada nueva, SIN GUARDAR. No copia las columnas de
-'             control, las de trazabilidad, las que apuntan a claves (las
-'             claves son de cada proyecto y quedarían colgadas) ni las notas
-'             propias del proyecto de origen. Deja pendiente id_origen
+'             como entrada nueva, SIN GUARDAR. Copia el tipo y los campos;
+'             no copia la clave, los campos que apuntan a claves (las claves
+'             son de cada proyecto y quedarían colgadas) ni las notas propias
+'             del proyecto de origen. Deja pendiente id_origen
 ' Parámetros: iId As Integer — id de la fila de origen
 ' Retorna   : Boolean — True si se volcó
 ' ============================================
 Public Function UsarEntrada(iId As Integer) As Boolean
 
-  Dim rFila As Result
-  Dim oCampo As ResultField
+  Dim rEntrada As Result
+  Dim rPares As Result
   Dim aCampos As New String[]
   Dim aControles As New String[]
   Dim aValores As New String[]
   Dim aInforme As New String[]
-  Dim aExcluidas As String[] = ["id", "id_proyecto", "id_articulo", "clave_bibtex",
-    "id_origen", "fecha_modificacion",
-    "cross_ref", "xref", "xdata", "ids", "entry_set", "related", "related_type", "related_string",
-    "note", "addendum", "annotation"]
-  Dim sColumna As String
+  ' CAMPOS QUE NO SE COPIAN (NOMBRES DE biblatex, 2.0.0): LOS QUE APUNTAN A
+  ' CLAVES, QUE SON DE CADA PROYECTO Y QUEDARÍAN COLGADAS, Y LAS NOTAS PROPIAS
+  ' DEL PROYECTO DE ORIGEN
+  Dim aExcluidos As String[] = ["crossref", "xref", "xdata", "ids", "entryset",
+    "related", "relatedtype", "relatedstring", "note", "addendum", "annotation"]
+  Dim sCampo As String
   Dim sControl As String
   Dim sValor As String
 
-  ' --- 1. LECTURA DE LA FILA ---
+  ' --- 1. LECTURA DE LA ENTRADA ---
   $sUltimoError = ""
-  Try rFila = m_ConexionBD.mConn.Exec("SELECT * FROM bibtex WHERE id = &1", iId)
+  Try rEntrada = m_ConexionBD.mConn.Exec("SELECT tipo_de_entrada FROM bibtex WHERE id = &1", iId)
   If Error Then
     $sUltimoError = "No se pudo leer la entrada de origen: " & Error.Text
     Return False
   Endif
-  If Not rFila.Available Then
+  If Not rEntrada.Available Then
     $sUltimoError = "La entrada de origen ya no existe (id " & iId & ")."
+    Return False
+  Endif
+  Try rPares = m_ConexionBD.mConn.Exec("SELECT c.campo, c.valor FROM bibtex_campo c " &
+    "JOIN bibtex_campo_catalogo k ON k.campo = c.campo WHERE c.id_bibtex = &1 ORDER BY k.orden", iId)
+  If Error Then
+    $sUltimoError = "No se pudieron leer los campos de la entrada de origen: " & Error.Text
     Return False
   Endif
 
   ' --- 2. EL TIPO DE ENTRADA VA PRIMERO: SU Click DECIDE SI SE VE EL TIPO DE TESIS ---
-  If Not IsNull(rFila["tipo_de_entrada"]) Then
+  If Not IsNull(rEntrada["tipo_de_entrada"]) Then
     aCampos.Add("tipo_de_entrada")
-    aControles.Add(m_Bibtex.ControlDeColumna("tipo_de_entrada"))
-    aValores.Add(CStr(rFila["tipo_de_entrada"]))
+    aControles.Add(m_Bibtex.CONTROL_TIPO)
+    aValores.Add(CStr(rEntrada["tipo_de_entrada"]))
   Endif
 
-  ' --- 3. RESTO DE LAS COLUMNAS, POR NOMBRE Y NO POR POSICIÓN ---
-  For Each oCampo In rFila.Fields
-    sColumna = oCampo.Name
-    If sColumna = "tipo_de_entrada" Then Continue
-    If aExcluidas.Exist(sColumna) Then Continue
-    ' RC-GM-17: And NO CORTOCIRCUITA; EL NULL SE MIRA ANTES DEL Trim
-    If IsNull(rFila[sColumna]) Then Continue
-    sValor = Trim(CStr(rFila[sColumna]))
+  ' --- 3. LOS CAMPOS, EN EL ORDEN DEL CATÁLOGO ---
+  While rPares.Available
+    sCampo = rPares["campo"]
+    sValor = Trim(Texto(rPares["valor"]))
+    rPares.MoveNext
+    If aExcluidos.Exist(sCampo) Then Continue
     If sValor = "" Then Continue
 
-    sControl = m_Bibtex.ControlDeColumna(sColumna)
+    sControl = m_Bibtex.ControlDeCampo(sCampo)
     If sControl = "" Then
-      aInforme.Add(sColumna & ": no tiene control en el formulario")
+      aInforme.Add(sCampo & ": no tiene control en el formulario")
       Continue
     Endif
 
-    aCampos.Add(sColumna)
+    aCampos.Add(sCampo)
     aControles.Add(sControl)
     aValores.Add(sValor)
-  Next
+  Wend
 
   ' --- 4. VOLCADO CON LAS MISMAS REGLAS QUE «Aplicar» ---
   If Not m_AplicarBib.Volcar(aCampos, aControles, aValores, aInforme) Then Return False

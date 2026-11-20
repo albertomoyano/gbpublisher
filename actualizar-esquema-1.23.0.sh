@@ -133,8 +133,12 @@ fi
 
 info "Servidor: ${VERSION}"
 
-# LA CADENA ES ORDENADA: 1.23.0 VA SOBRE 1.22.0
-if [ "$(valor "SELECT COUNT(*) FROM \`${DB}\`.esquema_version WHERE parche='${PREVIO}';")" != "1" ]; then
+# LA CADENA ES ORDENADA: 1.23.0 VA SOBRE 1.22.0. UNA BASE INSTALADA DESDE EL
+# BASELINE 2.0.0 NO TIENE LA 1.22.0 REGISTRADA PERO LA INCLUYE: TAMBIÉN VALE.
+# ESTE SCRIPT ES EL QUE REPONE LOS DISPARADORES DESPUÉS DE RESTAURAR UN
+# RESPALDO DE LA APLICACIÓN (BBDD_LEEME.md §5), ASÍ QUE TIENE QUE PODER
+# CORRER EN ESAS BASES (AGREGADO EN EL LOTE 2.0.0)
+if [ "$(valor "SELECT COUNT(*) FROM \`${DB}\`.esquema_version WHERE parche IN ('${PREVIO}', 'baseline-2.0.0');")" = "0" ]; then
   error "Falta la actualización 1.22.0. Aplicala primero (actualizar-esquema-1.22.0.sh)."
   exit 1
 fi
