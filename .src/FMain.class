@@ -1,7 +1,8 @@
 ' Gambas class file
 
 Public rutaApp As String = User.Home &/ ".gbpublisher"
-Public $Bash As Process
+' PROCESO BASH DE LA TERMINAL EMBEBIDA. SOLO SE DETIENE VÍA DetenerBashEnCurso()
+Private $Bash As Process
 Public TipoProyectoActual As Integer
 Private LastTextBox As TextBox
 Private sTB_Text As String
@@ -832,6 +833,53 @@ Private Function ObtenerDescripcionTipo(iTipo As Integer) As String
 End
 
 ' ============================================
+' Función   : DetenerBashEnCurso
+' Propósito : Punto único para detener el proceso bash de la terminal
+'             embebida. Reintenta Kill hasta 20 veces con pausas de 50 ms,
+'             avisa si no lo logra y anula siempre la referencia.
+'             Reemplaza las cuatro copias que existían en FMain,
+'             m_ConexionBD, m_InicioCierre y FProyectosParcial.
+' Parámetros: (ninguno)
+' Retorna   : nada
+' ============================================
+Public Sub DetenerBashEnCurso()
+
+  Dim iIntentos As Integer
+
+  ' --- 1. VALIDAR QUE EXISTE Y ESTÁ CORRIENDO ---
+  If Not $Bash Then Return
+  If Not Object.IsValid($Bash) Then
+    $Bash = Null
+    Return
+  Endif
+  If $Bash.State <> Process.Running Then
+    $Bash = Null
+    Return
+  Endif
+
+  ' --- 2. REINTENTAR Kill ---
+  ' WAIT PROCESA EVENTOS PARA QUE State SE ACTUALICE ENTRE INTENTOS.
+  ' TRY: EL PROCESO PUEDE MORIR ENTRE LA COMPROBACIÓN Y EL Kill
+  While $Bash.State = Process.Running And iIntentos < 20
+    Try $Bash.Kill
+    Wait 0.05
+    Inc iIntentos
+  Wend
+
+  ' --- 3. AVISAR SI NO SE DETUVO ---
+  ' KILL ENVÍA SIGKILL: NO HAY SEÑAL MÁS FUERTE A LA QUE RECURRIR.
+  ' PROCESS NO TIENE Terminate (DETECTADO CON gbc3 -p)
+  If $Bash.State = Process.Running Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("El proceso bash no pudo ser detenido.")
+  Endif
+
+  ' --- 4. ANULAR LA REFERENCIA ---
+  $Bash = Null
+
+End
+
+' ============================================
 ' Función   : InicializarTerminalProyecto
 ' Propósito : Crear (o recrear) el proceso bash
 '             de la terminal embebida, matando
@@ -842,20 +890,7 @@ End
 Public Sub InicializarTerminalProyecto(sRutaDirectorio As String)
 
   ' --- 1. CERRAR PROCESO ANTERIOR SI EXISTE ---
-  If $Bash Then
-    If Object.IsValid($Bash) Then
-      If $Bash.State = Process.Running Then
-        Try $Bash.Kill
-        Wait 0.2
-        ' SEGUNDO INTENTO SI RESISTE
-        If $Bash.State = Process.Running Then
-          Try $Bash.Kill' .Terminate
-          Wait 0.2
-        Endif
-      Endif
-    Endif
-    $Bash = Null
-  Endif
+  DetenerBashEnCurso()
 
   ' --- 2. INICIAR PROCESO NUEVO ---
   $Bash = TerminalViewProyecto.Shell("/usr/bin/bash")

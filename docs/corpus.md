@@ -10527,7 +10527,9 @@ Sí detecta un identificador desconocido dentro de la misma clase o un nombre de
 
 CONSECUENCIA: compilar no prueba que un borrado sea seguro. Después de borrar hay que buscar cada nombre borrado en el código vivo (SC-97).
 
-**Relaciones:** apoya:SC-97
+DESDE 3.22 (master). `gbc3 -p`, la compilación experimental en dos pasadas, sí detecta estos casos; pero su bytecode puede no arrancar y el botón del IDE se cuelga ante el error: sirve para verificar, no para ejecutar (GV-216).
+
+**Relaciones:** apoya:SC-97,vinculo:GV-216
 
 ### GV-211 — Un temático de JATS4R se compila solo, sin SchXslt, con un envoltorio derivado del maestro, y da los mismos hallazgos que el maestro
 
@@ -10622,6 +10624,32 @@ EN EL PROYECTO (revisado el 19/11/2026, ningún error): todas las asignaciones d
 - `FDossiers.lstEditoresDossier`, `FOrtografia.lstSugerencias` y `FEditarIPs.ListBox1`: el `Click` hace lo mismo que el código que asigna, o lo que ese código quiere.
 
 **Relaciones:** vinculo:GV-53,vinculo:GV-138,vinculo:SC-74
+
+### GV-216 — gbc3 -p (dos pasadas, experimental): detecta los símbolos que faltan en otras clases, pero el IDE se cuelga ante el error y el bytecode puede no arrancar
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.2 dbe6434 (master) / gbc3 e IDE / gb.qt6 / Linux Mint / proyecto gbpublisher · **Verificado:** 2026-11
+
+Medido el 20/11/2026 con `gbc3` 3.22.2 `dbe6434` (master) sobre el proyecto gbpublisher completo, en Mint.
+
+QUÉ ES. `-p` (`--two-pass`) es una compilación experimental en dos pasadas: la primera carga los componentes y escribe en `.desc/` la descripción de cada clase del proyecto; la segunda compila consultándolas. Por eso ve lo que la compilación normal no ve (GV-210): un miembro que no existe en OTRA clase. En el IDE es el botón «Compile all in two pass».
+
+LO QUE DETECTÓ. Una línea que el `Try` dejaba muda (RC-GM-02): `Process` no tiene `Terminate`.
+
+    gbc3 -a -p .
+    m_ConexionBD.module:229:36: error: Unknown symbol 'Terminate' in class 'Process'
+    (sale con 1; sin -p, el mismo proyecto sale con 0)
+
+Se detiene en el PRIMER error: la misma llamada en `m_InicioCierre`, sin `Try` y por lo tanto un error seguro al ejecutarse, no apareció hasta corregir la primera. Con `-v` la salida vuelca la carga de símbolos de cada componente y tapa el error; sin `-v` sale solo el error.
+
+EL IDE SE CUELGA. Con ese mismo error, el botón del IDE no lo muestra: da «¡El compilador se ha bloqueado!». Desde la terminal, `gbc3 -a -p` lo informa limpio y sale con 1.
+
+EL BYTECODE PUEDE NO ARRANCAR. Corregido el código, `gbc3 -a -p .` dio `OK` y salió con 0, pero la aplicación no arrancó: símbolo desconocido `gvNotas`, el `GridView` de `FMain` que `m_Notas` usa como `FMain.gvNotas` (`ControlPublic=1`, GV-57). El control y el código estaban intactos (comparado contra la copia previa). Después de Proyecto → Limpiar y compilar SIN `-p`, arrancó.
+
+REGLA. `-p` sirve para VERIFICAR, desde la terminal: `gbc3 -a -p . ; echo $?`, sin `-v`, repitiendo hasta que dé 0. Para EJECUTAR, siempre Limpiar y compilar sin `-p` (RC-GM-05): un `OK` de `-p` no prueba que el bytecode funcione. El botón de dos pasadas del IDE, no usarlo.
+
+**Relaciones:** vinculo:GV-210,apoya:RC-GM-05,vinculo:RC-GM-02,vinculo:GV-57
+
+**PENDIENTE:** El punto del bytecode es una sola observación: repetirla (gbc3 -a -p, ejecutar; Limpiar, compilar sin -p, ejecutar) para confirmar que la causa es -p. Reportar al bugtracker de Gambas el cuelgue del IDE y el bytecode, con la versión y el commit de gbpublisher anterior a la consolidación de DetenerBashEnCurso. Revisar esta entrada cuando cambie la versión de master.
 
 ---
 
