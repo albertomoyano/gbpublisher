@@ -1,0 +1,783 @@
+' Gambas class file
+
+' ==========================================================
+' FORMULARIO : FFileManager
+' PROPÓSITO  : Gestor de archivos del proyecto en curso. Se abre con
+'              ShowModal desde FMain.btnAbrirDirectorio. Navega solo hacia
+'              adentro del proyecto; las acciones están en el menú
+'              contextual menuFF y el único botón es Cerrar. Las reglas y
+'              las operaciones viven en m_FileManager (SC-70); acá solo hay
+'              controles y manejadores.
+'
+' CERRAR (claude/filemanager.md)
+' ----------------------------------------------------------
+'   1. Lo propio: se detiene el Timer de detalles. Va en Form_Close, así
+'      corre por cualquier salida.
+'   2. Lo de FMain: el retocador y el visor de PDF se refrescan en FMain al
+'      volver de ShowModal, siempre (btnAbrirDirectorio_Click).
+'   3. Lo externo: se avisa si quedan documentos abiertos en LibreOffice.
+'   No se cierra mientras corre un script de la lanzadora (el empuje).
+'
+' EMPUJE AL REMOTO (21/11/2026)
+' ----------------------------------------------------------
+'   btnEmpujar lanza engine/empujar_remoto.sh por la lanzadora (SC-53) con
+'   el formulario abierto: la salida corre en la terminal de FMain, que se ve
+'   corriendo esta ventana. El formulario lo cierra el usuario.
+' ==========================================================
+
+' TIMER DE LOS DETALLES PESADOS (DIMENSIONES DE IMAGEN, PÁGINAS DE PDF). SE
+' REINICIA EN CADA CAMBIO DE SELECCIÓN: SI EL USUARIO SIGUE MOVIÉNDOSE CON
+' LAS FLECHAS, LA IMAGEN INTERMEDIA NO SE DECODIFICA
+Private $hTimerDetalles As Timer
+' RUTA CUYOS DETALLES PESADOS ESPERA EL TIMER
+Private $sRutaPendiente As String
+' ÚLTIMA CARPETA VÁLIDA DEL ÁRBOL, PARA VOLVER SI SE ENTRA A UN ENLACE QUE
+' APUNTA AFUERA DEL PROYECTO
+Private $sUltimaCarpeta As String
+
+' ESPERA ANTES DE LEER LOS DETALLES PESADOS, EN MILISEGUNDOS
+Private Const DEMORA_DETALLES As Integer = 250
+' TAMAÑO MÍNIMO QUE SE ACEPTA AL RESTAURAR LA VENTANA
+Private Const ANCHO_MINIMO As Integer = 640
+Private Const ALTO_MINIMO As Integer = 400
+
+' ============================================
+' Función   : Form_Open
+' Propósito : Prepara la grilla, el Timer y las vistas confinadas a la raíz
+'             del proyecto
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Form_Open()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRaiz As String
+
+  ' --- 2. TAMAÑO GUARDADO ---
+  RestaurarTamanio()
+
+  ' --- 3. TIMER DE DETALLES ---
+  ' CREADO EN CÓDIGO, COMO LOS DE gb.form (New Timer As "...")
+  $hTimerDetalles = New Timer As "TimerDetalles"
+  $hTimerDetalles.Delay = DEMORA_DETALLES
+  $hTimerDetalles.Enabled = False
+
+  ' --- 4. GRILLA: PROPIEDAD Y VALOR, SIN ENCABEZADO ---
+  ' POCAS FILAS ESCRITAS DIRECTO EN LAS CELDAS: SIN EVENTO Data (GV-15)
+  With gvDetalles
+    .Columns.Count = 2
+    .Rows.Count = 0
+    .Header = GridView.None
+    .Grid = True
+    .Mode = Select.None
+    .Columns[0].Width = 250
+    .Columns[1].Expand = True
+  End With
+
+  ' --- 5. RAÍZ DEL PROYECTO ---
+  ' FMain YA LO CONTROLA ANTES DE ABRIR. SI IGUAL FALTA, LAS VISTAS QUEDAN
+  ' DESHABILITADAS: SIN Root, DirView ARRANCA EN User.Home (DirView.GetRoot)
+  sRaiz = m_FileManager.RaizProyecto()
+  If sRaiz = "" Then
+    dvProyecto.Enabled = False
+    fvProyecto.Enabled = False
+    Return
+  Endif
+
+  ' --- 6. VISTAS ---
+  ' Root PRIMERO: ES LO QUE IMPIDE SUBIR POR ENCIMA DEL PROYECTO
+  $sUltimaCarpeta = sRaiz
+  dvProyecto.Root = sRaiz
+  fvProyecto.Dir = sRaiz
+  QuitarScrollHorizontal()
+
+  ' LA RAÍZ NO SE MUESTRA EN EL ÁRBOL (HideRoot): VA EN lblRaiz. ES LO QUE
+  ' MUESTRA txtProyecto EN FMain, LEÍDO DE LA GLOBAL Y NO DEL CONTROL
+  ' (RC-GM-16)
+  lblRaiz.Text = m_InicioCierre.ArchivoProyectoEnCurso
+
+  ' EL USUARIO DE GitHub SE RECUERDA EN gbpublisher.conf (SC-17)
+  txtUsuarioGit.Text = m_GitHub.UsuarioGitGuardado()
+  HabilitarMenu("")
+  MostrarDetallesCarpeta()
+  sFileManager.Layout = [5, 2]
+
+End
+
+' ============================================
+' Función   : sFileManager_Resize
+' Propósito : Repone la proporción entre la lista y la grilla de detalles
+'             cuando cambia el tamaño del divisor
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub sFileManager_Resize()
+
+  sFileManager.Layout = [5, 2]
+
+End
+
+' ============================================
+' Función   : Form_Show
+' Propósito : Quita los botones del marco (SC-20). La salida es Cerrar o la
+'             tecla Escape (btnCerrar.Cancel)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Form_Show()
+
+  m_Ventana.FijarBotones(Me)
+
+End
+
+' ============================================
+' Función   : Form_Close
+' Propósito : Cierre completo: suelta lo propio, guarda el tamaño y avisa
+'             de los documentos que siguen abiertos en LibreOffice
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub Form_Close()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aAbiertos As String[]
+
+  ' --- 1b. NO SE CIERRA CON UN SCRIPT EN CURSO ---
+  ' EjecutarScript ESPERA CON Wait DENTRO DE btnEmpujar_Click: SI EL
+  ' FORMULARIO SE CERRARA, AL VOLVER EL MANEJADOR TOCARÍA CONTROLES DE UN
+  ' OBJETO DESTRUIDO
+  If m_Lanzadora.HayScriptEnCurso() Then
+    Stop Event
+    m_Sonido.sonar("Warning")
+    Message.Warning("Hay un script en curso: esperá a que termine para cerrar.")
+    Return
+  Endif
+
+  ' --- 2. LO PROPIO: EL TIMER Y LA RUTA PENDIENTE ---
+  ' LAS IMÁGENES Y LOS PDF QUE LEE m_FileManager.DetallesPesados SON LOCALES
+  ' Y SE LIBERAN AL SALIR DE LA FUNCIÓN: NO QUEDA NINGUNO EN MEMORIA
+  If $hTimerDetalles Then
+    $hTimerDetalles.Stop
+    $hTimerDetalles = Null
+  Endif
+  $sRutaPendiente = ""
+
+  ' --- 3. TAMAÑO DE LA VENTANA ---
+  GuardarTamanio()
+
+  ' --- 4. LO EXTERNO: DOCUMENTOS ABIERTOS EN LibreOffice ---
+  ' SOLO SE AVISA: LA APLICACIÓN NO PUEDE CERRAR UN PROGRAMA AJENO
+  aAbiertos = m_FileManager.DocumentosAbiertosEnLibreOffice()
+  If aAbiertos.Count > 0 Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Estos documentos del proyecto parecen seguir abiertos en LibreOffice:" &
+      gb.NewLine & gb.NewLine & "  • " & aAbiertos.Join(gb.NewLine & "  • ") &
+      gb.NewLine & gb.NewLine &
+      "Si LibreOffice ya está cerrado, son bloqueos que quedaron de un cierre inesperado.")
+  Endif
+
+End
+
+' ============================================
+' Función   : btnCerrar_Click
+' Propósito : Cierra el formulario; la limpieza la hace Form_Close
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnCerrar_Click()
+
+  Me.Close
+
+End
+
+' ============================================
+' Función   : btnEmpujar_Click
+' Propósito : Empuja el proyecto al repositorio remoto con el mensaje de
+'             txtGit y el usuario de txtUsuarioGit (m_GitHub.EmpujarRemoto,
+'             por la lanzadora)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnEmpujar_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMensaje As String
+  Dim bEmpujado As Boolean
+
+  ' --- 2. VALIDACIÓN ---
+  sMensaje = Trim(txtGit.Text)
+  If sMensaje = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Escribí el mensaje del commit.")
+    txtGit.SetFocus()
+    Return
+  Endif
+
+  ' --- 3. EMPUJE ---
+  ' MIENTRAS ESPERA, EL FORMULARIO SIGUE RECIBIENDO CLICS (Wait, GV-17): SE
+  ' APAGAN EL BOTÓN Y EL CAMPO, Y Form_Close NO DEJA CERRAR
+  btnEmpujar.Enabled = False
+  txtGit.Enabled = False
+  txtUsuarioGit.Enabled = False
+  bEmpujado = m_GitHub.EmpujarRemoto(sMensaje, txtUsuarioGit.Text)
+  btnEmpujar.Enabled = True
+  txtGit.Enabled = True
+  txtUsuarioGit.Enabled = True
+
+  ' --- 4. EL MENSAJE YA SE USÓ; EL USUARIO SE RECUERDA ---
+  ' SE GUARDA SOLO TRAS UN EMPUJE EXITOSO: UN USUARIO MAL ESCRITO NO QUEDA
+  If bEmpujado Then
+    txtGit.Clear
+    m_GitHub.GuardarUsuarioGit(txtUsuarioGit.Text)
+  Endif
+
+End
+
+' ============================================
+' Función   : QuitarScrollHorizontal
+' Propósito : Deja el árbol solo con barra vertical
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : DirView NO TIENE ScrollBar PROPIA: ARMA POR DENTRO UN TreeView
+'             HIJO SUYO (DirView._new, gb.form 3.22.1). EN EL TreeView,
+'             Scroll.Vertical SACA LA BARRA HORIZONTAL Y PRENDE AutoResize: LA
+'             COLUMNA SE AJUSTA AL ANCHO VISIBLE (_TreeView.ScrollBar_Write,
+'             gb.gui.base). SE BUSCA EL HIJO POR TIPO Y NO POR POSICIÓN; SI
+'             UNA VERSIÓN FUTURA CAMBIA EL ARMADO INTERNO, NO ROMPE NADA:
+'             VUELVE LA BARRA HORIZONTAL
+' ============================================
+Private Sub QuitarScrollHorizontal()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hHijo As Control
+  Dim hArbol As TreeView
+
+  ' --- 2. EL TreeView INTERNO ---
+  For Each hHijo In dvProyecto.Children
+    If hHijo Is TreeView Then
+      hArbol = hHijo
+      hArbol.ScrollBar = Scroll.Vertical
+      Return
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : dvProyecto_Click
+' Propósito : Muestra en fvProyecto la carpeta elegida en el árbol, salvo
+'             que sea un enlace que apunta afuera del proyecto
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub dvProyecto_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sCarpeta As String
+
+  sCarpeta = dvProyecto.Current
+
+  ' --- 2. EL DESTINO REAL TIENE QUE ESTAR DENTRO DEL PROYECTO ---
+  ' DirView DEJA ENTRAR EN LOS ENLACES SIMBÓLICOS. ASIGNAR Current DISPARA
+  ' Click OTRA VEZ, YA CON LA CARPETA VÁLIDA (DirView.Current_Write)
+  If Not m_FileManager.DentroDelProyecto(sCarpeta) Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("«" & File.Name(sCarpeta) & "» apunta fuera del proyecto: no se puede entrar.")
+    dvProyecto.Current = $sUltimaCarpeta
+    Return
+  Endif
+
+  ' --- 3. MOSTRAR LA CARPETA ---
+  $sUltimaCarpeta = sCarpeta
+  fvProyecto.Dir = sCarpeta
+  ActualizarSeleccion()
+
+End
+
+' ============================================
+' Función   : fvProyecto_Select
+' Propósito : Al cambiar la selección (también con el teclado), actualiza
+'             la grilla y el menú
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub fvProyecto_Select()
+
+  ActualizarSeleccion()
+
+End
+
+' ============================================
+' Función   : fvProyecto_Refresh
+' Propósito : FileView lo dispara al terminar cada recarga; con gb.inotify
+'             eso pasa cuando algo cambia en el disco. La grilla no queda
+'             mostrando un archivo que ya cambió o desapareció.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub fvProyecto_Refresh()
+
+  ActualizarSeleccion()
+
+End
+
+' ============================================
+' Función   : fvProyecto_Activate
+' Propósito : Doble clic o Enter: entra a una carpeta o abre un archivo
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub fvProyecto_Activate()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+
+  sRuta = fvProyecto.Path
+  If sRuta = "" Then Return
+
+  ' --- 2. CARPETA: SE NAVEGA DESDE EL ÁRBOL ---
+  ' FileView NO NAVEGA SOLO. IsDir SIGUE ENLACES A PROPÓSITO: SI EL ENLACE
+  ' APUNTA AFUERA, LO FRENA dvProyecto_Click
+  If IsDir(sRuta) Then
+    dvProyecto.Current = sRuta
+    Return
+  Endif
+
+  ' --- 3. ARCHIVO ---
+  AccionAbrir(sRuta)
+
+End
+
+' ============================================
+' Función   : TimerDetalles_Timer
+' Propósito : Agrega a la grilla los detalles pesados del archivo
+'             seleccionado, si la selección no cambió mientras tanto
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub TimerDetalles_Timer()
+
+  ' --- 1. UNA SOLA VEZ POR SELECCIÓN ---
+  $hTimerDetalles.Stop
+
+  ' --- 2. LA SELECCIÓN PUDO HABER CAMBIADO ---
+  If $sRutaPendiente = "" Then Return
+  If fvProyecto.Path <> $sRutaPendiente Then Return
+
+  ' --- 3. DETALLES PESADOS ---
+  AgregarAGrilla(m_FileManager.DetallesPesados($sRutaPendiente))
+  $sRutaPendiente = ""
+
+End
+
+' ============================================
+' Función   : mnuAbrir_Click
+' Propósito : Acción «Abrir» del menú contextual
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub mnuAbrir_Click()
+
+  fvProyecto_Activate()
+
+End
+
+' ============================================
+' Función   : mnuRenombrar_Click
+' Propósito : Acción «Renombrar» del menú contextual
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub mnuRenombrar_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+  Dim sMotivo As String
+  Dim sInicial As String
+  Dim sNuevo As String
+  Dim bCarpeta As Boolean
+  Dim bPieza As Boolean
+
+  sRuta = fvProyecto.Path
+  If sRuta = "" Then Return
+
+  ' --- 2. ¿SE PUEDE? ---
+  sMotivo = m_FileManager.MotivoNoRenombrar(sRuta)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sMotivo)
+    Return
+  Endif
+
+  ' --- 3. NOMBRE NUEVO ---
+  ' UN ARCHIVO TRAE LA SUGERENCIA NORMALIZADA (CASO 1). UNA CARPETA Y UNA
+  ' PIEZA, SU NOMBRE ACTUAL: LA PIEZA YA SIGUE LAS REGLAS DEL CONVERSOR Y LO
+  ' QUE SE CAMBIA ES EL NÚMERO
+  bCarpeta = m_FileManager.EsCarpeta(sRuta)
+  If bCarpeta Then
+    sInicial = File.Name(sRuta)
+  Else If m_FileManager.EsPieza(sRuta) Then
+    sInicial = File.Name(sRuta)
+  Else
+    sInicial = m_FileManager.NormalizarNombre(File.Name(sRuta), False)
+  Endif
+  sNuevo = m_FileManager.PedirNombre("Nombre nuevo para «" & File.Name(sRuta) & "»", sInicial, bCarpeta, fvProyecto.Dir, sRuta)
+  If sNuevo = "" Then Return
+
+  ' --- 4. RENOMBRAR ---
+  ' SE MIRA ANTES SI ES PIEZA: DESPUÉS DEL Move LA RUTA YA NO EXISTE
+  bPieza = m_FileManager.EsPieza(sRuta)
+  sMotivo = m_FileManager.Renombrar(sRuta, sNuevo)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error(sMotivo)
+    Return
+  Endif
+
+  ' --- 5. VISTAS ---
+  fvProyecto.Reload
+  fvProyecto.Current = sNuevo
+  If bCarpeta Then dvProyecto.Reload
+
+  ' --- 6. PIEZA: LA FICHA SE CORRIGE EN EL ABM (CAMINO B) ---
+  If bPieza Then
+    m_Sonido.sonar("Info")
+    Message.Info("Se renombró la pieza." & gb.NewLine & gb.NewLine &
+      "La base todavía tiene el nombre anterior: volvé a elegir el archivo en la ficha de la pieza.")
+  Endif
+
+End
+
+' ============================================
+' Función   : mnuBorrar_Click
+' Propósito : Acción «Borrar» del menú contextual. Borrado definitivo, con
+'             confirmación que dice qué se borra
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub mnuBorrar_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+  Dim sMotivo As String
+  Dim sPregunta As String
+  Dim bCarpeta As Boolean
+
+  sRuta = fvProyecto.Path
+  If sRuta = "" Then Return
+
+  ' --- 2. ¿SE PUEDE? ---
+  sMotivo = m_FileManager.MotivoNoBorrar(sRuta)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sMotivo)
+    Return
+  Endif
+
+  ' --- 3. CONFIRMACIÓN ---
+  sPregunta = m_FileManager.DescribirBorrado(sRuta) & gb.NewLine & gb.NewLine &
+    "El borrado es definitivo: no pasa por la papelera."
+  m_Sonido.sonar("Question")
+  If Message.Question(sPregunta, "Borrar", "Cancelar") <> 1 Then Return
+
+  ' --- 4. BORRAR ---
+  bCarpeta = m_FileManager.EsCarpeta(sRuta)
+  sMotivo = m_FileManager.Borrar(sRuta)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error(sMotivo)
+  Endif
+
+  ' --- 5. VISTAS ---
+  ' TAMBIÉN TRAS UN ERROR: UNA CARPETA PUDO QUEDAR BORRADA A MEDIAS
+  fvProyecto.Reload
+  If bCarpeta Then dvProyecto.Reload
+  ActualizarSeleccion()
+
+End
+
+' ============================================
+' Función   : mnuAgregarArchivo_Click
+' Propósito : Acción «Agregar archivo»: crea un archivo vacío en la carpeta
+'             abierta
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub mnuAgregarArchivo_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sDirectorio As String
+  Dim sNombre As String
+  Dim sMotivo As String
+
+  sDirectorio = fvProyecto.Dir
+
+  ' --- 2. NOMBRE ---
+  sNombre = m_FileManager.PedirNombre("Nombre del archivo nuevo (con extensión)", "", False, sDirectorio, "")
+  If sNombre = "" Then Return
+
+  ' --- 3. CREAR ---
+  sMotivo = m_FileManager.CrearArchivo(sDirectorio, sNombre)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error(sMotivo)
+    Return
+  Endif
+
+  ' --- 4. VISTA, CON EL ARCHIVO NUEVO SELECCIONADO ---
+  fvProyecto.Reload
+  fvProyecto.Current = sNombre
+
+End
+
+' ============================================
+' Función   : mnuAgregarCarpeta_Click
+' Propósito : Acción «Agregar carpeta»: crea una carpeta vacía en la carpeta
+'             abierta
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub mnuAgregarCarpeta_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sDirectorio As String
+  Dim sNombre As String
+  Dim sMotivo As String
+
+  sDirectorio = fvProyecto.Dir
+
+  ' --- 2. NOMBRE ---
+  sNombre = m_FileManager.PedirNombre("Nombre de la carpeta nueva", "", True, sDirectorio, "")
+  If sNombre = "" Then Return
+
+  ' --- 3. CREAR ---
+  sMotivo = m_FileManager.CrearCarpeta(sDirectorio, sNombre)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error(sMotivo)
+    Return
+  Endif
+
+  ' --- 4. VISTAS ---
+  fvProyecto.Reload
+  fvProyecto.Current = sNombre
+  dvProyecto.Reload
+
+End
+
+' ============================================
+' Función   : AccionAbrir
+' Propósito : Abre un archivo con la aplicación del sistema; un .md solo
+'             recibe el aviso de que existe el editor (caso 4)
+' Parámetros: sRuta As String — ruta absoluta del archivo
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub AccionAbrir(sRuta As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMotivo As String
+
+  ' --- 2. LOS .md NO SE ABREN: ES UN AVISO, NO UN ERROR ---
+  If m_FileManager.EsMarkdown(sRuta) Then
+    m_Sonido.sonar("Info")
+    Message.Info(m_FileManager.AVISO_MD)
+    Return
+  Endif
+
+  ' --- 3. VISOR DEL SISTEMA ---
+  sMotivo = m_FileManager.Abrir(sRuta)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sMotivo)
+  Endif
+
+End
+
+' ============================================
+' Función   : ActualizarSeleccion
+' Propósito : Llena la grilla y habilita el menú según la selección actual;
+'             programa los detalles pesados si corresponden
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub ActualizarSeleccion()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+
+  ' --- 2. LO PENDIENTE DE LA SELECCIÓN ANTERIOR SE DESCARTA ---
+  If $hTimerDetalles Then $hTimerDetalles.Stop
+  $sRutaPendiente = ""
+
+  ' --- 3. SIN SELECCIÓN: RESUMEN DE LA CARPETA ABIERTA ---
+  sRuta = fvProyecto.Path
+  If sRuta = "" Then
+    HabilitarMenu("")
+    MostrarDetallesCarpeta()
+    Return
+  Endif
+
+  ' --- 4. LO INMEDIATO ---
+  LlenarGrilla(m_FileManager.Detalles(sRuta))
+  HabilitarMenu(sRuta)
+
+  ' --- 5. LO PESADO, DESPUÉS DE LA DEMORA ---
+  If m_FileManager.TieneDetallesPesados(sRuta) Then
+    $sRutaPendiente = sRuta
+    $hTimerDetalles.Start
+  Endif
+
+End
+
+' ============================================
+' Función   : HabilitarMenu
+' Propósito : Habilita en menuFF solo las acciones que se pueden hacer con
+'             el elemento seleccionado
+' Parámetros: sRuta As String — ruta seleccionada, o vacío si no hay
+' Retorna   : (Sub, sin retorno)
+' Nota      : SE LLAMA DESDE Select. EN LA VISTA DE ÍCONOS EL BOTÓN DERECHO
+'             TAMBIÉN SELECCIONA EL ÍCONO ANTES DEL MENÚ (IconView.class,
+'             MouseDown NO FILTRA POR BOTÓN). SOBRE EL ÁREA VACÍA, EN MODO
+'             Single, LA SELECCIÓN ANTERIOR SE CONSERVA.
+' ============================================
+Private Sub HabilitarMenu(sRuta As String)
+
+  ' --- 1. AGREGAR: SIEMPRE, EN LA CARPETA ABIERTA ---
+  mnuAgregarArchivo.Enabled = True
+  mnuAgregarCarpeta.Enabled = True
+
+  ' --- 2. SIN SELECCIÓN ---
+  If sRuta = "" Then
+    mnuAbrir.Enabled = False
+    mnuRenombrar.Enabled = False
+    mnuBorrar.Enabled = False
+    Return
+  Endif
+
+  ' --- 3. CON SELECCIÓN: LAS MISMAS REGLAS QUE LAS ACCIONES ---
+  mnuAbrir.Enabled = True
+  mnuRenombrar.Enabled = (m_FileManager.MotivoNoRenombrar(sRuta) = "")
+  mnuBorrar.Enabled = (m_FileManager.MotivoNoBorrar(sRuta) = "")
+
+End
+
+' ============================================
+' Función   : MostrarDetallesCarpeta
+' Propósito : Sin selección, la grilla resume la carpeta abierta con los
+'             datos que FileView ya calculó
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : FileView CALCULA ESTOS DATOS AL RECARGAR, QUE ES ASÍNCRONO.
+'             JUSTO DESPUÉS DE CAMBIAR Dir PUEDEN SER LOS VIEJOS; EL EVENTO
+'             Refresh QUE LLEGA DESPUÉS LOS CORRIGE
+' ============================================
+Private Sub MostrarDetallesCarpeta()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPares As New String[]
+  Dim sRelativa As String
+
+  ' --- 2. PARES ---
+  sRelativa = m_FileManager.RutaRelativa(fvProyecto.Dir)
+  aPares.Add("Carpeta abierta")
+  If sRelativa = "" Then
+    aPares.Add("raíz del proyecto")
+  Else
+    aPares.Add(sRelativa & "/")
+  Endif
+  aPares.Add("Archivos")
+  aPares.Add(CStr(fvProyecto.FileCount))
+  aPares.Add("Carpetas")
+  aPares.Add(CStr(fvProyecto.DirCount))
+  aPares.Add("Tamaño de los archivos")
+  aPares.Add(m_FileManager.TamanioLegible(fvProyecto.TotalSize))
+
+  LlenarGrilla(aPares)
+
+End
+
+' ============================================
+' Función   : LlenarGrilla
+' Propósito : Reemplaza el contenido de gvDetalles por los pares recibidos
+' Parámetros: aPares As String[] — pares consecutivos propiedad/valor
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub LlenarGrilla(aPares As String[])
+
+  gvDetalles.Rows.Count = 0
+  AgregarAGrilla(aPares)
+
+End
+
+' ============================================
+' Función   : AgregarAGrilla
+' Propósito : Agrega al final de gvDetalles los pares recibidos
+' Parámetros: aPares As String[] — pares consecutivos propiedad/valor
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub AgregarAGrilla(aPares As String[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim i As Integer
+  Dim iFila As Integer
+
+  ' --- 2. UNA FILA POR PAR ---
+  ' ESCRITURA DIRECTA EN LAS CELDAS, COMO gvResultados EN FMain
+  For i = 0 To aPares.Count - 2 Step 2
+    iFila = gvDetalles.Rows.Count
+    gvDetalles.Rows.Count = iFila + 1
+    gvDetalles[iFila, 0].Text = aPares[i]
+    gvDetalles[iFila, 1].Text = aPares[i + 1]
+  Next
+
+End
+
+' ============================================
+' Función   : RestaurarTamanio
+' Propósito : Recupera el tamaño de la ventana de gbpublisher.conf (SC-17)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub RestaurarTamanio()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hConfiguracion As Settings
+  Dim iAncho As Integer
+  Dim iAlto As Integer
+
+  ' --- 2. LECTURA ---
+  ' SI FALTA O ES INVÁLIDO, QUEDA EL TAMAÑO DEL .form
+  Try hConfiguracion = New Settings(m_InicioCierre.RutaConfiguracion())
+  If Error Then Return
+  Try iAncho = CInt(hConfiguracion["FileManager/Ancho", 0])
+  If Error Then Return
+  Try iAlto = CInt(hConfiguracion["FileManager/Alto", 0])
+  If Error Then Return
+
+  ' --- 3. APLICACIÓN ---
+  If iAncho < ANCHO_MINIMO Then Return
+  If iAlto < ALTO_MINIMO Then Return
+  Me.Resize(iAncho, iAlto)
+
+End
+
+' ============================================
+' Función   : GuardarTamanio
+' Propósito : Guarda el tamaño de la ventana en gbpublisher.conf (SC-17)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub GuardarTamanio()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hConfiguracion As Settings
+
+  ' --- 2. ESCRITURA CON Save EXPLÍCITO (SC-17) ---
+  ' NO ES CRÍTICO: SI FALLA, LA PRÓXIMA VEZ ABRE CON EL TAMAÑO DEL .form
+  Try hConfiguracion = New Settings(m_InicioCierre.RutaConfiguracion())
+  If Error Then Return
+  hConfiguracion["FileManager/Ancho"] = Me.Width
+  hConfiguracion["FileManager/Alto"] = Me.Height
+  Try hConfiguracion.Save()
+
+End

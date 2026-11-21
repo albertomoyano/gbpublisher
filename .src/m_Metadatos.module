@@ -423,259 +423,259 @@ Public Function GuardarMetadatosDeLibro() As Boolean
   ' CAMPOS NUMÉRICOS: SOLO DÍGITOS (GV-96). ANTES IBAN COMO TEXTO Y UNO CON
   ' PUNTO O COMA LO RECHAZABA MySQL CON UN ERROR DE TIPO
   If Not m_FuncionesGenericas.ControlarEnteros(
-    [FMetadatosLibro.numero_edicion.Text, FMetadatosLibro.numero_paginas.Text, FMetadatosLibro.ano_publicacion.Text, FMetadatosLibro.periodo_embargo.Text],
-    ["Número de edición", "Número de páginas", "Año de publicación", "Período de embargo"]) Then Return False
+      [FMetadatosLibro.numero_edicion.Text, FMetadatosLibro.numero_paginas.Text, FMetadatosLibro.ano_publicacion.Text, FMetadatosLibro.periodo_embargo.Text],
+      ["Número de edición", "Número de páginas", "Año de publicación", "Período de embargo"]) Then Return False
 
-  ' DESTINO DE LA SALIDA HTML: LA DIRECCIÓN DEL PORTAL, CON LAS REGLAS DE
-  ' LOS CHECK DE libros_md (1.22.0)
-  If Not UrlPortalValida() Then Return False
+    ' DESTINO DE LA SALIDA HTML: LA DIRECCIÓN DEL PORTAL, CON LAS REGLAS DE
+    ' LOS CHECK DE libros_md (1.22.0)
+    If Not UrlPortalValida() Then Return False
 
-  ' --- 2. ARRAYS DE ENUM (MISMO ORDEN QUE EL POBLADO EN FMetadatosLibro.Form_Open) ---
-  Dim aTipoLibro As New String[]
-  Dim aLugarBib As New String[]
-  Dim aEstadoPub As New String[]
-  Dim aEstadoLibro As New String[]
-  Dim aTipoAcceso As New String[]
+    ' --- 2. ARRAYS DE ENUM (MISMO ORDEN QUE EL POBLADO EN FMetadatosLibro.Form_Open) ---
+    Dim aTipoLibro As New String[]
+    Dim aLugarBib As New String[]
+    Dim aEstadoPub As New String[]
+    Dim aEstadoLibro As New String[]
+    Dim aTipoAcceso As New String[]
 
-  aTipoLibro.Add("monografia")
-  aTipoLibro.Add("obra_colectiva")
-  aTipoLibro.Add("compilacion")
-  aTipoLibro.Add("traduccion")
-  aTipoLibro.Add("referencia")
-  aTipoLibro.Add("manual")
-  aTipoLibro.Add("actas")
+    aTipoLibro.Add("monografia")
+    aTipoLibro.Add("obra_colectiva")
+    aTipoLibro.Add("compilacion")
+    aTipoLibro.Add("traduccion")
+    aTipoLibro.Add("referencia")
+    aTipoLibro.Add("manual")
+    aTipoLibro.Add("actas")
 
-  aLugarBib.Add("consolidada")
-  aLugarBib.Add("por_capitulo")
+    aLugarBib.Add("consolidada")
+    aLugarBib.Add("por_capitulo")
 
-  aEstadoPub.Add("en_preparacion")
-  aEstadoPub.Add("publicado")
-  aEstadoPub.Add("agotado")
-  aEstadoPub.Add("descatalogado")
+    aEstadoPub.Add("en_preparacion")
+    aEstadoPub.Add("publicado")
+    aEstadoPub.Add("agotado")
+    aEstadoPub.Add("descatalogado")
 
-  ' ESTADO EDITORIAL DE PROCESO — ALIMENTA EL SEGUIMIENTO EN GITHUB DISCUSSIONS.
-  ' NO CONFUNDIR CON estado_publicacion, QUE ES EL ESTADO BIBLIOGRÁFICO.
-  aEstadoLibro.Add("borrador")
-  aEstadoLibro.Add("en_correccion")
-  aEstadoLibro.Add("en_produccion")
-  aEstadoLibro.Add("publicado")
+    ' ESTADO EDITORIAL DE PROCESO — ALIMENTA EL SEGUIMIENTO EN GITHUB DISCUSSIONS.
+    ' NO CONFUNDIR CON estado_publicacion, QUE ES EL ESTADO BIBLIOGRÁFICO.
+    aEstadoLibro.Add("borrador")
+    aEstadoLibro.Add("en_correccion")
+    aEstadoLibro.Add("en_produccion")
+    aEstadoLibro.Add("publicado")
 
-  aTipoAcceso.Add("abierto")
-  aTipoAcceso.Add("venta")
-  aTipoAcceso.Add("mixto")
-  aTipoAcceso.Add("embargado")
+    aTipoAcceso.Add("abierto")
+    aTipoAcceso.Add("venta")
+    aTipoAcceso.Add("mixto")
+    aTipoAcceso.Add("embargado")
 
-  ' DESTINO DE LA SALIDA HTML (1.22.0), EN EL ORDEN DEL COMBO
-  Dim aDestinoHtml As String[] = ["autonomo", "portal"]
+    ' DESTINO DE LA SALIDA HTML (1.22.0), EN EL ORDEN DEL COMBO
+    Dim aDestinoHtml As String[] = ["autonomo", "portal"]
 
-  ' --- 3. VERIFICAR QUE EXISTE EL REGISTRO; SI NO, CREARLO ---
-  verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
+    ' --- 3. VERIFICAR QUE EXISTE EL REGISTRO; SI NO, CREARLO ---
+    verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
 
-  If Not verificacion.Available Then
-    ' INSERT MÍNIMO CON LOS DEFAULTS Y EL TÍTULO ACTUAL DEL FORMULARIO.
-    ' INICIALIZA LAS TRES FECHAS (año, mes, fecha completa) AL MOMENTO DE
-    ' CREACIÓN PARA EVITAR Null Y POR COHERENCIA EDITORIAL.
-    m_ConexionBD.mConn.Exec("INSERT INTO libros_md (" &
-      "  id_proyecto, " &
-      "  titulo_libro, " &
-      "  tipo_libro, " &
-      "  lugar_bibliografia, " &
-      "  estado_publicacion, " &
-      "  tipo_acceso, " &
-      "  repositorio_produccion_privado, " &
-      "  idioma_principal, " &
-      "  ano_publicacion, " &
-      "  mes_publicacion, " &
-      "  fecha_publicacion_completa, " &
-      "  usuario_creacion" &
-      ") VALUES (&1, &2, 'monografia', 'por_capitulo', 'en_preparacion', 'abierto', 1, 'es', " &
-      "  YEAR(CURDATE()), " &
-      "  ELT(MONTH(CURDATE()), 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', " &
-      "                        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'), " &
-      "  CURDATE(), " &
-      "  &3)",
-      idProyecto,
-      StringToNull(FMetadatosLibro.titulo_libro.Text),
-      m_InicioCierre.UsuarioEnCurso)
+    If Not verificacion.Available Then
+      ' INSERT MÍNIMO CON LOS DEFAULTS Y EL TÍTULO ACTUAL DEL FORMULARIO.
+      ' INICIALIZA LAS TRES FECHAS (año, mes, fecha completa) AL MOMENTO DE
+      ' CREACIÓN PARA EVITAR Null Y POR COHERENCIA EDITORIAL.
+      m_ConexionBD.mConn.Exec("INSERT INTO libros_md (" &
+        "  id_proyecto, " &
+        "  titulo_libro, " &
+        "  tipo_libro, " &
+        "  lugar_bibliografia, " &
+        "  estado_publicacion, " &
+        "  tipo_acceso, " &
+        "  repositorio_produccion_privado, " &
+        "  idioma_principal, " &
+        "  ano_publicacion, " &
+        "  mes_publicacion, " &
+        "  fecha_publicacion_completa, " &
+        "  usuario_creacion" &
+        ") VALUES (&1, &2, 'monografia', 'por_capitulo', 'en_preparacion', 'abierto', 1, 'es', " &
+        "  YEAR(CURDATE()), " &
+        "  ELT(MONTH(CURDATE()), 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', " &
+        "                        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'), " &
+        "  CURDATE(), " &
+        "  &3)",
+        idProyecto,
+        StringToNull(FMetadatosLibro.titulo_libro.Text),
+        m_InicioCierre.UsuarioEnCurso)
+      m_ConexionBD.mConn.Commit()
+    Endif
+
+    ' --- 4. EDITAR EL REGISTRO ---
+    resultado = m_ConexionBD.mConn.Edit("libros_md", "id_proyecto=" & idProyecto)
+
+    If Not resultado.Available Then
+      m_Sonido.sonar("Error")
+      Message.Error("No se encontró el registro de libro para editar.")
+      Return False
+    Endif
+
+    With FMetadatosLibro
+
+      ' CÓDIGOS
+      resultado!isbn_impreso = StringToNull(.isbn_impreso.Text)
+      resultado!isbn_electronico = StringToNull(.isbn_electronico.Text)
+      resultado!doi_libro = StringToNull(.doi_libro.Text)
+      resultado!doi_prefix = StringToNull(.doi_prefix.Text)
+      resultado!handle_prefix = StringToNull(.handle_prefix.Text)
+      resultado!identificador_scielo = StringToNull(.identificador_scielo.Text)
+
+      ' TÍTULOS
+      resultado!titulo_libro = StringToNull(.titulo_libro.Text)
+      resultado!subtitulo = StringToNull(.subtitulo.Text)
+      resultado!titulo_abreviado = StringToNull(.titulo_abreviado.Text)
+      resultado!titulo_original = StringToNull(.titulo_original.Text)
+      resultado!idioma_titulo_original = StringToNull(.idioma_titulo_original.Text)
+
+      ' TIPOLOGÍA Y EDICIÓN
+      resultado!tipo_libro = ObtenerEnumDeCombo(.tipo_libro, aTipoLibro)
+      resultado!lugar_bibliografia = ObtenerEnumDeCombo(.lugar_bibliografia, aLugarBib)
+      resultado!edicion = StringToNull(.edicion.Text)
+      resultado!numero_edicion = m_FuncionesGenericas.EnteroDeTexto(.numero_edicion.Text)
+      resultado!numero_paginas = m_FuncionesGenericas.EnteroDeTexto(.numero_paginas.Text)
+
+      ' COLECCIÓN Y SERIE (FK) — IDs DESDE LOS HELPERS DEL FORMULARIO
+      Dim iIdCol As Integer = .ObtenerIdColeccionSeleccionada()
+      Dim iIdSer As Integer = .ObtenerIdSerieSeleccionada()
+      If iIdCol > 0 Then
+        resultado!id_coleccion = iIdCol
+      Else
+        resultado!id_coleccion = Null
+      Endif
+      If iIdSer > 0 Then
+        resultado!id_serie = iIdSer
+      Else
+        resultado!id_serie = Null
+      Endif
+      ' FORMATO PDF (FK NULLABLE): id 0 => "(sin formato)" => NULL
+      Dim iIdFmt As Integer = .ObtenerIdFormatoSeleccionado()
+      If iIdFmt > 0 Then
+        resultado!id_formato_pdf = iIdFmt
+      Else
+        resultado!id_formato_pdf = Null
+      Endif
+      resultado!numero_en_coleccion = StringToNull(.numero_en_coleccion.Text)
+      resultado!numero_en_serie = StringToNull(.numero_en_serie.Text)
+
+      ' PUBLICACIÓN
+      resultado!ano_publicacion = m_FuncionesGenericas.EnteroDeTexto(.ano_publicacion.Text)
+      resultado!mes_publicacion = StringToNull(.mes_publicacion.Text)
+      resultado!fecha_publicacion_completa = .fecha_publicacion_completa.Value
+      resultado!idioma_principal = StringToNull(.idioma_principal.Text)
+      resultado!idiomas_publicacion = StringToNull(.idiomas_publicacion.Text)
+      resultado!estado_publicacion = ObtenerEnumDeCombo(.estado_publicacion, aEstadoPub)
+      resultado!estado_libro = ObtenerEnumDeCombo(.estado_libro, aEstadoLibro)
+
+      ' EDITORIAL
+      resultado!editorial = StringToNull(.editorial.Text)
+      resultado!institucion_editora = StringToNull(.institucion_editora.Text)
+      resultado!ror_editorial = StringToNull(.ror_editorial.Text)
+      resultado!ciudad_publicacion = StringToNull(.ciudad_publicacion.Text)
+      resultado!pais_publicacion = StringToNull(m_Paises.NombreDelCombo(.cmbPaisPublicacion))
+      ' NULL Y NO «»: LA CLAVE FORÁNEA RECHAZA UN CÓDIGO VACÍO (StringToNull
+      ' DEVUELVE «»)
+      resultado!pais_publicacion_codigo = m_Revistas.NuloSiVacio(m_Paises.CodigoDelCombo(.cmbPaisPublicacion))
+      resultado!direccion_editorial = StringToNull(.direccion_editorial.Text)
+      resultado!email_editorial = StringToNull(.email_editorial.Text)
+
+      ' DISCIPLINAS
+      resultado!area_conocimiento = StringToNull(.area_conocimiento.Text)
+      resultado!disciplina = StringToNull(.disciplina.Text)
+      resultado!subdisciplina = StringToNull(.subdisciplina.Text)
+      resultado!palabras_clave_libro = StringToNull(.palabras_clave_libro.Text)
+      resultado!palabras_clave_traducidas = StringToNull(.palabras_clave_traducidas.Text)
+      resultado!idioma_palabras_clave_traducidas = StringToNull(.idioma_palabras_clave_traducidas.Text)
+      resultado!palabras_clave_traducidas_2 = StringToNull(.palabras_clave_traducidas_2.Text)
+      resultado!idioma_palabras_clave_traducidas_2 = StringToNull(.idioma_palabras_clave_traducidas_2.Text)
+      resultado!clasificacion_unesco = StringToNull(.clasificacion_unesco.Text)
+      resultado!clasificacion_oecd = StringToNull(.clasificacion_oecd.Text)
+
+      ' ACCESO Y LICENCIA
+      resultado!tipo_acceso = ObtenerEnumDeCombo(.tipo_acceso, aTipoAcceso)
+      resultado!licencia_defecto = StringToNull(.licencia_defecto.Text)
+      resultado!url_licencia = StringToNull(.url_licencia.Text)
+      resultado!politica_acceso_abierto = StringToNull(.politica_acceso_abierto.Text)
+      resultado!periodo_embargo = m_FuncionesGenericas.EnteroDeTexto(.periodo_embargo.Text)
+
+      ' URLS Y ACTIVOS
+      resultado!url_libro = StringToNull(.url_libro.Text)
+      ' DESTINO DE LA SALIDA HTML Y DIRECCIÓN DEL PORTAL (1.22.0). VACÍA ES
+      ' NULL (GV-74): LA COLUMNA TIENE CHECK DE FORMA
+      resultado!destino_html = ObtenerEnumDeCombo(.destino_html, aDestinoHtml)
+      resultado!url_portal = StringToNull(.url_portal.Text)
+      resultado!url_oai_pmh = StringToNull(.url_oai_pmh.Text)
+      resultado!url_logo = StringToNull(.url_logo.Text)
+      resultado!imagen_tapa = StringToNull(.imagen_tapa.Text)
+      resultado!url_descarga_epub = StringToNull(.url_descarga_epub.Text)
+      ' url_compra YA NO SE ESCRIBE: LOS PUNTOS DE VENTA VAN A libro_venta (1.21.0)
+
+      ' PRIMERAS DEL LIBRO (SC-25). StringToNull SOLO RECORTA LOS BORDES: LOS
+      ' SALTOS DE LÍNEA DE ADENTRO SE CONSERVAN, Y SON PARTE DEL TEXTO
+      resultado!leyenda_autoria = StringToNull(.leyenda_autoria.Text)
+      resultado!logo_portada = StringToNull(.logo_portada.Text)
+      resultado!logo_coleccion = StringToNull(.logo_coleccion.Text)
+      resultado!texto_catalogacion = StringToNull(.texto_catalogacion.Text)
+      resultado!texto_legal = StringToNull(.texto_legal.Text)
+      resultado!texto_catalogacion_digital = StringToNull(.texto_catalogacion_digital.Text)
+      resultado!texto_legal_digital = StringToNull(.texto_legal_digital.Text)
+      resultado!url_descarga_pdf = StringToNull(.url_descarga_pdf.Text)
+
+      ' REPOSITORIOS DE PRODUCCIÓN
+      resultado!repositorio_produccion_url = StringToNull(.repositorio_produccion_url.Text)
+      resultado!repositorio_produccion_plataforma = StringToNull(.repositorio_produccion_plataforma.Text)
+      resultado!repositorio_produccion_tipo = StringToNull(.repositorio_produccion_tipo.Text)
+      ' BUG FIX: ACÁ ESCRIBIMOS EL CHECKBOX A LA BD (NO AL REVÉS)
+      resultado!repositorio_produccion_privado = .repositorio_produccion_privado.Value
+      resultado!sistema_gestion_contenidos = StringToNull(.sistema_gestion_contenidos.Text)
+
+      ' REPOSITORIOS DE PRESERVACIÓN
+      resultado!repositorio_preservacion_url = StringToNull(.repositorio_preservacion_url.Text)
+      resultado!repositorio_preservacion_plataforma = StringToNull(.repositorio_preservacion_plataforma.Text)
+
+      ' INDEXACIÓN
+      resultado!indexado_en = StringToNull(.indexado_en.Text)
+
+      ' RESUMEN Y DESCRIPCIÓN
+      resultado!resumen_libro = StringToNull(.resumen_libro.Text)
+      resultado!resumen_traducido = StringToNull(.resumen_traducido.Text)
+      resultado!idioma_resumen_traducido = StringToNull(.idioma_resumen_traducido.Text)
+      resultado!resumen_traducido_2 = StringToNull(.resumen_traducido_2.Text)
+      resultado!idioma_resumen_traducido_2 = StringToNull(.idioma_resumen_traducido_2.Text)
+      resultado!descripcion_libro = StringToNull(.descripcion_libro.Text)
+      resultado!objetivos_alcance = StringToNull(.objetivos_alcance.Text)
+
+      ' ESTILO DE CITA (EXTRAE EL IDENTIFICADOR DEL TEXTO MOSTRADO)
+      resultado!estilo_cita = FMetadatosLibro.ExtraerIdEstilo(FMetadatosLibro.cmbEstiloCita.Text)
+
+      ' NOTAS INTERNAS
+      resultado!notas_internas = StringToNull(.notas_internas.Text)
+
+    End With
+
+    ' --- 5. ACTUALIZAR Y CONFIRMAR ---
+    resultado.Update
     m_ConexionBD.mConn.Commit()
-  Endif
+    resultado = Null
 
-  ' --- 4. EDITAR EL REGISTRO ---
-  resultado = m_ConexionBD.mConn.Edit("libros_md", "id_proyecto=" & idProyecto)
+    ' --- 5.b PUNTOS DE VENTA (TABLA libro_venta, 1.21.0) ---
+    ' DESPUÉS DEL LIBRO: SI EL REGISTRO SE ACABA DE CREAR, RECIÉN AHORA TIENE id_libro
+    verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
+    If Not m_VentaLibro.Guardar(verificacion!id_libro) Then Return False
 
-  If Not resultado.Available Then
+    m_Sonido.sonar("Info")
+    Message.Info("Metadatos de libro guardados correctamente.")
+
+    ' RECARGAR PARA MOSTRAR EL id_libro ACTUALIZADO Y NORMALIZADOS
+    CargarMetadatosDeLibro()
+
+    Return True
+
+  Catch
     m_Sonido.sonar("Error")
-    Message.Error("No se encontró el registro de libro para editar.")
+    Message.Error("Error al guardar metadatos de libro:" & gb.NewLine &
+      "Mensaje: " & Error.Text & gb.NewLine &
+      "Lugar: " & Error.Where & gb.NewLine &
+      "Código: " & Error.Code)
     Return False
-  Endif
-
-  With FMetadatosLibro
-
-    ' CÓDIGOS
-    resultado!isbn_impreso = StringToNull(.isbn_impreso.Text)
-    resultado!isbn_electronico = StringToNull(.isbn_electronico.Text)
-    resultado!doi_libro = StringToNull(.doi_libro.Text)
-    resultado!doi_prefix = StringToNull(.doi_prefix.Text)
-    resultado!handle_prefix = StringToNull(.handle_prefix.Text)
-    resultado!identificador_scielo = StringToNull(.identificador_scielo.Text)
-
-    ' TÍTULOS
-    resultado!titulo_libro = StringToNull(.titulo_libro.Text)
-    resultado!subtitulo = StringToNull(.subtitulo.Text)
-    resultado!titulo_abreviado = StringToNull(.titulo_abreviado.Text)
-    resultado!titulo_original = StringToNull(.titulo_original.Text)
-    resultado!idioma_titulo_original = StringToNull(.idioma_titulo_original.Text)
-
-    ' TIPOLOGÍA Y EDICIÓN
-    resultado!tipo_libro = ObtenerEnumDeCombo(.tipo_libro, aTipoLibro)
-    resultado!lugar_bibliografia = ObtenerEnumDeCombo(.lugar_bibliografia, aLugarBib)
-    resultado!edicion = StringToNull(.edicion.Text)
-    resultado!numero_edicion = m_FuncionesGenericas.EnteroDeTexto(.numero_edicion.Text)
-    resultado!numero_paginas = m_FuncionesGenericas.EnteroDeTexto(.numero_paginas.Text)
-
-    ' COLECCIÓN Y SERIE (FK) — IDs DESDE LOS HELPERS DEL FORMULARIO
-    Dim iIdCol As Integer = .ObtenerIdColeccionSeleccionada()
-    Dim iIdSer As Integer = .ObtenerIdSerieSeleccionada()
-    If iIdCol > 0 Then
-      resultado!id_coleccion = iIdCol
-    Else
-      resultado!id_coleccion = Null
-    Endif
-    If iIdSer > 0 Then
-      resultado!id_serie = iIdSer
-    Else
-      resultado!id_serie = Null
-    Endif
-    ' FORMATO PDF (FK NULLABLE): id 0 => "(sin formato)" => NULL
-    Dim iIdFmt As Integer = .ObtenerIdFormatoSeleccionado()
-    If iIdFmt > 0 Then
-      resultado!id_formato_pdf = iIdFmt
-    Else
-      resultado!id_formato_pdf = Null
-    Endif
-    resultado!numero_en_coleccion = StringToNull(.numero_en_coleccion.Text)
-    resultado!numero_en_serie = StringToNull(.numero_en_serie.Text)
-
-    ' PUBLICACIÓN
-    resultado!ano_publicacion = m_FuncionesGenericas.EnteroDeTexto(.ano_publicacion.Text)
-    resultado!mes_publicacion = StringToNull(.mes_publicacion.Text)
-    resultado!fecha_publicacion_completa = .fecha_publicacion_completa.Value
-    resultado!idioma_principal = StringToNull(.idioma_principal.Text)
-    resultado!idiomas_publicacion = StringToNull(.idiomas_publicacion.Text)
-    resultado!estado_publicacion = ObtenerEnumDeCombo(.estado_publicacion, aEstadoPub)
-    resultado!estado_libro = ObtenerEnumDeCombo(.estado_libro, aEstadoLibro)
-
-    ' EDITORIAL
-    resultado!editorial = StringToNull(.editorial.Text)
-    resultado!institucion_editora = StringToNull(.institucion_editora.Text)
-    resultado!ror_editorial = StringToNull(.ror_editorial.Text)
-    resultado!ciudad_publicacion = StringToNull(.ciudad_publicacion.Text)
-    resultado!pais_publicacion = StringToNull(m_Paises.NombreDelCombo(.cmbPaisPublicacion))
-    ' NULL Y NO «»: LA CLAVE FORÁNEA RECHAZA UN CÓDIGO VACÍO (StringToNull
-    ' DEVUELVE «»)
-    resultado!pais_publicacion_codigo = m_Revistas.NuloSiVacio(m_Paises.CodigoDelCombo(.cmbPaisPublicacion))
-    resultado!direccion_editorial = StringToNull(.direccion_editorial.Text)
-    resultado!email_editorial = StringToNull(.email_editorial.Text)
-
-    ' DISCIPLINAS
-    resultado!area_conocimiento = StringToNull(.area_conocimiento.Text)
-    resultado!disciplina = StringToNull(.disciplina.Text)
-    resultado!subdisciplina = StringToNull(.subdisciplina.Text)
-    resultado!palabras_clave_libro = StringToNull(.palabras_clave_libro.Text)
-    resultado!palabras_clave_traducidas = StringToNull(.palabras_clave_traducidas.Text)
-    resultado!idioma_palabras_clave_traducidas = StringToNull(.idioma_palabras_clave_traducidas.Text)
-    resultado!palabras_clave_traducidas_2 = StringToNull(.palabras_clave_traducidas_2.Text)
-    resultado!idioma_palabras_clave_traducidas_2 = StringToNull(.idioma_palabras_clave_traducidas_2.Text)
-    resultado!clasificacion_unesco = StringToNull(.clasificacion_unesco.Text)
-    resultado!clasificacion_oecd = StringToNull(.clasificacion_oecd.Text)
-
-    ' ACCESO Y LICENCIA
-    resultado!tipo_acceso = ObtenerEnumDeCombo(.tipo_acceso, aTipoAcceso)
-    resultado!licencia_defecto = StringToNull(.licencia_defecto.Text)
-    resultado!url_licencia = StringToNull(.url_licencia.Text)
-    resultado!politica_acceso_abierto = StringToNull(.politica_acceso_abierto.Text)
-    resultado!periodo_embargo = m_FuncionesGenericas.EnteroDeTexto(.periodo_embargo.Text)
-
-    ' URLS Y ACTIVOS
-    resultado!url_libro = StringToNull(.url_libro.Text)
-    ' DESTINO DE LA SALIDA HTML Y DIRECCIÓN DEL PORTAL (1.22.0). VACÍA ES
-    ' NULL (GV-74): LA COLUMNA TIENE CHECK DE FORMA
-    resultado!destino_html = ObtenerEnumDeCombo(.destino_html, aDestinoHtml)
-    resultado!url_portal = StringToNull(.url_portal.Text)
-    resultado!url_oai_pmh = StringToNull(.url_oai_pmh.Text)
-    resultado!url_logo = StringToNull(.url_logo.Text)
-    resultado!imagen_tapa = StringToNull(.imagen_tapa.Text)
-    resultado!url_descarga_epub = StringToNull(.url_descarga_epub.Text)
-    ' url_compra YA NO SE ESCRIBE: LOS PUNTOS DE VENTA VAN A libro_venta (1.21.0)
-
-    ' PRIMERAS DEL LIBRO (SC-25). StringToNull SOLO RECORTA LOS BORDES: LOS
-    ' SALTOS DE LÍNEA DE ADENTRO SE CONSERVAN, Y SON PARTE DEL TEXTO
-    resultado!leyenda_autoria = StringToNull(.leyenda_autoria.Text)
-    resultado!logo_portada = StringToNull(.logo_portada.Text)
-    resultado!logo_coleccion = StringToNull(.logo_coleccion.Text)
-    resultado!texto_catalogacion = StringToNull(.texto_catalogacion.Text)
-    resultado!texto_legal = StringToNull(.texto_legal.Text)
-    resultado!texto_catalogacion_digital = StringToNull(.texto_catalogacion_digital.Text)
-    resultado!texto_legal_digital = StringToNull(.texto_legal_digital.Text)
-    resultado!url_descarga_pdf = StringToNull(.url_descarga_pdf.Text)
-
-    ' REPOSITORIOS DE PRODUCCIÓN
-    resultado!repositorio_produccion_url = StringToNull(.repositorio_produccion_url.Text)
-    resultado!repositorio_produccion_plataforma = StringToNull(.repositorio_produccion_plataforma.Text)
-    resultado!repositorio_produccion_tipo = StringToNull(.repositorio_produccion_tipo.Text)
-    ' BUG FIX: ACÁ ESCRIBIMOS EL CHECKBOX A LA BD (NO AL REVÉS)
-    resultado!repositorio_produccion_privado = .repositorio_produccion_privado.Value
-    resultado!sistema_gestion_contenidos = StringToNull(.sistema_gestion_contenidos.Text)
-
-    ' REPOSITORIOS DE PRESERVACIÓN
-    resultado!repositorio_preservacion_url = StringToNull(.repositorio_preservacion_url.Text)
-    resultado!repositorio_preservacion_plataforma = StringToNull(.repositorio_preservacion_plataforma.Text)
-
-    ' INDEXACIÓN
-    resultado!indexado_en = StringToNull(.indexado_en.Text)
-
-    ' RESUMEN Y DESCRIPCIÓN
-    resultado!resumen_libro = StringToNull(.resumen_libro.Text)
-    resultado!resumen_traducido = StringToNull(.resumen_traducido.Text)
-    resultado!idioma_resumen_traducido = StringToNull(.idioma_resumen_traducido.Text)
-    resultado!resumen_traducido_2 = StringToNull(.resumen_traducido_2.Text)
-    resultado!idioma_resumen_traducido_2 = StringToNull(.idioma_resumen_traducido_2.Text)
-    resultado!descripcion_libro = StringToNull(.descripcion_libro.Text)
-    resultado!objetivos_alcance = StringToNull(.objetivos_alcance.Text)
-
-    ' ESTILO DE CITA (EXTRAE EL IDENTIFICADOR DEL TEXTO MOSTRADO)
-    resultado!estilo_cita = FMetadatosLibro.ExtraerIdEstilo(FMetadatosLibro.cmbEstiloCita.Text)
-
-    ' NOTAS INTERNAS
-    resultado!notas_internas = StringToNull(.notas_internas.Text)
-
-  End With
-
-  ' --- 5. ACTUALIZAR Y CONFIRMAR ---
-  resultado.Update
-  m_ConexionBD.mConn.Commit()
-  resultado = Null
-
-  ' --- 5.b PUNTOS DE VENTA (TABLA libro_venta, 1.21.0) ---
-  ' DESPUÉS DEL LIBRO: SI EL REGISTRO SE ACABA DE CREAR, RECIÉN AHORA TIENE id_libro
-  verificacion = m_ConexionBD.mConn.Exec("SELECT id_libro FROM libros_md WHERE id_proyecto = &1", idProyecto)
-  If Not m_VentaLibro.Guardar(verificacion!id_libro) Then Return False
-
-  m_Sonido.sonar("Info")
-  Message.Info("Metadatos de libro guardados correctamente.")
-
-  ' RECARGAR PARA MOSTRAR EL id_libro ACTUALIZADO Y NORMALIZADOS
-  CargarMetadatosDeLibro()
-
-  Return True
-
-Catch
-  m_Sonido.sonar("Error")
-  Message.Error("Error al guardar metadatos de libro:" & gb.NewLine &
-    "Mensaje: " & Error.Text & gb.NewLine &
-    "Lugar: " & Error.Where & gb.NewLine &
-    "Código: " & Error.Code)
-  Return False
 
 End
 
@@ -894,6 +894,8 @@ Public Sub GuardarMetadatosDeCapitulo()
   Dim $result As Result
   Dim iIdParte As Integer
   Dim sProblema As String
+  Dim sNombreNuevo As String
+  Dim sNombreAnterior As String
 
   ' --- 1. VALIDACIÓN: HAY CAPÍTULO ACTIVO? ---
   iIdCap = FMetadatosCapitulos.id_capitulo.Value
@@ -925,167 +927,186 @@ Public Sub GuardarMetadatosDeCapitulo()
 
   ' --- 2c. CAMPOS NUMÉRICOS: SOLO DÍGITOS (GV-96) ---
   If Not m_FuncionesGenericas.ControlarEnteros(
-    [FMetadatosCapitulos.numero_paginas.Text, FMetadatosCapitulos.numero_figuras.Text, FMetadatosCapitulos.numero_tablas.Text,
-    FMetadatosCapitulos.numero_ecuaciones.Text, FMetadatosCapitulos.copyright_year.Text],
-    ["Número de páginas", "Número de figuras", "Número de tablas", "Número de ecuaciones", "Año del copyright"]) Then Return
+      [FMetadatosCapitulos.numero_paginas.Text, FMetadatosCapitulos.numero_figuras.Text, FMetadatosCapitulos.numero_tablas.Text,
+      FMetadatosCapitulos.numero_ecuaciones.Text, FMetadatosCapitulos.copyright_year.Text],
+      ["Número de páginas", "Número de figuras", "Número de tablas", "Número de ecuaciones", "Año del copyright"]) Then Return
 
-  ' --- 3. ABRIR EL REGISTRO EN MODO EDICIÓN ---
-  Try $result = m_ConexionBD.mConn.Edit("capitulos", "id_capitulo = " & Str(iIdCap))
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al abrir capítulo para edición:" & Chr(10) & Error.Text)
-    Return
-  Endif
+    ' --- 3. ABRIR EL REGISTRO EN MODO EDICIÓN ---
+    Try $result = m_ConexionBD.mConn.Edit("capitulos", "id_capitulo = " & Str(iIdCap))
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al abrir capítulo para edición:" & Chr(10) & Error.Text)
+      Return
+    Endif
 
-  If Not $result.Available Then
-    m_Sonido.sonar("Error")
-    Message.Error("El capítulo no se encontró en la base de datos.")
-    Return
-  Endif
+    If Not $result.Available Then
+      m_Sonido.sonar("Error")
+      Message.Error("El capítulo no se encontró en la base de datos.")
+      Return
+    Endif
 
-  ' --- 4. RESOLVER id_parte (PUEDE SER 0 = "(sin parte)") ---
-  ' DEFENSA EN PROFUNDIDAD: fm-NN-* Y bm-NN-* NO PUEDEN TENER PARTE
-  ' ASIGNADA, INDEPENDIENTEMENTE DE LO QUE DIGA EL COMBO id_parte.
-  ' SI LA UI FALLÓ AL DESHABILITAR EL COMBO O LA BD QUEDÓ INCONSISTENTE
-  ' POR UNA SESIÓN ANTERIOR, ACÁ SE CORRIGE.
-  Dim sNom As String = LCase(FMetadatosCapitulos.nombre_archivo.Text)
-  If sNom Begins "fm-" Or sNom Begins "bm-" Then
-    iIdParte = 0
-  Else
-    iIdParte = FMetadatosCapitulos.ObtenerIdParteSeleccionada()
-  Endif
+    ' --- 3b. LA REGLA DEL NOMBRE, SOLO SI EL NOMBRE CAMBIA ---
+    ' LO QUE YA ESTÁ EN LA BASE QUEDA: LA REGLA SE APLICA AL ESCRIBIR UN NOMBRE,
+    ' EN UN ALTA O UN CAMBIO (m_OrdenPiezas, «LA ESCRITURA DEL NOMBRE»). VALE
+    ' TAMBIÉN PARA LAS PÁGINAS LÓGICAS, QUE NO TIENEN .md. If ANIDADOS POR EL
+    ' Null (RC-GM-17)
+    sNombreNuevo = Trim(FMetadatosCapitulos.nombre_archivo.Text)
+    If Not IsNull($result!nombre_archivo) Then sNombreAnterior = $result!nombre_archivo
+    If sNombreNuevo <> "" Then
+      If sNombreNuevo <> sNombreAnterior Then
+        sProblema = m_OrdenPiezas.MotivoNombrePieza(sNombreNuevo)
+        If sProblema <> "" Then
+          m_Sonido.sonar("Warning")
+          Message.Warning(sProblema)
+          FMetadatosCapitulos.nombre_archivo.SetFocus()
+          Return
+        Endif
+      Endif
+    Endif
 
-  ' --- 5. ASIGNAR TODOS LOS CAMPOS UNO POR UNO ---
-  With FMetadatosCapitulos
+    ' --- 4. RESOLVER id_parte (PUEDE SER 0 = "(sin parte)") ---
+    ' DEFENSA EN PROFUNDIDAD: fm-NN-* Y bm-NN-* NO PUEDEN TENER PARTE
+    ' ASIGNADA, INDEPENDIENTEMENTE DE LO QUE DIGA EL COMBO id_parte.
+    ' SI LA UI FALLÓ AL DESHABILITAR EL COMBO O LA BD QUEDÓ INCONSISTENTE
+    ' POR UNA SESIÓN ANTERIOR, ACÁ SE CORRIGE.
+    Dim sNom As String = LCase(FMetadatosCapitulos.nombre_archivo.Text)
+    If sNom Begins "fm-" Or sNom Begins "bm-" Then
+      iIdParte = 0
+    Else
+      iIdParte = FMetadatosCapitulos.ObtenerIdParteSeleccionada()
+    Endif
 
-    ' PARTE (FK nullable)
-    $result!id_parte = If(iIdParte > 0, iIdParte, Null)
+    ' --- 5. ASIGNAR TODOS LOS CAMPOS UNO POR UNO ---
+    With FMetadatosCapitulos
 
-    ' IDENTIFICACIÓN
-    $result!nombre_archivo = If(.nombre_archivo.Text <> "", .nombre_archivo.Text, Null)
-    $result!tipo_capitulo = .tipo_capitulo.Text
-    $result!tipo_capitulo_otro = If(.tipo_capitulo_otro.Text <> "", .tipo_capitulo_otro.Text, Null)
+      ' PARTE (FK nullable)
+      $result!id_parte = If(iIdParte > 0, iIdParte, Null)
 
-    ' TÍTULOS
-    $result!titulo_capitulo = .titulo_capitulo.Text
-    $result!subtitulo = If(.subtitulo.Text <> "", .subtitulo.Text, Null)
-    $result!titulo_corto = If(.titulo_corto.Text <> "", .titulo_corto.Text, Null)
-    $result!titulo_traducido = If(.titulo_traducido.Text <> "", .titulo_traducido.Text, Null)
-    $result!idioma_titulo_traducido = If(.idioma_titulo_traducido.Text <> "", .idioma_titulo_traducido.Text, Null)
+      ' IDENTIFICACIÓN
+      $result!nombre_archivo = If(.nombre_archivo.Text <> "", .nombre_archivo.Text, Null)
+      $result!tipo_capitulo = .tipo_capitulo.Text
+      $result!tipo_capitulo_otro = If(.tipo_capitulo_otro.Text <> "", .tipo_capitulo_otro.Text, Null)
 
-    ' DOI E IDENTIFICADORES
-    $result!doi = If(.doi.Text <> "", .doi.Text, Null)
-    $result!crossref_estado = .crossref_estado.Text
-    $result!crossref_fecha_deposito = .crossref_fecha_deposito.Value
-    $result!elocation_id = If(.elocation_id.Text <> "", .elocation_id.Text, Null)
-    $result!pagina_inicio = If(.pagina_inicio.Text <> "", .pagina_inicio.Text, Null)
-    $result!pagina_fin = If(.pagina_fin.Text <> "", .pagina_fin.Text, Null)
-    $result!numero_paginas = m_FuncionesGenericas.EnteroDeTexto(.numero_paginas.Text)
+      ' TÍTULOS
+      $result!titulo_capitulo = .titulo_capitulo.Text
+      $result!subtitulo = If(.subtitulo.Text <> "", .subtitulo.Text, Null)
+      $result!titulo_corto = If(.titulo_corto.Text <> "", .titulo_corto.Text, Null)
+      $result!titulo_traducido = If(.titulo_traducido.Text <> "", .titulo_traducido.Text, Null)
+      $result!idioma_titulo_traducido = If(.idioma_titulo_traducido.Text <> "", .idioma_titulo_traducido.Text, Null)
 
-    ' IDIOMA Y FECHAS EDITORIALES
-    $result!idioma_capitulo = .idioma_capitulo.Text
-    $result!fecha_publicacion_online = .fecha_publicacion_online.Value
-    $result!fecha_recepcion = .fecha_recepcion.Value
-    $result!fecha_aceptacion = .fecha_aceptacion.Value
-    $result!fecha_revision = .fecha_revision.Value
+      ' DOI E IDENTIFICADORES
+      $result!doi = If(.doi.Text <> "", .doi.Text, Null)
+      $result!crossref_estado = .crossref_estado.Text
+      $result!crossref_fecha_deposito = .crossref_fecha_deposito.Value
+      $result!elocation_id = If(.elocation_id.Text <> "", .elocation_id.Text, Null)
+      $result!pagina_inicio = If(.pagina_inicio.Text <> "", .pagina_inicio.Text, Null)
+      $result!pagina_fin = If(.pagina_fin.Text <> "", .pagina_fin.Text, Null)
+      $result!numero_paginas = m_FuncionesGenericas.EnteroDeTexto(.numero_paginas.Text)
 
-    ' AUTORÍA A NIVEL CAPÍTULO
-    $result!autor_corporativo = If(.autor_corporativo.Text <> "", .autor_corporativo.Text, Null)
-    $result!autores_anonimos = If(.autores_anonimos.Value = -1, 1, 0)
-    $result!grupo_autores = If(.grupo_autores.Text <> "", .grupo_autores.Text, Null)
-    $result!author_notes = If(.author_notes.Text <> "", .author_notes.Text, Null)
-    ' SOLO PRESENTACIÓN: LA APERTURA DEL CAPÍTULO EN EL PDF (actualizar-esquema-1.6.0)
-    $result!autoria_apertura = If(Trim(.autoria_apertura.Text) <> "", Trim(.autoria_apertura.Text), Null)
+      ' IDIOMA Y FECHAS EDITORIALES
+      $result!idioma_capitulo = .idioma_capitulo.Text
+      $result!fecha_publicacion_online = .fecha_publicacion_online.Value
+      $result!fecha_recepcion = .fecha_recepcion.Value
+      $result!fecha_aceptacion = .fecha_aceptacion.Value
+      $result!fecha_revision = .fecha_revision.Value
 
-    ' RESÚMENES MULTILINGÜES
-    $result!resumen_1 = If(.resumen_1.Text <> "", .resumen_1.Text, Null)
-    $result!idioma_resumen_1 = If(.idioma_resumen_1.Text <> "", .idioma_resumen_1.Text, Null)
-    $result!resumen_2 = If(.resumen_2.Text <> "", .resumen_2.Text, Null)
-    $result!idioma_resumen_2 = If(.idioma_resumen_2.Text <> "", .idioma_resumen_2.Text, Null)
-    $result!resumen_3 = If(.resumen_3.Text <> "", .resumen_3.Text, Null)
-    $result!idioma_resumen_3 = If(.idioma_resumen_3.Text <> "", .idioma_resumen_3.Text, Null)
+      ' AUTORÍA A NIVEL CAPÍTULO
+      $result!autor_corporativo = If(.autor_corporativo.Text <> "", .autor_corporativo.Text, Null)
+      $result!autores_anonimos = If(.autores_anonimos.Value = -1, 1, 0)
+      $result!grupo_autores = If(.grupo_autores.Text <> "", .grupo_autores.Text, Null)
+      $result!author_notes = If(.author_notes.Text <> "", .author_notes.Text, Null)
+      ' SOLO PRESENTACIÓN: LA APERTURA DEL CAPÍTULO EN EL PDF (actualizar-esquema-1.6.0)
+      $result!autoria_apertura = If(Trim(.autoria_apertura.Text) <> "", Trim(.autoria_apertura.Text), Null)
 
-    ' PALABRAS CLAVE
-    $result!palabras_clave_1 = If(.palabras_clave_1.Text <> "", .palabras_clave_1.Text, Null)
-    $result!idioma_kwd_1 = If(.idioma_kwd_1.Text <> "", .idioma_kwd_1.Text, Null)
-    $result!palabras_clave_2 = If(.palabras_clave_2.Text <> "", .palabras_clave_2.Text, Null)
-    $result!idioma_kwd_2 = If(.idioma_kwd_2.Text <> "", .idioma_kwd_2.Text, Null)
-    $result!palabras_clave_3 = If(.palabras_clave_3.Text <> "", .palabras_clave_3.Text, Null)
-    $result!idioma_kwd_3 = If(.idioma_kwd_3.Text <> "", .idioma_kwd_3.Text, Null)
+      ' RESÚMENES MULTILINGÜES
+      $result!resumen_1 = If(.resumen_1.Text <> "", .resumen_1.Text, Null)
+      $result!idioma_resumen_1 = If(.idioma_resumen_1.Text <> "", .idioma_resumen_1.Text, Null)
+      $result!resumen_2 = If(.resumen_2.Text <> "", .resumen_2.Text, Null)
+      $result!idioma_resumen_2 = If(.idioma_resumen_2.Text <> "", .idioma_resumen_2.Text, Null)
+      $result!resumen_3 = If(.resumen_3.Text <> "", .resumen_3.Text, Null)
+      $result!idioma_resumen_3 = If(.idioma_resumen_3.Text <> "", .idioma_resumen_3.Text, Null)
 
-    ' CLASIFICACIÓN TEMÁTICA
-    $result!mesh_terms = If(.mesh_terms.Text <> "", .mesh_terms.Text, Null)
-    $result!descriptores_decs = If(.descriptores_decs.Text <> "", .descriptores_decs.Text, Null)
-    $result!clasificacion_tematica = If(.clasificacion_tematica.Text <> "", .clasificacion_tematica.Text, Null)
+      ' PALABRAS CLAVE
+      $result!palabras_clave_1 = If(.palabras_clave_1.Text <> "", .palabras_clave_1.Text, Null)
+      $result!idioma_kwd_1 = If(.idioma_kwd_1.Text <> "", .idioma_kwd_1.Text, Null)
+      $result!palabras_clave_2 = If(.palabras_clave_2.Text <> "", .palabras_clave_2.Text, Null)
+      $result!idioma_kwd_2 = If(.idioma_kwd_2.Text <> "", .idioma_kwd_2.Text, Null)
+      $result!palabras_clave_3 = If(.palabras_clave_3.Text <> "", .palabras_clave_3.Text, Null)
+      $result!idioma_kwd_3 = If(.idioma_kwd_3.Text <> "", .idioma_kwd_3.Text, Null)
 
-    ' MÉTRICAS DEL CAPÍTULO
-    $result!numero_figuras = m_FuncionesGenericas.EnteroDeTexto(.numero_figuras.Text)
-    $result!numero_tablas = m_FuncionesGenericas.EnteroDeTexto(.numero_tablas.Text)
-    $result!numero_ecuaciones = m_FuncionesGenericas.EnteroDeTexto(.numero_ecuaciones.Text)
-    $result!material_suplementario = If(.material_suplementario.Text <> "", .material_suplementario.Text, Null)
-    $result!dataset_asociado = If(.dataset_asociado.Text <> "", .dataset_asociado.Text, Null)
+      ' CLASIFICACIÓN TEMÁTICA
+      $result!mesh_terms = If(.mesh_terms.Text <> "", .mesh_terms.Text, Null)
+      $result!descriptores_decs = If(.descriptores_decs.Text <> "", .descriptores_decs.Text, Null)
+      $result!clasificacion_tematica = If(.clasificacion_tematica.Text <> "", .clasificacion_tematica.Text, Null)
 
-    ' FINANCIAMIENTO
-    $result!financiamiento = If(.financiamiento.Text <> "", .financiamiento.Text, Null)
-    $result!numero_proyecto = If(.numero_proyecto.Text <> "", .numero_proyecto.Text, Null)
-    $result!funding_statement = If(.funding_statement.Text <> "", .funding_statement.Text, Null)
+      ' MÉTRICAS DEL CAPÍTULO
+      $result!numero_figuras = m_FuncionesGenericas.EnteroDeTexto(.numero_figuras.Text)
+      $result!numero_tablas = m_FuncionesGenericas.EnteroDeTexto(.numero_tablas.Text)
+      $result!numero_ecuaciones = m_FuncionesGenericas.EnteroDeTexto(.numero_ecuaciones.Text)
+      $result!material_suplementario = If(.material_suplementario.Text <> "", .material_suplementario.Text, Null)
+      $result!dataset_asociado = If(.dataset_asociado.Text <> "", .dataset_asociado.Text, Null)
 
-    ' ÉTICA
-    $result!conflictos_interes = If(.conflictos_interes.Text <> "", .conflictos_interes.Text, Null)
-    $result!tiene_conflictos = If(.tiene_conflictos.Value = -1, 1, 0)
-    $result!declaracion_etica = If(.declaracion_etica.Text <> "", .declaracion_etica.Text, Null)
-    $result!consentimiento_informado = If(.consentimiento_informado.Value = -1, 1, 0)
-    $result!aprobacion_comite_etica = If(.aprobacion_comite_etica.Value = -1, 1, 0)
-    $result!numero_aprobacion_etica = If(.numero_aprobacion_etica.Text <> "", .numero_aprobacion_etica.Text, Null)
-    $result!disponibilidad_datos = If(.disponibilidad_datos.Text <> "", .disponibilidad_datos.Text, Null)
-    $result!data_availability_statement = If(.data_availability_statement.Text <> "", .data_availability_statement.Text, Null)
+      ' FINANCIAMIENTO
+      $result!financiamiento = If(.financiamiento.Text <> "", .financiamiento.Text, Null)
+      $result!numero_proyecto = If(.numero_proyecto.Text <> "", .numero_proyecto.Text, Null)
+      $result!funding_statement = If(.funding_statement.Text <> "", .funding_statement.Text, Null)
 
-    ' LICENCIA Y COPYRIGHT
-    $result!licencia = If(.licencia.Text <> "", .licencia.Text, Null)
-    $result!url_licencia = If(.url_licencia.Text <> "", .url_licencia.Text, Null)
-    $result!copyright_holder = If(.copyright_holder.Text <> "", .copyright_holder.Text, Null)
-    $result!copyright_year = m_FuncionesGenericas.EnteroDeTexto(.copyright_year.Text)
-    $result!declaracion_copyright = If(.declaracion_copyright.Text <> "", .declaracion_copyright.Text, Null)
-    $result!url_capitulo = If(.url_capitulo.Text <> "", .url_capitulo.Text, Null)
-    $result!url_pdf = If(.url_pdf.Text <> "", .url_pdf.Text, Null)
+      ' ÉTICA
+      $result!conflictos_interes = If(.conflictos_interes.Text <> "", .conflictos_interes.Text, Null)
+      $result!tiene_conflictos = If(.tiene_conflictos.Value = -1, 1, 0)
+      $result!declaracion_etica = If(.declaracion_etica.Text <> "", .declaracion_etica.Text, Null)
+      $result!consentimiento_informado = If(.consentimiento_informado.Value = -1, 1, 0)
+      $result!aprobacion_comite_etica = If(.aprobacion_comite_etica.Value = -1, 1, 0)
+      $result!numero_aprobacion_etica = If(.numero_aprobacion_etica.Text <> "", .numero_aprobacion_etica.Text, Null)
+      $result!disponibilidad_datos = If(.disponibilidad_datos.Text <> "", .disponibilidad_datos.Text, Null)
+      $result!data_availability_statement = If(.data_availability_statement.Text <> "", .data_availability_statement.Text, Null)
 
-    ' ESTADO Y AUDITORÍA
-    $result!revisado_xml = If(.revisado_xml.Value = -1, 1, 0)
-    $result!validado_docbook = If(.validado_docbook.Value = -1, 1, 0)
-    $result!errores_validacion = If(.errores_validacion.Text <> "", .errores_validacion.Text, Null)
-    $result!calidad_metadatos = If(.calidad_metadatos.Text <> "", .calidad_metadatos.Text, Null)
-    $result!completitud_metadatos = If(.completitud_metadatos.Text <> "", .completitud_metadatos.Text, Null)
-    $result!estado_capitulo = .estado_capitulo.Text
-    $result!responsable_edicion = If(.responsable_edicion.Text <> "", .responsable_edicion.Text, Null)
-    $result!notas_internas = If(.notas_internas.Text <> "", .notas_internas.Text, Null)
+      ' LICENCIA Y COPYRIGHT
+      $result!licencia = If(.licencia.Text <> "", .licencia.Text, Null)
+      $result!url_licencia = If(.url_licencia.Text <> "", .url_licencia.Text, Null)
+      $result!copyright_holder = If(.copyright_holder.Text <> "", .copyright_holder.Text, Null)
+      $result!copyright_year = m_FuncionesGenericas.EnteroDeTexto(.copyright_year.Text)
+      $result!declaracion_copyright = If(.declaracion_copyright.Text <> "", .declaracion_copyright.Text, Null)
+      $result!url_capitulo = If(.url_capitulo.Text <> "", .url_capitulo.Text, Null)
+      $result!url_pdf = If(.url_pdf.Text <> "", .url_pdf.Text, Null)
 
-    ' fecha_actualizacion_registro: ACTUALIZADA AUTOMÁTICAMENTE POR MySQL
-    ' (ON UPDATE CURRENT_TIMESTAMP en la definición de la columna)
+      ' ESTADO Y AUDITORÍA
+      $result!revisado_xml = If(.revisado_xml.Value = -1, 1, 0)
+      $result!validado_docbook = If(.validado_docbook.Value = -1, 1, 0)
+      $result!errores_validacion = If(.errores_validacion.Text <> "", .errores_validacion.Text, Null)
+      $result!calidad_metadatos = If(.calidad_metadatos.Text <> "", .calidad_metadatos.Text, Null)
+      $result!completitud_metadatos = If(.completitud_metadatos.Text <> "", .completitud_metadatos.Text, Null)
+      $result!estado_capitulo = .estado_capitulo.Text
+      $result!responsable_edicion = If(.responsable_edicion.Text <> "", .responsable_edicion.Text, Null)
+      $result!notas_internas = If(.notas_internas.Text <> "", .notas_internas.Text, Null)
 
-  End With
+      ' fecha_actualizacion_registro: ACTUALIZADA AUTOMÁTICAMENTE POR MySQL
+      ' (ON UPDATE CURRENT_TIMESTAMP en la definición de la columna)
 
-  ' --- 6. APLICAR LOS CAMBIOS ---
-  Try $result.Update()
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("Error al guardar capítulo:" & Chr(10) & Error.Text)
-    Return
-  Endif
+    End With
 
-  ' --- 7. ORDEN DE LOS FINALES: AVISO, NO FRENO ---
-  ' SE CONTROLA DESPUÉS DE GUARDAR Y SOBRE TODAS LAS PIEZAS DEL LIBRO: AL
-  ' RENUMERAR HAY ESTADOS INTERMEDIOS INVÁLIDOS QUE NO SE PUEDEN EVITAR. EL
-  ' FRENO LO PONE EL GENERADOR DEL PDF (SC-55)
-  sProblema = ProblemaOrdenLibroAbierto()
-  If sProblema <> "" Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("La pieza se guardó, pero el orden del libro no sirve " &
-      "para las salidas:" & gb.NewLine & gb.NewLine & sProblema & gb.NewLine &
-      gb.NewLine & "Es necesario corregirlo para poder cerrar el formulario.")
-    Return
-  Endif
+    ' --- 6. APLICAR LOS CAMBIOS ---
+    Try $result.Update()
+    If Error Then
+      m_Sonido.sonar("Error")
+      Message.Error("Error al guardar capítulo:" & Chr(10) & Error.Text)
+      Return
+    Endif
 
-  m_Sonido.sonar("ok")
+    ' --- 7. ORDEN DE LOS FINALES: AVISO, NO FRENO ---
+    ' SE CONTROLA DESPUÉS DE GUARDAR Y SOBRE TODAS LAS PIEZAS DEL LIBRO: AL
+    ' RENUMERAR HAY ESTADOS INTERMEDIOS INVÁLIDOS QUE NO SE PUEDEN EVITAR. EL
+    ' FRENO LO PONE EL GENERADOR DEL PDF (SC-55)
+    sProblema = ProblemaOrdenLibroAbierto()
+    If sProblema <> "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning("La pieza se guardó, pero el orden del libro no sirve " &
+        "para las salidas:" & gb.NewLine & gb.NewLine & sProblema & gb.NewLine &
+        gb.NewLine & "Es necesario corregirlo para poder cerrar el formulario.")
+      Return
+    Endif
+
+    m_Sonido.sonar("ok")
 
 End
 

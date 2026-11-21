@@ -1431,6 +1431,7 @@ Public Sub btnSeleccionArchivo_Click()
   Dim sNombreSinExt As String
   Dim sNombreLower As String
   Dim sPrefijoEsperado As String
+  Dim sMotivo As String
 
   ' --- 1. CONFIGURAR EL DIÁLOGO ---
   Dialog.Title = "Seleccionar archivo MD"
@@ -1485,11 +1486,83 @@ Public Sub btnSeleccionArchivo_Click()
     Return
   Endif
 
+  ' --- 6b. LA REGLA DEL NOMBRE (m_OrdenPiezas) ---
+  ' ELEGIR UN ARCHIVO ES ESCRIBIR EL NOMBRE. VOLVER A ELEGIR EL MISMO QUE YA
+  ' TIENE LA FICHA NO LO ES: LO QUE ESTÁ QUEDA. UN .md VIEJO FUERA DE REGLA
+  ' SE RENOMBRA ANTES EN EL GESTOR DE ARCHIVOS
+  If sNombreSinExt <> Trim(nombre_archivo.Text) Then
+    sMotivo = m_OrdenPiezas.MotivoNombrePieza(sNombreSinExt, sPrefijoEsperado)
+    If sMotivo <> "" Then
+      m_Sonido.sonar("Warning")
+      Message.Warning(sMotivo & gb.NewLine & gb.NewLine &
+        "Renombrá el archivo en el gestor de archivos y volvé a elegirlo.")
+      Return
+    Endif
+  Endif
+
   ' --- 7. ASIGNAR EL NOMBRE AL TEXTBOX ---
   nombre_archivo.Text = sNombreSinExt
 
   ' --- 8. AJUSTAR EL COMBO id_parte SEGÚN EL NUEVO PREFIJO ---
   ' EL COMBO SE BLOQUEA SI EL ARCHIVO ES fm-/bm-, SE HABILITA SI ES a-.
   AjustarEstadoComboIdParte()
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : nombre_archivo_KeyPress
+' Propósito : Filtra lo que se tipea en el nombre, como el conversor: letras,
+'             dígitos y guion. Sirve sobre todo para las páginas lógicas, que
+'             no tienen .md y se escriben a mano. La forma completa se valida
+'             al guardar (m_Metadatos.GuardarMetadatosDeCapitulo, 3b)
+' Parámetros: ninguno
+' Retorna   : nada
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub nombre_archivo_KeyPress()
+
+  ' --- 1. TECLAS DE CONTROL ---
+  If Key.Code = Key.BackSpace Or Key.Code = Key.Delete Or
+      Key.Code = Key.Left Or Key.Code = Key.Right Or
+      Key.Code = Key.Tab Or Key.Code = Key.Enter Or
+      Key.Code = Key.Home Or Key.Code = Key.End Then
+    Return
+  Endif
+
+  ' TECLAS SIN TEXTO (SHIFT, CTRL): NO ESCRIBEN NADA Y NO DEBEN SONAR
+  If Key.Text = "" Then Return
+
+  ' --- 2. LETRAS EN CUALQUIER CAJA, DÍGITOS Y GUION ---
+  ' LA CAJA LA ACOMODA nombre_archivo_KeyRelease. UNA LETRA CON TILDE O UNA
+  ' Ñ NO ESTÁN EN LA LISTA Y SE BLOQUEAN, COMO EN FConversorDOCX2MD
+  If InStr(m_OrdenPiezas.CARACTERES_NOMBRE, UCase(Key.Text)) > 0 Then Return
+
+  ' --- 3. CUALQUIER OTRO CARÁCTER ---
+  m_Sonido.sonar("Warning")
+  Stop Event
+
+End
+
+' ════════════════════════════════════════════════════════════════════════════
+' Función   : nombre_archivo_KeyRelease
+' Propósito : Lleva el nombre a la forma de la regla mientras se escribe: el
+'             prefijo en minúscula y el resto en mayúscula
+'             (m_OrdenPiezas.NormalizarEscrituraPieza)
+' Parámetros: ninguno
+' Retorna   : nada
+' ════════════════════════════════════════════════════════════════════════════
+Public Sub nombre_archivo_KeyRelease()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sNormalizado As String
+  Dim iPosicionCursor As Integer
+
+  ' --- 2. SIN CAMBIOS, NO SE TOCA EL CAMPO ---
+  sNormalizado = m_OrdenPiezas.NormalizarEscrituraPieza(nombre_archivo.Text)
+  If sNormalizado = nombre_archivo.Text Then Return
+
+  ' --- 3. REEMPLAZAR CONSERVANDO EL CURSOR, COMO EL CONVERSOR ---
+  iPosicionCursor = nombre_archivo.Pos
+  nombre_archivo.Text = sNormalizado
+  nombre_archivo.Pos = iPosicionCursor
 
 End

@@ -54,11 +54,6 @@ Private $aHallazgosPares As New CHallazgoPar[]
 ' PUEDE INDEXAR UN ARRAY YA ARMADO: NADA DE CONCATENAR NI FORMATEAR AHÍ
 Private $aCeldasPares As New String[]
 
-' TAMAÑO DE LA VENTANA DE mc, EN PÍXELES. EL TERMINAL LO REDONDEA A CELDAS
-' ENTERAS DE CARÁCTER: EL RESULTADO PUEDE DIFERIR EN UNOS PÍXELES
-Private Const ANCHO_VENTANA_MC As Integer = 1024
-Private Const ALTO_VENTANA_MC As Integer = 600
-
 ' ============================================
 ' Función   : Form_Show
 ' Propósito : APLICAR LA CONFIGURACIÓN DE BOTONES DEL MARCO
@@ -240,146 +235,179 @@ Public Sub Form_Close()
 
 End
 
+' ============================================
+' Función   : btnCrearCarpeta_Click
+' Propósito : Crea una carpeta en la carpeta elegida del árbol de la pestaña
+'             de archivos. Usa las reglas de m_FileManager, las mismas que
+'             FFileManager.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub btnCrearCarpeta_Click()
 
-  If DirViewProyecto.Current = "" Then
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sDirectorio As String
+  Dim sNombre As String
+  Dim sMotivo As String
+
+  ' --- 2. VALIDACIÓN ---
+  sDirectorio = DirViewProyecto.Current
+  If sDirectorio = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("Seleccioná un directorio en el árbol primero.")
     Return
   Endif
 
-  ' GUARDAMOS LA RUTA ACTUAL COMO DESTINO
-  FAgregarCarpeta.RutaDestino = DirViewProyecto.Current
-
-  ' SI SE CREÓ LA CARPETA, ACTUALIZAMOS EL FILEVIEW. EL RESULTADO ES EL VALOR
-  ' DE ShowModal (Me.Close(1)): LA VARIABLE Public DEL FORM SE PERDÍA AL
-  ' CERRARLO Y ESTA RAMA NO CORRÍA NUNCA (RC-GM-13)
-  If FAgregarCarpeta.ShowModal() = 1 Then
-    FileViewProyecto.Dir = DirViewProyecto.Current
-  Endif
-
-  DirViewProyecto.Reload
-
-End
-
-Public Sub btnBorrarCarpeta_Click()
-
-  Dim ruta As String = DirViewProyecto.Current
-
-  ' VERIFICAR QUE LA RUTA EXISTE Y ES UNA CARPETA
-  If Not Exist(ruta) Or Not IsDir(ruta) Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("La ruta seleccionada no es una carpeta válida.")
-    Return
-  End If
-
-  ' CONFIRMAR ACCIÓN
-  m_Sonido.sonar("Question")
-  If Message.Question("¿Seguro que deseas borrar la carpeta y TODO su contenido, incluyendo subcarpetas y archivos?", "Sí", "Cancelar") <> 1 Then
-    Return
-  End If
-
-  ' INTENTAR BORRAR LA CARPETA
-  If BorrarCarpeta(ruta) Then
-    DirViewProyecto.Reload
-    m_Sonido.sonar("Info")
-    Message.Info("Carpeta borrada exitosamente.")
-  Else
+  ' --- 3. NOMBRE Y CREACIÓN ---
+  ' CrearCarpeta CONTROLA QUE EL DESTINO ESTÉ DENTRO DEL PROYECTO: SIN Root,
+  ' DirViewProyecto ARRANCA EN User.Home (DirView.GetRoot)
+  sNombre = m_FileManager.PedirNombre("Nombre de la carpeta nueva", "", True, sDirectorio, "")
+  If sNombre = "" Then Return
+  sMotivo = m_FileManager.CrearCarpeta(sDirectorio, sNombre)
+  If sMotivo <> "" Then
     m_Sonido.sonar("Error")
-    Message.Error("No se pudo borrar la carpeta completamente.")
-  End If
-
-End
-
-Private Function BorrarCarpeta(RutaCarpeta As String) As Boolean
-
-  Dim archivos As String[]
-  Dim archivo As String
-  Dim rutaCompleta As String
-
-  ' OBTENER LISTA DE ARCHIVOS Y CARPETAS
-  Try archivos = Dir(RutaCarpeta, "*", gb.File + gb.Directory)
-  If Error Then
-    Return False
-  End If
-
-  ' PROCESAR CADA ELEMENTO
-  For Each archivo In archivos
-    ' SALTAR LAS ENTRADAS "." Y ".."
-    If archivo = "." Or archivo = ".." Then Continue
-
-    rutaCompleta = RutaCarpeta &/ archivo
-
-    If IsDir(rutaCompleta) Then
-      ' ES UNA SUBCARPETA, LLAMADA RECURSIVA
-      If Not BorrarCarpeta(rutaCompleta) Then
-        Return False
-      End If
-    Else
-      ' ES UN ARCHIVO, BORRARLO
-      Try Kill rutaCompleta
-      If Error Then
-        Return False
-      End If
-    End If
-  Next
-
-  ' FINALMENTE, BORRAR LA CARPETA VACÍA
-  Try Rmdir RutaCarpeta
-  If Error Then
-    Return False
-  End If
-
-  Return True
-
-End Function
-
-' EVENTO PARA AGREGAR ARCHIVO
-Public Sub btnAgregarArchivo_Click()
-
-  ' MOSTRAR FORMULARIO DE CREACIÓN
-  FAgregarArchivo.RutaDestino = DirViewProyecto.Current
-
-  ' SI SE CREÓ, ACTUALIZAMOS LA VISTA. EL RESULTADO ES EL VALOR DE ShowModal
-  ' (Me.Close(1)): LA VARIABLE Public DEL FORM SE PERDÍA AL CERRARLO (RC-GM-13)
-  If FAgregarArchivo.ShowModal() = 1 Then
-    FileViewProyecto.Dir = DirViewProyecto.Current
+    Message.Error(sMotivo)
+    Return
   Endif
 
+  ' --- 4. VISTAS ---
+  DirViewProyecto.Reload
+  FileViewProyecto.Dir = sDirectorio
   FileViewProyecto.Reload
 
 End
 
+' ============================================
+' Función   : btnBorrarCarpeta_Click
+' Propósito : Borra la carpeta elegida en el árbol con todo su contenido.
+'             Usa m_FileManager.Borrar: respeta las carpetas del proyecto y
+'             no sigue enlaces simbólicos.
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : LA VERSIÓN ANTERIOR (BorrarCarpeta) DECIDÍA CON IsDir, QUE SIGUE
+'             LOS ENLACES: UN ENLACE A UNA CARPETA DE AFUERA HACÍA BORRAR EL
+'             CONTENIDO DE ESA CARPETA. TAMPOCO PROTEGÍA LA RAÍZ DEL PROYECTO
+' ============================================
+Public Sub btnBorrarCarpeta_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+  Dim sMotivo As String
+  Dim sPregunta As String
+
+  sRuta = DirViewProyecto.Current
+
+  ' --- 2. ¿SE PUEDE? ---
+  sMotivo = m_FileManager.MotivoNoBorrar(sRuta)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sMotivo)
+    Return
+  Endif
+
+  ' --- 3. CONFIRMACIÓN ---
+  sPregunta = m_FileManager.DescribirBorrado(sRuta) & gb.NewLine & gb.NewLine &
+    "El borrado es definitivo: no pasa por la papelera."
+  m_Sonido.sonar("Question")
+  If Message.Question(sPregunta, "Borrar", "Cancelar") <> 1 Then Return
+
+  ' --- 4. BORRAR ---
+  sMotivo = m_FileManager.Borrar(sRuta)
+
+  ' --- 5. VISTAS: TAMBIÉN TRAS UN ERROR, PUDO QUEDAR BORRADA A MEDIAS ---
+  DirViewProyecto.Reload
+  FileViewProyecto.Reload
+
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error(sMotivo)
+  Else
+    m_Sonido.sonar("Info")
+    Message.Info("Carpeta borrada.")
+  Endif
+
+End
+
+' ============================================
+' Función   : btnAgregarArchivo_Click
+' Propósito : Crea un archivo vacío en la carpeta elegida del árbol, con las
+'             reglas de m_FileManager
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub btnAgregarArchivo_Click()
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sDirectorio As String
+  Dim sNombre As String
+  Dim sMotivo As String
+
+  sDirectorio = DirViewProyecto.Current
+
+  ' --- 2. NOMBRE Y CREACIÓN ---
+  sNombre = m_FileManager.PedirNombre("Nombre del archivo nuevo (con extensión)", "", False, sDirectorio, "")
+  If sNombre = "" Then Return
+  sMotivo = m_FileManager.CrearArchivo(sDirectorio, sNombre)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Error")
+    Message.Error(sMotivo)
+    Return
+  Endif
+
+  ' --- 3. VISTA ---
+  FileViewProyecto.Dir = sDirectorio
+  FileViewProyecto.Reload
+
+End
+
+' ============================================
+' Función   : btnBorrarArchivo_Click
+' Propósito : Borra el archivo elegido en la lista, con las reglas de
+'             m_FileManager (las piezas y los .md de la raíz no se borran)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' ============================================
 Public Sub btnBorrarArchivo_Click()
 
-  Dim archivoSeleccionado As String
-  Dim rutaCompleta As String
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRuta As String
+  Dim sMotivo As String
+  Dim sPregunta As String
 
-  If FileViewProyecto.Current = "" Then
+  ' --- 2. SELECCIÓN ---
+  sRuta = FileViewProyecto.Path
+  If sRuta = "" Then
     m_Sonido.sonar("Warning")
     Message.Warning("No hay ningún archivo seleccionado")
     Return
   Endif
 
-  archivoSeleccionado = FileViewProyecto.Current
-  rutaCompleta = FileViewProyecto.Dir &/ archivoSeleccionado
-
-  m_Sonido.sonar("Question")
-
-  If Message.Question("¿Está seguro que desea eliminar el archivo '" & archivoSeleccionado & "'?", "Eliminar", "Cancelar") <> 1 Then
+  ' --- 3. ¿SE PUEDE? ---
+  sMotivo = m_FileManager.MotivoNoBorrar(sRuta)
+  If sMotivo <> "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning(sMotivo)
     Return
   Endif
 
-  Try Kill rutaCompleta
-  If Error Then
+  ' --- 4. CONFIRMACIÓN ---
+  sPregunta = m_FileManager.DescribirBorrado(sRuta) & gb.NewLine & gb.NewLine &
+    "El borrado es definitivo: no pasa por la papelera."
+  m_Sonido.sonar("Question")
+  If Message.Question(sPregunta, "Borrar", "Cancelar") <> 1 Then Return
+
+  ' --- 5. BORRAR ---
+  sMotivo = m_FileManager.Borrar(sRuta)
+  If sMotivo <> "" Then
     m_Sonido.sonar("Error")
-    Message.Error("Error al eliminar el archivo: " & Error.Text)
-  Else
-    m_Sonido.sonar("Info")
-    Message.Info("Archivo eliminado correctamente")
-    FileViewProyecto.Current = ""
-    FileViewProyecto.Reload
+    Message.Error(sMotivo)
+    Return
   Endif
+
+  m_Sonido.sonar("Info")
+  Message.Info("Archivo eliminado correctamente")
+  FileViewProyecto.Current = ""
+  FileViewProyecto.Reload
 
 End
 
@@ -648,12 +676,6 @@ End
 Public Sub btnEmpujarGitLocal_Click()
 
   m_GitHub.EmpujarGitLocal()
-
-End
-
-Public Sub btnEmpujarGitHubRemoto_Click()
-
-  m_GitHub.EmpujarGitHubRemoto()
 
 End
 
@@ -1613,112 +1635,36 @@ End
 
 ' ============================================
 ' Función   : btnAbrirDirectorio_Click
-' Propósito : Abre Midnight Commander en una ventana de terminal propia,
-'             parado en la carpeta del proyecto en curso. Reemplaza al gestor
-'             de archivos del escritorio (Desktop.Open).
+' Propósito : Abre el gestor de archivos del proyecto (FFileManager, modal).
+'             Al volver, refresca el retocador y el visor de PDF por si se
+'             renombró o se borró lo que tenían abierto.
 ' Parámetros: (ninguno)
 ' Retorna   : (Sub, sin retorno)
+' Nota      : Midnight Commander dejó de estar vinculado a la aplicación
+'             (21/11/2026): se usa por fuera para las copias grandes.
 ' ============================================
 Public Sub btnAbrirDirectorio_Click()
 
-  ' --- 1. INICIALIZACIÓN ---
-  Dim sRuta As String
-  Dim aVentanasAntes As Integer[]
-  Dim iVentana As Integer
-  Dim hVentana As DesktopWindow
-
-  sRuta = m_InicioCierre.RutaProyectoEnCurso
-
-  ' --- 2. VALIDACIÓN ---
-  If Trim(sRuta) = "" Then
+  ' --- 1. VALIDACIÓN: PROYECTO ABIERTO ---
+  If m_FileManager.RaizProyecto() = "" Then
     m_Sonido.sonar("Warning")
-    Message.Warning("No tiene ningún proyecto abierto.")
+    Message.Warning("No hay un proyecto abierto, o la carpeta del proyecto no está accesible.")
     Return
   Endif
 
-  If Not Exist(sRuta) Then
-    m_Sonido.sonar("Warning")
-    Message.Warning("No se encontró la carpeta del proyecto:" & gb.NewLine & sRuta)
-    Return
-  Endif
+  ' --- 2. GESTOR DE ARCHIVOS ---
+  FFileManager.ShowModal()
 
-  ' --- 3. LANZAMIENTO ---
-  ' LAS VENTANAS QUE YA EXISTEN, PARA RECONOCER DESPUÉS LA DE mc. SI FALLA,
-  ' mc SE ABRE IGUAL: SOLO QUE NO SE PODRÁ TRAER AL FRENTE
-  Try aVentanasAntes = Desktop.FindWindow()
-  ' Exec SOBRE UN ARRAY: SIN sh -c, LA RUTA NO SE INTERPRETA (GV-06).
-  ' «--» SEPARA LAS OPCIONES DE gnome-terminal DEL COMANDO QUE CORRE ADENTRO.
-  ' SIN Wait: LA VENTANA VIVE POR SU CUENTA Y LA INTERFAZ NO SE CONGELA
-  Try Exec ["gnome-terminal", "--", "mc", sRuta]
-  If Error Then
-    m_Sonido.sonar("Error")
-    Message.Error("No se pudo abrir Midnight Commander:" & gb.NewLine & Error.Text &
-      gb.NewLine & gb.NewLine & "Verificá que estén instalados gnome-terminal y mc.")
-    Return
-  Endif
+  ' --- 3. LO QUE FMain TIENE ABIERTO SOBRE ARCHIVOS DEL PROYECTO ---
+  ' SE LLAMA SIEMPRE: LAS DOS FUNCIONES COMPARAN LA FIRMA DE SU CARPETA Y NO
+  ' TOCAN NADA SI NO CAMBIÓ (SC-27). ASÍ NO DEPENDE DE CÓMO SE CERRÓ EL
+  ' FORMULARIO NI DE SI LOS Timer DE FMain CORREN DURANTE ShowModal
+  m_GestionImagenes.RefrescarComboSiCambio()
+  m_RevisarPDF.RefrescarComboSiCambio()
 
-  ' --- 4. TAMAÑO Y AL FRENTE ---
-  ' NINGUNO DE LOS DOS PASOS ES CRÍTICO: SI FALLAN, mc QUEDA ABIERTO IGUAL
-  If aVentanasAntes Then
-    iVentana = EsperarVentanaNueva(aVentanasAntes)
-    If iVentana <> 0 Then
-      ' FromHandle BUSCA EN UNA LISTA CACHEADA: SIN Refresh NO VE LA VENTANA
-      ' RECIÉN CREADA (gb.desktop.x11, _Desktop_Windows.class)
-      Try Desktop.Windows.Refresh()
-      Try hVentana = Desktop.Windows.FromHandle(iVentana)
-      ' SOLO EL TAMAÑO: LA POSICIÓN LA DECIDE gnome-terminal. CENTRARLA DESDE
-      ' ACÁ OBLIGA A MOVERLA DESPUÉS DE QUE APARECE Y SE VEN DOS PASOS
-      If hVentana Then Try hVentana.Resize(ANCHO_VENTANA_MC, ALTO_VENTANA_MC)
-
-      ' gnome-terminal ABRE LA VENTANA DESDE SU SERVIDOR Y CINNAMON LA DEJA
-      ' DETRÁS DE gbpublisher (PREVENCIÓN DE ROBO DE FOCO). _NET_ACTIVE_WINDOW
-      ' CON LA HORA DEL ÚLTIMO EVENTO DEL USUARIO (X11.Time) LA TRAE AL FRENTE
-      Try Desktop.ActiveWindow = iVentana
-    Endif
-  Endif
-
-  m_Sonido.sonar("Info")
-
-End
-
-' ============================================
-' Función   : EsperarVentanaNueva
-' Propósito : Espera a que aparezca una ventana que no estaba en la lista
-'             recibida y devuelve su id. Sirve para programas externos lanzados
-'             con Exec cuya ventana hay que ubicar, dimensionar o traer al
-'             frente.
-' Parámetros: aVentanasAntes As Integer[] — ids de las ventanas existentes
-'               antes de lanzar el programa
-' Retorna   : Integer — id de la ventana nueva, o 0 si no apareció en el plazo
-' ============================================
-Private Function EsperarVentanaNueva(aVentanasAntes As Integer[]) As Integer
-
-  ' --- 1. INICIALIZACIÓN ---
-  Dim aVentanasAhora As Integer[]
-  Dim iVentana As Integer
-  Dim fVence As Float
-
-  ' LA VENTANA TARDA EN APARECER: SE ESPERA HASTA TRES SEGUNDOS
-  fVence = Timer + 3
-
-  ' --- 2. ESPERA ---
-  ' LA SENTENCIA Wait DEJA CORRER EL BUCLE DE EVENTOS: LA INTERFAZ NO SE
-  ' CONGELA MIENTRAS TANTO (GV-17)
-  Do
-    Wait 0.1
-
-    Try aVentanasAhora = Desktop.FindWindow()
-    If Error Then Return 0
-
-    ' LA PRIMERA QUE NO ESTABA ANTES ES LA DEL PROGRAMA RECIÉN LANZADO
-    For Each iVentana In aVentanasAhora
-      If Not aVentanasAntes.Exist(iVentana) Then Return iVentana
-    Next
-
-  Loop Until Timer > fVence
-
-  ' --- 3. SIN VENTANA NUEVA EN EL PLAZO ---
-  Return 0
+  ' --- 4. LA PESTAÑA DE ARCHIVOS, QUE CONVIVE CON EL GESTOR ---
+  DirViewProyecto.Reload
+  FileViewProyecto.Reload
 
 End
 

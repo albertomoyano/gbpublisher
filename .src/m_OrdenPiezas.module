@@ -10,8 +10,8 @@
 '
 ' LA CONVENCIÓN
 ' ----------------------------------------------------------
-'   El nombre de archivo da la posición: prefijo-NN-resto («fm-10-prologo»,
-'   «a-03-tal-cosa», «bm-99-colofon»). El prefijo fija la familia
+'   El nombre de archivo da la posición: prefijo-NN-resto («fm-10-PROLOGO»,
+'   «a-03-TAL-COSA», «bm-99-COLOFON»; ver LA ESCRITURA DEL NOMBRE). El prefijo fija la familia
 '   (preliminares, cuerpo, finales) y NN el lugar dentro de ella. La
 '   numeración de dos dígitos hace que el orden alfabético dentro de cada
 '   familia equivalga al numérico.
@@ -25,6 +25,19 @@
 ' ----------------------------------------------------------
 '   Un id refleja cuándo se cargó la pieza, no dónde va. Las piezas no llegan
 '   juntas ni en orden.
+'
+' LA ESCRITURA DEL NOMBRE (21/11/2026)
+' ----------------------------------------------------------
+'   El nombre de una pieza tiene una sola regla, la del conversor de .docx:
+'   prefijo-NN-NOMBRE, con el prefijo en minúscula, NN de dos dígitos y
+'   NOMBRE en mayúsculas, dígitos y guiones; «NN-NOMBRE» de hasta 24
+'   caracteres. Vale para las piezas con .md, las páginas lógicas del libro
+'   (sin .md), los artículos y las preliminares del número. Se aplica al
+'   ESCRIBIR un nombre (alta o cambio): lo que ya está en la base queda.
+'   La regla está escrita en tres lenguajes, y cada copia cita a las otras:
+'     - Gambas: MotivoNombrePieza y MotivoCodigoYNombre, en este módulo
+'     - bash: el regex de engine/convertir_docx.sh
+'     - SQL: el CHECK chk_pieza_nombre de numero_pieza (esquema 2.1.0)
 '
 ' POR QUÉ NO EN m_PiezasLibro
 ' ----------------------------------------------------------
@@ -104,5 +117,119 @@ Public Function EnEspacioReservado(sNombre As String) As Boolean
   End Select
 
   Return False
+
+End
+
+' --- LA REGLA DEL NOMBRE (VER «LA ESCRITURA DEL NOMBRE» EN LA CABECERA) ---
+' GV-11: Const A NIVEL DE MÓDULO. LAS USA TAMBIÉN FConversorDOCX2MD PARA
+' FILTRAR LO QUE SE TIPEA
+Public Const CARACTERES_NOMBRE As String = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+Public Const DIGITOS As String = "0123456789"
+' LARGO DE «NN-NOMBRE», SIN EL PREFIJO DE TIPO NI LA EXTENSIÓN
+Public Const LARGO_MAXIMO_NOMBRE As Integer = 24
+
+' ============================================
+' Función   : MotivoCodigoYNombre
+' Propósito : Valida la parte «NN-NOMBRE» de un nombre de pieza: dos
+'             dígitos, un guion y después mayúsculas, dígitos y guiones, de
+'             hasta LARGO_MAXIMO_NOMBRE caracteres en total
+' Parámetros: sResto As String — el nombre sin el prefijo de tipo ni la
+'             extensión («01-INTRODUCCION»)
+' Retorna   : String — vacío si es válido; si no, el motivo
+' Nota      : ES LA REGLA DE convertir_docx.sh (^(fm|a|bm)-[0-9]{2}-[A-Z0-9-]+$)
+'             Y DEL CHECK DE numero_pieza (2.1.0). SI CAMBIA ACÁ, CAMBIA AHÍ
+' ============================================
+Public Function MotivoCodigoYNombre(sResto As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMotivo As String
+  Dim iLargo As Integer
+  Dim iPos As Integer
+
+  sMotivo = "Después del prefijo van dos dígitos, un guion y el nombre en mayúsculas," &
+    gb.NewLine & "dígitos y guiones, hasta " & CStr(LARGO_MAXIMO_NOMBRE) & " caracteres en total" &
+    gb.NewLine & "(por ejemplo, 01-INTRODUCCION)."
+
+  ' --- 2. LARGO: NN- MÁS AL MENOS UN CARÁCTER ---
+  iLargo = String.Len(sResto)
+  If iLargo < 4 Then Return sMotivo
+  If iLargo > LARGO_MAXIMO_NOMBRE Then Return sMotivo
+
+  ' --- 3. PATRÓN POSICIONAL NN- ---
+  ' CONDICIONES SEPARADAS: And/Or NO CORTOCIRCUITAN (RC-GM-17, GV-12)
+  If InStr(DIGITOS, String.Mid(sResto, 1, 1)) = 0 Then Return sMotivo
+  If InStr(DIGITOS, String.Mid(sResto, 2, 1)) = 0 Then Return sMotivo
+  If String.Mid(sResto, 3, 1) <> "-" Then Return sMotivo
+
+  ' --- 4. EL NOMBRE: SOLO MAYÚSCULAS, DÍGITOS Y GUIONES ---
+  ' String.Mid POR CODEPOINT (RC-GM-12): UNA Ñ O UNA TILDE NO ESTÁN EN LA
+  ' LISTA Y SE RECHAZAN
+  For iPos = 4 To iLargo
+    If InStr(CARACTERES_NOMBRE, String.Mid(sResto, iPos, 1)) = 0 Then Return sMotivo
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : MotivoNombrePieza
+' Propósito : Valida un nombre de pieza completo: prefijo de tipo más
+'             «NN-NOMBRE»
+' Parámetros: sNombre As String — el nombre sin extensión («fm-01-PORTADILLA»)
+'             sPrefijoEsperado As String — opcional: «fm-», «a-» o «bm-» si
+'             la carpeta o el contexto lo fijan
+' Retorna   : String — vacío si es válido; si no, el motivo
+' ============================================
+Public Function MotivoNombrePieza(sNombre As String, Optional sPrefijoEsperado As String = "") As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sPrefijo As String
+  Dim sMotivo As String
+
+  ' --- 2. PREFIJO DE TIPO, EN MINÚSCULA COMO LO ESCRIBE EL CONVERSOR ---
+  If sNombre Begins "fm-" Then
+    sPrefijo = "fm-"
+  Else If sNombre Begins "bm-" Then
+    sPrefijo = "bm-"
+  Else If sNombre Begins "a-" Then
+    sPrefijo = "a-"
+  Else
+    Return "El nombre empieza con el prefijo de su tipo, en minúscula: fm-, a- o bm-" &
+      gb.NewLine & "(por ejemplo, fm-01-PORTADILLA)."
+  Endif
+
+  If sPrefijoEsperado <> "" Then
+    If sPrefijo <> sPrefijoEsperado Then Return "En este lugar el nombre empieza con «" & sPrefijoEsperado & "»."
+  Endif
+
+  ' --- 3. EL RESTO ---
+  sMotivo = MotivoCodigoYNombre(Mid$(sNombre, Len(sPrefijo) + 1))
+  If sMotivo <> "" Then Return "«" & sNombre & "» no sigue la regla de los nombres de pieza." & gb.NewLine & gb.NewLine & sMotivo
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : NormalizarEscrituraPieza
+' Propósito : Lleva lo que se está tipeando a la forma de la regla: el
+'             prefijo (hasta el primer guion) en minúscula y el resto en
+'             mayúscula. No valida: eso lo hace MotivoNombrePieza
+' Parámetros: sTexto As String — el texto del campo
+' Retorna   : String — el texto normalizado
+' ============================================
+Public Function NormalizarEscrituraPieza(sTexto As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim iGuion As Integer
+
+  ' --- 2. SIN GUION TODAVÍA: SE ESTÁ ESCRIBIENDO EL PREFIJO ---
+  iGuion = InStr(sTexto, "-")
+  If iGuion = 0 Then Return String.LCase(sTexto)
+
+  ' --- 3. PREFIJO EN MINÚSCULA, EL RESTO EN MAYÚSCULA ---
+  ' InStr, Left$ Y Mid$ EN BYTES SON CORRECTOS ACÁ: EL GUION ES ASCII
+  Return String.LCase(Left$(sTexto, iGuion)) & String.UCase(Mid$(sTexto, iGuion + 1))
 
 End

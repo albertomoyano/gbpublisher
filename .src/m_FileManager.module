@@ -1,0 +1,1344 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_FileManager
+' PROPÓSITO : Lógica del gestor de archivos del proyecto (FFileManager,
+'             SC-70). El formulario tiene los controles y los manejadores;
+'             acá están las reglas, las validaciones y las operaciones sobre
+'             el disco.
+'
+' REGLAS ACORDADAS (claude/filemanager.md, 21/11/2026)
+' ----------------------------------------------------------
+'   - Todo queda dentro del proyecto en curso. Se compara la ruta REAL
+'     (File.RealPath), así un enlace simbólico que apunta afuera no saca
+'     al usuario del proyecto.
+'   - Las carpetas predefinidas (m_FuncionesGenericas.CarpetasPredefinidas)
+'     no se borran ni se renombran.
+'   - Un .md de la raíz no se borra ni se renombra: su nombre es la
+'     identidad del proyecto (SC-82).
+'   - Una pieza (fm- en front-matter, a- en articulos, bm- en back-matter)
+'     no se borra. Se puede renombrar, conservando el prefijo; la ficha de
+'     la pieza se corrige después en el ABM (la base no se toca desde acá).
+'   - Un .md nunca se abre: para eso está el editor.
+'   - El borrado es definitivo, con confirmación.
+'   - Los nombres siguen la lógica de origen, la del conversor de .docx
+'     (FConversorDOCX2MD y engine/convertir_docx.sh): letras sin tilde,
+'     dígitos y guion; el guion bajo queda fuera porque el conversor lo usa
+'     para separar el nombre de la pieza del de sus imágenes
+'     (NOMBRE_imagenN.ext). Una pieza se llama prefijo-NN-NOMBRE.md, con
+'     NOMBRE en mayúsculas: la regla única de m_OrdenPiezas.MotivoNombrePieza.
+'
+' CONTRATO
+' ----------------------------------------------------------
+'   Las funciones de acción devuelven String: vacío si salió bien, y si no,
+'   el motivo listo para mostrar. El formulario solo lo muestra.
+'
+' ENLACES SIMBÓLICOS (verificado en el fuente del intérprete 3.22.1)
+' ----------------------------------------------------------
+'   IsDir() usa stat() y SIGUE el enlace (main/share/gb_file_temp.h,
+'   FILE_is_dir). Stat(ruta) sin segundo parámetro usa lstat() y NO lo sigue
+'   (gbx_subr_file.c, SUBR_stat, follow = FALSE). Por eso el borrado y el
+'   conteo preguntan con Stat: un enlace a una carpeta se borra como enlace
+'   y nunca se recorre.
+' ==========================================================
+
+' --- PARÁMETROS Y RETORNO DE FPedirNombre ---
+' RC-GM-13: EL RETORNO ENTRE FORMULARIOS MODALES VA EN UN MÓDULO, NO EN UNA
+' VARIABLE Public DEL FORMULARIO. LOS PARÁMETROS SE FIJAN EN PedirNombre
+' ANTES DE ShowModal Y EL FORMULARIO LOS LEE EN Form_Open
+Public NombreElegido As String
+Public PedirTitulo As String
+Public PedirInicial As String
+Public PedirEsCarpeta As Boolean
+Public PedirDirectorio As String
+' RUTA DEL ELEMENTO QUE SE RENOMBRA; VACÍA AL CREAR
+Public PedirRutaOriginal As String
+
+' --- CONTADORES DE DescribirBorrado ---
+' GV-24: LOS PRIMITIVOS VAN SIEMPRE POR VALOR, ASÍ QUE LA RECURSIÓN DE
+' ContarContenido ACUMULA EN VARIABLES DEL MÓDULO
+Private $iCuentaArchivos As Integer
+Private $iCuentaCarpetas As Integer
+
+' --- CARACTERES ADMITIDOS (GV-11: Const A NIVEL DE MÓDULO) ---
+' ARCHIVOS Y CARPETAS: LETRAS SIN TILDE, DÍGITOS Y GUION. EL "_" QUEDA FUERA
+' A PROPÓSITO: EL CONVERSOR LO USA PARA SEPARAR EL NOMBRE DE LA PIEZA DEL DE
+' SUS IMÁGENES (FConversorDOCX2MD.CARACTERES_NOMBRE, convertir_docx.sh)
+Private Const CAR_ARCHIVO As String = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+Private Const CAR_CARPETA As String = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+Private Const CAR_EXTENSION As String = "abcdefghijklmnopqrstuvwxyz0123456789"
+' LARGO MÁXIMO: EL DE numero_pieza.nombre_archivo, EL MÁS CORTO DE LA BASE
+Private Const LARGO_MAXIMO As Integer = 100
+
+' LA REGLA DE LAS PIEZAS NO ESTÁ ACÁ: VIVE EN m_OrdenPiezas (MotivoNombrePieza)
+
+' --- ARCHIVOS DE BLOQUEO DE LIBREOFFICE: «.~lock.<nombre>#» ---
+' PENDIENTE DE VERIFICAR EN MINT (MINI-TEST EN claude/filemanager.md)
+Private Const PREFIJO_BLOQUEO As String = ".~lock."
+
+' --- TEXTO DEL AVISO PARA LOS .md ---
+Public Const AVISO_MD As String = "Los archivos .md se trabajan en el editor de gbpublisher: abrilo desde la lista de piezas del proyecto."
+
+' --- EXTENSIONES DE IMAGEN: LAS MISMAS QUE FMain.btnVerIMAGEN_Click ---
+Private Const EXT_IMAGEN As String = "|png|jpg|jpeg|gif|bmp|tiff|tif|webp|"
+
+' ============================================
+' Función   : RaizProyecto
+' Propósito : Devuelve la raíz del proyecto en curso sin barra final, que es
+'             la forma en que DirView guarda su Root (Root_Write la recorta)
+' Parámetros: (ninguno)
+' Retorna   : String — la raíz, o vacío si no hay proyecto válido
+' ============================================
+Public Function RaizProyecto() As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRaiz As String
+
+  ' --- 2. RAÍZ VALIDADA (EXISTE Y ES CARPETA) ---
+  sRaiz = m_FuncionesGenericas.RaizProyectoValida()
+  If sRaiz = "" Then Return ""
+
+  ' --- 3. SIN BARRA FINAL ---
+  ' SE RECORTA CARÁCTER POR CARÁCTER PORQUE PUEDE HABER MÁS DE UNA
+  While Right$(sRaiz) = "/"
+    If Len(sRaiz) = 1 Then Break
+    sRaiz = Left$(sRaiz, -1)
+  Wend
+
+  Return sRaiz
+
+End
+
+' ============================================
+' Función   : DentroDelProyecto
+' Propósito : Dice si una ruta, resuelta hasta su destino real, queda dentro
+'             del proyecto en curso (o es su raíz). Es el control para
+'             navegar y para abrir: un enlace que apunta afuera da False.
+' Parámetros: sRuta As String — ruta absoluta a controlar
+' Retorna   : Boolean — True si el destino real está dentro del proyecto
+' ============================================
+Public Function DentroDelProyecto(sRuta As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRaizReal As String
+  Dim sRutaReal As String
+
+  ' --- 2. LAS DOS RUTAS RESUELTAS ---
+  ' File.RealPath DEVUELVE VACÍO SI LA RUTA NO EXISTE (GV-01)
+  sRaizReal = File.RealPath(RaizProyecto())
+  If sRaizReal = "" Then Return False
+  sRutaReal = File.RealPath(sRuta)
+  If sRutaReal = "" Then Return False
+
+  ' --- 3. LA RAÍZ O ALGO DEBAJO DE ELLA ---
+  ' LA BARRA EVITA QUE /proyecto-viejo PASE POR ESTAR DENTRO DE /proyecto
+  If sRutaReal = sRaizReal Then Return True
+  Return sRutaReal Begins (sRaizReal & "/")
+
+End
+
+' ============================================
+' Función   : UbicacionDentroDelProyecto
+' Propósito : Dice si el LUGAR donde está un elemento queda dentro del
+'             proyecto, sin resolver el elemento mismo. Es el control para
+'             renombrar y borrar: un enlace dentro del proyecto que apunta
+'             afuera se puede renombrar o borrar (se opera sobre el enlace).
+' Parámetros: sRuta As String — ruta absoluta del elemento
+' Retorna   : Boolean — True si su carpeta está dentro del proyecto
+' ============================================
+Public Function UbicacionDentroDelProyecto(sRuta As String) As Boolean
+
+  Return DentroDelProyecto(File.Dir(sRuta))
+
+End
+
+' ============================================
+' Función   : RutaRelativa
+' Propósito : Devuelve la ruta relativa a la raíz del proyecto
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String — relativa («media/fig.png»); vacío para la raíz; la
+'             misma ruta si no está bajo la raíz
+' ============================================
+Public Function RutaRelativa(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRaiz As String
+
+  sRaiz = RaizProyecto()
+  If sRaiz = "" Then Return sRuta
+
+  ' --- 2. LA RAÍZ MISMA ---
+  If sRuta = sRaiz Then Return ""
+
+  ' --- 3. DEBAJO DE LA RAÍZ ---
+  ' Len Y Mid$ EN BYTES SON CORRECTOS ACÁ: SE CORTA UN PREFIJO IDÉNTICO
+  If sRuta Begins (sRaiz & "/") Then Return Mid$(sRuta, Len(sRaiz) + 2)
+
+  Return sRuta
+
+End
+
+' ============================================
+' Función   : EsCarpeta
+' Propósito : Dice si una ruta es una carpeta de verdad, sin seguir enlaces
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : Boolean — True solo para una carpeta real (no un enlace)
+' ============================================
+Public Function EsCarpeta(sRuta As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hStat As Stat
+
+  ' --- 2. Stat SIN SEGUNDO PARÁMETRO: NO SIGUE EL ENLACE (VER CABECERA) ---
+  Try hStat = Stat(sRuta)
+  If Error Then Return False
+
+  Return hStat.Type = gb.Directory
+
+End
+
+' ============================================
+' Función   : EsCarpetaPredefinida
+' Propósito : Dice si una ruta es la raíz o una de las carpetas que el
+'             programa crea en cada proyecto
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : Boolean — True si no se puede borrar ni renombrar por ser
+'             carpeta del proyecto
+' ============================================
+Public Function EsCarpetaPredefinida(sRuta As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRelativa As String
+
+  sRelativa = RutaRelativa(sRuta)
+
+  ' --- 2. LA RAÍZ CUENTA COMO PREDEFINIDA ---
+  If sRelativa = "" Then Return True
+
+  ' --- 3. LISTA ÚNICA, LA MISMA QUE USA ControlarCarpetas ---
+  Return m_FuncionesGenericas.CarpetasPredefinidas().Exist(sRelativa)
+
+End
+
+' ============================================
+' Función   : EsMarkdown
+' Propósito : Dice si un archivo es .md
+' Parámetros: sRuta As String — ruta o nombre del archivo
+' Retorna   : Boolean — True si la extensión es md (sin importar mayúsculas)
+' ============================================
+Public Function EsMarkdown(sRuta As String) As Boolean
+
+  Return LCase(File.Ext(sRuta)) = "md"
+
+End
+
+' ============================================
+' Función   : PrefijoDeCarpeta
+' Propósito : Devuelve el prefijo que llevan las piezas de una carpeta
+' Parámetros: sCarpetaRelativa As String — carpeta relativa a la raíz
+' Retorna   : String — «fm-», «a-», «bm-», o vacío si no es carpeta de piezas
+' ============================================
+Public Function PrefijoDeCarpeta(sCarpetaRelativa As String) As String
+
+  ' LA MISMA CORRESPONDENCIA QUE FMetadatosCapitulos (SELECCIÓN DEL ARCHIVO)
+  Select Case sCarpetaRelativa
+    Case "front-matter"
+      Return "fm-"
+    Case "articulos"
+      Return "a-"
+    Case "back-matter"
+      Return "bm-"
+  End Select
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : EsPieza
+' Propósito : Dice si un archivo es una pieza: un .md con el prefijo de su
+'             carpeta, en la carpeta misma (no en subcarpetas)
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : Boolean — True si es pieza
+' ============================================
+Public Function EsPieza(sRuta As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sPrefijo As String
+
+  ' --- 2. SOLO .md ---
+  If Not EsMarkdown(sRuta) Then Return False
+
+  ' --- 3. EL PREFIJO VALE DENTRO DE SU CARPETA (CASO 3 DEL RELEVAMIENTO) ---
+  sPrefijo = PrefijoDeCarpeta(RutaRelativa(File.Dir(sRuta)))
+  If sPrefijo = "" Then Return False
+
+  Return LCase(File.Name(sRuta)) Begins sPrefijo
+
+End
+
+' ============================================
+' Función   : EsMdDeLaRaiz
+' Propósito : Dice si un archivo es un .md que está en la raíz del proyecto
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : Boolean — True si es .md y su carpeta es la raíz
+' ============================================
+Public Function EsMdDeLaRaiz(sRuta As String) As Boolean
+
+  If Not EsMarkdown(sRuta) Then Return False
+  Return RutaRelativa(File.Dir(sRuta)) = ""
+
+End
+
+' ============================================
+' Función   : EstaAbiertoEnEditor
+' Propósito : Dice si una ruta es el archivo abierto en el editor principal
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : Boolean — True si es el mismo archivo (comparado por ruta real)
+' ============================================
+Public Function EstaAbiertoEnEditor(sRuta As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sAbierto As String
+  Dim sRealAbierto As String
+
+  ' --- 2. NADA ABIERTO ---
+  ' FMain.sRutaArchivoAbierto ES LA FUENTE DE LA RUTA DEL EDITOR; YA LA LEE
+  ' m_FuncionesGenericas CON EL MISMO FIN
+  sAbierto = FMain.sRutaArchivoAbierto
+  If sAbierto = "" Then Return False
+
+  ' --- 3. COMPARACIÓN POR RUTA REAL ---
+  ' If ANIDADO: SI EL ARCHIVO ABIERTO YA NO EXISTE, RealPath DEVUELVE VACÍO
+  sRealAbierto = File.RealPath(sAbierto)
+  If sRealAbierto = "" Then Return False
+
+  Return File.RealPath(sRuta) = sRealAbierto
+
+End
+
+' ============================================
+' Función   : MotivoNoBorrar
+' Propósito : Dice por qué un elemento no se puede borrar
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String — vacío si se puede borrar; si no, el motivo
+' ============================================
+Public Function MotivoNoBorrar(sRuta As String) As String
+
+  ' --- 1. DENTRO DEL PROYECTO ---
+  If Not UbicacionDentroDelProyecto(sRuta) Then Return "Está fuera del proyecto."
+
+  ' --- 2. CARPETAS DEL PROYECTO ---
+  If EsCarpetaPredefinida(sRuta) Then Return "Es una carpeta del proyecto: no se borra."
+
+  ' --- 3. .md PROTEGIDOS (CASO 3) ---
+  If EsMdDeLaRaiz(sRuta) Then Return "Es un .md de la raíz del proyecto: no se borra."
+  If EsPieza(sRuta) Then Return "Es una pieza del proyecto: no se borra."
+
+  ' --- 4. ABIERTO EN EL EDITOR ---
+  If EstaAbiertoEnEditor(sRuta) Then Return "Está abierto en el editor."
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : MotivoNoRenombrar
+' Propósito : Dice por qué un elemento no se puede renombrar
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String — vacío si se puede renombrar; si no, el motivo
+' ============================================
+Public Function MotivoNoRenombrar(sRuta As String) As String
+
+  ' --- 1. DENTRO DEL PROYECTO ---
+  If Not UbicacionDentroDelProyecto(sRuta) Then Return "Está fuera del proyecto."
+
+  ' --- 2. CARPETAS DEL PROYECTO (CASO 5) ---
+  If EsCarpetaPredefinida(sRuta) Then Return "Es una carpeta del proyecto: no se renombra."
+
+  ' --- 3. IDENTIDAD DEL PROYECTO (SC-82) ---
+  If EsMdDeLaRaiz(sRuta) Then Return "Es un .md de la raíz: su nombre es la identidad del proyecto y no se renombra."
+
+  ' --- 4. ABIERTO EN EL EDITOR ---
+  ' SI SE RENOMBRA, EL EDITOR GUARDA CON EL NOMBRE VIEJO Y DEJA UN DUPLICADO
+  If EstaAbiertoEnEditor(sRuta) Then Return "Está abierto en el editor: cerralo antes de renombrarlo."
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : DescripcionProteccion
+' Propósito : Texto de la fila «Protección» de la grilla de detalles
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String — qué no se puede hacer con el elemento y por qué
+' ============================================
+Public Function DescripcionProteccion(sRuta As String) As String
+
+  ' EL ORDEN ES EL DE MotivoNoBorrar: SE MUESTRA LA RAZÓN MÁS FUERTE
+  If EsCarpetaPredefinida(sRuta) Then Return "No se borra ni se renombra (carpeta del proyecto)"
+  If EsMdDeLaRaiz(sRuta) Then Return "No se borra ni se renombra (identidad del proyecto)"
+  If EstaAbiertoEnEditor(sRuta) Then Return "No se borra ni se renombra (abierto en el editor)"
+  If EsPieza(sRuta) Then Return "No se borra (pieza); al renombrarla conserva el prefijo"
+
+  Return "Ninguna"
+
+End
+
+' ============================================
+' Función   : SinTilde
+' Propósito : Cambia una letra con tilde, diéresis o ñ por su letra base
+' Parámetros: sCaracter As String — un carácter UTF-8
+' Retorna   : String — la letra base, o el mismo carácter si no hay cambio
+' Nota      : MAPA PROPIO Y NO iconv //TRANSLIT, QUE DEPENDE DEL LOCALE
+'             (GV-204)
+' ============================================
+Private Function SinTilde(sCaracter As String) As String
+
+  Select Case sCaracter
+    Case "á", "à", "ä", "â", "ã"
+      Return "a"
+    Case "é", "è", "ë", "ê"
+      Return "e"
+    Case "í", "ì", "ï", "î"
+      Return "i"
+    Case "ó", "ò", "ö", "ô", "õ"
+      Return "o"
+    Case "ú", "ù", "ü", "û"
+      Return "u"
+    Case "ñ"
+      Return "n"
+    Case "ç"
+      Return "c"
+    Case "Á", "À", "Ä", "Â", "Ã"
+      Return "A"
+    Case "É", "È", "Ë", "Ê"
+      Return "E"
+    Case "Í", "Ì", "Ï", "Î"
+      Return "I"
+    Case "Ó", "Ò", "Ö", "Ô", "Õ"
+      Return "O"
+    Case "Ú", "Ù", "Ü", "Û"
+      Return "U"
+    Case "Ñ"
+      Return "N"
+    Case "Ç"
+      Return "C"
+  End Select
+
+  Return sCaracter
+
+End
+
+' ============================================
+' Función   : NormalizarNombre
+' Propósito : Arma un nombre válido a partir de uno cualquiera. Es la
+'             sugerencia del diálogo de renombrar (caso 1: imágenes que
+'             llegan por email con nombres como «IMG_2034 (1).JPG»)
+' Parámetros: sNombre As String — nombre original
+'             bCarpeta As Boolean — True para carpetas (conservan mayúsculas
+'             y no tienen extensión)
+' Retorna   : String — el nombre normalizado («IMG-2034-1.jpg»): conserva
+'             mayúsculas y minúsculas, como el conversor; solo la extensión
+'             va en minúscula
+' ============================================
+Public Function NormalizarNombre(sNombre As String, bCarpeta As Boolean) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sBase As String
+  Dim sExtension As String
+  Dim sPermitidos As String
+  Dim sCaracter As String
+  Dim sSalida As String
+  Dim sExtensionLimpia As String
+  Dim i As Integer
+
+  ' --- 2. SEPARAR LA EXTENSIÓN (SOLO ARCHIVOS) ---
+  If bCarpeta Then
+    sBase = sNombre
+    sPermitidos = CAR_CARPETA
+  Else
+    sBase = File.BaseName(sNombre)
+    sExtension = LCase(File.Ext(sNombre))
+    sPermitidos = CAR_ARCHIVO
+  Endif
+
+  ' --- 3. CARÁCTER POR CARÁCTER ---
+  ' String.Len Y String.Mid RECORREN CODEPOINTS, NO BYTES (RC-GM-12). LO QUE
+  ' NO ES ADMITIDO (ESPACIO, GUION BAJO, PARÉNTESIS, PUNTO) PASA A GUION
+  For i = 1 To String.Len(sBase)
+    sCaracter = SinTilde(String.Mid(sBase, i, 1))
+    If InStr(sPermitidos, sCaracter) > 0 Then
+      sSalida &= sCaracter
+    Else
+      sSalida &= "-"
+    Endif
+  Next
+
+  ' --- 4. SIN GUIONES REPETIDOS NI EN LOS BORDES ---
+  While InStr(sSalida, "--") > 0
+    sSalida = Replace(sSalida, "--", "-")
+  Wend
+  While sSalida Begins "-"
+    sSalida = Mid$(sSalida, 2)
+  Wend
+  While sSalida Ends "-"
+    sSalida = Left$(sSalida, -1)
+  Wend
+
+  ' --- 5. EXTENSIÓN: SOLO LETRAS Y DÍGITOS, EN MINÚSCULA ---
+  ' LaTeX Y EL EPUB DISTINGUEN MAYÚSCULAS: .JPG Y .jpg SON DISTINTOS
+  If sExtension <> "" Then
+    For i = 1 To Len(sExtension)
+      sCaracter = Mid$(sExtension, i, 1)
+      If InStr(CAR_EXTENSION, sCaracter) > 0 Then sExtensionLimpia &= sCaracter
+    Next
+  Endif
+
+  If sExtensionLimpia = "" Then Return sSalida
+  Return sSalida & "." & sExtensionLimpia
+
+End
+
+' ============================================
+' Función   : MotivoNombreInvalido
+' Propósito : Valida un nombre de archivo o de carpeta nuevo
+' Parámetros: sNombre As String — el nombre, sin ruta
+'             bCarpeta As Boolean — True si es una carpeta
+' Retorna   : String — vacío si es válido; si no, el motivo
+' Nota      : LA VALIDACIÓN RECORRE BYTES (Len, Mid$) A PROPÓSITO: CUALQUIER
+'             BYTE DE UN CARÁCTER MULTIBYTE QUEDA FUERA DE LA LISTA Y EL NOMBRE
+'             SE RECHAZA, QUE ES LO BUSCADO
+' ============================================
+Public Function MotivoNombreInvalido(sNombre As String, bCarpeta As Boolean) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPartes As String[]
+  Dim sBase As String
+  Dim sExtension As String
+  Dim i As Integer
+
+  ' --- 2. VACÍO Y LARGO ---
+  If sNombre = "" Then Return "Escribí un nombre."
+  If Len(sNombre) > LARGO_MAXIMO Then Return "El nombre es demasiado largo (máximo " & CStr(LARGO_MAXIMO) & " caracteres)."
+
+  ' --- 3. CARPETAS ---
+  If bCarpeta Then
+    For i = 1 To Len(sNombre)
+      If InStr(CAR_CARPETA, Mid$(sNombre, i, 1)) = 0 Then Return "Una carpeta lleva solo letras sin tilde, números y guiones (sin guion bajo)."
+    Next
+    Return ""
+  Endif
+
+  ' --- 4. ARCHIVOS: BASE Y EXTENSIÓN, UN SOLO PUNTO ---
+  ' GV-185: Split TOMA CADA CARÁCTER DEL SEPARADOR; CON "." ES UNO SOLO
+  aPartes = Split(sNombre, ".")
+  If aPartes.Count <> 2 Then Return "El archivo lleva un solo punto, el de la extensión (por ejemplo, figura-01.png)."
+  sBase = aPartes[0]
+  sExtension = aPartes[1]
+
+  ' --- 5. BASE ---
+  If sBase = "" Then Return "Falta el nombre antes del punto."
+  For i = 1 To Len(sBase)
+    If InStr(CAR_ARCHIVO, Mid$(sBase, i, 1)) = 0 Then Return "El nombre lleva solo letras sin tilde, números y guiones (sin guion bajo)."
+  Next
+
+  ' --- 6. EXTENSIÓN: ENTRE 2 Y 4, COMO EN EL FORMULARIO ANTERIOR ---
+  If Len(sExtension) < 2 Then Return "La extensión debe tener entre 2 y 4 caracteres."
+  If Len(sExtension) > 4 Then Return "La extensión debe tener entre 2 y 4 caracteres."
+  For i = 1 To Len(sExtension)
+    If InStr(CAR_EXTENSION, Mid$(sExtension, i, 1)) = 0 Then Return "La extensión lleva solo minúsculas y números."
+  Next
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : MotivoNombrePieza
+' Propósito : Valida el nombre de archivo de una pieza: extensión .md y la
+'             regla única de m_OrdenPiezas con el prefijo de su carpeta
+' Parámetros: sNombre As String — el nombre, con extensión
+'             sPrefijo As String — el prefijo de la carpeta («fm-», «a-», «bm-»)
+' Retorna   : String — vacío si es válido; si no, el motivo
+' ============================================
+Public Function MotivoNombrePieza(sNombre As String, sPrefijo As String) As String
+
+  ' --- 1. EXTENSIÓN, EN MINÚSCULA COMO LA ESCRIBE EL CONVERSOR ---
+  If File.Ext(sNombre) <> "md" Then Return "Una pieza es un archivo .md (por ejemplo, " & sPrefijo & "01-INTRODUCCION.md)."
+
+  ' --- 2. EL NOMBRE: LA REGLA ÚNICA ---
+  Return m_OrdenPiezas.MotivoNombrePieza(File.BaseName(sNombre), sPrefijo)
+
+End
+
+' ============================================
+' Función   : MotivoNombre
+' Propósito : Valida un nombre según dónde va a quedar: las reglas
+'             generales y, para un .md en una carpeta de piezas, las de la
+'             pieza
+' Parámetros: sNombre As String — el nombre, sin ruta
+'             bCarpeta As Boolean — True si es una carpeta
+'             sDirectorio As String — carpeta donde va a quedar
+' Retorna   : String — vacío si es válido; si no, el motivo
+' Nota      : TODO .md EN front-matter, articulos O back-matter ES UNA PIEZA:
+'             ES LO QUE ESPERA FMetadatosCapitulos AL ELEGIR EL ARCHIVO
+' ============================================
+Public Function MotivoNombre(sNombre As String, bCarpeta As Boolean, sDirectorio As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMotivo As String
+  Dim sPrefijo As String
+
+  ' --- 2. REGLAS GENERALES ---
+  sMotivo = MotivoNombreInvalido(sNombre, bCarpeta)
+  If sMotivo <> "" Then Return sMotivo
+  If bCarpeta Then Return ""
+
+  ' --- 3. PIEZA ---
+  If Not EsMarkdown(sNombre) Then Return ""
+  sPrefijo = PrefijoDeCarpeta(RutaRelativa(sDirectorio))
+  If sPrefijo = "" Then Return ""
+
+  Return MotivoNombrePieza(sNombre, sPrefijo)
+
+End
+
+' ============================================
+' Función   : PedirNombre
+' Propósito : Muestra FPedirNombre y devuelve el nombre aceptado
+' Parámetros: sTitulo As String — indicación que ve el usuario
+'             sInicial As String — texto inicial del campo
+'             bCarpeta As Boolean — True si se pide un nombre de carpeta
+'             sDirectorio As String — carpeta donde quedará el elemento
+'             sRutaOriginal As String — al renombrar, la ruta actual; vacía
+'             al crear
+' Retorna   : String — el nombre aceptado, o vacío si se canceló
+' ============================================
+Public Function PedirNombre(sTitulo As String, sInicial As String, bCarpeta As Boolean, sDirectorio As String, sRutaOriginal As String) As String
+
+  ' --- 1. PARÁMETROS PARA EL FORMULARIO ---
+  PedirTitulo = sTitulo
+  PedirInicial = sInicial
+  PedirEsCarpeta = bCarpeta
+  PedirDirectorio = sDirectorio
+  PedirRutaOriginal = sRutaOriginal
+  NombreElegido = ""
+
+  ' --- 2. DIÁLOGO ---
+  ' LA DECISIÓN VUELVE POR ShowModal (Me.Close(1)) Y EL NOMBRE POR EL
+  ' MÓDULO (RC-GM-13)
+  If FPedirNombre.ShowModal() <> 1 Then Return ""
+
+  Return NombreElegido
+
+End
+
+' ============================================
+' Función   : Renombrar
+' Propósito : Renombra un archivo o una carpeta dentro de su misma carpeta
+' Parámetros: sRuta As String — ruta absoluta actual
+'             sNuevoNombre As String — nombre nuevo, sin ruta
+' Retorna   : String — vacío si salió bien; si no, el motivo
+' ============================================
+Public Function Renombrar(sRuta As String, sNuevoNombre As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMotivo As String
+  Dim sDestino As String
+  Dim bCarpeta As Boolean
+
+  ' --- 2. ¿SE PUEDE RENOMBRAR? ---
+  sMotivo = MotivoNoRenombrar(sRuta)
+  If sMotivo <> "" Then Return sMotivo
+
+  ' --- 3. NOMBRE VÁLIDO PARA ESA CARPETA ---
+  ' UN .md EN UNA CARPETA DE PIEZAS PASA POR LAS REGLAS DEL CONVERSOR, CON EL
+  ' PREFIJO DE SU CARPETA (MotivoNombre)
+  bCarpeta = EsCarpeta(sRuta)
+  sMotivo = MotivoNombre(sNuevoNombre, bCarpeta, File.Dir(sRuta))
+  If sMotivo <> "" Then Return sMotivo
+
+  ' --- 4. UNA PIEZA SIGUE SIENDO .md ---
+  ' SI NO, DEJARÍA DE SER PIEZA SIN QUE NADIE LO NOTE
+  If EsPieza(sRuta) Then
+    If Not EsMarkdown(sNuevoNombre) Then Return "Una pieza sigue siendo un archivo .md."
+  Endif
+
+  ' --- 5. DESTINO ---
+  sDestino = File.Dir(sRuta) &/ sNuevoNombre
+  If sDestino = sRuta Then Return ""
+  If Exist(sDestino) Then Return "Ya existe «" & sNuevoNombre & "» en esta carpeta."
+
+  ' --- 6. RENOMBRAR ---
+  ' Move EN LA MISMA CARPETA ES UN RENOMBRADO; SOBRE UN ENLACE, RENOMBRA EL
+  ' ENLACE Y NO SU DESTINO
+  Try Move sRuta To sDestino
+  If Error Then Return "No se pudo renombrar: " & Error.Text
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : ContarContenido
+' Propósito : Cuenta archivos y subcarpetas de una carpeta, en profundidad,
+'             sin seguir enlaces. Acumula en $iCuentaArchivos y
+'             $iCuentaCarpetas.
+' Parámetros: sCarpeta As String — ruta absoluta
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub ContarContenido(sCarpeta As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aNombres As String[]
+  Dim sNombre As String
+  Dim sHijo As String
+  Dim hStat As Stat
+
+  ' --- 2. LISTADO ---
+  ' Dir SIN PATRÓN NI FILTRO DEVUELVE TODO, OCULTOS INCLUIDOS (SOLO SALTEA
+  ' «.» Y «..», FILE_dir_next). UNA CARPETA ILEGIBLE NO SE CUENTA: EL
+  ' BORRADO POSTERIOR VA A FALLAR AHÍ Y LO VA A INFORMAR
+  Try aNombres = Dir(sCarpeta)
+  If Error Then Return
+
+  ' --- 3. RECORRIDO SIN SEGUIR ENLACES ---
+  For Each sNombre In aNombres
+    sHijo = sCarpeta &/ sNombre
+    Try hStat = Stat(sHijo)
+    If Error Then Continue
+    If hStat.Type = gb.Directory Then
+      Inc $iCuentaCarpetas
+      ContarContenido(sHijo)
+    Else
+      Inc $iCuentaArchivos
+    Endif
+  Next
+
+End
+
+' ============================================
+' Función   : Plural
+' Propósito : Arma «1 archivo» o «3 archivos»
+' Parámetros: iCantidad As Integer — la cantidad
+'             sSingular As String — la palabra en singular
+'             sPlural As String — la palabra en plural
+' Retorna   : String — la cantidad con la palabra que corresponde
+' ============================================
+Private Function Plural(iCantidad As Integer, sSingular As String, sPlural As String) As String
+
+  If iCantidad = 1 Then Return "1 " & sSingular
+  Return CStr(iCantidad) & " " & sPlural
+
+End
+
+' ============================================
+' Función   : DescribirBorrado
+' Propósito : Texto de la confirmación de borrado: qué se borra y, en una
+'             carpeta, cuánto hay adentro
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String — la descripción
+' ============================================
+Public Function DescribirBorrado(sRuta As String) As String
+
+  ' --- 1. ARCHIVO O ENLACE ---
+  If Not EsCarpeta(sRuta) Then Return "Se va a borrar «" & File.Name(sRuta) & "»."
+
+  ' --- 2. CARPETA: CONTENIDO EN PROFUNDIDAD ---
+  $iCuentaArchivos = 0
+  $iCuentaCarpetas = 0
+  ContarContenido(sRuta)
+
+  If $iCuentaArchivos + $iCuentaCarpetas = 0 Then Return "Se va a borrar la carpeta «" & File.Name(sRuta) & "», que está vacía."
+
+  Return "Se va a borrar la carpeta «" & File.Name(sRuta) & "» con todo su contenido: " &
+    Plural($iCuentaArchivos, "archivo", "archivos") & " y " &
+    Plural($iCuentaCarpetas, "carpeta", "carpetas") & "."
+
+End
+
+' ============================================
+' Función   : BorrarCarpetaRecursiva
+' Propósito : Borra una carpeta con todo su contenido, sin seguir enlaces
+' Parámetros: sCarpeta As String — ruta absoluta de una carpeta real
+' Retorna   : String — vacío si salió bien; si no, el motivo
+' ============================================
+Private Function BorrarCarpetaRecursiva(sCarpeta As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aNombres As String[]
+  Dim sNombre As String
+  Dim sHijo As String
+  Dim sMotivo As String
+  Dim hStat As Stat
+
+  ' --- 2. LISTADO (OCULTOS INCLUIDOS) ---
+  Try aNombres = Dir(sCarpeta)
+  If Error Then Return "No se pudo leer «" & RutaRelativa(sCarpeta) & "»: " & Error.Text
+
+  ' --- 3. CONTENIDO ---
+  For Each sNombre In aNombres
+    sHijo = sCarpeta &/ sNombre
+    Try hStat = Stat(sHijo)
+    If Error Then Return "No se pudo leer «" & RutaRelativa(sHijo) & "»: " & Error.Text
+
+    ' Stat NO SIGUE EL ENLACE: UN ENLACE A UNA CARPETA DE AFUERA SE BORRA
+    ' COMO ENLACE Y SU DESTINO QUEDA INTACTO (VER CABECERA)
+    If hStat.Type = gb.Directory Then
+      sMotivo = BorrarCarpetaRecursiva(sHijo)
+      If sMotivo <> "" Then Return sMotivo
+    Else
+      Try Kill sHijo
+      If Error Then Return "No se pudo borrar «" & RutaRelativa(sHijo) & "»: " & Error.Text
+    Endif
+  Next
+
+  ' --- 4. LA CARPETA, YA VACÍA ---
+  Try Rmdir sCarpeta
+  If Error Then Return "No se pudo borrar la carpeta «" & RutaRelativa(sCarpeta) & "»: " & Error.Text
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : Borrar
+' Propósito : Borra definitivamente un archivo, un enlace o una carpeta con
+'             su contenido. La confirmación la pide el formulario.
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String — vacío si salió bien; si no, el motivo
+' ============================================
+Public Function Borrar(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMotivo As String
+
+  ' --- 2. ¿SE PUEDE BORRAR? ---
+  sMotivo = MotivoNoBorrar(sRuta)
+  If sMotivo <> "" Then Return sMotivo
+
+  ' --- 3. CARPETA REAL: RECURSIVO ---
+  If EsCarpeta(sRuta) Then Return BorrarCarpetaRecursiva(sRuta)
+
+  ' --- 4. ARCHIVO O ENLACE ---
+  Try Kill sRuta
+  If Error Then Return "No se pudo borrar: " & Error.Text
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : CrearCarpeta
+' Propósito : Crea una carpeta vacía
+' Parámetros: sDirectorio As String — carpeta donde se crea
+'             sNombre As String — nombre de la carpeta nueva
+' Retorna   : String — vacío si salió bien; si no, el motivo
+' ============================================
+Public Function CrearCarpeta(sDirectorio As String, sNombre As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMotivo As String
+  Dim sRuta As String
+
+  ' --- 2. VALIDACIONES ---
+  If Not DentroDelProyecto(sDirectorio) Then Return "La carpeta de destino está fuera del proyecto."
+  sMotivo = MotivoNombre(sNombre, True, sDirectorio)
+  If sMotivo <> "" Then Return sMotivo
+  sRuta = sDirectorio &/ sNombre
+  If Exist(sRuta) Then Return "Ya existe «" & sNombre & "» en esta carpeta."
+
+  ' --- 3. CREACIÓN ---
+  Try Mkdir sRuta
+  If Error Then Return "No se pudo crear la carpeta: " & Error.Text
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : CrearArchivo
+' Propósito : Crea un archivo vacío
+' Parámetros: sDirectorio As String — carpeta donde se crea
+'             sNombre As String — nombre del archivo nuevo, con extensión
+' Retorna   : String — vacío si salió bien; si no, el motivo
+' ============================================
+Public Function CrearArchivo(sDirectorio As String, sNombre As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sMotivo As String
+  Dim sRuta As String
+  Dim hArchivo As File
+
+  ' --- 2. VALIDACIONES ---
+  If Not DentroDelProyecto(sDirectorio) Then Return "La carpeta de destino está fuera del proyecto."
+  sMotivo = MotivoNombre(sNombre, False, sDirectorio)
+  If sMotivo <> "" Then Return sMotivo
+  sRuta = sDirectorio &/ sNombre
+  If Exist(sRuta) Then Return "Ya existe «" & sNombre & "» en esta carpeta."
+
+  ' --- 3. CREACIÓN: VACÍO ---
+  Try hArchivo = Open sRuta For Create
+  If Error Then Return "No se pudo crear el archivo: " & Error.Text
+  Close #hArchivo
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : Abrir
+' Propósito : Abre un archivo con la aplicación que el sistema tiene
+'             asociada a su tipo
+' Parámetros: sRuta As String — ruta absoluta del archivo
+' Retorna   : String — vacío si se lanzó; si no, el motivo (para un .md,
+'             AVISO_MD)
+' ============================================
+Public Function Abrir(sRuta As String) As String
+
+  ' --- 1. LOS .md NUNCA SE ABREN (CASO 4) ---
+  If EsMarkdown(sRuta) Then Return AVISO_MD
+
+  ' --- 2. DESTINO REAL DENTRO DEL PROYECTO ---
+  If Not DentroDelProyecto(sRuta) Then Return "Está fuera del proyecto, o es un enlace que apunta afuera."
+
+  ' --- 3. Exist ANTES DE LANZAR ---
+  ' SIN Wait, UN FALLO DE xdg-open NO LLEGA NUNCA AL LLAMADOR: LO QUE SE
+  ' QUIERA INFORMAR SE VERIFICA ANTES (GV-43)
+  If Not Exist(sRuta) Then Return "El archivo ya no existe."
+
+  ' --- 4. VISOR DEL SISTEMA, SIN ESPERA (GV-43) ---
+  Try Desktop.Open(sRuta)
+  If Error Then Return "No se pudo abrir: " & Error.Text
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : TamanioLegible
+' Propósito : Escribe un tamaño en bytes con la unidad que corresponde
+' Parámetros: iBytes As Long — tamaño en bytes
+' Retorna   : String — «812 bytes», «2,4 MB»
+' ============================================
+Public Function TamanioLegible(iBytes As Long) As String
+
+  ' Format$ USA EL SEPARADOR DECIMAL DEL LOCALE
+  If iBytes < 1024 Then Return CStr(iBytes) & " bytes"
+  If iBytes < 1048576 Then Return Format$(iBytes / 1024, "0.0") & " KB"
+  If iBytes < 1073741824 Then Return Format$(iBytes / 1048576, "0.0") & " MB"
+  Return Format$(iBytes / 1073741824, "0.0") & " GB"
+
+End
+
+' ============================================
+' Función   : FormatoEsperado
+' Propósito : El formato que corresponde a una extensión, en los tipos que
+'             se pueden reconocer por su cabecera
+' Parámetros: sExtension As String — extensión, sin punto
+' Retorna   : String — «PNG», «JPEG»…, o vacío si no se controla
+' ============================================
+Private Function FormatoEsperado(sExtension As String) As String
+
+  Select Case LCase(sExtension)
+    Case "png"
+      Return "PNG"
+    Case "jpg", "jpeg"
+      Return "JPEG"
+    Case "gif"
+      Return "GIF"
+    Case "tif", "tiff"
+      Return "TIFF"
+    Case "webp"
+      Return "WebP"
+    Case "heic", "heif"
+      Return "HEIC"
+    Case "avif"
+      Return "AVIF"
+    Case "pdf"
+      Return "PDF"
+  End Select
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : FormatoReal
+' Propósito : Reconoce el formato de un archivo por sus primeros bytes, sin
+'             mirar la extensión. Detecta, por ejemplo, un HEIC del celular
+'             renombrado a .jpg, que después rompe LuaLaTeX.
+' Parámetros: sRuta As String — ruta absoluta del archivo
+' Retorna   : String — «PNG», «JPEG», «GIF», «TIFF», «WebP», «HEIC», «AVIF»,
+'             «PDF», o vacío si no se reconoce o no se pudo leer
+' Nota      : DesktopMime.FromFile NO SIRVE PARA ESTO: DEDUCE EL TIPO SOLO POR
+'             LA EXTENSIÓN (LA PRUEBA DE BYTES MÁGICOS ESTÁ COMENTADA EN
+'             gb.desktop 3.22.1)
+' ============================================
+Public Function FormatoReal(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hArchivo As File
+  Dim sCabecera As String
+  Dim sMarca As String
+
+  ' --- 2. LOS PRIMEROS 12 BYTES ---
+  ' CON LARGO NEGATIVO, Read LEE COMO MÁXIMO ESA CANTIDAD Y NO FALLA SI EL
+  ' ARCHIVO ES MÁS CORTO (gbx_subr_file.c; YA USADO EN FMain CON -200)
+  Try hArchivo = Open sRuta For Read
+  If Error Then Return ""
+  Try sCabecera = Read #hArchivo, -12
+  Close #hArchivo
+  If Len(sCabecera) < 4 Then Return ""
+
+  ' --- 3. FIRMAS DE CUATRO BYTES O MENOS ---
+  ' Asc Y Mid$ TRABAJAN EN BYTES, QUE ES LO QUE SE COMPARA ACÁ. Asc FUERA DE
+  ' RANGO DEVUELVE 0, ASÍ QUE And NO PUEDE FALLAR (RC-GM-17 NO APLICA)
+  If Left$(sCabecera, 4) = "%PDF" Then Return "PDF"
+  If Left$(sCabecera, 4) = "GIF8" Then Return "GIF"
+  If Asc(sCabecera, 1) = &H89 And Mid$(sCabecera, 2, 3) = "PNG" Then Return "PNG"
+  If Asc(sCabecera, 1) = &HFF And Asc(sCabecera, 2) = &HD8 And Asc(sCabecera, 3) = &HFF Then Return "JPEG"
+  If Left$(sCabecera, 4) = "II*" & Chr$(0) Then Return "TIFF"
+  If Left$(sCabecera, 4) = "MM" & Chr$(0) & "*" Then Return "TIFF"
+
+  ' --- 4. FIRMAS DE DOCE BYTES ---
+  If Len(sCabecera) < 12 Then Return ""
+  If Left$(sCabecera, 4) = "RIFF" And Mid$(sCabecera, 9, 4) = "WEBP" Then Return "WebP"
+  If Mid$(sCabecera, 5, 4) = "ftyp" Then
+    sMarca = Mid$(sCabecera, 9, 4)
+    Select Case sMarca
+      Case "heic", "heix", "hevc", "mif1", "msf1"
+        Return "HEIC"
+      Case "avif"
+        Return "AVIF"
+    End Select
+  Endif
+
+  Return ""
+
+End
+
+' ============================================
+' Función   : TipoLegible
+' Propósito : Descripción del tipo de archivo según la base MIME del sistema
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String — «Imagen JPEG», o «Archivo .xyz» si no hay descripción
+' ============================================
+Private Function TipoLegible(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hMime As DesktopMime
+  Dim sComentario As String
+
+  ' --- 2. BASE MIME (POR EXTENSIÓN) ---
+  ' If ANIDADOS: FromFile PUEDE DEVOLVER Null (RC-GM-17)
+  Try hMime = DesktopMime.FromFile(sRuta)
+  If Not Error Then
+    If hMime Then
+      Try sComentario = hMime.GetComment()
+    Endif
+  Endif
+
+  If sComentario <> "" Then Return sComentario
+  Return "Archivo ." & File.Ext(sRuta)
+
+End
+
+' ============================================
+' Función   : CodigoDePieza
+' Propósito : Código de posición y familia de una pieza
+' Parámetros: sRuta As String — ruta absoluta de una pieza
+' Retorna   : String — «fm-10 (preliminares)»
+' Nota      : EL CÓDIGO ES TODO HASTA EL SEGUNDO GUION, COMO
+'             m_OrdenPiezas.ExpresionCodigo
+' ============================================
+Private Function CodigoDePieza(sRuta As String) As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPartes As String[]
+  Dim sCodigo As String
+  Dim sFamilia As String
+
+  ' --- 2. CÓDIGO ---
+  aPartes = Split(LCase(File.BaseName(sRuta)), "-")
+  If aPartes.Count >= 2 Then
+    sCodigo = aPartes[0] & "-" & aPartes[1]
+  Else
+    sCodigo = aPartes[0]
+  Endif
+
+  ' --- 3. FAMILIA ---
+  Select Case aPartes[0]
+    Case "fm"
+      sFamilia = "preliminares"
+    Case "a"
+      sFamilia = "cuerpo"
+    Case "bm"
+      sFamilia = "finales"
+  End Select
+
+  Return sCodigo & " (" & sFamilia & ")"
+
+End
+
+' ============================================
+' Función   : Detalles
+' Propósito : Pares propiedad/valor de un elemento, para gvDetalles. Solo lo
+'             que se lee al instante: lo pesado va en DetallesPesados.
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String[] — pares consecutivos [propiedad, valor, propiedad,
+'             valor, …]
+' ============================================
+Public Function Detalles(sRuta As String) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPares As New String[]
+  Dim hStat As Stat
+  Dim sUbicacion As String
+  Dim sEsperado As String
+  Dim sReal As String
+  Dim iArchivos As Integer
+  Dim iCarpetas As Integer
+
+  ' --- 2. LECTURA SIN SEGUIR ENLACES ---
+  ' EL TEXTO DEL ERROR SE LEE ANTES DE CUALQUIER OTRA SENTENCIA
+  Try hStat = Stat(sRuta)
+  If Error Then
+    sReal = "No se pudo leer: " & Error.Text
+    aPares.Add("Estado")
+    aPares.Add(sReal)
+    Return aPares
+  Endif
+
+  ' --- 3. COMUNES ---
+  aPares.Add("Nombre")
+  aPares.Add(File.Name(sRuta))
+
+  sUbicacion = RutaRelativa(File.Dir(sRuta))
+  aPares.Add("Ubicación")
+  If sUbicacion = "" Then
+    aPares.Add("raíz del proyecto")
+  Else
+    aPares.Add(sUbicacion & "/")
+  Endif
+
+  aPares.Add("Tipo")
+  Select Case hStat.Type
+    Case gb.Link
+      aPares.Add("Enlace simbólico a " & hStat.Link)
+    Case gb.Directory
+      aPares.Add("Carpeta")
+    Case Else
+      aPares.Add(TipoLegible(sRuta))
+  End Select
+
+  ' --- 4. CARPETA: CONTENIDO DIRECTO, SIN RECORRER EN PROFUNDIDAD ---
+  If hStat.Type = gb.Directory Then
+    Try iArchivos = Dir(sRuta, "*", gb.File).Count
+    Try iCarpetas = Dir(sRuta, "*", gb.Directory).Count
+    aPares.Add("Contenido")
+    aPares.Add(Plural(iArchivos, "archivo", "archivos") & ", " & Plural(iCarpetas, "carpeta", "carpetas"))
+  Else
+    aPares.Add("Tamaño")
+    aPares.Add(TamanioLegible(hStat.Size))
+  Endif
+
+  aPares.Add("Modificado")
+  aPares.Add(Format$(hStat.LastModified, "dd/mm/yyyy hh:nn"))
+
+  aPares.Add("Protección")
+  aPares.Add(DescripcionProteccion(sRuta))
+
+  ' --- 5. PIEZA: CÓDIGO DE POSICIÓN Y FAMILIA ---
+  If EsPieza(sRuta) Then
+    aPares.Add("Pieza")
+    aPares.Add(CodigoDePieza(sRuta))
+  Endif
+
+  ' --- 6. FORMATO REAL CONTRA LA EXTENSIÓN ---
+  ' SOLO ARCHIVOS COMUNES CON UNA EXTENSIÓN QUE SE PUEDA CONTROLAR
+  If hStat.Type = gb.File Then
+    sEsperado = FormatoEsperado(File.Ext(sRuta))
+    If sEsperado <> "" Then
+      sReal = FormatoReal(sRuta)
+      aPares.Add("Formato real")
+      If sReal = "" Then
+        aPares.Add("no reconocido: revisar el archivo")
+      Else If sReal = sEsperado Then
+        aPares.Add(sReal)
+      Else
+        aPares.Add(sReal & ", no coincide con la extensión ." & File.Ext(sRuta))
+      Endif
+    Endif
+  Endif
+
+  Return aPares
+
+End
+
+' ============================================
+' Función   : TieneDetallesPesados
+' Propósito : Dice si un archivo tiene datos que cuesta leer (imagen o PDF)
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : Boolean — True para imágenes y PDF que no sean carpetas
+' ============================================
+Public Function TieneDetallesPesados(sRuta As String) As Boolean
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sExtension As String
+
+  If EsCarpeta(sRuta) Then Return False
+  sExtension = LCase(File.Ext(sRuta))
+  If sExtension = "" Then Return False
+
+  ' --- 2. IMAGEN O PDF ---
+  If sExtension = "pdf" Then Return True
+  Return InStr(EXT_IMAGEN, "|" & sExtension & "|") > 0
+
+End
+
+' ============================================
+' Función   : DetallesPesados
+' Propósito : Pares propiedad/valor que cuesta leer: dimensiones y
+'             resolución de una imagen; páginas y tamaño de un PDF
+' Parámetros: sRuta As String — ruta absoluta
+' Retorna   : String[] — pares consecutivos, como Detalles
+' Nota      : Image.Load DECODIFICA LA IMAGEN ENTERA: EL FORMULARIO LO PIDE
+'             CON UN Timer PARA NO HACERLO EN CADA PASO DE LAS FLECHAS
+' ============================================
+Public Function DetallesPesados(sRuta As String) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aPares As New String[]
+  Dim hImagen As Image
+  Dim hPdf As PdfDocument
+  Dim iEstado As Integer
+  Dim fAnchoMm As Float
+  Dim fAltoMm As Float
+  Dim sError As String
+
+  ' --- 2. PDF: PÁGINAS Y TAMAÑO DE LA PRIMERA ---
+  ' W Y H VIENEN EN PUNTOS, COMO EN m_RevisarPDF; LAS PÁGINAS EMPIEZAN EN 0
+  If LCase(File.Ext(sRuta)) = "pdf" Then
+    Try hPdf = New PdfDocument(sRuta)
+    If Error Then
+      sError = "no se pudo leer: " & Error.Text
+      aPares.Add("PDF")
+      aPares.Add(sError)
+      Return aPares
+    Endif
+    aPares.Add("Páginas")
+    aPares.Add(CStr(hPdf.Count))
+    If hPdf.Count > 0 Then
+      fAnchoMm = hPdf[0].W / 72 * 25.4
+      fAltoMm = hPdf[0].H / 72 * 25.4
+      aPares.Add("Página 1")
+      aPares.Add(Format$(fAnchoMm, "0") & " × " & Format$(fAltoMm, "0") & " mm")
+    Endif
+    ' SE SUELTA EL DOCUMENTO: PdfDocument NO TIENE Close, SE LIBERA EN _free
+    hPdf = Null
+    Return aPares
+  Endif
+
+  ' --- 3. IMAGEN: DIMENSIONES Y RESOLUCIÓN ---
+  Try hImagen = Image.Load(sRuta)
+  If Error Then
+    aPares.Add("Dimensiones")
+    aPares.Add("no se pudo leer la imagen")
+    Return aPares
+  Endif
+
+  aPares.Add("Dimensiones")
+  aPares.Add(CStr(hImagen.Width) & " × " & CStr(hImagen.Height) & " px")
+
+  ' EL MISMO SEMÁFORO QUE EL RETOCADOR: UN SOLO CRITERIO EN LA APLICACIÓN
+  iEstado = m_GestionImagenes.EvaluarResolucion(hImagen.Width)
+  aPares.Add("Resolución")
+  Select Case iEstado
+    Case 2
+      aPares.Add("suficiente para la caja")
+    Case 1
+      aPares.Add("justa para la caja")
+    Case Else
+      aPares.Add("insuficiente para la caja")
+  End Select
+
+  hImagen = Null
+  Return aPares
+
+End
+
+' ============================================
+' Función   : BuscarBloqueos
+' Propósito : Recorre una carpeta y sus subcarpetas buscando archivos de
+'             bloqueo de LibreOffice, y agrega a la lista el documento que
+'             cada uno bloquea
+' Parámetros: sCarpeta As String — carpeta a recorrer
+'             aEncontrados As String[] — lista donde se agregan las rutas
+'             relativas (los arreglos van por referencia, GV-24)
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub BuscarBloqueos(sCarpeta As String, aEncontrados As String[])
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aArchivos As String[]
+  Dim aCarpetas As String[]
+  Dim sNombre As String
+  Dim sDocumento As String
+  Dim iLargoPrefijo As Integer
+
+  iLargoPrefijo = Len(PREFIJO_BLOQUEO)
+
+  ' --- 2. BLOQUEOS DE ESTA CARPETA: «.~lock.<documento>#» ---
+  ' UNA CARPETA ILEGIBLE SE SALTEA: ES UN AVISO, NO UNA OPERACIÓN
+  Try aArchivos = Dir(sCarpeta, "*", gb.File)
+  If Not Error Then
+    For Each sNombre In aArchivos
+      If sNombre Begins PREFIJO_BLOQUEO Then
+        If Right$(sNombre) = "#" Then
+          sDocumento = Mid$(sNombre, iLargoPrefijo + 1, Len(sNombre) - iLargoPrefijo - 1)
+          aEncontrados.Add(RutaRelativa(sCarpeta &/ sDocumento))
+        Endif
+      Endif
+    Next
+  Endif
+
+  ' --- 3. SUBCARPETAS ---
+  ' CON gb.Directory, Dir DECIDE POR d_type = DT_DIR (FILE_dir_next): UN
+  ' ENLACE A CARPETA NO APARECE Y EL RECORRIDO NO SALE DEL PROYECTO. .git NO
+  ' TIENE DOCUMENTOS Y ES LA CARPETA MÁS GRANDE: SE SALTEA
+  Try aCarpetas = Dir(sCarpeta, "*", gb.Directory)
+  If Error Then Return
+  For Each sNombre In aCarpetas
+    If sNombre = ".git" Then Continue
+    BuscarBloqueos(sCarpeta &/ sNombre, aEncontrados)
+  Next
+
+End
+
+' ============================================
+' Función   : DocumentosAbiertosEnLibreOffice
+' Propósito : Lista los documentos del proyecto que LibreOffice tiene
+'             abiertos, según sus archivos de bloqueo
+' Parámetros: (ninguno)
+' Retorna   : String[] — rutas relativas; vacío si no hay ninguno
+' Nota      : UN BLOQUEO TAMBIÉN QUEDA SI LibreOffice SE CERRÓ DE GOLPE: EL
+'             AVISO LO DICE
+' ============================================
+Public Function DocumentosAbiertosEnLibreOffice() As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aEncontrados As New String[]
+  Dim sRaiz As String
+
+  ' --- 2. SIN PROYECTO NO HAY NADA QUE BUSCAR ---
+  sRaiz = RaizProyecto()
+  If sRaiz = "" Then Return aEncontrados
+
+  ' --- 3. RECORRIDO ---
+  BuscarBloqueos(sRaiz, aEncontrados)
+
+  Return aEncontrados
+
+End

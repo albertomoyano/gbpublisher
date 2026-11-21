@@ -324,152 +324,172 @@ Public Sub EmpujarGitLocal()
 
 End
 
-Public Sub EmpujarGitHubRemoto()
-  ' VALIDAR PRIMERO QUE EXISTA UN USUARIO DE GITHUB CONFIGURADO
-  ' ESTA VALIDACIÓN SE HACE ANTES DE MOSTRAR EL FORMULARIO DE COMMITS
-  ' PARA EVITAR QUE EL USUARIO ESCRIBA UN MENSAJE INNECESARIAMENTE
+' ============================================
+' Función   : EmpujarRemoto
+' Propósito : Empuja el proyecto al repositorio remoto de GitHub con
+'             engine/empujar_remoto.sh, por la lanzadora (SC-53). Acá queda
+'             solo lo que el script no puede hacer: leer la base (el JSON de
+'             la integración) y los datos de la interfaz (SC-13).
+' Parámetros: sMensaje As String — mensaje del commit
+'             sUsuario As String — usuario de GitHub (FFileManager.
+'             txtUsuarioGit); puede ir vacío si el proyecto ya tiene origin
+' Retorna   : Boolean — True si se empujó (con o sin avisos)
+' Nota      : LO LLAMA FFileManager.btnEmpujar_Click. REEMPLAZA A
+'             EmpujarGitHubRemoto, EjecutarPushGitHub, VerificarAccesoSSHGitHub
+'             Y VerificarProtocoloRemoto (21/11/2026): TIPEABAN EN LA TERMINAL
+'             SIN RECIBIR RESULTADO, Y ssh -T CON Shell ... To CONGELABA LA
+'             INTERFAZ. EL REMOTO ES SOLO SSH: EL SCRIPT NO CORRIGE UNO HTTPS
+' ============================================
+Public Function EmpujarRemoto(sMensaje As String, sUsuario As String) As Boolean
 
-  ' Y VERIFICAR ACCESO SSH ANTES DE EMPUJAR
-  Dim sRutaProyecto As String = m_InicioCierre.RutaProyectoEnCurso
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaProyecto As String
+  Dim sUrlRemoto As String
+  Dim sIntegracion As String
+  Dim aArgumentos As String[]
+  Dim bJsonOk As Boolean
+  Dim iResultado As Integer
 
-  If Not VerificarAccesoSSHGitHub() Then Return
-  If Not VerificarProtocoloRemoto(sRutaProyecto) Then Return
-
-  If Trim(FMain.txtUsuarioGit.Text) = "" Then
-    m_Sonido.sonar("Error")
-    Message.Error("Debe indicar su nombre de usuario en GitHub", "Ok")
-    FMain.txtUsuarioGit.SetFocus()
-    Return
+  ' --- 2. VALIDACIÓN ---
+  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  If sRutaProyecto = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un proyecto abierto.")
+    Return False
   Endif
 
-  ' MOSTRAR EL FORMULARIO MODAL PARA INGRESAR EL MENSAJE DE COMMIT
-  ' SHOWMODAL() RETORNA EL VALOR PASADO A ME.CLOSE()
-  ' SI EL USUARIO CANCELA O CIERRA LA VENTANA, RETORNA 0 (FALSE)
-  If Not FCommits.ShowModal() Then
-    ' EL USUARIO CANCELÓ LA OPERACIÓN
-    Return
+  If Trim(sMensaje) = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("Falta el mensaje del commit.")
+    Return False
   Endif
 
-  ' SI LLEGAMOS AQUÍ, EL USUARIO CONFIRMÓ CON UN MENSAJE VÁLIDO
-  ' LLAMAR AL PROCEDIMIENTO QUE EJECUTA EL PUSH
-  EjecutarPushGitHub(FCommits.MensajeCommit)
-
-End
-
-Private Sub EjecutarPushGitHub(mensajeCommit As String)
-
-  Dim usuario As String = Trim(FMain.txtUsuarioGit.Text)
-  Dim IdGitHub As String
-  Dim repoLocal As Boolean = False
-  Dim repoConfigurado As Boolean = False
-  Dim ramaMain As Boolean = False
-  Dim sRutaProyecto As String = m_InicioCierre.RutaProyectoEnCurso
-
-  ' MOSTRAMOS LA CONSOLA Y ASEGURAMOS LA POSICION DE LA RUTA
-  FMain.TabPanelIzquierdaInferior.Index = 0
-  FMain.TerminalViewProyecto.Input("cd " & Chr(34) & sRutaProyecto & Chr(34) & "\n")
-
-  IdGitHub = "git@github.com:" & usuario & "/" & m_InicioCierre.NombreProyectoEnCurso & ".git"
-
-  ' VERIFICAR SI ES REPOSITORIO GIT: EXISTE EL DIRECTORIO .git
-  repoLocal = Exist(sRutaProyecto &/ ".git")
-
-  If Not repoLocal Then
-    FMain.TerminalViewProyecto.Input("git init --initial-branch=main" & "\n")
+  ' --- 3. URL DEL REMOTO ---
+  ' SOLO HACE FALTA SI EL PROYECTO TODAVÍA NO TIENE origin: CON origin, EL
+  ' SCRIPT USA EL QUE ESTÁ. SIN USUARIO VA «-» (SC-53: NINGÚN ARGUMENTO
+  ' VACÍO) Y EL SCRIPT, SI NO HAY origin, LO DICE.
+  ' EL REPOSITORIO SE LLAMA COMO EL .md DEL PROYECTO SIN LA EXTENSIÓN:
+  ' NombreProyectoEnCurso ES File.Name DEL .md, CON «.md» (FMain, APERTURA)
+  sUsuario = Trim(sUsuario)
+  If sUsuario = "" Then
+    sUrlRemoto = "-"
+  Else
+    sUrlRemoto = "git@github.com:" & sUsuario & "/" & File.BaseName(m_InicioCierre.NombreProyectoEnCurso) & ".git"
   Endif
 
-  ' VERIFICAR SI TIENE ORIGIN CONFIGURADO: LEER .git/config
-  Dim sRutaConfig As String = sRutaProyecto &/ ".git" &/ "config"
-  If Exist(sRutaConfig) Then
-    Dim sConfig As String
-    Try sConfig = File.Load(sRutaConfig)
-    If Not Error And InStr(sConfig, "[remote " & Chr(34) & "origin" & Chr(34) & "]") > 0 Then
-      repoConfigurado = True
-    Endif
-  Endif
-
-  ' VERIFICAR RAMA ACTUAL: LEER .git/HEAD
-  Dim sRutaHEAD As String = sRutaProyecto &/ ".git" &/ "HEAD"
-  If Exist(sRutaHEAD) Then
-    Dim sHEAD As String
-    Try sHEAD = File.Load(sRutaHEAD)
-    If Not Error And Trim(sHEAD) = "ref: refs/heads/main" Then
-      ramaMain = True
-    Endif
-  Endif
-
-  ' CONFIGURAR ORIGIN SI NO EXISTE
-  If Not repoConfigurado Then
-    FMain.TerminalViewProyecto.Input("git remote add origin " & IdGitHub & "\n")
-  Endif
-
-  ' RENOMBRAR RAMA A MAIN SI ES NECESARIO
-  If Not ramaMain Then
-    FMain.TerminalViewProyecto.Input("git branch -M main" & "\n")
-  Endif
-
-  ' --- INTEGRACIÓN GITHUB: SOLO SI EL PROYECTO LA USA ---
-  ' ESTE BLOQUE ENVUELVE ÚNICAMENTE LO QUE ES ESPECÍFICO DE LA INTEGRACIÓN:
-  ' GENERAR EL JSON Y SINCRONIZAR CON LOS COMMITS DEL ACTION. EL add/commit/push
-  ' VA AFUERA, INCONDICIONAL: UN PROYECTO SIN INTEGRACIÓN TAMBIÉN DEBE PUSHEAR.
-  ' (BUG PREVIO: EL push ESTABA DENTRO DE ESTE If, ASÍ QUE LOS PROYECTOS SIN
-  ' INTEGRACIÓN —EL DEFAULT— NO EMPUJABAN NADA.)
+  ' --- 4. INTEGRACIÓN: EL JSON SALE DE LA BASE, LO ESCRIBE GAMBAS ANTES (SC-13) ---
+  sIntegracion = "no"
   If UsaIntegracionGitHub() Then
-
-    ' EL JSON ENTRA EN EL MISMO COMMIT EDITORIAL, SIN COMMIT SEPARADO
-    Dim bJsonOk As Boolean
+    sIntegracion = "si"
 
     ' LA FORMA DEL JSON DEPENDE DEL TIPO DE PROYECTO: LA REVISTA EMITE UN ARRAY
-    ' DE ARTÍCULOS; EL LIBRO, UN OBJETO ÚNICO CON MANIFIESTO DE CAPÍTULOS.
-    ' EL TIPO SALE DE FMain.TipoProyectoActual, FUENTE CANÓNICA YA USADA POR
-    ' m_Shortcodes, m_Bibtex Y m_FuncionesGenericas.
+    ' DE ARTÍCULOS; EL LIBRO, UN OBJETO ÚNICO CON MANIFIESTO DE CAPÍTULOS
     Select Case FMain.TipoProyectoActual
-
       Case m_Constantes.TIPO_LIBRO_MD
-        bJsonOk = m_GitHub.GenerarEstadoLibro(m_InicioCierre.RutaProyectoEnCurso, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
-
+        bJsonOk = GenerarEstadoLibro(sRutaProyecto, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
       Case m_Constantes.TIPO_REVISTA_MD
-        bJsonOk = m_GitHub.GenerarEstadoProyecto(m_InicioCierre.RutaProyectoEnCurso, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
-
+        bJsonOk = GenerarEstadoProyecto(sRutaProyecto, m_InicioCierre.IdProyectoEnCurso, File.BaseName(m_InicioCierre.NombreProyectoEnCurso))
       Default
-        ' TIPO NO CONTEMPLADO (LATEX LEGACY): NO SE GENERA JSON.
-        ' ES PREFERIBLE NO EMITIR NADA A EMITIR UN DOCUMENTO CON LA FORMA
-        ' EQUIVOCADA, QUE EL ACTION PROCESARÍA COMO SI FUERA OTRA COSA.
-        ' bJsonOk = True PARA QUE EL PUSH SIGA NORMAL, SIN PEDIR CONFIRMACIÓN.
+        ' TIPO NO CONTEMPLADO (LATEX LEGACY): NO SE GENERA JSON. ES PREFERIBLE
+        ' NO EMITIR NADA A EMITIR UN DOCUMENTO CON LA FORMA EQUIVOCADA
         bJsonOk = True
-
     End Select
 
     If Not bJsonOk Then
       m_Sonido.sonar("Warning")
-      ' SI EL USUARIO NO CONFIRMA CONTINUAR SIN EL JSON, SE ABORTA EL PUSH
-      If Message.Question(
-          "No se pudo generar el archivo de integración con GitHub." &
-          Chr(10) & Chr(10) &
-          "¿Desea continuar el push sin él?",
-          "Continuar", "Cancelar") <> 1 Then Return
+      If Message.Question("No se pudo generar el archivo de integración con GitHub." & gb.NewLine & gb.NewLine &
+          "¿Continuar el empuje sin él?", "Continuar", "Cancelar") <> 1 Then Return False
       Endif
-
-      ' SINCRONIZAR CON EL REMOTO ANTES DE COMMITEAR
-      ' git fetch DESCARGA LOS COMMITS DEL ACTION (incluyendo .github-ids.json)
-      ' git reset --mixed MUEVE HEAD AL REMOTE PRESERVANDO EL WORKING DIRECTORY
-      ' ASÍ EL COMMIT QUEDA SIEMPRE ENCIMA DEL REMOTE: PUSH FAST-FORWARD SIN CONFLICTOS
-      FMain.TerminalViewProyecto.Input("git fetch origin" & "\n")
-      FMain.TerminalViewProyecto.Input("git reset --mixed origin/main" & "\n")
-
     Endif
 
-    ' --- ADD / COMMIT / PUSH: INCONDICIONAL, CON O SIN INTEGRACIÓN ---
-    FMain.TerminalViewProyecto.Input("git add ." & "\n")
+    ' --- 5. LANZAMIENTO ---
+    ' NADA EN EL SCRIPT ESPERA UNA RESPUESTA (BatchMode): 120 s ALCANZAN PARA UN
+    ' EMPUJE NORMAL; SI VENCE, LA LANZADORA PREGUNTA SI SEGUIR ESPERANDO
+    aArgumentos = [sRutaProyecto, sUrlRemoto, sIntegracion, sMensaje]
+    iResultado = m_Lanzadora.EjecutarScript("empujar_remoto.sh", aArgumentos, 120, "Empujando al repositorio remoto")
 
-    ' .github-ids.json VIVE SOLO EN EL REPO, GESTIONADO POR EL ACTION.
-    ' git add . LO MARCARÍA COMO ELIMINADO (NO EXISTE EN EL WORKING DIR);
-    ' git restore --staged LO DEVUELVE AL ESTADO DEL HEAD SIN TOCARLO. INOFENSIVO
-    ' EN PROYECTOS SIN INTEGRACIÓN (EL ARCHIVO NO EXISTE Y EL 2>/dev/null LO CALLA).
-    FMain.TerminalViewProyecto.Input("git restore --staged .github-ids.json 2>/dev/null; true" & "\n")
-    FMain.TerminalViewProyecto.Input("git commit -m '" & Replace$(mensajeCommit, "'", "'\\''") & "'" & "\n")
-    FMain.TerminalViewProyecto.Input("git push --set-upstream origin main" & "\n")
-    FMain.TerminalViewProyecto.SetFocus()
+    Return InformarEmpuje(iResultado)
+
+End
+
+' ============================================
+' Función   : UsuarioGitGuardado
+' Propósito : El usuario de GitHub guardado en gbpublisher.conf (SC-17)
+' Parámetros: (ninguno)
+' Retorna   : String — el usuario, o vacío si no hay o no se pudo leer
+' ============================================
+Public Function UsuarioGitGuardado() As String
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hConfiguracion As Settings
+  Dim sUsuario As String
+
+  ' --- 2. LECTURA ---
+  ' NO ES CRÍTICO: SIN VALOR, EL CAMPO QUEDA VACÍO Y SE ESCRIBE A MANO
+  Try hConfiguracion = New Settings(m_InicioCierre.RutaConfiguracion())
+  If Error Then Return ""
+  Try sUsuario = Trim(CStr(hConfiguracion["GitHub/Usuario", ""]))
+  If Error Then Return ""
+
+  Return sUsuario
+
+End
+
+' ============================================
+' Función   : GuardarUsuarioGit
+' Propósito : Guarda el usuario de GitHub en gbpublisher.conf (SC-17), con
+'             Save explícito
+' Parámetros: sUsuario As String — el usuario
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Public Sub GuardarUsuarioGit(sUsuario As String)
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim hConfiguracion As Settings
+
+  ' --- 2. ESCRITURA ---
+  ' SOLO UN USUARIO NO VACÍO: UN EMPUJE SIN USUARIO (CON origin) NO BORRA EL
+  ' QUE YA ESTABA GUARDADO
+  If Trim(sUsuario) = "" Then Return
+  Try hConfiguracion = New Settings(m_InicioCierre.RutaConfiguracion())
+  If Error Then Return
+  hConfiguracion["GitHub/Usuario"] = Trim(sUsuario)
+  Try hConfiguracion.Save()
+
+End
+
+' ============================================
+' Función   : InformarEmpuje
+' Propósito : Traduce el resultado de la lanzadora a un mensaje del empuje.
+'             El detalle está en la terminal.
+' Parámetros: iResultado As Integer — lo que devolvió EjecutarScript
+' Retorna   : Boolean — True si se empujó (con o sin avisos)
+' Nota      : m_Lanzadora.InformarResultado HABLA DE «ARCHIVO GENERADO», QUE
+'             NO APLICA A UN EMPUJE; SE USA SOLO PARA LOS RESULTADOS PROPIOS
+'             DE LA LANZADORA (EN CURSO, NO LANZADO, ABANDONADO, ILEGIBLE)
+' ============================================
+Private Function InformarEmpuje(iResultado As Integer) As Boolean
+
+  Select Case iResultado
+    Case m_Lanzadora.SALIDA_OK
+      m_Sonido.sonar("Info")
+      Message.Info("Se empujó al repositorio remoto.")
+      Return True
+    Case m_Lanzadora.SALIDA_AVISOS
+      m_Sonido.sonar("Warning")
+      Message.Warning("Se empujó, pero con avisos." & gb.NewLine & gb.NewLine &
+        "Revisá la terminal: los avisos están marcados con ⚠.")
+      Return True
+    Case m_Lanzadora.SALIDA_FALLO
+      m_Sonido.sonar("Error")
+      Message.Error("No se empujó." & gb.NewLine & gb.NewLine &
+        "El motivo está al final de la salida en la terminal.")
+      Return False
+  End Select
+
+  ' RESULTADOS PROPIOS DE LA LANZADORA, Y CUALQUIER OTRO CÓDIGO
+  m_Lanzadora.InformarResultado(iResultado, "El empuje", "")
+  Return False
 
 End
 
@@ -477,7 +497,7 @@ End
 ' Función   : UsaIntegracionGitHub
 ' Propósito : Consulta si el proyecto activo tiene
 '             activada la integración con GitHub Actions.
-'             Se llama solo desde EjecutarPushGitHub.
+'             Se llama solo desde EmpujarRemoto.
 ' Retorna   : Boolean — True si debe generar el JSON
 ' ============================================
 Public Function UsaIntegracionGitHub() As Boolean
@@ -491,109 +511,5 @@ Public Function UsaIntegracionGitHub() As Boolean
   If Error Then Return False
   If Not hProyecto.Available Then Return False
   Return CStr(hProyecto["integracion_github"]) = "con_integracion"
-
-End Function
-
-' ============================================
-' Función   : VerificarAccesoSSHGitHub
-' Propósito : Confirma que el usuario tiene clave SSH funcional
-'             contra GitHub antes de intentar un push
-' Parámetros: ninguno
-' Retorna   : Boolean — True si la autenticación SSH es exitosa
-' ============================================
-Public Function VerificarAccesoSSHGitHub() As Boolean
-
-  ' --- 1. Verificación rápida: ¿existe alguna clave SSH? ---
-  If Not Exist(User.Home &/ ".ssh/id_ed25519.pub") And Not Exist(User.Home &/ ".ssh/id_rsa.pub") Then
-    Message.Warning("No se encontró ninguna clave SSH en ~/.ssh/\n\nPara generar una:\n  ssh-keygen -t ed25519\n\nLuego agregar la clave pública en:\n  GitHub → Settings → SSH and GPG keys")
-    Return False
-  Endif
-
-  ' --- 2. Verificación real: ¿GitHub acepta la clave? ---
-  Dim sSalida As String
-  Shell "ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1" To sSalida
-  Wait
-
-  If InStr(sSalida, "successfully authenticated") > 0 Then
-    ' AUTENTICACIÓN EXITOSA
-    Return True
-  Endif
-
-  ' --- 3. Diagnóstico del fallo ---
-  If InStr(sSalida, "Permission denied") > 0 Then
-    Message.Warning("La clave SSH existe pero GitHub la rechazó.\n\nVerificá que la clave pública esté cargada en:\n  GitHub → Settings → SSH and GPG keys")
-  Else
-    Message.Warning("No se pudo conectar con GitHub.\n\nVerificá la conexión a internet.\n\nDetalle: " & sSalida)
-  Endif
-
-  Return False
-
-End Function
-
-' ============================================
-' Función   : VerificarProtocoloRemoto
-' Propósito : Detecta si el remote origin usa HTTPS y lo
-'             corrige automáticamente a SSH
-' Parámetros: sRutaProyecto As String — ruta del repo git
-' Retorna   : Boolean — True si el remote usa SSH (o fue corregido)
-' ============================================
-Public Function VerificarProtocoloRemoto(sRutaProyecto As String) As Boolean
-
-  ' --- 1. Obtener la URL actual del remote ---
-  ' Exec (no Shell): sin sh -c, sin 2>&1. Con 2>&1 el error de "no hay remote"
-  ' caería en sUrl y el apartado 4 lo reportaría como "URL no reconocida"
-  ' (diagnóstico falso). Con Exec ... To, sUrl recibe solo stdout y stderr no
-  ' se captura: si no hay remote, sUrl queda vacío y Process.LastValue <> 0.
-  Dim sUrl As String
-
-  Try Exec ["git", "-C", sRutaProyecto, "remote", "get-url", "origin"] To sUrl
-  ' SI NO HAY REMOTE, git SALE CON CÓDIGO <> 0 Y sUrl QUEDA VACÍO: NO ES UN
-  ' PROTOCOLO NO RECONOCIDO, ES QUE NO HAY REMOTE TODAVÍA. SE DEJA SEGUIR: EL
-  ' push POSTERIOR LO CONFIGURA (git remote add). RETORNAR True NO CORRIGE NADA
-  ' PORQUE NO HAY NADA QUE CORREGIR.
-  If Process.LastValue <> 0 Then Return True
-  sUrl = Trim(sUrl)
-
-  ' REMOTE VACÍO POR OTRA RAZÓN: TAMPOCO HAY QUÉ CORREGIR
-  If sUrl = "" Then Return True
-
-  ' --- 2. Si ya usa SSH, no hay nada que corregir ---
-  If Left(sUrl, 4) = "git@" Then
-    Return True
-  Endif
-
-  ' --- 3. Si usa HTTPS, ofrecer corrección automática ---
-  If Left(sUrl, 8) = "https://" Then
-    ' EXTRAER USUARIO/REPO DE LA URL HTTPS
-    ' FORMATO: https://github.com/usuario/repo.git
-    Dim sRuta As String
-    sRuta = Replace(sUrl, "https://github.com/", "")
-    ' ASEGURAR QUE TERMINE EN .git
-    If Not Right(sRuta, 4) = ".git" Then
-      sRuta = sRuta & ".git"
-    Endif
-    Dim sUrlSSH As String
-    sUrlSSH = "git@github.com:" & sRuta
-
-    Select Case Message.Question("El remote está configurado con HTTPS:\n\n" & sUrl & "\n\nEsto provoca que pida usuario y clave.\n¿Corregir automáticamente a SSH?\n\n" & sUrlSSH, "Corregir", "Cancelar")
-      Case 1
-        ' CAMBIAR EL REMOTE A SSH. Exec (no Shell): el veredicto real es
-        ' Process.LastValue, no If Error (que con Shell...To ni siquiera se
-        ' seteaba — era una comprobación muerta).
-        Try Exec ["git", "-C", sRutaProyecto, "remote", "set-url", "origin", sUrlSSH] To sUrl
-        If Error Or If Process.LastValue <> 0 Then
-          Message.Error("No se pudo cambiar el remote a SSH.")
-          Return False
-        Endif
-        Message.Info("Remote corregido a SSH." & Chr(10) & "El push ahora usará la clave SSH.")
-        Return True
-      Case 2
-        Return False
-    End Select
-  Endif
-
-  ' --- 4. Protocolo no reconocido ---
-  Message.Warning("El remote tiene una URL no reconocida:\n\n" & sUrl)
-  Return False
 
 End Function

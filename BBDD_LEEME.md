@@ -296,8 +296,8 @@ Las propiedades que todo script de actualización debe tener:
 
 | Caso | Paso | Script |
 |---|---|---|
-| Instalación nueva | Instalación | `gbpublisher-baseline-2.0.0.sql` con `instalar-gbpublisher.sh` |
-| Instalación anterior a la 2.0.0 | Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.34.0.sh` y `actualizar-esquema-2.0.0.sh`, en orden, desde la última que tenga registrada |
+| Instalación nueva | Instalación | `gbpublisher-baseline-2.0.0.sql` con `instalar-gbpublisher.sh`, y después `actualizar-esquema-2.1.0.sh` |
+| Instalación anterior a la 2.0.0 | Actualizaciones | `actualizar-esquema-1.1.0.sh` … `actualizar-esquema-1.34.0.sh`, `actualizar-esquema-2.0.0.sh` y `actualizar-esquema-2.1.0.sh`, en orden, desde la última que tenga registrada |
 
 Para saber en qué punto está una base:
 
