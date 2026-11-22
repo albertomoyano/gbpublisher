@@ -942,7 +942,7 @@ Queda en Gambas:
 
 Una función de Gambas que tipea en la terminal con `Input()` fuera de la lanzadora (SC-53) es deuda de migración: si la terminal está ocupada el comando se encola y corre fuera de contexto, Gambas no recibe código de salida, y la espera por la aparición de un archivo da por terminado lo que recién empezó a escribirse.
 
-El primer caso migrado con este criterio: los canónicos de capítulo. `engine/generar_canonicos_capitulos.sh` reemplazó a `FMain.btnGenerarDocBookcanonico_Click` y a `m_XML.GenerarBodyCapituloXML`. El segundo, la salida PDF de libros: `compilar_pdf_libro.sh` pasó a la lanzadora y la preparación de los archivos LaTeX salió de Gambas a `preparar_latex_libro.sh` (SC-53). El 21/11/2026, git: el empuje remoto (`empujar_remoto.sh`) y el commit local (`commit_local.sh`, que el remoto llama anidado) reemplazaron a `m_GitHub.EmpujarGitHubRemoto` y a `EmpujarGitLocal`, que tipeaban en la terminal sin recibir resultado y escapaban el mensaje a mano (SC-103). El mismo día se retiró `FSabores`, que corría un XSLT a elección buscando Saxon con `dpkg` y `find`: las universidades personalizan sobre `main.tex`, el CSS y sus scripts de `scripts/`, no sobre el canónico.
+El primer caso migrado con este criterio: los canónicos de capítulo. `engine/generar_canonicos_capitulos.sh` reemplazó a `FMain.btnGenerarDocBookcanonico_Click` y a `m_XML.GenerarBodyCapituloXML`. El segundo, la salida PDF de libros: `compilar_pdf_libro.sh` pasó a la lanzadora y la preparación de los archivos LaTeX salió de Gambas a `preparar_latex_libro.sh` (SC-53). El 21/11/2026, git: el empuje remoto (`empujar_remoto.sh`) y el commit local (`commit_local.sh`, que el remoto llama anidado) reemplazaron a `m_GitHub.EmpujarGitHubRemoto` y a `EmpujarGitLocal`, que tipeaban en la terminal sin recibir resultado y escapaban el mensaje a mano (SC-103). El mismo día se retiró `FSabores`, que corría un XSLT a elección buscando Saxon con `dpkg` y `find`: las universidades personalizan sobre `main.tex`, el CSS y sus scripts de `scripts/`, no sobre el canónico. El 22/11/2026, las consultas a Crossref, OpenCitations y OpenAIRE: `consultar_doi.sh`, por `m_Crossref` (SC-105), reemplazó a los `Shell` de `FAnalizarDOI` y de FMain, que además leían el JSON a mano o con `python3 -c` armado como string.
 
 INTÉRPRETES ADMITIDOS
 
@@ -958,7 +958,7 @@ BASE COMPARTIDA
 
 Si el proceso externo escribe en la misma base que la aplicación tiene abierta, la conexión se cierra antes de lanzarlo y se reabre después por un ÚNICO camino explícito, invocado tanto en el éxito como en el fallo. `Finally` no sirve para esto (RC-GM-20).
 
-**Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53,vinculo:SC-103
+**Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53,vinculo:SC-103,vinculo:SC-105
 
 **PENDIENTE:** Inventario al 21/11/2026 de Input() fuera de la lanzadora: solo quedan el cd y el clear de la terminal (FMain, m_InicioCierre), un echo de diagnóstico en m_InicioCierre y los scripts personales del combo (m_FuncionesGenericas.EjecutarScript). m_XML y m_GitHub ya no tipean. Candidatos con Exec en Gambas: la conversión con LibreOffice de m_EditorHTML (criterio 1) y la auditoría de JATS externos, m_AuditarJats y m_ValidacionSchematron (criterio 2, con el contrato de m_Validaciones). Detalle: claude/migracion-engine.md.
 
@@ -3172,7 +3172,7 @@ El patrón sale de la salida real de jing en Linux Mint: `69:1130: error: IDREF 
 
 LOS USOS
 
-`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh`, `compilar_pdf_libro.sh`, `validar_canonicos.sh` (SC-75) y `tapa_web.sh` (SC-81). Desde el 21/11/2026, `empujar_remoto.sh` y `commit_local.sh` (SC-103). `compilar_pdf_libro.sh` fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
+`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh`, `compilar_pdf_libro.sh`, `validar_canonicos.sh` (SC-75) y `tapa_web.sh` (SC-81). Desde el 21/11/2026, `empujar_remoto.sh` y `commit_local.sh` (SC-103), y `consultar_doi.sh` (SC-105). `compilar_pdf_libro.sh` fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
 
 `preparar_latex_libro.sh` hace lo que antes hacía `m_GenerarPDFLibro.GenerarMainTeX` con `Exec` síncronos: colorear y transformar cada pieza (`colorear_codigo.sh` y `docbook-to-latex.xsl`), borrar los `c-*.tex` huérfanos y poner el `main.tex` en su lugar. Mientras eso corría en Gambas, la interfaz no se repintaba (GV-17) y no había señal de vida antes de que empezara la compilación. Gambas conserva lo que sale de la base, en `m_GenerarPDFLibro.ArmarInsumosLaTeX`: preámbulo derivado, `.bib`, la lista de piezas con cuerpo (`tmp/latex-piezas.txt`) y el `main.tex` propuesto (`latex/.main.tex.tmp`). «Solo generar» lanza `preparar_latex_libro.sh`; «Generar y compilar» lanza `compilar_pdf_libro.sh`, que lo llama anidado primero y no compila si falla.
 
@@ -3185,7 +3185,7 @@ LANZAR CON UN FORMULARIO MODAL ABIERTO (21/11/2026, SC-103)
 - `EjecutarScript` espera con `Wait`, y el formulario sigue recibiendo clics: el manejador apaga sus controles mientras espera, y `Form_Close` no deja cerrar con `m_Lanzadora.HayScriptEnCurso()`.
 Un script puede llamar a otro anidado para un paso común: `empujar_remoto.sh` hace el commit con `commit_local.sh` (`GBP_ANIDADO=1`) y cuenta sus avisos para el código final.
 
-**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07,vinculo:SC-75,vinculo:SC-78,vinculo:SC-84,vinculo:SC-103
+**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07,vinculo:SC-75,vinculo:SC-78,vinculo:SC-84,vinculo:SC-103,vinculo:SC-105
 
 ### SC-54 — Controles de corrección del .md: un filtro en engine/ con niveles declarados
 
@@ -5969,6 +5969,47 @@ El informe de la 2.1.0 lista, sin corregirlos, los nombres que no siguen la regl
 
 **Relaciones:** vinculo:SC-44,vinculo:SC-25,vinculo:SC-45,vinculo:SC-55,vinculo:SC-88,vinculo:SC-22,vinculo:SC-103
 
+### SC-105 — Consultas a servicios bibliográficos externos: engine/consultar_doi.sh con tres modos, por m_Crossref, sin mailto
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22.2 / bash / python3 / curl / Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 21/11/2026). Las consultas a Crossref, OpenCitations y OpenAIRE pasan por un solo script, `engine/consultar_doi.sh`, lanzado por la lanzadora (SC-53) desde un solo módulo, `m_Crossref`. Es el criterio 2 de SC-13: el script consulta y normaliza y deja un TSV; Gambas muestra, compara con la base y aplica.
+
+LOS TRES MODOS
+
+    consultar_doi.sh analisis <doi>    <salida.tsv>   FAnalizarDOI
+    consultar_doi.sh crossref <doi>    <salida.tsv>   FMain.btnChequearCrossref_Click
+    consultar_doi.sh titulo   <título> <salida.tsv>   FMain.btnCrossrefTitulo_Click
+
+- `analisis`: dato TAB valor, en el orden en que se muestran (DOI, tipo, título, autores con su ORCID, revista, ISSN, fechas, licencia, citas en Crossref y en OpenCitations, presencia en OpenAIRE, enlace a Google Scholar).
+- `crossref`: clave TAB valor, con las claves de `FEstructuraResultados.cValoresAplicar` (doi, titulo, anio, paginas, issn, autor). Un dato que Crossref no tiene va vacío y no crea su clave (GV-98).
+- `titulo`: hasta cinco candidatos, siete columnas (score, tipo, DOI, título, año, primer autor, revista).
+
+EL CONTRATO
+
+- El DOI llega como se pega (`https://doi.org/…`, `http://dx.doi.org/…`, `doi:…`): el script lo normaliza y controla su forma antes de consultar. Un valor con `$(…)` no llega a ninguna consulta.
+- La salida va a `tmp/consulta-doi.tsv` del proyecto: hace falta un proyecto abierto, como en el control de integridad (SC-95). `m_Crossref.HayProyectoAbierto` lo controla y lo explica; «Analizar DOI» no abre sin proyecto.
+- El script borra la salida vieja al empezar y escribe la nueva en un temporal que mueve al final: lo que Gambas lee es de esta consulta. La última línea no lleva salto: un valor vacío al final sigue siendo una columna.
+- Códigos: 0; 3 si OpenCitations u OpenAIRE no respondieron (la fila dice «(sin respuesta)») o si la búsqueda por título no encontró nada (salida vacía); 1 si Crossref no responde, no tiene el DOI o el DOI no tiene forma de DOI. El motivo, en la terminal.
+- El JSON lo lee `python3` dentro del script (SC-95 lo da por garantizado); bash hace las consultas y muestra el avance.
+- `FAnalizarDOI` lanza desde un modal: valen las reglas de SC-53 (curl no pregunta nada, controles apagados mientras espera, `Form_Close` no cierra con un script en curso).
+
+SIN mailto
+
+Crossref ofrece una cola preferente a quien se identifica con un correo. La aplicación no manda ninguno: cada instalación se presentaría con el mismo. El agente HTTP identifica a la aplicación y su repositorio, no a quien la usa.
+
+LO QUE QUEDA EN GAMBAS
+
+`m_DOI.VerificarDOI` y las consultas de `m_Orcid` solo necesitan un código HTTP o una respuesta corta por stdout: criterio 3 de SC-13, `Exec … To` (GV-20), sin script. Antes usaban `Shell` con `Quote()` (GV-06).
+
+LO QUE SE RETIRÓ (22/11/2026)
+
+De `FAnalizarDOI`: tres `Shell "curl …"` con el DOI entre comillas simples, `ProcesarRespuestas` y sus auxiliares de fechas y entidades, y la apertura de URL con `Shell "xdg-open '…'"` (GV-06). De FMain: los temporales fijos en `/tmp`, dos `python3 -c` armados como string y el lector de JSON a mano (`ExtraerValorJson`, `ExtraerDesde`, `DecodificarJson`).
+
+Probado por Alberto en Mint (22/11/2026): los tres modos a mano contra los servicios reales; en la aplicación, «Analizar DOI» con y sin proyecto, el clic en una URL, el cierre bloqueado durante la consulta, los dos botones de Crossref y «Aplicar»; `m_DOI`, `m_Orcid` y el aviso legal.
+
+**Relaciones:** vinculo:SC-13,vinculo:SC-53,vinculo:GV-06,vinculo:GV-20,vinculo:GV-43,vinculo:GV-98,vinculo:SC-95,apoya:GV-221
+
 ---
 
 ## RF — Referencia de API
@@ -6673,6 +6714,10 @@ Para pasar nombres a un script de shell sin interpolarlos, usar `$@`:
     aComando.Add(sScript)   ' EL SCRIPT USA "$@", NO CONCATENA NOMBRES
     aComando.Add("sh")      ' $0; LOS ARGUMENTOS ARRANCAN EN $1
 
+CASO (21/11/2026, SC-105). `FAnalizarDOI` abría las URL de su grilla con `Shell "xdg-open '" & sValor & "'"`, y `sValor` no lo escribía el usuario: venía de las respuestas de Crossref y OpenAIRE. Una comilla simple en un dato remoto cerraba la cita y lo que seguía lo ejecutaba `sh`. Además de lo que se tipea, lo que llega de un servicio externo nunca se arma en una línea de `Shell`. Ahora la apertura es `Desktop.Open` (GV-43), y las consultas van por un script con los valores como argumentos.
+
+**Relaciones:** vinculo:SC-105
+
 ### GV-07 — Consultas a dpkg
 
 **Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.19 / contenedor Ubuntu noble · **Verificado:** 2026-08
@@ -6894,6 +6939,8 @@ Pero sí captura stdout, y eso alcanza y sobra cuando la herramienta entrega su 
     ' DIAGNÓSTICOS POR STDERR: HACE FALTA EL MECANISMO DE EVENTOS
 
 REGLA: el aparato asíncrono, con su bucle de espera, su drenaje y su vencimiento de plazo, se reserva para cuando hay que leer la salida de ERROR. Para todo lo demás, la forma síncrona.
+
+**Relaciones:** vinculo:SC-105
 
 ### GV-21 — Saxon-HE no expone ninguna función de extensión saxon:
 
@@ -7433,7 +7480,9 @@ Aplicado en `m_RevisarPDF.AbrirPDFEnVisorExterno`, que abre en el visor del sist
 
 Aplicado también en `m_FileManager.Abrir` (21/11/2026, SC-103): `Exist` antes, sin `Wait`, para abrir con la aplicación del sistema lo que el gestor de archivos no reserva al editor.
 
-**Relaciones:** vinculo:GV-17, apoya:GV-23, vinculo:GV-06,vinculo:SC-103
+Aplicado también en `FAnalizarDOI.gvAnalizarDOI_Click` y en `FAvisoLegal.HtmlViewLegales_Link` (22/11/2026, SC-105): reemplazó a `Shell "xdg-open '…'"` y a `Exec ["xdg-open", …]`. Desktop.Open queda como el único camino para abrir con el sistema.
+
+**Relaciones:** vinculo:GV-17, apoya:GV-23, vinculo:GV-06,vinculo:SC-103,vinculo:SC-105
 
 **PENDIENTE:** Falta medir si xdg-open en Cinnamon vuelve de inmediato (delegando en gio open) o espera a que se cierre el visor. Mini-test: en una terminal, xdg-open archivo.pdf; echo $? — si el echo aparece recién al cerrar el visor, Wait = True queda descartado definitivamente. Hasta medirlo, no usar Wait = True.
 
@@ -8714,7 +8763,7 @@ Lo mismo que GV-68 para una clave con cadena vacía: al armar una `Collection` p
 
 Caso del proyecto: `m_PatronesRegex` (SC-51).
 
-**Relaciones:** vinculo:GV-68,vinculo:RC-GM-17,vinculo:SC-51
+**Relaciones:** vinculo:GV-68,vinculo:RC-GM-17,vinculo:SC-51,vinculo:SC-105
 
 ### GV-99 — Pandoc 3.1.3: las notas mal armadas pasan sin error y la mayoría sin aviso
 
@@ -10954,6 +11003,24 @@ SACAR UNA PESTAÑA DEL MEDIO DE UN TabStrip EN EL IDE. Bajar `Count` quita solo 
 **Relaciones:** vinculo:SC-103,vinculo:SC-03
 
 **PENDIENTE:** Confirmar que la línea falla al ejecutarse (los parches la sacaron antes de abrir o cerrar un proyecto) y leer en el fuente del compilador por qué no resuelve el miembro cuando va con el nombre de la clase adelante.
+
+### GV-221 — Crossref bloqueó query.title en 2019; OpenCitations cuenta citas con /index/v2/citation-count; OpenAIRE da el total en response.header.total
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** API REST de Crossref / OpenCitations Index API v2 / OpenAIRE Search API / Linux Mint · **Verificado:** 2026-11
+
+Verificado el 21-22/11/2026 en la documentación de cada servicio y medido por Alberto en Mint con `consultar_doi.sh` (SC-105).
+
+CROSSREF. `query.title` está bloqueado en la API REST desde octubre de 2019, por el costo que tenía para todo el servicio; Crossref indica usar `query.bibliographic`. La búsqueda por título de FMain lo seguía usando: no podía funcionar. Con `query.bibliographic` el orden es por relevancia sobre todos los datos bibliográficos (título, autores, revista, año), no solo el título: «The OpenCitations Index» trae primero preprints de COCI que el artículo de 2024.
+
+OPENCITATIONS. La API del índice va por la versión 2 (`https://api.opencitations.net/index/v2`). `/citation-count/doi:{doi}` devuelve solo la cantidad, como `[{"count": "34"}]` (el número es un texto). La barra del DOI va sin codificar, como en su documentación. El token de acceso es optativo; el límite es de 180 consultas por minuto por IP. Lo de antes (`/index/api/v1/citations/{doi}`) bajaba todas las citas para contarlas.
+
+OPENAIRE. `https://api.openaire.eu/search/publications?doi=…&format=json` sigue documentada. El total está en `response.header.total`; el script acepta que llegue como número o como `{"$": N}`. Medido: el DOI de prueba da «Sí (1 resultado/s)».
+
+MEDIDO CON 10.1108/jd-12-2013-0166: Crossref, 46 citas; OpenCitations, 57. La diferencia es esperable: OpenCitations reúne varias fuentes.
+
+**Relaciones:** apoya:SC-105
+
+**PENDIENTE:** Ver en qué forma llega el total de OpenAIRE (número o {"$": N}): el script acepta las dos. La API de búsqueda convive con la del grafo (api.openaire.eu/graph); si se retira, migrar a /graph con el filtro por pid.
 
 ---
 
