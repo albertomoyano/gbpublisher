@@ -50,6 +50,13 @@
 ' LA IMPORTACIÓN CORRE UNA SOLA VEZ POR ARCHIVO. DESPUÉS EL .html ES DE LA
 ' APLICACIÓN Y LIBREOFFICE NO VUELVE A INTERVENIR.
 '
+' LA CONVERSIÓN LA HACE engine/convertir_bibliografia.sh, POR LA LANZADORA
+' (SC-53; 22/11/2026): GAMBAS RECIBE EL CÓDIGO DE SALIDA Y EL HTML CRUDO EN
+' tmp/ DEL PROYECTO (SC-13, CRITERIO 1). ANTES LANZABA soffice CON EL
+' APARATO ASÍNCRONO COMPLETO (GV-17, GV-18, GV-19). LA NORMALIZACIÓN Y LA
+' ESCRITURA DEL .html DE TRABAJO SIGUEN ACÁ: CONOCEN EL SUBCONJUNTO DEL
+' TextEdit Y SON LAS QUE CUIDAN LOS SEMÁFOROS.
+'
 
 ' ============================================
 ' ESTADO PÚBLICO
@@ -70,7 +77,12 @@ Public bCargandoLista As Boolean
 
 Private Const SUBCARPETA_ORIGINALES As String = "originales"
 Private Const EXTENSION_TRABAJO As String = ".html"
-Private Const SEGUNDOS_ESPERA_IMPORTACION As Float = 90.0
+' LA CONVERSIÓN: EL SCRIPT, EL HTML CRUDO QUE DEJA EN tmp/ DEL PROYECTO Y EL
+' PLAZO DE LA LANZADORA. AL VENCER, LA LANZADORA PREGUNTA SI SEGUIR ESPERANDO
+' Y soffice SIGUE CORRIENDO: NO SE LO MATA (SC-53)
+Private Const SCRIPT_CONVERSION As String = "convertir_bibliografia.sh"
+Private Const ARCHIVO_CONVERTIDO As String = "bibliografia-convertida.html"
+Private Const PLAZO_CONVERSION As Float = 90
 
 ' COLORES DE LOS SEMÁFOROS, NORMALIZADOS
 Private Const COLOR_AMARILLO As String = "#ffff00"
@@ -95,18 +107,11 @@ Private $aResultados As New Integer[]
 Private $iResultado As Integer
 Private $sUltimaBusqueda As String
 
-' ESTADO DEL PROCESO DE CONVERSIÓN
-Private $bProcesoTerminado As Boolean
-Private $bImportando As Boolean      ' BANDERA DE REENTRADA (GV-17)
-Private $bSofficeVerificado As Boolean
-Private $bSofficePresente As Boolean
-
 ' TIPOGRAFÍA DE VISTA. VIVE EN EL MÓDULO Y NO EN FMain PORQUE HAY QUE
 ' REAPLICARLA CADA VEZ QUE SE CARGA UN DOCUMENTO: ASIGNAR RichText REHACE EL
 ' DOCUMENTO Y LA VISTA VUELVE AL VALOR POR OMISIÓN DEL CONTROL.
 Private $sFuenteVista As String
 Private $iCuerpoVista As Integer
-Private $sErrorProceso As String
 
 ' ============================================
 ' Función   : Iniciar
@@ -332,14 +337,9 @@ Public Function AbrirArchivo(sNombre As String) As Boolean
   ' --- 1. VALIDACIÓN DE ENTRADA ---
   UltimoError = ""
 
-  ' GUARD DE REENTRADA. LA SENTENCIA Wait DEL BUCLE DE ESPERA DEJA CORRER LOS
-  ' EVENTOS DE LA INTERFAZ, ASÍ QUE DURANTE LA IMPORTACIÓN LOS CONTROLES SIGUEN
-  ' SIENDO PULSABLES (GV-17). SIN ESTO, DOS CLICS SEGUIDOS EN EL COMBO LANZAN
-  ' DOS CONVERSIONES SOBRE LA MISMA CARPETA TEMPORAL.
-  If $bImportando Then
-    UltimoError = "Hay una importación en curso. Esperá a que termine."
-    Return False
-  Endif
+  ' LA REENTRADA DURANTE UNA IMPORTACIÓN LA CUBRE LA LANZADORA: UN SEGUNDO
+  ' LANZAMIENTO DEVUELVE RESULTADO_EN_CURSO (SC-53). FMain ADEMÁS APAGA EL
+  ' PANEL MIENTRAS ESPERA
 
   If sNombre = "" Then
     UltimoError = "No se indicó ningún archivo."
@@ -357,12 +357,9 @@ Public Function AbrirArchivo(sNombre As String) As Boolean
   If Lower(File.Ext(sNombre)) = "html" Then
     sRutaTrabajo = sRutaOrigen
   Else
-    ' LA BANDERA SE BAJA EN TODOS LOS CAMINOS DE SALIDA, EXPLÍCITAMENTE Y NO EN
-    ' UN Finally: Finally NO CORRE EN UN Return NORMAL (RC-GM-20).
-    $bImportando = True
+    ' UN FALLO DE LA IMPORTACIÓN PUEDE VOLVER CON UltimoError VACÍO: LA
+    ' LANZADORA YA LO INFORMÓ (VER ImportarOriginal)
     sRutaTrabajo = ImportarOriginal(sRutaOrigen)
-    $bImportando = False
-
     If sRutaTrabajo = "" Then Return False
   Endif
 
@@ -406,51 +403,63 @@ End
 
 ' ============================================
 ' Función   : ImportarOriginal
-' Propósito : Convierte un .docx o .rtf a HTML de trabajo, una sola vez
+' Propósito : Convierte un .rtf (o .docx) a HTML de trabajo, una sola vez: el
+'             script convierte, este módulo normaliza y escribe
 ' Parámetros: sRutaOrigen As String — ruta del archivo original
-' Retorna   : String — ruta del .html generado, o cadena vacía si falló
+' Retorna   : String — ruta del .html generado, o cadena vacía si falló. Si
+'             falló, UltimoError dice por qué, salvo cuando ya lo informó la
+'             lanzadora: entonces queda vacío, para no dar dos mensajes
 ' ============================================
 
 Private Function ImportarOriginal(sRutaOrigen As String) As String
 
-  Dim sCarpetaTemp As String
+  Dim aArgumentos As New String[]
   Dim sRutaConvertida As String
   Dim sRutaTrabajo As String
   Dim sCrudo As String
   Dim sLimpio As String
+  Dim iResultado As Integer
 
   ' --- 1. CONVERSIÓN CON LIBREOFFICE ---
+  ' EL HTML CRUDO VA A tmp/ DEL PROYECTO, QUE LA LANZADORA CREA SI FALTA. EL
+  ' SCRIPT BORRA UNA SALIDA VIEJA AL EMPEZAR: LO QUE SE LEE ABAJO ES DE ESTA
+  ' CONVERSIÓN. LA TERMINAL NO SE VE DESDE EL PANEL DE BIBLIOGRAFÍA: EL AVANCE
+  ' LO DAN EL PUNTERO OCUPADO Y lblMensajes
   UltimoError = ""
-  sCarpetaTemp = Temp$("importacion")
+  sRutaConvertida = m_InicioCierre.RutaProyectoEnCurso &/ "tmp" &/ ARCHIVO_CONVERTIDO
+  aArgumentos.Add(sRutaOrigen)
+  aArgumentos.Add(sRutaConvertida)
 
-  Try Mkdir sCarpetaTemp
-  If Error Then
-    UltimoError = "No se pudo crear la carpeta temporal: " & Error.Text
-    Return ""
-  Endif
+  iResultado = m_Lanzadora.EjecutarScript(SCRIPT_CONVERSION, aArgumentos, PLAZO_CONVERSION, "Importando la bibliografía")
 
-  If Not ConvertirConLibreOffice(sRutaOrigen, sCarpetaTemp) Then
-    LimpiarCarpetaTemporal(sCarpetaTemp)
-    Return ""
-  Endif
+  Select Case iResultado
+    Case m_Lanzadora.SALIDA_OK, m_Lanzadora.SALIDA_AVISOS
+      ' SIGUE ABAJO
+    Case m_Lanzadora.SALIDA_FALLO
+      UltimoError = "LibreOffice no pudo convertir el original." & gb.NewLine & gb.NewLine &
+        "El motivo está al final de la terminal, en el panel inferior."
+      Return ""
+    Case Else
+      ' LOS RESULTADOS PROPIOS DE LA LANZADORA LOS EXPLICA ELLA: UltimoError
+      ' QUEDA VACÍO Y FMain NO MUESTRA UN SEGUNDO MENSAJE
+      m_Lanzadora.InformarResultado(iResultado, "La importación de la bibliografía", "")
+      Return ""
+  End Select
 
-  ' --- 2. LOCALIZACIÓN DE LA SALIDA ---
-  sRutaConvertida = sCarpetaTemp &/ File.BaseName(sRutaOrigen) & ".html"
-
+  ' --- 2. LECTURA DEL HTML CRUDO ---
   If Not Exist(sRutaConvertida) Then
-    LimpiarCarpetaTemporal(sCarpetaTemp)
-    UltimoError = "LibreOffice no generó el archivo convertido." & gb.NewLine & $sErrorProceso
+    UltimoError = "LibreOffice no generó el archivo convertido."
     Return ""
   Endif
 
   Try sCrudo = File.Load(sRutaConvertida)
   If Error Then
-    LimpiarCarpetaTemporal(sCarpetaTemp)
     UltimoError = "No se pudo leer el archivo convertido: " & Error.Text
     Return ""
   Endif
 
-  LimpiarCarpetaTemporal(sCarpetaTemp)
+  ' YA LEÍDO, NO TIENE OTRO USO
+  Try Kill sRutaConvertida
 
   ' --- 3. NORMALIZACIÓN ---
   sLimpio = NormalizarHtml(sCrudo)
@@ -470,200 +479,6 @@ Private Function ImportarOriginal(sRutaOrigen As String) As String
   Endif
 
   Return sRutaTrabajo
-
-End
-
-' ============================================
-' Función   : SofficeDisponible
-' Propósito : Verifica una sola vez por sesión que LibreOffice esté instalado
-' Parámetros: ninguno
-' Retorna   : Boolean — True si el ejecutable soffice está en el PATH
-' ============================================
-
-Public Function SofficeDisponible() As Boolean
-
-  Dim aComando As New String[]
-  Dim sSalida As String
-
-  ' --- 1. RESULTADO CACHEADO ---
-  ' NO RELANZAR UN PROCESO POR CADA IMPORTACIÓN NI POR CADA CONSULTA DEL PANEL
-  ' DE DIAGNÓSTICO DEL ENTORNO.
-  If $bSofficeVerificado Then
-    Return $bSofficePresente
-  Endif
-
-  ' --- 2. CONSULTA AL SISTEMA ---
-  ' command -v ES BUILTIN DE POSIX sh; which VIVE EN debianutils Y PUEDE FALTAR
-  ' (GV-07).
-  aComando.Add("sh")
-  aComando.Add("-c")
-  aComando.Add("command -v soffice")
-
-  Try Exec aComando To sSalida
-  If Error Then
-    $bSofficeVerificado = True
-    $bSofficePresente = False
-    Return False
-  Endif
-
-  ' --- 3. REGISTRO DEL RESULTADO ---
-  $bSofficeVerificado = True
-  $bSofficePresente = (Trim(sSalida) <> "")
-
-  Return $bSofficePresente
-
-End
-
-' ============================================
-' Función   : ConvertirConLibreOffice
-' Propósito : Lanza LibreOffice sin interfaz y espera a que termine
-' Parámetros: sRutaOrigen As String — archivo a convertir
-'             sCarpetaSalida As String — carpeta donde dejar el .html
-' Retorna   : Boolean — True si el proceso terminó dentro del plazo
-' ============================================
-
-Private Function ConvertirConLibreOffice(sRutaOrigen As String, sCarpetaSalida As String) As Boolean
-
-  Dim aComando As New String[]
-  Dim hProceso As Process
-  Dim fVencimiento As Float
-  Dim iDrenaje As Integer
-
-  ' --- 1. VERIFICACIÓN DEL CONVERSOR ---
-  ' ANTES DE LANZAR NADA. SIN ESTO, LA AUSENCIA DE LIBREOFFICE SE MANIFIESTA
-  ' RECIÉN AL VENCER EL PLAZO, NOVENTA SEGUNDOS DESPUÉS Y CON UN MENSAJE QUE NO
-  ' DICE QUÉ HACER: EL FALLO LEJOS DE SU CAUSA DE GV-23.
-  If Not SofficeDisponible() Then
-    UltimoError = "No se encontró LibreOffice, que es lo que convierte el archivo original." & gb.NewLine & gb.NewLine &
-      "Viene instalado por omisión en Linux Mint. Si se quitó, se repone con:" & gb.NewLine &
-      "    sudo apt install libreoffice-writer"
-    Return False
-  Endif
-
-  ' --- 2. ARMADO DEL COMANDO ---
-  ' Exec CON ARRAY Y NUNCA Shell: LA RUTA PUEDE TENER ESPACIOS, TILDES O
-  ' METACARACTERES Y NO DEBE PASAR POR sh -c (SC-05, GV-06).
-  ' EL PERFIL APARTE EVITA EL CHOQUE CON UNA VENTANA DE LIBREOFFICE ABIERTA:
-  ' SIN ÉL, soffice SE CONECTA A LA INSTANCIA EN CURSO Y NO CONVIERTE NADA.
-  aComando.Add("soffice")
-  aComando.Add("--headless")
-  aComando.Add("--norestore")
-  aComando.Add("-env:UserInstallation=file://" & Temp$("perfilconversor"))
-  aComando.Add("--convert-to")
-  aComando.Add("html:HTML (StarWriter)")
-  aComando.Add("--outdir")
-  aComando.Add(sCarpetaSalida)
-  aComando.Add(sRutaOrigen)
-
-  ' --- 3. LANZAMIENTO ---
-  $bProcesoTerminado = False
-  $sErrorProceso = ""
-
-  ' EL NOMBRE DEL OBSERVADOR VA COMO LITERAL: EL As DE Exec SE RESUELVE AL
-  ' COMPILAR Y NO ACEPTA UNA CONSTANTE. TIENE QUE COINCIDIR EXACTAMENTE CON EL
-  ' PREFIJO DE LOS TRES HANDLERS ProcConversor_* DE MÁS ABAJO. UN NOMBRE MAL
-  ' ESCRITO NO DA ERROR DE COMPILACIÓN: FALLA AL LANZAR (GV-18), Y POR ESO EL
-  ' Try CON If Error SOBRE EL PROPIO Exec.
-  Try hProceso = Exec aComando For Read As "ProcConversor"
-  If Error Then
-    ' UNA FIRMA DE HANDLER EQUIVOCADA COMPILA Y HACE FALLAR EL Exec EN TIEMPO
-    ' DE EJECUCIÓN (GV-18), ASÍ QUE ESTE ERROR SE INFORMA SIEMPRE Y NO SE
-    ' TRAGA CON UN Return MUDO (GV-23).
-    UltimoError = "No se pudo lanzar LibreOffice: " & Error.Text
-    Return False
-  Endif
-
-  ' --- 4. ESPERA CON VENCIMIENTO DE PLAZO ---
-  ' NUNCA hProceso.Wait(): BLOQUEA EL PROCEDIMIENTO, LOS EVENTOS Read Y Error
-  ' NO SE DISPARAN, NADIE DRENA LAS TUBERÍAS Y LA APLICACIÓN SE CUELGA SIN
-  ' MENSAJE (GV-17). LA SENTENCIA Wait SÍ ENTRA AL BUCLE DE EVENTOS.
-  Application.Busy = True
-  fVencimiento = Timer + SEGUNDOS_ESPERA_IMPORTACION
-
-  While Not $bProcesoTerminado
-
-    Wait 0.01
-
-    If Timer > fVencimiento Then
-      Try hProceso.Kill()
-      Application.Busy = False
-      UltimoError = "La conversión con LibreOffice superó el plazo de " &
-        CStr(CInt(SEGUNDOS_ESPERA_IMPORTACION)) & " segundos."
-      Return False
-    Endif
-
-  Wend
-
-  ' --- 5. DRENAJE FINAL ---
-  ' EL EVENTO Kill PUEDE LLEGAR ANTES QUE LOS ÚLTIMOS TROZOS DE SALIDA (GV-17)
-  For iDrenaje = 1 To 10
-    Wait 0.01
-  Next
-
-  Application.Busy = False
-
-  Return True
-
-End
-
-' ============================================
-' Función   : ProcConversor_Read
-' Propósito : Drena la salida estándar del conversor
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-
-Public Sub ProcConversor_Read()
-
-  Dim sLinea As String
-
-  ' LA FIRMA DE Read NO LLEVA PARÁMETROS Y SE VALIDA AL LANZAR, NO AL COMPILAR
-  ' (GV-18). SI NADIE LEE, EL PROCESO HIJO SE BLOQUEA ESCRIBIENDO.
-  Try Line Input #Last, sLinea
-
-End
-
-' ============================================
-' Función   : ProcConversor_Error
-' Propósito : Acumula la salida de error del conversor
-' Parámetros: sDatos As String — trozo de salida de error
-' Retorna   : nada
-' ============================================
-
-Public Sub ProcConversor_Error(sDatos As String)
-
-  ' EL HANDLER SOLO ACUMULA. LOS DATOS LLEGAN EN TROZOS DE 256 BYTES QUE PARTEN
-  ' LÍNEAS AL MEDIO E INCLUSO CARACTERES MULTIBYTE: PARSEAR ACÁ ROMPERÍA LA
-  ' CODIFICACIÓN (GV-19). LA FIRMA DE Error SÍ LLEVA PARÁMETRO (GV-18).
-  $sErrorProceso &= sDatos
-
-End
-
-' ============================================
-' Función   : ProcConversor_Kill
-' Propósito : Levanta la señal de proceso terminado
-' Parámetros: ninguno
-' Retorna   : nada
-' ============================================
-
-Public Sub ProcConversor_Kill()
-
-  $bProcesoTerminado = True
-
-End
-
-' ============================================
-' Función   : LimpiarCarpetaTemporal
-' Propósito : Borra la carpeta temporal de conversión y su contenido
-' Parámetros: sCarpeta As String — carpeta a borrar
-' Retorna   : nada
-' ============================================
-
-Private Sub LimpiarCarpetaTemporal(sCarpeta As String)
-
-  ' LA LIBERACIÓN VA EXPLÍCITA EN CADA CAMINO DE SALIDA Y NO EN UN Finally:
-  ' Finally NO CORRE EN UN Return NORMAL (RC-GM-20).
-  Try Shell.RmDir(sCarpeta, True)
 
 End
 
