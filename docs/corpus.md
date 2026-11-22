@@ -670,7 +670,7 @@ Placeholders, etiquetas recurrentes, marcadores de formato y prefijos sintáctic
 
 Beneficios: i18n futura, búsqueda global de placeholders sin quedar incompletos, consistencia entre eventos que comparten el mismo texto, y posibilidad de detectar marcas sin completar buscando el literal exacto.
 
-**Relaciones:** vinculo:GV-11
+**Relaciones:** vinculo:GV-11,vinculo:GV-220
 
 ### SC-04 — Capturar las posiciones del editor, no calcularlas
 
@@ -906,7 +906,7 @@ LA REENTRADA DURANTE LA IMPORTACIÓN (18/11/2026). Mientras LibreOffice conviert
 
 ### SC-13 — Trabajo pesado con herramientas externas: script propio y terminal embebido
 
-**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.form.terminal / bash / Linux Mint · **Verificado:** 2026-09
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22 / gb.form.terminal / bash / Linux Mint · **Verificado:** 2026-11
 
 DECISIÓN CERRADA. Cuando una tarea depende de una herramienta externa que ya sabe hacer el trabajo, la lógica va en un script propio en `engine/`, invocado desde un `TerminalView`, y no se reimplementa en Gambas.
 
@@ -942,7 +942,7 @@ Queda en Gambas:
 
 Una función de Gambas que tipea en la terminal con `Input()` fuera de la lanzadora (SC-53) es deuda de migración: si la terminal está ocupada el comando se encola y corre fuera de contexto, Gambas no recibe código de salida, y la espera por la aparición de un archivo da por terminado lo que recién empezó a escribirse.
 
-El primer caso migrado con este criterio: los canónicos de capítulo. `engine/generar_canonicos_capitulos.sh` reemplazó a `FMain.btnGenerarDocBookcanonico_Click` y a `m_XML.GenerarBodyCapituloXML`. El segundo, la salida PDF de libros: `compilar_pdf_libro.sh` pasó a la lanzadora y la preparación de los archivos LaTeX salió de Gambas a `preparar_latex_libro.sh` (SC-53).
+El primer caso migrado con este criterio: los canónicos de capítulo. `engine/generar_canonicos_capitulos.sh` reemplazó a `FMain.btnGenerarDocBookcanonico_Click` y a `m_XML.GenerarBodyCapituloXML`. El segundo, la salida PDF de libros: `compilar_pdf_libro.sh` pasó a la lanzadora y la preparación de los archivos LaTeX salió de Gambas a `preparar_latex_libro.sh` (SC-53). El 21/11/2026, git: el empuje remoto (`empujar_remoto.sh`) y el commit local (`commit_local.sh`, que el remoto llama anidado) reemplazaron a `m_GitHub.EmpujarGitHubRemoto` y a `EmpujarGitLocal`, que tipeaban en la terminal sin recibir resultado y escapaban el mensaje a mano (SC-103). El mismo día se retiró `FSabores`, que corría un XSLT a elección buscando Saxon con `dpkg` y `find`: las universidades personalizan sobre `main.tex`, el CSS y sus scripts de `scripts/`, no sobre el canónico.
 
 INTÉRPRETES ADMITIDOS
 
@@ -958,9 +958,9 @@ BASE COMPARTIDA
 
 Si el proceso externo escribe en la misma base que la aplicación tiene abierta, la conexión se cierra antes de lanzarlo y se reabre después por un ÚNICO camino explícito, invocado tanto en el éxito como en el fallo. `Finally` no sirve para esto (RC-GM-20).
 
-**Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53
+**Relaciones:** vinculo:SC-05, vinculo:SC-11, vinculo:GV-17, vinculo:GV-20, apoya:GV-23, vinculo:GV-42,vinculo:SC-53,vinculo:SC-103
 
-**PENDIENTE:** Inventario de las funciones que todavía tipean en la terminal con Input() fuera de la lanzadora, para ordenar la migración. Por grep, al 2026-10: FMain, m_XML, m_GitHub, m_FuncionesGenericas, m_InicioCierre (m_OrdenTaller salió el 18/11/2026: SC-99). La salida PDF de libros ya no tiene nada fuera de la lanzadora. Las salidas viejas de revista, que también tipeaban, salieron el 18/11/2026 (SC-96, SC-98).
+**PENDIENTE:** Inventario al 21/11/2026 de Input() fuera de la lanzadora: solo quedan el cd y el clear de la terminal (FMain, m_InicioCierre), un echo de diagnóstico en m_InicioCierre y los scripts personales del combo (m_FuncionesGenericas.EjecutarScript). m_XML y m_GitHub ya no tipean. Candidatos con Exec en Gambas: la conversión con LibreOffice de m_EditorHTML (criterio 1) y la auditoría de JATS externos, m_AuditarJats y m_ValidacionSchematron (criterio 2, con el contrato de m_Validaciones). Detalle: claude/migracion-engine.md.
 
 ### SC-14 — Bibliografía en HTML y EPUB: se replica el estilo biblatex del libro
 
@@ -1058,13 +1058,13 @@ Toda preferencia de la aplicación se guarda en `~/.gbpublisher/gbpublisher.conf
 
 No se usa el objeto global `Settings`: escribe en otro archivo.
 
-Secciones en uso: `[Editor]` (FontName, FontSize), `[EditorHTML]` (FontName, FontSize), `[Interface]` (FontSize) y `[Resaltado]` (Tema).
+Secciones en uso: `[Editor]` (FontName, FontSize), `[EditorHTML]` (FontName, FontSize), `[Interface]` (FontSize), `[Resaltado]` (Tema), `[FileManager]` (Ancho, Alto: la ventana del gestor de archivos) y `[GitHub]` (Usuario: se guarda tras un empuje remoto exitoso). Las dos últimas, desde el 21/11/2026 (SC-103).
 
 La ruta se obtiene siempre de `m_InicioCierre.RutaConfiguracion()`; no se escribe literal.
 
 LAS CREDENCIALES NO VAN ACÁ (18/11/2026). Las claves de los servicios externos (Azure Translator y los demás) viven cifradas en la tabla `api_credenciales` de la base, por `m_ApiCredenciales`, y se cargan en el panel de administración. `m_Traduccion` y `FTraducir` ya no usan `Settings`, y DeepL salió del código. Verificado con grep: el último uso del `Settings` global era `m_LLM` (el modo elegido y el último proveedor por modo). El mismo día pasó a `gbpublisher.conf`, secciones `[LLM]` y `[LLM/Ultimo]`, con `LeerPreferencia` y `GuardarPreferencia` privadas del módulo. Los valores guardados antes no se migran: el proveedor se vuelve a elegir una vez.
 
-**Relaciones:** vinculo:SC-11, vinculo:SC-15
+**Relaciones:** vinculo:SC-11, vinculo:SC-15,vinculo:SC-103
 
 ### SC-18 — Editor principal de Markdown: TextEdit con refresco determinista
 
@@ -1206,7 +1206,7 @@ Un formulario sin botón de cerrar necesita una salida propia en la interfaz: un
 
 ALCANCE: X11, como GV-50. En Wayland no está verificado.
 
-**Relaciones:** vinculo:GV-50, vinculo:GV-11,vinculo:SC-55
+**Relaciones:** vinculo:GV-50, vinculo:GV-11,vinculo:SC-55,vinculo:SC-103
 
 **PENDIENTE:** Verificar en Mint la variante FijarBotones(Me, True), que conserva el botón de cerrar.
 
@@ -1335,7 +1335,9 @@ PUNTO DE RUPTURA: BASELINE 2.0.0 CON EL REFACTOR DE BIBTEX
 
 Decisión de Alberto (20/10). El baseline no se regenera con cada versión de la cadena. El 2.0.0 se genera junto con el refactor de bibtex y lo incorpora: las instalaciones nuevas parten de ahí. Las existentes siguen su cadena hasta ese mismo punto. Hasta entonces, una instalación nueva restaura `baseline-1.0.0` y corre la cadena completa (BBDD_LEEME.md §5, «Cuándo conviene rebasear»).
 
-HECHO (20/11/2026, SC-102). El baseline 2.0.0 se genera con `generar-baseline.sh` desde una base instalada desde cero con la cadena completa, no desde la base de trabajo: así es igual a toda instalación actualizada. Una instalación nueva lo restaura y no corre ninguna actualización. Desde ahí, cada script acepta como antecesor la actualización anterior o el baseline que la incluye: la 2.0.0 sale sin hacer nada en una base `baseline-2.0.0`, la 1.23.0 (que repone los disparadores después de restaurar un respaldo de la aplicación) corre en ella, y la 2.1.0 tendrá que aceptar `actualizacion-2.0.0` o `baseline-2.0.0`.
+HECHO (20/11/2026, SC-102). El baseline 2.0.0 se genera con `generar-baseline.sh` desde una base instalada desde cero con la cadena completa, no desde la base de trabajo: así es igual a toda instalación actualizada. Una instalación nueva lo restaura y no corre ninguna actualización. Desde ahí, cada script acepta como antecesor la actualización anterior o el baseline que la incluye: la 2.0.0 sale sin hacer nada en una base `baseline-2.0.0`, la 1.23.0 (que repone los disparadores después de restaurar un respaldo de la aplicación) corre en ella, y la 2.1.0 acepta `actualizacion-2.0.0` o `baseline-2.0.0`.
+
+LA 2.1.0 (21/11/2026, SC-104). Cambia solo el CHECK `chk_pieza_nombre` de `numero_pieza`: acepta la regla única del nombre de pieza y sigue aceptando la forma vieja, sin tocar ninguna fila. Va antes que la aplicación nueva, que graba la forma nueva. Se cambia con dos sentencias (quitar el viejo, poner el nuevo con el mismo nombre) y, si el nuevo falla, se repone el viejo: la tabla no queda sin control. El estado se lee de `information_schema.CHECK_CONSTRAINTS`. Una instalación nueva restaura el baseline 2.0.0 y corre la 2.1.0.
 
 EL ESQUEMA PROPIO DE gbWeb
 
@@ -1345,7 +1347,7 @@ CADENA DE LAS SALIDAS DE REVISTAS (7 A 14/11/2026)
 
 1.23.0 (reapertura de un artículo publicado, `articulo_reapertura` y sus disparadores), 1.24.0 (`por_articulo` al final del ENUM de `revista.modelo_paginacion`: así MySQL no copia la tabla ni renumera los valores), 1.25.0 (la fila `disponibilidad_datos` de `tipo_declaracion`), 1.26.0 (editorial, créditos, órganos y preliminares; migra), 1.27.0 (borra de `revista` las columnas que pasaron a la editorial; su vuelta atrás las repone desde la editorial), 1.28.0 (`credit_roles.uri`, `credit_rol_nombre`, `licencia_texto`, `revista.logo`), 1.29.0 (`articulo.licencia_texto`, `contribuyente_credit.nombre_rol` y `uri_rol`; congela los publicados con el catálogo del momento). Cada uno con respaldo, PREVIO, idempotencia y vuelta atrás probados en la base de prueba; los que borran o migran dejan un `…-volver-atras.sql` junto al respaldo. `m_ConexionBD.ObtenerEsquemaEsperado` se actualiza con cada uno. Ver SC-71, SC-88 y SC-90.
 
-**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217
+**Relaciones:** vinculo:GV-58,vinculo:GV-63,vinculo:RC-GM-04,vinculo:GV-67,vinculo:SC-26,vinculo:SC-34,vinculo:SC-60,vinculo:SC-71,vinculo:SC-78,vinculo:SC-81,apoya:GV-169,vinculo:SC-83,vinculo:SC-85,vinculo:SC-88,vinculo:SC-90,vinculo:SC-102,vinculo:GV-217,vinculo:SC-104
 
 ### SC-23 — Vocabularios de metadatos: el catálogo en la base alimenta el formulario, el registro guarda su valor
 
@@ -1550,7 +1552,7 @@ ESQUEMA
 
 Por un script de actualización (SC-22). El `enum` de `tipo_capitulo` se reescribe partiendo del REAL, leído en information_schema: el baseline no tiene `indice_concepto` ni `indice_autores`, que el código usa, y `MODIFY` reemplaza la lista entera. Los handlers nuevos de logo declaran sus variables al principio (RC-GM-18), a diferencia de `btnBuscarTapa_Click`.
 
-**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56,vinculo:SC-76,vinculo:SC-85
+**Relaciones:** vinculo:SC-22,vinculo:GV-66,vinculo:SC-05,apoya:GV-23,vinculo:RC-GM-18,vinculo:SC-21,vinculo:GV-68,vinculo:SC-26,vinculo:SC-45,vinculo:SC-56,vinculo:SC-76,vinculo:SC-85,vinculo:SC-104
 
 **PENDIENTE:** PDF implementado y probado con un libro real. EPUB implementado: las páginas generadas por el código real pasan epubcheck en el contenedor; falta probarlo con un libro real y verlo en un lector. Esquema: actualizar-esquema-1.4.0.sh y 1.5.0.sh.
 
@@ -1647,7 +1649,7 @@ SI LO ABIERTO DESAPARECE DEL DISCO
 
 Probado por Alberto en 3.22.1: primer PDF de un proyecto nuevo, PDF nuevo con otro abierto, PDF borrado, PDF regenerado; figura agregada, renombrada y borrada.
 
-**Relaciones:** vinculo:GV-53, vinculo:GV-69, vinculo:GV-59, vinculo:SC-06, apoya:GV-23
+**Relaciones:** vinculo:GV-53, vinculo:GV-69, vinculo:GV-59, vinculo:SC-06, apoya:GV-23,vinculo:SC-103
 
 **PENDIENTE:** hTimerRefrescarProyecto (cmbArticulosRevista) sigue con su propio modelo: compara cantidades y no firma, y resuelve el Click de la selección repuesta dentro del handler (GV-53). Unificarlo con este patrón queda por decidir.
 
@@ -2528,7 +2530,7 @@ DECISIÓN CERRADA. Libros y revistas. Las piezas se ordenan por su nombre de arc
 
 LA CONVENCIÓN
 
-El nombre da la posición: `prefijo-NN-resto` (`fm-10-prologo`, `a-03-…`, `bm-99-colofon`). El prefijo fija la familia —preliminares, cuerpo, finales— y NN el lugar dentro de ella. Con dos dígitos, el orden alfabético dentro de cada familia equivale al numérico. El espacio `fm-00` a `fm-09` está reservado para las primeras (SC-25) y las piezas sueltas, como la dedicatoria (SC-45): es todo lo que va antes del sumario. `bm-00` a `bm-09`, para las piezas sueltas de finales. La regla, en Gambas, es `m_OrdenPiezas.EnEspacioReservado(sNombre)`: solo la forma de dos dígitos.
+El nombre da la posición: `prefijo-NN-resto` (`fm-10-PROLOGO`, `a-03-…`, `bm-99-COLOFON`). Cómo se escribe el resto, en SC-104. El prefijo fija la familia —preliminares, cuerpo, finales— y NN el lugar dentro de ella. Con dos dígitos, el orden alfabético dentro de cada familia equivale al numérico. El espacio `fm-00` a `fm-09` está reservado para las primeras (SC-25) y las piezas sueltas, como la dedicatoria (SC-45): es todo lo que va antes del sumario. `bm-00` a `bm-09`, para las piezas sueltas de finales. La regla, en Gambas, es `m_OrdenPiezas.EnEspacioReservado(sNombre)`: solo la forma de dos dígitos.
 
 POR QUÉ NO EL ORDEN ALFABÉTICO SOLO, NI EL id
 
@@ -2537,7 +2539,7 @@ El alfabético da `a-` < `bm-` < `fm-`, exactamente el inverso del orden de lect
 EL MÓDULO
 
 - `ClausulaOrden(sColumna)` devuelve el criterio sin la palabra ORDER BY: `CASE` por prefijo (`fm-` 1, `a-` 2, `bm-` 3, resto 9) y después la columna. Recibe la columna como se escribe en la consulta (`nombre_archivo`, `c.nombre_archivo`).
-- `ExpresionCodigo(sColumna)` devuelve `SUBSTRING_INDEX(col, '-', 2)`: el código de posición (`fm-10-prologo` → `fm-10`). Con la columna NULL da NULL.
+- `ExpresionCodigo(sColumna)` devuelve `SUBSTRING_INDEX(col, '-', 2)`: el código de posición (`fm-10-PROLOGO` → `fm-10`). Con la columna NULL da NULL.
 - Un nombre NULL o sin prefijo conocido cae en el 9: queda al final y sigue a la vista. Las consultas de salida lo excluyen con `nombre_archivo IS NOT NULL`; las grillas no, porque la pieza recién creada tiene que poder editarse.
 - No va en `m_PiezasLibro`: esa es la matriz de piezas del libro por salida, y este orden vale también para los números de revista.
 
@@ -2553,7 +2555,7 @@ GRILLAS DE METADATOS
 
 Verificado: el orden y la extracción del código, en MariaDB 10.11 con nombres reales, un NULL y uno sin prefijo; las dos grillas, por Alberto en gbpublisher.
 
-**Relaciones:** vinculo:SC-25,vinculo:SC-45,vinculo:SC-55
+**Relaciones:** vinculo:SC-25,vinculo:SC-45,vinculo:SC-55,vinculo:SC-104
 
 ### SC-45 — Dedicatoria: pieza suelta de fm-00 a fm-09, antes del sumario, con el bloque del epígrafe sin filete
 
@@ -2613,7 +2615,7 @@ FUERA DE ESTA DECISIÓN
 
 Las otras piezas sueltas (foto, recordatorio) siguen saliendo con título en EPUB y HTML (decisión de Alberto).
 
-**Relaciones:** vinculo:SC-25,vinculo:SC-44,vinculo:SC-35,vinculo:SC-31
+**Relaciones:** vinculo:SC-25,vinculo:SC-44,vinculo:SC-35,vinculo:SC-31,vinculo:SC-104
 
 **PENDIENTE:** Probado en el contenedor con la cadena real: GenerarInfoCapituloXML contra MariaDB 10.11, Pandoc 3.1.3 con los filtros del proyecto, ensamblar-capitulo-canonico.xsl y docbook-to-latex.xsl; el PDF compilado con los preámbulos reales (dedicatoria en vii sin título ni entrada en el sumario, vuelta en blanco, sumario después). El canónico de la pieza y el del libro validan contra el RNG de DocBook 5.2 (jing). El EPUB mínimo pasa epubcheck 4.2.6; el index.html de un libro de prueba; gbc3 compila el proyecto. Falta en Mint con un libro real.
 
@@ -3170,13 +3172,20 @@ El patrón sale de la salida real de jing en Linux Mint: `69:1130: error: IDREF 
 
 LOS USOS
 
-`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh`, `compilar_pdf_libro.sh`, `validar_canonicos.sh` (SC-75) y `tapa_web.sh` (SC-81). `compilar_pdf_libro.sh` fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
+`ensamblar_libro.sh`, `generar_html_libro.sh`, `generar_epub_libro.sh`, `generar_canonicos_capitulos.sh`, `preparar_latex_libro.sh`, `compilar_pdf_libro.sh`, `validar_canonicos.sh` (SC-75) y `tapa_web.sh` (SC-81). Desde el 21/11/2026, `empujar_remoto.sh` y `commit_local.sh` (SC-103). `compilar_pdf_libro.sh` fue el último en pasar: se tipeaba en la terminal, Gambas no sabía cuándo terminaba y no informaba el resultado; además tenía su propia copia de las funciones de salida, con un `aviso` que no contaba. Ahora carga `comun.sh` y sus avisos (citas sin entrada en el .bib, entradas de índice descartadas, referencias cruzadas sin destino o repetidas, falta del .bib) llegan como código 3.
 
 `preparar_latex_libro.sh` hace lo que antes hacía `m_GenerarPDFLibro.GenerarMainTeX` con `Exec` síncronos: colorear y transformar cada pieza (`colorear_codigo.sh` y `docbook-to-latex.xsl`), borrar los `c-*.tex` huérfanos y poner el `main.tex` en su lugar. Mientras eso corría en Gambas, la interfaz no se repintaba (GV-17) y no había señal de vida antes de que empezara la compilación. Gambas conserva lo que sale de la base, en `m_GenerarPDFLibro.ArmarInsumosLaTeX`: preámbulo derivado, `.bib`, la lista de piezas con cuerpo (`tmp/latex-piezas.txt`) y el `main.tex` propuesto (`latex/.main.tex.tmp`). «Solo generar» lanza `preparar_latex_libro.sh`; «Generar y compilar» lanza `compilar_pdf_libro.sh`, que lo llama anidado primero y no compila si falla.
 
 El `main.tex` sigue yendo último (criterio de SC-07): el script lo pone con `mv` solo si todas las piezas salieron bien, y si alguna falla el anterior queda intacto. Como `mv` conserva la fecha del temporal, anterior a las piezas, un `touch` lo deja como el archivo más nuevo. Una pieza que falla no corta el resto: se listan todas y no se pone el `main.tex`. El preámbulo derivado y el `.bib` los sigue escribiendo Gambas antes del script: si una pieza falla quedan nuevos junto al `main.tex` anterior, lo que se aceptó porque no son declarativos y la próxima corrida los reescribe. Decisión de Alberto.
 
-**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07,vinculo:SC-75,vinculo:SC-78,vinculo:SC-84
+LANZAR CON UN FORMULARIO MODAL ABIERTO (21/11/2026, SC-103)
+
+`FFileManager` lanza `empujar_remoto.sh` sin cerrarse. Con un formulario abierto con `ShowModal` no se puede escribir en FMain: ni en sus campos ni en la terminal donde corre el script. Dos consecuencias:
+- El script no puede esperar respuestas: corre `ssh` y `git` con `BatchMode=yes` y `GIT_TERMINAL_PROMPT=0`. Si la clave pide una frase de paso que el agente no tiene, falla y lo dice en lugar de quedarse esperando.
+- `EjecutarScript` espera con `Wait`, y el formulario sigue recibiendo clics: el manejador apaga sus controles mientras espera, y `Form_Close` no deja cerrar con `m_Lanzadora.HayScriptEnCurso()`.
+Un script puede llamar a otro anidado para un paso común: `empujar_remoto.sh` hace el commit con `commit_local.sh` (`GBP_ANIDADO=1`) y cuenta sus avisos para el código final.
+
+**Relaciones:** vinculo:SC-13,vinculo:SC-06,vinculo:SC-11,vinculo:GV-06,vinculo:GV-39,vinculo:GV-42,vinculo:RC-GM-20,apoya:GV-23,vinculo:SC-32,vinculo:SC-52,vinculo:SC-54,vinculo:GV-100,vinculo:SC-07,vinculo:SC-75,vinculo:SC-78,vinculo:SC-84,vinculo:SC-103
 
 ### SC-54 — Controles de corrección del .md: un filtro en engine/ con niveles declarados
 
@@ -3295,7 +3304,7 @@ EL CASO QUE LO ORIGINÓ
 
 Un libro de autor con bibliografía consolidada sacó el índice de autores antes de la bibliografía. Con bibliografía por capítulo no se ve: cada pieza trae la suya y el índice después del último capítulo es lo correcto. Dos caminos llevan al error:
 - La bibliografía consolidada sin pieza declarada: `ArmarInsumosLaTeX` (apartado 8) emite `\printbibliography[heading=bibintoc]` al final, después de TODAS las piezas declaradas, índices incluidos.
-- La pieza declarada pero numerada después del índice (`bm-20-indice-autores`, `bm-21-referencias`).
+- La pieza declarada pero numerada después del índice (`bm-20-INDICE-AUTORES`, `bm-21-REFERENCIAS`).
 
 LAS REGLAS
 
@@ -3320,7 +3329,7 @@ La regla está escrita una sola vez, en `m_PiezasLibro`; los dos lugares la llam
 
 CÓDIGOS REPETIDOS
 
-Dos piezas con el mismo código de posición (`bm-20-indice-autores` y `bm-20-referencias`) quedan ordenadas por el resto del nombre, alfabéticamente, y no por el número: el orden puede salir bien por casualidad. Vale para TODO el libro —preliminares, cuerpo y finales— y para todas las salidas, porque todas ordenan por nombre (SC-44).
+Dos piezas con el mismo código de posición (`bm-20-INDICE-AUTORES` y `bm-20-REFERENCIAS`) quedan ordenadas por el resto del nombre, alfabéticamente, y no por el número: el orden puede salir bien por casualidad. Vale para TODO el libro —preliminares, cuerpo y finales— y para todas las salidas, porque todas ordenan por nombre (SC-44).
 
 - La función es `m_PiezasLibro.ProblemaCodigoRepetido(iIdLibro)`. Agrupa por `m_OrdenPiezas.ExpresionCodigo`, la misma definición del código que usan las grillas: no se reescribe en Gambas. `GROUP BY` sobre el alias lo admite MySQL (manual 8.0, B.3.4.4). Lista TODOS los códigos repetidos con sus piezas: renumerar uno puede chocar con otro. Un fallo de lectura devuelve vacío: los generadores leen la misma tabla y fallan con su propio mensaje.
 - Va ANTES que `ProblemaOrdenFinales`: con un código repetido, el control de los finales podría dar bien por casualidad.
@@ -3337,7 +3346,7 @@ FUERA DEL ALCANCE
 
 EPUB y HTML: los índices no se generan (`m_PiezasLibro.Tratamiento`), así que el orden respecto de la bibliografía no cambia nada. El EPUB ubica su colofón solo.
 
-**Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17,vinculo:SC-20,vinculo:GV-102,vinculo:SC-78,apoya:GV-164
+**Relaciones:** vinculo:SC-44,vinculo:SC-45,vinculo:RC-GM-17,vinculo:SC-20,vinculo:GV-102,vinculo:SC-78,apoya:GV-164,vinculo:SC-104
 
 ### SC-56 — Bibliografía con Verona en HTML y EPUB: nombre en cada entrada, versalitas por CSS, tipografía con smcp y c2sc
 
@@ -4320,7 +4329,7 @@ DECISIÓN CERRADA (Alberto, 25/10). Cada formulario, o cada función principal d
 
 Ya estaba aplicado caso por caso: SC-20 (`m_Ventana`), SC-21 (`m_Snippets`), SC-66 y SC-67 (`m_Cuadros`), SC-69 (`m_Graficos`). Esta entrada lo hace regla general.
 
-**Relaciones:** vinculo:SC-20,vinculo:SC-21,vinculo:SC-66,vinculo:SC-67,vinculo:SC-69,vinculo:GV-24
+**Relaciones:** vinculo:SC-20,vinculo:SC-21,vinculo:SC-66,vinculo:SC-67,vinculo:SC-69,vinculo:GV-24,vinculo:SC-103
 
 ### SC-71 — Revistas: la pirámide N0-N3 y el esquema nuevo
 
@@ -5007,7 +5016,7 @@ CONSECUENCIAS
 
 Es la misma idea que SC-16: el .md viaja solo.
 
-**Relaciones:** vinculo:SC-16,vinculo:SC-81
+**Relaciones:** vinculo:SC-16,vinculo:SC-81,vinculo:SC-103
 
 ### SC-83 — gbWeb: cómo se construye el sitio (sitio.xml, portal.xsl, construir_sitio.sh, docs/) y el esquema gbweb
 
@@ -5134,7 +5143,7 @@ DESPLEGAR
 
 PROBADO por Alberto en Linux Mint (04/11/2026, Gambas 3.22, gb.db2 y Qt6): el despliegue de `L-IMAGO`, y la salida por el menú y por la X, que termina el programa.
 
-**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-83,vinculo:SC-53,vinculo:SC-11,vinculo:RC-GM-13,apoya:GV-171,apoya:GV-172,apoya:GV-174,apoya:GV-178,vinculo:GV-142,apoya:GV-188
+**Relaciones:** vinculo:SC-80,vinculo:SC-81,vinculo:SC-83,vinculo:SC-53,vinculo:SC-11,vinculo:RC-GM-13,apoya:GV-171,apoya:GV-172,apoya:GV-174,apoya:GV-178,vinculo:GV-142,apoya:GV-188,vinculo:SC-103
 
 **PENDIENTE:** El visor no muestra el portal hasta hacer clic en su borde. Mini-test propuesto: `wvPortal.Url = "about:blank"` al final de `Form_Open` (sospecha de Alberto: el momento en que se asigna la URL). Junto con eso, el `#` en la ruta (GV-142).
 
@@ -5296,13 +5305,13 @@ LOS ÓRGANOS EDITORIALES
 
 LAS PRELIMINARES
 
-- Se declaran por número, como en libros (SC-25): `numero_pieza`, con tres nombres fijos (tapa, página legal, sumario). El formulario ofrece las tres; no se crean solas.
+- Se declaran por número, como en libros (SC-25): `numero_pieza`, con tres nombres fijos (tapa, página legal, sumario): `fm-01-TAPA`, `fm-02-LEGALES` y `fm-03-SUMARIO` (`m_Numero.PiezasArchivos`), con la regla de SC-104. Hasta el 21/11/2026 eran `fm-01-tapa`, `fm-02-legales` y `fm-03-sumario`: el CHECK de la 2.1.0 acepta las dos formas y las filas viejas se reescriben al volver a guardar el número. El formulario ofrece las tres; no se crean solas.
 - Fecha de referencia de las vigencias: el último día del mes del número (sin mes, el 31/12; sin año, frena si declara la página legal). El volcado (versión 3) trae `<preliminares>` y `<pagina-legal>` ya filtrados: un órgano sale si tiene algún miembro vigente a esa fecha. Ninguna salida decide vigencias.
 - El rótulo del volumen es de la revista (`revista.rotulo_volumen`: «Año III»); el período, un solo mes.
 - La tapa es `numero.imagen_tapa`: si el número declara la tapa y no tiene imagen, frena.
 - Las arman el PDF del número (`numero-maestro-latex.xsl`, SC-89) y el EPUB (`numero-a-epub.xsl`, SC-91) con las mismas funciones (`revista-comun.xsl`: la conjunción «y/e», la persona, los tramos del sumario por sección o dossier). El sumario agrupa los artículos por tramo seguido del mismo dossier o, sin dossier, de la misma sección. Un órgano de un solo miembro va en línea.
 
-**Relaciones:** vinculo:SC-71,vinculo:SC-22,vinculo:SC-25,vinculo:SC-87
+**Relaciones:** vinculo:SC-71,vinculo:SC-22,vinculo:SC-25,vinculo:SC-87,vinculo:SC-104
 
 ### SC-89 — Revistas: el PDF de cada artículo y el del número — contrato partido, primera página con columna, paginación que vuelve a la base y PDF/A-2u
 
@@ -5878,6 +5887,88 @@ Decidir:
 - si al guardar se cambian los saltos de línea por espacios;
 - qué hacer con las 48 consultas guardadas que nombran `articulos` o `revistas_md` (SC-98), entre ellas BIB-ART-001 y BIB-ART-002.
 
+### SC-103 — El gestor de archivos del proyecto: FFileManager, confinado a la raíz, con protecciones y acciones en el menú contextual
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22.2 / gb.qt6 / gb.inotify / Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 21/11/2026). `FFileManager` reemplaza al gestor de la pestaña «Proyecto» de `TabPanelIzquierdaInferior`, que se borró, y a Midnight Commander, que abría `btnAbrirDirectorio` y quedó desvinculado de la aplicación: se usa por fuera para las copias grandes. Hace pocas cosas, siempre dentro del proyecto en curso. La lógica está en `m_FileManager` (SC-70); el formulario tiene los controles y los manejadores. Detalle de diseño: `claude/filemanager.md` del proyecto.
+
+LA VENTANA
+
+- `ShowModal`, redimensionable; el tamaño se guarda en `gbpublisher.conf`, `[FileManager]` Ancho y Alto (SC-17). `m_Ventana.FijarBotones(Me)` (SC-20): la salida es Cerrar o Escape (`btnCerrar.Cancel`). La cierra siempre el usuario.
+- Todas las acciones están en el menú contextual `menuFF`: Abrir, Renombrar, Borrar, Agregar archivo, Agregar carpeta. Cada ítem se habilita según la selección, con las mismas reglas que la acción.
+- `lblRaiz` muestra el .md del proyecto (`m_InicioCierre.ArchivoProyectoEnCurso`); el árbol va con `HideRoot` y sin barra horizontal (RF-15).
+- `gvDetalles`, propiedad y valor: nombre, ubicación relativa, tipo, tamaño o contenido directo, fecha, protección; en una pieza, su código y familia; el formato real por los primeros bytes contra la extensión (un HEIC renombrado a .jpg rompe LuaLaTeX). Lo pesado (dimensiones y semáforo de `m_GestionImagenes.EvaluarResolucion` en imágenes, páginas y tamaño en PDF) espera 250 ms con un Timer que se reinicia en cada selección.
+
+EL CONFINAMIENTO
+
+- Navegar y abrir: `DentroDelProyecto` compara la ruta REAL (`File.RealPath`) con la raíz: un enlace simbólico que apunta afuera no saca del proyecto.
+- Renombrar y borrar: `UbicacionDentroDelProyecto` resuelve solo la carpeta, así un enlace se opera como enlace.
+- Sin proyecto abierto, `FMain` no abre el gestor: con `Root` vacío, `DirView` arranca en `User.Home` (RF-15). Por ahí se escapaba el gestor viejo.
+
+LAS PROTECCIONES
+
+- La raíz y las carpetas predefinidas no se borran ni se renombran. La lista es una sola, `m_FuncionesGenericas.CarpetasPredefinidas()`, la misma con la que `ControlarCarpetas` las crea. Las carpetas temporales de trabajo (REVISAR) son carpetas comunes.
+- Un .md de la raíz no se borra ni se renombra: es la identidad del proyecto (SC-82).
+- Una pieza (el .md con el prefijo de su carpeta: fm- en front-matter, a- en articulos, bm- en back-matter) no se borra. Se renombra con la regla de SC-104 y el gestor no toca la base: la ficha se corrige en el ABM eligiendo otra vez el archivo, como cuando se renombraba por fuera.
+- El archivo abierto en el editor (`FMain.sRutaArchivoAbierto`) no se borra ni se renombra: el editor lo volvería a crear con el nombre viejo.
+
+LAS ACCIONES
+
+- Abrir: un .md nunca (existe el editor); un .xml de `jats/` tampoco (se lee en el editor XML). Lo demás, `Exist` y `Desktop.Open` sin `Wait` (GV-43). Sin tabla de asociaciones propia: manda la del sistema.
+- Borrar: definitivo, sin papelera, con una confirmación que dice qué se borra (en una carpeta, cuántos archivos y subcarpetas). Recorre con `Stat`, que no sigue enlaces: un enlace a una carpeta de afuera se borra como enlace (GV-219).
+- Nombres: letras sin tilde, dígitos y guion; sin guion bajo (el conversor lo reserva para sus imágenes); extensión de 2 a 4 en minúscula. Al renombrar, la sugerencia viene normalizada («IMG_2034 (1).JPG» → «IMG-2034-1.jpg»), con tildes y ñ por mapa propio (GV-204). Todo .md de una carpeta de piezas sigue la regla de SC-104. `FPedirNombre` valida al aceptar, no por tecla: así se controla también lo pegado. Reemplazó a `FAgregarArchivo` y `FAgregarCarpeta`.
+
+EL CIERRE, EN TRES CAPAS
+
+1. Lo propio: `Form_Close` detiene el Timer y guarda el tamaño. No deja cerrar con un script en curso (`m_Lanzadora.HayScriptEnCurso`): el manejador que lo lanzó sigue esperando con `Wait` y tocaría controles destruidos.
+2. Lo de FMain: al volver de `ShowModal`, `btnAbrirDirectorio` llama siempre a `m_GestionImagenes.RefrescarComboSiCambio` y `m_RevisarPDF.RefrescarComboSiCambio` (SC-27). Siempre y no según un valor de retorno: no depende de cómo se cerró ni de si los Timer de FMain corren durante el modal.
+3. Lo externo: avisa de los documentos del proyecto que LibreOffice tiene abiertos, por sus archivos de bloqueo `.~lock.<nombre>#`.
+
+EL EMPUJE REMOTO
+
+`btnEmpujar` lanza `engine/empujar_remoto.sh` con el formulario abierto: la salida corre en la terminal de FMain, que se ve corriendo la ventana. El usuario de GitHub se escribe en `txtUsuarioGit` del gestor (con el modal abierto no se puede escribir en FMain) y se guarda en `[GitHub] Usuario` tras un empuje exitoso. Ver SC-53, LANZAR CON UN FORMULARIO MODAL ABIERTO.
+
+**Relaciones:** vinculo:SC-70,vinculo:SC-82,vinculo:SC-104,vinculo:SC-53,vinculo:SC-17,vinculo:SC-20,vinculo:SC-27,vinculo:GV-43,vinculo:GV-204,apoya:GV-219,vinculo:RF-15
+
+**PENDIENTE:** Mini-test: el formato del archivo de bloqueo de LibreOffice (ls -a con un .docx del proyecto abierto); se asumió .~lock.<nombre>#. Medir Image.Load con la imagen más pesada de un proyecto real: si tarda menos de 100 ms, el Timer de los detalles sobra.
+
+### SC-104 — La regla única del nombre de pieza: prefijo-NN-NOMBRE, la del conversor, aplicada al escribir
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** gbpublisher / Gambas 3.22.2 / MySQL 8 / esquema 2.1.0 / Linux Mint · **Verificado:** 2026-11
+
+DECISIÓN CERRADA (Alberto, 21/11/2026). El nombre de una pieza tiene una sola regla, la del conversor de .docx, que es la de origen:
+
+    prefijo-NN-NOMBRE
+
+- El prefijo (`fm-`, `a-`, `bm-`) en minúscula; NN, dos dígitos; NOMBRE, mayúsculas, dígitos y guiones. «NN-NOMBRE» tiene hasta 24 caracteres. El NOMBRE es obligatorio.
+- Sin guion bajo: el conversor lo usa para separar el nombre de la pieza del de sus imágenes (`NOMBRE_imagenN.ext`).
+
+Vale para las piezas con .md del libro (`capitulos`), las páginas lógicas del libro (sin .md: portadilla, portada, créditos, colofón), los artículos (`articulo`) y las preliminares del número (`numero_pieza`, SC-88). Complementa a SC-44: aquella dice cómo se ordena por el nombre; esta, cómo se escribe.
+
+CUÁNDO SE APLICA
+
+Al ESCRIBIR un nombre: un alta o un cambio. Lo que ya está en la base queda; se corrige solo si se cambia el nombre. Por eso la ficha de capítulos la aplica al guardar solo si el nombre cambió, y al elegir un .md solo si es otro que el que ya tenía.
+
+DÓNDE ESTÁ ESCRITA
+
+Tres lenguajes, una regla; cada copia cita a las otras:
+- Gambas: `m_OrdenPiezas` — `MotivoCodigoYNombre`, `MotivoNombrePieza` (con el prefijo esperado, opcional), `NormalizarEscrituraPieza` y las constantes `CARACTERES_NOMBRE`, `DIGITOS`, `LARGO_MAXIMO_NOMBRE`. La consultan `FConversorDOCX2MD` (que dejó de tener la suya), `m_FileManager`, la ficha de capítulos y `m_Metadatos.GuardarMetadatosDeCapitulo`.
+- bash: el regex de `engine/convertir_docx.sh`.
+- SQL: el CHECK `chk_pieza_nombre` de `numero_pieza` (esquema 2.1.0), que acepta la forma nueva y la vieja en minúsculas para lo que ya está.
+
+AL ESCRIBIR
+
+En la ficha de capítulos, `nombre_archivo` filtra lo que se tipea (letras, dígitos y guion) y acomoda la caja mientras se escribe (prefijo en minúscula, el resto en mayúscula), como el conversor. Es lo que faltaba para las páginas lógicas, que se escribían a mano sin regla.
+
+LO QUE NO CAMBIA
+
+El orden sale del código NN (`m_OrdenPiezas.ClausulaOrden`, `ensamblar-libro-canonico.xsl`), no del resto del nombre. La base compara sin distinguir caja (`utf8mb4_unicode_ci`), salvo el CHECK. Las salidas de revista reconocen las preliminares por `@tipo`, no por el nombre.
+
+El informe de la 2.1.0 lista, sin corregirlos, los nombres que no siguen la regla en `numero_pieza`, `capitulos` y `articulo`.
+
+**Relaciones:** vinculo:SC-44,vinculo:SC-25,vinculo:SC-45,vinculo:SC-55,vinculo:SC-88,vinculo:SC-22,vinculo:SC-103
+
 ---
 
 ## RF — Referencia de API
@@ -6418,6 +6509,34 @@ DATOS DEL FUENTE QUE USA EL PROYECTO
 
 **Relaciones:** vinculo:SC-14,vinculo:SC-57,vinculo:SC-59,vinculo:GV-106
 
+### RF-15 — DirView y FileView de gb.form 3.22.1: raíz por omisión, TreeView interno, navegación, eventos y vigilancia del disco
+
+**Estado:** vigente · **Evidencia:** doc_oficial · **Entorno:** Gambas 3.22.1 / código fuente de gb.form y gb.gui.base · **Verificado:** 2026-11
+
+Leído en el fuente, etiqueta 3.22.1: `comp/src/gb.form/.src/File/DirView.class` y `FileView.class`, `comp/src/gb.gui.base/.src/TreeView/_TreeView.class` e `IconView/IconView.class`. Informa, no manda.
+
+DirView
+
+- Con `Root` vacío, `GetRoot` devuelve `User.Home`: el árbol arranca en la carpeta personal. `Root_Write` recorta la barra final.
+- Por dentro es un `UserControl` con un `TreeView` hijo (`DirView._new`). No tiene `ScrollBar` propia: se llega al `TreeView` por `Children` (UserControl hereda de Container), buscándolo por tipo. En el `TreeView`, `ScrollBar = Scroll.Vertical` saca la barra horizontal y prende `AutoResize` (`_TreeView.ScrollBar_Write`): la columna se ajusta al ancho visible. Si una versión cambia el armado interno, se pierde solo eso.
+- Muestra los enlaces simbólicos a carpetas con el emblema de enlace y deja entrar.
+- Asignar `Current` dispara `Click` si la ruta cambió (`Current_Write`). `Reload` reconstruye el árbol y conserva la carpeta actual.
+
+FileView
+
+- No navega solo: el doble clic o Enter dispara `Activate`, también sobre una carpeta (`ShowDirectory`). El que lo usa decide.
+- `Current` es el nombre seleccionado, o vacío si no hay selección; `Path` es `Dir &/ Current`.
+- Dispara `Select` al cambiar la selección, también con el teclado, y `Refresh` al terminar cada recarga.
+- Vigila el disco solo si está cargado `gb.inotify` (`Component.IsLoaded`): sin él, lo que cambia afuera aparece recién con `Reload`.
+- `FileCount`, `DirCount` y `TotalSize` describen la carpeta mostrada; se calculan al recargar, que es asíncrono: justo después de cambiar `Dir` pueden ser los anteriores.
+- Trae renombrado en línea (`Rename()`) con un evento `Rename` que se cancela devolviendo True.
+
+IconView (la vista normal de FileView)
+
+- `MouseDown` no filtra por botón: el derecho también selecciona el ícono, antes de mostrar el `PopupMenu`. Sobre el área vacía, en modo `Single`, la selección anterior se conserva.
+
+**Relaciones:** vinculo:SC-103
+
 ---
 
 ## GV — Comportamientos verificados
@@ -6446,7 +6565,7 @@ Este fue el bug raíz de siete funciones del proyecto: recibían la ruta de un `
 
 `File.Name()` devuelve el nombre CON extensión; `File.BaseName()` SIN extensión.
 
-**Relaciones:** apoya:RC-GM-17
+**Relaciones:** apoya:RC-GM-17,vinculo:GV-219
 
 ### GV-02 — Operadores lógicos: And If y Or If solo existen en If
 
@@ -7312,7 +7431,9 @@ REGLA: usar sin espera, y hacer en Gambas, ANTES de la llamada, las verificacion
 
 Aplicado en `m_RevisarPDF.AbrirPDFEnVisorExterno`, que abre en el visor del sistema el PDF elegido en `cmbVerPDF`. Motivo: el `PictureBox` muestra páginas rasterizadas, y los hipervínculos del PDF solo se pueden usar y probar en un visor real. Verificado en Mint: abre el visor predeterminado sin bloquear la interfaz.
 
-**Relaciones:** vinculo:GV-17, apoya:GV-23, vinculo:GV-06
+Aplicado también en `m_FileManager.Abrir` (21/11/2026, SC-103): `Exist` antes, sin `Wait`, para abrir con la aplicación del sistema lo que el gestor de archivos no reserva al editor.
+
+**Relaciones:** vinculo:GV-17, apoya:GV-23, vinculo:GV-06,vinculo:SC-103
 
 **PENDIENTE:** Falta medir si xdg-open en Cinnamon vuelve de inmediato (delegando en gio open) o espera a que se cierre el visor. Mini-test: en una terminal, xdg-open archivo.pdf; echo $? — si el echo aparece recién al cerrar el visor, Wait = True queda descartado definitivamente. Hasta medirlo, no usar Wait = True.
 
@@ -10802,6 +10923,37 @@ CONSECUENCIA. `If Not Message.Question(…) Then` funciona como se lee: `Message
 **Relaciones:** vinculo:RC-GM-17,vinculo:SC-102
 
 **PENDIENTE:** Confirmar en 3.22 (Mint) con el mismo script. Leer en el fuente del compilador cómo se compila Not dentro de la condición de un If.
+
+### GV-219 — IsDir sigue los enlaces simbólicos; Stat sin segundo parámetro no; Dir devuelve los ocultos y, con gb.Directory, deja afuera los enlaces
+
+**Estado:** vigente · **Evidencia:** doc_oficial · **Entorno:** Gambas 3.22.1 / código fuente del intérprete (main/share, main/gbx) · **Verificado:** 2026-11
+
+Verificado en el fuente del intérprete, etiqueta 3.22.1 (`main/share/gb_file_temp.h` y `main/gbx/gbx_subr_file.c`).
+
+- `IsDir(ruta)` usa `stat()` (`FILE_is_dir`): SIGUE el enlace. Un enlace a una carpeta da True.
+- `Stat(ruta)` sin segundo parámetro usa `lstat()` (`SUBR_stat`, follow = FALSE): NO lo sigue. Un enlace da `.Type = gb.Link`. Con `Stat(ruta, True)` lo sigue.
+- `Dir(ruta)` sin patrón ni filtro devuelve también los ocultos: solo saltea «.» y «..» (`FILE_dir_next`).
+- `Dir(ruta, "*", gb.Directory)` decide por `d_type = DT_DIR` cuando el sistema lo informa (glibc, ext4): un enlace a una carpeta no aparece como carpeta. Con `gb.File` aparece entre los archivos.
+
+CONSECUENCIA. Un borrado recursivo que decide con `IsDir` entra por un enlace a una carpeta de afuera y borra el contenido del destino. Fue el caso de `FMain.BorrarCarpeta`, retirado el 21/11/2026 (SC-103), que además no protegía la raíz del proyecto. Para recorrer sin salir: `Stat(ruta).Type = gb.Directory` decide si se entra, y un enlace se borra con `Kill` como un archivo.
+
+Para un guard de «esto es una carpeta» que sí debe seguir enlaces (navegar), `IsDir` sigue siendo el indicado (GV-01).
+
+**Relaciones:** vinculo:GV-01,apoya:SC-103
+
+### GV-220 — Un control borrado que se nombra como FMain.Control compila igual; sacar una pestaña intermedia de un TabStrip corre los índices
+
+**Estado:** vigente · **Evidencia:** empirica · **Entorno:** Gambas 3.22.2 / IDE / gb.qt6 / Linux Mint · **Verificado:** 2026-11
+
+Observado el 21/11/2026 al borrar la pestaña «Proyecto» de `FMain` (SC-103). Con los controles `DirViewProyecto` y `FileViewProyecto` ya borrados del formulario, el proyecto compiló y la aplicación arrancó con tres líneas que los nombraban con la clase adelante: `FMain.DirViewProyecto.Root = …` en `FMain.AbrirProyectoMD` y en `m_InicioCierre` (`CerrarProyecto`, `CerrarTodoMySQL`). Los usos sin la clase adelante sí los marcó el compilador, y por eso se habían corregido.
+
+REGLA PRÁCTICA. Después de borrar un control, buscar `FMain.<nombre>` (o `<Formulario>.<nombre>`) en todo el proyecto: que compile no prueba que no quede ninguno.
+
+SACAR UNA PESTAÑA DEL MEDIO DE UN TabStrip EN EL IDE. Bajar `Count` quita solo las últimas. Se mueve la pestaña al final y se baja `Count`. Las que estaban después se corren un lugar: todo índice escrito como número en el código cambia de sentido sin error de compilación. Por eso el de «Resultados» pasó a `m_Constantes.PESTANA_INFERIOR_RESULTADOS` (SC-03).
+
+**Relaciones:** vinculo:SC-103,vinculo:SC-03
+
+**PENDIENTE:** Confirmar que la línea falla al ejecutarse (los parches la sacaron antes de abrir o cerrar un proyecto) y leer en el fuente del compilador por qué no resuelve el miembro cuando va con el nombre de la clase adelante.
 
 ---
 

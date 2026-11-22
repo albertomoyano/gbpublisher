@@ -288,39 +288,75 @@ Catch
 
 End Function
 
+' ============================================
+' Función   : EmpujarGitLocal
+' Propósito : Hace el commit en el repositorio local del proyecto con
+'             engine/commit_local.sh, por la lanzadora (SC-53). Acá queda solo
+'             lo que el script no puede hacer: pedir el mensaje (FCommits)
+' Parámetros: (ninguno)
+' Retorna   : (Sub, sin retorno)
+' Nota      : HASTA EL 21/11/2026 TIPEABA git init, git add Y git commit EN LA
+'             TERMINAL CON Input(), SIN RECIBIR EL RESULTADO Y CON EL MENSAJE
+'             ESCAPADO A MANO (DEUDA DE SC-13). EL MISMO SCRIPT HACE EL COMMIT
+'             DEL EMPUJE REMOTO (empujar_remoto.sh LO LLAMA ANIDADO)
+' ============================================
 Public Sub EmpujarGitLocal()
-  ' EMPUJA LOS CAMBIOS AL REPOSITORIO GIT LOCAL
-  ' MUESTRA UN FORMULARIO PARA INGRESAR EL MENSAJE DEL COMMIT
 
-  Dim rutaGit As String
-  Dim rutaProyecto As String
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sRutaProyecto As String
+  Dim aArgumentos As String[]
+  Dim iResultado As Integer
 
-  ' OBTENER LA RUTA DEL PROYECTO
-  rutaProyecto = m_InicioCierre.RutaProyectoEnCurso
-  rutaGit = rutaProyecto & "/.git"
-
-  ' MOSTRAR EL FORMULARIO MODAL PARA INGRESAR EL MENSAJE DE COMMIT
-  If Not FCommits.ShowModal() Then
-    ' EL USUARIO CANCELÓ LA OPERACIÓN
+  ' --- 2. VALIDACIÓN ---
+  sRutaProyecto = m_InicioCierre.RutaProyectoEnCurso
+  If sRutaProyecto = "" Then
+    m_Sonido.sonar("Warning")
+    Message.Warning("No hay un proyecto abierto.")
     Return
   Endif
 
-  ' MOSTRAMOS LA CONSOLA
-  FMain.TabPanelIzquierdaInferior.Index = 0
+  ' --- 3. MENSAJE DEL COMMIT ---
+  ' FCommits LO DEJA EN SU VARIABLE Static PUBLIC Y DEVUELVE True AL ACEPTAR
+  If Not FCommits.ShowModal() Then Return
 
-  ' CAMBIAR AL DIRECTORIO DEL PROYECTO
-  FMain.TerminalViewProyecto.Input("cd " & Shell$(rutaProyecto) & "\n")
+  ' --- 4. LANZAMIENTO ---
+  ' UN COMMIT LOCAL NO TOCA LA RED: 60 s ALCANZAN; SI VENCE, LA LANZADORA
+  ' PREGUNTA SI SEGUIR ESPERANDO
+  aArgumentos = [sRutaProyecto, FCommits.MensajeCommit]
+  iResultado = m_Lanzadora.EjecutarScript("commit_local.sh", aArgumentos, 60, "Commit en el repositorio local")
 
-  ' VERIFICAR SI EL DIRECTORIO .GIT EXISTE
-  If Not Exist(rutaGit) Then
-    ' INICIALIZAR EL REPOSITORIO SI NO EXISTE
-    FMain.TerminalViewProyecto.Input("git init --initial-branch=main" & "\n")
-  Endif
+  ' --- 5. RESULTADO ---
+  InformarCommit(iResultado)
 
-  ' EJECUTAR LOS COMANDOS DE GIT
-  FMain.TerminalViewProyecto.Input("git add ." & "\n")
-  FMain.TerminalViewProyecto.Input("git commit -m '" & Replace$(FCommits.MensajeCommit, "'", "'\\''") & "'" & "\n")
-  FMain.TerminalViewProyecto.SetFocus()
+End
+
+' ============================================
+' Función   : InformarCommit
+' Propósito : Traduce el resultado de la lanzadora a un mensaje del commit
+'             local. El detalle está en la terminal.
+' Parámetros: iResultado As Integer — lo que devolvió EjecutarScript
+' Retorna   : (Sub, sin retorno)
+' ============================================
+Private Sub InformarCommit(iResultado As Integer)
+
+  Select Case iResultado
+    Case m_Lanzadora.SALIDA_OK
+      m_Sonido.sonar("Info")
+      Message.Info("Se hizo el commit en el repositorio local.")
+      Return
+    Case m_Lanzadora.SALIDA_AVISOS
+      m_Sonido.sonar("Info")
+      Message.Info("No había cambios para commitear.")
+      Return
+    Case m_Lanzadora.SALIDA_FALLO
+      m_Sonido.sonar("Error")
+      Message.Error("No se hizo el commit." & gb.NewLine & gb.NewLine &
+        "El motivo está al final de la salida en la terminal.")
+      Return
+  End Select
+
+  ' RESULTADOS PROPIOS DE LA LANZADORA, Y CUALQUIER OTRO CÓDIGO
+  m_Lanzadora.InformarResultado(iResultado, "El commit", "")
 
 End
 

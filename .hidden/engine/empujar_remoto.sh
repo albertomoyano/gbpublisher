@@ -20,7 +20,7 @@
 #   Reemplaza a m_GitHub.EmpujarGitHubRemoto, que tipeaba los comandos en la
 #   terminal con Input() sin recibir el resultado (deuda de SC-13). El JSON de
 #   la integración lo escribe Gambas ANTES de lanzar este script, porque sale
-#   de la base.
+#   de la base. El commit lo hace commit_local.sh, anidado (apartado 8).
 #
 # SOLO SSH (decisión de Alberto, 21/11/2026)
 #   Un remoto que no es SSH no se corrige: el script se detiene y muestra el
@@ -147,21 +147,17 @@ if [[ "$INTEGRACION" == "si" ]]; then
 fi
 
 # --- 8. COMMIT ---
-paso "Commit"
-git add -A || morir "No se pudieron agregar los cambios"
-# .github-ids.json VIVE SOLO EN EL REMOTO Y LO GESTIONA EL ACTION: git add LO
-# MARCARÍA COMO BORRADO. restore --staged LO DEVUELVE AL ESTADO DE HEAD. SIN
-# INTEGRACIÓN EL ARCHIVO NO EXISTE Y NO HAY NADA QUE RESTAURAR
-git restore --staged .github-ids.json 2>/dev/null || true
-
-if git diff --cached --quiet; then
-    aviso "No había cambios para commitear: se empujan los commits pendientes, si los hay"
-else
-    # EL MENSAJE LLEGA COMO ARGUMENTO (Shell$ DESDE LA LANZADORA, SC-53): SIN
-    # ESCAPADO A MANO
-    git commit -m "$MENSAJE" >/dev/null || morir "No se pudo hacer el commit"
-    ok "Commit: $(git log -1 --format='%h %s')"
-fi
+# EL COMMIT SE ARMA EN UN SOLO LUGAR: commit_local.sh, EL MISMO DEL BOTÓN DE
+# COMMIT LOCAL. ANIDADO (GBP_ANIDADO=1, SC-53) SE PRESENTA COMO UN PASO MÁS.
+# SUS AVISOS («NO HABÍA CAMBIOS») LOS IMPRIME ÉL; ACÁ SOLO SE CUENTAN PARA EL
+# CÓDIGO FINAL: SIN CAMBIOS, SE EMPUJAN IGUAL LOS COMMITS PENDIENTES
+GBP_ANIDADO=1 bash "$DIR_ENGINE/commit_local.sh" "$DIR_PROYECTO" "$MENSAJE"
+CODIGO_COMMIT=$?
+case "$CODIGO_COMMIT" in
+    "$SALIDA_OK") ;;
+    "$SALIDA_AVISOS") AVISOS=$((AVISOS + 1)) ;;
+    *) morir "No se pudo hacer el commit: no se empuja" ;;
+esac
 
 # --- 9. EMPUJE ---
 paso "Empuje"

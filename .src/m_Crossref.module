@@ -1,0 +1,183 @@
+' Gambas module file
+
+' ==========================================================
+' MÓDULO    : m_Crossref
+' PROPÓSITO : Las consultas a Crossref, OpenCitations y OpenAIRE, por un solo
+'             camino: engine/consultar_doi.sh, lanzado por la lanzadora
+'             (SC-53). El script consulta y normaliza; deja un TSV en tmp/
+'             del proyecto, y este módulo lo devuelve en líneas o en una
+'             Collection. Mostrar, comparar con la base y aplicar queda en
+'             quien llama (SC-13, criterio 2).
+'             Reemplaza a las consultas con Shell de FAnalizarDOI y de
+'             FMain (btnChequearCrossref, btnCrossrefTitulo), que pasaban
+'             el DOI y el título por sh -c sin escapar (GV-06), usaban
+'             nombres fijos en /tmp y leían el JSON a mano.
+' USOS      : FAnalizarDOI (AnalizarDOI), FMain.btnChequearCrossref_Click
+'             (DatosPorDOI), FMain.btnCrossrefTitulo_Click (BuscarPorTitulo).
+' DEPENDENCIAS: m_Lanzadora, m_InicioCierre (RutaProyectoEnCurso), m_Sonido.
+' ==========================================================
+
+' EL SCRIPT Y EL ARCHIVO QUE DEJA EN tmp/ DEL PROYECTO. UNO SOLO PARA LOS TRES
+' MODOS: LA LANZADORA NO CORRE DOS SCRIPTS A LA VEZ
+Private Const SCRIPT_CONSULTA As String = "consultar_doi.sh"
+Private Const ARCHIVO_CONSULTA As String = "consulta-doi.tsv"
+
+' PLAZO DE LA LANZADORA EN SEGUNDOS: TRES CONSULTAS DE HASTA 30 s CADA UNA
+' (10 DE CONEXIÓN, 20 DE RESPUESTA). AL VENCER, LA LANZADORA PREGUNTA
+Private Const PLAZO_CONSULTA As Float = 120
+
+' ============================================
+' Función   : HayProyectoAbierto
+' Propósito : Dice si se puede consultar: el script corre en la terminal del
+'             proyecto y deja su resultado en tmp/ del proyecto (SC-53). Si
+'             no hay proyecto, lo explica.
+' Parámetros: (ninguno)
+' Retorna   : Boolean — True si hay un proyecto abierto
+' ============================================
+Public Function HayProyectoAbierto() As Boolean
+
+  If m_InicioCierre.RutaProyectoEnCurso <> "" Then Return True
+
+  m_Sonido.sonar("Info")
+  Message.Info("Para consultar un DOI, primero abrí cualquier proyecto: una revista o un libro." & gb.NewLine & gb.NewLine &
+    "La consulta corre en la terminal del proyecto, donde vas a ver cada paso.")
+  Return False
+
+End
+
+' ============================================
+' Función   : AnalizarDOI
+' Propósito : El informe de un DOI para FAnalizarDOI: Crossref, las citas de
+'             OpenCitations y la presencia en OpenAIRE.
+' Parámetros: sDoi As String — el DOI, en cualquiera de las formas en que se
+'             pega (el script lo normaliza y lo controla)
+' Retorna   : String[] — una línea por fila, «dato TAB valor»; Null si la
+'             consulta no se completó (ya se informó por qué)
+' ============================================
+Public Function AnalizarDOI(sDoi As String) As String[]
+
+  Return Consultar("analisis", sDoi, "Analizando el DOI")
+
+End
+
+' ============================================
+' Función   : DatosPorDOI
+' Propósito : Los datos de Crossref de un DOI, para compararlos con la ficha
+'             de bibtex y aplicarlos (FEstructuraResultados, FAplicarCrossRef).
+' Parámetros: sDoi As String — el DOI
+' Retorna   : Collection — claves doi, titulo, anio, paginas, issn, autor (las
+'             de FEstructuraResultados.cValoresAplicar). Un dato vacío no
+'             crea su clave (GV-98): leerla da Null, que como String es "".
+'             Null si la consulta no se completó (ya se informó por qué)
+' ============================================
+Public Function DatosPorDOI(sDoi As String) As Collection
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim aLineas As String[]
+  Dim sLinea As String
+  Dim aCampos As String[]
+  Dim cDatos As Collection
+
+  ' --- 2. CONSULTA ---
+  aLineas = Consultar("crossref", sDoi, "Consultando Crossref")
+  If IsNull(aLineas) Then Return Null
+
+  ' --- 3. PARES CLAVE/VALOR ---
+  ' UNA LÍNEA QUE NO TIENE DOS CAMPOS NO ES DEL CONTRATO: SE IGNORA
+  cDatos = New Collection
+  For Each sLinea In aLineas
+    aCampos = Split(sLinea, Chr(9))
+    If aCampos.Count = 2 Then cDatos[aCampos[0]] = aCampos[1]
+  Next
+
+  Return cDatos
+
+End
+
+' ============================================
+' Función   : BuscarPorTitulo
+' Propósito : Hasta cinco candidatos de Crossref para un título.
+' Parámetros: sTitulo As String — el título buscado
+' Retorna   : String[] — una línea por candidato, siete campos separados por
+'             TAB (score, tipo, DOI, título, año, primer autor, revista);
+'             vacío si Crossref no encontró nada; Null si la consulta no se
+'             completó (ya se informó por qué)
+' ============================================
+Public Function BuscarPorTitulo(sTitulo As String) As String[]
+
+  Return Consultar("titulo", sTitulo, "Buscando en Crossref")
+
+End
+
+' ============================================
+' Función   : Consultar
+' Propósito : Lanza consultar_doi.sh en uno de sus modos y lee el TSV que deja.
+'             Informa los fallos; los avisos, solo si hay algo que mostrar
+'             (una búsqueda sin resultados la informa quien llama).
+' Parámetros: sModo As String — analisis, crossref o titulo
+'             sValor As String — el DOI o el título
+'             sQue As String — lo que muestra la lanzadora mientras espera
+' Retorna   : String[] — las líneas del TSV (puede ser vacío); Null si la
+'             consulta no se completó
+' ============================================
+Private Function Consultar(sModo As String, sValor As String, sQue As String) As String[]
+
+  ' --- 1. INICIALIZACIÓN ---
+  Dim sSalida As String
+  Dim sContenido As String
+  Dim aArgumentos As New String[]
+  Dim aLineas As New String[]
+  Dim iResultado As Integer
+
+  ' --- 2. PROYECTO ABIERTO ---
+  If Not HayProyectoAbierto() Then Return Null
+
+  ' --- 3. LANZAMIENTO ---
+  ' EL DOI Y EL TÍTULO VAN COMO ARGUMENTOS: LA LANZADORA LOS CITA CON Shell$
+  ' (GV-06) Y EL SCRIPT NO LOS PASA POR sh -c. EL SCRIPT BORRA LA SALIDA
+  ' VIEJA AL EMPEZAR: LO QUE SE LEE ABAJO ES DE ESTA CONSULTA
+  sSalida = m_InicioCierre.RutaProyectoEnCurso &/ "tmp" &/ ARCHIVO_CONSULTA
+  aArgumentos.Add(sModo)
+  aArgumentos.Add(sValor)
+  aArgumentos.Add(sSalida)
+
+  iResultado = m_Lanzadora.EjecutarScript(SCRIPT_CONSULTA, aArgumentos, PLAZO_CONSULTA, sQue)
+
+  ' --- 4. RESULTADO ---
+  Select Case iResultado
+
+    Case m_Lanzadora.SALIDA_OK, m_Lanzadora.SALIDA_AVISOS
+      ' LA SALIDA PUEDE NO EXISTIR O ESTAR VACÍA: UNA BÚSQUEDA SIN RESULTADOS
+      If Exist(sSalida) Then
+        Try sContenido = File.Load(sSalida)
+        If Error Then
+          m_Sonido.sonar("Error")
+          Message.Error("La consulta terminó, pero no se pudo leer su resultado:" & gb.NewLine & Error.Text)
+          Return Null
+        Endif
+        ' LA ÚLTIMA LÍNEA NO TRAE SALTO: UN VALOR VACÍO AL FINAL SIGUE SIENDO
+        ' UNA COLUMNA, ASÍ QUE NO SE RECORTA
+        If sContenido <> "" Then aLineas = Split(sContenido, gb.NewLine)
+      Endif
+
+      If iResultado = m_Lanzadora.SALIDA_AVISOS And aLineas.Count > 0 Then
+        m_Sonido.sonar("Warning")
+        Message.Warning("La consulta terminó con avisos: algún servicio no respondió y su dato falta." & gb.NewLine & gb.NewLine &
+          "El detalle está en la terminal, marcado con ⚠.")
+      Endif
+      Return aLineas
+
+    Case m_Lanzadora.SALIDA_FALLO
+      m_Sonido.sonar("Error")
+      Message.Error("La consulta no se completó." & gb.NewLine & gb.NewLine &
+        "El motivo está al final de la terminal.")
+
+    Case Else
+      ' LOS RESULTADOS PROPIOS DE LA LANZADORA LOS EXPLICA ELLA
+      m_Lanzadora.InformarResultado(iResultado, "La consulta", "")
+
+  End Select
+
+  Return Null
+
+End
